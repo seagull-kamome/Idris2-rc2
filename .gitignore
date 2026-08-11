@@ -1,0 +1,12 @@
+# External reference clone (not our code; re-fetch via
+# git clone https://github.com/idris-lang/Idris2.git idris2-src)
+/idris2-src/
+
+# Generated install prefix (idris2api + rc2 runtime install output)
+/install/
+
+# Build artifacts
+build/
+*.o
+*.so
+*.a
