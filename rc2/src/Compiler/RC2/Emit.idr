@@ -624,6 +624,44 @@ const2Integer c i =
         (B64 x) => "UINT64_C(\{show x})"
         _ => show i
 
+||| Populate `target` with a newly-built closure over `n`, `missing`
+||| args still unset for further partial application -- either
+||| declaring it fresh (`declare = True`, `target` not yet in scope: an
+||| enclosing `RLet`'s own `var_N`) or assigning into an existing
+||| variable (`declare = False`: a case-branch's already-declared
+||| `returnvar`, see `branchBody`/RCmpCase). Takes the target name
+||| explicitly rather than always minting a fresh `closure_N` so a
+||| caller that already has its own destination variable in hand can
+||| build directly into it instead of declaring/using a throwaway
+||| `closure_N` and immediately copying it into the real target right
+||| after -- two statements doing the work of one.
+makeClosureInto : {auto a : Ref ArgCounter Nat}
+                -> {auto oft : Ref OutfileText Output}
+                -> {auto il : Ref IndentLevel Nat}
+                -> {auto r : Ref RepMap (SortedMap Int Rep)}
+                -> {auto lm : Ref InlineMap (SortedMap Int String)}
+                -> FC
+                -> (declare : Bool)
+                -> (target : String)
+                -> Name
+                -> List RCLocal
+                -> Nat
+                -> Core ()
+makeClosureInto fc declare target n args missing = do
+    let nargs = length args
+    let decl : String = if declare then "IDRIS2RC2_Value *" else ""
+    emit fc "\{decl}\{target} = (IDRIS2RC2_Value *)idris2rc2_mkClosure((IDRIS2RC2_Value *(*)())\{cName n}, \{show $ nargs + missing}, \{show nargs});"
+    let arglist = "((IDRIS2RC2_Closure*)\{target})->args"
+    _ <- foldlC (\k, v => do
+        vStr <- rcVarToBoxedC v
+        emit EmptyFC $ "\{arglist}[\{show k}] = \{vStr};"
+        pure (S k)) 0 args
+    pure ()
+
+||| As `makeClosureInto`, but mints its own fresh `closure_N` name and
+||| returns it as an expression -- for call sites where the closure is
+||| just a sub-expression (e.g. a tail call's own trampoline argument)
+||| with no existing destination variable to build into directly.
 makeClosure : {auto a : Ref ArgCounter Nat}
             -> {auto oft : Ref OutfileText Output}
             -> {auto il : Ref IndentLevel Nat}
@@ -636,13 +674,7 @@ makeClosure : {auto a : Ref ArgCounter Nat}
             -> Core String
 makeClosure fc n args missing = do
     let closure = "closure_\{!(getNextCounter)}"
-    let nargs = length args
-    emit fc "IDRIS2RC2_Value *\{closure} = (IDRIS2RC2_Value *)idris2rc2_mkClosure((IDRIS2RC2_Value *(*)())\{cName n}, \{show $ nargs + missing}, \{show nargs});"
-    let arglist = "((IDRIS2RC2_Closure*)\{closure})->args"
-    _ <- foldlC (\k, v => do
-        vStr <- rcVarToBoxedC v
-        emit EmptyFC $ "\{arglist}[\{show k}] = \{vStr};"
-        pure (S k)) 0 args
+    makeClosureInto fc True closure n args missing
     pure closure
 
 -- Must match the dispatch switch in support/rc2/runtime.c.
@@ -697,6 +729,42 @@ tryInlineNativeOp ty var (ROp fc _ op args postDrop) body =
                   else pure False
          _ :: _ => pure False
 tryInlineNativeOp _ _ _ _ = pure False
+
+||| If `value` is a partial application (RUnderApp), or an InTailPosition
+||| tail call (RAppName -- see emitRC's own RAppName case, which only
+||| ever produces a bare closure name in that tail position, never
+||| otherwise) -- either possibly wrapped in leading RDup/RDrop/RFree for
+||| their own operands' refcounting, which `annotate` can wrap around any
+||| expression uniformly and never change what the value itself is --
+||| lower those wrappers first, then build the closure directly into
+||| `target` via `makeClosureInto` instead of the throwaway `closure_N`
+||| a generic `emitRC value` would produce (only to have the caller
+||| immediately copy it into `target` right after -- two statements for
+||| one). Returns `False` (nothing emitted) if `value` isn't shaped like
+||| this at all, leaving the caller to fall back to the general case.
+tryBuildClosureInto : {auto a : Ref ArgCounter Nat}
+                    -> {auto oft : Ref OutfileText Output}
+                    -> {auto il : Ref IndentLevel Nat}
+                    -> {auto r : Ref RepMap (SortedMap Int Rep)}
+                    -> {auto lm : Ref InlineMap (SortedMap Int String)}
+                    -> (declare : Bool) -> String -> TailPositionStatus -> RCExp -> Core Bool
+tryBuildClosureInto declare target tailPosition (RDup fc v cont) = do
+    dupVars [varName v]
+    tryBuildClosureInto declare target tailPosition cont
+tryBuildClosureInto declare target tailPosition (RDrop fc vs cont) = do
+    boxedLocs <- keepBoxedLocals vs
+    removeVars (varName <$> boxedLocs)
+    tryBuildClosureInto declare target tailPosition cont
+tryBuildClosureInto declare target tailPosition (RFree fc v cont) = do
+    freeVars [varName v]
+    tryBuildClosureInto declare target tailPosition cont
+tryBuildClosureInto declare target _ (RUnderApp fc n missing args) = do
+    makeClosureInto fc declare target n args missing
+    pure True
+tryBuildClosureInto declare target InTailPosition (RAppName fc _ n args) = do
+    makeClosureInto fc declare target n args 0
+    pure True
+tryBuildClosureInto _ _ _ _ = pure False
 
 mutual
     ||| A case branch (or default): emit the drops RC.idr's `annotate`
@@ -753,7 +821,12 @@ mutual
                     else do
                         dupVars (conArgs \\ shouldDrop)
                         removeVars (shouldDrop \\ conArgs)
-        emit emptyFC "\{returnvar} = \{!(emitRC body' tailPosition)};"
+        -- `returnvar` is already declared (the enclosing RConCase/
+        -- RConstCase always emits `IDRIS2RC2_Value * returnvar = NULL;`
+        -- up front) -- same tryBuildClosureInto special case as RLet's
+        -- own, just assigning rather than declaring.
+        built <- tryBuildClosureInto False returnvar tailPosition body'
+        unless built $ emit emptyFC "\{returnvar} = \{!(emitRC body' tailPosition)};"
 
     emitRC : {auto a : Ref ArgCounter Nat}
            -> {auto oft : Ref OutfileText Output}
@@ -823,8 +896,18 @@ mutual
                         removeVars $ map varName pending
                         emitRC body tailPosition
              (RBoxed, _) => do
-                 valStr <- emitRC value NotInTailPosition
-                 emit fc $ "IDRIS2RC2_Value * var_\{show var} = \{valStr};"
+                 -- A partial application (RUnderApp, possibly RDup/RDrop/
+                 -- RFree-wrapped) built directly into `var` skips the usual
+                 -- `emitRC value NotInTailPosition` route entirely: that
+                 -- route always evaluates to a bare closure-variable name
+                 -- (RUnderApp's own emitRC case just wraps `makeClosure`,
+                 -- which mints one), which this case would then immediately
+                 -- copy into `var` with nothing done in between -- two
+                 -- statements for what `makeClosureInto` does in one.
+                 built <- tryBuildClosureInto True "var_\{show var}" NotInTailPosition value
+                 unless built $ do
+                     valStr <- emitRC value NotInTailPosition
+                     emit fc $ "IDRIS2RC2_Value * var_\{show var} = \{valStr};"
                  emitRC body tailPosition
 
     emitRC (RCon fc n coninfo tag args reuseFrom) _ = do
@@ -911,11 +994,13 @@ mutual
                  emit emptyFC "IDRIS2RC2_Value * \{switchReturnVar} = NULL;"
                  emit emptyFC "if (\{condVar}) {"
                  increaseIndentation
-                 emit emptyFC "\{switchReturnVar} = \{!(emitRC whenTrue tailPosition)};"
+                 builtT <- tryBuildClosureInto False switchReturnVar tailPosition whenTrue
+                 unless builtT $ emit emptyFC "\{switchReturnVar} = \{!(emitRC whenTrue tailPosition)};"
                  decreaseIndentation
                  emit emptyFC "} else {"
                  increaseIndentation
-                 emit emptyFC "\{switchReturnVar} = \{!(emitRC whenFalse tailPosition)};"
+                 builtF <- tryBuildClosureInto False switchReturnVar tailPosition whenFalse
+                 unless builtF $ emit emptyFC "\{switchReturnVar} = \{!(emitRC whenFalse tailPosition)};"
                  decreaseIndentation
                  emit emptyFC "}"
                  pure switchReturnVar
@@ -1114,8 +1199,12 @@ mutual
                      emit fc $ "\{nativeCType ty'} var_\{show var} = \{valStr};"
                      removeVars $ map varName pending
              (RBoxed, _) => do
-                 valStr <- emitRC value NotInTailPosition
-                 emit fc $ "IDRIS2RC2_Value * var_\{show var} = \{valStr};"
+                 -- Same tryBuildClosureInto special case as emitRC's own
+                 -- RLet above -- see its comment.
+                 built <- tryBuildClosureInto True "var_\{show var}" NotInTailPosition value
+                 unless built $ do
+                     valStr <- emitRC value NotInTailPosition
+                     emit fc $ "IDRIS2RC2_Value * var_\{show var} = \{valStr};"
         emitNativeValue ty body
     -- A native-typed let's *value* can still legitimately be wrapped in
     -- RDup/RDrop/RFree: those govern its own boxed operands (e.g. `x + x`
