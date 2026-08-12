@@ -99,8 +99,18 @@ Show RCLocal where
 ||| computed during the Lifted -> RCExp conversion itself (see RC.idr's
 ||| `repOf`) and carried directly on the RLet node -- not a side table
 ||| Emit has to (re)compute or look up separately.
+|||
+||| `RInlineNative` is a refinement `RC.idr`'s Phase 2 (`annotate`) can
+||| promote a plain `RNative` to, once ownership is known: it means this
+||| local's value is a native op with no Boxed operands at all
+||| (`ROp.postDrop == []`), referenced exactly once in the rest of the
+||| function -- safe and free to splice its expression directly into
+||| that one use site instead of ever declaring a C variable for it at
+||| all (see Emit.idr's `InlineMap`/`(RInlineNative ty, _)` RLet case).
+||| Phase 1 never produces this directly (it doesn't know postDrop or
+||| use-counts yet); only Phase 2 ever promotes into it.
 public export
-data Rep = RBoxed | RNative PrimType
+data Rep = RBoxed | RNative PrimType | RInlineNative PrimType
 
 mutual
   public export

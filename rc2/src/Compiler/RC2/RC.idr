@@ -327,6 +327,11 @@ freeableShape _ = False
 ||| comment for why that's just as unconditionally a no-op).
 dropDeadLet : FC -> SortedSet RCLocal -> Rep -> RCLocal -> RCExp -> RCExp -> RCExp
 dropDeadLet fc natives (RNative _) _ _ body = body
+-- Never actually reachable: `inlineableRep` only ever promotes to this
+-- in the *used* branch of RLet's own annotate case, which never calls
+-- dropDeadLet at all (that's the dead-variable branch) -- same no-op as
+-- RNative regardless, kept total rather than assumed unreachable.
+dropDeadLet fc natives (RInlineNative _) _ _ body = body
 dropDeadLet fc natives RBoxed loc value body =
     if contains loc natives
        then body
@@ -347,6 +352,11 @@ nativeLocalsR (RLet _ var rep value body) =
     let vs = union (nativeLocalsR value) (nativeLocalsR body) in
     case rep of
          RNative _ => insert (RCLoc var) vs
+         -- Never actually produced until `annotate` (Phase 2) runs, which
+         -- is strictly after this (Phase-1-output-consuming) function --
+         -- same native-ness as RNative regardless, kept total rather than
+         -- assumed unreachable.
+         RInlineNative _ => insert (RCLoc var) vs
          RBoxed => vs
 nativeLocalsR (RConCase _ _ alts mDef) =
     let altsNs = map (\(MkRConAlt _ _ _ _ body _) => nativeLocalsR body) alts in
@@ -447,6 +457,29 @@ boxedOperands natives = filter isBoxedOperand
     isBoxedOperand (RCConst _) = False
     isBoxedOperand v = not (contains v natives)
 
+||| Promote a plain `RNative ty` to `RInlineNative ty` once ownership is
+||| fully known (called from `annotate`'s own `RLet` case, after both
+||| `valueRC`'s `postDrop` and `bodyRC` are already computed): safe and
+||| worthwhile exactly when `valueRC` is a bare native op with no Boxed
+||| operands at all (`ROp`'s own `postDrop == []` -- the exact set of
+||| Boxed operands it needs dropped, see its own doc comment; empty
+||| means every operand is either `natives`-listed or an `RCConst`, so
+||| nothing a dup/drop elsewhere could invalidate by the time a deferred
+||| read happens) and `var` is referenced exactly once in `bodyRC`
+||| (otherwise inlining would duplicate the op's computation). Anything
+||| else (a literal-valued let, a multi-use one, one with a Boxed
+||| operand, or an already-`RBoxed` one) passes `rep` through unchanged
+||| -- this only ever *narrows* an existing `RNative`, never invents a
+||| new native classification `Types.repOf` didn't already decide.
+||| Moves what used to be `Emit.idr`'s own `tryInlineNativeOp` (a
+||| `countUsesR` tree-walk redone at *emission* time on every RLet) into
+||| a single Phase-2 decision instead, mirroring `ROp.postDrop` and
+||| reuse-in-place's own earlier elevations.
+inlineableRep : Rep -> RCExp -> Int -> RCExp -> Rep
+inlineableRep (RNative ty) (ROp _ _ _ _ []) var bodyRC =
+    if countUsesR (RCLoc var) bodyRC == 1 then RInlineNative ty else RNative ty
+inlineableRep rep _ _ _ = rep
+
 mutual
     branchBody : SortedSet RCLocal -> Owned -> SortedSet RCLocal -> RCExp -> Core RCExp
     branchBody natives owned ownedWithArgs body = do
@@ -481,10 +514,9 @@ mutual
                         else if contains (RCLoc var) usedVars then insert (RCLoc var) borrowVal else borrowVal
         valueRC <- annotate natives (owned `difference` borrowVal) value
         bodyRC <- annotate natives owned' body
-        let bodyRC' = if contains (RCLoc var) usedVars
-                         then bodyRC
-                         else dropDeadLet fc natives rep (RCLoc var) valueRC bodyRC
-        pure $ RLet fc var rep valueRC bodyRC'
+        if contains (RCLoc var) usedVars
+           then pure $ RLet fc var (inlineableRep rep valueRC var bodyRC) valueRC bodyRC
+           else pure $ RLet fc var rep valueRC (dropDeadLet fc natives rep (RCLoc var) valueRC bodyRC)
     annotate natives owned (RCon fc n ci tag args _) =
         -- reuseFrom stays Nothing -- Compiler.RC2.Reuse decides that in
         -- its own pass, after annotate is completely done (it needs the

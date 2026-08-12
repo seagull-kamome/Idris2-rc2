@@ -1,22 +1,38 @@
 module Compiler.RC2.Emit
 
--- RCExp -> C. Purely mechanical: every ownership decision (dup/drop/free,
--- and what to drop and when) and every native-vs-boxed representation
--- decision was already made by Compiler.RC2.RC during the Lifted -> RCExp
--- conversion, and is baked into the tree as data (explicit RDup/RDrop/
--- RFree nodes, RLet's Rep field). This module never (re)analyses either of
--- those; it just maintains a small incrementally-built `RepMap` so that a
--- *use* of a local (which only carries its RCLocal id) can look back up
--- the Rep its binding RLet already decided. Every local variable use
--- (RV, and every RCLocal appearing as a call/constructor/op argument) is
--- lowered as-is, with no per-use dup decision: any refcount adjustment a
--- use needs has already been made explicit as a wrapping RDup/RDrop/RFree
--- node earlier in the tree, which this module just lowers to the matching
--- runtime call. The only thing this module still *decides* is the
--- constructor-reuse-in-place optimization (see RCExp.idr's module note) --
--- it locally tracks a reuse map exactly as RC2's Stage 0 emission walk
--- did, just now reading candidate drop lists off of RDrop nodes instead of
--- computing them itself.
+-- RCExp -> C. Mostly mechanical: every ownership decision (dup/drop/free,
+-- and what to drop and when), every native-vs-boxed representation
+-- decision, and the constructor-reuse-in-place decision were already made
+-- by Compiler.RC2.RC/Compiler.RC2.Reuse and are baked into the tree as
+-- data (explicit RDup/RDrop/RFree nodes, RLet's Rep field, RCon's
+-- reuseFrom, RConAlt's offersReuse, RReleaseReuse). This module never
+-- (re)analyses any of those; it just maintains a small incrementally-built
+-- `RepMap` so that a *use* of a local (which only carries its RCLocal id)
+-- can look back up the Rep its binding RLet already decided. Every local
+-- variable use (RV, and every RCLocal appearing as a call/constructor/op
+-- argument) is lowered as-is, with no per-use dup decision: any refcount
+-- adjustment a use needs has already been made explicit as a wrapping
+-- RDup/RDrop/RFree node earlier in the tree, which this module just
+-- lowers to the matching runtime call.
+--
+-- A few things this module still *does* decide (deliberately, not an
+-- oversight -- see TODO.md's "Architecture" section for the two left
+-- unaddressed):
+--   * `tryBuildClosureInto`/`makeClosureInto`: which C statements a
+--     closure build/partial-application ends up as. Purely a codegen-
+--     shape optimisation (fewer statements, no throwaway `closure_N`
+--     immediately copied into its real destination) with zero effect on
+--     runtime semantics -- unlike the ownership/representation decisions
+--     above, there's no *semantic* fact for Compiler.RC2.RC's IR to carry
+--     about this, only a syntactic one about how many C statements to
+--     spend saying it.
+--   * `RPrimVal`'s small-int cache / constant-staging (`dyngen`/
+--     `orStagen`): a literal's own *value* decides whether it uses the
+--     small-int cache or gets staged into a deduplicated top-level
+--     constant -- inherently file-scoped (dedup spans the whole
+--     compilation unit, not one definition), so it doesn't fit the
+--     "decide once per node during Lifted -> RCExp conversion" shape the
+--     elevations above use even if moved.
 
 import Compiler.RC2.RCExp
 import Compiler.RC2.Types
@@ -363,16 +379,19 @@ data RepMap : Type where
 --      non-trivial operand -- including literal constants -- to a fresh
 --      let, purely for ANF shape; there's no sharing/evaluation-order
 --      reason to actually declare a C variable for a literal).
---   2. A native op with *no* Boxed operands (see `tryInlineNativeOp`)
---      that's used exactly once. Restricting to zero Boxed operands is
---      what makes this always safe to defer: every value such an op
---      reads is either another already-computed, stable native local
---      (a declared `var_N`, or itself a further InlineMap entry, so
+--   2. A native op Compiler.RC2.RC's `annotate` decided is `RInlineNative`
+--      (see Rep's own doc comment): no Boxed operands at all, and used
+--      exactly once. Restricting to zero Boxed operands is what makes
+--      this always safe to defer: every value such an op reads is
+--      either another already-computed, stable native local (a
+--      declared `var_N`, or itself a further InlineMap entry, so
 --      transitively still never a Boxed read) or a literal -- nothing
 --      that a dup/drop anywhere else in the function could invalidate
 --      by the time the deferred read actually happens. Restricting to
 --      exactly one use is what keeps this free -- inlining a multi-use
---      value would duplicate its computation.
+--      value would duplicate its computation. Unlike case 1 (a Phase 1
+--      decision), this one is decided by Phase 2 -- postDrop/use-counts
+--      aren't known yet during Phase 1's own conversion.
 -- Consulted by rcVarToNativeC/rcVarToBoxedC so *uses* of such a local
 -- inline its expression text directly instead of reading back a
 -- pointless `var_N`.
@@ -517,6 +536,10 @@ rcVarToBoxedC l = do
     inlined <- inlineExprFor l
     pure $ case rep of
                 RNative ty => nativeMk ty (fromMaybe (varName l) inlined)
+                -- Always InlineMap'd by construction (Rep.RInlineNative's
+                -- own doc comment) -- `fromMaybe (varName l) inlined` is
+                -- defensive totality, not a real fallback path.
+                RInlineNative ty => nativeMk ty (fromMaybe (varName l) inlined)
                 RBoxed => varName l
 
 ||| The C expression to use for `l` as an operand of a native op expecting
@@ -531,6 +554,7 @@ rcVarToNativeC ty l = do
     inlined <- inlineExprFor l
     pure $ case rep of
                 RNative _ => fromMaybe (varName l) inlined
+                RInlineNative _ => fromMaybe (varName l) inlined
                 RBoxed => nativeUnbox ty (varName l)
 
 ||| The reuse-reservation C variable's name for scrutinee `sc` -- a pure,
@@ -705,30 +729,8 @@ keepBoxedLocals locs = do
     isBoxed reps (RCConst _) = False
     isBoxed reps (RCLoc i) = case SortedMap.lookup i reps of
                                   Just (RNative _) => False
+                                  Just (RInlineNative _) => False
                                   _ => True
-
-||| If `value` is a native op with no Boxed operands at all and `var` is
-||| referenced exactly once in `body`, renders its expression and
-||| registers it in InlineMap instead of returning it for the caller to
-||| declare as a C variable, returning True. Otherwise leaves InlineMap
-||| untouched and returns False, so the caller declares `var` normally.
-||| See InlineMap's own module comment for why "no Boxed operands" is
-||| exactly the condition that makes deferring this op's evaluation to
-||| its (single) later use site always safe, and why "exactly one use"
-||| is what keeps it free of any recomputation cost.
-tryInlineNativeOp : {auto r : Ref RepMap (SortedMap Int Rep)}
-                  -> {auto lm : Ref InlineMap (SortedMap Int String)}
-                  -> PrimType -> Int -> RCExp -> RCExp -> Core Bool
-tryInlineNativeOp ty var (ROp fc _ op args postDrop) body =
-    case postDrop of
-         [] => if countUsesR (RCLoc var) body == 1
-                  then do
-                      argStrs <- rc2traverseVect (\v => rcVarToNativeC (opArgTyFor ty op) v) args
-                      update InlineMap (insert var (nativeOpExpr op argStrs))
-                      pure True
-                  else pure False
-         _ :: _ => pure False
-tryInlineNativeOp _ _ _ _ = pure False
 
 ||| If `value` is a partial application (RUnderApp), or an InTailPosition
 ||| tail call (RAppName -- see emitRC's own RAppName case, which only
@@ -798,6 +800,33 @@ mutual
     ||| uniqueness check (`emitReuseOffer`). `sc` not being in the drop
     ||| list at all (still owned elsewhere) means nothing is emitted for
     ||| it here either way.
+    ||| Evaluate `value` (in `tailPosition`) and store its result in
+    ||| `target` -- either declaring `target` fresh (`declare = True`,
+    ||| not yet in scope: an `RLet`'s own `var_N`) or assigning into an
+    ||| already-declared variable (`declare = False`: a case branch's
+    ||| `returnvar`, or RCmpCase's own two branches). Tries
+    ||| `tryBuildClosureInto` first (skips a throwaway `closure_N` when
+    ||| `value` is a closure build that can go straight into `target` --
+    ||| see its own doc comment); falls back to the general
+    ||| `emitRC`-then-assign route for everything else. Every "evaluate
+    ||| this RCExp and store the result in a C variable" site in this
+    ||| module goes through here, so the choice between those two routes
+    ||| is only ever written once.
+    assignInto : {auto a : Ref ArgCounter Nat}
+               -> {auto oft : Ref OutfileText Output}
+               -> {auto il : Ref IndentLevel Nat}
+               -> {auto _ : Ref ConstDef (SortedMap Constant ConstDef)}
+               -> {auto r : Ref RepMap (SortedMap Int Rep)}
+               -> {auto lm : Ref InlineMap (SortedMap Int String)}
+               -> FC -> (declare : Bool) -> (target : String) -> TailPositionStatus -> RCExp -> Core ()
+    assignInto fc declare target tailPosition value = do
+        built <- tryBuildClosureInto declare target tailPosition value
+        unless built $ do
+            valStr <- emitRC value tailPosition
+            if declare
+               then emit fc $ "IDRIS2RC2_Value * " ++ target ++ " = " ++ valStr ++ ";"
+               else emit fc $ target ++ " = " ++ valStr ++ ";"
+
     branchBody : {auto a : Ref ArgCounter Nat}
                -> {auto oft : Ref OutfileText Output}
                -> {auto il : Ref IndentLevel Nat}
@@ -823,10 +852,8 @@ mutual
                         removeVars (shouldDrop \\ conArgs)
         -- `returnvar` is already declared (the enclosing RConCase/
         -- RConstCase always emits `IDRIS2RC2_Value * returnvar = NULL;`
-        -- up front) -- same tryBuildClosureInto special case as RLet's
-        -- own, just assigning rather than declaring.
-        built <- tryBuildClosureInto False returnvar tailPosition body'
-        unless built $ emit emptyFC "\{returnvar} = \{!(emitRC body' tailPosition)};"
+        -- up front).
+        assignInto emptyFC False returnvar tailPosition body'
 
     emitRC : {auto a : Ref ArgCounter Nat}
            -> {auto oft : Ref OutfileText Output}
@@ -878,36 +905,26 @@ mutual
              (RNative _, RPrimVal _ c) => do
                  update InlineMap (insert var (nativeLitExpr c))
                  emitRC body tailPosition
+             -- Compiler.RC2.RC's `annotate` already decided this native
+             -- op has no Boxed operands and is referenced exactly once
+             -- (see Rep.RInlineNative's own doc comment) -- render its
+             -- expression straight into InlineMap, no `var_N` ever
+             -- declared. Used to be `tryInlineNativeOp`, an Emit-time
+             -- `countUsesR` tree-walk redone on every native RLet.
+             (RInlineNative ty, _) => do
+                 (valStr, pending) <- emitNativeValue ty value
+                 update InlineMap (insert var valStr)
+                 removeVars $ map varName pending
+                 emitRC body tailPosition
              (RNative ty, _) => do
-                 -- Native path: `value` is ROp here (RPrimVal is handled
-                 -- above), possibly interspersed with RDup/RDrop/RFree
-                 -- wrapping one of *its own* boxed operands -- see
-                 -- emitNativeValue. First see if it's a single-use,
-                 -- no-Boxed-operands op that can be spliced into its use
-                 -- site instead (tryInlineNativeOp); if not, this is an
-                 -- ordinary raw C scalar declaration -- no dup/drop/free,
+                 -- Ordinary raw C scalar declaration -- no dup/drop/free,
                  -- no heap allocation, for `var` itself either way.
-                 inlined <- tryInlineNativeOp ty var value body
-                 if inlined
-                    then emitRC body tailPosition
-                    else do
-                        (valStr, pending) <- emitNativeValue ty value
-                        emit fc $ "\{nativeCType ty} var_\{show var} = \{valStr};"
-                        removeVars $ map varName pending
-                        emitRC body tailPosition
+                 (valStr, pending) <- emitNativeValue ty value
+                 emit fc $ "\{nativeCType ty} var_\{show var} = \{valStr};"
+                 removeVars $ map varName pending
+                 emitRC body tailPosition
              (RBoxed, _) => do
-                 -- A partial application (RUnderApp, possibly RDup/RDrop/
-                 -- RFree-wrapped) built directly into `var` skips the usual
-                 -- `emitRC value NotInTailPosition` route entirely: that
-                 -- route always evaluates to a bare closure-variable name
-                 -- (RUnderApp's own emitRC case just wraps `makeClosure`,
-                 -- which mints one), which this case would then immediately
-                 -- copy into `var` with nothing done in between -- two
-                 -- statements for what `makeClosureInto` does in one.
-                 built <- tryBuildClosureInto True "var_\{show var}" NotInTailPosition value
-                 unless built $ do
-                     valStr <- emitRC value NotInTailPosition
-                     emit fc $ "IDRIS2RC2_Value * var_\{show var} = \{valStr};"
+                 assignInto fc True "var_\{show var}" NotInTailPosition value
                  emitRC body tailPosition
 
     emitRC (RCon fc n coninfo tag args reuseFrom) _ = do
@@ -994,13 +1011,11 @@ mutual
                  emit emptyFC "IDRIS2RC2_Value * \{switchReturnVar} = NULL;"
                  emit emptyFC "if (\{condVar}) {"
                  increaseIndentation
-                 builtT <- tryBuildClosureInto False switchReturnVar tailPosition whenTrue
-                 unless builtT $ emit emptyFC "\{switchReturnVar} = \{!(emitRC whenTrue tailPosition)};"
+                 assignInto emptyFC False switchReturnVar tailPosition whenTrue
                  decreaseIndentation
                  emit emptyFC "} else {"
                  increaseIndentation
-                 builtF <- tryBuildClosureInto False switchReturnVar tailPosition whenFalse
-                 unless builtF $ emit emptyFC "\{switchReturnVar} = \{!(emitRC whenFalse tailPosition)};"
+                 assignInto emptyFC False switchReturnVar tailPosition whenFalse
                  decreaseIndentation
                  emit emptyFC "}"
                  pure switchReturnVar
@@ -1187,24 +1202,22 @@ mutual
              -- Same literal-inlining as emitRC's RLet case above -- most
              -- of these synthetic lets *are* one (e.g. the `2` in `d * 2`).
              (RNative _, RPrimVal _ c) => update InlineMap (insert var (nativeLitExpr c))
+             -- Same RInlineNative case as emitRC's own RLet above -- see
+             -- its comment. A synthetic operand-let (this function's own
+             -- RLet chain) is used exactly once by construction (it
+             -- exists solely to hold that one operand) and, whenever its
+             -- own op has no Boxed operands either, is exactly what
+             -- `annotate` promotes to RInlineNative -- so this fires for
+             -- essentially every such let.
+             (RInlineNative ty', _) => do
+                 (valStr, pending) <- emitNativeValue ty' value
+                 update InlineMap (insert var valStr)
+                 removeVars $ map varName pending
              (RNative ty', _) => do
-                 -- Same op-inlining as emitRC's RLet case above -- a
-                 -- synthetic operand-let is used exactly once by
-                 -- construction (it exists solely to hold that one
-                 -- operand), so this fires for every such let whose op
-                 -- itself has no Boxed operands.
-                 inlined <- tryInlineNativeOp ty' var value body
-                 unless inlined $ do
-                     (valStr, pending) <- emitNativeValue ty' value
-                     emit fc $ "\{nativeCType ty'} var_\{show var} = \{valStr};"
-                     removeVars $ map varName pending
-             (RBoxed, _) => do
-                 -- Same tryBuildClosureInto special case as emitRC's own
-                 -- RLet above -- see its comment.
-                 built <- tryBuildClosureInto True "var_\{show var}" NotInTailPosition value
-                 unless built $ do
-                     valStr <- emitRC value NotInTailPosition
-                     emit fc $ "IDRIS2RC2_Value * var_\{show var} = \{valStr};"
+                 (valStr, pending) <- emitNativeValue ty' value
+                 emit fc $ "\{nativeCType ty'} var_\{show var} = \{valStr};"
+                 removeVars $ map varName pending
+             (RBoxed, _) => assignInto fc True "var_\{show var}" NotInTailPosition value
         emitNativeValue ty body
     -- A native-typed let's *value* can still legitimately be wrapped in
     -- RDup/RDrop/RFree: those govern its own boxed operands (e.g. `x + x`
