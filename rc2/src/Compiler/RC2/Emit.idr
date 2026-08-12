@@ -925,7 +925,38 @@ mutual
                      -> PrimType -> RCExp -> Core String
     emitNativeValue ty (ROp fc _ op args) = do
         argStrs <- rc2traverseVect (\v => rcVarToNativeC (opArgTy ty op) v) args
-        pure $ nativeOpExpr op argStrs
+        let exprStr = nativeOpExpr op argStrs
+        -- Mirrors emitRC's boxed-ROp case: every op unconditionally drops
+        -- whichever of its operands are Boxed once it's done reading them,
+        -- regardless of whether Compiler.RC2.RC's `annotate` dup'd them
+        -- (borrowed) or moved them in (owned) -- see that case's comment
+        -- ("this drop is purely mechanical -- no ownership decision is
+        -- being made here"). A native-result op still reads Boxed operands
+        -- (via rcVarToNativeC's unboxing above) and owes them that exact
+        -- same cleanup; omitting it entirely was a real bug -- every
+        -- Boxed operand `annotate` treated as owned/consumed (as opposed
+        -- to dup'd for a later reuse) leaked one reference, since nothing
+        -- else was ever going to drop it.
+        boxedArgs <- keepBoxedLocals (toList args)
+        case boxedArgs of
+             [] => pure exprStr
+             _  => do
+                 -- Unlike emitRC's boxed-ROp case, `exprStr` here is not
+                 -- itself a full statement -- it's an inline C expression
+                 -- (e.g. `(idris2rc2_to_i64(var_0) + ...)`) that the
+                 -- *caller* embeds in some later statement (an RLet's own
+                 -- declaration line, typically). If we dropped `boxedArgs`
+                 -- right here, that drop would be emitted -- and so would
+                 -- execute -- before the caller ever gets around to
+                 -- emitting the statement that actually reads them,
+                 -- freeing the value out from under its own extraction. So
+                 -- when there's anything to drop, force the read now by
+                 -- materialising `exprStr` into its own temp first, then
+                 -- drop, then hand back a bare variable reference instead.
+                 tmp <- getNewVarThatWillNotBeFreedAtEndOfBlock
+                 emit fc $ "\{nativeCType ty} \{tmp} = \{exprStr};"
+                 removeVars $ map varName boxedArgs
+                 pure tmp
       where
         -- All operands share `ty` except Cast's single argument, whose
         -- *source* type is the op's own `i`, not the result type `ty`.
