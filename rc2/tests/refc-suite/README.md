@@ -12,17 +12,17 @@ source ../../../env.sh
 nix-shell -p gcc gmp pkg-config --run './run.sh'
 ```
 
-## Ported (18)
+## Ported (19)
 
 Each subdirectory holds the original `.idr` source (unmodified unless
 noted below) plus an `expected` file. Most `expected` files are the
 upstream RefC ones, verbatim -- rc2 is expected to produce byte-identical
 output to RefC for ordinary programs, and `run.sh` diffs against it.
 
-- `args`, `basicpatternmatch`, `buffer`, `doubles`, `garbageCollect`,
-  `integers`, `issue1778`, `issue2424`, `issue2452`, `piTypecase001`,
-  `prims`, `refc001`, `refc002`, `refc003`, `reg001`, `strings`,
-  `wasm32cmp001`, `reuse`.
+- `args`, `basicpatternmatch`, `buffer`, `clock`, `doubles`,
+  `garbageCollect`, `integers`, `issue1778`, `issue2424`, `issue2452`,
+  `piTypecase001`, `prims`, `refc001`, `refc002`, `refc003`, `reg001`,
+  `strings`, `wasm32cmp001`, `reuse`.
 
 `buffer` additionally has a `postrun.sh` (a new mechanism added to
 `run.sh` for this test): upstream's own `run` script doesn't just diff
@@ -31,8 +31,8 @@ and appends that to the expected output, then deletes the file. `run.sh`
 now runs `postrun.sh` (if present) after the program exits and appends its
 stdout to what gets diffed against `expected`, mirroring that.
 
-Two of these needed their `expected` adjusted for reasons that aren't rc2
-bugs:
+Three of these needed their `expected` adjusted for reasons that aren't
+rc2 bugs:
 
 - **`prims`**: `printLn codegen` prints the backend name (`"refc"` vs.
   `"rc2"`) -- adjusted accordingly.
@@ -47,6 +47,16 @@ bugs:
   one -- see `Emit.idr`'s `extractIntExpr`), so its `expected` reflects
   the *correct* result instead of reproducing RefC's bug.
 
+- **`clock`**: upstream's expected (`[True, False, True, True]`) bakes in
+  a real quirk of RefC's own `clockTimeMonotonic`, which isn't a true
+  monotonic clock at all -- it just reuses RefC's second-granularity UTC
+  clock (`time()`), so `monotonicStart < monotonicEnd` reads `False` for
+  an ordinary test run completing within the same wall-clock second. rc2
+  implements `clockTimeMonotonic`/`clockTimeUtc`/`clockTimeProcess`/
+  `clockTimeThread` with `clock_gettime` instead (see bug/note 8 below),
+  giving real nanosecond resolution, so the comparison reliably reads
+  `True` -- `expected` reflects that.
+
 - **`reuse`**: only the functional part (the two `treePrint` traversals)
   is ported. Upstream's `expected` also greps the *generated RefC C
   source* for the shape of RefC's specific constructor-reuse-in-place
@@ -55,11 +65,8 @@ bugs:
   implements the same optimization (see `Emit.idr`'s
   `addReuseConstructor`/reuse-map machinery). Dropped rather than adapted.
 
-## Skipped (3) -- with reasons
+## Skipped (2) -- with reasons
 
-- **`clock`**: exercises `System.Clock`, whose "RefC"-tagged FFI path is
-  out of scope for rc2 (see the project plan's scope notes) -- not
-  implemented, not ported.
 - **`ccompilerArgs`**: verifies RefC's `CC.idr` correctly parses/passes
   `CFLAGS`/`LDFLAGS`/`LDLIBS` env vars through to the C compiler
   invocation, using a companion C library it builds and links against.
@@ -158,6 +165,28 @@ test in `rc2/tests/` happened to exercise:
    `extractValue` (`src/Compiler/RefC/RefC.idr`) -- rc2's `Emit.idr` now
    has the equivalent split, dispatching on the FFI tag actually used at
    each call site rather than a single blanket unwrapping.
+
+8. **`System.Clock` support added, with a deliberate improvement over
+   RefC's own clock resolution.** `OSClock` is a plain `[external]` opaque
+   Idris type with no constructors, which the compiler's `nfToCFType`
+   classifies as `CFUser` -- rc2 already had a generic, no-wrapper-needed
+   path for that (`extractValue`/`packCFType`'s `CFUser` cases just pass
+   the bare `IDRIS2RC2_Value*` through unchanged), so this needed no new
+   heap-value type, unlike `Data.Buffer` above. `support/rc2/clock.c`/`.h`
+   box a nanosecond count as `IDRIS2RC2_Value*` via the existing
+   `idris2rc2_mkBits64`; the two GC-time clocks are optional
+   (`System.Clock.isClockMandatory`) and unimplemented in both RefC and
+   rc2, returning `NULL` so `clockTime GCCPU`/`GCReal` come back as
+   `Nothing`. Unlike RefC's own `clock.c` -- which gets UTC/monotonic time
+   from `time()` (1-second resolution, and `clockTimeMonotonic` isn't
+   even a distinct clock, it just calls the UTC one) and process/thread
+   time from `clock()` -- rc2 uses POSIX `clock_gettime` throughout
+   (`CLOCK_REALTIME`, `CLOCK_MONOTONIC`, `CLOCK_PROCESS_CPUTIME_ID`,
+   `CLOCK_THREAD_CPUTIME_ID`), giving real nanosecond resolution and an
+   actually-monotonic monotonic clock. This is an intentional divergence
+   from RefC's behavior (all four clock ids are POSIX-guaranteed present
+   on Linux since 2.6.28, so no portability loss), not a parity bug --
+   see the `clock` test note above for how its `expected` reflects this.
 
 All fixes verified against upstream RefC's actual output (not just
 against what the code "should" do in the abstract) by compiling and
