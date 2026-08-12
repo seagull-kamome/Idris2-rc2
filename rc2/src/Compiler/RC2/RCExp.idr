@@ -48,29 +48,48 @@ import Data.Vect
 
 ||| A local variable, identified by a compiler-allocated integer id (rc2's
 ||| own equivalent of Compiler.ANF's AVar -- defined independently here so
-||| this whole pipeline has no dependency on Compiler.ANF).
+||| this whole pipeline has no dependency on Compiler.ANF). `RCConst`
+||| carries a native-eligible literal directly -- Compiler.RC2.RC's
+||| Phase 1 (`bindOne`) produces this instead of allocating an id and
+||| wrapping an RLet around an RPrimVal for such a literal (see its own
+||| comment), since there both is and never was any real local variable
+||| there to name: nothing to own, dup, drop, or free, no RepMap entry,
+||| no C declaration -- Compiler.RC2.Emit renders it as an inline literal
+||| expression wherever it's read (repOfLocal/inlineExprFor). Anywhere
+||| that pattern-matches on RCLocal to reason about ownership (Owned
+||| sets, `natives`, RDup/RDrop/RFree targets) must treat RCConst like a
+||| native local -- excluded, never touched -- see RC.idr's
+||| `splitBorrows`.
 public export
 data RCLocal : Type where
-     RCLoc  : Int -> RCLocal
-     RCNull : RCLocal
+     RCLoc   : Int -> RCLocal
+     RCNull  : RCLocal
+     RCConst : Constant -> RCLocal
 
 export
 Eq RCLocal where
   (RCLoc i1) == (RCLoc i2) = i1 == i2
   RCNull == RCNull = True
+  (RCConst c1) == (RCConst c2) = c1 == c2
   _ == _ = False
 
 export
 Ord RCLocal where
-  compare (RCLoc i1) (RCLoc i2) = compare i1 i2
-  compare (RCLoc _) RCNull = GT
-  compare RCNull (RCLoc _) = LT
-  compare RCNull RCNull = EQ
+  compare (RCLoc i1)   (RCLoc i2)   = compare i1 i2
+  compare (RCLoc _)    RCNull       = GT
+  compare (RCLoc _)    (RCConst _)  = GT
+  compare RCNull       (RCLoc _)    = LT
+  compare RCNull       RCNull       = EQ
+  compare RCNull       (RCConst _)  = GT
+  compare (RCConst _)  (RCLoc _)    = LT
+  compare (RCConst _)  RCNull       = LT
+  compare (RCConst c1) (RCConst c2) = compare c1 c2
 
 export
 Show RCLocal where
   show (RCLoc i) = "v" ++ show i
   show RCNull = "[__]"
+  show (RCConst c) = "#" ++ show c
 
 ||| The representation Compiler.RC2.RC decided for an RLet-bound local,
 ||| computed during the Lifted -> RCExp conversion itself (see RC.idr's
@@ -156,6 +175,35 @@ freeLocalsR (RDup _ v body) = insert v (freeLocalsR body)
 freeLocalsR (RDrop _ vars body) = union (fromList vars) (freeLocalsR body)
 freeLocalsR (RFree _ v body) = insert v (freeLocalsR body)
 freeLocalsR _ = empty
+
+||| How many times `l` is referenced anywhere in `e` -- unlike
+||| `freeLocalsR`'s set (which collapses repeats), Emit.idr's
+||| tryInlineNativeOp needs the exact count to tell "referenced exactly
+||| once, safe to splice its defining expression in at that one site
+||| instead of declaring a variable" apart from "referenced more than
+||| once, inlining would duplicate its computation."
+export
+countUsesR : RCLocal -> RCExp -> Nat
+countUsesR l (RV _ v) = if v == l then 1 else 0
+countUsesR l (RAppName _ _ _ args) = length (filter (== l) args)
+countUsesR l (RUnderApp _ _ _ args) = length (filter (== l) args)
+countUsesR l (RApp _ _ c a) = length (filter (== l) [c, a])
+countUsesR l (RLet _ _ _ value body) = countUsesR l value + countUsesR l body
+countUsesR l (RCon _ _ _ _ args) = length (filter (== l) args)
+countUsesR l (ROp _ _ _ args) = length (filter (== l) (toList args))
+countUsesR l (RExtPrim _ _ _ args) = length (filter (== l) args)
+countUsesR l (RConCase _ sc alts mDef) =
+    (if sc == l then 1 else 0)
+    + sum (map (\(MkRConAlt _ _ _ _ body) => countUsesR l body) alts)
+    + maybe 0 (countUsesR l) mDef
+countUsesR l (RConstCase _ sc alts mDef) =
+    (if sc == l then 1 else 0)
+    + sum (map (\(MkRConstAlt _ body) => countUsesR l body) alts)
+    + maybe 0 (countUsesR l) mDef
+countUsesR l (RDup _ v body) = (if v == l then 1 else 0) + countUsesR l body
+countUsesR l (RDrop _ vars body) = length (filter (== l) vars) + countUsesR l body
+countUsesR l (RFree _ v body) = (if v == l then 1 else 0) + countUsesR l body
+countUsesR l _ = 0
 
 export
 usedConstructorsR : RCExp -> SortedSet Name

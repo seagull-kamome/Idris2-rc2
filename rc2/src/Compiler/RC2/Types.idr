@@ -78,6 +78,11 @@ opResultRep DoubleFloor = Just DoubleType
 opResultRep DoubleCeiling = Just DoubleType
 opResultRep _ = Nothing
 
+||| Exported so both RC.idr's `bindOne` (deciding whether a literal
+||| operand needs an RCConst at all, see RCExp.idr's module note) and
+||| Emit.idr's `repOfLocal` (rendering one) can share this single
+||| source of truth instead of re-deriving it.
+export
 litRep : Constant -> Maybe PrimType
 litRep (I _) = Just IntType
 litRep (I8 _) = Just Int8Type

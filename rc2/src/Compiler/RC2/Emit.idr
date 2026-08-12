@@ -19,6 +19,7 @@ module Compiler.RC2.Emit
 -- computing them itself.
 
 import Compiler.RC2.RCExp
+import Compiler.RC2.Types
 
 import Compiler.CompileExpr
 import Compiler.Common
@@ -209,6 +210,10 @@ cOp fn args = show fn ++ "(" ++ (showSep ", " $ toList args) ++ ")"
 varName : RCLocal -> String
 varName (RCLoc i) = "var_" ++ (show i)
 varName (RCNull)  = "NULL"
+-- Unreachable in practice: repOfLocal/inlineExprFor always intercept an
+-- RCConst before anything falls back to reading its "variable name" (it
+-- never had one -- see RCExp.idr's module note). Kept total regardless.
+varName (RCConst _) = "/* [rc2] unreachable RCConst varName */"
 
 ------------------------------------------------------------------------
 -- Native (unboxed) codegen, driven by Compiler.RC2.Types' Rep inference.
@@ -308,6 +313,14 @@ nativeOpExpr DoubleFloor   [x] = "floor(" ++ x ++ ")"
 nativeOpExpr DoubleCeiling [x] = "ceil(" ++ x ++ ")"
 nativeOpExpr fn args = "0 /* [rc2] unreachable native op " ++ show fn ++ " */"
 
+-- A native op's operands all share its own `ty` except Cast's single
+-- argument, whose *source* type is the op's own `i`, not the result
+-- type `ty`. Shared by emitNativeValue's ROp case and
+-- tryInlineNativeOp, which both need to render an ROp's operands.
+opArgTyFor : PrimType -> PrimFn arity -> PrimType
+opArgTyFor _ (Cast i _) = i
+opArgTyFor ty _ = ty
+
 rc2traverseVect : (a -> Core b) -> Vect n a -> Core (Vect n b)
 rc2traverseVect f [] = pure []
 rc2traverseVect f (x :: xs) = do
@@ -335,6 +348,28 @@ data FunctionDefinitions : Type where
 data IndentLevel : Type where
 data HeaderFiles : Type where
 data RepMap : Type where
+-- Native-rep locals whose defining expression is safe and worthwhile to
+-- splice directly into their (sole) use site instead of ever being
+-- declared as a C variable at all -- holds the already-rendered C
+-- expression text, keyed by local id. Two cases populate this:
+--   1. A bare literal (Compiler.RC2.RC's Phase 1 binds *every*
+--      non-trivial operand -- including literal constants -- to a fresh
+--      let, purely for ANF shape; there's no sharing/evaluation-order
+--      reason to actually declare a C variable for a literal).
+--   2. A native op with *no* Boxed operands (see `tryInlineNativeOp`)
+--      that's used exactly once. Restricting to zero Boxed operands is
+--      what makes this always safe to defer: every value such an op
+--      reads is either another already-computed, stable native local
+--      (a declared `var_N`, or itself a further InlineMap entry, so
+--      transitively still never a Boxed read) or a literal -- nothing
+--      that a dup/drop anywhere else in the function could invalidate
+--      by the time the deferred read actually happens. Restricting to
+--      exactly one use is what keeps this free -- inlining a multi-use
+--      value would duplicate its computation.
+-- Consulted by rcVarToNativeC/rcVarToBoxedC so *uses* of such a local
+-- inline its expression text directly instead of reading back a
+-- pointless `var_N`.
+data InlineMap : Type where
 data ConstDef
   = CDI64 String
   | CDB64 String
@@ -443,32 +478,54 @@ removeReuseConstructors = applyFunctionToVars "idris2rc2_dropReuseConstructor"
 
 repOfLocal : {auto r : Ref RepMap (SortedMap Int Rep)} -> RCLocal -> Core Rep
 repOfLocal RCNull = pure RBoxed
+-- RC.idr's bindOne only ever produces RCConst for a litRep-covered
+-- (native-eligible) Constant -- see RCExp.idr's module note -- so this
+-- is always RNative in practice; the RBoxed fallback is unreachable
+-- defensive totality, not a real code path.
+repOfLocal (RCConst c) = pure $ maybe RBoxed RNative (litRep c)
 repOfLocal (RCLoc i) = do
     reps <- get RepMap
     pure $ fromMaybe RBoxed (SortedMap.lookup i reps)
+
+||| `Just` the C expression text standing in for `l`'s never-declared
+||| variable if it's an InlineMap-registered local, or a native-eligible
+||| RCConst (see InlineMap's and RCLocal's own comments), `Nothing` for
+||| an ordinary declared local.
+inlineExprFor : {auto lm : Ref InlineMap (SortedMap Int String)} -> RCLocal -> Core (Maybe String)
+inlineExprFor RCNull = pure Nothing
+inlineExprFor (RCConst c) = pure $ Just (nativeLitExpr c)
+inlineExprFor (RCLoc i) = do
+    inlined <- get InlineMap
+    pure $ SortedMap.lookup i inlined
 
 ||| RCLocal -> C, Rep-aware: a bare use of `l` if it's already Boxed, or a
 ||| fresh box of its native value otherwise (natives have no refcount, so
 ||| boxing them here always allocates an independent fresh value -- there
 ||| is no borrow/move distinction to make). Any dup this use needed was
 ||| already made explicit as a wrapping RDup node earlier in the tree (see
-||| the module note), so this never dups on its own.
-rcVarToBoxedC : {auto r : Ref RepMap (SortedMap Int Rep)} -> RCLocal -> Core String
+||| the module note), so this never dups on its own. An InlineMap'd local
+||| has no `var_N` to read in the first place -- its expression text is
+||| boxed fresh instead.
+rcVarToBoxedC : {auto r : Ref RepMap (SortedMap Int Rep)} -> {auto lm : Ref InlineMap (SortedMap Int String)} -> RCLocal -> Core String
 rcVarToBoxedC l = do
     rep <- repOfLocal l
+    inlined <- inlineExprFor l
     pure $ case rep of
-                RNative ty => nativeMk ty (varName l)
+                RNative ty => nativeMk ty (fromMaybe (varName l) inlined)
                 RBoxed => varName l
 
 ||| The C expression to use for `l` as an operand of a native op expecting
 ||| type `ty`: the raw variable if it's already native, or an inline
 ||| unboxing extraction if it's boxed. Never dups/drops -- reading a value
-||| for a native op doesn't take ownership either way.
-rcVarToNativeC : {auto r : Ref RepMap (SortedMap Int Rep)} -> PrimType -> RCLocal -> Core String
+||| for a native op doesn't take ownership either way. An InlineMap'd
+||| local inlines its expression text directly instead of reading back a
+||| `var_N` that was never declared.
+rcVarToNativeC : {auto r : Ref RepMap (SortedMap Int Rep)} -> {auto lm : Ref InlineMap (SortedMap Int String)} -> PrimType -> RCLocal -> Core String
 rcVarToNativeC ty l = do
     rep <- repOfLocal l
+    inlined <- inlineExprFor l
     pure $ case rep of
-                RNative _ => varName l
+                RNative _ => fromMaybe (varName l) inlined
                 RBoxed => nativeUnbox ty (varName l)
 
 -- if the constructor is unique use it, otherwise add it to should drop vars and create null constructor
@@ -568,6 +625,7 @@ makeClosure : {auto a : Ref ArgCounter Nat}
             -> {auto oft : Ref OutfileText Output}
             -> {auto il : Ref IndentLevel Nat}
             -> {auto r : Ref RepMap (SortedMap Int Rep)}
+            -> {auto lm : Ref InlineMap (SortedMap Int String)}
             -> FC
             -> Name
             -> List RCLocal
@@ -607,9 +665,36 @@ keepBoxedLocals locs = do
   where
     isBoxed : SortedMap Int Rep -> RCLocal -> Bool
     isBoxed reps RCNull = False
+    -- Always native by construction (RC.idr's bindOne only ever
+    -- produces RCConst for a litRep-covered literal) -- never Boxed.
+    isBoxed reps (RCConst _) = False
     isBoxed reps (RCLoc i) = case SortedMap.lookup i reps of
                                   Just (RNative _) => False
                                   _ => True
+
+||| If `value` is a native op with no Boxed operands at all and `var` is
+||| referenced exactly once in `body`, renders its expression and
+||| registers it in InlineMap instead of returning it for the caller to
+||| declare as a C variable, returning True. Otherwise leaves InlineMap
+||| untouched and returns False, so the caller declares `var` normally.
+||| See InlineMap's own module comment for why "no Boxed operands" is
+||| exactly the condition that makes deferring this op's evaluation to
+||| its (single) later use site always safe, and why "exactly one use"
+||| is what keeps it free of any recomputation cost.
+tryInlineNativeOp : {auto r : Ref RepMap (SortedMap Int Rep)}
+                  -> {auto lm : Ref InlineMap (SortedMap Int String)}
+                  -> PrimType -> Int -> RCExp -> RCExp -> Core Bool
+tryInlineNativeOp ty var (ROp fc _ op args) body = do
+    boxedArgs <- keepBoxedLocals (toList args)
+    case boxedArgs of
+         [] => if countUsesR (RCLoc var) body == 1
+                  then do
+                      argStrs <- rc2traverseVect (\v => rcVarToNativeC (opArgTyFor ty op) v) args
+                      update InlineMap (insert var (nativeOpExpr op argStrs))
+                      pure True
+                  else pure False
+         _ :: _ => pure False
+tryInlineNativeOp _ _ _ _ = pure False
 
 mutual
     ||| A case branch (or default) with no reuse candidate: just emit the
@@ -621,6 +706,7 @@ mutual
                  -> {auto il : Ref IndentLevel Nat}
                  -> {auto _ : Ref ConstDef (SortedMap Constant ConstDef)}
                  -> {auto r : Ref RepMap (SortedMap Int Rep)}
+                 -> {auto lm : Ref InlineMap (SortedMap Int String)}
                  -> ReuseMap -> String -> RCExp -> TailPositionStatus
                  -> Core ()
     plainBranch reuseMap returnvar body tailPosition = do
@@ -643,6 +729,7 @@ mutual
                     -> {auto il : Ref IndentLevel Nat}
                     -> {auto _ : Ref ConstDef (SortedMap Constant ConstDef)}
                     -> {auto r : Ref RepMap (SortedMap Int Rep)}
+                    -> {auto lm : Ref InlineMap (SortedMap Int String)}
                     -> ReuseMap -> String -> Name -> List Int -> String -> RCExp -> TailPositionStatus
                     -> Core ()
     reusableBranch reuseMap sc' name args returnvar body tailPosition = do
@@ -663,6 +750,7 @@ mutual
            -> {auto e : Ref EnvTracker ReuseMap}
            -> {auto _ : Ref ConstDef (SortedMap Constant ConstDef)}
            -> {auto r : Ref RepMap (SortedMap Int Rep)}
+           -> {auto lm : Ref InlineMap (SortedMap Int String)}
            -> RCExp
            -> TailPositionStatus
            -> Core String
@@ -696,18 +784,35 @@ mutual
         -- -- there is no separate flag to check here, the ordinary RDrop/
         -- RFree cases below pick it up naturally.
         update RepMap (insert var rep)
-        case rep of
-             RNative ty => do
-                 -- Native path: `value` is always ROp or RPrimVal (the
-                 -- only shapes Compiler.RC2.Types ever marks Native),
-                 -- possibly interspersed with RDup/RDrop/RFree wrapping
-                 -- one of *its own* boxed operands -- see emitNativeValue.
-                 -- Either way this is a raw C scalar declaration -- no
-                 -- dup/drop/free, no heap allocation, for `var` itself.
-                 valStr <- emitNativeValue ty value
-                 emit fc $ "\{nativeCType ty} var_\{show var} = \{valStr};"
+        case (rep, value) of
+             -- A bare literal never needs an actual C variable -- there's
+             -- no shared/reused computation or evaluation-order reason to
+             -- name it, only Compiler.RC2.RC's ANF normalisation binding
+             -- *every* non-trivial operand uniformly. Record it in
+             -- InlineMap and skip declaring `var` at all; every use inlines
+             -- the literal text directly (see rcVarToNativeC/
+             -- rcVarToBoxedC).
+             (RNative _, RPrimVal _ c) => do
+                 update InlineMap (insert var (nativeLitExpr c))
                  emitRC body tailPosition
-             RBoxed => do
+             (RNative ty, _) => do
+                 -- Native path: `value` is ROp here (RPrimVal is handled
+                 -- above), possibly interspersed with RDup/RDrop/RFree
+                 -- wrapping one of *its own* boxed operands -- see
+                 -- emitNativeValue. First see if it's a single-use,
+                 -- no-Boxed-operands op that can be spliced into its use
+                 -- site instead (tryInlineNativeOp); if not, this is an
+                 -- ordinary raw C scalar declaration -- no dup/drop/free,
+                 -- no heap allocation, for `var` itself either way.
+                 inlined <- tryInlineNativeOp ty var value body
+                 if inlined
+                    then emitRC body tailPosition
+                    else do
+                        (valStr, pending) <- emitNativeValue ty value
+                        emit fc $ "\{nativeCType ty} var_\{show var} = \{valStr};"
+                        removeVars $ map varName pending
+                        emitRC body tailPosition
+             (RBoxed, _) => do
                  outerReuseMap <- get EnvTracker
                  let usedCons = usedConstructorsR value
                  put EnvTracker (outerReuseMap `intersectionMap` usedCons)
@@ -916,65 +1021,68 @@ mutual
 
     ||| The raw C expression for a value Compiler.RC2.Types has decided is
     ||| Native ty -- only ROp/RPrimVal ever get marked this way.
+    -- Returns the native C expression for `e` together with any Boxed
+    -- locals `e`'s own tail op reads but doesn't own a further use of --
+    -- Compiler.RC2.RC's `annotate` already decided those are "consumed"
+    -- here (see splitBorrows), so they need exactly one drop, but not
+    -- before the expression string is actually *read* by whichever
+    -- statement the caller embeds it in. The caller (either emitRC's
+    -- RLet case below, or this function's own RLet case) is what emits
+    -- that statement, so it -- not this function -- is what must emit the
+    -- drop, and only *after* doing so: emitting it here unconditionally
+    -- would run the drop before the value it reads from is ever used,
+    -- freeing it out from under its own extraction (a real regression an
+    -- earlier version of this fix hit for heap-allocated 64-bit types).
     emitNativeValue : {auto a : Ref ArgCounter Nat}
                      -> {auto oft : Ref OutfileText Output}
                      -> {auto il : Ref IndentLevel Nat}
                      -> {auto e : Ref EnvTracker ReuseMap}
                      -> {auto _ : Ref ConstDef (SortedMap Constant ConstDef)}
                      -> {auto r : Ref RepMap (SortedMap Int Rep)}
-                     -> PrimType -> RCExp -> Core String
+                     -> {auto lm : Ref InlineMap (SortedMap Int String)}
+                     -> PrimType -> RCExp -> Core (String, List RCLocal)
     emitNativeValue ty (ROp fc _ op args) = do
-        argStrs <- rc2traverseVect (\v => rcVarToNativeC (opArgTy ty op) v) args
-        let exprStr = nativeOpExpr op argStrs
+        argStrs <- rc2traverseVect (\v => rcVarToNativeC (opArgTyFor ty op) v) args
         -- Mirrors emitRC's boxed-ROp case: every op unconditionally drops
-        -- whichever of its operands are Boxed once it's done reading them,
-        -- regardless of whether Compiler.RC2.RC's `annotate` dup'd them
-        -- (borrowed) or moved them in (owned) -- see that case's comment
-        -- ("this drop is purely mechanical -- no ownership decision is
-        -- being made here"). A native-result op still reads Boxed operands
-        -- (via rcVarToNativeC's unboxing above) and owes them that exact
-        -- same cleanup; omitting it entirely was a real bug -- every
-        -- Boxed operand `annotate` treated as owned/consumed (as opposed
-        -- to dup'd for a later reuse) leaked one reference, since nothing
-        -- else was ever going to drop it.
+        -- whichever of its operands are Boxed once it's done reading
+        -- them, regardless of whether `annotate` dup'd them (borrowed) or
+        -- moved them in (owned) -- see that case's comment ("this drop is
+        -- purely mechanical -- no ownership decision is being made
+        -- here"). A native-result op still reads Boxed operands (via
+        -- rcVarToNativeC's unboxing above) and owes them that exact same
+        -- cleanup; omitting it entirely was a real bug -- every Boxed
+        -- operand `annotate` treated as owned/consumed (as opposed to
+        -- dup'd for a later reuse) leaked one reference, since nothing
+        -- else was ever going to drop it. The caller drops the ones we
+        -- report back here once it's done with the expression string.
         boxedArgs <- keepBoxedLocals (toList args)
-        case boxedArgs of
-             [] => pure exprStr
-             _  => do
-                 -- Unlike emitRC's boxed-ROp case, `exprStr` here is not
-                 -- itself a full statement -- it's an inline C expression
-                 -- (e.g. `(idris2rc2_to_i64(var_0) + ...)`) that the
-                 -- *caller* embeds in some later statement (an RLet's own
-                 -- declaration line, typically). If we dropped `boxedArgs`
-                 -- right here, that drop would be emitted -- and so would
-                 -- execute -- before the caller ever gets around to
-                 -- emitting the statement that actually reads them,
-                 -- freeing the value out from under its own extraction. So
-                 -- when there's anything to drop, force the read now by
-                 -- materialising `exprStr` into its own temp first, then
-                 -- drop, then hand back a bare variable reference instead.
-                 tmp <- getNewVarThatWillNotBeFreedAtEndOfBlock
-                 emit fc $ "\{nativeCType ty} \{tmp} = \{exprStr};"
-                 removeVars $ map varName boxedArgs
-                 pure tmp
-      where
-        -- All operands share `ty` except Cast's single argument, whose
-        -- *source* type is the op's own `i`, not the result type `ty`.
-        opArgTy : PrimType -> PrimFn arity -> PrimType
-        opArgTy _ (Cast i _) = i
-        opArgTy ty _ = ty
-    emitNativeValue ty (RPrimVal fc c) = pure $ nativeLitExpr c
+        pure (nativeOpExpr op argStrs, boxedArgs)
+    emitNativeValue ty (RPrimVal fc c) = pure (nativeLitExpr c, [])
     -- RC.idr's own ANF-normalisation wraps any non-trivial operand (e.g. a
     -- literal) in a synthetic RLet before the "real" ROp/RPrimVal --
     -- declare it (native or boxed, whichever Compiler.RC2.Types decided)
-    -- and keep unwinding to find the tail expression.
+    -- and keep unwinding to find the tail expression. This synthetic
+    -- let's own value gets its pending-drop list (if any) discharged
+    -- right here, immediately after its own declaration statement; only
+    -- `body`'s eventual tail-op pending list is returned onward.
     emitNativeValue ty (RLet fc var rep value body) = do
         update RepMap (insert var rep)
-        case rep of
-             RNative ty' => do
-                 valStr <- emitNativeValue ty' value
-                 emit fc $ "\{nativeCType ty'} var_\{show var} = \{valStr};"
-             RBoxed => do
+        case (rep, value) of
+             -- Same literal-inlining as emitRC's RLet case above -- most
+             -- of these synthetic lets *are* one (e.g. the `2` in `d * 2`).
+             (RNative _, RPrimVal _ c) => update InlineMap (insert var (nativeLitExpr c))
+             (RNative ty', _) => do
+                 -- Same op-inlining as emitRC's RLet case above -- a
+                 -- synthetic operand-let is used exactly once by
+                 -- construction (it exists solely to hold that one
+                 -- operand), so this fires for every such let whose op
+                 -- itself has no Boxed operands.
+                 inlined <- tryInlineNativeOp ty' var value body
+                 unless inlined $ do
+                     (valStr, pending) <- emitNativeValue ty' value
+                     emit fc $ "\{nativeCType ty'} var_\{show var} = \{valStr};"
+                     removeVars $ map varName pending
+             (RBoxed, _) => do
                  outerReuseMap <- get EnvTracker
                  let usedCons = usedConstructorsR value
                  put EnvTracker (outerReuseMap `intersectionMap` usedCons)
@@ -1167,6 +1275,9 @@ createCFunctions n (MkRCFun args body) = do
     -- just lets *use* sites, which only have a bare RCLocal id, look it
     -- back up).
     _ <- newRef RepMap (the (SortedMap Int Rep) empty)
+    -- Populated instead of RepMap+a declaration for any RLet whose value
+    -- is a bare literal -- see InlineMap's own comment.
+    _ <- newRef InlineMap (the (SortedMap Int String) empty)
     emit EmptyFC $ "return \{!(emitRC body InTailPosition)};"
     decreaseIndentation
     emit EmptyFC  "}\n"

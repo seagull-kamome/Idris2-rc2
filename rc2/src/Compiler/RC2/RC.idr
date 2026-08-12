@@ -76,13 +76,34 @@ getFC (LCrash fc _) = fc
 
 mutual
     ||| Normalise a single (possibly compound) sub-expression: if it's
-    ||| already trivial (a local/erased), no new binding is needed;
-    ||| otherwise let-bind it to a fresh local first.
+    ||| already trivial (a local/erased/native-eligible-literal), no new
+    ||| binding is needed; otherwise let-bind it to a fresh local first.
     bindOne : {auto v : Ref NextVar Int} ->
               Env -> Lifted vars -> (RCLocal -> Core RCExp) -> Core RCExp
     bindOne env (LLocal {idx} fc p) k = k (RCLoc (lookupEnv idx env))
     bindOne env (LErased fc) k = k RCNull
-    bindOne env e k
+    bindOne env e@(LPrimVal fc c) k =
+        -- A native-eligible literal operand (the overwhelmingly common
+        -- case -- e.g. the `2` in `d * 2`) never needs a synthetic let
+        -- of its own: there's no sharing/evaluation-order reason to
+        -- name a bare constant, only `bindMany`/`bindManyV`'s uniform
+        -- "every argument is a variable" normal form. RCConst carries
+        -- it directly (see RCExp.idr's module note) -- Emit.idr renders
+        -- it as an inline literal wherever it's read, with no C
+        -- declaration and no RepMap/InlineMap bookkeeping needed at
+        -- all. Anything litRep doesn't cover (String, Integer, ...)
+        -- falls through to the general case below unchanged -- those
+        -- stay boxed regardless, and want Emit.idr's smarter
+        -- constant-staging/small-int-caching machinery for `RPrimVal`,
+        -- not this.
+        case litRep c of
+             Just _  => k (RCConst c)
+             Nothing => bindCompound env e k
+    bindOne env e k = bindCompound env e k
+
+    bindCompound : {auto v : Ref NextVar Int} ->
+                   Env -> Lifted vars -> (RCLocal -> Core RCExp) -> Core RCExp
+    bindCompound env e k
         = do i <- nextVarId
              eRC <- normalize env e
              let rep = maybe RBoxed RNative (repOf eRC)
@@ -236,9 +257,12 @@ nativeLocalsR _ = empty
 ||| before -- the *first* occurrence of an owned variable moves it (no dup
 ||| needed), any later occurrence (or one that was never owned to begin
 ||| with) needs a dup -- except a `natives`-listed local, which never needs
-||| a dup (or any refcount op at all) no matter how it's used.
+||| a dup (or any refcount op at all) no matter how it's used. An
+||| `RCConst` is skipped the same way as a native -- it was never a real
+||| heap value to begin with (see RCExp.idr's module note on RCLocal).
 splitBorrows : (natives : SortedSet RCLocal) -> Owned -> List RCLocal -> List RCLocal
 splitBorrows _ _ [] = []
+splitBorrows natives owned (RCConst _ :: vars) = splitBorrows natives owned vars
 splitBorrows natives owned (v :: vars) =
     if contains v natives
         then splitBorrows natives owned vars
