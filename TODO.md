@@ -47,6 +47,40 @@ materialize a boxed `Bool`, even when immediately consumed by a branch;
 only comparisons over the fixed-width/`Double`/`Char` types above skip
 that materialization.
 
+## Architecture: two optimization decisions still live in Emit.idr
+
+`Emit.idr`'s own module note claims it's purely mechanical -- every
+ownership/native-vs-boxed decision already made by `Compiler.RC2.RC`
+and lowered as-is. Two spots (both value-based, not shape-based, which
+is why they weren't folded into the same elevation as `ROp.postDrop`/
+constructor-reuse/single-use closure-building) don't actually fit that
+description yet:
+
+- **Small-int cache / constant-staging threshold** (`RPrimVal`'s
+  `dyngen`/`orStagen` in `Emit.idr`): decides, based on a literal's
+  *value* (`[0,100)` for the small-int cache; `ConstDef`/`SortedMap`
+  keyed staging to deduplicate repeated same-value boxed constants)
+  which representation strategy to use, entirely at emission time.
+  Elevating it would mean `RC.idr`'s Phase 1 either duplicating
+  knowledge of the small-int cache range, or `Emit.idr` keeping a
+  genuinely emission-scoped concern anyway (constant deduplication
+  naturally wants a single table spanning the *whole compiled file*,
+  not per-definition, so it doesn't fit the "decide once per node
+  during Lifted -> RCExp conversion" pattern the other elevations use).
+  Not obviously wrong to leave as-is; flagged for a decision, not a
+  known bug.
+- **`keepBoxedLocals`'s filter may be fully dead code.** `RC.idr`'s
+  `annotate` already excludes every `natives`-set local (Native-Rep, or
+  Boxed-but-`alwaysUnboxed`) from `owned` before any `RDrop` node is
+  ever constructed (`dropUnusedOwnedVars`, `dropDeadLet`) -- `ROp`'s
+  own `postDrop` field is populated the same way and, tellingly, is
+  *never* run back through `keepBoxedLocals` at emission time; only
+  `RDrop`-node-derived lists still are. If that exclusion is airtight
+  (needs verifying every `RDrop`-producing site in `RC.idr`, not just
+  the obvious ones), `keepBoxedLocals` is redundant re-filtering of
+  data that's already guaranteed clean -- worth removing rather than
+  elevating. Not yet verified; noted here instead of assumed.
+
 ## Concurrency: unchanged from RefC
 
 Reference counting stays non-atomic, matching RefC's own single-threaded
