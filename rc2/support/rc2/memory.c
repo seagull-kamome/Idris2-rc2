@@ -131,16 +131,13 @@ IDRIS2RC2_Value *idris2rc2_dup(IDRIS2RC2_Value *v) {
   return v;
 }
 
-void idris2rc2_drop(IDRIS2RC2_Value *v) {
-  if (!v || idris2rc2_is_unboxed(v))
-    return;
-  if (v->header.refCount == IDRIS2RC2_REFCOUNT_MAX)
-    return; // immortal
-  if (v->header.refCount != 1) {
-    --v->header.refCount;
-    return;
-  }
-
+// Recursively drop `v`'s children (each of which may itself still be
+// shared, so those go through the ordinary checked idris2rc2_drop) and
+// then free `v` itself. Shared by idris2rc2_drop's refcount==1 case and by
+// idris2rc2_free, which skips straight to this without checking/
+// decrementing `v`'s own count first -- so it must only ever be called on
+// a value the caller has *statically* proven has no other references.
+static void idris2rc2_teardown(IDRIS2RC2_Value *v) {
   switch (v->header.tag) {
   case IDRIS2RC2_TAG_BITS32:
   case IDRIS2RC2_TAG_BITS64:
@@ -188,6 +185,32 @@ void idris2rc2_drop(IDRIS2RC2_Value *v) {
     break;
   }
   free(v);
+}
+
+void idris2rc2_drop(IDRIS2RC2_Value *v) {
+  if (!v || idris2rc2_is_unboxed(v))
+    return;
+  if (v->header.refCount == IDRIS2RC2_REFCOUNT_MAX)
+    return; // immortal
+  if (v->header.refCount != 1) {
+    --v->header.refCount;
+    return;
+  }
+  idris2rc2_teardown(v);
+}
+
+void idris2rc2_free(IDRIS2RC2_Value *v) {
+  // No refcount check, no decrement: the caller (rc2's generated code,
+  // via the RFree IR primitive) has already proven statically that `v` is
+  // a brand-new allocation with no other references -- see RC.idr's
+  // `freeableShape`. Still a no-op for NULL/unboxed, both of which are
+  // never real heap allocations to begin with.
+  if (!v || idris2rc2_is_unboxed(v))
+    return;
+  IDRIS2RC2_VERIFY(v->header.refCount == 1,
+                   "idris2rc2_free called on a shared value (refCount=%d)",
+                   (int)v->header.refCount);
+  idris2rc2_teardown(v);
 }
 
 #define IDRIS2RC2_MK10(t, n)                                                       \

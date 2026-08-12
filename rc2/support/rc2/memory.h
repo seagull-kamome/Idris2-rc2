@@ -11,6 +11,11 @@ IDRIS2RC2_Value *idris2rc2_dup(IDRIS2RC2_Value *v);
 // Decrements the refcount of `v`, freeing it (recursively) once it reaches
 // zero. A no-op for unboxed/NULL/immortal values.
 void idris2rc2_drop(IDRIS2RC2_Value *v);
+// Unconditionally deallocates `v` right now, with no refcount check at
+// all -- the RFree IR primitive's lowering. Only ever safe to call on a
+// value statically proven to be a brand-new, unshared allocation (see
+// RCExp.idr/RC.idr's module notes on RFree). A no-op for unboxed/NULL.
+void idris2rc2_free(IDRIS2RC2_Value *v);
 
 IDRIS2RC2_Constructor *idris2rc2_newConstructor(int arity, int tag);
 IDRIS2RC2_Closure *idris2rc2_mkClosure(IDRIS2RC2_Value *(*fn)(), uint8_t arity, uint8_t filled);

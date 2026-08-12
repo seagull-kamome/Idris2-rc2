@@ -1,17 +1,22 @@
 module Compiler.RC2.Emit
 
--- RCExp -> C. Purely mechanical: every ownership decision (dup vs move,
--- what to drop and when) and every native-vs-boxed representation decision
--- was already made by Compiler.RC2.RC during the Lifted -> RCExp
--- conversion, and is baked into the tree as data (RCVar.borrowed, RDrop
--- nodes, RLet's Rep field). This module never (re)analyses either of
+-- RCExp -> C. Purely mechanical: every ownership decision (dup/drop/free,
+-- and what to drop and when) and every native-vs-boxed representation
+-- decision was already made by Compiler.RC2.RC during the Lifted -> RCExp
+-- conversion, and is baked into the tree as data (explicit RDup/RDrop/
+-- RFree nodes, RLet's Rep field). This module never (re)analyses either of
 -- those; it just maintains a small incrementally-built `RepMap` so that a
 -- *use* of a local (which only carries its RCLocal id) can look back up
--- the Rep its binding RLet already decided. The only thing this module
--- still *decides* is the constructor-reuse-in-place optimization (see
--- RCExp.idr's module note) -- it locally tracks a reuse map exactly as
--- RC2's Stage 0 emission walk did, just now reading candidate drop lists
--- off of RDrop nodes instead of computing them itself.
+-- the Rep its binding RLet already decided. Every local variable use
+-- (RV, and every RCLocal appearing as a call/constructor/op argument) is
+-- lowered as-is, with no per-use dup decision: any refcount adjustment a
+-- use needs has already been made explicit as a wrapping RDup/RDrop/RFree
+-- node earlier in the tree, which this module just lowers to the matching
+-- runtime call. The only thing this module still *decides* is the
+-- constructor-reuse-in-place optimization (see RCExp.idr's module note) --
+-- it locally tracks a reuse map exactly as RC2's Stage 0 emission walk
+-- did, just now reading candidate drop lists off of RDrop nodes instead of
+-- computing them itself.
 
 import Compiler.RC2.RCExp
 
@@ -416,20 +421,17 @@ dupVars : {auto oft : Ref OutfileText Output}
            -> Core ()
 dupVars = applyFunctionToVars "idris2rc2_dup"
 
+freeVars : {auto oft : Ref OutfileText Output}
+           -> {auto il : Ref IndentLevel Nat}
+           -> List String
+           -> Core ()
+freeVars = applyFunctionToVars "idris2rc2_free"
+
 removeReuseConstructors : {auto oft : Ref OutfileText Output}
                         -> {auto il : Ref IndentLevel Nat}
                         -> List String
                         -> Core ()
 removeReuseConstructors = applyFunctionToVars "idris2rc2_dropReuseConstructor"
-
-||| RCVar -> C: the ownership decision (borrow/move) was already made by
-||| Compiler.RC2.RC, so this is a direct, non-deciding lowering.
-||| Assumes `l` is Boxed -- see `rcVarToBoxedC` for the Rep-aware version
-||| used everywhere a value crosses into boxed-calling-convention territory
-||| (call/constructor/closure arguments, case scrutinees, return values).
-rcVarToC : RCVar -> String
-rcVarToC (MkRCVar l False) = varName l
-rcVarToC (MkRCVar l True)  = "idris2rc2_dup(" ++ varName l ++ ")"
 
 repOfLocal : {auto r : Ref RepMap (SortedMap Int Rep)} -> RCLocal -> Core Rep
 repOfLocal RCNull = pure RBoxed
@@ -437,27 +439,29 @@ repOfLocal (RCLoc i) = do
     reps <- get RepMap
     pure $ fromMaybe RBoxed (SortedMap.lookup i reps)
 
-||| Like `rcVarToC`, but Rep-aware: if the referenced local is a native
-||| (unboxed) scalar, box it fresh on the spot instead (natives have no
-||| refcount, so the borrow/move distinction doesn't apply to them -- a
-||| fresh box is exactly what's needed here either way).
-rcVarToBoxedC : {auto r : Ref RepMap (SortedMap Int Rep)} -> RCVar -> Core String
-rcVarToBoxedC v = do
-    rep <- repOfLocal v.rcVar
+||| RCLocal -> C, Rep-aware: a bare use of `l` if it's already Boxed, or a
+||| fresh box of its native value otherwise (natives have no refcount, so
+||| boxing them here always allocates an independent fresh value -- there
+||| is no borrow/move distinction to make). Any dup this use needed was
+||| already made explicit as a wrapping RDup node earlier in the tree (see
+||| the module note), so this never dups on its own.
+rcVarToBoxedC : {auto r : Ref RepMap (SortedMap Int Rep)} -> RCLocal -> Core String
+rcVarToBoxedC l = do
+    rep <- repOfLocal l
     pure $ case rep of
-                RNative ty => nativeMk ty (varName v.rcVar)
-                RBoxed => rcVarToC v
+                RNative ty => nativeMk ty (varName l)
+                RBoxed => varName l
 
-||| The C expression to use for `v` as an operand of a native op expecting
+||| The C expression to use for `l` as an operand of a native op expecting
 ||| type `ty`: the raw variable if it's already native, or an inline
 ||| unboxing extraction if it's boxed. Never dups/drops -- reading a value
 ||| for a native op doesn't take ownership either way.
-rcVarToNativeC : {auto r : Ref RepMap (SortedMap Int Rep)} -> PrimType -> RCVar -> Core String
-rcVarToNativeC ty v = do
-    rep <- repOfLocal v.rcVar
+rcVarToNativeC : {auto r : Ref RepMap (SortedMap Int Rep)} -> PrimType -> RCLocal -> Core String
+rcVarToNativeC ty l = do
+    rep <- repOfLocal l
     pure $ case rep of
-                RNative _ => varName v.rcVar
-                RBoxed => nativeUnbox ty (varName v.rcVar)
+                RNative _ => varName l
+                RBoxed => nativeUnbox ty (varName l)
 
 -- if the constructor is unique use it, otherwise add it to should drop vars and create null constructor
 addReuseConstructor : {auto a : Ref ArgCounter Nat}
@@ -540,7 +544,7 @@ makeClosure : {auto a : Ref ArgCounter Nat}
             -> {auto r : Ref RepMap (SortedMap Int Rep)}
             -> FC
             -> Name
-            -> List RCVar
+            -> List RCLocal
             -> Nat
             -> Core String
 makeClosure fc n args missing = do
@@ -568,10 +572,18 @@ peelDrop e = ([], e)
 
 ||| Native locals have no refcount at all -- filter them out of any drop
 ||| list RC.idr produced (it only ever reasons about Boxed ownership).
+||| A local not (yet) present in RepMap is a function argument (only
+||| RLet-bound locals are ever recorded there) and is always Boxed.
 keepBoxedLocals : {auto r : Ref RepMap (SortedMap Int Rep)} -> List RCLocal -> Core (List RCLocal)
 keepBoxedLocals locs = do
     reps <- get RepMap
-    pure $ filter (\case RCLoc i => not (isJust (SortedMap.lookup i reps)); RCNull => False) locs
+    pure $ filter (isBoxed reps) locs
+  where
+    isBoxed : SortedMap Int Rep -> RCLocal -> Bool
+    isBoxed reps RCNull = False
+    isBoxed reps (RCLoc i) = case SortedMap.lookup i reps of
+                                  Just (RNative _) => False
+                                  _ => True
 
 mutual
     ||| A case branch (or default) with no reuse candidate: just emit the
@@ -648,18 +660,24 @@ mutual
            NotInTailPosition => "idris2rc2_applyClosure"
            InTailPosition    => "idris2rc2_tailcallApplyClosure") ++ "(\{closureStr}, \{argStr})"
 
-    emitRC (RLet fc var rep value body dropIfUnused) tailPosition = do
+    emitRC (RLet fc var rep value body) tailPosition = do
         -- `rep` was already decided by Compiler.RC2.RC during the Lifted ->
         -- RCExp conversion and is carried directly on this node; record it
         -- so later *uses* of `var` (which only have its RCLocal id, not
         -- this node) can look it up via repOfLocal/rcVarToBoxedC/etc.
+        -- If `var` turned out dead, Compiler.RC2.RC already wrapped `body`
+        -- in an RDrop/RFree for it directly (see RCExp.idr's module note)
+        -- -- there is no separate flag to check here, the ordinary RDrop/
+        -- RFree cases below pick it up naturally.
         update RepMap (insert var rep)
         case rep of
              RNative ty => do
                  -- Native path: `value` is always ROp or RPrimVal (the
-                 -- only shapes Compiler.RC2.Types ever marks Native), so
-                 -- this is a raw C scalar declaration -- no dup/drop, no
-                 -- heap allocation.
+                 -- only shapes Compiler.RC2.Types ever marks Native),
+                 -- possibly interspersed with RDup/RDrop/RFree wrapping
+                 -- one of *its own* boxed operands -- see emitNativeValue.
+                 -- Either way this is a raw C scalar declaration -- no
+                 -- dup/drop/free, no heap allocation, for `var` itself.
                  valStr <- emitNativeValue ty value
                  emit fc $ "\{nativeCType ty} var_\{show var} = \{valStr};"
                  emitRC body tailPosition
@@ -669,7 +687,6 @@ mutual
                  put EnvTracker (outerReuseMap `intersectionMap` usedCons)
                  valStr <- emitRC value NotInTailPosition
                  emit fc $ "IDRIS2RC2_Value * var_\{show var} = \{valStr};"
-                 when dropIfUnused $ emit fc $ "idris2rc2_drop(var_\{show var});"
                  put EnvTracker (outerReuseMap `differenceMap` usedCons)
                  emitRC body tailPosition
 
@@ -713,17 +730,14 @@ mutual
         emit fc $ "IDRIS2RC2_Value *" ++ resultVar ++ " = " ++ cOp op argStrs ++ ";"
         -- Ops don't take ownership of their operands (they only read
         -- them); the operands are always dead here regardless of whether
-        -- this particular use borrowed or moved them (see RC.idr's module
-        -- note), so this drop is purely mechanical -- no ownership
-        -- decision is being made. Native locals are skipped: they have no
-        -- refcount, and `rcVarToBoxedC` above already boxed a *fresh*,
-        -- independent copy for the call rather than reading `var_N` itself.
-        reps <- get RepMap
-        let boxedArgs = filter (\v => case v.rcVar of
-                                            RCLoc i => not (isJust (SortedMap.lookup i reps))
-                                            RCNull => False)
-                                (toList args)
-        removeVars $ map (varName . rcVar) boxedArgs
+        -- Compiler.RC2.RC's `annotate` moved them in (owned) or wrapped
+        -- them in a preceding RDup (borrowed), so this drop is purely
+        -- mechanical -- no ownership decision is being made here. Native
+        -- locals are skipped: they have no refcount, and `rcVarToBoxedC`
+        -- above already boxed a *fresh*, independent copy for the call
+        -- rather than reading `var_N` itself.
+        boxedArgs <- keepBoxedLocals (toList args)
+        removeVars $ map varName boxedArgs
         pure resultVar
 
     emitRC (RExtPrim fc _ p args) _ = do
@@ -738,7 +752,7 @@ mutual
         emit fc $ "// call to external primitive " ++ cName p
         -- ext-prim args are used owned/as-is (see RC.idr's module note on
         -- RExtPrim); box any that happen to be native locals first.
-        argStrs <- traverse (\l => rcVarToBoxedC (MkRCVar l False)) args
+        argStrs <- traverse rcVarToBoxedC args
         pure $ "idris2rc2_\{cName p}("++ showSep ", " argStrs ++")"
 
     emitRC (RConCase fc sc alts mDef) tailPosition = do
@@ -863,6 +877,12 @@ mutual
         removeVars shouldDrop
         put EnvTracker actualReuseMap
         emitRC cont tailPosition
+    emitRC (RDup fc loc cont) tailPosition = do
+        dupVars [varName loc]
+        emitRC cont tailPosition
+    emitRC (RFree fc loc cont) tailPosition = do
+        freeVars [varName loc]
+        emitRC cont tailPosition
 
     ||| The raw C expression for a value Compiler.RC2.Types has decided is
     ||| Native ty -- only ROp/RPrimVal ever get marked this way.
@@ -887,7 +907,7 @@ mutual
     -- literal) in a synthetic RLet before the "real" ROp/RPrimVal --
     -- declare it (native or boxed, whichever Compiler.RC2.Types decided)
     -- and keep unwinding to find the tail expression.
-    emitNativeValue ty (RLet fc var rep value body _) = do
+    emitNativeValue ty (RLet fc var rep value body) = do
         update RepMap (insert var rep)
         case rep of
              RNative ty' => do
@@ -901,6 +921,21 @@ mutual
                  emit fc $ "IDRIS2RC2_Value * var_\{show var} = \{valStr};"
                  put EnvTracker (outerReuseMap `differenceMap` usedCons)
         emitNativeValue ty body
+    -- A native-typed let's *value* can still legitimately be wrapped in
+    -- RDup/RDrop/RFree: those govern its own boxed operands (e.g. `x + x`
+    -- where `x` is a boxed parameter needs a dup before the add), which is
+    -- an entirely separate concern from whether the op's *result* ends up
+    -- native. Just lower the wrapper and keep unwinding.
+    emitNativeValue ty (RDup fc loc cont) = do
+        dupVars [varName loc]
+        emitNativeValue ty cont
+    emitNativeValue ty (RFree fc loc cont) = do
+        freeVars [varName loc]
+        emitNativeValue ty cont
+    emitNativeValue ty (RDrop fc locs cont) = do
+        boxedLocs <- keepBoxedLocals locs
+        removeVars (varName <$> boxedLocs)
+        emitNativeValue ty cont
     emitNativeValue ty e = throw $ InternalError "[rc2] internal: expected a native-producing expression"
 
 addCommaToList : List String -> List String
