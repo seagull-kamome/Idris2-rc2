@@ -1025,29 +1025,40 @@ emitFDef funcName ((varType, varName, varCFType) :: xs) = do
     decreaseIndentation
     emit EmptyFC ")"
 
-extractValue : (cfType:CFType) -> (varName:String) -> String
-extractValue CFUnit           varName = "NULL"
-extractValue CFInt            varName = "(idris2rc2_to_i64(" ++ varName ++ "))"
-extractValue CFInt8           varName = "(idris2rc2_to_i8(" ++ varName ++ "))"
-extractValue CFInt16          varName = "(idris2rc2_to_i16(" ++ varName ++ "))"
-extractValue CFInt32          varName = "(idris2rc2_to_i32(" ++ varName ++ "))"
-extractValue CFInt64          varName = "(idris2rc2_to_i64(" ++ varName ++ "))"
-extractValue CFUnsigned8      varName = "(idris2rc2_to_u8(" ++ varName ++ "))"
-extractValue CFUnsigned16     varName = "(idris2rc2_to_u16(" ++ varName ++ "))"
-extractValue CFUnsigned32     varName = "(idris2rc2_to_u32(" ++ varName ++ "))"
-extractValue CFUnsigned64     varName = "(idris2rc2_to_u64(" ++ varName ++ "))"
-extractValue CFString         varName = "((IDRIS2RC2_String*)" ++ varName ++ ")->str"
-extractValue CFDouble         varName = "(idris2rc2_to_double(" ++ varName ++ "))"
-extractValue CFChar           varName = "((char)idris2rc2_to_char(" ++ varName ++ "))"
-extractValue CFPtr            varName = "((IDRIS2RC2_Pointer*)" ++ varName ++ ")->p"
-extractValue CFGCPtr          varName = "((IDRIS2RC2_GCPointer*)" ++ varName ++ ")->p->p"
-extractValue CFBuffer         varName = "((IDRIS2RC2_Buffer*)" ++ varName ++ ")"
-extractValue CFWorld          _       = "(IDRIS2RC2_Value *)NULL"
-extractValue (CFFun x y)      varName = "(IDRIS2RC2_Closure*)" ++ varName
-extractValue (CFIORes x)      varName = extractValue x varName
-extractValue (CFStruct x xs)  varName = assert_total $ idris_crash ("INTERNAL ERROR: Struct access not implemented: " ++ varName)
-extractValue (CFUser x xs)    varName = "(IDRIS2RC2_Value*)" ++ varName
-extractValue n _ = assert_total $ idris_crash ("INTERNAL ERROR: Unknown FFI type in rc2 backend: " ++ show n)
+-- RefC-tagged foreign calls go to our own runtime (buffer.c's own
+-- functions, which expect the whole IDRIS2RC2_Buffer.buf allocation
+-- including its `int size` header -- they read/write it themselves), so
+-- CFBuffer is unwrapped one level only. C-tagged foreign calls (e.g.
+-- `supportC`'s libidris2_support functions like idris2_readBufferData) are
+-- generic byte-buffer functions with no notion of that header -- they
+-- expect a flat pointer straight to the data, so CFBuffer must skip past
+-- it too. Mirrors RefC.idr's `CLang`/`CLangC`/`CLangRefC` split.
+data CLang = CLangC | CLangRefC
+
+extractValue : (cLang : CLang) -> (cfType:CFType) -> (varName:String) -> String
+extractValue _ CFUnit           varName = "NULL"
+extractValue _ CFInt            varName = "(idris2rc2_to_i64(" ++ varName ++ "))"
+extractValue _ CFInt8           varName = "(idris2rc2_to_i8(" ++ varName ++ "))"
+extractValue _ CFInt16          varName = "(idris2rc2_to_i16(" ++ varName ++ "))"
+extractValue _ CFInt32          varName = "(idris2rc2_to_i32(" ++ varName ++ "))"
+extractValue _ CFInt64          varName = "(idris2rc2_to_i64(" ++ varName ++ "))"
+extractValue _ CFUnsigned8      varName = "(idris2rc2_to_u8(" ++ varName ++ "))"
+extractValue _ CFUnsigned16     varName = "(idris2rc2_to_u16(" ++ varName ++ "))"
+extractValue _ CFUnsigned32     varName = "(idris2rc2_to_u32(" ++ varName ++ "))"
+extractValue _ CFUnsigned64     varName = "(idris2rc2_to_u64(" ++ varName ++ "))"
+extractValue _ CFString         varName = "((IDRIS2RC2_String*)" ++ varName ++ ")->str"
+extractValue _ CFDouble         varName = "(idris2rc2_to_double(" ++ varName ++ "))"
+extractValue _ CFChar           varName = "((char)idris2rc2_to_char(" ++ varName ++ "))"
+extractValue _ CFPtr            varName = "((IDRIS2RC2_Pointer*)" ++ varName ++ ")->p"
+extractValue _ CFGCPtr          varName = "((IDRIS2RC2_GCPointer*)" ++ varName ++ ")->p->p"
+extractValue CLangRefC CFBuffer varName = "((IDRIS2RC2_Buffer*)" ++ varName ++ ")->buf"
+extractValue CLangC    CFBuffer varName = "((IDRIS2RC2_RawBuffer*)((IDRIS2RC2_Buffer*)" ++ varName ++ ")->buf)->data"
+extractValue _ CFWorld          _       = "(IDRIS2RC2_Value *)NULL"
+extractValue _ (CFFun x y)      varName = "(IDRIS2RC2_Closure*)" ++ varName
+extractValue c (CFIORes x)      varName = extractValue c x varName
+extractValue _ (CFStruct x xs)  varName = assert_total $ idris_crash ("INTERNAL ERROR: Struct access not implemented: " ++ varName)
+extractValue _ (CFUser x xs)    varName = "(IDRIS2RC2_Value*)" ++ varName
+extractValue _ n _ = assert_total $ idris_crash ("INTERNAL ERROR: Unknown FFI type in rc2 backend: " ++ show n)
 
 packCFType : (cfType:CFType) -> (varName:String) -> String
 packCFType CFUnit          varName = "((IDRIS2RC2_Value *)NULL)"
@@ -1065,7 +1076,7 @@ packCFType CFDouble        varName = "idris2rc2_mkDouble(" ++ varName ++ ")"
 packCFType CFChar          varName = "idris2rc2_mkChar((unsigned char)" ++ varName ++ ")"
 packCFType CFPtr           varName = "idris2rc2_mkPointer(" ++ varName ++ ")"
 packCFType CFGCPtr         varName = "idris2rc2_mkPointer(" ++ varName ++ ")"
-packCFType CFBuffer        varName = "idris2rc2_mkPointer(" ++ varName ++ ")"
+packCFType CFBuffer        varName = "idris2rc2_mkBuffer(" ++ varName ++ ")"
 packCFType CFWorld         _       = "(IDRIS2RC2_Value *)NULL"
 packCFType (CFFun x y)     varName = "makeFunction(" ++ varName ++ ")"
 packCFType (CFIORes x)     varName = packCFType x varName
@@ -1144,6 +1155,7 @@ createCFunctions n (MkRCForeign ccs fargs ret) = do
   case parseCC ffiTags ccs of
       Just (lang, fctForeignName :: extLibOpts) => do
           let isStandardFFI = elem lang ffiTags
+          let cLang = if lang == "RefC" then CLangRefC else CLangC
           let fctName = if isStandardFFI
                            then UN $ Basic $ fctForeignName
                            else NS (mkNamespace lang) n
@@ -1165,21 +1177,21 @@ createCFunctions n (MkRCForeign ccs fargs ret) = do
               CFIORes CFUnit => do
                   emit EmptyFC $ cName fctName
                               ++ "("
-                              ++ showSep ", " (map (\(_, vn, vt) => extractValue vt vn) (discardLastArgument typeVarNameArgList))
+                              ++ showSep ", " (map (\(_, vn, vt) => extractValue cLang vt vn) (discardLastArgument typeVarNameArgList))
                               ++ ");"
                   removeVarsArgList
                   emit EmptyFC "return NULL;"
               CFIORes ret => do
                   emit EmptyFC $ cTypeOfCFType ret ++ " retVal = " ++ cName fctName
                               ++ "("
-                              ++ showSep ", " (map (\(_, vn, vt) => extractValue vt vn) (discardLastArgument typeVarNameArgList))
+                              ++ showSep ", " (map (\(_, vn, vt) => extractValue cLang vt vn) (discardLastArgument typeVarNameArgList))
                               ++ ");"
                   removeVarsArgList
                   emit EmptyFC $ "return (IDRIS2RC2_Value*)" ++ packCFType ret "retVal" ++ ";"
               _ => do
                   emit EmptyFC $ cTypeOfCFType ret ++ " retVal = " ++ cName fctName
                               ++ "("
-                              ++ showSep ", " (map (\(_, vn, vt) => extractValue vt vn) typeVarNameArgList)
+                              ++ showSep ", " (map (\(_, vn, vt) => extractValue cLang vt vn) typeVarNameArgList)
                               ++ ");"
                   removeVarsArgList
                   emit EmptyFC $ "return (IDRIS2RC2_Value*)" ++ packCFType ret "retVal" ++ ";"

@@ -12,17 +12,24 @@ source ../../../env.sh
 nix-shell -p gcc gmp pkg-config --run './run.sh'
 ```
 
-## Ported (17)
+## Ported (18)
 
 Each subdirectory holds the original `.idr` source (unmodified unless
 noted below) plus an `expected` file. Most `expected` files are the
 upstream RefC ones, verbatim -- rc2 is expected to produce byte-identical
 output to RefC for ordinary programs, and `run.sh` diffs against it.
 
-- `args`, `basicpatternmatch`, `doubles`, `garbageCollect`, `integers`,
-  `issue1778`, `issue2424`, `issue2452`, `piTypecase001`, `prims`,
-  `refc001`, `refc002`, `refc003`, `reg001`, `strings`, `wasm32cmp001`,
-  `reuse`.
+- `args`, `basicpatternmatch`, `buffer`, `doubles`, `garbageCollect`,
+  `integers`, `issue1778`, `issue2424`, `issue2452`, `piTypecase001`,
+  `prims`, `refc001`, `refc002`, `refc003`, `reg001`, `strings`,
+  `wasm32cmp001`, `reuse`.
+
+`buffer` additionally has a `postrun.sh` (a new mechanism added to
+`run.sh` for this test): upstream's own `run` script doesn't just diff
+stdout, it also base64-encodes a file (`testWrite.buf`) the program wrote
+and appends that to the expected output, then deletes the file. `run.sh`
+now runs `postrun.sh` (if present) after the program exits and appends its
+stdout to what gets diffed against `expected`, mirroring that.
 
 Two of these needed their `expected` adjusted for reasons that aren't rc2
 bugs:
@@ -48,12 +55,11 @@ bugs:
   implements the same optimization (see `Emit.idr`'s
   `addReuseConstructor`/reuse-map machinery). Dropped rather than adapted.
 
-## Skipped (4) -- with reasons
+## Skipped (3) -- with reasons
 
-- **`buffer`**: exercises `Data.Buffer`, whose "RefC"-tagged
-  `%foreign`/`%transform` FFI path is explicitly out of scope for rc2 (see
-  the project plan's scope notes) -- not implemented, not ported.
-- **`clock`**: same reasoning, for `System.Clock`.
+- **`clock`**: exercises `System.Clock`, whose "RefC"-tagged FFI path is
+  out of scope for rc2 (see the project plan's scope notes) -- not
+  implemented, not ported.
 - **`ccompilerArgs`**: verifies RefC's `CC.idr` correctly parses/passes
   `CFLAGS`/`LDFLAGS`/`LDLIBS` env vars through to the C compiler
   invocation, using a companion C library it builds and links against.
@@ -125,6 +131,33 @@ test in `rc2/tests/` happened to exercise:
    `numeric.c`'s `IDRIS2RC2_CAST_TO_INTEGER` macro into signed
    (`mpz_set_si`) and unsigned (`mpz_set_ui`) variants, applied to the
    right types.
+
+7. **`Data.Buffer` support added, plus a lang-dependent `CFBuffer`
+   extraction bug found while adding it.** rc2 previously had no
+   `IDRIS2RC2_Buffer` heap value at all -- `Buffer`-typed FFI args/returns
+   fell through to the generic `CFPtr` path (`idris2rc2_mkPointer`), which
+   never frees the wrapped allocation. Added a proper refcounted
+   `IDRIS2RC2_Buffer` wrapper (`datatypes.h`/`memory.c`/`.h`, tag
+   `IDRIS2RC2_TAG_BUFFER`, freed via `free()` when its wrapper's refcount
+   hits zero) and ported RefC's `support/refc/buffer.c` (the raw
+   size+data allocation and its accessors) to `support/rc2/buffer.c`/`.h`
+   nearly verbatim. This surfaced a real bug: `Data.Buffer.idr` reuses two
+   *different* FFI tags for buffer operations -- `"RefC:..."` for the
+   arithmetic accessors (`setBufferUInt8`, `getBufferInt32LE`, etc., which
+   go to our own `buffer.c` and expect the *whole* raw allocation,
+   `int size` header included, since they read that header themselves) and
+   `supportC "..."` (i.e. plain `"C:...", libidris2_support` for
+   `readBufferData`/`writeBufferData`, which are generic byte-buffer
+   functions in the shared `libidris2_support` library with no notion of
+   that header at all -- they expect a flat pointer straight to the byte
+   data). rc2's `extractValue` unwrapped `CFBuffer` the same way
+   regardless of which tag was in play, so file-buffer I/O silently wrote
+   starting 4 bytes into the *wrong* location (clobbering the struct's own
+   `size` field), corrupting every subsequent read of that buffer. RefC
+   itself avoids this via a `CLang`/`CLangC`/`CLangRefC` split in its own
+   `extractValue` (`src/Compiler/RefC/RefC.idr`) -- rc2's `Emit.idr` now
+   has the equivalent split, dispatching on the FFI tag actually used at
+   each call site rather than a single blanket unwrapping.
 
 All fixes verified against upstream RefC's actual output (not just
 against what the code "should" do in the abstract) by compiling and

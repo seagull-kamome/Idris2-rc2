@@ -132,3 +132,11 @@ typedef struct {
   int capacity;
   IDRIS2RC2_Value **items;
 } IDRIS2RC2_Array;
+
+// Wraps a raw malloc'd buffer.c allocation (see IDRIS2RC2_RawBuffer in
+// buffer.h) so it participates in refcounting like any other heap value;
+// freed via idris2rc2_teardown's IDRIS2RC2_TAG_BUFFER case (memory.c).
+typedef struct {
+  IDRIS2RC2_Header header;
+  void *buf;
+} IDRIS2RC2_Buffer;

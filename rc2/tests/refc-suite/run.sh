@@ -57,6 +57,15 @@ for dir in "$SUITE_DIR"/*/; do
             actual_out="$(./build/exec/"$exename" 2>&1)
 "
         fi
+        # Optional post-run hook: some upstream tests inspect a file the
+        # program wrote (e.g. buffer's `base64 testWrite.buf`) rather than
+        # just diffing stdout. If present, its stdout is appended to the
+        # captured output before diffing against `expected`.
+        if [ -f postrun.sh ]; then
+            post_out="$(bash postrun.sh 2>&1)"
+            actual_out="${actual_out}${post_out}
+"
+        fi
         printf '%s' "$actual_out" > actual.out
 
         if diff -u expected actual.out > diff.log 2>&1; then

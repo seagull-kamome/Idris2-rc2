@@ -116,6 +116,13 @@ IDRIS2RC2_GCPointer *idris2rc2_mkGCPointer(void *raw, IDRIS2RC2_Closure *onColle
   return p;
 }
 
+IDRIS2RC2_Buffer *idris2rc2_mkBuffer(void *buf) {
+  IDRIS2RC2_Buffer *b = IDRIS2RC2_NEW(IDRIS2RC2_Buffer);
+  b->header.tag = IDRIS2RC2_TAG_BUFFER;
+  b->buf = buf;
+  return b;
+}
+
 IDRIS2RC2_Array *idris2rc2_mkArray(int length) {
   IDRIS2RC2_Array *a = IDRIS2RC2_NEW(IDRIS2RC2_Array);
   a->header.tag = IDRIS2RC2_TAG_ARRAY;
@@ -181,6 +188,9 @@ static void idris2rc2_teardown(IDRIS2RC2_Value *v) {
     idris2rc2_drop((IDRIS2RC2_Value *)p->p);
     break;
   }
+  case IDRIS2RC2_TAG_BUFFER:
+    free(((IDRIS2RC2_Buffer *)v)->buf);
+    break;
   default:
     break;
   }
