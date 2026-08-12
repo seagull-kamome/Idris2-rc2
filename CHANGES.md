@@ -3,92 +3,95 @@
 Newest first. Each entry corresponds to one commit on `master`; see
 `git log` for full commit messages.
 
+## 2026-08-13 -- Fuse native comparisons directly into two-way branches (RCmpCase)
+
+A comparison (`LT`/`GT`/`EQ`/`LTE`/`GTE`) feeding straight into a
+two-way Bool match now compiles to a raw C boolean embedded in the
+`if`, skipping the boxed Bool Idris2's own encoding used to require.
+Fixed a double-free the refactor introduced: RCmpCase's two branches
+need the same ownership pre-shrinking an enclosing `RLet` normally does
+for `ROp`, which an early version omitted.
+
+## 2026-08-12 -- Elevate constructor-reuse-in-place analysis to a dedicated IR pass
+
+Moved constructor-reuse-in-place out of `Emit.idr`'s stateful,
+name-keyed map into a new `Compiler.RC2.Reuse` pass over the fully
+Phase-1+2'd tree, with decisions encoded directly on the IR
+(deterministic reservation naming, no lookup table). Fixed a
+double-free surfaced mid-refactor: dropping a matched constructor's
+scrutinee must first dup whichever of its own destructured fields
+survive, regardless of whether reuse actually fires.
+
+## 2026-08-12 -- Add cast-primitive coverage test for Double/Char/String
+
+`Test7CastMatrix.idr` covers `Cast` combinations upstream's `integers`
+test doesn't touch. Verified by hand (the environment's packaged RefC
+runtime has 3 unrelated bugs blocking a direct diff).
+
+## 2026-08-12 -- Add CLAUDE.md
+
+Repo layout, build/test commands, and conventions for future sessions.
+
+## 2026-08-12 -- Elide dup/drop entirely for Boxed locals of always-tagged PrimTypes
+
+`Int8`/`16`/`32`, `Bits8`/`16`/`32`, and `Char` are always tagged
+pointers at runtime, never real heap allocations, so dup/drop/free on
+them are unconditional no-ops -- generating the calls was pure waste.
+
+## 2026-08-12 -- Make ROp's operand-drop an explicit IR field instead of an Emit.idr rule
+
+Added a `postDrop` field to `ROp`, decided once by `annotate` (Phase
+2) instead of independently re-derived by both `emitRC` and
+`emitNativeValue` at emission time.
+
+## 2026-08-12 -- Reduce unnecessary variable/statement generation in native codegen
+
+Four incremental steps to cut generated-C noise for native arithmetic:
+skip a redundant temp var used only to sequence operand drops, inline
+literal-valued native lets, splice single-use no-Boxed-operand op
+chains into their use site, and move literal handling into Phase 1 via
+`RCConst`.
+
+## 2026-08-12 -- Add native-int width/signedness test, fix a real refcount leak it found
+
+`Test6NativeInts.idr` exercises all 8 fixed-width integer types. Found
+and fixed a leak: Boxed operands of a native-result op were never
+dropped in `emitNativeValue`'s `ROp` case (only in `emitRC`'s).
+Corrected `BENCHMARKS.md`'s `poly` figures, which had been measuring
+this exact leak (the previously-reported "10x reduction" was really
+"3x").
+
 ## 2026-08-12 -- Implement System.Clock, with clock_gettime precision
 
-`OSClock` is a plain `[external]` opaque type (`CFType CFUser`), so it
-needed no new heap-value wrapper -- passed through as a bare
-`IDRIS2RC2_Value*`. Added `support/rc2/clock.c`/`.h`, boxing a nanosecond
-count via the existing `idris2rc2_mkBits64`. `GCCPU`/`GCReal` stay
-unimplemented (`NULL` -> `Nothing`), matching RefC.
-
-Deliberately diverges from RefC's own `clock.c`: RefC gets UTC/monotonic
-time from `time()` (1-second resolution, and `clockTimeMonotonic` isn't
-even a distinct clock -- it just calls the UTC one) and process/thread
-time from `clock()`. rc2 uses POSIX `clock_gettime` throughout
-(`CLOCK_REALTIME`, `CLOCK_MONOTONIC`, `CLOCK_PROCESS_CPUTIME_ID`,
-`CLOCK_THREAD_CPUTIME_ID`) for real nanosecond resolution and an
-actually-monotonic monotonic clock -- an intentional improvement, not a
-parity bug. Ported `tests/refc/clock/TestClock.idr`; its expected output
-changed accordingly (RefC's `[True, False, True, True]` -> rc2's
-`[True, True, True, True]`).
+Deliberately diverges from RefC's coarse `time()`/`clock()`-based
+implementation: uses POSIX `clock_gettime` for real nanosecond
+resolution and an actually-monotonic monotonic clock.
 
 ## 2026-08-12 -- Implement Data.Buffer
 
-Added a refcounted `IDRIS2RC2_Buffer` heap value (freed via `free()` once
-its wrapper's refcount hits zero) and ported RefC's `buffer.c` raw
-byte-buffer primitives nearly verbatim. Found and fixed a real bug while
-adding it: `Data.Buffer.idr` uses two different FFI tags for buffer
-operations that need *different* pointer unwrapping (`"RefC:..."`
-arithmetic accessors expect the whole raw allocation including its
-`int size` header; `supportC`'s `"C:...", libidris2_support` I/O
-functions expect a flat pointer straight to the data, no header). rc2's
-`extractValue` unwrapped both the same way, corrupting file-buffer I/O.
-Fixed with a `CLang`/`CLangC`/`CLangRefC` split mirroring RefC's own.
-Ported `tests/refc/buffer/TestBuffer.idr`, verified byte-identical
-against RefC including the base64'd written-file check.
+Ported RefC's raw byte-buffer primitives. Found and fixed a real bug:
+`Data.Buffer.idr` uses two FFI tags expecting different pointer
+unwrapping, which rc2 was treating identically, corrupting file-buffer
+I/O.
 
 ## 2026-08-12 -- Port upstream RefC regression tests, fix 6 bugs they surfaced
 
 Ported 17 of `idris2-src`'s `tests/refc/*` programs into
-`rc2/tests/refc-suite/` with a diff-based `run.sh` driver, so rc2 gets
-checked against real-world RefC regression coverage instead of only
-hand-written smoke tests. Running real programs surfaced six bugs, all
-fixed:
-
-- Missing predeclared `idris2rc2_constr_<PrimType>` name constants for
-  Idris2's "typecase" feature (no backing top-level definition exists
-  for these anywhere in a compiled program; RefC predeclares them too).
-- Missing `refc_fork` stub for `Prelude.IO.prim__fork`'s bare
-  `%foreign "C:refc_fork"` (matches RefC's own unimplemented stub).
-- `stringIteratorToString`'s 4th parameter had the wrong pointer type.
-- `RConstCase`'s integer-switch fast path always zero-extended, breaking
-  negative `Int8`/`16`/`32` literal pattern matches.
-- `escapeChar` corrupted non-ASCII char codepoints via a signed
-  `(char)` cast.
-- `Bits8`/`16`/`32`/`64` -> `Integer` casts used the signed GMP setter
-  on unsigned values, corrupting large values (e.g. `UINT64_MAX` -> `-1`).
-
-Also identified one case where a ported test's upstream `expected`
-encoded a *known, source-commented RefC bug* that rc2 does not
-reproduce, and updated that expected file to the correct result instead
-of matching RefC's bug.
+`rc2/tests/refc-suite/`. Running real programs surfaced and fixed six
+bugs (missing typecase name constants, a missing FFI stub, a wrong
+pointer type, signed-extension and char-escaping bugs, and a signed/
+unsigned GMP setter mismatch).
 
 ## 2026-08-12 -- Add explicit RDup/RFree reference-counting primitives to RCExp
 
-Extended `RCExp`'s reference-counting model beyond `RDrop`: `RDup`
-(increment) and `RFree` (unconditional, unchecked deallocation for
-provably-fresh unshared allocations) are now first-class IR nodes
-inserted during the `Lifted -> RCExp` conversion's ownership-analysis
-phase, replacing the old per-use `RCVar` "borrowed" flag entirely. Found
-and fixed two related correctness bugs the refactor surfaced: ownership
-tracking didn't distinguish Native (unboxed) locals from Boxed ones
-(a Native local used more than once could be wrapped in an invalid
-`idris2rc2_dup` call on a raw scalar), and `Emit.idr`'s `keepBoxedLocals`
-filter was inverted, excluding legitimately Boxed locals from drop lists
-(a leak).
+`RDup`/`RFree` became first-class IR nodes alongside `RDrop`,
+replacing the old per-use "borrowed" flag. Fixed two bugs the refactor
+surfaced: Native locals weren't excluded from ownership tracking, and
+`keepBoxedLocals`'s filter was inverted (a leak).
 
 ## 2026-08-12 -- Add rc2: independent external C code generator backend for Idris2
 
-Initial implementation. A from-scratch, fully independent external
-backend (`idris2-rc2`) that never modifies the upstream `idris2`
-compiler, taking design cues from Idris2's own `RefC` backend (value
-representation, non-atomic refcounting, closures/trampoline) but
-diverging from it in two respects: reference counting is a separate IR
-pass run before C emission (Perceus/Koka-style) rather than interleaved
-with codegen, and function-local numeric intermediates get native type
-inference so they can skip heap allocation/refcounting entirely when
-provably safe. Verified via generated-code comparison against RefC: 10x
-fewer memory-management operations in an arithmetic-chain benchmark (see
-`rc2/BENCHMARKS.md`). Known scope boundaries: calling convention stays
-fully boxed (no dual native/boxed ABI), no self-tail-call loop
-conversion, comparisons still box their `Bool` result.
+Initial implementation. A from-scratch external backend that never
+modifies upstream `idris2`, diverging from RefC in two ways: reference
+counting is a separate IR pass before C emission (Perceus/Koka-style),
+and function-local numeric intermediates get native type inference.
