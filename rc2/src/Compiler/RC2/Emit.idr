@@ -288,6 +288,13 @@ isSigned Int32Type = True
 isSigned Int64Type = True
 isSigned _ = False
 
+-- Bit width suffix for the idris2rc2_ediv_iN/idris2rc2_emod_iN family
+-- (signed Euclidean division/modulo), shared by nativeOpExpr's Div and
+-- Mod cases below.
+intBits : PrimType -> String
+intBits IntType = "64"; intBits Int8Type = "8"; intBits Int16Type = "16"
+intBits Int32Type = "32"; intBits Int64Type = "64"; intBits _ = "64"
+
 -- Raw C expression for a native-eligible PrimFn, given each operand's
 -- already-native-or-unboxed C expression string.
 nativeOpExpr : {0 arity : Nat} -> PrimFn arity -> Vect arity String -> String
@@ -295,19 +302,11 @@ nativeOpExpr (Add ty)    [x, y] = "(" ++ x ++ " + " ++ y ++ ")"
 nativeOpExpr (Sub ty)    [x, y] = "(" ++ x ++ " - " ++ y ++ ")"
 nativeOpExpr (Mul ty)    [x, y] = "(" ++ x ++ " * " ++ y ++ ")"
 nativeOpExpr (Div ty)    [x, y] =
-    if isSigned ty then "idris2rc2_ediv_i" ++ bits ty ++ "(" ++ x ++ ", " ++ y ++ ")"
+    if isSigned ty then "idris2rc2_ediv_i" ++ intBits ty ++ "(" ++ x ++ ", " ++ y ++ ")"
                    else "(" ++ x ++ " / " ++ y ++ ")"
-  where
-    bits : PrimType -> String
-    bits IntType = "64"; bits Int8Type = "8"; bits Int16Type = "16"
-    bits Int32Type = "32"; bits Int64Type = "64"; bits _ = "64"
 nativeOpExpr (Mod ty)    [x, y] =
-    if isSigned ty then "idris2rc2_emod_i" ++ bits ty ++ "(" ++ x ++ ", " ++ y ++ ")"
+    if isSigned ty then "idris2rc2_emod_i" ++ intBits ty ++ "(" ++ x ++ ", " ++ y ++ ")"
                    else "(" ++ x ++ " % " ++ y ++ ")"
-  where
-    bits : PrimType -> String
-    bits IntType = "64"; bits Int8Type = "8"; bits Int16Type = "16"
-    bits Int32Type = "32"; bits Int64Type = "64"; bits _ = "64"
 nativeOpExpr (Neg ty)    [x]    = "(-(" ++ x ++ "))"
 nativeOpExpr (ShiftL ty) [x, y] = "(" ++ x ++ " << " ++ y ++ ")"
 nativeOpExpr (ShiftR ty) [x, y] = "(" ++ x ++ " >> " ++ y ++ ")"
@@ -769,6 +768,69 @@ tryBuildClosureInto declare target InTailPosition (RAppName fc _ n args) = do
 tryBuildClosureInto _ _ _ _ = pure False
 
 mutual
+    ||| Render `value`'s native expression and declare it as a plain
+    ||| `TYPE var_N = ...;` C scalar, discharging its own pending
+    ||| Boxed-operand drop(s) immediately after (see `emitNativeValue`'s
+    ||| own doc comment for why that ordering matters). Shared by
+    ||| `emitRC`'s and `emitNativeValue`'s own RLet cases for a plain
+    ||| (non-inlined) `RNative` local -- identical in both except for
+    ||| what continues afterward, which each caller keeps to itself.
+    declareNative : {auto a : Ref ArgCounter Nat}
+                  -> {auto oft : Ref OutfileText Output}
+                  -> {auto il : Ref IndentLevel Nat}
+                  -> {auto _ : Ref ConstDef (SortedMap Constant ConstDef)}
+                  -> {auto r : Ref RepMap (SortedMap Int Rep)}
+                  -> {auto lm : Ref InlineMap (SortedMap Int String)}
+                  -> FC -> PrimType -> Int -> RCExp -> Core ()
+    declareNative fc ty var value = do
+        (valStr, pending) <- emitNativeValue ty value
+        emit fc $ "\{nativeCType ty} var_\{show var} = \{valStr};"
+        removeVars $ map varName pending
+
+    ||| As `declareNative`, but for an `RInlineNative` local: no C
+    ||| variable ever declared, its rendered expression goes straight
+    ||| into InlineMap instead (see `Rep.RInlineNative`'s own doc
+    ||| comment). Also shared by `emitRC`'s and `emitNativeValue`'s own
+    ||| RLet cases.
+    inlineNative : {auto a : Ref ArgCounter Nat}
+                 -> {auto oft : Ref OutfileText Output}
+                 -> {auto il : Ref IndentLevel Nat}
+                 -> {auto _ : Ref ConstDef (SortedMap Constant ConstDef)}
+                 -> {auto r : Ref RepMap (SortedMap Int Rep)}
+                 -> {auto lm : Ref InlineMap (SortedMap Int String)}
+                 -> PrimType -> Int -> RCExp -> Core ()
+    inlineNative ty var value = do
+        (valStr, pending) <- emitNativeValue ty value
+        update InlineMap (insert var valStr)
+        removeVars $ map varName pending
+
+    ||| Evaluate `value` (in `tailPosition`) and store its result in
+    ||| `target` -- either declaring `target` fresh (`declare = True`,
+    ||| not yet in scope: an `RLet`'s own `var_N`) or assigning into an
+    ||| already-declared variable (`declare = False`: a case branch's
+    ||| `returnvar`, or RCmpCase's own two branches). Tries
+    ||| `tryBuildClosureInto` first (skips a throwaway `closure_N` when
+    ||| `value` is a closure build that can go straight into `target` --
+    ||| see its own doc comment); falls back to the general
+    ||| `emitRC`-then-assign route for everything else. Every "evaluate
+    ||| this RCExp and store the result in a C variable" site in this
+    ||| module goes through here, so the choice between those two routes
+    ||| is only ever written once.
+    assignInto : {auto a : Ref ArgCounter Nat}
+               -> {auto oft : Ref OutfileText Output}
+               -> {auto il : Ref IndentLevel Nat}
+               -> {auto _ : Ref ConstDef (SortedMap Constant ConstDef)}
+               -> {auto r : Ref RepMap (SortedMap Int Rep)}
+               -> {auto lm : Ref InlineMap (SortedMap Int String)}
+               -> FC -> (declare : Bool) -> (target : String) -> TailPositionStatus -> RCExp -> Core ()
+    assignInto fc declare target tailPosition value = do
+        built <- tryBuildClosureInto declare target tailPosition value
+        unless built $ do
+            valStr <- emitRC value tailPosition
+            if declare
+               then emit fc $ "IDRIS2RC2_Value * " ++ target ++ " = " ++ valStr ++ ";"
+               else emit fc $ target ++ " = " ++ valStr ++ ";"
+
     ||| A case branch (or default): emit the drops RC.idr's `annotate`
     ||| already decided on (the peeled leading RDrop), preceded by the
     ||| mechanical lowering of a reuse offer if Compiler.RC2.Reuse left
@@ -800,33 +862,6 @@ mutual
     ||| uniqueness check (`emitReuseOffer`). `sc` not being in the drop
     ||| list at all (still owned elsewhere) means nothing is emitted for
     ||| it here either way.
-    ||| Evaluate `value` (in `tailPosition`) and store its result in
-    ||| `target` -- either declaring `target` fresh (`declare = True`,
-    ||| not yet in scope: an `RLet`'s own `var_N`) or assigning into an
-    ||| already-declared variable (`declare = False`: a case branch's
-    ||| `returnvar`, or RCmpCase's own two branches). Tries
-    ||| `tryBuildClosureInto` first (skips a throwaway `closure_N` when
-    ||| `value` is a closure build that can go straight into `target` --
-    ||| see its own doc comment); falls back to the general
-    ||| `emitRC`-then-assign route for everything else. Every "evaluate
-    ||| this RCExp and store the result in a C variable" site in this
-    ||| module goes through here, so the choice between those two routes
-    ||| is only ever written once.
-    assignInto : {auto a : Ref ArgCounter Nat}
-               -> {auto oft : Ref OutfileText Output}
-               -> {auto il : Ref IndentLevel Nat}
-               -> {auto _ : Ref ConstDef (SortedMap Constant ConstDef)}
-               -> {auto r : Ref RepMap (SortedMap Int Rep)}
-               -> {auto lm : Ref InlineMap (SortedMap Int String)}
-               -> FC -> (declare : Bool) -> (target : String) -> TailPositionStatus -> RCExp -> Core ()
-    assignInto fc declare target tailPosition value = do
-        built <- tryBuildClosureInto declare target tailPosition value
-        unless built $ do
-            valStr <- emitRC value tailPosition
-            if declare
-               then emit fc $ "IDRIS2RC2_Value * " ++ target ++ " = " ++ valStr ++ ";"
-               else emit fc $ target ++ " = " ++ valStr ++ ";"
-
     branchBody : {auto a : Ref ArgCounter Nat}
                -> {auto oft : Ref OutfileText Output}
                -> {auto il : Ref IndentLevel Nat}
@@ -907,21 +942,14 @@ mutual
                  emitRC body tailPosition
              -- Compiler.RC2.RC's `annotate` already decided this native
              -- op has no Boxed operands and is referenced exactly once
-             -- (see Rep.RInlineNative's own doc comment) -- render its
-             -- expression straight into InlineMap, no `var_N` ever
-             -- declared. Used to be `tryInlineNativeOp`, an Emit-time
-             -- `countUsesR` tree-walk redone on every native RLet.
+             -- (see Rep.RInlineNative's own doc comment) -- used to be
+             -- `tryInlineNativeOp`, an Emit-time `countUsesR` tree-walk
+             -- redone on every native RLet.
              (RInlineNative ty, _) => do
-                 (valStr, pending) <- emitNativeValue ty value
-                 update InlineMap (insert var valStr)
-                 removeVars $ map varName pending
+                 inlineNative ty var value
                  emitRC body tailPosition
              (RNative ty, _) => do
-                 -- Ordinary raw C scalar declaration -- no dup/drop/free,
-                 -- no heap allocation, for `var` itself either way.
-                 (valStr, pending) <- emitNativeValue ty value
-                 emit fc $ "\{nativeCType ty} var_\{show var} = \{valStr};"
-                 removeVars $ map varName pending
+                 declareNative fc ty var value
                  emitRC body tailPosition
              (RBoxed, _) => do
                  assignInto fc True "var_\{show var}" NotInTailPosition value
@@ -1209,14 +1237,8 @@ mutual
              -- own op has no Boxed operands either, is exactly what
              -- `annotate` promotes to RInlineNative -- so this fires for
              -- essentially every such let.
-             (RInlineNative ty', _) => do
-                 (valStr, pending) <- emitNativeValue ty' value
-                 update InlineMap (insert var valStr)
-                 removeVars $ map varName pending
-             (RNative ty', _) => do
-                 (valStr, pending) <- emitNativeValue ty' value
-                 emit fc $ "\{nativeCType ty'} var_\{show var} = \{valStr};"
-                 removeVars $ map varName pending
+             (RInlineNative ty', _) => inlineNative ty' var value
+             (RNative ty', _) => declareNative fc ty' var value
              (RBoxed, _) => assignInto fc True "var_\{show var}" NotInTailPosition value
         emitNativeValue ty body
     -- A native-typed let's *value* can still legitimately be wrapped in
