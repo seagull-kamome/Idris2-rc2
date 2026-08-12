@@ -142,10 +142,10 @@ IDRIS2RC2_Value *onCollectStringIterator(IDRIS2RC2_Value *ptr, void *unused) {
   return NULL;
 }
 
-IDRIS2RC2_Value *stringIteratorToString(void *a, char *str, IDRIS2RC2_Value *it_p, IDRIS2RC2_Value *f) {
+IDRIS2RC2_Value *stringIteratorToString(void *a, char *str, IDRIS2RC2_Value *it_p, IDRIS2RC2_Closure *f) {
   IDRIS2RC2_StringIter *it = ((IDRIS2RC2_GCPointer *)it_p)->p->p;
   IDRIS2RC2_Value *strVal = (IDRIS2RC2_Value *)idris2rc2_mkString(it->str + it->pos);
-  return idris2rc2_applyClosure(idris2rc2_dup(f), strVal);
+  return idris2rc2_applyClosure(idris2rc2_dup((IDRIS2RC2_Value *)f), strVal);
 }
 
 IDRIS2RC2_Value *stringIteratorNext(char *s, IDRIS2RC2_Value *it_p) {

@@ -128,3 +128,30 @@ IDRIS2RC2_Value *idris2rc2_crash(IDRIS2RC2_Value *msg) {
   fprintf(stderr, "ERROR: %s\n", s ? s->str : "(no message)");
   exit(1);
 }
+
+// Name strings for Idris2's "typecase" feature: a `Type` value pattern
+// matched against a primitive type (e.g. `f : Type -> ...; f Int = ...`)
+// or against the reflected function-type former `(_ -> _)` compiles down
+// to an untagged constructor (ConInfo TYCON) match/build referencing a
+// *name* with no backing top-level definition anywhere in the program
+// (Compiler.CompileExpr.toCExpTm's `Ref fc (TyCon arity) fn` and
+// `Bind fc x (Pi ...) sc` cases just synthesize a bare `CCon` on the fly).
+// Since there is no definition, Compiler.RC2.RC/Emit's usual per-program
+// `idris2rc2_constr_<Name>` declaration (emitted alongside a real
+// `MkRCCon Nothing _ _`) never fires for these -- so, exactly as RefC's
+// own runtime does (support/refc/prim.c), the whole fixed set of
+// primitive-type name strings is predeclared here once, unconditionally.
+char const idris2rc2_constr_Int[] = "Int";
+char const idris2rc2_constr_Int8[] = "Int8";
+char const idris2rc2_constr_Int16[] = "Int16";
+char const idris2rc2_constr_Int32[] = "Int32";
+char const idris2rc2_constr_Int64[] = "Int64";
+char const idris2rc2_constr_Bits8[] = "Bits8";
+char const idris2rc2_constr_Bits16[] = "Bits16";
+char const idris2rc2_constr_Bits32[] = "Bits32";
+char const idris2rc2_constr_Bits64[] = "Bits64";
+char const idris2rc2_constr_Double[] = "Double";
+char const idris2rc2_constr_Integer[] = "Integer";
+char const idris2rc2_constr_Char[] = "Char";
+char const idris2rc2_constr_String[] = "String";
+char const idris2rc2_constr____gt[] = "->";

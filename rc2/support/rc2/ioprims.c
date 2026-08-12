@@ -89,3 +89,17 @@ IDRIS2RC2_Value *idris2rc2_Prelude_IO_prim__onCollectAny(IDRIS2RC2_Value *anyPtr
   r->onCollect = (IDRIS2RC2_Closure *)onFree;
   return (IDRIS2RC2_Value *)r;
 }
+
+// prelude/Prelude/IO.idr's `prim__fork` is declared with a generic
+// `%foreign "C:refc_fork"` (not gated behind any codegen-tag whitelist --
+// literally the bare C symbol name every C backend is expected to
+// provide), so it reaches us regardless of the "RC2"/"RefC"/"C" FFI-tag
+// mechanism rc2/Emit.idr otherwise uses to reuse RefC-tagged primitives.
+// RefC's own implementation (support/refc/threads.c) is itself just a
+// stub that prints a message and exits -- true thread support was never
+// implemented there either, and rc2 hasn't taken on concurrent/atomic
+// refcounting (see the project plan's scope notes), so this matches it.
+void *refc_fork(IDRIS2RC2_Closure *fct) {
+  fprintf(stderr, "Threads not implemented in the rc2 backend!\n");
+  exit(0);
+}

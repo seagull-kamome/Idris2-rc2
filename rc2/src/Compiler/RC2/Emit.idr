@@ -108,10 +108,18 @@ cName (CaseBlock x y) = "case__" ++ cCleanString (show x) ++ "_" ++ cCleanString
 cName (WithBlock x y) = "with__" ++ cCleanString (show x) ++ "_" ++ cCleanString (show y)
 cName (Resolved i) = "fn__" ++ cCleanString (show i)
 
+||| A C expression for `c`'s codepoint: a quoted char literal for
+||| printable/alphanumeric chars (Idris's own `show` conveniently doubles
+||| as valid C syntax for those), or a bare decimal codepoint otherwise.
+||| Must NOT go through an intermediate `(char)` cast -- `char` is a
+||| *signed* 8-bit type on most platforms, so for any codepoint above 127
+||| (e.g. '\x9f' = 159) that cast reinterprets it as negative before it
+||| gets used/widened again at the call site, corrupting the value (this
+||| was a real bug: 159 became 4294967199 after `(uint32_t)(char)159`).
 escapeChar : Char -> String
 escapeChar c = if isAlphaNum c || isNL c
                   then show c
-                  else "(char)" ++ show (ord c)
+                  else show (ord c)
 
 cStringQuoted : String -> String
 cStringQuoted cs = strCons '"' (showCString (unpack cs) "\"")
@@ -522,6 +530,24 @@ integer_switch (MkRConstAlt c _  :: _) =
         (Ch x) => True
         _ => False
 
+||| Correctly sign-aware int64 extraction for RConstCase's "integer
+||| switch" fast path below, dispatched on the constant type of the alt
+||| being matched (every alt in an integer-switch shares the same
+||| underlying type, per `integer_switch`). The pointer-tagged unboxed
+||| representation used for Int8/Int16/Int32 (like Bits8/Bits16/Bits32/
+||| Char) carries no runtime type tag of its own to say whether the stored
+||| bit pattern should be read back signed or unsigned -- unlike
+||| `idris2rc2_extractInt`'s generic fallback (always an unsigned
+||| zero-extend, harmless for the unsigned types but wrong for negative
+||| Int8/16/32 literals, e.g. -128 would extract as 128), this picks the
+||| same type-specific signed accessor the native-unboxing path already
+||| uses (see `rcVarToNativeC`/`nativeUnbox`).
+extractIntExpr : Constant -> String -> String
+extractIntExpr (I8 _) x = "idris2rc2_to_i8(\{x})"
+extractIntExpr (I16 _) x = "idris2rc2_to_i16(\{x})"
+extractIntExpr (I32 _) x = "idris2rc2_to_i32(\{x})"
+extractIntExpr _ x = "idris2rc2_extractInt(\{x})"
+
 const2Integer : Constant -> Integer -> String
 const2Integer c i =
     case c of
@@ -796,7 +822,11 @@ mutual
         case integer_switch alts of
             True => do
                 tmpint <- getNewVarThatWillNotBeFreedAtEndOfBlock
-                emit emptyFC "int64_t \{tmpint} = idris2rc2_extractInt(\{sc'});"
+                let extractExpr : String
+                    extractExpr = case alts of
+                                       (MkRConstAlt c0 _ :: _) => extractIntExpr c0 sc'
+                                       [] => "idris2rc2_extractInt(\{sc'})"
+                emit emptyFC "int64_t \{tmpint} = \{extractExpr};"
                 _ <- foldlC (\els, (MkRConstAlt c body) => do
                     emit emptyFC "\{els}if (\{tmpint} == \{const2Integer c 0}) {"
                     increaseIndentation

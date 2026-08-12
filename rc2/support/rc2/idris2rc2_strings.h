@@ -28,5 +28,8 @@ char *fastConcat(IDRIS2RC2_Value *strList);
 
 IDRIS2RC2_Value *stringIteratorNew(char *str);
 IDRIS2RC2_Value *onCollectStringIterator(IDRIS2RC2_Value *ptr, void *unused);
-IDRIS2RC2_Value *stringIteratorToString(void *a, char *str, IDRIS2RC2_Value *it, IDRIS2RC2_Value *f);
+// `f` matches the C signature our own FFI codegen actually generates for
+// a CFFun-typed foreign argument (cast to IDRIS2RC2_Closure*, see
+// Emit.idr's `extractValue (CFFun ...)`), not the generic Value*.
+IDRIS2RC2_Value *stringIteratorToString(void *a, char *str, IDRIS2RC2_Value *it, IDRIS2RC2_Closure *f);
 IDRIS2RC2_Value *stringIteratorNext(char *s, IDRIS2RC2_Value *it);

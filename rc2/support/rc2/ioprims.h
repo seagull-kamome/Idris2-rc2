@@ -23,3 +23,6 @@ extern IDRIS2RC2_String const idris2rc2_codegenString;
 
 IDRIS2RC2_Value *idris2rc2_Prelude_IO_prim__onCollect(IDRIS2RC2_Value *, IDRIS2RC2_Value *, IDRIS2RC2_Value *, IDRIS2RC2_Value *);
 IDRIS2RC2_Value *idris2rc2_Prelude_IO_prim__onCollectAny(IDRIS2RC2_Value *, IDRIS2RC2_Value *, IDRIS2RC2_Value *);
+
+// See ioprims.c for why this bare (un-namespaced) name is required.
+void *refc_fork(IDRIS2RC2_Closure *fct);

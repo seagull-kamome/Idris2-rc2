@@ -161,13 +161,32 @@ IDRIS2RC2_Value *idris2rc2_gte_Integer(IDRIS2RC2_Value *x, IDRIS2RC2_Value *y) {
 
 IDRIS2RC2_INTTYPES(IDRIS2RC2_CAST_TO_INT_MATRIX)
 
-#define IDRIS2RC2_CAST_TO_INTEGER(FROM, FCTY, FGET, FMK)                           \
-  IDRIS2RC2_Value *idris2rc2_cast_##FROM##_to_Integer(IDRIS2RC2_Value *x) {                    \
-    IDRIS2RC2_Integer *r = idris2rc2_mkInteger();                                        \
-    mpz_set_si(r->v, (long)FGET(x));                                        \
+// Split signed/unsigned (rather than one macro over all of
+// IDRIS2RC2_INTTYPES): mpz_set_si takes a signed `long`, so routing an
+// unsigned FCTY (e.g. Bits64's UINT64_MAX) through it reinterprets the
+// value as negative before GMP ever sees it -- e.g. UINT64_MAX cast to
+// Integer became -1 instead of 18446744073709551615. mpz_set_ui preserves
+// the full unsigned magnitude.
+#define IDRIS2RC2_CAST_SIGNED_TO_INTEGER(FROM, FCTY, FGET, FMK)                    \
+  IDRIS2RC2_Value *idris2rc2_cast_##FROM##_to_Integer(IDRIS2RC2_Value *x) {        \
+    IDRIS2RC2_Integer *r = idris2rc2_mkInteger();                                  \
+    mpz_set_si(r->v, (long)FGET(x));                                               \
     return (IDRIS2RC2_Value *)r;                                                   \
   }
-IDRIS2RC2_INTTYPES(IDRIS2RC2_CAST_TO_INTEGER)
+#define IDRIS2RC2_CAST_UNSIGNED_TO_INTEGER(FROM, FCTY, FGET, FMK)                  \
+  IDRIS2RC2_Value *idris2rc2_cast_##FROM##_to_Integer(IDRIS2RC2_Value *x) {        \
+    IDRIS2RC2_Integer *r = idris2rc2_mkInteger();                                  \
+    mpz_set_ui(r->v, (unsigned long)FGET(x));                                      \
+    return (IDRIS2RC2_Value *)r;                                                   \
+  }
+IDRIS2RC2_CAST_SIGNED_TO_INTEGER(Int8, int8_t, idris2rc2_to_i8, idris2rc2_mkInt8)
+IDRIS2RC2_CAST_SIGNED_TO_INTEGER(Int16, int16_t, idris2rc2_to_i16, idris2rc2_mkInt16)
+IDRIS2RC2_CAST_SIGNED_TO_INTEGER(Int32, int32_t, idris2rc2_to_i32, idris2rc2_mkInt32)
+IDRIS2RC2_CAST_SIGNED_TO_INTEGER(Int64, int64_t, idris2rc2_to_i64, idris2rc2_mkInt64)
+IDRIS2RC2_CAST_UNSIGNED_TO_INTEGER(Bits8, uint8_t, idris2rc2_to_u8, idris2rc2_mkBits8)
+IDRIS2RC2_CAST_UNSIGNED_TO_INTEGER(Bits16, uint16_t, idris2rc2_to_u16, idris2rc2_mkBits16)
+IDRIS2RC2_CAST_UNSIGNED_TO_INTEGER(Bits32, uint32_t, idris2rc2_to_u32, idris2rc2_mkBits32)
+IDRIS2RC2_CAST_UNSIGNED_TO_INTEGER(Bits64, uint64_t, idris2rc2_to_u64, idris2rc2_mkBits64)
 
 #define IDRIS2RC2_CAST_TO_CHAR(FROM, FCTY, FGET, FMK)                              \
   IDRIS2RC2_Value *idris2rc2_cast_##FROM##_to_Char(IDRIS2RC2_Value *x) {                       \
