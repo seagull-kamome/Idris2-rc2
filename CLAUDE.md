@@ -11,6 +11,13 @@ overview, history, and known gaps.
   `git clone https://github.com/idris-lang/Idris2.git idris2-src`)
 - `install/` — build output (gitignored)
 - `rc2/` — the actual deliverable (own package, own runtime, own tests)
+- `rc2/doc/` — implementation deep-dives for specific compiler passes,
+  meant to let a future session regain context without re-deriving the
+  design (currently: `reuse-analysis.md` for the constructor-reuse-in-
+  place pass, `native-type-inference.md` for native/unboxed Rep
+  inference). Not a replacement for `CHANGES.md`/`TODO.md` — those stay
+  the changelog and gap tracker; `rc2/doc/` is where the *why* and the
+  bugs-found-along-the-way for a specific subsystem live.
 - `env.sh` / `gen-env.sh` — environment setup; `source env.sh` before
   building/running rc2 or plain `idris2`
 
