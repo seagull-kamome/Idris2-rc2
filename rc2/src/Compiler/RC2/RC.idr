@@ -225,13 +225,17 @@ freeableShape _ = False
 ||| Wrap `body` in the cleanup for a single dead variable: an unconditional
 ||| `RFree` if `value` (its birthplace) is a provably-unshared fresh
 ||| allocation, otherwise the ordinary checked `RDrop`. Never wraps at all
-||| for a native (unboxed, unrefcounted) local.
-dropDeadLet : FC -> Rep -> RCLocal -> RCExp -> RCExp -> RCExp
-dropDeadLet fc (RNative _) _ _ body = body
-dropDeadLet fc RBoxed loc value body =
-    if freeableShape value
-       then RFree fc loc body
-       else RDrop fc [loc] body
+||| for a native (unboxed, unrefcounted) local, or for a Boxed local
+||| that's in `natives` anyway (alwaysUnboxedBoxedLocalsR -- see its own
+||| comment for why that's just as unconditionally a no-op).
+dropDeadLet : FC -> SortedSet RCLocal -> Rep -> RCLocal -> RCExp -> RCExp -> RCExp
+dropDeadLet fc natives (RNative _) _ _ body = body
+dropDeadLet fc natives RBoxed loc value body =
+    if contains loc natives
+       then body
+       else if freeableShape value
+               then RFree fc loc body
+               else RDrop fc [loc] body
 
 ||| Every RLet-bound local Phase 1 decided is Native, collected once per
 ||| top-level definition so Phase 2 can consult it directly. A native
@@ -254,6 +258,45 @@ nativeLocalsR (RConstCase _ _ alts mDef) =
     let altsNs = map (\(MkRConstAlt _ body) => nativeLocalsR body) alts in
     concat $ maybe altsNs (\d => nativeLocalsR d :: altsNs) mDef
 nativeLocalsR _ = empty
+
+||| Every genuine RCLoc used as an operand of a native op at a position
+||| whose PrimType is `Types.alwaysUnboxed` (Int8/16/32, Bits8/16/32,
+||| Char): such an operand is *always* a tagged pointer at runtime, by
+||| Idris2's own type discipline (a single local can't have two
+||| different types), regardless of how else it's declared (typically a
+||| Boxed function argument -- the calling convention itself is
+||| unchanged) or used elsewhere. A single qualifying use site is
+||| therefore sufficient evidence for the *whole* variable. Folded into
+||| `natives` in annotateDef alongside nativeLocalsR's genuinely-native
+||| locals -- both end up meaning the same thing to every consumer of
+||| `natives` (`splitBorrows`, `boxedOperands`, `RV`, RLet's owned'/
+||| dropDeadLet): no dup/drop/free, ever, for this local. The difference
+||| is *why*: nativeLocalsR's locals have no refcount because they're
+||| not even boxed; this function's locals are boxed and do have one,
+||| it's just that idris2rc2_dup/drop/free on them were always going to
+||| be unconditional no-ops (support/rc2/datatypes.h), so generating the
+||| calls at all is pure waste. Operates on Phase 1's output, same as
+||| nativeLocalsR and for the same reason.
+alwaysUnboxedBoxedLocalsR : RCExp -> SortedSet RCLocal
+alwaysUnboxedBoxedLocalsR (RLet _ _ _ value body) =
+    union (alwaysUnboxedBoxedLocalsR value) (alwaysUnboxedBoxedLocalsR body)
+alwaysUnboxedBoxedLocalsR (ROp _ _ op args _) =
+    case opResultRep op of
+         Nothing => empty
+         Just ty => if alwaysUnboxed (opArgTyFor ty op)
+                       then fromList (filter isRealLoc (toList args))
+                       else empty
+  where
+    isRealLoc : RCLocal -> Bool
+    isRealLoc (RCLoc _) = True
+    isRealLoc _ = False
+alwaysUnboxedBoxedLocalsR (RConCase _ _ alts mDef) =
+    let altsNs = map (\(MkRConAlt _ _ _ _ body) => alwaysUnboxedBoxedLocalsR body) alts in
+    concat $ maybe altsNs (\d => alwaysUnboxedBoxedLocalsR d :: altsNs) mDef
+alwaysUnboxedBoxedLocalsR (RConstCase _ _ alts mDef) =
+    let altsNs = map (\(MkRConstAlt _ body) => alwaysUnboxedBoxedLocalsR body) alts in
+    concat $ maybe altsNs (\d => alwaysUnboxedBoxedLocalsR d :: altsNs) mDef
+alwaysUnboxedBoxedLocalsR _ = empty
 
 ||| Which of `vars` need a dup: thread (and shrink) `owned` exactly as
 ||| before -- the *first* occurrence of an owned variable moves it (no dup
@@ -316,19 +359,22 @@ mutual
     annotate natives owned (RLet fc var rep value body) = do
         let usedVars = freeLocalsR body
         let borrowVal = intersection owned (delete (RCLoc var) usedVars)
-        -- Never add a Native local to `owned` -- it has no refcount to
-        -- own/borrow/drop in the first place (see `splitBorrows`/`RV`
-        -- above, which are the ones that actually decide whether a use
-        -- needs a dup; this just keeps `owned` itself Boxed-only, which
-        -- `dropUnusedOwnedVars`/`branchBody` rely on).
-        let owned' = case rep of
-                          RNative _ => borrowVal
-                          RBoxed => if contains (RCLoc var) usedVars then insert (RCLoc var) borrowVal else borrowVal
+        -- Never add a `natives`-listed local to `owned` -- whether it's
+        -- Native (no refcount at all) or a Boxed-but-alwaysUnboxed local
+        -- (has one, but dup/drop on it are unconditional no-ops anyway,
+        -- see alwaysUnboxedBoxedLocalsR's comment), it has nothing for
+        -- `owned` to track (see `splitBorrows`/`RV` above, which are
+        -- what actually decide whether a use needs a dup; this just
+        -- keeps `owned` itself limited to locals that genuinely need
+        -- tracking, which `dropUnusedOwnedVars`/`branchBody` rely on).
+        let owned' = if contains (RCLoc var) natives
+                        then borrowVal
+                        else if contains (RCLoc var) usedVars then insert (RCLoc var) borrowVal else borrowVal
         valueRC <- annotate natives (owned `difference` borrowVal) value
         bodyRC <- annotate natives owned' body
         let bodyRC' = if contains (RCLoc var) usedVars
                          then bodyRC
-                         else dropDeadLet fc rep (RCLoc var) valueRC bodyRC
+                         else dropDeadLet fc natives rep (RCLoc var) valueRC bodyRC
         pure $ RLet fc var rep valueRC bodyRC'
     annotate natives owned (RCon fc n ci tag args) =
         pure $ wrapDups fc (splitBorrows natives owned args) (RCon fc n ci tag args)
@@ -356,17 +402,37 @@ mutual
         -- Matching NIL/NOTHING/ZERO/UNIT consumes `sc` itself (it was only
         -- ever a NULL check, no heap object to keep owning).
         let erased = ci == NIL || ci == NOTHING || ci == ZERO || ci == UNIT
-        let ownedWithArgs = union (fromList (RCLoc <$> args)) (if erased then delete sc owned else owned)
+        -- `natives`-listed fields (e.g. an Int8 field extracted from a
+        -- constructor and later read in an arithmetic op) don't belong
+        -- in `owned` either, same reasoning as RLet's owned' above.
+        let ownedWithArgs = union (fromList (RCLoc <$> args) `difference` natives)
+                                   (if erased then delete sc owned else owned)
         bodyRC <- branchBody natives owned ownedWithArgs body
         pure $ MkRConAlt name ci tag args bodyRC
 
     annotateConstAlt : SortedSet RCLocal -> Owned -> RConstAlt -> Core RConstAlt
     annotateConstAlt natives owned (MkRConstAlt c body) = MkRConstAlt c <$> branchBody natives owned owned body
 
+||| `natives` for a definition's whole body: genuinely-native RLet
+||| locals (`nativeLocalsR`) plus Boxed locals provably always
+||| represented as a tagged pointer (`alwaysUnboxedBoxedLocalsR`) --
+||| every consumer of `natives` (`splitBorrows`, `boxedOperands`, `RV`,
+||| RLet's owned'/dropDeadLet, annotateConAlt) treats both exactly the
+||| same: no dup/drop/free, ever, regardless of how or how many times
+||| the local is used.
+definitionNatives : RCExp -> SortedSet RCLocal
+definitionNatives body = union (nativeLocalsR body) (alwaysUnboxedBoxedLocalsR body)
+
 annotateDef : RCDef -> Core RCDef
 annotateDef (MkRCFun args body) = do
-    let natives = nativeLocalsR body
-    let argsVars = fromList (RCLoc <$> args)
+    let natives = definitionNatives body
+    -- `natives`-listed args (see definitionNatives) don't belong in
+    -- `owned` either -- same reasoning as RLet's owned' above -- so
+    -- they're excluded before dropUnusedOwnedVars ever sees them,
+    -- rather than relying on it to notice they're unused later (they
+    -- may well be used, just never via anything owned/dup/drop cares
+    -- about).
+    let argsVars = fromList (RCLoc <$> args) `difference` natives
     let (shouldDrop, actualOwned) = dropUnusedOwnedVars argsVars (freeLocalsR body)
     rest <- annotate natives actualOwned body
     pure $ MkRCFun args $ case shouldDrop of
@@ -374,7 +440,7 @@ annotateDef (MkRCFun args body) = do
                                _  => RDrop emptyFC shouldDrop rest
 annotateDef d@(MkRCCon _ _ _) = pure d
 annotateDef d@(MkRCForeign _ _ _) = pure d
-annotateDef (MkRCError body) = MkRCError <$> annotate (nativeLocalsR body) empty body
+annotateDef (MkRCError body) = MkRCError <$> annotate (definitionNatives body) empty body
 
 export
 toRCDef : LiftedDef -> Core RCDef

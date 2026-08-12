@@ -43,8 +43,46 @@ nativeEligible _ = False
 ifNative : PrimType -> Maybe PrimType
 ifNative ty = if nativeEligible ty then Just ty else Nothing
 
+||| PrimTypes whose rc2 runtime representation is *always* a tagged
+||| pointer (payload packed into the pointer word itself, see
+||| support/rc2/datatypes.h's module note), never a real heap
+||| allocation -- unlike IntType/Int64Type/Bits64Type (which allocate
+||| for values outside the small-int cache) or DoubleType (which always
+||| allocates). idris2rc2_dup/idris2rc2_drop/idris2rc2_free on such a
+||| value are unconditional runtime no-ops: the `idris2rc2_is_unboxed`
+||| bit-check short-circuits before ever touching a refcount. Exported
+||| so RC.idr's `alwaysUnboxedBoxedLocalsR` can identify *Boxed*
+||| locals (typically function arguments -- the calling convention
+||| itself is unchanged) that are nonetheless safe to exempt from
+||| dup/drop entirely: not because they're natively-represented (they
+||| still are `IDRIS2RC2_Value*` at the C level), but because those
+||| calls on them were always going to be no-ops anyway, so generating
+||| them at all is pure waste.
+export
+alwaysUnboxed : PrimType -> Bool
+alwaysUnboxed Int8Type = True
+alwaysUnboxed Int16Type = True
+alwaysUnboxed Int32Type = True
+alwaysUnboxed Bits8Type = True
+alwaysUnboxed Bits16Type = True
+alwaysUnboxed Bits32Type = True
+alwaysUnboxed CharType = True
+alwaysUnboxed _ = False
+
+||| The PrimType a specific operand of `op` needs, given the op's own
+||| result type `ty`: every operand shares `ty` except Cast's single
+||| argument, whose *source* type is the op's own `i`, not `ty`. Shared
+||| by RC.idr (deciding which Boxed operands are alwaysUnboxed) and
+||| Emit.idr (rendering/unboxing each operand) so there's one definition
+||| of this correspondence, not two kept in sync by hand.
+export
+opArgTyFor : PrimType -> PrimFn arity -> PrimType
+opArgTyFor _ (Cast i _) = i
+opArgTyFor ty _         = ty
+
 ||| The Rep a PrimFn's result would have, if native-eligible. Comparisons
 ||| are deliberately absent (always Boxed Bool in this increment).
+export
 opResultRep : PrimFn arity -> Maybe PrimType
 opResultRep (Add ty) = ifNative ty
 opResultRep (Sub ty) = ifNative ty

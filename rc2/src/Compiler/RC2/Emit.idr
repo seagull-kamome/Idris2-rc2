@@ -313,13 +313,6 @@ nativeOpExpr DoubleFloor   [x] = "floor(" ++ x ++ ")"
 nativeOpExpr DoubleCeiling [x] = "ceil(" ++ x ++ ")"
 nativeOpExpr fn args = "0 /* [rc2] unreachable native op " ++ show fn ++ " */"
 
--- A native op's operands all share its own `ty` except Cast's single
--- argument, whose *source* type is the op's own `i`, not the result
--- type `ty`. Shared by emitNativeValue's ROp case and
--- tryInlineNativeOp, which both need to render an ROp's operands.
-opArgTyFor : PrimType -> PrimFn arity -> PrimType
-opArgTyFor _ (Cast i _) = i
-opArgTyFor ty _ = ty
 
 rc2traverseVect : (a -> Core b) -> Vect n a -> Core (Vect n b)
 rc2traverseVect f [] = pure []
