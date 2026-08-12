@@ -139,7 +139,9 @@ mutual
     normalize env (LCon fc n ci tag args) =
         bindMany env args (\locs => pure $ RCon fc n ci tag locs)
     normalize env (LOp fc lazy op args) =
-        bindManyV env args (\locs => pure $ ROp fc lazy op locs)
+        -- postDrop is always [] here -- Phase 2 (`annotate`) fills it in
+        -- once ownership is known (see RCExp.idr's ROp doc comment).
+        bindManyV env args (\locs => pure $ ROp fc lazy op locs [])
     normalize env (LExtPrim fc lazy p args) =
         bindMany env args (\locs => pure $ RExtPrim fc lazy p locs)
     normalize env (LConCase fc sc alts mDef) =
@@ -273,6 +275,26 @@ splitBorrows natives owned (v :: vars) =
 splitBorrowsV : (natives : SortedSet RCLocal) -> Owned -> Vect n RCLocal -> List RCLocal
 splitBorrowsV natives owned = splitBorrows natives owned . toList
 
+||| Which of an `ROp`'s operands need dropping once it's done reading
+||| them -- i.e. every genuinely Boxed one (native locals and RCConst
+||| never had a refcount to drop; see RCExp.idr's module notes on both),
+||| with one entry per *occurrence* so a repeated operand (`x + x`) gets
+||| dropped once per read. Unlike `splitBorrows`, this doesn't consult
+||| `owned` at all: an op's read always needs exactly one drop per Boxed
+||| occurrence regardless of whether that occurrence was moved-in
+||| (owned) or dup'd-for-borrow -- the dup (if any) exists precisely to
+||| give this read its own reference to consume. Becomes `ROp`'s
+||| `postDrop` field (see its doc comment) -- this is the one place
+||| Compiler.RC2.Emit used to independently re-derive an ownership
+||| decision instead of just lowering one; now it doesn't have to.
+boxedOperands : (natives : SortedSet RCLocal) -> List RCLocal -> List RCLocal
+boxedOperands natives = filter isBoxedOperand
+  where
+    isBoxedOperand : RCLocal -> Bool
+    isBoxedOperand RCNull = False
+    isBoxedOperand (RCConst _) = False
+    isBoxedOperand v = not (contains v natives)
+
 mutual
     branchBody : SortedSet RCLocal -> Owned -> SortedSet RCLocal -> RCExp -> Core RCExp
     branchBody natives owned ownedWithArgs body = do
@@ -310,8 +332,9 @@ mutual
         pure $ RLet fc var rep valueRC bodyRC'
     annotate natives owned (RCon fc n ci tag args) =
         pure $ wrapDups fc (splitBorrows natives owned args) (RCon fc n ci tag args)
-    annotate natives owned (ROp fc lazy op args) =
-        pure $ wrapDups fc (splitBorrowsV natives owned args) (ROp fc lazy op args)
+    annotate natives owned (ROp fc lazy op args _) =
+        pure $ wrapDups fc (splitBorrowsV natives owned args)
+                          (ROp fc lazy op args (boxedOperands natives (toList args)))
     annotate natives owned (RExtPrim fc lazy p args) = pure $ RExtPrim fc lazy p args
     annotate natives owned (RConCase fc sc alts mDef) = do
         alts' <- traverse (annotateConAlt natives owned sc) alts

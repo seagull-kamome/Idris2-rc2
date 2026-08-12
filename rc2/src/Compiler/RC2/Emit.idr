@@ -684,9 +684,8 @@ keepBoxedLocals locs = do
 tryInlineNativeOp : {auto r : Ref RepMap (SortedMap Int Rep)}
                   -> {auto lm : Ref InlineMap (SortedMap Int String)}
                   -> PrimType -> Int -> RCExp -> RCExp -> Core Bool
-tryInlineNativeOp ty var (ROp fc _ op args) body = do
-    boxedArgs <- keepBoxedLocals (toList args)
-    case boxedArgs of
+tryInlineNativeOp ty var (ROp fc _ op args postDrop) body =
+    case postDrop of
          [] => if countUsesR (RCLoc var) body == 1
                   then do
                       argStrs <- rc2traverseVect (\v => rcVarToNativeC (opArgTyFor ty op) v) args
@@ -851,7 +850,7 @@ mutual
                     pure (S k)) 0 args
                 pure "(IDRIS2RC2_Value*)\{constr}"
 
-    emitRC (ROp fc _ op args) _ = do
+    emitRC (ROp fc _ op args postDrop) _ = do
         -- Reached only when Compiler.RC2.Types decided this op's result
         -- stays Boxed (comparisons, or a non-numeric op) -- operands may
         -- still individually be native locals (e.g. a comparison over an
@@ -859,16 +858,10 @@ mutual
         argStrs <- rc2traverseVect rcVarToBoxedC args
         let resultVar = "primVar_" ++ !(getNextCounter)
         emit fc $ "IDRIS2RC2_Value *" ++ resultVar ++ " = " ++ cOp op argStrs ++ ";"
-        -- Ops don't take ownership of their operands (they only read
-        -- them); the operands are always dead here regardless of whether
-        -- Compiler.RC2.RC's `annotate` moved them in (owned) or wrapped
-        -- them in a preceding RDup (borrowed), so this drop is purely
-        -- mechanical -- no ownership decision is being made here. Native
-        -- locals are skipped: they have no refcount, and `rcVarToBoxedC`
-        -- above already boxed a *fresh*, independent copy for the call
-        -- rather than reading `var_N` itself.
-        boxedArgs <- keepBoxedLocals (toList args)
-        removeVars $ map varName boxedArgs
+        -- `postDrop` (Compiler.RC2.RC's `annotate`) already lists exactly
+        -- which operands are Boxed and need dropping now that this op is
+        -- done reading them -- just lower it, no re-deriving here.
+        removeVars $ map varName postDrop
         pure resultVar
 
     emitRC (RExtPrim fc _ p args) _ = do
@@ -1041,22 +1034,19 @@ mutual
                      -> {auto r : Ref RepMap (SortedMap Int Rep)}
                      -> {auto lm : Ref InlineMap (SortedMap Int String)}
                      -> PrimType -> RCExp -> Core (String, List RCLocal)
-    emitNativeValue ty (ROp fc _ op args) = do
+    emitNativeValue ty (ROp fc _ op args postDrop) = do
         argStrs <- rc2traverseVect (\v => rcVarToNativeC (opArgTyFor ty op) v) args
-        -- Mirrors emitRC's boxed-ROp case: every op unconditionally drops
-        -- whichever of its operands are Boxed once it's done reading
-        -- them, regardless of whether `annotate` dup'd them (borrowed) or
-        -- moved them in (owned) -- see that case's comment ("this drop is
-        -- purely mechanical -- no ownership decision is being made
-        -- here"). A native-result op still reads Boxed operands (via
-        -- rcVarToNativeC's unboxing above) and owes them that exact same
-        -- cleanup; omitting it entirely was a real bug -- every Boxed
-        -- operand `annotate` treated as owned/consumed (as opposed to
-        -- dup'd for a later reuse) leaked one reference, since nothing
-        -- else was ever going to drop it. The caller drops the ones we
-        -- report back here once it's done with the expression string.
-        boxedArgs <- keepBoxedLocals (toList args)
-        pure (nativeOpExpr op argStrs, boxedArgs)
+        -- `postDrop` is exactly the Boxed operands this op needs dropped
+        -- (Compiler.RC2.RC's `annotate` already decided this, same as
+        -- emitRC's boxed-ROp case) -- a native-result op still reads
+        -- them (via rcVarToNativeC's unboxing above) and owes them that
+        -- same cleanup, we just can't emit it *here*: unlike emitRC, our
+        -- caller hasn't necessarily emitted the statement that actually
+        -- performs the read yet (we only return an inline expression
+        -- string), so dropping now could run before that read happens.
+        -- Hand `postDrop` back so whoever *does* emit that statement can
+        -- drop right after it -- see this function's own doc comment.
+        pure (nativeOpExpr op argStrs, postDrop)
     emitNativeValue ty (RPrimVal fc c) = pure (nativeLitExpr c, [])
     -- RC.idr's own ANF-normalisation wraps any non-trivial operand (e.g. a
     -- literal) in a synthetic RLet before the "real" ROp/RPrimVal --

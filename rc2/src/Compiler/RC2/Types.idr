@@ -110,6 +110,6 @@ litRep _ = Nothing
 export
 repOf : RCExp -> Maybe PrimType
 repOf (RLet _ _ _ _ body) = repOf body
-repOf (ROp _ _ op _) = opResultRep op
+repOf (ROp _ _ op _ _) = opResultRep op
 repOf (RPrimVal _ c) = litRep c
 repOf _ = Nothing

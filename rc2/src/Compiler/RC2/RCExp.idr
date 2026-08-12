@@ -23,12 +23,16 @@ module Compiler.RC2.RCExp
 --               provenance isn't statically known this precisely (it may
 --               be a shared/immortal predefined value).
 -- Every local variable reference (RV, and every RCLocal used as a call/
--- constructor/op argument) is used *as-is*, with no per-use annotation:
--- any refcount adjustment it needs has already been made explicit as a
--- wrapping RDup/RDrop/RFree node earlier in the tree. Compiler.RC2.Emit is
--- a purely mechanical RCExp -> C lowering: it makes no ownership
--- decisions of its own, just lowers each of these three primitives to the
--- matching runtime call.
+-- constructor argument) is used *as-is*, with no per-use annotation: any
+-- refcount adjustment it needs has already been made explicit as a
+-- wrapping RDup/RDrop/RFree node earlier in the tree. An `ROp`'s operands
+-- are the one place a use *does* carry an annotation of its own --
+-- `postDrop`, see its own doc comment -- since an op reads its operands
+-- and produces a brand-new value in the same breath, with no separate
+-- "moment" to wrap an RDrop node around the read the way RLet/RConCase
+-- bodies have. Compiler.RC2.Emit is a purely mechanical RCExp -> C
+-- lowering: it makes no ownership decisions of its own, just lowers each
+-- of RDup/RDrop/RFree/postDrop to the matching runtime call.
 --
 -- (Scope note: the constructor-reuse-in-place optimization -- deciding at
 -- runtime whether a dying value's storage can be recycled for a
@@ -112,7 +116,19 @@ mutual
        ||| is just the same cleanup primitive as everywhere else.
        RLet       : FC -> (var : Int) -> Rep -> RCExp -> RCExp -> RCExp
        RCon       : FC -> Name -> ConInfo -> (tag : Maybe Int) -> List RCLocal -> RCExp
-       ROp        : {0 arity : Nat} -> FC -> (lazy : Maybe LazyReason) -> PrimFn arity -> Vect arity RCLocal -> RCExp
+       ||| `postDrop`: every Boxed operand this op needs dropped once
+       ||| it's done reading it (one entry per *occurrence* in `args`,
+       ||| so an operand read twice, e.g. `x + x`, appears twice) --
+       ||| decided by Compiler.RC2.RC's `annotate` (Phase 2) exactly
+       ||| like an RLet's `Rep`, and carried directly on the node so
+       ||| Emit.idr only ever lowers it, the same way it lowers
+       ||| RDup/RDrop/RFree, rather than independently re-deriving
+       ||| "which of my operands are Boxed" at emission time (which it
+       ||| used to do, and which was the one place Emit wasn't purely
+       ||| mechanical -- see the module note above). Phase 1
+       ||| (`normalize`) always constructs this as `[]`; only Phase 2
+       ||| ever fills it in.
+       ROp        : {0 arity : Nat} -> FC -> (lazy : Maybe LazyReason) -> PrimFn arity -> Vect arity RCLocal -> (postDrop : List RCLocal) -> RCExp
        RExtPrim   : FC -> (lazy : Maybe LazyReason) -> Name -> List RCLocal -> RCExp
        RConCase   : FC -> RCLocal -> List RConAlt -> Maybe RCExp -> RCExp
        RConstCase : FC -> RCLocal -> List RConstAlt -> Maybe RCExp -> RCExp
@@ -160,7 +176,7 @@ freeLocalsR (RApp _ _ c a) = fromList [c, a]
 freeLocalsR (RLet _ var _ value body) =
     union (freeLocalsR value) (delete (RCLoc var) (freeLocalsR body))
 freeLocalsR (RCon _ _ _ _ args) = fromList args
-freeLocalsR (ROp _ _ _ args) = fromList (toList args)
+freeLocalsR (ROp _ _ _ args _) = fromList (toList args)
 freeLocalsR (RExtPrim _ _ _ args) = fromList args
 freeLocalsR (RConCase _ sc alts mDef) =
     let altsFree = map (\(MkRConAlt _ _ _ args body) =>
@@ -190,7 +206,7 @@ countUsesR l (RUnderApp _ _ _ args) = length (filter (== l) args)
 countUsesR l (RApp _ _ c a) = length (filter (== l) [c, a])
 countUsesR l (RLet _ _ _ value body) = countUsesR l value + countUsesR l body
 countUsesR l (RCon _ _ _ _ args) = length (filter (== l) args)
-countUsesR l (ROp _ _ _ args) = length (filter (== l) (toList args))
+countUsesR l (ROp _ _ _ args _) = length (filter (== l) (toList args))
 countUsesR l (RExtPrim _ _ _ args) = length (filter (== l) args)
 countUsesR l (RConCase _ sc alts mDef) =
     (if sc == l then 1 else 0)
