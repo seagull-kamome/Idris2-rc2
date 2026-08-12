@@ -137,7 +137,10 @@ mutual
         bodyRC <- normalize (i :: env) body
         pure $ RLet fc i rep valRC bodyRC
     normalize env (LCon fc n ci tag args) =
-        bindMany env args (\locs => pure $ RCon fc n ci tag locs)
+        -- reuseFrom is always Nothing here -- Compiler.RC2.Reuse fills
+        -- it in as its own dedicated pass, after Phase 1 and 2 are both
+        -- done (see RCExp.idr's own doc comment on RCon).
+        bindMany env args (\locs => pure $ RCon fc n ci tag locs Nothing)
     normalize env (LOp fc lazy op args) =
         -- postDrop is always [] here -- Phase 2 (`annotate`) fills it in
         -- once ownership is known (see RCExp.idr's ROp doc comment).
@@ -163,7 +166,7 @@ mutual
     normalizeConAlt env (MkLConAlt n ci tag args body) = do
         argIds <- traverse (const nextVarId) args
         bodyRC <- normalize (argIds ++ env) body
-        pure $ MkRConAlt n ci tag argIds bodyRC
+        pure $ MkRConAlt n ci tag argIds bodyRC Nothing
 
     normalizeConstAlt : {auto v : Ref NextVar Int} ->
                          Env -> LiftedConstAlt vars -> Core RConstAlt
@@ -218,7 +221,7 @@ wrapDups fc needed e = foldr (RDup fc) e needed
 ||| Peels through the same synthetic-let wrapper chain `Types.repOf` does.
 freeableShape : RCExp -> Bool
 freeableShape (RLet _ _ _ _ body) = freeableShape body
-freeableShape (RCon _ _ ci _ _) = ci /= NIL && ci /= NOTHING && ci /= ZERO && ci /= UNIT
+freeableShape (RCon _ _ ci _ _ _) = ci /= NIL && ci /= NOTHING && ci /= ZERO && ci /= UNIT
 freeableShape (RUnderApp _ _ _ _) = True
 freeableShape _ = False
 
@@ -252,7 +255,7 @@ nativeLocalsR (RLet _ var rep value body) =
          RNative _ => insert (RCLoc var) vs
          RBoxed => vs
 nativeLocalsR (RConCase _ _ alts mDef) =
-    let altsNs = map (\(MkRConAlt _ _ _ _ body) => nativeLocalsR body) alts in
+    let altsNs = map (\(MkRConAlt _ _ _ _ body _) => nativeLocalsR body) alts in
     concat $ maybe altsNs (\d => nativeLocalsR d :: altsNs) mDef
 nativeLocalsR (RConstCase _ _ alts mDef) =
     let altsNs = map (\(MkRConstAlt _ body) => nativeLocalsR body) alts in
@@ -291,7 +294,7 @@ alwaysUnboxedBoxedLocalsR (ROp _ _ op args _) =
     isRealLoc (RCLoc _) = True
     isRealLoc _ = False
 alwaysUnboxedBoxedLocalsR (RConCase _ _ alts mDef) =
-    let altsNs = map (\(MkRConAlt _ _ _ _ body) => alwaysUnboxedBoxedLocalsR body) alts in
+    let altsNs = map (\(MkRConAlt _ _ _ _ body _) => alwaysUnboxedBoxedLocalsR body) alts in
     concat $ maybe altsNs (\d => alwaysUnboxedBoxedLocalsR d :: altsNs) mDef
 alwaysUnboxedBoxedLocalsR (RConstCase _ _ alts mDef) =
     let altsNs = map (\(MkRConstAlt _ body) => alwaysUnboxedBoxedLocalsR body) alts in
@@ -376,8 +379,12 @@ mutual
                          then bodyRC
                          else dropDeadLet fc natives rep (RCLoc var) valueRC bodyRC
         pure $ RLet fc var rep valueRC bodyRC'
-    annotate natives owned (RCon fc n ci tag args) =
-        pure $ wrapDups fc (splitBorrows natives owned args) (RCon fc n ci tag args)
+    annotate natives owned (RCon fc n ci tag args _) =
+        -- reuseFrom stays Nothing -- Compiler.RC2.Reuse decides that in
+        -- its own pass, after annotate is completely done (it needs the
+        -- final RDrop lists this function produces, see its own module
+        -- note).
+        pure $ wrapDups fc (splitBorrows natives owned args) (RCon fc n ci tag args Nothing)
     annotate natives owned (ROp fc lazy op args _) =
         pure $ wrapDups fc (splitBorrowsV natives owned args)
                           (ROp fc lazy op args (boxedOperands natives (toList args)))
@@ -396,9 +403,14 @@ mutual
     annotate natives owned (RDup fc v body) = RDup fc v <$> annotate natives owned body
     annotate natives owned (RDrop fc vars body) = RDrop fc vars <$> annotate natives owned body
     annotate natives owned (RFree fc v body) = RFree fc v <$> annotate natives owned body
+    -- Never actually produced until Compiler.RC2.Reuse runs, which is
+    -- strictly after annotate is done with the whole definition -- kept
+    -- total (as a plain pass-through) rather than assuming that can
+    -- never change.
+    annotate natives owned (RReleaseReuse fc v body) = RReleaseReuse fc v <$> annotate natives owned body
 
     annotateConAlt : SortedSet RCLocal -> Owned -> RCLocal -> RConAlt -> Core RConAlt
-    annotateConAlt natives owned sc (MkRConAlt name ci tag args body) = do
+    annotateConAlt natives owned sc (MkRConAlt name ci tag args body _) = do
         -- Matching NIL/NOTHING/ZERO/UNIT consumes `sc` itself (it was only
         -- ever a NULL check, no heap object to keep owning).
         let erased = ci == NIL || ci == NOTHING || ci == ZERO || ci == UNIT
@@ -408,7 +420,10 @@ mutual
         let ownedWithArgs = union (fromList (RCLoc <$> args) `difference` natives)
                                    (if erased then delete sc owned else owned)
         bodyRC <- branchBody natives owned ownedWithArgs body
-        pure $ MkRConAlt name ci tag args bodyRC
+        -- offersReuse stays Nothing -- Compiler.RC2.Reuse decides that
+        -- afterward, using the RDrop list this produces (see its own
+        -- module note).
+        pure $ MkRConAlt name ci tag args bodyRC Nothing
 
     annotateConstAlt : SortedSet RCLocal -> Owned -> RConstAlt -> Core RConstAlt
     annotateConstAlt natives owned (MkRConstAlt c body) = MkRConstAlt c <$> branchBody natives owned owned body

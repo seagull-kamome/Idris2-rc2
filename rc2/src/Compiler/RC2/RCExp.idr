@@ -115,7 +115,16 @@ mutual
        ||| for it directly -- there is no separate flag for that case, it
        ||| is just the same cleanup primitive as everywhere else.
        RLet       : FC -> (var : Int) -> Rep -> RCExp -> RCExp -> RCExp
-       RCon       : FC -> Name -> ConInfo -> (tag : Maybe Int) -> List RCLocal -> RCExp
+       ||| `reuseFrom`: if `Just loc`, this constructor's allocation may
+       ||| reuse `loc`'s storage in place (`loc` is a dying constructor
+       ||| of the exact same shape -- same field count -- offered by an
+       ||| enclosing RConAlt's `offersReuse`, see its own doc comment).
+       ||| Decided by Compiler.RC2.Reuse's `resolveReuse`, a dedicated
+       ||| pass that runs on the fully Phase-1+2'd tree, after
+       ||| Compiler.RC2.RC's normalize+annotate and before
+       ||| Compiler.RC2.Emit -- not by RC.idr itself. Phase 1/2 always
+       ||| leave this `Nothing`.
+       RCon       : FC -> Name -> ConInfo -> (tag : Maybe Int) -> List RCLocal -> (reuseFrom : Maybe RCLocal) -> RCExp
        ||| `postDrop`: every Boxed operand this op needs dropped once
        ||| it's done reading it (one entry per *occurrence* in `args`,
        ||| so an operand read twice, e.g. `x + x`, appears twice) --
@@ -147,10 +156,33 @@ mutual
        ||| See the module note: only ever inserted where RC.idr can prove
        ||| statically that `loc` is a brand-new, never-shared allocation.
        RFree      : FC -> RCLocal -> RCExp -> RCExp
+       ||| Release a reuse candidate (see RConAlt's `offersReuse`) that
+       ||| turned out *not* to be consumed by any RCon on this
+       ||| particular execution path (a sibling branch's RCon claimed it
+       ||| instead, or no matching RCon was reachable on this path at
+       ||| all) -- lowers to `idris2rc2_dropReuseConstructor(loc)`, which
+       ||| is a no-op if the runtime uniqueness check that created this
+       ||| offer failed (so `loc` was already dropped normally there and
+       ||| ends up NULL here) and a real release otherwise. Only ever
+       ||| inserted by Compiler.RC2.Reuse, never by RC.idr.
+       RReleaseReuse : FC -> RCLocal -> RCExp -> RCExp
 
   public export
   data RConAlt : Type where
-       MkRConAlt : Name -> ConInfo -> (tag : Maybe Int) -> (args : List Int) -> RCExp -> RConAlt
+       ||| `offersReuse`: if `Just sc`, matching this alt means `sc`
+       ||| (the scrutinee) dies here with no other references (an
+       ||| ordinary drop was going to happen) *and* this alt's own body
+       ||| goes on to build another constructor of the exact same name
+       ||| somewhere -- so instead of an unconditional drop, Emit.idr
+       ||| lowers this into a runtime uniqueness check that repurposes
+       ||| `sc`'s storage in place when safe. Exactly one RCon reachable
+       ||| from `body` (per execution path) ends up with
+       ||| `reuseFrom = Just sc`; every path that doesn't reach one gets
+       ||| an explicit `RReleaseReuse sc` instead, so the reservation is
+       ||| never simply lost. See Compiler.RC2.Reuse's module note for
+       ||| the full protocol; RC.idr's own Phase 1/2 always leave this
+       ||| `Nothing`.
+       MkRConAlt : Name -> ConInfo -> (tag : Maybe Int) -> (args : List Int) -> RCExp -> (offersReuse : Maybe RCLocal) -> RConAlt
 
   public export
   data RConstAlt : Type where
@@ -175,11 +207,15 @@ freeLocalsR (RUnderApp _ _ _ args) = fromList args
 freeLocalsR (RApp _ _ c a) = fromList [c, a]
 freeLocalsR (RLet _ var _ value body) =
     union (freeLocalsR value) (delete (RCLoc var) (freeLocalsR body))
-freeLocalsR (RCon _ _ _ _ args) = fromList args
+-- `reuseFrom`/`offersReuse` aren't counted here (or in countUsesR
+-- below) -- like ROp's postDrop, the local they name is already
+-- counted via its own real binding site (the enclosing RConCase's
+-- `sc`), so adding it again would only be redundant, never additive.
+freeLocalsR (RCon _ _ _ _ args _) = fromList args
 freeLocalsR (ROp _ _ _ args _) = fromList (toList args)
 freeLocalsR (RExtPrim _ _ _ args) = fromList args
 freeLocalsR (RConCase _ sc alts mDef) =
-    let altsFree = map (\(MkRConAlt _ _ _ args body) =>
+    let altsFree = map (\(MkRConAlt _ _ _ args body _) =>
                           difference (freeLocalsR body) (fromList (map RCLoc args))) alts
         allFree = maybe altsFree (\d => freeLocalsR d :: altsFree) mDef
     in insert sc (concat allFree)
@@ -190,6 +226,7 @@ freeLocalsR (RConstCase _ sc alts mDef) =
 freeLocalsR (RDup _ v body) = insert v (freeLocalsR body)
 freeLocalsR (RDrop _ vars body) = union (fromList vars) (freeLocalsR body)
 freeLocalsR (RFree _ v body) = insert v (freeLocalsR body)
+freeLocalsR (RReleaseReuse _ v body) = insert v (freeLocalsR body)
 freeLocalsR _ = empty
 
 ||| How many times `l` is referenced anywhere in `e` -- unlike
@@ -205,12 +242,12 @@ countUsesR l (RAppName _ _ _ args) = length (filter (== l) args)
 countUsesR l (RUnderApp _ _ _ args) = length (filter (== l) args)
 countUsesR l (RApp _ _ c a) = length (filter (== l) [c, a])
 countUsesR l (RLet _ _ _ value body) = countUsesR l value + countUsesR l body
-countUsesR l (RCon _ _ _ _ args) = length (filter (== l) args)
+countUsesR l (RCon _ _ _ _ args _) = length (filter (== l) args)
 countUsesR l (ROp _ _ _ args _) = length (filter (== l) (toList args))
 countUsesR l (RExtPrim _ _ _ args) = length (filter (== l) args)
 countUsesR l (RConCase _ sc alts mDef) =
     (if sc == l then 1 else 0)
-    + sum (map (\(MkRConAlt _ _ _ _ body) => countUsesR l body) alts)
+    + sum (map (\(MkRConAlt _ _ _ _ body _) => countUsesR l body) alts)
     + maybe 0 (countUsesR l) mDef
 countUsesR l (RConstCase _ sc alts mDef) =
     (if sc == l then 1 else 0)
@@ -219,14 +256,15 @@ countUsesR l (RConstCase _ sc alts mDef) =
 countUsesR l (RDup _ v body) = (if v == l then 1 else 0) + countUsesR l body
 countUsesR l (RDrop _ vars body) = length (filter (== l) vars) + countUsesR l body
 countUsesR l (RFree _ v body) = (if v == l then 1 else 0) + countUsesR l body
+countUsesR l (RReleaseReuse _ v body) = (if v == l then 1 else 0) + countUsesR l body
 countUsesR l _ = 0
 
 export
 usedConstructorsR : RCExp -> SortedSet Name
 usedConstructorsR (RLet _ _ _ value body) = union (usedConstructorsR value) (usedConstructorsR body)
-usedConstructorsR (RCon _ n _ _ _) = singleton n
+usedConstructorsR (RCon _ n _ _ _ _) = singleton n
 usedConstructorsR (RConCase _ _ alts mDef) =
-    let altsCons = map (\(MkRConAlt _ _ _ _ body) => usedConstructorsR body) alts
+    let altsCons = map (\(MkRConAlt _ _ _ _ body _) => usedConstructorsR body) alts
     in concat (maybe altsCons (\d => usedConstructorsR d :: altsCons) mDef)
 usedConstructorsR (RConstCase _ _ alts mDef) =
     let altsCons = map (\(MkRConstAlt _ body) => usedConstructorsR body) alts
@@ -234,4 +272,5 @@ usedConstructorsR (RConstCase _ _ alts mDef) =
 usedConstructorsR (RDup _ _ body) = usedConstructorsR body
 usedConstructorsR (RDrop _ _ body) = usedConstructorsR body
 usedConstructorsR (RFree _ _ body) = usedConstructorsR body
+usedConstructorsR (RReleaseReuse _ _ body) = usedConstructorsR body
 usedConstructorsR _ = empty

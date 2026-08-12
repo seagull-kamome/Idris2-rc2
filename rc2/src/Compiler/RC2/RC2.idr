@@ -2,12 +2,15 @@ module Compiler.RC2.RC2
 
 -- Orchestration: getCompileData (stopping at the Lifted phase -- rc2 does
 -- not use Compiler.ANF at all) -> Compiler.RC2.RC (Lifted -> RCExp) ->
--- Compiler.RC2.Emit (RCExp -> C) -> Compiler.RC2.CC (cc invocation).
+-- Compiler.RC2.Reuse (constructor-reuse-in-place, on the fully
+-- Phase-1+2'd tree) -> Compiler.RC2.Emit (RCExp -> C) ->
+-- Compiler.RC2.CC (cc invocation).
 
 import Compiler.RC2.CC
 import Compiler.RC2.Emit
 import Compiler.RC2.RC
 import Compiler.RC2.RCExp
+import Compiler.RC2.Reuse
 
 import Compiler.Common
 import Compiler.LambdaLift
@@ -23,8 +26,18 @@ import Libraries.Utils.Path
 
 %default covering
 
+||| Compiler.RC2.Reuse's pass runs after Compiler.RC2.RC's normalize+
+||| annotate are both fully done (it relies on `annotate`'s own RDrop
+||| lists -- see its own module note), on each definition's body
+||| independently -- reuse offers never cross a function boundary.
+applyReuse : RCDef -> RCDef
+applyReuse (MkRCFun args body) = MkRCFun args (resolveReuse body)
+applyReuse (MkRCError body) = MkRCError (resolveReuse body)
+applyReuse d@(MkRCCon _ _ _) = d
+applyReuse d@(MkRCForeign _ _ _) = d
+
 toRCDefs : List (Name, LiftedDef) -> Core (List (Name, RCDef))
-toRCDefs = traverse (\(n, ld) => (n,) <$> toRCDef ld)
+toRCDefs = traverse (\(n, ld) => (n,) . applyReuse <$> toRCDef ld)
 
 export
 compileExpr : Ref Ctxt Defs

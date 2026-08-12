@@ -336,7 +336,6 @@ nativeLitExpr (Ch x) = "((uint32_t)" ++ escapeChar x ++ ")"
 nativeLitExpr _ = "0 /* [rc2] unreachable native literal */"
 
 data ArgCounter : Type where
-data EnvTracker : Type where
 data FunctionDefinitions : Type where
 data IndentLevel : Type where
 data HeaderFiles : Type where
@@ -377,8 +376,6 @@ constantName = \case
   CDStr x => go "String" x
   where go : String -> String -> String
         go x y = "idris2rc2_constant_\{x}_\{y}"
-
-ReuseMap = SortedMap Name String
 
 ------------------------------------------------------------------------
 
@@ -521,45 +518,43 @@ rcVarToNativeC ty l = do
                 RNative _ => fromMaybe (varName l) inlined
                 RBoxed => nativeUnbox ty (varName l)
 
--- if the constructor is unique use it, otherwise add it to should drop vars and create null constructor
-addReuseConstructor : {auto a : Ref ArgCounter Nat}
-                    -> {auto oft : Ref OutfileText Output}
-                    -> {auto il : Ref IndentLevel Nat}
-                    -> ReuseMap
-                    -> String
-                    -> Name
-                    -> List String
-                    -> SortedSet Name
-                    -> List String
-                    -> SortedMap Name String
-                    -> Core (List String, SortedMap Name String)
-addReuseConstructor reuseMap sc conName conArgs consts shouldDrop actualReuseConsts =
-    if (isNothing $ SortedMap.lookup conName reuseMap)
-       && contains conName consts
-       && (isJust $ find (== sc) shouldDrop) then do
-        let constr = "constructor_" ++ !(getNextCounter)
-        emit EmptyFC $ "IDRIS2RC2_Constructor* " ++ constr ++ " = NULL;"
-        emit EmptyFC $ "if (idris2rc2_isUnique(" ++ sc ++ ")) {"
-        increaseIndentation
-        emit EmptyFC $ constr ++ " = (IDRIS2RC2_Constructor*)" ++ sc ++ ";"
-        decreaseIndentation
-        emit EmptyFC "}"
-        emit EmptyFC "else {"
-        increaseIndentation
-        dupVars (conArgs \\ shouldDrop)
-        removeVars [sc]
-        decreaseIndentation
-        emit EmptyFC "}"
-        pure (shouldDrop \\ (sc :: conArgs), insert conName constr actualReuseConsts)
-    else do
-        dupVars $ conArgs \\ shouldDrop
-        pure (shouldDrop \\ conArgs, actualReuseConsts)
+||| The reuse-reservation C variable's name for scrutinee `sc` -- a pure,
+||| deterministic function of `sc`'s own id, computed identically
+||| wherever it's needed (the offering RConAlt's own uniqueness check,
+||| the RCon(s) that may claim it, any RReleaseReuse that releases it)
+||| with no lookup table required at all, unlike the old ReuseMap this
+||| replaced: Compiler.RC2.Reuse already resolved *which* RCon (if any)
+||| claims a given offer, encoding that pairing directly as data
+||| (RCon.reuseFrom = Just sc) rather than something Emit has to
+||| rediscover via a name-keyed map at emission time.
+reuseVarName : RCLocal -> String
+reuseVarName sc = "reuse_" ++ varName sc
 
-dropUnusedReuseCons : ReuseMap -> SortedSet Name -> (List String, ReuseMap)
-dropUnusedReuseCons reuseMap usedCons =
-    let dropReuseMap = differenceMap reuseMap usedCons in
-    let actualReuseMap = intersectionMap reuseMap usedCons in
-    (values dropReuseMap, actualReuseMap)
+||| Lower an RConAlt's `offersReuse` (see its own doc comment): declare
+||| the reservation variable and emit the runtime uniqueness check that
+||| either repurposes `sc`'s storage in place or (if `sc` turned out
+||| shared) drops it normally -- dup'ing whichever of the destructured
+||| field variables (`conArgs`) are still alive (i.e. not already in
+||| `shouldDrop`, the branch's own drop list) first, since `sc`'s own
+||| teardown would otherwise recursively drop them out from under
+||| whatever still needs them.
+emitReuseOffer : {auto oft : Ref OutfileText Output}
+               -> {auto il : Ref IndentLevel Nat}
+               -> RCLocal -> (conArgs : List String) -> (shouldDrop : List String) -> Core ()
+emitReuseOffer sc conArgs shouldDrop = do
+    let sc' = varName sc
+    let reuseVar = reuseVarName sc
+    emit EmptyFC $ "IDRIS2RC2_Constructor* " ++ reuseVar ++ " = NULL;"
+    emit EmptyFC $ "if (idris2rc2_isUnique(" ++ sc' ++ ")) {"
+    increaseIndentation
+    emit EmptyFC $ reuseVar ++ " = (IDRIS2RC2_Constructor*)" ++ sc' ++ ";"
+    decreaseIndentation
+    emit EmptyFC "} else {"
+    increaseIndentation
+    dupVars (conArgs \\ shouldDrop)
+    removeVars [sc']
+    decreaseIndentation
+    emit EmptyFC "}"
 
 data TailPositionStatus = InTailPosition | NotInTailPosition
 
@@ -689,57 +684,65 @@ tryInlineNativeOp ty var (ROp fc _ op args postDrop) body =
 tryInlineNativeOp _ _ _ _ = pure False
 
 mutual
-    ||| A case branch (or default) with no reuse candidate: just emit the
-    ||| (reuse-map-narrowed) drops RC.idr already decided on, then the
-    ||| body. Mirrors RC2/RefC's `concaseBody`.
-    plainBranch : {auto a : Ref ArgCounter Nat}
-                 -> {auto e : Ref EnvTracker ReuseMap}
-                 -> {auto oft : Ref OutfileText Output}
-                 -> {auto il : Ref IndentLevel Nat}
-                 -> {auto _ : Ref ConstDef (SortedMap Constant ConstDef)}
-                 -> {auto r : Ref RepMap (SortedMap Int Rep)}
-                 -> {auto lm : Ref InlineMap (SortedMap Int String)}
-                 -> ReuseMap -> String -> RCExp -> TailPositionStatus
-                 -> Core ()
-    plainBranch reuseMap returnvar body tailPosition = do
+    ||| A case branch (or default): emit the drops RC.idr's `annotate`
+    ||| already decided on (the peeled leading RDrop), preceded by the
+    ||| mechanical lowering of a reuse offer if Compiler.RC2.Reuse left
+    ||| one on this alt (`offersReuse`, see RConAlt's own doc comment --
+    ||| `Nothing` for every non-matched-constructor branch, since only a
+    ||| matched constructor scrutinee can ever be offered), then the
+    ||| body itself. Mirrors RC2/RefC's `concaseBody`.
+    |||
+    ||| `matched`, when `Just (sc, conArgs)`, means this branch destructured
+    ||| `conArgs` directly out of `sc`'s own storage (`sc->args[k]`) --
+    ||| plain pointer aliasing, not independently reference-counted. Any
+    ||| `conArgs` entry that survives past this branch (i.e. isn't itself
+    ||| in the peeled drop list) therefore needs an explicit dup *here*,
+    ||| before `sc` potentially goes away below, or `sc`'s own teardown
+    ||| would free/repurpose storage a still-live field is pointing into.
+    ||| `conArgs` entries that *are* already dying are deliberately left
+    ||| out of the flat drop list -- their release comes for free from
+    ||| however `sc` itself gets torn down (ordinary recursive
+    ||| idris2rc2_drop, or the reuse check below), so dropping them a
+    ||| second time here would double-free. This applies unconditionally
+    ||| to *every* matched-constructor branch, not only ones offering
+    ||| reuse -- it's what makes destructured fields safe to keep using at
+    ||| all, independent of whether Compiler.RC2.Reuse ever fires.
+    |||
+    ||| `offersReuse` additionally selects, only for `sc` itself, and only
+    ||| when `sc` is actually in the peeled drop list, whether its own
+    ||| release goes through the ordinary path (a plain drop, folded into
+    ||| the same flat removeVars call as everything else) or the reuse
+    ||| uniqueness check (`emitReuseOffer`). `sc` not being in the drop
+    ||| list at all (still owned elsewhere) means nothing is emitted for
+    ||| it here either way.
+    branchBody : {auto a : Ref ArgCounter Nat}
+               -> {auto oft : Ref OutfileText Output}
+               -> {auto il : Ref IndentLevel Nat}
+               -> {auto _ : Ref ConstDef (SortedMap Constant ConstDef)}
+               -> {auto r : Ref RepMap (SortedMap Int Rep)}
+               -> {auto lm : Ref InlineMap (SortedMap Int String)}
+               -> (matched : Maybe (RCLocal, List String)) -> (offersReuse : Bool)
+               -> String -> RCExp -> TailPositionStatus -> Core ()
+    branchBody matched offersReuse returnvar body tailPosition = do
         let (shouldDrop0, body') = peelDrop body
-        shouldDrop <- keepBoxedLocals shouldDrop0
-        let usedCons = usedConstructorsR body'
-        let (dropReuseCons, actualReuseMap) = dropUnusedReuseCons reuseMap usedCons
-        removeVars (varName <$> shouldDrop)
-        removeReuseConstructors dropReuseCons
-        put EnvTracker actualReuseMap
-        emit emptyFC "\{returnvar} = \{!(emitRC body' tailPosition)};"
-
-    ||| A matched-constructor case branch: as `plainBranch`, but also lets
-    ||| the scrutinee's storage (`sc'`, just matched as constructor `name`)
-    ||| be recycled in-place for a same-shaped constructor built later in
-    ||| the body, if it turns out to be uniquely referenced at runtime.
-    reusableBranch : {auto a : Ref ArgCounter Nat}
-                    -> {auto e : Ref EnvTracker ReuseMap}
-                    -> {auto oft : Ref OutfileText Output}
-                    -> {auto il : Ref IndentLevel Nat}
-                    -> {auto _ : Ref ConstDef (SortedMap Constant ConstDef)}
-                    -> {auto r : Ref RepMap (SortedMap Int Rep)}
-                    -> {auto lm : Ref InlineMap (SortedMap Int String)}
-                    -> ReuseMap -> String -> Name -> List Int -> String -> RCExp -> TailPositionStatus
-                    -> Core ()
-    reusableBranch reuseMap sc' name args returnvar body tailPosition = do
-        let (shouldDrop0raw, body') = peelDrop body
-        shouldDrop0 <- keepBoxedLocals shouldDrop0raw
-        let usedCons = usedConstructorsR body'
-        let (dropReuseCons, actualReuseMap0) = dropUnusedReuseCons reuseMap usedCons
-        (shouldDrop, actualReuseMap) <-
-            addReuseConstructor reuseMap sc' name (varName . RCLoc <$> args) usedCons (varName <$> shouldDrop0) actualReuseMap0
-        removeVars shouldDrop
-        removeReuseConstructors dropReuseCons
-        put EnvTracker actualReuseMap
+        shouldDropLocs <- keepBoxedLocals shouldDrop0
+        let shouldDrop = varName <$> shouldDropLocs
+        case matched of
+             Nothing => removeVars shouldDrop
+             Just (sc, conArgs) => do
+                 let sc' = varName sc
+                 if offersReuse
+                    then do
+                        emitReuseOffer sc conArgs shouldDrop
+                        removeVars (shouldDrop \\ (sc' :: conArgs))
+                    else do
+                        dupVars (conArgs \\ shouldDrop)
+                        removeVars (shouldDrop \\ conArgs)
         emit emptyFC "\{returnvar} = \{!(emitRC body' tailPosition)};"
 
     emitRC : {auto a : Ref ArgCounter Nat}
            -> {auto oft : Ref OutfileText Output}
            -> {auto il : Ref IndentLevel Nat}
-           -> {auto e : Ref EnvTracker ReuseMap}
            -> {auto _ : Ref ConstDef (SortedMap Constant ConstDef)}
            -> {auto r : Ref RepMap (SortedMap Int Rep)}
            -> {auto lm : Ref InlineMap (SortedMap Int String)}
@@ -805,32 +808,34 @@ mutual
                         removeVars $ map varName pending
                         emitRC body tailPosition
              (RBoxed, _) => do
-                 outerReuseMap <- get EnvTracker
-                 let usedCons = usedConstructorsR value
-                 put EnvTracker (outerReuseMap `intersectionMap` usedCons)
                  valStr <- emitRC value NotInTailPosition
                  emit fc $ "IDRIS2RC2_Value * var_\{show var} = \{valStr};"
-                 put EnvTracker (outerReuseMap `differenceMap` usedCons)
                  emitRC body tailPosition
 
-    emitRC (RCon fc n coninfo tag args) _ = do
+    emitRC (RCon fc n coninfo tag args reuseFrom) _ = do
         if coninfo == NIL || coninfo == NOTHING || coninfo == ZERO || coninfo == UNIT
             then pure "(NULL /* \{show n} */)"
             else do
-                reuseMap <- get EnvTracker
                 let createNewConstructor = " = idris2rc2_newConstructor("
                                  ++ (show (length args))
                                  ++ ", "  ++ maybe "-1" show tag  ++ ");"
 
                 emit fc " // constructor \{show n}"
-                constr <- case SortedMap.lookup n reuseMap of
-                    Just constr => do
-                        emit fc "if (! \{constr}) {"
+                -- `reuseFrom` (Compiler.RC2.Reuse) already decided
+                -- whether this construction may claim an offered
+                -- scrutinee's storage -- just lower it: reference the
+                -- same deterministically-named reservation variable its
+                -- offering RConAlt already declared (see reuseVarName),
+                -- no lookup needed.
+                constr <- the (Core String) $ case reuseFrom of
+                    Just sc => do
+                        let reuseVar = reuseVarName sc
+                        emit fc "if (! \{reuseVar}) {"
                         increaseIndentation
-                        emit fc $ constr ++ createNewConstructor
+                        emit fc $ reuseVar ++ createNewConstructor
                         decreaseIndentation
                         emit fc "}"
-                        pure constr
+                        pure reuseVar
                     Nothing => do
                         let constr = "constructor_\{!(getNextCounter)}"
                         emit fc $ "IDRIS2RC2_Constructor* " ++ constr ++ createNewConstructor
@@ -876,8 +881,7 @@ mutual
         let sc' = varName sc
         switchReturnVar <- getNewVarThatWillNotBeFreedAtEndOfBlock
         emit fc "IDRIS2RC2_Value * \{switchReturnVar} = NULL;"
-        reuseMap <- get EnvTracker -- captured once; every branch starts from this same snapshot
-        _ <- foldlC (\els, (MkRConAlt name coninfo tag args body) => do
+        _ <- foldlC (\els, (MkRConAlt name coninfo tag args body offersReuse) => do
             let erased = coninfo == NIL || coninfo == NOTHING || coninfo == ZERO || coninfo == UNIT
             if erased then emit emptyFC "\{els}if (NULL == \{sc'} /* \{show name} \{show coninfo} */) {"
                 else if coninfo == CONS || coninfo == JUST || coninfo == SUCC
@@ -891,7 +895,7 @@ mutual
             _ <- foldlC (\k, arg => do
                 emit emptyFC "IDRIS2RC2_Value *var_\{show arg} = ((IDRIS2RC2_Constructor*)\{sc'})->args[\{show k}];"
                 pure (S k) ) 0 args
-            reusableBranch reuseMap sc' name args switchReturnVar body tailPosition
+            branchBody (Just (sc, varName . RCLoc <$> args)) (isJust offersReuse) switchReturnVar body tailPosition
             decreaseIndentation
             pure "} else ") "" alts
 
@@ -900,7 +904,7 @@ mutual
             Just body => do
                 emit emptyFC "} else {"
                 increaseIndentation
-                plainBranch reuseMap switchReturnVar body tailPosition
+                branchBody Nothing False switchReturnVar body tailPosition
                 decreaseIndentation
         emit emptyFC "}"
         pure switchReturnVar
@@ -909,7 +913,6 @@ mutual
         let sc' = varName sc
         switchReturnVar <- getNewVarThatWillNotBeFreedAtEndOfBlock
         emit fc "IDRIS2RC2_Value *\{switchReturnVar} = NULL;"
-        reuseMap <- get EnvTracker
         case integer_switch alts of
             True => do
                 tmpint <- getNewVarThatWillNotBeFreedAtEndOfBlock
@@ -921,7 +924,7 @@ mutual
                 _ <- foldlC (\els, (MkRConstAlt c body) => do
                     emit emptyFC "\{els}if (\{tmpint} == \{const2Integer c 0}) {"
                     increaseIndentation
-                    plainBranch reuseMap switchReturnVar body tailPosition
+                    branchBody Nothing False switchReturnVar body tailPosition
                     decreaseIndentation
                     pure "} else ") "" alts
                 pure ()
@@ -933,7 +936,7 @@ mutual
                         Db  x => emit emptyFC "\{els}if (((IDRIS2RC2_Double *)\{sc'})->v == \{show x}) {"
                         x => throw $ InternalError "[rc2] RConstCase : unsupported type. \{show fc} \{show x}"
                     increaseIndentation
-                    plainBranch reuseMap switchReturnVar body tailPosition
+                    branchBody Nothing False switchReturnVar body tailPosition
                     decreaseIndentation
                     pure "} else ") "" alts
                 pure ()
@@ -943,7 +946,7 @@ mutual
             Just body => do
                 emit emptyFC "} else {"
                 increaseIndentation
-                plainBranch reuseMap switchReturnVar body tailPosition
+                branchBody Nothing False switchReturnVar body tailPosition
                 decreaseIndentation
         emit emptyFC "}"
         pure switchReturnVar
@@ -990,19 +993,22 @@ mutual
     emitRC (RCrash fc x) _ = pure "(NULL /* CRASH */)"
     emitRC (RDrop fc locs cont) tailPosition = do
         boxedLocs <- keepBoxedLocals locs
-        let shouldDrop = varName <$> boxedLocs
-        reuseMap <- get EnvTracker
-        let usedCons = usedConstructorsR cont
-        let (dropReuseCons, actualReuseMap) = dropUnusedReuseCons reuseMap usedCons
-        removeReuseConstructors dropReuseCons
-        removeVars shouldDrop
-        put EnvTracker actualReuseMap
+        removeVars (varName <$> boxedLocs)
         emitRC cont tailPosition
     emitRC (RDup fc loc cont) tailPosition = do
         dupVars [varName loc]
         emitRC cont tailPosition
     emitRC (RFree fc loc cont) tailPosition = do
         freeVars [varName loc]
+        emitRC cont tailPosition
+    -- Compiler.RC2.Reuse's own cleanup node -- a reuse offer that this
+    -- particular execution path never reached a matching RCon to claim,
+    -- so the reservation (if it actually holds a repurposed
+    -- constructor -- NULL otherwise, see emitReuseOffer) needs releasing
+    -- through the same runtime path a failed-to-consume reuse always
+    -- used, `idris2rc2_dropReuseConstructor`.
+    emitRC (RReleaseReuse fc loc cont) tailPosition = do
+        removeReuseConstructors [reuseVarName loc]
         emitRC cont tailPosition
 
     ||| The raw C expression for a value Compiler.RC2.Types has decided is
@@ -1022,7 +1028,6 @@ mutual
     emitNativeValue : {auto a : Ref ArgCounter Nat}
                      -> {auto oft : Ref OutfileText Output}
                      -> {auto il : Ref IndentLevel Nat}
-                     -> {auto e : Ref EnvTracker ReuseMap}
                      -> {auto _ : Ref ConstDef (SortedMap Constant ConstDef)}
                      -> {auto r : Ref RepMap (SortedMap Int Rep)}
                      -> {auto lm : Ref InlineMap (SortedMap Int String)}
@@ -1066,12 +1071,8 @@ mutual
                      emit fc $ "\{nativeCType ty'} var_\{show var} = \{valStr};"
                      removeVars $ map varName pending
              (RBoxed, _) => do
-                 outerReuseMap <- get EnvTracker
-                 let usedCons = usedConstructorsR value
-                 put EnvTracker (outerReuseMap `intersectionMap` usedCons)
                  valStr <- emitRC value NotInTailPosition
                  emit fc $ "IDRIS2RC2_Value * var_\{show var} = \{valStr};"
-                 put EnvTracker (outerReuseMap `differenceMap` usedCons)
         emitNativeValue ty body
     -- A native-typed let's *value* can still legitimately be wrapped in
     -- RDup/RDrop/RFree: those govern its own boxed operands (e.g. `x + x`
@@ -1087,6 +1088,9 @@ mutual
     emitNativeValue ty (RDrop fc locs cont) = do
         boxedLocs <- keepBoxedLocals locs
         removeVars (varName <$> boxedLocs)
+        emitNativeValue ty cont
+    emitNativeValue ty (RReleaseReuse fc loc cont) = do
+        removeReuseConstructors [reuseVarName loc]
         emitNativeValue ty cont
     emitNativeValue ty e = throw $ InternalError "[rc2] internal: expected a native-producing expression"
 
@@ -1252,7 +1256,6 @@ createCFunctions n (MkRCFun args body) = do
          emit EmptyFC "IDRIS2RC2_Value *var_\{show j} = var_arglist[\{show i}];"
          pure $ i + 1) 0 args
       pure ()
-    _ <- newRef EnvTracker (the ReuseMap empty)
     -- Populated incrementally as each RLet is emitted below (its Rep is
     -- already decided and stored on the node by Compiler.RC2.RC; this map
     -- just lets *use* sites, which only have a bare RCLocal id, look it

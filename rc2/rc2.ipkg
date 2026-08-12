@@ -9,6 +9,7 @@ depends = idris2, contrib, network
 modules = Compiler.RC2.CC,
           Compiler.RC2.RCExp,
           Compiler.RC2.RC,
+          Compiler.RC2.Reuse,
           Compiler.RC2.Emit,
           Compiler.RC2.RC2,
           Main
