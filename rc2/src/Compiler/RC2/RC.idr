@@ -74,6 +74,59 @@ getFC (LPrimVal fc _) = fc
 getFC (LErased fc) = fc
 getFC (LCrash fc _) = fc
 
+||| Idris2's own encoding for a two-way Bool match at the `Constant`
+||| level -- False=0/True=1, as *some* Constant kind (which one varies:
+||| a bare comparison's own case tree tends to use the comparison's
+||| operand-adjacent kind, an interface method wrapping it might re-tag
+||| via a different one -- see RCExp.idr's own note on RCmpCase for
+||| where this gets consulted). Anything else (a non-0/1 literal, or a
+||| non-integer-ish Constant kind) means this isn't really matching a
+||| Bool at all.
+constantBoolValue : Constant -> Maybe Bool
+constantBoolValue (I 0) = Just False
+constantBoolValue (I 1) = Just True
+constantBoolValue (I8 0) = Just False
+constantBoolValue (I8 1) = Just True
+constantBoolValue (I16 0) = Just False
+constantBoolValue (I16 1) = Just True
+constantBoolValue (I32 0) = Just False
+constantBoolValue (I32 1) = Just True
+constantBoolValue (I64 0) = Just False
+constantBoolValue (I64 1) = Just True
+constantBoolValue (B8 0) = Just False
+constantBoolValue (B8 1) = Just True
+constantBoolValue (B16 0) = Just False
+constantBoolValue (B16 1) = Just True
+constantBoolValue (B32 0) = Just False
+constantBoolValue (B32 1) = Just True
+constantBoolValue (B64 0) = Just False
+constantBoolValue (B64 1) = Just True
+constantBoolValue (BI 0) = Just False
+constantBoolValue (BI 1) = Just True
+constantBoolValue _ = Nothing
+
+||| The (whenTrue, whenFalse) pair a two-way `LConstCase` decomposes
+||| into, if `alts`/`mDef` really do form an exhaustive match on
+||| Idris2's Bool encoding (`constantBoolValue`) -- either two explicit
+||| alts (one per value, in either order) or one explicit alt plus a
+||| default covering the other value. `Nothing` for anything else (a
+||| non-Boolean constant switch, or a shape too irregular to trust --
+||| e.g. a single alt with no default, which doesn't actually branch on
+||| the comparison at all), so the caller falls back to the ordinary,
+||| unfused `RConstCase` path unchanged.
+boolBranches : List (LiftedConstAlt vars) -> Maybe (Lifted vars) -> Maybe (Lifted vars, Lifted vars)
+boolBranches [MkLConstAlt c body] (Just other) =
+    case constantBoolValue c of
+         Just True  => Just (body, other)
+         Just False => Just (other, body)
+         Nothing    => Nothing
+boolBranches [MkLConstAlt c1 b1, MkLConstAlt c2 b2] Nothing =
+    case (constantBoolValue c1, constantBoolValue c2) of
+         (Just True, Just False) => Just (b1, b2)
+         (Just False, Just True) => Just (b2, b1)
+         _ => Nothing
+boolBranches _ _ = Nothing
+
 mutual
     ||| Normalise a single (possibly compound) sub-expression: if it's
     ||| already trivial (a local/erased/native-eligible-literal), no new
@@ -152,11 +205,15 @@ mutual
             alts' <- traverse (normalizeConAlt env) alts
             mDef' <- traverseOpt (normalize env) mDef
             pure $ RConCase fc scl alts' mDef')
-    normalize env (LConstCase fc sc alts mDef) =
-        bindOne env sc (\scl => do
-            alts' <- traverse (normalizeConstAlt env) alts
-            mDef' <- traverseOpt (normalize env) mDef
-            pure $ RConstCase fc scl alts' mDef')
+    normalize env (LConstCase fc sc alts mDef) = do
+        fused <- tryFuseCompare env sc alts mDef
+        case fused of
+             Just e => pure e
+             Nothing =>
+                 bindOne env sc (\scl => do
+                     alts' <- traverse (normalizeConstAlt env) alts
+                     mDef' <- traverseOpt (normalize env) mDef
+                     pure $ RConstCase fc scl alts' mDef')
     normalize env (LPrimVal fc c) = pure $ RPrimVal fc c
     normalize env (LErased fc) = pure $ RErased fc
     normalize env (LCrash fc msg) = pure $ RCrash fc msg
@@ -171,6 +228,43 @@ mutual
     normalizeConstAlt : {auto v : Ref NextVar Int} ->
                          Env -> LiftedConstAlt vars -> Core RConstAlt
     normalizeConstAlt env (MkLConstAlt c body) = MkRConstAlt c <$> normalize env body
+
+    ||| Shared body for each `tryFuseCompare` clause below -- factored out
+    ||| so the arity-2 refinement each specific comparison constructor
+    ||| brings (matched directly in the caller's own pattern, not via
+    ||| `Types.cmpArgTy`'s arity-generic signature, precisely so `op`'s
+    ||| arity unifies with `args`'s length automatically) only has to be
+    ||| written once.
+    tryFuseCompareOp : {auto v : Ref NextVar Int} ->
+                        Env -> FC -> PrimFn 2 -> PrimType -> Vect 2 (Lifted vars) ->
+                        List (LiftedConstAlt vars) -> Maybe (Lifted vars) -> Core (Maybe RCExp)
+    tryFuseCompareOp env fc op ty args alts mDef =
+        if not (nativeEligible ty)
+           then pure Nothing
+           else case boolBranches alts mDef of
+                     Nothing => pure Nothing
+                     Just (trueL, falseL) => do
+                         trueRC <- normalize env trueL
+                         falseRC <- normalize env falseL
+                         Just <$> bindManyV env args (\locs => pure $ RCmpCase fc op locs [] trueRC falseRC)
+
+    ||| If `sc` is a native-eligible boolean comparison (LT/GT/EQ/LTE/
+    ||| GTE) and `alts`/`mDef` together form a two-way match on Idris2's
+    ||| own Bool encoding (`boolBranches`), fuse the whole thing directly
+    ||| into an `RCmpCase`: neither the comparison's Boxed Bool result
+    ||| nor the scrutinee variable `bindOne` would otherwise introduce
+    ||| ever gets materialised. `Nothing` leaves `normalize`'s
+    ||| `LConstCase` case to fall through to its ordinary, unfused
+    ||| handling.
+    tryFuseCompare : {auto v : Ref NextVar Int} ->
+                      Env -> Lifted vars -> List (LiftedConstAlt vars) -> Maybe (Lifted vars) ->
+                      Core (Maybe RCExp)
+    tryFuseCompare env (LOp fc lazy (LT ty) args) alts mDef = tryFuseCompareOp env fc (LT ty) ty args alts mDef
+    tryFuseCompare env (LOp fc lazy (GT ty) args) alts mDef = tryFuseCompareOp env fc (GT ty) ty args alts mDef
+    tryFuseCompare env (LOp fc lazy (EQ ty) args) alts mDef = tryFuseCompareOp env fc (EQ ty) ty args alts mDef
+    tryFuseCompare env (LOp fc lazy (LTE ty) args) alts mDef = tryFuseCompareOp env fc (LTE ty) ty args alts mDef
+    tryFuseCompare env (LOp fc lazy (GTE ty) args) alts mDef = tryFuseCompareOp env fc (GTE ty) ty args alts mDef
+    tryFuseCompare _ _ _ _ = pure Nothing
 
 ||| args ordering matches Compiler.LambdaLift.MkLFun's own documented
 ||| convention: the emitted function takes `args` first, then `reverse
@@ -260,6 +354,7 @@ nativeLocalsR (RConCase _ _ alts mDef) =
 nativeLocalsR (RConstCase _ _ alts mDef) =
     let altsNs = map (\(MkRConstAlt _ body) => nativeLocalsR body) alts in
     concat $ maybe altsNs (\d => nativeLocalsR d :: altsNs) mDef
+nativeLocalsR (RCmpCase _ _ _ _ t f) = union (nativeLocalsR t) (nativeLocalsR f)
 nativeLocalsR _ = empty
 
 ||| Every genuine RCLoc used as an operand of a native op at a position
@@ -299,6 +394,17 @@ alwaysUnboxedBoxedLocalsR (RConCase _ _ alts mDef) =
 alwaysUnboxedBoxedLocalsR (RConstCase _ _ alts mDef) =
     let altsNs = map (\(MkRConstAlt _ body) => alwaysUnboxedBoxedLocalsR body) alts in
     concat $ maybe altsNs (\d => alwaysUnboxedBoxedLocalsR d :: altsNs) mDef
+alwaysUnboxedBoxedLocalsR (RCmpCase _ op args _ t f) =
+    let ownNs = case cmpArgTy op of
+                     Nothing => empty
+                     Just ty => if alwaysUnboxed ty
+                                   then fromList (filter isRealLoc (toList args))
+                                   else empty
+    in union ownNs (union (alwaysUnboxedBoxedLocalsR t) (alwaysUnboxedBoxedLocalsR f))
+  where
+    isRealLoc : RCLocal -> Bool
+    isRealLoc (RCLoc _) = True
+    isRealLoc _ = False
 alwaysUnboxedBoxedLocalsR _ = empty
 
 ||| Which of `vars` need a dup: thread (and shrink) `owned` exactly as
@@ -389,6 +495,31 @@ mutual
         pure $ wrapDups fc (splitBorrowsV natives owned args)
                           (ROp fc lazy op args (boxedOperands natives (toList args)))
     annotate natives owned (RExtPrim fc lazy p args) = pure $ RExtPrim fc lazy p args
+    annotate natives owned (RCmpCase fc op args _ t f) = do
+        -- Unlike ROp (always a "value" with the caller -- an enclosing
+        -- RLet -- responsible for pre-shrinking `owned` before handing
+        -- it over, see RLet's own borrowVal/owned' split above),
+        -- RCmpCase's own two continuations (t/f) mean *this* node must
+        -- do that shrinking itself: an owned arg that's never
+        -- referenced again in either branch is safe to fold into the
+        -- comparison's own read (a move, consumed by postDrop below,
+        -- no dup) and must NOT continue into `owned` for t/f -- passing
+        -- the *unrestricted* `owned` there would make each branch's own
+        -- `branchBody` (which drops anything owned it doesn't use) drop
+        -- the same already-consumed arg a second time. An owned arg
+        -- that *does* recur in a branch is left alone (splitBorrowsV
+        -- below sees it as needing a dup instead, exactly `splitBorrows`'s
+        -- ordinary borrow behaviour), same as any other owned local not
+        -- touched by this restriction.
+        let usedLater = union (freeLocalsR t) (freeLocalsR f)
+        let argsSet = fromList (toList args)
+        let deadArgs = intersection argsSet (owned `difference` usedLater)
+        let liveArgs = argsSet `difference` deadArgs
+        let ownedForBranches = owned `difference` deadArgs
+        t' <- branchBody natives ownedForBranches ownedForBranches t
+        f' <- branchBody natives ownedForBranches ownedForBranches f
+        pure $ wrapDups fc (splitBorrowsV natives (owned `difference` liveArgs) args)
+                          (RCmpCase fc op args (boxedOperands natives (toList args)) t' f')
     annotate natives owned (RConCase fc sc alts mDef) = do
         alts' <- traverse (annotateConAlt natives owned sc) alts
         mDef' <- traverseOpt (branchBody natives owned owned) mDef

@@ -12,11 +12,12 @@ The biggest lever left on the table. Native type inference
 function's ANF-normalized body -- every function argument and return
 value is always boxed, so native representations get boxed and reboxed
 at every call boundary. This is why `BENCHMARKS.md` shows a striking win
-for straight-line arithmetic (10x fewer memory-management operations in
-`BenchChain.idr`'s `poly`) but roughly parity with RefC for loop/
-recursion-heavy code (`BenchLoop.idr`, `BenchFib.idr`): the per-iteration
-call overhead dominates, swamping the native-arithmetic savings inside
-each call.
+for straight-line arithmetic (3x fewer memory-management operations in
+`BenchChain.idr`'s `poly`) while loop/recursion-heavy code
+(`BenchLoop.idr`, `BenchFib.idr`) sees a much smaller (though no longer
+zero, since comparison/branch fusion landed -- see `BENCHMARKS.md`)
+edge over RefC: the per-iteration call overhead still dominates,
+swamping the native-arithmetic savings inside each call.
 
 - **Dual calling convention.** Let native representations cross function
   boundaries for functions where it's provably safe (escape analysis +
@@ -31,19 +32,20 @@ each call.
 - **Mutual tail recursion loop-ification.** Same idea across a cycle of
   mutually tail-recursive functions. Out of scope even relative to the
   self-tail-call case above; falls back to the boxed trampoline.
-- **Comparison/branch fusion.** `LT`/`GT`/`EQ`/`LTE`/`GTE` currently
-  materialize a boxed `Bool` even when the result is immediately
-  consumed by a branch. Fusing comparison-then-branch to skip that
-  materialization is unimplemented.
 
 ## Scope: deliberately unboxed types stop at scalars
 
 `Integer` (GMP arbitrary precision) and `String` are never candidates
 for native-representation inference -- only fixed-width numeric types
-(`Int`, `Bits8`/`16`/`32`/`64`, `Int8`/`16`/`32`/`64`, `Double`). This is
-a deliberate scope boundary, not a bug, but revisiting it (e.g. a native
-"small string" representation) is plausible future work if profiling
-ever shows it matters.
+(`Int`, `Bits8`/`16`/`32`/`64`, `Int8`/`16`/`32`/`64`, `Double`, `Char`).
+This is a deliberate scope boundary, not a bug, but revisiting it (e.g.
+a native "small string" representation) is plausible future work if
+profiling ever shows it matters. Comparison/branch fusion (`RCmpCase`,
+see `Compiler.RC2.RC`'s `tryFuseCompare`) follows the same boundary --
+`LT`/`GT`/`EQ`/`LTE`/`GTE` over `Integer` or `String` still always
+materialize a boxed `Bool`, even when immediately consumed by a branch;
+only comparisons over the fixed-width/`Double`/`Char` types above skip
+that materialization.
 
 ## Concurrency: unchanged from RefC
 

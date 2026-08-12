@@ -139,6 +139,20 @@ mutual
        ||| ever fills it in.
        ROp        : {0 arity : Nat} -> FC -> (lazy : Maybe LazyReason) -> PrimFn arity -> Vect arity RCLocal -> (postDrop : List RCLocal) -> RCExp
        RExtPrim   : FC -> (lazy : Maybe LazyReason) -> Name -> List RCLocal -> RCExp
+       ||| A boolean comparison (LT/GT/EQ/LTE/GTE) fused directly into a
+       ||| two-way branch: `whenTrue`/`whenFalse` are taken according to
+       ||| the comparison's own result, with the Bool it would otherwise
+       ||| produce never materialised as a value at all (no heap
+       ||| allocation, no case-scrutinee variable). Only ever produced by
+       ||| Compiler.RC2.RC's Phase 1 `normalize`, when a comparison op is
+       ||| the sole, immediate scrutinee of a two-way match on Idris2's
+       ||| own Bool encoding (False=0/True=1) -- see `normalize`'s own
+       ||| `tryFuseCompare`. `postDrop` mirrors ROp's own field (see its
+       ||| doc comment): the comparison reads its operands and
+       ||| immediately branches, with no separate "moment" a wrapping
+       ||| RDrop could target either -- Phase 1 always constructs this as
+       ||| `[]`, only Phase 2 (`annotate`) fills it in.
+       RCmpCase   : FC -> PrimFn 2 -> Vect 2 RCLocal -> (postDrop : List RCLocal) -> (whenTrue : RCExp) -> (whenFalse : RCExp) -> RCExp
        RConCase   : FC -> RCLocal -> List RConAlt -> Maybe RCExp -> RCExp
        RConstCase : FC -> RCLocal -> List RConstAlt -> Maybe RCExp -> RCExp
        RPrimVal   : FC -> Constant -> RCExp
@@ -214,6 +228,8 @@ freeLocalsR (RLet _ var _ value body) =
 freeLocalsR (RCon _ _ _ _ args _) = fromList args
 freeLocalsR (ROp _ _ _ args _) = fromList (toList args)
 freeLocalsR (RExtPrim _ _ _ args) = fromList args
+freeLocalsR (RCmpCase _ _ args _ t f) =
+    union (fromList (toList args)) (union (freeLocalsR t) (freeLocalsR f))
 freeLocalsR (RConCase _ sc alts mDef) =
     let altsFree = map (\(MkRConAlt _ _ _ args body _) =>
                           difference (freeLocalsR body) (fromList (map RCLoc args))) alts
@@ -245,6 +261,8 @@ countUsesR l (RLet _ _ _ value body) = countUsesR l value + countUsesR l body
 countUsesR l (RCon _ _ _ _ args _) = length (filter (== l) args)
 countUsesR l (ROp _ _ _ args _) = length (filter (== l) (toList args))
 countUsesR l (RExtPrim _ _ _ args) = length (filter (== l) args)
+countUsesR l (RCmpCase _ _ args _ t f) =
+    length (filter (== l) (toList args)) + countUsesR l t + countUsesR l f
 countUsesR l (RConCase _ sc alts mDef) =
     (if sc == l then 1 else 0)
     + sum (map (\(MkRConAlt _ _ _ _ body _) => countUsesR l body) alts)
@@ -263,6 +281,7 @@ export
 usedConstructorsR : RCExp -> SortedSet Name
 usedConstructorsR (RLet _ _ _ value body) = union (usedConstructorsR value) (usedConstructorsR body)
 usedConstructorsR (RCon _ n _ _ _ _) = singleton n
+usedConstructorsR (RCmpCase _ _ _ _ t f) = union (usedConstructorsR t) (usedConstructorsR f)
 usedConstructorsR (RConCase _ _ alts mDef) =
     let altsCons = map (\(MkRConAlt _ _ _ _ body _) => usedConstructorsR body) alts
     in concat (maybe altsCons (\d => usedConstructorsR d :: altsCons) mDef)

@@ -313,6 +313,21 @@ nativeOpExpr DoubleFloor   [x] = "floor(" ++ x ++ ")"
 nativeOpExpr DoubleCeiling [x] = "ceil(" ++ x ++ ")"
 nativeOpExpr fn args = "0 /* [rc2] unreachable native op " ++ show fn ++ " */"
 
+||| The raw C boolean expression for a fused comparison (RCmpCase) --
+||| `x`/`y` are already-native-or-unboxed operand expressions (see
+||| `rcVarToNativeC`), same convention as `nativeOpExpr`. Unlike `cOp`'s
+||| own LT/GT/EQ/LTE/GTE handling (which calls a runtime function
+||| returning a freshly boxed Bool), this never allocates -- it's only
+||| ever embedded directly as an `if` condition by `emitRC`'s own
+||| RCmpCase case, the comparison's result never becomes a value at all.
+nativeCmpExpr : PrimFn 2 -> Vect 2 String -> String
+nativeCmpExpr (LT ty)  [x, y] = "(" ++ x ++ " < "  ++ y ++ ")"
+nativeCmpExpr (GT ty)  [x, y] = "(" ++ x ++ " > "  ++ y ++ ")"
+nativeCmpExpr (EQ ty)  [x, y] = "(" ++ x ++ " == " ++ y ++ ")"
+nativeCmpExpr (LTE ty) [x, y] = "(" ++ x ++ " <= " ++ y ++ ")"
+nativeCmpExpr (GTE ty) [x, y] = "(" ++ x ++ " >= " ++ y ++ ")"
+nativeCmpExpr fn _ = "0 /* [rc2] unreachable native comparison " ++ show fn ++ " */"
+
 
 rc2traverseVect : (a -> Core b) -> Vect n a -> Core (Vect n b)
 rc2traverseVect f [] = pure []
@@ -876,6 +891,34 @@ mutual
         -- RExtPrim); box any that happen to be native locals first.
         argStrs <- traverse rcVarToBoxedC args
         pure $ "idris2rc2_\{cName p}("++ showSep ", " argStrs ++")"
+
+    -- Lower a fused comparison branch (see RCExp.idr's own doc comment
+    -- on RCmpCase and `nativeCmpExpr`): the comparison is evaluated
+    -- once into a raw C `int` (no heap allocation for the Bool it would
+    -- otherwise be), `postDrop` (Compiler.RC2.RC's `annotate`) is
+    -- lowered immediately after -- same ordering rule as ROp's own
+    -- postDrop, see its doc comment -- and then exactly one of the two
+    -- branches runs.
+    emitRC (RCmpCase fc op args postDrop whenTrue whenFalse) tailPosition = do
+        case cmpArgTy op of
+             Nothing => throw $ InternalError "[rc2] RCmpCase: not a comparison op"
+             Just ty => do
+                 argStrs <- rc2traverseVect (rcVarToNativeC ty) args
+                 let condVar = "cmp_" ++ !(getNextCounter)
+                 emit fc $ "int " ++ condVar ++ " = " ++ nativeCmpExpr op argStrs ++ ";"
+                 removeVars $ map varName postDrop
+                 switchReturnVar <- getNewVarThatWillNotBeFreedAtEndOfBlock
+                 emit emptyFC "IDRIS2RC2_Value * \{switchReturnVar} = NULL;"
+                 emit emptyFC "if (\{condVar}) {"
+                 increaseIndentation
+                 emit emptyFC "\{switchReturnVar} = \{!(emitRC whenTrue tailPosition)};"
+                 decreaseIndentation
+                 emit emptyFC "} else {"
+                 increaseIndentation
+                 emit emptyFC "\{switchReturnVar} = \{!(emitRC whenFalse tailPosition)};"
+                 decreaseIndentation
+                 emit emptyFC "}"
+                 pure switchReturnVar
 
     emitRC (RConCase fc sc alts mDef) tailPosition = do
         let sc' = varName sc

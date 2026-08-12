@@ -105,6 +105,12 @@ mutual
         RConCase fc sc2 (map (tryConsumeAlt target sc) alts) (map (tryConsume target sc) mDef)
     tryConsume target sc (RConstCase fc sc2 alts mDef) =
         RConstCase fc sc2 (map (tryConsumeConstAlt target sc) alts) (map (tryConsume target sc) mDef)
+    -- A fused comparison branch (RCExp.idr's own RCmpCase) is exactly a
+    -- two-way case in every way this search cares about -- the search
+    -- continues into *both* whenTrue/whenFalse independently, same as
+    -- RConCase's own alts above.
+    tryConsume target sc (RCmpCase fc op args pd t f) =
+        RCmpCase fc op args pd (tryConsume target sc t) (tryConsume target sc f)
     tryConsume target sc e =
         -- A genuine terminal (RV/RAppName/RApp/RUnderApp/ROp/RExtPrim/
         -- RPrimVal/RErased/RCrash, or a bare tail-position RCon): claim it
@@ -126,9 +132,11 @@ mutual
 
 mutual
     ||| Walk the whole tree bottom-up, resolving every eligible RConCase
-    ||| alt's reuse offer along the way. Nodes with no nested RCExp of
-    ||| their own (RV, RAppName, RUnderApp, RApp, RCon, ROp, RExtPrim,
-    ||| RPrimVal, RErased, RCrash) have nothing to recurse into.
+    ||| alt's reuse offer along the way (RCmpCase's own two branches get
+    ||| the same treatment as RConCase's alts, just with no scrutinee of
+    ||| their own to ever offer). Nodes with no nested RCExp of their own
+    ||| (RV, RAppName, RUnderApp, RApp, RCon, ROp, RExtPrim, RPrimVal,
+    ||| RErased, RCrash) have nothing to recurse into.
     export
     resolveReuse : RCExp -> RCExp
     resolveReuse (RLet fc var rep value body) =
@@ -141,6 +149,8 @@ mutual
         RConCase fc sc (map (resolveAlt sc) alts) (map resolveReuse mDef)
     resolveReuse (RConstCase fc sc alts mDef) =
         RConstCase fc sc (map resolveConstAlt alts) (map resolveReuse mDef)
+    resolveReuse (RCmpCase fc op args pd t f) =
+        RCmpCase fc op args pd (resolveReuse t) (resolveReuse f)
     resolveReuse e = e
 
     resolveConstAlt : RConstAlt -> RConstAlt
