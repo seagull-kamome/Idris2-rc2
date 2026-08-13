@@ -158,7 +158,8 @@ else     { ret = idris2rc2_mkBits8(0); }
 パッケージ [`idris2-missing-containers`](https://github.com/seagull-kamome/idris2-missing-containers)
 (ハッシュテーブル・ハッシュアルゴリズム集、`Data.IOArray.Prims`のFFIプリミティブ・
 `System.Clock`・`System.File`を実際に使用)をcloneし、その `test/` を `--cg rc2`
-と本家 `idris2 --cg refc` の両方でコンパイル・実行して比較した。
+・本家 `idris2 --cg refc`・本家のデフォルトバックエンドである Chez Scheme
+(`idris2`、`--cg`省略)の3通りでコンパイル・実行して比較した。
 
 ### セットアップ
 
@@ -173,12 +174,14 @@ source /path/to/idris2-rc-cg/env.sh
 nix-shell -p idris2 gmp pkg-config --run \
   '/path/to/rc2/build/exec/idris2-rc2 --install missing-containers.ipkg'
 
-# test/src/Main.idr を両バックエンドで直接コンパイル
+# test/src/Main.idr を3バックエンドで直接コンパイル
 cd test/src
 nix-shell -p idris2 gmp pkg-config --run \
   '/path/to/rc2/build/exec/idris2-rc2 --cg rc2 -p missing-containers -p contrib Main.idr -o mct_rc2'
 nix-shell -p idris2 gmp pkg-config --run \
   'idris2 --cg refc -p missing-containers -p contrib Main.idr -o mct_refc'
+nix-shell -p idris2 gmp pkg-config chez --run \
+  'idris2 -p missing-containers -p contrib Main.idr -o mct_chez'   # --cg省略 = Chez Scheme(デフォルト)
 ```
 
 `test/test.ipkg` は `hashable >= 0.1.0` にも依存すると宣言しているが、
@@ -199,21 +202,27 @@ nix-shell -p idris2 gmp pkg-config --run \
 
 ### 結果(壁時計時間、3回実行)
 
-| 実行 | rc2 | RefC |
-|---|---|---|
-| 1回目 | 16.829s | 21.465s |
-| 2回目 | 17.591s | 21.554s |
-| 3回目 | 17.465s | 22.107s |
-| 平均 | **17.30s** | **21.71s** |
+| 実行 | rc2 | RefC | Chez Scheme |
+|---|---|---|---|
+| 1回目 | 16.829s | 21.465s | 7.149s |
+| 2回目 | 17.591s | 21.554s | 7.049s |
+| 3回目 | 17.465s | 22.107s | 7.067s |
+| 平均 | **17.30s** | **21.71s** | **7.09s** |
 
-rc2が平均で**約20%高速**(RefC比 1.25倍)。両者とも `testHashMap` は3件とも `✓`、
-`dict`/`words`の件数も一致し、出力は `codegen = rc2` / `codegen = refc` の行を除いて
-構造的に完全一致(挙動の差異なし)。
+rc2はRefC比で平均**約20%高速**(1.25倍)。ただしCの2バックエンド(rc2/RefC)は
+どちらもChez Schemeに大きく水をあけられている(rc2比でChezが**2.4倍高速**、
+RefC比では**3.1倍高速**)。3者とも `testHashMap` は3件とも `✓`、`dict`/`words`の
+件数も一致し、出力は `codegen = ...` の行を除いて構造的に完全一致(挙動の差異なし)。
 
 支配的なのは `benchmarkHashMap` の `write`(辞書985,690件の`IOHashMap`書き込み)
-フェーズで、rc2側では11.4秒程度、全体の実行時間の大半を占めていた
-(下記の注記の通りRefC側は秒精度のクロックしか出さないため直接の秒未満比較は
-できないが、壁時計の総実行時間差はこのフェーズに起因すると考えられる)。
+フェーズで、rc2側では11.4秒程度、Chez側では4.0秒程度と、全体の実行時間の大半を
+占めていた(下記の注記の通りRefC側は秒精度のクロックしか出さないため直接の
+秒未満比較はできないが、壁時計の総実行時間差はこのフェーズに起因すると考えられる)。
+ChezのGC(世代別・コピーGC)は非atomic参照カウント(rc2/RefC共通のモデル)に比べ、
+このワークロードが大量に生成する短命な小オブジェクト(ハッシュ計算の中間値、
+`IOHashMap`のバケット再配置に伴う一時配列など)の回収コストが本質的に低いと
+考えられ、CバックエンドどうしのRefC比較で見えていた最適化の差(約20%)よりも
+桁違いに大きい差がランタイム・GC戦略の違いから生じている。
 
 ### 注記: 本家RefCの`System.Clock`は秒精度
 
@@ -226,28 +235,44 @@ rc2が平均で**約20%高速**(RefC比 1.25倍)。両者とも `testHashMap` �
 上記「結果」表の壁時計比較(外部の`time`)はこの制約を受けないため、こちらを
 主たる比較指標とした。
 
-参考までにrc2側のプログラム内タイミング(ナノ秒精度、1回分):
+参考までにrc2・Chezそれぞれのプログラム内タイミング(いずれもナノ秒精度、1回分。
+ChezはIdris2本家のデフォルトバックエンドで、rc2と同様`clock_gettime`相当の
+高精度実装を持つため、RefCと異なり直接比較できる):
 
-| フェーズ | rc2 |
-|---|---|
-| FNV1a(words全件) | 0.322s |
-| MurMur3(words全件) | 0.282s |
-| OneAtATime(words全件) | 0.245s |
-| Sip64(words全件) | 0.507s |
-| Sip32(words全件) | 0.492s |
-| write(dict全件、985,690件) | 11.39s |
-| read(words全件、98,569件) | 0.974s |
+| フェーズ | rc2 | Chez Scheme |
+|---|---|---|
+| FNV1a(words全件) | 0.322s | 0.126s |
+| MurMur3(words全件) | 0.282s | 0.092s |
+| OneAtATime(words全件) | 0.245s | 0.048s |
+| Sip64(words全件) | 0.507s | 0.764s |
+| Sip32(words全件) | 0.492s | 0.228s |
+| write(dict全件、985,690件) | 11.39s | 4.03s |
+| read(words全件、98,569件) | 0.974s | 0.282s |
+
+ほぼ全フェーズでChezが優位だが、`Sip64`のみrc2の方が速い(0.507s対0.764s) --
+唯一の逆転現象。SipHashは他の4アルゴリズムと異なり64bit演算主体で分岐が少ない
+ため、この1点だけはCネイティブコード生成(+比較/分岐融合等の最適化)がChezの
+GC効率の良さを上回ったと考えられるが、詳細な原因分析はしていない。
 
 ### 結論
 
 rc2独自のマイクロベンチマークだけでなく、外部の第三者パッケージによる文字列
-ハッシュ・ハッシュテーブル中心の実ワークロードでも、RefCに対して一貫して優位
-(約20%高速)であることを確認した。このワークロードは関数呼び出し境界を
-頻繁にまたぐ(`IOHashMap`の`read`/`write`は毎回IORef経由のセル参照・比較・
+ハッシュ・ハッシュテーブル中心の実ワークロードでも、同じCベースのRefCに対しては
+一貫して優位(約20%高速)であることを確認した。このワークロードは関数呼び出し
+境界を頻繁にまたぐ(`IOHashMap`の`read`/`write`は毎回IORef経由のセル参照・比較・
 文字列ハッシュ計算を呼び出し規約Boxedのまま行う)にもかかわらず優位を維持して
 おり、上記の`BenchFib`同様、比較/分岐融合(RCmpCase)や常時タグ付きポインタの
 dup/drop省略など、関数境界の内側で効く最適化の効果が積み重なって現れていると
 考えられる。
+
+一方でIdris2本家のデフォルトバックエンドであるChez Schemeには、rc2・RefC
+いずれも大差(rc2比2.4倍、RefC比3.1倍)をつけられた。これは正直に記録して
+おくべき結果で、rc2の設計目標はあくまで「RefCというCベースの既存バックエンドを
+同じ設計(非atomic参照カウント、C出力)の範囲内でどこまで最適化できるか」で
+あり、Chezの世代別GCという根本的に異なるメモリ管理戦略に対する優位性は
+主張しない(そもそも目指していない)。参照カウントベースの設計を維持する限り、
+このワークロードのような「大量の短命な小オブジェクトを生成し続ける」パターンに
+おいてGCベースの処理系との差は原理的に縮まりにくいと考えられる。
 
 ## 再現方法
 
