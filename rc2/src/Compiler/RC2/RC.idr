@@ -152,6 +152,24 @@ mutual
         case litRep c of
              Just _  => k (RCConst c)
              Nothing => bindCompound env e k
+    bindOne env e@(LCon fc n ci tag []) k =
+        -- A zero-argument constructor operand never needs a synthetic
+        -- let either -- there's no field data to store, only a tag (or,
+        -- for these four, nothing at all) to remember, and (as with
+        -- RCConst above) no sharing/evaluation-order reason to name it.
+        -- `Nil`/`Nothing`/`Z`/`MkUnit` reuse the existing `RCNull`
+        -- representation (Emit.idr already renders *these specific
+        -- four* as a bare NULL and matches on NULL-vs-non-NULL, see its
+        -- RCon/RConCase cases -- unchanged by this); every other tagged
+        -- nullary constructor gets `RCEmptyCon` (see RCExp.idr's module
+        -- note). An untagged nullary constructor (matched by name, not
+        -- common) falls through to the general RLet+RCon path, same as
+        -- a non-native-eligible constant above.
+        if ci == NIL || ci == NOTHING || ci == ZERO || ci == UNIT
+           then k RCNull
+           else case tag of
+                     Just t  => k (RCEmptyCon n ci t)
+                     Nothing => bindCompound env e k
     bindOne env e k = bindCompound env e k
 
     bindCompound : {auto v : Ref NextVar Int} ->
@@ -429,11 +447,16 @@ alwaysUnboxedBoxedLocalsR _ = empty
 ||| needed), any later occurrence (or one that was never owned to begin
 ||| with) needs a dup -- except a `natives`-listed local, which never needs
 ||| a dup (or any refcount op at all) no matter how it's used. An
-||| `RCConst` is skipped the same way as a native -- it was never a real
-||| heap value to begin with (see RCExp.idr's module note on RCLocal).
+||| `RCConst`/`RCEmptyCon` are skipped the same way as a native -- neither
+||| was ever a real heap value to begin with (see RCExp.idr's module note
+||| on RCLocal); `RCNull` is skipped for the same reason (it's always
+||| either an erased value or one of the four NULL-mapped nullary
+||| constructors, see `bindOne` -- never a real refcounted heap value).
 splitBorrows : (natives : SortedSet RCLocal) -> Owned -> List RCLocal -> List RCLocal
 splitBorrows _ _ [] = []
+splitBorrows natives owned (RCNull :: vars) = splitBorrows natives owned vars
 splitBorrows natives owned (RCConst _ :: vars) = splitBorrows natives owned vars
+splitBorrows natives owned (RCEmptyCon {} :: vars) = splitBorrows natives owned vars
 splitBorrows natives owned (v :: vars) =
     if contains v natives
         then splitBorrows natives owned vars
@@ -462,6 +485,7 @@ boxedOperands natives = filter isBoxedOperand
     isBoxedOperand : RCLocal -> Bool
     isBoxedOperand RCNull = False
     isBoxedOperand (RCConst _) = False
+    isBoxedOperand (RCEmptyCon {}) = False
     isBoxedOperand v = not (contains v natives)
 
 ||| Promote a plain `RNative ty` to `RInlineNative ty` once ownership is

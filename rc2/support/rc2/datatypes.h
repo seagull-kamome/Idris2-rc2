@@ -103,6 +103,19 @@ typedef struct {
   IDRIS2RC2_Value *args[];
 } IDRIS2RC2_Constructor;
 
+// A zero-argument, tagged data constructor other than Nil/Nothing/Z/
+// MkUnit (those four are represented as a bare NULL instead, matched by
+// NULL-vs-non-NULL -- see Compiler.RC2.Emit's RCon/RConCase) has no
+// fields to store, so it's represented the same way as any other small
+// unboxed scalar: its own tag packed into a tagged pointer (see
+// RCEmptyCon in Compiler.RC2.RCExp), never a real IDRIS2RC2_Constructor
+// allocation. A scrutinee of such a type can therefore be *either* a
+// tagged pointer or a real heap IDRIS2RC2_Constructor* depending on
+// which alternative it happens to hold at runtime, so any tag-based
+// dispatch (Compiler.RC2.Emit's RConCase) must check is_unboxed first
+// rather than always dereferencing as a heap object.
+#define idris2rc2_conTag(p) (idris2rc2_is_unboxed(p) ? (int32_t)idris2rc2_to_u32(p) : ((IDRIS2RC2_Constructor *)(p))->tag)
+
 typedef struct {
   IDRIS2RC2_Header header;
   void *fn; // cast to the right arity's function pointer type to call

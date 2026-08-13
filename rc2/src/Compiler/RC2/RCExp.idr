@@ -68,36 +68,65 @@ import Data.Vect
 ||| sets, `natives`, RDup/RDrop/RFree targets) must treat RCConst like a
 ||| native local -- excluded, never touched -- see RC.idr's
 ||| `splitBorrows`.
+|||
+||| `RCEmptyCon` is the same idea applied to a zero-argument, *tagged*
+||| data constructor other than `Nil`/`Nothing`/`Z`/`MkUnit` (those four
+||| keep going through the ordinary RCon -> RLet path unchanged, since
+||| Compiler.RC2.Emit already renders them as a bare C `NULL` at
+||| construction and matches them by NULL-vs-non-NULL -- see its
+||| `emitRC`'s RCon/RConCase cases -- and `bindOne` maps them directly to
+||| `RCNull` instead, reusing that existing representation rather than
+||| this one). Every *other* nullary tagged constructor construction
+||| (`f Red`, `MkFoo True Nothing`, ...) needs no heap allocation either
+||| -- there's nothing to store, only a tag to remember -- so
+||| Compiler.RC2.RC's Phase 1 (`bindOne`) produces this directly instead
+||| of an RLet+RCon, the same way it does for RCConst; Compiler.RC2.Emit
+||| renders it inline as a tagged-pointer constant expression
+||| (`varName`) with no C declaration. Untagged nullary constructors
+||| (matched by name, not by tag -- rare) aren't covered and still go
+||| through the general RCon path. Treated identically to RCConst for
+||| ownership purposes everywhere RCConst is excluded (RC.idr's
+||| `splitBorrows`/`isBoxedOperand`).
 public export
 data RCLocal : Type where
-     RCLoc   : Int -> RCLocal
-     RCNull  : RCLocal
-     RCConst : Constant -> RCLocal
+     RCLoc      : Int -> RCLocal
+     RCNull     : RCLocal
+     RCConst    : Constant -> RCLocal
+     RCEmptyCon : Name -> ConInfo -> Int -> RCLocal
 
 export
 Eq RCLocal where
   (RCLoc i1) == (RCLoc i2) = i1 == i2
   RCNull == RCNull = True
   (RCConst c1) == (RCConst c2) = c1 == c2
+  (RCEmptyCon n1 _ t1) == (RCEmptyCon n2 _ t2) = n1 == n2 && t1 == t2
   _ == _ = False
 
 export
 Ord RCLocal where
-  compare (RCLoc i1)   (RCLoc i2)   = compare i1 i2
-  compare (RCLoc _)    RCNull       = GT
-  compare (RCLoc _)    (RCConst _)  = GT
-  compare RCNull       (RCLoc _)    = LT
-  compare RCNull       RCNull       = EQ
-  compare RCNull       (RCConst _)  = GT
-  compare (RCConst _)  (RCLoc _)    = LT
-  compare (RCConst _)  RCNull       = LT
-  compare (RCConst c1) (RCConst c2) = compare c1 c2
+  compare (RCLoc i1)      (RCLoc i2)      = compare i1 i2
+  compare (RCLoc _)       RCNull          = GT
+  compare (RCLoc _)       (RCConst _)     = GT
+  compare (RCLoc _)       (RCEmptyCon {}) = GT
+  compare RCNull          (RCLoc _)       = LT
+  compare RCNull          RCNull          = EQ
+  compare RCNull          (RCConst _)     = GT
+  compare RCNull          (RCEmptyCon {}) = GT
+  compare (RCConst _)     (RCLoc _)       = LT
+  compare (RCConst _)     RCNull          = LT
+  compare (RCConst c1)    (RCConst c2)    = compare c1 c2
+  compare (RCConst _)     (RCEmptyCon {}) = GT
+  compare (RCEmptyCon {}) (RCLoc _)       = LT
+  compare (RCEmptyCon {}) RCNull          = LT
+  compare (RCEmptyCon {}) (RCConst _)     = LT
+  compare (RCEmptyCon n1 _ t1) (RCEmptyCon n2 _ t2) = compare n1 n2 <+> compare t1 t2
 
 export
 Show RCLocal where
   show (RCLoc i) = "v" ++ show i
   show RCNull = "[__]"
   show (RCConst c) = "#" ++ show c
+  show (RCEmptyCon n _ t) = "#" ++ show n ++ "@" ++ show t
 
 ||| The representation Compiler.RC2.RC decided for an RLet-bound local,
 ||| computed during the Lifted -> RCExp conversion itself (see RC.idr's

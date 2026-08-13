@@ -230,6 +230,15 @@ varName (RCNull)  = "NULL"
 -- RCConst before anything falls back to reading its "variable name" (it
 -- never had one -- see RCExp.idr's module note). Kept total regardless.
 varName (RCConst _) = "/* [rc2] unreachable RCConst varName */"
+-- Unlike RCConst, this *is* the real rendering path (not just a
+-- defensive fallback): a nullary constructor's value is already
+-- Value*-shaped, not a native scalar that would need boxing via
+-- nativeMk, so it needs no RNative/InlineMap detour -- just a bare
+-- tagged-pointer constant expression, exactly like RCNull's "NULL"
+-- above. Reuses idris2rc2_mkBits32 as-is (identical bit pattern to a
+-- dedicated constructor-tag encoding, and every constructor tag fits
+-- comfortably in 32 bits) rather than adding a new runtime function.
+varName (RCEmptyCon _ _ tag) = "idris2rc2_mkBits32(\{show tag})"
 
 ------------------------------------------------------------------------
 -- Native (unboxed) codegen, driven by Compiler.RC2.Types' Rep inference.
@@ -506,6 +515,9 @@ repOfLocal RCNull = pure RBoxed
 -- is always RNative in practice; the RBoxed fallback is unreachable
 -- defensive totality, not a real code path.
 repOfLocal (RCConst c) = pure $ maybe RBoxed RNative (litRep c)
+-- Always Boxed, same as RCNull -- its value is already a valid Value*
+-- (a tagged pointer, per varName above), never a native scalar.
+repOfLocal (RCEmptyCon {}) = pure RBoxed
 repOfLocal (RCLoc i) = do
     reps <- get RepMap
     pure $ fromMaybe RBoxed (SortedMap.lookup i reps)
@@ -517,6 +529,9 @@ repOfLocal (RCLoc i) = do
 inlineExprFor : {auto lm : Ref InlineMap (SortedMap Int String)} -> RCLocal -> Core (Maybe String)
 inlineExprFor RCNull = pure Nothing
 inlineExprFor (RCConst c) = pure $ Just (nativeLitExpr c)
+-- Nothing, same as RCNull: rendered directly by varName, not through
+-- the InlineMap/RNative detour (see repOfLocal above).
+inlineExprFor (RCEmptyCon {}) = pure Nothing
 inlineExprFor (RCLoc i) = do
     inlined <- get InlineMap
     pure $ SortedMap.lookup i inlined
@@ -726,6 +741,7 @@ keepBoxedLocals locs = do
     -- Always native by construction (RC.idr's bindOne only ever
     -- produces RCConst for a litRep-covered literal) -- never Boxed.
     isBoxed reps (RCConst _) = False
+    isBoxed reps (RCEmptyCon {}) = False
     isBoxed reps (RCLoc i) = case SortedMap.lookup i reps of
                                   Just (RNative _) => False
                                   Just (RInlineNative _) => False
@@ -1059,8 +1075,17 @@ mutual
                 then emit emptyFC "\{els}if (NULL != \{sc'} /* \{show name} \{show coninfo} */) {"
                 else do
                     case tag of
+                        -- Untagged (name-compared) constructors are
+                        -- never zero-argument+tagged, so RCEmptyCon
+                        -- never covers them -- sc' is always a real
+                        -- heap IDRIS2RC2_Constructor* here.
                         Nothing   => emit emptyFC "\{els}if (! strcmp(((IDRIS2RC2_Constructor *)\{sc'})->name, idris2rc2_constr_\{cName name})) {"
-                        Just tag' => emit emptyFC "\{els}if (((IDRIS2RC2_Constructor *)\{sc'})->tag == \{show tag'} /* \{show name} */) {"
+                        -- sc' may be a tagged pointer (a zero-argument
+                        -- constructor of *this* ADT, see RCEmptyCon in
+                        -- RCExp.idr) as well as a real heap
+                        -- IDRIS2RC2_Constructor* -- idris2rc2_conTag
+                        -- (support/rc2/datatypes.h) checks which.
+                        Just tag' => emit emptyFC "\{els}if (idris2rc2_conTag(\{sc'}) == \{show tag'} /* \{show name} */) {"
 
             increaseIndentation
             _ <- foldlC (\k, arg => do

@@ -3,6 +3,19 @@
 Newest first. Each entry corresponds to one commit on `master`; see
 `git log` for full commit messages.
 
+## 2026-08-13 -- Avoid a synthetic let for zero-argument constructor operands
+
+`RCLocal` gains `RCEmptyCon` (mirroring `RCConst`): a zero-argument,
+tagged constructor other than `Nil`/`Nothing`/`Z`/`MkUnit` (which reuse
+the existing `RCNull`/NULL representation) used as an operand now
+inlines directly as a tagged-pointer constant, no `var_N` or heap
+allocation. Fixed a real segfault the change surfaced: `RConCase`'s
+dispatch always dereferenced its scrutinee as a heap
+`IDRIS2RC2_Constructor*`, which broke once such a scrutinee could also
+be a tagged pointer -- added `idris2rc2_conTag` to check first. Found
+via `Prelude.Show.Prec` (a mixed nullary/non-nullary ADT) in practice,
+not just `Test8EmptyCon.idr`'s own synthetic case.
+
 ## 2026-08-13 -- Move numeric.c's one-line functions into numeric.h as static inline
 
 Lets the C compiler inline basic arithmetic/comparison/cast at call
