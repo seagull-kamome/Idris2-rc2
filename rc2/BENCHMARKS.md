@@ -163,6 +163,8 @@ else     { ret = idris2rc2_mkBits8(0); }
 ### セットアップ
 
 ```sh
+# clone under install/ -- gitignored wholesale, no per-repo .gitignore entry needed
+cd /path/to/idris2-rc-cg/install
 git clone https://github.com/seagull-kamome/idris2-missing-containers.git
 cd idris2-missing-containers
 source /path/to/idris2-rc-cg/env.sh

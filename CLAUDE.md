@@ -9,7 +9,11 @@ overview, history, and known gaps.
 - `idris2-src/` — reference clone of upstream Idris2 (gitignored,
   read-only, never edited; re-fetch via
   `git clone https://github.com/idris-lang/Idris2.git idris2-src`)
-- `install/` — build output (gitignored)
+- `install/` — build output (gitignored). Also the place to `git clone`
+  any external package needed only temporarily (e.g. for a one-off
+  benchmark comparison) -- everything under `install/` is already
+  gitignored wholesale, so nothing needs adding to `.gitignore` per
+  clone. Don't clone such things at the repo root.
 - `rc2/` — the actual deliverable (own package, own runtime, own tests)
 - `rc2/doc/` — implementation deep-dives for specific compiler passes,
   meant to let a future session regain context without re-deriving the
