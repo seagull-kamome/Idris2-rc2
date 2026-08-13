@@ -241,7 +241,7 @@ mutual
     normalizeConAlt env (MkLConAlt n ci tag args body) = do
         argIds <- traverse (const nextVarId) args
         bodyRC <- normalize (argIds ++ env) body
-        pure $ MkRConAlt n ci tag argIds bodyRC Nothing
+        pure $ MkRConAlt n ci tag argIds bodyRC
 
     normalizeConstAlt : {auto v : Ref NextVar Int} ->
                          Env -> LiftedConstAlt vars -> Core RConstAlt
@@ -366,7 +366,7 @@ dropDeadLet fc natives RBoxed loc value body =
 ||| cases (they only differ in which function they recurse with).
 foldConAltsR : (RCExp -> SortedSet RCLocal) -> List RConAlt -> Maybe RCExp -> SortedSet RCLocal
 foldConAltsR f alts mDef =
-    let altsNs = map (\(MkRConAlt _ _ _ _ body _) => f body) alts in
+    let altsNs = map (\(MkRConAlt _ _ _ _ body) => f body) alts in
     concat $ maybe altsNs (\d => f d :: altsNs) mDef
 
 ||| As `foldConAltsR`, for `RConstAlt`.
@@ -605,6 +605,12 @@ mutual
     -- total (as a plain pass-through) rather than assuming that can
     -- never change.
     annotate natives owned (RReleaseReuse fc v body) = RReleaseReuse fc v <$> annotate natives owned body
+    -- Never actually produced until Compiler.RC2.Reuse runs, which is
+    -- strictly after annotate is done with the whole definition (see
+    -- RReuseOffer's own doc comment) -- kept total (as a plain
+    -- pass-through), same reasoning as RReleaseReuse just above.
+    annotate natives owned (RReuseOffer fc sc dupOnShared body) =
+        RReuseOffer fc sc dupOnShared <$> annotate natives owned body
     -- Never actually produced until Compiler.RC2.Loop runs, which is
     -- strictly after annotate is done with the whole definition (it
     -- rewrites already-annotated RAppName nodes in tail position, see
@@ -613,7 +619,7 @@ mutual
     annotate natives owned (RSelfTailCall fc args) = pure $ RSelfTailCall fc args
 
     annotateConAlt : SortedSet RCLocal -> Owned -> RCLocal -> RConAlt -> Core RConAlt
-    annotateConAlt natives owned sc (MkRConAlt name ci tag args body _) = do
+    annotateConAlt natives owned sc (MkRConAlt name ci tag args body) = do
         -- Matching NIL/NOTHING/ZERO/UNIT consumes `sc` itself (it was only
         -- ever a NULL check, no heap object to keep owning).
         let erased = ci == NIL || ci == NOTHING || ci == ZERO || ci == UNIT
@@ -623,10 +629,10 @@ mutual
         let ownedWithArgs = union (fromList (RCLoc <$> args) `difference` natives)
                                    (if erased then delete sc owned else owned)
         bodyRC <- branchBody natives ownedWithArgs body
-        -- offersReuse stays Nothing -- Compiler.RC2.Reuse decides that
+        -- No RReuseOffer here yet -- Compiler.RC2.Reuse decides that
         -- afterward, using the RDrop list this produces (see its own
         -- module note).
-        pure $ MkRConAlt name ci tag args bodyRC Nothing
+        pure $ MkRConAlt name ci tag args bodyRC
 
     annotateConstAlt : SortedSet RCLocal -> Owned -> RConstAlt -> Core RConstAlt
     annotateConstAlt natives owned (MkRConstAlt c body) = MkRConstAlt c <$> branchBody natives owned body

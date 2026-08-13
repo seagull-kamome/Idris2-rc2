@@ -5,7 +5,7 @@ module Compiler.RC2.Emit
 -- decision, and the constructor-reuse-in-place decision were already made
 -- by Compiler.RC2.RC/Compiler.RC2.Reuse and are baked into the tree as
 -- data (explicit RDup/RDrop/RFree nodes, RLet's Rep field, RCon's
--- reuseFrom, RConAlt's offersReuse, RReleaseReuse). This module never
+-- reuseFrom, RReuseOffer, RReleaseReuse). This module never
 -- (re)analyses any of those; it just maintains a small incrementally-built
 -- `RepMap` so that a *use* of a local (which only carries its RCLocal id)
 -- can look back up the Rep its binding RLet already decided. Every local
@@ -601,18 +601,18 @@ rcVarToNativeC ty l = do
 reuseVarName : RCLocal -> String
 reuseVarName sc = "reuse_" ++ varName sc
 
-||| Lower an RConAlt's `offersReuse` (see its own doc comment): declare
-||| the reservation variable and emit the runtime uniqueness check that
-||| either repurposes `sc`'s storage in place or (if `sc` turned out
-||| shared) drops it normally -- dup'ing whichever of the destructured
-||| field variables (`conArgs`) are still alive (i.e. not already in
-||| `shouldDrop`, the branch's own drop list) first, since `sc`'s own
-||| teardown would otherwise recursively drop them out from under
-||| whatever still needs them.
+||| Mechanically lower an `RReuseOffer` node (see its own doc comment in
+||| RCExp.idr): declare the reservation variable and emit the runtime
+||| uniqueness check that either repurposes `sc`'s storage in place or
+||| (if `sc` turned out shared) dup's every entry in `dupOnShared` --
+||| already exactly the set that needs it, precomputed by
+||| Compiler.RC2.Reuse -- and drops `sc` normally. A fixed template,
+||| the same shape every time; no set computation of any kind happens
+||| here.
 emitReuseOffer : {auto oft : Ref OutfileText Output}
                -> {auto il : Ref IndentLevel Nat}
-               -> RCLocal -> (conArgs : List String) -> (shouldDrop : List String) -> Core ()
-emitReuseOffer sc conArgs shouldDrop = do
+               -> RCLocal -> (dupOnShared : List RCLocal) -> Core ()
+emitReuseOffer sc dupOnShared = do
     let sc' = varName sc
     let reuseVar = reuseVarName sc
     emit EmptyFC $ "IDRIS2RC2_Constructor* " ++ reuseVar ++ " = NULL;"
@@ -622,7 +622,7 @@ emitReuseOffer sc conArgs shouldDrop = do
     decreaseIndentation
     emit EmptyFC "} else {"
     increaseIndentation
-    dupVars (conArgs \\ shouldDrop)
+    dupVars (varName <$> dupOnShared)
     removeVars [sc']
     decreaseIndentation
     emit EmptyFC "}"
@@ -842,7 +842,7 @@ splitLast xs = case reverse xs of
 ||| whether scrutinee `sc'` (already rendered via `varName`) matches
 ||| `alt`'s own constructor.
 conAltCondExpr : String -> RConAlt -> Core String
-conAltCondExpr sc' (MkRConAlt name coninfo tag args body offersReuse) = do
+conAltCondExpr sc' (MkRConAlt name coninfo tag args body) = do
     let erased = coninfo == NIL || coninfo == NOTHING || coninfo == ZERO || coninfo == UNIT
     pure $ if erased then "NULL == \{sc'} /* \{show name} \{show coninfo} */"
            else if coninfo == CONS || coninfo == JUST || coninfo == SUCC
@@ -984,6 +984,9 @@ mutual
     tryEmitSelfTailCall (RReleaseReuse fc loc cont) = do
         removeReuseConstructors [reuseVarName loc]
         tryEmitSelfTailCall cont
+    tryEmitSelfTailCall (RReuseOffer fc sc dupOnShared cont) = do
+        emitReuseOffer sc dupOnShared
+        tryEmitSelfTailCall cont
     tryEmitSelfTailCall (RSelfTailCall fc newArgs) = do
         fnArgs <- get FunctionArgs
         temps <- traverse (\v => do
@@ -1047,6 +1050,9 @@ mutual
         tryBuildClosureInto sink tailPosition body
     tryBuildClosureInto sink tailPosition (RReleaseReuse fc loc cont) = do
         removeReuseConstructors [reuseVarName loc]
+        tryBuildClosureInto sink tailPosition cont
+    tryBuildClosureInto sink tailPosition (RReuseOffer fc sc dupOnShared cont) = do
+        emitReuseOffer sc dupOnShared
         tryBuildClosureInto sink tailPosition cont
     tryBuildClosureInto sink _ (RUnderApp fc n missing args) = do
         buildClosureIntoSink fc sink n args missing
@@ -1146,12 +1152,11 @@ mutual
                          finalizeSink fc sink valStr
 
     ||| A case branch (or default): emit the drops RC.idr's `annotate`
-    ||| already decided on (the peeled leading RDrop), preceded by the
-    ||| mechanical lowering of a reuse offer if Compiler.RC2.Reuse left
-    ||| one on this alt (`offersReuse`, see RConAlt's own doc comment --
-    ||| `Nothing` for every non-matched-constructor branch, since only a
-    ||| matched constructor scrutinee can ever be offered), then the
-    ||| body itself. Mirrors RC2/RefC's `concaseBody`.
+    ||| already decided on (the peeled leading RDrop), then the body
+    ||| itself (an `RReuseOffer`, if Compiler.RC2.Reuse left one on this
+    ||| alt, is just part of that body now -- `emitInto`'s own peeling
+    ||| chain lowers it mechanically like any other wrapper, nothing
+    ||| special-cased here). Mirrors RC2/RefC's `concaseBody`.
     |||
     ||| `matched`, when `Just (sc, conArgs)`, means this branch destructured
     ||| `conArgs` directly out of `sc`'s own storage (`sc->args[k]`) --
@@ -1163,19 +1168,22 @@ mutual
     ||| `conArgs` entries that *are* already dying are deliberately left
     ||| out of the flat drop list -- their release comes for free from
     ||| however `sc` itself gets torn down (ordinary recursive
-    ||| idris2rc2_drop, or the reuse check below), so dropping them a
-    ||| second time here would double-free. This applies unconditionally
-    ||| to *every* matched-constructor branch, not only ones offering
-    ||| reuse -- it's what makes destructured fields safe to keep using at
-    ||| all, independent of whether Compiler.RC2.Reuse ever fires.
+    ||| idris2rc2_drop), so dropping them a second time here would
+    ||| double-free. This applies unconditionally to *every*
+    ||| matched-constructor branch that ISN'T a reuse offer.
     |||
-    ||| `offersReuse` additionally selects, only for `sc` itself, and only
-    ||| when `sc` is actually in the peeled drop list, whether its own
-    ||| release goes through the ordinary path (a plain drop, folded into
-    ||| the same flat removeVars call as everything else) or the reuse
-    ||| uniqueness check (`emitReuseOffer`). `sc` not being in the drop
-    ||| list at all (still owned elsewhere) means nothing is emitted for
-    ||| it here either way.
+    ||| A reuse-eligible alt's own body already starts with an
+    ||| `RReuseOffer` wrapping `sc` (see Compiler.RC2.Reuse's module
+    ||| note) -- that node fully owns `sc`'s own release *and* every
+    ||| surviving field's dup on its own (`dupOnShared`, precomputed
+    ||| there; the peeled `shouldDrop` here is already `sc`/its
+    ||| fields-free by construction), so this function must NOT also
+    ||| apply its generic survivor-dup rule on top of it -- doing so
+    ||| anyway would unconditionally dup every destructured field a
+    ||| second time, leaking a reference. Recognising that shape here is
+    ||| pattern matching on already-decided IR structure, the same as
+    ||| everywhere else in this module (e.g. `emitInto`'s own dispatch on
+    ||| `remaining`) -- not a fresh decision.
     branchBody : {auto a : Ref ArgCounter Nat}
                -> {auto oft : Ref OutfileText Output}
                -> {auto il : Ref IndentLevel Nat}
@@ -1183,24 +1191,19 @@ mutual
                -> {auto r : Ref RepMap (SortedMap Int Rep)}
                -> {auto lm : Ref InlineMap (SortedMap Int String)}
                -> {auto fa : Ref FunctionArgs (List Int)}
-               -> (matched : Maybe (RCLocal, List String)) -> (offersReuse : Bool)
+               -> (matched : Maybe (RCLocal, List String))
                -> Sink -> RCExp -> TailPositionStatus -> Core ()
-    branchBody matched offersReuse sink body tailPosition = do
+    branchBody matched sink body tailPosition = do
         let (shouldDrop0, body') = peelDrop body
         -- shouldDrop0 is already guaranteed Boxed-only -- see the
         -- module note.
         let shouldDrop = varName <$> shouldDrop0
-        case matched of
-             Nothing => removeVars shouldDrop
-             Just (sc, conArgs) => do
-                 let sc' = varName sc
-                 if offersReuse
-                    then do
-                        emitReuseOffer sc conArgs shouldDrop
-                        removeVars (shouldDrop \\ (sc' :: conArgs))
-                    else do
-                        dupVars (conArgs \\ shouldDrop)
-                        removeVars (shouldDrop \\ conArgs)
+        case (matched, body') of
+             (Nothing, _) => removeVars shouldDrop
+             (Just _, RReuseOffer {}) => removeVars shouldDrop
+             (Just (sc, conArgs), _) => do
+                 dupVars (conArgs \\ shouldDrop)
+                 removeVars (shouldDrop \\ conArgs)
         -- `sink` is already fully resolved -- any variable it names was
         -- declared once by the enclosing RConCase/RConstCase/RCmpCase
         -- before any branch ran (see `resolveSink`), or it's `SinkReturn`
@@ -1221,12 +1224,12 @@ mutual
                    -> {auto lm : Ref InlineMap (SortedMap Int String)}
                    -> {auto fa : Ref FunctionArgs (List Int)}
                    -> Sink -> TailPositionStatus -> RCLocal -> RConAlt -> Core ()
-    emitConAltBody sink tailPosition sc (MkRConAlt name coninfo tag args body offersReuse) = do
+    emitConAltBody sink tailPosition sc (MkRConAlt name coninfo tag args body) = do
         let sc' = varName sc
         _ <- foldlC (\k, arg => do
             emit emptyFC "IDRIS2RC2_Value *var_\{show arg} = ((IDRIS2RC2_Constructor*)\{sc'})->args[\{show k}];"
             pure (S k) ) 0 args
-        branchBody (Just (sc, varName . RCLoc <$> args)) (isJust offersReuse) sink body tailPosition
+        branchBody (Just (sc, varName . RCLoc <$> args)) sink body tailPosition
 
     ||| Lower a fused comparison branch (see RCExp.idr's own doc comment
     ||| on RCmpCase and `nativeCmpExpr`): the comparison is evaluated once
@@ -1293,7 +1296,7 @@ mutual
         emitAltChain resolvedSink
             (conAltCondExpr sc')
             (emitConAltBody resolvedSink tailPosition sc)
-            (map (\body => branchBody Nothing False resolvedSink body tailPosition) mDef)
+            (map (\body => branchBody Nothing resolvedSink body tailPosition) mDef)
             alts
 
     ||| Lower a constant/tag switch: same "each alt writes straight into
@@ -1312,7 +1315,7 @@ mutual
     emitConstCaseInto sink tailPosition fc sc alts def = do
         let sc' = varName sc
         resolvedSink <- resolveSink fc sink
-        let defaultAction = map (\body => branchBody Nothing False resolvedSink body tailPosition) def
+        let defaultAction = map (\body => branchBody Nothing resolvedSink body tailPosition) def
         case integer_switch alts of
             True => do
                 tmpint <- getNewVarThatWillNotBeFreedAtEndOfBlock
@@ -1323,7 +1326,7 @@ mutual
                 emit emptyFC "int64_t \{tmpint} = \{extractExpr};"
                 emitAltChain resolvedSink
                     (\(MkRConstAlt c _) => pure "\{tmpint} == \{const2Integer c 0}")
-                    (\(MkRConstAlt _ body) => branchBody Nothing False resolvedSink body tailPosition)
+                    (\(MkRConstAlt _ body) => branchBody Nothing resolvedSink body tailPosition)
                     defaultAction
                     alts
 
@@ -1333,7 +1336,7 @@ mutual
                         Str x => pure "! strcmp(\{cStringQuoted x}, ((IDRIS2RC2_String *)\{sc'})->str)"
                         Db  x => pure "((IDRIS2RC2_Double *)\{sc'})->v == \{show x}"
                         x => throw $ InternalError "[rc2] RConstCase : unsupported type. \{show fc} \{show x}")
-                    (\(MkRConstAlt _ body) => branchBody Nothing False resolvedSink body tailPosition)
+                    (\(MkRConstAlt _ body) => branchBody Nothing resolvedSink body tailPosition)
                     defaultAction
                     alts
 
@@ -1519,6 +1522,7 @@ mutual
     emitRC (RDup fc loc cont) _ = throw $ InternalError "[rc2] RDup reached emitRC directly (not intercepted by emitInto/tryBuildClosureInto)"
     emitRC (RFree fc loc cont) _ = throw $ InternalError "[rc2] RFree reached emitRC directly (not intercepted by emitInto/tryBuildClosureInto)"
     emitRC (RReleaseReuse fc loc cont) _ = throw $ InternalError "[rc2] RReleaseReuse reached emitRC directly (not intercepted by emitInto/tryBuildClosureInto)"
+    emitRC (RReuseOffer fc sc dupOnShared cont) _ = throw $ InternalError "[rc2] RReuseOffer reached emitRC directly (not intercepted by emitInto/tryBuildClosureInto)"
 
     ||| The raw C expression for a value Compiler.RC2.Types has decided is
     ||| Native ty -- only ROp/RPrimVal ever get marked this way.

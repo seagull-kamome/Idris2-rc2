@@ -4,11 +4,16 @@ module Compiler.RC2.Reuse
 -- Phase-1+2'd RCExp tree (Compiler.RC2.RC's normalize+annotate already
 -- done), after which Compiler.RC2.Emit lowers the whole thing to C
 -- purely mechanically. This used to be an Emit.idr-level, stateful
--- analysis (a name-keyed ReuseMap threaded through C emission); this
--- module makes the same decision instead, as data on the IR itself
--- (RConAlt's `offersReuse`, RCon's `reuseFrom`, and the new
--- `RReleaseReuse` node -- see their own doc comments in RCExp.idr),
--- leaving Emit.idr nothing to decide.
+-- analysis (a name-keyed ReuseMap threaded through C emission, and
+-- later, even after that map was replaced by data on the IR, the
+-- runtime uniqueness-check *branch itself* was still synthesised fresh
+-- by Emit.idr's own `emitReuseOffer` every time -- the one remaining
+-- piece of "new control flow Emit invents" that wasn't actually data);
+-- this module now makes and encodes the *entire* decision as IR data
+-- (RCon's `reuseFrom`, the new `RReuseOffer` node, and
+-- `RReleaseReuse`), leaving Emit.idr nothing to decide or synthesise --
+-- see `RReuseOffer`'s own doc comment in RCExp.idr for the exact node
+-- it lowers to.
 --
 -- The protocol, per RConCase alt (`resolveAlt`):
 --   1. An alt is *eligible* when its own scrutinee `sc` is about to be
@@ -18,16 +23,25 @@ module Compiler.RC2.Reuse
 --      build another constructor of the exact same name somewhere
 --      (`usedConstructorsR`).
 --   2. If eligible: `sc` is pulled out of the flat drop list (its fate
---      becomes the offer instead of an unconditional drop) and
---      `offersReuse` is set to `Just sc`; `tryConsume` then walks the
---      body looking for the first reachable (per execution path)
+--      becomes the offer instead of an unconditional drop), and the
+--      alt's own body is rewritten to `RReuseOffer sc dupOnShared
+--      inner'` (wrapped, if anything else is still due to be dropped
+--      unconditionally alongside it, in an ordinary leading `RDrop`) --
+--      `dupOnShared` is exactly the alt's own destructured fields that
+--      survive past this point (they were read straight out of `sc`'s
+--      own storage, so anything still live needs an explicit reference
+--      of its own before `sc`'s potential recursive teardown frees them
+--      out from under it -- same "destructured via aliasing" rule
+--      RC.idr's own `branchBody`-adjacent analysis already applies to
+--      an *ordinary* matched alt, just precomputed here instead of
+--      re-derived at emission time). `tryConsume` then walks `inner'`
+--      looking for the first reachable (per execution path)
 --      not-yet-claimed RCon of the matching name to mark
 --      `reuseFrom = Just sc`, inserting `RReleaseReuse fc sc` on every
 --      path that doesn't reach one, so the reservation is never lost.
 --   3. Ineligible alts, and the default branch (no known scrutinee
---      shape to reuse), are left with `offersReuse = Nothing` --
---      Emit.idr just does an ordinary drop for whatever's in their flat
---      list.
+--      shape to reuse), are left entirely alone -- an ordinary flat
+--      drop list, no `RReuseOffer` anywhere in their body.
 --
 -- Resolution proceeds bottom-up (`resolveReuse` recurses into a body
 -- *before* deciding the enclosing alt's own eligibility), so by the
@@ -101,6 +115,13 @@ mutual
     -- Not actually produced yet at the point this pass runs (nothing
     -- upstream inserts it) -- kept total rather than assumed unreachable.
     tryConsume target sc (RReleaseReuse fc v body) = RReleaseReuse fc v (tryConsume target sc body)
+    -- *Is* genuinely reachable here, unlike RReleaseReuse above:
+    -- resolution proceeds bottom-up (see the module note), so `inner`
+    -- may already contain an RReuseOffer a nested alt's own eligibility
+    -- check produced during the recursive `resolveReuse body` call that
+    -- ran before this search ever started.
+    tryConsume target sc (RReuseOffer fc sc2 dupOnShared body) =
+        RReuseOffer fc sc2 dupOnShared (tryConsume target sc body)
     tryConsume target sc (RConCase fc sc2 alts mDef) =
         RConCase fc sc2 (map (tryConsumeAlt target sc) alts) (map (tryConsume target sc) mDef)
     tryConsume target sc (RConstCase fc sc2 alts mDef) =
@@ -124,8 +145,8 @@ mutual
              Nothing => RReleaseReuse emptyFC sc e
 
     tryConsumeAlt : Name -> RCLocal -> RConAlt -> RConAlt
-    tryConsumeAlt target sc (MkRConAlt name ci tag args body offersReuse) =
-        MkRConAlt name ci tag args (tryConsume target sc body) offersReuse
+    tryConsumeAlt target sc (MkRConAlt name ci tag args body) =
+        MkRConAlt name ci tag args (tryConsume target sc body)
 
     tryConsumeConstAlt : Name -> RCLocal -> RConstAlt -> RConstAlt
     tryConsumeConstAlt target sc (MkRConstAlt c body) = MkRConstAlt c (tryConsume target sc body)
@@ -157,12 +178,28 @@ mutual
     resolveConstAlt (MkRConstAlt c body) = MkRConstAlt c (resolveReuse body)
 
     resolveAlt : RCLocal -> RConAlt -> RConAlt
-    resolveAlt sc (MkRConAlt name ci tag args body _) =
+    resolveAlt sc (MkRConAlt name ci tag args body) =
         let body1 = resolveReuse body
             erased = ci == NIL || ci == NOTHING || ci == ZERO || ci == UNIT
             (dropped, inner) = peelDrop body1
         in if not erased && elem sc dropped && contains name (usedConstructorsR inner)
               then let inner' = tryConsume name sc inner
+                       -- `sc`'s own fate is now the offer, not an
+                       -- unconditional drop -- pulled out of the flat
+                       -- list either way.
                        dropped' = dropped \\ [sc]
-                   in MkRConAlt name ci tag args (rewrapDrop dropped' inner') (Just sc)
-              else MkRConAlt name ci tag args body1 Nothing
+                       conArgsRC = map RCLoc args
+                       -- Surviving destructured fields need their own
+                       -- dup on the "turned out shared" path (see
+                       -- RReuseOffer's own doc comment); fields already
+                       -- in `dropped'` don't -- their release comes free
+                       -- from `sc`'s own recursive drop there.
+                       dupOnShared = conArgsRC \\ dropped'
+                       -- Everything else in `dropped'` (unrelated to the
+                       -- destructured fields) still needs an ordinary,
+                       -- unconditional drop regardless of which way the
+                       -- uniqueness check goes.
+                       outerDrop = dropped' \\ conArgsRC
+                   in MkRConAlt name ci tag args
+                        (rewrapDrop outerDrop (RReuseOffer emptyFC sc dupOnShared inner'))
+              else MkRConAlt name ci tag args body1

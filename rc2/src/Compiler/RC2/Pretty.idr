@@ -76,13 +76,14 @@ mutual
   prettyExp d (RDrop _ vs body) = indent d ++ "drop " ++ show vs ++ "\n" ++ prettyExp d body
   prettyExp d (RFree _ v body) = indent d ++ "free " ++ show v ++ "\n" ++ prettyExp d body
   prettyExp d (RReleaseReuse _ v body) = indent d ++ "releaseReuse " ++ show v ++ "\n" ++ prettyExp d body
+  prettyExp d (RReuseOffer _ sc dupOnShared body) =
+      indent d ++ "reuseOffer " ++ show sc ++ " dupOnShared=" ++ show dupOnShared ++ "\n" ++ prettyExp d body
   prettyExp d (RSelfTailCall _ args) = indent d ++ "tailcall self " ++ show args ++ "\n"
 
   prettyConAlt : Nat -> RConAlt -> String
-  prettyConAlt d (MkRConAlt n ci tag args body offersReuse) =
+  prettyConAlt d (MkRConAlt n ci tag args body) =
       indent d ++ show n ++ " " ++ show ci ++ " tag=" ++ show tag
-        ++ " args=" ++ show (map RCLoc args)
-        ++ maybe "" (\r => " offersReuse=" ++ show r) offersReuse ++ " ->\n"
+        ++ " args=" ++ show (map RCLoc args) ++ " ->\n"
       ++ prettyExp (d + 1) body
 
   prettyConstAlt : Nat -> RConstAlt -> String

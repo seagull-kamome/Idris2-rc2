@@ -47,7 +47,7 @@ mutual
   ||| "Tail position" here is the exact same structural set
   ||| Compiler.RC2.Emit's TailPositionStatus threading already visits
   ||| when lowering to C -- RLet's body; RDup/RDrop/RFree/
-  ||| RReleaseReuse's continuation; RCmpCase's two branches;
+  ||| RReleaseReuse/RReuseOffer's continuation; RCmpCase's two branches;
   ||| RConCase/RConstCase's alts and default. Operand positions (RCon's
   ||| args, ROp's operands, RApp's own callee/arg, an RAppName's *own*
   ||| arguments, ...) are never visited: a call sitting there isn't in
@@ -84,6 +84,9 @@ mutual
   mapTailAppNames f (RReleaseReuse fc v cont) =
       let (found, cont') = mapTailAppNames f cont
       in (found, RReleaseReuse fc v cont')
+  mapTailAppNames f (RReuseOffer fc sc dupOnShared cont) =
+      let (found, cont') = mapTailAppNames f cont
+      in (found, RReuseOffer fc sc dupOnShared cont')
   mapTailAppNames f (RCmpCase fc op args postDrop t g) =
       let (foundT, t') = mapTailAppNames f t
           (foundG, g') = mapTailAppNames f g
@@ -103,9 +106,9 @@ mutual
   mapTailAppNames _ e = (False, e)
 
   mapTailAppNamesAlt : (FC -> Name -> List RCLocal -> Maybe RCExp) -> RConAlt -> (Bool, RConAlt)
-  mapTailAppNamesAlt f (MkRConAlt name ci tag args body offersReuse) =
+  mapTailAppNamesAlt f (MkRConAlt name ci tag args body) =
       let (found, body') = mapTailAppNames f body
-      in (found, MkRConAlt name ci tag args body' offersReuse)
+      in (found, MkRConAlt name ci tag args body')
 
   mapTailAppNamesConstAlt : (FC -> Name -> List RCLocal -> Maybe RCExp) -> RConstAlt -> (Bool, RConstAlt)
   mapTailAppNamesConstAlt f (MkRConstAlt c body) =

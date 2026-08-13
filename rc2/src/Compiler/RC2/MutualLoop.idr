@@ -110,12 +110,13 @@ mutual
   collectBoundIds (RDrop _ _ body) = collectBoundIds body
   collectBoundIds (RFree _ _ body) = collectBoundIds body
   collectBoundIds (RReleaseReuse _ _ body) = collectBoundIds body
+  collectBoundIds (RReuseOffer _ _ _ body) = collectBoundIds body
   -- RV, RAppName, RUnderApp, RApp, RCon, ROp, RExtPrim, RPrimVal,
   -- RErased, RCrash, RSelfTailCall: no subexpressions, no bindings.
   collectBoundIds _ = []
 
   collectBoundIdsAlt : RConAlt -> List Int
-  collectBoundIdsAlt (MkRConAlt _ _ _ args body _) = args ++ collectBoundIds body
+  collectBoundIdsAlt (MkRConAlt _ _ _ args body) = args ++ collectBoundIds body
 
   collectBoundIdsConstAlt : RConstAlt -> List Int
   collectBoundIdsConstAlt (MkRConstAlt _ body) = collectBoundIds body
@@ -172,11 +173,13 @@ mutual
   renameRCExp ren (RDrop fc vars body) = RDrop fc (renameLocals ren vars) (renameRCExp ren body)
   renameRCExp ren (RFree fc v body) = RFree fc (renameLocal ren v) (renameRCExp ren body)
   renameRCExp ren (RReleaseReuse fc v body) = RReleaseReuse fc (renameLocal ren v) (renameRCExp ren body)
+  renameRCExp ren (RReuseOffer fc sc dupOnShared body) =
+      RReuseOffer fc (renameLocal ren sc) (renameLocals ren dupOnShared) (renameRCExp ren body)
   renameRCExp ren (RSelfTailCall fc args) = RSelfTailCall fc (renameLocals ren args)
 
   renameConAlt : Renaming -> RConAlt -> RConAlt
-  renameConAlt ren (MkRConAlt name ci tag args body offersReuse) =
-      MkRConAlt name ci tag (map (renameId ren) args) (renameRCExp ren body) (renameMaybeLocal ren offersReuse)
+  renameConAlt ren (MkRConAlt name ci tag args body) =
+      MkRConAlt name ci tag (map (renameId ren) args) (renameRCExp ren body)
 
   renameConstAlt : Renaming -> RConstAlt -> RConstAlt
   renameConstAlt ren (MkRConstAlt c body) = MkRConstAlt c (renameRCExp ren body)
@@ -193,9 +196,10 @@ tailCallTargets (RDup _ _ body) = tailCallTargets body
 tailCallTargets (RDrop _ _ body) = tailCallTargets body
 tailCallTargets (RFree _ _ body) = tailCallTargets body
 tailCallTargets (RReleaseReuse _ _ body) = tailCallTargets body
+tailCallTargets (RReuseOffer _ _ _ body) = tailCallTargets body
 tailCallTargets (RCmpCase _ _ _ _ t f) = union (tailCallTargets t) (tailCallTargets f)
 tailCallTargets (RConCase _ _ alts mDef) =
-    let altsT = map (\(MkRConAlt _ _ _ _ body _) => tailCallTargets body) alts
+    let altsT = map (\(MkRConAlt _ _ _ _ body) => tailCallTargets body) alts
     in concat (maybe altsT (\d => tailCallTargets d :: altsT) mDef)
 tailCallTargets (RConstCase _ _ alts mDef) =
     let altsT = map (\(MkRConstAlt _ body) => tailCallTargets body) alts

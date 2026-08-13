@@ -3,6 +3,25 @@
 Newest first. Each entry corresponds to one commit on `master`; see
 `git log` for full commit messages.
 
+## 2026-08-13 -- Represent constructor-reuse's runtime check as IR (RReuseOffer)
+
+The reuse-eligible-alt uniqueness check (`if (idris2rc2_isUnique(sc))
+{...} else {...}`) used to be synthesized fresh by Emit.idr's
+`emitReuseOffer` every time, computing its own dup/drop sets at
+emission time -- the one remaining piece of new control flow Emit
+invented rather than mechanically lowered. New `RReuseOffer` IR node
+(replacing `RConAlt`'s `offersReuse` flag) lets Compiler.RC2.Reuse
+encode the whole thing as data, including the exact dup-on-shared set;
+Emit.idr now only ever renders a fixed template. Fixed a double-dup bug
+this surfaced: `branchBody`'s own generic "destructured fields survive,
+dup them" rule needed to recognize and skip a reuse-wrapped alt (which
+already fully owns that dup on its own, conditionally) instead of
+applying on top of it unconditionally.
+
+Verified: generated C for `refc-suite/reuse` is exactly the expected
+shape (no double-dup); 19/19 refc-suite tests and all smoke tests
+still match `idris2 --cg refc` byte-for-byte; benchmarks unaffected.
+
 ## 2026-08-13 -- Add `--directive dumprcexp` to dump the final RCExp
 
 New `Compiler.RC2.Pretty` renders the whole program's final RCExp
