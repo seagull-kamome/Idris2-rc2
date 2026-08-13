@@ -3,6 +3,15 @@
 Newest first. Each entry corresponds to one commit on `master`; see
 `git log` for full commit messages.
 
+## 2026-08-13 -- Remove keepBoxedLocals, confirmed dead code
+
+Verified (TODO.md's "Architecture" note) that `RC.idr`'s `Owned` set --
+the sole source of every `RDrop` node -- only ever gains members at
+three sites, all of which already exclude `natives`-listed locals and
+only ever insert genuine `RCLoc`s. `keepBoxedLocals`'s Emit-time
+Native/RCConst/RCEmptyCon/RCNull re-filter in front of every `RDrop`
+lowering could therefore never actually remove anything; removed.
+
 ## 2026-08-13 -- Avoid a synthetic let for zero-argument constructor operands
 
 `RCLocal` gains `RCEmptyCon` (mirroring `RCConst`): a zero-argument,

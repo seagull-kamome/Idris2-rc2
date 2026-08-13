@@ -15,6 +15,18 @@ module Compiler.RC2.Emit
 -- RDup/RDrop/RFree node earlier in the tree, which this module just
 -- lowers to the matching runtime call.
 --
+-- In particular, an `RDrop`'s own var list never needs re-filtering
+-- here: Compiler.RC2.RC's `Owned` set (the sole source of every
+-- `RDrop` it produces, via `dropUnusedOwnedVars`'s set-difference) only
+-- ever gains members at three sites (a function's own args, an RLet's
+-- own bound var, an RConAlt's own destructured args), and all three
+-- exclude `natives`-listed locals and only ever insert genuine `RCLoc`s
+-- -- never `RCConst`/`RCEmptyCon`/`RCNull`. A `keepBoxedLocals`
+-- Native/RCConst/RCEmptyCon/RCNull re-filter used to sit in front of
+-- every `RDrop` lowering below as a defensive measure; removed once
+-- this was confirmed airtight (see TODO.md's former "Architecture"
+-- note on this exact question).
+--
 -- A few things this module still *does* decide (deliberately, not an
 -- oversight -- see TODO.md's "Architecture" section for the two left
 -- unaddressed):
@@ -727,26 +739,6 @@ peelDrop : RCExp -> (List RCLocal, RCExp)
 peelDrop (RDrop _ locs cont) = (locs, cont)
 peelDrop e = ([], e)
 
-||| Native locals have no refcount at all -- filter them out of any drop
-||| list RC.idr produced (it only ever reasons about Boxed ownership).
-||| A local not (yet) present in RepMap is a function argument (only
-||| RLet-bound locals are ever recorded there) and is always Boxed.
-keepBoxedLocals : {auto r : Ref RepMap (SortedMap Int Rep)} -> List RCLocal -> Core (List RCLocal)
-keepBoxedLocals locs = do
-    reps <- get RepMap
-    pure $ filter (isBoxed reps) locs
-  where
-    isBoxed : SortedMap Int Rep -> RCLocal -> Bool
-    isBoxed reps RCNull = False
-    -- Always native by construction (RC.idr's bindOne only ever
-    -- produces RCConst for a litRep-covered literal) -- never Boxed.
-    isBoxed reps (RCConst _) = False
-    isBoxed reps (RCEmptyCon {}) = False
-    isBoxed reps (RCLoc i) = case SortedMap.lookup i reps of
-                                  Just (RNative _) => False
-                                  Just (RInlineNative _) => False
-                                  _ => True
-
 ||| If `value` is a partial application (RUnderApp), or an InTailPosition
 ||| tail call (RAppName -- see emitRC's own RAppName case, which only
 ||| ever produces a bare closure name in that tail position, never
@@ -769,8 +761,8 @@ tryBuildClosureInto declare target tailPosition (RDup fc v cont) = do
     dupVars [varName v]
     tryBuildClosureInto declare target tailPosition cont
 tryBuildClosureInto declare target tailPosition (RDrop fc vs cont) = do
-    boxedLocs <- keepBoxedLocals vs
-    removeVars (varName <$> boxedLocs)
+    -- `vs` is already guaranteed Boxed-only -- see the module note.
+    removeVars (varName <$> vs)
     tryBuildClosureInto declare target tailPosition cont
 tryBuildClosureInto declare target tailPosition (RFree fc v cont) = do
     freeVars [varName v]
@@ -888,8 +880,9 @@ mutual
                -> String -> RCExp -> TailPositionStatus -> Core ()
     branchBody matched offersReuse returnvar body tailPosition = do
         let (shouldDrop0, body') = peelDrop body
-        shouldDropLocs <- keepBoxedLocals shouldDrop0
-        let shouldDrop = varName <$> shouldDropLocs
+        -- shouldDrop0 is already guaranteed Boxed-only -- see the
+        -- module note.
+        let shouldDrop = varName <$> shouldDrop0
         case matched of
              Nothing => removeVars shouldDrop
              Just (sc, conArgs) => do
@@ -1188,8 +1181,8 @@ mutual
     emitRC (RErased fc) _ = pure "NULL"
     emitRC (RCrash fc x) _ = pure "(NULL /* CRASH */)"
     emitRC (RDrop fc locs cont) tailPosition = do
-        boxedLocs <- keepBoxedLocals locs
-        removeVars (varName <$> boxedLocs)
+        -- locs is already guaranteed Boxed-only -- see the module note.
+        removeVars (varName <$> locs)
         emitRC cont tailPosition
     emitRC (RDup fc loc cont) tailPosition = do
         dupVars [varName loc]
@@ -1278,8 +1271,8 @@ mutual
         freeVars [varName loc]
         emitNativeValue ty cont
     emitNativeValue ty (RDrop fc locs cont) = do
-        boxedLocs <- keepBoxedLocals locs
-        removeVars (varName <$> boxedLocs)
+        -- locs is already guaranteed Boxed-only -- see the module note.
+        removeVars (varName <$> locs)
         emitNativeValue ty cont
     emitNativeValue ty (RReleaseReuse fc loc cont) = do
         removeReuseConstructors [reuseVarName loc]
