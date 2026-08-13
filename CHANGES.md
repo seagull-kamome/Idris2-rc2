@@ -3,6 +3,15 @@
 Newest first. Each entry corresponds to one commit on `master`; see
 `git log` for full commit messages.
 
+## 2026-08-13 -- Move numeric.c's one-line functions into numeric.h as static inline
+
+Lets the C compiler inline basic arithmetic/comparison/cast at call
+sites instead of always paying for a real function call. Kept
+`div_Integer` (real algorithm), `mpz_lsb` and its 9 dependent
+`cast_Integer_to_*` callers (helper is `static`, not itself a
+one-liner), and the string-conversion functions (multi-statement) in
+`numeric.c`.
+
 ## 2026-08-13 -- Fuse native comparisons directly into two-way branches (RCmpCase)
 
 A comparison (`LT`/`GT`/`EQ`/`LTE`/`GTE`) feeding straight into a
