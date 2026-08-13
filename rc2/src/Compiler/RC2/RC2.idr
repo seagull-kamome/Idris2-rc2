@@ -12,6 +12,7 @@ module Compiler.RC2.RC2
 
 import Compiler.RC2.CC
 import Compiler.RC2.Emit
+import Compiler.RC2.Pretty
 import Compiler.RC2.RC
 import Compiler.RC2.RCExp
 import Compiler.RC2.Reuse
@@ -21,7 +22,9 @@ import Compiler.RC2.Loop
 import Compiler.Common
 import Compiler.LambdaLift
 
+import Core.Context
 import Core.Directory
+import Core.Options
 
 import Idris.Syntax
 
@@ -64,6 +67,22 @@ compileExpr c s _ outputDir tm outfile =
      coreLift_ $ mkdirAll outputDir
      cdata <- getCompileData False Lifted tm
      defs <- toRCDefs (lambdaLifted cdata)
+
+     -- `--directive dumprcexp`: dump the final RCExp -- this exact
+     -- `defs`, after Reuse/MutualLoop/Loop have all run, i.e. precisely
+     -- what generateCSourceFile is about to consume -- to a human-
+     -- readable `.crexpr` file next to the `.c` output. Purely a
+     -- debugging aid (see Pretty.idr's own module note); idris2-src's
+     -- own generic `--dumplifted`/`--dumpanf`/etc. hooks (wired
+     -- entirely inside Compiler.Common.getCompileDataWith, already used
+     -- above via getCompileData) don't reach this far -- RCExp only
+     -- exists after rc2's own toRCDefs runs. `--directive` is upstream
+     -- idris2's own generic per-invocation string passthrough (see
+     -- Compiler.ES.Codegen's own "minimal"/"compact" directives for
+     -- precedent), so this needs no changes to idris2-src at all.
+     sess <- getSession
+     when ("dumprcexp" `elem` directives sess) $
+         coreLift_ $ writeFile (outputDir </> outfile ++ ".crexpr") (prettyProgram defs)
 
      generateCSourceFile defs outn
      Just _ <- compileCObjectFile outn outobj

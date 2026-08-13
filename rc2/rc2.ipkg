@@ -13,6 +13,7 @@ modules = Compiler.RC2.CC,
           Compiler.RC2.Loop,
           Compiler.RC2.MutualLoop,
           Compiler.RC2.Emit,
+          Compiler.RC2.Pretty,
           Compiler.RC2.RC2,
           Main
 

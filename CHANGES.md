@@ -3,6 +3,16 @@
 Newest first. Each entry corresponds to one commit on `master`; see
 `git log` for full commit messages.
 
+## 2026-08-13 -- Add `--directive dumprcexp` to dump the final RCExp
+
+New `Compiler.RC2.Pretty` renders the whole program's final RCExp
+(after Reuse/MutualLoop/Loop -- exactly what Emit.idr consumes) as a
+human-readable, indented text file, written next to the `.c` output as
+`<outfile>.crexpr` whenever `--directive dumprcexp` is passed. Reuses
+upstream idris2's own generic `--directive` passthrough (`session.
+directives`, the same mechanism Chez/ES use for their own directives),
+so this needed no changes to idris2-src.
+
 ## 2026-08-13 -- Drop braces/indentation from bare trailing case branches
 
 Follow-up to the else-chaining removal: under `SinkReturn`, a case's
