@@ -658,6 +658,20 @@ rcVarToNativeC : {auto a : Ref ArgCounter Nat}
               -> {auto r : Ref RepMap (SortedMap Int Rep)}
               -> {auto lm : Ref InlineMap (SortedMap Int String)}
               -> PrimType -> RCLocal -> Core String
+-- `RCNull` here is never a real value to unbox -- it only ever reaches
+-- this function as one of Compiler.RC2.MutualLoop's own `RCNull`
+-- padding slots (a smaller-arity member's unused trailing loop param,
+-- see `buildGroup`'s own `padded`), reaching a param
+-- Compiler.RC2.Loop's native-shadow promotion happened to promote to
+-- `RNative` because some *other* member of the same merged group does
+-- read that slot natively -- MutualLoop's own invariant ("members with
+-- a smaller arity simply never reference their own unused trailing
+-- slots") guarantees this specific value is never actually read on the
+-- path that receives it. `nativeUnbox`'s ordinary `RBoxed` case would
+-- otherwise unbox a literal C `NULL`, straight into a null-pointer
+-- dereference in the runtime accessor -- a real crash this exact
+-- pattern used to hit before this clause existed.
+rcVarToNativeC _ RCNull = pure "0"
 rcVarToNativeC ty l = do
     rep <- repOfLocal l
     inlined <- inlineExprFor l
@@ -1408,13 +1422,25 @@ mutual
         let sc' = varName sc
         resolvedSink <- resolveSink fc sink
         let defaultAction = map (\body => branchBody Nothing resolvedSink body tailPosition) def
+        -- `sc` is Boxed in every case Phase 1/2 ever produce on their
+        -- own -- but Compiler.RC2.Loop's own native-shadow promotion
+        -- (see its `applyLoop`) can redirect a loop param's *every*
+        -- read, including here, to a fresh `RNative` shadow (a loop-
+        -- carried numeric value pattern-matched against literal
+        -- constants -- e.g. a countdown's own `0` check -- is exactly
+        -- as native-shadow-eligible as one read by an `ROp`/`RCmpCase`
+        -- operand). Both branches below must render `sc` per its own
+        -- current `Rep`, not assume Boxed unconditionally.
+        scRep <- repOfLocal sc
         case integer_switch alts of
             True => do
                 tmpint <- getNewVarThatWillNotBeFreedAtEndOfBlock
-                let extractExpr : String
-                    extractExpr = case alts of
-                                       (MkRConstAlt c0 _ :: _) => extractIntExpr c0 sc'
-                                       [] => "idris2rc2_extractInt(\{sc'})"
+                extractExpr <- the (Core String) $ case scRep of
+                     RNative ty => rcVarToNativeC ty sc
+                     RInlineNative ty => rcVarToNativeC ty sc
+                     RBoxed => pure $ case alts of
+                                           (MkRConstAlt c0 _ :: _) => extractIntExpr c0 sc'
+                                           [] => "idris2rc2_extractInt(\{sc'})"
                 emit emptyFC "int64_t \{tmpint} = \{extractExpr};"
                 emitAltChain resolvedSink
                     (\(MkRConstAlt c _) => pure "\{tmpint} == \{const2Integer c 0}")
@@ -1426,7 +1452,10 @@ mutual
                 emitAltChain resolvedSink
                     (\(MkRConstAlt c _) => case c of
                         Str x => pure "! strcmp(\{cStringQuoted x}, ((IDRIS2RC2_String *)\{sc'})->str)"
-                        Db  x => pure "((IDRIS2RC2_Double *)\{sc'})->v == \{show x}"
+                        Db  x => case scRep of
+                                      RNative DoubleType => (\e => "\{e} == \{show x}") <$> rcVarToNativeC DoubleType sc
+                                      RInlineNative DoubleType => (\e => "\{e} == \{show x}") <$> rcVarToNativeC DoubleType sc
+                                      _ => pure "((IDRIS2RC2_Double *)\{sc'})->v == \{show x}"
                         x => throw $ InternalError "[rc2] RConstCase : unsupported type. \{show fc} \{show x}")
                     (\(MkRConstAlt _ body) => branchBody Nothing resolvedSink body tailPosition)
                     defaultAction
@@ -1444,6 +1473,40 @@ mutual
     ||| error, not just wasted work. Either way, `paramId`'s own `Rep` is
     ||| recorded in `RepMap` so later reads (native or boxed) render
     ||| correctly.
+    |||
+    ||| A genuinely fresh loop param (a native shadow -- see
+    ||| `Compiler.RC2.Loop`'s own `applyLoop`, the only other case this
+    ||| ever arises) reads `initVal` -- always one of the enclosing
+    ||| function's own top-level (always-Boxed) args -- directly via
+    ||| `rcVarToNativeC`/`rcVarToBoxedC` rather than going through
+    ||| `declareLet`/`declareNative`: those expect an ANF-shaped
+    ||| computation recipe (`ROp`/`RPrimVal`/...) to evaluate, not a
+    ||| bare existing-local read, which `emitNativeValue` has no case
+    ||| for. This is also the loop param's last use anywhere in the
+    ||| whole function -- Compiler.RC2.Loop's own rewrite has already
+    ||| redirected every other reference to the fresh shadow -- so if
+    ||| `initVal` is still Boxed at this point, it's dropped right here,
+    ||| once.
+    |||
+    ||| The native unboxing itself is guarded by a runtime NULL check on
+    ||| `initVal`'s own variable: an *ordinary* function's own
+    ||| native-eligible argument is never actually NULL at this point
+    ||| (Int/Int64/Bits64/Double always genuinely allocate or hit the
+    ||| small-value cache, never a bare `NULL`), but a top-level
+    ||| parameter of one of Compiler.RC2.MutualLoop's own merged
+    ||| functions can be -- its unused trailing "slots" are padded with
+    ||| `RCNull`/C `NULL` by callers that don't have that many arguments
+    ||| of their own (see `buildGroup`'s own `padded`), and this
+    ||| parameter can still end up native-shadowed if *some other*
+    ||| member of the same merged group reads its own same-position
+    ||| argument natively -- Compiler.RC2.Loop has no visibility into
+    ||| MutualLoop's own padding at all, so it can't exclude this case
+    ||| from eligibility; unboxing unconditionally here would dereference
+    ||| that NULL through `nativeUnbox`'s runtime accessor, a real crash
+    ||| this exact pattern used to hit before this guard existed. The
+    ||| check costs one comparison, once per function entry (not once
+    ||| per iteration), so it's not a meaningful cost even when it's
+    ||| provably unneeded.
     declareLoopParam : {auto a : Ref ArgCounter Nat}
                      -> {auto oft : Ref OutfileText Output}
                      -> {auto il : Ref IndentLevel Nat}
@@ -1456,7 +1519,21 @@ mutual
         if initVal == RCLoc paramId
            then update RepMap (insert paramId RBoxed)
            else declareLet fc paramId RBoxed (RV fc initVal)
-    declareLoopParam fc paramId rep initVal = declareLet fc paramId rep (RV fc initVal)
+    declareLoopParam fc paramId rep@(RNative ty) initVal = do
+        update RepMap (insert paramId rep)
+        valStr <- rcVarToNativeC ty initVal
+        let initValName = varName initVal
+        emit fc "\{nativeCType ty} var_\{show paramId} = (\{initValName} == NULL) ? 0 : (\{valStr});"
+        initRep <- repOfLocal initVal
+        case initRep of
+             RBoxed => removeVars [varName initVal]
+             _ => pure ()
+    -- A loop param is read again every iteration, so it never has the
+    -- single-use shape `RInlineNative` requires -- Compiler.RC2.Loop
+    -- never actually constructs this case -- kept total (falling back
+    -- to a plain native declaration) rather than assumed unreachable.
+    declareLoopParam fc paramId (RInlineNative ty) initVal =
+        declareLoopParam fc paramId (RNative ty) initVal
 
     ||| Lower an `RLoop` (see its own doc comment in RCExp.idr): declare
     ||| each loop param (`declareLoopParam`, a no-op for the common

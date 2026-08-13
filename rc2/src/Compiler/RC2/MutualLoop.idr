@@ -89,108 +89,11 @@ import Data.Vect
 
 %default covering
 
-------------------------------------------------------------------------
--- Collecting every locally-bound id in a body (RLet's own var,
--- RConAlt's own destructured args) -- everything a per-member renaming
--- substitution needs to cover, besides the member's own top-level
--- parameters (handled separately, see `buildGroup`). Mirrors
--- Compiler.RC2.Loop's own tail-position-only walk in spirit, but visits
--- *every* reachable subexpression (an RLet's `value`, not just its
--- `body`), since a bound id can appear anywhere in the tree.
-
-mutual
-  collectBoundIds : RCExp -> List Int
-  collectBoundIds (RLet _ var _ value body) = var :: (collectBoundIds value ++ collectBoundIds body)
-  collectBoundIds (RCmpCase _ _ _ _ t f) = collectBoundIds t ++ collectBoundIds f
-  collectBoundIds (RConCase _ _ alts mDef) =
-      concatMap collectBoundIdsAlt alts ++ maybe [] collectBoundIds mDef
-  collectBoundIds (RConstCase _ _ alts mDef) =
-      concatMap collectBoundIdsConstAlt alts ++ maybe [] collectBoundIds mDef
-  collectBoundIds (RDup _ _ body) = collectBoundIds body
-  collectBoundIds (RDrop _ _ body) = collectBoundIds body
-  collectBoundIds (RFree _ _ body) = collectBoundIds body
-  collectBoundIds (RReleaseReuse _ _ body) = collectBoundIds body
-  collectBoundIds (RReuseOffer _ _ _ body) = collectBoundIds body
-  -- RV, RAppName, RUnderApp, RApp, RCon, ROp, RExtPrim, RPrimVal,
-  -- RErased, RCrash: no subexpressions, no bindings. RLoop/
-  -- RLoopContinue never actually appear here in practice either -- this
-  -- pass runs strictly before Compiler.RC2.Loop, their sole producer.
-  collectBoundIds _ = []
-
-  collectBoundIdsAlt : RConAlt -> List Int
-  collectBoundIdsAlt (MkRConAlt _ _ _ args body) = args ++ collectBoundIds body
-
-  collectBoundIdsConstAlt : RConstAlt -> List Int
-  collectBoundIdsConstAlt (MkRConstAlt _ body) = collectBoundIds body
-
-------------------------------------------------------------------------
--- Renaming every RCLocal/bound-id occurrence in a body according to a
--- (possibly partial -- ids with no entry pass through unchanged) map.
--- A pure substitution: doesn't add or remove any RDup/RDrop/RFree/
--- RReleaseReuse/reuse-related node, just relabels what they (and every
--- read) refer to.
-
-Renaming : Type
-Renaming = SortedMap Int Int
-
-renameId : Renaming -> Int -> Int
-renameId ren i = fromMaybe i (lookup i ren)
-
-renameLocal : Renaming -> RCLocal -> RCLocal
-renameLocal ren (RCLoc i) = RCLoc (renameId ren i)
-renameLocal _ l = l
-
-renameLocals : Renaming -> List RCLocal -> List RCLocal
-renameLocals ren = map (renameLocal ren)
-
-renameLocalsV : Renaming -> Vect n RCLocal -> Vect n RCLocal
-renameLocalsV ren = map (renameLocal ren)
-
-renameMaybeLocal : Renaming -> Maybe RCLocal -> Maybe RCLocal
-renameMaybeLocal ren = map (renameLocal ren)
-
-mutual
-  renameRCExp : Renaming -> RCExp -> RCExp
-  renameRCExp ren (RV fc v) = RV fc (renameLocal ren v)
-  renameRCExp ren (RAppName fc lazy n args) = RAppName fc lazy n (renameLocals ren args)
-  renameRCExp ren (RUnderApp fc n missing args) = RUnderApp fc n missing (renameLocals ren args)
-  renameRCExp ren (RApp fc lazy c a) = RApp fc lazy (renameLocal ren c) (renameLocal ren a)
-  renameRCExp ren (RLet fc var rep value body) =
-      RLet fc (renameId ren var) rep (renameRCExp ren value) (renameRCExp ren body)
-  renameRCExp ren (RCon fc n ci tag args reuseFrom) =
-      RCon fc n ci tag (renameLocals ren args) (renameMaybeLocal ren reuseFrom)
-  renameRCExp ren (ROp fc lazy op args postDrop) =
-      ROp fc lazy op (renameLocalsV ren args) (renameLocals ren postDrop)
-  renameRCExp ren (RExtPrim fc lazy p args) = RExtPrim fc lazy p (renameLocals ren args)
-  renameRCExp ren (RCmpCase fc op args postDrop t f) =
-      RCmpCase fc op (renameLocalsV ren args) (renameLocals ren postDrop) (renameRCExp ren t) (renameRCExp ren f)
-  renameRCExp ren (RConCase fc sc alts mDef) =
-      RConCase fc (renameLocal ren sc) (map (renameConAlt ren) alts) (map (renameRCExp ren) mDef)
-  renameRCExp ren (RConstCase fc sc alts mDef) =
-      RConstCase fc (renameLocal ren sc) (map (renameConstAlt ren) alts) (map (renameRCExp ren) mDef)
-  renameRCExp _ (RPrimVal fc c) = RPrimVal fc c
-  renameRCExp _ (RErased fc) = RErased fc
-  renameRCExp _ (RCrash fc msg) = RCrash fc msg
-  renameRCExp ren (RDup fc v body) = RDup fc (renameLocal ren v) (renameRCExp ren body)
-  renameRCExp ren (RDrop fc vars body) = RDrop fc (renameLocals ren vars) (renameRCExp ren body)
-  renameRCExp ren (RFree fc v body) = RFree fc (renameLocal ren v) (renameRCExp ren body)
-  renameRCExp ren (RReleaseReuse fc v body) = RReleaseReuse fc (renameLocal ren v) (renameRCExp ren body)
-  renameRCExp ren (RReuseOffer fc sc dupOnShared body) =
-      RReuseOffer fc (renameLocal ren sc) (renameLocals ren dupOnShared) (renameRCExp ren body)
-  -- Never actually reached in practice -- this pass runs strictly
-  -- before Compiler.RC2.Loop, the sole producer of both -- kept total
-  -- (as a plain pass-through) rather than assumed unreachable, same
-  -- reasoning as RC.idr's own annotate.
-  renameRCExp ren (RLoop fc loopParams initial body) =
-      RLoop fc (map (\(i, r) => (renameId ren i, r)) loopParams) (renameLocals ren initial) (renameRCExp ren body)
-  renameRCExp ren (RLoopContinue fc args) = RLoopContinue fc (renameLocals ren args)
-
-  renameConAlt : Renaming -> RConAlt -> RConAlt
-  renameConAlt ren (MkRConAlt name ci tag args body) =
-      MkRConAlt name ci tag (map (renameId ren) args) (renameRCExp ren body)
-
-  renameConstAlt : Renaming -> RConstAlt -> RConstAlt
-  renameConstAlt ren (MkRConstAlt c body) = MkRConstAlt c (renameRCExp ren body)
+-- `collectBoundIds`/`Renaming`/`renameRCExp` (per-member id collection
+-- and substitution, used by `buildGroup` below) now live in
+-- Compiler.RC2.Loop -- shared with its own native-shadow-promotion
+-- rewrite, one definition instead of two kept in sync by hand. See its
+-- own doc comment.
 
 ------------------------------------------------------------------------
 -- Tail-call target collection (read-only sibling of Compiler.RC2.Loop's
@@ -335,7 +238,7 @@ buildGroup existingNames memberDefs groupNames = do
     alts <- traverse (\(name_i, (args_i, body_i)) => do
                 let internalIds = collectBoundIds body_i
                 freshInternal <- traverse (const freshId) internalIds
-                let ren = fromList (zip args_i slotIds ++ zip internalIds freshInternal)
+                let ren : Renaming = SortedMap.fromList (zip args_i slotIds ++ zip internalIds freshInternal)
                 let renamedBody = renameRCExp ren body_i
                 let tag_i = fromMaybe 0 (lookup name_i tagOf)
                 pure $ MkRConstAlt (I64 (cast tag_i)) (rewriteGroupTailCalls mergedName maxArity tagOf renamedBody))

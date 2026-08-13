@@ -3,6 +3,42 @@
 Newest first. Each entry corresponds to one commit on `master`; see
 `git log` for full commit messages.
 
+## 2026-08-13 -- Promote loop-carried parameters to native representation, Stage 3
+
+The optimization Stage 1/2's `RLoop`/`RLoopContinue` split was groundwork
+for: `Compiler.RC2.Loop`'s `applyLoop` now decides, per top-level
+parameter of a self- or (post-MutualLoop-merge) mutually-tail-recursive
+loop, whether the loop body reads it as a native-context operand
+anywhere (an `RLet`-bound `RNative`/`RInlineNative` `ROp`, or a fused
+`RCmpCase`) consistently at one `PrimType`; if so, promotes it to a
+fresh native-shadow loop param (unboxed once at loop entry, dropped
+there), redirecting every other reference to the shadow
+(`renameRCExp`, factored out and shared with `Compiler.RC2.MutualLoop`'s
+own per-member renaming) and stripping the original's now-stale
+ownership bookkeeping (`stripOwnership`) -- eliminating the
+box-then-immediately-reunbox round trip a loop-carried numeric value
+used to pay at every `goto` back to the top. Also fixes redundant
+*within-iteration* unboxing of a multiply-used native operand as a side
+effect.
+
+Two real bugs found and fixed during verification: `RConstCase`'s
+scrutinee handling (`emitConstCaseInto`) assumed it was always read
+Boxed, breaking once a loop param pattern-matched against a literal
+constant (e.g. `sumTo`'s own `0` check) became a native shadow --
+now Rep-aware. And `Compiler.RC2.MutualLoop`'s own `RCNull` arity
+padding could reach a slot promoted to native by a *different* group
+member, crashing on an unboxed-NULL dereference (`Test10MutualLoop.idr`'s
+differing-arity `stepA`/`stepB` group caught this) -- fixed by treating
+`RCNull` as a safe native `0` in `rcVarToNativeC`, plus a one-time
+runtime NULL guard on `declareLoopParam`'s own loop-entry unboxing.
+
+Verified: `BenchLoop.idr`'s `sumTo` now runs its entire loop as pure
+native `int64_t` arithmetic, zero heap allocation/refcount traffic per
+iteration; generated C for `Test9SelfTailLoop.idr` (mixed native-eligible
+and non-eligible params in one loop) inspected directly; 19/19
+refc-suite tests, all smoke tests, and all benchmarks re-verified
+byte-for-byte/crash-free against `idris2 --cg refc`.
+
 ## 2026-08-13 -- Adapt Compiler.RC2.MutualLoop to RLoop/RLoopContinue, Stage 2
 
 Second of the two staged steps (see Stage 1). `Compiler.RC2.MutualLoop`
