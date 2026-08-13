@@ -19,6 +19,15 @@ zero, since comparison/branch fusion landed -- see `BENCHMARKS.md`)
 edge over RefC: the per-iteration call overhead still dominates,
 swamping the native-arithmetic savings inside each call.
 
+`numeric.c`'s Boxed-value arithmetic/comparison/cast wrappers (the ones
+called at every call boundary, where native inference doesn't reach)
+are now `static inline` in `numeric.h`, so the C compiler folds away
+their own call overhead. This doesn't touch the actual bottleneck --
+the heap allocation and refcount bookkeeping the boxed representation
+itself requires -- so it doesn't reduce the gap below; it only removes
+one small, now-irrelevant-by-comparison cost that used to sit on top
+of it.
+
 - **Dual calling convention.** Let native representations cross function
   boundaries for functions where it's provably safe (escape analysis +
   a fixed-point signature inference pass, plus native entry points

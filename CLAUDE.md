@@ -63,6 +63,6 @@ and benchmarks (`rc2/tests/Bench*.idr`) are compiled/run the same way
   after the related commit lands. They're gitignored, so nothing extra
   ends up staged.
 - When making functional changes, record the details in `CHANGES.md`
-  using a few lines of concise text.
+  using a few lines of concise text. Also TODO.md.
 
 
