@@ -629,6 +629,53 @@ emitReuseOffer sc conArgs shouldDrop = do
 
 data TailPositionStatus = InTailPosition | NotInTailPosition
 
+||| Where a fully-evaluated RCExp's value ultimately goes: either into a
+||| named C variable -- freshly declared right here (`SinkVar True _`,
+||| e.g. an `RLet`'s own binding) or already declared by whoever set up
+||| this `Sink` in the first place (`SinkVar False _`, e.g. a case's own
+||| pre-declared result slot, see `resolveSink`) -- or straight out via a
+||| C `return` statement (`SinkReturn`, only ever handed down while
+||| `tailPosition` is `InTailPosition`, since nothing after a `return`
+||| would ever run). Generalises what used to be a bare `(declare, target)`
+||| pair (`assignInto`'s old signature) so that `RConCase`/`RConstCase`/
+||| `RCmpCase`'s own branches can write straight into the caller's real
+||| destination -- a variable *or* a `return` -- instead of a throwaway
+||| `switchReturnVar` that then had to be copied into it: the same "build
+||| directly into the real destination" idea as `tryBuildClosureInto`'s
+||| own doc comment, generalised to branching constructs, and to `return`
+||| as a destination in its own right.
+data Sink = SinkVar Bool String | SinkReturn
+
+||| Turn a `Sink` that might still need its own variable declared
+||| (`SinkVar True _`) into one that's guaranteed already-declared
+||| (`SinkVar False _`, unchanged if already such; `SinkReturn` always
+||| passes through unchanged) -- emitting the variable's own
+||| `NULL`-initialised declaration up front if needed. Shared by every
+||| multi-branch construct (`RCmpCase`/`RConCase`/`RConstCase`) that must
+||| pre-declare its result slot exactly *once*, before any branch, so
+||| every branch can then just plainly assign into the same
+||| already-in-scope variable -- declaring it separately inside each
+||| branch's own `{ }` block would scope it to that block alone, making
+||| it unreadable the moment the `if`/`switch` closes.
+resolveSink : {auto oft : Ref OutfileText Output}
+           -> {auto il : Ref IndentLevel Nat}
+           -> FC -> Sink -> Core Sink
+resolveSink fc (SinkVar True target) = do
+    emit fc "IDRIS2RC2_Value * \{target} = NULL;"
+    pure (SinkVar False target)
+resolveSink _ sink = pure sink
+
+||| Emit the one statement that finally disposes of an already-evaluated
+||| expression string per `sink` -- the common tail end of every leaf
+||| (non-branching) `RCExp` shape `emitInto` ever falls back to plain
+||| `emitRC` for.
+finalizeSink : {auto oft : Ref OutfileText Output}
+            -> {auto il : Ref IndentLevel Nat}
+            -> FC -> Sink -> String -> Core ()
+finalizeSink fc (SinkVar True target) valStr = emit fc "IDRIS2RC2_Value * \{target} = \{valStr};"
+finalizeSink fc (SinkVar False target) valStr = emit fc "\{target} = \{valStr};"
+finalizeSink fc SinkReturn valStr = emit fc "return \{valStr};"
+
 integer_switch : List RConstAlt -> Bool
 integer_switch [] = True
 integer_switch (MkRConstAlt c _  :: _) =
@@ -684,13 +731,13 @@ const2Integer c i =
 ||| args still unset for further partial application -- either
 ||| declaring it fresh (`declare = True`, `target` not yet in scope: an
 ||| enclosing `RLet`'s own `var_N`) or assigning into an existing
-||| variable (`declare = False`: a case-branch's already-declared
-||| `returnvar`, see `branchBody`/RCmpCase). Takes the target name
-||| explicitly rather than always minting a fresh `closure_N` so a
-||| caller that already has its own destination variable in hand can
-||| build directly into it instead of declaring/using a throwaway
-||| `closure_N` and immediately copying it into the real target right
-||| after -- two statements doing the work of one.
+||| variable (`declare = False`: a `Sink`'s own already-declared
+||| variable, see `buildClosureIntoSink`/`resolveSink`). Takes the
+||| target name explicitly rather than always minting a fresh
+||| `closure_N` so a caller that already has its own destination
+||| variable in hand can build directly into it instead of declaring/
+||| using a throwaway `closure_N` and immediately copying it into the
+||| real target right after -- two statements doing the work of one.
 makeClosureInto : {auto a : Ref ArgCounter Nat}
                 -> {auto oft : Ref OutfileText Output}
                 -> {auto il : Ref IndentLevel Nat}
@@ -733,6 +780,26 @@ makeClosure fc n args missing = do
     makeClosureInto fc True closure n args missing
     pure closure
 
+||| As `makeClosureInto`, but resolving a `Sink` first instead of a bare
+||| `(declare, target)` pair: an existing variable destination builds
+||| directly into it, same as `makeClosureInto` always did; `SinkReturn`
+||| has no variable to build into at all (a closure needs several
+||| statements -- the `mkClosure` call plus one assignment per field --
+||| so it can never collapse into a single `return` expression), so this
+||| mints its own throwaway temporary (same as plain `makeClosure`) and
+||| returns *that* via a trailing `return` statement.
+buildClosureIntoSink : {auto a : Ref ArgCounter Nat}
+                     -> {auto oft : Ref OutfileText Output}
+                     -> {auto il : Ref IndentLevel Nat}
+                     -> {auto r : Ref RepMap (SortedMap Int Rep)}
+                     -> {auto lm : Ref InlineMap (SortedMap Int String)}
+                     -> FC -> Sink -> Name -> List RCLocal -> Nat -> Core ()
+buildClosureIntoSink fc (SinkVar declare target) n args missing =
+    makeClosureInto fc declare target n args missing
+buildClosureIntoSink fc SinkReturn n args missing = do
+    closure <- makeClosure fc n args missing
+    emit fc "return \{closure};"
+
 -- Must match the dispatch switch in support/rc2/runtime.c.
 MaxExtractFunArgs : Nat
 MaxExtractFunArgs = 8
@@ -770,7 +837,7 @@ mutual
              (RNative _, RPrimVal _ c) => update InlineMap (insert var (nativeLitExpr c))
              (RInlineNative ty, _) => inlineNative ty var value
              (RNative ty, _) => declareNative fc ty var value
-             (RBoxed, _) => assignInto fc True "var_\{show var}" NotInTailPosition value
+             (RBoxed, _) => emitInto fc (SinkVar True "var_\{show var}") NotInTailPosition value
 
     ||| If `value` is a self-tail-call (`RSelfTailCall`, see its own doc
     ||| comment) -- possibly wrapped in leading RDup/RDrop/RFree/RLet,
@@ -833,10 +900,10 @@ mutual
     ||| `annotate`/Phase 1's own ANF normalisation can wrap around any
     ||| expression uniformly, without changing what the *tail* expression
     ||| actually is) -- lower those wrappers first, then build the closure
-    ||| directly into `target` via `makeClosureInto` instead of the
-    ||| throwaway `closure_N` a generic `emitRC value` would produce (only
-    ||| to have the caller immediately copy it into `target` right after
-    ||| -- two statements for one).
+    ||| directly into `sink` (via `buildClosureIntoSink`/`makeClosureInto`)
+    ||| instead of the throwaway `closure_N` a generic `emitRC value`
+    ||| would produce (only to have the caller immediately copy it into
+    ||| the real destination right after -- two statements for one).
     |||
     ||| Returns `Nothing` if the closure was built (nothing left for the
     ||| caller to do), or `Just leftover` if `value` wasn't shaped like
@@ -859,30 +926,30 @@ mutual
                         -> {auto r : Ref RepMap (SortedMap Int Rep)}
                         -> {auto lm : Ref InlineMap (SortedMap Int String)}
                         -> {auto fa : Ref FunctionArgs (List Int)}
-                        -> (declare : Bool) -> String -> TailPositionStatus -> RCExp -> Core (Maybe RCExp)
-    tryBuildClosureInto declare target tailPosition (RDup fc v cont) = do
+                        -> Sink -> TailPositionStatus -> RCExp -> Core (Maybe RCExp)
+    tryBuildClosureInto sink tailPosition (RDup fc v cont) = do
         dupVars [varName v]
-        tryBuildClosureInto declare target tailPosition cont
-    tryBuildClosureInto declare target tailPosition (RDrop fc vs cont) = do
+        tryBuildClosureInto sink tailPosition cont
+    tryBuildClosureInto sink tailPosition (RDrop fc vs cont) = do
         -- `vs` is already guaranteed Boxed-only -- see the module note.
         removeVars (varName <$> vs)
-        tryBuildClosureInto declare target tailPosition cont
-    tryBuildClosureInto declare target tailPosition (RFree fc v cont) = do
+        tryBuildClosureInto sink tailPosition cont
+    tryBuildClosureInto sink tailPosition (RFree fc v cont) = do
         freeVars [varName v]
-        tryBuildClosureInto declare target tailPosition cont
-    tryBuildClosureInto declare target tailPosition (RLet fc var rep value body) = do
+        tryBuildClosureInto sink tailPosition cont
+    tryBuildClosureInto sink tailPosition (RLet fc var rep value body) = do
         declareLet fc var rep value
-        tryBuildClosureInto declare target tailPosition body
-    tryBuildClosureInto declare target tailPosition (RReleaseReuse fc loc cont) = do
+        tryBuildClosureInto sink tailPosition body
+    tryBuildClosureInto sink tailPosition (RReleaseReuse fc loc cont) = do
         removeReuseConstructors [reuseVarName loc]
-        tryBuildClosureInto declare target tailPosition cont
-    tryBuildClosureInto declare target _ (RUnderApp fc n missing args) = do
-        makeClosureInto fc declare target n args missing
+        tryBuildClosureInto sink tailPosition cont
+    tryBuildClosureInto sink _ (RUnderApp fc n missing args) = do
+        buildClosureIntoSink fc sink n args missing
         pure Nothing
-    tryBuildClosureInto declare target InTailPosition (RAppName fc _ n args) = do
-        makeClosureInto fc declare target n args 0
+    tryBuildClosureInto sink InTailPosition (RAppName fc _ n args) = do
+        buildClosureIntoSink fc sink n args 0
         pure Nothing
-    tryBuildClosureInto _ _ _ e = pure (Just e)
+    tryBuildClosureInto _ _ e = pure (Just e)
 
     ||| Render `value`'s native expression and declare it as a plain
     ||| `TYPE var_N = ...;` C scalar, discharging its own pending
@@ -922,40 +989,56 @@ mutual
         update InlineMap (insert var valStr)
         removeVars $ map varName pending
 
-    ||| Evaluate `value` (in `tailPosition`) and store its result in
-    ||| `target` -- either declaring `target` fresh (`declare = True`,
-    ||| not yet in scope: an `RLet`'s own `var_N`) or assigning into an
-    ||| already-declared variable (`declare = False`: a case branch's
-    ||| `returnvar`, or RCmpCase's own two branches). Tries
-    ||| `tryEmitSelfTailCall` first (a self-tail-call has nothing to
-    ||| assign into `target` at all -- control leaves via `goto` -- see
-    ||| its own doc comment), then `tryBuildClosureInto` (skips a
-    ||| throwaway `closure_N` when `value` is a closure build that can go
-    ||| straight into `target` -- see its own doc comment); falls back to
-    ||| the general `emitRC`-then-assign route for everything else. Every
-    ||| "evaluate this RCExp and store the result in a C variable" site
-    ||| in this module goes through here, so the choice between those
-    ||| routes is only ever written once.
-    assignInto : {auto a : Ref ArgCounter Nat}
-               -> {auto oft : Ref OutfileText Output}
-               -> {auto il : Ref IndentLevel Nat}
-               -> {auto _ : Ref ConstDef (SortedMap Constant ConstDef)}
-               -> {auto r : Ref RepMap (SortedMap Int Rep)}
-               -> {auto lm : Ref InlineMap (SortedMap Int String)}
-               -> {auto fa : Ref FunctionArgs (List Int)}
-               -> FC -> (declare : Bool) -> (target : String) -> TailPositionStatus -> RCExp -> Core ()
-    assignInto fc declare target tailPosition value = do
+    ||| Evaluate `value` (in `tailPosition`) and dispose of its result per
+    ||| `sink` -- either declaring/assigning a named C variable, or (only
+    ||| ever while `tailPosition` is `InTailPosition`, since nothing after
+    ||| a `return` would run) emitting a plain C `return` statement. Tries
+    ||| `tryEmitSelfTailCall` first (a self-tail-call has nothing to hand
+    ||| any `Sink` at all -- control leaves via `goto` -- see its own doc
+    ||| comment), then `tryBuildClosureInto` (skips a throwaway `closure_N`
+    ||| when `value` is a closure build that can go straight into `sink`
+    ||| -- see its own doc comment). A leftover `RCmpCase`/`RConCase`/
+    ||| `RConstCase` is handled specially too (`emitCmpCaseInto`/
+    ||| `emitConCaseInto`/`emitConstCaseInto`), so every branch writes
+    ||| straight into the *caller's own* `sink` instead of a throwaway
+    ||| `switchReturnVar` that then has to be copied into it -- the same
+    ||| "build directly into the real destination" idea as
+    ||| `tryBuildClosureInto`, applied to branching constructs (and,
+    ||| in tail position, letting a whole chain of nested cases collapse
+    ||| straight down to a `return` in each leaf branch, with no
+    ||| intermediate variable anywhere along the way). Anything else (a
+    ||| genuine single-expression leaf: `RV`, `RCon`, `ROp`, `RExtPrim`,
+    ||| `RPrimVal`, `RErased`, `RCrash`, `RApp`, a non-tail `RAppName`)
+    ||| falls back to the general `emitRC`-then-`finalizeSink` route.
+    ||| Every "evaluate this RCExp and store/return its result" site in
+    ||| this module goes through here, so the choice between those routes
+    ||| is only ever written once.
+    emitInto : {auto a : Ref ArgCounter Nat}
+             -> {auto oft : Ref OutfileText Output}
+             -> {auto il : Ref IndentLevel Nat}
+             -> {auto _ : Ref ConstDef (SortedMap Constant ConstDef)}
+             -> {auto r : Ref RepMap (SortedMap Int Rep)}
+             -> {auto lm : Ref InlineMap (SortedMap Int String)}
+             -> {auto fa : Ref FunctionArgs (List Int)}
+             -> FC -> Sink -> TailPositionStatus -> RCExp -> Core ()
+    emitInto fc sink tailPosition value = do
         -- Same "resume from the leftover, not the original value" care
         -- as tryBuildClosureInto's own doc comment explains, chained
-        -- across both stages.
+        -- across every stage.
         afterSelfTail <- tryEmitSelfTailCall value
         whenJust afterSelfTail $ \v1 => do
-            leftover <- tryBuildClosureInto declare target tailPosition v1
-            whenJust leftover $ \remaining => do
-                valStr <- emitRC remaining tailPosition
-                if declare
-                   then emit fc $ "IDRIS2RC2_Value * " ++ target ++ " = " ++ valStr ++ ";"
-                   else emit fc $ target ++ " = " ++ valStr ++ ";"
+            leftover <- tryBuildClosureInto sink tailPosition v1
+            whenJust leftover $ \remaining =>
+                case remaining of
+                     RCmpCase fc' op args postDrop whenTrue whenFalse =>
+                         emitCmpCaseInto sink tailPosition fc' op args postDrop whenTrue whenFalse
+                     RConCase fc' sc alts mDef =>
+                         emitConCaseInto sink tailPosition fc' sc alts mDef
+                     RConstCase fc' sc alts def =>
+                         emitConstCaseInto sink tailPosition fc' sc alts def
+                     _ => do
+                         valStr <- emitRC remaining tailPosition
+                         finalizeSink fc sink valStr
 
     ||| A case branch (or default): emit the drops RC.idr's `annotate`
     ||| already decided on (the peeled leading RDrop), preceded by the
@@ -996,8 +1079,8 @@ mutual
                -> {auto lm : Ref InlineMap (SortedMap Int String)}
                -> {auto fa : Ref FunctionArgs (List Int)}
                -> (matched : Maybe (RCLocal, List String)) -> (offersReuse : Bool)
-               -> String -> RCExp -> TailPositionStatus -> Core ()
-    branchBody matched offersReuse returnvar body tailPosition = do
+               -> Sink -> RCExp -> TailPositionStatus -> Core ()
+    branchBody matched offersReuse sink body tailPosition = do
         let (shouldDrop0, body') = peelDrop body
         -- shouldDrop0 is already guaranteed Boxed-only -- see the
         -- module note.
@@ -1013,10 +1096,150 @@ mutual
                     else do
                         dupVars (conArgs \\ shouldDrop)
                         removeVars (shouldDrop \\ conArgs)
-        -- `returnvar` is already declared (the enclosing RConCase/
-        -- RConstCase always emits `IDRIS2RC2_Value * returnvar = NULL;`
-        -- up front).
-        assignInto emptyFC False returnvar tailPosition body'
+        -- `sink` is already fully resolved -- any variable it names was
+        -- declared once by the enclosing RConCase/RConstCase/RCmpCase
+        -- before any branch ran (see `resolveSink`), or it's `SinkReturn`
+        -- and names nothing at all.
+        emitInto emptyFC sink tailPosition body'
+
+    ||| Lower a fused comparison branch (see RCExp.idr's own doc comment
+    ||| on RCmpCase and `nativeCmpExpr`): the comparison is evaluated once
+    ||| into a raw C `int` (no heap allocation for the Bool it would
+    ||| otherwise be), `postDrop` (Compiler.RC2.RC's `annotate`) is
+    ||| lowered immediately after -- same ordering rule as ROp's own
+    ||| postDrop, see its doc comment -- and then exactly one of the two
+    ||| branches runs, each writing straight into `sink` (resolved once,
+    ||| before either branch -- see `resolveSink`) instead of a throwaway
+    ||| `switchReturnVar`.
+    emitCmpCaseInto : {auto a : Ref ArgCounter Nat}
+                    -> {auto oft : Ref OutfileText Output}
+                    -> {auto il : Ref IndentLevel Nat}
+                    -> {auto _ : Ref ConstDef (SortedMap Constant ConstDef)}
+                    -> {auto r : Ref RepMap (SortedMap Int Rep)}
+                    -> {auto lm : Ref InlineMap (SortedMap Int String)}
+                    -> {auto fa : Ref FunctionArgs (List Int)}
+                    -> Sink -> TailPositionStatus -> FC -> PrimFn 2 -> Vect 2 RCLocal
+                    -> List RCLocal -> RCExp -> RCExp -> Core ()
+    emitCmpCaseInto sink tailPosition fc op args postDrop whenTrue whenFalse = do
+        case cmpArgTy op of
+             Nothing => throw $ InternalError "[rc2] RCmpCase: not a comparison op"
+             Just ty => do
+                 argStrs <- rc2traverseVect (rcVarToNativeC ty) args
+                 let condVar = "cmp_" ++ !(getNextCounter)
+                 emit fc $ "int " ++ condVar ++ " = " ++ nativeCmpExpr op argStrs ++ ";"
+                 removeVars $ map varName postDrop
+                 resolvedSink <- resolveSink fc sink
+                 emit emptyFC "if (\{condVar}) {"
+                 increaseIndentation
+                 emitInto emptyFC resolvedSink tailPosition whenTrue
+                 decreaseIndentation
+                 emit emptyFC "} else {"
+                 increaseIndentation
+                 emitInto emptyFC resolvedSink tailPosition whenFalse
+                 decreaseIndentation
+                 emit emptyFC "}"
+
+    ||| Lower a constructor-tag switch: each alt (and the default, if
+    ||| any) writes straight into `sink` (resolved once, before any alt
+    ||| -- see `resolveSink`) instead of a throwaway `switchReturnVar`.
+    emitConCaseInto : {auto a : Ref ArgCounter Nat}
+                    -> {auto oft : Ref OutfileText Output}
+                    -> {auto il : Ref IndentLevel Nat}
+                    -> {auto _ : Ref ConstDef (SortedMap Constant ConstDef)}
+                    -> {auto r : Ref RepMap (SortedMap Int Rep)}
+                    -> {auto lm : Ref InlineMap (SortedMap Int String)}
+                    -> {auto fa : Ref FunctionArgs (List Int)}
+                    -> Sink -> TailPositionStatus -> FC -> RCLocal -> List RConAlt -> Maybe RCExp -> Core ()
+    emitConCaseInto sink tailPosition fc sc alts mDef = do
+        let sc' = varName sc
+        resolvedSink <- resolveSink fc sink
+        _ <- foldlC (\els, (MkRConAlt name coninfo tag args body offersReuse) => do
+            let erased = coninfo == NIL || coninfo == NOTHING || coninfo == ZERO || coninfo == UNIT
+            if erased then emit emptyFC "\{els}if (NULL == \{sc'} /* \{show name} \{show coninfo} */) {"
+                else if coninfo == CONS || coninfo == JUST || coninfo == SUCC
+                then emit emptyFC "\{els}if (NULL != \{sc'} /* \{show name} \{show coninfo} */) {"
+                else do
+                    case tag of
+                        -- Untagged (name-compared) constructors are
+                        -- never zero-argument+tagged, so RCEmptyCon
+                        -- never covers them -- sc' is always a real
+                        -- heap IDRIS2RC2_Constructor* here.
+                        Nothing   => emit emptyFC "\{els}if (! strcmp(((IDRIS2RC2_Constructor *)\{sc'})->name, idris2rc2_constr_\{cName name})) {"
+                        -- sc' may be a tagged pointer (a zero-argument
+                        -- constructor of *this* ADT, see RCEmptyCon in
+                        -- RCExp.idr) as well as a real heap
+                        -- IDRIS2RC2_Constructor* -- idris2rc2_conTag
+                        -- (support/rc2/datatypes.h) checks which.
+                        Just tag' => emit emptyFC "\{els}if (idris2rc2_conTag(\{sc'}) == \{show tag'} /* \{show name} */) {"
+
+            increaseIndentation
+            _ <- foldlC (\k, arg => do
+                emit emptyFC "IDRIS2RC2_Value *var_\{show arg} = ((IDRIS2RC2_Constructor*)\{sc'})->args[\{show k}];"
+                pure (S k) ) 0 args
+            branchBody (Just (sc, varName . RCLoc <$> args)) (isJust offersReuse) resolvedSink body tailPosition
+            decreaseIndentation
+            pure "} else ") "" alts
+
+        case mDef of
+            Nothing => pure ()
+            Just body => do
+                emit emptyFC "} else {"
+                increaseIndentation
+                branchBody Nothing False resolvedSink body tailPosition
+                decreaseIndentation
+        emit emptyFC "}"
+
+    ||| Lower a constant/tag switch: same "each alt writes straight into
+    ||| the once-resolved `sink`" shape as `emitConCaseInto`, just over
+    ||| `RConstCase`'s own two dispatch strategies (a fast integer switch
+    ||| via `extractIntExpr`, or the string/double equality chain).
+    emitConstCaseInto : {auto a : Ref ArgCounter Nat}
+                       -> {auto oft : Ref OutfileText Output}
+                       -> {auto il : Ref IndentLevel Nat}
+                       -> {auto _ : Ref ConstDef (SortedMap Constant ConstDef)}
+                       -> {auto r : Ref RepMap (SortedMap Int Rep)}
+                       -> {auto lm : Ref InlineMap (SortedMap Int String)}
+                       -> {auto fa : Ref FunctionArgs (List Int)}
+                       -> Sink -> TailPositionStatus -> FC -> RCLocal -> List RConstAlt -> Maybe RCExp -> Core ()
+    emitConstCaseInto sink tailPosition fc sc alts def = do
+        let sc' = varName sc
+        resolvedSink <- resolveSink fc sink
+        case integer_switch alts of
+            True => do
+                tmpint <- getNewVarThatWillNotBeFreedAtEndOfBlock
+                let extractExpr : String
+                    extractExpr = case alts of
+                                       (MkRConstAlt c0 _ :: _) => extractIntExpr c0 sc'
+                                       [] => "idris2rc2_extractInt(\{sc'})"
+                emit emptyFC "int64_t \{tmpint} = \{extractExpr};"
+                _ <- foldlC (\els, (MkRConstAlt c body) => do
+                    emit emptyFC "\{els}if (\{tmpint} == \{const2Integer c 0}) {"
+                    increaseIndentation
+                    branchBody Nothing False resolvedSink body tailPosition
+                    decreaseIndentation
+                    pure "} else ") "" alts
+                pure ()
+
+            False => do
+                _ <- foldlC (\els, (MkRConstAlt c body) => do
+                    case c of
+                        Str x => emit emptyFC "\{els}if (! strcmp(\{cStringQuoted x}, ((IDRIS2RC2_String *)\{sc'})->str)) {"
+                        Db  x => emit emptyFC "\{els}if (((IDRIS2RC2_Double *)\{sc'})->v == \{show x}) {"
+                        x => throw $ InternalError "[rc2] RConstCase : unsupported type. \{show fc} \{show x}"
+                    increaseIndentation
+                    branchBody Nothing False resolvedSink body tailPosition
+                    decreaseIndentation
+                    pure "} else ") "" alts
+                pure ()
+
+        case def of
+            Nothing => pure ()
+            Just body => do
+                emit emptyFC "} else {"
+                increaseIndentation
+                branchBody Nothing False resolvedSink body tailPosition
+                decreaseIndentation
+        emit emptyFC "}"
 
     emitRC : {auto a : Ref ArgCounter Nat}
            -> {auto oft : Ref OutfileText Output}
@@ -1030,17 +1253,26 @@ mutual
            -> Core String
 
     emitRC (RV fc v) _ = rcVarToBoxedC v
-    emitRC (RAppName fc _ n args) tailPosition = do
+    -- InTailPosition is unreachable here: emitInto's tryBuildClosureInto
+    -- always intercepts an InTailPosition RAppName itself, building the
+    -- closure straight into whichever Sink the caller handed down (see
+    -- buildClosureIntoSink) -- so emitRC only ever sees RAppName in
+    -- NotInTailPosition, where the call must actually be resolved
+    -- (trampolined) right here rather than deferred as a closure.
+    emitRC (RAppName fc _ n args) InTailPosition = throw $ InternalError "[rc2] RAppName (InTailPosition) reached emitRC directly (not intercepted by tryBuildClosureInto)"
+    emitRC (RAppName fc _ n args) NotInTailPosition = do
         let nargs = length args
-        case tailPosition of
-            InTailPosition => makeClosure fc n args 0
-            _ => if nargs > MaxExtractFunArgs
-                then pure "idris2rc2_trampoline(\{!(makeClosure fc n args 0)})"
-                else do
-                    argStrs <- traverse rcVarToBoxedC args
-                    pure "idris2rc2_trampoline(\{cName n}(\{concat $ intersperse ", " argStrs}))"
+        if nargs > MaxExtractFunArgs
+           then pure "idris2rc2_trampoline(\{!(makeClosure fc n args 0)})"
+           else do
+               argStrs <- traverse rcVarToBoxedC args
+               pure "idris2rc2_trampoline(\{cName n}(\{concat $ intersperse ", " argStrs}))"
 
-    emitRC (RUnderApp fc n missing args) _ = makeClosure fc n args missing
+    -- Unreachable: emitInto's tryBuildClosureInto always intercepts
+    -- RUnderApp itself, for any tailPosition -- a partial application is
+    -- always a closure build, tail position or not (see
+    -- buildClosureIntoSink).
+    emitRC (RUnderApp fc n missing args) _ = throw $ InternalError "[rc2] RUnderApp reached emitRC directly (not intercepted by tryBuildClosureInto)"
     emitRC (RApp fc _ closure arg) tailPosition = do
        closureStr <- rcVarToBoxedC closure
        argStr <- rcVarToBoxedC arg
@@ -1048,13 +1280,14 @@ mutual
            NotInTailPosition => "idris2rc2_applyClosure"
            InTailPosition    => "idris2rc2_tailcallApplyClosure") ++ "(\{closureStr}, \{argStr})"
 
-    -- If `var` turned out dead, Compiler.RC2.RC already wrapped `body` in
-    -- an RDrop/RFree for it directly (see RCExp.idr's module note) --
-    -- there is no separate flag to check here, the ordinary RDrop/RFree
-    -- cases below pick it up naturally.
-    emitRC (RLet fc var rep value body) tailPosition = do
-        declareLet fc var rep value
-        emitRC body tailPosition
+    -- Unreachable in practice, same reasoning as RSelfTailCall's own
+    -- case below: emitInto's tryBuildClosureInto always peels an RLet
+    -- (declaring it via declareLet) before ever falling back to a bare
+    -- emitRC call, so this construct itself should never reach emitRC
+    -- directly. Failing loudly here (rather than silently re-declaring
+    -- `var` a second time, or worse, skipping its declaration) is the
+    -- safer choice.
+    emitRC (RLet fc var rep value body) _ = throw $ InternalError "[rc2] RLet reached emitRC directly (not intercepted by emitInto/tryBuildClosureInto)"
 
     emitRC (RCon fc n coninfo tag args reuseFrom) _ = do
         if coninfo == NIL || coninfo == NOTHING || coninfo == ZERO || coninfo == UNIT
@@ -1121,116 +1354,17 @@ mutual
         argStrs <- traverse rcVarToBoxedC args
         pure $ "idris2rc2_\{cName p}("++ showSep ", " argStrs ++")"
 
-    -- Lower a fused comparison branch (see RCExp.idr's own doc comment
-    -- on RCmpCase and `nativeCmpExpr`): the comparison is evaluated
-    -- once into a raw C `int` (no heap allocation for the Bool it would
-    -- otherwise be), `postDrop` (Compiler.RC2.RC's `annotate`) is
-    -- lowered immediately after -- same ordering rule as ROp's own
-    -- postDrop, see its doc comment -- and then exactly one of the two
-    -- branches runs.
-    emitRC (RCmpCase fc op args postDrop whenTrue whenFalse) tailPosition = do
-        case cmpArgTy op of
-             Nothing => throw $ InternalError "[rc2] RCmpCase: not a comparison op"
-             Just ty => do
-                 argStrs <- rc2traverseVect (rcVarToNativeC ty) args
-                 let condVar = "cmp_" ++ !(getNextCounter)
-                 emit fc $ "int " ++ condVar ++ " = " ++ nativeCmpExpr op argStrs ++ ";"
-                 removeVars $ map varName postDrop
-                 switchReturnVar <- getNewVarThatWillNotBeFreedAtEndOfBlock
-                 emit emptyFC "IDRIS2RC2_Value * \{switchReturnVar} = NULL;"
-                 emit emptyFC "if (\{condVar}) {"
-                 increaseIndentation
-                 assignInto emptyFC False switchReturnVar tailPosition whenTrue
-                 decreaseIndentation
-                 emit emptyFC "} else {"
-                 increaseIndentation
-                 assignInto emptyFC False switchReturnVar tailPosition whenFalse
-                 decreaseIndentation
-                 emit emptyFC "}"
-                 pure switchReturnVar
-
-    emitRC (RConCase fc sc alts mDef) tailPosition = do
-        let sc' = varName sc
-        switchReturnVar <- getNewVarThatWillNotBeFreedAtEndOfBlock
-        emit fc "IDRIS2RC2_Value * \{switchReturnVar} = NULL;"
-        _ <- foldlC (\els, (MkRConAlt name coninfo tag args body offersReuse) => do
-            let erased = coninfo == NIL || coninfo == NOTHING || coninfo == ZERO || coninfo == UNIT
-            if erased then emit emptyFC "\{els}if (NULL == \{sc'} /* \{show name} \{show coninfo} */) {"
-                else if coninfo == CONS || coninfo == JUST || coninfo == SUCC
-                then emit emptyFC "\{els}if (NULL != \{sc'} /* \{show name} \{show coninfo} */) {"
-                else do
-                    case tag of
-                        -- Untagged (name-compared) constructors are
-                        -- never zero-argument+tagged, so RCEmptyCon
-                        -- never covers them -- sc' is always a real
-                        -- heap IDRIS2RC2_Constructor* here.
-                        Nothing   => emit emptyFC "\{els}if (! strcmp(((IDRIS2RC2_Constructor *)\{sc'})->name, idris2rc2_constr_\{cName name})) {"
-                        -- sc' may be a tagged pointer (a zero-argument
-                        -- constructor of *this* ADT, see RCEmptyCon in
-                        -- RCExp.idr) as well as a real heap
-                        -- IDRIS2RC2_Constructor* -- idris2rc2_conTag
-                        -- (support/rc2/datatypes.h) checks which.
-                        Just tag' => emit emptyFC "\{els}if (idris2rc2_conTag(\{sc'}) == \{show tag'} /* \{show name} */) {"
-
-            increaseIndentation
-            _ <- foldlC (\k, arg => do
-                emit emptyFC "IDRIS2RC2_Value *var_\{show arg} = ((IDRIS2RC2_Constructor*)\{sc'})->args[\{show k}];"
-                pure (S k) ) 0 args
-            branchBody (Just (sc, varName . RCLoc <$> args)) (isJust offersReuse) switchReturnVar body tailPosition
-            decreaseIndentation
-            pure "} else ") "" alts
-
-        case mDef of
-            Nothing => pure ()
-            Just body => do
-                emit emptyFC "} else {"
-                increaseIndentation
-                branchBody Nothing False switchReturnVar body tailPosition
-                decreaseIndentation
-        emit emptyFC "}"
-        pure switchReturnVar
-
-    emitRC (RConstCase fc sc alts def) tailPosition = do
-        let sc' = varName sc
-        switchReturnVar <- getNewVarThatWillNotBeFreedAtEndOfBlock
-        emit fc "IDRIS2RC2_Value *\{switchReturnVar} = NULL;"
-        case integer_switch alts of
-            True => do
-                tmpint <- getNewVarThatWillNotBeFreedAtEndOfBlock
-                let extractExpr : String
-                    extractExpr = case alts of
-                                       (MkRConstAlt c0 _ :: _) => extractIntExpr c0 sc'
-                                       [] => "idris2rc2_extractInt(\{sc'})"
-                emit emptyFC "int64_t \{tmpint} = \{extractExpr};"
-                _ <- foldlC (\els, (MkRConstAlt c body) => do
-                    emit emptyFC "\{els}if (\{tmpint} == \{const2Integer c 0}) {"
-                    increaseIndentation
-                    branchBody Nothing False switchReturnVar body tailPosition
-                    decreaseIndentation
-                    pure "} else ") "" alts
-                pure ()
-
-            False => do
-                _ <- foldlC (\els, (MkRConstAlt c body) => do
-                    case c of
-                        Str x => emit emptyFC "\{els}if (! strcmp(\{cStringQuoted x}, ((IDRIS2RC2_String *)\{sc'})->str)) {"
-                        Db  x => emit emptyFC "\{els}if (((IDRIS2RC2_Double *)\{sc'})->v == \{show x}) {"
-                        x => throw $ InternalError "[rc2] RConstCase : unsupported type. \{show fc} \{show x}"
-                    increaseIndentation
-                    branchBody Nothing False switchReturnVar body tailPosition
-                    decreaseIndentation
-                    pure "} else ") "" alts
-                pure ()
-
-        case def of
-            Nothing => pure ()
-            Just body => do
-                emit emptyFC "} else {"
-                increaseIndentation
-                branchBody Nothing False switchReturnVar body tailPosition
-                decreaseIndentation
-        emit emptyFC "}"
-        pure switchReturnVar
+    -- Unreachable in practice, same reasoning as RLet's own case above:
+    -- emitInto's dispatch always intercepts a leftover RCmpCase/
+    -- RConCase/RConstCase itself (routing it to emitCmpCaseInto/
+    -- emitConCaseInto/emitConstCaseInto's Sink-aware handling) before
+    -- ever falling back to a bare emitRC call. Failing loudly here is
+    -- the safer choice: reaching this would mean every branch just
+    -- silently reverted to a throwaway switchReturnVar, undoing the
+    -- point of that dispatch without any other visible symptom.
+    emitRC (RCmpCase fc op args postDrop whenTrue whenFalse) _ = throw $ InternalError "[rc2] RCmpCase reached emitRC directly (not intercepted by emitInto)"
+    emitRC (RConCase fc sc alts mDef) _ = throw $ InternalError "[rc2] RConCase reached emitRC directly (not intercepted by emitInto)"
+    emitRC (RConstCase fc sc alts def) _ = throw $ InternalError "[rc2] RConstCase reached emitRC directly (not intercepted by emitInto)"
 
     emitRC (RPrimVal fc (I x)) tailPosition = emitRC (RPrimVal fc (I64 $ cast x)) tailPosition
     emitRC (RPrimVal fc c) _ = do
@@ -1272,34 +1406,23 @@ mutual
 
     emitRC (RErased fc) _ = pure "NULL"
     emitRC (RCrash fc x) _ = pure "(NULL /* CRASH */)"
-    -- Unreachable in practice: assignInto/createCFunctions always try
-    -- tryEmitSelfTailCall first, which intercepts every RSelfTailCall
-    -- (however deeply RDup/RDrop/RFree/RLet-wrapped) before it could
-    -- ever reach a bare emitRC call -- see RSelfTailCall's own doc
-    -- comment. Unlike varName's RCConst case, failing loudly here
-    -- (rather than returning some placeholder string) is the safer
-    -- choice: reaching this would mean the goto-loop was never emitted
-    -- at all, silently turning a loop into infinite recursion.
+    -- Unreachable in practice: emitInto always tries tryEmitSelfTailCall
+    -- first, which intercepts every RSelfTailCall (however deeply
+    -- RDup/RDrop/RFree/RLet-wrapped) before it could ever reach a bare
+    -- emitRC call -- see RSelfTailCall's own doc comment. Unlike
+    -- varName's RCConst case, failing loudly here (rather than returning
+    -- some placeholder string) is the safer choice: reaching this would
+    -- mean the goto-loop was never emitted at all, silently turning a
+    -- loop into infinite recursion.
     emitRC (RSelfTailCall fc _) _ = throw $ InternalError "[rc2] RSelfTailCall reached emitRC directly (not intercepted by tryEmitSelfTailCall)"
-    emitRC (RDrop fc locs cont) tailPosition = do
-        -- locs is already guaranteed Boxed-only -- see the module note.
-        removeVars (varName <$> locs)
-        emitRC cont tailPosition
-    emitRC (RDup fc loc cont) tailPosition = do
-        dupVars [varName loc]
-        emitRC cont tailPosition
-    emitRC (RFree fc loc cont) tailPosition = do
-        freeVars [varName loc]
-        emitRC cont tailPosition
-    -- Compiler.RC2.Reuse's own cleanup node -- a reuse offer that this
-    -- particular execution path never reached a matching RCon to claim,
-    -- so the reservation (if it actually holds a repurposed
-    -- constructor -- NULL otherwise, see emitReuseOffer) needs releasing
-    -- through the same runtime path a failed-to-consume reuse always
-    -- used, `idris2rc2_dropReuseConstructor`.
-    emitRC (RReleaseReuse fc loc cont) tailPosition = do
-        removeReuseConstructors [reuseVarName loc]
-        emitRC cont tailPosition
+    -- Unreachable in practice, same reasoning as RLet's own case above:
+    -- emitInto's tryBuildClosureInto always peels these wrapper nodes
+    -- (emitting their own dup/drop/free/reuse-release side effect) on
+    -- the way down before ever falling back to a bare emitRC call.
+    emitRC (RDrop fc locs cont) _ = throw $ InternalError "[rc2] RDrop reached emitRC directly (not intercepted by emitInto/tryBuildClosureInto)"
+    emitRC (RDup fc loc cont) _ = throw $ InternalError "[rc2] RDup reached emitRC directly (not intercepted by emitInto/tryBuildClosureInto)"
+    emitRC (RFree fc loc cont) _ = throw $ InternalError "[rc2] RFree reached emitRC directly (not intercepted by emitInto/tryBuildClosureInto)"
+    emitRC (RReleaseReuse fc loc cont) _ = throw $ InternalError "[rc2] RReleaseReuse reached emitRC directly (not intercepted by emitInto/tryBuildClosureInto)"
 
     ||| The raw C expression for a value Compiler.RC2.Types has decided is
     ||| Native ty -- only ROp/RPrimVal ever get marked this way.
@@ -1544,14 +1667,12 @@ createCFunctions n (MkRCFun args isLoop body) = do
     -- whether this label exists -- Emit.idr doesn't re-derive it by
     -- scanning `body` itself.
     when isLoop $ emit EmptyFC "loop:;"
-    -- Same "try the tail-position special case first, else fall back"
-    -- protocol as assignInto -- see tryEmitSelfTailCall's own doc
-    -- comment on why a bare emitRC call here would be wrong for a
-    -- self-tail-call (it would return *and* have already looped, or
-    -- worse, never loop at all).
-    afterSelfTail <- tryEmitSelfTailCall body
-    whenJust afterSelfTail $ \remaining =>
-        emit EmptyFC $ "return \{!(emitRC remaining InTailPosition)};"
+    -- emitInto's own tryEmitSelfTailCall-first protocol handles a
+    -- self-tail-call body correctly on its own (goto, no return); for
+    -- anything else, SinkReturn makes every reachable tail leaf --
+    -- including inside a nested RCmpCase/RConCase/RConstCase -- emit its
+    -- own `return` directly, no intermediate switchReturnVar anywhere.
+    emitInto EmptyFC SinkReturn InTailPosition body
     decreaseIndentation
     emit EmptyFC  "}\n"
     emit EmptyFC  ""
