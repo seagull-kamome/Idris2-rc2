@@ -676,6 +676,22 @@ finalizeSink fc (SinkVar True target) valStr = emit fc "IDRIS2RC2_Value * \{targ
 finalizeSink fc (SinkVar False target) valStr = emit fc "\{target} = \{valStr};"
 finalizeSink fc SinkReturn valStr = emit fc "return \{valStr};"
 
+||| Whether a case's alts need `else`-chaining at all. Every branch
+||| reached under `SinkReturn` is guaranteed (inductively, via
+||| `emitInto`'s own dispatch -- see its doc comment) to end in either
+||| `return` or `goto loop;`, both of which leave the enclosing function
+||| entirely -- so a later alt's own condition is provably never even
+||| reached once an earlier one has already matched, `else` or not.
+||| Dropping it lets each alt stand as an independent `if`, matching
+||| what actually happens at runtime, and skips re-checking a condition
+||| control could never still reach anyway. Any other `Sink` (a plain
+||| variable) falls through after its own assignment -- exactly one
+||| branch must run, so the chain must stay `if`/`else if`/`else` to
+||| guarantee that.
+chainsWithElse : Sink -> Bool
+chainsWithElse SinkReturn = False
+chainsWithElse (SinkVar _ _) = True
+
 integer_switch : List RConstAlt -> Bool
 integer_switch [] = True
 integer_switch (MkRConstAlt c _  :: _) =
@@ -811,6 +827,86 @@ MaxExtractFunArgs = 8
 peelDrop : RCExp -> (List RCLocal, RCExp)
 peelDrop (RDrop _ locs cont) = (locs, cont)
 peelDrop e = ([], e)
+
+||| Split a non-empty list into everything but its last element, and the
+||| last element itself, in order -- `Nothing` for an empty list. Used
+||| by `emitAltChain` to single out a case's final alt, the one that can
+||| skip its own condition check when there's no explicit default (see
+||| its own doc comment).
+splitLast : List a -> Maybe (List a, a)
+splitLast xs = case reverse xs of
+    [] => Nothing
+    (l :: ls) => Just (reverse ls, l)
+
+||| The raw boolean C expression (no `if (...)` wrapper) deciding
+||| whether scrutinee `sc'` (already rendered via `varName`) matches
+||| `alt`'s own constructor.
+conAltCondExpr : String -> RConAlt -> Core String
+conAltCondExpr sc' (MkRConAlt name coninfo tag args body offersReuse) = do
+    let erased = coninfo == NIL || coninfo == NOTHING || coninfo == ZERO || coninfo == UNIT
+    pure $ if erased then "NULL == \{sc'} /* \{show name} \{show coninfo} */"
+           else if coninfo == CONS || coninfo == JUST || coninfo == SUCC
+           then "NULL != \{sc'} /* \{show name} \{show coninfo} */"
+           else case tag of
+                -- Untagged (name-compared) constructors are never
+                -- zero-argument+tagged, so RCEmptyCon never covers them
+                -- -- sc' is always a real heap IDRIS2RC2_Constructor*
+                -- here.
+                Nothing   => "! strcmp(((IDRIS2RC2_Constructor *)\{sc'})->name, idris2rc2_constr_\{cName name})"
+                -- sc' may be a tagged pointer (a zero-argument
+                -- constructor of *this* ADT, see RCEmptyCon in
+                -- RCExp.idr) as well as a real heap
+                -- IDRIS2RC2_Constructor* -- idris2rc2_conTag
+                -- (support/rc2/datatypes.h) checks which.
+                Just tag' => "idris2rc2_conTag(\{sc'}) == \{show tag'} /* \{show name} */"
+
+||| Render a case's own `if`-chain against `alts`, given a `Core String`
+||| condition expression and a `Core ()` body renderer per alt (each
+||| assuming indentation is the caller's -- `emitAltChain`'s own -- to
+||| manage), plus an optional default/fallback (`renderDefault`) for
+||| anything `alts` alone doesn't cover. Shared control-flow shape
+||| between `emitConCaseInto` and `emitConstCaseInto` -- the only two
+||| case constructs that dispatch over a genuine *list* of alts
+||| (`RCmpCase` always has exactly two, rendered directly by
+||| `emitCmpCaseInto` instead).
+|||
+||| Whenever there's no explicit default (`renderDefault = Nothing`),
+||| the very last alt in `alts` skips its own condition entirely --
+||| coverage already guarantees it matches once every earlier condition
+||| has failed, `else`-chained or not (see `chainsWithElse`). When
+||| `sink` also turns out to be `SinkReturn`, every *other* alt drops
+||| its `else`-chaining too (`chainsWithElse` again) -- together, a
+||| 2-alt case with no default in tail position (e.g. a `Bool`-shaped
+||| match) collapses to the simplest possible
+||| `if (...) { ...; return ...; } { ...; return ...; }` shape, and a
+||| single-alt case with no default (only one constructor is even
+||| possible) collapses further still, to no `if` at all.
+emitAltChain : {auto oft : Ref OutfileText Output}
+            -> {auto il : Ref IndentLevel Nat}
+            -> Sink -> (alt -> Core String) -> (alt -> Core ()) -> Maybe (Core ()) -> List alt -> Core ()
+emitAltChain sink condExpr renderBody renderDefault alts = do
+    let chained = chainsWithElse sink
+    let (condAlts, tailAlt) = case (renderDefault, splitLast alts) of
+             (Nothing, Just (initAlts, lastAlt)) => (initAlts, Just lastAlt)
+             _ => (alts, Nothing)
+    finalEls <- foldlC (\els, alt => do
+        cond <- condExpr alt
+        emit emptyFC "\{els}if (\{cond}) {"
+        increaseIndentation
+        renderBody alt
+        decreaseIndentation
+        if chained
+           then pure "} else "
+           else do
+               emit emptyFC "}"
+               pure "") "" condAlts
+    let trailing : Maybe (Core ()) = maybe renderDefault (Just . renderBody) tailAlt
+    whenJust trailing $ \body => do
+        emit emptyFC "\{finalEls}{"
+        increaseIndentation
+        body
+        decreaseIndentation
+        emit emptyFC "}"
 
 mutual
     ||| Declare an `RLet`'s own binding: record its `Rep` (so later *uses*
@@ -1102,6 +1198,27 @@ mutual
         -- and names nothing at all.
         emitInto emptyFC sink tailPosition body'
 
+    ||| An `RConAlt`'s own destructuring (`var_N = sc->args[k]` for each
+    ||| pattern-bound field) followed by its body via `branchBody` --
+    ||| shared by every alt `emitConCaseInto`/`emitAltChain` render,
+    ||| whether or not this particular alt ended up needing its own
+    ||| condition check (the destructuring itself doesn't depend on
+    ||| that).
+    emitConAltBody : {auto a : Ref ArgCounter Nat}
+                   -> {auto oft : Ref OutfileText Output}
+                   -> {auto il : Ref IndentLevel Nat}
+                   -> {auto _ : Ref ConstDef (SortedMap Constant ConstDef)}
+                   -> {auto r : Ref RepMap (SortedMap Int Rep)}
+                   -> {auto lm : Ref InlineMap (SortedMap Int String)}
+                   -> {auto fa : Ref FunctionArgs (List Int)}
+                   -> Sink -> TailPositionStatus -> RCLocal -> RConAlt -> Core ()
+    emitConAltBody sink tailPosition sc (MkRConAlt name coninfo tag args body offersReuse) = do
+        let sc' = varName sc
+        _ <- foldlC (\k, arg => do
+            emit emptyFC "IDRIS2RC2_Value *var_\{show arg} = ((IDRIS2RC2_Constructor*)\{sc'})->args[\{show k}];"
+            pure (S k) ) 0 args
+        branchBody (Just (sc, varName . RCLoc <$> args)) (isJust offersReuse) sink body tailPosition
+
     ||| Lower a fused comparison branch (see RCExp.idr's own doc comment
     ||| on RCmpCase and `nativeCmpExpr`): the comparison is evaluated once
     ||| into a raw C `int` (no heap allocation for the Bool it would
@@ -1110,7 +1227,10 @@ mutual
     ||| postDrop, see its doc comment -- and then exactly one of the two
     ||| branches runs, each writing straight into `sink` (resolved once,
     ||| before either branch -- see `resolveSink`) instead of a throwaway
-    ||| `switchReturnVar`.
+    ||| `switchReturnVar`. Under `SinkReturn`, `whenTrue` is guaranteed to
+    ||| end in `return`/`goto` (see `chainsWithElse`'s own doc comment),
+    ||| so `whenFalse` needs no `else` to guard it either -- a plain
+    ||| unconditioned block right after does the same job.
     emitCmpCaseInto : {auto a : Ref ArgCounter Nat}
                     -> {auto oft : Ref OutfileText Output}
                     -> {auto il : Ref IndentLevel Nat}
@@ -1133,7 +1253,11 @@ mutual
                  increaseIndentation
                  emitInto emptyFC resolvedSink tailPosition whenTrue
                  decreaseIndentation
-                 emit emptyFC "} else {"
+                 if chainsWithElse resolvedSink
+                    then emit emptyFC "} else {"
+                    else do
+                        emit emptyFC "}"
+                        emit emptyFC "{"
                  increaseIndentation
                  emitInto emptyFC resolvedSink tailPosition whenFalse
                  decreaseIndentation
@@ -1141,7 +1265,8 @@ mutual
 
     ||| Lower a constructor-tag switch: each alt (and the default, if
     ||| any) writes straight into `sink` (resolved once, before any alt
-    ||| -- see `resolveSink`) instead of a throwaway `switchReturnVar`.
+    ||| -- see `resolveSink`) instead of a throwaway `switchReturnVar` --
+    ||| see `emitAltChain`'s own doc comment for the `if`-chain shape.
     emitConCaseInto : {auto a : Ref ArgCounter Nat}
                     -> {auto oft : Ref OutfileText Output}
                     -> {auto il : Ref IndentLevel Nat}
@@ -1153,46 +1278,17 @@ mutual
     emitConCaseInto sink tailPosition fc sc alts mDef = do
         let sc' = varName sc
         resolvedSink <- resolveSink fc sink
-        _ <- foldlC (\els, (MkRConAlt name coninfo tag args body offersReuse) => do
-            let erased = coninfo == NIL || coninfo == NOTHING || coninfo == ZERO || coninfo == UNIT
-            if erased then emit emptyFC "\{els}if (NULL == \{sc'} /* \{show name} \{show coninfo} */) {"
-                else if coninfo == CONS || coninfo == JUST || coninfo == SUCC
-                then emit emptyFC "\{els}if (NULL != \{sc'} /* \{show name} \{show coninfo} */) {"
-                else do
-                    case tag of
-                        -- Untagged (name-compared) constructors are
-                        -- never zero-argument+tagged, so RCEmptyCon
-                        -- never covers them -- sc' is always a real
-                        -- heap IDRIS2RC2_Constructor* here.
-                        Nothing   => emit emptyFC "\{els}if (! strcmp(((IDRIS2RC2_Constructor *)\{sc'})->name, idris2rc2_constr_\{cName name})) {"
-                        -- sc' may be a tagged pointer (a zero-argument
-                        -- constructor of *this* ADT, see RCEmptyCon in
-                        -- RCExp.idr) as well as a real heap
-                        -- IDRIS2RC2_Constructor* -- idris2rc2_conTag
-                        -- (support/rc2/datatypes.h) checks which.
-                        Just tag' => emit emptyFC "\{els}if (idris2rc2_conTag(\{sc'}) == \{show tag'} /* \{show name} */) {"
-
-            increaseIndentation
-            _ <- foldlC (\k, arg => do
-                emit emptyFC "IDRIS2RC2_Value *var_\{show arg} = ((IDRIS2RC2_Constructor*)\{sc'})->args[\{show k}];"
-                pure (S k) ) 0 args
-            branchBody (Just (sc, varName . RCLoc <$> args)) (isJust offersReuse) resolvedSink body tailPosition
-            decreaseIndentation
-            pure "} else ") "" alts
-
-        case mDef of
-            Nothing => pure ()
-            Just body => do
-                emit emptyFC "} else {"
-                increaseIndentation
-                branchBody Nothing False resolvedSink body tailPosition
-                decreaseIndentation
-        emit emptyFC "}"
+        emitAltChain resolvedSink
+            (conAltCondExpr sc')
+            (emitConAltBody resolvedSink tailPosition sc)
+            (map (\body => branchBody Nothing False resolvedSink body tailPosition) mDef)
+            alts
 
     ||| Lower a constant/tag switch: same "each alt writes straight into
-    ||| the once-resolved `sink`" shape as `emitConCaseInto`, just over
-    ||| `RConstCase`'s own two dispatch strategies (a fast integer switch
-    ||| via `extractIntExpr`, or the string/double equality chain).
+    ||| the once-resolved `sink`, via `emitAltChain`'s shared `if`-chain
+    ||| shape" as `emitConCaseInto`, just over `RConstCase`'s own two
+    ||| dispatch strategies (a fast integer switch via `extractIntExpr`,
+    ||| or the string/double equality chain).
     emitConstCaseInto : {auto a : Ref ArgCounter Nat}
                        -> {auto oft : Ref OutfileText Output}
                        -> {auto il : Ref IndentLevel Nat}
@@ -1204,6 +1300,7 @@ mutual
     emitConstCaseInto sink tailPosition fc sc alts def = do
         let sc' = varName sc
         resolvedSink <- resolveSink fc sink
+        let defaultAction = map (\body => branchBody Nothing False resolvedSink body tailPosition) def
         case integer_switch alts of
             True => do
                 tmpint <- getNewVarThatWillNotBeFreedAtEndOfBlock
@@ -1212,34 +1309,21 @@ mutual
                                        (MkRConstAlt c0 _ :: _) => extractIntExpr c0 sc'
                                        [] => "idris2rc2_extractInt(\{sc'})"
                 emit emptyFC "int64_t \{tmpint} = \{extractExpr};"
-                _ <- foldlC (\els, (MkRConstAlt c body) => do
-                    emit emptyFC "\{els}if (\{tmpint} == \{const2Integer c 0}) {"
-                    increaseIndentation
-                    branchBody Nothing False resolvedSink body tailPosition
-                    decreaseIndentation
-                    pure "} else ") "" alts
-                pure ()
+                emitAltChain resolvedSink
+                    (\(MkRConstAlt c _) => pure "\{tmpint} == \{const2Integer c 0}")
+                    (\(MkRConstAlt _ body) => branchBody Nothing False resolvedSink body tailPosition)
+                    defaultAction
+                    alts
 
-            False => do
-                _ <- foldlC (\els, (MkRConstAlt c body) => do
-                    case c of
-                        Str x => emit emptyFC "\{els}if (! strcmp(\{cStringQuoted x}, ((IDRIS2RC2_String *)\{sc'})->str)) {"
-                        Db  x => emit emptyFC "\{els}if (((IDRIS2RC2_Double *)\{sc'})->v == \{show x}) {"
-                        x => throw $ InternalError "[rc2] RConstCase : unsupported type. \{show fc} \{show x}"
-                    increaseIndentation
-                    branchBody Nothing False resolvedSink body tailPosition
-                    decreaseIndentation
-                    pure "} else ") "" alts
-                pure ()
-
-        case def of
-            Nothing => pure ()
-            Just body => do
-                emit emptyFC "} else {"
-                increaseIndentation
-                branchBody Nothing False resolvedSink body tailPosition
-                decreaseIndentation
-        emit emptyFC "}"
+            False =>
+                emitAltChain resolvedSink
+                    (\(MkRConstAlt c _) => case c of
+                        Str x => pure "! strcmp(\{cStringQuoted x}, ((IDRIS2RC2_String *)\{sc'})->str)"
+                        Db  x => pure "((IDRIS2RC2_Double *)\{sc'})->v == \{show x}"
+                        x => throw $ InternalError "[rc2] RConstCase : unsupported type. \{show fc} \{show x}")
+                    (\(MkRConstAlt _ body) => branchBody Nothing False resolvedSink body tailPosition)
+                    defaultAction
+                    alts
 
     emitRC : {auto a : Ref ArgCounter Nat}
            -> {auto oft : Ref OutfileText Output}

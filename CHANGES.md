@@ -3,6 +3,17 @@
 Newest first. Each entry corresponds to one commit on `master`; see
 `git log` for full commit messages.
 
+## 2026-08-13 -- Drop redundant conditions/else-chaining in case codegen
+
+Two related simplifications to `emitConCaseInto`/`emitConstCaseInto`
+(new shared `emitAltChain`) and `emitCmpCaseInto`: a case with no
+explicit default now skips the last alt's own condition check entirely
+(coverage already guarantees it matches); and under `SinkReturn`, since
+every branch is guaranteed to end in `return`/`goto`, alts no longer
+need `else`-chaining at all. Together, a 2-alt case with no default in
+tail position (e.g. a `Bool`-shaped match) collapses from
+`if (...) {...} else if (...) {...}` to `if (...) {...} {...}`.
+
 ## 2026-08-13 -- Emit case branches straight into their real destination (Sink)
 
 Generalized `assignInto` into a `Sink` (a variable, or `return`) so
