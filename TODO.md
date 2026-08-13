@@ -169,6 +169,34 @@ inspected the generated C directly for the expected shape (`loop:;` +
 correct slot padding). 19/19 refc-suite tests and all other smoke tests
 still pass and still match upstream byte-for-byte.
 
+### Native-shadow eligibility stops at bare top-level scalars
+
+Measured against a real third-party package (`idris2-missing-containers`'s
+hash algorithms, see `rc2/BENCHMARKS.md`'s 2026-08-14 entry): a loop param
+only gets promoted if it's *itself* a native-eligible-typed local read
+directly as an `ROp`/`RCmpCase` operand -- a common real-world pattern
+this misses entirely is a numeric state wrapped in a single-field,
+`newtype`-style constructor (e.g. `data FNV1a = MkFNV1a Bits64`, the
+pattern every `HashAlgorithm` instance in that package uses), where the
+loop's own top-level parameter is the *constructor*, and the native
+value only appears after an explicit destructure inside the loop body.
+`nativeArgType` never sees past that destructure to attribute the
+native use back to the top-level parameter. A plausible extension:
+recognize "loop param `p`'s only structural uses are all
+`case p of MkX v => ...`-shaped destructures of the same single-field
+constructor, and `v` is itself native-eligible" and shadow-promote the
+*field*, re-wrapping at any Boxed-context use. Not attempted here --
+scoping and correctness (the constructor's own tag/shape still needs
+representing on the "runs once" -- entry -- side, which is a different
+shape of rewrite than a bare scalar) would need its own design pass.
+Two other, unrelated reasons the same benchmark's dominant costs stay
+unaffected regardless: interface-dispatched comparisons (`Ord`'s `<=`,
+etc.) never fuse into `RCmpCase` (that fusion only recognizes a direct
+`PrimFn` comparison, not a call through a typeclass method) and
+`IOHashMap`'s own write/read path is dominated by `IORef`/array access
+and constructor-list bucket traversal, not a numeric accumulator loop
+at all -- native-shadowing was never going to reach either of those.
+
 ## Scope: deliberately unboxed types stop at scalars
 
 `Integer` (GMP arbitrary precision) and `String` are never candidates
