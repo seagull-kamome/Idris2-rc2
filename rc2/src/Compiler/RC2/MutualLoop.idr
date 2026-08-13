@@ -112,7 +112,9 @@ mutual
   collectBoundIds (RReleaseReuse _ _ body) = collectBoundIds body
   collectBoundIds (RReuseOffer _ _ _ body) = collectBoundIds body
   -- RV, RAppName, RUnderApp, RApp, RCon, ROp, RExtPrim, RPrimVal,
-  -- RErased, RCrash, RSelfTailCall: no subexpressions, no bindings.
+  -- RErased, RCrash: no subexpressions, no bindings. RLoop/
+  -- RLoopContinue never actually appear here in practice either -- this
+  -- pass runs strictly before Compiler.RC2.Loop, their sole producer.
   collectBoundIds _ = []
 
   collectBoundIdsAlt : RConAlt -> List Int
@@ -175,7 +177,13 @@ mutual
   renameRCExp ren (RReleaseReuse fc v body) = RReleaseReuse fc (renameLocal ren v) (renameRCExp ren body)
   renameRCExp ren (RReuseOffer fc sc dupOnShared body) =
       RReuseOffer fc (renameLocal ren sc) (renameLocals ren dupOnShared) (renameRCExp ren body)
-  renameRCExp ren (RSelfTailCall fc args) = RSelfTailCall fc (renameLocals ren args)
+  -- Never actually reached in practice -- this pass runs strictly
+  -- before Compiler.RC2.Loop, the sole producer of both -- kept total
+  -- (as a plain pass-through) rather than assumed unreachable, same
+  -- reasoning as RC.idr's own annotate.
+  renameRCExp ren (RLoop fc loopParams initial body) =
+      RLoop fc (map (\(i, r) => (renameId ren i, r)) loopParams) (renameLocals ren initial) (renameRCExp ren body)
+  renameRCExp ren (RLoopContinue fc args) = RLoopContinue fc (renameLocals ren args)
 
   renameConAlt : Renaming -> RConAlt -> RConAlt
   renameConAlt ren (MkRConAlt name ci tag args body) =
@@ -334,11 +342,11 @@ buildGroup existingNames memberDefs groupNames = do
               members
     let mergedBody = RConstCase EmptyFC (RCLoc tagId) alts
                         (Just (RCrash EmptyFC "[rc2] internal: MutualLoop tag dispatch fell through"))
-    let mergedDef = MkRCFun (tagId :: slotIds) False mergedBody
+    let mergedDef = MkRCFun (tagId :: slotIds) mergedBody
     let wrappers = map (\(name_i, (args_i, _)) =>
                       let tag_i = fromMaybe 0 (lookup name_i tagOf)
                           padded = map RCLoc args_i ++ replicate (maxArity `minus` length args_i) RCNull
-                      in (name_i, MkRCFun args_i False
+                      in (name_i, MkRCFun args_i
                             (RAppName EmptyFC Nothing mergedName (RCConst (I64 (cast tag_i)) :: padded))))
                     members
     pure ((mergedName, mergedDef) :: wrappers)
@@ -363,7 +371,7 @@ applyMutualLoop defs = do
     _ <- newRef FreshId 0
     let memberDefs = SortedMap.fromList $ mapMaybe
             (\(n, d) => case d of
-                             MkRCFun args _ body => Just (n, (args, body))
+                             MkRCFun args body => Just (n, (args, body))
                              _ => Nothing)
             defs
     let graph = buildGraph memberDefs

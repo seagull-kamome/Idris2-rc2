@@ -3,6 +3,28 @@
 Newest first. Each entry corresponds to one commit on `master`; see
 `git log` for full commit messages.
 
+## 2026-08-13 -- Adapt Compiler.RC2.MutualLoop to RLoop/RLoopContinue, Stage 2
+
+Second of the two staged steps (see Stage 1). `Compiler.RC2.MutualLoop`
+itself needed no *design* changes -- it was already deliberately
+agnostic to how `Compiler.RC2.Loop` represents a converted loop
+internally, by design: it only ever produces an ordinary tail-position
+`RAppName` targeting its own synthesised merged function, relying
+entirely on `Compiler.RC2.Loop` (which still runs immediately
+afterward, unchanged in this regard) to recognize and convert it -- and
+that recognition (`mapTailAppNames`) didn't change in Stage 1 either.
+The only changes needed were mechanical: adapting to `MkRCFun`'s new
+2-field shape (no more `isLoop`) at its own two construction sites, and
+adding defensive `RLoop`/`RLoopContinue` pass-through cases to
+`renameRCExp` (never actually reached in practice -- this pass runs
+strictly before `Compiler.RC2.Loop`, the sole producer of both).
+
+Verified: `Test10MutualLoop.idr`'s merged `isEvenM`/`isOddM` function
+(and every other test) generates byte-for-byte identical C to before
+Stage 1/2 (`loop:;` placement, goto-reassignment, tag dispatch all
+unchanged); 19/19 refc-suite tests and all smoke tests still match
+`idris2 --cg refc`; benchmarks unaffected.
+
 ## 2026-08-13 -- Represent self-tail-call loops as explicit IR (RLoop/RLoopContinue), Stage 1
 
 First of two staged steps toward letting a loop's own carried state have
