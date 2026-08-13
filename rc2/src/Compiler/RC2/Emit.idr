@@ -28,7 +28,7 @@ module Compiler.RC2.Emit
 -- note on this exact question).
 --
 -- A few things this module still *does* decide (deliberately, not an
--- oversight -- see TODO.md's "Architecture" section for the two left
+-- oversight -- see TODO.md's "Architecture" section for the one left
 -- unaddressed):
 --   * `tryBuildClosureInto`/`makeClosureInto`: which C statements a
 --     closure build/partial-application ends up as. Purely a codegen-
@@ -739,43 +739,88 @@ peelDrop : RCExp -> (List RCLocal, RCExp)
 peelDrop (RDrop _ locs cont) = (locs, cont)
 peelDrop e = ([], e)
 
-||| If `value` is a partial application (RUnderApp), or an InTailPosition
-||| tail call (RAppName -- see emitRC's own RAppName case, which only
-||| ever produces a bare closure name in that tail position, never
-||| otherwise) -- either possibly wrapped in leading RDup/RDrop/RFree for
-||| their own operands' refcounting, which `annotate` can wrap around any
-||| expression uniformly and never change what the value itself is --
-||| lower those wrappers first, then build the closure directly into
-||| `target` via `makeClosureInto` instead of the throwaway `closure_N`
-||| a generic `emitRC value` would produce (only to have the caller
-||| immediately copy it into `target` right after -- two statements for
-||| one). Returns `False` (nothing emitted) if `value` isn't shaped like
-||| this at all, leaving the caller to fall back to the general case.
-tryBuildClosureInto : {auto a : Ref ArgCounter Nat}
-                    -> {auto oft : Ref OutfileText Output}
-                    -> {auto il : Ref IndentLevel Nat}
-                    -> {auto r : Ref RepMap (SortedMap Int Rep)}
-                    -> {auto lm : Ref InlineMap (SortedMap Int String)}
-                    -> (declare : Bool) -> String -> TailPositionStatus -> RCExp -> Core Bool
-tryBuildClosureInto declare target tailPosition (RDup fc v cont) = do
-    dupVars [varName v]
-    tryBuildClosureInto declare target tailPosition cont
-tryBuildClosureInto declare target tailPosition (RDrop fc vs cont) = do
-    -- `vs` is already guaranteed Boxed-only -- see the module note.
-    removeVars (varName <$> vs)
-    tryBuildClosureInto declare target tailPosition cont
-tryBuildClosureInto declare target tailPosition (RFree fc v cont) = do
-    freeVars [varName v]
-    tryBuildClosureInto declare target tailPosition cont
-tryBuildClosureInto declare target _ (RUnderApp fc n missing args) = do
-    makeClosureInto fc declare target n args missing
-    pure True
-tryBuildClosureInto declare target InTailPosition (RAppName fc _ n args) = do
-    makeClosureInto fc declare target n args 0
-    pure True
-tryBuildClosureInto _ _ _ _ = pure False
-
 mutual
+    ||| Declare an `RLet`'s own binding: record its `Rep` (so later *uses*
+    ||| of `var` can look it up), then either inline it (a literal, or an
+    ||| `RInlineNative`), declare a plain native C scalar, or build/copy
+    ||| its Boxed value into `var_N`. Shared by `emitRC`'s and
+    ||| `emitNativeValue`'s own `RLet` cases (identical in both except
+    ||| for what continues afterward, which each caller keeps to itself)
+    ||| *and* `tryBuildClosureInto`'s own `RLet` case -- an `RLet`
+    ||| standing between it and a closure-shaped tail expression still
+    ||| needs its binding declared exactly as it would be anywhere else,
+    ||| it just isn't the end of that search.
+    declareLet : {auto a : Ref ArgCounter Nat}
+               -> {auto oft : Ref OutfileText Output}
+               -> {auto il : Ref IndentLevel Nat}
+               -> {auto _ : Ref ConstDef (SortedMap Constant ConstDef)}
+               -> {auto r : Ref RepMap (SortedMap Int Rep)}
+               -> {auto lm : Ref InlineMap (SortedMap Int String)}
+               -> FC -> Int -> Rep -> RCExp -> Core ()
+    declareLet fc var rep value = do
+        update RepMap (insert var rep)
+        case (rep, value) of
+             (RNative _, RPrimVal _ c) => update InlineMap (insert var (nativeLitExpr c))
+             (RInlineNative ty, _) => inlineNative ty var value
+             (RNative ty, _) => declareNative fc ty var value
+             (RBoxed, _) => assignInto fc True "var_\{show var}" NotInTailPosition value
+
+    ||| If `value` is a partial application (RUnderApp), or an InTailPosition
+    ||| tail call (RAppName -- see emitRC's own RAppName case, which only
+    ||| ever produces a bare closure name in that tail position, never
+    ||| otherwise) -- either possibly wrapped in leading RDup/RDrop/RFree for
+    ||| their own operands' refcounting, or in one or more RLet bindings
+    ||| that have nothing to do with the closure itself (both of which
+    ||| `annotate`/Phase 1's own ANF normalisation can wrap around any
+    ||| expression uniformly, without changing what the *tail* expression
+    ||| actually is) -- lower those wrappers first, then build the closure
+    ||| directly into `target` via `makeClosureInto` instead of the
+    ||| throwaway `closure_N` a generic `emitRC value` would produce (only
+    ||| to have the caller immediately copy it into `target` right after
+    ||| -- two statements for one).
+    |||
+    ||| Returns `Nothing` if the closure was built (nothing left for the
+    ||| caller to do), or `Just leftover` if `value` wasn't shaped like
+    ||| this at all -- `leftover` is *not* always `value` itself: peeling
+    ||| an RDup/RDrop/RFree/RLet wrapper on the way down already emits
+    ||| that wrapper's own side effect (a dup/drop/free call, or a let
+    ||| declaration), so if the search dead-ends partway through, the
+    ||| caller must resume from what's left (the innermost un-peeled
+    ||| expression), not restart from `value` -- re-running `emitRC` on
+    ||| the original `value` would emit every wrapper's side effect a
+    ||| second time. (An earlier version returned a bare `Bool` and had
+    ||| exactly this bug: any Boxed `RLet` whose value was e.g. an
+    ||| RDup-wrapped non-tail-position `RAppName` -- an ordinary, common
+    ||| shape, not exotic -- had its dup emitted twice, permanently
+    ||| leaking one reference. Found via `Prelude.Types.foldr`.)
+    tryBuildClosureInto : {auto a : Ref ArgCounter Nat}
+                        -> {auto oft : Ref OutfileText Output}
+                        -> {auto il : Ref IndentLevel Nat}
+                        -> {auto _ : Ref ConstDef (SortedMap Constant ConstDef)}
+                        -> {auto r : Ref RepMap (SortedMap Int Rep)}
+                        -> {auto lm : Ref InlineMap (SortedMap Int String)}
+                        -> (declare : Bool) -> String -> TailPositionStatus -> RCExp -> Core (Maybe RCExp)
+    tryBuildClosureInto declare target tailPosition (RDup fc v cont) = do
+        dupVars [varName v]
+        tryBuildClosureInto declare target tailPosition cont
+    tryBuildClosureInto declare target tailPosition (RDrop fc vs cont) = do
+        -- `vs` is already guaranteed Boxed-only -- see the module note.
+        removeVars (varName <$> vs)
+        tryBuildClosureInto declare target tailPosition cont
+    tryBuildClosureInto declare target tailPosition (RFree fc v cont) = do
+        freeVars [varName v]
+        tryBuildClosureInto declare target tailPosition cont
+    tryBuildClosureInto declare target tailPosition (RLet fc var rep value body) = do
+        declareLet fc var rep value
+        tryBuildClosureInto declare target tailPosition body
+    tryBuildClosureInto declare target _ (RUnderApp fc n missing args) = do
+        makeClosureInto fc declare target n args missing
+        pure Nothing
+    tryBuildClosureInto declare target InTailPosition (RAppName fc _ n args) = do
+        makeClosureInto fc declare target n args 0
+        pure Nothing
+    tryBuildClosureInto _ _ _ e = pure (Just e)
+
     ||| Render `value`'s native expression and declare it as a plain
     ||| `TYPE var_N = ...;` C scalar, discharging its own pending
     ||| Boxed-operand drop(s) immediately after (see `emitNativeValue`'s
@@ -832,9 +877,12 @@ mutual
                -> {auto lm : Ref InlineMap (SortedMap Int String)}
                -> FC -> (declare : Bool) -> (target : String) -> TailPositionStatus -> RCExp -> Core ()
     assignInto fc declare target tailPosition value = do
-        built <- tryBuildClosureInto declare target tailPosition value
-        unless built $ do
-            valStr <- emitRC value tailPosition
+        leftover <- tryBuildClosureInto declare target tailPosition value
+        -- Resume from `leftover`, not `value` -- see tryBuildClosureInto's
+        -- own doc comment on why re-running emitRC on `value` itself
+        -- would double-emit any wrapper it already peeled and emitted.
+        whenJust leftover $ \remaining => do
+            valStr <- emitRC remaining tailPosition
             if declare
                then emit fc $ "IDRIS2RC2_Value * " ++ target ++ " = " ++ valStr ++ ";"
                else emit fc $ target ++ " = " ++ valStr ++ ";"
@@ -928,41 +976,13 @@ mutual
            NotInTailPosition => "idris2rc2_applyClosure"
            InTailPosition    => "idris2rc2_tailcallApplyClosure") ++ "(\{closureStr}, \{argStr})"
 
+    -- If `var` turned out dead, Compiler.RC2.RC already wrapped `body` in
+    -- an RDrop/RFree for it directly (see RCExp.idr's module note) --
+    -- there is no separate flag to check here, the ordinary RDrop/RFree
+    -- cases below pick it up naturally.
     emitRC (RLet fc var rep value body) tailPosition = do
-        -- `rep` was already decided by Compiler.RC2.RC during the Lifted ->
-        -- RCExp conversion and is carried directly on this node; record it
-        -- so later *uses* of `var` (which only have its RCLocal id, not
-        -- this node) can look it up via repOfLocal/rcVarToBoxedC/etc.
-        -- If `var` turned out dead, Compiler.RC2.RC already wrapped `body`
-        -- in an RDrop/RFree for it directly (see RCExp.idr's module note)
-        -- -- there is no separate flag to check here, the ordinary RDrop/
-        -- RFree cases below pick it up naturally.
-        update RepMap (insert var rep)
-        case (rep, value) of
-             -- A bare literal never needs an actual C variable -- there's
-             -- no shared/reused computation or evaluation-order reason to
-             -- name it, only Compiler.RC2.RC's ANF normalisation binding
-             -- *every* non-trivial operand uniformly. Record it in
-             -- InlineMap and skip declaring `var` at all; every use inlines
-             -- the literal text directly (see rcVarToNativeC/
-             -- rcVarToBoxedC).
-             (RNative _, RPrimVal _ c) => do
-                 update InlineMap (insert var (nativeLitExpr c))
-                 emitRC body tailPosition
-             -- Compiler.RC2.RC's `annotate` already decided this native
-             -- op has no Boxed operands and is referenced exactly once
-             -- (see Rep.RInlineNative's own doc comment) -- used to be
-             -- `tryInlineNativeOp`, an Emit-time `countUsesR` tree-walk
-             -- redone on every native RLet.
-             (RInlineNative ty, _) => do
-                 inlineNative ty var value
-                 emitRC body tailPosition
-             (RNative ty, _) => do
-                 declareNative fc ty var value
-                 emitRC body tailPosition
-             (RBoxed, _) => do
-                 assignInto fc True "var_\{show var}" NotInTailPosition value
-                 emitRC body tailPosition
+        declareLet fc var rep value
+        emitRC body tailPosition
 
     emitRC (RCon fc n coninfo tag args reuseFrom) _ = do
         if coninfo == NIL || coninfo == NOTHING || coninfo == ZERO || coninfo == UNIT
@@ -1243,21 +1263,7 @@ mutual
     -- right here, immediately after its own declaration statement; only
     -- `body`'s eventual tail-op pending list is returned onward.
     emitNativeValue ty (RLet fc var rep value body) = do
-        update RepMap (insert var rep)
-        case (rep, value) of
-             -- Same literal-inlining as emitRC's RLet case above -- most
-             -- of these synthetic lets *are* one (e.g. the `2` in `d * 2`).
-             (RNative _, RPrimVal _ c) => update InlineMap (insert var (nativeLitExpr c))
-             -- Same RInlineNative case as emitRC's own RLet above -- see
-             -- its comment. A synthetic operand-let (this function's own
-             -- RLet chain) is used exactly once by construction (it
-             -- exists solely to hold that one operand) and, whenever its
-             -- own op has no Boxed operands either, is exactly what
-             -- `annotate` promotes to RInlineNative -- so this fires for
-             -- essentially every such let.
-             (RInlineNative ty', _) => inlineNative ty' var value
-             (RNative ty', _) => declareNative fc ty' var value
-             (RBoxed, _) => assignInto fc True "var_\{show var}" NotInTailPosition value
+        declareLet fc var rep value
         emitNativeValue ty body
     -- A native-typed let's *value* can still legitimately be wrapped in
     -- RDup/RDrop/RFree: those govern its own boxed operands (e.g. `x + x`

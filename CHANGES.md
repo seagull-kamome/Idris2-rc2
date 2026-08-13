@@ -3,6 +3,33 @@
 Newest first. Each entry corresponds to one commit on `master`; see
 `git log` for full commit messages.
 
+## 2026-08-13 -- Fix remaining closure_N-then-copy redundancy; fix a real refcount leak it was hiding
+
+`tryBuildClosureInto` only peeled RDup/RDrop/RFree wrappers looking for
+a closure-shaped tail expression, missing the common case of an RLet
+standing in the way (e.g. IO's own `>>=`-continuation closures) --
+those still built into a throwaway `closure_N` then copied into the
+real target. Made it see through RLet too (sharing RLet's own
+declaration logic, extracted as `declareLet`, with emitRC/
+emitNativeValue's RLet cases).
+
+Doing this exposed a real bug in the surrounding fallback logic: when
+`tryBuildClosureInto` peeled a wrapper's side effect (a dup/drop/free
+call, or now a let declaration) and then still failed to find a
+closure at the end, its caller re-ran `emitRC` on the *original*
+un-peeled expression, emitting that wrapper's side effect a second
+time. For RDup this silently leaked one reference forever -- found via
+`Prelude.Types.foldr`, an entirely ordinary shape (a Boxed let bound to
+a dup-wrapped, non-tail-position call), not an exotic case. Fixed by
+having `tryBuildClosureInto` return the unconsumed leftover expression
+to resume from, instead of a bare success/fail flag.
+
+Verified: 19/19 refc-suite tests pass; all smoke tests match upstream
+`idris2 --cg refc` byte-for-byte; grepped every test's generated C for
+repeated dup/drop/free calls on the same variable with nothing between
+them -- none found (the few matches were legitimate, e.g. `x * x`
+reading `x` twice); all 3 benchmarks run correctly.
+
 ## 2026-08-13 -- Remove keepBoxedLocals, confirmed dead code
 
 Verified (TODO.md's "Architecture" note) that `RC.idr`'s `Owned` set --
