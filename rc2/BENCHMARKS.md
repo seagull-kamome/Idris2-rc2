@@ -151,6 +151,102 @@ else     { ret = idris2rc2_mkBits8(0); }
 将来課題)を実装すれば、算術チェインの削減効果と比較融合の効果の両方が、呼び出し
 境界をまたいでもより広く反映されると見込まれる。
 
+## 外部パッケージベンチマーク: idris2-missing-containers
+
+これまでのベンチマークは全てrc2プロジェクト自身が用意した小規模なマイクロベンチ
+マークだった。より実際のワークロードに近い比較として、外部の独立したIdris2
+パッケージ [`idris2-missing-containers`](https://github.com/seagull-kamome/idris2-missing-containers)
+(ハッシュテーブル・ハッシュアルゴリズム集、`Data.IOArray.Prims`のFFIプリミティブ・
+`System.Clock`・`System.File`を実際に使用)をcloneし、その `test/` を `--cg rc2`
+と本家 `idris2 --cg refc` の両方でコンパイル・実行して比較した。
+
+### セットアップ
+
+```sh
+git clone https://github.com/seagull-kamome/idris2-missing-containers.git
+cd idris2-missing-containers
+source /path/to/idris2-rc-cg/env.sh
+
+# ライブラリをインストール(以後 -p missing-containers で参照可能に)
+nix-shell -p idris2 gmp pkg-config --run \
+  '/path/to/rc2/build/exec/idris2-rc2 --install missing-containers.ipkg'
+
+# test/src/Main.idr を両バックエンドで直接コンパイル
+cd test/src
+nix-shell -p idris2 gmp pkg-config --run \
+  '/path/to/rc2/build/exec/idris2-rc2 --cg rc2 -p missing-containers -p contrib Main.idr -o mct_rc2'
+nix-shell -p idris2 gmp pkg-config --run \
+  'idris2 --cg refc -p missing-containers -p contrib Main.idr -o mct_refc'
+```
+
+`test/test.ipkg` は `hashable >= 0.1.0` にも依存すると宣言しているが、
+`test/src/Main.idr` は実際には `Data.Hashable` を一切importしていない(パッケージ
+自身の `Data.Hash.Algorithm` 経由の独自 `Hashable` インターフェースのみ使用)ため、
+単一ファイル直接コンパイル(`-p`指定のみ、ipkgベースの依存解決を経由しない)では
+未インストールのままでも問題なくビルドできた。
+
+### ワークロード
+
+`test/src/Main.idr` の `main` は次を実行する:
+
+1. `testHashMap` -- 3件の`IOHashMap`書き込み/読み出しの健全性チェック。
+2. `benchmarkHashMap` -- `test/words`(98,569行の単語リスト)を対象に5種類の
+   ハッシュアルゴリズム(FNV1a/MurMur3/OneAtATime/Sip64/Sip32)でハッシュ計算し、
+   `test/input_large`(985,690行の辞書)全件を`IOHashMap`へ書き込み、その後
+   `test/words`全件を読み出す。
+
+### 結果(壁時計時間、3回実行)
+
+| 実行 | rc2 | RefC |
+|---|---|---|
+| 1回目 | 16.829s | 21.465s |
+| 2回目 | 17.591s | 21.554s |
+| 3回目 | 17.465s | 22.107s |
+| 平均 | **17.30s** | **21.71s** |
+
+rc2が平均で**約20%高速**(RefC比 1.25倍)。両者とも `testHashMap` は3件とも `✓`、
+`dict`/`words`の件数も一致し、出力は `codegen = rc2` / `codegen = refc` の行を除いて
+構造的に完全一致(挙動の差異なし)。
+
+支配的なのは `benchmarkHashMap` の `write`(辞書985,690件の`IOHashMap`書き込み)
+フェーズで、rc2側では11.4秒程度、全体の実行時間の大半を占めていた
+(下記の注記の通りRefC側は秒精度のクロックしか出さないため直接の秒未満比較は
+できないが、壁時計の総実行時間差はこのフェーズに起因すると考えられる)。
+
+### 注記: 本家RefCの`System.Clock`は秒精度
+
+プログラム自身が`clockTime Monotonic`で計測・出力する区間タイミングは、rc2側は
+`clock_gettime`ベースでナノ秒精度(下記参照)だが、本家RefC側は`time()`/`clock()`
+ベースの実装で秒未満が常に`0`になる(rc2の`System.Clock`実装時に把握済みの
+既知の粗さで、rc2側は意図的に`clock_gettime`ベースへ改善している)。そのため
+1秒未満で終わる個々のハッシュアルゴリズムのベンチマークはRefC側の数値が
+`0s 0ns`/`1s 0ns`のように丸められ、プログラム内タイミングでの比較には使えない。
+上記「結果」表の壁時計比較(外部の`time`)はこの制約を受けないため、こちらを
+主たる比較指標とした。
+
+参考までにrc2側のプログラム内タイミング(ナノ秒精度、1回分):
+
+| フェーズ | rc2 |
+|---|---|
+| FNV1a(words全件) | 0.322s |
+| MurMur3(words全件) | 0.282s |
+| OneAtATime(words全件) | 0.245s |
+| Sip64(words全件) | 0.507s |
+| Sip32(words全件) | 0.492s |
+| write(dict全件、985,690件) | 11.39s |
+| read(words全件、98,569件) | 0.974s |
+
+### 結論
+
+rc2独自のマイクロベンチマークだけでなく、外部の第三者パッケージによる文字列
+ハッシュ・ハッシュテーブル中心の実ワークロードでも、RefCに対して一貫して優位
+(約20%高速)であることを確認した。このワークロードは関数呼び出し境界を
+頻繁にまたぐ(`IOHashMap`の`read`/`write`は毎回IORef経由のセル参照・比較・
+文字列ハッシュ計算を呼び出し規約Boxedのまま行う)にもかかわらず優位を維持して
+おり、上記の`BenchFib`同様、比較/分岐融合(RCmpCase)や常時タグ付きポインタの
+dup/drop省略など、関数境界の内側で効く最適化の効果が積み重なって現れていると
+考えられる。
+
 ## 再現方法
 
 ```sh

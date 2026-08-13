@@ -2,6 +2,12 @@
 # git clone https://github.com/idris-lang/Idris2.git idris2-src)
 /idris2-src/
 
+# External packages cloned for benchmarking (not our code; re-fetch via
+# git clone https://github.com/seagull-kamome/idris2-missing-containers.git
+# and git clone https://github.com/Z-snails/Idris2-hashable.git)
+/idris2-missing-containers/
+/Idris2-hashable/
+
 # Generated install prefix (idris2api + rc2 runtime install output)
 /install/
 
