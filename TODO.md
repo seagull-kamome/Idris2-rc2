@@ -33,13 +33,6 @@ of it.
   call sites keep working). This was scoped out of the current
   iteration as too large/risky to do alongside the RC-as-separate-pass
   work; see the project plan for the original design sketch.
-- **Mutual tail recursion loop-ification.** The same idea as self-
-  tail-call loop conversion (implemented, see below), across a cycle of
-  two or more mutually tail-recursive functions instead of a single
-  function calling itself. Out of scope relative to the self-tail-call
-  case; falls back to the boxed trampoline (matching RefC's own
-  behaviour for this case too).
-
 ### Self-tail-call loop conversion (implemented)
 
 A function's own self-recursive tail calls compile to reassigning its
@@ -51,8 +44,10 @@ right before Emit). The decision and the new `RSelfTailCall` node it
 introduces live entirely in the IR; `Compiler.RC2.Emit` only lowers it
 (`tryEmitSelfTailCall`, alongside `tryBuildClosureInto`'s existing
 "try the tail-position special case first" protocol). Scope: self-only
-(not mutual, see above), and calls under a `LazyReason` are excluded
-(conservative). Ownership is untouched by the rewrite -- `annotate`
+(mutual recursion between two or more functions is
+`Compiler.RC2.MutualLoop`'s job, see below), and calls under a
+`LazyReason` are excluded (conservative). Ownership is untouched by the
+rewrite -- `annotate`
 (Phase 2) already decided each argument's dup/move before this pass
 ever runs, exactly as for a call to any other function; only the
 *shape* of the call changes. `BenchLoop.idr` (`sumTo`, tail-recursive)
@@ -61,6 +56,49 @@ landed; `BenchChain.idr`'s `loopPoly` (also tail-recursive) improved
 similarly. `BenchFib.idr`'s naive `fib` is *not* tail-recursive (both
 recursive calls are inside a `+`) and is correctly left unconverted --
 still bound by the calling-convention gap above.
+
+### Mutual tail recursion loop conversion (implemented)
+
+The same idea as self-tail-call loop conversion, extended to a cycle of
+two or more mutually tail-recursive functions instead of a single
+function calling itself. New whole-program pass `Compiler.RC2.MutualLoop`
+runs after `Reuse` and before `Loop` (see `RC2.idr`'s `toRCDefs`): finds
+groups of >= 2 functions that mutually tail-call each other (Tarjan's
+SCC over the tail-call graph, so indirect cycles are found too, not
+just direct pairs -- lazy calls excluded, matching `Loop`'s own
+restriction), and merges each group into a single synthesized function
+whose body is an `RConstCase` switching on a small integer tag (one alt
+per original member). Every internal transition (self- or cross-member)
+is rewritten into an ordinary tail call to that merged function itself
+-- from the merged function's own point of view that's just a ordinary
+self-tail-call, so `Compiler.RC2.Loop` (running immediately after)
+converts it to a `goto` automatically, with zero new logic needed in
+`Compiler.RC2.Loop` or `Compiler.RC2.Emit`. Each original member name
+becomes a thin wrapper that calls the merged function once. Ownership
+carries over via pure id-renaming (each member's own top-level
+parameters and internal let/pattern-bound ids get renamed onto shared
+`tag, slot_0 .. slot_k` ids, k = the largest arity in the group) rather
+than a fresh ownership decision -- `annotate` (Phase 2) already decided
+every member's own dup/drop/move behaviour before this pass ever runs.
+Members with a smaller arity than the group's max simply never
+reference their own unused trailing slots; every transition always
+pads them with `RCNull`, which needs no extra drop logic given the
+inductive invariant that a member's own slots beyond its own arity are
+always null.
+
+Verified with `Test10MutualLoop.idr` (reusing Test9SelfTailLoop's own
+`isEvenM`/`isOddM`, specifically written to confirm mutual recursion
+was *not* touched by the self-tail-call-only pass -- now the first real
+test that it *is* merged and converted): differing-arity group members
+(slot padding), a 3-way cycle (SCC beyond the trivial pairwise case), a
+same-member transition inside a merged group (not just cross-member), a
+group member called both non-tail and as a first-class closure value
+from outside the group, and 300,000-500,000-deep mutual recursion with
+no stack growth. Output matches `idris2 --cg refc` byte-for-byte;
+inspected the generated C directly for the expected shape (`loop:;` +
+`goto loop;` for every internal transition, correct tag dispatch,
+correct slot padding). 19/19 refc-suite tests and all other smoke tests
+still pass and still match upstream byte-for-byte.
 
 ## Scope: deliberately unboxed types stop at scalars
 

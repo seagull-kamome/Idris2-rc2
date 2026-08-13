@@ -3,6 +3,35 @@
 Newest first. Each entry corresponds to one commit on `master`; see
 `git log` for full commit messages.
 
+## 2026-08-13 -- Mutual tail recursion loop conversion (Compiler.RC2.MutualLoop)
+
+Extends self-tail-call loop conversion to cycles of >= 2 mutually
+tail-recursive functions. New whole-program pass `Compiler.RC2.MutualLoop`
+(runs after Reuse, before Loop) finds each such group via Tarjan's SCC
+over the tail-call graph and merges it into one synthesized function --
+an `RConstCase` switching on an integer tag, one alt per member -- with
+every internal transition (self- or cross-member) rewritten into an
+ordinary tail call to the merged function itself. That's already an
+ordinary self-tail-call shape, so `Compiler.RC2.Loop` (running right
+after) converts it to a `goto` automatically -- no changes needed in
+`Compiler.RC2.Loop` or `Compiler.RC2.Emit`. Each original member name
+becomes a thin wrapper calling the merged function once. Ownership
+carries over via pure id-renaming (member parameters/locals renamed
+onto shared `tag, slot_0..slot_k` ids) rather than a new decision;
+smaller-arity members' unused trailing slots are always padded with
+`RCNull`, needing no extra drop logic.
+
+New `Test10MutualLoop.idr` (reusing `Test9SelfTailLoop.idr`'s own
+`isEvenM`/`isOddM`, originally written to confirm mutual recursion was
+*not* touched by the self-tail-call-only pass) covers differing-arity
+groups (slot padding), a 3-way cycle (SCC beyond the trivial pairwise
+case), a same-member transition within a merged group, a member used
+both non-tail and as a first-class closure, and 300,000-500,000-deep
+mutual recursion. Verified: output matches `idris2 --cg refc`
+byte-for-byte; generated C inspected directly for the expected
+`loop:;`/`goto loop;`/tag-dispatch shape; 19/19 refc-suite tests and
+all other smoke tests still pass and match upstream.
+
 ## 2026-08-13 -- Self-tail-call loop conversion (Compiler.RC2.Loop)
 
 A function's own self-recursive tail calls now compile to reassigning

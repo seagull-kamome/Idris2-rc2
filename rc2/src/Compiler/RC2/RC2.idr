@@ -3,15 +3,19 @@ module Compiler.RC2.RC2
 -- Orchestration: getCompileData (stopping at the Lifted phase -- rc2 does
 -- not use Compiler.ANF at all) -> Compiler.RC2.RC (Lifted -> RCExp) ->
 -- Compiler.RC2.Reuse (constructor-reuse-in-place, on the fully
--- Phase-1+2'd tree) -> Compiler.RC2.Loop (self-tail-call loop
--- conversion, on the fully Reuse'd tree) -> Compiler.RC2.Emit
--- (RCExp -> C) -> Compiler.RC2.CC (cc invocation).
+-- Phase-1+2'd tree) -> Compiler.RC2.MutualLoop (mutual tail recursion
+-- loop conversion, whole-program) -> Compiler.RC2.Loop (self-tail-call
+-- loop conversion -- including MutualLoop's own synthesised merged
+-- functions, whose internal transitions are already ordinary self-
+-- tail-calls by construction) -> Compiler.RC2.Emit (RCExp -> C) ->
+-- Compiler.RC2.CC (cc invocation).
 
 import Compiler.RC2.CC
 import Compiler.RC2.Emit
 import Compiler.RC2.RC
 import Compiler.RC2.RCExp
 import Compiler.RC2.Reuse
+import Compiler.RC2.MutualLoop
 import Compiler.RC2.Loop
 
 import Compiler.Common
@@ -39,7 +43,10 @@ applyReuse d@(MkRCCon _ _ _) = d
 applyReuse d@(MkRCForeign _ _ _) = d
 
 toRCDefs : List (Name, LiftedDef) -> Core (List (Name, RCDef))
-toRCDefs = traverse (\(n, ld) => (n,) . applyLoop n . applyReuse <$> toRCDef ld)
+toRCDefs lds = do
+    reused <- traverse (\(n, ld) => (n,) . applyReuse <$> toRCDef ld) lds
+    merged <- applyMutualLoop reused
+    pure $ map (\(n, d) => (n, applyLoop n d)) merged
 
 export
 compileExpr : Ref Ctxt Defs
