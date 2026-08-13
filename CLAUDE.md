@@ -19,8 +19,10 @@ overview, history, and known gaps.
   meant to let a future session regain context without re-deriving the
   design (currently: `reuse-analysis.md` for the constructor-reuse-in-
   place pass, `native-type-inference.md` for native/unboxed Rep
-  inference, `reading-the-ir.md` for how to dump and read the
-  `RCExp` IR itself — a practical reference, not a pass write-up). Not
+  inference, `loop-conversion.md` for self-/mutual-tail-call ->
+  `goto` conversion and native-shadow loop params, `reading-the-ir.md`
+  for how to dump and read the `RCExp` IR itself — a practical
+  reference, not a pass write-up). Not
   a replacement for `CHANGES.md`/`TODO.md` — those stay the changelog
   and gap tracker; `rc2/doc/` is where the *why* and the
   bugs-found-along-the-way for a specific subsystem live.
