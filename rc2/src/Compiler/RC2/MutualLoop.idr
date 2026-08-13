@@ -245,11 +245,11 @@ buildGroup existingNames memberDefs groupNames = do
               members
     let mergedBody = RConstCase EmptyFC (RCLoc tagId) alts
                         (Just (RCrash EmptyFC "[rc2] internal: MutualLoop tag dispatch fell through"))
-    let mergedDef = MkRCFun (tagId :: slotIds) mergedBody
+    let mergedDef = MkRCFun (map (\i => (i, RBoxed)) (tagId :: slotIds)) RBoxed mergedBody
     let wrappers = map (\(name_i, (args_i, _)) =>
                       let tag_i = fromMaybe 0 (lookup name_i tagOf)
                           padded = map RCLoc args_i ++ replicate (maxArity `minus` length args_i) RCNull
-                      in (name_i, MkRCFun args_i
+                      in (name_i, MkRCFun (map (\i => (i, RBoxed)) args_i) RBoxed
                             (RAppName EmptyFC Nothing mergedName (RCConst (I64 (cast tag_i)) :: padded))))
                     members
     pure ((mergedName, mergedDef) :: wrappers)
@@ -274,7 +274,7 @@ applyMutualLoop defs = do
     _ <- newRef FreshId 0
     let memberDefs = SortedMap.fromList $ mapMaybe
             (\(n, d) => case d of
-                             MkRCFun args body => Just (n, (args, body))
+                             MkRCFun args _ body => Just (n, (map fst args, body))
                              _ => Nothing)
             defs
     let graph = buildGraph memberDefs

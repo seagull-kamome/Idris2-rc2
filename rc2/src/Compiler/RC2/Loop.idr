@@ -457,16 +457,17 @@ assignShadowIds nextId ((p, ty) :: rest) = (p, nextId, ty) :: assignShadowIds (n
 ||| definition state needed.
 export
 applyLoop : Name -> RCDef -> RCDef
-applyLoop self (MkRCFun args body) =
-    let (found, body') = mapTailAppNames (\fc, n, args' => if n == self then Just (RLoopContinue fc args') else Nothing) body
-    in MkRCFun args $
+applyLoop self (MkRCFun args retRep body) =
+    let argIds = map fst args
+        (found, body') = mapTailAppNames (\fc, n, args' => if n == self then Just (RLoopContinue fc args') else Nothing) body
+    in MkRCFun args retRep $
          if not found
             then body'
             else
               let nextId : Int
-                  nextId = 1 + foldl max (-1) (args ++ collectBoundIds body')
+                  nextId = 1 + foldl max (-1) (argIds ++ collectBoundIds body')
                   eligible : List (Int, PrimType)
-                  eligible = mapMaybe (\p => map (\ty => (p, ty)) (nativeArgType p body')) args
+                  eligible = mapMaybe (\p => map (\ty => (p, ty)) (nativeArgType p body')) argIds
                   shadowed : List (Int, Int, PrimType)
                   shadowed = assignShadowIds nextId eligible
                   renaming : Renaming
@@ -478,6 +479,6 @@ applyLoop self (MkRCFun args body) =
                   loopParams : List (Int, Rep)
                   loopParams = map (\p => case find (\(p', _, _) => p' == p) shadowed of
                                                Just (_, sid, ty) => (sid, RNative ty)
-                                               Nothing => (p, RBoxed)) args
-              in RLoop emptyFC loopParams (map RCLoc args) rewritten
+                                               Nothing => (p, RBoxed)) argIds
+              in RLoop emptyFC loopParams (map RCLoc argIds) rewritten
 applyLoop _ d = d

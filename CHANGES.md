@@ -3,6 +3,29 @@
 Newest first. Each entry corresponds to one commit on `master`; see
 `git log` for full commit messages.
 
+## 2026-08-14 -- Dual calling convention: MkRCFun carries per-arg/return Rep, Stage 1
+
+First of a staged effort (branch `dual-abi`, see `TODO.md`'s "Dual
+calling convention" gap and its own plan discussion) to let native
+representations cross ordinary function-call boundaries, not just a
+self-tail-call loop's own `goto`. `RCDef`'s `MkRCFun` now carries `(args
+: List (Int, Rep))` and a `retRep : Rep` instead of a bare `List Int`
+(always-Boxed) argument list -- mirroring `RLoop`'s own "carries its own
+Reps" shape, at the whole-function granularity instead of a single
+loop's. Every existing construction site (`RC.idr`'s `normalizeDef`,
+`MutualLoop.idr`'s merged function and per-member wrappers) supplies
+`RBoxed` uniformly, matching today's implicit behavior exactly; no pass
+yet promotes anything. Deliberately deferred to a later stage: making
+`Emit.idr`'s own function-signature declaration and `SinkReturn`
+rendering actually Rep-aware -- building that now, before anything
+exercises the non-`RBoxed` path, would mean shipping untested code (the
+loop-conversion work's own "Bugs found" history is exactly why this
+project keeps to "verify byte-identical before adding real behavior").
+
+Verified: generated C for every `tests/Test*.idr`/`tests/Bench*.idr`
+file, compiled with both this commit's compiler and `master`'s,
+confirmed byte-for-byte identical; 19/19 refc-suite tests still pass.
+
 ## 2026-08-13 -- Promote loop-carried parameters to native representation, Stage 3
 
 The optimization Stage 1/2's `RLoop`/`RLoopContinue` split was groundwork

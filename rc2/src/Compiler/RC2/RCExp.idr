@@ -302,9 +302,25 @@ mutual
   data RConstAlt : Type where
        MkRConstAlt : Constant -> RCExp -> RConstAlt
 
+||| `MkRCFun`'s own top-level parameters, each with its own `Rep` --
+||| foundation for the dual (Boxed/native) calling convention: a
+||| parameter's `Rep` here describes how *this* function's own C
+||| signature declares it (`RBoxed` -- an ordinary `IDRIS2RC2_Value *`,
+||| matching every function's calling convention today -- or
+||| `RNative ty`, a raw native C scalar the caller must already supply
+||| natively). `retRep` is the same idea for the function's own return
+||| value/type. Currently always `RBoxed` everywhere (`Compiler.RC2.RC`'s
+||| `normalizeDef` constructs every `MkRCFun` this way, and no later
+||| pass changes it yet) -- this is pure IR-shape groundwork, landed on
+||| its own and verified to change no generated C, before any pass
+||| actually promotes a parameter or return value to `RNative`. See
+||| `RLoop`'s own `loopParams` for the precedent this mirrors (a loop's
+||| own carried locals, each with an independent `Rep`) -- the same idea
+||| here, just at the whole-function granularity instead of a single
+||| loop's.
 public export
 data RCDef : Type where
-     MkRCFun : (args : List Int) -> RCExp -> RCDef
+     MkRCFun : (args : List (Int, Rep)) -> (retRep : Rep) -> RCExp -> RCDef
      MkRCCon : (tag : Maybe Int) -> (arity : Nat) -> (nt : Maybe Nat) -> RCDef
      MkRCForeign : (ccs : List String) -> (fargs : List CFType) -> CFType -> RCDef
      MkRCError : RCExp -> RCDef

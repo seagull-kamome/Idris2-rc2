@@ -1926,12 +1926,21 @@ createCFunctions : {auto c : Ref Ctxt Defs}
                 -> Name
                 -> RCDef
                 -> Core ()
-createCFunctions n (MkRCFun args body) = do
-    let nargs = length args
+createCFunctions n (MkRCFun args retRep body) = do
+    -- `args`/`retRep` are dual-ABI groundwork (see RCExp.idr's own doc
+    -- comment on MkRCFun) -- always `RBoxed` for now, so `argIds` (just
+    -- the bare ids) is all this needs; nothing yet constructs a
+    -- non-`RBoxed` entry here, and `retRep` isn't consulted at all yet
+    -- (SinkReturn's own unconditional boxing, below, still matches it
+    -- exactly). A later stage will make both Rep-aware together with
+    -- the pass that actually produces non-`RBoxed` values here, rather
+    -- than adding that logic ahead of anything that could exercise it.
+    let argIds = map fst args
+    let nargs = length argIds
     let fn = "IDRIS2RC2_Value *\{cName !(getFullName n)}"
             ++ (if nargs == 0 then "(void)"
                else if nargs > MaxExtractFunArgs then "(IDRIS2RC2_Value *var_arglist[\{show nargs}])"
-               else ("\n(\n" ++ (showSep "\n" $ addCommaToList (map (\i =>  "  IDRIS2RC2_Value * var_" ++ (show i)) args))) ++ "\n)")
+               else ("\n(\n" ++ (showSep "\n" $ addCommaToList (map (\i =>  "  IDRIS2RC2_Value * var_" ++ (show i)) argIds))) ++ "\n)")
     update FunctionDefinitions $ \otherDefs => (fn ++ ";\n") :: otherDefs
 
     emit EmptyFC fn
@@ -1940,7 +1949,7 @@ createCFunctions n (MkRCFun args body) = do
     when (nargs > MaxExtractFunArgs) $ do
       _ <- foldlC (\i, j => do
          emit EmptyFC "IDRIS2RC2_Value *var_\{show j} = var_arglist[\{show i}];"
-         pure $ i + 1) 0 args
+         pure $ i + 1) 0 argIds
       pure ()
     -- Populated incrementally as each RLet is emitted below (its Rep is
     -- already decided and stored on the node by Compiler.RC2.RC; this map
