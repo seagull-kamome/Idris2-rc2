@@ -3,6 +3,37 @@
 Newest first. Each entry corresponds to one commit on `master`; see
 `git log` for full commit messages.
 
+## 2026-08-14 -- Dual calling convention: eligibility analysis, Stage 2
+
+Second of the staged `dual-abi` effort. New `Compiler.RC2.DualABI`
+module decides, per top-level function, which of its own parameters and
+whether its own return value could be given a native representation at
+the function's own external C signature -- read-only, nothing is
+synthesized or rewritten yet. Both analyses are purely local to one
+function's own body, needing no whole-program fixed point: a
+parameter's eligibility reuses `Compiler.RC2.Loop`'s own `nativeArgType`
+(now exported), or, for an already-`RLoop`-wrapped body, reads the
+answer straight off that loop's own `loopParams`; a tail-position
+return value's eligibility comes from the same local analysis, seeded
+with each already-decided parameter's own Rep so a bare tail return of
+an eligible parameter counts too.
+
+Verified via a new `--directive dumpdualabi` debug dump (mirroring
+`dumprcexp`) against the existing test/benchmark suite: `Main.fib`
+(the non-tail-recursive target this whole effort exists for) correctly
+comes back `params=[Int] ret=Int`; `Main.sumTo` correctly reads
+`Compiler.RC2.Loop`'s own decision; `Main.countDown`/`collatzLike`
+correctly show mixed (one native, one Boxed) parameter eligibility;
+every `Compiler.RC2.MutualLoop` per-member wrapper correctly shows no
+eligibility. One finding that changes Stage 3's own plan: a
+`MutualLoop`-*merged* function itself (as opposed to its per-member
+wrappers) can show real eligibility for a slot some group member reads
+natively even though a smaller-arity member only ever supplies `RCNull`
+there -- confirmed directly against `Test10MutualLoop.idr`'s own
+`stepA`/`stepB` group, the exact shape that already caused two crashes
+during the loop-conversion work. Stage 3 must explicitly exclude every
+`MutualLoop`-produced merged function from worker synthesis.
+
 ## 2026-08-14 -- Dual calling convention: MkRCFun carries per-arg/return Rep, Stage 1
 
 First of a staged effort (branch `dual-abi`, see `TODO.md`'s "Dual

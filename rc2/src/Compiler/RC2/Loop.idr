@@ -351,7 +351,13 @@ nativeArgTypes _ _ = empty
 ||| shadowed at, if `body` reads it that way at all, and consistently
 ||| (every native-context use agrees on the same type) -- `Nothing` if
 ||| it's never read natively, or read natively at conflicting types
-||| (conservatively left `RBoxed` rather than guessing).
+||| (conservatively left `RBoxed` rather than guessing). Exported for
+||| `Compiler.RC2.DualABI`'s own reuse (the same "is this top-level
+||| parameter read as a native operand anywhere in the body" question,
+||| just asked about a whole function's own parameters rather than only
+||| the ones an enclosing `RLoop` carries) -- one definition of this
+||| analysis, not two kept in sync by hand.
+export
 nativeArgType : Int -> RCExp -> Maybe PrimType
 nativeArgType p body =
     case Prelude.toList (nativeArgTypes p body) of

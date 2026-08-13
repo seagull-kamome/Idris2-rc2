@@ -11,6 +11,7 @@ module Compiler.RC2.RC2
 -- Compiler.RC2.CC (cc invocation).
 
 import Compiler.RC2.CC
+import Compiler.RC2.DualABI
 import Compiler.RC2.Emit
 import Compiler.RC2.Pretty
 import Compiler.RC2.RC
@@ -83,6 +84,14 @@ compileExpr c s _ outputDir tm outfile =
      sess <- getSession
      when ("dumprcexp" `elem` directives sess) $
          coreLift_ $ writeFile (outputDir </> outfile ++ ".crexpr") (prettyProgram defs)
+
+     -- `--directive dumpdualabi`: Stage 2's own verification tool for
+     -- the (not yet wired into this pipeline) dual-calling-convention
+     -- eligibility analysis -- see Compiler.RC2.DualABI's own module
+     -- note and doc/loop-conversion.md-style follow-up notes once this
+     -- lands. Same "--directive" mechanism as dumprcexp above.
+     when ("dumpdualabi" `elem` directives sess) $
+         coreLift_ $ writeFile (outputDir </> outfile ++ ".dualabi") (dumpDualABI defs)
 
      generateCSourceFile defs outn
      Just _ <- compileCObjectFile outn outobj
