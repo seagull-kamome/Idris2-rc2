@@ -875,11 +875,17 @@ conAltCondExpr sc' (MkRConAlt name coninfo tag args body offersReuse) = do
 ||| coverage already guarantees it matches once every earlier condition
 ||| has failed, `else`-chained or not (see `chainsWithElse`). When
 ||| `sink` also turns out to be `SinkReturn`, every *other* alt drops
-||| its `else`-chaining too (`chainsWithElse` again) -- together, a
-||| 2-alt case with no default in tail position (e.g. a `Bool`-shaped
-||| match) collapses to the simplest possible
-||| `if (...) { ...; return ...; } { ...; return ...; }` shape, and a
-||| single-alt case with no default (only one constructor is even
+||| its `else`-chaining too (`chainsWithElse` again), and the trailing
+||| piece (that skipped-condition last alt, or an explicit default)
+||| drops even its own `{ }` wrapper and any extra indentation -- under
+||| `SinkReturn`, this case's own rendering is always the last thing in
+||| whatever C block contains it (a function body, or an enclosing
+||| case's own already-diverging branch -- see `chainsWithElse`'s own
+||| doc comment), so there's nothing for a tighter scope to protect
+||| against here. Together, a 2-alt case with no default in tail
+||| position (e.g. a `Bool`-shaped match) collapses to the simplest
+||| possible `if (...) { ...; return ...; } ...; return ...;` shape,
+||| and a single-alt case with no default (only one constructor is even
 ||| possible) collapses further still, to no `if` at all.
 emitAltChain : {auto oft : Ref OutfileText Output}
             -> {auto il : Ref IndentLevel Nat}
@@ -901,12 +907,15 @@ emitAltChain sink condExpr renderBody renderDefault alts = do
                emit emptyFC "}"
                pure "") "" condAlts
     let trailing : Maybe (Core ()) = maybe renderDefault (Just . renderBody) tailAlt
-    whenJust trailing $ \body => do
-        emit emptyFC "\{finalEls}{"
-        increaseIndentation
-        body
-        decreaseIndentation
-        emit emptyFC "}"
+    whenJust trailing $ \body =>
+        if chained
+           then do
+               emit emptyFC "\{finalEls}{"
+               increaseIndentation
+               body
+               decreaseIndentation
+               emit emptyFC "}"
+           else body
 
 mutual
     ||| Declare an `RLet`'s own binding: record its `Rep` (so later *uses*
@@ -1229,8 +1238,10 @@ mutual
     ||| before either branch -- see `resolveSink`) instead of a throwaway
     ||| `switchReturnVar`. Under `SinkReturn`, `whenTrue` is guaranteed to
     ||| end in `return`/`goto` (see `chainsWithElse`'s own doc comment),
-    ||| so `whenFalse` needs no `else` to guard it either -- a plain
-    ||| unconditioned block right after does the same job.
+    ||| so `whenFalse` needs neither an `else` to guard it nor its own
+    ||| `{ }` scope -- it's already the last thing in whatever C block
+    ||| contains this whole comparison, so it can just continue right
+    ||| after `whenTrue`'s closing `}`, at the same indentation.
     emitCmpCaseInto : {auto a : Ref ArgCounter Nat}
                     -> {auto oft : Ref OutfileText Output}
                     -> {auto il : Ref IndentLevel Nat}
@@ -1254,14 +1265,15 @@ mutual
                  emitInto emptyFC resolvedSink tailPosition whenTrue
                  decreaseIndentation
                  if chainsWithElse resolvedSink
-                    then emit emptyFC "} else {"
+                    then do
+                        emit emptyFC "} else {"
+                        increaseIndentation
+                        emitInto emptyFC resolvedSink tailPosition whenFalse
+                        decreaseIndentation
+                        emit emptyFC "}"
                     else do
                         emit emptyFC "}"
-                        emit emptyFC "{"
-                 increaseIndentation
-                 emitInto emptyFC resolvedSink tailPosition whenFalse
-                 decreaseIndentation
-                 emit emptyFC "}"
+                        emitInto emptyFC resolvedSink tailPosition whenFalse
 
     ||| Lower a constructor-tag switch: each alt (and the default, if
     ||| any) writes straight into `sink` (resolved once, before any alt

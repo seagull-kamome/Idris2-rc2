@@ -3,6 +3,14 @@
 Newest first. Each entry corresponds to one commit on `master`; see
 `git log` for full commit messages.
 
+## 2026-08-13 -- Drop braces/indentation from bare trailing case branches
+
+Follow-up to the else-chaining removal: under `SinkReturn`, a case's
+unconditioned trailing branch (formerly `else { ... }`) is now emitted
+without its own `{ }` wrapper or extra indentation -- it's provably
+always the last thing in its enclosing C block, so nothing needs the
+tighter scope. Same for `emitCmpCaseInto`'s `whenFalse`.
+
 ## 2026-08-13 -- Drop redundant conditions/else-chaining in case codegen
 
 Two related simplifications to `emitConCaseInto`/`emitConstCaseInto`
