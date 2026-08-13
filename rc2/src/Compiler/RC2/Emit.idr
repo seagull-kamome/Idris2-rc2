@@ -540,13 +540,75 @@ repOfLocal (RCLoc i) = do
     reps <- get RepMap
     pure $ fromMaybe RBoxed (SortedMap.lookup i reps)
 
+||| The boxed C expression for constant `c`: a reference to an
+||| already-staged file-scope static (`ConstDef`, if this exact value
+||| has been staged before -- deduplicates across the *whole
+||| compilation unit*, not just one definition), or (`dyngen`) a
+||| small-value cache lookup, a fresh stage-and-reference (`orStagen`),
+||| or -- values with neither available -- a fresh allocation minted
+||| right here every time it's evaluated. Shared by `emitRC`'s own
+||| `RPrimVal` case (an ordinary let-bound literal) and
+||| `inlineExprFor`'s `RCConst` case (a non-native-eligible literal
+||| RC.idr's `bindOne` decided needs no let-binding at all -- currently
+||| only `Str` and a small-range `BI`, both of which always land in the
+||| small-cache/`orStagen` branches below, never the "fresh allocation
+||| every read" `BI`-outside-the-cache one -- see `bindOne`'s own
+||| comment for why that one is deliberately excluded from RCConst).
+boxedConstExpr : {auto a : Ref ArgCounter Nat}
+              -> {auto _ : Ref ConstDef (SortedMap Constant ConstDef)}
+              -> Constant -> Core String
+boxedConstExpr c = do
+    constdefs <- get ConstDef
+    case lookup c constdefs of
+         Just cdef => pure "((IDRIS2RC2_Value*)&\{constantName cdef})"
+         Nothing => dyngen
+  where
+    orStagen : ConstDef -> Core String
+    orStagen cdef = do
+        constdefs <- get ConstDef
+        put ConstDef $ insert c cdef constdefs
+        pure "((IDRIS2RC2_Value*)&\{constantName cdef})"
+    dyngen : Core String
+    dyngen = case c of
+        I x => if x >= 0 && x < 100
+            then pure "(IDRIS2RC2_Value*)(&idris2rc2_smallInt64[\{show x}])"
+            else orStagen $ CDI64 $ cCleanString $ show x
+        I8 x  => pure "idris2rc2_mkInt8(INT8_C(\{show x}))"
+        I16 x => pure "idris2rc2_mkInt16(INT16_C(\{show x}))"
+        I32 x => pure "idris2rc2_mkInt32(INT32_C(\{show x}))"
+        I64 x => if x >= 0 && x < 100
+            then pure "(IDRIS2RC2_Value*)(&idris2rc2_smallInt64[\{show x}])"
+            else orStagen $ CDI64 $ cCleanString $ show x
+        BI x => if x >= 0 && x < 100
+            then pure "idris2rc2_getSmallInteger(\{show x})"
+            else pure "idris2rc2_mkIntegerLiteral(\"\{show x}\")"
+        B8 x  => pure "idris2rc2_mkBits8(UINT8_C(\{show x}))"
+        B16 x => pure "idris2rc2_mkBits16(UINT16_C(\{show x}))"
+        B32 x => pure "idris2rc2_mkBits32(UINT32_C(\{show x}))"
+        B64 x => if x >= 0 && x < 100
+           then pure "(IDRIS2RC2_Value*)(&idris2rc2_smallBits64[\{show x}])"
+           else orStagen $ CDB64 $ show x
+        Db x => orStagen $ CDDb $ cCleanString $ show x
+        Ch x  => pure "idris2rc2_mkChar(\{escapeChar x})"
+        Str _ => orStagen $ CDStr !(getNextCounter)
+        PrT t => pure $ cPrimType t
+        WorldVal => pure "(NULL /* World */)"
+
 ||| `Just` the C expression text standing in for `l`'s never-declared
-||| variable if it's an InlineMap-registered local, or a native-eligible
-||| RCConst (see InlineMap's and RCLocal's own comments), `Nothing` for
-||| an ordinary declared local.
-inlineExprFor : {auto lm : Ref InlineMap (SortedMap Int String)} -> RCLocal -> Core (Maybe String)
+||| variable if it's an InlineMap-registered local, or an RCConst (see
+||| InlineMap's and RCLocal's own comments -- a native-eligible one
+||| renders as a plain native literal, ready to box; anything else
+||| RC.idr's `bindOne` still chose to make an RCConst goes through
+||| `boxedConstExpr`, the same staging/caching a let-bound literal of
+||| the same value would use), `Nothing` for an ordinary declared local.
+inlineExprFor : {auto a : Ref ArgCounter Nat}
+             -> {auto _ : Ref ConstDef (SortedMap Constant ConstDef)}
+             -> {auto lm : Ref InlineMap (SortedMap Int String)}
+             -> RCLocal -> Core (Maybe String)
 inlineExprFor RCNull = pure Nothing
-inlineExprFor (RCConst c) = pure $ Just (nativeLitExpr c)
+inlineExprFor (RCConst c) = Just <$> case litRep c of
+    Just _  => pure $ nativeLitExpr c
+    Nothing => boxedConstExpr c
 -- Nothing, same as RCNull: rendered directly by varName, not through
 -- the InlineMap/RNative detour (see repOfLocal above).
 inlineExprFor (RCEmptyCon {}) = pure Nothing
@@ -560,9 +622,13 @@ inlineExprFor (RCLoc i) = do
 ||| is no borrow/move distinction to make). Any dup this use needed was
 ||| already made explicit as a wrapping RDup node earlier in the tree (see
 ||| the module note), so this never dups on its own. An InlineMap'd local
-||| has no `var_N` to read in the first place -- its expression text is
-||| boxed fresh instead.
-rcVarToBoxedC : {auto r : Ref RepMap (SortedMap Int Rep)} -> {auto lm : Ref InlineMap (SortedMap Int String)} -> RCLocal -> Core String
+||| (or a non-native-eligible RCConst, see `inlineExprFor`) has no `var_N`
+||| to read in the first place -- its expression text is used as-is.
+rcVarToBoxedC : {auto a : Ref ArgCounter Nat}
+             -> {auto _ : Ref ConstDef (SortedMap Constant ConstDef)}
+             -> {auto r : Ref RepMap (SortedMap Int Rep)}
+             -> {auto lm : Ref InlineMap (SortedMap Int String)}
+             -> RCLocal -> Core String
 rcVarToBoxedC l = do
     rep <- repOfLocal l
     inlined <- inlineExprFor l
@@ -572,7 +638,13 @@ rcVarToBoxedC l = do
                 -- own doc comment) -- `fromMaybe (varName l) inlined` is
                 -- defensive totality, not a real fallback path.
                 RInlineNative ty => nativeMk ty (fromMaybe (varName l) inlined)
-                RBoxed => varName l
+                -- Was unconditionally `varName l` before a non-native-
+                -- eligible RCConst (String/small Integer) could ever be
+                -- RBoxed -- every existing RBoxed local is a genuine
+                -- `RCLoc` whose `inlineExprFor` is always `Nothing`
+                -- anyway, so this is a no-op change for them, but a real
+                -- fix for the new RCConst case.
+                RBoxed => fromMaybe (varName l) inlined
 
 ||| The C expression to use for `l` as an operand of a native op expecting
 ||| type `ty`: the raw variable if it's already native, or an inline
@@ -580,14 +652,24 @@ rcVarToBoxedC l = do
 ||| for a native op doesn't take ownership either way. An InlineMap'd
 ||| local inlines its expression text directly instead of reading back a
 ||| `var_N` that was never declared.
-rcVarToNativeC : {auto r : Ref RepMap (SortedMap Int Rep)} -> {auto lm : Ref InlineMap (SortedMap Int String)} -> PrimType -> RCLocal -> Core String
+rcVarToNativeC : {auto a : Ref ArgCounter Nat}
+              -> {auto _ : Ref ConstDef (SortedMap Constant ConstDef)}
+              -> {auto r : Ref RepMap (SortedMap Int Rep)}
+              -> {auto lm : Ref InlineMap (SortedMap Int String)}
+              -> PrimType -> RCLocal -> Core String
 rcVarToNativeC ty l = do
     rep <- repOfLocal l
     inlined <- inlineExprFor l
     pure $ case rep of
                 RNative _ => fromMaybe (varName l) inlined
                 RInlineNative _ => fromMaybe (varName l) inlined
-                RBoxed => nativeUnbox ty (varName l)
+                -- Unreachable in practice: a non-native-eligible RCConst
+                -- (the only new source of an RBoxed `inlined`) is never a
+                -- native op's own operand (String/Integer are never
+                -- native-eligible types to begin with) -- guarded anyway
+                -- for the same reason `nativeCType`/`nativeMk`/
+                -- `nativeUnbox`'s own catch-all cases are.
+                RBoxed => nativeUnbox ty (fromMaybe (varName l) inlined)
 
 ||| The reuse-reservation C variable's name for scrutinee `sc` -- a pure,
 ||| deterministic function of `sc`'s own id, computed identically
@@ -757,6 +839,7 @@ const2Integer c i =
 makeClosureInto : {auto a : Ref ArgCounter Nat}
                 -> {auto oft : Ref OutfileText Output}
                 -> {auto il : Ref IndentLevel Nat}
+                -> {auto _ : Ref ConstDef (SortedMap Constant ConstDef)}
                 -> {auto r : Ref RepMap (SortedMap Int Rep)}
                 -> {auto lm : Ref InlineMap (SortedMap Int String)}
                 -> FC
@@ -784,6 +867,7 @@ makeClosureInto fc declare target n args missing = do
 makeClosure : {auto a : Ref ArgCounter Nat}
             -> {auto oft : Ref OutfileText Output}
             -> {auto il : Ref IndentLevel Nat}
+            -> {auto _ : Ref ConstDef (SortedMap Constant ConstDef)}
             -> {auto r : Ref RepMap (SortedMap Int Rep)}
             -> {auto lm : Ref InlineMap (SortedMap Int String)}
             -> FC
@@ -807,6 +891,7 @@ makeClosure fc n args missing = do
 buildClosureIntoSink : {auto a : Ref ArgCounter Nat}
                      -> {auto oft : Ref OutfileText Output}
                      -> {auto il : Ref IndentLevel Nat}
+                     -> {auto _ : Ref ConstDef (SortedMap Constant ConstDef)}
                      -> {auto r : Ref RepMap (SortedMap Int Rep)}
                      -> {auto lm : Ref InlineMap (SortedMap Int String)}
                      -> FC -> Sink -> Name -> List RCLocal -> Nat -> Core ()
@@ -1466,42 +1551,7 @@ mutual
     emitRC (RConstCase fc sc alts def) _ = throw $ InternalError "[rc2] RConstCase reached emitRC directly (not intercepted by emitInto)"
 
     emitRC (RPrimVal fc (I x)) tailPosition = emitRC (RPrimVal fc (I64 $ cast x)) tailPosition
-    emitRC (RPrimVal fc c) _ = do
-      constdefs <- get ConstDef
-      case lookup c constdefs of
-           Just cdef => pure "((IDRIS2RC2_Value*)&\{constantName cdef})"
-           Nothing => dyngen
-     where
-        orStagen : ConstDef -> Core String
-        orStagen cdef = do
-            constdefs <- get ConstDef
-            put ConstDef $ insert c cdef constdefs
-            pure "((IDRIS2RC2_Value*)&\{constantName cdef})"
-        dyngen : Core String
-        dyngen = case c of
-            I x => if x >= 0 && x < 100
-                then pure "(IDRIS2RC2_Value*)(&idris2rc2_smallInt64[\{show x}])"
-                else orStagen $ CDI64 $ cCleanString $ show x
-            I8 x  => pure "idris2rc2_mkInt8(INT8_C(\{show x}))"
-            I16 x => pure "idris2rc2_mkInt16(INT16_C(\{show x}))"
-            I32 x => pure "idris2rc2_mkInt32(INT32_C(\{show x}))"
-            I64 x => if x >= 0 && x < 100
-                then pure "(IDRIS2RC2_Value*)(&idris2rc2_smallInt64[\{show x}])"
-                else orStagen $ CDI64 $ cCleanString $ show x
-            BI x => if x >= 0 && x < 100
-                then pure "idris2rc2_getSmallInteger(\{show x})"
-                else pure "idris2rc2_mkIntegerLiteral(\"\{show x}\")"
-            B8 x  => pure "idris2rc2_mkBits8(UINT8_C(\{show x}))"
-            B16 x => pure "idris2rc2_mkBits16(UINT16_C(\{show x}))"
-            B32 x => pure "idris2rc2_mkBits32(UINT32_C(\{show x}))"
-            B64 x => if x >= 0 && x < 100
-               then pure "(IDRIS2RC2_Value*)(&idris2rc2_smallBits64[\{show x}])"
-               else orStagen $ CDB64 $ show x
-            Db x => orStagen $ CDDb $ cCleanString $ show x
-            Ch x  => pure "idris2rc2_mkChar(\{escapeChar x})"
-            Str _ => orStagen $ CDStr !(getNextCounter)
-            PrT t => pure $ cPrimType t
-            WorldVal => pure "(NULL /* World */)"
+    emitRC (RPrimVal fc c) _ = boxedConstExpr c
 
     emitRC (RErased fc) _ = pure "NULL"
     emitRC (RCrash fc x) _ = pure "(NULL /* CRASH */)"

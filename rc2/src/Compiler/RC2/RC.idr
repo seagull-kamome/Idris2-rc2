@@ -144,14 +144,33 @@ mutual
         -- it directly (see RCExp.idr's module note) -- Emit.idr renders
         -- it as an inline literal wherever it's read, with no C
         -- declaration and no RepMap/InlineMap bookkeeping needed at
-        -- all. Anything litRep doesn't cover (String, Integer, ...)
-        -- falls through to the general case below unchanged -- those
-        -- stay boxed regardless, and want Emit.idr's smarter
-        -- constant-staging/small-int-caching machinery for `RPrimVal`,
-        -- not this.
+        -- all.
+        --
+        -- Two non-native-eligible kinds get the same treatment, since
+        -- Emit.idr's own constant-staging/small-int-caching machinery
+        -- (`boxedConstExpr`, shared with `RPrimVal`) already renders
+        -- them just as cheaply read-in-place as a native literal would
+        -- be: `Str` is always staged into a deduplicated file-scope
+        -- static (`orStagen`) regardless of value, so referencing it
+        -- inline at every use costs nothing extra over referencing a
+        -- `var_N` that itself only ever pointed at that same static.
+        -- `BI` (Integer) gets the same treatment only within the
+        -- small-value cache range [0, 100) (`idris2rc2_getSmallInteger`,
+        -- an O(1) lookup into an immortal, already-initialised table,
+        -- no allocation) -- *outside* that range, `boxedConstExpr`'s own
+        -- `BI` fallback (`idris2rc2_mkIntegerLiteral`) genuinely parses
+        -- and heap-allocates a fresh GMP integer on *every* evaluation,
+        -- so a large `Integer` literal used more than once must stay
+        -- let-bound (computed once, shared via ordinary dup/drop) rather
+        -- than becoming an RCConst re-evaluated at each use site.
         case litRep c of
              Just _  => k (RCConst c)
-             Nothing => bindCompound env e k
+             Nothing => case c of
+                  Str _ => k (RCConst c)
+                  BI x  => if x >= 0 && x < 100
+                              then k (RCConst c)
+                              else bindCompound env e k
+                  _     => bindCompound env e k
     bindOne env e@(LCon fc n ci tag []) k =
         -- A zero-argument constructor operand never needs a synthetic
         -- let either -- there's no field data to store, only a tag (or,

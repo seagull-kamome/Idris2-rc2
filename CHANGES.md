@@ -3,6 +3,25 @@
 Newest first. Each entry corresponds to one commit on `master`; see
 `git log` for full commit messages.
 
+## 2026-08-13 -- Avoid a synthetic let for String and small-Integer constant operands
+
+`RCConst` (no let-binding, no dup/drop, no C declaration) used to be
+restricted to native-eligible literals. Widened it to also cover
+`String` (always cheap: staged into a deduplicated static, see
+`orStagen`) and `Integer` within the small-value cache range [0, 100)
+(`idris2rc2_getSmallInteger`, an O(1) lookup, no allocation) -- both
+already render just as cheaply read-in-place as a native literal.
+Large/uncached `Integer` literals stay let-bound (computed once,
+shared via dup/drop), since re-evaluating those parses/allocates a
+fresh GMP integer every time. Extracted `boxedConstExpr` (the staging/
+caching logic RPrimVal's own emission already had) so both call sites
+share it.
+
+Verified: generated C confirmed to inline constants directly (e.g.
+`idris2rc2_sub_Integer(var_0, idris2rc2_getSmallInteger(1))`, no
+separate temp/dup/drop); 19/19 refc-suite tests and all smoke tests
+still match `idris2 --cg refc` byte-for-byte; benchmarks unaffected.
+
 ## 2026-08-13 -- Represent constructor-reuse's runtime check as IR (RReuseOffer)
 
 The reuse-eligible-alt uniqueness check (`if (idris2rc2_isUnique(sc))
