@@ -339,6 +339,21 @@ dropDeadLet fc natives RBoxed loc value body =
                then RFree fc loc body
                else RDrop fc [loc] body
 
+||| Fold `f` over every RConAlt's own body and (if present) the default,
+||| unioning the `SortedSet RCLocal` results -- the shared shape behind
+||| both `nativeLocalsR`'s and `alwaysUnboxedBoxedLocalsR`'s own RConCase
+||| cases (they only differ in which function they recurse with).
+foldConAltsR : (RCExp -> SortedSet RCLocal) -> List RConAlt -> Maybe RCExp -> SortedSet RCLocal
+foldConAltsR f alts mDef =
+    let altsNs = map (\(MkRConAlt _ _ _ _ body _) => f body) alts in
+    concat $ maybe altsNs (\d => f d :: altsNs) mDef
+
+||| As `foldConAltsR`, for `RConstAlt`.
+foldConstAltsR : (RCExp -> SortedSet RCLocal) -> List RConstAlt -> Maybe RCExp -> SortedSet RCLocal
+foldConstAltsR f alts mDef =
+    let altsNs = map (\(MkRConstAlt _ body) => f body) alts in
+    concat $ maybe altsNs (\d => f d :: altsNs) mDef
+
 ||| Every RLet-bound local Phase 1 decided is Native, collected once per
 ||| top-level definition so Phase 2 can consult it directly. A native
 ||| local's *use* carries no Rep information of its own (only the RLet
@@ -358,12 +373,8 @@ nativeLocalsR (RLet _ var rep value body) =
          -- assumed unreachable.
          RInlineNative _ => insert (RCLoc var) vs
          RBoxed => vs
-nativeLocalsR (RConCase _ _ alts mDef) =
-    let altsNs = map (\(MkRConAlt _ _ _ _ body _) => nativeLocalsR body) alts in
-    concat $ maybe altsNs (\d => nativeLocalsR d :: altsNs) mDef
-nativeLocalsR (RConstCase _ _ alts mDef) =
-    let altsNs = map (\(MkRConstAlt _ body) => nativeLocalsR body) alts in
-    concat $ maybe altsNs (\d => nativeLocalsR d :: altsNs) mDef
+nativeLocalsR (RConCase _ _ alts mDef) = foldConAltsR nativeLocalsR alts mDef
+nativeLocalsR (RConstCase _ _ alts mDef) = foldConstAltsR nativeLocalsR alts mDef
 nativeLocalsR (RCmpCase _ _ _ _ t f) = union (nativeLocalsR t) (nativeLocalsR f)
 nativeLocalsR _ = empty
 
@@ -385,36 +396,32 @@ nativeLocalsR _ = empty
 ||| be unconditional no-ops (support/rc2/datatypes.h), so generating the
 ||| calls at all is pure waste. Operates on Phase 1's output, same as
 ||| nativeLocalsR and for the same reason.
+||| `args`, filtered down to the genuine `RCLoc`s among them, if `mty`
+||| says they're at an always-unboxed operand position -- the shared
+||| core of `alwaysUnboxedBoxedLocalsR`'s ROp and RCmpCase cases, which
+||| only differ in *how* they derive `mty`: an `ROp`'s own operand type
+||| needs `opArgTyFor`'s Cast-source refinement (its operand type can
+||| differ from its result type); a comparison's is already exactly its
+||| shared operand type (`cmpArgTy`), no refinement needed.
+alwaysUnboxedArgs : Maybe PrimType -> Vect n RCLocal -> SortedSet RCLocal
+alwaysUnboxedArgs Nothing _ = empty
+alwaysUnboxedArgs (Just ty) args =
+    if alwaysUnboxed ty then fromList (filter isRealLoc (toList args)) else empty
+  where
+    isRealLoc : RCLocal -> Bool
+    isRealLoc (RCLoc _) = True
+    isRealLoc _ = False
+
 alwaysUnboxedBoxedLocalsR : RCExp -> SortedSet RCLocal
 alwaysUnboxedBoxedLocalsR (RLet _ _ _ value body) =
     union (alwaysUnboxedBoxedLocalsR value) (alwaysUnboxedBoxedLocalsR body)
 alwaysUnboxedBoxedLocalsR (ROp _ _ op args _) =
-    case opResultRep op of
-         Nothing => empty
-         Just ty => if alwaysUnboxed (opArgTyFor ty op)
-                       then fromList (filter isRealLoc (toList args))
-                       else empty
-  where
-    isRealLoc : RCLocal -> Bool
-    isRealLoc (RCLoc _) = True
-    isRealLoc _ = False
-alwaysUnboxedBoxedLocalsR (RConCase _ _ alts mDef) =
-    let altsNs = map (\(MkRConAlt _ _ _ _ body _) => alwaysUnboxedBoxedLocalsR body) alts in
-    concat $ maybe altsNs (\d => alwaysUnboxedBoxedLocalsR d :: altsNs) mDef
-alwaysUnboxedBoxedLocalsR (RConstCase _ _ alts mDef) =
-    let altsNs = map (\(MkRConstAlt _ body) => alwaysUnboxedBoxedLocalsR body) alts in
-    concat $ maybe altsNs (\d => alwaysUnboxedBoxedLocalsR d :: altsNs) mDef
+    alwaysUnboxedArgs (map (\ty => opArgTyFor ty op) (opResultRep op)) args
+alwaysUnboxedBoxedLocalsR (RConCase _ _ alts mDef) = foldConAltsR alwaysUnboxedBoxedLocalsR alts mDef
+alwaysUnboxedBoxedLocalsR (RConstCase _ _ alts mDef) = foldConstAltsR alwaysUnboxedBoxedLocalsR alts mDef
 alwaysUnboxedBoxedLocalsR (RCmpCase _ op args _ t f) =
-    let ownNs = case cmpArgTy op of
-                     Nothing => empty
-                     Just ty => if alwaysUnboxed ty
-                                   then fromList (filter isRealLoc (toList args))
-                                   else empty
-    in union ownNs (union (alwaysUnboxedBoxedLocalsR t) (alwaysUnboxedBoxedLocalsR f))
-  where
-    isRealLoc : RCLocal -> Bool
-    isRealLoc (RCLoc _) = True
-    isRealLoc _ = False
+    union (alwaysUnboxedArgs (cmpArgTy op) args)
+          (union (alwaysUnboxedBoxedLocalsR t) (alwaysUnboxedBoxedLocalsR f))
 alwaysUnboxedBoxedLocalsR _ = empty
 
 ||| Which of `vars` need a dup: thread (and shrink) `owned` exactly as
@@ -481,8 +488,8 @@ inlineableRep (RNative ty) (ROp _ _ _ _ []) var bodyRC =
 inlineableRep rep _ _ _ = rep
 
 mutual
-    branchBody : SortedSet RCLocal -> Owned -> SortedSet RCLocal -> RCExp -> Core RCExp
-    branchBody natives owned ownedWithArgs body = do
+    branchBody : SortedSet RCLocal -> SortedSet RCLocal -> RCExp -> Core RCExp
+    branchBody natives ownedWithArgs body = do
         let (shouldDrop, actualOwned) = dropUnusedOwnedVars ownedWithArgs (freeLocalsR body)
         rest <- annotate natives actualOwned body
         pure $ case shouldDrop of
@@ -548,17 +555,17 @@ mutual
         let deadArgs = intersection argsSet (owned `difference` usedLater)
         let liveArgs = argsSet `difference` deadArgs
         let ownedForBranches = owned `difference` deadArgs
-        t' <- branchBody natives ownedForBranches ownedForBranches t
-        f' <- branchBody natives ownedForBranches ownedForBranches f
+        t' <- branchBody natives ownedForBranches t
+        f' <- branchBody natives ownedForBranches f
         pure $ wrapDups fc (splitBorrowsV natives (owned `difference` liveArgs) args)
                           (RCmpCase fc op args (boxedOperands natives (toList args)) t' f')
     annotate natives owned (RConCase fc sc alts mDef) = do
         alts' <- traverse (annotateConAlt natives owned sc) alts
-        mDef' <- traverseOpt (branchBody natives owned owned) mDef
+        mDef' <- traverseOpt (branchBody natives owned) mDef
         pure $ RConCase fc sc alts' mDef'
     annotate natives owned (RConstCase fc sc alts mDef) = do
         alts' <- traverse (annotateConstAlt natives owned) alts
-        mDef' <- traverseOpt (branchBody natives owned owned) mDef
+        mDef' <- traverseOpt (branchBody natives owned) mDef
         pure $ RConstCase fc sc alts' mDef'
     annotate natives owned (RPrimVal fc c) = pure $ RPrimVal fc c
     annotate natives owned (RErased fc) = pure $ RErased fc
@@ -582,14 +589,14 @@ mutual
         -- in `owned` either, same reasoning as RLet's owned' above.
         let ownedWithArgs = union (fromList (RCLoc <$> args) `difference` natives)
                                    (if erased then delete sc owned else owned)
-        bodyRC <- branchBody natives owned ownedWithArgs body
+        bodyRC <- branchBody natives ownedWithArgs body
         -- offersReuse stays Nothing -- Compiler.RC2.Reuse decides that
         -- afterward, using the RDrop list this produces (see its own
         -- module note).
         pure $ MkRConAlt name ci tag args bodyRC Nothing
 
     annotateConstAlt : SortedSet RCLocal -> Owned -> RConstAlt -> Core RConstAlt
-    annotateConstAlt natives owned (MkRConstAlt c body) = MkRConstAlt c <$> branchBody natives owned owned body
+    annotateConstAlt natives owned (MkRConstAlt c body) = MkRConstAlt c <$> branchBody natives owned body
 
 ||| `natives` for a definition's whole body: genuinely-native RLet
 ||| locals (`nativeLocalsR`) plus Boxed locals provably always
@@ -606,16 +613,15 @@ annotateDef (MkRCFun args body) = do
     let natives = definitionNatives body
     -- `natives`-listed args (see definitionNatives) don't belong in
     -- `owned` either -- same reasoning as RLet's owned' above -- so
-    -- they're excluded before dropUnusedOwnedVars ever sees them,
-    -- rather than relying on it to notice they're unused later (they
-    -- may well be used, just never via anything owned/dup/drop cares
-    -- about).
+    -- they're excluded before `branchBody`'s own dropUnusedOwnedVars
+    -- ever sees them, rather than relying on it to notice they're
+    -- unused later (they may well be used, just never via anything
+    -- owned/dup/drop cares about). The whole function body is, in every
+    -- way that matters here, just a branch whose "owned with args" is
+    -- its own argument list -- `branchBody` already does exactly the
+    -- drop-unused-then-annotate-then-wrap sequence this needs.
     let argsVars = fromList (RCLoc <$> args) `difference` natives
-    let (shouldDrop, actualOwned) = dropUnusedOwnedVars argsVars (freeLocalsR body)
-    rest <- annotate natives actualOwned body
-    pure $ MkRCFun args $ case shouldDrop of
-                               [] => rest
-                               _  => RDrop emptyFC shouldDrop rest
+    MkRCFun args <$> branchBody natives argsVars body
 annotateDef d@(MkRCCon _ _ _) = pure d
 annotateDef d@(MkRCForeign _ _ _) = pure d
 annotateDef (MkRCError body) = MkRCError <$> annotate (definitionNatives body) empty body

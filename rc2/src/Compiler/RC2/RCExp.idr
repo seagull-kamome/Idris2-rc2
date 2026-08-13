@@ -37,9 +37,13 @@ module Compiler.RC2.RCExp
 -- (Scope note: the constructor-reuse-in-place optimization -- deciding at
 -- runtime whether a dying value's storage can be recycled for a
 -- freshly-built constructor of the same shape -- is a distinct, secondary
--- optimization layered on top of plain reference counting. It still lives
--- in Emit for now, driven off of the RDrop lists RC produces; lifting it
--- fully into this IR is future work, not required for the core directive.)
+-- optimization layered on top of plain reference counting. It's decided
+-- by Compiler.RC2.Reuse, a dedicated pass run after Compiler.RC2.RC's
+-- normalize+annotate are both done, and encoded directly on this IR
+-- (RCon's `reuseFrom`, RConAlt's `offersReuse`, and the `RReleaseReuse`
+-- node below) -- Compiler.RC2.Emit only ever lowers it, same as
+-- everything else in this tree; see Compiler.RC2.Reuse's own module
+-- note for the full protocol.)
 
 import Core.CompileExpr
 import Core.FC
@@ -220,8 +224,8 @@ data RCDef : Type where
      MkRCError : RCExp -> RCDef
 
 ------------------------------------------------------------------------
--- Structural analyses used by both RC.idr (ownership annotation) and
--- Emit.idr (constructor-reuse bookkeeping).
+-- Structural analyses used by RC.idr (ownership annotation) and
+-- Compiler.RC2.Reuse (constructor-reuse-in-place bookkeeping).
 
 export
 freeLocalsR : RCExp -> SortedSet RCLocal
@@ -256,8 +260,8 @@ freeLocalsR (RReleaseReuse _ v body) = insert v (freeLocalsR body)
 freeLocalsR _ = empty
 
 ||| How many times `l` is referenced anywhere in `e` -- unlike
-||| `freeLocalsR`'s set (which collapses repeats), Emit.idr's
-||| tryInlineNativeOp needs the exact count to tell "referenced exactly
+||| `freeLocalsR`'s set (which collapses repeats), RC.idr's
+||| `inlineableRep` needs the exact count to tell "referenced exactly
 ||| once, safe to splice its defining expression in at that one site
 ||| instead of declaring a variable" apart from "referenced more than
 ||| once, inlining would duplicate its computation."
