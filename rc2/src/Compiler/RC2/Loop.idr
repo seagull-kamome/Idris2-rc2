@@ -5,11 +5,18 @@ module Compiler.RC2.Loop
 -- Phase-1+2'd, Reuse'd tree, right before Compiler.RC2.Emit -- see
 -- RC2.idr's toRCDefs). Where Reuse looks for constructor-reuse
 -- opportunities, this pass looks for a function's own self-recursive
--- tail calls and rewrites each one from a generic (closure-build +
--- boxed-trampoline) `RAppName` into an `RSelfTailCall`, which
--- Compiler.RC2.Emit lowers to reassigning the function's own parameter
--- variables and a plain C `goto` back to the top -- no closure
--- allocation, no trampoline dispatch, per iteration.
+-- tail calls and, if it finds any, wraps the whole body in one explicit
+-- `RLoop` (see its own doc comment in RCExp.idr), rewriting each
+-- self-call found from a generic (closure-build + boxed-trampoline)
+-- `RAppName` into an `RLoopContinue`. Compiler.RC2.Emit lowers `RLoop`
+-- to a `TYPE var_N` declaration per loop param (its own `Rep`,
+-- independent of the function's own always-Boxed calling convention --
+-- this pass itself always uses `RBoxed`, reusing the function's own
+-- parameter ids unchanged as `loopParams`, so nothing about *this*
+-- pass' own output changes calling-convention behaviour; a later pass
+-- may choose otherwise) plus a `loop:;` label, and `RLoopContinue` to
+-- reassigning those loop params and a plain C `goto` back to the top --
+-- no closure allocation, no trampoline dispatch, per iteration.
 --
 -- Scope: self-tail-calls only. Mutual recursion between two or more
 -- functions is Compiler.RC2.MutualLoop's job -- a separate, whole-
@@ -100,9 +107,13 @@ mutual
           (foundDef, mDef') = mapTailAppNamesMaybe f mDef
       in (any fst altsR || foundDef, RConstCase fc sc (map snd altsR) mDef')
   -- Every other shape (RV, RUnderApp, RApp, RCon, ROp, RExtPrim,
-  -- RPrimVal, RErased, RCrash, RSelfTailCall, and a *lazy* RAppName) is
-  -- either not a tail position at all or already outside any tail-
-  -- rewrite pass' scope -- left untouched, no replacement.
+  -- RPrimVal, RErased, RCrash, RLoop, RLoopContinue, and a *lazy*
+  -- RAppName) is either not a tail position at all or already outside
+  -- any tail-rewrite pass' scope -- left untouched, no replacement.
+  -- (RLoop/RLoopContinue specifically: this pass never runs on a tree
+  -- that already contains one -- Compiler.RC2.Loop is the sole producer
+  -- and runs at most once per definition -- so there is nothing to
+  -- recurse into there in practice.)
   mapTailAppNames _ e = (False, e)
 
   mapTailAppNamesAlt : (FC -> Name -> List RCLocal -> Maybe RCExp) -> RConAlt -> (Bool, RConAlt)
@@ -126,10 +137,21 @@ mutual
 ||| definition's own name through Phase 1/2 at all (nothing there needs
 ||| it), so this takes it as an explicit argument the same way
 ||| RC2.idr's `toRCDefs` already has it in hand (paired with the
-||| `RCDef` it came from) for every definition.
+||| `RCDef` it came from) for every definition. If any self-tail-call is
+||| found, wraps the whole (rewritten) body in one `RLoop` whose own
+||| `loopParams` simply reuse the function's own top-level `args`
+||| unchanged, each `RBoxed` -- i.e. this pass alone changes nothing
+||| about calling convention or representation, only the call *shape*
+||| (see `RLoop`'s own doc comment, and Compiler.RC2.Emit's
+||| `declareLoopParam`, for why reusing the same ids under `RBoxed`
+||| costs nothing extra: those params are already in scope, as the
+||| function's own C parameters, under their own exact values).
 export
 applyLoop : Name -> RCDef -> RCDef
-applyLoop self (MkRCFun args _ body) =
-    let (found, body') = mapTailAppNames (\fc, n, args' => if n == self then Just (RSelfTailCall fc args') else Nothing) body
-    in MkRCFun args found body'
+applyLoop self (MkRCFun args body) =
+    let (found, body') = mapTailAppNames (\fc, n, args' => if n == self then Just (RLoopContinue fc args') else Nothing) body
+    in MkRCFun args $
+         if found
+            then RLoop emptyFC (map (\a => (a, RBoxed)) args) (map RCLoc args) body'
+            else body'
 applyLoop _ d = d

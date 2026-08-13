@@ -314,10 +314,7 @@ normalizeDef (MkLFun args scope body) = do
     scopeIds <- traverse (const (nextVarId {v})) scope
     let env = scopeIds ++ argIds
     bodyRC <- normalize {v} env body
-    -- `isLoop` is always False here -- only Compiler.RC2.Loop, running
-    -- after annotate (and Reuse), ever sets it. See RCDef's own doc
-    -- comment.
-    pure $ MkRCFun (argIds ++ reverse scopeIds) False bodyRC
+    pure $ MkRCFun (argIds ++ reverse scopeIds) bodyRC
 normalizeDef (MkLCon tag arity nt) = pure $ MkRCCon tag arity nt
 normalizeDef (MkLForeign ccs fargs ret) = pure $ MkRCForeign ccs fargs ret
 normalizeDef (MkLError body) = do
@@ -633,9 +630,11 @@ mutual
     -- Never actually produced until Compiler.RC2.Loop runs, which is
     -- strictly after annotate is done with the whole definition (it
     -- rewrites already-annotated RAppName nodes in tail position, see
-    -- RSelfTailCall's own doc comment) -- kept total (as a plain
-    -- pass-through), same reasoning as RReleaseReuse just above.
-    annotate natives owned (RSelfTailCall fc args) = pure $ RSelfTailCall fc args
+    -- RLoop's own doc comment) -- kept total (as a plain pass-through),
+    -- same reasoning as RReleaseReuse just above.
+    annotate natives owned (RLoop fc loopParams initial body) =
+        RLoop fc loopParams initial <$> annotate natives owned body
+    annotate natives owned (RLoopContinue fc args) = pure $ RLoopContinue fc args
 
     annotateConAlt : SortedSet RCLocal -> Owned -> RCLocal -> RConAlt -> Core RConAlt
     annotateConAlt natives owned sc (MkRConAlt name ci tag args body) = do
@@ -667,7 +666,7 @@ definitionNatives : RCExp -> SortedSet RCLocal
 definitionNatives body = union (nativeLocalsR body) (alwaysUnboxedBoxedLocalsR body)
 
 annotateDef : RCDef -> Core RCDef
-annotateDef (MkRCFun args isLoop body) = do
+annotateDef (MkRCFun args body) = do
     let natives = definitionNatives body
     -- `natives`-listed args (see definitionNatives) don't belong in
     -- `owned` either -- same reasoning as RLet's owned' above -- so
@@ -679,7 +678,7 @@ annotateDef (MkRCFun args isLoop body) = do
     -- its own argument list -- `branchBody` already does exactly the
     -- drop-unused-then-annotate-then-wrap sequence this needs.
     let argsVars = fromList (RCLoc <$> args) `difference` natives
-    MkRCFun args isLoop <$> branchBody natives argsVars body
+    MkRCFun args <$> branchBody natives argsVars body
 annotateDef d@(MkRCCon _ _ _) = pure d
 annotateDef d@(MkRCForeign _ _ _) = pure d
 annotateDef (MkRCError body) = MkRCError <$> annotate (definitionNatives body) empty body

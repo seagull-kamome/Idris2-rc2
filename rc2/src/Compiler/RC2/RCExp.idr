@@ -223,28 +223,49 @@ mutual
        ||| ends up NULL here) and a real release otherwise. Only ever
        ||| inserted by Compiler.RC2.Reuse, never by RC.idr.
        RReleaseReuse : FC -> RCLocal -> RCExp -> RCExp
-       ||| A tail call to *this same function*, with `args` as the new
-       ||| argument values -- compiled to reassigning the function's own
-       ||| parameter variables and jumping back to the top (a `goto`) in
-       ||| Compiler.RC2.Emit, instead of building a closure and going
-       ||| through the generic boxed trampoline. Only ever produced by
-       ||| Compiler.RC2.Loop, a dedicated pass that runs on the fully
-       ||| Phase-1+2'd and Reuse'd tree (mirroring Compiler.RC2.Reuse's
-       ||| own place in the pipeline): it walks *only* a function's own
-       ||| tail positions (the same set Compiler.RC2.Emit's
-       ||| TailPositionStatus threading already visits structurally --
-       ||| RLet's body, RDup/RDrop/RFree/RReleaseReuse's continuation,
-       ||| RCmpCase's two branches, RConCase/RConstCase's alts and
-       ||| default) looking for a plain `RAppName` (no `lazy` reason)
-       ||| whose target is this very function, and replaces each one
-       ||| found with this node. Ownership is untouched by this
-       ||| replacement -- `annotate` (Phase 2) already computed the
-       ||| right dup/move decisions for that `RAppName`'s own arguments
-       ||| before Loop ever ran, exactly as it would for a call to any
-       ||| other function, and those decisions are preserved as-is (any
-       ||| wrapping RDup/RDrop/RFree stays put; only the terminal
-       ||| RAppName node itself is swapped). RC.idr's own Phase 1/2 never
-       ||| produce this.
+       ||| An explicit tail-recursive loop. `loopParams` are this loop's
+       ||| own carried locals -- each with its own `Rep`, independent of
+       ||| whatever representation the *enclosing function's* own
+       ||| top-level parameters use (always Boxed, per the external
+       ||| calling convention) -- initialised once, in the *enclosing*
+       ||| scope, from `initial` (same order, same length), before the
+       ||| loop itself ever runs. `body` is then evaluated repeatedly: an
+       ||| `RLoopContinue` reachable from it in tail position supplies
+       ||| new values for the next iteration and jumps back to the top;
+       ||| any other tail-position value exits the loop and becomes this
+       ||| whole `RLoop` node's own result. Compiled to a C `TYPE var_N`
+       ||| declaration per loop param (skipped entirely when a param
+       ||| reuses an already-in-scope id under its own unchanged value --
+       ||| the common case for a loop whose params are simply the
+       ||| enclosing function's own top-level args, see
+       ||| Compiler.RC2.Emit's `declareLoopParam`), a `loop:;` label, and
+       ||| `body`.
+       |||
+       ||| Only ever produced by Compiler.RC2.Loop, a dedicated pass that
+       ||| runs on the fully Phase-1+2'd and Reuse'd tree (mirroring
+       ||| Compiler.RC2.Reuse's own place in the pipeline): it walks
+       ||| *only* a function's own tail positions (the same set
+       ||| Compiler.RC2.Emit's TailPositionStatus threading already
+       ||| visits structurally -- RLet's body, RDup/RDrop/RFree/
+       ||| RReleaseReuse/RReuseOffer's continuation, RCmpCase's two
+       ||| branches, RConCase/RConstCase's alts and default) looking for
+       ||| a plain `RAppName` (no `lazy` reason) whose target is the
+       ||| enclosing function itself, replacing each one found with an
+       ||| `RLoopContinue`, and wrapping the whole (possibly rewritten)
+       ||| body in one `RLoop` if any were found. RC.idr's own Phase 1/2
+       ||| never produce this.
+       RLoop : FC -> (loopParams : List (Int, Rep)) -> (initial : List RCLocal) -> RCExp -> RCExp
+       ||| Continue the nearest enclosing `RLoop`, supplying `args` as
+       ||| each loop param's new value (same order, same length as that
+       ||| `RLoop`'s own `loopParams`). Ownership is untouched by this
+       ||| node's own introduction -- `annotate` (Phase 2) already
+       ||| computed the right dup/move decisions for the original
+       ||| `RAppName`'s own arguments before Compiler.RC2.Loop ever ran,
+       ||| exactly as it would for a call to any other function, and
+       ||| those decisions are preserved as-is (any wrapping RDup/RDrop/
+       ||| RFree stays put; only the terminal `RAppName` node itself is
+       ||| swapped). RC.idr's own Phase 1/2 never produce this.
+       RLoopContinue : FC -> List RCLocal -> RCExp
        ||| A runtime uniqueness check deciding whether `sc`'s own storage
        ||| can be repurposed in place for a later `RCon` of the same
        ||| shape (see `RCon`'s own `reuseFrom`) instead of allocating
@@ -272,7 +293,6 @@ mutual
        ||| `RReleaseReuse sc` instead, so the reservation is never
        ||| simply lost. RC.idr's own Phase 1/2 never produce this.
        RReuseOffer : FC -> (sc : RCLocal) -> (dupOnShared : List RCLocal) -> RCExp -> RCExp
-       RSelfTailCall : FC -> List RCLocal -> RCExp
 
   public export
   data RConAlt : Type where
@@ -284,14 +304,7 @@ mutual
 
 public export
 data RCDef : Type where
-     ||| `isLoop`: `True` once Compiler.RC2.Loop has found (and rewritten)
-     ||| at least one self-tail-call reachable from `body` -- tells
-     ||| Compiler.RC2.Emit to wrap the emitted function body in a `goto`
-     ||| target (see `RSelfTailCall`'s own doc comment) instead of
-     ||| requiring it to re-scan the tree to find out. RC.idr's own
-     ||| Phase 1/2 always construct this as `False`; only
-     ||| Compiler.RC2.Loop ever sets it.
-     MkRCFun : (args : List Int) -> (isLoop : Bool) -> RCExp -> RCDef
+     MkRCFun : (args : List Int) -> RCExp -> RCDef
      MkRCCon : (tag : Maybe Int) -> (arity : Nat) -> (nt : Maybe Nat) -> RCDef
      MkRCForeign : (ccs : List String) -> (fargs : List CFType) -> CFType -> RCDef
      MkRCError : RCExp -> RCDef

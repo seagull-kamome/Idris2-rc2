@@ -78,7 +78,11 @@ mutual
   prettyExp d (RReleaseReuse _ v body) = indent d ++ "releaseReuse " ++ show v ++ "\n" ++ prettyExp d body
   prettyExp d (RReuseOffer _ sc dupOnShared body) =
       indent d ++ "reuseOffer " ++ show sc ++ " dupOnShared=" ++ show dupOnShared ++ "\n" ++ prettyExp d body
-  prettyExp d (RSelfTailCall _ args) = indent d ++ "tailcall self " ++ show args ++ "\n"
+  prettyExp d (RLoop _ loopParams initial body) =
+      indent d ++ "loop " ++ show (map (\(i, r) => "\{show (RCLoc i)}:\{prettyRep r}") loopParams)
+        ++ " initial=" ++ show initial ++ "\n"
+      ++ prettyExp d body
+  prettyExp d (RLoopContinue _ args) = indent d ++ "continue loop " ++ show args ++ "\n"
 
   prettyConAlt : Nat -> RConAlt -> String
   prettyConAlt d (MkRConAlt n ci tag args body) =
@@ -91,9 +95,8 @@ mutual
       indent d ++ show c ++ " ->\n" ++ prettyExp (d + 1) body
 
 prettyDef : Name -> RCDef -> String
-prettyDef n (MkRCFun args isLoop body) =
-    "def " ++ show n ++ "  (fun args=" ++ show (map RCLoc args)
-      ++ (if isLoop then " isLoop" else "") ++ ")\n"
+prettyDef n (MkRCFun args body) =
+    "def " ++ show n ++ "  (fun args=" ++ show (map RCLoc args) ++ ")\n"
     ++ prettyExp 1 body ++ "\n"
 prettyDef n (MkRCCon tag arity nt) =
     "def " ++ show n ++ "  (con tag=" ++ show tag ++ " arity=" ++ show arity

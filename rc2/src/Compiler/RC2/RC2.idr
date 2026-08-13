@@ -40,7 +40,7 @@ import Libraries.Utils.Path
 ||| lists -- see its own module note), on each definition's body
 ||| independently -- reuse offers never cross a function boundary.
 applyReuse : RCDef -> RCDef
-applyReuse (MkRCFun args isLoop body) = MkRCFun args isLoop (resolveReuse body)
+applyReuse (MkRCFun args body) = MkRCFun args (resolveReuse body)
 applyReuse (MkRCError body) = MkRCError (resolveReuse body)
 applyReuse d@(MkRCCon _ _ _) = d
 applyReuse d@(MkRCForeign _ _ _) = d

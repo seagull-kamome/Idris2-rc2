@@ -3,6 +3,30 @@
 Newest first. Each entry corresponds to one commit on `master`; see
 `git log` for full commit messages.
 
+## 2026-08-13 -- Represent self-tail-call loops as explicit IR (RLoop/RLoopContinue), Stage 1
+
+First of two staged steps toward letting a loop's own carried state have
+a representation independent of its enclosing function's (always Boxed)
+calling convention. New `RLoop`/`RLoopContinue` IR nodes replace
+`MkRCFun`'s `isLoop` flag and `RSelfTailCall`: `RLoop` carries its own
+loop params (each with its own `Rep`) and their initial values,
+structurally separating "runs once before the loop" from "the loop body
+itself" -- something the old flat `isLoop` boolean + scattered
+`RSelfTailCall` nodes couldn't express. `Compiler.RC2.Loop` now wraps a
+self-tail-recursive function's body in one `RLoop` (reusing the
+function's own top-level args unchanged, all `RBoxed` -- this stage
+changes no behavior, only representation); `Compiler.RC2.Emit`'s
+`declareLoopParam` skips declaring a loop param entirely when it's
+simply an unchanged, already-in-scope function arg (the common case),
+so generated C is unaffected.
+
+Verified: generated C confirmed byte-for-byte identical to before this
+change; 19/19 refc-suite tests and all smoke tests still match
+`idris2 --cg refc`; benchmarks unaffected. Stage 2 (Compiler.RC2.
+MutualLoop's own adaptation) is a separate, following commit; the
+actual native-representation optimization this groundwork enables is
+deliberately not part of either stage.
+
 ## 2026-08-13 -- Avoid a synthetic let for String and small-Integer constant operands
 
 `RCConst` (no let-binding, no dup/drop, no C declaration) used to be
