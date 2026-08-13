@@ -3,6 +3,40 @@
 Newest first. Each entry corresponds to one commit on `master`; see
 `git log` for full commit messages.
 
+## 2026-08-13 -- Self-tail-call loop conversion (Compiler.RC2.Loop)
+
+A function's own self-recursive tail calls now compile to reassigning
+its parameter variables and a plain C `goto` back to the top, instead
+of building a closure and going through the generic boxed trampoline.
+New dedicated pass `Compiler.RC2.Loop` (mirrors Reuse's place in the
+pipeline: runs on the fully Phase-1+2'd, Reuse'd tree) walks a
+function's own tail positions, rewriting each self-call found into the
+new `RSelfTailCall` IR node; `Emit.idr` only lowers it mechanically
+(`tryEmitSelfTailCall`). Scope: self-tail-calls only, not mutual
+recursion. Ownership is untouched -- `annotate` already decided each
+argument's dup/move before this pass runs.
+
+Fixed a bug found during verification: `tryEmitSelfTailCall` and
+`tryBuildClosureInto` both peel RDup/RDrop/RFree/RLet wrappers looking
+for their own target shape, but neither originally handled
+`RReleaseReuse` (a wrapper Reuse can also introduce) -- any self-tail-
+call sitting behind one (e.g. inside `Prelude.Types.mapAppend`, an
+entirely ordinary shape) reached `emitRC` unconverted and hit an
+internal error. Added the missing case to both.
+
+`BenchLoop.idr` (`sumTo`) now runs at ~68% of RefC's time (previously
+~90%); `BenchChain.idr`'s `loopPoly` improved similarly. Re-ran the
+idris2-missing-containers external-package benchmark too (its 5 hash
+algorithms are all self-tail-recursive loops): rc2's RefC-relative
+margin widened from ~20% to ~30% faster (BENCHMARKS.md). Verified:
+19/19 refc-suite tests pass, all smoke tests (including new
+`Test9SelfTailLoop.idr` -- parameter swapping, multiple recursive
+branches, an unchanged pass-through argument, and confirming mutual
+recursion is correctly left unconverted) match upstream `idris2 --cg
+refc` byte-for-byte, including at 100,000-500,000 recursion depth with
+no stack growth (direct evidence the `goto` is a real loop, not
+disguised recursion).
+
 ## 2026-08-13 -- Fix remaining closure_N-then-copy redundancy; fix a real refcount leak it was hiding
 
 `tryBuildClosureInto` only peeled RDup/RDrop/RFree wrappers looking for

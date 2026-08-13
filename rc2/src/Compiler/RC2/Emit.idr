@@ -390,6 +390,12 @@ data ArgCounter : Type where
 data FunctionDefinitions : Type where
 data IndentLevel : Type where
 data HeaderFiles : Type where
+-- The enclosing function's own parameter ids, in order -- set once per
+-- function (createCFunctions), consulted only by tryEmitSelfTailCall's
+-- own RSelfTailCall case to know which var_N to reassign for each new
+-- argument value (RSelfTailCall's own arg list is guaranteed the same
+-- length and order by construction, see its doc comment).
+data FunctionArgs : Type where
 data RepMap : Type where
 -- Native-rep locals whose defining expression is safe and worthwhile to
 -- splice directly into their (sole) use site instead of ever being
@@ -756,6 +762,7 @@ mutual
                -> {auto _ : Ref ConstDef (SortedMap Constant ConstDef)}
                -> {auto r : Ref RepMap (SortedMap Int Rep)}
                -> {auto lm : Ref InlineMap (SortedMap Int String)}
+               -> {auto fa : Ref FunctionArgs (List Int)}
                -> FC -> Int -> Rep -> RCExp -> Core ()
     declareLet fc var rep value = do
         update RepMap (insert var rep)
@@ -764,6 +771,58 @@ mutual
              (RInlineNative ty, _) => inlineNative ty var value
              (RNative ty, _) => declareNative fc ty var value
              (RBoxed, _) => assignInto fc True "var_\{show var}" NotInTailPosition value
+
+    ||| If `value` is a self-tail-call (`RSelfTailCall`, see its own doc
+    ||| comment) -- possibly wrapped in leading RDup/RDrop/RFree/RLet,
+    ||| same as `tryBuildClosureInto` -- emit the loop-back: snapshot
+    ||| every new argument value into a fresh temporary first (a plain
+    ||| simultaneous-assignment safeguard against aliasing, e.g.
+    ||| `f x y = f y x` -- nothing here is an ownership decision,
+    ||| `annotate` (Phase 2) already decided every argument's dup/move
+    ||| before Compiler.RC2.Loop ever ran, see `RSelfTailCall`'s own doc
+    ||| comment), reassign the function's own parameter variables from
+    ||| those temporaries, then `goto loop;`.
+    |||
+    ||| Returns `Nothing` if the loop-back was emitted (nothing left for
+    ||| the caller to assign or return -- control already left via the
+    ||| `goto`), or `Just leftover` using the same leftover protocol as
+    ||| `tryBuildClosureInto`, for the same reason (a peeled wrapper's
+    ||| side effect must not be emitted twice).
+    tryEmitSelfTailCall : {auto a : Ref ArgCounter Nat}
+                        -> {auto oft : Ref OutfileText Output}
+                        -> {auto il : Ref IndentLevel Nat}
+                        -> {auto _ : Ref ConstDef (SortedMap Constant ConstDef)}
+                        -> {auto r : Ref RepMap (SortedMap Int Rep)}
+                        -> {auto lm : Ref InlineMap (SortedMap Int String)}
+                        -> {auto fa : Ref FunctionArgs (List Int)}
+                        -> RCExp -> Core (Maybe RCExp)
+    tryEmitSelfTailCall (RDup fc v cont) = do
+        dupVars [varName v]
+        tryEmitSelfTailCall cont
+    tryEmitSelfTailCall (RDrop fc vs cont) = do
+        -- `vs` is already guaranteed Boxed-only -- see the module note.
+        removeVars (varName <$> vs)
+        tryEmitSelfTailCall cont
+    tryEmitSelfTailCall (RFree fc v cont) = do
+        freeVars [varName v]
+        tryEmitSelfTailCall cont
+    tryEmitSelfTailCall (RLet fc var rep value body) = do
+        declareLet fc var rep value
+        tryEmitSelfTailCall body
+    tryEmitSelfTailCall (RReleaseReuse fc loc cont) = do
+        removeReuseConstructors [reuseVarName loc]
+        tryEmitSelfTailCall cont
+    tryEmitSelfTailCall (RSelfTailCall fc newArgs) = do
+        fnArgs <- get FunctionArgs
+        temps <- traverse (\v => do
+            t <- getNewVarThatWillNotBeFreedAtEndOfBlock
+            vStr <- rcVarToBoxedC v
+            emit fc "IDRIS2RC2_Value *\{t} = \{vStr};"
+            pure t) newArgs
+        traverse_ (\(argId, t) => emit fc "var_\{show argId} = \{t};") (zip fnArgs temps)
+        emit fc "goto loop;"
+        pure Nothing
+    tryEmitSelfTailCall e = pure (Just e)
 
     ||| If `value` is a partial application (RUnderApp), or an InTailPosition
     ||| tail call (RAppName -- see emitRC's own RAppName case, which only
@@ -799,6 +858,7 @@ mutual
                         -> {auto _ : Ref ConstDef (SortedMap Constant ConstDef)}
                         -> {auto r : Ref RepMap (SortedMap Int Rep)}
                         -> {auto lm : Ref InlineMap (SortedMap Int String)}
+                        -> {auto fa : Ref FunctionArgs (List Int)}
                         -> (declare : Bool) -> String -> TailPositionStatus -> RCExp -> Core (Maybe RCExp)
     tryBuildClosureInto declare target tailPosition (RDup fc v cont) = do
         dupVars [varName v]
@@ -813,6 +873,9 @@ mutual
     tryBuildClosureInto declare target tailPosition (RLet fc var rep value body) = do
         declareLet fc var rep value
         tryBuildClosureInto declare target tailPosition body
+    tryBuildClosureInto declare target tailPosition (RReleaseReuse fc loc cont) = do
+        removeReuseConstructors [reuseVarName loc]
+        tryBuildClosureInto declare target tailPosition cont
     tryBuildClosureInto declare target _ (RUnderApp fc n missing args) = do
         makeClosureInto fc declare target n args missing
         pure Nothing
@@ -834,6 +897,7 @@ mutual
                   -> {auto _ : Ref ConstDef (SortedMap Constant ConstDef)}
                   -> {auto r : Ref RepMap (SortedMap Int Rep)}
                   -> {auto lm : Ref InlineMap (SortedMap Int String)}
+                  -> {auto fa : Ref FunctionArgs (List Int)}
                   -> FC -> PrimType -> Int -> RCExp -> Core ()
     declareNative fc ty var value = do
         (valStr, pending) <- emitNativeValue ty value
@@ -851,6 +915,7 @@ mutual
                  -> {auto _ : Ref ConstDef (SortedMap Constant ConstDef)}
                  -> {auto r : Ref RepMap (SortedMap Int Rep)}
                  -> {auto lm : Ref InlineMap (SortedMap Int String)}
+                 -> {auto fa : Ref FunctionArgs (List Int)}
                  -> PrimType -> Int -> RCExp -> Core ()
     inlineNative ty var value = do
         (valStr, pending) <- emitNativeValue ty value
@@ -862,30 +927,35 @@ mutual
     ||| not yet in scope: an `RLet`'s own `var_N`) or assigning into an
     ||| already-declared variable (`declare = False`: a case branch's
     ||| `returnvar`, or RCmpCase's own two branches). Tries
-    ||| `tryBuildClosureInto` first (skips a throwaway `closure_N` when
-    ||| `value` is a closure build that can go straight into `target` --
-    ||| see its own doc comment); falls back to the general
-    ||| `emitRC`-then-assign route for everything else. Every "evaluate
-    ||| this RCExp and store the result in a C variable" site in this
-    ||| module goes through here, so the choice between those two routes
-    ||| is only ever written once.
+    ||| `tryEmitSelfTailCall` first (a self-tail-call has nothing to
+    ||| assign into `target` at all -- control leaves via `goto` -- see
+    ||| its own doc comment), then `tryBuildClosureInto` (skips a
+    ||| throwaway `closure_N` when `value` is a closure build that can go
+    ||| straight into `target` -- see its own doc comment); falls back to
+    ||| the general `emitRC`-then-assign route for everything else. Every
+    ||| "evaluate this RCExp and store the result in a C variable" site
+    ||| in this module goes through here, so the choice between those
+    ||| routes is only ever written once.
     assignInto : {auto a : Ref ArgCounter Nat}
                -> {auto oft : Ref OutfileText Output}
                -> {auto il : Ref IndentLevel Nat}
                -> {auto _ : Ref ConstDef (SortedMap Constant ConstDef)}
                -> {auto r : Ref RepMap (SortedMap Int Rep)}
                -> {auto lm : Ref InlineMap (SortedMap Int String)}
+               -> {auto fa : Ref FunctionArgs (List Int)}
                -> FC -> (declare : Bool) -> (target : String) -> TailPositionStatus -> RCExp -> Core ()
     assignInto fc declare target tailPosition value = do
-        leftover <- tryBuildClosureInto declare target tailPosition value
-        -- Resume from `leftover`, not `value` -- see tryBuildClosureInto's
-        -- own doc comment on why re-running emitRC on `value` itself
-        -- would double-emit any wrapper it already peeled and emitted.
-        whenJust leftover $ \remaining => do
-            valStr <- emitRC remaining tailPosition
-            if declare
-               then emit fc $ "IDRIS2RC2_Value * " ++ target ++ " = " ++ valStr ++ ";"
-               else emit fc $ target ++ " = " ++ valStr ++ ";"
+        -- Same "resume from the leftover, not the original value" care
+        -- as tryBuildClosureInto's own doc comment explains, chained
+        -- across both stages.
+        afterSelfTail <- tryEmitSelfTailCall value
+        whenJust afterSelfTail $ \v1 => do
+            leftover <- tryBuildClosureInto declare target tailPosition v1
+            whenJust leftover $ \remaining => do
+                valStr <- emitRC remaining tailPosition
+                if declare
+                   then emit fc $ "IDRIS2RC2_Value * " ++ target ++ " = " ++ valStr ++ ";"
+                   else emit fc $ target ++ " = " ++ valStr ++ ";"
 
     ||| A case branch (or default): emit the drops RC.idr's `annotate`
     ||| already decided on (the peeled leading RDrop), preceded by the
@@ -924,6 +994,7 @@ mutual
                -> {auto _ : Ref ConstDef (SortedMap Constant ConstDef)}
                -> {auto r : Ref RepMap (SortedMap Int Rep)}
                -> {auto lm : Ref InlineMap (SortedMap Int String)}
+               -> {auto fa : Ref FunctionArgs (List Int)}
                -> (matched : Maybe (RCLocal, List String)) -> (offersReuse : Bool)
                -> String -> RCExp -> TailPositionStatus -> Core ()
     branchBody matched offersReuse returnvar body tailPosition = do
@@ -953,6 +1024,7 @@ mutual
            -> {auto _ : Ref ConstDef (SortedMap Constant ConstDef)}
            -> {auto r : Ref RepMap (SortedMap Int Rep)}
            -> {auto lm : Ref InlineMap (SortedMap Int String)}
+           -> {auto fa : Ref FunctionArgs (List Int)}
            -> RCExp
            -> TailPositionStatus
            -> Core String
@@ -1200,6 +1272,15 @@ mutual
 
     emitRC (RErased fc) _ = pure "NULL"
     emitRC (RCrash fc x) _ = pure "(NULL /* CRASH */)"
+    -- Unreachable in practice: assignInto/createCFunctions always try
+    -- tryEmitSelfTailCall first, which intercepts every RSelfTailCall
+    -- (however deeply RDup/RDrop/RFree/RLet-wrapped) before it could
+    -- ever reach a bare emitRC call -- see RSelfTailCall's own doc
+    -- comment. Unlike varName's RCConst case, failing loudly here
+    -- (rather than returning some placeholder string) is the safer
+    -- choice: reaching this would mean the goto-loop was never emitted
+    -- at all, silently turning a loop into infinite recursion.
+    emitRC (RSelfTailCall fc _) _ = throw $ InternalError "[rc2] RSelfTailCall reached emitRC directly (not intercepted by tryEmitSelfTailCall)"
     emitRC (RDrop fc locs cont) tailPosition = do
         -- locs is already guaranteed Boxed-only -- see the module note.
         removeVars (varName <$> locs)
@@ -1240,6 +1321,7 @@ mutual
                      -> {auto _ : Ref ConstDef (SortedMap Constant ConstDef)}
                      -> {auto r : Ref RepMap (SortedMap Int Rep)}
                      -> {auto lm : Ref InlineMap (SortedMap Int String)}
+                     -> {auto fa : Ref FunctionArgs (List Int)}
                      -> PrimType -> RCExp -> Core (String, List RCLocal)
     emitNativeValue ty (ROp fc _ op args postDrop) = do
         argStrs <- rc2traverseVect (\v => rcVarToNativeC (opArgTyFor ty op) v) args
@@ -1431,7 +1513,7 @@ createCFunctions : {auto c : Ref Ctxt Defs}
                 -> Name
                 -> RCDef
                 -> Core ()
-createCFunctions n (MkRCFun args body) = do
+createCFunctions n (MkRCFun args isLoop body) = do
     let nargs = length args
     let fn = "IDRIS2RC2_Value *\{cName !(getFullName n)}"
             ++ (if nargs == 0 then "(void)"
@@ -1455,7 +1537,21 @@ createCFunctions n (MkRCFun args body) = do
     -- Populated instead of RepMap+a declaration for any RLet whose value
     -- is a bare literal -- see InlineMap's own comment.
     _ <- newRef InlineMap (the (SortedMap Int String) empty)
-    emit EmptyFC $ "return \{!(emitRC body InTailPosition)};"
+    -- Only actually consulted if isLoop (by tryEmitSelfTailCall), but
+    -- cheap enough to always set -- see FunctionArgs' own comment.
+    _ <- newRef FunctionArgs args
+    -- `isLoop` (Compiler.RC2.Loop) is the only thing that decides
+    -- whether this label exists -- Emit.idr doesn't re-derive it by
+    -- scanning `body` itself.
+    when isLoop $ emit EmptyFC "loop:;"
+    -- Same "try the tail-position special case first, else fall back"
+    -- protocol as assignInto -- see tryEmitSelfTailCall's own doc
+    -- comment on why a bare emitRC call here would be wrong for a
+    -- self-tail-call (it would return *and* have already looped, or
+    -- worse, never loop at all).
+    afterSelfTail <- tryEmitSelfTailCall body
+    whenJust afterSelfTail $ \remaining =>
+        emit EmptyFC $ "return \{!(emitRC remaining InTailPosition)};"
     decreaseIndentation
     emit EmptyFC  "}\n"
     emit EmptyFC  ""

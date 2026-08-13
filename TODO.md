@@ -11,13 +11,11 @@ The biggest lever left on the table. Native type inference
 (`Compiler.RC2.Types`) only applies to values that stay within a single
 function's ANF-normalized body -- every function argument and return
 value is always boxed, so native representations get boxed and reboxed
-at every call boundary. This is why `BENCHMARKS.md` shows a striking win
-for straight-line arithmetic (3x fewer memory-management operations in
-`BenchChain.idr`'s `poly`) while loop/recursion-heavy code
-(`BenchLoop.idr`, `BenchFib.idr`) sees a much smaller (though no longer
-zero, since comparison/branch fusion landed -- see `BENCHMARKS.md`)
-edge over RefC: the per-iteration call overhead still dominates,
-swamping the native-arithmetic savings inside each call.
+at every call boundary. Self-tail-calls (see below) sidestep this for
+loops specifically -- a loop's own parameters never actually leave a
+single C stack frame -- but any *other* call boundary (a non-tail call,
+a call to a different function, a mutually-recursive cycle) still pays
+full boxing/reboxing cost.
 
 `numeric.c`'s Boxed-value arithmetic/comparison/cast wrappers (the ones
 called at every call boundary, where native inference doesn't reach)
@@ -35,12 +33,34 @@ of it.
   call sites keep working). This was scoped out of the current
   iteration as too large/risky to do alongside the RC-as-separate-pass
   work; see the project plan for the original design sketch.
-- **Self-tail-call loop conversion.** Compile a function's own tail
-  calls to itself into a C `while`/`goto` loop instead of the generic
-  boxed-trampoline path. Not implemented.
-- **Mutual tail recursion loop-ification.** Same idea across a cycle of
-  mutually tail-recursive functions. Out of scope even relative to the
-  self-tail-call case above; falls back to the boxed trampoline.
+- **Mutual tail recursion loop-ification.** The same idea as self-
+  tail-call loop conversion (implemented, see below), across a cycle of
+  two or more mutually tail-recursive functions instead of a single
+  function calling itself. Out of scope relative to the self-tail-call
+  case; falls back to the boxed trampoline (matching RefC's own
+  behaviour for this case too).
+
+### Self-tail-call loop conversion (implemented)
+
+A function's own self-recursive tail calls compile to reassigning its
+parameter variables and a plain C `goto` back to the top, instead of
+building a closure and going through the generic boxed trampoline --
+`Compiler.RC2.Loop`, a dedicated pass mirroring `Compiler.RC2.Reuse`'s
+place in the pipeline (runs on the fully Phase-1+2'd, Reuse'd tree,
+right before Emit). The decision and the new `RSelfTailCall` node it
+introduces live entirely in the IR; `Compiler.RC2.Emit` only lowers it
+(`tryEmitSelfTailCall`, alongside `tryBuildClosureInto`'s existing
+"try the tail-position special case first" protocol). Scope: self-only
+(not mutual, see above), and calls under a `LazyReason` are excluded
+(conservative). Ownership is untouched by the rewrite -- `annotate`
+(Phase 2) already decided each argument's dup/move before this pass
+ever runs, exactly as for a call to any other function; only the
+*shape* of the call changes. `BenchLoop.idr` (`sumTo`, tail-recursive)
+now runs at roughly 60% of RefC's time, up from near-parity before this
+landed; `BenchChain.idr`'s `loopPoly` (also tail-recursive) improved
+similarly. `BenchFib.idr`'s naive `fib` is *not* tail-recursive (both
+recursive calls are inside a `+`) and is correctly left unconverted --
+still bound by the calling-convention gap above.
 
 ## Scope: deliberately unboxed types stop at scalars
 
