@@ -302,6 +302,196 @@ all (confirmed the hard way -- see "Bugs found" below):
   before Stage 4 starts rewriting *arbitrary* call sites throughout the
   whole program -- see "Open design question for Stage 4" below.
 
+## Stage 3b: native returns
+
+Promotes a worker's own `retRep` to `RNative ty` when `returnEligibility`
+found one (`synthesizeWorker` now takes `retEligible : Maybe PrimType`
+separately from the wrapper's own `wrapperRetRep`, which stays exactly
+what the original function's `retRep` already was -- see
+`Compiler.RC2.DualABI`'s own updated doc comment). `applyDualABI`'s own
+"should this function even get a worker" test widened from "at least
+one eligible parameter" to "at least one eligible parameter *or* an
+eligible return" -- a function with zero eligible parameters but a
+native-eligible return (e.g. a closed computation with no numeric
+parameter to promote) is a real, if narrow, case this now covers too.
+`isMutualLoopMerged`'s own blanket exclusion already covered the
+return side for free -- it skips worker synthesis for a merged
+function entirely, regardless of which side turned out eligible.
+
+Landed as its own stage, after Stage 3a, specifically because it
+touches `Compiler.RC2.Emit`'s own `Sink`/`SinkReturn` machinery --
+exactly the "materially riskier change to some of that module's
+highest-traffic code" flagged when Stage 3a was scoped down to
+parameters only.
+
+### Design: one field on `Sink`, one dispatch point
+
+The actual change turned out smaller than the risk assessment implied,
+because of how centralised `Emit.idr`'s own control flow already was:
+every branching construct (`RCmpCase`/`RConCase`/`RConstCase`/`RLoop`)
+already threads the *same* `Sink` down to each of its own branches via
+recursive `emitInto` calls, all the way down to the one fallback arm
+that handles a genuine leaf expression. So:
+
+- **`Sink`'s own `SinkReturn` constructor gains a `Rep` field**
+  (`SinkReturn Rep`, was `SinkReturn` with no payload) -- the enclosing
+  function's own `retRep`, threaded in once by `createCFunctions`
+  (`emitInto EmptyFC (SinkReturn retRep) InTailPosition body`, was a
+  bare `SinkReturn`).
+- **`resolveSink`/`finalizeSink`/`chainsWithElse`/`buildClosureIntoSink`**
+  needed no *logic* changes at all, only pattern-widening to accept the
+  new field (`SinkReturn _`) -- none of their own behaviour depends on
+  *which* Rep a return carries, only on the fact that it's a `return`
+  rather than a variable assignment.
+- **`emitInto`'s own single fallback arm** (the one place every genuine
+  leaf value -- `RV`/`ROp`/`RPrimVal`/etc. -- ultimately lands) is the
+  *only* place that actually inspects the Rep: `SinkReturn (RNative
+  ty)`/`SinkReturn (RInlineNative ty)` routes to a new `emitNativeReturn`
+  instead of the ordinary `emitRC`-then-`finalizeSink` pair; every other
+  `Sink` is unaffected.
+
+Because every branching construct already just re-threads the same
+`Sink` value it was given, this one dispatch point is enough to make a
+loop's own exit value, or a value returned from inside an arbitrarily
+nested `if`/`switch` chain, render natively too -- with zero changes to
+`emitCmpCaseInto`/`emitConCaseInto`/`emitConstCaseInto`/`emitLoopInto`/
+`branchBody` themselves. `Main.sumTo` (loop-carried native parameters
+*and* a native return, together) exercises exactly this path: the
+loop's own exit (`if (tmp_3 == 0) { return var_4; }`) renders through
+the very same fallback arm as `Main.fib`'s own (non-loop) tail
+positions do.
+
+### `emitNativeReturn`: the "no statement position after `return`" problem
+
+`declareNative` (an `RLet`'s own native binding) already had to solve a
+closely related problem: `emitNativeValue`'s own pending Boxed-operand
+drop(s) (see its own doc comment) must run *after* the statement that
+reads the value, never before -- but for an `RLet`, "after" is easy,
+there's always a next statement in the same block. A `return` has no
+such "after" -- control leaves the function immediately, so a drop
+placed following a bare `return valStr;` would simply never execute.
+
+`emitNativeReturn` mirrors `declareNative`'s own two-step shape
+(materialise the value, *then* discharge pending drops) but only pays
+for the extra scratch variable when there's actually a pending drop to
+sequence around:
+
+```idris
+emitNativeReturn fc ty value = do
+    (valStr, pending) <- emitNativeValue ty value
+    case pending of
+         [] => emit fc "return \{valStr};"
+         _  => do
+             tmp <- getNewVarThatWillNotBeFreedAtEndOfBlock
+             emit fc "\{nativeCType ty} \{tmp} = \{valStr};"
+             removeVars $ map varName pending
+             emit fc "return \{tmp};"
+```
+
+The scratch variable reuses the existing `tmp_N` naming
+(`getNewVarThatWillNotBeFreedAtEndOfBlock`, already used by
+`makeClosure` for the same "must survive past its own declaring
+statement" need) rather than the `var_N` numbering space real `RCLoc`
+ids own -- `declareNative` gets away with `var_N` because it's
+declaring a genuine, tree-numbered local; this is a synthetic,
+emission-only temporary with no id of its own in the `RCExp` tree, so
+reusing `var_N` here would risk colliding with a real local.
+
+`Main.fib`'s own worker is the canonical example of the non-trivial
+path (both recursive calls' own Boxed results need dropping *after*
+the addition reads them):
+
+```c
+int64_t tmp_8 = (idris2rc2_to_i64(var_3) + idris2rc2_to_i64(var_5));
+idris2rc2_drop(var_3);
+idris2rc2_drop(var_5);
+return tmp_8;
+```
+
+and its own base case (a bare parameter returned directly, `if (n < 2)
+then n else ...`) is the trivial path -- no pending drop at all, so no
+scratch variable either:
+
+```c
+if (tmp_7 == UINT8_C(1)) {
+    idris2rc2_drop(var_1);
+    return var_0;
+}
+```
+
+### `emitNativeValue` gains a bare `RV` case
+
+`emitNativeValue` previously only had to handle what Phase 1's own ANF
+normalisation could ever hand an `RLet`'s tail: an `ROp`, an
+`RPrimVal`, or one of the transparent wrapper nodes (`RLet`/`RDup`/
+`RDrop`/`RFree`/`RReleaseReuse`) -- never a bare `RV`, since a
+"just copy this other local" `RLet` binding never arises that way. But
+`Compiler.RC2.DualABI`'s own `tailValueReps` (Stage 2) always allowed a
+bare tail-position `RV` to count as native (a parameter, or an
+already-native intermediate, returned unchanged) -- and Stage 3b is the
+first thing that actually reaches this case at emission time (`Main.fib`'s
+own `if n < 2 then n else ...` base case, above). Added directly:
+
+```idris
+emitNativeValue ty (RV fc v) = do
+    valStr <- rcVarToNativeC ty v
+    pure (valStr, [])
+```
+
+No pending drop at all -- unlike an `ROp`'s own operands, `v` here is
+already known native by construction (`tailValueReps`'s own seeding
+guarantees it), so there's no Boxed read to clean up after.
+
+### `RAppNameRep`'s own native `retRep` case
+
+A worker's own return being promoted to native means the *wrapper's*
+call into it (`RAppNameRep`, Stage 3a) can now genuinely have a
+non-`RBoxed` `retRep` too -- previously an `InternalError` ("not yet
+implemented"). `emitRC`'s own contract for this node (as for every
+other case in that function) is "always render a Boxed expression
+string" -- `RBoxed` behaves exactly as before (trampolined off tail
+position, bare in tail position); `RNative`/`RInlineNative` means `call`
+itself is already the worker's own raw native result, so it's boxed
+directly via `nativeMk ty call`, unconditionally regardless of tail
+position -- a native value can never itself be "a trampoline still
+awaiting resolution" (that's a Boxed-representation-only concept: a
+tagged heap pointer that might encode an unresolved continuation), so
+there's nothing to defer either way. `Main.fib`'s own wrapper is the
+concrete example:
+
+```c
+IDRIS2RC2_Value *Main_fib(IDRIS2RC2_Value * var_0)
+{
+    return idris2rc2_mkInt64(rc2_dualABI_0(idris2rc2_to_i64(var_0)));
+}
+```
+
+Only this direction (rendering a native worker's own result as Boxed,
+for a wrapper's always-Boxed tail value) is implemented -- a caller
+wanting `RAppNameRep`'s own result rendered *natively* instead
+(skipping the boxing) is Stage 4's own concern: Stage 3b's only
+producer of this node is still `Compiler.RC2.DualABI`'s own wrapper
+body, always feeding a `SinkReturn RBoxed`.
+
+### `createCFunctions`'s own return-type declaration
+
+The one remaining piece: the C function declaration itself
+(`IDRIS2RC2_Value *\{cName ...}`, unconditional) now derives its return
+type from `retRep`, mirroring `declareParam`'s own existing per-argument
+logic:
+
+```idris
+let retTypeStr : String = case retRep of
+                                RBoxed => "IDRIS2RC2_Value *"
+                                RNative ty => nativeCType ty ++ " "
+                                RInlineNative ty => nativeCType ty ++ " "
+let fn = "\{retTypeStr}\{cName !(getFullName n)}" ++ ...
+```
+
+`Main.fib`'s own worker forward-declares as `int64_t rc2_dualABI_0(int64_t
+var_0);` -- confirmed by reading the generated C directly, same
+verification discipline as every other stage.
+
 ## Bugs found and fixed
 
 1. **`createCFunctions` not yet `Rep`-aware when Stage 3a first landed.**
@@ -351,46 +541,39 @@ all (confirmed the hard way -- see "Bugs found" below):
    failing files rebuild and, run against real `idris2 --cg refc`,
    still match byte-for-byte; full refc-suite (19/19) unaffected.
 
+Stage 3b (native returns) found no new bugs of its own -- the design
+review that preceded implementation (working out `emitInto`'s own
+single-dispatch-point structure, and the exact "materialise then drop
+then return" ordering `emitNativeReturn` needed, before writing any
+code) caught what would otherwise likely have been a third entry here.
+First build succeeded outright; the full verification sweep below
+(including `Main.sumTo`'s own loop-plus-native-return combination,
+the closest analogue to bug #2 above) passed without any fix needed.
+
 ## Status
 
-**Implemented and verified** (Stages 1, 2, 3a): the IR foundation, the
-read-only eligibility analysis, and worker/wrapper synthesis for
-parameters. `Main.fib` compiles to a wrapper (`Main_fib`, unchanged
-Boxed signature) that unboxes its argument and calls a synthesised
-worker (`rc2_dualABI_N`, `int64_t` parameter) doing the real recursive
-work -- confirmed to compute the correct result (`832040` for `fib
-30`), and the full refc-suite (19/19) plus the existing smoke-test/
-benchmark matrix re-verified byte-for-byte/crash-free against `idris2
---cg refc`. **No performance change yet** -- nothing anywhere else in
-the program calls a worker directly (every call still goes through the
-unchanged wrapper, one extra thin layer deep), and no worker's own
-return value is native yet either. This stage was deliberately scoped
-to "get the worker/wrapper shape itself right, in isolation" before
-building anything riskier on top -- see `doc/loop-conversion.md`'s own
-precedent for why staging this way pays off.
+**Implemented and verified** (Stages 1, 2, 3a, 3b): the IR foundation,
+the read-only eligibility analysis, and worker/wrapper synthesis for
+both parameters and return values. `Main.fib` compiles to a wrapper
+(`Main_fib`, unchanged Boxed signature) that unboxes its argument,
+calls a synthesised worker (`rc2_dualABI_N`, `int64_t` parameter *and*
+`int64_t` return) doing the real recursive work entirely in native
+`int64_t` throughout its own body, and boxes the final result back up
+-- confirmed to compute the correct result (`832040` for `fib 30`), and
+the full refc-suite (19/19) plus the existing smoke-test/benchmark
+matrix re-verified byte-for-byte/crash-free against `idris2 --cg refc`
+(including `Main.sumTo`, whose worker combines loop-carried native
+parameters, from `Compiler.RC2.Loop`, with a native return from this
+stage, in the same function). **No performance change yet** -- nothing
+anywhere else in the program calls a worker directly (every call still
+goes through the unchanged wrapper, one extra thin layer deep). Both
+stages were deliberately scoped to "get the worker/wrapper shape
+itself right, in isolation" before building anything riskier on top --
+see `doc/loop-conversion.md`'s own precedent for why staging this way
+pays off.
 
 **Not yet implemented**:
 
-- **Stage 3b -- native returns.** Promote a worker's own `retRep` when
-  `returnEligibility` found one, instead of forcing `RBoxed`
-  unconditionally. Needs `Compiler.RC2.Emit`'s own `Sink`/`SinkReturn`
-  to become `Rep`-aware (carrying the function's own decided `retRep`
-  through `emitInto`'s dispatch down to the point a tail value is
-  finally rendered), and a native-return counterpart to `emitRC`+
-  `finalizeSink`'s existing (always-Boxed) path -- for a bare `RV` tail
-  value, direct `rcVarToNativeC` (no drop needed, since
-  `tailValueReps`'s own seeding guarantees anything it marked native
-  really is, by construction); for an `ROp`/`RPrimVal`-shaped one,
-  `emitNativeValue` plus the *same* drop-ordering care
-  `declareNative`'s own doc comment describes (`doc/native-type-inference.md`'s
-  "Bugs found" #4 is the exact mistake to avoid repeating: a native
-  return's own pending Boxed-operand drops must happen *before* the
-  `return` statement, via a temporary, never after -- there's no
-  statement position after a `return` for a deferred drop to ever run).
-  Deliberately split out from Stage 3a specifically because it touches
-  some of `Emit.idr`'s highest-traffic, most-relied-upon code, and
-  wanted its own isolated verification -- see the branch's own plan
-  discussion.
 - **Stage 4 -- call-site rewriting.** Walk every function's own body
   (not just tail positions -- an `RAppName` can appear anywhere, e.g.
   as an `ROp` operand) throughout the *whole* program, and rewrite
@@ -405,7 +588,8 @@ precedent for why staging this way pays off.
 ### Open design question for Stage 4
 
 Stage 3a's own "always safe to skip closure-deferral, `RAppNameRep` is
-never trampoline-deferred" argument (see "Emission" above) relied
+never trampoline-deferred" argument (see "Emission" above, and Stage
+3b's own native-`retRep` case, which keeps the same property) relied
 entirely on every `RAppNameRep` call being a fixed, single-hop
 delegation (wrapper -> its own worker, nothing else). Stage 4 will
 introduce `RAppNameRep` calls at **arbitrary** call sites throughout the
@@ -433,9 +617,10 @@ dedicated safety argument first).
 
 - `rc2/src/Compiler/RC2/DualABI.idr` -- `paramEligibility`/
   `returnEligibility`/`tailValueReps` (Stage 2), `synthesizeWorker`/
-  `applyDualABI`/`isMutualLoopMerged`/`FreshId` (Stage 3a),
-  `describeEligibility`/`dumpDualABI` (the `--directive dumpdualabi`
-  debug dump).
+  `applyDualABI`/`isMutualLoopMerged`/`FreshId` (Stage 3a+3b:
+  `synthesizeWorker` now promotes both `workerArgs` and `workerRetRep`
+  independently of `wrapperRetRep`), `describeEligibility`/
+  `dumpDualABI` (the `--directive dumpdualabi` debug dump).
 - `rc2/src/Compiler/RC2/RCExp.idr` -- `MkRCFun`'s new shape,
   `RAppNameRep`.
 - `rc2/src/Compiler/RC2/Loop.idr` -- `nativeArgType`/`stripOwnership`
@@ -448,8 +633,13 @@ dedicated safety argument first).
   shape (merged function and per-member wrappers both still always
   `RBoxed`, unconditionally, by this pass's own design).
 - `rc2/src/Compiler/RC2/Emit.idr` -- `createCFunctions` now `Rep`-aware
-  for a function's own parameter declarations and `RepMap` seeding;
-  `emitRC`'s new `RAppNameRep` case.
+  for both a function's own return-type declaration and each
+  parameter's own declaration/`RepMap` seeding; `Sink`'s own
+  `SinkReturn` constructor now carries a `Rep` (Stage 3b); new
+  `emitNativeReturn`; `emitNativeValue`'s new bare-`RV` case;
+  `emitInto`'s fallback arm dispatches to `emitNativeReturn` for a
+  native `SinkReturn`; `emitRC`'s `RAppNameRep` case now handles a
+  native `retRep` via `nativeMk`.
 - `rc2/src/Compiler/RC2/Pretty.idr` -- `MkRCFun`'s new
   `args`/`retRep` rendering; `RAppNameRep`'s own `callRep` rendering.
 - `rc2/src/Compiler/RC2/RC2.idr` -- `toRCDefs`'s own pipeline wiring
@@ -462,18 +652,47 @@ dedicated safety argument first).
 3. `--directive dumpdualabi` (see Stage 2's own section above) on any
    candidate function is the fastest way to confirm eligibility
    *before* looking at generated C at all -- e.g. `grep "Main.fib"
-   out.dualabi` should show `params=[Int] ret=Int`.
-4. `tests/BenchFib.idr` is the canonical Stage 3a smoke test: `fib 30`
-   must still print `832040`; `grep -n "^IDRIS2RC2_Value
-   \*rc2_dualABI" build/exec/*.c` confirms a worker actually got
-   synthesised, and reading its own C body directly confirms the
-   promoted parameter is declared with its native C type and the
-   original's own recursive calls still target the *wrapper*
-   (`Main_fib`, not the worker directly) -- that specific detail is
-   what confirms Stage 4's own call-site rewriting hasn't accidentally
-   started firing early.
+   out.dualabi` should show `params=[Int] ret=Int`. Note this dump
+   runs on the *post-`applyDualABI`* def list (`RC2.idr`'s own pipeline
+   position) -- once a function's own worker has actually been
+   synthesised, the *original* name now names the thin wrapper (Boxed
+   params/return, by design), so it correctly shows `Boxed`/`Boxed`
+   there too; the interesting native findings are what the worker
+   itself got built with, visible directly in the generated C instead
+   (next step).
+4. `tests/BenchFib.idr` is the canonical Stage 3a+3b smoke test: `fib
+   30` must still print `832040`; `grep -n "^int64_t rc2_dualABI\|
+   ^IDRIS2RC2_Value \*rc2_dualABI" build/exec/*.c` confirms a worker
+   actually got synthesised and shows whether its own return ended up
+   native, and reading its own C body directly confirms (a) the
+   promoted parameter/return are declared with their native C types,
+   (b) a pending-Boxed-operand-drop tail value renders as
+   "materialise into a temp, drop, then return" (never a drop directly
+   ahead of a bare `return`), and (c) the original's own recursive
+   calls still target the *wrapper* (`Main_fib`, not the worker
+   directly) -- that last detail is what confirms Stage 4's own
+   call-site rewriting hasn't accidentally started firing early.
+   `tests/BenchLoop.idr`'s own `Main.sumTo` is the loop-combination
+   smoke test -- its worker's own loop-exit tail value must render
+   through the same native path.
 5. Full `tests/Test*.idr`/`tests/Bench*.idr` suite, diffed against real
    `idris2 --cg refc` output, same as every other stage in this
-   project -- Stage 3a is supposed to be purely a structural/codegen
-   change, so *every* test must still match byte-for-byte, with zero
-   observable behaviour difference.
+   project -- both stages are supposed to be purely structural/codegen
+   changes, so *every* test must still match byte-for-byte, with zero
+   observable behaviour difference. Two files (`Test6NativeInts.idr`,
+   `Test7CastMatrix.idr`) need invoking from *inside* `tests/` (plain
+   `Test6NativeInts.idr`, not `tests/Test6NativeInts.idr`) -- both
+   declare `module TestNNNN` instead of `module Main` like every other
+   test file, so compiling them via a path with a `tests/` prefix trips
+   idris2's own module-name-must-match-file-path check; this reproduces
+   identically against unmodified upstream `idris2`, so it's a
+   pre-existing invocation-path quirk in these two files, not anything
+   `Compiler.RC2` related. `Test7CastMatrix.idr` additionally can't be
+   diff-checked against real `idris2 --cg refc` at all right now: the
+   nixpkgs-bundled RefC support library itself fails to compile
+   (`idris2_negate_Double` typo'd as `idris2_nagate_Double` in its own
+   headers, plus a couple of missing declarations) -- confirmed to be a
+   defect in that reference installation itself, unrelated to rc2;
+   `idris2-rc2`'s own build of the same file compiles and runs cleanly,
+   so this is a coverage gap in cross-checking this one file, not a
+   known or suspected rc2 bug.

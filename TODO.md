@@ -34,14 +34,16 @@ of it.
   whole-program fixed point, contrary to the original escape-analysis-
   plus-fixed-point sketch this bullet used to describe. Implemented and
   verified so far: the IR foundation, local per-function eligibility
-  analysis, and worker/wrapper synthesis for *parameters*. Still
-  missing: native *return* values at a worker's own signature, and
-  rewriting call sites throughout the program to actually target a
-  worker directly (today every call still goes through the unchanged
-  wrapper, so there's no performance change yet). Full design,
-  implementation walkthrough, and bugs found along the way are in
-  **`rc2/doc/dual-abi.md`**, including exactly what's implemented versus
-  still planned. The *loop-carried* subset of this gap -- a self- or
+  analysis, and worker/wrapper synthesis for both *parameters* and
+  *return values* (`Main.fib`'s own worker is now `int64_t
+  rc2_dualABI_N(int64_t)`, native end to end). Still missing: rewriting
+  call sites throughout the program to actually target a worker
+  directly (today every call still goes through the unchanged wrapper,
+  so there's no performance change yet -- that's the whole remaining
+  gap). Full design, implementation walkthrough, and bugs found along
+  the way are in **`rc2/doc/dual-abi.md`**, including exactly what's
+  implemented versus still planned. The *loop-carried* subset of this
+  gap -- a self- or
   mutually-tail-recursive loop's own parameters -- was addressed
   separately (see `doc/loop-conversion.md`).
 

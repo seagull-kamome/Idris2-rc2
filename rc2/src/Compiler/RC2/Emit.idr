@@ -741,7 +741,18 @@ data TailPositionStatus = InTailPosition | NotInTailPosition
 ||| directly into the real destination" idea as `tryBuildClosureInto`'s
 ||| own doc comment, generalised to branching constructs, and to `return`
 ||| as a destination in its own right.
-data Sink = SinkVar Bool String | SinkReturn
+|||
+||| `SinkReturn` carries the enclosing function's own `retRep` (`MkRCFun`'s
+||| own field, see `createCFunctions`) -- `RBoxed` renders exactly as
+||| before; `RNative`/`RInlineNative` means the enclosing C function's
+||| own declared return type is a native scalar, not
+||| `IDRIS2RC2_Value *`, so every reachable tail leaf must render its own
+||| value natively too (`emitInto`'s own fallback dispatches on this;
+||| every other construct in this module just threads `sink` straight
+||| through, so nothing else needs to know) -- see
+||| `Compiler.RC2.DualABI`'s own Stage 3b for what promotes a worker's
+||| own `retRep` in the first place.
+data Sink = SinkVar Bool String | SinkReturn Rep
 
 ||| Turn a `Sink` that might still need its own variable declared
 ||| (`SinkVar True _`) into one that's guaranteed already-declared
@@ -771,7 +782,7 @@ finalizeSink : {auto oft : Ref OutfileText Output}
             -> FC -> Sink -> String -> Core ()
 finalizeSink fc (SinkVar True target) valStr = emit fc "IDRIS2RC2_Value * \{target} = \{valStr};"
 finalizeSink fc (SinkVar False target) valStr = emit fc "\{target} = \{valStr};"
-finalizeSink fc SinkReturn valStr = emit fc "return \{valStr};"
+finalizeSink fc (SinkReturn _) valStr = emit fc "return \{valStr};"
 
 ||| Whether a case's alts need `else`-chaining at all. Every branch
 ||| reached under `SinkReturn` is guaranteed (inductively, via
@@ -786,7 +797,7 @@ finalizeSink fc SinkReturn valStr = emit fc "return \{valStr};"
 ||| branch must run, so the chain must stay `if`/`else if`/`else` to
 ||| guarantee that.
 chainsWithElse : Sink -> Bool
-chainsWithElse SinkReturn = False
+chainsWithElse (SinkReturn _) = False
 chainsWithElse (SinkVar _ _) = True
 
 integer_switch : List RConstAlt -> Bool
@@ -912,7 +923,7 @@ buildClosureIntoSink : {auto a : Ref ArgCounter Nat}
                      -> FC -> Sink -> Name -> List RCLocal -> Nat -> Core ()
 buildClosureIntoSink fc (SinkVar declare target) n args missing =
     makeClosureInto fc declare target n args missing
-buildClosureIntoSink fc SinkReturn n args missing = do
+buildClosureIntoSink fc (SinkReturn _) n args missing = do
     closure <- makeClosure fc n args missing
     emit fc "return \{closure};"
 
@@ -1204,6 +1215,44 @@ mutual
         update InlineMap (insert var valStr)
         removeVars $ map varName pending
 
+    ||| As `declareNative`, but for a `SinkReturn (RNative ty)`/
+    ||| `SinkReturn (RInlineNative ty)` tail position instead of an
+    ||| `RLet` -- `Compiler.RC2.DualABI`'s own Stage 3b, see `Sink`'s own
+    ||| doc comment. `declareNative` gets away with always declaring
+    ||| `value`'s own C variable *before* discharging `emitNativeValue`'s
+    ||| own pending Boxed-operand drop(s), because there's always a next
+    ||| statement (the rest of the enclosing block) for that ordering to
+    ||| land in -- a `return` has no such "afterward" position for a
+    ||| drop to ever run in (`doc/native-type-inference.md`'s own "Bugs
+    ||| found" #4 is exactly the mistake to avoid: dropping a value
+    ||| *before* the statement that reads it frees it out from under its
+    ||| own extraction). So: whenever there's nothing pending, render
+    ||| the plain, direct `return valStr;` `emitInto`'s own Boxed-return
+    ||| fallback would have produced anyway; whenever there IS a
+    ||| pending drop, capture `value`'s own reading into its own scratch
+    ||| variable first (same `tmp_N` naming `makeClosure`'s own
+    ||| `getNewVarThatWillNotBeFreedAtEndOfBlock` already uses for
+    ||| exactly this "must outlive its own declaring block" need), drop
+    ||| right after -- now safe, the read already happened -- then
+    ||| return the scratch variable.
+    emitNativeReturn : {auto a : Ref ArgCounter Nat}
+                     -> {auto oft : Ref OutfileText Output}
+                     -> {auto il : Ref IndentLevel Nat}
+                     -> {auto _ : Ref ConstDef (SortedMap Constant ConstDef)}
+                     -> {auto r : Ref RepMap (SortedMap Int Rep)}
+                     -> {auto lm : Ref InlineMap (SortedMap Int String)}
+                     -> {auto fa : Ref LoopParams (List (Int, Rep))}
+                     -> FC -> PrimType -> RCExp -> Core ()
+    emitNativeReturn fc ty value = do
+        (valStr, pending) <- emitNativeValue ty value
+        case pending of
+             [] => emit fc "return \{valStr};"
+             _  => do
+                 tmp <- getNewVarThatWillNotBeFreedAtEndOfBlock
+                 emit fc "\{nativeCType ty} \{tmp} = \{valStr};"
+                 removeVars $ map varName pending
+                 emit fc "return \{tmp};"
+
     ||| Evaluate `value` (in `tailPosition`) and dispose of its result per
     ||| `sink` -- either declaring/assigning a named C variable, or (only
     ||| ever while `tailPosition` is `InTailPosition`, since nothing after
@@ -1224,7 +1273,13 @@ mutual
     ||| intermediate variable anywhere along the way). Anything else (a
     ||| genuine single-expression leaf: `RV`, `RCon`, `ROp`, `RExtPrim`,
     ||| `RPrimVal`, `RErased`, `RCrash`, `RApp`, a non-tail `RAppName`)
-    ||| falls back to the general `emitRC`-then-`finalizeSink` route.
+    ||| falls back to the general `emitRC`-then-`finalizeSink` route --
+    ||| unless `sink` is itself a native `SinkReturn` (`RNative`/
+    ||| `RInlineNative`, Compiler.RC2.DualABI's own Stage 3b), in which
+    ||| case `emitNativeReturn` handles it instead: `emitRC`'s own
+    ||| contract is always-Boxed, exactly wrong for a function whose own
+    ||| C return type is a native scalar -- see `emitNativeReturn`'s own
+    ||| doc comment.
     ||| Every "evaluate this RCExp and store/return its result" site in
     ||| this module goes through here, so the choice between those routes
     ||| is only ever written once.
@@ -1253,9 +1308,24 @@ mutual
                          emitConstCaseInto sink tailPosition fc' sc alts def
                      RLoop fc' loopParams initial body =>
                          emitLoopInto sink tailPosition fc' loopParams initial body
-                     _ => do
-                         valStr <- emitRC remaining tailPosition
-                         finalizeSink fc sink valStr
+                     -- A native SinkReturn (Compiler.RC2.DualABI's own
+                     -- Stage 3b) skips emitRC entirely: emitRC's own
+                     -- contract is "always render a Boxed expression
+                     -- string" (every one of its cases does, including
+                     -- RAppNameRep's own boxing of a native call
+                     -- result -- see its own case below), which is
+                     -- exactly wrong here, and can't discharge a
+                     -- pending Boxed-operand drop safely in front of a
+                     -- `return` in the first place (see
+                     -- emitNativeReturn's own doc comment). Every other
+                     -- Sink still goes through the ordinary
+                     -- emitRC-then-finalizeSink route, unchanged.
+                     _ => case sink of
+                              SinkReturn (RNative ty) => emitNativeReturn fc ty remaining
+                              SinkReturn (RInlineNative ty) => emitNativeReturn fc ty remaining
+                              _ => do
+                                  valStr <- emitRC remaining tailPosition
+                                  finalizeSink fc sink valStr
 
     ||| A case branch (or default): emit the drops RC.idr's `annotate`
     ||| already decided on (the peeled leading RDrop), then the body
@@ -1609,20 +1679,31 @@ mutual
     -- `RAppNameRep`'s own doc comment in RCExp.idr. Renders each
     -- argument per `argReps`' own position, mirroring
     -- `tryEmitLoopContinue`'s own per-position Rep-aware rendering.
-    -- `retRep = RBoxed` behaves like an ordinary (never
-    -- closure-deferred, see RAppNameRep's own doc comment for why
-    -- that's safe here) `RAppName` call would: trampolined when not
-    -- in tail position (the caller is about to use the value
+    -- `emitRC`'s own contract (every case in this function) is "always
+    -- render a Boxed expression string", so `retRep` only controls how
+    -- the raw `call` gets there: `RBoxed` behaves like an ordinary
+    -- (never closure-deferred, see RAppNameRep's own doc comment for
+    -- why that's safe here) `RAppName` call would -- trampolined when
+    -- not in tail position (the caller is about to use the value
     -- directly), returned bare when in tail position (deferred to
     -- *this* call's own caller to trampoline, exactly as an ordinary
-    -- tail-position delegating call already would be). Only this
-    -- shape is implemented so far -- `Compiler.RC2.DualABI` never yet
-    -- promotes a worker's own return to native (Stage 3a only
-    -- promotes parameters), and never yet produces more than
-    -- `MaxExtractFunArgs` arguments here; both are explicit follow-on
-    -- work (a native `retRep` needs the same drop-ordering care
-    -- `declareNative`'s own doc comment describes, deliberately not
-    -- attempted until something can actually exercise it).
+    -- tail-position delegating call already would be); `RNative`/
+    -- `RInlineNative` means the worker being called genuinely returns
+    -- that native C type (Compiler.RC2.DualABI's own Stage 3b promotes
+    -- a worker's own retRep when `returnEligibility` found one), so
+    -- `call` itself is already the raw native value -- `nativeMk`
+    -- boxes it, unconditionally, regardless of tail position: a native
+    -- return can never itself be "a trampoline still awaiting
+    -- resolution" (that's a Boxed-representation-only concept -- a
+    -- tagged heap pointer that might encode an unresolved
+    -- continuation), so there's nothing to defer here either way. Only
+    -- this direction (rendering a native worker's own result as
+    -- Boxed, for a wrapper's own always-Boxed tail value) is
+    -- implemented -- a caller wanting `RAppNameRep`'s own result
+    -- rendered *natively* instead (skipping this boxing entirely) is
+    -- Stage 4's own concern, not yet needed: Stage 3b's only producer
+    -- of this node is still `Compiler.RC2.DualABI`'s own wrapper body,
+    -- always feeding straight into a `SinkReturn RBoxed`.
     emitRC (RAppNameRep fc n argReps retRep args) tailPosition = do
         let nargs = length args
         when (nargs > MaxExtractFunArgs) $
@@ -1636,7 +1717,8 @@ mutual
              RBoxed => pure $ case tailPosition of
                                    InTailPosition => call
                                    NotInTailPosition => "idris2rc2_trampoline(\{call})"
-             _ => throw $ InternalError "[rc2] RAppNameRep: native retRep not yet implemented"
+             RNative ty => pure $ nativeMk ty call
+             RInlineNative ty => pure $ nativeMk ty call
 
     -- Unreachable: emitInto's tryBuildClosureInto always intercepts
     -- RUnderApp itself, for any tailPosition -- a partial application is
@@ -1767,7 +1849,11 @@ mutual
     emitRC (RReuseOffer fc sc dupOnShared cont) _ = throw $ InternalError "[rc2] RReuseOffer reached emitRC directly (not intercepted by emitInto/tryBuildClosureInto)"
 
     ||| The raw C expression for a value Compiler.RC2.Types has decided is
-    ||| Native ty -- only ROp/RPrimVal ever get marked this way.
+    ||| Native ty -- an `RLet`'s own tail is always an `ROp`/`RPrimVal`
+    ||| here (Phase 1's own ANF normalisation guarantees it); a bare
+    ||| `RV` is reachable too, but only via `emitInto`'s own native-
+    ||| `SinkReturn` dispatch (`Compiler.RC2.DualABI`'s own Stage 3b),
+    ||| never via an `RLet`.
     -- Returns the native C expression for `e` together with any Boxed
     -- locals `e`'s own tail op reads but doesn't own a further use of --
     -- Compiler.RC2.RC's `annotate` already decided those are "consumed"
@@ -1788,6 +1874,20 @@ mutual
                      -> {auto lm : Ref InlineMap (SortedMap Int String)}
                      -> {auto fa : Ref LoopParams (List (Int, Rep))}
                      -> PrimType -> RCExp -> Core (String, List RCLocal)
+    -- A bare local read -- unreachable before Stage 3b (declareNative/
+    -- inlineNative's own RLet callers only ever see an ROp/RPrimVal
+    -- tail here, since Phase 1's own ANF normalisation binds every
+    -- non-trivial operand to its own let). Compiler.RC2.DualABI's own
+    -- native-return tail-value walk (`tailValueReps`) can genuinely
+    -- find a bare `RV` at a real tail position instead -- e.g. a
+    -- parameter, or an already-native intermediate, returned unchanged
+    -- -- so this case is reachable now. No pending drop: `v`'s own Rep
+    -- is already known native by construction here (see
+    -- `tailValueReps`'s own seeding), so there's nothing Boxed being
+    -- read at all, unlike the ROp case below.
+    emitNativeValue ty (RV fc v) = do
+        valStr <- rcVarToNativeC ty v
+        pure (valStr, [])
     emitNativeValue ty (ROp fc _ op args postDrop) = do
         argStrs <- rc2traverseVect (\v => rcVarToNativeC (opArgTyFor ty op) v) args
         -- `postDrop` is exactly the Boxed operands this op needs dropped
@@ -1981,24 +2081,29 @@ createCFunctions : {auto c : Ref Ctxt Defs}
 createCFunctions n (MkRCFun args retRep body) = do
     -- `args`/`retRep` are dual-ABI groundwork (see RCExp.idr's own doc
     -- comment on MkRCFun, and Compiler.RC2.DualABI's own module note).
-    -- `retRep` itself isn't consulted yet -- Compiler.RC2.DualABI's own
-    -- Stage 3a never promotes a worker's own return, only parameters
-    -- (SinkReturn's own unconditional boxing, below, still matches
-    -- `retRep`'s only possible value here exactly) -- native returns
-    -- are Stage 3b's own work, together with making this Rep-aware too.
-    -- `args` itself, though, can now genuinely hold `RNative` entries
-    -- (a dual-ABI worker's own eligible parameters), so each one's own
-    -- C declaration and RepMap registration (so *reads* within `body`
-    -- render correctly -- rcVarToNativeC/rcVarToBoxedC are already
-    -- fully Rep-aware, they just need this to actually find the Rep)
-    -- must follow suit.
+    -- Both can now genuinely hold `RNative`/`RInlineNative` entries (a
+    -- dual-ABI worker's own eligible parameters/return,
+    -- Compiler.RC2.DualABI's own Stage 3a+3b), so both this function's
+    -- own C declaration (its return type here, each parameter's own
+    -- type just below) and RepMap registration (so *reads* within
+    -- `body` render correctly -- rcVarToNativeC/rcVarToBoxedC are
+    -- already fully Rep-aware, they just need this to actually find
+    -- the Rep) must follow suit. `retRep` is threaded into `emitInto`
+    -- below via `SinkReturn retRep`, not consulted directly here
+    -- otherwise -- see `Sink`'s own doc comment for how that then
+    -- reaches every tail leaf, including inside nested
+    -- RCmpCase/RConCase/RConstCase/RLoop, uniformly.
     let argIds = map fst args
     let nargs = length argIds
     let declareParam : (Int, Rep) -> String
         declareParam (i, RBoxed) = "  IDRIS2RC2_Value * var_" ++ show i
         declareParam (i, RNative ty) = "  " ++ nativeCType ty ++ " var_" ++ show i
         declareParam (i, RInlineNative ty) = "  " ++ nativeCType ty ++ " var_" ++ show i
-    let fn = "IDRIS2RC2_Value *\{cName !(getFullName n)}"
+    let retTypeStr : String = case retRep of
+                                    RBoxed => "IDRIS2RC2_Value *"
+                                    RNative ty => nativeCType ty ++ " "
+                                    RInlineNative ty => nativeCType ty ++ " "
+    let fn = "\{retTypeStr}\{cName !(getFullName n)}"
             ++ (if nargs == 0 then "(void)"
                else if nargs > MaxExtractFunArgs then "(IDRIS2RC2_Value *var_arglist[\{show nargs}])"
                else ("\n(\n" ++ (showSep "\n" $ addCommaToList (map declareParam args))) ++ "\n)")
@@ -2047,7 +2152,7 @@ createCFunctions n (MkRCFun args retRep body) = do
     -- reachable tail leaf -- including inside a nested RCmpCase/
     -- RConCase/RConstCase -- emit its own `return` directly, no
     -- intermediate switchReturnVar anywhere.
-    emitInto EmptyFC SinkReturn InTailPosition body
+    emitInto EmptyFC (SinkReturn retRep) InTailPosition body
     decreaseIndentation
     emit EmptyFC  "}\n"
     emit EmptyFC  ""

@@ -10,28 +10,32 @@ module Compiler.RC2.DualABI
 -- biggest remaining item in TODO.md's "Performance" section.
 --
 -- Staged (branch `dual-abi`): Stage 2 (below, `paramEligibility`/
--- `returnEligibility`) is read-only analysis. Stage 3a (`applyDualABI`)
--- synthesises a *worker* variant for every eligible function -- its own
--- top-level parameters promoted to `RNative` at the eligible
--- positions, its own body's stale ownership bookkeeping for those
--- parameters stripped (`Compiler.RC2.Loop`'s own `stripOwnership`,
--- reused directly -- no id renaming needed at all here, unlike that
--- module's own use of it, since the worker is a brand-new C function
--- with no id collision to dodge) -- and rewrites the original function
--- into a thin wrapper (unchanged Boxed signature, body is a single
--- `RAppNameRep` call into the worker). Stage 3a deliberately promotes
--- *parameters only*: every worker's own `retRep` stays `RBoxed`
--- regardless of what `returnEligibility` found, deferred to Stage 3b
--- (native returns need `Compiler.RC2.Emit`'s own `SinkReturn`/tail-
--- position rendering to become Rep-aware, a materially riskier change
--- to some of that module's highest-traffic code -- see the branch's
--- own plan discussion for why this was split out rather than landed
--- together). No call site anywhere else in the program is rewritten to
--- actually *use* a worker yet (Stage 4) -- every wrapper's own worker
--- call is currently the only place any worker is ever reached, so
--- nothing changes performance-wise yet; this stage is purely about
--- getting the worker/wrapper shape itself right and verifiable in
--- isolation.
+-- `returnEligibility`) is read-only analysis. Stage 3a+3b
+-- (`applyDualABI`) synthesise a *worker* variant for every eligible
+-- function -- its own top-level parameters promoted to `RNative` at
+-- the eligible positions, its own return promoted to `RNative` when
+-- `returnEligibility` found one, its own body's stale ownership
+-- bookkeeping for those parameters stripped (`Compiler.RC2.Loop`'s own
+-- `stripOwnership`, reused directly -- no id renaming needed at all
+-- here, unlike that module's own use of it, since the worker is a
+-- brand-new C function with no id collision to dodge) -- and rewrites
+-- the original function into a thin wrapper (unchanged Boxed
+-- signature, body is a single `RAppNameRep` call into the worker,
+-- boxing the worker's own result back up if the worker's own return
+-- ended up native). Stage 3a landed parameters only, with every
+-- worker's own `retRep` still forced `RBoxed` regardless of what
+-- `returnEligibility` found -- native returns needed
+-- `Compiler.RC2.Emit`'s own `SinkReturn`/tail-position rendering to
+-- become Rep-aware first, a materially riskier change to some of that
+-- module's highest-traffic code, so it was deliberately split out and
+-- landed as its own, separately-verified Stage 3b (see the branch's
+-- own plan discussion, and `doc/dual-abi.md`'s own Stage 3b section,
+-- for the reasoning). No call site anywhere else in the program is
+-- rewritten to actually *use* a worker yet (Stage 4) -- every
+-- wrapper's own worker call is currently the only place any worker is
+-- ever reached, so nothing changes performance-wise yet; this stage is
+-- purely about getting the worker/wrapper shape itself right and
+-- verifiable in isolation.
 --
 -- Both analyses below are purely *local* to one function's own body --
 -- no whole-program fixed point is needed, for a reason worth spelling
@@ -237,25 +241,31 @@ isMutualLoopMerged (MN "rc2_mutualLoop" _) = True
 isMutualLoopMerged _ = False
 
 ||| For one top-level function eligible for at least one native
-||| parameter: synthesise its own worker (fresh name; each parameter
-||| promoted to `RNative` at the eligible positions, `RBoxed` at every
-||| other -- `retRep` forced `RBoxed` regardless of `returnEligibility`,
-||| Stage 3a's own deliberate scope limit, see the module note; body is
-||| the original's own body verbatim, minus the promoted parameters'
-||| now-stale ownership bookkeeping, via `Compiler.RC2.Loop`'s own
-||| `stripOwnership` -- no id renaming needed at all: the worker reuses
-||| every original parameter's own id directly, safe because it's a
-||| brand-new C function with no existing declaration under that name
-||| to collide with, unlike that module's own use of `stripOwnership`
-||| for a loop's shadow ids within the *same* function), and rewrite
-||| the original into a thin wrapper: unchanged signature, unchanged
-||| id, body is a single `RAppNameRep` call into the worker, one
-||| argument per original parameter rendered per the worker's own
-||| decided `Rep` there.
+||| parameter and/or a native return: synthesise its own worker (fresh
+||| name; each parameter promoted to `RNative` at the eligible
+||| positions, `RBoxed` at every other; `retRep` promoted to `RNative`
+||| when `retEligible` found one, otherwise left as `wrapperRetRep`
+||| unchanged; body is the original's own body verbatim, minus the
+||| promoted parameters' now-stale ownership bookkeeping, via
+||| `Compiler.RC2.Loop`'s own `stripOwnership` -- no id renaming needed
+||| at all: the worker reuses every original parameter's own id
+||| directly, safe because it's a brand-new C function with no existing
+||| declaration under that name to collide with, unlike that module's
+||| own use of `stripOwnership` for a loop's shadow ids within the
+||| *same* function), and rewrite the original into a thin wrapper:
+||| unchanged signature (`wrapperRetRep`, always `RBoxed` in practice --
+||| every existing caller anywhere else in the program keeps working
+||| unmodified), unchanged id, body is a single `RAppNameRep` call into
+||| the worker, one argument per original parameter rendered per the
+||| worker's own decided `Rep` there, and the *call's* own `retRep`
+||| naming the worker's own (possibly native) return -- `emitRC`'s own
+||| `RAppNameRep` case boxes that back up via `nativeMk` before it
+||| becomes this wrapper's own (always-Boxed) tail value, see
+||| `Compiler.RC2.Emit`'s own module note.
 synthesizeWorker : {auto r : Ref FreshId Int}
-                 -> SortedSet Name -> List (Int, PrimType) -> List (Int, Rep) -> Rep -> RCExp
+                 -> SortedSet Name -> List (Int, PrimType) -> Maybe PrimType -> List (Int, Rep) -> Rep -> RCExp
                  -> Core (Name, RCDef, RCDef)
-synthesizeWorker existingNames eligible args retRep body = do
+synthesizeWorker existingNames eligible retEligible args wrapperRetRep body = do
     workerName <- freshName existingNames
     let eligibleOf : Int -> Maybe PrimType
         eligibleOf p = lookup p (fromList eligible)
@@ -267,27 +277,27 @@ synthesizeWorker existingNames eligible args retRep body = do
         promotedIds = fromList (map fst eligible)
         workerBody : RCExp
         workerBody = stripOwnership promotedIds body
-        -- Stage 3a's own scope limit: the worker's own return stays
-        -- exactly whatever the original function's own retRep already
-        -- was (always RBoxed today), never promoted -- see the module
-        -- note.
+        workerRetRep : Rep
+        workerRetRep = maybe wrapperRetRep RNative retEligible
         workerDef : RCDef
-        workerDef = MkRCFun workerArgs retRep workerBody
+        workerDef = MkRCFun workerArgs workerRetRep workerBody
         wrapperArgIds : List Int
         wrapperArgIds = map fst args
         wrapperBody : RCExp
-        wrapperBody = RAppNameRep emptyFC workerName (map snd workerArgs) retRep (map RCLoc wrapperArgIds)
+        wrapperBody = RAppNameRep emptyFC workerName (map snd workerArgs) workerRetRep (map RCLoc wrapperArgIds)
         wrapperDef : RCDef
-        wrapperDef = MkRCFun args retRep wrapperBody
+        wrapperDef = MkRCFun args wrapperRetRep wrapperBody
     pure (workerName, wrapperDef, workerDef)
 
 ||| Whole-program pass: for every `MkRCFun` with at least one
-||| parameter-eligible position (`Compiler.RC2.MutualLoop`-produced
-||| merged functions excluded, see `isMutualLoopMerged`), synthesises a
-||| native-parameter worker and rewrites the original into a thin
-||| wrapper -- see the module note for the full Stage 3a design. Every
-||| other definition (a function with no eligible parameter, or any
-||| non-`MkRCFun` def) passes through completely unchanged.
+||| parameter-eligible position and/or an eligible return
+||| (`Compiler.RC2.MutualLoop`-produced merged functions excluded, see
+||| `isMutualLoopMerged`), synthesises a worker (native at whichever of
+||| its own parameters/return turned out eligible) and rewrites the
+||| original into a thin wrapper -- see the module note for the full
+||| Stage 3a+3b design. Every other definition (a function with nothing
+||| eligible at all, or any non-`MkRCFun` def) passes through
+||| completely unchanged.
 export
 applyDualABI : List (Name, RCDef) -> Core (List (Name, RCDef))
 applyDualABI defs = do
@@ -303,9 +313,10 @@ applyDualABI defs = do
              let argIds = map fst args
                  params = paramEligibility argIds body
                  eligible = mapMaybe (\(p, mty) => map (\ty => (p, ty)) mty) params
-             if null eligible
+                 retEligible = returnEligibility params body
+             if null eligible && isNothing retEligible
                 then pure [(n, d)]
                 else do
-                  (workerName, wrapperDef, workerDef) <- synthesizeWorker existingNames eligible args retRep body
+                  (workerName, wrapperDef, workerDef) <- synthesizeWorker existingNames eligible retEligible args retRep body
                   pure [(n, wrapperDef), (workerName, workerDef)]
     synthesizeIfEligible _ (n, d) = pure [(n, d)]

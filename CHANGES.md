@@ -3,6 +3,51 @@
 Newest first. Each entry corresponds to one commit on `master`; see
 `git log` for full commit messages.
 
+## 2026-08-14 -- Dual calling convention: worker/wrapper synthesis for native returns, Stage 3b
+
+Fourth of the staged `dual-abi` effort, completing the worker/wrapper
+split Stage 3a started: a worker's own `retRep` is now promoted to
+`RNative` when `Compiler.RC2.DualABI`'s own (Stage 2) `returnEligibility`
+found one, instead of always staying `RBoxed`. `Main.fib`
+(`tests/BenchFib.idr`) now compiles to a worker whose own C signature
+is `int64_t rc2_dualABI_0(int64_t var_0)` -- both parameter *and*
+return native, the whole recursive computation staying in `int64_t`
+throughout, boxed back up only once, in the unchanged wrapper, for
+whatever still-Boxed caller reads the final result.
+
+The change turned out smaller than its own risk assessment suggested:
+`Compiler.RC2.Emit`'s own control flow was already centralised enough
+(every branching construct threads the same `Sink` down to its own
+branches, all the way to one shared fallback for a genuine leaf value)
+that making `Sink`'s own `SinkReturn` constructor carry a `Rep`, and
+teaching that one fallback arm to dispatch to a new `emitNativeReturn`
+for a native `SinkReturn`, was enough -- no changes needed to
+`emitCmpCaseInto`/`emitConCaseInto`/`emitConstCaseInto`/`emitLoopInto`
+themselves. `emitNativeReturn` solves the same "must drop a pending
+Boxed operand only after the statement that reads it" ordering problem
+`declareNative` already solved for an `RLet`, adapted for `return`'s
+own lack of any statement position *after* it to run a deferred drop
+in: materialise the value into a scratch variable first (only when
+there's actually a pending drop to sequence around), drop, then return
+the scratch variable. `Main.sumTo` (`tests/BenchLoop.idr`) exercises
+the loop-plus-native-return combination in the same function, its own
+loop-exit tail value rendering through the very same fallback path.
+
+Unlike Stage 3a, this stage found no new bugs of its own -- attributed
+to the design review that preceded implementation (working out
+`emitInto`'s own single-dispatch-point structure, and the exact
+`emitNativeReturn` drop-ordering, before writing any code). Full
+design, implementation detail, and verification are in
+`rc2/doc/dual-abi.md`'s own "Stage 3b" section.
+
+Verified: full refc-suite (19/19), the `tests/Test*.idr`/`Bench*.idr`
+smoke-test/benchmark matrix rebuilt and diffed byte-for-byte against
+real `idris2 --cg refc` output (including the `Main.sumTo`
+loop-combination case above), and `fib 30` confirmed to still compute
+`832040` with its worker's own return now genuinely native throughout
+-- read directly off the generated C, not just inferred from matching
+output.
+
 ## 2026-08-14 -- Dual calling convention: worker/wrapper synthesis for parameters, Stage 3a
 
 Third of the staged `dual-abi` effort, split from the original Stage 3

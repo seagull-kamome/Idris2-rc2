@@ -295,6 +295,196 @@ Stage 3aが動くCコードを出すために両方とも必要な、2つの変�
   プログラム全体にわたる*任意の*呼び出しサイトの書き換えを始める前に
   再検討が必要である -- 下記「Stage 4に向けた未解決の設計課題」参照。
 
+## Stage 3b: ネイティブ戻り値
+
+`returnEligibility`(Stage 2)が何かを見つけた場合に、worker自身の
+`retRep`を`RNative`に昇格させる(常に`RBoxed`のままにしていたのを
+やめる)。`synthesizeWorker`は`retEligible : Maybe PrimType`を、
+wrapper自身の`wrapperRetRep`(元の関数の`retRep`のまま、変更なし)
+とは別に受け取るようになった(`Compiler.RC2.DualABI`自身の更新された
+docコメント参照)。`applyDualABI`自身の「そもそもworkerを作るべきか」
+の判定は「適格なパラメータが1つ以上」から「適格なパラメータ*または*
+適格な戻り値が1つでもあれば」に広がった -- 適格なパラメータがゼロで
+戻り値だけがネイティブ適格な関数(例えば昇格すべき数値パラメータを
+持たない、閉じた計算)という、狭いが実在するケースもこれでカバーされ
+るようになった。`isMutualLoopMerged`自身の一括除外は、戻り値側も既に
+タダでカバーしている -- どちらが適格であってもマージ関数に対しては
+worker合成自体を丸ごとスキップするため。
+
+Stage 3aの後に、それ自身の段階としてこれを着地させたのは、まさに
+`Compiler.RC2.Emit`自身の`Sink`/`SinkReturn`機構に触れる必要があった
+から -- Stage 3aをパラメータのみにスコープを絞った際に「そのモジュール
+の中でも特にトラフィックの高いコードへの、比較的リスクの高い変更」と
+名指しされていた箇所そのものである。
+
+### 設計: `Sink`へのフィールド追加1つ、ディスパッチ地点1箇所
+
+実際の変更は、リスク評価が示唆していたよりも小さく済んだ。
+`Emit.idr`自身の制御フローが既にどれだけ一点集中していたかによる:
+枝分かれする構文(`RCmpCase`/`RConCase`/`RConstCase`/`RLoop`)は既に
+全て、それぞれ自身の枝へ*同じ*`Sink`を再帰的な`emitInto`呼び出しで
+渡しており、その先は本物の末尾式を扱う唯一の共有フォールバック地点
+まで一直線につながっている。よって:
+
+- **`Sink`自身の`SinkReturn`コンストラクタに`Rep`フィールドを追加**
+  (`SinkReturn Rep`、以前はペイロードなしの`SinkReturn`) -- 囲む
+  関数自身の`retRep`を、`createCFunctions`が一度だけ渡す
+  (`emitInto EmptyFC (SinkReturn retRep) InTailPosition body`、以前は
+  裸の`SinkReturn`だった)。
+- **`resolveSink`/`finalizeSink`/`chainsWithElse`/`buildClosureIntoSink`**
+  は*ロジック*の変更が一切不要で、新フィールドを受け入れるようパター
+  ンを広げるだけで済んだ(`SinkReturn _`) -- これらの挙動はいずれも、
+  戻り値がどの`Rep`を運んでいるかには依存せず、それが変数への代入で
+  はなく`return`であるという事実にのみ依存しているため。
+- **`emitInto`自身の唯一のフォールバック枝**(`RV`/`ROp`/`RPrimVal`
+  等、あらゆる本物の末尾式が最終的に行き着く唯一の場所)だけが実際に
+  そのRepを参照する: `SinkReturn (RNative ty)`/`SinkReturn
+  (RInlineNative ty)`は、通常の`emitRC`→`finalizeSink`の組み合わせで
+  はなく、新設の`emitNativeReturn`へ回される; それ以外の`Sink`は一切
+  影響を受けない。
+
+枝分かれする構文がいずれも既に自身に渡された同じ`Sink`値をそのまま
+再度渡しているだけなので、このフォールバック地点1箇所を直すだけで、
+ループ自身の出口値や、任意にネストした`if`/`switch`連鎖の内側から
+返される値までもがネイティブにレンダリングされるようになる --
+`emitCmpCaseInto`/`emitConCaseInto`/`emitConstCaseInto`/`emitLoopInto`/
+`branchBody`自身には一切変更が要らない。`Main.sumTo`(ループ持ち回りの
+ネイティブパラメータ*と*ネイティブ戻り値が両方ある)は、まさにこの
+経路を行使する: ループ自身の出口(`if (tmp_3 == 0) { return var_4; }`)
+は、`Main.fib`自身の(ループを伴わない)末尾位置とまったく同じ
+フォールバック枝を通ってレンダリングされる。
+
+### `emitNativeReturn`: 「`return`の後には文の位置がない」問題
+
+`declareNative`(`RLet`自身のネイティブな束縛)は既にこれとよく似た
+問題を解決していた: `emitNativeValue`自身の未処理のBoxedオペランド
+drop(その自身のdocコメント参照)は、その値を読む文の*後に*実行しな
+ければならず、決して前ではいけない -- しかし`RLet`にとって「後」は
+簡単で、同じブロック内に常に次の文があるからだ。`return`にはそのよう
+な「後」が存在しない -- 制御は即座に関数を離れるので、裸の
+`return valStr;`の後にdropを置いても、それは決して実行されない。
+
+`emitNativeReturn`は`declareNative`自身の2段階の形(値を確定させて
+から、*その後に*未処理のdropを処理する)をミラーするが、実際に順序
+調整すべきdropが存在する場合にのみ、余分なスクラッチ変数のコストを
+払う:
+
+```idris
+emitNativeReturn fc ty value = do
+    (valStr, pending) <- emitNativeValue ty value
+    case pending of
+         [] => emit fc "return \{valStr};"
+         _  => do
+             tmp <- getNewVarThatWillNotBeFreedAtEndOfBlock
+             emit fc "\{nativeCType ty} \{tmp} = \{valStr};"
+             removeVars $ map varName pending
+             emit fc "return \{tmp};"
+```
+
+このスクラッチ変数は、本物の`RCLoc` idが持つ`var_N`という番号空間で
+はなく、既存の`tmp_N`命名(`getNewVarThatWillNotBeFreedAtEndOfBlock`、
+`makeClosure`が同じ「自分自身を宣言した文より後まで生き残らなければ
+ならない」というニーズのために既に使っている)を再利用する --
+`declareNative`が`var_N`を使えるのは、それが本物の、木で番号付けされた
+ローカルを宣言しているからであり、こちらは`RCExp`の木に自分自身のid
+を持たない合成の、エミッション専用の一時変数なので、ここで`var_N`を
+再利用すると本物のローカルと衝突する危険がある。
+
+`Main.fib`自身のworkerは、自明でない経路(両方の再帰呼び出し自身の
+Boxedな結果を、加算がそれらを読んだ*後に*dropする必要がある)の
+典型例である:
+
+```c
+int64_t tmp_8 = (idris2rc2_to_i64(var_3) + idris2rc2_to_i64(var_5));
+idris2rc2_drop(var_3);
+idris2rc2_drop(var_5);
+return tmp_8;
+```
+
+一方、その基底ケース(パラメータをそのまま直接returnする、`if (n < 2)
+then n else ...`)は自明な経路である -- 未処理のdropが一切ないので、
+スクラッチ変数も不要:
+
+```c
+if (tmp_7 == UINT8_C(1)) {
+    idris2rc2_drop(var_1);
+    return var_0;
+}
+```
+
+### `emitNativeValue`に裸の`RV`ケースを追加
+
+`emitNativeValue`はこれまで、Phase 1自身のANF正規化が`RLet`の末尾
+として渡し得るもの -- `ROp`、`RPrimVal`、あるいは透過的なラッパー
+ノード(`RLet`/`RDup`/`RDrop`/`RFree`/`RReleaseReuse`)のいずれか --
+だけを処理すればよく、裸の`RV`を処理する必要は一度もなかった、
+「この別のローカルをそのままコピーする」という形の`RLet`束縛はその
+経路では発生しないからである。しかし`Compiler.RC2.DualABI`自身の
+`tailValueReps`(Stage 2)は、裸の末尾位置の`RV`(パラメータ、あるいは
+既にネイティブな中間値がそのまま返される場合)を常にネイティブとして
+カウントすることを許していた -- Stage 3bは、このケースがエミッション
+時に実際に到達する最初のもの(上記の`Main.fib`自身の`if n < 2 then n
+else ...`基底ケース)である。直接以下を追加した:
+
+```idris
+emitNativeValue ty (RV fc v) = do
+    valStr <- rcVarToNativeC ty v
+    pure (valStr, [])
+```
+
+未処理のdropは一切ない -- `ROp`自身のオペランドとは異なり、ここでの
+`v`は構築上既にネイティブと分かっている(`tailValueReps`自身のシード
+がそれを保証している)ので、後始末すべきBoxedな読み取りが存在しない。
+
+### `RAppNameRep`自身のネイティブ`retRep`ケース
+
+worker自身の戻り値がネイティブに昇格されたことで、*wrapper*からその
+workerへの呼び出し(`RAppNameRep`、Stage 3a)も、非`RBoxed`な`retRep`
+を本当に持ち得るようになった -- 以前は`InternalError`(「まだ未実装」)
+だった。この関数の他のすべてのケースと同様、`emitRC`自身のこのノード
+に対する契約は「常にBoxedな式文字列をレンダリングする」であり --
+`RBoxed`は以前とまったく同じに振る舞う(末尾位置以外ではトランポリン、
+末尾位置では裸のまま); `RNative`/`RInlineNative`は`call`自身が既に
+worker自身の生のネイティブ結果であることを意味するので、
+`nativeMk ty call`で直接box化する、末尾位置かどうかに関わらず無条件
+に -- ネイティブな値がそれ自身「まだ解決を待つトランポリン」になる
+ことは決してあり得ない(それはBoxed表現にのみ存在する概念だ:
+未解決の継続をエンコードし得るタグ付きヒープポインタ)ので、どちら
+にせよ遅延させるべきものは何もない。`Main.fib`自身のwrapperが具体例
+である:
+
+```c
+IDRIS2RC2_Value *Main_fib(IDRIS2RC2_Value * var_0)
+{
+    return idris2rc2_mkInt64(rc2_dualABI_0(idris2rc2_to_i64(var_0)));
+}
+```
+
+この方向(ネイティブなworker自身の結果をBoxedとしてレンダリングし、
+wrapper自身の常にBoxedな末尾値にする)だけが実装されている -- 呼び出し
+元が`RAppNameRep`自身の結果を(box化をスキップして)*ネイティブ*の
+ままレンダリングしたい場合はStage 4自身の課題である: Stage 3bにおける
+このノードの唯一の生成元は依然として`Compiler.RC2.DualABI`自身の
+wrapper本体であり、常に`SinkReturn RBoxed`へ供給している。
+
+### `createCFunctions`自身の戻り値型宣言
+
+残る1点: C関数宣言そのもの(`IDRIS2RC2_Value *\{cName ...}`、無条件)
+が、`declareParam`自身の既存の引数ごとのロジックをミラーする形で、
+`retRep`から自身の戻り値型を導出するようになった:
+
+```idris
+let retTypeStr : String = case retRep of
+                                RBoxed => "IDRIS2RC2_Value *"
+                                RNative ty => nativeCType ty ++ " "
+                                RInlineNative ty => nativeCType ty ++ " "
+let fn = "\{retTypeStr}\{cName !(getFullName n)}" ++ ...
+```
+
+`Main.fib`自身のworkerは`int64_t rc2_dualABI_0(int64_t var_0);`という
+前方宣言になる -- 生成されたCを直接読んで確認済み、他のあらゆる段階
+と同じ検証の規律に従っている。
+
 ## 発見されたバグと修正
 
 1. **Stage 3aが最初に着地した時点で`createCFunctions`がまだ
@@ -344,46 +534,37 @@ Stage 3aが動くCコードを出すために両方とも必要な、2つの変�
    全てが再ビルドでき、本物の`idris2 --cg refc`に対して実行しても
    引き続きバイト単位で一致する; refc-suite全体(19/19)も影響なし。
 
+Stage 3b(ネイティブ戻り値)はそれ自身の新規バグを1件も見つけなかった
+-- 実装前に行った設計レビュー(`emitInto`自身の一点集中ディスパッチ
+構造、そして`emitNativeReturn`が必要とする正確な「確定させてから
+drop、それから return」という順序を、コードを書く前に洗い出したこと)
+が、そうでなければ3件目のバグとしてここに載っていたであろうものを
+未然に防いだと考えられる。最初のビルドがそのまま成功し、下記の全面
+的な検証スイープ(上記バグ#2に最も近い形の、`Main.sumTo`自身のループ
++ネイティブ戻り値の組み合わせを含む)も、一切の修正なしに通過した。
+
 ## ステータス
 
-**実装・検証済み**(Stage 1、2、3a): IRの基盤、読み取り専用の適格性
-解析、パラメータについてのworker/wrapper合成。`Main.fib`は、引数を
-unbox化して合成されたworker(`rc2_dualABI_N`、`int64_t`パラメータ)を
-呼び出す、変更されないBoxedシグネチャのwrapper(`Main_fib`)にコンパ
-イルされ、本物の再帰処理を行う -- 正しい結果(`fib 30`について
-`832040`)を計算することを確認済みであり、refc-suite全体(19/19)と
-既存のスモークテスト/ベンチマークの一式を、`idris2 --cg refc`に対して
-バイト単位で一致/クラッシュなしで再検証済み。**まだパフォーマンスの
-変化はない** -- プログラム中の他のどこもworkerを直接呼んでおらず
-(全ての呼び出しはまだ変更されないwrapperを経由する、1層薄くなった
-だけ)、worker自身の戻り値もまだネイティブではない。この段階は意図的
-に「他の何かリスクの高いものをその上に構築する前に、worker/wrapper
-の形自体を単体で正しくする」ことにスコープを絞った --
-`doc/loop-conversion.md`自身の先例が、この段階分けがなぜ報われるかを
-示している。
+**実装・検証済み**(Stage 1、2、3a、3b): IRの基盤、読み取り専用の
+適格性解析、パラメータと戻り値の両方についてのworker/wrapper合成。
+`Main.fib`は、引数をunbox化して合成されたworker(`rc2_dualABI_N`、
+`int64_t`パラメータ*かつ*`int64_t`戻り値)を呼び出す、変更されない
+Boxedシグネチャのwrapper(`Main_fib`)にコンパイルされ、本物の再帰
+処理を自身の本体全体にわたって`int64_t`のまま行い、最終結果だけを
+box化する -- 正しい結果(`fib 30`について`832040`)を計算することを
+確認済みであり、refc-suite全体(19/19)と既存のスモークテスト/
+ベンチマークの一式(ループ持ち回りのネイティブパラメータと本段階の
+ネイティブ戻り値を同じ関数内で組み合わせる`Main.sumTo`も含む)を、
+`idris2 --cg refc`に対してバイト単位で一致/クラッシュなしで再検証済み。
+**まだパフォーマンスの変化はない** -- プログラム中の他のどこもworker
+を直接呼んでおらず(全ての呼び出しはまだ変更されないwrapperを経由する、
+1層薄くなっただけ)。両段階とも意図的に「他の何かリスクの高いものを
+その上に構築する前に、worker/wrapperの形自体を単体で正しくする」こと
+にスコープを絞った -- `doc/loop-conversion.md`自身の先例が、この段階
+分けがなぜ報われるかを示している。
 
 **まだ実装されていない**:
 
-- **Stage 3b -- ネイティブな戻り値。** `returnEligibility`が何かを
-  見つけた時に、`RBoxed`を無条件に強制する代わりに、worker自身の
-  `retRep`を昇格させる。`Compiler.RC2.Emit`自身の`Sink`/`SinkReturn`
-  が`Rep`を意識するようになる必要がある(関数自身が決定した`retRep`
-  を`emitInto`のディスパッチを通じて、末尾値が最終的にレンダリング
-  される地点まで持ち回る)。また、`emitRC`+`finalizeSink`の既存の
-  (常にBoxedな)経路に対応する、ネイティブな戻り値用の経路も必要
-  (裸の`RV`末尾値には直接`rcVarToNativeC`(dropは不要、
-  `tailValueReps`自身のシードが、それがネイティブだとマークした
-  ものは構造的に本当にそうであることを保証しているため); `ROp`/
-  `RPrimVal`形の場合は`emitNativeValue`と、`declareNative`自身のdoc
-  コメントが説明しているのと*同じ*drop順序への配慮(`doc/
-  native-type-inference.md`の「発見されたバグ」#4がまさに繰り返して
-  はいけない間違いである: ネイティブな戻り値自身の未処理のBoxed
-  オペランドのdropは、`return`文の*前に*、一時変数を介して必ず起きな
-  ければならない -- `return`の後には、遅延されたdropが実行できる文の
-  位置は存在しない))。`Emit.idr`自身の中でも最も呼び出し頻度が高く、
-  最も依存されているコードの一部に触れるため、意図的にStage 3aから
-  切り出し、それ自身で孤立した検証を行いたかった -- ブランチ自身の
-  計画の議論を参照。
 - **Stage 4 -- 呼び出しサイトの書き換え。** プログラム*全体*にわたる
   全ての関数自身の本体を(末尾位置だけでなく -- `RAppName`は`ROp`
   オペランドとしてなど、どこにでも現れ得る)歩き、今やworkerを持つ
@@ -399,7 +580,8 @@ unbox化して合成されたworker(`rc2_dualABI_N`、`int64_t`パラメータ)�
 
 Stage 3a自身の「クロージャ遅延を常にスキップして安全、`RAppNameRep`
 は決してトランポリン遅延されない」という論拠(上記「エミッション」
-参照)は、全ての`RAppNameRep`呼び出しが固定された単一ホップの委譲
+参照、およびStage 3b自身のネイティブ`retRep`ケースもこの性質を保った
+まま)は、全ての`RAppNameRep`呼び出しが固定された単一ホップの委譲
 (wrapper -> 自分自身のworker、それ以外は何もない)であることに完全に
 依存していた。Stage 4はプログラム全体にわたる**任意の**呼び出し
 サイトに`RAppNameRep`呼び出しを導入することになり、その中には、
@@ -426,7 +608,9 @@ Stage 3a自身の「クロージャ遅延を常にスキップして安全、`RA
 
 - `rc2/src/Compiler/RC2/DualABI.idr` -- `paramEligibility`/
   `returnEligibility`/`tailValueReps`(Stage 2)、`synthesizeWorker`/
-  `applyDualABI`/`isMutualLoopMerged`/`FreshId`(Stage 3a)、
+  `applyDualABI`/`isMutualLoopMerged`/`FreshId`(Stage 3a+3b:
+  `synthesizeWorker`は`workerArgs`だけでなく`workerRetRep`も
+  `wrapperRetRep`とは独立に昇格するようになった)、
   `describeEligibility`/`dumpDualABI`(`--directive dumpdualabi`デバッグ
   ダンプ)。
 - `rc2/src/Compiler/RC2/RCExp.idr` -- `MkRCFun`の新しい形、
@@ -441,8 +625,13 @@ Stage 3a自身の「クロージャ遅延を常にスキップして安全、`RA
   て更新(マージ関数と各メンバーのwrapperは共に、このパス自身の設計
   により無条件に常に`RBoxed`のまま)。
 - `rc2/src/Compiler/RC2/Emit.idr` -- `createCFunctions`が関数自身の
-  パラメータ宣言と`RepMap`シードについて`Rep`を意識するようになった;
-  `emitRC`の新しい`RAppNameRep`ケース。
+  戻り値型宣言と各パラメータ自身の宣言/`RepMap`シードの両方について
+  `Rep`を意識するようになった; `Sink`自身の`SinkReturn`コンストラクタ
+  が`Rep`を運ぶようになった(Stage 3b); 新設の`emitNativeReturn`;
+  `emitNativeValue`の新しい裸`RV`ケース; `emitInto`のフォールバック枝
+  がネイティブな`SinkReturn`を`emitNativeReturn`へ回すようになった;
+  `emitRC`の`RAppNameRep`ケースがネイティブな`retRep`を`nativeMk`
+  経由で処理するようになった。
 - `rc2/src/Compiler/RC2/Pretty.idr` -- `MkRCFun`の新しい`args`/
   `retRep`レンダリング; `RAppNameRep`自身の`callRep`レンダリング。
 - `rc2/src/Compiler/RC2/RC2.idr` -- `toRCDefs`自身のパイプライン配線
@@ -455,18 +644,49 @@ Stage 3a自身の「クロージャ遅延を常にスキップして安全、`RA
 3. `--directive dumpdualabi`(上記Stage 2自身の節参照)を任意の候補
    関数に対して使うのが、生成されたCを一切見る前に適格性を確認する
    最速の方法である -- 例えば`grep "Main.fib" out.dualabi`は
-   `params=[Int] ret=Int`を示すはず。
-4. `tests/BenchFib.idr`がStage 3aの標準的なスモークテストである:
+   `params=[Int] ret=Int`を示すはず。注意: このダンプは
+   *`applyDualABI`実行後*のdefs一覧に対して走る(`RC2.idr`自身の
+   パイプライン上の位置)ため -- ある関数について実際にworkerが合成
+   された後は、*元の*名前が(設計通り)Boxedなparams/retの薄いwrapper
+   を指すようになっているので、そちらも正しく`Boxed`/`Boxed`と表示
+   される; 興味深いネイティブ判定の結果は、worker自身がどう構築され
+   たかであり、それは生成されたCを直接見て確認する(次のステップ)。
+4. `tests/BenchFib.idr`がStage 3a+3bの標準的なスモークテストである:
    `fib 30`は依然`832040`を印字しなければならない; `grep -n
-   "^IDRIS2RC2_Value \*rc2_dualABI" build/exec/*.c`はworkerが実際に
-   合成されたことを確認し、その自身のC本体を直接読むことで、昇格
-   されたパラメータが自身のネイティブなC型で宣言されていること、
-   そして元の関数自身の再帰呼び出しが依然として(workerを直接では
-   なく)*wrapper*(`Main_fib`)をターゲットにしていることを確認できる
-   -- その特定の詳細が、Stage 4自身の呼び出しサイト書き換えがまだ
-   誤って早期発火していないことの確認になる。
+   "^int64_t rc2_dualABI\|^IDRIS2RC2_Value \*rc2_dualABI" build/exec/*.c`
+   はworkerが実際に合成されたこと、その戻り値がネイティブになった
+   かどうかを確認でき、その自身のC本体を直接読むことで、(a)昇格
+   されたパラメータ/戻り値が自身のネイティブなC型で宣言されている
+   こと、(b)未処理のBoxedオペランドdropを伴う末尾値が「一時変数へ
+   確定させてからdropし、その後returnする」という形でレンダリング
+   されていること(裸の`return`の直前にdropが来ることは決してない)、
+   (c)元の関数自身の再帰呼び出しが依然として(workerを直接ではなく)
+   *wrapper*(`Main_fib`)をターゲットにしていることを確認できる -- 
+   最後の詳細が、Stage 4自身の呼び出しサイト書き換えがまだ誤って
+   早期発火していないことの確認になる。`tests/BenchLoop.idr`自身の
+   `Main.sumTo`がループ組み合わせのスモークテストである -- そのworker
+   自身のループ出口末尾値が同じネイティブ経路でレンダリングされて
+   いなければならない。
 5. `tests/Test*.idr`/`tests/Bench*.idr`一式全体を、本物の`idris2 --cg
    refc`出力と突き合わせて確認する -- このプロジェクトの他の全ての
-   段階と同じ。Stage 3aは純粋に構造/コード生成上の変更であるはずなの
-   で、*全ての*テストが引き続きバイト単位で一致し、観測可能な挙動の
-   差異はゼロでなければならない。
+   段階と同じ。両段階とも純粋に構造/コード生成上の変更であるはずな
+   ので、*全ての*テストが引き続きバイト単位で一致し、観測可能な挙動
+   の差異はゼロでなければならない。2ファイル
+   (`Test6NativeInts.idr`、`Test7CastMatrix.idr`)は`tests/`の*内側*
+   から起動する必要がある(`tests/Test6NativeInts.idr`ではなく、裸の
+   `Test6NativeInts.idr`)-- この2ファイルだけは他の全てのテスト
+   ファイルのような`module Main`ではなく`module TestNNNN`を宣言して
+   いるため、`tests/`プレフィックス付きのパスでコンパイルすると
+   idris2自身のモジュール名がファイルパスと一致しなければならない
+   というチェックに引っかかる; これは無改造の本家`idris2`に対しても
+   全く同じ形で再現するので、`Compiler.RC2`とは無関係な、この2
+   ファイル自身の既存の起動パス上の癖であり、事前に存在していたもの
+   である。`Test7CastMatrix.idr`はさらに、現時点では本物の`idris2
+   --cg refc`との突き合わせが一切できない: nixpkgs同梱のRefCサポート
+   ライブラリ自体がコンパイルに失敗する(`idris2_negate_Double`が自身
+   のヘッダの中で`idris2_nagate_Double`と誤記されている上、いくつかの
+   宣言が欠落している)-- これはその参照用インストール自体の不具合
+   であり、rc2とは無関係であると確認済み; `idris2-rc2`自身による同じ
+   ファイルのビルドは問題なくコンパイル・実行できるので、これはこの
+   1ファイルについての突き合わせ検証上の欠落であって、既知または
+   疑われるrc2自身のバグではない。
