@@ -306,13 +306,42 @@ opNativeUses p ty op args =
 ||| `emitNativeValue` already has to peel before it reaches the actual
 ||| operation (`annotate` (Phase 2) routinely wraps a multiply-used
 ||| operand's `RLet` value in a leading `RDup` this way, e.g. `n` here,
-||| shared between this op and a later one).
+||| shared between this op and a later one), *and* through a nested
+||| `RLet`'s own `body` (its own `value` is a genuinely separate
+||| sub-computation with its own, independently-gated `Rep` -- already
+||| covered by `nativeArgTypes`'s own unconditional recursion into it,
+||| see below -- but its `body` *is*, transitively, still the same
+||| value this outer `ty` governs, e.g. an ANF chain's own last
+||| operation sitting in an inner let's `body` rather than being the
+||| direct `value` of the outer one: `let v2 : Native Bits64 = let v3 =
+||| cast b in xor p v3`, where `xor`'s own read of `p` only becomes
+||| visible by walking *into* `v3`'s `body`, still under `v2`'s own
+||| already-decided `ty`). Deliberately does **not** invent a `ty` of
+||| its own from an unguarded/bare `ROp` with no enclosing `RNative`/
+||| `RInlineNative` `RLet` anywhere above it -- `opResultRep`, which
+||| `Compiler.RC2.DualABI`'s own `tailValueReps` uses for exactly that
+||| shape, would agree with an op's own natural type regardless of
+||| whether the *enclosing* context actually renders it natively; a
+||| bare tail with no enclosing native `let` genuinely can still render
+||| Boxed (`Compiler.RC2.Emit`'s own fallback), and unlike
+||| `tailValueReps`'s own use (paired, in lockstep, with
+||| `Compiler.RC2.DualABI`'s own return-eligibility decision for the
+||| very same op), this function's result is read independently by
+||| `Compiler.RC2.Loop`'s own loop-param promotion -- which has no such
+||| pairing and runs before any return-eligibility decision exists at
+||| all -- so guessing here caused a real, `valgrind`-confirmed leak
+||| (`Test9SelfTailLoop`'s own regression the first time this was
+||| tried: a loop param's boxed-context read got its ownership bookkeeping
+||| stripped on the strength of a bare op's own guessed nativeness, then
+||| had to be re-boxed fresh on demand at that Boxed-rendered read, with
+||| nothing left to ever drop the fresh box). See `TODO.md`'s git history.
 opNativeUsesThrough : (p : Int) -> PrimType -> RCExp -> SortedSet PrimType
 opNativeUsesThrough p ty (ROp _ _ op args _) = opNativeUses p ty op args
 opNativeUsesThrough p ty (RDup _ _ cont) = opNativeUsesThrough p ty cont
 opNativeUsesThrough p ty (RDrop _ _ cont) = opNativeUsesThrough p ty cont
 opNativeUsesThrough p ty (RFree _ _ cont) = opNativeUsesThrough p ty cont
 opNativeUsesThrough p ty (RReleaseReuse _ _ cont) = opNativeUsesThrough p ty cont
+opNativeUsesThrough p ty (RLet _ _ _ _ body) = opNativeUsesThrough p ty body
 opNativeUsesThrough _ _ _ = empty
 
 ||| Every native `PrimType` at which top-level parameter `p` is read as
@@ -321,20 +350,25 @@ opNativeUsesThrough _ _ _ = empty
 ||| via `rcVarToNativeC` rather than `rcVarToBoxedC` (a Boxed-*result*
 ||| `ROp`'s own operands are read Boxed too, via `emitRC`'s own ROp
 ||| case -- only an `RLet`-bound `ROp` whose *own* `Rep` is
-||| `RNative`/`RInlineNative` counts here). Walks the *whole* tree, not
-||| just tail positions -- an operand can appear anywhere. A bare
-||| (not-`RLet`-bound) `ROp` -- the tail value of some branch -- is
-||| always emitted Boxed (see `emitInto`'s own fallback to `emitRC`), so
-||| doesn't count either -- *when this pass itself runs*, strictly
-||| before `Compiler.RC2.DualABI` has decided any function's own return
-||| eligibility, every bare tail genuinely still is Boxed. By the time
-||| `Compiler.RC2.DualABI`'s own Stage 4 runs, that's no longer always
-||| true (`Compiler.RC2.Emit`'s own `emitNativeReturn`, Stage 3b, can
-||| render a bare tail natively too) -- exported (alongside
-||| `nativeArgType` below) so Stage 4 can union this set with its own
-||| separate bare-tail check rather than duplicating this whole
-||| traversal to add one more case that would only be valid for *some*
-||| of this function's own callers.
+||| `RNative`/`RInlineNative` counts here, now including one reached
+||| through a chain of nested `RLet`s under that same outer `Rep` --
+||| see `opNativeUsesThrough`'s own doc comment). Walks the *whole*
+||| tree, not just tail positions -- an operand can appear anywhere. A
+||| bare (not-`RLet`-bound) `ROp` -- the tail value of some branch, or a
+||| whole one-line function body -- is deliberately *not* treated as a
+||| native-context use here, even though its own `opResultRep` could
+||| answer the question in isolation: unlike
+||| `Compiler.RC2.DualABI`'s own `tailValueReps` (which asks the exact
+||| same question about a *return* value, always computed in lockstep
+||| with that same op's own eligibility, so the two can never disagree),
+||| this function's result is consumed by `Compiler.RC2.Loop`'s own
+||| loop-param promotion too, which runs before any function's return
+||| eligibility has been decided at all -- a bare tail can, and often
+||| does, still render Boxed at that point, and treating it as native
+||| anyway strips ownership bookkeeping a since-still-Boxed rendering
+||| genuinely needs (confirmed via a real `valgrind`-caught leak in
+||| `Test9SelfTailLoop` the first time a bare-`ROp` case was added here
+||| unconditionally; see `TODO.md`'s git history).
 export
 nativeArgTypes : (p : Int) -> RCExp -> SortedSet PrimType
 nativeArgTypes p (RLet _ _ rep value body) =
@@ -360,9 +394,10 @@ nativeArgTypes p (RConstCase _ _ alts mDef) =
 -- Every other shape (RV, RAppName, RUnderApp, RApp, RCon, a bare ROp,
 -- RExtPrim, RPrimVal, RErased, RCrash, RLoopContinue -- and RLoop,
 -- though it never actually appears here, this pass being its sole
--- producer): no native-context operand reads live directly in these,
--- and none hold a further RCExp to recurse into beyond what RLet/
--- RCmpCase/RConCase/RConstCase above already visit.
+-- producer): no native-context operand reads live directly in these
+-- (a bare ROp deliberately excepted -- see nativeArgTypes's own doc
+-- comment), and none hold a further RCExp to recurse into beyond what
+-- RLet/RCmpCase/RConCase/RConstCase above already visit.
 nativeArgTypes _ _ = empty
 
 ||| The single native `PrimType` top-level parameter `p` should be

@@ -667,46 +667,89 @@ Measured against a real third-party package
 (`idris2-missing-containers`'s hash algorithms -- see `rc2/BENCHMARKS.md`'s
 2026-08-14 entry for the full numbers): a loop param only gets promoted
 if it's *itself* a native-eligible-typed local read directly as an
-`ROp`/`RCmpCase` operand. A common real-world pattern this misses
-entirely is a numeric state wrapped in a single-field, `newtype`-style
-constructor (e.g. `data FNV1a = MkFNV1a Bits64`, the pattern every
-`HashAlgorithm` instance in that package uses), where the loop's own
-top-level parameter is the *constructor*, and the native value only
-appears after an explicit destructure inside the loop body.
-`nativeArgType` never sees past that destructure to attribute the
-native use back to the top-level parameter, so such a parameter always
-stays `RBoxed` -- correctly conservative (nothing is broken), just not
-as effective as it could be.
+`ROp`/`RCmpCase` operand.
 
-A plausible extension: recognize "loop param `p`'s only structural uses
-are all `case p of MkX v => ...`-shaped destructures of the same
-single-field constructor, and `v` is itself native-eligible," and
-shadow-promote the *field*, re-wrapping (`con MkX [shadow]`) at any
-Boxed-context use. Not attempted here -- scoping and correctness (the
-constructor's own tag/shape still needs representing on the "runs
-once" -- entry -- side, which is a genuinely different shape of rewrite
-than a bare scalar's unbox-once-at-entry, since the "does this value
-exist as this exact constructor everywhere along every path" question
-that requires answering is closer in spirit to `Compiler.RC2.Reuse`'s
-own eligibility analysis than to anything this document's own
-`nativeArgType` currently does) would need its own dedicated design
-pass, not a small extension of the current one.
+**Originally misdiagnosed here as a `newtype`-destructuring gap** -- the
+write-up used to claim a numeric state wrapped in a single-field,
+`newtype`-style constructor (e.g. `data FNV1a = MkFNV1a Bits64`, the
+pattern every `HashAlgorithm` instance in that package uses) was
+invisible because the loop's own top-level parameter was "the
+constructor," with the native value only appearing after an explicit
+destructure `nativeArgType` never saw past. **That was wrong.** Checked
+directly against `--directive dumprcexp` output for a minimal
+reproduction: a genuine `newtype`-eligible constructor is erased
+*entirely* by Idris2's own frontend, both construction and matching,
+before rc2 ever sees the `Lifted` IR at all (see upstream's own
+`Compiler/LambdaLift.idr` doc comment on `MkLCon`'s `nt` field: "backend
+implementations needs not make use of this argument, as newtype
+unboxing is managed by the Idris 2 compiler") -- there was never a
+constructor left for any rc2-side analysis to destructure, and rc2's
+own `RCDef`'s `newtype=` metadata (`Compiler.RC2.Pretty`'s own dump
+field) is carried through purely for display, never consulted by
+`Compiler.RC2.Loop`/`DualABI` at all.
 
-(Since writing the above: the related but distinct gap -- an *ordinary*
-case-alternative's own destructured field, not a loop-carried one --
-was addressed separately, see `rc2/doc/con-alt-native.md`
-(`Compiler.RC2.ConAltNative`, caches a repeatedly-native-read
-destructured field into a fresh shadow). This specific limitation --
-a *loop-carried* parameter's own constructor wrapper, which would need
-the shadow hoisted to loop entry rather than re-read every iteration,
-the same way `declareLoopParam` already does for a raw scalar param --
-is **not** what that pass does, and remains open; not currently
-planned, revisit if profiling ever shows it matters (see `TODO.md`'s
-own note on both pointing here).)
+The real cause, confirmed by reproducing the *identical* symptom with a
+plain `Bits64` parameter and zero constructors anywhere in sight: a
+multi-operation ANF chain (e.g. a hash-step-shaped `(v \`xor\` cast b) *
+k`) puts a top-level parameter's own native-context read in an *inner*
+`RLet`'s `body` (that inner let's own final operation) rather than
+directly in an outer native-typed `RLet`'s `value` -- `nativeArgTypes`'s
+own `opNativeUsesThrough` helper only ever looked at the latter shape.
 
-Two other, unrelated reasons the same benchmark's dominant costs stay
-unaffected regardless, worth keeping in mind before assuming a fix to
-the above alone would move the needle much on that specific benchmark:
+Fixed: `opNativeUsesThrough` now also recurses through a nested
+`RLet`'s own `body`, propagating the *same* outer, already-decided
+native `Rep` down to whatever bare `ROp` sits at the end of the chain --
+still exactly as conservative as before (a nested `RLet`'s own separate
+`value` gets no special treatment here; `nativeArgTypes`'s existing
+unconditional recursion into it already covers that independently,
+gated by *that* let's own `Rep`). An earlier, broader attempt at this
+fix instead treated *any* bare `ROp` -- including one with no enclosing
+native `RLet` anywhere above it at all -- as native, reasoning from the
+op's own `opResultRep` alone (the same source of truth
+`Compiler.RC2.DualABI`'s own `tailValueReps` already uses for *return*-
+value eligibility). That version caused a real, `valgrind`-caught leak
+in `Test9SelfTailLoop`: unlike `tailValueReps`'s own paired, in-lockstep
+use (return eligibility for the very same op, computed together, so the
+two can never disagree), `nativeArgTypes`'s result also feeds
+`Compiler.RC2.Loop`'s own loop-param promotion, which runs *before* any
+function's return-eligibility has been decided at all -- a bare tail
+can, and there did, still render Boxed at that point, and stripping a
+still-Boxed read's ownership bookkeeping on the strength of a guessed
+nativeness left a freshly-re-boxed value with nothing to ever drop it.
+See `rc2/tests/Test13NativeArgChain.idr` (`chain`, the fixed shape;
+`flat`, a single *unguarded* `ROp` with no enclosing `let` at all,
+deliberately left `RBoxed` -- kept in the same test file as a control).
+
+This closes the gap for a *non-loop* function's own parameters and,
+identically, `Compiler.RC2.DualABI`'s worker-parameter eligibility for
+one (e.g. a `step`-shaped per-element helper called from inside a
+loop) -- confirmed via `--directive dumprcexp`: such a helper's own
+worker now correctly declares that parameter `Native`, not `Boxed`.
+
+**What's still open**: a loop's own carried accumulator still does
+*not* get shadow-promoted purely from being threaded through calls to
+such a helper. In `loop acc (b :: bs) = loop (step acc b) bs`, `acc` is
+never read directly as an `ROp`/`RCmpCase` operand *inside `loop`'s own
+body* -- it only ever appears as an *argument* to the call to `step`
+(now a `callRep` targeting `step`'s own, correctly-native-parametered
+worker, per the fix above). `nativeArgTypes` has no case recognizing
+"passed as an argument at a position the callee's own native-signature
+worker accepts natively" as a native-context use of the caller's own
+parameter, so `loop`'s own accumulator stays a boxed `RLoop` param,
+unboxed and reboxed at that call site every single iteration -- the
+same net operation count as before this fix, just relocated from inside
+`step`'s own body to `loop`'s own call site (verified directly by
+diffing the `.crexpr` before/after: identical `postDrop` counts, moved
+location). Closing this would need a new case threading through
+`RAppNameRep`/`callRep` argument positions, matched against that
+target's own declared `argReps` -- not attempted here; not currently
+planned; revisit if profiling shows this actually dominates
+(see `TODO.md`'s own note on this, pointing here).
+
+Two other, unrelated reasons the motivating benchmark's dominant costs
+stay unaffected regardless, worth keeping in mind before assuming a fix
+to the above alone would move the needle much on that specific
+benchmark:
 
 - Interface-dispatched comparisons (`Ord`'s `<=`, etc.) never fuse into
   `RCmpCase` -- that fusion only recognizes a direct `PrimFn` comparison,
@@ -717,9 +760,7 @@ the above alone would move the needle much on that specific benchmark:
 - `IOHashMap`'s own write/read path is dominated by `IORef`/array
   access and constructor-list bucket traversal, not a numeric
   accumulator loop at all -- native-shadowing, however extended, was
-  never going to reach either of those; that's squarely
-  `TODO.md`'s "Dual calling convention" gap (native representations
-  never crossing an ordinary, non-loop call boundary) instead.
+  never going to reach either of those.
 
 ## Files
 

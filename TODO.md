@@ -60,12 +60,49 @@ of being re-boxed/re-unboxed at every iteration. Full design,
 implementation walkthrough, and the bugs found along the way are all
 documented in **`rc2/doc/loop-conversion.md`** -- moved there in full
 since it's finished design/implementation, not an open gap; this entry
-is only a pointer. Its own known limitation (native-shadow eligibility
-doesn't currently see through a `newtype`-style single-field
-constructor wrapper, *for a loop-carried parameter specifically*) is
-still open -- the related but distinct gap for an ordinary
-case-alternative's own destructured field (not loop-carried) was
-addressed separately, see "Constructor-destructured field native
+is only a pointer.
+
+Its own known limitation used to be attributed to a `newtype`-style
+single-field constructor wrapper never getting seen through for a
+loop-carried parameter specifically -- **that diagnosis was wrong**.
+Checked directly against `--directive dumprcexp` output: a genuine
+`newtype`-eligible constructor is erased entirely by Idris2's own
+frontend before rc2 ever sees it (both construction and matching --
+upstream's own `LambdaLift.idr` doc comment: "backend implementations
+needs not make use of \[the newtype info\], as newtype unboxing is
+managed by the Idris 2 compiler"), so there was never a constructor
+left for any rc2-side destructuring analysis to see through. The real
+cause, confirmed by reproducing the identical symptom with a *plain*
+`Bits64` parameter (no constructor at all), was a narrower bug in
+`Compiler.RC2.Loop`'s own `nativeArgTypes`: a multi-operation ANF chain
+(e.g. a hash-style `(v \`xor\` cast b) * k`) put the parameter's own
+native-context read in an *inner* `RLet`'s `body` rather than directly
+in an outer native-typed `RLet`'s `value`, which the scan never walked
+into. Fixed by having `opNativeUsesThrough` also recurse through a
+nested `RLet`'s own `body` (still gated by the outer, already-decided
+native `Rep` -- an earlier, broader attempt that treated *any* bare
+`ROp` as native regardless of enclosing context caused a real,
+`valgrind`-caught leak in `Test9SelfTailLoop`, since a bare tail can
+still genuinely render Boxed when `Compiler.RC2.Loop` itself runs,
+before any function's return-eligibility has been decided). See
+`rc2/tests/Test13NativeArgChain.idr` and `rc2/doc/loop-conversion.md`'s
+own "Known limitation" section for the full writeup.
+
+This fix closes the gap for a *non-loop* function's own parameters/
+`Compiler.RC2.DualABI` worker eligibility (e.g. a `step`-shaped helper
+called from within a loop). It does **not** by itself make a loop's own
+carried accumulator skip boxing across iterations when that accumulator
+is only ever passed *as a call argument* to such a helper (as opposed
+to being read directly as an `ROp` operand inside the loop body itself)
+-- `nativeArgTypes` still has no case recognizing "used as an argument
+at a position a callee's own native-signature worker accepts natively"
+as a native-context use. That remaining piece -- letting a loop
+accumulator threaded only through helper calls still get shadow-
+promoted -- is unaddressed and would need its own follow-on change
+(teach `nativeArgTypes` about `RAppNameRep`/`callRep` argument
+positions); not currently planned. The related but distinct gap for an
+ordinary case-alternative's own destructured field (not loop-carried)
+was addressed separately, see "Constructor-destructured field native
 shadowing" below.
 
 ### Constructor-destructured field native shadowing (implemented)

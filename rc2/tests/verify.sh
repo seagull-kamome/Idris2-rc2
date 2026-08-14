@@ -100,7 +100,7 @@ NO_REFC_DIFF_TESTS="Test7CastMatrix"
 # Leak-sensitive by design (reference-counting/reuse/native-shadow
 # regression tests) -- checked with valgrind by default even without
 # --valgrind-all.
-LEAK_SENSITIVE_TESTS="Test1Basics Test9SelfTailLoop Test10MutualLoop Test11DualABILeak Test12ConAltNative"
+LEAK_SENSITIVE_TESTS="Test1Basics Test9SelfTailLoop Test10MutualLoop Test11DualABILeak Test12ConAltNative Test13NativeArgChain"
 
 # KNOWN-BUGS.md's own two pre-existing leaks -- "definitely lost" byte
 # counts, exactly. Anything else non-zero is a genuine new failure.
