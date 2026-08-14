@@ -174,23 +174,86 @@ from ownership like a genuinely native local," but something closer to
 in ownership/reuse tracking exactly as today, and the *optimization* is
 narrower than originally scoped: `rcVarToNativeC` already unboxes a
 still-Boxed local inline at each native-context read (its own `RBoxed`
-case, `nativeUnbox ty (...)`) -- worth confirming empirically whether a
-destructured field read exactly once natively is *already* effectively
-native today, at the cost of one inline unbox per read, with correct
-ownership for free. If so, the real remaining gap is narrower still:
-caching that unboxed value once (across a field read *more than once*
-natively within the same alt) instead of repeating
-`idris2rc2_to_i64(...)` at every read, while leaving the field's own
-Boxed declaration/RDrop/reuse participation completely untouched. Needs
-a fresh, smaller design pass before attempting again -- not attempted
-in this correction.
+case, `nativeUnbox ty (...)`) -- a destructured field read exactly once
+natively is *already* effectively native today, at the cost of one
+inline unbox per read, with correct ownership for free (nothing to do
+there). The real remaining gap is narrower: caching that unboxed value
+once, across a field read *more than once* natively within the same
+alt, instead of repeating `idris2rc2_to_i64(...)` at every read --
+while leaving the field's own Boxed declaration/`RDrop`/reuse
+participation completely untouched, unlike the reverted attempt above.
 
 All changes from the first attempt were reverted (`git checkout --`)
 rather than fixed forward, to leave a known-good baseline; nothing from
-that attempt is in `master`. Not started (again). This TODO entry, not
-`rc2/doc/`, is where this correction lives -- consistent with the
-project's own convention that `rc2/doc/` is for finished
-design/implementation, not an in-progress or reopened one.
+that attempt is in `master`.
+
+**Revised layer 1 mechanism (planned, not yet attempted): mint a
+native shadow and rename into it, exactly `Compiler.RC2.Loop`'s own
+existing native-shadow-loop-param trick, just scoped to a single alt's
+own body instead of a whole function/loop.** `Loop.idr` already solves
+precisely this "redirect every native-context read of a Boxed value to
+a cached native copy, without disturbing the original's own ownership
+except where its own use sites actually changed" problem for top-level
+parameters -- reuse its shape rather than re-deriving a new one:
+
+1. Run as a **new pass, after `Compiler.RC2.Reuse`** (so `resolveAlt`'s
+   own `dupOnShared`/`RReuseOffer` decisions are already finalised
+   around the field exactly as they are today, completely undisturbed
+   -- this new pass only ever *adds* a wrapping `RLet`, never touches
+   an existing ownership node). Ordering relative to
+   `Compiler.RC2.Loop`/`MutualLoop`/`DualABI` otherwise probably
+   doesn't matter for this layer alone (no loop/call-boundary hoisting
+   yet, that's layer 2) -- confirm empirically once implementing rather
+   than assuming.
+2. For each `RConAlt`, ask `nativeArgType argId altBody` (unchanged --
+   the same usage-scan already planned above, and already exported for
+   reuse). If it finds a consistent native type `ty`:
+3. Mint a fresh id `shadowId`, and wrap the alt's own body in
+   `RLet shadowId (RNative ty) (RV (RCLoc argId)) body'` -- a
+   *manually*-assigned `Rep`, the same way `Loop.idr`'s own
+   `declareLoopParam`/`Compiler.RC2.DualABI`'s own worker synthesis
+   already bypass `Types.repOf`'s ordinary "only `ROp`/`RPrimVal`
+   propose Native" rule for a value they already know is safe to
+   declare native (`repOf` alone would leave a bare `RV` passthrough
+   `RBoxed`, per its own doc comment). `Emit.idr`'s `declareLet`
+   already handles an arbitrary-shaped `RNative` value via
+   `declareNative`, and `emitNativeValue`'s own bare-`RV` case (added
+   Stage 3b of the dual-ABI effort, `doc/dual-abi.md`) already renders
+   exactly this shape (a plain variable read in native context) --
+   confirm both paths actually cover `declareNative`'s own dispatch for
+   a bare `RV` value specifically (not just `emitNativeValue`'s) before
+   assuming zero new Emit.idr work is needed here.
+4. `body'` is `body` with every native-context reference to `argId`
+   renamed to `shadowId` (`renameRCExp`-shaped, scoped to just this
+   alt's own subtree) -- *not* every reference the way `Loop.idr`'s own
+   rename does for a loop param (which redirects Boxed-context uses
+   too, since a promoted loop param's *original* id becomes entirely
+   dead): a con-alt field can still legitimately have its own
+   *separate*, unrelated Boxed-context uses elsewhere in the same alt
+   (e.g. `case acc of MkAcc x y => f x (show y)` -- `x`'s own native
+   use and `y`'s own Boxed use coexist) that must keep reading `argId`
+   itself, unrenamed.
+5. `argId`'s own ownership bookkeeping (whatever `annotate` already
+   decided, back when every native-context use it now no longer has
+   still counted toward its own use-count) needs the same kind of
+   surgical fixup `Loop.idr`'s own `stripOwnership` performs for a
+   promoted loop param -- but *narrower*: only the specific `postDrop`
+   entries/dup-decisions tied to the *renamed-away* uses are stale, not
+   necessarily all of `argId`'s own bookkeeping (unlike a loop param,
+   which becomes wholly dead once promoted, a con-alt field may still
+   have real Boxed-context uses left, per point 4 -- `stripOwnership`
+   itself, unmodified, assumes total removal, so this needs its own
+   variant, not a direct reuse). Getting this exactly right is the
+   crux of the whole layer -- this is precisely the kind of ownership
+   surgery that produced the leak in the reverted first attempt, so it
+   deserves the same `valgrind --leak-check=full` scrutiny against a
+   dedicated test (a field read natively *and* in Boxed context within
+   the same alt, and separately a field read natively more than once)
+   before considering this done, not just a stdout diff.
+
+This TODO entry, not `rc2/doc/`, is where this plan lives -- consistent
+with the project's own convention that `rc2/doc/` is for finished
+design/implementation, not an in-progress or twice-reopened one.
 
 ## Scope: deliberately unboxed types stop at scalars
 
