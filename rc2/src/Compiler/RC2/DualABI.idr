@@ -30,12 +30,34 @@ module Compiler.RC2.DualABI
 -- module's highest-traffic code, so it was deliberately split out and
 -- landed as its own, separately-verified Stage 3b (see the branch's
 -- own plan discussion, and `doc/dual-abi.md`'s own Stage 3b section,
--- for the reasoning). No call site anywhere else in the program is
--- rewritten to actually *use* a worker yet (Stage 4) -- every
--- wrapper's own worker call is currently the only place any worker is
--- ever reached, so nothing changes performance-wise yet; this stage is
--- purely about getting the worker/wrapper shape itself right and
--- verifiable in isolation.
+-- for the reasoning). Stage 4 (below, `applyCallSiteRewrite`) is where
+-- the actual performance win materialises: walks every definition's
+-- own body (not just tail positions -- `RAppName` can appear anywhere,
+-- e.g. as an `ROp` operand) and rewrites every direct, saturated,
+-- *non-tail-position* call targeting a function with a worker into
+-- `RAppNameRep`, promoting the enclosing `RLet`'s own `Rep` to match
+-- the worker's own native `retRep` whenever the rest of that `RLet`'s
+-- own scope reads it natively too (reusing `Compiler.RC2.Loop`'s own
+-- `nativeArgType`/`stripOwnership` a third time -- see
+-- `applyCallSiteRewrite`'s own doc comment) -- this is what turns
+-- `fib(n-1) + fib(n-2)` into fully-native arithmetic with no
+-- intermediate heap allocation at all, not just native argument
+-- passing into an otherwise-still-boxed call.
+--
+-- Tail-position calls are a *deliberate, permanent* scope boundary,
+-- not a later stage: they're currently rendered via
+-- `tryBuildClosureInto`'s own closure-deferral (a boxed, trampolined
+-- value, letting the *caller's own caller* resolve it later -- bounds
+-- C stack growth for an otherwise-unknown-depth chain of tail calls
+-- that aren't self-/mutually-recursive in a way `Compiler.RC2.Loop`/
+-- `Compiler.RC2.MutualLoop` already convert to a `goto`). Rewriting a
+-- tail-position call into a direct, non-deferred `RAppNameRep` call
+-- could reintroduce that unbounded growth, and telling *which*
+-- tail-position call sites are safe to rewrite this way would need
+-- real interprocedural analysis -- exactly the whole-program fixed
+-- point this entire effort has otherwise avoided needing (the same
+-- reason `returnEligibility`, in Stage 2 above, already leaves a
+-- *pure* tail-call delegation ineligible rather than chasing it).
 --
 -- Both analyses below are purely *local* to one function's own body --
 -- no whole-program fixed point is needed, for a reason worth spelling
@@ -100,6 +122,7 @@ import Core.TT
 import Data.List
 import Data.SortedMap
 import Data.SortedSet
+import Data.Vect
 
 %default covering
 
@@ -274,7 +297,7 @@ synthesizeWorker : {auto r : Ref FreshId Int}
 synthesizeWorker existingNames eligible retEligible args wrapperRetRep body = do
     workerName <- freshName existingNames
     let eligibleOf : Int -> Maybe PrimType
-        eligibleOf p = lookup p (fromList eligible)
+        eligibleOf p = Data.SortedMap.lookup p (Data.SortedMap.fromList eligible)
         workerArgs : List (Int, Rep)
         workerArgs = map (\(p, _) => case eligibleOf p of
                                            Just ty => (p, RNative ty)
@@ -328,3 +351,270 @@ applyDualABI defs = do
                   (workerName, wrapperDef, workerDef) <- synthesizeWorker existingNames eligible retEligible args retRep body
                   pure [(n, wrapperDef), (workerName, workerDef)]
     synthesizeIfEligible _ (n, d) = pure [(n, d)]
+
+------------------------------------------------------------------------
+-- Stage 4: call-site rewriting (non-tail positions only -- see the
+-- module's own header note for why tail-position delegating calls are
+-- a deliberate, permanent scope boundary, not a later stage).
+
+||| The worker (if any) `n` -- an *original*, user-visible function
+||| name -- was rewritten to call: `(workerName, argReps, retRep)`,
+||| read directly off the wrapper's own body. `synthesizeWorker`'s own
+||| construction guarantees a wrapper's *entire* body is always exactly
+||| one bare `RAppNameRep` call into its own worker, nothing else (see
+||| its own doc comment) -- so scanning for that exact shape recovers
+||| the table without `applyDualABI` itself needing to thread a
+||| separate one out alongside its own `List (Name, RCDef)` result.
+workerTable : List (Name, RCDef) -> SortedMap Name (Name, List Rep, Rep)
+workerTable defs = fromList (mapMaybe workerEntry defs)
+  where
+    workerEntry : (Name, RCDef) -> Maybe (Name, (Name, List Rep, Rep))
+    workerEntry (n, MkRCFun _ _ (RAppNameRep _ workerName argReps retRep _ _)) =
+        Just (n, (workerName, argReps, retRep))
+    workerEntry _ = Nothing
+
+||| `l`'s own currently-known `Rep` in `reps` (seeded from a function's
+||| own top-level parameters, extended by every `RLet`/`RLoop` this
+||| walk has already passed through by the time it asks) -- the same
+||| lookup `Compiler.RC2.Emit`'s own (`Core`-monadic, `RepMap`-backed)
+||| `repOfLocal` performs at emission time, just written as a pure
+||| function here since this pass has no `Core` context of its own to
+||| thread a ref through.
+localRepIn : SortedMap Int Rep -> RCLocal -> Rep
+localRepIn _ RCNull = RBoxed
+localRepIn reps (RCLoc i) = fromMaybe RBoxed (lookup i reps)
+localRepIn _ (RCConst c) = fromMaybe RBoxed (RNative <$> litRep c)
+localRepIn _ (RCEmptyCon {}) = RBoxed
+
+||| Which of `args` (rendered per the worker's own `argReps`, same
+||| order) need an explicit drop once this call has been embedded in
+||| its own statement: exactly the positions the worker reads
+||| *natively* whose own source, per `reps`, is still genuinely
+||| `RBoxed` -- see `RAppNameRep`'s own `postDrop` doc comment in
+||| RCExp.idr for why this field exists at all (a real reference leak,
+||| found via `valgrind`, in `Compiler.RC2.DualABI`'s own earlier
+||| worker/wrapper synthesis before it did). No liveness analysis of
+||| this pass's own is needed to get this right: `Compiler.RC2.RC`'s
+||| own `annotate` already decided, for the *original* (still-
+||| `RAppName`) call this replaces, that passing a Boxed argument to a
+||| call consumes exactly one reference (dup'ing beforehand if that
+||| argument's own local is still needed after this point, transferring
+||| without a dup if this was already its last use) -- reading it
+||| natively instead and dropping it right here pays the exact same net
+||| cost, just explicitly rather than via ordinary Boxed hand-off, so
+||| whatever `annotate` already arranged around this call site (an
+||| earlier `RDup`, or none) still balances correctly either way.
+postDropFor : SortedMap Int Rep -> List Rep -> List RCLocal -> List RCLocal
+postDropFor reps argReps args =
+    mapMaybe (\(r, a) => case r of
+                              RBoxed => Nothing
+                              _ => case localRepIn reps a of
+                                        RBoxed => Just a
+                                        _ => Nothing) (zip argReps args)
+
+||| `e`'s own ultimate tail expression, peeling through every `RLet`'s
+||| own `body` and every `RDup`/`RDrop`/`RFree`/`RReleaseReuse`/
+||| `RReuseOffer`'s own `cont` -- the same peeling
+||| `tryEmitLoopContinue`/`peelDrop` (`Compiler.RC2.Emit`) already do,
+||| just walking all the way to the very end instead of stopping at the
+||| first interesting shape. Used only to *inspect* what a value
+||| position (an `RLet`'s own, possibly deeply nested, `value` -- see
+||| `applyCallSiteRewriteBody`'s own doc comment for why that can
+||| itself be a further `RLet` chain, not always a flat leaf) ultimately
+||| evaluates to, never to rewrite anything itself.
+ultimateTail : RCExp -> RCExp
+ultimateTail (RLet _ _ _ _ body) = ultimateTail body
+ultimateTail (RDup _ _ cont) = ultimateTail cont
+ultimateTail (RDrop _ _ cont) = ultimateTail cont
+ultimateTail (RFree _ _ cont) = ultimateTail cont
+ultimateTail (RReleaseReuse _ _ cont) = ultimateTail cont
+ultimateTail (RReuseOffer _ _ _ cont) = ultimateTail cont
+ultimateTail e = e
+
+||| `var`'s own native `PrimType` if `e`'s own *ultimate* tail
+||| (peeling exactly as `ultimateTail` above does) is a bare (not
+||| further `RLet`-bound) `ROp` reading `var` as one of its own
+||| operands -- the one shape `Compiler.RC2.Loop`'s own `nativeArgTypes`
+||| deliberately doesn't cover, and correctly so *for that pass's own
+||| callers* (see its own doc comment: true when it runs, strictly
+||| before any function's own return eligibility is decided, that a
+||| bare tail is always Boxed regardless) -- but no longer true by the
+||| time *this* stage runs: `fib`'s own worker is the concrete case this
+||| exists for -- `let v3 = fib(n-1) in let v5 = fib(n-2) in v3 + v5`,
+||| where `v3 + v5` is *itself* the worker's own bare tail, rendered
+||| natively (`Compiler.RC2.Emit`'s own `emitNativeReturn`, Stage 3b)
+||| precisely because the worker's own `retRep` already is -- without
+||| this, neither `v3` nor `v5` would ever look like a worthwhile
+||| promotion, and `fib` itself -- the flagship motivating case for this
+||| entire effort -- would keep boxing every recursive call's own result
+||| only to immediately unbox it again.
+bareTailNativeReads : Int -> RCExp -> SortedSet PrimType
+bareTailNativeReads var e =
+    case ultimateTail e of
+         ROp _ _ op args _ =>
+             if vectElemRCLoc var args
+                then maybe empty (\rty => SortedSet.fromList [opArgTyFor rty op]) (opResultRep op)
+                else empty
+         _ => empty
+  where
+    -- Plain recursive membership check, avoiding Data.Vect's own
+    -- `toList`/`Foldable` -- both collide (name ambiguity with
+    -- Data.SortedMap's own `fromList`/`lookup`, already used
+    -- throughout this module) or fail to resolve (the `{0 arity :
+    -- Nat}` erased implicit `ROp` carries its `Vect` length in blocks
+    -- the usual `Foldable (Vect n)` search) when actually imported
+    -- here.
+    vectElemRCLoc : Int -> Vect n RCLocal -> Bool
+    vectElemRCLoc _ [] = False
+    vectElemRCLoc i (x :: xs) = x == RCLoc i || vectElemRCLoc i xs
+
+||| Whether `body` justifies promoting an `RLet`-bound worker-call
+||| result (currently `RBoxed`) all the way to `RNative ty` instead of
+||| just rewriting the call itself and boxing its result back up on the
+||| way out -- the difference between "native arguments into an
+||| otherwise-still-boxed call" and the actual point of this whole
+||| stage: skipping the box-then-immediately-unbox round trip entirely
+||| (`fib(n-1) + fib(n-2)` staying in `int64_t` throughout, not
+||| materialising a heap value for either recursive call's own result).
+|||
+||| Unions `Compiler.RC2.Loop`'s own (now exported) `nativeArgTypes`
+||| with `bareTailNativeReads` above, then asks the *exact* same
+||| question `nativeArgType` itself asks about a whole function's own
+||| top-level parameter, over that combined set: does `body`
+||| (everything after this `RLet`) read `var` as a native-context
+||| operand, consistently, at `ty`? Any *other*, still-Boxed-context use
+||| of `var` elsewhere in `body` (e.g. stored into a constructor field)
+||| keeps working correctly regardless of whether this promotes --
+||| `rcVarToBoxedC`'s own on-demand reboxing of a native value handles
+||| it, as a fresh allocation instead of sharing the one this call
+||| *used* to produce, invisible to any Idris-level program (a scalar
+||| has no observable identity) -- see `stripOwnership`'s own doc
+||| comment for this exact case, already relied on by this same reuse.
+nativePromotionFor : Int -> PrimType -> RCExp -> Maybe PrimType
+nativePromotionFor var ty body =
+    let found = nativeArgTypes var body `union` bareTailNativeReads var body
+    in case Prelude.toList found of
+            [ty'] => if ty' == ty then Just ty else Nothing
+            _ => Nothing
+
+||| Rewrite every direct, saturated, non-tail-position call in `e`
+||| targeting a function `workers` has a worker for. `reps` threads
+||| this walk's own "which locals are already known native" state,
+||| exactly the same seeding/extension `paramEligibility`/
+||| `tailValueReps` (Stage 2, above) already use: a function's own
+||| top-level parameters start it off (`applyCallSiteRewrite`'s own
+||| entry point), each `RLet`'s own already-decided `Rep` extends it,
+||| and `RLoop`'s own `loopParams` extends it across a loop's own body.
+||| `inTail` tracks whether the point currently being visited is
+||| genuinely the *whole function's* own tail position (only ever
+||| `True` at the top-level entry point, and everywhere `RLet`'s own
+||| `body`/`RCmpCase`/`RConCase`/`RConstCase`/`RLoop`'s own branches/
+||| every wrapper node's own `cont` thread it straight through
+||| unchanged) -- a bare `RAppName` reached there is left alone
+||| (deliberately out of scope, see the module's own header note); one
+||| reached with `inTail = False` is always safe to rewrite.
+|||
+||| Critically, `inTail` is *always* `False` while walking an `RLet`'s
+||| own `value` (see this function's own first clause) -- and `value`
+||| is *not* always the flat leaf (`ROp`/`RAppName`/`RCon`/etc.) it
+||| might look like at first: Phase 1's own ANF normalisation of a call
+||| *argument* expression (e.g. `fib (n - 2)`) nests a further `RLet`
+||| *inside* the outer one's own value (`let v5 = (let v6 = n - 2 in
+||| fib v6) in ...`), so the actual call can sit arbitrarily deep in a
+||| chain of further `RLet`s, never directly as `value` itself. This
+||| function's own first clause handles that correctly by *recursing*
+||| into `value` (in non-tail mode, so any `RAppName` at *its* own
+||| ultimate tail -- reached via this same function's own catch-all
+||| below -- gets rewritten too) *before* deciding whether the
+||| resulting `value1`'s own `ultimateTail` (peeling through exactly
+||| that same kind of nested-`RLet` chain) is now a promotion
+||| candidate.
+applyCallSiteRewriteBody : SortedMap Name (Name, List Rep, Rep) -> SortedMap Int Rep -> Bool -> RCExp -> RCExp
+applyCallSiteRewriteBody workers reps inTail (RLet fc var rep value body) =
+    let value1 = applyCallSiteRewriteBody workers reps False value
+        -- Promotion candidate iff `var` was still genuinely `RBoxed`
+        -- and `value1`'s own ultimate tail is now a worker call with a
+        -- native `retRep` -- see `nativePromotionFor`'s own doc
+        -- comment for the actual eligibility question asked about
+        -- `body`.
+        promotedTy : Maybe PrimType
+        promotedTy = case rep of
+                          RBoxed => case ultimateTail value1 of
+                                         RAppNameRep _ _ _ (RNative ty) _ _ => nativePromotionFor var ty body
+                                         RAppNameRep _ _ _ (RInlineNative ty) _ _ => nativePromotionFor var ty body
+                                         _ => Nothing
+                          _ => Nothing
+    in case promotedTy of
+            Just ty =>
+                -- stripOwnership needs no id renaming here, same
+                -- reasoning as Compiler.RC2.DualABI's own Stage 3a use:
+                -- `var` is a fresh RLet binding, not retrofitting a
+                -- representation onto an already-declared C variable.
+                let body' = stripOwnership (SortedSet.fromList [var]) body
+                in RLet fc var (RNative ty) value1 (applyCallSiteRewriteBody workers (insert var (RNative ty) reps) inTail body')
+            Nothing =>
+                RLet fc var rep value1 (applyCallSiteRewriteBody workers (insert var rep reps) inTail body)
+applyCallSiteRewriteBody workers reps inTail (RCmpCase fc op args postDrop t f) =
+    RCmpCase fc op args postDrop (applyCallSiteRewriteBody workers reps inTail t) (applyCallSiteRewriteBody workers reps inTail f)
+applyCallSiteRewriteBody workers reps inTail (RConCase fc sc alts mDef) =
+    RConCase fc sc (map (rewriteConAlt workers reps inTail) alts) (map (applyCallSiteRewriteBody workers reps inTail) mDef)
+  where
+    rewriteConAlt : SortedMap Name (Name, List Rep, Rep) -> SortedMap Int Rep -> Bool -> RConAlt -> RConAlt
+    rewriteConAlt workers reps inTail (MkRConAlt name ci tag args body) =
+        MkRConAlt name ci tag args (applyCallSiteRewriteBody workers reps inTail body)
+applyCallSiteRewriteBody workers reps inTail (RConstCase fc sc alts mDef) =
+    RConstCase fc sc (map (rewriteConstAlt workers reps inTail) alts) (map (applyCallSiteRewriteBody workers reps inTail) mDef)
+  where
+    rewriteConstAlt : SortedMap Name (Name, List Rep, Rep) -> SortedMap Int Rep -> Bool -> RConstAlt -> RConstAlt
+    rewriteConstAlt workers reps inTail (MkRConstAlt c body) = MkRConstAlt c (applyCallSiteRewriteBody workers reps inTail body)
+applyCallSiteRewriteBody workers reps inTail (RLoop fc loopParams initial body) =
+    RLoop fc loopParams initial (applyCallSiteRewriteBody workers (foldl (\m, (i, r) => insert i r m) reps loopParams) inTail body)
+applyCallSiteRewriteBody workers reps inTail (RDup fc v cont) = RDup fc v (applyCallSiteRewriteBody workers reps inTail cont)
+applyCallSiteRewriteBody workers reps inTail (RDrop fc vs cont) = RDrop fc vs (applyCallSiteRewriteBody workers reps inTail cont)
+applyCallSiteRewriteBody workers reps inTail (RFree fc v cont) = RFree fc v (applyCallSiteRewriteBody workers reps inTail cont)
+applyCallSiteRewriteBody workers reps inTail (RReleaseReuse fc v cont) = RReleaseReuse fc v (applyCallSiteRewriteBody workers reps inTail cont)
+applyCallSiteRewriteBody workers reps inTail (RReuseOffer fc sc dupOnShared cont) = RReuseOffer fc sc dupOnShared (applyCallSiteRewriteBody workers reps inTail cont)
+-- The only case that ever actually rewrites a call: a bare RAppName
+-- reached with inTail = False (never anyone's RLet-bound value, by
+-- this point -- the RLet clause above already peeled through those --
+-- so this is the ultimate tail of *some* value-computation chain, not
+-- the whole function's own true tail position).
+applyCallSiteRewriteBody workers reps False value@(RAppName fc _ n args) =
+    case lookup n workers of
+         Nothing => value
+         Just (workerName, argReps, workerRetRep) =>
+             if length args /= length argReps
+                then value
+                else RAppNameRep fc workerName argReps workerRetRep (postDropFor reps argReps args) args
+-- Every other shape (including a bare RAppName reached with
+-- inTail = True -- the whole function's own true tail position,
+-- deliberately left alone, see this function's own doc comment):
+-- RV, RAppNameRep, RUnderApp, RApp, RCon, RExtPrim, RPrimVal, RErased,
+-- RCrash, RLoopContinue -- none hold a further RLet-bound-value
+-- position of their own for this pass to inspect.
+applyCallSiteRewriteBody _ _ _ e = e
+
+||| Whole-program pass: Stage 4 itself. Every direct, saturated,
+||| non-tail-position call anywhere in the program targeting a function
+||| Stage 3a/3b gave a worker to gets redirected straight to that
+||| worker, native arguments/return where the call site already has (or
+||| can be promoted to have) them on hand -- see the module's own header
+||| note and `applyCallSiteRewriteBody`'s own doc comment for the full
+||| design. Runs after `applyDualABI` (needs its own worker table
+||| already built); every definition (wrapper, worker, or untouched)
+||| passes through the same rewrite uniformly -- nothing here needs to
+||| know which of those three a given definition is, since a wrapper's
+||| own trivial single-call body and an ordinary function's body are
+||| rewritten by exactly the same logic. Each definition's own
+||| top-level body starts `inTail = True` -- that's genuinely where the
+||| function's own real tail position is.
+export
+applyCallSiteRewrite : List (Name, RCDef) -> List (Name, RCDef)
+applyCallSiteRewrite defs =
+    let workers = workerTable defs
+    in map (rewriteDef workers) defs
+  where
+    rewriteDef : SortedMap Name (Name, List Rep, Rep) -> (Name, RCDef) -> (Name, RCDef)
+    rewriteDef workers (n, MkRCFun args retRep body) =
+        (n, MkRCFun args retRep (applyCallSiteRewriteBody workers (fromList args) True body))
+    rewriteDef _ (n, d) = (n, d)

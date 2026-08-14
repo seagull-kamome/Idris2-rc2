@@ -325,7 +325,17 @@ opNativeUsesThrough _ _ _ = empty
 ||| just tail positions -- an operand can appear anywhere. A bare
 ||| (not-`RLet`-bound) `ROp` -- the tail value of some branch -- is
 ||| always emitted Boxed (see `emitInto`'s own fallback to `emitRC`), so
-||| doesn't count either.
+||| doesn't count either -- *when this pass itself runs*, strictly
+||| before `Compiler.RC2.DualABI` has decided any function's own return
+||| eligibility, every bare tail genuinely still is Boxed. By the time
+||| `Compiler.RC2.DualABI`'s own Stage 4 runs, that's no longer always
+||| true (`Compiler.RC2.Emit`'s own `emitNativeReturn`, Stage 3b, can
+||| render a bare tail natively too) -- exported (alongside
+||| `nativeArgType` below) so Stage 4 can union this set with its own
+||| separate bare-tail check rather than duplicating this whole
+||| traversal to add one more case that would only be valid for *some*
+||| of this function's own callers.
+export
 nativeArgTypes : (p : Int) -> RCExp -> SortedSet PrimType
 nativeArgTypes p (RLet _ _ rep value body) =
     let fromOp = case rep of

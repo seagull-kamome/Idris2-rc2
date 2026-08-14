@@ -36,6 +36,11 @@ overview, history, and known gaps.
 - `env.sh` / `gen-env.sh` — environment setup; `source env.sh` before
   building/running rc2 or plain `idris2`
 
+## コーディング規約
+
+- Cの関数名、グローバル変数、マクロ等には 'idris2rc2_' のプリフィックスをつける。
+  マクロの場合は 'IDRIS2RC2_'を使う。
+
 ## Build & test
 
 ```sh
@@ -79,4 +84,5 @@ and benchmarks (`rc2/tests/Bench*.idr`) are compiled/run the same way
   ends up staged.
 - TODO.mdには積み残しの課題を記録する。実装が済んでドキュメント化した項目は書かない。
 - ドキュメントを読めばわかる事はコードのコメントには書かず、参照リンクの記載に留める。
+
 

@@ -61,8 +61,8 @@ This is the classic worker/wrapper transformation (GHC uses the same
 idea for strictness-driven unboxing). A direct, saturated call site
 that already has (or only needs) the native representation can target
 the worker directly, skipping the wrapper's own conversion shuffle
-entirely -- **that rewrite is Stage 4's job, not yet implemented**; see
-"Status" below.
+entirely -- **that rewrite is Stage 4's job** (implemented -- see
+"Stage 4" and "Status" below).
 
 ### Why no whole-program fixed point is needed
 
@@ -298,9 +298,12 @@ all (confirmed the hard way -- see "Bugs found" below):
   closure-deferral/trampoline dance here can't introduce unbounded C
   stack growth anywhere it wasn't already possible. **This safety
   argument is specific to Stage 3a's own narrow usage** (a
-  fixed-topology, single-hop delegation) and needs to be revisited
-  before Stage 4 starts rewriting *arbitrary* call sites throughout the
-  whole program -- see "Open design question for Stage 4" below.
+  fixed-topology, single-hop delegation) and does *not* automatically
+  extend to Stage 4's own, much broader call-site rewriting -- see
+  "Stage 4"'s own "Scope: non-tail-position calls only, permanently"
+  below for how that stage resolved it (by simply never touching a
+  tail-position call site at all, rather than trying to prove this
+  same argument for arbitrary ones).
 
 ## Stage 3b: native returns
 
@@ -467,11 +470,16 @@ IDRIS2RC2_Value *Main_fib(IDRIS2RC2_Value * var_0)
 ```
 
 Only this direction (rendering a native worker's own result as Boxed,
-for a wrapper's always-Boxed tail value) is implemented -- a caller
-wanting `RAppNameRep`'s own result rendered *natively* instead
-(skipping the boxing) is Stage 4's own concern: Stage 3b's only
-producer of this node is still `Compiler.RC2.DualABI`'s own wrapper
-body, always feeding a `SinkReturn RBoxed`.
+for a wrapper's always-Boxed tail value) is what `emitAppNameRepInto`
+itself does -- at the time Stage 3b landed, that was still the *only*
+producer of this node (`Compiler.RC2.DualABI`'s own wrapper body,
+always feeding a `SinkReturn RBoxed`). A caller wanting `RAppNameRep`'s
+own result rendered *natively* instead (skipping the boxing) turned
+out to be Stage 4's own concern after all -- not by changing
+`emitAppNameRepInto`, but via a separate, dedicated `RAppNameRep` case
+on `emitNativeValue` (see Stage 4's own "The promotion" section below)
+for the one new shape Stage 4 introduces: an `RLet` whose own call
+result is promoted straight to native, never boxed at all.
 
 ### `createCFunctions`'s own return-type declaration
 
@@ -491,6 +499,125 @@ let fn = "\{retTypeStr}\{cName !(getFullName n)}" ++ ...
 `Main.fib`'s own worker forward-declares as `int64_t rc2_dualABI_0(int64_t
 var_0);` -- confirmed by reading the generated C directly, same
 verification discipline as every other stage.
+
+## Stage 4: call-site rewriting
+
+Where the actual performance win materialises. Landed as one combined
+stage rather than split further (unlike 3a/3b) -- the "rewrite the
+call" half reuses already-verified emission machinery
+(`emitAppNameRepInto` already boxes a native result on demand) with
+essentially no new risk, and the "promote the enclosing `RLet`" half
+is what makes the rewrite actually pay off; doing only the first half
+would have left every call boxing its own result only to immediately
+unbox it again, an underwhelming win not worth its own separate stage.
+
+### Scope: non-tail-position calls only, permanently
+
+Only a direct, saturated, **non-tail-position** call gets redirected to
+its own callee's worker. Tail-position calls to a function with a
+worker are a *deliberate, permanent* scope boundary, not a later
+stage: they're currently rendered via `tryBuildClosureInto`'s own
+closure-deferral (a boxed, trampolined value, letting the *caller's own
+caller* resolve it later -- bounds C stack growth for an
+otherwise-unknown-depth chain of tail calls that aren't self-/
+mutually-recursive in a way `Compiler.RC2.Loop`/`Compiler.RC2.MutualLoop`
+already convert to a `goto`). Rewriting such a call into a direct,
+non-deferred `RAppNameRep` call could reintroduce that unbounded
+growth, and telling *which* tail-position call sites are safe to
+rewrite this way would need real interprocedural analysis -- exactly
+the whole-program fixed point this entire effort has otherwise avoided
+needing (the same reason `returnEligibility`, in Stage 2, already
+leaves a *pure* tail-call delegation ineligible rather than chasing
+it).
+
+### The worker table
+
+`workerTable` recovers "which functions got a worker, and what its own
+`(workerName, argReps, retRep)` is" by scanning the post-`applyDualABI`
+def list for the exact shape `synthesizeWorker` always produces for a
+wrapper: `MkRCFun _ _ (RAppNameRep _ workerName argReps retRep _ _)`,
+nothing else in its own body. No separate table needs threading out of
+`applyDualABI` itself.
+
+### The rewrite: `applyCallSiteRewriteBody`
+
+Walks every definition's own body (wrapper, worker, or untouched
+function -- all rewritten by exactly the same logic, nothing here needs
+to know which of the three a given definition is), threading a
+`SortedMap Int Rep` of locally-known Reps (same seeding/extension
+`paramEligibility`/`tailValueReps` already use) and a `Bool` tracking
+whether the current point is genuinely the *whole function's* own tail
+position -- `True` only at the top-level entry point, and everywhere
+`RLet`'s own `body`, every branching construct's own branches, and
+every wrapper node's own `cont` thread it straight through unchanged.
+
+The one genuine subtlety: an `RLet`'s own *value* is not always the
+flat leaf (`ROp`/`RAppName`/`RCon`/etc.) it might look like. Phase 1's
+own ANF normalisation of a call *argument* expression nests a further
+`RLet` **inside** the outer one's own value --
+
+```
+let v3 = (let v4 = n - 1 in fib v4) in
+let v5 = (let v6 = n - 2 in fib v6) in
+v3 + v5
+```
+
+-- so the actual call can sit arbitrarily deep in a chain of further
+`RLet`s, never directly as `value` itself. The `RLet` clause handles
+this by *recursing* into `value` first (in non-tail mode, so whatever
+`RAppName` sits at *its own* ultimate tail -- reached via this same
+function's own catch-all, the only clause that actually rewrites
+anything -- gets rewritten too), then inspecting the rewritten
+`value1`'s own `ultimateTail` (peeling through that same nested-`RLet`
+shape) to decide whether the *outer* `RLet` itself -- `v3`, `v5` above,
+not `v4`/`v6` -- is a promotion candidate.
+
+`postDropFor` needs no liveness analysis of its own to decide which
+rewritten arguments need an explicit drop: `Compiler.RC2.RC`'s own
+`annotate` already decided, for the *original* (still-`RAppName`) call
+being replaced, that passing a Boxed argument to a call consumes
+exactly one reference (dup'ing beforehand if that argument's own local
+is still needed after this point) -- reading it natively instead and
+dropping it right here pays the exact same net cost, so whatever
+`annotate` already arranged around the call site still balances
+correctly either way.
+
+### The promotion: `nativePromotionFor`
+
+Reuses `Compiler.RC2.Loop`'s own `nativeArgTypes` (now `export`ed
+alongside `nativeArgType`) directly -- the same question it already
+asks about a whole function's own top-level parameter, just asked
+about an `RLet`-bound worker-call result instead: does the rest of
+this let's own scope read it as a native-context operand,
+consistently, at the worker's own `retRep`? When it finds one,
+`stripOwnership` (reused a third time, no id renaming needed here
+either -- a fresh `RLet` binding, not retrofitting onto an
+already-declared C variable) removes whatever stale Boxed-lifetime
+bookkeeping `annotate` attached to it back when it assumed an ordinary
+Boxed local. Any *other*, still-Boxed-context use of the same local
+elsewhere (e.g. stored into a constructor field) keeps working
+regardless of promotion, via `rcVarToBoxedC`'s own on-demand reboxing
+of a native value -- a fresh allocation instead of sharing the one
+this call *used* to produce, invisible to any Idris-level program
+(scalars have no observable identity).
+
+`fib`'s own worker is the concrete before/after:
+
+```c
+// before Stage 4
+IDRIS2RC2_Value * var_3 = idris2rc2_trampoline(Main_fib(idris2rc2_mkInt64(var_4)));
+IDRIS2RC2_Value * var_5 = idris2rc2_trampoline(Main_fib(idris2rc2_mkInt64(var_6)));
+int64_t tmp_9 = (idris2rc2_to_i64(var_3) + idris2rc2_to_i64(var_5));
+
+// after Stage 4
+int64_t var_3 = rc2_dualABI_0(var_4);
+int64_t var_5 = rc2_dualABI_0(var_6);
+return (var_3 + var_5);
+```
+
+No boxing, no unboxing, no dup/drop at all for either recursive call's
+own argument or result -- the whole computation stays in `int64_t`
+from the worker's own entry to its own `return`.
 
 ## Bugs found and fixed
 
@@ -600,68 +727,98 @@ the closest analogue to bug #2 above) passed without any fix needed.
    the entire `tests/Test*.idr`/`Bench*.idr` matrix re-diffed
    byte-for-byte against real `idris2 --cg refc`, unaffected.
 
+4. **First Stage 4 attempt never actually rewrote `fib`'s own recursive
+   calls, silently.** The very first working build compiled and ran
+   correctly (`fib 30` still `832040`), which made this easy to miss --
+   only reading the generated C directly (this project's own standing
+   discipline) revealed `rc2_dualABI_0`'s own body still called
+   `Main_fib` (the wrapper), not itself. Root cause: the first version
+   of `applyCallSiteRewriteBody` only recognised a call sitting
+   *directly* as an `RLet`'s own `value`, and treated a bare `RAppName`
+   reached any other way as "must be the whole function's own tail
+   position, leave alone" -- an assumption that held for every shape
+   tried by hand, but not for `fib(n - 1)`: Phase 1's own ANF
+   normalisation of a call *argument* expression nests a further
+   `RLet` **inside** the outer one's own value (`let v3 = (let v4 = n -
+   1 in fib v4) in ...`), so the call itself was never directly an
+   `RLet`'s own value at all, and the walk's own "must be tail
+   position" fallback swallowed it. Fixed by threading an explicit
+   `inTail : Bool` through the whole walk (mirroring
+   `Compiler.RC2.Emit`'s own `TailPositionStatus`) -- `True` only at a
+   definition's own top-level entry point, threaded straight through
+   every construct that doesn't change tail-ness, and *always* `False`
+   while descending into an `RLet`'s own `value` -- so the *only* place
+   a bare `RAppName` ever gets left alone is one reached with
+   `inTail = True`, genuinely the whole function's own tail position;
+   everywhere else, it's the ultimate tail of *some* value-computation
+   chain and always safe to rewrite. See
+   `applyCallSiteRewriteBody`'s own doc comment above for the corrected
+   design.
+5. **`nativeArgType`'s own established "bare tail is always Boxed"
+   assumption is stale by the time Stage 4 runs.** Even after fixing
+   bug #4 above, `fib`'s own worker still boxed both recursive calls'
+   results (`idris2rc2_mkInt64(rc2_dualABI_0(...))`) only to
+   immediately unbox them again for the `+` -- the promotion itself
+   never fired. `Compiler.RC2.Loop`'s own `nativeArgTypes` (reused
+   directly for the promotion decision, see "Stage 4" above)
+   deliberately doesn't count a *bare*, not-further-`RLet`-bound
+   `ROp`/`RCmpCase` reading a candidate variable -- correctly, for
+   *that pass's own* caller (`Compiler.RC2.Loop.applyLoop`, which
+   always runs strictly before any function's own return eligibility
+   is decided, so at the time *it* asks, a bare tail genuinely is
+   always still Boxed) -- but `v3 + v5` *is* `fib`'s own worker's bare
+   tail, and by Stage 4's own point in the pipeline that tail is
+   already known to render natively (`Compiler.RC2.Emit`'s own
+   `emitNativeReturn`, Stage 3b) precisely because the worker's own
+   `retRep` already is. Reusing `nativeArgType` unmodified silently
+   missed the single most important case this whole stage exists for.
+   Fixed without touching `nativeArgTypes`/`nativeArgType` themselves
+   (both already extensively verified elsewhere -- `export`ing the
+   set-returning `nativeArgTypes` alongside the already-exported
+   `nativeArgType` was the only change needed there) by adding a
+   separate, Stage-4-scoped `bareTailNativeReads` that checks
+   specifically for this one additional shape, unioned with
+   `nativeArgTypes`'s own result before the final "exactly one
+   consistent type" decision. Confirmed by reading the generated C
+   directly: `fib`'s own worker now reads `int64_t var_3 =
+   rc2_dualABI_0(var_4); ...; return (var_3 + var_5);` -- no boxing,
+   no unboxing, no dup/drop at all for either recursive call.
+
 ## Status
 
-**Implemented and verified** (Stages 1, 2, 3a, 3b): the IR foundation,
-the read-only eligibility analysis, and worker/wrapper synthesis for
-both parameters and return values. `Main.fib` compiles to a wrapper
-(`Main_fib`, unchanged Boxed signature) that unboxes its argument,
-calls a synthesised worker (`rc2_dualABI_N`, `int64_t` parameter *and*
-`int64_t` return) doing the real recursive work entirely in native
-`int64_t` throughout its own body, and boxes the final result back up
--- confirmed to compute the correct result (`832040` for `fib 30`), and
-the full refc-suite (19/19) plus the existing smoke-test/benchmark
-matrix re-verified byte-for-byte/crash-free against `idris2 --cg refc`
-(including `Main.sumTo`, whose worker combines loop-carried native
-parameters, from `Compiler.RC2.Loop`, with a native return from this
-stage, in the same function). **No performance change yet** -- nothing
-anywhere else in the program calls a worker directly (every call still
-goes through the unchanged wrapper, one extra thin layer deep). Both
-stages were deliberately scoped to "get the worker/wrapper shape
-itself right, in isolation" before building anything riskier on top --
-see `doc/loop-conversion.md`'s own precedent for why staging this way
-pays off.
+**Fully implemented and verified** (Stages 1, 2, 3a, 3b, 4). `Main.fib`
+compiles to a wrapper (`Main_fib`, unchanged Boxed signature, every
+existing caller anywhere else keeps working unmodified) plus a worker
+(`rc2_dualABI_N`) doing the real recursive work entirely in native
+`int64_t`, with **both of its own recursive calls now targeting the
+worker directly**:
 
-**Not yet implemented**:
+```c
+int64_t var_4 = (var_0 - INT64_C(1));
+int64_t var_3 = rc2_dualABI_0(var_4);
+int64_t var_6 = (var_0 - INT64_C(2));
+int64_t var_5 = rc2_dualABI_0(var_6);
+return (var_3 + var_5);
+```
 
-- **Stage 4 -- call-site rewriting.** Walk every function's own body
-  (not just tail positions -- an `RAppName` can appear anywhere, e.g.
-  as an `ROp` operand) throughout the *whole* program, and rewrite
-  every direct, saturated call targeting a function that now has a
-  worker into `RAppNameRep`, with argument/result rendering chosen per
-  what the *caller* already has on hand (or wants). This is where the
-  actual performance win materialises -- e.g. `fib`'s own two
-  recursive calls (currently still `Main_fib(idris2rc2_mkInt64(...))`,
-  boxing on the way in and out every time) becoming direct
-  `rc2_dualABI_0(...)` calls, native all the way through.
+No boxing, no unboxing, no heap allocation, no dup/drop anywhere in
+this computation -- the whole thing stays in `int64_t` from the
+worker's own entry to its own `return`. Confirmed correct (`832040`
+for `fib 30`), confirmed leak-free (`valgrind --leak-check=full`,
+`definitely lost: 0 bytes` across `tests/BenchFib.idr`,
+`tests/BenchLoop.idr`, `tests/BenchChain.idr`,
+`tests/Test11DualABILeak.idr`), the full refc-suite (19/19) and the
+entire smoke-test/benchmark matrix re-verified byte-for-byte against
+real `idris2 --cg refc`, and -- for the first time in this whole
+effort -- a **measured** performance win: `fib 30`, timed directly
+(`time`, three runs each), runs in ~0.14s under `idris2-rc2` versus
+~0.21s under real `idris2 --cg refc`, roughly **35% faster** on the
+flagship non-tail-recursive case this whole effort exists for.
 
-### Open design question for Stage 4
-
-Stage 3a's own "always safe to skip closure-deferral, `RAppNameRep` is
-never trampoline-deferred" argument (see "Emission" above, and Stage
-3b's own native-`retRep` case, which keeps the same property) relied
-entirely on every `RAppNameRep` call being a fixed, single-hop
-delegation (wrapper -> its own worker, nothing else). Stage 4 will
-introduce `RAppNameRep` calls at **arbitrary** call sites throughout the
-program, including ones that used to be genuine tail-position
-delegating calls `tryBuildClosureInto` would have deferred via a
-closure (returned as a to-be-trampolined value, letting the *caller's*
-own caller resolve it later, bounding C stack growth for an
-otherwise-unknown-depth chain of tail calls that aren't self- or
-mutually-recursive in a way `Compiler.RC2.Loop`/`Compiler.RC2.MutualLoop`
-already convert to a `goto`). If Stage 4 ever rewrites *that* kind of
-call site into a direct, non-deferred `RAppNameRep` call, it could
-reintroduce unbounded C stack growth somewhere that was previously
-protected. Before Stage 4 lands: work out exactly which call-site
-shapes are safe to rewrite this way (a strong candidate: only rewrite
-*non-tail-position* call sites at first, where there was never any
-closure-deferral to begin with -- `emitRC`'s own existing `RAppName`
-`NotInTailPosition` case *already* resolves the call immediately and
-trampolines the result, so replacing it with a direct `RAppNameRep`
-call changes representation, not this stack-depth property at all;
-tail-position call sites, where deferral-avoidance *is* a real
-behavioural change, may need to stay out of scope, or need their own
-dedicated safety argument first).
+Tail-position calls remain permanently out of scope (see "Scope" under
+"Stage 4" above) -- not a future stage, a deliberate, considered
+boundary matching `returnEligibility`'s own "pure delegation" exclusion
+from Stage 2.
 
 ## Files
 
@@ -670,14 +827,17 @@ dedicated safety argument first).
   `applyDualABI`/`isMutualLoopMerged`/`FreshId` (Stage 3a+3b:
   `synthesizeWorker` now promotes both `workerArgs` and `workerRetRep`
   independently of `wrapperRetRep`), `describeEligibility`/
-  `dumpDualABI` (the `--directive dumpdualabi` debug dump).
+  `dumpDualABI` (the `--directive dumpdualabi` debug dump),
+  `workerTable`/`applyCallSiteRewriteBody`/`applyCallSiteRewrite`/
+  `ultimateTail`/`bareTailNativeReads`/`nativePromotionFor`/
+  `postDropFor`/`localRepIn` (Stage 4).
 - `rc2/src/Compiler/RC2/RCExp.idr` -- `MkRCFun`'s new shape,
   `RAppNameRep` (now with its own `postDrop` field, mirroring `ROp`'s
   own, added for the reference-leak fix above).
-- `rc2/src/Compiler/RC2/Loop.idr` -- `nativeArgType`/`stripOwnership`
-  now `export`ed for `Compiler.RC2.DualABI`'s own reuse; defensive
-  `RAppNameRep` pass-through case in `renameRCExp` (now also renaming
-  `postDrop`).
+- `rc2/src/Compiler/RC2/Loop.idr` -- `nativeArgType`/`nativeArgTypes`/
+  `stripOwnership` now `export`ed for `Compiler.RC2.DualABI`'s own
+  reuse; defensive `RAppNameRep` pass-through case in `renameRCExp`
+  (now also renaming `postDrop`).
 - `rc2/src/Compiler/RC2/RC.idr` -- `normalizeDef`/`annotateDef` updated
   for `MkRCFun`'s new shape; defensive `RAppNameRep` pass-through case
   in `annotate`.
@@ -688,7 +848,9 @@ dedicated safety argument first).
   for both a function's own return-type declaration and each
   parameter's own declaration/`RepMap` seeding; `Sink`'s own
   `SinkReturn` constructor now carries a `Rep` (Stage 3b); new
-  `emitNativeReturn`; `emitNativeValue`'s new bare-`RV` case;
+  `emitNativeReturn`; `emitNativeValue`'s new bare-`RV` case (Stage 3b)
+  and new `RAppNameRep` case (Stage 4, for a promoted `RLet`'s own
+  native-consuming render);
   `emitInto`'s fallback arm dispatches to `emitNativeReturn` for a
   native `SinkReturn`; `RAppNameRep` moved out of `emitRC`'s own
   dispatch entirely into a new, dedicated `emitAppNameRepInto`
@@ -698,7 +860,8 @@ dedicated safety argument first).
   `args`/`retRep` rendering; `RAppNameRep`'s own `callRep` rendering
   (now including `postDrop`).
 - `rc2/src/Compiler/RC2/RC2.idr` -- `toRCDefs`'s own pipeline wiring
-  (`applyDualABI` after `applyLoop`); `--directive dumpdualabi` wiring.
+  (`applyDualABI` then `applyCallSiteRewrite` after `applyLoop`);
+  `--directive dumpdualabi` wiring.
 - `rc2/tests/Test11DualABILeak.idr` -- regression test for the
   reference-leak bug above; verify with `valgrind --leak-check=full`,
   not just a stdout diff (see the test file's own comment).
@@ -718,19 +881,19 @@ dedicated safety argument first).
    there too; the interesting native findings are what the worker
    itself got built with, visible directly in the generated C instead
    (next step).
-4. `tests/BenchFib.idr` is the canonical Stage 3a+3b smoke test: `fib
-   30` must still print `832040`; `grep -n "^int64_t rc2_dualABI\|
+4. `tests/BenchFib.idr` is the canonical smoke test for every stage:
+   `fib 30` must still print `832040`; `grep -n "^int64_t rc2_dualABI\|
    ^IDRIS2RC2_Value \*rc2_dualABI" build/exec/*.c` confirms a worker
    actually got synthesised and shows whether its own return ended up
    native, and reading its own C body directly confirms (a) the
    promoted parameter/return are declared with their native C types,
    (b) a pending-Boxed-operand-drop tail value renders as
    "materialise into a temp, drop, then return" (never a drop directly
-   ahead of a bare `return`), and (c) the original's own recursive
-   calls still target the *wrapper* (`Main_fib`, not the worker
-   directly) -- that last detail is what confirms Stage 4's own
-   call-site rewriting hasn't accidentally started firing early.
-   `tests/BenchLoop.idr`'s own `Main.sumTo` is the loop-combination
+   ahead of a bare `return`), and (c) -- **now that Stage 4 is
+   implemented** -- the original's own recursive calls target the
+   *worker* directly (`rc2_dualABI_N`, not `Main_fib`), with no
+   remaining `idris2rc2_mkInt64`/`idris2rc2_to_i64` pair around either
+   call. `tests/BenchLoop.idr`'s own `Main.sumTo` is the loop-combination
    smoke test -- its worker's own loop-exit tail value must render
    through the same native path.
 5. Full `tests/Test*.idr`/`tests/Bench*.idr` suite, diffed against real
@@ -766,3 +929,14 @@ dedicated safety argument first).
    it did in `Main.fib`/`Main.sumTo`'s own recursion) -- expect
    `definitely lost: 0 bytes in 0 blocks` (only the 100-entry immortal
    small-int cache should show as `still reachable`).
+7. **Once Stage 4 is actually rewriting call sites, verify the
+   performance win directly** -- `time ./build/exec/<BenchFib output>`
+   a few times, next to the same for a real-`idris2 --cg refc` build of
+   the same file. `fib 30` (`tests/BenchFib.idr`) went from parity/
+   slightly-behind RefC (every earlier stage in this project's own
+   history, per `BENCHMARKS.md`) to roughly **35% faster** once Stage 4
+   actually landed -- if a future change to this pipeline regresses
+   that back towards parity, that's a real signal something stopped
+   rewriting or promoting a call site that used to be, worth
+   investigating with `--directive dumprcexp` and a direct read of the
+   generated C (steps 3-4 above) before assuming it's just noise.

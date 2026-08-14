@@ -1923,6 +1923,35 @@ mutual
     emitNativeValue ty (RV fc v) = do
         valStr <- rcVarToNativeC ty v
         pure (valStr, [])
+    -- A direct worker call whose own result Compiler.RC2.DualABI's own
+    -- Stage 4 promoted an enclosing RLet's Rep to match (see
+    -- `applyCallSiteRewriteBody`'s own doc comment: "does the rest of
+    -- this let's own scope read the call's result natively, skip the
+    -- box-then-immediately-unbox round trip entirely"). `postDrop` here
+    -- is exactly `RAppNameRep`'s own field (see its own doc comment in
+    -- RCExp.idr) -- any Boxed-sourced *argument* this call reads
+    -- natively, handed back for the same reason ROp's own postDrop
+    -- above is: our caller (declareNative) hasn't emitted the statement
+    -- that actually performs the read yet. `retRep` is expected to
+    -- already be `RNative ty`/`RInlineNative ty` exactly -- Stage 4
+    -- only ever promotes an RLet's own Rep when the worker being called
+    -- already returns natively at this same `ty` (`nativePromotionFor`
+    -- checks this before ever constructing this shape) -- a Boxed
+    -- `retRep` reaching here would mean that invariant broke somewhere,
+    -- so it's an internal error, not a case to render around.
+    emitNativeValue ty (RAppNameRep fc n argReps retRep postDrop args) = do
+        let nargs = length args
+        when (nargs > MaxExtractFunArgs) $
+            throw $ InternalError "[rc2] RAppNameRep: more than \{show MaxExtractFunArgs} args not yet supported"
+        argStrs <- traverse (\(rep, v) => case rep of
+                                 RNative t => rcVarToNativeC t v
+                                 RInlineNative t => rcVarToNativeC t v
+                                 RBoxed => rcVarToBoxedC v) (zip argReps args)
+        let call = "\{cName n}(\{concat $ intersperse ", " argStrs})"
+        case retRep of
+             RBoxed => throw $ InternalError "[rc2] emitNativeValue: RAppNameRep with Boxed retRep reached a native context"
+             RNative _ => pure (call, postDrop)
+             RInlineNative _ => pure (call, postDrop)
     emitNativeValue ty (ROp fc _ op args postDrop) = do
         argStrs <- rc2traverseVect (\v => rcVarToNativeC (opArgTyFor ty op) v) args
         -- `postDrop` is exactly the Boxed operands this op needs dropped

@@ -7,11 +7,15 @@ module Compiler.RC2.RC2
 -- loop conversion, whole-program) -> Compiler.RC2.Loop (self-tail-call
 -- loop conversion -- including MutualLoop's own synthesised merged
 -- functions, whose internal transitions are already ordinary self-
--- tail-calls by construction) -> Compiler.RC2.DualABI (native-parameter
--- worker synthesis, whole-program -- runs after Loop specifically so
--- it can read a self-tail-recursive function's own native-shadow
--- decision straight off its RLoop, see DualABI's own module note) ->
--- Compiler.RC2.Emit (RCExp -> C) -> Compiler.RC2.CC (cc invocation).
+-- tail-calls by construction) -> Compiler.RC2.DualABI's own worker/
+-- wrapper synthesis (native-parameter/return worker synthesis, whole-
+-- program -- runs after Loop specifically so it can read a self-tail-
+-- recursive function's own native-shadow decision straight off its
+-- RLoop, see DualABI's own module note) -> Compiler.RC2.DualABI's own
+-- Stage 4 call-site rewriting (redirects non-tail calls to a worker
+-- straight at it -- needs the worker table Stage 3a/3b's own synthesis
+-- just built, hence running strictly after it) -> Compiler.RC2.Emit
+-- (RCExp -> C) -> Compiler.RC2.CC (cc invocation).
 
 import Compiler.RC2.CC
 import Compiler.RC2.DualABI
@@ -54,7 +58,8 @@ toRCDefs lds = do
     reused <- traverse (\(n, ld) => (n,) . applyReuse <$> toRCDef ld) lds
     merged <- applyMutualLoop reused
     let looped = map (\(n, d) => (n, applyLoop n d)) merged
-    applyDualABI looped
+    withWorkers <- applyDualABI looped
+    pure $ applyCallSiteRewrite withWorkers
 
 export
 compileExpr : Ref Ctxt Defs
