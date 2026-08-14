@@ -60,13 +60,45 @@ applyReuse (MkRCError body) = MkRCError (resolveReuse body)
 applyReuse d@(MkRCCon _ _ _) = d
 applyReuse d@(MkRCForeign _ _ _) = d
 
-toRCDefs : List (Name, LiftedDef) -> Core (List (Name, RCDef))
-toRCDefs lds = do
-    reused <- traverse (\(n, ld) => (n,) . applyConAltNative . applyReuse <$> toRCDef ld) lds
-    merged <- applyMutualLoop reused
-    let looped = map (\(n, d) => (n, applyLoop n d)) merged
-    withWorkers <- applyDualABI looped
-    pure $ applyCallSiteRewrite withWorkers
+||| Optional pipeline-stage disabling, via `--directive
+||| no<stagename>`, for A/B regression isolation (e.g. "does this
+||| observed difference/leak trace back to one specific pass") without
+||| editing `toRCDefs` itself and rebuilding `idris2-rc2` -- the whole
+||| reason this exists is that doing exactly that by hand (comment out
+||| one `. applyX` in the pipeline above, rebuild, retest, put it back,
+||| rebuild again) is what `Compiler.RC2.ConAltNative`'s own two
+||| reverted implementation attempts needed to isolate their own bugs
+||| from pre-existing ones (see `KNOWN-BUGS.md`'s own two small
+||| pre-existing leaks, told apart from that work this way). Recognised
+||| directives: `noreuse`, `noconaltnative`, `nomutualloop`, `noloop`,
+||| `nodualabi` (disables both `DualABI`'s own worker/wrapper synthesis
+||| *and* its own call-site rewriting together -- the rewrite needs the
+||| worker table the synthesis step builds, so splitting them wouldn't
+||| be meaningful). Each stage is still purely additive/optional in the
+||| sense that skipping any of them should still produce *correct* (if
+||| less optimised, and possibly no longer byte-for-byte matching real
+||| `idris2 --cg refc`'s own output shape) C -- none of
+||| `Compiler.RC2.Reuse`/`ConAltNative`/`MutualLoop`/`Loop`/`DualABI` is
+||| required by anything downstream of it for correctness, only for the
+||| optimisation it itself provides. "Not perfectly complete" by
+||| design: a coarse, whole-stage on/off switch, not fine-grained
+||| per-function/per-node control.
+toRCDefs : List String -> List (Name, LiftedDef) -> Core (List (Name, RCDef))
+toRCDefs disabled lds = do
+    reused <- traverse (\(n, ld) => do
+                  d0 <- toRCDef ld
+                  let d1 = if "noreuse" `elem` disabled then d0 else applyReuse d0
+                  let d2 = if "noconaltnative" `elem` disabled then d1 else applyConAltNative d1
+                  pure (n, d2)) lds
+    merged <- if "nomutualloop" `elem` disabled then pure reused else applyMutualLoop reused
+    let looped = if "noloop" `elem` disabled
+                    then merged
+                    else map (\(n, d) => (n, applyLoop n d)) merged
+    if "nodualabi" `elem` disabled
+       then pure looped
+       else do
+           withWorkers <- applyDualABI looped
+           pure $ applyCallSiteRewrite withWorkers
 
 export
 compileExpr : Ref Ctxt Defs
@@ -82,22 +114,30 @@ compileExpr c s _ outputDir tm outfile =
      let outexec = outputDir </> outfile
 
      coreLift_ $ mkdirAll outputDir
+
+     -- `--directive dumprcexp`/`dumpdualabi`/`no<stagename>` all share
+     -- this one `directives sess` list -- upstream idris2's own generic
+     -- per-invocation string passthrough (see Compiler.ES.Codegen's own
+     -- "minimal"/"compact" directives for precedent), so none of this
+     -- needs any changes to idris2-src itself. Fetched once, up front,
+     -- since `toRCDefs`'s own pipeline-stage disabling (see its own doc
+     -- comment) needs it before `toRCDefs` runs, not just after like
+     -- `dumprcexp`/`dumpdualabi` (which only ever inspect its *output*).
+     sess <- getSession
+     let disabledStages = filter (`elem` directives sess)
+                             ["noreuse", "noconaltnative", "nomutualloop", "noloop", "nodualabi"]
      cdata <- getCompileData False Lifted tm
-     defs <- toRCDefs (lambdaLifted cdata)
+     defs <- toRCDefs disabledStages (lambdaLifted cdata)
 
      -- `--directive dumprcexp`: dump the final RCExp -- this exact
-     -- `defs`, after Reuse/MutualLoop/Loop have all run, i.e. precisely
-     -- what generateCSourceFile is about to consume -- to a human-
-     -- readable `.crexpr` file next to the `.c` output. Purely a
+     -- `defs`, after every non-disabled stage above has run, i.e.
+     -- precisely what generateCSourceFile is about to consume -- to a
+     -- human-readable `.crexpr` file next to the `.c` output. Purely a
      -- debugging aid (see Pretty.idr's own module note); idris2-src's
      -- own generic `--dumplifted`/`--dumpanf`/etc. hooks (wired
      -- entirely inside Compiler.Common.getCompileDataWith, already used
      -- above via getCompileData) don't reach this far -- RCExp only
-     -- exists after rc2's own toRCDefs runs. `--directive` is upstream
-     -- idris2's own generic per-invocation string passthrough (see
-     -- Compiler.ES.Codegen's own "minimal"/"compact" directives for
-     -- precedent), so this needs no changes to idris2-src at all.
-     sess <- getSession
+     -- exists after rc2's own toRCDefs runs.
      when ("dumprcexp" `elem` directives sess) $
          coreLift_ $ writeFile (outputDir </> outfile ++ ".crexpr") (prettyProgram defs)
 

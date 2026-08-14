@@ -1,0 +1,119 @@
+# Known bugs and quirks (not going to surprise you again)
+
+Confirmed, already-investigated issues that show up while testing rc2
+but are **not** rc2 regressions to chase down again -- either a defect
+in a *reference* installation (nixpkgs' RefC support library), an
+already-understood quirk of the test file itself, or a pre-existing gap
+confirmed unrelated to whatever work is in progress when it's
+rediscovered. Kept separate from `TODO.md` (forward-looking gaps/future
+work) and `rc2/tests/refc-suite/README.md` (bugs found *and fixed*
+during that port) specifically so re-running the test suite doesn't
+trigger a fresh investigation of something already closed out.
+
+If one of these stops reproducing, or a fix lands, update or remove the
+entry rather than leaving it stale.
+
+## Real reference-installation bugs (not rc2 bugs)
+
+- **`Test7CastMatrix.idr` can't be diff-checked against real
+  `idris2 --cg refc` at all.** The nixpkgs-bundled RefC support library
+  itself fails to compile: `idris2_negate_Double` is typo'd as
+  `idris2_nagate_Double` in its own headers, plus a couple of missing
+  declarations. Confirmed to be a defect in that reference installation
+  itself, not rc2 -- `idris2-rc2`'s own build of the same file compiles
+  and runs cleanly. Verified instead via a saved `.expected` file
+  (manual verification), same as `rc2/tests/refc-suite`'s own
+  `Test7CastMatrix`-equivalent handling. See `rc2/doc/dual-abi.md`'s own
+  "Verification methodology" item 5 / `rc2/doc/reuse-analysis.md`'s
+  item 4 for the original write-up.
+- **`refc-suite`'s `basicpatternmatch` test: real RefC itself fails to
+  match `Bits32 0x80000000` and the `Int64` min/max boundary literal
+  cases**, falling through to the catch-all (flagged `-- FIXME: wont
+  work` in upstream Idris2's own test source). rc2 does not have this
+  bug -- its `expected` file reflects the *correct* result, which is
+  why it doesn't literally match what a naive read of upstream's own
+  `expected` would suggest. See `rc2/tests/refc-suite/README.md`.
+- **`refc-suite`'s `clock` test: real RefC's own `clockTimeMonotonic`
+  isn't actually monotonic** -- it just reuses RefC's second-granularity
+  UTC clock (`time()`), so `monotonicStart < monotonicEnd` reads
+  `False` for a test run completing within the same wall-clock second.
+  rc2 implements its own `System.Clock` via `clock_gettime`
+  (nanosecond resolution, genuinely monotonic), so its own `expected`
+  intentionally differs from what upstream's `expected` would produce
+  under real RefC. See `rc2/tests/refc-suite/README.md` and
+  `rc2/BENCHMARKS.md`'s own "本家RefCの`System.Clock`は秒精度" note.
+
+## Test-invocation quirk (reproduces on stock idris2 too)
+
+- **`Test6NativeInts.idr` and `Test7CastMatrix.idr` must be invoked as
+  a bare filename from *inside* `rc2/tests/`**, not with a `tests/`
+  path prefix (e.g. `cd rc2/tests && ...idris2-rc2 --cg rc2
+  Test6NativeInts.idr -o ...`, not `...idris2-rc2 --cg rc2
+  tests/Test6NativeInts.idr -o ...`). Both files declare `module
+  TestNNNN` instead of `module Main` like every other test file, so
+  compiling via a `tests/`-prefixed path trips idris2's own
+  module-name-must-match-file-path check. Confirmed to reproduce
+  identically against unmodified upstream `idris2` -- a pre-existing
+  quirk of these two files, nothing `Compiler.RC2`-related. See
+  `rc2/doc/dual-abi.md`'s own "Verification methodology" item 5.
+
+## Pre-existing `valgrind` leaks (unrelated to whatever's currently being tested)
+
+Found incidentally while re-running `valgrind --leak-check=full` across
+the smoke-test matrix during `Compiler.RC2.ConAltNative`'s own
+verification (2026-08-14) -- confirmed present **with that pass's own
+pipeline entry removed entirely** too, so they predate and are
+unrelated to that work specifically. Not investigated further yet;
+small enough (a few dozen blocks) that they haven't blocked shipping
+anything so far, but don't be surprised by them showing up again.
+
+- **`Test1Basics.idr`: `definitely lost: 40 bytes in 2 blocks`,
+  `indirectly lost: 56 bytes in 3 blocks`** (96 bytes / 5 blocks total).
+- **`Test9SelfTailLoop.idr`: `definitely lost: 784 bytes in 49
+  blocks`.**
+
+## Runtime: `RFree` rarely fires in practice (not a bug)
+
+`RFree` (unconditional, unchecked deallocation for provably-fresh
+unshared allocations) is implemented and reviews fine structurally, but
+essentially never appears in generated code for ordinary Idris2 source:
+Idris2's own frontend multiplicity-based dead-code elimination removes
+the only kind of binding that would trigger it before `RC.idr` ever
+sees it. Confirmed inherent to upstream Idris2's own pipeline, not
+rc2-specific (RefC has the same non-firing behavior for the same
+reason). If a `grep idris2rc2_free` across generated `.c` output comes
+back empty, that's expected, not a sign the feature is broken. See
+`TODO.md`'s own "Runtime: RFree rarely fires in practice" entry.
+
+## Runtime: constructor-reuse reservation abandonment doesn't recursively drop fields (latent, unverified, not fixed)
+
+`idris2rc2_dropReuseConstructor` (`support/rc2/runtime.c`) does *not*
+recursively drop the released constructor's own fields, unlike an
+ordinary `idris2rc2_drop`'s teardown. Confirmed pre-existing (predates
+`Compiler.RC2.Reuse` moving the reuse *decision* to IR level) by
+reading the runtime implementation directly. Means: if a reservation is
+claimed (`isUnique` succeeded) but then never actually consumed by any
+`RCon` on the specific execution path taken, that path's own fields
+aren't cleaned up by the release call itself. Not verified to be
+reachable in practice (no known failing test), deliberately left
+unfixed as out of scope for the work that found it. See
+`rc2/doc/reuse-analysis.md`'s own "Known, deliberately-unfixed edge
+case" section. If a leak ever traces back here, this is the first
+suspect.
+
+## Explicitly *not* a known bug (resolved, documented so it isn't rediscovered as one)
+
+- **`idris2-missing-containers`'s own `benchmarkHashMap` "crash"
+  (`Unhandled input for Main.case block`) was never an environment or
+  rc2 bug.** An earlier investigation (2026-08-14) concluded it was a
+  pre-existing environment issue after it reproduced against stock
+  `idris2 --cg refc` too -- that conclusion was wrong. Root cause: the
+  benchmark's own `Main.idr` opens `test/input_large`/`test/words` via
+  package-root-relative paths with no `Left` branch coded for
+  `openFile` failure, so running the compiled binary from any directory
+  other than the package root (`install/idris2-missing-containers/`)
+  surfaces as exactly this crash, on every backend, regardless of
+  commit -- which is also why the original bisection looked so
+  consistent. Run from the correct directory, it completes correctly on
+  all three backends. See `rc2/BENCHMARKS.md`'s own "訂正" note. If this
+  error resurfaces, check the working directory first.

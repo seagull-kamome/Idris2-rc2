@@ -206,9 +206,11 @@ work, not investigated further here.
    large enough that a per-iteration leak is unmistakable in the
    summary rather than lost in noise) -- expect `definitely lost: 0
    bytes in 0 blocks`.
-5. Before concluding a fix is correct, also rebuild with this pass's
-   own pipeline entry in `RC2.idr`'s `toRCDefs` temporarily removed and
-   re-run step 4 against the *baseline* -- confirms whether a leak (or
-   its absence) is actually caused by this pass at all, not just
-   present regardless (exactly how the two small pre-existing leaks
-   noted above were told apart from this work's own bugs).
+5. Before concluding a fix is correct, also re-run step 4 against the
+   *baseline* with this pass disabled via `--directive noconaltnative`
+   (`RC2.idr`'s own `toRCDefs`, see its doc comment -- no rebuild
+   needed) -- confirms whether a leak (or its absence) is actually
+   caused by this pass at all, not just present regardless (exactly how
+   the two small pre-existing leaks noted above were told apart from
+   this work's own bugs, back when this meant editing `toRCDefs` and
+   rebuilding `idris2-rc2` by hand instead).

@@ -2,7 +2,10 @@
 
 This repo hosts **rc2**, an independent external C code generator backend
 for Idris2. See `README.md`, `TODO.md` for project
-overview, history, and known gaps.
+overview, history, and known gaps; `KNOWN-BUGS.md` for confirmed,
+already-investigated test quirks (reference-installation defects,
+pre-existing leaks, etc.) that don't need re-investigating when they
+show up again during testing.
 
 ## Layout
 
