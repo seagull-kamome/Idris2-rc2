@@ -57,12 +57,86 @@ Self-recursive and mutually-recursive tail calls compile to a plain C
 `Compiler.RC2.MutualLoop`), and a loop-carried parameter read as a
 native-context numeric operand gets unboxed once at loop entry instead
 of being re-boxed/re-unboxed at every iteration. Full design,
-implementation walkthrough, the bugs found along the way, and a known
-limitation (native-shadow eligibility doesn't currently see through a
-`newtype`-style single-field constructor wrapper) are all documented in
-**`rc2/doc/loop-conversion.md`** -- moved there in full since it's
-finished design/implementation, not an open gap; this entry is only a
-pointer.
+implementation walkthrough, and the bugs found along the way are all
+documented in **`rc2/doc/loop-conversion.md`** -- moved there in full
+since it's finished design/implementation, not an open gap; this entry
+is only a pointer. Its own known limitation (native-shadow eligibility
+doesn't currently see through a `newtype`-style single-field
+constructor wrapper) is being generalized into its own planned work,
+see "Native representation for constructor-destructured fields" below.
+
+### Native representation for constructor-destructured fields (planned, not started)
+
+Found while discussing further optimization candidates after
+`BENCHMARKS.md`'s own `idris2-missing-containers` re-measurement (its
+"ループ変数のネイティブ表現化" section found the hash-algorithm state --
+a single-field wrapper around a `Bits32`/`Bits64` -- can't currently
+become a native shadow, exactly the loop-conversion `newtype`
+limitation above). Looking into it turned up a more fundamental, more
+broadly useful gap than that limitation alone suggested.
+
+**The actual current gap, confirmed by reading the code directly:** a
+case-alternative's destructured fields (`RConAlt`'s own
+`args : List Int`, bound by `RC.idr`'s `normalizeConAlt`) never go
+through `Types.idr`'s `repOf`/Rep-inference machinery at all -- `repOf`
+only ever looks at `RLet`/`ROp`/`RPrimVal`, `normalizeConAlt` builds no
+`Rep` for its fresh `argIds`, and `Emit.idr`'s `emitConAltBody`
+unconditionally declares every destructured field `IDRIS2RC2_Value *`
+(Boxed), never consulting `RepMap`. This holds regardless of how many
+alternatives the enclosing `RConCase` has, or whether the scrutinee's
+type is single- or multi-constructor -- an ordinary, already-tag-checked
+pattern-match body (`case acc of MkAcc x y => ... x ...`, an everyday
+two-field record, not just a `newtype`) gets zero benefit from native
+inference on its own bound fields today.
+
+**Planned in two layers:**
+
+1. **Base fix (no type-table lookup needed, no alt-count/default
+   condition needed):** extend Rep inference to case-alternative-bound
+   locals the same way `RLet`-bound locals already get it. Being inside
+   a given alternative's own body is *already* proof the scrutinee's tag
+   matched that alternative's constructor -- unconditionally, regardless
+   of how many other alternatives exist or whether a default branch is
+   present -- so no new safety argument is needed here, only wiring:
+   `normalizeConAlt`/whatever downstream pass decides Rep would need to
+   ask the same "is this field consistently read in a native context
+   within the alt's own body" question `Types.repOf` already asks for
+   `RLet` values, and `Emit.idr`'s `emitConAltBody` would need to
+   consult `RepMap` the way `RLet`'s own declare path already does. This
+   alone should unlock native field access for any *already-written*
+   `case`/pattern-match in ordinary source, single-constructor or not
+   (the hash-algorithm-state case above, and plain multi-field
+   records/product types generally).
+2. **Hoisting extension (loop-carried state / function-boundary
+   arguments; needs the single-constructor safety argument):** for a
+   loop-carried value or a dual-ABI-eligible argument that's read via a
+   `case` *every iteration/every call* rather than once, hoist the
+   tag-check-and-destructure to loop-entry/function-entry (mirroring
+   `Loop.idr`'s existing `declareLoopParam`, which already does exactly
+   this for raw-scalar loop params). Safe *without* consulting the
+   scrutinee's own type declaration at all -- purely from the existing
+   `RConCase`'s own shape: exactly one alternative (`List RConAlt` of
+   length 1) **and** no default branch (`Maybe RCExp` is `Nothing`) is
+   the only shape Idris2's own case-tree compiler ever produces for an
+   exhaustive match, which only happens when the type genuinely has one
+   constructor. (A single alternative *with* a `Just` default -- e.g.
+   matching only `Just x` of a `Maybe` -- does *not* qualify: the alt's
+   own body is still safely tag-checked by layer 1 above, but the type
+   isn't provably single-constructor, so hoisting the check itself out
+   of the loop/before the call wouldn't be sound.)
+
+**Files likely involved:** `rc2/src/Compiler/RC2/RCExp.idr`
+(`RConCase`/`RConAlt` definitions -- no change expected, the existing
+shape already carries everything layer 2 needs), `Types.idr` (`repOf`
+extension), `RC.idr` (`normalizeConAlt`), `Emit.idr`
+(`emitConAltBody`'s `RepMap` consultation), `Loop.idr`
+(`declareLoopParam` as the precedent layer 2 would mirror),
+`DualABI.idr` (layer 2's own argument-eligibility side, if pursued for
+function boundaries too, not just loops).
+
+Not started. Layer 1 is the recommended starting point -- smaller, no
+new safety argument needed, and broadly useful even outside loops;
+layer 2 builds on it.
 
 ## Scope: deliberately unboxed types stop at scalars
 

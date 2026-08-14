@@ -692,6 +692,16 @@ own eligibility analysis than to anything this document's own
 `nativeArgType` currently does) would need its own dedicated design
 pass, not a small extension of the current one.
 
+(Since writing the above: a more concrete, more tractable plan for this
+was worked out -- reading `Compiler.RC2.RC`'s own `normalizeConAlt`
+directly showed a case-alternative's destructured fields never go
+through `Types.idr`'s Rep inference *at all*, single-constructor or
+not, which reframes most of this gap as a smaller, shape-based fix
+rather than a `Reuse`-style dedicated pass. See `TODO.md`'s own "Native
+representation for constructor-destructured fields" entry for the full
+two-layer plan -- not started, not documented further here since it
+isn't implemented yet.)
+
 Two other, unrelated reasons the same benchmark's dominant costs stay
 unaffected regardless, worth keeping in mind before assuming a fix to
 the above alone would move the needle much on that specific benchmark:
