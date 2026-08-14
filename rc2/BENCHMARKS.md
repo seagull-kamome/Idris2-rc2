@@ -21,25 +21,25 @@
 
 (壁時計時間、3回実行の代表値。`time`コマンドで直接計測。)
 
-生成Cコードを直接確認すると、`fib`のworker自身の本体(`rc2_dualABI_0`)は
+生成Cコードを直接確認すると、`fib`のworker自身の本体(`idris2rc2_worker_Main_fib_0`)は
 以下のように、2回の再帰呼び出しの引数・戻り値ともに一切box化/unbox化されず、
 関数の入口から`return`まで完全に`int64_t`のまま計算されている:
 
 ```c
-int64_t rc2_dualABI_0(int64_t var_0)
+int64_t idris2rc2_worker_Main_fib_0(int64_t var_0)
 {
     ...
     int64_t var_4 = (var_0 - INT64_C(1));
-    int64_t var_3 = rc2_dualABI_0(var_4);
+    int64_t var_3 = idris2rc2_worker_Main_fib_0(var_4);
     int64_t var_6 = (var_0 - INT64_C(2));
-    int64_t var_5 = rc2_dualABI_0(var_6);
+    int64_t var_5 = idris2rc2_worker_Main_fib_0(var_6);
     return (var_3 + var_5);
 }
 ```
 
 以前(worker/wrapper分割のみ、呼び出しサイト書き換え未実装の段階)は
-`rc2_dualABI_0(idris2rc2_to_i64(var_0))`のように引数だけがネイティブで、
-戻り値は`idris2rc2_mkInt64(rc2_dualABI_0(...))`のように毎回box化され、
+`idris2rc2_worker_Main_fib_0(idris2rc2_to_i64(var_0))`のように引数だけがネイティブで、
+戻り値は`idris2rc2_mkInt64(idris2rc2_worker_Main_fib_0(...))`のように毎回box化され、
 それを呼び出し元の`+`が即座に`idris2rc2_to_i64`でunbox化し直すという
 往復コストが再帰呼び出し2回のたびに発生していた。これが完全に消えたことが
 実行時間の改善に直結している。

@@ -112,6 +112,7 @@ module Compiler.RC2.DualABI
 import Compiler.RC2.RCExp
 import Compiler.RC2.Types
 import Compiler.RC2.Loop
+import Compiler.RC2.Emit
 
 import Core.CompileExpr
 import Core.Context
@@ -236,11 +237,25 @@ data FreshId : Type where
 freshId : {auto r : Ref FreshId Int} -> Core Int
 freshId = do i <- get FreshId; put FreshId (i + 1); pure i
 
-freshName : {auto r : Ref FreshId Int} -> SortedSet Name -> Core Name
-freshName existing = do
+||| A fresh name for `original`'s own worker: `idris2rc2_worker_` plus
+||| `original`'s own mangled C name (`Compiler.RC2.Emit`'s `cName`,
+||| reused directly -- the exact same mangling the wrapper's own,
+||| unchanged C name already uses, so the two read as visibly related)
+||| plus a disambiguating counter (defends against, e.g., two
+||| originals whose own mangled names happen to collide after
+||| `cCleanString`'s own character sanitisation -- not expected in
+||| practice, kept only so this is provably total either way). The
+||| `idris2rc2_worker_` prefix itself makes a worker's own C name
+||| identifiable on sight, both as *generated* (matching this project's
+||| own `idris2rc2_`-prefix convention for every runtime-owned C symbol,
+||| `CLAUDE.md`) and as *this specific pass's* own output (nothing else
+||| in the compiler ever produces this prefix), rather than the opaque
+||| `rc2_dualABI_N` counter this used to be.
+freshName : {auto r : Ref FreshId Int} -> SortedSet Name -> Name -> Core Name
+freshName existing original = do
     i <- freshId
-    let cand = MN "rc2_dualABI" i
-    if contains cand existing then freshName existing else pure cand
+    let cand = MN ("idris2rc2_worker_" ++ cName original) i
+    if contains cand existing then freshName existing original else pure cand
 
 ||| True for a name `Compiler.RC2.MutualLoop` itself synthesised (its
 ||| own merged function -- sharing one slot per position across
@@ -292,10 +307,10 @@ isMutualLoopMerged _ = False
 ||| `RAppNameRep`'s own doc comment in RCExp.idr) is left alive and
 ||| genuinely needs this explicit drop once the call has read it.
 synthesizeWorker : {auto r : Ref FreshId Int}
-                 -> SortedSet Name -> List (Int, PrimType) -> Maybe PrimType -> List (Int, Rep) -> Rep -> RCExp
+                 -> SortedSet Name -> Name -> List (Int, PrimType) -> Maybe PrimType -> List (Int, Rep) -> Rep -> RCExp
                  -> Core (Name, RCDef, RCDef)
-synthesizeWorker existingNames eligible retEligible args wrapperRetRep body = do
-    workerName <- freshName existingNames
+synthesizeWorker existingNames original eligible retEligible args wrapperRetRep body = do
+    workerName <- freshName existingNames original
     let eligibleOf : Int -> Maybe PrimType
         eligibleOf p = Data.SortedMap.lookup p (Data.SortedMap.fromList eligible)
         workerArgs : List (Int, Rep)
@@ -348,7 +363,7 @@ applyDualABI defs = do
              if null eligible && isNothing retEligible
                 then pure [(n, d)]
                 else do
-                  (workerName, wrapperDef, workerDef) <- synthesizeWorker existingNames eligible retEligible args retRep body
+                  (workerName, wrapperDef, workerDef) <- synthesizeWorker existingNames n eligible retEligible args retRep body
                   pure [(n, wrapperDef), (workerName, workerDef)]
     synthesizeIfEligible _ (n, d) = pure [(n, d)]
 

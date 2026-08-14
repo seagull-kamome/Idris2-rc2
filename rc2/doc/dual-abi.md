@@ -226,7 +226,16 @@ merged function needed an **explicit** exclusion:
 every eligible, non-`MutualLoop`-merged function:
 
 1. Mint a fresh worker name (`freshName`/`freshId`/`FreshId`, the same
-   `Ref`-threaded-counter pattern `MutualLoop.idr` already uses).
+   `Ref`-threaded-counter pattern `MutualLoop.idr` already uses) --
+   `idris2rc2_worker_` plus the *original* function's own mangled C
+   name (`Compiler.RC2.Emit`'s own `cName`, now `export`ed for this
+   reuse -- the exact same mangling the wrapper's own unchanged C name
+   already uses) plus a disambiguating counter, e.g. `Main.fib`'s own
+   worker is `idris2rc2_worker_Main_fib_0` -- deliberately legible on
+   sight, both as *generated* (matching the project's own established
+   `idris2rc2_`-prefix convention for every runtime-owned C symbol) and
+   as *visibly this specific original function's own worker*, rather
+   than the original, opaque `rc2_dualABI_N` global counter.
 2. `workerArgs`: each parameter promoted to `RNative ty` at the
    eligible positions, `RBoxed` everywhere else -- **reusing the
    original parameter's own id directly, no renaming needed at all**.
@@ -465,7 +474,7 @@ concrete example:
 ```c
 IDRIS2RC2_Value *Main_fib(IDRIS2RC2_Value * var_0)
 {
-    return idris2rc2_mkInt64(rc2_dualABI_0(idris2rc2_to_i64(var_0)));
+    return idris2rc2_mkInt64(idris2rc2_worker_Main_fib_0(idris2rc2_to_i64(var_0)));
 }
 ```
 
@@ -496,7 +505,7 @@ let retTypeStr : String = case retRep of
 let fn = "\{retTypeStr}\{cName !(getFullName n)}" ++ ...
 ```
 
-`Main.fib`'s own worker forward-declares as `int64_t rc2_dualABI_0(int64_t
+`Main.fib`'s own worker forward-declares as `int64_t idris2rc2_worker_Main_fib_0(int64_t
 var_0);` -- confirmed by reading the generated C directly, same
 verification discipline as every other stage.
 
@@ -610,8 +619,8 @@ IDRIS2RC2_Value * var_5 = idris2rc2_trampoline(Main_fib(idris2rc2_mkInt64(var_6)
 int64_t tmp_9 = (idris2rc2_to_i64(var_3) + idris2rc2_to_i64(var_5));
 
 // after Stage 4
-int64_t var_3 = rc2_dualABI_0(var_4);
-int64_t var_5 = rc2_dualABI_0(var_6);
+int64_t var_3 = idris2rc2_worker_Main_fib_0(var_4);
+int64_t var_5 = idris2rc2_worker_Main_fib_0(var_6);
 return (var_3 + var_5);
 ```
 
@@ -731,7 +740,7 @@ the closest analogue to bug #2 above) passed without any fix needed.
    calls, silently.** The very first working build compiled and ran
    correctly (`fib 30` still `832040`), which made this easy to miss --
    only reading the generated C directly (this project's own standing
-   discipline) revealed `rc2_dualABI_0`'s own body still called
+   discipline) revealed `idris2rc2_worker_Main_fib_0`'s own body still called
    `Main_fib` (the wrapper), not itself. Root cause: the first version
    of `applyCallSiteRewriteBody` only recognised a call sitting
    *directly* as an `RLet`'s own `value`, and treated a bare `RAppName`
@@ -757,7 +766,7 @@ the closest analogue to bug #2 above) passed without any fix needed.
 5. **`nativeArgType`'s own established "bare tail is always Boxed"
    assumption is stale by the time Stage 4 runs.** Even after fixing
    bug #4 above, `fib`'s own worker still boxed both recursive calls'
-   results (`idris2rc2_mkInt64(rc2_dualABI_0(...))`) only to
+   results (`idris2rc2_mkInt64(idris2rc2_worker_Main_fib_0(...))`) only to
    immediately unbox them again for the `+` -- the promotion itself
    never fired. `Compiler.RC2.Loop`'s own `nativeArgTypes` (reused
    directly for the promotion decision, see "Stage 4" above)
@@ -781,7 +790,7 @@ the closest analogue to bug #2 above) passed without any fix needed.
    `nativeArgTypes`'s own result before the final "exactly one
    consistent type" decision. Confirmed by reading the generated C
    directly: `fib`'s own worker now reads `int64_t var_3 =
-   rc2_dualABI_0(var_4); ...; return (var_3 + var_5);` -- no boxing,
+   idris2rc2_worker_Main_fib_0(var_4); ...; return (var_3 + var_5);` -- no boxing,
    no unboxing, no dup/drop at all for either recursive call.
 
 ## Status
@@ -789,15 +798,15 @@ the closest analogue to bug #2 above) passed without any fix needed.
 **Fully implemented and verified** (Stages 1, 2, 3a, 3b, 4). `Main.fib`
 compiles to a wrapper (`Main_fib`, unchanged Boxed signature, every
 existing caller anywhere else keeps working unmodified) plus a worker
-(`rc2_dualABI_N`) doing the real recursive work entirely in native
+(`idris2rc2_worker_Main_fib_0`) doing the real recursive work entirely in native
 `int64_t`, with **both of its own recursive calls now targeting the
 worker directly**:
 
 ```c
 int64_t var_4 = (var_0 - INT64_C(1));
-int64_t var_3 = rc2_dualABI_0(var_4);
+int64_t var_3 = idris2rc2_worker_Main_fib_0(var_4);
 int64_t var_6 = (var_0 - INT64_C(2));
-int64_t var_5 = rc2_dualABI_0(var_6);
+int64_t var_5 = idris2rc2_worker_Main_fib_0(var_6);
 return (var_3 + var_5);
 ```
 
@@ -855,7 +864,8 @@ from Stage 2.
   native `SinkReturn`; `RAppNameRep` moved out of `emitRC`'s own
   dispatch entirely into a new, dedicated `emitAppNameRepInto`
   (`emitInto`'s own per-node dispatch, alongside `RCmpCase`/`RConCase`/
-  etc.) that discharges its own `postDrop`.
+  etc.) that discharges its own `postDrop`; `cName` now `export`ed for
+  `Compiler.RC2.DualABI`'s own worker-naming reuse.
 - `rc2/src/Compiler/RC2/Pretty.idr` -- `MkRCFun`'s new
   `args`/`retRep` rendering; `RAppNameRep`'s own `callRep` rendering
   (now including `postDrop`).
@@ -882,8 +892,8 @@ from Stage 2.
    itself got built with, visible directly in the generated C instead
    (next step).
 4. `tests/BenchFib.idr` is the canonical smoke test for every stage:
-   `fib 30` must still print `832040`; `grep -n "^int64_t rc2_dualABI\|
-   ^IDRIS2RC2_Value \*rc2_dualABI" build/exec/*.c` confirms a worker
+   `fib 30` must still print `832040`; `grep -n "^int64_t idris2rc2_worker_\|
+   ^IDRIS2RC2_Value \*idris2rc2_worker_" build/exec/*.c` confirms a worker
    actually got synthesised and shows whether its own return ended up
    native, and reading its own C body directly confirms (a) the
    promoted parameter/return are declared with their native C types,
@@ -891,7 +901,7 @@ from Stage 2.
    "materialise into a temp, drop, then return" (never a drop directly
    ahead of a bare `return`), and (c) -- **now that Stage 4 is
    implemented** -- the original's own recursive calls target the
-   *worker* directly (`rc2_dualABI_N`, not `Main_fib`), with no
+   *worker* directly (`idris2rc2_worker_Main_fib_0`, not `Main_fib`), with no
    remaining `idris2rc2_mkInt64`/`idris2rc2_to_i64` pair around either
    call. `tests/BenchLoop.idr`'s own `Main.sumTo` is the loop-combination
    smoke test -- its worker's own loop-exit tail value must render

@@ -126,6 +126,12 @@ cUserName (Basic n) = cCleanString n
 cUserName (Field n) = "rec__" ++ cCleanString n
 cUserName Underscore = cCleanString "_"
 
+||| Idris `Name` -> C identifier mangling. `export`ed for
+||| `Compiler.RC2.DualABI`'s own reuse (Stage 4's own worker naming
+||| embeds the *original* function's own mangled name -- see
+||| `DualABI.idr`'s own `freshName` doc comment -- so a worker's own C
+||| name is legible on sight instead of an opaque counter).
+export
 cName : Name -> String
 cName (NS ns n) = cCleanString (showNSWithSep "_" ns) ++ "_" ++ cName n
 cName (UN n) = cUserName n
