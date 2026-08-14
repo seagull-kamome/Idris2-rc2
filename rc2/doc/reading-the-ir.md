@@ -176,8 +176,7 @@ breath). To audit whether some local `vN` is handled correctly:
    its only drop, or two drops with no re-acquisition (`dup`) between
    them, is a real bug (this is precisely the manual technique that
    found several of the leaks/use-after-frees documented in
-   `doc/native-type-inference.md`'s "Bugs found" section and
-   `CHANGES.md`).
+   `doc/native-type-inference.md`'s "Bugs found" section).
 
 The reuse protocol (`reuseOffer`/`con ... reuse=sc`/`releaseReuse`) is a
 three-way handshake, not a simple linear thing to grep for in isolation

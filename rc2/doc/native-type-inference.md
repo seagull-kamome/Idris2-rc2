@@ -4,7 +4,7 @@ Implementation notes for rc2's native (unboxed) representation
 machinery, written to let a future session regain full context without
 re-deriving the design or re-discovering the bugs already found and
 fixed here. Corresponds to the original Stage 2-3 implementation plus
-several follow-on refactors and fixes (see `CHANGES.md`, entries from
+several follow-on refactors and fixes (see `git log`, commits from
 `2026-08-12` for "reduce unnecessary variable/statement generation",
 "ROp's operand-drop", "elide dup/drop for always-tagged PrimTypes", and
 `2026-08-13`'s comparison/branch fusion). See also
@@ -225,7 +225,7 @@ from) this module, not an extension of the `RLet.Rep` mechanism -- see
 the full design and its own bug (a double-free in `annotate`'s
 `RCmpCase` case, unrelated to anything in this document).
 
-## Bugs found and fixed (chronological, see `CHANGES.md`/`BENCHMARKS.md` for commit-level detail)
+## Bugs found and fixed (chronological, see `git log`/`BENCHMARKS.md` for commit-level detail)
 
 1. **`Cast Integer Int` memory corruption.** `opResultRep (Cast i o)`
    originally checked only `o` (the destination type), not `i` (the

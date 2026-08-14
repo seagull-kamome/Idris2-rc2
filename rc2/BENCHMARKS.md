@@ -9,7 +9,7 @@
 ループ本体内で一貫してネイティブ演算(`ROp`/`RCmpCase`)のオペランドとして
 読まれている場合、それを**ループ突入時に一度だけunboxしたネイティブshadow変数**
 に昇格し、以後反復のたびに発生していたbox化↔unbox化の往復を完全に除去する
-(`Compiler.RC2.Loop`の`applyLoop`、詳細は`TODO.md`/`CHANGES.md`参照)。
+(`Compiler.RC2.Loop`の`applyLoop`、詳細は`TODO.md`/`git log`参照)。
 
 ### 自前マイクロベンチマークの再計測(壁時計、5回実行)
 

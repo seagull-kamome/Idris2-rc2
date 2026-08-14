@@ -4,9 +4,9 @@ rc2のネイティブ(unboxed)表現機構に関する実装ノート。将来�
 が、設計を再導出したり、既に発見・修正済みのバグを再発見したりせず
 に完全な文脈を取り戻せるようにするために書かれた。当初のStage 2-3
 実装に加え、それに続く複数のリファクタリング・修正に対応する
-(`CHANGES.md`参照、`2026-08-12`付の「reduce unnecessary variable/
+(`git log`参照、`2026-08-12`付の「reduce unnecessary variable/
 statement generation」「ROp's operand-drop」「elide dup/drop for
-always-tagged PrimTypes」、`2026-08-13`付の比較/分岐融合の各エントリ)。
+always-tagged PrimTypes」、`2026-08-13`付の比較/分岐融合の各コミット)。
 本書の機構が連携する姉妹のIRレベルパスについては`doc/reuse-analysis.md`
 も参照(どちらも同じ`natives`集合を参照する)。
 
@@ -234,7 +234,7 @@ Bool表現(`False=0`/`True=1`)に対する二方向マッチの唯一かつ直�
 無関係)については`doc/`のコミット履歴/`BENCHMARKS.md`の
 「比較/分岐融合」節参照。
 
-## 発見・修正したバグ(時系列。コミットレベルの詳細は`CHANGES.md`/
+## 発見・修正したバグ(時系列。コミットレベルの詳細は`git log`/
 `BENCHMARKS.md`参照)
 
 1. **`Cast Integer Int`のメモリ破壊。** `opResultRep (Cast i o)`は

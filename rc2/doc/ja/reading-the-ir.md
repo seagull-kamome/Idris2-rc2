@@ -179,7 +179,7 @@ def <Name>  (<種別> ...)
    移譲される)か、ちょうど1回dropまたはfreeされるか。唯一のdropの
    後に使用がある、または2回のdropの間に再取得(`dup`)がない、と
    いったパスは実際のバグである(これはまさに`doc/native-type-inference.md`
-   の「発見したバグ」節や`CHANGES.md`に記録されている複数のリーク・
+   の「発見したバグ」節に記録されている複数のリーク・
    use-after-freeを発見した手作業の手法そのもの)。
 
 再利用プロトコル(`reuseOffer`/`con ... reuse=sc`/`releaseReuse`)は
