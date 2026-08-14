@@ -3,7 +3,13 @@ module Compiler.RC2.RC2
 -- Orchestration: getCompileData (stopping at the Lifted phase -- rc2 does
 -- not use Compiler.ANF at all) -> Compiler.RC2.RC (Lifted -> RCExp) ->
 -- Compiler.RC2.Reuse (constructor-reuse-in-place, on the fully
--- Phase-1+2'd tree) -> Compiler.RC2.MutualLoop (mutual tail recursion
+-- Phase-1+2'd tree) -> Compiler.RC2.ConAltNative (caches a repeatedly-
+-- native-read constructor-destructured field into a fresh native
+-- shadow, reusing Compiler.RC2.Loop's own native-shadow mechanism --
+-- runs right after Reuse so its own dupOnShared/RReuseOffer decisions
+-- around the field are already finalised and left undisturbed, see
+-- TODO.md's own "Native representation for constructor-destructured
+-- fields" entry) -> Compiler.RC2.MutualLoop (mutual tail recursion
 -- loop conversion, whole-program) -> Compiler.RC2.Loop (self-tail-call
 -- loop conversion -- including MutualLoop's own synthesised merged
 -- functions, whose internal transitions are already ordinary self-
@@ -18,6 +24,7 @@ module Compiler.RC2.RC2
 -- (RCExp -> C) -> Compiler.RC2.CC (cc invocation).
 
 import Compiler.RC2.CC
+import Compiler.RC2.ConAltNative
 import Compiler.RC2.DualABI
 import Compiler.RC2.Emit
 import Compiler.RC2.Pretty
@@ -55,7 +62,7 @@ applyReuse d@(MkRCForeign _ _ _) = d
 
 toRCDefs : List (Name, LiftedDef) -> Core (List (Name, RCDef))
 toRCDefs lds = do
-    reused <- traverse (\(n, ld) => (n,) . applyReuse <$> toRCDef ld) lds
+    reused <- traverse (\(n, ld) => (n,) . applyConAltNative . applyReuse <$> toRCDef ld) lds
     merged <- applyMutualLoop reused
     let looped = map (\(n, d) => (n, applyLoop n d)) merged
     withWorkers <- applyDualABI looped

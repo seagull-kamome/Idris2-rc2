@@ -25,7 +25,9 @@ overview, history, and known gaps.
   reference, not a pass write-up, `dual-abi.md` for the dual (Boxed/
   native) calling convention letting native representations cross
   ordinary function-call boundaries — a living document, updated as
-  later stages land). Not
+  later stages land, `con-alt-native.md` for caching a repeatedly-
+  native-read constructor-destructured field into a fresh native
+  shadow). Not
   a replacement for `TODO.md` — those stay the changelog
   and gap tracker; `rc2/doc/` is where the *why* and the
   bugs-found-along-the-way for a specific subsystem live.

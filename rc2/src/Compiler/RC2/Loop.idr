@@ -417,7 +417,13 @@ nativeArgType p body =
 ||| promoted id is never one of those to begin with; and a promoted id
 ||| stored into a constructor field just gets boxed fresh on the spot
 ||| by `rcVarToBoxedC`, correctly, with no bookkeeping node of its own
-||| to strip.
+||| to strip. (`Compiler.RC2.ConAltNative`'s own reuse of this function
+||| for a destructured field, not just a top-level parameter, never
+||| renames *into* an `RReuseOffer`'s own `dupOnShared` either -- it
+||| only ever transforms the "core" past every leading
+||| `RDup`/`RDrop`/`RFree`/`RReleaseReuse`/`RReuseOffer` wrapper, never
+||| the wrappers themselves, precisely so a reuse decision already made
+||| there stays completely undisturbed.)
 export
 stripOwnership : SortedSet Int -> RCExp -> RCExp
 stripOwnership ids (RDup fc v body) =

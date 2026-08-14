@@ -62,198 +62,37 @@ documented in **`rc2/doc/loop-conversion.md`** -- moved there in full
 since it's finished design/implementation, not an open gap; this entry
 is only a pointer. Its own known limitation (native-shadow eligibility
 doesn't currently see through a `newtype`-style single-field
-constructor wrapper) is being generalized into its own planned work,
-see "Native representation for constructor-destructured fields" below.
+constructor wrapper, *for a loop-carried parameter specifically*) is
+still open -- the related but distinct gap for an ordinary
+case-alternative's own destructured field (not loop-carried) was
+addressed separately, see "Constructor-destructured field native
+shadowing" below.
 
-### Native representation for constructor-destructured fields (planned, not started)
+### Constructor-destructured field native shadowing (implemented)
 
-Found while discussing further optimization candidates after
-`BENCHMARKS.md`'s own `idris2-missing-containers` re-measurement (its
-"ループ変数のネイティブ表現化" section found the hash-algorithm state --
-a single-field wrapper around a `Bits32`/`Bits64` -- can't currently
-become a native shadow, exactly the loop-conversion `newtype`
-limitation above). Looking into it turned up a more fundamental, more
-broadly useful gap than that limitation alone suggested.
-
-**The actual current gap, confirmed by reading the code directly:** a
-case-alternative's destructured fields (`RConAlt`'s own
-`args : List Int`, bound by `RC.idr`'s `normalizeConAlt`) never go
-through `Types.idr`'s `repOf`/Rep-inference machinery at all -- `repOf`
-only ever looks at `RLet`/`ROp`/`RPrimVal`, `normalizeConAlt` builds no
-`Rep` for its fresh `argIds`, and `Emit.idr`'s `emitConAltBody`
-unconditionally declares every destructured field `IDRIS2RC2_Value *`
-(Boxed), never consulting `RepMap`. This holds regardless of how many
-alternatives the enclosing `RConCase` has, or whether the scrutinee's
-type is single- or multi-constructor -- an ordinary, already-tag-checked
-pattern-match body (`case acc of MkAcc x y => ... x ...`, an everyday
-two-field record, not just a `newtype`) gets zero benefit from native
-inference on its own bound fields today.
-
-**Planned in two layers:**
-
-1. **Base fix (no type-table lookup needed, no alt-count/default
-   condition needed):** extend Rep inference to case-alternative-bound
-   locals the same way `RLet`-bound locals already get it. Being inside
-   a given alternative's own body is *already* proof the scrutinee's tag
-   matched that alternative's constructor -- unconditionally, regardless
-   of how many other alternatives exist or whether a default branch is
-   present -- so no new safety argument is needed here, only wiring:
-   `normalizeConAlt`/whatever downstream pass decides Rep would need to
-   ask the same "is this field consistently read in a native context
-   within the alt's own body" question `Types.repOf` already asks for
-   `RLet` values, and `Emit.idr`'s `emitConAltBody` would need to
-   consult `RepMap` the way `RLet`'s own declare path already does. This
-   alone should unlock native field access for any *already-written*
-   `case`/pattern-match in ordinary source, single-constructor or not
-   (the hash-algorithm-state case above, and plain multi-field
-   records/product types generally).
-2. **Hoisting extension (loop-carried state / function-boundary
-   arguments; needs the single-constructor safety argument):** for a
-   loop-carried value or a dual-ABI-eligible argument that's read via a
-   `case` *every iteration/every call* rather than once, hoist the
-   tag-check-and-destructure to loop-entry/function-entry (mirroring
-   `Loop.idr`'s existing `declareLoopParam`, which already does exactly
-   this for raw-scalar loop params). Safe *without* consulting the
-   scrutinee's own type declaration at all -- purely from the existing
-   `RConCase`'s own shape: exactly one alternative (`List RConAlt` of
-   length 1) **and** no default branch (`Maybe RCExp` is `Nothing`) is
-   the only shape Idris2's own case-tree compiler ever produces for an
-   exhaustive match, which only happens when the type genuinely has one
-   constructor. (A single alternative *with* a `Just` default -- e.g.
-   matching only `Just x` of a `Maybe` -- does *not* qualify: the alt's
-   own body is still safely tag-checked by layer 1 above, but the type
-   isn't provably single-constructor, so hoisting the check itself out
-   of the loop/before the call wouldn't be sound.)
-
-**Files likely involved:** `rc2/src/Compiler/RC2/RCExp.idr`
-(`RConCase`/`RConAlt` definitions -- no change expected, the existing
-shape already carries everything layer 2 needs), `Types.idr` (`repOf`
-extension), `RC.idr` (`normalizeConAlt`), `Emit.idr`
-(`emitConAltBody`'s `RepMap` consultation), `Loop.idr`
-(`declareLoopParam` as the precedent layer 2 would mirror),
-`DualABI.idr` (layer 2's own argument-eligibility side, if pursued for
-function boundaries too, not just loops).
-
-**Correction (first implementation attempt, reverted -- see below):**
-layer 1's own premise above -- "no new safety argument needed, just
-wiring" -- turned out to be wrong on the ownership side specifically,
-found empirically (this project's own standing discipline: a stdout
-diff alone doesn't catch a reference-counting bug, `valgrind
---leak-check=full` does, exactly as it did for `doc/dual-abi.md`'s own
-bug #3). A first attempt changed `RConAlt`'s `args` to
-`List (Int, Rep)`, excluded native-Rep fields from `annotate`'s own
-`owned` set (mirroring an `RLet`-bound native local exactly) and from
-`Compiler.RC2.Reuse`'s own `dupOnShared` computation, and declared a
-native field by unboxing `sc->args[k]` directly at destructure time,
-discarding the boxed pointer. Every field is still *physically* stored
-Boxed inside a constructor (`sc->args[k]` is always
-`IDRIS2RC2_Value *`, native or not) -- unlike an `RLet`-bound native
-value, which genuinely has no Boxed source anywhere to release, a
-destructured field's own **origin** (the Boxed value sitting in the
-constructor's own storage slot) still needs exactly one
-`idris2rc2_drop` somewhere, or it leaks -- confirmed with a dedicated
-test (`Acc = MkAcc Int Int` destructured and immediately reconstructed
-in a 200k-iteration self-tail-recursive loop, deliberately chosen to
-also exercise `Compiler.RC2.Reuse`'s constructor-reuse-in-place path
-alongside the new native fields): `valgrind` reported ~6.4MB
-definitely lost, one full `idris2rc2_mkInt64` allocation leaked per
-iteration. Root cause: in the *ordinary* (pre-this-change) design, a
-Boxed destructured field participates fully in `annotate`'s normal
-owned/dead-variable tracking, so an explicit `RDrop` releases its own
-Boxed origin once it's read for the last time -- excluding it from
-`owned` entirely (as a native local legitimately can, since *it* has no
-Boxed origin to release) silently deleted that drop instead of
-replacing it with anything. In the constructor-reuse path specifically
-(`sc`'s own storage reused in place rather than dropped), nothing else
-ever recovers that leaked reference either -- `sc` itself is never
-dropped there by design.
-
-This reopens what layer 1 actually needs to be: not "exclude the field
-from ownership like a genuinely native local," but something closer to
-`ROp`'s own `postDrop` -- the field's Boxed origin keeps participating
-in ownership/reuse tracking exactly as today, and the *optimization* is
-narrower than originally scoped: `rcVarToNativeC` already unboxes a
-still-Boxed local inline at each native-context read (its own `RBoxed`
-case, `nativeUnbox ty (...)`) -- a destructured field read exactly once
-natively is *already* effectively native today, at the cost of one
-inline unbox per read, with correct ownership for free (nothing to do
-there). The real remaining gap is narrower: caching that unboxed value
-once, across a field read *more than once* natively within the same
-alt, instead of repeating `idris2rc2_to_i64(...)` at every read --
-while leaving the field's own Boxed declaration/`RDrop`/reuse
-participation completely untouched, unlike the reverted attempt above.
-
-All changes from the first attempt were reverted (`git checkout --`)
-rather than fixed forward, to leave a known-good baseline; nothing from
-that attempt is in `master`.
-
-**Revised layer 1 mechanism (planned, not yet attempted): mint a
-native shadow and rename into it, exactly `Compiler.RC2.Loop`'s own
-existing native-shadow-loop-param trick, just scoped to a single alt's
-own body instead of a whole function/loop.** `Loop.idr` already solves
-precisely this "redirect every native-context read of a Boxed value to
-a cached native copy, without disturbing the original's own ownership
-except where its own use sites actually changed" problem for top-level
-parameters -- reuse its shape rather than re-deriving a new one:
-
-1. Run as a **new pass, after `Compiler.RC2.Reuse`** (so `resolveAlt`'s
-   own `dupOnShared`/`RReuseOffer` decisions are already finalised
-   around the field exactly as they are today, completely undisturbed
-   -- this new pass only ever *adds* a wrapping `RLet`, never touches
-   an existing ownership node). Ordering relative to
-   `Compiler.RC2.Loop`/`MutualLoop`/`DualABI` otherwise probably
-   doesn't matter for this layer alone (no loop/call-boundary hoisting
-   yet, that's layer 2) -- confirm empirically once implementing rather
-   than assuming.
-2. For each `RConAlt`, ask `nativeArgType argId altBody` (unchanged --
-   the same usage-scan already planned above, and already exported for
-   reuse). If it finds a consistent native type `ty`:
-3. Mint a fresh id `shadowId`, and wrap the alt's own body in
-   `RLet shadowId (RNative ty) (RV (RCLoc argId)) body'` -- a
-   *manually*-assigned `Rep`, the same way `Loop.idr`'s own
-   `declareLoopParam`/`Compiler.RC2.DualABI`'s own worker synthesis
-   already bypass `Types.repOf`'s ordinary "only `ROp`/`RPrimVal`
-   propose Native" rule for a value they already know is safe to
-   declare native (`repOf` alone would leave a bare `RV` passthrough
-   `RBoxed`, per its own doc comment). `Emit.idr`'s `declareLet`
-   already handles an arbitrary-shaped `RNative` value via
-   `declareNative`, and `emitNativeValue`'s own bare-`RV` case (added
-   Stage 3b of the dual-ABI effort, `doc/dual-abi.md`) already renders
-   exactly this shape (a plain variable read in native context) --
-   confirm both paths actually cover `declareNative`'s own dispatch for
-   a bare `RV` value specifically (not just `emitNativeValue`'s) before
-   assuming zero new Emit.idr work is needed here.
-4. `body'` is `body` with every native-context reference to `argId`
-   renamed to `shadowId` (`renameRCExp`-shaped, scoped to just this
-   alt's own subtree) -- *not* every reference the way `Loop.idr`'s own
-   rename does for a loop param (which redirects Boxed-context uses
-   too, since a promoted loop param's *original* id becomes entirely
-   dead): a con-alt field can still legitimately have its own
-   *separate*, unrelated Boxed-context uses elsewhere in the same alt
-   (e.g. `case acc of MkAcc x y => f x (show y)` -- `x`'s own native
-   use and `y`'s own Boxed use coexist) that must keep reading `argId`
-   itself, unrenamed.
-5. `argId`'s own ownership bookkeeping (whatever `annotate` already
-   decided, back when every native-context use it now no longer has
-   still counted toward its own use-count) needs the same kind of
-   surgical fixup `Loop.idr`'s own `stripOwnership` performs for a
-   promoted loop param -- but *narrower*: only the specific `postDrop`
-   entries/dup-decisions tied to the *renamed-away* uses are stale, not
-   necessarily all of `argId`'s own bookkeeping (unlike a loop param,
-   which becomes wholly dead once promoted, a con-alt field may still
-   have real Boxed-context uses left, per point 4 -- `stripOwnership`
-   itself, unmodified, assumes total removal, so this needs its own
-   variant, not a direct reuse). Getting this exactly right is the
-   crux of the whole layer -- this is precisely the kind of ownership
-   surgery that produced the leak in the reverted first attempt, so it
-   deserves the same `valgrind --leak-check=full` scrutiny against a
-   dedicated test (a field read natively *and* in Boxed context within
-   the same alt, and separately a field read natively more than once)
-   before considering this done, not just a stdout diff.
-
-This TODO entry, not `rc2/doc/`, is where this plan lives -- consistent
-with the project's own convention that `rc2/doc/` is for finished
-design/implementation, not an in-progress or twice-reopened one.
+Caches a constructor-destructured field read more than once in a
+native context into a fresh native shadow, computed once
+(`Compiler.RC2.ConAltNative`, a new pass running right after
+`Compiler.RC2.Reuse`) -- reusing `Compiler.RC2.Loop`'s own existing
+native-shadow-loop-param mechanism (mint a fresh id, `renameRCExp`
+every reference to it, `stripOwnership` the now-stale bookkeeping that
+rename carried along), just scoped to a single case-alternative's own
+body instead of a whole function/loop. The field's own Boxed
+declaration and its ownership/constructor-reuse-in-place participation
+(`Compiler.RC2.RC`'s `annotate`, `Compiler.RC2.Reuse`'s `resolveAlt`)
+stay completely untouched -- narrower in scope than the two-layer plan
+this entry used to describe (a single-read field was already
+effectively native today, via inline unboxing at that one read; only a
+repeated read actually benefits from caching). Two implementation
+attempts leaked (found via `valgrind`, not a stdout diff) before
+landing on the version that shipped -- full design, both bugs, and the
+fix are documented in **`rc2/doc/con-alt-native.md`** -- moved there in
+full since it's finished design/implementation, not an open gap; this
+entry is only a pointer. The *hoisting* extension the two-layer plan's
+own second layer used to describe (loop-carried/dual-ABI-boundary
+constructor state, not just a single alt's own body) was **not**
+pursued -- left as plausible future work if profiling ever shows it
+matters, not currently planned.
 
 ## Scope: deliberately unboxed types stop at scalars
 
