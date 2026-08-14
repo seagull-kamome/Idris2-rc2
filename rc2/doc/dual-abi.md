@@ -792,6 +792,54 @@ the closest analogue to bug #2 above) passed without any fix needed.
    directly: `fib`'s own worker now reads `int64_t var_3 =
    idris2rc2_worker_Main_fib_0(var_4); ...; return (var_3 + var_5);` -- no boxing,
    no unboxing, no dup/drop at all for either recursive call.
+6. **A dual-ABI-eligible function with more than `MaxExtractFunArgs`
+   (8) own top-level parameters crashed the compiler.** Found against a
+   real, externally-sourced package
+   ([`idris2-missing-containers`](https://github.com/seagull-kamome/idris2-missing-containers),
+   see `BENCHMARKS.md`'s own re-measurement), not by anything in this
+   project's own test suite (which has no function this wide) --
+   `idris2 --cg refc -p missing-containers -p contrib Main.idr` failed
+   outright with `INTERNAL ERROR: [rc2] RAppNameRep: more than 8 args
+   not yet supported`. Root cause: `RAppNameRep`'s own emission
+   (`emitAppNameRepInto` and `emitNativeValue`'s own case, see "Stage
+   3a"/"Stage 4" above) has no `var_arglist[]`-style boxed-array
+   extraction fallback for more than `MaxExtractFunArgs` arguments the
+   way an ordinary, always-Boxed many-argument function's own
+   `createCFunctions` path already does -- some of the package's own
+   lambda-lifted internal helpers carry 9-23 parameters (free variables
+   captured from an enclosing scope), and at least two of those had a
+   genuinely native-eligible parameter among them, so a worker (and,
+   for the wrapper's own call into it, an `RAppNameRep`) got
+   synthesised for a function this wide -- present from Stage 3a
+   onward, not introduced by Stage 4 (confirmed by bisecting the
+   compiler back through Stage 3a/3b, and separately the pre-dual-ABI
+   commit this whole branch started from -- all reproduced the
+   identical crash once actually tested against this package, since
+   nothing in this project's own suite ever exercised the shape at
+   all). Fixed conservatively rather than building the extraction
+   fallback (real work, and functions this wide are expected to stay
+   rare): `applyDualABI`'s own `synthesizeIfEligible` now excludes any
+   function with more than `MaxExtractFunArgs` parameters from dual-ABI
+   eligibility entirely, unconditionally -- regardless of what
+   `paramEligibility`/`returnEligibility` would otherwise decide -- the
+   same blanket-exclusion shape `isMutualLoopMerged` already uses.
+   `MaxExtractFunArgs` itself (`Compiler.RC2.Emit`) is now `export`ed
+   for this reuse, so the two limits can never drift apart by accident.
+   Re-verified: full refc-suite (19/19), the entire
+   `tests/Test*.idr`/`Bench*.idr` matrix re-diffed byte-for-byte against
+   real `idris2 --cg refc` (none of them has a function this wide, so
+   none of them is actually affected by the exclusion), `valgrind` still
+   reporting zero leaks. **Separately** (not a dual-ABI bug, but found
+   during the same investigation): the `idris2-missing-containers`
+   package's own `benchmarkHashMap` currently crashes at runtime
+   (`Unhandled input for Main.case block`) under *both* `idris2-rc2`
+   and unmodified upstream `idris2 --cg refc`, confirmed by bisecting
+   all the way back through every commit this branch ever built on,
+   including the exact commit `BENCHMARKS.md`'s own last successful
+   measurement of this package was taken at -- a pre-existing,
+   environment/package-level issue unrelated to `Compiler.RC2`
+   entirely, blocking a fresh benchmark re-measurement of this package
+   for now (see `BENCHMARKS.md`'s own note).
 
 ## Status
 

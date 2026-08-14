@@ -148,3 +148,27 @@ non-firing behavior for the same reason). Not a bug to fix, but noted
 here in case a future frontend change or a different lowering strategy
 changes when `RFree` becomes reachable, so its rarely-exercised code path
 gets renewed scrutiny then.
+
+## External: `idris2-missing-containers`'s own `benchmarkHashMap` crashes, unrelated to rc2
+
+`install/idris2-missing-containers` (the external package
+`rc2/BENCHMARKS.md`'s own "外部パッケージベンチマーク" section uses)
+currently fails at runtime (`Unhandled input for Main.case block in
+benchmarkHashMap`) partway through its own `benchmarkHashMap`, under
+both `idris2-rc2` and unmodified upstream `idris2 --cg refc`. Confirmed
+via bisection across every commit this repo has built the dual-ABI work
+on, including the exact commit `BENCHMARKS.md`'s own last successful
+measurement of this package was taken at (which reproduces the
+identical crash once actually re-tested, despite that earlier
+measurement having succeeded) -- not a regression from any change in
+this repo, and not `Compiler.RC2`-specific (real RefC hits it too).
+Likely an environment/toolchain drift (nix channel package version
+skew between then and now is the leading suspect, matching the class of
+issue `Test7CastMatrix.idr`'s own `contrib` package resolution and the
+nixpkgs-bundled RefC support library bug already are) rather than
+anything in the missing-containers package's own source (unchanged,
+confirmed via its own `git log`). Not investigated further -- out of
+scope for whatever rc2 work was in progress when this was found. Blocks
+a fresh post-dual-ABI re-measurement of this benchmark until resolved;
+re-run `rc2/BENCHMARKS.md`'s own "セットアップ" steps once it's
+diagnosed.

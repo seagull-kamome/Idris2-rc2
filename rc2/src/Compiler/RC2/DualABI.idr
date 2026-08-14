@@ -338,8 +338,11 @@ synthesizeWorker existingNames original eligible retEligible args wrapperRetRep 
 ||| Whole-program pass: for every `MkRCFun` with at least one
 ||| parameter-eligible position and/or an eligible return
 ||| (`Compiler.RC2.MutualLoop`-produced merged functions excluded, see
-||| `isMutualLoopMerged`), synthesises a worker (native at whichever of
-||| its own parameters/return turned out eligible) and rewrites the
+||| `isMutualLoopMerged`; a function with more than `MaxExtractFunArgs`
+||| own top-level parameters also excluded unconditionally, regardless
+||| of what eligibility it would otherwise have -- see this function's
+||| own inline note), synthesises a worker (native at whichever of its
+||| own parameters/return turned out eligible) and rewrites the
 ||| original into a thin wrapper -- see the module note for the full
 ||| Stage 3a+3b design. Every other definition (a function with nothing
 ||| eligible at all, or any non-`MkRCFun` def) passes through
@@ -353,7 +356,29 @@ applyDualABI defs = do
   where
     synthesizeIfEligible : {auto r : Ref FreshId Int} -> SortedSet Name -> (Name, RCDef) -> Core (List (Name, RCDef))
     synthesizeIfEligible existingNames (n, d@(MkRCFun args retRep body)) =
-        if isMutualLoopMerged n
+        -- `RAppNameRep`'s own emission (`Compiler.RC2.Emit`'s
+        -- `emitAppNameRepInto`/`emitNativeValue`) has no `var_arglist[]`
+        -- -style extraction fallback for more than `MaxExtractFunArgs`
+        -- arguments the way an ordinary, always-Boxed many-argument
+        -- function's own `createCFunctions` path does -- every
+        -- `RAppNameRep` call this pass (or Stage 4's own call-site
+        -- rewriting) ever produces throws `InternalError` past that
+        -- limit. A real, externally-sourced package (not covered by
+        -- this project's own test suite, which has no function this
+        -- wide) hit exactly this: some of its own lambda-lifted
+        -- internal helpers carry 9+ parameters (free variables
+        -- captured from an enclosing scope), and at least one of those
+        -- parameters was otherwise genuinely native-eligible. Rather
+        -- than building that extraction fallback (real work, and this
+        -- shape is expected to stay rare), simply exclude any function
+        -- this wide from dual-ABI eligibility entirely, unconditionally
+        -- -- regardless of what `paramEligibility`/`returnEligibility`
+        -- would otherwise decide -- so no `RAppNameRep` is ever
+        -- constructed for it in the first place. Correct, if
+        -- conservative: such a function just keeps its own ordinary,
+        -- always-Boxed calling convention, same as before this whole
+        -- effort existed.
+        if isMutualLoopMerged n || length args > MaxExtractFunArgs
            then pure [(n, d)]
            else do
              let argIds = map fst args

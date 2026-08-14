@@ -933,7 +933,14 @@ buildClosureIntoSink fc (SinkReturn _) n args missing = do
     closure <- makeClosure fc n args missing
     emit fc "return \{closure};"
 
--- Must match the dispatch switch in support/rc2/runtime.c.
+-- Must match the dispatch switch in support/rc2/runtime.c. `export`ed
+-- so `Compiler.RC2.DualABI` can consult the same limit when deciding
+-- worker eligibility (see its own use for why: `RAppNameRep`'s own
+-- emission -- both `emitAppNameRepInto` and `emitNativeValue`'s own
+-- case above -- has no `var_arglist[]`-style extraction fallback for
+-- more than this many arguments, unlike an ordinary many-argument
+-- function's own always-Boxed `createCFunctions` path).
+export
 MaxExtractFunArgs : Nat
 MaxExtractFunArgs = 8
 
