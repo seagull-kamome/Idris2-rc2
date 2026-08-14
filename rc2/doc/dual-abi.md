@@ -11,8 +11,8 @@ branch `dual-abi`; this document is a *living* one, updated as later
 stages land -- see "Status" below for exactly what's implemented today
 versus still planned.
 
-(Japanese translation: `doc/ja/dual-abi.md`, kept in sync -- see
-`CLAUDE.md`'s own doc index. Update both when editing this file.)
+(Japanese translation: `doc/ja/dual-abi.md`, updated only on request --
+this English original is the one kept current on every edit.)
 
 ## The problem
 
@@ -550,6 +550,56 @@ First build succeeded outright; the full verification sweep below
 (including `Main.sumTo`'s own loop-plus-native-return combination,
 the closest analogue to bug #2 above) passed without any fix needed.
 
+3. **`RAppNameRep` leaked every Boxed-sourced argument it read
+   natively.** Found while designing Stage 4 (call-site rewriting):
+   before rewriting *more* call sites to read Boxed values natively,
+   the existing Stage 3a wrapper -- already doing exactly that for
+   every promoted parameter -- was re-examined empirically rather than
+   just trusted. `rcVarToNativeC` (the unboxing accessor
+   `RAppNameRep`'s own argument rendering uses for any `RNative`/
+   `RInlineNative`-rep position) never dups/drops on its own (see its
+   own doc comment) -- it only ever *reads* the value, leaving the
+   original Boxed reference alive. `ROp`/`RCmpCase` already handle this
+   correctly via their own `annotate`-decided `postDrop` field, but
+   `RAppNameRep` had no such field at all, and -- unlike `ROp` --
+   `Compiler.RC2.DualABI`'s own worker/wrapper synthesis never goes
+   through `annotate`'s ownership analysis in the first place (it
+   builds `RAppNameRep` nodes directly, well after `annotate` is
+   already done with the whole definition), so nothing was ever
+   deciding this drop was needed. `Main.fib`'s own wrapper never
+   surfaced this in the existing verification sweep because every
+   value it ever promotes to native during `fib 30` stays within the
+   small-int cache range (`[0,100)`, backed by immortal, `refCount ==
+   IDRIS2RC2_REFCOUNT_MAX` shared singletons -- `idris2rc2_drop` on one
+   is unconditionally a no-op, so a *missing* drop is silently
+   indistinguishable from a correct one) -- exactly the same "hidden by
+   a no-op" shape that bit this project once before with 32-bit-and-
+   below pointer tagging. Confirmed with `valgrind --leak-check=full`
+   against a synthetic worst case (`tests/Test11DualABILeak.idr`, a
+   dual-ABI-eligible function whose own promoted parameter is
+   deliberately pushed outside the cache range): `31,999,984 bytes in
+   1,999,999 blocks definitely lost` for 2,000,000 calls -- essentially
+   one leaked allocation *per call*. Fixed by giving `RAppNameRep` its
+   own `postDrop : List RCLocal` field, mirroring `ROp`'s own exactly:
+   `Compiler.RC2.DualABI`'s own `synthesizeWorker` populates it for
+   free (it's exactly the wrapper's own promoted parameter ids, already
+   computed as `eligible` for an unrelated purpose), and
+   `Compiler.RC2.Emit` gained a dedicated `emitAppNameRepInto`
+   (`RAppNameRep` moved out of `emitRC`'s own "always render a Boxed
+   string, no room for a pending-drop list" dispatch into `emitInto`'s
+   own per-node dispatch, alongside `RCmpCase`/`RConCase`/etc.) that
+   discharges `postDrop` after the call's own value has been embedded
+   in its own statement -- reusing `emitNativeReturn`'s own "materialise
+   into a scratch variable first" trick for a `SinkReturn` target (no
+   statement position exists *after* a `return` for a drop to land in),
+   plain "finalize, then drop" for a `SinkVar` target (which always has
+   one). Re-verified: `valgrind` on the same synthetic case now reports
+   `definitely lost: 0 bytes in 0 blocks` (`total heap usage: 14,000,124
+   allocs, 14,000,024 frees` -- the 100-block gap is exactly the
+   immortal small-int cache, not a leak); full refc-suite (19/19) and
+   the entire `tests/Test*.idr`/`Bench*.idr` matrix re-diffed
+   byte-for-byte against real `idris2 --cg refc`, unaffected.
+
 ## Status
 
 **Implemented and verified** (Stages 1, 2, 3a, 3b): the IR foundation,
@@ -622,10 +672,12 @@ dedicated safety argument first).
   independently of `wrapperRetRep`), `describeEligibility`/
   `dumpDualABI` (the `--directive dumpdualabi` debug dump).
 - `rc2/src/Compiler/RC2/RCExp.idr` -- `MkRCFun`'s new shape,
-  `RAppNameRep`.
+  `RAppNameRep` (now with its own `postDrop` field, mirroring `ROp`'s
+  own, added for the reference-leak fix above).
 - `rc2/src/Compiler/RC2/Loop.idr` -- `nativeArgType`/`stripOwnership`
   now `export`ed for `Compiler.RC2.DualABI`'s own reuse; defensive
-  `RAppNameRep` pass-through case in `renameRCExp`.
+  `RAppNameRep` pass-through case in `renameRCExp` (now also renaming
+  `postDrop`).
 - `rc2/src/Compiler/RC2/RC.idr` -- `normalizeDef`/`annotateDef` updated
   for `MkRCFun`'s new shape; defensive `RAppNameRep` pass-through case
   in `annotate`.
@@ -638,12 +690,18 @@ dedicated safety argument first).
   `SinkReturn` constructor now carries a `Rep` (Stage 3b); new
   `emitNativeReturn`; `emitNativeValue`'s new bare-`RV` case;
   `emitInto`'s fallback arm dispatches to `emitNativeReturn` for a
-  native `SinkReturn`; `emitRC`'s `RAppNameRep` case now handles a
-  native `retRep` via `nativeMk`.
+  native `SinkReturn`; `RAppNameRep` moved out of `emitRC`'s own
+  dispatch entirely into a new, dedicated `emitAppNameRepInto`
+  (`emitInto`'s own per-node dispatch, alongside `RCmpCase`/`RConCase`/
+  etc.) that discharges its own `postDrop`.
 - `rc2/src/Compiler/RC2/Pretty.idr` -- `MkRCFun`'s new
-  `args`/`retRep` rendering; `RAppNameRep`'s own `callRep` rendering.
+  `args`/`retRep` rendering; `RAppNameRep`'s own `callRep` rendering
+  (now including `postDrop`).
 - `rc2/src/Compiler/RC2/RC2.idr` -- `toRCDefs`'s own pipeline wiring
   (`applyDualABI` after `applyLoop`); `--directive dumpdualabi` wiring.
+- `rc2/tests/Test11DualABILeak.idr` -- regression test for the
+  reference-leak bug above; verify with `valgrind --leak-check=full`,
+  not just a stdout diff (see the test file's own comment).
 
 ## Verification methodology
 
@@ -696,3 +754,15 @@ dedicated safety argument first).
    `idris2-rc2`'s own build of the same file compiles and runs cleanly,
    so this is a coverage gap in cross-checking this one file, not a
    known or suspected rc2 bug.
+6. **A stdout diff alone can't catch a reference leak** -- one existed
+   in `RAppNameRep`'s own argument handling for a full stage-and-a-half
+   (Stage 3a through most of Stage 3b) without ever failing a single
+   diff, precisely because it doesn't corrupt any computed value. Any
+   change to `RAppNameRep`'s own emission, or to `Compiler.RC2.DualABI`'s
+   own worker/wrapper synthesis, should also be checked with `valgrind
+   --leak-check=full` against `tests/Test11DualABILeak.idr` (deliberately
+   pushes its own promoted parameter's values outside the small-int
+   cache range, so a missing drop can't hide as a silent no-op the way
+   it did in `Main.fib`/`Main.sumTo`'s own recursion) -- expect
+   `definitely lost: 0 bytes in 0 blocks` (only the 100-entry immortal
+   small-int cache should show as `still reachable`).

@@ -167,7 +167,24 @@ mutual
        ||| `Compiler.RC2.DualABI`, itself run after
        ||| `Compiler.RC2.Loop` (see its own module note); no earlier
        ||| pass constructs or expects to see this.
-       RAppNameRep : FC -> Name -> (argReps : List Rep) -> (retRep : Rep) -> List RCLocal -> RCExp
+       |||
+       ||| `postDrop`: mirrors `ROp`'s own field of the same name --
+       ||| whichever of `args` get read *natively* (an `RNative`/
+       ||| `RInlineNative` position in `argReps`) while their own source
+       ||| is still genuinely `RBoxed` get unboxed via `rcVarToNativeC`,
+       ||| which (like every other native-read accessor in this codebase)
+       ||| never dups/drops on its own -- so, exactly as `ROp`'s own
+       ||| `postDrop` already tracks for an ordinary native operator, this
+       ||| node needs its own explicit list of which of its Boxed-sourced
+       ||| arguments are now dead and must be dropped once the call that
+       ||| read them has been embedded in its own statement (a real bug,
+       ||| found and fixed via `valgrind`, existed here before this field
+       ||| did: `Compiler.RC2.DualABI`'s own worker/wrapper synthesis is
+       ||| the *only* producer of this node, and unlike `ROp` -- decided
+       ||| by `Compiler.RC2.RC`'s own `annotate` -- never goes through
+       ||| that ownership analysis at all, so nothing was ever deciding
+       ||| this drop was needed).
+       RAppNameRep : FC -> Name -> (argReps : List Rep) -> (retRep : Rep) -> (postDrop : List RCLocal) -> List RCLocal -> RCExp
        RUnderApp  : FC -> Name -> (missing : Nat) -> List RCLocal -> RCExp
        RApp       : FC -> (lazy : Maybe LazyReason) -> RCLocal -> RCLocal -> RCExp
        ||| `rep`: the native-or-boxed representation decided for this local

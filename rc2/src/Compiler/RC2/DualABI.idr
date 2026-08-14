@@ -258,10 +258,16 @@ isMutualLoopMerged _ = False
 ||| unmodified), unchanged id, body is a single `RAppNameRep` call into
 ||| the worker, one argument per original parameter rendered per the
 ||| worker's own decided `Rep` there, and the *call's* own `retRep`
-||| naming the worker's own (possibly native) return -- `emitRC`'s own
-||| `RAppNameRep` case boxes that back up via `nativeMk` before it
-||| becomes this wrapper's own (always-Boxed) tail value, see
-||| `Compiler.RC2.Emit`'s own module note.
+||| naming the worker's own (possibly native) return -- `Compiler.RC2.Emit`'s
+||| own dedicated `RAppNameRep` renderer boxes that back up via
+||| `nativeMk` before it becomes this wrapper's own (always-Boxed) tail
+||| value, see its own module note. Every wrapper argument rendered
+||| natively (an eligible position) is passed as `RAppNameRep`'s own
+||| `postDrop`: the wrapper's own top-level parameters are always
+||| `RBoxed` by construction, so any of them read natively by the call
+||| (via `rcVarToNativeC`, which never dups/drops on its own -- see
+||| `RAppNameRep`'s own doc comment in RCExp.idr) is left alive and
+||| genuinely needs this explicit drop once the call has read it.
 synthesizeWorker : {auto r : Ref FreshId Int}
                  -> SortedSet Name -> List (Int, PrimType) -> Maybe PrimType -> List (Int, Rep) -> Rep -> RCExp
                  -> Core (Name, RCDef, RCDef)
@@ -283,8 +289,10 @@ synthesizeWorker existingNames eligible retEligible args wrapperRetRep body = do
         workerDef = MkRCFun workerArgs workerRetRep workerBody
         wrapperArgIds : List Int
         wrapperArgIds = map fst args
+        wrapperPostDrop : List RCLocal
+        wrapperPostDrop = map RCLoc (map fst eligible)
         wrapperBody : RCExp
-        wrapperBody = RAppNameRep emptyFC workerName (map snd workerArgs) workerRetRep (map RCLoc wrapperArgIds)
+        wrapperBody = RAppNameRep emptyFC workerName (map snd workerArgs) workerRetRep wrapperPostDrop (map RCLoc wrapperArgIds)
         wrapperDef : RCDef
         wrapperDef = MkRCFun args wrapperRetRep wrapperBody
     pure (workerName, wrapperDef, workerDef)

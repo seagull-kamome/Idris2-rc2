@@ -1253,6 +1253,69 @@ mutual
                  removeVars $ map varName pending
                  emit fc "return \{tmp};"
 
+    ||| Render a leftover `RAppNameRep` (a direct call to `name`'s own
+    ||| dual-ABI worker, see its own doc comment in RCExp.idr) into
+    ||| `sink`. Renders each argument per `argReps`' own position,
+    ||| mirroring `tryEmitLoopContinue`'s own per-position Rep-aware
+    ||| rendering, then always produces a *Boxed* value string (`RBoxed`
+    ||| behaves like an ordinary, never-closure-deferred `RAppName`
+    ||| call -- trampolined off tail position, bare in it, see
+    ||| `RAppNameRep`'s own doc comment for why deferral is never needed
+    ||| here; `RNative`/`RInlineNative` means the callee's own raw
+    ||| native result gets boxed via `nativeMk`) -- every current
+    ||| producer of this node (`Compiler.RC2.DualABI`'s own wrapper
+    ||| bodies) always feeds a Boxed-wanting `sink`, so there's no
+    ||| native-`Sink` case to render towards yet; that's Stage 4's own
+    ||| concern, not attempted until something needs it.
+    |||
+    ||| Then discharges `postDrop` -- see its own doc comment on
+    ||| `RAppNameRep` in RCExp.idr for why this exists at all (a real
+    ||| reference leak, found via `valgrind`, before it did): any
+    ||| Boxed-sourced argument read *natively* by the call is left alive
+    ||| by `rcVarToNativeC` (never dups/drops on its own) and must be
+    ||| dropped once the call has been embedded in its own statement.
+    ||| For `SinkVar`, there's always a statement position right after
+    ||| that embedding for the drop to land in (same as an ordinary
+    ||| `RLet`'s own `declareNative`); `SinkReturn` has none, so (only
+    ||| when `postDrop` isn't empty -- the common case, no promoted
+    ||| parameter at all, pays nothing extra) the value is first
+    ||| captured into its own scratch variable, exactly
+    ||| `emitNativeReturn`'s own approach.
+    emitAppNameRepInto : {auto a : Ref ArgCounter Nat}
+                       -> {auto oft : Ref OutfileText Output}
+                       -> {auto il : Ref IndentLevel Nat}
+                       -> {auto _ : Ref ConstDef (SortedMap Constant ConstDef)}
+                       -> {auto r : Ref RepMap (SortedMap Int Rep)}
+                       -> {auto lm : Ref InlineMap (SortedMap Int String)}
+                       -> {auto fa : Ref LoopParams (List (Int, Rep))}
+                       -> Sink -> TailPositionStatus -> FC -> Name -> List Rep -> Rep -> List RCLocal -> List RCLocal -> Core ()
+    emitAppNameRepInto sink tailPosition fc n argReps retRep postDrop args = do
+        let nargs = length args
+        when (nargs > MaxExtractFunArgs) $
+            throw $ InternalError "[rc2] RAppNameRep: more than \{show MaxExtractFunArgs} args not yet supported"
+        argStrs <- traverse (\(rep, v) => case rep of
+                                 RNative ty => rcVarToNativeC ty v
+                                 RInlineNative ty => rcVarToNativeC ty v
+                                 RBoxed => rcVarToBoxedC v) (zip argReps args)
+        let call = "\{cName n}(\{concat $ intersperse ", " argStrs})"
+        let valStr = case retRep of
+                          RBoxed => case tailPosition of
+                                         InTailPosition => call
+                                         NotInTailPosition => "idris2rc2_trampoline(\{call})"
+                          RNative ty => nativeMk ty call
+                          RInlineNative ty => nativeMk ty call
+        case postDrop of
+             [] => finalizeSink fc sink valStr
+             _  => case sink of
+                        SinkReturn _ => do
+                            tmp <- getNewVarThatWillNotBeFreedAtEndOfBlock
+                            emit fc "IDRIS2RC2_Value * \{tmp} = \{valStr};"
+                            removeVars $ map varName postDrop
+                            emit fc "return \{tmp};"
+                        _ => do
+                            finalizeSink fc sink valStr
+                            removeVars $ map varName postDrop
+
     ||| Evaluate `value` (in `tailPosition`) and dispose of its result per
     ||| `sink` -- either declaring/assigning a named C variable, or (only
     ||| ever while `tailPosition` is `InTailPosition`, since nothing after
@@ -1308,15 +1371,23 @@ mutual
                          emitConstCaseInto sink tailPosition fc' sc alts def
                      RLoop fc' loopParams initial body =>
                          emitLoopInto sink tailPosition fc' loopParams initial body
+                     -- Always routed to its own dedicated renderer,
+                     -- regardless of `sink` -- emitRC's own contract
+                     -- ("always render a Boxed expression string") has
+                     -- no room to also discharge RAppNameRep's own
+                     -- postDrop (see its own doc comment in RCExp.idr),
+                     -- the same "can't discharge a pending Boxed-operand
+                     -- drop safely in front of a `return`" problem
+                     -- emitNativeReturn already solves for an ordinary
+                     -- native tail value, generalised here to any Sink.
+                     RAppNameRep fc' n argReps retRep postDrop args =>
+                         emitAppNameRepInto sink tailPosition fc' n argReps retRep postDrop args
                      -- A native SinkReturn (Compiler.RC2.DualABI's own
                      -- Stage 3b) skips emitRC entirely: emitRC's own
                      -- contract is "always render a Boxed expression
-                     -- string" (every one of its cases does, including
-                     -- RAppNameRep's own boxing of a native call
-                     -- result -- see its own case below), which is
-                     -- exactly wrong here, and can't discharge a
-                     -- pending Boxed-operand drop safely in front of a
-                     -- `return` in the first place (see
+                     -- string", which is exactly wrong here, and can't
+                     -- discharge a pending Boxed-operand drop safely in
+                     -- front of a `return` in the first place (see
                      -- emitNativeReturn's own doc comment). Every other
                      -- Sink still goes through the ordinary
                      -- emitRC-then-finalizeSink route, unchanged.
@@ -1675,50 +1746,14 @@ mutual
                argStrs <- traverse rcVarToBoxedC args
                pure "idris2rc2_trampoline(\{cName n}(\{concat $ intersperse ", " argStrs}))"
 
-    -- A direct call to `n`'s own dual-ABI worker -- see
-    -- `RAppNameRep`'s own doc comment in RCExp.idr. Renders each
-    -- argument per `argReps`' own position, mirroring
-    -- `tryEmitLoopContinue`'s own per-position Rep-aware rendering.
-    -- `emitRC`'s own contract (every case in this function) is "always
-    -- render a Boxed expression string", so `retRep` only controls how
-    -- the raw `call` gets there: `RBoxed` behaves like an ordinary
-    -- (never closure-deferred, see RAppNameRep's own doc comment for
-    -- why that's safe here) `RAppName` call would -- trampolined when
-    -- not in tail position (the caller is about to use the value
-    -- directly), returned bare when in tail position (deferred to
-    -- *this* call's own caller to trampoline, exactly as an ordinary
-    -- tail-position delegating call already would be); `RNative`/
-    -- `RInlineNative` means the worker being called genuinely returns
-    -- that native C type (Compiler.RC2.DualABI's own Stage 3b promotes
-    -- a worker's own retRep when `returnEligibility` found one), so
-    -- `call` itself is already the raw native value -- `nativeMk`
-    -- boxes it, unconditionally, regardless of tail position: a native
-    -- return can never itself be "a trampoline still awaiting
-    -- resolution" (that's a Boxed-representation-only concept -- a
-    -- tagged heap pointer that might encode an unresolved
-    -- continuation), so there's nothing to defer here either way. Only
-    -- this direction (rendering a native worker's own result as
-    -- Boxed, for a wrapper's own always-Boxed tail value) is
-    -- implemented -- a caller wanting `RAppNameRep`'s own result
-    -- rendered *natively* instead (skipping this boxing entirely) is
-    -- Stage 4's own concern, not yet needed: Stage 3b's only producer
-    -- of this node is still `Compiler.RC2.DualABI`'s own wrapper body,
-    -- always feeding straight into a `SinkReturn RBoxed`.
-    emitRC (RAppNameRep fc n argReps retRep args) tailPosition = do
-        let nargs = length args
-        when (nargs > MaxExtractFunArgs) $
-            throw $ InternalError "[rc2] RAppNameRep: more than \{show MaxExtractFunArgs} args not yet supported"
-        argStrs <- traverse (\(rep, v) => case rep of
-                                 RNative ty => rcVarToNativeC ty v
-                                 RInlineNative ty => rcVarToNativeC ty v
-                                 RBoxed => rcVarToBoxedC v) (zip argReps args)
-        let call = "\{cName n}(\{concat $ intersperse ", " argStrs})"
-        case retRep of
-             RBoxed => pure $ case tailPosition of
-                                   InTailPosition => call
-                                   NotInTailPosition => "idris2rc2_trampoline(\{call})"
-             RNative ty => pure $ nativeMk ty call
-             RInlineNative ty => pure $ nativeMk ty call
+    -- Unreachable: emitInto's own dispatch always intercepts a leftover
+    -- RAppNameRep itself (routing it to emitAppNameRepInto, which needs
+    -- to discharge its own postDrop -- something emitRC's own "just
+    -- return a Boxed expression string" contract has no room for --
+    -- before ever falling back to a bare emitRC call). See
+    -- emitAppNameRepInto's own doc comment for the full rendering this
+    -- case used to do directly.
+    emitRC (RAppNameRep fc n argReps retRep postDrop args) _ = throw $ InternalError "[rc2] RAppNameRep reached emitRC directly (not intercepted by emitInto)"
 
     -- Unreachable: emitInto's tryBuildClosureInto always intercepts
     -- RUnderApp itself, for any tailPosition -- a partial application is

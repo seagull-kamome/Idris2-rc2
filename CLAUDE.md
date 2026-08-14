@@ -29,10 +29,10 @@ overview, history, and known gaps.
   a replacement for `TODO.md` — those stay the changelog
   and gap tracker; `rc2/doc/` is where the *why* and the
   bugs-found-along-the-way for a specific subsystem live.
-  `rc2/doc/ja/` holds Japanese translations of every file directly
-  under `rc2/doc/` (same filenames) — the English originals are
-  authoritative if the two ever drift; update both when editing an
-  `rc2/doc/*.md` file that has a translation.
+  `rc2/doc/ja/` holds Japanese translations of some files directly
+  under `rc2/doc/` (same filenames) — the English originals are always
+  authoritative and are the only ones maintained on every edit; only
+  update `rc2/doc/ja/` when specifically asked to translate/sync it.
 - `env.sh` / `gen-env.sh` — environment setup; `source env.sh` before
   building/running rc2 or plain `idris2`
 

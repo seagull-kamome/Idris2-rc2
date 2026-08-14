@@ -276,7 +276,8 @@ mutual
   -- renameRCExp) have already finished. Kept total (as a plain
   -- pass-through) rather than assumed unreachable, same reasoning as
   -- this function's own RLoop case just above.
-  renameRCExp ren (RAppNameRep fc n argReps retRep args) = RAppNameRep fc n argReps retRep (renameLocals ren args)
+  renameRCExp ren (RAppNameRep fc n argReps retRep postDrop args) =
+      RAppNameRep fc n argReps retRep (renameLocals ren postDrop) (renameLocals ren args)
 
   renameConAlt : Renaming -> RConAlt -> RConAlt
   renameConAlt ren (MkRConAlt name ci tag args body) =
