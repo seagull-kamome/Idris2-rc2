@@ -220,7 +220,17 @@ dumpdualabi`デバッグダンプ(`--directive dumprcexp`をミラーし、
 
 1. 新しいworker名を発行する(`freshName`/`freshId`/`FreshId`、
    `MutualLoop.idr`が既に使っているのと同じ`Ref`で持ち回るカウンター
-   のパターン)。
+   のパターン) -- `idris2rc2_worker_`に、*元の*関数自身のマングルされた
+   C名(`Compiler.RC2.Emit`自身の`cName`、この再利用のため今や
+   `export`化された -- wrapper自身の変更されないC名が既に使っている
+   のと全く同じマングリング)を加え、さらに曖昧さ回避用のカウンタを
+   付ける形である。例えば`Main.fib`自身のworkerは
+   `idris2rc2_worker_Main_fib_0`になる -- *生成されたもの*であること
+   (このプロジェクト自身が確立した、ランタイムが所有する全てのC
+   シンボルに対する`idris2rc2_`プレフィックス規約に合致する)と、
+   *この特定の元の関数自身のworkerであることが目に見える*ことの両方
+   が、一目でわかるよう意図的に作られている -- 元々の不透明な
+   `rc2_dualABI_N`というグローバルカウンタとは対照的である。
 2. `workerArgs`: 各パラメータを、適格な位置では`RNative ty`に、それ
    以外では`RBoxed`に昇格させる -- **元のパラメータ自身のidをそのまま
    再利用し、リネームは一切不要**。これは`Compiler.RC2.Loop`自身の
@@ -456,7 +466,7 @@ worker自身の生のネイティブ結果であることを意味するので�
 ```c
 IDRIS2RC2_Value *Main_fib(IDRIS2RC2_Value * var_0)
 {
-    return idris2rc2_mkInt64(rc2_dualABI_0(idris2rc2_to_i64(var_0)));
+    return idris2rc2_mkInt64(idris2rc2_worker_Main_fib_0(idris2rc2_to_i64(var_0)));
 }
 ```
 
@@ -481,9 +491,129 @@ let retTypeStr : String = case retRep of
 let fn = "\{retTypeStr}\{cName !(getFullName n)}" ++ ...
 ```
 
-`Main.fib`自身のworkerは`int64_t rc2_dualABI_0(int64_t var_0);`という
-前方宣言になる -- 生成されたCを直接読んで確認済み、他のあらゆる段階
-と同じ検証の規律に従っている。
+`Main.fib`自身のworkerは`int64_t idris2rc2_worker_Main_fib_0(int64_t var_0);`
+という前方宣言になる -- 生成されたCを直接読んで確認済み、他のあらゆる
+段階と同じ検証の規律に従っている。
+
+## Stage 4: 呼び出しサイトの書き換え
+
+実際のパフォーマンス向上が実現される段階である。(3a/3bとは異なり)
+これ以上分割せず、1つの統合されたステージとして着地させた -- 「呼び
+出しを書き換える」半分は既に検証済みのエミッション機構
+(`emitAppNameRepInto`は既にネイティブな結果を必要に応じてbox化する)
+を再利用するだけで、実質的に新たなリスクはない一方、「囲む`RLet`を
+昇格させる」半分こそが書き換えを実際に報われるものにしている。前半
+だけを行えば、あらゆる呼び出しが自身の結果をbox化しては直後に再び
+unbox化するだけに終わり、専用の段階を割くに値しない、ぱっとしない
+効果にしかならなかったはずである。
+
+### 適用範囲: 非末尾位置の呼び出しのみ、恒久的に
+
+直接的で飽和した**非末尾位置**の呼び出しだけが、自身の呼び出し先の
+workerへとリダイレクトされる。workerを持つ関数への末尾位置の呼び出し
+は*意図的かつ恒久的な*スコープ境界であり、後続の段階で対応するもの
+ではない: これらは現在`tryBuildClosureInto`自身のクロージャ遅延
+(box化されトランポリンされる値として返し、*呼び出し元自身のさらに
+呼び出し元*が後で解決できるようにする -- `Compiler.RC2.Loop`/
+`Compiler.RC2.MutualLoop`が既に`goto`へ変換する自己/相互再帰的な形
+ではない、深さが未知の末尾呼び出し連鎖についてCスタックの増大を抑
+える)によってレンダリングされている。このような呼び出しを直接的で
+遅延されない`RAppNameRep`呼び出しに書き換えてしまうと、その無制限の
+増大を再び持ち込みかねない上、*どの*末尾位置の呼び出しサイトをこの
+方法で安全に書き換えられるかを判別するには本物のプロシージャ間解析
+が必要になる -- まさに、この取り組み全体がこれまで避け続けてきた
+プログラム全体規模の不動点そのものである(Stage 2で`returnEligibility`
+が既に*純粋な*末尾呼び出し委譲を追いかけるのではなく対象外としている
+理由と同じである)。
+
+### workerテーブル
+
+`workerTable`は、「どの関数がworkerを得たか、そしてその
+`(workerName, argReps, retRep)`自身は何か」を、`applyDualABI`実行後
+のdefs一覧を、`synthesizeWorker`が常に生成するwrapper自身の形 --
+`MkRCFun _ _ (RAppNameRep _ workerName argReps retRep _ _)`、それ以外
+の本体は一切持たない -- に一致するものとして走査することで復元する。
+`applyDualABI`自身から別途テーブルを引き回す必要は一切ない。
+
+### 書き換え: `applyCallSiteRewriteBody`
+
+全ての定義自身の本体(wrapper、worker、あるいは手つかずの関数 -- 3つ
+のうちどれであるかをここで知る必要は一切なく、全く同じロジックで
+書き換えられる)を歩き、既知のRepのローカル変数を保持する
+`SortedMap Int Rep`(`paramEligibility`/`tailValueReps`が既に使って
+いるのと同じシード付け/拡張方法)と、現在地点が本当に*関数全体自身
+の*末尾位置であるかどうかを追跡する`Bool`を引き回す -- `True`になる
+のはトップレベルの入口だけであり、`RLet`自身の`body`、あらゆる分岐
+構造自身の各分岐、あらゆるラッパーノード自身の`cont`はどこも変更せ
+ずそのままスレッドする。
+
+唯一本当に注意が必要な点: `RLet`自身の*value*は、一見そう見えるよう
+なフラットな末端(`ROp`/`RAppName`/`RCon`等)とは限らない。Phase 1
+自身のANF正規化は、呼び出しの*引数*式に対しては、外側の`RLet`自身の
+valueの**内側**にさらに`RLet`をネストさせる --
+
+```
+let v3 = (let v4 = n - 1 in fib v4) in
+let v5 = (let v6 = n - 2 in fib v6) in
+v3 + v5
+```
+
+-- そのため実際の呼び出しは、`value`自身として直接現れることは一切
+なく、さらなる`RLet`の連鎖の中に任意の深さで埋まっていることがある。
+`RLet`節はこれを、まず(非末尾モードで)`value`自身へ再帰することで
+処理する(そうすることで、*自身の*究極の末尾に何らかの`RAppName`が
+座っていれば -- この同じ関数自身の総称ケース、実際に何かを書き換え
+る唯一の節を通じて到達する -- それも書き換えられる)。その後、書き
+換え済みの`value1`自身の`ultimateTail`(同じネストした`RLet`の形を
+剥いていく)を調べることで、*外側*の`RLet`自身(上の例で言えば
+`v4`/`v6`ではなく`v3`、`v5`)が昇格候補かどうかを判定する。
+
+`postDropFor`は、書き換えられた引数のうちどれが明示的なdropを必要と
+するかを判定するために、それ自身の生存解析を一切必要としない: 置き
+換えられる*元の*(まだ`RAppName`のままの)呼び出しについて、
+`Compiler.RC2.RC`自身の`annotate`が既に、Boxedな引数を呼び出しへ渡す
+ことはちょうど1個の参照を消費すると(その引数自身のローカルがこの後
+もまだ必要なら事前にdupしつつ)判断済みである -- 代わりにそれを
+ネイティブに読み、ここで直接dropすることは、正確に同じ正味のコスト
+を支払うことになるので、`annotate`が呼び出しサイトの周りに既に整え
+ていたものは、どちらの方法でも変わらず正しく釣り合ったままになる。
+
+### 昇格: `nativePromotionFor`
+
+`Compiler.RC2.Loop`自身の`nativeArgTypes`(今や`nativeArgType`と並んで
+`export`化された)をそのまま再利用する -- 関数全体自身のトップレベル
+パラメータについて既に問うているのと同じ問いを、代わりに`RLet`束縛
+されたworker呼び出しの結果について問うだけである: このletの残りの
+自身のスコープは、それをworker自身の`retRep`において一貫してネイテ
+ィブコンテキストのオペランドとして読んでいるか? 見つかった場合、
+`stripOwnership`(3度目の再利用であり、ここでもidのリネームは不要
+-- 既に宣言済みのC変数に後付けするのではなく、新しいRLet束縛である
+ため)が、`annotate`がかつて通常のBoxedローカルだと想定していた時代
+遅れのBoxed生存期間の帳簿付けを取り除く。同じローカルの*他の*、依然
+としてBoxedコンテキストでの利用(例えばコンストラクタのフィールドへ
+格納される場合)は、昇格の有無にかかわらずそのまま動作し続ける --
+`rcVarToBoxedC`自身のオンデマンドな再box化によるもので、この呼び出し
+が*かつて*生成していたものを共有する代わりに新規に確保する(Idris
+レベルのプログラムからは一切観測不可能である -- スカラーには観測
+可能なアイデンティティがないため)。
+
+`fib`自身のworkerが、その前後の具体例である:
+
+```c
+// Stage 4適用前
+IDRIS2RC2_Value * var_3 = idris2rc2_trampoline(Main_fib(idris2rc2_mkInt64(var_4)));
+IDRIS2RC2_Value * var_5 = idris2rc2_trampoline(Main_fib(idris2rc2_mkInt64(var_6)));
+int64_t tmp_9 = (idris2rc2_to_i64(var_3) + idris2rc2_to_i64(var_5));
+
+// Stage 4適用後
+int64_t var_3 = idris2rc2_worker_Main_fib_0(var_4);
+int64_t var_5 = idris2rc2_worker_Main_fib_0(var_6);
+return (var_3 + var_5);
+```
+
+再帰呼び出しのどちらについても、その引数・結果いずれについてもbox化
+・unbox化・dup/dropは一切ない -- 計算全体がworker自身の入口から自身
+の`return`まで、`int64_t`のまま保たれる。
 
 ## 発見されたバグと修正
 
@@ -543,81 +673,223 @@ drop、それから return」という順序を、コードを書く前に洗い
 的な検証スイープ(上記バグ#2に最も近い形の、`Main.sumTo`自身のループ
 +ネイティブ戻り値の組み合わせを含む)も、一切の修正なしに通過した。
 
+3. **`RAppNameRep`は、ネイティブに読んだBoxed由来の引数を全て
+   リークしていた。** Stage 4(呼び出しサイトの書き換え)を設計して
+   いる最中に発見された: *さらに多くの*呼び出しサイトをBoxed値の
+   ネイティブ読み取りへ書き換える前に、既存のStage 3a wrapper --
+   昇格されたパラメータの全てについて既にまさにそれを行っていた --
+   を、単に信頼するのではなく実際に経験的に再検証した。
+   `rcVarToNativeC`(`RAppNameRep`自身の引数レンダリングが
+   `RNative`/`RInlineNative`な位置のいずれについても使うunbox化
+   アクセサ)は、それ自身では一切dup/dropを行わない(自身のドキュメ
+   ントコメント参照) -- それは値を*読む*だけであり、元のBoxed参照を
+   生きたまま残す。`ROp`/`RCmpCase`は自身の`annotate`が決定する
+   `postDrop`フィールドを通じて既にこれを正しく処理しているが、
+   `RAppNameRep`にはそのようなフィールドが一切なく、しかも --
+   `ROp`とは異なり -- `Compiler.RC2.DualABI`自身のworker/wrapper合成
+   はそもそも`annotate`の所有権解析を一切通らない(`RAppNameRep`
+   ノードを直接構築するのは、`annotate`が定義全体の処理を既に終えた、
+   ずっと後である)ため、このdropが必要だと判断するものが誰もいなか
+   った。`Main.fib`自身のwrapperは、既存の検証スイープでこれを一度
+   も表面化させなかった -- `fib 30`の間に昇格される値は全て
+   small-intキャッシュの範囲(`[0,100)`、不滅の`refCount ==
+   IDRIS2RC2_REFCOUNT_MAX`な共有シングルトンに支えられている -- その
+   1つに対する`idris2rc2_drop`は無条件にno-opなので、*欠落した*drop
+   は正しいものと見分けがつかず沈黙する)に収まっていたためである
+   -- 以前このプロジェクトを一度噛んだのと全く同じ「no-opに隠れる」
+   形(32bit以下のポインタタグ付け)である。合成的な最悪ケース
+   (`tests/Test11DualABILeak.idr`、昇格されるパラメータ自身の値を
+   意図的にキャッシュ範囲外へ押し出したデュアルABI適格な関数)に対
+   する`valgrind --leak-check=full`で確認した: 200万回の呼び出しに
+   対して`31,999,984 bytes in 1,999,999 blocks definitely lost` --
+   実質的に*呼び出し1回につき*1個のリークしたアロケーションである。
+   `RAppNameRep`自身に`postDrop : List RCLocal`フィールドを与え、
+   `ROp`自身のものを正確に踏襲することで修正した:
+   `Compiler.RC2.DualABI`自身の`synthesizeWorker`がこれをただで埋める
+   (それは正確に、無関係な目的で既に`eligible`として計算済みの、
+   wrapper自身の昇格されたパラメータidそのものである)。
+   `Compiler.RC2.Emit`には専用の`emitAppNameRepInto`が新設された
+   (`RAppNameRep`は`emitRC`自身の「常にBoxedな文字列をレンダリング
+   し、保留中のdrop一覧の余地がない」ディスパッチから、`emitInto`
+   自身のノードごとのディスパッチ -- `RCmpCase`/`RConCase`等と並ぶ
+   -- へ移された)。これは呼び出し自身の値が自身の文へ組み込まれた
+   後に`postDrop`を消化する -- `SinkReturn`ターゲットについては
+   `emitNativeReturn`自身の「まず一時変数へ確定させる」トリックを
+   再利用し(`return`の*後*には、dropが収まる文の位置が一切存在しな
+   いため)、`SinkVar`ターゲット(こちらは常に1つ持つ)については
+   単純な「確定させてからdrop」とする。再検証: 同じ合成ケースに対
+   する`valgrind`は今や`definitely lost: 0 bytes in 0 blocks`を報告
+   する(`total heap usage: 14,000,124 allocs, 14,000,024 frees` --
+   100ブロックの差は正確に不滅のsmall-intキャッシュ分であり、リーク
+   ではない); refc-suite全体(19/19)と`tests/Test*.idr`/`Bench*.idr`
+   一式全体を、本物の`idris2 --cg refc`に対して再度バイト単位で突き
+   合わせたが、影響なし。
+4. **Stage 4の最初の試みは、`fib`自身の再帰呼び出しを実際には一切
+   書き換えていなかった -- しかも沈黙したまま。** 最初の動作する
+   ビルドは正しくコンパイル・実行できた(`fib 30`は依然`832040`)
+   ため、これは見落としやすかった -- 生成されたCを直接読むこと
+   (このプロジェクト自身の標準的な規律)によってのみ、
+   `idris2rc2_worker_Main_fib_0`自身の本体が依然として(自分自身では
+   なく)`Main_fib`(wrapper)を呼んでいることが判明した。根本原因:
+   `applyCallSiteRewriteBody`の最初のバージョンは、`RLet`自身の
+   *value*として直接座っている呼び出ししか認識せず、それ以外の経路
+   で到達した裸の`RAppName`は「関数全体自身の末尾位置に違いない、
+   そのままにせよ」という前提を置いていた -- これは手で試したあら
+   ゆる形については成り立っていたが、`fib(n - 1)`については成り立
+   たなかった: Phase 1自身のANF正規化は、呼び出しの*引数*式に対して
+   は外側の`RLet`自身のvalueの**内側**にさらに`RLet`をネストさせる
+   (`let v3 = (let v4 = n - 1 in fib v4) in ...`)ため、呼び出し自身
+   は一度も`RLet`自身のvalueとして直接現れることがなく、走査自身の
+   「末尾位置に違いない」というフォールバックがそれを飲み込んで
+   いた。明示的な`inTail : Bool`を走査全体に引き回すことで修正した
+   (`Compiler.RC2.Emit`自身の`TailPositionStatus`を踏まえた形) --
+   `True`になるのは定義自身のトップレベルの入口のみで、末尾性を変え
+   ないあらゆる構造を通じてそのままスレッドされ、`RLet`自身の
+   `value`へ下る際は*常に*`False`になる -- そのため、裸の`RAppName`
+   がそのまま放置される唯一の場所は、`inTail = True`で到達した箇所、
+   つまり本当に関数全体自身の末尾位置だけになる; それ以外のどこで
+   あっても、それは*何らかの*値計算の連鎖の究極の末尾であり、常に
+   安全に書き換えられる。修正された設計については、
+   `applyCallSiteRewriteBody`自身の上記のドキュメントコメントを参照。
+5. **`nativeArgType`自身の確立された「裸の末尾は常にBoxed」という
+   前提が、Stage 4が走る時点では既に陳腐化していた。** 上記バグ#4を
+   修正した後でさえ、`fib`自身のworkerは依然として両方の再帰呼び
+   出し自身の結果をbox化しては
+   (`idris2rc2_mkInt64(idris2rc2_worker_Main_fib_0(...))`)、`+`のため
+   に即座に再びunbox化していた -- 昇格そのものが一切発火していなか
+   った。`Compiler.RC2.Loop`自身の`nativeArgTypes`(昇格の判定にその
+   まま再利用される、上記「Stage 4」参照)は、候補変数を読む裸の、
+   それ以上`RLet`束縛されていない`ROp`/`RCmpCase`を意図的に数えない
+   -- これは*そのパス自身の*呼び出し元(`Compiler.RC2.Loop.applyLoop`、
+   常にどの関数自身の戻り値適格性が判定されるより厳密に前に走るため、
+   *それが*問う時点では、裸の末尾は本当に常にまだBoxedである)にと
+   っては正しい -- しかし`v3 + v5`は`fib`自身のworkerの裸の末尾*その
+   もの*であり、Stage 4自身のパイプライン上の位置の時点では、その
+   末尾はworker自身の`retRep`が既にそうであるからこそ、既にネイティ
+   ブにレンダリングされると分かっている(`Compiler.RC2.Emit`自身の
+   `emitNativeReturn`、Stage 3b)。`nativeArgType`を無改造のまま再利用
+   したことで、この段階全体が存在する理由そのものである、最も重要な
+   単一のケースを沈黙のうちに見逃していた。`nativeArgTypes`/
+   `nativeArgType`自身には一切手を触れず(どちらも既に他所で十分検証
+   済み -- そこで必要だった変更は、既に`export`化されている
+   `nativeArgType`と並んで、集合を返す`nativeArgTypes`を`export`化
+   することだけだった)、この1つの追加の形だけを特にチェックする、
+   Stage 4スコープの別の`bareTailNativeReads`を追加し、最終的な
+   「ちょうど1つの一貫した型」判定の前に`nativeArgTypes`自身の結果と
+   和を取ることで修正した。生成されたCを直接読んで確認した:
+   `fib`自身のworkerは今や`int64_t var_3 =
+   idris2rc2_worker_Main_fib_0(var_4); ...; return (var_3 + var_5);`
+   を読む -- 再帰呼び出しのどちらについても、box化・unbox化・
+   dup/dropは一切ない。
+6. **`MaxExtractFunArgs`(8個)を超えるトップレベルパラメータを持つ
+   デュアルABI適格な関数がコンパイラをクラッシュさせていた。** 実在
+   の、外部由来のパッケージ
+   ([`idris2-missing-containers`](https://github.com/seagull-kamome/idris2-missing-containers)、
+   `BENCHMARKS.md`自身の再計測参照)に対して発見された -- このプロ
+   ジェクト自身のテストスイート(これほど広い関数を1つも持たない)
+   の何かによってではない -- `idris2 --cg refc -p missing-containers
+   -p contrib Main.idr`は`INTERNAL ERROR: [rc2] RAppNameRep: more
+   than 8 args not yet supported`で即座に失敗した。根本原因:
+   `RAppNameRep`自身のエミッション(`emitAppNameRepInto`と
+   `emitNativeValue`自身のケース、上記「Stage 3a」「Stage 4」参照)
+   には、通常の常にBoxedな多引数関数自身の`createCFunctions`経路が
+   既に持っているような、`MaxExtractFunArgs`を超える引数のための
+   `var_arglist[]`形式のbox化された配列抽出のフォールバックが一切
+   ない -- パッケージ自身のラムダリフトされた内部ヘルパーのいくつか
+   は9〜23個のパラメータ(囲むスコープから捕捉された自由変数)を持ち、
+   そのうち少なくとも2つは本当にネイティブ昇格可能なパラメータをその
+   中に含んでいたため、これほど広い関数に対してworker(そしてwrapper
+   自身がそこへ行う呼び出しについては`RAppNameRep`)が合成されていた
+   -- これはStage 3aの時点から存在しており、Stage 4によって持ち込ま
+   れたものではない(コンパイラをStage 3a/3bまで遡ってbisectし、
+   さらに別途、このブランチ全体が始まった元のデュアルABI導入前の
+   コミットについても確認した -- このパッケージに対して実際にテスト
+   した途端、全て同一のクラッシュを再現した。このプロジェクト自身の
+   スイートは、この形を一度も行使したことがなかったためである)。
+   抽出フォールバックを構築するのではなく(実作業であり、これほど
+   広い関数は稀にとどまると見込まれる)保守的に修正した:
+   `applyDualABI`自身の`synthesizeIfEligible`は、今や
+   `MaxExtractFunArgs`を超えるパラメータを持つあらゆる関数を、
+   `paramEligibility`/`returnEligibility`が本来どう判定するかにかか
+   わらず無条件に、デュアルABI適格性そのものから除外する --
+   `isMutualLoopMerged`が既に使っているのと同じ一括除外の形である。
+   `MaxExtractFunArgs`自身(`Compiler.RC2.Emit`)は今やこの再利用の
+   ために`export`化されており、この2つの上限が誤って乖離することは
+   あり得ない。再検証: refc-suite全体(19/19)、
+   `tests/Test*.idr`/`Bench*.idr`一式全体を本物の`idris2 --cg refc`
+   に対して再度バイト単位で突き合わせ(どれもこれほど広い関数を持た
+   ないため、この除外の影響を実際に受けるものは一つもない)、
+   `valgrind`も引き続きリークをゼロと報告。**別件として**(デュアル
+   ABI自身のバグではなく、環境の問題でもない -- 最初はそう見えたが):
+   `idris2-missing-containers`パッケージ自身の`benchmarkHashMap`は、
+   `idris2-rc2`と無改造の本家`idris2 --cg refc`の*両方*で実行時に
+   クラッシュする(`Unhandled input for Main.case block`)ように見え、
+   このブランチがこれまで構築してきた全てのコミットまで遡って
+   bisectしても毎回全く同一の失敗が再現した -- しかし本当の原因は、
+   後にワークスペース全体をゼロから再構築している最中に判明した、
+   単純な誤った作業ディレクトリからコンパイル済みベンチマークバイナ
+   リを実行していたことだった(`Main.idr`自身の`benchmarkHashMap`は、
+   `openFile`失敗時の`Left`分岐が一切書かれていない状態で
+   `test/words`/`test/input_large`をパッケージルート相対パスで開いて
+   おり、誤ったcwdはバックエンドやコミットに関わらず一貫してこの
+   「unhandled input」クラッシュとして表面化する)。パッケージルート
+   から実行すれば、3つのバックエンド(`idris2-rc2`、本物の`idris2
+   --cg refc`、Chez上の本物の`idris2`)全てが正しく完走する
+   (`BENCHMARKS.md`自身の再計測参照)。
+
 ## ステータス
 
-**実装・検証済み**(Stage 1、2、3a、3b): IRの基盤、読み取り専用の
-適格性解析、パラメータと戻り値の両方についてのworker/wrapper合成。
-`Main.fib`は、引数をunbox化して合成されたworker(`rc2_dualABI_N`、
-`int64_t`パラメータ*かつ*`int64_t`戻り値)を呼び出す、変更されない
-Boxedシグネチャのwrapper(`Main_fib`)にコンパイルされ、本物の再帰
-処理を自身の本体全体にわたって`int64_t`のまま行い、最終結果だけを
-box化する -- 正しい結果(`fib 30`について`832040`)を計算することを
-確認済みであり、refc-suite全体(19/19)と既存のスモークテスト/
-ベンチマークの一式(ループ持ち回りのネイティブパラメータと本段階の
-ネイティブ戻り値を同じ関数内で組み合わせる`Main.sumTo`も含む)を、
-`idris2 --cg refc`に対してバイト単位で一致/クラッシュなしで再検証済み。
-**まだパフォーマンスの変化はない** -- プログラム中の他のどこもworker
-を直接呼んでおらず(全ての呼び出しはまだ変更されないwrapperを経由する、
-1層薄くなっただけ)。両段階とも意図的に「他の何かリスクの高いものを
-その上に構築する前に、worker/wrapperの形自体を単体で正しくする」こと
-にスコープを絞った -- `doc/loop-conversion.md`自身の先例が、この段階
-分けがなぜ報われるかを示している。
+**実装・検証済み**(Stage 1、2、3a、3b、4)。`Main.fib`は、wrapper
+(`Main_fib`、変更されないBoxedシグネチャ、他のどこにいる既存の呼び
+出し元も無改造のまま動作し続ける)と、本物の再帰処理を完全にネイティ
+ブな`int64_t`のまま行うworker(`idris2rc2_worker_Main_fib_0`)に
+コンパイルされ、**自身の再帰呼び出しの両方が今やworkerを直接ターゲ
+ットにしている**:
 
-**まだ実装されていない**:
+```c
+int64_t var_4 = (var_0 - INT64_C(1));
+int64_t var_3 = idris2rc2_worker_Main_fib_0(var_4);
+int64_t var_6 = (var_0 - INT64_C(2));
+int64_t var_5 = idris2rc2_worker_Main_fib_0(var_6);
+return (var_3 + var_5);
+```
 
-- **Stage 4 -- 呼び出しサイトの書き換え。** プログラム*全体*にわたる
-  全ての関数自身の本体を(末尾位置だけでなく -- `RAppName`は`ROp`
-  オペランドとしてなど、どこにでも現れ得る)歩き、今やworkerを持つ
-  関数をターゲットとする直接・飽和呼び出しをすべて`RAppNameRep`に
-  書き換える。引数/結果のレンダリングは*呼び出し元*が既に手元に
-  持っている(あるいは欲しい)ものごとに選ぶ。ここで実際のパフォー
-  マンスの向上が現れる -- 例えば`fib`自身の2つの再帰呼び出し(現在は
-  まだ`Main_fib(idris2rc2_mkInt64(...))`のままで、毎回行きも帰りも
-  box化している)が、直接の`rc2_dualABI_0(...)`呼び出しになり、
-  最初から最後までネイティブになる。
+この計算のどこにもbox化・unbox化・ヒープ確保・dup/dropは一切ない --
+全体がworker自身の入口から自身の`return`まで`int64_t`のまま保たれる。
+正しい結果(`fib 30`について`832040`)を確認済み、リークがないことを
+確認済み(`valgrind --leak-check=full`、`tests/BenchFib.idr`、
+`tests/BenchLoop.idr`、`tests/BenchChain.idr`、
+`tests/Test11DualABILeak.idr`にわたって`definitely lost: 0 bytes`)、
+refc-suite全体(19/19)とスモークテスト/ベンチマーク一式全体を本物の
+`idris2 --cg refc`に対してバイト単位で再検証済み、そして -- この取り
+組み全体で初めて -- **計測された**パフォーマンスの向上: `fib 30`を
+直接計測すると(`time`、3回実行それぞれ)、`idris2-rc2`では約0.14秒、
+本物の`idris2 --cg refc`では約0.21秒で、この取り組み全体が存在する
+理由である看板的な非末尾再帰ケースにおいておよそ**35%高速**である。
 
-### Stage 4に向けた未解決の設計課題
-
-Stage 3a自身の「クロージャ遅延を常にスキップして安全、`RAppNameRep`
-は決してトランポリン遅延されない」という論拠(上記「エミッション」
-参照、およびStage 3b自身のネイティブ`retRep`ケースもこの性質を保った
-まま)は、全ての`RAppNameRep`呼び出しが固定された単一ホップの委譲
-(wrapper -> 自分自身のworker、それ以外は何もない)であることに完全に
-依存していた。Stage 4はプログラム全体にわたる**任意の**呼び出し
-サイトに`RAppNameRep`呼び出しを導入することになり、その中には、
-以前は`tryBuildClosureInto`がクロージャ経由で遅延させていた(トランポ
-リンされるべき値として返し、*呼び出し元の*さらに呼び出し元が後で
-解決できるようにする -- `Compiler.RC2.Loop`/`Compiler.RC2.MutualLoop`
-が既に`goto`に変換する自己/相互再帰ではない形の、深さが未知の末尾
-呼び出しチェーンについて、Cスタックの増大を抑えるため)本物の末尾
-位置の委譲呼び出しも含まれる。Stage 4がもし*その種の*呼び出しサイト
-を直接の、遅延されない`RAppNameRep`呼び出しへ書き換えてしまうと、
-以前は保護されていた箇所で境界のないCスタック増大を再び持ち込みかね
-ない。Stage 4が着地する前に: どの呼び出しサイトの形状がこの方法で
-安全に書き換えられるかを正確に洗い出す必要がある(有力な候補: 最初は
-*末尾位置ではない*呼び出しサイトだけを書き換える -- そこにはそもそも
-クロージャ遅延が存在しなかった -- `emitRC`自身の既存の`RAppName`
-`NotInTailPosition`ケースは*既に*呼び出しを即座に解決してその結果を
-トランポリンしているので、それを直接の`RAppNameRep`呼び出しに置き換
-えることは表現を変えるだけで、このスタック深さの性質は一切変えない;
-遅延回避が本当の挙動の変化になる末尾位置の呼び出しサイトは、対象外の
-ままにするか、それ自身の専用の安全性の論拠を先に必要とするかもしれ
-ない)。
+末尾位置の呼び出しは恒久的にスコープ外のままである(上記「Stage 4」
+の「適用範囲」参照) -- 後続の段階ではなく、Stage 2自身の
+`returnEligibility`の「純粋な委譲」除外と同種の、意図的で熟考された
+境界である。
 
 ## ファイル
 
 - `rc2/src/Compiler/RC2/DualABI.idr` -- `paramEligibility`/
   `returnEligibility`/`tailValueReps`(Stage 2)、`synthesizeWorker`/
   `applyDualABI`/`isMutualLoopMerged`/`FreshId`(Stage 3a+3b:
-  `synthesizeWorker`は`workerArgs`だけでなく`workerRetRep`も
-  `wrapperRetRep`とは独立に昇格するようになった)、
-  `describeEligibility`/`dumpDualABI`(`--directive dumpdualabi`デバッグ
-  ダンプ)。
+  `synthesizeWorker`は今や`workerArgs`だけでなく`workerRetRep`も
+  `wrapperRetRep`とは独立に昇格する)、`describeEligibility`/
+  `dumpDualABI`(`--directive dumpdualabi`デバッグダンプ)、
+  `workerTable`/`applyCallSiteRewriteBody`/`applyCallSiteRewrite`/
+  `ultimateTail`/`bareTailNativeReads`/`nativePromotionFor`/
+  `postDropFor`/`localRepIn`(Stage 4)。
 - `rc2/src/Compiler/RC2/RCExp.idr` -- `MkRCFun`の新しい形、
-  `RAppNameRep`。
+  `RAppNameRep`(今や`ROp`自身のものを踏襲した`postDrop`フィールドを
+  持つ、上記の参照リーク修正で追加)。
 - `rc2/src/Compiler/RC2/Loop.idr` -- `Compiler.RC2.DualABI`自身の再利用
-  のため`export`化した`nativeArgType`/`stripOwnership`;
-  `renameRCExp`内の防御的な`RAppNameRep`素通しケース。
+  のため`nativeArgType`/`nativeArgTypes`/`stripOwnership`を`export`化;
+  `renameRCExp`内の防御的な`RAppNameRep`素通しケース(今や`postDrop`も
+  リネームする)。
 - `rc2/src/Compiler/RC2/RC.idr` -- `MkRCFun`の新しい形に合わせて更新
   した`normalizeDef`/`annotateDef`; `annotate`内の防御的な
   `RAppNameRep`素通しケース。
@@ -628,14 +900,24 @@ Stage 3a自身の「クロージャ遅延を常にスキップして安全、`RA
   戻り値型宣言と各パラメータ自身の宣言/`RepMap`シードの両方について
   `Rep`を意識するようになった; `Sink`自身の`SinkReturn`コンストラクタ
   が`Rep`を運ぶようになった(Stage 3b); 新設の`emitNativeReturn`;
-  `emitNativeValue`の新しい裸`RV`ケース; `emitInto`のフォールバック枝
-  がネイティブな`SinkReturn`を`emitNativeReturn`へ回すようになった;
-  `emitRC`の`RAppNameRep`ケースがネイティブな`retRep`を`nativeMk`
-  経由で処理するようになった。
+  `emitNativeValue`の新しい裸`RV`ケース(Stage 3b)と新しい
+  `RAppNameRep`ケース(Stage 4、昇格された`RLet`自身のネイティブ消費
+  レンダリング用); `emitInto`のフォールバック枝がネイティブな
+  `SinkReturn`を`emitNativeReturn`へ回すようになった; `RAppNameRep`は
+  `emitRC`自身のディスパッチから完全に外され、新設の専用
+  `emitAppNameRepInto`(`emitInto`自身のノードごとのディスパッチ、
+  `RCmpCase`/`RConCase`等と並ぶ)へ移り、自身の`postDrop`を消化する
+  ようになった; `cName`が`Compiler.RC2.DualABI`自身のworker命名での
+  再利用のため`export`化された。
 - `rc2/src/Compiler/RC2/Pretty.idr` -- `MkRCFun`の新しい`args`/
-  `retRep`レンダリング; `RAppNameRep`自身の`callRep`レンダリング。
+  `retRep`レンダリング; `RAppNameRep`自身の`callRep`レンダリング(今や
+  `postDrop`も含む)。
 - `rc2/src/Compiler/RC2/RC2.idr` -- `toRCDefs`自身のパイプライン配線
-  (`applyLoop`の後に`applyDualABI`); `--directive dumpdualabi`の配線。
+  (`applyLoop`の後に`applyDualABI`、その後`applyCallSiteRewrite`);
+  `--directive dumpdualabi`の配線。
+- `rc2/tests/Test11DualABILeak.idr` -- 上記の参照リークバグの回帰
+  テスト; 単なるstdout diffだけでなく`valgrind --leak-check=full`で
+  検証すること(テストファイル自身のコメント参照)。
 
 ## 検証方法
 
@@ -651,22 +933,23 @@ Stage 3a自身の「クロージャ遅延を常にスキップして安全、`RA
    を指すようになっているので、そちらも正しく`Boxed`/`Boxed`と表示
    される; 興味深いネイティブ判定の結果は、worker自身がどう構築され
    たかであり、それは生成されたCを直接見て確認する(次のステップ)。
-4. `tests/BenchFib.idr`がStage 3a+3bの標準的なスモークテストである:
+4. `tests/BenchFib.idr`があらゆる段階の標準的なスモークテストである:
    `fib 30`は依然`832040`を印字しなければならない; `grep -n
-   "^int64_t rc2_dualABI\|^IDRIS2RC2_Value \*rc2_dualABI" build/exec/*.c`
-   はworkerが実際に合成されたこと、その戻り値がネイティブになった
-   かどうかを確認でき、その自身のC本体を直接読むことで、(a)昇格
-   されたパラメータ/戻り値が自身のネイティブなC型で宣言されている
-   こと、(b)未処理のBoxedオペランドdropを伴う末尾値が「一時変数へ
-   確定させてからdropし、その後returnする」という形でレンダリング
-   されていること(裸の`return`の直前にdropが来ることは決してない)、
-   (c)元の関数自身の再帰呼び出しが依然として(workerを直接ではなく)
-   *wrapper*(`Main_fib`)をターゲットにしていることを確認できる -- 
-   最後の詳細が、Stage 4自身の呼び出しサイト書き換えがまだ誤って
-   早期発火していないことの確認になる。`tests/BenchLoop.idr`自身の
-   `Main.sumTo`がループ組み合わせのスモークテストである -- そのworker
-   自身のループ出口末尾値が同じネイティブ経路でレンダリングされて
-   いなければならない。
+   "^int64_t idris2rc2_worker_\|
+   ^IDRIS2RC2_Value \*idris2rc2_worker_" build/exec/*.c`はworkerが
+   実際に合成されたこと、その戻り値がネイティブになったかどうかを
+   確認でき、その自身のC本体を直接読むことで、(a)昇格されたパラメ
+   ータ/戻り値が自身のネイティブなC型で宣言されていること、(b)未処
+   理のBoxedオペランドdropを伴う末尾値が「一時変数へ確定させてから
+   dropし、その後returnする」という形でレンダリングされていること
+   (裸の`return`の直前にdropが来ることは決してない)、そして(c)
+   -- **今やStage 4が実装されたので** -- 元の関数自身の再帰呼び出し
+   が*worker*自身を直接ターゲットにしている(`idris2rc2_worker_Main_fib_0`
+   であって`Main_fib`ではない)こと、どちらの呼び出しの周りにも
+   `idris2rc2_mkInt64`/`idris2rc2_to_i64`の対が一切残っていないこと
+   を確認できる。`tests/BenchLoop.idr`自身の`Main.sumTo`がループ組み
+   合わせのスモークテストである -- そのworker自身のループ出口末尾値
+   が同じネイティブ経路でレンダリングされていなければならない。
 5. `tests/Test*.idr`/`tests/Bench*.idr`一式全体を、本物の`idris2 --cg
    refc`出力と突き合わせて確認する -- このプロジェクトの他の全ての
    段階と同じ。両段階とも純粋に構造/コード生成上の変更であるはずな
@@ -690,3 +973,23 @@ Stage 3a自身の「クロージャ遅延を常にスキップして安全、`RA
    ファイルのビルドは問題なくコンパイル・実行できるので、これはこの
    1ファイルについての突き合わせ検証上の欠落であって、既知または
    疑われるrc2自身のバグではない。
+6. **単なるstdout diffだけでは参照リークを捕まえられない** --
+   `RAppNameRep`自身の引数処理には、1段階半(Stage 3aからStage 3bの
+   大半まで)もの間、一度もdiffを落とすことなくバグが存在していた。
+   計算される値そのものを一切破壊しないためである。`RAppNameRep`
+   自身のエミッション、あるいは`Compiler.RC2.DualABI`自身の
+   worker/wrapper合成への変更は、`tests/Test11DualABILeak.idr`に対する
+   `valgrind --leak-check=full`でも必ず確認すること(自身の昇格された
+   パラメータの値を意図的にsmall-intキャッシュ範囲外へ押し出してあり、
+   `Main.fib`/`Main.sumTo`自身の再帰でそうだったように、欠落したdrop
+   が沈黙のno-opとして隠れることができない) -- `definitely lost: 0
+   bytes in 0 blocks`を期待する(100件の不滅なsmall-intキャッシュ分
+   だけが`still reachable`として表示されるべきである)。
+7. **Stage 4が実際に呼び出しサイトを書き換えるようになったら、パフォ
+   ーマンスの向上を直接検証すること** -- `time ./build/exec/<BenchFibの
+   出力>`を数回、本物の`idris2 --cg refc`でビルドした同じファイルに
+   ついても同様に実行して比較する。`fib 30`(`tests/BenchFib.idr`)は、
+   (このプロジェクト自身の歴史における、`BENCHMARKS.md`によればそれ
+   までの全ての段階での)RefCと同等かやや劣る状態から、Stage 4が実際
+   に書き換えを行うようになった後はおよそ**35%高速**になった --
+   このプロジェクト自身の元々の目的そのものである。

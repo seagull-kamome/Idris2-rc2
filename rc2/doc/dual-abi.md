@@ -829,17 +829,22 @@ the closest analogue to bug #2 above) passed without any fix needed.
    `tests/Test*.idr`/`Bench*.idr` matrix re-diffed byte-for-byte against
    real `idris2 --cg refc` (none of them has a function this wide, so
    none of them is actually affected by the exclusion), `valgrind` still
-   reporting zero leaks. **Separately** (not a dual-ABI bug, but found
-   during the same investigation): the `idris2-missing-containers`
-   package's own `benchmarkHashMap` currently crashes at runtime
-   (`Unhandled input for Main.case block`) under *both* `idris2-rc2`
-   and unmodified upstream `idris2 --cg refc`, confirmed by bisecting
-   all the way back through every commit this branch ever built on,
-   including the exact commit `BENCHMARKS.md`'s own last successful
-   measurement of this package was taken at -- a pre-existing,
-   environment/package-level issue unrelated to `Compiler.RC2`
-   entirely, blocking a fresh benchmark re-measurement of this package
-   for now (see `BENCHMARKS.md`'s own note).
+   reporting zero leaks. **Separately** (not a dual-ABI bug, and not an
+   environment issue either, despite first appearances): the
+   `idris2-missing-containers` package's own `benchmarkHashMap` appeared
+   to crash at runtime (`Unhandled input for Main.case block`) under
+   *both* `idris2-rc2` and unmodified upstream `idris2 --cg refc`, and
+   bisecting all the way back through every commit this branch ever
+   built on reproduced the identical failure every time -- but the real
+   cause, found later during a full from-scratch workspace rebuild, was
+   simply running the compiled benchmark binary from the wrong working
+   directory (`Main.idr`'s own `benchmarkHashMap` opens `test/words`/
+   `test/input_large` via a package-root-relative path with no `Left`
+   branch coded for `openFile` failure, so any wrong cwd surfaces as
+   exactly this "unhandled input" crash, consistently, regardless of
+   backend or commit). Run from the package root, all three backends
+   (`idris2-rc2`, real `idris2 --cg refc`, real `idris2` on Chez)
+   complete correctly (see `BENCHMARKS.md`'s own re-measurement).
 
 ## Status
 
