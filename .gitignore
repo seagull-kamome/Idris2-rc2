@@ -10,3 +10,7 @@ build/
 *.o
 *.so
 *.a
+
+# verify.sh/bench.sh own log output
+rc2/tests/verify-*.log
+rc2/tests/bench-*.log

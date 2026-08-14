@@ -1,0 +1,195 @@
+#!/usr/bin/env bash
+# One-shot correctness verification for rc2: builds the compiler and
+# runtime, runs the refc-suite regression tests, compiles and diffs
+# every smoke test (rc2/tests/Test*.idr) against real `idris2 --cg
+# refc`, and runs `valgrind --leak-check=full` on the leak-sensitive
+# subset -- all the steps rc2/doc/*.md's own "Verification methodology"
+# sections and past sessions have done by hand, in one deterministic,
+# exit-code-driven script. See KNOWN-BUGS.md for every already-
+# investigated quirk this script deliberately does NOT flag as a
+# failure (pre-existing leak byte counts, Test7CastMatrix's own
+# nixpkgs-RefC-library blocker, etc.) -- if KNOWN-BUGS.md changes,
+# update the constants below to match.
+#
+# Usage: ./verify.sh [--skip-build] [--no-valgrind] [--valgrind-all]
+#
+#   --skip-build    Don't rebuild idris2-rc2/libidris2rc2.a first
+#                    (use the existing rc2/build/exec/idris2-rc2).
+#   --no-valgrind   Skip the valgrind pass entirely (faster).
+#   --valgrind-all  Run valgrind on every smoke test, not just the
+#                    curated leak-sensitive subset.
+#
+# Exit code 0 iff every check passed (known pre-existing issues from
+# KNOWN-BUGS.md excepted); non-zero otherwise. All output is plain text
+# on stdout, PASS/FAIL/SKIP/KNOWN-prefixed lines, safe to grep.
+
+set -u
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+RC2_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+REPO_DIR="$(cd "$RC2_DIR/.." && pwd)"
+IDRIS2RC2="$RC2_DIR/build/exec/idris2-rc2"
+
+SKIP_BUILD=0
+DO_VALGRIND=1
+VALGRIND_ALL=0
+for arg in "$@"; do
+    case "$arg" in
+        --skip-build) SKIP_BUILD=1 ;;
+        --no-valgrind) DO_VALGRIND=0 ;;
+        --valgrind-all) VALGRIND_ALL=1 ;;
+        *) echo "unknown argument: $arg" >&2; exit 2 ;;
+    esac
+done
+
+# shellcheck source=/dev/null
+source "$REPO_DIR/env.sh"
+
+pass=0
+fail=0
+known=0
+failed_names=()
+
+report_pass() { echo "PASS  $1"; pass=$((pass + 1)); }
+report_fail() { echo "FAIL  $1${2:+ ($2)}"; fail=$((fail + 1)); failed_names+=("$1"); }
+report_known() { echo "KNOWN $1 ($2 -- see KNOWN-BUGS.md)"; known=$((known + 1)); }
+
+echo "=== Build ==="
+if [ "$SKIP_BUILD" -eq 1 ]; then
+    echo "SKIP  build (--skip-build)"
+else
+    (cd "$RC2_DIR" && nix-shell -p idris2 gmp pkg-config --run 'idris2 --build rc2.ipkg') \
+        > "$RC2_DIR/tests/verify-build.log" 2>&1
+    if [ $? -ne 0 ]; then
+        echo "FAIL  build (see rc2/tests/verify-build.log)"
+        exit 1
+    fi
+    report_pass "build (idris2-rc2)"
+
+    (cd "$RC2_DIR/support/rc2" && nix-shell -p gcc gmp pkg-config --run 'make && make install') \
+        > "$RC2_DIR/tests/verify-runtime-build.log" 2>&1
+    if [ $? -ne 0 ]; then
+        echo "FAIL  build (runtime, see rc2/tests/verify-runtime-build.log)"
+        exit 1
+    fi
+    report_pass "build (libidris2rc2.a)"
+fi
+
+echo
+echo "=== refc-suite ==="
+(cd "$RC2_DIR/tests/refc-suite" && nix-shell -p gcc gmp pkg-config --run './run.sh')
+refc_suite_status=$?
+if [ "$refc_suite_status" -ne 0 ]; then
+    fail=$((fail + 1))
+    failed_names+=("refc-suite")
+fi
+
+echo
+echo "=== Smoke tests ==="
+TMP="$(mktemp -d)"
+trap 'rm -rf "$TMP"' EXIT
+
+# name -> from inside tests/ as a bare filename (KNOWN-BUGS.md: module
+# TestNNNN, not module Main, trips idris2's own module-name check
+# otherwise), and skip diffing against real refc (nixpkgs' own RefC
+# support library fails to compile -- KNOWN-BUGS.md) in favour of a
+# saved .expected file.
+BARE_INVOKE_TESTS="Test6NativeInts Test7CastMatrix"
+NO_REFC_DIFF_TESTS="Test7CastMatrix"
+
+# Leak-sensitive by design (reference-counting/reuse/native-shadow
+# regression tests) -- checked with valgrind by default even without
+# --valgrind-all.
+LEAK_SENSITIVE_TESTS="Test1Basics Test9SelfTailLoop Test10MutualLoop Test11DualABILeak Test12ConAltNative"
+
+# KNOWN-BUGS.md's own two pre-existing leaks -- "definitely lost" byte
+# counts, exactly. Anything else non-zero is a genuine new failure.
+declare -A KNOWN_LEAK_BYTES=( [Test1Basics]=40 [Test9SelfTailLoop]=784 )
+
+is_in() { local x; for x in $2; do [ "$x" = "$1" ] && return 0; done; return 1; }
+
+ALL_TESTS="$(cd "$RC2_DIR/tests" && ls Test*.idr | sed 's/\.idr$//' | sort)"
+
+for name in $ALL_TESTS; do
+    if is_in "$name" "$BARE_INVOKE_TESTS"; then
+        (cd "$RC2_DIR/tests" && nix-shell -p idris2 gcc gmp pkg-config --run \
+            "$IDRIS2RC2 --cg rc2 $name.idr -o $TMP/${name}_rc2") \
+            > "$TMP/${name}_compile.log" 2>&1
+    else
+        nix-shell -p idris2 gcc gmp pkg-config --run \
+            "$IDRIS2RC2 --cg rc2 $RC2_DIR/tests/$name.idr -o $TMP/${name}_rc2" \
+            > "$TMP/${name}_compile.log" 2>&1
+    fi
+    if [ ! -x "$TMP/${name}_rc2" ]; then
+        report_fail "$name" "rc2 compile error, see $TMP/${name}_compile.log"
+        continue
+    fi
+
+    actual="$("$TMP/${name}_rc2" 2>&1)"
+
+    if is_in "$name" "$NO_REFC_DIFF_TESTS"; then
+        if [ -f "$RC2_DIR/tests/$name.expected" ]; then
+            expected="$(cat "$RC2_DIR/tests/$name.expected")"
+            if [ "$actual" = "$expected" ]; then
+                report_pass "$name (vs. saved .expected, refc diff blocked -- see KNOWN-BUGS.md)"
+            else
+                report_fail "$name" "mismatch against saved .expected"
+            fi
+        else
+            report_fail "$name" "no saved .expected and refc diff is blocked -- see KNOWN-BUGS.md"
+        fi
+    else
+        if is_in "$name" "$BARE_INVOKE_TESTS"; then
+            (cd "$RC2_DIR/tests" && nix-shell -p idris2 gcc gmp pkg-config --run \
+                "idris2 --cg refc $name.idr -o $TMP/${name}_refc") \
+                > "$TMP/${name}_refc_compile.log" 2>&1
+        else
+            nix-shell -p idris2 gcc gmp pkg-config --run \
+                "idris2 --cg refc $RC2_DIR/tests/$name.idr -o $TMP/${name}_refc" \
+                > "$TMP/${name}_refc_compile.log" 2>&1
+        fi
+        if [ ! -x "$TMP/${name}_refc" ]; then
+            report_fail "$name" "refc compile error, see $TMP/${name}_refc_compile.log"
+            continue
+        fi
+        expected="$("$TMP/${name}_refc" 2>&1)"
+        if [ "$actual" = "$expected" ]; then
+            report_pass "$name"
+        else
+            diff <(echo "$expected") <(echo "$actual") > "$TMP/${name}.diff"
+            report_fail "$name" "output mismatch, see $TMP/${name}.diff"
+        fi
+    fi
+done
+
+if [ "$DO_VALGRIND" -eq 1 ]; then
+    echo
+    echo "=== valgrind (leak-sensitive tests) ==="
+    for name in $ALL_TESTS; do
+        if [ "$VALGRIND_ALL" -eq 0 ] && ! is_in "$name" "$LEAK_SENSITIVE_TESTS"; then
+            continue
+        fi
+        [ -x "$TMP/${name}_rc2" ] || continue
+        nix-shell -p valgrind --run \
+            "valgrind --leak-check=full --error-exitcode=1 $TMP/${name}_rc2" \
+            > "$TMP/${name}_valgrind.log" 2>&1
+        leaked="$(grep -oP 'definitely lost: \K[0-9,]+(?= bytes)' "$TMP/${name}_valgrind.log" | tr -d ',')"
+        leaked="${leaked:-0}"
+        expected_leak="${KNOWN_LEAK_BYTES[$name]:-0}"
+        if [ "$leaked" -eq 0 ]; then
+            report_pass "$name (valgrind, 0 bytes definitely lost)"
+        elif [ "$leaked" -eq "$expected_leak" ]; then
+            report_known "$name (valgrind)" "$leaked bytes definitely lost, matches recorded pre-existing leak"
+        else
+            report_fail "$name (valgrind)" "$leaked bytes definitely lost (expected 0 or the known $expected_leak) -- see $TMP/${name}_valgrind.log"
+        fi
+    done
+fi
+
+echo
+echo "== $pass passed, $known known (pre-existing, see KNOWN-BUGS.md), $fail failed =="
+if [ "$fail" -gt 0 ] || [ "$refc_suite_status" -ne 0 ]; then
+    [ "${#failed_names[@]}" -gt 0 ] && echo "Failed: ${failed_names[*]}"
+    exit 1
+fi
+exit 0
