@@ -134,9 +134,63 @@ extension), `RC.idr` (`normalizeConAlt`), `Emit.idr`
 `DualABI.idr` (layer 2's own argument-eligibility side, if pursued for
 function boundaries too, not just loops).
 
-Not started. Layer 1 is the recommended starting point -- smaller, no
-new safety argument needed, and broadly useful even outside loops;
-layer 2 builds on it.
+**Correction (first implementation attempt, reverted -- see below):**
+layer 1's own premise above -- "no new safety argument needed, just
+wiring" -- turned out to be wrong on the ownership side specifically,
+found empirically (this project's own standing discipline: a stdout
+diff alone doesn't catch a reference-counting bug, `valgrind
+--leak-check=full` does, exactly as it did for `doc/dual-abi.md`'s own
+bug #3). A first attempt changed `RConAlt`'s `args` to
+`List (Int, Rep)`, excluded native-Rep fields from `annotate`'s own
+`owned` set (mirroring an `RLet`-bound native local exactly) and from
+`Compiler.RC2.Reuse`'s own `dupOnShared` computation, and declared a
+native field by unboxing `sc->args[k]` directly at destructure time,
+discarding the boxed pointer. Every field is still *physically* stored
+Boxed inside a constructor (`sc->args[k]` is always
+`IDRIS2RC2_Value *`, native or not) -- unlike an `RLet`-bound native
+value, which genuinely has no Boxed source anywhere to release, a
+destructured field's own **origin** (the Boxed value sitting in the
+constructor's own storage slot) still needs exactly one
+`idris2rc2_drop` somewhere, or it leaks -- confirmed with a dedicated
+test (`Acc = MkAcc Int Int` destructured and immediately reconstructed
+in a 200k-iteration self-tail-recursive loop, deliberately chosen to
+also exercise `Compiler.RC2.Reuse`'s constructor-reuse-in-place path
+alongside the new native fields): `valgrind` reported ~6.4MB
+definitely lost, one full `idris2rc2_mkInt64` allocation leaked per
+iteration. Root cause: in the *ordinary* (pre-this-change) design, a
+Boxed destructured field participates fully in `annotate`'s normal
+owned/dead-variable tracking, so an explicit `RDrop` releases its own
+Boxed origin once it's read for the last time -- excluding it from
+`owned` entirely (as a native local legitimately can, since *it* has no
+Boxed origin to release) silently deleted that drop instead of
+replacing it with anything. In the constructor-reuse path specifically
+(`sc`'s own storage reused in place rather than dropped), nothing else
+ever recovers that leaked reference either -- `sc` itself is never
+dropped there by design.
+
+This reopens what layer 1 actually needs to be: not "exclude the field
+from ownership like a genuinely native local," but something closer to
+`ROp`'s own `postDrop` -- the field's Boxed origin keeps participating
+in ownership/reuse tracking exactly as today, and the *optimization* is
+narrower than originally scoped: `rcVarToNativeC` already unboxes a
+still-Boxed local inline at each native-context read (its own `RBoxed`
+case, `nativeUnbox ty (...)`) -- worth confirming empirically whether a
+destructured field read exactly once natively is *already* effectively
+native today, at the cost of one inline unbox per read, with correct
+ownership for free. If so, the real remaining gap is narrower still:
+caching that unboxed value once (across a field read *more than once*
+natively within the same alt) instead of repeating
+`idris2rc2_to_i64(...)` at every read, while leaving the field's own
+Boxed declaration/RDrop/reuse participation completely untouched. Needs
+a fresh, smaller design pass before attempting again -- not attempted
+in this correction.
+
+All changes from the first attempt were reverted (`git checkout --`)
+rather than fixed forward, to leave a known-good baseline; nothing from
+that attempt is in `master`. Not started (again). This TODO entry, not
+`rc2/doc/`, is where this correction lives -- consistent with the
+project's own convention that `rc2/doc/` is for finished
+design/implementation, not an in-progress or reopened one.
 
 ## Scope: deliberately unboxed types stop at scalars
 
