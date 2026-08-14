@@ -94,6 +94,25 @@ constructor state, not just a single alt's own body) was **not**
 pursued -- left as plausible future work if profiling ever shows it
 matters, not currently planned.
 
+## Performance: constructor reuse doesn't reach across a monadic-bind continuation
+
+Investigated why `Compiler.RC2.Reuse` doesn't fire on
+`idris2-missing-containers`' `benchmarkHashMap` hot path (a bucket-list
+`replaceL2` that destructures and reconstructs a same-shape `::` cell)
+despite it being a textbook reuse candidate. Root cause confirmed via
+`--directive dumprcexp`: the reconstruction happens inside a separately
+lambda-lifted definition reached only through a genuine partial
+application (a monadic-bind continuation, from `HasIO io =>`-polymorphic
+`!`-bang-notation code -- not from `with` specifically, a case-based
+rewrite of the same shape has the identical gap). `Reuse`'s own
+eligibility check is intentionally, purely intraprocedural (any call is
+a dead end); a proposed fix (inline single-call-site, fully-saturated-call
+definitions before `Reuse` runs) is sound in principle but doesn't reach
+this specific case, since the call in question is a genuine partial
+application, not a fully-saturated one. Not pursued further -- full
+investigation, both refuted hypotheses, and what a real fix would need
+are in **`rc2/doc/reuse-monadic-bind-gap.md`**.
+
 ## Scope: deliberately unboxed types stop at scalars
 
 `Integer` (GMP arbitrary precision) and `String` are never candidates

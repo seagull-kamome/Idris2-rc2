@@ -30,7 +30,9 @@ show up again during testing.
   ordinary function-call boundaries — a living document, updated as
   later stages land, `con-alt-native.md` for caching a repeatedly-
   native-read constructor-destructured field into a fresh native
-  shadow). Not
+  shadow, `reuse-monadic-bind-gap.md` for an investigated-but-not-
+  pursued gap: constructor reuse doesn't reach across a monadic-bind
+  continuation). Not
   a replacement for `TODO.md` — those stay the changelog
   and gap tracker; `rc2/doc/` is where the *why* and the
   bugs-found-along-the-way for a specific subsystem live.
