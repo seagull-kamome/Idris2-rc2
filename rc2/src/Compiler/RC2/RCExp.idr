@@ -150,6 +150,24 @@ mutual
   data RCExp : Type where
        RV         : FC -> RCLocal -> RCExp
        RAppName   : FC -> (lazy : Maybe LazyReason) -> Name -> List RCLocal -> RCExp
+       ||| A direct, saturated call to `name`'s own dual-calling-
+       ||| convention *worker* variant (see `Compiler.RC2.DualABI`):
+       ||| `argReps`/`retRep` (same order/length as `args`, plus one for
+       ||| the result) describe how *this* call renders each argument
+       ||| and its own result -- `RNative ty` reads/produces a raw
+       ||| native C value there, `RBoxed` behaves exactly like an
+       ||| ordinary `RAppName` would. Unlike `RAppName`, this is never
+       ||| valid in a closure-building position (`RUnderApp`, or a
+       ||| would-be-tail-position call `Compiler.RC2.Emit`'s
+       ||| `tryBuildClosureInto` would otherwise defer into a closure)
+       ||| -- a closure's own argument slots can only ever hold
+       ||| `IDRIS2RC2_Value *`, so this always names a callee `argReps`
+       ||| says has a native parameter somewhere, one a closure could
+       ||| never represent. Only ever produced by
+       ||| `Compiler.RC2.DualABI`, itself run after
+       ||| `Compiler.RC2.Loop` (see its own module note); no earlier
+       ||| pass constructs or expects to see this.
+       RAppNameRep : FC -> Name -> (argReps : List Rep) -> (retRep : Rep) -> List RCLocal -> RCExp
        RUnderApp  : FC -> Name -> (missing : Nat) -> List RCLocal -> RCExp
        RApp       : FC -> (lazy : Maybe LazyReason) -> RCLocal -> RCLocal -> RCExp
        ||| `rep`: the native-or-boxed representation decided for this local

@@ -39,6 +39,9 @@ mutual
   prettyExp d (RV _ v) = indent d ++ show v ++ "\n"
   prettyExp d (RAppName _ lazy n args) =
       indent d ++ lazyPrefix lazy ++ "call " ++ show n ++ " " ++ show args ++ "\n"
+  prettyExp d (RAppNameRep _ n argReps retRep args) =
+      indent d ++ "callRep " ++ show n ++ " "
+        ++ show (map prettyRep argReps) ++ "->" ++ prettyRep retRep ++ " " ++ show args ++ "\n"
   prettyExp d (RUnderApp _ n missing args) =
       indent d ++ "partial " ++ show n ++ " missing=" ++ show missing ++ " " ++ show args ++ "\n"
   prettyExp d (RApp _ lazy c a) =

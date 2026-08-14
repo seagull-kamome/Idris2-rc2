@@ -3,6 +3,46 @@
 Newest first. Each entry corresponds to one commit on `master`; see
 `git log` for full commit messages.
 
+## 2026-08-14 -- Dual calling convention: worker/wrapper synthesis for parameters, Stage 3a
+
+Third of the staged `dual-abi` effort, split from the original Stage 3
+plan into a parameters-only step (native returns deferred to Stage 3b
+-- see `rc2/doc/dual-abi.md`'s own plan-reconsideration note) after
+scoping showed native-return rendering needed materially riskier
+changes to `Emit.idr`'s highest-traffic `Sink`/`SinkReturn` code. New
+`RAppNameRep` IR node and `Compiler.RC2.DualABI`'s `synthesizeWorker`/
+`applyDualABI` generate, for every parameter-eligible (per Stage 2's
+own analysis) and non-`MutualLoop`-merged function, a freshly
+synthesised internal *worker* with native C types at its eligible
+parameter positions, plus a rewritten *wrapper* (the function's own
+original name and Boxed signature, now a thin shim calling the
+worker) -- the classic GHC-style worker/wrapper split. `Main.fib`
+(`tests/BenchFib.idr`) now compiles to `Main_fib` (unchanged Boxed
+wrapper) unboxing its argument once and calling a synthesised
+`rc2_dualABI_N` worker doing the real recursive work in `int64_t`
+throughout its own body. No performance change yet -- every call site
+elsewhere in the program still targets the unchanged wrapper; that
+rewrite is Stage 4's own job.
+
+Two real bugs found and fixed during this stage's own build-and-test
+cycle: (1) `createCFunctions` not yet `Rep`-aware for a function's own
+C parameter declarations/`RepMap` seeding, caught immediately on the
+first build of `fib`'s worker (C type mismatch between the wrapper's
+unboxed call and the worker's still-`IDRIS2RC2_Value *` declared
+parameter); (2) `Compiler.RC2.Loop`'s own `declareLoopParam` NULL guard
+(written for `MutualLoop`'s `RCNull` padding case) applied
+unconditionally even when `initVal` was already native -- breaking any
+function that's *both* self-tail-recursive and dual-ABI-eligible
+(`Test1Basics.idr`, `Test9SelfTailLoop.idr`, `BenchLoop.idr`,
+`BenchChain.idr`), a pointer-vs-integer C comparison error under
+`-Werror`. Both fixed; full detail (root cause, fix, verification) in
+`rc2/doc/dual-abi.md`'s own "Bugs found and fixed" section.
+
+Verified: full refc-suite (19/19), the `tests/Test*.idr`/`Bench*.idr`
+smoke-test/benchmark matrix rebuilt and diffed byte-for-byte against
+real `idris2 --cg refc` output, and `fib 30` confirmed to still compute
+`832040` through the new worker/wrapper split.
+
 ## 2026-08-14 -- Dual calling convention: eligibility analysis, Stage 2
 
 Second of the staged `dual-abi` effort. New `Compiler.RC2.DualABI`

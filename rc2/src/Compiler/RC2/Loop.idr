@@ -270,6 +270,13 @@ mutual
   renameRCExp ren (RLoop fc loopParams initial body) =
       RLoop fc (map (\(i, r) => (renameId ren i, r)) loopParams) (renameLocals ren initial) (renameRCExp ren body)
   renameRCExp ren (RLoopContinue fc args) = RLoopContinue fc (renameLocals ren args)
+  -- Never actually reached in practice -- Compiler.RC2.DualABI, the
+  -- sole producer of RAppNameRep, runs strictly after both this
+  -- module and Compiler.RC2.MutualLoop (the only two callers of
+  -- renameRCExp) have already finished. Kept total (as a plain
+  -- pass-through) rather than assumed unreachable, same reasoning as
+  -- this function's own RLoop case just above.
+  renameRCExp ren (RAppNameRep fc n argReps retRep args) = RAppNameRep fc n argReps retRep (renameLocals ren args)
 
   renameConAlt : Renaming -> RConAlt -> RConAlt
   renameConAlt ren (MkRConAlt name ci tag args body) =
@@ -365,34 +372,42 @@ nativeArgType p body =
          _ => Nothing
 
 ||| Remove every `RDup`/`RDrop`/`RFree` target, and every `ROp`/
-||| `RCmpCase` `postDrop` entry, naming one of `ids` -- run right after
-||| the corresponding top-level parameter(s) have been promoted to a
-||| native shadow and every ordinary *value* read of them has already
-||| been redirected there by `renameRCExp` (so `ids` here means the
-||| *shadow* ids, post-rename, not the original parameter ids). A
-||| native value never needs reference-count bookkeeping at all, so
-||| whatever `annotate` (Phase 2) originally decided about the
-||| *original*, still-Boxed parameter's own dup/drop lifetime -- back
-||| when it was read from multiple Boxed-context sites across the loop
-||| body -- no longer applies and must be removed outright, not merely
-||| left in place: a native C scalar has no refcount header to pass to
+||| `RCmpCase` `postDrop` entry, naming one of `ids`. A native value
+||| never needs reference-count bookkeeping at all, so whatever
+||| `annotate` (Phase 2) originally decided about one of `ids`'s own
+||| dup/drop lifetime -- back when it was Boxed and read from multiple
+||| Boxed-context sites -- no longer applies and must be removed
+||| outright, not merely left in place: a native C scalar has no
+||| refcount header to pass to
 ||| `idris2rc2_dup`/`idris2rc2_drop`/`idris2rc2_free` in the first
-||| place. Safe precisely because every *other* occurrence of the
-||| promoted parameter was already redirected to its shadow by the
-||| accompanying `renameRCExp` call before this ever runs -- nothing
-||| here is deleting a drop some surviving Boxed read still needs.
+||| place.
+|||
+||| Safe precisely when every *value-reading* occurrence of each id in
+||| `ids` is already consistently native by the time this runs -- two
+||| distinct ways that holds, both used in this codebase: this
+||| module's own native-shadow promotion (`applyLoop` below) redirects
+||| every ordinary read to a *fresh* shadow id first (`renameRCExp`),
+||| then calls this with exactly that fresh id set; `Compiler.RC2.DualABI`'s
+||| own worker synthesis instead declares an *original* parameter id
+||| directly as a native C function parameter in a brand-new function
+||| (no id conflict to dodge, since nothing else in that function
+||| already used the name) and calls this with that same, unrenamed id.
+||| Either way, nothing here is deleting a drop some surviving Boxed
+||| read still needs.
 |||
 ||| `RCon`'s own field arguments, an `RConCase`/`RConstCase` scrutinee,
 ||| and `RReuseOffer`'s own `sc`/`dupOnShared` are deliberately *not*
-||| touched here (`renameRCExp` still substitutes the id in them, same
-||| as everywhere else -- only their *ownership* bookkeeping is a
-||| distinct concern from this function's job): a parameter eligible
-||| for native shadowing (an `ROp`/`RCmpCase` operand) and a parameter
-||| pattern-matched or reuse-checked as a constructor are mutually
-||| exclusive at the Idris type level, so a shadowed id is never one of
-||| those to begin with; and a shadowed id stored into a constructor
-||| field just gets boxed fresh on the spot by `rcVarToBoxedC`,
-||| correctly, with no bookkeeping node of its own to strip.
+||| touched here (a renaming caller's own `renameRCExp` still
+||| substitutes the id in them, same as everywhere else -- only their
+||| *ownership* bookkeeping is a distinct concern from this function's
+||| job): an id eligible for a native representation (an `ROp`/
+||| `RCmpCase` operand) and one pattern-matched or reuse-checked as a
+||| constructor are mutually exclusive at the Idris type level, so a
+||| promoted id is never one of those to begin with; and a promoted id
+||| stored into a constructor field just gets boxed fresh on the spot
+||| by `rcVarToBoxedC`, correctly, with no bookkeeping node of its own
+||| to strip.
+export
 stripOwnership : SortedSet Int -> RCExp -> RCExp
 stripOwnership ids (RDup fc v body) =
     let body' = stripOwnership ids body

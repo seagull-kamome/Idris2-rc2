@@ -1,7 +1,7 @@
 # CLAUDE.md
 
 This repo hosts **rc2**, an independent external C code generator backend
-for Idris2. See `README.md`, `CHANGES.md`, `TODO.md` for project
+for Idris2. See `README.md`, `TODO.md` for project
 overview, history, and known gaps.
 
 ## Layout
@@ -22,8 +22,11 @@ overview, history, and known gaps.
   inference, `loop-conversion.md` for self-/mutual-tail-call ->
   `goto` conversion and native-shadow loop params, `reading-the-ir.md`
   for how to dump and read the `RCExp` IR itself — a practical
-  reference, not a pass write-up). Not
-  a replacement for `CHANGES.md`/`TODO.md` — those stay the changelog
+  reference, not a pass write-up, `dual-abi.md` for the dual (Boxed/
+  native) calling convention letting native representations cross
+  ordinary function-call boundaries — a living document, updated as
+  later stages land). Not
+  a replacement for `TODO.md` — those stay the changelog
   and gap tracker; `rc2/doc/` is where the *why* and the
   bugs-found-along-the-way for a specific subsystem live.
   `rc2/doc/ja/` holds Japanese translations of every file directly
@@ -74,7 +77,6 @@ and benchmarks (`rc2/tests/Bench*.idr`) are compiled/run the same way
   immediately after a test run — leave them in place for review until
   after the related commit lands. They're gitignored, so nothing extra
   ends up staged.
-- When making functional changes, record the details in `CHANGES.md`
-  using a few lines of concise text. Also TODO.md.
-
+- TODO.mdには積み残しの課題を記録する。実装が済んでドキュメント化した項目は書かない。
+- ドキュメントを読めばわかる事はコードのコメントには書かず、参照リンクの記載に留める。
 

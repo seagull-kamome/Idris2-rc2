@@ -635,6 +635,12 @@ mutual
     annotate natives owned (RLoop fc loopParams initial body) =
         RLoop fc loopParams initial <$> annotate natives owned body
     annotate natives owned (RLoopContinue fc args) = pure $ RLoopContinue fc args
+    -- Never actually produced until Compiler.RC2.DualABI runs, which is
+    -- strictly after annotate is done with the whole definition (and
+    -- after Compiler.RC2.Loop too, see RAppNameRep's own doc comment)
+    -- -- kept total (as a plain pass-through), same reasoning as
+    -- RReleaseReuse above.
+    annotate natives owned (RAppNameRep fc n argReps retRep args) = pure $ RAppNameRep fc n argReps retRep args
 
     annotateConAlt : SortedSet RCLocal -> Owned -> RCLocal -> RConAlt -> Core RConAlt
     annotateConAlt natives owned sc (MkRConAlt name ci tag args body) = do

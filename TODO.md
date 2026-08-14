@@ -26,18 +26,24 @@ itself requires -- so it doesn't reduce the gap below; it only removes
 one small, now-irrelevant-by-comparison cost that used to sit on top
 of it.
 
-- **Dual calling convention.** Let native representations cross function
-  boundaries for functions where it's provably safe (escape analysis +
-  a fixed-point signature inference pass, plus native entry points
-  alongside the existing boxed ones so external/FFI/dynamic-dispatch
-  call sites keep working). This was scoped out of the current
-  iteration as too large/risky to do alongside the RC-as-separate-pass
-  work; see the project plan for the original design sketch. The
-  *loop-carried* subset of this gap -- a self- or mutually-tail-
-  recursive loop's own parameters -- is now addressed separately (see
-  `doc/loop-conversion.md`); this bullet is about the remaining, more
-  general case: an ordinary (non-loop) call boundary between two
-  different functions.
+- **Dual calling convention (in progress, branch `dual-abi`).** Let
+  native representations cross function boundaries for functions where
+  it's provably safe, via a worker/wrapper split (each eligible
+  function gets an internal native-signature worker alongside its
+  original, unchanged Boxed wrapper) -- turned out to need no
+  whole-program fixed point, contrary to the original escape-analysis-
+  plus-fixed-point sketch this bullet used to describe. Implemented and
+  verified so far: the IR foundation, local per-function eligibility
+  analysis, and worker/wrapper synthesis for *parameters*. Still
+  missing: native *return* values at a worker's own signature, and
+  rewriting call sites throughout the program to actually target a
+  worker directly (today every call still goes through the unchanged
+  wrapper, so there's no performance change yet). Full design,
+  implementation walkthrough, and bugs found along the way are in
+  **`rc2/doc/dual-abi.md`**, including exactly what's implemented versus
+  still planned. The *loop-carried* subset of this gap -- a self- or
+  mutually-tail-recursive loop's own parameters -- was addressed
+  separately (see `doc/loop-conversion.md`).
 
 ### Self-/mutual-tail-call loop conversion, native-shadow loop params (implemented)
 

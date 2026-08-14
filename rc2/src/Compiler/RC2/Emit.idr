@@ -1489,24 +1489,42 @@ mutual
     ||| once.
     |||
     ||| The native unboxing itself is guarded by a runtime NULL check on
-    ||| `initVal`'s own variable: an *ordinary* function's own
-    ||| native-eligible argument is never actually NULL at this point
-    ||| (Int/Int64/Bits64/Double always genuinely allocate or hit the
-    ||| small-value cache, never a bare `NULL`), but a top-level
-    ||| parameter of one of Compiler.RC2.MutualLoop's own merged
-    ||| functions can be -- its unused trailing "slots" are padded with
-    ||| `RCNull`/C `NULL` by callers that don't have that many arguments
-    ||| of their own (see `buildGroup`'s own `padded`), and this
-    ||| parameter can still end up native-shadowed if *some other*
-    ||| member of the same merged group reads its own same-position
-    ||| argument natively -- Compiler.RC2.Loop has no visibility into
-    ||| MutualLoop's own padding at all, so it can't exclude this case
-    ||| from eligibility; unboxing unconditionally here would dereference
-    ||| that NULL through `nativeUnbox`'s runtime accessor, a real crash
-    ||| this exact pattern used to hit before this guard existed. The
-    ||| check costs one comparison, once per function entry (not once
-    ||| per iteration), so it's not a meaningful cost even when it's
+    ||| `initVal`'s own variable, but *only* when `initVal` is itself
+    ||| still genuinely `RBoxed` (checked via `repOfLocal` first, not
+    ||| assumed): an *ordinary* function's own native-eligible argument
+    ||| is never actually NULL at this point (Int/Int64/Bits64/Double
+    ||| always genuinely allocate or hit the small-value cache, never a
+    ||| bare `NULL`), but a top-level parameter of one of
+    ||| Compiler.RC2.MutualLoop's own merged functions can be -- its
+    ||| unused trailing "slots" are padded with `RCNull`/C `NULL` by
+    ||| callers that don't have that many arguments of their own (see
+    ||| `buildGroup`'s own `padded`), and this parameter can still end
+    ||| up native-shadowed if *some other* member of the same merged
+    ||| group reads its own same-position argument natively --
+    ||| Compiler.RC2.Loop has no visibility into MutualLoop's own
+    ||| padding at all, so it can't exclude this case from eligibility;
+    ||| unboxing unconditionally here would dereference that NULL
+    ||| through `nativeUnbox`'s runtime accessor, a real crash this
+    ||| exact pattern used to hit before this guard existed. The check
+    ||| costs one comparison, once per function entry (not once per
+    ||| iteration), so it's not a meaningful cost even when it's
     ||| provably unneeded.
+    |||
+    ||| Checking `repOfLocal` first (rather than always guarding) is
+    ||| itself required for correctness, not just cheapness: `initVal`
+    ||| can *already* be `RNative` here too, when
+    ||| Compiler.RC2.DualABI has promoted this very parameter at the
+    ||| enclosing worker's own signature (see its own module note) --
+    ||| the loop this function belongs to was originally written
+    ||| assuming `initVal` is always one of the enclosing function's
+    ||| own top-level (always-Boxed) arguments, an assumption DualABI's
+    ||| own worker synthesis breaks. Comparing an already-native
+    ||| `int64_t` against C `NULL` is a real compile error (`comparison
+    ||| between pointer and integer`), not just a wasted check -- this
+    ||| exact mistake was caught by a real build failure in
+    ||| `Test1Basics.idr`'s own `Main.loop` (self-tail-recursive *and*
+    ||| dual-ABI-eligible) the first time a worker wrapped a native-
+    ||| shadowed loop.
     declareLoopParam : {auto a : Ref ArgCounter Nat}
                      -> {auto oft : Ref OutfileText Output}
                      -> {auto il : Ref IndentLevel Nat}
@@ -1522,12 +1540,13 @@ mutual
     declareLoopParam fc paramId rep@(RNative ty) initVal = do
         update RepMap (insert paramId rep)
         valStr <- rcVarToNativeC ty initVal
-        let initValName = varName initVal
-        emit fc "\{nativeCType ty} var_\{show paramId} = (\{initValName} == NULL) ? 0 : (\{valStr});"
         initRep <- repOfLocal initVal
         case initRep of
-             RBoxed => removeVars [varName initVal]
-             _ => pure ()
+             RBoxed => do
+                 let initValName = varName initVal
+                 emit fc "\{nativeCType ty} var_\{show paramId} = (\{initValName} == NULL) ? 0 : (\{valStr});"
+                 removeVars [varName initVal]
+             _ => emit fc "\{nativeCType ty} var_\{show paramId} = \{valStr};"
     -- A loop param is read again every iteration, so it never has the
     -- single-use shape `RInlineNative` requires -- Compiler.RC2.Loop
     -- never actually constructs this case -- kept total (falling back
@@ -1585,6 +1604,39 @@ mutual
            else do
                argStrs <- traverse rcVarToBoxedC args
                pure "idris2rc2_trampoline(\{cName n}(\{concat $ intersperse ", " argStrs}))"
+
+    -- A direct call to `n`'s own dual-ABI worker -- see
+    -- `RAppNameRep`'s own doc comment in RCExp.idr. Renders each
+    -- argument per `argReps`' own position, mirroring
+    -- `tryEmitLoopContinue`'s own per-position Rep-aware rendering.
+    -- `retRep = RBoxed` behaves like an ordinary (never
+    -- closure-deferred, see RAppNameRep's own doc comment for why
+    -- that's safe here) `RAppName` call would: trampolined when not
+    -- in tail position (the caller is about to use the value
+    -- directly), returned bare when in tail position (deferred to
+    -- *this* call's own caller to trampoline, exactly as an ordinary
+    -- tail-position delegating call already would be). Only this
+    -- shape is implemented so far -- `Compiler.RC2.DualABI` never yet
+    -- promotes a worker's own return to native (Stage 3a only
+    -- promotes parameters), and never yet produces more than
+    -- `MaxExtractFunArgs` arguments here; both are explicit follow-on
+    -- work (a native `retRep` needs the same drop-ordering care
+    -- `declareNative`'s own doc comment describes, deliberately not
+    -- attempted until something can actually exercise it).
+    emitRC (RAppNameRep fc n argReps retRep args) tailPosition = do
+        let nargs = length args
+        when (nargs > MaxExtractFunArgs) $
+            throw $ InternalError "[rc2] RAppNameRep: more than \{show MaxExtractFunArgs} args not yet supported"
+        argStrs <- traverse (\(rep, v) => case rep of
+                                 RNative ty => rcVarToNativeC ty v
+                                 RInlineNative ty => rcVarToNativeC ty v
+                                 RBoxed => rcVarToBoxedC v) (zip argReps args)
+        let call = "\{cName n}(\{concat $ intersperse ", " argStrs})"
+        case retRep of
+             RBoxed => pure $ case tailPosition of
+                                   InTailPosition => call
+                                   NotInTailPosition => "idris2rc2_trampoline(\{call})"
+             _ => throw $ InternalError "[rc2] RAppNameRep: native retRep not yet implemented"
 
     -- Unreachable: emitInto's tryBuildClosureInto always intercepts
     -- RUnderApp itself, for any tailPosition -- a partial application is
@@ -1928,21 +1980,42 @@ createCFunctions : {auto c : Ref Ctxt Defs}
                 -> Core ()
 createCFunctions n (MkRCFun args retRep body) = do
     -- `args`/`retRep` are dual-ABI groundwork (see RCExp.idr's own doc
-    -- comment on MkRCFun) -- always `RBoxed` for now, so `argIds` (just
-    -- the bare ids) is all this needs; nothing yet constructs a
-    -- non-`RBoxed` entry here, and `retRep` isn't consulted at all yet
-    -- (SinkReturn's own unconditional boxing, below, still matches it
-    -- exactly). A later stage will make both Rep-aware together with
-    -- the pass that actually produces non-`RBoxed` values here, rather
-    -- than adding that logic ahead of anything that could exercise it.
+    -- comment on MkRCFun, and Compiler.RC2.DualABI's own module note).
+    -- `retRep` itself isn't consulted yet -- Compiler.RC2.DualABI's own
+    -- Stage 3a never promotes a worker's own return, only parameters
+    -- (SinkReturn's own unconditional boxing, below, still matches
+    -- `retRep`'s only possible value here exactly) -- native returns
+    -- are Stage 3b's own work, together with making this Rep-aware too.
+    -- `args` itself, though, can now genuinely hold `RNative` entries
+    -- (a dual-ABI worker's own eligible parameters), so each one's own
+    -- C declaration and RepMap registration (so *reads* within `body`
+    -- render correctly -- rcVarToNativeC/rcVarToBoxedC are already
+    -- fully Rep-aware, they just need this to actually find the Rep)
+    -- must follow suit.
     let argIds = map fst args
     let nargs = length argIds
+    let declareParam : (Int, Rep) -> String
+        declareParam (i, RBoxed) = "  IDRIS2RC2_Value * var_" ++ show i
+        declareParam (i, RNative ty) = "  " ++ nativeCType ty ++ " var_" ++ show i
+        declareParam (i, RInlineNative ty) = "  " ++ nativeCType ty ++ " var_" ++ show i
     let fn = "IDRIS2RC2_Value *\{cName !(getFullName n)}"
             ++ (if nargs == 0 then "(void)"
                else if nargs > MaxExtractFunArgs then "(IDRIS2RC2_Value *var_arglist[\{show nargs}])"
-               else ("\n(\n" ++ (showSep "\n" $ addCommaToList (map (\i =>  "  IDRIS2RC2_Value * var_" ++ (show i)) argIds))) ++ "\n)")
+               else ("\n(\n" ++ (showSep "\n" $ addCommaToList (map declareParam args))) ++ "\n)")
     update FunctionDefinitions $ \otherDefs => (fn ++ ";\n") :: otherDefs
 
+    -- The `var_arglist[]`-extraction path just below always declares
+    -- every parameter Boxed (it's the >`MaxExtractFunArgs` fallback,
+    -- shared by every ordinary many-argument function, not something
+    -- Compiler.RC2.DualABI's own worker synthesis was written with in
+    -- mind) -- fail loudly here rather than silently seed RepMap with
+    -- a Rep that doesn't match what's actually declared, if a worker
+    -- somehow ended up needing it (Compiler.RC2.Emit's own
+    -- `RAppNameRep` case already refuses to *call* such a worker, so
+    -- this is a second, independent guard on the callee side, not
+    -- something expected to ever actually fire).
+    when (nargs > MaxExtractFunArgs && any (\(_, rep) => case rep of RBoxed => False; _ => True) args) $
+        throw $ InternalError "[rc2] createCFunctions: a dual-ABI worker with more than \{show MaxExtractFunArgs} args isn't supported yet"
     emit EmptyFC fn
     emit EmptyFC "{"
     increaseIndentation
@@ -1951,11 +2024,13 @@ createCFunctions n (MkRCFun args retRep body) = do
          emit EmptyFC "IDRIS2RC2_Value *var_\{show j} = var_arglist[\{show i}];"
          pure $ i + 1) 0 argIds
       pure ()
-    -- Populated incrementally as each RLet is emitted below (its Rep is
+    -- Seeded with this function's own top-level parameters (their Rep
+    -- is already decided, on `args` itself); populated further,
+    -- incrementally, as each RLet is emitted below (its Rep is
     -- already decided and stored on the node by Compiler.RC2.RC; this map
     -- just lets *use* sites, which only have a bare RCLocal id, look it
     -- back up).
-    _ <- newRef RepMap (the (SortedMap Int Rep) empty)
+    _ <- newRef RepMap (SortedMap.fromList args)
     -- Populated instead of RepMap+a declaration for any RLet whose value
     -- is a bare literal -- see InlineMap's own comment.
     _ <- newRef InlineMap (the (SortedMap Int String) empty)
