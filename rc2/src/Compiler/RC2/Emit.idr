@@ -1462,32 +1462,18 @@ mutual
     ||| chain lowers it mechanically like any other wrapper, nothing
     ||| special-cased here). Mirrors RC2/RefC's `concaseBody`.
     |||
-    ||| `matched`, when `Just (sc, conArgs)`, means this branch destructured
-    ||| `conArgs` directly out of `sc`'s own storage (`sc->args[k]`) --
-    ||| plain pointer aliasing, not independently reference-counted. Any
-    ||| `conArgs` entry that survives past this branch (i.e. isn't itself
-    ||| in the peeled drop list) therefore needs an explicit dup *here*,
-    ||| before `sc` potentially goes away below, or `sc`'s own teardown
-    ||| would free/repurpose storage a still-live field is pointing into.
-    ||| `conArgs` entries that *are* already dying are deliberately left
-    ||| out of the flat drop list -- their release comes for free from
-    ||| however `sc` itself gets torn down (ordinary recursive
-    ||| idris2rc2_drop), so dropping them a second time here would
-    ||| double-free. This applies unconditionally to *every*
-    ||| matched-constructor branch that ISN'T a reuse offer.
-    |||
-    ||| A reuse-eligible alt's own body already starts with an
-    ||| `RReuseOffer` wrapping `sc` (see Compiler.RC2.Reuse's module
-    ||| note) -- that node fully owns `sc`'s own release *and* every
-    ||| surviving field's dup on its own (`dupOnShared`, precomputed
-    ||| there; the peeled `shouldDrop` here is already `sc`/its
-    ||| fields-free by construction), so this function must NOT also
-    ||| apply its generic survivor-dup rule on top of it -- doing so
-    ||| anyway would unconditionally dup every destructured field a
-    ||| second time, leaking a reference. Recognising that shape here is
-    ||| pattern matching on already-decided IR structure, the same as
-    ||| everywhere else in this module (e.g. `emitInto`'s own dispatch on
-    ||| `remaining`) -- not a fresh decision.
+    ||| For a matched-constructor alt, any of its own destructured
+    ||| fields (read straight out of the scrutinee's own storage,
+    ||| `sc->args[k]` -- plain pointer aliasing, not independently
+    ||| reference-counted) that survive past this branch already carry
+    ||| their own explicit leading `RDup` here -- `Compiler.RC2.Reuse`'s
+    ||| own `resolveAlt` precomputes this (its own `else` branch for an
+    ||| ordinary matched alt, `dupOnShared` for a reuse-eligible one),
+    ||| the same "destructured via aliasing" rule either way, so this
+    ||| function has nothing left to re-derive: whatever survivor-dups
+    ||| a given alt's body needs are already part of `body` itself, laid
+    ||| out exactly like any other RDup/RDrop/RReuseOffer wrapper
+    ||| `emitInto`'s own peeling chain already lowers mechanically.
     branchBody : {auto a : Ref ArgCounter Nat}
                -> {auto oft : Ref OutfileText Output}
                -> {auto il : Ref IndentLevel Nat}
@@ -1495,19 +1481,13 @@ mutual
                -> {auto r : Ref RepMap (SortedMap Int Rep)}
                -> {auto lm : Ref InlineMap (SortedMap Int String)}
                -> {auto fa : Ref LoopParams (List (Int, Rep))}
-               -> (matched : Maybe (RCLocal, List String))
                -> Sink -> RCExp -> TailPositionStatus -> Core ()
-    branchBody matched sink body tailPosition = do
+    branchBody sink body tailPosition = do
         let (shouldDrop0, body') = peelDrop body
         -- shouldDrop0 is already guaranteed Boxed-only -- see the
         -- module note.
         let shouldDrop = varName <$> shouldDrop0
-        case (matched, body') of
-             (Nothing, _) => removeVars shouldDrop
-             (Just _, RReuseOffer {}) => removeVars shouldDrop
-             (Just (sc, conArgs), _) => do
-                 dupVars (conArgs \\ shouldDrop)
-                 removeVars (shouldDrop \\ conArgs)
+        removeVars shouldDrop
         -- `sink` is already fully resolved -- any variable it names was
         -- declared once by the enclosing RConCase/RConstCase/RCmpCase
         -- before any branch ran (see `resolveSink`), or it's `SinkReturn`
@@ -1533,7 +1513,7 @@ mutual
         _ <- foldlC (\k, arg => do
             emit emptyFC "IDRIS2RC2_Value *var_\{show arg} = ((IDRIS2RC2_Constructor*)\{sc'})->args[\{show k}];"
             pure (S k) ) 0 args
-        branchBody (Just (sc, varName . RCLoc <$> args)) sink body tailPosition
+        branchBody sink body tailPosition
 
     ||| Lower a fused comparison branch (see RCExp.idr's own doc comment
     ||| on RCmpCase and `nativeCmpExpr`): the comparison is evaluated once
@@ -1600,7 +1580,7 @@ mutual
         emitAltChain resolvedSink
             (conAltCondExpr sc')
             (emitConAltBody resolvedSink tailPosition sc)
-            (map (\body => branchBody Nothing resolvedSink body tailPosition) mDef)
+            (map (\body => branchBody resolvedSink body tailPosition) mDef)
             alts
 
     ||| Lower a constant/tag switch: same "each alt writes straight into
@@ -1619,7 +1599,7 @@ mutual
     emitConstCaseInto sink tailPosition fc sc alts def = do
         let sc' = varName sc
         resolvedSink <- resolveSink fc sink
-        let defaultAction = map (\body => branchBody Nothing resolvedSink body tailPosition) def
+        let defaultAction = map (\body => branchBody resolvedSink body tailPosition) def
         -- `sc` is Boxed in every case Phase 1/2 ever produce on their
         -- own -- but Compiler.RC2.Loop's own native-shadow promotion
         -- (see its `applyLoop`) can redirect a loop param's *every*
@@ -1642,7 +1622,7 @@ mutual
                 emit emptyFC "int64_t \{tmpint} = \{extractExpr};"
                 emitAltChain resolvedSink
                     (\(MkRConstAlt c _) => pure "\{tmpint} == \{const2Integer c 0}")
-                    (\(MkRConstAlt _ body) => branchBody Nothing resolvedSink body tailPosition)
+                    (\(MkRConstAlt _ body) => branchBody resolvedSink body tailPosition)
                     defaultAction
                     alts
 
@@ -1655,7 +1635,7 @@ mutual
                                       RInlineNative DoubleType => (\e => "\{e} == \{show x}") <$> rcVarToNativeC DoubleType sc
                                       _ => pure "((IDRIS2RC2_Double *)\{sc'})->v == \{show x}"
                         x => throw $ InternalError "[rc2] RConstCase : unsupported type. \{show fc} \{show x}")
-                    (\(MkRConstAlt _ body) => branchBody Nothing resolvedSink body tailPosition)
+                    (\(MkRConstAlt _ body) => branchBody resolvedSink body tailPosition)
                     defaultAction
                     alts
 

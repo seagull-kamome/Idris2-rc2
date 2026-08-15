@@ -39,9 +39,13 @@ module Compiler.RC2.Reuse
 --      not-yet-claimed RCon of the matching name to mark
 --      `reuseFrom = Just sc`, inserting `RReleaseReuse fc sc` on every
 --      path that doesn't reach one, so the reservation is never lost.
---   3. Ineligible alts, and the default branch (no known scrutinee
---      shape to reuse), are left entirely alone -- an ordinary flat
---      drop list, no `RReuseOffer` anywhere in their body.
+--   3. Ineligible alts get no `RReuseOffer` -- an ordinary flat drop
+--      list -- but still get an explicit `RDup` for any of their own
+--      destructured fields that survive past it, same "destructured via
+--      aliasing" reasoning as `dupOnShared` above (see `resolveAlt`'s
+--      own `else` branch). The default branch (no known scrutinee shape
+--      to reuse, so no destructured fields of its own either) is left
+--      entirely alone.
 --
 -- Resolution proceeds bottom-up (`resolveReuse` recurses into a body
 -- *before* deciding the enclosing alt's own eligibility), so by the
@@ -202,4 +206,31 @@ mutual
                        outerDrop = dropped' \\ conArgsRC
                    in MkRConAlt name ci tag args
                         (rewrapDrop outerDrop (RReuseOffer emptyFC sc dupOnShared inner'))
-              else MkRConAlt name ci tag args body1
+              else let conArgsRC = map RCLoc args
+                       -- Same "destructured via aliasing" rule as
+                       -- `dupOnShared` above, just with no reuse offer
+                       -- to carry it: a field read straight out of
+                       -- `sc`'s own storage that's still live past this
+                       -- point needs its own reference before `sc`'s
+                       -- own (ordinary, unconditional) drop below
+                       -- potentially frees/repurposes the storage it
+                       -- points into. Applies regardless of whether
+                       -- `sc` itself actually ends up dropped here --
+                       -- mirrors `Compiler.RC2.Emit`'s own `branchBody`,
+                       -- which used to re-derive this very same
+                       -- decision at emission time via a `conArgs \\
+                       -- shouldDrop` list difference; precomputed here
+                       -- instead, same as `dupOnShared`.
+                       dupOnSurvive = conArgsRC \\ dropped
+                       -- A `dropped` entry that's *also* one of this
+                       -- alt's own destructured fields is one that's
+                       -- already dying -- deliberately left out of the
+                       -- flat drop list here too, same as `outerDrop`
+                       -- above: its release comes for free from however
+                       -- `sc` itself gets torn down (an ordinary,
+                       -- unconditional drop, unlike the reuse-eligible
+                       -- case's own conditional one), so dropping it a
+                       -- second time here would double-free.
+                       outerDrop = dropped \\ conArgsRC
+                   in MkRConAlt name ci tag args
+                        (foldr (RDup emptyFC) (rewrapDrop outerDrop inner) dupOnSurvive)
