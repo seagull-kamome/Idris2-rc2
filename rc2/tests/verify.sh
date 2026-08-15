@@ -100,11 +100,14 @@ NO_REFC_DIFF_TESTS="Test7CastMatrix"
 # Leak-sensitive by design (reference-counting/reuse/native-shadow
 # regression tests) -- checked with valgrind by default even without
 # --valgrind-all.
-LEAK_SENSITIVE_TESTS="Test1Basics Test9SelfTailLoop Test10MutualLoop Test11DualABILeak Test12ConAltNative Test13NativeArgChain"
+LEAK_SENSITIVE_TESTS="Test1Basics Test9SelfTailLoop Test10MutualLoop Test11DualABILeak Test12ConAltNative Test13NativeArgChain Test16LoopContinuePostDrop"
 
-# KNOWN-BUGS.md's own two pre-existing leaks -- "definitely lost" byte
-# counts, exactly. Anything else non-zero is a genuine new failure.
-declare -A KNOWN_LEAK_BYTES=( [Test1Basics]=40 [Test9SelfTailLoop]=784 )
+# KNOWN-BUGS.md's own one remaining pre-existing leak -- "definitely
+# lost" byte count, exactly. Anything else non-zero is a genuine new
+# failure. (Test9SelfTailLoop's own former 784-byte entry was
+# root-caused and fixed -- RLoopContinue's own missing postDrop field,
+# see KNOWN-BUGS.md -- and is expected to be clean now.)
+declare -A KNOWN_LEAK_BYTES=( [Test1Basics]=40 )
 
 is_in() { local x; for x in $2; do [ "$x" = "$1" ] && return 0; done; return 1; }
 

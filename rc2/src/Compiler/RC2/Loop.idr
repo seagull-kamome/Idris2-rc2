@@ -269,7 +269,7 @@ mutual
   -- RC.idr's own `annotate`.
   renameRCExp ren (RLoop fc loopParams initial body) =
       RLoop fc (map (\(i, r) => (renameId ren i, r)) loopParams) (renameLocals ren initial) (renameRCExp ren body)
-  renameRCExp ren (RLoopContinue fc args) = RLoopContinue fc (renameLocals ren args)
+  renameRCExp ren (RLoopContinue fc args postDrop) = RLoopContinue fc (renameLocals ren args) (renameLocals ren postDrop)
   -- Never actually reached in practice -- Compiler.RC2.DualABI, the
   -- sole producer of RAppNameRep, runs strictly after both this
   -- module and Compiler.RC2.MutualLoop (the only two callers of
@@ -490,7 +490,8 @@ stripOwnership ids (RConstCase fc sc alts mDef) =
       (map (stripOwnership ids) mDef)
 stripOwnership ids (RReleaseReuse fc v body) = RReleaseReuse fc v (stripOwnership ids body)
 stripOwnership ids (RReuseOffer fc sc dupOnShared body) = RReuseOffer fc sc dupOnShared (stripOwnership ids body)
-stripOwnership ids (RLoopContinue fc args) = RLoopContinue fc args
+stripOwnership ids (RLoopContinue fc args postDrop) =
+    RLoopContinue fc args (filter (\v => case v of RCLoc i => not (contains i ids); _ => True) postDrop)
 -- RV, RAppName, RUnderApp, RApp, RCon, RExtPrim, RPrimVal, RErased,
 -- RCrash: no ownership-tracking positions of their own. RLoop: never
 -- actually appears here in practice, same reasoning as
@@ -529,10 +530,77 @@ assignShadowIds nextId ((p, ty) :: rest) = (p, nextId, ty) :: assignShadowIds (n
 ||| stays a pure function of one definition at a time, no cross-
 ||| definition state needed.
 export
+||| Fills in every `RLoopContinue`'s own `postDrop` -- see `RLoopContinue`'s
+||| own doc comment (RCExp.idr) for what this is and why it's needed:
+||| every argument that's still `Boxed` at the point it feeds a
+||| `Native`/`RInlineNative`-shadowed loop param slot needs an explicit
+||| drop once `Compiler.RC2.Emit` reads it natively to build that
+||| slot's own next value, the same "no separate statement position to
+||| hang an ordinary wrapping drop around a native-context read"
+||| reasoning `ROp`/`RCmpCase`/`RAppNameRep`'s own `postDrop` fields
+||| already carry.
+|||
+||| `reps` is threaded through the *same* tail-position shape
+||| `Compiler.RC2.Emit`'s own `TailPositionStatus` threading already
+||| visits (an `RLet`'s own body, `RCmpCase`'s two branches,
+||| `RConCase`/`RConstCase`'s alts and default, every
+||| `RDup`/`RDrop`/`RFree`/`RReleaseReuse`/`RReuseOffer`'s own
+||| continuation) -- the same shape `Compiler.RC2.DualABI`'s own
+||| `applyCallSiteRewriteBody` already threads an analogous `reps` map
+||| through, for a closely related reason (deciding whether a call's
+||| own argument needs reading natively) -- written fresh here rather
+||| than reused, since `Loop.idr` can't import `DualABI.idr` (which
+||| itself imports `Loop.idr`, to reuse *this* module's own
+||| `nativeArgTypes` -- reusing the other way round would be circular).
+||| Seeded from `loopParams` itself (exactly what's in scope at the top
+||| of the loop body, positionally paired with the same list this
+||| function's own caller already has in hand), extended at every
+||| `RLet` (its own declared `Rep`) and every `RConCase`/`RConstCase`
+||| alt's own destructured fields (always `RBoxed`, matching every other
+||| pass's own treatment of a constructor field's own storage). This
+||| pass's own sole caller (`applyLoop` below) never produces a nested
+||| `RLoop` within `rewritten` (one function, one `RLoop`, by
+||| construction), so there's no case for one here.
+fillLoopContinuePostDrop : List (Int, Rep) -> SortedMap Int Rep -> RCExp -> RCExp
+fillLoopContinuePostDrop loopParams reps (RLet fc var rep value body) =
+    RLet fc var rep value (fillLoopContinuePostDrop loopParams (insert var rep reps) body)
+fillLoopContinuePostDrop loopParams reps (RCmpCase fc op args postDrop t f) =
+    RCmpCase fc op args postDrop
+      (fillLoopContinuePostDrop loopParams reps t) (fillLoopContinuePostDrop loopParams reps f)
+fillLoopContinuePostDrop loopParams reps (RConCase fc sc alts mDef) =
+    RConCase fc sc (map fillConAlt alts) (map (fillLoopContinuePostDrop loopParams reps) mDef)
+  where
+    fillConAlt : RConAlt -> RConAlt
+    fillConAlt (MkRConAlt n ci tag as body) =
+        MkRConAlt n ci tag as (fillLoopContinuePostDrop loopParams (foldl (\m, i => insert i RBoxed m) reps as) body)
+fillLoopContinuePostDrop loopParams reps (RConstCase fc sc alts mDef) =
+    RConstCase fc sc (map (\(MkRConstAlt c body) => MkRConstAlt c (fillLoopContinuePostDrop loopParams reps body)) alts)
+      (map (fillLoopContinuePostDrop loopParams reps) mDef)
+fillLoopContinuePostDrop loopParams reps (RDup fc v cont) = RDup fc v (fillLoopContinuePostDrop loopParams reps cont)
+fillLoopContinuePostDrop loopParams reps (RDrop fc vs cont) = RDrop fc vs (fillLoopContinuePostDrop loopParams reps cont)
+fillLoopContinuePostDrop loopParams reps (RFree fc v cont) = RFree fc v (fillLoopContinuePostDrop loopParams reps cont)
+fillLoopContinuePostDrop loopParams reps (RReleaseReuse fc v cont) =
+    RReleaseReuse fc v (fillLoopContinuePostDrop loopParams reps cont)
+fillLoopContinuePostDrop loopParams reps (RReuseOffer fc sc dupOnShared cont) =
+    RReuseOffer fc sc dupOnShared (fillLoopContinuePostDrop loopParams reps cont)
+fillLoopContinuePostDrop loopParams reps (RLoopContinue fc args _) =
+    let postDrop = mapMaybe (\((_, paramRep), arg) => case paramRep of
+                                   RBoxed => Nothing
+                                   _ => needsDrop arg) (zip loopParams args)
+    in RLoopContinue fc args postDrop
+  where
+    needsDrop : RCLocal -> Maybe RCLocal
+    needsDrop v@(RCLoc i) = case fromMaybe RBoxed (lookup i reps) of
+                                  RBoxed => Just v
+                                  _ => Nothing
+    needsDrop _ = Nothing
+fillLoopContinuePostDrop _ _ e = e
+
+export
 applyLoop : Name -> RCDef -> RCDef
 applyLoop self (MkRCFun args retRep body) =
     let argIds = map fst args
-        (found, body') = mapTailAppNames (\fc, n, args' => if n == self then Just (RLoopContinue fc args') else Nothing) body
+        (found, body') = mapTailAppNames (\fc, n, args' => if n == self then Just (RLoopContinue fc args' []) else Nothing) body
     in MkRCFun args retRep $
          if not found
             then body'
@@ -553,5 +621,7 @@ applyLoop self (MkRCFun args retRep body) =
                   loopParams = map (\p => case find (\(p', _, _) => p' == p) shadowed of
                                                Just (_, sid, ty) => (sid, RNative ty)
                                                Nothing => (p, RBoxed)) argIds
-              in RLoop emptyFC loopParams (map RCLoc argIds) rewritten
+                  withPostDrop : RCExp
+                  withPostDrop = fillLoopContinuePostDrop loopParams (fromList loopParams) rewritten
+              in RLoop emptyFC loopParams (map RCLoc argIds) withPostDrop
 applyLoop _ d = d

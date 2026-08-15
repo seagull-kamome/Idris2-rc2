@@ -86,7 +86,9 @@ mutual
       indent d ++ "loop " ++ show (map (\(i, r) => "\{show (RCLoc i)}:\{prettyRep r}") loopParams)
         ++ " initial=" ++ show initial ++ "\n"
       ++ prettyExp d body
-  prettyExp d (RLoopContinue _ args) = indent d ++ "continue loop " ++ show args ++ "\n"
+  prettyExp d (RLoopContinue _ args postDrop) =
+      indent d ++ "continue loop " ++ show args
+        ++ (if postDrop == [] then "" else " postDrop=" ++ show postDrop) ++ "\n"
 
   prettyConAlt : Nat -> RConAlt -> String
   prettyConAlt d (MkRConAlt n ci tag args body) =

@@ -292,15 +292,32 @@ mutual
        RLoop : FC -> (loopParams : List (Int, Rep)) -> (initial : List RCLocal) -> RCExp -> RCExp
        ||| Continue the nearest enclosing `RLoop`, supplying `args` as
        ||| each loop param's new value (same order, same length as that
-       ||| `RLoop`'s own `loopParams`). Ownership is untouched by this
-       ||| node's own introduction -- `annotate` (Phase 2) already
-       ||| computed the right dup/move decisions for the original
-       ||| `RAppName`'s own arguments before Compiler.RC2.Loop ever ran,
-       ||| exactly as it would for a call to any other function, and
-       ||| those decisions are preserved as-is (any wrapping RDup/RDrop/
-       ||| RFree stays put; only the terminal `RAppName` node itself is
-       ||| swapped). RC.idr's own Phase 1/2 never produce this.
-       RLoopContinue : FC -> List RCLocal -> RCExp
+       ||| `RLoop`'s own `loopParams`). `args`'s own ownership is
+       ||| untouched by this node's own introduction -- `annotate`
+       ||| (Phase 2) already computed the right dup/move decisions for
+       ||| the original `RAppName`'s own arguments before
+       ||| Compiler.RC2.Loop ever ran, exactly as it would for a call to
+       ||| any other function, and those decisions are preserved as-is
+       ||| (any wrapping RDup/RDrop/RFree stays put; only the terminal
+       ||| `RAppName` node itself is swapped).
+       |||
+       ||| `postDrop` is a *second*, separate concern `annotate` never
+       ||| had anything to do with (it runs before this node even
+       ||| exists) -- every entry names a `Boxed` argument that needs
+       ||| reading *natively* (`Compiler.RC2.Emit`'s `rcVarToNativeC`)
+       ||| to feed a loop param position `Compiler.RC2.Loop`'s own
+       ||| native-shadow promotion decided is `Native`/`RInlineNative`,
+       ||| the same "there's no separate statement position to hang an
+       ||| ordinary wrapping `drop` around a native-context read"
+       ||| reasoning `ROp`/`RCmpCase`/`RAppNameRep`'s own `postDrop`
+       ||| fields already carry (see their own doc comments) -- decided
+       ||| by `Compiler.RC2.Loop`'s `applyLoop` itself, once it knows
+       ||| every loop param's own final `Rep` (empty for every
+       ||| `RLoopContinue` `mapTailAppNames` first produces, before that
+       ||| decision exists yet). A real, `valgrind`-confirmed leak was
+       ||| found from this field's own absence -- see `TODO.md`'s git
+       ||| history and `rc2/doc/loop-conversion.md`.
+       RLoopContinue : FC -> List RCLocal -> (postDrop : List RCLocal) -> RCExp
        ||| A runtime uniqueness check deciding whether `sc`'s own storage
        ||| can be repurposed in place for a later `RCon` of the same
        ||| shape (see `RCon`'s own `reuseFrom`) instead of allocating

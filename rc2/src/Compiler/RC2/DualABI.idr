@@ -182,7 +182,7 @@ tailValueReps reps (RConstCase _ _ alts mDef) =
       ++ maybe [] (tailValueReps reps) mDef
 tailValueReps reps (RLoop _ loopParams _ body) =
     tailValueReps (foldl (\m, (i, r) => insert i r m) reps loopParams) body
-tailValueReps _ (RLoopContinue _ _) = []
+tailValueReps _ (RLoopContinue _ _ _) = []
 -- RAppName, RUnderApp, RApp, RCon, RExtPrim, RErased, RCrash: never a
 -- native value regardless of context -- a call/closure/constructor
 -- result is always Boxed today (no callee is known to return native

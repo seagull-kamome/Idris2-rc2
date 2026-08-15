@@ -59,6 +59,7 @@ import Core.Context
 import Idris.Syntax
 
 import Libraries.Data.DList
+import Data.List
 import Data.SortedSet
 import Data.SortedMap
 import Data.Vect
@@ -653,6 +654,37 @@ rcVarToBoxedC l = do
                 -- fix for the new RCConst case.
                 RBoxed => fromMaybe (varName l) inlined
 
+||| An operand for a Boxed-result `ROp` (see its own `emitRC` case
+||| below): an already-`RBoxed` local renders via `rcVarToBoxedC` as-is,
+||| ownership already accounted for elsewhere -- nothing extra to free.
+||| A `RNative`/`RInlineNative` operand still needs `rcVarToBoxedC`'s own
+||| fresh `nativeMk` box to feed the Boxed C primitive, but unlike that
+||| function's other call sites (a constructor field, a return value --
+||| contexts that immediately hand the fresh box's ownership off to
+||| someone else), an `ROp` argument has nowhere to hand it to: the C
+||| primitive only reads it, so the fresh box must be named here and
+||| dropped once the op is done reading it, or it leaks (found via
+||| `Test16LoopContinuePostDrop.idr`: `Types.repOf` never promotes a
+||| `case`/`if`-valued `RLet` to Native even when a branch's own value is
+||| a plain native arithmetic chain, so that branch's `ROp` ends up
+||| Boxed-result while still reading a genuinely Native operand).
+boxOpArg : {auto a : Ref ArgCounter Nat}
+        -> {auto _ : Ref ConstDef (SortedMap Constant ConstDef)}
+        -> {auto r : Ref RepMap (SortedMap Int Rep)}
+        -> {auto lm : Ref InlineMap (SortedMap Int String)}
+        -> {auto oft : Ref OutfileText Output}
+        -> {auto il : Ref IndentLevel Nat}
+        -> FC -> RCLocal -> Core (String, Maybe String)
+boxOpArg fc l = do
+    rep <- repOfLocal l
+    expr <- rcVarToBoxedC l
+    case rep of
+         RBoxed => pure (expr, Nothing)
+         _ => do
+             let tmp = "opBox_" ++ !(getNextCounter)
+             emit fc $ "IDRIS2RC2_Value *" ++ tmp ++ " = " ++ expr ++ ";"
+             pure (tmp, Just tmp)
+
 ||| The C expression to use for `l` as an operand of a native op expecting
 ||| type `ty`: the raw variable if it's already native, or an inline
 ||| unboxing extraction if it's boxed. Never dups/drops -- reading a value
@@ -1112,7 +1144,7 @@ mutual
     tryEmitLoopContinue (RReuseOffer fc sc dupOnShared cont) = do
         emitReuseOffer sc dupOnShared
         tryEmitLoopContinue cont
-    tryEmitLoopContinue (RLoopContinue fc newArgs) = do
+    tryEmitLoopContinue (RLoopContinue fc newArgs postDrop) = do
         loopParams <- get LoopParams
         temps <- traverse (\(v, (paramId, rep)) => do
             t <- getNewVarThatWillNotBeFreedAtEndOfBlock
@@ -1122,6 +1154,18 @@ mutual
                  RInlineNative ty => (\s => (nativeCType ty ++ " ", s)) <$> rcVarToNativeC ty v
             emit fc "\{cty}\{t} = \{valStr};"
             pure (paramId, t)) (zip newArgs loopParams)
+        -- `postDrop`: every still-Boxed argument that was just read
+        -- *natively* above (a `Native`/`RInlineNative` loop param slot,
+        -- fed by a Boxed source -- e.g. a `case`-valued let, which
+        -- `Types.repOf` never promotes to Native on its own even when
+        -- every branch is native-eligible) needs its own Boxed source
+        -- dropped now that it's been read, the same "read first, drop
+        -- after" ordering `ROp`/`RCmpCase`'s own `postDrop` already
+        -- follow -- there's no separate statement position to hang an
+        -- ordinary wrapping `drop` around a native-context read. See
+        -- `RLoopContinue`'s own doc comment (RCExp.idr) for the real
+        -- leak this closes.
+        removeVars (varName <$> postDrop)
         traverse_ (\(paramId, t) => emit fc "var_\{show paramId} = \{t};") temps
         emit fc "goto loop;"
         pure Nothing
@@ -1829,14 +1873,22 @@ mutual
         -- Reached only when Compiler.RC2.Types decided this op's result
         -- stays Boxed (comparisons, or a non-numeric op) -- operands may
         -- still individually be native locals (e.g. a comparison over an
-        -- earlier native arithmetic chain), hence the Rep-aware boxing.
-        argStrs <- rc2traverseVect rcVarToBoxedC args
+        -- earlier native arithmetic chain), hence the Rep-aware boxing
+        -- (boxOpArg, which also names and tracks any fresh box it has to
+        -- fabricate for a Native operand, so it can be freed below).
+        argsWithFresh <- rc2traverseVect (boxOpArg fc) args
+        let argStrs = map fst argsWithFresh
         let resultVar = "primVar_" ++ !(getNextCounter)
         emit fc $ "IDRIS2RC2_Value *" ++ resultVar ++ " = " ++ cOp op argStrs ++ ";"
         -- `postDrop` (Compiler.RC2.RC's `annotate`) already lists exactly
-        -- which operands are Boxed and need dropping now that this op is
-        -- done reading them -- just lower it, no re-deriving here.
+        -- which *existing* Boxed operand locals need dropping now that
+        -- this op is done reading them -- just lower it, no re-deriving
+        -- here. Separately, any ephemeral box `boxOpArg` had to fabricate
+        -- for a Native operand is dropped too -- `annotate` runs before
+        -- `Compiler.RC2.Loop`'s native-shadow promotion ever decides a
+        -- local is Native, so it can't have known about these.
         removeVars $ map varName postDrop
+        removeVars $ mapMaybe snd (toList argsWithFresh)
         pure resultVar
 
     emitRC (RExtPrim fc _ p args) _ = do
@@ -1879,7 +1931,7 @@ mutual
     -- some placeholder string) is the safer choice: reaching this would
     -- mean the goto-loop was never emitted at all, silently turning a
     -- loop into infinite recursion.
-    emitRC (RLoopContinue fc _) _ = throw $ InternalError "[rc2] RLoopContinue reached emitRC directly (not intercepted by tryEmitLoopContinue)"
+    emitRC (RLoopContinue fc _ _) _ = throw $ InternalError "[rc2] RLoopContinue reached emitRC directly (not intercepted by tryEmitLoopContinue)"
     -- Unreachable in practice, same reasoning as RCmpCase/RConCase/
     -- RConstCase's own cases below: emitInto's dispatch always
     -- intercepts a leftover RLoop itself (routing it to

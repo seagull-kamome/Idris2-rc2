@@ -69,8 +69,16 @@ anything so far, but don't be surprised by them showing up again.
 
 - **`Test1Basics.idr`: `definitely lost: 40 bytes in 2 blocks`,
   `indirectly lost: 56 bytes in 3 blocks`** (96 bytes / 5 blocks total).
-- **`Test9SelfTailLoop.idr`: `definitely lost: 784 bytes in 49
-  blocks`.**
+- ~~`Test9SelfTailLoop.idr`: `definitely lost: 784 bytes in 49
+  blocks`~~ -- **root-caused and fixed**: `RLoopContinue` (`Compiler.RC2.Loop`'s
+  own self-tail-loop-continuation node) had no `postDrop` field at all,
+  unlike every other RCExp construct that reads a `Boxed` value natively
+  (`ROp`/`RCmpCase`/`RAppNameRep`), so a native-shadowed loop param fed by
+  a still-Boxed, `case`-valued continuation argument (e.g. `collatzLike`'s
+  own `mod`/`div` results) got read natively but never dropped. See
+  `TODO.md`'s git history and `rc2/doc/loop-conversion.md` for the full
+  investigation; `rc2/tests/Test16LoopContinuePostDrop.idr` is this fix's
+  own dedicated regression test.
 
 ## Runtime: `RFree` rarely fires in practice (not a bug)
 

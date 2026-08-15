@@ -634,7 +634,7 @@ mutual
     -- same reasoning as RReleaseReuse just above.
     annotate natives owned (RLoop fc loopParams initial body) =
         RLoop fc loopParams initial <$> annotate natives owned body
-    annotate natives owned (RLoopContinue fc args) = pure $ RLoopContinue fc args
+    annotate natives owned (RLoopContinue fc args postDrop) = pure $ RLoopContinue fc args postDrop
     -- Never actually produced until Compiler.RC2.DualABI runs, which is
     -- strictly after annotate is done with the whole definition (and
     -- after Compiler.RC2.Loop too, see RAppNameRep's own doc comment)

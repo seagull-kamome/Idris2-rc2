@@ -660,6 +660,50 @@ C is entirely mechanical, living in `Emit.idr`.
    Both fixes were verified against the full matrix again: 19/19
    refc-suite, all smoke tests (`Test1Basics.idr`-`Test10MutualLoop.idr`),
    all benchmarks, byte-for-byte/crash-free against `idris2 --cg refc`.
+5. **`RLoopContinue` never dropped a natively-read Boxed continuation
+   argument, and a second, independent leak in `ROp`'s own Boxed-result
+   emission.** Found while investigating a `valgrind`-caught leak that
+   surfaced through an (ultimately reverted, see `TODO.md`) whole-program
+   inlining pass -- but the actual cause turned out to be entirely
+   pre-existing and unrelated to that pass. Two distinct bugs, both on
+   the same general shape (a `case`/`if`-valued `RLet` whose overall Rep
+   `Types.repOf` never promotes to Native, feeding a native-shadowed loop
+   parameter's next value):
+   - **`RLoopContinue`**: unlike every other RCExp construct that reads a
+     Boxed value natively (`ROp`, `RCmpCase`, `RAppNameRep`, each with
+     their own `postDrop` field), `RLoopContinue` (`applyLoop`'s own
+     self-tail-loop continuation node) had no `postDrop` field at all --
+     `tryEmitLoopContinue` read a still-Boxed continuation argument via
+     `rcVarToNativeC` to build the next iteration's native shadow, but
+     never dropped the Boxed source. Fixed by adding `postDrop : List
+     RCLocal` to `RLoopContinue` itself, filled in by a new
+     `fillLoopContinuePostDrop` pass in `applyLoop` (run once `loopParams`
+     is known, threading a `SortedMap Int Rep` the same way
+     `Compiler.RC2.DualABI`'s own `applyCallSiteRewriteBody` does, but
+     written fresh in `Loop.idr` since it can't import `DualABI.idr`).
+   - **`ROp`'s own Boxed-result emission (`Compiler.RC2.Emit`)**: a
+     completely separate bug, found only because it happened to live on
+     the same test shape. When `Types.repOf` decides an `ROp`'s own
+     result stays Boxed but one of its *operands* is individually Native
+     (e.g. a chained `(acc * 3) + 1` inside a case branch whose overall
+     let-binding is Boxed), `Emit.idr`'s `rcVarToBoxedC` fabricates a
+     fresh, anonymous box (`idris2rc2_mkInt64(...)`) inline to feed the
+     Boxed C primitive -- with nowhere to name that ephemeral box, it was
+     never freed. Unlike the `RLoopContinue` case, this has nothing to do
+     with loops specifically: it's a general `ROp` emission gap that
+     could fire anywhere a Boxed-result op reads a Native operand. Fixed
+     by `boxOpArg`, which names any freshly-fabricated box and drops it
+     right after the op is done reading it.
+
+   Both bugs together explain why `rc2/tests/Test16LoopContinuePostDrop.idr`
+   (a dedicated repro built specifically to exercise them without any
+   dependency on the inlining pass that first surfaced them) only had its
+   leak *halved* by the `RLoopContinue` fix alone -- the `ROp` fix was
+   needed too before it went fully clean. See that test's own doc comment
+   for the exact shape. Verified against the full matrix again: 19/19
+   refc-suite, all smoke tests, valgrind-clean on every leak-sensitive
+   test except the one long-recorded pre-existing `Test1Basics` leak (see
+   `KNOWN-BUGS.md`).
 
 ## Known limitation: native-shadow eligibility stops at bare top-level scalars
 

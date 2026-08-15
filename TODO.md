@@ -174,26 +174,31 @@ verified working via `--directive dumprcexp` (the call and boxed Bool
 both disappear, replaced by one native `RCmpCase`) with correct output
 and zero leaks on the motivating test case -- but the full regression
 suite then surfaced a real, `valgrind`-confirmed per-loop-iteration leak
-in `Test9SelfTailLoop`'s own `collatzLike`. Root-caused the *first*
-suspect (the case-of-case collapse duplicating the caller's own, large
-outer branch bodies once per inner alternative) and fixed it (bounding
-the outer side's own size, then disabling the multi-alternative collapse
-entirely) -- the leak persisted **unchanged**, `valgrind`-confirmed, even
-with case-of-case collapsing fully disabled and the tree shape reduced to
-a 1:1 match with the source (no duplication, no nesting artifacts).
-Reproduced with a minimal case: a self-tail-recursive loop with two
-*independent* inlined comparisons (the loop's own `if`, plus one from an
-inlined single-line helper called once per iteration) leaks roughly two
-allocations per iteration, with nothing structurally unusual in the
-resulting tree by manual inspection (every read/dup/drop, walked by
-hand, balances). Root cause not found -- most likely a latent bug in
-`Compiler.RC2.RC`'s own `annotate` (Phase 2), never previously exercised
-against two sequential inlined-comparison cases sharing an outer
-loop-carried value, but not confirmed. Not pursued further this session
--- reverted in full (no `Compiler.RC2.Inline` code or commit kept) rather
-than ship or merge a known, unexplained leak. Worth revisiting with a
-fresh, focused `RC.idr`/`Compiler.RC2.Loop` ownership-tracing session
-before attempting this again; the minimal repro is, shape-for-shape:
+in `Test9SelfTailLoop`'s own `collatzLike`. First investigation session
+ruled out the case-of-case collapse (disabling it entirely didn't change
+the leak) and, unable to find the real cause, reverted the pass in full
+(no `Compiler.RC2.Inline` code or commit kept) rather than ship a known,
+unexplained leak.
+
+**Root cause since found and fixed, independently of the inlining pass**
+(see `rc2/doc/loop-conversion.md`'s "Bugs found and fixed" #5 for the
+full write-up) -- two separate, pre-existing bugs, both on the shape "a
+`case`/`if`-valued `RLet` whose overall Rep `Types.repOf` never promotes
+to Native, feeding a native-shadowed loop parameter's next value," which
+the inlining pass's own comparison-fusion happened to newly produce for
+the first time:
+- `RLoopContinue` had no `postDrop` field, unlike every other RCExp
+  construct that reads a Boxed value natively -- fixed by adding one,
+  filled in by `Compiler.RC2.Loop`'s new `fillLoopContinuePostDrop`.
+- `Compiler.RC2.Emit`'s `ROp` case fabricated an anonymous, unfreed
+  Boxed wrapper (`rcVarToBoxedC`'s own `nativeMk`) whenever a Boxed-
+  result op read an individually-Native operand -- fixed by `boxOpArg`,
+  which names and drops that ephemeral box.
+
+Both fixes are general rc2 pipeline fixes (not specific to inlining) and
+are verified clean across the full regression suite plus a dedicated
+test, `rc2/tests/Test16LoopContinuePostDrop.idr`. The minimal repro from
+the original investigation, confirmed clean post-fix:
 ```
 step : Int -> Int
 step acc = if acc == 0 then 1 else acc + 1
@@ -204,8 +209,13 @@ loop (S k) acc = if acc == (-999999) then acc else loop k (step acc)
 ```
 compiled with `step` inlined into `loop`'s own recursive-step argument
 (so both `if`s end up native-comparison-fused, independently, within the
-same loop iteration) -- leaks roughly two allocations per iteration under
-`valgrind --leak-check=full`.
+same loop iteration) -- previously leaked roughly two allocations per
+iteration under `valgrind --leak-check=full`, now zero.
+
+**`Compiler.RC2.Inline` itself is still not re-implemented** -- the gap
+this section opened with (interface-dispatched comparisons never fusing
+into `RCmpCase`) remains open. With the root cause above now fixed and
+out of the way, re-attempting the inlining pass is unblocked.
 
 ## Scope: deliberately unboxed types stop at scalars
 
