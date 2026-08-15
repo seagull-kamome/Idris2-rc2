@@ -150,6 +150,63 @@ application, not a fully-saturated one. Not pursued further -- full
 investigation, both refuted hypotheses, and what a real fix would need
 are in **`rc2/doc/reuse-monadic-bind-gap.md`**.
 
+## Performance: interface-dispatched comparisons never fuse into RCmpCase
+
+`Compiler.RC2.RC`'s `tryFuseCompare` only fuses a *direct* primitive
+comparison immediately consumed by a two-way Bool match into a single
+`RCmpCase` -- when the comparison is reached through an interface method
+call instead (e.g. `n <= 0` via `Ord Int`'s `<=`, a genuine, statically-
+resolved top-level function -- confirmed no dictionary parameter, since
+only fixed-width scalar types are ever native-eligible to begin with),
+this never fires: the comparison sits inside `<=`'s own separate
+definition, invisible to the caller's own fusion analysis. Confirmed via
+`--directive dumprcexp` that `<=`'s own Dual-ABI worker, in isolation,
+*does* already fuse correctly (its own body is `cmp <=Int [...] then 1
+else 0`) -- the gap is purely "the caller doesn't see through the call
+boundary."
+
+Investigated a general whole-program, `Lifted`-to-`Lifted` inlining pass
+(`Compiler.RC2.Inline`, run before `RC.idr`'s own Phase 1) meant to close
+this by splicing a small/single-call-site callee's own body into its call
+site (plus a `Compiler.CaseOpts`-style case-of-case collapse, needed for
+`tryFuseCompare` to then fire unmodified). Built, wired in, and initially
+verified working via `--directive dumprcexp` (the call and boxed Bool
+both disappear, replaced by one native `RCmpCase`) with correct output
+and zero leaks on the motivating test case -- but the full regression
+suite then surfaced a real, `valgrind`-confirmed per-loop-iteration leak
+in `Test9SelfTailLoop`'s own `collatzLike`. Root-caused the *first*
+suspect (the case-of-case collapse duplicating the caller's own, large
+outer branch bodies once per inner alternative) and fixed it (bounding
+the outer side's own size, then disabling the multi-alternative collapse
+entirely) -- the leak persisted **unchanged**, `valgrind`-confirmed, even
+with case-of-case collapsing fully disabled and the tree shape reduced to
+a 1:1 match with the source (no duplication, no nesting artifacts).
+Reproduced with a minimal case: a self-tail-recursive loop with two
+*independent* inlined comparisons (the loop's own `if`, plus one from an
+inlined single-line helper called once per iteration) leaks roughly two
+allocations per iteration, with nothing structurally unusual in the
+resulting tree by manual inspection (every read/dup/drop, walked by
+hand, balances). Root cause not found -- most likely a latent bug in
+`Compiler.RC2.RC`'s own `annotate` (Phase 2), never previously exercised
+against two sequential inlined-comparison cases sharing an outer
+loop-carried value, but not confirmed. Not pursued further this session
+-- reverted in full (no `Compiler.RC2.Inline` code or commit kept) rather
+than ship or merge a known, unexplained leak. Worth revisiting with a
+fresh, focused `RC.idr`/`Compiler.RC2.Loop` ownership-tracing session
+before attempting this again; the minimal repro is, shape-for-shape:
+```
+step : Int -> Int
+step acc = if acc == 0 then 1 else acc + 1
+
+loop : Nat -> Int -> Int
+loop Z acc = acc
+loop (S k) acc = if acc == (-999999) then acc else loop k (step acc)
+```
+compiled with `step` inlined into `loop`'s own recursive-step argument
+(so both `if`s end up native-comparison-fused, independently, within the
+same loop iteration) -- leaks roughly two allocations per iteration under
+`valgrind --leak-check=full`.
+
 ## Scope: deliberately unboxed types stop at scalars
 
 `Integer` (GMP arbitrary precision) and `String` are never candidates
