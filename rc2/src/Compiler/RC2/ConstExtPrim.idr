@@ -1,0 +1,91 @@
+module Compiler.RC2.ConstExtPrim
+
+-- A single, narrowly-scoped constant fold: `System.Info.prim__codegen`
+-- (an `%extern` ExtPrim, see idris2-src/libs/base/System/Info.idr) is
+-- guaranteed by rc2's own runtime (rc2/support/rc2/ioprims.c's
+-- `idris2rc2_codegenString`, see that definition's own comment) to
+-- always evaluate to the fixed string "rc2", regardless of its
+-- (nonexistent) arguments. Folding the call away at compile time avoids
+-- an unconditional runtime call/box round-trip for a value that's
+-- already known.
+--
+-- Runs as a whole-tree rewrite from Compiler.RC2.RC's `toRCDef`,
+-- strictly between Phase 1 (`normalizeDef`) and Phase 2
+-- (`annotateDef`) -- not as a separate stage in RC2.idr's `toRCDefs`
+-- pipeline, the way Reuse/ConAltNative/etc. are. This placement makes
+-- the `RPrimVal` this pass introduces just another literal by the time
+-- Phase 2 ever sees it, annotated exactly like any other constant
+-- (no refcount bookkeeping) rather than needing its own special case.
+
+import Compiler.RC2.RCExp
+
+import Core.CompileExpr
+import Core.TT
+
+%default covering
+
+||| `Just` the compile-time-known value for an ExtPrim call site
+||| guaranteed to always evaluate to it, `Nothing` otherwise. Matches
+||| by base name only (`NS _ (UN (Basic pn))`), the same shape
+||| Compiler.RC2.Emit's own known-ExtPrim whitelist uses (see its
+||| `emitRC (RExtPrim ...)` case) -- not a fully-qualified-name
+||| comparison.
+constExtPrimValue : Name -> List RCLocal -> Maybe Constant
+constExtPrimValue (NS _ (UN (Basic "prim__codegen"))) [] = Just (Str "rc2")
+constExtPrimValue _ _ = Nothing
+
+mutual
+  export
+  foldConstExtPrim : RCExp -> RCExp
+  foldConstExtPrim (RExtPrim fc lazy p args) =
+      case constExtPrimValue p args of
+           Just c  => RPrimVal fc c
+           Nothing => RExtPrim fc lazy p args
+  foldConstExtPrim (RV fc v) = RV fc v
+  foldConstExtPrim (RAppName fc lazy n args) = RAppName fc lazy n args
+  foldConstExtPrim (RAppNameRep fc n argReps retRep postDrop args) =
+      RAppNameRep fc n argReps retRep postDrop args
+  foldConstExtPrim (RUnderApp fc n missing args) = RUnderApp fc n missing args
+  foldConstExtPrim (RApp fc lazy c a) = RApp fc lazy c a
+  foldConstExtPrim (RLet fc var rep value body) =
+      RLet fc var rep (foldConstExtPrim value) (foldConstExtPrim body)
+  foldConstExtPrim (RCon fc n ci tag args reuseFrom) = RCon fc n ci tag args reuseFrom
+  foldConstExtPrim (ROp fc lazy op args postDrop) = ROp fc lazy op args postDrop
+  foldConstExtPrim (RCmpCase fc op args postDrop t f) =
+      RCmpCase fc op args postDrop (foldConstExtPrim t) (foldConstExtPrim f)
+  foldConstExtPrim (RConCase fc sc alts mDef) =
+      RConCase fc sc (map foldConstExtPrimAlt alts) (map foldConstExtPrim mDef)
+  foldConstExtPrim (RConstCase fc sc alts mDef) =
+      RConstCase fc sc (map foldConstExtPrimConstAlt alts) (map foldConstExtPrim mDef)
+  foldConstExtPrim (RPrimVal fc c) = RPrimVal fc c
+  foldConstExtPrim (RErased fc) = RErased fc
+  foldConstExtPrim (RCrash fc msg) = RCrash fc msg
+  foldConstExtPrim (RDup fc v body) = RDup fc v (foldConstExtPrim body)
+  foldConstExtPrim (RDrop fc vars body) = RDrop fc vars (foldConstExtPrim body)
+  foldConstExtPrim (RFree fc v body) = RFree fc v (foldConstExtPrim body)
+  foldConstExtPrim (RReleaseReuse fc v body) = RReleaseReuse fc v (foldConstExtPrim body)
+  foldConstExtPrim (RReuseOffer fc sc dupOnShared body) =
+      RReuseOffer fc sc dupOnShared (foldConstExtPrim body)
+  -- This pass's sole caller (Compiler.RC2.RC's `toRCDef`) only ever
+  -- runs it on Phase 1's direct output, before RLoop/RLoopContinue
+  -- (Compiler.RC2.Loop, much later) or RAppNameRep (Compiler.RC2.
+  -- DualABI, later still) can exist. Kept total (as a plain
+  -- pass-through) rather than assumed unreachable, same reasoning as
+  -- Loop.idr's own `renameRCExp` for these same two cases.
+  foldConstExtPrim (RLoop fc loopParams initial body) =
+      RLoop fc loopParams initial (foldConstExtPrim body)
+  foldConstExtPrim (RLoopContinue fc args postDrop) = RLoopContinue fc args postDrop
+
+  foldConstExtPrimAlt : RConAlt -> RConAlt
+  foldConstExtPrimAlt (MkRConAlt name ci tag args body) =
+      MkRConAlt name ci tag args (foldConstExtPrim body)
+
+  foldConstExtPrimConstAlt : RConstAlt -> RConstAlt
+  foldConstExtPrimConstAlt (MkRConstAlt c body) = MkRConstAlt c (foldConstExtPrim body)
+
+export
+foldConstExtPrimDef : RCDef -> RCDef
+foldConstExtPrimDef (MkRCFun args retRep body) = MkRCFun args retRep (foldConstExtPrim body)
+foldConstExtPrimDef (MkRCError body) = MkRCError (foldConstExtPrim body)
+foldConstExtPrimDef d@(MkRCCon _ _ _) = d
+foldConstExtPrimDef d@(MkRCForeign _ _ _) = d

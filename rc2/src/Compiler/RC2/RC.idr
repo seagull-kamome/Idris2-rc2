@@ -30,6 +30,7 @@ module Compiler.RC2.RC
 -- Boxed owned/borrowed bookkeeping would otherwise treat it.
 
 import Compiler.LambdaLift
+import Compiler.RC2.ConstExtPrim
 import Compiler.RC2.RCExp
 import Compiler.RC2.Types
 import Core.CompileExpr
@@ -690,6 +691,14 @@ annotateDef d@(MkRCCon _ _ _) = pure d
 annotateDef d@(MkRCForeign _ _ _) = pure d
 annotateDef (MkRCError body) = MkRCError <$> annotate (definitionNatives body) empty body
 
+||| Between the two phases, `Compiler.RC2.ConstExtPrim`'s constant
+||| fold runs once over Phase 1's freshly-built tree (see its own
+||| module note for why this placement, rather than a separate
+||| RC2.idr `toRCDefs` stage, is correct) -- so any `RExtPrim` it
+||| folds into an `RPrimVal` is annotated by Phase 2 exactly like any
+||| other literal.
 export
 toRCDef : LiftedDef -> Core RCDef
-toRCDef ld = normalizeDef ld >>= annotateDef
+toRCDef ld = do
+    n <- normalizeDef ld
+    annotateDef (foldConstExtPrimDef n)

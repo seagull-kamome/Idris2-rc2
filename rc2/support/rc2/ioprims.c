@@ -66,6 +66,10 @@ IDRIS2RC2_String const idris2rc2_osString = {
 #endif
 };
 
+/* Kept in sync by hand with the "rc2" literal
+   Compiler/RC2/ConstExtPrim.idr's constExtPrimValue folds
+   prim__codegen calls into at compile time -- update both if this
+   value ever changes. */
 IDRIS2RC2_String const idris2rc2_codegenString = {
     IDRIS2RC2_STOCKVAL(IDRIS2RC2_TAG_STRING), "rc2"};
 
