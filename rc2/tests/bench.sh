@@ -27,6 +27,12 @@
 # Prints wall-clock averages per backend and the rc2-vs-refc speedup
 # ratio. Not a pass/fail script (there's no "correct" answer to a timing
 # number) -- read the table.
+#
+# Every generated artifact (compiled binaries, build logs) lands under
+# rc2/tests/build/ -- cleaned at the very start of a run (same
+# directory rc2/tests/verify.sh also uses, so whichever of the two you
+# run last is the one whose artifacts are left behind), then left
+# alone for post-run inspection rather than deleted on exit.
 
 set -u
 
@@ -63,8 +69,9 @@ else
     echo "OK    build (idris2-rc2)"
 fi
 
-TMP="$(mktemp -d)"
-trap 'rm -rf "$TMP"' EXIT
+TMP="$RC2_DIR/tests/build"
+rm -rf "$TMP"
+mkdir -p "$TMP"
 
 # Average wall-clock seconds of $RUNS invocations of "$@", via bash's
 # own builtin `time` (TIMEFORMAT set to just the real-time seconds).

@@ -1,27 +1,63 @@
 #!/usr/bin/env bash
 # One-shot correctness verification for rc2: builds the compiler and
 # runtime, runs the refc-suite regression tests, compiles and diffs
-# every smoke test (rc2/tests/Test*.idr) against real `idris2 --cg
-# refc`, and runs `valgrind --leak-check=full` on the leak-sensitive
-# subset -- all the steps rc2/doc/*.md's own "Verification methodology"
-# sections and past sessions have done by hand, in one deterministic,
-# exit-code-driven script. See KNOWN-BUGS.md for every already-
-# investigated quirk this script deliberately does NOT flag as a
-# failure (pre-existing leak byte counts, Test7CastMatrix's own
-# nixpkgs-RefC-library blocker, etc.) -- if KNOWN-BUGS.md changes,
-# update the constants below to match.
+# every smoke test (rc2/tests/Test*.idr) against a saved expected
+# output (rc2/tests/TestN.expected), and runs `valgrind
+# --leak-check=full` on the leak-sensitive subset -- all the steps
+# rc2/doc/*.md's own "Verification methodology" sections and past
+# sessions have done by hand, in one deterministic, exit-code-driven
+# script. See KNOWN-BUGS.md for every already-investigated quirk this
+# script deliberately does NOT flag as a failure (pre-existing leak
+# byte counts, Test7CastMatrix's own nixpkgs-RefC-library blocker,
+# etc.) -- if KNOWN-BUGS.md changes, update the constants below to
+# match.
 #
 # Usage: ./verify.sh [--skip-build] [--no-valgrind] [--valgrind-all]
+#                     [--regen-expected]
 #
-#   --skip-build    Don't rebuild idris2-rc2/libidris2rc2.a first
-#                    (use the existing rc2/build/exec/idris2-rc2).
-#   --no-valgrind   Skip the valgrind pass entirely (faster).
-#   --valgrind-all  Run valgrind on every smoke test, not just the
-#                    curated leak-sensitive subset.
+#   --skip-build       Don't rebuild idris2-rc2/libidris2rc2.a first
+#                       (use the existing rc2/build/exec/idris2-rc2).
+#   --no-valgrind      Skip the valgrind pass entirely (faster).
+#   --valgrind-all     Run valgrind on every smoke test, not just the
+#                       curated leak-sensitive subset.
+#   --regen-expected   Rebuild each smoke test with real `idris2 --cg
+#                       refc` too, and overwrite its own
+#                       rc2/tests/TestN.expected with that run's
+#                       output, before diffing rc2's own output against
+#                       it as usual. Slower (every smoke test gets
+#                       built twice, once per backend) -- normal runs
+#                       skip real refc entirely and just diff against
+#                       whatever's already saved. Run this after
+#                       editing/adding a Test*.idr whose own expected
+#                       output changed, or after adding a brand new
+#                       Test*.idr (this script picks up every
+#                       Test*.idr under rc2/tests/ automatically, but a
+#                       new one has no .expected of its own yet --
+#                       without this flag it just reports FAIL "no
+#                       saved .expected"). Never touches
+#                       Test7CastMatrix.expected or
+#                       Test17ConstFold.expected -- those two are saved
+#                       by hand instead (real refc can't even build on
+#                       this reference nixpkgs for the former; the
+#                       latter deliberately diverges by backend on
+#                       purpose -- see NO_REFC_DIFF_TESTS below for
+#                       both).
 #
 # Exit code 0 iff every check passed (known pre-existing issues from
 # KNOWN-BUGS.md excepted); non-zero otherwise. All output is plain text
 # on stdout, PASS/FAIL/SKIP/KNOWN-prefixed lines, safe to grep.
+#
+# Every generated artifact (compiled binaries, build logs, valgrind
+# logs, .diff files) lands under rc2/tests/build/ -- cleaned at the
+# very start of a run, then left alone (not deleted on exit) so a
+# failure's own compile log/diff/valgrind output is still there to
+# read afterward. To rerun or inspect a single test by hand once
+# rc2/build/exec/idris2-rc2 exists:
+#
+#   cd rc2/tests
+#   ../build/exec/idris2-rc2 --cg rc2 TestN.idr -o build/exec/TestN_rc2
+#   ./build/exec/TestN_rc2                    # compare by eye, or:
+#   diff <(cat TestN.expected) <(./build/exec/TestN_rc2)
 
 set -u
 
@@ -33,17 +69,26 @@ IDRIS2RC2="$RC2_DIR/build/exec/idris2-rc2"
 SKIP_BUILD=0
 DO_VALGRIND=1
 VALGRIND_ALL=0
+REGEN_EXPECTED=0
 for arg in "$@"; do
     case "$arg" in
         --skip-build) SKIP_BUILD=1 ;;
         --no-valgrind) DO_VALGRIND=0 ;;
         --valgrind-all) VALGRIND_ALL=1 ;;
+        --regen-expected) REGEN_EXPECTED=1 ;;
         *) echo "unknown argument: $arg" >&2; exit 2 ;;
     esac
 done
 
 # shellcheck source=/dev/null
 source "$REPO_DIR/env.sh"
+
+# Every generated artifact lands here -- cleaned now, at the very
+# start, then left alone for the rest of this run (and afterward, for
+# post-mortem inspection) rather than deleted on exit.
+TMP="$RC2_DIR/tests/build"
+rm -rf "$TMP"
+mkdir -p "$TMP"
 
 pass=0
 fail=0
@@ -86,16 +131,18 @@ fi
 
 echo
 echo "=== Smoke tests ==="
-TMP="$(mktemp -d)"
-trap 'rm -rf "$TMP"' EXIT
 
 # name -> from inside tests/ as a bare filename (KNOWN-BUGS.md: module
 # TestNNNN, not module Main, trips idris2's own module-name check
-# otherwise), and skip diffing against real refc (nixpkgs' own RefC
-# support library fails to compile -- KNOWN-BUGS.md) in favour of a
-# saved .expected file.
+# otherwise). NO_REFC_DIFF_TESTS skips diffing against real refc in
+# favour of a saved .expected file, for two different reasons:
+# Test7CastMatrix because nixpkgs' own RefC support library fails to
+# compile at all (KNOWN-BUGS.md), Test17ConstFold because its own
+# codegenChain deliberately embeds System.Info.codegen's own value (a
+# ConstExtPrim regression check) -- "rc2" vs "refc" is real, correct
+# divergence between backends, not something to diff away.
 BARE_INVOKE_TESTS="Test6NativeInts Test7CastMatrix"
-NO_REFC_DIFF_TESTS="Test7CastMatrix"
+NO_REFC_DIFF_TESTS="Test7CastMatrix Test17ConstFold"
 
 # Leak-sensitive by design (reference-counting/reuse/native-shadow
 # regression tests) -- checked with valgrind by default even without
@@ -134,28 +181,36 @@ for name in $ALL_TESTS; do
         if [ -f "$RC2_DIR/tests/$name.expected" ]; then
             expected="$(cat "$RC2_DIR/tests/$name.expected")"
             if [ "$actual" = "$expected" ]; then
-                report_pass "$name (vs. saved .expected, refc diff blocked -- see KNOWN-BUGS.md)"
+                report_pass "$name (vs. saved .expected, refc diff skipped by design -- see NO_REFC_DIFF_TESTS above)"
             else
                 report_fail "$name" "mismatch against saved .expected"
             fi
         else
-            report_fail "$name" "no saved .expected and refc diff is blocked -- see KNOWN-BUGS.md"
+            report_fail "$name" "no saved .expected, and refc diff is skipped by design for this test -- see NO_REFC_DIFF_TESTS above"
         fi
     else
-        if is_in "$name" "$BARE_INVOKE_TESTS"; then
-            (cd "$RC2_DIR/tests" && nix-shell -p idris2 gcc gmp pkg-config --run \
-                "idris2 --cg refc $name.idr -o $TMP/${name}_refc") \
-                > "$TMP/${name}_refc_compile.log" 2>&1
-        else
-            nix-shell -p idris2 gcc gmp pkg-config --run \
-                "idris2 --cg refc $RC2_DIR/tests/$name.idr -o $TMP/${name}_refc" \
-                > "$TMP/${name}_refc_compile.log" 2>&1
+        expected_file="$RC2_DIR/tests/$name.expected"
+        if [ "$REGEN_EXPECTED" -eq 1 ]; then
+            if is_in "$name" "$BARE_INVOKE_TESTS"; then
+                (cd "$RC2_DIR/tests" && nix-shell -p idris2 gcc gmp pkg-config --run \
+                    "idris2 --cg refc $name.idr -o $TMP/${name}_refc") \
+                    > "$TMP/${name}_refc_compile.log" 2>&1
+            else
+                nix-shell -p idris2 gcc gmp pkg-config --run \
+                    "idris2 --cg refc $RC2_DIR/tests/$name.idr -o $TMP/${name}_refc" \
+                    > "$TMP/${name}_refc_compile.log" 2>&1
+            fi
+            if [ ! -x "$TMP/${name}_refc" ]; then
+                report_fail "$name" "refc compile error, see $TMP/${name}_refc_compile.log"
+                continue
+            fi
+            "$TMP/${name}_refc" > "$expected_file" 2>&1
         fi
-        if [ ! -x "$TMP/${name}_refc" ]; then
-            report_fail "$name" "refc compile error, see $TMP/${name}_refc_compile.log"
+        if [ ! -f "$expected_file" ]; then
+            report_fail "$name" "no saved .expected -- run with --regen-expected first"
             continue
         fi
-        expected="$("$TMP/${name}_refc" 2>&1)"
+        expected="$(cat "$expected_file")"
         if [ "$actual" = "$expected" ]; then
             report_pass "$name"
         else

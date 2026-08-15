@@ -50,6 +50,21 @@ show up again during testing.
 - Cの関数名、グローバル変数、マクロ等には 'idris2rc2_' のプリフィックスをつける。
   マクロの場合は 'IDRIS2RC2_'を使う。
 
+## テストコード
+
+退行テスト、スモークテストの期待出力はあらかじめテキストファイルを作っておき、
+diffのみで成否判定できるようにする。
+全てのテストを順番に実行して成否判定するシェルスクリプト'tests/veryfy.sh'を用意する。
+テストの実施はこのスクリプトで行い成否判定の手間を簡略化する。
+新しいテストを作成したらスクリプトも更新する。
+テストを単体で走らせる必要が生じた場合の手順はこのスクリプトを見ればわかるようにしておく。
+テストの結果生じる生成物(生成したCコード、IRダンプ、テスト出力)はtests/build以下に
+置きテスト終了時には消さずに後で確認できるように残しおく。このディレクトリはテストスクリプト
+の先頭で掃除してからテストが実施されるようにしておく。
+
+ベンチマークテストも同様にシェルスクリプト'tests/bench.sh'を用意しテスト手順のミスを減らす。
+
+
 ## Build & test
 
 ```sh
@@ -83,10 +98,6 @@ and benchmarks (`rc2/tests/Bench*.idr`) are compiled/run the same way
 - Never modify git config. Set identity inline per-commit only:
   `git -c user.name="..." -c user.email="..." commit ...`.
 - Only commit when the user explicitly asks.
-- Don't delete test build artifacts (`build/`, generated `.c` files)
-  right after a test run — leave them in place for review until after
-  the related commit lands. They're gitignored, so nothing extra ends
-  up staged.
 - Don't delete test build artifacts (`build/`, generated `.c` files)
   immediately after a test run — leave them in place for review until
   after the related commit lands. They're gitignored, so nothing extra
