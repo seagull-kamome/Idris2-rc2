@@ -121,6 +121,11 @@ tailCallTargets _ = empty
 -- Strongly-connected components of the tail-call graph (Tarjan), so
 -- indirect cycles (A -> B -> C -> A) are found, not just direct pairs.
 
+||| public export (not just export) so the type alias's own definition,
+||| not just its name, is visible for unification outside this module --
+||| Compiler.RC2.Inline reuses this same tail-call graph shape for its
+||| own whole-program call graph, rather than reimplementing Tarjan.
+public export
 Graph : Type
 Graph = SortedMap Name (SortedSet Name)
 
@@ -175,6 +180,10 @@ mutual
                      in MkTState (index st) (insert v (min vLow wIdx) (lowlink st)) (onStack st) (stack st) (sccs st)
                 else st
 
+||| Each SCC is prepended as it's found, so a caller's own component
+||| ends up *earlier* in the result than a callee's -- reverse the list
+||| for callees-before-callers (bottom-up) processing order.
+export
 tarjanSCCs : Graph -> List (List Name)
 tarjanSCCs graph =
     let allNames = map (\(n, _) => n) (SortedMap.toList graph)

@@ -32,7 +32,9 @@ show up again during testing.
   native-read constructor-destructured field into a fresh native
   shadow, `reuse-monadic-bind-gap.md` for an investigated-but-not-
   pursued gap: constructor reuse doesn't reach across a monadic-bind
-  continuation). Not
+  continuation, `inlining.md` for the whole-program `Lifted`-to-`Lifted`
+  inlining pass that lets an interface-dispatched comparison fuse into
+  `RCmpCase` through a call boundary). Not
   a replacement for `TODO.md` — those stay the changelog
   and gap tracker; `rc2/doc/` is where the *why* and the
   bugs-found-along-the-way for a specific subsystem live.

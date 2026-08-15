@@ -27,6 +27,7 @@ import Compiler.RC2.CC
 import Compiler.RC2.ConAltNative
 import Compiler.RC2.DualABI
 import Compiler.RC2.Emit
+import Compiler.RC2.Inline
 import Compiler.RC2.Pretty
 import Compiler.RC2.RC
 import Compiler.RC2.RCExp
@@ -70,21 +71,22 @@ applyReuse d@(MkRCForeign _ _ _) = d
 ||| reverted implementation attempts needed to isolate their own bugs
 ||| from pre-existing ones (see `KNOWN-BUGS.md`'s own two small
 ||| pre-existing leaks, told apart from that work this way). Recognised
-||| directives: `noreuse`, `noconaltnative`, `nomutualloop`, `noloop`,
-||| `nodualabi` (disables both `DualABI`'s own worker/wrapper synthesis
-||| *and* its own call-site rewriting together -- the rewrite needs the
-||| worker table the synthesis step builds, so splitting them wouldn't
-||| be meaningful). Each stage is still purely additive/optional in the
-||| sense that skipping any of them should still produce *correct* (if
-||| less optimised, and possibly no longer byte-for-byte matching real
-||| `idris2 --cg refc`'s own output shape) C -- none of
-||| `Compiler.RC2.Reuse`/`ConAltNative`/`MutualLoop`/`Loop`/`DualABI` is
-||| required by anything downstream of it for correctness, only for the
-||| optimisation it itself provides. "Not perfectly complete" by
-||| design: a coarse, whole-stage on/off switch, not fine-grained
-||| per-function/per-node control.
+||| directives: `noinline`, `noreuse`, `noconaltnative`, `nomutualloop`,
+||| `noloop`, `nodualabi` (disables both `DualABI`'s own worker/wrapper
+||| synthesis *and* its own call-site rewriting together -- the rewrite
+||| needs the worker table the synthesis step builds, so splitting them
+||| wouldn't be meaningful). Each stage is still purely additive/optional
+||| in the sense that skipping any of them should still produce *correct*
+||| (if less optimised, and possibly no longer byte-for-byte matching
+||| real `idris2 --cg refc`'s own output shape) C -- none of
+||| `Compiler.RC2.Inline`/`Reuse`/`ConAltNative`/`MutualLoop`/`Loop`/
+||| `DualABI` is required by anything downstream of it for correctness,
+||| only for the optimisation it itself provides. "Not perfectly
+||| complete" by design: a coarse, whole-stage on/off switch, not
+||| fine-grained per-function/per-node control.
 toRCDefs : List String -> List (Name, LiftedDef) -> Core (List (Name, RCDef))
-toRCDefs disabled lds = do
+toRCDefs disabled lds0 = do
+    lds <- if "noinline" `elem` disabled then pure lds0 else applyInlineLifted lds0
     reused <- traverse (\(n, ld) => do
                   d0 <- toRCDef ld
                   let d1 = if "noreuse" `elem` disabled then d0 else applyReuse d0
@@ -125,7 +127,7 @@ compileExpr c s _ outputDir tm outfile =
      -- `dumprcexp`/`dumpdualabi` (which only ever inspect its *output*).
      sess <- getSession
      let disabledStages = filter (`elem` directives sess)
-                             ["noreuse", "noconaltnative", "nomutualloop", "noloop", "nodualabi"]
+                             ["noinline", "noreuse", "noconaltnative", "nomutualloop", "noloop", "nodualabi"]
      cdata <- getCompileData False Lifted tm
      defs <- toRCDefs disabledStages (lambdaLifted cdata)
 
