@@ -31,6 +31,7 @@ module Compiler.RC2.RC
 
 import Compiler.LambdaLift
 import Compiler.RC2.ConstExtPrim
+import Compiler.RC2.ConstFold
 import Compiler.RC2.RCExp
 import Compiler.RC2.Types
 import Core.CompileExpr
@@ -696,9 +697,13 @@ annotateDef (MkRCError body) = MkRCError <$> annotate (definitionNatives body) e
 ||| module note for why this placement, rather than a separate
 ||| RC2.idr `toRCDefs` stage, is correct) -- so any `RExtPrim` it
 ||| folds into an `RPrimVal` is annotated by Phase 2 exactly like any
-||| other literal.
+||| other literal. Compiler.RC2.ConstFold's own arithmetic/comparison/
+||| case-of-constant fold runs right after it, on the same tree, for
+||| the same reason -- and after it specifically so it can fold
+||| further using whatever ConstExtPrim itself just folded in (e.g.
+||| chaining a string op onto `prim__codegen`'s folded `"rc2"`).
 export
 toRCDef : LiftedDef -> Core RCDef
 toRCDef ld = do
     n <- normalizeDef ld
-    annotateDef (foldConstExtPrimDef n)
+    annotateDef (foldConstDef (foldConstExtPrimDef n))
