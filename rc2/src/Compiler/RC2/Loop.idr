@@ -267,8 +267,8 @@ mutual
   -- `renameRCExp` on a not-yet-wrapped body). Kept total (as a plain
   -- pass-through) rather than assumed unreachable, same reasoning as
   -- RC.idr's own `annotate`.
-  renameRCExp ren (RLoop fc loopParams initial body) =
-      RLoop fc (map (\(i, r) => (renameId ren i, r)) loopParams) (renameLocals ren initial) (renameRCExp ren body)
+  renameRCExp ren (RLoop fc loopParams initial prologueDrop body) =
+      RLoop fc (map (\(i, r) => (renameId ren i, r)) loopParams) (renameLocals ren initial) (renameLocals ren prologueDrop) (renameRCExp ren body)
   renameRCExp ren (RLoopContinue fc args postDrop) = RLoopContinue fc (renameLocals ren args) (renameLocals ren postDrop)
   -- Never actually reached in practice -- Compiler.RC2.DualABI, the
   -- sole producer of RAppNameRep, runs strictly after both this
@@ -492,10 +492,23 @@ stripOwnership ids (RReleaseReuse fc v body) = RReleaseReuse fc v (stripOwnershi
 stripOwnership ids (RReuseOffer fc sc dupOnShared body) = RReuseOffer fc sc dupOnShared (stripOwnership ids body)
 stripOwnership ids (RLoopContinue fc args postDrop) =
     RLoopContinue fc args (filter (\v => case v of RCLoc i => not (contains i ids); _ => True) postDrop)
+-- Unlike every other case in this module, `RLoop` genuinely does show up
+-- here: `Compiler.RC2.DualABI`'s own `synthesizeWorker` calls this
+-- function over a whole worker body that may already be `RLoop`-wrapped
+-- (by this same module's own `applyLoop`, having already run earlier in
+-- the pipeline). `loopParams`/`initial` need no filtering of their own
+-- (a promoted top-level param's shadow id was already minted fresh by
+-- `applyLoop` and never re-promoted itself), but `prologueDrop` must be
+-- filtered exactly like an ordinary `RDrop`'s var list above, or a
+-- worker whose own signature now renders one of these ids natively
+-- would still emit a drop for a value that was never boxed in that
+-- worker's own rendering at all.
+stripOwnership ids (RLoop fc loopParams initial prologueDrop body) =
+    RLoop fc loopParams initial
+      (filter (\v => case v of RCLoc i => not (contains i ids); _ => True) prologueDrop)
+      (stripOwnership ids body)
 -- RV, RAppName, RUnderApp, RApp, RCon, RExtPrim, RPrimVal, RErased,
--- RCrash: no ownership-tracking positions of their own. RLoop: never
--- actually appears here in practice, same reasoning as
--- `nativeArgTypes`'s own catch-all.
+-- RCrash: no ownership-tracking positions of their own.
 stripOwnership _ e = e
 
 ||| Assign consecutive fresh ids, starting at `nextId`, to each eligible
@@ -623,5 +636,11 @@ applyLoop self (MkRCFun args retRep body) =
                                                Nothing => (p, RBoxed)) argIds
                   withPostDrop : RCExp
                   withPostDrop = fillLoopContinuePostDrop loopParams (fromList loopParams) rewritten
-              in RLoop emptyFC loopParams (map RCLoc argIds) withPostDrop
+                  -- Every shadowed param's own original top-level arg is
+                  -- dead in its Boxed form once its native shadow
+                  -- declaration above runs -- see `prologueDrop`'s own
+                  -- doc comment on `RLoop` in RCExp.idr.
+                  prologueDrop : List RCLocal
+                  prologueDrop = map (\(p, _, _) => RCLoc p) shadowed
+              in RLoop emptyFC loopParams (map RCLoc argIds) prologueDrop withPostDrop
 applyLoop _ d = d

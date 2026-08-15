@@ -72,8 +72,8 @@ mutual
   -- DualABI, later still) can exist. Kept total (as a plain
   -- pass-through) rather than assumed unreachable, same reasoning as
   -- Loop.idr's own `renameRCExp` for these same two cases.
-  foldConstExtPrim (RLoop fc loopParams initial body) =
-      RLoop fc loopParams initial (foldConstExtPrim body)
+  foldConstExtPrim (RLoop fc loopParams initial prologueDrop body) =
+      RLoop fc loopParams initial prologueDrop (foldConstExtPrim body)
   foldConstExtPrim (RLoopContinue fc args postDrop) = RLoopContinue fc args postDrop
 
   foldConstExtPrimAlt : RConAlt -> RConAlt

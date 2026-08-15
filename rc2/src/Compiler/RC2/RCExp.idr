@@ -273,8 +273,9 @@ mutual
        ||| reuses an already-in-scope id under its own unchanged value --
        ||| the common case for a loop whose params are simply the
        ||| enclosing function's own top-level args, see
-       ||| Compiler.RC2.Emit's `declareLoopParam`), a `loop:;` label, and
-       ||| `body`.
+       ||| Compiler.RC2.Emit's `declareLoopParam`), then `prologueDrop`
+       ||| discharged (see its own doc comment below), then a `loop:;`
+       ||| label, and `body`.
        |||
        ||| Only ever produced by Compiler.RC2.Loop, a dedicated pass that
        ||| runs on the fully Phase-1+2'd and Reuse'd tree (mirroring
@@ -289,7 +290,29 @@ mutual
        ||| `RLoopContinue`, and wrapping the whole (possibly rewritten)
        ||| body in one `RLoop` if any were found. RC.idr's own Phase 1/2
        ||| never produce this.
-       RLoop : FC -> (loopParams : List (Int, Rep)) -> (initial : List RCLocal) -> RCExp -> RCExp
+       |||
+       ||| `prologueDrop`: every enclosing-function top-level argument
+       ||| that got a native shadow here (see Compiler.RC2.Loop's own
+       ||| `applyLoop`) and is therefore, at the point this `RLoop` was
+       ||| built, guaranteed dead in its own original Boxed form once the
+       ||| shadow declarations above run -- `applyLoop` computes this
+       ||| once, mirroring `Compiler.RC2.Reuse`'s own `dupOnShared` (a
+       ||| decision made once at IR-construction time and carried as data,
+       ||| rather than re-derived at emission time from a `RepMap` lookup,
+       ||| the way `Compiler.RC2.Emit`'s `declareLoopParam` used to before
+       ||| this field existed). Not necessarily every shadowed param's own
+       ||| original: one whose *worker* signature `Compiler.RC2.DualABI`
+       ||| later promotes to native as well never had a genuine Boxed
+       ||| value there in the first place in that worker's own rendering,
+       ||| which is exactly why this list -- unlike `initial`/
+       ||| `loopParams` -- is one of `Compiler.RC2.Loop`'s own
+       ||| `stripOwnership` targets: DualABI's `synthesizeWorker` calls
+       ||| that same function over a worker body that may itself already
+       ||| be `RLoop`-wrapped, and it must filter any promoted id out of
+       ||| this list exactly as it would an ordinary `RDrop`'s var list,
+       ||| or the worker would double-drop/drop-a-native a value its own
+       ||| signature no longer boxes.
+       RLoop : FC -> (loopParams : List (Int, Rep)) -> (initial : List RCLocal) -> (prologueDrop : List RCLocal) -> RCExp -> RCExp
        ||| Continue the nearest enclosing `RLoop`, supplying `args` as
        ||| each loop param's new value (same order, same length as that
        ||| `RLoop`'s own `loopParams`). `args`'s own ownership is

@@ -1426,8 +1426,8 @@ mutual
                          emitConCaseInto sink tailPosition fc' sc alts mDef
                      RConstCase fc' sc alts def =>
                          emitConstCaseInto sink tailPosition fc' sc alts def
-                     RLoop fc' loopParams initial body =>
-                         emitLoopInto sink tailPosition fc' loopParams initial body
+                     RLoop fc' loopParams initial prologueDrop body =>
+                         emitLoopInto sink tailPosition fc' loopParams initial prologueDrop body
                      -- Always routed to its own dedicated renderer,
                      -- regardless of `sink` -- emitRC's own contract
                      -- ("always render a Boxed expression string") has
@@ -1675,54 +1675,56 @@ mutual
     ||| A genuinely fresh loop param (a native shadow -- see
     ||| `Compiler.RC2.Loop`'s own `applyLoop`, the only other case this
     ||| ever arises) reads `initVal` -- always one of the enclosing
-    ||| function's own top-level (always-Boxed) args -- directly via
+    ||| function's own top-level args -- directly via
     ||| `rcVarToNativeC`/`rcVarToBoxedC` rather than going through
     ||| `declareLet`/`declareNative`: those expect an ANF-shaped
     ||| computation recipe (`ROp`/`RPrimVal`/...) to evaluate, not a
     ||| bare existing-local read, which `emitNativeValue` has no case
-    ||| for. This is also the loop param's last use anywhere in the
-    ||| whole function -- Compiler.RC2.Loop's own rewrite has already
-    ||| redirected every other reference to the fresh shadow -- so if
-    ||| `initVal` is still Boxed at this point, it's dropped right here,
-    ||| once.
+    ||| for.
     |||
-    ||| The native unboxing itself is guarded by a runtime NULL check on
-    ||| `initVal`'s own variable, but *only* when `initVal` is itself
-    ||| still genuinely `RBoxed` (checked via `repOfLocal` first, not
-    ||| assumed): an *ordinary* function's own native-eligible argument
-    ||| is never actually NULL at this point (Int/Int64/Bits64/Double
-    ||| always genuinely allocate or hit the small-value cache, never a
-    ||| bare `NULL`), but a top-level parameter of one of
-    ||| Compiler.RC2.MutualLoop's own merged functions can be -- its
-    ||| unused trailing "slots" are padded with `RCNull`/C `NULL` by
-    ||| callers that don't have that many arguments of their own (see
-    ||| `buildGroup`'s own `padded`), and this parameter can still end
-    ||| up native-shadowed if *some other* member of the same merged
-    ||| group reads its own same-position argument natively --
-    ||| Compiler.RC2.Loop has no visibility into MutualLoop's own
-    ||| padding at all, so it can't exclude this case from eligibility;
-    ||| unboxing unconditionally here would dereference that NULL
-    ||| through `nativeUnbox`'s runtime accessor, a real crash this
-    ||| exact pattern used to hit before this guard existed. The check
-    ||| costs one comparison, once per function entry (not once per
-    ||| iteration), so it's not a meaningful cost even when it's
-    ||| provably unneeded.
+    ||| `inPrologueDrop`: whether `initVal` is a member of the enclosing
+    ||| `RLoop`'s own `prologueDrop` (see its own doc comment in
+    ||| RCExp.idr) -- `Compiler.RC2.Loop`'s own `applyLoop` already
+    ||| decided, once, whether this exact shadowed param's own original
+    ||| is genuinely Boxed here: true unless `Compiler.RC2.DualABI` later
+    ||| promoted this very parameter at the enclosing worker's own
+    ||| signature (see its own module note), in which case
+    ||| `Compiler.RC2.Loop`'s own `stripOwnership` -- called by DualABI's
+    ||| `synthesizeWorker` over the whole worker body -- already filtered
+    ||| this `initVal` back out of `prologueDrop` for us. Membership here
+    ||| now drives two things this function used to independently
+    ||| re-derive via a `repOfLocal` lookup on every call:
     |||
-    ||| Checking `repOfLocal` first (rather than always guarding) is
-    ||| itself required for correctness, not just cheapness: `initVal`
-    ||| can *already* be `RNative` here too, when
-    ||| Compiler.RC2.DualABI has promoted this very parameter at the
-    ||| enclosing worker's own signature (see its own module note) --
-    ||| the loop this function belongs to was originally written
-    ||| assuming `initVal` is always one of the enclosing function's
-    ||| own top-level (always-Boxed) arguments, an assumption DualABI's
-    ||| own worker synthesis breaks. Comparing an already-native
-    ||| `int64_t` against C `NULL` is a real compile error (`comparison
-    ||| between pointer and integer`), not just a wasted check -- this
-    ||| exact mistake was caught by a real build failure in
-    ||| `Test1Basics.idr`'s own `Main.loop` (self-tail-recursive *and*
-    ||| dual-ABI-eligible) the first time a worker wrapped a native-
-    ||| shadowed loop.
+    ||| * The native unboxing is guarded by a runtime NULL check on
+    |||   `initVal`'s own variable, but only when `inPrologueDrop`: an
+    |||   *ordinary* function's own native-eligible argument is never
+    |||   actually NULL (Int/Int64/Bits64/Double always genuinely
+    |||   allocate or hit the small-value cache, never a bare `NULL`),
+    |||   but a top-level parameter of one of Compiler.RC2.MutualLoop's
+    |||   own merged functions can be -- its unused trailing "slots" are
+    |||   padded with `RCNull`/C `NULL` by callers that don't have that
+    |||   many arguments of their own (see `buildGroup`'s own `padded`),
+    |||   and this parameter can still end up native-shadowed if *some
+    |||   other* member of the same merged group reads its own
+    |||   same-position argument natively -- Compiler.RC2.Loop has no
+    |||   visibility into MutualLoop's own padding at all, so it can't
+    |||   exclude this case from eligibility; unboxing unconditionally
+    |||   here would dereference that NULL through `nativeUnbox`'s
+    |||   runtime accessor, a real crash this exact pattern used to hit
+    |||   before this guard existed. A worker-promoted parameter is never
+    |||   actually NULL either (an `int64_t` argument, not a padded
+    |||   pointer slot) -- comparing it against C `NULL` would in fact be
+    |||   a compile error (`comparison between pointer and integer`),
+    |||   not just a wasted check -- this exact mistake was caught by a
+    |||   real build failure in `Test1Basics.idr`'s own `Main.loop`
+    |||   (self-tail-recursive *and* dual-ABI-eligible) the first time a
+    |||   worker wrapped a native-shadowed loop.
+    ||| * This is also the loop param's last use anywhere in the whole
+    |||   function -- Compiler.RC2.Loop's own rewrite has already
+    |||   redirected every other reference to the fresh shadow -- so
+    |||   `initVal` is dropped right here, once, whenever `inPrologueDrop`
+    |||   (its caller, `emitLoopInto`, discharges the full `prologueDrop`
+    |||   list as one `removeVars` after every param's own declaration).
     declareLoopParam : {auto a : Ref ArgCounter Nat}
                      -> {auto oft : Ref OutfileText Output}
                      -> {auto il : Ref IndentLevel Nat}
@@ -1730,27 +1732,25 @@ mutual
                      -> {auto r : Ref RepMap (SortedMap Int Rep)}
                      -> {auto lm : Ref InlineMap (SortedMap Int String)}
                      -> {auto fa : Ref LoopParams (List (Int, Rep))}
-                     -> FC -> (paramId : Int) -> Rep -> (initVal : RCLocal) -> Core ()
-    declareLoopParam fc paramId RBoxed initVal =
+                     -> (inPrologueDrop : Bool) -> FC -> (paramId : Int) -> Rep -> (initVal : RCLocal) -> Core ()
+    declareLoopParam _ fc paramId RBoxed initVal =
         if initVal == RCLoc paramId
            then update RepMap (insert paramId RBoxed)
            else declareLet fc paramId RBoxed (RV fc initVal)
-    declareLoopParam fc paramId rep@(RNative ty) initVal = do
+    declareLoopParam inPrologueDrop fc paramId rep@(RNative ty) initVal = do
         update RepMap (insert paramId rep)
         valStr <- rcVarToNativeC ty initVal
-        initRep <- repOfLocal initVal
-        case initRep of
-             RBoxed => do
-                 let initValName = varName initVal
-                 emit fc "\{nativeCType ty} var_\{show paramId} = (\{initValName} == NULL) ? 0 : (\{valStr});"
-                 removeVars [varName initVal]
-             _ => emit fc "\{nativeCType ty} var_\{show paramId} = \{valStr};"
+        if inPrologueDrop
+           then do
+               let initValName = varName initVal
+               emit fc "\{nativeCType ty} var_\{show paramId} = (\{initValName} == NULL) ? 0 : (\{valStr});"
+           else emit fc "\{nativeCType ty} var_\{show paramId} = \{valStr};"
     -- A loop param is read again every iteration, so it never has the
     -- single-use shape `RInlineNative` requires -- Compiler.RC2.Loop
     -- never actually constructs this case -- kept total (falling back
     -- to a plain native declaration) rather than assumed unreachable.
-    declareLoopParam fc paramId (RInlineNative ty) initVal =
-        declareLoopParam fc paramId (RNative ty) initVal
+    declareLoopParam inPrologueDrop fc paramId (RInlineNative ty) initVal =
+        declareLoopParam inPrologueDrop fc paramId (RNative ty) initVal
 
     ||| Lower an `RLoop` (see its own doc comment in RCExp.idr): declare
     ||| each loop param (`declareLoopParam`, a no-op for the common
@@ -1761,7 +1761,13 @@ mutual
     ||| is intercepted by `emitInto`'s own `tryEmitLoopContinue` call
     ||| before ever reaching here again, so `body`'s own tail-position
     ||| value(s), if any survive, are genuinely this whole loop's exit
-    ||| value).
+    ||| value), after each declared param's own `prologueDrop` membership
+    ||| (see `declareLoopParam`'s own doc comment) is discharged as one
+    ||| `removeVars` -- `Compiler.RC2.RC`'s `annotate`-decided ownership
+    ||| facts (`postDrop` etc.) are always discharged individually, at
+    ||| their own node; this one's just as much a precomputed IR fact
+    ||| (`Compiler.RC2.Loop`'s own `applyLoop`), simply batched here since
+    ||| every member's own drop point is this same spot regardless.
     emitLoopInto : {auto a : Ref ArgCounter Nat}
                  -> {auto oft : Ref OutfileText Output}
                  -> {auto il : Ref IndentLevel Nat}
@@ -1769,9 +1775,11 @@ mutual
                  -> {auto r : Ref RepMap (SortedMap Int Rep)}
                  -> {auto lm : Ref InlineMap (SortedMap Int String)}
                  -> {auto fa : Ref LoopParams (List (Int, Rep))}
-                 -> Sink -> TailPositionStatus -> FC -> List (Int, Rep) -> List RCLocal -> RCExp -> Core ()
-    emitLoopInto sink tailPosition fc loopParams initial body = do
-        traverse_ (\((paramId, rep), initVal) => declareLoopParam fc paramId rep initVal) (zip loopParams initial)
+                 -> Sink -> TailPositionStatus -> FC -> List (Int, Rep) -> List RCLocal -> (prologueDrop : List RCLocal) -> RCExp -> Core ()
+    emitLoopInto sink tailPosition fc loopParams initial prologueDrop body = do
+        traverse_ (\((paramId, rep), initVal) =>
+                       declareLoopParam (elem initVal prologueDrop) fc paramId rep initVal) (zip loopParams initial)
+        removeVars (varName <$> prologueDrop)
         emit fc "loop:;"
         put LoopParams loopParams
         emitInto emptyFC sink tailPosition body
@@ -1937,7 +1945,7 @@ mutual
     -- intercepts a leftover RLoop itself (routing it to
     -- emitLoopInto's Sink-aware handling) before ever falling back to
     -- a bare emitRC call.
-    emitRC (RLoop fc loopParams initial body) _ = throw $ InternalError "[rc2] RLoop reached emitRC directly (not intercepted by emitInto)"
+    emitRC (RLoop fc loopParams initial prologueDrop body) _ = throw $ InternalError "[rc2] RLoop reached emitRC directly (not intercepted by emitInto)"
     -- Unreachable in practice, same reasoning as RLet's own case above:
     -- emitInto's tryBuildClosureInto always peels these wrapper nodes
     -- (emitting their own dup/drop/free/reuse-release side effect) on

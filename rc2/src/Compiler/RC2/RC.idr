@@ -634,8 +634,8 @@ mutual
     -- rewrites already-annotated RAppName nodes in tail position, see
     -- RLoop's own doc comment) -- kept total (as a plain pass-through),
     -- same reasoning as RReleaseReuse just above.
-    annotate natives owned (RLoop fc loopParams initial body) =
-        RLoop fc loopParams initial <$> annotate natives owned body
+    annotate natives owned (RLoop fc loopParams initial prologueDrop body) =
+        RLoop fc loopParams initial prologueDrop <$> annotate natives owned body
     annotate natives owned (RLoopContinue fc args postDrop) = pure $ RLoopContinue fc args postDrop
     -- Never actually produced until Compiler.RC2.DualABI runs, which is
     -- strictly after annotate is done with the whole definition (and

@@ -185,8 +185,8 @@ mutual
   -- pass-through) rather than assumed unreachable, same reasoning as
   -- Loop.idr's own `renameRCExp` and Compiler.RC2.ConstExtPrim for
   -- these same two cases.
-  foldConst env (RLoop fc loopParams initial body) =
-      RLoop fc loopParams initial (foldConst env body)
+  foldConst env (RLoop fc loopParams initial prologueDrop body) =
+      RLoop fc loopParams initial prologueDrop (foldConst env body)
   foldConst _   (RLoopContinue fc args postDrop) = RLoopContinue fc args postDrop
 
   foldConstAlt : Env -> RConAlt -> RConAlt

@@ -139,7 +139,7 @@ import Data.Vect
 ||| positionally with `argIds` here, with nothing further to check.
 export
 paramEligibility : List Int -> RCExp -> List (Int, Maybe PrimType)
-paramEligibility argIds (RLoop _ loopParams _ _) =
+paramEligibility argIds (RLoop _ loopParams _ _ _) =
     zip argIds (map (\(_, r) => case r of
                                       RNative ty => Just ty
                                       RInlineNative ty => Just ty
@@ -180,7 +180,7 @@ tailValueReps reps (RConCase _ _ alts mDef) =
 tailValueReps reps (RConstCase _ _ alts mDef) =
     concatMap (\(MkRConstAlt _ body) => tailValueReps reps body) alts
       ++ maybe [] (tailValueReps reps) mDef
-tailValueReps reps (RLoop _ loopParams _ body) =
+tailValueReps reps (RLoop _ loopParams _ _ body) =
     tailValueReps (foldl (\m, (i, r) => insert i r m) reps loopParams) body
 tailValueReps _ (RLoopContinue _ _ _) = []
 -- RAppName, RUnderApp, RApp, RCon, RExtPrim, RErased, RCrash: never a
@@ -607,8 +607,8 @@ applyCallSiteRewriteBody workers reps inTail (RConstCase fc sc alts mDef) =
   where
     rewriteConstAlt : SortedMap Name (Name, List Rep, Rep) -> SortedMap Int Rep -> Bool -> RConstAlt -> RConstAlt
     rewriteConstAlt workers reps inTail (MkRConstAlt c body) = MkRConstAlt c (applyCallSiteRewriteBody workers reps inTail body)
-applyCallSiteRewriteBody workers reps inTail (RLoop fc loopParams initial body) =
-    RLoop fc loopParams initial (applyCallSiteRewriteBody workers (foldl (\m, (i, r) => insert i r m) reps loopParams) inTail body)
+applyCallSiteRewriteBody workers reps inTail (RLoop fc loopParams initial prologueDrop body) =
+    RLoop fc loopParams initial prologueDrop (applyCallSiteRewriteBody workers (foldl (\m, (i, r) => insert i r m) reps loopParams) inTail body)
 applyCallSiteRewriteBody workers reps inTail (RDup fc v cont) = RDup fc v (applyCallSiteRewriteBody workers reps inTail cont)
 applyCallSiteRewriteBody workers reps inTail (RDrop fc vs cont) = RDrop fc vs (applyCallSiteRewriteBody workers reps inTail cont)
 applyCallSiteRewriteBody workers reps inTail (RFree fc v cont) = RFree fc v (applyCallSiteRewriteBody workers reps inTail cont)
