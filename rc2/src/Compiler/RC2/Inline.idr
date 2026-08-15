@@ -44,6 +44,7 @@
 module Compiler.RC2.Inline
 
 import Compiler.LambdaLift
+import Compiler.RC2.ConstFold
 
 import Core.CompileExpr
 import Core.Context
@@ -431,17 +432,30 @@ isPrimVal : Lifted vars -> Bool
 isPrimVal (LPrimVal _ _) = True
 isPrimVal _ = False
 
-||| Never inline a call whose arguments are all bare literal constants:
-||| gcc's own `-Werror=overflow` can statically prove an intentional
-||| fixed-width wraparound "overflows" once every operand of a folded
-||| arithmetic chain is a compile-time literal (found via
-||| `Test6NativeInts.idr`'s own `chainInt8 100 100`-shaped calls, which
-||| this guard exists to keep working). Vacuously true for a nullary
-||| call, which has no such folding risk at all (nothing to fold), so
-||| this only ever actually fires once there's at least one argument.
+||| Never inline a call whose arguments are all bare literal constants
+||| *and* include at least one Compiler.RC2.ConstFold itself won't fold
+||| away (an `I`/`Db` literal -- see its own `safeConst`, reused here
+||| so this stays in lockstep with exactly what it folds): gcc's own
+||| `-Werror=overflow` can statically prove an intentional fixed-width
+||| wraparound "overflows" once every operand of a folded arithmetic
+||| chain is a compile-time literal (found via `Test6NativeInts.idr`'s
+||| own `chainInt8 100 100`-shaped calls, which this guard exists to
+||| keep working) -- but only when the resulting literal chain has an
+||| actual chance of reaching Emit unfolded. Everything else
+||| Compiler.RC2.ConstFold *does* fold (fixed-width ints, BigInteger,
+||| strings) gets computed down to a single RPrimVal by the time
+||| Compiler.RC2.RC's `toRCDef` finishes, well before Emit ever sees an
+||| arithmetic expression -- so inlining those poses no such risk and
+||| is allowed through. Vacuously true for a nullary call, which has no
+||| such folding risk at all (nothing to fold), so this only ever
+||| actually fires once there's at least one argument.
 allLiteralArgs : List (Lifted vars) -> Bool
 allLiteralArgs [] = False
-allLiteralArgs args = all isPrimVal args
+allLiteralArgs args = all isPrimVal args && any hasUnfoldableConst args
+  where
+    hasUnfoldableConst : Lifted vars -> Bool
+    hasUnfoldableConst (LPrimVal _ c) = not (safeConst c)
+    hasUnfoldableConst _ = False
 
 ------------------------------------------------------------------------
 -- The whole-program rewrite

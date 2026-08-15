@@ -74,6 +74,12 @@ foldableOp BelieveMe = False
 foldableOp (Cast _ _) = False
 foldableOp _ = True
 
+||| Operands ConstFold itself will actually fold (i.e. not `I`/`Db`,
+||| see `constFoldOp`'s own doc comment for why) -- exported so
+||| Compiler.RC2.Inline's own `allLiteralArgs` guard can stay in
+||| lockstep with exactly what this pass folds, rather than keeping a
+||| second, hand-duplicated copy of this same distinction.
+export
 safeConst : Constant -> Bool
 safeConst (I _) = False
 safeConst (Db _) = False

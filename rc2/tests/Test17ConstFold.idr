@@ -4,7 +4,10 @@ import System.Info
 
 -- Regression test for Compiler.RC2.ConstFold: ROp/RConstCase/RCmpCase
 -- constant folding, run between Compiler.RC2.RC's Phase 1 and Phase 2
--- (see ConstFold.idr's own module note).
+-- (see ConstFold.idr's own module note). `cmpConst` below also covers
+-- Compiler.RC2.Inline's own `allLiteralArgs` guard, narrowed to admit
+-- exactly the calls ConstFold can now make safe to inline (see its own
+-- doc comment).
 
 -- ROp folding: fixed-width int arithmetic and string append, entirely
 -- within one function body.
@@ -46,6 +49,24 @@ caseConst =
           10 => "ten"
           _  => "other"
 
+-- RCmpCase folding: comparison on known-constant operands, entirely
+-- within one function body. Reaching this needs Compiler.RC2.RC's own
+-- `tryFuseCompare` to fire on a *direct* primitive comparison -- which
+-- means Ord Int64's own `<` implementation (an interface method call,
+-- invisible to `tryFuseCompare` on its own) first has to be spliced in
+-- by Compiler.RC2.Inline. Before Inline's own `allLiteralArgs` guard
+-- was narrowed to only block Int/Double literal chains (this pass is
+-- exactly why it could be: whatever chain inlining produces here gets
+-- folded down to a single RPrimVal well before Emit), a call whose
+-- arguments were both compile-time literals like this one never got
+-- inlined at all, so `tryFuseCompare` never even got a direct
+-- comparison to look at -- this is the case that guard was blocking.
+cmpConst : String
+cmpConst =
+  let a : Int64
+      a = 3
+  in if a < 5 then "less" else "not less"
+
 -- Chained with ConstExtPrim's own prim__codegen fold: whether or not
 -- this particular call site happens to get inlined into `codegen`'s
 -- own body (that's Compiler.RC2.Inline's call, not ConstFold's), the
@@ -68,6 +89,7 @@ main = do
   putStrLn strConst
   printLn overflowChain
   putStrLn caseConst
+  putStrLn cmpConst
   putStrLn codegenChain
   printLn intNotFolded
   printLn doubleNotFolded
