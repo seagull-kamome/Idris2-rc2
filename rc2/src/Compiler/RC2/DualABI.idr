@@ -1,73 +1,26 @@
 module Compiler.RC2.DualABI
 
+-- Copyright 2026, Hattori,Hiroki. All rights reserved.
+-- This module was licensed by BSD3.
+
 -- Dual calling convention: optimizes function signatures by promoting
 -- parameters and return types to native (unboxed) representations
--- where statically eligible.
+-- where statically eligible. Both eligibility analyses are purely
+-- *local* to one function's own body -- no whole-program fixed point
+-- is needed (see `rc2/doc/dual-abi.md`'s design section for why).
 --
--- Tail-position calls are a *deliberate, permanent* scope boundary,
--- not a later stage: they're currently rendered via
--- `tryBuildClosureInto`'s own closure-deferral (a boxed, trampolined
--- value, letting the *caller's own caller* resolve it later -- bounds
--- C stack growth for an otherwise-unknown-depth chain of tail calls
--- that aren't self-/mutually-recursive in a way `Compiler.RC2.Loop`/
--- `Compiler.RC2.MutualLoop` already convert to a `goto`). Rewriting a
--- tail-position call into a direct, non-deferred `RAppNameRep` call
--- could reintroduce that unbounded growth, and telling *which*
--- tail-position call sites are safe to rewrite this way would need
--- real interprocedural analysis -- exactly the whole-program fixed
--- point this entire effort has otherwise avoided needing (the same
--- reason `returnEligibility`, in Stage 2 above, already leaves a
--- *pure* tail-call delegation ineligible rather than chasing it).
+-- Tail-position calls are a deliberate, permanent scope boundary, not
+-- a later stage: rewriting one into a direct, non-deferred call could
+-- reintroduce unbounded C stack growth that the current closure-
+-- deferral scheme bounds, and telling which call sites would be safe
+-- to rewrite would need real interprocedural analysis -- exactly the
+-- whole-program fixed point this effort otherwise avoids needing.
 --
--- Both analyses below are purely *local* to one function's own body --
--- no whole-program fixed point is needed, for a reason worth spelling
--- out since it's not obvious up front:
---
---   * A parameter's own eligibility only depends on how *this*
---     function's own body reads it (Compiler.RC2.Loop's existing
---     `nativeArgType`, or, if the body is already `RLoop`-wrapped by
---     that same pass, its own `loopParams`' Rep directly) -- nothing
---     about any other function is relevant.
---   * A tail-position `ROp`/`RCmpCase`-shaped return value's own Rep
---     comes from the *operator's own* type tag (`Types.opResultRep`),
---     which never depends on where its operands came from -- so
---     `fib(n-1) + fib(n-2)` is already a native-Rep'd `Add`, right now,
---     regardless of whether `fib` itself is known to return natively.
---     The one case this deliberately leaves on the table is a *pure*
---     tail-call delegation with no arithmetic of its own (`g x = h
---     x`) -- whether `g`'s own return could be native then genuinely
---     depends on `h`'s, a real cross-function fixed point. Left as
---     ineligible for now (a real but acceptable v1 limitation).
---
--- Stage 2 verification (`--directive dumpdualabi`, see RC2.idr) against
--- the existing test/benchmark suite confirmed the design holds up:
--- `Main.fib` (tests/BenchFib.idr) -> params=[Int] ret=Int, the marquee
--- non-tail-recursive target this whole effort exists for;
--- `Main.sumTo` (tests/BenchLoop.idr) -> params=[Int, Int] ret=Int,
--- correctly read straight off `Compiler.RC2.Loop`'s own `RLoop`
--- decision; `Main.countDown`/`Main.collatzLike`
--- (tests/Test9SelfTailLoop.idr) -> correct *mixed* eligibility (one
--- native param, one Boxed) in the same function; `Main.swapLoop` and
--- every `Compiler.RC2.MutualLoop`-produced per-member wrapper
--- (`Main.isEvenM`/`isOddM`/`stepA`/`stepB` in the same file) -> nothing
--- eligible, correctly (no `ROp`/`RCmpCase` use of their own params at
--- all -- a wrapper's own body is just a forwarding call).
---
--- One finding that changes a later stage's own plan, not this one:
--- `MutualLoop`'s own *merged* function (`{rc2_mutualLoop:N}`, as
--- opposed to the per-member wrappers above) can show real eligibility
--- for a shared slot some member reads natively, even though a
--- *different*, smaller-arity member only ever supplies `RCNull` there
--- (confirmed directly against `tests/Test10MutualLoop.idr`'s own
--- `stepA`/`stepB` group, the exact shape that already caused two real
--- crashes during the loop-conversion work's own native-shadow-
--- promotion, see `doc/loop-conversion.md`'s "Bugs found" #4). Stage 3
--- must exclude every `MutualLoop`-produced merged function from worker
--- synthesis explicitly -- this can't be left to "no eligibility found,
--- nothing to do" the way the wrappers' own exclusion falls out for
--- free, since the merged function's *own* body can genuinely contain
--- real native-context reads of a slot that isn't safe to treat that
--- way unconditionally.
+-- See `rc2/doc/dual-abi.md` for the full design, the Stage 2
+-- verification results against the test/benchmark suite, and the
+-- documented interaction with `Compiler.RC2.MutualLoop`-produced
+-- merged functions (which Stage 3 must exclude from worker synthesis
+-- explicitly -- see that doc's "Bugs found" section).
 
 import Compiler.RC2.RCExp
 import Compiler.RC2.Types

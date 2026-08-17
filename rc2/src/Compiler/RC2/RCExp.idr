@@ -1,5 +1,8 @@
 module Compiler.RC2.RCExp
 
+-- Copyright 2026, Hattori,Hiroki. All rights reserved.
+-- This module was licensed by BSD3.
+
 -- Explicit reference-counted IR for `rc2`.
 -- Reference counting is handled via three explicit nodes:
 --   * `RDup`: Increment refcount.

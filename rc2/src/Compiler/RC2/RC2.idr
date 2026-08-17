@@ -1,6 +1,9 @@
 module Compiler.RC2.RC2
 
--- Pipeline orchestration: 
+-- Copyright 2026, Hattori,Hiroki. All rights reserved.
+-- This module was licensed by BSD3.
+
+-- Pipeline orchestration:
 -- 1. Lifted -> RCExp (`Compiler.RC2.RC`)
 -- 2. Constructor reuse (`Compiler.RC2.Reuse`)
 -- 3. Native shadow caching (`Compiler.RC2.ConAltNative`)

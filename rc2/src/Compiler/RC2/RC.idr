@@ -1,5 +1,8 @@
 module Compiler.RC2.RC
 
+-- Copyright 2026, Hattori,Hiroki. All rights reserved.
+-- This module was licensed by BSD3.
+
 -- Transforms `Lifted` to `RCExp` in two phases:
 -- 1. `normalize`: ANF-style conversion with in-place native type inference.
 -- 2. `annotate`: Injects reference-counting primitives based on ownership.

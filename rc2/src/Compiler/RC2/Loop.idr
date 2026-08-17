@@ -1,9 +1,13 @@
 module Compiler.RC2.Loop
 
+-- Copyright 2026, Hattori,Hiroki. All rights reserved.
+-- This module was licensed by BSD3.
+
 -- Self-tail-call loop conversion: wraps self-recursive calls in `RLoop`/`RLoopContinue`
 -- to avoid trampoline dispatch, and promotes boxed parameters to native shadows
 -- where usage is consistently native.
 -- Scope: Self-tail-calls only (mutual recursion handled by MutualLoop).
+-- See `rc2/doc/loop-conversion.md` for the full design and rationale.
 
 import Compiler.RC2.RCExp
 import Compiler.RC2.Types

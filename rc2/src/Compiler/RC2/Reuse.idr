@@ -1,5 +1,8 @@
 module Compiler.RC2.Reuse
 
+-- Copyright 2026, Hattori,Hiroki. All rights reserved.
+-- This module was licensed by BSD3.
+
 -- Performs constructor-reuse-in-place optimization to recycle storage
 -- of dying values for new constructors of the same shape.
 -- This pass makes and encodes reuse decisions directly into the IR,

@@ -1,11 +1,15 @@
 module Compiler.RC2.ConAltNative
 
+-- Copyright 2026, Hattori,Hiroki. All rights reserved.
+-- This module was licensed by BSD3.
+
 -- Optimizes constructor-destructured fields by caching them into
 -- native shadows. This improves performance by avoiding repeated
 -- box unwrapping, while maintaining correct ownership tracking for
 -- the original boxed fields.
--- participation (Compiler.RC2.RC's `annotate`, Compiler.RC2.Reuse's
--- `resolveAlt`) stay completely untouched by this pass -- it runs
+-- Existing ownership decisions from earlier passes (Compiler.RC2.RC's
+-- `annotate`, Compiler.RC2.Reuse's `resolveAlt`) stay completely
+-- untouched by this pass -- it runs
 -- strictly after both (see RC2.idr's own toRCDefs) and only ever
 -- *adds* a wrapping RLet (the shadow) plus an explicit RDrop for the
 -- field's own single remaining (post-rename) use; it never edits an

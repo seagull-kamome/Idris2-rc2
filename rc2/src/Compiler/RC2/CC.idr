@@ -1,5 +1,8 @@
 module Compiler.RC2.CC
 
+-- Copyright 2026, Hattori,Hiroki. All rights reserved.
+-- This module was licensed by BSD3.
+
 -- Invokes the system C compiler to build an executable from generated C code,
 -- linking against the `rc2` runtime and upstream Idris2 support library.
 

@@ -1,5 +1,8 @@
 module Compiler.RC2.Pretty
 
+-- Copyright 2026, Hattori,Hiroki. All rights reserved.
+-- This module was licensed by BSD3.
+
 -- Generates a human-readable, indented dump of the final `RCExp` tree
 -- for debugging purposes when the `dumprcexpr` directive is active.
 

@@ -1,5 +1,8 @@
 module Compiler.RC2.ConstFold
 
+-- Copyright 2026, Hattori,Hiroki. All rights reserved.
+-- This module was licensed by BSD3.
+
 -- Constant folding pass for arithmetic, comparisons, and case-of-constant.
 -- Runs between normalization and annotation to simplify the IR after
 -- inlining and ExtPrim folding.

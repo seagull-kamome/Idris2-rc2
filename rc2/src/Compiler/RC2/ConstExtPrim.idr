@@ -1,10 +1,14 @@
 module Compiler.RC2.ConstExtPrim
 
+-- Copyright 2026, Hattori,Hiroki. All rights reserved.
+-- This module was licensed by BSD3.
+
 -- Folds constant `ExtPrim` calls like `prim__codegen` to their known
 -- fixed values at compile time to avoid unnecessary runtime overhead.
--- the `RPrimVal` this pass introduces just another literal by the time
--- Phase 2 ever sees it, annotated exactly like any other constant
--- (no refcount bookkeeping) rather than needing its own special case.
+-- No special ownership handling is needed here: the `RPrimVal` this
+-- pass introduces is just another literal by the time Phase 2 ever
+-- sees it, annotated exactly like any other constant (no refcount
+-- bookkeeping) rather than needing its own special case.
 
 import Compiler.RC2.RCExp
 

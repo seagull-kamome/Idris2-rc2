@@ -1,5 +1,8 @@
 module Compiler.RC2.Emit
 
+-- Copyright 2026, Hattori,Hiroki. All rights reserved.
+-- This module was licensed by BSD3.
+
 -- RCExp -> C. Mostly mechanical: every ownership decision (dup/drop/free,
 -- and what to drop and when), every native-vs-boxed representation
 -- decision, and the constructor-reuse-in-place decision were already made
@@ -276,8 +279,6 @@ nativeCType DoubleType = "double"
 nativeCType CharType = "uint32_t"
 nativeCType _ = "void*" -- unreachable: Types.nativeEligible excludes these
 
--- Box a raw C expression of the given native type into a fresh
--- IDRIS2RC2_Value*.
 nativeMk : PrimType -> String -> String
 nativeMk IntType x = "idris2rc2_mkInt64(" ++ x ++ ")"
 nativeMk Int8Type x = "idris2rc2_mkInt8(" ++ x ++ ")"
@@ -292,8 +293,6 @@ nativeMk DoubleType x = "idris2rc2_mkDouble(" ++ x ++ ")"
 nativeMk CharType x = "idris2rc2_mkChar(" ++ x ++ ")"
 nativeMk _ x = x -- unreachable
 
--- Unbox a boxed IDRIS2RC2_Value* into a raw C expression of the given
--- native type.
 nativeUnbox : PrimType -> String -> String
 nativeUnbox IntType x = "idris2rc2_to_i64(" ++ x ++ ")"
 nativeUnbox Int8Type x = "idris2rc2_to_i8(" ++ x ++ ")"
@@ -323,8 +322,6 @@ intBits : PrimType -> String
 intBits IntType = "64"; intBits Int8Type = "8"; intBits Int16Type = "16"
 intBits Int32Type = "32"; intBits Int64Type = "64"; intBits _ = "64"
 
--- Raw C expression for a native-eligible PrimFn, given each operand's
--- already-native-or-unboxed C expression string.
 nativeOpExpr : {0 arity : Nat} -> PrimFn arity -> Vect arity String -> String
 nativeOpExpr (Add ty)    [x, y] = "(" ++ x ++ " + " ++ y ++ ")"
 nativeOpExpr (Sub ty)    [x, y] = "(" ++ x ++ " - " ++ y ++ ")"

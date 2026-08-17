@@ -1,35 +1,18 @@
 module Compiler.RC2.MutualLoop
 
--- Mutual tail recursion loop conversion pass.
--- This whole-program pass synthesizes a merged function for each group
--- of mutually tail-recursive functions, turning cross-member tail calls
--- into self-tail calls. This allows `Compiler.RC2.Loop` to subsequently
--- convert them into efficient `goto`-based loops.
--- change any of that, it only changes *where a tail call lands*. Two
--- things this pass does need to get right on its own, since it's
--- building genuinely new tree shape that never went through `annotate`:
---   1. Renaming: each member's own local ids (its own top-level
---      parameters *and* every RLet/RConAlt-bound id in its body) get
---      renamed to fresh, group-wide-unique ids before being spliced
---      into the merged function -- a pure, meaning-preserving
---      substitution (every existing RDup/RDrop/RFree node just moves
---      to the new id along with its target), *not* a fresh ownership
---      decision. A member's own top-level parameters specifically get
---      renamed onto the shared `slot_0 .. slot_{arity-1}` ids (not
---      arbitrary fresh ones), since those *are* the merged function's
---      real parameters.
---   2. The invariant that keeps padding safe without any extra drops:
---      whenever a transition enters member `j`, slots `< arity(j)`
---      always hold real, freshly-supplied values for `j`, and slots
---      `>= arity(j)` are always `RCNull`. This holds inductively as
---      long as *every* transition (wrapper call or in-group tail call)
---      pads unused trailing slots with `RCNull` -- which this pass
---      always does. Under that invariant, a member's own body only
---      ever needs to reason about its own `[0, arity)` slots exactly as
---      it always did (that's exactly what `annotate` already
---      determined for its original, pre-merge argument list); nothing
---      beyond that is ever read, so nothing beyond that ever needs an
---      extra drop this pass would have to invent.
+-- Copyright 2026, Hattori,Hiroki. All rights reserved.
+-- This module was licensed by BSD3.
+
+-- Mutual tail recursion loop conversion pass: synthesizes a merged
+-- function for each group of mutually tail-recursive functions,
+-- rewriting cross-member tail calls into self-tail calls so
+-- `Compiler.RC2.Loop` can subsequently convert them into `goto`-based
+-- loops. See `rc2/doc/loop-conversion.md`'s "Compiler.RC2.MutualLoop:
+-- mutual tail recursion" section for the full design, the renaming
+-- and arity-padding invariants this pass must get right on its own
+-- (it never goes through `annotate`, so ownership is preserved only
+-- by pure renaming, not re-decided), and its documented interaction
+-- with native-shadow promotion in `Compiler.RC2.Loop`.
 --
 -- Scope: this pass only merges genuine cycles of size >= 2 in the
 -- *tail-call* graph (via strongly-connected-components, so indirect

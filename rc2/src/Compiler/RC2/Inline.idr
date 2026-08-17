@@ -1,36 +1,21 @@
-||| Whole-program `Lifted`-to-`Lifted` inlining pass.
-||| Motivation: Exposes comparison primitives in callee definitions
-||| to `RC.idr`'s fusion analysis (`tryFuseCompare`) by inlining
-||| small, call-free functions into callers.
+||| Whole-program `Lifted`-to-`Lifted` inlining pass: splices a small,
+||| call-free callee's own body directly into its call site, so
+||| `Compiler.RC2.RC`'s comparison-fusion analysis (`tryFuseCompare`)
+||| can reach a comparison hidden behind an interface method call
+||| (e.g. `Ord Int`'s `<=`) the same way it already reaches a bare one.
 |||
-||| Two independent eligibility criteria decide what may be inlined:
-|||
-||| - **Criterion A** (implemented): a callee whose own body is small
-|||   (`smallBodyThreshold`) and *call-free* (no `LAppName`/`LUnderApp`/
-|||   `LApp`/`LExtPrim` anywhere in it) -- this is what actually closes the
-|||   motivating gap above, and is the only criterion currently applied.
-||| - **Criterion B** (single call site, whole-program, via a Tarjan-SCC
-|||   ordered call graph, reusing `Compiler.RC2.MutualLoop`'s own `Graph`/
-|||   `tarjanSCCs`): investigated in an earlier session, confirmed *not* to
-|||   reach the separately-documented monadic-bind reuse gap (see
-|||   `rc2/doc/reuse-monadic-bind-gap.md`) and not otherwise load-bearing
-|||   for any currently-known gap -- not implemented here to keep this
-|||   pass's own blast radius as small as the problem it's actually solving
-|||   requires. Revisit if profiling ever shows a real need for it.
-|||
-||| Root-cause history: an earlier attempt at this pass (this session,
-||| reverted in full) surfaced a real, `valgrind`-confirmed leak in
-||| `Test9SelfTailLoop`'s own `collatzLike` once this pass made comparison
-||| fusion reach a self-tail-loop's own accumulator for the first time.
-||| The leak was *not* a bug in this pass -- it root-caused to two
-||| completely independent, pre-existing bugs in `Compiler.RC2.Loop`/
-||| `Emit` (a missing `RLoopContinue` `postDrop` field, and an unfreed
-||| ephemeral box in `Emit.idr`'s own `ROp` case), both fixed separately
-||| (see `rc2/doc/loop-conversion.md`'s "Bugs found and fixed" #5, and
-||| `TODO.md`'s own entry). This pass's own logic (the IR plumbing below,
-||| the case-of-case collapse, the eligibility criteria) was already
-||| correct at that point, confirmed via `--directive dumprcexp`.
+||| See `rc2/doc/inlining.md` for the full motivation, the two
+||| eligibility criteria (only Criterion A -- small, call-free callees
+||| -- is implemented; Criterion B was investigated and deliberately
+||| not pursued, see its "Eligibility" section), and the "Bugs found
+||| and fixed" history -- in particular a leak this pass's own
+||| inlining first exposed, that root-caused to two pre-existing,
+||| unrelated bugs in `Compiler.RC2.Loop`/`Emit` rather than to this
+||| pass's own logic.
 module Compiler.RC2.Inline
+
+-- Copyright 2026, Hattori,Hiroki. All rights reserved.
+-- This module was licensed by BSD3.
 
 import Compiler.LambdaLift
 import Compiler.RC2.ConstFold
