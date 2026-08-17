@@ -459,30 +459,6 @@ assignShadowIds : (nextId : Int) -> List (Int, PrimType) -> List (Int, Int, Prim
 assignShadowIds _ [] = []
 assignShadowIds nextId ((p, ty) :: rest) = (p, nextId, ty) :: assignShadowIds (nextId + 1) rest
 
-||| Apply self-tail-call loop conversion to one top-level definition,
-||| given its own `Name` -- Compiler.RC2.RC doesn't thread a
-||| definition's own name through Phase 1/2 at all (nothing there needs
-||| it), so this takes it as an explicit argument the same way
-||| RC2.idr's `toRCDefs` already has it in hand (paired with the
-||| `RCDef` it came from) for every definition. If any self-tail-call is
-||| found, wraps the whole (rewritten) body in one `RLoop`: each
-||| top-level parameter becomes a loop param reusing its own id,
-||| `RBoxed`, unless `nativeArgType` finds it worth promoting to a fresh
-||| native shadow (see this module's own header note, and
-||| `nativeArgType`/`stripOwnership`'s own doc comments for the
-||| eligibility criterion and why the rewrite is safe) -- either way,
-||| `initial` always reads the original (always-Boxed) parameter's own
-||| value, since that's genuinely where every loop param's value starts
-||| from; Compiler.RC2.Emit's `declareLoopParam` does the (skipped, for
-||| an unchanged `RBoxed` param -- the common case) unboxing conversion.
-|||
-||| Fresh shadow ids start one past the highest id already used
-||| anywhere in this definition (its own top-level `args`, plus every
-||| `RLet`/`RConAlt`-bound id in `body'`, via `collectBoundIds`) -- kept
-||| a plain arithmetic maximum rather than a `Core`-threaded counter
-||| (like Compiler.RC2.MutualLoop's own `FreshId`) since this whole pass
-||| stays a pure function of one definition at a time, no cross-
-||| definition state needed.
 export
 ||| Fills in every `RLoopContinue`'s own `postDrop` -- see `RLoopContinue`'s
 ||| own doc comment (RCExp.idr) for what this is and why it's needed:
@@ -550,6 +526,30 @@ fillLoopContinuePostDrop loopParams reps (RLoopContinue fc args _) =
     needsDrop _ = Nothing
 fillLoopContinuePostDrop _ _ e = e
 
+||| Apply self-tail-call loop conversion to one top-level definition,
+||| given its own `Name` -- Compiler.RC2.RC doesn't thread a
+||| definition's own name through Phase 1/2 at all (nothing there needs
+||| it), so this takes it as an explicit argument the same way
+||| RC2.idr's `toRCDefs` already has it in hand (paired with the
+||| `RCDef` it came from) for every definition. If any self-tail-call is
+||| found, wraps the whole (rewritten) body in one `RLoop`: each
+||| top-level parameter becomes a loop param reusing its own id,
+||| `RBoxed`, unless `nativeArgType` finds it worth promoting to a fresh
+||| native shadow (see this module's own header note, and
+||| `nativeArgType`/`stripOwnership`'s own doc comments for the
+||| eligibility criterion and why the rewrite is safe) -- either way,
+||| `initial` always reads the original (always-Boxed) parameter's own
+||| value, since that's genuinely where every loop param's value starts
+||| from; Compiler.RC2.Emit's `declareLoopParam` does the (skipped, for
+||| an unchanged `RBoxed` param -- the common case) unboxing conversion.
+|||
+||| Fresh shadow ids start one past the highest id already used
+||| anywhere in this definition (its own top-level `args`, plus every
+||| `RLet`/`RConAlt`-bound id in `body'`, via `collectBoundIds`) -- kept
+||| a plain arithmetic maximum rather than a `Core`-threaded counter
+||| (like Compiler.RC2.MutualLoop's own `FreshId`) since this whole pass
+||| stays a pure function of one definition at a time, no cross-
+||| definition state needed.
 export
 applyLoop : Name -> RCDef -> RCDef
 applyLoop self (MkRCFun args retRep body) =

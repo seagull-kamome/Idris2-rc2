@@ -39,21 +39,6 @@ data NextVar : Type where
 nextVarId : {auto v : Ref NextVar Int} -> Core Int
 nextVarId = do i <- get NextVar; put NextVar (i + 1); pure i
 
-getFC : Lifted vars -> FC
-getFC (LLocal fc _) = fc
-getFC (LAppName fc _ _ _) = fc
-getFC (LUnderApp fc _ _ _) = fc
-getFC (LApp fc _ _ _) = fc
-getFC (LLet fc _ _ _) = fc
-getFC (LCon fc _ _ _ _) = fc
-getFC (LOp fc _ _ _) = fc
-getFC (LExtPrim fc _ _ _) = fc
-getFC (LConCase fc _ _ _) = fc
-getFC (LConstCase fc _ _ _) = fc
-getFC (LPrimVal fc _) = fc
-getFC (LErased fc) = fc
-getFC (LCrash fc _) = fc
-
 ||| Check if Constant is a two-way Bool (0 or 1).
 constantBoolValue : Constant -> Maybe Bool
 constantBoolValue (I 0) = Just False
@@ -124,6 +109,21 @@ mutual
              let rep = maybe RBoxed RNative (repOf eRC)
              rest <- k (RCLoc i)
              pure $ RLet (getFC e) i rep eRC rest
+      where
+        getFC : Lifted vars -> FC
+        getFC (LLocal fc _) = fc
+        getFC (LAppName fc _ _ _) = fc
+        getFC (LUnderApp fc _ _ _) = fc
+        getFC (LApp fc _ _ _) = fc
+        getFC (LLet fc _ _ _) = fc
+        getFC (LCon fc _ _ _ _) = fc
+        getFC (LOp fc _ _ _) = fc
+        getFC (LExtPrim fc _ _ _) = fc
+        getFC (LConCase fc _ _ _) = fc
+        getFC (LConstCase fc _ _ _) = fc
+        getFC (LPrimVal fc _) = fc
+        getFC (LErased fc) = fc
+        getFC (LCrash fc _) = fc
 
     bindMany : {auto v : Ref NextVar Int} ->
                Env -> List (Lifted vars) -> (List RCLocal -> Core RCExp) -> Core RCExp
@@ -257,49 +257,10 @@ normalizeDef (MkLError body) = do
 Owned : Type
 Owned = SortedSet RCLocal
 
-dropUnusedOwnedVars : Owned -> SortedSet RCLocal -> (List RCLocal, Owned)
-dropUnusedOwnedVars owned usedVars =
-    let actualOwned = intersection owned usedVars in
-    let shouldDrop = difference owned actualOwned in
-    (Prelude.toList shouldDrop, actualOwned)
-
 ||| Wrap `e` in an RDup for each variable in `needed` (order doesn't
 ||| matter between independent increments).
 wrapDups : FC -> List RCLocal -> RCExp -> RCExp
 wrapDups fc needed e = foldr (RDup fc) e needed
-
-||| Whether a just-built value (still in its pre-annotation, Phase 1
-||| shape) is provably a brand-new, never-shared heap allocation:
-||| constructing it always initialises refcount=1, and since we're
-||| looking at it in exactly the position it was created, no other code
-||| has had a chance to dup the reference yet. Safe to skip the refcount
-||| check and free unconditionally (`RFree`) if it turns out dead.
-||| Peels through the same synthetic-let wrapper chain `Types.repOf` does.
-freeableShape : RCExp -> Bool
-freeableShape (RLet _ _ _ _ body) = freeableShape body
-freeableShape (RCon _ _ ci _ _ _) = ci /= NIL && ci /= NOTHING && ci /= ZERO && ci /= UNIT
-freeableShape (RUnderApp _ _ _ _) = True
-freeableShape _ = False
-
-||| Wrap `body` in the cleanup for a single dead variable: an unconditional
-||| `RFree` if `value` (its birthplace) is a provably-unshared fresh
-||| allocation, otherwise the ordinary checked `RDrop`. Never wraps at all
-||| for a native (unboxed, unrefcounted) local, or for a Boxed local
-||| that's in `natives` anyway (alwaysUnboxedBoxedLocalsR -- see its own
-||| comment for why that's just as unconditionally a no-op).
-dropDeadLet : FC -> SortedSet RCLocal -> Rep -> RCLocal -> RCExp -> RCExp -> RCExp
-dropDeadLet fc natives (RNative _) _ _ body = body
--- Never actually reachable: `inlineableRep` only ever promotes to this
--- in the *used* branch of RLet's own annotate case, which never calls
--- dropDeadLet at all (that's the dead-variable branch) -- same no-op as
--- RNative regardless, kept total rather than assumed unreachable.
-dropDeadLet fc natives (RInlineNative _) _ _ body = body
-dropDeadLet fc natives RBoxed loc value body =
-    if contains loc natives
-       then body
-       else if freeableShape value
-               then RFree fc loc body
-               else RDrop fc [loc] body
 
 ||| Fold `f` over every RConAlt's own body and (if present) the default,
 ||| unioning the `SortedSet RCLocal` results -- the shared shape behind
@@ -432,29 +393,6 @@ boxedOperands natives = filter isBoxedOperand
     isBoxedOperand (RCEmptyCon {}) = False
     isBoxedOperand v = not (contains v natives)
 
-||| Promote a plain `RNative ty` to `RInlineNative ty` once ownership is
-||| fully known (called from `annotate`'s own `RLet` case, after both
-||| `valueRC`'s `postDrop` and `bodyRC` are already computed): safe and
-||| worthwhile exactly when `valueRC` is a bare native op with no Boxed
-||| operands at all (`ROp`'s own `postDrop == []` -- the exact set of
-||| Boxed operands it needs dropped, see its own doc comment; empty
-||| means every operand is either `natives`-listed or an `RCConst`, so
-||| nothing a dup/drop elsewhere could invalidate by the time a deferred
-||| read happens) and `var` is referenced exactly once in `bodyRC`
-||| (otherwise inlining would duplicate the op's computation). Anything
-||| else (a literal-valued let, a multi-use one, one with a Boxed
-||| operand, or an already-`RBoxed` one) passes `rep` through unchanged
-||| -- this only ever *narrows* an existing `RNative`, never invents a
-||| new native classification `Types.repOf` didn't already decide.
-||| Moves what used to be `Emit.idr`'s own `tryInlineNativeOp` (a
-||| `countUsesR` tree-walk redone at *emission* time on every RLet) into
-||| a single Phase-2 decision instead, mirroring `ROp.postDrop` and
-||| reuse-in-place's own earlier elevations.
-inlineableRep : Rep -> RCExp -> Int -> RCExp -> Rep
-inlineableRep (RNative ty) (ROp _ _ _ _ []) var bodyRC =
-    if countUsesR (RCLoc var) bodyRC == 1 then RInlineNative ty else RNative ty
-inlineableRep rep _ _ _ = rep
-
 mutual
     branchBody : SortedSet RCLocal -> SortedSet RCLocal -> RCExp -> Core RCExp
     branchBody natives ownedWithArgs body = do
@@ -463,6 +401,12 @@ mutual
         pure $ case shouldDrop of
                     [] => rest
                     _  => RDrop emptyFC shouldDrop rest
+      where
+        dropUnusedOwnedVars : Owned -> SortedSet RCLocal -> (List RCLocal, Owned)
+        dropUnusedOwnedVars owned usedVars =
+            let actualOwned = intersection owned usedVars in
+            let shouldDrop = difference owned actualOwned in
+            (Prelude.toList shouldDrop, actualOwned)
 
     annotate : SortedSet RCLocal -> Owned -> RCExp -> Core RCExp
     annotate natives owned (RV fc v) =
@@ -492,6 +436,62 @@ mutual
         if contains (RCLoc var) usedVars
            then pure $ RLet fc var (inlineableRep rep valueRC var bodyRC) valueRC bodyRC
            else pure $ RLet fc var rep valueRC (dropDeadLet fc natives rep (RCLoc var) valueRC bodyRC)
+      where
+        ||| Promote a plain `RNative ty` to `RInlineNative ty` once ownership is
+        ||| fully known (called from `annotate`'s own `RLet` case, after both
+        ||| `valueRC`'s `postDrop` and `bodyRC` are already computed): safe and
+        ||| worthwhile exactly when `valueRC` is a bare native op with no Boxed
+        ||| operands at all (`ROp`'s own `postDrop == []` -- the exact set of
+        ||| Boxed operands it needs dropped, see its own doc comment; empty
+        ||| means every operand is either `natives`-listed or an `RCConst`, so
+        ||| nothing a dup/drop elsewhere could invalidate by the time a deferred
+        ||| read happens) and `var` is referenced exactly once in `bodyRC`
+        ||| (otherwise inlining would duplicate the op's computation). Anything
+        ||| else (a literal-valued let, a multi-use one, one with a Boxed
+        ||| operand, or an already-`RBoxed` one) passes `rep` through unchanged
+        ||| -- this only ever *narrows* an existing `RNative`, never invents a
+        ||| new native classification `Types.repOf` didn't already decide.
+        ||| Moves what used to be `Emit.idr`'s own `tryInlineNativeOp` (a
+        ||| `countUsesR` tree-walk redone at *emission* time on every RLet) into
+        ||| a single Phase-2 decision instead, mirroring `ROp.postDrop` and
+        ||| reuse-in-place's own earlier elevations.
+        inlineableRep : Rep -> RCExp -> Int -> RCExp -> Rep
+        inlineableRep (RNative ty) (ROp _ _ _ _ []) var bodyRC =
+            if countUsesR (RCLoc var) bodyRC == 1 then RInlineNative ty else RNative ty
+        inlineableRep rep _ _ _ = rep
+
+        ||| Wrap `body` in the cleanup for a single dead variable: an unconditional
+        ||| `RFree` if `value` (its birthplace) is a provably-unshared fresh
+        ||| allocation, otherwise the ordinary checked `RDrop`. Never wraps at all
+        ||| for a native (unboxed, unrefcounted) local, or for a Boxed local
+        ||| that's in `natives` anyway (alwaysUnboxedBoxedLocalsR -- see its own
+        ||| comment for why that's just as unconditionally a no-op).
+        dropDeadLet : FC -> SortedSet RCLocal -> Rep -> RCLocal -> RCExp -> RCExp -> RCExp
+        dropDeadLet fc natives (RNative _) _ _ body = body
+        -- Never actually reachable: `inlineableRep` only ever promotes to this
+        -- in the *used* branch of RLet's own annotate case, which never calls
+        -- dropDeadLet at all (that's the dead-variable branch) -- same no-op as
+        -- RNative regardless, kept total rather than assumed unreachable.
+        dropDeadLet fc natives (RInlineNative _) _ _ body = body
+        dropDeadLet fc natives RBoxed loc value body =
+            if contains loc natives
+               then body
+               else if freeableShape value
+                       then RFree fc loc body
+                       else RDrop fc [loc] body
+          where
+            ||| Whether a just-built value (still in its pre-annotation, Phase 1
+            ||| shape) is provably a brand-new, never-shared heap allocation:
+            ||| constructing it always initialises refcount=1, and since we're
+            ||| looking at it in exactly the position it was created, no other code
+            ||| has had a chance to dup the reference yet. Safe to skip the refcount
+            ||| check and free unconditionally (`RFree`) if it turns out dead.
+            ||| Peels through the same synthetic-let wrapper chain `Types.repOf` does.
+            freeableShape : RCExp -> Bool
+            freeableShape (RLet _ _ _ _ body) = freeableShape body
+            freeableShape (RCon _ _ ci _ _ _) = ci /= NIL && ci /= NOTHING && ci /= ZERO && ci /= UNIT
+            freeableShape (RUnderApp _ _ _ _) = True
+            freeableShape _ = False
     annotate natives owned (RCon fc n ci tag args _) =
         -- reuseFrom stays Nothing -- Compiler.RC2.Reuse decides that in
         -- its own pass, after annotate is completely done (it needs the

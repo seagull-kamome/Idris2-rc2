@@ -34,25 +34,14 @@ mutual
       case constExtPrimValue p args of
            Just c  => RPrimVal fc c
            Nothing => RExtPrim fc lazy p args
-  foldConstExtPrim (RV fc v) = RV fc v
-  foldConstExtPrim (RAppName fc lazy n args) = RAppName fc lazy n args
-  foldConstExtPrim (RAppNameRep fc n argReps retRep postDrop args) =
-      RAppNameRep fc n argReps retRep postDrop args
-  foldConstExtPrim (RUnderApp fc n missing args) = RUnderApp fc n missing args
-  foldConstExtPrim (RApp fc lazy c a) = RApp fc lazy c a
   foldConstExtPrim (RLet fc var rep value body) =
       RLet fc var rep (foldConstExtPrim value) (foldConstExtPrim body)
-  foldConstExtPrim (RCon fc n ci tag args reuseFrom) = RCon fc n ci tag args reuseFrom
-  foldConstExtPrim (ROp fc lazy op args postDrop) = ROp fc lazy op args postDrop
   foldConstExtPrim (RCmpCase fc op args postDrop t f) =
       RCmpCase fc op args postDrop (foldConstExtPrim t) (foldConstExtPrim f)
   foldConstExtPrim (RConCase fc sc alts mDef) =
       RConCase fc sc (map foldConstExtPrimAlt alts) (map foldConstExtPrim mDef)
   foldConstExtPrim (RConstCase fc sc alts mDef) =
       RConstCase fc sc (map foldConstExtPrimConstAlt alts) (map foldConstExtPrim mDef)
-  foldConstExtPrim (RPrimVal fc c) = RPrimVal fc c
-  foldConstExtPrim (RErased fc) = RErased fc
-  foldConstExtPrim (RCrash fc msg) = RCrash fc msg
   foldConstExtPrim (RDup fc v body) = RDup fc v (foldConstExtPrim body)
   foldConstExtPrim (RDrop fc vars body) = RDrop fc vars (foldConstExtPrim body)
   foldConstExtPrim (RFree fc v body) = RFree fc v (foldConstExtPrim body)
@@ -67,7 +56,7 @@ mutual
   -- Loop.idr's own `renameRCExp` for these same two cases.
   foldConstExtPrim (RLoop fc loopParams initial prologueDrop body) =
       RLoop fc loopParams initial prologueDrop (foldConstExtPrim body)
-  foldConstExtPrim (RLoopContinue fc args postDrop) = RLoopContinue fc args postDrop
+  foldConstExtPrim e = e
 
   foldConstExtPrimAlt : RConAlt -> RConAlt
   foldConstExtPrimAlt (MkRConAlt name ci tag args body) =

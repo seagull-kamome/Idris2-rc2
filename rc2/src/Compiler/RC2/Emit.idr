@@ -79,56 +79,51 @@ import System.File
 -- Name mangling (matches Compiler.RC2.RC2's original scheme, kept for
 -- generated-symbol stability)
 
-showcCleanStringChar : Char -> String -> String
-showcCleanStringChar ' ' = ("_" ++)
-showcCleanStringChar '!' = ("_bang" ++)
-showcCleanStringChar '"' = ("_quotation" ++)
-showcCleanStringChar '#' = ("_number" ++)
-showcCleanStringChar '$' = ("_dollar" ++)
-showcCleanStringChar '%' = ("_percent" ++)
-showcCleanStringChar '&' = ("_and" ++)
-showcCleanStringChar '\'' = ("_tick" ++)
-showcCleanStringChar '(' = ("_parenOpen" ++)
-showcCleanStringChar ')' = ("_parenClose" ++)
-showcCleanStringChar '*' = ("_star" ++)
-showcCleanStringChar '+' = ("_plus" ++)
-showcCleanStringChar ',' = ("_comma" ++)
-showcCleanStringChar '-' = ("__" ++)
-showcCleanStringChar '.' = ("_dot" ++)
-showcCleanStringChar '/' = ("_slash" ++)
-showcCleanStringChar ':' = ("_colon" ++)
-showcCleanStringChar ';' = ("_semicolon" ++)
-showcCleanStringChar '<' = ("_lt" ++)
-showcCleanStringChar '=' = ("_eq" ++)
-showcCleanStringChar '>' = ("_gt" ++)
-showcCleanStringChar '?' = ("_question" ++)
-showcCleanStringChar '@' = ("_at" ++)
-showcCleanStringChar '[' = ("_bracketOpen" ++)
-showcCleanStringChar '\\' = ("_backslash" ++)
-showcCleanStringChar ']' = ("_bracketClose" ++)
-showcCleanStringChar '^' = ("_hat" ++)
-showcCleanStringChar '_' = ("_" ++)
-showcCleanStringChar '`' = ("_backquote" ++)
-showcCleanStringChar '{' = ("_braceOpen" ++)
-showcCleanStringChar '|' = ("_or" ++)
-showcCleanStringChar '}' = ("_braceClose" ++)
-showcCleanStringChar '~' = ("_tilde" ++)
-showcCleanStringChar c
-   = if c < chr 32 || c > chr 126
-        then (("u" ++ leftPad '0' 4 (asHex (cast c))) ++)
-        else strCons c
-
-showcCleanString : List Char -> String -> String
-showcCleanString [] = id
-showcCleanString (c ::cs) = (showcCleanStringChar c) . showcCleanString cs
-
 cCleanString : String -> String
 cCleanString cs = showcCleanString (unpack cs) ""
-
-cUserName : UserName -> String
-cUserName (Basic n) = cCleanString n
-cUserName (Field n) = "rec__" ++ cCleanString n
-cUserName Underscore = cCleanString "_"
+  where
+    showcCleanString : List Char -> String -> String
+    showcCleanString [] = id
+    showcCleanString (c ::cs) = (showcCleanStringChar c) . showcCleanString cs
+      where
+        showcCleanStringChar : Char -> String -> String
+        showcCleanStringChar ' ' = ("_" ++)
+        showcCleanStringChar '!' = ("_bang" ++)
+        showcCleanStringChar '"' = ("_quotation" ++)
+        showcCleanStringChar '#' = ("_number" ++)
+        showcCleanStringChar '$' = ("_dollar" ++)
+        showcCleanStringChar '%' = ("_percent" ++)
+        showcCleanStringChar '&' = ("_and" ++)
+        showcCleanStringChar '\'' = ("_tick" ++)
+        showcCleanStringChar '(' = ("_parenOpen" ++)
+        showcCleanStringChar ')' = ("_parenClose" ++)
+        showcCleanStringChar '*' = ("_star" ++)
+        showcCleanStringChar '+' = ("_plus" ++)
+        showcCleanStringChar ',' = ("_comma" ++)
+        showcCleanStringChar '-' = ("__" ++)
+        showcCleanStringChar '.' = ("_dot" ++)
+        showcCleanStringChar '/' = ("_slash" ++)
+        showcCleanStringChar ':' = ("_colon" ++)
+        showcCleanStringChar ';' = ("_semicolon" ++)
+        showcCleanStringChar '<' = ("_lt" ++)
+        showcCleanStringChar '=' = ("_eq" ++)
+        showcCleanStringChar '>' = ("_gt" ++)
+        showcCleanStringChar '?' = ("_question" ++)
+        showcCleanStringChar '@' = ("_at" ++)
+        showcCleanStringChar '[' = ("_bracketOpen" ++)
+        showcCleanStringChar '\\' = ("_backslash" ++)
+        showcCleanStringChar ']' = ("_bracketClose" ++)
+        showcCleanStringChar '^' = ("_hat" ++)
+        showcCleanStringChar '_' = ("_" ++)
+        showcCleanStringChar '`' = ("_backquote" ++)
+        showcCleanStringChar '{' = ("_braceOpen" ++)
+        showcCleanStringChar '|' = ("_or" ++)
+        showcCleanStringChar '}' = ("_braceClose" ++)
+        showcCleanStringChar '~' = ("_tilde" ++)
+        showcCleanStringChar c
+           = if c < chr 32 || c > chr 126
+                then (("u" ++ leftPad '0' 4 (asHex (cast c))) ++)
+                else strCons c
 
 ||| Idris `Name` -> C identifier mangling. `export`ed for
 ||| `Compiler.RC2.DualABI`'s own reuse (Stage 4's own worker naming
@@ -139,6 +134,11 @@ export
 cName : Name -> String
 cName (NS ns n) = cCleanString (showNSWithSep "_" ns) ++ "_" ++ cName n
 cName (UN n) = cUserName n
+  where
+    cUserName : UserName -> String
+    cUserName (Basic n) = cCleanString n
+    cUserName (Field n) = "rec__" ++ cCleanString n
+    cUserName Underscore = cCleanString "_"
 cName (MN n i) = cCleanString n ++ "_" ++ cCleanString (show i)
 cName (PV n d) = "pat__" ++ cName n
 cName (DN _ n) = cName n
@@ -2050,59 +2050,6 @@ addCommaToList : List String -> List String
 addCommaToList [] = []
 addCommaToList (x :: xs) = ("  " ++ x) :: map (", " ++) xs
 
-getArgsNrList : List ty -> Nat -> List Nat
-getArgsNrList [] _ = []
-getArgsNrList (x :: xs) k = k :: getArgsNrList xs (S k)
-
-cTypeOfCFType : CFType -> String
-cTypeOfCFType CFUnit          = "void"
-cTypeOfCFType CFInt           = "int64_t"
-cTypeOfCFType CFInt8          = "int8_t"
-cTypeOfCFType CFInt16         = "int16_t"
-cTypeOfCFType CFInt32         = "int32_t"
-cTypeOfCFType CFInt64         = "int64_t"
-cTypeOfCFType CFUnsigned8     = "uint8_t"
-cTypeOfCFType CFUnsigned16    = "uint16_t"
-cTypeOfCFType CFUnsigned32    = "uint32_t"
-cTypeOfCFType CFUnsigned64    = "uint64_t"
-cTypeOfCFType CFString        = "char *"
-cTypeOfCFType CFDouble        = "double"
-cTypeOfCFType CFChar          = "char"
-cTypeOfCFType CFPtr           = "void *"
-cTypeOfCFType CFGCPtr         = "void *"
-cTypeOfCFType CFBuffer        = "void *"
-cTypeOfCFType CFWorld         = "void *"
-cTypeOfCFType (CFFun x y)     = "void *"
-cTypeOfCFType (CFIORes x)     = "void *"
-cTypeOfCFType (CFStruct x ys) = "void *"
-cTypeOfCFType (CFUser x ys)   = "void *"
-cTypeOfCFType n = assert_total $ idris_crash ("INTERNAL ERROR: Unknown FFI type in rc2 backend: " ++ show n)
-
-varNamesFromList : List ty -> Nat -> List String
-varNamesFromList str k = map (("var_" ++) . show) (getArgsNrList str k)
-
-createFFIArgList : List CFType
-                -> Core $ List (String, String, CFType)
-createFFIArgList cftypeList = do
-    let sList = map cTypeOfCFType cftypeList
-    let varList = varNamesFromList cftypeList 1
-    pure $ zip3 sList varList cftypeList
-
-emitFDef : {auto oft : Ref OutfileText Output}
-        -> {auto il : Ref IndentLevel Nat}
-        -> (funcName:Name)
-        -> (arglist:List (String, String, CFType))
-        -> Core ()
-emitFDef funcName [] = emit EmptyFC $ "IDRIS2RC2_Value *" ++ cName funcName ++ "(void)"
-emitFDef funcName ((varType, varName, varCFType) :: xs) = do
-    emit EmptyFC $ "IDRIS2RC2_Value *" ++ cName funcName
-    emit EmptyFC "("
-    increaseIndentation
-    emit EmptyFC $ "  IDRIS2RC2_Value *" ++ varName
-    traverse_ (\(varType, varName, varCFType) => emit EmptyFC $ ", IDRIS2RC2_Value *" ++ varName) xs
-    decreaseIndentation
-    emit EmptyFC ")"
-
 -- RefC-tagged foreign calls go to our own runtime (buffer.c's own
 -- functions, which expect the whole IDRIS2RC2_Buffer.buf allocation
 -- including its `int size` header -- they read/write it themselves), so
@@ -2112,66 +2059,6 @@ emitFDef funcName ((varType, varName, varCFType) :: xs) = do
 -- expect a flat pointer straight to the data, so CFBuffer must skip past
 -- it too. Mirrors RefC.idr's `CLang`/`CLangC`/`CLangRefC` split.
 data CLang = CLangC | CLangRefC
-
-extractValue : (cLang : CLang) -> (cfType:CFType) -> (varName:String) -> String
-extractValue _ CFUnit           varName = "NULL"
-extractValue _ CFInt            varName = "(idris2rc2_to_i64(" ++ varName ++ "))"
-extractValue _ CFInt8           varName = "(idris2rc2_to_i8(" ++ varName ++ "))"
-extractValue _ CFInt16          varName = "(idris2rc2_to_i16(" ++ varName ++ "))"
-extractValue _ CFInt32          varName = "(idris2rc2_to_i32(" ++ varName ++ "))"
-extractValue _ CFInt64          varName = "(idris2rc2_to_i64(" ++ varName ++ "))"
-extractValue _ CFUnsigned8      varName = "(idris2rc2_to_u8(" ++ varName ++ "))"
-extractValue _ CFUnsigned16     varName = "(idris2rc2_to_u16(" ++ varName ++ "))"
-extractValue _ CFUnsigned32     varName = "(idris2rc2_to_u32(" ++ varName ++ "))"
-extractValue _ CFUnsigned64     varName = "(idris2rc2_to_u64(" ++ varName ++ "))"
-extractValue _ CFString         varName = "((IDRIS2RC2_String*)" ++ varName ++ ")->str"
-extractValue _ CFDouble         varName = "(idris2rc2_to_double(" ++ varName ++ "))"
-extractValue _ CFChar           varName = "((char)idris2rc2_to_char(" ++ varName ++ "))"
-extractValue _ CFPtr            varName = "((IDRIS2RC2_Pointer*)" ++ varName ++ ")->p"
-extractValue _ CFGCPtr          varName = "((IDRIS2RC2_GCPointer*)" ++ varName ++ ")->p->p"
-extractValue CLangRefC CFBuffer varName = "((IDRIS2RC2_Buffer*)" ++ varName ++ ")->buf"
-extractValue CLangC    CFBuffer varName = "((IDRIS2RC2_RawBuffer*)((IDRIS2RC2_Buffer*)" ++ varName ++ ")->buf)->data"
-extractValue _ CFWorld          _       = "(IDRIS2RC2_Value *)NULL"
-extractValue _ (CFFun x y)      varName = "(IDRIS2RC2_Closure*)" ++ varName
-extractValue c (CFIORes x)      varName = extractValue c x varName
-extractValue _ (CFStruct x xs)  varName = assert_total $ idris_crash ("INTERNAL ERROR: Struct access not implemented: " ++ varName)
-extractValue _ (CFUser x xs)    varName = "(IDRIS2RC2_Value*)" ++ varName
-extractValue _ n _ = assert_total $ idris_crash ("INTERNAL ERROR: Unknown FFI type in rc2 backend: " ++ show n)
-
-packCFType : (cfType:CFType) -> (varName:String) -> String
-packCFType CFUnit          varName = "((IDRIS2RC2_Value *)NULL)"
-packCFType CFInt           varName = "idris2rc2_mkInt64(" ++ varName ++ ")"
-packCFType CFInt8          varName = "idris2rc2_mkInt8(" ++ varName ++ ")"
-packCFType CFInt16         varName = "idris2rc2_mkInt16(" ++ varName ++ ")"
-packCFType CFInt32         varName = "idris2rc2_mkInt32(" ++ varName ++ ")"
-packCFType CFInt64         varName = "idris2rc2_mkInt64(" ++ varName ++ ")"
-packCFType CFUnsigned64    varName = "idris2rc2_mkBits64(" ++ varName ++ ")"
-packCFType CFUnsigned32    varName = "idris2rc2_mkBits32(" ++ varName ++ ")"
-packCFType CFUnsigned16    varName = "idris2rc2_mkBits16(" ++ varName ++ ")"
-packCFType CFUnsigned8     varName = "idris2rc2_mkBits8(" ++ varName ++ ")"
-packCFType CFString        varName = "idris2rc2_mkString(" ++ varName ++ ")"
-packCFType CFDouble        varName = "idris2rc2_mkDouble(" ++ varName ++ ")"
-packCFType CFChar          varName = "idris2rc2_mkChar((unsigned char)" ++ varName ++ ")"
-packCFType CFPtr           varName = "idris2rc2_mkPointer(" ++ varName ++ ")"
-packCFType CFGCPtr         varName = "idris2rc2_mkPointer(" ++ varName ++ ")"
-packCFType CFBuffer        varName = "idris2rc2_mkBuffer(" ++ varName ++ ")"
-packCFType CFWorld         _       = "(IDRIS2RC2_Value *)NULL"
-packCFType (CFFun x y)     varName = "makeFunction(" ++ varName ++ ")"
-packCFType (CFIORes x)     varName = packCFType x varName
-packCFType (CFStruct x xs) varName = "makeStruct(" ++ varName ++ ")"
-packCFType (CFUser x xs)   varName = varName
-packCFType n _ = assert_total $ idris_crash ("INTERNAL ERROR: Unknown FFI type in rc2 backend: " ++ show n)
-
-discardLastArgument : List ty -> List ty
-discardLastArgument [] = []
-discardLastArgument xs@(_ :: _) = init xs
-
-additionalFFIStub : Name -> List CFType -> CFType -> String
-additionalFFIStub name argTypes (CFIORes retType) = additionalFFIStub name (discardLastArgument argTypes) retType
-additionalFFIStub name argTypes retType =
-    cTypeOfCFType retType ++
-    " (*" ++ cName name ++ ")(" ++
-    (concat $ intersperse ", " $ map cTypeOfCFType argTypes) ++ ") = (void*)idris2rc2_missingForeign;\n"
 
 -- Accepted FFI tags, in priority order. "RefC" is accepted (and treated as
 -- directly callable, not stubbed) because prelude/base/contrib bake a
@@ -2329,6 +2216,117 @@ createCFunctions n (MkRCForeign ccs fargs ret) = do
           decreaseIndentation
           emit EmptyFC "}"
       _ => throw $ InternalError "[rc2] FFI not found for \{cName n}"
+  where
+    getArgsNrList : List ty -> Nat -> List Nat
+    getArgsNrList [] _ = []
+    getArgsNrList (x :: xs) k = k :: getArgsNrList xs (S k)
+
+    cTypeOfCFType : CFType -> String
+    cTypeOfCFType CFUnit          = "void"
+    cTypeOfCFType CFInt           = "int64_t"
+    cTypeOfCFType CFInt8          = "int8_t"
+    cTypeOfCFType CFInt16         = "int16_t"
+    cTypeOfCFType CFInt32         = "int32_t"
+    cTypeOfCFType CFInt64         = "int64_t"
+    cTypeOfCFType CFUnsigned8     = "uint8_t"
+    cTypeOfCFType CFUnsigned16    = "uint16_t"
+    cTypeOfCFType CFUnsigned32    = "uint32_t"
+    cTypeOfCFType CFUnsigned64    = "uint64_t"
+    cTypeOfCFType CFString        = "char *"
+    cTypeOfCFType CFDouble        = "double"
+    cTypeOfCFType CFChar          = "char"
+    cTypeOfCFType CFPtr           = "void *"
+    cTypeOfCFType CFGCPtr         = "void *"
+    cTypeOfCFType CFBuffer        = "void *"
+    cTypeOfCFType CFWorld         = "void *"
+    cTypeOfCFType (CFFun x y)     = "void *"
+    cTypeOfCFType (CFIORes x)     = "void *"
+    cTypeOfCFType (CFStruct x ys) = "void *"
+    cTypeOfCFType (CFUser x ys)   = "void *"
+    cTypeOfCFType n = assert_total $ idris_crash ("INTERNAL ERROR: Unknown FFI type in rc2 backend: " ++ show n)
+
+    varNamesFromList : List ty -> Nat -> List String
+    varNamesFromList str k = map (("var_" ++) . show) (getArgsNrList str k)
+
+    createFFIArgList : List CFType
+                    -> Core $ List (String, String, CFType)
+    createFFIArgList cftypeList = do
+        let sList = map cTypeOfCFType cftypeList
+        let varList = varNamesFromList cftypeList 1
+        pure $ zip3 sList varList cftypeList
+
+    emitFDef : (funcName:Name)
+            -> (arglist:List (String, String, CFType))
+            -> Core ()
+    emitFDef funcName [] = emit EmptyFC $ "IDRIS2RC2_Value *" ++ cName funcName ++ "(void)"
+    emitFDef funcName ((varType, varName, varCFType) :: xs) = do
+        emit EmptyFC $ "IDRIS2RC2_Value *" ++ cName funcName
+        emit EmptyFC "("
+        increaseIndentation
+        emit EmptyFC $ "  IDRIS2RC2_Value *" ++ varName
+        traverse_ (\(varType, varName, varCFType) => emit EmptyFC $ ", IDRIS2RC2_Value *" ++ varName) xs
+        decreaseIndentation
+        emit EmptyFC ")"
+
+    extractValue : (cLang : CLang) -> (cfType:CFType) -> (varName:String) -> String
+    extractValue _ CFUnit           varName = "NULL"
+    extractValue _ CFInt            varName = "(idris2rc2_to_i64(" ++ varName ++ "))"
+    extractValue _ CFInt8           varName = "(idris2rc2_to_i8(" ++ varName ++ "))"
+    extractValue _ CFInt16          varName = "(idris2rc2_to_i16(" ++ varName ++ "))"
+    extractValue _ CFInt32          varName = "(idris2rc2_to_i32(" ++ varName ++ "))"
+    extractValue _ CFInt64          varName = "(idris2rc2_to_i64(" ++ varName ++ "))"
+    extractValue _ CFUnsigned8      varName = "(idris2rc2_to_u8(" ++ varName ++ "))"
+    extractValue _ CFUnsigned16     varName = "(idris2rc2_to_u16(" ++ varName ++ "))"
+    extractValue _ CFUnsigned32     varName = "(idris2rc2_to_u32(" ++ varName ++ "))"
+    extractValue _ CFUnsigned64     varName = "(idris2rc2_to_u64(" ++ varName ++ "))"
+    extractValue _ CFString         varName = "((IDRIS2RC2_String*)" ++ varName ++ ")->str"
+    extractValue _ CFDouble         varName = "(idris2rc2_to_double(" ++ varName ++ "))"
+    extractValue _ CFChar           varName = "((char)idris2rc2_to_char(" ++ varName ++ "))"
+    extractValue _ CFPtr            varName = "((IDRIS2RC2_Pointer*)" ++ varName ++ ")->p"
+    extractValue _ CFGCPtr          varName = "((IDRIS2RC2_GCPointer*)" ++ varName ++ ")->p->p"
+    extractValue CLangRefC CFBuffer varName = "((IDRIS2RC2_Buffer*)" ++ varName ++ ")->buf"
+    extractValue CLangC    CFBuffer varName = "((IDRIS2RC2_RawBuffer*)((IDRIS2RC2_Buffer*)" ++ varName ++ ")->buf)->data"
+    extractValue _ CFWorld          _       = "(IDRIS2RC2_Value *)NULL"
+    extractValue _ (CFFun x y)      varName = "(IDRIS2RC2_Closure*)" ++ varName
+    extractValue c (CFIORes x)      varName = extractValue c x varName
+    extractValue _ (CFStruct x xs)  varName = assert_total $ idris_crash ("INTERNAL ERROR: Struct access not implemented: " ++ varName)
+    extractValue _ (CFUser x xs)    varName = "(IDRIS2RC2_Value*)" ++ varName
+    extractValue _ n _ = assert_total $ idris_crash ("INTERNAL ERROR: Unknown FFI type in rc2 backend: " ++ show n)
+
+    packCFType : (cfType:CFType) -> (varName:String) -> String
+    packCFType CFUnit          varName = "((IDRIS2RC2_Value *)NULL)"
+    packCFType CFInt           varName = "idris2rc2_mkInt64(" ++ varName ++ ")"
+    packCFType CFInt8          varName = "idris2rc2_mkInt8(" ++ varName ++ ")"
+    packCFType CFInt16         varName = "idris2rc2_mkInt16(" ++ varName ++ ")"
+    packCFType CFInt32         varName = "idris2rc2_mkInt32(" ++ varName ++ ")"
+    packCFType CFInt64         varName = "idris2rc2_mkInt64(" ++ varName ++ ")"
+    packCFType CFUnsigned64    varName = "idris2rc2_mkBits64(" ++ varName ++ ")"
+    packCFType CFUnsigned32    varName = "idris2rc2_mkBits32(" ++ varName ++ ")"
+    packCFType CFUnsigned16    varName = "idris2rc2_mkBits16(" ++ varName ++ ")"
+    packCFType CFUnsigned8     varName = "idris2rc2_mkBits8(" ++ varName ++ ")"
+    packCFType CFString        varName = "idris2rc2_mkString(" ++ varName ++ ")"
+    packCFType CFDouble        varName = "idris2rc2_mkDouble(" ++ varName ++ ")"
+    packCFType CFChar          varName = "idris2rc2_mkChar((unsigned char)" ++ varName ++ ")"
+    packCFType CFPtr           varName = "idris2rc2_mkPointer(" ++ varName ++ ")"
+    packCFType CFGCPtr         varName = "idris2rc2_mkPointer(" ++ varName ++ ")"
+    packCFType CFBuffer        varName = "idris2rc2_mkBuffer(" ++ varName ++ ")"
+    packCFType CFWorld         _       = "(IDRIS2RC2_Value *)NULL"
+    packCFType (CFFun x y)     varName = "makeFunction(" ++ varName ++ ")"
+    packCFType (CFIORes x)     varName = packCFType x varName
+    packCFType (CFStruct x xs) varName = "makeStruct(" ++ varName ++ ")"
+    packCFType (CFUser x xs)   varName = varName
+    packCFType n _ = assert_total $ idris_crash ("INTERNAL ERROR: Unknown FFI type in rc2 backend: " ++ show n)
+
+    discardLastArgument : List ty -> List ty
+    discardLastArgument [] = []
+    discardLastArgument xs@(_ :: _) = init xs
+
+    additionalFFIStub : Name -> List CFType -> CFType -> String
+    additionalFFIStub name argTypes (CFIORes retType) = additionalFFIStub name (discardLastArgument argTypes) retType
+    additionalFFIStub name argTypes retType =
+        cTypeOfCFType retType ++
+        " (*" ++ cName name ++ ")(" ++
+        (concat $ intersperse ", " $ map cTypeOfCFType argTypes) ++ ") = (void*)idris2rc2_missingForeign;\n"
 
 createCFunctions n (MkRCError exp) = throw $ InternalError "[rc2] Error with expression"
 

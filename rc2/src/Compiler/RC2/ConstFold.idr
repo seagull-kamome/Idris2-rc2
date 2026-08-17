@@ -81,12 +81,6 @@ findConstAlt c (MkRConstAlt c' body :: rest) def =
 
 mutual
   foldConst : Env -> RCExp -> RCExp
-  foldConst _   (RV fc v) = RV fc v
-  foldConst _   (RAppName fc lazy n args) = RAppName fc lazy n args
-  foldConst _   (RAppNameRep fc n argReps retRep postDrop args) =
-      RAppNameRep fc n argReps retRep postDrop args
-  foldConst _   (RUnderApp fc n missing args) = RUnderApp fc n missing args
-  foldConst _   (RApp fc lazy c a) = RApp fc lazy c a
   foldConst env (RLet fc var rep value body) =
       let value' = foldConst env value
       in case value' of
@@ -96,14 +90,12 @@ mutual
                         then RLet fc var rep value' body'
                         else body'
               _ => RLet fc var rep value' (foldConst env body)
-  foldConst _   (RCon fc n ci tag args reuseFrom) = RCon fc n ci tag args reuseFrom
   foldConst env (ROp fc lazy op args postDrop) =
       case resolveConsts env args of
            Just cs => case constFoldOp op cs of
                            Just c  => RPrimVal fc c
                            Nothing => ROp fc lazy op args postDrop
            Nothing => ROp fc lazy op args postDrop
-  foldConst _   (RExtPrim fc lazy p args) = RExtPrim fc lazy p args
   foldConst env (RCmpCase fc op args postDrop t f) =
       let t' = foldConst env t
           f' = foldConst env f
@@ -121,9 +113,6 @@ mutual
       in case resolveConst env sc of
               Just c  => fromMaybe (RConstCase fc sc alts' mDef') (findConstAlt c alts' mDef')
               Nothing => RConstCase fc sc alts' mDef'
-  foldConst _   (RPrimVal fc c) = RPrimVal fc c
-  foldConst _   (RErased fc) = RErased fc
-  foldConst _   (RCrash fc msg) = RCrash fc msg
   foldConst env (RDup fc v body) = RDup fc v (foldConst env body)
   foldConst env (RDrop fc vars body) = RDrop fc vars (foldConst env body)
   foldConst env (RFree fc v body) = RFree fc v (foldConst env body)
@@ -139,7 +128,7 @@ mutual
   -- these same two cases.
   foldConst env (RLoop fc loopParams initial prologueDrop body) =
       RLoop fc loopParams initial prologueDrop (foldConst env body)
-  foldConst _   (RLoopContinue fc args postDrop) = RLoopContinue fc args postDrop
+  foldConst _ e = e
 
   foldConstAlt : Env -> RConAlt -> RConAlt
   foldConstAlt env (MkRConAlt name ci tag args body) =
