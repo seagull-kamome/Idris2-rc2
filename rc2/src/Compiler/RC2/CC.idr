@@ -1,10 +1,7 @@
 module Compiler.RC2.CC
 
--- Invokes the system C compiler to turn generated C into an executable,
--- linking against our own runtime (libidris2rc2.a, found via the "rc2"
--- data directory) and the cross-backend libidris2_support.a that every
--- Idris2 codegen relies on for basic OS/IO primitives (see
--- support/c/idris_support.c upstream).
+-- Invokes the system C compiler to build an executable from generated C code,
+-- linking against the `rc2` runtime and upstream Idris2 support library.
 
 import Core.Context.Log
 import Core.Options

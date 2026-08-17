@@ -1,18 +1,7 @@
-||| A whole-program, `Lifted`-to-`Lifted` inlining pass, run before
-||| `Compiler.RC2.RC`'s own Phase 1 (`normalize`).
-|||
-||| Motivation: `Compiler.RC2.RC`'s `tryFuseCompare` only fuses a *direct*
-||| primitive comparison immediately consumed by a two-way Bool match into
-||| a single native `RCmpCase` -- when the comparison is reached through an
-||| interface method call instead (e.g. `n <= 0` via `Ord Int`'s `<=`, a
-||| genuine, statically-resolved top-level function), this never fires: the
-||| comparison sits inside `<=`'s own separate definition, invisible to the
-||| caller's own fusion analysis. Splicing a small, call-free callee's own
-||| body directly into its call site (this module), followed by a
-||| case-of-case collapse (`collapseCaseOfCase`, needed because naive
-||| substitution alone produces a "case of case" shape `tryFuseCompare`
-||| doesn't recognise on its own), closes this gap without `RC.idr` itself
-||| needing any changes.
+||| Whole-program `Lifted`-to-`Lifted` inlining pass.
+||| Motivation: Exposes comparison primitives in callee definitions
+||| to `RC.idr`'s fusion analysis (`tryFuseCompare`) by inlining
+||| small, call-free functions into callers.
 |||
 ||| Two independent eligibility criteria decide what may be inlined:
 |||

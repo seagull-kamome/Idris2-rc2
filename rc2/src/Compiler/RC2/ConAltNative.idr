@@ -1,23 +1,9 @@
 module Compiler.RC2.ConAltNative
 
--- Caches a repeatedly-native-read constructor-destructured field into
--- a fresh native shadow -- Compiler.RC2.Loop's own native-shadow-loop-
--- param mechanism (mint a fresh id, redirect every reference to it via
--- renameRCExp, then strip the shadow's own now-stale ownership
--- bookkeeping via stripOwnership), reused directly, just scoped to a
--- single case-alternative's own body instead of a whole function/loop,
--- and applied to every RConAlt found anywhere in a definition's body,
--- not only a function's own top-level parameters. See TODO.md's own
--- "Native representation for constructor-destructured fields" entry
--- for the full design discussion, including a first, reverted attempt
--- that tried to exclude a native-promoted field from ownership
--- tracking directly and leaked (a destructured field's own Boxed
--- origin -- sc->args[k] is always Boxed, native or not -- still needs
--- exactly one drop somewhere, unlike an RLet-bound native value, which
--- genuinely has none).
---
--- A destructured field's own Boxed declaration (Compiler.RC2.Emit's
--- `emitConAltBody`, unaffected by this pass) and ownership/reuse
+-- Optimizes constructor-destructured fields by caching them into
+-- native shadows. This improves performance by avoiding repeated
+-- box unwrapping, while maintaining correct ownership tracking for
+-- the original boxed fields.
 -- participation (Compiler.RC2.RC's `annotate`, Compiler.RC2.Reuse's
 -- `resolveAlt`) stay completely untouched by this pass -- it runs
 -- strictly after both (see RC2.idr's own toRCDefs) and only ever

@@ -1,48 +1,8 @@
 module Compiler.RC2.DualABI
 
--- Dual calling convention. Decides, for each top-level function, which
--- of its own parameters and whether its own return value could be
--- given a native (unboxed) representation *at the function's own
--- external C signature* -- Compiler.RC2.Loop's own native-shadow
--- promotion (see doc/loop-conversion.md) already does the analogous
--- thing for a *loop's own* carried parameters; this is the same idea
--- widened to an ordinary function's own calling convention, the
--- biggest remaining item in TODO.md's "Performance" section.
---
--- Staged (branch `dual-abi`): Stage 2 (below, `paramEligibility`/
--- `returnEligibility`) is read-only analysis. Stage 3a+3b
--- (`applyDualABI`) synthesise a *worker* variant for every eligible
--- function -- its own top-level parameters promoted to `RNative` at
--- the eligible positions, its own return promoted to `RNative` when
--- `returnEligibility` found one, its own body's stale ownership
--- bookkeeping for those parameters stripped (`Compiler.RC2.Loop`'s own
--- `stripOwnership`, reused directly -- no id renaming needed at all
--- here, unlike that module's own use of it, since the worker is a
--- brand-new C function with no id collision to dodge) -- and rewrites
--- the original function into a thin wrapper (unchanged Boxed
--- signature, body is a single `RAppNameRep` call into the worker,
--- boxing the worker's own result back up if the worker's own return
--- ended up native). Stage 3a landed parameters only, with every
--- worker's own `retRep` still forced `RBoxed` regardless of what
--- `returnEligibility` found -- native returns needed
--- `Compiler.RC2.Emit`'s own `SinkReturn`/tail-position rendering to
--- become Rep-aware first, a materially riskier change to some of that
--- module's highest-traffic code, so it was deliberately split out and
--- landed as its own, separately-verified Stage 3b (see the branch's
--- own plan discussion, and `doc/dual-abi.md`'s own Stage 3b section,
--- for the reasoning). Stage 4 (below, `applyCallSiteRewrite`) is where
--- the actual performance win materialises: walks every definition's
--- own body (not just tail positions -- `RAppName` can appear anywhere,
--- e.g. as an `ROp` operand) and rewrites every direct, saturated,
--- *non-tail-position* call targeting a function with a worker into
--- `RAppNameRep`, promoting the enclosing `RLet`'s own `Rep` to match
--- the worker's own native `retRep` whenever the rest of that `RLet`'s
--- own scope reads it natively too (reusing `Compiler.RC2.Loop`'s own
--- `nativeArgType`/`stripOwnership` a third time -- see
--- `applyCallSiteRewrite`'s own doc comment) -- this is what turns
--- `fib(n-1) + fib(n-2)` into fully-native arithmetic with no
--- intermediate heap allocation at all, not just native argument
--- passing into an otherwise-still-boxed call.
+-- Dual calling convention: optimizes function signatures by promoting
+-- parameters and return types to native (unboxed) representations
+-- where statically eligible.
 --
 -- Tail-position calls are a *deliberate, permanent* scope boundary,
 -- not a later stage: they're currently rendered via

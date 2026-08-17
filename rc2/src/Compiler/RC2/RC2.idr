@@ -1,27 +1,13 @@
 module Compiler.RC2.RC2
 
--- Orchestration: getCompileData (stopping at the Lifted phase -- rc2 does
--- not use Compiler.ANF at all) -> Compiler.RC2.RC (Lifted -> RCExp) ->
--- Compiler.RC2.Reuse (constructor-reuse-in-place, on the fully
--- Phase-1+2'd tree) -> Compiler.RC2.ConAltNative (caches a repeatedly-
--- native-read constructor-destructured field into a fresh native
--- shadow, reusing Compiler.RC2.Loop's own native-shadow mechanism --
--- runs right after Reuse so its own dupOnShared/RReuseOffer decisions
--- around the field are already finalised and left undisturbed, see
--- TODO.md's own "Native representation for constructor-destructured
--- fields" entry) -> Compiler.RC2.MutualLoop (mutual tail recursion
--- loop conversion, whole-program) -> Compiler.RC2.Loop (self-tail-call
--- loop conversion -- including MutualLoop's own synthesised merged
--- functions, whose internal transitions are already ordinary self-
--- tail-calls by construction) -> Compiler.RC2.DualABI's own worker/
--- wrapper synthesis (native-parameter/return worker synthesis, whole-
--- program -- runs after Loop specifically so it can read a self-tail-
--- recursive function's own native-shadow decision straight off its
--- RLoop, see DualABI's own module note) -> Compiler.RC2.DualABI's own
--- Stage 4 call-site rewriting (redirects non-tail calls to a worker
--- straight at it -- needs the worker table Stage 3a/3b's own synthesis
--- just built, hence running strictly after it) -> Compiler.RC2.Emit
--- (RCExp -> C) -> Compiler.RC2.CC (cc invocation).
+-- Pipeline orchestration: 
+-- 1. Lifted -> RCExp (`Compiler.RC2.RC`)
+-- 2. Constructor reuse (`Compiler.RC2.Reuse`)
+-- 3. Native shadow caching (`Compiler.RC2.ConAltNative`)
+-- 4. Loop/Tail call conversion (`Compiler.RC2.MutualLoop`, `Compiler.RC2.Loop`)
+-- 5. Dual ABI synthesis (`Compiler.RC2.DualABI`)
+-- 6. C generation (`Compiler.RC2.Emit`)
+-- 7. C compiler invocation (`Compiler.RC2.CC`)
 
 import Compiler.RC2.CC
 import Compiler.RC2.ConAltNative

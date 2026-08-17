@@ -1,18 +1,7 @@
 module Compiler.RC2.ConstExtPrim
 
--- A single, narrowly-scoped constant fold: `System.Info.prim__codegen`
--- (an `%extern` ExtPrim, see idris2-src/libs/base/System/Info.idr) is
--- guaranteed by rc2's own runtime (rc2/support/rc2/ioprims.c's
--- `idris2rc2_codegenString`, see that definition's own comment) to
--- always evaluate to the fixed string "rc2", regardless of its
--- (nonexistent) arguments. Folding the call away at compile time avoids
--- an unconditional runtime call/box round-trip for a value that's
--- already known.
---
--- Runs as a whole-tree rewrite from Compiler.RC2.RC's `toRCDef`,
--- strictly between Phase 1 (`normalizeDef`) and Phase 2
--- (`annotateDef`) -- not as a separate stage in RC2.idr's `toRCDefs`
--- pipeline, the way Reuse/ConAltNative/etc. are. This placement makes
+-- Folds constant `ExtPrim` calls like `prim__codegen` to their known
+-- fixed values at compile time to avoid unnecessary runtime overhead.
 -- the `RPrimVal` this pass introduces just another literal by the time
 -- Phase 2 ever sees it, annotated exactly like any other constant
 -- (no refcount bookkeeping) rather than needing its own special case.

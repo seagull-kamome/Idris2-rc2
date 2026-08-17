@@ -1,72 +1,9 @@
 module Compiler.RC2.Loop
 
--- Self-tail-call loop conversion: a dedicated pass, mirroring
--- Compiler.RC2.Reuse's own place in the pipeline (runs on the fully
--- Phase-1+2'd, Reuse'd tree, right before Compiler.RC2.Emit -- see
--- RC2.idr's toRCDefs). Where Reuse looks for constructor-reuse
--- opportunities, this pass looks for a function's own self-recursive
--- tail calls and, if it finds any, wraps the whole body in one explicit
--- `RLoop` (see its own doc comment in RCExp.idr), rewriting each
--- self-call found from a generic (closure-build + boxed-trampoline)
--- `RAppName` into an `RLoopContinue`. Compiler.RC2.Emit lowers `RLoop`
--- to a `TYPE var_N` declaration per loop param (its own `Rep`,
--- independent of the function's own always-Boxed calling convention)
--- plus a `loop:;` label, and `RLoopContinue` to reassigning those loop
--- params and a plain C `goto` back to the top -- no closure allocation,
--- no trampoline dispatch, per iteration.
---
--- Besides that wrapping, this pass also decides which loop params (if
--- any) are worth promoting from `RBoxed` to a native shadow: for each
--- of the function's own top-level parameters, if the (rewritten) body
--- reads it as a native-context operand (an `RLet`-bound `RNative`/
--- `RInlineNative` `ROp`, or a fused `RCmpCase` -- the only two places
--- Compiler.RC2.Emit ever reads an operand via `rcVarToNativeC` rather
--- than `rcVarToBoxedC`, see `nativeArgTypes`) consistently at one
--- `PrimType`, a fresh loop param id is minted for it, `RNative` at that
--- type, initialised from the original (still-Boxed) parameter's value;
--- every other reference to the original parameter throughout the body
--- is redirected to the fresh shadow (`renameRCExp`), and whatever
--- Compiler.RC2.RC's `annotate` (Phase 2) had decided about the
--- *original* parameter's own dup/drop lifetime -- back when it was
--- still read from multiple Boxed-context sites -- is stripped out
--- (`stripOwnership`): a native value never needs any of that, and the
--- original parameter's own single remaining read (the shadow's own
--- initialisation, lowered by Compiler.RC2.Emit's `declareLoopParam`) is
--- its last use anywhere, dropped there instead. A parameter never read
--- natively, or read natively at more than one (conflicting) type, stays
--- `RBoxed`, reusing its own id unchanged (Compiler.RC2.Emit's
--- `declareLoopParam` then skips declaring it at all -- it's already in
--- scope, under its own exact value, as a C function parameter).
---
--- Scope: self-tail-calls only. Mutual recursion between two or more
--- functions is Compiler.RC2.MutualLoop's job -- a separate, whole-
--- program pass that runs *before* this one (see RC2.idr's toRCDefs):
--- it synthesises, for each group of mutually tail-recursive functions,
--- a single merged function whose own internal transitions (both
--- self- and cross-member) are already expressed as ordinary tail-
--- position `RAppName`s targeting *itself* -- so by the time this
--- module ever sees that merged function, converting it is just the
--- ordinary self-tail-call case below, no special-casing needed here.
--- A call wrapped in a `LazyReason` is left alone -- conservatively out
--- of scope, not investigated.
---
--- Ownership, for the wrapping step itself, is completely unaffected:
--- Compiler.RC2.RC's `annotate` (Phase 2) already decided the right
--- dup/move behaviour for the `RAppName`'s own arguments before this
--- pass ever runs, exactly as it would for a call to any other function
--- -- converting the call's *shape* doesn't change what should happen to
--- its operands. Any RDup/RDrop/RFree/RReleaseReuse wrapping the
--- `RAppName` is left in place untouched; only the terminal `RAppName`
--- node itself is ever replaced. The native-shadow promotion step is the
--- one place this pass *does* need to actively rewrite ownership
--- bookkeeping -- see `stripOwnership`'s own doc comment for why that's
--- both necessary and safe.
---
--- `collectBoundIds`/`Renaming`/`renameRCExp` below are also shared with
--- Compiler.RC2.MutualLoop's own per-member renaming (it already imports
--- this module for `mapTailAppNames`), so there is exactly one
--- definition of "walk every bound id"/"substitute every RCLocal
--- occurrence", not two kept in sync by hand.
+-- Self-tail-call loop conversion: wraps self-recursive calls in `RLoop`/`RLoopContinue`
+-- to avoid trampoline dispatch, and promotes boxed parameters to native shadows
+-- where usage is consistently native.
+-- Scope: Self-tail-calls only (mutual recursion handled by MutualLoop).
 
 import Compiler.RC2.RCExp
 import Compiler.RC2.Types

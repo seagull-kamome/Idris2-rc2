@@ -1,33 +1,8 @@
 module Compiler.RC2.RC
 
--- Lifted (Compiler.LambdaLift) -> RCExp, in two internal phases that
--- together replace what would otherwise be "convert to ANF" followed by
--- "analyse ownership over ANF": rc2 does not use Compiler.ANF at all.
---
--- Phase 1 (`normalize`) walks `Lifted` directly and produces an RCExp
--- shaped tree: every compound argument expression gets let-bound to a
--- fresh local first (the same "every argument is a variable" normal form
--- Compiler.ANF would produce), using our own independent variable-id
--- allocation (RCLocal) -- not Compiler.ANF's AVar/toANF. This is also
--- where native type inference happens: every RLet this phase builds is
--- given its final `Rep` immediately, by calling Compiler.RC2.Types.repOf
--- on the just-built value -- there is no separate Emit-time analysis, and
--- no side table; the decision is made right here, during the conversion,
--- and stored directly on the RLet node. Reference counting (RDup/RDrop/
--- RFree) is not yet inserted at this point -- Phase 1 only ever produces
--- plain variable reads (RV) with no wrapping.
---
--- Phase 2 (`annotate`) walks that shape and rebuilds it with the actual
--- reference-counting primitives inserted (see RCExp.idr's module note),
--- mirroring RC2's original borrow/ownership algorithm -- just retargeted
--- from ANF onto our own IR, and now producing explicit RDup/RDrop/RFree
--- nodes instead of a `borrowed` flag on each use. It threads each RLet's
--- `Rep` straight through unchanged (Phase 1 already decided it), and
--- additionally threads a `natives` set (every Native-rep RLet-bound local
--- in the current definition, see `nativeLocalsR`) throughout, since a
--- Native local has no refcount at all and must never be dup'd/dropped/
--- freed no matter how or how many times it's used or how the ordinary
--- Boxed owned/borrowed bookkeeping would otherwise treat it.
+-- Transforms `Lifted` to `RCExp` in two phases:
+-- 1. `normalize`: ANF-style conversion with in-place native type inference.
+-- 2. `annotate`: Injects reference-counting primitives based on ownership.
 
 import Compiler.LambdaLift
 import Compiler.RC2.ConstExtPrim
@@ -76,14 +51,7 @@ getFC (LPrimVal fc _) = fc
 getFC (LErased fc) = fc
 getFC (LCrash fc _) = fc
 
-||| Idris2's own encoding for a two-way Bool match at the `Constant`
-||| level -- False=0/True=1, as *some* Constant kind (which one varies:
-||| a bare comparison's own case tree tends to use the comparison's
-||| operand-adjacent kind, an interface method wrapping it might re-tag
-||| via a different one -- see RCExp.idr's own note on RCmpCase for
-||| where this gets consulted). Anything else (a non-0/1 literal, or a
-||| non-integer-ish Constant kind) means this isn't really matching a
-||| Bool at all.
+||| Check if Constant is a two-way Bool (0 or 1).
 constantBoolValue : Constant -> Maybe Bool
 constantBoolValue (I 0) = Just False
 constantBoolValue (I 1) = Just True
@@ -107,15 +75,8 @@ constantBoolValue (BI 0) = Just False
 constantBoolValue (BI 1) = Just True
 constantBoolValue _ = Nothing
 
-||| The (whenTrue, whenFalse) pair a two-way `LConstCase` decomposes
-||| into, if `alts`/`mDef` really do form an exhaustive match on
-||| Idris2's Bool encoding (`constantBoolValue`) -- either two explicit
-||| alts (one per value, in either order) or one explicit alt plus a
-||| default covering the other value. `Nothing` for anything else (a
-||| non-Boolean constant switch, or a shape too irregular to trust --
-||| e.g. a single alt with no default, which doesn't actually branch on
-||| the comparison at all), so the caller falls back to the ordinary,
-||| unfused `RConstCase` path unchanged.
+||| If `alts` and `mDef` form an exhaustive two-way Bool match,
+||| return the (True, False) branch pair; otherwise Nothing.
 boolBranches : List (LiftedConstAlt vars) -> Maybe (Lifted vars) -> Maybe (Lifted vars, Lifted vars)
 boolBranches [MkLConstAlt c body] (Just other) =
     case constantBoolValue c of
@@ -130,41 +91,12 @@ boolBranches [MkLConstAlt c1 b1, MkLConstAlt c2 b2] Nothing =
 boolBranches _ _ = Nothing
 
 mutual
-    ||| Normalise a single (possibly compound) sub-expression: if it's
-    ||| already trivial (a local/erased/native-eligible-literal), no new
-    ||| binding is needed; otherwise let-bind it to a fresh local first.
+    ||| Let-bind compound expressions to fresh locals to ensure ANF normal form.
     bindOne : {auto v : Ref NextVar Int} ->
               Env -> Lifted vars -> (RCLocal -> Core RCExp) -> Core RCExp
     bindOne env (LLocal {idx} fc p) k = k (RCLoc (lookupEnv idx env))
     bindOne env (LErased fc) k = k RCNull
     bindOne env e@(LPrimVal fc c) k =
-        -- A native-eligible literal operand (the overwhelmingly common
-        -- case -- e.g. the `2` in `d * 2`) never needs a synthetic let
-        -- of its own: there's no sharing/evaluation-order reason to
-        -- name a bare constant, only `bindMany`/`bindManyV`'s uniform
-        -- "every argument is a variable" normal form. RCConst carries
-        -- it directly (see RCExp.idr's module note) -- Emit.idr renders
-        -- it as an inline literal wherever it's read, with no C
-        -- declaration and no RepMap/InlineMap bookkeeping needed at
-        -- all.
-        --
-        -- Two non-native-eligible kinds get the same treatment, since
-        -- Emit.idr's own constant-staging/small-int-caching machinery
-        -- (`boxedConstExpr`, shared with `RPrimVal`) already renders
-        -- them just as cheaply read-in-place as a native literal would
-        -- be: `Str` is always staged into a deduplicated file-scope
-        -- static (`orStagen`) regardless of value, so referencing it
-        -- inline at every use costs nothing extra over referencing a
-        -- `var_N` that itself only ever pointed at that same static.
-        -- `BI` (Integer) gets the same treatment only within the
-        -- small-value cache range [0, 100) (`idris2rc2_getSmallInteger`,
-        -- an O(1) lookup into an immortal, already-initialised table,
-        -- no allocation) -- *outside* that range, `boxedConstExpr`'s own
-        -- `BI` fallback (`idris2rc2_mkIntegerLiteral`) genuinely parses
-        -- and heap-allocates a fresh GMP integer on *every* evaluation,
-        -- so a large `Integer` literal used more than once must stay
-        -- let-bound (computed once, shared via ordinary dup/drop) rather
-        -- than becoming an RCConst re-evaluated at each use site.
         case litRep c of
              Just _  => k (RCConst c)
              Nothing => case c of
@@ -174,18 +106,6 @@ mutual
                               else bindCompound env e k
                   _     => bindCompound env e k
     bindOne env e@(LCon fc n ci tag []) k =
-        -- A zero-argument constructor operand never needs a synthetic
-        -- let either -- there's no field data to store, only a tag (or,
-        -- for these four, nothing at all) to remember, and (as with
-        -- RCConst above) no sharing/evaluation-order reason to name it.
-        -- `Nil`/`Nothing`/`Z`/`MkUnit` reuse the existing `RCNull`
-        -- representation (Emit.idr already renders *these specific
-        -- four* as a bare NULL and matches on NULL-vs-non-NULL, see its
-        -- RCon/RConCase cases -- unchanged by this); every other tagged
-        -- nullary constructor gets `RCEmptyCon` (see RCExp.idr's module
-        -- note). An untagged nullary constructor (matched by name, not
-        -- common) falls through to the general RLet+RCon path, same as
-        -- a non-native-eligible constant above.
         if ci == NIL || ci == NOTHING || ci == ZERO || ci == UNIT
            then k RCNull
            else case tag of

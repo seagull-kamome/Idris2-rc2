@@ -1,49 +1,14 @@
 module Compiler.RC2.RCExp
 
--- The reference-counted IR produced directly from Compiler.LambdaLift's
--- `Lifted` (NOT from Compiler.ANF -- rc2 implements its own ANF-style
--- normalisation as part of building this IR, see Compiler.RC2.RC).
+-- Explicit reference-counted IR for `rc2`.
+-- Reference counting is handled via three explicit nodes:
+--   * `RDup`: Increment refcount.
+--   * `RDrop`: Decrement refcount, recursively free if zero.
+--   * `RFree`: Unconditionally free, used for provably unshared fresh values.
 --
--- Reference counting is fully explicit, as three primitive node types
--- Compiler.RC2.RC inserts during the Lifted -> RCExp conversion itself
--- (not a separate pass, and not implicit flags on variable uses) -- which
--- makes each one an independently visible, independently optimisable
--- operation:
---   * `RDup`  : increment a value's refcount ("add").
---   * `RDrop` : decrement a value's refcount, recursively freeing it (and
---               its children) once it reaches zero.
---   * `RFree` : unconditionally deallocate a value *now*, with no refcount
---               check at all. Only ever inserted where RC.idr can prove,
---               from the shape of the binding alone, that the value is a
---               brand-new heap allocation that has had no chance to be
---               shared (see RC.idr's `freeableShape`) -- e.g. a
---               constructor built and immediately found dead. Using this
---               instead of a checked `RDrop` skips a branch and a memory
---               read; it is unsound to insert anywhere the value's
---               provenance isn't statically known this precisely (it may
---               be a shared/immortal predefined value).
--- Every local variable reference (RV, and every RCLocal used as a call/
--- constructor argument) is used *as-is*, with no per-use annotation: any
--- refcount adjustment it needs has already been made explicit as a
--- wrapping RDup/RDrop/RFree node earlier in the tree. An `ROp`'s operands
--- are the one place a use *does* carry an annotation of its own --
--- `postDrop`, see its own doc comment -- since an op reads its operands
--- and produces a brand-new value in the same breath, with no separate
--- "moment" to wrap an RDrop node around the read the way RLet/RConCase
--- bodies have. Compiler.RC2.Emit is a purely mechanical RCExp -> C
--- lowering: it makes no ownership decisions of its own, just lowers each
--- of RDup/RDrop/RFree/postDrop to the matching runtime call.
---
--- (Scope note: the constructor-reuse-in-place optimization -- deciding at
--- runtime whether a dying value's storage can be recycled for a
--- freshly-built constructor of the same shape -- is a distinct, secondary
--- optimization layered on top of plain reference counting. It's decided
--- by Compiler.RC2.Reuse, a dedicated pass run after Compiler.RC2.RC's
--- normalize+annotate are both done, and encoded directly on this IR
--- (RCon's `reuseFrom`, and the `RReuseOffer`/`RReleaseReuse` nodes
--- below) -- Compiler.RC2.Emit only ever lowers it, same as
--- everything else in this tree; see Compiler.RC2.Reuse's own module
--- note for the full protocol.)
+-- Optimization note: Constructor reuse is decided by `Compiler.RC2.Reuse`
+-- and encoded directly on this IR.
+-- `Compiler.RC2.Emit` mechanically lowers this IR to C.
 
 import Core.CompileExpr
 import Core.FC
@@ -54,39 +19,14 @@ import Data.Vect
 
 %default covering
 
-||| A local variable, identified by a compiler-allocated integer id (rc2's
-||| own equivalent of Compiler.ANF's AVar -- defined independently here so
-||| this whole pipeline has no dependency on Compiler.ANF). `RCConst`
-||| carries a native-eligible literal directly -- Compiler.RC2.RC's
-||| Phase 1 (`bindOne`) produces this instead of allocating an id and
-||| wrapping an RLet around an RPrimVal for such a literal (see its own
-||| comment), since there both is and never was any real local variable
-||| there to name: nothing to own, dup, drop, or free, no RepMap entry,
-||| no C declaration -- Compiler.RC2.Emit renders it as an inline literal
-||| expression wherever it's read (repOfLocal/inlineExprFor). Anywhere
-||| that pattern-matches on RCLocal to reason about ownership (Owned
-||| sets, `natives`, RDup/RDrop/RFree targets) must treat RCConst like a
-||| native local -- excluded, never touched -- see RC.idr's
-||| `splitBorrows`.
+||| A type representing expressions that can appear as function arguments.
+||| Since RCExpr follows the ANF (A-Normal Form) convention, only variables
+||| and constants can appear as function arguments.
 |||
-||| `RCEmptyCon` is the same idea applied to a zero-argument, *tagged*
-||| data constructor other than `Nil`/`Nothing`/`Z`/`MkUnit` (those four
-||| keep going through the ordinary RCon -> RLet path unchanged, since
-||| Compiler.RC2.Emit already renders them as a bare C `NULL` at
-||| construction and matches them by NULL-vs-non-NULL -- see its
-||| `emitRC`'s RCon/RConCase cases -- and `bindOne` maps them directly to
-||| `RCNull` instead, reusing that existing representation rather than
-||| this one). Every *other* nullary tagged constructor construction
-||| (`f Red`, `MkFoo True Nothing`, ...) needs no heap allocation either
-||| -- there's nothing to store, only a tag to remember -- so
-||| Compiler.RC2.RC's Phase 1 (`bindOne`) produces this directly instead
-||| of an RLet+RCon, the same way it does for RCConst; Compiler.RC2.Emit
-||| renders it inline as a tagged-pointer constant expression
-||| (`varName`) with no C declaration. Untagged nullary constructors
-||| (matched by name, not by tag -- rare) aren't covered and still go
-||| through the general RCon path. Treated identically to RCConst for
-||| ownership purposes everywhere RCConst is excluded (RC.idr's
-||| `splitBorrows`/`isBoxedOperand`).
+||| Special constructors are treated as constants. NIL, NOTHING, ZERO,
+||| and UNIT are interpreted as C's NULL.
+||| The same applies to constructors with no arguments, as they are also
+||| transformed into integers.
 public export
 data RCLocal : Type where
      RCLoc      : Int -> RCLocal
