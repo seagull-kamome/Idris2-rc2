@@ -11,9 +11,10 @@ Native type inference (`Compiler.RC2.Types`) only applies to values
 that stay within a single function's ANF-normalized body -- every
 function argument and return value used to always be boxed, meaning
 native representations got boxed and reboxed at every call boundary.
-Self-tail-calls sidestep this for loops specifically (see below), and
-the dual calling convention (see below) closes the gap for essentially
-every *non-tail-position* call boundary too. What's left, deliberately:
+Self-tail-calls sidestep this for loops specifically (`Compiler.RC2.Loop`,
+see `rc2/doc/loop-conversion.md`), and the dual calling convention
+(`Compiler.RC2.DualABI`, see `rc2/doc/dual-abi.md`) closes the gap for
+essentially every *non-tail-position* call boundary too. What's left, deliberately:
 a **tail-position** call to a function with a native-signature worker
 still goes through that function's own unchanged, fully-boxed wrapper,
 permanently -- see `doc/dual-abi.md`'s own Stage 4 "Scope" section for
@@ -31,105 +32,32 @@ own call overhead -- doesn't touch the actual (now largely closed)
 boxing/reboxing gap above, just removes one small cost that used to sit
 on top of it.
 
-### Dual calling convention (implemented)
+## Performance: loop accumulator threaded only through helper calls stays boxed
 
-Lets native representations cross function boundaries for functions
-where it's provably safe, via a worker/wrapper split (each eligible
-function gets an internal native-signature worker alongside its
-original, unchanged Boxed wrapper) plus whole-program call-site
-rewriting for every non-tail-position call targeting one -- turned out
-to need no whole-program fixed point at all, contrary to the original
-escape-analysis-plus-fixed-point sketch this entry used to describe.
-`fib 30`, timed directly against real `idris2 --cg refc`, runs roughly
-35% faster. Full design, implementation walkthrough, and the bugs found
-along the way (including two found only by reading generated C or
-running it under `valgrind`, not by any stdout diff) are all documented
-in **`rc2/doc/dual-abi.md`** -- moved there in full since it's finished
-design/implementation, not an open gap; this entry is only a pointer.
-The *loop-carried* subset of this same gap -- a self- or
-mutually-tail-recursive loop's own parameters -- was addressed
-separately (see `doc/loop-conversion.md`).
-
-### Self-/mutual-tail-call loop conversion, native-shadow loop params (implemented)
-
-Self-recursive and mutually-recursive tail calls compile to a plain C
-`goto` instead of a closure + boxed trampoline (`Compiler.RC2.Loop`/
-`Compiler.RC2.MutualLoop`), and a loop-carried parameter read as a
-native-context numeric operand gets unboxed once at loop entry instead
-of being re-boxed/re-unboxed at every iteration. Full design,
-implementation walkthrough, and the bugs found along the way are all
-documented in **`rc2/doc/loop-conversion.md`** -- moved there in full
-since it's finished design/implementation, not an open gap; this entry
-is only a pointer.
-
-Its own known limitation used to be attributed to a `newtype`-style
-single-field constructor wrapper never getting seen through for a
-loop-carried parameter specifically -- **that diagnosis was wrong**.
-Checked directly against `--directive dumprcexp` output: a genuine
-`newtype`-eligible constructor is erased entirely by Idris2's own
-frontend before rc2 ever sees it (both construction and matching --
-upstream's own `LambdaLift.idr` doc comment: "backend implementations
-needs not make use of \[the newtype info\], as newtype unboxing is
-managed by the Idris 2 compiler"), so there was never a constructor
-left for any rc2-side destructuring analysis to see through. The real
-cause, confirmed by reproducing the identical symptom with a *plain*
-`Bits64` parameter (no constructor at all), was a narrower bug in
-`Compiler.RC2.Loop`'s own `nativeArgTypes`: a multi-operation ANF chain
-(e.g. a hash-style `(v \`xor\` cast b) * k`) put the parameter's own
-native-context read in an *inner* `RLet`'s `body` rather than directly
-in an outer native-typed `RLet`'s `value`, which the scan never walked
-into. Fixed by having `opNativeUsesThrough` also recurse through a
-nested `RLet`'s own `body` (still gated by the outer, already-decided
-native `Rep` -- an earlier, broader attempt that treated *any* bare
-`ROp` as native regardless of enclosing context caused a real,
-`valgrind`-caught leak in `Test9SelfTailLoop`, since a bare tail can
-still genuinely render Boxed when `Compiler.RC2.Loop` itself runs,
-before any function's return-eligibility has been decided). See
-`rc2/tests/Test13NativeArgChain.idr` and `rc2/doc/loop-conversion.md`'s
-own "Known limitation" section for the full writeup.
-
-This fix closes the gap for a *non-loop* function's own parameters/
-`Compiler.RC2.DualABI` worker eligibility (e.g. a `step`-shaped helper
-called from within a loop). It does **not** by itself make a loop's own
-carried accumulator skip boxing across iterations when that accumulator
-is only ever passed *as a call argument* to such a helper (as opposed
-to being read directly as an `ROp` operand inside the loop body itself)
--- `nativeArgTypes` still has no case recognizing "used as an argument
-at a position a callee's own native-signature worker accepts natively"
-as a native-context use. That remaining piece -- letting a loop
-accumulator threaded only through helper calls still get shadow-
-promoted -- is unaddressed and would need its own follow-on change
+A loop-carried accumulator only skips boxing across iterations when
+it's read directly as an `ROp`/`RCmpCase` operand inside the loop body
+itself (`Compiler.RC2.Loop`'s own native-shadow promotion, see
+`rc2/doc/loop-conversion.md`). When it's instead only ever passed *as
+a call argument* to a helper function (e.g. a `step`-shaped function
+called from within the loop), it stays boxed across iterations:
+`nativeArgTypes` has no case recognizing "used as an argument at a
+position a callee's own native-signature worker accepts natively" as
+a native-context use. Unaddressed, would need its own follow-on change
 (teach `nativeArgTypes` about `RAppNameRep`/`callRep` argument
 positions); not currently planned. The related but distinct gap for an
 ordinary case-alternative's own destructured field (not loop-carried)
-was addressed separately, see "Constructor-destructured field native
-shadowing" below.
+was addressed separately (`Compiler.RC2.ConAltNative`, see
+`rc2/doc/con-alt-native.md`).
 
-### Constructor-destructured field native shadowing (implemented)
+## Performance: hoisting native shadow across loop/dual-ABI boundaries not pursued
 
-Caches a constructor-destructured field read more than once in a
-native context into a fresh native shadow, computed once
-(`Compiler.RC2.ConAltNative`, a new pass running right after
-`Compiler.RC2.Reuse`) -- reusing `Compiler.RC2.Loop`'s own existing
-native-shadow-loop-param mechanism (mint a fresh id, `renameRCExp`
-every reference to it, `stripOwnership` the now-stale bookkeeping that
-rename carried along), just scoped to a single case-alternative's own
-body instead of a whole function/loop. The field's own Boxed
-declaration and its ownership/constructor-reuse-in-place participation
-(`Compiler.RC2.RC`'s `annotate`, `Compiler.RC2.Reuse`'s `resolveAlt`)
-stay completely untouched -- narrower in scope than the two-layer plan
-this entry used to describe (a single-read field was already
-effectively native today, via inline unboxing at that one read; only a
-repeated read actually benefits from caching). Two implementation
-attempts leaked (found via `valgrind`, not a stdout diff) before
-landing on the version that shipped -- full design, both bugs, and the
-fix are documented in **`rc2/doc/con-alt-native.md`** -- moved there in
-full since it's finished design/implementation, not an open gap; this
-entry is only a pointer. The *hoisting* extension the two-layer plan's
-own second layer used to describe (loop-carried/dual-ABI-boundary
-constructor state, not just a single alt's own body) was **not**
-pursued -- left as plausible future work if profiling ever shows it
-matters, not currently planned.
+`Compiler.RC2.ConAltNative` caches a repeatedly-native-read
+constructor-destructured field within a single case-alternative's own
+body (see `rc2/doc/con-alt-native.md`). The *hoisting* extension this
+entry used to describe (loop-carried/dual-ABI-boundary constructor
+state, not just a single alt's own body) was **not** pursued -- left
+as plausible future work if profiling ever shows it matters, not
+currently planned.
 
 ## Performance: constructor reuse doesn't reach across a monadic-bind continuation
 
@@ -187,11 +115,6 @@ that description yet:
   Not obviously wrong to leave as-is; flagged for a decision, not a
   known bug.
 
-(`keepBoxedLocals`'s filter, previously flagged here as possibly fully
-dead code, was confirmed dead by exhaustively tracing every site that
-adds to `Owned` in `RC.idr` -- all three only ever insert genuine
-`RCLoc`s already excluded from `natives` -- and removed.)
-
 ## Concurrency: unchanged from RefC
 
 Reference counting stays non-atomic, matching RefC's own single-threaded
@@ -214,11 +137,10 @@ full reasoning):
 - **`callingConvention`**: upstream's version `awk`-inspects the shape
   of RefC's own generated C, which isn't meaningful for rc2's
   structurally different codegen. No rc2-specific replacement exists
-  yet that would pin down the *current* (fully-boxed) calling
-  convention's C shape as a regression guard -- worth writing from
-  scratch, especially before starting on the dual-ABI work above (so
-  there's a test to update/extend rather than write from nothing once
-  the convention actually changes).
+  yet that would pin down the *current* calling convention's C shape
+  (now partly dual-ABI'd for eligible functions, see
+  `rc2/doc/dual-abi.md`) as a regression guard -- worth writing from
+  scratch.
 
 ## Runtime: RFree rarely fires in practice
 
@@ -234,3 +156,29 @@ non-firing behavior for the same reason). Not a bug to fix, but noted
 here in case a future frontend change or a different lowering strategy
 changes when `RFree` becomes reachable, so its rarely-exercised code path
 gets renewed scrutiny then.
+
+## yet another hope
+この項は人間が追加したものなので、後で整理して独立の項に括りだす事。
+今は着手しないが将来的な展望を書き連ねる。この項は日本語で書かれるが
+翻訳する必要はない。計画立案して項を独立した時に英語になっていればよい。
+
+-  定数に対するCastの畳み込みを試したい
+- Cのレベルで無駄な代入が相変わらず発生している。Cコードの可読性を向上させたい
+- カスタムメモリアロケータに対応したい。例えばpythonに組み込む時にpython側
+  のアロケータを使えれば効率化につながるのでは？
+- slabの様にfree-list風に高速割り当てできる固定アロケータを使えるようにしたい。
+- マルチスレッド対応は別にネイティブスレッドを使える必要はないはず。
+  ランタイム提供するワーカースレッドを使ったdotnetのTask風機能は比較的簡単に
+  作れるのでは？
+- 変数がタグ付きポインタ化された32ビット未満整数の場合、ネイティブ化されていなくても
+  dup/dropを省略できる。
+- 比較演算子の融合はinline展開の後にやらないと効果が限定されてしまうのでは？
+- libgc板のランタイム。dup/drop/freeをCマクロで消去してしまい、mallocを単純に差し替える
+  だけでlibgc対応できるのでは？
+- 短い文字列をタグ付きポインタに押し込む
+
+
+
+
+
+
