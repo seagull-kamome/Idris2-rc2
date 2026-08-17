@@ -15,16 +15,32 @@ import Core.Primitives
 import Core.TT
 import Core.Value
 
+import Data.Maybe
 import Data.SortedMap
 import Data.SortedSet
 import Data.Vect
 
 %default covering
 
+||| Cast folding mirrors upstream Compiler.Opts.ConstantFold.foldableOp
+||| (idris2-src/src/Compiler/Opts/ConstantFold.idr:20-25) exactly, not
+||| just "whatever Core.Primitives.getOp happens to compute" -- getOp's
+||| own Cast dispatch (idris2-src/src/Core/Primitives.idr:550-613) has
+||| no safety net of its own (it computes Double->Int8 just fine, no
+||| Nothing), so the exclusion has to live here. IntType is excluded on
+||| either side because its width is backend-dependent, not provably
+||| safe; Double/String/Char are excluded because rc2's own runtime
+||| cast for them (support/rc2/numeric.h's idris2rc2_cast_Double_to_*,
+||| a raw C cast) is undefined behaviour on out-of-range/NaN/Infinity
+||| input, unlike getOp's own Chez-side clamped evaluation -- intKind
+||| already returns Nothing for all three, so the exclusion is
+||| automatic here, not hand-maintained.
 foldableOp : PrimFn arity -> Bool
 foldableOp BelieveMe = False
-foldableOp (Cast _ _) = False
-foldableOp _ = True
+foldableOp (Cast IntType _) = False
+foldableOp (Cast _ IntType) = False
+foldableOp (Cast from to)   = isJust (intKind from) && isJust (intKind to)
+foldableOp _                = True
 
 ||| Operands ConstFold itself will actually fold (i.e. not `I`/`Db`,
 ||| see `constFoldOp`'s own doc comment for why) -- exported so
