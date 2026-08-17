@@ -55,10 +55,17 @@ show up again during testing.
 
 
 ### コメント規約
- コード内のコメントは極力排除する。
+コード内のコメントは極力排除する。
 コード自体が何をしているか説明するような冗長なコメント(How)は禁止します。
 どうしても必要場合は(Why not/特異な制約等)を除き、コメント無しのクリーンな
 コードを書きなさい。
+
+モジュールの先頭には、そのモジュールの役目と負うべき責任についてのコメントと
+Copyright表記を書きなさい。
+
+-- Copyright 2026, Hattori,Hiroki. All rights reserved.
+-- This module was licensed by BSD3.
+
 
 ### Cコード
 ./code-style-C.md を参照

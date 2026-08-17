@@ -9,18 +9,28 @@ totalの関数は必要が無い限りtotalを維持し、コンパイラに安�
 人間が指示しない限り、coveredの関数を手間を掛けてtotalにリファクタリングしなくてよい。
 コードリファクタリングを依頼された時に作業を提案する。
 
-asパターンを活用する。
+## asパターンを活用する
+パターンマッチしたあと結局同じ値を返す場合はasパターンを使って簡略化する。
+例：
 case ...
-❌️  Foo a b c => Foo a b c
-⭕️  a@(Foo _ _ _ ) => a
+  Foo a b c => Foo a b c
+  a@(Foo _ _ _ ) => a
 
-else節を活用する。
-❌️ case ...
+無用の変数はつくらない事。以下はaが無用。
+NG例：
+  a@(Foo _ _ x) => x
+
+
+## else節を活用する。
+NG例：
+ case ...
      ConA a b => exprA
      ConB c d => exprB c d
      ConC e f => exprA
      conD g h => exprA
-⭕️ case ...
+
+ベター：
+ case ...
      ConB c d => exprB c d
      _ => exprA
 
