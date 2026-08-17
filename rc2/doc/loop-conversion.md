@@ -51,14 +51,17 @@ call's shape."
 
 ```
 Lifted (Compiler.LambdaLift)
-  -> Compiler.RC2.RC.normalize      (Phase 1: ANF-style, native type inference)
-  -> Compiler.RC2.RC.annotate       (Phase 2: ownership -- RDup/RDrop/RFree)
-  -> Compiler.RC2.Reuse             (constructor-reuse-in-place)
-  -> Compiler.RC2.MutualLoop        (mutual tail recursion -> one merged function)
-  -> Compiler.RC2.Loop              (self-tail-call, incl. MutualLoop's own
-                                      merged functions -> RLoop/RLoopContinue,
-                                      plus native-shadow promotion)
-  -> Compiler.RC2.Emit              (purely mechanical RCExp -> C)
+  -> Compiler.RC2.Inline           (whole-program inlining, Lifted -> Lifted)
+  -> Compiler.RC2.RC.normalize     (Phase 1: ANF-style, native type inference)
+  -> Compiler.RC2.RC.annotate      (Phase 2: ownership -- RDup/RDrop/RFree)
+  -> Compiler.RC2.Reuse            (constructor-reuse-in-place)
+  -> Compiler.RC2.ConAltNative     (native-shadow field caching)
+  -> Compiler.RC2.MutualLoop       (mutual tail recursion -> one merged function -- this document)
+  -> Compiler.RC2.Loop             (self-tail-call, incl. MutualLoop's own
+                                     merged functions -> RLoop/RLoopContinue,
+                                     plus native-shadow promotion -- this document)
+  -> Compiler.RC2.DualABI          (worker/wrapper synthesis, call-site rewrite)
+  -> Compiler.RC2.Emit             (purely mechanical RCExp -> C)
 ```
 
 `MutualLoop` runs *before* `Loop`, not after, and this ordering is the
@@ -824,9 +827,9 @@ benchmark:
 
 ## Verification methodology
 
-1. `cd rc2 && source ../env.sh && nix-shell -p idris2 gmp pkg-config --run 'idris2 --build rc2.ipkg'`
-2. `cd tests/refc-suite && nix-shell -p gcc gmp pkg-config --run './run.sh'` -- expect 19/19.
-3. `tests/Test9SelfTailLoop.idr` -- self-tail-call conversion's own
+1. Build + regression baseline: see `CLAUDE.md`'s "Build & test" section
+   (`idris2 --build rc2.ipkg`, then `tests/refc-suite/run.sh`, expect 19/19).
+2. `tests/Test9SelfTailLoop.idr` -- self-tail-call conversion's own
    dedicated coverage: parameter swapping (aliasing hazard for the
    simultaneous-assignment temp-snapshot), multiple distinct recursive
    branches in one function, an argument passed straight through
@@ -837,7 +840,7 @@ benchmark:
    alongside its `String` passthrough) and of a loop parameter promoted
    via its `RConstCase` use rather than an `ROp`/`RCmpCase` one (see
    "Bugs found" #3).
-4. `tests/Test10MutualLoop.idr` -- mutual-loop conversion's own
+3. `tests/Test10MutualLoop.idr` -- mutual-loop conversion's own
    dedicated coverage: differing-arity group members (slot padding --
    the specific shape that caught "Bugs found" #4), a 3-way cycle (SCC
    beyond the trivial pairwise case), a same-member transition inside a
@@ -846,14 +849,14 @@ benchmark:
    and 300,000-500,000-deep mutual recursion with no C stack growth
    (direct evidence the `goto` conversion is actually firing, not just
    type-checking).
-5. `tests/BenchLoop.idr`/`tests/BenchMutual.idr` -- generated C
+4. `tests/BenchLoop.idr`/`tests/BenchMutual.idr` -- generated C
    inspection (`grep -n "^IDRIS2RC2_Value \*Main_sumTo$" -A20
    build/exec/*.c` or similar) to directly confirm a loop body contains
    zero `idris2rc2_mk*`/`idris2rc2_dup`/`idris2rc2_drop` calls once
    native-shadow promotion applies to every loop-carried parameter; see
    `rc2/BENCHMARKS.md`'s 2026-08-14 entry for the resulting wall-clock
    comparison against `idris2 --cg refc` (roughly 60x/11x respectively).
-6. `--directive dumprcexpr` (see `doc/reading-the-ir.md`) on any
+5. `--directive dumprcexpr` (see `doc/reading-the-ir.md`) on any
    candidate function is the fastest way to confirm, *before* looking
    at generated C at all, whether a given definition's body starts with
    `loop [...]` (converted) and which of its own params show `Native

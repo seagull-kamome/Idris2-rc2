@@ -139,7 +139,7 @@ included), are left completely untouched, not even renamed into.
    conditional inside `RReuseOffer`'s own `else` branch -- proving the
    regression was this pass's own insertion point, not anything
    pre-existing. Fixed by `peelWrappers`: split off every leading
-   `RDup`/`RDrop`/`RFree`/`RReleaseReuse`/`RReuseOffer` node first,
+   wrapper node (the same five shapes from "Design" above) first,
    insert the shadow wrapping only around the "core" underneath, and
    rebuild by re-wrapping afterward -- the wrappers (and an
    `RReuseOffer`'s own `dupOnShared`) are never renamed into at all
@@ -185,9 +185,9 @@ work, not investigated further here.
 
 ## Verification methodology
 
-1. `cd rc2 && source ../env.sh && nix-shell -p idris2 gmp pkg-config --run 'idris2 --build rc2.ipkg'`
-2. `cd tests/refc-suite && nix-shell -p gcc gmp pkg-config --run './run.sh'` -- expect 19/19.
-3. `tests/Test12ConAltNative.idr` is this feature's own canonical smoke
+1. Build + regression baseline: see `CLAUDE.md`'s "Build & test" section
+   (`idris2 --build rc2.ipkg`, then `tests/refc-suite/run.sh`, expect 19/19).
+2. `tests/Test12ConAltNative.idr` is this feature's own canonical smoke
    test -- diff its output against real `idris2 --cg refc`'s own
    (byte-for-byte), and read `Main_step`'s own generated C directly:
    the field reads should be `int64_t var_N = idris2rc2_to_i64(var_M);`
@@ -196,7 +196,7 @@ work, not investigated further here.
    before it -- and that block's own `dup`s should stay conditional,
    inside its own `else` branch, exactly as they are with this whole
    pass's pipeline entry removed.
-4. **A stdout diff alone can't catch a reference leak or an unbalanced
+3. **A stdout diff alone can't catch a reference leak or an unbalanced
    dup** -- both bugs above compiled, ran, and printed the *correct*
    result while still leaking. Any change to `ConAltNative.idr`, or to
    `Compiler.RC2.Reuse`'s own `resolveAlt`/`Compiler.RC2.Loop`'s own
@@ -206,7 +206,7 @@ work, not investigated further here.
    large enough that a per-iteration leak is unmistakable in the
    summary rather than lost in noise) -- expect `definitely lost: 0
    bytes in 0 blocks`.
-5. Before concluding a fix is correct, also re-run step 4 against the
+4. Before concluding a fix is correct, also re-run step 3 against the
    *baseline* with this pass disabled via `--directive noconaltnative`
    (`RC2.idr`'s own `toRCDefs`, see its doc comment -- no rebuild
    needed) -- confirms whether a leak (or its absence) is actually

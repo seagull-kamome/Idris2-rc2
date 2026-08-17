@@ -137,7 +137,17 @@ defensive pass-through case for it, same reasoning as their existing
 ## Pipeline position
 
 ```
-RC (normalize+annotate) -> Reuse -> MutualLoop -> Loop -> DualABI -> Emit
+Lifted (Compiler.LambdaLift)
+  -> Compiler.RC2.Inline          (whole-program inlining, Lifted -> Lifted)
+  -> Compiler.RC2.RC.normalize    (Phase 1: ANF-style, native type inference)
+  -> Compiler.RC2.RC.annotate     (Phase 2: ownership -- RDup/RDrop/RFree)
+  -> Compiler.RC2.Reuse           (constructor-reuse-in-place)
+  -> Compiler.RC2.ConAltNative    (native-shadow field caching)
+  -> Compiler.RC2.MutualLoop      (mutual tail recursion -> one merged function)
+  -> Compiler.RC2.Loop            (self-tail-call -> RLoop/RLoopContinue,
+                                    plus native-shadow promotion)
+  -> Compiler.RC2.DualABI         (worker/wrapper synthesis, call-site rewrite -- this module)
+  -> Compiler.RC2.Emit            (purely mechanical RCExp -> C)
 ```
 
 `DualABI` runs *after* `Loop`, specifically so a self-tail-recursive
@@ -853,19 +863,10 @@ compiles to a wrapper (`Main_fib`, unchanged Boxed signature, every
 existing caller anywhere else keeps working unmodified) plus a worker
 (`idris2rc2_worker_Main_fib_0`) doing the real recursive work entirely in native
 `int64_t`, with **both of its own recursive calls now targeting the
-worker directly**:
-
-```c
-int64_t var_4 = (var_0 - INT64_C(1));
-int64_t var_3 = idris2rc2_worker_Main_fib_0(var_4);
-int64_t var_6 = (var_0 - INT64_C(2));
-int64_t var_5 = idris2rc2_worker_Main_fib_0(var_6);
-return (var_3 + var_5);
-```
-
-No boxing, no unboxing, no heap allocation, no dup/drop anywhere in
-this computation -- the whole thing stays in `int64_t` from the
-worker's own entry to its own `return`. Confirmed correct (`832040`
+worker directly** -- no boxing, no unboxing, no heap allocation, no
+dup/drop anywhere in this computation, the whole thing staying in
+`int64_t` from the worker's own entry to its own `return` (see Stage 4's
+own before/after code sample above for the generated C). Confirmed correct (`832040`
 for `fib 30`), confirmed leak-free (`valgrind --leak-check=full`,
 `definitely lost: 0 bytes` across `tests/BenchFib.idr`,
 `tests/BenchLoop.idr`, `tests/BenchChain.idr`,
@@ -931,9 +932,9 @@ from Stage 2.
 
 ## Verification methodology
 
-1. `cd rc2 && source ../env.sh && nix-shell -p idris2 gmp pkg-config --run 'idris2 --build rc2.ipkg'`
-2. `cd tests/refc-suite && nix-shell -p gcc gmp pkg-config --run './run.sh'` -- expect 19/19.
-3. `--directive dumpdualabi` (see Stage 2's own section above) on any
+1. Build + regression baseline: see `CLAUDE.md`'s "Build & test" section
+   (`idris2 --build rc2.ipkg`, then `tests/refc-suite/run.sh`, expect 19/19).
+2. `--directive dumpdualabi` (see Stage 2's own section above) on any
    candidate function is the fastest way to confirm eligibility
    *before* looking at generated C at all -- e.g. `grep "Main.fib"
    out.dualabi` should show `params=[Int] ret=Int`. Note this dump
@@ -944,7 +945,7 @@ from Stage 2.
    there too; the interesting native findings are what the worker
    itself got built with, visible directly in the generated C instead
    (next step).
-4. `tests/BenchFib.idr` is the canonical smoke test for every stage:
+3. `tests/BenchFib.idr` is the canonical smoke test for every stage:
    `fib 30` must still print `832040`; `grep -n "^int64_t idris2rc2_worker_\|
    ^IDRIS2RC2_Value \*idris2rc2_worker_" build/exec/*.c` confirms a worker
    actually got synthesised and shows whether its own return ended up
@@ -959,7 +960,7 @@ from Stage 2.
    call. `tests/BenchLoop.idr`'s own `Main.sumTo` is the loop-combination
    smoke test -- its worker's own loop-exit tail value must render
    through the same native path.
-5. Full `tests/Test*.idr`/`tests/Bench*.idr` suite, diffed against real
+4. Full `tests/Test*.idr`/`tests/Bench*.idr` suite, diffed against real
    `idris2 --cg refc` output, same as every other stage in this
    project -- both stages are supposed to be purely structural/codegen
    changes, so *every* test must still match byte-for-byte, with zero
@@ -980,7 +981,7 @@ from Stage 2.
    `idris2-rc2`'s own build of the same file compiles and runs cleanly,
    so this is a coverage gap in cross-checking this one file, not a
    known or suspected rc2 bug.
-6. **A stdout diff alone can't catch a reference leak** -- one existed
+5. **A stdout diff alone can't catch a reference leak** -- one existed
    in `RAppNameRep`'s own argument handling for a full stage-and-a-half
    (Stage 3a through most of Stage 3b) without ever failing a single
    diff, precisely because it doesn't corrupt any computed value. Any
@@ -992,7 +993,7 @@ from Stage 2.
    it did in `Main.fib`/`Main.sumTo`'s own recursion) -- expect
    `definitely lost: 0 bytes in 0 blocks` (only the 100-entry immortal
    small-int cache should show as `still reachable`).
-7. **Once Stage 4 is actually rewriting call sites, verify the
+6. **Once Stage 4 is actually rewriting call sites, verify the
    performance win directly** -- `time ./build/exec/<BenchFib output>`
    a few times, next to the same for a real-`idris2 --cg refc` build of
    the same file. `fib 30` (`tests/BenchFib.idr`) went from parity/
@@ -1002,4 +1003,4 @@ from Stage 2.
    that back towards parity, that's a real signal something stopped
    rewriting or promoting a call site that used to be, worth
    investigating with `--directive dumprcexpr` and a direct read of the
-   generated C (steps 3-4 above) before assuming it's just noise.
+   generated C (steps 2-3 above) before assuming it's just noise.

@@ -29,10 +29,15 @@ once by a dedicated pass, with Emit.idr left to just lower it.
 
 ```
 Lifted (Compiler.LambdaLift)
-  -> Compiler.RC2.RC.normalize   (Phase 1: ANF-style, native type inference)
-  -> Compiler.RC2.RC.annotate    (Phase 2: ownership -- RDup/RDrop/RFree)
+  -> Compiler.RC2.Inline          (whole-program inlining, Lifted -> Lifted)
+  -> Compiler.RC2.RC.normalize    (Phase 1: ANF-style, native type inference)
+  -> Compiler.RC2.RC.annotate     (Phase 2: ownership -- RDup/RDrop/RFree)
   -> Compiler.RC2.Reuse.resolveReuse   (this pass)
-  -> Compiler.RC2.Emit          (purely mechanical RCExp -> C)
+  -> Compiler.RC2.ConAltNative    (native-shadow field caching)
+  -> Compiler.RC2.MutualLoop      (mutual tail recursion -> one merged function)
+  -> Compiler.RC2.Loop            (self-tail-call -> RLoop/RLoopContinue)
+  -> Compiler.RC2.DualABI         (worker/wrapper synthesis, call-site rewrite)
+  -> Compiler.RC2.Emit            (purely mechanical RCExp -> C)
 ```
 
 Wired in at `Compiler.RC2.RC2`'s `applyReuse`, called from `toRCDefs`
@@ -247,17 +252,17 @@ practice.
 
 ## Verification methodology (for repeating after future changes)
 
-1. `cd rc2 && source ../env.sh && nix-shell -p idris2 gmp pkg-config --run 'idris2 --build rc2.ipkg'`
-2. `cd tests/refc-suite && nix-shell -p gcc gmp pkg-config --run './run.sh'` -- expect 19/19, pay
-   particular attention to `reuse`/`refc001`-`refc003` (exercise this
-   optimization directly) and anything touching `Prelude.EqOrd`/
-   pattern-heavy code (comparisons, `basicpatternmatch`) since that's
-   where the double-free above actually surfaced.
-3. Grep generated `.c` under `tests/refc-suite/*/build/exec/` for
+1. Build + regression baseline: see `CLAUDE.md`'s "Build & test" section
+   (`idris2 --build rc2.ipkg`, then `tests/refc-suite/run.sh`, expect
+   19/19). Pay particular attention to `reuse`/`refc001`-`refc003`
+   (exercise this optimization directly) and anything touching
+   `Prelude.EqOrd`/pattern-heavy code (comparisons, `basicpatternmatch`)
+   since that's where the double-free above actually surfaced.
+2. Grep generated `.c` under `tests/refc-suite/*/build/exec/` for
    `idris2rc2_isUnique` and `idris2rc2_dropReuseConstructor` to confirm
    the optimization is actually firing (both consume and release paths)
    rather than silently never triggering.
-4. Full `tests/*.idr` smoke-test suite (`Test1Basics`..`Test7CastMatrix`)
+3. Full `tests/*.idr` smoke-test suite (`Test1Basics`..`Test7CastMatrix`)
    diffed against real `idris2 --cg refc` output (or the saved
    `.expected` file for `Test7CastMatrix`, whose RefC comparison is
    blocked by unrelated nixpkgs RefC-runtime bugs -- see its own module

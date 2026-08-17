@@ -25,16 +25,17 @@ noinline`.
 ## Pipeline position
 
 ```
-Lifted (upstream lambda-lifted IR)
-  |
-  v
-Compiler.RC2.Inline   <-- this module (Lifted -> Lifted)
-  |
-  v
-Compiler.RC2.RC (Phase 1 normalize, Phase 2 annotate)  -> RCExp
-  |
-  v
-... Reuse / ConAltNative / MutualLoop / Loop / DualABI / Emit ...
+Lifted (Compiler.LambdaLift)
+  -> Compiler.RC2.Inline          (this module -- whole-program inlining, Lifted -> Lifted)
+  -> Compiler.RC2.RC.normalize    (Phase 1: ANF-style, native type inference)
+  -> Compiler.RC2.RC.annotate     (Phase 2: ownership -- RDup/RDrop/RFree)
+  -> Compiler.RC2.Reuse           (constructor-reuse-in-place)
+  -> Compiler.RC2.ConAltNative    (native-shadow field caching)
+  -> Compiler.RC2.MutualLoop      (mutual tail recursion -> one merged function)
+  -> Compiler.RC2.Loop            (self-tail-call -> RLoop/RLoopContinue,
+                                    plus native-shadow promotion)
+  -> Compiler.RC2.DualABI         (worker/wrapper synthesis, call-site rewrite)
+  -> Compiler.RC2.Emit            (purely mechanical RCExp -> C)
 ```
 
 Run first, before anything RC2-specific exists at all -- `Compiler.RC2.RC2`'s
@@ -165,24 +166,12 @@ git history for that investigation).
 The real root cause, found in the *next* session by reproducing the leak
 with a hand-written source program containing zero function calls to
 inline at all, turned out to be two completely independent, pre-existing
-bugs, neither one in this pass:
+bugs in `Compiler.RC2.Loop`/`Emit` (a missing `RLoopContinue` `postDrop`
+field, and an unfreed ephemeral box in `Emit.idr`'s own `ROp` case),
+neither one in this pass -- see `rc2/doc/loop-conversion.md`'s "Bugs
+found and fixed" #5 for the full write-up of both.
 
-- `Compiler.RC2.Loop`'s own `RLoopContinue` (the self-tail-loop
-  continuation node `applyLoop` produces) had no `postDrop` field at
-  all, unlike every other RCExp construct that reads a Boxed value
-  natively (`ROp`/`RCmpCase`/`RAppNameRep`) -- so a native-shadowed loop
-  parameter fed by a still-Boxed, `case`-valued continuation argument
-  got read natively but never dropped.
-- `Compiler.RC2.Emit`'s own `ROp` case fabricated an anonymous, unfreed
-  Boxed wrapper (`rcVarToBoxedC`'s own `nativeMk`) whenever a
-  Boxed-result op read an individually-Native operand -- a `case`/
-  `if`-valued `RLet`'s own Rep never promotes to Native
-  (`Types.repOf`), so a genuinely native arithmetic chain living inside
-  one of its branches still had to be boxed on the fly to feed a Boxed
-  C primitive, and that ephemeral box had nowhere to be dropped.
-
-Both are fixed (see `rc2/doc/loop-conversion.md`'s "Bugs found and
-fixed" #5 for the full write-up) independently of this pass -- neither
+Both are fixed independently of this pass -- neither
 fix touches `Inline.idr` at all. This pass's own logic (the IR plumbing,
 the case-of-case collapse, both eligibility criteria) was already
 correct at the point the original leak was found, confirmed via
@@ -217,15 +206,14 @@ describe exactly what to expect changed between the two builds).
 
 ## Verification methodology
 
-1. Build (`idris2 --build rc2.ipkg`) and runtime (`support/rc2`'s own
-   `make && make install`).
-2. `rc2/tests/verify.sh`: 19/19 refc-suite, every smoke test, valgrind
-   clean on every `LEAK_SENSITIVE_TESTS` entry except the one
-   long-recorded pre-existing `Test1Basics` leak.
-3. `--directive dumprcexpf`, compared against `--directive dumprcexpf
+1. Full build + test suite: see `CLAUDE.md`'s "Build & test" section
+   (compiler, runtime, then `rc2/tests/verify.sh` -- 19/19 refc-suite,
+   every smoke test, valgrind clean on every `LEAK_SENSITIVE_TESTS`
+   entry except the one long-recorded pre-existing `Test1Basics` leak).
+2. `--directive dumprcexpf`, compared against `--directive dumprcexpf
    --directive noinline` on `Test15CompareFusionThroughCall.idr`:
    confirms the interface call disappears, replaced by a single native
    `cmp <=Int [...]`, and that `step`'s own worker parameter goes from
    `Boxed` to `Native Int` as a direct consequence.
-4. `rc2/tests/bench.sh`: no timing regression on the existing
+3. `rc2/tests/bench.sh`: no timing regression on the existing
    micro-benchmark suite.

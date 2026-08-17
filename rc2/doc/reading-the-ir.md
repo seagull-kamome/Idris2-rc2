@@ -31,23 +31,27 @@ to a file, with `defs` being the exact same value `generateCSourceFile`
 is about to consume.
 
 **What state of the pipeline you're looking at**: the dump fires *after*
-`Compiler.RC2.Reuse`, `Compiler.RC2.MutualLoop`, and `Compiler.RC2.Loop`
-have all already run --
+every non-disabled `toRCDefs` stage has run -- it's the exact `defs`
+`generateCSourceFile` is about to consume:
 
 ```
 Lifted (Compiler.LambdaLift)
-  -> Compiler.RC2.RC.normalize   (Phase 1: ANF-style, native type inference)
-  -> Compiler.RC2.RC.annotate    (Phase 2: ownership -- RDup/RDrop/RFree)
-  -> Compiler.RC2.Reuse          (constructor-reuse-in-place)
-  -> Compiler.RC2.MutualLoop     (mutual tail recursion -> merged function)
-  -> Compiler.RC2.Loop           (self-tail-call -> RLoop/RLoopContinue)
+  -> Compiler.RC2.Inline          (whole-program inlining, Lifted -> Lifted)
+  -> Compiler.RC2.RC.normalize    (Phase 1: ANF-style, native type inference)
+  -> Compiler.RC2.RC.annotate     (Phase 2: ownership -- RDup/RDrop/RFree)
+  -> Compiler.RC2.Reuse           (constructor-reuse-in-place)
+  -> Compiler.RC2.ConAltNative    (native-shadow field caching)
+  -> Compiler.RC2.MutualLoop      (mutual tail recursion -> merged function)
+  -> Compiler.RC2.Loop            (self-tail-call -> RLoop/RLoopContinue)
+  -> Compiler.RC2.DualABI         (worker/wrapper synthesis, call-site rewrite)
   -> [ .rcexpr dumped here ]
-  -> Compiler.RC2.Emit           (purely mechanical RCExp -> C)
+  -> Compiler.RC2.Emit            (purely mechanical RCExp -> C)
 ```
 
 -- so what you see is *exactly* what `Emit.idr` consumes: every
-ownership decision, every reuse offer, every loop conversion already
-baked in. There is currently no hook to dump an *earlier* stage (e.g.
+ownership decision, every reuse offer, every loop conversion, and every
+dual-ABI worker/wrapper rewrite already baked in. There is currently no
+hook to dump an *earlier* stage (e.g.
 right after Phase 1, before ownership is decided); if you need that,
 you'd add a similar `writeFile` call at the point you care about, same
 pattern as `compileExpr`'s own.

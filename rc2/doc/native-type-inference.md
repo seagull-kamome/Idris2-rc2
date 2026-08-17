@@ -296,21 +296,21 @@ the full design and its own bug (a double-free in `annotate`'s
 
 ## Verification methodology
 
-1. `cd rc2 && source ../env.sh && nix-shell -p idris2 gmp pkg-config --run 'idris2 --build rc2.ipkg'`
-2. `cd tests/refc-suite && nix-shell -p gcc gmp pkg-config --run './run.sh'` -- expect 19/19.
-3. `tests/Test6NativeInts.idr` specifically exercises all 8 fixed-width
+1. Build + regression baseline: see `CLAUDE.md`'s "Build & test" section
+   (`idris2 --build rc2.ipkg`, then `tests/refc-suite/run.sh`, expect 19/19).
+2. `tests/Test6NativeInts.idr` specifically exercises all 8 fixed-width
    integer types (signed/unsigned, all widths) through the same
    arithmetic chain, byte-diffed against real `idris2 --cg refc` output
    including boundary-value wraparound -- this is the test that found
    bug 3/4 above, re-run it first when touching anything in this area.
-4. `tests/BenchChain.idr`'s `poly` function is the canonical
+3. `tests/BenchChain.idr`'s `poly` function is the canonical
    demonstration that the whole mechanism works end-to-end: compare its
    generated C's heap-allocation/dup/drop counts against RefC's (see
    `BENCHMARKS.md`'s "算術チェイン" section for the exact expected
    numbers -- 3 allocations / 3 dup / 4 drop for rc2 vs. RefC's 8/6/16,
    a regression here should show up as those numbers drifting back
    toward RefC's).
-5. Grep generated `.c` for the specific PrimType's native C type
+4. Grep generated `.c` for the specific PrimType's native C type
    (e.g. `int8_t`) appearing as a bare stack-declared variable, not
    wrapped in `IDRIS2RC2_Value*`/`idris2rc2_mk*`, to confirm the
    unboxing actually fired for a given test case.
