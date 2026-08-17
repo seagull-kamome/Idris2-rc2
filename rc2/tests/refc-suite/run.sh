@@ -40,7 +40,7 @@ for dir in "$SUITE_DIR"/*/; do
         cd "$dir" || exit 1
         rm -rf build
         idr_basename="$(basename "$idr_file")"
-        if ! "$IDRIS2RC2" --cg rc2 "${pkg_flags[@]}" "$idr_basename" -o "$exename" > compile.log 2>&1; then
+        if ! "$IDRIS2RC2" --cg rc2 --directive dumprcexp "${pkg_flags[@]}" "$idr_basename" -o "$exename" > compile.log 2>&1; then
             echo "FAIL  $name (compile error, see $dir/compile.log)"
             exit 1
         fi
