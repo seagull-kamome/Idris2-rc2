@@ -1,59 +1,8 @@
 module Compiler.RC2.ConstFold
 
--- Constant folding for `ROp` (arithmetic/comparison/string PrimFn
--- application), `RConstCase` (case-of-constant), and `RCmpCase`
--- (Compiler.RC2.RC's own comparison-fused-into-branch node, see its
--- own doc comment in RCExp.idr) -- three shapes that Compiler.RC2.Inline
--- (whole-program Lifted inlining) and Compiler.RC2.ConstExtPrim
--- (folding known-fixed-value ExtPrim calls, e.g. prim__codegen) leave
--- behind once their own folded-in constants end up as PrimFn operands
--- or case scrutinees.
---
--- The actual arithmetic is never reimplemented here: `constFoldOp`
--- below is a thin wrapper around upstream's own `Core.Primitives.getOp`
--- (idris2-src/src/Core/Primitives.idr:566-613), the same function
--- Idris2's own Compiler.Opts.ConstantFold.idr (the direct upstream
--- precedent for this whole pass, operating on `CExp` rather than
--- `RCExp`) uses. `getOp` needs no `Core` monad or global state --
--- purely a `PrimFn arity -> Vect arity (NF vars) -> Maybe (NF vars)`
--- pattern match -- and `NF`'s `NPrimVal : FC -> Constant -> NF vars`
--- constructor holds nothing but an `FC` and a `Constant`, so wrapping/
--- unwrapping it here is exactly as cheap as working with `Constant`
--- directly; `EmptyFC` and `{vars = []}` are throwaway values `getOp`
--- never inspects.
---
--- Folding is deliberately narrower than what `getOp` itself can
--- compute, mirroring (for the arithmetic-safety half) upstream's own
--- `Compiler.Opts.ConstantFold.foldableOp`/`toNF`
--- (idris2-src/src/Compiler/Opts/ConstantFold.idr:20-25, 130-136):
---   * `I` (Int) and `Db` (Double) operands are never folded -- their
---     width/rounding isn't guaranteed to match between this compiler's
---     own host arithmetic and the fixed-width `int64_t`/`double` C
---     rc2 actually generates. Fixed-width ints (`I8`..`I64`,`B8`..`B64`)
---     and arbitrary-precision `BI` have no such mismatch and are safe.
---   * `Cast` is excluded outright (unlike upstream, which admits it for
---     provably-safe fixed-width int pairs via `Core.TT.Primitive`'s own
---     non-exported `intKind`) -- this pass's scope is arithmetic/
---     comparison/string folding, not cast folding, so there's no need
---     to depend on or replicate that non-exported helper.
---   * `BelieveMe` is excluded; `Crash` needs no explicit exclusion
---     since `getOp` itself already falls through to `Nothing` for it.
---
--- Runs as a whole-tree rewrite from Compiler.RC2.RC's `toRCDef`,
--- strictly between Phase 1 (`normalizeDef`) and Phase 2
--- (`annotateDef`) -- same placement and reasoning as
--- Compiler.RC2.ConstExtPrim (see its own module note), and run
--- strictly *after* it so any `RPrimVal` ConstExtPrim itself folds in
--- (e.g. `prim__codegen`'s `"rc2"`) is available to fold further here
--- too (string append onto it, a case branch on it, etc).
---
--- A single top-down pass suffices, no fixpoint iteration: rc2's IR is
--- ANF (a compound sub-expression is never itself an operand -- it's
--- always let-bound to a fresh local first), and `Compiler.RC2.Inline`
--- has already fully finished (at the `Lifted` level, strictly before
--- this pass ever runs) whatever inlining was going to happen. Walking
--- `RLet` outside-in, threading an environment of already-folded
--- locals, sees every chain of dependent constants exactly once.
+-- Constant folding pass for arithmetic, comparisons, and case-of-constant.
+-- Runs between normalization and annotation to simplify the IR after
+-- inlining and ExtPrim folding.
 
 import Compiler.RC2.RCExp
 

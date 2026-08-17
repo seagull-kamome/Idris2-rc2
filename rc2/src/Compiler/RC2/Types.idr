@@ -1,23 +1,9 @@
 module Compiler.RC2.Types
 
--- Pure, syntax-directed helpers for native type inference. Compiler.RC2.RC
--- calls `repOf` directly at each RLet it builds, during the Lifted ->
--- RCExp conversion itself -- there is no separate whole-tree analysis
--- pass, and no side table: the decided Rep is stored right on the RLet
--- node (see RCExp.idr).
---
--- Scope (see the project plan's Stage 3 note): this only ever proposes
--- Rep for *intermediate* let-bound locals coming directly from a numeric
--- PrimFn or a numeric literal -- function parameters and return values
--- stay boxed (the calling convention is unchanged). Even so, a chain of
--- arithmetic on an already-boxed input (e.g. `let y = x + 1; let z = y *
--- 2 in z`) now allocates zero intermediate boxed values instead of one
--- per operation: `x` is unboxed once, and `y`/`z` live as raw C locals
--- until they cross back over a boxed boundary (return, constructor field,
--- function argument, case scrutinee, ...), where Emit boxes them on the
--- spot. A comparison (LT/GT/EQ/LTE/GTE) has no native *result* Rep of
--- its own here (`opResultRep` excludes them) -- its Boxed Bool result
--- only ever avoids materialising at all when it feeds directly into a
+-- Provides helpers for native type inference, deciding `Rep` for
+-- intermediate let-bound locals during normalization.
+-- Native unboxed representation is used for arithmetic chains, while
+-- boxed representation remains for function boundaries.
 -- two-way match on Idris2's own Bool encoding, which Compiler.RC2.RC's
 -- `normalize` fuses into a dedicated `RCmpCase` node instead (see
 -- `cmpArgTy` below and RCExp.idr's own doc comment on RCmpCase) -- a

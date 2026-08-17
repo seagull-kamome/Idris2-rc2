@@ -1,43 +1,10 @@
 module Compiler.RC2.MutualLoop
 
--- Mutual tail recursion loop conversion: a whole-program pass (unlike
--- Compiler.RC2.Reuse/Compiler.RC2.Loop, which each work one definition
--- at a time) that runs after Reuse and *before* Loop (see RC2.idr's
--- toRCDefs).
---
--- The key idea: rather than inventing a new IR shape for "a tail call
--- to a *different* member of my own mutually-recursive group", this
--- pass synthesises, for each group of >= 2 functions that mutually
--- tail-call each other, a single new merged function whose body is a
--- plain `RConstCase` switching on a small integer tag -- one alt per
--- original group member -- and rewrites *every* tail call within the
--- group (self- or cross-member alike) into an ordinary tail call to
--- that merged function itself, carrying the target's tag and (padded)
--- arguments. From that merged function's own point of view, every one
--- of those is now just a plain self-tail-call -- exactly the shape
--- Compiler.RC2.Loop (which runs immediately afterward) already knows
--- how to turn into a `goto`. So this module needs no help from
--- Compiler.RC2.Emit at all: it only ever produces ordinary `RConstCase`/
--- `RAppName`/`MkRCFun` shapes that already have a mechanical, verified
--- lowering.
---
--- Each original member's own top-level name keeps working as a normal,
--- independently-callable function (for external callers, and for any
--- *non*-tail use, e.g. being passed around as a closure) -- it becomes
--- a thin wrapper that just calls the merged function once with its own
--- tag and arguments and returns whatever comes back.
---
--- Because all of rc2's own calling convention is uniformly `Value*`,
--- the merged function's parameters are just `tag, slot_0 .. slot_k`
--- (k = the largest arity among the group's members) -- every ordinary
--- `RCLocal`, nothing backend-specific. Members with a smaller arity
--- simply never reference their own unused trailing slots, and every
--- caller (wrapper or in-group transition) always pads them with
--- `RCNull`.
---
--- Ownership: Compiler.RC2.RC's `annotate` (Phase 2) already decided
--- every member's own dup/drop/move behaviour for its original
--- arguments and locals, before this pass ever runs -- merging doesn't
+-- Mutual tail recursion loop conversion pass.
+-- This whole-program pass synthesizes a merged function for each group
+-- of mutually tail-recursive functions, turning cross-member tail calls
+-- into self-tail calls. This allows `Compiler.RC2.Loop` to subsequently
+-- convert them into efficient `goto`-based loops.
 -- change any of that, it only changes *where a tail call lands*. Two
 -- things this pass does need to get right on its own, since it's
 -- building genuinely new tree shape that never went through `annotate`:

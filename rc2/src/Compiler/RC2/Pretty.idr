@@ -1,16 +1,7 @@
 module Compiler.RC2.Pretty
 
--- A human-readable, indented dump of the final RCExp tree -- after
--- Compiler.RC2.Reuse/MutualLoop/Loop have all run, i.e. exactly what
--- Compiler.RC2.Emit itself consumes -- written to a `.rcexpr` file
--- alongside the generated `.c` file whenever the "dumprcexpr" directive
--- is passed (`--directive dumprcexpr`, see RC2.idr's `compileExpr`).
--- Purely a debugging aid, never read back by the compiler itself, so
--- its formatting choices favour readability over completeness -- FC
--- source spans are omitted entirely (RCExp.idr carries one on nearly
--- every node, but they're pure noise for this purpose), and every
--- constructor gets a short, deliberately terse keyword (`let`, `case`,
--- `dup`, `drop`, ...) rather than its actual Idris constructor name.
+-- Generates a human-readable, indented dump of the final `RCExp` tree
+-- for debugging purposes when the `dumprcexpr` directive is active.
 
 import Compiler.RC2.RCExp
 

@@ -1,19 +1,9 @@
 module Compiler.RC2.Reuse
 
--- Constructor-reuse-in-place: a dedicated pass that runs on the fully
--- Phase-1+2'd RCExp tree (Compiler.RC2.RC's normalize+annotate already
--- done), after which Compiler.RC2.Emit lowers the whole thing to C
--- purely mechanically. This used to be an Emit.idr-level, stateful
--- analysis (a name-keyed ReuseMap threaded through C emission, and
--- later, even after that map was replaced by data on the IR, the
--- runtime uniqueness-check *branch itself* was still synthesised fresh
--- by Emit.idr's own `emitReuseOffer` every time -- the one remaining
--- piece of "new control flow Emit invents" that wasn't actually data);
--- this module now makes and encodes the *entire* decision as IR data
--- (RCon's `reuseFrom`, the new `RReuseOffer` node, and
--- `RReleaseReuse`), leaving Emit.idr nothing to decide or synthesise --
--- see `RReuseOffer`'s own doc comment in RCExp.idr for the exact node
--- it lowers to.
+-- Performs constructor-reuse-in-place optimization to recycle storage
+-- of dying values for new constructors of the same shape.
+-- This pass makes and encodes reuse decisions directly into the IR,
+-- eliminating the need for `Emit.idr` to perform runtime uniqueness checks.
 --
 -- The protocol, per RConCase alt (`resolveAlt`):
 --   1. An alt is *eligible* when its own scrutinee `sc` is about to be
