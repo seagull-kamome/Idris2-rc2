@@ -720,7 +720,7 @@ pattern every `HashAlgorithm` instance in that package uses) was
 invisible because the loop's own top-level parameter was "the
 constructor," with the native value only appearing after an explicit
 destructure `nativeArgType` never saw past. **That was wrong.** Checked
-directly against `--directive dumprcexp` output for a minimal
+directly against `--directive dumprcexpr` output for a minimal
 reproduction: a genuine `newtype`-eligible constructor is erased
 *entirely* by Idris2's own frontend, both construction and matching,
 before rc2 ever sees the `Lifted` IR at all (see upstream's own
@@ -767,7 +767,7 @@ deliberately left `RBoxed` -- kept in the same test file as a control).
 This closes the gap for a *non-loop* function's own parameters and,
 identically, `Compiler.RC2.DualABI`'s worker-parameter eligibility for
 one (e.g. a `step`-shaped per-element helper called from inside a
-loop) -- confirmed via `--directive dumprcexp`: such a helper's own
+loop) -- confirmed via `--directive dumprcexpr`: such a helper's own
 worker now correctly declares that parameter `Native`, not `Boxed`.
 
 **What's still open**: a loop's own carried accumulator still does
@@ -783,7 +783,7 @@ parameter, so `loop`'s own accumulator stays a boxed `RLoop` param,
 unboxed and reboxed at that call site every single iteration -- the
 same net operation count as before this fix, just relocated from inside
 `step`'s own body to `loop`'s own call site (verified directly by
-diffing the `.crexpr` before/after: identical `postDrop` counts, moved
+diffing the `.rcexpr` before/after: identical `postDrop` counts, moved
 location). Closing this would need a new case threading through
 `RAppNameRep`/`callRep` argument positions, matched against that
 target's own declared `argReps` -- not attempted here; not currently
@@ -853,7 +853,7 @@ benchmark:
    native-shadow promotion applies to every loop-carried parameter; see
    `rc2/BENCHMARKS.md`'s 2026-08-14 entry for the resulting wall-clock
    comparison against `idris2 --cg refc` (roughly 60x/11x respectively).
-6. `--directive dumprcexp` (see `doc/reading-the-ir.md`) on any
+6. `--directive dumprcexpr` (see `doc/reading-the-ir.md`) on any
    candidate function is the fastest way to confirm, *before* looking
    at generated C at all, whether a given definition's body starts with
    `loop [...]` (converted) and which of its own params show `Native

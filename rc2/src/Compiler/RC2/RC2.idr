@@ -117,21 +117,21 @@ compileExpr c s _ outputDir tm outfile =
 
      coreLift_ $ mkdirAll outputDir
 
-     -- `--directive dumprcexp`/`dumpdualabi`/`no<stagename>` all share
+     -- `--directive dumprcexpr`/`dumpdualabi`/`no<stagename>` all share
      -- this one `directives sess` list -- upstream idris2's own generic
      -- per-invocation string passthrough (see Compiler.ES.Codegen's own
      -- "minimal"/"compact" directives for precedent), so none of this
      -- needs any changes to idris2-src itself. Fetched once, up front,
      -- since `toRCDefs`'s own pipeline-stage disabling (see its own doc
      -- comment) needs it before `toRCDefs` runs, not just after like
-     -- `dumprcexp`/`dumpdualabi` (which only ever inspect its *output*).
+     -- `dumprcexpr`/`dumpdualabi` (which only ever inspect its *output*).
      sess <- getSession
      let disabledStages = filter (`elem` directives sess)
                              ["noinline", "noreuse", "noconaltnative", "nomutualloop", "noloop", "nodualabi"]
      cdata <- getCompileData False Lifted tm
      defs <- toRCDefs disabledStages (lambdaLifted cdata)
 
-     -- `--directive dumprcexp`: dump the final RCExp -- this exact
+     -- `--directive dumprcexpr`: dump the final RCExp -- this exact
      -- `defs`, after every non-disabled stage above has run, i.e.
      -- precisely what generateCSourceFile is about to consume -- to a
      -- human-readable `.crexpr` file next to the `.c` output. Purely a
@@ -140,14 +140,14 @@ compileExpr c s _ outputDir tm outfile =
      -- entirely inside Compiler.Common.getCompileDataWith, already used
      -- above via getCompileData) don't reach this far -- RCExp only
      -- exists after rc2's own toRCDefs runs.
-     when ("dumprcexp" `elem` directives sess) $
-         coreLift_ $ writeFile (outputDir </> outfile ++ ".crexpr") (prettyProgram defs)
+     when ("dumprcexpr" `elem` directives sess) $
+         coreLift_ $ writeFile (outputDir </> outfile ++ ".rcexpr") (prettyProgram defs)
 
      -- `--directive dumpdualabi`: Stage 2's own verification tool for
      -- the (not yet wired into this pipeline) dual-calling-convention
      -- eligibility analysis -- see Compiler.RC2.DualABI's own module
      -- note and doc/loop-conversion.md-style follow-up notes once this
-     -- lands. Same "--directive" mechanism as dumprcexp above.
+     -- lands. Same "--directive" mechanism as dumprcexpr above.
      when ("dumpdualabi" `elem` directives sess) $
          coreLift_ $ writeFile (outputDir </> outfile ++ ".dualabi") (dumpDualABI defs)
 

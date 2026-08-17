@@ -91,12 +91,12 @@ So `with` vs. `case` isn't the actual variable. The real function
 outer dispatch is written with `with` or `case`. That's what actually
 matters, per the next section.
 
-## Root cause, confirmed via `--directive dumprcexp`
+## Root cause, confirmed via `--directive dumprcexpr`
 
 Reverse-engineering generated C left real ambiguity (see the "coincidental
 reuse" aside below), so the actual mechanism was confirmed directly from
-the RCExp IR (`idris2-rc2 --cg rc2 --directive dumprcexp ...`, producing
-a `.crexpr` file next to the `.c` output -- see `rc2/doc/reading-the-ir.md`).
+the RCExp IR (`idris2-rc2 --cg rc2 --directive dumprcexpr ...`, producing
+a `.rcexpr` file next to the `.c` output -- see `rc2/doc/reading-the-ir.md`).
 A repro matching the real shape (`HasIO io`-polymorphic, bang-notation
 on an effectful callback):
 
@@ -221,7 +221,7 @@ re-derive this chain of reasoning from scratch.
 2. Write a minimal `HasIO io =>`-polymorphic repro using bang-notation
    on an effectful callback inside a case branch that reconstructs the
    scrutinee's own constructor (see the repro above).
-3. `nix-shell -p idris2 gcc gmp pkg-config --run 'build/exec/idris2-rc2 --cg rc2 --directive dumprcexp <file>.idr -o <out>'`
+3. `nix-shell -p idris2 gcc gmp pkg-config --run 'build/exec/idris2-rc2 --cg rc2 --directive dumprcexpr <file>.idr -o <out>'`
 4. Read `build/exec/<out>.crexpr` (see `rc2/doc/reading-the-ir.md`) --
    look for `drop [...]` (unconditional) vs. `reuseOffer`/`reuse=` on the
    destructured scrutinee, and check whether the reconstruction is a

@@ -152,7 +152,7 @@ the plan" below.
 
 Read-only; decides eligibility without synthesizing or rewriting
 anything. Verified via a new `--directive dumpdualabi` debug dump
-(mirrors `--directive dumprcexp`, writes `<outfile>.dualabi`) before any
+(mirrors `--directive dumprcexpr`, writes `<outfile>.dualabi`) before any
 of Stage 3's riskier rewriting was built on top -- catching design
 mistakes here, where they're cheap to fix, rather than after they're
 tangled up with ownership-stripping/codegen bugs.
@@ -1001,5 +1001,5 @@ from Stage 2.
    actually landed -- if a future change to this pipeline regresses
    that back towards parity, that's a real signal something stopped
    rewriting or promoting a call site that used to be, worth
-   investigating with `--directive dumprcexp` and a direct read of the
+   investigating with `--directive dumprcexpr` and a direct read of the
    generated C (steps 3-4 above) before assuming it's just noise.

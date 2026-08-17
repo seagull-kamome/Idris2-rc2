@@ -163,11 +163,11 @@ ALL_TESTS="$(cd "$RC2_DIR/tests" && ls Test*.idr | sed 's/\.idr$//' | sort)"
 for name in $ALL_TESTS; do
     if is_in "$name" "$BARE_INVOKE_TESTS"; then
         (cd "$RC2_DIR/tests" && nix-shell -p idris2 gcc gmp pkg-config --run \
-            "$IDRIS2RC2 --cg rc2 --directive dumprcexp $name.idr -o $TMP/${name}_rc2") \
+            "$IDRIS2RC2 --cg rc2 --directive dumprcexpr $name.idr -o $TMP/${name}_rc2") \
             > "$TMP/${name}_compile.log" 2>&1
     else
         nix-shell -p idris2 gcc gmp pkg-config --run \
-            "$IDRIS2RC2 --cg rc2 --directive dumprcexp $RC2_DIR/tests/$name.idr -o $TMP/${name}_rc2" \
+            "$IDRIS2RC2 --cg rc2 --directive dumprcexpr $RC2_DIR/tests/$name.idr -o $TMP/${name}_rc2" \
             > "$TMP/${name}_compile.log" 2>&1
     fi
     if [ ! -x "$TMP/${name}_rc2" ]; then

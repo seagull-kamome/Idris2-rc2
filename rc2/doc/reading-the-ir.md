@@ -1,4 +1,4 @@
-# Reading rc2's IR: the `--directive dumprcexp` dump and `RCExp` syntax
+# Reading rc2's IR: the `--directive dumprcexpr` dump and `RCExp` syntax
 
 A practical reference for dumping and reading rc2's own reference-counted
 IR (`Compiler.RC2.RCExp`) -- the tree `Compiler.RC2.Emit` lowers directly
@@ -14,10 +14,10 @@ tool that shows it to you).
 ```sh
 cd rc2 && source ../env.sh
 nix-shell -p gcc gmp pkg-config --run \
-  './build/exec/idris2-rc2 --cg rc2 --directive dumprcexp YourFile.idr -o out'
+  './build/exec/idris2-rc2 --cg rc2 --directive dumprcexpr YourFile.idr -o out'
 ```
 
-This writes `out.crexpr` next to the generated `out.c`, in whatever
+This writes `out.rcexpr` next to the generated `out.c`, in whatever
 directory `-o` resolves to (`build/exec/` under the working directory
 you invoke `idris2-rc2` from, same as the `.c`/executable). `--directive`
 is upstream Idris2's own generic per-invocation string passthrough (the
@@ -41,7 +41,7 @@ Lifted (Compiler.LambdaLift)
   -> Compiler.RC2.Reuse          (constructor-reuse-in-place)
   -> Compiler.RC2.MutualLoop     (mutual tail recursion -> merged function)
   -> Compiler.RC2.Loop           (self-tail-call -> RLoop/RLoopContinue)
-  -> [ .crexpr dumped here ]
+  -> [ .rcexpr dumped here ]
   -> Compiler.RC2.Emit           (purely mechanical RCExp -> C)
 ```
 
@@ -66,7 +66,7 @@ formatting choices favour readability over completeness (see
 `Compiler.RC2.Pretty`'s own module note: source spans are dropped
 entirely, and every constructor gets a short keyword rather than its
 real Idris constructor name -- the mapping is the whole point of
-section 3 below). `.crexpr` files are build artifacts (same directory as
+section 3 below). `.rcexpr` files are build artifacts (same directory as
 generated `.c`), not committed; regenerate whenever you need one.
 
 ## 2. The shape of a dump
@@ -348,7 +348,7 @@ since `Integer` is never native-eligible): `let v2 : Boxed = op
 ## 10. Quick recipes
 
 - **"Did my self-tail-recursive function become a `goto` loop?"** --
-  `grep -A1 "^def YourFn" out.crexpr`; look for `loop [...]` as the very
+  `grep -A1 "^def YourFn" out.rcexpr`; look for `loop [...]` as the very
   next line.
 - **"Did a specific loop parameter get native-shadowed?"** -- check that
   same `loop [...]` line's own param list for `Native <ty>` at the
@@ -384,6 +384,6 @@ since `Integer` is never native-eligible): `let v2 : Boxed = op
 - `rc2/src/Compiler/RC2/Pretty.idr` -- the renderer itself
   (`prettyExp`/`prettyDef`/`prettyProgram`, all the syntax in section 5).
 - `rc2/src/Compiler/RC2/RC2.idr` -- `compileExpr`'s own `--directive
-  dumprcexp` wiring (writes the `.crexpr` file).
+  dumprcexpr` wiring (writes the `.rcexpr` file).
 - `rc2/src/Compiler/RC2/RCExp.idr` -- the actual IR this all renders;
   authoritative doc comments on every constructor mentioned above.

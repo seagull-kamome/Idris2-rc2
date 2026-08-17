@@ -19,7 +19,7 @@ callee's own body directly into its call site, run once, before
 `Compiler.RC2.RC`'s own Phase 1 (`normalize`) ever sees the program --
 so from `RC.idr`'s point of view, the call was never there. See
 `rc2/tests/Test15CompareFusionThroughCall.idr` for the exact motivating
-shape and how to check it via `--directive dumprcexp`/`--directive
+shape and how to check it via `--directive dumprcexpr`/`--directive
 noinline`.
 
 ## Pipeline position
@@ -186,7 +186,7 @@ fixed" #5 for the full write-up) independently of this pass -- neither
 fix touches `Inline.idr` at all. This pass's own logic (the IR plumbing,
 the case-of-case collapse, both eligibility criteria) was already
 correct at the point the original leak was found, confirmed via
-`--directive dumprcexp` on the motivating comparison-fusion case both
+`--directive dumprcexpr` on the motivating comparison-fusion case both
 then and after this reimplementation.
 
 A separate, narrower bug specific to *this* implementation attempt: the
@@ -222,7 +222,7 @@ describe exactly what to expect changed between the two builds).
 2. `rc2/tests/verify.sh`: 19/19 refc-suite, every smoke test, valgrind
    clean on every `LEAK_SENSITIVE_TESTS` entry except the one
    long-recorded pre-existing `Test1Basics` leak.
-3. `--directive dumprcexp`, compared against `--directive dumprcexp
+3. `--directive dumprcexpf`, compared against `--directive dumprcexpf
    --directive noinline` on `Test15CompareFusionThroughCall.idr`:
    confirms the interface call disappears, replaced by a single native
    `cmp <=Int [...]`, and that `step`'s own worker parameter goes from

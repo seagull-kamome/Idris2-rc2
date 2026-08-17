@@ -211,7 +211,7 @@ returnEligibility params body =
 ||| `returnEligibility`'s own results -- a debugging aid only, written
 ||| to `<outfile>.dualabi` whenever `--directive dumpdualabi` is passed
 ||| (see `RC2.idr`'s `compileExpr`), mirroring `Compiler.RC2.Pretty`'s
-||| own `.crexpr` dump. Stage 2's own verification tool: nothing in the
+||| own `.rcexpr` dump. Stage 2's own verification tool: nothing in the
 ||| main pipeline reads this back, and nothing here is synthesized or
 ||| rewritten yet -- see the module note.
 export
