@@ -6,6 +6,7 @@
 /install/
 
 # Build artifacts
+/env.sh
 build/
 *.o
 *.so

@@ -46,11 +46,27 @@ show up again during testing.
   building/running rc2 or plain `idris2`
 
 ## コーディング規約
+以下を金言とせよ。
 
-- Cの関数名、グローバル変数、マクロ等には 'idris2rc2_' のプリフィックスをつける。
-  マクロの場合は 'IDRIS2RC2_'を使う。
+コードには How
+テストコードには What
+コミットログには Why
+コードコメントには Why not
 
-## テストコード
+
+### コメント規約
+ コード内のコメントは極力排除する。
+コード自体が何をしているか説明するような冗長なコメント(How)は禁止します。
+どうしても必要場合は(Why not/特異な制約等)を除き、コメント無しのクリーンな
+コードを書きなさい。
+
+### Cコード
+./code-style-C.md を参照
+
+### Idris2コード
+./code-style-Idris2.md を参照
+
+### テストコード
 
 退行テスト、スモークテストの期待出力はあらかじめテキストファイルを作っておき、
 diffのみで成否判定できるようにする。
@@ -78,10 +94,9 @@ cd support/rc2
 nix-shell -p gcc gmp pkg-config --run 'make && make install'
 cd ../..
 
-# ported upstream RefC regression suite
+# build compiler and full test
 cd tests/refc-suite
-nix-shell -p gcc gmp pkg-config --run './run.sh'
-```
+./verify.sh
 
 Hand-written smoke tests (`rc2/tests/Test1Basics.idr` .. `Test6NativeInts.idr`)
 and benchmarks (`rc2/tests/Bench*.idr`) are compiled/run the same way
@@ -102,7 +117,7 @@ and benchmarks (`rc2/tests/Bench*.idr`) are compiled/run the same way
   immediately after a test run — leave them in place for review until
   after the related commit lands. They're gitignored, so nothing extra
   ends up staged.
-- TODO.mdには積み残しの課題を記録する。実装が済んでドキュメント化した項目は書かない。
+- TODO.mdには積み残しの課題を記録する。実装が済んでドキュメント化した項目は削除する。
 - ドキュメントを読めばわかる事はコードのコメントには書かず、参照リンクの記載に留める。
 
 
