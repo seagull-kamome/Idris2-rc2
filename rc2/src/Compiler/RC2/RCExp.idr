@@ -22,14 +22,11 @@ import Data.Vect
 
 %default covering
 
-||| A type representing expressions that can appear as function arguments.
-||| Since RCExpr follows the ANF (A-Normal Form) convention, only variables
-||| and constants can appear as function arguments.
-|||
-||| Special constructors are treated as constants. NIL, NOTHING, ZERO,
-||| and UNIT are interpreted as C's NULL.
-||| The same applies to constructors with no arguments, as they are also
-||| transformed into integers.
+||| ANF-position value: a variable or a constant (see
+||| `doc/reading-the-ir.md`'s "## 3. Values" for the full syntax
+||| reference). `RCNull`/`RCEmptyCon` fold NIL/NOTHING/ZERO/UNIT and
+||| other zero-arg constructors into C's NULL/a tagged integer, rather
+||| than a genuine heap constructor.
 public export
 data RCLocal : Type where
      RCLoc      : Int -> RCLocal
@@ -71,20 +68,14 @@ Show RCLocal where
   show (RCConst c) = "#" ++ show c
   show (RCEmptyCon n _ t) = "#" ++ show n ++ "@" ++ show t
 
-||| The representation Compiler.RC2.RC decided for an RLet-bound local,
-||| computed during the Lifted -> RCExp conversion itself (see RC.idr's
-||| `repOf`) and carried directly on the RLet node -- not a side table
-||| Emit has to (re)compute or look up separately.
-|||
-||| `RInlineNative` is a refinement `RC.idr`'s Phase 2 (`annotate`) can
-||| promote a plain `RNative` to, once ownership is known: it means this
-||| local's value is a native op with no Boxed operands at all
-||| (`ROp.postDrop == []`), referenced exactly once in the rest of the
-||| function -- safe and free to splice its expression directly into
-||| that one use site instead of ever declaring a C variable for it at
-||| all (see Emit.idr's `InlineMap`/`(RInlineNative ty, _)` RLet case).
-||| Phase 1 never produces this directly (it doesn't know postDrop or
-||| use-counts yet); only Phase 2 ever promotes into it.
+||| The representation decided for an RLet-bound local, carried
+||| directly on the RLet node (see `doc/reading-the-ir.md`'s
+||| "## 4. Representation" and `doc/native-type-inference.md`).
+||| `RInlineNative` is a Phase 2 (`annotate`) refinement of a plain
+||| `RNative`: a native op with no Boxed operands (`ROp.postDrop == []`),
+||| used exactly once, safe to splice inline instead of declaring a C
+||| variable -- Phase 1 never produces this directly, only Phase 2
+||| promotes into it.
 public export
 data Rep = RBoxed | RNative PrimType | RInlineNative PrimType
 
@@ -93,86 +84,51 @@ mutual
   data RCExp : Type where
        RV         : FC -> RCLocal -> RCExp
        RAppName   : FC -> (lazy : Maybe LazyReason) -> Name -> List RCLocal -> RCExp
-       ||| A direct, saturated call to `name`'s own dual-calling-
-       ||| convention *worker* variant (see `Compiler.RC2.DualABI`):
-       ||| `argReps`/`retRep` (same order/length as `args`, plus one for
-       ||| the result) describe how *this* call renders each argument
-       ||| and its own result -- `RNative ty` reads/produces a raw
-       ||| native C value there, `RBoxed` behaves exactly like an
-       ||| ordinary `RAppName` would. Unlike `RAppName`, this is never
-       ||| valid in a closure-building position (`RUnderApp`, or a
-       ||| would-be-tail-position call `Compiler.RC2.Emit`'s
-       ||| `tryBuildClosureInto` would otherwise defer into a closure)
-       ||| -- a closure's own argument slots can only ever hold
-       ||| `IDRIS2RC2_Value *`, so this always names a callee `argReps`
-       ||| says has a native parameter somewhere, one a closure could
-       ||| never represent. Only ever produced by
-       ||| `Compiler.RC2.DualABI`, itself run after
-       ||| `Compiler.RC2.Loop` (see its own module note); no earlier
-       ||| pass constructs or expects to see this.
-       |||
-       ||| `postDrop`: mirrors `ROp`'s own field of the same name --
-       ||| whichever of `args` get read *natively* (an `RNative`/
-       ||| `RInlineNative` position in `argReps`) while their own source
-       ||| is still genuinely `RBoxed` get unboxed via `rcVarToNativeC`,
-       ||| which (like every other native-read accessor in this codebase)
-       ||| never dups/drops on its own -- so, exactly as `ROp`'s own
-       ||| `postDrop` already tracks for an ordinary native operator, this
-       ||| node needs its own explicit list of which of its Boxed-sourced
-       ||| arguments are now dead and must be dropped once the call that
-       ||| read them has been embedded in its own statement (a real bug,
-       ||| found and fixed via `valgrind`, existed here before this field
-       ||| did: `Compiler.RC2.DualABI`'s own worker/wrapper synthesis is
-       ||| the *only* producer of this node, and unlike `ROp` -- decided
-       ||| by `Compiler.RC2.RC`'s own `annotate` -- never goes through
-       ||| that ownership analysis at all, so nothing was ever deciding
-       ||| this drop was needed).
+       ||| Direct, saturated call to `name`'s own dual-ABI worker variant
+       ||| (see `Compiler.RC2.DualABI`); `argReps`/`retRep` describe how
+       ||| *this* call renders each argument/its result. Never valid in
+       ||| a closure-building position -- a closure slot can only ever
+       ||| hold `IDRIS2RC2_Value *`. Only produced by
+       ||| `Compiler.RC2.DualABI`, strictly after `Compiler.RC2.Loop`.
+       ||| `postDrop` mirrors `ROp`'s own field -- see
+       ||| `doc/native-type-inference.md`'s "What's stored on the IR
+       ||| vs. re-derived" and `doc/dual-abi.md`'s Bugs found #3 for the
+       ||| full rationale and the leak it fixes.
        RAppNameRep : FC -> Name -> (argReps : List Rep) -> (retRep : Rep) -> (postDrop : List RCLocal) -> List RCLocal -> RCExp
        RUnderApp  : FC -> Name -> (missing : Nat) -> List RCLocal -> RCExp
        RApp       : FC -> (lazy : Maybe LazyReason) -> RCLocal -> RCLocal -> RCExp
-       ||| `rep`: the native-or-boxed representation decided for this local
-       ||| (see `Rep`). If the bound variable turns out dead on arrival
-       ||| (never used in `body`), RC.idr wraps `body` in an RDrop/RFree
-       ||| for it directly -- there is no separate flag for that case, it
-       ||| is just the same cleanup primitive as everywhere else.
+       ||| `rep`: this local's representation (see `Rep`,
+       ||| `doc/native-type-inference.md`). A dead-on-arrival binding
+       ||| (never used in `body`) has no separate flag -- `body` is just
+       ||| wrapped in an ordinary RDrop/RFree for it, like anywhere else.
        RLet       : FC -> (var : Int) -> Rep -> RCExp -> RCExp -> RCExp
        ||| `reuseFrom`: if `Just loc`, this constructor's allocation may
-       ||| reuse `loc`'s storage in place (`loc` is a dying constructor
-       ||| of the exact same shape -- same field count -- offered by an
-       ||| enclosing `RReuseOffer`, see its own doc comment).
-       ||| Decided by Compiler.RC2.Reuse's `resolveReuse`, a dedicated
-       ||| pass that runs on the fully Phase-1+2'd tree, after
-       ||| Compiler.RC2.RC's normalize+annotate and before
-       ||| Compiler.RC2.Emit -- not by RC.idr itself. Phase 1/2 always
-       ||| leave this `Nothing`.
+       ||| reuse `loc`'s storage (a dying same-shape constructor offered
+       ||| by an enclosing `RReuseOffer`). Decided by
+       ||| `Compiler.RC2.Reuse`'s `resolveReuse`, run after Phase 1/2 --
+       ||| see `doc/reuse-analysis.md`'s "IR additions". Phase 1/2
+       ||| always leave this `Nothing`.
        RCon       : FC -> Name -> ConInfo -> (tag : Maybe Int) -> List RCLocal -> (reuseFrom : Maybe RCLocal) -> RCExp
        ||| `postDrop`: every Boxed operand this op needs dropped once
        ||| it's done reading it (one entry per *occurrence* in `args`,
        ||| so an operand read twice, e.g. `x + x`, appears twice) --
-       ||| decided by Compiler.RC2.RC's `annotate` (Phase 2) exactly
-       ||| like an RLet's `Rep`, and carried directly on the node so
-       ||| Emit.idr only ever lowers it, the same way it lowers
-       ||| RDup/RDrop/RFree, rather than independently re-deriving
-       ||| "which of my operands are Boxed" at emission time (which it
-       ||| used to do, and which was the one place Emit wasn't purely
-       ||| mechanical -- see the module note above). Phase 1
-       ||| (`normalize`) always constructs this as `[]`; only Phase 2
-       ||| ever fills it in.
+       ||| decided by Compiler.RC2.RC's `annotate` (Phase 2), carried
+       ||| directly on the node so Emit.idr only ever lowers it rather
+       ||| than re-deriving "which operands are Boxed" at emission time.
+       ||| Phase 1 always constructs this as `[]`; only Phase 2 fills it
+       ||| in. See `doc/native-type-inference.md`'s "What's stored on
+       ||| the IR vs. re-derived" -- the canonical explanation every
+       ||| other `postDrop` field in this file points back to.
        ROp        : {0 arity : Nat} -> FC -> (lazy : Maybe LazyReason) -> PrimFn arity -> Vect arity RCLocal -> (postDrop : List RCLocal) -> RCExp
        RExtPrim   : FC -> (lazy : Maybe LazyReason) -> Name -> List RCLocal -> RCExp
        ||| A boolean comparison (LT/GT/EQ/LTE/GTE) fused directly into a
-       ||| two-way branch: `whenTrue`/`whenFalse` are taken according to
-       ||| the comparison's own result, with the Bool it would otherwise
-       ||| produce never materialised as a value at all (no heap
-       ||| allocation, no case-scrutinee variable). Only ever produced by
-       ||| Compiler.RC2.RC's Phase 1 `normalize`, when a comparison op is
-       ||| the sole, immediate scrutinee of a two-way match on Idris2's
-       ||| own Bool encoding (False=0/True=1) -- see `normalize`'s own
-       ||| `tryFuseCompare`. `postDrop` mirrors ROp's own field (see its
-       ||| doc comment): the comparison reads its operands and
-       ||| immediately branches, with no separate "moment" a wrapping
-       ||| RDrop could target either -- Phase 1 always constructs this as
-       ||| `[]`, only Phase 2 (`annotate`) fills it in.
+       ||| two-way branch, with the Bool it would otherwise produce
+       ||| never materialised as a value. Only produced by Phase 1
+       ||| `normalize`'s `tryFuseCompare` -- see
+       ||| `doc/native-type-inference.md`'s "Comparisons are a
+       ||| separate, narrower mechanism". `postDrop` mirrors `ROp`'s
+       ||| own field above; Phase 1 always constructs this as `[]`,
+       ||| only Phase 2 fills it in.
        RCmpCase   : FC -> PrimFn 2 -> Vect 2 RCLocal -> (postDrop : List RCLocal) -> (whenTrue : RCExp) -> (whenFalse : RCExp) -> RCExp
        RConCase   : FC -> RCLocal -> List RConAlt -> Maybe RCExp -> RCExp
        RConstCase : FC -> RCLocal -> List RConstAlt -> Maybe RCExp -> RCExp
@@ -191,125 +147,56 @@ mutual
        ||| See the module note: only ever inserted where RC.idr can prove
        ||| statically that `loc` is a brand-new, never-shared allocation.
        RFree      : FC -> RCLocal -> RCExp -> RCExp
-       ||| Release a reuse candidate (see `RReuseOffer`) that
-       ||| turned out *not* to be consumed by any RCon on this
-       ||| particular execution path (a sibling branch's RCon claimed it
-       ||| instead, or no matching RCon was reachable on this path at
-       ||| all) -- lowers to `idris2rc2_dropReuseConstructor(loc)`, which
-       ||| is a no-op if the runtime uniqueness check that created this
-       ||| offer failed (so `loc` was already dropped normally there and
-       ||| ends up NULL here) and a real release otherwise. Only ever
-       ||| inserted by Compiler.RC2.Reuse, never by RC.idr.
+       ||| Releases a reuse candidate (`RReuseOffer`) not consumed by
+       ||| any `RCon` on this execution path -- lowers to
+       ||| `idris2rc2_dropReuseConstructor(loc)`, a no-op if the
+       ||| uniqueness check that created the offer already failed. Only
+       ||| inserted by `Compiler.RC2.Reuse` -- see
+       ||| `doc/reuse-analysis.md`'s "IR additions".
        RReleaseReuse : FC -> RCLocal -> RCExp -> RCExp
-       ||| An explicit tail-recursive loop. `loopParams` are this loop's
-       ||| own carried locals -- each with its own `Rep`, independent of
-       ||| whatever representation the *enclosing function's* own
-       ||| top-level parameters use (always Boxed, per the external
-       ||| calling convention) -- initialised once, in the *enclosing*
-       ||| scope, from `initial` (same order, same length), before the
-       ||| loop itself ever runs. `body` is then evaluated repeatedly: an
-       ||| `RLoopContinue` reachable from it in tail position supplies
-       ||| new values for the next iteration and jumps back to the top;
-       ||| any other tail-position value exits the loop and becomes this
-       ||| whole `RLoop` node's own result. Compiled to a C `TYPE var_N`
-       ||| declaration per loop param (skipped entirely when a param
-       ||| reuses an already-in-scope id under its own unchanged value --
-       ||| the common case for a loop whose params are simply the
-       ||| enclosing function's own top-level args, see
-       ||| Compiler.RC2.Emit's `declareLoopParam`), then `prologueDrop`
-       ||| discharged (see its own doc comment below), then a `loop:;`
-       ||| label, and `body`.
-       |||
-       ||| Only ever produced by Compiler.RC2.Loop, a dedicated pass that
-       ||| runs on the fully Phase-1+2'd and Reuse'd tree (mirroring
-       ||| Compiler.RC2.Reuse's own place in the pipeline): it walks
-       ||| *only* a function's own tail positions (the same set
-       ||| Compiler.RC2.Emit's TailPositionStatus threading already
-       ||| visits structurally -- RLet's body, RDup/RDrop/RFree/
-       ||| RReleaseReuse/RReuseOffer's continuation, RCmpCase's two
-       ||| branches, RConCase/RConstCase's alts and default) looking for
-       ||| a plain `RAppName` (no `lazy` reason) whose target is the
-       ||| enclosing function itself, replacing each one found with an
-       ||| `RLoopContinue`, and wrapping the whole (possibly rewritten)
-       ||| body in one `RLoop` if any were found. RC.idr's own Phase 1/2
-       ||| never produce this.
-       |||
-       ||| `prologueDrop`: every enclosing-function top-level argument
-       ||| that got a native shadow here (see Compiler.RC2.Loop's own
-       ||| `applyLoop`) and is therefore, at the point this `RLoop` was
-       ||| built, guaranteed dead in its own original Boxed form once the
-       ||| shadow declarations above run -- `applyLoop` computes this
-       ||| once, mirroring `Compiler.RC2.Reuse`'s own `dupOnShared` (a
-       ||| decision made once at IR-construction time and carried as data,
-       ||| rather than re-derived at emission time from a `RepMap` lookup,
-       ||| the way `Compiler.RC2.Emit`'s `declareLoopParam` used to before
-       ||| this field existed). Not necessarily every shadowed param's own
-       ||| original: one whose *worker* signature `Compiler.RC2.DualABI`
-       ||| later promotes to native as well never had a genuine Boxed
-       ||| value there in the first place in that worker's own rendering,
-       ||| which is exactly why this list -- unlike `initial`/
-       ||| `loopParams` -- is one of `Compiler.RC2.Loop`'s own
-       ||| `stripOwnership` targets: DualABI's `synthesizeWorker` calls
-       ||| that same function over a worker body that may itself already
-       ||| be `RLoop`-wrapped, and it must filter any promoted id out of
-       ||| this list exactly as it would an ordinary `RDrop`'s var list,
-       ||| or the worker would double-drop/drop-a-native a value its own
-       ||| signature no longer boxes.
+       ||| Explicit tail-recursive loop: `loopParams` are this loop's
+       ||| own carried locals, each with an independent `Rep`; `initial`
+       ||| supplies their starting values, evaluated once in the
+       ||| enclosing scope. `body` runs repeatedly -- an `RLoopContinue`
+       ||| reachable in tail position starts the next iteration;
+       ||| anything else exits with that value. `prologueDrop`:
+       ||| top-level args that got a native shadow here and are
+       ||| therefore dead in their original Boxed form once the shadow
+       ||| declarations run. Only produced by `Compiler.RC2.Loop`'s
+       ||| `applyLoop`. See `doc/loop-conversion.md`'s "IR shape" for
+       ||| the full field-by-field walkthrough and "`stripOwnership`"
+       ||| for why `prologueDrop` (unlike `initial`/`loopParams`) must
+       ||| also be filtered by DualABI's `synthesizeWorker`.
        RLoop : FC -> (loopParams : List (Int, Rep)) -> (initial : List RCLocal) -> (prologueDrop : List RCLocal) -> RCExp -> RCExp
        ||| Continue the nearest enclosing `RLoop`, supplying `args` as
-       ||| each loop param's new value (same order, same length as that
-       ||| `RLoop`'s own `loopParams`). `args`'s own ownership is
-       ||| untouched by this node's own introduction -- `annotate`
-       ||| (Phase 2) already computed the right dup/move decisions for
-       ||| the original `RAppName`'s own arguments before
-       ||| Compiler.RC2.Loop ever ran, exactly as it would for a call to
-       ||| any other function, and those decisions are preserved as-is
-       ||| (any wrapping RDup/RDrop/RFree stays put; only the terminal
-       ||| `RAppName` node itself is swapped).
+       ||| each loop param's new value. `args`'s own ownership is
+       ||| untouched by this node's introduction -- `annotate` (Phase 2)
+       ||| already computed the right dup/move decisions before
+       ||| `Compiler.RC2.Loop` ever ran, and those decisions are
+       ||| preserved as-is (only the terminal `RAppName` is swapped).
+       ||| See `doc/loop-conversion.md`'s "`applyLoop`" section.
        |||
-       ||| `postDrop` is a *second*, separate concern `annotate` never
-       ||| had anything to do with (it runs before this node even
-       ||| exists) -- every entry names a `Boxed` argument that needs
-       ||| reading *natively* (`Compiler.RC2.Emit`'s `rcVarToNativeC`)
-       ||| to feed a loop param position `Compiler.RC2.Loop`'s own
-       ||| native-shadow promotion decided is `Native`/`RInlineNative`,
-       ||| the same "there's no separate statement position to hang an
-       ||| ordinary wrapping `drop` around a native-context read"
-       ||| reasoning `ROp`/`RCmpCase`/`RAppNameRep`'s own `postDrop`
-       ||| fields already carry (see their own doc comments) -- decided
-       ||| by `Compiler.RC2.Loop`'s `applyLoop` itself, once it knows
-       ||| every loop param's own final `Rep` (empty for every
-       ||| `RLoopContinue` `mapTailAppNames` first produces, before that
-       ||| decision exists yet). A real, `valgrind`-confirmed leak was
-       ||| found from this field's own absence -- see `TODO.md`'s git
-       ||| history and `rc2/doc/loop-conversion.md`.
+       ||| `postDrop` mirrors `ROp`'s own field (a *separate* concern
+       ||| `annotate` never touches, since this node doesn't exist yet
+       ||| when it runs) -- decided by `applyLoop` once every loop
+       ||| param's final `Rep` is known. A real, `valgrind`-confirmed
+       ||| leak was found from this field's own absence -- see
+       ||| `doc/loop-conversion.md`'s "Bugs found and fixed" #5.
        RLoopContinue : FC -> List RCLocal -> (postDrop : List RCLocal) -> RCExp
-       ||| A runtime uniqueness check deciding whether `sc`'s own storage
-       ||| can be repurposed in place for a later `RCon` of the same
-       ||| shape (see `RCon`'s own `reuseFrom`) instead of allocating
-       ||| fresh and dropping `sc` normally: if `sc` turns out unique,
-       ||| its storage is reserved for that reuse; otherwise, every
-       ||| entry in `dupOnShared` is dup'd (they were destructured
-       ||| straight out of `sc`'s own storage -- plain pointer aliasing,
-       ||| see `RConAlt`'s own former doc comment -- so anything that
-       ||| survives past this point needs its own reference before `sc`'s
-       ||| ordinary recursive drop potentially frees them out from under
-       ||| it) and `sc` is dropped normally. Either way, execution
-       ||| continues into the same `body` afterward -- this is a setup
-       ||| step with two ways of getting there, not a real two-armed
-       ||| branch the way `RCmpCase`/`RConCase` are.
-       |||
-       ||| Only ever inserted by Compiler.RC2.Reuse's `resolveAlt`,
-       ||| wrapping (a prefix of) whatever an eligible `RConAlt`'s own
-       ||| body already was -- see its module note for the full
-       ||| eligibility protocol (mirrors the old `RConAlt.offersReuse`
-       ||| flag this node replaces: an alt "offers reuse" exactly when
-       ||| its own body's leading shape, after any ordinary drops, is
-       ||| this node). Exactly one `RCon` reachable from `body` (per
-       ||| execution path) ends up with `reuseFrom = Just sc`; every
-       ||| path that doesn't reach one gets an explicit
-       ||| `RReleaseReuse sc` instead, so the reservation is never
-       ||| simply lost. RC.idr's own Phase 1/2 never produce this.
+       ||| Runtime uniqueness check deciding whether `sc`'s storage can
+       ||| be repurposed for a later `RCon` of the same shape
+       ||| (`RCon.reuseFrom`) instead of allocating fresh: if `sc` is
+       ||| unique, its storage is reserved; otherwise every
+       ||| `dupOnShared` entry (destructured straight out of `sc`, plain
+       ||| pointer aliasing) is dup'd before `sc` drops normally. Either
+       ||| way execution continues into `body` -- a setup step with two
+       ||| ways of getting there, not a two-armed branch. Exactly one
+       ||| reachable `RCon` claims the offer; every other path gets an
+       ||| `RReleaseReuse sc` instead. Only inserted by
+       ||| `Compiler.RC2.Reuse`'s `resolveAlt` (replaces the old
+       ||| `MkRConAlt.offersReuse` flag). See `doc/reuse-analysis.md`'s
+       ||| "IR additions" for this node's semantics and "`resolveAlt`"/
+       ||| "`tryConsume`/`tryClaim`" for the algorithm.
        RReuseOffer : FC -> (sc : RCLocal) -> (dupOnShared : List RCLocal) -> RCExp -> RCExp
 
   public export
@@ -321,21 +208,12 @@ mutual
        MkRConstAlt : Constant -> RCExp -> RConstAlt
 
 ||| `MkRCFun`'s own top-level parameters, each with its own `Rep` --
-||| foundation for the dual (Boxed/native) calling convention: a
-||| parameter's `Rep` here describes how *this* function's own C
-||| signature declares it (`RBoxed` -- an ordinary `IDRIS2RC2_Value *`,
-||| matching every function's calling convention today -- or
-||| `RNative ty`, a raw native C scalar the caller must already supply
-||| natively). `retRep` is the same idea for the function's own return
-||| value/type. Currently always `RBoxed` everywhere (`Compiler.RC2.RC`'s
-||| `normalizeDef` constructs every `MkRCFun` this way, and no later
-||| pass changes it yet) -- this is pure IR-shape groundwork, landed on
-||| its own and verified to change no generated C, before any pass
-||| actually promotes a parameter or return value to `RNative`. See
-||| `RLoop`'s own `loopParams` for the precedent this mirrors (a loop's
-||| own carried locals, each with an independent `Rep`) -- the same idea
-||| here, just at the whole-function granularity instead of a single
-||| loop's.
+||| foundation for the dual (Boxed/native) calling convention (`RBoxed`
+||| = an ordinary `IDRIS2RC2_Value *`, `RNative ty` = a raw native C
+||| scalar the caller supplies directly); `retRep` is the same idea for
+||| the return value. Currently always `RBoxed` everywhere -- pure
+||| IR-shape groundwork, no pass promotes a parameter/return yet. See
+||| `doc/dual-abi.md`'s "`MkRCFun`'s new shape (Stage 1)".
 public export
 data RCDef : Type where
      MkRCFun : (args : List (Int, Rep)) -> (retRep : Rep) -> RCExp -> RCDef

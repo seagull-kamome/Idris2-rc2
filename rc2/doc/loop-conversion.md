@@ -77,8 +77,8 @@ to produce.
 ## IR shape: `RLoop` / `RLoopContinue`
 
 ```idris
-RLoop         : FC -> (loopParams : List (Int, Rep)) -> (initial : List RCLocal) -> RCExp -> RCExp
-RLoopContinue : FC -> List RCLocal -> RCExp
+RLoop         : FC -> (loopParams : List (Int, Rep)) -> (initial : List RCLocal) -> (prologueDrop : List RCLocal) -> RCExp -> RCExp
+RLoopContinue : FC -> List RCLocal -> (postDrop : List RCLocal) -> RCExp
 ```
 
 `RLoop` wraps a whole tail-recursive loop: `loopParams` are this loop's
@@ -93,6 +93,27 @@ jumps back to the top; any other tail-position value exits the loop and
 becomes the whole `RLoop` node's own result. Only ever produced by
 `Compiler.RC2.Loop`; `RC.idr`'s own Phase 1/2 never construct either
 node.
+
+`RLoop`'s own `prologueDrop`: every enclosing-function top-level
+argument that got a native shadow in this loop (see "Native-shadow
+promotion" below) and is therefore, once the shadow declarations run,
+guaranteed dead in its own original Boxed form. `applyLoop` computes
+this once and carries it as data, mirroring `Compiler.RC2.Reuse`'s own
+`dupOnShared` (a decision made once at IR-construction time rather
+than re-derived at emission time). Not necessarily every shadowed
+param's own original: one whose worker signature `Compiler.RC2.DualABI`
+later promotes to native as well never had a genuine Boxed value there
+in that worker's own rendering -- which is exactly why this list,
+unlike `initial`/`loopParams`, is one of "`stripOwnership`" (below)'s
+own targets: `synthesizeWorker` must filter any promoted id out of it
+the same way it would an ordinary `RDrop`'s var list, or the worker
+would double-drop/drop-a-native a value its own signature no longer
+boxes.
+
+`RLoopContinue`'s own `postDrop` -- every Boxed argument that needs
+reading natively to feed a shadow-promoted loop param position -- is
+documented in "Bugs found and fixed" #5 below, where the leak its
+absence caused is the reason the field exists.
 
 ### Why this shape, and not something simpler
 

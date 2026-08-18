@@ -60,23 +60,35 @@ was considered and rejected as more complex for no benefit.
 - `RCon`'s `reuseFrom : Maybe RCLocal` -- `Just sc` means this
   construction may reuse `sc`'s storage. Phase 1/2 always leave it
   `Nothing`; only this pass ever sets it.
-- `MkRConAlt`'s `offersReuse : Maybe RCLocal` -- `Just sc` means this
-  alt's own scrutinee `sc` dies here *and* the body builds another
-  constructor of the same name somewhere, so its drop becomes a reuse
-  check instead of unconditional. Also always `Nothing` out of Phase
-  1/2.
+- `RReuseOffer : FC -> (sc : RCLocal) -> (dupOnShared : List RCLocal) -> RCExp -> RCExp`
+  -- new node, replacing an earlier `MkRConAlt.offersReuse : Maybe
+  RCLocal` flag design. A runtime uniqueness check on `sc`: if unique,
+  its storage is reserved for a later `RCon` of the same shape to claim
+  (`reuseFrom = Just sc`); otherwise every `dupOnShared` entry
+  (destructured straight out of `sc`, plain pointer aliasing) is dup'd
+  before `sc` drops normally. Either way execution continues into
+  `body` -- a setup step with two ways of getting there, not a
+  two-armed branch like `RCmpCase`/`RConCase`. Only ever inserted by
+  this pass's `resolveAlt`, wrapping (a prefix of) whatever an eligible
+  `RConAlt`'s own body already was -- see "Algorithm" below for the
+  full eligibility protocol.
 - `RReleaseReuse : FC -> RCLocal -> RCExp -> RCExp` -- new node, only
   ever inserted by this pass. Releases a reuse offer that turned out
   *not* to be consumed on a given execution path (a sibling branch
   claimed it, or no matching RCon was reachable on this path at all).
   Lowers to `idris2rc2_dropReuseConstructor(loc)`, which is a no-op if
   `loc` is NULL (already resolved elsewhere) and a real release
-  otherwise.
+  otherwise. Exactly one `RCon` reachable from an `RReuseOffer`'s own
+  `body` ends up claiming it; every other path gets an
+  `RReleaseReuse sc` instead, so a reservation is never simply lost.
 
-`freeLocalsR`/`countUsesR` don't count `reuseFrom`/`offersReuse` --
-same reasoning as `ROp.postDrop`: the local they name is already
-counted via its own real binding site, so counting it again would be
-redundant, never additive.
+`freeLocalsR`/`countUsesR` don't count `RCon`'s own `reuseFrom` -- same
+reasoning as `ROp.postDrop`: the local it names is already counted via
+its own real binding site (the enclosing `RReuseOffer`'s `sc`), so
+adding it again would only be redundant, never additive.
+`RReuseOffer`'s own `sc`/`dupOnShared`, by contrast, *are* counted --
+they're genuine uses of those locals, not a derived echo of another
+field.
 
 ## Deterministic reservation naming (the key simplification over the old design)
 
