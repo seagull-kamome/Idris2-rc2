@@ -8,9 +8,10 @@ module Compiler.RC2.RC2
 -- 2. Constructor reuse (`Compiler.RC2.Reuse`)
 -- 3. Native shadow caching (`Compiler.RC2.ConAltNative`)
 -- 4. Loop/Tail call conversion (`Compiler.RC2.MutualLoop`, `Compiler.RC2.Loop`)
--- 5. Dual ABI synthesis (`Compiler.RC2.DualABI`)
--- 6. C generation (`Compiler.RC2.Emit`)
--- 7. C compiler invocation (`Compiler.RC2.CC`)
+-- 5. Branch-local sinking (`Compiler.RC2.Sink`)
+-- 6. Dual ABI synthesis (`Compiler.RC2.DualABI`)
+-- 7. C generation (`Compiler.RC2.Emit`)
+-- 8. C compiler invocation (`Compiler.RC2.CC`)
 
 import Compiler.RC2.CC
 import Compiler.RC2.ConAltNative
@@ -23,6 +24,7 @@ import Compiler.RC2.RCExp
 import Compiler.RC2.Reuse
 import Compiler.RC2.MutualLoop
 import Compiler.RC2.Loop
+import Compiler.RC2.Sink
 
 import Compiler.Common
 import Compiler.LambdaLift
@@ -61,18 +63,19 @@ applyReuse d@(MkRCForeign _ _ _) = d
 ||| from pre-existing ones (see `KNOWN-BUGS.md`'s own two small
 ||| pre-existing leaks, told apart from that work this way). Recognised
 ||| directives: `noinline`, `noreuse`, `noconaltnative`, `nomutualloop`,
-||| `noloop`, `nodualabi` (disables both `DualABI`'s own worker/wrapper
-||| synthesis *and* its own call-site rewriting together -- the rewrite
-||| needs the worker table the synthesis step builds, so splitting them
-||| wouldn't be meaningful). Each stage is still purely additive/optional
-||| in the sense that skipping any of them should still produce *correct*
+||| `noloop`, `nosink`, `nodualabi` (disables both `DualABI`'s own
+||| worker/wrapper synthesis *and* its own call-site rewriting together
+||| -- the rewrite needs the worker table the synthesis step builds, so
+||| splitting them wouldn't be meaningful). Each stage is still purely
+||| additive/optional in the sense that skipping any of them should
+||| still produce *correct*
 ||| (if less optimised, and possibly no longer byte-for-byte matching
 ||| real `idris2 --cg refc`'s own output shape) C -- none of
 ||| `Compiler.RC2.Inline`/`Reuse`/`ConAltNative`/`MutualLoop`/`Loop`/
-||| `DualABI` is required by anything downstream of it for correctness,
-||| only for the optimisation it itself provides. "Not perfectly
-||| complete" by design: a coarse, whole-stage on/off switch, not
-||| fine-grained per-function/per-node control.
+||| `Sink`/`DualABI` is required by anything downstream of it for
+||| correctness, only for the optimisation it itself provides. "Not
+||| perfectly complete" by design: a coarse, whole-stage on/off switch,
+||| not fine-grained per-function/per-node control.
 toRCDefs : List String -> List (Name, LiftedDef) -> Core (List (Name, RCDef))
 toRCDefs disabled lds0 = do
     lds <- if "noinline" `elem` disabled then pure lds0 else applyInlineLifted lds0
@@ -85,10 +88,13 @@ toRCDefs disabled lds0 = do
     let looped = if "noloop" `elem` disabled
                     then merged
                     else map (\(n, d) => (n, applyLoop n d)) merged
+    let sunk = if "nosink" `elem` disabled
+                  then looped
+                  else map (\(n, d) => (n, applySink d)) looped
     if "nodualabi" `elem` disabled
-       then pure looped
+       then pure sunk
        else do
-           withWorkers <- applyDualABI looped
+           withWorkers <- applyDualABI sunk
            pure $ applyCallSiteRewrite withWorkers
 
 export
@@ -116,7 +122,7 @@ compileExpr c s _ outputDir tm outfile =
      -- `dumprcexpr`/`dumpdualabi` (which only ever inspect its *output*).
      sess <- getSession
      let disabledStages = filter (`elem` directives sess)
-                             ["noinline", "noreuse", "noconaltnative", "nomutualloop", "noloop", "nodualabi"]
+                             ["noinline", "noreuse", "noconaltnative", "nomutualloop", "noloop", "nosink", "nodualabi"]
      cdata <- getCompileData False Lifted tm
      defs <- toRCDefs disabledStages (lambdaLifted cdata)
 

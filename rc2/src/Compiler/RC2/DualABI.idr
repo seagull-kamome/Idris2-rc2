@@ -40,24 +40,45 @@ import Data.Vect
 
 %default covering
 
+||| Find an `RLoop` reachable through a prefix of ordinary `RLet`s
+||| (`Compiler.RC2.Loop.applyLoop`'s own invariant-loop-param elision
+||| wraps an `RLoop` in exactly this shape now -- a native-shadow-
+||| eligible parameter that turned out loop-invariant gets hoisted into
+||| a one-time `RLet` ahead of the loop rather than staying loop-
+||| carried, see that function's own doc comment), collecting every id
+||| bound along the way. `Nothing` if no `RLoop` is reachable this way
+||| at all (an ordinary non-looping function, the common case).
+findLoopThroughLets : SortedMap Int Rep -> RCExp -> Maybe (SortedMap Int Rep, List (Int, Rep))
+findLoopThroughLets acc (RLet _ var rep _ body) = findLoopThroughLets (insert var rep acc) body
+findLoopThroughLets acc (RLoop _ loopParams _ _ _) = Just (acc, loopParams)
+findLoopThroughLets _ _ = Nothing
+
 ||| Every top-level parameter's own native eligibility: `Just ty` at the
 ||| position(s) `Compiler.RC2.Loop`'s `nativeArgType` (or, for an
-||| already-`RLoop`-wrapped body, the corresponding `loopParams` entry)
+||| already-`RLoop`-wrapped body, `loopParams` together with any
+||| invariant-parameter `RLet`s wrapping it, see `findLoopThroughLets`)
 ||| finds eligible, `Nothing` otherwise. Reads `Compiler.RC2.Loop`'s own
-||| decision directly when present rather than re-deriving it: an
-||| `RLoop`'s own `initial` always reads each loop param's starting
-||| value from the *same-position* top-level argument, unconditionally,
-||| by construction (`Compiler.RC2.Loop.applyLoop`'s own `initial =
-||| map RCLoc argIds`) -- so `loopParams`'s own entries line up
-||| positionally with `argIds` here, with nothing further to check.
+||| decision directly when present rather than re-deriving it, via an id
+||| lookup rather than a positional `zip` against `argIds` -- since
+||| `applyLoop`'s own invariant-parameter elision, `loopParams` can now
+||| be a strict subset of the function's own top-level parameters (with
+||| the rest either needing no entry at all -- an eliminated Boxed
+||| parameter's own id is still, and remains, the enclosing function's
+||| own argument -- or captured by one of the wrapping `RLet`s instead);
+||| an id missing from both simply means `Nothing` here, which is
+||| correct either way (an eliminated Boxed parameter was never native
+||| to begin with).
 export
 paramEligibility : List Int -> RCExp -> List (Int, Maybe PrimType)
-paramEligibility argIds (RLoop _ loopParams _ _ _) =
-    zip argIds (map (\(_, r) => case r of
-                                      RNative ty => Just ty
-                                      RInlineNative ty => Just ty
-                                      RBoxed => Nothing) loopParams)
-paramEligibility argIds body = map (\p => (p, nativeArgType p body)) argIds
+paramEligibility argIds body =
+    case findLoopThroughLets empty body of
+         Just (letReps, loopParams) =>
+             let m = foldl (\mp, (i, r) => insert i r mp) letReps loopParams
+             in map (\p => (p, case lookup p m of
+                                     Just (RNative ty) => Just ty
+                                     Just (RInlineNative ty) => Just ty
+                                     _ => Nothing)) argIds
+         Nothing => map (\p => (p, nativeArgType p body)) argIds
 
 ||| Every `Rep` a genuine (non-`RLoopContinue`) tail-position value of
 ||| `e` would have, given `reps` (every local already known to be

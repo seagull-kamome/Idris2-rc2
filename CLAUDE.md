@@ -34,7 +34,10 @@ show up again during testing.
   pursued gap: constructor reuse doesn't reach across a monadic-bind
   continuation, `inlining.md` for the whole-program `Lifted`-to-`Lifted`
   inlining pass that lets an interface-dispatched comparison fuse into
-  `RCmpCase` through a call boundary). Not
+  `RCmpCase` through a call boundary, `branch-sinking.md` for the
+  loop-independent pass that moves a `let`-bound value into the one
+  branch arm that actually reads it, dropping it everywhere else
+  instead of computing it unconditionally). Not
   a replacement for `TODO.md` — those stay the changelog
   and gap tracker; `rc2/doc/` is where the *why* and the
   bugs-found-along-the-way for a specific subsystem live.
