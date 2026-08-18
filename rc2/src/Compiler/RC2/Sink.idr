@@ -341,6 +341,18 @@ trySinkInto _ _ _ _ = Nothing
 ||| into the very same place right behind it, no fixed-point iteration
 ||| needed (mirrors `Compiler.RC2.Loop`'s own `hoistInvariantPrefix`
 ||| reasoning, just in the opposite direction).
+|||
+||| A successful sink is re-fed through `applySinkExp` itself (rather
+||| than returned as-is) so a chain of *nested* single-use branches
+||| resolves in one pass too: once `var`'s own binding lands at the top
+||| of the one arm that reads it, that arm's own body might itself
+||| start with another branch `var` is only read on one side of --
+||| `sunk`'s own top-level shape is now that branch node (`var`'s own
+||| `RLet` moved *inside* one of its arms), so re-walking it lets
+||| `trySinkInto` fire again, one level deeper. Always terminates: each
+||| successful sink strictly relocates `var`'s own binding site into a
+||| strictly smaller subtree of a finite tree; a failed attempt (or no
+||| deeper branch to sink into) just stops there.
 export
 applySinkExp : RCExp -> RCExp
 applySinkExp (RLet fc var rep value body) =
@@ -348,7 +360,7 @@ applySinkExp (RLet fc var rep value body) =
         body' = applySinkExp body
     in if sinkEligible value'
           then case trySinkInto var rep value' body' of
-                    Just sunk => sunk
+                    Just sunk => applySinkExp sunk
                     Nothing => RLet fc var rep value' body'
           else RLet fc var rep value' body'
 applySinkExp (RCmpCase fc op args pd t f) = RCmpCase fc op args pd (applySinkExp t) (applySinkExp f)

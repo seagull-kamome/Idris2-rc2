@@ -27,9 +27,26 @@ notSinkable flag a b =
         then case ctx of MkPair2 x y => x + y
         else case ctx of MkPair2 x y => x - y
 
+-- Exercises applySinkExp re-feeding a successful sink through itself:
+-- `ctx` is read only when *both* flags are True -- one sink moves it
+-- into `flag`'s own True arm, landing it directly above another
+-- branch (`flag2`), which should trigger a second sink one level
+-- deeper in the very same pass.
+deepSinkable : Bool -> Bool -> Int -> Int -> Int
+deepSinkable flag flag2 a b =
+  let ctx = MkPair2 a b
+  in if flag
+        then if flag2
+                then case ctx of MkPair2 x y => x + y
+                else 0
+        else 0
+
 main : IO ()
 main = do
   printLn (sinkable True 3 4)
   printLn (sinkable False 3 4)
   printLn (notSinkable True 10 3)
   printLn (notSinkable False 10 3)
+  printLn (deepSinkable True True 5 6)
+  printLn (deepSinkable True False 5 6)
+  printLn (deepSinkable False True 5 6)

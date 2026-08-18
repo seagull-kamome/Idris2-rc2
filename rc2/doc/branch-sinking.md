@@ -54,6 +54,23 @@ needed, mirroring `Compiler.RC2.Loop`'s own `hoistInvariantPrefix`
 reasoning one level up (see that function's own doc comment) -- just in
 the opposite direction (into a branch, not out of a loop).
 
+### Sinking arbitrarily deep, not just one level
+
+A successful sink re-feeds its own result through `applySinkExp` again
+rather than returning it as-is. This matters whenever the one arm
+`var` sinks into itself starts with another branch `var` is only read
+on one side of: after the first sink, `var`'s own `RLet` now sits at
+the top of that arm, wrapping a branch node -- exactly the shape
+`applySinkExp`'s own `RLet` case looks for, so re-walking it lets
+`trySinkInto` fire a second time, landing `var` one level deeper still.
+This chains for arbitrarily many nested single-use branches, in the
+same single pass, with no separate fixed-point driver: each success
+strictly relocates `var`'s own binding into a strictly smaller
+subtree of a finite tree, so the recursion always terminates.
+`tests/Test22BranchSinking.idr`'s own `deepSinkable` is the dedicated
+test for this -- `ctx` is read only when *two* nested flags are both
+`True`, and sinks through both branches in one `Compiler.RC2.Sink` run.
+
 ### Deciding whether `value` is even a candidate (`sinkEligible`)
 
 Only a bare `ROp`/`RCon` (after peeling the same leading `RDup`/
@@ -171,7 +188,9 @@ this stage alone, same convention as every other optional stage (see
   loop-invariant expression hoisting as its negative case).
 - `tests/Test22BranchSinking.idr` -- the general, loop-independent
   case: one sinkable example, one that must *not* sink (`var` read on
-  both arms).
+  both arms), and `deepSinkable` for sinking through two nested
+  single-use branches in one pass (see "Sinking arbitrarily deep,
+  not just one level" above).
 - `tests/Test2Recursion.idr`/`tests/Test9SelfTailLoop.idr` -- existing
   tests (via Prelude functions they transitively pull in) that caught
   the two real bugs documented above; no dedicated new regression test
