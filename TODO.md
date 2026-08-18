@@ -59,6 +59,52 @@ state, not just a single alt's own body) was **not** pursued -- left
 as plausible future work if profiling ever shows it matters, not
 currently planned.
 
+## Performance: no loop-invariant single-branch case hoisting
+
+Found while reading the `--directive dumprcexpr` dump of
+`idris2-missing-containers`' `Data.Hash.Algorithm.Internal.feedCharOfString.go`
+(see `rc2/BENCHMARKS.md`'s 2026-08-18 closure in-place growth entry --
+this is the loop that motivated that change). Its loop body re-executes
+a `case v0 of HashAlgorithm ... args=[..., v20, ...]` every iteration
+purely to extract one interface-dictionary method closure, even though
+`v0` (the dictionary) is passed unchanged through every
+`RLoopContinue` -- the match has exactly one alt (a record, so no
+default is needed), so which branch runs is already known before the
+loop even starts. `Compiler.RC2.Loop`/`Compiler.RC2.Emit` have no pass
+that recognizes "a single-alt `RConCase` whose scrutinee is a
+loop-invariant loop param" and hoists the destructure above the `loop`,
+promoting its bound fields to new loop-invariant synthetic params
+(single dup before the loop, threaded unchanged through every
+`continue`, instead of re-matching and re-`dup`ing every iteration).
+Not currently planned -- would need its own pass (after
+`Compiler.RC2.Loop`, since it needs the `RLoop`/`RLoopContinue` nodes
+already built) recognizing this shape and rewriting `loopParams`/
+`initial`/every `RLoopContinue` accordingly.
+
+## Performance: loop-invariant loop parameters aren't elided
+
+Same investigation as the entry directly above, same loop. Beyond the
+single-alt `case` on it, `v0` (the interface dictionary) is itself an
+example of a broader gap: `Compiler.RC2.Loop`'s `applyLoop` turns
+*every* top-level parameter into a loop param unconditionally
+(`loopParams = map (\p => ...) argIds` -- see `applyLoop`'s own body),
+with no check for whether a given parameter position ever actually
+changes across any `RLoopContinue`. In this `go` loop, 4 of the 6 loop
+params (the dictionary, the captured string being hashed, one more
+captured arg, and `len`) are passed through every single
+`RLoopContinue` as the exact same `RCLoc` they started as -- true loop
+invariants that pay the `Compiler.RC2.Emit` "snapshot to a temp, then
+write back" rewrite cost (see `rc2/doc/loop-conversion.md`'s `sumTo`
+example) on every iteration for no reason, and take up a loop-param
+slot each. Fix would be a purely syntactic check on `applyLoop`'s own
+output: for each top-level param, if every `RLoopContinue` in the
+rewritten body supplies that exact same `RCLoc` at that position,
+leave it out of `loopParams`/`initial` entirely and let the loop body
+reference it as an ordinary enclosing-scope local instead. Independent
+of (doesn't subsume, and isn't subsumed by) the single-branch-case
+hoist above -- both apply to this same loop and would stack. Not
+currently planned.
+
 ## Performance: constructor reuse doesn't reach across a monadic-bind continuation
 
 Investigated why `Compiler.RC2.Reuse` doesn't fire on
