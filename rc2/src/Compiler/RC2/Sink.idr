@@ -37,6 +37,7 @@ import Core.FC
 import Core.TT
 
 import Data.List
+import Data.SortedMap
 import Data.SortedSet
 import Data.Vect
 
@@ -133,16 +134,32 @@ stripIfUnused var branch =
        then Nothing
        else Just (removeVarDrop var branch)
 
+||| `RCLocal`'s own representation, given `reps` -- the same "missing
+||| id defaults to `RBoxed`" convention `Compiler.RC2.DualABI`'s own
+||| `localRepIn` uses (a top-level function argument, or one of this
+||| loop's own `RLoop`-carried params/`RLet`-bound locals not yet seen,
+||| is always genuinely Boxed at that point -- `reps` only ever records
+||| a *promotion* away from that default).
+localRepIn : SortedMap Int Rep -> RCLocal -> Rep
+localRepIn _ RCNull = RBoxed
+localRepIn reps (RCLoc i) = fromMaybe RBoxed (lookup i reps)
+localRepIn _ (RCConst c) = fromMaybe RBoxed (RNative <$> litRep c)
+localRepIn _ (RCEmptyCon {}) = RBoxed
+
 ||| Every Boxed operand `value` itself *consumes* by reading it -- an
-||| `ROp`'s own `postDrop` list, or (tracked via `dupped`, every id a
-||| leading `RDup` already protected with its own extra reference) any
-||| `RCon` field *not* `dup`'d first -- the field's own sole remaining
-||| reference then moves straight into the new constructor rather than
-||| surviving independently (contrast `tests/
-||| Test21BoxedInvariantNotHoisted.idr`'s own `dup v0; dup v1; con
-||| _ [v0, v1]`, where both fields *are* `dup`'d first, so `v0`/`v1`
-||| themselves keep living on past the `con` -- correctly not counted
-||| here, `consumedOperands` for that one is `[]`).
+||| `ROp`'s own `postDrop` list; every Boxed argument of an `RAppName`
+||| (a call transfers ownership of *all* its own arguments to the
+||| callee unconditionally, unlike `ROp`'s own curated `postDrop` --
+||| `reps` is what lets this filter out an already-native argument,
+||| which never needs (or permits) an `RDrop` entry at all); or
+||| (tracked via `dupped`, every id a leading `RDup` already protected
+||| with its own extra reference) any `RCon` field *not* `dup`'d first
+||| -- the field's own sole remaining reference then moves straight
+||| into the new constructor rather than surviving independently
+||| (contrast `tests/Test21BoxedInvariantNotHoisted.idr`'s own `dup v0;
+||| dup v1; con _ [v0, v1]`, where both fields *are* `dup`'d first, so
+||| `v0`/`v1` themselves keep living on past the `con` -- correctly not
+||| counted here, `consumedOperands` for that one is `[]`).
 |||
 ||| Found the hard way: `tests/Test9SelfTailLoop.idr`'s own
 ||| (transitively pulled in Prelude) `Prelude.Types.getAt` has `let v4
@@ -159,11 +176,16 @@ stripIfUnused var branch =
 ||| release `value`'s own `postDrop`/field-move used to unconditionally
 ||| provide every time (see that function's own doc comment for why
 ||| this is always safe to add).
-consumedOperands : RCExp -> List RCLocal
-consumedOperands = go []
+consumedOperands : SortedMap Int Rep -> RCExp -> List RCLocal
+consumedOperands reps = go []
   where
+    isBoxed : RCLocal -> Bool
+    isBoxed a = case localRepIn reps a of
+                     RBoxed => True
+                     _ => False
     go : List RCLocal -> RCExp -> List RCLocal
     go _ (ROp _ _ _ _ postDrop) = postDrop
+    go _ (RAppName _ _ _ args) = filter isBoxed args
     go dupped (RCon _ _ _ _ args _) = filter (\a => not (a `elem` dupped)) args
     go dupped (RDup _ v cont) = go (v :: dupped) cont
     go dupped (RDrop _ _ cont) = go dupped cont
@@ -196,16 +218,32 @@ addOperandDrops fc consumed branch =
 ||| Whether `value` (after peeling the same leading `RDup`/`RDrop`/
 ||| `RFree`/`RReleaseReuse` shapes `Compiler.RC2.Loop`'s own
 ||| `isInvariantExpr` already peels for an analogous reason) is a bare
-||| `ROp`/`RCon` -- deliberately excluding a `Lazy`-marked `ROp` (its
-||| evaluation *timing* is itself observable, `Compiler.RC2.Loop`'s own
-||| `isInvariantExpr` doc comment has the full reasoning) and a
-||| `reuseFrom`-tied `RCon` (entangled with a specific `RReuseOffer`'s
-||| own per-arm runtime protocol, not this pass's to relocate) --
-||| conservative parity with that same function's own exclusions, kept
-||| in sync deliberately rather than re-derived independently.
+||| `ROp`/`RCon`/`RAppName` -- deliberately excluding a `Lazy`-marked
+||| `ROp`/`RAppName` (its evaluation *timing* is itself observable,
+||| `Compiler.RC2.Loop`'s own `isInvariantExpr` doc comment has the
+||| full reasoning) and a `reuseFrom`-tied `RCon` (entangled with a
+||| specific `RReuseOffer`'s own per-arm runtime protocol, not this
+||| pass's to relocate) -- conservative parity with that same
+||| function's own exclusions, kept in sync deliberately rather than
+||| re-derived independently.
+|||
+||| `RAppName` (an ordinary, named call) is eligible here even though
+||| `Compiler.RC2.Loop`'s own hoisting deliberately excludes it: that
+||| exclusion is specific to *hoisting* (moving a computation to run
+||| unconditionally, once per call, ahead of a loop that might
+||| otherwise have skipped it on a zero-iteration path -- see that
+||| module's own doc comment). Sinking only ever *reduces* how many
+||| times `value` runs, so the same worry doesn't apply -- a call that
+||| would have executed regardless is still guaranteed to, now simply
+||| closer to (and only when reaching) its one actual use.
+||| `RApp`/`RUnderApp` (closure application/building) stay out of scope
+||| deliberately -- more machinery (allocation, the trampoline) than a
+||| direct named call, not analysed here. `RExtPrim` (genuine
+||| `%World`-threaded effects) is never eligible, sunk or not.
 sinkEligible : RCExp -> Bool
 sinkEligible (ROp _ Nothing _ _ _) = True
 sinkEligible (RCon _ _ _ _ _ Nothing) = True
+sinkEligible (RAppName _ Nothing _ _) = True
 sinkEligible (RDup _ _ cont) = sinkEligible cont
 sinkEligible (RDrop _ _ cont) = sinkEligible cont
 sinkEligible (RFree _ _ cont) = sinkEligible cont
@@ -258,15 +296,15 @@ isDecidingOperand _ _ = False
 stripForSink : Int -> FC -> List RCLocal -> RCExp -> Maybe RCExp
 stripForSink var fc consumed branch = stripIfUnused var branch >>= addOperandDrops fc consumed
 
-trySinkIntoArms : Int -> Rep -> RCExp -> RCExp -> Maybe RCExp
-trySinkIntoArms var rep value (RCmpCase fc op args pd t f) =
-    let consumed = consumedOperands value
+trySinkIntoArms : SortedMap Int Rep -> Int -> Rep -> RCExp -> RCExp -> Maybe RCExp
+trySinkIntoArms reps var rep value (RCmpCase fc op args pd t f) =
+    let consumed = consumedOperands reps value
     in case (stripForSink var fc consumed t, stripForSink var fc consumed f) of
             (Nothing, Just f') => Just $ RCmpCase fc op args pd (RLet fc var rep value t) f'
             (Just t', Nothing) => Just $ RCmpCase fc op args pd t' (RLet fc var rep value f)
             _ => Nothing
-trySinkIntoArms var rep value (RConCase fc sc alts mDef) =
-    let consumed = consumedOperands value
+trySinkIntoArms reps var rep value (RConCase fc sc alts mDef) =
+    let consumed = consumedOperands reps value
         altStripped : List (RConAlt, Maybe RCExp)
         altStripped = map (\alt@(MkRConAlt _ _ _ _ body) => (alt, stripForSink var fc consumed body)) alts
         defStripped : Maybe (RCExp, Maybe RCExp)
@@ -287,8 +325,8 @@ trySinkIntoArms var rep value (RConCase fc sc alts mDef) =
                  (map (\(orig, r) => case r of
                                            Nothing => RLet fc var rep value orig
                                            Just b => b) defStripped)
-trySinkIntoArms var rep value (RConstCase fc sc alts mDef) =
-    let consumed = consumedOperands value
+trySinkIntoArms reps var rep value (RConstCase fc sc alts mDef) =
+    let consumed = consumedOperands reps value
         altStripped : List (RConstAlt, Maybe RCExp)
         altStripped = map (\alt@(MkRConstAlt _ body) => (alt, stripForSink var fc consumed body)) alts
         defStripped : Maybe (RCExp, Maybe RCExp)
@@ -309,26 +347,26 @@ trySinkIntoArms var rep value (RConstCase fc sc alts mDef) =
                  (map (\(orig, r) => case r of
                                            Nothing => RLet fc var rep value orig
                                            Just b => b) defStripped)
-trySinkIntoArms _ _ _ _ = Nothing
+trySinkIntoArms _ _ _ _ _ = Nothing
 
 ||| Sees through the same leading `RDup`/`RDrop`/`RFree`/
 ||| `RReleaseReuse`/`RReuseOffer` wrappers `stripIfUnused` itself sees
 ||| through, then dispatches to `trySinkIntoArms` -- guarded by
 ||| `isDecidingOperand` first (see its own doc comment for the
 ||| real bug this guard fixes).
-trySinkInto : Int -> Rep -> RCExp -> RCExp -> Maybe RCExp
-trySinkInto var rep value (RDup fc v cont) = map (RDup fc v) (trySinkInto var rep value cont)
-trySinkInto var rep value (RDrop fc vs cont) = map (RDrop fc vs) (trySinkInto var rep value cont)
-trySinkInto var rep value (RFree fc v cont) = map (RFree fc v) (trySinkInto var rep value cont)
-trySinkInto var rep value (RReleaseReuse fc v cont) = map (RReleaseReuse fc v) (trySinkInto var rep value cont)
-trySinkInto var rep value (RReuseOffer fc sc dupOnShared cont) = map (RReuseOffer fc sc dupOnShared) (trySinkInto var rep value cont)
-trySinkInto var rep value branch@(RCmpCase _ _ _ _ _ _) =
-    if isDecidingOperand var branch then Nothing else trySinkIntoArms var rep value branch
-trySinkInto var rep value branch@(RConCase _ _ _ _) =
-    if isDecidingOperand var branch then Nothing else trySinkIntoArms var rep value branch
-trySinkInto var rep value branch@(RConstCase _ _ _ _) =
-    if isDecidingOperand var branch then Nothing else trySinkIntoArms var rep value branch
-trySinkInto _ _ _ _ = Nothing
+trySinkInto : SortedMap Int Rep -> Int -> Rep -> RCExp -> RCExp -> Maybe RCExp
+trySinkInto reps var rep value (RDup fc v cont) = map (RDup fc v) (trySinkInto reps var rep value cont)
+trySinkInto reps var rep value (RDrop fc vs cont) = map (RDrop fc vs) (trySinkInto reps var rep value cont)
+trySinkInto reps var rep value (RFree fc v cont) = map (RFree fc v) (trySinkInto reps var rep value cont)
+trySinkInto reps var rep value (RReleaseReuse fc v cont) = map (RReleaseReuse fc v) (trySinkInto reps var rep value cont)
+trySinkInto reps var rep value (RReuseOffer fc sc dupOnShared cont) = map (RReuseOffer fc sc dupOnShared) (trySinkInto reps var rep value cont)
+trySinkInto reps var rep value branch@(RCmpCase _ _ _ _ _ _) =
+    if isDecidingOperand var branch then Nothing else trySinkIntoArms reps var rep value branch
+trySinkInto reps var rep value branch@(RConCase _ _ _ _) =
+    if isDecidingOperand var branch then Nothing else trySinkIntoArms reps var rep value branch
+trySinkInto reps var rep value branch@(RConstCase _ _ _ _) =
+    if isDecidingOperand var branch then Nothing else trySinkIntoArms reps var rep value branch
+trySinkInto _ _ _ _ _ = Nothing
 
 ------------------------------------------------------------------------
 -- Whole-tree application.
@@ -353,35 +391,49 @@ trySinkInto _ _ _ _ = Nothing
 ||| successful sink strictly relocates `var`'s own binding site into a
 ||| strictly smaller subtree of a finite tree; a failed attempt (or no
 ||| deeper branch to sink into) just stops there.
+||| `reps` threads which locals are already known non-`RBoxed` -- seeded
+||| from the enclosing function's own top-level args (all `RBoxed`, so
+||| nothing to seed there, see `applySink` below), extended at every
+||| `RLet` (its own declared `Rep`) and `RLoop` (its own `loopParams`)
+||| -- the same shape `Compiler.RC2.Loop`'s own `fillLoopContinuePostDrop`/
+||| `Compiler.RC2.DualABI`'s own `applyCallSiteRewriteBody` already
+||| thread through, for the analogous reason (`consumedOperands` needs
+||| it to tell a genuinely Boxed `RAppName` argument from an
+||| already-native one, see that function's own doc comment).
 export
-applySinkExp : RCExp -> RCExp
-applySinkExp (RLet fc var rep value body) =
-    let value' = applySinkExp value
-        body' = applySinkExp body
+applySinkExp : SortedMap Int Rep -> RCExp -> RCExp
+applySinkExp reps (RLet fc var rep value body) =
+    let value' = applySinkExp reps value
+        reps' = insert var rep reps
+        body' = applySinkExp reps' body
     in if sinkEligible value'
-          then case trySinkInto var rep value' body' of
-                    Just sunk => applySinkExp sunk
+          then case trySinkInto reps' var rep value' body' of
+                    Just sunk => applySinkExp reps sunk
                     Nothing => RLet fc var rep value' body'
           else RLet fc var rep value' body'
-applySinkExp (RCmpCase fc op args pd t f) = RCmpCase fc op args pd (applySinkExp t) (applySinkExp f)
-applySinkExp (RConCase fc sc alts mDef) =
-    RConCase fc sc (map (\(MkRConAlt n ci tag as body) => MkRConAlt n ci tag as (applySinkExp body)) alts)
-      (map applySinkExp mDef)
-applySinkExp (RConstCase fc sc alts mDef) =
-    RConstCase fc sc (map (\(MkRConstAlt c body) => MkRConstAlt c (applySinkExp body)) alts)
-      (map applySinkExp mDef)
-applySinkExp (RDup fc v body) = RDup fc v (applySinkExp body)
-applySinkExp (RDrop fc vs body) = RDrop fc vs (applySinkExp body)
-applySinkExp (RFree fc v body) = RFree fc v (applySinkExp body)
-applySinkExp (RReleaseReuse fc v body) = RReleaseReuse fc v (applySinkExp body)
-applySinkExp (RReuseOffer fc sc dupOnShared body) = RReuseOffer fc sc dupOnShared (applySinkExp body)
-applySinkExp (RLoop fc loopParams initial prologueDrop body) = RLoop fc loopParams initial prologueDrop (applySinkExp body)
-applySinkExp e = e
+applySinkExp reps (RCmpCase fc op args pd t f) = RCmpCase fc op args pd (applySinkExp reps t) (applySinkExp reps f)
+applySinkExp reps (RConCase fc sc alts mDef) =
+    RConCase fc sc (map (\(MkRConAlt n ci tag as body) => MkRConAlt n ci tag as (applySinkExp reps body)) alts)
+      (map (applySinkExp reps) mDef)
+applySinkExp reps (RConstCase fc sc alts mDef) =
+    RConstCase fc sc (map (\(MkRConstAlt c body) => MkRConstAlt c (applySinkExp reps body)) alts)
+      (map (applySinkExp reps) mDef)
+applySinkExp reps (RDup fc v body) = RDup fc v (applySinkExp reps body)
+applySinkExp reps (RDrop fc vs body) = RDrop fc vs (applySinkExp reps body)
+applySinkExp reps (RFree fc v body) = RFree fc v (applySinkExp reps body)
+applySinkExp reps (RReleaseReuse fc v body) = RReleaseReuse fc v (applySinkExp reps body)
+applySinkExp reps (RReuseOffer fc sc dupOnShared body) = RReuseOffer fc sc dupOnShared (applySinkExp reps body)
+applySinkExp reps (RLoop fc loopParams initial prologueDrop body) =
+    RLoop fc loopParams initial prologueDrop (applySinkExp (foldl (\m, (i, r) => insert i r m) reps loopParams) body)
+applySinkExp _ e = e
 
-||| Apply branch-local sinking to one top-level definition.
+||| Apply branch-local sinking to one top-level definition. Every
+||| top-level argument is genuinely `RBoxed` (the external calling
+||| convention), which is exactly `localRepIn`'s own default for an id
+||| missing from `reps` -- nothing to seed there.
 export
 applySink : RCDef -> RCDef
-applySink (MkRCFun args retRep body) = MkRCFun args retRep (applySinkExp body)
-applySink (MkRCError body) = MkRCError (applySinkExp body)
+applySink (MkRCFun args retRep body) = MkRCFun args retRep (applySinkExp empty body)
+applySink (MkRCError body) = MkRCError (applySinkExp empty body)
 applySink d@(MkRCCon _ _ _) = d
 applySink d@(MkRCForeign _ _ _) = d

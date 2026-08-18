@@ -73,17 +73,56 @@ test for this -- `ctx` is read only when *two* nested flags are both
 
 ### Deciding whether `value` is even a candidate (`sinkEligible`)
 
-Only a bare `ROp`/`RCon` (after peeling the same leading `RDup`/
+A bare `ROp`/`RCon`/`RAppName` (after peeling the same leading `RDup`/
 `RDrop`/`RFree`/`RReleaseReuse` wrapper shapes
 `Compiler.RC2.Loop.isInvariantExpr` already peels for an analogous
-reason), with the same two exclusions that function uses and for the
-same reasons (kept in sync deliberately, not re-derived):
+reason), with the same exclusions that function uses and for the same
+reasons where they apply (kept in sync deliberately, not re-derived):
 
-- `ROp`'s own `lazy` field must be `Nothing` -- a deferred operation's
-  evaluation *timing* is itself observable.
+- `ROp`/`RAppName`'s own `lazy` field must be `Nothing` -- a deferred
+  operation's evaluation *timing* is itself observable.
 - `RCon`'s own `reuseFrom` must be `Nothing` -- entangled with a
   specific `RReuseOffer`'s own per-arm runtime uniqueness-check
   protocol, not this pass's to relocate.
+
+**`RAppName` (an ordinary, named call) is eligible here even though
+`Compiler.RC2.Loop`'s own hoisting deliberately excludes it.** That
+exclusion is specific to *hoisting*: moving a computation to run
+unconditionally, once per call, ahead of a loop that might otherwise
+have skipped it entirely on a path that never iterates (see
+`rc2/doc/loop-conversion.md`'s own "Loop-invariant expression hoisting"
+section). Sinking only ever *reduces* how many times `value` runs --
+down to "only when the one arm that needs it is actually reached" --
+so a call that would have executed regardless is still guaranteed to,
+now simply closer to (and only when reaching) its one actual use;
+nothing here can turn a "never runs" path into a "now runs" one, the
+same safety argument the whole pass already rests on. `RApp`/
+`RUnderApp` (closure application/building) stay explicitly out of
+scope -- more machinery (allocation, the trampoline) than a direct
+named call, not analysed here. `RExtPrim` (genuine `%World`-threaded
+effects) is never eligible, sunk or not.
+
+Sinking a call needed one new piece of infrastructure this whole pass
+didn't previously need: `Sink.idr` now threads a `SortedMap Int Rep`
+(`reps`) through `applySinkExp`/`trySinkInto`/`trySinkIntoArms` --
+seeded empty (every top-level argument is genuinely `RBoxed`, matching
+`localRepIn`'s own "missing id defaults to `RBoxed`" convention,
+mirrored directly from `Compiler.RC2.DualABI`'s own function of the
+same name), extended at every `RLet` (its own declared `Rep`) and
+`RLoop` (its own `loopParams`) -- the same shape
+`Compiler.RC2.Loop.fillLoopContinuePostDrop`/`Compiler.RC2.DualABI
+.applyCallSiteRewriteBody` already thread. It exists purely for
+`consumedOperands`' own benefit: unlike `ROp`, whose `postDrop` already
+lists exactly which of its own operands are Boxed, `RAppName` has no
+such field -- *all* of its own arguments are unconditionally consumed
+(ownership transferred to the callee) the moment the call runs, so
+`consumedOperands` must filter that full argument list down to the
+ones `reps` confirms are actually `RBoxed` before handing them to
+`addOperandDrops` -- an already-native argument must never appear in
+an `RDrop`'s own `vars` list. `tests/Test22BranchSinking.idr`'s own
+`callSinkable` is the dedicated test: `buildMsg tag n`'s call sinks
+into the one arm that reads its result, and the other arm gets an
+explicit `drop [tag, n]` in its place.
 
 ### Classifying each arm (`stripIfUnused`, `genuinelyUsedR`)
 
@@ -188,9 +227,10 @@ this stage alone, same convention as every other optional stage (see
   loop-invariant expression hoisting as its negative case).
 - `tests/Test22BranchSinking.idr` -- the general, loop-independent
   case: one sinkable example, one that must *not* sink (`var` read on
-  both arms), and `deepSinkable` for sinking through two nested
-  single-use branches in one pass (see "Sinking arbitrarily deep,
-  not just one level" above).
+  both arms), `deepSinkable` for sinking through two nested single-use
+  branches in one pass (see "Sinking arbitrarily deep, not just one
+  level" above), and `callSinkable` for sinking a plain `RAppName`
+  call (see "Deciding whether `value` is even a candidate" above).
 - `tests/Test2Recursion.idr`/`tests/Test9SelfTailLoop.idr` -- existing
   tests (via Prelude functions they transitively pull in) that caught
   the two real bugs documented above; no dedicated new regression test

@@ -41,6 +41,22 @@ deepSinkable flag flag2 a b =
                 else 0
         else 0
 
+-- Exercises sinking a plain function call (RAppName), not just
+-- ROp/RCon: `buildMsg tag n`'s own call is only read on the `True`
+-- arm, so the call itself -- and the drop of its own Boxed arguments
+-- it would otherwise perform via ownership transfer -- should move
+-- into that arm; the `False` arm gets an explicit `drop [tag, n]`
+-- instead of ever making the call.
+buildMsg : String -> Int -> String
+buildMsg tag n = tag ++ show n
+
+callSinkable : Bool -> String -> Int -> String
+callSinkable flag tag n =
+  let msg = buildMsg tag n
+  in if flag
+        then msg
+        else "none"
+
 main : IO ()
 main = do
   printLn (sinkable True 3 4)
@@ -50,3 +66,5 @@ main = do
   printLn (deepSinkable True True 5 6)
   printLn (deepSinkable True False 5 6)
   printLn (deepSinkable False True 5 6)
+  putStrLn (callSinkable True "n=" 5)
+  putStrLn (callSinkable False "n=" 5)
