@@ -43,6 +43,7 @@ Lifted (Compiler.LambdaLift)
   -> Compiler.RC2.ConAltNative    (native-shadow field caching)
   -> Compiler.RC2.MutualLoop      (mutual tail recursion -> merged function)
   -> Compiler.RC2.Loop            (self-tail-call -> RLoop/RLoopContinue)
+  -> Compiler.RC2.Sink            (branch-local sinking, see doc/branch-sinking.md)
   -> Compiler.RC2.DualABI         (worker/wrapper synthesis, call-site rewrite)
   -> [ .rcexpr dumped here ]
   -> Compiler.RC2.Emit            (purely mechanical RCExp -> C)
@@ -345,6 +346,26 @@ takes (`tests/Test21BoxedInvariantNotHoisted.idr` is the dedicated
 negative-case test for exactly this; see `rc2/doc/loop-conversion.md`'s
 "Loop-invariant expression hoisting" section for the full reasoning,
 including a real double-free this restriction was added to fix).
+
+## 8.7. Reading sunk (branch-local) expressions
+
+`Compiler.RC2.Sink` (see `doc/branch-sinking.md`) runs right after
+`Compiler.RC2.Loop`, so its own effect shows up in the very same dump:
+a `let` that used to sit directly above a `case`/`cmp` -- read on only
+one of its arms -- moves *inside* that one arm instead, and the other
+arm's own now-unnecessary `drop [...]` for it disappears. Exactly the
+mirror image of section 8.6's hoisting (moving a computation *out* of
+a loop) -- this moves one *into* the one branch arm that actually needs
+it, running it even less often (only when that arm is actually
+reached, versus hoisting's "once per call regardless"). Unlike
+sections 8.5/8.6, nothing about this needs a loop at all --
+`tests/Test22BranchSinking.idr`'s own dump shows the identical shape in
+an ordinary non-recursive function; `tests/
+Test21BoxedInvariantNotHoisted.idr`'s own post-`Sink` dump shows it
+firing on the very `let v5 = ...` section 8.6 above deliberately leaves
+inside `loop [...]` (hoisting and sinking are complementary, not
+competing, for that exact binding -- see `doc/branch-sinking.md`'s own
+"Sinking versus hoisting" section).
 
 ## 9. Worked examples
 

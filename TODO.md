@@ -86,51 +86,6 @@ itself now uses for a native-shadowed elided parameter would apply
 here too, for `v20`). Not currently planned -- would need its own pass
 (after `Compiler.RC2.Loop`) recognizing this shape.
 
-## Performance: a value only used to build a hoisted-ineligible prefix expression outlives its own last use
-
-Found while reviewing `tests/Test21BoxedInvariantNotHoisted.idr`'s own
-`.rcexpr` dump (the `Boxed`-result negative case for loop-invariant
-expression hoisting, see `rc2/doc/loop-conversion.md`'s "Loop-invariant
-expression hoisting" section). Its own `let v5 : Boxed = dup v0; dup
-v1; con ... [v0, v1]` sits in the loop's own unconditional prefix and
-is never itself hoisted (a `Boxed` result, per that section's own
-`isNativeRep` guard) -- but `v0`/`v1` themselves are *also* never read
-anywhere else in the loop body, on either branch: `v0`/`v1`'s own
-original references are only ever consumed by that one `dup`+`con`
-right there, yet `annotate` (Phase 2, which runs *before*
-`Compiler.RC2.Loop` ever converts the recursion into a loop at all)
-still only drops them at the very end, on the loop's own exit arm
-(`then`'s own `drop [v0, v1]`) -- not right after their one and only
-use, in the prefix, where a fresh dataflow analysis run *after* loop
-conversion would place it. This isn't a correctness bug (the drop still
-happens exactly once, on the only path that doesn't otherwise transfer
-ownership of them onward) -- it's `annotate`'s own ownership decision
-having been made for the *pre-loop-conversion* recursive shape, where
-`v0`/`v1` genuinely did need to survive into the `else` arm to be
-forwarded to the next recursive call. Post-conversion, that "forward to
-the next call" need has silently disappeared (a `continue loop` needs
-no explicit forwarding of an untouched value at all), but nothing
-revisits `v0`/`v1`'s own drop position to notice their real last use
-now sits earlier, in the prefix -- they're kept alive (an unnecessary
-outstanding reference) for the whole loop's own lifetime for no reason.
-
-Distinct from both loop-invariant parameter elision (`v0`/`v1` were
-never loop-carried params to begin with) and loop-invariant expression
-hoisting (the expression *reading* them, `v5`'s own construction,
-can't be hoisted at all here since it's `Boxed`) -- this is about
-*shortening a still-in-place value's own lifetime*, not moving a
-computation. Would need something like: within the same "unconditional
-prefix" scan `hoistInvariantPrefix` already performs, track each
-loop-invariant local's own last read position; if that position is
-itself in the prefix and the local doesn't survive into either branch
-(a proper liveness check, not just "isn't a loop param"), move its own
-drop there instead of leaving it wherever `annotate`'s original,
-pre-loop-conversion decision put it. Not currently planned -- would
-need its own liveness pass working within `Compiler.RC2.Loop`'s
-already-converted body, reasoning about what happens on *both* branches
-past the prefix (the same "look past the first branch" territory the
-single-branch-case-hoisting entry above needs too).
-
 ## Performance: constructor reuse doesn't reach across a monadic-bind continuation
 
 Investigated why `Compiler.RC2.Reuse` doesn't fire on
