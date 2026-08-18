@@ -526,6 +526,77 @@ fillLoopContinuePostDrop loopParams reps (RLoopContinue fc args _) =
     needsDrop _ = Nothing
 fillLoopContinuePostDrop _ _ e = e
 
+||| Every `RLoopContinue` reachable in `e`, collecting each one's own
+||| `args` list -- same tree shape `fillLoopContinuePostDrop` itself
+||| walks (its own doc comment's "no nested `RLoop`" reasoning applies
+||| here unchanged), just collecting instead of rewriting.
+collectContinueArgs : RCExp -> List (List RCLocal)
+collectContinueArgs (RLet _ _ _ _ body) = collectContinueArgs body
+collectContinueArgs (RCmpCase _ _ _ _ t f) = collectContinueArgs t ++ collectContinueArgs f
+collectContinueArgs (RConCase _ _ alts mDef) =
+    concatMap (\(MkRConAlt _ _ _ _ body) => collectContinueArgs body) alts
+      ++ maybe [] collectContinueArgs mDef
+collectContinueArgs (RConstCase _ _ alts mDef) =
+    concatMap (\(MkRConstAlt _ body) => collectContinueArgs body) alts
+      ++ maybe [] collectContinueArgs mDef
+collectContinueArgs (RDup _ _ cont) = collectContinueArgs cont
+collectContinueArgs (RDrop _ _ cont) = collectContinueArgs cont
+collectContinueArgs (RFree _ _ cont) = collectContinueArgs cont
+collectContinueArgs (RReleaseReuse _ _ cont) = collectContinueArgs cont
+collectContinueArgs (RReuseOffer _ _ _ cont) = collectContinueArgs cont
+collectContinueArgs (RLoopContinue _ args _) = [args]
+collectContinueArgs _ = []
+
+||| Every loop param's own id (a shadow id where native-shadowed, the
+||| original top-level parameter id otherwise) that *every* collected
+||| `RLoopContinue` supplies completely unchanged (`RCLoc` of that same
+||| id, at that same position) -- a param that never actually varies
+||| across an iteration, so it has no business being loop-carried at
+||| all. See `applyLoop`'s own doc comment for what happens to one of
+||| these next.
+invariantLoopParamIds : List (Int, Rep) -> List (List RCLocal) -> SortedSet Int
+invariantLoopParamIds fullLoopParams continues =
+    let start : List (Int, Bool)
+        start = map (\(p, _) => (p, True)) fullLoopParams
+        settled : List (Int, Bool)
+        settled = foldl (\acc, cargs => zipWith (\(p, inv), arg => (p, inv && arg == RCLoc p)) acc cargs)
+                         start continues
+    in fromList $ map fst $ filter snd settled
+
+||| Drops every `inv`-listed position's own argument from each
+||| `RLoopContinue` reachable in `e`, keyed positionally against
+||| `fullLoopParams` (the *un*-filtered param list every
+||| `RLoopContinue`'s own `args` is still aligned against at this
+||| point) -- same tree shape `fillLoopContinuePostDrop` walks.
+||| `postDrop` itself is untouched: an invariant position is never a
+||| source of one (it's never fed by a fresh Boxed computation -- by
+||| definition it's the very same already-native-or-Boxed local every
+||| time).
+elideInvariantContinueArgs : SortedSet Int -> List (Int, Rep) -> RCExp -> RCExp
+elideInvariantContinueArgs inv fullLoopParams (RLet fc var rep value body) =
+    RLet fc var rep value (elideInvariantContinueArgs inv fullLoopParams body)
+elideInvariantContinueArgs inv fullLoopParams (RCmpCase fc op args postDrop t f) =
+    RCmpCase fc op args postDrop
+      (elideInvariantContinueArgs inv fullLoopParams t) (elideInvariantContinueArgs inv fullLoopParams f)
+elideInvariantContinueArgs inv fullLoopParams (RConCase fc sc alts mDef) =
+    RConCase fc sc (map elideAlt alts) (map (elideInvariantContinueArgs inv fullLoopParams) mDef)
+  where
+    elideAlt : RConAlt -> RConAlt
+    elideAlt (MkRConAlt n ci tag as body) = MkRConAlt n ci tag as (elideInvariantContinueArgs inv fullLoopParams body)
+elideInvariantContinueArgs inv fullLoopParams (RConstCase fc sc alts mDef) =
+    RConstCase fc sc (map (\(MkRConstAlt c body) => MkRConstAlt c (elideInvariantContinueArgs inv fullLoopParams body)) alts)
+      (map (elideInvariantContinueArgs inv fullLoopParams) mDef)
+elideInvariantContinueArgs inv fullLoopParams (RDup fc v cont) = RDup fc v (elideInvariantContinueArgs inv fullLoopParams cont)
+elideInvariantContinueArgs inv fullLoopParams (RDrop fc vs cont) = RDrop fc vs (elideInvariantContinueArgs inv fullLoopParams cont)
+elideInvariantContinueArgs inv fullLoopParams (RFree fc v cont) = RFree fc v (elideInvariantContinueArgs inv fullLoopParams cont)
+elideInvariantContinueArgs inv fullLoopParams (RReleaseReuse fc v cont) =
+    RReleaseReuse fc v (elideInvariantContinueArgs inv fullLoopParams cont)
+elideInvariantContinueArgs inv fullLoopParams (RReuseOffer fc sc dupOnShared cont) =
+    RReuseOffer fc sc dupOnShared (elideInvariantContinueArgs inv fullLoopParams cont)
+elideInvariantContinueArgs inv fullLoopParams (RLoopContinue fc args postDrop) =
+    RLoopContinue fc (map snd $ filter (\((p, _), _) => not (contains p inv)) (zip fullLoopParams args)) postDrop
+elideInvariantContinueArgs _ _ e = e
+
 ||| Apply self-tail-call loop conversion to one top-level definition,
 ||| given its own `Name` -- Compiler.RC2.RC doesn't thread a
 ||| definition's own name through Phase 1/2 at all (nothing there needs
@@ -550,6 +621,21 @@ fillLoopContinuePostDrop _ _ e = e
 ||| (like Compiler.RC2.MutualLoop's own `FreshId`) since this whole pass
 ||| stays a pure function of one definition at a time, no cross-
 ||| definition state needed.
+|||
+||| A param that turns out loop-*invariant* (`invariantLoopParamIds`:
+||| every `RLoopContinue` supplies it completely unchanged) is excluded
+||| from `loopParams`/`initial`/every continue's own `args` entirely --
+||| it was never going to be reassigned, so it has no business being
+||| loop-carried in the IR at all. A Boxed one needs nothing further:
+||| its own original id is already, and remains, the enclosing
+||| function's own top-level argument (`Compiler.RC2.Emit`'s
+||| `declareLoopParam` already special-cases this exact "no
+||| declaration needed" shape). A native-shadow-eligible one instead
+||| gets hoisted into a one-time `RLet`+`RDrop` pair wrapping the whole
+||| loop -- the exact same idiom `Compiler.RC2.ConAltNative`'s own
+||| `shadowAltFields` already established for caching a native read of
+||| a destructured field, reused here verbatim (see its own doc
+||| comment) rather than reinvented.
 export
 applyLoop : Name -> RCDef -> RCDef
 applyLoop self (MkRCFun args retRep body) =
@@ -571,17 +657,41 @@ applyLoop self (MkRCFun args retRep body) =
                   shadowIds = fromList $ map (\(_, sid, _) => sid) shadowed
                   rewritten : RCExp
                   rewritten = if null shadowed then body' else stripOwnership shadowIds (renameRCExp renaming body')
-                  loopParams : List (Int, Rep)
-                  loopParams = map (\p => case find (\(p', _, _) => p' == p) shadowed of
+                  fullLoopParams : List (Int, Rep)
+                  fullLoopParams = map (\p => case find (\(p', _, _) => p' == p) shadowed of
                                                Just (_, sid, ty) => (sid, RNative ty)
                                                Nothing => (p, RBoxed)) argIds
                   withPostDrop : RCExp
-                  withPostDrop = fillLoopContinuePostDrop loopParams (fromList loopParams) rewritten
-                  -- Every shadowed param's own original top-level arg is
-                  -- dead in its Boxed form once its native shadow
-                  -- declaration above runs -- see `prologueDrop`'s own
-                  -- doc comment on `RLoop` in RCExp.idr.
+                  withPostDrop = fillLoopContinuePostDrop fullLoopParams (fromList fullLoopParams) rewritten
+                  invariantIds : SortedSet Int
+                  invariantIds = invariantLoopParamIds fullLoopParams (collectContinueArgs withPostDrop)
+                  loopParams : List (Int, Rep)
+                  loopParams = filter (\(p, _) => not (contains p invariantIds)) fullLoopParams
+                  initial : List RCLocal
+                  initial = map snd $ filter (\((p, _), _) => not (contains p invariantIds))
+                                              (zip fullLoopParams (map RCLoc argIds))
+                  finalBody : RCExp
+                  finalBody = if null (Prelude.toList invariantIds)
+                                 then withPostDrop
+                                 else elideInvariantContinueArgs invariantIds fullLoopParams withPostDrop
+                  -- Every *still-loop-carried* shadowed param's own
+                  -- original top-level arg is dead in its Boxed form
+                  -- once its native shadow declaration above runs --
+                  -- see `prologueDrop`'s own doc comment on `RLoop` in
+                  -- RCExp.idr. An *invariant* shadowed param isn't
+                  -- loop-carried any more at all (see
+                  -- `wrapInvariantShadows` below) -- its own drop
+                  -- happens right there instead, so it's excluded here
+                  -- to avoid a double drop.
                   prologueDrop : List RCLocal
-                  prologueDrop = map (\(p, _, _) => RCLoc p) shadowed
-              in RLoop emptyFC loopParams (map RCLoc argIds) prologueDrop withPostDrop
+                  prologueDrop = mapMaybe (\(p, sid, _) => if contains sid invariantIds then Nothing else Just (RCLoc p)) shadowed
+                  innerLoop : RCExp
+                  innerLoop = RLoop emptyFC loopParams initial prologueDrop finalBody
+                  wrapInvariantShadows : RCExp
+                  wrapInvariantShadows = foldr (\(p, sid, ty), acc =>
+                                                    RLet emptyFC sid (RNative ty) (RV emptyFC (RCLoc p))
+                                                      (RDrop emptyFC [RCLoc p] acc))
+                                             innerLoop
+                                             (filter (\(_, sid, _) => contains sid invariantIds) shadowed)
+              in wrapInvariantShadows
 applyLoop _ d = d

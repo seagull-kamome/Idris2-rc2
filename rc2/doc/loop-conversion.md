@@ -299,6 +299,84 @@ found" below for how this was diagnosed.
    `Compiler.RC2.Emit`'s `declareLoopParam` does the (skipped, for an
    unchanged `RBoxed` param) unboxing conversion.
 
+### Loop-invariant parameter elision
+
+Found while reading `--directive dumprcexpr` output for an external
+package's own hot loop (see `rc2/BENCHMARKS.md`'s 2026-08-18 entry): a
+loop-carried parameter that never actually changes across any
+iteration was still showing up in `loopParams`/`initial`/every
+`continue`'s own `args`, indistinguishable in the dump from one that
+genuinely varies. The motivation here is IR *accuracy*, not raw speed
+(Compiler.RC2.Emit's own `zip`-based lowering happens to also shrink as
+a direct consequence, but that's a side effect, not the point) -- a
+reader of the `.rcexpr` dump should be able to trust that `loopParams`
+lists exactly the values a loop actually reassigns.
+
+**Detection**: after `applyLoop`'s existing native-shadow promotion has
+already run (`fullLoopParams`, `withPostDrop` -- everything through
+step 4 above, completely unchanged), `collectContinueArgs` walks the
+body collecting every `RLoopContinue`'s own `args` list (same tree
+shape `fillLoopContinuePostDrop` itself already walks -- one function,
+one `RLoop`, by construction, so there's never a nested one to worry
+about). `invariantLoopParamIds` then folds over all of them: starting
+from "every position is invariant" and, for each collected `args` list,
+ANDing in "does this continue supply *this exact same local* (`RCLoc`
+of the loop param's own id -- a shadow id where native-shadowed, the
+original parameter id otherwise) at this position" -- a position
+survives only if literally every continue agrees. Boxed and native-
+shadowed positions are checked identically; nothing here distinguishes
+them.
+
+**Rewrite**: a survivor gets removed from `loopParams`/`initial` (via
+`elideInvariantContinueArgs`, same tree-walk shape again, dropping the
+corresponding slot from every `RLoopContinue`'s own `args`) and handled
+one of two ways depending on whether it had been native-shadowed:
+
+- **Stayed Boxed**: nothing further to do. Its own id is already, and
+  remains, the enclosing function's own top-level argument -- readable
+  directly from anywhere in the loop body without any declaration at
+  all (the exact same "no redeclaration needed" case
+  `Compiler.RC2.Emit`'s `declareLoopParam` already special-cases for an
+  ordinary unchanged `RBoxed` loop param, see the "Emission" section
+  below -- an elided Boxed param just means that special case now also
+  applies to something that's no longer even nominally a loop param).
+- **Native-shadowed**: hoisted into a one-time `RLet`+`RDrop` pair
+  wrapping the *whole* `RLoop` -- `RLet emptyFC sid (RNative ty) (RV
+  emptyFC (RCLoc p)) (RDrop emptyFC [RCLoc p] ...)`. This is not a new
+  IR shape invented for this pass: it's `Compiler.RC2.ConAltNative`'s
+  own `shadowAltFields` idiom (see that module's own doc, and its
+  worked example in `doc/reading-the-ir.md`) for caching a native read
+  of a Boxed value exactly once, reused verbatim -- only the thing
+  being wrapped (a whole loop, rather than one `case` alt's own body)
+  differs. `prologueDrop` excludes these ids (their own drop is now
+  this explicit `RDrop`, not the batch-discharged `prologueDrop` list
+  `Compiler.RC2.Emit`'s `emitLoopInto` still handles for every
+  remaining, genuinely-varying shadowed param).
+
+No MutualLoop-arity-padding NULL hazard here (contrast
+`Compiler.RC2.Emit`'s own `declareLoopParam`, which needs an explicit
+NULL guard for exactly this reason -- see its own doc comment):
+`invariantLoopParamIds` only accepts a position where *every* continue
+supplies the same real local, so a position ever fed `RCNull`/`[__]` on
+even one transition (`Compiler.RC2.MutualLoop`'s own trailing-slot
+padding, see that module's own section below) fails the check outright
+and is never a candidate for elision.
+
+**DualABI interaction**: `Compiler.RC2.DualABI`'s own `paramEligibility`
+used to pattern-match `RLoop` directly at the top of a body and `zip`
+`argIds` against its `loopParams` positionally, relying on the two
+always being the same length. Elision breaks that invariant, so
+`paramEligibility` now peels through a leading `RLet` chain
+(`findLoopThroughLets`) before checking for a nested `RLoop`, and looks
+each parameter up by id (`SortedMap`) rather than by position -- an id
+missing from both the peeled `RLet`s and `loopParams` correctly reads
+as "not native" (an elided Boxed parameter was never native to begin
+with). `DualABI`'s other two `RLoop`-aware functions
+(`tailValueReps`/`applyCallSiteRewriteBody`) needed no change at all --
+both already recurse generically through an arbitrary `RLet`/`RDrop`
+prefix on their way to whatever's inside, so the new wrapping shape is
+already exactly what they expect.
+
 #### `renameRCExp` -- whole-tree substitution
 
 ```idris
@@ -835,7 +913,9 @@ benchmark:
 - `rc2/src/Compiler/RC2/Loop.idr` -- `mapTailAppNames` (shared),
   `collectBoundIds`/`Renaming`/`renameRCExp` (shared),
   `nativeArgType`/`nativeArgTypes`/`opNativeUsesThrough`,
-  `stripOwnership`, `assignShadowIds`, `applyLoop`.
+  `stripOwnership`, `assignShadowIds`, `applyLoop`,
+  `collectContinueArgs`/`invariantLoopParamIds`/
+  `elideInvariantContinueArgs` (loop-invariant parameter elision).
 - `rc2/src/Compiler/RC2/MutualLoop.idr` -- `tailCallTargets`,
   `tarjanSCCs`/`strongConnect` (Tarjan's algorithm), `buildGroup`,
   `rewriteGroupTailCalls`, `applyMutualLoop`.
@@ -844,7 +924,15 @@ benchmark:
   (`applyMutualLoop` then `applyLoop`, in that order).
 - `rc2/src/Compiler/RC2/Emit.idr` -- `declareLoopParam`, `emitLoopInto`,
   `tryEmitLoopContinue`, `LoopParams`, the `rcVarToNativeC _ RCNull`
-  clause, `emitConstCaseInto`'s `Rep`-aware scrutinee handling.
+  clause, `emitConstCaseInto`'s `Rep`-aware scrutinee handling
+  (unchanged by loop-invariant parameter elision -- see that section
+  above for why).
+- `rc2/src/Compiler/RC2/DualABI.idr` -- `paramEligibility`,
+  `findLoopThroughLets` (both updated for loop-invariant parameter
+  elision, see that section above).
+- `rc2/src/Compiler/RC2/ConAltNative.idr` -- `shadowAltFields`, the
+  `RLet`+`RDrop` idiom loop-invariant parameter elision reuses verbatim
+  for a native-shadowed elided parameter.
 
 ## Verification methodology
 
@@ -883,3 +971,12 @@ benchmark:
    `loop [...]` (converted) and which of its own params show `Native
    <ty>` in that line (promoted) -- `doc/reading-the-ir.md`'s own
    section 7/8 walks through exactly this.
+6. `tests/Test19LoopInvariantParam.idr` -- loop-invariant parameter
+   elision's own dedicated coverage: one Boxed (`tag`) and one
+   native-shadow-eligible (`limit`) parameter, both threaded unchanged
+   through every recursive call alongside a genuinely varying
+   accumulator/counter pair, confirming both categories of elision (and
+   their very different ownership handling -- an explicit `RDrop` for
+   the hoisted native one, nothing at all for the Boxed one) under
+   `valgrind` -- see `doc/reading-the-ir.md`'s own section 8.5 for its
+   full `.rcexpr` dump.

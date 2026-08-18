@@ -252,6 +252,68 @@ entry for the resulting generated-C/timing comparison, and
 note for the real-world pattern -- a loop-carried value wrapped in a
 single-field constructor -- this specific mechanism does *not* reach).
 
+## 8.5. Reading elided (loop-invariant) params
+
+`loop`'s own param list is not guaranteed to have one entry per the
+enclosing function's own top-level argument. `Compiler.RC2.Loop`'s
+`applyLoop` checks, for every parameter, whether *every* `continue
+loop` in the body supplies it completely unchanged (the exact same
+local, not merely an equal-looking recomputation) -- one that does is
+provably never reassigned across any iteration, so it's dropped from
+`loop`'s own param list and `initial` entirely rather than being
+carried around a `goto` for no reason.
+
+What happens to that parameter next depends on whether it was native-
+shadow-eligible:
+
+- **Stayed Boxed**: nothing else changes at all -- its own original id
+  is still, and remains, the enclosing function's own top-level
+  argument, readable directly from anywhere in the loop body exactly
+  as before this pass ever ran.
+- **Native-shadow-eligible**: hoisted into a one-time `let`+`drop` pair
+  immediately *outside* the `loop`, reusing the exact same idiom
+  section 9's `Compiler.RC2.ConAltNative` example below uses for
+  caching a destructured field's own native read (`Compiler.RC2.Loop`'s
+  own `applyLoop` reuses it verbatim, wrapping the whole loop rather
+  than one alt's own body).
+
+Worked example -- `Test19LoopInvariantParam.idr`'s `sumWithTag tag
+limit acc n = if n >= limit then acc + cast (length tag) else
+sumWithTag tag limit (acc + n) (n + 1)` (`tag : String` and `limit :
+Int` are both threaded through every recursive call completely
+unchanged; only `acc`/`n` actually vary):
+
+```
+def {idris2rc2_worker_Main_sumWithTag:0}  (fun args=["v0:Boxed", "v1:Boxed", "v2:Boxed", "v3:Boxed"] ret=Native Int)
+  let v12 : Native Int =
+    v1
+  drop [v1]
+  loop ["v13:Native Int", "v14:Native Int"] initial=[v2, v3] prologueDrop=[v2, v3]
+  cmp >=Int [v14, v12]
+  then
+    ...
+    op +Int [v13, v4] postDrop=[v4]
+  else
+    ...
+    continue loop [v10, v11]
+```
+
+Reading this: `loop`'s own param list has only two entries (`v13`/
+`v14`, `acc`/`n`) -- `tag` (`v0`) and `limit` (`v1`) are both gone from
+it entirely, even though `limit` is genuinely native-shadow-eligible
+(read as a `cmp >=Int` operand every iteration, same as `BenchLoop`'s
+own `n` in section 8's example). `limit`'s own shadow (`v12`) is
+instead bound just once, immediately above the loop -- `let v12 :
+Native Int = v1` reads `v1` (still fully Boxed, still fully owned at
+that point) natively exactly once, `drop [v1]` releases the original
+right after, and every native-context read of `limit` inside the loop
+body (the `cmp >=Int [v14, v12]` above) uses `v12` directly, never
+re-reading or re-unboxing it on any iteration. `tag` (`v0`) needs no
+wrapping at all -- it stays Boxed, absent from both the `let` prefix
+and `loop`'s own param list, and its one remaining use (`length tag` in
+the base case, not shown above) simply reads the worker's own `v0`
+argument directly, exactly as if this pass had never run.
+
 ## 9. Worked examples
 
 ### Constructor-reuse-in-place (`List.takeUntil`-shaped code, from `Test1Basics.idr`)
