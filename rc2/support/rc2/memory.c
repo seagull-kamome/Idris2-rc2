@@ -31,8 +31,13 @@ IDRIS2RC2_Constructor *idris2rc2_newConstructor(int arity, int tag) {
 }
 
 IDRIS2RC2_Closure *idris2rc2_mkClosure(IDRIS2RC2_Value *(*fn)(), uint8_t arity, uint8_t filled) {
+  // Always allocate room for the full `arity`, not just `filled` -- lets
+  // idris2rc2_tailcallApplyClosure grow a unique closure in place
+  // (args[filled] = arg; filled++) instead of reallocating on every
+  // partial application. Overhead is at most (arity - filled) pointers,
+  // and Idris2 functions rarely have many params.
   IDRIS2RC2_Closure *c = (IDRIS2RC2_Closure *)idris2rc2_alloc(sizeof(IDRIS2RC2_Closure) +
-                                             sizeof(IDRIS2RC2_Value *) * filled);
+                                             sizeof(IDRIS2RC2_Value *) * arity);
   c->header.tag = IDRIS2RC2_TAG_CLOSURE;
   c->fn = fn;
   c->arity = arity;
