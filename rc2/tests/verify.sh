@@ -13,13 +13,31 @@
 # match.
 #
 # Usage: ./verify.sh [--skip-build] [--no-valgrind] [--valgrind-all]
-#                     [--regen-expected]
+#                     [--regen-expected] [--directive VALUE]...
 #
 #   --skip-build       Don't rebuild idris2-rc2/libidris2rc2.a first
 #                       (use the existing rc2/build/exec/idris2-rc2).
 #   --no-valgrind      Skip the valgrind pass entirely (faster).
 #   --valgrind-all     Run valgrind on every smoke test, not just the
 #                       curated leak-sensitive subset.
+#   --directive VALUE  Forwarded as `--directive VALUE` to idris2-rc2
+#                       for every smoke test (rc2/tests/Test*.idr)
+#                       compile -- repeatable, same convention as
+#                       idris2's own `--directive` (e.g. `--directive
+#                       noreuse --directive noconaltnative`). See
+#                       Compiler.RC2.RC2's own `toRCDefs` doc comment
+#                       (rc2/src/Compiler/RC2/RC2.idr) for the
+#                       recognised `no<stagename>` values (noinline/
+#                       noreuse/noconaltnative/nomutualloop/noloop/
+#                       nodualabi) -- lets a session compare compile/
+#                       run time with a given optimisation pass on vs.
+#                       off. Not applied to refc-suite (its own run.sh
+#                       runs as a separate process, untouched by this
+#                       flag). Disabling a stage should never change a
+#                       smoke test's own PASS/FAIL outcome -- if it
+#                       does, that's a correctness bug in the disabled
+#                       stage, not a script bug; report it as a normal
+#                       FAIL rather than special-casing it.
 #   --regen-expected   Rebuild each smoke test with real `idris2 --cg
 #                       refc` too, and overwrite its own
 #                       rc2/tests/TestN.expected with that run's
@@ -45,7 +63,10 @@
 #
 # Exit code 0 iff every check passed (known pre-existing issues from
 # KNOWN-BUGS.md excepted); non-zero otherwise. All output is plain text
-# on stdout, PASS/FAIL/SKIP/KNOWN-prefixed lines, safe to grep.
+# on stdout, PASS/FAIL/SKIP/KNOWN-prefixed lines, safe to grep. Each
+# smoke test's own PASS/FAIL line also carries its compile/run wall-
+# clock time -- informational only, never part of the pass/fail
+# verdict.
 #
 # Every generated artifact (compiled binaries, build logs, valgrind
 # logs, .diff files) lands under rc2/tests/build/ -- cleaned at the
@@ -70,15 +91,36 @@ SKIP_BUILD=0
 DO_VALGRIND=1
 VALGRIND_ALL=0
 REGEN_EXPECTED=0
-for arg in "$@"; do
-    case "$arg" in
-        --skip-build) SKIP_BUILD=1 ;;
-        --no-valgrind) DO_VALGRIND=0 ;;
-        --valgrind-all) VALGRIND_ALL=1 ;;
-        --regen-expected) REGEN_EXPECTED=1 ;;
-        *) echo "unknown argument: $arg" >&2; exit 2 ;;
+EXTRA_DIRECTIVES=()
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --skip-build) SKIP_BUILD=1; shift ;;
+        --no-valgrind) DO_VALGRIND=0; shift ;;
+        --valgrind-all) VALGRIND_ALL=1; shift ;;
+        --regen-expected) REGEN_EXPECTED=1; shift ;;
+        --directive) EXTRA_DIRECTIVES+=("$2"); shift 2 ;;
+        *) echo "unknown argument: $1" >&2; exit 2 ;;
     esac
 done
+
+# Turned into a single ` --directive X --directive Y ...` string,
+# spliced straight after `--directive dumprcexpr` in every smoke-test
+# compile line below (never sent to refc-suite/run.sh, which runs as
+# its own separate process). nix-shell --run "<string>" re-parses that
+# whole string inside its own `bash -c`, so this still word-splits
+# correctly there -- just don't pass a directive value containing
+# whitespace (every recognised rc2 directive is a single identifier).
+extra_directive_args=""
+for d in "${EXTRA_DIRECTIVES[@]}"; do
+    extra_directive_args="$extra_directive_args --directive $d"
+done
+
+# Wall-clock elapsed seconds between two `date +%s.%N` samples --
+# avoided bash's own `time` builtin since it doesn't compose with the
+# `actual="$(...)"` command substitution smoke tests already need to
+# capture their own stdout.
+elapsed() { awk -v a="$1" -v b="$2" 'BEGIN { printf "%.3f", b - a }'; }
+timing_note() { echo "compile ${1}s, run ${2}s"; }
 
 # shellcheck source=/dev/null
 source "$REPO_DIR/env.sh"
@@ -161,29 +203,33 @@ is_in() { local x; for x in $2; do [ "$x" = "$1" ] && return 0; done; return 1; 
 ALL_TESTS="$(cd "$RC2_DIR/tests" && ls Test*.idr | sed 's/\.idr$//' | sort)"
 
 for name in $ALL_TESTS; do
+    compile_t0="$(date +%s.%N)"
     if is_in "$name" "$BARE_INVOKE_TESTS"; then
         (cd "$RC2_DIR/tests" && nix-shell -p idris2 gcc gmp pkg-config --run \
-            "$IDRIS2RC2 --cg rc2 --directive dumprcexpr $name.idr -o $TMP/${name}_rc2") \
+            "$IDRIS2RC2 --cg rc2 --directive dumprcexpr$extra_directive_args $name.idr -o $TMP/${name}_rc2") \
             > "$TMP/${name}_compile.log" 2>&1
     else
         nix-shell -p idris2 gcc gmp pkg-config --run \
-            "$IDRIS2RC2 --cg rc2 --directive dumprcexpr $RC2_DIR/tests/$name.idr -o $TMP/${name}_rc2" \
+            "$IDRIS2RC2 --cg rc2 --directive dumprcexpr$extra_directive_args $RC2_DIR/tests/$name.idr -o $TMP/${name}_rc2" \
             > "$TMP/${name}_compile.log" 2>&1
     fi
+    compile_time="$(elapsed "$compile_t0" "$(date +%s.%N)")"
     if [ ! -x "$TMP/${name}_rc2" ]; then
-        report_fail "$name" "rc2 compile error, see $TMP/${name}_compile.log"
+        report_fail "$name" "rc2 compile error (compile ${compile_time}s), see $TMP/${name}_compile.log"
         continue
     fi
 
+    run_t0="$(date +%s.%N)"
     actual="$("$TMP/${name}_rc2" 2>&1)"
+    run_time="$(elapsed "$run_t0" "$(date +%s.%N)")"
 
     if is_in "$name" "$NO_REFC_DIFF_TESTS"; then
         if [ -f "$RC2_DIR/tests/$name.expected" ]; then
             expected="$(cat "$RC2_DIR/tests/$name.expected")"
             if [ "$actual" = "$expected" ]; then
-                report_pass "$name (vs. saved .expected, refc diff skipped by design -- see NO_REFC_DIFF_TESTS above)"
+                report_pass "$name ($(timing_note "$compile_time" "$run_time"); vs. saved .expected, refc diff skipped by design -- see NO_REFC_DIFF_TESTS above)"
             else
-                report_fail "$name" "mismatch against saved .expected"
+                report_fail "$name" "mismatch against saved .expected (compile ${compile_time}s, run ${run_time}s)"
             fi
         else
             report_fail "$name" "no saved .expected, and refc diff is skipped by design for this test -- see NO_REFC_DIFF_TESTS above"
@@ -212,10 +258,10 @@ for name in $ALL_TESTS; do
         fi
         expected="$(cat "$expected_file")"
         if [ "$actual" = "$expected" ]; then
-            report_pass "$name"
+            report_pass "$name (compile ${compile_time}s, run ${run_time}s)"
         else
             diff <(echo "$expected") <(echo "$actual") > "$TMP/${name}.diff"
-            report_fail "$name" "output mismatch, see $TMP/${name}.diff"
+            report_fail "$name" "output mismatch (compile ${compile_time}s, run ${run_time}s), see $TMP/${name}.diff"
         fi
     fi
 done
