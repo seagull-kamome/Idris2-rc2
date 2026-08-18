@@ -1,5 +1,102 @@
 # rc2 Stage 5: テストとベンチマーク結果
 
+## 2026-08-18 追記: クロージャ部分適用チェーンのin-place伸長(unique closure fast path)
+
+「ループ変数になっているクロージャも、参照が1(unique)なら再利用できるはず」
+という指摘を受けて調査した。コンストラクタのreuse-in-place(`Compiler.RC2.Reuse`)
+と違い、クロージャへの一般的な拡張(コンパイル時escape解析で「一箇所で一度だけ
+呼ばれる」ことを保証する)は`rc2/doc/reuse-monadic-bind-gap.md`で既に「大規模、
+未着手」と判断済みの領域だったためスコープ外としたが、代わりに**IR解析を一切
+必要としない、ランタイムだけで完結する最適化**の余地が見つかった。
+
+部分適用を1段ずつ進める`idris2rc2_tailcallApplyClosure`(`rc2/support/rc2/runtime.c`)
+は、それまで`refCount==1`(unique)の場合でも毎回新しいクロージャをアロケーション
+してコピーしていた。一方`idris2rc2_mkClosure`(`rc2/support/rc2/memory.c`)は元々
+`arity`(最終的な引数総数)と`filled`(現時点で埋まっている数)を別々の引数として
+受け取っていたにもかかわらず、確保サイズは`filled`分しか取っていなかった。
+確保サイズを`arity`分に変えるだけで、そのクロージャの生涯を通じて再アロケーション
+が一切不要になる。unique分岐は「新規確保+コピー+free」から「フィールド1個書き
+換えるだけ」まで縮む:
+
+```c
+/* 変更前 */
+IDRIS2RC2_Closure *nc = idris2rc2_mkClosure(c->fn, c->arity, c->filled + 1);
+if (c->header.refCount <= 1) {
+    memcpy(nc->args, c->args, sizeof(IDRIS2RC2_Value *) * c->filled);
+} else {
+    for (int i = 0; i < c->filled; ++i) nc->args[i] = idris2rc2_dup(c->args[i]);
+}
+nc->args[c->filled] = arg;
+if (idris2rc2_isUnique(c)) free(c); else --c->header.refCount;
+return (IDRIS2RC2_Value *)nc;
+
+/* 変更後 */
+if (idris2rc2_isUnique(c)) {
+    c->args[c->filled] = arg;
+    ++c->filled;
+    return (IDRIS2RC2_Value *)c;               /* 確保・コピー・freeなし */
+}
+IDRIS2RC2_Closure *nc = idris2rc2_mkClosure(c->fn, c->arity, c->filled + 1);
+for (int i = 0; i < c->filled; ++i) nc->args[i] = idris2rc2_dup(c->args[i]);
+nc->args[c->filled] = arg;
+--c->header.refCount;
+return (IDRIS2RC2_Value *)nc;
+```
+
+共有(非unique)分岐も、従来`c->header.refCount <= 1`(memcpy可否)と
+`idris2rc2_isUnique(c)`(`==1`、free可否)という微妙に非対称な2つの判定を
+持っていたが、unique分岐が独立したことで単純に「要素ごとdupしてコピー、
+refCountを1減らす」の一本道になった。オーバーヘッドはクロージャ1個あたり
+高々`(arity - filled)`ポインタ分(Idris2の関数引数は実用上少数)。安全性は
+`idris2rc2_mkClosure`呼び出し直後にフィールドを順に埋めるだけの単一シーケンス
+(`Emit.idr`の`makeClosureInto`)であること、rc2ランタイムがシングルスレッド
+前提(非atomic参照カウント)であることから、構築途中の状態が他コードから
+観測されることはない。
+
+### 新規マイクロベンチマーク `BenchClosureChain.idr`(3段の部分適用チェーンを300万回)
+
+| | 変更前 | 変更後 | RefC |
+|---|---|---|---|
+| rc2(壁時計、3回平均) | 0.482s | **0.287s** | 0.753s(不変) |
+| rc2倍率(RefC比) | 約1.56倍高速 | **約2.63倍高速** | - |
+
+rc2自身の実行時間が**約40%短縮**。RefC側はこの変更の対象外(rc2独自ランタイム
+のみの変更)のため数値は不変。新規スモークテスト`Test18ClosureInPlaceGrow.idr`
+(unique連鎖・共有クロージャの両経路をカバー)を`verify.sh`の
+`LEAK_SENSITIVE_TESTS`に追加し、valgrindで0バイトリークを確認済み。他の
+`Bench*.idr`(Chain/Fib/Loop/Mutual)には回帰なし。
+
+### 外部パッケージベンチマーク(idris2-missing-containers)再計測: 大幅な追加改善
+
+上記「ループ変数のネイティブ表現化」の節で判明していた通り、`idris2-missing-
+containers`のハッシュアルゴリズム内部ループは1バイトごとに`idris2rc2_applyClosure`
+をインターフェース経由で2回呼び出す、まさに部分適用チェーンが支配的なホット
+パスだった。今回の変更後に同じワークロードを再計測したところ(壁時計時間、
+3回実行):
+
+| | 直前の記録値(2026-08-14、デュアルABI+ループshadow後) | 今回(in-place伸長後) |
+|---|---|---|
+| rc2 | 15.16s | **10.92s**(10.9567s/10.8847s、2回計測の平均) |
+| RefC | 21.91s | 20.49s |
+| Chez | 7.52s | 7.09s |
+
+RefC/Chezは今回の変更の対象外(それぞれ別ランタイム)なので、両方とも数%
+下がっている絶対値の変化はセッション間の環境差(マシン負荷等)によるノイズと
+見るべきで、比較の軸は同一セッション内での比率に置く:
+
+| | 直前 | 今回 |
+|---|---|---|
+| rc2/RefC比 | 約1.45倍高速 | **約1.88倍高速** |
+| rc2/Chez比 | 約2.02倍(rc2が遅い) | **約1.54倍**(rc2が遅い) |
+
+RefC優位幅がさらに広がり、Chezとの差も縮まった。`rc2`自身の絶対時間で見ても
+15.16s→10.92s(約28%短縮)と、自己/相互末尾再帰ループ変換(17.30s→15.20s、
+約12%短縮)を上回る改善幅になっている。今回はフェーズ別の再計測(FNV1a/
+MurMur3等の個別タイミング)までは行っていないが、既存の分析(前節参照:
+ハッシュ状態がインターフェース経由の部分適用チェーンで1バイトごとに更新
+される)と整合する結果であり、ランタイムだけで完結する最適化が実ワーク
+ロードにもそのまま波及することを裏付けている。
+
 ## 2026-08-14 追記: デュアル呼び出し規約(Compiler.RC2.DualABI、Stage 1〜4完了)
 
 これまでの各セクションで繰り返し「デュアルABI(未実装)を実装しない限りこの
