@@ -157,6 +157,33 @@ here in case a future frontend change or a different lowering strategy
 changes when `RFree` becomes reachable, so its rarely-exercised code path
 gets renewed scrutiny then.
 
+## Correctness: `--directive noreuse` corrupts the heap on several smoke tests
+
+`rc2/tests/verify.sh --directive noreuse` (see its own "--directive"
+option, added to let a session compare an optimisation pass on vs.
+off) surfaces a real heap corruption in 11 of 17 smoke tests
+(`Test1Basics`, `Test2Recursion`, `Test3Data`, `Test4Closures`,
+`Test5FFIStrings`, `Test7CastMatrix`, `Test8EmptyCon`,
+`Test9SelfTailLoop`, `Test10MutualLoop`, `Test12ConAltNative`,
+`Test13NativeArgChain`) -- `malloc(): unaligned tcache chunk detected`
+at runtime, not a compile error. `--directive noconaltnative` alone is
+unaffected (all 17 pass); the corruption is specific to disabling
+`Compiler.RC2.Reuse` itself, not something `ConAltNative` depends on.
+
+Not investigated further yet -- likely a later pass
+(`ConAltNative`/`MutualLoop`/`Loop`/`DualABI`, or `Emit` itself)
+implicitly relies on `Compiler.RC2.Reuse` having already run (e.g.
+assuming every `RCon`'s own `reuseFrom` field, or the absence of a
+dangling `RReuseOffer`/`RReleaseReuse`, in a way that's silently wrong
+when `Reuse` is skipped) rather than being a genuinely independent,
+disableable stage the way `--directive noconaltnative`/`noloop`/etc.
+are. Doesn't affect the default pipeline (`Reuse` always runs unless
+explicitly disabled), so it's not a correctness bug in what ships --
+only surfaces via this debug flag -- but worth root-causing before
+trusting `--directive noreuse` for any future performance comparison.
+
+Repro: `cd rc2/tests && ./verify.sh --skip-build --no-valgrind --directive noreuse`.
+
 ## yet another hope
 この項は人間が追加したものなので、後で整理して独立の項に括りだす事。
 今は着手しないが将来的な展望を書き連ねる。この項は日本語で書かれるが
