@@ -27,9 +27,60 @@ notSinkable flag a b =
         then case ctx of MkPair2 x y => x + y
         else case ctx of MkPair2 x y => x - y
 
+-- Exercises applySinkExp re-feeding a successful sink through itself:
+-- `ctx` is read only when *both* flags are True -- one sink moves it
+-- into `flag`'s own True arm, landing it directly above another
+-- branch (`flag2`), which should trigger a second sink one level
+-- deeper in the very same pass.
+deepSinkable : Bool -> Bool -> Int -> Int -> Int
+deepSinkable flag flag2 a b =
+  let ctx = MkPair2 a b
+  in if flag
+        then if flag2
+                then case ctx of MkPair2 x y => x + y
+                else 0
+        else 0
+
+-- Exercises sinking a plain function call (RAppName), not just
+-- ROp/RCon: `buildMsg tag n`'s own call is only read on the `True`
+-- arm, so the call itself -- and the drop of its own Boxed arguments
+-- it would otherwise perform via ownership transfer -- should move
+-- into that arm; the `False` arm gets an explicit `drop [tag, n]`
+-- instead of ever making the call.
+buildMsg : String -> Int -> String
+buildMsg tag n = tag ++ show n
+
+callSinkable : Bool -> String -> Int -> String
+callSinkable flag tag n =
+  let msg = buildMsg tag n
+  in if flag
+        then msg
+        else "none"
+
+-- Exercises sinking `x` *past* an unrelated `let y = ...` sitting
+-- between it and the branch: `y` itself is read on both arms (so it
+-- can't sink anywhere and stays exactly where it is), but `x` doesn't
+-- appear in `y`'s own computation, so `x`'s own binding should still
+-- reach through `y` and land inside the one arm (`True`) that reads
+-- it.
+skipUnrelatedLet : Bool -> Int -> Int -> Int -> Int
+skipUnrelatedLet flag a b c =
+  let x = a + b
+      y = c * 2
+  in if flag
+        then x + y
+        else y
+
 main : IO ()
 main = do
   printLn (sinkable True 3 4)
   printLn (sinkable False 3 4)
   printLn (notSinkable True 10 3)
   printLn (notSinkable False 10 3)
+  printLn (deepSinkable True True 5 6)
+  printLn (deepSinkable True False 5 6)
+  printLn (deepSinkable False True 5 6)
+  putStrLn (callSinkable True "n=" 5)
+  putStrLn (callSinkable False "n=" 5)
+  printLn (skipUnrelatedLet True 3 4 5)
+  printLn (skipUnrelatedLet False 3 4 5)

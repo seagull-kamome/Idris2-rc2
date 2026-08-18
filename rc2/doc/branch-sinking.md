@@ -54,19 +54,75 @@ needed, mirroring `Compiler.RC2.Loop`'s own `hoistInvariantPrefix`
 reasoning one level up (see that function's own doc comment) -- just in
 the opposite direction (into a branch, not out of a loop).
 
+### Sinking arbitrarily deep, not just one level
+
+A successful sink re-feeds its own result through `applySinkExp` again
+rather than returning it as-is. This matters whenever the one arm
+`var` sinks into itself starts with another branch `var` is only read
+on one side of: after the first sink, `var`'s own `RLet` now sits at
+the top of that arm, wrapping a branch node -- exactly the shape
+`applySinkExp`'s own `RLet` case looks for, so re-walking it lets
+`trySinkInto` fire a second time, landing `var` one level deeper still.
+This chains for arbitrarily many nested single-use branches, in the
+same single pass, with no separate fixed-point driver: each success
+strictly relocates `var`'s own binding into a strictly smaller
+subtree of a finite tree, so the recursion always terminates.
+`tests/Test22BranchSinking.idr`'s own `deepSinkable` is the dedicated
+test for this -- `ctx` is read only when *two* nested flags are both
+`True`, and sinks through both branches in one `Compiler.RC2.Sink` run.
+
 ### Deciding whether `value` is even a candidate (`sinkEligible`)
 
-Only a bare `ROp`/`RCon` (after peeling the same leading `RDup`/
+A bare `ROp`/`RCon`/`RAppName` (after peeling the same leading `RDup`/
 `RDrop`/`RFree`/`RReleaseReuse` wrapper shapes
 `Compiler.RC2.Loop.isInvariantExpr` already peels for an analogous
-reason), with the same two exclusions that function uses and for the
-same reasons (kept in sync deliberately, not re-derived):
+reason), with the same exclusions that function uses and for the same
+reasons where they apply (kept in sync deliberately, not re-derived):
 
-- `ROp`'s own `lazy` field must be `Nothing` -- a deferred operation's
-  evaluation *timing* is itself observable.
+- `ROp`/`RAppName`'s own `lazy` field must be `Nothing` -- a deferred
+  operation's evaluation *timing* is itself observable.
 - `RCon`'s own `reuseFrom` must be `Nothing` -- entangled with a
   specific `RReuseOffer`'s own per-arm runtime uniqueness-check
   protocol, not this pass's to relocate.
+
+**`RAppName` (an ordinary, named call) is eligible here even though
+`Compiler.RC2.Loop`'s own hoisting deliberately excludes it.** That
+exclusion is specific to *hoisting*: moving a computation to run
+unconditionally, once per call, ahead of a loop that might otherwise
+have skipped it entirely on a path that never iterates (see
+`rc2/doc/loop-conversion.md`'s own "Loop-invariant expression hoisting"
+section). Sinking only ever *reduces* how many times `value` runs --
+down to "only when the one arm that needs it is actually reached" --
+so a call that would have executed regardless is still guaranteed to,
+now simply closer to (and only when reaching) its one actual use;
+nothing here can turn a "never runs" path into a "now runs" one, the
+same safety argument the whole pass already rests on. `RApp`/
+`RUnderApp` (closure application/building) stay explicitly out of
+scope -- more machinery (allocation, the trampoline) than a direct
+named call, not analysed here. `RExtPrim` (genuine `%World`-threaded
+effects) is never eligible, sunk or not.
+
+Sinking a call needed one new piece of infrastructure this whole pass
+didn't previously need: `Sink.idr` now threads a `SortedMap Int Rep`
+(`reps`) through `applySinkExp`/`trySinkInto`/`trySinkIntoArms` --
+seeded empty (every top-level argument is genuinely `RBoxed`, matching
+`localRepIn`'s own "missing id defaults to `RBoxed`" convention,
+mirrored directly from `Compiler.RC2.DualABI`'s own function of the
+same name), extended at every `RLet` (its own declared `Rep`) and
+`RLoop` (its own `loopParams`) -- the same shape
+`Compiler.RC2.Loop.fillLoopContinuePostDrop`/`Compiler.RC2.DualABI
+.applyCallSiteRewriteBody` already thread. It exists purely for
+`consumedOperands`' own benefit: unlike `ROp`, whose `postDrop` already
+lists exactly which of its own operands are Boxed, `RAppName` has no
+such field -- *all* of its own arguments are unconditionally consumed
+(ownership transferred to the callee) the moment the call runs, so
+`consumedOperands` must filter that full argument list down to the
+ones `reps` confirms are actually `RBoxed` before handing them to
+`addOperandDrops` -- an already-native argument must never appear in
+an `RDrop`'s own `vars` list. `tests/Test22BranchSinking.idr`'s own
+`callSinkable` is the dedicated test: `buildMsg tag n`'s call sinks
+into the one arm that reads its result, and the other arm gets an
+explicit `drop [tag, n]` in its place.
 
 ### Classifying each arm (`stripIfUnused`, `genuinelyUsedR`)
 
@@ -140,6 +196,59 @@ case one of them is already independently read there (would risk a
 double-drop; costs nothing to guard against, should never actually
 fire in practice).
 
+### Sinking past an unrelated `let`
+
+`trySinkInto` also sees through a leading `RLet` for some *unrelated*
+local `y` sitting between `var`'s own binding and the eventual branch --
+`let x = .. in let y = (doesn't read x) in <branch>` -- leaving `y`
+exactly where it is and continuing the search for `x`'s own one
+using arm past it. This case only ever fires for a `y` that couldn't
+itself be sunk (if it could, `applySinkExp`'s own innermost-first walk
+already rewrote that `let y = .. in <branch>` into the branch itself,
+with `y`'s own binding moved inside one arm -- see "Algorithm" above --
+so this `RLet` shape only survives when `y` is read on more than one
+arm, or isn't itself `sinkEligible`). Bails (`Nothing`) if `y`'s own
+value reads `var` -- that read happens unconditionally regardless of
+which arm eventually runs, so `var` is genuinely needed before any
+arm, the exact same reasoning `isDecidingOperand` already applies to a
+branch's own scrutinee.
+`tests/Test22BranchSinking.idr`'s own `skipUnrelatedLet` is the
+dedicated test: `x`'s own binding reaches through `y`'s (`y` reads
+both arms, `x` doesn't appear in `y`'s own computation) and lands
+inside the one arm that reads `x`.
+
+### Not peeling through `var`'s own death
+
+**The single most important bug this whole pass produced, caught by
+`refc-suite/buffer`'s own `TestBuffer.idr` -- a real miscompile, not
+just a leak.** Every wrapper case in `trySinkInto` (`RDup`/`RDrop`/
+`RFree`/`RReleaseReuse`/`RReuseOffer`) now checks whether *its own
+target is `var` itself* before peeling through it, bailing to `Nothing`
+if so.
+
+`TestBuffer.idr` calls a chain of `IO ()`-returning `Data.Buffer`
+functions in `do`-notation (`setByte buf 0 1; setBits8 buf 1 2;
+setBits16 buf 2 3; ...`), each one's own `()` result immediately
+discarded -- lowering to `let v5 = call prim__setByte [...] in drop
+[v5]; let v6 = call prim__setBits8 [...] in drop [v6]; let v7 = ...;
+let v8 = ...` before ever reaching an unrelated branch further down.
+Each `RDrop [vN]` here is `vN`'s own, singular death, not some
+unrelated ownership bookkeeping to see past on the way to a branch.
+The *first* version of the wrapper-peeling clauses (`trySinkInto reps
+var rep value (RDrop fc vs cont) = map (RDrop fc vs) (trySinkInto reps
+var rep value cont)`, with no check on `vs`) didn't distinguish "an
+unrelated drop sitting in the way" from "`var`'s own drop" -- it kept
+searching straight through `v5`'s own death, through `v6`/`v7`/`v8`'s
+identical chain, all the way to a distant, unrelated branch, and sank
+`v5` there. The generated C referenced `var_5`/`var_6`/... in a scope
+where they were never declared -- an undeclared-identifier compile
+error, not a silent leak, since `v5` genuinely never reaches that far
+in the real control flow at all.
+`tests/Test23SinkPastSelfDrop.idr` reproduces the same shape directly
+(a chain of `IO ()` calls whose result is discarded, followed by a
+branch reading an unrelated value) as a dedicated regression,
+independent of `Data.Buffer`.
+
 ## Pipeline position
 
 Runs after `Compiler.RC2.Loop` (self-tail-call conversion), before
@@ -171,9 +280,25 @@ this stage alone, same convention as every other optional stage (see
   loop-invariant expression hoisting as its negative case).
 - `tests/Test22BranchSinking.idr` -- the general, loop-independent
   case: one sinkable example, one that must *not* sink (`var` read on
-  both arms).
-- `tests/Test2Recursion.idr`/`tests/Test9SelfTailLoop.idr` -- existing
-  tests (via Prelude functions they transitively pull in) that caught
-  the two real bugs documented above; no dedicated new regression test
-  needed for either since the existing full-suite run already exercises
-  both shapes.
+  both arms), `deepSinkable` for sinking through two nested single-use
+  branches in one pass (see "Sinking arbitrarily deep, not just one
+  level" above), `callSinkable` for sinking a plain `RAppName` call
+  (see "Deciding whether `value` is even a candidate" above), and
+  `skipUnrelatedLet` for sinking past an unrelated `let` (see "Sinking
+  past an unrelated `let`" above).
+- `tests/Test23SinkPastSelfDrop.idr` -- dedicated regression for the
+  most serious bug this pass produced, a real miscompile rather than a
+  leak (see "Not peeling through `var`'s own death" above):
+  reproduces `refc-suite/buffer`'s own `TestBuffer.idr` shape (a chain
+  of `IO ()` calls whose result is immediately discarded, followed by
+  a branch reading an unrelated value) directly, independent of
+  `Data.Buffer`.
+- `tests/Test2Recursion.idr`/`tests/Test9SelfTailLoop.idr`/
+  `refc-suite/buffer/TestBuffer.idr` -- existing tests (the first two
+  via Prelude functions they transitively pull in) that caught three
+  of the four real bugs documented above; no dedicated new regression
+  test needed for the first two since the existing full-suite run
+  already exercises both shapes (the third, `TestBuffer.idr`'s own
+  shape, got `Test23SinkPastSelfDrop.idr` as a dedicated regression
+  instead, since relying on `refc-suite` alone to keep catching it
+  felt too indirect for the single most serious bug found here).
