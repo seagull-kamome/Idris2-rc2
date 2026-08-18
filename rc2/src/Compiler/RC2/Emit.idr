@@ -30,9 +30,8 @@ module Compiler.RC2.Emit
 -- this was confirmed airtight (see TODO.md's former "Architecture"
 -- note on this exact question).
 --
--- A few things this module still *does* decide (deliberately, not an
--- oversight -- see TODO.md's "Architecture" section for the one left
--- unaddressed):
+-- A few things this module still *does* decide, deliberately, not an
+-- oversight:
 --   * `tryBuildClosureInto`/`makeClosureInto`: which C statements a
 --     closure build/partial-application ends up as. Purely a codegen-
 --     shape optimisation (fewer statements, no throwaway `closure_N`
@@ -44,10 +43,14 @@ module Compiler.RC2.Emit
 --   * `RPrimVal`'s small-int cache / constant-staging (`dyngen`/
 --     `orStagen`): a literal's own *value* decides whether it uses the
 --     small-int cache or gets staged into a deduplicated top-level
---     constant -- inherently file-scoped (dedup spans the whole
---     compilation unit, not one definition), so it doesn't fit the
---     "decide once per node during Lifted -> RCExp conversion" shape the
---     elevations above use even if moved.
+--     constant. Left here on purpose, not elevated alongside the
+--     decisions above: this is a runtime-representation detail (which
+--     cache/table a given literal's storage lives in), not an
+--     ownership/native-vs-boxed *fact* about the IR itself, and dedup
+--     inherently spans the *whole compilation unit* rather than one
+--     definition, so it doesn't fit the "decide once per node during
+--     Lifted -> RCExp conversion" shape the elevations above use even
+--     if moved.
 
 import Compiler.RC2.RCExp
 import Compiler.RC2.Types
