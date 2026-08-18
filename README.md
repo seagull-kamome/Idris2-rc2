@@ -27,46 +27,86 @@ You need to run gen-env.sh to generate env.sh at once after clone.
 
 ```
 rc2/
-├── rc2.ipkg         Idris2 package: builds the idris2-rc2 executable
+├── rc2.ipkg           Idris2 package: builds the idris2-rc2 executable
 ├── src/Compiler/RC2/
-│   ├── RCExp.idr     the IR: ANF-normalized, ownership-annotated expressions
-│   ├── RC.idr        Lifted -> RCExp: Phase 1 normalize, Phase 2 annotate (dup/drop/free insertion)
-│   ├── Types.idr      native/boxed representation inference (Rep)
-│   ├── Emit.idr       RCExp -> C emission (mechanical; no ownership decisions here)
-│   ├── CC.idr          C compiler driver / linking
-│   └── RC2.idr         backend entry point (registers with Idris2's codegen dispatch)
-├── support/rc2/      the runtime library (libidris2rc2.a) linked into every rc2-compiled program
+│   ├── RCExp.idr        the IR: ANF-normalized, ownership-annotated expressions
+│   ├── RC.idr           Lifted -> RCExp: Phase 1 normalize, Phase 2 annotate (dup/drop/free insertion)
+│   ├── Types.idr        native/boxed representation inference (Rep)
+│   ├── Inline.idr       whole-program inlining (lets comparison fusion reach through a call)
+│   ├── ConstExtPrim.idr constant-folds ExtPrim calls like prim__codegen
+│   ├── ConstFold.idr    arithmetic/comparison/cast/case-of-constant folding
+│   ├── Reuse.idr        constructor reuse-in-place
+│   ├── ConAltNative.idr caches a repeatedly-native-read destructured field
+│   ├── MutualLoop.idr   mutual tail recursion -> one merged self-tail-recursive function
+│   ├── Loop.idr         self-tail-call -> goto, native-shadow/loop-invariant param+expr promotion
+│   ├── Sink.idr         branch-local sinking: a let used on one arm only moves into it
+│   ├── DualABI.idr      dual (Boxed/native) calling convention across function boundaries
+│   ├── Emit.idr         RCExp -> C emission (mechanical; no ownership decisions here)
+│   ├── Pretty.idr       human-readable RCExp dump (`--directive dumprcexpr`)
+│   ├── CC.idr           C compiler driver / linking
+│   └── RC2.idr          backend entry point + pipeline wiring (registers with Idris2's codegen dispatch)
+├── support/rc2/       the runtime library (libidris2rc2.a) linked into every rc2-compiled program
+├── doc/               deep-dive design notes per pass -- see rc2/CLAUDE.md's own Layout section for the index
 └── tests/
-    ├── Test1Basics.idr .. Test5FFIStrings.idr   hand-written smoke tests
-    ├── Bench*.idr                                 benchmarks vs. upstream RefC
-    └── refc-suite/                                 ported subset of upstream's own RefC regression suite
+    ├── Test1Basics.idr .. Test23SinkPastSelfDrop.idr   hand-written smoke tests, one per pass/bug found
+    ├── Bench*.idr                                       benchmarks vs. upstream RefC
+    ├── verify.sh                                        one-shot build + full regression run (see Testing below)
+    ├── bench.sh                                         one-shot benchmark run (see Testing below)
+    └── refc-suite/                                      ported subset of upstream's own RefC regression suite
 ```
 
 `rc2` is a **fully independent** Idris2 package -- it is *not* merged
 into `idris2-src`. Building it produces a separate `idris2-rc2`
-executable; the upstream `idris2` binary is never modified. It targets C,
-takes design cues from Idris2's own `RefC` backend (value representation,
-non-atomic reference counting, closure machinery), but diverges from it
-in two respects:
+executable; the upstream `idris2` binary is never modified. It targets
+C, takes design cues from Idris2's own `RefC` backend (value
+representation, non-atomic reference counting, closure machinery), and
+runs a pipeline of independent, individually-disableable optimization
+passes on top of it (`Lifted -> RCExp -> C`, see `Compiler.RC2.RC2`'s
+own `toRCDefs` for the exact order):
 
-1. **Reference counting is a separate IR pass, run before C emission**
-   (Perceus/Koka-style), rather than interleaved with codegen the way
+1. **Reference counting as a separate IR pass**, run before C emission
+   (Perceus/Koka-style) rather than interleaved with codegen the way
    RefC does it. `RCExp` carries explicit `RDup`/`RDrop`/`RFree` nodes,
-   inserted by `RC.idr`'s ownership-analysis pass (`annotate`) once
-   Idris2's `Lifted` IR has been ANF-normalized (`normalize`). `Emit.idr`
-   only ever does mechanical translation of an already-decided tree.
-2. **Function-local native type inference.** Numeric intermediates
-   (`Int`/`Bits*`/`Double` arithmetic) that stay within a single
-   function's ANF-normalized body are kept as raw C scalars on the
-   stack, skipping heap allocation and refcounting entirely, when
-   `Types.idr` can prove it's safe. Function arguments and return values
-   always stay boxed (the calling convention itself is unchanged in this
-   iteration) -- see `BENCHMARKS.md` for what this buys and doesn't buy.
+   inserted once by `RC.idr`'s ownership-analysis pass (`annotate`);
+   every later pass either leaves that decision alone or updates it
+   consistently while reshaping the tree. `Emit.idr` only ever does
+   mechanical translation of an already-decided tree.
+2. **Native (unboxed) representation inference** (`Types.idr`) for
+   fixed-width numeric intermediates, extended well past a single
+   function's own body by later passes: a dual Boxed/native calling
+   convention lets natives cross ordinary call boundaries (`DualABI`),
+   self-/mutual-tail-recursive loops keep a native loop counter
+   unboxed for the loop's entire lifetime (`Loop`/`MutualLoop`), and a
+   repeatedly-read destructured field gets cached as a native shadow
+   within its own case alternative (`ConAltNative`).
+3. **Constructor reuse-in-place** (`Reuse.idr`): a `case` that
+   destructures and immediately reconstructs a same-shape value reuses
+   the original allocation in place when it's uniquely owned at
+   runtime, instead of allocating fresh.
+4. **Loop-invariant hoisting and elision** (`Loop.idr`): a loop
+   parameter that never actually varies across iterations is dropped
+   from the loop's own carried state entirely; an invariant expression
+   in a loop's own unconditional prefix is computed once, ahead of the
+   loop, instead of once per iteration.
+5. **Branch-local sinking** (`Sink.idr`): a `let`-bound value read on
+   only one arm of the branch immediately following it moves into that
+   one arm -- loop-independent, and the mirror image of (4): it moves a
+   computation *closer* to its one use instead of further away from
+   repetition.
+6. **Whole-program inlining and constant folding** (`Inline.idr`,
+   `ConstExtPrim.idr`, `ConstFold.idr`): splices small, call-free
+   callees into their call sites (letting comparison fusion reach
+   through an interface method call), folds constant `ExtPrim`s and
+   arithmetic/comparison/cast/case-of-constant expressions.
 
-See `rc2/BENCHMARKS.md` for measured effects of native type inference and
-`rc2/tests/refc-suite/README.md` for what's covered by (and diverges
-from) upstream's own regression tests, including every bug that
-porting/writing those tests surfaced.
+Each pass has its own `rc2/doc/*.md` deep-dive (design rationale, bugs
+found and fixed along the way) -- see `rc2/CLAUDE.md`'s own Layout
+section for the full index, and `rc2/doc/reading-the-ir.md` for how to
+dump and read the `RCExp` IR itself (`--directive dumprcexpr`).
+`rc2/BENCHMARKS.md` has measured effects for most of the above, and
+`rc2/tests/refc-suite/README.md` documents what's covered by (and
+diverges from) upstream's own regression tests, including every bug
+that porting/writing those tests surfaced.
 
 ## Building and running
 
@@ -96,24 +136,54 @@ nix-shell -p gcc gmp pkg-config --run \
 ## Testing
 
 ```sh
-cd rc2/tests/refc-suite
-source ../../../env.sh
-nix-shell -p gcc gmp pkg-config --run './run.sh'
+cd rc2/tests
+source ../../env.sh
+nix-shell -p idris2 gcc gmp pkg-config valgrind --run './verify.sh'
 ```
 
-runs the ported upstream regression suite (see `rc2/tests/refc-suite/README.md`).
-The hand-written smoke tests in `rc2/tests/*.idr` and the benchmarks in
-`rc2/tests/Bench*.idr` are compiled/run the same way `idris2-rc2` is used
-above; see `rc2/BENCHMARKS.md` for the benchmark methodology and results.
+`verify.sh` is the one-shot entry point for correctness: it builds
+`idris2-rc2` and the runtime, runs the ported upstream regression suite
+(`rc2/tests/refc-suite/`, see its own `README.md`), compiles and diffs
+every hand-written smoke test (`rc2/tests/Test*.idr`) against a saved
+expected output, and runs `valgrind --leak-check=full` on the
+leak-sensitive subset -- see `KNOWN-BUGS.md` for the few
+already-investigated quirks it deliberately doesn't flag as failures
+(pre-existing leaks, a reference-RefC-library blocker, etc.). Useful
+flags: `--skip-build` (reuse the existing `idris2-rc2`), `--no-valgrind`
+(faster), `--valgrind-all`, `--directive VALUE` (forwarded to
+`idris2-rc2`, repeatable -- e.g. `--directive noloop` to disable one
+optimization stage and isolate a regression to it), `--regen-expected`
+(after adding/editing a smoke test) -- run `./verify.sh` with no
+arguments to see the full list in its own header comment, or to rerun
+a single smoke test by hand once `idris2-rc2` exists.
+
+```sh
+cd rc2/tests
+nix-shell -p idris2 gcc gmp pkg-config --run './bench.sh'
+```
+
+`bench.sh` is the equivalent one-shot entry point for performance:
+compiles and times every `rc2/tests/Bench*.idr` against both `idris2-rc2`
+and real `idris2 --cg refc`, reporting wall-clock speedup. `--runs N`
+controls repetitions per binary; `--missing-containers` additionally
+runs the `idris2-missing-containers` external-package benchmark (see
+`rc2/BENCHMARKS.md`'s own methodology section for what that needs
+set up first). See `rc2/BENCHMARKS.md` for recorded results and how to
+read them.
 
 ## Status and scope
 
-Working external C backend: functionally correct against Idris2's own
-RefC regression suite, with the native-type-inference optimization
-verified to substantially cut heap allocation/refcounting traffic for
-straight-line numeric code. Known out of scope for the current
-iteration (see the project plan for details): a dual calling convention
-that would let native representations cross function boundaries,
-self-tail-call loop conversion, and `System.Clock`-optional GC-time
-clocks (`GCCPU`/`GCReal`, unimplemented in upstream RefC too).
-`Data.Buffer` and `System.Clock` are both implemented.
+Working external C backend, functionally correct against Idris2's own
+RefC regression suite (`rc2/tests/refc-suite/`) plus 23 hand-written
+smoke tests, all leak-clean under `valgrind`. Implemented: constructor
+reuse-in-place, native type inference (function-local and, via a dual
+calling convention, across ordinary call boundaries), self- and
+mutual-tail-call loop conversion with loop-invariant parameter/
+expression hoisting, branch-local sinking, whole-program inlining,
+constant folding, and `Data.Buffer`/`System.Clock`. See `TODO.md` for
+the current, actively-maintained list of known gaps and deliberately
+out-of-scope decisions (e.g. tail-position delegating calls staying
+boxed, a loop accumulator threaded only through a helper call staying
+boxed, native-shadow hoisting not reaching across a loop/dual-ABI
+boundary) -- each entry there explains what was tried, what was found,
+and why it stopped where it did.
