@@ -597,6 +597,148 @@ elideInvariantContinueArgs inv fullLoopParams (RLoopContinue fc args postDrop) =
     RLoopContinue fc (map snd $ filter (\((p, _), _) => not (contains p inv)) (zip fullLoopParams args)) postDrop
 elideInvariantContinueArgs _ _ e = e
 
+||| Whether `RCLocal` `v` reads something loop-*variant* (a member of
+||| `variant`) -- the single question `isInvariantExpr`'s own operand
+||| scan asks of every argument. A constant/`NULL`/tagged-empty-con
+||| local is always invariant (it's not an `RCLoc` at all).
+noneVariant : SortedSet Int -> RCLocal -> Bool
+noneVariant variant (RCLoc i) = not (contains i variant)
+noneVariant _ _ = True
+
+||| Whether `e` -- an `RLet`'s own `value`, after peeling the same
+||| leading `RDup`/`RDrop`/`RFree`/`RReleaseReuse` wrapper shapes
+||| `opNativeUsesThrough` already peels -- is an `ROp`/`RCon` reading
+||| only loop-invariant operands (every `RCLocal` argument not a member
+||| of `variant`, see `noneVariant`). Both are the *only* two `RCExp`
+||| shapes this pass ever hoists (see `hoistInvariantPrefix`'s own doc
+||| comment for why nothing else qualifies), and even then only under
+||| three further, deliberately conservative exclusions:
+|||
+||| - `ROp`'s own `lazy` field must be `Nothing` -- a `Just` marks an
+|||   operation Idris2 itself decided to keep deferred (`Lazy`/`Inf`);
+|||   hoisting would force it unconditionally, ahead of schedule,
+|||   changing *when* (or whether) it ever runs -- squarely outside the
+|||   "strict evaluation means position doesn't matter" reasoning this
+|||   whole pass otherwise relies on.
+||| - `RCon`'s own `reuseFrom` must be `Nothing` -- a `Just` ties this
+|||   construction to a specific `RReuseOffer`'s own runtime uniqueness
+|||   check (`Compiler.RC2.Reuse`), a per-iteration protocol this pass
+|||   has no business relocating.
+||| - The binding's own declared `Rep` must be `RNative`/`RInlineNative`
+|||   -- **not checked by this function itself** (it only looks at
+|||   `value`), but by `hoistInvariantPrefix`'s own caller-side guard;
+|||   documented here since it's just as essential to this function's
+|||   own soundness claim -- see that function's own doc comment for
+|||   why a `RBoxed` result is unsound to hoist, confirmed by an actual
+|||   `valgrind`-caught double-free the first time this was tried
+|||   without the guard.
+isInvariantExpr : SortedSet Int -> RCExp -> Bool
+isInvariantExpr variant (ROp _ Nothing _ args _) = all (noneVariant variant) (toList args)
+isInvariantExpr variant (RCon _ _ _ _ args Nothing) = all (noneVariant variant) args
+isInvariantExpr variant (RDup _ _ cont) = isInvariantExpr variant cont
+isInvariantExpr variant (RDrop _ _ cont) = isInvariantExpr variant cont
+isInvariantExpr variant (RFree _ _ cont) = isInvariantExpr variant cont
+isInvariantExpr variant (RReleaseReuse _ _ cont) = isInvariantExpr variant cont
+isInvariantExpr _ _ = False
+
+||| Whether `rep` is a native representation (`RNative`/`RInlineNative`)
+||| -- see `hoistInvariantPrefix`'s own doc comment for why only these
+||| are safe to hoist.
+isNativeRep : Rep -> Bool
+isNativeRep (RNative _) = True
+isNativeRep (RInlineNative _) = True
+isNativeRep RBoxed = False
+
+||| Pulls every loop-invariant `RLet` binding out of `e`'s own
+||| *unconditional prefix* -- the straight-line chain of `RLet`s
+||| (optionally interleaved with non-branching ownership wrappers)
+||| reached from `e` before hitting the first branch (`RConCase`/
+||| `RConstCase`/`RCmpCase`) or a leaf. Returns the hoisted bindings (in
+||| their own original relative order) alongside the rewritten
+||| remainder with them removed; everything from the first branch
+||| onward -- including a genuinely invariant `ROp`/`RCon` sitting
+||| inside just one arm of it -- is left completely untouched (that's
+||| `Compiler.RC2.Loop`'s own *single-branch case hoisting*/`RCmpCase`
+||| gap, still tracked in `TODO.md`, deliberately not attempted here).
+|||
+||| **Why "unconditional prefix only" is the right -- and sufficient --
+||| scope**: everything in this prefix already runs on *every* pass
+||| through `loop:;`, including the very first one (the label sits at
+||| the very top of the function's own repeating region, before any
+||| exit check). So an expression here is already guaranteed to execute
+||| at least once the moment the function is ever called at all --
+||| hoisting it to run once, ahead of the loop, instead of once per
+||| iteration, can only *reduce* how many times it runs, never turn a
+||| "never reached" execution into a "now reached" one. Something
+||| sitting inside just one arm of a branch doesn't have that
+||| guarantee -- it might never run at all if the loop exits on its
+||| very first check -- which is exactly why that shape stays out of
+||| scope here.
+|||
+||| **Why no extra ownership bookkeeping is needed for the operands
+||| being *read***: a hoisted binding's own `postDrop`/leading `RDup`
+||| etc. moves with it unchanged. Every one of its operands is, by
+||| `isInvariantExpr`'s own definition, either a loop-external value
+||| already computed exactly once (a top-level argument, or something
+||| this same pass -- or the parameter-elision pass before it --
+||| already hoisted) or a constant; reading the *same* such value
+||| repeatedly, once per iteration, is only possible in the first place
+||| because `Compiler.RC2.RC`'s own `annotate` already arranged a
+||| net-zero `dup`-then-drop around each repeated read (an outright
+||| *consuming* read could never coexist with the value surviving to
+||| the next iteration). Collapsing N such net-zero cycles into one
+||| doesn't change the net effect on that operand's own refcount at
+||| all.
+|||
+||| **Why only a `Native`/`RInlineNative` *result* is safe to hoist --
+||| this part is essential, confirmed the hard way**: the reasoning
+||| above is only about the operands being *read*; it says nothing
+||| about the hoisted binding's own *result*, `var` itself. A `RBoxed`
+||| result has its own, separate liveness story *inside the loop body*
+||| that this pass's "unconditional prefix" scan never looks past: if
+||| `var` is a fresh Boxed construction only actually *used* on one arm
+||| of the branch immediately following the prefix (e.g. only in the
+||| loop's own exit value, never on the `continue`-taking arm),
+||| `Compiler.RC2.RC`'s own `annotate` already placed a `drop [var]` at
+||| the top of the *other* arm (the one that doesn't use it -- exactly
+||| the "at most one `RDrop` per branch entry" pattern this whole
+||| ownership system is built on). That drop sits *past* this pass's
+||| own scan boundary (inside a branch, not the prefix), so hoisting
+||| `var`'s construction out from under it leaves that drop stale: what
+||| used to release a fresh, per-iteration allocation now double-frees
+||| the *one*, shared, hoisted value on every iteration that takes the
+||| non-using arm. Reproduced directly: hoisting a `Boxed`-`Rep`
+||| invariant `RCon` used only in one arm crashed with `malloc():
+||| unaligned tcache chunk detected` and a `valgrind`-confirmed
+||| double-free the first time this restriction was missing. A native
+||| result sidesteps the whole issue structurally -- native values are
+||| never dup'd/dropped anywhere, so no branch can ever hold a stale
+||| drop for one -- which is why `hoistInvariantPrefix` below gates on
+||| `isNativeRep rep`, not just `isInvariantExpr`.
+|||
+||| `var` itself is deliberately *not* added to `variant` when hoisted
+||| -- it's now a loop-external value too, so a later prefix binding
+||| that only reads *it* remains eligible for hoisting in the same
+||| pass, no fixed-point iteration required.
+hoistInvariantPrefix : SortedSet Int -> RCExp -> (List (Int, Rep, RCExp), RCExp)
+hoistInvariantPrefix variant (RLet fc var rep value body) =
+    if isNativeRep rep && isInvariantExpr variant value
+       then let (hoisted, rest) = hoistInvariantPrefix variant body
+            in ((var, rep, value) :: hoisted, rest)
+       else let (hoisted, rest) = hoistInvariantPrefix (insert var variant) body
+            in (hoisted, RLet fc var rep value rest)
+hoistInvariantPrefix variant (RDup fc v cont) =
+    let (hoisted, rest) = hoistInvariantPrefix variant cont in (hoisted, RDup fc v rest)
+hoistInvariantPrefix variant (RDrop fc vs cont) =
+    let (hoisted, rest) = hoistInvariantPrefix variant cont in (hoisted, RDrop fc vs rest)
+hoistInvariantPrefix variant (RFree fc v cont) =
+    let (hoisted, rest) = hoistInvariantPrefix variant cont in (hoisted, RFree fc v rest)
+hoistInvariantPrefix variant (RReleaseReuse fc v cont) =
+    let (hoisted, rest) = hoistInvariantPrefix variant cont in (hoisted, RReleaseReuse fc v rest)
+hoistInvariantPrefix variant (RReuseOffer fc sc dupOnShared cont) =
+    let (hoisted, rest) = hoistInvariantPrefix variant cont in (hoisted, RReuseOffer fc sc dupOnShared rest)
+hoistInvariantPrefix _ e = ([], e)
+
 ||| Apply self-tail-call loop conversion to one top-level definition,
 ||| given its own `Name` -- Compiler.RC2.RC doesn't thread a
 ||| definition's own name through Phase 1/2 at all (nothing there needs
@@ -636,6 +778,15 @@ elideInvariantContinueArgs _ _ e = e
 ||| `shadowAltFields` already established for caching a native read of
 ||| a destructured field, reused here verbatim (see its own doc
 ||| comment) rather than reinvented.
+|||
+||| Once `loopParams` is settled, `hoistInvariantPrefix` makes one more
+||| pass over the loop's own body, pulling any `ROp`/`RCon` in its
+||| unconditional prefix that reads only loop-external operands out to
+||| a one-time `RLet` too (see that function's own doc comment for the
+||| scope and safety argument) -- nested *inside* the invariant-
+||| parameter `RLet`s above, since a hoisted expression may itself read
+||| one of those (e.g. a native-shadowed invariant parameter's own
+||| shadow id).
 export
 applyLoop : Name -> RCDef -> RCDef
 applyLoop self (MkRCFun args retRep body) =
@@ -685,13 +836,30 @@ applyLoop self (MkRCFun args retRep body) =
                   -- to avoid a double drop.
                   prologueDrop : List RCLocal
                   prologueDrop = mapMaybe (\(p, sid, _) => if contains sid invariantIds then Nothing else Just (RCLoc p)) shadowed
+                  -- Loop-invariant *expression* hoisting (ROp/RCon in
+                  -- the loop body's own unconditional prefix, see
+                  -- `hoistInvariantPrefix`'s own doc comment): anything
+                  -- not a member of the final `loopParams` is, by
+                  -- construction, already a loop-external value (a
+                  -- plain top-level argument, or something already
+                  -- hoisted -- by this pass or the one above), so that
+                  -- set alone is the right seed with nothing further to
+                  -- compute.
+                  hoistResult : (List (Int, Rep, RCExp), RCExp)
+                  hoistResult = hoistInvariantPrefix (fromList (map fst loopParams)) finalBody
+                  hoistedExprs : List (Int, Rep, RCExp)
+                  hoistedExprs = fst hoistResult
+                  finalBody2 : RCExp
+                  finalBody2 = snd hoistResult
                   innerLoop : RCExp
-                  innerLoop = RLoop emptyFC loopParams initial prologueDrop finalBody
+                  innerLoop = RLoop emptyFC loopParams initial prologueDrop finalBody2
+                  withHoistedExprs : RCExp
+                  withHoistedExprs = foldr (\(var, rep, value), acc => RLet emptyFC var rep value acc) innerLoop hoistedExprs
                   wrapInvariantShadows : RCExp
                   wrapInvariantShadows = foldr (\(p, sid, ty), acc =>
                                                     RLet emptyFC sid (RNative ty) (RV emptyFC (RCLoc p))
                                                       (RDrop emptyFC [RCLoc p] acc))
-                                             innerLoop
+                                             withHoistedExprs
                                              (filter (\(_, sid, _) => contains sid invariantIds) shadowed)
               in wrapInvariantShadows
 applyLoop _ d = d

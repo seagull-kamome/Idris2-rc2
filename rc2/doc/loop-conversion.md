@@ -466,6 +466,105 @@ ownership node attached to a scrutinee position itself to strip), but
 this is also precisely the gap that produced a real emission-side bug
 -- see "Bugs found" below.
 
+### Loop-invariant expression hoisting
+
+A natural follow-on question once parameter elision existed: what about
+an *expression* inside the loop body, not just a top-level parameter,
+whose value never actually changes across iterations? Idris2 is a
+strict language, and `ROp`(arithmetic)/`RCon`(constructor construction)
+are the only two `RCExp` shapes that can *never* carry an observable
+side effect (a genuine effect always routes through `RExtPrim`, with
+its own `%World`-token threading) -- so, in principle, either shape
+should be hoistable out of the loop entirely whenever every one of its
+own operands is itself loop-invariant.
+
+**Scope: the loop body's own unconditional prefix only.** Only the
+straight-line `RLet` chain reached from the loop's own top *before*
+hitting the first branch (`RConCase`/`RConstCase`/`RCmpCase`) is
+scanned -- a candidate sitting inside just one arm of a branch is left
+alone entirely (that's the still-open "single-branch case hoisting"/
+`RCmpCase` gap `TODO.md` tracks, deliberately not attempted here).
+This isn't an arbitrary restriction, it's what makes the whole pass
+provably safe without needing to reason about *which* branch a given
+iteration takes at all: everything in this prefix already runs on
+*every* pass through `loop:;`, including the very first one (the label
+sits at the very top of the loop's own repeating region, before any
+exit check ever runs) -- so an expression there is already guaranteed
+to execute at least once the moment the function is called at all.
+Hoisting it to run once, ahead of the loop, instead of once per
+iteration, can only *reduce* how many times it runs; it can never turn
+a "never reached" execution into a "now reached" one. Something inside
+just one branch arm doesn't have that guarantee -- it might never run
+at all if the loop exits on its very first check.
+
+**Detection (`isInvariantExpr`)**: given `variant` -- the *final*,
+post-elision `loopParams`' own set of ids -- an `RLet`'s own `value`
+(peeled through the same leading `RDup`/`RDrop`/`RFree`/
+`RReleaseReuse` shapes `opNativeUsesThrough` already peels) qualifies
+if it's a bare `ROp`/`RCon` whose every `RCLocal` operand is *not* a
+member of `variant`. Nothing else needs computing: post-elision,
+anything not in `loopParams` is, by construction, already a
+loop-external value -- a plain top-level argument, or something this
+same pass (or the elision pass before it) has already hoisted -- so a
+single membership check against the *final* `loopParams` is a complete
+invariance test, no separate fixed-point dataflow pass needed. Two
+further exclusions, both conservative: `ROp`'s own `lazy` field must be
+`Nothing` (a deferred/`Lazy` operation's evaluation *timing* is itself
+observable, outside the "strict evaluation, position doesn't matter"
+reasoning above), and `RCon`'s own `reuseFrom` must be `Nothing` (a
+reuse candidate is tied to a specific `RReuseOffer`'s own per-iteration
+runtime uniqueness check, not something this pass has any business
+relocating).
+
+**A third exclusion, found the hard way, essential for
+soundness**: hoisting is *only* safe when the binding's own declared
+`Rep` is `RNative`/`RInlineNative` -- never `RBoxed`. The reasoning
+above (operands are safe to keep reading past their own original
+position) says nothing about the hoisted binding's own *result*. A
+`Boxed` result has its own, separate liveness story *inside the loop
+body*, invisible to a scan that stops at the first branch: if that
+result is only actually used on one arm of the branch immediately
+following the prefix (e.g. only on the loop's own exit value, never on
+the arm that keeps looping), `Compiler.RC2.RC`'s own `annotate` already
+placed a `drop` at the top of the *other* arm -- the one that doesn't
+use it, "at most one `RDrop` per branch entry" being the whole
+ownership system's own standing convention. That drop sits past this
+pass's own scan boundary. Hoist the construction out from under it and
+that drop goes stale: what used to release a fresh, freshly-allocated,
+per-iteration value now double-frees the *one*, shared, hoisted value
+on every iteration that takes the non-using arm. This was reproduced
+directly while implementing this pass -- a `Boxed`-`Rep` invariant
+`RCon` used only on the loop's exit arm crashed with `malloc():
+unaligned tcache chunk detected`, `valgrind`-confirmed as a genuine
+double-free, before the `isNativeRep` guard existed (see
+`tests/Test21BoxedInvariantNotHoisted.idr`, a permanent regression test
+for exactly this shape). A native result sidesteps the entire issue
+structurally: native values are never dup'd/dropped anywhere in this
+runtime, so no branch can ever hold a stale drop for one. In today's
+type system this means `RCon` hoisting, while implemented and correct,
+essentially never fires in practice (a general ADT construction is
+always `Boxed`) -- reaching the cases that would actually benefit needs
+the same "look into, and adjust, the branch that doesn't use it"
+machinery as the still-open single-branch-case-hoisting gap above, not
+attempted here.
+
+**Rewrite (`hoistInvariantPrefix`)**: walks the prefix once, threading
+`variant` forward -- a non-hoisted `RLet`'s own `var` gets added to it
+(conservatively: anything depending on a non-hoisted binding must
+itself stay put, since that binding's own computation still only
+happens inside the loop); a hoisted one's `var` is deliberately *not*
+added, so a later prefix binding that depends only on it remains
+eligible too, in the same single pass (no fixed-point iteration
+needed, mirroring parameter elision's own reasoning one level up).
+Returns the hoisted `(id, Rep, value)` triples in their own original
+relative order alongside the rewritten remainder. `applyLoop` wraps the
+final `RLoop` in one `RLet` per hoisted triple -- reusing the plain
+`RLet` node directly, no new IR shape -- nested *inside* the existing
+invariant-shadow-parameter `RLet`s (see the section above), since a
+hoisted expression may itself read one of those (e.g. a native-shadowed
+invariant parameter's own shadow id, exactly `bound = limit * 2` in
+`tests/Test20LoopInvariantExpr.idr`'s own worked example).
+
 ## `Compiler.RC2.MutualLoop`: mutual tail recursion
 
 ### The problem `RLoop`/`RLoopContinue` alone don't solve
@@ -915,7 +1014,9 @@ benchmark:
   `nativeArgType`/`nativeArgTypes`/`opNativeUsesThrough`,
   `stripOwnership`, `assignShadowIds`, `applyLoop`,
   `collectContinueArgs`/`invariantLoopParamIds`/
-  `elideInvariantContinueArgs` (loop-invariant parameter elision).
+  `elideInvariantContinueArgs` (loop-invariant parameter elision),
+  `noneVariant`/`isInvariantExpr`/`isNativeRep`/`hoistInvariantPrefix`
+  (loop-invariant expression hoisting).
 - `rc2/src/Compiler/RC2/MutualLoop.idr` -- `tailCallTargets`,
   `tarjanSCCs`/`strongConnect` (Tarjan's algorithm), `buildGroup`,
   `rewriteGroupTailCalls`, `applyMutualLoop`.
@@ -980,3 +1081,19 @@ benchmark:
    the hoisted native one, nothing at all for the Boxed one) under
    `valgrind` -- see `doc/reading-the-ir.md`'s own section 8.5 for its
    full `.rcexpr` dump.
+7. `tests/Test20LoopInvariantExpr.idr` -- loop-invariant expression
+   hoisting's own positive case: `bound = limit * 2`, a `Native Int`
+   `ROp` in the loop body's own unconditional prefix depending only on
+   an already-hoisted native-shadow parameter, confirmed via
+   `--directive dumprcexpr` to land outside `loop [...]` entirely,
+   nested inside that parameter's own `RLet`.
+8. `tests/Test21BoxedInvariantNotHoisted.idr` -- the negative case, and
+   the single most important regression test this section's own work
+   produced: a `Boxed`-`Rep` invariant `RCon` used only on the loop's
+   exit arm, confirming it stays *inside* `loop [...]` and passes
+   `valgrind` clean. Without `isNativeRep`'s own guard in
+   `hoistInvariantPrefix`, this exact shape double-frees -- reproduced
+   directly during development (`malloc(): unaligned tcache chunk
+   detected`, confirmed with `valgrind` as a genuine double-free) --
+   see the "Loop-invariant expression hoisting" section above for the
+   full explanation.

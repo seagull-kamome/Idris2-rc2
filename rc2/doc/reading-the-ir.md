@@ -314,6 +314,38 @@ and `loop`'s own param list, and its one remaining use (`length tag` in
 the base case, not shown above) simply reads the worker's own `v0`
 argument directly, exactly as if this pass had never run.
 
+## 8.6. Reading hoisted (loop-invariant) expressions
+
+Beyond whole parameters, a `let` sitting in the loop body's own
+*unconditional prefix* (before the first `case`/`cmp`) whose value
+reads only loop-external operands gets hoisted the same way, outside
+`loop [...]` entirely -- `tests/Test20LoopInvariantExpr.idr`'s
+`bound = limit * 2` (both `Native Int`, `limit` itself already a
+hoisted native-shadow parameter per section 8.5):
+
+```
+let v12 : Native Int =
+  v1
+drop [v1]
+let v3 : Native Int =
+  op *Int [v12, #2]
+loop ["v9:Native Int", "v10:Native Int"] initial=[v1, v2] prologueDrop=[v1, v2]
+cmp >=Int [v10, v3]
+...
+```
+
+`v3` (`bound`) sits *inside* `v12`'s (`limit`'s) own `let`, since it
+reads `v12` -- ordering here always nests a hoisted expression inside
+whatever hoisted parameter binding it itself depends on. Only a
+`Native`/`RInlineNative`-`Rep`'d `let` is ever hoisted this way -- a
+`Boxed` one always stays inside `loop [...]`, even when its own value
+reads nothing but loop-invariant operands, because its *own* liveness
+past that point may still depend on which branch a given iteration
+takes (`tests/Test21BoxedInvariantNotHoisted.idr` is the dedicated
+negative-case test for exactly this; see `rc2/doc/loop-conversion.md`'s
+"Loop-invariant expression hoisting" section for the full reasoning,
+including a real double-free this restriction was added to fix).
+
 ## 9. Worked examples
 
 ### Constructor-reuse-in-place (`List.takeUntil`-shaped code, from `Test1Basics.idr`)
