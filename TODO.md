@@ -49,21 +49,15 @@ ordinary case-alternative's own destructured field (not loop-carried)
 was addressed separately (`Compiler.RC2.ConAltNative`, see
 `rc2/doc/con-alt-native.md`).
 
-## Performance: hoisting native shadow across loop/dual-ABI boundaries not pursued
+## Dropped: loop-invariant constructor-field hoisting
 
-`Compiler.RC2.ConAltNative` caches a repeatedly-native-read
-constructor-destructured field within a single case-alternative's own
-body (see `rc2/doc/con-alt-native.md`). The *hoisting* extension this
-entry used to describe (loop-carried/dual-ABI-boundary constructor
-state, not just a single alt's own body) was **not** pursued -- left
-as plausible future work if profiling ever shows it matters, not
-currently planned.
-
-## Dropped: loop-invariant single-branch case hoisting
-
-Investigated, then dropped -- see `rc2/doc/case-hoisting-scope.md` for
-the full writeup (why it looked worth doing, what the investigation
-found, and why neither design considered was pursued).
+Two entries, investigated and dropped together -- "loop-invariant
+single-branch case hoisting" and `ConAltNative`'s once-planned
+extension "across loop/dual-ABI boundaries" turned out to be the same
+underlying gap wearing two different names. See
+`rc2/doc/case-hoisting-scope.md` for the full writeup (why it looked
+worth doing, what the investigation found, and why neither design
+considered was pursued).
 
 ## Performance: constructor reuse doesn't reach across a monadic-bind continuation
 

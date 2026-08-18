@@ -1,9 +1,13 @@
-# Loop-invariant single-alt case hoisting: investigated, not pursued
+# Loop-invariant constructor-field hoisting: investigated, not pursued
 
 This document records why hoisting a loop-invariant, single-alternative
 `RConCase` destructure out of a loop body was investigated and then
 dropped, so a future session doesn't have to re-derive this before
-picking the idea back up.
+picking the idea back up. It also covers a second entry that turned out
+to be the same underlying gap wearing a different name --
+`Compiler.RC2.ConAltNative`'s once-planned extension across loop/
+dual-ABI boundaries (see "A related gap" below) -- dropped for the same
+reasons.
 
 ## Motivation
 
@@ -84,6 +88,47 @@ Decision: **dropped, not currently planned.** Revisit only if profiling
 turns up a concrete case where this specific dup-per-iteration cost
 (not the already-elided branch dispatch) actually matters.
 
+## A related gap: `ConAltNative`'s loop/dual-ABI-boundary extension
+
+`Compiler.RC2.ConAltNative` (see `rc2/doc/con-alt-native.md`) caches a
+repeatedly-native-read constructor-destructured field, but only within
+a single case-alternative's own body. `TODO.md` used to carry a
+separate entry proposing to extend that caching across a loop
+iteration boundary or a dual-ABI call boundary -- i.e. keep a native
+shadow of a field of a **loop-carried constructor** alive across
+iterations, instead of re-destructuring and re-caching it every time
+the loop body re-enters the `case`.
+
+This is the same gap as the single-alt-case hoisting above, just
+described starting from `ConAltNative` instead of from the loop:
+`feedCharOfString.go`'s own `v0`/`v20` example (Motivation, above) *is*
+a loop-carried-constructor case, and a native shadow for `v20` that
+survived across iterations is exactly what this extension would have
+produced. Concretely, implementing it means solving the same problem
+option 2 above already solves for the general case -- restructuring so
+the `case` runs once, outside the loop, with the loop nested inside the
+surviving alt's body -- and then layering `ConAltNative`'s existing
+per-alt shadow caching on top, now running just once instead of once
+per iteration. It doesn't need a new IR node the way option 1 does
+(`ConAltNative`'s shadow-and-rename mechanism, `doc/con-alt-native.md`'s
+"Design", already works over existing nodes), but it inherits option
+2's own narrowness: still a dedicated pass for one specific shape, not
+a general mechanism, and gated on the same loop-restructuring machinery
+this document already declined to build for a smaller-than-expected
+payoff.
+
+The dual-ABI-boundary half of the original proposal (a native shadow
+surviving *across a function call*, not just loop iterations) was never
+even scoped this closely -- it would need `ConAltNative` to reason about
+a constructor field's shadow status at a call site, an extension to
+`Compiler.RC2.DualABI`'s own argument/return Rep negotiation that was
+never designed, on top of everything above.
+
+Decision: **dropped, not currently planned**, for the same reason as
+the loop-invariant case-hoisting entry above -- the piece that would
+make it worth doing (the loop-restructuring transform) was already
+declined on its own merits.
+
 ## Files
 
 - `rc2/src/Compiler/RC2/Emit.idr` -- `emitAltChain`'s own doc comment,
@@ -96,3 +141,6 @@ turns up a concrete case where this specific dup-per-iteration cost
   machinery a flattened `RLet` chain would have piggybacked on.
 - `rc2/BENCHMARKS.md` -- 2026-08-18 closure in-place growth entry,
   where this loop shape was first found.
+- `rc2/src/Compiler/RC2/ConAltNative.idr`, `rc2/doc/con-alt-native.md`
+  -- the existing single-alt-body field-shadow caching this document's
+  "related gap" section builds on.
