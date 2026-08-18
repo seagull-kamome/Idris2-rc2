@@ -175,6 +175,7 @@ gets renewed scrutiny then.
 - libgc板のランタイム。dup/drop/freeをCマクロで消去してしまい、mallocを単純に差し替える
   だけでlibgc対応できるのでは？
 - 短い文字列をタグ付きポインタに押し込む
+- 定数のCast畳み込み、Char/Double絡みとString→数値方向は未対応（理由はrc2/doc/cast-fold-scope.md参照）
 
 
 

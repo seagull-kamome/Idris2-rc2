@@ -29,16 +29,36 @@ import Data.Vect
 ||| no safety net of its own (it computes Double->Int8 just fine, no
 ||| Nothing), so the exclusion has to live here. IntType is excluded on
 ||| either side because its width is backend-dependent, not provably
-||| safe; Double/String/Char are excluded because rc2's own runtime
-||| cast for them (support/rc2/numeric.h's idris2rc2_cast_Double_to_*,
-||| a raw C cast) is undefined behaviour on out-of-range/NaN/Infinity
-||| input, unlike getOp's own Chez-side clamped evaluation -- intKind
-||| already returns Nothing for all three, so the exclusion is
-||| automatic here, not hand-maintained.
+||| safe; Double is excluded because rc2's own runtime cast for it
+||| (support/rc2/numeric.h's idris2rc2_cast_Double_to_*, a raw C cast)
+||| is undefined behaviour on out-of-range/NaN/Infinity input, unlike
+||| getOp's own Chez-side clamped evaluation -- intKind already returns
+||| Nothing for it, so the exclusion is automatic here, not
+||| hand-maintained (also, `safeConst` already excludes `Db` from
+||| folding entirely, so this is belt-and-suspenders).
+|||
+||| `to = StringType` is its own case rather than folded into the
+||| generic `intKind from && intKind to` rule below, on purpose: only
+||| the from-integer direction is safe. `Cast CharType StringType`
+||| must stay excluded -- upstream's own `castString` (Primitives.idr:
+||| 42) renders a Char via `stripQuotes (show c)`, but `stripQuotes`
+||| only strips one character off each end, which is wrong for any
+||| `Show Char` output using its own multi-character escape (every
+||| codepoint above `\DEL`, plus control characters like `'\n'`):
+||| `show '\n'` is `"'\n'"`, so `stripQuotes` yields `"\n"` (backslash,
+||| n -- two characters) instead of an actual newline byte. rc2's own
+||| `constFoldOp` calls upstream's `getOp` unmodified, so it would
+||| inherit that bug verbatim. `intKind CharType = Nothing` keeps this
+||| case out of the generic rule too, so excluding it here is doubly
+||| covered, not accidentally exposed by widening the rule to `to`.
+||| See rc2/doc/cast-fold-scope.md for the full investigation (also
+||| covers why the reverse direction, String as Cast's source, stays
+||| unfolded regardless of `to`).
 foldableOp : PrimFn arity -> Bool
 foldableOp BelieveMe = False
 foldableOp (Cast IntType _) = False
 foldableOp (Cast _ IntType) = False
+foldableOp (Cast from StringType) = isJust (intKind from)
 foldableOp (Cast from to)   = isJust (intKind from) && isJust (intKind to)
 foldableOp _                = True
 

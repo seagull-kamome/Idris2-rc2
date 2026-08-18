@@ -139,6 +139,75 @@ castCharNotFolded =
       a = 'A'
   in cast a
 
+-- Cast-to-String folding: fixed-width int/Integer -> String, entirely
+-- within one function body -- `from` admits intKind, `to = StringType`
+-- is its own foldableOp case (see ConstFold.idr's own doc comment for
+-- why Char/Double stay excluded from this direction).
+castInt8PosToString : String
+castInt8PosToString =
+  let a : Int8
+      a = 100
+  in cast a
+
+castInt8NegToString : String
+castInt8NegToString =
+  let a : Int8
+      a = -56
+  in cast a
+
+castBits64MaxToString : String
+castBits64MaxToString =
+  let a : Bits64
+      a = 18446744073709551615
+  in cast a
+
+-- Small enough for `bindOne` (RC.idr) to resolve straight to an
+-- `RCConst` rather than a `bindCompound`-built RLet.
+castIntegerSmallToString : String
+castIntegerSmallToString =
+  let a : Integer
+      a = 42
+  in cast a
+
+-- Large enough for `bindOne` to go through `bindCompound`'s RLet path
+-- instead -- exercises `foldConst`'s RLet-folding branch, not just the
+-- direct RCConst-resolution one.
+castIntegerBigToString : String
+castIntegerBigToString =
+  let a : Integer
+      a = 123456789012345678901234567890
+  in cast a
+
+-- Should NOT be folded: Char as Cast's source into String -- see
+-- ConstFold.idr's own foldableOp doc comment for the stripQuotes bug
+-- this avoids inheriting from upstream's Core.Primitives.castString.
+-- Deliberately a non-ASCII codepoint (above '\DEL'), not just any
+-- Char: Show Char's own multi-character numeric escape for such
+-- codepoints is exactly what stripQuotes mishandles, so folding this
+-- (if the exclusion ever regressed) would produce a visibly different,
+-- wrong string instead of silently matching by coincidence.
+castCharToStringNotFolded : String
+castCharToStringNotFolded =
+  let a : Char
+      a = 'あ'
+  in cast a
+
+-- Should NOT be folded: Double as Cast's source into String -- belt-
+-- and-suspenders with `safeConst`'s own `Db` exclusion.
+castDoubleToStringNotFolded : String
+castDoubleToStringNotFolded =
+  let a : Double
+      a = 3.999
+  in cast a
+
+-- Should NOT be folded: String as Cast's source (either direction) --
+-- see rc2/doc/cast-fold-scope.md for why parsing stays out of scope.
+castStringToIntegerNotFolded : Integer
+castStringToIntegerNotFolded =
+  let a : String
+      a = "42"
+  in cast a
+
 main : IO ()
 main = do
   printLn addConst
@@ -156,3 +225,11 @@ main = do
   printLn castDoubleNotFolded
   printLn castIntNotFolded
   printLn castCharNotFolded
+  putStrLn castInt8PosToString
+  putStrLn castInt8NegToString
+  putStrLn castBits64MaxToString
+  putStrLn castIntegerSmallToString
+  putStrLn castIntegerBigToString
+  putStrLn castCharToStringNotFolded
+  putStrLn castDoubleToStringNotFolded
+  printLn castStringToIntegerNotFolded
