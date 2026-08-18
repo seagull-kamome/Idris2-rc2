@@ -59,32 +59,11 @@ state, not just a single alt's own body) was **not** pursued -- left
 as plausible future work if profiling ever shows it matters, not
 currently planned.
 
-## Performance: no loop-invariant single-branch case hoisting
+## Dropped: loop-invariant single-branch case hoisting
 
-Found while reading the `--directive dumprcexpr` dump of
-`idris2-missing-containers`' `Data.Hash.Algorithm.Internal.feedCharOfString.go`
-(see `rc2/BENCHMARKS.md`'s 2026-08-18 closure in-place growth entry --
-this is the loop that motivated that change). Its loop body re-executes
-a `case v0 of HashAlgorithm ... args=[..., v20, ...]` every iteration
-purely to extract one interface-dictionary method closure, even though
-the match has exactly one alt (a record, so no default is needed), so
-which branch runs is already known before the loop even starts.
-`Compiler.RC2.Loop`'s loop-invariant parameter elision (see
-`rc2/doc/loop-conversion.md`'s "Loop-invariant parameter elision"
-section) already removes `v0` itself from the loop's own carried
-params, since it's passed unchanged through every continue -- but the
-`case` inside the loop body is untouched by that pass (it only ever
-rewrites `loopParams`/`initial`/`RLoopContinue`'s own `args`, never a
-loop's own body shape), so the redundant re-match/re-`dup` of `v20`
-still happens every single iteration, now reading the enclosing
-function's own plain top-level argument instead of a loop param but
-otherwise identical. No pass recognizes "a single-alt `RConCase` whose
-scrutinee is loop-invariant" and hoists the destructure above the
-`loop`, promoting its bound fields to a one-time binding ahead of it
-(the exact same `RLet`+`RDrop` idiom loop-invariant parameter elision
-itself now uses for a native-shadowed elided parameter would apply
-here too, for `v20`). Not currently planned -- would need its own pass
-(after `Compiler.RC2.Loop`) recognizing this shape.
+Investigated, then dropped -- see `rc2/doc/case-hoisting-scope.md` for
+the full writeup (why it looked worth doing, what the investigation
+found, and why neither design considered was pursued).
 
 ## Performance: constructor reuse doesn't reach across a monadic-bind continuation
 
