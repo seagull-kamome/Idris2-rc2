@@ -73,19 +73,21 @@ IDRIS2RC2_Value *idris2rc2_trampoline(IDRIS2RC2_Value *it) {
 
 IDRIS2RC2_Value *idris2rc2_tailcallApplyClosure(IDRIS2RC2_Value *_c, IDRIS2RC2_Value *arg) {
   IDRIS2RC2_Closure *c = (IDRIS2RC2_Closure *)_c;
-  IDRIS2RC2_Closure *nc = idris2rc2_mkClosure(c->fn, c->arity, c->filled + 1);
-  if (c->header.refCount <= 1) {
-    memcpy(nc->args, c->args, sizeof(IDRIS2RC2_Value *) * c->filled);
-  } else {
-    for (int i = 0; i < c->filled; ++i)
-      nc->args[i] = idris2rc2_dup(c->args[i]);
-  }
-  nc->args[c->filled] = arg;
 
-  if (idris2rc2_isUnique(c))
-    free(c);
-  else
-    --c->header.refCount;
+  // Unique: idris2rc2_mkClosure already reserved room for the full
+  // arity, so growing by one argument is just a field write -- no
+  // allocation, no copy, no free.
+  if (idris2rc2_isUnique(c)) {
+    c->args[c->filled] = arg;
+    ++c->filled;
+    return (IDRIS2RC2_Value *)c;
+  }
+
+  IDRIS2RC2_Closure *nc = idris2rc2_mkClosure(c->fn, c->arity, c->filled + 1);
+  for (int i = 0; i < c->filled; ++i)
+    nc->args[i] = idris2rc2_dup(c->args[i]);
+  nc->args[c->filled] = arg;
+  --c->header.refCount;
 
   return (IDRIS2RC2_Value *)nc;
 }
