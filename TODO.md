@@ -5,6 +5,19 @@ scattered code comments. Nothing below is a known correctness bug in
 what's implemented -- see `rc2/tests/refc-suite/README.md` for bugs that
 were found and already fixed.
 
+## Feature: C struct support (`System.FFI.Struct`/`getField`/`setField`) -- investigating
+
+Upstream Idris2's `System.FFI.Struct`/`getField`/`setField` (backed by
+`prim__getField`/`prim__setField`) works on the Chez backend but not on
+RefC -- and rc2, having copied RefC's own ExtPrim whitelist and
+`extractValue`/`packCFType` verbatim, inherited the identical gap.
+Confirmed by hand that this genuinely breaks at the C-compile step
+(an undefined-function error on the generated C), not just in theory.
+See `rc2/doc/c-struct-support.md` for the full investigation -- what's
+confirmed, how Chez actually resolves a field's type at compile time,
+and the open design questions for a native rc2 implementation.
+Investigation in progress; not yet designed or scheduled.
+
 ## Performance: tail-position delegating calls stay boxed
 
 Native type inference (`Compiler.RC2.Types`) only applies to values
