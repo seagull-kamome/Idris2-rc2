@@ -351,15 +351,59 @@ trySinkIntoArms _ _ _ _ _ = Nothing
 
 ||| Sees through the same leading `RDup`/`RDrop`/`RFree`/
 ||| `RReleaseReuse`/`RReuseOffer` wrappers `stripIfUnused` itself sees
-||| through, then dispatches to `trySinkIntoArms` -- guarded by
-||| `isDecidingOperand` first (see its own doc comment for the
-||| real bug this guard fixes).
+||| through -- *unless* the wrapper's own target(s) include `var`
+||| itself, in which case sinking stops right there (`Nothing`): a real
+||| bug, caught by `refc-suite/buffer`'s own `TestBuffer.idr` during
+||| development. `let v5 = call prim__setByte ... in drop [v5]; let v6
+||| = call prim__setBits8 ... in drop [v6]; ...` (a chain of
+||| side-effecting calls whose own `IORes ()`-shaped result is
+||| immediately discarded) has `v5` wrapped by exactly one `RDrop [v5]`
+||| right after its own binding -- before this fix, the old
+||| unconditional "peel through any RDrop" clause treated that as just
+||| another non-branching wrapper to see past, entirely missing that
+||| *this specific* `RDrop` is `v5`'s own death, and kept searching
+||| straight through `v6`/`v7`/`v8`'s own identical chain all the way
+||| to a distant, unrelated branch far downstream -- producing a
+||| miscompile (`var_5`/`var_6`/... referenced in generated C without
+||| ever being declared there). Every wrapper case below now checks its
+||| own target(s) against `var` first, mirroring the same reasoning the
+||| `RLet` case (below) already applies to `y`'s own `valueY`.
+|||
+||| Also sees through a leading `RLet` for some unrelated local `y`
+||| (`var`'s own binding sinks *past* `y`'s, leaving it exactly where
+||| it is), then dispatches to `trySinkIntoArms` -- guarded by
+||| `isDecidingOperand` first (see its own doc comment for the real bug
+||| *that* guard fixes).
+|||
+||| The `RLet` case only fires for a `y` that couldn't itself be sunk
+||| into the branch beneath it (if it could, `applySinkExp`'s own
+||| innermost-first walk already rewrote `let y = .. in <branch>` into
+||| that very branch, with `y`'s own binding moved inside one arm --
+||| see that function's own doc comment -- so by the time `var`'s own
+||| `trySinkInto` runs, this `RLet` shape only survives when `y` itself
+||| had nowhere to go, e.g. read on more than one arm). Bails
+||| (`Nothing`) if `y`'s own `valueY` reads `var` -- that read happens
+||| unconditionally, regardless of which branch arm eventually runs, so
+||| `var` is genuinely needed before any arm, exactly the same
+||| reasoning `isDecidingOperand` already applies to a branch's own
+||| scrutinee/comparison operands.
 trySinkInto : SortedMap Int Rep -> Int -> Rep -> RCExp -> RCExp -> Maybe RCExp
-trySinkInto reps var rep value (RDup fc v cont) = map (RDup fc v) (trySinkInto reps var rep value cont)
-trySinkInto reps var rep value (RDrop fc vs cont) = map (RDrop fc vs) (trySinkInto reps var rep value cont)
-trySinkInto reps var rep value (RFree fc v cont) = map (RFree fc v) (trySinkInto reps var rep value cont)
-trySinkInto reps var rep value (RReleaseReuse fc v cont) = map (RReleaseReuse fc v) (trySinkInto reps var rep value cont)
-trySinkInto reps var rep value (RReuseOffer fc sc dupOnShared cont) = map (RReuseOffer fc sc dupOnShared) (trySinkInto reps var rep value cont)
+trySinkInto reps var rep value (RDup fc v cont) =
+    if v == RCLoc var then Nothing else map (RDup fc v) (trySinkInto reps var rep value cont)
+trySinkInto reps var rep value (RDrop fc vs cont) =
+    if RCLoc var `elem` vs then Nothing else map (RDrop fc vs) (trySinkInto reps var rep value cont)
+trySinkInto reps var rep value (RFree fc v cont) =
+    if v == RCLoc var then Nothing else map (RFree fc v) (trySinkInto reps var rep value cont)
+trySinkInto reps var rep value (RReleaseReuse fc v cont) =
+    if v == RCLoc var then Nothing else map (RReleaseReuse fc v) (trySinkInto reps var rep value cont)
+trySinkInto reps var rep value (RReuseOffer fc sc dupOnShared cont) =
+    if (sc == RCLoc var) || (RCLoc var `elem` dupOnShared)
+       then Nothing
+       else map (RReuseOffer fc sc dupOnShared) (trySinkInto reps var rep value cont)
+trySinkInto reps var rep value (RLet fc y repY valueY cont) =
+    if contains (RCLoc var) (genuinelyUsedR valueY)
+       then Nothing
+       else map (RLet fc y repY valueY) (trySinkInto reps var rep value cont)
 trySinkInto reps var rep value branch@(RCmpCase _ _ _ _ _ _) =
     if isDecidingOperand var branch then Nothing else trySinkIntoArms reps var rep value branch
 trySinkInto reps var rep value branch@(RConCase _ _ _ _) =

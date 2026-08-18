@@ -196,6 +196,59 @@ case one of them is already independently read there (would risk a
 double-drop; costs nothing to guard against, should never actually
 fire in practice).
 
+### Sinking past an unrelated `let`
+
+`trySinkInto` also sees through a leading `RLet` for some *unrelated*
+local `y` sitting between `var`'s own binding and the eventual branch --
+`let x = .. in let y = (doesn't read x) in <branch>` -- leaving `y`
+exactly where it is and continuing the search for `x`'s own one
+using arm past it. This case only ever fires for a `y` that couldn't
+itself be sunk (if it could, `applySinkExp`'s own innermost-first walk
+already rewrote that `let y = .. in <branch>` into the branch itself,
+with `y`'s own binding moved inside one arm -- see "Algorithm" above --
+so this `RLet` shape only survives when `y` is read on more than one
+arm, or isn't itself `sinkEligible`). Bails (`Nothing`) if `y`'s own
+value reads `var` -- that read happens unconditionally regardless of
+which arm eventually runs, so `var` is genuinely needed before any
+arm, the exact same reasoning `isDecidingOperand` already applies to a
+branch's own scrutinee.
+`tests/Test22BranchSinking.idr`'s own `skipUnrelatedLet` is the
+dedicated test: `x`'s own binding reaches through `y`'s (`y` reads
+both arms, `x` doesn't appear in `y`'s own computation) and lands
+inside the one arm that reads `x`.
+
+### Not peeling through `var`'s own death
+
+**The single most important bug this whole pass produced, caught by
+`refc-suite/buffer`'s own `TestBuffer.idr` -- a real miscompile, not
+just a leak.** Every wrapper case in `trySinkInto` (`RDup`/`RDrop`/
+`RFree`/`RReleaseReuse`/`RReuseOffer`) now checks whether *its own
+target is `var` itself* before peeling through it, bailing to `Nothing`
+if so.
+
+`TestBuffer.idr` calls a chain of `IO ()`-returning `Data.Buffer`
+functions in `do`-notation (`setByte buf 0 1; setBits8 buf 1 2;
+setBits16 buf 2 3; ...`), each one's own `()` result immediately
+discarded -- lowering to `let v5 = call prim__setByte [...] in drop
+[v5]; let v6 = call prim__setBits8 [...] in drop [v6]; let v7 = ...;
+let v8 = ...` before ever reaching an unrelated branch further down.
+Each `RDrop [vN]` here is `vN`'s own, singular death, not some
+unrelated ownership bookkeeping to see past on the way to a branch.
+The *first* version of the wrapper-peeling clauses (`trySinkInto reps
+var rep value (RDrop fc vs cont) = map (RDrop fc vs) (trySinkInto reps
+var rep value cont)`, with no check on `vs`) didn't distinguish "an
+unrelated drop sitting in the way" from "`var`'s own drop" -- it kept
+searching straight through `v5`'s own death, through `v6`/`v7`/`v8`'s
+identical chain, all the way to a distant, unrelated branch, and sank
+`v5` there. The generated C referenced `var_5`/`var_6`/... in a scope
+where they were never declared -- an undeclared-identifier compile
+error, not a silent leak, since `v5` genuinely never reaches that far
+in the real control flow at all.
+`tests/Test23SinkPastSelfDrop.idr` reproduces the same shape directly
+(a chain of `IO ()` calls whose result is discarded, followed by a
+branch reading an unrelated value) as a dedicated regression,
+independent of `Data.Buffer`.
+
 ## Pipeline position
 
 Runs after `Compiler.RC2.Loop` (self-tail-call conversion), before
@@ -229,10 +282,23 @@ this stage alone, same convention as every other optional stage (see
   case: one sinkable example, one that must *not* sink (`var` read on
   both arms), `deepSinkable` for sinking through two nested single-use
   branches in one pass (see "Sinking arbitrarily deep, not just one
-  level" above), and `callSinkable` for sinking a plain `RAppName`
-  call (see "Deciding whether `value` is even a candidate" above).
-- `tests/Test2Recursion.idr`/`tests/Test9SelfTailLoop.idr` -- existing
-  tests (via Prelude functions they transitively pull in) that caught
-  the two real bugs documented above; no dedicated new regression test
-  needed for either since the existing full-suite run already exercises
-  both shapes.
+  level" above), `callSinkable` for sinking a plain `RAppName` call
+  (see "Deciding whether `value` is even a candidate" above), and
+  `skipUnrelatedLet` for sinking past an unrelated `let` (see "Sinking
+  past an unrelated `let`" above).
+- `tests/Test23SinkPastSelfDrop.idr` -- dedicated regression for the
+  most serious bug this pass produced, a real miscompile rather than a
+  leak (see "Not peeling through `var`'s own death" above):
+  reproduces `refc-suite/buffer`'s own `TestBuffer.idr` shape (a chain
+  of `IO ()` calls whose result is immediately discarded, followed by
+  a branch reading an unrelated value) directly, independent of
+  `Data.Buffer`.
+- `tests/Test2Recursion.idr`/`tests/Test9SelfTailLoop.idr`/
+  `refc-suite/buffer/TestBuffer.idr` -- existing tests (the first two
+  via Prelude functions they transitively pull in) that caught three
+  of the four real bugs documented above; no dedicated new regression
+  test needed for the first two since the existing full-suite run
+  already exercises both shapes (the third, `TestBuffer.idr`'s own
+  shape, got `Test23SinkPastSelfDrop.idr` as a dedicated regression
+  instead, since relying on `refc-suite` alone to keep catching it
+  felt too indirect for the single most serious bug found here).
