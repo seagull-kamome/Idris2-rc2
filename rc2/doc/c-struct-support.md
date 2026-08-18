@@ -154,14 +154,23 @@ inferring it from Chez's behaviour:
   are known; the exact `RC2.idr` `toRCDefs` wiring (where the
   collection pass slots into the existing pipeline order) still needs
   to be worked out.
-- **Unconfirmed: what happens, in any backend including Chez, when a
+- ~~Unconfirmed: what happens, in any backend including Chez, when a
   program uses `getField`/`setField` on a struct name never mentioned
-  in any `%foreign` signature** -- e.g. built via `believe_me` from a
-  raw pointer, exactly this investigation's own repro above. If Chez's
-  own `(ftype-ref undeclared-name ...)` also fails in that case (needs
-  checking directly, not assumed), rc2 wouldn't need to solve a
-  strictly harder problem than upstream already leaves unsolved --
-  worth confirming before treating it as a requirement.
+  in any `%foreign` signature~~ **Confirmed: Chez fails too, at compile
+  time.** Ran this investigation's own repro above through `idris2 --cg
+  chez` directly: `Exception: unrecognized ftype name my_struct ... /
+  Error: INTERNAL ERROR: Chez exited with return code 255` -- Chez
+  Scheme's own `ftype-ref` macro-expansion fails outright when no
+  `(define-ftype my_struct ...)` was ever emitted for that name (i.e.
+  no `%foreign` signature ever mentioned `Struct "my_struct" ...`).
+  So requiring every struct name used with `getField`/`setField` to
+  have appeared in at least one `%foreign` signature somewhere in the
+  program is not a new restriction rc2 would be imposing -- it's the
+  existing upstream contract, already enforced (just later than
+  ideal -- at Scheme macro-expansion time rather than at Idris2
+  compile time) by the reference backend. rc2 can rely on this and
+  doesn't need to handle the "struct name never declared" case as
+  anything other than a compile error of its own.
 - **Not yet scoped: how field values interact with rc2's own
   Boxed/Native `Rep` split.** An `Int`-typed field read/written
   natively is plausible future work (the same shape
