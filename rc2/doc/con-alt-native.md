@@ -57,22 +57,29 @@ directly, not re-derived):
    `declareNative`, and `emitNativeValue`'s own bare-`RV` case (added
    Stage 3b of the dual-ABI effort, `doc/dual-abi.md`) already renders
    exactly this shape -- no new Emit.idr work needed.
-3. `core'` is `core` with **every** reference to `fieldId` (not just
-   native-context ones -- `renameRCExp` renames uniformly) redirected
-   to `shadowId`, then `Compiler.RC2.Loop`'s own `stripOwnership`
-   (reused directly) removes whatever stale `RDup`/`RDrop`/`postDrop`
-   bookkeeping `annotate` had attached to those now-renamed-away
-   occurrences (its own now-invalid target is `shadowId`, since
-   `renameRCExp` rewrote those too).
+3. `core'` is `core` with only `fieldId`'s own *native-context*
+   occurrences redirected to `shadowId` (`markNativeOccurrences`,
+   mirroring `Loop.idr`'s own `nativeArgTypes`/`opNativeUsesThrough`
+   walk exactly, but rewriting instead of collecting) -- any surviving
+   Boxed-context occurrence is left on `fieldId` itself, untouched.
+   `stripOwnership` (`Compiler.RC2.Loop`, reused directly) first clears
+   whatever stale `RDup`/`RDrop`/`postDrop` bookkeeping `annotate` had
+   attached to `fieldId` (computed back when every occurrence, native
+   and Boxed alike, was still assumed to disappear into the shadow),
+   then `reannotateFieldOwnership` rebuilds ownership for just
+   `fieldId`, from scratch, over whatever Boxed-context occurrences
+   remain -- see "Reusing the original Boxed field for surviving
+   Boxed-context reads" below for the full design and the two real
+   bugs found landing it.
 4. A destructured field can still have a genuinely separate Boxed use
-   in the same alt (`case acc of MkAcc x y => f x (show y)`) --
-   redirecting *that* reference to the shadow too, and re-boxing it on
-   demand via `rcVarToBoxedC`'s own already-established `RNative` case,
-   needs no special-casing: a fresh allocation instead of sharing the
-   one the field used to hold, invisible to any Idris-level program
-   (scalars have no observable identity), the same reasoning
-   `doc/dual-abi.md`'s own `nativePromotionFor` write-up already relies
-   on for the analogous `RLet` case.
+   in the same alt (`case acc of MkAcc x y => f x (show y)`) -- as of
+   the design in point 3 above, that reference keeps referring to
+   `fieldId` itself rather than being redirected to the shadow, so it
+   keeps sharing the original field's own identity via an ordinary
+   `dup`/move exactly as it would without this pass running at all,
+   instead of paying for a fresh reallocation every time
+   `rcVarToBoxedC` would otherwise have to re-box a still-Native
+   shadow on demand.
 
 ### "Core": peeling past ownership/reuse wrappers first
 
@@ -163,17 +170,129 @@ bytes/49 blocks) were confirmed present, identical in size, with this
 whole pass's own pipeline entry removed entirely -- unrelated to this
 work, not investigated further here.
 
+## Reusing the original Boxed field for surviving Boxed-context reads
+
+Point 4 above used to mean an unconditional re-box: `rcVarToBoxedC`
+allocating a fresh `IDRIS2RC2_Value*` from the shadow's own native
+value every single time a Boxed-context read of the field survived
+promotion, rather than sharing the identity the original, still-live
+field already had (see `TODO.md`'s own "Performance: reboxing a
+native-shadowed value always allocates fresh" entry for the full
+motivation, and `rc2/doc/loop-conversion.md`'s "Native-shadow
+promotion" section for where this trade-off was first accepted for
+`Compiler.RC2.Loop`'s own, structurally similar case). Fixed here for
+`ConAltNative` specifically (`Compiler.RC2.Loop`'s own loop-carried
+shadow promotion is unaffected -- see that TODO entry for why the two
+cases aren't the same problem) by splitting what used to be one
+combined rename-and-strip step into three, run per promoted field
+rather than batched:
+
+1. `stripOwnership (singleton fieldId)` clears `fieldId`'s own stale
+   ownership bookkeeping first, exactly as before, just keyed on the
+   original field id rather than a whole batch of shadow ids.
+2. `markNativeOccurrences` mirrors `Loop.idr`'s own `nativeArgTypes`/
+   `opNativeUsesThrough` walk exactly, but rewrites the native-context
+   occurrences it finds instead of collecting their types -- every
+   Boxed-context occurrence is left on `fieldId` untouched.
+3. `reannotateFieldOwnership` rebuilds ownership for `fieldId` alone,
+   from scratch, over whatever Boxed-context occurrences remain: the
+   same "first occurrence moves, later ones dup" rule `RC.idr`'s own
+   `annotate`/`splitBorrows` use, and the same per-arm drop-if-unused
+   handling `branchBody` uses for `RConCase`/`RConstCase`'s own alts --
+   both re-derived here in a form specialised to tracking a single
+   local (`owned : Bool`) rather than `RC.idr`'s own whole-set version,
+   since `annotate` itself can't simply be re-run over `core` (its own
+   `RCon` case unconditionally resets `reuseFrom` to `Nothing`, which
+   would silently undo whatever `Compiler.RC2.Reuse` had already
+   decided).
+
+Two real, `valgrind`-silent bugs (both compiled, ran, and printed the
+*correct* result while still leaking or, in the second case, actively
+corrupting memory) were found landing this, both via
+`tests/Test12ConAltNative.idr`'s own new `multiBoxedUse`/`branchingUse`
+cases (see "Files" below):
+
+1. **A `freeLocalsR` lookahead in the naive left-to-right version of
+   `reannotateFieldOwnership`'s own `RLet` case saw a lie.** The first
+   attempt threaded ownership straight through, `value` then `body`, in
+   source order -- correct in total dup/drop *count*, but wrong in
+   *timing*: whichever occurrence of `fieldId` happened to come first
+   textually got the move, and a later one got the `dup` -- backwards
+   from the one ordering that's actually safe. A `dup` exists to
+   guarantee an extra reference *before* anything could free the
+   object; getting the *first* live use to move the object's only
+   reference and only *then* running a `dup` for a later use is, if
+   that first callee happens to drop what it was moved once it's done
+   with it, a `dup` reading already-freed memory. `multiBoxedUse`
+   (`show x ++ ... ++ show x ++ ...`, `x` read Boxed twice) reproduces
+   this shape directly. Fixed by restoring `RC.idr`'s own `annotate`
+   ordering: whether `fieldId` is still needed *later*, in `body`, is
+   decided via a `freeLocalsR` lookahead *before* `value` is ever
+   processed (exactly RC.idr's own `borrowVal`), so a `dup` always
+   lands ahead of the read it protects, never behind it -- with one
+   necessary departure from `RC.idr`'s own shape: `body` here has
+   already had every native-context occurrence of `fieldId` redirected
+   away by `markNativeOccurrences`, so when the lookahead finds none in
+   `body` at all, `value`'s own actual post-processing result is
+   threaded through unchanged rather than recomputed from `owned` the
+   way `RC.idr`'s own `borrowVal` shape assumes (which implicitly
+   assumes `value` always resolves every occurrence it's handed -- true
+   for `RC.idr` itself, not true here, where `value` can easily contain
+   zero occurrences of `fieldId` at all).
+2. **`RConCase`/`RConstCase`/`RCmpCase` returned the wrong ownership to
+   their own caller, producing both a double-drop and a genuine
+   use-after-free in the same test.** The first attempt returned
+   whatever `owned` state was current *before* the branch (or, for
+   `RConCase`/`RConstCase`, after only the scrutinee's own read) --
+   ignoring that `finalizeBranch` (see below) leaves `fieldId`
+   *provably* fully consumed on every single arm it processes, whether
+   by dropping it (an arm that never touches it) or by moving/dup'ing
+   it into whatever Boxed-context read that arm does find. `branchingUse`
+   (`case x/y of` two arms, one reading the destructured field only
+   natively, the other only in a Boxed context) reproduced both
+   failure modes from this one bug at once: `shadowAltFields`'s own
+   outer `RLet` wrapping, seeing the stale "still owned" ownership this
+   case wrongly reported, added its own unconditional `RDrop` --
+   double-dropping `fieldId` on the arm that had already dropped it
+   itself, and turning the *other* arm's own already-live Boxed-context
+   read into a read of a value some *other*, never-taken arm would have
+   freed. Fixed by having all three cases return `False`
+   unconditionally: past `finalizeBranch`, `fieldId` is spent no matter
+   which arm runs, so there is never anything left for a caller to
+   still own.
+
+Re-verified after both fixes: `valgrind --leak-check=full` against
+`tests/Test12ConAltNative.idr` (`step`'s own reuse-in-place case,
+`repeatedRead`'s own field-read-three-times case, `mixedUse`'s own
+native-and-Boxed-same-field case, `multiBoxedUse`'s own repeated-dup
+case, `branchingUse`'s own asymmetric-branch case) reports `definitely
+lost: 0 bytes in 0 blocks` (`800 bytes in 100 blocks still reachable`
+-- exactly the immortal small-int cache, not a leak). Full refc-suite
+(19/19), the entire `tests/Test*.idr` smoke-test matrix, and
+`rc2/tests/bench.sh`'s own micro-benchmark suite all pass unaffected.
+
 ## Files
 
 - `rc2/src/Compiler/RC2/ConAltNative.idr` (new) -- `peelWrappers`,
   `shadowAltFields`, `assignShadowIds`, the `applyConAltNativeExp`/
-  `applyConAltNativeAlt`/etc. whole-tree walk, exported `applyConAltNative`.
-- `rc2/src/Compiler/RC2/Loop.idr` -- `nativeArgTypes`/`nativeArgType`
-  (already `export`ed, reused unchanged) and `stripOwnership` (already
-  `export`ed, reused unchanged -- an earlier attempt to extend it for
-  `RReuseOffer`'s own `dupOnShared` was added then reverted, see bug #2
-  above; its own doc comment now notes why `Compiler.RC2.ConAltNative`
-  never needs that).
+  `applyConAltNativeAlt`/etc. whole-tree walk, exported
+  `applyConAltNative`; `markNativeOccurrences`/`renameOpArgsThrough`,
+  `reannotateFieldOwnership`/`finalizeBranch`, `countDupsNeeded`/
+  `wrapNDups` (the "Reusing the original Boxed field" design above).
+- `rc2/src/Compiler/RC2/Loop.idr` -- `nativeArgTypes`/`nativeArgType`/
+  `opNativeUsesThrough` (already `export`ed, reused unchanged --
+  `markNativeOccurrences`/`renameOpArgsThrough` mirror their own walk
+  exactly rather than calling them, since they rewrite instead of
+  collecting) and `stripOwnership` (already `export`ed, reused
+  unchanged -- an earlier attempt to extend it for `RReuseOffer`'s own
+  `dupOnShared` was added then reverted, see bug #2 above; its own doc
+  comment now notes why `Compiler.RC2.ConAltNative` never needs that).
+- `rc2/src/Compiler/RC2/RC.idr` -- `splitBorrows`/`annotate`/
+  `branchBody` (the "first occurrence moves, later ones dup" ownership
+  rule `reannotateFieldOwnership`/`finalizeBranch` re-derive, specialised
+  to a single local; not called directly -- `annotate`'s own `RCon`
+  case unconditionally resets `reuseFrom`, which would undo
+  `Compiler.RC2.Reuse`'s own decisions if re-run over `core`).
 - `rc2/src/Compiler/RC2/RC2.idr` -- `toRCDefs`'s own pipeline wiring
   (`applyConAltNative` right after `applyReuse`, before
   `applyMutualLoop`).
@@ -181,7 +300,11 @@ work, not investigated further here.
 - `rc2/tests/Test12ConAltNative.idr` (new) -- `step` (reuse-in-place
   interaction), `repeatedRead` (a field read natively three times,
   confirms the caching itself), `mixedUse` (the same field read both
-  natively and in Boxed context).
+  natively and in Boxed context), `multiBoxedUse` (a field read
+  natively twice and in a Boxed context twice -- the dup-ordering bug's
+  own dedicated regression), `branchingUse` (the destructured field's
+  own Boxed-context use appearing in only one of two nested branch
+  arms -- the branch-ownership bug's own dedicated regression).
 
 ## Verification methodology
 
@@ -196,16 +319,20 @@ work, not investigated further here.
    before it -- and that block's own `dup`s should stay conditional,
    inside its own `else` branch, exactly as they are with this whole
    pass's pipeline entry removed.
-3. **A stdout diff alone can't catch a reference leak or an unbalanced
-   dup** -- both bugs above compiled, ran, and printed the *correct*
-   result while still leaking. Any change to `ConAltNative.idr`, or to
-   `Compiler.RC2.Reuse`'s own `resolveAlt`/`Compiler.RC2.Loop`'s own
-   `stripOwnership` (both reused here), should be re-checked with
-   `valgrind --leak-check=full` against `tests/Test12ConAltNative.idr`
-   specifically (its own `step` runs 200k iterations, deliberately
-   large enough that a per-iteration leak is unmistakable in the
-   summary rather than lost in noise) -- expect `definitely lost: 0
-   bytes in 0 blocks`.
+3. **A stdout diff alone can't catch a reference leak, an unbalanced
+   dup, or a use-after-free** -- every bug found in this module so far
+   compiled, ran, and printed the *correct* result regardless (see
+   "Bugs found and fixed" and "Reusing the original Boxed field" above
+   for four separate confirmed instances of exactly this). Any change
+   to `ConAltNative.idr`, or to `Compiler.RC2.Reuse`'s own
+   `resolveAlt`/`Compiler.RC2.Loop`'s own `stripOwnership`/`nativeArgTypes`
+   (all reused or mirrored here), should be re-checked with `valgrind
+   --leak-check=full` against `tests/Test12ConAltNative.idr` specifically
+   (its own `step` runs 200k iterations, deliberately large enough that
+   a per-iteration leak is unmistakable in the summary rather than lost
+   in noise; `multiBoxedUse`/`branchingUse` are the dedicated regressions
+   for the dup-ordering and branch-ownership bugs specifically) --
+   expect `definitely lost: 0 bytes in 0 blocks`.
 4. Before concluding a fix is correct, also re-run step 3 against the
    *baseline* with this pass disabled via `--directive noconaltnative`
    (`RC2.idr`'s own `toRCDefs`, see its doc comment -- no rebuild

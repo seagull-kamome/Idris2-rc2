@@ -97,51 +97,57 @@ ordinary case-alternative's own destructured field (not loop-carried)
 was addressed separately (`Compiler.RC2.ConAltNative`, see
 `rc2/doc/con-alt-native.md`).
 
-## Performance: reboxing a native-shadowed value always allocates fresh, never reuses the original Boxed object
+## Performance: `Loop.idr`'s own loop-carried native shadow still reboxes fresh on a Boxed-context read
 
 `Emit.idr`'s `rcVarToBoxedC` (its own doc comment states this
 explicitly) boxes a `Native`/`RInlineNative` local by always calling
 `nativeMk` (`idris2rc2_mkInt64`/etc.) -- a fresh allocation, never a
 `dup` of whatever Boxed object the value was originally unboxed from.
-This is deliberate, not an oversight: both `Compiler.RC2.Loop`'s own
-native-shadow-loop-param promotion and `Compiler.RC2.ConAltNative`'s
-own destructured-field caching use `renameRCExp` to redirect *every*
-occurrence of the original id (native-context reads and Boxed-context
-reads alike) to the fresh shadow id, then `stripOwnership` deletes the
-original's own now-stale ownership bookkeeping outright -- so by the
-time a Boxed-context read is reached, there's no reference to the
-original Boxed object left in the tree to `dup`, only the raw scalar.
-See `rc2/doc/loop-conversion.md`'s own "Native-shadow promotion"
-section (step 2) for where this trade-off was first accepted ("a real
-but acceptable trade-off, not a correctness issue").
+Fixed for `Compiler.RC2.ConAltNative`'s own destructured-field caching
+(see `rc2/doc/con-alt-native.md`'s own "Reusing the original Boxed
+field for surviving Boxed-context reads" section): a Boxed-context read
+of a promoted field now keeps sharing the original field's own
+identity via an ordinary `dup`/move, exactly as it would without that
+pass running at all, instead of paying for a fresh reallocation every
+time.
 
-Two related points worth recording alongside this:
+**Not fixed for `Compiler.RC2.Loop`'s own loop-carried native-shadow
+promotion** -- deliberately out of scope for the `ConAltNative` fix
+above, and structurally harder: a loop-carried shadow's own value is
+reassigned every iteration (`continue loop [...]`), so unlike a
+destructured field's own one-time, unchanging read, "the original
+Boxed object this shadow came from" isn't a single, fixed thing --
+after the first iteration, a loop param's own current native value
+typically comes from an arithmetic result with no Boxed original to
+`dup` at all, not from re-reading the same Boxed local. The one
+sub-case where an original *does* stay meaningful across every
+iteration -- a loop-invariant parameter, promoted then hoisted
+(`Compiler.RC2.Loop`'s own `hoistInvariantPrefix`/`wrapInvariantShadows`,
+see `rc2/doc/loop-conversion.md`'s own "Loop-invariant parameter
+elision") -- still isn't fixed either: `applyLoop`'s own `renameRCExp`
+already redirects every occurrence of the original id (native and
+Boxed alike) to the shadow *before* invariance is even decided, so
+applying `ConAltNative`'s own fix here would need reordering
+`applyLoop`'s own pipeline (decide invariance first, rename
+selectively per parameter after) rather than a direct port -- a larger
+change, not attempted. Revisit if profiling shows a loop-carried or
+hoisted-invariant shadow's own Boxed-context reboxing cost actually
+matters in practice.
 
-- **The promotion decision itself doesn't weigh this cost.**
-  `Loop.idr`'s `nativeArgTypes`/`nativeArgType` (the eligibility check
-  both passes above share) only asks whether a parameter/field is ever
-  read in a native context at a consistent type -- it never counts how
-  many *Boxed*-context reads would each pay a fresh-allocation cost as
-  a result of promoting. A variable read natively once but read Boxed
-  many times could plausibly get *slower* under promotion, not faster.
-  `idris2rc2_mkInt64`/`mkBits64` do have a 0-99 small-value cache
-  (`memory.c`), so the real cost only bites for out-of-range integers
-  and for types with no such cache (`Double`, wider `Int`/`Bits` values
-  outside 0-99) -- unmeasured how often that actually happens in
-  practice.
-- **A more ambitious fix (not attempted, non-trivial)**: instead of
-  `renameRCExp`'s blanket redirect, only redirect the *native-context*
-  occurrences to the shadow id and leave every Boxed-context occurrence
-  on the *original* id, letting `annotate`'s own original dup/drop
-  bookkeeping for that id keep working unmodified (a native-context
-  read never needs a `dup` regardless, so removing just the
-  dup/drop entries tied to the redirected occurrences -- not all of
-  them, unlike today's `stripOwnership` -- should be sound in
-  principle). Would touch `renameRCExp`/`stripOwnership`'s own
-  all-or-nothing shape in both `Loop.idr` and `ConAltNative.idr`; not
-  designed further than this. Neither this nor the cheaper
-  eligibility-side fix above has been attempted -- not currently
-  planned, revisit if profiling shows reboxing cost actually matters.
+`Loop.idr`'s `nativeArgTypes`/`nativeArgType` (the eligibility check
+that gates promotion for both `Loop.idr` and `ConAltNative.idr`) still
+doesn't weigh reboxing cost either way: it only asks whether a
+parameter/field is ever read in a native context at a consistent type,
+never how many *Boxed*-context reads there are. For `ConAltNative`
+this no longer risks a net slowdown (a Boxed-context read is cheap
+again, an ordinary `dup`/move); for `Loop.idr`'s own still-unfixed case
+above, a variable read natively once but read Boxed many times across
+iterations could still plausibly get slower under promotion, not
+faster. `idris2rc2_mkInt64`/`mkBits64` do have a 0-99 small-value cache
+(`memory.c`), so the real cost only bites for out-of-range integers and
+for types with no such cache (`Double`, wider `Int`/`Bits` values
+outside 0-99) -- unmeasured how often that actually happens in
+practice.
 
 ## Dropped: loop-invariant constructor-field hoisting
 
