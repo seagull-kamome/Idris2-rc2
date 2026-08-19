@@ -5,18 +5,30 @@ scattered code comments. Nothing below is a known correctness bug in
 what's implemented -- see `rc2/tests/refc-suite/README.md` for bugs that
 were found and already fixed.
 
-## Feature: C struct support (`System.FFI.Struct`/`getField`/`setField`) -- investigating
+## Feature: C struct support (`System.FFI.Struct`/`getField`/`setField`) -- designed, not yet implemented
 
 Upstream Idris2's `System.FFI.Struct`/`getField`/`setField` (backed by
 `prim__getField`/`prim__setField`) works on the Chez backend but not on
 RefC -- and rc2, having copied RefC's own ExtPrim whitelist and
 `extractValue`/`packCFType` verbatim, inherited the identical gap.
 Confirmed by hand that this genuinely breaks at the C-compile step
-(an undefined-function error on the generated C), not just in theory.
-See `rc2/doc/c-struct-support.md` for the full investigation -- what's
-confirmed, how Chez actually resolves a field's type at compile time,
-and the open design questions for a native rc2 implementation.
-Investigation in progress; not yet designed or scheduled.
+(an undefined-function error on the generated C), not just in theory --
+and that upstream's own issue tracker already has a report of the same
+crash (#3830, open) plus an abandoned prior attempt at exactly this
+feature (#2062) that hit the same core problem this investigation
+independently found. See `rc2/doc/c-struct-support.md` for the full
+investigation and a concrete design ("Design: an `Emit.idr`-resident
+collection-and-lowering pass"), verified against actual `RCExp`/
+generated-C output: a whole-program pass inside `Emit.idr`'s own
+`generateCSourceFile` collects every `CFStruct` from `MkRCForeign`
+defs into a table, emits real C `typedef struct`s from it, and lowers
+`getField`/`setField` call sites (whose struct-name/field-name
+arguments are confirmed to be plain `RCConst`s, directly readable at
+compile time) against that table -- no new `RCExp` node, no new
+pipeline stage. Still open: how a Boxed (non-scalar) field interacts
+with ownership (dup-on-read, matching `Compiler.RC2.ConAltNative`'s
+existing reasoning for an ordinary destructured field) -- not blocking
+a first, scalar-fields-only implementation. Not yet implemented.
 
 ## Performance: tail-position delegating calls stay boxed
 

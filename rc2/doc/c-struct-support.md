@@ -1,4 +1,4 @@
-# C struct FFI support (`System.FFI.Struct`/`getField`/`setField`): investigating
+# C struct FFI support (`System.FFI.Struct`/`getField`/`setField`): design proposed, not yet implemented
 
 Upstream Idris2's `System.FFI` module (`idris2-src/libs/base/System/FFI.idr`)
 provides direct access to C structs via `Struct`/`getField`/`setField`
@@ -7,8 +7,11 @@ struct-by-value `%foreign` arguments/returns (`CFStruct` in
 `Core.CompileExpr`). The Chez backend fully supports both. RefC does
 not -- and rc2, having copied RefC's own ExtPrim whitelist and
 `extractValue`/`packCFType` verbatim, inherited the identical gap. This
-document records what's been confirmed so far and the open design
-questions, before any implementation work starts.
+document records what's been confirmed, what upstream's own issue
+tracker already says about this gap, and a concrete design ("Design:
+an `Emit.idr`-resident collection-and-lowering pass" below) -- verified
+against actual `RCExp`/generated-C output, not just constructor shapes.
+No implementation has started yet.
 
 ## What's confirmed
 
@@ -291,24 +294,167 @@ section derived independently, then gave up on it.
   (basic scalar-field `getField`/`setField`), but worth knowing about
   as a direction upstream's own `System.FFI` module may move in.
 
+## Design: an `Emit.idr`-resident collection-and-lowering pass
+
+Two facts, confirmed by actually compiling a struct-using program with
+rc2 (see "Verifying it against real output" below) rather than assumed
+from the constructor shapes alone, make the design land somewhere more
+concrete than "a `Structs`-ref-and-`mkStruct`-style mechanism":
+
+1. A `getField`/`setField` call site's struct-name and field-name
+   arguments are `RCConst (Str ...)` in `RCExp` itself, not something
+   staged behind a runtime lookup -- directly pattern-matchable at
+   compile time, no extra plumbing needed to recover them.
+2. `Compiler.RC2.Emit`'s own top-level entry point,
+   `generateCSourceFile : List (Name, RCDef) -> String -> Core ()`
+   (`Emit.idr:2392`), already receives *every* `RCDef` in the
+   compilation unit at once, before any of them are individually
+   lowered (`traverse_ (uncurry createCFunctions) defs`). There's
+   nowhere else in rc2's own pipeline with an obviously better claim to
+   host a whole-program collection step for something this
+   emission-scoped -- Chez's own `Structs` ref lives exactly here too
+   (per-codegen-run state, not passed through any earlier IR stage).
+
+Together, this means the whole feature can live inside `Emit.idr`
+alone -- no new pipeline stage, no new `RCExp` node, no new data
+threaded through `RC2.idr`'s `toRCDefs`.
+
+### Part A: struct-by-pointer FFI itself needs no new logic -- `CFStruct` can reuse `CFPtr`'s existing handling verbatim
+
+Confirmed by comparing the two side by side: `cTypeOfCFType CFPtr =
+"void *"` and `cTypeOfCFType (CFStruct x ys) = "void *"` already agree
+(`Emit.idr:2241`/`2247`) -- a struct is always accessed by pointer in
+this design (matches the "every struct name must appear in a
+`%foreign` signature" contract already confirmed above, and matches
+what Chez itself assumes -- see #36 in "What upstream's issue tracker
+says" for what breaks when that assumption doesn't hold). So the two
+genuinely broken cases --
+
+```idris2
+extractValue _ (CFStruct x xs) varName = idris_crash "..." -- Emit.idr:2295
+packCFType (CFStruct x xs)     varName = "makeStruct(" ++ varName ++ ")" -- Emit.idr:2319, undefined function
+```
+
+-- can become direct copies of `CFPtr`'s own already-working lines:
+
+```idris2
+extractValue _ (CFStruct x xs) varName = "((IDRIS2RC2_Pointer*)" ++ varName ++ ")->p"
+packCFType (CFStruct x xs)     varName = "idris2rc2_mkPointer(" ++ varName ++ ")"
+```
+
+This alone fixes `%foreign` functions that take or return a struct
+pointer (`prim__makePoint`/`prim__pointFree` in the worked example
+above) -- independent of `getField`/`setField`, and low-risk: reusing
+an already-verified code path, not new logic.
+
+### Part B: collection phase
+
+At the top of `generateCSourceFile`, before `traverse_ (uncurry
+createCFunctions) defs` runs, walk every `(Name, RCDef)` pair looking
+for `MkRCForeign ccs fargs ret`, and recurse into `fargs`/`ret`'s own
+`CFType`s the same way Chez's `mkStruct` does (`Compiler/Scheme/Chez.idr`,
+cited above) -- through `CFIORes`/`CFFun` to find a `CFStruct n flds`
+possibly nested inside. Collect every `(n, flds)` seen into a new
+`Ref StructDefs (SortedMap String (List (String, CFType)))`, registered
+alongside the existing `ConstDef`/`OutfileText`/etc. refs
+`generateCSourceFile` already sets up. This is a direct structural port
+of Chez's `Structs`/`mkStruct` -- same recursion shape, same "first
+struct name seen wins, don't re-emit" dedup -- just building a
+`SortedMap` instead of threading a `List String` `Ref`, and with no
+Scheme code to emit.
+
+### Part C: emitting the C struct definitions
+
+In `header` (`Emit.idr`, called right after the `traverse_` in
+`generateCSourceFile`, so field-type resolution during `createCFunctions`
+doesn't depend on emission order), emit one `typedef struct { ... }
+name;` per entry in the `StructDefs` table, translating each field's
+`CFType` via the existing `cTypeOfCFType` -- no new type-to-C-type logic
+needed, it's already there for `%foreign` arg/return types and a
+struct field is the same kind of type.
+
+### Part D: lowering `getField`/`setField` call sites
+
+`emitRC (RExtPrim fc _ p args)` (`Emit.idr:1882`) currently treats
+every `ExtPrim` name uniformly (whitelist check, then a generic
+`idris2rc2_<name>(args...)` call). Add a case ahead of that generic
+path for `p` matching `prim__getField`/`prim__setField`:
+
+- `args` is confirmed (see below) to be `[RCConst (Str structName),
+  RCNull, RCNull, structPtrVar, RCConst (Str fieldName), positionConst]`
+  for `getField` (8 elements for `setField`, with `valVar`/`worldVar`
+  appended -- see the worked example's own `Lifted` dump above). Pull
+  `structName`/`fieldName` straight out of the `RCConst (Str ...)`
+  positions -- no lookup needed to get the strings themselves.
+- Look `structName` up in `StructDefs`, then `fieldName` in that
+  struct's own field list to get the field's `CFType`.
+- Render `((structName*)ptr)->fieldName` (`ptr` = `structPtrVar`
+  rendered via the usual native-pointer accessor, reusing
+  `extractValue CFPtr`'s own rendering now that Part A makes `CFStruct`
+  match it), then `packCFType` the read (for `getField`) or
+  `extractValue` the value being stored (for `setField`) using the
+  field's own `CFType` -- both already-existing functions, no new ones.
+- **Ownership**: `structPtrVar` needs an explicit
+  `idris2rc2_drop(...)` emitted alongside the field access (see next
+  section for why) -- for `getField`, whether the field's own boxed
+  value needs a `dup` first depends on whether it's read via aliasing
+  (like a constructor-destructured field, `Compiler.RC2.Reuse`'s
+  `dupOnShared`/`Compiler.RC2.ConAltNative`'s own reasoning) or copied
+  outright (a scalar, no dup needed) -- not fully resolved, see Open
+  questions.
+
+### Ownership: verified against actual `annotate` output, not assumed
+
+Compiled the worked example above through rc2 itself (`--directive
+dumprcexpr`, `idris2-rc2 --cg rc2`) to see what `Compiler.RC2.RC`'s
+`annotate` (Phase 2) actually decided, rather than assuming:
+
+```
+def Main.getX  (fun args=["v0:Boxed"] ret=Boxed)
+  extprim System.FFI.prim__getField [#"point", [__], [__], v0, #"x", #0]
+```
+
+No `RDrop`/`RDup` wraps `v0` anywhere in `getX`'s own body -- `v0` (the
+struct pointer) is passed straight into the `extprim` call, meaning
+`annotate` already decided its ownership is consumed by this call, the
+same as any other operand used for the last time. This confirms
+`RExtPrim`'s existing, general ownership contract (`RC.idr`'s own
+module note: "ext-prim args are used owned/as-is") extends to
+`getField`/`setField` with no special-casing needed on `annotate`'s
+side -- whatever lowering `emitRC` produces for the `RExtPrim` case
+just has to *actually drop* `structPtrVar` once it's done reading it,
+matching the ownership `annotate` already committed to (RefC/Chez's
+own runtime function would have needed to do the same, had it existed
+-- this isn't an obligation specific to inlining the access at
+emission time instead of calling a runtime function).
+
+### What can actually be ported from upstream, concretely
+
+rc2 is a fully independent package that never edits `idris2-src`
+(`README.md`'s own "What's here") and can't `import` code from it --
+so "porting" here means re-deriving the same logic in rc2's own style,
+not copying files. What that comes down to, concretely:
+
+- **Direct algorithmic port** (same shape, rewritten in rc2's own
+  idiom): the `Structs`-ref-and-`mkStruct` collect-once-per-struct-name
+  pattern (Part B above) -- this is genuinely "the same idea, different
+  language," including the `CFIORes`/`CFFun` recursion into a
+  `%foreign` def's own return/argument types.
+- **Not needed at all, already covered by existing rc2 code**:
+  Chez's `cftySpec` (per-`CFType` Scheme-type-string generation) has
+  no rc2 equivalent to write -- `cTypeOfCFType`/`extractValue`/
+  `packCFType` already do the analogous job for every other `CFType`,
+  `CFStruct` just needs to be added to the existing per-case functions
+  the way Part A/C above do, not reimplemented from scratch.
+- **Not portable, has to be written fresh**: `chezExtPrim`'s
+  `GetField`/`SetField` cases emit Scheme (`ftype-ref`/`ftype-set!`)
+  and rely on Chez Scheme's own macro-expansion-time type resolution;
+  rc2 emits C directly and does its own resolution against the
+  `StructDefs` table built in Part B. Same problem, structurally
+  unrelated solution -- Part D above is original design, not a port.
+
 ## Open questions for rc2's own design
 
-- **A `Structs`-ref-and-`mkStruct`-style mechanism looks like the
-  natural port**, and is now concretely scoped (see "How struct field
-  types actually appear in `Lifted`" above): a first pass collecting
-  every `CFStruct n flds` out of every `MkRCForeign` in the whole
-  compiled program into a `SortedMap String (List (String, CFType))`
-  (or similar), built the same way `Compiler.RC2.Inline`'s
-  `buildEligible` already is, then a second pass resolving each
-  `getField`/`setField` call site's struct-name/field-name string
-  literals against it. rc2 gets to emit a real C `typedef struct {
-  ... } name;` once per struct and lower straight to `((name*)ptr)->
-  field` reads/writes -- leaning on the C compiler for layout math
-  instead of hand-rolling a Scheme `ftype` the way Chez does. Not
-  designed in full yet -- the two-pass shape and where the table lives
-  are known; the exact `RC2.idr` `toRCDefs` wiring (where the
-  collection pass slots into the existing pipeline order) still needs
-  to be worked out.
 - ~~Unconfirmed: what happens, in any backend including Chez, when a
   program uses `getField`/`setField` on a struct name never mentioned
   in any `%foreign` signature~~ **Confirmed: Chez fails too, at compile
@@ -358,7 +504,8 @@ section derived independently, then gave up on it.
 - `rc2/src/Compiler/RC2/Emit.idr` -- `emitRC`'s `RExtPrim` case (the
   `prims` whitelist), `cTypeOfCFType`/`extractValue`/`packCFType`'s own
   `CFStruct` cases (`extractValue`'s `idris_crash`, `packCFType`'s
-  undefined `makeStruct` call).
+  undefined `makeStruct` call), `generateCSourceFile`/`header` -- the
+  proposed collection-and-lowering pass's own home (see "Design" above).
 - `rc2/src/Compiler/RC2/RCExp.idr` -- `MkRCForeign`, where a
   `%foreign` def's own `CFType` list currently ends up.
 - `idris2-src/src/Compiler/LambdaLift.idr` -- `LiftedDef`'s
