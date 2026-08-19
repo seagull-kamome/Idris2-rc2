@@ -20,22 +20,27 @@ independently found. See `rc2/doc/c-struct-support.md` for the full
 investigation and a concrete design ("Design: dedicated
 `RStructGet`/`RStructSet` nodes, resolved in `Emit.idr`"), verified
 against actual `RCExp`/generated-C output: two new `RCExp` nodes
-(`RStructGet`/`RStructSet`, shaped like `ROp` -- an operand plus a
-`postDrop` field) replace `prim__getField`/`prim__setField` early
-(`Compiler.RC2.RC`'s `normalize`), keeping struct-name/field-name as
-plain strings (confirmed to survive to the call site as `RCConst`s,
-directly readable at compile time) rather than resolving a `CFType` at
-that point. A whole-program pass inside `Emit.idr`'s own
-`generateCSourceFile` collects every `CFStruct` from `MkRCForeign` defs
-into a table, emits real C `typedef struct`s from it, and lowers
-`RStructGet`/`RStructSet` against that table at emission time.
+replace `prim__getField`/`prim__setField` early (`Compiler.RC2.RC`'s
+`normalize`), keeping struct-name/field-name as plain strings
+(confirmed to survive to the call site as `RCConst`s, directly readable
+at compile time) rather than resolving a `CFType` at that point. A
+whole-program pass inside `Emit.idr`'s own `generateCSourceFile`
+collects every `CFStruct` from `MkRCForeign` defs into a table, emits
+real C `typedef struct`s from it, and lowers `RStructGet`/`RStructSet`
+against that table at emission time.
+
 Switched from an earlier "keep `RExtPrim`, special-case only in
 `Emit.idr`" draft after finding `RExtPrim`'s own `annotate` case is a
 bare pass-through with no `dup`/`drop` computation at all (unlike
 `ROp`/`RCon`/`RAppName`), which would give a wrong answer the moment a
-struct pointer gets read more than once in the same function --
-`RStructGet`/`RStructSet` reuse `ROp`'s own `annotate` pattern
-(`splitBorrows`/`wrapDups`/`boxedOperands`) instead, closing that gap.
+struct pointer gets read more than once in the same function. But the
+fix isn't "give the struct pointer `ROp`'s own `postDrop` treatment" --
+`getField`/`setField` lower to a plain C pointer dereference, which
+never touches the pointer's own refcount at all, so `RStructGet` has
+*no* `postDrop` field and its own `structVar` is never consumed by
+either node (confirmed correct via direct feedback while designing
+this). Only `RStructSet`'s own `value` operand is consumed and gets
+`ROp`'s `postDrop`/`splitBorrows`/`wrapDups` treatment.
 A struct field is never itself a Boxed value (every `CFType` but
 `CFUser` denotes real C storage, and `CFUser` -- an arbitrary Idris2
 type -- has no meaningful C struct-member layout, so it's out of scope
