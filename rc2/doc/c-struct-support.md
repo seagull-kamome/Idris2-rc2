@@ -9,9 +9,9 @@ not -- and rc2, having copied RefC's own ExtPrim whitelist and
 `extractValue`/`packCFType` verbatim, inherited the identical gap. This
 document records what's been confirmed, what upstream's own issue
 tracker already says about this gap, and a concrete design ("Design:
-an `Emit.idr`-resident collection-and-lowering pass" below) -- verified
-against actual `RCExp`/generated-C output, not just constructor shapes.
-No implementation has started yet.
+dedicated `RStructGet`/`RStructSet` nodes, resolved in `Emit.idr`"
+below) -- verified against actual `RCExp`/generated-C output, not just
+constructor shapes. No implementation has started yet.
 
 ## What's confirmed
 
@@ -294,30 +294,149 @@ section derived independently, then gave up on it.
   (basic scalar-field `getField`/`setField`), but worth knowing about
   as a direction upstream's own `System.FFI` module may move in.
 
-## Design: an `Emit.idr`-resident collection-and-lowering pass
+## Design: dedicated `RStructGet`/`RStructSet` nodes, resolved in `Emit.idr`
+
+An earlier draft of this design kept `getField`/`setField` as plain
+`RExtPrim` calls all the way to `Emit.idr`, special-cased only there.
+Current direction, decided after finding the ownership gap below:
+convert `prim__getField`/`prim__setField` into two new, dedicated
+`RCExp` nodes early (`Compiler.RC2.RC`'s own `normalize`, Phase 1), and
+resolve *those* against the struct-field table in `Emit.idr`, instead
+of pattern-matching `RExtPrim`'s own generic `args : List RCLocal`
+shape at emission time. Struct-name/field-name stay plain `String`s on
+the new nodes -- resolving them against a whole-program table stays
+exactly where the earlier draft put it (`Emit.idr`'s own
+`generateCSourceFile`); only *which node* carries them to that table
+changes.
+
+### Why a dedicated node instead of lowering `RExtPrim` directly
 
 Two facts, confirmed by actually compiling a struct-using program with
-rc2 (see "Verifying it against real output" below) rather than assumed
-from the constructor shapes alone, make the design land somewhere more
-concrete than "a `Structs`-ref-and-`mkStruct`-style mechanism":
+rc2 and reading both the `RCExp` dump and `RC.idr`'s own source (not
+assumed from constructor shapes alone):
 
 1. A `getField`/`setField` call site's struct-name and field-name
    arguments are `RCConst (Str ...)` in `RCExp` itself, not something
    staged behind a runtime lookup -- directly pattern-matchable at
-   compile time, no extra plumbing needed to recover them.
-2. `Compiler.RC2.Emit`'s own top-level entry point,
-   `generateCSourceFile : List (Name, RCDef) -> String -> Core ()`
-   (`Emit.idr:2392`), already receives *every* `RCDef` in the
-   compilation unit at once, before any of them are individually
-   lowered (`traverse_ (uncurry createCFunctions) defs`). There's
-   nowhere else in rc2's own pipeline with an obviously better claim to
-   host a whole-program collection step for something this
-   emission-scoped -- Chez's own `Structs` ref lives exactly here too
-   (per-codegen-run state, not passed through any earlier IR stage).
+   compile time, no extra plumbing needed to recover them (unchanged
+   from the earlier draft, still true).
+2. **`RExtPrim` doesn't actually get the same ownership treatment as
+   every other operand-consuming node.** `RAppName`/`RUnderApp`/
+   `RApp`/`RCon`/`ROp`'s own `annotate` (Phase 2, `RC.idr`) cases all
+   go through the same `wrapDups fc (splitBorrows natives owned args)
+   (...)` pattern -- `splitBorrows` walks `args` against the current
+   `owned` set, leaving still-alive operands to be `dup`'d
+   (`wrapDups`) and letting operands used for the last time transfer
+   ownership as-is. `RExtPrim`'s own case, by contrast
+   (`annotate natives owned (RExtPrim fc lazy p args) = pure $ RExtPrim
+   fc lazy p args`, `RC.idr:504`), is a bare pass-through -- no
+   `splitBorrows`, no `wrapDups`, `owned` doesn't even get consulted.
 
-Together, this means the whole feature can live inside `Emit.idr`
-alone -- no new pipeline stage, no new `RCExp` node, no new data
-threaded through `RC2.idr`'s `toRCDefs`.
+   Confirmed by compiling the worked example above through rc2 itself
+   (`--directive dumprcexpr`, `idris2-rc2 --cg rc2`) and reading what
+   `annotate` actually decided, rather than assuming:
+
+   ```
+   def Main.getX  (fun args=["v0:Boxed"] ret=Boxed)
+     extprim System.FFI.prim__getField [#"point", [__], [__], v0, #"x", #0]
+   ```
+
+   No `RDrop`/`RDup` wraps `v0` anywhere in `getX`'s own body -- it
+   reaches the `extprim` call with no wrapping at all, which happens to
+   be *correct* for a struct pointer used exactly once (this is the
+   only use, so passing it as-is, ownership and all, is right) -- but
+   nothing about `RExtPrim`'s own `annotate` case would keep computing
+   the right answer if the same struct pointer were read by two
+   `getField` calls in the same function: with `owned` never consulted,
+   the second call would receive an already-consumed reference. This
+   isn't a bug this document needs to fix generally (every current
+   `RExtPrim` user -- `prim__newIORef`, array prims, etc. -- happens to
+   only ever appear in a tail/single-use position in practice), but it
+   means `RExtPrim`'s existing ownership handling isn't something a
+   new, potentially-multiply-used struct accessor should inherit as-is.
+
+A dedicated node sidesteps this by reusing `ROp`'s own proven pattern
+instead of `RExtPrim`'s: same `wrapDups (splitBorrowsV natives owned
+args) (...)` shape `ROp`'s own `annotate` case already uses
+(`RC.idr:501-503`), applied to the new node's own operand(s). This also
+leaves the door open for later passes (`Compiler.RC2.Sink`,
+`Compiler.RC2.Loop`'s loop-invariant hoisting) to recognize a struct
+field read/write as a first-class IR shape instead of an opaque
+`RExtPrim` call, the same way they already recognize `ROp`/`RCon` --
+though no such extension is designed or scoped here, just left
+possible rather than foreclosed.
+
+### The new nodes
+
+```idris2
+||| A read of one field out of a C struct pointer. structName/fieldName
+||| stay plain strings -- resolved against a whole-program struct-field
+||| table built once in Emit.idr's own generateCSourceFile (see "The
+||| collection-and-lowering pass" below), the same way RPrimVal's own
+||| dyngen/orStagen resolve a literal's concrete C rendering late,
+||| rather than being pre-resolved to a CFType here. postDrop mirrors
+||| ROp's own field (Compiler.RC2.RC's annotate, Phase 2) -- see
+||| doc/native-type-inference.md's "What's stored on the IR vs.
+||| re-derived" for why.
+RStructGet : FC -> (structVar : RCLocal) -> (structName : String) ->
+             (fieldName : String) -> (postDrop : List RCLocal) -> RCExp
+
+||| A write of one field into a C struct pointer, evaluating to Unit.
+||| Same string-stays-unresolved reasoning as RStructGet.
+RStructSet : FC -> (structVar : RCLocal) -> (structName : String) ->
+             (fieldName : String) -> (value : RCLocal) ->
+             (postDrop : List RCLocal) -> RCExp
+```
+
+Both are shaped like `ROp` deliberately (an operand vector conceptually
+-- `structVar` alone for `RStructGet`, `[structVar, value]` for
+`RStructSet` -- plus a `postDrop` field Phase 2 fills in), so every
+place that already knows how to treat an `ROp` node (`freeLocalsR`/
+`countUsesR`/`usedConstructorsR` in `RCExp.idr`, `Compiler.RC2.Reuse`,
+`Compiler.RC2.Sink`'s `consumedOperands`, `Compiler.RC2.Loop`'s
+`stripOwnership`) gets a close structural precedent to copy rather than
+inventing a new pattern -- this document doesn't attempt to enumerate
+every one of those sites' own required changes yet (that's
+implementation work, not design), but the *shape* to add is `ROp`'s own
+shape, not a novel one.
+
+### Phase 1 (`normalize`): converting `LExtPrim`/`RExtPrim` to the new nodes
+
+In `Compiler.RC2.RC`'s `normalize`, add a case ahead of the generic
+`LExtPrim fc lazy p args => bindMany env args (\locs => pure $ RExtPrim
+fc lazy p locs)` (`RC.idr:163-164`) matching `p`'s name against
+`prim__getField`/`prim__setField` specifically. `args`' own shape is
+already confirmed (see "A concrete example" above): pull the
+struct-name/field-name `String`s straight out of their `RCConst (Str
+...)` positions, keep the struct-pointer/value `RCLocal`s, and discard
+the erased `fs`/`ty` placeholders and the `FieldType` position integer
+(confirmed elsewhere in this document to be redundant with the
+field-name string, and not something any implementation should depend
+on). Build `RStructGet`/`RStructSet` directly -- `postDrop` starts
+empty here, the same way `ROp`'s own Phase 1 shape always constructs
+`postDrop = []` and leaves filling it in to Phase 2 (see the `ROp`
+constructor's own doc comment in `RCExp.idr`).
+
+### Phase 2 (`annotate`): ownership, following `ROp`'s own pattern
+
+```idris2
+annotate natives owned (RStructGet fc structVar sn fn _) =
+    pure $ wrapDups fc (splitBorrows natives owned [structVar])
+                      (RStructGet fc structVar sn fn (boxedOperands natives [structVar]))
+annotate natives owned (RStructSet fc structVar sn fn value _) =
+    pure $ wrapDups fc (splitBorrows natives owned [structVar, value])
+                      (RStructSet fc structVar sn fn value (boxedOperands natives [structVar, value]))
+```
+
+Direct reuse of `ROp`'s own already-existing `splitBorrows`/`wrapDups`/
+`boxedOperands` helpers (`RC.idr:360-388`) -- no new ownership-analysis
+logic, just applying the existing general-purpose one to a `List
+RCLocal` built from the new nodes' own operands instead of `ROp`'s
+`Vect arity RCLocal`. This is exactly what closes the gap the previous
+section found in `RExtPrim`'s own handling: a struct pointer read by
+two separate `getField` calls in the same function now gets a correct
+`dup` before the first (non-last) use, the same as any other
+multiply-read operand.
 
 ### Part A: struct-by-pointer FFI itself needs no new logic -- `CFStruct` can reuse `CFPtr`'s existing handling verbatim
 
@@ -373,60 +492,41 @@ name;` per entry in the `StructDefs` table, translating each field's
 needed, it's already there for `%foreign` arg/return types and a
 struct field is the same kind of type.
 
-### Part D: lowering `getField`/`setField` call sites
+### Part D: lowering `RStructGet`/`RStructSet` in `emitRC`
 
-`emitRC (RExtPrim fc _ p args)` (`Emit.idr:1882`) currently treats
-every `ExtPrim` name uniformly (whitelist check, then a generic
-`idris2rc2_<name>(args...)` call). Add a case ahead of that generic
-path for `p` matching `prim__getField`/`prim__setField`:
+Add cases to `emitRC` (`Emit.idr:1882`, alongside the existing
+`RExtPrim` case -- `prim__getField`/`prim__setField` no longer reach it
+at all once Phase 1 converts them, so the existing `RExtPrim` case's
+own whitelist/generic-call logic doesn't need touching):
 
-- `args` is confirmed (see below) to be `[RCConst (Str structName),
-  RCNull, RCNull, structPtrVar, RCConst (Str fieldName), positionConst]`
-  for `getField` (8 elements for `setField`, with `valVar`/`worldVar`
-  appended -- see the worked example's own `Lifted` dump above). Pull
-  `structName`/`fieldName` straight out of the `RCConst (Str ...)`
-  positions -- no lookup needed to get the strings themselves.
-- Look `structName` up in `StructDefs`, then `fieldName` in that
-  struct's own field list to get the field's `CFType`.
-- Render `((structName*)ptr)->fieldName` (`ptr` = `structPtrVar`
-  rendered via the usual native-pointer accessor, reusing
-  `extractValue CFPtr`'s own rendering now that Part A makes `CFStruct`
-  match it), then `packCFType` the read (for `getField`) or
-  `extractValue` the value being stored (for `setField`) using the
-  field's own `CFType` -- both already-existing functions, no new ones.
-- **Ownership**: `structPtrVar` needs an explicit
-  `idris2rc2_drop(...)` emitted alongside the field access (see next
-  section for why) -- for `getField`, whether the field's own boxed
-  value needs a `dup` first depends on whether it's read via aliasing
-  (like a constructor-destructured field, `Compiler.RC2.Reuse`'s
-  `dupOnShared`/`Compiler.RC2.ConAltNative`'s own reasoning) or copied
-  outright (a scalar, no dup needed) -- not fully resolved, see Open
-  questions.
-
-### Ownership: verified against actual `annotate` output, not assumed
-
-Compiled the worked example above through rc2 itself (`--directive
-dumprcexpr`, `idris2-rc2 --cg rc2`) to see what `Compiler.RC2.RC`'s
-`annotate` (Phase 2) actually decided, rather than assuming:
-
-```
-def Main.getX  (fun args=["v0:Boxed"] ret=Boxed)
-  extprim System.FFI.prim__getField [#"point", [__], [__], v0, #"x", #0]
+```idris2
+emitRC (RStructGet fc structVar sn fn postDrop) _ = do
+    fields <- getStructFields sn   -- looks up the Ref from Part B
+    let Just ty = lookup fn fields | Nothing => throw (InternalError ...)
+    ptr <- rcVarToC structVar      -- reuses extractValue CFPtr's rendering (Part A)
+    removeVars $ map varName postDrop   -- drops structVar per annotate's own decision
+    pure $ packCFType ty ("((\{sn}*)\{ptr})->\{fn}")
+emitRC (RStructSet fc structVar sn fn value postDrop) _ = do
+    fields <- getStructFields sn
+    let Just ty = lookup fn fields | Nothing => throw (InternalError ...)
+    ptr <- rcVarToC structVar
+    valC <- rcVarToC value          -- extractValue ty, since value's own Rep matches ty
+    removeVars $ map varName postDrop
+    pure $ "(((\{sn}*)\{ptr})->\{fn} = \{extractValue ty valC}, (IDRIS2RC2_Value*)NULL)"
 ```
 
-No `RDrop`/`RDup` wraps `v0` anywhere in `getX`'s own body -- `v0` (the
-struct pointer) is passed straight into the `extprim` call, meaning
-`annotate` already decided its ownership is consumed by this call, the
-same as any other operand used for the last time. This confirms
-`RExtPrim`'s existing, general ownership contract (`RC.idr`'s own
-module note: "ext-prim args are used owned/as-is") extends to
-`getField`/`setField` with no special-casing needed on `annotate`'s
-side -- whatever lowering `emitRC` produces for the `RExtPrim` case
-just has to *actually drop* `structPtrVar` once it's done reading it,
-matching the ownership `annotate` already committed to (RefC/Chez's
-own runtime function would have needed to do the same, had it existed
--- this isn't an obligation specific to inlining the access at
-emission time instead of calling a runtime function).
+(Sketch, not final syntax -- `getStructFields` denotes "look up
+`StructDefs`, the `Ref` Part B populates"; exact plumbing for
+`Ref`/error handling/how a C statement-vs-expression position gets
+threaded follows whatever convention the surrounding `emitRC` cases
+already use, not designed further here.) `packCFType`/`extractValue`
+are the same existing functions Part A already fixed for `CFStruct`
+itself -- reused again here for a *field's* `CFType`, not the struct
+pointer's own. `postDrop` (now correctly populated by Phase 2, per
+"Phase 2" above) tells this code exactly which operands to drop, the
+same contract every other `postDrop`-carrying node already has --
+Emit.idr doesn't re-derive ownership here, same as everywhere else in
+this module (`Emit.idr`'s own module note).
 
 ### What can actually be ported from upstream, concretely
 
@@ -451,7 +551,14 @@ not copying files. What that comes down to, concretely:
   and rely on Chez Scheme's own macro-expansion-time type resolution;
   rc2 emits C directly and does its own resolution against the
   `StructDefs` table built in Part B. Same problem, structurally
-  unrelated solution -- Part D above is original design, not a port.
+  unrelated solution -- Part D (and the `RStructGet`/`RStructSet`
+  nodes/Phase 1/Phase 2 machinery above) is original design, not a
+  port. Chez also has no equivalent of this design's dedicated-node
+  step at all -- Scheme's own dynamic typing means `chezExtPrim` can
+  lower `GetField`/`SetField` directly from `ExtPrim`, with no
+  ownership-tracking gap to work around the way rc2's `RExtPrim` has
+  (see "Why a dedicated node" above) -- so that part of the design has
+  no upstream analogue to port from at all.
 
 ## Open questions for rc2's own design
 
@@ -478,6 +585,21 @@ not copying files. What that comes down to, concretely:
   `Compiler.RC2.ConAltNative` already caches for an ordinary
   constructor-destructured field, `rc2/doc/con-alt-native.md`) but
   should come after a basic, always-Boxed version works, not block it.
+- **Not yet enumerated: every site that needs an `RStructGet`/
+  `RStructSet` case added, now that they're real `RCExp` nodes.**
+  "The new nodes" above names the general shape (`freeLocalsR`/
+  `countUsesR`/`usedConstructorsR` in `RCExp.idr` at minimum, likely
+  `Pretty.idr` for `--directive dumprcexpr` output too) but doesn't
+  work through each site's actual required change -- that's
+  implementation work. Every later pass (`Compiler.RC2.Reuse`,
+  `Compiler.RC2.ConAltNative`, `Compiler.RC2.MutualLoop`,
+  `Compiler.RC2.Loop`, `Compiler.RC2.Sink`, `Compiler.RC2.DualABI`)
+  needs auditing for whether it needs a new case at all (most can
+  likely just fall through a catch-all the way they already handle
+  `RCon`/other leaf-ish nodes) or actively benefits from one (e.g.
+  `Compiler.RC2.Sink`'s `sinkEligible` treating a struct field read as
+  sinkable the same way it already treats `ROp`/`RCon`/`RAppName`) --
+  not designed here, deliberately deferred to implementation time.
 
 ## Files
 
@@ -505,15 +627,26 @@ not copying files. What that comes down to, concretely:
   `prims` whitelist), `cTypeOfCFType`/`extractValue`/`packCFType`'s own
   `CFStruct` cases (`extractValue`'s `idris_crash`, `packCFType`'s
   undefined `makeStruct` call), `generateCSourceFile`/`header` -- the
-  proposed collection-and-lowering pass's own home (see "Design" above).
+  proposed collection pass's own home, and the new `emitRC` cases for
+  `RStructGet`/`RStructSet` (see "Design" above).
 - `rc2/src/Compiler/RC2/RCExp.idr` -- `MkRCForeign`, where a
-  `%foreign` def's own `CFType` list currently ends up.
+  `%foreign` def's own `CFType` list currently ends up; `ROp`, the
+  existing node `RStructGet`/`RStructSet` are shaped after (operand(s)
+  + `postDrop`); `freeLocalsR`/`countUsesR`/`usedConstructorsR`, the
+  structural-analysis functions a new node needs cases added to.
+- `rc2/src/Compiler/RC2/RC.idr` -- `normalize`'s `LExtPrim`/`MkLForeign`
+  cases (`RC.idr:163-164`/`244`, where the new
+  `prim__getField`/`prim__setField` case slots in, and the direct
+  `Lifted` -> `RCExp` `MkLForeign`/`MkRCForeign` copy this document's
+  "How struct field types actually appear" section traces), `annotate`'s
+  `ROp`/`RExtPrim` cases (`RC.idr:501-504`, the pattern
+  `RStructGet`/`RStructSet`'s own `annotate` case follows/diverges
+  from), `splitBorrows`/`splitBorrowsV`/`wrapDups`/
+  `boxedOperands` (`RC.idr:360-388`, reused directly for the new
+  nodes' own ownership computation).
 - `idris2-src/src/Compiler/LambdaLift.idr` -- `LiftedDef`'s
   `MkLForeign`, `Lifted`'s `LExtPrim` -- where struct field types do
   (and don't) survive into the `Lifted` IR rc2's own `RC.idr` consumes.
-- `rc2/src/Compiler/RC2/RC.idr` -- `normalizeDef`'s `MkLForeign`/
-  `LExtPrim` cases, the direct `Lifted` -> `RCExp` copy this document's
-  "How struct field types actually appear" section traces.
 - `rc2/src/Compiler/RC2/Inline.idr` -- `buildEligible`/
   `applyInlineLifted`, the whole-program collect-then-traverse shape a
   struct-field table would follow.

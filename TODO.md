@@ -17,18 +17,31 @@ and that upstream's own issue tracker already has a report of the same
 crash (#3830, open) plus an abandoned prior attempt at exactly this
 feature (#2062) that hit the same core problem this investigation
 independently found. See `rc2/doc/c-struct-support.md` for the full
-investigation and a concrete design ("Design: an `Emit.idr`-resident
-collection-and-lowering pass"), verified against actual `RCExp`/
-generated-C output: a whole-program pass inside `Emit.idr`'s own
-`generateCSourceFile` collects every `CFStruct` from `MkRCForeign`
-defs into a table, emits real C `typedef struct`s from it, and lowers
-`getField`/`setField` call sites (whose struct-name/field-name
-arguments are confirmed to be plain `RCConst`s, directly readable at
-compile time) against that table -- no new `RCExp` node, no new
-pipeline stage. Still open: how a Boxed (non-scalar) field interacts
-with ownership (dup-on-read, matching `Compiler.RC2.ConAltNative`'s
-existing reasoning for an ordinary destructured field) -- not blocking
-a first, scalar-fields-only implementation. Not yet implemented.
+investigation and a concrete design ("Design: dedicated
+`RStructGet`/`RStructSet` nodes, resolved in `Emit.idr`"), verified
+against actual `RCExp`/generated-C output: two new `RCExp` nodes
+(`RStructGet`/`RStructSet`, shaped like `ROp` -- an operand plus a
+`postDrop` field) replace `prim__getField`/`prim__setField` early
+(`Compiler.RC2.RC`'s `normalize`), keeping struct-name/field-name as
+plain strings (confirmed to survive to the call site as `RCConst`s,
+directly readable at compile time) rather than resolving a `CFType` at
+that point. A whole-program pass inside `Emit.idr`'s own
+`generateCSourceFile` collects every `CFStruct` from `MkRCForeign` defs
+into a table, emits real C `typedef struct`s from it, and lowers
+`RStructGet`/`RStructSet` against that table at emission time.
+Switched from an earlier "keep `RExtPrim`, special-case only in
+`Emit.idr`" draft after finding `RExtPrim`'s own `annotate` case is a
+bare pass-through with no `dup`/`drop` computation at all (unlike
+`ROp`/`RCon`/`RAppName`), which would give a wrong answer the moment a
+struct pointer gets read more than once in the same function --
+`RStructGet`/`RStructSet` reuse `ROp`'s own `annotate` pattern
+(`splitBorrows`/`wrapDups`/`boxedOperands`) instead, closing that gap.
+Still open: how a Boxed (non-scalar) field interacts with ownership
+(dup-on-read, matching `Compiler.RC2.ConAltNative`'s existing reasoning
+for an ordinary destructured field), and the full list of existing
+passes (`Reuse`/`ConAltNative`/`MutualLoop`/`Loop`/`Sink`/`DualABI`)
+that need a case added for the two new nodes -- not blocking a first,
+scalar-fields-only implementation. Not yet implemented.
 
 ## Performance: tail-position delegating calls stay boxed
 
