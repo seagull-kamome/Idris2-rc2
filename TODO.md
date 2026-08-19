@@ -36,12 +36,15 @@ bare pass-through with no `dup`/`drop` computation at all (unlike
 struct pointer gets read more than once in the same function --
 `RStructGet`/`RStructSet` reuse `ROp`'s own `annotate` pattern
 (`splitBorrows`/`wrapDups`/`boxedOperands`) instead, closing that gap.
-Still open: how a Boxed (non-scalar) field interacts with ownership
-(dup-on-read, matching `Compiler.RC2.ConAltNative`'s existing reasoning
-for an ordinary destructured field), and the full list of existing
-passes (`Reuse`/`ConAltNative`/`MutualLoop`/`Loop`/`Sink`/`DualABI`)
-that need a case added for the two new nodes -- not blocking a first,
-scalar-fields-only implementation. Not yet implemented.
+A struct field is never itself a Boxed value (every `CFType` but
+`CFUser` denotes real C storage, and `CFUser` -- an arbitrary Idris2
+type -- has no meaningful C struct-member layout, so it's out of scope
+rather than a real design question), so unlike a constructor's own
+destructured field there's no `ConAltNative`-style aliasing/dup
+question on the read side at all. Still open: the full list of
+existing passes (`Reuse`/`ConAltNative`/`MutualLoop`/`Loop`/`Sink`/
+`DualABI`) that need a case added for the two new nodes. Not yet
+implemented.
 
 ## Performance: tail-position delegating calls stay boxed
 

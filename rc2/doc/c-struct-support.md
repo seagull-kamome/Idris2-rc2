@@ -579,12 +579,37 @@ not copying files. What that comes down to, concretely:
   compile time) by the reference backend. rc2 can rely on this and
   doesn't need to handle the "struct name never declared" case as
   anything other than a compile error of its own.
-- **Not yet scoped: how field values interact with rc2's own
-  Boxed/Native `Rep` split.** An `Int`-typed field read/written
-  natively is plausible future work (the same shape
-  `Compiler.RC2.ConAltNative` already caches for an ordinary
-  constructor-destructured field, `rc2/doc/con-alt-native.md`) but
-  should come after a basic, always-Boxed version works, not block it.
+- ~~Not yet scoped: how field values interact with rc2's own
+  Boxed/Native `Rep` split~~ **Resolved: a struct field is never
+  itself a Boxed (`IDRIS2RC2_Value*`) value, so there's no
+  `ConAltNative`-style aliasing/dup question to answer at all.** A
+  `CFStruct`'s own field list is `List (String, CFType)`
+  (`Core/CompileExpr.idr:199`), and every `CFType` other than `CFUser`
+  denotes a genuine C type with its own storage (`CFInt`/`CFDouble`/
+  `CFPtr`/a nested `CFStruct`/etc.) -- exactly what `cTypeOfCFType`
+  already renders for each case. `CFUser : Name -> List CFType ->
+  CFType` (an arbitrary Idris2 type, rendered Boxed via `extractValue`'s
+  own `(CFUser x xs) varName = "(IDRIS2RC2_Value*)" ++ varName` case)
+  exists in the type *grammar*, but a genuinely Boxed, refcounted
+  Idris2 value has no meaningful C struct-member storage -- there's no
+  real C layout for "a slot holding a pointer this GC's own lifetime
+  is tied to" the way there is for an `int`/`double`/plain pointer
+  field. So `RStructGet`/`RStructSet`'s own field-type lookup can
+  treat a `CFUser`-typed field as out of scope (an error at struct-
+  collection time, Part B) rather than as a case needing real
+  ownership design -- `getField`/`setField`'s read/write is always a
+  `packCFType`/`extractValue` conversion against a genuine C-typed
+  slot, never an aliased read of an already-Boxed value, so no `dup`
+  is needed on the read side at all (unlike a constructor's own
+  destructured field, which *is* a direct alias into Boxed storage --
+  `Compiler.RC2.ConAltNative`'s own problem, not this one). Native
+  (unboxed) reads/writes of a scalar field, bypassing the
+  `packCFType`/`extractValue` round-trip for a value that's about to be
+  used in a native context anyway, remains plausible future work (the
+  same shape `Compiler.RC2.ConAltNative` already does for an ordinary
+  constructor-destructured field, `rc2/doc/con-alt-native.md`) but is a
+  performance optimization on top of a working, always-Boxed version,
+  not a prerequisite for one.
 - **Not yet enumerated: every site that needs an `RStructGet`/
   `RStructSet` case added, now that they're real `RCExp` nodes.**
   "The new nodes" above names the general shape (`freeLocalsR`/
