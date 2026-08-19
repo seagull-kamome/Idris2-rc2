@@ -213,6 +213,84 @@ table described above). Recorded here only because it was an
 unexplained `0`/`1` in the dump that turned out to have a real,
 traceable explanation rather than being arbitrary.
 
+## What upstream Idris2's own issue tracker says
+
+Searched `idris-lang/Idris2`'s own issues for prior art before
+designing anything, on the chance someone had already hit this wall.
+They had -- and one of them ran into exactly the same problem this
+document's "How struct field types actually appear in `Lifted`"
+section derived independently, then gave up on it.
+
+- **[#3830](https://github.com/idris-lang/Idris2/issues/3830)**
+  (opened 2026-08-09, still open, no comments): reports the exact
+  crash reproduced above -- `idris2 --cg refc` on upstream's own
+  `samples/ffi/Struct.idr` hits `ERROR: INTERNAL ERROR: Struct access
+  not implemented: var_1`, traced to the same `extractValue`
+  `idris_crash` in `RefC.idr:763` this document already cites.
+  Confirms the gap is real, currently unfixed upstream, and not
+  something specific to how this investigation's own repro was
+  written.
+- **[#2062 "Align FFI with C FFI"](https://github.com/idris-lang/Idris2/issues/2062)**
+  (opened 2021-11-22, closed 2022-07-21, discussion continued as late
+  as 2026-08-31): the most directly relevant find. User `xavierzwirtz`
+  tried to implement `getField` support for the RefC backend and,
+  five months in, wrote:
+  > The compiler currently computes a `CFType` only for `MkForeign`,
+  > the `CFType` does not get attached to the return type of
+  > `MkForeign` in a usable fashion. I believe that for
+  > `prim__getField` to work `CFType` needs to be attached to the
+  > expression so that when compiling an application of
+  > `prim__getField` the accessed field's `CFType` can be used to
+  > call `packCFType` and pack it for the RefC runtime. Tldr, how do
+  > I get `CFType` for an arbitrary expression from within the refc
+  > backend?
+
+  Nobody answered. Six months after that, asked directly "how did you
+  solve this," he replied: **"I cut bait and moved on. The memory
+  model of Idris as it stands does not align well with passing by
+  struct."** This is independent confirmation, from someone who
+  actually tried, of the exact gap this document's own `Lifted`
+  tracing found -- `CFType` info dies at any `LExtPrim` call site.
+
+  **Where this document's own plan differs from what he was looking
+  for** (and why it might succeed where he didn't): xavierzwirtz was
+  after a way to recover a `CFType` for *an arbitrary expression* --
+  a fully general mechanism. Nothing in his comments suggests he
+  considered the narrower approach this document proposes: don't
+  recover a type from the expression at all, resolve the
+  struct-name/field-name *string literals* (which do survive to the
+  call site, confirmed above) against a table built once from every
+  `%foreign` signature's own `CFStruct` -- exactly what Chez's
+  `Structs`/`mkStruct` already does, and what he'd have been re-deriving
+  from Chez's own approach rather than solving generally from
+  scratch. Worth staying alert to the possibility that this narrower
+  path is exactly why he didn't find it -- he may have been solving a
+  harder problem than the one that's actually needed.
+- **[#1916 "Add support for value structs"](https://github.com/idris-lang/Idris2/issues/1916)**
+  (2021, closed in favor of #2062): about *struct-by-value* FFI
+  (Chez's `(& ftype)` vs. `(* ftype)`), a different and harder problem
+  than pointer-based `getField`/`setField` -- not this document's
+  scope, but the discussion that produced #2062 above.
+- **[#36 "Nested Structs in FFI not read correctly"](https://github.com/idris-lang/Idris2/issues/36)**
+  (2020, still open): a *Chez-specific* bug -- a struct field that is
+  itself a struct *by value* (not `Ptr`) reads wrong values, because
+  `Struct` is implicitly assumed to be a pointer everywhere, including
+  in a `define-ftype`'s own field list, with (per maintainer `edwinb`'s
+  own comment) no way to express the distinction to Chez Scheme. Out
+  of scope for a first rc2 implementation (scalar fields only), but a
+  real prior bug to be aware of if nested-struct fields are ever
+  supported -- and notably a bug rc2 might sidestep for free, since it
+  would emit a real C `typedef struct` rather than a Scheme `ftype`
+  the way Chez does, and C itself doesn't share this pointer/value
+  ambiguity.
+- **[#3809 "FFI improvements (explicit Ptr) and additions (Union type and nested data fields)"](https://github.com/idris-lang/Idris2/issues/3809)**
+  (opened 2026-07-08, open, no comments yet): a recent, more ambitious
+  proposal -- explicit `Ptr` on pointer `Struct`s, nested-field access
+  paths, non-pointer struct fields, and `union` support -- with a Chez
+  backend PR reportedly attached. Well beyond this document's scope
+  (basic scalar-field `getField`/`setField`), but worth knowing about
+  as a direction upstream's own `System.FFI` module may move in.
+
 ## Open questions for rc2's own design
 
 - **A `Structs`-ref-and-`mkStruct`-style mechanism looks like the
@@ -257,6 +335,16 @@ traceable explanation rather than being arbitrary.
 
 ## Files
 
+- Upstream issues: [#3830](https://github.com/idris-lang/Idris2/issues/3830)
+  (the exact `extractValue` crash, still open, unfixed),
+  [#2062](https://github.com/idris-lang/Idris2/issues/2062) (prior
+  attempt at RefC `getField` support, abandoned -- see "What upstream
+  Idris2's own issue tracker says" above for the key comment),
+  [#1916](https://github.com/idris-lang/Idris2/issues/1916) (struct-
+  by-value, out of scope), [#36](https://github.com/idris-lang/Idris2/issues/36)
+  (Chez-specific nested-struct bug, out of scope for scalar fields),
+  [#3809](https://github.com/idris-lang/Idris2/issues/3809) (recent,
+  broader FFI proposal, out of scope for a first implementation).
 - `idris2-src/libs/base/System/FFI.idr` -- `Struct`/`FieldType`/
   `getField`/`setField`/`prim__getField`/`prim__setField`.
 - `idris2-src/src/Compiler/Scheme/Chez.idr` -- `chezExtPrim`'s
