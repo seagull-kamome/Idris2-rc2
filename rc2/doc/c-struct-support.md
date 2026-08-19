@@ -136,6 +136,83 @@ inferring it from Chez's behaviour:
   just keyed on struct name (a `String`, from `CFStruct`) instead of
   `Name`.
 
+## A concrete example, from `--dumplifted`
+
+Upstream Idris2 has a `--dumplifted <file>` debug flag
+(`idris2-src/src/Idris/CommandLine.idr:140`, wired through
+`Compiler/Common.idr`) that dumps exactly the `LiftedDef`s described
+above, as text, before any backend touches them. Ran it by hand on:
+
+```idris2
+module Main
+import System.FFI
+
+%foreign "C:make_point,point"
+prim__makePoint : Int -> Double -> PrimIO (Struct "point" [("x", Int), ("y", Double)])
+
+%foreign "C:point_free,point"
+prim__pointFree : Struct "point" [("x", Int), ("y", Double)] -> PrimIO ()
+
+makePoint : HasIO io => Int -> Double -> io (Struct "point" [("x", Int), ("y", Double)])
+makePoint x y = primIO (prim__makePoint x y)
+
+getX : Struct "point" [("x", Int), ("y", Double)] -> Int
+getX s = getField s "x"
+
+setY : HasIO io => Struct "point" [("x", Int), ("y", Double)] -> Double -> io ()
+setY s v = liftIO (setField s "y" v)
+```
+
+(`idris2 --dumplifted lifted.txt --cg chez -o t T.idr`). The relevant
+lines:
+
+```
+Main.prim__makePoint = Foreign call ["C:make_point,point"]
+    [Int, Double, %World] -> IORes struct "point" ("x", Int) ("y", Double)
+
+Main.prim__pointFree = Foreign call ["C:point_free,point"]
+    [struct "point" ("x", Int) ("y", Double), %World] -> IORes Unit
+
+Main.getX = [{arg:0}][]:
+    %extprim System.FFI.prim__getField("point", ___, ___, !{arg:0}, "x", 0)
+
+Main.{setY:0} = [{arg:2}, {arg:3}][{eta:0}]:
+    %extprim System.FFI.prim__setField("point", ___, ___, !{arg:2}, "y", 1, !{arg:3}, !{eta:0})
+```
+
+This matches the two claims above exactly: the two `MkLForeign` entries
+carry the full `struct "point" ("x", Int) ("y", Double)` shape (this is
+`CFStruct`'s own `Show` output -- field names and types both intact);
+the two `LExtPrim` call sites carry only the struct/field name string
+literals (`"point"`, `"x"`/`"y"`) plus two `___` placeholders where
+`fs`/`ty` used to be.
+
+**A side discovery worth recording so a future session doesn't have to
+re-derive it: the trailing `0`/`1` in each `LExtPrim` call is not
+another erased placeholder -- it's the `FieldType` proof
+(`fieldok`), collapsed to a plain integer.** `FieldType n t fs`
+(`System/FFI.idr:19`) has exactly the shape Idris2's frontend
+recognizes as "nat-like" (`TTImp/ProcessData.idr`'s `calcNaty`, driven
+by `Core/CompileExpr.idr`'s `ConInfo`'s `ZERO`/`SUCC` tags -- not a
+`Nat`-specific hack, a general structural check: two constructors, one
+zero-arg, the other's one argument recursing into the same type
+constructor): `First : FieldType n t ((n, t) :: ts)` (zero args) plays
+`ZERO`, `Later : FieldType n t ts -> FieldType n t (f :: ts)` (one
+recursive arg) plays `SUCC`. So a `FieldType` proof lowers to a plain
+integer the same way a literal `Nat` does -- concretely, the zero-based
+position of the field within the struct's own field list (`"x"` is
+field 0 -> `First` -> `0`; `"y"` is field 1 -> `Later First` -> `1`).
+
+This position integer isn't something a `getField`/`setField`
+implementation needs to rely on -- Chez's own `chezExtPrim` ignores it
+outright (`GetField`'s own pattern match ends in a bare `_`), resolving
+purely from the struct-name/field-name string literals instead, and
+any rc2 design should do the same (a field's *position* alone doesn't
+carry its *type*, which is still only recoverable from the `CFStruct`
+table described above). Recorded here only because it was an
+unexplained `0`/`1` in the dump that turned out to have a real,
+traceable explanation rather than being arbitrary.
+
 ## Open questions for rc2's own design
 
 - **A `Structs`-ref-and-`mkStruct`-style mechanism looks like the
@@ -205,3 +282,9 @@ inferring it from Chez's behaviour:
 - `rc2/src/Compiler/RC2/Inline.idr` -- `buildEligible`/
   `applyInlineLifted`, the whole-program collect-then-traverse shape a
   struct-field table would follow.
+- `idris2-src/src/Idris/CommandLine.idr`, `idris2-src/src/Compiler/Common.idr`
+  -- `--dumplifted`, the debug flag used to produce the example above.
+- `idris2-src/src/TTImp/ProcessData.idr` -- `calcNaty`, the general
+  "nat-like type" structural detection `FieldType` triggers (not a
+  `Nat`-specific special case); `idris2-src/src/Core/CompileExpr.idr`
+  -- `ConInfo`'s `ZERO`/`SUCC` tags this detection assigns.
