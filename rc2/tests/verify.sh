@@ -79,6 +79,12 @@
 #   ../build/exec/idris2-rc2 --cg rc2 TestN.idr -o build/exec/TestN_rc2
 #   ./build/exec/TestN_rc2                    # compare by eye, or:
 #   diff <(cat TestN.expected) <(./build/exec/TestN_rc2)
+#
+# A smoke test whose own %foreign declarations need a real C
+# implementation (not just an rc2/RefC-provided primitive) can supply
+# one as TestN.c alongside TestN.idr -- compiled once per run and
+# linked in automatically via IDRIS2_CFLAGS/IDRIS2_LDFLAGS. Most tests
+# have no such file; this is a no-op for them.
 
 set -u
 
@@ -177,19 +183,23 @@ echo "=== Smoke tests ==="
 # name -> from inside tests/ as a bare filename (KNOWN-BUGS.md: module
 # TestNNNN, not module Main, trips idris2's own module-name check
 # otherwise). NO_REFC_DIFF_TESTS skips diffing against real refc in
-# favour of a saved .expected file, for two different reasons:
+# favour of a saved .expected file, for three different reasons:
 # Test7CastMatrix because nixpkgs' own RefC support library fails to
 # compile at all (KNOWN-BUGS.md), Test17ConstFold because its own
 # codegenChain deliberately embeds System.Info.codegen's own value (a
 # ConstExtPrim regression check) -- "rc2" vs "refc" is real, correct
-# divergence between backends, not something to diff away.
+# divergence between backends, not something to diff away --
+# Test24CStructSupport because real RefC doesn't implement
+# getField/setField at all (see rc2/doc/c-struct-support.md's "What's
+# confirmed" -- this is the exact gap rc2 closes), so there's no real
+# refc output to diff against in the first place.
 BARE_INVOKE_TESTS="Test6NativeInts Test7CastMatrix"
-NO_REFC_DIFF_TESTS="Test7CastMatrix Test17ConstFold"
+NO_REFC_DIFF_TESTS="Test7CastMatrix Test17ConstFold Test24CStructSupport"
 
 # Leak-sensitive by design (reference-counting/reuse/native-shadow
 # regression tests) -- checked with valgrind by default even without
 # --valgrind-all.
-LEAK_SENSITIVE_TESTS="Test1Basics Test9SelfTailLoop Test10MutualLoop Test11DualABILeak Test12ConAltNative Test13NativeArgChain Test14SmallFunctionInline Test15CompareFusionThroughCall Test16LoopContinuePostDrop Test18ClosureInPlaceGrow Test19LoopInvariantParam Test20LoopInvariantExpr Test21BoxedInvariantNotHoisted Test22BranchSinking Test23SinkPastSelfDrop"
+LEAK_SENSITIVE_TESTS="Test1Basics Test9SelfTailLoop Test10MutualLoop Test11DualABILeak Test12ConAltNative Test13NativeArgChain Test14SmallFunctionInline Test15CompareFusionThroughCall Test16LoopContinuePostDrop Test18ClosureInPlaceGrow Test19LoopInvariantParam Test20LoopInvariantExpr Test21BoxedInvariantNotHoisted Test22BranchSinking Test23SinkPastSelfDrop Test24CStructSupport"
 
 # KNOWN-BUGS.md's own one remaining pre-existing leak -- "definitely
 # lost" byte count, exactly. Anything else non-zero is a genuine new
@@ -204,12 +214,30 @@ ALL_TESTS="$(cd "$RC2_DIR/tests" && ls Test*.idr | sed 's/\.idr$//' | sort)"
 
 for name in $ALL_TESTS; do
     compile_t0="$(date +%s.%N)"
+    # A companion C file ($name.c) supplies the actual C-side
+    # implementation a %foreign declaration needs (e.g. a struct
+    # constructor/destructor establishing a struct name for
+    # getField/setField -- see rc2/doc/c-struct-support.md). Compiled
+    # once here and linked in via IDRIS2_CFLAGS/IDRIS2_LDFLAGS, the
+    # same environment variables Compiler.RC2.CC's own
+    # findCFlags/findLDFlags already read -- most tests have no such
+    # file, so this is a no-op for them.
+    companion_env=()
+    if [ -f "$RC2_DIR/tests/$name.c" ]; then
+        nix-shell -p gcc --run "gcc -c $RC2_DIR/tests/$name.c -o $TMP/${name}_companion.o" \
+            > "$TMP/${name}_companion_compile.log" 2>&1
+        if [ $? -ne 0 ]; then
+            report_fail "$name" "companion C file failed to compile, see $TMP/${name}_companion_compile.log"
+            continue
+        fi
+        companion_env=("IDRIS2_LDFLAGS=$TMP/${name}_companion.o" "IDRIS2_CFLAGS=-I$RC2_DIR/tests")
+    fi
     if is_in "$name" "$BARE_INVOKE_TESTS"; then
-        (cd "$RC2_DIR/tests" && nix-shell -p idris2 gcc gmp pkg-config --run \
+        (cd "$RC2_DIR/tests" && env "${companion_env[@]}" nix-shell -p idris2 gcc gmp pkg-config --run \
             "$IDRIS2RC2 --cg rc2 --directive dumprcexpr$extra_directive_args $name.idr -o $TMP/${name}_rc2") \
             > "$TMP/${name}_compile.log" 2>&1
     else
-        nix-shell -p idris2 gcc gmp pkg-config --run \
+        env "${companion_env[@]}" nix-shell -p idris2 gcc gmp pkg-config --run \
             "$IDRIS2RC2 --cg rc2 --directive dumprcexpr$extra_directive_args $RC2_DIR/tests/$name.idr -o $TMP/${name}_rc2" \
             > "$TMP/${name}_compile.log" 2>&1
     fi
