@@ -117,10 +117,13 @@ tailValueReps reps (RConstCase _ _ alts mDef) =
 tailValueReps reps (RLoop _ loopParams _ _ body) =
     tailValueReps (foldl (\m, (i, r) => insert i r m) reps loopParams) body
 tailValueReps _ (RLoopContinue _ _ _) = []
--- RAppName, RUnderApp, RApp, RCon, RExtPrim, RErased, RCrash: never a
--- native value regardless of context -- a call/closure/constructor
--- result is always Boxed today (no callee is known to return native
--- yet -- see the module note's "pure tail-call delegation" limitation).
+-- RAppName, RUnderApp, RApp, RCon, RExtPrim, RErased, RCrash,
+-- RStructGet, RStructSet: never a native value regardless of context --
+-- a call/closure/constructor result is always Boxed today (no callee is
+-- known to return native yet -- see the module note's "pure tail-call
+-- delegation" limitation); RStructGet/RStructSet's own packCFType
+-- (doc/c-struct-support.md's Part D) always renders a Boxed
+-- IDRIS2RC2_Value* too, same reasoning.
 tailValueReps _ _ = [Nothing]
 
 ||| `Just ty` iff `xs` is non-empty and every element is `Just ty` for
@@ -564,8 +567,8 @@ applyCallSiteRewriteBody workers reps False value@(RAppName fc _ n args) =
 -- inTail = True -- the whole function's own true tail position,
 -- deliberately left alone, see this function's own doc comment):
 -- RV, RAppNameRep, RUnderApp, RApp, RCon, RExtPrim, RPrimVal, RErased,
--- RCrash, RLoopContinue -- none hold a further RLet-bound-value
--- position of their own for this pass to inspect.
+-- RCrash, RLoopContinue, RStructGet, RStructSet -- none hold a further
+-- RLet-bound-value position of their own for this pass to inspect.
 applyCallSiteRewriteBody _ _ _ e = e
 
 ||| Whole-program pass: Stage 4 itself. Every direct, saturated,

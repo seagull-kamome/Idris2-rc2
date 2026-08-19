@@ -172,10 +172,10 @@ mutual
   applyConAltNativeExp nextId (RReuseOffer fc sc dupOnShared body) =
       let (n, body') = applyConAltNativeExp nextId body in (n, RReuseOffer fc sc dupOnShared body')
   -- Every other shape (RV, RAppName, RUnderApp, RApp, RCon, ROp,
-  -- RExtPrim, RPrimVal, RErased, RCrash, RLoopContinue, RAppNameRep --
-  -- and RLoop, though this pass runs strictly before
-  -- Compiler.RC2.Loop/MutualLoop ever produce one, see RC2.idr's own
-  -- toRCDefs): no further RCExp to recurse into.
+  -- RExtPrim, RPrimVal, RErased, RCrash, RLoopContinue, RAppNameRep,
+  -- RStructGet, RStructSet -- and RLoop, though this pass runs
+  -- strictly before Compiler.RC2.Loop/MutualLoop ever produce one, see
+  -- RC2.idr's own toRCDefs): no further RCExp to recurse into.
   applyConAltNativeExp nextId e = (nextId, e)
 
   applyConAltNativeMaybe : Int -> Maybe RCExp -> (Int, Maybe RCExp)

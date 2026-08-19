@@ -154,7 +154,8 @@ mutual
     ||| the same treatment as RConCase's alts, just with no scrutinee of
     ||| their own to ever offer). Nodes with no nested RCExp of their own
     ||| (RV, RAppName, RUnderApp, RApp, RCon, ROp, RExtPrim, RPrimVal,
-    ||| RErased, RCrash) have nothing to recurse into.
+    ||| RErased, RCrash, RStructGet, RStructSet) have nothing to
+    ||| recurse into.
     export
     resolveReuse : RCExp -> RCExp
     resolveReuse (RLet fc var rep value body) =
