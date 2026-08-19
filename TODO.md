@@ -30,6 +30,29 @@ if a future feature would benefit from embeddable-value locals badly
 enough to justify auditing every `RCLocal` call site -- not currently
 planned.
 
+## Performance: native (unboxed) `Ptr`/`CFPtr` representation -- investigated, not pursued
+
+Neither `getField`'s own result nor `setField`'s own `value`, nor a
+struct pointer (`structVar`) itself, is ever native -- each pays for a
+Boxed `IDRIS2RC2_Pointer` heap allocation just to carry one raw
+pointer around. Investigated whether `Ptr`/`CFPtr` could join rc2's
+existing native-representation machinery. Structurally blocked before
+the semantics even come up: `Rep`'s `RNative`/`RInlineNative` are typed
+over upstream's own `PrimType`, which has no pointer case at all, so
+representing one at all needs a new `Rep` variant of rc2's own,
+touching every module that pattern-matches on `Rep`. Semantically
+murkier too: `CFGCPtr`'s own `onCollect` callback genuinely depends on
+refcounting to fire, so it would need permanent exclusion (`CFPtr`
+only); and even `CFPtr` alone would lose the weak reachability
+tracking its current Boxed wrapper provides, with no borrow/lifetime
+checker to make up for it once a future nested-struct-field-pointer
+feature makes that tracking matter more. See
+`rc2/doc/c-struct-support.md`'s own "Investigated: native (unboxed)
+`Ptr`/`CFPtr` representation" section for the full writeup. Not
+currently planned -- revisit only if profiling shows the allocation
+cost actually matters, with a concrete plan for the `CFGCPtr` split
+and the lifetime question.
+
 ## Performance: tail-position delegating calls stay boxed
 
 Native type inference (`Compiler.RC2.Types`) only applies to values

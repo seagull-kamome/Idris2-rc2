@@ -781,6 +781,75 @@ functions `void*`-typed rather than `test_point*`-typed, with the real
 companion C file establishing a struct name this way will hit the same
 thing), but worth knowing before writing another test like this one.
 
+## Investigated: native (unboxed) `Ptr`/`CFPtr` representation -- not pursued
+
+Prompted by a direct question after the implementation landed: neither
+`getField`'s own result nor `setField`'s own `value` operand is ever
+promoted to `Rep`'s `RNative` (`Compiler.RC2.Types`'s own `repOf` only
+proposes it for `ROp`/`RPrimVal`, `RStructGet` has no case and falls
+through to `Nothing`) -- and, more specifically, `structVar` itself
+(the struct pointer, `CFPtr`-shaped since Part A) is always Boxed too,
+paying for one `IDRIS2RC2_Pointer` heap allocation (`packCFType CFPtr
+= idris2rc2_mkPointer(...)`) just to carry one raw pointer around.
+Investigated whether `Ptr`/`CFPtr` values generally (not just struct
+pointers) could go through rc2's existing native-representation
+machinery the way fixed-width scalars already do.
+
+**Structurally blocked before the semantics even come up**: `Rep`'s
+own `RNative`/`RInlineNative` are typed as `RNative PrimType`, and
+`PrimType` (`idris2-src/src/Core/TT/Primitive.idr`) -- upstream's own
+type, not rc2's -- has no pointer case at all (`IntType`/.../
+`DoubleType`/`CharType`/`WorldType`, nothing else).
+`Compiler.RC2.Types`'s own `nativeEligible` only accepts a subset of
+those. Representing a native pointer at all would need a new `Rep`
+variant of rc2's own, since there's no existing `PrimType` value to
+reuse -- a change touching every module that pattern-matches on `Rep`
+(`RC.idr`, `Types.idr`, `Emit.idr`, `Loop.idr`, `DualABI.idr`).
+Compounding that: `RCExp` has already erased Idris2's own type
+information by the time any of this runs, so recognizing "this
+particular Boxed local is actually a pointer" would only be possible
+at the handful of sites that still carry `CFType` information
+first-hand (`RStructGet`'s own field type, a `%foreign` call's own
+return type) -- not a general local-type inference the way
+`ROp`/`RPrimVal`-driven native promotion is today.
+
+**Even setting that aside, the semantics don't hold up as cleanly as a
+scalar's do.** A native pointer would need to mean "copied by value,
+no refcounting" -- true for a plain address -- but two real problems
+surface:
+
+- **`CFGCPtr` would break outright.** `idris2rc2_mkGCPointer(raw,
+  onCollect)` runs `onCollect` when the *Boxed wrapper* is collected --
+  a real dependency on refcounting to trigger external cleanup. Any
+  native-pointer design would have to exclude `CFGCPtr` explicitly and
+  keep it Boxed-only forever; only `CFPtr` (no collection callback)
+  could ever be a candidate.
+- **`CFPtr` itself loses a safety net, not just an allocation.** The
+  current `IDRIS2RC2_Pointer` wrapper doesn't protect the memory a raw
+  pointer points at (that's already entirely the programmer's own
+  responsibility -- see `Test24CStructSupport.idr`'s own explicit
+  `prim__freePoint` call), but it does mean *something* in the IR
+  tracks whether a given copy of that pointer is still reachable
+  (ordinary `dup`/`drop`). A native pointer is copied freely with zero
+  tracking of any kind -- not a regression in what rc2 already
+  guarantees about the pointed-to memory (nothing), but a real
+  reduction in what's visible/checkable in the IR itself. Struct
+  fields that are themselves pointers (a future nested-struct feature)
+  would compound this further -- reasoning about a field pointer's own
+  lifetime relative to its owning struct's lifetime is exactly the
+  kind of thing a real borrow/lifetime checker exists for, and rc2 has
+  none.
+
+**Conclusion**: semantically plausible for `CFPtr` specifically (a
+pointer value genuinely is "copy, no refcount" the same way a scalar
+is), but not pursued -- the `Rep`-widening cost is broad, `CFGCPtr`
+would need permanent exclusion, and the loss of even the weak
+reachability tracking `IDRIS2RC2_Pointer` currently provides is a real
+open question rather than a solved one. Revisit only if profiling
+shows the `IDRIS2RC2_Pointer` allocation cost actually matters in
+practice, with a concrete plan for the `CFGCPtr` split and the
+lifetime question above -- not currently planned.
+
 ## Files
 
 - `rc2/tests/Test24CStructSupport.idr`/`.c`/`.h`/`.expected` -- the
@@ -788,6 +857,14 @@ thing), but worth knowing before writing another test like this one.
   compile-and-link mechanism this test needed (`if [ -f
   "$RC2_DIR/tests/$name.c" ]; then ...`), plus its own
   `NO_REFC_DIFF_TESTS`/`LEAK_SENSITIVE_TESTS` entries for this test.
+- `rc2/src/Compiler/RC2/RCExp.idr` -- `Rep`'s own `RNative`/
+  `RInlineNative PrimType`, the "Investigated: native `Ptr`/`CFPtr`"
+  section's own starting point. `rc2/src/Compiler/RC2/Types.idr` --
+  `nativeEligible`/`repOf`. `rc2/src/Compiler/RC2/Emit.idr` --
+  `packCFType`/`extractValue`'s own `CFPtr`/`CFGCPtr` cases
+  (`idris2rc2_mkPointer`/`idris2rc2_mkGCPointer`).
+- `idris2-src/src/Core/TT/Primitive.idr` -- upstream's own `PrimType`,
+  confirming it has no pointer case for `Rep`'s `RNative` to reuse.
 - Upstream issues: [#3830](https://github.com/idris-lang/Idris2/issues/3830)
   (the exact `extractValue` crash, still open, unfixed),
   [#2062](https://github.com/idris-lang/Idris2/issues/2062) (prior
