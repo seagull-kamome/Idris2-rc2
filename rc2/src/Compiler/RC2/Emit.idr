@@ -430,6 +430,13 @@ data RepMap : Type where
 -- inline its expression text directly instead of reading back a
 -- pointless `var_N`.
 data InlineMap : Type where
+-- Struct name -> field name/type list, collected once (Part B,
+-- generateCSourceFile) from every %foreign def's own CFStruct before
+-- any RStructGet/RStructSet is lowered, and consulted by both `header`
+-- (to emit each struct's own C `typedef`) and emitRC's own
+-- RStructGet/RStructSet cases (to resolve a field's CFType). See
+-- doc/c-struct-support.md's "Design" section, Parts B/C/D.
+data StructDefs : Type where
 data ConstDef
   = CDI64 String
   | CDB64 String
@@ -1073,6 +1080,147 @@ emitAltChain sink condExpr renderBody renderDefault alts = do
                emit emptyFC "}"
            else body
 
+-- RefC-tagged foreign calls go to our own runtime (buffer.c's own
+-- functions, which expect the whole IDRIS2RC2_Buffer.buf allocation
+-- including its `int size` header -- they read/write it themselves), so
+-- CFBuffer is unwrapped one level only. C-tagged foreign calls (e.g.
+-- `supportC`'s libidris2_support functions like idris2_readBufferData) are
+-- generic byte-buffer functions with no notion of that header -- they
+-- expect a flat pointer straight to the data, so CFBuffer must skip past
+-- it too. Mirrors RefC.idr's `CLang`/`CLangC`/`CLangRefC` split.
+data CLang = CLangC | CLangRefC
+
+-- Accepted FFI tags, in priority order. "RefC" is accepted (and treated as
+-- directly callable, not stubbed) because prelude/base/contrib bake a
+-- handful of load-bearing low-level primitives (fastPack, fastConcat,
+-- fastUnpack, string iterators) into %foreign/%transform pairs hardcoded
+-- to the "RefC" tag; our own runtime provides matching C symbols for
+-- those so we can reuse the declarations as-is instead of forking prelude.
+ffiTags : List String
+ffiTags = ["RC2", "RefC", "C"]
+
+||| The C type a `%foreign` argument/return, or a struct field, of this
+||| `CFType` is rendered as. Lifted out of `createCFunctions`'s own
+||| `where` (originally scoped to its `MkRCForeign` case alone) so
+||| `RStructGet`/`RStructSet`'s own lowering (Part D,
+||| doc/c-struct-support.md) can share it for a field's own `CFType`,
+||| not just a whole `%foreign` def's. Placed ahead of the `mutual`
+||| block below (rather than alongside `createCFunctions`, its own
+||| original home) so `emitRC`'s own `RStructGet`/`RStructSet` cases,
+||| earlier in that same block, can see it.
+cTypeOfCFType : CFType -> String
+cTypeOfCFType CFUnit          = "void"
+cTypeOfCFType CFInt           = "int64_t"
+cTypeOfCFType CFInt8          = "int8_t"
+cTypeOfCFType CFInt16         = "int16_t"
+cTypeOfCFType CFInt32         = "int32_t"
+cTypeOfCFType CFInt64         = "int64_t"
+cTypeOfCFType CFUnsigned8     = "uint8_t"
+cTypeOfCFType CFUnsigned16    = "uint16_t"
+cTypeOfCFType CFUnsigned32    = "uint32_t"
+cTypeOfCFType CFUnsigned64    = "uint64_t"
+cTypeOfCFType CFString        = "char *"
+cTypeOfCFType CFDouble        = "double"
+cTypeOfCFType CFChar          = "char"
+cTypeOfCFType CFPtr           = "void *"
+cTypeOfCFType CFGCPtr         = "void *"
+cTypeOfCFType CFBuffer        = "void *"
+cTypeOfCFType CFWorld         = "void *"
+cTypeOfCFType (CFFun x y)     = "void *"
+cTypeOfCFType (CFIORes x)     = "void *"
+cTypeOfCFType (CFStruct x ys) = "void *"
+cTypeOfCFType (CFUser x ys)   = "void *"
+cTypeOfCFType n = assert_total $ idris_crash ("INTERNAL ERROR: Unknown FFI type in rc2 backend: " ++ show n)
+
+||| Read a C value of this `CFType` out of a Boxed `varName` (a
+||| `%foreign` argument, or -- Part D -- an `RStructGet`'s own field
+||| read). Lifted out of `createCFunctions`'s own `where` for the same
+||| reason as `cTypeOfCFType` above.
+|||
+||| `CFStruct`'s own case reuses `CFPtr`'s already-working line
+||| verbatim, rather than the `idris_crash` this used to be (see
+||| doc/c-struct-support.md's "Part A"): a struct is always accessed by
+||| pointer in this design, and `cTypeOfCFType` already renders both
+||| identically (`"void *"`), so there was never a reason for this to
+||| diverge from `CFPtr`'s own handling.
+extractValue : (cLang : CLang) -> (cfType:CFType) -> (varName:String) -> String
+extractValue _ CFUnit           varName = "NULL"
+extractValue _ CFInt            varName = "(idris2rc2_to_i64(" ++ varName ++ "))"
+extractValue _ CFInt8           varName = "(idris2rc2_to_i8(" ++ varName ++ "))"
+extractValue _ CFInt16          varName = "(idris2rc2_to_i16(" ++ varName ++ "))"
+extractValue _ CFInt32          varName = "(idris2rc2_to_i32(" ++ varName ++ "))"
+extractValue _ CFInt64          varName = "(idris2rc2_to_i64(" ++ varName ++ "))"
+extractValue _ CFUnsigned8      varName = "(idris2rc2_to_u8(" ++ varName ++ "))"
+extractValue _ CFUnsigned16     varName = "(idris2rc2_to_u16(" ++ varName ++ "))"
+extractValue _ CFUnsigned32     varName = "(idris2rc2_to_u32(" ++ varName ++ "))"
+extractValue _ CFUnsigned64     varName = "(idris2rc2_to_u64(" ++ varName ++ "))"
+extractValue _ CFString         varName = "((IDRIS2RC2_String*)" ++ varName ++ ")->str"
+extractValue _ CFDouble         varName = "(idris2rc2_to_double(" ++ varName ++ "))"
+extractValue _ CFChar           varName = "((char)idris2rc2_to_char(" ++ varName ++ "))"
+extractValue _ CFPtr            varName = "((IDRIS2RC2_Pointer*)" ++ varName ++ ")->p"
+extractValue _ CFGCPtr          varName = "((IDRIS2RC2_GCPointer*)" ++ varName ++ ")->p->p"
+extractValue CLangRefC CFBuffer varName = "((IDRIS2RC2_Buffer*)" ++ varName ++ ")->buf"
+extractValue CLangC    CFBuffer varName = "((IDRIS2RC2_RawBuffer*)((IDRIS2RC2_Buffer*)" ++ varName ++ ")->buf)->data"
+extractValue _ CFWorld          _       = "(IDRIS2RC2_Value *)NULL"
+extractValue _ (CFFun x y)      varName = "(IDRIS2RC2_Closure*)" ++ varName
+extractValue c (CFIORes x)      varName = extractValue c x varName
+extractValue _ (CFStruct x xs)  varName = "((IDRIS2RC2_Pointer*)" ++ varName ++ ")->p"
+extractValue _ (CFUser x xs)    varName = "(IDRIS2RC2_Value*)" ++ varName
+extractValue _ n _ = assert_total $ idris_crash ("INTERNAL ERROR: Unknown FFI type in rc2 backend: " ++ show n)
+
+||| Wrap a raw C value of this `CFType` (a `%foreign` return, or --
+||| Part D -- the value read for an `RStructGet`, or `RStructSet`'s own
+||| field being written) into a Boxed `IDRIS2RC2_Value*`. Lifted out of
+||| `createCFunctions`'s own `where` for the same reason as
+||| `cTypeOfCFType` above.
+|||
+||| `CFStruct`'s own case reuses `CFPtr`'s already-working line
+||| verbatim -- see `extractValue`'s own doc comment above, same
+||| reasoning (this used to call an undefined `makeStruct` helper).
+packCFType : (cfType:CFType) -> (varName:String) -> String
+packCFType CFUnit          varName = "((IDRIS2RC2_Value *)NULL)"
+packCFType CFInt           varName = "idris2rc2_mkInt64(" ++ varName ++ ")"
+packCFType CFInt8          varName = "idris2rc2_mkInt8(" ++ varName ++ ")"
+packCFType CFInt16         varName = "idris2rc2_mkInt16(" ++ varName ++ ")"
+packCFType CFInt32         varName = "idris2rc2_mkInt32(" ++ varName ++ ")"
+packCFType CFInt64         varName = "idris2rc2_mkInt64(" ++ varName ++ ")"
+packCFType CFUnsigned64    varName = "idris2rc2_mkBits64(" ++ varName ++ ")"
+packCFType CFUnsigned32    varName = "idris2rc2_mkBits32(" ++ varName ++ ")"
+packCFType CFUnsigned16    varName = "idris2rc2_mkBits16(" ++ varName ++ ")"
+packCFType CFUnsigned8     varName = "idris2rc2_mkBits8(" ++ varName ++ ")"
+packCFType CFString        varName = "idris2rc2_mkString(" ++ varName ++ ")"
+packCFType CFDouble        varName = "idris2rc2_mkDouble(" ++ varName ++ ")"
+packCFType CFChar          varName = "idris2rc2_mkChar((unsigned char)" ++ varName ++ ")"
+packCFType CFPtr           varName = "idris2rc2_mkPointer(" ++ varName ++ ")"
+packCFType CFGCPtr         varName = "idris2rc2_mkPointer(" ++ varName ++ ")"
+packCFType CFBuffer        varName = "idris2rc2_mkBuffer(" ++ varName ++ ")"
+packCFType CFWorld         _       = "(IDRIS2RC2_Value *)NULL"
+packCFType (CFFun x y)     varName = "makeFunction(" ++ varName ++ ")"
+packCFType (CFIORes x)     varName = packCFType x varName
+packCFType (CFStruct x xs) varName = "idris2rc2_mkPointer(" ++ varName ++ ")"
+packCFType (CFUser x xs)   varName = varName
+packCFType n _ = assert_total $ idris_crash ("INTERNAL ERROR: Unknown FFI type in rc2 backend: " ++ show n)
+
+||| Every `CFStruct` reachable inside a `%foreign` def's own argument/
+||| return `CFType`s, by struct name, keyed the first time each name is
+||| seen (later re-occurrences of the same name are assumed identical,
+||| matching upstream's own Chez backend -- see
+||| doc/c-struct-support.md's "Part B"). Recurses into `CFIORes`/
+||| `CFFun`, and into a `CFStruct`'s own field types too (a field can
+||| itself be a nested struct pointer). Direct algorithmic port of
+||| Chez's own `mkStruct`/`Structs` (`Compiler/Scheme/Chez.idr`),
+||| rewritten in rc2's own idiom -- a `SortedMap` built via `foldl`
+||| instead of a `List String` `Ref` threaded through Scheme-code
+||| generation, since there's no Scheme code to emit here.
+collectStructDefs : CFType -> SortedMap String (List (String, CFType)) -> SortedMap String (List (String, CFType))
+collectStructDefs (CFStruct n flds) acc =
+    if isJust (lookup n acc)
+       then acc
+       else foldl (\acc', (_, ty) => collectStructDefs ty acc') (insert n flds acc) flds
+collectStructDefs (CFIORes t) acc = collectStructDefs t acc
+collectStructDefs (CFFun a b) acc = collectStructDefs b (collectStructDefs a acc)
+collectStructDefs _ acc = acc
+
 mutual
     ||| Declare an `RLet`'s own binding: record its `Rep` (so later *uses*
     ||| of `var` can look it up), then either inline it (a literal, or an
@@ -1091,6 +1239,7 @@ mutual
                -> {auto r : Ref RepMap (SortedMap Int Rep)}
                -> {auto lm : Ref InlineMap (SortedMap Int String)}
                -> {auto fa : Ref LoopParams (List (Int, Rep))}
+               -> {auto sd : Ref StructDefs (SortedMap String (List (String, CFType)))}
                -> FC -> Int -> Rep -> RCExp -> Core ()
     declareLet fc var rep value = do
         update RepMap (insert var rep)
@@ -1124,6 +1273,7 @@ mutual
                         -> {auto r : Ref RepMap (SortedMap Int Rep)}
                         -> {auto lm : Ref InlineMap (SortedMap Int String)}
                         -> {auto fa : Ref LoopParams (List (Int, Rep))}
+                        -> {auto sd : Ref StructDefs (SortedMap String (List (String, CFType)))}
                         -> RCExp -> Core (Maybe RCExp)
     tryEmitLoopContinue (RDup fc v cont) = do
         dupVars [varName v]
@@ -1206,6 +1356,7 @@ mutual
                         -> {auto r : Ref RepMap (SortedMap Int Rep)}
                         -> {auto lm : Ref InlineMap (SortedMap Int String)}
                         -> {auto fa : Ref LoopParams (List (Int, Rep))}
+                        -> {auto sd : Ref StructDefs (SortedMap String (List (String, CFType)))}
                         -> Sink -> TailPositionStatus -> RCExp -> Core (Maybe RCExp)
     tryBuildClosureInto sink tailPosition (RDup fc v cont) = do
         dupVars [varName v]
@@ -1248,6 +1399,7 @@ mutual
                   -> {auto r : Ref RepMap (SortedMap Int Rep)}
                   -> {auto lm : Ref InlineMap (SortedMap Int String)}
                   -> {auto fa : Ref LoopParams (List (Int, Rep))}
+                  -> {auto sd : Ref StructDefs (SortedMap String (List (String, CFType)))}
                   -> FC -> PrimType -> Int -> RCExp -> Core ()
     declareNative fc ty var value = do
         (valStr, pending) <- emitNativeValue ty value
@@ -1266,6 +1418,7 @@ mutual
                  -> {auto r : Ref RepMap (SortedMap Int Rep)}
                  -> {auto lm : Ref InlineMap (SortedMap Int String)}
                  -> {auto fa : Ref LoopParams (List (Int, Rep))}
+                 -> {auto sd : Ref StructDefs (SortedMap String (List (String, CFType)))}
                  -> PrimType -> Int -> RCExp -> Core ()
     inlineNative ty var value = do
         (valStr, pending) <- emitNativeValue ty value
@@ -1299,6 +1452,7 @@ mutual
                      -> {auto r : Ref RepMap (SortedMap Int Rep)}
                      -> {auto lm : Ref InlineMap (SortedMap Int String)}
                      -> {auto fa : Ref LoopParams (List (Int, Rep))}
+                     -> {auto sd : Ref StructDefs (SortedMap String (List (String, CFType)))}
                      -> FC -> PrimType -> RCExp -> Core ()
     emitNativeReturn fc ty value = do
         (valStr, pending) <- emitNativeValue ty value
@@ -1345,6 +1499,7 @@ mutual
                        -> {auto r : Ref RepMap (SortedMap Int Rep)}
                        -> {auto lm : Ref InlineMap (SortedMap Int String)}
                        -> {auto fa : Ref LoopParams (List (Int, Rep))}
+                       -> {auto sd : Ref StructDefs (SortedMap String (List (String, CFType)))}
                        -> Sink -> TailPositionStatus -> FC -> Name -> List Rep -> Rep -> List RCLocal -> List RCLocal -> Core ()
     emitAppNameRepInto sink tailPosition fc n argReps retRep postDrop args = do
         let nargs = length args
@@ -1410,6 +1565,7 @@ mutual
              -> {auto r : Ref RepMap (SortedMap Int Rep)}
              -> {auto lm : Ref InlineMap (SortedMap Int String)}
              -> {auto fa : Ref LoopParams (List (Int, Rep))}
+             -> {auto sd : Ref StructDefs (SortedMap String (List (String, CFType)))}
              -> FC -> Sink -> TailPositionStatus -> RCExp -> Core ()
     emitInto fc sink tailPosition value = do
         -- Same "resume from the leftover, not the original value" care
@@ -1481,6 +1637,7 @@ mutual
                -> {auto r : Ref RepMap (SortedMap Int Rep)}
                -> {auto lm : Ref InlineMap (SortedMap Int String)}
                -> {auto fa : Ref LoopParams (List (Int, Rep))}
+               -> {auto sd : Ref StructDefs (SortedMap String (List (String, CFType)))}
                -> Sink -> RCExp -> TailPositionStatus -> Core ()
     branchBody sink body tailPosition = do
         let (shouldDrop0, body') = peelDrop body
@@ -1507,6 +1664,7 @@ mutual
                    -> {auto r : Ref RepMap (SortedMap Int Rep)}
                    -> {auto lm : Ref InlineMap (SortedMap Int String)}
                    -> {auto fa : Ref LoopParams (List (Int, Rep))}
+                   -> {auto sd : Ref StructDefs (SortedMap String (List (String, CFType)))}
                    -> Sink -> TailPositionStatus -> RCLocal -> RConAlt -> Core ()
     emitConAltBody sink tailPosition sc (MkRConAlt name coninfo tag args body) = do
         let sc' = varName sc
@@ -1536,6 +1694,7 @@ mutual
                     -> {auto r : Ref RepMap (SortedMap Int Rep)}
                     -> {auto lm : Ref InlineMap (SortedMap Int String)}
                     -> {auto fa : Ref LoopParams (List (Int, Rep))}
+                    -> {auto sd : Ref StructDefs (SortedMap String (List (String, CFType)))}
                     -> Sink -> TailPositionStatus -> FC -> PrimFn 2 -> Vect 2 RCLocal
                     -> List RCLocal -> RCExp -> RCExp -> Core ()
     emitCmpCaseInto sink tailPosition fc op args postDrop whenTrue whenFalse = do
@@ -1573,6 +1732,7 @@ mutual
                     -> {auto r : Ref RepMap (SortedMap Int Rep)}
                     -> {auto lm : Ref InlineMap (SortedMap Int String)}
                     -> {auto fa : Ref LoopParams (List (Int, Rep))}
+                    -> {auto sd : Ref StructDefs (SortedMap String (List (String, CFType)))}
                     -> Sink -> TailPositionStatus -> FC -> RCLocal -> List RConAlt -> Maybe RCExp -> Core ()
     emitConCaseInto sink tailPosition fc sc alts mDef = do
         let sc' = varName sc
@@ -1595,6 +1755,7 @@ mutual
                        -> {auto r : Ref RepMap (SortedMap Int Rep)}
                        -> {auto lm : Ref InlineMap (SortedMap Int String)}
                        -> {auto fa : Ref LoopParams (List (Int, Rep))}
+                       -> {auto sd : Ref StructDefs (SortedMap String (List (String, CFType)))}
                        -> Sink -> TailPositionStatus -> FC -> RCLocal -> List RConstAlt -> Maybe RCExp -> Core ()
     emitConstCaseInto sink tailPosition fc sc alts def = do
         let sc' = varName sc
@@ -1712,6 +1873,7 @@ mutual
                      -> {auto r : Ref RepMap (SortedMap Int Rep)}
                      -> {auto lm : Ref InlineMap (SortedMap Int String)}
                      -> {auto fa : Ref LoopParams (List (Int, Rep))}
+                     -> {auto sd : Ref StructDefs (SortedMap String (List (String, CFType)))}
                      -> (inPrologueDrop : Bool) -> FC -> (paramId : Int) -> Rep -> (initVal : RCLocal) -> Core ()
     declareLoopParam _ fc paramId RBoxed initVal =
         if initVal == RCLoc paramId
@@ -1755,6 +1917,7 @@ mutual
                  -> {auto r : Ref RepMap (SortedMap Int Rep)}
                  -> {auto lm : Ref InlineMap (SortedMap Int String)}
                  -> {auto fa : Ref LoopParams (List (Int, Rep))}
+                 -> {auto sd : Ref StructDefs (SortedMap String (List (String, CFType)))}
                  -> Sink -> TailPositionStatus -> FC -> List (Int, Rep) -> List RCLocal -> (prologueDrop : List RCLocal) -> RCExp -> Core ()
     emitLoopInto sink tailPosition fc loopParams initial prologueDrop body = do
         traverse_ (\((paramId, rep), initVal) =>
@@ -1771,6 +1934,7 @@ mutual
            -> {auto r : Ref RepMap (SortedMap Int Rep)}
            -> {auto lm : Ref InlineMap (SortedMap Int String)}
            -> {auto fa : Ref LoopParams (List (Int, Rep))}
+           -> {auto sd : Ref StructDefs (SortedMap String (List (String, CFType)))}
            -> RCExp
            -> TailPositionStatus
            -> Core String
@@ -1880,9 +2044,13 @@ mutual
         pure resultVar
 
     emitRC (RExtPrim fc _ p args) _ = do
+        -- prim__getField/prim__setField never reach here -- Compiler.RC2.RC's
+        -- own `normalize` (Phase 1) converts them straight into
+        -- RStructGet/RStructSet, handled by their own cases below (see
+        -- doc/c-struct-support.md's "Design" section for why).
         let prims : List String =
             ["prim__newIORef", "prim__readIORef", "prim__writeIORef", "prim__newArray",
-             "prim__arrayGet", "prim__arraySet", "prim__getField", "prim__setField",
+             "prim__arrayGet", "prim__arraySet",
              "prim__os", "prim__codegen", "prim__onCollect", "prim__onCollectAny" ]
         case p of
             NS _ (UN (Basic pn)) =>
@@ -1893,6 +2061,41 @@ mutual
         -- RExtPrim); box any that happen to be native locals first.
         argStrs <- traverse rcVarToBoxedC args
         pure $ "idris2rc2_\{cName p}("++ showSep ", " argStrs ++")"
+
+    -- Part D (doc/c-struct-support.md's "Design" section): resolve
+    -- structName/fieldName against StructDefs (Part B/C), then render
+    -- a plain C pointer dereference. Neither structVar (here) nor
+    -- value (RStructSet below) is ever duplicated to get here --
+    -- postDrop only ever means "this was this operand's own last use"
+    -- (Compiler.RC2.RC's dropIfLastUse), never "drop after a dup", so
+    -- this only ever discharges it, never inserts one.
+    emitRC (RStructGet fc structVar sn fn postDrop) _ = do
+        structDefs <- get StructDefs
+        let Just flds = lookup sn structDefs
+            | Nothing => throw $ InternalError "[rc2] RStructGet: unknown struct \{sn}"
+        let Just ty = lookup fn flds
+            | Nothing => throw $ InternalError "[rc2] RStructGet: unknown field \{fn} of struct \{sn}"
+        ptrBoxed <- rcVarToBoxedC structVar
+        let ptrC = extractValue CLangC CFPtr ptrBoxed
+        let resultVar = "primVar_" ++ !(getNextCounter)
+        emit fc $ "IDRIS2RC2_Value *" ++ resultVar ++ " = "
+                    ++ packCFType ty ("((\{sn}*)\{ptrC})->\{fn}") ++ ";"
+        removeVars $ map varName postDrop
+        pure resultVar
+
+    emitRC (RStructSet fc structVar sn fn value postDrop) _ = do
+        structDefs <- get StructDefs
+        let Just flds = lookup sn structDefs
+            | Nothing => throw $ InternalError "[rc2] RStructSet: unknown struct \{sn}"
+        let Just ty = lookup fn flds
+            | Nothing => throw $ InternalError "[rc2] RStructSet: unknown field \{fn} of struct \{sn}"
+        ptrBoxed <- rcVarToBoxedC structVar
+        let ptrC = extractValue CLangC CFPtr ptrBoxed
+        valBoxed <- rcVarToBoxedC value
+        let valC = extractValue CLangC ty valBoxed
+        emit fc $ "((\{sn}*)\{ptrC})->\{fn} = \{valC};"
+        removeVars $ map varName postDrop
+        pure "((IDRIS2RC2_Value *)NULL)"
 
     -- Unreachable in practice, same reasoning as RLet's own case above:
     -- emitInto's dispatch always intercepts a leftover RCmpCase/
@@ -1961,6 +2164,7 @@ mutual
                      -> {auto r : Ref RepMap (SortedMap Int Rep)}
                      -> {auto lm : Ref InlineMap (SortedMap Int String)}
                      -> {auto fa : Ref LoopParams (List (Int, Rep))}
+                     -> {auto sd : Ref StructDefs (SortedMap String (List (String, CFType)))}
                      -> PrimType -> RCExp -> Core (String, List RCLocal)
     -- A bare local read -- unreachable before Stage 3b (declareNative/
     -- inlineNative's own RLet callers only ever see an ROp/RPrimVal
@@ -2053,25 +2257,6 @@ addCommaToList : List String -> List String
 addCommaToList [] = []
 addCommaToList (x :: xs) = ("  " ++ x) :: map (", " ++) xs
 
--- RefC-tagged foreign calls go to our own runtime (buffer.c's own
--- functions, which expect the whole IDRIS2RC2_Buffer.buf allocation
--- including its `int size` header -- they read/write it themselves), so
--- CFBuffer is unwrapped one level only. C-tagged foreign calls (e.g.
--- `supportC`'s libidris2_support functions like idris2_readBufferData) are
--- generic byte-buffer functions with no notion of that header -- they
--- expect a flat pointer straight to the data, so CFBuffer must skip past
--- it too. Mirrors RefC.idr's `CLang`/`CLangC`/`CLangRefC` split.
-data CLang = CLangC | CLangRefC
-
--- Accepted FFI tags, in priority order. "RefC" is accepted (and treated as
--- directly callable, not stubbed) because prelude/base/contrib bake a
--- handful of load-bearing low-level primitives (fastPack, fastConcat,
--- fastUnpack, string iterators) into %foreign/%transform pairs hardcoded
--- to the "RefC" tag; our own runtime provides matching C symbols for
--- those so we can reuse the declarations as-is instead of forking prelude.
-ffiTags : List String
-ffiTags = ["RC2", "RefC", "C"]
-
 createCFunctions : {auto c : Ref Ctxt Defs}
                 -> {auto a : Ref ArgCounter Nat}
                 -> {auto _ : Ref ConstDef (SortedMap Constant ConstDef)}
@@ -2079,6 +2264,7 @@ createCFunctions : {auto c : Ref Ctxt Defs}
                 -> {auto oft : Ref OutfileText Output}
                 -> {auto il : Ref IndentLevel Nat}
                 -> {auto h : Ref HeaderFiles (SortedSet String)}
+                -> {auto sd : Ref StructDefs (SortedMap String (List (String, CFType)))}
                 -> Name
                 -> RCDef
                 -> Core ()
@@ -2224,30 +2410,6 @@ createCFunctions n (MkRCForeign ccs fargs ret) = do
     getArgsNrList [] _ = []
     getArgsNrList (x :: xs) k = k :: getArgsNrList xs (S k)
 
-    cTypeOfCFType : CFType -> String
-    cTypeOfCFType CFUnit          = "void"
-    cTypeOfCFType CFInt           = "int64_t"
-    cTypeOfCFType CFInt8          = "int8_t"
-    cTypeOfCFType CFInt16         = "int16_t"
-    cTypeOfCFType CFInt32         = "int32_t"
-    cTypeOfCFType CFInt64         = "int64_t"
-    cTypeOfCFType CFUnsigned8     = "uint8_t"
-    cTypeOfCFType CFUnsigned16    = "uint16_t"
-    cTypeOfCFType CFUnsigned32    = "uint32_t"
-    cTypeOfCFType CFUnsigned64    = "uint64_t"
-    cTypeOfCFType CFString        = "char *"
-    cTypeOfCFType CFDouble        = "double"
-    cTypeOfCFType CFChar          = "char"
-    cTypeOfCFType CFPtr           = "void *"
-    cTypeOfCFType CFGCPtr         = "void *"
-    cTypeOfCFType CFBuffer        = "void *"
-    cTypeOfCFType CFWorld         = "void *"
-    cTypeOfCFType (CFFun x y)     = "void *"
-    cTypeOfCFType (CFIORes x)     = "void *"
-    cTypeOfCFType (CFStruct x ys) = "void *"
-    cTypeOfCFType (CFUser x ys)   = "void *"
-    cTypeOfCFType n = assert_total $ idris_crash ("INTERNAL ERROR: Unknown FFI type in rc2 backend: " ++ show n)
-
     varNamesFromList : List ty -> Nat -> List String
     varNamesFromList str k = map (("var_" ++) . show) (getArgsNrList str k)
 
@@ -2271,55 +2433,6 @@ createCFunctions n (MkRCForeign ccs fargs ret) = do
         decreaseIndentation
         emit EmptyFC ")"
 
-    extractValue : (cLang : CLang) -> (cfType:CFType) -> (varName:String) -> String
-    extractValue _ CFUnit           varName = "NULL"
-    extractValue _ CFInt            varName = "(idris2rc2_to_i64(" ++ varName ++ "))"
-    extractValue _ CFInt8           varName = "(idris2rc2_to_i8(" ++ varName ++ "))"
-    extractValue _ CFInt16          varName = "(idris2rc2_to_i16(" ++ varName ++ "))"
-    extractValue _ CFInt32          varName = "(idris2rc2_to_i32(" ++ varName ++ "))"
-    extractValue _ CFInt64          varName = "(idris2rc2_to_i64(" ++ varName ++ "))"
-    extractValue _ CFUnsigned8      varName = "(idris2rc2_to_u8(" ++ varName ++ "))"
-    extractValue _ CFUnsigned16     varName = "(idris2rc2_to_u16(" ++ varName ++ "))"
-    extractValue _ CFUnsigned32     varName = "(idris2rc2_to_u32(" ++ varName ++ "))"
-    extractValue _ CFUnsigned64     varName = "(idris2rc2_to_u64(" ++ varName ++ "))"
-    extractValue _ CFString         varName = "((IDRIS2RC2_String*)" ++ varName ++ ")->str"
-    extractValue _ CFDouble         varName = "(idris2rc2_to_double(" ++ varName ++ "))"
-    extractValue _ CFChar           varName = "((char)idris2rc2_to_char(" ++ varName ++ "))"
-    extractValue _ CFPtr            varName = "((IDRIS2RC2_Pointer*)" ++ varName ++ ")->p"
-    extractValue _ CFGCPtr          varName = "((IDRIS2RC2_GCPointer*)" ++ varName ++ ")->p->p"
-    extractValue CLangRefC CFBuffer varName = "((IDRIS2RC2_Buffer*)" ++ varName ++ ")->buf"
-    extractValue CLangC    CFBuffer varName = "((IDRIS2RC2_RawBuffer*)((IDRIS2RC2_Buffer*)" ++ varName ++ ")->buf)->data"
-    extractValue _ CFWorld          _       = "(IDRIS2RC2_Value *)NULL"
-    extractValue _ (CFFun x y)      varName = "(IDRIS2RC2_Closure*)" ++ varName
-    extractValue c (CFIORes x)      varName = extractValue c x varName
-    extractValue _ (CFStruct x xs)  varName = assert_total $ idris_crash ("INTERNAL ERROR: Struct access not implemented: " ++ varName)
-    extractValue _ (CFUser x xs)    varName = "(IDRIS2RC2_Value*)" ++ varName
-    extractValue _ n _ = assert_total $ idris_crash ("INTERNAL ERROR: Unknown FFI type in rc2 backend: " ++ show n)
-
-    packCFType : (cfType:CFType) -> (varName:String) -> String
-    packCFType CFUnit          varName = "((IDRIS2RC2_Value *)NULL)"
-    packCFType CFInt           varName = "idris2rc2_mkInt64(" ++ varName ++ ")"
-    packCFType CFInt8          varName = "idris2rc2_mkInt8(" ++ varName ++ ")"
-    packCFType CFInt16         varName = "idris2rc2_mkInt16(" ++ varName ++ ")"
-    packCFType CFInt32         varName = "idris2rc2_mkInt32(" ++ varName ++ ")"
-    packCFType CFInt64         varName = "idris2rc2_mkInt64(" ++ varName ++ ")"
-    packCFType CFUnsigned64    varName = "idris2rc2_mkBits64(" ++ varName ++ ")"
-    packCFType CFUnsigned32    varName = "idris2rc2_mkBits32(" ++ varName ++ ")"
-    packCFType CFUnsigned16    varName = "idris2rc2_mkBits16(" ++ varName ++ ")"
-    packCFType CFUnsigned8     varName = "idris2rc2_mkBits8(" ++ varName ++ ")"
-    packCFType CFString        varName = "idris2rc2_mkString(" ++ varName ++ ")"
-    packCFType CFDouble        varName = "idris2rc2_mkDouble(" ++ varName ++ ")"
-    packCFType CFChar          varName = "idris2rc2_mkChar((unsigned char)" ++ varName ++ ")"
-    packCFType CFPtr           varName = "idris2rc2_mkPointer(" ++ varName ++ ")"
-    packCFType CFGCPtr         varName = "idris2rc2_mkPointer(" ++ varName ++ ")"
-    packCFType CFBuffer        varName = "idris2rc2_mkBuffer(" ++ varName ++ ")"
-    packCFType CFWorld         _       = "(IDRIS2RC2_Value *)NULL"
-    packCFType (CFFun x y)     varName = "makeFunction(" ++ varName ++ ")"
-    packCFType (CFIORes x)     varName = packCFType x varName
-    packCFType (CFStruct x xs) varName = "makeStruct(" ++ varName ++ ")"
-    packCFType (CFUser x xs)   varName = varName
-    packCFType n _ = assert_total $ idris_crash ("INTERNAL ERROR: Unknown FFI type in rc2 backend: " ++ show n)
-
     discardLastArgument : List ty -> List ty
     discardLastArgument [] = []
     discardLastArgument xs@(_ :: _) = init xs
@@ -2338,6 +2451,7 @@ header : {auto f : Ref FunctionDefinitions (List String)}
       -> {auto il : Ref IndentLevel Nat}
       -> {auto h : Ref HeaderFiles (SortedSet String)}
       -> {auto _ : Ref ConstDef (SortedMap Constant ConstDef)}
+      -> {auto sd : Ref StructDefs (SortedMap String (List (String, CFType)))}
       -> Core ()
 header = do
     let initLines = """
@@ -2347,9 +2461,18 @@ header = do
       """
     let headerFiles = Prelude.toList !(get HeaderFiles)
     fns <- get FunctionDefinitions
+    -- Part C (doc/c-struct-support.md's "Design" section): one real C
+    -- `typedef struct` per entry in `StructDefs` (Part B), so
+    -- RStructGet/RStructSet's own `((name*)ptr)->field` rendering
+    -- (Part D) has something to compile against -- emitted here,
+    -- ahead of every function definition, since C needs the type
+    -- declared before any use.
+    structDefs <- get StructDefs
     update OutfileText $ appendL $
         [initLines] ++
         map (\h => "#include <\{h}>\n") headerFiles ++
+        ["\n// struct definitions"] ++
+        map (uncurry genStructDef) (SortedMap.toList structDefs) ++
         ["\n// function definitions"] ++
         fns ++
         ["\n// constant value definitions"] ++
@@ -2367,6 +2490,11 @@ header = do
       Db x  => go cdef "Double" "DOUBLE" (show x)
       Str x => go cdef "String" "STRING" (cStringQuoted x)
       _ => "/* bad constant */"
+    genStructDef : String -> List (String, CFType) -> String
+    genStructDef name flds =
+      "typedef struct { "
+        ++ concat (map (\(fn, ty) => cTypeOfCFType ty ++ " " ++ fn ++ "; ") flds)
+        ++ "} \{name};\n"
 
 footer : {auto il : Ref IndentLevel Nat}
       -> {auto f : Ref OutfileText Output}
@@ -2400,6 +2528,18 @@ generateCSourceFile defs outn =
      _ <- newRef OutfileText DList.Nil
      _ <- newRef HeaderFiles empty
      _ <- newRef IndentLevel 0
+     -- Part B (doc/c-struct-support.md's "Design" section): collect
+     -- every CFStruct reachable from any MkRCForeign's own argument/
+     -- return types, once, before any def is lowered -- so a
+     -- getField/setField call site anywhere in the program can resolve
+     -- its own struct name against a table that already knows about
+     -- every struct declared anywhere, regardless of definition order.
+     let structDefs = foldl (\acc, (_, d) => case d of
+                                  MkRCForeign _ fargs ret =>
+                                      foldl (flip collectStructDefs) (collectStructDefs ret acc) fargs
+                                  _ => acc)
+                             Data.SortedMap.empty defs
+     _ <- newRef StructDefs structDefs
      traverse_ (uncurry createCFunctions) defs
      header
      footer

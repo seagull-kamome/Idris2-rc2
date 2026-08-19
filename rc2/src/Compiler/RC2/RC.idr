@@ -17,6 +17,7 @@ import Core.Context
 import Core.Core
 import Core.FC
 import Core.Name.Scoped
+import Core.TT
 
 import Data.SortedSet
 import Data.Vect
@@ -160,6 +161,31 @@ mutual
         -- postDrop is always [] here -- Phase 2 (`annotate`) fills it in
         -- once ownership is known (see RCExp.idr's ROp doc comment).
         bindManyV env args (\locs => pure $ ROp fc lazy op locs [])
+    -- `getField`/`setField` become dedicated RStructGet/RStructSet
+    -- nodes here rather than staying RExtPrim -- see
+    -- doc/c-struct-support.md's own "Design" section for why (RExtPrim's
+    -- own `annotate` case is a bare pass-through with no ownership
+    -- tracking, wrong for an operand that can be read more than once).
+    -- `args`' own shape (struct name, two erased fs/ty placeholders,
+    -- the struct pointer, the field name, the FieldType position
+    -- integer -- discarded, redundant with the field name and not
+    -- needed by any backend) is confirmed by `doc/c-struct-support.md`'s
+    -- own "A concrete example" section, from an actual `--dumplifted`
+    -- run, not assumed.
+    normalize env (LExtPrim fc lazy (NS _ (UN (Basic "prim__getField"))) [sn, _, _, sv, fn, _]) =
+        bindOne env sn (\snl => bindOne env sv (\svl => bindOne env fn (\fnl =>
+            case (snl, fnl) of
+                 (RCConst (Str structName), RCConst (Str fieldName)) =>
+                     pure $ RStructGet fc svl structName fieldName []
+                 _ => throw $ InternalError
+                        "[rc2] prim__getField: struct/field name must be string literals")))
+    normalize env (LExtPrim fc lazy (NS _ (UN (Basic "prim__setField"))) [sn, _, _, sv, fn, _, vl, _]) =
+        bindOne env sn (\snl => bindOne env sv (\svl => bindOne env fn (\fnl => bindOne env vl (\vll =>
+            case (snl, fnl) of
+                 (RCConst (Str structName), RCConst (Str fieldName)) =>
+                     pure $ RStructSet fc svl structName fieldName vll []
+                 _ => throw $ InternalError
+                        "[rc2] prim__setField: struct/field name must be string literals"))))
     normalize env (LExtPrim fc lazy p args) =
         bindMany env args (\locs => pure $ RExtPrim fc lazy p locs)
     normalize env (LConCase fc sc alts mDef) =
@@ -372,6 +398,32 @@ splitBorrows natives owned (v :: vars) =
 splitBorrowsV : (natives : SortedSet RCLocal) -> Owned -> Vect n RCLocal -> List RCLocal
 splitBorrowsV natives owned = splitBorrows natives owned . toList
 
+||| Which of `vars` are their own last use here (still in `owned`, not
+||| `natives`) -- for `RStructGet`/`RStructSet` (see doc/c-struct-support.md's
+||| "Design" section): a plain C pointer dereference/field read never
+||| needs a `dup` the way an `ROp` operand can (there's no C-level
+||| reason to copy a pointer, or reread an already-Boxed operand's own
+||| field, just to use it), but an operand still needs dropping once
+||| read if this is genuinely its last use, or it leaks. Unlike
+||| `splitBorrows`, never inserts a `dup` for a still-alive operand --
+||| there's nothing to do here for one. Processed left-to-right,
+||| consuming `owned` as it goes (mirroring `splitBorrows`'s own
+||| occurrence-order handling), so the same local occurring twice (a
+||| degenerate case -- e.g. `RStructSet`'s `structVar`/`value` happening
+||| to be the same local) is only marked drop-worthy on its first
+||| occurrence, not both.
+dropIfLastUse : (natives : SortedSet RCLocal) -> Owned -> List RCLocal -> List RCLocal
+dropIfLastUse _ _ [] = []
+dropIfLastUse natives owned (RCNull :: vars) = dropIfLastUse natives owned vars
+dropIfLastUse natives owned (RCConst _ :: vars) = dropIfLastUse natives owned vars
+dropIfLastUse natives owned (RCEmptyCon {} :: vars) = dropIfLastUse natives owned vars
+dropIfLastUse natives owned (v :: vars) =
+    if contains v natives
+        then dropIfLastUse natives owned vars
+        else if contains v owned
+                then v :: dropIfLastUse natives (delete v owned) vars
+                else dropIfLastUse natives owned vars
+
 ||| Which of an `ROp`'s operands need dropping once it's done reading
 ||| them -- i.e. every genuinely Boxed one (native locals and RCConst
 ||| never had a refcount to drop; see RCExp.idr's module notes on both),
@@ -502,6 +554,14 @@ mutual
         pure $ wrapDups fc (splitBorrowsV natives owned args)
                           (ROp fc lazy op args (boxedOperands natives (toList args)))
     annotate natives owned (RExtPrim fc lazy p args) = pure $ RExtPrim fc lazy p args
+    -- Never calls splitBorrows/wrapDups -- see dropIfLastUse's own doc
+    -- comment and doc/c-struct-support.md's "Design" section: neither
+    -- structVar nor value is ever duplicated, only dropped if this use
+    -- is genuinely the last one.
+    annotate natives owned (RStructGet fc structVar sn fn _) =
+        pure $ RStructGet fc structVar sn fn (dropIfLastUse natives owned [structVar])
+    annotate natives owned (RStructSet fc structVar sn fn value _) =
+        pure $ RStructSet fc structVar sn fn value (dropIfLastUse natives owned [structVar, value])
     annotate natives owned (RCmpCase fc op args _ t f) = do
         -- Unlike ROp (always a "value" with the caller -- an enclosing
         -- RLet -- responsible for pre-shrinking `owned` before handing

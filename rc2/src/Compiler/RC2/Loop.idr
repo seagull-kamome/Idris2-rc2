@@ -187,6 +187,10 @@ mutual
   renameRCExp ren (ROp fc lazy op args postDrop) =
       ROp fc lazy op (renameLocalsV ren args) (renameLocals ren postDrop)
   renameRCExp ren (RExtPrim fc lazy p args) = RExtPrim fc lazy p (renameLocals ren args)
+  renameRCExp ren (RStructGet fc structVar sn fn postDrop) =
+      RStructGet fc (renameLocal ren structVar) sn fn (renameLocals ren postDrop)
+  renameRCExp ren (RStructSet fc structVar sn fn value postDrop) =
+      RStructSet fc (renameLocal ren structVar) sn fn (renameLocal ren value) (renameLocals ren postDrop)
   renameRCExp ren (RCmpCase fc op args postDrop t f) =
       RCmpCase fc op (renameLocalsV ren args) (renameLocals ren postDrop) (renameRCExp ren t) (renameRCExp ren f)
   renameRCExp ren (RConCase fc sc alts mDef) =
@@ -448,6 +452,10 @@ stripOwnership ids (RLoop fc loopParams initial prologueDrop body) =
     RLoop fc loopParams initial
       (filter (\v => case v of RCLoc i => not (contains i ids); _ => True) prologueDrop)
       (stripOwnership ids body)
+stripOwnership ids (RStructGet fc structVar sn fn postDrop) =
+    RStructGet fc structVar sn fn (filter (\v => case v of RCLoc i => not (contains i ids); _ => True) postDrop)
+stripOwnership ids (RStructSet fc structVar sn fn value postDrop) =
+    RStructSet fc structVar sn fn value (filter (\v => case v of RCLoc i => not (contains i ids); _ => True) postDrop)
 -- RV, RAppName, RUnderApp, RApp, RCon, RExtPrim, RPrimVal, RErased,
 -- RCrash: no ownership-tracking positions of their own.
 stripOwnership _ e = e

@@ -69,6 +69,8 @@ genuinelyUsedR (RLet _ var _ value body) =
 genuinelyUsedR (RCon _ _ _ _ args _) = fromList args
 genuinelyUsedR (ROp _ _ _ args _) = fromList (toList args)
 genuinelyUsedR (RExtPrim _ _ _ args) = fromList args
+genuinelyUsedR (RStructGet _ structVar _ _ _) = singleton structVar
+genuinelyUsedR (RStructSet _ structVar _ _ value _) = fromList [structVar, value]
 genuinelyUsedR (RCmpCase _ _ args _ t f) =
     union (fromList (toList args)) (union (genuinelyUsedR t) (genuinelyUsedR f))
 genuinelyUsedR (RConCase _ sc alts mDef) =

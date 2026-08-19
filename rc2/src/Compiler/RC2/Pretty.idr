@@ -54,6 +54,12 @@ mutual
         ++ (if postDrop == [] then "" else " postDrop=" ++ show postDrop) ++ "\n"
   prettyExp d (RExtPrim _ lazy p args) =
       indent d ++ lazyPrefix lazy ++ "extprim " ++ show p ++ " " ++ show args ++ "\n"
+  prettyExp d (RStructGet _ structVar sn fn postDrop) =
+      indent d ++ "structGet " ++ show structVar ++ "." ++ fn ++ " (" ++ sn ++ ")"
+        ++ (if postDrop == [] then "" else " postDrop=" ++ show postDrop) ++ "\n"
+  prettyExp d (RStructSet _ structVar sn fn value postDrop) =
+      indent d ++ "structSet " ++ show structVar ++ "." ++ fn ++ " (" ++ sn ++ ") = " ++ show value
+        ++ (if postDrop == [] then "" else " postDrop=" ++ show postDrop) ++ "\n"
   prettyExp d (RCmpCase _ op args postDrop whenTrue whenFalse) =
       indent d ++ "cmp " ++ show op ++ " " ++ show (toList args)
         ++ (if postDrop == [] then "" else " postDrop=" ++ show postDrop) ++ "\n"

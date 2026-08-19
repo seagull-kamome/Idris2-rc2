@@ -121,6 +121,25 @@ mutual
        ||| other `postDrop` field in this file points back to.
        ROp        : {0 arity : Nat} -> FC -> (lazy : Maybe LazyReason) -> PrimFn arity -> Vect arity RCLocal -> (postDrop : List RCLocal) -> RCExp
        RExtPrim   : FC -> (lazy : Maybe LazyReason) -> Name -> List RCLocal -> RCExp
+       ||| A read of one field out of a C struct pointer (see
+       ||| `doc/c-struct-support.md`). `structName`/`fieldName` stay
+       ||| plain strings, resolved against a whole-program struct-field
+       ||| table built once in `Compiler.RC2.Emit`'s own
+       ||| `generateCSourceFile`, the same way `RPrimVal`'s own
+       ||| `dyngen`/`orStagen` resolve a literal's concrete C rendering
+       ||| late rather than pre-resolving it here. `postDrop` mirrors
+       ||| `ROp`'s own field, but a plain C pointer dereference never
+       ||| needs a `dup` the way an `ROp` operand can -- `postDrop`
+       ||| here only ever means "drop `structVar`, this was its last
+       ||| use", never "drop after an inserted `dup`". Phase 1 always
+       ||| constructs this as `[]`; only Phase 2 fills it in.
+       RStructGet : FC -> (structVar : RCLocal) -> (structName : String) -> (fieldName : String) -> (postDrop : List RCLocal) -> RCExp
+       ||| A write of one field into a C struct pointer, evaluating to
+       ||| Unit. Same reasoning as `RStructGet` for both `structVar`
+       ||| and `value` -- neither is ever duplicated, `postDrop` (0, 1,
+       ||| or 2 elements) only ever means "this was this operand's own
+       ||| last use". See `doc/c-struct-support.md`.
+       RStructSet : FC -> (structVar : RCLocal) -> (structName : String) -> (fieldName : String) -> (value : RCLocal) -> (postDrop : List RCLocal) -> RCExp
        ||| A boolean comparison (LT/GT/EQ/LTE/GTE) fused directly into a
        ||| two-way branch, with the Bool it would otherwise produce
        ||| never materialised as a value. Only produced by Phase 1
@@ -240,6 +259,8 @@ freeLocalsR (RLet _ var _ value body) =
 freeLocalsR (RCon _ _ _ _ args _) = fromList args
 freeLocalsR (ROp _ _ _ args _) = fromList (toList args)
 freeLocalsR (RExtPrim _ _ _ args) = fromList args
+freeLocalsR (RStructGet _ structVar _ _ _) = singleton structVar
+freeLocalsR (RStructSet _ structVar _ _ value _) = fromList [structVar, value]
 freeLocalsR (RCmpCase _ _ args _ t f) =
     union (fromList (toList args)) (union (freeLocalsR t) (freeLocalsR f))
 freeLocalsR (RConCase _ sc alts mDef) =
@@ -275,6 +296,8 @@ countUsesR l (RLet _ _ _ value body) = countUsesR l value + countUsesR l body
 countUsesR l (RCon _ _ _ _ args _) = length (filter (== l) args)
 countUsesR l (ROp _ _ _ args _) = length (filter (== l) (toList args))
 countUsesR l (RExtPrim _ _ _ args) = length (filter (== l) args)
+countUsesR l (RStructGet _ structVar _ _ _) = if structVar == l then 1 else 0
+countUsesR l (RStructSet _ structVar _ _ value _) = length (filter (== l) [structVar, value])
 countUsesR l (RCmpCase _ _ args _ t f) =
     length (filter (== l) (toList args)) + countUsesR l t + countUsesR l f
 countUsesR l (RConCase _ sc alts mDef) =
