@@ -5,6 +5,31 @@ scattered code comments. Nothing below is a known correctness bug in
 what's implemented -- see `rc2/tests/refc-suite/README.md` for bugs that
 were found and already fixed.
 
+## Architecture: `RCLocal` can't hold another `RCLocal`
+
+While designing `getField`/`setField` support (`rc2/doc/c-struct-support.md`),
+considered making a struct field read a new `RCLocal` variant (e.g.
+`RCStructField : RCLocal -> String -> String -> RCLocal`) instead of a
+dedicated `RCExp` node -- it's a pure, ownership-neutral read, so it
+would have been usable directly as an `ROp`/`RCon`/etc. operand, no
+`RLet` needed just to name it first. Not pursued: `RCLocal`
+(`RCLoc`/`RCNull`/`RCConst`/`RCEmptyCon`) is currently *atomic* --
+every existing user (`freeLocalsR`/`countUsesR` in `RCExp.idr`,
+`splitBorrows`/`boxedOperands` in `RC.idr`, and similar code across
+`Reuse.idr`/`Sink.idr`/`Loop.idr`/`DualABI.idr`) relies on plain `==`
+comparison and `fromList`/`filter` over `List RCLocal`, which only
+works because no variant currently holds a nested `RCLocal` of its
+own. Adding one that does (`RCStructField`'s own `structVar`) would
+mean every one of those sites needs to recurse into the nested
+`RCLocal` instead of just comparing values directly -- a broader,
+riskier change than adding a new `RCExp` node (which only affects
+`RCExp`-walking code, a smaller and more precedented surface, see
+`Compiler.RC2.RC`'s own `ROp`-shaped precedent for `RStructGet`/
+`RStructSet`). Went with the `RCExp` node instead. Worth reconsidering
+if a future feature would benefit from embeddable-value locals badly
+enough to justify auditing every `RCLocal` call site -- not currently
+planned.
+
 ## Performance: tail-position delegating calls stay boxed
 
 Native type inference (`Compiler.RC2.Types`) only applies to values
