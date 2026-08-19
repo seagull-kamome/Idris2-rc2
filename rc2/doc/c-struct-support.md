@@ -355,68 +355,99 @@ assumed from constructor shapes alone):
    means `RExtPrim`'s existing ownership handling isn't something a
    new, potentially-multiply-used struct accessor should inherit as-is.
 
-A dedicated node sidesteps this. But the fix isn't "reuse `ROp`'s
-`postDrop`/`splitBorrows`/`wrapDups` pattern outright" -- a closer look
-at what these nodes actually do (per direct feedback while designing
-this, across two rounds) shows they need *no* ownership machinery at
-all, not `ROp`'s reduced amount:
+A dedicated node sidesteps this -- but working out exactly *how much*
+ownership machinery it needs took three passes, not one, each corrected
+by direct feedback while designing this. Recorded here so a future
+session doesn't have to re-walk the same wrong turns:
 
-**Neither `structVar` nor `value` is ever consumed by either node.**
-`getField`/`setField` lower to a plain C pointer dereference/assignment
-(`s->x`, `s->y = v`) -- reading or writing through a pointer doesn't
-touch that pointer's own refcount in any C-level sense, and there's no
-runtime function call left to "own" a reference the way the earlier
-`RExtPrim`-call design implied (that design's own `postDrop` was
-modeling a *function call* consuming its argument, which no longer
-applies once the call is gone). The same reasoning that applies to
-`structVar` turns out to apply to `value` too: `RStructSet` reads
-`value` via `extractValue` (Part D below) -- an unboxing read of the
-already-Boxed operand's own internal field, structurally identical to
-`structVar`'s own pointer dereference, not a `ROp`-style consuming use.
-So neither operand needs a `postDrop` slot, `splitBorrows`, or
-`wrapDups` at all -- both nodes are pure reads with zero ownership
-consequences, closer to `RV` than to `ROp`. Whatever scope `structVar`/
-`value` were already bound in still owns them and still decides,
-through the ordinary `dropDeadLet` machinery, when (if ever) each gets
-dropped -- `RStructGet`/`RStructSet` just need to appear as an ordinary
-use-site so that machinery counts them correctly (see
-`freeLocalsR`/`countUsesR` below).
+**Pass 1 (wrong): reuse `ROp`'s `postDrop`/`splitBorrows`/`wrapDups`
+pattern outright**, treating `structVar` as a consumed operand the way
+`ROp`'s own operands are. Rejected: `getField`/`setField` lower to a
+plain C pointer dereference/assignment (`s->x`, `s->y = v`) -- reading
+or writing through a pointer never touches that pointer's own refcount,
+so there's no *function call* left to model as "consuming its
+argument" the way the earlier `RExtPrim`-based design's own `postDrop`
+did.
+
+**Pass 2 (also wrong): drop all ownership machinery, on both operands,
+entirely** -- no `postDrop` field on either node at all, reasoning that
+`structVar`/`value` are never consumed so there's nothing to track.
+This is *half* right (see "What's actually true" below) but misses a
+real case: a variable read only through `RStructGet`/`RStructSet` and
+never again (e.g. `f s = getField s "x"`, where `s` is never used
+afterward) still needs dropping *eventually*, or it leaks. The
+"whatever scope it was bound in will drop it via the ordinary
+`dropDeadLet` machinery" reasoning this pass relied on doesn't actually
+hold: `dropDeadLet`/`dropUnusedOwnedVars` (`RC.idr`, `branchBody`)
+decide whether to drop a variable by checking whether `freeLocalsR`
+still reports it as used *later* in the body -- and once `RStructGet`
+correctly reports `structVar` as one of its own free locals (as it
+must, for liveness to be tracked at all), that check finds `s` "still
+used" at the `getField` call site and therefore never drops it there
+either. With neither the call site nor the enclosing scope dropping
+it, `s` leaks. Confirmed by tracing `annotateDef`/`branchBody`/
+`dropUnusedOwnedVars` by hand against exactly this repro.
+
+**What's actually true, and the resulting design:** `structVar`/`value`
+are never *duplicated* (no C-level reason to copy a pointer, or reread
+an already-Boxed operand's own field, just to use it once or a hundred
+times) -- Pass 2's core insight survives. But *dropping* is still
+needed exactly when the current use is the operand's own last one,
+same as any other Boxed local. This is a real, if narrower, third
+shape -- not `ROp`'s "always dup-if-still-live, always drop
+afterward," not Pass 2's "never dup, never drop":
+
+```idris2
+||| [v] if this use is v's own last use in the enclosing scope (v is
+||| still in `owned` -- nothing upstream has already claimed or
+||| dropped it) and it isn't Native; [] otherwise (still alive
+||| afterward -- borrowed, no dup needed either way, since reading
+||| through a pointer never requires a copy -- or a Native local,
+||| which is never Boxed-refcounted in the first place). Never dup's,
+||| unlike splitBorrows: an operand that's still alive afterward needs
+||| no action here at all.
+dropIfLastUse : SortedSet RCLocal -> Owned -> RCLocal -> List RCLocal
+dropIfLastUse natives owned v =
+    if contains v owned && not (contains v natives) then [v] else []
+```
 
 ### The new nodes
 
 ```idris2
-||| A read of one field out of a C struct pointer -- pure, and
-||| ownership-neutral (see "Why a dedicated node" above: this is a C
-||| pointer dereference, not a call that consumes anything).
+||| A read of one field out of a C struct pointer -- pure, and never
+||| duplicates structVar (a C pointer dereference, not a call that
+||| consumes anything -- see "Why a dedicated node" above). structVar
+||| still needs dropping if this is its own last use, though --
+||| postDrop captures that (0 or 1 elements, computed by
+||| Compiler.RC2.RC's annotate via dropIfLastUse, mirroring ROp's own
+||| field but never triggering a dup the way ROp's can).
 ||| structName/fieldName stay plain strings -- resolved against a
 ||| whole-program struct-field table built once in Emit.idr's own
 ||| generateCSourceFile (see "Part B/C/D" below), the same way
 ||| RPrimVal's own dyngen/orStagen resolve a literal's concrete C
 ||| rendering late, rather than being pre-resolved to a CFType here.
-||| No postDrop field -- structVar is never consumed by this node, so
-||| there's nothing for Phase 2 to compute here.
 RStructGet : FC -> (structVar : RCLocal) -> (structName : String) ->
-             (fieldName : String) -> RCExp
+             (fieldName : String) -> (postDrop : List RCLocal) -> RCExp
 
 ||| A write of one field into a C struct pointer, evaluating to Unit.
-||| Both structVar and value are borrowed -- same "unboxing read, not
-||| a consuming use" reasoning as RStructGet, now applying to value
-||| too (see "Why a dedicated node" above). No postDrop field, for the
-||| same reason RStructGet has none.
+||| Same reasoning as RStructGet for both structVar and value -- either
+||| may end up in postDrop (0, 1, or 2 elements) if this use is its
+||| own last one; neither is ever duplicated.
 RStructSet : FC -> (structVar : RCLocal) -> (structName : String) ->
-             (fieldName : String) -> (value : RCLocal) -> RCExp
+             (fieldName : String) -> (value : RCLocal) ->
+             (postDrop : List RCLocal) -> RCExp
 ```
 
-Both nodes end up shaped like `RV` (a pure read, no ownership
-bookkeeping at all) rather than `ROp`. Every place that already knows
-how to treat an `RV` node (`freeLocalsR`/`countUsesR`/
+Both nodes keep `ROp`'s own `postDrop` field but never its
+`splitBorrows`/`wrapDups` dup-insertion half -- a real hybrid shape,
+not simply `ROp`'s or simply `RV`'s. Every place that already knows how
+to treat an `ROp` node's `postDrop` (`freeLocalsR`/`countUsesR`/
 `usedConstructorsR` in `RCExp.idr`, `Compiler.RC2.Reuse`,
 `Compiler.RC2.Sink`'s `consumedOperands`, `Compiler.RC2.Loop`'s
 `stripOwnership`) gets a close structural precedent to copy rather than
 inventing a new pattern -- this document doesn't attempt to enumerate
 every one of those sites' own required changes yet (that's
-implementation work, not design), but the *shape* to add is `RV`'s own
-shape, not a novel one.
+implementation work, not design).
 
 ### Phase 1 (`normalize`): converting `LExtPrim`/`RExtPrim` to the new nodes
 
@@ -430,37 +461,31 @@ struct-name/field-name `String`s straight out of their `RCConst (Str
 the erased `fs`/`ty` placeholders and the `FieldType` position integer
 (confirmed elsewhere in this document to be redundant with the
 field-name string, and not something any implementation should depend
-on). Build `RStructGet`/`RStructSet` directly -- neither has any
-ownership bookkeeping to initialize (unlike `ROp`'s own Phase 1 shape,
-which always constructs `postDrop = []` for Phase 2 to fill in later,
-`RStructGet`/`RStructSet` carry no such field at all).
+on). Build `RStructGet`/`RStructSet` directly -- `postDrop` starts
+empty here, the same way `ROp`'s own Phase 1 shape always constructs
+`postDrop = []` and leaves filling it in to Phase 2 (see the `ROp`
+constructor's own doc comment in `RCExp.idr`).
 
 ### Phase 2 (`annotate`): ownership
 
 ```idris2
--- Neither structVar nor value is ever in owned's target set for
--- these nodes -- no splitBorrows/wrapDups, nothing to consult in
--- owned at all, for either node.
-annotate natives owned (RStructGet fc structVar sn fn) =
-    pure $ RStructGet fc structVar sn fn
-annotate natives owned (RStructSet fc structVar sn fn value) =
+annotate natives owned (RStructGet fc structVar sn fn _) =
+    pure $ RStructGet fc structVar sn fn (dropIfLastUse natives owned structVar)
+annotate natives owned (RStructSet fc structVar sn fn value _) =
     pure $ RStructSet fc structVar sn fn value
+             (dropIfLastUse natives owned structVar ++ dropIfLastUse natives owned value)
 ```
 
-Both cases are bare pass-throughs -- the same shape `RExtPrim`'s own
-(buggy, for a multiply-used operand) case has, but this is the case
-where that shape is actually *correct*: unlike `RExtPrim`, whose
-argument really is consumed by the call it lowers to, neither
-`structVar` nor `value` is consumed by anything here, so there's no
-ownership decision being skipped, just none needed. This closes the
-gap the previous section found in `RExtPrim`'s own handling not by
-reusing `ROp`'s pattern at all, but by recognizing neither operand
-needs it: a struct pointer (or a value about to be written into one)
-read by two, or a thousand, separate `getField`/`setField` calls in
-the same function needs no `dup` before any of them, ever, because
-none of them ever consume it -- correct by construction, not by
-re-deriving the right count of `dup`s the way `ROp`'s own pattern
-would have to.
+(`dropIfLastUse` defined in "Why a dedicated node" above.) Neither case
+calls `splitBorrows`/`wrapDups` -- no `dup` is ever inserted, since
+reading through a pointer or rereading an already-Boxed operand's own
+field never needs a copy -- but both consult `owned` to decide whether
+*this* use is the operand's own last one, exactly the check Pass 2
+above skipped and got wrong. This closes the gap "Why a dedicated node"
+found in `RExtPrim`'s own handling, but via a genuinely new pattern
+(`dropIfLastUse`), not by reusing `ROp`'s pattern outright the way Pass
+1 first tried, nor by dropping ownership tracking entirely the way Pass
+2 then tried.
 
 ### Part A: struct-by-pointer FFI itself needs no new logic -- `CFStruct` can reuse `CFPtr`'s existing handling verbatim
 
@@ -524,18 +549,19 @@ at all once Phase 1 converts them, so the existing `RExtPrim` case's
 own whitelist/generic-call logic doesn't need touching):
 
 ```idris2
-emitRC (RStructGet fc structVar sn fn) _ = do
+emitRC (RStructGet fc structVar sn fn postDrop) _ = do
     fields <- getStructFields sn   -- looks up the Ref from Part B
     let Just ty = lookup fn fields | Nothing => throw (InternalError ...)
-    ptr <- rcVarToC structVar      -- reuses extractValue CFPtr's rendering (Part A);
-                                    -- no removeVars call -- structVar isn't consumed
+    ptr <- rcVarToC structVar      -- reuses extractValue CFPtr's rendering (Part A)
+    removeVars $ map varName postDrop   -- drops structVar iff this was its last use
     pure $ packCFType ty ("((\{sn}*)\{ptr})->\{fn}")
-emitRC (RStructSet fc structVar sn fn value) _ = do
+emitRC (RStructSet fc structVar sn fn value postDrop) _ = do
     fields <- getStructFields sn
     let Just ty = lookup fn fields | Nothing => throw (InternalError ...)
-    ptr <- rcVarToC structVar       -- neither structVar nor value is consumed,
-    valC <- rcVarToC value          -- so no removeVars call for either -- just
-                                     -- extractValue ty, since value's own Rep matches ty
+    ptr <- rcVarToC structVar       -- neither is ever duplicated to get here --
+    valC <- rcVarToC value          -- extractValue ty, since value's own Rep matches ty
+    removeVars $ map varName postDrop   -- drops whichever of structVar/value (0, 1,
+                                         -- or both) this was the last use of
     pure $ "(((\{sn}*)\{ptr})->\{fn} = \{extractValue ty valC}, (IDRIS2RC2_Value*)NULL)"
 ```
 
@@ -546,9 +572,10 @@ threaded follows whatever convention the surrounding `emitRC` cases
 already use, not designed further here.) `packCFType`/`extractValue`
 are the same existing functions Part A already fixed for `CFStruct`
 itself -- reused again here for a *field's* `CFType`, not the struct
-pointer's own. Neither case calls `removeVars` at all -- there's no
-`postDrop` on either node to discharge, consistent with neither
-`structVar` nor `value` ever being consumed.
+pointer's own. `postDrop` (computed by `dropIfLastUse`, Phase 2 above)
+tells this code exactly which of `structVar`/`value` (if either) to
+drop -- the same contract every other `postDrop`-carrying node already
+has, Emit.idr doesn't re-derive ownership here.
 
 ### What can actually be ported from upstream, concretely
 
@@ -677,21 +704,25 @@ not copying files. What that comes down to, concretely:
   proposed collection pass's own home, and the new `emitRC` cases for
   `RStructGet`/`RStructSet` (see "Design" above).
 - `rc2/src/Compiler/RC2/RCExp.idr` -- `MkRCForeign`, where a
-  `%foreign` def's own `CFType` list currently ends up; `RV`, the
-  existing node `RStructGet`/`RStructSet` are shaped after (a pure
-  operand read, no ownership bookkeeping); `freeLocalsR`/`countUsesR`/
-  `usedConstructorsR`, the structural-analysis functions a new node
-  needs cases added to.
+  `%foreign` def's own `CFType` list currently ends up; `ROp`, whose
+  `postDrop` field `RStructGet`/`RStructSet` reuse (without `ROp`'s own
+  `splitBorrows`/`wrapDups` dup-insertion half); `freeLocalsR`/
+  `countUsesR`/`usedConstructorsR`, the structural-analysis functions a
+  new node needs cases added to.
 - `rc2/src/Compiler/RC2/RC.idr` -- `normalize`'s `LExtPrim`/`MkLForeign`
   cases (`RC.idr:163-164`/`244`, where the new
   `prim__getField`/`prim__setField` case slots in, and the direct
   `Lifted` -> `RCExp` `MkLForeign`/`MkRCForeign` copy this document's
   "How struct field types actually appear" section traces), `annotate`'s
-  `RV`/`RExtPrim` cases (`RC.idr:412-413`/`504`, the pattern
-  `RStructGet`/`RStructSet`'s own `annotate` case follows/diverges
-  from -- `RV`'s own conditional `dup`, unlike `RStructGet`/
-  `RStructSet`'s unconditional pass-through, since `RV` genuinely
-  transfers/borrows a value while these two never do).
+  `ROp`/`RExtPrim` cases (`RC.idr:501-504`, the pattern
+  `RStructGet`/`RStructSet`'s own `annotate`/`dropIfLastUse` diverges
+  from -- `ROp`'s own `splitBorrows`/`wrapDups` inserts `dup`s,
+  `dropIfLastUse` never does), `branchBody`/`dropUnusedOwnedVars`
+  (`RC.idr:397-409`, the top-level "drop what `freeLocalsR` says is
+  unused" machinery that Pass 2 above wrongly assumed would cover
+  `structVar`/`value` on its own), `annotateDef`/`definitionNatives`
+  (`RC.idr:596-613`, traced by hand against the `f s = getField s "x"`
+  repro to find Pass 2's bug).
 - `idris2-src/src/Compiler/LambdaLift.idr` -- `LiftedDef`'s
   `MkLForeign`, `Lifted`'s `LExtPrim` -- where struct field types do
   (and don't) survive into the `Lifted` IR rc2's own `RC.idr` consumes.

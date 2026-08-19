@@ -33,17 +33,26 @@ Switched from an earlier "keep `RExtPrim`, special-case only in
 `Emit.idr`" draft after finding `RExtPrim`'s own `annotate` case is a
 bare pass-through with no `dup`/`drop` computation at all (unlike
 `ROp`/`RCon`/`RAppName`), which would give a wrong answer the moment a
-struct pointer gets read more than once in the same function. But the
-fix isn't "give the struct pointer `ROp`'s own `postDrop` treatment" --
-`getField`/`setField` lower to plain C pointer dereferences/assignments,
-which never touch either operand's own refcount at all, so *neither*
-node has a `postDrop` field and *neither* `structVar` nor
-`RStructSet`'s own `value` is ever consumed (confirmed correct via
-direct feedback while designing this, across two rounds -- `value` was
-first assumed to need `ROp`'s own consuming treatment, then found to
-be an unboxing read exactly like `structVar`'s own pointer dereference,
-not a consuming use). Both nodes end up shaped like `RV` (a pure read,
-no ownership bookkeeping) rather than `ROp`.
+struct pointer gets read more than once in the same function. Took
+three design passes (each corrected by direct feedback) to land on the
+right ownership shape for the replacement nodes: giving `structVar`
+`ROp`'s own full `postDrop`/`splitBorrows`/`wrapDups` treatment was
+wrong (`getField`/`setField` lower to a plain C pointer dereference/
+assignment, which never touches either operand's refcount, so there's
+no `dup` ever needed); dropping ownership tracking entirely was *also*
+wrong -- a variable read only once via `getField` and never again
+(`f s = getField s "x"`) still needs dropping eventually, and tracing
+`annotateDef`/`branchBody`/`dropUnusedOwnedVars` by hand against that
+exact repro confirmed neither the call site nor the enclosing scope
+would do it, a real leak. Landed on a third, narrower shape: never
+`dup` (no C-level reason to copy a pointer, or reread an already-Boxed
+operand's own field, just to use it), but still `drop` an operand if
+this use is its own last one (tracked via `owned`, the same way
+`splitBorrows` checks, just without ever inserting a `dup`). Both
+`RStructGet`/`RStructSet` keep `postDrop` for this, covering `value`
+too on the `RStructSet` side (found to need identical treatment,
+`extractValue` being an unboxing read of `value`'s own field, exactly
+like `structVar`'s own pointer dereference).
 
 A struct field is never itself a Boxed value (every `CFType` but
 `CFUser` denotes real C storage, and `CFUser` -- an arbitrary Idris2
