@@ -1,4 +1,4 @@
-# rc2のIRを読む: `--directive dumprcexp`ダンプと`RCExp`構文
+# rc2のIRを読む: `--directive dumprcexpr`ダンプと`RCExp`構文
 
 rc2独自の参照カウント付きIR(`Compiler.RC2.RCExp` -- `Compiler.RC2.Emit`
 が直接Cへ下ろす木そのもの)をダンプ・読解するための実用リファレンス。
@@ -15,12 +15,12 @@ rc2独自の参照カウント付きIR(`Compiler.RC2.RCExp` -- `Compiler.RC2.Emi
 ```sh
 cd rc2 && source ../env.sh
 nix-shell -p gcc gmp pkg-config --run \
-  './build/exec/idris2-rc2 --cg rc2 --directive dumprcexp YourFile.idr -o out'
+  './build/exec/idris2-rc2 --cg rc2 --directive dumprcexpr YourFile.idr -o out'
 ```
 
 これにより、生成される`out.c`と同じ場所(`-o`が解決するディレクトリ
 -- `idris2-rc2`を起動したディレクトリ配下の`build/exec/`。`.c`や
-実行ファイルと同じ場所)に`out.crexpr`が書き出される。`--directive`は
+実行ファイルと同じ場所)に`out.rcexpr`が書き出される。`--directive`は
 本家Idris2自身が持つ汎用の実行ごとの文字列パススルー機構(Chez/ESの
 directive群と同じ仕組み)であり、これを使うためにidris2-src側への
 変更は一切不要だった(`Compiler.RC2.RC2`の`compileExpr`参照)。
@@ -30,27 +30,32 @@ directive群と同じ仕組み)であり、これを使うためにidris2-src側
 -- 純粋な副作用として、`generateCSourceFile`がこれから消費するのと
 *全く同じ*`defs`の値を`prettyProgram defs`でファイルへ書き出すだけ。
 
-**どの時点のパイプライン状態を見ているか**: このダンプは
-`Compiler.RC2.Reuse`・`Compiler.RC2.MutualLoop`・`Compiler.RC2.Loop`が
-全て実行し終わった*後*に発火する --
+**どの時点のパイプライン状態を見ているか**: このダンプは、無効化
+されていない`toRCDefs`の全ステージが実行し終わった*後*に発火する
+-- `generateCSourceFile`がこれから消費するのとまさに同じ`defs`:
 
 ```
 Lifted (Compiler.LambdaLift)
-  -> Compiler.RC2.RC.normalize   (Phase 1: ANF風正規化、ネイティブ型推論)
-  -> Compiler.RC2.RC.annotate    (Phase 2: 所有権 -- RDup/RDrop/RFree)
-  -> Compiler.RC2.Reuse          (コンストラクタのin-place再利用)
-  -> Compiler.RC2.MutualLoop     (相互末尾再帰 -> 合成関数へマージ)
-  -> Compiler.RC2.Loop           (自己末尾呼び出し -> RLoop/RLoopContinue)
-  -> [ ここで .crexpr がダンプされる ]
-  -> Compiler.RC2.Emit           (RCExp -> C、純粋に機械的な変換)
+  -> Compiler.RC2.Inline          (プログラム全体のインライン化、Lifted -> Lifted)
+  -> Compiler.RC2.RC.normalize    (Phase 1: ANF風正規化、ネイティブ型推論)
+  -> Compiler.RC2.RC.annotate     (Phase 2: 所有権 -- RDup/RDrop/RFree)
+  -> Compiler.RC2.Reuse           (コンストラクタのin-place再利用)
+  -> Compiler.RC2.ConAltNative    (ネイティブshadowフィールドキャッシュ)
+  -> Compiler.RC2.MutualLoop      (相互末尾再帰 -> 合成関数へマージ)
+  -> Compiler.RC2.Loop            (自己末尾呼び出し -> RLoop/RLoopContinue)
+  -> Compiler.RC2.Sink            (枝ローカルなsinking、doc/branch-sinking.md参照)
+  -> Compiler.RC2.DualABI         (worker/wrapper合成、呼び出しサイト書き換え)
+  -> [ ここで .rcexpr がダンプされる ]
+  -> Compiler.RC2.Emit            (RCExp -> C、純粋に機械的な変換)
 ```
 
 -- つまり見えているのは`Emit.idr`が実際に消費する内容そのもの
-(全ての所有権判断、全ての再利用オファー、全てのループ変換が
-既に確定済み)。現時点では、もっと*前段階*(たとえばPhase 1直後、
-所有権が決まる前)をダンプするフックは存在しない。必要なら
-`compileExpr`と同様のパターンで、関心のある時点に同様の`writeFile`
-呼び出しを追加すればよい。
+(全ての所有権判断、全ての再利用オファー、全てのループ変換、そして
+全てのデュアルABI worker/wrapper書き換えが既に確定済み)。現時点
+では、もっと*前段階*(たとえばPhase 1直後、所有権が決まる前)を
+ダンプするフックは存在しない。必要なら`compileExpr`と同様の
+パターンで、関心のある時点に同様の`writeFile`呼び出しを追加すれば
+よい。
 
 **1ファイル・プログラム全体分**: ダンプには、`Compiler.RC2.RC2`の
 `toRCDefs`が生成したトップレベル定義1つにつき1つの`def`ブロックが
@@ -67,7 +72,7 @@ Lifted (Compiler.LambdaLift)
 (`Compiler.RC2.Pretty`自身のモジュールコメント参照: ソース位置情報は
 完全に省かれ、各コンストラクタには本来のIdrisコンストラクタ名ではなく
 短いキーワードが割り当てられている -- その対応表がまさに以下の
-第3節の内容そのもの)。`.crexpr`ファイルは生成された`.c`と同じ場所に
+第3節の内容そのもの)。`.rcexpr`ファイルは生成された`.c`と同じ場所に
 置かれるビルド成果物であり、コミットはされない。必要な都度、再生成
 すればよい。
 
@@ -251,6 +256,121 @@ shadowをそのまま返す(生成時に、関数自身の戻り値型がBoxed�
 されたループ内蓄積値)については`TODO.md`の「Native-shadow eligibility
 stops at bare top-level scalars」の注記を参照)。
 
+## 8.5. 除去された(ループ不変な)パラメータを読む
+
+`loop`自身のパラメータリストが、囲む関数自身のトップレベル引数
+1つにつき1エントリを持つとは限らない。`Compiler.RC2.Loop`の
+`applyLoop`は、全てのパラメータについて、本体中の*全ての*
+`continue loop`がそれを完全に変更なしで供給しているか(見た目が
+等しいだけの再計算ではなく、まさに同一のローカル)を検査する --
+そうであるものは、どの反復をまたいでも決して再代入されないことが
+証明されているので、理由なく`goto`のたびに持ち運ぶのではなく、
+`loop`自身のパラメータリストと`initial`から丸ごと除去される。
+
+そのパラメータが次にどうなるかは、それがネイティブshadow適格
+だったかどうかで決まる:
+
+- **Boxedのまま**: 他には一切何も変わらない -- 自身の元のIDは今も、
+  そして引き続き、囲む関数自身のトップレベル引数であり、ループ本体
+  のどこからでも、このパスが実行される前と全く同じように直接読める。
+- **ネイティブshadow適格だった場合**: `loop`の*外側*に置かれる、
+  一度限りの`let`+`drop`のペアへホイストされる -- 第9節の下記
+  `Compiler.RC2.ConAltNative`の例が、destructureされたフィールド
+  自身のネイティブ読み取りをキャッシュするために使っているのと
+  まったく同じイディオムを再利用したもの(`Compiler.RC2.Loop`自身の
+  `applyLoop`がこれをそのまま再利用し、1つのalt自身の本体ではなく
+  ループ全体をラップする)。
+
+実例 -- `Test19LoopInvariantParam.idr`の`sumWithTag tag limit acc n =
+if n >= limit then acc + cast (length tag) else sumWithTag tag limit
+(acc + n) (n + 1)`(`tag : String`と`limit : Int`はどちらも全ての
+再帰呼び出しを通じて完全に変更なしで糸通しされ、実際に変化するのは
+`acc`/`n`だけ):
+
+```
+def {idris2rc2_worker_Main_sumWithTag:0}  (fun args=["v0:Boxed", "v1:Boxed", "v2:Boxed", "v3:Boxed"] ret=Native Int)
+  let v12 : Native Int =
+    v1
+  drop [v1]
+  loop ["v13:Native Int", "v14:Native Int"] initial=[v2, v3] prologueDrop=[v2, v3]
+  cmp >=Int [v14, v12]
+  then
+    ...
+    op +Int [v13, v4] postDrop=[v4]
+  else
+    ...
+    continue loop [v10, v11]
+```
+
+読み方: `loop`自身のパラメータリストにはエントリが2つしかない
+(`v13`/`v14`、`acc`/`n`) -- `tag`(`v0`)と`limit`(`v1`)はどちらも
+完全にそこから消えている、たとえ`limit`が本物のネイティブshadow
+適格であっても(毎回の反復で`cmp >=Int`のオペランドとして読まれる、
+第8節の`BenchLoop`自身の`n`の例と同じ)。`limit`自身のshadow
+(`v12`)は代わりにループの直前でただ一度だけ束縛される --
+`let v12 : Native Int = v1`は`v1`(その時点ではまだ完全にBoxedで、
+まだ完全に所有されている)をちょうど一度だけネイティブに読み、
+`drop [v1]`が直後に元の値を解放し、ループ本体内での`limit`への
+ネイティブコンテキストの読み取り(上記の`cmp >=Int [v14, v12]`)は
+どの反復でも`v12`を直接使い、二度と再読み込みや再unbox化はしない。
+`tag`(`v0`)はラップが一切不要 -- Boxedのまま、`let`前置部分にも
+`loop`自身のパラメータリストにも現れず、残る唯一の使用(上記には
+示していないベースケースの`length tag`)は単にworker自身の`v0`引数
+を直接読むだけで、このパスが一度も実行されなかったかのようになる。
+
+## 8.6. ホイストされた(ループ不変な)式を読む
+
+パラメータ全体だけでなく、ループ本体自身の*無条件prefix*
+(最初の`case`/`cmp`より前)に座る`let`で、その値がループ外部の
+オペランドしか読まない場合も同様にホイストされ、`loop [...]`の
+完全に外側に出る -- `tests/Test20LoopInvariantExpr.idr`の
+`bound = limit * 2`(どちらも`Native Int`、`limit`自体は第8.5節に
+従って既にホイストされたネイティブshadowパラメータ):
+
+```
+let v12 : Native Int =
+  v1
+drop [v1]
+let v3 : Native Int =
+  op *Int [v12, #2]
+loop ["v9:Native Int", "v10:Native Int"] initial=[v1, v2] prologueDrop=[v1, v2]
+cmp >=Int [v10, v3]
+...
+```
+
+`v3`(`bound`)は`v12`(`limit`)自身の`let`の*内側*に座る -- `v12`を
+読むから。ここでの順序は常に、ホイストされた式を、それ自身が依存
+しているホイスト済みパラメータ束縛の内側にネストする。この形で
+ホイストされるのは`Native`/`RInlineNative`な`Rep`の`let`だけ --
+`Boxed`なものは、その値がループ不変なオペランドしか読まない場合
+でも常に`loop [...]`の内側に留まる。なぜなら、その*自身*の、その
+先での生存は、ある反復がどちらの枝を取るかに依然として依存しうる
+から(`tests/Test21BoxedInvariantNotHoisted.idr`はまさにこれの
+専用の負のケーステスト -- 完全な理由付け、この制限を追加して修正
+した実際の二重解放も含めて、`rc2/doc/loop-conversion.md`の
+「ループ不変式のホイスティング」節参照)。
+
+## 8.7. 沈められた(枝ローカルな)式を読む
+
+`Compiler.RC2.Sink`(`doc/branch-sinking.md`参照)は
+`Compiler.RC2.Loop`の直後に実行されるので、その自身の効果は
+まさに同じダンプに現れる: かつて`case`/`cmp`の直上に座っていて
+その枝のうち1つでしか読まれない`let`が、その1つの枝の*内側*へ
+代わりに移動し、それを必要としなくなったもう一方の枝自身の
+`drop [...]`は消える。第8.6節のホイスティング(計算をループの
+*外へ*動かす)のちょうど鏡像 -- こちらは計算を、実際にそれを必要と
+する1つの枝の中へ*動かし*、実行頻度をさらに減らす(ホイスティング
+の「呼び出しごとに一度、無条件で」に対して、「その枝が実際に
+到達された場合のみ」)。第8.5/8.6節とは異なり、これにはループが
+一切不要 -- `tests/Test22BranchSinking.idr`自身のダンプは、通常の
+非再帰関数の中で全く同一の形を示す。`tests/
+Test21BoxedInvariantNotHoisted.idr`自身の`Sink`実行後のダンプは、
+第8.6節が上で意図的に`loop [...]`の内側に残した、まさにその
+`let v5 = ...`に対してこれが発火する様子を示す(そのまさに同一の
+束縛について、ホイスティングとsinkingは競合するのではなく補完
+し合う -- `doc/branch-sinking.md`自身の「Sinking versus hoisting」
+節参照)。
+
 ## 9. 実例で読む
 
 ### コンストラクタのin-place再利用(`Test1Basics.idr`の`List.takeUntil`風コード)
@@ -351,7 +471,7 @@ op <Integer [...] ...`に続いて通常の`case v2 of 0 -> ...; _ -> ...`
 ## 10. 早見レシピ
 
 - **「自分の自己末尾再帰関数は`goto`ループになったか?」** --
-  `grep -A1 "^def YourFn" out.crexpr`し、次の行が`loop [...]`に
+  `grep -A1 "^def YourFn" out.rcexpr`し、次の行が`loop [...]`に
   なっているか確認する。
 - **「特定のループパラメータはネイティブshadow化されたか?」** --
   同じ`loop [...]`行自身のパラメータリストで、目的のパラメータに
@@ -387,7 +507,7 @@ op <Integer [...] ...`に続いて通常の`case v2 of 0 -> ...; _ -> ...`
 - `rc2/src/Compiler/RC2/Pretty.idr` -- レンダラー本体
   (`prettyExp`/`prettyDef`/`prettyProgram`、第5節の構文は全てここ)。
 - `rc2/src/Compiler/RC2/RC2.idr` -- `compileExpr`自身の
-  `--directive dumprcexp`配線(`.crexpr`ファイルを書き出す)。
+  `--directive dumprcexpr`配線(`.rcexpr`ファイルを書き出す)。
 - `rc2/src/Compiler/RC2/RCExp.idr` -- ここでレンダリングされている
   実際のIRそのもの。上記で触れた各コンストラクタの正式なドキュメント
   コメントを持つ。

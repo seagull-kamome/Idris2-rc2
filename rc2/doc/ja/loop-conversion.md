@@ -52,13 +52,16 @@ Idris2自身のコンパイル済みIRは*あらゆる*呼び出しを一様に�
 
 ```
 Lifted (Compiler.LambdaLift)
+  -> Compiler.RC2.Inline            (全プログラム inline化, Lifted -> Lifted)
   -> Compiler.RC2.RC.normalize      (Phase 1: ANF風、ネイティブ型推論)
   -> Compiler.RC2.RC.annotate       (Phase 2: 所有権 -- RDup/RDrop/RFree)
   -> Compiler.RC2.Reuse             (コンストラクタのin-place再利用)
-  -> Compiler.RC2.MutualLoop        (相互末尾再帰 -> 1つの合成関数へ)
+  -> Compiler.RC2.ConAltNative      (ネイティブシャドウなフィールドキャッシュ)
+  -> Compiler.RC2.MutualLoop        (相互末尾再帰 -> 1つの合成関数へ -- 本文書)
   -> Compiler.RC2.Loop              (自己末尾呼び出し、MutualLoop自身の
                                       合成関数も含む -> RLoop/RLoopContinue、
-                                      加えてネイティブshadow昇格)
+                                      加えてネイティブshadow昇格 -- 本文書)
+  -> Compiler.RC2.DualABI           (worker/wrapper合成、呼び出し箇所書き換え)
   -> Compiler.RC2.Emit              (純粋に機械的なRCExp -> C)
 ```
 
@@ -75,8 +78,8 @@ Lifted (Compiler.LambdaLift)
 ## IRの形: `RLoop` / `RLoopContinue`
 
 ```idris
-RLoop         : FC -> (loopParams : List (Int, Rep)) -> (initial : List RCLocal) -> RCExp -> RCExp
-RLoopContinue : FC -> List RCLocal -> RCExp
+RLoop         : FC -> (loopParams : List (Int, Rep)) -> (initial : List RCLocal) -> (prologueDrop : List RCLocal) -> RCExp -> RCExp
+RLoopContinue : FC -> List RCLocal -> (postDrop : List RCLocal) -> RCExp
 ```
 
 `RLoop`は末尾再帰ループ全体をラップする: `loopParams`はこのループ
@@ -90,6 +93,27 @@ RLoopContinue : FC -> List RCLocal -> RCExp
 位置の値はループを抜けて`RLoop`ノード自身の結果になる。
 `Compiler.RC2.Loop`のみが生成する。`RC.idr`自身のPhase 1/2はどちらも
 一切構築しない。
+
+`RLoop`自身の`prologueDrop`: このループの中でネイティブシャドウを
+獲得した(下記「ネイティブshadow昇格」参照)、囲む関数のトップレベル
+引数のうち、shadow宣言が実行された後は自身の元のBoxed形が確実に
+死ぬものすべて。`applyLoop`はこれを一度だけ計算しデータとして
+持ち運ぶ -- `Compiler.RC2.Reuse`自身の`dupOnShared`(発行時に再導出
+するのではなく、IR構築時に一度だけ決定する)と同じ考え方である。
+shadow化された各パラメータの元の値が常にそうなるとは限らない:
+worker側のシグネチャを`Compiler.RC2.DualABI`が後でネイティブへ昇格
+させたものは、そのworker自身のレンダリングにおいてそもそも本物の
+Boxed値を一度も持たなかった -- まさにこれが理由で、このリストは
+`initial`/`loopParams`と異なり「`stripOwnership`」(下記)自身の対象
+の1つになっている: `synthesizeWorker`は、これを通常の`RDrop`の変数
+リストと同じように、昇格されたidをそこから除外しなければならない。
+さもなければworkerは、自身のシグネチャがもはやboxしない値を二重に
+drop/ネイティブ値をdropすることになる。
+
+`RLoopContinue`自身の`postDrop` -- shadow昇格されたループパラメータ
+位置を養うためにネイティブとして読む必要のあるBoxed引数すべて --
+は下記「発見・修正したバグ」#5で説明されている。その欠落が招いた
+リークが、このフィールドが存在する理由である。
 
 ### なぜこの形なのか、もっと単純な形ではだめだったのか
 
@@ -272,6 +296,86 @@ applyLoop : Name -> RCDef -> RCDef
    `Compiler.RC2.Emit`の`declareLoopParam`が(変更のない`RBoxed`
    パラメータについてはスキップされる)unbox変換を行う。
 
+### ループ不変パラメータの除去
+
+ある外部パッケージ自身のホットループの`--directive dumprcexpr`出力を
+読んでいて見つかった(`rc2/BENCHMARKS.md`の2026-08-18のエントリ参照):
+どの反復をまたいでも実際には一切変化しないループ搬送パラメータが、
+それでも`loopParams`/`initial`/毎回の`continue`自身の`args`に現れ
+続けており、ダンプ上では本物に変化するものと見分けがつかなかった。
+ここでの動機はIRの*正確さ*であり、生の速度ではない(結果として
+`Compiler.RC2.Emit`自身の`zip`ベースの発行も縮小するが、これは
+副作用であって主眼ではない) -- `.rcexpr`ダンプの読者は、`loopParams`
+がループが実際に再代入する値だけを正確に列挙していると信頼できる
+べきである。
+
+**検出**: `applyLoop`の既存のネイティブshadow昇格が既に走った後
+(`fullLoopParams`、`withPostDrop` -- 上記ステップ4までの全て、
+完全に無改造)、`collectContinueArgs`が本体を歩いて全ての
+`RLoopContinue`自身の`args`リストを収集する(`fillLoopContinuePostDrop`
+自身が既に歩いているのと同じ木構造 -- 構造上1つの関数につき1つの
+`RLoop`なので、入れ子を心配する必要は一切ない)。次に
+`invariantLoopParamIds`がそれら全体を畳み込む: 「全ての位置は不変
+である」から出発し、収集した各`args`リストについて「このcontinueは
+この位置に*まさにこの同一のローカル*(ネイティブshadow化されていれば
+ループパラメータ自身のidのshadow id、そうでなければ元のパラメータ
+id、いずれも`RCLoc`)を供給しているか」をANDで畳み込む -- 文字通り
+*全ての*continueが一致した位置だけが生き残る。Boxedとネイティブ
+shadow化された位置は同一に検査される。この点で両者を区別するもの
+は何もない。
+
+**書き換え**: 生き残った変数は`loopParams`/`initial`から除去され
+(`elideInvariantContinueArgs`経由、同じ木の歩き方をもう一度使い、
+全ての`RLoopContinue`自身の`args`から対応するスロットを落とす)、
+ネイティブshadow化されていたかどうかに応じて2通りのいずれかで
+処理される:
+
+- **Boxedのまま**: これ以上何もすることはない。自身のidは既に、
+  そして引き続き、囲む関数自身のトップレベル引数である --
+  ループ本体のどこからでも一切の宣言なしに直接読める(通常の
+  変化しない`RBoxed`ループパラメータについて`Compiler.RC2.Emit`
+  自身の`declareLoopParam`が既に特別扱いしているのと全く同じ
+  「再宣言不要」のケース、下記「発行」節参照 -- 除去されたBoxed
+  パラメータは、単にその特別扱いがもはや名目上すらループパラメータ
+  でない何かにも適用されるようになった、というだけのことである)。
+- **ネイティブshadow化されていた場合**: `RLoop`*全体*をラップする
+  1回限りの`RLet`+`RDrop`のペアへホイスト(hoist)される --
+  `RLet emptyFC sid (RNative ty) (RV emptyFC (RCLoc p)) (RDrop emptyFC
+  [RCLoc p] ...)`。これはこのパスのために発明された新しいIR形状では
+  ない: `Compiler.RC2.ConAltNative`自身の`shadowAltFields`の慣用形
+  (そのモジュール自身のドキュメント、および`doc/reading-the-ir.md`
+  内の実例参照)を、Boxed値のネイティブ読み取りをちょうど一度だけ
+  キャッシュするために、そのまま再利用したものにすぎない -- ラップ
+  される対象(1つの`case`枝自身の本体ではなくループ全体)だけが
+  異なる。`prologueDrop`はこれらのidを除外する(自身のdropは今や
+  この明示的な`RDrop`になっており、残る本物に変化するshadow化された
+  各パラメータについて`Compiler.RC2.Emit`自身の`emitLoopInto`が
+  引き続き処理する一括放出の`prologueDrop`リストではない)。
+
+ここにはMutualLoopのアリティ埋め合わせNULLの危険は存在しない
+(`Compiler.RC2.Emit`自身の`declareLoopParam`とは対照的で、
+そちらはまさにこの理由で明示的なNULLガードが必要になる --
+自身のドキュメントコメント参照): `invariantLoopParamIds`は
+*全ての*continueが同一の本物のローカルを供給する位置だけを受理
+するので、1回でも(`Compiler.RC2.MutualLoop`自身の末尾スロット
+埋め合わせによって、下記そのモジュール自身の節参照)`RCNull`/`[__]`
+を供給された位置は検査に完全に失敗し、除去の候補には決してならない。
+
+**DualABIとの相互作用**: `Compiler.RC2.DualABI`自身の
+`paramEligibility`は、かつて本体の先頭で`RLoop`を直接パターン
+マッチし、`argIds`をその`loopParams`と位置ベースで`zip`していた。
+両者が常に同じ長さであることに依存していたのである。除去はこの
+不変条件を破壊するので、`paramEligibility`は今や、入れ子の`RLoop`
+を検査する前に先頭の`RLet`連鎖を剥がすようになり(`findLoopThroughLets`)、
+各パラメータを位置ではなくidで(`SortedMap`)引くようになった --
+剥がした`RLet`群にも`loopParams`にも見当たらないidは正しく
+「ネイティブでない」と読める(除去されたBoxedパラメータはそもそも
+一度もネイティブだったことがない)。`DualABI`の`RLoop`を意識する
+他の2つの関数(`tailValueReps`/`applyCallSiteRewriteBody`)は一切の
+変更を必要としなかった -- どちらも既に、中身が何であれそこへ至る
+までの任意の`RLet`/`RDrop`前置部分を汎用的に再帰しているので、
+この新しいラッピング形状は既にそれらが期待している通りのものだった。
+
 #### `renameRCExp` -- 木全体の置換
 
 ```idris
@@ -360,6 +464,106 @@ Boxedだったパラメータ自身のdup/drop生存期間について決めて�
 `stripOwnership`はこれを正しく手つかずのままにする(スクルティニーの
 位置自体に除去すべき所有権ノードは付いていない)が、これがまさに
 実際の発行側のバグを生んだ隙間でもある -- 下記「発見したバグ」参照。
+
+### ループ不変式のホイスティング
+
+パラメータ除去が存在するようになった時点で自然に出てくる後続の
+問い: トップレベルパラメータだけでなく、ループ本体*内の式*で、
+反復をまたいでその値が実際には一切変化しないものについてはどう
+か? Idris2は正格評価の言語であり、`ROp`(算術)/`RCon`
+(コンストラクタ構築)は、観測可能な副作用を*決して*持ち得ない
+唯一の2つの`RCExp`形状である(本物の副作用は常に、自身の
+`%World`トークンの糸通しを伴う`RExtPrim`を経由する) -- したがって
+原理的には、いずれの形状も、自身のオペランドの全てがそれ自体
+ループ不変であるときには常に、ループの外へ丸ごとホイスト可能な
+はずである。
+
+**スコープ: ループ本体自身の無条件な前置部分のみ。** ループ自身の
+先頭から到達可能な、最初の分岐(`RConCase`/`RConstCase`/`RCmpCase`)
+に当たる*前*の直線的な`RLet`連鎖だけが走査される -- 分岐のたった
+1つの枝の内側に座っている候補は完全に手つかずのままにする(これが
+`TODO.md`が追跡している、まだ未解決の「単一枝case hoisting」/
+`RCmpCase`の隙間であり、ここでは意図的に試みていない)。これは
+恣意的な制約ではなく、ある反復が*どの*分岐を取るかについて一切
+推論する必要なしにパス全体を証明可能に安全にするものそのもの
+である: この前置部分にあるものは全て、`loop:;`を通るたびに、最初
+の1回も含めて既に実行される(このラベルはループ自身の繰り返し
+領域のまさに先頭にあり、いかなる終了チェックよりも前にある) --
+したがってそこにある式は、関数が呼ばれた時点で少なくとも一度は
+実行されることが既に保証されている。それをループの前に一度だけ
+実行するようホイストすることは、それが実行される回数を*減らす*
+ことしかできない。「一度も到達しない」実行を「今や到達する」もの
+に変えることは決してできない。たった1つの分岐枝の内側にあるもの
+には、この保証がない -- 最初のチェックでループが抜けてしまえば、
+一度も実行されない可能性がある。
+
+**検出(`isInvariantExpr`)**: `variant` -- 除去*後*の、最終的な
+`loopParams`自身のid集合 -- が与えられたとき、`RLet`自身の`value`
+(`opNativeUsesThrough`が既に剥がしているのと同じ先頭の`RDup`/
+`RDrop`/`RFree`/`RReleaseReuse`形状を通して剥がされる)は、それが
+裸の`ROp`/`RCon`であり、その全ての`RCLocal`オペランドが`variant`
+の要素で*ない*場合に適格となる。他に何も計算する必要はない:
+除去後は、`loopParams`に含まれないものは構造上既にループ外部の値
+である -- 普通のトップレベル引数か、この同じパス(あるいはその前の
+除去パス)が既にホイストした何かのいずれかである -- したがって
+*最終的な*`loopParams`に対する単一のメンバーシップ検査だけで
+完全な不変性テストになり、別途の不動点データフローパスは不要
+である。さらに2つの除外があり、どちらも保守的である: `ROp`自身の
+`lazy`フィールドは`Nothing`でなければならない(遅延/`Lazy`な演算
+の評価*タイミング*自体が観測可能であり、上記の「正格評価、位置は
+関係ない」という論法の外側にある)、そして`RCon`自身の`reuseFrom`
+は`Nothing`でなければならない(再利用候補は特定の`RReuseOffer`
+自身の反復ごとの実行時一意性チェックに紐づいており、このパスが
+それを再配置する権限は一切ない)。
+
+**3つ目の除外、苦労の末に見つかったもの、健全性に不可欠**:
+ホイスティングは、その束縛自身の宣言された`Rep`が`RNative`/
+`RInlineNative`である場合*のみ*安全である -- `RBoxed`では決して
+安全ではない。上記の論法(オペランドは自身の元の位置を過ぎても
+読み続けて安全)は、ホイストされる束縛自身の*結果*については何も
+語っていない。`Boxed`な結果は、*ループ本体の内側*に自身独自の、
+別の生存の物語を持っており、最初の分岐で止まる走査からは見えない:
+もしその結果が、前置部分のすぐ後に続く分岐のたった1つの枝でしか
+実際には使われない場合(例えばループの終了値でしか使われず、
+ループを続ける枝では一度も使われない場合)、`Compiler.RC2.RC`
+自身の`annotate`は既に*もう一方の*枝(それを使わない方)の先頭に
+`drop`を置いている -- 「1つの枝の入口につきたかだか1つの`RDrop`」
+が所有権システム全体が拠って立つ規約だからである。そのdropは
+このパス自身の走査境界を過ぎた場所に座っている。そのdropの下から
+構築処理をホイストしてしまうと、そのdropは古くなる: 以前は新鮮な、
+反復ごとに新しく確保された値を解放していたものが、使わない方の
+枝を取るたびに、*その1つの*、共有された、ホイストされた値を二重
+解放するようになってしまう。これはこのパスを実装している最中に
+直接再現された -- ループの終了枝でしか使われないBoxed-`Rep`な
+不変`RCon`が、`isNativeRep`ガードが存在する前は`malloc():
+unaligned tcache chunk detected`でクラッシュし、`valgrind`で本物の
+二重解放であることが確認された(まさにこの形状のための恒久的な
+回帰テストである`tests/Test21BoxedInvariantNotHoisted.idr`参照)。
+ネイティブな結果はこの問題全体を構造的に回避する: ネイティブな値は
+このランタイムのどこにおいても一度もdup/dropされないので、いかなる
+枝も古いdropを1つも保持し得ない。現在の型システムでは、これは
+`RCon`のホイスティングが、実装されていて正しくはあるものの、実際
+にはほぼ一度も発火しないことを意味する(一般的なADT構築は常に
+`Boxed`である) -- 実際に恩恵を受けるケースに到達するには、上記の
+まだ未解決の単一枝case hoistingの隙間と同じ「使わない方の枝の中を
+見て、調整する」機構が必要であり、ここでは試みていない。
+
+**書き換え(`hoistInvariantPrefix`)**: 前置部分を一度歩き、`variant`
+を前方へ糸通しする -- ホイストされなかった`RLet`自身の`var`はそこに
+追加される(保守的に: ホイストされなかった束縛に依存するものは
+それ自身も留まらなければならない。その束縛自身の計算は依然として
+ループの内側でしか起きないからである)。ホイストされたものの`var`
+は意図的に追加*しない*。そうすることで、それだけに依存する後続の
+前置部分の束縛も、同じ単一パスの中で(1段上のパラメータ除去自身の
+論法を反映して、不動点反復は不要)適格であり続けられる。ホイスト
+された`(id, Rep, value)`の三つ組を自身の元の相対順序のまま、書き
+換えられた残りの部分と並べて返す。`applyLoop`はこの`RLet`ノードを
+直接ラップする -- 新しいIR形状ではなく、既存の不変shadowパラメータ
+の`RLet`群の*内側*にネストする(上記の節参照)。ホイストされた式が
+それら自身の1つを読むことがありうるからである
+(`tests/Test20LoopInvariantExpr.idr`自身の実例で言えば、ネイティブ
+shadow化された不変パラメータ自身のshadow idを読む、まさに
+`bound = limit * 2`)。
 
 ## `Compiler.RC2.MutualLoop`: 相互末尾再帰
 
@@ -668,41 +872,150 @@ dropがあったとしても無害だっただろう -- しかしこの不変条
    `Test10MutualLoop.idr`)、全ベンチマーク、いずれも
    `idris2 --cg refc`とバイト完全一致/クラッシュなし。
 
+5. **`RLoopContinue`が、ネイティブとして読んだBoxedな継続引数を一度
+   もdropしていなかった。加えてもう1つ独立した、`ROp`自身の
+   Boxed結果発行におけるリーク。** (最終的には差し戻された、
+   `TODO.md`参照)全プログラムinline化パスを経由して表面化した
+   `valgrind`検出のリークを調査していて見つかった -- しかし実際の
+   原因は完全に既存のもので、そのパスとは無関係だと判明した。同じ
+   一般的な形状(`case`/`if`値の`RLet`で、その全体のRepを
+   `Types.repOf`が一度もネイティブへ昇格させないもの、これがネイティブ
+   shadow化されたループパラメータの次の値を養う)上にある、2つの
+   別々のバグ:
+   - **`RLoopContinue`**: Boxed値をネイティブとして読む他の全ての
+     RCExp構文(`ROp`、`RCmpCase`、`RAppNameRep`、それぞれ自身の
+     `postDrop`フィールドを持つ)とは異なり、`RLoopContinue`
+     (`applyLoop`自身の自己末尾ループ継続ノード)には`postDrop`
+     フィールドが一切なかった -- `tryEmitLoopContinue`は、まだ
+     Boxedな継続引数を`rcVarToNativeC`経由で読んで次の反復のネイティブ
+     shadowを構築していたが、そのBoxedな源をdropすることが一度も
+     なかった。`RLoopContinue`自身に`postDrop : List RCLocal`を追加
+     し、`applyLoop`内の新しい`fillLoopContinuePostDrop`パスがこれを
+     埋めることで修正した(`loopParams`が判明した時点で1度だけ実行
+     され、`Compiler.RC2.DualABI`自身の`applyCallSiteRewriteBody`が
+     やっているのと同じ形で`SortedMap Int Rep`を糸通しするが、
+     `Loop.idr`は`DualABI.idr`をimportできないので新規に書かれて
+     いる)。
+   - **`ROp`自身のBoxed結果発行(`Compiler.RC2.Emit`)**: たまたま
+     同じテスト形状の上に住んでいたために見つかっただけの、完全に
+     別のバグ。`Types.repOf`があるループ内の`ROp`自身の結果は
+     Boxedのままにすると決めたのに、そのオペランドの1つが個別には
+     ネイティブである場合(例えば`case`分岐内の連鎖した
+     `(acc * 3) + 1`で、その全体のlet束縛はBoxed)、`Emit.idr`の
+     `rcVarToBoxedC`は、Boxed C プリミティブを養うためにその場で
+     新しい無名のbox(`idris2rc2_mkInt64(...)`)を捏造する -- この
+     一時的なboxを名付ける場所がどこにもないため、一度も解放され
+     なかった。`RLoopContinue`のケースとは異なり、これはループに
+     特有の話では全くない: Boxed結果の演算がネイティブなオペランドを
+     読むあらゆる場所で発火しうる、一般的な`ROp`発行の隙間である。
+     新しく捏造されたboxがあればそれに名前を付け、その演算が読み
+     終えた直後にdropする`boxOpArg`によって修正された。
+
+   これら2つのバグ両方が、`rc2/tests/Test16LoopContinuePostDrop.idr`
+   (それらを最初に表面化させたinline化パスへの依存を一切持たずに
+   専用に構築された再現)自身のリークが、`RLoopContinue`の修正だけ
+   では*半分にしかならなかった*理由を説明している -- 完全にクリーン
+   になるには`ROp`の修正も必要だった。正確な形状はそのテスト自身の
+   ドキュメントコメント参照。フルマトリクスに対して再度検証済み:
+   19/19 refc-suite、全スモークテスト、既知の長年記録済みの
+   `Test1Basics`リーク(`KNOWN-BUGS.md`参照)を除く全てのリーク検知
+   対象テストでvalgrindクリーン。
+
 ## 既知の限界: ネイティブshadowの適格性は裸のトップレベルスカラーどまり
 
 実際のサードパーティパッケージ(`idris2-missing-containers`のハッシュ
 アルゴリズム群 -- 完全な数値は`rc2/BENCHMARKS.md`の2026-08-14付の
 エントリ参照)に対して計測したところ、あるループパラメータが昇格
 されるのは、それ*自身*がネイティブ対応型のローカルとして`ROp`/
-`RCmpCase`のオペランドに直接読まれている場合のみである。これが完全
-に見逃す一般的な実世界のパターンが、単一フィールドの`newtype`風
-コンストラクタでラップされた数値状態である(例えば
-`data FNV1a = MkFNV1a Bits64`。あのパッケージの`HashAlgorithm`
-インスタンスすべてが使うパターン)。ここでは、ループ自身のトップ
-レベルパラメータは*コンストラクタ*であり、ネイティブな値はループ
-本体内の明示的なdestructureの後にしか現れない。`nativeArgType`は
-そのdestructureの先を見通してネイティブな使用をトップレベル
-パラメータへ帰属させることは一切ないので、そのようなパラメータは
-常に`RBoxed`のまま -- 正しく保守的である(何も壊れてはいない)が、
-本来ありうるほどには効果的でない。
+`RCmpCase`のオペランドに直接読まれている場合のみである。
 
-考えられる拡張: 「ループパラメータ`p`の構造的な使用がすべて同じ
-単一フィールドコンストラクタの`case p of MkX v => ...`という形の
-destructureであり、`v`自身がネイティブ対応である」ことを認識し、
-*フィールド*をshadow昇格し、Boxedコンテキストでの使用があれば
-そのつど再ラップ(`con MkX [shadow]`)する。ここでは試みていない --
-スコープと正しさ(コンストラクタ自身のタグ/形状が、依然「一度だけ
-実行される」-- 入口 -- の側で表現される必要があり、これは裸の
-スカラーの入口一度きりのunboxとは根本的に異なる形の書き換えである。
-「この値がすべてのパスに沿ってどこでも正確にこのコンストラクタ
-として存在するか」という、答える必要のある問いは、本書自身の
-`nativeArgType`が現在行っていることよりも、`Compiler.RC2.Reuse`
-自身の適格性解析の精神に近い)は、現行のものの小さな拡張ではなく、
-独自の専用の設計パスを必要とするだろう。
+**元々ここでは`newtype`のdestructureの隙間だと誤診断していた** --
+この文書はかつて、単一フィールドの`newtype`風コンストラクタで
+ラップされた数値状態(例えば`data FNV1a = MkFNV1a Bits64`、あの
+パッケージの`HashAlgorithm`インスタンスすべてが使うパターン)が
+見えないのは、ループ自身のトップレベルパラメータが「コンストラクタ」
+であり、ネイティブな値は`nativeArgType`が見通したことのない明示的な
+destructureの後にしか現れないからだと主張していた。**これは誤り
+だった。** 最小の再現例に対する`--directive dumprcexpr`出力を直接
+確認したところ: 本物の`newtype`適格なコンストラクタは、rc2が
+`Lifted` IRを目にする前の、Idris2自身のフロントエンドによって、
+構築もマッチングも*完全に*消去されている(upstream自身の
+`Compiler/LambdaLift.idr`の`MkLCon`自身の`nt`フィールドに関する
+ドキュメントコメント参照: 「バックエンド実装はこの引数を使う必要が
+ない。newtypeのunboxingはIdris 2コンパイラ自身が管理するからで
+ある」) -- rc2側の解析がdestructureすべきコンストラクタはそもそも
+一度も残っていなかったのであり、rc2自身の`RCDef`の`newtype=`
+メタデータ(`Compiler.RC2.Pretty`自身のダンプフィールド)は純粋に
+表示のためだけに持ち運ばれているだけで、`Compiler.RC2.Loop`/
+`DualABI`のどちらからも一切参照されない。
 
-同じベンチマークの支配的なコストが依然として影響を受けない、無関係
-な理由がもう2つある。上記だけを修正すれば、その特定のベンチマークで
-大きく針が動くと決めつける前に、心に留めておく価値がある:
+本当の原因は、素の`Bits64`パラメータとコンストラクタが一切見当たら
+ない状態で*同一の*症状を再現することで確認された: 複数演算からなる
+ANF連鎖(例えばハッシュのステップ形の`(v \`xor\` cast b) * k`)は、
+トップレベルパラメータ自身のネイティブコンテキストでの読み取りを、
+外側のネイティブ型`RLet`自身の`value`に直接ではなく、*内側の*
+`RLet`自身の`body`(その内側letの最後の演算)に置く --
+`nativeArgTypes`自身の`opNativeUsesThrough`ヘルパーは、これまで
+後者の形しか見ていなかった。
+
+修正: `opNativeUsesThrough`は今や、入れ子の`RLet`自身の`body`も
+再帰するようになり、*同一の*外側の、既に決定済みのネイティブ`Rep`
+を、連鎖の末端に座る裸の`ROp`まで下方へ伝播させる -- 依然として
+以前と全く同じ程度に保守的である(入れ子の`RLet`自身の独立した
+`value`はここでは特別扱いされない。`nativeArgTypes`の既存の無条件
+再帰が既に独立にそれをカバーしており、*その*letの自身の`Rep`で
+ゲートされている)。この修正の以前の、より広範な試みは、代わりに
+*どんな*裸の`ROp`でも(その上に一切ネイティブな`RLet`が囲んで
+いないものも含めて)、その演算自身の`opResultRep`だけから推論して
+ネイティブとして扱っていた(`Compiler.RC2.DualABI`自身の
+`tailValueReps`が*戻り値*の適格性に既に使っているのと同じ情報源)。
+そのバージョンは`Test9SelfTailLoop`で本物の、`valgrind`が検出する
+リークを引き起こした: `tailValueReps`自身のペアになった、歩調の
+揃った使い方(同一の演算に対する戻り値適格性が一緒に計算されるので、
+両者は決して食い違わない)とは異なり、`nativeArgTypes`の結果は
+`Compiler.RC2.Loop`自身のループパラメータ昇格も養っており、これは
+どの関数の戻り値適格性が決定される*よりも前に*実行される -- 裸の
+末尾はその時点でまだBoxedとしてレンダリングされる可能性があり、
+実際にそうなった。推測されたネイティブ性の強さだけを頼りに、まだ
+Boxedな読み取りの所有権帳簿を剥ぎ取ってしまうと、新たに再box化
+された値が、それをdropするものを一切持たないまま残されてしまう。
+`rc2/tests/Test13NativeArgChain.idr`参照(`chain`が修正された形、
+`flat`は囲む`let`が一切ない単一の*無保護な*`ROp`で、意図的に
+`RBoxed`のまま残されている -- 対照群として同じテストファイルに
+残されている)。
+
+これは*ループでない*関数自身のパラメータについての隙間を閉じ、
+同一に、`Compiler.RC2.DualABI`のworkerパラメータ適格性についても
+1つ閉じる(例えばループの内側から呼ばれる、`step`形の要素ごとの
+ヘルパー) -- `--directive dumprcexpr`で確認済み: そのようなヘルパー
+自身のworkerは今や、そのパラメータを正しく`Native`と宣言する、
+`Boxed`ではなく。
+
+**まだ未解決な点**: ループ自身が搬送するアキュムレータは、そのような
+ヘルパーへの呼び出しを通して糸通しされているというだけでは、依然
+shadow昇格され*ない*。`loop acc (b :: bs) = loop (step acc b) bs`
+において、`acc`は*`loop`自身の本体の内側で*`ROp`/`RCmpCase`の
+オペランドとして直接読まれることは一度もない -- `step`への呼び出し
+への*引数*としてしか現れない(上記の修正により、今や`step`自身の
+正しくネイティブパラメータ化されたworkerを対象とする`callRep`に
+なっている)。`nativeArgTypes`には「呼び出し先自身のネイティブ
+シグネチャworkerがネイティブに受け取る位置への引数として渡された」
+ことを呼び出し元自身のパラメータのネイティブコンテキストでの使用
+として認識するケースが無いので、`loop`自身のアキュムレータはboxed
+な`RLoop`パラメータのままであり、その呼び出しサイトで毎回の反復ごと
+にunbox化・再box化される -- この修正以前と正味の演算回数は同じで、
+単に`step`自身の本体の内側から`loop`自身の呼び出しサイトへ移動した
+だけである(`.rcexpr`の前後を直接diffして確認済み: 同一の`postDrop`
+回数、場所だけが移動)。これを閉じるには、`RAppNameRep`/`callRep`の
+引数位置を糸通しし、その対象自身の宣言された`argReps`と照合する
+新しいケースが必要になる -- ここでは試みていない。現時点では計画
+していない。プロファイリングで実際にこれが支配的だと分かれば見直す
+(`TODO.md`自身のこの点についての、ここを指すメモ参照)。
+
+動機となったベンチマークの支配的なコストが依然として影響を受けない、
+無関係な理由がもう2つある。上記だけを修正すれば、その特定の
+ベンチマークで大きく針が動くと決めつける前に、心に留めておく価値が
+ある:
 
 - インターフェース経由でディスパッチされる比較(`Ord`の`<=`など)は
   決して`RCmpCase`に融合されない -- その融合は直接の`PrimFn`比較
@@ -713,16 +1026,18 @@ destructureであり、`v`自身がネイティブ対応である」ことを認
 - `IOHashMap`自身のwrite/read経路は、数値アキュムレータループでは
   一切なく、`IORef`/配列アクセスとコンストラクタのリストの
   バケット走査が支配的である -- ネイティブshadow化は、どれだけ拡張
-  してもそのどちらにも一切届かなかっただろう。これはむしろ完全に
-  `TODO.md`の「デュアル呼び出し規約」のギャップ(ネイティブ表現が
-  通常の、ループでない呼び出し境界を一切越えない)の領分である。
+  してもそのどちらにも一切届かなかっただろう。
 
 ## ファイル
 
 - `rc2/src/Compiler/RC2/Loop.idr` -- `mapTailAppNames`(共有)、
   `collectBoundIds`/`Renaming`/`renameRCExp`(共有)、
   `nativeArgType`/`nativeArgTypes`/`opNativeUsesThrough`、
-  `stripOwnership`、`assignShadowIds`、`applyLoop`。
+  `stripOwnership`、`assignShadowIds`、`applyLoop`、
+  `collectContinueArgs`/`invariantLoopParamIds`/
+  `elideInvariantContinueArgs`(ループ不変パラメータの除去)、
+  `noneVariant`/`isInvariantExpr`/`isNativeRep`/`hoistInvariantPrefix`
+  (ループ不変式のホイスティング)。
 - `rc2/src/Compiler/RC2/MutualLoop.idr` -- `tailCallTargets`、
   `tarjanSCCs`/`strongConnect`(Tarjanのアルゴリズム)、`buildGroup`、
   `rewriteGroupTailCalls`、`applyMutualLoop`。
@@ -732,13 +1047,21 @@ destructureであり、`v`自身がネイティブ対応である」ことを認
 - `rc2/src/Compiler/RC2/Emit.idr` -- `declareLoopParam`、
   `emitLoopInto`、`tryEmitLoopContinue`、`LoopParams`、
   `rcVarToNativeC _ RCNull`節、`emitConstCaseInto`のRep対応の
-  スクルティニー処理。
+  スクルティニー処理(ループ不変パラメータの除去による変更なし --
+  理由は上記の該当節参照)。
+- `rc2/src/Compiler/RC2/DualABI.idr` -- `paramEligibility`、
+  `findLoopThroughLets`(両方ともループ不変パラメータの除去のために
+  更新済み、上記の該当節参照)。
+- `rc2/src/Compiler/RC2/ConAltNative.idr` -- `shadowAltFields`、
+  ループ不変パラメータの除去がネイティブshadow化された除去対象
+  パラメータに対してそのまま再利用する`RLet`+`RDrop`イディオム。
 
 ## 検証方法
 
-1. `cd rc2 && source ../env.sh && nix-shell -p idris2 gmp pkg-config --run 'idris2 --build rc2.ipkg'`
-2. `cd tests/refc-suite && nix-shell -p gcc gmp pkg-config --run './run.sh'` -- 19/19を期待する。
-3. `tests/Test9SelfTailLoop.idr` -- 自己末尾呼び出し変換自身の専用
+1. ビルド+回帰テストの基準線: `CLAUDE.md`の「Build & test」節参照
+   (`idris2 --build rc2.ipkg`、続けて`tests/refc-suite/run.sh`、
+   19/19を期待する)。
+2. `tests/Test9SelfTailLoop.idr` -- 自己末尾呼び出し変換自身の専用
    カバレッジ: パラメータの入れ替え(同時代入の一時スナップショット
    にとってのエイリアシングの危険)、1つの関数内の複数の異なる
    再帰分岐、変更なしでそのまま渡される引数(「move」であって
@@ -748,7 +1071,7 @@ destructureであり、`v`自身がネイティブ対応である」ことを認
    カウンタとその`String`のパススルー)、および`ROp`/`RCmpCase`
    ではなく`RConstCase`での使用経由で昇格されたループパラメータの
    例でもある(「発見したバグ」#3参照)。
-4. `tests/Test10MutualLoop.idr` -- 相互ループ変換自身の専用
+3. `tests/Test10MutualLoop.idr` -- 相互ループ変換自身の専用
    カバレッジ: アリティの異なるグループメンバー(スロットパディング
    -- 「発見したバグ」#4を捕らえた具体的な形)、3方向サイクル(単純
    なペア以上のSCC)、合成グループ内の同一メンバー内遷移(メンバー間
@@ -757,7 +1080,7 @@ destructureであり、`v`自身がネイティブ対応である」ことを認
    300,000〜500,000段の深さの相互再帰でCスタックが一切増加しない
    こと(`goto`変換が実際に発火していることの直接的な証拠であって、
    単に型検査を通っているだけではないことの証拠)。
-5. `tests/BenchLoop.idr`/`tests/BenchMutual.idr` -- 生成されたCの
+4. `tests/BenchLoop.idr`/`tests/BenchMutual.idr` -- 生成されたCの
    検査(`grep -n "^IDRIS2RC2_Value \*Main_sumTo$" -A20 build/exec/*.c`
    など)で、ネイティブshadow昇格がループ内蓄積パラメータすべてに
    適用された場合、ループ本体に`idris2rc2_mk*`/`idris2rc2_dup`/
@@ -765,9 +1088,32 @@ destructureであり、`v`自身がネイティブ対応である」ことを認
    結果として得られる、`idris2 --cg refc`との壁時計比較
    (それぞれ概ね60倍/11倍)は`rc2/BENCHMARKS.md`の2026-08-14付の
    エントリ参照。
-6. `--directive dumprcexp`(`doc/reading-the-ir.md`参照)を候補の
+5. `--directive dumprcexpr`(`doc/reading-the-ir.md`参照)を候補の
    関数に対して使うのが、生成Cを一切見る*前に*、ある定義の本体が
    `loop [...]`で始まっているか(変換された)、そしてその自身の
    パラメータのどれがその行で`Native <ty>`を示しているか(昇格
    された)を確認する最速の方法である -- `doc/reading-the-ir.md`
    自身の第7/8節がまさにこれを歩いて説明している。
+6. `tests/Test19LoopInvariantParam.idr` -- ループ不変パラメータの
+   除去自身の専用カバレッジ: 1つのBoxedパラメータ(`tag`)と1つの
+   ネイティブshadow適格パラメータ(`limit`)を、真に変化する
+   アキュムレータ/カウンタの対と並べてすべての再帰呼び出しを通して
+   変更せずに糸通しし、両方のカテゴリの除去(そしてその全く異なる
+   所有権処理 -- ホイストされたネイティブなものには明示的な
+   `RDrop`、Boxedなものには何も無し)を`valgrind`下で確認する --
+   完全な`.rcexpr`ダンプは`doc/reading-the-ir.md`自身の第8.5節参照。
+7. `tests/Test20LoopInvariantExpr.idr` -- ループ不変式のホイスティング
+   自身の正のケース: `bound = limit * 2`、既にホイスト済みの
+   ネイティブshadowパラメータのみに依存する、ループ本体自身の
+   無条件prefix内の`Native Int`な`ROp`。`--directive dumprcexpr`で、
+   `loop [...]`の完全に外側、そのパラメータ自身の`RLet`の内側に
+   ネストされて着地することを確認する。
+8. `tests/Test21BoxedInvariantNotHoisted.idr` -- 負のケースであり、
+   この節自身の作業が生み出した中で単一の最も重要な回帰テスト:
+   ループの脱出枝でのみ使われる`Boxed`な`Rep`の不変`RCon`。
+   `loop [...]`の*内側*に留まり、`valgrind`をクリーンに通ることを
+   確認する。`hoistInvariantPrefix`内の`isNativeRep`自身のガードが
+   無ければ、この形はまさに二重解放する -- 開発中に直接再現された
+   (`malloc(): unaligned tcache chunk detected`、`valgrind`で本物の
+   二重解放と確認済み) -- 完全な説明は上記の「ループ不変式の
+   ホイスティング」節参照。

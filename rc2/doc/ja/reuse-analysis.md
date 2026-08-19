@@ -33,10 +33,15 @@ rc2も元々は同じ方式だった(`Emit.idr`、`Ref EnvTracker`経由で
 
 ```
 Lifted (Compiler.LambdaLift)
-  -> Compiler.RC2.RC.normalize   (Phase 1: ANF風、ネイティブ型推論)
-  -> Compiler.RC2.RC.annotate    (Phase 2: 所有権 -- RDup/RDrop/RFree)
+  -> Compiler.RC2.Inline           (全プログラム inline化, Lifted -> Lifted)
+  -> Compiler.RC2.RC.normalize     (Phase 1: ANF風、ネイティブ型推論)
+  -> Compiler.RC2.RC.annotate      (Phase 2: 所有権 -- RDup/RDrop/RFree)
   -> Compiler.RC2.Reuse.resolveReuse   (このパス)
-  -> Compiler.RC2.Emit          (純粋に機械的なRCExp -> C)
+  -> Compiler.RC2.ConAltNative     (ネイティブシャドウなフィールドキャッシュ)
+  -> Compiler.RC2.MutualLoop       (相互末尾再帰 -> 1つに統合された関数)
+  -> Compiler.RC2.Loop             (自己末尾呼び出し -> RLoop/RLoopContinue)
+  -> Compiler.RC2.DualABI          (worker/wrapper合成、呼び出し箇所書き換え)
+  -> Compiler.RC2.Emit             (純粋に機械的なRCExp -> C)
 ```
 
 `Compiler.RC2.RC2`の`applyReuse`で配線されており、`toRCDef`
@@ -60,22 +65,36 @@ annotateが既にやった作業をやり直すことを意味する。これは
 - `RCon`の`reuseFrom : Maybe RCLocal` -- `Just sc`はこの構築が`sc`の
   ストレージを再利用しうることを意味する。Phase 1/2は常にこれを
   `Nothing`のままにする。このパスだけが値を設定する。
-- `MkRConAlt`の`offersReuse : Maybe RCLocal` -- `Just sc`は、この枝
-  自身のスクルティニー`sc`がここで死に、*かつ*本体のどこかで同じ
-  名前のコンストラクタをもう1つ構築することを意味する。つまり
-  そのdropは無条件のものではなく再利用チェックになる。これも
-  Phase 1/2からは常に`Nothing`。
+- `RReuseOffer : FC -> (sc : RCLocal) -> (dupOnShared : List RCLocal) -> RCExp -> RCExp`
+  -- 新規ノード、以前の`MkRConAlt.offersReuse : Maybe RCLocal`という
+  フラグ設計を置き換えるもの。`sc`に対する実行時の一意性チェック:
+  一意であればそのストレージは同じ形の後続`RCon`が claim するために
+  予約される(`reuseFrom = Just sc`)。そうでなければ`dupOnShared`の
+  各エントリ(`sc`自身のストレージから直接destructureされた、単なる
+  ポインタエイリアス)は、`sc`が通常通りdropされる前にdupされる。
+  いずれの経路でも実行は`body`へ継続する -- 到達方法が2通りある
+  セットアップ手順であって、`RCmpCase`/`RConCase`のような二股分岐
+  ではない。このパスの`resolveAlt`のみが挿入し、適格な`RConAlt`
+  自身の本体(の先頭部分)を包む -- 完全な適格性プロトコルは下記
+  「アルゴリズム」参照。
 - `RReleaseReuse : FC -> RCLocal -> RCExp -> RCExp` -- 新規ノード、
   このパスのみが挿入する。ある実行パス上で結局消費されなかった
   再利用オファーを解放する(兄弟の枝がそれをclaimしたか、この
   パス上には一致する`RCon`が到達可能な形で一切なかったか)。
   `idris2rc2_dropReuseConstructor(loc)`に変換される。これは`loc`が
   NULL(他所で既に解決済み)ならno-op、それ以外は実際の解放となる。
+  `RReuseOffer`自身の`body`から到達可能な`RCon`のうち、正確に1つが
+  それをclaimすることになり、それ以外の全経路は代わりに
+  `RReleaseReuse sc`を受け取る。つまり予約が単純に失われることは
+  決してない。
 
-`freeLocalsR`/`countUsesR`は`reuseFrom`/`offersReuse`を数えない --
-`ROp.postDrop`と同じ理屈: それらが指すローカルは既にその本来の
-束縛箇所で数えられているので、もう一度数えることは冗長になる
-だけで、加算的な意味を持たない。
+`freeLocalsR`/`countUsesR`は`RCon`自身の`reuseFrom`を数えない --
+`ROp.postDrop`と同じ理屈: それが指すローカルは既にその本来の
+束縛箇所(囲む`RReuseOffer`自身の`sc`)で数えられているので、もう
+一度数えることは冗長になるだけで、加算的な意味を持たない。対照的に
+`RReuseOffer`自身の`sc`/`dupOnShared`は数える -- これらは別のフィー
+ルドの派生的な反映ではなく、それらのローカルに対する本物の使用
+だからである。
 
 ## 決定論的な予約名(旧設計に対する鍵となる簡略化)
 
@@ -257,18 +276,18 @@ claimされ(`isUnique`が成功した)が、その後結局実際に取られた
 
 ## 検証方法(将来の変更後に繰り返すために)
 
-1. `cd rc2 && source ../env.sh && nix-shell -p idris2 gmp pkg-config --run 'idris2 --build rc2.ipkg'`
-2. `cd tests/refc-suite && nix-shell -p gcc gmp pkg-config --run './run.sh'` -- 19/19を
-   期待する。特に`reuse`/`refc001`〜`refc003`(この最適化を直接
+1. ビルド+回帰テストの基準線: `CLAUDE.md`の「Build & test」節を参照
+   (`idris2 --build rc2.ipkg`、次に`tests/refc-suite/run.sh`、19/19を
+   期待する)。特に`reuse`/`refc001`〜`refc003`(この最適化を直接
    行使する)と、`Prelude.EqOrd`/パターンマッチが多いコード
    (比較、`basicpatternmatch`)に注意する -- 上記の二重解放が
    実際に表面化した場所だから。
-3. 生成された`tests/refc-suite/*/build/exec/`配下の`.c`を
+2. 生成された`tests/refc-suite/*/build/exec/`配下の`.c`を
    `idris2rc2_isUnique`と`idris2rc2_dropReuseConstructor`で
    grepし、この最適化が(消費・解放の両パスとも)サイレントに
    一度も発火しない、ということなく実際に発火していることを
    確認する。
-4. 全`tests/*.idr`スモークテスト一式(`Test1Basics`〜
+3. 全`tests/*.idr`スモークテスト一式(`Test1Basics`〜
    `Test7CastMatrix`)を、本家`idris2 --cg refc`の出力(あるいは
    `Test7CastMatrix`については保存済みの`.expected`ファイル -- その
    RefC比較は無関係なnixpkgsのRefCランタイムのバグによりブロック

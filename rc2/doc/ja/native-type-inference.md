@@ -234,8 +234,7 @@ Bool表現(`False=0`/`True=1`)に対する二方向マッチの唯一かつ直�
 無関係)については`doc/`のコミット履歴/`BENCHMARKS.md`の
 「比較/分岐融合」節参照。
 
-## 発見・修正したバグ(時系列。コミットレベルの詳細は`git log`/
-`BENCHMARKS.md`参照)
+## 発見・修正したバグ(時系列。コミットレベルの詳細は`git log`/`BENCHMARKS.md`参照)
 
 1. **`Cast Integer Int`のメモリ破壊。** `opResultRep (Cast i o)`は
    元々`o`(変換先の型)しか見ておらず、`i`(ソースの型)を見て
@@ -306,20 +305,20 @@ Bool表現(`False=0`/`True=1`)に対する二方向マッチの唯一かつ直�
 
 ## 検証方法
 
-1. `cd rc2 && source ../env.sh && nix-shell -p idris2 gmp pkg-config --run 'idris2 --build rc2.ipkg'`
-2. `cd tests/refc-suite && nix-shell -p gcc gmp pkg-config --run './run.sh'` -- 19/19を期待する。
-3. `tests/Test6NativeInts.idr`が、固定幅整数型8種すべて
+1. ビルド+回帰テストの基準線: `CLAUDE.md`の「Build & test」節を参照
+   (`idris2 --build rc2.ipkg`、次に`tests/refc-suite/run.sh`、19/19を期待する)。
+2. `tests/Test6NativeInts.idr`が、固定幅整数型8種すべて
    (符号あり/なし、全ビット幅)を同じ算術チェインを通して行使し、
    境界値でのラップアラウンドも含めて本家`idris2 --cg refc`の出力
    とバイト単位で差分比較する -- これがまさに上記のバグ3/4を発見
    したテストなので、この領域に触れる際は最初にこれを再実行する。
-4. `tests/BenchChain.idr`の`poly`関数は、この機構全体がエンド
+3. `tests/BenchChain.idr`の`poly`関数は、この機構全体がエンド
    ツーエンドで機能していることの標準的な実証である: 生成された
    Cのヒープ確保/dup/dropの回数を本家RefCのものと比較する
    (`BENCHMARKS.md`の「算術チェイン」節に正確な期待値がある --
    rc2は3回の確保/3回のdup/4回のdrop、対するRefCは8/6/16。ここが
    後退するとRefC側の数値へ向かってドリフトして見えるはず)。
-5. 生成された`.c`を、特定の`PrimType`のネイティブC型
+4. 生成された`.c`を、特定の`PrimType`のネイティブC型
    (例えば`int8_t`)が`IDRIS2RC2_Value*`/`idris2rc2_mk*`にラップ
    されずに裸のスタック宣言変数として出現するかどうかでgrepし、
    特定のテストケースについて実際にunbox化が発火したことを確認

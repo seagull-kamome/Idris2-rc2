@@ -132,7 +132,17 @@ RAppNameRep : FC -> Name -> (argReps : List Rep) -> (retRep : Rep) -> List RCLoc
 ## パイプライン上の位置
 
 ```
-RC (normalize+annotate) -> Reuse -> MutualLoop -> Loop -> DualABI -> Emit
+Lifted (Compiler.LambdaLift)
+  -> Compiler.RC2.Inline          (全プログラム inline化, Lifted -> Lifted)
+  -> Compiler.RC2.RC.normalize    (Phase 1: ANF形式化, ネイティブ型推論)
+  -> Compiler.RC2.RC.annotate     (Phase 2: 所有権 -- RDup/RDrop/RFree)
+  -> Compiler.RC2.Reuse           (コンストラクタのreuse-in-place)
+  -> Compiler.RC2.ConAltNative    (ネイティブシャドウなフィールドキャッシュ)
+  -> Compiler.RC2.MutualLoop      (相互末尾再帰 -> 1つに統合された関数)
+  -> Compiler.RC2.Loop            (自己末尾呼び出し -> RLoop/RLoopContinue,
+                                    加えてネイティブシャドウ昇格)
+  -> Compiler.RC2.DualABI         (worker/wrapper合成, 呼び出し箇所書き換え -- 本モジュール)
+  -> Compiler.RC2.Emit            (純粋に機械的な RCExp -> C)
 ```
 
 `DualABI`は`Loop`の*後に*動く -- これは、自己末尾再帰関数自身の
@@ -146,7 +156,7 @@ RC (normalize+annotate) -> Reuse -> MutualLoop -> Loop -> DualABI -> Emit
 
 読み取り専用; 何も合成・書き換えせずに適格性だけを決める。Stage 3の
 より危険な書き換えの上に何かを構築する前に、新しい`--directive
-dumpdualabi`デバッグダンプ(`--directive dumprcexp`をミラーし、
+dumpdualabi`デバッグダンプ(`--directive dumprcexpr`をミラーし、
 `<outfile>.dualabi`を書き出す)経由で検証済み -- 所有権剥奪/コード
 生成のバグと絡み合ってしまう前の、安く直せる段階で設計ミスを捕まえる
 ため。
@@ -204,8 +214,8 @@ dumpdualabi`デバッグダンプ(`--directive dumprcexp`をミラーし、
 に対して直接確認済み(`{rc2_mutualLoop:0}: params=["1:Boxed",
 "2:Boxed", "3:Int", "4:Int"]`)。これはまさに、`Compiler.RC2.Loop`
 自身のネイティブshadow昇格の間に既に2回の実クラッシュを引き起こした
-のと*同じ*形状である(`doc/loop-conversion.md`の「発見されたバグ」
-#4参照) -- マージ関数自身の*外部*シグネチャにもネイティブworkerを
+のと*同じ*形状である(`doc/loop-conversion.md`の「発見されたバグ」#4
+参照) -- マージ関数自身の*外部*シグネチャにもネイティブworkerを
 与えることは、別の境界で同じ危険を再び開くことになる。wrapper側
 (何も適格なものがないのでその除外はタダで成り立つ)とは異なり、
 マージ関数には**明示的な**除外が必要だった: `Compiler.RC2.DualABI`
@@ -844,18 +854,10 @@ drop、それから return」という順序を、コードを書く前に洗い
 出し元も無改造のまま動作し続ける)と、本物の再帰処理を完全にネイティ
 ブな`int64_t`のまま行うworker(`idris2rc2_worker_Main_fib_0`)に
 コンパイルされ、**自身の再帰呼び出しの両方が今やworkerを直接ターゲ
-ットにしている**:
-
-```c
-int64_t var_4 = (var_0 - INT64_C(1));
-int64_t var_3 = idris2rc2_worker_Main_fib_0(var_4);
-int64_t var_6 = (var_0 - INT64_C(2));
-int64_t var_5 = idris2rc2_worker_Main_fib_0(var_6);
-return (var_3 + var_5);
-```
-
-この計算のどこにもbox化・unbox化・ヒープ確保・dup/dropは一切ない --
-全体がworker自身の入口から自身の`return`まで`int64_t`のまま保たれる。
+ットにしている** -- この計算のどこにもbox化・unbox化・ヒープ確保・
+dup/dropは一切なく、全体がworker自身の入口から自身の`return`まで
+`int64_t`のまま保たれる(生成されるCコードはStage 4自身の前後比較
+コードサンプルを上記参照)。
 正しい結果(`fib 30`について`832040`)を確認済み、リークがないことを
 確認済み(`valgrind --leak-check=full`、`tests/BenchFib.idr`、
 `tests/BenchLoop.idr`、`tests/BenchChain.idr`、
@@ -921,9 +923,9 @@ refc-suite全体(19/19)とスモークテスト/ベンチマーク一式全体�
 
 ## 検証方法
 
-1. `cd rc2 && source ../env.sh && nix-shell -p idris2 gmp pkg-config --run 'idris2 --build rc2.ipkg'`
-2. `cd tests/refc-suite && nix-shell -p gcc gmp pkg-config --run './run.sh'` -- 19/19を期待。
-3. `--directive dumpdualabi`(上記Stage 2自身の節参照)を任意の候補
+1. ビルド+回帰テストの基準線: `CLAUDE.md`の「Build & test」節を参照
+   (`idris2 --build rc2.ipkg`、次に`tests/refc-suite/run.sh`、19/19を期待する)。
+2. `--directive dumpdualabi`(上記Stage 2自身の節参照)を任意の候補
    関数に対して使うのが、生成されたCを一切見る前に適格性を確認する
    最速の方法である -- 例えば`grep "Main.fib" out.dualabi`は
    `params=[Int] ret=Int`を示すはず。注意: このダンプは
@@ -933,7 +935,7 @@ refc-suite全体(19/19)とスモークテスト/ベンチマーク一式全体�
    を指すようになっているので、そちらも正しく`Boxed`/`Boxed`と表示
    される; 興味深いネイティブ判定の結果は、worker自身がどう構築され
    たかであり、それは生成されたCを直接見て確認する(次のステップ)。
-4. `tests/BenchFib.idr`があらゆる段階の標準的なスモークテストである:
+3. `tests/BenchFib.idr`があらゆる段階の標準的なスモークテストである:
    `fib 30`は依然`832040`を印字しなければならない; `grep -n
    "^int64_t idris2rc2_worker_\|
    ^IDRIS2RC2_Value \*idris2rc2_worker_" build/exec/*.c`はworkerが
@@ -950,7 +952,7 @@ refc-suite全体(19/19)とスモークテスト/ベンチマーク一式全体�
    を確認できる。`tests/BenchLoop.idr`自身の`Main.sumTo`がループ組み
    合わせのスモークテストである -- そのworker自身のループ出口末尾値
    が同じネイティブ経路でレンダリングされていなければならない。
-5. `tests/Test*.idr`/`tests/Bench*.idr`一式全体を、本物の`idris2 --cg
+4. `tests/Test*.idr`/`tests/Bench*.idr`一式全体を、本物の`idris2 --cg
    refc`出力と突き合わせて確認する -- このプロジェクトの他の全ての
    段階と同じ。両段階とも純粋に構造/コード生成上の変更であるはずな
    ので、*全ての*テストが引き続きバイト単位で一致し、観測可能な挙動
@@ -973,7 +975,7 @@ refc-suite全体(19/19)とスモークテスト/ベンチマーク一式全体�
    ファイルのビルドは問題なくコンパイル・実行できるので、これはこの
    1ファイルについての突き合わせ検証上の欠落であって、既知または
    疑われるrc2自身のバグではない。
-6. **単なるstdout diffだけでは参照リークを捕まえられない** --
+5. **単なるstdout diffだけでは参照リークを捕まえられない** --
    `RAppNameRep`自身の引数処理には、1段階半(Stage 3aからStage 3bの
    大半まで)もの間、一度もdiffを落とすことなくバグが存在していた。
    計算される値そのものを一切破壊しないためである。`RAppNameRep`
@@ -985,11 +987,16 @@ refc-suite全体(19/19)とスモークテスト/ベンチマーク一式全体�
    が沈黙のno-opとして隠れることができない) -- `definitely lost: 0
    bytes in 0 blocks`を期待する(100件の不滅なsmall-intキャッシュ分
    だけが`still reachable`として表示されるべきである)。
-7. **Stage 4が実際に呼び出しサイトを書き換えるようになったら、パフォ
+6. **Stage 4が実際に呼び出しサイトを書き換えるようになったら、パフォ
    ーマンスの向上を直接検証すること** -- `time ./build/exec/<BenchFibの
    出力>`を数回、本物の`idris2 --cg refc`でビルドした同じファイルに
    ついても同様に実行して比較する。`fib 30`(`tests/BenchFib.idr`)は、
    (このプロジェクト自身の歴史における、`BENCHMARKS.md`によればそれ
    までの全ての段階での)RefCと同等かやや劣る状態から、Stage 4が実際
    に書き換えを行うようになった後はおよそ**35%高速**になった --
-   このプロジェクト自身の元々の目的そのものである。
+   このプロジェクト自身の元々の目的そのものである。もし将来この
+   パイプラインへの変更がこの数値をパリティ方向へ後退させるなら、
+   それはかつて書き換え・昇格されていたある呼び出しサイトがもはや
+   そうならなくなったという本物の兆候であり、単なるノイズと片付ける
+   前に`--directive dumprcexpr`と生成されたCの直接確認(上記ステップ
+   2-3)で調査する価値がある。
