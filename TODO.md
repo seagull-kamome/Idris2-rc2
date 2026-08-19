@@ -35,12 +35,16 @@ bare pass-through with no `dup`/`drop` computation at all (unlike
 `ROp`/`RCon`/`RAppName`), which would give a wrong answer the moment a
 struct pointer gets read more than once in the same function. But the
 fix isn't "give the struct pointer `ROp`'s own `postDrop` treatment" --
-`getField`/`setField` lower to a plain C pointer dereference, which
-never touches the pointer's own refcount at all, so `RStructGet` has
-*no* `postDrop` field and its own `structVar` is never consumed by
-either node (confirmed correct via direct feedback while designing
-this). Only `RStructSet`'s own `value` operand is consumed and gets
-`ROp`'s `postDrop`/`splitBorrows`/`wrapDups` treatment.
+`getField`/`setField` lower to plain C pointer dereferences/assignments,
+which never touch either operand's own refcount at all, so *neither*
+node has a `postDrop` field and *neither* `structVar` nor
+`RStructSet`'s own `value` is ever consumed (confirmed correct via
+direct feedback while designing this, across two rounds -- `value` was
+first assumed to need `ROp`'s own consuming treatment, then found to
+be an unboxing read exactly like `structVar`'s own pointer dereference,
+not a consuming use). Both nodes end up shaped like `RV` (a pure read,
+no ownership bookkeeping) rather than `ROp`.
+
 A struct field is never itself a Boxed value (every `CFType` but
 `CFUser` denotes real C storage, and `CFUser` -- an arbitrary Idris2
 type -- has no meaningful C struct-member layout, so it's out of scope
