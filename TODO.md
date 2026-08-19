@@ -5,64 +5,27 @@ scattered code comments. Nothing below is a known correctness bug in
 what's implemented -- see `rc2/tests/refc-suite/README.md` for bugs that
 were found and already fixed.
 
-## Feature: C struct support (`System.FFI.Struct`/`getField`/`setField`) -- designed, not yet implemented
+## Feature: C struct support (`System.FFI.Struct`/`getField`/`setField`) -- implemented, no dedicated regression test yet
 
-Upstream Idris2's `System.FFI.Struct`/`getField`/`setField` (backed by
-`prim__getField`/`prim__setField`) works on the Chez backend but not on
-RefC -- and rc2, having copied RefC's own ExtPrim whitelist and
-`extractValue`/`packCFType` verbatim, inherited the identical gap.
-Confirmed by hand that this genuinely breaks at the C-compile step
-(an undefined-function error on the generated C), not just in theory --
-and that upstream's own issue tracker already has a report of the same
-crash (#3830, open) plus an abandoned prior attempt at exactly this
-feature (#2062) that hit the same core problem this investigation
-independently found. See `rc2/doc/c-struct-support.md` for the full
-investigation and a concrete design ("Design: dedicated
-`RStructGet`/`RStructSet` nodes, resolved in `Emit.idr`"), verified
-against actual `RCExp`/generated-C output: two new `RCExp` nodes
-replace `prim__getField`/`prim__setField` early (`Compiler.RC2.RC`'s
-`normalize`), keeping struct-name/field-name as plain strings
-(confirmed to survive to the call site as `RCConst`s, directly readable
-at compile time) rather than resolving a `CFType` at that point. A
-whole-program pass inside `Emit.idr`'s own `generateCSourceFile`
-collects every `CFStruct` from `MkRCForeign` defs into a table, emits
-real C `typedef struct`s from it, and lowers `RStructGet`/`RStructSet`
-against that table at emission time.
-
-Switched from an earlier "keep `RExtPrim`, special-case only in
-`Emit.idr`" draft after finding `RExtPrim`'s own `annotate` case is a
-bare pass-through with no `dup`/`drop` computation at all (unlike
-`ROp`/`RCon`/`RAppName`), which would give a wrong answer the moment a
-struct pointer gets read more than once in the same function. Took
-three design passes (each corrected by direct feedback) to land on the
-right ownership shape for the replacement nodes: giving `structVar`
-`ROp`'s own full `postDrop`/`splitBorrows`/`wrapDups` treatment was
-wrong (`getField`/`setField` lower to a plain C pointer dereference/
-assignment, which never touches either operand's refcount, so there's
-no `dup` ever needed); dropping ownership tracking entirely was *also*
-wrong -- a variable read only once via `getField` and never again
-(`f s = getField s "x"`) still needs dropping eventually, and tracing
-`annotateDef`/`branchBody`/`dropUnusedOwnedVars` by hand against that
-exact repro confirmed neither the call site nor the enclosing scope
-would do it, a real leak. Landed on a third, narrower shape: never
-`dup` (no C-level reason to copy a pointer, or reread an already-Boxed
-operand's own field, just to use it), but still `drop` an operand if
-this use is its own last one (tracked via `owned`, the same way
-`splitBorrows` checks, just without ever inserting a `dup`). Both
-`RStructGet`/`RStructSet` keep `postDrop` for this, covering `value`
-too on the `RStructSet` side (found to need identical treatment,
-`extractValue` being an unboxing read of `value`'s own field, exactly
-like `structVar`'s own pointer dereference).
-
-A struct field is never itself a Boxed value (every `CFType` but
-`CFUser` denotes real C storage, and `CFUser` -- an arbitrary Idris2
-type -- has no meaningful C struct-member layout, so it's out of scope
-rather than a real design question), so unlike a constructor's own
-destructured field there's no `ConAltNative`-style aliasing/dup
-question on the read side at all. Still open: the full list of
-existing passes (`Reuse`/`ConAltNative`/`MutualLoop`/`Loop`/`Sink`/
-`DualABI`) that need a case added for the two new nodes. Not yet
-implemented.
+Upstream Idris2's `System.FFI.Struct`/`getField`/`setField` now works
+on rc2 the same way it already did on Chez -- two dedicated `RCExp`
+nodes (`RStructGet`/`RStructSet`) replace `prim__getField`/
+`prim__setField` in `Compiler.RC2.RC`'s `normalize`, with a new
+ownership pattern (`dropIfLastUse`: never `dup`s, only conditionally
+`drop`s) worked out across several rounds of review, and `Emit.idr`
+collects every `%foreign`-declared `CFStruct` into a table once and
+lowers both nodes against it as a direct C pointer dereference/
+assignment. A follow-up audit of every other pass touching `RCExp`
+found and fixed two real gaps (`Loop.idr`'s `stripOwnership`,
+`Sink.idr`'s `genuinelyUsedR`, both missing the new nodes' own
+`postDrop`/free-variable handling). Verified by hand (compiles, runs
+correctly including repeated-read/reused-value edge cases, valgrind-clean)
+-- but not yet via `rc2/tests/verify.sh`, which has no support for a
+per-test companion C file yet (needed to establish a struct name via a
+real `%foreign` signature). See `rc2/doc/c-struct-support.md`'s
+"Implementation status" section for the full writeup. Follow-up:
+extend `verify.sh` (or find another way) to add a proper regression
+test.
 
 ## Performance: tail-position delegating calls stay boxed
 

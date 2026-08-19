@@ -1,17 +1,22 @@
-# C struct FFI support (`System.FFI.Struct`/`getField`/`setField`): design proposed, not yet implemented
+# C struct FFI support (`System.FFI.Struct`/`getField`/`setField`): implemented, no dedicated regression test yet
 
 Upstream Idris2's `System.FFI` module (`idris2-src/libs/base/System/FFI.idr`)
 provides direct access to C structs via `Struct`/`getField`/`setField`
 (backed by the `prim__getField`/`prim__setField` ExtPrims), plus
 struct-by-value `%foreign` arguments/returns (`CFStruct` in
-`Core.CompileExpr`). The Chez backend fully supports both. RefC does
+`Core.CompileExpr`). The Chez backend fully supports both. RefC did
 not -- and rc2, having copied RefC's own ExtPrim whitelist and
 `extractValue`/`packCFType` verbatim, inherited the identical gap. This
-document records what's been confirmed, what upstream's own issue
-tracker already says about this gap, and a concrete design ("Design:
-dedicated `RStructGet`/`RStructSet` nodes, resolved in `Emit.idr`"
-below) -- verified against actual `RCExp`/generated-C output, not just
-constructor shapes. No implementation has started yet.
+document records what was confirmed, what upstream's own issue tracker
+already says about this gap, the design ("Design: dedicated
+`RStructGet`/`RStructSet` nodes, resolved in `Emit.idr`" below,
+verified against actual `RCExp`/generated-C output before any code was
+written), and now the implementation itself (on the `c-struct-support`
+branch) -- see "Implementation status" below for what's actually done,
+what was found and fixed along the way, and what's still missing (a
+proper `rc2/tests/verify.sh`-integrated regression test; no dedicated
+test exists yet because it needs a companion C file the harness
+doesn't currently support building).
 
 ## What's confirmed
 
@@ -659,21 +664,100 @@ not copying files. What that comes down to, concretely:
   constructor-destructured field, `rc2/doc/con-alt-native.md`) but is a
   performance optimization on top of a working, always-Boxed version,
   not a prerequisite for one.
-- **Not yet enumerated: every site that needs an `RStructGet`/
-  `RStructSet` case added, now that they're real `RCExp` nodes.**
-  "The new nodes" above names the general shape (`freeLocalsR`/
-  `countUsesR`/`usedConstructorsR` in `RCExp.idr` at minimum, likely
-  `Pretty.idr` for `--directive dumprcexpr` output too) but doesn't
-  work through each site's actual required change -- that's
-  implementation work. Every later pass (`Compiler.RC2.Reuse`,
-  `Compiler.RC2.ConAltNative`, `Compiler.RC2.MutualLoop`,
-  `Compiler.RC2.Loop`, `Compiler.RC2.Sink`, `Compiler.RC2.DualABI`)
-  needs auditing for whether it needs a new case at all (most can
-  likely just fall through a catch-all the way they already handle
-  `RCon`/other leaf-ish nodes) or actively benefits from one (e.g.
-  `Compiler.RC2.Sink`'s `sinkEligible` treating a struct field read as
-  sinkable the same way it already treats `ROp`/`RCon`/`RAppName`) --
-  not designed here, deliberately deferred to implementation time.
+- ~~Not yet enumerated: every site that needs an `RStructGet`/
+  `RStructSet` case added~~ **Done -- see "Implementation status"
+  below.** Every pass touching `RCExp` was audited; two real gaps were
+  found and fixed (`Loop.idr`'s `stripOwnership`, `Sink.idr`'s
+  `genuinelyUsedR`), the rest confirmed already-correct via their own
+  wildcard fallthrough.
+
+## Implementation status
+
+Implemented on the `c-struct-support` branch (`RCExp.idr`, `RC.idr`,
+`Loop.idr`, `Pretty.idr`, `Emit.idr`, `Sink.idr`, plus comment-only
+updates to `DualABI.idr`/`ConAltNative.idr`/`Reuse.idr`), following the
+design above essentially as written -- the one refinement made during
+implementation, not anticipated by the design, is `dropIfLastUse`
+itself: `RStructGet`/`RStructSet` never call `splitBorrows`/`wrapDups`
+(no operand is ever duplicated), but a naive "drop nothing" reading of
+the design leaked a struct pointer used exactly once and never again
+(`f s = getField s "x"`) -- traced `annotateDef`/`branchBody`/
+`dropUnusedOwnedVars` by hand against that exact repro before landing
+on the `owned`-consulting-but-never-`dup`-inserting shape described
+above.
+
+**Verified by hand**, since no dedicated `verify.sh`-integrated
+regression test exists yet (see below): a program declaring a struct
+via a `%foreign` signature, then reading/writing several fields
+(including rereading a field twice, and reusing a `setField` value
+operand three more times afterward -- exercising `dropIfLastUse`'s
+occurrence-order handling on both `RStructGet` and `RStructSet`) --
+
+- compiles cleanly and produces the expected output,
+- generates the C shown in "A concrete example" style below:
+  ```c
+  typedef struct { int64_t x; double y; } point;
+  /* ... */
+  IDRIS2RC2_Value *primVar_9 = idris2rc2_mkInt64(((point*)((IDRIS2RC2_Pointer*)var_0)->p)->x);
+  idris2rc2_drop(var_0);
+  return primVar_9;
+  ```
+  (`RStructGet`, direct pointer dereference, `postDrop` discharged as
+  a plain `idris2rc2_drop`, no branch/dup anywhere), and
+  ```c
+  ((point*)((IDRIS2RC2_Pointer*)var_0)->p)->y = (idris2rc2_to_double(var_1));
+  idris2rc2_drop(var_0);
+  idris2rc2_drop(var_1);
+  ```
+  (`RStructSet`, same shape, both operands dropped only because that
+  particular call site happened to be each one's own last use),
+- is `valgrind --leak-check=full` clean (`definitely lost: 0 bytes`,
+  `0 errors`) in every variant tried.
+
+**A follow-up audit** (prompted by direct review, after the field-
+reuse case above had already been caught by review and fixed) checked
+every other pass touching `RCExp` for whether its own wildcard
+fallthrough correctly covers the two new nodes. Two real gaps found
+and fixed:
+- `Loop.idr`'s `stripOwnership` filters `ids` out of `ROp`/`RCmpCase`/
+  `RLoopContinue`/`RLoop`'s own `postDrop`/`prologueDrop` fields (used
+  by `Compiler.RC2.ConAltNative`/`Compiler.RC2.DualABI` when promoting
+  a local to a native shadow) but fell through its own wildcard for
+  `RStructGet`/`RStructSet`, which have the identical kind of
+  `postDrop` field -- a native-promoted local surviving there would
+  have emitted a drop for a value never boxed in the first place.
+- `Sink.idr`'s `genuinelyUsedR` (a free-variable analysis almost
+  identical to `RCExp.idr`'s own `freeLocalsR`) didn't count
+  `structVar`/`value` as a genuine use, the same class of bug that
+  caused branch-sinking's own real, previously-fixed miscompile
+  (`TestBuffer.idr`, see `rc2/doc/branch-sinking.md`'s "Not peeling
+  through var's own death") -- left uncaught, `trySinkInto`'s `RLet`
+  case could sink a binding past a `getField`/`setField` call that was
+  actually reading it, producing a use-before-definition reference in
+  the generated C.
+
+Every other site audited (`Reuse.idr`'s `tryClaim`/`tryConsume`/
+`resolveReuse`, `ConAltNative.idr`'s `peelWrappers`/
+`applyConAltNativeExp`, `MutualLoop.idr`'s `tailCallTargets`/
+`buildGroup` -- which delegates renaming entirely to `Loop.idr`'s own
+`renameRCExp`, already fixed alongside the initial implementation --
+and `DualABI.idr`'s `tailValueReps`/`applyCallSiteRewriteBody`)
+confirmed its own wildcard fallthrough is already correct for both new
+nodes -- comments naming the specific node list were updated to say so
+explicitly where they existed, no behavior changes needed. Full
+`refc-suite` (19/19) and smoke-test (23/23) regression suite passes
+throughout, with no changes -- confirming neither the new nodes nor
+the `Emit.idr` `where`-clause refactor (Part A's `cTypeOfCFType`/
+`extractValue`/`packCFType` lifted to top level) regressed anything.
+
+**Still missing**: a proper `rc2/tests/verify.sh`-integrated regression
+test. The manual verification above needed a companion C `.o`/header
+(establishing the "point" struct name via a `%foreign` signature the
+test never actually calls for real work, just to get the name into
+`StructDefs`) linked in via `IDRIS2_LDFLAGS`/`IDRIS2_CFLAGS` --
+`verify.sh`'s own test harness doesn't currently support building a
+per-test companion C file, so no `Test24...`-style test was added yet.
+Follow-up work, not blocking the implementation itself.
 
 ## Files
 
