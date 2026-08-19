@@ -1,4 +1,4 @@
-# C struct FFI support (`System.FFI.Struct`/`getField`/`setField`): implemented, no dedicated regression test yet
+# C struct FFI support (`System.FFI.Struct`/`getField`/`setField`): implemented, with a regression test
 
 Upstream Idris2's `System.FFI` module (`idris2-src/libs/base/System/FFI.idr`)
 provides direct access to C structs via `Struct`/`getField`/`setField`
@@ -11,12 +11,12 @@ document records what was confirmed, what upstream's own issue tracker
 already says about this gap, the design ("Design: dedicated
 `RStructGet`/`RStructSet` nodes, resolved in `Emit.idr`" below,
 verified against actual `RCExp`/generated-C output before any code was
-written), and now the implementation itself (on the `c-struct-support`
+written), and the implementation itself (on the `c-struct-support`
 branch) -- see "Implementation status" below for what's actually done,
-what was found and fixed along the way, and what's still missing (a
-proper `rc2/tests/verify.sh`-integrated regression test; no dedicated
-test exists yet because it needs a companion C file the harness
-doesn't currently support building).
+what was found and fixed along the way, and `rc2/tests/Test24CStructSupport.idr`
+for the regression test (with `rc2/tests/verify.sh` itself extended to
+support a per-test companion C file, needed to establish a struct name
+via a real `%foreign` signature the way both rc2 and Chez require).
 
 ## What's confirmed
 
@@ -750,17 +750,44 @@ throughout, with no changes -- confirming neither the new nodes nor
 the `Emit.idr` `where`-clause refactor (Part A's `cTypeOfCFType`/
 `extractValue`/`packCFType` lifted to top level) regressed anything.
 
-**Still missing**: a proper `rc2/tests/verify.sh`-integrated regression
-test. The manual verification above needed a companion C `.o`/header
-(establishing the "point" struct name via a `%foreign` signature the
-test never actually calls for real work, just to get the name into
-`StructDefs`) linked in via `IDRIS2_LDFLAGS`/`IDRIS2_CFLAGS` --
-`verify.sh`'s own test harness doesn't currently support building a
-per-test companion C file, so no `Test24...`-style test was added yet.
-Follow-up work, not blocking the implementation itself.
+**Now has a proper `rc2/tests/verify.sh`-integrated regression test**:
+`rc2/tests/Test24CStructSupport.idr`, with a real companion C
+constructor/destructor pair (`Test24CStructSupport.c`/`.h`) exercising
+`RStructGet`/`RStructSet`'s own `dropIfLastUse` ownership handling
+directly -- a field reread twice in a row (`structVar` used twice, no
+`dup` either time) and a `setField` call's own `value` operand reused
+three more times afterward. `verify.sh` itself gained the general
+mechanism this needed: a `TestN.c` alongside `TestN.idr` is compiled
+once and linked in via `IDRIS2_CFLAGS`/`IDRIS2_LDFLAGS` automatically
+-- a no-op for every other existing test, but reusable by any future
+smoke test whose own `%foreign` declarations need a real C
+implementation, not just an rc2/RefC-provided primitive. Joins
+`NO_REFC_DIFF_TESTS` (real RefC has no `getField`/`setField` to diff
+against) with a hand-verified `.expected`, and `LEAK_SENSITIVE_TESTS`
+(ownership correctness is the whole point of this test). Full
+`verify.sh` run: 39 passed, 1 known pre-existing (`Test1Basics`'s own
+recorded leak, unrelated), 0 failed -- including this test's own
+`valgrind` pass at 0 bytes definitely lost.
+
+One thing the C-level typedef collision while writing the companion
+file surfaced, worth recording: rc2's own generated C already emits
+`typedef struct { ... } name;` for every struct in `StructDefs` (Part
+C above), so a companion header declaring the *same* struct shape
+again (even byte-for-byte identical) trips a duplicate-typedef error
+once both are `#include`d into the same translation unit --
+`Test24CStructSupport.h` sidesteps this by declaring its own two
+functions `void*`-typed rather than `test_point*`-typed, with the real
+`test_point` typedef kept local to the `.c` file. Not an rc2 bug (any
+companion C file establishing a struct name this way will hit the same
+thing), but worth knowing before writing another test like this one.
 
 ## Files
 
+- `rc2/tests/Test24CStructSupport.idr`/`.c`/`.h`/`.expected` -- the
+  regression test; `rc2/tests/verify.sh` -- the companion-C-file
+  compile-and-link mechanism this test needed (`if [ -f
+  "$RC2_DIR/tests/$name.c" ]; then ...`), plus its own
+  `NO_REFC_DIFF_TESTS`/`LEAK_SENSITIVE_TESTS` entries for this test.
 - Upstream issues: [#3830](https://github.com/idris-lang/Idris2/issues/3830)
   (the exact `extractValue` crash, still open, unfixed),
   [#2062](https://github.com/idris-lang/Idris2/issues/2062) (prior

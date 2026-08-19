@@ -5,28 +5,6 @@ scattered code comments. Nothing below is a known correctness bug in
 what's implemented -- see `rc2/tests/refc-suite/README.md` for bugs that
 were found and already fixed.
 
-## Feature: C struct support (`System.FFI.Struct`/`getField`/`setField`) -- implemented, no dedicated regression test yet
-
-Upstream Idris2's `System.FFI.Struct`/`getField`/`setField` now works
-on rc2 the same way it already did on Chez -- two dedicated `RCExp`
-nodes (`RStructGet`/`RStructSet`) replace `prim__getField`/
-`prim__setField` in `Compiler.RC2.RC`'s `normalize`, with a new
-ownership pattern (`dropIfLastUse`: never `dup`s, only conditionally
-`drop`s) worked out across several rounds of review, and `Emit.idr`
-collects every `%foreign`-declared `CFStruct` into a table once and
-lowers both nodes against it as a direct C pointer dereference/
-assignment. A follow-up audit of every other pass touching `RCExp`
-found and fixed two real gaps (`Loop.idr`'s `stripOwnership`,
-`Sink.idr`'s `genuinelyUsedR`, both missing the new nodes' own
-`postDrop`/free-variable handling). Verified by hand (compiles, runs
-correctly including repeated-read/reused-value edge cases, valgrind-clean)
--- but not yet via `rc2/tests/verify.sh`, which has no support for a
-per-test companion C file yet (needed to establish a struct name via a
-real `%foreign` signature). See `rc2/doc/c-struct-support.md`'s
-"Implementation status" section for the full writeup. Follow-up:
-extend `verify.sh` (or find another way) to add a proper regression
-test.
-
 ## Performance: tail-position delegating calls stay boxed
 
 Native type inference (`Compiler.RC2.Types`) only applies to values
