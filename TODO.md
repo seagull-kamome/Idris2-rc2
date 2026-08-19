@@ -97,6 +97,52 @@ ordinary case-alternative's own destructured field (not loop-carried)
 was addressed separately (`Compiler.RC2.ConAltNative`, see
 `rc2/doc/con-alt-native.md`).
 
+## Performance: reboxing a native-shadowed value always allocates fresh, never reuses the original Boxed object
+
+`Emit.idr`'s `rcVarToBoxedC` (its own doc comment states this
+explicitly) boxes a `Native`/`RInlineNative` local by always calling
+`nativeMk` (`idris2rc2_mkInt64`/etc.) -- a fresh allocation, never a
+`dup` of whatever Boxed object the value was originally unboxed from.
+This is deliberate, not an oversight: both `Compiler.RC2.Loop`'s own
+native-shadow-loop-param promotion and `Compiler.RC2.ConAltNative`'s
+own destructured-field caching use `renameRCExp` to redirect *every*
+occurrence of the original id (native-context reads and Boxed-context
+reads alike) to the fresh shadow id, then `stripOwnership` deletes the
+original's own now-stale ownership bookkeeping outright -- so by the
+time a Boxed-context read is reached, there's no reference to the
+original Boxed object left in the tree to `dup`, only the raw scalar.
+See `rc2/doc/loop-conversion.md`'s own "Native-shadow promotion"
+section (step 2) for where this trade-off was first accepted ("a real
+but acceptable trade-off, not a correctness issue").
+
+Two related points worth recording alongside this:
+
+- **The promotion decision itself doesn't weigh this cost.**
+  `Loop.idr`'s `nativeArgTypes`/`nativeArgType` (the eligibility check
+  both passes above share) only asks whether a parameter/field is ever
+  read in a native context at a consistent type -- it never counts how
+  many *Boxed*-context reads would each pay a fresh-allocation cost as
+  a result of promoting. A variable read natively once but read Boxed
+  many times could plausibly get *slower* under promotion, not faster.
+  `idris2rc2_mkInt64`/`mkBits64` do have a 0-99 small-value cache
+  (`memory.c`), so the real cost only bites for out-of-range integers
+  and for types with no such cache (`Double`, wider `Int`/`Bits` values
+  outside 0-99) -- unmeasured how often that actually happens in
+  practice.
+- **A more ambitious fix (not attempted, non-trivial)**: instead of
+  `renameRCExp`'s blanket redirect, only redirect the *native-context*
+  occurrences to the shadow id and leave every Boxed-context occurrence
+  on the *original* id, letting `annotate`'s own original dup/drop
+  bookkeeping for that id keep working unmodified (a native-context
+  read never needs a `dup` regardless, so removing just the
+  dup/drop entries tied to the redirected occurrences -- not all of
+  them, unlike today's `stripOwnership` -- should be sound in
+  principle). Would touch `renameRCExp`/`stripOwnership`'s own
+  all-or-nothing shape in both `Loop.idr` and `ConAltNative.idr`; not
+  designed further than this. Neither this nor the cheaper
+  eligibility-side fix above has been attempted -- not currently
+  planned, revisit if profiling shows reboxing cost actually matters.
+
 ## Dropped: loop-invariant constructor-field hoisting
 
 Two entries, investigated and dropped together -- "loop-invariant
@@ -227,7 +273,19 @@ Repro: `cd rc2/tests && ./verify.sh --skip-build --no-valgrind --directive noreu
 - libgc板のランタイム。dup/drop/freeをCマクロで消去してしまい、mallocを単純に差し替える
   だけでlibgc対応できるのでは？
 - 短い文字列をタグ付きポインタに押し込む
-- 定数のCast畳み込み、Char/Double絡みとString→数値方向は未対応（理由はrc2/doc/cast-fold-scope.md参照）
+- **Performance: Closure Inlining and Immediate Expansion**
+  `partial`呼び出しによるクロージャ生成とヒープ割り当てが、高階関数や型クラスの辞書使用時に頻発している。特に`List`操作や`mapAppend`のような高階関数において、`Boxed`なクロージャが多重生成されており、パフォーマンスを大きく阻害している。
+  - 可能な限りコンパイル時にクロージャを特定し、直接呼び出しへとインライン展開するパスを実装する。
+  - スコープ内で閉じている静的な定数クロージャは、最適化パスで完全にインライン化・削除を行う。
+
+- **Performance: Static Data Embedding**
+  定数データ（リストやCONSセルの連鎖など）が、実行時に毎回ヒープ上で動的割り当て（`_builtin.CONS`等）されている。
+  - コンパイル時に値が完全に確定しているデータ構造は、実行時の動的割り当てを排除し、バイナリの静的データ領域（`.rodata`）に配置することで、初期化コストとメモリ割り当てコストをゼロにする。
+
+- **Performance: Higher-Order Function Specialization**
+  `mapAppend`のような汎用的な高階関数は、すべて`Boxed`な値を引数に取るため、頻繁なポインタ参照とヒープ割り当てが発生している。
+  - 特定の型（例：`List Double`）に対して高階関数が呼び出されている場合、コンパイル時に型特化した関数を生成する（テンプレート化/マングリング）。
+  - 特化により、`Boxed`なCONSセル走査を、ネイティブな配列走査へと置き換え、参照カウント操作を削減する。
 
 
 
