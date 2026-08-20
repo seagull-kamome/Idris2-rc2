@@ -54,6 +54,12 @@ show up again during testing.
 - `env.sh` / `gen-env.sh` — environment setup; `source env.sh` before
   building/running rc2 or plain `idris2`
 
+## サブエージェント
+- ファイル調査、コードベース調査、定型実装はサブエージェントに移譲する。
+- メインセッションは判断、設計、統合のみを残す。
+- 調査結果はサマリーのみをメインセッションに返却させる。(全文蓄積は禁止)
+
+
 ## コーディング規約
 以下を金言とせよ。
 
@@ -62,6 +68,8 @@ show up again during testing.
 コミットログには Why
 コードコメントには Why not
 
+C言語用 ./code-style-C.md を参照
+Idris2言語用 ./code-style-Idris2.md を参照
 
 ### コメント規約
 コード内のコメントは極力排除する。
@@ -75,12 +83,6 @@ Copyright表記を書きなさい。
 -- Copyright 2026, Hattori,Hiroki. All rights reserved.
 -- This module was licensed by BSD3.
 
-
-### Cコード
-./code-style-C.md を参照
-
-### Idris2コード
-./code-style-Idris2.md を参照
 
 ### テストコード
 
