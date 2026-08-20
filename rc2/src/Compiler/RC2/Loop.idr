@@ -747,6 +747,252 @@ hoistInvariantPrefix variant (RReuseOffer fc sc dupOnShared cont) =
     let (hoisted, rest) = hoistInvariantPrefix variant cont in (hoisted, RReuseOffer fc sc dupOnShared rest)
 hoistInvariantPrefix _ e = ([], e)
 
+------------------------------------------------------------------------
+-- Reusing a loop-*invariant* parameter's own original Boxed value for
+-- a surviving Boxed-context read, instead of always reboxing fresh
+-- from its native shadow (see TODO.md's own "Performance: Loop.idr's
+-- own loop-carried native shadow still reboxes fresh on a Boxed-context
+-- read" entry, and `rc2/doc/con-alt-native.md`'s own "Reusing the
+-- original Boxed field for surviving Boxed-context reads" section for
+-- the sibling fix this one is modelled on for
+-- `Compiler.RC2.ConAltNative`'s own destructured-field caching).
+--
+-- Deliberately *not* the same ownership rule as ConAltNative's own
+-- `reannotateFieldOwnership` ("first occurrence moves, later ones
+-- dup"): an invariant parameter's own Boxed-context read can sit on
+-- the loop's own *continue* path, re-executed once per iteration, not
+-- just once total the way a destructured field's own alt body is. If
+-- the first (textually) iteration's own use *moved* the parameter's
+-- only reference, a later iteration's own `dup` of the very same
+-- now-freed local would be a use-after-free. Every surviving
+-- Boxed-context occurrence is instead unconditionally `dup`'d
+-- (`dupInvariantBoxed`), and the parameter's own single release is
+-- hoisted to run *once*, after the whole loop has finished evaluating
+-- (`applyLoop`'s own `wrapInvariantShadows`, below) -- one dup per
+-- occurrence per iteration it's actually reached, one drop total,
+-- regardless of iteration count.
+
+||| Mirrors `Compiler.RC2.ConAltNative`'s own `renameOpArgsThrough`
+||| exactly (itself mirroring this module's own `opNativeUsesThrough`)
+||| -- re-declared here rather than exported across the module boundary,
+||| same reasoning as `assignShadowIds` above: once inside the `ROp`
+||| that a native-`Rep` `RLet`'s own `value` peels down to (through
+||| `RDup`/`RDrop`/`RFree`/`RReleaseReuse`/nested-`RLet`-`body`
+||| wrapping), redirect `p`'s own occurrences in that `ROp`'s own
+||| `args` to `sid`.
+invariantOpArgsThrough : (p : Int) -> (sid : Int) -> RCExp -> RCExp
+invariantOpArgsThrough p sid (ROp fc lazy op args postDrop) =
+    ROp fc lazy op (map (\a => if a == RCLoc p then RCLoc sid else a) args) postDrop
+invariantOpArgsThrough p sid (RDup fc v cont) = RDup fc v (invariantOpArgsThrough p sid cont)
+invariantOpArgsThrough p sid (RDrop fc vs cont) = RDrop fc vs (invariantOpArgsThrough p sid cont)
+invariantOpArgsThrough p sid (RFree fc v cont) = RFree fc v (invariantOpArgsThrough p sid cont)
+invariantOpArgsThrough p sid (RReleaseReuse fc v cont) = RReleaseReuse fc v (invariantOpArgsThrough p sid cont)
+invariantOpArgsThrough p sid (RLet fc var rep value body) = RLet fc var rep value (invariantOpArgsThrough p sid body)
+invariantOpArgsThrough _ _ e = e
+
+||| Mirrors `nativeArgTypes`'s own walk exactly (identical cases), but
+||| rewrites the native-context occurrences it finds instead of
+||| collecting their types. Every Boxed-context occurrence of `p` (an
+||| `RCon`/`RAppName`/etc. operand -- anywhere `nativeArgTypes` itself
+||| falls through to its own `_ = empty` case) is left completely
+||| untouched; `dupInvariantBoxed` handles those next.
+|||
+||| The one addition *not* mirrored from `nativeArgTypes` (which never
+||| looks at an `RLoopContinue` at all -- see its own doc comment):
+||| `p`'s own occurrence in a continue's own `args`, at the position
+||| this parameter still occupies before `elideInvariantContinueArgs`
+||| (run later, after this) removes it. That position isn't a
+||| native-context read by itself, but `fillLoopContinuePostDrop`
+||| (run right after this whole rewrite settles) looks up every
+||| continue-arg's own `Rep` by id -- an unrenamed `p` there misses
+||| `fullLoopParams`'s own shadow-id-keyed map entirely, reads as
+||| `RBoxed` by that lookup's own default, and gets a spurious drop
+||| added to *every* continue, once per iteration -- a real,
+||| `valgrind`-confirmed double-free/crash caught via
+||| `tests/Test19LoopInvariantParam.idr` during development. Redirecting
+||| it here, alongside every other occurrence, keeps that lookup
+||| correct without needing `fillLoopContinuePostDrop` itself to know
+||| anything about invariance.
+markInvariantNative : (p : Int) -> (sid : Int) -> RCExp -> RCExp
+markInvariantNative p sid (RLet fc var rep value body) =
+    let value' = case rep of
+                      RNative _ => invariantOpArgsThrough p sid value
+                      RInlineNative _ => invariantOpArgsThrough p sid value
+                      RBoxed => value
+    in RLet fc var rep (markInvariantNative p sid value') (markInvariantNative p sid body)
+markInvariantNative p sid (RCmpCase fc op args postDrop t f) =
+    RCmpCase fc op (map (\a => if a == RCLoc p then RCLoc sid else a) args) postDrop
+             (markInvariantNative p sid t) (markInvariantNative p sid f)
+markInvariantNative p sid (RLoopContinue fc args postDrop) =
+    RLoopContinue fc (map (\a => if a == RCLoc p then RCLoc sid else a) args) postDrop
+markInvariantNative p sid (RDup fc v cont) = RDup fc v (markInvariantNative p sid cont)
+markInvariantNative p sid (RDrop fc vs cont) = RDrop fc vs (markInvariantNative p sid cont)
+markInvariantNative p sid (RFree fc v cont) = RFree fc v (markInvariantNative p sid cont)
+markInvariantNative p sid (RReleaseReuse fc v cont) = RReleaseReuse fc v (markInvariantNative p sid cont)
+markInvariantNative p sid (RReuseOffer fc sc dupOnShared cont) =
+    RReuseOffer fc sc dupOnShared (markInvariantNative p sid cont)
+markInvariantNative p sid (RConCase fc sc alts mDef) =
+    RConCase fc sc (map (\(MkRConAlt n ci tag as body) => MkRConAlt n ci tag as (markInvariantNative p sid body)) alts)
+                    (map (markInvariantNative p sid) mDef)
+markInvariantNative p sid (RConstCase fc sc alts mDef) =
+    RConstCase fc sc (map (\(MkRConstAlt c body) => MkRConstAlt c (markInvariantNative p sid body)) alts)
+                      (map (markInvariantNative p sid) mDef)
+markInvariantNative _ _ e = e
+
+||| Whether `p` is referenced anywhere in `e` -- `RCExp.idr`'s own
+||| `countUsesR`, specialised to a yes/no question, but with `RLoop`/
+||| `RLoopContinue` cases added. `countUsesR` itself was designed for
+||| Phase 2 (`RC.idr`'s own `annotate`), which never sees an `RLoop` at
+||| all (`Compiler.RC2.Loop` produces its first one strictly after
+||| Phase 2 runs) -- its own catch-all `_ = 0` silently undercounts a
+||| tree that already contains one, exactly the shape
+||| `applyLoop`'s own `wrapInvariantShadows` hands it below (`acc`
+||| there is, almost always, the `RLoop` itself, or an `RLet` wrapping
+||| one). A real bug caught during development: without these two
+||| cases, a Boxed-context read of an invariant parameter sitting
+||| *inside* the loop's own body was invisible to this check, and the
+||| parameter got dropped immediately instead of kept alive for its own
+||| still-live read -- a real, `valgrind`-confirmed crash caught via
+||| `tests/Test19LoopInvariantParam.idr`'s own `sumWithBoxedExitOnly`/
+||| `sumWithBoxedContinuePath`.
+usesInvariant : Int -> RCExp -> Bool
+usesInvariant p e = countInvariantUses e > 0
+  where
+    countInvariantUses : RCExp -> Nat
+    countInvariantUses (RV _ v) = if v == RCLoc p then 1 else 0
+    countInvariantUses (RAppName _ _ _ args) = length (filter (== RCLoc p) args)
+    countInvariantUses (RUnderApp _ _ _ args) = length (filter (== RCLoc p) args)
+    countInvariantUses (RApp _ _ c a) = length (filter (== RCLoc p) [c, a])
+    countInvariantUses (RLet _ _ _ value body) = countInvariantUses value + countInvariantUses body
+    countInvariantUses (RCon _ _ _ _ args _) = length (filter (== RCLoc p) args)
+    countInvariantUses (ROp _ _ _ args _) = length (filter (== RCLoc p) (toList args))
+    countInvariantUses (RExtPrim _ _ _ args) = length (filter (== RCLoc p) args)
+    countInvariantUses (RStructGet _ structVar _ _ _) = if structVar == RCLoc p then 1 else 0
+    countInvariantUses (RStructSet _ structVar _ _ value _) = length (filter (== RCLoc p) [structVar, value])
+    countInvariantUses (RCmpCase _ _ args _ t f) =
+        length (filter (== RCLoc p) (toList args)) + countInvariantUses t + countInvariantUses f
+    countInvariantUses (RConCase _ sc alts mDef) =
+        (if sc == RCLoc p then 1 else 0)
+        + sum (map (\(MkRConAlt _ _ _ _ body) => countInvariantUses body) alts)
+        + maybe 0 countInvariantUses mDef
+    countInvariantUses (RConstCase _ sc alts mDef) =
+        (if sc == RCLoc p then 1 else 0)
+        + sum (map (\(MkRConstAlt _ body) => countInvariantUses body) alts)
+        + maybe 0 countInvariantUses mDef
+    countInvariantUses (RDup _ v body) = (if v == RCLoc p then 1 else 0) + countInvariantUses body
+    countInvariantUses (RDrop _ vars body) = length (filter (== RCLoc p) vars) + countInvariantUses body
+    countInvariantUses (RFree _ v body) = (if v == RCLoc p then 1 else 0) + countInvariantUses body
+    countInvariantUses (RReleaseReuse _ v body) = (if v == RCLoc p then 1 else 0) + countInvariantUses body
+    countInvariantUses (RReuseOffer _ sc dupOnShared body) =
+        (if sc == RCLoc p then 1 else 0) + length (filter (== RCLoc p) dupOnShared) + countInvariantUses body
+    countInvariantUses (RLoop _ _ initial prologueDrop body) =
+        length (filter (== RCLoc p) initial) + length (filter (== RCLoc p) prologueDrop) + countInvariantUses body
+    countInvariantUses (RLoopContinue _ args postDrop) =
+        length (filter (== RCLoc p) args) + length (filter (== RCLoc p) postDrop)
+    countInvariantUses _ = 0
+
+||| How many `RDup`s an operand list needs for `p`'s own occurrences in
+||| it -- unlike `RC.idr`'s own `splitBorrows`, never consults an
+||| `owned` state: *every* occurrence gets its own `dup`, unconditionally
+||| (see this section's own header note for why -- a loop's own
+||| continue path can re-execute the very same occurrence once per
+||| iteration, so there's no single "first" occurrence whose own move
+||| would ever be safe).
+countInvariantDups : (p : Int) -> List RCLocal -> Nat
+countInvariantDups p args = length (filter (== RCLoc p) args)
+
+||| Nest `n` `RDup`s for `p` around `e`.
+wrapInvariantDups : FC -> Int -> Nat -> RCExp -> RCExp
+wrapInvariantDups fc p Z e = e
+wrapInvariantDups fc p (S k) e = RDup fc (RCLoc p) (wrapInvariantDups fc p k e)
+
+||| Unconditionally `dup`s every surviving Boxed-context occurrence of
+||| `p` in `e` (already known, by construction, to contain no
+||| native-context ones -- those were redirected away by
+||| `markInvariantNative` before this ever runs). Never touches any
+||| other local's own ownership node -- every case below only ever
+||| inspects or rewrites `p`'s own occurrences, the same discipline
+||| `ConAltNative.idr`'s own `reannotateFieldOwnership` follows (though
+||| that function tracks `owned` state to decide move-vs-dup; this one
+||| doesn't need to, see this section's own header note).
+dupInvariantBoxed : (p : Int) -> RCExp -> RCExp
+dupInvariantBoxed p (RV fc v) =
+    if v == RCLoc p then RDup fc v (RV fc v) else RV fc v
+dupInvariantBoxed p (RAppName fc lazy n args) =
+    wrapInvariantDups fc p (countInvariantDups p args) (RAppName fc lazy n args)
+dupInvariantBoxed p (RUnderApp fc n missing args) =
+    wrapInvariantDups fc p (countInvariantDups p args) (RUnderApp fc n missing args)
+dupInvariantBoxed p (RApp fc lazy c a) =
+    wrapInvariantDups fc p (countInvariantDups p [c, a]) (RApp fc lazy c a)
+dupInvariantBoxed p (RLet fc var rep value body) =
+    RLet fc var rep (dupInvariantBoxed p value) (dupInvariantBoxed p body)
+dupInvariantBoxed p (RCon fc n ci tag args reuseFrom) =
+    wrapInvariantDups fc p (countInvariantDups p args) (RCon fc n ci tag args reuseFrom)
+dupInvariantBoxed p (ROp fc lazy op args postDrop) =
+    -- Every occurrence needs its own drop once the op is done reading
+    -- it, dup'd or not (RC.idr's own `boxedOperands` doesn't consult
+    -- ownership either, for the same reason) -- reached only when the
+    -- enclosing `RLet`'s own `Rep` is `RBoxed` (a `Native`/`RInlineNative`
+    -- one's own `value` was already fully redirected by
+    -- `markInvariantNative`, leaving no occurrence of `p` here for this
+    -- case to ever see).
+    let argsList = toList args
+        occ = countInvariantDups p argsList
+    in wrapInvariantDups fc p occ (ROp fc lazy op args (postDrop ++ List.replicate occ (RCLoc p)))
+-- Deliberately a no-op on ownership, matching RC.idr's own annotate
+-- RExtPrim case (a bare pass-through, ownership never consulted) --
+-- see doc/c-struct-support.md's "Why a dedicated node" section for why
+-- RExtPrim's own ownership handling is already known-incomplete; this
+-- mirrors that as-is rather than fixing it here.
+dupInvariantBoxed _ (RExtPrim fc lazy nm args) = RExtPrim fc lazy nm args
+dupInvariantBoxed p (RStructGet fc structVar sn fn postDrop) =
+    wrapInvariantDups fc p (countInvariantDups p [structVar]) (RStructGet fc structVar sn fn postDrop)
+dupInvariantBoxed p (RStructSet fc structVar sn fn value postDrop) =
+    wrapInvariantDups fc p (countInvariantDups p [structVar, value]) (RStructSet fc structVar sn fn value postDrop)
+dupInvariantBoxed p (RCmpCase fc op args postDrop t f) =
+    -- markInvariantNative already redirected every native-context
+    -- occurrence in `args` to the shadow id -- args is left untouched
+    -- here (p genuinely shouldn't still appear in it).
+    RCmpCase fc op args postDrop (dupInvariantBoxed p t) (dupInvariantBoxed p f)
+dupInvariantBoxed p (RConCase fc sc alts mDef) =
+    wrapInvariantDups fc p (countInvariantDups p [sc])
+      (RConCase fc sc (map (\(MkRConAlt n ci tag as body) => MkRConAlt n ci tag as (dupInvariantBoxed p body)) alts)
+                       (map (dupInvariantBoxed p) mDef))
+dupInvariantBoxed p (RConstCase fc sc alts mDef) =
+    wrapInvariantDups fc p (countInvariantDups p [sc])
+      (RConstCase fc sc (map (\(MkRConstAlt c body) => MkRConstAlt c (dupInvariantBoxed p body)) alts)
+                         (map (dupInvariantBoxed p) mDef))
+dupInvariantBoxed p (RDup fc v cont) = RDup fc v (dupInvariantBoxed p cont)
+dupInvariantBoxed p (RDrop fc vs cont) = RDrop fc vs (dupInvariantBoxed p cont)
+dupInvariantBoxed p (RFree fc v cont) = RFree fc v (dupInvariantBoxed p cont)
+dupInvariantBoxed p (RReleaseReuse fc v cont) = RReleaseReuse fc v (dupInvariantBoxed p cont)
+dupInvariantBoxed p (RReuseOffer fc sc dupOnShared cont) = RReuseOffer fc sc dupOnShared (dupInvariantBoxed p cont)
+-- `acc` here is `applyLoop`'s own `withHoistedExprs` -- almost always
+-- an `RLoop` itself (or an `RLet` chain wrapping one), *not* a tree
+-- where one can't appear -- so this case is very much live, unlike the
+-- analogous case in `Compiler.RC2.ConAltNative`'s own
+-- `reannotateFieldOwnership` (which never sees one, since that pass
+-- runs strictly before this one). `p` is never expected to appear in
+-- `initial`/`prologueDrop` in practice (an invariant parameter's own
+-- continue-arg position is elided by `elideInvariantContinueArgs`,
+-- which runs after this, and `initial`/`prologueDrop` are themselves
+-- built from `argIds` reads that `markInvariantNative` already
+-- redirected to the shadow id wherever `p` itself was invariant) --
+-- `wrapInvariantDups` on them is defensive totality, not a load-bearing
+-- path.
+dupInvariantBoxed p (RLoop fc loopParams initial prologueDrop body) =
+    wrapInvariantDups fc p (countInvariantDups p initial + countInvariantDups p prologueDrop)
+      (RLoop fc loopParams initial prologueDrop (dupInvariantBoxed p body))
+-- Same defensive reasoning as `RLoop` above -- `markInvariantNative`
+-- already redirected `p`'s own occurrence in a continue's own `args`
+-- to the shadow id, so this case is never expected to actually fire.
+dupInvariantBoxed p (RLoopContinue fc args postDrop) =
+    wrapInvariantDups fc p (countInvariantDups p args) (RLoopContinue fc args postDrop)
+-- RPrimVal/RErased/RCrash carry no locals; RAppNameRep never actually
+-- appears here in practice -- this whole pass runs strictly before
+-- Compiler.RC2.DualABI ever produces one.
+dupInvariantBoxed _ e = e
+
 ||| Apply self-tail-call loop conversion to one top-level definition,
 ||| given its own `Name` -- Compiler.RC2.RC doesn't thread a
 ||| definition's own name through Phase 1/2 at all (nothing there needs
@@ -804,26 +1050,82 @@ applyLoop self (MkRCFun args retRep body) =
          if not found
             then body'
             else
-              let nextId : Int
-                  nextId = 1 + foldl max (-1) (argIds ++ collectBoundIds body')
+              let nextId0 : Int
+                  nextId0 = 1 + foldl max (-1) (argIds ++ collectBoundIds body')
                   eligible : List (Int, PrimType)
                   eligible = mapMaybe (\p => map (\ty => (p, ty)) (nativeArgType p body')) argIds
-                  shadowed : List (Int, Int, PrimType)
-                  shadowed = assignShadowIds nextId eligible
-                  renaming : Renaming
-                  renaming = fromList $ map (\(p, sid, _) => (p, sid)) shadowed
-                  shadowIds : SortedSet Int
-                  shadowIds = fromList $ map (\(_, sid, _) => sid) shadowed
+                  -- Decided *before* any renaming touches body' at all
+                  -- (see this module's own header note on
+                  -- `invariantOpArgsThrough`/`markInvariantNative`/
+                  -- `dupInvariantBoxed` above): whether a given continue
+                  -- supplies a parameter's own id unchanged is a purely
+                  -- structural question, independent of whether that id
+                  -- has since been renamed to a shadow -- so this scan
+                  -- reaches exactly the same answer run here, on the
+                  -- original ids, as `invariantLoopParamIds` used to
+                  -- reach running after renaming.
+                  invariantIdsPre : SortedSet Int
+                  invariantIdsPre = invariantLoopParamIds (map (\p => (p, RBoxed)) argIds) (collectContinueArgs body')
+                  eligibleVariant : List (Int, PrimType)
+                  eligibleVariant = filter (\(p, _) => not (contains p invariantIdsPre)) eligible
+                  eligibleInvariant : List (Int, PrimType)
+                  eligibleInvariant = filter (\(p, _) => contains p invariantIdsPre) eligible
+                  shadowedVariant : List (Int, Int, PrimType)
+                  shadowedVariant = assignShadowIds nextId0 eligibleVariant
+                  nextId1 : Int
+                  nextId1 = nextId0 + cast (length eligibleVariant)
+                  shadowedInvariant : List (Int, Int, PrimType)
+                  shadowedInvariant = assignShadowIds nextId1 eligibleInvariant
+                  nextId2 : Int
+                  nextId2 = nextId1 + cast (length eligibleInvariant)
+                  renamingVariant : Renaming
+                  renamingVariant = fromList $ map (\(p, sid, _) => (p, sid)) shadowedVariant
+                  shadowIdsVariant : SortedSet Int
+                  shadowIdsVariant = fromList $ map (\(_, sid, _) => sid) shadowedVariant
+                  -- Every eligible *variant* parameter still gets the
+                  -- original blanket treatment (every occurrence,
+                  -- native and Boxed alike, redirected to the shadow) --
+                  -- unchanged, deliberately out of scope (see this
+                  -- module's own header note above for why a
+                  -- loop-carried shadow's own Boxed-context reuse isn't
+                  -- addressed here).
+                  variantRewritten : RCExp
+                  variantRewritten = if null shadowedVariant then body' else stripOwnership shadowIdsVariant (renameRCExp renamingVariant body')
+                  -- Every eligible *invariant* parameter instead only
+                  -- has its own native-context occurrences redirected
+                  -- (`markInvariantNative`) here -- any surviving
+                  -- Boxed-context occurrence is dealt with later, in
+                  -- `wrapInvariantShadows` below, once the whole rest of
+                  -- this rewrite has settled. `stripOwnership (singleton
+                  -- p)` first clears whatever stale ownership
+                  -- bookkeeping `annotate` had attached to `p` as an
+                  -- ordinary (possibly multiply-used) top-level
+                  -- argument -- the same first step
+                  -- `Compiler.RC2.ConAltNative`'s own `shadowOneField`
+                  -- takes for a destructured field.
                   rewritten : RCExp
-                  rewritten = if null shadowed then body' else stripOwnership shadowIds (renameRCExp renaming body')
+                  rewritten = foldr (\(p, sid, _), acc => markInvariantNative p sid (stripOwnership (SortedSet.singleton p) acc))
+                                variantRewritten shadowedInvariant
                   fullLoopParams : List (Int, Rep)
-                  fullLoopParams = map (\p => case find (\(p', _, _) => p' == p) shadowed of
+                  fullLoopParams = map (\p => case find (\(p', _, _) => p' == p) (shadowedVariant ++ shadowedInvariant) of
                                                Just (_, sid, ty) => (sid, RNative ty)
                                                Nothing => (p, RBoxed)) argIds
                   withPostDrop : RCExp
                   withPostDrop = fillLoopContinuePostDrop fullLoopParams (fromList fullLoopParams) rewritten
+                  -- The final loop-param id (shadow id if eligible,
+                  -- original id otherwise) for every parameter found
+                  -- invariant above -- `invariantLoopParamIds`'s own
+                  -- pre-rename result (`invariantIdsPre`), translated
+                  -- through `fullLoopParams`'s own id mapping. Includes
+                  -- both native-shadow-promoted *and* plain-Boxed
+                  -- invariant parameters (the latter need no further
+                  -- treatment here -- see `applyLoop`'s own doc comment
+                  -- above -- but still need excluding from `loopParams`/
+                  -- `initial`/every continue's own `args` exactly like
+                  -- before).
                   invariantIds : SortedSet Int
-                  invariantIds = invariantLoopParamIds fullLoopParams (collectContinueArgs withPostDrop)
+                  invariantIds = fromList $ mapMaybe (\(p, finalId) => if contains p invariantIdsPre then Just finalId else Nothing)
+                                   (zip argIds (map fst fullLoopParams))
                   loopParams : List (Int, Rep)
                   loopParams = filter (\(p, _) => not (contains p invariantIds)) fullLoopParams
                   initial : List RCLocal
@@ -843,7 +1145,8 @@ applyLoop self (MkRCFun args retRep body) =
                   -- happens right there instead, so it's excluded here
                   -- to avoid a double drop.
                   prologueDrop : List RCLocal
-                  prologueDrop = mapMaybe (\(p, sid, _) => if contains sid invariantIds then Nothing else Just (RCLoc p)) shadowed
+                  prologueDrop = mapMaybe (\(p, sid, _) => if contains sid invariantIds then Nothing else Just (RCLoc p))
+                                   (shadowedVariant ++ shadowedInvariant)
                   -- Loop-invariant *expression* hoisting (ROp/RCon in
                   -- the loop body's own unconditional prefix, see
                   -- `hoistInvariantPrefix`'s own doc comment): anything
@@ -863,11 +1166,37 @@ applyLoop self (MkRCFun args retRep body) =
                   innerLoop = RLoop emptyFC loopParams initial prologueDrop finalBody2
                   withHoistedExprs : RCExp
                   withHoistedExprs = foldr (\(var, rep, value), acc => RLet emptyFC var rep value acc) innerLoop hoistedExprs
-                  wrapInvariantShadows : RCExp
-                  wrapInvariantShadows = foldr (\(p, sid, ty), acc =>
-                                                    RLet emptyFC sid (RNative ty) (RV emptyFC (RCLoc p))
-                                                      (RDrop emptyFC [RCLoc p] acc))
-                                             withHoistedExprs
-                                             (filter (\(_, sid, _) => contains sid invariantIds) shadowed)
-              in wrapInvariantShadows
+                  -- Wrap each native-shadow-promoted invariant parameter
+                  -- with its own one-time `RLet`: if no Boxed-context
+                  -- occurrence of `p` survived `markInvariantNative`
+                  -- above (`countUsesR` finds none), this is the
+                  -- original, simpler shape -- an unconditional `RDrop`
+                  -- right after the shadow read. Otherwise (see this
+                  -- module's own header note above for the full
+                  -- reasoning), every surviving occurrence is `dup`'d
+                  -- unconditionally (`dupInvariantBoxed`) and `p`'s own
+                  -- single release is deferred until the whole rest of
+                  -- the loop (`acc`) has finished evaluating -- bound to
+                  -- a fresh `resultVar` first (the same
+                  -- bind-then-drop-then-return shape `RC.idr`'s own
+                  -- `dropDeadLet` uses), threading `nid` onward so a
+                  -- second invariant parameter needing this same
+                  -- treatment mints its own, later, `resultVar` rather
+                  -- than colliding.
+                  wrapInvariantShadows : (Int, RCExp)
+                  wrapInvariantShadows =
+                      foldr wrapOneInvariant (nextId2, withHoistedExprs)
+                        (filter (\(_, sid, _) => contains sid invariantIds) shadowedInvariant)
+                    where
+                      wrapOneInvariant : (Int, Int, PrimType) -> (Int, RCExp) -> (Int, RCExp)
+                      wrapOneInvariant (p, sid, ty) (nid, acc) =
+                          if not (usesInvariant p acc)
+                             then (nid, RLet emptyFC sid (RNative ty) (RV emptyFC (RCLoc p)) (RDrop emptyFC [RCLoc p] acc))
+                             else
+                               let resultVar = nid
+                                   dupped = dupInvariantBoxed p acc
+                               in (nid + 1, RLet emptyFC sid (RNative ty) (RV emptyFC (RCLoc p))
+                                              (RLet emptyFC resultVar retRep dupped
+                                                (RDrop emptyFC [RCLoc p] (RV emptyFC (RCLoc resultVar)))))
+              in snd wrapInvariantShadows
 applyLoop _ d = d

@@ -340,18 +340,22 @@ one of two ways depending on whether it had been native-shadowed:
   ordinary unchanged `RBoxed` loop param, see the "Emission" section
   below -- an elided Boxed param just means that special case now also
   applies to something that's no longer even nominally a loop param).
-- **Native-shadowed**: hoisted into a one-time `RLet`+`RDrop` pair
-  wrapping the *whole* `RLoop` -- `RLet emptyFC sid (RNative ty) (RV
-  emptyFC (RCLoc p)) (RDrop emptyFC [RCLoc p] ...)`. This is not a new
-  IR shape invented for this pass: it's `Compiler.RC2.ConAltNative`'s
-  own `shadowAltFields` idiom (see that module's own doc, and its
-  worked example in `doc/reading-the-ir.md`) for caching a native read
-  of a Boxed value exactly once, reused verbatim -- only the thing
-  being wrapped (a whole loop, rather than one `case` alt's own body)
-  differs. `prologueDrop` excludes these ids (their own drop is now
-  this explicit `RDrop`, not the batch-discharged `prologueDrop` list
-  `Compiler.RC2.Emit`'s `emitLoopInto` still handles for every
-  remaining, genuinely-varying shadowed param).
+- **Native-shadowed**: hoisted into a one-time `RLet` pair wrapping the
+  *whole* `RLoop` -- `RLet emptyFC sid (RNative ty) (RV emptyFC (RCLoc
+  p)) ...`. This is not a new IR shape invented for this pass: it's
+  `Compiler.RC2.ConAltNative`'s own `shadowAltFields` idiom (see that
+  module's own doc, and its worked example in `doc/reading-the-ir.md`)
+  for caching a native read of a Boxed value exactly once, reused
+  verbatim -- only the thing being wrapped (a whole loop, rather than
+  one `case` alt's own body) differs. `prologueDrop` excludes these ids
+  (their own drop is now handled by this wrapping, not the
+  batch-discharged `prologueDrop` list `Compiler.RC2.Emit`'s
+  `emitLoopInto` still handles for every remaining, genuinely-varying
+  shadowed param). What follows `p`'s own read here -- an unconditional
+  `RDrop` right away, or something more involved -- depends on whether
+  `p` is *also* read in a Boxed context anywhere in the loop; see
+  "Reusing the original Boxed value for a surviving Boxed-context read"
+  below.
 
 No MutualLoop-arity-padding NULL hazard here (contrast
 `Compiler.RC2.Emit`'s own `declareLoopParam`, which needs an explicit
@@ -465,6 +469,101 @@ pattern-matching a loop counter against a literal (`case n of 0 =>
 ownership node attached to a scrutinee position itself to strip), but
 this is also precisely the gap that produced a real emission-side bug
 -- see "Bugs found" below.
+
+#### Reusing the original Boxed value for a surviving Boxed-context read
+
+Promoting an invariant parameter used to mean `renameRCExp` redirected
+*every* occurrence -- native-context reads and Boxed-context ones
+alike -- to the fresh shadow, so a Boxed-context read that survived
+promotion had no reference to the original left to `dup`, and
+`Emit.idr`'s `rcVarToBoxedC` always paid for a fresh `nativeMk`
+reallocation instead (see `TODO.md`'s own "reboxing a native-shadowed
+value always allocates fresh" entry). Fixed the same way
+`Compiler.RC2.ConAltNative` fixes the identical problem for a
+destructured field (see `rc2/doc/con-alt-native.md`'s own "Reusing the
+original Boxed field" section) -- but with one deliberate difference
+in the ownership rule, forced by a real shape ConAltNative never has to
+deal with.
+
+**Detection is moved earlier, ahead of any renaming at all.**
+`invariantLoopParamIds`/`collectContinueArgs` (above) turn out to ask a
+purely *structural* question -- does every continue supply this exact
+same id, unchanged, at this position -- that doesn't actually depend on
+whether that id has since been renamed to a shadow. Run instead on
+`body'` directly, right after tail-call conversion and before any
+`renameRCExp` touches it, the answer is identical either way. This
+matters because it lets eligible parameters be split into two disjoint
+groups *before* any rewriting happens: genuinely loop-*carried* ones
+(unchanged, still get the original blanket `renameRCExp`+`stripOwnership`
+treatment -- see `TODO.md`'s own note on why a loop-carried shadow's
+own Boxed-context reuse isn't attempted), and *invariant* ones, which
+instead only have their native-context occurrences redirected
+(`markInvariantNative`, mirroring `Loop.idr`'s own `nativeArgTypes`/
+`opNativeUsesThrough` walk exactly but rewriting instead of
+collecting) -- any surviving Boxed-context occurrence is left on the
+original parameter id, dealt with next.
+
+**Why never *move*, only ever `dup`.** `ConAltNative`'s own
+`reannotateFieldOwnership` uses the same "first occurrence moves, later
+ones dup" rule `RC.idr`'s own `annotate` does, safe there because a
+destructured field's own alt body runs at most once, total, per
+enclosing call. A loop-invariant parameter's own surviving Boxed-context
+read can instead sit on the loop's own *continue* path -- the exact
+same textual occurrence re-executed once per iteration. Moving on the
+first (textually) iteration's own use would hand the parameter's only
+live reference away; a later iteration's own attempt to read the same,
+now-effectively-freed local would be a use-after-free the moment the
+callee that received the move has actually dropped it. So every
+surviving Boxed-context occurrence is instead `dup`'d unconditionally
+(`dupInvariantBoxed`, `RC.idr`'s own `splitBorrows`-shaped args-list
+walk but with no `owned` state to consult -- there's no single "first"
+occurrence whose own move would ever be safe), and the parameter's own
+single release is deferred until the whole rest of the loop has
+finished evaluating: `withHoistedExprs`'s own result is bound to a
+fresh `resultVar` first (the same bind-then-drop-then-return shape
+`RC.idr`'s own `dropDeadLet` uses for an ordinary dead Boxed local), so
+`p`'s own drop runs exactly once regardless of how many iterations
+actually took the arm reading it. A parameter with no surviving
+Boxed-context occurrence at all keeps the original, simpler shape (an
+unconditional `RDrop` immediately after the shadow read) -- no
+`resultVar` needed.
+
+**One correctness bug found landing this, caught the same way every
+`RCExp`-walking function in this codebase eventually finds one --
+`RCExp.idr`'s own `countUsesR`, used to check whether a parameter has
+any surviving occurrence at all, has no `RLoop`/`RLoopContinue` case.**
+It was designed for Phase 2 (`RC.idr`'s own `annotate`), which never
+sees an `RLoop` -- `Compiler.RC2.Loop` produces the first one strictly
+afterward -- so its own catch-all silently returns zero for a tree that
+already contains one, exactly what `wrapInvariantShadows` hands it
+(`acc` there is almost always the `RLoop` itself, or an `RLet` chain
+wrapping one). Every parameter with a real, live Boxed-context read
+*inside* the loop's own body was invisible to this check, and got
+dropped immediately instead -- a real, `valgrind`-confirmed crash
+(`malloc(): unaligned tcache chunk detected`) caught via
+`tests/Test19LoopInvariantParam.idr`'s own `sumWithBoxedContinuePath`/
+`sumWithBoxedExitOnly` during development. Fixed with a
+dedicated `usesInvariant` (`Loop.idr`'s own local copy of
+`countUsesR`'s logic, `RLoop`/`RLoopContinue` cases added) rather than
+extending `countUsesR` itself, the same "re-declare locally instead of
+widening a shared function's own contract" choice `assignShadowIds`
+already makes.
+
+A second, distinct bug found alongside the first: `dupInvariantBoxed`
+itself also had no `RLoop`/`RLoopContinue` case (its own comment
+claimed, wrongly, that this pass "runs strictly before
+Compiler.RC2.MutualLoop/Compiler.RC2.DualABI ever produce one" --
+true, but irrelevant, since `applyLoop` itself already produced one by
+the time `dupInvariantBoxed` runs on `acc`). Without it, a
+Boxed-context occurrence sitting inside the loop's own body was simply
+never reached at all, leaving it un-`dup`'d while the parameter's own
+release still ran unconditionally after the loop -- a use-after-free
+on whichever iteration actually took that arm. Fixed by adding both
+cases, recursing into the loop's own `body` (and, defensively,
+`initial`/`prologueDrop`/a continue's own `args`, though `p` is never
+expected to actually appear there in practice -- `markInvariantNative`
+already redirects those to the shadow id wherever `p` itself is
+invariant).
 
 ### Loop-invariant expression hoisting
 
@@ -1015,6 +1114,10 @@ benchmark:
   `stripOwnership`, `assignShadowIds`, `applyLoop`,
   `collectContinueArgs`/`invariantLoopParamIds`/
   `elideInvariantContinueArgs` (loop-invariant parameter elision),
+  `invariantOpArgsThrough`/`markInvariantNative`/`usesInvariant`/
+  `countInvariantDups`/`wrapInvariantDups`/`dupInvariantBoxed`
+  (reusing the original Boxed value for a surviving Boxed-context
+  read),
   `noneVariant`/`isInvariantExpr`/`isNativeRep`/`hoistInvariantPrefix`
   (loop-invariant expression hoisting).
 - `rc2/src/Compiler/RC2/MutualLoop.idr` -- `tailCallTargets`,
@@ -1080,7 +1183,17 @@ benchmark:
    their very different ownership handling -- an explicit `RDrop` for
    the hoisted native one, nothing at all for the Boxed one) under
    `valgrind` -- see `doc/reading-the-ir.md`'s own section 8.5 for its
-   full `.rcexpr` dump.
+   full `.rcexpr` dump. Its own `sumWithBoxedContinuePath`/
+   `sumWithBoxedExitOnly` cover "Reusing the original Boxed value for a
+   surviving Boxed-context read" above specifically: an invariant,
+   native-shadow-eligible parameter also read in a Boxed context on the
+   loop's own continue path (re-`dup`'d every iteration) and on its
+   exit arm only (`dup`'d once), both `valgrind`-clean --
+   `tests/BenchLoopInvariantBoxed.idr` exercises the continue-path shape
+   at 3,000,000 iterations specifically to make a per-iteration leak
+   unmistakable, and to measure the resulting wall-clock difference
+   (~25% faster than the pre-fix reboxing-every-time behaviour on this
+   shape, `rc2/tests/bench.sh`).
 7. `tests/Test20LoopInvariantExpr.idr` -- loop-invariant expression
    hoisting's own positive case: `bound = limit * 2`, a `Native Int`
    `ROp` in the loop body's own unconditional prefix depending only on
