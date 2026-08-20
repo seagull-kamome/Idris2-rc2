@@ -69,6 +69,7 @@ import Data.List
 import Data.List.Quantifiers
 import Data.SortedSet
 import Data.SortedMap
+import Data.String
 import Data.Vect
 
 import Protocol.Hex
@@ -409,6 +410,7 @@ data ArgCounter : Type where
 data FunctionDefinitions : Type where
 data IndentLevel : Type where
 data HeaderFiles : Type where
+data ForeignLibs : Type where
 -- The nearest enclosing `RLoop`'s own loop params (id + Rep), in order
 -- -- empty until `emitLoopInto` actually enters one, consulted only by
 -- `tryEmitLoopContinue`'s own `RLoopContinue` case to know which
@@ -2365,6 +2367,7 @@ createCFunctions : {auto c : Ref Ctxt Defs}
                 -> {auto oft : Ref OutfileText Output}
                 -> {auto il : Ref IndentLevel Nat}
                 -> {auto h : Ref HeaderFiles (SortedSet String)}
+                -> {auto fl : Ref ForeignLibs (SortedSet String)}
                 -> {auto sd : Ref StructDefs (SortedMap String (List (String, CFType)))}
                 -> Name
                 -> RCDef
@@ -2468,7 +2471,9 @@ createCFunctions n (MkRCForeign ccs fargs ret) = do
                            else NS (mkNamespace lang) n
           if isStandardFFI
              then case extLibOpts of
-                      [lib, header] => update HeaderFiles $ insert header
+                      [lib, header] => do update HeaderFiles $ insert header
+                                          maybe (pure ()) (\l => update ForeignLibs $ insert l) (linkLibName lib)
+                      [lib] => maybe (pure ()) (\l => update ForeignLibs $ insert l) (linkLibName lib)
                       _ => pure ()
              else emit EmptyFC $ additionalFFIStub fctName fargs ret
           let fnDef = "IDRIS2RC2_Value *" ++ (cName n) ++ "(" ++ showSep ", " (replicate (length fargs) "IDRIS2RC2_Value *") ++ ");"
@@ -2507,6 +2512,21 @@ createCFunctions n (MkRCForeign ccs fargs ret) = do
           emit EmptyFC "}"
       _ => throw $ InternalError "[rc2] FFI not found for \{cName n}"
   where
+    ||| Turn a `%foreign` lib field ("libcurl", "libc 6", ...) into the
+    ||| bare name a linker's own `-l` flag needs: drop the "lib" prefix
+    ||| (this project's own FFI convention -- matches how Chez's own
+    ||| `loadLib` treats the same field) and any trailing " <version>"
+    ||| hint (a Chez-only dynamic-load version pin, meaningless to a
+    ||| static linker). `Nothing` for a lib field that doesn't start
+    ||| with "lib" at all -- not expected in practice, left unlinked
+    ||| rather than guessed at.
+    linkLibName : String -> Maybe String
+    linkLibName lib =
+        let base = fst (Data.String.break isSpace lib)
+        in if isPrefixOf "lib" base
+              then Just (substr 3 (length base `minus` 3) base)
+              else Nothing
+
     getArgsNrList : List ty -> Nat -> List Nat
     getArgsNrList [] _ = []
     getArgsNrList (x :: xs) k = k :: getArgsNrList xs (S k)
@@ -2620,11 +2640,17 @@ footer = do
       }
       """
 
+||| The distinct link-library names (already "lib"-prefix-stripped,
+||| see `linkLibName`) every `MkRCForeign` def in the program named via
+||| its own standard-FFI `%foreign` lib field -- for `Compiler.RC2.CC`
+||| to turn into `-l<name>` flags at link time, so an external library
+||| a program's own FFI bindings depend on doesn't need `IDRIS2_LDLIBS`
+||| set by hand.
 export
 generateCSourceFile : {auto c : Ref Ctxt Defs}
                    -> List (Name, RCDef)
                    -> (outn : String)
-                   -> Core ()
+                   -> Core (List String)
 generateCSourceFile defs outn =
   do _ <- newRef ArgCounter 0
      _ <- newRef FunctionDefinitions []
@@ -2632,6 +2658,7 @@ generateCSourceFile defs outn =
      _ <- newRef ConstConDef (Data.SortedMap.empty, [])
      _ <- newRef OutfileText DList.Nil
      _ <- newRef HeaderFiles empty
+     _ <- newRef ForeignLibs empty
      _ <- newRef IndentLevel 0
      -- Part B (doc/c-struct-support.md's "Design" section): collect
      -- every CFStruct reachable from any MkRCForeign's own argument/
@@ -2653,3 +2680,4 @@ generateCSourceFile defs outn =
 
      coreLift_ $ writeFile outn code
      log "compiler.refc" 10 $ "Generated C file " ++ outn
+     pure (Prelude.toList !(get ForeignLibs))

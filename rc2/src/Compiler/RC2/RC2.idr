@@ -146,10 +146,10 @@ compileExpr c s _ outputDir tm outfile =
      when ("dumpdualabi" `elem` directives sess) $
          coreLift_ $ writeFile (outputDir </> outfile ++ ".dualabi") (dumpDualABI defs)
 
-     generateCSourceFile defs outn
+     foreignLibs <- generateCSourceFile defs outn
      Just _ <- compileCObjectFile outn outobj
        | Nothing => pure Nothing
-     compileCFile outobj outexec
+     compileCFile outobj outexec foreignLibs
 
 export
 executeExpr : Ref Ctxt Defs -> Ref Syn SyntaxInfo ->

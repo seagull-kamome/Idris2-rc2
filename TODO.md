@@ -337,6 +337,27 @@ trusting `--directive noreuse` for any future performance comparison.
 
 Repro: `cd rc2/tests && ./verify.sh --skip-build --no-valgrind --directive noreuse`.
 
+## Correctness: `CFString`'s hardcoded `char *` return type collides with `-Werror` on a `const`-returning C function
+
+Also found via the libcurl experiment above: `curl_easy_strerror`
+returns `const char *`. `Compiler/RC2/Emit.idr`'s own
+`cTypeOfCFType CFString = "char *"` (no `const`) makes the generated
+call site `char * retVal = curl_easy_strerror(...)`, which GCC flags as
+`-Wdiscarded-qualifiers` -- and `CC.idr`'s own `-Werror` (both the
+`-c` and link steps) turns that into a hard build failure, not just a
+warning.
+
+Not rc2-specific either: upstream RefC's own `RefC.idr` has the
+byte-for-byte identical `cTypeOfCFType CFString = "char *"`, so any
+`const char *`-returning C function hits the same wall there too. No
+existing rc2/RefC test happens to bind one. Two possible fixes if this
+is ever worth pursuing: (a) generate `const char *` for `CFString`
+foreign *return* types specifically (would need extractValue/packCFType
+to know a call's own foreign-return position, not just the CFType
+itself), or (b) document the limitation and let callers work around it
+with a thin non-const C wrapper. Not investigated further; no
+regression test exists for it yet.
+
 ## yet another hope
 この項は人間が追加したものなので、後で整理して独立の項に括りだす事。
 今は着手しないが将来的な展望を書き連ねる。この項は日本語で書かれるが

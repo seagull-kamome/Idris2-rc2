@@ -86,12 +86,22 @@ compileCObjectFile sourceFile objectFile
 
          pure (Just objectFile)
 
+||| `foreignLibs` -- distinct link-library names collected from every
+||| program-level `%foreign` declaration's own lib field (see
+||| `Compiler.RC2.Emit`'s `generateCSourceFile`/`linkLibName`) --
+||| become `-l<name>` flags placed right after `objectFile`, ahead of
+||| the rc2 runtime and its own dependencies: the symbols they provide
+||| are the ones a program's own FFI call sites reference directly, so
+||| they need to resolve before anything downstream does. Lets a
+||| binding to a genuinely external library (e.g. libcurl) link without
+||| the caller having to set `IDRIS2_LDLIBS`/`LDLIBS` by hand.
 export
 compileCFile : {auto c : Ref Ctxt Defs}
             -> (objectFile : String)
             -> (outFile : String)
+            -> (foreignLibs : List String)
             -> Core (Maybe String)
-compileCFile objectFile outFile
+compileCFile objectFile outFile foreignLibs
     = do cc <- coreLift findCC
          cFlags <- coreLift findCFlags
          ldFlags <- coreLift findLDFlags
@@ -104,7 +114,8 @@ compileCFile objectFile outFile
          let runcc = (escapeCmd $
              [cc, "-Werror", objectFile,
                   "-o", outFile,
-                  supportFile,
+                  supportFile
+                  ] ++ map ("-l" ++) foreignLibs ++ [
                   "-lidris2rc2",
                   "-L" ++ rc2Dir
                   ] ++ clibdirs (lib_dirs dirs) ++ [
