@@ -964,15 +964,7 @@ from Stage 2.
    `idris2 --cg refc` output, same as every other stage in this
    project -- both stages are supposed to be purely structural/codegen
    changes, so *every* test must still match byte-for-byte, with zero
-   observable behaviour difference. Two files (`Test6NativeInts.idr`,
-   `Test7CastMatrix.idr`) need invoking from *inside* `tests/` (plain
-   `Test6NativeInts.idr`, not `tests/Test6NativeInts.idr`) -- both
-   declare `module TestNNNN` instead of `module Main` like every other
-   test file, so compiling them via a path with a `tests/` prefix trips
-   idris2's own module-name-must-match-file-path check; this reproduces
-   identically against unmodified upstream `idris2`, so it's a
-   pre-existing invocation-path quirk in these two files, not anything
-   `Compiler.RC2` related. `Test7CastMatrix.idr` additionally can't be
+   observable behaviour difference. `Test7CastMatrix.idr` can't be
    diff-checked against real `idris2 --cg refc` at all right now: the
    nixpkgs-bundled RefC support library itself fails to compile
    (`idris2_negate_Double` typo'd as `idris2_nagate_Double` in its own

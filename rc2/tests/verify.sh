@@ -180,20 +180,17 @@ fi
 echo
 echo "=== Smoke tests ==="
 
-# name -> from inside tests/ as a bare filename (KNOWN-BUGS.md: module
-# TestNNNN, not module Main, trips idris2's own module-name check
-# otherwise). NO_REFC_DIFF_TESTS skips diffing against real refc in
-# favour of a saved .expected file, for three different reasons:
-# Test7CastMatrix because nixpkgs' own RefC support library fails to
-# compile at all (KNOWN-BUGS.md), Test17ConstFold because its own
-# codegenChain deliberately embeds System.Info.codegen's own value (a
-# ConstExtPrim regression check) -- "rc2" vs "refc" is real, correct
-# divergence between backends, not something to diff away --
-# Test24CStructSupport because real RefC doesn't implement
-# getField/setField at all (see rc2/doc/c-struct-support.md's "What's
-# confirmed" -- this is the exact gap rc2 closes), so there's no real
-# refc output to diff against in the first place.
-BARE_INVOKE_TESTS="Test6NativeInts Test7CastMatrix Test17ConstFold"
+# NO_REFC_DIFF_TESTS skips diffing against real refc in favour of a
+# saved .expected file, for three different reasons: Test7CastMatrix
+# because nixpkgs' own RefC support library fails to compile at all
+# (KNOWN-BUGS.md), Test17ConstFold because its own codegenChain
+# deliberately embeds System.Info.codegen's own value (a ConstExtPrim
+# regression check) -- "rc2" vs "refc" is real, correct divergence
+# between backends, not something to diff away -- Test24CStructSupport
+# because real RefC doesn't implement getField/setField at all (see
+# rc2/doc/c-struct-support.md's "What's confirmed" -- this is the
+# exact gap rc2 closes), so there's no real refc output to diff
+# against in the first place.
 NO_REFC_DIFF_TESTS="Test7CastMatrix Test17ConstFold Test24CStructSupport"
 
 # Leak-sensitive by design (reference-counting/reuse/native-shadow
@@ -232,15 +229,9 @@ for name in $ALL_TESTS; do
         fi
         companion_env=("IDRIS2_LDFLAGS=$TMP/${name}_companion.o" "IDRIS2_CFLAGS=-I$RC2_DIR/tests")
     fi
-    if is_in "$name" "$BARE_INVOKE_TESTS"; then
-        (cd "$RC2_DIR/tests" && env "${companion_env[@]}" nix-shell -p idris2 gcc gmp pkg-config --run \
-            "$IDRIS2RC2 --cg rc2 --directive dumprcexpr$extra_directive_args $name.idr -o $TMP/${name}_rc2") \
-            > "$TMP/${name}_compile.log" 2>&1
-    else
-        env "${companion_env[@]}" nix-shell -p idris2 gcc gmp pkg-config --run \
-            "$IDRIS2RC2 --cg rc2 --directive dumprcexpr$extra_directive_args $RC2_DIR/tests/$name.idr -o $TMP/${name}_rc2" \
-            > "$TMP/${name}_compile.log" 2>&1
-    fi
+    env "${companion_env[@]}" nix-shell -p idris2 gcc gmp pkg-config --run \
+        "$IDRIS2RC2 --cg rc2 --directive dumprcexpr$extra_directive_args $RC2_DIR/tests/$name.idr -o $TMP/${name}_rc2" \
+        > "$TMP/${name}_compile.log" 2>&1
     compile_time="$(elapsed "$compile_t0" "$(date +%s.%N)")"
     if [ ! -x "$TMP/${name}_rc2" ]; then
         report_fail "$name" "rc2 compile error (compile ${compile_time}s), see $TMP/${name}_compile.log"
@@ -265,15 +256,9 @@ for name in $ALL_TESTS; do
     else
         expected_file="$RC2_DIR/tests/$name.expected"
         if [ "$REGEN_EXPECTED" -eq 1 ]; then
-            if is_in "$name" "$BARE_INVOKE_TESTS"; then
-                (cd "$RC2_DIR/tests" && nix-shell -p idris2 gcc gmp pkg-config --run \
-                    "idris2 --cg refc $name.idr -o $TMP/${name}_refc") \
-                    > "$TMP/${name}_refc_compile.log" 2>&1
-            else
-                nix-shell -p idris2 gcc gmp pkg-config --run \
-                    "idris2 --cg refc $RC2_DIR/tests/$name.idr -o $TMP/${name}_refc" \
-                    > "$TMP/${name}_refc_compile.log" 2>&1
-            fi
+            nix-shell -p idris2 gcc gmp pkg-config --run \
+                "idris2 --cg refc $RC2_DIR/tests/$name.idr -o $TMP/${name}_refc" \
+                > "$TMP/${name}_refc_compile.log" 2>&1
             if [ ! -x "$TMP/${name}_refc" ]; then
                 report_fail "$name" "refc compile error, see $TMP/${name}_refc_compile.log"
                 continue

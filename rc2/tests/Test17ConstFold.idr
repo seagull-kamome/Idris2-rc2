@@ -1,4 +1,4 @@
-module Test17ConstFold
+module Main
 
 import System.Info
 

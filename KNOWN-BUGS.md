@@ -43,20 +43,6 @@ entry rather than leaving it stale.
   under real RefC. See `rc2/tests/refc-suite/README.md` and
   `rc2/BENCHMARKS.md`'s own "本家RefCの`System.Clock`は秒精度" note.
 
-## Test-invocation quirk (reproduces on stock idris2 too)
-
-- **`Test6NativeInts.idr` and `Test7CastMatrix.idr` must be invoked as
-  a bare filename from *inside* `rc2/tests/`**, not with a `tests/`
-  path prefix (e.g. `cd rc2/tests && ...idris2-rc2 --cg rc2
-  Test6NativeInts.idr -o ...`, not `...idris2-rc2 --cg rc2
-  tests/Test6NativeInts.idr -o ...`). Both files declare `module
-  TestNNNN` instead of `module Main` like every other test file, so
-  compiling via a `tests/`-prefixed path trips idris2's own
-  module-name-must-match-file-path check. Confirmed to reproduce
-  identically against unmodified upstream `idris2` -- a pre-existing
-  quirk of these two files, nothing `Compiler.RC2`-related. See
-  `rc2/doc/dual-abi.md`'s own "Verification methodology" item 5.
-
 ## Pre-existing `valgrind` leaks (unrelated to whatever's currently being tested)
 
 Found incidentally while re-running `valgrind --leak-check=full` across

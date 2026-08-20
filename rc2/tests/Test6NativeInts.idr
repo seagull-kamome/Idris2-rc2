@@ -1,4 +1,4 @@
-module Test6NativeInts
+module Main
 
 -- Exercises native (unboxed) representation inference
 -- (Compiler.RC2.Types/RC.idr) across every signed/unsigned x

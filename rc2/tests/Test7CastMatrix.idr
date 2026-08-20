@@ -1,4 +1,4 @@
-module Test7CastMatrix
+module Main
 
 -- Fills the gap rc2/tests/refc-suite/integers/TestIntegers.idr (ported
 -- from upstream RefC) leaves in Idris2's full `Cast` primitive matrix:
