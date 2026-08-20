@@ -17,33 +17,56 @@ import Core.CompileExpr
 import Core.FC
 import Core.TT
 
+import Data.List.Quantifiers
 import Data.SortedSet
 import Data.Vect
 
 %default covering
 
-||| ANF-position value: a variable or a constant (see
-||| `doc/reading-the-ir.md`'s "## 3. Values" for the full syntax
-||| reference). `RCNull`/`RCEmptyCon` fold NIL/NOTHING/ZERO/UNIT and
-||| other zero-arg constructors into C's NULL/a tagged integer, rather
-||| than a genuine heap constructor. `RCConstCon` folds a constructor
-||| application whose fields are themselves all constant (see
-||| `Compiler.RC2.ConstFold`) into a single value staged once as a
-||| file-scope static (`Compiler.RC2.Emit`'s `ConstConDef`), immortal
-||| the same way a small-int-cache/`ConstDef` value is -- never a
-||| freshly-allocated heap constructor.
-public export
-data RCLocal : Type where
-     RCLoc      : Int -> RCLocal
-     RCNull     : RCLocal
-     RCConst    : Constant -> RCLocal
-     RCEmptyCon : Name -> ConInfo -> Int -> RCLocal
-     ||| Invariant: every element of `args` is itself one of these four
-     ||| constant `RCLocal` forms (recursively, for nested
-     ||| `RCConstCon`) -- never `RCLoc`. Only ever constructed by
-     ||| `Compiler.RC2.ConstFold`, which is solely responsible for
-     ||| upholding this invariant.
-     RCConstCon : Name -> ConInfo -> (tag : Maybe Int) -> List RCLocal -> RCLocal
+mutual
+  ||| ANF-position value: a variable or a constant (see
+  ||| `doc/reading-the-ir.md`'s "## 3. Values" for the full syntax
+  ||| reference). `RCNull`/`RCEmptyCon` fold NIL/NOTHING/ZERO/UNIT and
+  ||| other zero-arg constructors into C's NULL/a tagged integer, rather
+  ||| than a genuine heap constructor. `RCConstCon` folds a constructor
+  ||| application whose fields are themselves all constant (see
+  ||| `Compiler.RC2.ConstFold`) into a single value staged once as a
+  ||| file-scope static (`Compiler.RC2.Emit`'s `ConstConDef`), immortal
+  ||| the same way a small-int-cache/`ConstDef` value is -- never a
+  ||| freshly-allocated heap constructor.
+  public export
+  data RCLocal : Type where
+       RCLoc      : Int -> RCLocal
+       RCNull     : RCLocal
+       RCConst    : Constant -> RCLocal
+       RCEmptyCon : Name -> ConInfo -> Int -> RCLocal
+       ||| `argsConst` is the type-level enforcement of the old
+       ||| comment-only invariant "every element of `args` is itself one
+       ||| of `RCLocal`'s constant forms, never `RCLoc`" -- erased
+       ||| (`0`), so it costs nothing at runtime, but makes constructing
+       ||| an ill-formed `RCConstCon` (one holding a live variable
+       ||| reference) a compile error rather than a `Compiler.RC2.Emit`
+       ||| `idris_crash`. Staying erased all the way through
+       ||| (`Compiler.RC2.Emit`'s own `boxedConstConExpr`/
+       ||| `constConFieldExprsFor` thread it onward at `0` too, never
+       ||| widening it to a kept value) is exactly what lets Idris2
+       ||| still use it to rule out the `RCLoc` case in
+       ||| `constConFieldExpr`'s coverage check, without this proof
+       ||| existing at runtime at all. Only ever constructed by
+       ||| `Compiler.RC2.ConstFold`.
+       RCConstCon : Name -> ConInfo -> (tag : Maybe Int)
+                 -> (args : List RCLocal) -> {0 argsConst : All IsConstLocal args}
+                 -> RCLocal
+
+  ||| Witness that `l` is one of `RCLocal`'s four constant forms, never
+  ||| `RCLoc` -- no constructor targets an `RCLoc _` index, so nothing
+  ||| can manufacture this proof for a variable reference.
+  public export
+  data IsConstLocal : RCLocal -> Type where
+       ItIsNull     : IsConstLocal RCNull
+       ItIsConst    : IsConstLocal (RCConst c)
+       ItIsEmptyCon : IsConstLocal (RCEmptyCon n ci i)
+       ItIsConstCon : IsConstLocal (RCConstCon n ci t args)
 
 export
 covering

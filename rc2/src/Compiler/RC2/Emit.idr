@@ -66,6 +66,7 @@ import Idris.Syntax
 
 import Libraries.Data.DList
 import Data.List
+import Data.List.Quantifiers
 import Data.SortedSet
 import Data.SortedMap
 import Data.Vect
@@ -628,24 +629,39 @@ boxedConstExpr c = do
 
 mutual
     ||| C initializer text for one `RCConstCon` field: `l` is always
-    ||| already one of `RCLocal`'s constant forms, per `RCConstCon`'s
-    ||| own invariant (RCExp.idr) -- `RCLoc` reaching here would mean
-    ||| `Compiler.RC2.ConstFold` built an ill-formed value. `RCNull`/
-    ||| `RCEmptyCon` render exactly as `varName` would (they're never
-    ||| InlineMap'd -- no detour needed); `RCConst` goes through
-    ||| `boxedConstExpr`, the same staging a let-bound literal of the
-    ||| same value would use; a nested `RCConstCon` stages itself first
-    ||| via `boxedConstConExpr`.
+    ||| already one of `RCLocal`'s constant forms, enforced by `prf`
+    ||| (`IsConstLocal`, RCExp.idr) rather than a runtime check -- an
+    ||| `RCLoc` can't reach here at all, so there's no case for it and
+    ||| no crash to write. `RCNull`/`RCEmptyCon` render exactly as
+    ||| `varName` would (they're never InlineMap'd -- no detour
+    ||| needed); `RCConst` goes through `boxedConstExpr`, the same
+    ||| staging a let-bound literal of the same value would use; a
+    ||| nested `RCConstCon` stages itself first via `boxedConstConExpr`.
     constConFieldExpr : {auto a : Ref ArgCounter Nat}
                      -> {auto _ : Ref ConstDef (SortedMap Constant ConstDef)}
                      -> {auto cc : Ref ConstConDef (SortedMap RCLocal String, List String)}
-                     -> RCLocal -> Core String
-    constConFieldExpr RCNull            = pure "NULL"
-    constConFieldExpr (RCConst c)       = boxedConstExpr c
-    constConFieldExpr (RCEmptyCon _ _ tag) = pure "idris2rc2_mkBits32(\{show tag})"
-    constConFieldExpr l@(RCConstCon {}) = boxedConstConExpr l
-    constConFieldExpr (RCLoc _) =
-        assert_total $ idris_crash "INTERNAL ERROR: [rc2] non-constant field inside RCConstCon"
+                     -> (l : RCLocal) -> {0 prf : IsConstLocal l} -> Core String
+    constConFieldExpr RCNull               {prf=ItIsNull}     = pure "NULL"
+    constConFieldExpr (RCConst c)          {prf=ItIsConst}    = boxedConstExpr c
+    constConFieldExpr (RCEmptyCon _ _ tag) {prf=ItIsEmptyCon} = pure "idris2rc2_mkBits32(\{show tag})"
+    constConFieldExpr l@(RCConstCon {})    {prf=ItIsConstCon} = boxedConstConExpr l
+
+    ||| Walks `args` alongside its own `All` proof so each element's
+    ||| individual `IsConstLocal` witness reaches `constConFieldExpr`.
+    ||| The proof stays erased (`0`) the whole way down -- Idris2 still
+    ||| lets an erased value be pattern-matched to guide which case of
+    ||| a *callee* runs (here, which `constConFieldExpr` clause), as
+    ||| long as nothing downstream ever treats the matched pieces as a
+    ||| kept value.
+    constConFieldExprsFor : {auto a : Ref ArgCounter Nat}
+                          -> {auto _ : Ref ConstDef (SortedMap Constant ConstDef)}
+                          -> {auto cc : Ref ConstConDef (SortedMap RCLocal String, List String)}
+                          -> (args : List RCLocal) -> (0 argsConst : All IsConstLocal args) -> Core (List String)
+    constConFieldExprsFor [] [] = pure []
+    constConFieldExprsFor (l :: ls) (p :: ps) = do
+        e  <- constConFieldExpr l {prf=p}
+        es <- constConFieldExprsFor ls ps
+        pure (e :: es)
 
     ||| The boxed C expression for constant constructor value `l` (an
     ||| `RCConstCon` -- see `Compiler.RC2.ConstFold`): a reference to an
@@ -663,12 +679,12 @@ mutual
                       -> {auto _ : Ref ConstDef (SortedMap Constant ConstDef)}
                       -> {auto cc : Ref ConstConDef (SortedMap RCLocal String, List String)}
                       -> RCLocal -> Core String
-    boxedConstConExpr l@(RCConstCon n _ tag args) = do
+    boxedConstConExpr l@(RCConstCon n _ tag args {argsConst}) = do
         (names, _) <- get ConstConDef
         case lookup l names of
              Just nm => pure "((IDRIS2RC2_Value*)&\{nm})"
              Nothing => do
-                 argExprs <- traverse constConFieldExpr args
+                 argExprs <- constConFieldExprsFor args argsConst
                  nm <- ("constcon_" ++) <$> getNextCounter
                  let nameField = maybe "idris2rc2_constr_\{cName n}" (const "NULL") tag
                  let tagField = maybe "-1" show tag

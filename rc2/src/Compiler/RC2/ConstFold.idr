@@ -16,6 +16,8 @@ import Core.Primitives
 import Core.TT
 import Core.Value
 
+import Data.DPair
+import Data.List.Quantifiers
 import Data.Maybe
 import Data.SortedMap
 import Data.SortedSet
@@ -90,19 +92,22 @@ constFoldOp fn cs =
 ||| at the start of the next `LiftedDef`), so a plain map with no de-
 ||| Bruijn-style weakening is sufficient -- no id this pass records can
 ||| ever be shadowed or reused within the one `RCDef` body it's
-||| threaded through. Values are `RCLocal` (not just `Constant`) so a
-||| folded constant *constructor* (`RCConstCon`, see its own doc
-||| comment in RCExp.idr) can be tracked the same way a folded
-||| arithmetic result can.
+||| threaded through. Values are paired with an `IsConstLocal` proof
+||| (`Data.DPair.Subset`, erased at runtime) so `Env` itself can only
+||| ever hold a genuine constant form (not just `Constant` -- a folded
+||| constant *constructor*, `RCConstCon`, see its own doc comment in
+||| RCExp.idr, is tracked the same way a folded arithmetic result can
+||| be), unlike a plain `SortedMap Int RCLocal` a caller could still
+||| slip a live `RCLoc` into.
 Env : Type
-Env = SortedMap Int RCLocal
+Env = SortedMap Int (Subset RCLocal IsConstLocal)
 
 ||| Resolve `l` against `env` if it's a variable this pass has already
 ||| folded to a known constant value -- otherwise `l` unchanged (still
 ||| `RCLoc`, or already one of the other constant forms, which are
 ||| never looked up).
 resolveLocal : Env -> RCLocal -> RCLocal
-resolveLocal env l@(RCLoc i) = fromMaybe l (lookup i env)
+resolveLocal env l@(RCLoc i) = fromMaybe l (fst <$> lookup i env)
 resolveLocal _   l           = l
 
 ||| `RCConst` is already a literal (no `RLet` involved, see `bindOne`'s
@@ -116,21 +121,54 @@ resolveConst env l = case resolveLocal env l of
 
 ||| `l` is already one of `RCLocal`'s constant forms (not a variable
 ||| reference) *and* safe to stage as a static C initializer (see
-||| `Compiler.RC2.Emit`'s `boxedConstConExpr`) -- used to check whether
-||| `resolveLocal` fully resolved a `RCon` field into something an
-||| `RCConstCon` can actually hold. Excludes `RCConst (BI _)`: every
-||| other `Constant` case renders as either a plain cast/shift macro
-||| (`idris2rc2_mkInt8`, etc.) or a reference to an already-staged
-||| file-scope static (`Compiler.RC2.Emit`'s `ConstDef`, via
-||| `orStagen`), both of which are compile-time constant expressions --
-||| but `BI`'s own rendering (`idris2rc2_getSmallInteger`/
-||| `idris2rc2_mkIntegerLiteral`) is always a real function call, since
-||| GMP's `mpz_t` has no representation a C static initializer can
-||| express.
-asConstLocal : RCLocal -> Maybe RCLocal
-asConstLocal (RCLoc _)        = Nothing
-asConstLocal (RCConst (BI _)) = Nothing
-asConstLocal l                = Just l
+||| `Compiler.RC2.Emit`'s `boxedConstConExpr`) -- the proof itself,
+||| still at its natural (non-erased) multiplicity so callers can
+||| either fold it into `RCConstCon`'s own `All` proof obligation
+||| (`allConstLocal` below, which needs an unrestricted-multiplicity
+||| proof to build each `All.(::)`) or weaken it into a `Subset` to
+||| keep alongside its value in `Env` (`isConstLocal` below). Excludes
+||| `RCConst (BI _)`: every other `Constant` case renders as either a
+||| plain cast/shift macro (`idris2rc2_mkInt8`, etc.) or a reference to
+||| an already-staged file-scope static (`Compiler.RC2.Emit`'s
+||| `ConstDef`, via `orStagen`), both of which are compile-time
+||| constant expressions -- but `BI`'s own rendering
+||| (`idris2rc2_getSmallInteger`/`idris2rc2_mkIntegerLiteral`) is
+||| always a real function call, since GMP's `mpz_t` has no
+||| representation a C static initializer can express. (This exclusion
+||| is a value-level condition on top of `IsConstLocal`, not something
+||| the proof itself encodes -- `IsConstLocal` only ever means "not
+||| RCLoc".)
+isConstLocalProof : (l : RCLocal) -> Maybe (IsConstLocal l)
+isConstLocalProof (RCLoc _)        = Nothing
+isConstLocalProof (RCConst (BI _)) = Nothing
+isConstLocalProof RCNull                 = Just ItIsNull
+isConstLocalProof (RCConst _)            = Just ItIsConst
+isConstLocalProof (RCEmptyCon {})        = Just ItIsEmptyCon
+isConstLocalProof (RCConstCon {})        = Just ItIsConstCon
+
+||| `isConstLocalProof`, paired with its own value for `Env` to keep
+||| around (`Subset`'s own `snd` is erased, so unlike
+||| `isConstLocalProof`'s bare `IsConstLocal l` this can't be
+||| re-weakened back into an unrestricted-multiplicity proof --
+||| `allConstLocal` below deliberately goes through
+||| `isConstLocalProof` directly instead of this, rather than
+||| unwrapping a `Subset` it could never have gotten a full-multiplicity
+||| proof out of).
+isConstLocal : RCLocal -> Maybe (Subset RCLocal IsConstLocal)
+isConstLocal l = case isConstLocalProof l of
+                       Nothing => Nothing
+                       Just p  => Just (Element l p)
+
+||| Whole-list version of `isConstLocalProof`, collecting each
+||| element's own proof into the `All`-shaped obligation `RCConstCon`'s
+||| own `argsConst` field requires -- `args` itself stays a plain
+||| `List RCLocal` (see RCExp.idr's own doc comment for why
+||| `RCConstCon` doesn't need every field re-typed to carry the proof).
+allConstLocal : (args : List RCLocal) -> Maybe (All IsConstLocal args)
+allConstLocal [] = Just []
+allConstLocal (x :: xs) = case isConstLocalProof x of
+                               Nothing => Nothing
+                               Just p  => map (\ps => p :: ps) (allConstLocal xs)
 
 ||| Named so `arity` has a type-signature-level home to be inferred
 ||| from -- inlining this as a bare `traverse (resolveConst env) args`
@@ -178,13 +216,13 @@ mutual
               RPrimVal _ c =>
                   case litRep c of
                        Just _ =>
-                           let body' = foldConst (insert var (RCConst c) env) body
+                           let body' = foldConst (insert var (Element (RCConst c) ItIsConst) env) body
                            in if contains (RCLoc var) (freeLocalsR body')
                                  then RLet fc var rep value' body'
                                  else body'
                        Nothing => RLet fc var rep value' (foldConst env body)
               RV _ cval@(RCConstCon {}) =>
-                  let body' = foldConst (insert var cval env) body
+                  let body' = foldConst (insert var (Element cval ItIsConstCon) env) body
                   in if contains (RCLoc var) (freeLocalsR body')
                         then RLet fc var rep value' body'
                         else body'
@@ -209,8 +247,8 @@ mutual
       let resolvedArgs = map (resolveLocal env) args
       in case args of
               [] => RCon fc n ci tag args Nothing
-              _  => case the (Maybe (List RCLocal)) (traverse asConstLocal resolvedArgs) of
-                         Just constArgs => RV fc (RCConstCon n ci tag constArgs)
+              _  => case allConstLocal resolvedArgs of
+                         Just argsConst => RV fc (RCConstCon n ci tag resolvedArgs {argsConst})
                          Nothing        => RCon fc n ci tag resolvedArgs Nothing
   -- Every other node holding `RCLocal` operands gets them resolved
   -- against `env` too -- not for a value of its own to fold to (an
