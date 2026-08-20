@@ -232,6 +232,28 @@ application, not a fully-saturated one. Not pursued further -- full
 investigation, both refuted hypotheses, and what a real fix would need
 are in **`rc2/doc/reuse-monadic-bind-gap.md`**.
 
+## Performance: constant-constructor folding doesn't cross a CAF boundary or a case scrutinee
+
+`Compiler.RC2.ConstFold`'s `RCConstCon` folding (see
+`rc2/doc/const-con-fold.md`) only folds literal constructor nesting
+*within one definition's own body* -- deliberately MVP-scoped, two
+gaps left for later:
+
+- A `RAppName` referencing another top-level CAF is never treated as
+  constant, even when that CAF's own body folds entirely. Folding
+  through would need whole-program dependency resolution (which CAF
+  folds first if two reference each other) this pass doesn't attempt.
+- `RConCase`/`RConstCase`'s own scrutinee (`sc`) is never resolved
+  against a folded `RCConstCon`, so a `case` over a
+  provably-constant value still compiles to a real runtime dispatch
+  instead of folding away. `Compiler.RC2.Reuse` and `Emit.idr`'s own
+  case-lowering both currently assume a scrutinee is a real heap
+  `RCLoc` -- both would need auditing before this could be lifted.
+
+Not pursued further this round -- see `const-con-fold.md`'s own
+"Scope / limitations" and "Verification methodology" sections for the
+reasoning and what to check before extending either.
+
 ## Scope: deliberately unboxed types stop at scalars
 
 `Integer` (GMP arbitrary precision) and `String` are never candidates
@@ -337,10 +359,6 @@ Repro: `cd rc2/tests && ./verify.sh --skip-build --no-valgrind --directive noreu
   `partial`呼び出しによるクロージャ生成とヒープ割り当てが、高階関数や型クラスの辞書使用時に頻発している。特に`List`操作や`mapAppend`のような高階関数において、`Boxed`なクロージャが多重生成されており、パフォーマンスを大きく阻害している。
   - 可能な限りコンパイル時にクロージャを特定し、直接呼び出しへとインライン展開するパスを実装する。
   - スコープ内で閉じている静的な定数クロージャは、最適化パスで完全にインライン化・削除を行う。
-
-- **Performance: Static Data Embedding**
-  定数データ（リストやCONSセルの連鎖など）が、実行時に毎回ヒープ上で動的割り当て（`_builtin.CONS`等）されている。
-  - コンパイル時に値が完全に確定しているデータ構造は、実行時の動的割り当てを排除し、バイナリの静的データ領域（`.rodata`）に配置することで、初期化コストとメモリ割り当てコストをゼロにする。
 
 - **Performance: Higher-Order Function Specialization**
   `mapAppend`のような汎用的な高階関数は、すべて`Boxed`な値を引数に取るため、頻繁なポインタ参照とヒープ割り当てが発生している。

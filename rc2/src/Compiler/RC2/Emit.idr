@@ -264,6 +264,9 @@ varName (RCConst _) = "/* [rc2] unreachable RCConst varName */"
 -- dedicated constructor-tag encoding, and every constructor tag fits
 -- comfortably in 32 bits) rather than adding a new runtime function.
 varName (RCEmptyCon _ _ tag) = "idris2rc2_mkBits32(\{show tag})"
+-- Unreachable in practice, same reasoning as RCConst above:
+-- repOfLocal/inlineExprFor always intercept a RCConstCon first.
+varName (RCConstCon {}) = "/* [rc2] unreachable RCConstCon varName */"
 
 ------------------------------------------------------------------------
 -- Native (unboxed) codegen, driven by Compiler.RC2.Types' Rep inference.
@@ -443,6 +446,16 @@ data ConstDef
   | CDDb  String
   | CDStr String
 
+||| State for `RCConstCon` staging (`boxedConstConExpr`): a lookup from
+||| already-staged value to its file-scope static's name (dedup, same
+||| role as `ConstDef`'s own `SortedMap`), paired with the finished C
+||| definition text for each staged value *in staging order* -- always
+||| children-before-parents, since `boxedConstConExpr` stages a nested
+||| `RCConstCon` field before appending its own definition, and a C
+||| static initializer can only take the address of an already-declared
+||| static. `header` emits this list as-is, no further reordering.
+data ConstConDef : Type where
+
 constantName : ConstDef -> String
 constantName = \case
   CDI64 x => go "Int64" x
@@ -551,6 +564,9 @@ repOfLocal (RCConst c) = pure $ maybe RBoxed RNative (litRep c)
 -- Always Boxed, same as RCNull -- its value is already a valid Value*
 -- (a tagged pointer, per varName above), never a native scalar.
 repOfLocal (RCEmptyCon {}) = pure RBoxed
+-- Always Boxed -- a staged static IDRIS2RC2_Constructor is a real
+-- Value*, same as any other heap constructor, never a native scalar.
+repOfLocal (RCConstCon {}) = pure RBoxed
 repOfLocal (RCLoc i) = do
     reps <- get RepMap
     pure $ fromMaybe RBoxed (SortedMap.lookup i reps)
@@ -571,6 +587,7 @@ repOfLocal (RCLoc i) = do
 ||| comment for why that one is deliberately excluded from RCConst).
 boxedConstExpr : {auto a : Ref ArgCounter Nat}
               -> {auto _ : Ref ConstDef (SortedMap Constant ConstDef)}
+              -> {auto cc : Ref ConstConDef (SortedMap RCLocal String, List String)}
               -> Constant -> Core String
 boxedConstExpr c = do
     constdefs <- get ConstDef
@@ -609,6 +626,59 @@ boxedConstExpr c = do
         PrT t => pure $ cPrimType t
         WorldVal => pure "(NULL /* World */)"
 
+mutual
+    ||| C initializer text for one `RCConstCon` field: `l` is always
+    ||| already one of `RCLocal`'s constant forms, per `RCConstCon`'s
+    ||| own invariant (RCExp.idr) -- `RCLoc` reaching here would mean
+    ||| `Compiler.RC2.ConstFold` built an ill-formed value. `RCNull`/
+    ||| `RCEmptyCon` render exactly as `varName` would (they're never
+    ||| InlineMap'd -- no detour needed); `RCConst` goes through
+    ||| `boxedConstExpr`, the same staging a let-bound literal of the
+    ||| same value would use; a nested `RCConstCon` stages itself first
+    ||| via `boxedConstConExpr`.
+    constConFieldExpr : {auto a : Ref ArgCounter Nat}
+                     -> {auto _ : Ref ConstDef (SortedMap Constant ConstDef)}
+                     -> {auto cc : Ref ConstConDef (SortedMap RCLocal String, List String)}
+                     -> RCLocal -> Core String
+    constConFieldExpr RCNull            = pure "NULL"
+    constConFieldExpr (RCConst c)       = boxedConstExpr c
+    constConFieldExpr (RCEmptyCon _ _ tag) = pure "idris2rc2_mkBits32(\{show tag})"
+    constConFieldExpr l@(RCConstCon {}) = boxedConstConExpr l
+    constConFieldExpr (RCLoc _) =
+        assert_total $ idris_crash "INTERNAL ERROR: [rc2] non-constant field inside RCConstCon"
+
+    ||| The boxed C expression for constant constructor value `l` (an
+    ||| `RCConstCon` -- see `Compiler.RC2.ConstFold`): a reference to an
+    ||| already-staged file-scope static (deduplicates across the whole
+    ||| compilation unit, same as `boxedConstExpr`), or a fresh stage-
+    ||| then-reference otherwise. The staged static mirrors
+    ||| `IDRIS2RC2_Constructor`'s own layout field-for-field (see
+    ||| `emitRC`'s `RCon` case for the dynamic-allocation equivalent)
+    ||| but as a fixed-size array instead of a flexible array member --
+    ||| plain C has no static initializer for a flexible array member --
+    ||| and stamps `IDRIS2RC2_STOCKVAL` (the same immortal-refcount
+    ||| marker the small-int cache and `ConstDef` values already use)
+    ||| instead of the `refCount = 1` a fresh heap allocation gets.
+    boxedConstConExpr : {auto a : Ref ArgCounter Nat}
+                      -> {auto _ : Ref ConstDef (SortedMap Constant ConstDef)}
+                      -> {auto cc : Ref ConstConDef (SortedMap RCLocal String, List String)}
+                      -> RCLocal -> Core String
+    boxedConstConExpr l@(RCConstCon n _ tag args) = do
+        (names, _) <- get ConstConDef
+        case lookup l names of
+             Just nm => pure "((IDRIS2RC2_Value*)&\{nm})"
+             Nothing => do
+                 argExprs <- traverse constConFieldExpr args
+                 nm <- ("constcon_" ++) <$> getNextCounter
+                 let nameField = maybe "idris2rc2_constr_\{cName n}" (const "NULL") tag
+                 let tagField = maybe "-1" show tag
+                 let def = "static struct { IDRIS2RC2_Header header; int32_t arity; int32_t tag; char const *name; IDRIS2RC2_Value *args[\{show (length args)}]; } const \{nm} = { IDRIS2RC2_STOCKVAL(IDRIS2RC2_TAG_CONSTRUCTOR), \{show (length args)}, \{tagField}, \{nameField}, { \{showSep ", " argExprs} } };"
+                 (names', defs') <- get ConstConDef
+                 put ConstConDef (insert l nm names', defs' ++ [def])
+                 pure "((IDRIS2RC2_Value*)&\{nm})"
+    boxedConstConExpr _ =
+        assert_total $ idris_crash "INTERNAL ERROR: [rc2] boxedConstConExpr called on non-RCConstCon"
+
 ||| `Just` the C expression text standing in for `l`'s never-declared
 ||| variable if it's an InlineMap-registered local, or an RCConst (see
 ||| InlineMap's and RCLocal's own comments -- a native-eligible one
@@ -618,6 +688,7 @@ boxedConstExpr c = do
 ||| the same value would use), `Nothing` for an ordinary declared local.
 inlineExprFor : {auto a : Ref ArgCounter Nat}
              -> {auto _ : Ref ConstDef (SortedMap Constant ConstDef)}
+             -> {auto cc : Ref ConstConDef (SortedMap RCLocal String, List String)}
              -> {auto lm : Ref InlineMap (SortedMap Int String)}
              -> RCLocal -> Core (Maybe String)
 inlineExprFor RCNull = pure Nothing
@@ -627,6 +698,7 @@ inlineExprFor (RCConst c) = Just <$> case litRep c of
 -- Nothing, same as RCNull: rendered directly by varName, not through
 -- the InlineMap/RNative detour (see repOfLocal above).
 inlineExprFor (RCEmptyCon {}) = pure Nothing
+inlineExprFor l@(RCConstCon {}) = Just <$> boxedConstConExpr l
 inlineExprFor (RCLoc i) = do
     inlined <- get InlineMap
     pure $ SortedMap.lookup i inlined
@@ -641,6 +713,7 @@ inlineExprFor (RCLoc i) = do
 ||| to read in the first place -- its expression text is used as-is.
 rcVarToBoxedC : {auto a : Ref ArgCounter Nat}
              -> {auto _ : Ref ConstDef (SortedMap Constant ConstDef)}
+             -> {auto cc : Ref ConstConDef (SortedMap RCLocal String, List String)}
              -> {auto r : Ref RepMap (SortedMap Int Rep)}
              -> {auto lm : Ref InlineMap (SortedMap Int String)}
              -> RCLocal -> Core String
@@ -677,6 +750,7 @@ rcVarToBoxedC l = do
 ||| Boxed-result while still reading a genuinely Native operand).
 boxOpArg : {auto a : Ref ArgCounter Nat}
         -> {auto _ : Ref ConstDef (SortedMap Constant ConstDef)}
+        -> {auto cc : Ref ConstConDef (SortedMap RCLocal String, List String)}
         -> {auto r : Ref RepMap (SortedMap Int Rep)}
         -> {auto lm : Ref InlineMap (SortedMap Int String)}
         -> {auto oft : Ref OutfileText Output}
@@ -700,6 +774,7 @@ boxOpArg fc l = do
 ||| `var_N` that was never declared.
 rcVarToNativeC : {auto a : Ref ArgCounter Nat}
               -> {auto _ : Ref ConstDef (SortedMap Constant ConstDef)}
+              -> {auto cc : Ref ConstConDef (SortedMap RCLocal String, List String)}
               -> {auto r : Ref RepMap (SortedMap Int Rep)}
               -> {auto lm : Ref InlineMap (SortedMap Int String)}
               -> PrimType -> RCLocal -> Core String
@@ -911,6 +986,7 @@ makeClosureInto : {auto a : Ref ArgCounter Nat}
                 -> {auto oft : Ref OutfileText Output}
                 -> {auto il : Ref IndentLevel Nat}
                 -> {auto _ : Ref ConstDef (SortedMap Constant ConstDef)}
+                -> {auto cc : Ref ConstConDef (SortedMap RCLocal String, List String)}
                 -> {auto r : Ref RepMap (SortedMap Int Rep)}
                 -> {auto lm : Ref InlineMap (SortedMap Int String)}
                 -> FC
@@ -939,6 +1015,7 @@ makeClosure : {auto a : Ref ArgCounter Nat}
             -> {auto oft : Ref OutfileText Output}
             -> {auto il : Ref IndentLevel Nat}
             -> {auto _ : Ref ConstDef (SortedMap Constant ConstDef)}
+            -> {auto cc : Ref ConstConDef (SortedMap RCLocal String, List String)}
             -> {auto r : Ref RepMap (SortedMap Int Rep)}
             -> {auto lm : Ref InlineMap (SortedMap Int String)}
             -> FC
@@ -963,6 +1040,7 @@ buildClosureIntoSink : {auto a : Ref ArgCounter Nat}
                      -> {auto oft : Ref OutfileText Output}
                      -> {auto il : Ref IndentLevel Nat}
                      -> {auto _ : Ref ConstDef (SortedMap Constant ConstDef)}
+                     -> {auto cc : Ref ConstConDef (SortedMap RCLocal String, List String)}
                      -> {auto r : Ref RepMap (SortedMap Int Rep)}
                      -> {auto lm : Ref InlineMap (SortedMap Int String)}
                      -> FC -> Sink -> Name -> List RCLocal -> Nat -> Core ()
@@ -1236,6 +1314,7 @@ mutual
                -> {auto oft : Ref OutfileText Output}
                -> {auto il : Ref IndentLevel Nat}
                -> {auto _ : Ref ConstDef (SortedMap Constant ConstDef)}
+               -> {auto cc : Ref ConstConDef (SortedMap RCLocal String, List String)}
                -> {auto r : Ref RepMap (SortedMap Int Rep)}
                -> {auto lm : Ref InlineMap (SortedMap Int String)}
                -> {auto fa : Ref LoopParams (List (Int, Rep))}
@@ -1270,6 +1349,7 @@ mutual
                         -> {auto oft : Ref OutfileText Output}
                         -> {auto il : Ref IndentLevel Nat}
                         -> {auto _ : Ref ConstDef (SortedMap Constant ConstDef)}
+                        -> {auto cc : Ref ConstConDef (SortedMap RCLocal String, List String)}
                         -> {auto r : Ref RepMap (SortedMap Int Rep)}
                         -> {auto lm : Ref InlineMap (SortedMap Int String)}
                         -> {auto fa : Ref LoopParams (List (Int, Rep))}
@@ -1353,6 +1433,7 @@ mutual
                         -> {auto oft : Ref OutfileText Output}
                         -> {auto il : Ref IndentLevel Nat}
                         -> {auto _ : Ref ConstDef (SortedMap Constant ConstDef)}
+                        -> {auto cc : Ref ConstConDef (SortedMap RCLocal String, List String)}
                         -> {auto r : Ref RepMap (SortedMap Int Rep)}
                         -> {auto lm : Ref InlineMap (SortedMap Int String)}
                         -> {auto fa : Ref LoopParams (List (Int, Rep))}
@@ -1396,6 +1477,7 @@ mutual
                   -> {auto oft : Ref OutfileText Output}
                   -> {auto il : Ref IndentLevel Nat}
                   -> {auto _ : Ref ConstDef (SortedMap Constant ConstDef)}
+                  -> {auto cc : Ref ConstConDef (SortedMap RCLocal String, List String)}
                   -> {auto r : Ref RepMap (SortedMap Int Rep)}
                   -> {auto lm : Ref InlineMap (SortedMap Int String)}
                   -> {auto fa : Ref LoopParams (List (Int, Rep))}
@@ -1415,6 +1497,7 @@ mutual
                  -> {auto oft : Ref OutfileText Output}
                  -> {auto il : Ref IndentLevel Nat}
                  -> {auto _ : Ref ConstDef (SortedMap Constant ConstDef)}
+                 -> {auto cc : Ref ConstConDef (SortedMap RCLocal String, List String)}
                  -> {auto r : Ref RepMap (SortedMap Int Rep)}
                  -> {auto lm : Ref InlineMap (SortedMap Int String)}
                  -> {auto fa : Ref LoopParams (List (Int, Rep))}
@@ -1449,6 +1532,7 @@ mutual
                      -> {auto oft : Ref OutfileText Output}
                      -> {auto il : Ref IndentLevel Nat}
                      -> {auto _ : Ref ConstDef (SortedMap Constant ConstDef)}
+                     -> {auto cc : Ref ConstConDef (SortedMap RCLocal String, List String)}
                      -> {auto r : Ref RepMap (SortedMap Int Rep)}
                      -> {auto lm : Ref InlineMap (SortedMap Int String)}
                      -> {auto fa : Ref LoopParams (List (Int, Rep))}
@@ -1496,6 +1580,7 @@ mutual
                        -> {auto oft : Ref OutfileText Output}
                        -> {auto il : Ref IndentLevel Nat}
                        -> {auto _ : Ref ConstDef (SortedMap Constant ConstDef)}
+                       -> {auto cc : Ref ConstConDef (SortedMap RCLocal String, List String)}
                        -> {auto r : Ref RepMap (SortedMap Int Rep)}
                        -> {auto lm : Ref InlineMap (SortedMap Int String)}
                        -> {auto fa : Ref LoopParams (List (Int, Rep))}
@@ -1562,6 +1647,7 @@ mutual
              -> {auto oft : Ref OutfileText Output}
              -> {auto il : Ref IndentLevel Nat}
              -> {auto _ : Ref ConstDef (SortedMap Constant ConstDef)}
+             -> {auto cc : Ref ConstConDef (SortedMap RCLocal String, List String)}
              -> {auto r : Ref RepMap (SortedMap Int Rep)}
              -> {auto lm : Ref InlineMap (SortedMap Int String)}
              -> {auto fa : Ref LoopParams (List (Int, Rep))}
@@ -1634,6 +1720,7 @@ mutual
                -> {auto oft : Ref OutfileText Output}
                -> {auto il : Ref IndentLevel Nat}
                -> {auto _ : Ref ConstDef (SortedMap Constant ConstDef)}
+               -> {auto cc : Ref ConstConDef (SortedMap RCLocal String, List String)}
                -> {auto r : Ref RepMap (SortedMap Int Rep)}
                -> {auto lm : Ref InlineMap (SortedMap Int String)}
                -> {auto fa : Ref LoopParams (List (Int, Rep))}
@@ -1661,6 +1748,7 @@ mutual
                    -> {auto oft : Ref OutfileText Output}
                    -> {auto il : Ref IndentLevel Nat}
                    -> {auto _ : Ref ConstDef (SortedMap Constant ConstDef)}
+                   -> {auto cc : Ref ConstConDef (SortedMap RCLocal String, List String)}
                    -> {auto r : Ref RepMap (SortedMap Int Rep)}
                    -> {auto lm : Ref InlineMap (SortedMap Int String)}
                    -> {auto fa : Ref LoopParams (List (Int, Rep))}
@@ -1691,6 +1779,7 @@ mutual
                     -> {auto oft : Ref OutfileText Output}
                     -> {auto il : Ref IndentLevel Nat}
                     -> {auto _ : Ref ConstDef (SortedMap Constant ConstDef)}
+                    -> {auto cc : Ref ConstConDef (SortedMap RCLocal String, List String)}
                     -> {auto r : Ref RepMap (SortedMap Int Rep)}
                     -> {auto lm : Ref InlineMap (SortedMap Int String)}
                     -> {auto fa : Ref LoopParams (List (Int, Rep))}
@@ -1729,6 +1818,7 @@ mutual
                     -> {auto oft : Ref OutfileText Output}
                     -> {auto il : Ref IndentLevel Nat}
                     -> {auto _ : Ref ConstDef (SortedMap Constant ConstDef)}
+                    -> {auto cc : Ref ConstConDef (SortedMap RCLocal String, List String)}
                     -> {auto r : Ref RepMap (SortedMap Int Rep)}
                     -> {auto lm : Ref InlineMap (SortedMap Int String)}
                     -> {auto fa : Ref LoopParams (List (Int, Rep))}
@@ -1752,6 +1842,7 @@ mutual
                        -> {auto oft : Ref OutfileText Output}
                        -> {auto il : Ref IndentLevel Nat}
                        -> {auto _ : Ref ConstDef (SortedMap Constant ConstDef)}
+                       -> {auto cc : Ref ConstConDef (SortedMap RCLocal String, List String)}
                        -> {auto r : Ref RepMap (SortedMap Int Rep)}
                        -> {auto lm : Ref InlineMap (SortedMap Int String)}
                        -> {auto fa : Ref LoopParams (List (Int, Rep))}
@@ -1870,6 +1961,7 @@ mutual
                      -> {auto oft : Ref OutfileText Output}
                      -> {auto il : Ref IndentLevel Nat}
                      -> {auto _ : Ref ConstDef (SortedMap Constant ConstDef)}
+                     -> {auto cc : Ref ConstConDef (SortedMap RCLocal String, List String)}
                      -> {auto r : Ref RepMap (SortedMap Int Rep)}
                      -> {auto lm : Ref InlineMap (SortedMap Int String)}
                      -> {auto fa : Ref LoopParams (List (Int, Rep))}
@@ -1914,6 +2006,7 @@ mutual
                  -> {auto oft : Ref OutfileText Output}
                  -> {auto il : Ref IndentLevel Nat}
                  -> {auto _ : Ref ConstDef (SortedMap Constant ConstDef)}
+                 -> {auto cc : Ref ConstConDef (SortedMap RCLocal String, List String)}
                  -> {auto r : Ref RepMap (SortedMap Int Rep)}
                  -> {auto lm : Ref InlineMap (SortedMap Int String)}
                  -> {auto fa : Ref LoopParams (List (Int, Rep))}
@@ -1931,6 +2024,7 @@ mutual
            -> {auto oft : Ref OutfileText Output}
            -> {auto il : Ref IndentLevel Nat}
            -> {auto _ : Ref ConstDef (SortedMap Constant ConstDef)}
+           -> {auto cc : Ref ConstConDef (SortedMap RCLocal String, List String)}
            -> {auto r : Ref RepMap (SortedMap Int Rep)}
            -> {auto lm : Ref InlineMap (SortedMap Int String)}
            -> {auto fa : Ref LoopParams (List (Int, Rep))}
@@ -2161,6 +2255,7 @@ mutual
                      -> {auto oft : Ref OutfileText Output}
                      -> {auto il : Ref IndentLevel Nat}
                      -> {auto _ : Ref ConstDef (SortedMap Constant ConstDef)}
+                     -> {auto cc : Ref ConstConDef (SortedMap RCLocal String, List String)}
                      -> {auto r : Ref RepMap (SortedMap Int Rep)}
                      -> {auto lm : Ref InlineMap (SortedMap Int String)}
                      -> {auto fa : Ref LoopParams (List (Int, Rep))}
@@ -2260,6 +2355,7 @@ addCommaToList (x :: xs) = ("  " ++ x) :: map (", " ++) xs
 createCFunctions : {auto c : Ref Ctxt Defs}
                 -> {auto a : Ref ArgCounter Nat}
                 -> {auto _ : Ref ConstDef (SortedMap Constant ConstDef)}
+                -> {auto cc : Ref ConstConDef (SortedMap RCLocal String, List String)}
                 -> {auto f : Ref FunctionDefinitions (List String)}
                 -> {auto oft : Ref OutfileText Output}
                 -> {auto il : Ref IndentLevel Nat}
@@ -2451,6 +2547,7 @@ header : {auto f : Ref FunctionDefinitions (List String)}
       -> {auto il : Ref IndentLevel Nat}
       -> {auto h : Ref HeaderFiles (SortedSet String)}
       -> {auto _ : Ref ConstDef (SortedMap Constant ConstDef)}
+      -> {auto cc : Ref ConstConDef (SortedMap RCLocal String, List String)}
       -> {auto sd : Ref StructDefs (SortedMap String (List (String, CFType)))}
       -> Core ()
 header = do
@@ -2476,7 +2573,9 @@ header = do
         ["\n// function definitions"] ++
         fns ++
         ["\n// constant value definitions"] ++
-        map (uncurry genConstant) (SortedMap.toList !(get ConstDef))
+        map (uncurry genConstant) (SortedMap.toList !(get ConstDef)) ++
+        ["\n// constant constructor value definitions"] ++
+        snd !(get ConstConDef)
   where
     go : ConstDef -> String -> String -> String -> String
     go cdef ty tag v =
@@ -2525,6 +2624,7 @@ generateCSourceFile defs outn =
   do _ <- newRef ArgCounter 0
      _ <- newRef FunctionDefinitions []
      _ <- newRef ConstDef Data.SortedMap.empty
+     _ <- newRef ConstConDef (Data.SortedMap.empty, [])
      _ <- newRef OutfileText DList.Nil
      _ <- newRef HeaderFiles empty
      _ <- newRef IndentLevel 0

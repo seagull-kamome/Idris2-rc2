@@ -8,6 +8,7 @@ module Compiler.RC2.ConstFold
 -- inlining and ExtPrim folding.
 
 import Compiler.RC2.RCExp
+import Compiler.RC2.Types
 
 import Core.CompileExpr
 import Core.FC
@@ -83,24 +84,53 @@ constFoldOp fn cs =
                  Just (NPrimVal _ c) => Just c
                  _                   => Nothing
 
-||| Locals this pass has itself folded to a known constant, keyed by
-||| `RCLoc`'s own `Int` id. Ids are minted by `RC.idr`'s per-`LiftedDef`
-||| `NextVar` counter (monotonically increasing, reset only at the
-||| start of the next `LiftedDef`), so a plain map with no de-Bruijn-
-||| style weakening is sufficient -- no id this pass records can ever
-||| be shadowed or reused within the one `RCDef` body it's threaded
-||| through.
+||| Locals this pass has itself folded to a known constant value, keyed
+||| by `RCLoc`'s own `Int` id. Ids are minted by `RC.idr`'s per-
+||| `LiftedDef` `NextVar` counter (monotonically increasing, reset only
+||| at the start of the next `LiftedDef`), so a plain map with no de-
+||| Bruijn-style weakening is sufficient -- no id this pass records can
+||| ever be shadowed or reused within the one `RCDef` body it's
+||| threaded through. Values are `RCLocal` (not just `Constant`) so a
+||| folded constant *constructor* (`RCConstCon`, see its own doc
+||| comment in RCExp.idr) can be tracked the same way a folded
+||| arithmetic result can.
 Env : Type
-Env = SortedMap Int Constant
+Env = SortedMap Int RCLocal
+
+||| Resolve `l` against `env` if it's a variable this pass has already
+||| folded to a known constant value -- otherwise `l` unchanged (still
+||| `RCLoc`, or already one of the other constant forms, which are
+||| never looked up).
+resolveLocal : Env -> RCLocal -> RCLocal
+resolveLocal env l@(RCLoc i) = fromMaybe l (lookup i env)
+resolveLocal _   l           = l
 
 ||| `RCConst` is already a literal (no `RLet` involved, see `bindOne`'s
 ||| own doc comment in RC.idr); `RCLoc` is resolved against whatever
-||| this pass has folded so far. `RCNull`/`RCEmptyCon` never denote a
-||| `Constant`.
+||| this pass has folded so far. `RCNull`/`RCEmptyCon`/`RCConstCon`
+||| never denote a plain `Constant`.
 resolveConst : Env -> RCLocal -> Maybe Constant
-resolveConst _   (RCConst c) = Just c
-resolveConst env (RCLoc i)   = lookup i env
-resolveConst _   _           = Nothing
+resolveConst env l = case resolveLocal env l of
+                           RCConst c => Just c
+                           _         => Nothing
+
+||| `l` is already one of `RCLocal`'s constant forms (not a variable
+||| reference) *and* safe to stage as a static C initializer (see
+||| `Compiler.RC2.Emit`'s `boxedConstConExpr`) -- used to check whether
+||| `resolveLocal` fully resolved a `RCon` field into something an
+||| `RCConstCon` can actually hold. Excludes `RCConst (BI _)`: every
+||| other `Constant` case renders as either a plain cast/shift macro
+||| (`idris2rc2_mkInt8`, etc.) or a reference to an already-staged
+||| file-scope static (`Compiler.RC2.Emit`'s `ConstDef`, via
+||| `orStagen`), both of which are compile-time constant expressions --
+||| but `BI`'s own rendering (`idris2rc2_getSmallInteger`/
+||| `idris2rc2_mkIntegerLiteral`) is always a real function call, since
+||| GMP's `mpz_t` has no representation a C static initializer can
+||| express.
+asConstLocal : RCLocal -> Maybe RCLocal
+asConstLocal (RCLoc _)        = Nothing
+asConstLocal (RCConst (BI _)) = Nothing
+asConstLocal l                = Just l
 
 ||| Named so `arity` has a type-signature-level home to be inferred
 ||| from -- inlining this as a bare `traverse (resolveConst env) args`
@@ -117,30 +147,105 @@ findConstAlt c (MkRConstAlt c' body :: rest) def =
 
 mutual
   foldConst : Env -> RCExp -> RCExp
+  -- `value` is folded first (recursively -- if it's itself a `RLet`
+  -- chain building a constant constructor, e.g. a `Cons` cell nesting
+  -- another `Cons` cell as its own value, the innermost one folds to a
+  -- `RV`-of-`RCConstCon` first, then that fold result is what this
+  -- level sees as `value'`), then classified: a `RPrimVal` or a
+  -- `RV`-wrapped `RCConstCon` both mean "this variable is now a known
+  -- constant" -- insert into `env`, drop the `RLet` entirely if
+  -- nothing in `body` (post-fold) still references the variable, same
+  -- "moves a value out of `env`-tracking once truly dead" shape either
+  -- way, just for constructor values as well as primitive ones now.
   foldConst env (RLet fc var rep value body) =
       let value' = foldConst env value
       in case value' of
+              -- Only a native-eligible constant (`litRep` -- see
+              -- `asConstLocal`'s own doc comment) is safe to track in
+              -- `env` and splice into other nodes' `args` in its place
+              -- (the `RAppName`/`ROp`/etc. cases below): a
+              -- non-native-eligible one (`BI`, `Str`) is a genuine
+              -- heap value RC.idr's `bindOne` deliberately always
+              -- keeps behind a real `RCLoc` (see RCExp.idr's module
+              -- note) precisely so `Compiler.RC2.RC`'s own `annotate`
+              -- tracks its ownership/postDrop normally -- `RCConst`
+              -- itself is unconditionally treated as non-Boxed
+              -- everywhere in `annotate` (`isBoxedOperand`/
+              -- `splitBorrows`/`dropIfLastUse`). Splicing one in
+              -- directly would make `annotate` silently skip dropping
+              -- a real refcounted value (`idris2rc2_mkIntegerLiteral`,
+              -- for `BI`) -- a leak, not just a missed optimisation.
               RPrimVal _ c =>
-                  let body' = foldConst (insert var c env) body
+                  case litRep c of
+                       Just _ =>
+                           let body' = foldConst (insert var (RCConst c) env) body
+                           in if contains (RCLoc var) (freeLocalsR body')
+                                 then RLet fc var rep value' body'
+                                 else body'
+                       Nothing => RLet fc var rep value' (foldConst env body)
+              RV _ cval@(RCConstCon {}) =>
+                  let body' = foldConst (insert var cval env) body
                   in if contains (RCLoc var) (freeLocalsR body')
                         then RLet fc var rep value' body'
                         else body'
               _ => RLet fc var rep value' (foldConst env body)
+  foldConst env (RV fc l) = RV fc (resolveLocal env l)
+  -- A `RCon` whose `args` are all -- directly, or via `env` --
+  -- already-constant `RCLocal`s folds to a single `RCConstCon` value
+  -- (see its own doc comment in RCExp.idr), rendered as a `RV` of that
+  -- value so the `RLet` case above can pick it up the same way it
+  -- picks up a folded `RPrimVal`. A `reuseFrom` construction is never
+  -- folded -- the reuse reservation it's claiming would become
+  -- meaningless. Zero-arity `args` are excluded too: NIL/NOTHING/ZERO/
+  -- UNIT already take the dedicated `RCNull` route (see `RCon`'s own
+  -- `emitRC` case), so a genuinely-zero-arity `RCon` reaching here
+  -- would need a zero-length C array in its staged static, which
+  -- plain C doesn't allow. Args that don't all resolve stay a `RCon`,
+  -- but with each field rewritten to its resolved form -- a constant
+  -- field nested inside an otherwise-dynamic construction (e.g.
+  -- `Cons x constList`) still gets to reference the staged static
+  -- directly rather than re-reading a dead variable.
+  foldConst env (RCon fc n ci tag args Nothing) =
+      let resolvedArgs = map (resolveLocal env) args
+      in case args of
+              [] => RCon fc n ci tag args Nothing
+              _  => case the (Maybe (List RCLocal)) (traverse asConstLocal resolvedArgs) of
+                         Just constArgs => RV fc (RCConstCon n ci tag constArgs)
+                         Nothing        => RCon fc n ci tag resolvedArgs Nothing
+  -- Every other node holding `RCLocal` operands gets them resolved
+  -- against `env` too -- not for a value of its own to fold to (an
+  -- `RAppName`/`RApp`/etc. call always still happens), but so a
+  -- variable this pass already proved constant is referenced as that
+  -- constant directly rather than left as a dead `RCLoc` -- which is
+  -- what `freeLocalsR` (the `RLet` case above) uses to decide whether
+  -- the `RLet` that built it is now droppable. Left unresolved here,
+  -- every such use would keep the variable "live", permanently
+  -- defeating the whole pass.
+  foldConst env (RAppName fc lazy n args) = RAppName fc lazy n (map (resolveLocal env) args)
+  foldConst env (RUnderApp fc n missing args) = RUnderApp fc n missing (map (resolveLocal env) args)
+  foldConst env (RApp fc lazy c a) = RApp fc lazy (resolveLocal env c) (resolveLocal env a)
+  foldConst env (RExtPrim fc lazy p args) = RExtPrim fc lazy p (map (resolveLocal env) args)
+  foldConst env (RStructGet fc structVar sn fn postDrop) =
+      RStructGet fc (resolveLocal env structVar) sn fn postDrop
+  foldConst env (RStructSet fc structVar sn fn value postDrop) =
+      RStructSet fc (resolveLocal env structVar) sn fn (resolveLocal env value) postDrop
   foldConst env (ROp fc lazy op args postDrop) =
-      case resolveConsts env args of
-           Just cs => case constFoldOp op cs of
-                           Just c  => RPrimVal fc c
-                           Nothing => ROp fc lazy op args postDrop
-           Nothing => ROp fc lazy op args postDrop
+      let resolvedArgs = map (resolveLocal env) args
+      in case resolveConsts env args of
+              Just cs => case constFoldOp op cs of
+                              Just c  => RPrimVal fc c
+                              Nothing => ROp fc lazy op resolvedArgs postDrop
+              Nothing => ROp fc lazy op resolvedArgs postDrop
   foldConst env (RCmpCase fc op args postDrop t f) =
       let t' = foldConst env t
           f' = foldConst env f
+          resolvedArgs = map (resolveLocal env) args
       in case resolveConsts env args of
               Just cs => case constFoldOp op cs of
                               Just (I 1) => t'
                               Just (I 0) => f'
-                              _          => RCmpCase fc op args postDrop t' f'
-              Nothing => RCmpCase fc op args postDrop t' f'
+                              _          => RCmpCase fc op resolvedArgs postDrop t' f'
+              Nothing => RCmpCase fc op resolvedArgs postDrop t' f'
   foldConst env (RConCase fc sc alts mDef) =
       RConCase fc sc (map (foldConstAlt env) alts) (map (foldConst env) mDef)
   foldConst env (RConstCase fc sc alts mDef) =

@@ -388,6 +388,7 @@ splitBorrows _ _ [] = []
 splitBorrows natives owned (RCNull :: vars) = splitBorrows natives owned vars
 splitBorrows natives owned (RCConst _ :: vars) = splitBorrows natives owned vars
 splitBorrows natives owned (RCEmptyCon {} :: vars) = splitBorrows natives owned vars
+splitBorrows natives owned (RCConstCon {} :: vars) = splitBorrows natives owned vars
 splitBorrows natives owned (v :: vars) =
     if contains v natives
         then splitBorrows natives owned vars
@@ -417,6 +418,7 @@ dropIfLastUse _ _ [] = []
 dropIfLastUse natives owned (RCNull :: vars) = dropIfLastUse natives owned vars
 dropIfLastUse natives owned (RCConst _ :: vars) = dropIfLastUse natives owned vars
 dropIfLastUse natives owned (RCEmptyCon {} :: vars) = dropIfLastUse natives owned vars
+dropIfLastUse natives owned (RCConstCon {} :: vars) = dropIfLastUse natives owned vars
 dropIfLastUse natives owned (v :: vars) =
     if contains v natives
         then dropIfLastUse natives owned vars
@@ -443,6 +445,7 @@ boxedOperands natives = filter isBoxedOperand
     isBoxedOperand RCNull = False
     isBoxedOperand (RCConst _) = False
     isBoxedOperand (RCEmptyCon {}) = False
+    isBoxedOperand (RCConstCon {}) = False
     isBoxedOperand v = not (contains v natives)
 
 mutual
@@ -461,6 +464,10 @@ mutual
             (Prelude.toList shouldDrop, actualOwned)
 
     annotate : SortedSet RCLocal -> Owned -> RCExp -> Core RCExp
+    -- Immortal, same reasoning as splitBorrows/dropIfLastUse/
+    -- boxedOperands above -- never needs a dup, `owned`/`natives`
+    -- (variable sets) never contain it anyway.
+    annotate natives owned (RV fc v@(RCConstCon {})) = pure $ RV fc v
     annotate natives owned (RV fc v) =
         pure $ if contains v natives || contains v owned then RV fc v else RDup fc v (RV fc v)
     annotate natives owned (RAppName fc lazy n args) =

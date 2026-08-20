@@ -26,47 +26,73 @@ import Data.Vect
 ||| `doc/reading-the-ir.md`'s "## 3. Values" for the full syntax
 ||| reference). `RCNull`/`RCEmptyCon` fold NIL/NOTHING/ZERO/UNIT and
 ||| other zero-arg constructors into C's NULL/a tagged integer, rather
-||| than a genuine heap constructor.
+||| than a genuine heap constructor. `RCConstCon` folds a constructor
+||| application whose fields are themselves all constant (see
+||| `Compiler.RC2.ConstFold`) into a single value staged once as a
+||| file-scope static (`Compiler.RC2.Emit`'s `ConstConDef`), immortal
+||| the same way a small-int-cache/`ConstDef` value is -- never a
+||| freshly-allocated heap constructor.
 public export
 data RCLocal : Type where
      RCLoc      : Int -> RCLocal
      RCNull     : RCLocal
      RCConst    : Constant -> RCLocal
      RCEmptyCon : Name -> ConInfo -> Int -> RCLocal
+     ||| Invariant: every element of `args` is itself one of these four
+     ||| constant `RCLocal` forms (recursively, for nested
+     ||| `RCConstCon`) -- never `RCLoc`. Only ever constructed by
+     ||| `Compiler.RC2.ConstFold`, which is solely responsible for
+     ||| upholding this invariant.
+     RCConstCon : Name -> ConInfo -> (tag : Maybe Int) -> List RCLocal -> RCLocal
 
 export
+covering
 Eq RCLocal where
   (RCLoc i1) == (RCLoc i2) = i1 == i2
   RCNull == RCNull = True
   (RCConst c1) == (RCConst c2) = c1 == c2
   (RCEmptyCon n1 _ t1) == (RCEmptyCon n2 _ t2) = n1 == n2 && t1 == t2
+  (RCConstCon n1 _ t1 a1) == (RCConstCon n2 _ t2 a2) = n1 == n2 && t1 == t2 && a1 == a2
   _ == _ = False
 
 export
+covering
 Ord RCLocal where
   compare (RCLoc i1)      (RCLoc i2)      = compare i1 i2
   compare (RCLoc _)       RCNull          = GT
   compare (RCLoc _)       (RCConst _)     = GT
   compare (RCLoc _)       (RCEmptyCon {}) = GT
+  compare (RCLoc _)       (RCConstCon {}) = GT
   compare RCNull          (RCLoc _)       = LT
   compare RCNull          RCNull          = EQ
   compare RCNull          (RCConst _)     = GT
   compare RCNull          (RCEmptyCon {}) = GT
+  compare RCNull          (RCConstCon {}) = GT
   compare (RCConst _)     (RCLoc _)       = LT
   compare (RCConst _)     RCNull          = LT
   compare (RCConst c1)    (RCConst c2)    = compare c1 c2
   compare (RCConst _)     (RCEmptyCon {}) = GT
+  compare (RCConst _)     (RCConstCon {}) = GT
   compare (RCEmptyCon {}) (RCLoc _)       = LT
   compare (RCEmptyCon {}) RCNull          = LT
   compare (RCEmptyCon {}) (RCConst _)     = LT
   compare (RCEmptyCon n1 _ t1) (RCEmptyCon n2 _ t2) = compare n1 n2 <+> compare t1 t2
+  compare (RCEmptyCon {}) (RCConstCon {}) = GT
+  compare (RCConstCon {}) (RCLoc _)       = LT
+  compare (RCConstCon {}) RCNull          = LT
+  compare (RCConstCon {}) (RCConst _)     = LT
+  compare (RCConstCon {}) (RCEmptyCon {}) = LT
+  compare (RCConstCon n1 _ t1 a1) (RCConstCon n2 _ t2 a2) =
+    compare n1 n2 <+> compare t1 t2 <+> compare a1 a2
 
 export
+covering
 Show RCLocal where
   show (RCLoc i) = "v" ++ show i
   show RCNull = "[__]"
   show (RCConst c) = "#" ++ show c
   show (RCEmptyCon n _ t) = "#" ++ show n ++ "@" ++ show t
+  show (RCConstCon n _ t args) = "#" ++ show n ++ "@" ++ show t ++ "(" ++ show args ++ ")"
 
 ||| The representation decided for an RLet-bound local, carried
 ||| directly on the RLet node (see `doc/reading-the-ir.md`'s

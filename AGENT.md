@@ -40,7 +40,10 @@ show up again during testing.
   instead of computing it unconditionally, `cast-fold-scope.md` for an
   investigated-but-not-pursued gap: why `Compiler.RC2.ConstFold`'s
   constant folding excludes `Char`-/`Double`-to-`String` casts and any
-  `String`-sourced `Cast`). Not
+  `String`-sourced `Cast`, `const-con-fold.md` for folding a
+  constructor whose fields are all recursively constant into a single
+  immortal file-scope static (`RCConstCon`) instead of a fresh heap
+  allocation on every evaluation). Not
   a replacement for `TODO.md` — those stay the changelog
   and gap tracker; `rc2/doc/` is where the *why* and the
   bugs-found-along-the-way for a specific subsystem live.

@@ -147,6 +147,7 @@ localRepIn _ RCNull = RBoxed
 localRepIn reps (RCLoc i) = fromMaybe RBoxed (lookup i reps)
 localRepIn _ (RCConst c) = fromMaybe RBoxed (RNative <$> litRep c)
 localRepIn _ (RCEmptyCon {}) = RBoxed
+localRepIn _ (RCConstCon {}) = RBoxed
 
 ||| Every Boxed operand `value` itself *consumes* by reading it -- an
 ||| `ROp`'s own `postDrop` list; every Boxed argument of an `RAppName`

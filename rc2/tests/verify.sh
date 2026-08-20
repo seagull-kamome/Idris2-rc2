@@ -193,13 +193,13 @@ echo "=== Smoke tests ==="
 # getField/setField at all (see rc2/doc/c-struct-support.md's "What's
 # confirmed" -- this is the exact gap rc2 closes), so there's no real
 # refc output to diff against in the first place.
-BARE_INVOKE_TESTS="Test6NativeInts Test7CastMatrix"
+BARE_INVOKE_TESTS="Test6NativeInts Test7CastMatrix Test17ConstFold"
 NO_REFC_DIFF_TESTS="Test7CastMatrix Test17ConstFold Test24CStructSupport"
 
 # Leak-sensitive by design (reference-counting/reuse/native-shadow
 # regression tests) -- checked with valgrind by default even without
 # --valgrind-all.
-LEAK_SENSITIVE_TESTS="Test1Basics Test9SelfTailLoop Test10MutualLoop Test11DualABILeak Test12ConAltNative Test13NativeArgChain Test14SmallFunctionInline Test15CompareFusionThroughCall Test16LoopContinuePostDrop Test18ClosureInPlaceGrow Test19LoopInvariantParam Test20LoopInvariantExpr Test21BoxedInvariantNotHoisted Test22BranchSinking Test23SinkPastSelfDrop Test24CStructSupport"
+LEAK_SENSITIVE_TESTS="Test1Basics Test9SelfTailLoop Test10MutualLoop Test11DualABILeak Test12ConAltNative Test13NativeArgChain Test14SmallFunctionInline Test15CompareFusionThroughCall Test16LoopContinuePostDrop Test18ClosureInPlaceGrow Test19LoopInvariantParam Test20LoopInvariantExpr Test21BoxedInvariantNotHoisted Test22BranchSinking Test23SinkPastSelfDrop Test24CStructSupport Test25ConstConFold"
 
 # KNOWN-BUGS.md's own one remaining pre-existing leak -- "definitely
 # lost" byte count, exactly. Anything else non-zero is a genuine new

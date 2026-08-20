@@ -362,6 +362,7 @@ localRepIn _ RCNull = RBoxed
 localRepIn reps (RCLoc i) = fromMaybe RBoxed (lookup i reps)
 localRepIn _ (RCConst c) = fromMaybe RBoxed (RNative <$> litRep c)
 localRepIn _ (RCEmptyCon {}) = RBoxed
+localRepIn _ (RCConstCon {}) = RBoxed
 
 ||| Which of `args` (rendered per the worker's own `argReps`, same
 ||| order) need an explicit drop once this call has been embedded in
