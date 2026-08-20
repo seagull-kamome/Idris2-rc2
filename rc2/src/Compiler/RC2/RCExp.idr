@@ -55,18 +55,36 @@ mutual
        ||| existing at runtime at all. Only ever constructed by
        ||| `Compiler.RC2.ConstFold`.
        RCConstCon : Name -> ConInfo -> (tag : Maybe Int)
-                 -> (args : List RCLocal) -> {0 argsConst : All IsConstLocal args}
+                 -> (args : List RCLocal) -> {0 argsConst : All IsAnyConstLocal args}
                  -> RCLocal
+
+  ||| Witness that `l` is `RCConstCon` -- kept as its own narrow proof
+  ||| (rather than only the four-case `IsAnyConstLocal` below)
+  ||| specifically so `Compiler.RC2.Emit`'s `boxedConstConExpr`, which
+  ||| only ever handles this one case, can require exactly it and let
+  ||| Idris2's coverage checker rule out every other `RCLocal`
+  ||| constructor (`RCLoc` included) as ill-typed, rather than needing a
+  ||| runtime `idris_crash` fallback for the ones it can't otherwise
+  ||| exclude.
+  public export
+  data IsConstLocal : RCLocal -> Type where
+       ItIsConstCon : IsConstLocal (RCConstCon n ci t args)
 
   ||| Witness that `l` is one of `RCLocal`'s four constant forms, never
   ||| `RCLoc` -- no constructor targets an `RCLoc _` index, so nothing
-  ||| can manufacture this proof for a variable reference.
+  ||| can manufacture this proof for a variable reference. Used
+  ||| wherever a value just needs to be "not a live variable" without
+  ||| narrowing further (`RCConstCon`'s own `args`,
+  ||| `Compiler.RC2.ConstFold`'s `Env`); `constConFieldExpr`
+  ||| (`Compiler.RC2.Emit`) rebuilds the narrower `IsConstLocal` it
+  ||| needs for its own `RCConstCon` case directly, rather than
+  ||| unwrapping one of these.
   public export
-  data IsConstLocal : RCLocal -> Type where
-       ItIsNull     : IsConstLocal RCNull
-       ItIsConst    : IsConstLocal (RCConst c)
-       ItIsEmptyCon : IsConstLocal (RCEmptyCon n ci i)
-       ItIsConstCon : IsConstLocal (RCConstCon n ci t args)
+  data IsAnyConstLocal : RCLocal -> Type where
+       ItIsNull2     : IsAnyConstLocal RCNull
+       ItIsConst2    : IsAnyConstLocal (RCConst c)
+       ItIsEmptyCon2 : IsAnyConstLocal (RCEmptyCon n ci i)
+       ItIsConstCon2 : IsAnyConstLocal (RCConstCon n ci t args)
 
 export
 covering

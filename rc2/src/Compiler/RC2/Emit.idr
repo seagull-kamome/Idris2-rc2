@@ -630,25 +630,27 @@ boxedConstExpr c = do
 mutual
     ||| C initializer text for one `RCConstCon` field: `l` is always
     ||| already one of `RCLocal`'s constant forms, enforced by `prf`
-    ||| (`IsConstLocal`, RCExp.idr) rather than a runtime check -- an
+    ||| (`IsAnyConstLocal`, RCExp.idr) rather than a runtime check -- an
     ||| `RCLoc` can't reach here at all, so there's no case for it and
     ||| no crash to write. `RCNull`/`RCEmptyCon` render exactly as
     ||| `varName` would (they're never InlineMap'd -- no detour
     ||| needed); `RCConst` goes through `boxedConstExpr`, the same
     ||| staging a let-bound literal of the same value would use; a
-    ||| nested `RCConstCon` stages itself first via `boxedConstConExpr`.
+    ||| nested `RCConstCon` stages itself first via `boxedConstConExpr`,
+    ||| which requires the narrower `IsConstLocal` (a fresh `ItIsConstCon`
+    ||| built here, not unwrapped from `prf` -- see its own doc comment).
     constConFieldExpr : {auto a : Ref ArgCounter Nat}
                      -> {auto _ : Ref ConstDef (SortedMap Constant ConstDef)}
                      -> {auto cc : Ref ConstConDef (SortedMap RCLocal String, List String)}
-                     -> (l : RCLocal) -> {0 prf : IsConstLocal l} -> Core String
-    constConFieldExpr RCNull               {prf=ItIsNull}     = pure "NULL"
-    constConFieldExpr (RCConst c)          {prf=ItIsConst}    = boxedConstExpr c
-    constConFieldExpr (RCEmptyCon _ _ tag) {prf=ItIsEmptyCon} = pure "idris2rc2_mkBits32(\{show tag})"
-    constConFieldExpr l@(RCConstCon {})    {prf=ItIsConstCon} = boxedConstConExpr l
-    constConFieldExpr (RCLoc _) impossible
+                     -> (l : RCLocal) -> {0 prf : IsAnyConstLocal l} -> Core String
+    constConFieldExpr RCNull               = pure "NULL"
+    constConFieldExpr (RCConst c)          = boxedConstExpr c
+    constConFieldExpr (RCEmptyCon _ _ tag) = pure "idris2rc2_mkBits32(\{show tag})"
+    constConFieldExpr l@(RCConstCon {})    = boxedConstConExpr l {prf=ItIsConstCon}
+    constConFieldExpr (RCLoc _) {prf=_} impossible
 
     ||| Walks `args` alongside its own `All` proof so each element's
-    ||| individual `IsConstLocal` witness reaches `constConFieldExpr`.
+    ||| individual `IsAnyConstLocal` witness reaches `constConFieldExpr`.
     ||| The proof stays erased (`0`) the whole way down -- Idris2 still
     ||| lets an erased value be pattern-matched to guide which case of
     ||| a *callee* runs (here, which `constConFieldExpr` clause), as
@@ -657,7 +659,7 @@ mutual
     constConFieldExprsFor : {auto a : Ref ArgCounter Nat}
                           -> {auto _ : Ref ConstDef (SortedMap Constant ConstDef)}
                           -> {auto cc : Ref ConstConDef (SortedMap RCLocal String, List String)}
-                          -> (args : List RCLocal) -> (0 argsConst : All IsConstLocal args) -> Core (List String)
+                          -> (args : List RCLocal) -> (0 argsConst : All IsAnyConstLocal args) -> Core (List String)
     constConFieldExprsFor [] [] = pure []
     constConFieldExprsFor (l :: ls) (p :: ps) = do
         e  <- constConFieldExpr l {prf=p}
@@ -676,11 +678,14 @@ mutual
     ||| and stamps `IDRIS2RC2_STOCKVAL` (the same immortal-refcount
     ||| marker the small-int cache and `ConstDef` values already use)
     ||| instead of the `refCount = 1` a fresh heap allocation gets.
+    ||| `prf`'s type (`IsConstLocal`, narrower than `IsAnyConstLocal`
+    ||| above) targets `RCConstCon` alone, so every other `RCLocal`
+    ||| constructor is ill-typed here -- no runtime fallback needed.
     boxedConstConExpr : {auto a : Ref ArgCounter Nat}
                       -> {auto _ : Ref ConstDef (SortedMap Constant ConstDef)}
                       -> {auto cc : Ref ConstConDef (SortedMap RCLocal String, List String)}
-                      -> RCLocal -> Core String
-    boxedConstConExpr l@(RCConstCon n _ tag args {argsConst}) = do
+                      -> (l : RCLocal) -> {0 prf : IsConstLocal l} -> Core String
+    boxedConstConExpr l@(RCConstCon n _ tag args {argsConst}) {prf=ItIsConstCon} = do
         (names, _) <- get ConstConDef
         case lookup l names of
              Just nm => pure "((IDRIS2RC2_Value*)&\{nm})"
@@ -693,8 +698,6 @@ mutual
                  (names', defs') <- get ConstConDef
                  put ConstConDef (insert l nm names', defs' ++ [def])
                  pure "((IDRIS2RC2_Value*)&\{nm})"
-    boxedConstConExpr _ =
-        assert_total $ idris_crash "INTERNAL ERROR: [rc2] boxedConstConExpr called on non-RCConstCon"
 
 ||| `Just` the C expression text standing in for `l`'s never-declared
 ||| variable if it's an InlineMap-registered local, or an RCConst (see
@@ -715,7 +718,7 @@ inlineExprFor (RCConst c) = Just <$> case litRep c of
 -- Nothing, same as RCNull: rendered directly by varName, not through
 -- the InlineMap/RNative detour (see repOfLocal above).
 inlineExprFor (RCEmptyCon {}) = pure Nothing
-inlineExprFor l@(RCConstCon {}) = Just <$> boxedConstConExpr l
+inlineExprFor l@(RCConstCon {}) = Just <$> boxedConstConExpr l {prf=ItIsConstCon}
 inlineExprFor (RCLoc i) = do
     inlined <- get InlineMap
     pure $ SortedMap.lookup i inlined

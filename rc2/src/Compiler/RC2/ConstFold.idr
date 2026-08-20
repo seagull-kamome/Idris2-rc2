@@ -92,7 +92,7 @@ constFoldOp fn cs =
 ||| at the start of the next `LiftedDef`), so a plain map with no de-
 ||| Bruijn-style weakening is sufficient -- no id this pass records can
 ||| ever be shadowed or reused within the one `RCDef` body it's
-||| threaded through. Values are paired with an `IsConstLocal` proof
+||| threaded through. Values are paired with an `IsAnyConstLocal` proof
 ||| (`Data.DPair.Subset`, erased at runtime) so `Env` itself can only
 ||| ever hold a genuine constant form (not just `Constant` -- a folded
 ||| constant *constructor*, `RCConstCon`, see its own doc comment in
@@ -100,7 +100,7 @@ constFoldOp fn cs =
 ||| be), unlike a plain `SortedMap Int RCLocal` a caller could still
 ||| slip a live `RCLoc` into.
 Env : Type
-Env = SortedMap Int (Subset RCLocal IsConstLocal)
+Env = SortedMap Int (Subset RCLocal IsAnyConstLocal)
 
 ||| Resolve `l` against `env` if it's a variable this pass has already
 ||| folded to a known constant value -- otherwise `l` unchanged (still
@@ -135,26 +135,26 @@ resolveConst env l = case resolveLocal env l of
 ||| (`idris2rc2_getSmallInteger`/`idris2rc2_mkIntegerLiteral`) is
 ||| always a real function call, since GMP's `mpz_t` has no
 ||| representation a C static initializer can express. (This exclusion
-||| is a value-level condition on top of `IsConstLocal`, not something
-||| the proof itself encodes -- `IsConstLocal` only ever means "not
-||| RCLoc".)
-isConstLocalProof : (l : RCLocal) -> Maybe (IsConstLocal l)
+||| is a value-level condition on top of `IsAnyConstLocal`, not
+||| something the proof itself encodes -- `IsAnyConstLocal` only ever
+||| means "not RCLoc".)
+isConstLocalProof : (l : RCLocal) -> Maybe (IsAnyConstLocal l)
 isConstLocalProof (RCLoc _)        = Nothing
 isConstLocalProof (RCConst (BI _)) = Nothing
-isConstLocalProof RCNull                 = Just ItIsNull
-isConstLocalProof (RCConst _)            = Just ItIsConst
-isConstLocalProof (RCEmptyCon {})        = Just ItIsEmptyCon
-isConstLocalProof (RCConstCon {})        = Just ItIsConstCon
+isConstLocalProof RCNull                 = Just ItIsNull2
+isConstLocalProof (RCConst _)            = Just ItIsConst2
+isConstLocalProof (RCEmptyCon {})        = Just ItIsEmptyCon2
+isConstLocalProof (RCConstCon {})        = Just ItIsConstCon2
 
 ||| `isConstLocalProof`, paired with its own value for `Env` to keep
 ||| around (`Subset`'s own `snd` is erased, so unlike
-||| `isConstLocalProof`'s bare `IsConstLocal l` this can't be
+||| `isConstLocalProof`'s bare `IsAnyConstLocal l` this can't be
 ||| re-weakened back into an unrestricted-multiplicity proof --
 ||| `allConstLocal` below deliberately goes through
 ||| `isConstLocalProof` directly instead of this, rather than
 ||| unwrapping a `Subset` it could never have gotten a full-multiplicity
 ||| proof out of).
-isConstLocal : RCLocal -> Maybe (Subset RCLocal IsConstLocal)
+isConstLocal : RCLocal -> Maybe (Subset RCLocal IsAnyConstLocal)
 isConstLocal l = case isConstLocalProof l of
                        Nothing => Nothing
                        Just p  => Just (Element l p)
@@ -164,7 +164,7 @@ isConstLocal l = case isConstLocalProof l of
 ||| own `argsConst` field requires -- `args` itself stays a plain
 ||| `List RCLocal` (see RCExp.idr's own doc comment for why
 ||| `RCConstCon` doesn't need every field re-typed to carry the proof).
-allConstLocal : (args : List RCLocal) -> Maybe (All IsConstLocal args)
+allConstLocal : (args : List RCLocal) -> Maybe (All IsAnyConstLocal args)
 allConstLocal [] = Just []
 allConstLocal (x :: xs) = case isConstLocalProof x of
                                Nothing => Nothing
@@ -216,13 +216,13 @@ mutual
               RPrimVal _ c =>
                   case litRep c of
                        Just _ =>
-                           let body' = foldConst (insert var (Element (RCConst c) ItIsConst) env) body
+                           let body' = foldConst (insert var (Element (RCConst c) ItIsConst2) env) body
                            in if contains (RCLoc var) (freeLocalsR body')
                                  then RLet fc var rep value' body'
                                  else body'
                        Nothing => RLet fc var rep value' (foldConst env body)
               RV _ cval@(RCConstCon {}) =>
-                  let body' = foldConst (insert var (Element cval ItIsConstCon) env) body
+                  let body' = foldConst (insert var (Element cval ItIsConstCon2) env) body
                   in if contains (RCLoc var) (freeLocalsR body')
                         then RLet fc var rep value' body'
                         else body'
