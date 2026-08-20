@@ -195,22 +195,13 @@ freshName existing original = do
     if contains cand existing then freshName existing original else pure cand
 
 ||| True for a name `Compiler.RC2.MutualLoop` itself synthesised (its
-||| own merged function -- sharing one slot per position across
-||| multiple original members, potentially with different arities/
-||| native-eligibility needs -- see this module's own header note's
-||| "finding" from Stage 2's verification). These must never get a
-||| dual-ABI worker of their own: a slot that's genuinely native for
-||| one member can receive a literal `RCNull` from a smaller-arity
-||| member's own caller, and `Compiler.RC2.Loop`'s own native-shadow
-||| promotion already had to work around exactly this once (two real
-||| crashes, see `doc/loop-conversion.md`'s "Bugs found" #4) for the
-||| *loop-carried* case -- giving the merged function's own *external*
-||| signature a native worker too would reopen the same hazard at a
-||| different boundary. `MutualLoop`'s own per-member *wrapper*
-||| functions don't need this special-casing -- their own body is
-||| always just a forwarding call, so `paramEligibility`/
-||| `returnEligibility` already correctly find nothing eligible there
-||| on their own (confirmed directly in Stage 2's own verification).
+||| own merged function). Must never get a dual-ABI worker of its own --
+||| a slot genuinely native for one group member can receive a literal
+||| `RCNull` from a smaller-arity member's own caller. See
+||| `rc2/doc/dual-abi.md`'s "A finding that changed Stage 3's own plan"
+||| for the full story (the per-member *wrapper* functions need no such
+||| exclusion -- their own trivial forwarding body already has nothing
+||| eligible).
 isMutualLoopMerged : Name -> Bool
 isMutualLoopMerged (MN "rc2_mutualLoop" _) = True
 isMutualLoopMerged _ = False

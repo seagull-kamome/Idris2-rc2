@@ -1539,23 +1539,15 @@ mutual
     ||| As `declareNative`, but for a `SinkReturn (RNative ty)`/
     ||| `SinkReturn (RInlineNative ty)` tail position instead of an
     ||| `RLet` -- `Compiler.RC2.DualABI`'s own Stage 3b, see `Sink`'s own
-    ||| doc comment. `declareNative` gets away with always declaring
-    ||| `value`'s own C variable *before* discharging `emitNativeValue`'s
-    ||| own pending Boxed-operand drop(s), because there's always a next
-    ||| statement (the rest of the enclosing block) for that ordering to
-    ||| land in -- a `return` has no such "afterward" position for a
-    ||| drop to ever run in (`doc/native-type-inference.md`'s own "Bugs
-    ||| found" #4 is exactly the mistake to avoid: dropping a value
-    ||| *before* the statement that reads it frees it out from under its
-    ||| own extraction). So: whenever there's nothing pending, render
-    ||| the plain, direct `return valStr;` `emitInto`'s own Boxed-return
-    ||| fallback would have produced anyway; whenever there IS a
-    ||| pending drop, capture `value`'s own reading into its own scratch
-    ||| variable first (same `tmp_N` naming `makeClosure`'s own
-    ||| `getNewVarThatWillNotBeFreedAtEndOfBlock` already uses for
-    ||| exactly this "must outlive its own declaring block" need), drop
-    ||| right after -- now safe, the read already happened -- then
-    ||| return the scratch variable.
+    ||| doc comment. A `return` has no statement position *after* it for
+    ||| a pending Boxed-operand drop to land in, unlike `declareNative`'s
+    ||| `RLet` -- see `rc2/doc/dual-abi.md`'s "no statement position
+    ||| after return" section for the full problem and the bug this
+    ||| design avoids repeating. Nothing pending: plain `return valStr;`.
+    ||| Something pending: capture the read into a scratch `tmp_N` (same
+    ||| naming `makeClosure`'s own
+    ||| `getNewVarThatWillNotBeFreedAtEndOfBlock` already uses) first,
+    ||| drop, then return the scratch variable.
     emitNativeReturn : {auto a : Ref ArgCounter Nat}
                      -> {auto oft : Ref OutfileText Output}
                      -> {auto il : Ref IndentLevel Nat}
@@ -1578,32 +1570,17 @@ mutual
 
     ||| Render a leftover `RAppNameRep` (a direct call to `name`'s own
     ||| dual-ABI worker, see its own doc comment in RCExp.idr) into
-    ||| `sink`. Renders each argument per `argReps`' own position,
-    ||| mirroring `tryEmitLoopContinue`'s own per-position Rep-aware
-    ||| rendering, then always produces a *Boxed* value string (`RBoxed`
-    ||| behaves like an ordinary, never-closure-deferred `RAppName`
-    ||| call -- trampolined off tail position, bare in it, see
-    ||| `RAppNameRep`'s own doc comment for why deferral is never needed
-    ||| here; `RNative`/`RInlineNative` means the callee's own raw
-    ||| native result gets boxed via `nativeMk`) -- every current
-    ||| producer of this node (`Compiler.RC2.DualABI`'s own wrapper
-    ||| bodies) always feeds a Boxed-wanting `sink`, so there's no
-    ||| native-`Sink` case to render towards yet; that's Stage 4's own
-    ||| concern, not attempted until something needs it.
-    |||
-    ||| Then discharges `postDrop` -- see its own doc comment on
-    ||| `RAppNameRep` in RCExp.idr for why this exists at all (a real
-    ||| reference leak, found via `valgrind`, before it did): any
-    ||| Boxed-sourced argument read *natively* by the call is left alive
-    ||| by `rcVarToNativeC` (never dups/drops on its own) and must be
-    ||| dropped once the call has been embedded in its own statement.
-    ||| For `SinkVar`, there's always a statement position right after
-    ||| that embedding for the drop to land in (same as an ordinary
-    ||| `RLet`'s own `declareNative`); `SinkReturn` has none, so (only
-    ||| when `postDrop` isn't empty -- the common case, no promoted
-    ||| parameter at all, pays nothing extra) the value is first
-    ||| captured into its own scratch variable, exactly
-    ||| `emitNativeReturn`'s own approach.
+    ||| `sink`. Renders each argument per `argReps`' own position
+    ||| (mirroring `tryEmitLoopContinue`'s own per-position rendering),
+    ||| then always produces a *Boxed* value string -- `RBoxed` behaves
+    ||| like an ordinary, never-closure-deferred `RAppName` call;
+    ||| `RNative`/`RInlineNative` boxes the callee's raw native result via
+    ||| `nativeMk`. See `rc2/doc/dual-abi.md`'s Stage 3a "Bugs found" #3
+    ||| for why `postDrop` exists at all (a real reference leak, found via
+    ||| `valgrind`), and its Stage 4 section for why a `SinkReturn` target
+    ||| needs the same scratch-variable capture `emitNativeReturn` uses
+    ||| (no statement position after a `return` for the drop to land in)
+    ||| -- `SinkVar` always has one, so it just drops right after.
     emitAppNameRepInto : {auto a : Ref ArgCounter Nat}
                        -> {auto oft : Ref OutfileText Output}
                        -> {auto il : Ref IndentLevel Nat}
