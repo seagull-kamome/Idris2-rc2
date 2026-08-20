@@ -376,6 +376,14 @@ nativeCmpExpr (GTE ty) [x, y] = "(" ++ x ++ " >= " ++ y ++ ")"
 nativeCmpExpr fn _ = "0 /* [rc2] unreachable native comparison " ++ show fn ++ " */"
 
 
+||| Plain recursive Vect traversal in Core, not the standard `traverse`:
+||| multiple `traverse`/`Applicative Core` candidates already in scope
+||| here (`Core.Core.Search`, `Core.Core.SnocList`, `Core.Core.WithData`,
+||| ...) make `traverse f (args : Vect n a)` fail to resolve at all
+||| ("Can't find an implementation for Applicative Core") rather than
+||| picking `Traversable (Vect n)` -- confirmed directly by substituting
+||| it in and rebuilding. Same ambiguity `Compiler.RC2.DualABI`'s own
+||| `vectElemRCLoc` avoids for `Foldable (Vect n)`.
 rc2traverseVect : (a -> Core b) -> Vect n a -> Core (Vect n b)
 rc2traverseVect f [] = pure []
 rc2traverseVect f (x :: xs) = do
