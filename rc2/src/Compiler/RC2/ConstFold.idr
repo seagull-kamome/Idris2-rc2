@@ -123,10 +123,9 @@ resolveConst env l = case resolveLocal env l of
 ||| reference) *and* safe to stage as a static C initializer (see
 ||| `Compiler.RC2.Emit`'s `boxedConstConExpr`) -- the proof itself,
 ||| still at its natural (non-erased) multiplicity so callers can
-||| either fold it into `RCConstCon`'s own `All` proof obligation
-||| (`allConstLocal` below, which needs an unrestricted-multiplicity
-||| proof to build each `All.(::)`) or weaken it into a `Subset` to
-||| keep alongside its value in `Env` (`isConstLocal` below). Excludes
+||| fold into `RCConstCon`'s own `All` proof obligation (`allConstLocal`
+||| below, which needs an unrestricted-multiplicity proof to build each
+||| `All.(::)`). Excludes
 ||| `RCConst (BI _)`: every other `Constant` case renders as either a
 ||| plain cast/shift macro (`idris2rc2_mkInt8`, etc.) or a reference to
 ||| an already-staged file-scope static (`Compiler.RC2.Emit`'s
@@ -145,19 +144,6 @@ isConstLocalProof RCNull                 = Just ItIsNull2
 isConstLocalProof (RCConst _)            = Just ItIsConst2
 isConstLocalProof (RCEmptyCon {})        = Just ItIsEmptyCon2
 isConstLocalProof (RCConstCon {})        = Just ItIsConstCon2
-
-||| `isConstLocalProof`, paired with its own value for `Env` to keep
-||| around (`Subset`'s own `snd` is erased, so unlike
-||| `isConstLocalProof`'s bare `IsAnyConstLocal l` this can't be
-||| re-weakened back into an unrestricted-multiplicity proof --
-||| `allConstLocal` below deliberately goes through
-||| `isConstLocalProof` directly instead of this, rather than
-||| unwrapping a `Subset` it could never have gotten a full-multiplicity
-||| proof out of).
-isConstLocal : RCLocal -> Maybe (Subset RCLocal IsAnyConstLocal)
-isConstLocal l = case isConstLocalProof l of
-                       Nothing => Nothing
-                       Just p  => Just (Element l p)
 
 ||| Whole-list version of `isConstLocalProof`, collecting each
 ||| element's own proof into the `All`-shaped obligation `RCConstCon`'s
