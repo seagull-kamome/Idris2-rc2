@@ -535,16 +535,16 @@ applyCallSiteRewriteBody workers reps inTail (RLet fc var rep value body) =
 applyCallSiteRewriteBody workers reps inTail (RCmpCase fc op args postDrop t f) =
     RCmpCase fc op args postDrop (applyCallSiteRewriteBody workers reps inTail t) (applyCallSiteRewriteBody workers reps inTail f)
 applyCallSiteRewriteBody workers reps inTail (RConCase fc sc alts mDef) =
-    RConCase fc sc (map (rewriteConAlt workers reps inTail) alts) (map (applyCallSiteRewriteBody workers reps inTail) mDef)
+    RConCase fc sc (map rewriteConAlt alts) (map (applyCallSiteRewriteBody workers reps inTail) mDef)
   where
-    rewriteConAlt : SortedMap Name (Name, List Rep, Rep) -> SortedMap Int Rep -> Bool -> RConAlt -> RConAlt
-    rewriteConAlt workers reps inTail (MkRConAlt name ci tag args body) =
+    rewriteConAlt : RConAlt -> RConAlt
+    rewriteConAlt (MkRConAlt name ci tag args body) =
         MkRConAlt name ci tag args (applyCallSiteRewriteBody workers reps inTail body)
 applyCallSiteRewriteBody workers reps inTail (RConstCase fc sc alts mDef) =
-    RConstCase fc sc (map (rewriteConstAlt workers reps inTail) alts) (map (applyCallSiteRewriteBody workers reps inTail) mDef)
+    RConstCase fc sc (map rewriteConstAlt alts) (map (applyCallSiteRewriteBody workers reps inTail) mDef)
   where
-    rewriteConstAlt : SortedMap Name (Name, List Rep, Rep) -> SortedMap Int Rep -> Bool -> RConstAlt -> RConstAlt
-    rewriteConstAlt workers reps inTail (MkRConstAlt c body) = MkRConstAlt c (applyCallSiteRewriteBody workers reps inTail body)
+    rewriteConstAlt : RConstAlt -> RConstAlt
+    rewriteConstAlt (MkRConstAlt c body) = MkRConstAlt c (applyCallSiteRewriteBody workers reps inTail body)
 applyCallSiteRewriteBody workers reps inTail (RLoop fc loopParams initial prologueDrop body) =
     RLoop fc loopParams initial prologueDrop (applyCallSiteRewriteBody workers (foldl (\m, (i, r) => insert i r m) reps loopParams) inTail body)
 applyCallSiteRewriteBody workers reps inTail (RDup fc v cont) = RDup fc v (applyCallSiteRewriteBody workers reps inTail cont)

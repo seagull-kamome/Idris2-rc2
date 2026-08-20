@@ -166,7 +166,7 @@ escapeChar c = if isAlphaNum c || isNL c
 
 cStringQuoted : String -> String
 cStringQuoted cs = strCons '"' (showCString (unpack cs) "\"")
-where
+  where
     showCChar : Char -> String -> String
     showCChar '\\' = ("\\\\" ++)
     showCChar c
@@ -940,9 +940,9 @@ chainsWithElse : Sink -> Bool
 chainsWithElse (SinkReturn _) = False
 chainsWithElse (SinkVar _ _) = True
 
-integer_switch : List RConstAlt -> Bool
-integer_switch [] = True
-integer_switch (MkRConstAlt c _  :: _) =
+integerSwitch : List RConstAlt -> Bool
+integerSwitch [] = True
+integerSwitch (MkRConstAlt c _  :: _) =
     case c of
         (I x) => True
         (I8 x) => True
@@ -960,7 +960,7 @@ integer_switch (MkRConstAlt c _  :: _) =
 ||| Correctly sign-aware int64 extraction for RConstCase's "integer
 ||| switch" fast path below, dispatched on the constant type of the alt
 ||| being matched (every alt in an integer-switch shares the same
-||| underlying type, per `integer_switch`). The pointer-tagged unboxed
+||| underlying type, per `integerSwitch`). The pointer-tagged unboxed
 ||| representation used for Int8/Int16/Int32 (like Bits8/Bits16/Bits32/
 ||| Char) carries no runtime type tag of its own to say whether the stored
 ||| bit pattern should be read back signed or unsigned -- unlike
@@ -1882,7 +1882,7 @@ mutual
         -- operand). Both branches below must render `sc` per its own
         -- current `Rep`, not assume Boxed unconditionally.
         scRep <- repOfLocal sc
-        case integer_switch alts of
+        case integerSwitch alts of
             True => do
                 tmpint <- getNewVarThatWillNotBeFreedAtEndOfBlock
                 extractExpr <- the (Core String) $ case scRep of

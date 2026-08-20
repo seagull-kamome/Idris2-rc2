@@ -404,28 +404,32 @@ nativeArgType p body =
 ||| `RDup`/`RDrop`/`RFree`/`RReleaseReuse`/`RReuseOffer` wrapper, never
 ||| the wrappers themselves, precisely so a reuse decision already made
 ||| there stays completely undisturbed.)
+||| Whether `v` survives `stripOwnership`'s own filtering -- kept
+||| (`True`) unless it names one of `ids`; a non-`RCLoc` local (a
+||| constant/`NULL`/tagged-empty-con) is never one of `ids` to begin
+||| with and always survives.
+keepUnlessOwned : SortedSet Int -> RCLocal -> Bool
+keepUnlessOwned ids (RCLoc i) = not (contains i ids)
+keepUnlessOwned _ _ = True
+
 export
 stripOwnership : SortedSet Int -> RCExp -> RCExp
 stripOwnership ids (RDup fc v body) =
     let body' = stripOwnership ids body
-    in case v of
-            RCLoc i => if contains i ids then body' else RDup fc v body'
-            _ => RDup fc v body'
+    in if keepUnlessOwned ids v then RDup fc v body' else body'
 stripOwnership ids (RDrop fc vs body) =
-    let vs' = filter (\v => case v of RCLoc i => not (contains i ids); _ => True) vs
+    let vs' = filter (keepUnlessOwned ids) vs
         body' = stripOwnership ids body
     in if null vs' then body' else RDrop fc vs' body'
 stripOwnership ids (RFree fc v body) =
     let body' = stripOwnership ids body
-    in case v of
-            RCLoc i => if contains i ids then body' else RFree fc v body'
-            _ => RFree fc v body'
+    in if keepUnlessOwned ids v then RFree fc v body' else body'
 stripOwnership ids (RLet fc var rep value body) =
     RLet fc var rep (stripOwnership ids value) (stripOwnership ids body)
 stripOwnership ids (ROp fc lazy op args postDrop) =
-    ROp fc lazy op args (filter (\v => case v of RCLoc i => not (contains i ids); _ => True) postDrop)
+    ROp fc lazy op args (filter (keepUnlessOwned ids) postDrop)
 stripOwnership ids (RCmpCase fc op args postDrop t f) =
-    RCmpCase fc op args (filter (\v => case v of RCLoc i => not (contains i ids); _ => True) postDrop)
+    RCmpCase fc op args (filter (keepUnlessOwned ids) postDrop)
       (stripOwnership ids t) (stripOwnership ids f)
 stripOwnership ids (RConCase fc sc alts mDef) =
     RConCase fc sc (map (\(MkRConAlt n ci tag as body) => MkRConAlt n ci tag as (stripOwnership ids body)) alts)
@@ -436,7 +440,7 @@ stripOwnership ids (RConstCase fc sc alts mDef) =
 stripOwnership ids (RReleaseReuse fc v body) = RReleaseReuse fc v (stripOwnership ids body)
 stripOwnership ids (RReuseOffer fc sc dupOnShared body) = RReuseOffer fc sc dupOnShared (stripOwnership ids body)
 stripOwnership ids (RLoopContinue fc args postDrop) =
-    RLoopContinue fc args (filter (\v => case v of RCLoc i => not (contains i ids); _ => True) postDrop)
+    RLoopContinue fc args (filter (keepUnlessOwned ids) postDrop)
 -- Unlike every other case in this module, `RLoop` genuinely does show up
 -- here: `Compiler.RC2.DualABI`'s own `synthesizeWorker` calls this
 -- function over a whole worker body that may already be `RLoop`-wrapped
@@ -450,12 +454,12 @@ stripOwnership ids (RLoopContinue fc args postDrop) =
 -- worker's own rendering at all.
 stripOwnership ids (RLoop fc loopParams initial prologueDrop body) =
     RLoop fc loopParams initial
-      (filter (\v => case v of RCLoc i => not (contains i ids); _ => True) prologueDrop)
+      (filter (keepUnlessOwned ids) prologueDrop)
       (stripOwnership ids body)
 stripOwnership ids (RStructGet fc structVar sn fn postDrop) =
-    RStructGet fc structVar sn fn (filter (\v => case v of RCLoc i => not (contains i ids); _ => True) postDrop)
+    RStructGet fc structVar sn fn (filter (keepUnlessOwned ids) postDrop)
 stripOwnership ids (RStructSet fc structVar sn fn value postDrop) =
-    RStructSet fc structVar sn fn value (filter (\v => case v of RCLoc i => not (contains i ids); _ => True) postDrop)
+    RStructSet fc structVar sn fn value (filter (keepUnlessOwned ids) postDrop)
 -- RV, RAppName, RUnderApp, RApp, RCon, RExtPrim, RPrimVal, RErased,
 -- RCrash: no ownership-tracking positions of their own.
 stripOwnership _ e = e

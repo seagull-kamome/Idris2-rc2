@@ -315,13 +315,12 @@ nativeLocalsR : RCExp -> SortedSet RCLocal
 nativeLocalsR (RLet _ var rep value body) =
     let vs = union (nativeLocalsR value) (nativeLocalsR body) in
     case rep of
-         RNative _ => insert (RCLoc var) vs
-         -- Never actually produced until `annotate` (Phase 2) runs, which
-         -- is strictly after this (Phase-1-output-consuming) function --
-         -- same native-ness as RNative regardless, kept total rather than
-         -- assumed unreachable.
-         RInlineNative _ => insert (RCLoc var) vs
          RBoxed => vs
+         -- RInlineNative never actually produced until `annotate` (Phase 2)
+         -- runs, which is strictly after this (Phase-1-output-consuming)
+         -- function -- same native-ness as RNative regardless, kept total
+         -- rather than assumed unreachable.
+         _ => insert (RCLoc var) vs
 nativeLocalsR (RConCase _ _ alts mDef) = foldConAltsR nativeLocalsR alts mDef
 nativeLocalsR (RConstCase _ _ alts mDef) = foldConstAltsR nativeLocalsR alts mDef
 nativeLocalsR (RCmpCase _ _ _ _ t f) = union (nativeLocalsR t) (nativeLocalsR f)
@@ -526,12 +525,6 @@ mutual
         ||| that's in `natives` anyway (alwaysUnboxedBoxedLocalsR -- see its own
         ||| comment for why that's just as unconditionally a no-op).
         dropDeadLet : FC -> SortedSet RCLocal -> Rep -> RCLocal -> RCExp -> RCExp -> RCExp
-        dropDeadLet fc natives (RNative _) _ _ body = body
-        -- Never actually reachable: `inlineableRep` only ever promotes to this
-        -- in the *used* branch of RLet's own annotate case, which never calls
-        -- dropDeadLet at all (that's the dead-variable branch) -- same no-op as
-        -- RNative regardless, kept total rather than assumed unreachable.
-        dropDeadLet fc natives (RInlineNative _) _ _ body = body
         dropDeadLet fc natives RBoxed loc value body =
             if contains loc natives
                then body
@@ -551,6 +544,11 @@ mutual
             freeableShape (RCon _ _ ci _ _ _) = ci /= NIL && ci /= NOTHING && ci /= ZERO && ci /= UNIT
             freeableShape (RUnderApp _ _ _ _) = True
             freeableShape _ = False
+        -- RNative/RInlineNative never need cleanup: neither is refcounted
+        -- (RInlineNative never actually reaches here at all -- see
+        -- `inlineableRep`'s own doc comment -- but kept total rather than
+        -- assumed unreachable).
+        dropDeadLet fc natives _ _ _ body = body
     annotate natives owned (RCon fc n ci tag args _) =
         -- reuseFrom stays Nothing -- Compiler.RC2.Reuse decides that in
         -- its own pass, after annotate is completely done (it needs the
