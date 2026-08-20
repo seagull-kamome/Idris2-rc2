@@ -645,6 +645,7 @@ mutual
     constConFieldExpr (RCConst c)          {prf=ItIsConst}    = boxedConstExpr c
     constConFieldExpr (RCEmptyCon _ _ tag) {prf=ItIsEmptyCon} = pure "idris2rc2_mkBits32(\{show tag})"
     constConFieldExpr l@(RCConstCon {})    {prf=ItIsConstCon} = boxedConstConExpr l
+    constConFieldExpr (RCLoc _) impossible
 
     ||| Walks `args` alongside its own `All` proof so each element's
     ||| individual `IsConstLocal` witness reaches `constConFieldExpr`.
