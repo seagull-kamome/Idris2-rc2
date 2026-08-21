@@ -2498,15 +2498,23 @@ createCFunctions n (MkRCForeign ccs fargs ret) = do
                               ++ "("
                               ++ showSep ", " (map (\(_, vn, vt) => extractValue cLang vt vn) (discardLastArgument typeVarNameArgList))
                               ++ ");"
+                  -- Pack retVal before dropping the args: a CFString/CFBuffer
+                  -- retVal may alias memory owned by one of those args (e.g.
+                  -- a C function that just returns a pointer it was handed),
+                  -- so packCFType must read through it while the arg (and
+                  -- whatever finalizer freeing that memory) is still alive.
+                  emit EmptyFC $ "IDRIS2RC2_Value *packedRet = (IDRIS2RC2_Value*)" ++ packCFType ret "retVal" ++ ";"
                   removeVarsArgList
-                  emit EmptyFC $ "return (IDRIS2RC2_Value*)" ++ packCFType ret "retVal" ++ ";"
+                  emit EmptyFC "return packedRet;"
               _ => do
                   emit EmptyFC $ cTypeOfCFType ret ++ " retVal = " ++ cName fctName
                               ++ "("
                               ++ showSep ", " (map (\(_, vn, vt) => extractValue cLang vt vn) typeVarNameArgList)
                               ++ ");"
+                  -- Same reasoning as the CFIORes ret branch above.
+                  emit EmptyFC $ "IDRIS2RC2_Value *packedRet = (IDRIS2RC2_Value*)" ++ packCFType ret "retVal" ++ ";"
                   removeVarsArgList
-                  emit EmptyFC $ "return (IDRIS2RC2_Value*)" ++ packCFType ret "retVal" ++ ";"
+                  emit EmptyFC "return packedRet;"
 
           decreaseIndentation
           emit EmptyFC "}"

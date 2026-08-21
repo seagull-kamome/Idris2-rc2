@@ -190,13 +190,18 @@ echo "=== Smoke tests ==="
 # because real RefC doesn't implement getField/setField at all (see
 # rc2/doc/c-struct-support.md's "What's confirmed" -- this is the
 # exact gap rc2 closes), so there's no real refc output to diff
-# against in the first place.
-NO_REFC_DIFF_TESTS="Test7CastMatrix Test17ConstFold Test24CStructSupport"
+# against in the first place. Test26GCPtrAliasString is a fourth
+# reason: real RefC's own createCFunctions has the identical drop-
+# before-pack ordering bug this test regression-checks rc2 for (see
+# idris2-src/src/Compiler/RefC/RefC.idr, out of scope to fix there),
+# so diffing against it would compare two buggy outputs instead of
+# checking against a correctness oracle.
+NO_REFC_DIFF_TESTS="Test7CastMatrix Test17ConstFold Test24CStructSupport Test26GCPtrAliasString"
 
 # Leak-sensitive by design (reference-counting/reuse/native-shadow
 # regression tests) -- checked with valgrind by default even without
 # --valgrind-all.
-LEAK_SENSITIVE_TESTS="Test1Basics Test9SelfTailLoop Test10MutualLoop Test11DualABILeak Test12ConAltNative Test13NativeArgChain Test14SmallFunctionInline Test15CompareFusionThroughCall Test16LoopContinuePostDrop Test18ClosureInPlaceGrow Test19LoopInvariantParam Test20LoopInvariantExpr Test21BoxedInvariantNotHoisted Test22BranchSinking Test23SinkPastSelfDrop Test24CStructSupport Test25ConstConFold"
+LEAK_SENSITIVE_TESTS="Test1Basics Test9SelfTailLoop Test10MutualLoop Test11DualABILeak Test12ConAltNative Test13NativeArgChain Test14SmallFunctionInline Test15CompareFusionThroughCall Test16LoopContinuePostDrop Test18ClosureInPlaceGrow Test19LoopInvariantParam Test20LoopInvariantExpr Test21BoxedInvariantNotHoisted Test22BranchSinking Test23SinkPastSelfDrop Test24CStructSupport Test25ConstConFold Test26GCPtrAliasString"
 
 # KNOWN-BUGS.md's own one remaining pre-existing leak -- "definitely
 # lost" byte count, exactly. Anything else non-zero is a genuine new
