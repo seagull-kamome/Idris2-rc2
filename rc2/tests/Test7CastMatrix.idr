@@ -129,6 +129,22 @@ main = do
         the Int8 65, the Int16 122, the Int32 48, the Int64 126
     ])
 
+    -- X -> Char -> Int round trip: a value past one byte but within
+    -- the valid Unicode range must survive whole, and an invalid
+    -- codepoint (negative, in the surrogate hole, or past 0x10FFFF)
+    -- must become NUL rather than alias whatever low bits survive
+    -- truncation. No Double case: `Cast Double Char` isn't a Prelude
+    -- instance (see the module note), so that C conversion (still
+    -- fixed alongside the others) isn't reachable from ordinary Idris
+    -- code at all. Expected: 300, 0, 0, 1114111, 0.
+    putStrLn "X -> Char -> Int (round trip):"
+    put $ [ the Int (cast (the Char (cast (the Bits32 300))))
+          , the Int (cast (the Char (cast (the Int32 (-1)))))
+          , the Int (cast (the Char (cast (the Bits32 0xD800))))
+          , the Int (cast (the Char (cast (the Bits64 0x10FFFF))))
+          , the Int (cast (the Char (cast (the Integer 99999999999999999999999999))))
+          ]
+
     -- String as source -- kept within `atoi`'s 32-bit-safe range (see
     -- the module note) so this exercises the actual parsing path
     -- without landing on the one place rc2 and RefC deliberately

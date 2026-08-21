@@ -181,6 +181,25 @@ runs the `idris2-missing-containers` external-package benchmark (see
 set up first). See `rc2/BENCHMARKS.md` for recorded results and how to
 read them.
 
+## Deliberate differences from upstream RefC
+
+`Char` is a full Unicode scalar value (`0..0x10FFFF`, surrogate range
+excluded) by Idris2's own spec -- Chez and the JS backends already treat
+it that way. Upstream RefC instead narrows it to a 1-byte C `char`
+throughout its runtime (`support/refc/casts.h`'s own numeric-to-Char
+casts, `idris2_vp_to_Char`'s own decode macro); rc2 deliberately doesn't
+follow that: its numeric-to-`Char` casts (`support/rc2/numeric.h`'s
+`idris2rc2_charFromCodepoint`, matching Chez's own `cast-int-char`) and
+its boxed `Char` representation both carry the full 32-bit codepoint, so
+a value outside the valid Unicode range maps to NUL instead of being
+silently reinterpreted through whichever low bits happened to survive
+truncation. One deliberate exception: a `CFStruct` field bound as
+`Char` (`Emit.idr`'s `genStructDef`/`cTypeOfCFType`) still uses a real,
+1-byte C `char` -- that field's type has to match the actual C
+library's own struct layout (size, offset, alignment) byte for byte,
+so widening it to `uint32_t` there would corrupt adjacent fields rather
+than fix anything.
+
 ## Status and scope
 
 Working external C backend, functionally correct against Idris2's own

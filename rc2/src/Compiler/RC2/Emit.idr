@@ -346,6 +346,15 @@ nativeOpExpr (ShiftR ty) [x, y] = "(" ++ x ++ " >> " ++ y ++ ")"
 nativeOpExpr (BAnd ty)   [x, y] = "(" ++ x ++ " & " ++ y ++ ")"
 nativeOpExpr (BOr ty)    [x, y] = "(" ++ x ++ " | " ++ y ++ ")"
 nativeOpExpr (BXOr ty)   [x, y] = "(" ++ x ++ " ^ " ++ y ++ ")"
+-- A bare C cast to uint32_t would just reinterpret whatever bits
+-- survive truncation as a codepoint; Char casts need the same
+-- Unicode-scalar-range validation Compiler.RC2.Types.cfTypeNative's
+-- own doc comment and support/rc2/numeric.h's boxed
+-- idris2rc2_cast_*_to_Char already give the Boxed path, or this native
+-- path (reachable whenever every operand of the cast chain is itself
+-- native-eligible, e.g. two Int32/Bits32 literals) would silently
+-- disagree with it for the exact same source expression.
+nativeOpExpr (Cast i CharType) [x] = "idris2rc2_charFromCodepoint((int64_t)(" ++ x ++ "))"
 nativeOpExpr (Cast i o)  [x]    = "((" ++ nativeCType o ++ ")(" ++ x ++ "))"
 nativeOpExpr DoubleExp     [x] = "exp(" ++ x ++ ")"
 nativeOpExpr DoubleLog     [x] = "log(" ++ x ++ ")"

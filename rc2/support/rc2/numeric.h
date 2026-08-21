@@ -251,9 +251,21 @@ IDRIS2RC2_CAST_UNSIGNED_TO_INTEGER(Bits16, uint16_t, idris2rc2_to_u16, idris2rc2
 IDRIS2RC2_CAST_UNSIGNED_TO_INTEGER(Bits32, uint32_t, idris2rc2_to_u32, idris2rc2_mkBits32)
 IDRIS2RC2_CAST_UNSIGNED_TO_INTEGER(Bits64, uint64_t, idris2rc2_to_u64, idris2rc2_mkBits64)
 
+// Char is a full Unicode scalar value (0..0x10FFFF, surrogate range
+// 0xD800..0xDFFF excluded), not a C `char` -- an out-of-range source
+// value (negative, or past 0x10FFFF, or landing in the surrogate hole)
+// has no valid codepoint to become, so it maps to NUL rather than
+// silently reinterpreting whichever low bits happened to fit. Mirrors
+// Idris2's own Chez backend runtime (`cast-int-char` in support/chez/
+// support.ss), the spec-correct reference this was checked against.
+static inline uint32_t idris2rc2_charFromCodepoint(int64_t v) {
+  if ((v >= 0 && v <= 0xD7FF) || (v >= 0xE000 && v <= 0x10FFFF)) return (uint32_t)v;
+  return 0;
+}
+
 #define IDRIS2RC2_CAST_TO_CHAR(FROM, FCTY, FGET, FMK)                              \
   static inline IDRIS2RC2_Value *idris2rc2_cast_##FROM##_to_Char(IDRIS2RC2_Value *x) {         \
-    return idris2rc2_mkChar((uint32_t)(uint8_t)FGET(x));                          \
+    return idris2rc2_mkChar(idris2rc2_charFromCodepoint((int64_t)FGET(x)));       \
   }
 IDRIS2RC2_INTTYPES(IDRIS2RC2_CAST_TO_CHAR)
 
@@ -274,7 +286,7 @@ static inline IDRIS2RC2_Value *idris2rc2_cast_Double_to_Bits16(IDRIS2RC2_Value *
 static inline IDRIS2RC2_Value *idris2rc2_cast_Double_to_Bits32(IDRIS2RC2_Value *x) { return idris2rc2_mkBits32((uint32_t)idris2rc2_to_double(x)); }
 static inline IDRIS2RC2_Value *idris2rc2_cast_Double_to_Bits64(IDRIS2RC2_Value *x) { return idris2rc2_mkBits64((uint64_t)idris2rc2_to_double(x)); }
 static inline IDRIS2RC2_Value *idris2rc2_cast_Double_to_Integer(IDRIS2RC2_Value *x) { IDRIS2RC2_Integer *r = idris2rc2_mkInteger(); mpz_set_d(r->v, idris2rc2_to_double(x)); return (IDRIS2RC2_Value *)r; }
-static inline IDRIS2RC2_Value *idris2rc2_cast_Double_to_Char(IDRIS2RC2_Value *x) { return idris2rc2_mkChar((uint32_t)(uint8_t)idris2rc2_to_double(x)); }
+static inline IDRIS2RC2_Value *idris2rc2_cast_Double_to_Char(IDRIS2RC2_Value *x) { return idris2rc2_mkChar(idris2rc2_charFromCodepoint((int64_t)idris2rc2_to_double(x))); }
 // idris2rc2_cast_Double_to_string stays in numeric.c (multi-statement).
 IDRIS2RC2_Value *idris2rc2_cast_Double_to_string(IDRIS2RC2_Value *);
 

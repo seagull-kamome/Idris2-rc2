@@ -87,7 +87,18 @@ IDRIS2RC2_Value *idris2rc2_cast_Integer_to_Bits8(IDRIS2RC2_Value *x) { return id
 IDRIS2RC2_Value *idris2rc2_cast_Integer_to_Bits16(IDRIS2RC2_Value *x) { return idris2rc2_mkBits16((uint16_t)idris2rc2_mpz_lsb(((IDRIS2RC2_Integer *)x)->v, 16)); }
 IDRIS2RC2_Value *idris2rc2_cast_Integer_to_Bits32(IDRIS2RC2_Value *x) { return idris2rc2_mkBits32((uint32_t)idris2rc2_mpz_lsb(((IDRIS2RC2_Integer *)x)->v, 32)); }
 IDRIS2RC2_Value *idris2rc2_cast_Integer_to_Bits64(IDRIS2RC2_Value *x) { return idris2rc2_mkBits64((uint64_t)idris2rc2_mpz_lsb(((IDRIS2RC2_Integer *)x)->v, 64)); }
-IDRIS2RC2_Value *idris2rc2_cast_Integer_to_Char(IDRIS2RC2_Value *x) { return idris2rc2_mkChar((uint32_t)idris2rc2_mpz_lsb(((IDRIS2RC2_Integer *)x)->v, 32)); }
+IDRIS2RC2_Value *idris2rc2_cast_Integer_to_Char(IDRIS2RC2_Value *x) {
+  IDRIS2RC2_Integer *i = (IDRIS2RC2_Integer *)x;
+  // mpz_lsb below would silently reinterpret a magnitude past 0x10FFFF
+  // (or negative) into some unrelated low-32-bit codepoint; compare
+  // against GMP's own arbitrary-precision value directly instead of
+  // narrowing first, so a huge Integer is correctly rejected rather
+  // than aliasing whatever bits happened to survive truncation.
+  if ((mpz_cmp_si(i->v, 0) >= 0 && mpz_cmp_ui(i->v, 0xD7FF) <= 0) ||
+      (mpz_cmp_ui(i->v, 0xE000) >= 0 && mpz_cmp_ui(i->v, 0x10FFFF) <= 0))
+    return idris2rc2_mkChar((uint32_t)mpz_get_ui(i->v));
+  return idris2rc2_mkChar(0);
+}
 IDRIS2RC2_Value *idris2rc2_cast_Integer_to_string(IDRIS2RC2_Value *x) {
   IDRIS2RC2_String *r = IDRIS2RC2_NEW(IDRIS2RC2_String);
   r->header.tag = IDRIS2RC2_TAG_STRING;
