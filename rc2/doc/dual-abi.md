@@ -653,17 +653,26 @@ Narrower than Stages 1-4 in three ways that fall directly out of a
 
 - **Eligibility needs no analysis, just a type lookup.**
   `Compiler.RC2.Types.cfTypeNative : CFType -> Maybe PrimType` is the
-  FFI-side counterpart to `nativeEligible` -- deliberately narrower
-  (`CFChar` excluded: `nativeCType CharType` is `uint32_t`, a full
-  Idris `Char`'s own Unicode codepoint, while `cTypeOfCFType CFChar` is
-  a plain 1-byte C `char` -- promoting it would hand a worker's own
-  caller-supplied `uint32_t` straight through to a `%foreign` C
-  function declared to take `char`). `Int`/`Int8`/`Int16`/`Int32`/
-  `Int64`/`Bits8`/`Bits16`/`Bits32`/`Bits64`/`Double` all have their
-  `nativeCType` and `cTypeOfCFType` renderings agree exactly, so an
-  eligible position needs zero conversion crossing the worker's own
+  FFI-side counterpart to `nativeEligible`. `Int`/`Int8`/`Int16`/
+  `Int32`/`Int64`/`Bits8`/`Bits16`/`Bits32`/`Bits64`/`Double` all have
+  their `nativeCType` and `cTypeOfCFType` renderings agree exactly, so
+  an eligible position needs zero conversion crossing the worker's own
   outer boundary -- it's the *same* C value both call sites already
-  agree on.
+  agree on. `CFChar` is the one exception: `nativeCType CharType` is
+  `uint32_t` (a full Idris `Char`'s own Unicode codepoint) while
+  `cTypeOfCFType CFChar` is a plain 1-byte C `char`. Rather than
+  excluding it, `Compiler.RC2.Emit`'s `emitFFIWorker` casts explicitly
+  at the one call boundary where the mismatch actually surfaces --
+  `nativeCharArgExpr` narrows `(char)` on the way into `fctName`,
+  `nativeCharRetExpr` widens back up through `(uint32_t)(unsigned
+  char)` (not a direct `(uint32_t)` cast, to zero- rather than sign-
+  extend a `char` whose top bit is set) on the way out -- the same
+  narrowing/widening the always-Boxed wrapper already pays via
+  `idris2rc2_to_char`/`idris2rc2_mkChar`, just as a register-width cast
+  instead of a box/unbox round trip. `rc2/tests/Test27FFIDualABI.idr`'s
+  own `prim__bumpChar` case (codepoint 254 -> 255, both past plain
+  `char`'s signed range) exists specifically to catch a regression that
+  drops the `unsigned char` step and sign-extends instead.
 - **No wrapper rewrite -- the original `MkRCForeign` is untouched.**
   `Compiler.RC2.DualABI.ffiWorkerTable` only ever *adds* a table entry
   (`Name -> (workerName, argReps, retRep)`); it never rewrites the
@@ -1008,7 +1017,10 @@ from Stage 2.
   ref and `emitFFIWorker` (Stage 3c -- `createCFunctions`'s own
   `MkRCForeign` case emits the always-Boxed wrapper exactly as before,
   unconditionally, then looks `n` up in `FFIWorkers` and emits a second
-  native-signature C function if present).
+  native-signature C function if present); `nativeCharArgExpr`/
+  `nativeCharRetExpr` (the explicit `CFChar`-only cast `emitFFIWorker`
+  needs at its `fctName` call site, see Stage 3c's own eligibility
+  bullet above).
 - `rc2/src/Compiler/RC2/Types.idr` -- `cfTypeNative` (Stage 3c's own
   `CFType`-side eligibility, the FFI counterpart to `nativeEligible`).
 - `rc2/src/Compiler/RC2/Pretty.idr` -- `MkRCFun`'s new

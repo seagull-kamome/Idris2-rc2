@@ -426,6 +426,45 @@ against this one pinned reference. Revisit (i.e. add an `Int32` case
 back to that test) if the pinned reference `idris2` version is ever
 bumped past whatever release added `Int32` FFI support.
 
+## Correctness: `String`<->`Char` conversions are byte-indexed, not codepoint-indexed, on both RefC-family backends
+
+Found while working out whether the FFI worker's `CFChar` position
+(`Compiler.RC2.Types.cfTypeNative`, the Stage 3c FFI worker's own doc
+comment; now handled with an explicit cast rather than excluded, see
+`rc2/doc/dual-abi.md`'s Stage 3c) could ever observe a non-Latin1
+codepoint in practice: `rc2/support/rc2/idris2rc2_strings.c`'s
+`idris2rc2_strIndex`,
+`fastPack`/`fastUnpack`, and `idris2rc2_strCons` all read/write a
+`String`'s underlying `char *` buffer one raw byte at a time, casting
+each byte straight to a `Char` via `idris2rc2_mkChar((unsigned char)s[idx])`
+-- for any string containing a multi-byte UTF-8 sequence (any codepoint
+above `U+007F`), this splits the sequence into several bogus single-byte
+"characters" instead of decoding the real codepoint. Only the explicit
+`cast String Char` primitive (`idris2rc2_cast_string_to_Char`,
+`rc2/support/rc2/numeric.c:104-116`) does real UTF-8 decoding -- an
+inconsistency within rc2's own runtime, not a deliberate design split.
+
+Not rc2-specific: confirmed the identical byte-indexed pattern in the
+pinned reference `idris2-src/support/refc/stringOps.c` (`idris2_vp_to_Char`,
+`stringIteratorNext`, `fastPack`/`fastUnpack` there too), so this is a
+pre-existing upstream RefC limitation rc2 inherited, not something
+introduced here. The JS backend (`Compiler/ES/Codegen.idr`) has the
+same class of bug at a different granularity: `ord` uses
+`.codePointAt(0)` (correct), but `StrIndex` uses `.charAt` (UTF-16
+code-unit indexed, wrong for astral-plane codepoints via a lone
+surrogate half). Only the Chez backend is unaffected, since Scheme's
+own `string`/`char` types are codepoint-native by the R6RS spec
+(`string-ref`, `Compiler/Scheme/Common.idr:170`), needing no
+special-casing.
+
+Doesn't block anything currently worked on (this project's own smoke
+tests are ASCII-only) and is out of scope for the Stage 3c FFI work
+that surfaced it. Worth fixing eventually (`strIndex`/`fastPack`/
+`fastUnpack`/`strCons` all rewritten to decode/encode UTF-8 properly,
+mirroring `idris2rc2_cast_string_to_Char`'s own approach) if any future
+test or user code needs non-ASCII `String`/`Char` correctness on the
+RefC/rc2 backends.
+
 ## yet another hope
 この項は人間が追加したものなので、後で整理して独立の項に括りだす事。
 今は着手しないが将来的な展望を書き連ねる。この項は日本語で書かれるが

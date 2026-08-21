@@ -2584,21 +2584,39 @@ createCFunctions n (MkRCForeign ccs fargs ret) = do
     discardLastArgument [] = []
     discardLastArgument xs@(_ :: _) = init xs
 
+    ||| `CFChar`-only cast a native argument needs at its `fctName` call
+    ||| site: `nativeCType CharType` (this worker's own `uint32_t`
+    ||| parameter) disagrees with `cTypeOfCFType CFChar` (`fctName`'s own
+    ||| `char`), the one `CFType` where those two differ.
+    nativeCharArgExpr : String -> String
+    nativeCharArgExpr vn = "(char)" ++ vn
+
+    ||| Widens a `CFChar`-returning `fctName`'s own `char` result back up
+    ||| to this worker's own `uint32_t` return type. Goes through
+    ||| `unsigned char` first, not a direct `(uint32_t)` cast, so a
+    ||| `char` whose top bit is set zero-extends instead of sign-
+    ||| extending into three bogus `0xff` bytes -- the same
+    ||| `(unsigned char)` step every other `Char`-producing site in this
+    ||| runtime already takes (e.g. `idris2rc2_strings.c`'s
+    ||| `idris2rc2_mkChar((unsigned char)s[idx])`).
+    nativeCharRetExpr : String -> String
+    nativeCharRetExpr retVar = "(uint32_t)(unsigned char)" ++ retVar
+
     ||| The dual-ABI FFI worker itself (`Compiler.RC2.DualABI`'s Stage
     ||| 3c already decided `workerName`/`argReps`/`retRep`; this just
     ||| renders it) -- a second C function alongside the always-emitted,
     ||| always-Boxed wrapper above, one `Rep`-eligible position at a
     ||| time: a `RNative`/`RInlineNative` position's own declared C type
-    ||| is already `nativeCType`, textually identical to
-    ||| `cTypeOfCFType` for every `CFType` `Compiler.RC2.Types.cfTypeNative`
-    ||| ever maps to one (guaranteed by that function's own doc comment,
-    ||| `CFChar` deliberately excluded there for exactly this reason) --
-    ||| so such a parameter is passed straight into `fctName` verbatim,
-    ||| no `extractValue`; such a return is `retVal` itself, no
-    ||| `packCFType`. Every other position renders exactly like the
-    ||| wrapper's own (`extractValue`/`packCFType`), so a mixed
-    ||| signature costs nothing extra at the positions that were never
-    ||| eligible to begin with.
+    ||| is already `nativeCType`, textually identical to `cTypeOfCFType`
+    ||| for every `CFType` `Compiler.RC2.Types.cfTypeNative` ever maps to
+    ||| one *except* `CFChar`, cast explicitly instead
+    ||| (`nativeCharArgExpr`/`nativeCharRetExpr` above) -- same
+    ||| narrowing/zero-extension the always-Boxed wrapper already gets
+    ||| via `idris2rc2_to_char`/`idris2rc2_mkChar`, just paid as a
+    ||| register-width cast here rather than a box/unbox round trip.
+    ||| Every other position renders exactly like the wrapper's own
+    ||| (`extractValue`/`packCFType`), so a mixed signature costs nothing
+    ||| extra at the positions that were never eligible to begin with.
     emitFFIWorker : CLang -> Name -> Name -> List Rep -> Rep -> List CFType -> CFType -> Core ()
     emitFFIWorker cLang fctName workerName argReps retRep fargs ret = do
         let varNames = varNamesFromList fargs 1
@@ -2622,6 +2640,8 @@ createCFunctions n (MkRCForeign ccs fargs ret) = do
         emit EmptyFC $ " // dual-ABI FFI worker for " ++ cName fctName
         let argExprFor : (Rep, String, CFType) -> String
             argExprFor (RBoxed, vn, vt) = extractValue cLang vt vn
+            argExprFor (RNative _, vn, CFChar) = nativeCharArgExpr vn
+            argExprFor (RInlineNative _, vn, CFChar) = nativeCharArgExpr vn
             argExprFor (RNative _, vn, _) = vn
             argExprFor (RInlineNative _, vn, _) = vn
             boxedVars : List String
@@ -2630,6 +2650,9 @@ createCFunctions n (MkRCForeign ccs fargs ret) = do
             finishNative retVar = do
                 removeVars boxedVars
                 emit EmptyFC "return \{retVar};"
+            nativeRetExprFor : CFType -> String -> String
+            nativeRetExprFor CFChar retVar = nativeCharRetExpr retVar
+            nativeRetExprFor _      retVar = retVar
         case ret of
             CFIORes CFUnit => do
                 emit EmptyFC $ cName fctName ++ "(" ++ showSep ", " (map argExprFor (discardLastArgument paramsInfo)) ++ ");"
@@ -2643,7 +2666,7 @@ createCFunctions n (MkRCForeign ccs fargs ret) = do
                          emit EmptyFC $ "IDRIS2RC2_Value *packedRet = (IDRIS2RC2_Value*)" ++ packCFType ret' "retVal" ++ ";"
                          removeVars boxedVars
                          emit EmptyFC "return packedRet;"
-                     _ => finishNative "retVal"
+                     _ => finishNative (nativeRetExprFor ret' "retVal")
             _ => do
                 emit EmptyFC $ cTypeOfCFType ret ++ " retVal = " ++ cName fctName
                             ++ "(" ++ showSep ", " (map argExprFor paramsInfo) ++ ");"
@@ -2652,7 +2675,7 @@ createCFunctions n (MkRCForeign ccs fargs ret) = do
                          emit EmptyFC $ "IDRIS2RC2_Value *packedRet = (IDRIS2RC2_Value*)" ++ packCFType ret "retVal" ++ ";"
                          removeVars boxedVars
                          emit EmptyFC "return packedRet;"
-                     _ => finishNative "retVal"
+                     _ => finishNative (nativeRetExprFor ret "retVal")
         decreaseIndentation
         emit EmptyFC "}"
 

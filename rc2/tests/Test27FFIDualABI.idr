@@ -11,8 +11,16 @@ module Main
 -- native worker exists alongside the always-Boxed wrapper. Covers
 -- every CFType shape that distinguishes an eligible position from an
 -- ineligible one: Int/Bits64/Double (all-native), a mixed Int+String
--- signature (only the Int position promotes), and an Int arg with a
--- CFUnit IO return (return stays Boxed, the arg still promotes).
+-- signature (only the Int position promotes), an Int arg with a
+-- CFUnit IO return (return stays Boxed, the arg still promotes), and a
+-- CFChar arg/return round trip -- the one native-eligible CFType whose
+-- own worker-boundary C type (uint32_t) disagrees with its %foreign
+-- call-site C type (char), so it needs an explicit cast rather than a
+-- verbatim pass-through (Compiler.RC2.Emit's nativeCharArgExpr/
+-- nativeCharRetExpr). Uses codepoint 254 -> bumped to 255, both past
+-- plain char's signed range on a typical platform, to catch a
+-- regression that sign-extends the return instead of zero-extending
+-- it (255 misread as 4294967295).
 -- (Int32 deliberately not covered here -- the pinned reference `idris2
 -- --cg refc` 0.8.0 this project cross-checks against rejects any
 -- Int32-typed %foreign position outright, `Unknown FFI type in C
@@ -53,6 +61,9 @@ prim__mixed : Int -> String -> Int
 %foreign "C:idris2rc2_test27_noop,libc,Test27FFIDualABI.h"
 prim__noop : Int -> PrimIO ()
 
+%foreign "C:idris2rc2_test27_bumpChar,libc,Test27FFIDualABI.h"
+prim__bumpChar : Char -> Char
+
 loop : Int -> Int -> Int
 loop 0 acc = acc
 loop n acc = loop (n - 1) (acc + prim__add (n + 999999) (n + 1000001))
@@ -65,4 +76,5 @@ main = do
     printLn (prim__mulDouble 2.5 4.0)
     printLn (prim__mixed 10 "hello")
     primIO (prim__noop 5)
+    printLn (ord (prim__bumpChar (chr 254)))
     putStrLn "done"

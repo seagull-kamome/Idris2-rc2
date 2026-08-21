@@ -69,15 +69,16 @@ alwaysUnboxed _ = False
 ||| synthesis (no function body to analyse there, unlike
 ||| `paramEligibility`/`returnEligibility` -- the C ABI a `%foreign`
 ||| declaration commits to already decides eligibility by itself).
-||| Deliberately narrower than `nativeEligible`'s own `PrimType` set:
-||| `CFChar` excluded even though `CharType` itself is native-eligible,
-||| because their raw C representations disagree --
-||| `Compiler.RC2.Emit.nativeCType CharType` is `uint32_t` (a full
-||| Idris `Char`'s own Unicode codepoint) while `cTypeOfCFType CFChar`
-||| is a plain 1-byte C `char` -- promoting it here would hand a
-||| worker's own caller-supplied `uint32_t` straight through to a
-||| `%foreign` C function declared to take `char`, silently
-||| reinterpreting whichever 3 extra bytes the ABI happens to pass.
+||| `CFChar` included even though `Compiler.RC2.Emit.nativeCType
+||| CharType` (`uint32_t`, a full Idris `Char`'s own Unicode codepoint)
+||| disagrees with `cTypeOfCFType CFChar` (a plain 1-byte C `char`) --
+||| unlike every other case here, where the two already agree and a
+||| native-eligible position can cross into `%foreign`'s own call verbatim,
+||| `emitFFIWorker` casts explicitly at that one call boundary instead
+||| of skipping the conversion. Same narrowing a `CFChar` argument/return
+||| already gets on the always-Boxed wrapper path (`idris2rc2_to_char`/
+||| `idris2rc2_mkChar`), just paid as a register-width cast instead of a
+||| box/unbox round trip.
 export
 cfTypeNative : CFType -> Maybe PrimType
 cfTypeNative CFInt        = Just IntType
@@ -90,6 +91,7 @@ cfTypeNative CFUnsigned16 = Just Bits16Type
 cfTypeNative CFUnsigned32 = Just Bits32Type
 cfTypeNative CFUnsigned64 = Just Bits64Type
 cfTypeNative CFDouble     = Just DoubleType
+cfTypeNative CFChar       = Just CharType
 cfTypeNative _            = Nothing
 
 ||| The PrimType a specific operand of `op` needs, given the op's own

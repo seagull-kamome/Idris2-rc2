@@ -8,8 +8,10 @@
 // emitFFIWorker) across every CFType shape it distinguishes: all-
 // native args + native return (idris2rc2_test27_add/scale32/
 // mulDouble), a mixed native/Boxed arg signature with a native return
-// (idris2rc2_test27_mixed), and a native arg with a Boxed (CFUnit) IO
-// return (idris2rc2_test27_noop).
+// (idris2rc2_test27_mixed), a native arg with a Boxed (CFUnit) IO
+// return (idris2rc2_test27_noop), and a CFChar arg/return round trip
+// (idris2rc2_test27_bumpChar) exercising the explicit uint32_t<->char
+// cast a native CFChar position needs at this exact call boundary.
 
 #include "Test27FFIDualABI.h"
 #include <string.h>
@@ -32,4 +34,8 @@ int64_t idris2rc2_test27_mixed(int64_t n, const char *tag) {
 
 void idris2rc2_test27_noop(int64_t n) {
     (void)n;
+}
+
+char idris2rc2_test27_bumpChar(char c) {
+    return (char)((unsigned char)c + 1);
 }
