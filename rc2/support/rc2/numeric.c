@@ -1,4 +1,5 @@
 #include "numeric.h"
+#include "utf8.h"
 
 #include <inttypes.h>
 #include <stdio.h>
@@ -57,14 +58,9 @@ IDRIS2RC2_Value *idris2rc2_cast_Double_to_string(IDRIS2RC2_Value *x) {
 
 // ---- Char ----
 IDRIS2RC2_Value *idris2rc2_cast_Char_to_string(IDRIS2RC2_Value *x) {
-  // Encode the codepoint as UTF-8.
   uint32_t c = idris2rc2_to_char(x);
-  char buf[5] = {0};
-  int n;
-  if (c < 0x80) { buf[0] = (char)c; n = 1; }
-  else if (c < 0x800) { buf[0] = (char)(0xC0 | (c >> 6)); buf[1] = (char)(0x80 | (c & 0x3F)); n = 2; }
-  else if (c < 0x10000) { buf[0] = (char)(0xE0 | (c >> 12)); buf[1] = (char)(0x80 | ((c >> 6) & 0x3F)); buf[2] = (char)(0x80 | (c & 0x3F)); n = 3; }
-  else { buf[0] = (char)(0xF0 | (c >> 18)); buf[1] = (char)(0x80 | ((c >> 12) & 0x3F)); buf[2] = (char)(0x80 | ((c >> 6) & 0x3F)); buf[3] = (char)(0x80 | (c & 0x3F)); n = 4; }
+  char buf[4];
+  int n = idris2rc2_utf8EncodeInto(c, buf);
   IDRIS2RC2_String *r = idris2rc2_mkEmptyString((size_t)n + 1);
   memcpy(r->str, buf, (size_t)n);
   return (IDRIS2RC2_Value *)r;
@@ -113,15 +109,10 @@ IDRIS2RC2_Value *idris2rc2_cast_string_to_Integer(IDRIS2RC2_Value *x) {
   return (IDRIS2RC2_Value *)r;
 }
 IDRIS2RC2_Value *idris2rc2_cast_string_to_Char(IDRIS2RC2_Value *x) {
-  // Decode the first UTF-8 codepoint (matching the way strings are packed
-  // by idris2rc2_cast_Char_to_string), rather than just the first byte.
-  unsigned char const *s = (unsigned char const *)((IDRIS2RC2_String *)x)->str;
-  if (s[0] == '\0')
+  char const *s = ((IDRIS2RC2_String *)x)->str;
+  size_t byteLen = strlen(s);
+  if (byteLen == 0)
     return idris2rc2_mkChar(0);
-  uint32_t c;
-  if ((s[0] & 0x80) == 0) c = s[0];
-  else if ((s[0] & 0xE0) == 0xC0) c = ((s[0] & 0x1F) << 6) | (s[1] & 0x3F);
-  else if ((s[0] & 0xF0) == 0xE0) c = ((s[0] & 0x0F) << 12) | ((s[1] & 0x3F) << 6) | (s[2] & 0x3F);
-  else c = ((s[0] & 0x07) << 18) | ((s[1] & 0x3F) << 12) | ((s[2] & 0x3F) << 6) | (s[3] & 0x3F);
-  return idris2rc2_mkChar(c);
+  size_t consumed;
+  return idris2rc2_mkChar(idris2rc2_utf8DecodeAt(s, byteLen, 0, &consumed));
 }

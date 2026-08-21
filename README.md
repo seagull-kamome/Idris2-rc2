@@ -200,6 +200,30 @@ library's own struct layout (size, offset, alignment) byte for byte,
 so widening it to `uint32_t` there would corrupt adjacent fields rather
 than fix anything.
 
+The same story applies one level up, to `String`: Idris2's own spec (and
+Chez's native, R6RS-mandated string type) treats `length`/indexing/
+`substr`/`pack`/`unpack`/`reverse`/`Data.String.Iterator` as
+Unicode-*codepoint*-indexed. Upstream RefC treats them as byte-indexed
+instead (`support/refc/stringOps.c`); rc2 deliberately doesn't follow
+that either -- `support/rc2/idris2rc2_strings.c`'s own String
+primitives now decode/measure/slice by codepoint via the shared
+`support/rc2/utf8.c` codec, while still allocating every buffer by its
+own real UTF-8 *byte* span (never confusing the two counts -- see each
+primitive's own comment there for exactly which byte count it allocates
+against). A malformed byte sequence (e.g. from a `CFString`-typed
+`%foreign` argument or a `Buffer -> String` conversion) decodes to
+U+FFFD, Unicode's own standard replacement-character convention for
+lossy decoding, rather than crashing or misreading. One accepted,
+unaddressed consequence: unlike Chez's native fixed-width character
+array (`string-ref` is O(1)), rc2 keeps its UTF-8 byte-buffer
+representation, so codepoint-indexed access (`strIndex`/`strSubstr`/
+`strTail`) costs O(n) per call, scanning from the string's own start --
+matching Chez's *semantics* without matching its *internal
+representation*. See `TODO.md` for that tradeoff and the one gap this
+work didn't reach (byte-based `String`<->`Char` conversions of
+malformed/adversarial input aside, the *value's own storage width* was
+already fixed by the `Char` work above).
+
 ## Status and scope
 
 Working external C backend, functionally correct against Idris2's own

@@ -55,6 +55,28 @@ anything so far, but don't be surprised by them showing up again.
 
 - **`Test1Basics.idr`: `definitely lost: 40 bytes in 2 blocks`,
   `indirectly lost: 56 bytes in 3 blocks`** (96 bytes / 5 blocks total).
+- **`fastPack`/`fastConcat` leak their own raw `malloc`'d `char *` return
+  on every call** -- root-caused while adding `Test28Utf8Strings.idr`
+  (the first `LEAK_SENSITIVE_TESTS` entry that happens to call `pack`),
+  confirmed pre-existing and unrelated to that test's own UTF-8 work by
+  reproducing the identical pattern on already-passing `Test5FFIStrings.idr`
+  (`1,079 bytes in 13 blocks`, entirely `fastPack`/`fastConcat` frames,
+  not previously valgrind-checked). Both are declared
+  `%foreign "RefC:fastPack"`/`"RefC:fastConcat"` with a `CFString`
+  return, so `Compiler.RC2.Emit`'s generic FFI wrapper codegen wraps
+  their raw `char *` in `idris2rc2_mkString` (which `memcpy`s into a
+  fresh `IDRIS2RC2_String`, per `rc2/support/rc2/memory.c`) and never
+  frees the original -- correct for the common case (a real external
+  library's own `char *` return, e.g. `curl_easy_strerror`, must *not*
+  be freed by the caller), wrong for these two specifically, which
+  `malloc` a buffer this project itself owns. Fixing it properly means
+  teaching the wrapper codegen to free after copy for exactly these two
+  (or having them build the `IDRIS2RC2_String` directly instead of
+  returning a raw `char *` for the generic wrapper to copy) -- not
+  attempted, out of scope for the UTF-8 work that found it.
+  `Test28Utf8Strings`'s own `KNOWN_LEAK_BYTES` entry in `verify.sh`
+  (28 bytes / 3 blocks, three `pack` calls) is this same bug, not a
+  regression in its own String-primitive rewrite.
 - ~~`Test9SelfTailLoop.idr`: `definitely lost: 784 bytes in 49
   blocks`~~ -- **root-caused and fixed**: `RLoopContinue` (`Compiler.RC2.Loop`'s
   own self-tail-loop-continuation node) had no `postDrop` field at all,

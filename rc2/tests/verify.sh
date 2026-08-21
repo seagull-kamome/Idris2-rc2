@@ -195,20 +195,31 @@ echo "=== Smoke tests ==="
 # before-pack ordering bug this test regression-checks rc2 for (see
 # idris2-src/src/Compiler/RefC/RefC.idr, out of scope to fix there),
 # so diffing against it would compare two buggy outputs instead of
-# checking against a correctness oracle.
-NO_REFC_DIFF_TESTS="Test7CastMatrix Test17ConstFold Test24CStructSupport Test26GCPtrAliasString"
+# checking against a correctness oracle. Test28Utf8Strings is a fifth
+# reason: it regression-checks rc2's own codepoint- (not byte-) indexed
+# String primitives, a deliberate divergence from real RefC's own
+# byte-wise ones -- see README.md's "Deliberate differences from
+# upstream RefC" -- so a real-refc diff would be an expected mismatch,
+# not a regression. Its own saved .expected was independently cross-
+# checked against plain `idris2` (Chez, the spec-correct reference) for
+# every line not involving its own companion-C-only malformed-string
+# case (Chez has no `scheme:`-tagged binding for that one test-only
+# foreign function, so there is nothing meaningful to diff there).
+NO_REFC_DIFF_TESTS="Test7CastMatrix Test17ConstFold Test24CStructSupport Test26GCPtrAliasString Test28Utf8Strings"
 
 # Leak-sensitive by design (reference-counting/reuse/native-shadow
 # regression tests) -- checked with valgrind by default even without
 # --valgrind-all.
-LEAK_SENSITIVE_TESTS="Test1Basics Test9SelfTailLoop Test10MutualLoop Test11DualABILeak Test12ConAltNative Test13NativeArgChain Test14SmallFunctionInline Test15CompareFusionThroughCall Test16LoopContinuePostDrop Test18ClosureInPlaceGrow Test19LoopInvariantParam Test20LoopInvariantExpr Test21BoxedInvariantNotHoisted Test22BranchSinking Test23SinkPastSelfDrop Test24CStructSupport Test25ConstConFold Test26GCPtrAliasString Test27FFIDualABI"
+LEAK_SENSITIVE_TESTS="Test1Basics Test9SelfTailLoop Test10MutualLoop Test11DualABILeak Test12ConAltNative Test13NativeArgChain Test14SmallFunctionInline Test15CompareFusionThroughCall Test16LoopContinuePostDrop Test18ClosureInPlaceGrow Test19LoopInvariantParam Test20LoopInvariantExpr Test21BoxedInvariantNotHoisted Test22BranchSinking Test23SinkPastSelfDrop Test24CStructSupport Test25ConstConFold Test26GCPtrAliasString Test27FFIDualABI Test28Utf8Strings"
 
-# KNOWN-BUGS.md's own one remaining pre-existing leak -- "definitely
+# KNOWN-BUGS.md's own remaining pre-existing leaks -- "definitely
 # lost" byte count, exactly. Anything else non-zero is a genuine new
 # failure. (Test9SelfTailLoop's own former 784-byte entry was
 # root-caused and fixed -- RLoopContinue's own missing postDrop field,
-# see KNOWN-BUGS.md -- and is expected to be clean now.)
-declare -A KNOWN_LEAK_BYTES=( [Test1Basics]=40 )
+# see KNOWN-BUGS.md -- and is expected to be clean now.) Test28Utf8Strings'
+# own 28 bytes is fastPack's own pre-existing (not this test's own
+# String-primitive rewrite's) leak -- see KNOWN-BUGS.md.
+declare -A KNOWN_LEAK_BYTES=( [Test1Basics]=40 [Test28Utf8Strings]=28 )
 
 is_in() { local x; for x in $2; do [ "$x" = "$1" ] && return 0; done; return 1; }
 

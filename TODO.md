@@ -426,44 +426,30 @@ against this one pinned reference. Revisit (i.e. add an `Int32` case
 back to that test) if the pinned reference `idris2` version is ever
 bumped past whatever release added `Int32` FFI support.
 
-## Correctness: `String`<->`Char` conversions are byte-indexed, not codepoint-indexed, on both RefC-family backends
+## Performance: codepoint-indexed String access is O(n) per call, not O(1)
 
-Found while working out whether the FFI worker's `CFChar` position
-(`Compiler.RC2.Types.cfTypeNative`, the Stage 3c FFI worker's own doc
-comment; now handled with an explicit cast rather than excluded, see
-`rc2/doc/dual-abi.md`'s Stage 3c) could ever observe a non-Latin1
-codepoint in practice: `rc2/support/rc2/idris2rc2_strings.c`'s
-`idris2rc2_strIndex`,
-`fastPack`/`fastUnpack`, and `idris2rc2_strCons` all read/write a
-`String`'s underlying `char *` buffer one raw byte at a time, casting
-each byte straight to a `Char` via `idris2rc2_mkChar((unsigned char)s[idx])`
--- for any string containing a multi-byte UTF-8 sequence (any codepoint
-above `U+007F`), this splits the sequence into several bogus single-byte
-"characters" instead of decoding the real codepoint. Only the explicit
-`cast String Char` primitive (`idris2rc2_cast_string_to_Char`,
-`rc2/support/rc2/numeric.c:104-116`) does real UTF-8 decoding -- an
-inconsistency within rc2's own runtime, not a deliberate design split.
+`String`'s primitives (`length`/`strIndex`/`strTail`/`strCons`/
+`reverse`/`substr`/`pack`/`unpack`/`Data.String.Iterator`) were
+rewritten to be Unicode-codepoint-, not byte-, indexed, matching
+Idris2's own Chez backend (see README.md's "Deliberate differences
+from upstream RefC" -- this used to be tracked here as a correctness
+gap; now fixed, `rc2/support/rc2/utf8.c` is the shared codec every
+primitive in `idris2rc2_strings.c` decodes/measures/slices through,
+with each one's own comment there spelling out which real *byte* span
+it allocates against so character and byte counts are never confused).
 
-Not rc2-specific: confirmed the identical byte-indexed pattern in the
-pinned reference `idris2-src/support/refc/stringOps.c` (`idris2_vp_to_Char`,
-`stringIteratorNext`, `fastPack`/`fastUnpack` there too), so this is a
-pre-existing upstream RefC limitation rc2 inherited, not something
-introduced here. The JS backend (`Compiler/ES/Codegen.idr`) has the
-same class of bug at a different granularity: `ord` uses
-`.codePointAt(0)` (correct), but `StrIndex` uses `.charAt` (UTF-16
-code-unit indexed, wrong for astral-plane codepoints via a lone
-surrogate half). Only the Chez backend is unaffected, since Scheme's
-own `string`/`char` types are codepoint-native by the R6RS spec
-(`string-ref`, `Compiler/Scheme/Common.idr:170`), needing no
-special-casing.
-
-Doesn't block anything currently worked on (this project's own smoke
-tests are ASCII-only) and is out of scope for the Stage 3c FFI work
-that surfaced it. Worth fixing eventually (`strIndex`/`fastPack`/
-`fastUnpack`/`strCons` all rewritten to decode/encode UTF-8 properly,
-mirroring `idris2rc2_cast_string_to_Char`'s own approach) if any future
-test or user code needs non-ASCII `String`/`Char` correctness on the
-RefC/rc2 backends.
+One accepted, deliberately unaddressed consequence of *how* it's
+fixed: rc2 kept `String`'s existing UTF-8-byte-buffer representation,
+so `strIndex`/`strSubstr`/`strTail` must scan from the string's own
+start to translate a codepoint index into a byte offset -- O(n) per
+call. Chez's own native string type is a fixed-width character array
+(`string-ref` is O(1)), so this matches Chez's *semantics* without
+matching its *performance characteristics*. Fixing that would mean
+switching `String`'s internal representation entirely (e.g. UTF-32, or
+caching a byte-offset table) -- a much larger change than this work's
+own scope. Not currently planned; revisit only if profiling ever shows
+codepoint-indexed access on a long string actually mattering in
+practice.
 
 ## yet another hope
 この項は人間が追加したものなので、後で整理して独立の項に括りだす事。

@@ -2,10 +2,15 @@
 
 #include "datatypes.h"
 #include "numeric.h"
+#include "utf8.h"
 
-// Strings are treated byte-wise (not Unicode-codepoint-wise) for indexing,
-// matching the simplification RefC itself makes.
-#define idris2rc2_strLength(x) (idris2rc2_mkInt64((int64_t)strlen(((IDRIS2RC2_String *)(x))->str)))
+// Length/indexing are Unicode-codepoint-wise, matching Idris2's own Chez
+// backend (Scheme strings are codepoint sequences by spec) rather than
+// upstream RefC's own byte-wise simplification -- see README.md's
+// "Deliberate differences from upstream RefC".
+#define idris2rc2_strLength(x)                                                     \
+  (idris2rc2_mkInt64((int64_t)idris2rc2_utf8Length(                                \
+      ((IDRIS2RC2_String *)(x))->str, strlen(((IDRIS2RC2_String *)(x))->str))))
 #define idris2rc2_strHead(x) (idris2rc2_cast_string_to_Char(x))
 
 IDRIS2RC2_Value *idris2rc2_strTail(IDRIS2RC2_Value *str);
