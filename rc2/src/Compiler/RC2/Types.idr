@@ -63,6 +63,35 @@ alwaysUnboxed Bits32Type = True
 alwaysUnboxed CharType = True
 alwaysUnboxed _ = False
 
+||| A `%foreign` argument/return `CFType`'s own native-eligible
+||| `PrimType`, if any -- the FFI-boundary counterpart to
+||| `nativeEligible` above, used by `Compiler.RC2.DualABI`'s FFI worker
+||| synthesis (no function body to analyse there, unlike
+||| `paramEligibility`/`returnEligibility` -- the C ABI a `%foreign`
+||| declaration commits to already decides eligibility by itself).
+||| Deliberately narrower than `nativeEligible`'s own `PrimType` set:
+||| `CFChar` excluded even though `CharType` itself is native-eligible,
+||| because their raw C representations disagree --
+||| `Compiler.RC2.Emit.nativeCType CharType` is `uint32_t` (a full
+||| Idris `Char`'s own Unicode codepoint) while `cTypeOfCFType CFChar`
+||| is a plain 1-byte C `char` -- promoting it here would hand a
+||| worker's own caller-supplied `uint32_t` straight through to a
+||| `%foreign` C function declared to take `char`, silently
+||| reinterpreting whichever 3 extra bytes the ABI happens to pass.
+export
+cfTypeNative : CFType -> Maybe PrimType
+cfTypeNative CFInt        = Just IntType
+cfTypeNative CFInt8       = Just Int8Type
+cfTypeNative CFInt16      = Just Int16Type
+cfTypeNative CFInt32      = Just Int32Type
+cfTypeNative CFInt64      = Just Int64Type
+cfTypeNative CFUnsigned8  = Just Bits8Type
+cfTypeNative CFUnsigned16 = Just Bits16Type
+cfTypeNative CFUnsigned32 = Just Bits32Type
+cfTypeNative CFUnsigned64 = Just Bits64Type
+cfTypeNative CFDouble     = Just DoubleType
+cfTypeNative _            = Nothing
+
 ||| The PrimType a specific operand of `op` needs, given the op's own
 ||| result type `ty`: every operand shares `ty` except Cast's single
 ||| argument, whose *source* type is the op's own `i`, not `ty`. Shared

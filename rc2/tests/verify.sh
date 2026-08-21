@@ -201,7 +201,7 @@ NO_REFC_DIFF_TESTS="Test7CastMatrix Test17ConstFold Test24CStructSupport Test26G
 # Leak-sensitive by design (reference-counting/reuse/native-shadow
 # regression tests) -- checked with valgrind by default even without
 # --valgrind-all.
-LEAK_SENSITIVE_TESTS="Test1Basics Test9SelfTailLoop Test10MutualLoop Test11DualABILeak Test12ConAltNative Test13NativeArgChain Test14SmallFunctionInline Test15CompareFusionThroughCall Test16LoopContinuePostDrop Test18ClosureInPlaceGrow Test19LoopInvariantParam Test20LoopInvariantExpr Test21BoxedInvariantNotHoisted Test22BranchSinking Test23SinkPastSelfDrop Test24CStructSupport Test25ConstConFold Test26GCPtrAliasString"
+LEAK_SENSITIVE_TESTS="Test1Basics Test9SelfTailLoop Test10MutualLoop Test11DualABILeak Test12ConAltNative Test13NativeArgChain Test14SmallFunctionInline Test15CompareFusionThroughCall Test16LoopContinuePostDrop Test18ClosureInPlaceGrow Test19LoopInvariantParam Test20LoopInvariantExpr Test21BoxedInvariantNotHoisted Test22BranchSinking Test23SinkPastSelfDrop Test24CStructSupport Test25ConstConFold Test26GCPtrAliasString Test27FFIDualABI"
 
 # KNOWN-BUGS.md's own one remaining pre-existing leak -- "definitely
 # lost" byte count, exactly. Anything else non-zero is a genuine new
@@ -223,7 +223,11 @@ for name in $ALL_TESTS; do
     # once here and linked in via IDRIS2_CFLAGS/IDRIS2_LDFLAGS, the
     # same environment variables Compiler.RC2.CC's own
     # findCFlags/findLDFlags already read -- most tests have no such
-    # file, so this is a no-op for them.
+    # file, so this is a no-op for them. Reused below for the real
+    # `idris2 --cg refc` --regen-expected invocation too, not just
+    # rc2's own -- a companion-C test with nothing else disqualifying
+    # it from NO_REFC_DIFF_TESTS still needs the same header/object
+    # available to compile against the real reference compiler.
     companion_env=()
     if [ -f "$RC2_DIR/tests/$name.c" ]; then
         nix-shell -p gcc --run "gcc -c $RC2_DIR/tests/$name.c -o $TMP/${name}_companion.o" \
@@ -261,7 +265,7 @@ for name in $ALL_TESTS; do
     else
         expected_file="$RC2_DIR/tests/$name.expected"
         if [ "$REGEN_EXPECTED" -eq 1 ]; then
-            nix-shell -p idris2 gcc gmp pkg-config --run \
+            env "${companion_env[@]}" nix-shell -p idris2 gcc gmp pkg-config --run \
                 "idris2 --cg refc $RC2_DIR/tests/$name.idr -o $TMP/${name}_refc" \
                 > "$TMP/${name}_refc_compile.log" 2>&1
             if [ ! -x "$TMP/${name}_refc" ]; then

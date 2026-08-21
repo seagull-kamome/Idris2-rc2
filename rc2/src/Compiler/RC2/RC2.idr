@@ -33,6 +33,8 @@ import Core.Context
 import Core.Directory
 import Core.Options
 
+import Data.SortedMap
+
 import Idris.Syntax
 
 import System
@@ -76,7 +78,7 @@ applyReuse d@(MkRCForeign _ _ _) = d
 ||| correctness, only for the optimisation it itself provides. "Not
 ||| perfectly complete" by design: a coarse, whole-stage on/off switch,
 ||| not fine-grained per-function/per-node control.
-toRCDefs : {auto c : Ref Ctxt Defs} -> List String -> List (Name, LiftedDef) -> Core (List (Name, RCDef))
+toRCDefs : {auto c : Ref Ctxt Defs} -> List String -> List (Name, LiftedDef) -> Core (List (Name, RCDef), SortedMap Name (Name, List Rep, Rep))
 toRCDefs disabled lds0 = do
     lds <- if "noinline" `elem` disabled then pure lds0 else logTime 2 "rc2: Inline" $ applyInlineLifted lds0
     reused <- logTime 2 "rc2: RC annotate + Reuse + ConAltNative" $
@@ -93,10 +95,11 @@ toRCDefs disabled lds0 = do
                then pure looped
                else logTime 2 "rc2: Sink" $ pure (map (\(n, d) => (n, applySink d)) looped)
     if "nodualabi" `elem` disabled
-       then pure sunk
+       then pure (sunk, Data.SortedMap.empty)
        else logTime 2 "rc2: DualABI" $ do
            withWorkers <- applyDualABI sunk
-           pure $ applyCallSiteRewrite withWorkers
+           ffiWorkers <- ffiWorkerTable sunk
+           pure (applyCallSiteRewrite ffiWorkers withWorkers, ffiWorkers)
 
 export
 compileExpr : Ref Ctxt Defs
@@ -125,7 +128,7 @@ compileExpr c s _ outputDir tm outfile =
      let disabledStages = filter (`elem` directives sess)
                              ["noinline", "noreuse", "noconaltnative", "nomutualloop", "noloop", "nosink", "nodualabi"]
      cdata <- getCompileData False Lifted tm
-     defs <- toRCDefs disabledStages (lambdaLifted cdata)
+     (defs, ffiWorkers) <- toRCDefs disabledStages (lambdaLifted cdata)
 
      -- `--directive dumprcexpr`: dump the final RCExp -- this exact
      -- `defs`, after every non-disabled stage above has run, i.e.
@@ -147,7 +150,7 @@ compileExpr c s _ outputDir tm outfile =
      when ("dumpdualabi" `elem` directives sess) $
          coreLift_ $ writeFile (outputDir </> outfile ++ ".dualabi") (dumpDualABI defs)
 
-     foreignLibs <- logTime 2 "rc2: C generation" $ generateCSourceFile defs outn
+     foreignLibs <- logTime 2 "rc2: C generation" $ generateCSourceFile ffiWorkers defs outn
      Just _ <- logTime 2 "rc2: C compile" $ compileCObjectFile outn outobj
        | Nothing => pure Nothing
      logTime 2 "rc2: C link" $ compileCFile outobj outexec foreignLibs

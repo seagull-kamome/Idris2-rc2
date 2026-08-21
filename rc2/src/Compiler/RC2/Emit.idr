@@ -451,6 +451,18 @@ data InlineMap : Type where
 -- RStructGet/RStructSet cases (to resolve a field's CFType). See
 -- doc/c-struct-support.md's "Design" section, Parts B/C/D.
 data StructDefs : Type where
+-- `%foreign` name -> (worker C name, per-argument Rep, return Rep),
+-- computed once up front by `Compiler.RC2.DualABI`'s `ffiWorkerTable`
+-- and threaded straight through -- unlike `Compiler.RC2.DualABI`'s own
+-- `MkRCFun` worker table (recovered by scanning a wrapper's own
+-- `RAppNameRep` body), a `MkRCForeign` has no body to scan, so this is
+-- genuine external state rather than something `createCFunctions`
+-- could derive from `defs` alone. Consulted by `createCFunctions`'s
+-- own `MkRCForeign` case to decide whether (and under what name/
+-- signature) to emit a second, native-signature worker alongside the
+-- always-emitted, always-Boxed wrapper -- see `doc/dual-abi.md`'s
+-- "Stage 3c" section.
+data FFIWorkers : Type where
 data ConstDef
   = CDI64 String
   | CDB64 String
@@ -2369,6 +2381,7 @@ createCFunctions : {auto c : Ref Ctxt Defs}
                 -> {auto h : Ref HeaderFiles (SortedSet String)}
                 -> {auto fl : Ref ForeignLibs (SortedSet String)}
                 -> {auto sd : Ref StructDefs (SortedMap String (List (String, CFType)))}
+                -> {auto fw : Ref FFIWorkers (SortedMap Name (Name, List Rep, Rep))}
                 -> Name
                 -> RCDef
                 -> Core ()
@@ -2518,6 +2531,11 @@ createCFunctions n (MkRCForeign ccs fargs ret) = do
 
           decreaseIndentation
           emit EmptyFC "}"
+          ffiWorkers <- get FFIWorkers
+          case lookup n ffiWorkers of
+               Nothing => pure ()
+               Just (workerName, argReps, retRep) =>
+                   emitFFIWorker cLang fctName workerName argReps retRep fargs ret
       _ => throw $ InternalError "[rc2] FFI not found for \{cName n}"
   where
     ||| Turn a `%foreign` lib field ("libcurl", "libc 6", ...) into the
@@ -2565,6 +2583,78 @@ createCFunctions n (MkRCForeign ccs fargs ret) = do
     discardLastArgument : List ty -> List ty
     discardLastArgument [] = []
     discardLastArgument xs@(_ :: _) = init xs
+
+    ||| The dual-ABI FFI worker itself (`Compiler.RC2.DualABI`'s Stage
+    ||| 3c already decided `workerName`/`argReps`/`retRep`; this just
+    ||| renders it) -- a second C function alongside the always-emitted,
+    ||| always-Boxed wrapper above, one `Rep`-eligible position at a
+    ||| time: a `RNative`/`RInlineNative` position's own declared C type
+    ||| is already `nativeCType`, textually identical to
+    ||| `cTypeOfCFType` for every `CFType` `Compiler.RC2.Types.cfTypeNative`
+    ||| ever maps to one (guaranteed by that function's own doc comment,
+    ||| `CFChar` deliberately excluded there for exactly this reason) --
+    ||| so such a parameter is passed straight into `fctName` verbatim,
+    ||| no `extractValue`; such a return is `retVal` itself, no
+    ||| `packCFType`. Every other position renders exactly like the
+    ||| wrapper's own (`extractValue`/`packCFType`), so a mixed
+    ||| signature costs nothing extra at the positions that were never
+    ||| eligible to begin with.
+    emitFFIWorker : CLang -> Name -> Name -> List Rep -> Rep -> List CFType -> CFType -> Core ()
+    emitFFIWorker cLang fctName workerName argReps retRep fargs ret = do
+        let varNames = varNamesFromList fargs 1
+            paramsInfo = zip3 argReps varNames fargs
+            declareParam : (Rep, String, CFType) -> String
+            declareParam (RBoxed, vn, _) = "  IDRIS2RC2_Value *" ++ vn
+            declareParam (RNative ty, vn, _) = "  " ++ nativeCType ty ++ " " ++ vn
+            declareParam (RInlineNative ty, vn, _) = "  " ++ nativeCType ty ++ " " ++ vn
+            retTypeStr : String
+            retTypeStr = case retRep of
+                              RBoxed => "IDRIS2RC2_Value *"
+                              RNative ty => nativeCType ty ++ " "
+                              RInlineNative ty => nativeCType ty ++ " "
+            wfn = "\{retTypeStr}\{cName workerName}"
+                    ++ (if null paramsInfo then "(void)"
+                       else ("\n(\n" ++ (showSep "\n" $ addCommaToList (map declareParam paramsInfo))) ++ "\n)")
+        update FunctionDefinitions $ \otherDefs => (wfn ++ ";\n") :: otherDefs
+        emit EmptyFC wfn
+        emit EmptyFC "{"
+        increaseIndentation
+        emit EmptyFC $ " // dual-ABI FFI worker for " ++ cName fctName
+        let argExprFor : (Rep, String, CFType) -> String
+            argExprFor (RBoxed, vn, vt) = extractValue cLang vt vn
+            argExprFor (RNative _, vn, _) = vn
+            argExprFor (RInlineNative _, vn, _) = vn
+            boxedVars : List String
+            boxedVars = mapMaybe (\(r, vn, _) => case r of RBoxed => Just vn; _ => Nothing) paramsInfo
+            finishNative : String -> Core ()
+            finishNative retVar = do
+                removeVars boxedVars
+                emit EmptyFC "return \{retVar};"
+        case ret of
+            CFIORes CFUnit => do
+                emit EmptyFC $ cName fctName ++ "(" ++ showSep ", " (map argExprFor (discardLastArgument paramsInfo)) ++ ");"
+                removeVars boxedVars
+                emit EmptyFC "return NULL;"
+            CFIORes ret' => do
+                emit EmptyFC $ cTypeOfCFType ret' ++ " retVal = " ++ cName fctName
+                            ++ "(" ++ showSep ", " (map argExprFor (discardLastArgument paramsInfo)) ++ ");"
+                case retRep of
+                     RBoxed => do
+                         emit EmptyFC $ "IDRIS2RC2_Value *packedRet = (IDRIS2RC2_Value*)" ++ packCFType ret' "retVal" ++ ";"
+                         removeVars boxedVars
+                         emit EmptyFC "return packedRet;"
+                     _ => finishNative "retVal"
+            _ => do
+                emit EmptyFC $ cTypeOfCFType ret ++ " retVal = " ++ cName fctName
+                            ++ "(" ++ showSep ", " (map argExprFor paramsInfo) ++ ");"
+                case retRep of
+                     RBoxed => do
+                         emit EmptyFC $ "IDRIS2RC2_Value *packedRet = (IDRIS2RC2_Value*)" ++ packCFType ret "retVal" ++ ";"
+                         removeVars boxedVars
+                         emit EmptyFC "return packedRet;"
+                     _ => finishNative "retVal"
+        decreaseIndentation
+        emit EmptyFC "}"
 
     additionalFFIStub : Name -> List CFType -> CFType -> String
     additionalFFIStub name argTypes (CFIORes retType) = additionalFFIStub name (discardLastArgument argTypes) retType
@@ -2656,10 +2746,11 @@ footer = do
 ||| set by hand.
 export
 generateCSourceFile : {auto c : Ref Ctxt Defs}
+                   -> SortedMap Name (Name, List Rep, Rep)
                    -> List (Name, RCDef)
                    -> (outn : String)
                    -> Core (List String)
-generateCSourceFile defs outn =
+generateCSourceFile ffiWorkers defs outn =
   do _ <- newRef ArgCounter 0
      _ <- newRef FunctionDefinitions []
      _ <- newRef ConstDef Data.SortedMap.empty
@@ -2668,6 +2759,7 @@ generateCSourceFile defs outn =
      _ <- newRef HeaderFiles empty
      _ <- newRef ForeignLibs empty
      _ <- newRef IndentLevel 0
+     _ <- newRef FFIWorkers ffiWorkers
      -- Part B (doc/c-struct-support.md's "Design" section): collect
      -- every CFStruct reachable from any MkRCForeign's own argument/
      -- return types, once, before any def is lowered -- so a

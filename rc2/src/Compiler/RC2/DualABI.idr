@@ -174,25 +174,26 @@ data FreshId : Type where
 freshId : {auto r : Ref FreshId Int} -> Core Int
 freshId = do i <- get FreshId; put FreshId (i + 1); pure i
 
-||| A fresh name for `original`'s own worker: `idris2rc2_worker_` plus
-||| `original`'s own mangled C name (`Compiler.RC2.Emit`'s `cName`,
-||| reused directly -- the exact same mangling the wrapper's own,
-||| unchanged C name already uses, so the two read as visibly related)
-||| plus a disambiguating counter (defends against, e.g., two
-||| originals whose own mangled names happen to collide after
-||| `cCleanString`'s own character sanitisation -- not expected in
-||| practice, kept only so this is provably total either way). The
-||| `idris2rc2_worker_` prefix itself makes a worker's own C name
-||| identifiable on sight, both as *generated* (matching this project's
-||| own `idris2rc2_`-prefix convention for every runtime-owned C symbol,
-||| `CLAUDE.md`) and as *this specific pass's* own output (nothing else
-||| in the compiler ever produces this prefix), rather than the opaque
-||| `rc2_dualABI_N` counter this used to be.
-freshName : {auto r : Ref FreshId Int} -> SortedSet Name -> Name -> Core Name
-freshName existing original = do
+||| A fresh name for `original`'s own worker: `pfx` (the caller's own
+||| prefix, e.g. `"idris2rc2_worker_"` for an ordinary `MkRCFun` worker,
+||| `"idris2rc2_ffiworker_"` for an FFI one) plus `original`'s own
+||| mangled C name (`Compiler.RC2.Emit`'s `cName`, reused directly --
+||| the exact same mangling the wrapper's own, unchanged C name already
+||| uses, so the two read as visibly related) plus a disambiguating
+||| counter (defends against, e.g., two originals whose own mangled
+||| names happen to collide after `cCleanString`'s own character
+||| sanitisation -- not expected in practice, kept only so this is
+||| provably total either way). The prefix itself makes a worker's own
+||| C name identifiable on sight, both as *generated* (matching this
+||| project's own `idris2rc2_`-prefix convention for every runtime-owned
+||| C symbol, `CLAUDE.md`) and as *whichever pass* produced it (nothing
+||| else in the compiler ever produces either of the two prefixes above),
+||| rather than the opaque `rc2_dualABI_N` counter this used to be.
+freshName : {auto r : Ref FreshId Int} -> (pfx : String) -> SortedSet Name -> Name -> Core Name
+freshName pfx existing original = do
     i <- freshId
-    let cand = MN ("idris2rc2_worker_" ++ cName original) i
-    if contains cand existing then freshName existing original else pure cand
+    let cand = MN (pfx ++ cName original) i
+    if contains cand existing then freshName pfx existing original else pure cand
 
 ||| True for a name `Compiler.RC2.MutualLoop` itself synthesised (its
 ||| own merged function). Must never get a dual-ABI worker of its own --
@@ -238,7 +239,7 @@ synthesizeWorker : {auto r : Ref FreshId Int}
                  -> SortedSet Name -> Name -> List (Int, PrimType) -> Maybe PrimType -> List (Int, Rep) -> Rep -> RCExp
                  -> Core (Name, RCDef, RCDef)
 synthesizeWorker existingNames original eligible retEligible args wrapperRetRep body = do
-    workerName <- freshName existingNames original
+    workerName <- freshName "idris2rc2_worker_" existingNames original
     let eligibleOf : Int -> Maybe PrimType
         eligibleOf p = Data.SortedMap.lookup p (Data.SortedMap.fromList eligible)
         workerArgs : List (Int, Rep)
@@ -319,6 +320,60 @@ applyDualABI defs = do
                   (workerName, wrapperDef, workerDef) <- synthesizeWorker existingNames n eligible retEligible args retRep body
                   pure [(n, wrapperDef), (workerName, workerDef)]
     synthesizeIfEligible _ (n, d) = pure [(n, d)]
+
+------------------------------------------------------------------------
+-- Stage 3c: FFI worker synthesis. Unlike Stage 3a, there is no
+-- `RCExp` body to rewrite into a thin wrapper -- a `MkRCForeign`'s own
+-- always-Boxed C stub (`Compiler.RC2.Emit`'s `createCFunctions`) is
+-- untouched by this pass entirely, wrapper and all. This only builds
+-- the worker *table* Stage 4 needs; `Compiler.RC2.Emit` is the one
+-- that actually emits a worker C function for each entry, reading this
+-- exact table back via its own `FFIWorkers` ref (`RC2.idr`'s pipeline
+-- threads the same `SortedMap` to both).
+
+||| Every `MkRCForeign` def's own worker-table entry, if its own
+||| `fargs`/`ret` have at least one `cfTypeNative`-eligible position.
+||| No `paramEligibility`/`returnEligibility` needed here at all -- a
+||| `%foreign` declaration's own `CFType`s already commit to a fixed C
+||| ABI, so eligibility is decided by the type alone, unconditionally,
+||| with no function body to analyse (see `Compiler.RC2.Types`'
+||| `cfTypeNative` own doc comment for why it's a narrower set than
+||| `nativeEligible`). `CFIORes`'s own payload type is what gets asked,
+||| not `CFIORes` itself; a `CFWorld` trailing argument (IO's own dummy
+||| world token) is never eligible either way, so it needs no special
+||| peeling on the parameter side -- it just stays `RBoxed`, identically
+||| to today, like every other non-eligible position.
+export
+ffiWorkerTable : List (Name, RCDef) -> Core (SortedMap Name (Name, List Rep, Rep))
+ffiWorkerTable defs = do
+    _ <- newRef FreshId 0
+    let existingNames = SortedSet.fromList (map fst defs)
+    entries <- traverse (ffiEntry existingNames) defs
+    pure (fromList (concat entries))
+  where
+    peelIORes : CFType -> CFType
+    peelIORes (CFIORes t) = t
+    peelIORes t = t
+
+    repOf : CFType -> Rep
+    repOf ty = maybe RBoxed RNative (cfTypeNative ty)
+
+    ffiEntry : {auto r : Ref FreshId Int} -> SortedSet Name -> (Name, RCDef) -> Core (List (Name, (Name, List Rep, Rep)))
+    ffiEntry existingNames (n, MkRCForeign _ fargs ret) =
+        if length fargs > MaxExtractFunArgs
+           then pure []
+           else
+             let argReps = map repOf fargs
+                 retRep = repOf (peelIORes ret)
+                 anyNative : Rep -> Bool
+                 anyNative RBoxed = False
+                 anyNative _ = True
+             in if not (any anyNative argReps) && not (anyNative retRep)
+                   then pure []
+                   else do
+                     workerName <- freshName "idris2rc2_ffiworker_" existingNames n
+                     pure [(n, (workerName, argReps, retRep))]
+    ffiEntry _ (_, _) = pure []
 
 ------------------------------------------------------------------------
 -- Stage 4: call-site rewriting (non-tail positions only -- see the
@@ -576,11 +631,15 @@ applyCallSiteRewriteBody _ _ _ e = e
 ||| own trivial single-call body and an ordinary function's body are
 ||| rewritten by exactly the same logic. Each definition's own
 ||| top-level body starts `inTail = True` -- that's genuinely where the
-||| function's own real tail position is.
+||| function's own real tail position is. `ffiWorkers` (Stage 3c's own
+||| table) is unioned in alongside the `MkRCFun`-derived `workerTable`
+||| -- their keys are always disjoint (a `MkRCFun`/`MkRCForeign` name
+||| can never be both), so `mergeWith`'s own conflict-resolution
+||| function is never actually exercised.
 export
-applyCallSiteRewrite : List (Name, RCDef) -> List (Name, RCDef)
-applyCallSiteRewrite defs =
-    let workers = workerTable defs
+applyCallSiteRewrite : SortedMap Name (Name, List Rep, Rep) -> List (Name, RCDef) -> List (Name, RCDef)
+applyCallSiteRewrite ffiWorkers defs =
+    let workers = mergeWith const (workerTable defs) ffiWorkers
     in map (rewriteDef workers) defs
   where
     rewriteDef : SortedMap Name (Name, List Rep, Rep) -> (Name, RCDef) -> (Name, RCDef)

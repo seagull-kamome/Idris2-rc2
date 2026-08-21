@@ -402,6 +402,30 @@ surfaced this) were not pursued further, since fixing them would also
 require a separate upstream fix or a local `%foreign_impl`-based
 patch, and the underlying `idris2-json` build was abandoned instead.
 
+## Pinned reference `idris2 --cg refc` 0.8.0 rejects `Int32` in `%foreign` position
+
+Found while writing `rc2/tests/Test27FFIDualABI.idr` (the dual-ABI FFI
+worker's own smoke test, see `rc2/doc/dual-abi.md`'s "Stage 3c"): a
+`%foreign`-declared function with an `Int32` argument or return type
+compiles fine under `idris2-rc2`, but `verify.sh --regen-expected`'s
+own cross-check against the pinned reference `idris2 --cg refc` (this
+project's own installed 0.8.0) fails with `ERROR: INTERNAL ERROR:
+Unknonw FFI type in C backend: Int_32` [sic, upstream's own typo].
+Confirmed with a minimal repro outside the test suite. **Not
+rc2-specific, and not what this project's own `Compiler/RC2/Emit.idr`
+does** -- rc2's own `cTypeOfCFType`/`extractValue`/`packCFType` already
+handle `CFInt32` correctly (`int32_t`, same as the `idris2-src` clone's
+own `Compiler/RefC/RefC.idr`); this is purely a gap in the specific
+pinned 0.8.0 *binary* used for cross-checking, apparently predating
+`Int32` FFI support landing upstream. `Int8`/`Int16`/`Int64`/
+`Bits8`/`Bits16`/`Bits64`/`Double` all confirmed fine against the same
+binary. Worked around in `Test27FFIDualABI.idr` by using `Bits64`
+instead of `Int32` for that test's "all-native-arguments" coverage --
+not a real gap in this project's own Int32 support, just untestable
+against this one pinned reference. Revisit (i.e. add an `Int32` case
+back to that test) if the pinned reference `idris2` version is ever
+bumped past whatever release added `Int32` FFI support.
+
 ## yet another hope
 この項は人間が追加したものなので、後で整理して独立の項に括りだす事。
 今は着手しないが将来的な展望を書き連ねる。この項は日本語で書かれるが
