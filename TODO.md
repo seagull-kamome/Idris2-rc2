@@ -358,6 +358,50 @@ itself), or (b) document the limitation and let callers work around it
 with a thin non-const C wrapper. Not investigated further; no
 regression test exists for it yet.
 
+## `Integer` (`CFInteger`) has no `%foreign` codegen support at all
+
+Found while investigating whether `idris2-json` (stefan-hoeck's JSON
+marshalling library, via `pack`'s collection) could build against rc2.
+Its transitive dependency `idris2-array`'s own `Data.Buffer.Core`
+declares several low-level buffer primitives (`prim__newBuf`,
+`prim__getByte`, `prim__setByte`, `prim__getString`, `prim__fromString`,
+`prim__copy`) typed over `Integer` (arbitrary-precision) offsets/
+lengths, rather than `Int` (fixed-width) like upstream `Data.Buffer`'s
+own equivalents use. Confirmed directly with a minimal repro
+(`%foreign "C:atoi,libc 6" prim__atoi : String -> Integer`, no other
+code) that any `%foreign`-declared function with an `Integer` argument
+or return type crashes rc2's own codegen:
+`ERROR: INTERNAL ERROR: Unknown FFI type in rc2 backend: Integer`.
+
+Root cause: `CFInteger` is a real constructor of `CompileExpr.idr`'s
+own `CFType` (`Core/CompileExpr.idr`, alongside `CFInt`/`CFString`/
+etc.), but `Compiler.RC2.Emit`'s `cTypeOfCFType`/`extractValue`/
+`packCFType` have no case for it at all -- it falls straight through
+to the generic `idris_crash "Unknown FFI type"` fallback. **Not
+rc2-specific**: confirmed the identical crash (`Unknown FFI type in C
+backend: Integer`) against upstream `idris2 --cg refc` with the same
+repro -- RefC's own `RefC.idr` has the exact same gap. Presumably
+never hit before because `Integer`-typed `%foreign` declarations are
+rare (arbitrary-precision values don't map onto a fixed-width C
+parameter without a marshalling decision -- `Integer` `%foreign`
+returns elsewhere in this codebase, e.g. `Network.Curl`'s `off_t`
+question in a sibling project's own TODO.md, deliberately avoid this
+by using `Int`/`String` instead).
+
+Not investigated further (found via unrelated library-compatibility
+exploration, not pursued): would need a representation decision before
+implementing (`extractValue`'s own C-side type -- a fixed-width
+integer truncates for anything beyond that width; a GMP `mpz_t`-backed
+representation would need its own boxing/unboxing shim, mirroring how
+`IDRIS2RC2_Integer` already works for the *ordinary* (non-FFI) `Integer`
+representation inside rc2's own runtime, `support/rc2/memory.c`'s
+`idris2rc2_mkInteger`). Revisit if a concrete library/binding actually
+needs an `Integer`-typed `%foreign` argument or return badly enough to
+justify it -- `idris2-array`'s own buffer primitives (the case that
+surfaced this) were not pursued further, since fixing them would also
+require a separate upstream fix or a local `%foreign_impl`-based
+patch, and the underlying `idris2-json` build was abandoned instead.
+
 ## yet another hope
 この項は人間が追加したものなので、後で整理して独立の項に括りだす事。
 今は着手しないが将来的な展望を書き連ねる。この項は日本語で書かれるが
