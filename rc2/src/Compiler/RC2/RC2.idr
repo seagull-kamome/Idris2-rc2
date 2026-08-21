@@ -76,24 +76,25 @@ applyReuse d@(MkRCForeign _ _ _) = d
 ||| correctness, only for the optimisation it itself provides. "Not
 ||| perfectly complete" by design: a coarse, whole-stage on/off switch,
 ||| not fine-grained per-function/per-node control.
-toRCDefs : List String -> List (Name, LiftedDef) -> Core (List (Name, RCDef))
+toRCDefs : {auto c : Ref Ctxt Defs} -> List String -> List (Name, LiftedDef) -> Core (List (Name, RCDef))
 toRCDefs disabled lds0 = do
-    lds <- if "noinline" `elem` disabled then pure lds0 else applyInlineLifted lds0
-    reused <- traverse (\(n, ld) => do
+    lds <- if "noinline" `elem` disabled then pure lds0 else logTime 2 "rc2: Inline" $ applyInlineLifted lds0
+    reused <- logTime 2 "rc2: RC annotate + Reuse + ConAltNative" $
+                traverse (\(n, ld) => do
                   d0 <- toRCDef ld
                   let d1 = if "noreuse" `elem` disabled then d0 else applyReuse d0
                   let d2 = if "noconaltnative" `elem` disabled then d1 else applyConAltNative d1
                   pure (n, d2)) lds
-    merged <- if "nomutualloop" `elem` disabled then pure reused else applyMutualLoop reused
-    let looped = if "noloop" `elem` disabled
-                    then merged
-                    else map (\(n, d) => (n, applyLoop n d)) merged
-    let sunk = if "nosink" `elem` disabled
-                  then looped
-                  else map (\(n, d) => (n, applySink d)) looped
+    merged <- if "nomutualloop" `elem` disabled then pure reused else logTime 2 "rc2: Mutual loop" $ applyMutualLoop reused
+    looped <- if "noloop" `elem` disabled
+                 then pure merged
+                 else logTime 2 "rc2: Loop conversion" $ pure (map (\(n, d) => (n, applyLoop n d)) merged)
+    sunk <- if "nosink" `elem` disabled
+               then pure looped
+               else logTime 2 "rc2: Sink" $ pure (map (\(n, d) => (n, applySink d)) looped)
     if "nodualabi" `elem` disabled
        then pure sunk
-       else do
+       else logTime 2 "rc2: DualABI" $ do
            withWorkers <- applyDualABI sunk
            pure $ applyCallSiteRewrite withWorkers
 
@@ -146,10 +147,10 @@ compileExpr c s _ outputDir tm outfile =
      when ("dumpdualabi" `elem` directives sess) $
          coreLift_ $ writeFile (outputDir </> outfile ++ ".dualabi") (dumpDualABI defs)
 
-     foreignLibs <- generateCSourceFile defs outn
-     Just _ <- compileCObjectFile outn outobj
+     foreignLibs <- logTime 2 "rc2: C generation" $ generateCSourceFile defs outn
+     Just _ <- logTime 2 "rc2: C compile" $ compileCObjectFile outn outobj
        | Nothing => pure Nothing
-     compileCFile outobj outexec foreignLibs
+     logTime 2 "rc2: C link" $ compileCFile outobj outexec foreignLibs
 
 export
 executeExpr : Ref Ctxt Defs -> Ref Syn SyntaxInfo ->

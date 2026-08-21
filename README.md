@@ -133,6 +133,16 @@ nix-shell -p gcc gmp pkg-config --run \
   './build/exec/idris2-rc2 --cg rc2 Program.idr -o program'
 ```
 
+Upstream Idris2's own `--timing N` flag (no rc2-specific flag needed) shows
+build performance: `--timing 1` gives the "Code generation overall" total
+already shown by the upstream `Compiler.Common` wrapper, while `--timing 2`
+additionally breaks that total down into rc2's own pipeline stages (inline,
+RC annotate/reuse/ConAltNative, mutual loop, loop conversion, sink, dual
+ABI, C generation, C compile, C link), each labelled `rc2: <stage>`. A stage
+disabled via `--directive no<stagename>` (see `verify.sh`'s `--directive`
+flag below) simply has no timing line, rather than showing a spurious
+zero-duration entry.
+
 ## Testing
 
 ```sh
