@@ -5,6 +5,11 @@
 # Generated install prefix (idris2api + rc2 runtime install output)
 /install/
 
+# Per-package local install prefixes (e.g. libs/*/.local-install/),
+# used when the default Idris2 package location is a read-only nix
+# store and a package needs `idris2 --install` into something writable
+.local-install/
+
 # Build artifacts
 /env.sh
 build/

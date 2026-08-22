@@ -1,0 +1,7 @@
+package idris2-Text
+
+opts       = "--total"
+sourcedir  = "src"
+modules    = Data.Text
+prebuild   = "make -C support/c"
+postclean  = "make -C support/c clean"

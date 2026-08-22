@@ -188,8 +188,10 @@ static void idris2rc2_teardown(IDRIS2RC2_Value *v) {
   }
   case IDRIS2RC2_TAG_GCPOINTER: {
     IDRIS2RC2_GCPointer *p = (IDRIS2RC2_GCPointer *)v;
-    IDRIS2RC2_Value *step1 = idris2rc2_applyClosure((IDRIS2RC2_Value *)p->onCollect, (IDRIS2RC2_Value *)p->p);
-    idris2rc2_applyClosure(step1, NULL);
+    if (p->onCollect) {
+      IDRIS2RC2_Value *step1 = idris2rc2_applyClosure((IDRIS2RC2_Value *)p->onCollect, (IDRIS2RC2_Value *)p->p);
+      idris2rc2_applyClosure(step1, NULL);
+    }
     idris2rc2_drop((IDRIS2RC2_Value *)p->p);
     break;
   }
