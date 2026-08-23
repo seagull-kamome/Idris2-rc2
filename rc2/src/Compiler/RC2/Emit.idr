@@ -2820,8 +2820,13 @@ generateCSourceFile ffiWorkers defs injectedRuntime outn =
      header
      footer
      fileContent <- get OutfileText
-     let code = fastConcat (map (++ "\n") (reify fileContent))
-
-     coreLift_ $ writeFile outn code
+     -- Streams each already-generated line straight to a buffered file
+     -- handle instead of first fastConcat-ing the whole file into one
+     -- in-memory String (the old `writeFile outn code` above) -- avoids
+     -- holding both the List String and its full concatenation in
+     -- memory at once for large generated .c files.
+     coreLift_ $ withFile outn WriteTruncate pure $ \h => do
+         traverse_ (fPutStrLn h) (reify fileContent)
+         pure (Right ())
      log "compiler.refc" 10 $ "Generated C file " ++ outn
      pure (Prelude.toList !(get ForeignLibs))
