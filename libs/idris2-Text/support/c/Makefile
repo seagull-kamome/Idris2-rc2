@@ -1,6 +1,9 @@
 CC=gcc
-CFLAGS=-fPIC -Wall -Wextra -O2
+CFLAGS+=-fPIC -Wall -Wextra -O2
+CFLAGS  += $(addprefix -I,$(subst :, ,$(IDRIS2_DATA)))
+LDFLAGS += $(addprefix -L,$(subst :, ,$(IDRIS2_LIBS)))
 AR=ar
+
 
 all: libidris2text.a
 

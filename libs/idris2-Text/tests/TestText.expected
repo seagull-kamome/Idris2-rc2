@@ -1,0 +1,8 @@
+--- Testing idris2-Text ---
+Text: Hello, Length: 5
+Character at index 1: e
+Appended: Hello + World, Length: 10
+Round-trip toString: HelloWorld
+Multi-byte length: 12
+Multi-byte round-trip: Hello, 世界! 😀
+--- Tests finished ---
