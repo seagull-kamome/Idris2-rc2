@@ -1,7 +1,20 @@
 package idris2-Text
 
+version    = 0.1.0
 opts       = "--total"
 sourcedir  = "src"
 modules    = Data.Text
 prebuild   = "make -C support/c"
 postclean  = "make -C support/c clean"
+
+-- Idris2's own packaging convention (docs/source/reference/packages.rst,
+-- "Support file install directories"): a package's install root has two
+-- specially-treated subdirectories, `lib` (compiled libraries) and
+-- `data` -- but idris2 --install only creates the install root itself
+-- and copies .ttc/.ttm/.ipkg there; it never knows to create `lib` or
+-- populate it, so a postinstall hook has to do that itself. Note this
+-- only gets picked up *automatically* by the Chez/Racket backends'
+-- .so dlopen mechanism -- rc2 (like upstream RefC) still needs the
+-- consumer to point IDRIS2_LIBS/IDRIS2_CFLAGS/IDRIS2_LDFLAGS at this
+-- directory manually (see README.md's "Build & test" section).
+postinstall = "make -C support/c install"

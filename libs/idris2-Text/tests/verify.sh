@@ -40,13 +40,19 @@ echo "=== Chez backend: type-check ==="
 echo "=== Install into throwaway local prefix ==="
 rm -rf "$PKG_DIR/.local-install"
 IDRIS2_PREFIX="$PKG_DIR/.local-install" \
-    nix-shell -p idris2 gmp pkg-config --run \
+    nix-shell -p idris2 gnumake gcc gmp pkg-config --run \
     "cd '$PKG_DIR' && idris2 --install idris2-Text.ipkg"
 
-echo "=== rc2 backend: build TestText ==="
+PKG_VERSION="$(sed -n 's/^version *= *//p' "$PKG_DIR/idris2-Text.ipkg" | tr -d ' ')"
+INSTALLED_LIB="$PKG_DIR/.local-install/idris2-0.8.0/idris2-Text-$PKG_VERSION/lib"
+echo "=== Check postinstall copied the native library into lib/ ==="
+[[ -f "$INSTALLED_LIB/libidris2text.a" ]] || fail "postinstall didn't install libidris2text.a to $INSTALLED_LIB"
+[[ -f "$INSTALLED_LIB/text_util.h" ]] || fail "postinstall didn't install text_util.h to $INSTALLED_LIB"
+
+echo "=== rc2 backend: build TestText (against the INSTALLED lib/, not support/c) ==="
 export IDRIS2_PACKAGE_PATH="$IDRIS2_PACKAGE_PATH:$PKG_DIR/.local-install/idris2-0.8.0"
-export IDRIS2_CFLAGS="-I$PKG_DIR/support/c -I$REPO_ROOT/install/idris2-0.8.0/support"
-export IDRIS2_LDFLAGS="-L$PKG_DIR/support/c"
+export IDRIS2_CFLAGS="-I$INSTALLED_LIB -I$REPO_ROOT/install/idris2-0.8.0/support"
+export IDRIS2_LDFLAGS="-L$INSTALLED_LIB"
 # idris2-rc2 always writes its -o output under <cwd>/build/exec/, so cd
 # into tests/ first to get a predictable, self-contained output path.
 nix-shell -p gcc gmp pkg-config --run \
