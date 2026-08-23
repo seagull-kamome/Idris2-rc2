@@ -1,4 +1,4 @@
-package idris2-Text
+package rc2base
 
 version    = 0.1.0
 opts       = "--total"

@@ -29,28 +29,28 @@ data Text : Nat -> Type where
 ||| through untouched.
 data RawTextValue : Type
 
-%foreign "C:idris2rc2_TextBuffer_mkEmpty,libidris2text,text_util.h"
+%foreign "C:idris2rc2_TextBuffer_mkEmpty,libidris2rc2base,text_util.h"
 prim__TextBuffer_mkEmpty : Int -> PrimIO AnyPtr
 
-%foreign "C:idris2rc2_String_to_TextBuffer,libidris2text,text_util.h"
+%foreign "C:idris2rc2_String_to_TextBuffer,libidris2rc2base,text_util.h"
 prim__String_to_TextBuffer : String -> PrimIO AnyPtr
 
-%foreign "C:idris2rc2_TextBuffer_to_string,libidris2text,text_util.h"
+%foreign "C:idris2rc2_TextBuffer_to_string,libidris2rc2base,text_util.h"
 prim__TextBuffer_toString : GCAnyPtr -> PrimIO RawTextValue
 
-%foreign "C:idris2rc2_TextBuffer_free,libidris2text,text_util.h"
+%foreign "C:idris2rc2_TextBuffer_free,libidris2rc2base,text_util.h"
 prim__TextBuffer_free : AnyPtr -> PrimIO ()
 
-%foreign "C:idris2rc2_TextBuffer_unsafe_write_char,libidris2text,text_util.h"
+%foreign "C:idris2rc2_TextBuffer_unsafe_write_char,libidris2rc2 ase,text_util.h"
 prim__TextBuffer_unsafe_write_char : GCAnyPtr -> Int -> Bits32 -> PrimIO ()
 
-%foreign "C:idris2rc2_text_length,libidris2text,text_util.h"
+%foreign "C:idris2rc2_text_length,libidris2rc2base,text_util.h"
 prim__textLength : GCAnyPtr -> PrimIO Int
 
-%foreign "C:idris2rc2_text_index,libidris2text,text_util.h"
+%foreign "C:idris2rc2_text_index,libidris2rc2base,text_util.h"
 prim__textIndex : GCAnyPtr -> Int -> PrimIO Bits32
 
-%foreign "C:idris2rc2_TextBuffer_append,libidris2text,text_util.h"
+%foreign "C:idris2rc2_TextBuffer_append,libidris2rc2base,text_util.h"
 prim__TextBuffer_append : GCAnyPtr -> GCAnyPtr -> PrimIO AnyPtr
 
 -- ---------------------------------------------------------------------------

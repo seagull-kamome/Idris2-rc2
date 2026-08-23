@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# One-shot correctness verification for libs/idris2-Text: cleans and
+# One-shot correctness verification for libs/rc2base: cleans and
 # rebuilds the C support library, type-checks the package against the
 # plain Chez backend, installs it into a throwaway local prefix,
 # builds tests/TestText.idr against idris2-rc-cg's own rc2 backend,
@@ -35,18 +35,18 @@ nix-shell -p gnumake gcc gmp pkg-config --run \
     "make -C '$PKG_DIR/support/c' clean && make -C '$PKG_DIR/support/c'"
 
 echo "=== Chez backend: type-check ==="
-(cd "$PKG_DIR" && nix-shell -p idris2 gmp pkg-config --run 'idris2 --build idris2-Text.ipkg')
+(cd "$PKG_DIR" && nix-shell -p idris2 gmp pkg-config --run 'idris2 --build rc2base.ipkg')
 
 echo "=== Install into throwaway local prefix ==="
 rm -rf "$PKG_DIR/.local-install"
 IDRIS2_PREFIX="$PKG_DIR/.local-install" \
     nix-shell -p idris2 gnumake gcc gmp pkg-config --run \
-    "cd '$PKG_DIR' && idris2 --install idris2-Text.ipkg"
+    "cd '$PKG_DIR' && idris2 --install rc2base.ipkg"
 
-PKG_VERSION="$(sed -n 's/^version *= *//p' "$PKG_DIR/idris2-Text.ipkg" | tr -d ' ')"
-INSTALLED_LIB="$PKG_DIR/.local-install/idris2-0.8.0/idris2-Text-$PKG_VERSION/lib"
+PKG_VERSION="$(sed -n 's/^version *= *//p' "$PKG_DIR/rc2base.ipkg" | tr -d ' ')"
+INSTALLED_LIB="$PKG_DIR/.local-install/idris2-0.8.0/rc2base-$PKG_VERSION/lib"
 echo "=== Check postinstall copied the native library into lib/ ==="
-[[ -f "$INSTALLED_LIB/libidris2text.a" ]] || fail "postinstall didn't install libidris2text.a to $INSTALLED_LIB"
+[[ -f "$INSTALLED_LIB/libidris2rc2base.a" ]] || fail "postinstall didn't install libidris2rc2base.a to $INSTALLED_LIB"
 [[ -f "$INSTALLED_LIB/text_util.h" ]] || fail "postinstall didn't install text_util.h to $INSTALLED_LIB"
 
 echo "=== rc2 backend: build TestText (against the INSTALLED lib/, not support/c) ==="
@@ -56,7 +56,7 @@ export IDRIS2_LDFLAGS="-L$INSTALLED_LIB"
 # idris2-rc2 always writes its -o output under <cwd>/build/exec/, so cd
 # into tests/ first to get a predictable, self-contained output path.
 nix-shell -p gcc gmp pkg-config --run \
-    "cd '$TESTS_DIR' && '$IDRIS2RC2' --cg rc2 -p idris2-Text -o TestText_idris2Text_verify TestText.idr"
+    "cd '$TESTS_DIR' && '$IDRIS2RC2' --cg rc2 -p rc2base -o TestText_idris2Text_verify TestText.idr"
 
 echo "=== Run and diff against TestText.expected ==="
 export LD_LIBRARY_PATH="$REPO_ROOT/install/idris2-0.8.0/support/rc2${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"

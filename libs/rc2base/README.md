@@ -1,4 +1,4 @@
-# idris2-Text
+# rc2base
 
 A `Data.Text` type wrapping a UTF-8-derived codepoint buffer, backed by
 a small C shim (`support/c/text_util.c`, built into
@@ -11,34 +11,34 @@ a small C shim (`support/c/text_util.c`, built into
 
 Default Chez backend, plain type-check:
 ```sh
-idris2 --build idris2-Text.ipkg
+idris2 --build rc2base.ipkg
 ```
 
 To build `tests/TestText.idr` against the library (rather than just
-type-checking `idris2-Text.ipkg` itself), install the library into a
+type-checking `rc2base.ipkg` itself), install the library into a
 local prefix first -- the default Idris2 package location lives in a
 read-only nix store here, same reasoning as `idris2-curl/AGENT.md`'s
 own "Build & test" section:
 ```sh
 export IDRIS2_PREFIX="$(pwd)/.local-install"
-idris2 --install idris2-Text.ipkg
+idris2 --install rc2base.ipkg
 ```
 
 Against `idris2-rc-cg`'s own `rc2` backend (this repo's own
-sibling directory -- `libs/idris2-Text` lives inside `idris2-rc-cg`
+sibling directory -- `libs/rc2base` lives inside `idris2-rc-cg`
 itself, so no separate checkout/`env.sh` sourcing across repos is
 needed, unlike an external consumer such as `idris2-curl`):
 ```sh
 cd idris2-rc-cg   # repo root
 source ./env.sh
-export IDRIS2_PREFIX="$(pwd)/libs/idris2-Text/.local-install"
-(cd libs/idris2-Text && idris2 --install idris2-Text.ipkg)
+export IDRIS2_PREFIX="$(pwd)/libs/rc2base/.local-install"
+(cd libs/rc2base && idris2 --install rc2base.ipkg)
 
-INSTALLED_LIB="$(pwd)/libs/idris2-Text/.local-install/idris2-0.8.0/idris2-Text-0.1.0/lib"
-export IDRIS2_PACKAGE_PATH="$IDRIS2_PACKAGE_PATH:$(pwd)/libs/idris2-Text/.local-install/idris2-0.8.0"
+INSTALLED_LIB="$(pwd)/libs/rc2base/.local-install/idris2-0.8.0/rc2base-0.1.0/lib"
+export IDRIS2_PACKAGE_PATH="$IDRIS2_PACKAGE_PATH:$(pwd)/libs/rc2base/.local-install/idris2-0.8.0"
 export IDRIS2_CFLAGS="-I$INSTALLED_LIB -I$(pwd)/install/idris2-0.8.0/support"
 export IDRIS2_LDFLAGS="-L$INSTALLED_LIB"
-./rc2/build/exec/idris2-rc2 --cg rc2 -p idris2-Text -o TestText libs/idris2-Text/tests/TestText.idr
+./rc2/build/exec/idris2-rc2 --cg rc2 -p rc2base -o TestText libs/rc2base/tests/TestText.idr
 
 export LD_LIBRARY_PATH="$(pwd)/install/idris2-0.8.0/support/rc2:$LD_LIBRARY_PATH"
 ./build/exec/TestText
@@ -61,9 +61,9 @@ libraries) and `data`. `idris2 --install` creates the install root
 itself and copies `.ttc`/`.ttm`/the `.ipkg` file there, but it has no
 idea this package also has a C shim to ship -- it never creates or
 populates `lib` on its own. This package's `postinstall` hook
-(`idris2-Text.ipkg`, running `support/c/postinstall.sh`) does that:
+(`rc2base.ipkg`, running `support/c/postinstall.sh`) does that:
 after `idris2 --install`, `libidris2text.a` and `text_util.h` land in
-`<IDRIS2_PREFIX>/idris2-<idris2 version>/idris2-Text-0.1.0/lib/`.
+`<IDRIS2_PREFIX>/idris2-<idris2 version>/rc2base-0.1.0/lib/`.
 
 One caveat worth being explicit about: this `lib` convention is
 **picked up automatically only by the Chez/Racket backends**, which
@@ -88,7 +88,7 @@ rc2 auto-derives a `-l<name>` linker flag from every `%foreign`
 declaration's own lib field (`Compiler.RC2.Emit`'s `linkLibName`), but
 only when that field's value literally starts with `"lib"` -- it
 strips that prefix and passes the rest straight to `-l`. It is *not* a
-file path: a field like `"libs/idris2-Text/support/c/libidris2text.a"`
+file path: a field like `"libs/rc2base/support/c/libidris2text.a"`
 does not start with `"lib"` in the way `linkLibName` expects (or,
 worse, if it does incidentally match the prefix check, produces a
 broken `-l` flag with a slash in it) -- either way `-l<lib>` silently
