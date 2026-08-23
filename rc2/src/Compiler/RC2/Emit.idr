@@ -420,6 +420,11 @@ data FunctionDefinitions : Type where
 data IndentLevel : Type where
 data HeaderFiles : Type where
 data ForeignLibs : Type where
+-- Raw C text from `%cg rc2 extraRuntime=<path>`/`inlineRuntime=<code>`
+-- (Compiler.RC2.RC2's own `compileExpr`), spliced verbatim by `header`
+-- right after the `#include`s and before any generated definition --
+-- see the README's own "%cg rc2 directives" section for the design.
+data InjectedRuntime : Type where
 -- The nearest enclosing `RLoop`'s own loop params (id + Rep), in order
 -- -- empty until `emitLoopInto` actually enters one, consulted only by
 -- `tryEmitLoopContinue`'s own `RLoopContinue` case to know which
@@ -2704,6 +2709,7 @@ header : {auto f : Ref FunctionDefinitions (List String)}
       -> {auto _ : Ref ConstDef (SortedMap Constant ConstDef)}
       -> {auto cc : Ref ConstConDef (SortedMap RCLocal String, List String)}
       -> {auto sd : Ref StructDefs (SortedMap String (List (String, CFType)))}
+      -> {auto ir : Ref InjectedRuntime String}
       -> Core ()
 header = do
     let initLines = """
@@ -2720,9 +2726,13 @@ header = do
     -- ahead of every function definition, since C needs the type
     -- declared before any use.
     structDefs <- get StructDefs
+    injectedRuntime <- get InjectedRuntime
     update OutfileText $ appendL $
         [initLines] ++
         map (\h => "#include <\{h}>\n") headerFiles ++
+        (if injectedRuntime == ""
+            then []
+            else ["\n// %cg rc2 extraRuntime=<path> / inlineRuntime=<code>\n", injectedRuntime, "\n"]) ++
         ["\n// struct definitions"] ++
         map (uncurry genStructDef) (SortedMap.toList structDefs) ++
         ["\n// function definitions"] ++
@@ -2780,9 +2790,10 @@ export
 generateCSourceFile : {auto c : Ref Ctxt Defs}
                    -> SortedMap Name (Name, List Rep, Rep)
                    -> List (Name, RCDef)
+                   -> (injectedRuntime : String)
                    -> (outn : String)
                    -> Core (List String)
-generateCSourceFile ffiWorkers defs outn =
+generateCSourceFile ffiWorkers defs injectedRuntime outn =
   do _ <- newRef ArgCounter 0
      _ <- newRef FunctionDefinitions []
      _ <- newRef ConstDef Data.SortedMap.empty
@@ -2792,6 +2803,7 @@ generateCSourceFile ffiWorkers defs outn =
      _ <- newRef ForeignLibs empty
      _ <- newRef IndentLevel 0
      _ <- newRef FFIWorkers ffiWorkers
+     _ <- newRef InjectedRuntime injectedRuntime
      -- Part B (doc/c-struct-support.md's "Design" section): collect
      -- every CFStruct reachable from any MkRCForeign's own argument/
      -- return types, once, before any def is lowered -- so a

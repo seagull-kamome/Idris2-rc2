@@ -34,6 +34,7 @@ import Core.Directory
 import Core.Options
 
 import Data.SortedMap
+import Data.String as String
 
 import Idris.Syntax
 
@@ -101,6 +102,43 @@ toRCDefs disabled lds0 = do
            ffiWorkers <- ffiWorkerTable sunk
            pure (applyCallSiteRewrite ffiWorkers withWorkers, ffiWorkers)
 
+||| `%cg rc2 inlineRuntime=<code>` companion to upstream's own
+||| file-path-based `Compiler.Common.getExtraRuntime` (no inline-text
+||| equivalent exists there) -- same `key=value` directive shape,
+||| except the value is spliced as literal C text directly instead of
+||| being read from a file. MUST stay on one line: Idris2's own `%cg`
+||| lexer (`Parser.Lexer.Source`'s `cgDirective`) has a braced `{ ... }`
+||| form that stops at the *first* literal `}`, with no nesting support
+||| -- real C (any function body) always has a closing `}`, so that
+||| form would silently truncate. The plain, unbraced form it falls
+||| back to instead just consumes the rest of the line verbatim with no
+||| brace-balancing at all, which is what `inlineRuntime=` (starting
+||| with `i`, never `{`) always hits.
+|||
+||| A second, sharper landmine: the code MUST NOT end with a literal
+||| `}` after trimming. `Idris.Parser`'s `stripBraces` unconditionally
+||| strips one trailing `}` (and one leading `{`) from a %cg directive's
+||| captured text no matter which lexer alternative produced it -- it
+||| has no way to tell "this `}` is the real, load-bearing end of a C
+||| function body" from "this `}` is the braced form's own delimiter".
+||| Since any C function definition ends in `}`, this WILL silently eat
+||| it, and the resulting mangled C won't fail until gcc chokes on it
+||| much later with a confusing error far from the actual cause. Ending
+||| the directive with a trailing `;` (a harmless empty top-level C
+||| declaration) after the function's own `}` sidesteps this, since
+||| that `;` -- not the `}` before it -- becomes the new last character.
+||| See the README's own "%cg rc2 directives" section for the
+||| user-facing version of both notes.
+getInlineRuntime : List String -> String
+getInlineRuntime directives = concat $ intersperse "\n" $ nub $ mapMaybe getArg $ reverse directives
+  where
+    getArg : String -> Maybe String
+    getArg directive =
+      let (k, v) = String.break (== '=') directive
+      in if trim k == "inlineRuntime"
+            then Just $ trim $ substr 1 (length v) v
+            else Nothing
+
 export
 compileExpr : Ref Ctxt Defs
            -> Ref Syn SyntaxInfo
@@ -158,7 +196,21 @@ compileExpr c s _ outputDir tm outfile =
      when ("dumpdualabi" `elem` directiveList) $
          coreLift_ $ writeFile (outputDir </> outfile ++ ".dualabi") (dumpDualABI defs)
 
-     foreignLibs <- logTime 2 "rc2: C generation" $ generateCSourceFile ffiWorkers defs outn
+     -- `%cg rc2 extraRuntime=<path>` / `inlineRuntime=<code>`: splice
+     -- arbitrary C straight into the generated output, right after its
+     -- own `#include`s (Emit.idr's `header`) -- `extraRuntime` reuses
+     -- upstream's own generic, backend-agnostic file-based directive
+     -- (`Compiler.Common.getExtraRuntime`, same one the Chez backend
+     -- uses for `%cg chez extraRuntime=file.ss`) verbatim; `inlineRuntime`
+     -- is this backend's own text-instead-of-a-file companion (see
+     -- `getInlineRuntime`'s own doc comment for its one-line
+     -- constraint). Real upstream RefC has no equivalent at all --
+     -- it never reads `--directive`/`%cg` for anything.
+     extraRuntimeFiles <- getExtraRuntime directiveList
+     let inlineRuntime = getInlineRuntime directiveList
+     let injectedRuntime = extraRuntimeFiles ++ (if inlineRuntime == "" then "" else "\n" ++ inlineRuntime)
+
+     foreignLibs <- logTime 2 "rc2: C generation" $ generateCSourceFile ffiWorkers defs injectedRuntime outn
      Just _ <- logTime 2 "rc2: C compile" $ compileCObjectFile outn outobj
        | Nothing => pure Nothing
      logTime 2 "rc2: C link" $ compileCFile outobj outexec foreignLibs

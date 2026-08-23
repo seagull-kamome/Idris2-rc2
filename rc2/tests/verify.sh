@@ -211,8 +211,16 @@ echo "=== Smoke tests ==="
 # GCPointer-vs-plain-Pointer packing mismatch this test regression-
 # checks rc2 for -- diffing against it would hit the same bug there
 # (out of scope to fix in that separate reference tree) instead of
-# checking against a correctness oracle.
-NO_REFC_DIFF_TESTS="Test7CastMatrix Test17ConstFold Test24CStructSupport Test26GCPtrAliasString Test28Utf8Strings Test29GCAnyPtrReturn"
+# checking against a correctness oracle. Test31CgExtraRuntime and
+# Test32CgInlineRuntime are a seventh reason, different in kind from
+# the others above: real RefC never reads `--directive`/`%cg` at all
+# (see README.md's "%cg rc2 directives" section), so their own bare
+# %foreign call sites would hit a genuine *link* error under
+# `idris2 --cg refc` (the C function their %cg rc2 extraRuntime=/
+# inlineRuntime= directive injects for rc2 is simply never defined
+# anywhere in RefC's own output) -- not a divergent-but-comparable
+# output, so there is nothing to regen/diff against there at all.
+NO_REFC_DIFF_TESTS="Test7CastMatrix Test17ConstFold Test24CStructSupport Test26GCPtrAliasString Test28Utf8Strings Test29GCAnyPtrReturn Test31CgExtraRuntime Test32CgInlineRuntime"
 
 # Leak-sensitive by design (reference-counting/reuse/native-shadow
 # regression tests) -- checked with valgrind by default even without

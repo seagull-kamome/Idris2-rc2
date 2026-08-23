@@ -224,6 +224,67 @@ work didn't reach (byte-based `String`<->`Char` conversions of
 malformed/adversarial input aside, the *value's own storage width* was
 already fixed by the `Char` work above).
 
+## `%cg rc2` directives
+
+Idris2 has a generic, backend-agnostic `%cg <codegen> <directive>` source
+pragma (parsed, aggregated across transitive imports, persisted in TTC --
+no idris2-src changes needed to support a new directive for a new
+backend) that rc2 reads via `Core.Context.getDirectives (Other "rc2")`,
+unioned with any CLI `--directive` flags. Two directives splice arbitrary
+C straight into the generated `.c`, right after its own `#include`s and
+before any generated definition -- so the injected code can use rc2's
+own runtime types (`IDRIS2RC2_Value` etc.) and be called from generated
+function bodies below it:
+
+```idris2
+%cg rc2 extraRuntime=path/to/helpers.c
+%cg rc2 inlineRuntime=int64_t helper(int64_t x) { return x * 2; };
+```
+
+- `extraRuntime=<path>` reads the whole file and splices its contents in
+  verbatim -- the same generic directive (and the same
+  `Compiler.Common.getExtraRuntime`) the Chez backend already uses for
+  `%cg chez extraRuntime=file.ss`.
+- `inlineRuntime=<code>` is rc2's own text-instead-of-a-file companion
+  (no upstream equivalent). It comes with two landmines, both inherent
+  to Idris2's own `%cg` lexer/parser, not fixable without touching
+  idris2-src:
+  1. **Must stay on one line.** The `%cg name { ... }` braced form
+     stops at the *first* literal `}` with no nesting support, so any
+     real C function body (which has one) would get silently
+     truncated. Writing the code right after `inlineRuntime=` (not
+     `{`) instead hits the lexer's other, unbraced fallback, which
+     just consumes the rest of the line verbatim with no
+     brace-balancing at all -- but only if it's all on one line.
+  2. **Must not end with a literal `}`.** `Idris.Parser`'s own
+     `stripBraces` unconditionally strips one trailing `}` (and one
+     leading `{`) from *any* `%cg` directive's captured text, whichever
+     lexer form produced it -- it can't tell a real function body's own
+     closing brace from the braced form's delimiter. Since a C function
+     definition always ends in `}`, this silently eats it, and the
+     resulting mangled C only fails much later, at the gcc step, far
+     from the real cause. A trailing `;` after the function's own `}`
+     (a harmless empty top-level C declaration) sidesteps it, since
+     that `;` becomes the new last character instead. For anything
+     longer or trickier than a one-line snippet, use `extraRuntime=` and
+     a real file instead.
+
+Both are rc2-only: real upstream RefC never reads `--directive`/`%cg`
+for anything at all (nothing in `idris2-src/src/Compiler/RefC/RefC.idr`
+calls `getDirectives`/`getSession`), so there's no shared baseline
+behavior to diverge from here, and no meaningful RefC comparison for
+`rc2/tests/verify.sh` to make for the two smoke tests covering this
+(`Test31CgExtraRuntime`, `Test32CgInlineRuntime` -- both in
+`NO_REFC_DIFF_TESTS`).
+
+The natural pairing is a *bare* `%foreign "C:funcName"` declaration --
+no lib/header field at all -- calling straight into injected code by
+plain textual order in the one generated translation unit. That skips
+building any separate static library or wiring up
+`IDRIS2_CFLAGS`/`IDRIS2_LDFLAGS` entirely; contrast with `libs/idris2-Text`'s
+own README, which needs all of that because its C helpers live in a real
+separate `.a`.
+
 ## Status and scope
 
 Working external C backend, functionally correct against Idris2's own
