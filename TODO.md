@@ -80,6 +80,55 @@ own call overhead -- doesn't touch the actual (now largely closed)
 boxing/reboxing gap above, just removes one small cost that used to sit
 on top of it.
 
+## Dropped: skipping `idris2rc2_trampoline` for provably non-delegating functions
+
+Investigated whether `Compiler.RC2.Emit`'s two call-emission sites that
+unconditionally wrap a non-tail call in `idris2rc2_trampoline(...)`
+(`emitRC`'s plain `RAppName` case, and `emitAppNameRepInto`'s `RBoxed`
+branch) could skip that wrap when the callee is statically known to
+never itself defer a tail call into a closure. The base property --
+every genuine tail-position leaf of a function's body is a non-call
+(`RV`/`ROp`/`RPrimVal`/`RCon`/`RErased`/`RCrash`/`RStructGet`/
+`RStructSet`), never a saturated call (`RAppName`/`RAppNameRep`/
+`RUnderApp`/`RApp`) -- is decidable per-function with no whole-program
+fixed point, the same shape `Compiler.RC2.DualABI`'s
+`paramEligibility`/`returnEligibility` already use. The natural home
+for the decision is a new field directly on `MkRCFun` itself (mirroring
+`ROp`'s own `postDrop`), not on every call site referencing it --
+`RAppName`/`RAppNameRep` would need no changes at all, and
+`Compiler.RC2.Emit` could derive a lookup set once from `defs`, the
+same way it already derives `StructDefs`.
+
+Dropped before implementation once its actual payoff was traced
+through: it provides **zero benefit for the flagship `fib`-shaped
+case** -- `Compiler.RC2.DualABI`'s own Stage 3b/4 already renders a
+native (`RNative`/`RInlineNative`) worker return without ever calling
+`idris2rc2_trampoline` at all (a native value can never be a closure),
+so this would-be optimisation only reaches the disjoint, narrower set
+of Boxed-returning, non-delegating functions (e.g. ones returning
+`List`/`Maybe`/a user ADT) plus `%foreign` calls (always eligible,
+unconditionally). Extending it to also cover *delegating* functions
+(`g x = h x`, promoting `g` once `h` is known trampoline-free) was
+considered and found unsound as a simple flag-propagation: `g`'s own
+tail call to `h` is still unconditionally deferred into a closure by
+`tryBuildClosureInto` regardless of `h`'s own properties, so skipping
+the caller's trampoline would hand back an undispatched closure as if
+it were the final value. Making it sound would require also rewriting
+`g`'s own tail-position emission to call `h` directly (no closure
+deferral) -- safe only if the delegation subgraph reachable from `g`'s
+tail position is acyclic, which in turn depends on trusting that
+`Compiler.RC2.Loop`/`Compiler.RC2.MutualLoop` have already eliminated
+every tail-recursive cycle before this pass would run (an unverified
+completeness claim), or building explicit cycle detection (SCC) as a
+safety net. This is exactly the same "pure tail-call delegation"
+territory the "tail-position delegating calls stay boxed" entry above
+already flags as deliberately unsolved, wearing a different name.
+Given the real verification burden, the reopened stack-safety
+territory `doc/dual-abi.md`'s own Stage 4 permanently excluded, and no
+profiling evidence the narrow (non-propagated) win is worth pursuing
+on its own, not implemented; revisit only if profiling shows Boxed-
+returning non-delegating call sites are a real hot path.
+
 ## Performance: loop accumulator threaded only through helper calls stays boxed
 
 A loop-carried accumulator only skips boxing across iterations when
