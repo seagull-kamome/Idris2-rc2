@@ -117,37 +117,45 @@ compileExpr c s _ outputDir tm outfile =
      coreLift_ $ mkdirAll outputDir
 
      -- `--directive dumprcexpr`/`dumpdualabi`/`no<stagename>` all share
-     -- this one `directives sess` list -- upstream idris2's own generic
+     -- this one `directiveList` -- upstream idris2's own generic
      -- per-invocation string passthrough (see Compiler.ES.Codegen's own
      -- "minimal"/"compact" directives for precedent), so none of this
-     -- needs any changes to idris2-src itself. Fetched once, up front,
-     -- since `toRCDefs`'s own pipeline-stage disabling (see its own doc
-     -- comment) needs it before `toRCDefs` runs, not just after like
-     -- `dumprcexpr`/`dumpdualabi` (which only ever inspect its *output*).
-     sess <- getSession
-     let disabledStages = filter (`elem` directives sess)
+     -- needs any changes to idris2-src itself. `getDirectives (Other
+     -- "rc2")` (rc2's own registered codegen name, `Main.idr`) unions
+     -- CLI `--directive` flags with any `%cg rc2 <directive>` pragma
+     -- written directly in Idris2 source -- also fully generic upstream
+     -- machinery (`Core.Context.addDirective`/`cgdirectives`, aggregated
+     -- across transitive imports, persisted in TTC); rc2 previously only
+     -- read the CLI half via `getSession`, silently ignoring any source
+     -- `%cg rc2 ...` pragma. Fetched once, up front, since `toRCDefs`'s
+     -- own pipeline-stage disabling (see its own doc comment) needs it
+     -- before `toRCDefs` runs, not just after like `dumprcexpr`/
+     -- `dumpdualabi` (which only ever inspect its *output*).
+     directiveList <- getDirectives (Other "rc2")
+     let disabledStages = filter (`elem` directiveList)
                              ["noinline", "noreuse", "noconaltnative", "nomutualloop", "noloop", "nosink", "nodualabi"]
      cdata <- getCompileData False Lifted tm
      (defs, ffiWorkers) <- toRCDefs disabledStages (lambdaLifted cdata)
 
-     -- `--directive dumprcexpr`: dump the final RCExp -- this exact
-     -- `defs`, after every non-disabled stage above has run, i.e.
-     -- precisely what generateCSourceFile is about to consume -- to a
-     -- human-readable `.crexpr` file next to the `.c` output. Purely a
-     -- debugging aid (see Pretty.idr's own module note); idris2-src's
-     -- own generic `--dumplifted`/`--dumpanf`/etc. hooks (wired
-     -- entirely inside Compiler.Common.getCompileDataWith, already used
-     -- above via getCompileData) don't reach this far -- RCExp only
-     -- exists after rc2's own toRCDefs runs.
-     when ("dumprcexpr" `elem` directives sess) $
+     -- `--directive dumprcexpr` / `%cg rc2 dumprcexpr`: dump the final
+     -- RCExp -- this exact `defs`, after every non-disabled stage above
+     -- has run, i.e. precisely what generateCSourceFile is about to
+     -- consume -- to a human-readable `.crexpr` file next to the `.c`
+     -- output. Purely a debugging aid (see Pretty.idr's own module
+     -- note); idris2-src's own generic `--dumplifted`/`--dumpanf`/etc.
+     -- hooks (wired entirely inside Compiler.Common.getCompileDataWith,
+     -- already used above via getCompileData) don't reach this far --
+     -- RCExp only exists after rc2's own toRCDefs runs.
+     when ("dumprcexpr" `elem` directiveList) $
          coreLift_ $ writeFile (outputDir </> outfile ++ ".rcexpr") (prettyProgram defs)
 
-     -- `--directive dumpdualabi`: Stage 2's own verification tool for
-     -- the (not yet wired into this pipeline) dual-calling-convention
-     -- eligibility analysis -- see Compiler.RC2.DualABI's own module
-     -- note and doc/loop-conversion.md-style follow-up notes once this
-     -- lands. Same "--directive" mechanism as dumprcexpr above.
-     when ("dumpdualabi" `elem` directives sess) $
+     -- `--directive dumpdualabi` / `%cg rc2 dumpdualabi`: Stage 2's own
+     -- verification tool for the (not yet wired into this pipeline)
+     -- dual-calling-convention eligibility analysis -- see
+     -- Compiler.RC2.DualABI's own module note and doc/loop-conversion.md-
+     -- style follow-up notes once this lands. Same directive mechanism
+     -- as dumprcexpr above.
+     when ("dumpdualabi" `elem` directiveList) $
          coreLift_ $ writeFile (outputDir </> outfile ++ ".dualabi") (dumpDualABI defs)
 
      foreignLibs <- logTime 2 "rc2: C generation" $ generateCSourceFile ffiWorkers defs outn

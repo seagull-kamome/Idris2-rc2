@@ -265,6 +265,22 @@ for name in $ALL_TESTS; do
         continue
     fi
 
+    # Test30CgPragma's own `%cg rc2 dumpdualabi` source pragma is the
+    # ONLY thing that can produce this build's `.dualabi` dump file --
+    # this compile never got `--directive dumpdualabi` on the CLI (only
+    # the baked-in `--directive dumprcexpr` above, plus whatever
+    # --directive flags this verify.sh run was given by hand, none of
+    # which are dumpdualabi by default). Confirms Compiler.RC2.RC2's
+    # `getDirectives (Other "rc2")` wiring actually picks up source-level
+    # %cg rc2 directives, not just CLI ones.
+    if [ "$name" = "Test30CgPragma" ]; then
+        if [ -f "$TMP/${name}_rc2.dualabi" ]; then
+            report_pass "$name (source %cg rc2 dumpdualabi honored -- $TMP/${name}_rc2.dualabi produced with no CLI --directive dumpdualabi)"
+        else
+            report_fail "$name" "source %cg rc2 dumpdualabi NOT honored -- $TMP/${name}_rc2.dualabi missing"
+        fi
+    fi
+
     run_t0="$(date +%s.%N)"
     actual="$("$TMP/${name}_rc2" 2>&1)"
     run_time="$(elapsed "$run_t0" "$(date +%s.%N)")"
