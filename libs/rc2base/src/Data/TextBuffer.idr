@@ -5,6 +5,7 @@ module Data.TextBuffer
 
 import System.FFI
 import Data.Fin
+import Data.Vect
 
 -- ---------------------------------------------------------------------------
 
@@ -158,6 +159,28 @@ fromCharList cs = unsafePerformIO $ do
     writeLoop p i (c :: rest) = do
       primIO $ prim__TextBuffer_unsafe_write_char p (cast i) (cast c)
       writeLoop p (S i) rest
+
+||| `map f . toList` fused into a single index-based pass -- no
+||| intermediate `List Char` gets read out of the buffer just to
+||| immediately map over it.
+export
+fastMap : (Char -> a) -> TextBuffer n -> List a
+fastMap f buf = go (length buf) 0
+  where
+    go : (fuel : Nat) -> Nat -> List a
+    go Z _ = []
+    go (S fuel) i = f (unsafeIndex buf i) :: go fuel (S i)
+
+buildVect : (Char -> a) -> TextBuffer n -> (fuel : Nat) -> Nat -> Vect fuel a
+buildVect f buf Z i = []
+buildVect f buf (S fuel) i = f (unsafeIndex buf i) :: buildVect f buf fuel (S i)
+
+||| Like `fastMap`, but into a `Vect` of the buffer's own exact length
+||| instead of a `List` -- useful when the caller wants that length
+||| carried in the type rather than re-deriving it.
+export
+fastMap' : (Char -> a) -> TextBuffer n -> Vect n a
+fastMap' f buf = rewrite sym (lengthCorrect buf) in buildVect f buf (length buf) 0
 
 -- ---------------------------------------------------------------------------
 -- Construction helpers with a statically known result length.
