@@ -18,14 +18,22 @@ module Data.Text
 -- node runs into constant associativity/identity mismatches (`a+b+c`
 -- vs `a+(b+c)`, `n` vs `n+0`, ...) that need a proof at nearly every
 -- constructor. The standard, much lighter answer -- used by
--- Data.Seq.Internal itself -- is to cache a plain runtime Nat (via
--- the `Sized` interface, Control.WellFounded) at each Node/Deep
--- instead, and to only put a *phantom* Nat index on the outermost
--- public wrapper (`Text`), exactly like `Data.TextBuffer.TextBuffer`
--- already does for its own FFI-backed length. That single boundary
--- is the only place trusting "this Nat matches the real content"
--- rather than proving it, matching `Data.TextBuffer.lengthCorrect`'s
--- own documented rationale.
+-- Data.Seq.Internal itself -- is to cache a plain runtime Nat (via a
+-- small `Sized` interface local to this module -- Control.WellFounded
+-- has one too, but bundled with well-founded-recursion machinery this
+-- module has no use for) at each Node/Deep instead, and to only put a
+-- *phantom* Nat index on the outermost public wrapper (`Text`),
+-- exactly like `Data.TextBuffer.TextBuffer` already does for its own
+-- FFI-backed length. `Text`'s own constructor never actually
+-- constrains that phantom to anything, so building a `Text` at a
+-- specific claimed length (e.g. `(++)`'s `Text (n + m)`) needs no
+-- proof at all -- there's no equation to prove, unlike
+-- `Data.TextBuffer.lengthCorrect`, which bridges two independently-
+-- computed values (an FFI re-read vs. the type index) and so is a
+-- genuine (if `believe_me`-backed) axiom. The one place this module
+-- still needs `believe_me` is `index`, bridging a caller's `Fin n`
+-- against the flattened buffer's own `Fin m` -- a real bound, not a
+-- phantom, so there's no way around asserting `m` and `n` agree.
 --
 -- Every operation that isn't fundamentally about concatenation
 -- (substr, words, trim, ...) is implemented by flattening to a single
@@ -35,7 +43,6 @@ module Data.Text
 -- from it (concat, joinBy, unwords, unlines, singleton, replicate)
 -- get the tree's win.
 
-import Control.WellFounded
 import Data.TextBuffer
 import Data.Fin
 import Data.List
@@ -44,6 +51,15 @@ import Data.List
 -- The finger tree engine. Ordinary (non-dependent) types; every
 -- Node2/Node3/Deep caches its own already-computed total as a plain
 -- Nat field instead of proving anything about it.
+
+-- A minimal, locally-scoped version of Control.WellFounded's `Sized`
+-- (just the one method actually used here) -- this module has exactly
+-- one instantiation in mind (TextBuffer chunks, nested arbitrarily
+-- deep via Node), not WellFounded's own broader well-founded-recursion
+-- machinery (Smaller/SizeAccessible/sizeInd/...), so importing that
+-- whole interface for one method is more than this needs.
+interface Sized e where
+  size : e -> Nat
 
 data Digit : Type -> Type where
   One   : e -> Digit e
@@ -55,7 +71,7 @@ data Node : Type -> Type where
   Node2 : Nat -> e -> e -> Node e
   Node3 : Nat -> e -> e -> e -> Node e
 
-Sized e => Sized (Node e) where
+Sized (Node e) where
   size (Node2 s _ _) = s
   size (Node3 s _ _ _) = s
 
@@ -259,12 +275,10 @@ treeToList = foldr (::) []
 
 -- ---------------------------------------------------------------------------
 -- The public, length-indexed API. `Text`'s own Nat index is a phantom,
--- exactly like `Data.TextBuffer.TextBuffer`'s own -- trusted by
--- construction (every function below that changes a Text's length
--- computes the new length independently, via TextBuffer's own already-
--- correct arithmetic, and only ties it back to the finger tree's
--- actual content via `believe_me`, never by proving the finger tree
--- engine's own internals match it step by step).
+-- exactly like `Data.TextBuffer.TextBuffer`'s own -- `MkText`'s `n`
+-- never appears in its argument type, so wrapping a freshly-built
+-- FingerTree at whatever length the caller's own signature promises
+-- needs no proof at all (see this file's own header comment).
 
 Chunk : Type
 Chunk = (k ** TextBuffer k)
@@ -294,8 +308,15 @@ fromString s = let (n ** tb) = TextBuffer.fromString s in (n ** fromTextBuffer t
 -- Collapses a Text's chunks back into a single TextBuffer -- the
 -- boundary every operation below that isn't fundamentally about
 -- concatenation crosses to reuse Data.TextBuffer's own algorithms.
+-- Folds with TextBuffer's own native (++) (a single memcpy per step)
+-- rather than TextBuffer.concat's List Char round trip -- the chunk
+-- type here is always TextBuffer, never some arbitrary Foldable-ish
+-- thing, so there's no reason to detour through a char list to
+-- combine them.
 flatten : Text n -> (m ** TextBuffer m)
-flatten (MkText t) = TextBuffer.concat (treeToList t)
+flatten (MkText t) = case treeToList t of
+  [] => TextBuffer.fromString ""
+  (x :: xs) => foldl (\(_ ** acc), (_ ** tb) => (_ ** acc ++ tb)) x xs
 
 ||| Convert a Text back to a String.
 export
@@ -305,7 +326,7 @@ toString t = let (_ ** tb) = flatten t in TextBuffer.toString tb
 ||| O(log(min(n,m))). Concatenate two Texts.
 export
 (++) : Text n -> Text m -> Text (n + m)
-(++) (MkText t1) (MkText t2) = believe_me (MkText {n=0} (addTree0 t1 t2))
+(++) (MkText t1) (MkText t2) = MkText (addTree0 t1 t2)
 
 ||| A Text of a single character.
 export
@@ -352,12 +373,12 @@ index t i = let (_ ** tb) = flatten t in TextBuffer.index tb (believe_me i)
 ||| Uppercase every character. Length-preserving.
 export
 toUpper : Text n -> Text n
-toUpper t = let (_ ** tb) = flatten t in believe_me (fromTextBuffer (TextBuffer.toUpper tb))
+toUpper t = let (_ ** tb) = flatten t in MkText (Single (_ ** TextBuffer.toUpper tb))
 
 ||| Lowercase every character. Length-preserving.
 export
 toLower : Text n -> Text n
-toLower t = let (_ ** tb) = flatten t in believe_me (fromTextBuffer (TextBuffer.toLower tb))
+toLower t = let (_ ** tb) = flatten t in MkText (Single (_ ** TextBuffer.toLower tb))
 
 ||| Extract a substring of the given length, starting at the given
 ||| offset. Clamped to the source Text's actual bounds.
