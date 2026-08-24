@@ -3,7 +3,7 @@ package rc2base
 version    = 0.1.0
 opts       = "--total"
 sourcedir  = "src"
-modules    = Data.Text
+modules    = Data.TextBuffer
 prebuild   = "make -C support/c"
 postclean  = "make -C support/c clean"
 
