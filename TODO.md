@@ -500,6 +500,35 @@ own scope. Not currently planned; revisit only if profiling ever shows
 codepoint-indexed access on a long string actually mattering in
 practice.
 
+## Scope: FFI worker synthesis (Stage 3c) keeps its own 8-argument limit
+
+`Compiler.RC2.DualABI`'s ordinary-function worker synthesis (Stage 3a,
+`synthesizeIfEligible`/`synthesizeWorker`) no longer excludes functions
+with more than `Compiler.RC2.Emit.MaxExtractFunArgs` (8) parameters --
+a dual-ABI *worker* is only ever reached via a direct, statically-named
+`RAppNameRep` call, never stored in a `Closure`, so it doesn't need to
+satisfy `support/rc2/runtime.c`'s closure-dispatch function-pointer
+convention (`IDRIS2RC2_FUN0`..`FUN8`/`FUNSTAR`) that convention exists
+for -- `MkRCFun`'s new `isWorker` field lets `Compiler.RC2.Emit`'s
+`createCFunctions` skip the width-based `var_arglist[]` declaration
+fallback specifically for workers, regardless of argument count. See
+`rc2/tests/Test33WideDualABIWorker.idr` for the regression test (a
+10-parameter function, 9 native-eligible `Int`s + 1 `Boxed` `String`,
+mirroring a real bug report where an externally-sourced package's
+lambda-lifted internal helper hit exactly this shape).
+
+Stage 3c's own separate FFI worker synthesis (`ffiWorkerTable`,
+`DualABI.idr`'s `length fargs > MaxExtractFunArgs` exclusion) was left
+untouched -- a structurally distinct code path (`MkRCForeign`, not
+`MkRCFun`) not investigated as part of this change. A `%foreign`
+declaration with more than 8 parameters still gets no worker
+synthesized at all, unconditionally. Plausibly the same "the callee
+side never needs the closure-dispatch convention" argument applies
+there too (an FFI worker is also only ever called directly), but this
+hasn't been checked. Not currently planned; revisit if a real
+`%foreign` binding this wide with native-eligible parameters ever
+shows up.
+
 ## yet another hope
 この項は人間が追加したものなので、後で整理して独立の項に括りだす事。
 今は着手しないが将来的な展望を書き連ねる。この項は日本語で書かれるが

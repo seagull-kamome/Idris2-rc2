@@ -478,11 +478,11 @@ mutual
 ||| one definition at a time, no cross-definition state needed.
 export
 applyConAltNative : RCDef -> RCDef
-applyConAltNative (MkRCFun args retRep body) =
+applyConAltNative (MkRCFun args retRep isWorker body) =
     let argIds = map fst args
         nextId = the Int (1 + foldl max (-1) (argIds ++ collectBoundIds body))
         (_, body') = applyConAltNativeExp nextId body
-    in MkRCFun args retRep body'
+    in MkRCFun args retRep isWorker body'
 applyConAltNative (MkRCError body) =
     let nextId = the Int (1 + foldl max (-1) (collectBoundIds body))
         (_, body') = applyConAltNativeExp nextId body

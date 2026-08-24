@@ -102,9 +102,10 @@ mutual
       indent d ++ show c ++ " ->\n" ++ prettyExp (d + 1) body
 
 prettyDef : Name -> RCDef -> String
-prettyDef n (MkRCFun args retRep body) =
+prettyDef n (MkRCFun args retRep isWorker body) =
     "def " ++ show n ++ "  (fun args=" ++ show (map (\(i, r) => "\{show (RCLoc i)}:\{prettyRep r}") args)
-      ++ " ret=" ++ prettyRep retRep ++ ")\n"
+      ++ " ret=" ++ prettyRep retRep
+      ++ (if isWorker then " worker=True" else "") ++ ")\n"
     ++ prettyExp 1 body ++ "\n"
 prettyDef n (MkRCCon tag arity nt) =
     "def " ++ show n ++ "  (con tag=" ++ show tag ++ " arity=" ++ show arity

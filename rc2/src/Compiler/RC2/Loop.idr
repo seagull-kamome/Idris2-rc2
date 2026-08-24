@@ -1047,10 +1047,10 @@ dupInvariantBoxed _ e = e
 ||| shadow id).
 export
 applyLoop : Name -> RCDef -> RCDef
-applyLoop self (MkRCFun args retRep body) =
+applyLoop self (MkRCFun args retRep isWorker body) =
     let argIds = map fst args
         (found, body') = mapTailAppNames (\fc, n, args' => if n == self then Just (RLoopContinue fc args' []) else Nothing) body
-    in MkRCFun args retRep $
+    in MkRCFun args retRep isWorker $
          if not found
             then body'
             else

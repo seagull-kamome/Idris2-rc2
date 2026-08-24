@@ -480,7 +480,7 @@ applySinkExp _ e = e
 ||| missing from `reps` -- nothing to seed there.
 export
 applySink : RCDef -> RCDef
-applySink (MkRCFun args retRep body) = MkRCFun args retRep (applySinkExp empty body)
+applySink (MkRCFun args retRep isWorker body) = MkRCFun args retRep isWorker (applySinkExp empty body)
 applySink (MkRCError body) = MkRCError (applySinkExp empty body)
 applySink d@(MkRCCon _ _ _) = d
 applySink d@(MkRCForeign _ _ _) = d

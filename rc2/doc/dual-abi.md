@@ -927,6 +927,41 @@ the closest analogue to bug #2 above) passed without any fix needed.
    backend or commit). Run from the package root, all three backends
    (`idris2-rc2`, real `idris2 --cg refc`, real `idris2` on Chez)
    complete correctly (see `BENCHMARKS.md`'s own re-measurement).
+7. **Follow-up: the >8-argument exclusion above was overly
+   conservative -- properly fixed instead of left as a blanket
+   exclusion.** Re-examining why the exclusion was needed at all: the
+   `var_arglist[]`-style extraction fallback item 6 deferred exists
+   purely to match `support/rc2/runtime.c`'s closure-dispatch function-
+   pointer types (`IDRIS2RC2_FUN0`..`FUN8`/`FUNSTAR`, all
+   `IDRIS2RC2_Value*`-only) -- a convention that only matters for a
+   function that might actually be *dispatched through a `Closure`*.
+   A dual-ABI **worker** never is: it's reachable only via a direct,
+   statically-named, fully-saturated `RAppNameRep` call (from its own
+   wrapper's body, or a Stage 4 non-tail call-site rewrite), never
+   stored in a `Closure` at all. Its **wrapper** (the original
+   function's own name, always Boxed) is what remains closure-
+   dispatch-compatible, and was never the thing item 6's crash was
+   actually about. So the real fix isn't "build the extraction
+   fallback" (item 6's deferred "real work") -- it's "exempt workers
+   from needing it in the first place": `MkRCFun` gained an `isWorker`
+   field (`True` only for `synthesizeWorker`'s own worker, `False`
+   everywhere else including the wrapper), and `Compiler.RC2.Emit`'s
+   `createCFunctions` now only falls back to the `var_arglist[]`
+   declaration shape for a non-worker past `MaxExtractFunArgs`
+   parameters -- a worker keeps individually-typed (native where
+   eligible) positional parameters regardless of its own width.
+   `applyDualABI`'s `synthesizeIfEligible` no longer excludes wide
+   functions at all (only `isMutualLoopMerged` remains). Verified with
+   `rc2/tests/Test33WideDualABIWorker.idr` (10 parameters: nine native-
+   eligible `Int`s + one `Boxed` `String`, mirroring the original
+   `idris2-missing-containers` shape) -- generated C declares
+   `idris2rc2_worker_Main_wideAdd_0` with ten individual parameters
+   (nine `int64_t`, one `IDRIS2RC2_Value *`), called directly with no
+   `var_arglist[]`/boxing/trampoline involved; full refc-suite,
+   smoke-test matrix, and `valgrind` (`0 bytes definitely lost`) all
+   still pass. Stage 3c's own separate FFI worker exclusion
+   (`ffiWorkerTable`'s `length fargs > MaxExtractFunArgs`) was left
+   untouched -- see `TODO.md`'s own note on why.
 
 ## Status
 

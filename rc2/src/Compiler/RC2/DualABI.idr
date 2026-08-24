@@ -153,7 +153,7 @@ returnEligibility params body =
 ||| rewritten yet -- see the module note.
 export
 describeEligibility : Name -> RCDef -> Maybe String
-describeEligibility n (MkRCFun args _ body) =
+describeEligibility n (MkRCFun args _ _ body) =
     let argIds = map fst args
         params = paramEligibility argIds body
         ret = returnEligibility params body
@@ -253,7 +253,7 @@ synthesizeWorker existingNames original eligible retEligible args wrapperRetRep 
         workerRetRep : Rep
         workerRetRep = maybe wrapperRetRep RNative retEligible
         workerDef : RCDef
-        workerDef = MkRCFun workerArgs workerRetRep workerBody
+        workerDef = MkRCFun workerArgs workerRetRep True workerBody
         wrapperArgIds : List Int
         wrapperArgIds = map fst args
         wrapperPostDrop : List RCLocal
@@ -261,21 +261,39 @@ synthesizeWorker existingNames original eligible retEligible args wrapperRetRep 
         wrapperBody : RCExp
         wrapperBody = RAppNameRep emptyFC workerName (map snd workerArgs) workerRetRep wrapperPostDrop (map RCLoc wrapperArgIds)
         wrapperDef : RCDef
-        wrapperDef = MkRCFun args wrapperRetRep wrapperBody
+        wrapperDef = MkRCFun args wrapperRetRep False wrapperBody
     pure (workerName, wrapperDef, workerDef)
 
 ||| Whole-program pass: for every `MkRCFun` with at least one
 ||| parameter-eligible position and/or an eligible return
 ||| (`Compiler.RC2.MutualLoop`-produced merged functions excluded, see
-||| `isMutualLoopMerged`; a function with more than `MaxExtractFunArgs`
-||| own top-level parameters also excluded unconditionally, regardless
-||| of what eligibility it would otherwise have -- see this function's
-||| own inline note), synthesises a worker (native at whichever of its
-||| own parameters/return turned out eligible) and rewrites the
+||| `isMutualLoopMerged`), synthesises a worker (native at whichever of
+||| its own parameters/return turned out eligible) and rewrites the
 ||| original into a thin wrapper -- see the module note for the full
 ||| Stage 3a+3b design. Every other definition (a function with nothing
 ||| eligible at all, or any non-`MkRCFun` def) passes through
 ||| completely unchanged.
+|||
+||| No width limit on the worker's own parameter count, unlike an
+||| earlier version of this pass: a worker is only ever reachable via a
+||| direct, statically-named `RAppNameRep` call (from its own wrapper's
+||| body, or Stage 4's own call-site rewriting), never stored in a
+||| `Closure` and so never dispatched through
+||| `support/rc2/runtime.c`'s `idris2rc2_dispatchClosure` -- unlike an
+||| ordinary function or this pass's own wrapper (both of which keep
+||| the always-Boxed, closure-dispatch-compatible calling convention,
+||| and so DO still need `Compiler.RC2.Emit`'s `createCFunctions` to
+||| fall back to a `var_arglist[]`-style declaration past
+||| `MaxExtractFunArgs` parameters -- see that function's own doc
+||| comment). `MkRCFun`'s `isWorker` field is exactly this distinction,
+||| baked onto the IR node itself rather than re-derived: `True` only
+||| for a worker `synthesizeWorker` itself produces, `False` for its
+||| own wrapper and everywhere else. A real, externally-sourced package
+||| (not covered by this project's own test suite) once hit a lambda-
+||| lifted internal helper with 9+ free-variable parameters, at least
+||| one genuinely native-eligible -- this is exactly the shape that
+||| now works correctly instead of being excluded from dual-ABI
+||| eligibility outright.
 export
 applyDualABI : List (Name, RCDef) -> Core (List (Name, RCDef))
 applyDualABI defs = do
@@ -284,30 +302,8 @@ applyDualABI defs = do
     concat <$> traverse (synthesizeIfEligible existingNames) defs
   where
     synthesizeIfEligible : {auto r : Ref FreshId Int} -> SortedSet Name -> (Name, RCDef) -> Core (List (Name, RCDef))
-    synthesizeIfEligible existingNames (n, d@(MkRCFun args retRep body)) =
-        -- `RAppNameRep`'s own emission (`Compiler.RC2.Emit`'s
-        -- `emitAppNameRepInto`/`emitNativeValue`) has no `var_arglist[]`
-        -- -style extraction fallback for more than `MaxExtractFunArgs`
-        -- arguments the way an ordinary, always-Boxed many-argument
-        -- function's own `createCFunctions` path does -- every
-        -- `RAppNameRep` call this pass (or Stage 4's own call-site
-        -- rewriting) ever produces throws `InternalError` past that
-        -- limit. A real, externally-sourced package (not covered by
-        -- this project's own test suite, which has no function this
-        -- wide) hit exactly this: some of its own lambda-lifted
-        -- internal helpers carry 9+ parameters (free variables
-        -- captured from an enclosing scope), and at least one of those
-        -- parameters was otherwise genuinely native-eligible. Rather
-        -- than building that extraction fallback (real work, and this
-        -- shape is expected to stay rare), simply exclude any function
-        -- this wide from dual-ABI eligibility entirely, unconditionally
-        -- -- regardless of what `paramEligibility`/`returnEligibility`
-        -- would otherwise decide -- so no `RAppNameRep` is ever
-        -- constructed for it in the first place. Correct, if
-        -- conservative: such a function just keeps its own ordinary,
-        -- always-Boxed calling convention, same as before this whole
-        -- effort existed.
-        if isMutualLoopMerged n || length args > MaxExtractFunArgs
+    synthesizeIfEligible existingNames (n, d@(MkRCFun args retRep _ body)) =
+        if isMutualLoopMerged n
            then pure [(n, d)]
            else do
              let argIds = map fst args
@@ -392,7 +388,7 @@ workerTable : List (Name, RCDef) -> SortedMap Name (Name, List Rep, Rep)
 workerTable defs = fromList (mapMaybe workerEntry defs)
   where
     workerEntry : (Name, RCDef) -> Maybe (Name, (Name, List Rep, Rep))
-    workerEntry (n, MkRCFun _ _ (RAppNameRep _ workerName argReps retRep _ _)) =
+    workerEntry (n, MkRCFun _ _ _ (RAppNameRep _ workerName argReps retRep _ _)) =
         Just (n, (workerName, argReps, retRep))
     workerEntry _ = Nothing
 
@@ -643,6 +639,6 @@ applyCallSiteRewrite ffiWorkers defs =
     in map (rewriteDef workers) defs
   where
     rewriteDef : SortedMap Name (Name, List Rep, Rep) -> (Name, RCDef) -> (Name, RCDef)
-    rewriteDef workers (n, MkRCFun args retRep body) =
-        (n, MkRCFun args retRep (applyCallSiteRewriteBody workers (fromList args) True body))
+    rewriteDef workers (n, MkRCFun args retRep isWorker body) =
+        (n, MkRCFun args retRep isWorker (applyCallSiteRewriteBody workers (fromList args) True body))
     rewriteDef _ (n, d) = (n, d)

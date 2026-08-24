@@ -297,12 +297,20 @@ mutual
 ||| foundation for the dual (Boxed/native) calling convention (`RBoxed`
 ||| = an ordinary `IDRIS2RC2_Value *`, `RNative ty` = a raw native C
 ||| scalar the caller supplies directly); `retRep` is the same idea for
-||| the return value. Currently always `RBoxed` everywhere -- pure
-||| IR-shape groundwork, no pass promotes a parameter/return yet. See
-||| `doc/dual-abi.md`'s "`MkRCFun`'s new shape (Stage 1)".
+||| the return value. `isWorker` marks a `Compiler.RC2.DualABI`-
+||| synthesized worker: a function reachable *only* through a direct,
+||| statically-named, fully-saturated `RAppNameRep` call (from its own
+||| wrapper's body, or a non-tail call-site rewrite) -- never stored in
+||| a `Closure`, so never dispatched through
+||| `support/rc2/runtime.c`'s `idris2rc2_dispatchClosure` the way an
+||| ordinary function/wrapper might be. `Compiler.RC2.Emit`'s
+||| `createCFunctions` uses this to decide its own C declaration shape
+||| (see that function's own doc comment). `False` for every ordinary
+||| function and every dual-ABI wrapper (which keeps the original
+||| function's name and stays closure-dispatch-compatible).
 public export
 data RCDef : Type where
-     MkRCFun : (args : List (Int, Rep)) -> (retRep : Rep) -> RCExp -> RCDef
+     MkRCFun : (args : List (Int, Rep)) -> (retRep : Rep) -> (isWorker : Bool) -> RCExp -> RCDef
      MkRCCon : (tag : Maybe Int) -> (arity : Nat) -> (nt : Maybe Nat) -> RCDef
      MkRCForeign : (ccs : List String) -> (fargs : List CFType) -> CFType -> RCDef
      MkRCError : RCExp -> RCDef

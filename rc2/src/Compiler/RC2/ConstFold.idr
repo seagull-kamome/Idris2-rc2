@@ -304,7 +304,7 @@ mutual
 
 export
 foldConstDef : RCDef -> RCDef
-foldConstDef (MkRCFun args retRep body) = MkRCFun args retRep (foldConst empty body)
+foldConstDef (MkRCFun args retRep isWorker body) = MkRCFun args retRep isWorker (foldConst empty body)
 foldConstDef (MkRCError body) = MkRCError (foldConst empty body)
 foldConstDef d@(MkRCCon _ _ _) = d
 foldConstDef d@(MkRCForeign _ _ _) = d

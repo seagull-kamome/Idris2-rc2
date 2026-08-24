@@ -265,7 +265,7 @@ normalizeDef (MkLFun args scope body) = do
     scopeIds <- traverse (const (nextVarId {v})) scope
     let env = scopeIds ++ argIds
     bodyRC <- normalize {v} env body
-    pure $ MkRCFun (map (\i => (i, RBoxed)) (argIds ++ reverse scopeIds)) RBoxed bodyRC
+    pure $ MkRCFun (map (\i => (i, RBoxed)) (argIds ++ reverse scopeIds)) RBoxed False bodyRC
 normalizeDef (MkLCon tag arity nt) = pure $ MkRCCon tag arity nt
 normalizeDef (MkLForeign ccs fargs ret) = pure $ MkRCForeign ccs fargs ret
 normalizeDef (MkLError body) = do
@@ -663,7 +663,7 @@ definitionNatives : RCExp -> SortedSet RCLocal
 definitionNatives body = union (nativeLocalsR body) (alwaysUnboxedBoxedLocalsR body)
 
 annotateDef : RCDef -> Core RCDef
-annotateDef (MkRCFun args retRep body) = do
+annotateDef (MkRCFun args retRep isWorker body) = do
     let natives = definitionNatives body
     -- `natives`-listed args (see definitionNatives) don't belong in
     -- `owned` either -- same reasoning as RLet's owned' above -- so
@@ -675,7 +675,7 @@ annotateDef (MkRCFun args retRep body) = do
     -- its own argument list -- `branchBody` already does exactly the
     -- drop-unused-then-annotate-then-wrap sequence this needs.
     let argsVars = fromList (RCLoc <$> map fst args) `difference` natives
-    MkRCFun args retRep <$> branchBody natives argsVars body
+    MkRCFun args retRep isWorker <$> branchBody natives argsVars body
 annotateDef d@(MkRCCon _ _ _) = pure d
 annotateDef d@(MkRCForeign _ _ _) = pure d
 annotateDef (MkRCError body) = MkRCError <$> annotate (definitionNatives body) empty body

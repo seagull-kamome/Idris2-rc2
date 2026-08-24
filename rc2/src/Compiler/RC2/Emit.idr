@@ -1106,13 +1106,25 @@ buildClosureIntoSink fc (SinkReturn _) n args missing = do
     closure <- makeClosure fc n args missing
     emit fc "return \{closure};"
 
--- Must match the dispatch switch in support/rc2/runtime.c. `export`ed
--- so `Compiler.RC2.DualABI` can consult the same limit when deciding
--- worker eligibility (see its own use for why: `RAppNameRep`'s own
--- emission -- both `emitAppNameRepInto` and `emitNativeValue`'s own
--- case above -- has no `var_arglist[]`-style extraction fallback for
--- more than this many arguments, unlike an ordinary many-argument
--- function's own always-Boxed `createCFunctions` path).
+-- Must match the dispatch switch in support/rc2/runtime.c
+-- (`idris2rc2_dispatchClosure`'s own fixed `IDRIS2RC2_FUN0`..`FUN8`/
+-- `FUNSTAR` function-pointer types, all-`IDRIS2RC2_Value*`-only).
+-- Governs two things, both about a function that CAN be dispatched
+-- through that closure machinery -- i.e. an ordinary function or a
+-- dual-ABI wrapper, never a dual-ABI *worker* (see `MkRCFun`'s own
+-- `isWorker` field doc comment and `createCFunctions`'s own use of it
+-- below -- a worker is only ever called via a direct, statically-named
+-- `RAppNameRep`, never stored in a `Closure`, so it's exempt from both
+-- of these regardless of its own argument count):
+-- 1. `emitRC`'s own `RAppName`/`NotInTailPosition` case above: past
+--    this many arguments, a non-tail call builds a closure and
+--    trampolines it rather than calling directly (unrelated to
+--    dual-ABI, `RAppName` is never a dual-ABI call).
+-- 2. `createCFunctions`'s own C declaration shape for a non-worker
+--    `MkRCFun`: past this many arguments, the function is declared
+--    taking a single `IDRIS2RC2_Value *var_arglist[]` instead of
+--    individually-typed positional parameters, matching
+--    `IDRIS2RC2_FUNSTAR`.
 export
 MaxExtractFunArgs : Nat
 MaxExtractFunArgs = 8
@@ -1620,9 +1632,12 @@ mutual
                        -> {auto sd : Ref StructDefs (SortedMap String (List (String, CFType)))}
                        -> Sink -> TailPositionStatus -> FC -> Name -> List Rep -> Rep -> List RCLocal -> List RCLocal -> Core ()
     emitAppNameRepInto sink tailPosition fc n argReps retRep postDrop args = do
-        let nargs = length args
-        when (nargs > MaxExtractFunArgs) $
-            throw $ InternalError "[rc2] RAppNameRep: more than \{show MaxExtractFunArgs} args not yet supported"
+        -- No `nargs` cap here: the call below is always a plain,
+        -- positional, direct C call to a dual-ABI worker (`isWorker =
+        -- True`, see `MkRCFun`'s own doc comment) -- never dispatched
+        -- through `support/rc2/runtime.c`'s closure machinery, so
+        -- `MaxExtractFunArgs` (which governs THAT convention) doesn't
+        -- apply here.
         argStrs <- traverse (\(rep, v) => case rep of
                                  RNative ty => rcVarToNativeC ty v
                                  RInlineNative ty => rcVarToNativeC ty v
@@ -2325,9 +2340,10 @@ mutual
     -- `retRep` reaching here would mean that invariant broke somewhere,
     -- so it's an internal error, not a case to render around.
     emitNativeValue ty (RAppNameRep fc n argReps retRep postDrop args) = do
-        let nargs = length args
-        when (nargs > MaxExtractFunArgs) $
-            throw $ InternalError "[rc2] RAppNameRep: more than \{show MaxExtractFunArgs} args not yet supported"
+        -- No `nargs` cap here -- same reasoning as `emitAppNameRepInto`'s
+        -- own doc comment: always a plain, direct positional call to a
+        -- dual-ABI worker, never dispatched through the closure
+        -- machinery `MaxExtractFunArgs` governs.
         argStrs <- traverse (\(rep, v) => case rep of
                                  RNative t => rcVarToNativeC t v
                                  RInlineNative t => rcVarToNativeC t v
@@ -2399,7 +2415,7 @@ createCFunctions : {auto c : Ref Ctxt Defs}
                 -> Name
                 -> RCDef
                 -> Core ()
-createCFunctions n (MkRCFun args retRep body) = do
+createCFunctions n (MkRCFun args retRep isWorker body) = do
     -- `args`/`retRep` are dual-ABI groundwork (see RCExp.idr's own doc
     -- comment on MkRCFun, and Compiler.RC2.DualABI's own module note).
     -- Both can now genuinely hold `RNative`/`RInlineNative` entries (a
@@ -2424,28 +2440,24 @@ createCFunctions n (MkRCFun args retRep body) = do
                                     RBoxed => "IDRIS2RC2_Value *"
                                     RNative ty => nativeCType ty ++ " "
                                     RInlineNative ty => nativeCType ty ++ " "
+    -- `MaxExtractFunArgs`'s own `var_arglist[]` fallback only exists to
+    -- match `support/rc2/runtime.c`'s closure-dispatch function-pointer
+    -- types (see that constant's own doc comment) -- a dual-ABI
+    -- *worker* (`isWorker = True`) is never stored in a `Closure` and
+    -- so never needs to satisfy that convention, regardless of its own
+    -- argument count: it keeps individually-typed positional
+    -- parameters (native where eligible) no matter how wide it is.
+    let useVarArglist = not isWorker && nargs > MaxExtractFunArgs
     let fn = "\{retTypeStr}\{cName !(getFullName n)}"
             ++ (if nargs == 0 then "(void)"
-               else if nargs > MaxExtractFunArgs then "(IDRIS2RC2_Value *var_arglist[\{show nargs}])"
+               else if useVarArglist then "(IDRIS2RC2_Value *var_arglist[\{show nargs}])"
                else ("\n(\n" ++ (showSep "\n" $ addCommaToList (map declareParam args))) ++ "\n)")
     update FunctionDefinitions $ \otherDefs => (fn ++ ";\n") :: otherDefs
 
-    -- The `var_arglist[]`-extraction path just below always declares
-    -- every parameter Boxed (it's the >`MaxExtractFunArgs` fallback,
-    -- shared by every ordinary many-argument function, not something
-    -- Compiler.RC2.DualABI's own worker synthesis was written with in
-    -- mind) -- fail loudly here rather than silently seed RepMap with
-    -- a Rep that doesn't match what's actually declared, if a worker
-    -- somehow ended up needing it (Compiler.RC2.Emit's own
-    -- `RAppNameRep` case already refuses to *call* such a worker, so
-    -- this is a second, independent guard on the callee side, not
-    -- something expected to ever actually fire).
-    when (nargs > MaxExtractFunArgs && any (\(_, rep) => case rep of RBoxed => False; _ => True) args) $
-        throw $ InternalError "[rc2] createCFunctions: a dual-ABI worker with more than \{show MaxExtractFunArgs} args isn't supported yet"
     emit EmptyFC fn
     emit EmptyFC "{"
     increaseIndentation
-    when (nargs > MaxExtractFunArgs) $ do
+    when useVarArglist $ do
       _ <- foldlC (\i, j => do
          emit EmptyFC "IDRIS2RC2_Value *var_\{show j} = var_arglist[\{show i}];"
          pure $ i + 1) 0 argIds
