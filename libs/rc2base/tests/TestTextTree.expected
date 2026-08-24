@@ -1,0 +1,33 @@
+--- Testing Data.Text (finger tree) ---
+Text: Hello, Length: 5
+Character at index 1: e
+Appended: Hello + World, Length: 10
+Round-trip toString: HelloWorld
+Multi-byte length: 12
+Multi-byte round-trip: Hello, 世界! 😀
+concat of 26 singletons: abcdefghijklmnopqrstuvwxyz, length: 26
+Deep++Deep: ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789+-*/, length: 40
+substr 1 3 "HelloWorld": ell
+concat [Hello, World]: HelloWorld
+joinBy ", " [Hello, World]: Hello, World
+singleton 'x': x
+replicate 5 'z': zzzzz
+padLeft 8 '.' "Hello": ...Hello
+padRight 8 '.' "Hello": Hello...
+ltrim: [spaced out  ]
+rtrim: [  spaced out]
+trim: [spaced out]
+words: ["the", "quick", "brown", "fox"]
+unwords . words: the quick brown fox
+lines: ["line1", "line2", "line3"]
+unlines . lines: [line1
+line2
+line3
+]
+span (/= ' '): (the,  quick  brown fox)
+break (== ' '): (the,  quick  brown fox)
+split (== ','): ["a", "b", "", "c"]
+toString of an empty Text: []
+toUpper "Hello": HELLO
+toLower "Hello": hello
+--- Tests finished ---

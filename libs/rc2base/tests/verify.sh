@@ -67,3 +67,16 @@ if diff -u "$TESTS_DIR/TestText.expected" "$TMP/actual.out"; then
 else
     fail "TestText -- output mismatch (see diff above)"
 fi
+
+echo "=== rc2 backend: build TestTextTree (Data.Text, the finger-tree rope) ==="
+nix-shell -p gcc gmp pkg-config --run \
+    "cd '$TESTS_DIR' && '$IDRIS2RC2' --cg rc2 -p rc2base -o TestTextTree_verify TestTextTree.idr"
+
+echo "=== Run and diff against TestTextTree.expected ==="
+"$TESTS_DIR/build/exec/TestTextTree_verify" > "$TMP/actual2.out" 2>&1
+
+if diff -u "$TESTS_DIR/TestTextTree.expected" "$TMP/actual2.out"; then
+    echo "PASS  TestTextTree"
+else
+    fail "TestTextTree -- output mismatch (see diff above)"
+fi

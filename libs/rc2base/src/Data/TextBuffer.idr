@@ -138,8 +138,8 @@ tabulate n f = unsafePerformIO $ do
 ||| already-total string-shaped algorithms instead of reimplementing
 ||| them against the raw C buffer.
 export
-toList : {n : Nat} -> TextBuffer n -> List Char
-toList buf = go n 0
+toList : TextBuffer n -> List Char
+toList buf = go (length buf) 0
   where
     go : (fuel : Nat) -> Nat -> List Char
     go Z _ = []
@@ -177,14 +177,14 @@ replicate n c = tabulate n (const c)
 ||| Uppercase every character. Length-preserving, so no existential
 ||| needed.
 export
-toUpper : {n : Nat} -> TextBuffer n -> TextBuffer n
-toUpper buf = tabulate n (\i => toUpper (unsafeIndex buf i))
+toUpper : TextBuffer n -> TextBuffer n
+toUpper buf = rewrite sym (lengthCorrect buf) in tabulate (length buf) (\i => toUpper (unsafeIndex buf i))
 
 ||| Lowercase every character. Length-preserving, so no existential
 ||| needed.
 export
-toLower : {n : Nat} -> TextBuffer n -> TextBuffer n
-toLower buf = tabulate n (\i => toLower (unsafeIndex buf i))
+toLower : TextBuffer n -> TextBuffer n
+toLower buf = rewrite sym (lengthCorrect buf) in tabulate (length buf) (\i => toLower (unsafeIndex buf i))
 
 -- ---------------------------------------------------------------------------
 -- Dynamic-length operations, all returning an existential
@@ -193,7 +193,7 @@ toLower buf = tabulate n (\i => toLower (unsafeIndex buf i))
 ||| Extract a substring of the given length, starting at the given
 ||| offset. Clamped to the source Text's actual bounds.
 export
-substr : {n : Nat} -> (start, len : Nat) -> TextBuffer n -> (m ** TextBuffer m)
+substr : (start, len : Nat) -> TextBuffer n -> (m ** TextBuffer m)
 substr start len buf = fromCharList (take len (drop start (toList buf)))
 
 ||| Concatenate a list of Texts into one.
@@ -203,13 +203,13 @@ concat xs = fromCharList (concatMap (\(_ ** b) => toList b) xs)
 
 ||| Join a list of Texts, inserting `sep` between each pair.
 export
-joinBy : {k : Nat} -> TextBuffer k -> List (n ** TextBuffer n) -> (m ** TextBuffer m)
+joinBy : TextBuffer k -> List (n ** TextBuffer n) -> (m ** TextBuffer m)
 joinBy sep xs = fromCharList (concatMap id (intersperse (toList sep) (map (\(_ ** b) => toList b) xs)))
 
 ||| Pad on the left with `c` up to `width` (a no-op if already at
 ||| least that long).
 export
-padLeft : {n : Nat} -> (width : Nat) -> Char -> TextBuffer n -> (m ** TextBuffer m)
+padLeft : (width : Nat) -> Char -> TextBuffer n -> (m ** TextBuffer m)
 padLeft width c buf =
   let cs = toList buf
   in fromCharList (replicate (width `minus` length cs) c ++ cs)
@@ -217,29 +217,29 @@ padLeft width c buf =
 ||| Pad on the right with `c` up to `width` (a no-op if already at
 ||| least that long).
 export
-padRight : {n : Nat} -> (width : Nat) -> Char -> TextBuffer n -> (m ** TextBuffer m)
+padRight : (width : Nat) -> Char -> TextBuffer n -> (m ** TextBuffer m)
 padRight width c buf =
   let cs = toList buf
   in fromCharList (cs ++ replicate (width `minus` length cs) c)
 
 ||| Strip whitespace from the left.
 export
-ltrim : {n : Nat} -> TextBuffer n -> (m ** TextBuffer m)
+ltrim : TextBuffer n -> (m ** TextBuffer m)
 ltrim buf = fromCharList (dropWhile isSpace (toList buf))
 
 ||| Strip whitespace from the right.
 export
-rtrim : {n : Nat} -> TextBuffer n -> (m ** TextBuffer m)
+rtrim : TextBuffer n -> (m ** TextBuffer m)
 rtrim buf = fromCharList (reverse (dropWhile isSpace (reverse (toList buf))))
 
 ||| Strip whitespace from both ends.
 export
-trim : {n : Nat} -> TextBuffer n -> (m ** TextBuffer m)
+trim : TextBuffer n -> (m ** TextBuffer m)
 trim buf = let (_ ** t) = ltrim buf in rtrim t
 
 ||| Split on runs of whitespace, dropping empty pieces.
 export
-words : {n : Nat} -> TextBuffer n -> List (m ** TextBuffer m)
+words : TextBuffer n -> List (m ** TextBuffer m)
 words buf = map fromCharList (filter (not . null) (forget (split isSpace (toList buf))))
 
 ||| Join with single spaces.
@@ -250,7 +250,7 @@ unwords xs = joinBy (singleton ' ') xs
 ||| Split on newlines (`\n`, `\r`, or `\r\n`). A trailing newline
 ||| doesn't produce a trailing empty piece, matching `Data.String.lines`.
 export
-lines : {n : Nat} -> TextBuffer n -> List (m ** TextBuffer m)
+lines : TextBuffer n -> List (m ** TextBuffer m)
 lines buf = map fromCharList (go [] (toList buf))
   where
     go : List Char -> List Char -> List (List Char)
@@ -269,17 +269,17 @@ unlines xs = fromCharList (concatMap (\(_ ** b) => toList b ++ ['\n']) xs)
 ||| Split into the longest prefix satisfying the predicate, and the
 ||| rest.
 export
-span : {n : Nat} -> (Char -> Bool) -> TextBuffer n -> ((p ** TextBuffer p), (q ** TextBuffer q))
+span : (Char -> Bool) -> TextBuffer n -> ((p ** TextBuffer p), (q ** TextBuffer q))
 span p buf = let (a, b) = span p (toList buf) in (fromCharList a, fromCharList b)
 
 ||| Split into the longest prefix *not* satisfying the predicate, and
 ||| the rest.
 export
-break : {n : Nat} -> (Char -> Bool) -> TextBuffer n -> ((p ** TextBuffer p), (q ** TextBuffer q))
+break : (Char -> Bool) -> TextBuffer n -> ((p ** TextBuffer p), (q ** TextBuffer q))
 break p buf = span (not . p) buf
 
 ||| Split wherever the predicate holds, dropping the separator
 ||| characters themselves.
 export
-split : {n : Nat} -> (Char -> Bool) -> TextBuffer n -> List (m ** TextBuffer m)
+split : (Char -> Bool) -> TextBuffer n -> List (m ** TextBuffer m)
 split p buf = map fromCharList (forget (split p (toList buf)))
