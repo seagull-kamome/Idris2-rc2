@@ -5,8 +5,6 @@ module Data.TextBuffer
 
 import System.FFI
 import Data.Fin
-import Data.List
-import Data.List1
 
 -- ---------------------------------------------------------------------------
 
@@ -243,6 +241,41 @@ substr start len buf =
     copyInto gcptr 0 buf copyLen start
     pure (copyLen ** MkTextBuffer gcptr)
 
+||| Splits `buf` wherever `p` holds, one character at a time (`fuel`
+||| decreasing by exactly 1 per character scanned, so this is
+||| structurally total without needing a variable-length fuel jump).
+||| `pieceStart` marks where the current (not-yet-emitted) piece
+||| began; hitting a separator emits `[pieceStart, pos)` and starts a
+||| fresh piece right after it, matching `Data.List.split`'s own
+||| one-separator-at-a-time semantics (consecutive separators produce
+||| empty pieces in between).
+scanSplit : (Char -> Bool) -> TextBuffer n -> (fuel : Nat) -> (pos : Nat) -> (pieceStart : Nat) -> List (m ** TextBuffer m)
+scanSplit p buf Z pos pieceStart = [substr pieceStart (pos `minus` pieceStart) buf]
+scanSplit p buf (S fuel) pos pieceStart =
+  if p (unsafeIndex buf pos)
+    then substr pieceStart (pos `minus` pieceStart) buf :: scanSplit p buf fuel (S pos) (S pos)
+    else scanSplit p buf fuel (S pos) pieceStart
+
+||| Splits `buf` on `\n`, `\r`, or `\r\n`, one character at a time
+||| like `scanSplit`. Unlike `scanSplit`, a trailing newline doesn't
+||| produce a trailing empty piece: reaching the end exactly at a
+||| piece boundary (`pos == pieceStart`, i.e. the last thing scanned
+||| was itself a newline, or the buffer was empty) emits nothing
+||| further, matching `Data.String.lines`.
+scanLines : TextBuffer n -> (fuel : Nat) -> (pos : Nat) -> (pieceStart : Nat) -> List (m ** TextBuffer m)
+scanLines buf Z pos pieceStart =
+  if pos == pieceStart then [] else [substr pieceStart (pos `minus` pieceStart) buf]
+scanLines buf (S fuel) pos pieceStart =
+  case unsafeIndex buf pos of
+    '\n' => substr pieceStart (pos `minus` pieceStart) buf :: scanLines buf fuel (S pos) (S pos)
+    '\r' => case fuel of
+              Z => [substr pieceStart (pos `minus` pieceStart) buf]
+              S fuel' =>
+                if unsafeIndex buf (S pos) == '\n'
+                  then substr pieceStart (pos `minus` pieceStart) buf :: scanLines buf fuel' (S (S pos)) (S (S pos))
+                  else substr pieceStart (pos `minus` pieceStart) buf :: scanLines buf fuel (S pos) (S pos)
+    _ => scanLines buf fuel (S pos) pieceStart
+
 concatWriteAll : GCAnyPtr -> Nat -> List (n ** TextBuffer n) -> IO ()
 concatWriteAll p destOffset [] = pure ()
 concatWriteAll p destOffset ((_ ** b) :: rest) = do
@@ -340,7 +373,7 @@ trim buf =
 ||| Split on runs of whitespace, dropping empty pieces.
 export
 words : TextBuffer n -> List (m ** TextBuffer m)
-words buf = map fromCharList (filter (not . null) (forget (split isSpace (toList buf))))
+words buf = filter (\(_ ** w) => length w > 0) (scanSplit isSpace buf (length buf) 0 0)
 
 ||| Join with single spaces.
 export
@@ -351,15 +384,7 @@ unwords xs = joinBy (singleton ' ') xs
 ||| doesn't produce a trailing empty piece, matching `Data.String.lines`.
 export
 lines : TextBuffer n -> List (m ** TextBuffer m)
-lines buf = map fromCharList (go [] (toList buf))
-  where
-    go : List Char -> List Char -> List (List Char)
-    go [] [] = []
-    go acc [] = [reverse acc]
-    go acc ('\n' :: xs) = reverse acc :: go [] xs
-    go acc ('\r' :: '\n' :: xs) = reverse acc :: go [] xs
-    go acc ('\r' :: xs) = reverse acc :: go [] xs
-    go acc (c :: xs) = go (c :: acc) xs
+lines buf = scanLines buf (length buf) 0 0
 
 unlinesTotalLength : List (n ** TextBuffer n) -> Nat
 unlinesTotalLength [] = 0
@@ -401,4 +426,4 @@ break p buf = span (not . p) buf
 ||| characters themselves.
 export
 split : (Char -> Bool) -> TextBuffer n -> List (m ** TextBuffer m)
-split p buf = map fromCharList (forget (split p (toList buf)))
+split p buf = scanSplit p buf (length buf) 0 0
