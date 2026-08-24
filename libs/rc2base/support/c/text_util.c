@@ -43,6 +43,13 @@ IDRIS2RC2_Value* idris2rc2_TextBuffer_to_string(const idris2rc2_TextBuffer* buf)
     for (int i = 0; i < buf->len; i++) {
         outLen += idris2rc2_utf8EncodeLen(buf->buf[i]);
     }
+    // idris2rc2_mkEmptyString(1) returns a shared, immutable empty-string
+    // singleton (memory.c) rather than a fresh writable allocation -- for
+    // outLen == 0 that singleton must be returned as-is, never written
+    // into below.
+    if (outLen == 0) {
+        return (IDRIS2RC2_Value*)idris2rc2_mkEmptyString(1);
+    }
     IDRIS2RC2_String* r = idris2rc2_mkEmptyString(outLen + 1);
     char* p = r->str;
     for (int i = 0; i < buf->len; i++) {
