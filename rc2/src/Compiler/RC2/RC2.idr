@@ -196,6 +196,14 @@ compileExpr c s _ outputDir tm outfile =
      when ("dumpdualabi" `elem` directiveList) $
          coreLift_ $ writeFile (outputDir </> outfile ++ ".dualabi") (dumpDualABI defs)
 
+     -- `--directive dumpcc` / `%cg rc2 dumpcc`: print the exact C
+     -- compile/link command(s) about to run to stdout -- same
+     -- directive mechanism as dumprcexpr/dumpdualabi above, but read
+     -- here (rather than only inside Compiler.RC2.CC) since it's
+     -- `compileExpr`'s own call sites that need the extra `verbose`
+     -- argument threaded through.
+     let dumpCC = "dumpcc" `elem` directiveList
+
      -- `%cg rc2 extraRuntime=<path>` / `inlineRuntime=<code>`: splice
      -- arbitrary C straight into the generated output, right after its
      -- own `#include`s (Emit.idr's `header`) -- `extraRuntime` reuses
@@ -211,9 +219,9 @@ compileExpr c s _ outputDir tm outfile =
      let injectedRuntime = extraRuntimeFiles ++ (if inlineRuntime == "" then "" else "\n" ++ inlineRuntime)
 
      foreignLibs <- logTime 2 "rc2: C generation" $ generateCSourceFile ffiWorkers defs injectedRuntime outn
-     Just _ <- logTime 2 "rc2: C compile" $ compileCObjectFile outn outobj
+     Just _ <- logTime 2 "rc2: C compile" $ compileCObjectFile outn outobj dumpCC
        | Nothing => pure Nothing
-     logTime 2 "rc2: C link" $ compileCFile outobj outexec foreignLibs
+     logTime 2 "rc2: C link" $ compileCFile outobj outexec foreignLibs dumpCC
 
 export
 executeExpr : Ref Ctxt Defs -> Ref Syn SyntaxInfo ->

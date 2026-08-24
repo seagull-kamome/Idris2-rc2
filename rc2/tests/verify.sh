@@ -98,6 +98,24 @@
 
 set -u
 
+# Must be run with cwd = this script's own directory (rc2/tests), e.g.
+# `cd rc2/tests && ./verify.sh`, NOT `./rc2/tests/verify.sh` from the
+# repo root or anywhere else. Most of this script only ever touches
+# $RC2_DIR/$REPO_DIR-prefixed absolute paths, so cwd doesn't normally
+# matter -- but a handful of tests' own `%cg rc2
+# extraRuntime=<relative path>` source pragmas (e.g.
+# Test31CgExtraRuntime's `extraRuntime=Test31CgExtraRuntimeSupport.c`)
+# get resolved by upstream's own Compiler.Common.getExtraRuntime via a
+# plain Core.readFile on that string as-is -- i.e. relative to
+# whatever the idris2-rc2 *process's* cwd is at compile time, not
+# relative to the source file's own directory. Run from the wrong cwd
+# and those tests fail with a misleading "File Not Found" that has
+# nothing to do with whatever you were actually testing (confirmed by
+# hand: running from the repo root instead of here breaks
+# Test31CgExtraRuntime this way). Deliberately NOT `cd`-ed into
+# automatically here -- this script won't change a cwd the caller
+# didn't ask it to.
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 RC2_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 REPO_DIR="$(cd "$RC2_DIR/.." && pwd)"
