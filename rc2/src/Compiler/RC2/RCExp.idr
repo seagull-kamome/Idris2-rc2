@@ -31,7 +31,7 @@ mutual
   ||| than a genuine heap constructor. `RCConstCon` folds a constructor
   ||| application whose fields are themselves all constant (see
   ||| `Compiler.RC2.ConstFold`) into a single value staged once as a
-  ||| file-scope static (`Compiler.RC2.Emit`'s `ConstConDef`), immortal
+  ||| file-scope static (`Compiler.RC2.EmitUtil`'s `ConstConDef`), immortal
   ||| the same way a small-int-cache/`ConstDef` value is -- never a
   ||| freshly-allocated heap constructor.
   public export
@@ -45,9 +45,9 @@ mutual
        ||| of `RCLocal`'s constant forms, never `RCLoc`" -- erased
        ||| (`0`), so it costs nothing at runtime, but makes constructing
        ||| an ill-formed `RCConstCon` (one holding a live variable
-       ||| reference) a compile error rather than a `Compiler.RC2.Emit`
+       ||| reference) a compile error rather than a `Compiler.RC2.EmitUtil`
        ||| `idris_crash`. Staying erased all the way through
-       ||| (`Compiler.RC2.Emit`'s own `boxedConstConExpr`/
+       ||| (`Compiler.RC2.EmitUtil`'s own `boxedConstConExpr`/
        ||| `constConFieldExprsFor` thread it onward at `0` too, never
        ||| widening it to a kept value) is exactly what lets Idris2
        ||| still use it to rule out the `RCLoc` case in
@@ -60,7 +60,7 @@ mutual
 
   ||| Witness that `l` is `RCConstCon` -- kept as its own narrow proof
   ||| (rather than only the four-case `IsAnyConstLocal` below)
-  ||| specifically so `Compiler.RC2.Emit`'s `boxedConstConExpr`, which
+  ||| specifically so `Compiler.RC2.EmitUtil`'s `boxedConstConExpr`, which
   ||| only ever handles this one case, can require exactly it and let
   ||| Idris2's coverage checker rule out every other `RCLocal`
   ||| constructor (`RCLoc` included) as ill-typed, rather than needing a
@@ -76,7 +76,7 @@ mutual
   ||| wherever a value just needs to be "not a live variable" without
   ||| narrowing further (`RCConstCon`'s own `args`,
   ||| `Compiler.RC2.ConstFold`'s `Env`); `constConFieldExpr`
-  ||| (`Compiler.RC2.Emit`) rebuilds the narrower `IsConstLocal` it
+  ||| (`Compiler.RC2.EmitUtil`) rebuilds the narrower `IsConstLocal` it
   ||| needs for its own `RCConstCon` case directly, rather than
   ||| unwrapping one of these.
   public export

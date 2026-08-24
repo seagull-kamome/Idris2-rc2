@@ -36,7 +36,7 @@ import Libraries.Data.List.SizeOf
 
 ||| `Vect`'s own stdlib `Traversable` instance doesn't resolve cleanly
 ||| against `Core`'s own `Applicative` in this codebase (same issue
-||| `Compiler.RC2.Emit`'s own identically-named helper already works
+||| `Compiler.RC2.EmitUtil`'s own identically-named helper already works
 ||| around) -- a plain hand-written traversal sidesteps it.
 traverseVectCore : (a -> Core b) -> Vect n a -> Core (Vect n b)
 traverseVectCore f [] = pure []

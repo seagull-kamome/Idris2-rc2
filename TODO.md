@@ -148,7 +148,7 @@ was addressed separately (`Compiler.RC2.ConAltNative`, see
 
 ## Performance: `Loop.idr`'s own loop-carried (non-invariant) native shadow still reboxes fresh on a Boxed-context read
 
-`Emit.idr`'s `rcVarToBoxedC` (its own doc comment states this
+`EmitUtil.idr`'s `rcVarToBoxedC` (its own doc comment states this
 explicitly) boxes a `Native`/`RInlineNative` local by always calling
 `nativeMk` (`idris2rc2_mkInt64`/etc.) -- a fresh allocation, never a
 `dup` of whatever Boxed object the value was originally unboxed from.
@@ -389,7 +389,7 @@ Repro: `cd rc2/tests && ./verify.sh --skip-build --no-valgrind --directive noreu
 ## Correctness: `CFString`'s hardcoded `char *` return type collides with `-Werror` on a `const`-returning C function
 
 Also found via the libcurl experiment above: `curl_easy_strerror`
-returns `const char *`. `Compiler/RC2/Emit.idr`'s own
+returns `const char *`. `Compiler/RC2/EmitUtil.idr`'s own
 `cTypeOfCFType CFString = "char *"` (no `const`) makes the generated
 call site `char * retVal = curl_easy_strerror(...)`, which GCC flags as
 `-Wdiscarded-qualifiers` -- and `CC.idr`'s own `-Werror` (both the
@@ -424,7 +424,7 @@ or return type crashes rc2's own codegen:
 
 Root cause: `CFInteger` is a real constructor of `CompileExpr.idr`'s
 own `CFType` (`Core/CompileExpr.idr`, alongside `CFInt`/`CFString`/
-etc.), but `Compiler.RC2.Emit`'s `cTypeOfCFType`/`extractValue`/
+etc.), but `Compiler.RC2.EmitUtil`'s `cTypeOfCFType`/`extractValue`/
 `packCFType` have no case for it at all -- it falls straight through
 to the generic `idris_crash "Unknown FFI type"` fallback. **Not
 rc2-specific**: confirmed the identical crash (`Unknown FFI type in C
@@ -461,7 +461,7 @@ own cross-check against the pinned reference `idris2 --cg refc` (this
 project's own installed 0.8.0) fails with `ERROR: INTERNAL ERROR:
 Unknonw FFI type in C backend: Int_32` [sic, upstream's own typo].
 Confirmed with a minimal repro outside the test suite. **Not
-rc2-specific, and not what this project's own `Compiler/RC2/Emit.idr`
+rc2-specific, and not what this project's own `Compiler/RC2/EmitUtil.idr`
 does** -- rc2's own `cTypeOfCFType`/`extractValue`/`packCFType` already
 handle `CFInt32` correctly (`int32_t`, same as the `idris2-src` clone's
 own `Compiler/RefC/RefC.idr`); this is purely a gap in the specific
@@ -504,7 +504,7 @@ practice.
 
 `Compiler.RC2.DualABI`'s ordinary-function worker synthesis (Stage 3a,
 `synthesizeIfEligible`/`synthesizeWorker`) no longer excludes functions
-with more than `Compiler.RC2.Emit.MaxExtractFunArgs` (8) parameters --
+with more than `Compiler.RC2.EmitUtil.MaxExtractFunArgs` (8) parameters --
 a dual-ABI *worker* is only ever reached via a direct, statically-named
 `RAppNameRep` call, never stored in a `Closure`, so it doesn't need to
 satisfy `support/rc2/runtime.c`'s closure-dispatch function-pointer

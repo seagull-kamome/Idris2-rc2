@@ -41,6 +41,8 @@ rc2/
 │   ├── Loop.idr         self-tail-call -> goto, native-shadow/loop-invariant param+expr promotion
 │   ├── Sink.idr         branch-local sinking: a let used on one arm only moves into it
 │   ├── DualABI.idr      dual (Boxed/native) calling convention across function boundaries
+│   ├── EmitUtil.idr     C-rendering primitives used by Emit.idr (name mangling, literal/op
+│   │                    rendering, Boxed/native value rendering, closures, FFI CFType mapping)
 │   ├── Emit.idr         RCExp -> C emission (mechanical; no ownership decisions here)
 │   ├── Pretty.idr       human-readable RCExp dump (`--directive dumprcexpr`)
 │   ├── CC.idr           C compiler driver / linking
@@ -69,8 +71,8 @@ own `toRCDefs` for the exact order):
    RefC does it. `RCExp` carries explicit `RDup`/`RDrop`/`RFree` nodes,
    inserted once by `RC.idr`'s ownership-analysis pass (`annotate`);
    every later pass either leaves that decision alone or updates it
-   consistently while reshaping the tree. `Emit.idr` only ever does
-   mechanical translation of an already-decided tree.
+   consistently while reshaping the tree. `Emit.idr`/`EmitUtil.idr`
+   only ever does mechanical translation of an already-decided tree.
 2. **Native (unboxed) representation inference** (`Types.idr`) for
    fixed-width numeric intermediates, extended well past a single
    function's own body by later passes: a dual Boxed/native calling
@@ -194,7 +196,7 @@ its boxed `Char` representation both carry the full 32-bit codepoint, so
 a value outside the valid Unicode range maps to NUL instead of being
 silently reinterpreted through whichever low bits happened to survive
 truncation. One deliberate exception: a `CFStruct` field bound as
-`Char` (`Emit.idr`'s `genStructDef`/`cTypeOfCFType`) still uses a real,
+`Char` (`Emit.idr`'s `genStructDef`/`EmitUtil.idr`'s `cTypeOfCFType`) still uses a real,
 1-byte C `char` -- that field's type has to match the actual C
 library's own struct layout (size, offset, alignment) byte for byte,
 so widening it to `uint32_t` there would corrupt adjacent fields rather

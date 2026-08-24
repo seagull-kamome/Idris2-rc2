@@ -29,8 +29,8 @@ mutual
   ||| `e'` in its place; every other leaf (including a lazy `RAppName`,
   ||| or one `f` declines by returning `Nothing`) is left untouched.
   ||| "Tail position" here is the exact same structural set
-  ||| Compiler.RC2.Emit's TailPositionStatus threading already visits
-  ||| when lowering to C -- RLet's body; RDup/RDrop/RFree/
+  ||| Compiler.RC2.Emit's own `TailPositionStatus` (`Compiler.RC2.EmitUtil`)
+  ||| threading already visits when lowering to C -- RLet's body; RDup/RDrop/RFree/
   ||| RReleaseReuse/RReuseOffer's continuation; RCmpCase's two branches;
   ||| RConCase/RConstCase's alts and default. Operand positions (RCon's
   ||| args, ROp's operands, RApp's own callee/arg, an RAppName's *own*
@@ -292,7 +292,8 @@ opNativeUsesThrough _ _ _ = empty
 ||| Every native `PrimType` at which top-level parameter `p` is read as
 ||| an operand of a native-result `ROp`, or of a fused `RCmpCase` -- the
 ||| two, and only two, places Compiler.RC2.Emit ever reads an operand
-||| via `rcVarToNativeC` rather than `rcVarToBoxedC` (a Boxed-*result*
+||| via `Compiler.RC2.EmitUtil`'s `rcVarToNativeC` rather than
+||| `rcVarToBoxedC` (a Boxed-*result*
 ||| `ROp`'s own operands are read Boxed too, via `emitRC`'s own ROp
 ||| case -- only an `RLet`-bound `ROp` whose *own* `Rep` is
 ||| `RNative`/`RInlineNative` counts here, now including one reached
@@ -483,8 +484,8 @@ export
 ||| already carry.
 |||
 ||| `reps` is threaded through the *same* tail-position shape
-||| `Compiler.RC2.Emit`'s own `TailPositionStatus` threading already
-||| visits (an `RLet`'s own body, `RCmpCase`'s two branches,
+||| `Compiler.RC2.Emit`'s own `TailPositionStatus` (`Compiler.RC2.EmitUtil`)
+||| threading already visits (an `RLet`'s own body, `RCmpCase`'s two branches,
 ||| `RConCase`/`RConstCase`'s alts and default, every
 ||| `RDup`/`RDrop`/`RFree`/`RReleaseReuse`/`RReuseOffer`'s own
 ||| continuation) -- the same shape `Compiler.RC2.DualABI`'s own

@@ -238,7 +238,7 @@ every eligible, non-`MutualLoop`-merged function:
 1. Mint a fresh worker name (`freshName`/`freshId`/`FreshId`, the same
    `Ref`-threaded-counter pattern `MutualLoop.idr` already uses) --
    `idris2rc2_worker_` plus the *original* function's own mangled C
-   name (`Compiler.RC2.Emit`'s own `cName`, now `export`ed for this
+   name (`Compiler.RC2.EmitUtil`'s own `cName`, `export`ed for this
    reuse -- the exact same mangling the wrapper's own unchanged C name
    already uses) plus a disambiguating counter, e.g. `Main.fib`'s own
    worker is `idris2rc2_worker_Main_fib_0` -- deliberately legible on
@@ -341,8 +341,9 @@ return side for free -- it skips worker synthesis for a merged
 function entirely, regardless of which side turned out eligible.
 
 Landed as its own stage, after Stage 3a, specifically because it
-touches `Compiler.RC2.Emit`'s own `Sink`/`SinkReturn` machinery --
-exactly the "materially riskier change to some of that module's
+touches `Sink`/`SinkReturn` (`Compiler.RC2.EmitUtil`) machinery
+threaded pervasively through `Compiler.RC2.Emit`'s own emission
+engine -- exactly the "materially riskier change to some of that module's
 highest-traffic code" flagged when Stage 3a was scoped down to
 parameters only.
 
@@ -677,7 +678,7 @@ Narrower than Stages 1-4 in three ways that fall directly out of a
   `Compiler.RC2.DualABI.ffiWorkerTable` only ever *adds* a table entry
   (`Name -> (workerName, argReps, retRep)`); it never rewrites the
   `MkRCForeign` itself the way `synthesizeWorker` rewrites a `MkRCFun`
-  into a thin wrapper. `Compiler.RC2.Emit`'s own `FFIWorkers` ref
+  into a thin wrapper. `Compiler.RC2.EmitUtil`'s own `FFIWorkers` ref
   (populated from this same table, threaded down from
   `Compiler.RC2.RC2`'s pipeline) is what tells `createCFunctions`
   whether to also emit a second, native-signature C function
@@ -835,7 +836,7 @@ the closest analogue to bug #2 above) passed without any fix needed.
    `RLet`'s own value at all, and the walk's own "must be tail
    position" fallback swallowed it. Fixed by threading an explicit
    `inTail : Bool` through the whole walk (mirroring
-   `Compiler.RC2.Emit`'s own `TailPositionStatus`) -- `True` only at a
+   `Compiler.RC2.EmitUtil`'s own `TailPositionStatus`) -- `True` only at a
    definition's own top-level entry point, threaded straight through
    every construct that doesn't change tail-ness, and *always* `False`
    while descending into an `RLet`'s own `value` -- so the *only* place
@@ -905,7 +906,7 @@ the closest analogue to bug #2 above) passed without any fix needed.
    eligibility entirely, unconditionally -- regardless of what
    `paramEligibility`/`returnEligibility` would otherwise decide -- the
    same blanket-exclusion shape `isMutualLoopMerged` already uses.
-   `MaxExtractFunArgs` itself (`Compiler.RC2.Emit`) is now `export`ed
+   `MaxExtractFunArgs` itself (`Compiler.RC2.EmitUtil`) is now `export`ed
    for this reuse, so the two limits can never drift apart by accident.
    Re-verified: full refc-suite (19/19), the entire
    `tests/Test*.idr`/`Bench*.idr` matrix re-diffed byte-for-byte against

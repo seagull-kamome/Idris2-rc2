@@ -64,10 +64,10 @@ already-staged `constList` static, not a re-read of a dead variable.
 though none of them fold to a value of their own. This isn't
 optional -- see `Bugs found #1`.
 
-### Staging (`Compiler.RC2.Emit`)
+### Staging (`Compiler.RC2.EmitUtil`)
 
 Mirrors the existing `ConstDef` machinery (`boxedConstExpr`,
-`Emit.idr:572`) almost exactly: a new `ConstConDef` state
+`EmitUtil.idr:637`) almost exactly: a new `ConstConDef` state
 (`SortedMap RCLocal String` for dedup-by-name, paired with the
 finished definition text list in staging order) is consulted by a new
 `boxedConstConExpr`. Staging a `RCConstCon` recursively stages any
@@ -234,11 +234,12 @@ confirm exactly which `RLet` was losing its `RCLoc`.
   extended `case value' of`, the standalone `RCon` case, the
   `RAppName`/etc. operand-resolution cases), `asConstLocal`'s `BI`
   exclusion.
-- `rc2/src/Compiler/RC2/Emit.idr` -- `ConstConDef` state,
-  `boxedConstConExpr`/`constConFieldExpr`, the `header` function's own
-  static-definition-list emission, `RCLocal`-consuming helpers
+- `rc2/src/Compiler/RC2/EmitUtil.idr` -- `ConstConDef` state,
+  `boxedConstConExpr`/`constConFieldExpr`, `RCLocal`-consuming helpers
   (`varName`/`repOfLocal`/`inlineExprFor`) extended with a
   `RCConstCon` case.
+- `rc2/src/Compiler/RC2/Emit.idr` -- the `header` function's own
+  static-definition-list emission.
 - `rc2/src/Compiler/RC2/RC.idr` -- `annotate`'s own `splitBorrows`/
   `dropIfLastUse`/`isBoxedOperand`/`(RV fc v)` cases, extended to
   treat `RCConstCon` as immortal (never needs a dup/drop tracked).

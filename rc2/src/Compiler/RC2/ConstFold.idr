@@ -121,14 +121,14 @@ resolveConst env l = case resolveLocal env l of
 
 ||| `l` is already one of `RCLocal`'s constant forms (not a variable
 ||| reference) *and* safe to stage as a static C initializer (see
-||| `Compiler.RC2.Emit`'s `boxedConstConExpr`) -- the proof itself,
+||| `Compiler.RC2.EmitUtil`'s `boxedConstConExpr`) -- the proof itself,
 ||| still at its natural (non-erased) multiplicity so callers can
 ||| fold into `RCConstCon`'s own `All` proof obligation (`allConstLocal`
 ||| below, which needs an unrestricted-multiplicity proof to build each
 ||| `All.(::)`). Excludes
 ||| `RCConst (BI _)`: every other `Constant` case renders as either a
 ||| plain cast/shift macro (`idris2rc2_mkInt8`, etc.) or a reference to
-||| an already-staged file-scope static (`Compiler.RC2.Emit`'s
+||| an already-staged file-scope static (`Compiler.RC2.EmitUtil`'s
 ||| `ConstDef`, via `orStagen`), both of which are compile-time
 ||| constant expressions -- but `BI`'s own rendering
 ||| (`idris2rc2_getSmallInteger`/`idris2rc2_mkIntegerLiteral`) is

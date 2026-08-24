@@ -188,8 +188,8 @@ mapTailAppNames : (FC -> Name -> List RCLocal -> Maybe RCExp) -> RCExp -> (Bool,
 Rewrites every tail-position, non-lazy `RAppName fc Nothing n args` leaf
 for which `f fc n args` returns `Just e'`, substituting `e'` in its
 place. "Tail position" here is the *exact* structural set
-`Compiler.RC2.Emit`'s own `TailPositionStatus` threading already visits
-when lowering to C: `RLet`'s body; `RDup`/`RDrop`/`RFree`/
+`Compiler.RC2.Emit`'s own `TailPositionStatus` (`Compiler.RC2.EmitUtil`)
+threading already visits when lowering to C: `RLet`'s body; `RDup`/`RDrop`/`RFree`/
 `RReleaseReuse`/`RReuseOffer`'s continuation; `RCmpCase`'s two
 branches; `RConCase`/`RConstCase`'s alts and default. Operand positions
 (`RCon`'s args, `ROp`'s operands, `RApp`'s own callee/arg, an
@@ -245,7 +245,8 @@ of context), or as an operand of an `RLet`-bound `ROp` whose *own*
 `Rep` is `RNative`/`RInlineNative` (a Boxed-*result* `ROp`'s own
 operands are read Boxed too, via `emitRC`'s own `ROp` case -- they
 don't count). These are the *only* two places `Compiler.RC2.Emit` ever
-reads an operand via `rcVarToNativeC` rather than `rcVarToBoxedC`; the
+reads an operand via `Compiler.RC2.EmitUtil`'s `rcVarToNativeC` rather
+than `rcVarToBoxedC`; the
 eligibility scan is deliberately defined in exactly those terms so it
 can never diverge from what Emit actually does. `nativeArgTypes` walks
 the *whole* tree (not just tail positions -- an operand can appear

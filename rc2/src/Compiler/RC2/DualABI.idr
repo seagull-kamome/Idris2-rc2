@@ -25,7 +25,7 @@ module Compiler.RC2.DualABI
 import Compiler.RC2.RCExp
 import Compiler.RC2.Types
 import Compiler.RC2.Loop
-import Compiler.RC2.Emit
+import Compiler.RC2.EmitUtil
 
 import Core.CompileExpr
 import Core.Context
@@ -177,7 +177,7 @@ freshId = do i <- get FreshId; put FreshId (i + 1); pure i
 ||| A fresh name for `original`'s own worker: `pfx` (the caller's own
 ||| prefix, e.g. `"idris2rc2_worker_"` for an ordinary `MkRCFun` worker,
 ||| `"idris2rc2_ffiworker_"` for an FFI one) plus `original`'s own
-||| mangled C name (`Compiler.RC2.Emit`'s `cName`, reused directly --
+||| mangled C name (`Compiler.RC2.EmitUtil`'s `cName`, reused directly --
 ||| the exact same mangling the wrapper's own, unchanged C name already
 ||| uses, so the two read as visibly related) plus a disambiguating
 ||| counter (defends against, e.g., two originals whose own mangled
@@ -395,8 +395,8 @@ workerTable defs = fromList (mapMaybe workerEntry defs)
 ||| `l`'s own currently-known `Rep` in `reps` (seeded from a function's
 ||| own top-level parameters, extended by every `RLet`/`RLoop` this
 ||| walk has already passed through by the time it asks) -- the same
-||| lookup `Compiler.RC2.Emit`'s own (`Core`-monadic, `RepMap`-backed)
-||| `repOfLocal` performs at emission time, just written as a pure
+||| lookup `Compiler.RC2.EmitUtil`'s own (`Core`-monadic, `RepMap`-
+||| backed) `repOfLocal` performs at emission time, just written as a pure
 ||| function here since this pass has no `Core` context of its own to
 ||| thread a ref through.
 localRepIn : SortedMap Int Rep -> RCLocal -> Rep
@@ -435,7 +435,8 @@ postDropFor reps argReps args =
 ||| `e`'s own ultimate tail expression, peeling through every `RLet`'s
 ||| own `body` and every `RDup`/`RDrop`/`RFree`/`RReleaseReuse`/
 ||| `RReuseOffer`'s own `cont` -- the same peeling
-||| `tryEmitLoopContinue`/`peelDrop` (`Compiler.RC2.Emit`) already do,
+||| `Compiler.RC2.Emit`'s `tryEmitLoopContinue`/`Compiler.RC2.EmitUtil`'s
+||| `peelDrop` already do,
 ||| just walking all the way to the very end instead of stopping at the
 ||| first interesting shape. Used only to *inspect* what a value
 ||| position (an `RLet`'s own, possibly deeply nested, `value` -- see

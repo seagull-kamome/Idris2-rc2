@@ -119,8 +119,8 @@ here.
 ## Conventions
 
 - Code, comments, and commit messages: English.
-- When changing codegen (`Compiler/RC2/Emit.idr`, `RC.idr`, `Types.idr`,
-  `RCExp.idr`), verify the generated C against real RefC
+- When changing codegen (`Compiler/RC2/Emit.idr`, `EmitUtil.idr`,
+  `RC.idr`, `Types.idr`, `RCExp.idr`), verify the generated C against real RefC
   (`idris2 --cg refc`) for parity, and re-run the full refc-suite plus
   the `rc2/tests/*.idr` smoke tests and benchmarks before considering
   the change done.
