@@ -13,24 +13,23 @@ module Data.Text
 -- snocTree/addTree0) is an ordinary, non-Nat-indexed set of types --
 -- deliberately NOT dependently typed, mirroring idris2's own
 -- contrib package (Data.Seq.Internal, adapted here from the same
--- containers/Data.Sequence algorithm it itself credits). Trying to
--- carry an exact Nat *sum* as a type index through every internal
--- node runs into constant associativity/identity mismatches (`a+b+c`
--- vs `a+(b+c)`, `n` vs `n+0`, ...) that need a proof at nearly every
--- constructor. The standard, much lighter answer -- used by
--- Data.Seq.Internal itself -- is to cache a plain runtime Nat (via a
--- small `Sized` interface local to this module -- Control.WellFounded
--- has one too, but bundled with well-founded-recursion machinery this
--- module has no use for) at each Node/Deep instead. `Text` itself is
--- plain `Type`, exactly like `Data.TextBuffer.TextBuffer` -- `length`
--- (reading the outermost `Deep`/`Single`'s own cached `size`, or the
--- chunk's own FFI length for a single leaf) is the one source of
--- truth for how long a given `Text` is, mirroring the same choice
--- `TextBuffer` itself makes for its FFI-backed length. A function
--- that genuinely needs to relate a `Nat` to a specific `Text`'s
--- length (just `index`'s `Fin` bound, here) takes an explicit,
--- erased `(0 _ : n = length t)` witness for exactly that purpose
--- instead of indexing the whole type by it.
+-- containers/Data.Sequence algorithm it itself credits). Unlike
+-- Data.Seq.Internal (and containers' own Data.Sequence), this tree
+-- carries no per-node size cache at all: every branch decision in
+-- consTree/snocTree/appendTreeK/addDigitsK/addTree0 is driven purely
+-- by which Digit constructor (One/Two/Three/Four) is in hand, never
+-- by a running total, so there was nothing for a cached Nat to buy
+-- except a faster `length` -- and no index-based split/search that
+-- would need one is implemented here (every non-concatenation
+-- operation flattens to a single TextBuffer first, see below). `Text`
+-- itself is plain `Type`, exactly like `Data.TextBuffer.TextBuffer`;
+-- `length` walks the tree structurally (via `Foldable FingerTree`,
+-- O(chunk count), no data copied) and is the one source of truth for
+-- how long a given `Text` is. A function that genuinely needs to
+-- relate a `Nat` to a specific `Text`'s length (just `index`'s `Fin`
+-- bound, here) takes an explicit, erased `(0 _ : n = length t)`
+-- witness for exactly that purpose instead of indexing the whole type
+-- by it.
 --
 -- Every operation that isn't fundamentally about concatenation
 -- (substr, words, trim, ...) is implemented by flattening to a single
@@ -45,18 +44,9 @@ import Data.Fin
 import Data.List
 
 -- ---------------------------------------------------------------------------
--- The finger tree engine. Ordinary (non-dependent) types; every
--- Node2/Node3/Deep caches its own already-computed total as a plain
--- Nat field instead of proving anything about it.
-
--- A minimal, locally-scoped version of Control.WellFounded's `Sized`
--- (just the one method actually used here) -- this module has exactly
--- one instantiation in mind (TextBuffer chunks, nested arbitrarily
--- deep via Node), not WellFounded's own broader well-founded-recursion
--- machinery (Smaller/SizeAccessible/sizeInd/...), so importing that
--- whole interface for one method is more than this needs.
-interface Sized e where
-  size : e -> Nat
+-- The finger tree engine. Ordinary (non-dependent), unsized types --
+-- no node caches a running total; every Node2/Node3/Deep is just a
+-- plain structural grouping.
 
 data Digit : Type -> Type where
   One   : e -> Digit e
@@ -65,53 +55,38 @@ data Digit : Type -> Type where
   Four  : e -> e -> e -> e -> Digit e
 
 data Node : Type -> Type where
-  Node2 : Nat -> e -> e -> Node e
-  Node3 : Nat -> e -> e -> e -> Node e
+  Node2 : e -> e -> Node e
+  Node3 : e -> e -> e -> Node e
 
-Sized (Node e) where
-  size (Node2 s _ _) = s
-  size (Node3 s _ _ _) = s
+node2 : e -> e -> Node e
+node2 = Node2
 
-node2 : Sized e => e -> e -> Node e
-node2 a b = Node2 (size a + size b) a b
-
-node3 : Sized e => e -> e -> e -> Node e
-node3 a b c = Node3 (size a + size b + size c) a b c
+node3 : e -> e -> e -> Node e
+node3 = Node3
 
 data FingerTree : Type -> Type where
   Empty  : FingerTree e
   Single : e -> FingerTree e
-  Deep   : Nat -> Digit e -> FingerTree (Node e) -> Digit e -> FingerTree e
+  Deep   : Digit e -> FingerTree (Node e) -> Digit e -> FingerTree e
 
-Sized e => Sized (FingerTree e) where
-  size Empty = 0
-  size (Single a) = size a
-  size (Deep s _ _ _) = s
+deep : Digit e -> FingerTree (Node e) -> Digit e -> FingerTree e
+deep pr m sf = Deep pr m sf
 
-digitSize : Sized e => Digit e -> Nat
-digitSize (One a) = size a
-digitSize (Two a b) = size a + size b
-digitSize (Three a b c) = size a + size b + size c
-digitSize (Four a b c d) = size a + size b + size c + size d
-
-deep : Sized e => Digit e -> FingerTree (Node e) -> Digit e -> FingerTree e
-deep pr m sf = Deep (digitSize pr + size m + digitSize sf) pr m sf
-
-consTree : Sized e => e -> FingerTree e -> FingerTree e
+consTree : e -> FingerTree e -> FingerTree e
 consTree a Empty = Single a
 consTree a (Single b) = deep (One a) Empty (One b)
-consTree a (Deep s (One b) m sf) = Deep (size a + s) (Two a b) m sf
-consTree a (Deep s (Two b c) m sf) = Deep (size a + s) (Three a b c) m sf
-consTree a (Deep s (Three b c d) m sf) = Deep (size a + s) (Four a b c d) m sf
-consTree a (Deep s (Four b c d f) m sf) = Deep (size a + s) (Two a b) (consTree (node3 c d f) m) sf
+consTree a (Deep (One b) m sf) = Deep (Two a b) m sf
+consTree a (Deep (Two b c) m sf) = Deep (Three a b c) m sf
+consTree a (Deep (Three b c d) m sf) = Deep (Four a b c d) m sf
+consTree a (Deep (Four b c d f) m sf) = Deep (Two a b) (consTree (node3 c d f) m) sf
 
-snocTree : Sized e => FingerTree e -> e -> FingerTree e
+snocTree : FingerTree e -> e -> FingerTree e
 snocTree Empty a = Single a
 snocTree (Single a) b = deep (One a) Empty (One b)
-snocTree (Deep s pr m (One a)) f = Deep (s + size f) pr m (Two a f)
-snocTree (Deep s pr m (Two a b)) f = Deep (s + size f) pr m (Three a b f)
-snocTree (Deep s pr m (Three a b c)) f = Deep (s + size f) pr m (Four a b c f)
-snocTree (Deep s pr m (Four a b c d)) f = Deep (s + size f) pr (snocTree m (node3 a b c)) (Two d f)
+snocTree (Deep pr m (One a)) f = Deep pr m (Two a f)
+snocTree (Deep pr m (Two a b)) f = Deep pr m (Three a b f)
+snocTree (Deep pr m (Three a b c)) f = Deep pr m (Four a b c f)
+snocTree (Deep pr m (Four a b c d)) f = Deep pr (snocTree m (node3 a b c)) (Two d f)
 
 -- Regroups the up-to-8 elements of two adjacent digits (plus, at
 -- deeper recursion levels, up to 4 already-built Nodes carried
@@ -122,7 +97,7 @@ snocTree (Deep s pr m (Four a b c d)) f = Deep (s + size f) pr (snocTree m (node
 -- node, up to 4 extra needs up to 4) is why this bottoms out at K=4
 -- rather than needing a generic list.
 mutual
-  addDigits4 : Sized e => FingerTree (Node (Node e)) -> Digit (Node e) -> Node e -> Node e -> Node e -> Node e -> Digit (Node e) -> FingerTree (Node (Node e)) -> FingerTree (Node (Node e))
+  addDigits4 : FingerTree (Node (Node e)) -> Digit (Node e) -> Node e -> Node e -> Node e -> Node e -> Digit (Node e) -> FingerTree (Node (Node e)) -> FingerTree (Node (Node e))
   addDigits4 m1 (One a) b c d e (One f) m2 = appendTree2 m1 (node3 a b c) (node3 d e f) m2
   addDigits4 m1 (One a) b c d e (Two f g) m2 = appendTree3 m1 (node3 a b c) (node2 d e) (node2 f g) m2
   addDigits4 m1 (One a) b c d e (Three f g h) m2 = appendTree3 m1 (node3 a b c) (node3 d e f) (node2 g h) m2
@@ -140,14 +115,14 @@ mutual
   addDigits4 m1 (Four a b c d) e f g h (Three i j k) m2 = appendTree4 m1 (node3 a b c) (node3 d e f) (node3 g h i) (node2 j k) m2
   addDigits4 m1 (Four a b c d) e f g h (Four i j k l) m2 = appendTree4 m1 (node3 a b c) (node3 d e f) (node3 g h i) (node3 j k l) m2
 
-  appendTree4 : Sized e => FingerTree (Node e) -> Node e -> Node e -> Node e -> Node e -> FingerTree (Node e) -> FingerTree (Node e)
+  appendTree4 : FingerTree (Node e) -> Node e -> Node e -> Node e -> Node e -> FingerTree (Node e) -> FingerTree (Node e)
   appendTree4 Empty a b c d xs = consTree a (consTree b (consTree c (consTree d xs)))
   appendTree4 xs a b c d Empty = snocTree (snocTree (snocTree (snocTree xs a) b) c) d
   appendTree4 (Single x) a b c d xs = consTree x (consTree a (consTree b (consTree c (consTree d xs))))
   appendTree4 xs a b c d (Single x) = snocTree (snocTree (snocTree (snocTree (snocTree xs a) b) c) d) x
-  appendTree4 (Deep s1 pr1 m1 sf1) a b c d (Deep s2 pr2 m2 sf2) = Deep (s1 + size a + size b + size c + size d + s2) pr1 (addDigits4 m1 sf1 a b c d pr2 m2) sf2
+  appendTree4 (Deep pr1 m1 sf1) a b c d (Deep pr2 m2 sf2) = Deep pr1 (addDigits4 m1 sf1 a b c d pr2 m2) sf2
 
-  addDigits3 : Sized e => FingerTree (Node (Node e)) -> Digit (Node e) -> Node e -> Node e -> Node e -> Digit (Node e) -> FingerTree (Node (Node e)) -> FingerTree (Node (Node e))
+  addDigits3 : FingerTree (Node (Node e)) -> Digit (Node e) -> Node e -> Node e -> Node e -> Digit (Node e) -> FingerTree (Node (Node e)) -> FingerTree (Node (Node e))
   addDigits3 m1 (One a) b c d (One e) m2 = appendTree2 m1 (node3 a b c) (node2 d e) m2
   addDigits3 m1 (One a) b c d (Two e f) m2 = appendTree2 m1 (node3 a b c) (node3 d e f) m2
   addDigits3 m1 (One a) b c d (Three e f g) m2 = appendTree3 m1 (node3 a b c) (node2 d e) (node2 f g) m2
@@ -165,14 +140,14 @@ mutual
   addDigits3 m1 (Four a b c d) e f g (Three h i j) m2 = appendTree4 m1 (node3 a b c) (node3 d e f) (node2 g h) (node2 i j) m2
   addDigits3 m1 (Four a b c d) e f g (Four h i j k) m2 = appendTree4 m1 (node3 a b c) (node3 d e f) (node3 g h i) (node2 j k) m2
 
-  appendTree3 : Sized e => FingerTree (Node e) -> Node e -> Node e -> Node e -> FingerTree (Node e) -> FingerTree (Node e)
+  appendTree3 : FingerTree (Node e) -> Node e -> Node e -> Node e -> FingerTree (Node e) -> FingerTree (Node e)
   appendTree3 Empty a b c xs = consTree a (consTree b (consTree c xs))
   appendTree3 xs a b c Empty = snocTree (snocTree (snocTree xs a) b) c
   appendTree3 (Single x) a b c xs = consTree x (consTree a (consTree b (consTree c xs)))
   appendTree3 xs a b c (Single x) = snocTree (snocTree (snocTree (snocTree xs a) b) c) x
-  appendTree3 (Deep s1 pr1 m1 sf1) a b c (Deep s2 pr2 m2 sf2) = Deep (s1 + size a + size b + size c + s2) pr1 (addDigits3 m1 sf1 a b c pr2 m2) sf2
+  appendTree3 (Deep pr1 m1 sf1) a b c (Deep pr2 m2 sf2) = Deep pr1 (addDigits3 m1 sf1 a b c pr2 m2) sf2
 
-  addDigits2 : Sized e => FingerTree (Node (Node e)) -> Digit (Node e) -> Node e -> Node e -> Digit (Node e) -> FingerTree (Node (Node e)) -> FingerTree (Node (Node e))
+  addDigits2 : FingerTree (Node (Node e)) -> Digit (Node e) -> Node e -> Node e -> Digit (Node e) -> FingerTree (Node (Node e)) -> FingerTree (Node (Node e))
   addDigits2 m1 (One a) b c (One d) m2 = appendTree2 m1 (node2 a b) (node2 c d) m2
   addDigits2 m1 (One a) b c (Two d e) m2 = appendTree2 m1 (node3 a b c) (node2 d e) m2
   addDigits2 m1 (One a) b c (Three d e f) m2 = appendTree2 m1 (node3 a b c) (node3 d e f) m2
@@ -190,14 +165,14 @@ mutual
   addDigits2 m1 (Four a b c d) e f (Three g h i) m2 = appendTree3 m1 (node3 a b c) (node3 d e f) (node3 g h i) m2
   addDigits2 m1 (Four a b c d) e f (Four g h i j) m2 = appendTree4 m1 (node3 a b c) (node3 d e f) (node2 g h) (node2 i j) m2
 
-  appendTree2 : Sized e => FingerTree (Node e) -> Node e -> Node e -> FingerTree (Node e) -> FingerTree (Node e)
+  appendTree2 : FingerTree (Node e) -> Node e -> Node e -> FingerTree (Node e) -> FingerTree (Node e)
   appendTree2 Empty a b xs = consTree a (consTree b xs)
   appendTree2 xs a b Empty = snocTree (snocTree xs a) b
   appendTree2 (Single x) a b xs = consTree x (consTree a (consTree b xs))
   appendTree2 xs a b (Single x) = snocTree (snocTree (snocTree xs a) b) x
-  appendTree2 (Deep s1 pr1 m1 sf1) a b (Deep s2 pr2 m2 sf2) = Deep (s1 + size a + size b + s2) pr1 (addDigits2 m1 sf1 a b pr2 m2) sf2
+  appendTree2 (Deep pr1 m1 sf1) a b (Deep pr2 m2 sf2) = Deep pr1 (addDigits2 m1 sf1 a b pr2 m2) sf2
 
-  addDigits1 : Sized e => FingerTree (Node (Node e)) -> Digit (Node e) -> Node e -> Digit (Node e) -> FingerTree (Node (Node e)) -> FingerTree (Node (Node e))
+  addDigits1 : FingerTree (Node (Node e)) -> Digit (Node e) -> Node e -> Digit (Node e) -> FingerTree (Node (Node e)) -> FingerTree (Node (Node e))
   addDigits1 m1 (One a) b (One c) m2 = appendTree1 m1 (node3 a b c) m2
   addDigits1 m1 (One a) b (Two c d) m2 = appendTree2 m1 (node2 a b) (node2 c d) m2
   addDigits1 m1 (One a) b (Three c d e) m2 = appendTree2 m1 (node3 a b c) (node2 d e) m2
@@ -215,14 +190,14 @@ mutual
   addDigits1 m1 (Four a b c d) e (Three f g h) m2 = appendTree3 m1 (node3 a b c) (node3 d e f) (node2 g h) m2
   addDigits1 m1 (Four a b c d) e (Four f g h i) m2 = appendTree3 m1 (node3 a b c) (node3 d e f) (node3 g h i) m2
 
-  appendTree1 : Sized e => FingerTree (Node e) -> Node e -> FingerTree (Node e) -> FingerTree (Node e)
+  appendTree1 : FingerTree (Node e) -> Node e -> FingerTree (Node e) -> FingerTree (Node e)
   appendTree1 Empty a xs = consTree a xs
   appendTree1 xs a Empty = snocTree xs a
   appendTree1 (Single x) a xs = consTree x (consTree a xs)
   appendTree1 xs a (Single x) = snocTree (snocTree xs a) x
-  appendTree1 (Deep s1 pr1 m1 sf1) a (Deep s2 pr2 m2 sf2) = Deep (s1 + size a + s2) pr1 (addDigits1 m1 sf1 a pr2 m2) sf2
+  appendTree1 (Deep pr1 m1 sf1) a (Deep pr2 m2 sf2) = Deep pr1 (addDigits1 m1 sf1 a pr2 m2) sf2
 
-addDigits0 : Sized e => FingerTree (Node e) -> Digit e -> Digit e -> FingerTree (Node e) -> FingerTree (Node e)
+addDigits0 : FingerTree (Node e) -> Digit e -> Digit e -> FingerTree (Node e) -> FingerTree (Node e)
 addDigits0 m1 (One a) (One b) m2 = appendTree1 m1 (node2 a b) m2
 addDigits0 m1 (One a) (Two b c) m2 = appendTree1 m1 (node3 a b c) m2
 addDigits0 m1 (One a) (Three b c d) m2 = appendTree2 m1 (node2 a b) (node2 c d) m2
@@ -240,12 +215,12 @@ addDigits0 m1 (Four a b c d) (Two e f) m2 = appendTree2 m1 (node3 a b c) (node3 
 addDigits0 m1 (Four a b c d) (Three e f g) m2 = appendTree3 m1 (node3 a b c) (node2 d e) (node2 f g) m2
 addDigits0 m1 (Four a b c d) (Four e f g h) m2 = appendTree3 m1 (node3 a b c) (node3 d e f) (node2 g h) m2
 
-addTree0 : Sized e => FingerTree e -> FingerTree e -> FingerTree e
+addTree0 : FingerTree e -> FingerTree e -> FingerTree e
 addTree0 Empty xs = xs
 addTree0 xs Empty = xs
 addTree0 (Single x) xs = consTree x xs
 addTree0 xs (Single x) = snocTree xs x
-addTree0 (Deep s1 pr1 m1 sf1) (Deep s2 pr2 m2 sf2) = Deep (s1 + s2) pr1 (addDigits0 m1 sf1 pr2 m2) sf2
+addTree0 (Deep pr1 m1 sf1) (Deep pr2 m2 sf2) = Deep pr1 (addDigits0 m1 sf1 pr2 m2) sf2
 
 -- Foldable instances, mirroring Data.Seq.Internal's own: ordinary
 -- structural recursion, `m`'s own Foldable dispatch (a DIFFERENT
@@ -258,38 +233,34 @@ Foldable Digit where
   foldr f z (Four a b c d) = a `f` (b `f` (c `f` (d `f` z)))
 
 Foldable Node where
-  foldr f z (Node2 _ a b) = a `f` (b `f` z)
-  foldr f z (Node3 _ a b c) = a `f` (b `f` (c `f` z))
+  foldr f z (Node2 a b) = a `f` (b `f` z)
+  foldr f z (Node3 a b c) = a `f` (b `f` (c `f` z))
 
 Foldable FingerTree where
   foldr _ z Empty = z
   foldr f z (Single x) = x `f` z
-  foldr f z (Deep _ pr m sf) = foldr f (foldr (flip (foldr f)) (foldr f z sf) m) pr
+  foldr f z (Deep pr m sf) = foldr f (foldr (flip (foldr f)) (foldr f z sf) m) pr
 
 -- Walks the tree collecting its leaves, in order.
 treeToList : FingerTree e -> List e
 treeToList = foldr (::) []
 
 -- ---------------------------------------------------------------------------
--- The public API. A `Chunk` is just a `TextBuffer` -- `TextBuffer`
--- itself is already a plain `Type` (see Data.TextBuffer's own header),
--- so it sits directly as the finger tree's leaf type with no
--- existential wrapping needed.
-
-Chunk : Type
-Chunk = TextBuffer
-
-Sized Chunk where
-  size = TextBuffer.length
+-- The public API. `TextBuffer` itself is already a plain `Type` (see
+-- Data.TextBuffer's own header), so it sits directly as the finger
+-- tree's leaf type with no existential wrapping and no separate
+-- `Chunk` alias needed.
 
 export
 data Text : Type where
-  MkText : FingerTree Chunk -> Text
+  MkText : FingerTree TextBuffer -> Text
 
-||| O(1). The length of a Text.
+||| O(chunk count). The length of a Text, summed by walking the tree
+||| structurally (via `Foldable FingerTree`) -- no data is copied,
+||| contrast with `flatten` below, which builds a single buffer.
 export
 length : Text -> Nat
-length (MkText t) = size t
+length (MkText t) = foldr (\c, acc => TextBuffer.length c + acc) 0 t
 
 ||| O(1). Wrap an existing TextBuffer as a single-chunk Text.
 export
@@ -304,11 +275,12 @@ fromString s = fromTextBuffer (TextBuffer.fromString s)
 -- Collapses a Text's chunks back into a single TextBuffer -- the
 -- boundary every operation below that isn't fundamentally about
 -- concatenation crosses to reuse Data.TextBuffer's own algorithms.
--- Folds with TextBuffer's own native (++) (a single memcpy per step)
--- rather than TextBuffer.concat's List Char round trip -- the chunk
--- type here is always TextBuffer, never some arbitrary Foldable-ish
--- thing, so there's no reason to detour through a char list to
--- combine them.
+-- Folds with TextBuffer's own native (++) rather than calling
+-- TextBuffer.concat on the chunk list: the overwhelmingly common case
+-- is a single-chunk Text (nothing appended to it yet), where this
+-- fold is free (foldl returns the one chunk unchanged) but
+-- TextBuffer.concat would still allocate and copy into a fresh
+-- buffer.
 flatten : Text -> TextBuffer
 flatten (MkText t) = case treeToList t of
   [] => TextBuffer.fromString ""
