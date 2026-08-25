@@ -4,19 +4,6 @@ module System.Concurrency.RC2
 -- This module was licensed by BSD3.
 
 import System.Concurrency
-import Data.IORef
-
--- This module defines its own Channel (see the "Channel" section below,
--- for why upstream's own type can't be reused) with the same names as
--- upstream's -- hidden here so this file's own definitions aren't
--- ambiguous against the imported ones. A downstream importer of *both*
--- modules still needs a qualified name; that's the documented tradeoff.
-%hide System.Concurrency.Channel
-%hide System.Concurrency.makeChannel
-%hide System.Concurrency.channelPut
-%hide System.Concurrency.channelGet
-%hide System.Concurrency.channelGetNonBlocking
-%hide System.Concurrency.channelGetWithTimeout
 
 %foreign_impl System.Concurrency.prim__makeMutex
   "RC2:idris2rc2_mutex_make,libidris2rc2base,concurrency_util.h"
@@ -79,89 +66,20 @@ export
 join : HasIO io => JoinHandle a -> io a
 join h = primIO (prim__join h)
 
--- Channel: upstream's own `Channel`/`makeChannel`/... are scheme-only
--- (like everything else patched above), but channelGetNonBlocking/
--- channelGetWithTimeout return `Maybe a` -- rc2 has no way to construct
--- an arbitrary program's `Just` tag from generic runtime C (only
--- `Nothing`'s NULL representation is a fixed, program-independent
--- convention). So Channel is implemented here in ordinary Idris on top
--- of the Mutex/Condition/IORef primitives above instead of patched via
--- %foreign_impl -- Maybe/List construction then goes through the normal
--- compiler pipeline, never across an FFI boundary. This also means it's
--- a fresh declaration (upstream's own `Channel` type can't be reused,
--- since giving an `[external]` type a concrete Idris-level constructor
--- from a different module isn't possible), so importing both this
--- module and System.Concurrency ambiguates `Channel` -- use a qualified
--- name if you need both.
-export
-data Channel : Type -> Type where
-  MkChannel : IORef (List a) -> Mutex -> Condition -> Channel a
-
-||| Creates and returns a new `Channel`.
-export
-makeChannel : HasIO io => io (Channel a)
-makeChannel = do
-  ref <- newIORef []
-  mtx <- makeMutex
-  cv <- makeCondition
-  pure (MkChannel ref mtx cv)
-
-||| Puts a value on the given channel.
-export
-channelPut : HasIO io => Channel a -> a -> io ()
-channelPut (MkChannel ref mtx cv) val = do
-  mutexAcquire mtx
-  modifyIORef ref (++ [val])
-  conditionSignal cv
-  mutexRelease mtx
-
-||| Blocks until a value is available on `chan`, then returns it.
-export
-covering
-channelGet : HasIO io => Channel a -> io a
-channelGet (MkChannel ref mtx cv) = do
-  mutexAcquire mtx
-  result <- loop
-  mutexRelease mtx
-  pure result
-  where
-    covering
-    loop : io a
-    loop = do
-      xs <- readIORef ref
-      case xs of
-        [] => do conditionWait cv mtx; loop
-        (x :: rest) => do writeIORef ref rest; pure x
-
-||| Non-blocking version of `channelGet`.
-export
-channelGetNonBlocking : HasIO io => Channel a -> io (Maybe a)
-channelGetNonBlocking (MkChannel ref mtx cv) = do
-  mutexAcquire mtx
-  xs <- readIORef ref
-  result <- case xs of
-    [] => pure Nothing
-    (x :: rest) => do writeIORef ref rest; pure (Just x)
-  mutexRelease mtx
-  pure result
-
-||| Timeout version of `channelGet`. A single `conditionWaitTimeout`
-||| covers the whole budget -- if woken (spuriously or by a `channelPut`)
-||| before a value is actually available, this returns `Nothing` rather
-||| than re-waiting for the remainder, a deliberately simple first-pass
-||| semantics rather than exact deadline tracking.
-export
-channelGetWithTimeout : HasIO io => Channel a -> (milliseconds : Nat) -> io (Maybe a)
-channelGetWithTimeout (MkChannel ref mtx cv) milliseconds = do
-  mutexAcquire mtx
-  xs <- readIORef ref
-  result <- case xs of
-    (x :: rest) => do writeIORef ref rest; pure (Just x)
-    [] => do
-      conditionWaitTimeout cv mtx (cast milliseconds * 1000)
-      xs' <- readIORef ref
-      case xs' of
-        [] => pure Nothing
-        (x :: rest) => do writeIORef ref rest; pure (Just x)
-  mutexRelease mtx
-  pure result
+-- Channel: patched the same way as everything else above, now that
+-- Just's representation can be relied on directly (see concurrency_util.c's
+-- idris2rc2_channel_get_non_blocking/_get_with_timeout for the exact
+-- assumption and its limits -- this is a narrower, sound thing than the
+-- general "unwrap Just x to x" idea TODO.md records as dropped: here we
+-- *build* a real tag=1/arity=1 Constructor for Prelude.Maybe specifically,
+-- never elide one for an arbitrary payload type).
+%foreign_impl System.Concurrency.prim__makeChannel
+  "RC2:idris2rc2_channel_make,libidris2rc2base,concurrency_util.h"
+%foreign_impl System.Concurrency.prim__channelGet
+  "RC2:idris2rc2_channel_get,libidris2rc2base,concurrency_util.h"
+%foreign_impl System.Concurrency.prim__channelGetNonBlocking
+  "RC2:idris2rc2_channel_get_non_blocking,libidris2rc2base,concurrency_util.h"
+%foreign_impl System.Concurrency.prim__channelGetWithTimeout
+  "RC2:idris2rc2_channel_get_with_timeout,libidris2rc2base,concurrency_util.h"
+%foreign_impl System.Concurrency.prim__channelPut
+  "RC2:idris2rc2_channel_put,libidris2rc2base,concurrency_util.h"

@@ -8,16 +8,6 @@ import System.Concurrency.RC2
 import Data.IORef
 import Data.List
 
--- Both System.Concurrency and System.Concurrency.RC2 export a Channel
--- API; this test exercises RC2's (see RC2.idr's own module-level %hide
--- for why upstream's own Channel/channel* can't be used from a C backend).
-%hide System.Concurrency.Channel
-%hide System.Concurrency.makeChannel
-%hide System.Concurrency.channelPut
-%hide System.Concurrency.channelGet
-%hide System.Concurrency.channelGetNonBlocking
-%hide System.Concurrency.channelGetWithTimeout
-
 workerCount : Int
 workerCount = 5
 

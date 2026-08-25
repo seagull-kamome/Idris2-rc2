@@ -42,6 +42,7 @@
 #define IDRIS2RC2_TAG_SEMAPHORE 27
 #define IDRIS2RC2_TAG_BARRIER 28
 #define IDRIS2RC2_TAG_JOINHANDLE 29
+#define IDRIS2RC2_TAG_CHANNEL 30
 
 typedef struct {
   // Values that reach the maximum reference count are treated as immortal
@@ -204,3 +205,23 @@ typedef struct {
   pthread_t tid;
   bool joined;
 } IDRIS2RC2_JoinHandle;
+
+// Backs System.Concurrency.RC2's Channel: an unbounded FIFO queue of
+// owned IDRIS2RC2_Value* nodes, guarded by an embedded mutex/condition
+// pair (put appends+signals, get blocks while empty then pops). Torn
+// down by idris2rc2_teardown, which must walk any still-queued nodes,
+// dropping each one's value, before destroying the mutex/cond -- a
+// channel dropped with pending, never-received messages must not leak
+// them.
+typedef struct idris2rc2_ChannelNode {
+  struct idris2rc2_ChannelNode *next;
+  IDRIS2RC2_Value *value;
+} idris2rc2_ChannelNode;
+
+typedef struct {
+  IDRIS2RC2_Header header;
+  pthread_mutex_t mutex;
+  pthread_cond_t cond;
+  idris2rc2_ChannelNode *head;
+  idris2rc2_ChannelNode *tail;
+} IDRIS2RC2_Channel;

@@ -370,6 +370,13 @@ information at this IR stage (`Compiler.RC2.Types`'s native type
 inference does something in this spirit for a much narrower purpose --
 worth a look if this is ever revisited) to be viable.
 
+Not to be confused with `libs/rc2base/support/c/concurrency_util.c`'s
+`Channel` primitives (`rc2/doc/concurrency.md`'s "Design: Channel"),
+which *do* build `Just` values directly from C -- that's a different,
+sound thing: always constructing a real `Constructor` for
+`Prelude.Maybe` specifically (a fixed library type whose `Just` tag is
+known and stable), never eliding one for an arbitrary payload type.
+
 ## Correctness: `List.(++)` leaks memory on repeated `IORef` append
 
 Found incidentally while testing `Channel`'s `channelPut`

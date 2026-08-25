@@ -226,6 +226,51 @@ work didn't reach (byte-based `String`<->`Char` conversions of
 malformed/adversarial input aside, the *value's own storage width* was
 already fixed by the `Char` work above).
 
+Concurrency tells a similar story, at a larger scale. Upstream Idris2's
+`System.Concurrency` module (`Mutex`/`Condition`/`Semaphore`/`Barrier`/
+`Channel`/`getThreadId`/`setThreadData`/`getThreadData`) declares every
+one of those as `%foreign` primitives with a Scheme-only implementation
+(`scheme:blodwen-make-mutex` and friends) -- no C backend, RefC
+included, has ever been able to reach any of them. `fork` itself sits
+one level lower, as a compiler-core primitive every backend must supply
+its own `prim__fork` landing point for; upstream RefC's own
+(`support/refc/threads.c`) is a single-function stub that prints
+"Threads not implemented in the RefC backend!" and calls `exit(0)` --
+it never spawns a thread at all, so nothing above it could ever have
+been reachable regardless of what those `%foreign` declarations
+targeted.
+
+rc2 deliberately doesn't follow that either: it made the reference
+count atomic first (`support/rc2/datatypes.h`/`memory.c`/`runtime.h`),
+then rewrote `refc_fork` (`support/rc2/ioprims.c`) to spawn a real,
+detached `pthread` instead of stubbing out, then used `%foreign_impl`
+(an existing Idris2 directive that attaches a concrete implementation
+to an *existing* primitive declaration from another module, without
+touching upstream's own source) to back upstream's own `Mutex`/
+`Condition`/`Semaphore`/`Barrier`/`Channel`/`conditionWaitTimeout`/
+`getThreadId`/`setThreadData`/`getThreadData` with real pthread objects
+(`libs/rc2base/src/System/Concurrency/RC2.idr`, `libs/rc2base/support/
+c/concurrency_util.c`). A caller gets all of that by adding a single
+import, `System.Concurrency.RC2`, alongside the ordinary
+`System.Concurrency` -- every upstream type and function name works
+completely unchanged from there. `Channel`'s `channelGetNonBlocking`/
+`channelGetWithTimeout` need one narrow, explicitly documented
+assumption to make that work: rc2's runtime has no program-independent
+way to construct an arbitrary compilation's `Just` tag from generic C,
+but `Prelude.Maybe` itself is one fixed library type, not a
+per-program user-defined ADT, and its `Just` is empirically confirmed
+to always be tag=1/arity=1 -- `concurrency_util.c`'s
+`idris2rc2_channel_wrap_just` builds a real `Constructor` on that
+basis rather than eliding one, so it stays sound even for payloads
+that are themselves `NULL`-representable (`Just []`, `Just ()`), unlike
+the general "unwrap `Just x` to `x`" optimization `TODO.md` records as
+investigated and dropped for exactly that reason. One thing upstream
+has no equivalent for at all rounds out the same module: a joinable
+fork (`forkJoin`/`join`/`JoinHandle`), added because upstream's own
+`threadWait` is Scheme-only and unreachable from any C backend the
+same way `Mutex` was. See `rc2/doc/concurrency.md` for the full design
+history and the memory-order reasoning behind the atomic refcount.
+
 ## `%cg rc2` directives
 
 Idris2 has a generic, backend-agnostic `%cg <codegen> <directive>` source

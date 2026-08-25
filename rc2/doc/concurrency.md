@@ -8,14 +8,15 @@ and Mutex/Condition actually work, then filling in every remaining
 (`conditionWaitTimeout`, `getThreadId`, `setThreadData`/`getThreadData`,
 `Semaphore`, `Barrier`, `Channel`) plus an rc2-specific joinable fork --
 all three stages are now done, see "Status" below for exactly what's
-implemented. The first two stages introduced no new Idris-level API
-surface: existing `System.Concurrency` types and functions work
-unchanged, just now actually backed by real threads and pthread
-primitives instead of a stub. The third stage does add new surface --
-a joinable fork and a from-scratch `Channel`, see "Design: joinable
-fork" and "Design: Channel" below for why those two specifically
-couldn't just patch an existing upstream declaration the way everything
-else in this document does. Written to let a future session (or a
+implemented. Only one thing in this whole document adds genuinely new
+Idris-level API surface: the rc2-specific joinable fork (`forkJoin`/
+`join`/`JoinHandle`), which has no upstream equivalent to patch onto --
+see "Design: joinable fork" below for why. Everything else, `Channel`
+included (see "Design: Channel" for that one's own back-and-forth),
+patches an existing upstream `System.Concurrency` declaration via
+`%foreign_impl`: existing types and functions work unchanged, just now
+actually backed by real threads and pthread primitives instead of a
+stub. Written to let a future session (or a
 future you) regain full context without re-deriving the design or
 re-discovering the constraints already identified here. This document
 is a *living* one, updated as later stages land.
@@ -328,40 +329,63 @@ documentation stops a caller from calling it twice.
 
 ## Design: Channel
 
-Channel is the one primitive in this stage that couldn't be attached
-via `%foreign_impl` at all. `channelGetNonBlocking`/
-`channelGetWithTimeout` return `Maybe a`, and rc2's runtime has no
-program-independent way to construct an arbitrary compilation's `Just`
-tag from generic runtime C: `[external]` types marshal as an
-unconstrained `IDRIS2RC2_Value*` (CFUser) passthrough, but `Just x` is
-an ordinary Idris constructor whose tag number is assigned per-
-compilation by the compiler -- only `Nothing`'s NULL representation is
-a fixed, program-independent convention (the same one already relied on
-elsewhere in the runtime).
+Channel was originally the one primitive in this stage that couldn't be
+attached via `%foreign_impl` at all: `channelGetNonBlocking`/
+`channelGetWithTimeout` return `Maybe a`, and building an arbitrary
+compilation's `Just` from generic runtime C looked unsafe in general
+(see TODO.md's "Dropped: unwrapping `Just x` to a bare `x`" entry for
+the full investigation) -- only `Nothing`'s NULL representation is a
+fixed, program-independent convention. The first version of Channel
+therefore avoided `Maybe` construction entirely, implemented in
+ordinary Idris (`MkChannel (IORef (List a)) Mutex Condition`) on top of
+the already-verified Mutex/Condition/IORef primitives, with its own
+fresh `Channel` type `%hide`-shadowing upstream's.
 
-So Channel is implemented as ordinary Idris (`libs/rc2base/src/
-System/Concurrency/RC2.idr`) on top of the already-verified Mutex/
-Condition/IORef primitives instead: `Channel a` is
-`MkChannel (IORef (List a)) Mutex Condition`; `channelPut` appends and
-signals; `channelGet` loops on `conditionWait` until the list is
-non-empty; `channelGetNonBlocking` and `channelGetWithTimeout` both
-check-then-return a `Maybe` without looping (the latter via a single
-`conditionWaitTimeout` covering the whole budget -- if woken, spuriously
-or by a `channelPut`, before a value is actually available, it returns
-`Nothing` rather than re-waiting for the remainder; deliberately simple
-rather than exact deadline tracking). Because `Maybe`/`List`
-construction goes through the ordinary compiler pipeline here, it never
-crosses an FFI boundary and needs no runtime-side tag knowledge at all.
+That's since been revisited and replaced with a `%foreign_impl`-backed
+implementation, patching `System.Concurrency`'s own `prim__makeChannel`/
+`prim__channelGet`/`prim__channelGetNonBlocking`/
+`prim__channelGetWithTimeout`/`prim__channelPut`, the same way as every
+other primitive in this document. This is **not** the general "unwrap
+`Just x` to `x`" idea that TODO.md records as dropped for being unsound
+-- that one tried to *elide* a Constructor allocation for an arbitrary
+payload type, which collides with `Nothing` whenever the payload is
+itself NULL-representable (`Just []`, `Just ()`, `Just Nothing`, ...).
+What `idris2rc2_channel_get_non_blocking`/`_get_with_timeout`
+(`libs/rc2base/support/c/concurrency_util.c`) do instead is narrower and
+sound: they always *build* a real `IDRIS2RC2_Constructor` for `Just`
+(`idris2rc2_newConstructor(1, 1)`) or return `NULL` for `Nothing`, never
+eliding one. This only works because `Prelude.Maybe`'s own tag
+assignment is a fixed, program-independent fact (confirmed empirically:
+an ordinary `Just x` compiles to `idris2rc2_newConstructor(1, 1)`, and
+`ConstFold`'s own staged-static `Just []` uses the same tag/arity) --
+**a documented limitation**, not a general technique: it relies on
+`Prelude.Maybe` being one fixed, versioned library type shared by every
+rc2 program, not a per-program user-defined ADT, and would break if a
+future Idris2 ever reordered `Nothing`/`Just`'s own declaration.
 
-This makes Channel a genuinely new type, not upstream's own `Channel`
-reused: giving an `[external]` type from another module a concrete
-Idris-level constructor isn't possible. `System.Concurrency.RC2`
-therefore `%hide`s `System.Concurrency`'s own five Channel-family names
-(`Channel`, `makeChannel`, `channelPut`, `channelGet`,
-`channelGetNonBlocking`, `channelGetWithTimeout`) rather than hiding its
-own -- a caller who imports both modules together needs a qualified
-name for whichever one they mean, a known tradeoff rather than an
-oversight.
+`Channel a` is backed by a new native tag, `IDRIS2RC2_TAG_CHANNEL`
+(`datatypes.h`): an embedded `pthread_mutex_t`/`pthread_cond_t` guarding
+a singly-linked FIFO queue of owned `IDRIS2RC2_Value*` nodes.
+`channelPut` appends a node and signals (`idris2rc2_dup`ing the value
+first -- the generated FFI wrapper drops its own reference to every
+argument right after the call returns, the same convention
+`idris2rc2_fork`/`idris2rc2_fork_join`'s own `dup` already documents,
+and the node here outlives the call); `channelGet` blocks on the
+condition variable while the queue is empty, then pops; the
+non-blocking/timeout variants pop-or-`NULL` and pop-or-wait-once-or-
+`NULL` respectively (the timeout version keeping the earlier version's
+"single wait covers the whole budget, no exact deadline tracking"
+simplicity). `idris2rc2_teardown`'s CHANNEL case destroys the mutex/cond
+and walks any still-queued nodes, dropping each stored value before
+freeing the node -- a channel dropped with pending, never-received
+messages must not leak them.
+
+Because Channel is patched onto upstream's own declarations now, the
+earlier version's `%hide` workaround and its separate, non-reusable
+`Channel` type are both gone -- callers just `import System.Concurrency`
+`import System.Concurrency.RC2` and use `System.Concurrency`'s own
+`Channel`/`makeChannel`/... unchanged, same as every other primitive in
+this document.
 
 ## Finding: `%foreign` type witnesses are not erased
 
@@ -407,18 +431,24 @@ a shared counter and waiting on a condition), plus
 
 **Remaining `System.Concurrency`-family primitives, joinable fork, and
 Channel: done and verified.** `conditionWaitTimeout`, `getThreadId`,
-`setThreadData`/`getThreadData`, `Semaphore`, and `Barrier` are now
+`setThreadData`/`getThreadData`, `Semaphore`, `Barrier`, and (as of a
+later revisit, see "Design: Channel" above) `Channel` itself are all
 usable from rc2 the same way `Mutex`/`Condition` are -- `%foreign_impl`
-onto upstream's existing prim__ declarations (see "Design: Semaphore
-and Barrier" above). An rc2-specific joinable fork (`forkJoin`/`join`/
-`JoinHandle`) and a from-scratch `Channel` fill the two gaps upstream
-itself can't cover on any C backend (see "Design: joinable fork" and
-"Design: Channel" above). Verified via `rc2/tests/verify.sh` (56
-passed, 2 known pre-existing, 0 failed) and `libs/rc2base/tests/
-verify.sh` (`TestConcurrency.idr` extended to exercise every new
-primitive, all PASS), plus `valgrind --fair-sched=yes` and `helgrind`
-reporting no new errors (the pre-existing `List.(++)` leak and the
-already-known `ThreadID` malloc are unrelated -- see `KNOWN-BUGS.md`).
+onto upstream's existing prim__ declarations. An rc2-specific joinable
+fork (`forkJoin`/`join`/`JoinHandle`) fills the one gap upstream itself
+can't cover on any C backend (see "Design: joinable fork" above).
+Verified via `rc2/tests/verify.sh` (56 passed, 2 known pre-existing, 0
+failed) and `libs/rc2base/tests/verify.sh` (`TestConcurrency.idr`
+extended to exercise every new primitive, all PASS), plus
+`valgrind --fair-sched=yes` and `helgrind` reporting no new errors (the
+pre-existing `List.(++)` leak and the already-known `ThreadID` malloc
+are unrelated -- see `KNOWN-BUGS.md`). Channel's own revisit additionally
+fixed a genuine use-after-free found while testing it: `channelPut`'s
+generated FFI wrapper drops its own reference to the value right after
+the call returns, but the queued node outlives that call -- the same
+"FFI call consumes its argument" convention `idris2rc2_fork`'s own `dup`
+already documents, missed here until a concurrent `Integer`-valued
+`Channel` test crashed inside `libgmp`.
 
 ## Outlook
 

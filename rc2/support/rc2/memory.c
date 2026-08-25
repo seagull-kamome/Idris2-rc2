@@ -216,6 +216,19 @@ static void idris2rc2_teardown(IDRIS2RC2_Value *v) {
       pthread_detach(h->tid);
     break;
   }
+  case IDRIS2RC2_TAG_CHANNEL: {
+    IDRIS2RC2_Channel *c = (IDRIS2RC2_Channel *)v;
+    idris2rc2_ChannelNode *node = c->head;
+    while (node) {
+      idris2rc2_ChannelNode *next = node->next;
+      idris2rc2_drop(node->value);
+      free(node);
+      node = next;
+    }
+    pthread_mutex_destroy(&c->mutex);
+    pthread_cond_destroy(&c->cond);
+    break;
+  }
   default:
     break;
   }

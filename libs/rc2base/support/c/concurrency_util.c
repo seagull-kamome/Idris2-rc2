@@ -136,3 +136,116 @@ IDRIS2RC2_Value *idris2rc2_join(IDRIS2RC2_Value *typeWitness, IDRIS2RC2_Value *h
   h->joined = true;
   return (IDRIS2RC2_Value *)result;
 }
+
+void *idris2rc2_channel_make(IDRIS2RC2_Value *typeWitness) {
+  IDRIS2RC2_Value *v = idris2rc2_alloc(sizeof(IDRIS2RC2_Channel));
+  v->header.tag = IDRIS2RC2_TAG_CHANNEL;
+  IDRIS2RC2_Channel *c = (IDRIS2RC2_Channel *)v;
+  pthread_mutex_init(&c->mutex, NULL);
+  pthread_cond_init(&c->cond, NULL);
+  c->head = NULL;
+  c->tail = NULL;
+  return v;
+}
+
+void idris2rc2_channel_put(IDRIS2RC2_Value *typeWitness, IDRIS2RC2_Value *chan, IDRIS2RC2_Value *val) {
+  IDRIS2RC2_Channel *c = (IDRIS2RC2_Channel *)chan;
+  idris2rc2_ChannelNode *node = malloc(sizeof(idris2rc2_ChannelNode));
+  IDRIS2RC2_VERIFY(node, "malloc failed");
+  node->next = NULL;
+  // The generated FFI wrapper drops its own reference to every argument
+  // (including val) right after this call returns -- same convention
+  // idris2rc2_fork/idris2rc2_fork_join's own dup already documents --
+  // but the node holding val outlives this call, so it needs its own
+  // reference.
+  node->value = idris2rc2_dup(val);
+  pthread_mutex_lock(&c->mutex);
+  if (c->tail)
+    c->tail->next = node;
+  else
+    c->head = node;
+  c->tail = node;
+  pthread_cond_signal(&c->cond);
+  pthread_mutex_unlock(&c->mutex);
+}
+
+IDRIS2RC2_Value *idris2rc2_channel_get(IDRIS2RC2_Value *typeWitness, IDRIS2RC2_Value *chan) {
+  IDRIS2RC2_Channel *c = (IDRIS2RC2_Channel *)chan;
+  pthread_mutex_lock(&c->mutex);
+  while (!c->head)
+    pthread_cond_wait(&c->cond, &c->mutex);
+  idris2rc2_ChannelNode *node = c->head;
+  c->head = node->next;
+  if (!c->head)
+    c->tail = NULL;
+  pthread_mutex_unlock(&c->mutex);
+  IDRIS2RC2_Value *val = node->value;
+  free(node);
+  return val;
+}
+
+// Prelude.Maybe's Just is always tag=1, arity=1 -- confirmed empirically
+// (not by reading the compiler's own source) by building a small
+// Maybe-returning program and reading the generated C: an ordinary
+// `Just x` lowers to `idris2rc2_newConstructor(1, 1)`, and ConstFold's
+// own staged-static `Just []` uses the same tag/arity. This is a
+// narrower, sound relative of the "unwrap Just x to x" idea TODO.md
+// records as investigated and dropped: that one was rejected because a
+// payload that's itself NULL-representable (e.g. `Just []`, `Just ()`)
+// would collapse onto the same NULL as Nothing. Here we always *build*
+// a real Constructor for whatever payload we're handed -- we never
+// elide one -- so that failure mode doesn't apply. Only safe because
+// Prelude.Maybe is one fixed, versioned library type shared by every
+// rc2 program, not a per-program user-defined ADT whose tag assignment
+// varies; would break if a future Idris2 ever reordered Nothing/Just's
+// declaration.
+static IDRIS2RC2_Value *idris2rc2_channel_wrap_just(IDRIS2RC2_Value *val) {
+  IDRIS2RC2_Constructor *just = idris2rc2_newConstructor(1, 1);
+  just->args[0] = val;
+  return (IDRIS2RC2_Value *)just;
+}
+
+IDRIS2RC2_Value *idris2rc2_channel_get_non_blocking(IDRIS2RC2_Value *typeWitness, IDRIS2RC2_Value *chan) {
+  IDRIS2RC2_Channel *c = (IDRIS2RC2_Channel *)chan;
+  pthread_mutex_lock(&c->mutex);
+  idris2rc2_ChannelNode *node = c->head;
+  if (node) {
+    c->head = node->next;
+    if (!c->head)
+      c->tail = NULL;
+  }
+  pthread_mutex_unlock(&c->mutex);
+  if (!node)
+    return NULL;
+  IDRIS2RC2_Value *val = node->value;
+  free(node);
+  return idris2rc2_channel_wrap_just(val);
+}
+
+IDRIS2RC2_Value *idris2rc2_channel_get_with_timeout(IDRIS2RC2_Value *typeWitness, IDRIS2RC2_Value *chan, int64_t milliseconds) {
+  IDRIS2RC2_Channel *c = (IDRIS2RC2_Channel *)chan;
+  pthread_mutex_lock(&c->mutex);
+  if (!c->head) {
+    struct timespec ts;
+    clock_gettime(CLOCK_REALTIME, &ts);
+    ts.tv_sec += milliseconds / 1000;
+    ts.tv_nsec += (milliseconds % 1000) * 1000000;
+    if (ts.tv_nsec >= 1000000000) {
+      ts.tv_nsec -= 1000000000;
+      ts.tv_sec += 1;
+    }
+    pthread_cond_timedwait(&c->cond, &c->mutex, &ts);
+  }
+  idris2rc2_ChannelNode *node = c->head;
+  if (node) {
+    c->head = node->next;
+    if (!c->head)
+      c->tail = NULL;
+  }
+  pthread_mutex_unlock(&c->mutex);
+  if (!node)
+    return NULL;
+  IDRIS2RC2_Value *val = node->value;
+  free(node);
+  return idris2rc2_channel_wrap_just(val);
+}
