@@ -55,16 +55,40 @@ prim__textIndex : GCAnyPtr -> Int -> PrimIO Bits32
 prim__TextBuffer_append : GCAnyPtr -> GCAnyPtr -> PrimIO AnyPtr
 
 -- ---------------------------------------------------------------------------
+-- Every buffer-producing function below goes through one of these:
+-- `wrapBuffer` attaches the GC finalizer to an already-obtained raw
+-- pointer (from `mkEmpty` or a primitive that builds one directly, e.g.
+-- `String_to_TextBuffer`/`append`); `allocBuffer` is `wrapBuffer` of a
+-- fresh `mkEmpty`; `build`/`buildExact` additionally run a caller-given
+-- action to populate that fresh buffer before handing it back, existentially
+-- or at a precise length respectively.
 
 freeTextBuffer : AnyPtr -> IO ()
 freeTextBuffer ptr = primIO $ prim__TextBuffer_free ptr
+
+wrapBuffer : AnyPtr -> IO GCAnyPtr
+wrapBuffer ptr = onCollectAny ptr freeTextBuffer
+
+allocBuffer : (len : Nat) -> IO GCAnyPtr
+allocBuffer len = wrapBuffer =<< primIO (prim__TextBuffer_mkEmpty (cast len))
+
+build : (len : Nat) -> (GCAnyPtr -> IO ()) -> (n ** TextBuffer n)
+build len action = unsafePerformIO $ do
+  gcptr <- allocBuffer len
+  action gcptr
+  pure (len ** MkTextBuffer gcptr)
+
+buildExact : (len : Nat) -> (GCAnyPtr -> IO ()) -> TextBuffer len
+buildExact len action = unsafePerformIO $ do
+  gcptr <- allocBuffer len
+  action gcptr
+  pure (MkTextBuffer gcptr)
 
 ||| Convert a String to Text.
 export
 fromString : (s : String) -> (n : Nat ** TextBuffer n)
 fromString s = unsafePerformIO $ do
-  ptr <- primIO $ prim__String_to_TextBuffer s
-  gcptr <- onCollectAny ptr freeTextBuffer
+  gcptr <- wrapBuffer =<< primIO (prim__String_to_TextBuffer s)
   len <- primIO $ prim__textLength gcptr
   pure (fromInteger (cast len) ** MkTextBuffer gcptr)
 
@@ -98,10 +122,8 @@ index (MkTextBuffer ptr) idx = cast $ unsafePerformIO $ primIO $ prim__textIndex
 ||| Append two Texts.
 export
 (++) : TextBuffer n -> TextBuffer m -> TextBuffer (n + m)
-(++) (MkTextBuffer ptr1) (MkTextBuffer ptr2) = unsafePerformIO $ do
-  newPtr <- primIO $ prim__TextBuffer_append ptr1 ptr2
-  gcptr <- onCollectAny newPtr freeTextBuffer
-  pure (MkTextBuffer gcptr)
+(++) (MkTextBuffer p1) (MkTextBuffer p2) =
+  unsafePerformIO $ MkTextBuffer <$> (wrapBuffer =<< primIO (prim__TextBuffer_append p1 p2))
 
 -- ---------------------------------------------------------------------------
 -- Shared construction/deconstruction primitives. Everything below this
@@ -120,11 +142,7 @@ unsafeIndex (MkTextBuffer ptr) i = cast $ unsafePerformIO $ primIO $ prim__textI
 ||| structurally terminates under this package's `--total`.
 export
 tabulate : (n : Nat) -> (Nat -> Char) -> TextBuffer n
-tabulate n f = unsafePerformIO $ do
-  ptr <- primIO $ prim__TextBuffer_mkEmpty (cast n)
-  gcptr <- onCollectAny ptr freeTextBuffer
-  writeLoop gcptr n 0
-  pure (MkTextBuffer gcptr)
+tabulate n f = buildExact n (\p => writeLoop p n 0)
   where
     writeLoop : GCAnyPtr -> (fuel : Nat) -> Nat -> IO ()
     writeLoop p Z _ = pure ()
@@ -148,11 +166,7 @@ toList buf = go (length buf) 0
 ||| statically, existentially quantified like `fromString`.
 export
 fromCharList : List Char -> (n ** TextBuffer n)
-fromCharList cs = unsafePerformIO $ do
-  ptr <- primIO $ prim__TextBuffer_mkEmpty (cast (length cs))
-  gcptr <- onCollectAny ptr freeTextBuffer
-  writeLoop gcptr 0 cs
-  pure (length cs ** MkTextBuffer gcptr)
+fromCharList cs = build (length cs) (\p => writeLoop p 0 cs)
   where
     writeLoop : GCAnyPtr -> Nat -> List Char -> IO ()
     writeLoop p i [] = pure ()
@@ -171,16 +185,16 @@ fastMap f buf = go (length buf) 0
     go Z _ = []
     go (S fuel) i = f (unsafeIndex buf i) :: go fuel (S i)
 
-buildVect : (Char -> a) -> TextBuffer n -> (fuel : Nat) -> Nat -> Vect fuel a
-buildVect f buf Z i = []
-buildVect f buf (S fuel) i = f (unsafeIndex buf i) :: buildVect f buf fuel (S i)
-
 ||| Like `fastMap`, but into a `Vect` of the buffer's own exact length
 ||| instead of a `List` -- useful when the caller wants that length
 ||| carried in the type rather than re-deriving it.
 export
 fastMap' : (Char -> a) -> TextBuffer n -> Vect n a
-fastMap' f buf = rewrite sym (lengthCorrect buf) in buildVect f buf (length buf) 0
+fastMap' f buf = rewrite sym (lengthCorrect buf) in go (length buf) 0
+  where
+    go : (fuel : Nat) -> Nat -> Vect fuel a
+    go Z i = []
+    go (S fuel) i = f (unsafeIndex buf i) :: go fuel (S i)
 
 -- ---------------------------------------------------------------------------
 -- Construction helpers with a statically known result length.
@@ -210,17 +224,14 @@ toLower buf = rewrite sym (lengthCorrect buf) in tabulate (length buf) (\i => to
 -- ---------------------------------------------------------------------------
 -- Dynamic-length operations, all returning an existential
 -- `(m ** TextBuffer m)` (or a list thereof) like `fromString`.
-
--- Every operation below builds its result by pre-computing the exact
+--
+-- Every one of these builds its result by pre-computing the exact
 -- output length and then writing straight into a single freshly
--- `mkEmpty`'d buffer via `unsafe_write_char`, all inside one
--- `unsafePerformIO` -- no `List Char` round trip through `toList`/
--- `fromCharList`. Same idea as `tabulate` above, just reading from an
--- existing buffer's own `unsafeIndex` instead of an arbitrary `f`.
-
-totalLength : List (n ** TextBuffer n) -> Nat
-totalLength [] = 0
-totalLength ((_ ** b) :: rest) = length b + totalLength rest
+-- `mkEmpty`'d buffer via `unsafe_write_char` (through `build`/
+-- `copyInto`/`copyAll`/`fillChar`), all inside one `unsafePerformIO`
+-- -- no `List Char` round trip through `toList`/`fromCharList`. Same
+-- idea as `tabulate` above, just reading from an existing buffer's
+-- own `unsafeIndex` instead of an arbitrary `f`.
 
 ||| Copy `fuel` characters of `src` (starting at `srcOffset`) into
 ||| `dest` starting at `destOffset`.
@@ -229,6 +240,10 @@ copyInto dest destOffset src Z srcOffset = pure ()
 copyInto dest destOffset src (S fuel) srcOffset = do
   primIO $ prim__TextBuffer_unsafe_write_char dest (cast destOffset) (cast (unsafeIndex src srcOffset))
   copyInto dest (S destOffset) src fuel (S srcOffset)
+
+||| `copyInto`, copying all of `src`.
+copyAll : (dest : GCAnyPtr) -> (destOffset : Nat) -> (src : TextBuffer bn) -> IO ()
+copyAll dest destOffset src = copyInto dest destOffset src (length src) 0
 
 ||| Write `fuel` copies of `c` into `dest` starting at `destOffset`.
 fillChar : (dest : GCAnyPtr) -> (destOffset : Nat) -> Char -> (fuel : Nat) -> IO ()
@@ -251,18 +266,22 @@ scanWhileBack p buf Z len = len
 scanWhileBack p buf (S fuel) Z = Z
 scanWhileBack p buf (S fuel) (S len) = if p (unsafeIndex buf len) then scanWhileBack p buf fuel len else S len
 
-||| Extract a substring of the given length, starting at the given
-||| offset. Clamped to the source Text's actual bounds.
+||| `substr`, clamped to the source Text's actual bounds instead of
+||| requiring a proof -- used internally by scans (`ltrim`/`span`/...)
+||| whose bounds are only known at runtime, never statically provable
+||| the way `substr`'s own `LTE` precondition demands.
+substrClamped : (start, len : Nat) -> TextBuffer n -> (m ** TextBuffer m)
+substrClamped start len buf =
+  let copyLen = min len (length buf `minus` start)
+  in build copyLen (\p => copyInto p 0 buf copyLen start)
+
+||| Extract a substring of exactly `len` characters starting at
+||| `start`. Requires a proof that `start + len` doesn't exceed the
+||| buffer's own length -- unlike most of this module's other
+||| operations, this one doesn't silently clamp.
 export
-substr : (start, len : Nat) -> TextBuffer n -> (m ** TextBuffer m)
-substr start len buf =
-  let bufLen = length buf
-      copyLen = min len (bufLen `minus` start)
-  in unsafePerformIO $ do
-    ptr <- primIO $ prim__TextBuffer_mkEmpty (cast copyLen)
-    gcptr <- onCollectAny ptr freeTextBuffer
-    copyInto gcptr 0 buf copyLen start
-    pure (copyLen ** MkTextBuffer gcptr)
+substr : {n : Nat} -> (start, len : Nat) -> {auto ok : LTE (start + len) n} -> TextBuffer n -> TextBuffer len
+substr start len buf = buildExact len (\p => copyInto p 0 buf len start)
 
 ||| Splits `buf` wherever `p` holds, one character at a time (`fuel`
 ||| decreasing by exactly 1 per character scanned, so this is
@@ -273,116 +292,68 @@ substr start len buf =
 ||| one-separator-at-a-time semantics (consecutive separators produce
 ||| empty pieces in between).
 scanSplit : (Char -> Bool) -> TextBuffer n -> (fuel : Nat) -> (pos : Nat) -> (pieceStart : Nat) -> List (m ** TextBuffer m)
-scanSplit p buf Z pos pieceStart = [substr pieceStart (pos `minus` pieceStart) buf]
+scanSplit p buf Z pos pieceStart = [substrClamped pieceStart (pos `minus` pieceStart) buf]
 scanSplit p buf (S fuel) pos pieceStart =
   if p (unsafeIndex buf pos)
-    then substr pieceStart (pos `minus` pieceStart) buf :: scanSplit p buf fuel (S pos) (S pos)
+    then substrClamped pieceStart (pos `minus` pieceStart) buf :: scanSplit p buf fuel (S pos) (S pos)
     else scanSplit p buf fuel (S pos) pieceStart
 
-||| Splits `buf` on `\n`, `\r`, or `\r\n`, one character at a time
-||| like `scanSplit`. Unlike `scanSplit`, a trailing newline doesn't
-||| produce a trailing empty piece: reaching the end exactly at a
-||| piece boundary (`pos == pieceStart`, i.e. the last thing scanned
-||| was itself a newline, or the buffer was empty) emits nothing
-||| further, matching `Data.String.lines`.
-scanLines : TextBuffer n -> (fuel : Nat) -> (pos : Nat) -> (pieceStart : Nat) -> List (m ** TextBuffer m)
-scanLines buf Z pos pieceStart =
-  if pos == pieceStart then [] else [substr pieceStart (pos `minus` pieceStart) buf]
-scanLines buf (S fuel) pos pieceStart =
-  case unsafeIndex buf pos of
-    '\n' => substr pieceStart (pos `minus` pieceStart) buf :: scanLines buf fuel (S pos) (S pos)
-    '\r' => case fuel of
-              Z => [substr pieceStart (pos `minus` pieceStart) buf]
-              S fuel' =>
-                if unsafeIndex buf (S pos) == '\n'
-                  then substr pieceStart (pos `minus` pieceStart) buf :: scanLines buf fuel' (S (S pos)) (S (S pos))
-                  else substr pieceStart (pos `minus` pieceStart) buf :: scanLines buf fuel (S pos) (S pos)
-    _ => scanLines buf fuel (S pos) pieceStart
-
-concatWriteAll : GCAnyPtr -> Nat -> List (n ** TextBuffer n) -> IO ()
-concatWriteAll p destOffset [] = pure ()
-concatWriteAll p destOffset ((_ ** b) :: rest) = do
-  copyInto p destOffset b (length b) 0
-  concatWriteAll p (destOffset + length b) rest
+||| The combined length of a list of Texts.
+export
+totalLength : List (n ** TextBuffer n) -> Nat
+totalLength = foldr (\(_ ** b), acc => length b + acc) 0
 
 ||| Concatenate a list of Texts into one.
 export
 concat : List (n ** TextBuffer n) -> (m ** TextBuffer m)
-concat xs = unsafePerformIO $ do
-  let totalLen = totalLength xs
-  ptr <- primIO $ prim__TextBuffer_mkEmpty (cast totalLen)
-  gcptr <- onCollectAny ptr freeTextBuffer
-  concatWriteAll gcptr 0 xs
-  pure (totalLen ** MkTextBuffer gcptr)
-
-joinTotalLength : Nat -> List (n ** TextBuffer n) -> Nat
-joinTotalLength sepLen [] = 0
-joinTotalLength sepLen ((_ ** b) :: []) = length b
-joinTotalLength sepLen ((_ ** b) :: rest@(_ :: _)) = length b + sepLen + joinTotalLength sepLen rest
-
-joinWriteAll : GCAnyPtr -> Nat -> TextBuffer k -> List (n ** TextBuffer n) -> IO ()
-joinWriteAll p destOffset sep [] = pure ()
-joinWriteAll p destOffset sep ((_ ** b) :: []) = copyInto p destOffset b (length b) 0
-joinWriteAll p destOffset sep ((_ ** b) :: rest@(_ :: _)) = do
-  copyInto p destOffset b (length b) 0
-  copyInto p (destOffset + length b) sep (length sep) 0
-  joinWriteAll p (destOffset + length b + length sep) sep rest
+concat xs = build (totalLength xs) (\p => writeAll p 0 xs)
+  where
+    writeAll : GCAnyPtr -> Nat -> List (n ** TextBuffer n) -> IO ()
+    writeAll p destOffset [] = pure ()
+    writeAll p destOffset ((_ ** b) :: rest) = do
+      copyAll p destOffset b
+      writeAll p (destOffset + length b) rest
 
 ||| Join a list of Texts, inserting `sep` between each pair.
 export
 joinBy : TextBuffer k -> List (n ** TextBuffer n) -> (m ** TextBuffer m)
-joinBy sep xs = unsafePerformIO $ do
-  let totalLen = joinTotalLength (length sep) xs
-  ptr <- primIO $ prim__TextBuffer_mkEmpty (cast totalLen)
-  gcptr <- onCollectAny ptr freeTextBuffer
-  joinWriteAll gcptr 0 sep xs
-  pure (totalLen ** MkTextBuffer gcptr)
+joinBy sep xs = build (totalLength xs + (List.length xs `minus` 1) * length sep) (\p => writeAll p 0 xs)
+  where
+    writeAll : GCAnyPtr -> Nat -> List (n ** TextBuffer n) -> IO ()
+    writeAll p destOffset [] = pure ()
+    writeAll p destOffset ((_ ** b) :: []) = copyAll p destOffset b
+    writeAll p destOffset ((_ ** b) :: rest@(_ :: _)) = do
+      copyAll p destOffset b
+      copyAll p (destOffset + length b) sep
+      writeAll p (destOffset + length b + length sep) rest
 
 ||| Pad on the left with `c` up to `width` (a no-op if already at
 ||| least that long).
 export
 padLeft : (width : Nat) -> Char -> TextBuffer n -> (m ** TextBuffer m)
 padLeft width c buf =
-  let bufLen = length buf
-      padLen = width `minus` bufLen
-      resultLen = padLen + bufLen
-  in unsafePerformIO $ do
-    ptr <- primIO $ prim__TextBuffer_mkEmpty (cast resultLen)
-    gcptr <- onCollectAny ptr freeTextBuffer
-    fillChar gcptr 0 c padLen
-    copyInto gcptr padLen buf bufLen 0
-    pure (resultLen ** MkTextBuffer gcptr)
+  let padLen = width `minus` length buf
+  in build (padLen + length buf) (\p => fillChar p 0 c padLen >> copyAll p padLen buf)
 
 ||| Pad on the right with `c` up to `width` (a no-op if already at
 ||| least that long).
 export
 padRight : (width : Nat) -> Char -> TextBuffer n -> (m ** TextBuffer m)
 padRight width c buf =
-  let bufLen = length buf
-      padLen = width `minus` bufLen
-      resultLen = bufLen + padLen
-  in unsafePerformIO $ do
-    ptr <- primIO $ prim__TextBuffer_mkEmpty (cast resultLen)
-    gcptr <- onCollectAny ptr freeTextBuffer
-    copyInto gcptr 0 buf bufLen 0
-    fillChar gcptr bufLen c padLen
-    pure (resultLen ** MkTextBuffer gcptr)
+  let padLen = width `minus` length buf
+  in build (length buf + padLen) (\p => copyAll p 0 buf >> fillChar p (length buf) c padLen)
 
 ||| Strip whitespace from the left.
 export
 ltrim : TextBuffer n -> (m ** TextBuffer m)
 ltrim buf =
-  let bufLen = length buf
-      start = scanWhile isSpace buf bufLen 0
-  in substr start (bufLen `minus` start) buf
+  let start = scanWhile isSpace buf (length buf) 0
+  in substrClamped start (length buf `minus` start) buf
 
 ||| Strip whitespace from the right.
 export
 rtrim : TextBuffer n -> (m ** TextBuffer m)
-rtrim buf =
-  let bufLen = length buf
-      keepLen = scanWhileBack isSpace buf bufLen bufLen
-  in substr 0 keepLen buf
+rtrim buf = substrClamped 0 (scanWhileBack isSpace buf (length buf) (length buf)) buf
 
 ||| Strip whitespace from both ends.
 export
@@ -391,7 +362,7 @@ trim buf =
   let bufLen = length buf
       start = scanWhile isSpace buf bufLen 0
       keepLen = scanWhileBack isSpace buf bufLen bufLen
-  in substr start (keepLen `minus` start) buf
+  in substrClamped start (keepLen `minus` start) buf
 
 ||| Split on runs of whitespace, dropping empty pieces.
 export
@@ -407,37 +378,49 @@ unwords xs = joinBy (singleton ' ') xs
 ||| doesn't produce a trailing empty piece, matching `Data.String.lines`.
 export
 lines : TextBuffer n -> List (m ** TextBuffer m)
-lines buf = scanLines buf (length buf) 0 0
-
-unlinesTotalLength : List (n ** TextBuffer n) -> Nat
-unlinesTotalLength [] = 0
-unlinesTotalLength ((_ ** b) :: rest) = length b + 1 + unlinesTotalLength rest
-
-unlinesWriteAll : GCAnyPtr -> Nat -> List (n ** TextBuffer n) -> IO ()
-unlinesWriteAll p destOffset [] = pure ()
-unlinesWriteAll p destOffset ((_ ** b) :: rest) = do
-  copyInto p destOffset b (length b) 0
-  primIO $ prim__TextBuffer_unsafe_write_char p (cast (destOffset + length b)) (cast '\n')
-  unlinesWriteAll p (destOffset + length b + 1) rest
+lines buf = scanLines (length buf) 0 0
+  where
+    -- One character at a time (`fuel` decreasing by exactly 1 per
+    -- character scanned, so this is structurally total without
+    -- needing a variable-length fuel jump). Unlike `scanSplit`, a
+    -- trailing newline doesn't produce a trailing empty piece:
+    -- reaching the end exactly at a piece boundary (`pos ==
+    -- pieceStart`, i.e. the last thing scanned was itself a newline,
+    -- or the buffer was empty) emits nothing further, matching
+    -- `Data.String.lines`.
+    scanLines : (fuel : Nat) -> (pos : Nat) -> (pieceStart : Nat) -> List (m ** TextBuffer m)
+    scanLines Z pos pieceStart =
+      if pos == pieceStart then [] else [substrClamped pieceStart (pos `minus` pieceStart) buf]
+    scanLines (S fuel) pos pieceStart =
+      case unsafeIndex buf pos of
+        '\n' => substrClamped pieceStart (pos `minus` pieceStart) buf :: scanLines fuel (S pos) (S pos)
+        '\r' => case fuel of
+                  Z => [substrClamped pieceStart (pos `minus` pieceStart) buf]
+                  S fuel' =>
+                    if unsafeIndex buf (S pos) == '\n'
+                      then substrClamped pieceStart (pos `minus` pieceStart) buf :: scanLines fuel' (S (S pos)) (S (S pos))
+                      else substrClamped pieceStart (pos `minus` pieceStart) buf :: scanLines fuel (S pos) (S pos)
+        _ => scanLines fuel (S pos) pieceStart
 
 ||| Join, appending a newline after each piece (including the last).
 export
 unlines : List (n ** TextBuffer n) -> (m ** TextBuffer m)
-unlines xs = unsafePerformIO $ do
-  let totalLen = unlinesTotalLength xs
-  ptr <- primIO $ prim__TextBuffer_mkEmpty (cast totalLen)
-  gcptr <- onCollectAny ptr freeTextBuffer
-  unlinesWriteAll gcptr 0 xs
-  pure (totalLen ** MkTextBuffer gcptr)
+unlines xs = build (totalLength xs + List.length xs) (\p => writeAll p 0 xs)
+  where
+    writeAll : GCAnyPtr -> Nat -> List (n ** TextBuffer n) -> IO ()
+    writeAll p destOffset [] = pure ()
+    writeAll p destOffset ((_ ** b) :: rest) = do
+      copyAll p destOffset b
+      primIO $ prim__TextBuffer_unsafe_write_char p (cast (destOffset + length b)) (cast '\n')
+      writeAll p (destOffset + length b + 1) rest
 
 ||| Split into the longest prefix satisfying the predicate, and the
 ||| rest.
 export
 span : (Char -> Bool) -> TextBuffer n -> ((p ** TextBuffer p), (q ** TextBuffer q))
 span pred buf =
-  let bufLen = length buf
-      splitAt = scanWhile pred buf bufLen 0
-  in (substr 0 splitAt buf, substr splitAt (bufLen `minus` splitAt) buf)
+  let splitAt = scanWhile pred buf (length buf) 0
+  in (substrClamped 0 splitAt buf, substrClamped splitAt (length buf `minus` splitAt) buf)
 
 ||| Split into the longest prefix *not* satisfying the predicate, and
 ||| the rest.

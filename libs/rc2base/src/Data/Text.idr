@@ -386,8 +386,8 @@ export
 substr : (start, len : Nat) -> Text n -> (m ** Text m)
 substr start len t =
   let (_ ** tb) = flatten t
-      (_ ** tb') = TextBuffer.substr start len tb
-  in (_ ** fromTextBuffer tb')
+      copyLen = min len (TextBuffer.length tb `minus` start)
+  in (copyLen ** fromTextBuffer (TextBuffer.substr {ok = believe_me ()} start copyLen tb))
 
 ||| Pad on the left with `c` up to `width` (a no-op if already at
 ||| least that long).

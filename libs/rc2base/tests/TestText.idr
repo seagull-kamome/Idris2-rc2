@@ -32,7 +32,7 @@ main = do
 
   putStrLn "--- Testing new string ops ---"
 
-  let (_ ** sub) = substr 1 3 txt3
+  let sub = substr {ok = believe_me ()} 1 3 txt3
   putStrLn $ "substr 1 3 \"HelloWorld\": " ++ toString sub
 
   let (_ ** cat) = concat [(n1 ** txt1), (_ ** txt2)]
