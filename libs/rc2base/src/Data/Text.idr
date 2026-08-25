@@ -3,11 +3,11 @@ module Data.Text
 -- Copyright 2026, Hattori,Hiroki. All rights reserved.
 -- This module was licensed by BSD3.
 
--- A length-indexed rope over Data.TextBuffer chunks, backed by a 2-3
--- finger tree (Hinze/Paterson). TextBuffer's own (++) is O(n) (it
--- memcpys both sides into a fresh buffer every time), which makes
--- repeated small concatenations O(n^2) overall; wrapping chunks in a
--- finger tree instead makes (++) O(log(min(n,m))).
+-- A rope over Data.TextBuffer chunks, backed by a 2-3 finger tree
+-- (Hinze/Paterson). TextBuffer's own (++) is O(n) (it memcpys both
+-- sides into a fresh buffer every time), which makes repeated small
+-- concatenations O(n^2) overall; wrapping chunks in a finger tree
+-- instead makes (++) O(log(min(n,m))).
 --
 -- The finger tree engine below (Digit/Node/FingerTree, consTree/
 -- snocTree/addTree0) is an ordinary, non-Nat-indexed set of types --
@@ -21,19 +21,16 @@ module Data.Text
 -- Data.Seq.Internal itself -- is to cache a plain runtime Nat (via a
 -- small `Sized` interface local to this module -- Control.WellFounded
 -- has one too, but bundled with well-founded-recursion machinery this
--- module has no use for) at each Node/Deep instead, and to only put a
--- *phantom* Nat index on the outermost public wrapper (`Text`),
--- exactly like `Data.TextBuffer.TextBuffer` already does for its own
--- FFI-backed length. `Text`'s own constructor never actually
--- constrains that phantom to anything, so building a `Text` at a
--- specific claimed length (e.g. `(++)`'s `Text (n + m)`) needs no
--- proof at all -- there's no equation to prove, unlike
--- `Data.TextBuffer.lengthCorrect`, which bridges two independently-
--- computed values (an FFI re-read vs. the type index) and so is a
--- genuine (if `believe_me`-backed) axiom. The one place this module
--- still needs `believe_me` is `index`, bridging a caller's `Fin n`
--- against the flattened buffer's own `Fin m` -- a real bound, not a
--- phantom, so there's no way around asserting `m` and `n` agree.
+-- module has no use for) at each Node/Deep instead. `Text` itself is
+-- plain `Type`, exactly like `Data.TextBuffer.TextBuffer` -- `length`
+-- (reading the outermost `Deep`/`Single`'s own cached `size`, or the
+-- chunk's own FFI length for a single leaf) is the one source of
+-- truth for how long a given `Text` is, mirroring the same choice
+-- `TextBuffer` itself makes for its FFI-backed length. A function
+-- that genuinely needs to relate a `Nat` to a specific `Text`'s
+-- length (just `index`'s `Fin` bound, here) takes an explicit,
+-- erased `(0 _ : n = length t)` witness for exactly that purpose
+-- instead of indexing the whole type by it.
 --
 -- Every operation that isn't fundamentally about concatenation
 -- (substr, words, trim, ...) is implemented by flattening to a single
@@ -274,36 +271,35 @@ treeToList : FingerTree e -> List e
 treeToList = foldr (::) []
 
 -- ---------------------------------------------------------------------------
--- The public, length-indexed API. `Text`'s own Nat index is a phantom,
--- exactly like `Data.TextBuffer.TextBuffer`'s own -- `MkText`'s `n`
--- never appears in its argument type, so wrapping a freshly-built
--- FingerTree at whatever length the caller's own signature promises
--- needs no proof at all (see this file's own header comment).
+-- The public API. A `Chunk` is just a `TextBuffer` -- `TextBuffer`
+-- itself is already a plain `Type` (see Data.TextBuffer's own header),
+-- so it sits directly as the finger tree's leaf type with no
+-- existential wrapping needed.
 
 Chunk : Type
-Chunk = (k ** TextBuffer k)
+Chunk = TextBuffer
 
 Sized Chunk where
-  size (_ ** tb) = TextBuffer.length tb
+  size = TextBuffer.length
 
 export
-data Text : Nat -> Type where
-  MkText : FingerTree Chunk -> Text n
+data Text : Type where
+  MkText : FingerTree Chunk -> Text
 
 ||| O(1). The length of a Text.
 export
-length : Text n -> Nat
+length : Text -> Nat
 length (MkText t) = size t
 
 ||| O(1). Wrap an existing TextBuffer as a single-chunk Text.
 export
-fromTextBuffer : {n : Nat} -> TextBuffer n -> Text n
-fromTextBuffer {n} tb = MkText (Single (n ** tb))
+fromTextBuffer : TextBuffer -> Text
+fromTextBuffer tb = MkText (Single tb)
 
 ||| Convert a String to Text.
 export
-fromString : (s : String) -> (n ** Text n)
-fromString s = let (n ** tb) = TextBuffer.fromString s in (n ** fromTextBuffer tb)
+fromString : String -> Text
+fromString s = fromTextBuffer (TextBuffer.fromString s)
 
 -- Collapses a Text's chunks back into a single TextBuffer -- the
 -- boundary every operation below that isn't fundamentally about
@@ -313,52 +309,50 @@ fromString s = let (n ** tb) = TextBuffer.fromString s in (n ** fromTextBuffer t
 -- type here is always TextBuffer, never some arbitrary Foldable-ish
 -- thing, so there's no reason to detour through a char list to
 -- combine them.
-flatten : Text n -> (m ** TextBuffer m)
+flatten : Text -> TextBuffer
 flatten (MkText t) = case treeToList t of
   [] => TextBuffer.fromString ""
-  (x :: xs) => foldl (\(_ ** acc), (_ ** tb) => (_ ** acc ++ tb)) x xs
+  (x :: xs) => foldl (TextBuffer.(++)) x xs
 
 ||| Convert a Text back to a String.
 export
-toString : Text n -> String
-toString t = let (_ ** tb) = flatten t in TextBuffer.toString tb
+toString : Text -> String
+toString t = TextBuffer.toString (flatten t)
 
 ||| O(log(min(n,m))). Concatenate two Texts.
 export
-(++) : Text n -> Text m -> Text (n + m)
+(++) : Text -> Text -> Text
 (++) (MkText t1) (MkText t2) = MkText (addTree0 t1 t2)
 
 ||| A Text of a single character.
 export
-singleton : Char -> Text 1
+singleton : Char -> Text
 singleton c = fromTextBuffer (TextBuffer.singleton c)
 
 ||| A Text of `n` copies of a character.
 export
-replicate : (n : Nat) -> Char -> Text n
+replicate : (n : Nat) -> Char -> Text
 replicate n c = fromTextBuffer (TextBuffer.replicate n c)
 
 ||| Concatenate a list of Texts into one, O(log) chunk at a time.
 export
-concat : List (n ** Text n) -> (m ** Text m)
-concat = foldl (\(a ** acc), (b ** t) => (a + b ** acc ++ t)) (0 ** MkText Empty)
+concat : List Text -> Text
+concat = foldl (Data.Text.(++)) (MkText Empty)
 
 ||| Join a list of Texts, inserting `sep` between each pair.
 export
-joinBy : {k : Nat} -> Text k -> List (n ** Text n) -> (m ** Text m)
-joinBy sep xs = Data.Text.concat (intersperse (k ** sep) xs)
+joinBy : Text -> List Text -> Text
+joinBy sep xs = Data.Text.concat (intersperse sep xs)
 
 ||| Join with single spaces.
 export
-unwords : List (n ** Text n) -> (m ** Text m)
-unwords xs = let (_ ** sep) = Data.Text.fromString " " in joinBy sep xs
+unwords : List Text -> Text
+unwords xs = joinBy (Data.Text.fromString " ") xs
 
 ||| Join, appending a newline after each piece (including the last).
 export
-unlines : List (n ** Text n) -> (m ** Text m)
-unlines xs =
-  let (_ ** nl) = Data.Text.fromString "\n"
-  in Data.Text.concat (concatMap (\(_ ** t) => [(_ ** t), (_ ** nl)]) xs)
+unlines : List Text -> Text
+unlines xs = Data.Text.concat (concatMap (\t => [t, Data.Text.fromString "\n"]) xs)
 
 -- ---------------------------------------------------------------------------
 -- Everything below flattens to a single TextBuffer and delegates to
@@ -367,107 +361,84 @@ unlines xs =
 
 ||| Get the character at the given index.
 export
-index : {n : Nat} -> Text n -> Fin n -> Char
-index t i = let (_ ** tb) = flatten t in TextBuffer.index tb (believe_me i)
+index : (t : Text) -> {0 n : Nat} -> {auto 0 prf : n = length t} -> Fin n -> Char
+index t i = let tb = flatten t in TextBuffer.index tb {prf = believe_me ()} i
 
 ||| Uppercase every character. Length-preserving.
 export
-toUpper : Text n -> Text n
-toUpper t = let (_ ** tb) = flatten t in MkText (Single (_ ** TextBuffer.toUpper tb))
+toUpper : Text -> Text
+toUpper t = fromTextBuffer (TextBuffer.toUpper (flatten t))
 
 ||| Lowercase every character. Length-preserving.
 export
-toLower : Text n -> Text n
-toLower t = let (_ ** tb) = flatten t in MkText (Single (_ ** TextBuffer.toLower tb))
+toLower : Text -> Text
+toLower t = fromTextBuffer (TextBuffer.toLower (flatten t))
 
 ||| Extract a substring of the given length, starting at the given
 ||| offset. Clamped to the source Text's actual bounds.
 export
-substr : (start, len : Nat) -> Text n -> (m ** Text m)
+substr : (start, len : Nat) -> Text -> Text
 substr start len t =
-  let (_ ** tb) = flatten t
+  let tb = flatten t
       copyLen = min len (TextBuffer.length tb `minus` start)
-  in (copyLen ** fromTextBuffer (TextBuffer.substr {ok = believe_me ()} start copyLen tb))
+  in fromTextBuffer (TextBuffer.substr start copyLen tb {n = TextBuffer.length tb} {prf = believe_me ()} {ok = believe_me ()})
 
 ||| Pad on the left with `c` up to `width` (a no-op if already at
 ||| least that long).
 export
-padLeft : (width : Nat) -> Char -> Text n -> (m ** Text m)
-padLeft width c t =
-  let (_ ** tb) = flatten t
-      (_ ** tb') = TextBuffer.padLeft width c tb
-  in (_ ** fromTextBuffer tb')
+padLeft : (width : Nat) -> Char -> Text -> Text
+padLeft width c t = fromTextBuffer (TextBuffer.padLeft width c (flatten t))
 
 ||| Pad on the right with `c` up to `width` (a no-op if already at
 ||| least that long).
 export
-padRight : (width : Nat) -> Char -> Text n -> (m ** Text m)
-padRight width c t =
-  let (_ ** tb) = flatten t
-      (_ ** tb') = TextBuffer.padRight width c tb
-  in (_ ** fromTextBuffer tb')
+padRight : (width : Nat) -> Char -> Text -> Text
+padRight width c t = fromTextBuffer (TextBuffer.padRight width c (flatten t))
 
 ||| Strip whitespace from the left.
 export
-ltrim : Text n -> (m ** Text m)
-ltrim t =
-  let (_ ** tb) = flatten t
-      (_ ** tb') = TextBuffer.ltrim tb
-  in (_ ** fromTextBuffer tb')
+ltrim : Text -> Text
+ltrim t = fromTextBuffer (TextBuffer.ltrim (flatten t))
 
 ||| Strip whitespace from the right.
 export
-rtrim : Text n -> (m ** Text m)
-rtrim t =
-  let (_ ** tb) = flatten t
-      (_ ** tb') = TextBuffer.rtrim tb
-  in (_ ** fromTextBuffer tb')
+rtrim : Text -> Text
+rtrim t = fromTextBuffer (TextBuffer.rtrim (flatten t))
 
 ||| Strip whitespace from both ends.
 export
-trim : Text n -> (m ** Text m)
-trim t =
-  let (_ ** tb) = flatten t
-      (_ ** tb') = TextBuffer.trim tb
-  in (_ ** fromTextBuffer tb')
+trim : Text -> Text
+trim t = fromTextBuffer (TextBuffer.trim (flatten t))
 
 ||| Split on runs of whitespace, dropping empty pieces.
 export
-words : Text n -> List (m ** Text m)
-words t =
-  let (_ ** tb) = flatten t
-  in map (\(_ ** w) => (_ ** fromTextBuffer w)) (TextBuffer.words tb)
+words : Text -> List Text
+words t = map fromTextBuffer (TextBuffer.words (flatten t))
 
 ||| Split on newlines (`\n`, `\r`, or `\r\n`). A trailing newline
 ||| doesn't produce a trailing empty piece.
 export
-lines : Text n -> List (m ** Text m)
-lines t =
-  let (_ ** tb) = flatten t
-  in map (\(_ ** l) => (_ ** fromTextBuffer l)) (TextBuffer.lines tb)
+lines : Text -> List Text
+lines t = map fromTextBuffer (TextBuffer.lines (flatten t))
 
 ||| Split into the longest prefix satisfying the predicate, and the
 ||| rest.
 export
-span : (Char -> Bool) -> Text n -> ((p ** Text p), (q ** Text q))
+span : (Char -> Bool) -> Text -> (Text, Text)
 span p t =
-  let (_ ** tb) = flatten t
-      ((_ ** a), (_ ** b)) = TextBuffer.span p tb
-  in ((_ ** fromTextBuffer a), (_ ** fromTextBuffer b))
+  let (a, b) = TextBuffer.span p (flatten t)
+  in (fromTextBuffer a, fromTextBuffer b)
 
 ||| Split into the longest prefix *not* satisfying the predicate, and
 ||| the rest.
 export
-break : (Char -> Bool) -> Text n -> ((p ** Text p), (q ** Text q))
+break : (Char -> Bool) -> Text -> (Text, Text)
 break p t =
-  let (_ ** tb) = flatten t
-      ((_ ** a), (_ ** b)) = TextBuffer.break p tb
-  in ((_ ** fromTextBuffer a), (_ ** fromTextBuffer b))
+  let (a, b) = TextBuffer.break p (flatten t)
+  in (fromTextBuffer a, fromTextBuffer b)
 
 ||| Split wherever the predicate holds, dropping the separator
 ||| characters themselves.
 export
-split : (Char -> Bool) -> Text n -> List (m ** Text m)
-split p t =
-  let (_ ** tb) = flatten t
-  in map (\(_ ** s) => (_ ** fromTextBuffer s)) (TextBuffer.split p tb)
+split : (Char -> Bool) -> Text -> List Text
+split p t = map fromTextBuffer (TextBuffer.split p (flatten t))

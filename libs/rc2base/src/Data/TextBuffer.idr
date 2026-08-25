@@ -9,10 +9,18 @@ import Data.Vect
 
 -- ---------------------------------------------------------------------------
 
-||| The Text type, representing a Unicode codepoint sequence of length n.
+||| The Text type, representing a Unicode codepoint sequence. `length`
+||| (an FFI re-read of the underlying C buffer's own `len` field) is
+||| this module's only source of truth for how long a given `TextBuffer`
+||| is -- nothing here tracks it separately in the type. A function
+||| that genuinely needs to relate a `Nat` to a specific buffer's
+||| length (a `Fin` bound, a range precondition, a `Vect`'s own length)
+||| takes an explicit, erased `(0 _ : n = length buf)` witness for
+||| exactly that purpose instead of indexing the whole type by it --
+||| see `index`/`substr`/`fastMap'` below.
 export
-data TextBuffer : Nat -> Type where
-  MkTextBuffer : GCAnyPtr -> TextBuffer n
+data TextBuffer : Type where
+  MkTextBuffer : GCAnyPtr -> TextBuffer
 
 -- ---------------------------------------------------------------------------
 
@@ -59,9 +67,8 @@ prim__TextBuffer_append : GCAnyPtr -> GCAnyPtr -> PrimIO AnyPtr
 -- `wrapBuffer` attaches the GC finalizer to an already-obtained raw
 -- pointer (from `mkEmpty` or a primitive that builds one directly, e.g.
 -- `String_to_TextBuffer`/`append`); `allocBuffer` is `wrapBuffer` of a
--- fresh `mkEmpty`; `build`/`buildExact` additionally run a caller-given
--- action to populate that fresh buffer before handing it back, existentially
--- or at a precise length respectively.
+-- fresh `mkEmpty`; `build` additionally runs a caller-given action to
+-- populate that fresh buffer before handing it back.
 
 freeTextBuffer : AnyPtr -> IO ()
 freeTextBuffer ptr = primIO $ prim__TextBuffer_free ptr
@@ -72,56 +79,36 @@ wrapBuffer ptr = onCollectAny ptr freeTextBuffer
 allocBuffer : (len : Nat) -> IO GCAnyPtr
 allocBuffer len = wrapBuffer =<< primIO (prim__TextBuffer_mkEmpty (cast len))
 
-build : (len : Nat) -> (GCAnyPtr -> IO ()) -> (n ** TextBuffer n)
+build : (len : Nat) -> (GCAnyPtr -> IO ()) -> TextBuffer
 build len action = unsafePerformIO $ do
-  gcptr <- allocBuffer len
-  action gcptr
-  pure (len ** MkTextBuffer gcptr)
-
-buildExact : (len : Nat) -> (GCAnyPtr -> IO ()) -> TextBuffer len
-buildExact len action = unsafePerformIO $ do
   gcptr <- allocBuffer len
   action gcptr
   pure (MkTextBuffer gcptr)
 
 ||| Convert a String to Text.
 export
-fromString : (s : String) -> (n : Nat ** TextBuffer n)
-fromString s = unsafePerformIO $ do
-  gcptr <- wrapBuffer =<< primIO (prim__String_to_TextBuffer s)
-  len <- primIO $ prim__textLength gcptr
-  pure (fromInteger (cast len) ** MkTextBuffer gcptr)
+fromString : String -> TextBuffer
+fromString s = unsafePerformIO $ MkTextBuffer <$> (wrapBuffer =<< primIO (prim__String_to_TextBuffer s))
 
 ||| Convert a Text back to a String.
 export
-toString : TextBuffer n -> String
+toString : TextBuffer -> String
 toString (MkTextBuffer ptr) = believe_me $ unsafePerformIO $ primIO $ prim__TextBuffer_toString ptr
 
 ||| Get the length of the Text.
 export
-length : TextBuffer n -> Nat
+length : TextBuffer -> Nat
 length (MkTextBuffer ptr) =
   fromInteger $ cast $ unsafePerformIO $ primIO $ prim__textLength ptr
 
-||| `length` always agrees with a `Text`'s own index `n` -- true by
-||| construction (every `Text` value is reached only through this
-||| module's own smart constructors, each of which sets the C buffer's
-||| `len` field to exactly `n`, and no operation here ever mutates a
-||| buffer's `len` afterward), but not mechanically provable from this
-||| side: `length` re-reads `n` through an opaque C FFI call every
-||| time, which the proof checker can't see through.
-export
-0 lengthCorrect : {n:Nat} -> (xs:TextBuffer n) -> length xs = n
-lengthCorrect xs = the (length xs = n) $ believe_me xs
-
 ||| Get the character at the given index.
 export
-index : {n : Nat} -> TextBuffer n -> Fin n -> Char
+index : (buf : TextBuffer) -> {0 n : Nat} -> {auto 0 prf : n = length buf} -> Fin n -> Char
 index (MkTextBuffer ptr) idx = cast $ unsafePerformIO $ primIO $ prim__textIndex ptr (cast (finToNat idx))
 
 ||| Append two Texts.
 export
-(++) : TextBuffer n -> TextBuffer m -> TextBuffer (n + m)
+(++) : TextBuffer -> TextBuffer -> TextBuffer
 (++) (MkTextBuffer p1) (MkTextBuffer p2) =
   unsafePerformIO $ MkTextBuffer <$> (wrapBuffer =<< primIO (prim__TextBuffer_append p1 p2))
 
@@ -134,15 +121,15 @@ export
 ||| proof. Only meant for internal use by loops here that already
 ||| guarantee the offset is in range by construction (e.g. counting up
 ||| to a buffer's own `length`).
-unsafeIndex : TextBuffer n -> Nat -> Char
+unsafeIndex : TextBuffer -> Nat -> Char
 unsafeIndex (MkTextBuffer ptr) i = cast $ unsafePerformIO $ primIO $ prim__textIndex ptr (cast i)
 
 ||| Build a Text of the given length by evaluating `f` at each index.
 ||| The `fuel` parameter is `n` itself, counted down, so this
 ||| structurally terminates under this package's `--total`.
 export
-tabulate : (n : Nat) -> (Nat -> Char) -> TextBuffer n
-tabulate n f = buildExact n (\p => writeLoop p n 0)
+tabulate : (n : Nat) -> (Nat -> Char) -> TextBuffer
+tabulate n f = build n (\p => writeLoop p n 0)
   where
     writeLoop : GCAnyPtr -> (fuel : Nat) -> Nat -> IO ()
     writeLoop p Z _ = pure ()
@@ -155,17 +142,16 @@ tabulate n f = buildExact n (\p => writeLoop p n 0)
 ||| already-total string-shaped algorithms instead of reimplementing
 ||| them against the raw C buffer.
 export
-toList : TextBuffer n -> List Char
+toList : TextBuffer -> List Char
 toList buf = go (length buf) 0
   where
     go : (fuel : Nat) -> Nat -> List Char
     go Z _ = []
     go (S fuel) i = unsafeIndex buf i :: go fuel (S i)
 
-||| The inverse of `toList`: build a Text whose length isn't known
-||| statically, existentially quantified like `fromString`.
+||| The inverse of `toList`.
 export
-fromCharList : List Char -> (n ** TextBuffer n)
+fromCharList : List Char -> TextBuffer
 fromCharList cs = build (length cs) (\p => writeLoop p 0 cs)
   where
     writeLoop : GCAnyPtr -> Nat -> List Char -> IO ()
@@ -178,7 +164,7 @@ fromCharList cs = build (length cs) (\p => writeLoop p 0 cs)
 ||| intermediate `List Char` gets read out of the buffer just to
 ||| immediately map over it.
 export
-fastMap : (Char -> a) -> TextBuffer n -> List a
+fastMap : (Char -> a) -> TextBuffer -> List a
 fastMap f buf = go (length buf) 0
   where
     go : (fuel : Nat) -> Nat -> List a
@@ -189,41 +175,38 @@ fastMap f buf = go (length buf) 0
 ||| instead of a `List` -- useful when the caller wants that length
 ||| carried in the type rather than re-deriving it.
 export
-fastMap' : (Char -> a) -> TextBuffer n -> Vect n a
-fastMap' f buf = rewrite sym (lengthCorrect buf) in go (length buf) 0
+fastMap' : (f : Char -> a) -> (buf : TextBuffer) -> {0 n : Nat} -> {auto 0 prf : n = length buf} -> Vect n a
+fastMap' f buf {prf = Refl} = go (length buf) 0
   where
     go : (fuel : Nat) -> Nat -> Vect fuel a
     go Z i = []
     go (S fuel) i = f (unsafeIndex buf i) :: go fuel (S i)
 
 -- ---------------------------------------------------------------------------
--- Construction helpers with a statically known result length.
+-- Construction helpers.
 
 ||| A Text of a single character.
 export
-singleton : Char -> TextBuffer 1
+singleton : Char -> TextBuffer
 singleton c = tabulate 1 (const c)
 
 ||| A Text of `n` copies of a character.
 export
-replicate : (n : Nat) -> Char -> TextBuffer n
+replicate : (n : Nat) -> Char -> TextBuffer
 replicate n c = tabulate n (const c)
 
-||| Uppercase every character. Length-preserving, so no existential
-||| needed.
+||| Uppercase every character.
 export
-toUpper : TextBuffer n -> TextBuffer n
-toUpper buf = rewrite sym (lengthCorrect buf) in tabulate (length buf) (\i => toUpper (unsafeIndex buf i))
+toUpper : TextBuffer -> TextBuffer
+toUpper buf = tabulate (length buf) (\i => toUpper (unsafeIndex buf i))
 
-||| Lowercase every character. Length-preserving, so no existential
-||| needed.
+||| Lowercase every character.
 export
-toLower : TextBuffer n -> TextBuffer n
-toLower buf = rewrite sym (lengthCorrect buf) in tabulate (length buf) (\i => toLower (unsafeIndex buf i))
+toLower : TextBuffer -> TextBuffer
+toLower buf = tabulate (length buf) (\i => toLower (unsafeIndex buf i))
 
 -- ---------------------------------------------------------------------------
--- Dynamic-length operations, all returning an existential
--- `(m ** TextBuffer m)` (or a list thereof) like `fromString`.
+-- Dynamic-length operations.
 --
 -- Every one of these builds its result by pre-computing the exact
 -- output length and then writing straight into a single freshly
@@ -235,14 +218,14 @@ toLower buf = rewrite sym (lengthCorrect buf) in tabulate (length buf) (\i => to
 
 ||| Copy `fuel` characters of `src` (starting at `srcOffset`) into
 ||| `dest` starting at `destOffset`.
-copyInto : (dest : GCAnyPtr) -> (destOffset : Nat) -> (src : TextBuffer bn) -> (fuel : Nat) -> (srcOffset : Nat) -> IO ()
+copyInto : (dest : GCAnyPtr) -> (destOffset : Nat) -> (src : TextBuffer) -> (fuel : Nat) -> (srcOffset : Nat) -> IO ()
 copyInto dest destOffset src Z srcOffset = pure ()
 copyInto dest destOffset src (S fuel) srcOffset = do
   primIO $ prim__TextBuffer_unsafe_write_char dest (cast destOffset) (cast (unsafeIndex src srcOffset))
   copyInto dest (S destOffset) src fuel (S srcOffset)
 
 ||| `copyInto`, copying all of `src`.
-copyAll : (dest : GCAnyPtr) -> (destOffset : Nat) -> (src : TextBuffer bn) -> IO ()
+copyAll : (dest : GCAnyPtr) -> (destOffset : Nat) -> (src : TextBuffer) -> IO ()
 copyAll dest destOffset src = copyInto dest destOffset src (length src) 0
 
 ||| Write `fuel` copies of `c` into `dest` starting at `destOffset`.
@@ -254,14 +237,14 @@ fillChar dest destOffset c (S fuel) = do
 
 ||| The first index `>= start` (bounded by `start + fuel`) at which
 ||| `p` no longer holds -- the split point `span`/`ltrim` scan for.
-scanWhile : (Char -> Bool) -> TextBuffer n -> (fuel : Nat) -> Nat -> Nat
+scanWhile : (Char -> Bool) -> TextBuffer -> (fuel : Nat) -> Nat -> Nat
 scanWhile p buf Z i = i
 scanWhile p buf (S fuel) i = if p (unsafeIndex buf i) then scanWhile p buf fuel (S i) else i
 
 ||| The length `<= len` (bounded by `fuel` steps down from `len`) such
 ||| that the character just before it no longer satisfies `p` -- the
 ||| "keep length" `rtrim` scans for, from the right.
-scanWhileBack : (Char -> Bool) -> TextBuffer n -> (fuel : Nat) -> (len : Nat) -> Nat
+scanWhileBack : (Char -> Bool) -> TextBuffer -> (fuel : Nat) -> (len : Nat) -> Nat
 scanWhileBack p buf Z len = len
 scanWhileBack p buf (S fuel) Z = Z
 scanWhileBack p buf (S fuel) (S len) = if p (unsafeIndex buf len) then scanWhileBack p buf fuel len else S len
@@ -270,7 +253,7 @@ scanWhileBack p buf (S fuel) (S len) = if p (unsafeIndex buf len) then scanWhile
 ||| requiring a proof -- used internally by scans (`ltrim`/`span`/...)
 ||| whose bounds are only known at runtime, never statically provable
 ||| the way `substr`'s own `LTE` precondition demands.
-substrClamped : (start, len : Nat) -> TextBuffer n -> (m ** TextBuffer m)
+substrClamped : (start, len : Nat) -> TextBuffer -> TextBuffer
 substrClamped start len buf =
   let copyLen = min len (length buf `minus` start)
   in build copyLen (\p => copyInto p 0 buf copyLen start)
@@ -280,8 +263,8 @@ substrClamped start len buf =
 ||| buffer's own length -- unlike most of this module's other
 ||| operations, this one doesn't silently clamp.
 export
-substr : {n : Nat} -> (start, len : Nat) -> {auto ok : LTE (start + len) n} -> TextBuffer n -> TextBuffer len
-substr start len buf = buildExact len (\p => copyInto p 0 buf len start)
+substr : (start, len : Nat) -> (buf : TextBuffer) -> {0 n : Nat} -> {auto 0 prf : n = length buf} -> {auto ok : LTE (start + len) n} -> TextBuffer
+substr start len buf = build len (\p => copyInto p 0 buf len start)
 
 ||| Splits `buf` wherever `p` holds, one character at a time (`fuel`
 ||| decreasing by exactly 1 per character scanned, so this is
@@ -291,7 +274,7 @@ substr start len buf = buildExact len (\p => copyInto p 0 buf len start)
 ||| fresh piece right after it, matching `Data.List.split`'s own
 ||| one-separator-at-a-time semantics (consecutive separators produce
 ||| empty pieces in between).
-scanSplit : (Char -> Bool) -> TextBuffer n -> (fuel : Nat) -> (pos : Nat) -> (pieceStart : Nat) -> List (m ** TextBuffer m)
+scanSplit : (Char -> Bool) -> TextBuffer -> (fuel : Nat) -> (pos : Nat) -> (pieceStart : Nat) -> List TextBuffer
 scanSplit p buf Z pos pieceStart = [substrClamped pieceStart (pos `minus` pieceStart) buf]
 scanSplit p buf (S fuel) pos pieceStart =
   if p (unsafeIndex buf pos)
@@ -300,29 +283,29 @@ scanSplit p buf (S fuel) pos pieceStart =
 
 ||| The combined length of a list of Texts.
 export
-totalLength : List (n ** TextBuffer n) -> Nat
-totalLength = foldr (\(_ ** b), acc => length b + acc) 0
+totalLength : List TextBuffer -> Nat
+totalLength = foldr (\b, acc => length b + acc) 0
 
 ||| Concatenate a list of Texts into one.
 export
-concat : List (n ** TextBuffer n) -> (m ** TextBuffer m)
+concat : List TextBuffer -> TextBuffer
 concat xs = build (totalLength xs) (\p => writeAll p 0 xs)
   where
-    writeAll : GCAnyPtr -> Nat -> List (n ** TextBuffer n) -> IO ()
+    writeAll : GCAnyPtr -> Nat -> List TextBuffer -> IO ()
     writeAll p destOffset [] = pure ()
-    writeAll p destOffset ((_ ** b) :: rest) = do
+    writeAll p destOffset (b :: rest) = do
       copyAll p destOffset b
       writeAll p (destOffset + length b) rest
 
 ||| Join a list of Texts, inserting `sep` between each pair.
 export
-joinBy : TextBuffer k -> List (n ** TextBuffer n) -> (m ** TextBuffer m)
+joinBy : TextBuffer -> List TextBuffer -> TextBuffer
 joinBy sep xs = build (totalLength xs + (List.length xs `minus` 1) * length sep) (\p => writeAll p 0 xs)
   where
-    writeAll : GCAnyPtr -> Nat -> List (n ** TextBuffer n) -> IO ()
+    writeAll : GCAnyPtr -> Nat -> List TextBuffer -> IO ()
     writeAll p destOffset [] = pure ()
-    writeAll p destOffset ((_ ** b) :: []) = copyAll p destOffset b
-    writeAll p destOffset ((_ ** b) :: rest@(_ :: _)) = do
+    writeAll p destOffset (b :: []) = copyAll p destOffset b
+    writeAll p destOffset (b :: rest@(_ :: _)) = do
       copyAll p destOffset b
       copyAll p (destOffset + length b) sep
       writeAll p (destOffset + length b + length sep) rest
@@ -330,7 +313,7 @@ joinBy sep xs = build (totalLength xs + (List.length xs `minus` 1) * length sep)
 ||| Pad on the left with `c` up to `width` (a no-op if already at
 ||| least that long).
 export
-padLeft : (width : Nat) -> Char -> TextBuffer n -> (m ** TextBuffer m)
+padLeft : (width : Nat) -> Char -> TextBuffer -> TextBuffer
 padLeft width c buf =
   let padLen = width `minus` length buf
   in build (padLen + length buf) (\p => fillChar p 0 c padLen >> copyAll p padLen buf)
@@ -338,26 +321,26 @@ padLeft width c buf =
 ||| Pad on the right with `c` up to `width` (a no-op if already at
 ||| least that long).
 export
-padRight : (width : Nat) -> Char -> TextBuffer n -> (m ** TextBuffer m)
+padRight : (width : Nat) -> Char -> TextBuffer -> TextBuffer
 padRight width c buf =
   let padLen = width `minus` length buf
   in build (length buf + padLen) (\p => copyAll p 0 buf >> fillChar p (length buf) c padLen)
 
 ||| Strip whitespace from the left.
 export
-ltrim : TextBuffer n -> (m ** TextBuffer m)
+ltrim : TextBuffer -> TextBuffer
 ltrim buf =
   let start = scanWhile isSpace buf (length buf) 0
   in substrClamped start (length buf `minus` start) buf
 
 ||| Strip whitespace from the right.
 export
-rtrim : TextBuffer n -> (m ** TextBuffer m)
+rtrim : TextBuffer -> TextBuffer
 rtrim buf = substrClamped 0 (scanWhileBack isSpace buf (length buf) (length buf)) buf
 
 ||| Strip whitespace from both ends.
 export
-trim : TextBuffer n -> (m ** TextBuffer m)
+trim : TextBuffer -> TextBuffer
 trim buf =
   let bufLen = length buf
       start = scanWhile isSpace buf bufLen 0
@@ -366,18 +349,18 @@ trim buf =
 
 ||| Split on runs of whitespace, dropping empty pieces.
 export
-words : TextBuffer n -> List (m ** TextBuffer m)
-words buf = filter (\(_ ** w) => length w > 0) (scanSplit isSpace buf (length buf) 0 0)
+words : TextBuffer -> List TextBuffer
+words buf = filter (\w => length w > 0) (scanSplit isSpace buf (length buf) 0 0)
 
 ||| Join with single spaces.
 export
-unwords : List (n ** TextBuffer n) -> (m ** TextBuffer m)
+unwords : List TextBuffer -> TextBuffer
 unwords xs = joinBy (singleton ' ') xs
 
 ||| Split on newlines (`\n`, `\r`, or `\r\n`). A trailing newline
 ||| doesn't produce a trailing empty piece, matching `Data.String.lines`.
 export
-lines : TextBuffer n -> List (m ** TextBuffer m)
+lines : TextBuffer -> List TextBuffer
 lines buf = scanLines (length buf) 0 0
   where
     -- One character at a time (`fuel` decreasing by exactly 1 per
@@ -388,7 +371,7 @@ lines buf = scanLines (length buf) 0 0
     -- pieceStart`, i.e. the last thing scanned was itself a newline,
     -- or the buffer was empty) emits nothing further, matching
     -- `Data.String.lines`.
-    scanLines : (fuel : Nat) -> (pos : Nat) -> (pieceStart : Nat) -> List (m ** TextBuffer m)
+    scanLines : (fuel : Nat) -> (pos : Nat) -> (pieceStart : Nat) -> List TextBuffer
     scanLines Z pos pieceStart =
       if pos == pieceStart then [] else [substrClamped pieceStart (pos `minus` pieceStart) buf]
     scanLines (S fuel) pos pieceStart =
@@ -404,12 +387,12 @@ lines buf = scanLines (length buf) 0 0
 
 ||| Join, appending a newline after each piece (including the last).
 export
-unlines : List (n ** TextBuffer n) -> (m ** TextBuffer m)
+unlines : List TextBuffer -> TextBuffer
 unlines xs = build (totalLength xs + List.length xs) (\p => writeAll p 0 xs)
   where
-    writeAll : GCAnyPtr -> Nat -> List (n ** TextBuffer n) -> IO ()
+    writeAll : GCAnyPtr -> Nat -> List TextBuffer -> IO ()
     writeAll p destOffset [] = pure ()
-    writeAll p destOffset ((_ ** b) :: rest) = do
+    writeAll p destOffset (b :: rest) = do
       copyAll p destOffset b
       primIO $ prim__TextBuffer_unsafe_write_char p (cast (destOffset + length b)) (cast '\n')
       writeAll p (destOffset + length b + 1) rest
@@ -417,7 +400,7 @@ unlines xs = build (totalLength xs + List.length xs) (\p => writeAll p 0 xs)
 ||| Split into the longest prefix satisfying the predicate, and the
 ||| rest.
 export
-span : (Char -> Bool) -> TextBuffer n -> ((p ** TextBuffer p), (q ** TextBuffer q))
+span : (Char -> Bool) -> TextBuffer -> (TextBuffer, TextBuffer)
 span pred buf =
   let splitAt = scanWhile pred buf (length buf) 0
   in (substrClamped 0 splitAt buf, substrClamped splitAt (length buf `minus` splitAt) buf)
@@ -425,11 +408,11 @@ span pred buf =
 ||| Split into the longest prefix *not* satisfying the predicate, and
 ||| the rest.
 export
-break : (Char -> Bool) -> TextBuffer n -> ((p ** TextBuffer p), (q ** TextBuffer q))
+break : (Char -> Bool) -> TextBuffer -> (TextBuffer, TextBuffer)
 break p buf = span (not . p) buf
 
 ||| Split wherever the predicate holds, dropping the separator
 ||| characters themselves.
 export
-split : (Char -> Bool) -> TextBuffer n -> List (m ** TextBuffer m)
+split : (Char -> Bool) -> TextBuffer -> List TextBuffer
 split p buf = scanSplit p buf (length buf) 0 0
