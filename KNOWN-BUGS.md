@@ -87,6 +87,20 @@ anything so far, but don't be surprised by them showing up again.
   `TODO.md`'s git history and `rc2/doc/loop-conversion.md` for the full
   investigation; `rc2/tests/Test16LoopContinuePostDrop.idr` is this fix's
   own dedicated regression test.
+- **`List.(++)` (`Prelude.Types`'s `reverseOnto`/`tailRecAppend`) leaks
+  memory via `idris2rc2_newConstructor` on repeated `IORef` append.**
+  Found incidentally (2026-08-25) while testing `Channel`'s
+  `channelPut` for the Concurrency work (`rc2/doc/concurrency.md`,
+  commit `05c5c78`), but confirmed unrelated to concurrency: reproduces
+  on a plain, single-threaded program that
+  `modifyIORef`/`writeIORef`-appends to a `List` a handful of times
+  (three appends was enough in `libs/rc2base/tests/
+  TestConcurrency.idr`'s own test), no `fork`/`Mutex`/thread involved
+  at all -- `channelPut`'s test just happened to be the first thing in
+  this codebase to exercise `List.(++)` this way. On the order of
+  40-280 bytes per run in this test's own `valgrind` numbers. Not
+  root-caused or fixed, only found and reproduced; see `TODO.md`'s own
+  matching entry.
 
 ## Runtime: `RFree` rarely fires in practice (not a bug)
 

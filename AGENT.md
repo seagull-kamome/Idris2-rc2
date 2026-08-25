@@ -45,8 +45,9 @@ show up again during testing.
   immortal file-scope static (`RCConstCon`) instead of a fresh heap
   allocation on every evaluation), `concurrency.md` for the runtime's
   multi-step move to thread-safety -- atomic reference count, then real
-  OS thread spawning (`refc_fork`) and Mutex/Condition -- a living
-  document, updated as later stages land. Not
+  OS thread spawning (`refc_fork`) and Mutex/Condition, then the
+  remaining `System.Concurrency`-family primitives plus a joinable fork
+  and `Channel` -- a living document, updated as later stages land. Not
   a replacement for `TODO.md` — those stay the changelog
   and gap tracker; `rc2/doc/` is where the *why* and the
   bugs-found-along-the-way for a specific subsystem live.

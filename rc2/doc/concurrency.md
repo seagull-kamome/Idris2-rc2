@@ -3,15 +3,22 @@
 Implementation notes for rc2's runtime-side concurrency posture, built
 in stages: first making the reference count itself safe to touch from
 more than one thread, then making real OS thread spawning (`refc_fork`)
-and Mutex/Condition actually work -- both stages are now done, see
-"Status" below for exactly what's implemented versus what's still
-planned. Neither stage introduced new Idris-level API surface: existing
-`System.Concurrency` types and functions work unchanged, just now
-actually backed by real threads and pthread primitives instead of a
-stub. Written to let a future session (or a future you) regain full
-context without re-deriving the design or re-discovering the
-constraints already identified here. This document is a *living* one,
-updated as later stages land.
+and Mutex/Condition actually work, then filling in every remaining
+`System.Concurrency`-family primitive left out of that second stage
+(`conditionWaitTimeout`, `getThreadId`, `setThreadData`/`getThreadData`,
+`Semaphore`, `Barrier`, `Channel`) plus an rc2-specific joinable fork --
+all three stages are now done, see "Status" below for exactly what's
+implemented. The first two stages introduced no new Idris-level API
+surface: existing `System.Concurrency` types and functions work
+unchanged, just now actually backed by real threads and pthread
+primitives instead of a stub. The third stage does add new surface --
+a joinable fork and a from-scratch `Channel`, see "Design: joinable
+fork" and "Design: Channel" below for why those two specifically
+couldn't just patch an existing upstream declaration the way everything
+else in this document does. Written to let a future session (or a
+future you) regain full context without re-deriving the design or
+re-discovering the constraints already identified here. This document
+is a *living* one, updated as later stages land.
 
 (Japanese translation: `doc/ja/concurrency.md`, updated only on request
 -- this English original is the one kept current on every edit.)
@@ -254,6 +261,125 @@ What was implemented instead:
   `idris2rc2_condition_make`, `idris2rc2_condition_wait`,
   `idris2rc2_condition_signal`, `idris2rc2_condition_broadcast`).
 
+## Design: Semaphore and Barrier
+
+Same pattern as Mutex/Condition above, and for the same reason: upstream
+`System.Concurrency` declares `Semaphore`/`makeSemaphore`/
+`semaphorePost`/`semaphoreWait` and `Barrier`/`makeBarrier`/
+`barrierWait` as `%foreign` primitives with only a Scheme
+implementation. `%foreign_impl` (`libs/rc2base/src/System/Concurrency/
+RC2.idr`) attaches C implementations onto those existing declarations
+without touching upstream. Two new native tags,
+`IDRIS2RC2_TAG_SEMAPHORE`/`IDRIS2RC2_TAG_BARRIER` (`datatypes.h`), embed
+a `sem_t`/`pthread_barrier_t` directly in the header-prefixed value,
+the same single-allocation shape `IDRIS2RC2_TAG_MUTEX`/`_CONDITION`
+already use; `idris2rc2_teardown` (`memory.c`) calls `sem_destroy`/
+`pthread_barrier_destroy` once the refcount reaches zero, so there's no
+explicit free primitive on the Idris side. The actual pthread/semaphore
+calls (`idris2rc2_semaphore_make`/`_post`/`_wait`,
+`idris2rc2_barrier_make`/`_wait`) live in
+`libs/rc2base/support/c/concurrency_util.c`.
+
+`conditionWaitTimeout` and `getThreadId` are `%foreign_impl` patches
+too, but need no new tag: `idris2rc2_condition_wait_timeout` wraps
+`pthread_cond_timedwait` against a `CLOCK_REALTIME`-based absolute
+deadline computed from the caller's microsecond count;
+`idris2rc2_get_thread_id` wraps Linux's `gettid()` (needs
+`_GNU_SOURCE`).
+
+`setThreadData`/`getThreadData` are backed by a single
+`_Thread_local IDRIS2RC2_Value *`, one slot per OS thread.
+`idris2rc2_set_thread_data` drops the slot's previous value before
+overwriting it -- ordinary refcount discipline, not a new mechanism --
+and `idris2rc2_get_thread_data` `dup`s before returning, since the
+caller receives its own fresh reference while the thread-local slot
+keeps its own.
+
+## Design: joinable fork (`forkJoin`/`join`, `JoinHandle`)
+
+Upstream `System.Concurrency.idr` has no joinable-fork equivalent to
+patch: its `ThreadID`/`threadWait` can't join anything from any C
+backend, `threadWait` being Scheme-only, exactly the unreachability
+"Design: real thread spawning" above already relies on to justify
+`refc_fork` detaching unconditionally. So `forkJoin`/`join`/
+`JoinHandle` are a fresh `%foreign` declaration (`libs/rc2base/src/
+System/Concurrency/RC2.idr`), not a `%foreign_impl` patch -- this is
+genuinely new Idris-level API surface, absent from upstream entirely.
+
+A new tag, `IDRIS2RC2_TAG_JOINHANDLE` (`datatypes.h`), holds the raw
+`pthread_t` plus a `joined : bool` flag. `idris2rc2_fork_join`
+(`concurrency_util.c`) mirrors `idris2rc2_fork`'s own trampoline
+(`ioprims.c`) -- including `dup`ing the closure before `pthread_create`
+for the same use-after-free reason -- but spawns the thread *not*
+detached, since it may still need to be joined; `idris2rc2_join`
+`pthread_join`s and sets `joined = true`.
+
+The `joined` flag is what makes `idris2rc2_teardown`'s
+`IDRIS2RC2_TAG_JOINHANDLE` case correct either way a handle can be
+dropped: if it's dropped without ever being joined, teardown
+`pthread_detach`s it so the underlying thread doesn't become a zombie;
+if it *was* joined, teardown does nothing further, because
+`pthread_join` already reaped the thread and its `pthread_t` is no
+longer a valid identifier -- touching it again (a second detach or
+join) is undefined behavior. `join` is documented as callable at most
+once per handle, the same lack of a type-enforced uniqueness guarantee
+upstream's own `Mutex`/`Condition` API already has; nothing beyond that
+documentation stops a caller from calling it twice.
+
+## Design: Channel
+
+Channel is the one primitive in this stage that couldn't be attached
+via `%foreign_impl` at all. `channelGetNonBlocking`/
+`channelGetWithTimeout` return `Maybe a`, and rc2's runtime has no
+program-independent way to construct an arbitrary compilation's `Just`
+tag from generic runtime C: `[external]` types marshal as an
+unconstrained `IDRIS2RC2_Value*` (CFUser) passthrough, but `Just x` is
+an ordinary Idris constructor whose tag number is assigned per-
+compilation by the compiler -- only `Nothing`'s NULL representation is
+a fixed, program-independent convention (the same one already relied on
+elsewhere in the runtime).
+
+So Channel is implemented as ordinary Idris (`libs/rc2base/src/
+System/Concurrency/RC2.idr`) on top of the already-verified Mutex/
+Condition/IORef primitives instead: `Channel a` is
+`MkChannel (IORef (List a)) Mutex Condition`; `channelPut` appends and
+signals; `channelGet` loops on `conditionWait` until the list is
+non-empty; `channelGetNonBlocking` and `channelGetWithTimeout` both
+check-then-return a `Maybe` without looping (the latter via a single
+`conditionWaitTimeout` covering the whole budget -- if woken, spuriously
+or by a `channelPut`, before a value is actually available, it returns
+`Nothing` rather than re-waiting for the remainder; deliberately simple
+rather than exact deadline tracking). Because `Maybe`/`List`
+construction goes through the ordinary compiler pipeline here, it never
+crosses an FFI boundary and needs no runtime-side tag knowledge at all.
+
+This makes Channel a genuinely new type, not upstream's own `Channel`
+reused: giving an `[external]` type from another module a concrete
+Idris-level constructor isn't possible. `System.Concurrency.RC2`
+therefore `%hide`s `System.Concurrency`'s own five Channel-family names
+(`Channel`, `makeChannel`, `channelPut`, `channelGet`,
+`channelGetNonBlocking`, `channelGetWithTimeout`) rather than hiding its
+own -- a caller who imports both modules together needs a qualified
+name for whichever one they mean, a known tradeoff rather than an
+oversight.
+
+## Finding: `%foreign` type witnesses are not erased
+
+Discovered while implementing `setThreadData`/`getThreadData`/
+`forkJoin`/`join`: a `%foreign` primitive's polymorphic type parameter
+-- an implicit `{a : Type}`, or the witness rc2's own FFI convention
+supplies whenever `a` appears in a return type -- is **not** erased by
+rc2's codegen. Confirmed empirically, by building and reading the
+actual generated C, not by inspecting the compiler's erasure logic
+directly. All four affected C functions (`idris2rc2_set_thread_data`,
+`idris2rc2_get_thread_data`, `idris2rc2_fork_join`, `idris2rc2_join`,
+`concurrency_util.c`/`.h`) therefore take a leading
+`IDRIS2RC2_Value *typeWitness` parameter that's received and
+immediately ignored. Worth re-checking the generated C for this again
+before assuming erasure on any future primitive whose signature
+mentions a bare polymorphic `a`, rather than trusting that assumption
+from first principles.
+
 ## Status
 
 **Reference count made atomic: done and verified.** `datatypes.h`,
@@ -279,11 +405,36 @@ a shared counter and waiting on a condition), plus
 `valgrind --fair-sched=yes` and `helgrind` reporting no data races, and
 `rc2/tests/bench.sh` showing no measured performance regression.
 
-**Not yet implemented:** `conditionWaitTimeout`, `getThreadId`,
-`setThreadData`/`getThreadData`, `Semaphore`, `Barrier`, `Channel` (all
-still Scheme-only in upstream `System.Concurrency`, the same gap
-`Mutex`/`Condition` had before this step), and an rc2-specific
-*joinable* fork (today's `refc_fork` is fire-and-forget only, matching
-what `threadWait`'s unreachability makes the upstream API itself
-capable of observing -- see "Design: real thread spawning" above).
-These remain candidates for a future stage of this document.
+**Remaining `System.Concurrency`-family primitives, joinable fork, and
+Channel: done and verified.** `conditionWaitTimeout`, `getThreadId`,
+`setThreadData`/`getThreadData`, `Semaphore`, and `Barrier` are now
+usable from rc2 the same way `Mutex`/`Condition` are -- `%foreign_impl`
+onto upstream's existing prim__ declarations (see "Design: Semaphore
+and Barrier" above). An rc2-specific joinable fork (`forkJoin`/`join`/
+`JoinHandle`) and a from-scratch `Channel` fill the two gaps upstream
+itself can't cover on any C backend (see "Design: joinable fork" and
+"Design: Channel" above). Verified via `rc2/tests/verify.sh` (56
+passed, 2 known pre-existing, 0 failed) and `libs/rc2base/tests/
+verify.sh` (`TestConcurrency.idr` extended to exercise every new
+primitive, all PASS), plus `valgrind --fair-sched=yes` and `helgrind`
+reporting no new errors (the pre-existing `List.(++)` leak and the
+already-known `ThreadID` malloc are unrelated -- see `KNOWN-BUGS.md`).
+
+## Outlook
+
+Every item this document's own "Not yet implemented" list (and
+`TODO.md`'s Concurrency section) used to name is now implemented. Two
+things worth keeping in mind for future work here, neither blocking
+anything today:
+
+- rc2's `Mutex`/`Condition`/`Semaphore`/`Barrier`/`JoinHandle` are all
+  backed by pthread objects with exactly the shape upstream's
+  `[external]` marshaling licenses, but nothing about that shape is
+  visible to, or reusable by, a different backend -- callers only ever
+  see the opaque upstream type, so this isn't a portability constraint
+  in practice, just worth remembering if a future backend-comparison
+  pass ever inspects concrete representations.
+- `channelGetWithTimeout`'s single-wait budget (see "Design: Channel"
+  above) is deliberately simple rather than exact deadline tracking.
+  Revisit only if a caller actually needs precise deadline semantics;
+  nothing found during this stage's own testing needed it.

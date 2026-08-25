@@ -317,21 +317,19 @@ materialize a boxed `Bool`, even when immediately consumed by a branch;
 only comparisons over the fixed-width/`Double`/`Char` types above skip
 that materialization.
 
-## Concurrency: real thread spawning, Mutex/Condition done; some APIs still missing
+## Correctness: `List.(++)` leaks memory on repeated `IORef` append
 
-Reference counting is atomic, `refc_fork` (`ioprims.c`) spawns a real
-detached `pthread`, and upstream `System.Concurrency`'s `Mutex`/
-`Condition` are usable from rc2 via `System.Concurrency.RC2`'s
-`%foreign_impl` (`libs/rc2base/src/System/Concurrency/RC2.idr`) -- see
-`rc2/doc/concurrency.md` for the full design, the memory-order
-reasoning, and the races that real thread spawning made reachable
-(all fixed).
-
-Still missing, all Scheme-only in upstream `System.Concurrency` and not
-yet implemented for rc2: `conditionWaitTimeout`, `getThreadId`,
-`setThreadData`/`getThreadData`, `Semaphore`, `Barrier`, `Channel`.
-Also missing: an rc2-specific *joinable* fork (today's `refc_fork` is
-detached, fire-and-forget only).
+Found incidentally while testing `Channel`'s `channelPut`
+(`rc2/doc/concurrency.md`'s Concurrency work, commit `05c5c78`), but
+reproduces on a single-threaded, non-concurrent program: repeatedly
+`modifyIORef`/`writeIORef`-appending to a `List` held in an `IORef`
+(three appends was enough to trigger it in `TestConcurrency.idr`) leaks
+memory via `idris2rc2_newConstructor`, on the order of 40-280 bytes per
+run. Unrelated to concurrency itself -- the `channelPut` test just
+happened to be the first thing in this codebase to exercise
+`List.(++)` (`Prelude.Types`'s `reverseOnto`/`tailRecAppend`) this way.
+Not investigated further and not fixed; recorded here as found, not
+root-caused.
 
 ## Test coverage gaps
 
