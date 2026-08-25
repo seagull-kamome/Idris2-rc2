@@ -134,8 +134,12 @@ typedef struct {
   IDRIS2RC2_Value *args[];
 } IDRIS2RC2_Closure;
 
+// `lock` guards `v` itself (the swap-and-drop-old sequence in
+// writeIORef/readIORef, ioprims.c) -- see util.h's idris2rc2_spin_lock
+// doc comment for why a bare atomic load+dup on `v` isn't enough.
 typedef struct {
   IDRIS2RC2_Header header;
+  atomic_flag lock;
   IDRIS2RC2_Value *v;
 } IDRIS2RC2_IORef;
 
@@ -150,8 +154,12 @@ typedef struct {
   IDRIS2RC2_Closure *onCollect;
 } IDRIS2RC2_GCPointer;
 
+// `lock` guards `items` the same way IDRIS2RC2_IORef's own lock guards
+// `v` -- one lock for the whole array (coarse-grained, matching a
+// single IORef's own granularity), not one per element.
 typedef struct {
   IDRIS2RC2_Header header;
+  atomic_flag lock;
   int capacity;
   IDRIS2RC2_Value **items;
 } IDRIS2RC2_Array;

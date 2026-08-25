@@ -11,8 +11,19 @@ IDRIS2RC2_Value *idris2rc2_Data_IORef_prim__newIORef(IDRIS2RC2_Value *erased,
                                                        IDRIS2RC2_Value *world) {
   IDRIS2RC2_IORef *r = IDRIS2RC2_NEW(IDRIS2RC2_IORef);
   r->header.tag = IDRIS2RC2_TAG_IOREF;
+  atomic_flag_clear(&r->lock);
   r->v = idris2rc2_dup(v);
   return (IDRIS2RC2_Value *)r;
+}
+
+IDRIS2RC2_Value *idris2rc2_Data_IORef_prim__readIORef(IDRIS2RC2_Value *erased,
+                                                        IDRIS2RC2_Value *ioref,
+                                                        IDRIS2RC2_Value *world) {
+  IDRIS2RC2_IORef *r = (IDRIS2RC2_IORef *)ioref;
+  idris2rc2_spin_lock(&r->lock);
+  IDRIS2RC2_Value *result = idris2rc2_dup(r->v);
+  idris2rc2_spin_unlock(&r->lock);
+  return result;
 }
 
 IDRIS2RC2_Value *idris2rc2_Data_IORef_prim__writeIORef(IDRIS2RC2_Value *erased,
@@ -21,8 +32,10 @@ IDRIS2RC2_Value *idris2rc2_Data_IORef_prim__writeIORef(IDRIS2RC2_Value *erased,
                                                          IDRIS2RC2_Value *world) {
   IDRIS2RC2_IORef *r = (IDRIS2RC2_IORef *)ioref;
   idris2rc2_dup(newValue);
+  idris2rc2_spin_lock(&r->lock);
   IDRIS2RC2_Value *old = r->v;
   r->v = newValue;
+  idris2rc2_spin_unlock(&r->lock);
   idris2rc2_drop(old);
   return NULL;
 }
@@ -37,13 +50,28 @@ IDRIS2RC2_Value *idris2rc2_Data_IOArray_Prims_prim__newArray(
   return (IDRIS2RC2_Value *)a;
 }
 
+IDRIS2RC2_Value *idris2rc2_Data_IOArray_Prims_prim__arrayGet(
+    IDRIS2RC2_Value *erased, IDRIS2RC2_Value *array, IDRIS2RC2_Value *index,
+    IDRIS2RC2_Value *world) {
+  IDRIS2RC2_Array *a = (IDRIS2RC2_Array *)array;
+  int64_t i = idris2rc2_extractInt(index);
+  idris2rc2_spin_lock(&a->lock);
+  IDRIS2RC2_Value *result = idris2rc2_dup(a->items[i]);
+  idris2rc2_spin_unlock(&a->lock);
+  return result;
+}
+
 IDRIS2RC2_Value *idris2rc2_Data_IOArray_Prims_prim__arraySet(
     IDRIS2RC2_Value *erased, IDRIS2RC2_Value *array, IDRIS2RC2_Value *index,
     IDRIS2RC2_Value *v, IDRIS2RC2_Value *world) {
   IDRIS2RC2_Array *a = (IDRIS2RC2_Array *)array;
   int64_t i = idris2rc2_extractInt(index);
-  idris2rc2_drop(a->items[i]);
-  a->items[i] = idris2rc2_dup(v);
+  idris2rc2_dup(v);
+  idris2rc2_spin_lock(&a->lock);
+  IDRIS2RC2_Value *old = a->items[i];
+  a->items[i] = v;
+  idris2rc2_spin_unlock(&a->lock);
+  idris2rc2_drop(old);
   return NULL;
 }
 

@@ -131,6 +131,7 @@ IDRIS2RC2_Buffer *idris2rc2_mkBuffer(void *buf) {
 IDRIS2RC2_Array *idris2rc2_mkArray(int length) {
   IDRIS2RC2_Array *a = IDRIS2RC2_NEW(IDRIS2RC2_Array);
   a->header.tag = IDRIS2RC2_TAG_ARRAY;
+  atomic_flag_clear(&a->lock);
   a->capacity = length;
   a->items = (IDRIS2RC2_Value **)calloc(length, sizeof(IDRIS2RC2_Value *));
   IDRIS2RC2_VERIFY(length == 0 || a->items, "calloc failed");
