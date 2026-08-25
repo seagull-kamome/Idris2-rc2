@@ -1,3 +1,12 @@
 --- Testing System.Concurrency.RC2 ---
 Final counter (expected 5): 5
+forkJoin/join result (expected 4): 4
+Semaphore post/wait ran: True
+Barrier released all 4 parties: True
+Channel got 3 values summing to 60: True
+channelGetNonBlocking on empty channel: Nothing
+channelGetWithTimeout on empty channel: Nothing
+conditionWaitTimeout returned without deadlocking
+getThreadId returned: True
+setThreadData/getThreadData round-trip: True
 --- Tests finished ---

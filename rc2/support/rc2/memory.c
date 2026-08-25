@@ -204,6 +204,18 @@ static void idris2rc2_teardown(IDRIS2RC2_Value *v) {
   case IDRIS2RC2_TAG_CONDITION:
     pthread_cond_destroy(&((IDRIS2RC2_Condition *)v)->cond);
     break;
+  case IDRIS2RC2_TAG_SEMAPHORE:
+    sem_destroy(&((IDRIS2RC2_Semaphore *)v)->sem);
+    break;
+  case IDRIS2RC2_TAG_BARRIER:
+    pthread_barrier_destroy(&((IDRIS2RC2_Barrier *)v)->barrier);
+    break;
+  case IDRIS2RC2_TAG_JOINHANDLE: {
+    IDRIS2RC2_JoinHandle *h = (IDRIS2RC2_JoinHandle *)v;
+    if (!h->joined)
+      pthread_detach(h->tid);
+    break;
+  }
   default:
     break;
   }

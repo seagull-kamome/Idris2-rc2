@@ -14,7 +14,9 @@
 
 #include <gmp.h>
 #include <pthread.h>
+#include <semaphore.h>
 #include <stdatomic.h>
+#include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -37,6 +39,9 @@
 #define IDRIS2RC2_TAG_BUFFER 24
 #define IDRIS2RC2_TAG_MUTEX 25
 #define IDRIS2RC2_TAG_CONDITION 26
+#define IDRIS2RC2_TAG_SEMAPHORE 27
+#define IDRIS2RC2_TAG_BARRIER 28
+#define IDRIS2RC2_TAG_JOINHANDLE 29
 
 typedef struct {
   // Values that reach the maximum reference count are treated as immortal
@@ -175,3 +180,27 @@ typedef struct {
   IDRIS2RC2_Header header;
   pthread_cond_t cond;
 } IDRIS2RC2_Condition;
+
+typedef struct {
+  IDRIS2RC2_Header header;
+  sem_t sem;
+} IDRIS2RC2_Semaphore;
+
+typedef struct {
+  IDRIS2RC2_Header header;
+  pthread_barrier_t barrier;
+} IDRIS2RC2_Barrier;
+
+// Backs System.Concurrency.RC2's rc2-specific joinable fork (forkJoin/
+// join) -- upstream System.Concurrency.idr's ThreadID/threadWait can't
+// join anything from a C backend (threadWait is scheme-only), so this is
+// a new type, not a %foreign_impl patch onto an existing one. `joined`
+// guards idris2rc2_teardown: pthread_detach only if join was never
+// called (so a dropped-but-never-joined thread isn't leaked as a
+// zombie); once idris2rc2_join has pthread_join'd, `tid` is no longer a
+// valid identifier and must not be touched again.
+typedef struct {
+  IDRIS2RC2_Header header;
+  pthread_t tid;
+  bool joined;
+} IDRIS2RC2_JoinHandle;
