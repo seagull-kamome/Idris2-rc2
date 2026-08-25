@@ -70,7 +70,7 @@ fi
 
 echo "=== rc2 backend: build TestTextTree (Data.Text, the finger-tree rope) ==="
 nix-shell -p gcc gmp pkg-config --run \
-    "cd '$TESTS_DIR' && '$IDRIS2RC2' --cg rc2 -p rc2base -o TestTextTree_verify TestTextTree.idr"
+    "cd '$TESTS_DIR' && '$IDRIS2RC2' --cg rc2 -p rc2base -p contrib -o TestTextTree_verify TestTextTree.idr"
 
 echo "=== Run and diff against TestTextTree.expected ==="
 "$TESTS_DIR/build/exec/TestTextTree_verify" > "$TMP/actual2.out" 2>&1

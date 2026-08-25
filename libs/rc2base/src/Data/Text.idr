@@ -3,260 +3,65 @@ module Data.Text
 -- Copyright 2026, Hattori,Hiroki. All rights reserved.
 -- This module was licensed by BSD3.
 
--- A rope over Data.TextBuffer chunks, backed by a 2-3 finger tree
--- (Hinze/Paterson). TextBuffer's own (++) is O(n) (it memcpys both
--- sides into a fresh buffer every time), which makes repeated small
--- concatenations O(n^2) overall; wrapping chunks in a finger tree
--- instead makes (++) O(log(min(n,m))).
+-- A rope over Data.TextBuffer chunks, backed by contrib's own 2-3
+-- finger tree (Hinze/Paterson): `Data.Seq.Unsized.Seq`. TextBuffer's
+-- own (++) is O(n) (it memcpys both sides into a fresh buffer every
+-- time), which makes repeated small concatenations O(n^2) overall;
+-- wrapping chunks in a finger tree instead makes (++) O(log(min(n,m))).
 --
--- The finger tree engine below (Digit/Node/FingerTree, consTree/
--- snocTree/addTree0) is an ordinary, non-Nat-indexed set of types --
--- deliberately NOT dependently typed, mirroring idris2's own
--- contrib package (Data.Seq.Internal, adapted here from the same
--- containers/Data.Sequence algorithm it itself credits). Unlike
--- Data.Seq.Internal (and containers' own Data.Sequence), this tree
--- carries no per-node size cache at all: every branch decision in
--- consTree/snocTree/appendTreeK/addDigitsK/addTree0 is driven purely
--- by which Digit constructor (One/Two/Three/Four) is in hand, never
--- by a running total, so there was nothing for a cached Nat to buy
--- except a faster `length` -- and no index-based split/search that
--- would need one is implemented here (every non-concatenation
--- operation flattens to a single TextBuffer first, see below). `Text`
--- itself is plain `Type`, exactly like `Data.TextBuffer.TextBuffer`;
--- `length` walks the tree structurally (via `Foldable FingerTree`,
--- O(chunk count), no data copied) and is the one source of truth for
--- how long a given `Text` is. A function that genuinely needs to
--- relate a `Nat` to a specific `Text`'s length (just `index`'s `Fin`
--- bound, here) takes an explicit, erased `(0 _ : n = length t)`
--- witness for exactly that purpose instead of indexing the whole type
--- by it.
+-- This module used to carry its own hand-rolled copy of that same
+-- finger tree engine (Digit/Node/FingerTree, consTree/snocTree/
+-- addTree0 -- itself a port of Data.Seq.Internal's algorithm, adapted
+-- from the `containers` package's Data.Sequence). Once this module's
+-- own Sized cache was dropped (nothing here ever branched on a size
+-- value, only on which Digit constructor was in hand), the two
+-- implementations had nothing left distinguishing them, so the
+-- hand-rolled copy was replaced with `Seq` directly: one less engine
+-- to maintain, and contrib's version is `%default total` with no
+-- partial functions.
 --
--- Every operation that isn't fundamentally about concatenation
--- (substr, words, trim, ...) is implemented by flattening to a single
--- TextBuffer and delegating to Data.TextBuffer's own (already-correct)
--- implementation -- same asymptotic cost as TextBuffer itself, no
--- better, no worse; only (++) and the handful of operations built
--- from it (concat, joinBy, unwords, unlines, singleton, replicate)
--- get the tree's win.
+-- `Seq`'s own element wrapper (`Elem`) fixes its internal size
+-- annotation at a constant 1 per element regardless of what's stored,
+-- so `Seq`'s own `index`/`splitAt` count chunks, not characters -- of
+-- no consequence here since this module never uses tree-level indexed
+-- access anyway (every non-concatenation operation flattens to a
+-- single TextBuffer first, see below). `Text` itself is plain `Type`,
+-- exactly like `Data.TextBuffer.TextBuffer`; `length` walks the tree
+-- structurally (via `Seq`'s own `Foldable`, O(chunk count), no data
+-- copied) and is the one source of truth for how long a given `Text`
+-- is. A function that genuinely needs to relate a `Nat` to a specific
+-- `Text`'s length (just `index`'s `Fin` bound, here) takes an
+-- explicit, erased `(0 _ : n = length t)` witness for exactly that
+-- purpose instead of indexing the whole type by it.
+--
+-- Every operation that needs to look at, or rebuild, every chunk
+-- but can't avoid touching every character anyway (substr, words,
+-- trim, ...) is implemented by flattening to a single TextBuffer and
+-- delegating to Data.TextBuffer's own (already-correct) implementation
+-- -- same asymptotic cost as TextBuffer itself, no better, no worse.
+-- (++) and the handful of operations built from it (concat, joinBy,
+-- unwords, unlines, singleton, replicate) get the tree's O(log n)
+-- concatenation win; `index` skips whole chunks instead of copying
+-- them, and toUpper/toLower map each chunk in place -- neither needs
+-- `flatten` at all.
 
 import Data.TextBuffer
+import Data.Seq.Unsized as Seq
 import Data.Fin
 import Data.List
 
 -- ---------------------------------------------------------------------------
--- The finger tree engine. Ordinary (non-dependent), unsized types --
--- no node caches a running total; every Node2/Node3/Deep is just a
--- plain structural grouping.
-
-data Digit : Type -> Type where
-  One   : e -> Digit e
-  Two   : e -> e -> Digit e
-  Three : e -> e -> e -> Digit e
-  Four  : e -> e -> e -> e -> Digit e
-
-data Node : Type -> Type where
-  Node2 : e -> e -> Node e
-  Node3 : e -> e -> e -> Node e
-
-node2 : e -> e -> Node e
-node2 = Node2
-
-node3 : e -> e -> e -> Node e
-node3 = Node3
-
-data FingerTree : Type -> Type where
-  Empty  : FingerTree e
-  Single : e -> FingerTree e
-  Deep   : Digit e -> FingerTree (Node e) -> Digit e -> FingerTree e
-
-deep : Digit e -> FingerTree (Node e) -> Digit e -> FingerTree e
-deep pr m sf = Deep pr m sf
-
-consTree : e -> FingerTree e -> FingerTree e
-consTree a Empty = Single a
-consTree a (Single b) = deep (One a) Empty (One b)
-consTree a (Deep (One b) m sf) = Deep (Two a b) m sf
-consTree a (Deep (Two b c) m sf) = Deep (Three a b c) m sf
-consTree a (Deep (Three b c d) m sf) = Deep (Four a b c d) m sf
-consTree a (Deep (Four b c d f) m sf) = Deep (Two a b) (consTree (node3 c d f) m) sf
-
-snocTree : FingerTree e -> e -> FingerTree e
-snocTree Empty a = Single a
-snocTree (Single a) b = deep (One a) Empty (One b)
-snocTree (Deep pr m (One a)) f = Deep pr m (Two a f)
-snocTree (Deep pr m (Two a b)) f = Deep pr m (Three a b f)
-snocTree (Deep pr m (Three a b c)) f = Deep pr m (Four a b c f)
-snocTree (Deep pr m (Four a b c d)) f = Deep pr (snocTree m (node3 a b c)) (Two d f)
-
--- Regroups the up-to-8 elements of two adjacent digits (plus, at
--- deeper recursion levels, up to 4 already-built Nodes carried
--- between them) into 1-4 Node2/Node3s, splicing them into the middle
--- tree. Direct port of Data.Seq.Internal's addDigitsK/appendTreeK
--- mutual block (itself adapted from the `containers` package's
--- Data.Sequence) -- the natural node-count bound (>=1 needs 1 extra
--- node, up to 4 extra needs up to 4) is why this bottoms out at K=4
--- rather than needing a generic list.
-mutual
-  addDigits4 : FingerTree (Node (Node e)) -> Digit (Node e) -> Node e -> Node e -> Node e -> Node e -> Digit (Node e) -> FingerTree (Node (Node e)) -> FingerTree (Node (Node e))
-  addDigits4 m1 (One a) b c d e (One f) m2 = appendTree2 m1 (node3 a b c) (node3 d e f) m2
-  addDigits4 m1 (One a) b c d e (Two f g) m2 = appendTree3 m1 (node3 a b c) (node2 d e) (node2 f g) m2
-  addDigits4 m1 (One a) b c d e (Three f g h) m2 = appendTree3 m1 (node3 a b c) (node3 d e f) (node2 g h) m2
-  addDigits4 m1 (One a) b c d e (Four f g h i) m2 = appendTree3 m1 (node3 a b c) (node3 d e f) (node3 g h i) m2
-  addDigits4 m1 (Two a b) c d e f (One g) m2 = appendTree3 m1 (node3 a b c) (node2 d e) (node2 f g) m2
-  addDigits4 m1 (Two a b) c d e f (Two g h) m2 = appendTree3 m1 (node3 a b c) (node3 d e f) (node2 g h) m2
-  addDigits4 m1 (Two a b) c d e f (Three g h i) m2 = appendTree3 m1 (node3 a b c) (node3 d e f) (node3 g h i) m2
-  addDigits4 m1 (Two a b) c d e f (Four g h i j) m2 = appendTree4 m1 (node3 a b c) (node3 d e f) (node2 g h) (node2 i j) m2
-  addDigits4 m1 (Three a b c) d e f g (One h) m2 = appendTree3 m1 (node3 a b c) (node3 d e f) (node2 g h) m2
-  addDigits4 m1 (Three a b c) d e f g (Two h i) m2 = appendTree3 m1 (node3 a b c) (node3 d e f) (node3 g h i) m2
-  addDigits4 m1 (Three a b c) d e f g (Three h i j) m2 = appendTree4 m1 (node3 a b c) (node3 d e f) (node2 g h) (node2 i j) m2
-  addDigits4 m1 (Three a b c) d e f g (Four h i j k) m2 = appendTree4 m1 (node3 a b c) (node3 d e f) (node3 g h i) (node2 j k) m2
-  addDigits4 m1 (Four a b c d) e f g h (One i) m2 = appendTree3 m1 (node3 a b c) (node3 d e f) (node3 g h i) m2
-  addDigits4 m1 (Four a b c d) e f g h (Two i j) m2 = appendTree4 m1 (node3 a b c) (node3 d e f) (node2 g h) (node2 i j) m2
-  addDigits4 m1 (Four a b c d) e f g h (Three i j k) m2 = appendTree4 m1 (node3 a b c) (node3 d e f) (node3 g h i) (node2 j k) m2
-  addDigits4 m1 (Four a b c d) e f g h (Four i j k l) m2 = appendTree4 m1 (node3 a b c) (node3 d e f) (node3 g h i) (node3 j k l) m2
-
-  appendTree4 : FingerTree (Node e) -> Node e -> Node e -> Node e -> Node e -> FingerTree (Node e) -> FingerTree (Node e)
-  appendTree4 Empty a b c d xs = consTree a (consTree b (consTree c (consTree d xs)))
-  appendTree4 xs a b c d Empty = snocTree (snocTree (snocTree (snocTree xs a) b) c) d
-  appendTree4 (Single x) a b c d xs = consTree x (consTree a (consTree b (consTree c (consTree d xs))))
-  appendTree4 xs a b c d (Single x) = snocTree (snocTree (snocTree (snocTree (snocTree xs a) b) c) d) x
-  appendTree4 (Deep pr1 m1 sf1) a b c d (Deep pr2 m2 sf2) = Deep pr1 (addDigits4 m1 sf1 a b c d pr2 m2) sf2
-
-  addDigits3 : FingerTree (Node (Node e)) -> Digit (Node e) -> Node e -> Node e -> Node e -> Digit (Node e) -> FingerTree (Node (Node e)) -> FingerTree (Node (Node e))
-  addDigits3 m1 (One a) b c d (One e) m2 = appendTree2 m1 (node3 a b c) (node2 d e) m2
-  addDigits3 m1 (One a) b c d (Two e f) m2 = appendTree2 m1 (node3 a b c) (node3 d e f) m2
-  addDigits3 m1 (One a) b c d (Three e f g) m2 = appendTree3 m1 (node3 a b c) (node2 d e) (node2 f g) m2
-  addDigits3 m1 (One a) b c d (Four e f g h) m2 = appendTree3 m1 (node3 a b c) (node3 d e f) (node2 g h) m2
-  addDigits3 m1 (Two a b) c d e (One f) m2 = appendTree2 m1 (node3 a b c) (node3 d e f) m2
-  addDigits3 m1 (Two a b) c d e (Two f g) m2 = appendTree3 m1 (node3 a b c) (node2 d e) (node2 f g) m2
-  addDigits3 m1 (Two a b) c d e (Three f g h) m2 = appendTree3 m1 (node3 a b c) (node3 d e f) (node2 g h) m2
-  addDigits3 m1 (Two a b) c d e (Four f g h i) m2 = appendTree3 m1 (node3 a b c) (node3 d e f) (node3 g h i) m2
-  addDigits3 m1 (Three a b c) d e f (One g) m2 = appendTree3 m1 (node3 a b c) (node2 d e) (node2 f g) m2
-  addDigits3 m1 (Three a b c) d e f (Two g h) m2 = appendTree3 m1 (node3 a b c) (node3 d e f) (node2 g h) m2
-  addDigits3 m1 (Three a b c) d e f (Three g h i) m2 = appendTree3 m1 (node3 a b c) (node3 d e f) (node3 g h i) m2
-  addDigits3 m1 (Three a b c) d e f (Four g h i j) m2 = appendTree4 m1 (node3 a b c) (node3 d e f) (node2 g h) (node2 i j) m2
-  addDigits3 m1 (Four a b c d) e f g (One h) m2 = appendTree3 m1 (node3 a b c) (node3 d e f) (node2 g h) m2
-  addDigits3 m1 (Four a b c d) e f g (Two h i) m2 = appendTree3 m1 (node3 a b c) (node3 d e f) (node3 g h i) m2
-  addDigits3 m1 (Four a b c d) e f g (Three h i j) m2 = appendTree4 m1 (node3 a b c) (node3 d e f) (node2 g h) (node2 i j) m2
-  addDigits3 m1 (Four a b c d) e f g (Four h i j k) m2 = appendTree4 m1 (node3 a b c) (node3 d e f) (node3 g h i) (node2 j k) m2
-
-  appendTree3 : FingerTree (Node e) -> Node e -> Node e -> Node e -> FingerTree (Node e) -> FingerTree (Node e)
-  appendTree3 Empty a b c xs = consTree a (consTree b (consTree c xs))
-  appendTree3 xs a b c Empty = snocTree (snocTree (snocTree xs a) b) c
-  appendTree3 (Single x) a b c xs = consTree x (consTree a (consTree b (consTree c xs)))
-  appendTree3 xs a b c (Single x) = snocTree (snocTree (snocTree (snocTree xs a) b) c) x
-  appendTree3 (Deep pr1 m1 sf1) a b c (Deep pr2 m2 sf2) = Deep pr1 (addDigits3 m1 sf1 a b c pr2 m2) sf2
-
-  addDigits2 : FingerTree (Node (Node e)) -> Digit (Node e) -> Node e -> Node e -> Digit (Node e) -> FingerTree (Node (Node e)) -> FingerTree (Node (Node e))
-  addDigits2 m1 (One a) b c (One d) m2 = appendTree2 m1 (node2 a b) (node2 c d) m2
-  addDigits2 m1 (One a) b c (Two d e) m2 = appendTree2 m1 (node3 a b c) (node2 d e) m2
-  addDigits2 m1 (One a) b c (Three d e f) m2 = appendTree2 m1 (node3 a b c) (node3 d e f) m2
-  addDigits2 m1 (One a) b c (Four d e f g) m2 = appendTree3 m1 (node3 a b c) (node2 d e) (node2 f g) m2
-  addDigits2 m1 (Two a b) c d (One e) m2 = appendTree2 m1 (node3 a b c) (node2 d e) m2
-  addDigits2 m1 (Two a b) c d (Two e f) m2 = appendTree2 m1 (node3 a b c) (node3 d e f) m2
-  addDigits2 m1 (Two a b) c d (Three e f g) m2 = appendTree3 m1 (node3 a b c) (node2 d e) (node2 f g) m2
-  addDigits2 m1 (Two a b) c d (Four e f g h) m2 = appendTree3 m1 (node3 a b c) (node3 d e f) (node2 g h) m2
-  addDigits2 m1 (Three a b c) d e (One f) m2 = appendTree2 m1 (node3 a b c) (node3 d e f) m2
-  addDigits2 m1 (Three a b c) d e (Two f g) m2 = appendTree3 m1 (node3 a b c) (node2 d e) (node2 f g) m2
-  addDigits2 m1 (Three a b c) d e (Three f g h) m2 = appendTree3 m1 (node3 a b c) (node3 d e f) (node2 g h) m2
-  addDigits2 m1 (Three a b c) d e (Four f g h i) m2 = appendTree3 m1 (node3 a b c) (node3 d e f) (node3 g h i) m2
-  addDigits2 m1 (Four a b c d) e f (One g) m2 = appendTree3 m1 (node3 a b c) (node2 d e) (node2 f g) m2
-  addDigits2 m1 (Four a b c d) e f (Two g h) m2 = appendTree3 m1 (node3 a b c) (node3 d e f) (node2 g h) m2
-  addDigits2 m1 (Four a b c d) e f (Three g h i) m2 = appendTree3 m1 (node3 a b c) (node3 d e f) (node3 g h i) m2
-  addDigits2 m1 (Four a b c d) e f (Four g h i j) m2 = appendTree4 m1 (node3 a b c) (node3 d e f) (node2 g h) (node2 i j) m2
-
-  appendTree2 : FingerTree (Node e) -> Node e -> Node e -> FingerTree (Node e) -> FingerTree (Node e)
-  appendTree2 Empty a b xs = consTree a (consTree b xs)
-  appendTree2 xs a b Empty = snocTree (snocTree xs a) b
-  appendTree2 (Single x) a b xs = consTree x (consTree a (consTree b xs))
-  appendTree2 xs a b (Single x) = snocTree (snocTree (snocTree xs a) b) x
-  appendTree2 (Deep pr1 m1 sf1) a b (Deep pr2 m2 sf2) = Deep pr1 (addDigits2 m1 sf1 a b pr2 m2) sf2
-
-  addDigits1 : FingerTree (Node (Node e)) -> Digit (Node e) -> Node e -> Digit (Node e) -> FingerTree (Node (Node e)) -> FingerTree (Node (Node e))
-  addDigits1 m1 (One a) b (One c) m2 = appendTree1 m1 (node3 a b c) m2
-  addDigits1 m1 (One a) b (Two c d) m2 = appendTree2 m1 (node2 a b) (node2 c d) m2
-  addDigits1 m1 (One a) b (Three c d e) m2 = appendTree2 m1 (node3 a b c) (node2 d e) m2
-  addDigits1 m1 (One a) b (Four c d e f) m2 = appendTree2 m1 (node3 a b c) (node3 d e f) m2
-  addDigits1 m1 (Two a b) c (One d) m2 = appendTree2 m1 (node2 a b) (node2 c d) m2
-  addDigits1 m1 (Two a b) c (Two d e) m2 = appendTree2 m1 (node3 a b c) (node2 d e) m2
-  addDigits1 m1 (Two a b) c (Three d e f) m2 = appendTree2 m1 (node3 a b c) (node3 d e f) m2
-  addDigits1 m1 (Two a b) c (Four d e f g) m2 = appendTree3 m1 (node3 a b c) (node2 d e) (node2 f g) m2
-  addDigits1 m1 (Three a b c) d (One e) m2 = appendTree2 m1 (node3 a b c) (node2 d e) m2
-  addDigits1 m1 (Three a b c) d (Two e f) m2 = appendTree2 m1 (node3 a b c) (node3 d e f) m2
-  addDigits1 m1 (Three a b c) d (Three e f g) m2 = appendTree3 m1 (node3 a b c) (node2 d e) (node2 f g) m2
-  addDigits1 m1 (Three a b c) d (Four e f g h) m2 = appendTree3 m1 (node3 a b c) (node3 d e f) (node2 g h) m2
-  addDigits1 m1 (Four a b c d) e (One f) m2 = appendTree2 m1 (node3 a b c) (node3 d e f) m2
-  addDigits1 m1 (Four a b c d) e (Two f g) m2 = appendTree3 m1 (node3 a b c) (node2 d e) (node2 f g) m2
-  addDigits1 m1 (Four a b c d) e (Three f g h) m2 = appendTree3 m1 (node3 a b c) (node3 d e f) (node2 g h) m2
-  addDigits1 m1 (Four a b c d) e (Four f g h i) m2 = appendTree3 m1 (node3 a b c) (node3 d e f) (node3 g h i) m2
-
-  appendTree1 : FingerTree (Node e) -> Node e -> FingerTree (Node e) -> FingerTree (Node e)
-  appendTree1 Empty a xs = consTree a xs
-  appendTree1 xs a Empty = snocTree xs a
-  appendTree1 (Single x) a xs = consTree x (consTree a xs)
-  appendTree1 xs a (Single x) = snocTree (snocTree xs a) x
-  appendTree1 (Deep pr1 m1 sf1) a (Deep pr2 m2 sf2) = Deep pr1 (addDigits1 m1 sf1 a pr2 m2) sf2
-
-addDigits0 : FingerTree (Node e) -> Digit e -> Digit e -> FingerTree (Node e) -> FingerTree (Node e)
-addDigits0 m1 (One a) (One b) m2 = appendTree1 m1 (node2 a b) m2
-addDigits0 m1 (One a) (Two b c) m2 = appendTree1 m1 (node3 a b c) m2
-addDigits0 m1 (One a) (Three b c d) m2 = appendTree2 m1 (node2 a b) (node2 c d) m2
-addDigits0 m1 (One a) (Four b c d e) m2 = appendTree2 m1 (node3 a b c) (node2 d e) m2
-addDigits0 m1 (Two a b) (One c) m2 = appendTree1 m1 (node3 a b c) m2
-addDigits0 m1 (Two a b) (Two c d) m2 = appendTree2 m1 (node2 a b) (node2 c d) m2
-addDigits0 m1 (Two a b) (Three c d e) m2 = appendTree2 m1 (node3 a b c) (node2 d e) m2
-addDigits0 m1 (Two a b) (Four c d e f) m2 = appendTree2 m1 (node3 a b c) (node3 d e f) m2
-addDigits0 m1 (Three a b c) (One d) m2 = appendTree2 m1 (node2 a b) (node2 c d) m2
-addDigits0 m1 (Three a b c) (Two d e) m2 = appendTree2 m1 (node3 a b c) (node2 d e) m2
-addDigits0 m1 (Three a b c) (Three d e f) m2 = appendTree2 m1 (node3 a b c) (node3 d e f) m2
-addDigits0 m1 (Three a b c) (Four d e f g) m2 = appendTree3 m1 (node3 a b c) (node2 d e) (node2 f g) m2
-addDigits0 m1 (Four a b c d) (One e) m2 = appendTree2 m1 (node3 a b c) (node2 d e) m2
-addDigits0 m1 (Four a b c d) (Two e f) m2 = appendTree2 m1 (node3 a b c) (node3 d e f) m2
-addDigits0 m1 (Four a b c d) (Three e f g) m2 = appendTree3 m1 (node3 a b c) (node2 d e) (node2 f g) m2
-addDigits0 m1 (Four a b c d) (Four e f g h) m2 = appendTree3 m1 (node3 a b c) (node3 d e f) (node2 g h) m2
-
-addTree0 : FingerTree e -> FingerTree e -> FingerTree e
-addTree0 Empty xs = xs
-addTree0 xs Empty = xs
-addTree0 (Single x) xs = consTree x xs
-addTree0 xs (Single x) = snocTree xs x
-addTree0 (Deep pr1 m1 sf1) (Deep pr2 m2 sf2) = Deep pr1 (addDigits0 m1 sf1 pr2 m2) sf2
-
--- Foldable instances, mirroring Data.Seq.Internal's own: ordinary
--- structural recursion, `m`'s own Foldable dispatch (a DIFFERENT
--- instance -- Node e's, not FingerTree e's own) handles the one-level-
--- deeper nesting without needing any explicit recursive helper here.
-Foldable Digit where
-  foldr f z (One a) = a `f` z
-  foldr f z (Two a b) = a `f` (b `f` z)
-  foldr f z (Three a b c) = a `f` (b `f` (c `f` z))
-  foldr f z (Four a b c d) = a `f` (b `f` (c `f` (d `f` z)))
-
-Foldable Node where
-  foldr f z (Node2 a b) = a `f` (b `f` z)
-  foldr f z (Node3 a b c) = a `f` (b `f` (c `f` z))
-
-Foldable FingerTree where
-  foldr _ z Empty = z
-  foldr f z (Single x) = x `f` z
-  foldr f z (Deep pr m sf) = foldr f (foldr (flip (foldr f)) (foldr f z sf) m) pr
-
--- Walks the tree collecting its leaves, in order.
-treeToList : FingerTree e -> List e
-treeToList = foldr (::) []
-
--- ---------------------------------------------------------------------------
 -- The public API. `TextBuffer` itself is already a plain `Type` (see
--- Data.TextBuffer's own header), so it sits directly as the finger
--- tree's leaf type with no existential wrapping and no separate
--- `Chunk` alias needed.
+-- Data.TextBuffer's own header), so it sits directly as `Seq`'s
+-- element type with no existential wrapping and no separate `Chunk`
+-- alias needed.
 
 export
 data Text : Type where
-  MkText : FingerTree TextBuffer -> Text
+  MkText : Seq TextBuffer -> Text
 
 ||| O(chunk count). The length of a Text, summed by walking the tree
-||| structurally (via `Foldable FingerTree`) -- no data is copied,
+||| structurally (via `Seq`'s own `Foldable`) -- no data is copied,
 ||| contrast with `flatten` below, which builds a single buffer.
 export
 length : Text -> Nat
@@ -265,7 +70,7 @@ length (MkText t) = foldr (\c, acc => TextBuffer.length c + acc) 0 t
 ||| O(1). Wrap an existing TextBuffer as a single-chunk Text.
 export
 fromTextBuffer : TextBuffer -> Text
-fromTextBuffer tb = MkText (Single tb)
+fromTextBuffer tb = MkText (Seq.singleton tb)
 
 ||| Convert a String to Text.
 export
@@ -282,7 +87,7 @@ fromString s = fromTextBuffer (TextBuffer.fromString s)
 -- TextBuffer.concat would still allocate and copy into a fresh
 -- buffer.
 flatten : Text -> TextBuffer
-flatten (MkText t) = case treeToList t of
+flatten (MkText t) = case toList t of
   [] => TextBuffer.fromString ""
   (x :: xs) => foldl (TextBuffer.(++)) x xs
 
@@ -294,7 +99,7 @@ toString t = TextBuffer.toString (flatten t)
 ||| O(log(min(n,m))). Concatenate two Texts.
 export
 (++) : Text -> Text -> Text
-(++) (MkText t1) (MkText t2) = MkText (addTree0 t1 t2)
+(++) (MkText t1) (MkText t2) = MkText (Seq.(++) t1 t2)
 
 ||| A Text of a single character.
 export
@@ -309,7 +114,7 @@ replicate n c = fromTextBuffer (TextBuffer.replicate n c)
 ||| Concatenate a list of Texts into one, O(log) chunk at a time.
 export
 concat : List Text -> Text
-concat = foldl (Data.Text.(++)) (MkText Empty)
+concat = foldl (Data.Text.(++)) (MkText Seq.empty)
 
 ||| Join a list of Texts, inserting `sep` between each pair.
 export
@@ -326,61 +131,158 @@ export
 unlines : List Text -> Text
 unlines xs = Data.Text.concat (concatMap (\t => [t, Data.Text.fromString "\n"]) xs)
 
+||| Get the character at the given index. Walks the chunk list
+||| summing lengths to find the chunk containing the target offset,
+||| then delegates to it locally -- no `flatten`, no data copied.
+export
+index : (t : Text) -> {0 n : Nat} -> {auto 0 prf : n = length t} -> Fin n -> Char
+index (MkText t) i = go (toList t) (finToNat i)
+  where
+    go : List TextBuffer -> Nat -> Char
+    go [] _ = believe_me ()
+    go (c :: cs) idx =
+      if idx < TextBuffer.length c
+        then case natToFin idx (TextBuffer.length c) of
+               Just fin => TextBuffer.index c {n = TextBuffer.length c} {prf = Refl} fin
+               Nothing => believe_me ()
+        else go cs (idx `minus` TextBuffer.length c)
+
+||| Uppercase every character. Length-preserving. Maps each chunk in
+||| place -- no `flatten`, no merging into a single buffer.
+export
+toUpper : Text -> Text
+toUpper (MkText t) = MkText (map TextBuffer.toUpper t)
+
+||| Lowercase every character. Length-preserving. Maps each chunk in
+||| place -- no `flatten`, no merging into a single buffer.
+export
+toLower : Text -> Text
+toLower (MkText t) = MkText (map TextBuffer.toLower t)
+
+-- ---------------------------------------------------------------------------
+-- Range extraction: skip whole chunks outside the target range without
+-- touching them, copy only the chunk(s) the range actually overlaps,
+-- and stitch the (usually one, occasionally a handful of) resulting
+-- pieces into a single fresh TextBuffer. `words`/`lines`/`split` are
+-- the exception -- they must inspect every character regardless of
+-- chunking to find every delimiter, so no range can be skipped, and
+-- they stay on the simpler `flatten`-then-delegate path below.
+
+-- Copies exactly `len` characters starting at global offset `start`
+-- out of `chunks`, touching only the chunk(s) that range overlaps.
+-- Chunks entirely before `start` are skipped by their length alone,
+-- no copy. Structurally recurses on the chunk list, so no fuel is
+-- needed.
+extractRange : (start, len : Nat) -> List TextBuffer -> TextBuffer
+extractRange start len chunks = case collect start len chunks of
+    []  => TextBuffer.fromString ""
+    [x] => x
+    xs  => TextBuffer.concat xs
+  where
+    collect : Nat -> Nat -> List TextBuffer -> List TextBuffer
+    collect _ Z _ = []
+    collect _ _ [] = []
+    collect skip remaining (c :: cs) =
+      let clen = TextBuffer.length c
+      in if skip >= clen
+           then collect (skip `minus` clen) remaining cs
+           else
+             let avail = clen `minus` skip
+                 takeLen = min remaining avail
+                 piece = TextBuffer.substr skip takeLen c {n = clen} {prf = believe_me ()} {ok = believe_me ()}
+             in piece :: collect 0 (remaining `minus` takeLen) cs
+
+-- The global offset at which `p` first stops holding, found by
+-- delegating to `TextBuffer.span` one chunk at a time and stopping as
+-- soon as a chunk's own remainder is non-empty -- chunks after that
+-- point are never even looked at.
+findBoundary : (Char -> Bool) -> List TextBuffer -> Nat
+findBoundary p [] = 0
+findBoundary p (c :: cs) =
+  let (matched, rest) = TextBuffer.span p c
+  in if TextBuffer.length rest == 0
+       then TextBuffer.length c + findBoundary p cs
+       else TextBuffer.length matched
+
+-- The number of trailing characters `TextBuffer.rtrim` would remove,
+-- found by walking chunks from the end (caller passes `reverse
+-- chunks`) and stopping as soon as a chunk turns out not to be pure
+-- trailing whitespace -- chunks before that point are never looked at.
+trimmedSuffixLen : List TextBuffer -> Nat
+trimmedSuffixLen [] = 0
+trimmedSuffixLen (c :: cs) =
+  let trimmed = TextBuffer.rtrim c
+      removedHere = TextBuffer.length c `minus` TextBuffer.length trimmed
+  in if TextBuffer.length trimmed == 0
+       then removedHere + trimmedSuffixLen cs
+       else removedHere
+
+||| Extract a substring of the given length, starting at the given
+||| offset. Clamped to the source Text's actual bounds. Chunks outside
+||| the range are skipped, not copied.
+export
+substr : (start, len : Nat) -> Text -> Text
+substr start len t@(MkText s) =
+  let n = Data.Text.length t
+      copyLen = min len (n `minus` start)
+  in fromTextBuffer (extractRange start copyLen (toList s))
+
+||| Pad on the left with `c` up to `width` (a no-op if already at
+||| least that long). When padding is needed, only the new padding
+||| chunk is allocated -- the existing chunks are shared, not copied.
+export
+padLeft : (width : Nat) -> Char -> Text -> Text
+padLeft width c t@(MkText s) =
+  let n = Data.Text.length t
+  in if n >= width then t else MkText (Seq.cons (TextBuffer.replicate (width `minus` n) c) s)
+
+||| Pad on the right with `c` up to `width` (a no-op if already at
+||| least that long). When padding is needed, only the new padding
+||| chunk is allocated -- the existing chunks are shared, not copied.
+export
+padRight : (width : Nat) -> Char -> Text -> Text
+padRight width c t@(MkText s) =
+  let n = Data.Text.length t
+  in if n >= width then t else MkText (Seq.snoc s (TextBuffer.replicate (width `minus` n) c))
+
+||| Strip whitespace from the left. Chunks past the first non-space
+||| character are skipped, not copied.
+export
+ltrim : Text -> Text
+ltrim t@(MkText s) =
+  let chunks = toList s
+      n = Data.Text.length t
+      start = findBoundary isSpace chunks
+  in fromTextBuffer (extractRange start (n `minus` start) chunks)
+
+||| Strip whitespace from the right. Chunks before the last non-space
+||| character are skipped, not copied.
+export
+rtrim : Text -> Text
+rtrim t@(MkText s) =
+  let chunks = toList s
+      n = Data.Text.length t
+      removed = trimmedSuffixLen (reverse chunks)
+  in fromTextBuffer (extractRange 0 (n `minus` removed) chunks)
+
+||| Strip whitespace from both ends. Chunks entirely outside the kept
+||| range are skipped, not copied.
+export
+trim : Text -> Text
+trim t@(MkText s) =
+  let chunks = toList s
+      n = Data.Text.length t
+      start = findBoundary isSpace chunks
+      removed = trimmedSuffixLen (reverse chunks)
+  in fromTextBuffer (extractRange start ((n `minus` removed) `minus` start) chunks)
+
 -- ---------------------------------------------------------------------------
 -- Everything below flattens to a single TextBuffer and delegates to
 -- Data.TextBuffer's own implementation -- same asymptotic cost as
--- TextBuffer itself (no tree-shape reuse), see this file's own header.
-
-||| Get the character at the given index.
-export
-index : (t : Text) -> {0 n : Nat} -> {auto 0 prf : n = length t} -> Fin n -> Char
-index t i = let tb = flatten t in TextBuffer.index tb {prf = believe_me ()} i
-
-||| Uppercase every character. Length-preserving.
-export
-toUpper : Text -> Text
-toUpper t = fromTextBuffer (TextBuffer.toUpper (flatten t))
-
-||| Lowercase every character. Length-preserving.
-export
-toLower : Text -> Text
-toLower t = fromTextBuffer (TextBuffer.toLower (flatten t))
-
-||| Extract a substring of the given length, starting at the given
-||| offset. Clamped to the source Text's actual bounds.
-export
-substr : (start, len : Nat) -> Text -> Text
-substr start len t =
-  let tb = flatten t
-      copyLen = min len (TextBuffer.length tb `minus` start)
-  in fromTextBuffer (TextBuffer.substr start copyLen tb {n = TextBuffer.length tb} {prf = believe_me ()} {ok = believe_me ()})
-
-||| Pad on the left with `c` up to `width` (a no-op if already at
-||| least that long).
-export
-padLeft : (width : Nat) -> Char -> Text -> Text
-padLeft width c t = fromTextBuffer (TextBuffer.padLeft width c (flatten t))
-
-||| Pad on the right with `c` up to `width` (a no-op if already at
-||| least that long).
-export
-padRight : (width : Nat) -> Char -> Text -> Text
-padRight width c t = fromTextBuffer (TextBuffer.padRight width c (flatten t))
-
-||| Strip whitespace from the left.
-export
-ltrim : Text -> Text
-ltrim t = fromTextBuffer (TextBuffer.ltrim (flatten t))
-
-||| Strip whitespace from the right.
-export
-rtrim : Text -> Text
-rtrim t = fromTextBuffer (TextBuffer.rtrim (flatten t))
-
-||| Strip whitespace from both ends.
-export
-trim : Text -> Text
-trim t = fromTextBuffer (TextBuffer.trim (flatten t))
+-- TextBuffer itself (no tree-shape reuse). Unlike substr/ltrim/rtrim/
+-- trim above, these must examine every character no matter how the
+-- text is chunked (to find every delimiter), so there is no range to
+-- skip and flattening first costs nothing extra.
 
 ||| Split on runs of whitespace, dropping empty pieces.
 export
@@ -394,12 +296,16 @@ lines : Text -> List Text
 lines t = map fromTextBuffer (TextBuffer.lines (flatten t))
 
 ||| Split into the longest prefix satisfying the predicate, and the
-||| rest.
+||| rest. Scans chunk by chunk, stopping as soon as the predicate
+||| first fails -- chunks past that point are reused inside the
+||| extracted ranges, never scanned.
 export
 span : (Char -> Bool) -> Text -> (Text, Text)
-span p t =
-  let (a, b) = TextBuffer.span p (flatten t)
-  in (fromTextBuffer a, fromTextBuffer b)
+span p t@(MkText s) =
+  let chunks = toList s
+      n = Data.Text.length t
+      boundary = findBoundary p chunks
+  in (fromTextBuffer (extractRange 0 boundary chunks), fromTextBuffer (extractRange boundary (n `minus` boundary) chunks))
 
 ||| Split into the longest prefix *not* satisfying the predicate, and
 ||| the rest.
