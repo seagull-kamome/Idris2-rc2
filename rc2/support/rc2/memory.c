@@ -2,7 +2,7 @@
 #include "runtime.h"
 #include "util.h"
 
-#include <stdbool.h>
+#include <pthread.h>
 
 IDRIS2RC2_Value *idris2rc2_alloc(size_t size) {
   size_t aligned = ((size + sizeof(void *) - 1) / sizeof(void *)) * sizeof(void *);
@@ -198,6 +198,12 @@ static void idris2rc2_teardown(IDRIS2RC2_Value *v) {
   case IDRIS2RC2_TAG_BUFFER:
     free(((IDRIS2RC2_Buffer *)v)->buf);
     break;
+  case IDRIS2RC2_TAG_MUTEX:
+    pthread_mutex_destroy(&((IDRIS2RC2_Mutex *)v)->mutex);
+    break;
+  case IDRIS2RC2_TAG_CONDITION:
+    pthread_cond_destroy(&((IDRIS2RC2_Condition *)v)->cond);
+    break;
   default:
     break;
   }
@@ -252,20 +258,22 @@ IDRIS2RC2_Bits64 const idris2rc2_smallBits64[100] = {
 
 IDRIS2RC2_String const idris2rc2_emptyStringValue = {IDRIS2RC2_STOCKVAL(IDRIS2RC2_TAG_STRING), ""};
 
-static bool idris2rc2_smallIntegerInit = false;
 IDRIS2RC2_Integer idris2rc2_smallInteger[100];
+
+static pthread_once_t idris2rc2_smallIntegerOnce = PTHREAD_ONCE_INIT;
+
+static void idris2rc2_initSmallInteger(void) {
+  for (int i = 0; i < 100; ++i) {
+    idris2rc2_smallInteger[i].header.refCount = IDRIS2RC2_REFCOUNT_MAX;
+    idris2rc2_smallInteger[i].header.tag = IDRIS2RC2_TAG_INTEGER;
+    idris2rc2_smallInteger[i].header.reserved = 0;
+    mpz_init(idris2rc2_smallInteger[i].v);
+    mpz_set_si(idris2rc2_smallInteger[i].v, i);
+  }
+}
 
 IDRIS2RC2_Value *idris2rc2_getSmallInteger(int n) {
   IDRIS2RC2_VERIFY(n >= 0 && n < 100, "out of range: %d", n);
-  if (!idris2rc2_smallIntegerInit) {
-    idris2rc2_smallIntegerInit = true;
-    for (int i = 0; i < 100; ++i) {
-      idris2rc2_smallInteger[i].header.refCount = IDRIS2RC2_REFCOUNT_MAX;
-      idris2rc2_smallInteger[i].header.tag = IDRIS2RC2_TAG_INTEGER;
-      idris2rc2_smallInteger[i].header.reserved = 0;
-      mpz_init(idris2rc2_smallInteger[i].v);
-      mpz_set_si(idris2rc2_smallInteger[i].v, i);
-    }
-  }
+  pthread_once(&idris2rc2_smallIntegerOnce, idris2rc2_initSmallInteger);
   return (IDRIS2RC2_Value *)&idris2rc2_smallInteger[n];
 }

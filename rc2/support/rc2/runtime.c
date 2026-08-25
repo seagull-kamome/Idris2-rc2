@@ -63,10 +63,18 @@ IDRIS2RC2_Value *idris2rc2_trampoline(IDRIS2RC2_Value *it) {
     if (c->filled < c->arity)
       break;
     it = idris2rc2_dispatchClosure(c);
-    if (idris2rc2_isUnique(c))
+    // Args were already consumed by dispatchClosure (ownership passed
+    // into fn, never re-dup'd), so on reaching zero here this only ever
+    // needs to free the closure shell itself -- never the full
+    // idris2rc2_drop teardown (which would re-drop already-consumed
+    // args). Unconditional atomic decrement (rather than an isUnique
+    // check followed by a separate bare decrement) is what makes this
+    // race-free once another thread can hold its own counted reference
+    // to the same closure (see runtime.h's idris2rc2_isUnique comment).
+    if (atomic_fetch_sub_explicit(&c->header.refCount, 1, memory_order_release) == 1) {
+      atomic_thread_fence(memory_order_acquire);
       free(c);
-    else
-      --c->header.refCount;
+    }
   }
   return it;
 }
@@ -87,7 +95,10 @@ IDRIS2RC2_Value *idris2rc2_tailcallApplyClosure(IDRIS2RC2_Value *_c, IDRIS2RC2_V
   for (int i = 0; i < c->filled; ++i)
     nc->args[i] = idris2rc2_dup(c->args[i]);
   nc->args[c->filled] = arg;
-  --c->header.refCount;
+  // c's own args were dup'd into nc above, not stolen -- c still owns
+  // them, so (unlike trampoline's case above) the ordinary checked drop
+  // is exactly right if this reference turns out to be the last one.
+  idris2rc2_drop((IDRIS2RC2_Value *)c);
 
   return (IDRIS2RC2_Value *)nc;
 }
@@ -100,8 +111,15 @@ void idris2rc2_dropReuseConstructor(IDRIS2RC2_Constructor *c) {
   if (!c)
     return;
   IDRIS2RC2_VERIFY(c->header.refCount > 0, "refCount %d", (int)c->header.refCount);
-  if (--c->header.refCount == 0)
+  // Only ever called on a value whose uniqueness idris2rc2_isUnique has
+  // already established statically (see Reuse.idr/reuse-analysis.md), so
+  // no other thread can concurrently touch this refCount -- atomicity
+  // here is just so the operation itself is a well-defined memory access
+  // alongside every other refCount op, not a response to a real race.
+  if (atomic_fetch_sub_explicit(&c->header.refCount, 1, memory_order_release) == 1) {
+    atomic_thread_fence(memory_order_acquire);
     free(c);
+  }
 }
 
 int64_t idris2rc2_extractInt(IDRIS2RC2_Value *v) {

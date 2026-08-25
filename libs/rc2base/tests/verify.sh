@@ -48,6 +48,7 @@ INSTALLED_LIB="$PKG_DIR/.local-install/idris2-0.8.0/rc2base-$PKG_VERSION/lib"
 echo "=== Check postinstall copied the native library into lib/ ==="
 [[ -f "$INSTALLED_LIB/libidris2rc2base.a" ]] || fail "postinstall didn't install libidris2rc2base.a to $INSTALLED_LIB"
 [[ -f "$INSTALLED_LIB/text_util.h" ]] || fail "postinstall didn't install text_util.h to $INSTALLED_LIB"
+[[ -f "$INSTALLED_LIB/concurrency_util.h" ]] || fail "postinstall didn't install concurrency_util.h to $INSTALLED_LIB"
 
 echo "=== rc2 backend: build TestText (against the INSTALLED lib/, not support/c) ==="
 export IDRIS2_PACKAGE_PATH="$IDRIS2_PACKAGE_PATH:$PKG_DIR/.local-install/idris2-0.8.0"
@@ -79,4 +80,17 @@ if diff -u "$TESTS_DIR/TestTextTree.expected" "$TMP/actual2.out"; then
     echo "PASS  TestTextTree"
 else
     fail "TestTextTree -- output mismatch (see diff above)"
+fi
+
+echo "=== rc2 backend: build TestConcurrency (fork + System.Concurrency.RC2's Mutex/Condition) ==="
+nix-shell -p gcc gmp pkg-config --run \
+    "cd '$TESTS_DIR' && '$IDRIS2RC2' --cg rc2 -p rc2base -o TestConcurrency_verify TestConcurrency.idr"
+
+echo "=== Run and diff against TestConcurrency.expected ==="
+"$TESTS_DIR/build/exec/TestConcurrency_verify" > "$TMP/actual3.out" 2>&1
+
+if diff -u "$TESTS_DIR/TestConcurrency.expected" "$TMP/actual3.out"; then
+    echo "PASS  TestConcurrency"
+else
+    fail "TestConcurrency -- output mismatch (see diff above)"
 fi

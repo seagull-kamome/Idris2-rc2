@@ -13,6 +13,7 @@
 // the low 2 bits free for tagging.
 
 #include <gmp.h>
+#include <pthread.h>
 #include <stdatomic.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -34,6 +35,8 @@
 #define IDRIS2RC2_TAG_POINTER 22
 #define IDRIS2RC2_TAG_GCPOINTER 23
 #define IDRIS2RC2_TAG_BUFFER 24
+#define IDRIS2RC2_TAG_MUTEX 25
+#define IDRIS2RC2_TAG_CONDITION 26
 
 typedef struct {
   // Values that reach the maximum reference count are treated as immortal
@@ -154,3 +157,21 @@ typedef struct {
   IDRIS2RC2_Header header;
   void *buf;
 } IDRIS2RC2_Buffer;
+
+// Mutex/Condition back System.Concurrency.RC2 (libs/rc2base) -- upstream
+// System.Concurrency.idr's `Mutex`/`Condition` are `[external]`, which
+// rc2 marshals as CFUser (an unconstrained IDRIS2RC2_Value* passthrough,
+// see Compiler.RC2.EmitUtil's packCFType/extractValue for CFUser), so any
+// value shaped like this is a valid one. The pthread object is embedded
+// directly (one allocation, no extra indirection through
+// IDRIS2RC2_Pointer) and destroyed by idris2rc2_teardown once refcount
+// reaches zero, same as IDRIS2RC2_TAG_BUFFER's free(buf).
+typedef struct {
+  IDRIS2RC2_Header header;
+  pthread_mutex_t mutex;
+} IDRIS2RC2_Mutex;
+
+typedef struct {
+  IDRIS2RC2_Header header;
+  pthread_cond_t cond;
+} IDRIS2RC2_Condition;

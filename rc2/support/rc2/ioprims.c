@@ -1,7 +1,9 @@
 #include "ioprims.h"
 #include "memory.h"
 #include "runtime.h"
+#include "util.h"
 
+#include <pthread.h>
 #include <stdio.h>
 
 IDRIS2RC2_Value *idris2rc2_Data_IORef_prim__newIORef(IDRIS2RC2_Value *erased,
@@ -101,9 +103,37 @@ IDRIS2RC2_Value *idris2rc2_Prelude_IO_prim__onCollectAny(IDRIS2RC2_Value *anyPtr
 // mechanism rc2/Emit.idr otherwise uses to reuse RefC-tagged primitives.
 // RefC's own implementation (support/refc/threads.c) is itself just a
 // stub that prints a message and exits -- true thread support was never
-// implemented there either, and rc2 hasn't taken on concurrent/atomic
-// refcounting (see the project plan's scope notes), so this matches it.
+// implemented there either. rc2's refcount is now atomic (see
+// rc2/doc/concurrency.md), so this is real: pthread_create, detached --
+// `threadWait` (the only thing that could join it) is scheme-only in
+// upstream System.Concurrency.idr, unreachable from any C backend, so a
+// detached fire-and-forget thread matches what's actually usable here.
+static void *idris2rc2_threadTrampoline(void *arg) {
+  // `fct : PrimIO ()` is `(1 w : %World) -> ()` -- a single application
+  // of the erased world token runs it, same as idris2rc2_teardown's
+  // GCPointer onCollect case (memory.c) does for its own bare PrimIO ().
+  IDRIS2RC2_Value *result = idris2rc2_applyClosure((IDRIS2RC2_Value *)arg, NULL);
+  idris2rc2_drop(result);
+  return NULL;
+}
+
 void *refc_fork(IDRIS2RC2_Closure *fct) {
-  fprintf(stderr, "Threads not implemented in the rc2 backend!\n");
-  exit(0);
+  // Prelude.IO's generated prim__fork wrapper drops its own reference to
+  // fct right after this call returns (the ordinary "FFI call consumed
+  // its argument" convention) -- but the spawned thread keeps using the
+  // same pointer well past that. Without this dup, the caller-side drop
+  // can free fct out from under the still-running thread.
+  idris2rc2_dup((IDRIS2RC2_Value *)fct);
+  pthread_t tid;
+  int err = pthread_create(&tid, NULL, idris2rc2_threadTrampoline, fct);
+  IDRIS2RC2_VERIFY(err == 0, "pthread_create failed: %d", err);
+  pthread_detach(tid);
+  // ThreadID is `[external]` (CFUser: identity pass-through, see
+  // Compiler.RC2.EmitUtil's packCFType/extractValue for CFUser), so any
+  // valid IDRIS2RC2_Value* works. threadWait can never read it (see
+  // above), so a plain IDRIS2RC2_Pointer is enough -- no dedicated tag.
+  pthread_t *heapTid = malloc(sizeof(pthread_t));
+  IDRIS2RC2_VERIFY(heapTid, "malloc failed");
+  *heapTid = tid;
+  return idris2rc2_mkPointer(heapTid);
 }
