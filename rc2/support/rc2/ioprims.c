@@ -117,7 +117,7 @@ static void *idris2rc2_threadTrampoline(void *arg) {
   return NULL;
 }
 
-void *refc_fork(IDRIS2RC2_Closure *fct) {
+void *idris2rc2_fork(IDRIS2RC2_Closure *fct) {
   // Prelude.IO's generated prim__fork wrapper drops its own reference to
   // fct right after this call returns (the ordinary "FFI call consumed
   // its argument" convention) -- but the spawned thread keeps using the
@@ -136,4 +136,12 @@ void *refc_fork(IDRIS2RC2_Closure *fct) {
   IDRIS2RC2_VERIFY(heapTid, "malloc failed");
   *heapTid = tid;
   return idris2rc2_mkPointer(heapTid);
+}
+
+// Thin adapter satisfying the fixed, un-namespaced symbol name Prelude.IO's
+// %foreign "C:refc_fork" declaration mandates (see ioprims.h) -- the real
+// implementation lives in idris2rc2_fork, matching rc2's own naming
+// convention everywhere else.
+void *refc_fork(IDRIS2RC2_Closure *fct) {
+  return idris2rc2_fork(fct);
 }
