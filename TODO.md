@@ -317,6 +317,59 @@ materialize a boxed `Bool`, even when immediately consumed by a branch;
 only comparisons over the fixed-width/`Double`/`Char` types above skip
 that materialization.
 
+## Dropped: unwrapping `Just x` to a bare `x` (nullable-pointer `Maybe`)
+
+Investigated turning `Maybe`-shaped types' non-nullary constructor into
+a zero-allocation passthrough, matching `Nothing`'s existing `NULL`
+representation -- i.e. `Just x` would just *be* `x` (plus whatever
+`dup` ordinary variable sharing already needs), never a real
+`idris2rc2_newConstructor` heap allocation. Motivated by noticing that
+`Nothing` already compiles to a bare C `NULL`
+(`support/rc2/datatypes.h`'s "Nil/Nothing/Z/MkUnit" comment) while
+`Just x` still allocates.
+
+The mechanics turned out easy: `ConInfo`'s `JUST` (`idris2-src/src/Core/
+CompileExpr.idr`) is a shape-based tag upstream Idris2 itself assigns
+to *any* option-shaped type's non-nullary constructor, not just
+`Prelude.Maybe`'s -- one `ci == JUST` check is enough, no need to
+inspect the whole datatype. `Compiler.RC2.EmitUtil`'s
+`conAltCondExpr` already discriminates a `JUST` alt with plain `NULL !=
+sc'`, no tag comparison at all -- exactly the test this scheme needs
+and already in place. The only genuinely new code would have been:
+`Compiler.RC2.RC`'s `bindOne`/`normalize` skip constructing an `RCon`
+for a `ci == JUST` application and bind its single argument directly
+instead (so no `RCon fc n JUST ...` node is ever produced), a matching
+case in `Emit.idr`'s `emitConAltBody` (alias the scrutinee itself
+instead of reading `args[0]`), and adding `JUST` to `Reuse.idr`'s
+`resolveAlt` `erased` set (so the reuse pass doesn't try to treat a
+no-longer-boxed `JUST` scrutinee as reusable heap storage). No new
+`RCExp`/`RCLocal` node needed, no new ownership rules -- confirmed by
+reading the full pipeline before writing any code.
+
+**Dropped once a concrete soundness counterexample was found**: the
+scheme collapses `Just x` and `Nothing` into the same `NULL`
+representation whenever `x`'s own value can itself be `NULL` --
+which is exactly the case for `Just []` (`x : List a`), `Just ()`,
+`Just Nothing` (nested `Maybe`), and any user type sharing the
+NIL/NOTHING/ZERO/UNIT shape. Confirmed by building a real program and
+reading the generated C: today, `Just []` correctly compiles to a
+distinct (`ConstFold`-staged, immortal) non-`NULL` object --
+`return ((IDRIS2RC2_Value*)&constcon_12);` with `constcon_12.args[0] =
+NULL` -- while `Nothing` compiles to bare `NULL`; unwrapping `Just`
+would make both `NULL`, indistinguishable at runtime. `Compiler.RC2`
+operates on already-erased `Lifted` IR at this stage, with no general
+way to prove "this `Just`'s payload type can never itself be
+`NULL`-representable" from local syntax alone -- this isn't a
+where-to-implement-it problem (IR vs. `Emit`, hand-written C swap,
+etc. all hit the identical soundness gap), only a
+provably-safe-payload-type problem. Not implemented, not currently
+planned; would need either a narrow, conservatively-safe subset (e.g.
+only payloads whose shape is syntactically visible and provably
+non-`NULL` at the exact `Just` call site) or recovering real type
+information at this IR stage (`Compiler.RC2.Types`'s native type
+inference does something in this spirit for a much narrower purpose --
+worth a look if this is ever revisited) to be viable.
+
 ## Correctness: `List.(++)` leaks memory on repeated `IORef` append
 
 Found incidentally while testing `Channel`'s `channelPut`
