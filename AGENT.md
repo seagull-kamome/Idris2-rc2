@@ -43,7 +43,10 @@ show up again during testing.
   `String`-sourced `Cast`, `const-con-fold.md` for folding a
   constructor whose fields are all recursively constant into a single
   immortal file-scope static (`RCConstCon`) instead of a fresh heap
-  allocation on every evaluation). Not
+  allocation on every evaluation), `concurrency.md` for the runtime's
+  multi-step move to thread-safety, starting with an atomic reference
+  count -- a living document, updated as later stages (real OS thread
+  spawning) land. Not
   a replacement for `TODO.md` — those stay the changelog
   and gap tracker; `rc2/doc/` is where the *why* and the
   bugs-found-along-the-way for a specific subsystem live.

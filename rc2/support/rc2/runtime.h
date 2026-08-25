@@ -4,7 +4,22 @@
 
 void idris2rc2_missingForeign(void);
 
-#define idris2rc2_isUnique(x) ((x)->header.refCount == 1)
+// Acquire ordering pairs with idris2rc2_drop's release-decrement: once this
+// observes 1, the calling thread is provably the sole owner (the release
+// fence of whichever thread dropped the second-to-last reference is now
+// visible), so in-place mutation of `x` needs no further synchronization.
+// Kept as a macro (not a typed inline function) so it stays generic over any
+// struct starting with an IDRIS2RC2_Header `header` field, matching every
+// call site's own concrete pointer type (e.g. IDRIS2RC2_Closure *).
+#define idris2rc2_isUnique(x)                                                \
+  (atomic_load_explicit(&(x)->header.refCount, memory_order_acquire) == 1)
+// Why not atomic-safe against a concurrent second reference: trampoline's
+// non-unique branch and idris2rc2_tailcallApplyClosure/
+// idris2rc2_dropReuseConstructor (runtime.c) still decrement refCount
+// without checking for a zero result, relying on the single-threaded
+// invariant that "not unique" means refCount was >=2 going in. This is
+// unreachable today (refc_fork is still a stub, no real OS threads run
+// concurrently) but must be revisited once real thread spawning lands.
 void idris2rc2_dropReuseConstructor(IDRIS2RC2_Constructor *c);
 
 IDRIS2RC2_Value *idris2rc2_applyClosure(IDRIS2RC2_Value *closure, IDRIS2RC2_Value *arg);

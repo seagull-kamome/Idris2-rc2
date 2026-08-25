@@ -317,12 +317,30 @@ materialize a boxed `Bool`, even when immediately consumed by a branch;
 only comparisons over the fixed-width/`Double`/`Char` types above skip
 that materialization.
 
-## Concurrency: unchanged from RefC
+## Concurrency: refcount is atomic, real thread spawning still missing
 
-Reference counting stays non-atomic, matching RefC's own single-threaded
-assumption. If rc2 ever needs to support genuinely concurrent mutation
-of shared values, this needs revisiting (atomic refcounts at minimum,
-possibly a different GC strategy). Not addressed, not currently planned.
+Reference counting (`datatypes.h`/`memory.c`/`runtime.h`) is now atomic
+-- `relaxed` increment, `release` decrement with an
+acquire-fence-on-zero before teardown, `acquire` load for
+`idris2rc2_isUnique` -- see `rc2/doc/concurrency.md` for the full design
+and the reasoning behind each memory order. This was step one of a
+multi-step effort; `refc_fork` (`ioprims.c`) is still a stub ("Threads
+not implemented", `exit(0)`), so no real OS thread runs today.
+
+Two known races remain, both currently unreachable only because
+`refc_fork` never actually spawns a thread, and both need revisiting
+once it does (see `rc2/doc/concurrency.md`'s "Out of scope" section for
+detail):
+
+- `idris2rc2_trampoline`, `idris2rc2_tailcallApplyClosure`, and
+  `idris2rc2_dropReuseConstructor` (`runtime.c`) still do a bare
+  `--`/`==` on `refCount` with no zero-reaching check, relying on a
+  single-threaded invariant ("not unique" means the count was already
+  >=2) that real concurrent drops would break.
+- `idris2rc2_getSmallInteger`'s (`memory.c`) lazy-init flag
+  `idris2rc2_smallIntegerInit` is a plain, unsynchronized
+  check-then-set-then-init-loop, susceptible to double-init or a
+  partially-initialized read under real concurrent first calls.
 
 ## Test coverage gaps
 

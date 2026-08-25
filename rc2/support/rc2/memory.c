@@ -139,7 +139,7 @@ IDRIS2RC2_Array *idris2rc2_mkArray(int length) {
 
 IDRIS2RC2_Value *idris2rc2_dup(IDRIS2RC2_Value *v) {
   if (v && !idris2rc2_is_unboxed(v) && v->header.refCount != IDRIS2RC2_REFCOUNT_MAX)
-    ++v->header.refCount;
+    atomic_fetch_add_explicit(&v->header.refCount, 1, memory_order_relaxed);
   return v;
 }
 
@@ -209,10 +209,9 @@ void idris2rc2_drop(IDRIS2RC2_Value *v) {
     return;
   if (v->header.refCount == IDRIS2RC2_REFCOUNT_MAX)
     return; // immortal
-  if (v->header.refCount != 1) {
-    --v->header.refCount;
+  if (atomic_fetch_sub_explicit(&v->header.refCount, 1, memory_order_release) != 1)
     return;
-  }
+  atomic_thread_fence(memory_order_acquire);
   idris2rc2_teardown(v);
 }
 

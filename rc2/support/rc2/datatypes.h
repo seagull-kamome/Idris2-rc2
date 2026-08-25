@@ -2,7 +2,7 @@
 
 // Value representation for the rc2 backend runtime.
 //
-// Every heap value starts with a small header carrying a non-atomic
+// Every heap value starts with a small header carrying an atomic
 // reference count and a type tag. Small fixed-width integers/Char are
 // represented unboxed, packed into the pointer itself (tagged pointers),
 // exactly like a plain pointer with its low bit set so it can never be
@@ -13,6 +13,7 @@
 // the low 2 bits free for tagging.
 
 #include <gmp.h>
+#include <stdatomic.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -38,7 +39,7 @@ typedef struct {
   // Values that reach the maximum reference count are treated as immortal
   // (never freed). This also covers statically-allocated values.
 #define IDRIS2RC2_REFCOUNT_MAX UINT16_MAX
-  uint16_t refCount;
+  _Atomic uint16_t refCount;
   uint8_t tag;
   uint8_t reserved;
 } IDRIS2RC2_Header;
