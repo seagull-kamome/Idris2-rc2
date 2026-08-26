@@ -262,7 +262,22 @@ echo "=== Smoke tests ==="
 # 127.0.0.1 loopback), saved by hand -- same reasoning as
 # Test7CastMatrix/Test17ConstFold above, there is no real-RefC output
 # to diff against in the first place.
-NO_REFC_DIFF_TESTS="Test7CastMatrix Test17ConstFold Test24CStructSupport Test26GCPtrAliasString Test28Utf8Strings Test29GCAnyPtrReturn Test31CgExtraRuntime Test32CgInlineRuntime Test35NetworkLoopback"
+#
+# Test42SupportMisc: exercises setEnv/unsetEnv, which real `idris2 --cg
+# refc` cannot even compile -- upstream's own idris_support.h declares
+# no prototype for idris2_setenv/idris2_unsetenv (idris_support.c
+# defines both; System.idr's own %foreign targets them through that
+# same header regardless), and unlike rc2 (which now declares them
+# itself in idris2rc2_runtime.h, ahead of that #include, so its own
+# build never sees the mismatch -- see that file's own comment) real
+# RefC's build has no such workaround: gcc's implicit-declaration
+# warning is treated as a hard error in this project's own reference
+# toolchain, confirmed by direct `idris2 --cg refc` attempt. Not
+# RefC/rc2-specific -- a genuine upstream defect this project works
+# around for its own tests but can't fix. `.expected` here is rc2's own
+# manually-verified-correct output, same reasoning as
+# Test7CastMatrix/Test17ConstFold above.
+NO_REFC_DIFF_TESTS="Test7CastMatrix Test17ConstFold Test24CStructSupport Test26GCPtrAliasString Test28Utf8Strings Test29GCAnyPtrReturn Test31CgExtraRuntime Test32CgInlineRuntime Test35NetworkLoopback Test42SupportMisc"
 
 # Leak-sensitive by design (reference-counting/reuse/native-shadow
 # regression tests) -- checked with valgrind by default even without

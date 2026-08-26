@@ -42,6 +42,22 @@ entry rather than leaving it stale.
   intentionally differs from what upstream's `expected` would produce
   under real RefC. See `rc2/tests/refc-suite/README.md` and
   `rc2/BENCHMARKS.md`'s own "本家RefCの`System.Clock`は秒精度" note.
+- **Upstream's own `idris_support.h` declares no C prototype for
+  `idris2_setenv`/`idris2_unsetenv`, even though `idris_support.c`
+  defines both and `System.idr`'s `setEnv`/`unsetEnv` target them
+  through that same header** -- a real upstream header/implementation
+  mismatch. Not just a harmless warning: confirmed that real
+  `idris2 --cg refc` cannot even compile a program calling `setEnv`/
+  `unsetEnv` in this project's own reference toolchain (gcc's implicit-
+  declaration diagnostic is a hard error there, not a warning as
+  originally assumed). rc2 works around it for its own builds by
+  declaring both prototypes itself in `rc2/support/rc2/
+  idris2rc2_runtime.h` (included ahead of upstream's own
+  `idris_support.h`, so the mismatch never reaches the compiler; the
+  functions themselves are still the shared library's own, unmodified)
+  -- see that file's own comment. `Test42SupportMisc.idr` exercises
+  this and is listed in `verify.sh`'s `NO_REFC_DIFF_TESTS` since there's
+  no real-RefC output to diff against in the first place.
 
 ## Pre-existing `valgrind` leaks (unrelated to whatever's currently being tested)
 

@@ -1,4 +1,6 @@
 getEnv (arbitrary unset var): Nothing
+getEnv (after setEnv): Just "hello"
+getEnv (after unsetEnv): Nothing
 getPID positive: True
 sleep/usleep: ok
 getNProcessors positive: True
