@@ -1156,7 +1156,7 @@ buildClosureIntoSink fc (SinkReturn _) n args missing = do
 --    `IDRIS2RC2_FUNSTAR`.
 export
 MaxExtractFunArgs : Nat
-MaxExtractFunArgs = 8
+MaxExtractFunArgs = 20
 
 ||| RC.idr wraps a branch/scope body in a leading `RDrop` node whenever
 ||| there are dead owned variables at its entry. Peel it off so its drop

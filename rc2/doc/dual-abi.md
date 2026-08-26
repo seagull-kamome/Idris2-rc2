@@ -928,12 +928,12 @@ the closest analogue to bug #2 above) passed without any fix needed.
    backend or commit). Run from the package root, all three backends
    (`idris2-rc2`, real `idris2 --cg refc`, real `idris2` on Chez)
    complete correctly (see `BENCHMARKS.md`'s own re-measurement).
-7. **Follow-up: the >8-argument exclusion above was overly
-   conservative -- properly fixed instead of left as a blanket
+7. **Follow-up: the >`MaxExtractFunArgs`-argument exclusion above was
+   overly conservative -- properly fixed instead of left as a blanket
    exclusion.** Re-examining why the exclusion was needed at all: the
    `var_arglist[]`-style extraction fallback item 6 deferred exists
    purely to match `support/rc2/runtime.c`'s closure-dispatch function-
-   pointer types (`IDRIS2RC2_FUN0`..`FUN8`/`FUNSTAR`, all
+   pointer types (`IDRIS2RC2_FUN0`..`FUN20`/`FUNSTAR`, all
    `IDRIS2RC2_Value*`-only) -- a convention that only matters for a
    function that might actually be *dispatched through a `Closure`*.
    A dual-ABI **worker** never is: it's reachable only via a direct,
@@ -963,6 +963,33 @@ the closest analogue to bug #2 above) passed without any fix needed.
    still pass. Stage 3c's own separate FFI worker exclusion
    (`ffiWorkerTable`'s `length fargs > MaxExtractFunArgs`) was left
    untouched -- see `TODO.md`'s own note on why.
+8. **`MaxExtractFunArgs` itself raised from 8 to 20, with
+   `support/rc2/runtime.c` extended to match.** Both item 7's worker
+   exemption and Stage 3c's own `ffiWorkerTable` exclusion move to the
+   new threshold automatically -- same symbolic constant, no code
+   change needed at either call site. The runtime side did need a real
+   change: `idris2rc2_dispatchClosure`'s switch only had `case 0`..
+   `case 8` (falling through to `default`/`IDRIS2RC2_FUNSTAR` for any
+   wider arity), so a genuine `Closure` of arity 9-20 -- reachable
+   whenever a wide, native-eligible-parameter function's own *wrapper*
+   is partially applied rather than called directly (a worker itself is
+   never dispatched this way, per item 7) -- would have silently taken
+   the untyped `var_arglist[]` path instead of the correctly-typed
+   function pointer. Added `IDRIS2RC2_FUN9`..`IDRIS2RC2_FUN20` typedefs
+   (same hand-written style as the existing `FUN0`..`FUN8`) and `case
+   9`..`case 20` in `dispatchClosure` to match. A stale comment in
+   `runtime.c` pointing at `Compiler/RC2/RC2.idr` for where
+   `MaxExtractFunArgs` lives was also corrected to
+   `Compiler/RC2/EmitUtil.idr`, its real location. Verified with
+   `rc2/tests/Test34WideClosureDispatch.idr` -- a 20-parameter function
+   reached via a genuine partial-application chain (not a direct/
+   saturated call), forcing it through a real `Closure` and
+   `dispatchClosure` to exercise the new `case 9`..`case 20` paths, the
+   way `Test33WideDualABIWorker.idr` exercises the worker-side width
+   exemption; registered in `verify.sh`'s `LEAK_SENSITIVE_TESTS`,
+   `valgrind` confirming `0 bytes definitely lost`. Full refc-suite
+   (19/19) and smoke-test matrix still pass; `bench.sh` shows no
+   regression.
 
 ## Status
 

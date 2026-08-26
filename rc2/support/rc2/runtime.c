@@ -26,10 +26,67 @@ typedef IDRIS2RC2_Value *(*const IDRIS2RC2_FUN7)(IDRIS2RC2_Value *, IDRIS2RC2_Va
 typedef IDRIS2RC2_Value *(*const IDRIS2RC2_FUN8)(IDRIS2RC2_Value *, IDRIS2RC2_Value *, IDRIS2RC2_Value *,
                                       IDRIS2RC2_Value *, IDRIS2RC2_Value *, IDRIS2RC2_Value *,
                                       IDRIS2RC2_Value *, IDRIS2RC2_Value *);
+typedef IDRIS2RC2_Value *(*const IDRIS2RC2_FUN9)(IDRIS2RC2_Value *,
+                                      IDRIS2RC2_Value *, IDRIS2RC2_Value *, IDRIS2RC2_Value *, IDRIS2RC2_Value *,
+                                      IDRIS2RC2_Value *, IDRIS2RC2_Value *, IDRIS2RC2_Value *, IDRIS2RC2_Value *);
+typedef IDRIS2RC2_Value *(*const IDRIS2RC2_FUN10)(IDRIS2RC2_Value *,
+                                      IDRIS2RC2_Value *, IDRIS2RC2_Value *, IDRIS2RC2_Value *, IDRIS2RC2_Value *,
+                                      IDRIS2RC2_Value *, IDRIS2RC2_Value *, IDRIS2RC2_Value *, IDRIS2RC2_Value *,
+                                      IDRIS2RC2_Value *);
+typedef IDRIS2RC2_Value *(*const IDRIS2RC2_FUN11)(IDRIS2RC2_Value *,
+                                      IDRIS2RC2_Value *, IDRIS2RC2_Value *, IDRIS2RC2_Value *, IDRIS2RC2_Value *,
+                                      IDRIS2RC2_Value *, IDRIS2RC2_Value *, IDRIS2RC2_Value *, IDRIS2RC2_Value *,
+                                      IDRIS2RC2_Value *, IDRIS2RC2_Value *);
+typedef IDRIS2RC2_Value *(*const IDRIS2RC2_FUN12)(IDRIS2RC2_Value *,
+                                      IDRIS2RC2_Value *, IDRIS2RC2_Value *, IDRIS2RC2_Value *, IDRIS2RC2_Value *,
+                                      IDRIS2RC2_Value *, IDRIS2RC2_Value *, IDRIS2RC2_Value *, IDRIS2RC2_Value *,
+                                      IDRIS2RC2_Value *, IDRIS2RC2_Value *, IDRIS2RC2_Value *);
+typedef IDRIS2RC2_Value *(*const IDRIS2RC2_FUN13)(IDRIS2RC2_Value *,
+                                      IDRIS2RC2_Value *, IDRIS2RC2_Value *, IDRIS2RC2_Value *, IDRIS2RC2_Value *,
+                                      IDRIS2RC2_Value *, IDRIS2RC2_Value *, IDRIS2RC2_Value *, IDRIS2RC2_Value *,
+                                      IDRIS2RC2_Value *, IDRIS2RC2_Value *, IDRIS2RC2_Value *, IDRIS2RC2_Value *);
+typedef IDRIS2RC2_Value *(*const IDRIS2RC2_FUN14)(IDRIS2RC2_Value *,
+                                      IDRIS2RC2_Value *, IDRIS2RC2_Value *, IDRIS2RC2_Value *, IDRIS2RC2_Value *,
+                                      IDRIS2RC2_Value *, IDRIS2RC2_Value *, IDRIS2RC2_Value *, IDRIS2RC2_Value *,
+                                      IDRIS2RC2_Value *, IDRIS2RC2_Value *, IDRIS2RC2_Value *, IDRIS2RC2_Value *,
+                                      IDRIS2RC2_Value *);
+typedef IDRIS2RC2_Value *(*const IDRIS2RC2_FUN15)(IDRIS2RC2_Value *,
+                                      IDRIS2RC2_Value *, IDRIS2RC2_Value *, IDRIS2RC2_Value *, IDRIS2RC2_Value *,
+                                      IDRIS2RC2_Value *, IDRIS2RC2_Value *, IDRIS2RC2_Value *, IDRIS2RC2_Value *,
+                                      IDRIS2RC2_Value *, IDRIS2RC2_Value *, IDRIS2RC2_Value *, IDRIS2RC2_Value *,
+                                      IDRIS2RC2_Value *, IDRIS2RC2_Value *);
+typedef IDRIS2RC2_Value *(*const IDRIS2RC2_FUN16)(IDRIS2RC2_Value *,
+                                      IDRIS2RC2_Value *, IDRIS2RC2_Value *, IDRIS2RC2_Value *, IDRIS2RC2_Value *,
+                                      IDRIS2RC2_Value *, IDRIS2RC2_Value *, IDRIS2RC2_Value *, IDRIS2RC2_Value *,
+                                      IDRIS2RC2_Value *, IDRIS2RC2_Value *, IDRIS2RC2_Value *, IDRIS2RC2_Value *,
+                                      IDRIS2RC2_Value *, IDRIS2RC2_Value *, IDRIS2RC2_Value *);
+typedef IDRIS2RC2_Value *(*const IDRIS2RC2_FUN17)(IDRIS2RC2_Value *,
+                                      IDRIS2RC2_Value *, IDRIS2RC2_Value *, IDRIS2RC2_Value *, IDRIS2RC2_Value *,
+                                      IDRIS2RC2_Value *, IDRIS2RC2_Value *, IDRIS2RC2_Value *, IDRIS2RC2_Value *,
+                                      IDRIS2RC2_Value *, IDRIS2RC2_Value *, IDRIS2RC2_Value *, IDRIS2RC2_Value *,
+                                      IDRIS2RC2_Value *, IDRIS2RC2_Value *, IDRIS2RC2_Value *, IDRIS2RC2_Value *);
+typedef IDRIS2RC2_Value *(*const IDRIS2RC2_FUN18)(IDRIS2RC2_Value *,
+                                      IDRIS2RC2_Value *, IDRIS2RC2_Value *, IDRIS2RC2_Value *, IDRIS2RC2_Value *,
+                                      IDRIS2RC2_Value *, IDRIS2RC2_Value *, IDRIS2RC2_Value *, IDRIS2RC2_Value *,
+                                      IDRIS2RC2_Value *, IDRIS2RC2_Value *, IDRIS2RC2_Value *, IDRIS2RC2_Value *,
+                                      IDRIS2RC2_Value *, IDRIS2RC2_Value *, IDRIS2RC2_Value *, IDRIS2RC2_Value *,
+                                      IDRIS2RC2_Value *);
+typedef IDRIS2RC2_Value *(*const IDRIS2RC2_FUN19)(IDRIS2RC2_Value *,
+                                      IDRIS2RC2_Value *, IDRIS2RC2_Value *, IDRIS2RC2_Value *, IDRIS2RC2_Value *,
+                                      IDRIS2RC2_Value *, IDRIS2RC2_Value *, IDRIS2RC2_Value *, IDRIS2RC2_Value *,
+                                      IDRIS2RC2_Value *, IDRIS2RC2_Value *, IDRIS2RC2_Value *, IDRIS2RC2_Value *,
+                                      IDRIS2RC2_Value *, IDRIS2RC2_Value *, IDRIS2RC2_Value *, IDRIS2RC2_Value *,
+                                      IDRIS2RC2_Value *, IDRIS2RC2_Value *);
+typedef IDRIS2RC2_Value *(*const IDRIS2RC2_FUN20)(IDRIS2RC2_Value *,
+                                      IDRIS2RC2_Value *, IDRIS2RC2_Value *, IDRIS2RC2_Value *, IDRIS2RC2_Value *,
+                                      IDRIS2RC2_Value *, IDRIS2RC2_Value *, IDRIS2RC2_Value *, IDRIS2RC2_Value *,
+                                      IDRIS2RC2_Value *, IDRIS2RC2_Value *, IDRIS2RC2_Value *, IDRIS2RC2_Value *,
+                                      IDRIS2RC2_Value *, IDRIS2RC2_Value *, IDRIS2RC2_Value *, IDRIS2RC2_Value *,
+                                      IDRIS2RC2_Value *, IDRIS2RC2_Value *, IDRIS2RC2_Value *);
 typedef IDRIS2RC2_Value *(*const IDRIS2RC2_FUNSTAR)(IDRIS2RC2_Value **);
 
-// When adding arities above 8, extend this switch and MaxExtractFunArgs in
-// Compiler/RC2/RC2.idr accordingly.
+// When adding arities above 20, extend this switch and MaxExtractFunArgs in
+// Compiler/RC2/EmitUtil.idr accordingly.
 static inline IDRIS2RC2_Value *idris2rc2_dispatchClosure(IDRIS2RC2_Closure *c) {
   IDRIS2RC2_Value **const xs = c->args;
   switch (c->arity) {
@@ -54,6 +111,48 @@ static inline IDRIS2RC2_Value *idris2rc2_dispatchClosure(IDRIS2RC2_Closure *c) {
   case 8:
     return (*(IDRIS2RC2_FUN8)c->fn)(xs[0], xs[1], xs[2], xs[3], xs[4], xs[5], xs[6],
                                xs[7]);
+  case 9:
+    return (*(IDRIS2RC2_FUN9)c->fn)(xs[0], xs[1], xs[2], xs[3], xs[4], xs[5], xs[6],
+                               xs[7], xs[8]);
+  case 10:
+    return (*(IDRIS2RC2_FUN10)c->fn)(xs[0], xs[1], xs[2], xs[3], xs[4], xs[5], xs[6],
+                               xs[7], xs[8], xs[9]);
+  case 11:
+    return (*(IDRIS2RC2_FUN11)c->fn)(xs[0], xs[1], xs[2], xs[3], xs[4], xs[5], xs[6],
+                               xs[7], xs[8], xs[9], xs[10]);
+  case 12:
+    return (*(IDRIS2RC2_FUN12)c->fn)(xs[0], xs[1], xs[2], xs[3], xs[4], xs[5], xs[6],
+                               xs[7], xs[8], xs[9], xs[10], xs[11]);
+  case 13:
+    return (*(IDRIS2RC2_FUN13)c->fn)(xs[0], xs[1], xs[2], xs[3], xs[4], xs[5], xs[6],
+                               xs[7], xs[8], xs[9], xs[10], xs[11], xs[12]);
+  case 14:
+    return (*(IDRIS2RC2_FUN14)c->fn)(xs[0], xs[1], xs[2], xs[3], xs[4], xs[5], xs[6],
+                               xs[7], xs[8], xs[9], xs[10], xs[11], xs[12], xs[13]);
+  case 15:
+    return (*(IDRIS2RC2_FUN15)c->fn)(xs[0], xs[1], xs[2], xs[3], xs[4], xs[5], xs[6],
+                               xs[7], xs[8], xs[9], xs[10], xs[11], xs[12], xs[13],
+                               xs[14]);
+  case 16:
+    return (*(IDRIS2RC2_FUN16)c->fn)(xs[0], xs[1], xs[2], xs[3], xs[4], xs[5], xs[6],
+                               xs[7], xs[8], xs[9], xs[10], xs[11], xs[12], xs[13],
+                               xs[14], xs[15]);
+  case 17:
+    return (*(IDRIS2RC2_FUN17)c->fn)(xs[0], xs[1], xs[2], xs[3], xs[4], xs[5], xs[6],
+                               xs[7], xs[8], xs[9], xs[10], xs[11], xs[12], xs[13],
+                               xs[14], xs[15], xs[16]);
+  case 18:
+    return (*(IDRIS2RC2_FUN18)c->fn)(xs[0], xs[1], xs[2], xs[3], xs[4], xs[5], xs[6],
+                               xs[7], xs[8], xs[9], xs[10], xs[11], xs[12], xs[13],
+                               xs[14], xs[15], xs[16], xs[17]);
+  case 19:
+    return (*(IDRIS2RC2_FUN19)c->fn)(xs[0], xs[1], xs[2], xs[3], xs[4], xs[5], xs[6],
+                               xs[7], xs[8], xs[9], xs[10], xs[11], xs[12], xs[13],
+                               xs[14], xs[15], xs[16], xs[17], xs[18]);
+  case 20:
+    return (*(IDRIS2RC2_FUN20)c->fn)(xs[0], xs[1], xs[2], xs[3], xs[4], xs[5], xs[6],
+                               xs[7], xs[8], xs[9], xs[10], xs[11], xs[12], xs[13],
+                               xs[14], xs[15], xs[16], xs[17], xs[18], xs[19]);
   }
 }
 

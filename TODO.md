@@ -567,28 +567,36 @@ own scope. Not currently planned; revisit only if profiling ever shows
 codepoint-indexed access on a long string actually mattering in
 practice.
 
-## Scope: FFI worker synthesis (Stage 3c) keeps its own 8-argument limit
+## Scope: FFI worker synthesis (Stage 3c) keeps its own 20-argument limit
 
 `Compiler.RC2.DualABI`'s ordinary-function worker synthesis (Stage 3a,
 `synthesizeIfEligible`/`synthesizeWorker`) no longer excludes functions
-with more than `Compiler.RC2.EmitUtil.MaxExtractFunArgs` (8) parameters --
+with more than `Compiler.RC2.EmitUtil.MaxExtractFunArgs` (20) parameters --
 a dual-ABI *worker* is only ever reached via a direct, statically-named
 `RAppNameRep` call, never stored in a `Closure`, so it doesn't need to
 satisfy `support/rc2/runtime.c`'s closure-dispatch function-pointer
-convention (`IDRIS2RC2_FUN0`..`FUN8`/`FUNSTAR`) that convention exists
+convention (`IDRIS2RC2_FUN0`..`FUN20`/`FUNSTAR`) that convention exists
 for -- `MkRCFun`'s new `isWorker` field lets `Compiler.RC2.Emit`'s
 `createCFunctions` skip the width-based `var_arglist[]` declaration
 fallback specifically for workers, regardless of argument count. See
 `rc2/tests/Test33WideDualABIWorker.idr` for the regression test (a
 10-parameter function, 9 native-eligible `Int`s + 1 `Boxed` `String`,
 mirroring a real bug report where an externally-sourced package's
-lambda-lifted internal helper hit exactly this shape).
+lambda-lifted internal helper hit exactly this shape). The runtime side
+of that closure-dispatch convention was separately widened to match
+`MaxExtractFunArgs`'s current value: `IDRIS2RC2_FUN9`..`FUN20` typedefs
+and `dispatchClosure`'s `case 9`..`case 20` were added so a real
+`Closure` of any arity up to 20 still dispatches to a correctly-typed
+function pointer instead of falling through to `FUNSTAR`, verified by
+`rc2/tests/Test34WideClosureDispatch.idr` (reached via a genuine
+partial-application chain, not a direct call, to actually exercise
+`dispatchClosure` rather than `RAppNameRep`).
 
 Stage 3c's own separate FFI worker synthesis (`ffiWorkerTable`,
-`DualABI.idr`'s `length fargs > MaxExtractFunArgs` exclusion) was left
+`DualABI.idr`'s `length fargs > MaxExtractFunArgs` exclusion) remains
 untouched -- a structurally distinct code path (`MkRCForeign`, not
 `MkRCFun`) not investigated as part of this change. A `%foreign`
-declaration with more than 8 parameters still gets no worker
+declaration with more than 20 parameters still gets no worker
 synthesized at all, unconditionally. Plausibly the same "the callee
 side never needs the closure-dispatch convention" argument applies
 there too (an FFI worker is also only ever called directly), but this
@@ -610,7 +618,6 @@ shows up.
   作れるのでは？
 - 変数がタグ付きポインタ化された32ビット未満整数の場合、ネイティブ化されていなくても
   dup/dropを省略できる。
-- 比較演算子の融合はinline展開の後にやらないと効果が限定されてしまうのでは？
 - libgc板のランタイム。dup/drop/freeをCマクロで消去してしまい、mallocを単純に差し替える
   だけでlibgc対応できるのでは？
 - 短い文字列をタグ付きポインタに押し込む
