@@ -187,7 +187,19 @@ mutual
        ||| the IR vs. re-derived" -- the canonical explanation every
        ||| other `postDrop` field in this file points back to.
        ROp        : {0 arity : Nat} -> FC -> (lazy : Maybe LazyReason) -> PrimFn arity -> Vect arity RCLocal -> (postDrop : List RCLocal) -> RCExp
-       RExtPrim   : FC -> (lazy : Maybe LazyReason) -> Name -> List RCLocal -> RCExp
+       ||| `postDrop` mirrors `ROp`'s own field exactly -- one entry per
+       ||| Boxed argument occurrence this ext-prim call needs dropped
+       ||| once it's done reading it. Deliberately primitive-agnostic:
+       ||| `Compiler.RC2.RC`'s `annotate` (Phase 2) treats every
+       ||| `RExtPrim` argument under the same borrow/move contract `ROp`
+       ||| uses for its own operands, regardless of which primitive `p`
+       ||| names -- the callee's own C implementation is responsible for
+       ||| `idris2rc2_dup`-ing anything it wants to keep past the call
+       ||| (see `support/rc2/ioprims.c`), the same way any other FFI
+       ||| callee would. Phase 1 always constructs this as `[]`; only
+       ||| Phase 2 fills it in. See `doc/native-type-inference.md`'s
+       ||| "What's stored on the IR vs. re-derived".
+       RExtPrim   : FC -> (lazy : Maybe LazyReason) -> Name -> List RCLocal -> (postDrop : List RCLocal) -> RCExp
        ||| A read of one field out of a C struct pointer (see
        ||| `doc/c-struct-support.md`). `structName`/`fieldName` stay
        ||| plain strings, resolved against a whole-program struct-field
@@ -344,7 +356,7 @@ freeLocalsR (RLet _ var _ value body) =
 -- again would only be redundant, never additive.
 freeLocalsR (RCon _ _ _ _ args _) = fromList args
 freeLocalsR (ROp _ _ _ args _) = fromList (toList args)
-freeLocalsR (RExtPrim _ _ _ args) = fromList args
+freeLocalsR (RExtPrim _ _ _ args _) = fromList args
 freeLocalsR (RStructGet _ structVar _ _ _) = singleton structVar
 freeLocalsR (RStructSet _ structVar _ _ value _) = fromList [structVar, value]
 freeLocalsR (RCmpCase _ _ args _ t f) =
@@ -381,7 +393,7 @@ countUsesR l (RApp _ _ c a) = length (filter (== l) [c, a])
 countUsesR l (RLet _ _ _ value body) = countUsesR l value + countUsesR l body
 countUsesR l (RCon _ _ _ _ args _) = length (filter (== l) args)
 countUsesR l (ROp _ _ _ args _) = length (filter (== l) (toList args))
-countUsesR l (RExtPrim _ _ _ args) = length (filter (== l) args)
+countUsesR l (RExtPrim _ _ _ args _) = length (filter (== l) args)
 countUsesR l (RStructGet _ structVar _ _ _) = if structVar == l then 1 else 0
 countUsesR l (RStructSet _ structVar _ _ value _) = length (filter (== l) [structVar, value])
 countUsesR l (RCmpCase _ _ args _ t f) =

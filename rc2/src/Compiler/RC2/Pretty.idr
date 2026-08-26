@@ -52,8 +52,9 @@ mutual
   prettyExp d (ROp _ lazy op args postDrop) =
       indent d ++ lazyPrefix lazy ++ "op " ++ show op ++ " " ++ show (toList args)
         ++ (if postDrop == [] then "" else " postDrop=" ++ show postDrop) ++ "\n"
-  prettyExp d (RExtPrim _ lazy p args) =
-      indent d ++ lazyPrefix lazy ++ "extprim " ++ show p ++ " " ++ show args ++ "\n"
+  prettyExp d (RExtPrim _ lazy p args postDrop) =
+      indent d ++ lazyPrefix lazy ++ "extprim " ++ show p ++ " " ++ show args
+        ++ (if postDrop == [] then "" else " postDrop=" ++ show postDrop) ++ "\n"
   prettyExp d (RStructGet _ structVar sn fn postDrop) =
       indent d ++ "structGet " ++ show structVar ++ "." ++ fn ++ " (" ++ sn ++ ")"
         ++ (if postDrop == [] then "" else " postDrop=" ++ show postDrop) ++ "\n"

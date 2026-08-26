@@ -257,12 +257,16 @@ mutual
           (nDups, owned') = countDupsNeeded fid owned argsList
           postDrop' = postDrop ++ List.replicate occ (RCLoc fid)
       in (owned', wrapNDups fc fid nDups (ROp fc lazy op args postDrop'))
-  -- Deliberately a no-op on ownership, matching RC.idr's own annotate
-  -- RExtPrim case (a bare pass-through, `owned` never consulted) --
-  -- see doc/c-struct-support.md's "Why a dedicated node" section for
-  -- why RExtPrim's own ownership handling is already known-incomplete;
-  -- this mirrors that as-is rather than fixing it here.
-  reannotateFieldOwnership fid owned (RExtPrim fc lazy p args) = (owned, RExtPrim fc lazy p args)
+  -- Mirrors the ROp case immediately above exactly, primitive-agnostic
+  -- (RC.idr's own annotate RExtPrim case now follows the same contract
+  -- as ROp's own -- see doc/c-struct-support.md's "Why a dedicated
+  -- node" section for the fixed-as-of gap this used to be a deliberate
+  -- no-op for).
+  reannotateFieldOwnership fid owned (RExtPrim fc lazy p args postDrop) =
+      let occ = length (filter (== RCLoc fid) args)
+          (nDups, owned') = countDupsNeeded fid owned args
+          postDrop' = postDrop ++ List.replicate occ (RCLoc fid)
+      in (owned', wrapNDups fc fid nDups (RExtPrim fc lazy p args postDrop'))
   reannotateFieldOwnership fid owned (RStructGet fc structVar sn fn postDrop) =
       let isField = structVar == RCLoc fid
           dropHere = isField && owned

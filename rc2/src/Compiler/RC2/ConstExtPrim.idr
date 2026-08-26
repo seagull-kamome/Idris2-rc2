@@ -30,10 +30,10 @@ constExtPrimValue _ _ = Nothing
 mutual
   export
   foldConstExtPrim : RCExp -> RCExp
-  foldConstExtPrim (RExtPrim fc lazy p args) =
+  foldConstExtPrim (RExtPrim fc lazy p args postDrop) =
       case constExtPrimValue p args of
            Just c  => RPrimVal fc c
-           Nothing => RExtPrim fc lazy p args
+           Nothing => RExtPrim fc lazy p args postDrop
   foldConstExtPrim (RLet fc var rep value body) =
       RLet fc var rep (foldConstExtPrim value) (foldConstExtPrim body)
   foldConstExtPrim (RCmpCase fc op args postDrop t f) =

@@ -248,7 +248,7 @@ mutual
   foldConst env (RAppName fc lazy n args) = RAppName fc lazy n (map (resolveLocal env) args)
   foldConst env (RUnderApp fc n missing args) = RUnderApp fc n missing (map (resolveLocal env) args)
   foldConst env (RApp fc lazy c a) = RApp fc lazy (resolveLocal env c) (resolveLocal env a)
-  foldConst env (RExtPrim fc lazy p args) = RExtPrim fc lazy p (map (resolveLocal env) args)
+  foldConst env (RExtPrim fc lazy p args postDrop) = RExtPrim fc lazy p (map (resolveLocal env) args) postDrop
   foldConst env (RStructGet fc structVar sn fn postDrop) =
       RStructGet fc (resolveLocal env structVar) sn fn postDrop
   foldConst env (RStructSet fc structVar sn fn value postDrop) =

@@ -110,7 +110,7 @@ IDRIS2RC2_Value *idris2rc2_Prelude_IO_prim__onCollect(IDRIS2RC2_Value *erased,
   IDRIS2RC2_GCPointer *r = IDRIS2RC2_NEW(IDRIS2RC2_GCPointer);
   r->header.tag = IDRIS2RC2_TAG_GCPOINTER;
   r->p = (IDRIS2RC2_Pointer *)idris2rc2_dup(anyPtr);
-  r->onCollect = (IDRIS2RC2_Closure *)onFree;
+  r->onCollect = (IDRIS2RC2_Closure *)idris2rc2_dup(onFree);
   return (IDRIS2RC2_Value *)r;
 }
 
@@ -120,7 +120,7 @@ IDRIS2RC2_Value *idris2rc2_Prelude_IO_prim__onCollectAny(IDRIS2RC2_Value *anyPtr
   IDRIS2RC2_GCPointer *r = IDRIS2RC2_NEW(IDRIS2RC2_GCPointer);
   r->header.tag = IDRIS2RC2_TAG_GCPOINTER;
   r->p = (IDRIS2RC2_Pointer *)idris2rc2_dup(anyPtr);
-  r->onCollect = (IDRIS2RC2_Closure *)onFree;
+  r->onCollect = (IDRIS2RC2_Closure *)idris2rc2_dup(onFree);
   return (IDRIS2RC2_Value *)r;
 }
 

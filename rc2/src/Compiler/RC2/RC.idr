@@ -187,7 +187,9 @@ mutual
                  _ => throw $ InternalError
                         "[rc2] prim__setField: struct/field name must be string literals"))))
     normalize env (LExtPrim fc lazy p args) =
-        bindMany env args (\locs => pure $ RExtPrim fc lazy p locs)
+        -- postDrop is always [] here -- Phase 2 (`annotate`) fills it in
+        -- once ownership is known (see RCExp.idr's RExtPrim doc comment).
+        bindMany env args (\locs => pure $ RExtPrim fc lazy p locs [])
     normalize env (LConCase fc sc alts mDef) =
         bindOne env sc (\scl => do
             alts' <- traverse (normalizeConAlt env) alts
@@ -558,7 +560,22 @@ mutual
     annotate natives owned (ROp fc lazy op args _) =
         pure $ wrapDups fc (splitBorrowsV natives owned args)
                           (ROp fc lazy op args (boxedOperands natives (toList args)))
-    annotate natives owned (RExtPrim fc lazy p args) = pure $ RExtPrim fc lazy p args
+    -- Mirrors the ROp case immediately above exactly, deliberately
+    -- primitive-agnostic (never inspects/branches on `p`): the
+    -- compiler can't know in advance how every present-and-future
+    -- ExtPrim's own C implementation handles its arguments' ownership,
+    -- so `RExtPrim`'s args get the same borrow/move contract as an
+    -- ordinary ROp's operands -- the callee is responsible for
+    -- `idris2rc2_dup`-ing anything it wants to keep past the call (see
+    -- `support/rc2/ioprims.c`), the same way any other FFI callee
+    -- would. Previously a bare pass-through (`owned` never consulted
+    -- at all), which leaked e.g. an IORef's own cell (`prim__newIORef`)
+    -- and any argument computed fresh for the call (e.g.
+    -- `modifyIORef`'s own `f val` fed into `writeIORef`) -- see
+    -- doc/c-struct-support.md's own addendum for the full writeup.
+    annotate natives owned (RExtPrim fc lazy p args _) =
+        pure $ wrapDups fc (splitBorrows natives owned args)
+                          (RExtPrim fc lazy p args (boxedOperands natives args))
     -- Never calls splitBorrows/wrapDups -- see dropIfLastUse's own doc
     -- comment and doc/c-struct-support.md's "Design" section: neither
     -- structVar nor value is ever duplicated, only dropped if this use

@@ -188,12 +188,24 @@ static void idris2rc2_teardown(IDRIS2RC2_Value *v) {
     break;
   }
   case IDRIS2RC2_TAG_GCPOINTER: {
+    // idris2rc2_applyClosure always fully consumes both of its own
+    // arguments (see its own doc comment in runtime.c) -- and every
+    // compiler-generated closure body disposes of an owned parameter
+    // exactly once by the time it returns, whether by genuine use or
+    // an inserted drop for an unused binding (RC.idr's
+    // dropUnusedOwnedVars). So once onCollect has actually been
+    // invoked, it has already consumed p->p itself -- an unconditional
+    // drop here on top of that double-drops it. Only fall back to
+    // dropping it ourselves when there's no onCollect closure to have
+    // consumed it.
     IDRIS2RC2_GCPointer *p = (IDRIS2RC2_GCPointer *)v;
     if (p->onCollect) {
       IDRIS2RC2_Value *step1 = idris2rc2_applyClosure((IDRIS2RC2_Value *)p->onCollect, (IDRIS2RC2_Value *)p->p);
-      idris2rc2_applyClosure(step1, NULL);
+      IDRIS2RC2_Value *result = idris2rc2_applyClosure(step1, NULL);
+      idris2rc2_drop(result);
+    } else {
+      idris2rc2_drop((IDRIS2RC2_Value *)p->p);
     }
-    idris2rc2_drop((IDRIS2RC2_Value *)p->p);
     break;
   }
   case IDRIS2RC2_TAG_BUFFER:

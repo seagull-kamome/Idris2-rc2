@@ -291,7 +291,7 @@ NO_REFC_DIFF_TESTS="Test7CastMatrix Test17ConstFold Test24CStructSupport Test26G
 # Leak-sensitive by design (reference-counting/reuse/native-shadow
 # regression tests) -- checked with valgrind by default even without
 # --valgrind-all.
-LEAK_SENSITIVE_TESTS="Test1Basics Test9SelfTailLoop Test10MutualLoop Test11DualABILeak Test12ConAltNative Test13NativeArgChain Test14SmallFunctionInline Test15CompareFusionThroughCall Test16LoopContinuePostDrop Test18ClosureInPlaceGrow Test19LoopInvariantParam Test20LoopInvariantExpr Test21BoxedInvariantNotHoisted Test22BranchSinking Test23SinkPastSelfDrop Test24CStructSupport Test25ConstConFold Test26GCPtrAliasString Test27FFIDualABI Test28Utf8Strings Test29GCAnyPtrReturn Test33WideDualABIWorker Test34WideClosureDispatch Test35NetworkLoopback Test36ReuseOfferUniqueLeak Test37SystemDirectory Test40SystemProcess Test41FFIMalloc Test42SupportMisc Test43FileExtra"
+LEAK_SENSITIVE_TESTS="Test1Basics Test9SelfTailLoop Test10MutualLoop Test11DualABILeak Test12ConAltNative Test13NativeArgChain Test14SmallFunctionInline Test15CompareFusionThroughCall Test16LoopContinuePostDrop Test18ClosureInPlaceGrow Test19LoopInvariantParam Test20LoopInvariantExpr Test21BoxedInvariantNotHoisted Test22BranchSinking Test23SinkPastSelfDrop Test24CStructSupport Test25ConstConFold Test26GCPtrAliasString Test27FFIDualABI Test28Utf8Strings Test29GCAnyPtrReturn Test33WideDualABIWorker Test34WideClosureDispatch Test35NetworkLoopback Test36ReuseOfferUniqueLeak Test37SystemDirectory Test40SystemProcess Test41FFIMalloc Test42SupportMisc Test43FileExtra Test44IORefExtPrimLeak Test45ArrayExtPrimLeak"
 
 # KNOWN-BUGS.md's own remaining pre-existing leaks -- "definitely
 # lost" byte count, exactly. Anything else non-zero is a genuine new
@@ -302,24 +302,25 @@ LEAK_SENSITIVE_TESTS="Test1Basics Test9SelfTailLoop Test10MutualLoop Test11DualA
 # `pack` calls, directly in its own source) -- it now `import
 # Prelude.Fix.RC2` (see libs/rc2base/src/Prelude/Fix/RC2.idr) to opt
 # into that leak's fix, genuinely clean (0 bytes) now, not just KNOWN.
-# Test1Basics/Test35NetworkLoopback/Test40SystemProcess do NOT get the
-# same treatment despite superficially similar-looking leaks:
-# Test1Basics' own 40 bytes turned out, on inspection, to be a wholly
-# unrelated IORef leak, not fastPack/fastConcat at all (KNOWN-BUGS.md's
-# prior attribution here was simply wrong). Test35NetworkLoopback's
-# fastPack call (via `Network.Socket.Data.parseIPv4`) and
-# Test40SystemProcess's fastConcat call (via `System.File.ReadWrite`'s
-# `fRead'`) are both genuine fastPack/fastConcat leaks, but originate
-# inside the pre-compiled `network`/`base` packages' own already-
-# elaborated code -- `%transform` is applied once, at a definition's
-# OWN elaboration time, using whatever's in its OWN import scope right
-# then; re-importing Prelude.Fix.RC2 from a downstream consumer (this
-# test) cannot retroactively rewrite a call site baked into a
-# dependency's own separately-compiled .ttc. Out of this fix's reach
-# without recompiling `network`/`base` themselves against
-# Prelude.Fix.RC2 (not attempted -- those are pinned nixpkgs-provided
-# packages, out of scope here).
-declare -A KNOWN_LEAK_BYTES=( [Test1Basics]=40 [Test35NetworkLoopback]=10 [Test40SystemProcess]=11 )
+# Test35NetworkLoopback/Test40SystemProcess do NOT get the Prelude.Fix.RC2
+# treatment despite superficially similar-looking leaks: their
+# fastPack/fastConcat calls (Test35's via `Network.Socket.Data.parseIPv4`,
+# Test40's via `System.File.ReadWrite`'s `fRead'`) originate inside the
+# pre-compiled `network`/`base` packages' own already-elaborated code --
+# `%transform` is applied once, at a definition's OWN elaboration time,
+# using whatever's in its OWN import scope right then; re-importing
+# Prelude.Fix.RC2 from a downstream consumer (this test) cannot
+# retroactively rewrite a call site baked into a dependency's own
+# separately-compiled .ttc. Out of this fix's reach without recompiling
+# `network`/`base` themselves against Prelude.Fix.RC2 (not attempted --
+# those are pinned nixpkgs-provided packages, out of scope here).
+#
+# Test1Basics no longer needs an entry here: its own 40-byte leak
+# (KNOWN-BUGS.md's prior attribution to fastPack/fastConcat was wrong --
+# it was actually the RExtPrim ownership-annotation gap, see
+# doc/c-struct-support.md's own addendum) is genuinely fixed now, not
+# just reclassified.
+declare -A KNOWN_LEAK_BYTES=( [Test35NetworkLoopback]=10 [Test40SystemProcess]=11 )
 
 is_in() { local x; for x in $2; do [ "$x" = "$1" ] && return 0; done; return 1; }
 

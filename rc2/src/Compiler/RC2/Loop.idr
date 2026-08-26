@@ -186,7 +186,8 @@ mutual
       RCon fc n ci tag (renameLocals ren args) (renameMaybeLocal ren reuseFrom)
   renameRCExp ren (ROp fc lazy op args postDrop) =
       ROp fc lazy op (renameLocalsV ren args) (renameLocals ren postDrop)
-  renameRCExp ren (RExtPrim fc lazy p args) = RExtPrim fc lazy p (renameLocals ren args)
+  renameRCExp ren (RExtPrim fc lazy p args postDrop) =
+      RExtPrim fc lazy p (renameLocals ren args) (renameLocals ren postDrop)
   renameRCExp ren (RStructGet fc structVar sn fn postDrop) =
       RStructGet fc (renameLocal ren structVar) sn fn (renameLocals ren postDrop)
   renameRCExp ren (RStructSet fc structVar sn fn value postDrop) =
@@ -871,7 +872,7 @@ usesInvariant p e = countInvariantUses e > 0
     countInvariantUses (RLet _ _ _ value body) = countInvariantUses value + countInvariantUses body
     countInvariantUses (RCon _ _ _ _ args _) = length (filter (== RCLoc p) args)
     countInvariantUses (ROp _ _ _ args _) = length (filter (== RCLoc p) (toList args))
-    countInvariantUses (RExtPrim _ _ _ args) = length (filter (== RCLoc p) args)
+    countInvariantUses (RExtPrim _ _ _ args _) = length (filter (== RCLoc p) args)
     countInvariantUses (RStructGet _ structVar _ _ _) = if structVar == RCLoc p then 1 else 0
     countInvariantUses (RStructSet _ structVar _ _ value _) = length (filter (== RCLoc p) [structVar, value])
     countInvariantUses (RCmpCase _ _ args _ t f) =
@@ -945,12 +946,14 @@ dupInvariantBoxed p (ROp fc lazy op args postDrop) =
     let argsList = toList args
         occ = countInvariantDups p argsList
     in wrapInvariantDups fc p occ (ROp fc lazy op args (postDrop ++ List.replicate occ (RCLoc p)))
--- Deliberately a no-op on ownership, matching RC.idr's own annotate
--- RExtPrim case (a bare pass-through, ownership never consulted) --
--- see doc/c-struct-support.md's "Why a dedicated node" section for why
--- RExtPrim's own ownership handling is already known-incomplete; this
--- mirrors that as-is rather than fixing it here.
-dupInvariantBoxed _ (RExtPrim fc lazy nm args) = RExtPrim fc lazy nm args
+-- Mirrors the ROp case immediately above exactly, primitive-agnostic
+-- (RC.idr's own annotate RExtPrim case now follows the same contract
+-- as ROp's own -- see doc/c-struct-support.md's "Why a dedicated node"
+-- section for the fixed-as-of gap this used to be a deliberate no-op
+-- for).
+dupInvariantBoxed p (RExtPrim fc lazy nm args postDrop) =
+    let occ = countInvariantDups p args
+    in wrapInvariantDups fc p occ (RExtPrim fc lazy nm args (postDrop ++ List.replicate occ (RCLoc p)))
 dupInvariantBoxed p (RStructGet fc structVar sn fn postDrop) =
     wrapInvariantDups fc p (countInvariantDups p [structVar]) (RStructGet fc structVar sn fn postDrop)
 dupInvariantBoxed p (RStructSet fc structVar sn fn value postDrop) =

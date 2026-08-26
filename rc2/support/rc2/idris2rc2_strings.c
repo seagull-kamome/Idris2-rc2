@@ -221,6 +221,13 @@ IDRIS2RC2_Value *onCollectStringIterator(IDRIS2RC2_Value *ptr, void *unused) {
   IDRIS2RC2_StringIter *it = (IDRIS2RC2_StringIter *)((IDRIS2RC2_Pointer *)ptr)->p;
   free(it->str);
   free(it);
+  // Own the Boxed ptr (IDRIS2RC2_Pointer*) argument the same way any
+  // compiler-generated closure body owns and disposes of it (see
+  // memory.c's own GCPointer teardown comment) -- this is a
+  // hand-written native callback, not compiler-generated, so it has
+  // to do that disposal itself rather than getting it for free from
+  // RC.idr's dropUnusedOwnedVars.
+  idris2rc2_drop(ptr);
   return NULL;
 }
 

@@ -281,6 +281,45 @@ application, not a fully-saturated one. Not pursued further -- full
 investigation, both refuted hypotheses, and what a real fix would need
 are in **`rc2/doc/reuse-monadic-bind-gap.md`**.
 
+## Performance: `ROp`'s Boxed arithmetic never reuses a dying/unique operand's own heap allocation
+
+Noticed while designing the `RExtPrim` ownership-annotation fix (see
+this file's own entry, or `rc2/doc/c-struct-support.md`'s addendum,
+once landed): `RCon`'s own `annotate` case already uses a strictly
+cheaper convention than `ROp`'s -- `wrapDups fc (splitBorrows natives
+owned args) (RCon fc n ci tag args Nothing)`, no `postDrop` at all. A
+`living` field gets `dup`'d before the call; a `dying` one is simply
+handed over as-is, ownership transferred, no call-site drop ever
+generated -- exactly the shape `Compiler.RC2.Reuse`'s reuse-in-place
+pass already exploits for constructor destructure/rebuild. `ROp`'s own
+case, by contrast, always emits an explicit post-call `drop` for a
+dying operand (`boxedOperands`-derived `postDrop`), and every Boxed
+numeric primitive in `rc2/support/rc2/numeric.c` (GMP-backed `Integer`
+arithmetic especially, e.g. `idris2rc2_mkInteger()`'s own fresh
+`mpz_t`-backed allocation on every add/sub/mul) always allocates a
+brand-new result, regardless of whether an operand was itself dying and
+uniquely referenced right at that call.
+
+If `ROp` adopted the same ownership-transfer convention `RCon` already
+uses, a Boxed arithmetic primitive's own C implementation could check
+whether a dying operand is uniquely referenced (mirroring
+`idris2rc2_isUnique`'s existing use in constructor reuse) and, if so,
+mutate its own already-allocated `mpz_t` buffer in place instead of
+`mkInteger()`-ing a fresh one -- the same reuse-in-place saving
+`Compiler.RC2.Reuse` gives constructors, extended to Boxed numeric ops.
+
+Not pursued as part of the `RExtPrim` fix (deliberately kept that fix's
+own scope to fixing the leak, not redesigning `ROp`'s convention) --
+and adopting it project-wide has the same tradeoff the `RExtPrim`
+design discussion surfaced: shifting from "the compiler emits every
+drop, the C side never touches refcounts" to "each Boxed-arithmetic C
+primitive is now responsible for correctly finishing off whatever
+operand ownership it was handed" is a real increase in per-primitive C-side
+responsibility, not free. Not investigated further, not implemented;
+revisit only if profiling ever shows Boxed (`Integer`-heavy, not
+native-`Int`) arithmetic as a real hot path worth the added C-side
+complexity.
+
 ## Performance: constant-constructor folding doesn't cross a CAF boundary or a case scrutinee
 
 `Compiler.RC2.ConstFold`'s `RCConstCon` folding (see
@@ -376,20 +415,6 @@ which *do* build `Just` values directly from C -- that's a different,
 sound thing: always constructing a real `Constructor` for
 `Prelude.Maybe` specifically (a fixed library type whose `Just` tag is
 known and stable), never eliding one for an arbitrary payload type.
-
-## Correctness: `List.(++)` leaks memory on repeated `IORef` append
-
-Found incidentally while testing `Channel`'s `channelPut`
-(`rc2/doc/concurrency.md`'s Concurrency work, commit `05c5c78`), but
-reproduces on a single-threaded, non-concurrent program: repeatedly
-`modifyIORef`/`writeIORef`-appending to a `List` held in an `IORef`
-(three appends was enough to trigger it in `TestConcurrency.idr`) leaks
-memory via `idris2rc2_newConstructor`, on the order of 40-280 bytes per
-run. Unrelated to concurrency itself -- the `channelPut` test just
-happened to be the first thing in this codebase to exercise
-`List.(++)` (`Prelude.Types`'s `reverseOnto`/`tailRecAppend`) this way.
-Not investigated further and not fixed; recorded here as found, not
-root-caused.
 
 ## Test coverage gaps
 

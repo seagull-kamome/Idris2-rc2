@@ -900,7 +900,7 @@ mutual
         removeVars $ mapMaybe snd (toList argsWithFresh)
         pure resultVar
 
-    emitRC (RExtPrim fc _ p args) _ = do
+    emitRC (RExtPrim fc _ p args postDrop) _ = do
         -- prim__getField/prim__setField never reach here -- Compiler.RC2.RC's
         -- own `normalize` (Phase 1) converts them straight into
         -- RStructGet/RStructSet, handled by their own cases below (see
@@ -914,10 +914,22 @@ mutual
                unless (elem pn prims) $ throw $ InternalError $ "[rc2] Unknown primitive: " ++ cName p
             _ => throw $ InternalError $ "[rc2] Unknown primitive: " ++ cName p
         emit fc $ "// call to external primitive " ++ cName p
-        -- ext-prim args are used owned/as-is (see RC.idr's module note on
-        -- RExtPrim); box any that happen to be native locals first.
+        -- ext-prim args follow the same borrow/move contract as an
+        -- ordinary ROp's operands (see RC.idr's own annotate RExtPrim
+        -- case) -- box any that happen to be native locals first.
         argStrs <- traverse rcVarToBoxedC args
-        pure $ "idris2rc2_\{cName p}("++ showSep ", " argStrs ++")"
+        -- Materialize the call into a fresh C variable (like the ROp
+        -- case above) BEFORE dropping any postDrop argument -- args
+        -- must still be alive while the call itself actually reads
+        -- them; only after that's emitted is it safe to drop them.
+        let resultVar = "extprimVar_" ++ !(getNextCounter)
+        emit fc $ "IDRIS2RC2_Value *" ++ resultVar ++ " = idris2rc2_\{cName p}("++ showSep ", " argStrs ++");"
+        -- `postDrop` (Compiler.RC2.RC's `annotate`) already lists exactly
+        -- which *existing* Boxed argument locals need dropping now that
+        -- this call is done reading them -- just lower it, no re-deriving
+        -- here (same as the ROp case above).
+        removeVars $ map varName postDrop
+        pure resultVar
 
     -- Part D (doc/c-struct-support.md's "Design" section): resolve
     -- structName/fieldName against StructDefs (Part B/C), then render
