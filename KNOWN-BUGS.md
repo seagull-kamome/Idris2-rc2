@@ -58,6 +58,35 @@ entry rather than leaving it stale.
   -- see that file's own comment. `Test42SupportMisc.idr` exercises
   this and is listed in `verify.sh`'s `NO_REFC_DIFF_TESTS` since there's
   no real-RefC output to diff against in the first place.
+- **Upstream RefC's own `cTypeOfCFType CFString = "char *"` (no
+  `const`) still collides with `-Werror`/`-Wdiscarded-qualifiers` on
+  any `const char *`-returning C function** (e.g.
+  `curl_easy_strerror`). Confirmed directly: `rc2/tests/
+  Test47ConstCFStringReturn.idr` cannot be built by real
+  `idris2 --cg refc` at all -- it fails with exactly this
+  warning-turned-error. rc2 itself no longer has this limitation:
+  `Compiler/RC2/EmitUtil.idr`'s `cTypeOfCFType CFString` was changed to
+  `"const char *"` (`idris2rc2_mkString` already took `char const *s`,
+  so no other codegen change was needed). `Test47ConstCFStringReturn`
+  is listed in `verify.sh`'s `NO_REFC_DIFF_TESTS` since there's no
+  real-RefC output to diff against for it.
+
+## Retired: `--directive noreuse` no longer exists
+
+`--directive noreuse` used to let `Compiler.RC2.RC2.idr`'s `toRCDefs`
+skip `Compiler.RC2.Reuse` (constructor reuse-in-place), for the same
+kind of A/B isolation `noloop`/`noconaltnative`/etc. still provide. But
+disabling it reliably corrupted the heap (`malloc(): unaligned tcache
+chunk detected`) in 11 of 17 smoke tests -- some later pass apparently
+assumes `Reuse` already ran, but which pass and what invariant it
+relies on was never root-caused. Rather than leave that footgun
+sitting in `verify.sh --directive`, the ability to disable `Reuse` this
+way was removed outright: `toRCDefs` now always runs `applyReuse`
+unconditionally, and `"noreuse"` is gone from the `disabledStages`
+allow-list. Passing `--directive noreuse` today is a harmless no-op,
+same as any other unrecognized directive string. If a way to disable
+`Reuse` is ever reintroduced, expect this same corruption to resurface
+until the actual invariant is found.
 
 ## Pre-existing `valgrind` leaks (unrelated to whatever's currently being tested)
 

@@ -451,54 +451,6 @@ here in case a future frontend change or a different lowering strategy
 changes when `RFree` becomes reachable, so its rarely-exercised code path
 gets renewed scrutiny then.
 
-## Correctness: `--directive noreuse` corrupts the heap on several smoke tests
-
-`rc2/tests/verify.sh --directive noreuse` (see its own "--directive"
-option, added to let a session compare an optimisation pass on vs.
-off) surfaces a real heap corruption in 11 of 17 smoke tests
-(`Test1Basics`, `Test2Recursion`, `Test3Data`, `Test4Closures`,
-`Test5FFIStrings`, `Test7CastMatrix`, `Test8EmptyCon`,
-`Test9SelfTailLoop`, `Test10MutualLoop`, `Test12ConAltNative`,
-`Test13NativeArgChain`) -- `malloc(): unaligned tcache chunk detected`
-at runtime, not a compile error. `--directive noconaltnative` alone is
-unaffected (all 17 pass); the corruption is specific to disabling
-`Compiler.RC2.Reuse` itself, not something `ConAltNative` depends on.
-
-Not investigated further yet -- likely a later pass
-(`ConAltNative`/`MutualLoop`/`Loop`/`DualABI`, or `Emit` itself)
-implicitly relies on `Compiler.RC2.Reuse` having already run (e.g.
-assuming every `RCon`'s own `reuseFrom` field, or the absence of a
-dangling `RReuseOffer`/`RReleaseReuse`, in a way that's silently wrong
-when `Reuse` is skipped) rather than being a genuinely independent,
-disableable stage the way `--directive noconaltnative`/`noloop`/etc.
-are. Doesn't affect the default pipeline (`Reuse` always runs unless
-explicitly disabled), so it's not a correctness bug in what ships --
-only surfaces via this debug flag -- but worth root-causing before
-trusting `--directive noreuse` for any future performance comparison.
-
-Repro: `cd rc2/tests && ./verify.sh --skip-build --no-valgrind --directive noreuse`.
-
-## Correctness: `CFString`'s hardcoded `char *` return type collides with `-Werror` on a `const`-returning C function
-
-Also found via the libcurl experiment above: `curl_easy_strerror`
-returns `const char *`. `Compiler/RC2/EmitUtil.idr`'s own
-`cTypeOfCFType CFString = "char *"` (no `const`) makes the generated
-call site `char * retVal = curl_easy_strerror(...)`, which GCC flags as
-`-Wdiscarded-qualifiers` -- and `CC.idr`'s own `-Werror` (both the
-`-c` and link steps) turns that into a hard build failure, not just a
-warning.
-
-Not rc2-specific either: upstream RefC's own `RefC.idr` has the
-byte-for-byte identical `cTypeOfCFType CFString = "char *"`, so any
-`const char *`-returning C function hits the same wall there too. No
-existing rc2/RefC test happens to bind one. Two possible fixes if this
-is ever worth pursuing: (a) generate `const char *` for `CFString`
-foreign *return* types specifically (would need extractValue/packCFType
-to know a call's own foreign-return position, not just the CFType
-itself), or (b) document the limitation and let callers work around it
-with a thin non-const C wrapper. Not investigated further; no
-regression test exists for it yet.
-
 ## `Integer` (`CFInteger`) has no `%foreign` codegen support at all
 
 Found while investigating whether `idris2-json` (stefan-hoeck's JSON

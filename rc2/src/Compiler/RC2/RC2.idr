@@ -65,7 +65,7 @@ applyReuse d@(MkRCForeign _ _ _) = d
 ||| reverted implementation attempts needed to isolate their own bugs
 ||| from pre-existing ones (see `KNOWN-BUGS.md`'s own two small
 ||| pre-existing leaks, told apart from that work this way). Recognised
-||| directives: `noinline`, `noreuse`, `noconaltnative`, `nomutualloop`,
+||| directives: `noinline`, `noconaltnative`, `nomutualloop`,
 ||| `noloop`, `nosink`, `nodualabi` (disables both `DualABI`'s own
 ||| worker/wrapper synthesis *and* its own call-site rewriting together
 ||| -- the rewrite needs the worker table the synthesis step builds, so
@@ -74,18 +74,29 @@ applyReuse d@(MkRCForeign _ _ _) = d
 ||| still produce *correct*
 ||| (if less optimised, and possibly no longer byte-for-byte matching
 ||| real `idris2 --cg refc`'s own output shape) C -- none of
-||| `Compiler.RC2.Inline`/`Reuse`/`ConAltNative`/`MutualLoop`/`Loop`/
+||| `Compiler.RC2.Inline`/`ConAltNative`/`MutualLoop`/`Loop`/
 ||| `Sink`/`DualABI` is required by anything downstream of it for
 ||| correctness, only for the optimisation it itself provides. "Not
 ||| perfectly complete" by design: a coarse, whole-stage on/off switch,
 ||| not fine-grained per-function/per-node control.
+|||
+||| `noreuse` (disabling `Compiler.RC2.Reuse`) is deliberately NOT in
+||| this list -- retired, not merely undocumented. Unlike every stage
+||| above, `Reuse` was never actually safely independent/disableable
+||| this way: using `--directive noreuse` caused real heap corruption
+||| (`malloc(): unaligned tcache chunk detected`) in 11 of 17 smoke
+||| tests, because a later pass silently assumes `Reuse` has already
+||| run (which specific pass, and exactly what invariant it assumes,
+||| was never root-caused). Rather than fix that, the ability to
+||| disable `Reuse` this way was removed entirely -- `applyReuse` now
+||| always runs, unconditionally.
 toRCDefs : {auto c : Ref Ctxt Defs} -> List String -> List (Name, LiftedDef) -> Core (List (Name, RCDef), SortedMap Name (Name, List Rep, Rep))
 toRCDefs disabled lds0 = do
     lds <- if "noinline" `elem` disabled then pure lds0 else logTime 2 "rc2: Inline" $ applyInlineLifted lds0
     reused <- logTime 2 "rc2: RC annotate + Reuse + ConAltNative" $
                 traverse (\(n, ld) => do
                   d0 <- toRCDef ld
-                  let d1 = if "noreuse" `elem` disabled then d0 else applyReuse d0
+                  let d1 = applyReuse d0
                   let d2 = if "noconaltnative" `elem` disabled then d1 else applyConAltNative d1
                   pure (n, d2)) lds
     merged <- if "nomutualloop" `elem` disabled then pure reused else logTime 2 "rc2: Mutual loop" $ applyMutualLoop reused
@@ -171,7 +182,7 @@ compileExpr c s _ outputDir tm outfile =
      -- `dumpdualabi` (which only ever inspect its *output*).
      directiveList <- getDirectives (Other "rc2")
      let disabledStages = filter (`elem` directiveList)
-                             ["noinline", "noreuse", "noconaltnative", "nomutualloop", "noloop", "nosink", "nodualabi"]
+                             ["noinline", "noconaltnative", "nomutualloop", "noloop", "nosink", "nodualabi"]
      cdata <- getCompileData False Lifted tm
      (defs, ffiWorkers) <- toRCDefs disabledStages (lambdaLifted cdata)
 

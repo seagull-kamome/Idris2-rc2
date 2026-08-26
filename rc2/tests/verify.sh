@@ -34,12 +34,14 @@
 #                       for every smoke test (rc2/tests/Test*.idr)
 #                       compile -- repeatable, same convention as
 #                       idris2's own `--directive` (e.g. `--directive
-#                       noreuse --directive noconaltnative`). See
+#                       noconaltnative --directive noloop`). See
 #                       Compiler.RC2.RC2's own `toRCDefs` doc comment
 #                       (rc2/src/Compiler/RC2/RC2.idr) for the
 #                       recognised `no<stagename>` values (noinline/
-#                       noreuse/noconaltnative/nomutualloop/noloop/
-#                       nodualabi) -- lets a session compare compile/
+#                       noconaltnative/nomutualloop/noloop/nosink/
+#                       nodualabi -- `noreuse` was retired, see that
+#                       doc comment's own note on why) -- lets a
+#                       session compare compile/
 #                       run time with a given optimisation pass on vs.
 #                       off. Not applied to refc-suite (its own run.sh
 #                       runs as a separate process, untouched by this
@@ -286,7 +288,20 @@ echo "=== Smoke tests ==="
 # around for its own tests but can't fix. `.expected` here is rc2's own
 # manually-verified-correct output, same reasoning as
 # Test7CastMatrix/Test17ConstFold above.
-NO_REFC_DIFF_TESTS="Test7CastMatrix Test17ConstFold Test24CStructSupport Test26GCPtrAliasString Test28Utf8Strings Test29GCAnyPtrReturn Test31CgExtraRuntime Test32CgInlineRuntime Test35NetworkLoopback Test42SupportMisc"
+#
+# Test47ConstCFStringReturn: exercises binding a real `const char *`-
+# returning C function, which real `idris2 --cg refc` cannot compile --
+# RefC.idr's own `cTypeOfCFType CFString = "char *"` (no `const`,
+# unchanged upstream) makes its generated wrapper declare a plain,
+# non-const `char *` for a CFString return, so GCC's own
+# -Wdiscarded-qualifiers ("initialization discards 'const' qualifier")
+# is a hard -Werror failure there, confirmed by direct `idris2 --cg
+# refc` attempt. rc2's own `EmitUtil.idr` now declares this `const char
+# *` instead (this fix's whole point -- see TODO.md's git history /
+# KNOWN-BUGS.md), so only rc2 can actually compile this test. `.expected`
+# here is rc2's own manually-verified-correct output, same reasoning as
+# Test7CastMatrix/Test17ConstFold above.
+NO_REFC_DIFF_TESTS="Test7CastMatrix Test17ConstFold Test24CStructSupport Test26GCPtrAliasString Test28Utf8Strings Test29GCAnyPtrReturn Test31CgExtraRuntime Test32CgInlineRuntime Test35NetworkLoopback Test42SupportMisc Test47ConstCFStringReturn"
 
 # Leak-sensitive by design (reference-counting/reuse/native-shadow
 # regression tests) -- checked with valgrind by default even without

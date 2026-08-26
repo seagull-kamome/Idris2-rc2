@@ -41,8 +41,8 @@ Lifted (Compiler.LambdaLift)
 Run first, before anything RC2-specific exists at all -- `Compiler.RC2.RC2`'s
 own `toRCDefs` calls `applyInlineLifted` on the raw `lambdaLifted` list
 before any other stage. `--directive noinline` skips it, for the same
-kind of A/B regression isolation `noreuse`/`noloop`/etc. already provide
-(see `RC2.idr`'s own module note on `toRCDefs`).
+kind of A/B regression isolation `noloop`/`noconaltnative`/etc. already
+provide (see `RC2.idr`'s own module note on `toRCDefs`).
 
 ## Eligibility: Criterion A only
 

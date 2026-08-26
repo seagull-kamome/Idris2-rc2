@@ -43,8 +43,8 @@ Lifted (Compiler.LambdaLift)
 RC2固有のものが何も存在しない時点で、最初に実行される --
 `Compiler.RC2.RC2`自身の`toRCDefs`は、他のどのステージよりも前に、
 生の`lambdaLifted`リストに対して`applyInlineLifted`を呼び出す。
-`--directive noinline`はこれをスキップする。`noreuse`/`noloop`など
-が既に提供しているのと同じ種類のA/Bリグレッション切り分けのため
+`--directive noinline`はこれをスキップする。`noloop`/`noconaltnative`
+などが既に提供しているのと同じ種類のA/Bリグレッション切り分けのため
 (`RC2.idr`自身の`toRCDefs`に関するモジュール注記参照)。
 
 ## 適格性: 基準Aのみ
