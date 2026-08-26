@@ -166,24 +166,36 @@ reason). If a `grep idris2rc2_free` across generated `.c` output comes
 back empty, that's expected, not a sign the feature is broken. See
 `TODO.md`'s own "Runtime: RFree rarely fires in practice" entry.
 
-## Runtime: constructor-reuse reservation abandonment doesn't recursively drop fields (latent, unverified, not fixed)
-
-`idris2rc2_dropReuseConstructor` (`support/rc2/runtime.c`) does *not*
-recursively drop the released constructor's own fields, unlike an
-ordinary `idris2rc2_drop`'s teardown. Confirmed pre-existing (predates
-`Compiler.RC2.Reuse` moving the reuse *decision* to IR level) by
-reading the runtime implementation directly. Means: if a reservation is
-claimed (`isUnique` succeeded) but then never actually consumed by any
-`RCon` on the specific execution path taken, that path's own fields
-aren't cleaned up by the release call itself. Not verified to be
-reachable in practice (no known failing test), deliberately left
-unfixed as out of scope for the work that found it. See
-`rc2/doc/reuse-analysis.md`'s own "Known, deliberately-unfixed edge
-case" section. If a leak ever traces back here, this is the first
-suspect.
-
 ## Explicitly *not* a known bug (resolved, documented so it isn't rediscovered as one)
 
+- **`idris2rc2_dropReuseConstructor` (`support/rc2/runtime.c`) not
+  recursively dropping the released constructor's own fields was
+  suspected to leak an abandoned constructor-reuse reservation's still-
+  live fields.** Two rounds of investigation: the first (analysis-only)
+  concluded this was reachable; actually compiling and valgrind-checking
+  the proposed repro proved that conclusion wrong -- `RC.idr`'s own
+  ordinary per-branch dead-variable cleanup already drops any field
+  that's genuinely dead in an abandoning branch, before
+  `idris2rc2_dropReuseConstructor` is ever reached, so the "missing"
+  recursive drop would double-drop, not fix anything. A second round
+  found the actual structural reason this is unreachable, not just
+  unreachable-for-this-shape: `Compiler.RC2.Reuse`'s `resolveAlt`
+  partitions every one of a destructured constructor's own fields into
+  exactly two disjoint sets by plain set subtraction --
+  `dupOnShared`/`dropOnUnique` (`dropOnUnique = conArgsRC \\
+  dupOnShared`) -- with no third bucket a field could fall into and be
+  missed. `EmitUtil.idr`'s `emitReuseOffer` fully discharges both sets
+  (dup what's still needed, drop what's dead) before a reservation is
+  ever claimed or abandoned, so by the time
+  `idris2rc2_dropReuseConstructor` runs, every field's ownership is
+  already resolved -- recursively dropping `args[]` there would drop
+  already-discharged references. (`dropOnUnique` itself was added by an
+  unrelated, later session's `RExtPrim`/GCPointer-adjacent fix -- this
+  edge case predates that field and is fully closed by it now.) See
+  `rc2/doc/reuse-analysis.md`'s own updated "Known, deliberately-
+  unfixed edge case" section for the full writeup. `runtime.c`'s
+  `idris2rc2_dropReuseConstructor` needs no change and should not be
+  "fixed" as originally proposed.
 - **`idris2-missing-containers`'s own `benchmarkHashMap` "crash"
   (`Unhandled input for Main.case block`) was never an environment or
   rc2 bug.** An earlier investigation (2026-08-14) concluded it was a

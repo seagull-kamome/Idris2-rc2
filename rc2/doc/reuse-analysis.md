@@ -230,24 +230,36 @@ and all 3 benchmarks, with `idris2rc2_isUnique`/
 `idris2rc2_dropReuseConstructor` both confirmed firing across several
 refc-suite tests (not a silently-dead pass).
 
-## Known, deliberately-unfixed edge case
+## Known edge case -- now confirmed resolved by the `dropOnUnique` addendum below
 
 `idris2rc2_dropReuseConstructor` (the release path) does **not**
 recursively drop the released constructor's own fields, unlike an
 ordinary `idris2rc2_drop`'s teardown. This is a pre-existing property
 of the runtime (`support/rc2/runtime.c`), not something introduced by
-this pass -- confirmed by reading its implementation before this work
-started. It means: if a reservation is claimed (`isUnique` succeeded)
-but then never actually consumed by any `RCon` on the specific
-execution path taken (e.g. a sibling nested branch runs instead, and
-`tryConsume` inserted an `RReleaseReuse` for this path), the *fields*
-of the now-repurposed-then-abandoned storage are not cleaned up by the
-release call itself. This is a latent gap, not verified to be
-unreachable, and was explicitly **not** fixed as part of this work --
-scope was "faithfully preserve existing behavior while moving the
-*decision* to IR level," not "fix latent runtime issues discovered
-along the way." Worth revisiting if it's ever confirmed to fire in
-practice.
+this pass. At the time this section was originally written, it was
+flagged as a latent, unverified gap: if a reservation is claimed
+(`isUnique` succeeded) but then never actually consumed by any `RCon`
+on the specific execution path taken, the *fields* of the
+now-repurposed-then-abandoned storage looked like they might not be
+cleaned up by the release call itself.
+
+**Re-investigated later (two rounds) and confirmed unreachable, not
+just unconfirmed.** A first, analysis-only pass concluded this WAS
+reachable; actually compiling a repro and checking it under valgrind
+proved that wrong -- `RC.idr`'s own ordinary per-branch dead-variable
+cleanup already drops any field genuinely dead in an abandoning branch
+before `idris2rc2_dropReuseConstructor` is ever reached, so adding a
+recursive drop there would double-drop, not fix anything. A second
+round found the actual structural reason: the `dropOnUnique` addendum
+below partitions every one of a destructured constructor's own fields
+into exactly two disjoint sets (`dupOnShared`/`dropOnUnique`, related
+by plain set subtraction) with no third bucket a field could fall into
+unnoticed, and both sets are fully discharged (dup'd or dropped)
+*before* a reservation is ever claimed or released. By the time
+`idris2rc2_dropReuseConstructor` runs, every field's ownership is
+already resolved -- there is nothing left for it to recursively drop.
+`idris2rc2_dropReuseConstructor` needs no change. See `KNOWN-BUGS.md`'s
+own matching entry (under "Explicitly not a known bug").
 
 ## Addendum: `dropOnUnique` -- a destructured field leaking on the reuse-in-place (unique) path
 
