@@ -158,12 +158,14 @@ void *idris2rc2_fork(IDRIS2RC2_Closure *fct) {
   pthread_detach(tid);
   // ThreadID is `[external]` (CFUser: identity pass-through, see
   // Compiler.RC2.EmitUtil's packCFType/extractValue for CFUser), so any
-  // valid IDRIS2RC2_Value* works. threadWait can never read it (see
-  // above), so a plain IDRIS2RC2_Pointer is enough -- no dedicated tag.
-  pthread_t *heapTid = malloc(sizeof(pthread_t));
-  IDRIS2RC2_VERIFY(heapTid, "malloc failed");
-  *heapTid = tid;
-  return idris2rc2_mkPointer(heapTid);
+  // valid IDRIS2RC2_Value* works, and threadWait can never read it (see
+  // above) -- but it still needs to actually be freed once dropped.
+  // IDRIS2RC2_TAG_THREADID (datatypes.h) embeds tid directly rather than
+  // wrapping a separately malloc'd pthread_t* in a generic
+  // IDRIS2RC2_Pointer, whose own teardown deliberately never frees its
+  // payload (that's correct for an externally-owned pointer, but this
+  // one is ours) -- using it here leaked 8 bytes on every single fork.
+  return (IDRIS2RC2_Value *)idris2rc2_mkThreadID(tid);
 }
 
 // Thin adapter satisfying the fixed, un-namespaced symbol name Prelude.IO's

@@ -41,6 +41,7 @@ IDRIS2RC2_String *idris2rc2_mkString(char const *s);
 
 IDRIS2RC2_Pointer *idris2rc2_mkPointer(void *raw);
 IDRIS2RC2_GCPointer *idris2rc2_mkGCPointer(void *raw, IDRIS2RC2_Closure *onCollect);
+IDRIS2RC2_ThreadID *idris2rc2_mkThreadID(pthread_t tid);
 IDRIS2RC2_Array *idris2rc2_mkArray(int length);
 // Wraps a raw buffer.c allocation (see buffer.h); takes ownership -- freed
 // with a bare free() when the wrapper's refcount reaches zero.

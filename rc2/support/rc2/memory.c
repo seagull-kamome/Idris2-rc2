@@ -121,6 +121,13 @@ IDRIS2RC2_GCPointer *idris2rc2_mkGCPointer(void *raw, IDRIS2RC2_Closure *onColle
   return p;
 }
 
+IDRIS2RC2_ThreadID *idris2rc2_mkThreadID(pthread_t tid) {
+  IDRIS2RC2_ThreadID *t = IDRIS2RC2_NEW(IDRIS2RC2_ThreadID);
+  t->header.tag = IDRIS2RC2_TAG_THREADID;
+  t->tid = tid;
+  return t;
+}
+
 IDRIS2RC2_Buffer *idris2rc2_mkBuffer(void *buf) {
   IDRIS2RC2_Buffer *b = IDRIS2RC2_NEW(IDRIS2RC2_Buffer);
   b->header.tag = IDRIS2RC2_TAG_BUFFER;
@@ -229,6 +236,13 @@ static void idris2rc2_teardown(IDRIS2RC2_Value *v) {
       pthread_detach(h->tid);
     break;
   }
+  case IDRIS2RC2_TAG_THREADID:
+    // idris2rc2_fork already pthread_detach()s before ever handing this
+    // struct back -- unlike IDRIS2RC2_JOINHANDLE above, there's no join
+    // decision left to make here, no pthread_t-destroying API to call.
+    // Freeing this struct itself (below, unconditionally, after this
+    // switch) is the whole of this tag's teardown.
+    break;
   case IDRIS2RC2_TAG_CHANNEL: {
     IDRIS2RC2_Channel *c = (IDRIS2RC2_Channel *)v;
     idris2rc2_ChannelNode *node = c->head;

@@ -43,6 +43,7 @@
 #define IDRIS2RC2_TAG_BARRIER 28
 #define IDRIS2RC2_TAG_JOINHANDLE 29
 #define IDRIS2RC2_TAG_CHANNEL 30
+#define IDRIS2RC2_TAG_THREADID 31
 
 typedef struct {
   // Values that reach the maximum reference count are treated as immortal
@@ -153,6 +154,25 @@ typedef struct {
   IDRIS2RC2_Pointer *p;
   IDRIS2RC2_Closure *onCollect;
 } IDRIS2RC2_GCPointer;
+
+// Backs Prelude.IO's `fork`'s own `ThreadID` return value. `ThreadID` is
+// `[external]` upstream (CFUser: identity pass-through, see
+// Compiler.RC2.EmitUtil's packCFType/extractValue for CFUser), so any
+// valid IDRIS2RC2_Value* would type-check -- this exists (rather than
+// reusing IDRIS2RC2_TAG_POINTER, a generic externally-owned-pointer
+// wrapper idris2rc2_teardown deliberately never frees the payload of)
+// purely so the pthread_t idris2rc2_fork needs to hand back has
+// somewhere to live that a normal drop actually reclaims, with no
+// separate malloc/free of its own the way a bare IDRIS2RC2_Pointer
+// wrapping a heap-allocated pthread_t* would need. No teardown action
+// beyond freeing this struct itself: idris2rc2_fork already
+// pthread_detach()s before returning, unlike IDRIS2RC2_JoinHandle
+// (concurrency_util.c), which conditionally detaches based on its own
+// `joined` flag because a real join is possible for it.
+typedef struct {
+  IDRIS2RC2_Header header;
+  pthread_t tid;
+} IDRIS2RC2_ThreadID;
 
 // `lock` guards `items` the same way IDRIS2RC2_IORef's own lock guards
 // `v` -- one lock for the whole array (coarse-grained, matching a

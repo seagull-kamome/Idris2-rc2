@@ -440,9 +440,19 @@ can't cover on any C backend (see "Design: joinable fork" above).
 Verified via `rc2/tests/verify.sh` (56 passed, 2 known pre-existing, 0
 failed) and `libs/rc2base/tests/verify.sh` (`TestConcurrency.idr`
 extended to exercise every new primitive, all PASS), plus
-`valgrind --fair-sched=yes` and `helgrind` reporting no new errors (the
-pre-existing `List.(++)` leak and the already-known `ThreadID` malloc
-are unrelated -- see `KNOWN-BUGS.md`). Channel's own revisit additionally
+`valgrind --fair-sched=yes` and `helgrind` reporting no new errors at
+the time. Both loose ends mentioned in an earlier revision of this
+paragraph are now resolved: the `List.(++)`-on-repeated-`IORef`-append
+leak turned out to share a root cause with `Compiler.RC2.RC`'s own
+`RExtPrim` ownership-annotation gap (fixed, see
+`doc/c-struct-support.md`'s own addendum), and `idris2rc2_fork`'s own
+`ThreadID` malloc (it wrapped a heap-allocated `pthread_t*` in a generic
+`IDRIS2RC2_Pointer`, whose teardown deliberately never frees an
+externally-owned payload -- wrong for a pointer rc2 itself allocated)
+is fixed by giving `ThreadID` its own dedicated tag
+(`IDRIS2RC2_TAG_THREADID`, `datatypes.h`) that embeds the `pthread_t`
+directly, the same single-allocation idiom already used for
+`Mutex`/`Condition`/`Semaphore`/`Barrier`/`JoinHandle`. Channel's own revisit additionally
 fixed a genuine use-after-free found while testing it: `channelPut`'s
 generated FFI wrapper drops its own reference to the value right after
 the call returns, but the queued node outlives that call -- the same
