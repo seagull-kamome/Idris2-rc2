@@ -1,0 +1,6 @@
+collectSignal: ok
+raiseSignal: ok
+collected signal is SigUser1: True
+no more pending signals: ok
+defaultSignal: ok
+done

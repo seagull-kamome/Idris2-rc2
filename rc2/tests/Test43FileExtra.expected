@@ -1,0 +1,7 @@
+line 1: "line one\n"
+line 2: "line two\n"
+eof after two lines: False
+chmod: ok
+removeFile: ok
+file gone after removeFile: ok
+done

@@ -80,7 +80,11 @@ anything so far, but don't be surprised by them showing up again.
   own `KNOWN_LEAK_BYTES` entry (10 bytes / 4 blocks) is this same bug
   again, reached via `Network.Socket.Data.parseIPv4`'s own `fastPack`
   call while parsing the peer address `accept`'s `getSockAddr` returns --
-  not a networking-specific leak.
+  not a networking-specific leak. `Test40SystemProcess`'s own
+  `KNOWN_LEAK_BYTES` entry (11 bytes / 1 block) is this same bug yet
+  again, reached via `System.File.ReadWrite`'s `fRead`'s own `fastConcat`
+  call while `run`/`runProcessingOutput` read back a spawned process's
+  captured output -- not a process-spawning-specific leak either.
 - ~~`Test9SelfTailLoop.idr`: `definitely lost: 784 bytes in 49
   blocks`~~ -- **root-caused and fixed**: `RLoopContinue` (`Compiler.RC2.Loop`'s
   own self-tail-loop-continuation node) had no `postDrop` field at all,

@@ -1,0 +1,8 @@
+currentDir: ok
+createDir: ok
+changeDir: ok
+has a.txt: True
+has b.txt: True
+changeDir back: ok
+removeDir: ok
+done

@@ -542,6 +542,30 @@ against this one pinned reference. Revisit (i.e. add an `Int32` case
 back to that test) if the pinned reference `idris2` version is ever
 bumped past whatever release added `Int32` FFI support.
 
+## Upstream `idris_support.h` declares no prototype for `idris2_setenv`/`idris2_unsetenv`
+
+Found while writing `rc2/tests/Test42SupportMisc.idr` (a smoke test for
+the remaining untested pieces of `idris_support.c`, the shared
+`libidris2_support.a` fallback rc2 has no native port of, unlike
+`Data.Buffer`/`System.Clock`/`network`'s own `idrnet_*`): `setEnv`/
+`unsetEnv` were deliberately left out of that test's coverage.
+`idris2-src/support/c/idris_support.h` (read-only upstream reference)
+declares no C prototype at all for `idris2_setenv`/`idris2_unsetenv`,
+even though `idris_support.c` actually defines both and `System.idr`'s
+own `%foreign` declarations target them through that same header -- a
+real upstream header/implementation mismatch. Confirmed harmless under
+real `idris2 --cg refc`: plain gcc only warns (doesn't fail) on an
+implicit declaration by default, so upstream's own build never notices.
+It only surfaces here because rc2's own build policy compiles with
+`-Werror`, turning that same implicit-declaration warning into a hard
+compile error. **Not rc2's bug to fix** -- `idris_support.c` isn't a
+native rc2 port the way `Data.Buffer`/`System.Clock`/`network`'s
+`idrnet_*` are, so there's no rc2-owned header to patch here; any real
+fix would have to land upstream. Not currently planned; revisit only if
+upstream adds the missing prototypes to `idris_support.h` (at which
+point `setEnv`/`unsetEnv` coverage could be added back to
+`Test42SupportMisc.idr`).
+
 ## Performance: codepoint-indexed String access is O(n) per call, not O(1)
 
 `String`'s primitives (`length`/`strIndex`/`strTail`/`strCons`/

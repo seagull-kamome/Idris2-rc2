@@ -1,0 +1,5 @@
+getEnv (arbitrary unset var): Nothing
+getPID positive: True
+sleep/usleep: ok
+getNProcessors positive: True
+done

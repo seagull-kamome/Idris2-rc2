@@ -267,18 +267,20 @@ NO_REFC_DIFF_TESTS="Test7CastMatrix Test17ConstFold Test24CStructSupport Test26G
 # Leak-sensitive by design (reference-counting/reuse/native-shadow
 # regression tests) -- checked with valgrind by default even without
 # --valgrind-all.
-LEAK_SENSITIVE_TESTS="Test1Basics Test9SelfTailLoop Test10MutualLoop Test11DualABILeak Test12ConAltNative Test13NativeArgChain Test14SmallFunctionInline Test15CompareFusionThroughCall Test16LoopContinuePostDrop Test18ClosureInPlaceGrow Test19LoopInvariantParam Test20LoopInvariantExpr Test21BoxedInvariantNotHoisted Test22BranchSinking Test23SinkPastSelfDrop Test24CStructSupport Test25ConstConFold Test26GCPtrAliasString Test27FFIDualABI Test28Utf8Strings Test29GCAnyPtrReturn Test33WideDualABIWorker Test34WideClosureDispatch Test35NetworkLoopback Test36ReuseOfferUniqueLeak"
+LEAK_SENSITIVE_TESTS="Test1Basics Test9SelfTailLoop Test10MutualLoop Test11DualABILeak Test12ConAltNative Test13NativeArgChain Test14SmallFunctionInline Test15CompareFusionThroughCall Test16LoopContinuePostDrop Test18ClosureInPlaceGrow Test19LoopInvariantParam Test20LoopInvariantExpr Test21BoxedInvariantNotHoisted Test22BranchSinking Test23SinkPastSelfDrop Test24CStructSupport Test25ConstConFold Test26GCPtrAliasString Test27FFIDualABI Test28Utf8Strings Test29GCAnyPtrReturn Test33WideDualABIWorker Test34WideClosureDispatch Test35NetworkLoopback Test36ReuseOfferUniqueLeak Test37SystemDirectory Test40SystemProcess Test41FFIMalloc Test42SupportMisc Test43FileExtra"
 
 # KNOWN-BUGS.md's own remaining pre-existing leaks -- "definitely
 # lost" byte count, exactly. Anything else non-zero is a genuine new
 # failure. (Test9SelfTailLoop's own former 784-byte entry was
 # root-caused and fixed -- RLoopContinue's own missing postDrop field,
 # see KNOWN-BUGS.md -- and is expected to be clean now.) Test28Utf8Strings'
-# own 28 bytes and Test35NetworkLoopback's own 10 bytes (parseIPv4's own
-# fastPack call, reached via accept's getSockAddr) are both fastPack's
-# own pre-existing leak, not either test's own subject matter -- see
-# KNOWN-BUGS.md.
-declare -A KNOWN_LEAK_BYTES=( [Test1Basics]=40 [Test28Utf8Strings]=28 [Test35NetworkLoopback]=10 )
+# own 28 bytes, Test35NetworkLoopback's own 10 bytes (parseIPv4's own
+# fastPack call, reached via accept's getSockAddr), and
+# Test40SystemProcess's own 11 bytes (System.File.ReadWrite's fRead,
+# reached via run's own captured-output read) are all the same
+# fastPack/fastConcat pre-existing leak, not any of those tests' own
+# subject matter -- see KNOWN-BUGS.md.
+declare -A KNOWN_LEAK_BYTES=( [Test1Basics]=40 [Test28Utf8Strings]=28 [Test35NetworkLoopback]=10 [Test40SystemProcess]=11 )
 
 is_in() { local x; for x in $2; do [ "$x" = "$1" ] && return 0; done; return 1; }
 
