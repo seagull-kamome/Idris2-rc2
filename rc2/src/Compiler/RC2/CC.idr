@@ -97,13 +97,16 @@ compileCObjectFile sourceFile objectFile verbose
 
          -- `-Wno-error=deprecated-declarations`: the deprecated attribute
          -- on `fastPack`/`fastConcat` (idris2rc2_strings.h -- both leak
-         -- their own malloc'd buffer, see KNOWN-BUGS.md and
-         -- Prelude.Fix.RC2's own doc comment for the leak-free
-         -- replacement) must stay a visible warning, not a hard error --
-         -- otherwise any program that doesn't `import Prelude.Fix.RC2`
-         -- (i.e. nearly every existing one) would fail to build under
-         -- this project's own `-Werror` policy the moment it calls
-         -- `pack`/`concat` at all.
+         -- their own malloc'd buffer, see KNOWN-BUGS.md) is a safety net,
+         -- not something normal builds are expected to hit:
+         -- `Compiler.RC2.Emit`'s own `createCFunctions` (see
+         -- `fastPackFixedReplacement`) always redirects every
+         -- `Prelude.Types.fastPack`/`fastConcat` call site to the
+         -- leak-free `fastPackFixed`/`fastConcatFixed` instead, so this
+         -- declaration itself is never actually reached by generated
+         -- code today. Kept `-Wno-error` anyway so a future regression in
+         -- that redirect degrades to a visible warning, not a hard
+         -- `-Werror` build failure for every program in existence.
          let runccobj = (escapeCmd $
              [cc, "-Werror", "-Wno-error=deprecated-declarations", "-c", sourceFile,
                   "-o", objectFile,

@@ -124,6 +124,19 @@ IDRIS2RC2_Value *fastPackFixed(IDRIS2RC2_Value *charList) {
     byteLen += (size_t)idris2rc2_utf8EncodeLen(idris2rc2_to_char(cur->args[0]));
     cur = (IDRIS2RC2_Constructor *)cur->args[1];
   }
+  // No explicit trailing-NUL write here (unlike this file's own
+  // idris2rc2_strTail/strReverse/strCons/strAppend/strSubstr, which
+  // never need one to begin with, only ever memcpy-ing real payload
+  // bytes): idris2rc2_mkEmptyString's own malloc'd path already
+  // memset()s the whole buffer to zero, so byte `byteLen` (right after
+  // the last one this loop writes) is already '\0'. Byte-for-byte
+  // required for the byteLen == 0 case specifically -- mkEmptyString(1)
+  // hands back the shared immortal idris2rc2_emptyStringValue (a
+  // `const` static, `str = ""`), and a `r->str[0] = '\0'` write here
+  // would be a write into read-only memory (confirmed by an actual
+  // SIGSEGV once this function started being reached unconditionally
+  // for every fastPack call, including `pack []`, project-wide -- see
+  // rc2/doc/fastpack-fix.md).
   IDRIS2RC2_String *r = idris2rc2_mkEmptyString(byteLen + 1);
   size_t pos = 0;
   cur = (IDRIS2RC2_Constructor *)charList;
@@ -131,7 +144,6 @@ IDRIS2RC2_Value *fastPackFixed(IDRIS2RC2_Value *charList) {
     pos += (size_t)idris2rc2_utf8EncodeInto(idris2rc2_to_char(cur->args[0]), r->str + pos);
     cur = (IDRIS2RC2_Constructor *)cur->args[1];
   }
-  r->str[byteLen] = '\0';
   return (IDRIS2RC2_Value *)r;
 }
 
@@ -184,6 +196,12 @@ IDRIS2RC2_Value *fastConcatFixed(IDRIS2RC2_Value *strList) {
     total += strlen(((IDRIS2RC2_String *)cur->args[0])->str);
     cur = (IDRIS2RC2_Constructor *)cur->args[1];
   }
+  // See fastPackFixed's own matching comment: no explicit trailing-NUL
+  // write here either, and for the identical reason -- mkEmptyString(1)
+  // (the total == 0 case, e.g. `concat []`) hands back the shared
+  // immortal idris2rc2_emptyStringValue, a `const` static, so writing
+  // to it would fault; the malloc'd path is already memset() to zero,
+  // so the terminator's already correct without an explicit write.
   IDRIS2RC2_String *r = idris2rc2_mkEmptyString(total + 1);
   size_t offset = 0;
   cur = (IDRIS2RC2_Constructor *)strList;
@@ -194,7 +212,6 @@ IDRIS2RC2_Value *fastConcatFixed(IDRIS2RC2_Value *strList) {
     offset += l;
     cur = (IDRIS2RC2_Constructor *)cur->args[1];
   }
-  r->str[total] = '\0';
   return (IDRIS2RC2_Value *)r;
 }
 

@@ -28,10 +28,10 @@ IDRIS2RC2_Value *idris2rc2_strSubstr(IDRIS2RC2_Value *start, IDRIS2RC2_Value *le
 // tag as directly callable, so we must provide these exact symbol names
 // ourselves, using our own value representation.
 char *fastPack(IDRIS2RC2_Value *charList)
-    __attribute__((deprecated("leaks its own malloc'd buffer -- import Prelude.Fix.RC2 to use fastPackFixed instead")));
+    __attribute__((deprecated("leaks its own malloc'd buffer -- Compiler.RC2.Emit's own createCFunctions should always redirect Prelude.Types.fastPack to fastPackFixed instead, so reaching this is an rc2 bug, not something to work around (see KNOWN-BUGS.md / rc2/doc/fastpack-fix.md)")));
 IDRIS2RC2_Value *fastUnpack(char *str);
 char *fastConcat(IDRIS2RC2_Value *strList)
-    __attribute__((deprecated("leaks its own malloc'd buffer -- import Prelude.Fix.RC2 to use fastConcatFixed instead")));
+    __attribute__((deprecated("leaks its own malloc'd buffer -- Compiler.RC2.Emit's own createCFunctions should always redirect Prelude.Types.fastConcat to fastConcatFixed instead, so reaching this is an rc2 bug, not something to work around (see KNOWN-BUGS.md / rc2/doc/fastpack-fix.md)")));
 
 // Leak-free siblings of fastPack/fastConcat above: same computation, but
 // building directly into a fresh IDRIS2RC2_String via idris2rc2_mkEmptyString

@@ -1128,6 +1128,40 @@ addCommaToList : List String -> List String
 addCommaToList [] = []
 addCommaToList (x :: xs) = ("  " ++ x) :: map (", " ++) xs
 
+||| `Prelude.Types.fastPack`/`fastConcat` leak their own raw `malloc`'d
+||| `char *` return through the generic `CFString`-return FFI wrapper
+||| codegen below (it copies into a fresh `IDRIS2RC2_String` via
+||| `packCFType` and never frees the original -- correct for a real
+||| external library's `char *` return, wrong for these two, which
+||| `malloc` a buffer this project itself owns). `rc2/support/rc2/
+||| idris2rc2_strings.c` already has leak-free replacements
+||| (`fastPackFixed`/`fastConcatFixed`, returning an already-fully-built
+||| `IDRIS2RC2_Value*` directly, the same way any `CFUser` return is
+||| already passed straight through with no copy). See `KNOWN-BUGS.md`
+||| and `rc2/doc/fastpack-fix.md` for the full writeup, including why
+||| this is intercepted here (at C-emission time, universally, for
+||| every call site project-wide -- including ones already baked into
+||| precompiled `network`/`base` code) rather than via upstream's own
+||| `%transform` mechanism (which only ever rewrites a call site within
+||| the rewriting definition's own elaboration/import scope, and so can
+||| never reach a call site inside another package's own separately-
+||| compiled `.ttc`).
+|||
+||| Checked by FULL namespace + base name (not just base name, unlike
+||| `Compiler.RC2.ConstExtPrim`'s own known-ExtPrim whitelist) precisely
+||| so this never misfires on some unrelated future function that merely
+||| happens to share the base name "fastPack"/"fastConcat" in a
+||| different namespace. `createCFunctions`'s own `MkRCForeign` case
+||| additionally requires the exact signature shape
+||| (`CFString`-returning, single `CFUser` argument) before using this,
+||| as a second layer of defensive scoping.
+fastPackFixedReplacement : Name -> Maybe String
+fastPackFixedReplacement (NS ns (UN (Basic "fastPack"))) =
+    if ns == mkNamespace "Prelude.Types" then Just "fastPackFixed" else Nothing
+fastPackFixedReplacement (NS ns (UN (Basic "fastConcat"))) =
+    if ns == mkNamespace "Prelude.Types" then Just "fastConcatFixed" else Nothing
+fastPackFixedReplacement _ = Nothing
+
 createCFunctions : {auto c : Ref Ctxt Defs}
                 -> {auto a : Ref ArgCounter Nat}
                 -> {auto _ : Ref ConstDef (SortedMap Constant ConstDef)}
@@ -1227,69 +1261,15 @@ createCFunctions n (MkRCCon Nothing _ _) = do
 createCFunctions n (MkRCCon tag arity nt) = do
   emit EmptyFC $ ( "// \{show n} Constructor tag " ++ show tag ++ " arity " ++ show arity)
 
-createCFunctions n (MkRCForeign ccs fargs ret) = do
-  case parseCC ffiTags ccs of
-      Just (lang, fctForeignName :: extLibOpts) => do
-          let isStandardFFI = elem lang ffiTags
-          let cLang = if lang == "RefC" then CLangRefC else CLangC
-          let fctName = if isStandardFFI
-                           then UN $ Basic $ fctForeignName
-                           else NS (mkNamespace lang) n
-          if isStandardFFI
-             then case extLibOpts of
-                      [lib, header] => do update HeaderFiles $ insert header
-                                          maybe (pure ()) (\l => update ForeignLibs $ insert l) (linkLibName lib)
-                      [lib] => maybe (pure ()) (\l => update ForeignLibs $ insert l) (linkLibName lib)
-                      _ => pure ()
-             else emit EmptyFC $ additionalFFIStub fctName fargs ret
-          let fnDef = "IDRIS2RC2_Value *" ++ (cName n) ++ "(" ++ showSep ", " (replicate (length fargs) "IDRIS2RC2_Value *") ++ ");"
-          update FunctionDefinitions $ \otherDefs => (fnDef ++ "\n") :: otherDefs
-          typeVarNameArgList <- createFFIArgList fargs
-
-          emitFDef n typeVarNameArgList
-          emit EmptyFC "{"
-          increaseIndentation
-          emit EmptyFC $ " // ffi call to " ++ cName fctName
-          let removeVarsArgList = removeVars ((\(_, varName, _) => varName) <$> typeVarNameArgList)
-          case ret of
-              CFIORes CFUnit => do
-                  emit EmptyFC $ cName fctName
-                              ++ "("
-                              ++ showSep ", " (map (\(_, vn, vt) => extractValue cLang vt vn) (discardLastArgument typeVarNameArgList))
-                              ++ ");"
-                  removeVarsArgList
-                  emit EmptyFC "return NULL;"
-              CFIORes ret => do
-                  emit EmptyFC $ cTypeOfCFType ret ++ " retVal = " ++ cName fctName
-                              ++ "("
-                              ++ showSep ", " (map (\(_, vn, vt) => extractValue cLang vt vn) (discardLastArgument typeVarNameArgList))
-                              ++ ");"
-                  -- Pack retVal before dropping the args: a CFString/CFBuffer
-                  -- retVal may alias memory owned by one of those args (e.g.
-                  -- a C function that just returns a pointer it was handed),
-                  -- so packCFType must read through it while the arg (and
-                  -- whatever finalizer freeing that memory) is still alive.
-                  emit EmptyFC $ "IDRIS2RC2_Value *packedRet = (IDRIS2RC2_Value*)" ++ packCFType ret "retVal" ++ ";"
-                  removeVarsArgList
-                  emit EmptyFC "return packedRet;"
-              _ => do
-                  emit EmptyFC $ cTypeOfCFType ret ++ " retVal = " ++ cName fctName
-                              ++ "("
-                              ++ showSep ", " (map (\(_, vn, vt) => extractValue cLang vt vn) typeVarNameArgList)
-                              ++ ");"
-                  -- Same reasoning as the CFIORes ret branch above.
-                  emit EmptyFC $ "IDRIS2RC2_Value *packedRet = (IDRIS2RC2_Value*)" ++ packCFType ret "retVal" ++ ";"
-                  removeVarsArgList
-                  emit EmptyFC "return packedRet;"
-
-          decreaseIndentation
-          emit EmptyFC "}"
-          ffiWorkers <- get FFIWorkers
-          case lookup n ffiWorkers of
-               Nothing => pure ()
-               Just (workerName, argReps, retRep) =>
-                   emitFFIWorker cLang fctName workerName argReps retRep fargs ret
-      _ => throw $ InternalError "[rc2] FFI not found for \{cName n}"
+createCFunctions n (MkRCForeign ccs fargs ret) =
+  -- `fastPackFixedReplacement`'s own doc comment has the full writeup.
+  -- Both defensive checks (name via that function, signature shape
+  -- here) must hold before diverting away from the generic FFI-wrapper
+  -- codegen path every other `%foreign` declaration still goes through
+  -- unconditionally.
+  case (fastPackFixedReplacement n, ret, fargs) of
+       (Just fixedFnName, CFString, [CFUser _ _]) => emitFastPackFixedWrapper fixedFnName
+       _ => emitGenericForeignWrapper
   where
     ||| Turn a `%foreign` lib field ("libcurl", "libc 6", ...) into the
     ||| bare name a linker's own `-l` flag needs: drop the "lib" prefix
@@ -1438,6 +1418,103 @@ createCFunctions n (MkRCForeign ccs fargs ret) = do
         cTypeOfCFType retType ++
         " (*" ++ cName name ++ ")(" ++
         (concat $ intersperse ", " $ map cTypeOfCFType argTypes) ++ ") = (void*)idris2rc2_missingForeign;\n"
+
+    ||| Same external name/declared signature `emitGenericForeignWrapper`
+    ||| would have produced (so every existing call site anywhere --
+    ||| including ones already baked into precompiled `network`/`base`
+    ||| code -- keeps linking against the same symbol, unmodified), but
+    ||| the body calls rc2's own leak-free `fastPackFixed`/
+    ||| `fastConcatFixed` (`idris2rc2_strings.c`) instead of the leaking
+    ||| `fastPack`/`fastConcat`, and returns its result directly --
+    ||| skipping `packCFType`/`idris2rc2_mkString` entirely, the same
+    ||| way a bare `CFUser` return is already passed straight through
+    ||| with no copy (see `EmitUtil.idr`'s own `packCFType` `CFUser`
+    ||| case) -- since `fastPackFixed`/`fastConcatFixed` already return
+    ||| a fully-formed, correctly-owned `IDRIS2RC2_Value*` themselves.
+    emitFastPackFixedWrapper : String -> Core ()
+    emitFastPackFixedWrapper fixedFnName = do
+        let fnDef = "IDRIS2RC2_Value *" ++ (cName n) ++ "(" ++ showSep ", " (replicate (length fargs) "IDRIS2RC2_Value *") ++ ");"
+        update FunctionDefinitions $ \otherDefs => (fnDef ++ "\n") :: otherDefs
+        typeVarNameArgList <- createFFIArgList fargs
+
+        emitFDef n typeVarNameArgList
+        emit EmptyFC "{"
+        increaseIndentation
+        emit EmptyFC $ " // rc2's own leak-free replacement for " ++ show n ++ " -- see KNOWN-BUGS.md / rc2/doc/fastpack-fix.md"
+        let removeVarsArgList = removeVars ((\(_, varName, _) => varName) <$> typeVarNameArgList)
+        emit EmptyFC $ "IDRIS2RC2_Value *retVal = " ++ fixedFnName
+                    ++ "("
+                    ++ showSep ", " (map (\(_, vn, vt) => extractValue CLangC vt vn) typeVarNameArgList)
+                    ++ ");"
+        removeVarsArgList
+        emit EmptyFC "return retVal;"
+        decreaseIndentation
+        emit EmptyFC "}"
+
+    emitGenericForeignWrapper : Core ()
+    emitGenericForeignWrapper = do
+      case parseCC ffiTags ccs of
+          Just (lang, fctForeignName :: extLibOpts) => do
+              let isStandardFFI = elem lang ffiTags
+              let cLang = if lang == "RefC" then CLangRefC else CLangC
+              let fctName = if isStandardFFI
+                               then UN $ Basic $ fctForeignName
+                               else NS (mkNamespace lang) n
+              if isStandardFFI
+                 then case extLibOpts of
+                          [lib, header] => do update HeaderFiles $ insert header
+                                              maybe (pure ()) (\l => update ForeignLibs $ insert l) (linkLibName lib)
+                          [lib] => maybe (pure ()) (\l => update ForeignLibs $ insert l) (linkLibName lib)
+                          _ => pure ()
+                 else emit EmptyFC $ additionalFFIStub fctName fargs ret
+              let fnDef = "IDRIS2RC2_Value *" ++ (cName n) ++ "(" ++ showSep ", " (replicate (length fargs) "IDRIS2RC2_Value *") ++ ");"
+              update FunctionDefinitions $ \otherDefs => (fnDef ++ "\n") :: otherDefs
+              typeVarNameArgList <- createFFIArgList fargs
+
+              emitFDef n typeVarNameArgList
+              emit EmptyFC "{"
+              increaseIndentation
+              emit EmptyFC $ " // ffi call to " ++ cName fctName
+              let removeVarsArgList = removeVars ((\(_, varName, _) => varName) <$> typeVarNameArgList)
+              case ret of
+                  CFIORes CFUnit => do
+                      emit EmptyFC $ cName fctName
+                                  ++ "("
+                                  ++ showSep ", " (map (\(_, vn, vt) => extractValue cLang vt vn) (discardLastArgument typeVarNameArgList))
+                                  ++ ");"
+                      removeVarsArgList
+                      emit EmptyFC "return NULL;"
+                  CFIORes ret => do
+                      emit EmptyFC $ cTypeOfCFType ret ++ " retVal = " ++ cName fctName
+                                  ++ "("
+                                  ++ showSep ", " (map (\(_, vn, vt) => extractValue cLang vt vn) (discardLastArgument typeVarNameArgList))
+                                  ++ ");"
+                      -- Pack retVal before dropping the args: a CFString/CFBuffer
+                      -- retVal may alias memory owned by one of those args (e.g.
+                      -- a C function that just returns a pointer it was handed),
+                      -- so packCFType must read through it while the arg (and
+                      -- whatever finalizer freeing that memory) is still alive.
+                      emit EmptyFC $ "IDRIS2RC2_Value *packedRet = (IDRIS2RC2_Value*)" ++ packCFType ret "retVal" ++ ";"
+                      removeVarsArgList
+                      emit EmptyFC "return packedRet;"
+                  _ => do
+                      emit EmptyFC $ cTypeOfCFType ret ++ " retVal = " ++ cName fctName
+                                  ++ "("
+                                  ++ showSep ", " (map (\(_, vn, vt) => extractValue cLang vt vn) typeVarNameArgList)
+                                  ++ ");"
+                      -- Same reasoning as the CFIORes ret branch above.
+                      emit EmptyFC $ "IDRIS2RC2_Value *packedRet = (IDRIS2RC2_Value*)" ++ packCFType ret "retVal" ++ ";"
+                      removeVarsArgList
+                      emit EmptyFC "return packedRet;"
+
+              decreaseIndentation
+              emit EmptyFC "}"
+              ffiWorkers <- get FFIWorkers
+              case lookup n ffiWorkers of
+                   Nothing => pure ()
+                   Just (workerName, argReps, retRep) =>
+                       emitFFIWorker cLang fctName workerName argReps retRep fargs ret
+          _ => throw $ InternalError "[rc2] FFI not found for \{cName n}"
 
 createCFunctions n (MkRCError exp) = throw $ InternalError "[rc2] Error with expression"
 

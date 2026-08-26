@@ -22,7 +22,6 @@ module Main
 -- decoding, matching Unicode's own standard convention.
 
 import Data.String
-import Prelude.Fix.RC2
 
 %foreign "C:idris2rc2_test28_malformed,libc,Test28Utf8Strings.h"
 prim__malformed : PrimIO String
