@@ -4,7 +4,7 @@ version    = 0.1.0
 opts       = "--total"
 sourcedir  = "src"
 depends    = contrib
-modules    = Data.TextBuffer, Data.Text, System.Concurrency.RC2
+modules    = Data.TextBuffer, Data.Text, System.Concurrency.RC2, Prelude.Fix.RC2
 prebuild   = "make -C support/c"
 postclean  = "make -C support/c clean"
 

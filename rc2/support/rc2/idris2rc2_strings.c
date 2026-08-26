@@ -117,6 +117,24 @@ char *fastPack(IDRIS2RC2_Value *charList) {
   return out;
 }
 
+IDRIS2RC2_Value *fastPackFixed(IDRIS2RC2_Value *charList) {
+  size_t byteLen = 0;
+  IDRIS2RC2_Constructor *cur = (IDRIS2RC2_Constructor *)charList;
+  while (cur != NULL) {
+    byteLen += (size_t)idris2rc2_utf8EncodeLen(idris2rc2_to_char(cur->args[0]));
+    cur = (IDRIS2RC2_Constructor *)cur->args[1];
+  }
+  IDRIS2RC2_String *r = idris2rc2_mkEmptyString(byteLen + 1);
+  size_t pos = 0;
+  cur = (IDRIS2RC2_Constructor *)charList;
+  while (cur != NULL) {
+    pos += (size_t)idris2rc2_utf8EncodeInto(idris2rc2_to_char(cur->args[0]), r->str + pos);
+    cur = (IDRIS2RC2_Constructor *)cur->args[1];
+  }
+  r->str[byteLen] = '\0';
+  return (IDRIS2RC2_Value *)r;
+}
+
 IDRIS2RC2_Value *fastUnpack(char *str) {
   size_t byteLen = strlen(str);
   if (byteLen == 0)
@@ -157,6 +175,27 @@ char *fastConcat(IDRIS2RC2_Value *strList) {
   }
   out[total] = '\0';
   return out;
+}
+
+IDRIS2RC2_Value *fastConcatFixed(IDRIS2RC2_Value *strList) {
+  size_t total = 0;
+  IDRIS2RC2_Constructor *cur = (IDRIS2RC2_Constructor *)strList;
+  while (cur != NULL) {
+    total += strlen(((IDRIS2RC2_String *)cur->args[0])->str);
+    cur = (IDRIS2RC2_Constructor *)cur->args[1];
+  }
+  IDRIS2RC2_String *r = idris2rc2_mkEmptyString(total + 1);
+  size_t offset = 0;
+  cur = (IDRIS2RC2_Constructor *)strList;
+  while (cur != NULL) {
+    char *s = ((IDRIS2RC2_String *)cur->args[0])->str;
+    size_t l = strlen(s);
+    memcpy(r->str + offset, s, l);
+    offset += l;
+    cur = (IDRIS2RC2_Constructor *)cur->args[1];
+  }
+  r->str[total] = '\0';
+  return (IDRIS2RC2_Value *)r;
 }
 
 typedef struct {

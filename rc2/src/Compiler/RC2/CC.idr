@@ -95,8 +95,17 @@ compileCObjectFile sourceFile objectFile verbose
          cDir <- findDataFile "c"
          depLibDirs <- depPkgLibDirs
 
+         -- `-Wno-error=deprecated-declarations`: the deprecated attribute
+         -- on `fastPack`/`fastConcat` (idris2rc2_strings.h -- both leak
+         -- their own malloc'd buffer, see KNOWN-BUGS.md and
+         -- Prelude.Fix.RC2's own doc comment for the leak-free
+         -- replacement) must stay a visible warning, not a hard error --
+         -- otherwise any program that doesn't `import Prelude.Fix.RC2`
+         -- (i.e. nearly every existing one) would fail to build under
+         -- this project's own `-Werror` policy the moment it calls
+         -- `pack`/`concat` at all.
          let runccobj = (escapeCmd $
-             [cc, "-Werror", "-c", sourceFile,
+             [cc, "-Werror", "-Wno-error=deprecated-declarations", "-c", sourceFile,
                   "-o", objectFile,
                   "-I" ++ rc2Dir,
                   "-I" ++ cDir] ++ map ("-I" ++) depLibDirs)
@@ -153,8 +162,13 @@ compileCFile objectFile outFile foreignLibs verbose
          -- shadow the shared one, not the other way around. Anything
          -- rc2 doesn't provide natively still resolves from
          -- `supportFile` afterwards, unaffected by this reordering.
+         -- `-Wno-error=deprecated-declarations`: see `compileCObjectFile`'s
+         -- own comment on the same flag -- kept here too since this
+         -- step's own `cc` invocation could in principle also compile
+         -- from source (not just link an already-built object file),
+         -- same reasoning either way.
          let runcc = (escapeCmd $
-             [cc, "-Werror", objectFile,
+             [cc, "-Werror", "-Wno-error=deprecated-declarations", objectFile,
                   "-o", outFile,
                   "-L" ++ rc2Dir,
                   "-lidris2rc2"

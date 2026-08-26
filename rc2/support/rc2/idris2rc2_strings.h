@@ -27,9 +27,23 @@ IDRIS2RC2_Value *idris2rc2_strSubstr(IDRIS2RC2_Value *start, IDRIS2RC2_Value *le
 // call them. Our codegen (see Compiler/RC2/RC2.idr) treats the "RefC" FFI
 // tag as directly callable, so we must provide these exact symbol names
 // ourselves, using our own value representation.
-char *fastPack(IDRIS2RC2_Value *charList);
+char *fastPack(IDRIS2RC2_Value *charList)
+    __attribute__((deprecated("leaks its own malloc'd buffer -- import Prelude.Fix.RC2 to use fastPackFixed instead")));
 IDRIS2RC2_Value *fastUnpack(char *str);
-char *fastConcat(IDRIS2RC2_Value *strList);
+char *fastConcat(IDRIS2RC2_Value *strList)
+    __attribute__((deprecated("leaks its own malloc'd buffer -- import Prelude.Fix.RC2 to use fastConcatFixed instead")));
+
+// Leak-free siblings of fastPack/fastConcat above: same computation, but
+// building directly into a fresh IDRIS2RC2_String via idris2rc2_mkEmptyString
+// instead of returning a bare malloc'd char* for the generic CFString-return
+// FFI wrapper to copy-and-never-free (that copy-and-leak is correct for a
+// real external library's char* return, which the caller must not free --
+// wrong only for these two, which malloc a buffer this project itself owns;
+// see KNOWN-BUGS.md). Returns an already-fully-built IDRIS2RC2_Value*,
+// opted into by Idris code via Prelude.Fix.RC2's `Raw` pass-through type +
+// %transform, not used unless that module is imported.
+IDRIS2RC2_Value *fastPackFixed(IDRIS2RC2_Value *charList);
+IDRIS2RC2_Value *fastConcatFixed(IDRIS2RC2_Value *strList);
 
 IDRIS2RC2_Value *stringIteratorNew(char *str);
 IDRIS2RC2_Value *onCollectStringIterator(IDRIS2RC2_Value *ptr, void *unused);

@@ -159,6 +159,15 @@ timing_note() { echo "compile ${1}s, run ${2}s"; }
 # shellcheck source=/dev/null
 source "$REPO_DIR/env.sh"
 
+# libs/rc2base isn't one of nixpkgs' own idris2 packages env.sh's own
+# generator (gen-env.sh) draws from -- it's this repo's own local
+# package, installed once by hand into its own local prefix (see
+# libs/rc2base/README.md's "Build & test" section for the exact
+# recipe this mirrors) -- so it's appended here rather than checked
+# into env.sh itself, which gen-env.sh would just overwrite on its
+# next run.
+export IDRIS2_PACKAGE_PATH="$IDRIS2_PACKAGE_PATH:$REPO_DIR/libs/rc2base/.local-install/idris2-0.8.0"
+
 # Every generated artifact lands here -- cleaned now, at the very
 # start, then left alone for the rest of this run (and afterward, for
 # post-mortem inspection) rather than deleted on exit.
@@ -288,14 +297,29 @@ LEAK_SENSITIVE_TESTS="Test1Basics Test9SelfTailLoop Test10MutualLoop Test11DualA
 # lost" byte count, exactly. Anything else non-zero is a genuine new
 # failure. (Test9SelfTailLoop's own former 784-byte entry was
 # root-caused and fixed -- RLoopContinue's own missing postDrop field,
-# see KNOWN-BUGS.md -- and is expected to be clean now.) Test28Utf8Strings'
-# own 28 bytes, Test35NetworkLoopback's own 10 bytes (parseIPv4's own
-# fastPack call, reached via accept's getSockAddr), and
-# Test40SystemProcess's own 11 bytes (System.File.ReadWrite's fRead,
-# reached via run's own captured-output read) are all the same
-# fastPack/fastConcat pre-existing leak, not any of those tests' own
-# subject matter -- see KNOWN-BUGS.md.
-declare -A KNOWN_LEAK_BYTES=( [Test1Basics]=40 [Test28Utf8Strings]=28 [Test35NetworkLoopback]=10 [Test40SystemProcess]=11 )
+# see KNOWN-BUGS.md -- and is expected to be clean now.) Test28Utf8Strings
+# used to have an entry here for the fastPack/fastConcat leak (its own
+# `pack` calls, directly in its own source) -- it now `import
+# Prelude.Fix.RC2` (see libs/rc2base/src/Prelude/Fix/RC2.idr) to opt
+# into that leak's fix, genuinely clean (0 bytes) now, not just KNOWN.
+# Test1Basics/Test35NetworkLoopback/Test40SystemProcess do NOT get the
+# same treatment despite superficially similar-looking leaks:
+# Test1Basics' own 40 bytes turned out, on inspection, to be a wholly
+# unrelated IORef leak, not fastPack/fastConcat at all (KNOWN-BUGS.md's
+# prior attribution here was simply wrong). Test35NetworkLoopback's
+# fastPack call (via `Network.Socket.Data.parseIPv4`) and
+# Test40SystemProcess's fastConcat call (via `System.File.ReadWrite`'s
+# `fRead'`) are both genuine fastPack/fastConcat leaks, but originate
+# inside the pre-compiled `network`/`base` packages' own already-
+# elaborated code -- `%transform` is applied once, at a definition's
+# OWN elaboration time, using whatever's in its OWN import scope right
+# then; re-importing Prelude.Fix.RC2 from a downstream consumer (this
+# test) cannot retroactively rewrite a call site baked into a
+# dependency's own separately-compiled .ttc. Out of this fix's reach
+# without recompiling `network`/`base` themselves against
+# Prelude.Fix.RC2 (not attempted -- those are pinned nixpkgs-provided
+# packages, out of scope here).
+declare -A KNOWN_LEAK_BYTES=( [Test1Basics]=40 [Test35NetworkLoopback]=10 [Test40SystemProcess]=11 )
 
 is_in() { local x; for x in $2; do [ "$x" = "$1" ] && return 0; done; return 1; }
 
@@ -326,7 +350,7 @@ for name in $ALL_TESTS; do
         companion_env=("IDRIS2_LDFLAGS=$TMP/${name}_companion.o" "IDRIS2_CFLAGS=-I$RC2_DIR/tests")
     fi
     env "${companion_env[@]}" nix-shell -p idris2 gcc gmp pkg-config --run \
-        "$IDRIS2RC2 --cg rc2 -p network -p linear --directive dumprcexpr$extra_directive_args $RC2_DIR/tests/$name.idr -o $TMP/${name}_rc2" \
+        "$IDRIS2RC2 --cg rc2 -p network -p linear -p rc2base --directive dumprcexpr$extra_directive_args $RC2_DIR/tests/$name.idr -o $TMP/${name}_rc2" \
         > "$TMP/${name}_compile.log" 2>&1
     compile_time="$(elapsed "$compile_t0" "$(date +%s.%N)")"
     if [ ! -x "$TMP/${name}_rc2" ]; then
@@ -369,7 +393,7 @@ for name in $ALL_TESTS; do
         expected_file="$RC2_DIR/tests/$name.expected"
         if [ "$REGEN_EXPECTED" -eq 1 ]; then
             env "${companion_env[@]}" nix-shell -p idris2 gcc gmp pkg-config --run \
-                "idris2 --cg refc -p network -p linear $RC2_DIR/tests/$name.idr -o $TMP/${name}_refc" \
+                "idris2 --cg refc -p network -p linear -p rc2base $RC2_DIR/tests/$name.idr -o $TMP/${name}_refc" \
                 > "$TMP/${name}_refc_compile.log" 2>&1
             if [ ! -x "$TMP/${name}_refc" ]; then
                 report_fail "$name" "refc compile error, see $TMP/${name}_refc_compile.log"
