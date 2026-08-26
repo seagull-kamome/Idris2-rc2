@@ -1,0 +1,8 @@
+bind: 0
+listen: 0
+connect: 0
+send bytes: 9
+recv payload: hello rc2
+sendBytes count: 5
+recvBytes payload: [1, 2, 3, 4, 5]
+done

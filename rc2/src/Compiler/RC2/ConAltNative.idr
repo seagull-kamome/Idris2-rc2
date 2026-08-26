@@ -92,8 +92,8 @@ peelWrappers (RFree fc v cont) =
     let (rebuild, core) = peelWrappers cont in (\c => RFree fc v (rebuild c), core)
 peelWrappers (RReleaseReuse fc v cont) =
     let (rebuild, core) = peelWrappers cont in (\c => RReleaseReuse fc v (rebuild c), core)
-peelWrappers (RReuseOffer fc sc dupOnShared cont) =
-    let (rebuild, core) = peelWrappers cont in (\c => RReuseOffer fc sc dupOnShared (rebuild c), core)
+peelWrappers (RReuseOffer fc sc dupOnShared dropOnUnique cont) =
+    let (rebuild, core) = peelWrappers cont in (\c => RReuseOffer fc sc dupOnShared dropOnUnique (rebuild c), core)
 peelWrappers e = (id, e)
 
 ------------------------------------------------------------------------
@@ -148,8 +148,8 @@ markNativeOccurrences fid sid (RDup fc v cont) = RDup fc v (markNativeOccurrence
 markNativeOccurrences fid sid (RDrop fc vs cont) = RDrop fc vs (markNativeOccurrences fid sid cont)
 markNativeOccurrences fid sid (RFree fc v cont) = RFree fc v (markNativeOccurrences fid sid cont)
 markNativeOccurrences fid sid (RReleaseReuse fc v cont) = RReleaseReuse fc v (markNativeOccurrences fid sid cont)
-markNativeOccurrences fid sid (RReuseOffer fc sc dupOnShared cont) =
-    RReuseOffer fc sc dupOnShared (markNativeOccurrences fid sid cont)
+markNativeOccurrences fid sid (RReuseOffer fc sc dupOnShared dropOnUnique cont) =
+    RReuseOffer fc sc dupOnShared dropOnUnique (markNativeOccurrences fid sid cont)
 markNativeOccurrences fid sid (RConCase fc sc alts mDef) =
     RConCase fc sc (map (\(MkRConAlt n ci tag as body) => MkRConAlt n ci tag as (markNativeOccurrences fid sid body)) alts)
                     (map (markNativeOccurrences fid sid) mDef)
@@ -318,8 +318,8 @@ mutual
       let (o, cont') = reannotateFieldOwnership fid owned cont in (o, RFree fc v cont')
   reannotateFieldOwnership fid owned (RReleaseReuse fc v cont) =
       let (o, cont') = reannotateFieldOwnership fid owned cont in (o, RReleaseReuse fc v cont')
-  reannotateFieldOwnership fid owned (RReuseOffer fc sc dupOnShared cont) =
-      let (o, cont') = reannotateFieldOwnership fid owned cont in (o, RReuseOffer fc sc dupOnShared cont')
+  reannotateFieldOwnership fid owned (RReuseOffer fc sc dupOnShared dropOnUnique cont) =
+      let (o, cont') = reannotateFieldOwnership fid owned cont in (o, RReuseOffer fc sc dupOnShared dropOnUnique cont')
   -- RPrimVal/RErased/RCrash carry no locals; RLoop/RLoopContinue/
   -- RAppNameRep never appear here in practice (this pass runs strictly
   -- before Compiler.RC2.Loop/MutualLoop/DualABI ever produce one, same
@@ -428,8 +428,8 @@ mutual
       let (n, body') = applyConAltNativeExp nextId body in (n, RFree fc v body')
   applyConAltNativeExp nextId (RReleaseReuse fc v body) =
       let (n, body') = applyConAltNativeExp nextId body in (n, RReleaseReuse fc v body')
-  applyConAltNativeExp nextId (RReuseOffer fc sc dupOnShared body) =
-      let (n, body') = applyConAltNativeExp nextId body in (n, RReuseOffer fc sc dupOnShared body')
+  applyConAltNativeExp nextId (RReuseOffer fc sc dupOnShared dropOnUnique body) =
+      let (n, body') = applyConAltNativeExp nextId body in (n, RReuseOffer fc sc dupOnShared dropOnUnique body')
   -- Every other shape (RV, RAppName, RUnderApp, RApp, RCon, ROp,
   -- RExtPrim, RPrimVal, RErased, RCrash, RLoopContinue, RAppNameRep,
   -- RStructGet, RStructSet -- and RLoop, though this pass runs

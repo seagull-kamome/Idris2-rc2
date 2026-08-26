@@ -57,7 +57,7 @@ tailCallTargets (RDup _ _ body) = tailCallTargets body
 tailCallTargets (RDrop _ _ body) = tailCallTargets body
 tailCallTargets (RFree _ _ body) = tailCallTargets body
 tailCallTargets (RReleaseReuse _ _ body) = tailCallTargets body
-tailCallTargets (RReuseOffer _ _ _ body) = tailCallTargets body
+tailCallTargets (RReuseOffer _ _ _ _ body) = tailCallTargets body
 tailCallTargets (RCmpCase _ _ _ _ t f) = union (tailCallTargets t) (tailCallTargets f)
 tailCallTargets (RConCase _ _ alts mDef) =
     let altsT = map (\(MkRConAlt _ _ _ _ body) => tailCallTargets body) alts

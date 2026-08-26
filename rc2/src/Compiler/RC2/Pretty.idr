@@ -80,8 +80,9 @@ mutual
   prettyExp d (RDrop _ vs body) = indent d ++ "drop " ++ show vs ++ "\n" ++ prettyExp d body
   prettyExp d (RFree _ v body) = indent d ++ "free " ++ show v ++ "\n" ++ prettyExp d body
   prettyExp d (RReleaseReuse _ v body) = indent d ++ "releaseReuse " ++ show v ++ "\n" ++ prettyExp d body
-  prettyExp d (RReuseOffer _ sc dupOnShared body) =
-      indent d ++ "reuseOffer " ++ show sc ++ " dupOnShared=" ++ show dupOnShared ++ "\n" ++ prettyExp d body
+  prettyExp d (RReuseOffer _ sc dupOnShared dropOnUnique body) =
+      indent d ++ "reuseOffer " ++ show sc ++ " dupOnShared=" ++ show dupOnShared
+        ++ (if dropOnUnique == [] then "" else " dropOnUnique=" ++ show dropOnUnique) ++ "\n" ++ prettyExp d body
   prettyExp d (RLoop _ loopParams initial prologueDrop body) =
       indent d ++ "loop " ++ show (map (\(i, r) => "\{show (RCLoc i)}:\{prettyRep r}") loopParams)
         ++ " initial=" ++ show initial

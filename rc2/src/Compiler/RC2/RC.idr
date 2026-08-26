@@ -615,8 +615,8 @@ mutual
     -- strictly after annotate is done with the whole definition (see
     -- RReuseOffer's own doc comment) -- kept total (as a plain
     -- pass-through), same reasoning as RReleaseReuse just above.
-    annotate natives owned (RReuseOffer fc sc dupOnShared body) =
-        RReuseOffer fc sc dupOnShared <$> annotate natives owned body
+    annotate natives owned (RReuseOffer fc sc dupOnShared dropOnUnique body) =
+        RReuseOffer fc sc dupOnShared dropOnUnique <$> annotate natives owned body
     -- Never actually produced until Compiler.RC2.Loop runs, which is
     -- strictly after annotate is done with the whole definition (it
     -- rewrites already-annotated RAppName nodes in tail position, see

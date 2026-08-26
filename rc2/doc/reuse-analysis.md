@@ -249,11 +249,47 @@ scope was "faithfully preserve existing behavior while moving the
 along the way." Worth revisiting if it's ever confirmed to fire in
 practice.
 
+## Addendum: `dropOnUnique` -- a destructured field leaking on the reuse-in-place (unique) path
+
+Found and fixed after the above was written. A field destructured out of
+`sc` but never referenced anywhere in the branch body (not read, not
+passed on, not part of `dupOnShared` because nothing downstream needs it
+dup'd) had no owner dropping it on the reuse-in-place path:
+`emitReuseOffer`'s **true** (unique) branch reclaims `sc`'s storage
+directly into `reuse_<sc>` without ever calling an ordinary
+`idris2rc2_drop(sc)` -- unlike the **false** (not-unique) branch, which
+does drop `sc` (after dup'ing whichever of `conArgs` survive), and whose
+recursive teardown was exactly what such an unreferenced field's drop
+was implicitly relying on. On the unique path nothing plays that role,
+so the field's own refcount was never decremented -- a real leak, not
+merely a missed dup.
+
+Fixed by adding a new `dropOnUnique : List RCLocal` field directly on
+`RReuseOffer` (`RCExp.idr`), computed in `Reuse.idr`'s `resolveAlt`
+alongside `dupOnShared` (the same peeled-drop-list analysis that already
+identifies `sc` and its destructured fields, just naming the
+complementary set: fields that die on the unique path specifically,
+because they're absent from the body's own later uses). Discharged only
+in `EmitUtil.idr`'s `emitReuseOffer`'s unique branch -- each
+`dropOnUnique` entry gets an ordinary drop there, right before
+`reuse_<sc>` is claimed -- deliberately left untouched in the
+not-unique branch, since that branch's existing unconditional
+`idris2rc2_drop(sc)` already recursively drops every field, and dropping
+the same field twice there would be a double-free, not a fix.
+
+Regression test: `rc2/tests/Test36ReuseOfferUniqueLeak.idr` -- a
+minimal, socket-free repro (an outer `do` with 2+ binds, plus a nested
+`do` in an `if`'s else-branch with its own bind), engineered to force
+exactly this reuse-in-place shape. Confirmed via `--directive
+dumprcexpr` IR tracing and by inspecting the generated C, not just by
+observing the leak disappear under `valgrind`.
+
 ## Files
 
 - `rc2/src/Compiler/RC2/Reuse.idr` -- the pass itself (new module).
 - `rc2/src/Compiler/RC2/RCExp.idr` -- `RCon.reuseFrom`,
-  `MkRConAlt.offersReuse`, `RReleaseReuse`.
+  `MkRConAlt.offersReuse`, `RReleaseReuse`, `RReuseOffer.dropOnUnique`
+  (see the `dropOnUnique` addendum above).
 - `rc2/src/Compiler/RC2/RC.idr` -- Phase 1/2 always leave the new
   fields `Nothing`/`[]` as appropriate; no ownership-logic changes.
 - `rc2/src/Compiler/RC2/Emit.idr` -- `reuseVarName`, `emitReuseOffer`,

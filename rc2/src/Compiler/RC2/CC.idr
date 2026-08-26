@@ -144,13 +144,22 @@ compileCFile objectFile outFile foreignLibs verbose
          supportFile <- findLibraryFile "libidris2_support.a"
          depLibDirs <- depPkgLibDirs
 
+         -- `-lidris2rc2` must resolve before `supportFile` (the shared
+         -- `libidris2_support.a`): C static linking resolves an
+         -- unresolved symbol from the first library on the command
+         -- line that provides it, and rc2's own runtime now provides
+         -- native implementations (e.g. `idrnet_*`) for symbols the
+         -- shared library also happens to define -- rc2's own must
+         -- shadow the shared one, not the other way around. Anything
+         -- rc2 doesn't provide natively still resolves from
+         -- `supportFile` afterwards, unaffected by this reordering.
          let runcc = (escapeCmd $
              [cc, "-Werror", objectFile,
                   "-o", outFile,
-                  supportFile
+                  "-L" ++ rc2Dir,
+                  "-lidris2rc2"
                   ] ++ map ("-l" ++) foreignLibs ++ [
-                  "-lidris2rc2",
-                  "-L" ++ rc2Dir
+                  supportFile
                   ] ++ clibdirs (lib_dirs dirs) ++ clibdirs depLibDirs ++ [
                   "-lgmp", "-lm", "-lpthread"])
                   ++ " " ++ (unwords [cFlags, ldFlags, ldLibs])

@@ -76,7 +76,11 @@ anything so far, but don't be surprised by them showing up again.
   attempted, out of scope for the UTF-8 work that found it.
   `Test28Utf8Strings`'s own `KNOWN_LEAK_BYTES` entry in `verify.sh`
   (28 bytes / 3 blocks, three `pack` calls) is this same bug, not a
-  regression in its own String-primitive rewrite.
+  regression in its own String-primitive rewrite. `Test35NetworkLoopback`'s
+  own `KNOWN_LEAK_BYTES` entry (10 bytes / 4 blocks) is this same bug
+  again, reached via `Network.Socket.Data.parseIPv4`'s own `fastPack`
+  call while parsing the peer address `accept`'s `getSockAddr` returns --
+  not a networking-specific leak.
 - ~~`Test9SelfTailLoop.idr`: `definitely lost: 784 bytes in 49
   blocks`~~ -- **root-caused and fixed**: `RLoopContinue` (`Compiler.RC2.Loop`'s
   own self-tail-loop-continuation node) had no `postDrop` field at all,

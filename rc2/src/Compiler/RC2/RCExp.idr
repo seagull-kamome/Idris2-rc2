@@ -283,7 +283,18 @@ mutual
        ||| `MkRConAlt.offersReuse` flag). See `doc/reuse-analysis.md`'s
        ||| "IR additions" for this node's semantics and "`resolveAlt`"/
        ||| "`tryConsume`/`tryClaim`" for the algorithm.
-       RReuseOffer : FC -> (sc : RCLocal) -> (dupOnShared : List RCLocal) -> RCExp -> RCExp
+       |||
+       ||| `dropOnUnique`: destructured-out-of-`sc`-but-never-referenced
+       ||| fields (unlike `dupOnShared`'s survivors). On the *not-unique*
+       ||| path these are freed for free by `sc`'s own ordinary recursive
+       ||| drop; on the *unique* path `sc` itself is never dropped (its
+       ||| storage is reserved for reuse instead), so that free-ride
+       ||| never happens and these need an explicit drop of their own,
+       ||| emitted only in that branch (see `EmitUtil.emitReuseOffer`).
+       ||| A real, valgrind-confirmed leak was found from this field's
+       ||| own absence -- see `doc/reuse-analysis.md`'s "Bugs found and
+       ||| fixed".
+       RReuseOffer : FC -> (sc : RCLocal) -> (dupOnShared : List RCLocal) -> (dropOnUnique : List RCLocal) -> RCExp -> RCExp
 
   public export
   data RConAlt : Type where
@@ -351,8 +362,8 @@ freeLocalsR (RDup _ v body) = insert v (freeLocalsR body)
 freeLocalsR (RDrop _ vars body) = union (fromList vars) (freeLocalsR body)
 freeLocalsR (RFree _ v body) = insert v (freeLocalsR body)
 freeLocalsR (RReleaseReuse _ v body) = insert v (freeLocalsR body)
-freeLocalsR (RReuseOffer _ sc dupOnShared body) =
-    union (insert sc (fromList dupOnShared)) (freeLocalsR body)
+freeLocalsR (RReuseOffer _ sc dupOnShared dropOnUnique body) =
+    union (insert sc (fromList dupOnShared `union` fromList dropOnUnique)) (freeLocalsR body)
 freeLocalsR _ = empty
 
 ||| How many times `l` is referenced anywhere in `e` -- unlike
@@ -387,8 +398,9 @@ countUsesR l (RDup _ v body) = (if v == l then 1 else 0) + countUsesR l body
 countUsesR l (RDrop _ vars body) = length (filter (== l) vars) + countUsesR l body
 countUsesR l (RFree _ v body) = (if v == l then 1 else 0) + countUsesR l body
 countUsesR l (RReleaseReuse _ v body) = (if v == l then 1 else 0) + countUsesR l body
-countUsesR l (RReuseOffer _ sc dupOnShared body) =
-    (if sc == l then 1 else 0) + length (filter (== l) dupOnShared) + countUsesR l body
+countUsesR l (RReuseOffer _ sc dupOnShared dropOnUnique body) =
+    (if sc == l then 1 else 0) + length (filter (== l) dupOnShared)
+    + length (filter (== l) dropOnUnique) + countUsesR l body
 countUsesR l _ = 0
 
 export
@@ -406,5 +418,5 @@ usedConstructorsR (RDup _ _ body) = usedConstructorsR body
 usedConstructorsR (RDrop _ _ body) = usedConstructorsR body
 usedConstructorsR (RFree _ _ body) = usedConstructorsR body
 usedConstructorsR (RReleaseReuse _ _ body) = usedConstructorsR body
-usedConstructorsR (RReuseOffer _ _ _ body) = usedConstructorsR body
+usedConstructorsR (RReuseOffer _ _ _ _ body) = usedConstructorsR body
 usedConstructorsR _ = empty

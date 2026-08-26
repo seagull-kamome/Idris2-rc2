@@ -899,17 +899,27 @@ reuseVarName sc = "reuse_" ++ varName sc
 ||| Compiler.RC2.Reuse -- and drops `sc` normally. A fixed template,
 ||| the same shape every time; no set computation of any kind happens
 ||| here.
+|||
+||| The unique branch also drops every `dropOnUnique` entry -- fields
+||| destructured out of `sc` but never referenced past this point,
+||| whose release the not-unique branch gets for free from `sc`'s own
+||| recursive drop below. The unique branch never drops `sc` itself
+||| (its storage is reserved for reuse instead), so that free ride
+||| doesn't happen there -- these need an explicit drop of their own,
+||| in this branch only (see `RReuseOffer`'s own doc comment for the
+||| leak this fixes).
 export
 emitReuseOffer : {auto oft : Ref OutfileText Output}
                -> {auto il : Ref IndentLevel Nat}
-               -> RCLocal -> (dupOnShared : List RCLocal) -> Core ()
-emitReuseOffer sc dupOnShared = do
+               -> RCLocal -> (dupOnShared : List RCLocal) -> (dropOnUnique : List RCLocal) -> Core ()
+emitReuseOffer sc dupOnShared dropOnUnique = do
     let sc' = varName sc
     let reuseVar = reuseVarName sc
     emit EmptyFC $ "IDRIS2RC2_Constructor* " ++ reuseVar ++ " = NULL;"
     emit EmptyFC $ "if (idris2rc2_isUnique(" ++ sc' ++ ")) {"
     increaseIndentation
     emit EmptyFC $ reuseVar ++ " = (IDRIS2RC2_Constructor*)" ++ sc' ++ ";"
+    removeVars (varName <$> dropOnUnique)
     decreaseIndentation
     emit EmptyFC "} else {"
     increaseIndentation

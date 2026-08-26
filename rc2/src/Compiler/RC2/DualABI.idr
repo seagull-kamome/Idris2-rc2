@@ -106,7 +106,7 @@ tailValueReps reps (RDup _ _ cont) = tailValueReps reps cont
 tailValueReps reps (RDrop _ _ cont) = tailValueReps reps cont
 tailValueReps reps (RFree _ _ cont) = tailValueReps reps cont
 tailValueReps reps (RReleaseReuse _ _ cont) = tailValueReps reps cont
-tailValueReps reps (RReuseOffer _ _ _ cont) = tailValueReps reps cont
+tailValueReps reps (RReuseOffer _ _ _ _ cont) = tailValueReps reps cont
 tailValueReps reps (RCmpCase _ _ _ _ t f) = tailValueReps reps t ++ tailValueReps reps f
 tailValueReps reps (RConCase _ _ alts mDef) =
     concatMap (\(MkRConAlt _ _ _ _ body) => tailValueReps reps body) alts
@@ -449,7 +449,7 @@ ultimateTail (RDup _ _ cont) = ultimateTail cont
 ultimateTail (RDrop _ _ cont) = ultimateTail cont
 ultimateTail (RFree _ _ cont) = ultimateTail cont
 ultimateTail (RReleaseReuse _ _ cont) = ultimateTail cont
-ultimateTail (RReuseOffer _ _ _ cont) = ultimateTail cont
+ultimateTail (RReuseOffer _ _ _ _ cont) = ultimateTail cont
 ultimateTail e = e
 
 ||| `var`'s own native `PrimType` if `e`'s own *ultimate* tail
@@ -594,7 +594,7 @@ applyCallSiteRewriteBody workers reps inTail (RDup fc v cont) = RDup fc v (apply
 applyCallSiteRewriteBody workers reps inTail (RDrop fc vs cont) = RDrop fc vs (applyCallSiteRewriteBody workers reps inTail cont)
 applyCallSiteRewriteBody workers reps inTail (RFree fc v cont) = RFree fc v (applyCallSiteRewriteBody workers reps inTail cont)
 applyCallSiteRewriteBody workers reps inTail (RReleaseReuse fc v cont) = RReleaseReuse fc v (applyCallSiteRewriteBody workers reps inTail cont)
-applyCallSiteRewriteBody workers reps inTail (RReuseOffer fc sc dupOnShared cont) = RReuseOffer fc sc dupOnShared (applyCallSiteRewriteBody workers reps inTail cont)
+applyCallSiteRewriteBody workers reps inTail (RReuseOffer fc sc dupOnShared dropOnUnique cont) = RReuseOffer fc sc dupOnShared dropOnUnique (applyCallSiteRewriteBody workers reps inTail cont)
 -- The only case that ever actually rewrites a call: a bare RAppName
 -- reached with inTail = False (never anyone's RLet-bound value, by
 -- this point -- the RLet clause above already peeled through those --

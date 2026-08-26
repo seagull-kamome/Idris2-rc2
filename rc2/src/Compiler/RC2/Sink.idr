@@ -86,8 +86,8 @@ genuinelyUsedR (RDup _ v body) = insert v (genuinelyUsedR body)
 genuinelyUsedR (RDrop _ _ body) = genuinelyUsedR body
 genuinelyUsedR (RFree _ _ body) = genuinelyUsedR body
 genuinelyUsedR (RReleaseReuse _ _ body) = genuinelyUsedR body
-genuinelyUsedR (RReuseOffer _ sc dupOnShared body) =
-    union (insert sc (fromList dupOnShared)) (genuinelyUsedR body)
+genuinelyUsedR (RReuseOffer _ sc dupOnShared dropOnUnique body) =
+    union (insert sc (fromList dupOnShared `union` fromList dropOnUnique)) (genuinelyUsedR body)
 genuinelyUsedR (RLoop _ _ initial _ body) = union (fromList initial) (genuinelyUsedR body)
 genuinelyUsedR (RLoopContinue _ args postDrop) = union (fromList args) (fromList postDrop)
 genuinelyUsedR _ = empty
@@ -113,7 +113,7 @@ removeVarDrop var (RDrop fc vars body) =
     in if null vars' then body' else RDrop fc vars' body'
 removeVarDrop var (RFree fc v body) = RFree fc v (removeVarDrop var body)
 removeVarDrop var (RReleaseReuse fc v body) = RReleaseReuse fc v (removeVarDrop var body)
-removeVarDrop var (RReuseOffer fc sc dupOnShared body) = RReuseOffer fc sc dupOnShared (removeVarDrop var body)
+removeVarDrop var (RReuseOffer fc sc dupOnShared dropOnUnique body) = RReuseOffer fc sc dupOnShared dropOnUnique (removeVarDrop var body)
 removeVarDrop var (RCmpCase fc op args pd t f) = RCmpCase fc op args pd (removeVarDrop var t) (removeVarDrop var f)
 removeVarDrop var (RConCase fc sc alts mDef) =
     RConCase fc sc (map (\(MkRConAlt n ci tag as body) => MkRConAlt n ci tag as (removeVarDrop var body)) alts)
@@ -399,10 +399,10 @@ trySinkInto reps var rep value (RFree fc v cont) =
     if v == RCLoc var then Nothing else map (RFree fc v) (trySinkInto reps var rep value cont)
 trySinkInto reps var rep value (RReleaseReuse fc v cont) =
     if v == RCLoc var then Nothing else map (RReleaseReuse fc v) (trySinkInto reps var rep value cont)
-trySinkInto reps var rep value (RReuseOffer fc sc dupOnShared cont) =
-    if (sc == RCLoc var) || (RCLoc var `elem` dupOnShared)
+trySinkInto reps var rep value (RReuseOffer fc sc dupOnShared dropOnUnique cont) =
+    if (sc == RCLoc var) || (RCLoc var `elem` dupOnShared) || (RCLoc var `elem` dropOnUnique)
        then Nothing
-       else map (RReuseOffer fc sc dupOnShared) (trySinkInto reps var rep value cont)
+       else map (RReuseOffer fc sc dupOnShared dropOnUnique) (trySinkInto reps var rep value cont)
 trySinkInto reps var rep value (RLet fc y repY valueY cont) =
     if contains (RCLoc var) (genuinelyUsedR valueY)
        then Nothing
@@ -469,7 +469,7 @@ applySinkExp reps (RDup fc v body) = RDup fc v (applySinkExp reps body)
 applySinkExp reps (RDrop fc vs body) = RDrop fc vs (applySinkExp reps body)
 applySinkExp reps (RFree fc v body) = RFree fc v (applySinkExp reps body)
 applySinkExp reps (RReleaseReuse fc v body) = RReleaseReuse fc v (applySinkExp reps body)
-applySinkExp reps (RReuseOffer fc sc dupOnShared body) = RReuseOffer fc sc dupOnShared (applySinkExp reps body)
+applySinkExp reps (RReuseOffer fc sc dupOnShared dropOnUnique body) = RReuseOffer fc sc dupOnShared dropOnUnique (applySinkExp reps body)
 applySinkExp reps (RLoop fc loopParams initial prologueDrop body) =
     RLoop fc loopParams initial prologueDrop (applySinkExp (foldl (\m, (i, r) => insert i r m) reps loopParams) body)
 applySinkExp _ e = e

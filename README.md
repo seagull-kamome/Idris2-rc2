@@ -50,7 +50,7 @@ rc2/
 ├── support/rc2/       the runtime library (libidris2rc2.a) linked into every rc2-compiled program
 ├── doc/               deep-dive design notes per pass -- see rc2/CLAUDE.md's own Layout section for the index
 └── tests/
-    ├── Test1Basics.idr .. Test23SinkPastSelfDrop.idr   hand-written smoke tests, one per pass/bug found
+    ├── Test1Basics.idr .. Test36ReuseOfferUniqueLeak.idr  hand-written smoke tests, one per pass/bug found
     ├── Bench*.idr                                       benchmarks vs. upstream RefC
     ├── verify.sh                                        one-shot build + full regression run (see Testing below)
     ├── bench.sh                                         one-shot benchmark run (see Testing below)
@@ -335,13 +335,14 @@ separate `.a`.
 ## Status and scope
 
 Working external C backend, functionally correct against Idris2's own
-RefC regression suite (`rc2/tests/refc-suite/`) plus 23 hand-written
+RefC regression suite (`rc2/tests/refc-suite/`) plus 36 hand-written
 smoke tests, all leak-clean under `valgrind`. Implemented: constructor
 reuse-in-place, native type inference (function-local and, via a dual
 calling convention, across ordinary call boundaries), self- and
 mutual-tail-call loop conversion with loop-invariant parameter/
 expression hoisting, branch-local sinking, whole-program inlining,
-constant folding, and `Data.Buffer`/`System.Clock`. See `TODO.md` for
+constant folding, and `Data.Buffer`/`System.Clock`/the standard
+`network` package (rc2's own native `idrnet_*` port). See `TODO.md` for
 the current, actively-maintained list of known gaps and deliberately
 out-of-scope decisions (e.g. tail-position delegating calls staying
 boxed, a loop accumulator threaded only through a helper call staying

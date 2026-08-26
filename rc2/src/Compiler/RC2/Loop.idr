@@ -68,9 +68,9 @@ mutual
   mapTailAppNames f (RReleaseReuse fc v cont) =
       let (found, cont') = mapTailAppNames f cont
       in (found, RReleaseReuse fc v cont')
-  mapTailAppNames f (RReuseOffer fc sc dupOnShared cont) =
+  mapTailAppNames f (RReuseOffer fc sc dupOnShared dropOnUnique cont) =
       let (found, cont') = mapTailAppNames f cont
-      in (found, RReuseOffer fc sc dupOnShared cont')
+      in (found, RReuseOffer fc sc dupOnShared dropOnUnique cont')
   mapTailAppNames f (RCmpCase fc op args postDrop t g) =
       let (foundT, t') = mapTailAppNames f t
           (foundG, g') = mapTailAppNames f g
@@ -131,7 +131,7 @@ mutual
   collectBoundIds (RDrop _ _ body) = collectBoundIds body
   collectBoundIds (RFree _ _ body) = collectBoundIds body
   collectBoundIds (RReleaseReuse _ _ body) = collectBoundIds body
-  collectBoundIds (RReuseOffer _ _ _ body) = collectBoundIds body
+  collectBoundIds (RReuseOffer _ _ _ _ body) = collectBoundIds body
   -- RV, RAppName, RUnderApp, RApp, RCon, ROp, RExtPrim, RPrimVal,
   -- RErased, RCrash: no subexpressions, no bindings. RLoop/
   -- RLoopContinue never actually appear here in practice either -- the
@@ -204,8 +204,8 @@ mutual
   renameRCExp ren (RDrop fc vars body) = RDrop fc (renameLocals ren vars) (renameRCExp ren body)
   renameRCExp ren (RFree fc v body) = RFree fc (renameLocal ren v) (renameRCExp ren body)
   renameRCExp ren (RReleaseReuse fc v body) = RReleaseReuse fc (renameLocal ren v) (renameRCExp ren body)
-  renameRCExp ren (RReuseOffer fc sc dupOnShared body) =
-      RReuseOffer fc (renameLocal ren sc) (renameLocals ren dupOnShared) (renameRCExp ren body)
+  renameRCExp ren (RReuseOffer fc sc dupOnShared dropOnUnique body) =
+      RReuseOffer fc (renameLocal ren sc) (renameLocals ren dupOnShared) (renameLocals ren dropOnUnique) (renameRCExp ren body)
   -- Never actually reached in practice -- nothing calling this ever
   -- operates on a tree that already contains an `RLoop` (this module's
   -- own `applyLoop` is its sole producer, and only ever calls
@@ -330,7 +330,7 @@ nativeArgTypes p (RDup _ _ cont) = nativeArgTypes p cont
 nativeArgTypes p (RDrop _ _ cont) = nativeArgTypes p cont
 nativeArgTypes p (RFree _ _ cont) = nativeArgTypes p cont
 nativeArgTypes p (RReleaseReuse _ _ cont) = nativeArgTypes p cont
-nativeArgTypes p (RReuseOffer _ _ _ cont) = nativeArgTypes p cont
+nativeArgTypes p (RReuseOffer _ _ _ _ cont) = nativeArgTypes p cont
 nativeArgTypes p (RConCase _ _ alts mDef) =
     concat (map (\(MkRConAlt _ _ _ _ body) => nativeArgTypes p body) alts)
       `union` maybe empty (nativeArgTypes p) mDef
@@ -439,7 +439,7 @@ stripOwnership ids (RConstCase fc sc alts mDef) =
     RConstCase fc sc (map (\(MkRConstAlt c body) => MkRConstAlt c (stripOwnership ids body)) alts)
       (map (stripOwnership ids) mDef)
 stripOwnership ids (RReleaseReuse fc v body) = RReleaseReuse fc v (stripOwnership ids body)
-stripOwnership ids (RReuseOffer fc sc dupOnShared body) = RReuseOffer fc sc dupOnShared (stripOwnership ids body)
+stripOwnership ids (RReuseOffer fc sc dupOnShared dropOnUnique body) = RReuseOffer fc sc dupOnShared dropOnUnique (stripOwnership ids body)
 stripOwnership ids (RLoopContinue fc args postDrop) =
     RLoopContinue fc args (filter (keepUnlessOwned ids) postDrop)
 -- Unlike every other case in this module, `RLoop` genuinely does show up
@@ -524,8 +524,8 @@ fillLoopContinuePostDrop loopParams reps (RDrop fc vs cont) = RDrop fc vs (fillL
 fillLoopContinuePostDrop loopParams reps (RFree fc v cont) = RFree fc v (fillLoopContinuePostDrop loopParams reps cont)
 fillLoopContinuePostDrop loopParams reps (RReleaseReuse fc v cont) =
     RReleaseReuse fc v (fillLoopContinuePostDrop loopParams reps cont)
-fillLoopContinuePostDrop loopParams reps (RReuseOffer fc sc dupOnShared cont) =
-    RReuseOffer fc sc dupOnShared (fillLoopContinuePostDrop loopParams reps cont)
+fillLoopContinuePostDrop loopParams reps (RReuseOffer fc sc dupOnShared dropOnUnique cont) =
+    RReuseOffer fc sc dupOnShared dropOnUnique (fillLoopContinuePostDrop loopParams reps cont)
 fillLoopContinuePostDrop loopParams reps (RLoopContinue fc args _) =
     let postDrop = mapMaybe (\((_, paramRep), arg) => case paramRep of
                                    RBoxed => Nothing
@@ -556,7 +556,7 @@ collectContinueArgs (RDup _ _ cont) = collectContinueArgs cont
 collectContinueArgs (RDrop _ _ cont) = collectContinueArgs cont
 collectContinueArgs (RFree _ _ cont) = collectContinueArgs cont
 collectContinueArgs (RReleaseReuse _ _ cont) = collectContinueArgs cont
-collectContinueArgs (RReuseOffer _ _ _ cont) = collectContinueArgs cont
+collectContinueArgs (RReuseOffer _ _ _ _ cont) = collectContinueArgs cont
 collectContinueArgs (RLoopContinue _ args _) = [args]
 collectContinueArgs _ = []
 
@@ -604,8 +604,8 @@ elideInvariantContinueArgs inv fullLoopParams (RDrop fc vs cont) = RDrop fc vs (
 elideInvariantContinueArgs inv fullLoopParams (RFree fc v cont) = RFree fc v (elideInvariantContinueArgs inv fullLoopParams cont)
 elideInvariantContinueArgs inv fullLoopParams (RReleaseReuse fc v cont) =
     RReleaseReuse fc v (elideInvariantContinueArgs inv fullLoopParams cont)
-elideInvariantContinueArgs inv fullLoopParams (RReuseOffer fc sc dupOnShared cont) =
-    RReuseOffer fc sc dupOnShared (elideInvariantContinueArgs inv fullLoopParams cont)
+elideInvariantContinueArgs inv fullLoopParams (RReuseOffer fc sc dupOnShared dropOnUnique cont) =
+    RReuseOffer fc sc dupOnShared dropOnUnique (elideInvariantContinueArgs inv fullLoopParams cont)
 elideInvariantContinueArgs inv fullLoopParams (RLoopContinue fc args postDrop) =
     RLoopContinue fc (map snd $ filter (\((p, _), _) => not (contains p inv)) (zip fullLoopParams args)) postDrop
 elideInvariantContinueArgs _ _ e = e
@@ -748,8 +748,8 @@ hoistInvariantPrefix variant (RFree fc v cont) =
     let (hoisted, rest) = hoistInvariantPrefix variant cont in (hoisted, RFree fc v rest)
 hoistInvariantPrefix variant (RReleaseReuse fc v cont) =
     let (hoisted, rest) = hoistInvariantPrefix variant cont in (hoisted, RReleaseReuse fc v rest)
-hoistInvariantPrefix variant (RReuseOffer fc sc dupOnShared cont) =
-    let (hoisted, rest) = hoistInvariantPrefix variant cont in (hoisted, RReuseOffer fc sc dupOnShared rest)
+hoistInvariantPrefix variant (RReuseOffer fc sc dupOnShared dropOnUnique cont) =
+    let (hoisted, rest) = hoistInvariantPrefix variant cont in (hoisted, RReuseOffer fc sc dupOnShared dropOnUnique rest)
 hoistInvariantPrefix _ e = ([], e)
 
 ------------------------------------------------------------------------
@@ -834,8 +834,8 @@ markInvariantNative p sid (RDup fc v cont) = RDup fc v (markInvariantNative p si
 markInvariantNative p sid (RDrop fc vs cont) = RDrop fc vs (markInvariantNative p sid cont)
 markInvariantNative p sid (RFree fc v cont) = RFree fc v (markInvariantNative p sid cont)
 markInvariantNative p sid (RReleaseReuse fc v cont) = RReleaseReuse fc v (markInvariantNative p sid cont)
-markInvariantNative p sid (RReuseOffer fc sc dupOnShared cont) =
-    RReuseOffer fc sc dupOnShared (markInvariantNative p sid cont)
+markInvariantNative p sid (RReuseOffer fc sc dupOnShared dropOnUnique cont) =
+    RReuseOffer fc sc dupOnShared dropOnUnique (markInvariantNative p sid cont)
 markInvariantNative p sid (RConCase fc sc alts mDef) =
     RConCase fc sc (map (\(MkRConAlt n ci tag as body) => MkRConAlt n ci tag as (markInvariantNative p sid body)) alts)
                     (map (markInvariantNative p sid) mDef)
@@ -888,8 +888,9 @@ usesInvariant p e = countInvariantUses e > 0
     countInvariantUses (RDrop _ vars body) = length (filter (== RCLoc p) vars) + countInvariantUses body
     countInvariantUses (RFree _ v body) = (if v == RCLoc p then 1 else 0) + countInvariantUses body
     countInvariantUses (RReleaseReuse _ v body) = (if v == RCLoc p then 1 else 0) + countInvariantUses body
-    countInvariantUses (RReuseOffer _ sc dupOnShared body) =
-        (if sc == RCLoc p then 1 else 0) + length (filter (== RCLoc p) dupOnShared) + countInvariantUses body
+    countInvariantUses (RReuseOffer _ sc dupOnShared dropOnUnique body) =
+        (if sc == RCLoc p then 1 else 0) + length (filter (== RCLoc p) dupOnShared)
+        + length (filter (== RCLoc p) dropOnUnique) + countInvariantUses body
     countInvariantUses (RLoop _ _ initial prologueDrop body) =
         length (filter (== RCLoc p) initial) + length (filter (== RCLoc p) prologueDrop) + countInvariantUses body
     countInvariantUses (RLoopContinue _ args postDrop) =
@@ -971,7 +972,7 @@ dupInvariantBoxed p (RDup fc v cont) = RDup fc v (dupInvariantBoxed p cont)
 dupInvariantBoxed p (RDrop fc vs cont) = RDrop fc vs (dupInvariantBoxed p cont)
 dupInvariantBoxed p (RFree fc v cont) = RFree fc v (dupInvariantBoxed p cont)
 dupInvariantBoxed p (RReleaseReuse fc v cont) = RReleaseReuse fc v (dupInvariantBoxed p cont)
-dupInvariantBoxed p (RReuseOffer fc sc dupOnShared cont) = RReuseOffer fc sc dupOnShared (dupInvariantBoxed p cont)
+dupInvariantBoxed p (RReuseOffer fc sc dupOnShared dropOnUnique cont) = RReuseOffer fc sc dupOnShared dropOnUnique (dupInvariantBoxed p cont)
 -- `acc` here is `applyLoop`'s own `withHoistedExprs` -- almost always
 -- an `RLoop` itself (or an `RLet` chain wrapping one), *not* a tree
 -- where one can't appear -- so this case is very much live, unlike the

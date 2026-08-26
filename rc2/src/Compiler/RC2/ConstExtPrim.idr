@@ -46,8 +46,8 @@ mutual
   foldConstExtPrim (RDrop fc vars body) = RDrop fc vars (foldConstExtPrim body)
   foldConstExtPrim (RFree fc v body) = RFree fc v (foldConstExtPrim body)
   foldConstExtPrim (RReleaseReuse fc v body) = RReleaseReuse fc v (foldConstExtPrim body)
-  foldConstExtPrim (RReuseOffer fc sc dupOnShared body) =
-      RReuseOffer fc sc dupOnShared (foldConstExtPrim body)
+  foldConstExtPrim (RReuseOffer fc sc dupOnShared dropOnUnique body) =
+      RReuseOffer fc sc dupOnShared dropOnUnique (foldConstExtPrim body)
   -- This pass's sole caller (Compiler.RC2.RC's `toRCDef`) only ever
   -- runs it on Phase 1's direct output, before RLoop/RLoopContinue
   -- (Compiler.RC2.Loop, much later) or RAppNameRep (Compiler.RC2.

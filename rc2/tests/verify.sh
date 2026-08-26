@@ -248,21 +248,37 @@ echo "=== Smoke tests ==="
 # inlineRuntime= directive injects for rc2 is simply never defined
 # anywhere in RefC's own output) -- not a divergent-but-comparable
 # output, so there is nothing to regen/diff against there at all.
-NO_REFC_DIFF_TESTS="Test7CastMatrix Test17ConstFold Test24CStructSupport Test26GCPtrAliasString Test28Utf8Strings Test29GCAnyPtrReturn Test31CgExtraRuntime Test32CgInlineRuntime"
+# Test35NetworkLoopback is an eighth reason: this pinned reference
+# idris2 0.8.0's own RefC codegen has a real bug of its own, unrelated
+# to networking or rc2 -- accept()'s own getSockAddr internally reaches
+# Network.Socket.Data.parseIPv4's `Cast String Integer` usage, and the
+# reference install's generated C calls `idris2_cast_string_to_Integer`
+# (lowercase) where only `idris2_cast_String_to_Integer` (capital S) is
+# actually defined, an implicit-declaration/int-to-pointer compile
+# error confirmed by a direct `idris2 --cg refc` attempt. rc2's own
+# codegen has no equivalent naming inconsistency and compiles this test
+# cleanly. `.expected` here is rc2's own manually-verified-correct
+# output (deterministic bind/listen/connect/send/recv transcript over a
+# 127.0.0.1 loopback), saved by hand -- same reasoning as
+# Test7CastMatrix/Test17ConstFold above, there is no real-RefC output
+# to diff against in the first place.
+NO_REFC_DIFF_TESTS="Test7CastMatrix Test17ConstFold Test24CStructSupport Test26GCPtrAliasString Test28Utf8Strings Test29GCAnyPtrReturn Test31CgExtraRuntime Test32CgInlineRuntime Test35NetworkLoopback"
 
 # Leak-sensitive by design (reference-counting/reuse/native-shadow
 # regression tests) -- checked with valgrind by default even without
 # --valgrind-all.
-LEAK_SENSITIVE_TESTS="Test1Basics Test9SelfTailLoop Test10MutualLoop Test11DualABILeak Test12ConAltNative Test13NativeArgChain Test14SmallFunctionInline Test15CompareFusionThroughCall Test16LoopContinuePostDrop Test18ClosureInPlaceGrow Test19LoopInvariantParam Test20LoopInvariantExpr Test21BoxedInvariantNotHoisted Test22BranchSinking Test23SinkPastSelfDrop Test24CStructSupport Test25ConstConFold Test26GCPtrAliasString Test27FFIDualABI Test28Utf8Strings Test29GCAnyPtrReturn Test33WideDualABIWorker Test34WideClosureDispatch"
+LEAK_SENSITIVE_TESTS="Test1Basics Test9SelfTailLoop Test10MutualLoop Test11DualABILeak Test12ConAltNative Test13NativeArgChain Test14SmallFunctionInline Test15CompareFusionThroughCall Test16LoopContinuePostDrop Test18ClosureInPlaceGrow Test19LoopInvariantParam Test20LoopInvariantExpr Test21BoxedInvariantNotHoisted Test22BranchSinking Test23SinkPastSelfDrop Test24CStructSupport Test25ConstConFold Test26GCPtrAliasString Test27FFIDualABI Test28Utf8Strings Test29GCAnyPtrReturn Test33WideDualABIWorker Test34WideClosureDispatch Test35NetworkLoopback Test36ReuseOfferUniqueLeak"
 
 # KNOWN-BUGS.md's own remaining pre-existing leaks -- "definitely
 # lost" byte count, exactly. Anything else non-zero is a genuine new
 # failure. (Test9SelfTailLoop's own former 784-byte entry was
 # root-caused and fixed -- RLoopContinue's own missing postDrop field,
 # see KNOWN-BUGS.md -- and is expected to be clean now.) Test28Utf8Strings'
-# own 28 bytes is fastPack's own pre-existing (not this test's own
-# String-primitive rewrite's) leak -- see KNOWN-BUGS.md.
-declare -A KNOWN_LEAK_BYTES=( [Test1Basics]=40 [Test28Utf8Strings]=28 )
+# own 28 bytes and Test35NetworkLoopback's own 10 bytes (parseIPv4's own
+# fastPack call, reached via accept's getSockAddr) are both fastPack's
+# own pre-existing leak, not either test's own subject matter -- see
+# KNOWN-BUGS.md.
+declare -A KNOWN_LEAK_BYTES=( [Test1Basics]=40 [Test28Utf8Strings]=28 [Test35NetworkLoopback]=10 )
 
 is_in() { local x; for x in $2; do [ "$x" = "$1" ] && return 0; done; return 1; }
 
@@ -293,7 +309,7 @@ for name in $ALL_TESTS; do
         companion_env=("IDRIS2_LDFLAGS=$TMP/${name}_companion.o" "IDRIS2_CFLAGS=-I$RC2_DIR/tests")
     fi
     env "${companion_env[@]}" nix-shell -p idris2 gcc gmp pkg-config --run \
-        "$IDRIS2RC2 --cg rc2 --directive dumprcexpr$extra_directive_args $RC2_DIR/tests/$name.idr -o $TMP/${name}_rc2" \
+        "$IDRIS2RC2 --cg rc2 -p network -p linear --directive dumprcexpr$extra_directive_args $RC2_DIR/tests/$name.idr -o $TMP/${name}_rc2" \
         > "$TMP/${name}_compile.log" 2>&1
     compile_time="$(elapsed "$compile_t0" "$(date +%s.%N)")"
     if [ ! -x "$TMP/${name}_rc2" ]; then
@@ -336,7 +352,7 @@ for name in $ALL_TESTS; do
         expected_file="$RC2_DIR/tests/$name.expected"
         if [ "$REGEN_EXPECTED" -eq 1 ]; then
             env "${companion_env[@]}" nix-shell -p idris2 gcc gmp pkg-config --run \
-                "idris2 --cg refc $RC2_DIR/tests/$name.idr -o $TMP/${name}_refc" \
+                "idris2 --cg refc -p network -p linear $RC2_DIR/tests/$name.idr -o $TMP/${name}_refc" \
                 > "$TMP/${name}_refc_compile.log" 2>&1
             if [ ! -x "$TMP/${name}_refc" ]; then
                 report_fail "$name" "refc compile error, see $TMP/${name}_refc_compile.log"

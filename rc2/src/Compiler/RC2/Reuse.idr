@@ -117,8 +117,8 @@ mutual
     -- may already contain an RReuseOffer a nested alt's own eligibility
     -- check produced during the recursive `resolveReuse body` call that
     -- ran before this search ever started.
-    tryConsume target sc (RReuseOffer fc sc2 dupOnShared body) =
-        RReuseOffer fc sc2 dupOnShared (tryConsume target sc body)
+    tryConsume target sc (RReuseOffer fc sc2 dupOnShared dropOnUnique body) =
+        RReuseOffer fc sc2 dupOnShared dropOnUnique (tryConsume target sc body)
     tryConsume target sc (RConCase fc sc2 alts mDef) =
         RConCase fc sc2 (map (tryConsumeAlt target sc) alts) (map (tryConsume target sc) mDef)
     tryConsume target sc (RConstCase fc sc2 alts mDef) =
@@ -198,8 +198,19 @@ mutual
                        -- unconditional drop regardless of which way the
                        -- uniqueness check goes.
                        outerDrop = dropped' \\ conArgsRC
+                       -- The destructured fields *not* in `dupOnShared`
+                       -- (i.e. never referenced in `inner`, so `dropped'`
+                       -- already claims them) -- on the not-unique path
+                       -- these ride `sc`'s own recursive drop for free,
+                       -- but on the unique path `sc` itself is never
+                       -- dropped (its storage is reserved for reuse
+                       -- instead), so that free ride never happens.
+                       -- `EmitUtil.emitReuseOffer` emits an explicit drop
+                       -- for each of these, unique branch only -- see
+                       -- `RReuseOffer`'s own doc comment.
+                       dropOnUnique = conArgsRC \\ dupOnShared
                    in MkRConAlt name ci tag args
-                        (rewrapDrop outerDrop (RReuseOffer emptyFC sc dupOnShared inner'))
+                        (rewrapDrop outerDrop (RReuseOffer emptyFC sc dupOnShared dropOnUnique inner'))
               else let conArgsRC = map RCLoc args
                        -- Same "destructured via aliasing" rule as
                        -- `dupOnShared` above, just with no reuse offer

@@ -154,8 +154,8 @@ mutual
     tryEmitLoopContinue (RReleaseReuse fc loc cont) = do
         removeReuseConstructors [reuseVarName loc]
         tryEmitLoopContinue cont
-    tryEmitLoopContinue (RReuseOffer fc sc dupOnShared cont) = do
-        emitReuseOffer sc dupOnShared
+    tryEmitLoopContinue (RReuseOffer fc sc dupOnShared dropOnUnique cont) = do
+        emitReuseOffer sc dupOnShared dropOnUnique
         tryEmitLoopContinue cont
     tryEmitLoopContinue (RLoopContinue fc newArgs postDrop) = do
         loopParams <- get LoopParams
@@ -238,8 +238,8 @@ mutual
     tryBuildClosureInto sink tailPosition (RReleaseReuse fc loc cont) = do
         removeReuseConstructors [reuseVarName loc]
         tryBuildClosureInto sink tailPosition cont
-    tryBuildClosureInto sink tailPosition (RReuseOffer fc sc dupOnShared cont) = do
-        emitReuseOffer sc dupOnShared
+    tryBuildClosureInto sink tailPosition (RReuseOffer fc sc dupOnShared dropOnUnique cont) = do
+        emitReuseOffer sc dupOnShared dropOnUnique
         tryBuildClosureInto sink tailPosition cont
     tryBuildClosureInto sink _ (RUnderApp fc n missing args) = do
         buildClosureIntoSink fc sink n args missing
@@ -994,7 +994,7 @@ mutual
     emitRC (RDup fc loc cont) _ = throw $ InternalError "[rc2] RDup reached emitRC directly (not intercepted by emitInto/tryBuildClosureInto)"
     emitRC (RFree fc loc cont) _ = throw $ InternalError "[rc2] RFree reached emitRC directly (not intercepted by emitInto/tryBuildClosureInto)"
     emitRC (RReleaseReuse fc loc cont) _ = throw $ InternalError "[rc2] RReleaseReuse reached emitRC directly (not intercepted by emitInto/tryBuildClosureInto)"
-    emitRC (RReuseOffer fc sc dupOnShared cont) _ = throw $ InternalError "[rc2] RReuseOffer reached emitRC directly (not intercepted by emitInto/tryBuildClosureInto)"
+    emitRC (RReuseOffer fc sc dupOnShared dropOnUnique cont) _ = throw $ InternalError "[rc2] RReuseOffer reached emitRC directly (not intercepted by emitInto/tryBuildClosureInto)"
 
     ||| The raw C expression for a value Compiler.RC2.Types has decided is
     ||| Native ty -- an `RLet`'s own tail is always an `ROp`/`RPrimVal`
