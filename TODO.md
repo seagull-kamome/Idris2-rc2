@@ -513,6 +513,70 @@ this reference bug). Revisit (i.e. add `negate` coverage back to that
 extension) if the pinned reference `idris2` version is ever bumped past
 whatever release fixes this typo.
 
+## Upstream stdlib `%foreign` declarations with no C/RefC backend at all
+
+Surveyed every `%foreign` declaration in `idris2-src/libs` (206 across
+27 files, `base`/`prelude`/`contrib`/`network`) for ones carrying no
+`"C:..."`/`"RefC:..."` alternative whatsoever (including the indirect
+forms -- `supportC`/`libc`/`libterm`/`signalFFI`-style local helper
+functions that stitch a `"C:..."` string together at compile time
+rather than writing the tag literally; these had to be read past to
+avoid false positives). Anything without a C-tagged alternative is a
+function the *pinned reference* `idris2 --cg refc` itself cannot call
+at all -- not an rc2-specific gap, but confirmed here not worked around
+by rc2 either (`libs/rc2base` provides no patch for any of these, unlike
+`System.Concurrency`, see below). Four such spots, all upstream, none
+touched by this project:
+
+- **`Data.Buffer`**: `setInt8`/`getInt8`/`getInt16`/`setInt64`/
+  `getInt64` each carry only a `"scheme:..."` tag. Notably asymmetric
+  with their own siblings in the same file -- `setInt16`/`getInt32`/
+  `setInt32` do carry a `"RefC:..."` tag (`setBufferInt16LE`/
+  `getBufferInt32LE`/`setBufferInt32LE`), so this looks like an
+  upstream oversight rather than a deliberate scheme-only design.
+  `rc2/support/rc2/buffer.h` already has C-side macros that could back
+  every one of these (`setBufferUInt8`/`getBufferUIntLE`/
+  `setBufferInt64LE`/`getBufferInt64LE`, etc.) -- the only missing
+  piece is the upstream `%foreign` tag itself, so a local
+  `%foreign_impl` patch (the same mechanism `libs/rc2base/src/System/
+  Concurrency/RC2.idr` already uses) would be a small, low-risk fix if
+  ever needed by a real program.
+- **`Data.Double`**: `unitRoundoff`/`epsilon`/`nan`/`inf` carry only
+  `"scheme:..."`/`"node:..."` tags -- no C alternative at all.
+- **`System.Random`** (contrib): `prim__randomBits32`/
+  `prim__randomDouble`/`prim__srand` (backing the whole module,
+  including its `Random Int32`/`Random Double` instances and
+  `rndFin`/`rndSelect`/`rndSelect'`) carry only `"scheme:..."`/
+  `"javascript:..."` tags. The entire module is unusable on any C
+  backend, refc included.
+- **`System.Future`** (contrib): `prim__makeFuture`/
+  `prim__awaitFuture` (backing `fork`/`await` and the `Functor`/
+  `Applicative`/`Monad Future` instances) carry only a `"scheme:..."`
+  tag. Entire module unusable on any C backend, refc included. Not to
+  be confused with rc2's own, unrelated joinable fork (`forkJoin`/
+  `join`/`JoinHandle`, `rc2/doc/concurrency.md`'s "Design: joinable
+  fork") -- that's an rc2-specific addition with no upstream
+  `System.Future` involvement at all, built to cover a gap upstream's
+  own `threadWait` (see next paragraph) leaves open on every C backend.
+
+One more single-function case surfaced by the same survey,
+`prim__threadWait` (`libs/prelude/Prelude/IO.idr`) -- also
+`"scheme:..."`-only, unlike its own sibling `prim__fork` (which does
+carry `"C:refc_fork"`) -- is *not* a fresh finding: it's the exact gap
+`rc2/doc/concurrency.md`'s "Design: joinable fork" section and
+`rc2/support/rc2/ioprims.c`'s own comments already document at length
+(upstream's `fork` can spawn a thread from C, but nothing about
+`ThreadID`'s representation lets any C backend ever implement
+`threadWait` to join it back) -- included here only so this survey is a
+complete index of the same class of gap, not as new information.
+
+Not investigated further for `Data.Buffer`/`Data.Double`/
+`System.Random`/`System.Future`: none of these have surfaced as a real
+blocker for any program built against rc2 so far (unlike
+`System.Concurrency`, which had actual demand behind it). Revisit with
+a `%foreign_impl` patch, `libs/rc2base`-style, if a concrete program
+ever needs one of them.
+
 ## Performance: codepoint-indexed String access is O(n) per call, not O(1)
 
 `String`'s primitives (`length`/`strIndex`/`strTail`/`strCons`/
