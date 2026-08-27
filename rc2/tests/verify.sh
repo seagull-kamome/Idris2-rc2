@@ -190,7 +190,16 @@ echo "=== Build ==="
 if [ "$SKIP_BUILD" -eq 1 ]; then
     echo "SKIP  build (--skip-build)"
 else
-    (cd "$RC2_DIR" && nix-shell -p idris2 gmp pkg-config --run 'idris2 --build rc2.ipkg') \
+    # rc2.ipkg's own postbuild/postinstall hooks build and install
+    # support/rc2's runtime (libidris2rc2.a) as a side effect of these
+    # two calls -- see README.md's "Building and running" section.
+    # IDRIS2_PREFIX only steers where rc2.ipkg's *own* .ttc/.ttm end up
+    # (the runtime's own install path is fixed relative to its Makefile
+    # regardless); needed so --install doesn't try to write into the
+    # default, typically read-only, nix store location.
+    (cd "$RC2_DIR" && IDRIS2_PREFIX="$(dirname "$RC2_DIR")/install" \
+        nix-shell -p idris2 gcc gmp pkg-config --run \
+            'idris2 --build rc2.ipkg') \
         > "$RC2_DIR/tests/verify-build.log" 2>&1
     if [ $? -ne 0 ]; then
         echo "FAIL  build (see rc2/tests/verify-build.log)"
@@ -198,7 +207,9 @@ else
     fi
     report_pass "build (idris2-rc2)"
 
-    (cd "$RC2_DIR/support/rc2" && nix-shell -p gcc gmp pkg-config --run 'make && make install') \
+    (cd "$RC2_DIR" && IDRIS2_PREFIX="$(dirname "$RC2_DIR")/install" \
+        nix-shell -p idris2 gcc gmp pkg-config --run \
+            'idris2 --install rc2.ipkg') \
         > "$RC2_DIR/tests/verify-runtime-build.log" 2>&1
     if [ $? -ne 0 ]; then
         echo "FAIL  build (runtime, see rc2/tests/verify-runtime-build.log)"

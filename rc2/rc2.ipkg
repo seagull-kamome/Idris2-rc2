@@ -25,3 +25,17 @@ modules = Compiler.RC2.CC,
 
 main = Main
 executable = "idris2-rc2"
+
+-- The C runtime (`libidris2rc2.a`, linked into every rc2-compiled
+-- program, not into idris2-rc2 itself) has its own standalone Makefile
+-- (`support/rc2/Makefile`) rather than being folded into this package's
+-- own module list -- mirrors `libs/rc2base/rc2base.ipkg`'s identical
+-- split between its own Idris modules and `support/c`. `postbuild`
+-- only builds it (`make`'s default `all` target); `postinstall` copies
+-- the already-built `.a`/headers into `install/idris2-0.8.0/support/rc2`
+-- (see the Makefile's own `INSTALL_ROOT` default) -- so both
+-- `idris2 --build rc2.ipkg` and `idris2 --install rc2.ipkg` need to run
+-- for a program compiled with `--cg rc2` to find the runtime afterward.
+postbuild   = "make -C support/rc2"
+postinstall = "make -C support/rc2 install"
+postclean   = "make -C support/rc2 clean"

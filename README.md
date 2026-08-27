@@ -115,18 +115,25 @@ that porting/writing those tests surfaced.
 ```sh
 cd rc2
 source ../env.sh
-nix-shell -p idris2 gmp pkg-config --run 'idris2 --build rc2.ipkg'
+export IDRIS2_PREFIX="$(cd .. && pwd)/install"
+nix-shell -p idris2 gcc gmp pkg-config --run 'idris2 --build rc2.ipkg && idris2 --install rc2.ipkg'
 ```
 
 This produces `rc2/build/exec/idris2-rc2`. The runtime library
-(`libidris2rc2.a`) lives under `rc2/support/rc2/` and is built/installed
-separately:
-
-```sh
-cd rc2/support/rc2
-source ../../../env.sh
-nix-shell -p gcc gmp pkg-config --run 'make && make install'
-```
+(`libidris2rc2.a`, linked into every rc2-*compiled* program, not into
+`idris2-rc2` itself) lives under `rc2/support/rc2/` and has its own
+standalone `Makefile` (mirroring `libs/rc2base/rc2base.ipkg`'s own
+`support/c` split) -- `rc2.ipkg`'s own `postbuild`/`postinstall` hooks
+run it automatically as part of the two commands above: `--build`
+compiles it (`make -C support/rc2`), `--install` copies the result into
+`install/idris2-0.8.0/support/rc2` (`make -C support/rc2 install`,
+`IDRIS2_PREFIX` needed so the *rc2 package's own* `.ttc`/`.ttm` this
+`--install` call also produces lands in this repo's local `install/`
+tree instead of the default, typically read-only, nix store location --
+the runtime's own install path is fixed relative to the `Makefile`
+itself either way, so this only matters for that side effect). Running
+just `make`/`make install` directly under `rc2/support/rc2` still works
+too, for a runtime-only rebuild that skips recompiling the compiler.
 
 To compile an Idris2 program with rc2:
 

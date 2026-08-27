@@ -60,13 +60,29 @@ echo "=== Build ==="
 if [ "$SKIP_BUILD" -eq 1 ]; then
     echo "SKIP  build (--skip-build)"
 else
-    (cd "$RC2_DIR" && nix-shell -p idris2 gmp pkg-config --run 'idris2 --build rc2.ipkg') \
+    # rc2.ipkg's own postbuild/postinstall hooks build and install
+    # support/rc2's runtime (libidris2rc2.a) as a side effect of these
+    # two calls (see README.md's "Building and running" section) --
+    # both are needed here (unlike a lone `--build`) so this script is
+    # self-contained and doesn't silently depend on rc2/tests/verify.sh
+    # having already installed the runtime in a prior run.
+    (cd "$RC2_DIR" && IDRIS2_PREFIX="$REPO_DIR/install" \
+        nix-shell -p idris2 gcc gmp pkg-config --run \
+            'idris2 --build rc2.ipkg') \
         > "$RC2_DIR/tests/bench-build.log" 2>&1
     if [ $? -ne 0 ]; then
         echo "FAIL  build (see rc2/tests/bench-build.log)"
         exit 1
     fi
-    echo "OK    build (idris2-rc2)"
+    (cd "$RC2_DIR" && IDRIS2_PREFIX="$REPO_DIR/install" \
+        nix-shell -p idris2 gcc gmp pkg-config --run \
+            'idris2 --install rc2.ipkg') \
+        >> "$RC2_DIR/tests/bench-build.log" 2>&1
+    if [ $? -ne 0 ]; then
+        echo "FAIL  build (runtime install, see rc2/tests/bench-build.log)"
+        exit 1
+    fi
+    echo "OK    build (idris2-rc2 + libidris2rc2.a)"
 fi
 
 TMP="$RC2_DIR/tests/build"
