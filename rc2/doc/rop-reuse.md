@@ -356,7 +356,8 @@ concurrency-related code (see `doc/concurrency.md`).
   through rather than deleted, so a reader following this document's
   history can see this item was the follow-up that closed itself out.)
 - **Pinned-reference `negate` typo, discovered while testing this
-  extension.** While writing `Test50FixedWidthOpReuse.idr`, the pinned
+  extension.** While writing the `Int64`/`Bits64`/`Double` extension's
+  own tests (now merged into `Test49IntegerOpReuse.idr`), the pinned
   reference `idris2 --cg refc` 0.8.0's own installed
   `mathFunctions.h` turned out to define `idris2_nagate_Int8/16/32/64`
   and `idris2_nagate_Double` -- misspelled ("nagate") -- as macros,
@@ -366,9 +367,10 @@ concurrency-related code (see `doc/concurrency.md`).
   against that one pinned binary as a result. This is a defect in the
   pinned reference binary, not in rc2 (`rc2/support/rc2/numeric.h`'s
   own `idris2rc2_negate_Int64`/`negate_Double` are spelled correctly
-  and unaffected), so `Test50FixedWidthOpReuse.idr` simply doesn't
-  exercise `negate` at all -- `Test49IntegerOpReuse.idr`'s `Integer`
-  `negate` usage already covers the general reuse-consuming-`Neg`
+  and unaffected), so `Test49IntegerOpReuse.idr`'s fixed-width
+  extension functions simply don't exercise `negate` at all -- that
+  same file's original `Integer`-typed `bigFactorial` `negate` usage
+  already covers the general reuse-consuming-`Neg`
   pattern, and `Integer`'s `idris2_negate_Integer` is a real function,
   not a macro, so it isn't affected by this typo. See `TODO.md`'s
   "Pinned reference `idris2 --cg refc` 0.8.0 misspells `negate` for
@@ -428,7 +430,8 @@ concurrency-related code (see `doc/concurrency.md`).
 
 ## Verification performed (extension: `Int64`/`Bits64`/`Double`)
 
-- New regression test: `rc2/tests/Test50FixedWidthOpReuse.idr` --
+- Regression test coverage added to `rc2/tests/Test49IntegerOpReuse.idr`
+  (merged in at the end of that file) --
   `sumInt64`/`sumBits64`/`sumDouble` (self-tail-recursive accumulator
   loops past the small-int cache) plus `bitOpsInt64`/`bitOpsBits64`
   (straight-line `Data.Bits` usage: `.&.`/`.|.`/`xor`/`shiftL`/
@@ -437,7 +440,7 @@ concurrency-related code (see `doc/concurrency.md`).
   `Compiler.RC2.Loop`'s own native-shadow loop promotion instead of the
   Boxed reuse-consuming primitives: the whole loop body ends up as
   plain unboxed `int64_t`/`double` C locals, confirmed by inspecting
-  `rc2/tests/build/Test50FixedWidthOpReuse_rc2.c`'s
+  `rc2/tests/build/Test49IntegerOpReuse_rc2.c`'s
   `idris2rc2_worker_Main_sumInt64_0`, whose body is pure native
   arithmetic with no Boxed call at all.
 - `bitOpsInt64`/`bitOpsBits64` are the ones that actually exercise the
@@ -445,22 +448,24 @@ concurrency-related code (see `doc/concurrency.md`).
   Idris2's `Prelude.Num`'s `Integral` interface dispatch means these
   aren't inlined as a native operator the way `+`/`-`/`*`/bitwise ops
   are. `idris2rc2_worker_Prelude_Num_div_Integral_Int64_7`'s generated
-  body calls `idris2rc2_div_Int64(var_0, opBox_41)` directly with no
+  body calls `idris2rc2_div_Int64(var_0, opBox_66)` directly with no
   trailing `idris2rc2_drop` call (hand-confirmed) -- proof the
   consuming-primitive contract and the compiler-side skip are both
   correctly wired end-to-end for `Int64`, and by extension `IntType`
   (identical C name). The same pattern was independently confirmed for
   `idris2rc2_mod_Bits64`/`div_Bits64`, both present with no trailing
-  drop in `rc2/tests/build/Test50FixedWidthOpReuse_rc2.c` at lines 712
-  and 772.
-- `Neg` was deliberately not exercised in `Test50` at all, due to the
-  pinned-reference `negate` typo described above and in `TODO.md`.
-- Full `verify.sh --regen-expected`: 89/89 pass (87 + the new Test50;
-  this also re-confirms the `IntType`/`Int64Type` double-drop fix,
-  since it's what brought the four regressed tests back to passing).
+  drop in `rc2/tests/build/Test49IntegerOpReuse_rc2.c` at lines 877
+  and 937.
+- `Neg` was deliberately not exercised in the fixed-width extension
+  coverage at all, due to the pinned-reference `negate` typo described
+  above and in `TODO.md`.
+- Full `verify.sh --regen-expected`: 89/89 pass (87 + the new
+  fixed-width extension coverage; this also re-confirms the
+  `IntType`/`Int64Type` double-drop fix, since it's what brought the
+  four regressed tests back to passing).
 - `refc-suite/run.sh`: 19/19 pass.
-- `valgrind --leak-check=full` on `Test50FixedWidthOpReuse`: 0 bytes
-  definitely lost.
+- `valgrind --leak-check=full` on `Test49IntegerOpReuse` (fixed-width
+  extension coverage): 0 bytes definitely lost.
 
 ## Files
 
@@ -476,9 +481,8 @@ concurrency-related code (see `doc/concurrency.md`).
   matching `IntType` cases added by the double-drop bug fix.
 - `rc2/src/Compiler/RC2/Emit.idr` -- `emitRC (ROp ...)`'s
   `isReuseConsumingOp`-gated skip of both `removeVars` calls.
-- `rc2/tests/Test49IntegerOpReuse.idr` -- the regression test for the
-  `Integer` mechanism.
-- `rc2/tests/Test50FixedWidthOpReuse.idr` -- the regression test for
+- `rc2/tests/Test49IntegerOpReuse.idr` -- the regression test for both
+  the `Integer` mechanism and (merged in at the end of the same file)
   the `Int64`/`Bits64`/`Double` extension.
 - Explicitly untouched: `rc2/src/Compiler/RC2/RCExp.idr` (`ROp`'s own
   shape), `rc2/src/Compiler/RC2/RC.idr` (`annotate`'s `ROp` case), and

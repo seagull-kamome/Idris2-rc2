@@ -320,8 +320,9 @@ argument directly, exactly as if this pass had never run.
 Beyond whole parameters, a `let` sitting in the loop body's own
 *unconditional prefix* (before the first `case`/`cmp`) whose value
 reads only loop-external operands gets hoisted the same way, outside
-`loop [...]` entirely -- `tests/Test20LoopInvariantExpr.idr`'s
-`bound = limit * 2` (both `Native Int`, `limit` itself already a
+`loop [...]` entirely -- `tests/Test19LoopInvariantParam.idr`'s
+loop-invariant-expression-hoisting coverage (merged in at the end of
+that file), `bound = limit * 2` (both `Native Int`, `limit` itself already a
 hoisted native-shadow parameter per section 8.5):
 
 ```

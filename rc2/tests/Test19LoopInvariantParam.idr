@@ -9,7 +9,9 @@ module Main
 -- from the loop's own loopParams/initial/continue-args, with `limit`
 -- additionally getting hoisted into a one-time RLet+RDrop native read
 -- ahead of the loop (mirroring Compiler.RC2.ConAltNative's own field
--- caching).
+-- caching). Also covers loop-invariant EXPRESSION hoisting, the same
+-- pass's next stage building on this (formerly a separate
+-- Test20LoopInvariantExpr.idr, merged in below as `sumBounded`).
 sumWithTag : String -> Int -> Int -> Int -> Int
 sumWithTag tag limit acc n =
   if n >= limit
@@ -45,8 +47,25 @@ sumWithBoxedExitOnly limit acc n =
      then acc + showBox (MkBox limit acc)
      else sumWithBoxedExitOnly limit (acc + n) (n + 1)
 
+-- Also covers Compiler.RC2.Loop's loop-invariant EXPRESSION hoisting
+-- (ROp/RCon in the loop body's own unconditional prefix, depending
+-- only on non-loop-carried ids -- formerly Test20LoopInvariantExpr.idr,
+-- merged in here since it's the same pass's own next stage, building
+-- directly on the parameter-elision this file already covers): `bound`
+-- is recomputed from `limit` (itself a loop-invariant native shadow
+-- hoisted by the parameter-elision pass above) on every iteration but
+-- never actually changes, so it should get hoisted to a one-time
+-- computation ahead of the loop too.
+sumBounded : Int -> Int -> Int -> Int
+sumBounded limit acc n =
+  let bound = limit * 2
+  in if n >= bound
+        then acc
+        else sumBounded limit (acc + n) (n + 1)
+
 main : IO ()
 main = do
   printLn (sumWithTag "ctx" 1000 0 0)
   printLn (sumWithBoxedContinuePath 1000 0 0)
   printLn (sumWithBoxedExitOnly 1000 0 0)
+  printLn (sumBounded 500 0 0)

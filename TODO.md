@@ -482,9 +482,9 @@ bumped past whatever release added `Int32` FFI support.
 
 ## Pinned reference `idris2 --cg refc` 0.8.0 misspells `negate` for fixed-width/`Double` types
 
-Found while writing `rc2/tests/Test50FixedWidthOpReuse.idr` (the
-`Int64`/`Bits64`/`Double` extension of `ROp` reuse-in-place, see
-`rc2/doc/rop-reuse.md`): the pinned reference `idris2 --cg refc`
+Found while writing the `Int64`/`Bits64`/`Double` extension of `ROp`
+reuse-in-place (now merged into `rc2/tests/Test49IntegerOpReuse.idr`;
+see `rc2/doc/rop-reuse.md`): the pinned reference `idris2 --cg refc`
 0.8.0's own installed runtime support header (`mathFunctions.h`, at
 `/nix/store/.../libidris2_support-0.8.0/share/refc/mathFunctions.h`)
 defines `idris2_nagate_Int8`/`idris2_nagate_Int16`/
@@ -504,13 +504,14 @@ macro) and is unaffected. **Not rc2-specific** -- confirmed
 is purely a defect in the one pinned reference *binary* used for
 cross-checking, exactly the same class of gap as the "Pinned reference
 `idris2 --cg refc` 0.8.0 rejects `Int32` in `%foreign` position" entry
-above. Worked around in `Test50FixedWidthOpReuse.idr` by not exercising
-`negate` there at all (a comment in the test file explains why, and
-points out `Test49IntegerOpReuse.idr`'s own `Integer`-typed `negate`
-usage already covers the *general* reuse-consuming-`Neg` pattern, since
-`Integer`'s negate is unaffected by this reference bug). Revisit (i.e.
-add `negate` coverage back to `Test50`) if the pinned reference
-`idris2` version is ever bumped past whatever release fixes this typo.
+above. Worked around in `Test49IntegerOpReuse.idr`'s fixed-width extension
+coverage by not exercising `negate` there at all (a comment in the test
+file explains why, and points out that same file's original
+`Integer`-typed `negate` usage already covers the *general*
+reuse-consuming-`Neg` pattern, since `Integer`'s negate is unaffected by
+this reference bug). Revisit (i.e. add `negate` coverage back to that
+extension) if the pinned reference `idris2` version is ever bumped past
+whatever release fixes this typo.
 
 ## Performance: codepoint-indexed String access is O(n) per call, not O(1)
 

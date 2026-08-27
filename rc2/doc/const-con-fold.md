@@ -248,7 +248,8 @@ confirm exactly which `RLet` was losing its `RCLoc`.
 - `rc2/support/rc2/datatypes.h` -- `IDRIS2RC2_Constructor`'s layout
   (referenced, not modified) and `IDRIS2RC2_STOCKVAL`/
   `IDRIS2RC2_REFCOUNT_MAX` (reused as-is).
-- `rc2/tests/Test25ConstConFold.idr` -- regression test: full folds
+- `rc2/tests/Test17ConstFold.idr` -- regression test (merged in at the
+  end of that file): full folds
   (`constList`/`constMaybe`/`nestedConst`), a partial fold
   (`partialConst`), and multi-site destructuring of the same immortal
   value (`headOf`/`tailOf`/`unwrapMaybe`, each called more than once)

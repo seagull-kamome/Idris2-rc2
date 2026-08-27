@@ -323,7 +323,8 @@ def {idris2rc2_worker_Main_sumWithTag:0}  (fun args=["v0:Boxed", "v1:Boxed", "v2
 パラメータ全体だけでなく、ループ本体自身の*無条件prefix*
 (最初の`case`/`cmp`より前)に座る`let`で、その値がループ外部の
 オペランドしか読まない場合も同様にホイストされ、`loop [...]`の
-完全に外側に出る -- `tests/Test20LoopInvariantExpr.idr`の
+完全に外側に出る -- `tests/Test19LoopInvariantParam.idr`の
+ループ不変式ホイスティングのカバレッジ(そのファイル末尾にマージ済み)、
 `bound = limit * 2`(どちらも`Native Int`、`limit`自体は第8.5節に
 従って既にホイストされたネイティブshadowパラメータ):
 

@@ -663,7 +663,9 @@ final `RLoop` in one `RLet` per hoisted triple -- reusing the plain
 invariant-shadow-parameter `RLet`s (see the section above), since a
 hoisted expression may itself read one of those (e.g. a native-shadowed
 invariant parameter's own shadow id, exactly `bound = limit * 2` in
-`tests/Test20LoopInvariantExpr.idr`'s own worked example).
+`tests/Test19LoopInvariantParam.idr`'s own worked example -- its
+loop-invariant-expression-hoisting coverage, merged in at the end of
+that file).
 
 ## `Compiler.RC2.MutualLoop`: mutual tail recursion
 
@@ -1195,12 +1197,13 @@ benchmark:
    unmistakable, and to measure the resulting wall-clock difference
    (~25% faster than the pre-fix reboxing-every-time behaviour on this
    shape, `rc2/tests/bench.sh`).
-7. `tests/Test20LoopInvariantExpr.idr` -- loop-invariant expression
-   hoisting's own positive case: `bound = limit * 2`, a `Native Int`
-   `ROp` in the loop body's own unconditional prefix depending only on
-   an already-hoisted native-shadow parameter, confirmed via
-   `--directive dumprcexpr` to land outside `loop [...]` entirely,
-   nested inside that parameter's own `RLet`.
+7. `tests/Test19LoopInvariantParam.idr` (further down in the same
+   file) -- loop-invariant expression hoisting's own positive case:
+   `bound = limit * 2`, a `Native Int` `ROp` in the loop body's own
+   unconditional prefix depending only on an already-hoisted
+   native-shadow parameter, confirmed via `--directive dumprcexpr` to
+   land outside `loop [...]` entirely, nested inside that parameter's
+   own `RLet`.
 8. `tests/Test21BoxedInvariantNotHoisted.idr` -- the negative case, and
    the single most important regression test this section's own work
    produced: a `Boxed`-`Rep` invariant `RCon` used only on the loop's

@@ -561,8 +561,9 @@ unaligned tcache chunk detected`でクラッシュし、`valgrind`で本物の
 直接ラップする -- 新しいIR形状ではなく、既存の不変shadowパラメータ
 の`RLet`群の*内側*にネストする(上記の節参照)。ホイストされた式が
 それら自身の1つを読むことがありうるからである
-(`tests/Test20LoopInvariantExpr.idr`自身の実例で言えば、ネイティブ
-shadow化された不変パラメータ自身のshadow idを読む、まさに
+(`tests/Test19LoopInvariantParam.idr`自身の実例で言えば -- ループ不変
+式ホイスティングのカバレッジとしてそのファイル末尾にマージ済み --
+ネイティブshadow化された不変パラメータ自身のshadow idを読む、まさに
 `bound = limit * 2`)。
 
 ## `Compiler.RC2.MutualLoop`: 相互末尾再帰
@@ -1102,8 +1103,9 @@ shadow昇格され*ない*。`loop acc (b :: bs) = loop (step acc b) bs`
    所有権処理 -- ホイストされたネイティブなものには明示的な
    `RDrop`、Boxedなものには何も無し)を`valgrind`下で確認する --
    完全な`.rcexpr`ダンプは`doc/reading-the-ir.md`自身の第8.5節参照。
-7. `tests/Test20LoopInvariantExpr.idr` -- ループ不変式のホイスティング
-   自身の正のケース: `bound = limit * 2`、既にホイスト済みの
+7. `tests/Test19LoopInvariantParam.idr`(同じファイルのさらに下) --
+   ループ不変式のホイスティング自身の正のケース: `bound = limit * 2`、
+   既にホイスト済みの
    ネイティブshadowパラメータのみに依存する、ループ本体自身の
    無条件prefix内の`Native Int`な`ROp`。`--directive dumprcexpr`で、
    `loop [...]`の完全に外側、そのパラメータ自身の`RLet`の内側に
