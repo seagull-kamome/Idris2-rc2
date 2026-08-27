@@ -278,6 +278,48 @@ the full design and its own bug (a double-free in `annotate`'s
    local was incorrectly excluded from drop lists too, leaking it.
    Fixed by filtering on the `Rep` value itself (`RNative _` only),
    not on `RepMap` membership.
+6. **`alwaysUnboxed`'s own elision, wired into `RC.idr`'s `annotate`
+   pass since this document's original writing, missed two later,
+   structurally separate wrapper-generation code paths entirely.**
+   Not a defect in anything above -- `Types.alwaysUnboxed` itself and
+   its consultation from `annotate` (`alwaysUnboxedBoxedLocalsR`, see
+   "The `natives` set" above) were correct from the start. But two
+   dual-ABI-related code paths added a couple of days later, each
+   synthesising its own always-Boxed wrapper function, never consulted
+   it: (1) `Compiler.RC2.DualABI`'s `synthesizeWorker` (Stage 3a, the
+   always-Boxed wrapper a dual-ABI-eligible ordinary function gets
+   rewritten into) -- its `wrapperPostDrop` unconditionally dropped
+   every natively-promoted parameter regardless of `PrimType`; (2)
+   `Compiler.RC2.Emit`'s `emitGenericForeignWrapper` (the always-Boxed
+   C wrapper stub for an ordinary `%foreign` declaration) -- its
+   `removeVarsArgList` dropped every FFI argument by variable name
+   alone, with the argument's own `CFType` discarded before the drop
+   decision was ever made. Neither was a correctness bug --
+   `idris2rc2_drop` on an `alwaysUnboxed` value is a guaranteed
+   runtime no-op by construction (see the `alwaysUnboxed` bullet
+   above), so both merely emitted wasted C code, never wrong C code --
+   but both defeated the entire point of `alwaysUnboxed` existing, on
+   these two paths specifically. Fixed by filtering both against
+   `Types.alwaysUnboxed` directly: `DualABI.idr`'s `wrapperPostDrop`
+   now filters its own `eligible : List (Int, PrimType)` through
+   `alwaysUnboxed`, keeping only the non-always-unboxed positions in
+   the drop list; `Emit.idr` gained a shared `alwaysUnboxedDropVar :
+   (String, String, CFType) -> Maybe String` helper (in the same
+   `where`-block as `createFFIArgList`/`discardLastArgument`, used by
+   both `emitGenericForeignWrapper`'s and `emitFastPackFixedWrapper`'s
+   own `removeVarsArgList` -- the latter only for consistency, since
+   `fastPackFixed`/`fastConcatFixed`'s own arguments are always
+   `CFUser` and never actually hit the `alwaysUnboxed` case in
+   practice) that returns `Nothing` (skip the drop) when
+   `cfTypeNative vt` is `Just ty` and `alwaysUnboxed ty` holds. A third
+   related spot, `Emit.idr`'s own `emitFFIWorker` (Stage 3c's
+   native-ABI FFI worker, not an always-Boxed wrapper), was checked
+   and needs no fix: its Boxed positions are, by construction, exactly
+   the ones where `cfTypeNative` already returned `Nothing` (not
+   native-eligible at all), and `cfTypeNative` always returns `Just`
+   for an `alwaysUnboxed` type, so such a type structurally can never
+   appear in that worker's own Boxed-position drop list in the first
+   place.
 
 ## Files
 
@@ -292,7 +334,15 @@ the full design and its own bug (a double-free in `annotate`'s
 - `rc2/src/Compiler/RC2/Emit.idr` -- `nativeCType`/`nativeMk`/
   `nativeUnbox`, `rcVarToNativeC`/`rcVarToBoxedC`, `cOp`/`nativeOpExpr`/
   `nativeCmpExpr`, `emitNativeValue`, `InlineMap`/`tryInlineNativeOp`,
-  `RepMap`.
+  `RepMap`; also `alwaysUnboxedDropVar` (bug 6 above), consulted by
+  `emitGenericForeignWrapper`/`emitFastPackFixedWrapper`'s own
+  `removeVarsArgList`.
+- `rc2/src/Compiler/RC2/DualABI.idr` -- not otherwise part of this
+  document's own Phase 1/2 machinery, but `synthesizeWorker`'s
+  `wrapperPostDrop` is a second, separate consumer of
+  `Types.alwaysUnboxed` (bug 6 above), filtering its own dual-ABI
+  wrapper's drop list the same way `annotate`'s
+  `alwaysUnboxedBoxedLocalsR` does for ordinary functions.
 
 ## Verification methodology
 
@@ -314,3 +364,20 @@ the full design and its own bug (a double-free in `annotate`'s
    (e.g. `int8_t`) appearing as a bare stack-declared variable, not
    wrapped in `IDRIS2RC2_Value*`/`idris2rc2_mk*`, to confirm the
    unboxing actually fired for a given test case.
+5. Bug 6 above (the two dual-ABI wrapper paths that missed
+   `alwaysUnboxed`) has its own separate regression coverage, since
+   neither path is reachable through `RC.idr`'s own `annotate` pass
+   that `Test6NativeInts.idr` above was written to exercise: hand-check
+   `tests/build/Test6NativeInts_rc2.c`'s `Main_chainInt8`/`chainInt16`/
+   `chainInt32` (and the Bits8/16/32 equivalents) to confirm their
+   dual-ABI wrappers no longer call `idris2rc2_drop` on their arguments
+   at all, while `Main_chainInt64` (native-eligible but *not*
+   `alwaysUnboxed` -- a real heap allocation outside the small-int
+   cache) still correctly drops both of its arguments, unchanged;
+   likewise `tests/build/Test27FFIDualABI_rc2.c`'s `Main_prim__bumpChar`
+   (the `CFChar`/`Char` `%foreign` wrapper) no longer drops its
+   argument, while `Main_prim__mixed` (`Int`+`String`, neither
+   `alwaysUnboxed`) and `Main_prim__noop` still correctly drop theirs.
+   Full `verify.sh --regen-expected` (85/85) and `refc-suite/run.sh`
+   (19/19) both pass, consistent with this being a pure codegen-waste
+   fix with no behavior change.

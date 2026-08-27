@@ -257,7 +257,7 @@ synthesizeWorker existingNames original eligible retEligible args wrapperRetRep 
         wrapperArgIds : List Int
         wrapperArgIds = map fst args
         wrapperPostDrop : List RCLocal
-        wrapperPostDrop = map RCLoc (map fst eligible)
+        wrapperPostDrop = map RCLoc (mapMaybe (\(p, ty) => if alwaysUnboxed ty then Nothing else Just p) eligible)
         wrapperBody : RCExp
         wrapperBody = RAppNameRep emptyFC workerName (map snd workerArgs) workerRetRep wrapperPostDrop (map RCLoc wrapperArgIds)
         wrapperDef : RCDef

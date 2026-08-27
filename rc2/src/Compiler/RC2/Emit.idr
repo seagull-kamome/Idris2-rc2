@@ -1317,6 +1317,18 @@ createCFunctions n (MkRCForeign ccs fargs ret) =
     discardLastArgument [] = []
     discardLastArgument xs@(_ :: _) = init xs
 
+    ||| `Nothing` for an always-Boxed FFI wrapper argument whose own
+    ||| `CFType` maps to `Types.alwaysUnboxed` (a tagged pointer at the
+    ||| C level -- `idris2rc2_drop` on it is a guaranteed runtime no-op),
+    ||| `Just` its own variable name otherwise. Filters `removeVars`'
+    ||| own drop list so such an argument's drop call isn't generated at
+    ||| all instead of merely being cheap once generated.
+    alwaysUnboxedDropVar : (String, String, CFType) -> Maybe String
+    alwaysUnboxedDropVar (_, varName, vt) =
+        case cfTypeNative vt of
+             Just ty => if alwaysUnboxed ty then Nothing else Just varName
+             Nothing => Just varName
+
     ||| `CFChar`-only cast a native argument needs at its `fctName` call
     ||| site: `nativeCType CharType` (this worker's own `uint32_t`
     ||| parameter) disagrees with `cTypeOfCFType CFChar` (`fctName`'s own
@@ -1441,7 +1453,7 @@ createCFunctions n (MkRCForeign ccs fargs ret) =
         emit EmptyFC "{"
         increaseIndentation
         emit EmptyFC $ " // rc2's own leak-free replacement for " ++ show n ++ " -- see KNOWN-BUGS.md / rc2/doc/fastpack-fix.md"
-        let removeVarsArgList = removeVars ((\(_, varName, _) => varName) <$> typeVarNameArgList)
+        let removeVarsArgList = removeVars (mapMaybe alwaysUnboxedDropVar typeVarNameArgList)
         emit EmptyFC $ "IDRIS2RC2_Value *retVal = " ++ fixedFnName
                     ++ "("
                     ++ showSep ", " (map (\(_, vn, vt) => extractValue CLangC vt vn) typeVarNameArgList)
@@ -1475,7 +1487,7 @@ createCFunctions n (MkRCForeign ccs fargs ret) =
               emit EmptyFC "{"
               increaseIndentation
               emit EmptyFC $ " // ffi call to " ++ cName fctName
-              let removeVarsArgList = removeVars ((\(_, varName, _) => varName) <$> typeVarNameArgList)
+              let removeVarsArgList = removeVars (mapMaybe alwaysUnboxedDropVar typeVarNameArgList)
               case ret of
                   CFIORes CFUnit => do
                       emit EmptyFC $ cName fctName
