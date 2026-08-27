@@ -356,19 +356,16 @@ ffiWorkerTable defs = do
 
     ffiEntry : {auto r : Ref FreshId Int} -> SortedSet Name -> (Name, RCDef) -> Core (List (Name, (Name, List Rep, Rep)))
     ffiEntry existingNames (n, MkRCForeign _ fargs ret) =
-        if length fargs > MaxExtractFunArgs
-           then pure []
-           else
-             let argReps = map repOf fargs
-                 retRep = repOf (peelIORes ret)
-                 anyNative : Rep -> Bool
-                 anyNative RBoxed = False
-                 anyNative _ = True
-             in if not (any anyNative argReps) && not (anyNative retRep)
-                   then pure []
-                   else do
-                     workerName <- freshName "idris2rc2_ffiworker_" existingNames n
-                     pure [(n, (workerName, argReps, retRep))]
+        let argReps = map repOf fargs
+            retRep = repOf (peelIORes ret)
+            anyNative : Rep -> Bool
+            anyNative RBoxed = False
+            anyNative _ = True
+        in if not (any anyNative argReps) && not (anyNative retRep)
+              then pure []
+              else do
+                workerName <- freshName "idris2rc2_ffiworker_" existingNames n
+                pure [(n, (workerName, argReps, retRep))]
     ffiEntry _ (_, _) = pure []
 
 ------------------------------------------------------------------------

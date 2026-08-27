@@ -990,6 +990,51 @@ the closest analogue to bug #2 above) passed without any fix needed.
    `valgrind` confirming `0 bytes definitely lost`. Full refc-suite
    (19/19) and smoke-test matrix still pass; `bench.sh` shows no
    regression.
+9. **Follow-up to item 7: Stage 3c's own separate FFI worker exclusion,
+   left untouched there, was investigated and removed too.** Item 7
+   left `ffiWorkerTable`'s own `length fargs > MaxExtractFunArgs`
+   cutoff (`DualABI.idr`'s `ffiEntry`) in place unconditionally,
+   noting only that the same "the callee side never needs the
+   closure-dispatch convention" argument plausibly applied but hadn't
+   actually been checked against this structurally distinct code path
+   (`MkRCForeign`, not `MkRCFun`). Checked now, and it does apply
+   without modification: an FFI worker is never stored in a `Closure`
+   either -- closure construction always uses the wrapper's own
+   original name, and the worker's own name is reachable only via a
+   direct, statically-named `RAppNameRep` call, so it never needs to
+   satisfy `support/rc2/runtime.c`'s `IDRIS2RC2_FUN0`..`FUN20`/
+   `FUNSTAR` convention that the width limit existed to protect. And
+   unlike Stage 3a's own worker-synthesis path, Stage 3c's own
+   `emitFFIWorker` (`Compiler.RC2.Emit`) never had a width-dependent
+   `var_arglist[]` fallback to route around in the first place --
+   `declareParam` always emits individually-typed positional
+   parameters regardless of arity, so item 6's original bug
+   structurally couldn't occur here at all. `extractValue`/
+   `packCFType`/`nativeCType` are all purely positional,
+   arity-independent transforms too, with nothing in them that changes
+   shape past 20 parameters. So `ffiEntry`'s own `if length fargs >
+   MaxExtractFunArgs then pure [] else ...` cutoff was removed outright
+   -- every `%foreign` declaration now always reaches the
+   natively-eligible-position check (`if not (any anyNative argReps)
+   && not (anyNative retRep) then pure [] else ...`) regardless of its
+   own arity, with no width-based exclusion left anywhere in Stage 3c.
+   Verified with `rc2/tests/Test48WideFFIDualABIWorker.idr` (a
+   15-parameter `%foreign` declaration -- 12 native-eligible `Int`s + 3
+   `Boxed` `String`s, mirroring `Test33WideDualABIWorker.idr`'s own
+   "mostly native, some Boxed" shape but past what the old limit would
+   have excluded -- called fully saturated from `main` so Stage 4's own
+   call-site rewriting fires): the generated C was inspected by hand
+   and shows `idris2rc2_ffiworker_Main_prim__wide_0` declared with 12
+   individually-typed `int64_t` parameters plus 3 `IDRIS2RC2_Value *`
+   parameters (no `var_arglist[]` anywhere), and `main`'s own call site
+   calling the worker directly, confirming Stage 4's own rewrite fired.
+   `verify.sh --regen-expected` (full suite, 85/85) and
+   `refc-suite/run.sh` (19/19) both still pass; `valgrind
+   --leak-check=full` reports `0 bytes definitely lost` for this test
+   (registered in `verify.sh`'s `LEAK_SENSITIVE_TESTS`). See
+   `KNOWN-BUGS.md`'s "Retired: FFI worker synthesis (Stage 3c) no
+   longer has its own argument-count limit" for the closed-out
+   `TODO.md` entry this resolves.
 
 ## Status
 

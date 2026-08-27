@@ -88,6 +88,56 @@ same as any other unrecognized directive string. If a way to disable
 `Reuse` is ever reintroduced, expect this same corruption to resurface
 until the actual invariant is found.
 
+## Retired: FFI worker synthesis (Stage 3c) no longer has its own argument-count limit
+
+`Compiler.RC2.DualABI`'s Stage 3c FFI worker synthesis (`ffiWorkerTable`/
+`ffiEntry`) used to exclude any `%foreign` declaration with more than
+`Compiler.RC2.EmitUtil.MaxExtractFunArgs` (20) parameters
+unconditionally (`if length fargs > MaxExtractFunArgs then pure []
+else ...`), before ever reaching the natively-eligible-position check
+that actually decides whether synthesizing a worker is worth it at
+all. This mirrored Stage 3a's own former blanket exclusion on ordinary
+functions (see `rc2/doc/dual-abi.md`'s history items 6-8) -- but unlike
+Stage 3a's, which got investigated and properly narrowed down to just
+the one thing it actually needed to guard against, Stage 3c's own copy
+was carried over unexamined, left in place "to be safe" (see `TODO.md`'s
+own former "Scope: FFI worker synthesis (Stage 3c) keeps its own
+20-argument limit" entry, now closed out and removed).
+
+Investigated and confirmed unnecessary, then removed outright -- the
+cutoff is gone from `ffiEntry`, which now always proceeds to the
+natively-eligible-position check (`if not (any anyNative argReps) &&
+not (anyNative retRep) then pure [] else ...`) regardless of a
+declaration's own arity: (1) `emitFFIWorker` (`Compiler.RC2.Emit`) has
+no width-dependent `var_arglist[]` fallback at all -- `declareParam`
+always emits individually-typed positional parameters, so the bug
+Stage 3a's own item 6 fixed for ordinary workers (`createCFunctions`'s
+`MkRCFun` case falling back to `var_arglist[]` past the width limit)
+never existed on this path in the first place; (2) an FFI worker is
+never stored in a `Closure` -- closure construction always uses the
+wrapper's own original name, and the worker's own name is reachable
+only via a direct, statically-named `RAppNameRep` call, so it never
+needs to satisfy `support/rc2/runtime.c`'s closure-dispatch
+function-pointer convention (`IDRIS2RC2_FUN0`..`FUN20`/`FUNSTAR`) that
+the width limit existed to protect; (3) `extractValue`/`packCFType`/
+`nativeCType` are all purely positional, arity-independent transforms,
+nothing in them changes shape past 20 parameters. Verified with a new
+regression test, `rc2/tests/Test48WideFFIDualABIWorker.idr` (a
+15-parameter `%foreign` declaration -- 12 native-eligible `Int`s + 3
+`Boxed` `String`s, mirroring `Test33WideDualABIWorker.idr`'s own
+"mostly native, some Boxed" shape but past what the old limit would
+have excluded, called fully saturated from `main` so Stage 4's own
+call-site rewriting fires): the generated C was inspected by hand and
+shows `idris2rc2_ffiworker_Main_prim__wide_0` declared with 12
+individually-typed `int64_t` parameters plus 3 `IDRIS2RC2_Value *`
+parameters (no `var_arglist[]` anywhere), with `main`'s own call site
+calling the worker directly (confirming Stage 4's rewrite fired).
+`verify.sh --regen-expected` (full suite, 85/85) and
+`refc-suite/run.sh` (19/19) both pass; `valgrind --leak-check=full`
+reports `0 bytes definitely lost` for this test (registered in
+`verify.sh`'s `LEAK_SENSITIVE_TESTS`). See `rc2/doc/dual-abi.md`'s
+history item 9 for the full write-up.
+
 ## Pre-existing `valgrind` leaks (unrelated to whatever's currently being tested)
 
 Found incidentally while re-running `valgrind --leak-check=full` across
