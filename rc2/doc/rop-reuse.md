@@ -1,9 +1,12 @@
-# Boxed-arithmetic reuse-in-place (`ROp`'s `Integer` ops)
+# Boxed-arithmetic reuse-in-place (`ROp`'s `Integer`/`Int64`/`Bits64`/`Double` ops)
 
 Implementation notes for the runtime-level reuse mechanism `ROp`'s
-Boxed (GMP `mpz_t`-backed) `Integer` arithmetic now uses, written to let
-a future session (or a future you) regain full context without
-re-deriving the design. Closes out `TODO.md`'s former "Performance:
+Boxed (GMP `mpz_t`-backed) `Integer` arithmetic now uses, later
+extended to Boxed `Int64`/`Bits64`/`Double` (fixed-size scalar
+payloads, not GMP-backed -- see "Runtime contract change, extended"
+below), written to let a future session (or a future you) regain full
+context without re-deriving the design. Closes out `TODO.md`'s former
+"Performance:
 `ROp`'s Boxed arithmetic never reuses a dying/unique operand's own heap
 allocation" section (see `KNOWN-BUGS.md`'s matching "Retired:" entry for
 the short version and the closure precedent this follows). See also
@@ -148,6 +151,121 @@ generated `ROp`-lowering code, so their contract could be changed in
 place with no need for new `_consume`-suffixed names to avoid breaking
 some other caller's expectations.
 
+## Runtime contract change, extended: `Int64`/`Bits64`/`Double`
+
+The "Scope" section below used to list `Double`/`Int64`/`Bits64` reuse
+as "a natural but not-yet-attempted follow-up." This has now been done,
+closing that out. The mechanism is structurally simpler than the
+`Integer` case above, because these three types are fixed-size scalar
+payloads -- `{ IDRIS2RC2_Header header; <int64_t/uint64_t/double> v; }`
+-- not a GMP `mpz_t` needing its own mutation function. "Reuse in
+place" for these is just overwriting the struct's own `v` field
+directly and returning the same pointer; there is no GMP-style
+in-place-mutate-the-limbs step to call.
+
+### The `IDRIS2RC2_INTTYPES` split: why it had to happen
+
+Before this change, `rc2/support/rc2/numeric.h` generated `Add`/`Sub`/
+`Mul`/`ShiftL`/`ShiftR`/`BAnd`/`BOr`/`BXOr` uniformly across all 8
+fixed-width int types (`Int8/16/32/64`, `Bits8/16/32/64`) via one
+X-macro, `IDRIS2RC2_INTTYPES(F)`. That uniform treatment is no longer
+correct once reuse-consuming ops enter the picture: `Int8/16/32` and
+`Bits8/16/32` are `Types.alwaysUnboxed` (see `doc/native-type-
+inference.md`) -- at the C level they're always a tagged pointer, never
+a real heap allocation (`datatypes.h`'s `idris2rc2_is_unboxed`
+bit-check distinguishes the two). Calling `idris2rc2_isUnique` (a raw
+`->header.refCount` read) on one of these tagged values would read
+through a fake pointer -- undefined behaviour, not merely wrong.
+
+The fix was to split the one X-macro into two:
+
+- `IDRIS2RC2_INTTYPES_TAGGED(F)` -- the 6 always-unboxed types
+  (`Int8/16/32`, `Bits8/16/32`), unchanged behavior, still built from
+  the original `IDRIS2RC2_DEFOP` macro. No `isUnique` check ever
+  happens for these.
+- `IDRIS2RC2_INTTYPES_REUSABLE(F)` -- `Int64`/`Bits64` only, the two
+  fixed-width int types that are genuinely heap-allocated once their
+  value moves past the small-int cache `[0,100)`.
+
+A new macro, `IDRIS2RC2_DEFOP_REUSE(OPNAME, TY, CTY, GET, MK, OP)`,
+generates the reuse-consuming versions for the reusable pair. It
+follows the exact same "check `idris2rc2_isUnique` on `a`, then `b`,
+else allocate fresh" shape as `IDRIS2RC2_INTEGER_BINOP` above, but
+mutates `((IDRIS2RC2_##TY *)a)->v = result` directly instead of calling
+a GMP function into a `dst->v` mpz_t.
+
+`Double` is never small-int-cached at all -- `idris2rc2_mkDouble`
+always allocates fresh -- so it doesn't need the tagged/reusable split
+in the first place, and got its own `IDRIS2RC2_DOUBLE_BINOP(OPNAME,
+OP)` macro for `add`/`sub`/`mul`/`div`.
+
+### `Div`/`Mod` and `Neg`, this time around
+
+`Int64`'s Euclidean div/mod and `Bits64`'s plain div/mod are trivial
+one-liners in this header, unlike `Integer`'s own `idris2rc2_div_Integer`
+(a real multi-statement GMP algorithm, still excluded -- see "Scope").
+There was no reason to exclude `Div`/`Mod` for `Int64`/`Bits64` this
+time, so both were converted to the reuse-consuming shape alongside
+the rest.
+
+`Neg` was converted for `Int64`/`Double` (hand-written unary versions,
+same field-overwrite pattern as `negate_Integer`). `Bits64` has no
+`negate` at all, matching pre-existing behavior -- unsigned types don't
+get one.
+
+### Compiler side: `isReuseConsumingOp` gains matching cases
+
+`Compiler.RC2.EmitUtil`'s `isReuseConsumingOp` gained cases for
+`Int64Type`/`Bits64Type`/`DoubleType`, each covering exactly the ops
+that type actually has: `Bits64Type` gets the bitwise ops but no `Neg`
+(no `negate` at that type); `DoubleType` gets `Add`/`Sub`/`Mul`/`Div`/
+`Neg` but no `Mod`/bitwise ops (`Double` has neither) -- matching
+Idris2's own set of available operations per type.
+
+## A real bug found: `IntType` and `Int64Type` share a C name
+
+This is the most important thing to take away from this extension, and
+it deserves its own section rather than a footnote.
+
+`EmitUtil.cPrimType` maps **both** `IntType` (Idris2's plain,
+machine-width `Int`) and `Int64Type` to the identical C function name
+suffix, `"Int64"`. `Add IntType` and `Add Int64Type` both lower to a
+call to the exact same `idris2rc2_add_Int64` -- there is only one
+runtime function, shared by two distinct `PrimType`s.
+
+The first pass at this implementation added only the `Int64Type` cases
+to `isReuseConsumingOp`, missing `IntType` entirely -- it looked like
+the obvious/complete set at a glance, since `IntType` doesn't appear in
+its own right anywhere in `numeric.h`. But `numeric.h`'s
+`idris2rc2_add_Int64` (and its siblings) now unconditionally consume
+and drop their own operands internally, for *every* caller, regardless
+of which `PrimType` the IR-level call originated from. Meanwhile
+`Compiler.RC2.Emit`'s `ROp` case still emitted its old explicit
+post-call drop for any op `isReuseConsumingOp` didn't recognize -- which,
+with `IntType` missing, meant *every plain `IntType` op*. The runtime
+already dropped the operand; the compiler-emitted code then dropped it
+again. This is a genuine **double-drop / use-after-free bug**, not
+merely a missed optimization -- a contract change on a shared/aliased
+runtime function name needs the compiler-side gate to recognize *every*
+`PrimType` that maps to that same C name, not just the one that looks
+like the "real" owner of it.
+
+It was caught by a full `verify.sh` regression run: four PRE-EXISTING,
+previously-passing tests -- `Test16LoopContinuePostDrop`,
+`Test19LoopInvariantParam`, `Test3Data`, `Test9SelfTailLoop` -- started
+producing wrong output. Not crashes: corrupted values from the
+use-after-free, and still 0 bytes "definitely lost" under valgrind,
+since the freed memory was reused/still mapped rather than actually
+leaked. That's worth calling out as a real gap in relying on valgrind's
+leak-detection alone to catch this class of bug -- a double-free/UAF
+doesn't always show up as a leak.
+
+Fixed by adding the identical set of `IntType` cases alongside every
+`Int64Type` case in `isReuseConsumingOp`, with a doc comment on
+`isReuseConsumingOp` itself explaining why the two `PrimType`s must
+always be kept in lockstep for any op added in the future. After the
+fix, full `verify.sh --regen-expected` returned to 89/89 passing.
+
 ## Compiler-side change: `isReuseConsumingOp` and the `Emit.idr` skip
 
 `Compiler.RC2.EmitUtil` gained one new pure function:
@@ -233,11 +351,28 @@ concurrency-related code (see `doc/concurrency.md`).
   not a one-liner macro instantiation like the ten ops above --
   extending it the same way is more involved and was deliberately
   deferred, not folded into this change.
-- **`Double`/`Int64`/`Bits64` reuse.** These Boxed numeric types have
-  their own runtime primitives and could plausibly benefit from the
-  same `idris2rc2_isUnique`-gated in-place-reuse treatment, but none of
-  that was touched here -- this change is `Integer`(GMP)-only. A
-  natural follow-up, not attempted.
+- ~~**`Double`/`Int64`/`Bits64` reuse.**~~ Done -- see "Runtime contract
+  change, extended: `Int64`/`Bits64`/`Double`" above. (Left struck
+  through rather than deleted, so a reader following this document's
+  history can see this item was the follow-up that closed itself out.)
+- **Pinned-reference `negate` typo, discovered while testing this
+  extension.** While writing `Test50FixedWidthOpReuse.idr`, the pinned
+  reference `idris2 --cg refc` 0.8.0's own installed
+  `mathFunctions.h` turned out to define `idris2_nagate_Int8/16/32/64`
+  and `idris2_nagate_Double` -- misspelled ("nagate") -- as macros,
+  while that same pinned reference's own codegen emits calls to the
+  correctly-spelled `idris2_negate_<...>`. Any Idris2 program using
+  `negate` on a fixed-width int or `Double` type fails to *link*
+  against that one pinned binary as a result. This is a defect in the
+  pinned reference binary, not in rc2 (`rc2/support/rc2/numeric.h`'s
+  own `idris2rc2_negate_Int64`/`negate_Double` are spelled correctly
+  and unaffected), so `Test50FixedWidthOpReuse.idr` simply doesn't
+  exercise `negate` at all -- `Test49IntegerOpReuse.idr`'s `Integer`
+  `negate` usage already covers the general reuse-consuming-`Neg`
+  pattern, and `Integer`'s `idris2_negate_Integer` is a real function,
+  not a macro, so it isn't affected by this typo. See `TODO.md`'s
+  "Pinned reference `idris2 --cg refc` 0.8.0 misspells `negate` for
+  fixed-width/`Double` types" entry for the full writeup.
 - **`boxOpArg`'s ephemeral-temporary reuse is already included, not
   excluded.** As noted above, `Emit.idr`'s skip covers both `postDrop`
   and `boxOpArg`'s temporaries uniformly; there was no need to carve
@@ -291,15 +426,60 @@ concurrency-related code (see `doc/concurrency.md`).
   confirms the primitive is invoked with exactly the refcounts the
   ownership analysis guarantees.
 
+## Verification performed (extension: `Int64`/`Bits64`/`Double`)
+
+- New regression test: `rc2/tests/Test50FixedWidthOpReuse.idr` --
+  `sumInt64`/`sumBits64`/`sumDouble` (self-tail-recursive accumulator
+  loops past the small-int cache) plus `bitOpsInt64`/`bitOpsBits64`
+  (straight-line `Data.Bits` usage: `.&.`/`.|.`/`xor`/`shiftL`/
+  `shiftR`/`div`/`mod`).
+- `sumInt64`/`sumBits64`/`sumDouble` turned out to mostly exercise
+  `Compiler.RC2.Loop`'s own native-shadow loop promotion instead of the
+  Boxed reuse-consuming primitives: the whole loop body ends up as
+  plain unboxed `int64_t`/`double` C locals, confirmed by inspecting
+  `rc2/tests/build/Test50FixedWidthOpReuse_rc2.c`'s
+  `idris2rc2_worker_Main_sumInt64_0`, whose body is pure native
+  arithmetic with no Boxed call at all.
+- `bitOpsInt64`/`bitOpsBits64` are the ones that actually exercise the
+  Boxed reuse-consuming path in practice, specifically via `div`/`mod`:
+  Idris2's `Prelude.Num`'s `Integral` interface dispatch means these
+  aren't inlined as a native operator the way `+`/`-`/`*`/bitwise ops
+  are. `idris2rc2_worker_Prelude_Num_div_Integral_Int64_7`'s generated
+  body calls `idris2rc2_div_Int64(var_0, opBox_41)` directly with no
+  trailing `idris2rc2_drop` call (hand-confirmed) -- proof the
+  consuming-primitive contract and the compiler-side skip are both
+  correctly wired end-to-end for `Int64`, and by extension `IntType`
+  (identical C name). The same pattern was independently confirmed for
+  `idris2rc2_mod_Bits64`/`div_Bits64`, both present with no trailing
+  drop in `rc2/tests/build/Test50FixedWidthOpReuse_rc2.c` at lines 712
+  and 772.
+- `Neg` was deliberately not exercised in `Test50` at all, due to the
+  pinned-reference `negate` typo described above and in `TODO.md`.
+- Full `verify.sh --regen-expected`: 89/89 pass (87 + the new Test50;
+  this also re-confirms the `IntType`/`Int64Type` double-drop fix,
+  since it's what brought the four regressed tests back to passing).
+- `refc-suite/run.sh`: 19/19 pass.
+- `valgrind --leak-check=full` on `Test50FixedWidthOpReuse`: 0 bytes
+  definitely lost.
+
 ## Files
 
 - `rc2/support/rc2/numeric.h` -- `IDRIS2RC2_INTEGER_BINOP`,
   `IDRIS2RC2_INTEGER_SHIFTOP`, `idris2rc2_negate_Integer`, and the 10
-  instantiations built from the two macros.
-- `rc2/src/Compiler/RC2/EmitUtil.idr` -- `isReuseConsumingOp`.
+  instantiations built from the two macros. Also (extension):
+  `IDRIS2RC2_INTTYPES_TAGGED`/`IDRIS2RC2_INTTYPES_REUSABLE` (the split
+  of the former single `IDRIS2RC2_INTTYPES`), `IDRIS2RC2_DEFOP_REUSE`,
+  `IDRIS2RC2_DOUBLE_BINOP`, and the hand-written `Int64`/`Double`
+  `negate`.
+- `rc2/src/Compiler/RC2/EmitUtil.idr` -- `isReuseConsumingOp`, including
+  (extension) the `Int64Type`/`Bits64Type`/`DoubleType` cases and the
+  matching `IntType` cases added by the double-drop bug fix.
 - `rc2/src/Compiler/RC2/Emit.idr` -- `emitRC (ROp ...)`'s
   `isReuseConsumingOp`-gated skip of both `removeVars` calls.
-- `rc2/tests/Test49IntegerOpReuse.idr` -- the regression test.
+- `rc2/tests/Test49IntegerOpReuse.idr` -- the regression test for the
+  `Integer` mechanism.
+- `rc2/tests/Test50FixedWidthOpReuse.idr` -- the regression test for
+  the `Int64`/`Bits64`/`Double` extension.
 - Explicitly untouched: `rc2/src/Compiler/RC2/RCExp.idr` (`ROp`'s own
   shape), `rc2/src/Compiler/RC2/RC.idr` (`annotate`'s `ROp` case), and
   `rc2/src/Compiler/RC2/Reuse.idr` (constructor-reuse-only, unrelated) --

@@ -58,6 +58,29 @@ static inline int64_t idris2rc2_emod_i64(int64_t n, int64_t d) {
   F(Bits32, uint32_t, idris2rc2_to_u32, idris2rc2_mkBits32)                              \
   F(Bits64, uint64_t, idris2rc2_to_u64, idris2rc2_mkBits64)
 
+// Subset of IDRIS2RC2_INTTYPES that's always a tagged pointer
+// (Types.alwaysUnboxed) at the C level, never a real heap allocation --
+// idris2rc2_isUnique (a raw ->header.refCount read) would be undefined
+// behaviour on one of these, so the reuse-in-place arithmetic below
+// (IDRIS2RC2_INTTYPES_REUSABLE) must never be applied to them. Also
+// covered by the alwaysUnboxed dup/drop elision already (Compiler.RC2.RC's
+// alwaysUnboxedBoxedLocalsR), so there's no drop call left to reuse
+// anyway for these.
+#define IDRIS2RC2_INTTYPES_TAGGED(F)                                              \
+  F(Int8, int8_t, idris2rc2_to_i8, idris2rc2_mkInt8)                                     \
+  F(Int16, int16_t, idris2rc2_to_i16, idris2rc2_mkInt16)                                 \
+  F(Int32, int32_t, idris2rc2_to_i32, idris2rc2_mkInt32)                                 \
+  F(Bits8, uint8_t, idris2rc2_to_u8, idris2rc2_mkBits8)                                  \
+  F(Bits16, uint16_t, idris2rc2_to_u16, idris2rc2_mkBits16)                              \
+  F(Bits32, uint32_t, idris2rc2_to_u32, idris2rc2_mkBits32)
+
+// The other subset: genuinely heap-allocated (outside the small-int
+// cache) when Boxed, so a dying/unique operand's own storage is worth
+// reusing in place -- see rc2/doc/rop-reuse.md.
+#define IDRIS2RC2_INTTYPES_REUSABLE(F)                                            \
+  F(Int64, int64_t, idris2rc2_to_i64, idris2rc2_mkInt64)                                 \
+  F(Bits64, uint64_t, idris2rc2_to_u64, idris2rc2_mkBits64)
+
 // Most of the functions below are one-liners (a single boxed read, C
 // operator, and boxed write) -- defined here as `static inline` rather than
 // forward-declared and defined in numeric.c, so every translation unit that
@@ -85,14 +108,47 @@ static inline int64_t idris2rc2_emod_i64(int64_t n, int64_t d) {
 #define IDRIS2RC2_OR_DEF(TY, CTY, GET, MK) IDRIS2RC2_DEFOP(or, TY, CTY, GET, MK, |)
 #define IDRIS2RC2_XOR_DEF(TY, CTY, GET, MK) IDRIS2RC2_DEFOP(xor, TY, CTY, GET, MK, ^)
 
-IDRIS2RC2_INTTYPES(IDRIS2RC2_ADD_DEF)
-IDRIS2RC2_INTTYPES(IDRIS2RC2_SUB_DEF)
-IDRIS2RC2_INTTYPES(IDRIS2RC2_MUL_DEF)
-IDRIS2RC2_INTTYPES(IDRIS2RC2_SHL_DEF)
-IDRIS2RC2_INTTYPES(IDRIS2RC2_SHR_DEF)
-IDRIS2RC2_INTTYPES(IDRIS2RC2_AND_DEF)
-IDRIS2RC2_INTTYPES(IDRIS2RC2_OR_DEF)
-IDRIS2RC2_INTTYPES(IDRIS2RC2_XOR_DEF)
+IDRIS2RC2_INTTYPES_TAGGED(IDRIS2RC2_ADD_DEF)
+IDRIS2RC2_INTTYPES_TAGGED(IDRIS2RC2_SUB_DEF)
+IDRIS2RC2_INTTYPES_TAGGED(IDRIS2RC2_MUL_DEF)
+IDRIS2RC2_INTTYPES_TAGGED(IDRIS2RC2_SHL_DEF)
+IDRIS2RC2_INTTYPES_TAGGED(IDRIS2RC2_SHR_DEF)
+IDRIS2RC2_INTTYPES_TAGGED(IDRIS2RC2_AND_DEF)
+IDRIS2RC2_INTTYPES_TAGGED(IDRIS2RC2_OR_DEF)
+IDRIS2RC2_INTTYPES_TAGGED(IDRIS2RC2_XOR_DEF)
+
+// Int64/Bits64: reuse-consuming versions -- both operands are handed
+// over already dup'd for any use past this call (Compiler.RC2.Emit's
+// ROp lowering, matching Integer's own treatment -- see
+// rc2/doc/rop-reuse.md), so a uniquely-referenced one's own struct
+// becomes the result in place instead of a fresh idris2rc2_mk*; the
+// other operand is dropped here instead of by the caller.
+#define IDRIS2RC2_DEFOP_REUSE(OPNAME, TY, CTY, GET, MK, OP)                        \
+  static inline IDRIS2RC2_Value *idris2rc2_##OPNAME##_##TY(IDRIS2RC2_Value *a, IDRIS2RC2_Value *b) { \
+    CTY result = (CTY)(GET(a) OP GET(b));                                   \
+    IDRIS2RC2_Value *dst;                                                    \
+    if (idris2rc2_isUnique(a))      { ((IDRIS2RC2_##TY *)a)->v = result; dst = a; idris2rc2_drop(b); } \
+    else if (idris2rc2_isUnique(b)) { ((IDRIS2RC2_##TY *)b)->v = result; dst = b; idris2rc2_drop(a); } \
+    else                             { dst = MK(result); idris2rc2_drop(a); idris2rc2_drop(b); }        \
+    return dst;                                                              \
+  }
+#define IDRIS2RC2_ADD_REUSE_DEF(TY, CTY, GET, MK) IDRIS2RC2_DEFOP_REUSE(add, TY, CTY, GET, MK, +)
+#define IDRIS2RC2_SUB_REUSE_DEF(TY, CTY, GET, MK) IDRIS2RC2_DEFOP_REUSE(sub, TY, CTY, GET, MK, -)
+#define IDRIS2RC2_MUL_REUSE_DEF(TY, CTY, GET, MK) IDRIS2RC2_DEFOP_REUSE(mul, TY, CTY, GET, MK, *)
+#define IDRIS2RC2_SHL_REUSE_DEF(TY, CTY, GET, MK) IDRIS2RC2_DEFOP_REUSE(shiftl, TY, CTY, GET, MK, <<)
+#define IDRIS2RC2_SHR_REUSE_DEF(TY, CTY, GET, MK) IDRIS2RC2_DEFOP_REUSE(shiftr, TY, CTY, GET, MK, >>)
+#define IDRIS2RC2_AND_REUSE_DEF(TY, CTY, GET, MK) IDRIS2RC2_DEFOP_REUSE(and, TY, CTY, GET, MK, &)
+#define IDRIS2RC2_OR_REUSE_DEF(TY, CTY, GET, MK) IDRIS2RC2_DEFOP_REUSE(or, TY, CTY, GET, MK, |)
+#define IDRIS2RC2_XOR_REUSE_DEF(TY, CTY, GET, MK) IDRIS2RC2_DEFOP_REUSE(xor, TY, CTY, GET, MK, ^)
+
+IDRIS2RC2_INTTYPES_REUSABLE(IDRIS2RC2_ADD_REUSE_DEF)
+IDRIS2RC2_INTTYPES_REUSABLE(IDRIS2RC2_SUB_REUSE_DEF)
+IDRIS2RC2_INTTYPES_REUSABLE(IDRIS2RC2_MUL_REUSE_DEF)
+IDRIS2RC2_INTTYPES_REUSABLE(IDRIS2RC2_SHL_REUSE_DEF)
+IDRIS2RC2_INTTYPES_REUSABLE(IDRIS2RC2_SHR_REUSE_DEF)
+IDRIS2RC2_INTTYPES_REUSABLE(IDRIS2RC2_AND_REUSE_DEF)
+IDRIS2RC2_INTTYPES_REUSABLE(IDRIS2RC2_OR_REUSE_DEF)
+IDRIS2RC2_INTTYPES_REUSABLE(IDRIS2RC2_XOR_REUSE_DEF)
 
 #define IDRIS2RC2_CMPOP(OPNAME, TY, CTY, GET, MK, OP)                              \
   static inline IDRIS2RC2_Value *idris2rc2_##OPNAME##_##TY(IDRIS2RC2_Value *a, IDRIS2RC2_Value *b) {  \
@@ -117,11 +173,28 @@ IDRIS2RC2_INTTYPES(IDRIS2RC2_GTE_DEF)
 static inline IDRIS2RC2_Value *idris2rc2_div_Bits8(IDRIS2RC2_Value *a, IDRIS2RC2_Value *b) { return idris2rc2_mkBits8(idris2rc2_to_u8(a) / idris2rc2_to_u8(b)); }
 static inline IDRIS2RC2_Value *idris2rc2_div_Bits16(IDRIS2RC2_Value *a, IDRIS2RC2_Value *b) { return idris2rc2_mkBits16(idris2rc2_to_u16(a) / idris2rc2_to_u16(b)); }
 static inline IDRIS2RC2_Value *idris2rc2_div_Bits32(IDRIS2RC2_Value *a, IDRIS2RC2_Value *b) { return idris2rc2_mkBits32(idris2rc2_to_u32(a) / idris2rc2_to_u32(b)); }
-static inline IDRIS2RC2_Value *idris2rc2_div_Bits64(IDRIS2RC2_Value *a, IDRIS2RC2_Value *b) { return idris2rc2_mkBits64(idris2rc2_to_u64(a) / idris2rc2_to_u64(b)); }
+
+// Bits64: reuse-consuming, same pattern as the arithmetic/bitwise ops
+// above -- see rc2/doc/rop-reuse.md.
+static inline IDRIS2RC2_Value *idris2rc2_div_Bits64(IDRIS2RC2_Value *a, IDRIS2RC2_Value *b) {
+  uint64_t result = idris2rc2_to_u64(a) / idris2rc2_to_u64(b);
+  IDRIS2RC2_Value *dst;
+  if (idris2rc2_isUnique(a))      { ((IDRIS2RC2_Bits64 *)a)->v = result; dst = a; idris2rc2_drop(b); }
+  else if (idris2rc2_isUnique(b)) { ((IDRIS2RC2_Bits64 *)b)->v = result; dst = b; idris2rc2_drop(a); }
+  else                             { dst = idris2rc2_mkBits64(result); idris2rc2_drop(a); idris2rc2_drop(b); }
+  return dst;
+}
 static inline IDRIS2RC2_Value *idris2rc2_mod_Bits8(IDRIS2RC2_Value *a, IDRIS2RC2_Value *b) { return idris2rc2_mkBits8(idris2rc2_to_u8(a) % idris2rc2_to_u8(b)); }
 static inline IDRIS2RC2_Value *idris2rc2_mod_Bits16(IDRIS2RC2_Value *a, IDRIS2RC2_Value *b) { return idris2rc2_mkBits16(idris2rc2_to_u16(a) % idris2rc2_to_u16(b)); }
 static inline IDRIS2RC2_Value *idris2rc2_mod_Bits32(IDRIS2RC2_Value *a, IDRIS2RC2_Value *b) { return idris2rc2_mkBits32(idris2rc2_to_u32(a) % idris2rc2_to_u32(b)); }
-static inline IDRIS2RC2_Value *idris2rc2_mod_Bits64(IDRIS2RC2_Value *a, IDRIS2RC2_Value *b) { return idris2rc2_mkBits64(idris2rc2_to_u64(a) % idris2rc2_to_u64(b)); }
+static inline IDRIS2RC2_Value *idris2rc2_mod_Bits64(IDRIS2RC2_Value *a, IDRIS2RC2_Value *b) {
+  uint64_t result = idris2rc2_to_u64(a) % idris2rc2_to_u64(b);
+  IDRIS2RC2_Value *dst;
+  if (idris2rc2_isUnique(a))      { ((IDRIS2RC2_Bits64 *)a)->v = result; dst = a; idris2rc2_drop(b); }
+  else if (idris2rc2_isUnique(b)) { ((IDRIS2RC2_Bits64 *)b)->v = result; dst = b; idris2rc2_drop(a); }
+  else                             { dst = idris2rc2_mkBits64(result); idris2rc2_drop(a); idris2rc2_drop(b); }
+  return dst;
+}
 
 #define IDRIS2RC2_EUCLID_DIV(TY, CTY, GET, MK)                                     \
   static inline IDRIS2RC2_Value *idris2rc2_div_##TY(IDRIS2RC2_Value *a, IDRIS2RC2_Value *b) {         \
@@ -138,23 +211,68 @@ static inline IDRIS2RC2_Value *idris2rc2_mod_Bits64(IDRIS2RC2_Value *a, IDRIS2RC
 IDRIS2RC2_EUCLID_DIV(Int8, int8_t, idris2rc2_to_i8, idris2rc2_mkInt8)
 IDRIS2RC2_EUCLID_DIV(Int16, int16_t, idris2rc2_to_i16, idris2rc2_mkInt16)
 IDRIS2RC2_EUCLID_DIV(Int32, int32_t, idris2rc2_to_i32, idris2rc2_mkInt32)
-IDRIS2RC2_EUCLID_DIV(Int64, int64_t, idris2rc2_to_i64, idris2rc2_mkInt64)
 IDRIS2RC2_EUCLID_MOD(Int8, int8_t, idris2rc2_to_i8, idris2rc2_mkInt8)
 IDRIS2RC2_EUCLID_MOD(Int16, int16_t, idris2rc2_to_i16, idris2rc2_mkInt16)
 IDRIS2RC2_EUCLID_MOD(Int32, int32_t, idris2rc2_to_i32, idris2rc2_mkInt32)
-IDRIS2RC2_EUCLID_MOD(Int64, int64_t, idris2rc2_to_i64, idris2rc2_mkInt64)
+
+// Int64: reuse-consuming Euclidean div/mod -- same pattern as the
+// arithmetic/bitwise ops above -- see rc2/doc/rop-reuse.md.
+static inline IDRIS2RC2_Value *idris2rc2_div_Int64(IDRIS2RC2_Value *a, IDRIS2RC2_Value *b) {
+  int64_t num = idris2rc2_to_i64(a), denom = idris2rc2_to_i64(b);
+  int64_t rem = num % denom;
+  int64_t result = num / denom + ((rem < 0) ? ((denom < 0) ? 1 : -1) : 0);
+  IDRIS2RC2_Value *dst;
+  if (idris2rc2_isUnique(a))      { ((IDRIS2RC2_Int64 *)a)->v = result; dst = a; idris2rc2_drop(b); }
+  else if (idris2rc2_isUnique(b)) { ((IDRIS2RC2_Int64 *)b)->v = result; dst = b; idris2rc2_drop(a); }
+  else                             { dst = idris2rc2_mkInt64(result); idris2rc2_drop(a); idris2rc2_drop(b); }
+  return dst;
+}
+static inline IDRIS2RC2_Value *idris2rc2_mod_Int64(IDRIS2RC2_Value *a, IDRIS2RC2_Value *b) {
+  int64_t num = idris2rc2_to_i64(a), denom = idris2rc2_to_i64(b);
+  denom = (denom < 0) ? -denom : denom;
+  int64_t result = num % denom + (num < 0 ? denom : 0);
+  IDRIS2RC2_Value *dst;
+  if (idris2rc2_isUnique(a))      { ((IDRIS2RC2_Int64 *)a)->v = result; dst = a; idris2rc2_drop(b); }
+  else if (idris2rc2_isUnique(b)) { ((IDRIS2RC2_Int64 *)b)->v = result; dst = b; idris2rc2_drop(a); }
+  else                             { dst = idris2rc2_mkInt64(result); idris2rc2_drop(a); idris2rc2_drop(b); }
+  return dst;
+}
 
 static inline IDRIS2RC2_Value *idris2rc2_negate_Int8(IDRIS2RC2_Value *x) { return idris2rc2_mkInt8(-idris2rc2_to_i8(x)); }
 static inline IDRIS2RC2_Value *idris2rc2_negate_Int16(IDRIS2RC2_Value *x) { return idris2rc2_mkInt16(-idris2rc2_to_i16(x)); }
 static inline IDRIS2RC2_Value *idris2rc2_negate_Int32(IDRIS2RC2_Value *x) { return idris2rc2_mkInt32(-idris2rc2_to_i32(x)); }
-static inline IDRIS2RC2_Value *idris2rc2_negate_Int64(IDRIS2RC2_Value *x) { return idris2rc2_mkInt64(-idris2rc2_to_i64(x)); }
-static inline IDRIS2RC2_Value *idris2rc2_negate_Double(IDRIS2RC2_Value *x) { return idris2rc2_mkDouble(-idris2rc2_to_double(x)); }
+// Int64/Double negate: reuse-consuming, unary version of the same
+// pattern -- see rc2/doc/rop-reuse.md.
+static inline IDRIS2RC2_Value *idris2rc2_negate_Int64(IDRIS2RC2_Value *x) {
+  int64_t result = -idris2rc2_to_i64(x);
+  if (idris2rc2_isUnique(x)) { ((IDRIS2RC2_Int64 *)x)->v = result; return x; }
+  idris2rc2_drop(x);
+  return idris2rc2_mkInt64(result);
+}
+static inline IDRIS2RC2_Value *idris2rc2_negate_Double(IDRIS2RC2_Value *x) {
+  double result = -idris2rc2_to_double(x);
+  if (idris2rc2_isUnique(x)) { ((IDRIS2RC2_Double *)x)->v = result; return x; }
+  idris2rc2_drop(x);
+  return idris2rc2_mkDouble(result);
+}
 
 // ---- Double ----
-static inline IDRIS2RC2_Value *idris2rc2_add_Double(IDRIS2RC2_Value *a, IDRIS2RC2_Value *b) { return idris2rc2_mkDouble(idris2rc2_to_double(a) + idris2rc2_to_double(b)); }
-static inline IDRIS2RC2_Value *idris2rc2_sub_Double(IDRIS2RC2_Value *a, IDRIS2RC2_Value *b) { return idris2rc2_mkDouble(idris2rc2_to_double(a) - idris2rc2_to_double(b)); }
-static inline IDRIS2RC2_Value *idris2rc2_mul_Double(IDRIS2RC2_Value *a, IDRIS2RC2_Value *b) { return idris2rc2_mkDouble(idris2rc2_to_double(a) * idris2rc2_to_double(b)); }
-static inline IDRIS2RC2_Value *idris2rc2_div_Double(IDRIS2RC2_Value *a, IDRIS2RC2_Value *b) { return idris2rc2_mkDouble(idris2rc2_to_double(a) / idris2rc2_to_double(b)); }
+// Double: reuse-consuming -- never small-int-cached (idris2rc2_mkDouble
+// always allocates), so every Boxed Double is a genuine heap struct
+// worth reusing when unique -- see rc2/doc/rop-reuse.md.
+#define IDRIS2RC2_DOUBLE_BINOP(OPNAME, OP)                                         \
+  static inline IDRIS2RC2_Value *idris2rc2_##OPNAME##_Double(IDRIS2RC2_Value *a, IDRIS2RC2_Value *b) { \
+    double result = idris2rc2_to_double(a) OP idris2rc2_to_double(b);       \
+    IDRIS2RC2_Value *dst;                                                    \
+    if (idris2rc2_isUnique(a))      { ((IDRIS2RC2_Double *)a)->v = result; dst = a; idris2rc2_drop(b); } \
+    else if (idris2rc2_isUnique(b)) { ((IDRIS2RC2_Double *)b)->v = result; dst = b; idris2rc2_drop(a); } \
+    else                             { dst = idris2rc2_mkDouble(result); idris2rc2_drop(a); idris2rc2_drop(b); } \
+    return dst;                                                              \
+  }
+IDRIS2RC2_DOUBLE_BINOP(add, +)
+IDRIS2RC2_DOUBLE_BINOP(sub, -)
+IDRIS2RC2_DOUBLE_BINOP(mul, *)
+IDRIS2RC2_DOUBLE_BINOP(div, /)
 static inline IDRIS2RC2_Value *idris2rc2_lt_Double(IDRIS2RC2_Value *a, IDRIS2RC2_Value *b) { return idris2rc2_mkBool(idris2rc2_to_double(a) < idris2rc2_to_double(b)); }
 static inline IDRIS2RC2_Value *idris2rc2_gt_Double(IDRIS2RC2_Value *a, IDRIS2RC2_Value *b) { return idris2rc2_mkBool(idris2rc2_to_double(a) > idris2rc2_to_double(b)); }
 static inline IDRIS2RC2_Value *idris2rc2_eq_Double(IDRIS2RC2_Value *a, IDRIS2RC2_Value *b) { return idris2rc2_mkBool(idris2rc2_to_double(a) == idris2rc2_to_double(b)); }

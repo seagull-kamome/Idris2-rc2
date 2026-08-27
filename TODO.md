@@ -480,6 +480,38 @@ against this one pinned reference. Revisit (i.e. add an `Int32` case
 back to that test) if the pinned reference `idris2` version is ever
 bumped past whatever release added `Int32` FFI support.
 
+## Pinned reference `idris2 --cg refc` 0.8.0 misspells `negate` for fixed-width/`Double` types
+
+Found while writing `rc2/tests/Test50FixedWidthOpReuse.idr` (the
+`Int64`/`Bits64`/`Double` extension of `ROp` reuse-in-place, see
+`rc2/doc/rop-reuse.md`): the pinned reference `idris2 --cg refc`
+0.8.0's own installed runtime support header (`mathFunctions.h`, at
+`/nix/store/.../libidris2_support-0.8.0/share/refc/mathFunctions.h`)
+defines `idris2_nagate_Int8`/`idris2_nagate_Int16`/
+`idris2_nagate_Int32`/`idris2_nagate_Int64`/`idris2_nagate_Double` --
+misspelled ("nagate", not "negate") -- as macros, while that same
+pinned reference's own codegen (confirmed by inspecting a `_refc.c`
+compile error) emits calls to the correctly-spelled
+`idris2_negate_<...>`. Any Idris2 program using `negate` on any
+fixed-width int or `Double` type therefore fails to *link* (technically
+a C compile error: `implicit declaration of function
+'idris2_negate_Double'`) against this one pinned binary. Confirmed via
+a real compile error, not just by reading the header. `Integer`'s own
+`idris2_negate_Integer` is a real, correctly-spelled function (not a
+macro) and is unaffected. **Not rc2-specific** -- confirmed
+`rc2/support/rc2/numeric.h`'s own `idris2rc2_negate_Int64`/
+`negate_Double` are spelled correctly and completely unaffected; this
+is purely a defect in the one pinned reference *binary* used for
+cross-checking, exactly the same class of gap as the "Pinned reference
+`idris2 --cg refc` 0.8.0 rejects `Int32` in `%foreign` position" entry
+above. Worked around in `Test50FixedWidthOpReuse.idr` by not exercising
+`negate` there at all (a comment in the test file explains why, and
+points out `Test49IntegerOpReuse.idr`'s own `Integer`-typed `negate`
+usage already covers the *general* reuse-consuming-`Neg` pattern, since
+`Integer`'s negate is unaffected by this reference bug). Revisit (i.e.
+add `negate` coverage back to `Test50`) if the pinned reference
+`idris2` version is ever bumped past whatever release fixes this typo.
+
 ## Performance: codepoint-indexed String access is O(n) per call, not O(1)
 
 `String`'s primitives (`length`/`strIndex`/`strTail`/`strCons`/

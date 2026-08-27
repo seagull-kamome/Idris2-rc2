@@ -221,17 +221,40 @@ cOp BelieveMe     [_, _, x] = "idris2rc2_dup(" ++ x ++ ")"
 cOp Crash         [_, msg]  = "idris2rc2_crash(" ++ msg ++ ");"
 cOp fn args = show fn ++ "(" ++ (showSep ", " $ toList args) ++ ")"
 
-||| `True` for the Boxed `Integer` `PrimFn`s whose own runtime primitive
+||| `True` for the Boxed `PrimFn`s whose own runtime primitive
 ||| (`rc2/support/rc2/numeric.h`) now consumes every operand it's handed
-||| -- reusing a uniquely-referenced one's own `mpz_t` storage in place
+||| -- reusing a uniquely-referenced one's own heap storage in place
 ||| instead of allocating fresh, and dropping whichever operand it didn't
 ||| reuse itself -- rather than only reading its operands and leaving
 ||| ownership to the caller. `Compiler.RC2.Emit`'s `ROp` case uses this to
 ||| skip emitting its usual post-call drops for such an op's own operands
 ||| (the runtime primitive already disposed of them); see
-||| rc2/doc/rop-reuse.md. `Div` stays excluded -- `idris2rc2_div_Integer`
-||| is a real multi-statement Euclidean-division algorithm in `numeric.c`,
-||| not yet given this treatment.
+||| rc2/doc/rop-reuse.md.
+|||
+||| `IntegerType` (GMP `mpz_t`-backed) covers every arithmetic/bitwise op
+||| except `Div` -- `idris2rc2_div_Integer` is a real multi-statement
+||| Euclidean-division algorithm in `numeric.c`, not yet given this
+||| treatment. `Int64Type`/`Bits64Type` (genuinely heap-allocated once
+||| past the small-int cache) and `DoubleType` (never cached, always a
+||| real heap struct when Boxed) cover every op their own `PrimType` has
+||| in the first place -- `Int8Type`/`Int16Type`/`Int32Type`/
+||| `Bits8Type`/`Bits16Type`/`Bits32Type` are deliberately excluded
+||| entirely: `Types.alwaysUnboxed` already means these are *always* a
+||| tagged pointer at the C level, never a real heap allocation, so
+||| `idris2rc2_isUnique` (a raw `->header.refCount` read) would be
+||| undefined behaviour on one, and the existing `alwaysUnboxed` dup/drop
+||| elision (`Compiler.RC2.RC`'s `alwaysUnboxedBoxedLocalsR`) already
+||| means there's no post-call drop left to skip for them anyway.
+|||
+||| `IntType` (Idris2's plain, machine-width `Int`) is included alongside
+||| every `Int64Type` case, not because it's itself reuse-eligible by
+||| some separate reasoning, but because `EmitUtil.cPrimType` maps BOTH
+||| to the identical C name (`"Int64"`) -- `Add IntType` and `Add
+||| Int64Type` both lower to a call to the exact same
+||| `idris2rc2_add_Int64`. Missing either one here would leave `Emit.idr`
+||| still emitting its own old explicit post-call drop for that op's
+||| operands on top of the now-consuming primitive's own internal drop:
+||| a double-drop/use-after-free, not merely a missed optimisation.
 export
 isReuseConsumingOp : PrimFn arity -> Bool
 isReuseConsumingOp (Add IntegerType)  = True
@@ -244,6 +267,43 @@ isReuseConsumingOp (BOr IntegerType)  = True
 isReuseConsumingOp (BXOr IntegerType) = True
 isReuseConsumingOp (ShiftL IntegerType) = True
 isReuseConsumingOp (ShiftR IntegerType) = True
+isReuseConsumingOp (Add Int64Type)    = True
+isReuseConsumingOp (Sub Int64Type)    = True
+isReuseConsumingOp (Mul Int64Type)    = True
+isReuseConsumingOp (Div Int64Type)    = True
+isReuseConsumingOp (Mod Int64Type)    = True
+isReuseConsumingOp (Neg Int64Type)    = True
+isReuseConsumingOp (BAnd Int64Type)   = True
+isReuseConsumingOp (BOr Int64Type)    = True
+isReuseConsumingOp (BXOr Int64Type)   = True
+isReuseConsumingOp (ShiftL Int64Type) = True
+isReuseConsumingOp (ShiftR Int64Type) = True
+isReuseConsumingOp (Add IntType)    = True
+isReuseConsumingOp (Sub IntType)    = True
+isReuseConsumingOp (Mul IntType)    = True
+isReuseConsumingOp (Div IntType)    = True
+isReuseConsumingOp (Mod IntType)    = True
+isReuseConsumingOp (Neg IntType)    = True
+isReuseConsumingOp (BAnd IntType)   = True
+isReuseConsumingOp (BOr IntType)    = True
+isReuseConsumingOp (BXOr IntType)   = True
+isReuseConsumingOp (ShiftL IntType) = True
+isReuseConsumingOp (ShiftR IntType) = True
+isReuseConsumingOp (Add Bits64Type)    = True
+isReuseConsumingOp (Sub Bits64Type)    = True
+isReuseConsumingOp (Mul Bits64Type)    = True
+isReuseConsumingOp (Div Bits64Type)    = True
+isReuseConsumingOp (Mod Bits64Type)    = True
+isReuseConsumingOp (BAnd Bits64Type)   = True
+isReuseConsumingOp (BOr Bits64Type)    = True
+isReuseConsumingOp (BXOr Bits64Type)   = True
+isReuseConsumingOp (ShiftL Bits64Type) = True
+isReuseConsumingOp (ShiftR Bits64Type) = True
+isReuseConsumingOp (Add DoubleType) = True
+isReuseConsumingOp (Sub DoubleType) = True
+isReuseConsumingOp (Mul DoubleType) = True
+isReuseConsumingOp (Div DoubleType) = True
+isReuseConsumingOp (Neg DoubleType) = True
 isReuseConsumingOp _ = False
 
 export
