@@ -577,6 +577,23 @@ blocker for any program built against rc2 so far (unlike
 a `%foreign_impl` patch, `libs/rc2base`-style, if a concrete program
 ever needs one of them.
 
+Partial exception for `System.Random`: `libs/rc2base/src/System/
+Random/Xoshiro128PlusPlus.idr` now provides an independent,
+pure-Idris replacement (xoshiro128++, Blackman & Vigna, public
+domain), usable on rc2 (and, being ordinary Idris with no `%foreign`
+of its own, on any backend). This is *not* a `%foreign_impl` patch
+onto upstream contrib's own `System.Random` primitives the way
+`System.Concurrency.RC2` patches `System.Concurrency` -- those
+primitives (`prim__randomBits32`/`prim__randomDouble`/`prim__srand`)
+remain entirely unimplemented on any C backend, unfixed by this. It's
+a separate module with its own API (`Gen`/`seed`/`next`/`nextDouble`/
+`nextBits32`/`nextDoubleIO`/`newSeeded`), deliberately not wired up as
+an instance of upstream's own `Random` interface, to avoid ambiguous
+instance resolution against upstream `System.Random`'s existing
+instances for callers who import both. See `libs/rc2base/README.md`'s
+own "`System.Random.Xoshiro128PlusPlus`" section for the full API and
+design rationale.
+
 ## Performance: codepoint-indexed String access is O(n) per call, not O(1)
 
 `String`'s primitives (`length`/`strIndex`/`strTail`/`strCons`/

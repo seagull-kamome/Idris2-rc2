@@ -94,3 +94,16 @@ if diff -u "$TESTS_DIR/TestConcurrency.expected" "$TMP/actual3.out"; then
 else
     fail "TestConcurrency -- output mismatch (see diff above)"
 fi
+
+echo "=== rc2 backend: build TestXoshiro128PlusPlus (System.Random.Xoshiro128PlusPlus) ==="
+nix-shell -p gcc gmp pkg-config --run \
+    "cd '$TESTS_DIR' && '$IDRIS2RC2' --cg rc2 -p rc2base -o TestXoshiro128PlusPlus_verify TestXoshiro128PlusPlus.idr"
+
+echo "=== Run and diff against TestXoshiro128PlusPlus.expected ==="
+"$TESTS_DIR/build/exec/TestXoshiro128PlusPlus_verify" > "$TMP/actual4.out" 2>&1
+
+if diff -u "$TESTS_DIR/TestXoshiro128PlusPlus.expected" "$TMP/actual4.out"; then
+    echo "PASS  TestXoshiro128PlusPlus"
+else
+    fail "TestXoshiro128PlusPlus -- output mismatch (see diff above)"
+fi
