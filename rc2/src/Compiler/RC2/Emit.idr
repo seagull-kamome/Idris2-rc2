@@ -1477,7 +1477,17 @@ createCFunctions n (MkRCForeign ccs fargs ret) =
       case parseCC ffiTags ccs of
           Just (lang, fctForeignName :: extLibOpts) => do
               let isStandardFFI = elem lang ffiTags
-              let cLang = if lang == "RefC" then CLangRefC else CLangC
+              -- "RC2" (rc2-specific %foreign_impl patches, e.g.
+              -- System.Concurrency.RC2/Data.Buffer.RC2) targets our own
+              -- runtime exactly like "RefC" does -- both need
+              -- CFBuffer's header-aware unwrap (EmitUtil.idr's
+              -- `extractValue CLangRefC CFBuffer`), not the generic
+              -- flat-data-pointer one "C" gets. Before this, every
+              -- "RC2:"-tagged call fell into the `else` branch below
+              -- and got the wrong (CLangC) unwrap for any CFBuffer
+              -- argument -- never caught earlier because
+              -- System.Concurrency.RC2's own patches never took one.
+              let cLang = if lang == "RefC" || lang == "RC2" then CLangRefC else CLangC
               let fctName = if isStandardFFI
                                then UN $ Basic $ fctForeignName
                                else NS (mkNamespace lang) n

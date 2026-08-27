@@ -594,6 +594,26 @@ instances for callers who import both. See `libs/rc2base/README.md`'s
 own "`System.Random.Xoshiro128PlusPlus`" section for the full API and
 design rationale.
 
+Also patched since the above survey, unlike `System.Random`/
+`System.Future` above: `Data.Buffer`'s five gap primitives
+(`setInt8`/`getInt8`/`getInt16`/`setInt64`/`getInt64`) are now wired up
+by `libs/rc2base/src/Data/Buffer/RC2.idr`, a `%foreign_impl` patch
+(unlike `System.Random`'s from-scratch replacement) onto the existing
+`rc2/support/rc2/buffer.h` macros this survey already noted could back
+them. See `libs/rc2base/README.md`'s own "`Data.Buffer.RC2`" section
+for the full API and design rationale, including a real
+`Compiler.RC2.Emit` `CFBuffer`-unwrap bug this patch surfaced and fixed
+along the way (`KNOWN-BUGS.md`'s own "Retired: ..." entry for that
+fix).
+
+Also patched: `Data.Double`'s `unitRoundoff`/`epsilon`/`nan`/`inf` are
+now wired up by `libs/rc2base/src/Data/Double/RC2.idr`, a
+`%foreign_impl` patch onto four new `rc2/support/rc2/numeric.h`
+functions (no existing runtime support to reuse here, unlike
+`Data.Buffer`). See `libs/rc2base/README.md`'s own "`Data.Double.RC2`"
+section for the full API and design rationale, including the first
+arity-0, non-`PrimIO` `%foreign` value this project has wired up.
+
 ## Performance: codepoint-indexed String access is O(n) per call, not O(1)
 
 `String`'s primitives (`length`/`strIndex`/`strTail`/`strCons`/

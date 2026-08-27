@@ -107,3 +107,29 @@ if diff -u "$TESTS_DIR/TestXoshiro128PlusPlus.expected" "$TMP/actual4.out"; then
 else
     fail "TestXoshiro128PlusPlus -- output mismatch (see diff above)"
 fi
+
+echo "=== rc2 backend: build TestBufferRC2 (Data.Buffer.RC2's %foreign_impl patches) ==="
+nix-shell -p gcc gmp pkg-config --run \
+    "cd '$TESTS_DIR' && '$IDRIS2RC2' --cg rc2 -p rc2base -o TestBufferRC2_verify TestBufferRC2.idr"
+
+echo "=== Run and diff against TestBufferRC2.expected ==="
+"$TESTS_DIR/build/exec/TestBufferRC2_verify" > "$TMP/actual5.out" 2>&1
+
+if diff -u "$TESTS_DIR/TestBufferRC2.expected" "$TMP/actual5.out"; then
+    echo "PASS  TestBufferRC2"
+else
+    fail "TestBufferRC2 -- output mismatch (see diff above)"
+fi
+
+echo "=== rc2 backend: build TestDoubleRC2 (Data.Double.RC2's %foreign_impl patches) ==="
+nix-shell -p gcc gmp pkg-config --run \
+    "cd '$TESTS_DIR' && '$IDRIS2RC2' --cg rc2 -p rc2base -o TestDoubleRC2_verify TestDoubleRC2.idr"
+
+echo "=== Run and diff against TestDoubleRC2.expected ==="
+"$TESTS_DIR/build/exec/TestDoubleRC2_verify" > "$TMP/actual6.out" 2>&1
+
+if diff -u "$TESTS_DIR/TestDoubleRC2.expected" "$TMP/actual6.out"; then
+    echo "PASS  TestDoubleRC2"
+else
+    fail "TestDoubleRC2 -- output mismatch (see diff above)"
+fi

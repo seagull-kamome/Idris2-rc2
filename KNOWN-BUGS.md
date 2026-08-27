@@ -185,6 +185,31 @@ C was hand-inspected to confirm the targeted calls emit no trailing
 does. See `rc2/doc/rop-reuse.md` for the full design writeup, including
 the multi-occurrence (`x + x`) and concurrency safety arguments.
 
+## Retired: `Compiler.RC2.Emit`'s FFI wrapper treated `"RC2:"`-tagged `CFBuffer` arguments as generic-C instead of RefC-style
+
+`emitGenericForeignWrapper`'s own `cLang` binding, which chooses
+between `EmitUtil.idr`'s two `CFBuffer`-unwrap cases (`CLangRefC`,
+passing the whole size-header-carrying `IDRIS2RC2_Buffer` allocation
+`rc2/support/rc2/buffer.h`'s macros expect, vs `CLangC`, which skips
+past that header for generic byte-buffer functions with no notion of
+it), used to check only `lang == "RefC"` -- so every `"RC2:"`-tagged
+declaration (rc2's own `%foreign_impl` patch mechanism, `EmitUtil.idr`'s
+`ffiTags`) fell through to the `CLangC` unwrap regardless of what it
+actually targeted. Silently correct for every `"RC2:"` patch written so
+far (`System.Concurrency.RC2`), since none of those happen to take a
+`CFBuffer`-typed argument -- only surfaced once `libs/rc2base/src/Data/
+Buffer/RC2.idr` (wiring five upstream `Data.Buffer` primitives with no
+RefC/C backend, see `TODO.md`) was written, the first `"RC2:"` patch to
+have one.
+
+Investigated and fixed immediately, before ever shipping: `cLang` now
+checks `lang == "RefC" || lang == "RC2"`, a one-line change. Verified
+with `Data.Buffer.RC2`'s own regression test (`libs/rc2base/tests/
+TestBufferRC2.idr`, round-tripping negative/boundary values through all
+five patched primitives) plus a full `rc2/tests/verify.sh` run
+(refc-suite 19/19, smoke+valgrind 82/82) confirming no other
+`"RefC:"`/`"RC2:"`-tagged call site changed behavior.
+
 ## Pre-existing `valgrind` leaks (unrelated to whatever's currently being tested)
 
 Found incidentally while re-running `valgrind --leak-check=full` across

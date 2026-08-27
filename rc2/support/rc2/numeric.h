@@ -8,6 +8,23 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <float.h>
+
+// `Data.Double`'s upstream `unitRoundoff`/`epsilon`/`nan`/`inf` carry only
+// `"scheme:..."`/`"node:..."` %foreign tags -- unusable on refc/rc2 at
+// all (TODO.md's "Upstream stdlib `%foreign` declarations with no C/RefC
+// backend at all"). `Data.Double.RC2` (libs/rc2base) patches all four via
+// `%foreign_impl` onto these. Values matched against
+// idris2-src/support/chez/support.ss's own definitions rather than
+// assumed: `blodwen-calcFlonumUnitRoundoff` halves from 1.0 until
+// `1.0 + uro == 1.0` first holds and returns that uro -- for IEEE 754
+// binary64 this is provably exactly DBL_EPSILON/2 (the classic round-to-
+// nearest-even boundary), and `blodwen-calcFlonumEpsilon` is defined as
+// exactly double that, i.e. DBL_EPSILON itself.
+static inline double idris2rc2_unitRoundoff(void) { return DBL_EPSILON / 2.0; }
+static inline double idris2rc2_epsilon(void) { return DBL_EPSILON; }
+static inline double idris2rc2_nan(void) { return NAN; }
+static inline double idris2rc2_inf(void) { return INFINITY; }
 
 // Raw (unboxed) Euclidean division/modulo, used by the native-ABI codegen
 // path (Compiler.RC2.Types/Emit) to compute on plain C locals without ever

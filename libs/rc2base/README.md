@@ -247,3 +247,126 @@ process id via `System.Clock`/`getPID`) -- not cryptographically
 secure, just a reasonable "don't hand me the same sequence every run"
 default. Use `newIORef . seed` directly instead for a reproducible,
 caller-chosen seed.
+
+### `Data.Buffer.RC2`
+
+Patches the five upstream `Data.Buffer` primitives that carry only a
+`"scheme:..."` `%foreign` tag and are therefore unusable on refc/rc2
+(or any C backend) at all -- see `TODO.md`'s "Upstream stdlib
+`%foreign` declarations with no C/RefC backend at all" entry. Unlike
+`System.Random.Xoshiro128PlusPlus` above (a from-scratch replacement
+-- upstream's own primitives there have no C-reachable implementation
+to patch onto at all), `rc2/support/rc2/buffer.h` already had every
+one of these under a different name: `setInt16`/`getInt32`/`setInt32`
+(upstream's own already-working `"RefC:..."` tags matching that
+runtime's symbol names verbatim) show the same runtime was always
+meant to cover the rest of `Data.Buffer` too. This module just wires
+the remaining five up via `%foreign_impl` (the same mechanism
+`System.Concurrency.RC2` uses):
+
+```
+prim__setInt8  -> setBufferUInt8
+prim__getInt8  -> getBufferByte
+prim__getInt16 -> getBufferInt16LE
+prim__setInt64 -> setBufferInt64LE
+prim__getInt64 -> getBufferInt64LE
+```
+
+`getBufferByte` is worth calling out: that's also the C symbol
+upstream's own already-working `"RefC:getBufferByte"` tag targets from
+`prim__getByte` -- a *different* primitive, with a plain `Int` return
+rather than `Int8`. Reused here as-is rather than given a fresh name:
+the same C macro produces the correct result either way, since
+sign-reinterpretation happens at the *caller's* return-holding local,
+not inside the macro (`Compiler.RC2.EmitUtil`'s `cTypeOfCFType`
+declares that local at the FFI declaration's own target width --
+`int8_t` for `prim__getInt8`, plain `int64_t` for `prim__getByte` --
+so the same unsigned-built macro result narrows/sign-extends correctly
+under either return type). Renaming it would have silently broken the
+other, already-shipped `prim__getByte` patch instead of adding
+anything. This module's own test (`tests/TestBufferRC2.idr`)
+round-trips negative and boundary values through all five to confirm
+the sign handling is actually correct, not just assumed from reading
+the macro.
+
+Tagged `"RC2:"`, not `"RefC:"`, unlike upstream's own three
+already-working entries above: those are upstream's pre-existing
+declarations that happen to name real rc2 runtime symbols, not
+something this module adds. Adding a *new* `"RefC:"`-tagged entry
+ourselves would make a real `idris2 --cg refc` build believe upstream
+itself supports these -- it doesn't, there's no such symbol in its own
+runtime -- failing confusingly at final link instead of not compiling
+at all. `"RC2:"` is rc2-exclusive (`EmitUtil.idr`'s own `ffiTags`) and
+silently ignored by any other backend, same as `System.Concurrency.RC2`'s
+own patches.
+
+Surfaced a real rc2 compiler bug the first time this module was
+written: `Compiler.RC2.Emit`'s `emitGenericForeignWrapper` treated
+every non-`"RefC"` foreign tag (including the newly-introduced
+`"RC2"`) as generic C for the purpose of unwrapping a `CFBuffer`
+argument -- but `EmitUtil.idr`'s `extractValue`'s two `CFBuffer` cases
+are not interchangeable: `CLangRefC` passes the whole
+size-header-carrying `IDRIS2RC2_Buffer` allocation `buffer.h`'s own
+macros expect, while `CLangC` skips past that header for generic
+byte-buffer functions with no notion of it. This had been silently
+correct for `System.Concurrency.RC2`'s own earlier patches purely
+because none of them happen to take a `CFBuffer`-typed argument, and
+only became visible once a patch that does (this one) was written.
+Fixed by a one-line change treating `"RC2"` the same as `"RefC"` for
+this one purpose; verified against rc2's full regression suite
+(`rc2/tests/verify.sh`, refc-suite 19/19, smoke+valgrind 82/82) with
+no other change. See `KNOWN-BUGS.md`'s own "Retired: ..." entry for
+this fix's own writeup.
+
+### `Data.Double.RC2`
+
+Patches upstream `Data.Double`'s `unitRoundoff`/`epsilon`/`nan`/`inf`,
+each of which carries only a `"scheme:..."`/`"node:..."` `%foreign`
+tag and is therefore unusable on refc/rc2 (or any C backend) at all --
+see `TODO.md`'s same "Upstream stdlib `%foreign` declarations..."
+entry. Unlike `Data.Buffer.RC2` above (rc2's own runtime already had
+every needed primitive under a different name), `rc2/support/rc2/
+numeric.h` needed four small new `static inline` functions --
+`idris2rc2_unitRoundoff`/`idris2rc2_epsilon`/`idris2rc2_nan`/
+`idris2rc2_inf` -- since there was nothing to reuse:
+
+```c
+static inline double idris2rc2_unitRoundoff(void) { return DBL_EPSILON / 2.0; }
+static inline double idris2rc2_epsilon(void)      { return DBL_EPSILON; }
+static inline double idris2rc2_nan(void)          { return NAN; }
+static inline double idris2rc2_inf(void)          { return INFINITY; }
+```
+
+Values matched against upstream's own Chez definition
+(`idris2-src/support/chez/support.ss`), not just assumed:
+`blodwen-calcFlonumUnitRoundoff` halves a value repeatedly until
+`1.0 + uro == 1.0` first holds -- the classic round-to-nearest-even
+boundary, which provably converges to exactly `DBL_EPSILON / 2` for
+IEEE 754 binary64 -- and `epsilon` is exactly double that
+(`DBL_EPSILON` itself, the smallest value that does *not* leave `1.0`
+unchanged when added). This module's own test (`tests/
+TestDoubleRC2.idr`) checks those defining properties directly
+(`1.0 + unitRoundoff == 1.0`, `1.0 + epsilon != 1.0`,
+`epsilon == unitRoundoff * 2`, plus `nan != nan` and
+`1.0 / inf == 0.0`) rather than hardcoding a literal comparison.
+
+Each of these is declared upstream as a plain `Double` -- not
+`PrimIO Double` -- an arity-0, non-monadic `%foreign` value, a shape
+no other rc2/rc2base `%foreign_impl` patch had used before this one.
+Confirmed working via a standalone scratch program (compiled and run,
+not just read out of the compiler source) before writing this module
+for real: like any other arity-0 top-level definition on this
+backend, a call to one of these four is re-evaluated fresh at every
+reference site rather than memoized as a CAF (neither rc2 nor
+upstream RefC ever memoizes a 0-argument top-level definition the way,
+say, Chez/GHC do -- see `System.Random.Xoshiro128PlusPlus`'s own API
+section above for the same point made about a *stateful* case, where
+the identical non-memoization behavior would actually have been a
+bug). Harmless here specifically because all four are pure,
+side-effect-free constants -- re-evaluating `idris2rc2_inf()` a second
+time returns the same `INFINITY` either way.
+
+Tagged `"RC2:"`, not `"RefC:"`, for the same reason as
+`Data.Buffer.RC2` above: these symbol names are new, rc2-only
+additions to rc2's own runtime, not something a real `idris2 --cg refc`
+build's own runtime also happens to provide.
