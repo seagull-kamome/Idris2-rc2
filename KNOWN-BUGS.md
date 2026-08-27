@@ -138,6 +138,53 @@ reports `0 bytes definitely lost` for this test (registered in
 `verify.sh`'s `LEAK_SENSITIVE_TESTS`). See `rc2/doc/dual-abi.md`'s
 history item 9 for the full write-up.
 
+## Retired: `ROp`'s Boxed `Integer` arithmetic never reused a dying/unique operand's own heap allocation
+
+`RCon`'s own `annotate` case (`Compiler.RC2.RC`) already used a
+strictly cheaper ownership convention than `ROp`'s -- `wrapDups`/
+`splitBorrows`, no separate `postDrop` at all, transferring a dying
+argument's ownership straight into the new constructor instead of
+dropping it -- exactly the shape `Compiler.RC2.Reuse`'s reuse-in-place
+pass exploits for constructor destructure/rebuild. `ROp` (Boxed
+arithmetic, e.g. `Integer` addition backed by GMP `mpz_t`) instead
+always emitted an explicit compiler-side `idris2rc2_drop` after the
+call regardless of uniqueness, so a Boxed numeric primitive always
+allocated fresh even when an operand was dying and uniquely referenced
+right at that call (see `TODO.md`'s own former "Performance: `ROp`'s
+Boxed arithmetic never reuses a dying/unique operand's own heap
+allocation" entry, now closed out and removed).
+
+Investigated and implemented: unlike `RCon` reuse, which needed a
+dedicated IR pass (`Compiler.RC2.Reuse`, its own `RReuseOffer` node) to
+bridge an "offer" and a "claim" occurring in two different places in
+the IR, `ROp` consumes its operand(s) and produces its result in the
+same C statement (one runtime call) -- there is no gap to bridge, so
+this needed **zero IR changes**: `RCExp.idr`'s `ROp` node, `RC.idr`'s
+`annotate` case, and `Compiler.RC2.Reuse` itself are all untouched. The
+entire change is confined to `rc2/support/rc2/numeric.h` (10 Boxed
+`Integer` primitives -- `add`/`sub`/`mul`/`mod`/`negate`/`and`/`or`/
+`xor`/`shiftl`/`shiftr` -- now check `idris2rc2_isUnique` on their
+operand(s) and reuse a unique one's own `mpz_t` storage as the
+destination in place, falling back to a fresh allocation otherwise) plus
+a small compiler-side skip (`Compiler.RC2.EmitUtil`'s
+`isReuseConsumingOp`, consulted by `Compiler.RC2.Emit`'s `ROp` case to
+stop emitting the now-redundant post-call drops for exactly those 10
+ops). `Div IntegerType` was deliberately left out of scope (a real
+multi-statement algorithm, not a macro one-liner); `Double`/`Int64`/
+`Bits64` reuse is a natural but not-yet-attempted follow-up.
+
+Verified with a new regression test, `rc2/tests/Test49IntegerOpReuse.idr`
+(`bigFactorial`, a self-tail-recursive accumulator past both the
+small-int cache and 64-bit range, plus `bigBitOps` exercising the
+bitwise/shift/mod ops via `Data.Bits`): full `verify.sh --regen-expected`
+(87/87) and `refc-suite/run.sh` (19/19) both pass, `valgrind
+--leak-check=full` reports `0 bytes definitely lost`, and the generated
+C was hand-inspected to confirm the targeted calls emit no trailing
+`idris2rc2_drop` at all while an untouched comparison primitive
+(`idris2rc2_lte_Integer`, via `Prelude_Types_prim__integerToNat`) still
+does. See `rc2/doc/rop-reuse.md` for the full design writeup, including
+the multi-occurrence (`x + x`) and concurrency safety arguments.
+
 ## Pre-existing `valgrind` leaks (unrelated to whatever's currently being tested)
 
 Found incidentally while re-running `valgrind --leak-check=full` across

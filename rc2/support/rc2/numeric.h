@@ -2,6 +2,7 @@
 
 #include "datatypes.h"
 #include "memory.h"
+#include "runtime.h"
 #include <math.h>
 #include <inttypes.h>
 #include <stdio.h>
@@ -180,16 +181,57 @@ static inline IDRIS2RC2_Value *idris2rc2_gte_string(IDRIS2RC2_Value *a, IDRIS2RC
 // idris2rc2_div_Integer stays in numeric.c: a real multi-statement
 // algorithm (Euclidean division built from mpz_mod/mpz_sub/mpz_divexact),
 // not a one-liner.
-static inline IDRIS2RC2_Value *idris2rc2_add_Integer(IDRIS2RC2_Value *x, IDRIS2RC2_Value *y) { IDRIS2RC2_Integer *r = idris2rc2_mkInteger(); mpz_add(r->v, ((IDRIS2RC2_Integer *)x)->v, ((IDRIS2RC2_Integer *)y)->v); return (IDRIS2RC2_Value *)r; }
-static inline IDRIS2RC2_Value *idris2rc2_sub_Integer(IDRIS2RC2_Value *x, IDRIS2RC2_Value *y) { IDRIS2RC2_Integer *r = idris2rc2_mkInteger(); mpz_sub(r->v, ((IDRIS2RC2_Integer *)x)->v, ((IDRIS2RC2_Integer *)y)->v); return (IDRIS2RC2_Value *)r; }
-static inline IDRIS2RC2_Value *idris2rc2_mul_Integer(IDRIS2RC2_Value *x, IDRIS2RC2_Value *y) { IDRIS2RC2_Integer *r = idris2rc2_mkInteger(); mpz_mul(r->v, ((IDRIS2RC2_Integer *)x)->v, ((IDRIS2RC2_Integer *)y)->v); return (IDRIS2RC2_Value *)r; }
-static inline IDRIS2RC2_Value *idris2rc2_negate_Integer(IDRIS2RC2_Value *x) { IDRIS2RC2_Integer *r = idris2rc2_mkInteger(); mpz_neg(r->v, ((IDRIS2RC2_Integer *)x)->v); return (IDRIS2RC2_Value *)r; }
-static inline IDRIS2RC2_Value *idris2rc2_mod_Integer(IDRIS2RC2_Value *x, IDRIS2RC2_Value *y) { IDRIS2RC2_Integer *r = idris2rc2_mkInteger(); mpz_mod(r->v, ((IDRIS2RC2_Integer *)x)->v, ((IDRIS2RC2_Integer *)y)->v); return (IDRIS2RC2_Value *)r; }
-static inline IDRIS2RC2_Value *idris2rc2_shiftl_Integer(IDRIS2RC2_Value *x, IDRIS2RC2_Value *y) { IDRIS2RC2_Integer *r = idris2rc2_mkInteger(); mpz_mul_2exp(r->v, ((IDRIS2RC2_Integer *)x)->v, (mp_bitcnt_t)mpz_get_ui(((IDRIS2RC2_Integer *)y)->v)); return (IDRIS2RC2_Value *)r; }
-static inline IDRIS2RC2_Value *idris2rc2_shiftr_Integer(IDRIS2RC2_Value *x, IDRIS2RC2_Value *y) { IDRIS2RC2_Integer *r = idris2rc2_mkInteger(); mpz_fdiv_q_2exp(r->v, ((IDRIS2RC2_Integer *)x)->v, (mp_bitcnt_t)mpz_get_ui(((IDRIS2RC2_Integer *)y)->v)); return (IDRIS2RC2_Value *)r; }
-static inline IDRIS2RC2_Value *idris2rc2_and_Integer(IDRIS2RC2_Value *x, IDRIS2RC2_Value *y) { IDRIS2RC2_Integer *r = idris2rc2_mkInteger(); mpz_and(r->v, ((IDRIS2RC2_Integer *)x)->v, ((IDRIS2RC2_Integer *)y)->v); return (IDRIS2RC2_Value *)r; }
-static inline IDRIS2RC2_Value *idris2rc2_or_Integer(IDRIS2RC2_Value *x, IDRIS2RC2_Value *y) { IDRIS2RC2_Integer *r = idris2rc2_mkInteger(); mpz_ior(r->v, ((IDRIS2RC2_Integer *)x)->v, ((IDRIS2RC2_Integer *)y)->v); return (IDRIS2RC2_Value *)r; }
-static inline IDRIS2RC2_Value *idris2rc2_xor_Integer(IDRIS2RC2_Value *x, IDRIS2RC2_Value *y) { IDRIS2RC2_Integer *r = idris2rc2_mkInteger(); mpz_xor(r->v, ((IDRIS2RC2_Integer *)x)->v, ((IDRIS2RC2_Integer *)y)->v); return (IDRIS2RC2_Value *)r; }
+//
+// Add/Sub/Mul/Mod/And/Or/Xor/ShiftL/ShiftR/Neg consume both Boxed operands
+// (Compiler.RC2.Emit's ROp lowering hands them over already dup'd for any
+// use past this call, exactly like a dying RCon field -- see
+// rc2/doc/rop-reuse.md) rather than only reading them: if an operand is
+// uniquely referenced (idris2rc2_isUnique, the same runtime check
+// constructor reuse-in-place already relies on), its own mpz_t limb
+// storage becomes the result in place instead of allocating a fresh
+// IDRIS2RC2_Integer -- safe regardless of which operand mpz_* writes into,
+// since every mpz_* function here is documented by GMP to tolerate its
+// destination aliasing either source operand. Whichever operand wasn't
+// reused this way is dropped here instead of by the caller.
+#define IDRIS2RC2_INTEGER_BINOP(OPNAME, MPZFN)                                     \
+  static inline IDRIS2RC2_Value *idris2rc2_##OPNAME##_Integer(IDRIS2RC2_Value *x, IDRIS2RC2_Value *y) { \
+    IDRIS2RC2_Integer *dst = idris2rc2_isUnique(x) ? (IDRIS2RC2_Integer *)x        \
+                            : idris2rc2_isUnique(y) ? (IDRIS2RC2_Integer *)y       \
+                            : idris2rc2_mkInteger();                               \
+    MPZFN(dst->v, ((IDRIS2RC2_Integer *)x)->v, ((IDRIS2RC2_Integer *)y)->v);       \
+    if ((IDRIS2RC2_Value *)dst != x) idris2rc2_drop(x);                           \
+    if ((IDRIS2RC2_Value *)dst != y) idris2rc2_drop(y);                           \
+    return (IDRIS2RC2_Value *)dst;                                                \
+  }
+IDRIS2RC2_INTEGER_BINOP(add, mpz_add)
+IDRIS2RC2_INTEGER_BINOP(sub, mpz_sub)
+IDRIS2RC2_INTEGER_BINOP(mul, mpz_mul)
+IDRIS2RC2_INTEGER_BINOP(mod, mpz_mod)
+IDRIS2RC2_INTEGER_BINOP(and, mpz_and)
+IDRIS2RC2_INTEGER_BINOP(or, mpz_ior)
+IDRIS2RC2_INTEGER_BINOP(xor, mpz_xor)
+
+static inline IDRIS2RC2_Value *idris2rc2_negate_Integer(IDRIS2RC2_Value *x) {
+  IDRIS2RC2_Integer *dst = idris2rc2_isUnique(x) ? (IDRIS2RC2_Integer *)x : idris2rc2_mkInteger();
+  mpz_neg(dst->v, ((IDRIS2RC2_Integer *)x)->v);
+  if ((IDRIS2RC2_Value *)dst != x) idris2rc2_drop(x);
+  return (IDRIS2RC2_Value *)dst;
+}
+
+// Shift amount `y` is never itself a reuse candidate -- it's the operand
+// count, not "the same kind of value" as the shifted result, and in
+// practice always a small cached-immortal Integer (never isUnique) --
+// only `x` (the value being shifted) is checked.
+#define IDRIS2RC2_INTEGER_SHIFTOP(OPNAME, MPZFN)                                   \
+  static inline IDRIS2RC2_Value *idris2rc2_##OPNAME##_Integer(IDRIS2RC2_Value *x, IDRIS2RC2_Value *y) { \
+    IDRIS2RC2_Integer *dst = idris2rc2_isUnique(x) ? (IDRIS2RC2_Integer *)x : idris2rc2_mkInteger(); \
+    MPZFN(dst->v, ((IDRIS2RC2_Integer *)x)->v, (mp_bitcnt_t)mpz_get_ui(((IDRIS2RC2_Integer *)y)->v)); \
+    if ((IDRIS2RC2_Value *)dst != x) idris2rc2_drop(x);                           \
+    idris2rc2_drop(y);                                                            \
+    return (IDRIS2RC2_Value *)dst;                                                \
+  }
+IDRIS2RC2_INTEGER_SHIFTOP(shiftl, mpz_mul_2exp)
+IDRIS2RC2_INTEGER_SHIFTOP(shiftr, mpz_fdiv_q_2exp)
 static inline IDRIS2RC2_Value *idris2rc2_lt_Integer(IDRIS2RC2_Value *x, IDRIS2RC2_Value *y) { return idris2rc2_mkBool(mpz_cmp(((IDRIS2RC2_Integer *)x)->v, ((IDRIS2RC2_Integer *)y)->v) < 0); }
 static inline IDRIS2RC2_Value *idris2rc2_gt_Integer(IDRIS2RC2_Value *x, IDRIS2RC2_Value *y) { return idris2rc2_mkBool(mpz_cmp(((IDRIS2RC2_Integer *)x)->v, ((IDRIS2RC2_Integer *)y)->v) > 0); }
 static inline IDRIS2RC2_Value *idris2rc2_eq_Integer(IDRIS2RC2_Value *x, IDRIS2RC2_Value *y) { return idris2rc2_mkBool(mpz_cmp(((IDRIS2RC2_Integer *)x)->v, ((IDRIS2RC2_Integer *)y)->v) == 0); }

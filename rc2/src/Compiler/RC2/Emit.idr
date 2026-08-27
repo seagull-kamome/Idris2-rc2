@@ -896,8 +896,17 @@ mutual
         -- for a Native operand is dropped too -- `annotate` runs before
         -- `Compiler.RC2.Loop`'s native-shadow promotion ever decides a
         -- local is Native, so it can't have known about these.
-        removeVars $ map varName postDrop
-        removeVars $ mapMaybe snd (toList argsWithFresh)
+        --
+        -- `isReuseConsumingOp op` skips both: its own runtime primitive
+        -- (rc2/support/rc2/numeric.h) now consumes and disposes of every
+        -- operand handed to it itself, reusing a uniquely-referenced
+        -- one's own heap allocation in place where possible -- see
+        -- rc2/doc/rop-reuse.md.
+        if isReuseConsumingOp op
+           then pure ()
+           else do
+             removeVars $ map varName postDrop
+             removeVars $ mapMaybe snd (toList argsWithFresh)
         pure resultVar
 
     emitRC (RExtPrim fc _ p args postDrop) _ = do

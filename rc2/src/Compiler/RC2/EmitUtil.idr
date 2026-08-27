@@ -221,6 +221,31 @@ cOp BelieveMe     [_, _, x] = "idris2rc2_dup(" ++ x ++ ")"
 cOp Crash         [_, msg]  = "idris2rc2_crash(" ++ msg ++ ");"
 cOp fn args = show fn ++ "(" ++ (showSep ", " $ toList args) ++ ")"
 
+||| `True` for the Boxed `Integer` `PrimFn`s whose own runtime primitive
+||| (`rc2/support/rc2/numeric.h`) now consumes every operand it's handed
+||| -- reusing a uniquely-referenced one's own `mpz_t` storage in place
+||| instead of allocating fresh, and dropping whichever operand it didn't
+||| reuse itself -- rather than only reading its operands and leaving
+||| ownership to the caller. `Compiler.RC2.Emit`'s `ROp` case uses this to
+||| skip emitting its usual post-call drops for such an op's own operands
+||| (the runtime primitive already disposed of them); see
+||| rc2/doc/rop-reuse.md. `Div` stays excluded -- `idris2rc2_div_Integer`
+||| is a real multi-statement Euclidean-division algorithm in `numeric.c`,
+||| not yet given this treatment.
+export
+isReuseConsumingOp : PrimFn arity -> Bool
+isReuseConsumingOp (Add IntegerType)  = True
+isReuseConsumingOp (Sub IntegerType)  = True
+isReuseConsumingOp (Mul IntegerType)  = True
+isReuseConsumingOp (Mod IntegerType)  = True
+isReuseConsumingOp (Neg IntegerType)  = True
+isReuseConsumingOp (BAnd IntegerType) = True
+isReuseConsumingOp (BOr IntegerType)  = True
+isReuseConsumingOp (BXOr IntegerType) = True
+isReuseConsumingOp (ShiftL IntegerType) = True
+isReuseConsumingOp (ShiftR IntegerType) = True
+isReuseConsumingOp _ = False
+
 export
 varName : RCLocal -> String
 varName (RCLoc i) = "var_" ++ (show i)
