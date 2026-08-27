@@ -538,6 +538,33 @@ own scope. Not currently planned; revisit only if profiling ever shows
 codepoint-indexed access on a long string actually mattering in
 practice.
 
+## Dropped: packing short strings into a tagged pointer
+
+Considered (as a future-hope wishlist item) extending rc2's existing
+tagged-pointer scheme (`Int8`/`Int16`/`Int32`/`Bits8`/`Bits16`/
+`Bits32`/`Char`, see `Compiler.RC2.Types.alwaysUnboxed` and
+`support/rc2/datatypes.h`'s own module note) to short strings as well
+-- packing a small enough `String` directly into the pointer word
+itself, avoiding a real heap allocation (and its `idris2rc2_dup`/
+`idris2rc2_drop` traffic) the same way these scalar types already do.
+
+Dropped without implementing: a short string overwhelmingly shows up
+in real Idris2 source as a *compile-time constant*, not a
+runtime-computed value, and constant strings already get exactly this
+class of allocation-avoidance treatment today -- `Compiler.RC2.Emit`/
+`ConstFold` stage every literal `String` constant (short or long) as
+an immortal, file-scope C static (`IDRIS2RC2_STOCKVAL`), never a fresh
+heap allocation, with `idris2rc2_dup`/`idris2rc2_drop` already
+no-ops against it (the `REFCOUNT_MAX` immortal check). Tagging short
+strings would therefore buy nothing for the overwhelmingly common
+constant case -- it could only help a short string that's *itself
+computed at runtime* (e.g. sliced/concatenated dynamically) and still
+happens to end up short, a narrow enough slice of real workloads that
+the payoff looks marginal at best. Not investigated further, not
+implemented; revisit only if profiling ever shows short,
+runtime-computed strings actually dominating some real workload's own
+allocation traffic.
+
 ## yet another hope
 この項は人間が追加したものなので、後で整理して独立の項に括りだす事。
 今は着手しないが将来的な展望を書き連ねる。この項は日本語で書かれるが
@@ -552,7 +579,6 @@ practice.
   作れるのでは？
 - libgc板のランタイム。dup/drop/freeをCマクロで消去してしまい、mallocを単純に差し替える
   だけでlibgc対応できるのでは？
-- 短い文字列をタグ付きポインタに押し込む
 - **Performance: Closure Inlining and Immediate Expansion**
   `partial`呼び出しによるクロージャ生成とヒープ割り当てが、高階関数や型クラスの辞書使用時に頻発している。特に`List`操作や`mapAppend`のような高階関数において、`Boxed`なクロージャが多重生成されており、パフォーマンスを大きく阻害している。
   - 可能な限りコンパイル時にクロージャを特定し、直接呼び出しへとインライン展開するパスを実装する。
