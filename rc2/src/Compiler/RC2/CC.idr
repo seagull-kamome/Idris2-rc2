@@ -102,7 +102,7 @@ compileCObjectFile sourceFile objectFile verbose
          -- `Compiler.RC2.Emit`'s own `createCFunctions` (see
          -- `fastPackFixedReplacement`) always redirects every
          -- `Prelude.Types.fastPack`/`fastConcat` call site to the
-         -- leak-free `fastPackFixed`/`fastConcatFixed` instead, so this
+         -- leak-free `idris2rc2_fastPackFixed`/`idris2rc2_fastConcatFixed` instead, so this
          -- declaration itself is never actually reached by generated
          -- code today. Kept `-Wno-error` anyway so a future regression in
          -- that redirect degrades to a visible warning, not a hard

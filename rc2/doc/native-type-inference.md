@@ -308,7 +308,7 @@ the full design and its own bug (a double-free in `annotate`'s
    `where`-block as `createFFIArgList`/`discardLastArgument`, used by
    both `emitGenericForeignWrapper`'s and `emitFastPackFixedWrapper`'s
    own `removeVarsArgList` -- the latter only for consistency, since
-   `fastPackFixed`/`fastConcatFixed`'s own arguments are always
+   `idris2rc2_fastPackFixed`/`idris2rc2_fastConcatFixed`'s own arguments are always
    `CFUser` and never actually hit the `alwaysUnboxed` case in
    practice) that returns `Nothing` (skip the drop) when
    `cfTypeNative vt` is `Just ty` and `alwaysUnboxed ty` holds. A third

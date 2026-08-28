@@ -1144,7 +1144,7 @@ addCommaToList (x :: xs) = ("  " ++ x) :: map (", " ++) xs
 ||| external library's `char *` return, wrong for these two, which
 ||| `malloc` a buffer this project itself owns). `rc2/support/rc2/
 ||| idris2rc2_strings.c` already has leak-free replacements
-||| (`fastPackFixed`/`fastConcatFixed`, returning an already-fully-built
+||| (`idris2rc2_fastPackFixed`/`idris2rc2_fastConcatFixed`, returning an already-fully-built
 ||| `IDRIS2RC2_Value*` directly, the same way any `CFUser` return is
 ||| already passed straight through with no copy). See `KNOWN-BUGS.md`
 ||| and `rc2/doc/fastpack-fix.md` for the full writeup, including why
@@ -1166,9 +1166,9 @@ addCommaToList (x :: xs) = ("  " ++ x) :: map (", " ++) xs
 ||| as a second layer of defensive scoping.
 fastPackFixedReplacement : Name -> Maybe String
 fastPackFixedReplacement (NS ns (UN (Basic "fastPack"))) =
-    if ns == mkNamespace "Prelude.Types" then Just "fastPackFixed" else Nothing
+    if ns == mkNamespace "Prelude.Types" then Just "idris2rc2_fastPackFixed" else Nothing
 fastPackFixedReplacement (NS ns (UN (Basic "fastConcat"))) =
-    if ns == mkNamespace "Prelude.Types" then Just "fastConcatFixed" else Nothing
+    if ns == mkNamespace "Prelude.Types" then Just "idris2rc2_fastConcatFixed" else Nothing
 fastPackFixedReplacement _ = Nothing
 
 createCFunctions : {auto c : Ref Ctxt Defs}
@@ -1444,13 +1444,13 @@ createCFunctions n (MkRCForeign ccs fargs ret) =
     ||| would have produced (so every existing call site anywhere --
     ||| including ones already baked into precompiled `network`/`base`
     ||| code -- keeps linking against the same symbol, unmodified), but
-    ||| the body calls rc2's own leak-free `fastPackFixed`/
-    ||| `fastConcatFixed` (`idris2rc2_strings.c`) instead of the leaking
+    ||| the body calls rc2's own leak-free `idris2rc2_fastPackFixed`/
+    ||| `idris2rc2_fastConcatFixed` (`idris2rc2_strings.c`) instead of the leaking
     ||| `fastPack`/`fastConcat`, and returns its result directly --
     ||| skipping `packCFType`/`idris2rc2_mkString` entirely, the same
     ||| way a bare `CFUser` return is already passed straight through
     ||| with no copy (see `EmitUtil.idr`'s own `packCFType` `CFUser`
-    ||| case) -- since `fastPackFixed`/`fastConcatFixed` already return
+    ||| case) -- since `idris2rc2_fastPackFixed`/`idris2rc2_fastConcatFixed` already return
     ||| a fully-formed, correctly-owned `IDRIS2RC2_Value*` themselves.
     emitFastPackFixedWrapper : String -> Core ()
     emitFastPackFixedWrapper fixedFnName = do

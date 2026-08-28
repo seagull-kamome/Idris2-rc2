@@ -10,8 +10,8 @@ module Main
 -- raw malloc'd char* return through the generic CFString-return FFI
 -- wrapper codegen, which copies it into a fresh IDRIS2RC2_String and
 -- never frees the original. Fixed by redirecting the wrapper's own
--- internal implementation to rc2's own leak-free fastPackFixed/
--- fastConcatFixed at codegen time -- unconditionally, for every call
+-- internal implementation to rc2's own leak-free idris2rc2_fastPackFixed/
+-- idris2rc2_fastConcatFixed at codegen time -- unconditionally, for every call
 -- site project-wide, with no opt-in import needed (unlike the retired
 -- Prelude.Fix.RC2 module, which only ever reached a call site within
 -- its own importer's elaboration scope). `pack`/`concat` below reach

@@ -334,7 +334,7 @@ LEAK_SENSITIVE_TESTS="Test1Basics Test9SelfTailLoop Test10MutualLoop Test11DualA
 # just KNOWN: Compiler.RC2.Emit's own `createCFunctions` intercepts
 # `Prelude.Types.fastPack`/`fastConcat` by full name+signature at
 # C-emission time and redirects to rc2's own leak-free
-# `fastPackFixed`/`fastConcatFixed` unconditionally, project-wide --
+# `idris2rc2_fastPackFixed`/`idris2rc2_fastConcatFixed` unconditionally, project-wide --
 # reaching every call site regardless of which package it originates
 # from, unlike the retired `Prelude.Fix.RC2` module's own `%transform`,
 # which could only ever rewrite a call site within its own importer's

@@ -32,8 +32,8 @@ identical whether the underlying buffer is borrowed or owned.
 
 ## First attempt: `Prelude.Fix.RC2` + `%transform` (insufficient)
 
-The first fix added leak-free replacements, `fastPackFixed`/
-`fastConcatFixed` (still in `idris2rc2_strings.c`), each building
+The first fix added leak-free replacements, `idris2rc2_fastPackFixed`/
+`idris2rc2_fastConcatFixed` (still in `idris2rc2_strings.c`), each building
 directly into a fresh `IDRIS2RC2_String` and returning an
 already-fully-formed `IDRIS2RC2_Value *` — no intermediate `char *` for
 anything to copy-and-leak. These were wired in via a
@@ -77,9 +77,9 @@ packages needed.
 ```idris
 fastPackFixedReplacement : Name -> Maybe String
 fastPackFixedReplacement (NS ns (UN (Basic "fastPack"))) =
-    if ns == mkNamespace "Prelude.Types" then Just "fastPackFixed" else Nothing
+    if ns == mkNamespace "Prelude.Types" then Just "idris2rc2_fastPackFixed" else Nothing
 fastPackFixedReplacement (NS ns (UN (Basic "fastConcat"))) =
-    if ns == mkNamespace "Prelude.Types" then Just "fastConcatFixed" else Nothing
+    if ns == mkNamespace "Prelude.Types" then Just "idris2rc2_fastConcatFixed" else Nothing
 fastPackFixedReplacement _ = Nothing
 ```
 
@@ -110,16 +110,16 @@ untouched `emitGenericForeignWrapper`.
 and declared signature** `emitGenericForeignWrapper` would have produced
 — so every existing call site anywhere keeps linking against the same
 symbol, completely unmodified. Only the wrapper's own *body* differs: it
-calls `fastPackFixed`/`fastConcatFixed` directly and returns the result
+calls `idris2rc2_fastPackFixed`/`idris2rc2_fastConcatFixed` directly and returns the result
 immediately, skipping `packCFType`/`idris2rc2_mkString` entirely (the
 same way a bare `CFUser` return already skips it), since
-`fastPackFixed`/`fastConcatFixed` already hand back a fully-formed,
+`idris2rc2_fastPackFixed`/`idris2rc2_fastConcatFixed` already hand back a fully-formed,
 correctly-owned `IDRIS2RC2_Value *` themselves.
 
 Confirmed by inspecting real generated C for `Test35NetworkLoopback`:
 its `Prelude_Types_fastPack` wrapper (emitted for `network`'s own
 precompiled `parseIPv4` call site — that package was **not**
-recompiled) now calls `fastPackFixed`, and the leak is gone.
+recompiled) now calls `idris2rc2_fastPackFixed`, and the leak is gone.
 
 ## `Prelude.Fix.RC2` retired
 
@@ -158,7 +158,7 @@ needs to work around.
 ## Second bug found along the way: empty-string SIGSEGV
 
 Not part of the original plan — discovered during verification once the
-Emit-time redirect made `fastPackFixed`/`fastConcatFixed` unconditional
+Emit-time redirect made `idris2rc2_fastPackFixed`/`idris2rc2_fastConcatFixed` unconditional
 project-wide.
 
 **Root cause**: both functions used to do an explicit
@@ -191,7 +191,7 @@ past their own `memcpy`'d payload either).
 3. Inspected real generated C for `Test35NetworkLoopback` (an
    unmodified precompiled `network`-package call site into
    `parseIPv4`) and confirmed its `Prelude_Types_fastPack` wrapper calls
-   `fastPackFixed`, with no recompilation of `network`/`base` needed
+   `idris2rc2_fastPackFixed`, with no recompilation of `network`/`base` needed
    anywhere.
 4. `verify.sh`'s `KNOWN_LEAK_BYTES` map is now genuinely empty — the
    `Test35NetworkLoopback`/`Test40SystemProcess` entries were removed,
@@ -212,8 +212,8 @@ past their own `memcpy`'d payload either).
 
 - `rc2/src/Compiler/RC2/Emit.idr` — `fastPackFixedReplacement`,
   `createCFunctions`'s `MkRCForeign` case, `emitFastPackFixedWrapper`.
-- `rc2/support/rc2/idris2rc2_strings.c` — `fastPackFixed`/
-  `fastConcatFixed` (the empty-string trailing-NUL-write removal).
+- `rc2/support/rc2/idris2rc2_strings.c` — `idris2rc2_fastPackFixed`/
+  `idris2rc2_fastConcatFixed` (the empty-string trailing-NUL-write removal).
 - `rc2/support/rc2/idris2rc2_strings.h` — the retained `deprecated`
   attributes on `fastPack`/`fastConcat` (messages updated to describe
   reaching them as an rc2 bug, not a caller workaround).

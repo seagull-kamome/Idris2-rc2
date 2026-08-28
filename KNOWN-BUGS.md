@@ -240,7 +240,7 @@ anything so far, but don't be surprised by them showing up again.
   `malloc` a buffer this project itself owns. A first fix
   (`libs/rc2base/src/Prelude/Fix/RC2.idr`, using upstream's own
   `%transform` mechanism to substitute in leak-free
-  `fastPackFixed`/`fastConcatFixed` replacements) only reached a call
+  `idris2rc2_fastPackFixed`/`idris2rc2_fastConcatFixed` replacements) only reached a call
   site within its own importer's elaboration scope, so it could never
   fix a call already baked into precompiled `network`/`base` package
   code -- `Test35NetworkLoopback` (via `Network.Socket.Data.parseIPv4`'s
@@ -255,7 +255,7 @@ anything so far, but don't be surprised by them showing up again.
   every `Prelude.Types.fastPack`/`fastConcat` call site, project-wide --
   including ones already compiled into `network`/`base`'s own `.ttc` --
   now gets redirected, at codegen time, to call the leak-free
-  `fastPackFixed`/`fastConcatFixed` C implementations directly, with the
+  `idris2rc2_fastPackFixed`/`idris2rc2_fastConcatFixed` C implementations directly, with the
   external symbol name/signature left unchanged so no call site anywhere
   needs to be recompiled. `Prelude.Fix.RC2` (the first, `%transform`-based
   fix) was retired as redundant once this landed. `verify.sh`'s

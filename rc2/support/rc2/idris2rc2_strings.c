@@ -117,7 +117,7 @@ char *fastPack(IDRIS2RC2_Value *charList) {
   return out;
 }
 
-IDRIS2RC2_Value *fastPackFixed(IDRIS2RC2_Value *charList) {
+IDRIS2RC2_Value *idris2rc2_fastPackFixed(IDRIS2RC2_Value *charList) {
   size_t byteLen = 0;
   IDRIS2RC2_Constructor *cur = (IDRIS2RC2_Constructor *)charList;
   while (cur != NULL) {
@@ -189,14 +189,14 @@ char *fastConcat(IDRIS2RC2_Value *strList) {
   return out;
 }
 
-IDRIS2RC2_Value *fastConcatFixed(IDRIS2RC2_Value *strList) {
+IDRIS2RC2_Value *idris2rc2_fastConcatFixed(IDRIS2RC2_Value *strList) {
   size_t total = 0;
   IDRIS2RC2_Constructor *cur = (IDRIS2RC2_Constructor *)strList;
   while (cur != NULL) {
     total += strlen(((IDRIS2RC2_String *)cur->args[0])->str);
     cur = (IDRIS2RC2_Constructor *)cur->args[1];
   }
-  // See fastPackFixed's own matching comment: no explicit trailing-NUL
+  // See idris2rc2_fastPackFixed's own matching comment: no explicit trailing-NUL
   // write here either, and for the identical reason -- mkEmptyString(1)
   // (the total == 0 case, e.g. `concat []`) hands back the shared
   // immortal idris2rc2_emptyStringValue, a `const` static, so writing
