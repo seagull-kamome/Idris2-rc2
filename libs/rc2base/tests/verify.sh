@@ -133,3 +133,16 @@ if diff -u "$TESTS_DIR/TestDoubleRC2.expected" "$TMP/actual6.out"; then
 else
     fail "TestDoubleRC2 -- output mismatch (see diff above)"
 fi
+
+echo "=== rc2 backend: build TestXoroshiro64StarStar (System.Random.Xoroshiro64StarStar) ==="
+nix-shell -p gcc gmp pkg-config --run \
+    "cd '$TESTS_DIR' && '$IDRIS2RC2' --cg rc2 -p rc2base -o TestXoroshiro64StarStar_verify TestXoroshiro64StarStar.idr"
+
+echo "=== Run and diff against TestXoroshiro64StarStar.expected ==="
+"$TESTS_DIR/build/exec/TestXoroshiro64StarStar_verify" > "$TMP/actual7.out" 2>&1
+
+if diff -u "$TESTS_DIR/TestXoroshiro64StarStar.expected" "$TMP/actual7.out"; then
+    echo "PASS  TestXoroshiro64StarStar"
+else
+    fail "TestXoroshiro64StarStar -- output mismatch (see diff above)"
+fi

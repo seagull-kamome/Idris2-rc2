@@ -12,7 +12,7 @@ module Main
 -- while still being wrong.
 
 import Data.IORef
-import System.Random.Xoshiro128PlusPlus
+import System.Random.Xoroshiro128PlusPlus
 
 printSeq : Nat -> Gen -> IO ()
 printSeq Z _ = pure ()

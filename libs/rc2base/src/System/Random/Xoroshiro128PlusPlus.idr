@@ -1,4 +1,4 @@
-module System.Random.Xoshiro128PlusPlus
+module System.Random.Xoroshiro128PlusPlus
 
 -- Copyright 2026, Hattori,Hiroki. All rights reserved.
 -- This module was licensed by BSD3.
