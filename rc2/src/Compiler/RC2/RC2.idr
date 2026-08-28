@@ -29,11 +29,13 @@ import Compiler.RC2.Sink
 import Compiler.Common
 import Compiler.LambdaLift
 
+import Core.CompileExpr
 import Core.Context
 import Core.Directory
 import Core.Options
 
 import Data.SortedMap
+import Data.SortedSet
 import Data.String as String
 
 import Idris.Syntax
@@ -150,6 +152,25 @@ getInlineRuntime directives = concat $ intersperse "\n" $ nub $ mapMaybe getArg 
             then Just $ trim $ substr 1 (length v) v
             else Nothing
 
+||| Names of top-level definitions whose upstream CExp body is exactly
+||| `Delay e` (`MkNmFun [] (NmDelay _ _ _)`) -- the same shape
+||| `Compiler.Scheme.Common`'s own `schDef` special-cases for a
+||| memoized top-level lazy definition on the Chez backend (see
+||| `TODO.md`'s "Semantics: `Lazy`/`Force`..." entry). rc2 doesn't
+||| implement that memoization (see the same TODO.md entry's own
+||| follow-up for why it's more than a small fix), but the detection
+||| itself is free: `CompileData.namedDefs` is populated unconditionally
+||| by `getCompileDataWith` regardless of the requested `UsePhase`, so
+||| no extra compilation pass is needed to build this set purely for
+||| `dumprcexpr`'s own benefit (`Compiler.RC2.Pretty.prettyDef`'s
+||| `lazyCAFs` parameter).
+collectLazyCAFs : List (Name, FC, NamedDef) -> SortedSet Name
+collectLazyCAFs = SortedSet.fromList . mapMaybe isLazyCAF
+  where
+    isLazyCAF : (Name, FC, NamedDef) -> Maybe Name
+    isLazyCAF (n, _, MkNmFun [] (NmDelay _ _ _)) = Just n
+    isLazyCAF _ = Nothing
+
 export
 compileExpr : Ref Ctxt Defs
            -> Ref Syn SyntaxInfo
@@ -196,7 +217,8 @@ compileExpr c s _ outputDir tm outfile =
      -- already used above via getCompileData) don't reach this far --
      -- RCExp only exists after rc2's own toRCDefs runs.
      when ("dumprcexpr" `elem` directiveList) $
-         coreLift_ $ writeFile (outputDir </> outfile ++ ".rcexpr") (prettyProgram defs)
+         coreLift_ $ writeFile (outputDir </> outfile ++ ".rcexpr")
+             (prettyProgram (collectLazyCAFs (namedDefs cdata)) defs)
 
      -- `--directive dumpdualabi` / `%cg rc2 dumpdualabi`: Stage 2's own
      -- verification tool for the (not yet wired into this pipeline)

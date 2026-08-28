@@ -509,6 +509,83 @@ the same shape `IDRIS2RC2_IORef` already uses) -- non-trivial given it
 would need to interact correctly with this project's own reference-
 counting/reuse machinery, and no concrete need has surfaced yet.
 
+**Follow-up investigated, not implemented**: could the narrow, common
+"top-level constant defined as exactly `delay expr`" case (the one
+Chez memoizes via its own special case, see above) be given the same
+treatment on rc2, using the `lazy : Maybe LazyReason` markers
+`doLazyAnnots = True` would populate? Worth checking since it looked,
+at first, like a small, targeted win rather than a general memoizing-
+thunk implementation. Four things came out of chasing it:
+
+1. **Flipping `doLazyAnnots` globally is not safe.**
+   `Prelude.Basics`'s `(&&)`/`(||)` are implemented over `Lazy Bool`
+   for short-circuiting (`(&&) True x = x; (&&) False x = False`), and
+   general corecursive structures (`Stream`, `Colist`, ...) depend on
+   `Delay` never running early. Turning `doLazyAnnots` on for the whole
+   program erases *every* `Delay` into immediate evaluation (this
+   entry's own "Semantics" discussion above), which would break both
+   outright. Any safe version of this idea has to detect and special-
+   case only the exact `MkNmFun [] (NmDelay _ _ exp)` shape -- matching
+   `Compiler.Scheme.Common.idr`'s own `schDef` case for it -- while
+   leaving `doLazyAnnots = False` (and hence every other `Delay`/`Force`
+   site's existing, correct, deferred-but-non-memoizing closure
+   compilation) untouched.
+
+2. **That detection is free, as it turns out.** Traced
+   `idris2-src/src/Compiler/Common.idr`'s `getCompileDataWith`: the
+   `namedDefs <- traverse getNamedDef cseDefs` line runs unconditionally,
+   regardless of the requested `UsePhase` -- so rc2's own existing single
+   `getCompileData False Lifted tm` call already produces a fully
+   populated `cdata.namedDefs : List (Name, FC, NamedDef)`, with the
+   exact `NamedDef`/`NamedCExp` shape (`MkNmFun [] (NmDelay _ _ exp)`)
+   Chez's own `schDef` pattern-matches on. No second compilation pass
+   needed to build the "these top-level names are pure `delay expr`
+   constants" set.
+
+3. **But changing just the 0-argument CAF's own codegen turns out not to
+   be enough.** Under `doLazyAnnots = False`, `Delay e` compiles to a
+   closure (`CLam (MN "act" 0) (weaken e)`), so a CAF like `sideEffect :
+   Lazy Int; sideEffect = delay e` compiles to a genuine 0-argument C
+   function that *builds and returns a closure object*
+   (`Main_sideEffect(void) { return
+   idris2rc2_mkClosure(Main_sideEffect_1, ...); }` -- confirmed against
+   real generated C, not assumed; also confirmed rc2's own pipeline
+   never pads a 0-argument top-level definition with a dummy parameter
+   for any reason -- the only "dummy argument" concept anywhere in
+   `Compiler.RC2` is `DualABI.idr`'s `CFWorld` token, which belongs to
+   `IO a`'s own FFI representation, unrelated to a plain `Lazy a` CAF).
+   `Force t`'s own compiled form is unconditionally `CApp fc tm
+   [CErased fc]` -- "apply whatever `tm` evaluates to as a closure" --
+   so memoizing only `Main_sideEffect` itself (making it return the
+   *same* closure object every call, fixable with an atomic
+   compare-and-swap-guarded static cache) is not sufficient on its own:
+   the closure *object itself* (its body function, e.g.
+   `Main_sideEffect_1`, the thing `idris2rc2_applyClosure` actually
+   invokes) still has no "already forced, here's the cached result"
+   state, so a second `force` on the same (now correctly shared) closure
+   would still recompute. A real fix needs *both* the CAF-sharing half
+   above *and* a new memoizing closure representation (a "forced?" flag
+   plus a cached-value slot, checked by `idris2rc2_applyClosure` or
+   equivalent) -- touching `datatypes.h`'s own closure layout, not just
+   `Compiler.RC2.Emit`'s codegen for 0-argument top-level definitions.
+   Meaningfully bigger than the initially-hoped-for "just change how a
+   0-arg CAF compiles."
+
+4. Were this pursued, the natural choice for guarding the memoizing
+   closure's first-computation race (rc2 has real OS threads,
+   `doc/concurrency.md`) is an atomic compare-and-swap/double-checked
+   pattern rather than a `Mutex` -- lock-free, and acceptable since the
+   worst case under a genuine race is redundant (not incorrect)
+   recomputation for a referentially transparent value, the same
+   tradeoff this whole entry already accepts for the *unmemoized*
+   general case.
+
+Not implemented -- point 3 changes this from a small, contained fix
+into a new runtime representation plus matching `Compiler.RC2.Emit`/
+`idris2rc2_applyClosure` work, and no concrete program has needed it
+yet. Revisit starting from this writeup (particularly point 3's closure-
+representation requirement) if one does.
+
 ## `Integer` (`CFInteger`) has no `%foreign` codegen support at all
 
 Found while investigating whether `idris2-json` (stefan-hoeck's JSON
