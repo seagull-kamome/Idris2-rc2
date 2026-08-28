@@ -580,11 +580,50 @@ thunk implementation. Four things came out of chasing it:
    tradeoff this whole entry already accepts for the *unmemoized*
    general case.
 
+5. Point 3's conclusion (a new representation is unavoidable) isn't
+   speculation -- upstream itself already ships exactly this tradeoff
+   for the *general* (non-CAF) case, opt-in only, on the Scheme
+   backends: `--directive lazy=weakMemo` / `%cg chez lazy=weakMemo`
+   (`Compiler.Common.getWeakMemoLazy`, read only by
+   `Compiler.Scheme.{Chez,Racket,Gambit}`, never by RefC or rc2) swaps
+   every generic `Delay`/`Force` site from the default `(lambda ()
+   expr)` / `(expr)` pair (`Compiler.Scheme.Common.defaultLaziness` --
+   the same non-memoizing shape rc2/RefC always use) to
+   `weakMemoLaziness`: `(blodwen-delay-lazy (lambda () expr))` /
+   `(blodwen-force-lazy expr)`. Confirmed by compiling a `Lazy` value
+   built from runtime data (can't be floated to a CAF) with and without
+   the directive: `computing!` prints twice by default, once with
+   `lazy=weakMemo` on. `idris2-src/support/chez/support.ss`'s own
+   implementation:
+   ```scheme
+   (define (blodwen-delay-lazy f) (weak-cons #!bwp f))
+   (define (blodwen-force-lazy e)
+     (let ((exval (car e)))
+       (if (bwp-object? exval)
+           (let ((val ((cdr e)))) (set-car! e val) val)
+           exval)))
+   ```
+   -- a genuinely new representation (a `weak-cons` pair: `car` starts
+   as the not-yet-computed sentinel `#!bwp` and is overwritten with the
+   result on first force, `cdr` holds the thunk), not a flag on the
+   existing closure shape. And it's deliberately *weak*: `car`'s cached
+   result can be GC'd if nothing else references it, silently forcing a
+   recomputation on the next `force` -- "memoized as long as memory
+   pressure allows", not the strict once-only guarantee the top-level-
+   CAF special case's real `(delay ...)` gives via strong references.
+   Confirms this dial exists precisely because unconditional *strong*
+   memoization for every `Delay`/`Force` has a real memory cost upstream
+   itself isn't willing to pay by default (matters for long corecursive
+   chains, `Stream`/`Colist`, where pinning every historical thunk's
+   result forever would defeat the point of streaming in the first
+   place) -- a consideration any real rc2 implementation of point 3
+   would inherit too.
+
 Not implemented -- point 3 changes this from a small, contained fix
 into a new runtime representation plus matching `Compiler.RC2.Emit`/
 `idris2rc2_applyClosure` work, and no concrete program has needed it
-yet. Revisit starting from this writeup (particularly point 3's closure-
-representation requirement) if one does.
+yet. Revisit starting from this writeup (particularly points 3 and 5)
+if one does.
 
 ## `Integer` (`CFInteger`) has no `%foreign` codegen support at all
 
@@ -697,10 +736,10 @@ functions that stitch a `"C:..."` string together at compile time
 rather than writing the tag literally; these had to be read past to
 avoid false positives). Anything without a C-tagged alternative is a
 function the *pinned reference* `idris2 --cg refc` itself cannot call
-at all -- not an rc2-specific gap, but confirmed here not worked around
-by rc2 either (`libs/rc2base` provides no patch for any of these, unlike
-`System.Concurrency`, see below). Four such spots, all upstream, none
-touched by this project:
+at all -- not an rc2-specific gap. Four such spots, all upstream; three
+have since been patched independently by `libs/rc2base` (see the
+"Partial exception"/"Also patched" paragraphs below), the fourth
+(`System.Future`) has not:
 
 - **`Data.Buffer`**: `setInt8`/`getInt8`/`getInt16`/`setInt64`/
   `getInt64` each carry only a `"scheme:..."` tag. Notably asymmetric
@@ -708,13 +747,11 @@ touched by this project:
   `setInt32` do carry a `"RefC:..."` tag (`setBufferInt16LE`/
   `getBufferInt32LE`/`setBufferInt32LE`), so this looks like an
   upstream oversight rather than a deliberate scheme-only design.
-  `rc2/support/rc2/buffer.h` already has C-side macros that could back
+  `rc2/support/rc2/buffer.h` already had C-side macros that could back
   every one of these (`setBufferUInt8`/`getBufferUIntLE`/
   `setBufferInt64LE`/`getBufferInt64LE`, etc.) -- the only missing
-  piece is the upstream `%foreign` tag itself, so a local
-  `%foreign_impl` patch (the same mechanism `libs/rc2base/src/System/
-  Concurrency/RC2.idr` already uses) would be a small, low-risk fix if
-  ever needed by a real program.
+  piece was the upstream `%foreign` tag itself; now patched, see
+  "Also patched" below.
 - **`Data.Double`**: `unitRoundoff`/`epsilon`/`nan`/`inf` carry only
   `"scheme:..."`/`"node:..."` tags -- no C alternative at all.
 - **`System.Random`** (contrib): `prim__randomBits32`/
@@ -744,12 +781,12 @@ carry `"C:refc_fork"`) -- is *not* a fresh finding: it's the exact gap
 `threadWait` to join it back) -- included here only so this survey is a
 complete index of the same class of gap, not as new information.
 
-Not investigated further for `Data.Buffer`/`Data.Double`/
-`System.Random`/`System.Future`: none of these have surfaced as a real
-blocker for any program built against rc2 so far (unlike
-`System.Concurrency`, which had actual demand behind it). Revisit with
-a `%foreign_impl` patch, `libs/rc2base`-style, if a concrete program
-ever needs one of them.
+`System.Future` remains genuinely un-investigated: it hasn't surfaced
+as a real blocker for any program built against rc2 so far (unlike
+`System.Concurrency`, which had actual demand behind it, or
+`Data.Buffer`/`Data.Double`/`System.Random`, patched below once looked
+at). Revisit with a `%foreign_impl` patch or a from-scratch
+replacement, `libs/rc2base`-style, if a concrete program needs it.
 
 Partial exception for `System.Random`: `libs/rc2base/src/System/
 Random/Xoshiro128PlusPlus.idr` now provides an independent,
@@ -849,9 +886,6 @@ allocation traffic.
 - カスタムメモリアロケータに対応したい。例えばpythonに組み込む時にpython側
   のアロケータを使えれば効率化につながるのでは？
 - slabの様にfree-list風に高速割り当てできる固定アロケータを使えるようにしたい。
-- マルチスレッド対応は別にネイティブスレッドを使える必要はないはず。
-  ランタイム提供するワーカースレッドを使ったdotnetのTask風機能は比較的簡単に
-  作れるのでは？
 - libgc板のランタイム。dup/drop/freeをCマクロで消去してしまい、mallocを単純に差し替える
   だけでlibgc対応できるのでは？
 - **Performance: Closure Inlining and Immediate Expansion**
