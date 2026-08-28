@@ -460,7 +460,7 @@ Chez's own top-level `define`s are genuinely shared CAFs, unlike rc2/
 RefC's (a top-level 0-argument definition is a plain function re-run on
 every reference on this backend, no memoization at all -- confirmed
 separately in this project's own investigation of `System.Random.
-Xoshiro128PlusPlus`'s global-state design). So the real picture: a
+Xoroshiro128PlusPlus`'s global-state design). So the real picture: a
 `Lazy` value that's a closed top-level constant is memoized on Chez
 (CAF-sharing + the native-`delay` special case working together) but
 never on rc2/RefC (no CAF-sharing at all); a `Lazy` value built at
@@ -789,21 +789,23 @@ at). Revisit with a `%foreign_impl` patch or a from-scratch
 replacement, `libs/rc2base`-style, if a concrete program needs it.
 
 Partial exception for `System.Random`: `libs/rc2base/src/System/
-Random/Xoshiro128PlusPlus.idr` now provides an independent,
-pure-Idris replacement (xoshiro128++, Blackman & Vigna, public
-domain), usable on rc2 (and, being ordinary Idris with no `%foreign`
-of its own, on any backend). This is *not* a `%foreign_impl` patch
-onto upstream contrib's own `System.Random` primitives the way
-`System.Concurrency.RC2` patches `System.Concurrency` -- those
-primitives (`prim__randomBits32`/`prim__randomDouble`/`prim__srand`)
-remain entirely unimplemented on any C backend, unfixed by this. It's
-a separate module with its own API (`Gen`/`seed`/`next`/`nextDouble`/
-`nextBits32`/`nextDoubleIO`/`newSeeded`), deliberately not wired up as
-an instance of upstream's own `Random` interface, to avoid ambiguous
-instance resolution against upstream `System.Random`'s existing
-instances for callers who import both. See `libs/rc2base/README.md`'s
-own "`System.Random.Xoshiro128PlusPlus`" section for the full API and
-design rationale.
+Random/` now provides two modules, `Xoroshiro64StarStar.idr` and
+`Xoroshiro128PlusPlus.idr` (the latter rewritten from an earlier
+pure-Idris xoshiro128++ port to a real xoroshiro128++ port) -- both
+thin FFI wrappers around a C port of their respective reference
+algorithm, and so, unlike a from-scratch pure-Idris replacement would
+be, rc2/C-backend-specific rather than portable to every backend.
+Neither is a `%foreign_impl` patch onto upstream contrib's own
+`System.Random` primitives the way `System.Concurrency.RC2` patches
+`System.Concurrency` -- those primitives (`prim__randomBits32`/
+`prim__randomDouble`/`prim__srand`) remain entirely unimplemented on
+any C backend, unfixed by this. Both stay separate modules with their
+own API, deliberately not wired up as instances of upstream's own
+`Random` interface, to avoid ambiguous instance resolution against
+upstream `System.Random`'s existing instances for callers who import
+both. See `libs/rc2base/README.md`'s own
+"`System.Random.Xoroshiro128PlusPlus` / `System.Random.
+Xoroshiro64StarStar`" section for the full API and design rationale.
 
 Also patched since the above survey, unlike `System.Random`/
 `System.Future` above: `Data.Buffer`'s five gap primitives

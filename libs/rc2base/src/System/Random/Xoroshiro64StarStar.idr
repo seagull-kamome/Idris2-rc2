@@ -5,11 +5,11 @@ module System.Random.Xoroshiro64StarStar
 
 -- xoroshiro64** (Blackman & Vigna, public domain), the 32-bit-output,
 -- 64-bit-state member of the xoshiro/xoroshiro family -- a different
--- algorithm from System.Random.Xoroshiro128PlusPlus (128 bits of state,
--- 4x Bits32), not a truncated variant of it.
+-- algorithm from System.Random.Xoroshiro128PlusPlus (64-bit output,
+-- 128-bit state), not a truncated variant of it.
 --
--- Unlike Xoroshiro128PlusPlus (a from-scratch pure-Idris port), this
--- module is a thin FFI wrapper around a direct C port of the reference
+-- Like Xoroshiro128PlusPlus, this module is a thin FFI wrapper around a
+-- direct C port of the reference
 -- implementation (support/c/xoroshiro64starstar.c, itself a mechanical
 -- rename of https://prng.di.unimi.it/xoroshiro64starstar.c) -- kept in C
 -- mainly so the reference's own jump()/long_jump()/jump_ce()/jump_n()
@@ -121,6 +121,19 @@ newIOGen s = do
   setBits32 buf 0 s0
   setBits32 buf 4 s1
   pure $ Just $ MkIOGen buf
+
+||| Clone a generator's current state into a fresh, independent
+||| `IOGen` -- the copy produces the exact same output sequence as the
+||| original from this point on, but mutating one (via `next`/`jump`*)
+||| has no effect on the other, since each holds its own `Buffer`.
+||| `Nothing` only on the new buffer's own allocation failure.
+export
+copyIOGen : HasIO io => IOGen -> io (Maybe IOGen)
+copyIOGen (MkIOGen buf) = do
+  Just buf' <- newBuffer 8
+    | Nothing => pure Nothing
+  copyData buf 0 8 buf' 0
+  pure $ Just $ MkIOGen buf'
 
 ||| Draw the next 32-bit output from a generator, updating its state
 ||| (held in the underlying `Buffer`) in place.

@@ -95,17 +95,17 @@ else
     fail "TestConcurrency -- output mismatch (see diff above)"
 fi
 
-echo "=== rc2 backend: build TestXoshiro128PlusPlus (System.Random.Xoshiro128PlusPlus) ==="
+echo "=== rc2 backend: build TestXoroshiro128PlusPlus (System.Random.Xoroshiro128PlusPlus) ==="
 nix-shell -p gcc gmp pkg-config --run \
-    "cd '$TESTS_DIR' && '$IDRIS2RC2' --cg rc2 -p rc2base -o TestXoshiro128PlusPlus_verify TestXoshiro128PlusPlus.idr"
+    "cd '$TESTS_DIR' && '$IDRIS2RC2' --cg rc2 -p rc2base -o TestXoroshiro128PlusPlus_verify TestXoroshiro128PlusPlus.idr"
 
-echo "=== Run and diff against TestXoshiro128PlusPlus.expected ==="
-"$TESTS_DIR/build/exec/TestXoshiro128PlusPlus_verify" > "$TMP/actual4.out" 2>&1
+echo "=== Run and diff against TestXoroshiro128PlusPlus.expected ==="
+"$TESTS_DIR/build/exec/TestXoroshiro128PlusPlus_verify" > "$TMP/actual4.out" 2>&1
 
-if diff -u "$TESTS_DIR/TestXoshiro128PlusPlus.expected" "$TMP/actual4.out"; then
-    echo "PASS  TestXoshiro128PlusPlus"
+if diff -u "$TESTS_DIR/TestXoroshiro128PlusPlus.expected" "$TMP/actual4.out"; then
+    echo "PASS  TestXoroshiro128PlusPlus"
 else
-    fail "TestXoshiro128PlusPlus -- output mismatch (see diff above)"
+    fail "TestXoroshiro128PlusPlus -- output mismatch (see diff above)"
 fi
 
 echo "=== rc2 backend: build TestBufferRC2 (Data.Buffer.RC2's %foreign_impl patches) ==="

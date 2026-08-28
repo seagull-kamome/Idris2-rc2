@@ -26,11 +26,10 @@ module Data.Double.RC2
 -- shape any other rc2/rc2base %foreign_impl patch so far has used.
 -- Confirmed working (a fresh call re-evaluated at every reference site,
 -- same as any other arity-0 top-level definition on this backend --
--- harmless here since all four are pure, side-effect-free constants,
--- unlike `System.Random.Xoshiro128PlusPlus`'s own stateful IORef case
--- where the identical non-memoization behavior would have been a real
--- bug) via a standalone scratch program before writing this module for
--- real, not assumed from reading the compiler alone.
+-- harmless here since all four are pure, side-effect-free constants;
+-- the same non-memoization would be a real bug for a stateful
+-- generator) via a standalone scratch program before writing this
+-- module for real, not assumed from reading the compiler alone.
 --
 -- Tagged `"RC2:"`, not `"RefC:"`, for the same reason as
 -- `Data.Buffer.RC2`: these symbol names are new, rc2-only additions to

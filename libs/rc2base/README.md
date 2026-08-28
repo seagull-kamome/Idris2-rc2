@@ -157,96 +157,134 @@ untouched; `believe_me` then tells the type checker what's already
 true at runtime. This avoids an extra copy through an intermediate
 `char *` buffer.
 
-### `System.Random.Xoshiro128PlusPlus`
+### `System.Random.Xoroshiro128PlusPlus` / `System.Random.Xoroshiro64StarStar`
 
-A pure-Idris port of xoshiro128++ (Blackman & Vigna, 2018, public
-domain) -- the 32-bit-output, 128-bit-state member of the
-xoshiro/xoroshiro family. Reference C implementations:
-[xoshiro128plusplus.c](https://prng.di.unimi.it/xoshiro128plusplus.c)
-(the `next` step) and
-[splitmix64.c](https://prng.di.unimi.it/splitmix64.c) (`seed`'s own
-expansion of a single `Bits64` into the four words of initial state).
-Written because upstream contrib's `System.Random` is entirely
-`%foreign`-backed with only `scheme:`/`javascript:` implementations --
-unusable on refc/rc2 (or any C backend) at all, see `TODO.md`'s
-"Upstream stdlib `%foreign` declarations with no C/RefC backend at
-all" -- and this module is not a patch onto that primitive, just an
-independent replacement with its own API.
+Two thin FFI wrappers around C ports of the real xoroshiro128++ and
+xoroshiro64** algorithms (Blackman & Vigna, 2019, public domain) --
+respectively the 64-bit-output/128-bit-state and 32-bit-output/64-bit-
+state members of the xoshiro/xoroshiro family. Despite the similar
+naming, neither is a scaled variant of the other. Reference C
+implementations:
+[xoroshiro128plusplus.c](https://prng.di.unimi.it/xoroshiro128plusplus.c)/
+[xoroshiro64starstar.c](https://prng.di.unimi.it/xoroshiro64starstar.c),
+mechanically renamed into `support/c/xoroshiro128plusplus.c`/
+`xoroshiro64starstar.c` (C symbol prefixes
+`idris2rc2_System_Random128_*`/`idris2rc2_System_Random_*`
+respectively -- note the un-"128"-suffixed prefix belongs to the
+64-bit-state module, not the 128-bit one, despite looking like it
+should be the other way round). Written because upstream contrib's
+`System.Random` is entirely `%foreign`-backed with only
+`scheme:`/`javascript:` implementations -- unusable on refc/rc2 (or any
+C backend) at all, see `TODO.md`'s "Upstream stdlib `%foreign`
+declarations with no C/RefC backend at all" -- and neither module is a
+patch onto that primitive, just an independent replacement with its own
+API. Kept in C (rather than ported to pure Idris) mainly so the
+reference algorithms' own `jump()`/`long_jump()`/`jump_ce()`/`jump_n()`
+machinery stays available below with no from-scratch
+F2X-polynomial-arithmetic port needed.
 
-```idris2
-record Gen where
-  constructor MkGen
-  s0, s1, s2, s3 : Bits32
-```
-The generator's full 128 bits of state, deliberately kept as four
-`Bits32` fields rather than packed into two `Bits64` fields, even
-though that looks like the more "natural" 128-bit layout. `Bits32` (and
-every other <=32-bit scalar) is one of rc2's own `alwaysUnboxed` types
-(`Compiler.RC2.Types.alwaysUnboxed`): a tagged pointer, never a real
-heap allocation, with `dup`/`drop` already a no-op against it and every
-arithmetic op pure pointer-tag manipulation. `Bits64` is not in that
-set -- it's a real heap-boxed value needing a fresh allocation and
-refcount traffic on every new value `next` produces. Packing to 2x64
-would shrink `Gen`'s own constructor from 4 slots to 2, but at the cost
-of boxing a fresh `Bits64` per repacked half on every single step, plus
-the pack/unpack shifting needed to get back at the algorithm's own
-32-bit halves -- a net loss, not a win, under rc2's value-representation
-model, even though it would look like the "obvious" choice under a
-representation model (like GHC's) where a boxed 64-bit word isn't any
-more expensive than a boxed 32-bit one.
+Both modules share the same API shape:
 
 ```idris2
-seed       : Bits64 -> Gen
-next       : Gen -> (Bits32, Gen)
-nextDouble : Gen -> (Double, Gen)
+export
+data IOGen  -- opaque; wraps a Buffer holding the raw state
+
+newIOGen   : HasIO io => Bits64 -> io (Maybe IOGen)
+copyIOGen  : HasIO io => IOGen -> io (Maybe IOGen)
+next       : HasIO io => IOGen -> io Bits32   -- Bits64 for Xoroshiro128PlusPlus
+nextDouble : HasIO io => IOGen -> io Double
+newSeeded  : HasIO io => io (Maybe IOGen)
+
+jump     : HasIO io => IOGen -> io ()
+longJump : HasIO io => IOGen -> io ()
+jumpCE   : HasIO io => IOGen -> (c : Bits64) -> (e : Bits32) -> io ()
+jumpN    : HasIO io => IOGen -> (n : Bits64) -> io ()   -- two Bits64 words for Xoroshiro128PlusPlus
 ```
-All pure. `seed` expands one caller-chosen `Bits64` into a full `Gen`
-via two splitmix64 steps (Vigna, public domain; used here only to mix
-a single seed into four well-distributed `Bits32` words, not part of
-xoshiro128++ itself). `next` is one xoshiro128++ step: the algorithm's
-own 32-bit output plus the successor state, threaded through explicitly
-since there is no mutable cell here to hide it in. `nextDouble` maps
-that same step's output onto a uniform `Double` in `[0,1)` at the
-generator's native 32-bit precision (`output / 2^32`) -- not the full
+plus a `setSystemSeed`/`nextIO`/`jumpIO`/`longJumpIO`/`jumpCEIO`/
+`jumpNIO` family operating on a single global generator (below).
+
+`IOGen` wraps a `Buffer` holding the algorithm's raw state (8 bytes for
+Xoroshiro64StarStar, 16 for Xoroshiro128PlusPlus), mutated in place by
+`next`/`jump`*, rather than threaded by hand as a pure value or hidden
+behind an `IORef`: `next` calls straight into the reference C algorithm
+via the `"C"` tag, and `Compiler.RC2.EmitUtil`'s `extractValue CLangC
+CFBuffer` unwraps a `Buffer` argument to a flat pointer straight at its
+data (no size header in the way), so the C side can treat it exactly as
+the reference algorithm's own `uint32_t s[2]`/`uint64_t s[2]`, reading
+consecutive words as native-endian -- which only agrees with the
+buffer's own little-endian-by-construction layout (`Data.Buffer.
+setBits32`/`setBits64`) on realistic little-endian targets (x86/x86_64/
+ARM in their default mode); not a coincidence this project relies on
+elsewhere, but not a real risk in practice either. `newIOGen`/
+`copyIOGen`/`newSeeded` return `Maybe`, `Nothing` only on buffer
+allocation failure -- a possibility a `Buffer`-backed design has that a
+plain `newIORef` never did. `copyIOGen` clones a generator's current
+state into a second, independent `IOGen` (a fresh `Buffer`, `Data.
+Buffer.copyData`-populated) -- the two then produce identical output
+until one is mutated, since each holds its own state from that point
+on.
+
+`newIOGen` expands a caller-chosen `Bits64` seed into the full state
+via one (`Xoroshiro64StarStar`, 64-bit state) or two
+(`Xoroshiro128PlusPlus`, 128-bit state) splitmix64 (Vigna, public
+domain) steps, to avoid handing the algorithm a poorly-diffused or
+all-zero state -- exactly the seeding method the reference
+implementation's own header comment suggests. `nextDouble` maps a
+step's output onto a uniform `Double` in `[0,1)` at the generator's own
+native precision (`output / 2^32` or `output / 2^64`) -- not the full
 53-bit `Double` mantissa's worth of randomness some other generators
-provide.
+provide. `newSeeded` is a convenience constructor seeded from the
+monotonic clock mixed with the current process id (`System.Clock`/
+`getPID`) -- not cryptographically secure, just a reasonable "don't
+hand me the same sequence every run" default; use `newIOGen` directly
+for a reproducible, caller-chosen seed.
 
-```idris2
-nextBits32   : HasIO io => IORef Gen -> io Bits32
-nextDoubleIO : HasIO io => IORef Gen -> io Double
-newSeeded    : HasIO io => io (IORef Gen)
-```
-Convenience wrappers around the pure core above, for the common case of
-threading a generator through a sequence of `IO` actions instead of
-carrying the successor state by hand. `nextBits32`/`nextDoubleIO` each
-do a plain read-`next`-write cycle against the given `IORef`.
-Deliberately just `IORef Gen`, not an opaque handle bundling a `Mutex`:
-that read-then-write is two separate operations, not one atomic step,
-so it is not safe for multiple threads to share the same `IORef`
-without their own guard -- a caller needing that wraps it in a `Mutex`
-(`System.Concurrency`) themselves, same as any other shared mutable
-state; a fresh `IORef Gen` per thread needs no such guard at all.
+`jump`/`longJump`/`jumpCE`/`jumpN` wrap the reference algorithm's own
+jump-ahead machinery, advancing a generator's state as if by `2^k` (or
+`c * 2^e`, or an arbitrary caller-given distance) calls to `next`
+without actually stepping through that many -- useful for handing out
+non-overlapping subsequences to independent parallel computations.
+`jumpN`'s distance is one `Bits64` word for `Xoroshiro64StarStar`
+(whose whole state is 64 bits) and two for `Xoroshiro128PlusPlus` (128
+bits) -- simpler than the reference algorithm's own general
+`POLY_WORDS`-word `jump[]` array, sized for generators with larger
+state than either of these.
 
-This also rules out the seemingly simpler alternative of a single
-top-level global generator (`unsafePerformIO`-backed, no explicit
-`IORef` threading needed at call sites): neither rc2 nor upstream RefC
-ever memoizes a 0-argument top-level definition (a CAF) the way, say,
-GHC does -- both re-run its body, a fresh call, every single time it's
-referenced (confirmed against `Compiler.RC2.Emit`'s and upstream
-`Compiler.RefC.RefC`'s own handling of the `nargs == 0` case). A global
-`unsafePerformIO (newIORef (seed ...))`-shaped CAF would therefore
-silently hand back a *new*, independently-seeded `IORef` on every
-reference, never a single shared one -- so state cannot be hidden
-behind a memoized top-level singleton on this backend the way it might
-on Chez/JS, and the caller must instead create one `IORef Gen` itself
-and thread it explicitly, which is exactly what these wrappers ask for.
+Each module also offers a separate, single global generator
+(`setSystemSeed`/`nextIO`/`jumpIO`/`longJumpIO`/`jumpCEIO`/`jumpNIO`)
+held entirely in C-side static state (each `support/c/*.c`'s own
+`system_seed[...]`) -- not thread-safe (no locking around the shared
+mutable state, unlike even the "caller must guard their own `IOGen`"
+contract the per-instance API above leaves to callers), offered purely
+as a quick, no-instance-to-carry-around convenience akin to C's own
+`rand()`/`srand()`. Prefer `newIOGen`/`next` for anything concurrent or
+reproducible.
 
-`newSeeded` is a convenience constructor building one such `IORef` from
-a non-fixed default seed (the monotonic clock mixed with the current
-process id via `System.Clock`/`getPID`) -- not cryptographically
-secure, just a reasonable "don't hand me the same sequence every run"
-default. Use `newIORef . seed` directly instead for a reproducible,
-caller-chosen seed.
+The single-global-generator design is also the answer to a seemingly
+simpler alternative: a top-level `unsafePerformIO`-backed `IOGen`,
+needing no explicit handle threading at call sites. Neither rc2 nor
+upstream RefC ever memoizes a 0-argument top-level definition (a CAF)
+the way, say, GHC does -- both re-run its body, a fresh call, every
+single time it's referenced (confirmed against `Compiler.RC2.Emit`'s
+and upstream `Compiler.RefC.RefC`'s own handling of the `nargs == 0`
+case). A top-level `unsafePerformIO (newIOGen ...)`-shaped CAF would
+therefore silently hand back a *new*, independently-seeded (and
+independently `Buffer`-allocated) `IOGen` on every reference, never a
+single shared one -- so a memoized top-level singleton isn't available
+on this backend the way it might be on Chez/JS. The `*IO` functions
+above sidestep this by living in C-side static state rather than behind
+an Idris-side CAF, which is exactly why they're implemented in C rather
+than as a thin Idris wrapper over a top-level `IOGen`.
+
+An earlier version of `Xoroshiro128PlusPlus` -- under the same module
+name but implementing a different algorithm, xoshiro128++ (32-bit
+output over 4x `Bits32` state) -- was a from-scratch, pure-Idris port
+instead of a C wrapper, with a pure `Gen` record (`seed`/`next`/
+`nextDouble`) threaded by hand plus `IORef`-based convenience wrappers
+(`nextBits32`/`nextDoubleIO`/`newSeeded`). That implementation has been
+replaced outright by the real xoroshiro128++ ported above -- a
+different algorithm despite the shared "128"/"++" naming, not merely a
+rename.
 
 ### `Data.Buffer.RC2`
 
@@ -254,10 +292,11 @@ Patches the five upstream `Data.Buffer` primitives that carry only a
 `"scheme:..."` `%foreign` tag and are therefore unusable on refc/rc2
 (or any C backend) at all -- see `TODO.md`'s "Upstream stdlib
 `%foreign` declarations with no C/RefC backend at all" entry. Unlike
-`System.Random.Xoshiro128PlusPlus` above (a from-scratch replacement
--- upstream's own primitives there have no C-reachable implementation
-to patch onto at all), `rc2/support/rc2/buffer.h` already had every
-one of these under a different name: `setInt16`/`getInt32`/`setInt32`
+the `System.Random` modules above (independent replacements built from
+scratch -- upstream's own primitives there have no C-reachable
+implementation whatsoever to patch onto at all), `rc2/support/rc2/
+buffer.h` already had every one of these under a different name:
+`setInt16`/`getInt32`/`setInt32`
 (upstream's own already-working `"RefC:..."` tags matching that
 runtime's symbol names verbatim) show the same runtime was always
 meant to cover the rest of `Data.Buffer` too. This module just wires
@@ -359,11 +398,12 @@ for real: like any other arity-0 top-level definition on this
 backend, a call to one of these four is re-evaluated fresh at every
 reference site rather than memoized as a CAF (neither rc2 nor
 upstream RefC ever memoizes a 0-argument top-level definition the way,
-say, Chez/GHC do -- see `System.Random.Xoshiro128PlusPlus`'s own API
-section above for the same point made about a *stateful* case, where
-the identical non-memoization behavior would actually have been a
-bug). Harmless here specifically because all four are pure,
-side-effect-free constants -- re-evaluating `idris2rc2_inf()` a second
+say, Chez/GHC do -- see the `System.Random.Xoroshiro128PlusPlus` /
+`System.Random.Xoroshiro64StarStar` section above for the same point
+made about a *stateful* generator case, where the identical
+non-memoization behavior would actually have been a bug). Harmless here
+specifically because all four are pure, side-effect-free constants --
+re-evaluating `idris2rc2_inf()` a second
 time returns the same `INFINITY` either way.
 
 Tagged `"RC2:"`, not `"RefC:"`, for the same reason as

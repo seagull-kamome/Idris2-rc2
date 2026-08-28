@@ -3,48 +3,96 @@ module System.Random.Xoroshiro128PlusPlus
 -- Copyright 2026, Hattori,Hiroki. All rights reserved.
 -- This module was licensed by BSD3.
 
--- xoshiro128++ (Blackman & Vigna, 2018, public domain), the 32-bit-output
--- member of the xoshiro/xoroshiro family: 128 bits of state held as four
--- Bits32 words, not two Bits64 words -- unlike the more famous
--- xoroshiro128++ (64-bit output, 2x64 state), which is a different
--- algorithm with different rotation constants and a different state
--- shape, not just a truncated/packed variant of this one.
+-- xoroshiro128++ 1.0 (Blackman & Vigna, 2019, public domain), the
+-- 64-bit-output, 128-bit-state member of the xoshiro/xoroshiro family --
+-- a different algorithm from System.Random.Xoroshiro64StarStar (64-bit
+-- state, 32-bit output), not a scaled-up variant of it. (An earlier
+-- version of this module implemented xoshiro128++ instead -- a
+-- different generator that happens to share the "128" and "++" naming,
+-- 32-bit output over 4x Bits32 state -- under this same module name;
+-- that implementation has been replaced outright by the real
+-- xoroshiro128++ ported below, not merely renamed.)
 --
--- Original C reference implementations this module ports (both public
--- domain, Blackman & Vigna):
---   https://prng.di.unimi.it/xoshiro128plusplus.c  (the `next` step)
---   https://prng.di.unimi.it/splitmix64.c           (`seed`'s expansion)
+-- Like Xoroshiro64StarStar (and unlike that earlier xoshiro128++ port,
+-- which was from-scratch pure Idris), this module is a thin FFI wrapper
+-- around a direct C port of the reference implementation
+-- (support/c/xoroshiro128plusplus.c, itself a mechanical rename of
+-- https://prng.di.unimi.it/xoroshiro128plusplus.c) -- kept in C mainly
+-- so the reference's own jump()/long_jump()/jump_ce()/jump_n()
+-- machinery (exposed below as jump/longJump/jumpCE/jumpN, plus their
+-- *IO global-generator counterparts) stays available with no
+-- from-scratch F2X-polynomial-arithmetic port to Idris needed.
 --
--- Deliberately kept as 4 Bits32 fields rather than packed into 2 Bits64
--- fields, even though that looks like the more "natural" 128-bit layout:
--- `Bits32` (and every other <=32-bit scalar) is one of rc2's own
--- alwaysUnboxed types (`Compiler.RC2.Types.alwaysUnboxed`) -- a tagged
--- pointer, never a real heap allocation, with `idris2rc2_dup`/`drop`
--- already a no-op against it and every arithmetic op
--- (`rc2/support/rc2/numeric.h`'s `IDRIS2RC2_INTTYPES_TAGGED` macros)
--- pure pointer-tag manipulation. `Bits64` is not in that set -- it's a
--- real heap-boxed value needing an allocation and refcount traffic per
--- new value. Packing to 2x64 would shrink `Gen`'s own constructor
--- (`args[]` of 2 slots instead of 4), but would need to box a fresh
--- Bits64 for each repacked half on every `next` call, plus the actual
--- pack/unpack shifting to get back at the algorithm's own 32-bit halves
--- -- very likely a net loss, not a win, under rc2's own cost model.
+-- The 16-byte state lives in a `Buffer`. Seeding it goes through the
+-- standard `Data.Buffer.setBits64` (backed by "RefC:setBufferUInt64LE",
+-- little-endian by construction), while `next` itself calls straight
+-- into the reference C algorithm via the "C" tag: `Compiler.RC2.
+-- EmitUtil`'s `extractValue CLangC CFBuffer` unwraps a `Buffer` argument
+-- to a flat pointer straight at its data (no size header in the way), so
+-- the C side can treat it exactly as the reference algorithm's own
+-- `uint64_t s[2]`, reading both bytes 0..7 and 8..15 as native-endian
+-- words. The two only agree on every realistic target (x86/x86_64/ARM in
+-- their default little-endian mode) because "native" there already means
+-- "little-endian" -- not a coincidence this project relies on elsewhere,
+-- but not a real risk in practice either.
 
 import Data.Bits
-import Data.IORef
+import Data.Buffer
 import System
 import System.Clock
 
-||| 128 bits of xoshiro128++ state, as four Bits32 words (`s[0..3]` in the
-||| reference implementation).
-public export
-record Gen where
-  constructor MkGen
-  s0, s1, s2, s3 : Bits32
+%default covering
 
--- splitmix64 (Vigna, public domain) -- used only to expand a single Bits64
--- seed into four well-mixed Bits32 words for `Gen`'s own initial state,
--- not part of xoshiro128++ itself. Returns (output, next splitmix64 state).
+||| A single instance's 128 bits of xoroshiro128++ state, held as a
+||| 16-byte `Buffer` (`s[0..1]` in the reference implementation) --
+||| mutated in place by `next`.
+export
+data IOGen = MkIOGen Buffer
+
+-- ----------------------------------------------------------------------------
+-- FFI: support/c/xoroshiro128plusplus.c
+
+%foreign "C:idris2rc2_System_Random128_set_system_seed,libidris2rc2base,xoroshiro128plusplus.h"
+prim__setSystemSeed : Bits64 -> Bits64 -> PrimIO ()
+
+%foreign "C:idris2rc2_System_Random128_next_sys,libidris2rc2base,xoroshiro128plusplus.h"
+prim__nextSys : PrimIO Bits64
+
+%foreign "C:idris2rc2_System_Random128_next,libidris2rc2base,xoroshiro128plusplus.h"
+prim__next : Buffer -> PrimIO Bits64
+
+%foreign "C:idris2rc2_System_Random128_jump,libidris2rc2base,xoroshiro128plusplus.h"
+prim__jump : Buffer -> PrimIO ()
+
+%foreign "C:idris2rc2_System_Random128_jump_sys,libidris2rc2base,xoroshiro128plusplus.h"
+prim__jumpSys : PrimIO ()
+
+%foreign "C:idris2rc2_System_Random128_long_jump,libidris2rc2base,xoroshiro128plusplus.h"
+prim__longJump : Buffer -> PrimIO ()
+
+%foreign "C:idris2rc2_System_Random128_long_jump_sys,libidris2rc2base,xoroshiro128plusplus.h"
+prim__longJumpSys : PrimIO ()
+
+%foreign "C:idris2rc2_System_Random128_jump_ce,libidris2rc2base,xoroshiro128plusplus.h"
+prim__jumpCE : Buffer -> Bits64 -> Bits32 -> PrimIO ()
+
+%foreign "C:idris2rc2_System_Random128_jump_ce_sys,libidris2rc2base,xoroshiro128plusplus.h"
+prim__jumpCESys : Bits64 -> Bits32 -> PrimIO ()
+
+%foreign "C:idris2rc2_System_Random128_jump_n,libidris2rc2base,xoroshiro128plusplus.h"
+prim__jumpN : Buffer -> Bits64 -> Bits64 -> PrimIO ()
+
+%foreign "C:idris2rc2_System_Random128_jump_n_sys,libidris2rc2base,xoroshiro128plusplus.h"
+prim__jumpNSys : Bits64 -> Bits64 -> PrimIO ()
+
+-- ----------------------------------------------------------------------------
+-- splitmix64 (Vigna, public domain) -- same construction as
+-- Xoroshiro64StarStar.splitmix64Next, duplicated locally rather than
+-- shared: both modules are otherwise self-contained, each citing its own
+-- reference source directly. This is exactly the seeding method the
+-- reference implementation's own header comment suggests ("If you have a
+-- 64-bit seed, we suggest to seed a splitmix64 generator and use its
+-- output to fill s").
 splitmix64Next : Bits64 -> (Bits64, Bits64)
 splitmix64Next state =
   let state' = state + 0x9e3779b97f4a7c15
@@ -53,77 +101,146 @@ splitmix64Next state =
       z2     = (z1 `xor` (z1 `shiftR` 27)) * 0x94d049bb133111eb
   in (z2 `xor` (z2 `shiftR` 31), state')
 
-||| Expand a single 64-bit seed into a full `Gen` via two splitmix64 steps
-||| (one per pair of Bits32 words), each split into its upper/lower half.
-export
-seed : Bits64 -> Gen
-seed s =
-  let (a, s')  = splitmix64Next s
-      (b, _)   = splitmix64Next s'
-  in MkGen (cast (a `shiftR` 32)) (cast a) (cast (b `shiftR` 32)) (cast b)
+||| Two splitmix64 steps' full 64-bit outputs, `(s[0], s[1])` -- this
+||| generator's state is 128 bits, so (unlike Xoroshiro64StarStar.
+||| mixSeed, whose 64-bit state fits in a single splitmix64 step's
+||| output) two steps are needed, one per word.
+mixSeed : Bits64 -> (Bits64, Bits64)
+mixSeed s = let (s0, s') = splitmix64Next s
+                (s1, _)  = splitmix64Next s'
+            in (s0, s1)
 
-rotl32 : Bits32 -> (k : Fin 32) -> (nk : Fin 32) -> Bits32
-rotl32 x k nk = (x `shiftL` k) .|. (x `shiftR` nk)
+-- ----------------------------------------------------------------------------
 
-||| One xoshiro128++ step: returns the next 32-bit output and the
-||| successor state.
+||| A fresh per-instance generator, seeded (via two splitmix64 steps, to
+||| avoid handing the algorithm a poorly-diffused or all-zero state) from
+||| a caller-chosen `Bits64`. `Nothing` only on buffer allocation failure.
 export
-next : Gen -> (Bits32, Gen)
-next (MkGen s0 s1 s2 s3) =
-  let result = rotl32 (s0 + s3) 7 25 + s0
-      t      = s1 `shiftL` 9
-      s2'    = s2 `xor` s0
-      s3'    = s3 `xor` s1
-      s1'    = s1 `xor` s2'
-      s0'    = s0 `xor` s3'
-      s2''   = s2' `xor` t
-      s3''   = rotl32 s3' 11 21
-  in (result, MkGen s0' s1' s2'' s3'')
+newIOGen : HasIO io => Bits64 -> io (Maybe IOGen)
+newIOGen s = do
+  Just buf <- newBuffer 16
+    | Nothing => pure Nothing
+  let (s0, s1) = mixSeed s
+  setBits64 buf 0 s0
+  setBits64 buf 8 s1
+  pure $ Just $ MkIOGen buf
+
+||| Clone a generator's current state into a fresh, independent
+||| `IOGen` -- the copy produces the exact same output sequence as the
+||| original from this point on, but mutating one (via `next`/`jump`*)
+||| has no effect on the other, since each holds its own `Buffer`.
+||| `Nothing` only on the new buffer's own allocation failure.
+export
+copyIOGen : HasIO io => IOGen -> io (Maybe IOGen)
+copyIOGen (MkIOGen buf) = do
+  Just buf' <- newBuffer 16
+    | Nothing => pure Nothing
+  copyData buf 0 16 buf' 0
+  pure $ Just $ MkIOGen buf'
+
+||| Draw the next 64-bit output from a generator, updating its state
+||| (held in the underlying `Buffer`) in place.
+export
+next : HasIO io => IOGen -> io Bits64
+next (MkIOGen buf) = primIO $ prim__next buf
 
 ||| A step's output mapped to a uniform `Double` in `[0,1)`, at the
-||| generator's own native 32-bit precision (`output / 2^32`).
+||| generator's own native 64-bit precision (`output / 2^64`) -- same
+||| formula as `Xoroshiro64StarStar.nextDouble`, scaled up.
 export
-nextDouble : Gen -> (Double, Gen)
-nextDouble g =
-  let (v, g') = next g
-  in (cast v / 4294967296.0, g')
+nextDouble : HasIO io => IOGen -> io Double
+nextDouble g = do
+  v <- next g
+  pure (cast v / 18446744073709551616.0)
 
--- IORef-based convenience wrappers. Deliberately just `IORef Gen`, not an
--- opaque handle bundling a Mutex: a plain read-next-write cycle here is
--- not safe under concurrent access from multiple threads onto the *same*
--- `IORef` (the read and the write are two separate operations, not one
--- atomic step) -- a caller needing that guards the `IORef` with their own
--- `Mutex` (`System.Concurrency`), same as any other shared mutable state.
--- A fresh `IORef Gen` per thread needs no such guard at all.
-
-||| Draw the next 32-bit output from a generator held in an `IORef`,
-||| updating it in place.
+||| Equivalent to 2^64 calls to `next` -- advances a generator to the
+||| start of one of 2^64 non-overlapping subsequences, useful for
+||| handing out independent streams to parallel computations.
 export
-nextBits32 : HasIO io => IORef Gen -> io Bits32
-nextBits32 ref = do
-  g <- readIORef ref
-  let (v, g') = next g
-  writeIORef ref g'
-  pure v
+jump : HasIO io => IOGen -> io ()
+jump (MkIOGen buf) = primIO $ prim__jump buf
 
-||| Draw the next `Double` in `[0,1)` from a generator held in an `IORef`,
-||| updating it in place.
+||| Equivalent to 2^96 calls to `next` -- like `jump`, but for 2^32
+||| starting points each 2^64 apart (so `jump` can still be used within
+||| each to hand out 2^32 further non-overlapping subsequences).
 export
-nextDoubleIO : HasIO io => IORef Gen -> io Double
-nextDoubleIO ref = do
-  g <- readIORef ref
-  let (v, g') = nextDouble g
-  writeIORef ref g'
-  pure v
+longJump : HasIO io => IOGen -> io ()
+longJump (MkIOGen buf) = primIO $ prim__longJump buf
 
-||| Convenience constructor: a fresh `IORef Gen`, seeded from the
-||| monotonic clock and the current process id. Not cryptographically
-||| secure, just a reasonable non-fixed default -- use `seed` directly
-||| (via `newIORef . seed`) for a reproducible, caller-chosen seed.
+||| Equivalent to `c * 2^e` calls to `next` -- e.g. `jumpCE g 1 64` is
+||| `jump g`, `jumpCE g 1 96` is `longJump g`. Expressing the distance
+||| this way avoids handling a multiple-precision integer for ordinary
+||| jump counts (`jumpCE g k 0`) or power-of-two multiples. For the jump
+||| to be meaningful, `c * 2^e` should stay under the generator's period
+||| (2^128 - 1).
 export
-newSeeded : HasIO io => io (IORef Gen)
+jumpCE : HasIO io => IOGen -> (c : Bits64) -> (e : Bits32) -> io ()
+jumpCE (MkIOGen buf) c e = primIO $ prim__jumpCE buf c e
+
+||| Equivalent to `n` calls to `next`, for an arbitrary distance
+||| `n = n0 + n1 * 2^64` (should stay under the generator's period,
+||| 2^128 - 1, for the jump to be meaningful) -- more general than
+||| `jumpCE`, taking `n` as two `Bits64` words directly since this
+||| generator's 128-bit state means any distance always fits in exactly
+||| two of them (unlike the reference algorithm's own general
+||| POLY_WORDS-word `jump[]` array, sized for generators with larger
+||| state).
+export
+jumpN : HasIO io => IOGen -> (n0 : Bits64) -> (n1 : Bits64) -> io ()
+jumpN (MkIOGen buf) n0 n1 = primIO $ prim__jumpN buf n0 n1
+
+||| Convenience constructor: a fresh generator, seeded from the monotonic
+||| clock and the current process id. Not cryptographically secure, just
+||| a reasonable non-fixed default -- use `newIOGen` directly for a
+||| reproducible, caller-chosen seed. `Nothing` only on buffer allocation
+||| failure.
+export
+newSeeded : HasIO io => io (Maybe IOGen)
 newSeeded = do
   clk <- liftIO (clockTime Monotonic)
   pid <- getPID
   let mixed = cast (toNano clk) `xor` cast pid
-  newIORef (seed mixed)
+  newIOGen mixed
+
+-- ----------------------------------------------------------------------------
+-- A separate, single global generator held entirely in C-side static
+-- state (`support/c/xoroshiro128plusplus.c`'s own `system_seed[2]`) --
+-- not thread-safe (no locking around the shared mutable state, unlike
+-- even the "caller must guard their own IORef/Buffer" contract the
+-- per-instance API above leaves to callers), offered purely as a
+-- quick, no-instance-to-carry-around convenience akin to C's own
+-- rand()/srand(). Prefer `newIOGen`/`next` for anything concurrent or
+-- reproducible.
+
+||| Seed the single global generator (via two splitmix64 steps, same
+||| mixing `newIOGen` applies -- the underlying C function just stores
+||| whatever two 64-bit words it's given, so the mixing has to happen
+||| here).
+export
+setSystemSeed : HasIO io => Bits64 -> io ()
+setSystemSeed s = let (s0, s1) = mixSeed s in primIO $ prim__setSystemSeed s0 s1
+
+||| Draw the next 64-bit output from the single global generator.
+export
+nextIO : HasIO io => io Bits64
+nextIO = primIO $ prim__nextSys
+
+||| `jump` applied to the single global generator.
+export
+jumpIO : HasIO io => io ()
+jumpIO = primIO prim__jumpSys
+
+||| `longJump` applied to the single global generator.
+export
+longJumpIO : HasIO io => io ()
+longJumpIO = primIO prim__longJumpSys
+
+||| `jumpCE` applied to the single global generator.
+export
+jumpCEIO : HasIO io => (c : Bits64) -> (e : Bits32) -> io ()
+jumpCEIO c e = primIO $ prim__jumpCESys c e
+
+||| `jumpN` applied to the single global generator.
+export
+jumpNIO : HasIO io => (n0 : Bits64) -> (n1 : Bits64) -> io ()
+jumpNIO n0 n1 = primIO $ prim__jumpNSys n0 n1

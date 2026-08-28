@@ -6,13 +6,12 @@ module Data.Buffer.RC2
 -- Patches the five upstream `Data.Buffer` primitives that carry only a
 -- `"scheme:..."` %foreign tag and are therefore unusable on refc/rc2 (or
 -- any C backend) at all -- see TODO.md's "Upstream stdlib `%foreign`
--- declarations with no C/RefC backend at all" entry. Unlike
--- `System.Random.Xoshiro128PlusPlus` (a from-scratch replacement, since
--- upstream's own primitives there have no C-reachable implementation
--- whatsoever to patch onto), rc2's own runtime
--- (`rc2/support/rc2/buffer.h`) already has every one of these under a
--- different name -- `setInt16`/`getInt32`/`setInt32` (already usable on
--- rc2 unpatched, via upstream's own `"RefC:..."` tags matching that
+-- declarations with no C/RefC backend at all" entry. Unlike a
+-- from-scratch replacement (needed only when upstream has no
+-- C-reachable implementation whatsoever to patch onto), rc2's own
+-- runtime (`rc2/support/rc2/buffer.h`) already has every one of these
+-- under a different name -- `setInt16`/`getInt32`/`setInt32` (already
+-- usable on rc2 unpatched, via upstream's own `"RefC:..."` tags matching that
 -- runtime's own symbol names verbatim) show the same runtime was always
 -- meant to cover the rest of `Data.Buffer` too; this module just wires
 -- the remaining five up via `%foreign_impl`, the same mechanism
