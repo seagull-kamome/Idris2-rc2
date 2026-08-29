@@ -14,17 +14,18 @@ LIBDIR = $(shell idris2 --libdir)/rc2base-$(RC2BASE_VERSION)/lib
 
 all: libidris2rc2base.a
 
-libidris2rc2base.a: text_util.o concurrency_util.o xoroshiro64starstar.o xoroshiro128plusplus.o
-	$(AR) rcs $@ text_util.o concurrency_util.o xoroshiro64starstar.o xoroshiro128plusplus.o
+libidris2rc2base.a: text_util.o concurrency_util.o xoroshiro64starstar.o xoroshiro128plusplus.o memstream.o
+	$(AR) rcs $@ text_util.o concurrency_util.o xoroshiro64starstar.o xoroshiro128plusplus.o memstream.o
 
 text_util.o: text_util.c text_util.h
 concurrency_util.o: concurrency_util.c concurrency_util.h
 xoroshiro64starstar.o: xoroshiro64starstar.c xoroshiro64starstar.h f2x.c
 xoroshiro128plusplus.o: xoroshiro128plusplus.c xoroshiro128plusplus.h f2x.c
+memstream.o: memstream.c memstream.h
 
 install: all
 	mkdir -p $(LIBDIR)
-	cp libidris2rc2base.a text_util.h concurrency_util.h xoroshiro64starstar.h xoroshiro128plusplus.h $(LIBDIR)/
+	cp libidris2rc2base.a text_util.h concurrency_util.h xoroshiro64starstar.h xoroshiro128plusplus.h memstream.h $(LIBDIR)/
 
 clean:
-	rm -f libidris2rc2base.a text_util.o concurrency_util.o xoroshiro64starstar.o xoroshiro128plusplus.o
+	rm -f libidris2rc2base.a text_util.o concurrency_util.o xoroshiro64starstar.o xoroshiro128plusplus.o memstream.o
