@@ -5,6 +5,7 @@ module Data.TextBuffer
 
 import System.FFI
 import Data.Fin
+import Data.So
 import Data.Vect
 
 -- ---------------------------------------------------------------------------
@@ -101,18 +102,32 @@ fromString s = unsafePerformIO $ MkTextBuffer <$> (wrapBuffer =<< primIO (prim__
 %foreign "C:idris2rc2_String_to_TextBuffer,libidris2rc2base,text_util.h"
 prim__RawUtf8_to_TextBuffer : AnyPtr -> PrimIO AnyPtr
 
+||| Erased (`0`-multiplicity, zero runtime cost), `Data.So`-based proof
+||| that a raw `AnyPtr` is non-NULL. `idris2rc2_String_to_TextBuffer`
+||| (`prim__RawUtf8_to_TextBuffer` below) unconditionally dereferences
+||| its own argument with no NULL check of its own (same contract as
+||| `strlen`) -- rather than leave that precondition as a doc comment a
+||| caller could forget, `fromRawUtf8` demands one of these, obtained
+||| via `Data.So.choose (prim__nullAnyPtr ptr == 0)` at the call site.
+public export
+NonNullPtr : AnyPtr -> Type
+NonNullPtr ptr = So (prim__nullAnyPtr ptr == 0)
+
 ||| Convert a raw, NUL-terminated UTF-8 byte buffer directly to Text --
 ||| one decode copy (raw bytes -> codepoint array), the same work
 ||| `fromString` above does, without a boxed Idris `String` in between.
-||| Deliberately sequenced (`IO`), not pure like `fromString` above:
-||| `ptr` is expected to come from external, C-managed memory with its
-||| own lifetime window (e.g. a libcurl response buffer, valid only
-||| between some "capture finished" point and its own release) --
-||| unlike an immutable Idris `String`, `unsafePerformIO` here could
-||| let the optimizer reorder this read relative to that window.
+||| `ok` -- see `NonNullPtr`'s own doc comment; a caller can only reach
+||| this function after actually performing that check, not merely
+||| documenting it. Deliberately sequenced (`IO`), not pure like
+||| `fromString` above: `ptr` is expected to come from external,
+||| C-managed memory with its own lifetime window (e.g. a libcurl
+||| response buffer, valid only between some "capture finished" point
+||| and its own release) -- unlike an immutable Idris `String`,
+||| `unsafePerformIO` here could let the optimizer reorder this read
+||| relative to that window.
 export
-fromRawUtf8 : AnyPtr -> IO TextBuffer
-fromRawUtf8 ptr = MkTextBuffer <$> (wrapBuffer =<< primIO (prim__RawUtf8_to_TextBuffer ptr))
+fromRawUtf8 : (ptr : AnyPtr) -> (0 ok : NonNullPtr ptr) -> IO TextBuffer
+fromRawUtf8 ptr _ = MkTextBuffer <$> (wrapBuffer =<< primIO (prim__RawUtf8_to_TextBuffer ptr))
 
 ||| Convert a Text back to a String.
 export
