@@ -1007,6 +1007,22 @@ C is entirely mechanical, living in `Emit.idr`.
    refc-suite, all smoke tests, valgrind-clean on every leak-sensitive
    test except the one long-recorded pre-existing `Test1Basics` leak (see
    `KNOWN-BUGS.md`).
+6. **`markInvariantNative` missed a loop-invariant parameter's own
+   occurrence inside `RLoopContinue`'s own `args`, causing a spurious
+   drop on every continue.** `fillLoopContinuePostDrop` (added by bug 5
+   above) looks up every continue-arg's own `Rep` by id via
+   `fullLoopParams`'s shadow-id-keyed map; an unrenamed original
+   parameter id `p` at that position missed the map entirely, read as
+   `RBoxed` by that lookup's own default, and got a spurious drop added
+   to *every* continue, once per iteration -- a real, `valgrind`-
+   confirmed double-free/crash caught via
+   `tests/Test19LoopInvariantParam.idr` during development. Fixed by
+   redirecting `p`'s own occurrence in a continue's `args` to its
+   shadow id `sid` here too, alongside every other occurrence
+   `markInvariantNative` already rewrites, so
+   `fillLoopContinuePostDrop`'s lookup finds the shadow's already-native
+   `Rep` correctly without needing to know anything about invariance
+   itself.
 
 ## Known limitation: native-shadow eligibility stops at bare top-level scalars
 

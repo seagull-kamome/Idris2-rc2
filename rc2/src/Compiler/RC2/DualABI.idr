@@ -26,6 +26,7 @@ import Compiler.RC2.RCExp
 import Compiler.RC2.Types
 import Compiler.RC2.Loop
 import Compiler.RC2.EmitUtil
+import Compiler.RC2.Util
 
 import Core.CompileExpr
 import Core.Context
@@ -288,12 +289,11 @@ synthesizeWorker existingNames original eligible retEligible args wrapperRetRep 
 ||| comment). `MkRCFun`'s `isWorker` field is exactly this distinction,
 ||| baked onto the IR node itself rather than re-derived: `True` only
 ||| for a worker `synthesizeWorker` itself produces, `False` for its
-||| own wrapper and everywhere else. A real, externally-sourced package
-||| (not covered by this project's own test suite) once hit a lambda-
-||| lifted internal helper with 9+ free-variable parameters, at least
-||| one genuinely native-eligible -- this is exactly the shape that
-||| now works correctly instead of being excluded from dual-ABI
-||| eligibility outright.
+||| own wrapper and everywhere else. See rc2/doc/dual-abi.md's "Bugs
+||| found and fixed" #7-9 for why this exemption exists (a real,
+||| externally-sourced package's own wide lambda-lifted helper) and how
+||| far it was carried (closure-dispatch typedefs up to arity 20, the
+||| FFI worker path too).
 export
 applyDualABI : List (Name, RCDef) -> Core (List (Name, RCDef))
 applyDualABI defs = do
@@ -388,20 +388,6 @@ workerTable defs = fromList (mapMaybe workerEntry defs)
     workerEntry (n, MkRCFun _ _ _ (RAppNameRep _ workerName argReps retRep _ _)) =
         Just (n, (workerName, argReps, retRep))
     workerEntry _ = Nothing
-
-||| `l`'s own currently-known `Rep` in `reps` (seeded from a function's
-||| own top-level parameters, extended by every `RLet`/`RLoop` this
-||| walk has already passed through by the time it asks) -- the same
-||| lookup `Compiler.RC2.EmitUtil`'s own (`Core`-monadic, `RepMap`-
-||| backed) `repOfLocal` performs at emission time, just written as a pure
-||| function here since this pass has no `Core` context of its own to
-||| thread a ref through.
-localRepIn : SortedMap Int Rep -> RCLocal -> Rep
-localRepIn _ RCNull = RBoxed
-localRepIn reps (RCLoc i) = fromMaybe RBoxed (lookup i reps)
-localRepIn _ (RCConst c) = fromMaybe RBoxed (RNative <$> litRep c)
-localRepIn _ (RCEmptyCon {}) = RBoxed
-localRepIn _ (RCConstCon {}) = RBoxed
 
 ||| Which of `args` (rendered per the worker's own `argReps`, same
 ||| order) need an explicit drop once this call has been embedded in

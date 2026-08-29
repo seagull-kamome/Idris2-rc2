@@ -468,7 +468,7 @@ mutual
     -- Immortal, same reasoning as splitBorrows/dropIfLastUse/
     -- boxedOperands above -- never needs a dup, `owned`/`natives`
     -- (variable sets) never contain it anyway.
-    annotate natives owned (RV fc v@(RCConstCon {})) = pure $ RV fc v
+    annotate natives owned e@(RV _ (RCConstCon {})) = pure e
     annotate natives owned (RV fc v) =
         pure $ if contains v natives || contains v owned then RV fc v else RDup fc v (RV fc v)
     annotate natives owned (RAppName fc lazy n args) =
@@ -617,9 +617,9 @@ mutual
         alts' <- traverse (annotateConstAlt natives owned) alts
         mDef' <- traverseOpt (branchBody natives owned) mDef
         pure $ RConstCase fc sc alts' mDef'
-    annotate natives owned (RPrimVal fc c) = pure $ RPrimVal fc c
-    annotate natives owned (RErased fc) = pure $ RErased fc
-    annotate natives owned (RCrash fc msg) = pure $ RCrash fc msg
+    annotate natives owned e@(RPrimVal _ _) = pure e
+    annotate natives owned e@(RErased _) = pure e
+    annotate natives owned e@(RCrash _ _) = pure e
     annotate natives owned (RDup fc v body) = RDup fc v <$> annotate natives owned body
     annotate natives owned (RDrop fc vars body) = RDrop fc vars <$> annotate natives owned body
     annotate natives owned (RFree fc v body) = RFree fc v <$> annotate natives owned body
@@ -641,14 +641,13 @@ mutual
     -- same reasoning as RReleaseReuse just above.
     annotate natives owned (RLoop fc loopParams initial prologueDrop body) =
         RLoop fc loopParams initial prologueDrop <$> annotate natives owned body
-    annotate natives owned (RLoopContinue fc args postDrop) = pure $ RLoopContinue fc args postDrop
+    annotate natives owned e@(RLoopContinue _ _ _) = pure e
     -- Never actually produced until Compiler.RC2.DualABI runs, which is
     -- strictly after annotate is done with the whole definition (and
     -- after Compiler.RC2.Loop too, see RAppNameRep's own doc comment)
     -- -- kept total (as a plain pass-through), same reasoning as
     -- RReleaseReuse above.
-    annotate natives owned (RAppNameRep fc n argReps retRep postDrop args) =
-        pure $ RAppNameRep fc n argReps retRep postDrop args
+    annotate natives owned e@(RAppNameRep _ _ _ _ _ _) = pure e
 
     annotateConAlt : SortedSet RCLocal -> Owned -> RCLocal -> RConAlt -> Core RConAlt
     annotateConAlt natives owned sc (MkRConAlt name ci tag args body) = do

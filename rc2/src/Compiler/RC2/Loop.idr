@@ -11,6 +11,7 @@ module Compiler.RC2.Loop
 
 import Compiler.RC2.RCExp
 import Compiler.RC2.Types
+import Compiler.RC2.Util
 
 import Core.CompileExpr
 import Core.FC
@@ -275,12 +276,8 @@ opNativeUses p ty op args =
 ||| very same op), this function's result is read independently by
 ||| `Compiler.RC2.Loop`'s own loop-param promotion -- which has no such
 ||| pairing and runs before any return-eligibility decision exists at
-||| all -- so guessing here caused a real, `valgrind`-confirmed leak
-||| (`Test9SelfTailLoop`'s own regression the first time this was
-||| tried: a loop param's boxed-context read got its ownership bookkeeping
-||| stripped on the strength of a bare op's own guessed nativeness, then
-||| had to be re-boxed fresh on demand at that Boxed-rendered read, with
-||| nothing left to ever drop the fresh box). See `TODO.md`'s git history.
+||| all. See rc2/doc/loop-conversion.md's "Known limitation" section for
+||| the leak guessing here caused (Test9SelfTailLoop).
 opNativeUsesThrough : (p : Int) -> PrimType -> RCExp -> SortedSet PrimType
 opNativeUsesThrough p ty (ROp _ _ op args _) = opNativeUses p ty op args
 opNativeUsesThrough p ty (RDup _ _ cont) = opNativeUsesThrough p ty cont
@@ -313,9 +310,8 @@ opNativeUsesThrough _ _ _ = empty
 ||| eligibility has been decided at all -- a bare tail can, and often
 ||| does, still render Boxed at that point, and treating it as native
 ||| anyway strips ownership bookkeeping a since-still-Boxed rendering
-||| genuinely needs (confirmed via a real `valgrind`-caught leak in
-||| `Test9SelfTailLoop` the first time a bare-`ROp` case was added here
-||| unconditionally; see `TODO.md`'s git history).
+||| genuinely needs. See rc2/doc/loop-conversion.md's "Known limitation"
+||| section for the Test9SelfTailLoop valgrind leak this caused.
 export
 nativeArgTypes : (p : Int) -> RCExp -> SortedSet PrimType
 nativeArgTypes p (RLet _ _ rep value body) =
@@ -465,13 +461,6 @@ stripOwnership ids (RStructSet fc structVar sn fn value postDrop) =
 -- RV, RAppName, RUnderApp, RApp, RCon, RExtPrim, RPrimVal, RErased,
 -- RCrash: no ownership-tracking positions of their own.
 stripOwnership _ e = e
-
-||| Assign consecutive fresh ids, starting at `nextId`, to each eligible
-||| `(p, ty)` pair -- pairing each original parameter with its own
-||| shadow id and the native type it was found eligible at.
-assignShadowIds : (nextId : Int) -> List (Int, PrimType) -> List (Int, Int, PrimType)
-assignShadowIds _ [] = []
-assignShadowIds nextId ((p, ty) :: rest) = (p, nextId, ty) :: assignShadowIds (nextId + 1) rest
 
 export
 ||| Fills in every `RLoopContinue`'s own `postDrop` -- see `RLoopContinue`'s
@@ -642,10 +631,10 @@ noneVariant _ _ = True
 |||   -- **not checked by this function itself** (it only looks at
 |||   `value`), but by `hoistInvariantPrefix`'s own caller-side guard;
 |||   documented here since it's just as essential to this function's
-|||   own soundness claim -- see that function's own doc comment for
-|||   why a `RBoxed` result is unsound to hoist, confirmed by an actual
-|||   `valgrind`-caught double-free the first time this was tried
-|||   without the guard.
+|||   own soundness claim. See rc2/doc/loop-conversion.md's "Loop-
+|||   invariant expression hoisting" section, "A third exclusion, found
+|||   the hard way" for why a `RBoxed` result is unsound to hoist (a
+|||   valgrind-confirmed double-free).
 isInvariantExpr : SortedSet Int -> RCExp -> Bool
 isInvariantExpr variant (ROp _ Nothing _ args _) = all (noneVariant variant) (toList args)
 isInvariantExpr variant (RCon _ _ _ _ args Nothing) = all (noneVariant variant) args
@@ -659,9 +648,8 @@ isInvariantExpr _ _ = False
 ||| -- see `hoistInvariantPrefix`'s own doc comment for why only these
 ||| are safe to hoist.
 isNativeRep : Rep -> Bool
-isNativeRep (RNative _) = True
-isNativeRep (RInlineNative _) = True
 isNativeRep RBoxed = False
+isNativeRep _ = True
 
 ||| Pulls every loop-invariant `RLet` binding out of `e`'s own
 ||| *unconditional prefix* -- the straight-line chain of `RLet`s
@@ -807,24 +795,15 @@ invariantOpArgsThrough _ _ e = e
 ||| looks at an `RLoopContinue` at all -- see its own doc comment):
 ||| `p`'s own occurrence in a continue's own `args`, at the position
 ||| this parameter still occupies before `elideInvariantContinueArgs`
-||| (run later, after this) removes it. That position isn't a
-||| native-context read by itself, but `fillLoopContinuePostDrop`
-||| (run right after this whole rewrite settles) looks up every
-||| continue-arg's own `Rep` by id -- an unrenamed `p` there misses
-||| `fullLoopParams`'s own shadow-id-keyed map entirely, reads as
-||| `RBoxed` by that lookup's own default, and gets a spurious drop
-||| added to *every* continue, once per iteration -- a real,
-||| `valgrind`-confirmed double-free/crash caught via
-||| `tests/Test19LoopInvariantParam.idr` during development. Redirecting
-||| it here, alongside every other occurrence, keeps that lookup
-||| correct without needing `fillLoopContinuePostDrop` itself to know
-||| anything about invariance.
+||| (run later, after this) removes it. Must be redirected here too,
+||| alongside every other occurrence -- see rc2/doc/loop-conversion.md's
+||| "Bugs found and fixed" #6 for the spurious-drop double-free this
+||| left unfixed causes in `fillLoopContinuePostDrop`'s own lookup.
 markInvariantNative : (p : Int) -> (sid : Int) -> RCExp -> RCExp
 markInvariantNative p sid (RLet fc var rep value body) =
     let value' = case rep of
-                      RNative _ => invariantOpArgsThrough p sid value
-                      RInlineNative _ => invariantOpArgsThrough p sid value
                       RBoxed => value
+                      _ => invariantOpArgsThrough p sid value
     in RLet fc var rep (markInvariantNative p sid value') (markInvariantNative p sid body)
 markInvariantNative p sid (RCmpCase fc op args postDrop t f) =
     RCmpCase fc op (map (\a => if a == RCLoc p then RCLoc sid else a) args) postDrop
@@ -854,13 +833,9 @@ markInvariantNative _ _ e = e
 ||| tree that already contains one, exactly the shape
 ||| `applyLoop`'s own `wrapInvariantShadows` hands it below (`acc`
 ||| there is, almost always, the `RLoop` itself, or an `RLet` wrapping
-||| one). A real bug caught during development: without these two
-||| cases, a Boxed-context read of an invariant parameter sitting
-||| *inside* the loop's own body was invisible to this check, and the
-||| parameter got dropped immediately instead of kept alive for its own
-||| still-live read -- a real, `valgrind`-confirmed crash caught via
-||| `tests/Test19LoopInvariantParam.idr`'s own `sumWithBoxedExitOnly`/
-||| `sumWithBoxedContinuePath`.
+||| one). See rc2/doc/loop-conversion.md's "Loop-invariant parameter
+||| elision" section for the crash a local copy of `countUsesR` without
+||| these two cases caused (Test19LoopInvariantParam).
 usesInvariant : Int -> RCExp -> Bool
 usesInvariant p e = countInvariantUses e > 0
   where

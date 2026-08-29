@@ -19,6 +19,7 @@ module Compiler.RC2.Inline
 
 import Compiler.LambdaLift
 import Compiler.RC2.ConstFold
+import Compiler.RC2.Util
 
 import Core.CompileExpr
 import Core.Context
@@ -33,17 +34,6 @@ import Data.Vect
 import Libraries.Data.List.SizeOf
 
 %default covering
-
-||| `Vect`'s own stdlib `Traversable` instance doesn't resolve cleanly
-||| against `Core`'s own `Applicative` in this codebase (same issue
-||| `Compiler.RC2.EmitUtil`'s own identically-named helper already works
-||| around) -- a plain hand-written traversal sidesteps it.
-traverseVectCore : (a -> Core b) -> Vect n a -> Core (Vect n b)
-traverseVectCore f [] = pure []
-traverseVectCore f (x :: xs) = do
-    x' <- f x
-    xs' <- traverseVectCore f xs
-    pure (x' :: xs')
 
 ------------------------------------------------------------------------
 -- IR plumbing: `Weaken`/`Substitutable` for `Lifted`, ported from
@@ -462,7 +452,7 @@ mutual
   inlineLifted elig (LCon fc n ci tag args)
       = LCon fc n ci tag <$> traverse (inlineLifted elig) args
   inlineLifted elig (LOp fc lazy op args)
-      = LOp fc lazy op <$> traverseVectCore (inlineLifted elig) args
+      = LOp fc lazy op <$> rc2traverseVect (inlineLifted elig) args
   inlineLifted elig (LExtPrim fc lazy p args)
       = LExtPrim fc lazy p <$> traverse (inlineLifted elig) args
   inlineLifted elig (LConCase fc sc alts def)

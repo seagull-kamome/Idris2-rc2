@@ -79,6 +79,7 @@ import System
 import System.File
 
 import Compiler.RC2.EmitUtil
+import Compiler.RC2.Util
 
 %default covering
 
@@ -207,11 +208,9 @@ mutual
     ||| caller must resume from what's left (the innermost un-peeled
     ||| expression), not restart from `value` -- re-running `emitRC` on
     ||| the original `value` would emit every wrapper's side effect a
-    ||| second time. (An earlier version returned a bare `Bool` and had
-    ||| exactly this bug: any Boxed `RLet` whose value was e.g. an
-    ||| RDup-wrapped non-tail-position `RAppName` -- an ordinary, common
-    ||| shape, not exotic -- had its dup emitted twice, permanently
-    ||| leaking one reference. Found via `Prelude.Types.foldr`.)
+    ||| second time. See `KNOWN-BUGS.md`'s "Fixed: Compiler.RC2.Emit's
+    ||| tryBuildClosureInto used to double-emit a peeled wrapper's own
+    ||| side effect" for why this return shape matters.
     tryBuildClosureInto : {auto a : Ref ArgCounter Nat}
                         -> {auto oft : Ref OutfileText Output}
                         -> {auto il : Ref IndentLevel Nat}
@@ -703,17 +702,12 @@ mutual
     |||   other* member of the same merged group reads its own
     |||   same-position argument natively -- Compiler.RC2.Loop has no
     |||   visibility into MutualLoop's own padding at all, so it can't
-    |||   exclude this case from eligibility; unboxing unconditionally
-    |||   here would dereference that NULL through `nativeUnbox`'s
-    |||   runtime accessor, a real crash this exact pattern used to hit
-    |||   before this guard existed. A worker-promoted parameter is never
-    |||   actually NULL either (an `int64_t` argument, not a padded
-    |||   pointer slot) -- comparing it against C `NULL` would in fact be
-    |||   a compile error (`comparison between pointer and integer`),
-    |||   not just a wasted check -- this exact mistake was caught by a
-    |||   real build failure in `Test1Basics.idr`'s own `Main.loop`
-    |||   (self-tail-recursive *and* dual-ABI-eligible) the first time a
-    |||   worker wrapped a native-shadowed loop.
+    |||   exclude this case from eligibility. A worker-promoted parameter
+    |||   is never actually NULL either (an `int64_t` argument, not a
+    |||   padded pointer slot), so the guard is scoped to `inPrologueDrop`
+    |||   only -- see `rc2/doc/loop-conversion.md`'s "Bugs found and
+    |||   fixed" #4 (Site 2) and `rc2/doc/dual-abi.md`'s #2 for the crash
+    |||   and build failure this guard fixes.
     ||| * This is also the loop param's last use anywhere in the whole
     |||   function -- Compiler.RC2.Loop's own rewrite has already
     |||   redirected every other reference to the fresh shadow -- so
@@ -1031,10 +1025,10 @@ mutual
     -- statement the caller embeds it in. The caller (either emitRC's
     -- RLet case below, or this function's own RLet case) is what emits
     -- that statement, so it -- not this function -- is what must emit the
-    -- drop, and only *after* doing so: emitting it here unconditionally
-    -- would run the drop before the value it reads from is ever used,
-    -- freeing it out from under its own extraction (a real regression an
-    -- earlier version of this fix hit for heap-allocated 64-bit types).
+    -- drop, and only *after* doing so. See KNOWN-BUGS.md's "Fixed:
+    -- Compiler.RC2.Emit's emitNativeValue used to drop a native-read
+    -- Boxed operand before the value was actually read" for what
+    -- emitting it here unconditionally used to break.
     emitNativeValue : {auto a : Ref ArgCounter Nat}
                      -> {auto oft : Ref OutfileText Output}
                      -> {auto il : Ref IndentLevel Nat}
@@ -1087,8 +1081,7 @@ mutual
         let call = "\{cName n}(\{concat $ intersperse ", " argStrs})"
         case retRep of
              RBoxed => throw $ InternalError "[rc2] emitNativeValue: RAppNameRep with Boxed retRep reached a native context"
-             RNative _ => pure (call, postDrop)
-             RInlineNative _ => pure (call, postDrop)
+             _ => pure (call, postDrop)
     emitNativeValue ty (ROp fc _ op args postDrop) = do
         argStrs <- rc2traverseVect (\v => rcVarToNativeC (opArgTyFor ty op) v) args
         -- `postDrop` is exactly the Boxed operands this op needs dropped
@@ -1136,40 +1129,6 @@ mutual
 addCommaToList : List String -> List String
 addCommaToList [] = []
 addCommaToList (x :: xs) = ("  " ++ x) :: map (", " ++) xs
-
-||| `Prelude.Types.fastPack`/`fastConcat` leak their own raw `malloc`'d
-||| `char *` return through the generic `CFString`-return FFI wrapper
-||| codegen below (it copies into a fresh `IDRIS2RC2_String` via
-||| `packCFType` and never frees the original -- correct for a real
-||| external library's `char *` return, wrong for these two, which
-||| `malloc` a buffer this project itself owns). `rc2/support/rc2/
-||| idris2rc2_strings.c` already has leak-free replacements
-||| (`idris2rc2_fastPackFixed`/`idris2rc2_fastConcatFixed`, returning an already-fully-built
-||| `IDRIS2RC2_Value*` directly, the same way any `CFUser` return is
-||| already passed straight through with no copy). See `KNOWN-BUGS.md`
-||| and `rc2/doc/fastpack-fix.md` for the full writeup, including why
-||| this is intercepted here (at C-emission time, universally, for
-||| every call site project-wide -- including ones already baked into
-||| precompiled `network`/`base` code) rather than via upstream's own
-||| `%transform` mechanism (which only ever rewrites a call site within
-||| the rewriting definition's own elaboration/import scope, and so can
-||| never reach a call site inside another package's own separately-
-||| compiled `.ttc`).
-|||
-||| Checked by FULL namespace + base name (not just base name, unlike
-||| `Compiler.RC2.ConstExtPrim`'s own known-ExtPrim whitelist) precisely
-||| so this never misfires on some unrelated future function that merely
-||| happens to share the base name "fastPack"/"fastConcat" in a
-||| different namespace. `createCFunctions`'s own `MkRCForeign` case
-||| additionally requires the exact signature shape
-||| (`CFString`-returning, single `CFUser` argument) before using this,
-||| as a second layer of defensive scoping.
-fastPackFixedReplacement : Name -> Maybe String
-fastPackFixedReplacement (NS ns (UN (Basic "fastPack"))) =
-    if ns == mkNamespace "Prelude.Types" then Just "idris2rc2_fastPackFixed" else Nothing
-fastPackFixedReplacement (NS ns (UN (Basic "fastConcat"))) =
-    if ns == mkNamespace "Prelude.Types" then Just "idris2rc2_fastConcatFixed" else Nothing
-fastPackFixedReplacement _ = Nothing
 
 createCFunctions : {auto c : Ref Ctxt Defs}
                 -> {auto a : Ref ArgCounter Nat}
@@ -1280,6 +1239,39 @@ createCFunctions n (MkRCForeign ccs fargs ret) =
        (Just fixedFnName, CFString, [CFUser _ _]) => emitFastPackFixedWrapper fixedFnName
        _ => emitGenericForeignWrapper
   where
+    ||| `Prelude.Types.fastPack`/`fastConcat` leak their own raw `malloc`'d
+    ||| `char *` return through the generic `CFString`-return FFI wrapper
+    ||| codegen below (it copies into a fresh `IDRIS2RC2_String` via
+    ||| `packCFType` and never frees the original -- correct for a real
+    ||| external library's `char *` return, wrong for these two, which
+    ||| `malloc` a buffer this project itself owns). `rc2/support/rc2/
+    ||| idris2rc2_strings.c` already has leak-free replacements
+    ||| (`idris2rc2_fastPackFixed`/`idris2rc2_fastConcatFixed`, returning an already-fully-built
+    ||| `IDRIS2RC2_Value*` directly, the same way any `CFUser` return is
+    ||| already passed straight through with no copy). See `KNOWN-BUGS.md`
+    ||| and `rc2/doc/fastpack-fix.md` for the full writeup, including why
+    ||| this is intercepted here (at C-emission time, universally, for
+    ||| every call site project-wide -- including ones already baked into
+    ||| precompiled `network`/`base` code) rather than via upstream's own
+    ||| `%transform` mechanism (which only ever rewrites a call site within
+    ||| the rewriting definition's own elaboration/import scope, and so can
+    ||| never reach a call site inside another package's own separately-
+    ||| compiled `.ttc`).
+    |||
+    ||| Checked by FULL namespace + base name (not just base name, unlike
+    ||| `Compiler.RC2.ConstExtPrim`'s own known-ExtPrim whitelist) precisely
+    ||| so this never misfires on some unrelated future function that merely
+    ||| happens to share the base name "fastPack"/"fastConcat" in a
+    ||| different namespace. This case's own signature-shape check
+    ||| (`CFString`-returning, single `CFUser` argument) is a second layer
+    ||| of defensive scoping.
+    fastPackFixedReplacement : Name -> Maybe String
+    fastPackFixedReplacement (NS ns (UN (Basic "fastPack"))) =
+        if ns == mkNamespace "Prelude.Types" then Just "idris2rc2_fastPackFixed" else Nothing
+    fastPackFixedReplacement (NS ns (UN (Basic "fastConcat"))) =
+        if ns == mkNamespace "Prelude.Types" then Just "idris2rc2_fastConcatFixed" else Nothing
+    fastPackFixedReplacement _ = Nothing
+
     ||| Turn a `%foreign` lib field ("libcurl", "libc 6", ...) into the
     ||| bare name a linker's own `-l` flag needs: drop the "lib" prefix
     ||| (this project's own FFI convention -- matches how Chez's own
@@ -1394,10 +1386,8 @@ createCFunctions n (MkRCForeign ccs fargs ret) =
         emit EmptyFC $ " // dual-ABI FFI worker for " ++ cName fctName
         let argExprFor : (Rep, String, CFType) -> String
             argExprFor (RBoxed, vn, vt) = extractValue cLang vt vn
-            argExprFor (RNative _, vn, CFChar) = nativeCharArgExpr vn
-            argExprFor (RInlineNative _, vn, CFChar) = nativeCharArgExpr vn
-            argExprFor (RNative _, vn, _) = vn
-            argExprFor (RInlineNative _, vn, _) = vn
+            argExprFor (_, vn, CFChar) = nativeCharArgExpr vn
+            argExprFor (_, vn, _) = vn
             boxedVars : List String
             boxedVars = mapMaybe (\(r, vn, _) => case r of RBoxed => Just vn; _ => Nothing) paramsInfo
             finishNative : String -> Core ()

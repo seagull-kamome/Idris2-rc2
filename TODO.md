@@ -879,6 +879,26 @@ implemented; revisit only if profiling ever shows short,
 runtime-computed strings actually dominating some real workload's own
 allocation traffic.
 
+## Cleanup: `freshId`/`freshName` duplication between `DualABI.idr` and `MutualLoop.idr`
+
+`freshId` (a one-line `Ref`-backed counter bump) is byte-identical
+between `Compiler.RC2.DualABI` and `Compiler.RC2.MutualLoop`, and was
+considered for consolidation into `Compiler.RC2.Util` alongside
+`rc2traverseVect`/`peelDrop`/`assignShadowIds`/`localRepIn` (see
+`Util.idr`'s own module note). Not pursued in that round: each file
+declares its own local phantom marker type `data FreshId : Type`
+(`DualABI.idr`, `MutualLoop.idr`) to key its own `Ref FreshId Int`, so
+merging just the function would still leave the two modules'
+`Ref`s incompatibly typed -- consolidating `freshId` for real means
+also sharing that phantom type across both modules, a bigger, more
+invasive change for a two-line function's benefit. `freshName` is
+*not* a safe merge candidate either way: `DualABI.idr`'s own version
+takes an extra `pfx : String` and `original : Name`, `MutualLoop.idr`'s
+own is fixed to `MN "rc2_mutualLoop" i` with no parameters -- a strict
+generalisation, not an identical duplicate. Revisit both together if
+`Compiler.RC2.Util` ever needs a shared fresh-id facility for a third
+consumer.
+
 ## yet another hope
 この項は人間が追加したものなので、後で整理して独立の項に括りだす事。
 今は着手しないが将来的な展望を書き連ねる。この項は日本語で書かれるが

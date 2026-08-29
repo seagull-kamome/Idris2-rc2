@@ -18,6 +18,7 @@ module Compiler.RC2.EmitUtil
 
 import Compiler.RC2.RCExp
 import Compiler.RC2.Types
+import Compiler.RC2.Util
 
 import Compiler.CompileExpr
 import Compiler.Common
@@ -449,22 +450,6 @@ nativeCmpExpr (LTE ty) [x, y] = "(" ++ x ++ " <= " ++ y ++ ")"
 nativeCmpExpr (GTE ty) [x, y] = "(" ++ x ++ " >= " ++ y ++ ")"
 nativeCmpExpr fn _ = "0 /* [rc2] unreachable native comparison " ++ show fn ++ " */"
 
-
-||| Plain recursive Vect traversal in Core, not the standard `traverse`:
-||| multiple `traverse`/`Applicative Core` candidates already in scope
-||| here (`Core.Core.Search`, `Core.Core.SnocList`, `Core.Core.WithData`,
-||| ...) make `traverse f (args : Vect n a)` fail to resolve at all
-||| ("Can't find an implementation for Applicative Core") rather than
-||| picking `Traversable (Vect n)` -- confirmed directly by substituting
-||| it in and rebuilding. Same ambiguity `Compiler.RC2.DualABI`'s own
-||| `vectElemRCLoc` avoids for `Foldable (Vect n)`.
-export
-rc2traverseVect : (a -> Core b) -> Vect n a -> Core (Vect n b)
-rc2traverseVect f [] = pure []
-rc2traverseVect f (x :: xs) = do
-    x' <- f x
-    xs' <- rc2traverseVect f xs
-    pure (x' :: xs')
 
 export
 nativeLitExpr : Constant -> String
@@ -953,8 +938,6 @@ rcVarToNativeC ty l = do
     rep <- repOfLocal l
     inlined <- inlineExprFor l
     pure $ case rep of
-                RNative _ => fromMaybe (varName l) inlined
-                RInlineNative _ => fromMaybe (varName l) inlined
                 -- Unreachable in practice: a non-native-eligible RCConst
                 -- (the only new source of an RBoxed `inlined`) is never a
                 -- native op's own operand (String/Integer are never
@@ -962,6 +945,7 @@ rcVarToNativeC ty l = do
                 -- for the same reason `nativeCType`/`nativeMk`/
                 -- `nativeUnbox`'s own catch-all cases are.
                 RBoxed => nativeUnbox ty (fromMaybe (varName l) inlined)
+                _ => fromMaybe (varName l) inlined
 
 ||| The reuse-reservation C variable's name for scrutinee `sc` -- a pure,
 ||| deterministic function of `sc`'s own id, computed identically
@@ -1252,15 +1236,6 @@ buildClosureIntoSink fc (SinkReturn _) n args missing = do
 export
 MaxExtractFunArgs : Nat
 MaxExtractFunArgs = 20
-
-||| RC.idr wraps a branch/scope body in a leading `RDrop` node whenever
-||| there are dead owned variables at its entry. Peel it off so its drop
-||| list can be refined by the reuse-in-place analysis below (instead of
-||| unconditionally emitting the drops as-is).
-export
-peelDrop : RCExp -> (List RCLocal, RCExp)
-peelDrop (RDrop _ locs cont) = (locs, cont)
-peelDrop e = ([], e)
 
 ||| Split a non-empty list into everything but its last element, and the
 ||| last element itself, in order -- `Nothing` for an empty list. Used

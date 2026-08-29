@@ -210,6 +210,39 @@ five patched primitives) plus a full `rc2/tests/verify.sh` run
 (refc-suite 19/19, smoke+valgrind 82/82) confirming no other
 `"RefC:"`/`"RC2:"`-tagged call site changed behavior.
 
+## Fixed: Compiler.RC2.Emit's tryBuildClosureInto used to double-emit a peeled wrapper's own side effect
+
+`tryBuildClosureInto` peels leading `RDup`/`RDrop`/`RFree`/`RLet`
+wrappers off a value on the way to building a closure directly into its
+sink, emitting each wrapper's own side effect (a dup/drop/free call, or
+a let declaration) as it goes. An earlier version returned a bare
+`Bool` instead of `Maybe RCExp` -- when the search dead-ended partway
+through (nothing left shaped like a closure to build), the caller had
+no way to resume from what was left after the already-peeled wrappers,
+and re-ran `emitRC` on the original, unpeeled value instead, re-emitting
+every wrapper's own side effect a second time. Any Boxed `RLet` whose
+value was e.g. an RDup-wrapped non-tail-position `RAppName` -- an
+ordinary, common shape, not exotic -- had its dup emitted twice,
+permanently leaking one reference. Found via `Prelude.Types.foldr`.
+Fixed by returning `Maybe RCExp`: `Nothing` when the closure was built,
+`Just leftover` naming exactly the innermost un-peeled expression the
+caller must resume from instead of `value` itself.
+
+## Fixed: Compiler.RC2.Emit's emitNativeValue used to drop a native-read Boxed operand before the value was actually read
+
+`emitNativeValue` returns the native C expression for a value together
+with any Boxed locals its own tail op reads but doesn't own a further
+use of (`Compiler.RC2.RC`'s `annotate` already decided those are
+"consumed" here). An earlier version of this fix emitted the drop for
+those locals unconditionally, inside `emitNativeValue` itself, before
+the returned expression string was ever embedded in the caller's own
+statement -- freeing the value out from under its own extraction. A
+real regression for heap-allocated 64-bit types. Fixed by handing the
+drop back to the caller (either `emitRC`'s `RLet` case, or
+`emitNativeValue`'s own `RLet` case) as part of the return value, so it
+only ever runs *after* the statement that actually reads the
+expression has been emitted.
+
 ## Pre-existing `valgrind` leaks (unrelated to whatever's currently being tested)
 
 Found incidentally while re-running `valgrind --leak-check=full` across

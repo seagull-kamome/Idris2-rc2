@@ -60,13 +60,10 @@ applyReuse d@(MkRCForeign _ _ _) = d
 ||| Optional pipeline-stage disabling, via `--directive
 ||| no<stagename>`, for A/B regression isolation (e.g. "does this
 ||| observed difference/leak trace back to one specific pass") without
-||| editing `toRCDefs` itself and rebuilding `idris2-rc2` -- the whole
-||| reason this exists is that doing exactly that by hand (comment out
-||| one `. applyX` in the pipeline above, rebuild, retest, put it back,
-||| rebuild again) is what `Compiler.RC2.ConAltNative`'s own two
-||| reverted implementation attempts needed to isolate their own bugs
-||| from pre-existing ones (see `KNOWN-BUGS.md`'s own two small
-||| pre-existing leaks, told apart from that work this way). Recognised
+||| editing `toRCDefs` itself and rebuilding `idris2-rc2` (this
+||| A/B-isolation need is exactly what rc2/doc/con-alt-native.md's
+||| "Bugs found and fixed" #1-2 describe hitting by hand, before this
+||| mechanism existed). Recognised
 ||| directives: `noinline`, `noconaltnative`, `nomutualloop`,
 ||| `noloop`, `nosink`, `nodualabi` (disables both `DualABI`'s own
 ||| worker/wrapper synthesis *and* its own call-site rewriting together
@@ -82,16 +79,12 @@ applyReuse d@(MkRCForeign _ _ _) = d
 ||| perfectly complete" by design: a coarse, whole-stage on/off switch,
 ||| not fine-grained per-function/per-node control.
 |||
-||| `noreuse` (disabling `Compiler.RC2.Reuse`) is deliberately NOT in
-||| this list -- retired, not merely undocumented. Unlike every stage
-||| above, `Reuse` was never actually safely independent/disableable
-||| this way: using `--directive noreuse` caused real heap corruption
-||| (`malloc(): unaligned tcache chunk detected`) in 11 of 17 smoke
-||| tests, because a later pass silently assumes `Reuse` has already
-||| run (which specific pass, and exactly what invariant it assumes,
-||| was never root-caused). Rather than fix that, the ability to
-||| disable `Reuse` this way was removed entirely -- `applyReuse` now
-||| always runs, unconditionally.
+||| `noreuse` is deliberately not in this list -- retired, not merely
+||| undocumented. See `KNOWN-BUGS.md`'s "Retired: `--directive noreuse`
+||| no longer exists" for why: it was never actually safely
+||| independent/disableable, and the ability to disable `Reuse` this
+||| way was removed entirely -- `applyReuse` now always runs,
+||| unconditionally.
 toRCDefs : {auto c : Ref Ctxt Defs} -> List String -> List (Name, LiftedDef) -> Core (List (Name, RCDef), SortedMap Name (Name, List Rep, Rep))
 toRCDefs disabled lds0 = do
     lds <- if "noinline" `elem` disabled then pure lds0 else logTime 2 "rc2: Inline" $ applyInlineLifted lds0

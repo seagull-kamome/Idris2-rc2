@@ -38,6 +38,7 @@ module Compiler.RC2.ConAltNative
 import Compiler.RC2.RCExp
 import Compiler.RC2.Types
 import Compiler.RC2.Loop
+import Compiler.RC2.Util
 
 import Core.CompileExpr
 import Core.FC
@@ -50,15 +51,6 @@ import Data.Vect
 
 %default covering
 
-||| Assign consecutive fresh ids, starting at `nextId`, to each eligible
-||| `(p, ty)` pair -- mirrors `Compiler.RC2.Loop`'s own private
-||| `assignShadowIds` exactly (not exported there, so re-declared here
-||| rather than exporting a one-line helper across a module boundary
-||| just for this).
-assignShadowIds : (nextId : Int) -> List (Int, PrimType) -> List (Int, Int, PrimType)
-assignShadowIds _ [] = []
-assignShadowIds nextId ((p, ty) :: rest) = (p, nextId, ty) :: assignShadowIds (nextId + 1) rest
-
 ||| Peel every leading `RDup`/`RDrop`/`RFree`/`RReleaseReuse`/
 ||| `RReuseOffer` node -- `Compiler.RC2.RC`'s own `annotate` /
 ||| `Compiler.RC2.Reuse`'s own `resolveAlt` output, always already fully
@@ -66,23 +58,11 @@ assignShadowIds nextId ((p, ty) :: rest) = (p, nextId, ty) :: assignShadowIds (n
 ||| an alt's own body, returning a rebuilding function alongside the
 ||| "core" underneath: the point past which this alt's own real
 ||| computation begins, and the *only* safe point to insert a native
-||| shadow read (and its own eventual drop). Inserting any earlier --
-||| the first, buggier version of this function did exactly that,
-||| wrapping the *whole* alt body including a leading `RReuseOffer` --
-||| reads and drops the field before `Compiler.RC2.Reuse`'s own
-||| uniqueness check has even run, which independently, unconditionally
-||| `idris2rc2_dup`s every `RReuseOffer`'s own con-arg regardless of
-||| which branch it takes (`Compiler.RC2.Emit`'s own `branchBody`, see
-||| its own doc comment) whenever the alt's body it's handed doesn't
-||| *structurally start with* `RReuseOffer` -- an early field read
-||| satisfies that condition by construction, silently defeating the
-||| whole reuse mechanism's own "just drop these unconditionally,
-||| they're already covered by the reuse offer that comes right after"
-||| assumption, and leaking every reused field's own reboxed value one
-||| allocation at a time. Confirmed with `valgrind --leak-check=full`
-||| against `tests/Test12ConAltNative.idr`'s own `step` (destructures
-||| and immediately reconstructs the same shape) before landing on this
-||| fix -- see TODO.md's own entry for the full history.
+||| shadow read (and its own eventual drop). Must be inserted past every
+||| leading wrapper, never before -- reading/dropping the field earlier
+||| runs ahead of `Compiler.RC2.Reuse`'s own uniqueness check, silently
+||| defeating reuse. See rc2/doc/con-alt-native.md's "Bugs found and
+||| fixed" #2 for the leak this caused before this fix existed.
 peelWrappers : RCExp -> (RCExp -> RCExp, RCExp)
 peelWrappers (RDup fc v cont) =
     let (rebuild, core) = peelWrappers cont in (\c => RDup fc v (rebuild c), core)
@@ -137,9 +117,8 @@ renameOpArgsThrough _ _ e = e
 markNativeOccurrences : (fid : Int) -> (sid : Int) -> RCExp -> RCExp
 markNativeOccurrences fid sid (RLet fc var rep value body) =
     let value' = case rep of
-                      RNative _ => renameOpArgsThrough fid sid value
-                      RInlineNative _ => renameOpArgsThrough fid sid value
                       RBoxed => value
+                      _ => renameOpArgsThrough fid sid value
     in RLet fc var rep (markNativeOccurrences fid sid value') (markNativeOccurrences fid sid body)
 markNativeOccurrences fid sid (RCmpCase fc op args postDrop t f) =
     RCmpCase fc op (map (\a => if a == RCLoc fid then RCLoc sid else a) args) postDrop

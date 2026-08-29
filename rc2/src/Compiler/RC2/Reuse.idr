@@ -55,6 +55,7 @@ module Compiler.RC2.Reuse
 -- ends up either consuming the offer or releasing it.
 
 import Compiler.RC2.RCExp
+import Compiler.RC2.Util
 
 import Core.CompileExpr
 import Core.FC
@@ -65,15 +66,7 @@ import Data.SortedSet
 
 %default covering
 
-||| Peel a single leading RDrop, mirroring RC.idr's `branchBody` -- the
-||| only producer of RConAlt/RConstAlt/default bodies -- which always
-||| wraps its result in at most one such node (a single list, never a
-||| chain of several).
-peelDrop : RCExp -> (List RCLocal, RCExp)
-peelDrop (RDrop _ locs cont) = (locs, cont)
-peelDrop e = ([], e)
-
-||| Inverse of `peelDrop`.
+||| Inverse of `Compiler.RC2.Util.peelDrop`.
 rewrapDrop : List RCLocal -> RCExp -> RCExp
 rewrapDrop [] cont = cont
 rewrapDrop locs cont = RDrop emptyFC locs cont

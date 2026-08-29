@@ -7,30 +7,17 @@ module Compiler.RC2.Sink
 -- only ever genuinely read on *one* arm of the immediately-following
 -- branch (RConCase/RConstCase/RCmpCase) gets rewritten to move
 -- `value`'s own computation into that one arm instead, deleting the
--- stale "unused here" RDrop the other arm(s) had for `var`.
---
--- Found while reading tests/Test21BoxedInvariantNotHoisted.idr's own
--- `.rcexpr` dump (Compiler.RC2.Loop's own loop-invariant expression
--- hoisting, which deliberately never hoists a Boxed-Rep binding out of
--- a loop -- see that module's own doc comment): its `let v5 = MkCtx
--- tag extra` sits in the loop's own unconditional prefix even though
--- `v5` is only ever read on the loop's *exit* arm, so it gets rebuilt
--- (and immediately dropped, unused) on every single iteration that
--- keeps looping. Unlike hoisting, this doesn't depend on loop-carried
--- values being invariant at all -- `v5`'s own operands could just as
--- well be varying loop parameters and the same rewrite would still be
--- correct, since it only ever *reduces* how many times `value` gets
--- computed (down to "only on the one arm that actually needs it,
--- exactly when it's reached" -- strictly fewer executions than
--- hoisting's own "exactly once per call, regardless of which arm
--- eventually fires," and *far* fewer than the original "once per
--- iteration, discarded on every iteration but the last"). That's why
--- this lives as its own general pass over `let ... in <branch>`
--- rather than folding into `Compiler.RC2.Loop`: nothing about it is
--- loop-specific.
+-- stale "unused here" RDrop the other arm(s) had for `var`. Lives as
+-- its own general pass over `let ... in <branch>` rather than folding
+-- into `Compiler.RC2.Loop`: nothing about it is loop-specific, it only
+-- ever *reduces* how many times `value` gets computed, regardless of
+-- whether `value`'s own operands are loop-invariant or not. See
+-- rc2/doc/branch-sinking.md's opening section for the discovery story
+-- and full sinking-vs-hoisting design rationale.
 
 import Compiler.RC2.RCExp
 import Compiler.RC2.Types
+import Compiler.RC2.Util
 
 import Core.CompileExpr
 import Core.FC
@@ -136,19 +123,6 @@ stripIfUnused var branch =
        then Nothing
        else Just (removeVarDrop var branch)
 
-||| `RCLocal`'s own representation, given `reps` -- the same "missing
-||| id defaults to `RBoxed`" convention `Compiler.RC2.DualABI`'s own
-||| `localRepIn` uses (a top-level function argument, or one of this
-||| loop's own `RLoop`-carried params/`RLet`-bound locals not yet seen,
-||| is always genuinely Boxed at that point -- `reps` only ever records
-||| a *promotion* away from that default).
-localRepIn : SortedMap Int Rep -> RCLocal -> Rep
-localRepIn _ RCNull = RBoxed
-localRepIn reps (RCLoc i) = fromMaybe RBoxed (lookup i reps)
-localRepIn _ (RCConst c) = fromMaybe RBoxed (RNative <$> litRep c)
-localRepIn _ (RCEmptyCon {}) = RBoxed
-localRepIn _ (RCConstCon {}) = RBoxed
-
 ||| Every Boxed operand `value` itself *consumes* by reading it -- an
 ||| `ROp`'s own `postDrop` list; every Boxed argument of an `RAppName`
 ||| (a call transfers ownership of *all* its own arguments to the
@@ -164,21 +138,11 @@ localRepIn _ (RCConstCon {}) = RBoxed
 ||| `v0`/`v1` themselves keep living on past the `con` -- correctly not
 ||| counted here, `consumedOperands` for that one is `[]`).
 |||
-||| Found the hard way: `tests/Test9SelfTailLoop.idr`'s own
-||| (transitively pulled in Prelude) `Prelude.Types.getAt` has `let v4
-||| = op -Integer [v0, #1] postDrop=[v0] in case v1 of Cons ... =>
-||| ...v4...; Nil => (v4 unused)`. Before this fix, sinking `v4`'s own
-||| binding into the `Cons` arm carried `postDrop=[v0]` along with it
-||| -- meaning `v0` only got released on iterations that actually take
-||| that arm. On the `Nil` arm, nothing ever reads `v0` at all any more
-||| (that arm doesn't mention `v4`, so `v0` -- only ever reachable
-||| *through* computing `v4` -- never gets read there either), a
-||| genuine `valgrind`-confirmed leak. `addOperandDrops` (below) is
-||| what plugs this: every arm `value` does *not* sink into gets an
-||| explicit `drop` for these operands instead, exactly replacing the
-||| release `value`'s own `postDrop`/field-move used to unconditionally
-||| provide every time (see that function's own doc comment for why
-||| this is always safe to add).
+||| Every arm `value` does *not* sink into needs an explicit `drop` for
+||| these operands instead of the release `value`'s own
+||| `postDrop`/field-move used to unconditionally provide -- see
+||| rc2/doc/branch-sinking.md's "The rewrite itself, and the second
+||| real bug it took to get right" (Test9SelfTailLoop's `getAt` leak).
 consumedOperands : SortedMap Int Rep -> RCExp -> List RCLocal
 consumedOperands reps = go []
   where
@@ -260,15 +224,11 @@ sinkEligible _ = False
 ||| runs* -- an `RCmpCase`'s own comparison args, or an `RConCase`/
 ||| `RConstCase`'s own scrutinee. This must be evaluated *before* any
 ||| arm ever runs, so sinking `value` into one specific arm is
-||| impossible when it's the very thing being branched on: a real bug,
-||| caught by `tests/Test2Recursion.idr`'s own `fib` during
-||| development -- `let v1 = v0 - 1 in case v1 of 0 => ...; _ => (uses
-||| v1 to compute v0's own fib)` looks, to a check that only scans each
-||| arm's own *body*, exactly like "one arm uses it, the other doesn't"
-||| (the `0` arm never reads `v1` again; the `_` arm does) -- sinking
-||| `v1`'s own binding into the `_` arm produces `case v1 of ...`
-||| referencing `v1` before it's ever declared. `trySinkInto` checks
-||| this before ever calling `trySinkIntoArms` below.
+||| impossible when it's the very thing being branched on -- see
+||| rc2/doc/branch-sinking.md (Test2Recursion's `fib`: sinking a
+||| branch's own deciding operand into one arm would reference it
+||| before it's ever declared). `trySinkInto` checks this before ever
+||| calling `trySinkIntoArms` below.
 isDecidingOperand : Int -> RCExp -> Bool
 isDecidingOperand var (RCmpCase _ _ args _ _ _) = RCLoc var `elem` toList args
 isDecidingOperand var (RConCase _ sc _ _) = sc == RCLoc var
@@ -355,22 +315,13 @@ trySinkIntoArms _ _ _ _ _ = Nothing
 ||| Sees through the same leading `RDup`/`RDrop`/`RFree`/
 ||| `RReleaseReuse`/`RReuseOffer` wrappers `stripIfUnused` itself sees
 ||| through -- *unless* the wrapper's own target(s) include `var`
-||| itself, in which case sinking stops right there (`Nothing`): a real
-||| bug, caught by `refc-suite/buffer`'s own `TestBuffer.idr` during
-||| development. `let v5 = call prim__setByte ... in drop [v5]; let v6
-||| = call prim__setBits8 ... in drop [v6]; ...` (a chain of
-||| side-effecting calls whose own `IORes ()`-shaped result is
-||| immediately discarded) has `v5` wrapped by exactly one `RDrop [v5]`
-||| right after its own binding -- before this fix, the old
-||| unconditional "peel through any RDrop" clause treated that as just
-||| another non-branching wrapper to see past, entirely missing that
-||| *this specific* `RDrop` is `v5`'s own death, and kept searching
-||| straight through `v6`/`v7`/`v8`'s own identical chain all the way
-||| to a distant, unrelated branch far downstream -- producing a
-||| miscompile (`var_5`/`var_6`/... referenced in generated C without
-||| ever being declared there). Every wrapper case below now checks its
-||| own target(s) against `var` first, mirroring the same reasoning the
-||| `RLet` case (below) already applies to `y`'s own `valueY`.
+||| itself, in which case sinking stops right there (`Nothing`). Every
+||| wrapper case below checks its own target(s) against `var` first,
+||| mirroring the same reasoning the `RLet` case (below) already
+||| applies to `y`'s own `valueY` -- see rc2/doc/branch-sinking.md's
+||| "Not peeling through `var`'s own death" (TestBuffer miscompile:
+||| peeling straight through `var`'s own `RDrop` used to sink its
+||| binding past its own death into a distant, unrelated branch).
 |||
 ||| Also sees through a leading `RLet` for some unrelated local `y`
 ||| (`var`'s own binding sinks *past* `y`'s, leaving it exactly where
