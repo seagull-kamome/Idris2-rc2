@@ -1,0 +1,5 @@
+--- Testing Data.String.FFI ---
+ptrToString on NULL: Nothing
+ptrToString on a real C string: Just "Hello, rc2base!"
+ptrToString on an empty C string: Just ""
+--- Tests finished ---

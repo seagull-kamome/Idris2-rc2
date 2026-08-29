@@ -5,6 +5,7 @@ opts       = "--total"
 sourcedir  = "src"
 depends    = contrib
 modules    = Data.TextBuffer, Data.Text, Data.Buffer.RC2, Data.Double.RC2,
+             Data.String.FFI,
              System.Concurrency.RC2, System.Random.Xoroshiro128PlusPlus,
              System.Random.Xoroshiro64StarStar
 prebuild   = "make -C support/c"

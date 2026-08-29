@@ -146,3 +146,16 @@ if diff -u "$TESTS_DIR/TestXoroshiro64StarStar.expected" "$TMP/actual7.out"; the
 else
     fail "TestXoroshiro64StarStar -- output mismatch (see diff above)"
 fi
+
+echo "=== rc2 backend: build TestStringFFI (Data.String.FFI's ptrToString) ==="
+nix-shell -p gcc gmp pkg-config --run \
+    "cd '$TESTS_DIR' && '$IDRIS2RC2' --cg rc2 -p rc2base -o TestStringFFI_verify TestStringFFI.idr"
+
+echo "=== Run and diff against TestStringFFI.expected ==="
+"$TESTS_DIR/build/exec/TestStringFFI_verify" > "$TMP/actual8.out" 2>&1
+
+if diff -u "$TESTS_DIR/TestStringFFI.expected" "$TMP/actual8.out"; then
+    echo "PASS  TestStringFFI"
+else
+    fail "TestStringFFI -- output mismatch (see diff above)"
+fi
