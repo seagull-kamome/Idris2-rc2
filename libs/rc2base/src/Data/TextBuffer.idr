@@ -90,6 +90,30 @@ export
 fromString : String -> TextBuffer
 fromString s = unsafePerformIO $ MkTextBuffer <$> (wrapBuffer =<< primIO (prim__String_to_TextBuffer s))
 
+-- Same C symbol as prim__String_to_TextBuffer above, just typed
+-- against an already-raw AnyPtr instead of a boxed Idris String --
+-- idris2rc2_String_to_TextBuffer only ever sees a plain, NUL-
+-- terminated `const char *` at the C ABI level regardless (an Idris
+-- `String` %foreign argument is itself passed to C as a raw `char *`,
+-- no separate marshalling step), so this reuses the identical decode
+-- loop with no new C code, for a caller that already has a raw
+-- pointer and doesn't want to force it through a boxed String first.
+%foreign "C:idris2rc2_String_to_TextBuffer,libidris2rc2base,text_util.h"
+prim__RawUtf8_to_TextBuffer : AnyPtr -> PrimIO AnyPtr
+
+||| Convert a raw, NUL-terminated UTF-8 byte buffer directly to Text --
+||| one decode copy (raw bytes -> codepoint array), the same work
+||| `fromString` above does, without a boxed Idris `String` in between.
+||| Deliberately sequenced (`IO`), not pure like `fromString` above:
+||| `ptr` is expected to come from external, C-managed memory with its
+||| own lifetime window (e.g. a libcurl response buffer, valid only
+||| between some "capture finished" point and its own release) --
+||| unlike an immutable Idris `String`, `unsafePerformIO` here could
+||| let the optimizer reorder this read relative to that window.
+export
+fromRawUtf8 : AnyPtr -> IO TextBuffer
+fromRawUtf8 ptr = MkTextBuffer <$> (wrapBuffer =<< primIO (prim__RawUtf8_to_TextBuffer ptr))
+
 ||| Convert a Text back to a String.
 export
 toString : TextBuffer -> String
