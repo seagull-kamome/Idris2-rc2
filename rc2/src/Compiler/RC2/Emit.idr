@@ -1375,6 +1375,87 @@ addCommaToList : List String -> List String
 addCommaToList [] = []
 addCommaToList (x :: xs) = ("  " ++ x) :: map (", " ++) xs
 
+||| The C signature line for a MkRCFun def -- shared by collectDeclarations
+||| (needs it as a forward prototype before any body) and createCFunctions
+||| (emits it as the definition's own head line).
+fnSignature : {auto c : Ref Ctxt Defs}
+           -> Name -> (args : List (Int, Rep)) -> (retRep : Rep) -> (isWorker : Bool)
+           -> Core String
+fnSignature n args retRep isWorker = do
+    let nargs = length args
+    let declareParam : (Int, Rep) -> String
+        declareParam (i, RBoxed) = "  IDRIS2RC2_Value * var_" ++ show i
+        declareParam (i, RNative ty) = "  " ++ nativeCType ty ++ " var_" ++ show i
+        declareParam (i, RInlineNative ty) = "  " ++ nativeCType ty ++ " var_" ++ show i
+    let retTypeStr : String = case retRep of
+                                    RBoxed => "IDRIS2RC2_Value *"
+                                    RNative ty => nativeCType ty ++ " "
+                                    RInlineNative ty => nativeCType ty ++ " "
+    -- `MaxExtractFunArgs`'s own `var_arglist[]` fallback only exists to
+    -- match `support/rc2/runtime.c`'s closure-dispatch function-pointer
+    -- types (see that constant's own doc comment) -- a dual-ABI
+    -- *worker* (`isWorker = True`) is never stored in a `Closure` and
+    -- so never needs to satisfy that convention, regardless of its own
+    -- argument count: it keeps individually-typed positional
+    -- parameters (native where eligible) no matter how wide it is.
+    let useVarArglist = not isWorker && nargs > MaxExtractFunArgs
+    pure $ "\{retTypeStr}\{cName !(getFullName n)}"
+            ++ (if nargs == 0 then "(void)"
+               else if useVarArglist then "(IDRIS2RC2_Value *var_arglist[\{show nargs}])"
+               else ("\n(\n" ++ (showSep "\n" $ addCommaToList (map declareParam args))) ++ "\n)")
+
+||| `Prelude.Types.fastPack`/`fastConcat` leak their own raw `malloc`'d
+||| `char *` return through the generic `CFString`-return FFI wrapper
+||| codegen (`emitGenericForeignWrapper`, `createCFunctions`'s own
+||| `MkRCForeign` case) -- it copies into a fresh `IDRIS2RC2_String` via
+||| `packCFType` and never frees the original -- correct for a real
+||| external library's `char *` return, wrong for these two, which
+||| `malloc` a buffer this project itself owns). `rc2/support/rc2/
+||| idris2rc2_strings.c` already has leak-free replacements
+||| (`idris2rc2_fastPackFixed`/`idris2rc2_fastConcatFixed`, returning an already-fully-built
+||| `IDRIS2RC2_Value*` directly, the same way any `CFUser` return is
+||| already passed straight through with no copy). See `KNOWN-BUGS.md`
+||| and `rc2/doc/fastpack-fix.md` for the full writeup, including why
+||| this is intercepted here (at C-emission time, universally, for
+||| every call site project-wide -- including ones already baked into
+||| precompiled `network`/`base` code) rather than via upstream's own
+||| `%transform` mechanism (which only ever rewrites a call site within
+||| the rewriting definition's own elaboration/import scope, and so can
+||| never reach a call site inside another package's own separately-
+||| compiled `.ttc`).
+|||
+||| Checked by FULL namespace + base name (not just base name, unlike
+||| `Compiler.RC2.ConstExtPrim`'s own known-ExtPrim whitelist) precisely
+||| so this never misfires on some unrelated future function that merely
+||| happens to share the base name "fastPack"/"fastConcat" in a
+||| different namespace. Every caller also checks this def's own
+||| signature shape (`CFString`-returning, single `CFUser` argument) as
+||| a second layer of defensive scoping. Shared by `createCFunctions`
+||| (dispatch to `emitFastPackFixedWrapper`) and `collectDeclarations`
+||| (must skip this def's own parseCC/HeaderFiles/ForeignLibs
+||| registration exactly when `createCFunctions` will too).
+fastPackFixedReplacement : Name -> Maybe String
+fastPackFixedReplacement (NS ns (UN (Basic "fastPack"))) =
+    if ns == mkNamespace "Prelude.Types" then Just "idris2rc2_fastPackFixed" else Nothing
+fastPackFixedReplacement (NS ns (UN (Basic "fastConcat"))) =
+    if ns == mkNamespace "Prelude.Types" then Just "idris2rc2_fastConcatFixed" else Nothing
+fastPackFixedReplacement _ = Nothing
+
+||| Turn a `%foreign` lib field ("libcurl", "libc 6", ...) into the
+||| bare name a linker's own `-l` flag needs: drop the "lib" prefix
+||| (this project's own FFI convention -- matches how Chez's own
+||| `loadLib` treats the same field) and any trailing " <version>"
+||| hint (a Chez-only dynamic-load version pin, meaningless to a
+||| static linker). `Nothing` for a lib field that doesn't start
+||| with "lib" at all -- not expected in practice, left unlinked
+||| rather than guessed at.
+linkLibName : String -> Maybe String
+linkLibName lib =
+    let base = fst (Data.String.break isSpace lib)
+    in if isPrefixOf "lib" base
+          then Just (substr 3 (length base `minus` 3) base)
+          else Nothing
+
 createCFunctions : {auto c : Ref Ctxt Defs}
                 -> {auto a : Ref ArgCounter Nat}
                 -> {auto _ : Ref ConstDef (SortedMap Constant ConstDef)}
@@ -1405,27 +1486,11 @@ createCFunctions n (MkRCFun args retRep isWorker body) = do
     -- RCmpCase/RConCase/RConstCase/RLoop, uniformly.
     let argIds = map fst args
     let nargs = length argIds
-    let declareParam : (Int, Rep) -> String
-        declareParam (i, RBoxed) = "  IDRIS2RC2_Value * var_" ++ show i
-        declareParam (i, RNative ty) = "  " ++ nativeCType ty ++ " var_" ++ show i
-        declareParam (i, RInlineNative ty) = "  " ++ nativeCType ty ++ " var_" ++ show i
-    let retTypeStr : String = case retRep of
-                                    RBoxed => "IDRIS2RC2_Value *"
-                                    RNative ty => nativeCType ty ++ " "
-                                    RInlineNative ty => nativeCType ty ++ " "
-    -- `MaxExtractFunArgs`'s own `var_arglist[]` fallback only exists to
-    -- match `support/rc2/runtime.c`'s closure-dispatch function-pointer
-    -- types (see that constant's own doc comment) -- a dual-ABI
-    -- *worker* (`isWorker = True`) is never stored in a `Closure` and
-    -- so never needs to satisfy that convention, regardless of its own
-    -- argument count: it keeps individually-typed positional
-    -- parameters (native where eligible) no matter how wide it is.
+    -- See `fnSignature`'s own identical computation -- kept in sync
+    -- here only for `useVarArglist`, which this def's own body (just
+    -- below) also needs to decide whether to unpack `var_arglist[]`.
     let useVarArglist = not isWorker && nargs > MaxExtractFunArgs
-    let fn = "\{retTypeStr}\{cName !(getFullName n)}"
-            ++ (if nargs == 0 then "(void)"
-               else if useVarArglist then "(IDRIS2RC2_Value *var_arglist[\{show nargs}])"
-               else ("\n(\n" ++ (showSep "\n" $ addCommaToList (map declareParam args))) ++ "\n)")
-    update FunctionDefinitions $ \otherDefs => (fn ++ ";\n") :: otherDefs
+    fn <- fnSignature n args retRep isWorker
 
     emit EmptyFC fn
     emit EmptyFC "{"
@@ -1466,7 +1531,6 @@ createCFunctions n (MkRCFun args retRep isWorker body) = do
 
 createCFunctions n (MkRCCon Nothing _ _) = do
   let n' = cName n
-  update FunctionDefinitions $ \otherDefs => "char const idris2rc2_constr_\{n'}[];" :: otherDefs
   emit EmptyFC "char const idris2rc2_constr_\{n'}[] = \{cStringQuoted $ show n};"
   pure ()
 
@@ -1483,54 +1547,6 @@ createCFunctions n (MkRCForeign ccs fargs ret) =
        (Just fixedFnName, CFString, [CFUser _ _]) => emitFastPackFixedWrapper fixedFnName
        _ => emitGenericForeignWrapper
   where
-    ||| `Prelude.Types.fastPack`/`fastConcat` leak their own raw `malloc`'d
-    ||| `char *` return through the generic `CFString`-return FFI wrapper
-    ||| codegen below (it copies into a fresh `IDRIS2RC2_String` via
-    ||| `packCFType` and never frees the original -- correct for a real
-    ||| external library's `char *` return, wrong for these two, which
-    ||| `malloc` a buffer this project itself owns). `rc2/support/rc2/
-    ||| idris2rc2_strings.c` already has leak-free replacements
-    ||| (`idris2rc2_fastPackFixed`/`idris2rc2_fastConcatFixed`, returning an already-fully-built
-    ||| `IDRIS2RC2_Value*` directly, the same way any `CFUser` return is
-    ||| already passed straight through with no copy). See `KNOWN-BUGS.md`
-    ||| and `rc2/doc/fastpack-fix.md` for the full writeup, including why
-    ||| this is intercepted here (at C-emission time, universally, for
-    ||| every call site project-wide -- including ones already baked into
-    ||| precompiled `network`/`base` code) rather than via upstream's own
-    ||| `%transform` mechanism (which only ever rewrites a call site within
-    ||| the rewriting definition's own elaboration/import scope, and so can
-    ||| never reach a call site inside another package's own separately-
-    ||| compiled `.ttc`).
-    |||
-    ||| Checked by FULL namespace + base name (not just base name, unlike
-    ||| `Compiler.RC2.ConstExtPrim`'s own known-ExtPrim whitelist) precisely
-    ||| so this never misfires on some unrelated future function that merely
-    ||| happens to share the base name "fastPack"/"fastConcat" in a
-    ||| different namespace. This case's own signature-shape check
-    ||| (`CFString`-returning, single `CFUser` argument) is a second layer
-    ||| of defensive scoping.
-    fastPackFixedReplacement : Name -> Maybe String
-    fastPackFixedReplacement (NS ns (UN (Basic "fastPack"))) =
-        if ns == mkNamespace "Prelude.Types" then Just "idris2rc2_fastPackFixed" else Nothing
-    fastPackFixedReplacement (NS ns (UN (Basic "fastConcat"))) =
-        if ns == mkNamespace "Prelude.Types" then Just "idris2rc2_fastConcatFixed" else Nothing
-    fastPackFixedReplacement _ = Nothing
-
-    ||| Turn a `%foreign` lib field ("libcurl", "libc 6", ...) into the
-    ||| bare name a linker's own `-l` flag needs: drop the "lib" prefix
-    ||| (this project's own FFI convention -- matches how Chez's own
-    ||| `loadLib` treats the same field) and any trailing " <version>"
-    ||| hint (a Chez-only dynamic-load version pin, meaningless to a
-    ||| static linker). `Nothing` for a lib field that doesn't start
-    ||| with "lib" at all -- not expected in practice, left unlinked
-    ||| rather than guessed at.
-    linkLibName : String -> Maybe String
-    linkLibName lib =
-        let base = fst (Data.String.break isSpace lib)
-        in if isPrefixOf "lib" base
-              then Just (substr 3 (length base `minus` 3) base)
-              else Nothing
-
     createFFIArgList : List CFType
                     -> Core $ List (String, String, CFType)
     createFFIArgList cftypeList = do
@@ -1584,8 +1600,6 @@ createCFunctions n (MkRCForeign ccs fargs ret) =
     ||| a fully-formed, correctly-owned `IDRIS2RC2_Value*` themselves.
     emitFastPackFixedWrapper : String -> Core ()
     emitFastPackFixedWrapper fixedFnName = do
-        let fnDef = "IDRIS2RC2_Value *" ++ (cName n) ++ "(" ++ showSep ", " (replicate (length fargs) "IDRIS2RC2_Value *") ++ ");"
-        update FunctionDefinitions $ \otherDefs => (fnDef ++ "\n") :: otherDefs
         typeVarNameArgList <- createFFIArgList fargs
 
         emitFDef n typeVarNameArgList
@@ -1605,7 +1619,7 @@ createCFunctions n (MkRCForeign ccs fargs ret) =
     emitGenericForeignWrapper : Core ()
     emitGenericForeignWrapper = do
       case parseCC ffiTags ccs of
-          Just (lang, fctForeignName :: extLibOpts) => do
+          Just (lang, _ :: _) => do
               let isStandardFFI = elem lang ffiTags
               -- "RC2" (rc2-specific %foreign_impl patches, e.g.
               -- System.Concurrency.RC2/Data.Buffer.RC2) targets our own
@@ -1618,15 +1632,7 @@ createCFunctions n (MkRCForeign ccs fargs ret) =
               -- argument -- never caught earlier because
               -- System.Concurrency.RC2's own patches never took one.
               (cLang, fctName) <- resolveForeignTarget ccs
-              if isStandardFFI
-                 then case extLibOpts of
-                          [lib, header] => do update HeaderFiles $ insert header
-                                              maybe (pure ()) (\l => update ForeignLibs $ insert l) (linkLibName lib)
-                          [lib] => maybe (pure ()) (\l => update ForeignLibs $ insert l) (linkLibName lib)
-                          _ => pure ()
-                 else emit EmptyFC $ additionalFFIStub fctName fargs ret
-              let fnDef = "IDRIS2RC2_Value *" ++ (cName n) ++ "(" ++ showSep ", " (replicate (length fargs) "IDRIS2RC2_Value *") ++ ");"
-              update FunctionDefinitions $ \otherDefs => (fnDef ++ "\n") :: otherDefs
+              when (not isStandardFFI) $ emit EmptyFC $ additionalFFIStub fctName fargs ret
               typeVarNameArgList <- createFFIArgList fargs
 
               emitFDef n typeVarNameArgList
@@ -1671,15 +1677,66 @@ createCFunctions n (MkRCForeign ccs fargs ret) =
 
 createCFunctions n (MkRCError exp) = throw $ InternalError "[rc2] Error with expression"
 
+||| Every file-scope declaration `def` contributes, derivable from its own
+||| outer shape alone -- no RCExp recursion needed.
+declarationsOf : {auto c : Ref Ctxt Defs} -> Name -> RCDef -> Core (List String)
+declarationsOf n (MkRCFun args retRep isWorker _) = pure [ !(fnSignature n args retRep isWorker) ++ ";\n" ]
+declarationsOf n (MkRCCon Nothing _ _) = pure [ "char const idris2rc2_constr_\{cName n}[];" ]
+declarationsOf _ (MkRCCon _ _ _) = pure []
+declarationsOf n (MkRCForeign _ fargs _) =
+    pure [ "IDRIS2RC2_Value *\{cName n}(" ++ showSep ", " (replicate (length fargs) "IDRIS2RC2_Value *") ++ ");\n" ]
+declarationsOf _ (MkRCError _) = pure []
+
+||| Registers `n`'s own forward declaration(s) (`declarationsOf`) into
+||| `FunctionDefinitions`, plus -- for a standard-FFI `MkRCForeign` not
+||| diverted to rc2's own fastpack replacement (`fastPackFixedReplacement`,
+||| same condition `createCFunctions`'s own `MkRCForeign` case dispatches
+||| on) -- its own lib/header registration (`HeaderFiles`/`ForeignLibs`,
+||| moved here verbatim from the old `emitGenericForeignWrapper`). Conses
+||| each declaration onto the front of `FunctionDefinitions`, so run over
+||| `defs` in its own original order (`generateCSourceFile`'s own
+||| `traverse_`) this reproduces the exact reverse-`defs` order the old
+||| direct-from-`createCFunctions` population left it in -- `header`
+||| prints the list as-is, so the prototype section stays byte-identical
+||| to before this pass was split out. Also the sole place `MkRCForeign`'s
+||| own `parseCC` failure and `MkRCError` are detected -- both now surface
+||| before `outn` is ever opened, same "no half-written .c on failure"
+||| property the old single-pass design had.
+collectDeclarations : {auto c : Ref Ctxt Defs} -> {auto f : Ref FunctionDefinitions (List String)}
+                   -> {auto hf : Ref HeaderFiles (SortedSet String)} -> {auto fl : Ref ForeignLibs (SortedSet String)}
+                   -> Name -> RCDef -> Core ()
+collectDeclarations n (MkRCError exp) = throw $ InternalError "[rc2] Error with expression"
+collectDeclarations n def@(MkRCForeign ccs fargs ret) = do
+    decls <- declarationsOf n def
+    update FunctionDefinitions $ \otherDefs => decls ++ otherDefs
+    case (fastPackFixedReplacement n, ret, fargs) of
+         (Just _, CFString, [CFUser _ _]) => pure ()
+         _ => case parseCC ffiTags ccs of
+                   Just (lang, _ :: extLibOpts) =>
+                       when (elem lang ffiTags) $
+                           case extLibOpts of
+                                [lib, header] => do update HeaderFiles $ insert header
+                                                    maybe (pure ()) (\l => update ForeignLibs $ insert l) (linkLibName lib)
+                                [lib] => maybe (pure ()) (\l => update ForeignLibs $ insert l) (linkLibName lib)
+                                _ => pure ()
+                   _ => throw $ InternalError "[rc2] FFI not found for \{cName n}"
+collectDeclarations n def = do
+    decls <- declarationsOf n def
+    update FunctionDefinitions $ \otherDefs => decls ++ otherDefs
+
+||| Every declaration that has a whole-program forward-reference
+||| requirement (`#include`s, struct typedefs, function prototypes --
+||| see `collectDeclarations`'s own doc comment for why constants don't
+||| belong here) -- returned as plain text lines instead of appended
+||| into `OutfileText` directly, since `generateCSourceFile` now writes
+||| this straight to `outn` before any def's own body-emission pass
+||| runs, rather than threading it through the same accumulator every
+||| def's own generated text passes through.
 header : {auto f : Ref FunctionDefinitions (List String)}
-      -> {auto o : Ref OutfileText Output}
-      -> {auto il : Ref IndentLevel Nat}
       -> {auto h : Ref HeaderFiles (SortedSet String)}
-      -> {auto _ : Ref ConstDef (SortedMap Constant ConstDef)}
-      -> {auto cc : Ref ConstConDef (SortedMap RCLocal String, List String)}
       -> {auto sd : Ref StructDefs (SortedMap String (List (String, CFType)))}
       -> {auto ir : Ref InjectedRuntime String}
-      -> Core ()
+      -> Core (List String)
 header = do
     let initLines = """
       #include <idris2rc2_runtime.h>
@@ -1696,7 +1753,7 @@ header = do
     -- declared before any use.
     structDefs <- get StructDefs
     injectedRuntime <- get InjectedRuntime
-    update OutfileText $ appendL $
+    pure $
         [initLines] ++
         map (\h => "#include <\{h}>\n") headerFiles ++
         (if injectedRuntime == ""
@@ -1705,24 +1762,8 @@ header = do
         ["\n// struct definitions"] ++
         map (uncurry genStructDef) (SortedMap.toList structDefs) ++
         ["\n// function definitions"] ++
-        fns ++
-        ["\n// constant value definitions"] ++
-        map (uncurry genConstant) (SortedMap.toList !(get ConstDef)) ++
-        ["\n// constant constructor value definitions"] ++
-        snd !(get ConstConDef)
+        fns
   where
-    go : ConstDef -> String -> String -> String -> String
-    go cdef ty tag v =
-      "static IDRIS2RC2_\{ty} const \{constantName cdef}"
-        ++ " = { IDRIS2RC2_STOCKVAL(IDRIS2RC2_TAG_\{tag}), \{v} };"
-    genConstant : Constant -> ConstDef -> String
-    genConstant c cdef = case c of
-      I x   => go cdef "Int64" "INT64" (showIntMin x)
-      I64 x => go cdef "Int64" "INT64" (showInt64Min x)
-      B64 x => go cdef "Bits64" "BITS64" "UINT64_C(\{show x})"
-      Db x  => go cdef "Double" "DOUBLE" (show x)
-      Str x => go cdef "String" "STRING" (cStringQuoted x)
-      _ => "/* bad constant */"
     genStructDef : String -> List (String, CFType) -> String
     genStructDef name flds =
       "typedef struct { "
@@ -1748,6 +1789,45 @@ footer = do
           return 0;
       }
       """
+
+||| Writes `ls` to `h`, throwing `FileErr outn err` on any failure --
+||| unlike `System.File`'s own `HasIO`-polymorphic `fPutStrLn`, whose
+||| `Either FileError ()` result the old single-shot write loop this
+||| replaces discarded as a plain value inside an unconditional
+||| `pure (Right ())`, via `coreLift_`'s own `ignore`: every failure,
+||| including `openFile`'s own, used to vanish silently, leaving either
+||| no `.c` at all or a stale one for the next compile stage to trip
+||| over with a confusing gcc error instead. `Core.Core.FileErr` is an
+||| existing `Error` constructor -- no new exception type needed.
+putLines : (outn : String) -> File -> List String -> Core ()
+putLines outn h = traverse_ $ \l =>
+    coreLift (fPutStrLn h l) >>= \case
+        Right () => pure ()
+        Left err => throw $ FileErr outn err
+
+||| Flushes this def's own already-generated body text (`OutfileText`,
+||| reset to empty right before this def's own `createCFunctions` call)
+||| to `h`, then clears it. `generateCSourceFile`'s own per-def loop
+||| calls this right after `flushStagedDecls`, so a constant this def
+||| just staged lands in the file before the def's own body text that
+||| references it.
+flushEmitBuffer : {auto oft : Ref OutfileText Output} -> (outn : String) -> File -> Core ()
+flushEmitBuffer outn h = do
+    buf <- get OutfileText
+    put OutfileText DList.Nil
+    putLines outn h (reify buf)
+
+||| Flushes every constant `boxedConstExpr`/`boxedConstConExpr` staged
+||| while lowering the def just processed (`ConstConDef`'s own pending
+||| queue, see its doc comment) to `h`, then clears it -- always called
+||| before `flushEmitBuffer` for the same def, so a constant a def
+||| references is always declared earlier in the file than the def
+||| itself, without needing any whole-program forward-reference pass.
+flushStagedDecls : {auto cc : Ref ConstConDef (SortedMap RCLocal String, List String)} -> (outn : String) -> File -> Core ()
+flushStagedDecls outn h = do
+    (names, pending) <- get ConstConDef
+    put ConstConDef (names, [])
+    putLines outn h pending
 
 ||| The distinct link-library names (already "lib"-prefix-stripped,
 ||| see `linkLibName`) every `MkRCForeign` def in the program named via
@@ -1783,17 +1863,34 @@ generateCSourceFile defs injectedRuntime outn =
                                   _ => acc)
                              Data.SortedMap.empty defs
      _ <- newRef StructDefs structDefs
-     traverse_ (uncurry createCFunctions) defs
-     header
+     -- Pass 1: every declaration with a whole-program forward-reference
+     -- requirement (function prototypes, plus the header/lib metadata
+     -- and early parseCC/MkRCError error detection that ride along --
+     -- see `collectDeclarations`'s own doc comment), derived from each
+     -- def's own signature alone, no body traversal.
+     traverse_ (uncurry collectDeclarations) defs
+     -- `withFile`'s own continuation runs in a `HasIO io`-polymorphic
+     -- type, and `Core` has no `HasIO` instance -- `createCFunctions`
+     -- (which needs `Core`, for e.g. `Ref Ctxt Defs`) can't run inside
+     -- it. `openFile`/`closeFile` are driven directly instead, the same
+     -- `coreLift` idiom `Core.Core.writeFile` already uses.
+     Right h <- coreLift $ openFile outn WriteTruncate
+       | Left err => throw $ FileErr outn err
+     putLines outn h !header
+     -- Pass 2: def-at-a-time body lowering (`createCFunctions`, totally
+     -- unchanged, still exactly once per def) into a small per-def
+     -- `OutfileText` scratch buffer, flushed straight to `h` before
+     -- moving to the next def instead of accumulating in memory for the
+     -- whole program -- constants this def staged while lowering
+     -- (`flushStagedDecls`) always go out first, so they're declared
+     -- before the def's own body text that references them.
+     traverse_ (\(n, d) => do
+         put OutfileText DList.Nil
+         createCFunctions n d
+         flushStagedDecls outn h
+         flushEmitBuffer outn h) defs
      footer
-     fileContent <- get OutfileText
-     -- Streams each already-generated line straight to a buffered file
-     -- handle instead of first fastConcat-ing the whole file into one
-     -- in-memory String (the old `writeFile outn code` above) -- avoids
-     -- holding both the List String and its full concatenation in
-     -- memory at once for large generated .c files.
-     coreLift_ $ withFile outn WriteTruncate pure $ \h => do
-         traverse_ (fPutStrLn h) (reify fileContent)
-         pure (Right ())
+     flushEmitBuffer outn h
+     coreLift $ closeFile h
      log "compiler.refc" 10 $ "Generated C file " ++ outn
      pure (Prelude.toList !(get ForeignLibs))

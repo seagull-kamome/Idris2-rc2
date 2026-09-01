@@ -399,6 +399,53 @@ convention verbatim. Re-verified: `Test24CStructSupport.idr` compiles
 and runs correctly again; full `verify.sh`/`refc-suite/run.sh` (19/19)
 unaffected.
 
+## Fixed: `Compiler.RC2.Emit`'s `generateCSourceFile` silently ignored a failed C-file write
+
+Found while redesigning `generateCSourceFile` to stream generated C text
+to disk per-definition instead of buffering the entire file in memory
+(the two-pass structure `d41b2c8`'s own commit message noted it hadn't
+addressed -- see that commit and this project's own `rc2/doc/`-adjacent
+design notes for the full "why now" story: prototypes/headers/struct
+typedefs are signature-only and need no body recursion, and constant
+`static` definitions turned out to have no whole-program forward-
+reference requirement either, needing only to precede the first
+definition that references them -- so both can be produced/flushed
+incrementally, def by def, with `Compiler.RC2.EmitUtil`'s existing
+`ConstConDef` pending-queue field reused as the constant-staging
+mechanism, rather than accumulating the whole file as one in-memory
+`Output`/`DList`).
+
+The old single-shot write path was:
+
+```idris
+coreLift_ $ withFile outn WriteTruncate pure $ \h => do
+    traverse_ (fPutStrLn h) (reify fileContent)
+    pure (Right ())
+```
+
+Two independent bugs here, both silent: `traverse_` runs in `IO`, so
+each `fPutStrLn`'s own `Either FileError ()` result was just a discarded
+value, never short-circuiting on a write failure -- and the lambda
+unconditionally returned `pure (Right ())` regardless. Worse, `coreLift_`
+(`= ignore (coreLift op)`) swallowed `openFile`'s own failure too. Net
+effect: pointing `--cg rc2` at a read-only output directory produced no
+error at all -- confirmed to silently leave a *stale* previously-written
+`.c` in place, which the next stage (gcc) then happily compiled,
+producing a binary from outdated generated code instead of any diagnostic
+pointing at the real problem.
+
+Fixed as part of the same redesign: `generateCSourceFile` now drives
+`openFile`/`closeFile` directly (the same `coreLift` idiom
+`Core.Core.writeFile` itself already uses, needed here regardless since
+`Core` has no `HasIO` instance for `withFile`'s own `HasIO io`-polymorphic
+continuation to run in), and every line write goes through a small
+`putLines` helper that `throw`s `Core.Core.FileErr` -- an existing
+`Error` constructor, no new exception type needed -- on the first
+failure, `openFile`'s included. Re-verified by pointing the output
+directory read-only again: now produces a clear `File error (<path>):
+...` compiler error, no C compilation attempted, no stale binary
+produced. Full `verify.sh` (84/84) unaffected.
+
 ## Pre-existing `valgrind` leaks (unrelated to whatever's currently being tested)
 
 Found incidentally while re-running `valgrind --leak-check=full` across

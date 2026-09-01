@@ -535,12 +535,17 @@ data ConstDef
 
 ||| State for `RCConstCon` staging (`boxedConstConExpr`): a lookup from
 ||| already-staged value to its file-scope static's name (dedup, same
-||| role as `ConstDef`'s own `SortedMap`), paired with the finished C
-||| definition text for each staged value *in staging order* -- always
+||| role as `ConstDef`'s own `SortedMap`), paired with a queue of not-
+||| yet-flushed static definition text, in staging order -- always
 ||| children-before-parents, since `boxedConstConExpr` stages a nested
 ||| `RCConstCon` field before appending its own definition, and a C
 ||| static initializer can only take the address of an already-declared
-||| static. `header` emits this list as-is, no further reordering.
+||| static. `boxedConstExpr`'s own `orStagen` appends to the same queue
+||| for an ordinary `ConstDef` value (not just `RCConstCon`), since both
+||| share the same "declared before the def(s) that reference it, no
+||| whole-program forward-reference requirement" ordering need --
+||| `Compiler.RC2.Emit.generateCSourceFile` flushes this queue right
+||| before the def that triggered the staging.
 export
 data ConstConDef : Type where
 
@@ -553,6 +558,19 @@ constantName = \case
   CDStr x => go "String" x
   where go : String -> String -> String
         go x y = "idris2rc2_constant_\{x}_\{y}"
+
+genConstant : Constant -> ConstDef -> String
+genConstant c cdef = case c of
+  I x   => go cdef "Int64" "INT64" (showIntMin x)
+  I64 x => go cdef "Int64" "INT64" (showInt64Min x)
+  B64 x => go cdef "Bits64" "BITS64" "UINT64_C(\{show x})"
+  Db x  => go cdef "Double" "DOUBLE" (show x)
+  Str x => go cdef "String" "STRING" (cStringQuoted x)
+  _ => "/* bad constant */"
+  where go : ConstDef -> String -> String -> String -> String
+        go cdef ty tag v =
+          "static IDRIS2RC2_\{ty} const \{constantName cdef}"
+            ++ " = { IDRIS2RC2_STOCKVAL(IDRIS2RC2_TAG_\{tag}), \{v} };"
 
 ------------------------------------------------------------------------
 
@@ -705,6 +723,7 @@ boxedConstExpr c = do
     orStagen cdef = do
         constdefs <- get ConstDef
         put ConstDef $ insert c cdef constdefs
+        update ConstConDef $ \(names, pending) => (names, pending ++ [genConstant c cdef])
         pure "((IDRIS2RC2_Value*)&\{constantName cdef})"
     dyngen : Core String
     dyngen = case c of
