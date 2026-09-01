@@ -85,7 +85,7 @@ applyReuse d@(MkRCForeign _ _ _) = d
 ||| independent/disableable, and the ability to disable `Reuse` this
 ||| way was removed entirely -- `applyReuse` now always runs,
 ||| unconditionally.
-toRCDefs : {auto c : Ref Ctxt Defs} -> List String -> List (Name, LiftedDef) -> Core (List (Name, RCDef), SortedMap Name (Name, List Rep, Rep))
+toRCDefs : {auto c : Ref Ctxt Defs} -> List String -> List (Name, LiftedDef) -> Core (List (Name, RCDef))
 toRCDefs disabled lds0 = do
     lds <- if "noinline" `elem` disabled then pure lds0 else logTime 2 "rc2: Inline" $ applyInlineLifted lds0
     reused <- logTime 2 "rc2: RC annotate + Reuse + ConAltNative" $
@@ -102,11 +102,12 @@ toRCDefs disabled lds0 = do
                then pure looped
                else logTime 2 "rc2: Sink" $ pure (map (\(n, d) => (n, applySink d)) looped)
     if "nodualabi" `elem` disabled
-       then pure (sunk, Data.SortedMap.empty)
+       then pure sunk
        else logTime 2 "rc2: DualABI" $ do
            withWorkers <- applyDualABI sunk
-           ffiWorkers <- ffiWorkerTable sunk
-           pure (applyCallSiteRewrite ffiWorkers withWorkers, ffiWorkers)
+           (ffiWorkers, ffiInlineMap) <- ffiWorkerTable sunk
+           let rewritten = applyCallSiteRewrite ffiWorkers withWorkers
+           pure (inlineFFIWorkers ffiInlineMap rewritten)
 
 ||| `%cg rc2 inlineRuntime=<code>` companion to upstream's own
 ||| file-path-based `Compiler.Common.getExtraRuntime` (no inline-text
@@ -198,7 +199,7 @@ compileExpr c s _ outputDir tm outfile =
      let disabledStages = filter (`elem` directiveList)
                              ["noinline", "noconaltnative", "nomutualloop", "noloop", "nosink", "nodualabi"]
      cdata <- getCompileData False Lifted tm
-     (defs, ffiWorkers) <- toRCDefs disabledStages (lambdaLifted cdata)
+     defs <- toRCDefs disabledStages (lambdaLifted cdata)
 
      -- `--directive dumprcexpr` / `%cg rc2 dumprcexpr`: dump the final
      -- RCExp -- this exact `defs`, after every non-disabled stage above
@@ -244,7 +245,7 @@ compileExpr c s _ outputDir tm outfile =
      let inlineRuntime = getInlineRuntime directiveList
      let injectedRuntime = extraRuntimeFiles ++ (if inlineRuntime == "" then "" else "\n" ++ inlineRuntime)
 
-     foreignLibs <- logTime 2 "rc2: C generation" $ generateCSourceFile ffiWorkers defs injectedRuntime outn
+     foreignLibs <- logTime 2 "rc2: C generation" $ generateCSourceFile defs injectedRuntime outn
      Just _ <- logTime 2 "rc2: C compile" $ compileCObjectFile outn outobj dumpCC
        | Nothing => pure Nothing
      logTime 2 "rc2: C link" $ compileCFile outobj outexec foreignLibs dumpCC

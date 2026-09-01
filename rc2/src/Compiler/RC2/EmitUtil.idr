@@ -526,19 +526,6 @@ data InlineMap : Type where
 -- doc/c-struct-support.md's "Design" section, Parts B/C/D.
 export
 data StructDefs : Type where
--- `%foreign` name -> (worker C name, per-argument Rep, return Rep),
--- computed once up front by `Compiler.RC2.DualABI`'s `ffiWorkerTable`
--- and threaded straight through -- unlike `Compiler.RC2.DualABI`'s own
--- `MkRCFun` worker table (recovered by scanning a wrapper's own
--- `RAppNameRep` body), a `MkRCForeign` has no body to scan, so this is
--- genuine external state rather than something `createCFunctions`
--- could derive from `defs` alone. Consulted by `createCFunctions`'s
--- own `MkRCForeign` case to decide whether (and under what name/
--- signature) to emit a second, native-signature worker alongside the
--- always-emitted, always-Boxed wrapper -- see `doc/dual-abi.md`'s
--- "Stage 3c" section.
-export
-data FFIWorkers : Type where
 export
 data ConstDef
   = CDI64 String

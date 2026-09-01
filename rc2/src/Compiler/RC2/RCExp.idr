@@ -162,6 +162,26 @@ mutual
        ||| vs. re-derived" and `doc/dual-abi.md`'s Bugs found #3 for the
        ||| full rationale and the leak it fixes.
        RAppNameRep : FC -> Name -> (argReps : List Rep) -> (retRep : Rep) -> (postDrop : List RCLocal) -> List RCLocal -> RCExp
+       ||| Direct, saturated, inlined call to a `%foreign` declaration's own
+       ||| native C function -- splices the same marshalling logic
+       ||| `Compiler.RC2.Emit`'s `emitFFIWorker` used to emit into a standalone
+       ||| C function directly at this call site instead. `ccs`/`fargs`/`ret`
+       ||| are the original `MkRCForeign`'s own fields, carried verbatim --
+       ||| deliberately NOT precomputed `Rep`s (unlike `RAppNameRep`'s
+       ||| `argReps`/`retRep`): a `CFType`'s own `Rep` is a pure, non-analytical
+       ||| fact of the type alone (`Compiler.RC2.Types.cfTypeNative`), cheap to
+       ||| re-derive per use, unlike ownership/liveness facts that genuinely
+       ||| need storing. `postDrop` mirrors `RAppNameRep`'s own field -- in fact
+       ||| this node's `postDrop`/args are always inherited verbatim from the
+       ||| `RAppNameRep` this replaces (Stage 4's own `postDropFor` decision is
+       ||| representation-agnostic, since it only depends on `argReps`, which
+       ||| is invariant between the two node shapes). Never valid in a
+       ||| closure-building position, same reasoning as `RAppNameRep`. Only
+       ||| produced by `Compiler.RC2.DualABI`'s FFI-inline pass, strictly after
+       ||| Stage 4's own call-site rewrite (never directly by Stage 4 itself --
+       ||| see that pass's own module note for why).
+       RAppFFIInline : FC -> (ccs : List String) -> (fargs : List CFType) -> (ret : CFType)
+                    -> (postDrop : List RCLocal) -> List RCLocal -> RCExp
        RUnderApp  : FC -> Name -> (missing : Nat) -> List RCLocal -> RCExp
        RApp       : FC -> (lazy : Maybe LazyReason) -> RCLocal -> RCLocal -> RCExp
        ||| `rep`: this local's representation (see `Rep`,

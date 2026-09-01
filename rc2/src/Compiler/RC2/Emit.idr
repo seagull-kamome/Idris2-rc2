@@ -83,6 +83,150 @@ import Compiler.RC2.Util
 
 %default covering
 
+getArgsNrList : List ty -> Nat -> List Nat
+getArgsNrList [] _ = []
+getArgsNrList (x :: xs) k = k :: getArgsNrList xs (S k)
+
+varNamesFromList : List ty -> Nat -> List String
+varNamesFromList str k = map (("var_" ++) . show) (getArgsNrList str k)
+
+discardLastArgument : List ty -> List ty
+discardLastArgument [] = []
+discardLastArgument xs@(_ :: _) = init xs
+
+||| `CFChar`-only cast a native argument needs at a `%foreign` call
+||| site: `nativeCType CharType` (this backend's own `uint32_t` native
+||| Char representation) disagrees with `cTypeOfCFType CFChar`
+||| (`char`), the one `CFType` where those two differ.
+nativeCharArgExpr : String -> String
+nativeCharArgExpr vn = "(char)" ++ vn
+
+||| Widens a `CFChar`-returning `%foreign` call's own `char` result
+||| back up to this backend's own native `uint32_t` Char
+||| representation. Goes through `unsigned char` first, not a direct
+||| `(uint32_t)` cast, so a `char` whose top bit is set zero-extends
+||| instead of sign-extending into three bogus `0xff` bytes -- the same
+||| `(unsigned char)` step every other `Char`-producing site in this
+||| runtime already takes (e.g. `idris2rc2_strings.c`'s
+||| `idris2rc2_mkChar((unsigned char)s[idx])`).
+nativeCharRetExpr : String -> String
+nativeCharRetExpr retVar = "(uint32_t)(unsigned char)" ++ retVar
+
+||| `ret`'s own peeled type -- `CFIORes t`'s payload `t`, or `ret`
+||| itself for a non-IO (pure) `%foreign` declaration. Mirrors
+||| `Compiler.RC2.DualABI`'s own `peelIORes` -- kept as its own tiny
+||| re-derivation here rather than shared across modules, same
+||| reasoning as `RAppFFIInline`'s own doc comment in RCExp.idr gives
+||| for not storing this on the IR node itself: cheap enough to
+||| re-derive per use, including per module.
+peelIORes : CFType -> CFType
+peelIORes (CFIORes t) = t
+peelIORes t = t
+
+||| `(cLang, fctName)` for a `%foreign` declaration's own `ccs` tag
+||| list. Shared by `emitGenericForeignWrapper` (which additionally
+||| consults the same `parseCC` result for the library/header options
+||| `extLibOpts` carries, and the always-Boxed wrapper's own emission)
+||| and the new `emitAppFFIInlineInto`/`emitNativeValue`'s own
+||| `RAppFFIInline` case below, which need only the resolved call
+||| target itself -- no header/library registration of their own,
+||| since the wrapper for the same declaration already did that once,
+||| regardless of how many inline call sites end up calling this same
+||| target.
+resolveForeignTarget : List String -> Core (CLang, Name)
+resolveForeignTarget ccs =
+    case parseCC ffiTags ccs of
+         Just (lang, fctForeignName :: _) =>
+             pure ( if lang == "RefC" || lang == "RC2" then CLangRefC else CLangC
+                  , UN $ Basic $ fctForeignName)
+         _ => throw $ InternalError "[rc2] FFI not found for foreign declaration"
+
+||| A `%foreign` declaration's own argument, marshalled per its own
+||| `CFType` -- mirrors the old `Compiler.RC2.Emit.emitFFIWorker`'s own
+||| `argExprFor`: `CFChar` needs the same narrow-cast
+||| `nativeCharArgExpr` gives a native-context `char` parameter
+||| (`cTypeOfCFType CFChar` disagrees with this backend's own native
+||| `Char` representation, `nativeCType CharType`); any other
+||| native-eligible type reads directly via `rcVarToNativeC`, no
+||| further cast needed (every other `cfTypeNative` mapping already
+||| agrees with `nativeCType` textually); anything else is genuinely
+||| Boxed, read via `rcVarToBoxedC` then narrowed to its own C
+||| representation via `extractValue` -- that same `rcVarToBoxedC`
+||| rendering is also handed back separately (`Just`) as this
+||| argument's own drop target, for `ffiRawCall`'s own use: unlike an
+||| ordinary `postDrop` entry (always a genuine `RCLoc`, safe to render
+||| via a bare `varName`), a raw FFI call argument can itself be a
+||| literal `RCConst` (e.g. a `String` literal passed directly, with no
+||| enclosing `let`), which needs this same constant-staging/InlineMap-
+||| aware rendering to drop correctly -- `varName`'s own `RCConst` case
+||| is a deliberately-unreachable placeholder everywhere else in this
+||| module precisely because nothing else ever hands it one.
+ffiArgMarshal : {auto a : Ref ArgCounter Nat}
+             -> {auto _ : Ref ConstDef (SortedMap Constant ConstDef)}
+             -> {auto cc : Ref ConstConDef (SortedMap RCLocal String, List String)}
+             -> {auto r : Ref RepMap (SortedMap Int Rep)}
+             -> {auto lm : Ref InlineMap (SortedMap Int String)}
+             -> CLang -> RCLocal -> CFType -> Core (String, Maybe String)
+ffiArgMarshal cLang v CFChar = do
+    e <- rcVarToNativeC CharType v
+    pure (nativeCharArgExpr e, Nothing)
+ffiArgMarshal cLang v farg = case cfTypeNative farg of
+    Just ty => do
+        e <- rcVarToNativeC ty v
+        pure (e, Nothing)
+    Nothing => do
+        boxedExpr <- rcVarToBoxedC v
+        pure (extractValue cLang farg boxedExpr, Just boxedExpr)
+
+||| Marshal every one of `fargs`'s own positions, call `fctName`, and
+||| produce the raw (un-packed, un-widened) C return-value expression
+||| text -- `""` for a `CFIORes CFUnit` declaration, whose call is
+||| emitted here as its own statement instead (C forbids a
+||| `void`-returning call as a subexpression; `packCFType CFUnit`
+||| ignores its own argument regardless, so an empty placeholder is
+||| always safe to feed it). Shared by `emitAppFFIInlineInto` (wants
+||| this value Boxed, via `packCFType`) and `emitNativeValue`'s own
+||| `RAppFFIInline` case (wants it left native, via a plain
+||| `CFChar`-aware widen) -- both then finish it off differently, so
+||| this only carries the part identical either way, avoiding
+||| triplicating the marshalling logic.
+|||
+||| Also returns every genuinely-`RBoxed`-typed argument position
+||| (`CFWorld`'s own trailing slot on a `CFIORes`-returning declaration
+||| included), already rendered to its own drop-ready C expression text
+||| (`ffiArgMarshal`'s own `Just` component) -- mirrors the old
+||| `emitFFIWorker`'s own unconditional `removeVars boxedVars`, now paid
+||| at the call site directly since no worker function exists any more
+||| to pay it internally (see `emitAppFFIInlineInto`'s own doc comment
+||| for the ownership hazard this closes). `discardLastArgument` only
+||| ever trims the text actually passed to `fctName(...)` -- the
+||| trailing `CFWorld` slot still contributes to this drop set
+||| regardless, since it's still an ordinarily-owned Idris-level
+||| reference even though the raw C function itself takes one fewer
+||| parameter.
+ffiRawCall : {auto a : Ref ArgCounter Nat}
+          -> {auto oft : Ref OutfileText Output}
+          -> {auto il : Ref IndentLevel Nat}
+          -> {auto _ : Ref ConstDef (SortedMap Constant ConstDef)}
+          -> {auto cc : Ref ConstConDef (SortedMap RCLocal String, List String)}
+          -> {auto r : Ref RepMap (SortedMap Int Rep)}
+          -> {auto lm : Ref InlineMap (SortedMap Int String)}
+          -> CLang -> Name -> List CFType -> CFType -> List RCLocal -> Core (String, List String)
+ffiRawCall cLang fctName fargs ret args = do
+    let paramsInfo = zip fargs args
+    marshalled <- traverse (\(farg, v) => ffiArgMarshal cLang v farg) paramsInfo
+    let argExprs = map fst marshalled
+        boxedArgDrop = mapMaybe snd marshalled
+    let callWith : List String -> String
+        callWith es = "\{cName fctName}(\{showSep ", " es})"
+    rawExpr <- case ret of
+         CFIORes CFUnit => do
+             emit emptyFC "\{callWith (discardLastArgument argExprs)};"
+             pure ""
+         CFIORes _ => pure $ callWith (discardLastArgument argExprs)
+         _          => pure $ callWith argExprs
+    pure (rawExpr, boxedArgDrop)
+
 mutual
     ||| Declare an `RLet`'s own binding: record its `Rep` (so later *uses*
     ||| of `var` can look it up), then either inline it (a literal, or an
@@ -268,7 +412,7 @@ mutual
     declareNative fc ty var value = do
         (valStr, pending) <- emitNativeValue ty value
         emit fc $ "\{nativeCType ty} var_\{show var} = \{valStr};"
-        removeVars $ map varName pending
+        removeVars pending
 
     ||| As `declareNative`, but for an `RInlineNative` local: no C
     ||| variable ever declared, its rendered expression goes straight
@@ -288,7 +432,7 @@ mutual
     inlineNative ty var value = do
         (valStr, pending) <- emitNativeValue ty value
         update InlineMap (insert var valStr)
-        removeVars $ map varName pending
+        removeVars pending
 
     ||| As `declareNative`, but for a `SinkReturn (RNative ty)`/
     ||| `SinkReturn (RInlineNative ty)` tail position instead of an
@@ -319,7 +463,7 @@ mutual
              _  => do
                  tmp <- getNewVarThatWillNotBeFreedAtEndOfBlock
                  emit fc "\{nativeCType ty} \{tmp} = \{valStr};"
-                 removeVars $ map varName pending
+                 removeVars pending
                  emit fc "return \{tmp};"
 
     ||| Render a leftover `RAppNameRep` (a direct call to `name`'s own
@@ -374,6 +518,68 @@ mutual
                         _ => do
                             finalizeSink fc sink valStr
                             removeVars $ map varName postDrop
+
+    ||| Render a leftover `RAppFFIInline` (a direct, self-contained call
+    ||| to a `%foreign` declaration's own raw C function, see its own
+    ||| doc comment in RCExp.idr) into `sink` -- always produces a
+    ||| *Boxed* value string, mirroring `emitAppNameRepInto`'s own
+    ||| contract exactly (`emitNativeValue`'s own separate
+    ||| `RAppFFIInline` case below is the native-context counterpart,
+    ||| used instead whenever `Compiler.RC2.DualABI`'s own `RLet`
+    ||| promotion already decided this call's own result stays
+    ||| unboxed).
+    |||
+    ||| Every genuinely-`RBoxed`-typed argument position
+    ||| (`ffiRawCall`'s own drop set) needs an unconditional drop here,
+    ||| *in addition to* `postDrop` -- the two are disjoint by
+    ||| construction (`postDrop` only ever names a position whose own
+    ||| argument representation is native; this only ever names a
+    ||| position whose own argument representation is `RBoxed`) but
+    ||| need exactly the same "after the value has been embedded in a
+    ||| statement" discharge timing, so they're combined into one list
+    ||| and handled by the same postDrop-capture-then-drop machinery
+    ||| `emitAppNameRepInto` above already has. Get this backwards (miss
+    ||| this drop entirely, or double it up with `postDrop`) and every
+    ||| FFI call with a genuinely Boxed argument leaks or double-frees
+    ||| -- see `ffiRawCall`'s own doc comment for the full rationale.
+    emitAppFFIInlineInto : {auto a : Ref ArgCounter Nat}
+                         -> {auto oft : Ref OutfileText Output}
+                         -> {auto il : Ref IndentLevel Nat}
+                         -> {auto _ : Ref ConstDef (SortedMap Constant ConstDef)}
+                         -> {auto cc : Ref ConstConDef (SortedMap RCLocal String, List String)}
+                         -> {auto r : Ref RepMap (SortedMap Int Rep)}
+                         -> {auto lm : Ref InlineMap (SortedMap Int String)}
+                         -> {auto fa : Ref LoopParams (List (Int, Rep))}
+                         -> {auto sd : Ref StructDefs (SortedMap String (List (String, CFType)))}
+                         -> Sink -> TailPositionStatus -> FC -> List String -> List CFType -> CFType -> List RCLocal -> List RCLocal -> Core ()
+    emitAppFFIInlineInto sink tailPosition fc ccs fargs ret postDrop args = do
+        (cLang, fctName) <- resolveForeignTarget ccs
+        (rawExpr, boxedArgDrop) <- ffiRawCall cLang fctName fargs ret args
+        -- The explicit cast matches `emitGenericForeignWrapper`'s own
+        -- two analogous `packCFType` uses just below -- `packCFType`'s
+        -- own "mk" functions don't all literally return
+        -- `IDRIS2RC2_Value *` (e.g. `CFStruct`/`CFPtr`'s own
+        -- `idris2rc2_mkPointer` returns `IDRIS2RC2_Pointer *`), so
+        -- without it this fails to compile (`-Wincompatible-pointer-
+        -- types` as an error) for any such declaration.
+        let valStr = "(IDRIS2RC2_Value*)" ++ packCFType (peelIORes ret) rawExpr
+        -- `postDrop` is always genuine-`RCLoc`-only (inherited verbatim
+        -- from the `RAppNameRep` this replaced, see RCExp.idr's own doc
+        -- comment), safe to render via a bare `varName`; `boxedArgDrop`
+        -- is already-rendered text (see `ffiArgMarshal`'s own doc
+        -- comment for why it can't be a bare `varName` render).
+        let allDrop = map varName postDrop ++ boxedArgDrop
+        case allDrop of
+             [] => finalizeSink fc sink valStr
+             _  => case sink of
+                        SinkReturn _ => do
+                            tmp <- getNewVarThatWillNotBeFreedAtEndOfBlock
+                            emit fc "IDRIS2RC2_Value * \{tmp} = \{valStr};"
+                            removeVars allDrop
+                            emit fc "return \{tmp};"
+                        _ => do
+                            finalizeSink fc sink valStr
+                            removeVars allDrop
 
     ||| Evaluate `value` (in `tailPosition`) and dispose of its result per
     ||| `sink` -- either declaring/assigning a named C variable, or (only
@@ -443,6 +649,11 @@ mutual
                      -- native tail value, generalised here to any Sink.
                      RAppNameRep fc' n argReps retRep postDrop args =>
                          emitAppNameRepInto sink tailPosition fc' n argReps retRep postDrop args
+                     -- Same reasoning as the RAppNameRep case just
+                     -- above -- always routed to its own dedicated
+                     -- renderer, regardless of `sink`.
+                     RAppFFIInline fc' ccs fargs ret postDrop args =>
+                         emitAppFFIInlineInto sink tailPosition fc' ccs fargs ret postDrop args
                      -- A native SinkReturn (Compiler.RC2.DualABI's own
                      -- Stage 3b) skips emitRC entirely: emitRC's own
                      -- contract is "always render a Boxed expression
@@ -815,6 +1026,11 @@ mutual
     -- case used to do directly.
     emitRC (RAppNameRep fc n argReps retRep postDrop args) _ = throw $ InternalError "[rc2] RAppNameRep reached emitRC directly (not intercepted by emitInto)"
 
+    -- Unreachable: emitInto's own dispatch always intercepts a
+    -- leftover RAppFFIInline itself, same reasoning as RAppNameRep's
+    -- own case just above.
+    emitRC (RAppFFIInline fc ccs fargs ret postDrop args) _ = throw $ InternalError "[rc2] RAppFFIInline reached emitRC directly (not intercepted by emitInto)"
+
     -- Unreachable: emitInto's tryBuildClosureInto always intercepts
     -- RUnderApp itself, for any tailPosition -- a partial application is
     -- always a closure build, tail position or not (see
@@ -1038,7 +1254,7 @@ mutual
                      -> {auto lm : Ref InlineMap (SortedMap Int String)}
                      -> {auto fa : Ref LoopParams (List (Int, Rep))}
                      -> {auto sd : Ref StructDefs (SortedMap String (List (String, CFType)))}
-                     -> PrimType -> RCExp -> Core (String, List RCLocal)
+                     -> PrimType -> RCExp -> Core (String, List String)
     -- A bare local read -- unreachable before Stage 3b (declareNative/
     -- inlineNative's own RLet callers only ever see an ROp/RPrimVal
     -- tail here, since Phase 1's own ANF normalisation binds every
@@ -1081,7 +1297,36 @@ mutual
         let call = "\{cName n}(\{concat $ intersperse ", " argStrs})"
         case retRep of
              RBoxed => throw $ InternalError "[rc2] emitNativeValue: RAppNameRep with Boxed retRep reached a native context"
-             _ => pure (call, postDrop)
+             _ => pure (call, map varName postDrop)
+    -- A direct, self-contained call to a %foreign declaration's own
+    -- raw C function (`RAppFFIInline`, `Compiler.RC2.DualABI`'s own
+    -- Stage 5), reached here whenever an enclosing `RLet`'s own Rep
+    -- was promoted to match this call's own implied native return --
+    -- see the `RAppNameRep` case just above for the identical
+    -- reasoning (this call's own `ret`, peeled through `CFIORes`, is
+    -- expected to already be native-eligible; a Boxed one reaching
+    -- here would mean that invariant broke somewhere upstream, an
+    -- internal error rather than a case to render around). `postDrop`
+    -- and `ffiRawCall`'s own genuinely-Boxed-argument drop set (already
+    -- rendered to its own C expression text there -- unlike `postDrop`,
+    -- a raw FFI call argument can genuinely be a literal `RCConst`, not
+    -- only a plain declared variable, so it needs `rcVarToBoxedC`'s own
+    -- constant-staging/InlineMap handling rather than a bare `varName`)
+    -- are handed back combined, same reasoning as
+    -- `emitAppFFIInlineInto`'s own doc comment -- our caller
+    -- (declareNative/inlineNative/emitNativeReturn) hasn't emitted the
+    -- statement that actually embeds this value yet, so it -- not this
+    -- function -- is what must drop them, and only after doing so.
+    emitNativeValue ty (RAppFFIInline fc ccs fargs ret postDrop args) = do
+        (cLang, fctName) <- resolveForeignTarget ccs
+        (rawExpr, boxedArgDrop) <- ffiRawCall cLang fctName fargs ret args
+        case cfTypeNative (peelIORes ret) of
+             Nothing => throw $ InternalError "[rc2] emitNativeValue: RAppFFIInline with Boxed ret reached a native context"
+             Just _  =>
+                 let retExpr = case peelIORes ret of
+                                    CFChar => nativeCharRetExpr rawExpr
+                                    _      => rawExpr
+                 in pure (retExpr, map varName postDrop ++ boxedArgDrop)
     emitNativeValue ty (ROp fc _ op args postDrop) = do
         argStrs <- rc2traverseVect (\v => rcVarToNativeC (opArgTyFor ty op) v) args
         -- `postDrop` is exactly the Boxed operands this op needs dropped
@@ -1094,7 +1339,7 @@ mutual
         -- string), so dropping now could run before that read happens.
         -- Hand `postDrop` back so whoever *does* emit that statement can
         -- drop right after it -- see this function's own doc comment.
-        pure (nativeOpExpr op argStrs, postDrop)
+        pure (nativeOpExpr op argStrs, map varName postDrop)
     emitNativeValue ty (RPrimVal fc c) = pure (nativeLitExpr c, [])
     -- RC.idr's own ANF-normalisation wraps any non-trivial operand (e.g. a
     -- literal) in a synthetic RLet before the "real" ROp/RPrimVal --
@@ -1140,7 +1385,6 @@ createCFunctions : {auto c : Ref Ctxt Defs}
                 -> {auto h : Ref HeaderFiles (SortedSet String)}
                 -> {auto fl : Ref ForeignLibs (SortedSet String)}
                 -> {auto sd : Ref StructDefs (SortedMap String (List (String, CFType)))}
-                -> {auto fw : Ref FFIWorkers (SortedMap Name (Name, List Rep, Rep))}
                 -> Name
                 -> RCDef
                 -> Core ()
@@ -1287,13 +1531,6 @@ createCFunctions n (MkRCForeign ccs fargs ret) =
               then Just (substr 3 (length base `minus` 3) base)
               else Nothing
 
-    getArgsNrList : List ty -> Nat -> List Nat
-    getArgsNrList [] _ = []
-    getArgsNrList (x :: xs) k = k :: getArgsNrList xs (S k)
-
-    varNamesFromList : List ty -> Nat -> List String
-    varNamesFromList str k = map (("var_" ++) . show) (getArgsNrList str k)
-
     createFFIArgList : List CFType
                     -> Core $ List (String, String, CFType)
     createFFIArgList cftypeList = do
@@ -1314,10 +1551,6 @@ createCFunctions n (MkRCForeign ccs fargs ret) =
         decreaseIndentation
         emit EmptyFC ")"
 
-    discardLastArgument : List ty -> List ty
-    discardLastArgument [] = []
-    discardLastArgument xs@(_ :: _) = init xs
-
     ||| `Nothing` for an always-Boxed FFI wrapper argument whose own
     ||| `CFType` maps to `Types.alwaysUnboxed` (a tagged pointer at the
     ||| C level -- `idris2rc2_drop` on it is a guaranteed runtime no-op),
@@ -1329,99 +1562,6 @@ createCFunctions n (MkRCForeign ccs fargs ret) =
         case cfTypeNative vt of
              Just ty => if alwaysUnboxed ty then Nothing else Just varName
              Nothing => Just varName
-
-    ||| `CFChar`-only cast a native argument needs at its `fctName` call
-    ||| site: `nativeCType CharType` (this worker's own `uint32_t`
-    ||| parameter) disagrees with `cTypeOfCFType CFChar` (`fctName`'s own
-    ||| `char`), the one `CFType` where those two differ.
-    nativeCharArgExpr : String -> String
-    nativeCharArgExpr vn = "(char)" ++ vn
-
-    ||| Widens a `CFChar`-returning `fctName`'s own `char` result back up
-    ||| to this worker's own `uint32_t` return type. Goes through
-    ||| `unsigned char` first, not a direct `(uint32_t)` cast, so a
-    ||| `char` whose top bit is set zero-extends instead of sign-
-    ||| extending into three bogus `0xff` bytes -- the same
-    ||| `(unsigned char)` step every other `Char`-producing site in this
-    ||| runtime already takes (e.g. `idris2rc2_strings.c`'s
-    ||| `idris2rc2_mkChar((unsigned char)s[idx])`).
-    nativeCharRetExpr : String -> String
-    nativeCharRetExpr retVar = "(uint32_t)(unsigned char)" ++ retVar
-
-    ||| The dual-ABI FFI worker itself (`Compiler.RC2.DualABI`'s Stage
-    ||| 3c already decided `workerName`/`argReps`/`retRep`; this just
-    ||| renders it) -- a second C function alongside the always-emitted,
-    ||| always-Boxed wrapper above, one `Rep`-eligible position at a
-    ||| time: a `RNative`/`RInlineNative` position's own declared C type
-    ||| is already `nativeCType`, textually identical to `cTypeOfCFType`
-    ||| for every `CFType` `Compiler.RC2.Types.cfTypeNative` ever maps to
-    ||| one *except* `CFChar`, cast explicitly instead
-    ||| (`nativeCharArgExpr`/`nativeCharRetExpr` above) -- same
-    ||| narrowing/zero-extension the always-Boxed wrapper already gets
-    ||| via `idris2rc2_to_char`/`idris2rc2_mkChar`, just paid as a
-    ||| register-width cast here rather than a box/unbox round trip.
-    ||| Every other position renders exactly like the wrapper's own
-    ||| (`extractValue`/`packCFType`), so a mixed signature costs nothing
-    ||| extra at the positions that were never eligible to begin with.
-    emitFFIWorker : CLang -> Name -> Name -> List Rep -> Rep -> List CFType -> CFType -> Core ()
-    emitFFIWorker cLang fctName workerName argReps retRep fargs ret = do
-        let varNames = varNamesFromList fargs 1
-            paramsInfo = zip3 argReps varNames fargs
-            declareParam : (Rep, String, CFType) -> String
-            declareParam (RBoxed, vn, _) = "  IDRIS2RC2_Value *" ++ vn
-            declareParam (RNative ty, vn, _) = "  " ++ nativeCType ty ++ " " ++ vn
-            declareParam (RInlineNative ty, vn, _) = "  " ++ nativeCType ty ++ " " ++ vn
-            retTypeStr : String
-            retTypeStr = case retRep of
-                              RBoxed => "IDRIS2RC2_Value *"
-                              RNative ty => nativeCType ty ++ " "
-                              RInlineNative ty => nativeCType ty ++ " "
-            wfn = "\{retTypeStr}\{cName workerName}"
-                    ++ (if null paramsInfo then "(void)"
-                       else ("\n(\n" ++ (showSep "\n" $ addCommaToList (map declareParam paramsInfo))) ++ "\n)")
-        update FunctionDefinitions $ \otherDefs => (wfn ++ ";\n") :: otherDefs
-        emit EmptyFC wfn
-        emit EmptyFC "{"
-        increaseIndentation
-        emit EmptyFC $ " // dual-ABI FFI worker for " ++ cName fctName
-        let argExprFor : (Rep, String, CFType) -> String
-            argExprFor (RBoxed, vn, vt) = extractValue cLang vt vn
-            argExprFor (_, vn, CFChar) = nativeCharArgExpr vn
-            argExprFor (_, vn, _) = vn
-            boxedVars : List String
-            boxedVars = mapMaybe (\(r, vn, _) => case r of RBoxed => Just vn; _ => Nothing) paramsInfo
-            finishNative : String -> Core ()
-            finishNative retVar = do
-                removeVars boxedVars
-                emit EmptyFC "return \{retVar};"
-            nativeRetExprFor : CFType -> String -> String
-            nativeRetExprFor CFChar retVar = nativeCharRetExpr retVar
-            nativeRetExprFor _      retVar = retVar
-        case ret of
-            CFIORes CFUnit => do
-                emit EmptyFC $ cName fctName ++ "(" ++ showSep ", " (map argExprFor (discardLastArgument paramsInfo)) ++ ");"
-                removeVars boxedVars
-                emit EmptyFC "return NULL;"
-            CFIORes ret' => do
-                emit EmptyFC $ cTypeOfCFType ret' ++ " retVal = " ++ cName fctName
-                            ++ "(" ++ showSep ", " (map argExprFor (discardLastArgument paramsInfo)) ++ ");"
-                case retRep of
-                     RBoxed => do
-                         emit EmptyFC $ "IDRIS2RC2_Value *packedRet = (IDRIS2RC2_Value*)" ++ packCFType ret' "retVal" ++ ";"
-                         removeVars boxedVars
-                         emit EmptyFC "return packedRet;"
-                     _ => finishNative (nativeRetExprFor ret' "retVal")
-            _ => do
-                emit EmptyFC $ cTypeOfCFType ret ++ " retVal = " ++ cName fctName
-                            ++ "(" ++ showSep ", " (map argExprFor paramsInfo) ++ ");"
-                case retRep of
-                     RBoxed => do
-                         emit EmptyFC $ "IDRIS2RC2_Value *packedRet = (IDRIS2RC2_Value*)" ++ packCFType ret "retVal" ++ ";"
-                         removeVars boxedVars
-                         emit EmptyFC "return packedRet;"
-                     _ => finishNative (nativeRetExprFor ret "retVal")
-        decreaseIndentation
-        emit EmptyFC "}"
 
     additionalFFIStub : Name -> List CFType -> CFType -> String
     additionalFFIStub name argTypes (CFIORes retType) = additionalFFIStub name (discardLastArgument argTypes) retType
@@ -1477,10 +1617,7 @@ createCFunctions n (MkRCForeign ccs fargs ret) =
               -- and got the wrong (CLangC) unwrap for any CFBuffer
               -- argument -- never caught earlier because
               -- System.Concurrency.RC2's own patches never took one.
-              let cLang = if lang == "RefC" || lang == "RC2" then CLangRefC else CLangC
-              let fctName = if isStandardFFI
-                               then UN $ Basic $ fctForeignName
-                               else NS (mkNamespace lang) n
+              (cLang, fctName) <- resolveForeignTarget ccs
               if isStandardFFI
                  then case extLibOpts of
                           [lib, header] => do update HeaderFiles $ insert header
@@ -1530,11 +1667,6 @@ createCFunctions n (MkRCForeign ccs fargs ret) =
 
               decreaseIndentation
               emit EmptyFC "}"
-              ffiWorkers <- get FFIWorkers
-              case lookup n ffiWorkers of
-                   Nothing => pure ()
-                   Just (workerName, argReps, retRep) =>
-                       emitFFIWorker cLang fctName workerName argReps retRep fargs ret
           _ => throw $ InternalError "[rc2] FFI not found for \{cName n}"
 
 createCFunctions n (MkRCError exp) = throw $ InternalError "[rc2] Error with expression"
@@ -1625,12 +1757,11 @@ footer = do
 ||| set by hand.
 export
 generateCSourceFile : {auto c : Ref Ctxt Defs}
-                   -> SortedMap Name (Name, List Rep, Rep)
                    -> List (Name, RCDef)
                    -> (injectedRuntime : String)
                    -> (outn : String)
                    -> Core (List String)
-generateCSourceFile ffiWorkers defs injectedRuntime outn =
+generateCSourceFile defs injectedRuntime outn =
   do _ <- newRef ArgCounter 0
      _ <- newRef FunctionDefinitions []
      _ <- newRef ConstDef Data.SortedMap.empty
@@ -1639,7 +1770,6 @@ generateCSourceFile ffiWorkers defs injectedRuntime outn =
      _ <- newRef HeaderFiles empty
      _ <- newRef ForeignLibs empty
      _ <- newRef IndentLevel 0
-     _ <- newRef FFIWorkers ffiWorkers
      _ <- newRef InjectedRuntime injectedRuntime
      -- Part B (doc/c-struct-support.md's "Design" section): collect
      -- every CFStruct reachable from any MkRCForeign's own argument/

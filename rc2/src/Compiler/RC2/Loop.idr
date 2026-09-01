@@ -225,6 +225,13 @@ mutual
   -- this function's own RLoop case just above.
   renameRCExp ren (RAppNameRep fc n argReps retRep postDrop args) =
       RAppNameRep fc n argReps retRep (renameLocals ren postDrop) (renameLocals ren args)
+  -- Never actually reached in practice, same reasoning as RAppNameRep
+  -- just above -- Compiler.RC2.DualABI's own FFI-inline pass runs even
+  -- later than RAppNameRep's own producer (Stage 4), strictly after
+  -- both this module and Compiler.RC2.MutualLoop have already
+  -- finished.
+  renameRCExp ren (RAppFFIInline fc ccs fargs ret postDrop args) =
+      RAppFFIInline fc ccs fargs ret (renameLocals ren postDrop) (renameLocals ren args)
 
   renameConAlt : Renaming -> RConAlt -> RConAlt
   renameConAlt ren (MkRConAlt name ci tag args body) =

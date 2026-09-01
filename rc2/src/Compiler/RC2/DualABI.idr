@@ -327,6 +327,24 @@ applyDualABI defs = do
 -- exact table back via its own `FFIWorkers` ref (`RC2.idr`'s pipeline
 -- threads the same `SortedMap` to both).
 
+||| `ret`'s own peeled type -- `CFIORes t`'s payload `t`, or `ret`
+||| itself for a non-IO (pure) `%foreign` declaration.
+peelIORes : CFType -> CFType
+peelIORes (CFIORes t) = t
+peelIORes t = t
+
+||| A `CFType`'s own intrinsic `Rep` -- a pure, non-analytical fact of
+||| the type alone (`Compiler.RC2.Types.cfTypeNative`), unlike a
+||| `MkRCFun` parameter's eligibility (`paramEligibility`/
+||| `returnEligibility` above), which genuinely depends on how a whole
+||| function body uses it.
+repOf : CFType -> Rep
+repOf ty = maybe RBoxed RNative (cfTypeNative ty)
+
+anyNative : Rep -> Bool
+anyNative RBoxed = False
+anyNative _ = True
+
 ||| Every `MkRCForeign` def's own worker-table entry, if its own
 ||| `fargs`/`ret` have at least one `cfTypeNative`-eligible position.
 ||| No `paramEligibility`/`returnEligibility` needed here at all -- a
@@ -339,34 +357,38 @@ applyDualABI defs = do
 ||| world token) is never eligible either way, so it needs no special
 ||| peeling on the parameter side -- it just stays `RBoxed`, identically
 ||| to today, like every other non-eligible position.
+|||
+||| Returns two maps built from the same single traversal: the first,
+||| keyed by the *original* `%foreign` name, is `Compiler.RC2.RC2`'s own
+||| unmodified input to `applyCallSiteRewrite` below (Stage 4 itself is
+||| untouched by this module's later FFI-inline addition -- see this
+||| module's own header note); the second, keyed by the *worker's own*
+||| synthesized name instead, is `inlineFFIWorkers`'s own input (Stage
+||| 5, below Stage 4's section) -- it needs to recognise a Stage-4-
+||| produced `RAppNameRep` by the worker name Stage 4 already put on
+||| it, not the original function's name, which no longer appears
+||| anywhere on that node.
 export
-ffiWorkerTable : List (Name, RCDef) -> Core (SortedMap Name (Name, List Rep, Rep))
+ffiWorkerTable : List (Name, RCDef)
+              -> Core (SortedMap Name (Name, List Rep, Rep),
+                       SortedMap Name (List String, List CFType, CFType))
 ffiWorkerTable defs = do
     _ <- newRef FreshId 0
     let existingNames = SortedSet.fromList (map fst defs)
     entries <- traverse (ffiEntry existingNames) defs
-    pure (fromList (concat entries))
+    pure (fromList (concatMap fst entries), fromList (concatMap snd entries))
   where
-    peelIORes : CFType -> CFType
-    peelIORes (CFIORes t) = t
-    peelIORes t = t
-
-    repOf : CFType -> Rep
-    repOf ty = maybe RBoxed RNative (cfTypeNative ty)
-
-    ffiEntry : {auto r : Ref FreshId Int} -> SortedSet Name -> (Name, RCDef) -> Core (List (Name, (Name, List Rep, Rep)))
-    ffiEntry existingNames (n, MkRCForeign _ fargs ret) =
+    ffiEntry : {auto r : Ref FreshId Int} -> SortedSet Name -> (Name, RCDef)
+            -> Core (List (Name, (Name, List Rep, Rep)), List (Name, (List String, List CFType, CFType)))
+    ffiEntry existingNames (n, MkRCForeign ccs fargs ret) =
         let argReps = map repOf fargs
             retRep = repOf (peelIORes ret)
-            anyNative : Rep -> Bool
-            anyNative RBoxed = False
-            anyNative _ = True
         in if not (any anyNative argReps) && not (anyNative retRep)
-              then pure []
+              then pure ([], [])
               else do
                 workerName <- freshName "idris2rc2_ffiworker_" existingNames n
-                pure [(n, (workerName, argReps, retRep))]
-    ffiEntry _ (_, _) = pure []
+                pure ([(n, (workerName, argReps, retRep))], [(workerName, (ccs, fargs, ret))])
+    ffiEntry _ (_, _) = pure ([], [])
 
 ------------------------------------------------------------------------
 -- Stage 4: call-site rewriting (non-tail positions only -- see the
@@ -625,4 +647,75 @@ applyCallSiteRewrite ffiWorkers defs =
     rewriteDef : SortedMap Name (Name, List Rep, Rep) -> (Name, RCDef) -> (Name, RCDef)
     rewriteDef workers (n, MkRCFun args retRep isWorker body) =
         (n, MkRCFun args retRep isWorker (applyCallSiteRewriteBody workers (fromList args) True body))
+    rewriteDef _ (n, d) = (n, d)
+
+------------------------------------------------------------------------
+-- Stage 5: fold each Stage-4-produced FFI worker call directly into
+-- its own marshalling logic, eliminating the standalone worker
+-- function `ffiWorkerTable` above still synthesizes a name for. A
+-- separate pass placed strictly after Stage 4 (rather than folded
+-- into `applyCallSiteRewriteBody` itself), for the same reason
+-- `Compiler.RC2.Inline` is its own pass rather than folded into
+-- `Compiler.RC2.RC`: Stage 4's own `RAppName`/`RLet` rewriting logic
+-- is already involved enough without also needing to know about
+-- FFI-specific marshalling concerns. By the time this runs, Stage 4
+-- has already made every ownership/promotion decision (`RAppNameRep`'s
+-- own `postDrop`, and any enclosing `RLet`'s own native `Rep`
+-- promotion) purely in terms of "is this call's own `retRep` native",
+-- a question `RAppNameRep`'s `retRep` field already answers
+-- identically whether the callee turns out to be an ordinary
+-- `Compiler.RC2.DualABI` worker or (as only this pass knows) an FFI
+-- one -- so this pass only ever needs to swap the node shape itself,
+-- never re-derive or revisit any of those decisions.
+
+||| Structural, whole-tree rewrite: every `RAppNameRep` naming a worker
+||| `ffiInline` has an entry for becomes `RAppFFIInline`, `postDrop`/
+||| `args` carried over completely unchanged -- see `RAppFFIInline`'s
+||| own doc comment in RCExp.idr for why this is always safe
+||| (`argReps = map repOf fargs` is invariant between the two node
+||| shapes, so whatever Stage 4 already decided stays correct). Every
+||| other node shape just recurses through -- no Rep-inference,
+||| ownership, or tail-position logic of its own, unlike Stage 4
+||| itself; much like `Loop.idr`'s own `renameRCExp` or
+||| `ConstFold.idr`'s own tree-walkers.
+inlineFFIWorkersExp : SortedMap Name (List String, List CFType, CFType) -> RCExp -> RCExp
+inlineFFIWorkersExp ffiInline (RAppNameRep fc workerName argReps retRep postDrop args) =
+    case lookup workerName ffiInline of
+         Just (ccs, fargs, ret) => RAppFFIInline fc ccs fargs ret postDrop args
+         Nothing => RAppNameRep fc workerName argReps retRep postDrop args
+inlineFFIWorkersExp ffiInline (RLet fc var rep value body) =
+    RLet fc var rep (inlineFFIWorkersExp ffiInline value) (inlineFFIWorkersExp ffiInline body)
+inlineFFIWorkersExp ffiInline (RCmpCase fc op args postDrop t f) =
+    RCmpCase fc op args postDrop (inlineFFIWorkersExp ffiInline t) (inlineFFIWorkersExp ffiInline f)
+inlineFFIWorkersExp ffiInline (RConCase fc sc alts mDef) =
+    RConCase fc sc (map rewriteAlt alts) (map (inlineFFIWorkersExp ffiInline) mDef)
+  where
+    rewriteAlt : RConAlt -> RConAlt
+    rewriteAlt (MkRConAlt name ci tag args body) = MkRConAlt name ci tag args (inlineFFIWorkersExp ffiInline body)
+inlineFFIWorkersExp ffiInline (RConstCase fc sc alts mDef) =
+    RConstCase fc sc (map rewriteAlt alts) (map (inlineFFIWorkersExp ffiInline) mDef)
+  where
+    rewriteAlt : RConstAlt -> RConstAlt
+    rewriteAlt (MkRConstAlt c body) = MkRConstAlt c (inlineFFIWorkersExp ffiInline body)
+inlineFFIWorkersExp ffiInline (RLoop fc loopParams initial prologueDrop body) =
+    RLoop fc loopParams initial prologueDrop (inlineFFIWorkersExp ffiInline body)
+inlineFFIWorkersExp ffiInline (RDup fc v cont) = RDup fc v (inlineFFIWorkersExp ffiInline cont)
+inlineFFIWorkersExp ffiInline (RDrop fc vs cont) = RDrop fc vs (inlineFFIWorkersExp ffiInline cont)
+inlineFFIWorkersExp ffiInline (RFree fc v cont) = RFree fc v (inlineFFIWorkersExp ffiInline cont)
+inlineFFIWorkersExp ffiInline (RReleaseReuse fc v cont) = RReleaseReuse fc v (inlineFFIWorkersExp ffiInline cont)
+inlineFFIWorkersExp ffiInline (RReuseOffer fc sc dupOnShared dropOnUnique cont) =
+    RReuseOffer fc sc dupOnShared dropOnUnique (inlineFFIWorkersExp ffiInline cont)
+inlineFFIWorkersExp _ e = e
+
+||| Whole-program pass: Stage 5 itself. See `inlineFFIWorkersExp`'s own
+||| doc comment -- every definition (wrapper, ordinary worker, FFI
+||| wrapper, or untouched) passes through the same rewrite uniformly,
+||| same reasoning as `applyCallSiteRewrite` above.
+export
+inlineFFIWorkers : SortedMap Name (List String, List CFType, CFType) -> List (Name, RCDef) -> List (Name, RCDef)
+inlineFFIWorkers ffiInline defs = map (rewriteDef ffiInline) defs
+  where
+    rewriteDef : SortedMap Name (List String, List CFType, CFType) -> (Name, RCDef) -> (Name, RCDef)
+    rewriteDef ffiInline' (n, MkRCFun args retRep isWorker body) =
+        (n, MkRCFun args retRep isWorker (inlineFFIWorkersExp ffiInline' body))
     rewriteDef _ (n, d) = (n, d)

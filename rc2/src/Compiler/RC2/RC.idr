@@ -648,6 +648,12 @@ mutual
     -- -- kept total (as a plain pass-through), same reasoning as
     -- RReleaseReuse above.
     annotate natives owned e@(RAppNameRep _ _ _ _ _ _) = pure e
+    -- Never actually produced until Compiler.RC2.DualABI's own later
+    -- FFI-inline pass runs (Stage 5, strictly after Stage 4's own
+    -- RAppNameRep rewrite -- see RAppFFIInline's own doc comment in
+    -- RCExp.idr) -- kept total (as a plain pass-through), same
+    -- reasoning as RAppNameRep just above.
+    annotate natives owned e@(RAppFFIInline _ _ _ _ _ _) = pure e
 
     annotateConAlt : SortedSet RCLocal -> Owned -> RCLocal -> RConAlt -> Core RConAlt
     annotateConAlt natives owned sc (MkRConAlt name ci tag args body) = do

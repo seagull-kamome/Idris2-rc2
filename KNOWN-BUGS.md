@@ -189,6 +189,53 @@ reports `0 bytes definitely lost` for this test (registered in
 `verify.sh`'s `LEAK_SENSITIVE_TESTS`). See `rc2/doc/dual-abi.md`'s
 history item 9 for the full write-up.
 
+## Retired: FFI worker synthesis (Stage 3c) no longer emits a standalone worker C function at all
+
+The entry immediately above ("Retired: FFI worker synthesis (Stage 3c)
+no longer has its own argument-count limit") describes a former design
+where `Compiler.RC2.DualABI`'s `ffiWorkerTable` caused
+`Compiler.RC2.Emit` to emit a *second*, native-signature C function
+(`idris2rc2_ffiworker_*`) alongside a `%foreign` declaration's own
+always-Boxed wrapper, with `Compiler.RC2.DualABI`'s Stage 4
+(`applyCallSiteRewriteBody`) redirecting eligible call sites to call it
+directly. That entry's own argument-count-limit fix is still accurate
+history for the design *as it existed then* -- but the mechanism it
+describes (a separate worker function existing at all) is itself now
+superseded by this entry: there is no longer any standalone
+`idris2rc2_ffiworker_*` C function anywhere in generated output, for
+any `%foreign` declaration, regardless of arity.
+
+Replaced with direct call-site inlining: Stage 4 itself is completely
+unchanged (it still produces an `RAppNameRep` pointing at the
+synthesized worker *name*, exactly as before -- the argument-count-
+limit fix above still applies to that unchanged step). A new pass,
+`inlineFFIWorkers` (`Compiler.RC2.DualABI`, described in that module's
+own comments as Stage 5, run immediately after Stage 4), walks the
+whole program and replaces every `RAppNameRep` pointing at an FFI
+worker name with a new `RAppFFIInline` IR node (`Compiler.RC2.RCExp`)
+instead, reusing Stage 4's own `postDrop`/`args` decisions verbatim (no
+recomputation needed -- see that node's own doc comment for why this is
+always safe). `Compiler.RC2.Emit`'s own `emitFFIWorker` and
+`Compiler.RC2.EmitUtil`'s own `FFIWorkers` ref (both mentioned in the
+entry above) are deleted outright; a new `emitAppFFIInlineInto` (plus a
+dedicated `RAppFFIInline` case on `emitNativeValue`, for whenever an
+enclosing `RLet` promotes the call's own result straight to native) do
+the marshalling+call+return inline at each call site instead, sharing a
+`ffiRawCall`/`ffiArgMarshal` helper pair.
+
+Verified with a new regression test, `rc2/tests/Test50FFIInlineNoWorker.idr`
+(registered in `verify.sh`'s `LEAK_SENSITIVE_TESTS`): full
+`verify.sh`/`refc-suite/run.sh` (19/19) pass, `valgrind --leak-check=full`
+reports `0 bytes definitely lost`, and -- by hand -- `grep -c
+idris2rc2_ffiworker_` against the generated `.c` for
+`Test27FFIDualABI`/`Test48WideFFIDualABIWorker`/`Test50FFIInlineNoWorker`
+all return `0`, confirming no standalone FFI worker C function is
+emitted anywhere any more. See `rc2/doc/dual-abi.md`'s "Stage 5: FFI-
+inline call splicing" section for the full design writeup, including
+the re-measured ~20% performance win on `Test27FFIDualABI.idr`'s own
+loop benchmark (up slightly from the former design's own ~18%, i.e. no
+regression from the rewrite).
+
 ## Retired: `ROp`'s Boxed `Integer` arithmetic never reused a dying/unique operand's own heap allocation
 
 `RCon`'s own `annotate` case (`Compiler.RC2.RC`) already used a
@@ -293,6 +340,64 @@ drop back to the caller (either `emitRC`'s `RLet` case, or
 `emitNativeValue`'s own `RLet` case) as part of the return value, so it
 only ever runs *after* the statement that actually reads the
 expression has been emitted.
+
+## Fixed: a literal-constant FFI argument broke `Compiler.RC2.Emit`'s Boxed-argument-drop tracking for the FFI-inline call-site rewrite
+
+Found while building the FFI-inline call-site splicing described in
+"Retired: FFI worker synthesis (Stage 3c) no longer emits a standalone
+worker C function at all" above: an earlier version of the new
+`ffiArgMarshal`'s own Boxed-position drop set (what became
+`ffiRawCall`'s own `boxedArgDrop`, consumed by `emitAppFFIInlineInto`/
+`emitNativeValue`'s own `RAppFFIInline` case) carried raw `RCLocal`s,
+rendered via the same bare `varName` every ordinary `postDrop` entry
+already uses safely. That assumption -- "every dropped argument is a
+named variable" -- doesn't hold for a raw FFI call argument
+specifically: unlike `RAppNameRep`'s own `postDrop` (always a genuine
+`RCLoc` by construction), a `%foreign` call's own Boxed-typed argument
+can itself be a literal `RCConst` (e.g. a `String` literal passed with
+no enclosing `let`) -- `varName`'s own `RCConst` case is a deliberately-
+unreachable placeholder everywhere else in `Emit.idr` precisely because
+nothing else ever hands it one. Produced an undeclared/wrong C
+identifier -- a C compilation failure, not a silent runtime bug. Fixed
+by carrying already-rendered C expression text for the drop set instead
+of raw `RCLocal`s: `ffiArgMarshal` now returns `(String, Maybe String)`
+(the argument's own render, and separately its own drop-ready render
+when genuinely Boxed, via the same `rcVarToBoxedC` that already handles
+constant-staging/`InlineMap` correctly), which widened
+`emitNativeValue`'s own "pending drop" contract project-wide from `List
+RCLocal` to `List String` (every other producer -- `RV`, `RAppNameRep`,
+`ROp` -- already had a genuine `RCLocal` in hand, so this only ever
+meant one extra `map varName` at each of those existing call sites, not
+a behavior change for them). Re-verified against
+`rc2/tests/Test50FFIInlineNoWorker.idr`'s own `prim__mixed50` (a
+`String`-typed argument, deliberately included in that test for this
+reason); full `verify.sh`/`refc-suite/run.sh` (19/19) unaffected.
+
+## Fixed: `Compiler.RC2.Emit`'s new `emitAppFFIInlineInto` was missing a `(IDRIS2RC2_Value*)` cast on its own boxed FFI return
+
+Found during the same FFI-inline call-site splicing work as the entry
+above. `emitGenericForeignWrapper`'s own pre-existing boxed-return
+handling already casts `packCFType`'s own result explicitly, because
+`packCFType`'s "mk" functions don't all literally return
+`IDRIS2RC2_Value *` (e.g. `CFStruct`/`CFPtr`'s own `idris2rc2_mkPointer`
+returns `IDRIS2RC2_Pointer *`) -- the first version of the new
+`emitAppFFIInlineInto` omitted this cast on its own, structurally
+identical `packCFType (peelIORes ret) rawExpr` call, since it was
+written fresh rather than copied from the wrapper's own code. Silent
+for every purely-scalar `%foreign` declaration (their own `packCFType`
+results already happen to be `IDRIS2RC2_Value *`), only surfacing as a
+real `-Wincompatible-pointer-types` compile error for a `CFStruct`/
+pointer-returning declaration. Caught by
+`rc2/tests/Test24CStructSupport.idr`'s own `prim__makePoint : Int ->
+Double -> PrimIO Point` -- both arguments native-eligible (so it gets
+an FFI worker at all) but its `Point` return is `CFStruct`, called in a
+genuine non-tail position (`p <- primIO (prim__makePoint 3 4.5)` inside
+`main`'s own `do` block), so the call-site rewrite actually fires and
+hits this code path. Fixed by adding the same explicit
+`(IDRIS2RC2_Value*)` cast, matching the wrapper's own established
+convention verbatim. Re-verified: `Test24CStructSupport.idr` compiles
+and runs correctly again; full `verify.sh`/`refc-suite/run.sh` (19/19)
+unaffected.
 
 ## Pre-existing `valgrind` leaks (unrelated to whatever's currently being tested)
 
