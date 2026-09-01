@@ -6,7 +6,7 @@ CC ?= cc
 AR ?= ar
 RANLIB ?= ranlib
 CFLAGS += -O2 -Wall -Wno-unused-function
-INSTALL_ROOT ?= $(CURDIR)/../../../install/idris2-0.8.0/support/rc2
+INSTALL_ROOT ?= $(shell idris2 --libdir)/support/rc2
 
 TARGET = libidris2rc2.a
 SRCS := $(wildcard *.c)

@@ -9,7 +9,7 @@ without modifying) an upstream Idris2 checkout used only as a reference.
 ```
 .
 ├── env.sh          generated environment (source before building/running rc2) (gitignored)
-├── gen-env.sh       regenerates env.sh from nixpkgs' idris2 wrapper
+├── gen-env.sh       regenerates env.sh: nixpkgs' idris2 wrapper env vars, plus PATH pointing at the self-built install/bin compiler
 ├── idris2-src/      reference clone of github.com/idris-lang/Idris2 (gitignored, untouched)
 ├── install/         local install prefix for the rc2 package + runtime (gitignored, build output)
 └── rc2/             the actual deliverable -- see rc2/ below
@@ -116,8 +116,18 @@ that porting/writing those tests surfaced.
 cd rc2
 source ../env.sh
 export IDRIS2_PREFIX="$(cd .. && pwd)/install"
-nix-shell -p idris2 gcc gmp pkg-config --run 'idris2 --build rc2.ipkg && idris2 --install rc2.ipkg'
+nix-shell -p gcc gmp pkg-config --run 'idris2 --build rc2.ipkg && idris2 --install rc2.ipkg'
 ```
+
+This builds with whatever `idris2` `source ../env.sh` already put first on
+`PATH` -- the self-built `install/bin/idris2` by default. Per project
+policy, nixpkgs' `idris2` package is bootstrap-only now and shouldn't be
+used to build rc2 without a specific reason; to force it for one run
+anyway, add `idris2` back to the `-p` list: `nix-shell -p idris2 gcc gmp
+pkg-config --run 'idris2 --build rc2.ipkg && idris2 --install rc2.ipkg'`
+-- nix-shell prepends each `-p` package's own `bin/` ahead of the rest of
+`PATH`, so nixpkgs' `idris2` wins over `install/bin`'s self-built one for
+that shell even though `env.sh` already put the latter on `PATH` first.
 
 This produces `rc2/build/exec/idris2-rc2`. The runtime library
 (`libidris2rc2.a`, linked into every rc2-*compiled* program, not into
@@ -157,7 +167,7 @@ zero-duration entry.
 ```sh
 cd rc2/tests
 source ../../env.sh
-nix-shell -p idris2 gcc gmp pkg-config valgrind --run './verify.sh'
+nix-shell -p gcc gmp pkg-config valgrind --run './verify.sh'
 ```
 
 `verify.sh` is the one-shot entry point for correctness: it builds
@@ -167,24 +177,32 @@ every hand-written smoke test (`rc2/tests/Test*.idr`) against a saved
 expected output, and runs `valgrind --leak-check=full` on the
 leak-sensitive subset -- see `KNOWN-BUGS.md` for the few
 already-investigated quirks it deliberately doesn't flag as failures
-(pre-existing leaks, a reference-RefC-library blocker, etc.). Useful
-flags: `--skip-build` (reuse the existing `idris2-rc2`), `--no-valgrind`
-(faster), `--valgrind-all`, `--directive VALUE` (forwarded to
-`idris2-rc2`, repeatable -- e.g. `--directive noloop` to disable one
-optimization stage and isolate a regression to it), `--regen-expected`
-(after adding/editing a smoke test) -- run `./verify.sh` with no
-arguments to see the full list in its own header comment, or to rerun
-a single smoke test by hand once `idris2-rc2` exists.
+(pre-existing leaks, a reference-RefC-library blocker, etc.). By default
+both the build and `--regen-expected`'s own real-refc reference compile
+use whatever `idris2` is already first on `PATH` (the self-built one);
+`--nix-idris2` forces nixpkgs' `idris2` for both instead, for the rare
+case of isolating whether a bug is specific to the self-built compiler.
+Useful flags: `--skip-build` (reuse the existing `idris2-rc2`),
+`--nix-idris2`, `--no-valgrind` (faster), `--valgrind-all`, `--directive
+VALUE` (forwarded to `idris2-rc2`, repeatable -- e.g. `--directive
+noloop` to disable one optimization stage and isolate a regression to
+it), `--regen-expected` (after adding/editing a smoke test) -- run
+`./verify.sh` with no arguments to see the full list in its own header
+comment, or to rerun a single smoke test by hand once `idris2-rc2`
+exists.
 
 ```sh
 cd rc2/tests
-nix-shell -p idris2 gcc gmp pkg-config --run './bench.sh'
+nix-shell -p gcc gmp pkg-config --run './bench.sh'
 ```
 
 `bench.sh` is the equivalent one-shot entry point for performance:
 compiles and times every `rc2/tests/Bench*.idr` against both `idris2-rc2`
-and real `idris2 --cg refc`, reporting wall-clock speedup. `--runs N`
-controls repetitions per binary; `--missing-containers` additionally
+and real `idris2 --cg refc`, reporting wall-clock speedup. By default
+both the build and the real-refc comparison side use whatever `idris2`
+is already first on `PATH` (the self-built one); `--nix-idris2` forces
+nixpkgs' `idris2` for both instead. `--runs N` controls repetitions per
+binary; `--missing-containers` additionally
 runs the `idris2-missing-containers` external-package benchmark (see
 `rc2/BENCHMARKS.md`'s own methodology section for what that needs
 set up first). See `rc2/BENCHMARKS.md` for recorded results and how to

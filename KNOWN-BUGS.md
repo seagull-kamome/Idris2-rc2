@@ -2,9 +2,13 @@
 
 Confirmed, already-investigated issues that show up while testing rc2
 but are **not** rc2 regressions to chase down again -- either a defect
-in a *reference* installation (nixpkgs' RefC support library), an
-already-understood quirk of the test file itself, or a pre-existing gap
-confirmed unrelated to whatever work is in progress when it's
+in this project's own *reference* toolchain (a self-built upstream
+`idris2` compiled from `idris2-src/`, pinned at a specific commit and
+kept up to date by fast-forward merge from `origin/main`; nixpkgs'
+`idris2` package is used only for that compiler's own one-time
+bootstrap, not as the reference itself -- see `env.sh`/`gen-env.sh`),
+an already-understood quirk of the test file itself, or a pre-existing
+gap confirmed unrelated to whatever work is in progress when it's
 rediscovered. Kept separate from `TODO.md` (forward-looking gaps/future
 work) and `rc2/tests/refc-suite/README.md` (bugs found *and fixed*
 during that port) specifically so re-running the test suite doesn't
@@ -16,16 +20,26 @@ entry rather than leaving it stale.
 ## Real reference-installation bugs (not rc2 bugs)
 
 - **`Test7CastMatrix.idr` can't be diff-checked against real
-  `idris2 --cg refc` at all.** The nixpkgs-bundled RefC support library
-  itself fails to compile: `idris2_negate_Double` is typo'd as
-  `idris2_nagate_Double` in its own headers, plus a couple of missing
-  declarations. Confirmed to be a defect in that reference installation
-  itself, not rc2 -- `idris2-rc2`'s own build of the same file compiles
-  and runs cleanly. Verified instead via a saved `.expected` file
-  (manual verification), same as `rc2/tests/refc-suite`'s own
-  `Test7CastMatrix`-equivalent handling. See `rc2/doc/dual-abi.md`'s own
-  "Verification methodology" item 5 / `rc2/doc/reuse-analysis.md`'s
-  item 4 for the original write-up.
+  `idris2 --cg refc` at all.** Originally because the reference RefC
+  support library's `idris2_negate_Double` was typo'd as
+  `idris2_nagate_Double`, plus a couple of missing declarations -- **that
+  typo is now fixed** in this project's self-built reference toolchain
+  (`idris2-src`, confirmed directly: `mathFunctions.h` spells
+  `idris2_negate_Double` correctly). But the test still can't be
+  compiled by real `idris2 --cg refc`, now for a *different* reason:
+  `idris2-src/support/refc/casts.h`'s `idris2_cast_Double_to_Int` is a
+  copy-paste of the `Int8` cast (`idris2_mkInt8((int8_t)
+  idris2_vp_to_Double(x))` -- wrong helper, wrong width), and there is
+  no separate `idris2_cast_Double_to_Int8` defined at all, so a program
+  exercising that cast hits an undeclared-function compile error. Net
+  effect unchanged: still can't be diff-checked against real refc, just
+  a different underlying bug now. Confirmed to be a defect in that
+  reference toolchain itself, not rc2 -- `idris2-rc2`'s own build of the
+  same file compiles and runs cleanly. Verified instead via a saved
+  `.expected` file (manual verification), same as `rc2/tests/
+  refc-suite`'s own `Test7CastMatrix`-equivalent handling. See
+  `rc2/doc/dual-abi.md`'s own "Verification methodology" item 5 /
+  `rc2/doc/reuse-analysis.md`'s item 4 for the original write-up.
 - **`refc-suite`'s `basicpatternmatch` test: real RefC itself fails to
   match `Bits32 0x80000000` and the `Int64` min/max boundary literal
   cases**, falling through to the catch-all (flagged `-- FIXME: wont
@@ -57,7 +71,9 @@ entry rather than leaving it stale.
   functions themselves are still the shared library's own, unmodified)
   -- see that file's own comment. `Test42SupportMisc.idr` exercises
   this and is listed in `verify.sh`'s `NO_REFC_DIFF_TESTS` since there's
-  no real-RefC output to diff against in the first place.
+  no real-RefC output to diff against in the first place. Re-verified
+  directly against this project's self-built reference toolchain
+  (`idris2-src` at its currently pinned commit): unchanged.
 - **Upstream RefC's own `cTypeOfCFType CFString = "char *"` (no
   `const`) still collides with `-Werror`/`-Wdiscarded-qualifiers` on
   any `const char *`-returning C function** (e.g.
@@ -69,7 +85,42 @@ entry rather than leaving it stale.
   `"const char *"` (`idris2rc2_mkString` already took `char const *s`,
   so no other codegen change was needed). `Test47ConstCFStringReturn`
   is listed in `verify.sh`'s `NO_REFC_DIFF_TESTS` since there's no
-  real-RefC output to diff against for it.
+  real-RefC output to diff against for it. Re-verified directly against
+  this project's self-built reference toolchain (`idris2-src` at its
+  currently pinned commit): unchanged.
+- **`Test35NetworkLoopback.idr` can't be diff-checked against real
+  `idris2 --cg refc` at all.** Originally because the reference RefC's
+  generated code called `idris2_cast_string_to_Integer` (lowercase, via
+  `Network.Socket.Data.parseIPv4`'s `Cast String Integer` usage) while
+  only `idris2_cast_String_to_Integer` (capital `S`) was actually
+  defined -- **that naming mismatch is now fixed** in this project's
+  self-built reference toolchain (`idris2-src`, confirmed directly:
+  both the generated call site and `support/refc/casts.h`/`casts.c`'s
+  own declaration/definition are now consistently lowercase), fixed by
+  upstream commit `0781ad1 [refc] Fix casts from String failing to
+  compile (#3832)`. But the test still can't be compiled by real
+  `idris2 --cg refc`, now for a *different, unrelated* reason: a genuine
+  internal inconsistency within `idris2-src` itself, between the
+  Idris-level `network` package and its own C runtime implementation --
+  `idris2-src/libs/network/Network/FFI.idr`'s own `%foreign` declaration
+  of `prim__idrnet_send_bytes` expects a 4-argument C function
+  (`idrnet_send_bytes(sockfd, content, nbytes, flags : Bits32)`, i.e. it
+  takes a `flags` parameter), but `idris2-src/support/c/idris_net.h`/
+  `idris_net.c` still only declare/define the old 3-argument version
+  (`int idrnet_send_bytes(int sockfd, void *data, int len)`) with no
+  `flags` parameter at all -- confirmed to still be present at
+  `idris2-src`'s currently pinned commit, which is current
+  `origin/main` HEAD (i.e. not yet fixed upstream as of this writing).
+  Entirely an upstream `idris2-src` defect (a same-commit mismatch
+  between its own Idris-level API and its own C implementation),
+  unrelated to nix packaging and unrelated to rc2. Real
+  `idris2 --cg refc` fails to compile any program exercising
+  `Network.Socket.sendBytes` (which `Test35NetworkLoopback` does via
+  `accept`'s loopback exchange) with an implicit-declaration/argument-
+  count error as a result. Verified instead via a saved `.expected` file
+  (manual verification), same reasoning as `Test7CastMatrix` above.
+  `Test35NetworkLoopback` is listed in `verify.sh`'s `NO_REFC_DIFF_TESTS`
+  since there's no real-RefC output to diff against in the first place.
 
 ## Retired: `--directive noreuse` no longer exists
 

@@ -9,14 +9,22 @@ show up again during testing.
 
 ## Layout
 
-- `idris2-src/` — reference clone of upstream Idris2 (gitignored,
-  read-only, never edited; re-fetch via
-  `git clone https://github.com/idris-lang/Idris2.git idris2-src`)
-- `install/` — build output (gitignored). Also the place to `git clone`
-  any external package needed only temporarily (e.g. for a one-off
-  benchmark comparison) -- everything under `install/` is already
-  gitignored wholesale, so nothing needs adding to `.gitignore` per
-  clone. Don't clone such things at the repo root.
+- `idris2-src/` — clone of upstream Idris2 (gitignored, read-only, never
+  edited; kept current via `git merge --ff-only origin/main`, not
+  re-cloned). Both a reference (comparing generated C, checking prelude
+  `%foreign` declarations, borrowing/porting regression tests) and the
+  SOURCE this repo's own self-built idris2 toolchain (see `install/`
+  below) is built from.
+- `install/` — build output (gitignored). `install/bin/idris2` +
+  `install/idris2-0.8.0/` is the PERMANENT self-built idris2 toolchain
+  (self-hosted: its own prelude/base/contrib/network/idris2api all
+  built by itself, not by nix) built from `idris2-src/` -- the default
+  compiler for all rc2 work now (see policy note below). `install/` is
+  also the place to `git clone` any external package needed only
+  temporarily (e.g. for a one-off benchmark comparison) -- everything
+  under `install/` is already gitignored wholesale, so nothing needs
+  adding to `.gitignore` per clone. Don't clone such things at the repo
+  root.
 - `rc2/` — the actual deliverable (own package, own runtime, own tests)
 - `rc2/doc/` — implementation deep-dives for specific compiler passes,
   meant to let a future session regain context without re-deriving the
@@ -56,7 +64,19 @@ show up again during testing.
   authoritative and are the only ones maintained on every edit; only
   update `rc2/doc/ja/` when specifically asked to translate/sync it.
 - `env.sh` / `gen-env.sh` — environment setup; `source env.sh` before
-  building/running rc2 or plain `idris2`
+  building/running rc2 or plain `idris2`. Also puts the self-built
+  `install/bin` first on `PATH`, so plain `idris2` resolves to it.
+
+## Policy: don't use nixpkgs' idris2 for rc2 work
+
+nixpkgs' `idris2` package is for the one-time bootstrap of the
+self-built compiler ONLY -- never for building rc2, never for
+reference/comparison test runs, unless there's a specific genuine need
+(e.g. isolating whether a bug is specific to the self-built compiler's
+own dev-snapshot state). `rc2/tests/verify.sh` and `rc2/tests/bench.sh`
+default to whatever `idris2` is first on `PATH` (the self-built one);
+their `--nix-idris2` flag is the escape hatch for that specific-need
+case. Do not regress back to nix-idris2-by-default.
 
 ## コーディング規約
 以下を金言とせよ。

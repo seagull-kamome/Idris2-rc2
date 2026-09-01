@@ -12,11 +12,19 @@
 # etc.) -- if KNOWN-BUGS.md changes, update the constants below to
 # match.
 #
-# Usage: ./verify.sh [--skip-build] [--no-valgrind] [--valgrind-all]
-#                     [--regen-expected] [--directive VALUE]...
+# Usage: ./verify.sh [--skip-build] [--nix-idris2] [--no-valgrind]
+#                     [--valgrind-all] [--regen-expected] [--directive VALUE]...
 #
 #   --skip-build       Don't rebuild idris2-rc2/libidris2rc2.a first
 #                       (use the existing rc2/build/exec/idris2-rc2).
+#   --nix-idris2       Use nixpkgs' `idris2` package -- for building
+#                       rc2 itself (the "Build" step) AND for
+#                       --regen-expected's own real-refc reference
+#                       compile -- instead of the default: whatever
+#                       `idris2` is already first on PATH (e.g. a
+#                       self-built one). Smoke tests themselves always
+#                       run the resulting rc2/build/exec/idris2-rc2
+#                       directly either way, never `idris2` as such.
 #   --no-valgrind      Skip the valgrind pass entirely (faster).
 #   --valgrind-all     Run valgrind on every smoke test, not just the
 #                       curated leak-sensitive subset.
@@ -124,6 +132,7 @@ REPO_DIR="$(cd "$RC2_DIR/.." && pwd)"
 IDRIS2RC2="$RC2_DIR/build/exec/idris2-rc2"
 
 SKIP_BUILD=0
+NIX_IDRIS2=0
 DO_VALGRIND=1
 VALGRIND_ALL=0
 REGEN_EXPECTED=0
@@ -131,6 +140,7 @@ EXTRA_DIRECTIVES=()
 while [ $# -gt 0 ]; do
     case "$1" in
         --skip-build) SKIP_BUILD=1; shift ;;
+        --nix-idris2) NIX_IDRIS2=1; shift ;;
         --no-valgrind) DO_VALGRIND=0; shift ;;
         --valgrind-all) VALGRIND_ALL=1; shift ;;
         --regen-expected) REGEN_EXPECTED=1; shift ;;
@@ -138,6 +148,20 @@ while [ $# -gt 0 ]; do
         *) echo "unknown argument: $1" >&2; exit 2 ;;
     esac
 done
+
+# Both rc2 itself (the "Build" step below) and --regen-expected's own
+# real-refc reference compile use whichever `idris2` is first on PATH
+# by default -- e.g. a self-built one -- rather than always forcing
+# nixpkgs' own, so a locally-built compiler under test can be picked up
+# just by adjusting PATH before invoking this script. --nix-idris2
+# restores the old always-nixpkgs behaviour for both.
+BUILD_NIX_PKGS="gcc gmp pkg-config"
+if [ "$NIX_IDRIS2" -eq 1 ]; then
+    BUILD_NIX_PKGS="idris2 $BUILD_NIX_PKGS"
+elif { [ "$SKIP_BUILD" -eq 0 ] || [ "$REGEN_EXPECTED" -eq 1 ]; } && ! command -v idris2 > /dev/null 2>&1; then
+    echo "error: no 'idris2' on PATH, and --nix-idris2 not given -- either put one on PATH or pass --nix-idris2" >&2
+    exit 2
+fi
 
 # Turned into a single ` --directive X --directive Y ...` string,
 # spliced straight after `--directive dumprcexpr` in every smoke-test
@@ -198,7 +222,7 @@ else
     # regardless); needed so --install doesn't try to write into the
     # default, typically read-only, nix store location.
     (cd "$RC2_DIR" && IDRIS2_PREFIX="$(dirname "$RC2_DIR")/install" \
-        nix-shell -p idris2 gcc gmp pkg-config --run \
+        nix-shell -p $BUILD_NIX_PKGS --run \
             'idris2 --build rc2.ipkg') \
         > "$RC2_DIR/tests/verify-build.log" 2>&1
     if [ $? -ne 0 ]; then
@@ -208,7 +232,7 @@ else
     report_pass "build (idris2-rc2)"
 
     (cd "$RC2_DIR" && IDRIS2_PREFIX="$(dirname "$RC2_DIR")/install" \
-        nix-shell -p idris2 gcc gmp pkg-config --run \
+        nix-shell -p $BUILD_NIX_PKGS --run \
             'idris2 --install rc2.ipkg') \
         > "$RC2_DIR/tests/verify-runtime-build.log" 2>&1
     if [ $? -ne 0 ]; then
@@ -270,20 +294,35 @@ echo "=== Smoke tests ==="
 # inlineRuntime= directive injects for rc2 is simply never defined
 # anywhere in RefC's own output) -- not a divergent-but-comparable
 # output, so there is nothing to regen/diff against there at all.
-# Test35NetworkLoopback is an eighth reason: this pinned reference
-# idris2 0.8.0's own RefC codegen has a real bug of its own, unrelated
-# to networking or rc2 -- accept()'s own getSockAddr internally reaches
-# Network.Socket.Data.parseIPv4's `Cast String Integer` usage, and the
-# reference install's generated C calls `idris2_cast_string_to_Integer`
-# (lowercase) where only `idris2_cast_String_to_Integer` (capital S) is
-# actually defined, an implicit-declaration/int-to-pointer compile
-# error confirmed by a direct `idris2 --cg refc` attempt. rc2's own
-# codegen has no equivalent naming inconsistency and compiles this test
-# cleanly. `.expected` here is rc2's own manually-verified-correct
-# output (deterministic bind/listen/connect/send/recv transcript over a
-# 127.0.0.1 loopback), saved by hand -- same reasoning as
-# Test7CastMatrix/Test17ConstFold above, there is no real-RefC output
-# to diff against in the first place.
+# Test35NetworkLoopback is an eighth reason: this project's self-built
+# reference idris2 (idris2-src, pinned at a specific commit) has a real
+# bug of its own, unrelated to networking or rc2. It used to be a
+# String-cast naming mismatch (`idris2_cast_string_to_Integer` vs.
+# `idris2_cast_String_to_Integer`) reached via accept()'s own
+# getSockAddr -> Network.Socket.Data.parseIPv4's `Cast String Integer`
+# usage -- that one is now fixed upstream (commit 0781ad1, "[refc] Fix
+# casts from String failing to compile (#3832)"), confirmed in
+# idris2-src: both the call site and casts.h/casts.c are now
+# consistently lowercase. The test still can't compile under real
+# `idris2 --cg refc`, though, for a different, unrelated reason: an
+# internal inconsistency within idris2-src itself between the
+# Idris-level network package and its own C runtime -- libs/network/
+# Network/FFI.idr's `prim__idrnet_send_bytes` %foreign declaration
+# expects a 4-argument idrnet_send_bytes(sockfd, content, nbytes, flags
+# : Bits32), but support/c/idris_net.h/idris_net.c still only
+# declare/define the old 3-argument idrnet_send_bytes(int sockfd, void
+# *data, int len) with no flags parameter at all -- still present at
+# idris2-src's currently pinned commit (confirmed to be current
+# origin/main HEAD, i.e. not yet fixed upstream as of this writing).
+# Real `idris2 --cg refc` fails to compile any program exercising
+# Network.Socket.sendBytes (which this test does via accept()'s own
+# loopback exchange) with an implicit-declaration/argument-count error
+# as a result. rc2's own codegen has no equivalent inconsistency and
+# compiles this test cleanly. `.expected` here is rc2's own
+# manually-verified-correct output (deterministic bind/listen/connect/
+# send/recv transcript over a 127.0.0.1 loopback), saved by hand --
+# same reasoning as Test7CastMatrix/Test17ConstFold above, there is no
+# real-RefC output to diff against in the first place.
 #
 # Test42SupportMisc: exercises setEnv/unsetEnv, which real `idris2 --cg
 # refc` cannot even compile -- upstream's own idris_support.h declares
@@ -378,7 +417,10 @@ for name in $ALL_TESTS; do
         fi
         companion_env=("IDRIS2_LDFLAGS=$TMP/${name}_companion.o" "IDRIS2_CFLAGS=-I$RC2_DIR/tests")
     fi
-    env "${companion_env[@]}" nix-shell -p idris2 gcc gmp pkg-config --run \
+    # $IDRIS2RC2 is invoked directly (an already-built binary), not via
+    # a bare `idris2` command, so nix's idris2 package is never needed
+    # here regardless of --nix-idris2 -- just the C toolchain.
+    env "${companion_env[@]}" nix-shell -p gcc gmp pkg-config --run \
         "$IDRIS2RC2 --cg rc2 -p network -p linear -p rc2base --directive dumprcexpr$extra_directive_args $RC2_DIR/tests/$name.idr -o $TMP/${name}_rc2" \
         > "$TMP/${name}_compile.log" 2>&1
     compile_time="$(elapsed "$compile_t0" "$(date +%s.%N)")"
@@ -421,7 +463,7 @@ for name in $ALL_TESTS; do
     else
         expected_file="$RC2_DIR/tests/$name.expected"
         if [ "$REGEN_EXPECTED" -eq 1 ]; then
-            env "${companion_env[@]}" nix-shell -p idris2 gcc gmp pkg-config --run \
+            env "${companion_env[@]}" nix-shell -p $BUILD_NIX_PKGS --run \
                 "idris2 --cg refc -p network -p linear -p rc2base $RC2_DIR/tests/$name.idr -o $TMP/${name}_refc" \
                 > "$TMP/${name}_refc_compile.log" 2>&1
             if [ ! -x "$TMP/${name}_refc" ]; then

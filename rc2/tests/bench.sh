@@ -6,9 +6,15 @@
 # rc2/BENCHMARKS.md's own measurements have always been done with, just
 # scripted so it doesn't cost a session's own reasoning each time.
 #
-# Usage: ./bench.sh [--skip-build] [--runs N] [--missing-containers]
+# Usage: ./bench.sh [--skip-build] [--nix-idris2] [--runs N] [--missing-containers]
 #
 #   --skip-build           Don't rebuild idris2-rc2 first.
+#   --nix-idris2           Use nixpkgs' `idris2` package -- for building
+#                           rc2 itself (the "Build" step) AND for every
+#                           benchmark's own real-refc/chez comparison
+#                           side -- instead of the default: whatever
+#                           `idris2` is already first on PATH (e.g. a
+#                           self-built one).
 #   --runs N                Repeat each binary N times (default 3).
 #   --missing-containers    Also run the idris2-missing-containers
 #                            external-package benchmark (rc2/BENCHMARKS.md's
@@ -42,16 +48,36 @@ REPO_DIR="$(cd "$RC2_DIR/.." && pwd)"
 IDRIS2RC2="$RC2_DIR/build/exec/idris2-rc2"
 
 SKIP_BUILD=0
+NIX_IDRIS2=0
 RUNS=3
 DO_MISSING_CONTAINERS=0
 while [ $# -gt 0 ]; do
     case "$1" in
         --skip-build) SKIP_BUILD=1; shift ;;
+        --nix-idris2) NIX_IDRIS2=1; shift ;;
         --runs) RUNS="$2"; shift 2 ;;
         --missing-containers) DO_MISSING_CONTAINERS=1; shift ;;
         *) echo "unknown argument: $1" >&2; exit 2 ;;
     esac
 done
+
+# Both rc2 itself (the "Build" step below) and every benchmark's own
+# real-refc/chez comparison side use whichever `idris2` is first on
+# PATH by default -- e.g. a self-built one -- rather than always
+# forcing nixpkgs' own, so a locally-built compiler under test can be
+# picked up just by adjusting PATH before invoking this script.
+# --nix-idris2 restores the old always-nixpkgs behaviour for both.
+# Comparisons always run (no flag skips them), so the PATH check below
+# isn't conditioned on --skip-build the way verify.sh's is.
+BUILD_NIX_PKGS="gcc gmp pkg-config"
+COMPARE_CHEZ_PKGS="gmp pkg-config chez"
+if [ "$NIX_IDRIS2" -eq 1 ]; then
+    BUILD_NIX_PKGS="idris2 $BUILD_NIX_PKGS"
+    COMPARE_CHEZ_PKGS="idris2 $COMPARE_CHEZ_PKGS"
+elif ! command -v idris2 > /dev/null 2>&1; then
+    echo "error: no 'idris2' on PATH, and --nix-idris2 not given -- either put one on PATH or pass --nix-idris2" >&2
+    exit 2
+fi
 
 # shellcheck source=/dev/null
 source "$REPO_DIR/env.sh"
@@ -67,7 +93,7 @@ else
     # self-contained and doesn't silently depend on rc2/tests/verify.sh
     # having already installed the runtime in a prior run.
     (cd "$RC2_DIR" && IDRIS2_PREFIX="$REPO_DIR/install" \
-        nix-shell -p idris2 gcc gmp pkg-config --run \
+        nix-shell -p $BUILD_NIX_PKGS --run \
             'idris2 --build rc2.ipkg') \
         > "$RC2_DIR/tests/bench-build.log" 2>&1
     if [ $? -ne 0 ]; then
@@ -75,7 +101,7 @@ else
         exit 1
     fi
     (cd "$RC2_DIR" && IDRIS2_PREFIX="$REPO_DIR/install" \
-        nix-shell -p idris2 gcc gmp pkg-config --run \
+        nix-shell -p $BUILD_NIX_PKGS --run \
             'idris2 --install rc2.ipkg') \
         >> "$RC2_DIR/tests/bench-build.log" 2>&1
     if [ $? -ne 0 ]; then
@@ -108,9 +134,9 @@ echo "=== Micro-benchmarks (rc2/tests/Bench*.idr, $RUNS run(s) each) ==="
 printf '%-14s %10s %10s %8s\n' "benchmark" "rc2(s)" "refc(s)" "speedup"
 for bf in "$RC2_DIR"/tests/Bench*.idr; do
     name="$(basename "$bf" .idr)"
-    nix-shell -p idris2 gcc gmp pkg-config --run \
+    nix-shell -p gcc gmp pkg-config --run \
         "$IDRIS2RC2 --cg rc2 $bf -o $TMP/${name}_rc2" > "$TMP/${name}_rc2_build.log" 2>&1
-    nix-shell -p idris2 gcc gmp pkg-config --run \
+    nix-shell -p $BUILD_NIX_PKGS --run \
         "idris2 --cg refc $bf -o $TMP/${name}_refc" > "$TMP/${name}_refc_build.log" 2>&1
     if [ ! -x "$TMP/${name}_rc2" ] || [ ! -x "$TMP/${name}_refc" ]; then
         printf '%-14s %10s %10s %8s\n' "$name" "BUILD-FAIL" "-" "-"
@@ -137,18 +163,18 @@ if [ "$DO_MISSING_CONTAINERS" -eq 1 ]; then
     fi
 
     echo "Installing missing-containers.ipkg via idris2-rc2 ..."
-    (cd "$MCT_DIR" && nix-shell -p idris2 gmp pkg-config --run \
+    (cd "$MCT_DIR" && nix-shell -p gmp pkg-config --run \
         "$IDRIS2RC2 --install missing-containers.ipkg") \
         > "$RC2_DIR/tests/bench-mct-install.log" 2>&1
 
     echo "Building 3 backends (rc2/refc/chez) ..."
-    (cd "$MCT_DIR/test/src" && nix-shell -p idris2 gmp pkg-config --run \
+    (cd "$MCT_DIR/test/src" && nix-shell -p gmp pkg-config --run \
         "$IDRIS2RC2 --cg rc2 -p missing-containers -p contrib Main.idr -o mct_rc2") \
         > "$RC2_DIR/tests/bench-mct-build-rc2.log" 2>&1
-    (cd "$MCT_DIR/test/src" && nix-shell -p idris2 gmp pkg-config --run \
+    (cd "$MCT_DIR/test/src" && nix-shell -p $BUILD_NIX_PKGS --run \
         "idris2 --cg refc -p missing-containers -p contrib Main.idr -o mct_refc") \
         > "$RC2_DIR/tests/bench-mct-build-refc.log" 2>&1
-    (cd "$MCT_DIR/test/src" && nix-shell -p idris2 gmp pkg-config chez --run \
+    (cd "$MCT_DIR/test/src" && nix-shell -p $COMPARE_CHEZ_PKGS --run \
         "idris2 -p missing-containers -p contrib Main.idr -o mct_chez") \
         > "$RC2_DIR/tests/bench-mct-build-chez.log" 2>&1
 
