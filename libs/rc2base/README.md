@@ -410,3 +410,62 @@ Tagged `"RC2:"`, not `"RefC:"`, for the same reason as
 `Data.Buffer.RC2` above: these symbol names are new, rc2-only
 additions to rc2's own runtime, not something a real `idris2 --cg refc`
 build's own runtime also happens to provide.
+
+### `Data.Integer.GMP`
+
+Direct `%foreign` bindings onto real GMP `mpz_*` functions -- made
+possible by `Compiler.RC2.Emit`'s own `Integer`-as-`%foreign`-argument-
+and-return support (`rc2/tests/Test54FFIInteger.idr`/
+`Test55FFIIntegerReturn.idr`): the very `mpz_t` backing every ordinary
+Idris `Integer` in this runtime is handed to (arguments) or freshly
+allocated for (an implicit, leading out-parameter for a return value,
+exactly matching GMP's own `rop`-always-first convention -- `mpz_add
+(rop, op1, op2)`, etc.) the real GMP symbol directly, no wrapper of its
+own needed anywhere in this module.
+
+Two groups only, `mpz_` dropped and snake_case turned into camelCase
+mechanically, nothing renamed for style: **arithmetic/bitwise**
+(`add`/`sub`/`mul`/`neg`/`abs`/`addUi`/`subUi`/`uiSub`/`mulSi`/`mulUi`/
+`gcd`/`lcm`/`tdivQ`/`tdivR`/`fdivQ`/`fdivR`/`cdivQ`/`cdivR`/`mod`/
+`divexact`/`powUi`/`uiPowUi`/`powm`/`powmUi`/`sqrt`/`mul2exp`/
+`tdivQ2exp`/`tdivR2exp`/`fdivQ2exp`/`fdivR2exp`/`and`/`ior`/`xor`/`com`/
+`nextprime`) and **predicates/queries** (`cmp`/`cmpabs`/
+`probabPrimeP`/`perfectSquareP`/`perfectPowerP`/`popcount`/`hamdist`/
+`tstbit`/`sizeinbase`/`fitsSlongP`/`fitsUlongP`/`getD`/`scan0`/
+`scan1`). All live in `namespace GMP` (so e.g. `GMP.add`), not exported
+unqualified -- over a dozen of these names would otherwise collide with
+`Prelude`'s own (`abs`, `neg`... well, `negate`, `mod`, `gcd`, `lcm`,
+`sqrt`, `and`, `xor`), the same convention `System.FFI.C.Ptr`'s own
+per-type namespaces already use.
+
+Deliberately excluded, in each case because the function's own real
+signature doesn't fit either of the two shapes above (a single leading
+`mpz_t` out-parameter with a `void` return, or a plain native return
+with no output parameter at all) -- forcing one in would mean silently
+discarding real information or miscounting arguments, not just
+following an established convention:
+
+- `mpz_invert`/`mpz_root`: a leading `mpz_t` out-param *and* a
+  meaningful `int` return (invertibility/exactness) at once.
+- `mpz_tdiv_qr`/`mpz_fdiv_qr`/`mpz_cdiv_qr`/`mpz_gcdext`: more than one
+  output parameter.
+- `mpz_setbit`/`mpz_clrbit`/`mpz_combit`: mutate their *single* `mpz_t`
+  argument in place (`void mpz_setbit(mpz_ptr, mp_bitcnt_t)` -- no
+  separate `rop`/`op` at all). Confirmed as a real compile error
+  (three arguments generated for a two-parameter function), not just a
+  theoretical mismatch -- a real binding needs a wrapper that copies
+  first (`mpz_init_set` into a fresh destination, then mutate that
+  copy).
+- `mpz_urandomb`/`mpz_urandomm` and the rest of GMP's random-number
+  API: needs an opaque `gmp_randstate_t` with its own init/clear
+  lifecycle, a separate piece of design work.
+- `mpz_get_str`/`mpz_set_str`: redundant with Idris's own `Integer`
+  `Show`/numeric-literal parsing, which already goes through this same
+  `mpz_t`.
+
+`tests/TestIntegerGMP.idr` exercises every binding at least once,
+cross-checked either against Idris's own native `Integer` arithmetic
+(the same `mpz_t` state, computed through a completely different code
+path) or known textbook constants (`gcd 1071 462 == 21`, the classic
+`4^13 mod 497 == 445` modular-exponentiation example, etc.), with
+values kept well outside `Int`'s 64-bit range throughout.

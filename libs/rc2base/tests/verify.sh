@@ -199,3 +199,16 @@ if diff -u "$TESTS_DIR/TestArrayRC2.expected" "$TMP/actual11.out"; then
 else
     fail "TestArrayRC2 -- output mismatch (see diff above)"
 fi
+
+echo "=== rc2 backend: build TestIntegerGMP (Data.Integer.GMP's direct GMP bindings) ==="
+nix-shell -p gcc gmp pkg-config --run \
+    "cd '$TESTS_DIR' && '$IDRIS2RC2' --cg rc2 -p rc2base -o TestIntegerGMP_verify TestIntegerGMP.idr"
+
+echo "=== Run and diff against TestIntegerGMP.expected ==="
+"$TESTS_DIR/build/exec/TestIntegerGMP_verify" > "$TMP/actual12.out" 2>&1
+
+if diff -u "$TESTS_DIR/TestIntegerGMP.expected" "$TMP/actual12.out"; then
+    echo "PASS  TestIntegerGMP"
+else
+    fail "TestIntegerGMP -- output mismatch (see diff above)"
+fi
