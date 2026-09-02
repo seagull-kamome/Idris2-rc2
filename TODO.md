@@ -131,20 +131,11 @@ returning non-delegating call sites are a real hot path.
 
 ## Performance: loop accumulator threaded only through helper calls stays boxed
 
-A loop-carried accumulator only skips boxing across iterations when
-it's read directly as an `ROp`/`RCmpCase` operand inside the loop body
-itself (`Compiler.RC2.Loop`'s own native-shadow promotion, see
-`rc2/doc/loop-conversion.md`). When it's instead only ever passed *as
-a call argument* to a helper function (e.g. a `step`-shaped function
-called from within the loop), it stays boxed across iterations:
-`nativeArgTypes` has no case recognizing "used as an argument at a
-position a callee's own native-signature worker accepts natively" as
-a native-context use. Unaddressed, would need its own follow-on change
-(teach `nativeArgTypes` about `RAppNameRep`/`callRep` argument
-positions); not currently planned. The related but distinct gap for an
-ordinary case-alternative's own destructured field (not loop-carried)
-was addressed separately (`Compiler.RC2.ConAltNative`, see
-`rc2/doc/con-alt-native.md`).
+Fixed -- see `rc2/doc/loop-conversion.md`'s "Known limitation" section
+for the closed case (`calleeNativeParams`/`buildCalleeTable`/
+`callArgNativeTypes`/`callArgOrOpNativeType`) and its two remaining,
+deliberate scope limits (one call hop only; variant loop parameters
+only).
 
 ## Performance: `Loop.idr`'s own loop-carried (non-invariant) native shadow still reboxes fresh on a Boxed-context read
 

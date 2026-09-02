@@ -69,3 +69,19 @@ localRepIn reps (RCLoc i) = fromMaybe RBoxed (lookup i reps)
 localRepIn _ (RCConst c) = fromMaybe RBoxed (RNative <$> litRep c)
 localRepIn _ (RCEmptyCon {}) = RBoxed
 localRepIn _ (RCConstCon {}) = RBoxed
+
+||| True for a name `Compiler.RC2.MutualLoop` itself synthesised (its
+||| own merged function). Must never get a dual-ABI worker of its own --
+||| a slot genuinely native for one group member can receive a literal
+||| `RCNull` from a smaller-arity member's own caller. See
+||| `rc2/doc/dual-abi.md`'s "A finding that changed Stage 3's own plan"
+||| for the full story (the per-member *wrapper* functions need no such
+||| exclusion -- their own trivial forwarding body already has nothing
+||| eligible). Moved here from `Compiler.RC2.DualABI` so
+||| `Compiler.RC2.Loop`'s own `buildCalleeTable` can reuse it too,
+||| without Loop.idr needing to import DualABI.idr (which itself
+||| imports Loop.idr -- that would be a cycle).
+export
+isMutualLoopMerged : Name -> Bool
+isMutualLoopMerged (MN "rc2_mutualLoop" _) = True
+isMutualLoopMerged _ = False

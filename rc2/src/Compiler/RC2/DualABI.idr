@@ -201,17 +201,9 @@ freshName pfx existing original = do
     let cand = MN (pfx ++ cName original) i
     if contains cand existing then freshName pfx existing original else pure cand
 
-||| True for a name `Compiler.RC2.MutualLoop` itself synthesised (its
-||| own merged function). Must never get a dual-ABI worker of its own --
-||| a slot genuinely native for one group member can receive a literal
-||| `RCNull` from a smaller-arity member's own caller. See
-||| `rc2/doc/dual-abi.md`'s "A finding that changed Stage 3's own plan"
-||| for the full story (the per-member *wrapper* functions need no such
-||| exclusion -- their own trivial forwarding body already has nothing
-||| eligible).
-isMutualLoopMerged : Name -> Bool
-isMutualLoopMerged (MN "rc2_mutualLoop" _) = True
-isMutualLoopMerged _ = False
+-- `isMutualLoopMerged` itself now lives in `Compiler.RC2.Util` (see its
+-- own doc comment there) -- reused as-is here via the existing `Util`
+-- import above.
 
 ||| For one top-level function eligible for at least one native
 ||| parameter and/or a native return: synthesise its own worker (fresh

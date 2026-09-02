@@ -85,7 +85,7 @@ nix-shell -p gcc gmp pkg-config --run \
 ```bash
 cd rc2/tests
 source ../../env.sh
-nix-shell -p idris2 gcc gmp pkg-config valgrind --run './verify.sh'
+nix-shell -p gcc gmp pkg-config valgrind --run './verify.sh'
 ```
 
 Expected: `82 passed, 0 known, 0 failed` (refc-suite 19, smoke tests,

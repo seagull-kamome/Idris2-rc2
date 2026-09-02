@@ -1089,25 +1089,57 @@ one (e.g. a `step`-shaped per-element helper called from inside a
 loop) -- confirmed via `--directive dumprcexpr`: such a helper's own
 worker now correctly declares that parameter `Native`, not `Boxed`.
 
-**What's still open**: a loop's own carried accumulator still does
-*not* get shadow-promoted purely from being threaded through calls to
-such a helper. In `loop acc (b :: bs) = loop (step acc b) bs`, `acc` is
-never read directly as an `ROp`/`RCmpCase` operand *inside `loop`'s own
-body* -- it only ever appears as an *argument* to the call to `step`
-(now a `callRep` targeting `step`'s own, correctly-native-parametered
-worker, per the fix above). `nativeArgTypes` has no case recognizing
-"passed as an argument at a position the callee's own native-signature
-worker accepts natively" as a native-context use of the caller's own
-parameter, so `loop`'s own accumulator stays a boxed `RLoop` param,
-unboxed and reboxed at that call site every single iteration -- the
-same net operation count as before this fix, just relocated from inside
-`step`'s own body to `loop`'s own call site (verified directly by
-diffing the `.rcexpr` before/after: identical `postDrop` counts, moved
-location). Closing this would need a new case threading through
-`RAppNameRep`/`callRep` argument positions, matched against that
-target's own declared `argReps` -- not attempted here; not currently
-planned; revisit if profiling shows this actually dominates
-(see `TODO.md`'s own note on this, pointing here).
+**Now closed** for the common case: a loop-carried parameter threaded
+only through a call to a helper like `step` above now gets the same
+native-shadow promotion a direct `ROp`/`RCmpCase` operand read already
+got. `Compiler.RC2.Loop`'s `calleeNativeParams`/`buildCalleeTable`
+build a whole-program table, once, from the post-`MutualLoop`/pre-`Loop`
+def list -- each entry purely that one definition's own (unchanged)
+`nativeArgType` verdict per parameter, never consulting another entry,
+so no fixed point or cycle handling is needed (`MutualLoop`-merged
+dispatchers excluded via `isMutualLoopMerged`, now shared from
+`Compiler.RC2.Util` rather than living only in `Compiler.RC2.DualABI`).
+`callArgNativeTypes`/`callArgOrOpNativeType` then ask, for a top-level
+parameter `p`, whether it's fed as a direct, saturated argument to a
+callee the table says is independently native-eligible at that exact
+position; `applyLoop` unions this into `eligibleVariant` (a new
+`calleeTable` argument threaded through from `RC2.idr`'s `toRCDefs`).
+
+Two scope limits remain deliberate, not oversights:
+
+- **One call hop only.** A multi-hop delegation chain (`loop`'s `acc`
+  passed to `mid`, which only forwards it on to `step`) isn't covered --
+  `mid`'s own parameter would need to *itself* already be
+  `nativeArgType`-eligible (a direct op/cmp operand read within `mid`),
+  which a pure pass-through parameter never is.
+- **Variant loop parameters only.** A loop-*invariant* parameter
+  (unchanged by every `RLoopContinue`) is deliberately excluded:
+  `markInvariantNative`, the only place an invariant parameter's own
+  native occurrences get redirected to its shadow, has no `RAppName`
+  case, so promoting one solely via a call-argument occurrence would
+  mint a shadow nothing ever actually reads from -- dead weight, though
+  still safe (`dupInvariantBoxed`'s own generic `RAppName` case handles
+  the un-redirected occurrence correctly regardless, via ordinary
+  dup/deferred-drop). Left as a followup rather than also teaching
+  `markInvariantNative` an `RAppName` case.
+
+This closes only the *argument*-feeding side of the round trip
+identified above (confirmed via `--directive dumprcexpr`/generated-C
+diff on `rc2/tests/Test57LoopCallArgNativeShadow.idr`: the call into
+`step`'s own worker now reads the loop-carried accumulator directly as
+a native `int64_t`, no `idris2rc2_to_i64` conversion at the call site
+any more). The *result* flowing back from such a call into the next
+iteration's own carried value is a separate, still-open gap: when that
+call's own worker already returns native, the result still boxes
+(`idris2rc2_mkInt64`) only to be immediately unboxed again
+(`idris2rc2_to_i64`) for the next iteration's shadow, because
+`Compiler.RC2.DualABI`'s own call-site rewriting (`nativePromotionFor`)
+has no case recognizing an `RLoopContinue` argument position as a
+native-context consumer of a preceding `RLet`. Out of scope here (it
+lives in `Compiler.RC2.DualABI`, not `Compiler.RC2.Loop`, and concerns
+the call's *return* side rather than loop-parameter eligibility) --
+revisit if profiling shows this dominates (see `TODO.md`'s own note on
+this, pointing here).
 
 Two other, unrelated reasons the motivating benchmark's dominant costs
 stay unaffected regardless, worth keeping in mind before assuming a fix

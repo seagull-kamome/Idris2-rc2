@@ -367,6 +367,86 @@ nativeArgType p body =
          [ty] => Just ty
          _ => Nothing
 
+||| Every declared parameter's own eligibility, exactly as `nativeArgType`
+||| already decides it, positionally aligned with `d`'s own `args` list.
+||| `Nothing` for anything with no ordinary RCExp body to ask this about
+||| (MkRCForeign -- its ABI is fixed by its own CFType's, handled
+||| separately by Compiler.RC2.DualABI's ffiWorkerTable, deliberately
+||| out of this function's scope).
+export
+calleeNativeParams : RCDef -> Maybe (List (Maybe PrimType))
+calleeNativeParams (MkRCFun args _ _ body) = Just (map (\(p, _) => nativeArgType p body) args)
+calleeNativeParams _ = Nothing
+
+||| Whole-program table built once from the post-MutualLoop/pre-Loop
+||| def list, threaded into every applyLoop call. Each entry comes
+||| purely from that one definition's own body (via calleeNativeParams,
+||| which itself just calls the unmodified nativeArgType) -- never by
+||| consulting any other entry -- so this is a single, non-recursive
+||| pass, safe even in the presence of an ordinary (non-tail) mutual
+||| recursion pair MutualLoop never touches (it only merges tail-call
+||| cycles): there is simply no edge in this table's own construction
+||| for such a pair to cycle along, regardless of the real call graph.
+||| MutualLoop-merged dispatcher functions are excluded via
+||| isMutualLoopMerged (never a valid call target); their own
+||| per-member wrapper functions need no separate exclusion -- their
+||| trivial single-call body already yields no eligible positions via
+||| calleeNativeParams/nativeArgType's own catch-all.
+export
+buildCalleeTable : List (Name, RCDef) -> SortedMap Name (List (Maybe PrimType))
+buildCalleeTable defs = fromList $ mapMaybe
+    (\(n, d) => if isMutualLoopMerged n then Nothing else map (\ps => (n, ps)) (calleeNativeParams d))
+    defs
+
+||| Every native PrimType at which top-level parameter `p` is fed as a
+||| direct, saturated call argument to a plain (MkRCFun) callee
+||| `calleeTable` says is independently native-eligible at that exact
+||| argument position. Mirrors Compiler.RC2.DualABI's own
+||| callArgNativeReads (same walk, same "does args !! i == RCLoc p line
+||| up with a native position" check) but deliberately kept separate:
+||| that one's own table is the richer, post-DualABI worker shape not
+||| available this early in the pipeline, and serves a different
+||| rewrite (call-site rewriting, not loop-param promotion).
+||| Deliberately NOT folded into nativeArgTypes itself -- ConAltNative/
+||| DualABI's existing reuse of nativeArgType/nativeArgTypes must not
+||| gain this behaviour implicitly.
+export
+callArgNativeTypes : SortedMap Name (List (Maybe PrimType)) -> Int -> RCExp -> SortedSet PrimType
+callArgNativeTypes calleeTable p (RLet _ _ _ value body) =
+    callArgNativeTypes calleeTable p value `union` callArgNativeTypes calleeTable p body
+callArgNativeTypes calleeTable p (RCmpCase _ _ _ _ t f) =
+    callArgNativeTypes calleeTable p t `union` callArgNativeTypes calleeTable p f
+callArgNativeTypes calleeTable p (RConCase _ _ alts mDef) =
+    concat (map (\(MkRConAlt _ _ _ _ body) => callArgNativeTypes calleeTable p body) alts)
+      `union` maybe empty (callArgNativeTypes calleeTable p) mDef
+callArgNativeTypes calleeTable p (RConstCase _ _ alts mDef) =
+    concat (map (\(MkRConstAlt _ body) => callArgNativeTypes calleeTable p body) alts)
+      `union` maybe empty (callArgNativeTypes calleeTable p) mDef
+callArgNativeTypes calleeTable p (RDup _ _ cont) = callArgNativeTypes calleeTable p cont
+callArgNativeTypes calleeTable p (RDrop _ _ cont) = callArgNativeTypes calleeTable p cont
+callArgNativeTypes calleeTable p (RFree _ _ cont) = callArgNativeTypes calleeTable p cont
+callArgNativeTypes calleeTable p (RReleaseReuse _ _ cont) = callArgNativeTypes calleeTable p cont
+callArgNativeTypes calleeTable p (RReuseOffer _ _ _ _ cont) = callArgNativeTypes calleeTable p cont
+callArgNativeTypes calleeTable p (RAppName _ _ n args) =
+    case lookup n calleeTable of
+         Nothing => empty
+         Just paramTypes =>
+             if length args /= length paramTypes
+                then empty
+                else fromList $ mapMaybe (\(a, mty) => if a == RCLoc p then mty else Nothing)
+                                          (zip args paramTypes)
+callArgNativeTypes _ _ _ = empty
+
+||| Unions nativeArgTypes' own answer with callArgNativeTypes', giving
+||| a single consistent-type-or-Nothing verdict the same shape
+||| nativeArgType itself already returns.
+export
+callArgOrOpNativeType : SortedMap Name (List (Maybe PrimType)) -> Int -> RCExp -> Maybe PrimType
+callArgOrOpNativeType calleeTable p body =
+    case Prelude.toList (nativeArgTypes p body `union` callArgNativeTypes calleeTable p body) of
+         [ty] => Just ty
+         _ => Nothing
+
 ||| Remove every `RDup`/`RDrop`/`RFree` target, and every `ROp`/
 ||| `RCmpCase` `postDrop` entry, naming one of `ids`. A native value
 ||| never needs reference-count bookkeeping at all, so whatever
@@ -1052,9 +1132,27 @@ dupInvariantBoxed _ e = e
 ||| parameter `RLet`s above, since a hoisted expression may itself read
 ||| one of those (e.g. a native-shadowed invariant parameter's own
 ||| shadow id).
+||| `calleeTable` (`Compiler.RC2.Util.buildCalleeTable`, built once from
+||| the whole post-MutualLoop/pre-Loop def list) feeds `eligibleVariant`
+||| below via `callArgOrOpNativeType`, extending native-shadow
+||| eligibility to a loop parameter read only as a call argument to an
+||| independently-eligible plain callee (`rc2/doc/loop-conversion.md`'s
+||| "Known limitation" -- the `loop acc n = loop (step acc n) ...`
+||| shape). Deliberately variant-only: `eligibleInvariant` keeps using
+||| the OLD, call-argument-blind `eligible` list unchanged, because
+||| `markInvariantNative` (the only place an invariant parameter's own
+||| native occurrences get redirected to its shadow) has no `RAppName`
+||| case at all -- an invariant parameter promoted solely via a call
+||| argument would get a shadow variable nothing ever actually reads
+||| from, dead weight rather than a real box-elimination (still safe:
+||| `dupInvariantBoxed`'s own generic `RAppName` case handles the
+||| un-redirected call-argument occurrence correctly either way, via
+||| ordinary dup/deferred-drop -- just pointless to allocate the shadow
+||| for). Left as a followup rather than also teaching
+||| `markInvariantNative` an `RAppName` case in this change.
 export
-applyLoop : Name -> RCDef -> RCDef
-applyLoop self (MkRCFun args retRep isWorker body) =
+applyLoop : SortedMap Name (List (Maybe PrimType)) -> Name -> RCDef -> RCDef
+applyLoop calleeTable self (MkRCFun args retRep isWorker body) =
     let argIds = map fst args
         (found, body') = mapTailAppNames (\fc, n, args' => if n == self then Just (RLoopContinue fc args' []) else Nothing) body
     in MkRCFun args retRep isWorker $
@@ -1065,6 +1163,8 @@ applyLoop self (MkRCFun args retRep isWorker body) =
                   nextId0 = 1 + foldl max (-1) (argIds ++ collectBoundIds body')
                   eligible : List (Int, PrimType)
                   eligible = mapMaybe (\p => map (\ty => (p, ty)) (nativeArgType p body')) argIds
+                  eligibleWithCallArgs : List (Int, PrimType)
+                  eligibleWithCallArgs = mapMaybe (\p => map (\ty => (p, ty)) (callArgOrOpNativeType calleeTable p body')) argIds
                   -- Decided *before* any renaming touches body' at all
                   -- (see this module's own header note on
                   -- `invariantOpArgsThrough`/`markInvariantNative`/
@@ -1078,7 +1178,7 @@ applyLoop self (MkRCFun args retRep isWorker body) =
                   invariantIdsPre : SortedSet Int
                   invariantIdsPre = invariantLoopParamIds (map (\p => (p, RBoxed)) argIds) (collectContinueArgs body')
                   eligibleVariant : List (Int, PrimType)
-                  eligibleVariant = filter (\(p, _) => not (contains p invariantIdsPre)) eligible
+                  eligibleVariant = filter (\(p, _) => not (contains p invariantIdsPre)) eligibleWithCallArgs
                   eligibleInvariant : List (Int, PrimType)
                   eligibleInvariant = filter (\(p, _) => contains p invariantIdsPre) eligible
                   shadowedVariant : List (Int, Int, PrimType)
@@ -1210,4 +1310,4 @@ applyLoop self (MkRCFun args retRep isWorker body) =
                                               (RLet emptyFC resultVar retRep dupped
                                                 (RDrop emptyFC [RCLoc p] (RV emptyFC (RCLoc resultVar)))))
               in snd wrapInvariantShadows
-applyLoop _ d = d
+applyLoop _ _ d = d
