@@ -3,15 +3,15 @@ module Main
 -- Copyright 2026, Hattori,Hiroki. All rights reserved.
 -- This module was licensed by BSD3.
 
--- Regression test for TODO.md's "`Integer` (`CFInteger`) `%foreign`
--- codegen: argument position done, return position still unsupported"
--- entry's own agreed next step: a `%foreign` declaration returning
--- `Integer` now compiles to a call with an extra, implicit trailing
--- `mpz_t` out-parameter (a freshly allocated `IDRIS2RC2_Integer`'s own
--- embedded state) rather than assigning from a nonexistent C-level
--- return value -- matching every real GMP API's own out-parameter
--- idiom (`mpz_add`/`mpz_set`/etc. all write into a caller-supplied
--- `mpz_t`, none return one).
+-- Regression test for `Integer` (`CFInteger`) as a `%foreign` return
+-- type: such a declaration now compiles to a call with an extra,
+-- implicit *leading* `mpz_t` out-parameter (a freshly allocated
+-- `IDRIS2RC2_Integer`'s own embedded state) rather than assigning from
+-- a nonexistent C-level return value -- matching every real GMP API's
+-- own out-parameter convention exactly, `rop` always first
+-- (`mpz_add(rop, op1, op2)`, `mpz_set_str(rop, str, base)`, etc. --
+-- none of them return one), so a declaration can bind directly to a
+-- real GMP function's own signature with no wrapper of its own needed.
 --
 -- `Compiler.RC2.Emit` has two independent call-emission paths that
 -- both needed this (`emitGenericForeignWrapper`'s own hand-rolled

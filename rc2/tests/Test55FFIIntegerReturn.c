@@ -8,18 +8,18 @@
 
 #include "Test55FFIIntegerReturn.h"
 
-void idris2rc2_test55_fromDecimalString(const char *s, mpz_t result) {
+void idris2rc2_test55_fromDecimalString(mpz_t result, const char *s) {
     mpz_set_str(result, s, 10);
 }
 
-void idris2rc2_test55_fromDecimalStringIO(const char *s, mpz_t result) {
+void idris2rc2_test55_fromDecimalStringIO(mpz_t result, const char *s) {
     mpz_set_str(result, s, 10);
 }
 
-void idris2rc2_test55_addInt(mpz_t x, int64_t y, mpz_t result) {
+void idris2rc2_test55_addInt(mpz_t result, mpz_t x, int64_t y) {
     mpz_add_ui(result, x, (unsigned long)y);
 }
 
-void idris2rc2_test55_addIntIO(mpz_t x, int64_t y, mpz_t result) {
+void idris2rc2_test55_addIntIO(mpz_t result, mpz_t x, int64_t y) {
     mpz_add_ui(result, x, (unsigned long)y);
 }
