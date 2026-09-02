@@ -83,16 +83,28 @@ rc2 bugs:
   implements the same optimization (see `Emit.idr`'s
   `addReuseConstructor`/reuse-map machinery). Dropped rather than adapted.
 
-## Skipped (1) -- with reasons
+## rc2-native additions (not ports) (1)
 
-- **`callingConvention`**: `awk`-inspects the *shape* of RefC's own
-  generated C (specific function names/argument-passing patterns
-  RefC's own borrow/ownership algorithm produces) -- not meaningful for
-  rc2, whose codegen (own ANF-normalisation, explicit RDup/RDrop/RFree
-  primitives, native-type inference) produces structurally different C by
-  design. There is no equivalent "shape" to assert without writing a
-  whole new rc2-specific test from scratch, which is future work, not a
-  port.
+- **`callingConvention`**: upstream's own version `awk`-inspects the
+  *shape* of RefC's own generated C (specific function names/argument-
+  passing patterns RefC's own borrow/ownership algorithm produces) --
+  not meaningful for rc2, whose codegen (own ANF-normalisation, explicit
+  RDup/RDrop/RFree primitives, native-type inference) produces
+  structurally different C by design, so it was skipped rather than
+  ported. Replaced with a from-scratch rc2-specific test: `Main.idr` is
+  original (not upstream's), and `postrun.sh` greps this test's own
+  generated `build/exec/test.c` directly for three shapes that would
+  otherwise only be checked indirectly by existing output-diff tests --
+  `Compiler.RC2.DualABI`'s worker/wrapper split (a native-eligible
+  function gets `idris2rc2_worker_...`, an ineligible one doesn't), its
+  FFI inline splicing at a non-tail call site (no
+  `idris2rc2_ffiworker_...` indirection ever appears, and the raw C
+  call itself shows up more than once -- once inside the always-Boxed
+  wrapper, once spliced directly into the caller), and
+  `Compiler.RC2.Loop`'s goto conversion (a `loop:;`/`goto loop;` pair
+  inside the self-tail-recursive function's own worker body, not a
+  real recursive call) -- see `rc2/doc/dual-abi.md` and `rc2/doc/
+  loop-conversion.md`.
 
 ## Bugs found and fixed while porting
 

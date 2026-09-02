@@ -366,21 +366,6 @@ sound thing: always constructing a real `Constructor` for
 `Prelude.Maybe` specifically (a fixed library type whose `Just` tag is
 known and stable), never eliding one for an arbitrary payload type.
 
-## Test coverage gaps
-
-One of upstream Idris2's own `tests/refc/*` regression tests is
-deliberately not ported (see `rc2/tests/refc-suite/README.md` for the
-full reasoning; `ccompilerArgs`, the other test this section used to
-list as unported, is now ported -- same README, "Ported (20)"):
-
-- **`callingConvention`**: upstream's version `awk`-inspects the shape
-  of RefC's own generated C, which isn't meaningful for rc2's
-  structurally different codegen. No rc2-specific replacement exists
-  yet that would pin down the *current* calling convention's C shape
-  (now partly dual-ABI'd for eligible functions, see
-  `rc2/doc/dual-abi.md`) as a regression guard -- worth writing from
-  scratch.
-
 ## Runtime: RFree rarely fires in practice
 
 `RFree` (unconditional, unchecked deallocation for provably-fresh
