@@ -4,6 +4,13 @@
 # against the (mostly unmodified) upstream `expected` files. See
 # rc2/tests/refc-suite/README.md for what was ported, skipped, and why.
 #
+# Per-test optional hooks (both run inside that test's own subshell, so
+# nothing leaks to sibling tests): `prebuild.sh` (executed, before
+# anything else -- builds a companion C project the test's own .idr
+# links against) and `envsetup.sh` (sourced, right after -- for env
+# vars the idris2-rc2 invocation and the compiled binary's own run both
+# need, e.g. ccompilerArgs's CFLAGS/LDFLAGS/LDLIBS/LD_LIBRARY_PATH).
+#
 # Usage: source ../../../env.sh first, then run this from inside a
 # nix-shell providing gcc/gmp/pkg-config (or wrap the whole thing, as the
 # examples in README.md do).
@@ -38,6 +45,21 @@ for dir in "$SUITE_DIR"/*/; do
 
     (
         cd "$dir" || exit 1
+        # Optional pre-build hook: builds a companion C project a test's
+        # own .idr links against (e.g. ccompilerArgs's library/) before
+        # idris2-rc2 ever runs.
+        if [ -f prebuild.sh ]; then
+            if ! bash prebuild.sh > prebuild.log 2>&1; then
+                echo "FAIL  $name (prebuild failed, see $dir/prebuild.log)"
+                exit 1
+            fi
+        fi
+        # Optional env-setup hook: sourced (not executed) so its own
+        # `export`s reach the idris2-rc2 invocation and the compiled
+        # binary's own run below, scoped to this one test's subshell.
+        if [ -f envsetup.sh ]; then
+            source envsetup.sh
+        fi
         rm -rf build
         idr_basename="$(basename "$idr_file")"
         if ! "$IDRIS2RC2" --cg rc2 --directive dumprcexpr "${pkg_flags[@]}" "$idr_basename" -o "$exename" > compile.log 2>&1; then
@@ -70,7 +92,7 @@ for dir in "$SUITE_DIR"/*/; do
 
         if diff -u expected actual.out > diff.log 2>&1; then
             echo "PASS  $name"
-            rm -f compile.log diff.log actual.out
+            rm -f compile.log diff.log actual.out prebuild.log
             exit 0
         else
             echo "FAIL  $name (output mismatch, see $dir/diff.log)"

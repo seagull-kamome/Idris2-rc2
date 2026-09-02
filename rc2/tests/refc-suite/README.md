@@ -12,17 +12,17 @@ source ../../../env.sh
 nix-shell -p gcc gmp pkg-config --run './run.sh'
 ```
 
-## Ported (19)
+## Ported (20)
 
 Each subdirectory holds the original `.idr` source (unmodified unless
 noted below) plus an `expected` file. Most `expected` files are the
 upstream RefC ones, verbatim -- rc2 is expected to produce byte-identical
 output to RefC for ordinary programs, and `run.sh` diffs against it.
 
-- `args`, `basicpatternmatch`, `buffer`, `clock`, `doubles`,
-  `garbageCollect`, `integers`, `issue1778`, `issue2424`, `issue2452`,
-  `piTypecase001`, `prims`, `refc001`, `refc002`, `refc003`, `reg001`,
-  `strings`, `wasm32cmp001`, `reuse`.
+- `args`, `basicpatternmatch`, `buffer`, `ccompilerArgs`, `clock`,
+  `doubles`, `garbageCollect`, `integers`, `issue1778`, `issue2424`,
+  `issue2452`, `piTypecase001`, `prims`, `refc001`, `refc002`,
+  `refc003`, `reg001`, `strings`, `wasm32cmp001`, `reuse`.
 
 `buffer` additionally has a `postrun.sh` (a new mechanism added to
 `run.sh` for this test): upstream's own `run` script doesn't just diff
@@ -30,6 +30,24 @@ stdout, it also base64-encodes a file (`testWrite.buf`) the program wrote
 and appends that to the expected output, then deletes the file. `run.sh`
 now runs `postrun.sh` (if present) after the program exits and appends its
 stdout to what gets diffed against `expected`, mirroring that.
+
+`ccompilerArgs` needed two more new `run.sh` mechanisms of its own,
+since it's the first ported test needing anything beyond compile+run+
+diff: an optional `prebuild.sh` (executed before anything else -- builds
+this test's own companion `library/libexternalc.so`, the same
+`library/` C project upstream's own version builds) and an optional
+`envsetup.sh` (sourced right after -- exports the *bare* `CFLAGS`/
+`LDFLAGS`/`LDLIBS`/`LD_LIBRARY_PATH` env vars this test exists to
+exercise, scoped to its own subshell so nothing leaks to sibling
+tests). Confirmed the test genuinely depends on them, not just
+coincidentally passing: temporarily removing `envsetup.sh` reproduces
+a real compile failure (`fatal error: externalc.h: No such file or
+directory` -- `CFLAGS`'s own `-I./library` never reaching the generated
+C file's own compile step). `Main.idr`'s `%foreign` declarations
+already use a plain `"C:...,libexternalc,externalc.h"` tag, identical
+to what upstream's own RefC-targeted version uses -- no rc2-specific
+tag needed, so the `.idr` source ported completely unmodified, unlike
+every other case in this list needing something adjusted.
 
 Three of these needed their `expected` adjusted for reasons that aren't
 rc2 bugs:
@@ -65,15 +83,8 @@ rc2 bugs:
   implements the same optimization (see `Emit.idr`'s
   `addReuseConstructor`/reuse-map machinery). Dropped rather than adapted.
 
-## Skipped (2) -- with reasons
+## Skipped (1) -- with reasons
 
-- **`ccompilerArgs`**: verifies RefC's `CC.idr` correctly parses/passes
-  `CFLAGS`/`LDFLAGS`/`LDLIBS` env vars through to the C compiler
-  invocation, using a companion C library it builds and links against.
-  rc2's own `CC.idr` (`Compiler/RC2/CC.idr`) has equivalent flag-handling
-  logic, but porting this test faithfully (its own `library/` C project,
-  env var wiring) was judged out of proportion to the rest of this
-  port; left as a documented gap rather than done half-way.
 - **`callingConvention`**: `awk`-inspects the *shape* of RefC's own
   generated C (specific function names/argument-passing patterns
   RefC's own borrow/ownership algorithm produces) -- not meaningful for

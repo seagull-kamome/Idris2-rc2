@@ -379,16 +379,11 @@ known and stable), never eliding one for an arbitrary payload type.
 
 ## Test coverage gaps
 
-Two of upstream Idris2's own `tests/refc/*` regression tests were
+One of upstream Idris2's own `tests/refc/*` regression tests is
 deliberately not ported (see `rc2/tests/refc-suite/README.md` for the
-full reasoning):
+full reasoning; `ccompilerArgs`, the other test this section used to
+list as unported, is now ported -- same README, "Ported (20)"):
 
-- **`ccompilerArgs`**: verifies that `CFLAGS`/`LDFLAGS`/`LDLIBS` env vars
-  reach the C compiler invocation. `Compiler/RC2/CC.idr` has equivalent
-  flag-handling logic, but it's currently *unverified by a test* --
-  porting upstream's test faithfully (its own companion C library,
-  env var wiring) was judged out of proportion to do alongside the rest
-  of the regression-suite port. Worth doing as a focused follow-up.
 - **`callingConvention`**: upstream's version `awk`-inspects the shape
   of RefC's own generated C, which isn't meaningful for rc2's
   structurally different codegen. No rc2-specific replacement exists
