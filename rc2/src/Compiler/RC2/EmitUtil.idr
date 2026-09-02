@@ -1463,15 +1463,19 @@ packCFType CFUnsigned8     varName = "idris2rc2_mkBits8(" ++ varName ++ ")"
 packCFType CFString        varName = "idris2rc2_mkString(" ++ varName ++ ")"
 packCFType CFDouble        varName = "idris2rc2_mkDouble(" ++ varName ++ ")"
 packCFType CFChar          varName = "idris2rc2_mkChar((unsigned char)" ++ varName ++ ")"
--- Deliberately unimplemented, not merely missing: GMP's own `mpz_t` is
--- an array type with no valid "return by value" C shape (a real GMP
--- function needing to hand back an arbitrary-precision result takes an
--- output `mpz_t` parameter instead, returning `void`) -- see
--- `extractValue`'s own CFInteger case above for the argument-position
--- support this exists alongside, and TODO.md's own entry for why the
--- return position stays unsupported rather than picking a lossy
--- (fixed-width) or copying (string-based) representation for it.
-packCFType CFInteger       _       = assert_total $ idris_crash "INTERNAL ERROR: [rc2] Integer (CFInteger) is only supported as a %foreign argument, not as a return type"
+-- A bare passthrough, same shape as `CFUser` below: GMP's own `mpz_t`
+-- has no valid "return by value" C shape at all (a real GMP function
+-- needing to hand back an arbitrary-precision result takes an output
+-- `mpz_t` parameter instead, returning `void`, the same idiom
+-- `mpz_add`/`mpz_set`/etc. all follow) -- so an `Integer`-returning
+-- `%foreign` declaration's own call site (`Emit.idr`'s `ffiRawCall`/
+-- `emitGenericForeignWrapper`) allocates a fresh `IDRIS2RC2_Integer`
+-- *before* the call and passes its own `->v` as an extra, implicit
+-- trailing argument for the callee to write its result into, matching
+-- that convention. By the time this case ever runs, `varName` already
+-- names that freshly-built, already-fully-formed `IDRIS2RC2_Integer *`
+-- -- nothing left to do but hand it back unchanged.
+packCFType CFInteger       varName = varName
 packCFType CFPtr           varName = "idris2rc2_mkPointer(" ++ varName ++ ")"
 packCFType CFGCPtr         varName = "idris2rc2_mkGCPointer(" ++ varName ++ ", NULL)"
 packCFType CFBuffer        varName = "idris2rc2_mkBuffer(" ++ varName ++ ")"

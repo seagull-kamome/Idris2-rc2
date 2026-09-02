@@ -219,10 +219,27 @@ ffiRawCall cLang fctName fargs ret args = do
         boxedArgDrop = mapMaybe snd marshalled
     let callWith : List String -> String
         callWith es = "\{cName fctName}(\{showSep ", " es})"
+    -- `Compiler.RC2.EmitUtil`'s own `packCFType` CFInteger case doc
+    -- comment has the full rationale: allocate a fresh
+    -- `IDRIS2RC2_Integer` *before* the call, pass its own `->v` as an
+    -- extra trailing argument the callee writes its result into
+    -- (GMP's own out-parameter idiom), emit the call as a bare
+    -- statement (its real C return type is `void`), and hand the
+    -- fresh Integer back as this call's own "result" -- already fully
+    -- formed, no further packing needed (`packCFType CFInteger` is a
+    -- bare passthrough for exactly this reason).
+    let ffiIntegerOutParam : List String -> Core String
+        ffiIntegerOutParam es = do
+            retVar <- getNewVarThatWillNotBeFreedAtEndOfBlock
+            emit emptyFC "IDRIS2RC2_Integer *\{retVar} = idris2rc2_mkInteger();"
+            emit emptyFC "\{callWith (es ++ ["\{retVar}->v"])};"
+            pure retVar
     rawExpr <- case ret of
-         CFIORes CFUnit => do
+         CFIORes CFUnit    => do
              emit emptyFC "\{callWith (discardLastArgument argExprs)};"
              pure ""
+         CFIORes CFInteger => ffiIntegerOutParam (discardLastArgument argExprs)
+         CFInteger         => ffiIntegerOutParam argExprs
          CFIORes _ => pure $ callWith (discardLastArgument argExprs)
          _          => pure $ callWith argExprs
     pure (rawExpr, boxedArgDrop)
@@ -1581,6 +1598,17 @@ createCFunctions n (MkRCForeign ccs fargs ret) =
 
     additionalFFIStub : Name -> List CFType -> CFType -> String
     additionalFFIStub name argTypes (CFIORes retType) = additionalFFIStub name (discardLastArgument argTypes) retType
+    -- A real C function returning `Integer` is actually declared `void`,
+    -- taking an extra trailing `mpz_t` out-parameter instead (see
+    -- `Compiler.RC2.EmitUtil`'s own `packCFType` CFInteger case) --
+    -- `cTypeOfCFType CFInteger` ("mpz_t") is only ever valid in
+    -- parameter position, never as a function(-pointer)'s own return
+    -- type (illegal C: a function cannot return an array type), so this
+    -- stub's declared shape has to match the real one, not the generic
+    -- fallback below.
+    additionalFFIStub name argTypes CFInteger =
+        "void (*" ++ cName name ++ ")(" ++
+        (concat $ intersperse ", " $ map cTypeOfCFType argTypes ++ ["mpz_t"]) ++ ") = (void*)idris2rc2_missingForeign;\n"
     additionalFFIStub name argTypes retType =
         cTypeOfCFType retType ++
         " (*" ++ cName name ++ ")(" ++
@@ -1648,6 +1676,25 @@ createCFunctions n (MkRCForeign ccs fargs ret) =
                                   ++ ");"
                       removeVarsArgList
                       emit EmptyFC "return NULL;"
+                  -- `Compiler.RC2.EmitUtil`'s own `packCFType` CFInteger
+                  -- case has the full rationale: GMP's own `mpz_t` has
+                  -- no "return by value" C shape, so a fresh
+                  -- `IDRIS2RC2_Integer` is allocated *before* the call
+                  -- and its own `->v` passed as an extra trailing
+                  -- argument the real C function (declared `void`,
+                  -- following the same out-parameter idiom every GMP
+                  -- API itself uses) writes its result into, rather
+                  -- than assigning from the call's own (nonexistent)
+                  -- return value.
+                  CFIORes CFInteger => do
+                      emit EmptyFC "IDRIS2RC2_Integer *retVal = idris2rc2_mkInteger();"
+                      emit EmptyFC $ cName fctName
+                                  ++ "("
+                                  ++ showSep ", " (map (\(_, vn, vt) => extractValue cLang vt vn) (discardLastArgument typeVarNameArgList) ++ ["retVal->v"])
+                                  ++ ");"
+                      emit EmptyFC $ "IDRIS2RC2_Value *packedRet = (IDRIS2RC2_Value*)" ++ packCFType CFInteger "retVal" ++ ";"
+                      removeVarsArgList
+                      emit EmptyFC "return packedRet;"
                   CFIORes ret => do
                       emit EmptyFC $ cTypeOfCFType ret ++ " retVal = " ++ cName fctName
                                   ++ "("
@@ -1659,6 +1706,16 @@ createCFunctions n (MkRCForeign ccs fargs ret) =
                       -- so packCFType must read through it while the arg (and
                       -- whatever finalizer freeing that memory) is still alive.
                       emit EmptyFC $ "IDRIS2RC2_Value *packedRet = (IDRIS2RC2_Value*)" ++ packCFType ret "retVal" ++ ";"
+                      removeVarsArgList
+                      emit EmptyFC "return packedRet;"
+                  -- Same reasoning as the CFIORes CFInteger branch above.
+                  CFInteger => do
+                      emit EmptyFC "IDRIS2RC2_Integer *retVal = idris2rc2_mkInteger();"
+                      emit EmptyFC $ cName fctName
+                                  ++ "("
+                                  ++ showSep ", " (map (\(_, vn, vt) => extractValue cLang vt vn) typeVarNameArgList ++ ["retVal->v"])
+                                  ++ ");"
+                      emit EmptyFC $ "IDRIS2RC2_Value *packedRet = (IDRIS2RC2_Value*)" ++ packCFType CFInteger "retVal" ++ ";"
                       removeVarsArgList
                       emit EmptyFC "return packedRet;"
                   _ => do

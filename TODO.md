@@ -620,53 +620,6 @@ into a new runtime representation plus matching `Compiler.RC2.Emit`/
 yet. Revisit starting from this writeup (particularly points 3 and 5)
 if one does.
 
-## `Integer` (`CFInteger`) `%foreign` codegen: argument position done, return position still unsupported
-
-Found while investigating whether `idris2-json` (stefan-hoeck's JSON
-marshalling library, via `pack`'s collection) could build against rc2.
-Its transitive dependency `idris2-array`'s own `Data.Buffer.Core`
-declares several low-level buffer primitives (`prim__newBuf`,
-`prim__getByte`, `prim__setByte`, `prim__getString`, `prim__fromString`,
-`prim__copy`) typed over `Integer` (arbitrary-precision) offsets/
-lengths, rather than `Int` (fixed-width) like upstream `Data.Buffer`'s
-own equivalents use. Confirmed directly with a minimal repro
-(`%foreign "C:atoi,libc 6" prim__atoi : String -> Integer`, no other
-code) that any `%foreign`-declared function with an `Integer` argument
-or return type used to crash rc2's own codegen outright:
-`ERROR: INTERNAL ERROR: Unknown FFI type in rc2 backend: Integer`.
-**Not rc2-specific**: confirmed the identical crash against upstream
-`idris2 --cg refc` with the same repro -- RefC's own `RefC.idr` has the
-exact same gap (unaffected by anything below, which is rc2-only).
-
-Argument position now implemented: `IDRIS2RC2_Integer.v` is a GMP
-`mpz_t`, itself defined by GMP as a one-element array type, which
-already decays to the `mpz_t`/`mpz_ptr` a real GMP-based C function
-expects when read directly -- `Compiler.RC2.EmitUtil`'s `extractValue`
-hands it over with no copy, no truncation, no boxing/unboxing shim
-needed (`rc2/tests/Test54FFIInteger.idr` confirms round-tripping a
-30-digit value, well outside `Int`'s 64-bit range, through a real
-`mpz_get_str` on the C side). The one caveat: this hands the callee the
-*actual* mutable GMP state backing the Idris value, not a defensive
-copy -- safe to read, never to mutate in place (Idris's own semantics
-promise `Integer` is immutable and the value may be aliased/refcounted
-elsewhere), documented directly on `extractValue`'s own `CFInteger`
-case.
-
-Return position deliberately still rejected (`packCFType`'s own
-`CFInteger` case throws a dedicated "only supported as an argument, not
-a return type" crash, replacing the old generic "Unknown FFI type"
-one): GMP's own `mpz_t` has no valid "return by value" C shape (a real
-GMP function needing to hand back an arbitrary-precision result takes
-an output `mpz_t` parameter instead, returning `void` -- the idiom
-`mpz_add`/`mpz_set`/etc. all follow). Next step agreed: support this by
-having a `%foreign` declaration whose Idris return type is `Integer`
-compile to a C call with an *extra*, implicit trailing `mpz_t`
-argument -- a freshly allocated (but not yet initialized-to-any-value)
-`IDRIS2RC2_Integer`'s own embedded `mpz_t`, matching every other GMP
-API's own out-parameter convention -- rather than one of the
-previously-considered alternatives (truncating to a fixed width, or a
-string-based round trip). Not yet implemented as of this entry.
-
 ## Pinned reference `idris2 --cg refc` 0.8.0 rejects `Int32` in `%foreign` position
 
 Found while writing `rc2/tests/Test27FFIDualABI.idr` (the dual-ABI FFI
