@@ -533,9 +533,9 @@ unbox it again, an underwhelming win not worth its own separate stage.
 
 ### Scope: non-tail-position calls only, permanently
 
-Only a direct, saturated, **non-tail-position** call gets redirected to
-its own callee's worker. Tail-position calls to a function with a
-worker are a *deliberate, permanent* scope boundary, not a later
+Only a direct, saturated, **non-tail-position** call to an *ordinary*
+RC2 function worker gets redirected to it. Tail-position calls to such
+a worker are a *deliberate, permanent* scope boundary, not a later
 stage: they're currently rendered via `tryBuildClosureInto`'s own
 closure-deferral (a boxed, trampolined value, letting the *caller's own
 caller* resolve it later -- bounds C stack growth for an
@@ -549,6 +549,10 @@ the whole-program fixed point this entire effort has otherwise avoided
 needing (the same reason `returnEligibility`, in Stage 2, already
 leaves a *pure* tail-call delegation ineligible rather than chasing
 it).
+
+A tail-position call to an **FFI worker** (Stage 3c, below) is the one
+exception to this boundary -- see "Stage 4b: tail-position FFI calls"
+after Stage 5 for why a `%foreign` callee doesn't carry the same risk.
 
 ### The worker table
 
@@ -681,25 +685,23 @@ Narrower than Stages 1-4 in three ways that fall directly out of a
   one, via a since-deleted `Compiler.RC2.Emit.emitFFIWorker` and
   `Compiler.RC2.EmitUtil.FFIWorkers` ref; both are gone, see "Files"
   below).
-- **Stage 4 needed zero changes.** A `%foreign`-declared name's own
-  call sites already appear as ordinary `RAppName` nodes in a caller's
-  RCExp (`Compiler.RC2.RC`'s own `MkAForeign -> MkRCForeign`
-  normalization is a plain pass-through, nothing FFI-specific about the
-  *caller* side) -- `applyCallSiteRewriteBody`'s existing rewrite rule
-  already redirects any non-tail call whose target has a table entry,
-  regardless of whether that entry came from Stage 3a or 3c, producing
-  an ordinary `RAppNameRep` pointing at the synthesized worker *name*
-  either way. `applyCallSiteRewrite` just unions `ffiWorkerTable`'s own
-  first return value into the `workerTable` it already builds from
-  scanning `MkRCFun` wrappers (`mergeWith const` -- the two key sets
-  are always disjoint, a name is never both a `MkRCFun` and a
-  `MkRCForeign`). This `RAppNameRep` never survives to `Emit` unchanged
-  though -- see "Stage 5" immediately below.
-
-The same tail-position scope boundary Stage 4 already has applies here
-unchanged: a `%foreign` call sitting in its *caller's own* tail
-position is left on the wrapper, same as any ordinary function call
-would be.
+- **Stage 4 needed zero changes for the non-tail case.** A
+  `%foreign`-declared name's own call sites already appear as ordinary
+  `RAppName` nodes in a caller's RCExp (`Compiler.RC2.RC`'s own
+  `MkAForeign -> MkRCForeign` normalization is a plain pass-through,
+  nothing FFI-specific about the *caller* side) --
+  `applyCallSiteRewriteBody`'s existing rewrite rule already redirects
+  any non-tail call whose target has a table entry, regardless of
+  whether that entry came from Stage 3a or 3c, producing an ordinary
+  `RAppNameRep` pointing at the synthesized worker *name* either way.
+  `applyCallSiteRewrite` just unions `ffiWorkerTable`'s own first
+  return value into the `workerTable` it already builds from scanning
+  `MkRCFun` wrappers (`mergeWith const` -- the two key sets are always
+  disjoint, a name is never both a `MkRCFun` and a `MkRCForeign`). This
+  `RAppNameRep` never survives to `Emit` unchanged though -- see
+  "Stage 5" immediately below. (Stage 4 *did* later need one small
+  addition to also cover the tail-position case -- see "Stage 4b:
+  tail-position FFI calls" after Stage 5.)
 
 ## Stage 5: FFI-inline call splicing
 
@@ -813,6 +815,67 @@ confirming the call-site-splicing rewrite didn't cost anything relative
 to the worker/wrapper approach it replaced. Still smaller than `fib`'s
 own 35% since this loop's own body does real non-FFI work too
 (large-integer-literal casts), not purely FFI-call-bound.
+
+## Stage 4b: tail-position FFI calls
+
+"Scope: non-tail-position calls only, permanently" (Stage 4, above)
+excludes tail-position calls from rewriting because an ordinary RC2
+function's worker can itself end in a further tail call, chaining into
+an otherwise-unknown-depth sequence `tryBuildClosureInto`'s closure-
+deferral scheme exists to bound. A `%foreign` declaration's own worker
+never can: it's a single, opaque call into external C code that
+returns once and doesn't participate in this module's own tail-call
+scheme at all, so the risk that scope boundary guards against simply
+doesn't arise for it.
+
+`ffiWorkerTable`'s first return value (`Name -> (workerName, argReps,
+retRep, Bool)`) carries this as an explicit trailing tag, `True` for
+every entry it produces; `workerTable` (the `MkRCFun`-derived table for
+ordinary workers) tags its own entries `False`. `applyCallSiteRewrite`
+merges the two tables as before (`mergeWith const`), now over the
+tagged type, and passes the merged table straight through to
+`applyCallSiteRewriteBody` unchanged. That function's non-tail
+`RAppName` clause ignores the tag (either kind of worker is always
+safe to redirect there, as always); a new tail-position clause reads
+it, rewriting a saturated call only when the tag is `True`:
+
+```idris
+applyCallSiteRewriteBody workers reps True value@(RAppName fc _ n args) =
+    case lookup n workers of
+         Just (workerName, argReps, workerRetRep, True) =>
+             if length args /= length argReps
+                then value
+                else RAppNameRep fc workerName argReps workerRetRep (postDropFor reps argReps args) args
+         _ => value
+```
+
+No further pipeline change was needed. Stage 5 (`inlineFFIWorkers`)
+already walks every `RAppNameRep` in the tree looking for a name its
+own second table has an entry for, tail position or not, so the
+`RAppNameRep` this new clause produces becomes an `RAppFFIInline` the
+same way a non-tail one always has. `Emit.idr`'s `emitAppFFIInlineInto`
+already threads a `TailPositionStatus`/`Sink` through correctly too
+(its `SinkReturn` branch already renders any pending Boxed-argument
+drop before a plain `return`, the same ordering `emitNativeReturn`
+uses for an ordinary native tail value) -- it was written generically
+enough from the start that this call site simply becomes reachable in
+a genuine tail position for the first time, with no `Emit`-side change
+required.
+
+This only changes how the *call site* renders -- it does not make the
+*calling* function itself dual-ABI-eligible. `tailAbs n = prim__abs n`
+still gets an ordinary, always-Boxed wrapper for `tailAbs` itself
+(Stage 2's `tailValueReps` still treats any call, including this one,
+as never-native in tail position -- the *pure tail-call delegation*
+limitation noted in Stage 2's own "Verification findings" above,
+deliberately left alone). What changes is only that `tailAbs`'s own
+body no longer defers `prim__abs`'s call via a boxed closure for the
+trampoline to resolve later -- it calls `abs` directly and boxes the
+result immediately before returning, one hop shorter.
+
+`rc2/tests/refc-suite/callingConvention` (Stage 4's own golden-snapshot
+test, see its own `README.md` entry) pins the generated C for exactly
+this shape.
 
 ## Bugs found and fixed
 

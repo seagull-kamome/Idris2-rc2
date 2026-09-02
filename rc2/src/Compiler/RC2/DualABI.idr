@@ -14,7 +14,12 @@ module Compiler.RC2.DualABI
 -- reintroduce unbounded C stack growth that the current closure-
 -- deferral scheme bounds, and telling which call sites would be safe
 -- to rewrite would need real interprocedural analysis -- exactly the
--- whole-program fixed point this effort otherwise avoids needing.
+-- whole-program fixed point this effort otherwise avoids needing. A
+-- tail call to an FFI worker is the one exception: a `%foreign`
+-- callee is a leaf as far as this scheme is concerned (it can never
+-- itself extend an otherwise-unknown-depth chain of further deferred
+-- tail calls), so it's rewritten in tail position too -- see
+-- `applyCallSiteRewriteBody`'s own tail-position clause (Stage 4).
 --
 -- See `rc2/doc/dual-abi.md` for the full design, the Stage 2
 -- verification results against the test/benchmark suite, and the
@@ -368,9 +373,21 @@ anyNative _ = True
 ||| produced `RAppNameRep` by the worker name Stage 4 already put on
 ||| it, not the original function's name, which no longer appears
 ||| anywhere on that node.
+|||
+||| The first map's own entries carry a trailing `Bool`, always `True`
+||| here -- "safe to rewrite even in tail position" (see
+||| `applyCallSiteRewriteBody`'s own tail-position clause below for why
+||| an FFI worker specifically is safe there, unlike an ordinary
+||| `Compiler.RC2.DualABI` worker, which `workerTable` tags `False`):
+||| a `%foreign` declaration's own callee is a leaf as far as this
+||| module's own tail-call-deferral scheme is concerned -- it can never
+||| itself extend an otherwise-unknown-depth chain of further deferred
+||| Idris tail calls the way an ordinary RC2 function might, so the
+||| stack-growth risk that scope boundary exists to avoid simply
+||| doesn't apply here.
 export
 ffiWorkerTable : List (Name, RCDef)
-              -> Core (SortedMap Name (Name, List Rep, Rep),
+              -> Core (SortedMap Name (Name, List Rep, Rep, Bool),
                        SortedMap Name (List String, List CFType, CFType))
 ffiWorkerTable defs = do
     _ <- newRef FreshId 0
@@ -379,7 +396,7 @@ ffiWorkerTable defs = do
     pure (fromList (concatMap fst entries), fromList (concatMap snd entries))
   where
     ffiEntry : {auto r : Ref FreshId Int} -> SortedSet Name -> (Name, RCDef)
-            -> Core (List (Name, (Name, List Rep, Rep)), List (Name, (List String, List CFType, CFType)))
+            -> Core (List (Name, (Name, List Rep, Rep, Bool)), List (Name, (List String, List CFType, CFType)))
     ffiEntry existingNames (n, MkRCForeign ccs fargs ret) =
         let argReps = map repOf fargs
             retRep = repOf (peelIORes ret)
@@ -387,12 +404,13 @@ ffiWorkerTable defs = do
               then pure ([], [])
               else do
                 workerName <- freshName "idris2rc2_ffiworker_" existingNames n
-                pure ([(n, (workerName, argReps, retRep))], [(workerName, (ccs, fargs, ret))])
+                pure ([(n, (workerName, argReps, retRep, True))], [(workerName, (ccs, fargs, ret))])
     ffiEntry _ (_, _) = pure ([], [])
 
 ------------------------------------------------------------------------
--- Stage 4: call-site rewriting (non-tail positions only -- see the
--- module's own header note for why tail-position delegating calls are
+-- Stage 4: call-site rewriting (non-tail positions, plus tail-position
+-- calls to an FFI worker specifically -- see the module's own header
+-- note for why an ordinary function's tail-position delegating calls are
 -- a deliberate, permanent scope boundary, not a later stage).
 
 ||| The worker (if any) `n` -- an *original*, user-visible function
@@ -403,12 +421,16 @@ ffiWorkerTable defs = do
 ||| its own doc comment) -- so scanning for that exact shape recovers
 ||| the table without `applyDualABI` itself needing to thread a
 ||| separate one out alongside its own `List (Name, RCDef)` result.
-workerTable : List (Name, RCDef) -> SortedMap Name (Name, List Rep, Rep)
+||| Tagged `False` (unlike `ffiWorkerTable`'s own entries) -- an
+||| ordinary RC2 function's worker genuinely can chain into further
+||| deferred tail calls, so `applyCallSiteRewriteBody`'s tail-position
+||| clause must still leave a call through this table alone.
+workerTable : List (Name, RCDef) -> SortedMap Name (Name, List Rep, Rep, Bool)
 workerTable defs = fromList (mapMaybe workerEntry defs)
   where
-    workerEntry : (Name, RCDef) -> Maybe (Name, (Name, List Rep, Rep))
+    workerEntry : (Name, RCDef) -> Maybe (Name, (Name, List Rep, Rep, Bool))
     workerEntry (n, MkRCFun _ _ _ (RAppNameRep _ workerName argReps retRep _ _)) =
-        Just (n, (workerName, argReps, retRep))
+        Just (n, (workerName, argReps, retRep, False))
     workerEntry _ = Nothing
 
 ||| Which of `args` (rendered per the worker's own `argReps`, same
@@ -555,7 +577,7 @@ nativePromotionFor var ty body =
 ||| resulting `value1`'s own `ultimateTail` (peeling through exactly
 ||| that same kind of nested-`RLet` chain) is now a promotion
 ||| candidate.
-applyCallSiteRewriteBody : SortedMap Name (Name, List Rep, Rep) -> SortedMap Int Rep -> Bool -> RCExp -> RCExp
+applyCallSiteRewriteBody : SortedMap Name (Name, List Rep, Rep, Bool) -> SortedMap Int Rep -> Bool -> RCExp -> RCExp
 applyCallSiteRewriteBody workers reps inTail (RLet fc var rep value body) =
     let value1 = applyCallSiteRewriteBody workers reps False value
         -- Promotion candidate iff `var` was still genuinely `RBoxed`
@@ -600,24 +622,45 @@ applyCallSiteRewriteBody workers reps inTail (RDrop fc vs cont) = RDrop fc vs (a
 applyCallSiteRewriteBody workers reps inTail (RFree fc v cont) = RFree fc v (applyCallSiteRewriteBody workers reps inTail cont)
 applyCallSiteRewriteBody workers reps inTail (RReleaseReuse fc v cont) = RReleaseReuse fc v (applyCallSiteRewriteBody workers reps inTail cont)
 applyCallSiteRewriteBody workers reps inTail (RReuseOffer fc sc dupOnShared dropOnUnique cont) = RReuseOffer fc sc dupOnShared dropOnUnique (applyCallSiteRewriteBody workers reps inTail cont)
--- The only case that ever actually rewrites a call: a bare RAppName
--- reached with inTail = False (never anyone's RLet-bound value, by
--- this point -- the RLet clause above already peeled through those --
--- so this is the ultimate tail of *some* value-computation chain, not
--- the whole function's own true tail position).
+-- The main case that rewrites a call: a bare RAppName reached with
+-- inTail = False (never anyone's RLet-bound value, by this point --
+-- the RLet clause above already peeled through those -- so this is
+-- the ultimate tail of *some* value-computation chain, not the whole
+-- function's own true tail position). Rewrites through either kind of
+-- table entry (ordinary worker or FFI worker) alike -- the `Bool` tag
+-- only matters for the tail-position clause just below.
 applyCallSiteRewriteBody workers reps False value@(RAppName fc _ n args) =
     case lookup n workers of
          Nothing => value
-         Just (workerName, argReps, workerRetRep) =>
+         Just (workerName, argReps, workerRetRep, _) =>
              if length args /= length argReps
                 then value
                 else RAppNameRep fc workerName argReps workerRetRep (postDropFor reps argReps args) args
--- Every other shape (including a bare RAppName reached with
--- inTail = True -- the whole function's own true tail position,
--- deliberately left alone, see this function's own doc comment):
--- RV, RAppNameRep, RUnderApp, RApp, RCon, RExtPrim, RPrimVal, RErased,
--- RCrash, RLoopContinue, RStructGet, RStructSet -- none hold a further
--- RLet-bound-value position of their own for this pass to inspect.
+-- A bare RAppName reached with inTail = True -- the whole function's
+-- own true tail position. Left alone for an ordinary worker (tagged
+-- `False`, see `workerTable`'s own doc comment: it can chain into
+-- further deferred tail calls of unknown depth, so
+-- `tryBuildClosureInto`'s closure-deferral scheme must still handle
+-- it) -- but rewritten just the same as the non-tail case for an FFI
+-- worker (tagged `True`, see `ffiWorkerTable`'s own doc comment: a
+-- `%foreign` callee is a leaf, never itself another link in a
+-- deferred tail-call chain, so the risk that scope boundary exists to
+-- avoid doesn't apply). `Compiler.RC2.Emit`'s `emitAppFFIInlineInto`
+-- already renders a `SinkReturn` correctly (return-with-drop-before-
+-- return ordering, same as any other tail value), so no Emit-side
+-- change is needed for this to work once Stage 5 below turns the
+-- resulting `RAppNameRep` into an `RAppFFIInline`.
+applyCallSiteRewriteBody workers reps True value@(RAppName fc _ n args) =
+    case lookup n workers of
+         Just (workerName, argReps, workerRetRep, True) =>
+             if length args /= length argReps
+                then value
+                else RAppNameRep fc workerName argReps workerRetRep (postDropFor reps argReps args) args
+         _ => value
+-- Every other shape: RV, RAppNameRep, RUnderApp, RApp, RCon, RExtPrim,
+-- RPrimVal, RErased, RCrash, RLoopContinue, RStructGet, RStructSet --
+-- none hold a further RLet-bound-value position of their own for this
+-- pass to inspect.
 applyCallSiteRewriteBody _ _ _ e = e
 
 ||| Whole-program pass: Stage 4 itself. Every direct, saturated,
@@ -626,25 +669,30 @@ applyCallSiteRewriteBody _ _ _ e = e
 ||| worker, native arguments/return where the call site already has (or
 ||| can be promoted to have) them on hand -- see the module's own header
 ||| note and `applyCallSiteRewriteBody`'s own doc comment for the full
-||| design. Runs after `applyDualABI` (needs its own worker table
-||| already built); every definition (wrapper, worker, or untouched)
-||| passes through the same rewrite uniformly -- nothing here needs to
-||| know which of those three a given definition is, since a wrapper's
-||| own trivial single-call body and an ordinary function's body are
-||| rewritten by exactly the same logic. Each definition's own
-||| top-level body starts `inTail = True` -- that's genuinely where the
-||| function's own real tail position is. `ffiWorkers` (Stage 3c's own
-||| table) is unioned in alongside the `MkRCFun`-derived `workerTable`
-||| -- their keys are always disjoint (a `MkRCFun`/`MkRCForeign` name
-||| can never be both), so `mergeWith`'s own conflict-resolution
-||| function is never actually exercised.
+||| design. A direct, saturated, *tail*-position call gets the same
+||| treatment too, but only when it targets an FFI worker specifically
+||| (`ffiWorkers`'s own entries are tagged `True`; `workerTable`'s own
+||| are tagged `False`) -- see `applyCallSiteRewriteBody`'s own
+||| tail-position clause for why that distinction is safe. Runs after
+||| `applyDualABI` (needs its own worker table already built); every
+||| definition (wrapper, worker, or untouched) passes through the same
+||| rewrite uniformly -- nothing here needs to know which of those
+||| three a given definition is, since a wrapper's own trivial
+||| single-call body and an ordinary function's body are rewritten by
+||| exactly the same logic. Each definition's own top-level body starts
+||| `inTail = True` -- that's genuinely where the function's own real
+||| tail position is. `ffiWorkers` (Stage 3c's own table) is unioned in
+||| alongside the `MkRCFun`-derived `workerTable` -- their keys are
+||| always disjoint (a `MkRCFun`/`MkRCForeign` name can never be both),
+||| so `mergeWith`'s own conflict-resolution function is never actually
+||| exercised.
 export
-applyCallSiteRewrite : SortedMap Name (Name, List Rep, Rep) -> List (Name, RCDef) -> List (Name, RCDef)
+applyCallSiteRewrite : SortedMap Name (Name, List Rep, Rep, Bool) -> List (Name, RCDef) -> List (Name, RCDef)
 applyCallSiteRewrite ffiWorkers defs =
     let workers = mergeWith const (workerTable defs) ffiWorkers
     in map (rewriteDef workers) defs
   where
-    rewriteDef : SortedMap Name (Name, List Rep, Rep) -> (Name, RCDef) -> (Name, RCDef)
+    rewriteDef : SortedMap Name (Name, List Rep, Rep, Bool) -> (Name, RCDef) -> (Name, RCDef)
     rewriteDef workers (n, MkRCFun args retRep isWorker body) =
         (n, MkRCFun args retRep isWorker (applyCallSiteRewriteBody workers (fromList args) True body))
     rewriteDef _ (n, d) = (n, d)

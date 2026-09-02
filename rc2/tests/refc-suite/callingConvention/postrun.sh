@@ -21,8 +21,11 @@ grep -c 'idris2rc2_worker_Main_ineligibleShow' "$c"
 echo "--- FFI worker-indirection count (want: none, inline splicing only) ---"
 grep -c 'idris2rc2_ffiworker_' "$c"
 
-echo "--- FFI call-site shape (wrapper body + inlined non-tail call site) ---"
+echo "--- FFI call-site shape (wrapper body + inlined non-tail call site + tailAbs's own inlined tail call) ---"
 grep -E '\babs\(' "$c" | strip_loc
 
 echo "--- Compiler.RC2.Loop goto conversion for sumLoop's own worker body ---"
 awk '/idris2rc2_worker_Main_sumLoop_0/{n++; if (n==2) p=1} p{print} p&&/^}/{exit}' "$c" | strip_loc
+
+echo "--- Tail-position FFI call for tailAbs (want: inlined call + immediate return, no closure defer, rc2/doc/dual-abi.md Stage 4b) ---"
+awk '/Main_tailAbs/{n++; if (n==2) p=1} p{print} p&&/^}/{exit}' "$c" | strip_loc
