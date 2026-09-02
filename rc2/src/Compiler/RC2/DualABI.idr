@@ -572,6 +572,71 @@ callArgNativeReads workers var (RAppName _ _ n args) =
 -- RLet/RCmpCase/RConCase/RConstCase/RLoop above already visit.
 callArgNativeReads _ _ _ = empty
 
+||| Every native `PrimType` at which `var` is fed as the enclosing
+||| `RLoop`'s own next value for an already native-shadowed loop-carried
+||| parameter, via a bare `RLoopContinue` reachable in `e` -- the
+||| loop-carried analogue of `callArgNativeReads` above (there: argument
+||| of a *named* worker call; here: argument of the *implicit* self-call
+||| every `RLoopContinue` represents, `loopParams` standing in for that
+||| self-call's own fixed positional "signature"). `loopParams` is the
+||| *exact* ordered list the enclosing `RLoop` node already carries as
+||| its own field (`Compiler.RC2.Loop`'s `applyLoop` is its sole
+||| producer, strictly before this pass ever runs) -- passed down
+||| unchanged from `applyCallSiteRewriteBody`'s own `RLoop` clause, never
+||| re-derived here, and guaranteed positionally 1:1 with every
+||| `RLoopContinue`'s own `args` reachable inside that same `RLoop`'s
+||| `body` (`applyLoop`'s own `elideInvariantContinueArgs` filters both
+||| lists together from the same `fullLoopParams`, so by the time this
+||| stage runs the two are already aligned -- exactly the same guarantee
+||| `Compiler.RC2.Loop`'s own `fillLoopContinuePostDrop` already relies
+||| on for its own unguarded `zip loopParams args`).
+|||
+||| Walks only the tail-position-preserving shape
+||| `fillLoopContinuePostDrop`/`collectContinueArgs` already use (an
+||| `RLet`'s own `body` only, never `value`; `RCmpCase`'s both branches;
+||| `RConCase`/`RConstCase`'s alts and default; every `RDup`/`RDrop`/
+||| `RFree`/`RReleaseReuse`/`RReuseOffer`'s own continuation) --
+||| deliberately *not* `callArgNativeReads`'s own "walk the whole tree,
+||| including a `RLet`'s own `value`" shape: an `RLoopContinue` is only
+||| ever produced by `Compiler.RC2.Loop`'s `mapTailAppNames`, which only
+||| ever rewrites a genuine *tail-position* self-call -- it can
+||| therefore only ever sit somewhere along `e`'s own tail-preserving
+||| spine, never nested inside some other node's own value-computation.
+||| No `RLoop` case is needed either: this module's own single-`RLoop`-
+||| per-function invariant means `e`, already strictly inside the one
+||| `RLoop` this walk started from, never itself contains a second,
+||| different `RLoop` to recurse through.
+loopContinueNativeReads : List (Int, Rep) -> Int -> RCExp -> SortedSet PrimType
+loopContinueNativeReads loopParams var (RLet _ _ _ _ body) = loopContinueNativeReads loopParams var body
+loopContinueNativeReads loopParams var (RCmpCase _ _ _ _ t f) =
+    loopContinueNativeReads loopParams var t `union` loopContinueNativeReads loopParams var f
+loopContinueNativeReads loopParams var (RConCase _ _ alts mDef) =
+    concat (map (\(MkRConAlt _ _ _ _ body) => loopContinueNativeReads loopParams var body) alts)
+      `union` maybe empty (loopContinueNativeReads loopParams var) mDef
+loopContinueNativeReads loopParams var (RConstCase _ _ alts mDef) =
+    concat (map (\(MkRConstAlt _ body) => loopContinueNativeReads loopParams var body) alts)
+      `union` maybe empty (loopContinueNativeReads loopParams var) mDef
+loopContinueNativeReads loopParams var (RDup _ _ cont) = loopContinueNativeReads loopParams var cont
+loopContinueNativeReads loopParams var (RDrop _ _ cont) = loopContinueNativeReads loopParams var cont
+loopContinueNativeReads loopParams var (RFree _ _ cont) = loopContinueNativeReads loopParams var cont
+loopContinueNativeReads loopParams var (RReleaseReuse _ _ cont) = loopContinueNativeReads loopParams var cont
+loopContinueNativeReads loopParams var (RReuseOffer _ _ _ _ cont) = loopContinueNativeReads loopParams var cont
+loopContinueNativeReads loopParams var (RLoopContinue _ args _) =
+    fromList $ mapMaybe (\((_, paramRep), arg) =>
+                              if arg == RCLoc var
+                                 then case paramRep of
+                                           RNative ty => Just ty
+                                           RInlineNative ty => Just ty
+                                           RBoxed => Nothing
+                                 else Nothing)
+                         (zip loopParams args)
+-- Every other shape (RV, RAppName, RAppNameRep, RUnderApp, RApp, RCon,
+-- a bare ROp/RExtPrim, RPrimVal, RErased, RCrash, RStructGet,
+-- RStructSet -- and RLoop, never actually reachable here, see this
+-- function's own doc comment): no RLoopContinue reachable through any
+-- of these beyond what the cases above already cover.
+loopContinueNativeReads _ _ _ = empty
+
 ||| Whether `body` justifies promoting an `RLet`-bound worker-call
 ||| result (currently `RBoxed`) all the way to `RNative ty` instead of
 ||| just rewriting the call itself and boxing its result back up on the
@@ -594,9 +659,21 @@ callArgNativeReads _ _ _ = empty
 ||| *used* to produce, invisible to any Idris-level program (a scalar
 ||| has no observable identity) -- see `stripOwnership`'s own doc
 ||| comment for this exact case, already relied on by this same reuse.
-nativePromotionFor : SortedMap Name (Name, List Rep, Rep, Bool) -> Int -> PrimType -> RCExp -> Maybe PrimType
-nativePromotionFor workers var ty body =
-    let found = (nativeArgTypes var body `union` bareTailNativeReads var body) `union` callArgNativeReads workers var body
+|||
+||| `mLoopParams` adds one more source, when `var`'s own `RLet` sits
+||| inside an `RLoop`: `loopContinueNativeReads` above, closing the
+||| "argument of the *implicit* self-call" case `callArgNativeReads`
+||| can't see on its own, since an `RLoopContinue` is never an
+||| `RAppName` node -- it carries no callee name, table entry, or
+||| `argReps` to look up in the first place. `Nothing` (the top-level
+||| entry point, or any `RLet` not inside a loop at all) contributes
+||| nothing, same as an absent `RLoop` case anywhere else in this file.
+nativePromotionFor : SortedMap Name (Name, List Rep, Rep, Bool) -> Maybe (List (Int, Rep)) -> Int -> PrimType -> RCExp -> Maybe PrimType
+nativePromotionFor workers mLoopParams var ty body =
+    let fromLoop = maybe empty (\loopParams => loopContinueNativeReads loopParams var body) mLoopParams
+        found = ((nativeArgTypes var body `union` bareTailNativeReads var body)
+                  `union` callArgNativeReads workers var body)
+                  `union` fromLoop
     in case Prelude.toList found of
             [ty'] => if ty' == ty then Just ty else Nothing
             _ => Nothing
@@ -633,9 +710,12 @@ nativePromotionFor workers var ty body =
 ||| resulting `value1`'s own `ultimateTail` (peeling through exactly
 ||| that same kind of nested-`RLet` chain) is now a promotion
 ||| candidate.
-applyCallSiteRewriteBody : SortedMap Name (Name, List Rep, Rep, Bool) -> SortedMap Int Rep -> Bool -> RCExp -> RCExp
-applyCallSiteRewriteBody workers reps inTail (RLet fc var rep value body) =
-    let value1 = applyCallSiteRewriteBody workers reps False value
+applyCallSiteRewriteBody : SortedMap Name (Name, List Rep, Rep, Bool)
+                        -> SortedMap Int Rep
+                        -> Maybe (List (Int, Rep))
+                        -> Bool -> RCExp -> RCExp
+applyCallSiteRewriteBody workers reps mLoopParams inTail (RLet fc var rep value body) =
+    let value1 = applyCallSiteRewriteBody workers reps mLoopParams False value
         -- Promotion candidate iff `var` was still genuinely `RBoxed`
         -- and `value1`'s own ultimate tail is now a worker call with a
         -- native `retRep` -- see `nativePromotionFor`'s own doc
@@ -644,8 +724,8 @@ applyCallSiteRewriteBody workers reps inTail (RLet fc var rep value body) =
         promotedTy : Maybe PrimType
         promotedTy = case rep of
                           RBoxed => case ultimateTail value1 of
-                                         RAppNameRep _ _ _ (RNative ty) _ _ => nativePromotionFor workers var ty body
-                                         RAppNameRep _ _ _ (RInlineNative ty) _ _ => nativePromotionFor workers var ty body
+                                         RAppNameRep _ _ _ (RNative ty) _ _ => nativePromotionFor workers mLoopParams var ty body
+                                         RAppNameRep _ _ _ (RInlineNative ty) _ _ => nativePromotionFor workers mLoopParams var ty body
                                          _ => Nothing
                           _ => Nothing
     in case promotedTy of
@@ -655,29 +735,29 @@ applyCallSiteRewriteBody workers reps inTail (RLet fc var rep value body) =
                 -- `var` is a fresh RLet binding, not retrofitting a
                 -- representation onto an already-declared C variable.
                 let body' = stripOwnership (SortedSet.fromList [var]) body
-                in RLet fc var (RNative ty) value1 (applyCallSiteRewriteBody workers (insert var (RNative ty) reps) inTail body')
+                in RLet fc var (RNative ty) value1 (applyCallSiteRewriteBody workers (insert var (RNative ty) reps) mLoopParams inTail body')
             Nothing =>
-                RLet fc var rep value1 (applyCallSiteRewriteBody workers (insert var rep reps) inTail body)
-applyCallSiteRewriteBody workers reps inTail (RCmpCase fc op args postDrop t f) =
-    RCmpCase fc op args postDrop (applyCallSiteRewriteBody workers reps inTail t) (applyCallSiteRewriteBody workers reps inTail f)
-applyCallSiteRewriteBody workers reps inTail (RConCase fc sc alts mDef) =
-    RConCase fc sc (map rewriteConAlt alts) (map (applyCallSiteRewriteBody workers reps inTail) mDef)
+                RLet fc var rep value1 (applyCallSiteRewriteBody workers (insert var rep reps) mLoopParams inTail body)
+applyCallSiteRewriteBody workers reps mLoopParams inTail (RCmpCase fc op args postDrop t f) =
+    RCmpCase fc op args postDrop (applyCallSiteRewriteBody workers reps mLoopParams inTail t) (applyCallSiteRewriteBody workers reps mLoopParams inTail f)
+applyCallSiteRewriteBody workers reps mLoopParams inTail (RConCase fc sc alts mDef) =
+    RConCase fc sc (map rewriteConAlt alts) (map (applyCallSiteRewriteBody workers reps mLoopParams inTail) mDef)
   where
     rewriteConAlt : RConAlt -> RConAlt
     rewriteConAlt (MkRConAlt name ci tag args body) =
-        MkRConAlt name ci tag args (applyCallSiteRewriteBody workers reps inTail body)
-applyCallSiteRewriteBody workers reps inTail (RConstCase fc sc alts mDef) =
-    RConstCase fc sc (map rewriteConstAlt alts) (map (applyCallSiteRewriteBody workers reps inTail) mDef)
+        MkRConAlt name ci tag args (applyCallSiteRewriteBody workers reps mLoopParams inTail body)
+applyCallSiteRewriteBody workers reps mLoopParams inTail (RConstCase fc sc alts mDef) =
+    RConstCase fc sc (map rewriteConstAlt alts) (map (applyCallSiteRewriteBody workers reps mLoopParams inTail) mDef)
   where
     rewriteConstAlt : RConstAlt -> RConstAlt
-    rewriteConstAlt (MkRConstAlt c body) = MkRConstAlt c (applyCallSiteRewriteBody workers reps inTail body)
-applyCallSiteRewriteBody workers reps inTail (RLoop fc loopParams initial prologueDrop body) =
-    RLoop fc loopParams initial prologueDrop (applyCallSiteRewriteBody workers (foldl (\m, (i, r) => insert i r m) reps loopParams) inTail body)
-applyCallSiteRewriteBody workers reps inTail (RDup fc v cont) = RDup fc v (applyCallSiteRewriteBody workers reps inTail cont)
-applyCallSiteRewriteBody workers reps inTail (RDrop fc vs cont) = RDrop fc vs (applyCallSiteRewriteBody workers reps inTail cont)
-applyCallSiteRewriteBody workers reps inTail (RFree fc v cont) = RFree fc v (applyCallSiteRewriteBody workers reps inTail cont)
-applyCallSiteRewriteBody workers reps inTail (RReleaseReuse fc v cont) = RReleaseReuse fc v (applyCallSiteRewriteBody workers reps inTail cont)
-applyCallSiteRewriteBody workers reps inTail (RReuseOffer fc sc dupOnShared dropOnUnique cont) = RReuseOffer fc sc dupOnShared dropOnUnique (applyCallSiteRewriteBody workers reps inTail cont)
+    rewriteConstAlt (MkRConstAlt c body) = MkRConstAlt c (applyCallSiteRewriteBody workers reps mLoopParams inTail body)
+applyCallSiteRewriteBody workers reps mLoopParams inTail (RLoop fc loopParams initial prologueDrop body) =
+    RLoop fc loopParams initial prologueDrop (applyCallSiteRewriteBody workers (foldl (\m, (i, r) => insert i r m) reps loopParams) (Just loopParams) inTail body)
+applyCallSiteRewriteBody workers reps mLoopParams inTail (RDup fc v cont) = RDup fc v (applyCallSiteRewriteBody workers reps mLoopParams inTail cont)
+applyCallSiteRewriteBody workers reps mLoopParams inTail (RDrop fc vs cont) = RDrop fc vs (applyCallSiteRewriteBody workers reps mLoopParams inTail cont)
+applyCallSiteRewriteBody workers reps mLoopParams inTail (RFree fc v cont) = RFree fc v (applyCallSiteRewriteBody workers reps mLoopParams inTail cont)
+applyCallSiteRewriteBody workers reps mLoopParams inTail (RReleaseReuse fc v cont) = RReleaseReuse fc v (applyCallSiteRewriteBody workers reps mLoopParams inTail cont)
+applyCallSiteRewriteBody workers reps mLoopParams inTail (RReuseOffer fc sc dupOnShared dropOnUnique cont) = RReuseOffer fc sc dupOnShared dropOnUnique (applyCallSiteRewriteBody workers reps mLoopParams inTail cont)
 -- The main case that rewrites a call: a bare RAppName reached with
 -- inTail = False (never anyone's RLet-bound value, by this point --
 -- the RLet clause above already peeled through those -- so this is
@@ -685,7 +765,7 @@ applyCallSiteRewriteBody workers reps inTail (RReuseOffer fc sc dupOnShared drop
 -- function's own true tail position). Rewrites through either kind of
 -- table entry (ordinary worker or FFI worker) alike -- the `Bool` tag
 -- only matters for the tail-position clause just below.
-applyCallSiteRewriteBody workers reps False value@(RAppName fc _ n args) =
+applyCallSiteRewriteBody workers reps _ False value@(RAppName fc _ n args) =
     case lookup n workers of
          Nothing => value
          Just (workerName, argReps, workerRetRep, _) =>
@@ -706,7 +786,7 @@ applyCallSiteRewriteBody workers reps False value@(RAppName fc _ n args) =
 -- return ordering, same as any other tail value), so no Emit-side
 -- change is needed for this to work once Stage 5 below turns the
 -- resulting `RAppNameRep` into an `RAppFFIInline`.
-applyCallSiteRewriteBody workers reps True value@(RAppName fc _ n args) =
+applyCallSiteRewriteBody workers reps _ True value@(RAppName fc _ n args) =
     case lookup n workers of
          Just (workerName, argReps, workerRetRep, True) =>
              if length args /= length argReps
@@ -717,7 +797,7 @@ applyCallSiteRewriteBody workers reps True value@(RAppName fc _ n args) =
 -- RPrimVal, RErased, RCrash, RLoopContinue, RStructGet, RStructSet --
 -- none hold a further RLet-bound-value position of their own for this
 -- pass to inspect.
-applyCallSiteRewriteBody _ _ _ e = e
+applyCallSiteRewriteBody _ _ _ _ e = e
 
 ||| Whole-program pass: Stage 4 itself. Every direct, saturated,
 ||| non-tail-position call anywhere in the program targeting a function
@@ -750,7 +830,7 @@ applyCallSiteRewrite ffiWorkers defs =
   where
     rewriteDef : SortedMap Name (Name, List Rep, Rep, Bool) -> (Name, RCDef) -> (Name, RCDef)
     rewriteDef workers (n, MkRCFun args retRep isWorker body) =
-        (n, MkRCFun args retRep isWorker (applyCallSiteRewriteBody workers (fromList args) True body))
+        (n, MkRCFun args retRep isWorker (applyCallSiteRewriteBody workers (fromList args) Nothing True body))
     rewriteDef _ (n, d) = (n, d)
 
 ------------------------------------------------------------------------

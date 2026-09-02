@@ -135,7 +135,28 @@ Fixed -- see `rc2/doc/loop-conversion.md`'s "Known limitation" section
 for the closed case (`calleeNativeParams`/`buildCalleeTable`/
 `callArgNativeTypes`/`callArgOrOpNativeType`) and its two remaining,
 deliberate scope limits (one call hop only; variant loop parameters
-only).
+only). The return side (a native-returning helper's own result boxed
+only to be immediately unboxed again for the next iteration's carried
+shadow) is now fixed too -- `Compiler.RC2.DualABI`'s
+`loopContinueNativeReads`, see the same doc section's updated
+paragraph and `rc2/tests/Test58LoopContinueNativePromotion.idr`.
+
+## Future: nested self-tail-recursive loops
+
+`Compiler.RC2.Loop`'s `applyLoop` assumes a function has at most one
+`RLoop` -- relied on directly by `fillLoopContinuePostDrop` and by
+`Compiler.RC2.DualABI`'s own `loopContinueNativeReads` (a single
+`Maybe (List (Int, Rep))` slot for "the enclosing loop's own
+`loopParams`", not a stack). A genuinely nested self-tail-recursive
+loop (one loop's own body containing another, independent
+self-tail-recursive loop) isn't something `applyLoop` currently
+produces or expects, so this invariant holds today -- but if nested
+loop support is ever added, every one of these single-loop
+assumptions needs revisiting (at minimum: `loopContinueNativeReads`'s
+own `Maybe (List (Int, Rep))` would need to become a stack keyed to
+the *innermost* enclosing loop, since a `RLoopContinue` found while
+walking one loop's body must never be matched against an outer loop's
+own `loopParams`).
 
 ## Performance: `Loop.idr`'s own loop-carried (non-invariant) native shadow still reboxes fresh on a Boxed-context read
 

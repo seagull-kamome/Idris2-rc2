@@ -1123,23 +1123,32 @@ Two scope limits remain deliberate, not oversights:
   dup/deferred-drop). Left as a followup rather than also teaching
   `markInvariantNative` an `RAppName` case.
 
-This closes only the *argument*-feeding side of the round trip
-identified above (confirmed via `--directive dumprcexpr`/generated-C
-diff on `rc2/tests/Test57LoopCallArgNativeShadow.idr`: the call into
-`step`'s own worker now reads the loop-carried accumulator directly as
-a native `int64_t`, no `idris2rc2_to_i64` conversion at the call site
-any more). The *result* flowing back from such a call into the next
-iteration's own carried value is a separate, still-open gap: when that
-call's own worker already returns native, the result still boxes
+This closed the *argument*-feeding side of the round trip identified
+above (confirmed via `--directive dumprcexpr`/generated-C diff on
+`rc2/tests/Test57LoopCallArgNativeShadow.idr`: the call into `step`'s
+own worker now reads the loop-carried accumulator directly as a native
+`int64_t`, no `idris2rc2_to_i64` conversion at the call site any more).
+
+**Now also closed** for the *result* flowing back from such a call
+into the next iteration's own carried value: previously, when that
+call's own worker already returned native, the result still boxed
 (`idris2rc2_mkInt64`) only to be immediately unboxed again
 (`idris2rc2_to_i64`) for the next iteration's shadow, because
 `Compiler.RC2.DualABI`'s own call-site rewriting (`nativePromotionFor`)
-has no case recognizing an `RLoopContinue` argument position as a
-native-context consumer of a preceding `RLet`. Out of scope here (it
-lives in `Compiler.RC2.DualABI`, not `Compiler.RC2.Loop`, and concerns
-the call's *return* side rather than loop-parameter eligibility) --
-revisit if profiling shows this dominates (see `TODO.md`'s own note on
-this, pointing here).
+had no case recognizing an `RLoopContinue` argument position as a
+native-context consumer of a preceding `RLet`. Fixed by
+`Compiler.RC2.DualABI`'s new `loopContinueNativeReads`, unioned into
+`nativePromotionFor`'s own eligibility question alongside
+`nativeArgTypes`/`bareTailNativeReads`/`callArgNativeReads`: it walks
+the same tail-preserving spine `fillLoopContinuePostDrop` does, and
+asks whether the `RLet`-bound value is fed straight into the enclosing
+`RLoop`'s own `RLoopContinue` at a position `loopParams` already marks
+native. Confirmed via `rc2/tests/Test58LoopContinueNativePromotion.idr`
+(same `step`/`loop` shape as Test57): the `RLet` binding `step`'s call
+result now shows `Native Int`, and the generated C declares that local
+straight off the worker call (`int64_t var_4 = idris2rc2_worker_...`)
+with no boxing/unboxing call in between it and the `goto loop;`
+reassignment.
 
 Two other, unrelated reasons the motivating benchmark's dominant costs
 stay unaffected regardless, worth keeping in mind before assuming a fix
