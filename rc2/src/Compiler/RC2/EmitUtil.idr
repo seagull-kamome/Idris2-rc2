@@ -1380,6 +1380,7 @@ cTypeOfCFType CFUnsigned64    = "uint64_t"
 cTypeOfCFType CFString        = "const char *"
 cTypeOfCFType CFDouble        = "double"
 cTypeOfCFType CFChar          = "char"
+cTypeOfCFType CFInteger       = "mpz_t"
 cTypeOfCFType CFPtr           = "void *"
 cTypeOfCFType CFGCPtr         = "void *"
 cTypeOfCFType CFBuffer        = "void *"
@@ -1416,6 +1417,17 @@ extractValue _ CFUnsigned64     varName = "(idris2rc2_to_u64(" ++ varName ++ "))
 extractValue _ CFString         varName = "((IDRIS2RC2_String*)" ++ varName ++ ")->str"
 extractValue _ CFDouble         varName = "(idris2rc2_to_double(" ++ varName ++ "))"
 extractValue _ CFChar           varName = "((char)idris2rc2_to_char(" ++ varName ++ "))"
+-- `IDRIS2RC2_Integer.v` is a GMP `mpz_t` -- itself defined by GMP as a
+-- one-element array type, so this expression already decays to the
+-- `mpz_t`/`mpz_ptr` a real GMP-based C function expects, with no copy.
+-- %foreign argument only (see TODO.md's "`Integer` (`CFInteger`) has
+-- no `%foreign` codegen support at all" and `packCFType`'s own
+-- CFInteger case below): this hands the callee the *actual* mutable
+-- GMP state backing this Idris `Integer` value, not a defensive copy --
+-- a callee that mutates it in place is corrupting a value Idris's own
+-- semantics promise is immutable and may be shared (aliased,
+-- refcounted) elsewhere in the program. Safe to read; never to write.
+extractValue _ CFInteger        varName = "((IDRIS2RC2_Integer*)" ++ varName ++ ")->v"
 extractValue _ CFPtr            varName = "((IDRIS2RC2_Pointer*)" ++ varName ++ ")->p"
 extractValue _ CFGCPtr          varName = "((IDRIS2RC2_GCPointer*)" ++ varName ++ ")->p->p"
 extractValue CLangRefC CFBuffer varName = "((IDRIS2RC2_Buffer*)" ++ varName ++ ")->buf"
@@ -1451,6 +1463,15 @@ packCFType CFUnsigned8     varName = "idris2rc2_mkBits8(" ++ varName ++ ")"
 packCFType CFString        varName = "idris2rc2_mkString(" ++ varName ++ ")"
 packCFType CFDouble        varName = "idris2rc2_mkDouble(" ++ varName ++ ")"
 packCFType CFChar          varName = "idris2rc2_mkChar((unsigned char)" ++ varName ++ ")"
+-- Deliberately unimplemented, not merely missing: GMP's own `mpz_t` is
+-- an array type with no valid "return by value" C shape (a real GMP
+-- function needing to hand back an arbitrary-precision result takes an
+-- output `mpz_t` parameter instead, returning `void`) -- see
+-- `extractValue`'s own CFInteger case above for the argument-position
+-- support this exists alongside, and TODO.md's own entry for why the
+-- return position stays unsupported rather than picking a lossy
+-- (fixed-width) or copying (string-based) representation for it.
+packCFType CFInteger       _       = assert_total $ idris_crash "INTERNAL ERROR: [rc2] Integer (CFInteger) is only supported as a %foreign argument, not as a return type"
 packCFType CFPtr           varName = "idris2rc2_mkPointer(" ++ varName ++ ")"
 packCFType CFGCPtr         varName = "idris2rc2_mkGCPointer(" ++ varName ++ ", NULL)"
 packCFType CFBuffer        varName = "idris2rc2_mkBuffer(" ++ varName ++ ")"
