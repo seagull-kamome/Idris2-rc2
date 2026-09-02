@@ -10,7 +10,7 @@ module Main
 -- a box-then-immediately-unbox round trip at every call site once a
 -- native worker exists alongside the always-Boxed wrapper. Covers
 -- every CFType shape that distinguishes an eligible position from an
--- ineligible one: Int/Bits64/Double (all-native), a mixed Int+String
+-- ineligible one: Int/Int32/Bits64/Double (all-native), a mixed Int+String
 -- signature (only the Int position promotes), an Int arg with a
 -- CFUnit IO return (return stays Boxed, the arg still promotes), and a
 -- CFChar arg/return round trip -- the one native-eligible CFType whose
@@ -21,11 +21,6 @@ module Main
 -- plain char's signed range on a typical platform, to catch a
 -- regression that sign-extends the return instead of zero-extending
 -- it (255 misread as 4294967295).
--- (Int32 deliberately not covered here -- the pinned reference `idris2
--- --cg refc` 0.8.0 this project cross-checks against rejects any
--- Int32-typed %foreign position outright, `Unknown FFI type in C
--- backend: Int_32`, a pre-existing reference-toolchain gap unrelated
--- to this work; see TODO.md.)
 --
 -- `loop` deliberately builds the FFI argument via native arithmetic
 -- (`n + 999999`, `n + 1000001`) directly inside its own self-tail-call
@@ -52,6 +47,9 @@ prim__add : Int -> Int -> Int
 %foreign "C:idris2rc2_test27_scaleBits64,libc,Test27FFIDualABI.h"
 prim__scaleBits64 : Bits64 -> Bits64 -> Bits64
 
+%foreign "C:idris2rc2_test27_scaleInt32,libc,Test27FFIDualABI.h"
+prim__scaleInt32 : Int32 -> Int32 -> Int32
+
 %foreign "C:idris2rc2_test27_mulDouble,libc,Test27FFIDualABI.h"
 prim__mulDouble : Double -> Double -> Double
 
@@ -73,6 +71,7 @@ main = do
     printLn (prim__add 3 4)
     printLn (loop 200000 0)
     printLn (prim__scaleBits64 6 7)
+    printLn (prim__scaleInt32 (-6) 7)
     printLn (prim__mulDouble 2.5 4.0)
     printLn (prim__mixed 10 "hello")
     primIO (prim__noop 5)

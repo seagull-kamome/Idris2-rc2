@@ -5,6 +5,7 @@
 
 int64_t idris2rc2_test27_add(int64_t a, int64_t b);
 uint64_t idris2rc2_test27_scaleBits64(uint64_t x, uint64_t factor);
+int32_t idris2rc2_test27_scaleInt32(int32_t x, int32_t factor);
 double idris2rc2_test27_mulDouble(double a, double b);
 int64_t idris2rc2_test27_mixed(int64_t n, const char *tag);
 void idris2rc2_test27_noop(int64_t n);
