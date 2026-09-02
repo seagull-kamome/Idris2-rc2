@@ -643,6 +643,54 @@ No boxing, no unboxing, no dup/drop at all for either recursive call's
 own argument or result -- the whole computation stays in `int64_t`
 from the worker's own entry to its own `return`.
 
+### Extending the promotion to call-argument chains: `callArgNativeReads`
+
+`nativeArgTypes`/`bareTailNativeReads` only ever look for `var` read as
+an `ROp`/`RCmpCase` operand, or at a bare tail. They miss a third
+shape: `var` fed straight into *another* worker's own native argument
+position (`ffiCall2 (ffiCall1 x) y`-shaped chains, not just
+`fib(n-1) + fib(n-2)`-shaped ones) -- increasingly common once Stage 5
+makes FFI calls cheap leaf nodes to chain together. `callArgNativeReads`
+closes that gap: it walks `body` the same way `nativeArgTypes` does,
+and for every bare `RAppName` it finds (`body` is always the
+*not-yet-Stage-4-rewritten* subtree at the point this runs, so a call
+still looks like this, never yet an `RAppNameRep`), looks `var`'s own
+occurrence up against that callee's own `workers` table entry -- an
+occurrence at a position the callee's own `argReps` says is
+`RNative`/`RInlineNative` counts, one at a `RBoxed` position doesn't.
+`nativePromotionFor` just unions this in as a third source alongside
+the other two. Whether the target's own `workers` entry is tagged
+`True` (FFI, Stage 4b) or `False` (ordinary) doesn't matter here --
+Stage 4's *non-tail* clause already rewrites through either kind
+unconditionally, and an occurrence that instead sits in a genuinely
+tail-position call to an ordinary worker (left deferred via a closure)
+still renders correctly either way: closure slots only ever hold
+`IDRIS2RC2_Value *`, so `var` is reboxed on the way in exactly like any
+other still-Boxed-context use -- the same "reboxed on demand, still
+correct" reasoning `nativePromotionFor` itself already relies on.
+
+`rc2/tests/Test56NativeCallArgChain.idr`'s own `chain`/`addAbs` is the
+concrete before/after (`addAbs`'s own body calls an FFI declaration, so
+it's never `Compiler.RC2.Inline`-eligible, and its first parameter is
+native only via the nested-`RLet`-body fix `Test13NativeArgChain.idr`
+covers -- both deliberately chosen so the call itself, and a genuinely
+native target argument, both survive to Stage 4 intact):
+
+```c
+// before this extension
+IDRIS2RC2_Value * var_3 = (IDRIS2RC2_Value*)idris2rc2_mkInt64(abs(idris2rc2_to_i64(var_0)));
+int64_t var_2 = idris2rc2_worker_Main_addAbs_1(var_3, var_1);
+
+// after
+int64_t var_3 = abs(idris2rc2_to_i64(var_0));
+int64_t var_2 = idris2rc2_worker_Main_addAbs_1(var_3, var_1);
+```
+
+`var_3` no longer round-trips through `IDRIS2RC2_Value *` at all between
+the two calls. Verified leak-free via `valgrind` (registered in
+`verify.sh`'s `LEAK_SENSITIVE_TESTS`), and against `rc2/tests/verify.sh`
+as a whole: 90 passed, 0 known, 0 failed.
+
 ## Stage 3c: FFI worker synthesis
 
 Extends the same worker/wrapper idea across a `%foreign` call boundary

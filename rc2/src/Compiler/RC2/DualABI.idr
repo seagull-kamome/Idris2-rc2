@@ -516,6 +516,70 @@ bareTailNativeReads var e =
     vectElemRCLoc _ [] = False
     vectElemRCLoc i (x :: xs) = x == RCLoc i || vectElemRCLoc i xs
 
+||| Every native `PrimType` at which `var` is read as a direct,
+||| saturated call argument somewhere in `e`, at a position `workers`'
+||| own table says its callee reads natively -- the same "skip the
+||| box-then-immediately-unbox round trip" idea `nativeArgTypes`/
+||| `bareTailNativeReads` already apply to an `ROp`/comparison operand
+||| or a bare tail read, now extended to a *call* consuming the value
+||| (`ffiCall2 (ffiCall1 x) y`-shaped chains, not just
+||| `fib(n-1) + fib(n-2)`-shaped ones). Walks the whole tree, the same
+||| way `nativeArgTypes` does -- a use can appear anywhere in `e`, not
+||| just its tail. Looks only at bare `RAppName` nodes, since `e` is
+||| always the *not-yet-Stage-4-rewritten* `body` at the point this is
+||| called (see `applyCallSiteRewriteBody`'s own RLet clause: the
+||| promotion decision for `var` happens before `body` itself is
+||| walked). Whether `workers`' own entry for a callee is tagged `True`
+||| (FFI) or `False` (ordinary) doesn't matter here -- both kinds are
+||| always rewritten to read a native argument directly in *non-tail*
+||| position (Stage 4's own non-tail clause ignores the tag too), and
+||| an occurrence that instead sits in a tail-position call to an
+||| ordinary (non-FFI) worker -- one Stage 4 leaves deferred via a
+||| boxed closure, see the module's own header note -- still renders
+||| correctly either way: closure slots only ever hold
+||| `IDRIS2RC2_Value *`, so `var` gets reboxed on the way in exactly
+||| like any other still-Boxed-context use elsewhere in `body` (see
+||| this function's own caller, `nativePromotionFor`, for that same
+||| "reboxed on demand, still correct" reasoning) -- promoting `var` in
+||| that case just doesn't buy anything, it doesn't cost anything
+||| either.
+callArgNativeReads : SortedMap Name (Name, List Rep, Rep, Bool) -> Int -> RCExp -> SortedSet PrimType
+callArgNativeReads workers var (RLet _ _ _ value body) =
+    callArgNativeReads workers var value `union` callArgNativeReads workers var body
+callArgNativeReads workers var (RCmpCase _ _ _ _ t f) =
+    callArgNativeReads workers var t `union` callArgNativeReads workers var f
+callArgNativeReads workers var (RConCase _ _ alts mDef) =
+    concat (map (\(MkRConAlt _ _ _ _ body) => callArgNativeReads workers var body) alts)
+      `union` maybe empty (callArgNativeReads workers var) mDef
+callArgNativeReads workers var (RConstCase _ _ alts mDef) =
+    concat (map (\(MkRConstAlt _ body) => callArgNativeReads workers var body) alts)
+      `union` maybe empty (callArgNativeReads workers var) mDef
+callArgNativeReads workers var (RLoop _ _ _ _ body) = callArgNativeReads workers var body
+callArgNativeReads workers var (RDup _ _ cont) = callArgNativeReads workers var cont
+callArgNativeReads workers var (RDrop _ _ cont) = callArgNativeReads workers var cont
+callArgNativeReads workers var (RFree _ _ cont) = callArgNativeReads workers var cont
+callArgNativeReads workers var (RReleaseReuse _ _ cont) = callArgNativeReads workers var cont
+callArgNativeReads workers var (RReuseOffer _ _ _ _ cont) = callArgNativeReads workers var cont
+callArgNativeReads workers var (RAppName _ _ n args) =
+    case lookup n workers of
+         Nothing => empty
+         Just (_, argReps, _, _) =>
+             if length args /= length argReps
+                then empty
+                else fromList $ mapMaybe (\(a, r) => if a == RCLoc var
+                                                          then case r of
+                                                                    RNative ty => Just ty
+                                                                    RInlineNative ty => Just ty
+                                                                    RBoxed => Nothing
+                                                          else Nothing)
+                                          (zip args argReps)
+-- Every other shape (RV, RAppNameRep, RUnderApp, RApp, RCon, a bare
+-- ROp/RExtPrim, RPrimVal, RErased, RCrash, RLoopContinue, RStructGet,
+-- RStructSet): no call-argument position of its own to inspect, and
+-- none hold a further RCExp to recurse into beyond what
+-- RLet/RCmpCase/RConCase/RConstCase/RLoop above already visit.
+callArgNativeReads _ _ _ = empty
+
 ||| Whether `body` justifies promoting an `RLet`-bound worker-call
 ||| result (currently `RBoxed`) all the way to `RNative ty` instead of
 ||| just rewriting the call itself and boxing its result back up on the
@@ -526,10 +590,10 @@ bareTailNativeReads var e =
 ||| materialising a heap value for either recursive call's own result).
 |||
 ||| Unions `Compiler.RC2.Loop`'s own (now exported) `nativeArgTypes`
-||| with `bareTailNativeReads` above, then asks the *exact* same
-||| question `nativeArgType` itself asks about a whole function's own
-||| top-level parameter, over that combined set: does `body`
-||| (everything after this `RLet`) read `var` as a native-context
+||| with `bareTailNativeReads` and `callArgNativeReads` above, then asks
+||| the *exact* same question `nativeArgType` itself asks about a whole
+||| function's own top-level parameter, over that combined set: does
+||| `body` (everything after this `RLet`) read `var` as a native-context
 ||| operand, consistently, at `ty`? Any *other*, still-Boxed-context use
 ||| of `var` elsewhere in `body` (e.g. stored into a constructor field)
 ||| keeps working correctly regardless of whether this promotes --
@@ -538,9 +602,9 @@ bareTailNativeReads var e =
 ||| *used* to produce, invisible to any Idris-level program (a scalar
 ||| has no observable identity) -- see `stripOwnership`'s own doc
 ||| comment for this exact case, already relied on by this same reuse.
-nativePromotionFor : Int -> PrimType -> RCExp -> Maybe PrimType
-nativePromotionFor var ty body =
-    let found = nativeArgTypes var body `union` bareTailNativeReads var body
+nativePromotionFor : SortedMap Name (Name, List Rep, Rep, Bool) -> Int -> PrimType -> RCExp -> Maybe PrimType
+nativePromotionFor workers var ty body =
+    let found = (nativeArgTypes var body `union` bareTailNativeReads var body) `union` callArgNativeReads workers var body
     in case Prelude.toList found of
             [ty'] => if ty' == ty then Just ty else Nothing
             _ => Nothing
@@ -588,8 +652,8 @@ applyCallSiteRewriteBody workers reps inTail (RLet fc var rep value body) =
         promotedTy : Maybe PrimType
         promotedTy = case rep of
                           RBoxed => case ultimateTail value1 of
-                                         RAppNameRep _ _ _ (RNative ty) _ _ => nativePromotionFor var ty body
-                                         RAppNameRep _ _ _ (RInlineNative ty) _ _ => nativePromotionFor var ty body
+                                         RAppNameRep _ _ _ (RNative ty) _ _ => nativePromotionFor workers var ty body
+                                         RAppNameRep _ _ _ (RInlineNative ty) _ _ => nativePromotionFor workers var ty body
                                          _ => Nothing
                           _ => Nothing
     in case promotedTy of
