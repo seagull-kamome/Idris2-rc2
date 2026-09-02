@@ -148,25 +148,14 @@ was addressed separately (`Compiler.RC2.ConAltNative`, see
 
 ## Performance: `Loop.idr`'s own loop-carried (non-invariant) native shadow still reboxes fresh on a Boxed-context read
 
-`EmitUtil.idr`'s `rcVarToBoxedC` (its own doc comment states this
-explicitly) boxes a `Native`/`RInlineNative` local by always calling
-`nativeMk` (`idris2rc2_mkInt64`/etc.) -- a fresh allocation, never a
-`dup` of whatever Boxed object the value was originally unboxed from.
 Fixed for `Compiler.RC2.ConAltNative`'s own destructured-field caching
-(see `rc2/doc/con-alt-native.md`'s own "Reusing the original Boxed
-field for surviving Boxed-context reads" section) and for
-`Compiler.RC2.Loop`'s own loop-*invariant* parameter hoisting (see
-`rc2/doc/loop-conversion.md`'s own "Reusing the original Boxed value
-for a surviving Boxed-context read" section): a Boxed-context read of
-a promoted field, or of an invariant loop parameter's own native
-shadow, now keeps sharing the original value's own identity via an
-ordinary `dup`, instead of paying for a fresh reallocation every time.
-The invariant-parameter fix deliberately never *moves* (unlike
-`ConAltNative`'s own "first occurrence moves, later ones dup" rule) --
-a surviving Boxed-context read can sit on the loop's own *continue*
-path, re-executed once per iteration, so every occurrence is `dup`'d
-unconditionally and the parameter's own single release is deferred
-until the whole loop has finished evaluating, once.
+(`rc2/doc/con-alt-native.md`'s "Reusing the original Boxed field for
+surviving Boxed-context reads" section) and for `Compiler.RC2.Loop`'s
+own loop-*invariant* parameter hoisting (`rc2/doc/loop-conversion.md`'s
+"Reusing the original Boxed value for a surviving Boxed-context read"
+section) -- both `dup` the original Boxed value on a surviving
+Boxed-context read now, instead of `EmitUtil.idr`'s `rcVarToBoxedC`
+default cost (a fresh `nativeMk` allocation every time).
 
 **Still not fixed for `Compiler.RC2.Loop`'s own genuinely loop-*carried*
 (non-invariant) native-shadow promotion** -- structurally harder than
@@ -620,175 +609,48 @@ into a new runtime representation plus matching `Compiler.RC2.Emit`/
 yet. Revisit starting from this writeup (particularly points 3 and 5)
 if one does.
 
-## Pinned reference `idris2 --cg refc` 0.8.0 rejects `Int32` in `%foreign` position
-
-Found while writing `rc2/tests/Test27FFIDualABI.idr` (the dual-ABI FFI
-worker's own smoke test, see `rc2/doc/dual-abi.md`'s "Stage 3c"): a
-`%foreign`-declared function with an `Int32` argument or return type
-compiles fine under `idris2-rc2`, but `verify.sh --regen-expected`'s
-own cross-check against the pinned reference `idris2 --cg refc` (this
-project's own installed 0.8.0) fails with `ERROR: INTERNAL ERROR:
-Unknonw FFI type in C backend: Int_32` [sic, upstream's own typo].
-Confirmed with a minimal repro outside the test suite. **Not
-rc2-specific, and not what this project's own `Compiler/RC2/EmitUtil.idr`
-does** -- rc2's own `cTypeOfCFType`/`extractValue`/`packCFType` already
-handle `CFInt32` correctly (`int32_t`, same as the `idris2-src` clone's
-own `Compiler/RefC/RefC.idr`); this is purely a gap in the specific
-pinned 0.8.0 *binary* used for cross-checking, apparently predating
-`Int32` FFI support landing upstream. `Int8`/`Int16`/`Int64`/
-`Bits8`/`Bits16`/`Bits64`/`Double` all confirmed fine against the same
-binary. Worked around in `Test27FFIDualABI.idr` by using `Bits64`
-instead of `Int32` for that test's "all-native-arguments" coverage --
-not a real gap in this project's own Int32 support, just untestable
-against this one pinned reference. Revisit (i.e. add an `Int32` case
-back to that test) if the pinned reference `idris2` version is ever
-bumped past whatever release added `Int32` FFI support.
-
-## Pinned reference `idris2 --cg refc` 0.8.0 misspells `negate` for fixed-width/`Double` types
-
-Found while writing the `Int64`/`Bits64`/`Double` extension of `ROp`
-reuse-in-place (now merged into `rc2/tests/Test49IntegerOpReuse.idr`;
-see `rc2/doc/rop-reuse.md`): the pinned reference `idris2 --cg refc`
-0.8.0's own installed runtime support header (`mathFunctions.h`, at
-`/nix/store/.../libidris2_support-0.8.0/share/refc/mathFunctions.h`)
-defines `idris2_nagate_Int8`/`idris2_nagate_Int16`/
-`idris2_nagate_Int32`/`idris2_nagate_Int64`/`idris2_nagate_Double` --
-misspelled ("nagate", not "negate") -- as macros, while that same
-pinned reference's own codegen (confirmed by inspecting a `_refc.c`
-compile error) emits calls to the correctly-spelled
-`idris2_negate_<...>`. Any Idris2 program using `negate` on any
-fixed-width int or `Double` type therefore fails to *link* (technically
-a C compile error: `implicit declaration of function
-'idris2_negate_Double'`) against this one pinned binary. Confirmed via
-a real compile error, not just by reading the header. `Integer`'s own
-`idris2_negate_Integer` is a real, correctly-spelled function (not a
-macro) and is unaffected. **Not rc2-specific** -- confirmed
-`rc2/support/rc2/numeric.h`'s own `idris2rc2_negate_Int64`/
-`negate_Double` are spelled correctly and completely unaffected; this
-is purely a defect in the one pinned reference *binary* used for
-cross-checking, exactly the same class of gap as the "Pinned reference
-`idris2 --cg refc` 0.8.0 rejects `Int32` in `%foreign` position" entry
-above. Worked around in `Test49IntegerOpReuse.idr`'s fixed-width extension
-coverage by not exercising `negate` there at all (a comment in the test
-file explains why, and points out that same file's original
-`Integer`-typed `negate` usage already covers the *general*
-reuse-consuming-`Neg` pattern, since `Integer`'s negate is unaffected by
-this reference bug). Revisit (i.e. add `negate` coverage back to that
-extension) if the pinned reference `idris2` version is ever bumped past
-whatever release fixes this typo.
-
 ## Upstream stdlib `%foreign` declarations with no C/RefC backend at all
 
 Surveyed every `%foreign` declaration in `idris2-src/libs` (206 across
 27 files, `base`/`prelude`/`contrib`/`network`) for ones carrying no
-`"C:..."`/`"RefC:..."` alternative whatsoever (including the indirect
-forms -- `supportC`/`libc`/`libterm`/`signalFFI`-style local helper
-functions that stitch a `"C:..."` string together at compile time
-rather than writing the tag literally; these had to be read past to
-avoid false positives). Anything without a C-tagged alternative is a
-function the *pinned reference* `idris2 --cg refc` itself cannot call
-at all -- not an rc2-specific gap. Four such spots, all upstream; three
-have since been patched independently by `libs/rc2base` (see the
-"Partial exception"/"Also patched" paragraphs below), the fourth
-(`System.Future`) has not:
+`"C:..."`/`"RefC:..."` alternative whatsoever. Anything without a
+C-tagged alternative is a function the *pinned reference*
+`idris2 --cg refc` itself cannot call at all -- not an rc2-specific
+gap. Four such spots found, all upstream:
 
 - **`Data.Buffer`**: `setInt8`/`getInt8`/`getInt16`/`setInt64`/
-  `getInt64` each carry only a `"scheme:..."` tag. Notably asymmetric
-  with their own siblings in the same file -- `setInt16`/`getInt32`/
-  `setInt32` do carry a `"RefC:..."` tag (`setBufferInt16LE`/
-  `getBufferInt32LE`/`setBufferInt32LE`), so this looks like an
-  upstream oversight rather than a deliberate scheme-only design.
-  `rc2/support/rc2/buffer.h` already had C-side macros that could back
-  every one of these (`setBufferUInt8`/`getBufferUIntLE`/
-  `setBufferInt64LE`/`getBufferInt64LE`, etc.) -- the only missing
-  piece was the upstream `%foreign` tag itself; now patched, see
-  "Also patched" below.
-- **`Data.Double`**: `unitRoundoff`/`epsilon`/`nan`/`inf` carry only
-  `"scheme:..."`/`"node:..."` tags -- no C alternative at all.
+  `getInt64` -- patched, see `libs/rc2base/README.md`'s
+  "`Data.Buffer.RC2`" section.
+- **`Data.Double`**: `unitRoundoff`/`epsilon`/`nan`/`inf` -- patched,
+  see `libs/rc2base/README.md`'s "`Data.Double.RC2`" section.
 - **`System.Random`** (contrib): `prim__randomBits32`/
-  `prim__randomDouble`/`prim__srand` (backing the whole module,
-  including its `Random Int32`/`Random Double` instances and
-  `rndFin`/`rndSelect`/`rndSelect'`) carry only `"scheme:..."`/
-  `"javascript:..."` tags. The entire module is unusable on any C
-  backend, refc included.
+  `prim__randomDouble`/`prim__srand` (backing the whole module) remain
+  entirely unimplemented on any C backend. Not a `%foreign_impl` patch
+  onto them (unlike `Data.Buffer`/`Data.Double` above) -- see
+  `libs/rc2base/README.md`'s "`System.Random.Xoroshiro128PlusPlus` /
+  `System.Random.Xoroshiro64StarStar`" section for two independent,
+  from-scratch replacement modules with their own API instead.
 - **`System.Future`** (contrib): `prim__makeFuture`/
-  `prim__awaitFuture` (backing `fork`/`await` and the `Functor`/
-  `Applicative`/`Monad Future` instances) carry only a `"scheme:..."`
-  tag. Entire module unusable on any C backend, refc included. Not to
-  be confused with rc2's own, unrelated joinable fork (`forkJoin`/
-  `join`/`JoinHandle`, `rc2/doc/concurrency.md`'s "Design: joinable
-  fork") -- that's an rc2-specific addition with no upstream
-  `System.Future` involvement at all, built to cover a gap upstream's
-  own `threadWait` (see next paragraph) leaves open on every C backend.
+  `prim__awaitFuture` carry only a `"scheme:..."` tag -- entire module
+  unusable on any C backend, refc included, and genuinely
+  un-investigated: hasn't surfaced as a real blocker for any program
+  built against rc2 so far. Revisit with a `%foreign_impl` patch or a
+  from-scratch replacement, `libs/rc2base`-style, if a concrete program
+  needs it. Not to be confused with rc2's own, unrelated joinable fork
+  (`forkJoin`/`join`/`JoinHandle`, `rc2/doc/concurrency.md`'s "Design:
+  joinable fork").
 
 One more single-function case surfaced by the same survey,
-`prim__threadWait` (`libs/prelude/Prelude/IO.idr`) -- also
-`"scheme:..."`-only, unlike its own sibling `prim__fork` (which does
-carry `"C:refc_fork"`) -- is *not* a fresh finding: it's the exact gap
-`rc2/doc/concurrency.md`'s "Design: joinable fork" section and
-`rc2/support/rc2/ioprims.c`'s own comments already document at length
-(upstream's `fork` can spawn a thread from C, but nothing about
-`ThreadID`'s representation lets any C backend ever implement
-`threadWait` to join it back) -- included here only so this survey is a
-complete index of the same class of gap, not as new information.
-
-`System.Future` remains genuinely un-investigated: it hasn't surfaced
-as a real blocker for any program built against rc2 so far (unlike
-`System.Concurrency`, which had actual demand behind it, or
-`Data.Buffer`/`Data.Double`/`System.Random`, patched below once looked
-at). Revisit with a `%foreign_impl` patch or a from-scratch
-replacement, `libs/rc2base`-style, if a concrete program needs it.
-
-Partial exception for `System.Random`: `libs/rc2base/src/System/
-Random/` now provides two modules, `Xoroshiro64StarStar.idr` and
-`Xoroshiro128PlusPlus.idr` (the latter rewritten from an earlier
-pure-Idris xoshiro128++ port to a real xoroshiro128++ port) -- both
-thin FFI wrappers around a C port of their respective reference
-algorithm, and so, unlike a from-scratch pure-Idris replacement would
-be, rc2/C-backend-specific rather than portable to every backend.
-Neither is a `%foreign_impl` patch onto upstream contrib's own
-`System.Random` primitives the way `System.Concurrency.RC2` patches
-`System.Concurrency` -- those primitives (`prim__randomBits32`/
-`prim__randomDouble`/`prim__srand`) remain entirely unimplemented on
-any C backend, unfixed by this. Both stay separate modules with their
-own API, deliberately not wired up as instances of upstream's own
-`Random` interface, to avoid ambiguous instance resolution against
-upstream `System.Random`'s existing instances for callers who import
-both. See `libs/rc2base/README.md`'s own
-"`System.Random.Xoroshiro128PlusPlus` / `System.Random.
-Xoroshiro64StarStar`" section for the full API and design rationale.
-
-Also patched since the above survey, unlike `System.Random`/
-`System.Future` above: `Data.Buffer`'s five gap primitives
-(`setInt8`/`getInt8`/`getInt16`/`setInt64`/`getInt64`) are now wired up
-by `libs/rc2base/src/Data/Buffer/RC2.idr`, a `%foreign_impl` patch
-(unlike `System.Random`'s from-scratch replacement) onto the existing
-`rc2/support/rc2/buffer.h` macros this survey already noted could back
-them. See `libs/rc2base/README.md`'s own "`Data.Buffer.RC2`" section
-for the full API and design rationale, including a real
-`Compiler.RC2.Emit` `CFBuffer`-unwrap bug this patch surfaced and fixed
-along the way (`KNOWN-BUGS.md`'s own "Retired: ..." entry for that
-fix).
-
-Also patched: `Data.Double`'s `unitRoundoff`/`epsilon`/`nan`/`inf` are
-now wired up by `libs/rc2base/src/Data/Double/RC2.idr`, a
-`%foreign_impl` patch onto four new `rc2/support/rc2/numeric.h`
-functions (no existing runtime support to reuse here, unlike
-`Data.Buffer`). See `libs/rc2base/README.md`'s own "`Data.Double.RC2`"
-section for the full API and design rationale, including the first
-arity-0, non-`PrimIO` `%foreign` value this project has wired up.
+`prim__threadWait` (`libs/prelude/Prelude/IO.idr`) -- not a fresh
+finding, it's the same gap `rc2/doc/concurrency.md`'s "Design: joinable
+fork" section already documents at length -- included here only so
+this survey is a complete index.
 
 ## Performance: codepoint-indexed String access is O(n) per call, not O(1)
 
-`String`'s primitives (`length`/`strIndex`/`strTail`/`strCons`/
-`reverse`/`substr`/`pack`/`unpack`/`Data.String.Iterator`) were
-rewritten to be Unicode-codepoint-, not byte-, indexed, matching
-Idris2's own Chez backend (see README.md's "Deliberate differences
-from upstream RefC" -- this used to be tracked here as a correctness
-gap; now fixed, `rc2/support/rc2/utf8.c` is the shared codec every
-primitive in `idris2rc2_strings.c` decodes/measures/slices through,
-with each one's own comment there spelling out which real *byte* span
-it allocates against so character and byte counts are never confused).
+`String`'s primitives are Unicode-codepoint-, not byte-, indexed,
+matching Idris2's own Chez backend -- see `rc2/README.md`'s "Deliberate
+differences from upstream RefC" section for that fix.
 
 One accepted, deliberately unaddressed consequence of *how* it's
 fixed: rc2 kept `String`'s existing UTF-8-byte-buffer representation,
