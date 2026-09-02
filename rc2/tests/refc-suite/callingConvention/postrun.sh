@@ -1,37 +1,28 @@
 #!/usr/bin/env bash
-# Greps this test's own generated C (build/exec/test.c, from run.sh's
-# `--cg rc2 ... -o test` invocation) for the three shapes Main.idr's
-# own header comment lists. run.sh appends this script's own stdout to
-# the program's stdout before diffing against `expected`.
+# Prints the actual generated-C fragments this test exists to pin down
+# (build/exec/test.c, from run.sh's `--cg rc2 ... -o test` invocation)
+# verbatim, not a self-graded PASS/FAIL -- run.sh appends this script's
+# own stdout to the program's stdout before diffing against `expected`,
+# so any real change to these shapes shows up as an ordinary diff, the
+# same way every other test in this suite pins its own output.
+# Trailing `// <file>:<line>:<col>--...` source-location comments are
+# stripped since they shift with unrelated line-number edits to
+# Main.idr, not with a genuine shape change.
 set -u
 c=build/exec/test.c
+strip_loc() { sed -E 's#[[:space:]]+// [A-Za-z_.]+:[0-9]+:[0-9]+.*$##'; }
 
-if [ "$(grep -c 'idris2rc2_worker_Main_eligibleAdd' "$c")" -ge 1 ]; then
-    echo "dualabi_worker_present: PASS"
-else
-    echo "dualabi_worker_present: FAIL"
-fi
+echo "--- DualABI worker for eligibleAdd (native return, rc2/doc/dual-abi.md) ---"
+awk '/^int64_t idris2rc2_worker_Main_eligibleAdd_1$/{p=1} p{print} p&&/^\);$/{exit}' "$c"
 
-if [ "$(grep -c 'idris2rc2_worker_Main_ineligibleShow' "$c")" -eq 0 ]; then
-    echo "dualabi_ineligible_no_worker: PASS"
-else
-    echo "dualabi_ineligible_no_worker: FAIL"
-fi
+echo "--- DualABI worker count for ineligibleShow (want: none) ---"
+grep -c 'idris2rc2_worker_Main_ineligibleShow' "$c"
 
-if [ "$(grep -c 'idris2rc2_ffiworker_' "$c")" -eq 0 ]; then
-    echo "ffi_no_worker_indirection: PASS"
-else
-    echo "ffi_no_worker_indirection: FAIL"
-fi
+echo "--- FFI worker-indirection count (want: none, inline splicing only) ---"
+grep -c 'idris2rc2_ffiworker_' "$c"
 
-if [ "$(grep -cE '\babs\(' "$c")" -ge 2 ]; then
-    echo "ffi_inlined_at_call_site: PASS"
-else
-    echo "ffi_inlined_at_call_site: FAIL"
-fi
+echo "--- FFI call-site shape (wrapper body + inlined non-tail call site) ---"
+grep -E '\babs\(' "$c" | strip_loc
 
-if awk '/idris2rc2_worker_Main_sumLoop_0/{c++; if (c==2) p=1} p{print} p&&/^}/{exit}' "$c" | grep -q 'loop:;'; then
-    echo "loop_goto_conversion: PASS"
-else
-    echo "loop_goto_conversion: FAIL"
-fi
+echo "--- Compiler.RC2.Loop goto conversion for sumLoop's own worker body ---"
+awk '/idris2rc2_worker_Main_sumLoop_0/{n++; if (n==2) p=1} p{print} p&&/^}/{exit}' "$c" | strip_loc

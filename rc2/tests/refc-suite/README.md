@@ -92,19 +92,16 @@ rc2 bugs:
   RDup/RDrop/RFree primitives, native-type inference) produces
   structurally different C by design, so it was skipped rather than
   ported. Replaced with a from-scratch rc2-specific test: `Main.idr` is
-  original (not upstream's), and `postrun.sh` greps this test's own
-  generated `build/exec/test.c` directly for three shapes that would
-  otherwise only be checked indirectly by existing output-diff tests --
-  `Compiler.RC2.DualABI`'s worker/wrapper split (a native-eligible
-  function gets `idris2rc2_worker_...`, an ineligible one doesn't), its
-  FFI inline splicing at a non-tail call site (no
-  `idris2rc2_ffiworker_...` indirection ever appears, and the raw C
-  call itself shows up more than once -- once inside the always-Boxed
-  wrapper, once spliced directly into the caller), and
-  `Compiler.RC2.Loop`'s goto conversion (a `loop:;`/`goto loop;` pair
-  inside the self-tail-recursive function's own worker body, not a
-  real recursive call) -- see `rc2/doc/dual-abi.md` and `rc2/doc/
-  loop-conversion.md`.
+  original (not upstream's), and `postrun.sh` extracts three shapes
+  from this test's own generated `build/exec/test.c` -- `Compiler.
+  RC2.DualABI`'s worker/wrapper split, its FFI inline splicing at a
+  non-tail call site, and `Compiler.RC2.Loop`'s goto conversion (see
+  `rc2/doc/dual-abi.md` and `rc2/doc/loop-conversion.md`) -- and prints
+  the actual matched C **verbatim** (source-location comments stripped,
+  everything else byte-exact) rather than a self-graded PASS/FAIL, so
+  `expected` is a real golden snapshot of the generated code: any
+  future change to these shapes shows up as an ordinary `diff`, the
+  same way every other test in this suite already pins its own output.
 
 ## Bugs found and fixed while porting
 

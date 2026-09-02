@@ -1,8 +1,40 @@
 12
 "value=7"
 5000050000
-dualabi_worker_present: PASS
-dualabi_ineligible_no_worker: PASS
-ffi_no_worker_indirection: PASS
-ffi_inlined_at_call_site: PASS
-loop_goto_conversion: PASS
+--- DualABI worker for eligibleAdd (native return, rc2/doc/dual-abi.md) ---
+int64_t idris2rc2_worker_Main_eligibleAdd_1
+(
+    IDRIS2RC2_Value * var_0
+,   IDRIS2RC2_Value * var_1
+);
+--- DualABI worker count for ineligibleShow (want: none) ---
+0
+--- FFI worker-indirection count (want: none, inline splicing only) ---
+0
+--- FFI call-site shape (wrapper body + inlined non-tail call site) ---
+    int64_t retVal = abs((idris2rc2_to_i64(var_1)));
+    int64_t var_6 = abs(var_7);
+--- Compiler.RC2.Loop goto conversion for sumLoop's own worker body ---
+int64_t idris2rc2_worker_Main_sumLoop_0
+(
+    IDRIS2RC2_Value * var_0
+,   IDRIS2RC2_Value * var_1
+)
+{
+    int64_t var_4 = (var_0 == NULL) ? 0 : (idris2rc2_to_i64(var_0));
+    int64_t var_5 = (var_1 == NULL) ? 0 : (idris2rc2_to_i64(var_1));
+    idris2rc2_drop(var_0);
+    idris2rc2_drop(var_1);
+    loop:;
+    int64_t tmp_4 = var_4;
+    if (tmp_4 == INT64_C(0)) {
+        return var_5;
+    }
+    int64_t var_2 = (var_4 - INT64_C(1));
+    int64_t var_3 = (var_5 + var_4);
+    int64_t tmp_5 = var_2;
+    int64_t tmp_6 = var_3;
+    var_4 = tmp_5;
+    var_5 = tmp_6;
+    goto loop;
+}
