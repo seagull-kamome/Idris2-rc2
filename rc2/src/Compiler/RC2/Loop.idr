@@ -843,42 +843,62 @@ markInvariantNative _ _ e = e
 ||| one). See rc2/doc/loop-conversion.md's "Loop-invariant parameter
 ||| elision" section for the crash a local copy of `countUsesR` without
 ||| these two cases caused (Test19LoopInvariantParam).
+|||
+||| A yes/no question needs only the *first* occurrence, not an exact
+||| tally -- `existsInvariantUse` short-circuits on it (each `if`
+||| below never evaluates its own `else` once `then` already fired,
+||| and `any`'s own short-circuiting search covers the list-argument
+||| cases the same way), unlike summing a `Nat` count via `+`/`sum`
+||| (always strict in both operands) then comparing `> 0` at the very
+||| end, which is what this used to do.
 usesInvariant : Int -> RCExp -> Bool
-usesInvariant p e = countInvariantUses e > 0
+usesInvariant p e = existsInvariantUse e
   where
-    countInvariantUses : RCExp -> Nat
-    countInvariantUses (RV _ v) = if v == RCLoc p then 1 else 0
-    countInvariantUses (RAppName _ _ _ args) = length (filter (== RCLoc p) args)
-    countInvariantUses (RUnderApp _ _ _ args) = length (filter (== RCLoc p) args)
-    countInvariantUses (RApp _ _ c a) = length (filter (== RCLoc p) [c, a])
-    countInvariantUses (RLet _ _ _ value body) = countInvariantUses value + countInvariantUses body
-    countInvariantUses (RCon _ _ _ _ args _) = length (filter (== RCLoc p) args)
-    countInvariantUses (ROp _ _ _ args _) = length (filter (== RCLoc p) (toList args))
-    countInvariantUses (RExtPrim _ _ _ args _) = length (filter (== RCLoc p) args)
-    countInvariantUses (RStructGet _ structVar _ _ _) = if structVar == RCLoc p then 1 else 0
-    countInvariantUses (RStructSet _ structVar _ _ value _) = length (filter (== RCLoc p) [structVar, value])
-    countInvariantUses (RCmpCase _ _ args _ t f) =
-        length (filter (== RCLoc p) (toList args)) + countInvariantUses t + countInvariantUses f
-    countInvariantUses (RConCase _ sc alts mDef) =
-        (if sc == RCLoc p then 1 else 0)
-        + sum (map (\(MkRConAlt _ _ _ _ body) => countInvariantUses body) alts)
-        + maybe 0 countInvariantUses mDef
-    countInvariantUses (RConstCase _ sc alts mDef) =
-        (if sc == RCLoc p then 1 else 0)
-        + sum (map (\(MkRConstAlt _ body) => countInvariantUses body) alts)
-        + maybe 0 countInvariantUses mDef
-    countInvariantUses (RDup _ v body) = (if v == RCLoc p then 1 else 0) + countInvariantUses body
-    countInvariantUses (RDrop _ vars body) = length (filter (== RCLoc p) vars) + countInvariantUses body
-    countInvariantUses (RFree _ v body) = (if v == RCLoc p then 1 else 0) + countInvariantUses body
-    countInvariantUses (RReleaseReuse _ v body) = (if v == RCLoc p then 1 else 0) + countInvariantUses body
-    countInvariantUses (RReuseOffer _ sc dupOnShared dropOnUnique body) =
-        (if sc == RCLoc p then 1 else 0) + length (filter (== RCLoc p) dupOnShared)
-        + length (filter (== RCLoc p) dropOnUnique) + countInvariantUses body
-    countInvariantUses (RLoop _ _ initial prologueDrop body) =
-        length (filter (== RCLoc p) initial) + length (filter (== RCLoc p) prologueDrop) + countInvariantUses body
-    countInvariantUses (RLoopContinue _ args postDrop) =
-        length (filter (== RCLoc p) args) + length (filter (== RCLoc p) postDrop)
-    countInvariantUses _ = 0
+    existsInvariantUse : RCExp -> Bool
+    existsInvariantUse (RV _ v) = v == RCLoc p
+    existsInvariantUse (RAppName _ _ _ args) = any (== RCLoc p) args
+    existsInvariantUse (RUnderApp _ _ _ args) = any (== RCLoc p) args
+    existsInvariantUse (RApp _ _ c a) = if c == RCLoc p then True else a == RCLoc p
+    existsInvariantUse (RLet _ _ _ value body) =
+        if existsInvariantUse value then True else existsInvariantUse body
+    existsInvariantUse (RCon _ _ _ _ args _) = any (== RCLoc p) args
+    existsInvariantUse (ROp _ _ _ args _) = any (== RCLoc p) (toList args)
+    existsInvariantUse (RExtPrim _ _ _ args _) = any (== RCLoc p) args
+    existsInvariantUse (RStructGet _ structVar _ _ _) = structVar == RCLoc p
+    existsInvariantUse (RStructSet _ structVar _ _ value _) =
+        if structVar == RCLoc p then True else value == RCLoc p
+    existsInvariantUse (RCmpCase _ _ args _ t f) =
+        if any (== RCLoc p) (toList args) then True
+        else if existsInvariantUse t then True
+        else existsInvariantUse f
+    existsInvariantUse (RConCase _ sc alts mDef) =
+        if sc == RCLoc p then True
+        else if any (\(MkRConAlt _ _ _ _ body) => existsInvariantUse body) alts then True
+        else maybe False existsInvariantUse mDef
+    existsInvariantUse (RConstCase _ sc alts mDef) =
+        if sc == RCLoc p then True
+        else if any (\(MkRConstAlt _ body) => existsInvariantUse body) alts then True
+        else maybe False existsInvariantUse mDef
+    existsInvariantUse (RDup _ v body) =
+        if v == RCLoc p then True else existsInvariantUse body
+    existsInvariantUse (RDrop _ vars body) =
+        if any (== RCLoc p) vars then True else existsInvariantUse body
+    existsInvariantUse (RFree _ v body) =
+        if v == RCLoc p then True else existsInvariantUse body
+    existsInvariantUse (RReleaseReuse _ v body) =
+        if v == RCLoc p then True else existsInvariantUse body
+    existsInvariantUse (RReuseOffer _ sc dupOnShared dropOnUnique body) =
+        if sc == RCLoc p then True
+        else if any (== RCLoc p) dupOnShared then True
+        else if any (== RCLoc p) dropOnUnique then True
+        else existsInvariantUse body
+    existsInvariantUse (RLoop _ _ initial prologueDrop body) =
+        if any (== RCLoc p) initial then True
+        else if any (== RCLoc p) prologueDrop then True
+        else existsInvariantUse body
+    existsInvariantUse (RLoopContinue _ args postDrop) =
+        if any (== RCLoc p) args then True else any (== RCLoc p) postDrop
+    existsInvariantUse _ = False
 
 ||| How many `RDup`s an operand list needs for `p`'s own occurrences in
 ||| it -- unlike `RC.idr`'s own `splitBorrows`, never consults an
