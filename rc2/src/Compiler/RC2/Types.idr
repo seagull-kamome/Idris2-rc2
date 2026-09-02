@@ -17,7 +17,7 @@ import Compiler.RC2.RCExp
 import Core.CompileExpr
 import Core.TT
 
-%default covering
+%default total
 
 export
 nativeEligible : PrimType -> Bool

@@ -44,7 +44,7 @@ import System
 import System.File
 
 
-%default covering
+%default total
 
 -- Name mangling (matches Compiler.RC2.RC2's original scheme, kept for
 -- generated-symbol stability)
@@ -1502,6 +1502,7 @@ packCFType n _ = assert_total $ idris_crash ("INTERNAL ERROR: Unknown FFI type i
 ||| instead of a `List String` `Ref` threaded through Scheme-code
 ||| generation, since there's no Scheme code to emit here.
 export
+covering
 collectStructDefs : CFType -> SortedMap String (List (String, CFType)) -> SortedMap String (List (String, CFType))
 collectStructDefs (CFStruct n flds) acc =
     if isJust (lookup n acc)
