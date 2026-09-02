@@ -10,11 +10,13 @@ module Compiler.RC2.RC2
 -- 4. Loop/Tail call conversion (`Compiler.RC2.MutualLoop`, `Compiler.RC2.Loop`)
 -- 5. Branch-local sinking (`Compiler.RC2.Sink`)
 -- 6. Dual ABI synthesis (`Compiler.RC2.DualABI`)
--- 7. C generation (`Compiler.RC2.Emit`)
--- 8. C compiler invocation (`Compiler.RC2.CC`)
+-- 7. Dead-code elimination (`Compiler.RC2.DeadCode`)
+-- 8. C generation (`Compiler.RC2.Emit`)
+-- 9. C compiler invocation (`Compiler.RC2.CC`)
 
 import Compiler.RC2.CC
 import Compiler.RC2.ConAltNative
+import Compiler.RC2.DeadCode
 import Compiler.RC2.DualABI
 import Compiler.RC2.Emit
 import Compiler.RC2.Inline
@@ -68,14 +70,16 @@ applyReuse d@(MkRCForeign _ _ _) = d
 ||| `noloop`, `nosink`, `nodualabi` (disables both `DualABI`'s own
 ||| worker/wrapper synthesis *and* its own call-site rewriting together
 ||| -- the rewrite needs the worker table the synthesis step builds, so
-||| splitting them wouldn't be meaningful). Each stage is still purely
+||| splitting them wouldn't be meaningful), `nodeadcode` (disables
+||| `Compiler.RC2.DeadCode`'s own pruning -- see that module's own
+||| header note for what it removes and why). Each stage is still purely
 ||| additive/optional in the sense that skipping any of them should
 ||| still produce *correct*
 ||| (if less optimised, and possibly no longer byte-for-byte matching
 ||| real `idris2 --cg refc`'s own output shape) C -- none of
 ||| `Compiler.RC2.Inline`/`ConAltNative`/`MutualLoop`/`Loop`/
-||| `Sink`/`DualABI` is required by anything downstream of it for
-||| correctness, only for the optimisation it itself provides. "Not
+||| `Sink`/`DualABI`/`DeadCode` is required by anything downstream of it
+||| for correctness, only for the optimisation it itself provides. "Not
 ||| perfectly complete" by design: a coarse, whole-stage on/off switch,
 ||| not fine-grained per-function/per-node control.
 |||
@@ -85,8 +89,16 @@ applyReuse d@(MkRCForeign _ _ _) = d
 ||| independent/disableable, and the ability to disable `Reuse` this
 ||| way was removed entirely -- `applyReuse` now always runs,
 ||| unconditionally.
-toRCDefs : {auto c : Ref Ctxt Defs} -> List String -> List (Name, LiftedDef) -> Core (List (Name, RCDef))
-toRCDefs disabled lds0 = do
+|||
+||| `roots`: names `Compiler.RC2.DeadCode.pruneDeadDefs` must never drop
+||| regardless of reachability -- `main`'s own well-known entry name
+||| (`MN "__mainExpression" 0`, `Compiler.Common`) plus any `%export`ed
+||| names, both supplied by `compileExpr`'s own call site (the latter is
+||| currently always `[]` in practice -- rc2 doesn't otherwise implement
+||| `%export`, but including it costs nothing and avoids a latent trap
+||| if that ever changes).
+toRCDefs : {auto c : Ref Ctxt Defs} -> List String -> (roots : List Name) -> List (Name, LiftedDef) -> Core (List (Name, RCDef))
+toRCDefs disabled roots lds0 = do
     lds <- if "noinline" `elem` disabled then pure lds0 else logTime 2 "rc2: Inline" $ applyInlineLifted lds0
     reused <- logTime 2 "rc2: RC annotate + Reuse + ConAltNative" $
                 traverse (\(n, ld) => do
@@ -101,13 +113,16 @@ toRCDefs disabled lds0 = do
     sunk <- if "nosink" `elem` disabled
                then pure looped
                else logTime 2 "rc2: Sink" $ pure (map (\(n, d) => (n, applySink d)) looped)
-    if "nodualabi" `elem` disabled
+    dualABId <- if "nodualabi" `elem` disabled
        then pure sunk
        else logTime 2 "rc2: DualABI" $ do
            withWorkers <- applyDualABI sunk
            (ffiWorkers, ffiInlineMap) <- ffiWorkerTable sunk
            let rewritten = applyCallSiteRewrite ffiWorkers withWorkers
            pure (inlineFFIWorkers ffiInlineMap rewritten)
+    if "nodeadcode" `elem` disabled
+       then pure dualABId
+       else logTime 2 "rc2: Dead code elimination" $ pure (pruneDeadDefs roots dualABId)
 
 ||| `%cg rc2 inlineRuntime=<code>` companion to upstream's own
 ||| file-path-based `Compiler.Common.getExtraRuntime` (no inline-text
@@ -197,9 +212,10 @@ compileExpr c s _ outputDir tm outfile =
      -- `dumpdualabi` (which only ever inspect its *output*).
      directiveList <- getDirectives (Other "rc2")
      let disabledStages = filter (`elem` directiveList)
-                             ["noinline", "noconaltnative", "nomutualloop", "noloop", "nosink", "nodualabi"]
+                             ["noinline", "noconaltnative", "nomutualloop", "noloop", "nosink", "nodualabi", "nodeadcode"]
      cdata <- getCompileData False Lifted tm
-     defs <- toRCDefs disabledStages (lambdaLifted cdata)
+     let roots = MN "__mainExpression" 0 :: map fst (exported cdata)
+     defs <- toRCDefs disabledStages roots (lambdaLifted cdata)
 
      -- `--directive dumprcexpr` / `%cg rc2 dumprcexpr`: dump the final
      -- RCExp -- this exact `defs`, after every non-disabled stage above

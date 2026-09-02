@@ -899,6 +899,44 @@ generalisation, not an identical duplicate. Revisit both together if
 `Compiler.RC2.Util` ever needs a shared fresh-id facility for a third
 consumer.
 
+## Scope: `Compiler.RC2.DeadCode` doesn't cover `MkRCForeign` removed by constant folding
+
+`Compiler.RC2.DeadCode` (see `rc2/doc/dead-code-elim.md`) deliberately
+never removes a `%foreign` declaration's own `MkRCForeign` entry --
+argued there that, under `Inline`/`DualABI` alone, a `MkRCForeign`
+entry surviving to this pass can never actually lose every caller
+(`Inline` requires a callee to be call-free, so a function calling an
+FFI declaration is never Inline-eligible in the first place; `DualABI`'s
+wrapper/worker split keeps a function's own FFI calls alive inside
+whichever of its wrapper/worker is still reachable).
+
+That argument has a real gap: `Compiler.RC2.ConstFold`'s `RConstCase`
+case-of-constant folding (`foldConst`'s `findConstAlt`) replaces the
+*entire* case node with just the one matching alt's body once its
+scrutinee resolves to a known constant, discarding every other alt's
+body outright -- including any `%foreign` call inside it. This is
+exactly what a codegen-identity branch (`prim__codegen`/`prim__os`
+folded to a literal string, `Compiler.RC2.ConstExtPrim`) or a folded
+comparison feeding a boolean `RConstCase` compiles down to. A
+declaration whose *only* call site sits inside a branch eliminated
+this way would genuinely lose every caller, `MkRCForeign` included --
+`Compiler.RC2.DeadCode.pruneDeadDefs` would need to also track, for
+`MkRCForeign` specifically, whether its own `ccs` still appears among
+surviving `RAppFFIInline` splices (a mechanism that was actually
+implemented and then removed during that pass's own development,
+because every test constructed to exercise it went through `Inline`/
+`DualABI` instead, where it never fires -- see `dead-code-elim.md`'s
+own "Bugs found" #1 and the surrounding "Scope" section).
+
+Not pursued: this needs an actual multi-target-`%foreign`/codegen-
+branch test to hit deliberately, and is a narrow enough case (a
+`%foreign` declaration with a *single* call site sitting inside a
+statically-eliminated branch) that it wasn't judged worth the
+complexity revival for now. Revisit by reintroducing
+`usedForeignCCsR`/`usedForeignCCsD` (removed, not merely disabled) if
+this ever turns out to matter for a real generated-C size/compile-time
+concern.
+
 ## yet another hope
 この項は人間が追加したものなので、後で整理して独立の項に括りだす事。
 今は着手しないが将来的な展望を書き連ねる。この項は日本語で書かれるが

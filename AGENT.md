@@ -51,7 +51,11 @@ show up again during testing.
   `String`-sourced `Cast`, `const-con-fold.md` for folding a
   constructor whose fields are all recursively constant into a single
   immortal file-scope static (`RCConstCon`) instead of a fresh heap
-  allocation on every evaluation), `concurrency.md` for the runtime's
+  allocation on every evaluation), `dead-code-elim.md` for the
+  whole-program mark-and-sweep pass that drops definitions rc2's own
+  optimizations (Inline, DualABI's Stage 3a wrapper split) leave with
+  zero remaining callers, run as `toRCDefs`'s own final stage,
+  `concurrency.md` for the runtime's
   multi-step move to thread-safety -- atomic reference count, then real
   OS thread spawning (`refc_fork`) and Mutex/Condition, then the
   remaining `System.Concurrency`-family primitives plus a joinable fork

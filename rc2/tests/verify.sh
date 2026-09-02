@@ -47,8 +47,8 @@
 #                       (rc2/src/Compiler/RC2/RC2.idr) for the
 #                       recognised `no<stagename>` values (noinline/
 #                       noconaltnative/nomutualloop/noloop/nosink/
-#                       nodualabi -- `noreuse` was retired, see that
-#                       doc comment's own note on why) -- lets a
+#                       nodualabi/nodeadcode -- `noreuse` was retired,
+#                       see that doc comment's own note on why) -- lets a
 #                       session compare compile/
 #                       run time with a given optimisation pass on vs.
 #                       off. Not applied to refc-suite (its own run.sh
