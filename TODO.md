@@ -888,6 +888,37 @@ complexity revival for now. Revisit by reintroducing
 this ever turns out to matter for a real generated-C size/compile-time
 concern.
 
+## `libs/rc2base`'s `Data.Integer.GMP` doesn't cover every `mpz_*` function
+
+Deliberately scoped to two shapes only (see that module's own header
+comment and `libs/rc2base/README.md`'s own section for the full
+reasoning, not restated here): a single leading `mpz_t` out-parameter
+with a `void` return, or a plain native return with no output
+parameter at all. Several real GMP functions don't fit either shape
+and are excluded rather than force-fit:
+
+- `mpz_setbit`/`mpz_clrbit`/`mpz_combit`: mutate their *single* `mpz_t`
+  argument in place, no separate `rop`/`op` at all -- confirmed as a
+  real compile error when tried the same way as everything else
+  (generates one argument too many). A real binding needs a wrapper
+  that copies first (`mpz_init_set` into a fresh destination, then
+  mutate that copy) -- the one case in this module that would need one
+  at all.
+- `mpz_invert`/`mpz_root`: a leading `mpz_t` out-param *and* a
+  meaningful `int` return (invertibility/exactness) at once.
+- `mpz_tdiv_qr`/`mpz_fdiv_qr`/`mpz_cdiv_qr`/`mpz_gcdext`: more than one
+  output parameter (quotient+remainder together, or gcd+both Bézout
+  coefficients).
+- GMP's random-number API (`mpz_urandomb`/`mpz_urandomm`/etc.): needs
+  an opaque `gmp_randstate_t` with its own init/clear lifecycle --
+  separate design work, not an extension of this module's own
+  direct-binding convention.
+
+Not pursued further this round -- none of these came up against a real
+need, and each would cost more than a one-line `%foreign` declaration
+(the whole point of what's already there). Revisit if a concrete use
+case needs one specifically.
+
 ## yet another hope
 この項は人間が追加したものなので、後で整理して独立の項に括りだす事。
 今は着手しないが将来的な展望を書き連ねる。この項は日本語で書かれるが
