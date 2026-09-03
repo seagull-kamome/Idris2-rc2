@@ -199,7 +199,7 @@ dumpdualabi`デバッグダンプ(`--directive dumprcexpr`をミラーし、
   正しい*混在*適格性(1つがネイティブ、1つがBoxed)が同じ関数の中に
   ある。
 - `Main.swapLoop`、および`Compiler.RC2.MutualLoop`が生成した全ての
-  メンバー別wrapper(`Test10MutualLoop.idr`の
+  メンバー別wrapper(`Test9SelfTailLoop.idr`の
   `Main.isEvenM`/`isOddM`/`stepA`/`stepB`) -> 正しく何も適格ではない
   (自分自身のパラメータを`ROp`/`RCmpCase`で使うことが一切ない --
   wrapper自身の本体はマージ関数への転送呼び出しでしかない)。
@@ -210,7 +210,7 @@ dumpdualabi`デバッグダンプ(`--directive dumprcexpr`をミラーし、
 別wrapperとは対照的)は、グループのある1メンバーがネイティブとして
 読む共有スロットについて、それとは*別の*、より小さいアリティの
 メンバーが単に`RCNull`しか供給していない場合でも実際に適格性を示す
-**ことがある** -- `Test10MutualLoop.idr`自身の`stepA`/`stepB`グループ
+**ことがある** -- `Test9SelfTailLoop.idr`自身の`stepA`/`stepB`グループ
 に対して直接確認済み(`{rc2_mutualLoop:0}: params=["1:Boxed",
 "2:Boxed", "3:Int", "4:Int"]`)。これはまさに、`Compiler.RC2.Loop`
 自身のネイティブshadow昇格の間に既に2回の実クラッシュを引き起こした

@@ -346,7 +346,8 @@ cmp >=Int [v10, v3]
 `Boxed`なものは、その値がループ不変なオペランドしか読まない場合
 でも常に`loop [...]`の内側に留まる。なぜなら、その*自身*の、その
 先での生存は、ある反復がどちらの枝を取るかに依然として依存しうる
-から(`tests/Test21BoxedInvariantNotHoisted.idr`はまさにこれの
+から(`tests/Test19LoopInvariantParam.idr`に統合された旧
+`Test21BoxedInvariantNotHoisted.idr`のケースはまさにこれの
 専用の負のケーステスト -- 完全な理由付け、この制限を追加して修正
 した実際の二重解放も含めて、`rc2/doc/loop-conversion.md`の
 「ループ不変式のホイスティング」節参照)。
@@ -364,8 +365,8 @@ cmp >=Int [v10, v3]
 の「呼び出しごとに一度、無条件で」に対して、「その枝が実際に
 到達された場合のみ」)。第8.5/8.6節とは異なり、これにはループが
 一切不要 -- `tests/Test22BranchSinking.idr`自身のダンプは、通常の
-非再帰関数の中で全く同一の形を示す。`tests/
-Test21BoxedInvariantNotHoisted.idr`自身の`Sink`実行後のダンプは、
+非再帰関数の中で全く同一の形を示す。`tests/Test19LoopInvariantParam.idr`
+に統合された旧`Test21BoxedInvariantNotHoisted.idr`自身の`Sink`実行後のダンプは、
 第8.6節が上で意図的に`loop [...]`の内側に残した、まさにその
 `let v5 = ...`に対してこれが発火する様子を示す(そのまさに同一の
 束縛について、ホイスティングとsinkingは競合するのではなく補完

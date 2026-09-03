@@ -139,7 +139,9 @@ only). The return side (a native-returning helper's own result boxed
 only to be immediately unboxed again for the next iteration's carried
 shadow) is now fixed too -- `Compiler.RC2.DualABI`'s
 `loopContinueNativeReads`, see the same doc section's updated
-paragraph and `rc2/tests/Test58LoopContinueNativePromotion.idr`.
+paragraph and `rc2/tests/Test57LoopCallArgNativeShadow.idr`, which
+also absorbed the former `Test58LoopContinueNativePromotion.idr`'s
+dedicated coverage for this case.
 
 ## Future: nested self-tail-recursive loops
 

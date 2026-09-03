@@ -173,11 +173,12 @@ function-pointer convention (`IDRIS2RC2_FUN0`..`FUN20`/`FUNSTAR`) that
 the width limit existed to protect; (3) `extractValue`/`packCFType`/
 `nativeCType` are all purely positional, arity-independent transforms,
 nothing in them changes shape past 20 parameters. Verified with a new
-regression test, `rc2/tests/Test48WideFFIDualABIWorker.idr` (a
-15-parameter `%foreign` declaration -- 12 native-eligible `Int`s + 3
-`Boxed` `String`s, mirroring `Test33WideDualABIWorker.idr`'s own
-"mostly native, some Boxed" shape but past what the old limit would
-have excluded, called fully saturated from `main` so Stage 4's own
+regression test, now `rc2/tests/Test33WideDualABIWorker.idr`'s own
+`prim__wide` (formerly a separate `Test48WideFFIDualABIWorker.idr`,
+merged in): a 15-parameter `%foreign` declaration -- 12 native-eligible
+`Int`s + 3 `Boxed` `String`s, a "mostly native, some Boxed" shape but
+past what the old limit would have excluded, called fully saturated
+from `main` so Stage 4's own
 call-site rewriting fires): the generated C was inspected by hand and
 shows `idris2rc2_ffiworker_Main_prim__wide_0` declared with 12
 individually-typed `int64_t` parameters plus 3 `IDRIS2RC2_Value *`
@@ -223,12 +224,14 @@ enclosing `RLet` promotes the call's own result straight to native) do
 the marshalling+call+return inline at each call site instead, sharing a
 `ffiRawCall`/`ffiArgMarshal` helper pair.
 
-Verified with a new regression test, `rc2/tests/Test50FFIInlineNoWorker.idr`
-(registered in `verify.sh`'s `LEAK_SENSITIVE_TESTS`): full
+Verified with a new regression test, now `rc2/tests/Test27FFIDualABI.idr`'s
+own `inlineLoop`/`prim__add50`/etc. (formerly a separate
+`Test50FFIInlineNoWorker.idr`, merged in; registered in `verify.sh`'s
+`LEAK_SENSITIVE_TESTS`): full
 `verify.sh`/`refc-suite/run.sh` (19/19) pass, `valgrind --leak-check=full`
 reports `0 bytes definitely lost`, and -- by hand -- `grep -c
 idris2rc2_ffiworker_` against the generated `.c` for
-`Test27FFIDualABI`/`Test48WideFFIDualABIWorker`/`Test50FFIInlineNoWorker`
+`Test27FFIDualABI`/`Test33WideDualABIWorker`
 all return `0`, confirming no standalone FFI worker C function is
 emitted anywhere any more. See `rc2/doc/dual-abi.md`'s "Stage 5: FFI-
 inline call splicing" section for the full design writeup, including
@@ -369,7 +372,7 @@ RCLocal` to `List String` (every other producer -- `RV`, `RAppNameRep`,
 `ROp` -- already had a genuine `RCLocal` in hand, so this only ever
 meant one extra `map varName` at each of those existing call sites, not
 a behavior change for them). Re-verified against
-`rc2/tests/Test50FFIInlineNoWorker.idr`'s own `prim__mixed50` (a
+`rc2/tests/Test27FFIDualABI.idr`'s own `prim__mixed50` (a
 `String`-typed argument, deliberately included in that test for this
 reason); full `verify.sh`/`refc-suite/run.sh` (19/19) unaffected.
 
@@ -481,7 +484,8 @@ anything so far, but don't be surprised by them showing up again.
   fix a call already baked into precompiled `network`/`base` package
   code -- `Test35NetworkLoopback` (via `Network.Socket.Data.parseIPv4`'s
   own `fastPack` call parsing `accept`'s `getSockAddr` result) and
-  `Test40SystemProcess` (via `System.File.ReadWrite`'s `fRead'`'s own
+  `Test37SystemMisc` (formerly `Test40SystemProcess`, via
+  `System.File.ReadWrite`'s `fRead'`'s own
   `fastConcat` call reading back a spawned process's captured output)
   each kept a `KNOWN_LEAK_BYTES` entry in `verify.sh` (10 bytes / 4
   blocks, and 11 bytes / 1 block, respectively) even after that fix

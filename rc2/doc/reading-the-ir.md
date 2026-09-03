@@ -343,7 +343,8 @@ whatever hoisted parameter binding it itself depends on. Only a
 `Boxed` one always stays inside `loop [...]`, even when its own value
 reads nothing but loop-invariant operands, because its *own* liveness
 past that point may still depend on which branch a given iteration
-takes (`tests/Test21BoxedInvariantNotHoisted.idr` is the dedicated
+takes (`tests/Test19LoopInvariantParam.idr`'s own absorbed former
+`Test21BoxedInvariantNotHoisted.idr` case is the dedicated
 negative-case test for exactly this; see `rc2/doc/loop-conversion.md`'s
 "Loop-invariant expression hoisting" section for the full reasoning,
 including a real double-free this restriction was added to fix).
@@ -361,8 +362,9 @@ it, running it even less often (only when that arm is actually
 reached, versus hoisting's "once per call regardless"). Unlike
 sections 8.5/8.6, nothing about this needs a loop at all --
 `tests/Test22BranchSinking.idr`'s own dump shows the identical shape in
-an ordinary non-recursive function; `tests/
-Test21BoxedInvariantNotHoisted.idr`'s own post-`Sink` dump shows it
+an ordinary non-recursive function; `tests/Test19LoopInvariantParam.idr`'s
+own absorbed former `Test21BoxedInvariantNotHoisted.idr` case's own
+post-`Sink` dump shows it
 firing on the very `let v5 = ...` section 8.6 above deliberately leaves
 inside `loop [...]` (hoisting and sinking are complementary, not
 competing, for that exact binding -- see `doc/branch-sinking.md`'s own

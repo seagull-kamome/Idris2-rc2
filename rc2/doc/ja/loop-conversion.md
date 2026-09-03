@@ -538,7 +538,8 @@ Boxedだったパラメータ自身のdup/drop生存期間について決めて�
 不変`RCon`が、`isNativeRep`ガードが存在する前は`malloc():
 unaligned tcache chunk detected`でクラッシュし、`valgrind`で本物の
 二重解放であることが確認された(まさにこの形状のための恒久的な
-回帰テストである`tests/Test21BoxedInvariantNotHoisted.idr`参照)。
+回帰テストである、`tests/Test19LoopInvariantParam.idr`に統合された旧
+`Test21BoxedInvariantNotHoisted.idr`のケース参照)。
 ネイティブな結果はこの問題全体を構造的に回避する: ネイティブな値は
 このランタイムのどこにおいても一度もdup/dropされないので、いかなる
 枝も古いdropを1つも保持し得ない。現在の型システムでは、これは
@@ -599,7 +600,7 @@ unaligned tcache chunk detected`でクラッシュし、`valgrind`で本物の
 各元のメンバー自身のトップレベル名は、通常の、独立に呼び出し可能な
 関数として動作し続ける(外部の呼び出し元のため、そして*末尾でない*
 あらゆる使用 -- 例えばクロージャとして受け渡されること。
-`Test10MutualLoop.idr`がまさにこれを行使する -- のため)。それは合成
+`Test9SelfTailLoop.idr`がまさにこれを行使する -- のため)。それは合成
 関数を、自身のタグと引数を添えて一度だけ呼び出し、返ってきたものを
 そのまま返す薄いラッパーになる。
 
@@ -624,7 +625,7 @@ Name)`へ変換し、このパス自身が検討している定義(すなわち`
 内に収まるように)で実装したものである。直接のペアだけを探すのでは
 なくSCCを使うことで、`applyMutualLoop`は*間接的な*サイクル
 (`A -> B -> C -> A`、単なる`A -> B -> A`だけでなく)も見つけられる
--- `Test10MutualLoop.idr`自身の`cycleA`/`cycleB`/`cycleC`グループが
+-- `Test9SelfTailLoop.idr`自身の`cycleA`/`cycleB`/`cycleC`グループが
 まさにこれを行使する。サイズ`>= 2`の成分だけがマージされる。サイズ
 1の成分は単なる通常の(自己再帰であるかもしれない)関数であり、既に
 `Compiler.RC2.Loop`の仕事であり、このパスは完全に手をつけない。
@@ -823,7 +824,7 @@ dropがあったとしても無害だっただろう -- しかしこの不変条
    関数の共有スロットは、*どこかの*グループメンバーがそれをネイティブ
    に読むために`RNative`へ昇格されうるが、*他の*メンバーはそこで
    常に`RCNull`しか受け取らない(自身のアリティが小さいため)。
-   `Test10MutualLoop.idr`自身のアリティが異なる`stepA`/`stepB`
+   `Test9SelfTailLoop.idr`自身のアリティが異なる`stepA`/`stepB`
    グループ(`stepA : Nat -> Int -> Int -> Int`、
    `stepB : Nat -> Int -> Int`)で発見された。ネイティブshadow昇格が
    着地した後、他のすべてのテストはパスしているのにこれだけが
@@ -845,7 +846,7 @@ dropがあったとしても無害だっただろう -- しかしこの不変条
      にとって有効なリテラルである。
    - **箇所2 -- ループ突入時、`declareLoopParam`経由**: 最初の修正
      (箇所1のみ)ではクラッシュは完全には解消しなかった --
-     `Test10MutualLoop.idr`は依然セグフォルトした。実際のクラッシュ
+     `Test9SelfTailLoop.idr`は依然セグフォルトした。実際のクラッシュ
      はもう1段階前にあった: `declareLoopParam`自身の`initial`の値の
      unbox化(合成関数自身のトップレベルパラメータを、まさに関数
      入口で、ループのタグディスパッチが実行される*前に*読む)は
@@ -870,7 +871,7 @@ dropがあったとしても無害だっただろう -- しかしこの不変条
 
    両方の修正は、フルマトリクスに対して再度検証済み: 19/19
    refc-suite、全スモークテスト(`Test1Basics.idr`〜
-   `Test10MutualLoop.idr`)、全ベンチマーク、いずれも
+   `Test9SelfTailLoop.idr`)、全ベンチマーク、いずれも
    `idris2 --cg refc`とバイト完全一致/クラッシュなし。
 
 5. **`RLoopContinue`が、ネイティブとして読んだBoxedな継続引数を一度
@@ -1072,7 +1073,8 @@ shadow昇格され*ない*。`loop acc (b :: bs) = loop (step acc b) bs`
    カウンタとその`String`のパススルー)、および`ROp`/`RCmpCase`
    ではなく`RConstCase`での使用経由で昇格されたループパラメータの
    例でもある(「発見したバグ」#3参照)。
-3. `tests/Test10MutualLoop.idr` -- 相互ループ変換自身の専用
+3. `tests/Test9SelfTailLoop.idr`(旧`Test10MutualLoop.idr`を統合、
+   上記2と同じファイル) -- 相互ループ変換自身の専用
    カバレッジ: アリティの異なるグループメンバー(スロットパディング
    -- 「発見したバグ」#4を捕らえた具体的な形)、3方向サイクル(単純
    なペア以上のSCC)、合成グループ内の同一メンバー内遷移(メンバー間
@@ -1110,7 +1112,8 @@ shadow昇格され*ない*。`loop acc (b :: bs) = loop (step acc b) bs`
    無条件prefix内の`Native Int`な`ROp`。`--directive dumprcexpr`で、
    `loop [...]`の完全に外側、そのパラメータ自身の`RLet`の内側に
    ネストされて着地することを確認する。
-8. `tests/Test21BoxedInvariantNotHoisted.idr` -- 負のケースであり、
+8. `tests/Test19LoopInvariantParam.idr`自身の`sumOrCtx`(同じファイルの
+   さらに下、旧`Test21BoxedInvariantNotHoisted.idr`を統合) -- 負のケースであり、
    この節自身の作業が生み出した中で単一の最も重要な回帰テスト:
    ループの脱出枝でのみ使われる`Boxed`な`Rep`の不変`RCon`。
    `loop [...]`の*内側*に留まり、`valgrind`をクリーンに通ることを

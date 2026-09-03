@@ -57,9 +57,9 @@ neither fixable from the frontend side no matter what a caller
 
 - `Test35NetworkLoopback` — leaks via `network`'s own
   `Network.Socket.Data.parseIPv4`, which calls `fastPack` internally.
-- `Test40SystemProcess` — leaks via `base`'s own
-  `System.File.ReadWrite`'s `fRead'`, which calls `fastConcat`
-  internally.
+- `Test37SystemMisc` (formerly `Test40SystemProcess`) — leaks via
+  `base`'s own `System.File.ReadWrite`'s `fRead'`, which calls
+  `fastConcat` internally.
 
 ## The actual fix: Emit-time interception
 
@@ -194,7 +194,7 @@ past their own `memcpy`'d payload either).
    `idris2rc2_fastPackFixed`, with no recompilation of `network`/`base` needed
    anywhere.
 4. `verify.sh`'s `KNOWN_LEAK_BYTES` map is now genuinely empty — the
-   `Test35NetworkLoopback`/`Test40SystemProcess` entries were removed,
+   `Test35NetworkLoopback`/`Test37SystemMisc` (then `Test40SystemProcess`) entries were removed,
    both confirmed 0 leaked bytes. (`Test35NetworkLoopback` remains in
    `NO_REFC_DIFF_TESTS` for a completely unrelated, still-open reason: a
    real-RefC-only compile bug in `parseIPv4`'s own generated

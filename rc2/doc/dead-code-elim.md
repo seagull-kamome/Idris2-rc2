@@ -216,8 +216,8 @@ would take.
 
 `rc2/tests/Test51DeadCodeInline.idr` (an Inline-orphaned definition,
 which itself further fans out into its own dead DualABI wrapper+worker
-pair) and `rc2/tests/Test52DeadCodeDualABIWrapper.idr` (a DualABI
-wrapper with no tail-position callers) each confirm, by hand:
+pair, and also absorbs the former, separate `Test52DeadCodeDualABIWrapper.idr`'s
+coverage of a DualABI wrapper with no tail-position callers) confirms, by hand:
 
 - functional output unchanged with `--directive nodeadcode` either way
   (this pass changes generated-C *size*, never program behaviour);

@@ -46,8 +46,8 @@ limitation」参照):
 ループになった——`Compiler.RC2.Loop`導入時の`BenchLoop.idr`(約60倍高速化)
 と同種のパターンがヘルパー呼び出しを挟む形にも広がったかたちである。
 
-新規スモークテスト`Test57LoopCallArgNativeShadow.idr`/
-`Test58LoopContinueNativePromotion.idr`(2番目・3番目の最適化それぞれの
+新規スモークテスト`Test57LoopCallArgNativeShadow.idr`(旧
+`Test58LoopContinueNativePromotion.idr`を統合済み、2番目・3番目の最適化それぞれの
 正当性・box除去を生成C直接確認、`verify.sh`の`LEAK_SENSITIVE_TESTS`に
 登録、valgrindで0バイトリーク確認済み)。既存の`Bench*.idr`・`Test*.idr`
 全件に回帰なし(`verify.sh`: 94 passed, 0 known, 0 failed)。
@@ -567,7 +567,7 @@ IDRIS2RC2_Value *rc2_mutualLoop_0(IDRIS2RC2_Value *var_1, IDRIS2RC2_Value *var_2
 生成Cコードを直接確認し、合成関数の本体(`rc2_mutualLoop_0`)に
 `mkClosure`/`trampoline`呼び出しが一切含まれず、全ての内部遷移が
 `goto loop;`のみで完結していることを確認済み。正当性は
-`Test10MutualLoop.idr`(アリティの異なるグループでのスロットパディング、
+`Test9SelfTailLoop.idr`(旧`Test10MutualLoop.idr`を統合済み、アリティの異なるグループでのスロットパディング、
 3方向サイクル、同一メンバー内遷移、グループ外からの非末尾呼び出し・
 クロージャとしての利用、30万〜50万段の深さでの相互末尾再帰)で検証し、
 `idris2 --cg refc`の出力とバイト完全一致することを確認済み(TODO.md

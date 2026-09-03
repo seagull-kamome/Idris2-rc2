@@ -11,7 +11,8 @@
 を一切知らなくなり、それらの自身の今や古くなった`drop [var, ...]`
 (存在した場合)は除去される。
 
-`tests/Test21BoxedInvariantNotHoisted.idr`自身のダンプ(意図的に
+`tests/Test19LoopInvariantParam.idr`に統合された旧
+`Test21BoxedInvariantNotHoisted.idr`自身のダンプ(意図的に
 ホイストされない負のケース、`rc2/doc/loop-conversion.md`の「ループ
 不変式のホイスティング」節参照)を読んでいて見つかった: `let v5 =
 MkCtx tag extra in (ループ自身の脱出判定) then v5 else (v5を使わない)
@@ -192,7 +193,8 @@ in case v1 of Cons ... => ...v4...; Nil => (v4は未使用、なので`drop
 `postDrop`リスト、または(先頭の`RDup`が既に追加の参照で保護した
 どのidかを追跡しながら)先に`dup`されていない`RCon`のフィールド
 (その唯一残る参照は独立して生き残るのではなく新しいコンストラクタ
-へ直接移動する。`tests/Test21BoxedInvariantNotHoisted.idr`自身の
+へ直接移動する。`tests/Test19LoopInvariantParam.idr`に統合された旧
+`Test21BoxedInvariantNotHoisted.idr`自身の
 `dup v0; dup v1; con _ [v0, v1]`は両方のフィールドを先にdupするので、
 正しくここには何も寄与しない)。`addOperandDrops`は、`value`が
 沈まない全ての枝の先頭に、これらのための`drop`を付ける -- これは
@@ -249,7 +251,8 @@ prim__setBits8 [...] in drop [v6]; let v7 = ...; let v8 = ...`という
 `var_6`/...を、それらが一度も宣言されていないスコープで参照して
 おり -- これは静かなリークではなく未宣言識別子のコンパイルエラー
 だった。なぜなら`v5`は実際の制御フローの中ではそこまで一度も到達
-しないからである。`tests/Test23SinkPastSelfDrop.idr`は、
+しないからである。`tests/Test22BranchSinking.idr`に統合された旧
+`Test23SinkPastSelfDrop.idr`のケースは、
 `Data.Buffer`とは独立した専用の回帰テストとして、全く同じ形
 (結果が破棄される`IO ()`呼び出しの連鎖の後に、無関係な値を読む分岐
 が続く)を直接再現する。
@@ -281,7 +284,8 @@ prim__setBits8 [...] in drop [v6]; let v7 = ...; let v8 = ...`という
 - `rc2/src/Compiler/RC2/ConAltNative.idr` -- `peelWrappers`。このパス
   自身のラッパー剥がしケースが鏡写しにしている「先頭ラッパー、
   その後分岐」というイディオム。
-- `tests/Test21BoxedInvariantNotHoisted.idr` -- 動機となったケース、
+- `tests/Test19LoopInvariantParam.idr`に統合された旧
+  `Test21BoxedInvariantNotHoisted.idr`のケース -- 動機となったケース、
   自己末尾ループの内側(`Compiler.RC2.Loop`自身のループ不変式
   ホイスティングの負のケースとしても共有されている)。
 - `tests/Test22BranchSinking.idr` -- 一般的な、ループ非依存のケース:
@@ -291,19 +295,20 @@ prim__setBits8 [...] in drop [v6]; let v7 = ...; let v8 = ...`という
   参照)、単純な`RAppName`呼び出しを沈める`callSinkable`(上記
   「`value`がそもそも候補かどうかの判定」参照)、無関係な`let`越しに
   沈める`skipUnrelatedLet`(上記「無関係な`let`越しに沈める」参照)。
-- `tests/Test23SinkPastSelfDrop.idr` -- このパスが生んだ中で最も
-  深刻なバグ、リークではなく本物のミスコンパイルの専用回帰テスト
-  (上記「`var`自身の死を通り越して剥がさない」参照):
-  `refc-suite/buffer`自身の`TestBuffer.idr`の形(結果が即座に破棄
-  される`IO ()`呼び出しの連鎖の後に、無関係な値を読む分岐が続く)を、
-  `Data.Buffer`とは独立に直接再現する。
+  旧`Test23SinkPastSelfDrop.idr`もここに統合されており、このパスが
+  生んだ中で最も深刻なバグ、リークではなく本物のミスコンパイルの
+  専用回帰テスト(上記「`var`自身の死を通り越して剥がさない」参照)
+  として、`refc-suite/buffer`自身の`TestBuffer.idr`の形(結果が即座に
+  破棄される`IO ()`呼び出しの連鎖の後に、無関係な値を読む分岐が
+  続く)を、`Data.Buffer`とは独立に直接再現する。
 - `tests/Test2Recursion.idr`/`tests/Test9SelfTailLoop.idr`/
   `refc-suite/buffer/TestBuffer.idr` -- 既存のテスト(最初の2つは、
   それらが推移的に取り込むPrelude関数経由)であり、上記で文書化した
   4つの本物のバグのうち3つを捕まえた。最初の2つについては専用の
   新規回帰テストは不要だった。既存のフルスイート実行が既にその両方
   の形を演習しているため(3つ目の`TestBuffer.idr`自身の形について
-  は、代わりに`Test23SinkPastSelfDrop.idr`が専用の回帰テストとして
+  は、代わりに`Test22BranchSinking.idr`に統合された旧
+  `Test23SinkPastSelfDrop.idr`が専用の回帰テストとして
   追加された。`refc-suite`だけに頼ってそれを捕まえ続けるのは、ここで
   見つかった単一の最も深刻なバグにしては間接的すぎると感じられた
   ため)。

@@ -1,11 +1,12 @@
 module Main
 
 -- Measures Compiler.RC2.DualABI's call-argument promotion (rc2/doc/
--- dual-abi.md; see Test56NativeCallArgChain.idr): an RLet-bound
--- worker call's result that's consumed only as *another* worker's own
--- native argument used to box the intermediate value only to
--- immediately unbox it again at the callee's own entry. Same shape as
--- Test56NativeCallArgChain.idr, hot-looped.
+-- dual-abi.md; see Test13NativeArgChain.idr, which absorbed the former
+-- Test56NativeCallArgChain.idr): an RLet-bound worker call's result
+-- that's consumed only as *another* worker's own native argument used
+-- to box the intermediate value only to immediately unbox it again at
+-- the callee's own entry. Same shape as Test13NativeArgChain.idr's
+-- own former-Test56 half, hot-looped.
 --
 -- addAbs's own body calls prim__labs (not call-free), so
 -- Compiler.RC2.Inline can't splice it into chain before DualABI ever

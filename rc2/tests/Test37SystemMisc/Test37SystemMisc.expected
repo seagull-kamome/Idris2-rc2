@@ -1,0 +1,29 @@
+currentDir: ok
+createDir: ok
+changeDir: ok
+has a.txt: True
+has b.txt: True
+changeDir back: ok
+removeDir: ok
+done
+collectSignal: ok
+raiseSignal: ok
+collected signal is SigUser1: True
+no more pending signals: ok
+defaultSignal: ok
+done
+cols non-negative: True
+lines non-negative: True
+done
+system true exit code: 0
+system false exit code: 1
+run output: "hello-rc2\n"
+run exit code: 0
+done
+line 1: "line one\n"
+line 2: "line two\n"
+eof after two lines: False
+chmod: ok
+removeFile: ok
+file gone after removeFile: ok
+done

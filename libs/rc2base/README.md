@@ -415,8 +415,8 @@ build's own runtime also happens to provide.
 
 Direct `%foreign` bindings onto real GMP `mpz_*` functions -- made
 possible by `Compiler.RC2.Emit`'s own `Integer`-as-`%foreign`-argument-
-and-return support (`rc2/tests/Test54FFIInteger.idr`/
-`Test55FFIIntegerReturn.idr`): the very `mpz_t` backing every ordinary
+and-return support (`rc2/tests/Test54FFIInteger.idr`, which also
+absorbed the former `Test55FFIIntegerReturn.idr`): the very `mpz_t` backing every ordinary
 Idris `Integer` in this runtime is handed to (arguments) or freshly
 allocated for (an implicit, leading out-parameter for a return value,
 exactly matching GMP's own `rop`-always-first convention -- `mpz_add

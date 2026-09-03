@@ -1,5 +1,0 @@
-system true exit code: 0
-system false exit code: 1
-run output: "hello-rc2\n"
-run exit code: 0
-done

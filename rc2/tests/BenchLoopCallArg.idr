@@ -3,7 +3,8 @@ module Main
 -- Measures Compiler.RC2.Loop's call-argument-based native-shadow
 -- eligibility plus Compiler.RC2.DualABI's RLoopContinue native
 -- promotion (rc2/doc/loop-conversion.md; see
--- Test57LoopCallArgNativeShadow.idr / Test58LoopContinueNativePromotion.idr):
+-- Test57LoopCallArgNativeShadow.idr, which absorbed the former
+-- Test58LoopContinueNativePromotion.idr):
 -- a loop-carried accumulator threaded only through a helper call's own
 -- native argument, and the helper's own native return fed straight
 -- back into RLoopContinue, used to box/unbox on every iteration.

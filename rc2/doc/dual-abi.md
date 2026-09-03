@@ -207,7 +207,7 @@ Confirmed against the existing test/benchmark suite:
   the same function.
 - `Main.swapLoop`, and every `Compiler.RC2.MutualLoop`-produced
   per-member wrapper (`Main.isEvenM`/`isOddM`/`stepA`/`stepB` in
-  `Test10MutualLoop.idr`) -> nothing eligible, correctly (no
+  `Test9SelfTailLoop.idr`) -> nothing eligible, correctly (no
   `ROp`/`RCmpCase` use of their own parameters at all -- a wrapper's own
   body is just a forwarding call to the merged function).
 
@@ -217,7 +217,7 @@ Confirmed against the existing test/benchmark suite:
 to its per-member wrappers above) **can** show real eligibility for a
 shared slot some group member reads natively, even though a
 *different*, smaller-arity member only ever supplies `RCNull` there --
-confirmed directly against `Test10MutualLoop.idr`'s own `stepA`/`stepB`
+confirmed directly against `Test9SelfTailLoop.idr`'s own `stepA`/`stepB`
 group (`{rc2_mutualLoop:0}: params=["1:Boxed", "2:Boxed", "3:Int",
 "4:Int"]`). This is the *exact* shape that already caused two real
 crashes during `Compiler.RC2.Loop`'s own native-shadow promotion (see
@@ -669,21 +669,22 @@ still renders correctly either way: closure slots only ever hold
 other still-Boxed-context use -- the same "reboxed on demand, still
 correct" reasoning `nativePromotionFor` itself already relies on.
 
-`rc2/tests/Test56NativeCallArgChain.idr`'s own `chain`/`addAbs` is the
-concrete before/after (`addAbs`'s own body calls an FFI declaration, so
+`rc2/tests/Test13NativeArgChain.idr`'s own `chainCallArg`/`addAbsCallArg`
+(formerly a separate `Test56NativeCallArgChain.idr`, merged in) is the
+concrete before/after (`addAbsCallArg`'s own body calls an FFI declaration, so
 it's never `Compiler.RC2.Inline`-eligible, and its first parameter is
-native only via the nested-`RLet`-body fix `Test13NativeArgChain.idr`
+native only via the nested-`RLet`-body fix this same file's own `chain`
 covers -- both deliberately chosen so the call itself, and a genuinely
 native target argument, both survive to Stage 4 intact):
 
 ```c
 // before this extension
 IDRIS2RC2_Value * var_3 = (IDRIS2RC2_Value*)idris2rc2_mkInt64(abs(idris2rc2_to_i64(var_0)));
-int64_t var_2 = idris2rc2_worker_Main_addAbs_1(var_3, var_1);
+int64_t var_2 = idris2rc2_worker_Main_addAbsCallArg_1(var_3, var_1);
 
 // after
 int64_t var_3 = abs(idris2rc2_to_i64(var_0));
-int64_t var_2 = idris2rc2_worker_Main_addAbs_1(var_3, var_1);
+int64_t var_2 = idris2rc2_worker_Main_addAbsCallArg_1(var_3, var_1);
 ```
 
 `var_3` no longer round-trips through `IDRIS2RC2_Value *` at all between
@@ -834,21 +835,23 @@ cast, to zero- rather than sign-extend a `char` whose top bit is set)
 on the way out -- the same narrowing/widening the always-Boxed wrapper
 already pays via `idris2rc2_to_char`/`idris2rc2_mkChar`, just as a
 register-width cast instead of a box/unbox round trip.
-`rc2/tests/Test50FFIInlineNoWorker.idr`'s own `prim__bumpChar50` case
-(codepoint 254 -> 255) exercises the same regression `Test27FFIDualABI.idr`'s
-`prim__bumpChar` case always has, now through the inline path instead
-of a worker's own body.
+`rc2/tests/Test27FFIDualABI.idr`'s own `prim__bumpChar50` case
+(codepoint 254 -> 255, absorbed from the former `Test50FFIInlineNoWorker.idr`)
+exercises the same regression that same file's own `prim__bumpChar`
+case always has, now through the inline path instead of a worker's own
+body.
 
-`rc2/tests/Test50FFIInlineNoWorker.idr` is Stage 5's own dedicated
-regression/smoke test -- mirrors `Test27FFIDualABI.idr`'s signature
-coverage (all-native args+return, a mixed Int+String signature, a
+That absorbed `prim__add50`/`prim__mixed50`/`prim__noop50`/`prim__bumpChar50`
+group is Stage 5's own dedicated regression/smoke test coverage --
+mirrors this same file's original Stage 3c signature coverage
+(all-native args+return, a mixed Int+String signature, a
 `CFChar` narrow/widen round trip, an Int arg with a Boxed `CFUnit` IO
 return) but under the new design, registered in `verify.sh`'s
 `LEAK_SENSITIVE_TESTS`. Confirmed correct against real `idris2 --cg
 refc` byte-for-byte, leak-free (`valgrind --leak-check=full`,
 `definitely lost: 0 bytes`), and -- by hand -- `grep -c
 idris2rc2_ffiworker_` against the generated `.c` for `Test27FFIDualABI`/
-`Test48WideFFIDualABIWorker`/`Test50FFIInlineNoWorker` all return `0`:
+`Test33WideDualABIWorker` all return `0`:
 no standalone FFI worker C function is emitted anywhere any more,
 confirming the earlier `emitFFIWorker`-based design is genuinely gone,
 not merely dead code.
@@ -1195,12 +1198,14 @@ the closest analogue to bug #2 above) passed without any fix needed.
    `runtime.c` pointing at `Compiler/RC2/RC2.idr` for where
    `MaxExtractFunArgs` lives was also corrected to
    `Compiler/RC2/EmitUtil.idr`, its real location. Verified with
-   `rc2/tests/Test34WideClosureDispatch.idr` -- a 20-parameter function
-   reached via a genuine partial-application chain (not a direct/
-   saturated call), forcing it through a real `Closure` and
-   `dispatchClosure` to exercise the new `case 9`..`case 20` paths, the
-   way `Test33WideDualABIWorker.idr` exercises the worker-side width
-   exemption; registered in `verify.sh`'s `LEAK_SENSITIVE_TESTS`,
+   `rc2/tests/Test33WideDualABIWorker.idr`'s own `add20` (formerly a
+   separate `Test34WideClosureDispatch.idr`, merged in) -- a
+   20-parameter function reached via a genuine partial-application
+   chain (not a direct/saturated call), forcing it through a real
+   `Closure` and `dispatchClosure` to exercise the new `case 9`..`case
+   20` paths, the way that same file's own `wideAdd`/`prim__wide`
+   exercise the worker-side width exemption; registered in
+   `verify.sh`'s `LEAK_SENSITIVE_TESTS`,
    `valgrind` confirming `0 bytes definitely lost`. Full refc-suite
    (19/19) and smoke-test matrix still pass; `bench.sh` shows no
    regression.
@@ -1232,10 +1237,11 @@ the closest analogue to bug #2 above) passed without any fix needed.
    natively-eligible-position check (`if not (any anyNative argReps)
    && not (anyNative retRep) then pure [] else ...`) regardless of its
    own arity, with no width-based exclusion left anywhere in Stage 3c.
-   Verified with `rc2/tests/Test48WideFFIDualABIWorker.idr` (a
-   15-parameter `%foreign` declaration -- 12 native-eligible `Int`s + 3
-   `Boxed` `String`s, mirroring `Test33WideDualABIWorker.idr`'s own
-   "mostly native, some Boxed" shape but past what the old limit would
+   Verified with `rc2/tests/Test33WideDualABIWorker.idr`'s own
+   `prim__wide` (formerly a separate `Test48WideFFIDualABIWorker.idr`,
+   merged in) -- a 15-parameter `%foreign` declaration -- 12
+   native-eligible `Int`s + 3 `Boxed` `String`s, a "mostly native, some
+   Boxed" shape but past what the old limit would
    have excluded -- called fully saturated from `main` so Stage 4's own
    call-site rewriting fires): the generated C was inspected by hand
    and shows `idris2rc2_ffiworker_Main_prim__wide_0` declared with 12
@@ -1275,7 +1281,7 @@ the closest analogue to bug #2 above) passed without any fix needed.
     `RV`, `RAppNameRep`, `ROp` -- already had a genuine `RCLocal` in
     hand, so this only ever meant one extra `map varName` at each of
     those existing call sites, not a behavior change for them).
-    Re-verified: `rc2/tests/Test50FFIInlineNoWorker.idr`'s own
+    Re-verified: `rc2/tests/Test27FFIDualABI.idr`'s own
     `prim__mixed50` (a `String`-typed argument) compiles and runs
     correctly; full `verify.sh` (all tests) and `refc-suite/run.sh`
     (19/19) unaffected.
@@ -1441,14 +1447,12 @@ from Stage 2.
   reference-leak bug above; verify with `valgrind --leak-check=full`,
   not just a stdout diff (see the test file's own comment).
 - `rc2/tests/Test27FFIDualABI.idr`/`.c`/`.h` -- Stage 3c/5's own
-  original regression/smoke test; verify with `valgrind
-  --leak-check=full`, same reasoning as `Test11DualABILeak.idr` above.
-- `rc2/tests/Test50FFIInlineNoWorker.idr`/`.c`/`.h` -- Stage 5's own
-  dedicated regression/smoke test, mirroring `Test27FFIDualABI.idr`'s
-  own signature coverage but written specifically to confirm no
-  standalone `idris2rc2_ffiworker_*` C function is emitted any more;
-  registered in `verify.sh`'s `LEAK_SENSITIVE_TESTS`, verify with
-  `valgrind --leak-check=full` same as the other two above.
+  original regression/smoke test, also absorbing the former, separate
+  `Test50FFIInlineNoWorker.idr`'s dedicated Stage 5 coverage (written
+  specifically to confirm no standalone `idris2rc2_ffiworker_*` C
+  function is emitted any more; registered in `verify.sh`'s
+  `LEAK_SENSITIVE_TESTS`); verify with `valgrind --leak-check=full`,
+  same reasoning as `Test11DualABILeak.idr` above.
 
 ## Verification methodology
 

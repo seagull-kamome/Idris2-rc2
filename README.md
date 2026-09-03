@@ -50,7 +50,7 @@ rc2/
 ├── support/rc2/       the runtime library (libidris2rc2.a) linked into every rc2-compiled program
 ├── doc/               deep-dive design notes per pass -- see rc2/CLAUDE.md's own Layout section for the index
 └── tests/
-    ├── Test1Basics.idr .. Test43FileExtra.idr  hand-written smoke tests, one per pass/bug found
+    ├── Test1Basics.idr .. Test59ExportScalar.idr  hand-written smoke tests, one per pass/bug found
     ├── Bench*.idr                                       benchmarks vs. upstream RefC
     ├── verify.sh                                        one-shot build + full regression run (see Testing below)
     ├── bench.sh                                         one-shot benchmark run (see Testing below)

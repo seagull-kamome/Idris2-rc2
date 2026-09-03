@@ -637,7 +637,8 @@ directly while implementing this pass -- a `Boxed`-`Rep` invariant
 `RCon` used only on the loop's exit arm crashed with `malloc():
 unaligned tcache chunk detected`, `valgrind`-confirmed as a genuine
 double-free, before the `isNativeRep` guard existed (see
-`tests/Test21BoxedInvariantNotHoisted.idr`, a permanent regression test
+`tests/Test19LoopInvariantParam.idr`'s own absorbed former
+`Test21BoxedInvariantNotHoisted.idr` case, a permanent regression test
 for exactly this shape). A native result sidesteps the entire issue
 structurally: native values are never dup'd/dropped anywhere in this
 runtime, so no branch can ever hold a stale drop for one. In today's
@@ -701,7 +702,7 @@ solves.
 Each original member's own top-level name keeps working as a normal,
 independently-callable function (for external callers, and for any
 *non*-tail use -- e.g. being passed around as a closure, which
-`Test10MutualLoop.idr` specifically exercises) -- it becomes a thin
+`Test9SelfTailLoop.idr` specifically exercises) -- it becomes a thin
 wrapper that just calls the merged function once with its own tag and
 arguments and returns whatever comes back.
 
@@ -726,7 +727,7 @@ Idris2's own totality/stack constraints rather than a naive recursive
 Tarjan) implementation of Tarjan's strongly-connected-components
 algorithm over that graph. Using SCCs rather than only looking for
 direct pairs is what lets `applyMutualLoop` find *indirect* cycles too
-(`A -> B -> C -> A`, not just `A -> B -> A`) -- `Test10MutualLoop.idr`'s
+(`A -> B -> C -> A`, not just `A -> B -> A`) -- `Test9SelfTailLoop.idr`'s
 own `cycleA`/`cycleB`/`cycleC` group specifically exercises this. Only
 components of size `>= 2` are merged; a size-1 component is just an
 ordinary (possibly self-recursive) function, already `Compiler.RC2.Loop`'s
@@ -917,7 +918,7 @@ C is entirely mechanical, living in `Emit.idr`.
    shared slot can be promoted to `RNative` because *some* group member
    reads it natively, even though *other* members only ever receive
    `RCNull` there (their own arity is smaller). Found via
-   `Test10MutualLoop.idr`'s own differing-arity `stepA`/`stepB` group
+   `Test9SelfTailLoop.idr`'s own differing-arity `stepA`/`stepB` group
    (`stepA : Nat -> Int -> Int -> Int`, `stepB : Nat -> Int -> Int`),
    which segfaulted after native-shadow promotion landed even though
    every other test still passed.
@@ -936,7 +937,7 @@ C is entirely mechanical, living in `Emit.idr`.
      C type this can be (`int64_t`, `double`, unsigned widths, all
      accept a bare `0`).
    - **Site 2 -- loop entry, via `declareLoopParam`**: a *first* fix
-     (site 1 alone) didn't fully resolve the crash -- `Test10MutualLoop.idr`
+     (site 1 alone) didn't fully resolve the crash -- `Test9SelfTailLoop.idr`
      still segfaulted. The actual crash was one level earlier:
      `declareLoopParam`'s own unboxing of `initial`'s value (reading
      the merged function's own top-level parameter, at genuine function
@@ -961,7 +962,7 @@ C is entirely mechanical, living in `Emit.idr`.
      provably unnecessary.
 
    Both fixes were verified against the full matrix again: 19/19
-   refc-suite, all smoke tests (`Test1Basics.idr`-`Test10MutualLoop.idr`),
+   refc-suite, all smoke tests (`Test1Basics.idr`-`Test9SelfTailLoop.idr`),
    all benchmarks, byte-for-byte/crash-free against `idris2 --cg refc`.
 5. **`RLoopContinue` never dropped a natively-read Boxed continuation
    argument, and a second, independent leak in `ROp`'s own Boxed-result
@@ -1143,8 +1144,9 @@ native-context consumer of a preceding `RLet`. Fixed by
 the same tail-preserving spine `fillLoopContinuePostDrop` does, and
 asks whether the `RLet`-bound value is fed straight into the enclosing
 `RLoop`'s own `RLoopContinue` at a position `loopParams` already marks
-native. Confirmed via `rc2/tests/Test58LoopContinueNativePromotion.idr`
-(same `step`/`loop` shape as Test57): the `RLet` binding `step`'s call
+native. Confirmed via `rc2/tests/Test57LoopCallArgNativeShadow.idr`'s
+own absorbed former `Test58LoopContinueNativePromotion.idr` case
+(reuses the same file's own `step`/`loop` shape verbatim): the `RLet` binding `step`'s call
 result now shows `Native Int`, and the generated C declares that local
 straight off the worker call (`int64_t var_4 = idris2rc2_worker_...`)
 with no boxing/unboxing call in between it and the `goto loop;`
@@ -1213,7 +1215,8 @@ benchmark:
    alongside its `String` passthrough) and of a loop parameter promoted
    via its `RConstCase` use rather than an `ROp`/`RCmpCase` one (see
    "Bugs found" #3).
-3. `tests/Test10MutualLoop.idr` -- mutual-loop conversion's own
+3. `tests/Test9SelfTailLoop.idr` (same file as item 2 above, absorbing
+   the former `Test10MutualLoop.idr`) -- mutual-loop conversion's own
    dedicated coverage: differing-arity group members (slot padding --
    the specific shape that caught "Bugs found" #4), a 3-way cycle (SCC
    beyond the trivial pairwise case), a same-member transition inside a
@@ -1261,7 +1264,9 @@ benchmark:
    native-shadow parameter, confirmed via `--directive dumprcexpr` to
    land outside `loop [...]` entirely, nested inside that parameter's
    own `RLet`.
-8. `tests/Test21BoxedInvariantNotHoisted.idr` -- the negative case, and
+8. `tests/Test19LoopInvariantParam.idr`'s own `sumOrCtx` (further down
+   in the same file, absorbing the former `Test21BoxedInvariantNotHoisted.idr`)
+   -- the negative case, and
    the single most important regression test this section's own work
    produced: a `Boxed`-`Rep` invariant `RCon` used only on the loop's
    exit arm, confirming it stays *inside* `loop [...]` and passes

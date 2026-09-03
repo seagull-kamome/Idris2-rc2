@@ -133,7 +133,8 @@ stripIfUnused var branch =
 ||| with its own extra reference) any `RCon` field *not* `dup`'d first
 ||| -- the field's own sole remaining reference then moves straight
 ||| into the new constructor rather than surviving independently
-||| (contrast `tests/Test21BoxedInvariantNotHoisted.idr`'s own `dup v0;
+||| (contrast `tests/Test19LoopInvariantParam.idr`'s own absorbed former
+||| `Test21BoxedInvariantNotHoisted.idr` case, `dup v0;
 ||| dup v1; con _ [v0, v1]`, where both fields *are* `dup`'d first, so
 ||| `v0`/`v1` themselves keep living on past the `con` -- correctly not
 ||| counted here, `consumedOperands` for that one is `[]`).

@@ -9,8 +9,9 @@ into that one arm instead -- every other arm no longer knows `var`
 exists at all, and its own now-stale `drop [var, ...]` (if it had one)
 is removed.
 
-Found while reading `tests/Test21BoxedInvariantNotHoisted.idr`'s own
-dump (the deliberately-not-hoisted negative case from
+Found while reading `tests/Test19LoopInvariantParam.idr`'s own
+absorbed former `Test21BoxedInvariantNotHoisted.idr` dump (the
+deliberately-not-hoisted negative case from
 `rc2/doc/loop-conversion.md`'s "Loop-invariant expression hoisting"
 section): `let v5 = MkCtx tag extra in (loop's own exit check) then v5
 else (doesn't use v5) ...` rebuilds `v5` -- and immediately drops it,
@@ -186,8 +187,9 @@ an `ROp`'s own `postDrop` list, or (tracking which ids a leading
 `RDup` already protected with an extra reference) any `RCon` field
 *not* `dup`'d first, whose own sole remaining reference moves straight
 into the new constructor rather than surviving independently
-(`tests/Test21BoxedInvariantNotHoisted.idr`'s own `dup v0; dup v1; con
-_ [v0, v1]` `dup`s both fields first, so correctly contributes nothing
+(`tests/Test19LoopInvariantParam.idr`'s own absorbed former
+`Test21BoxedInvariantNotHoisted.idr` case, `dup v0; dup v1; con
+_ [v0, v1]`, `dup`s both fields first, so correctly contributes nothing
 here). `addOperandDrops` prefixes every arm `value` doesn't sink into
 with a `drop` for these -- exactly replacing the release `value`'s own
 `postDrop`/field-move used to unconditionally provide every time --
@@ -244,7 +246,8 @@ identical chain, all the way to a distant, unrelated branch, and sank
 where they were never declared -- an undeclared-identifier compile
 error, not a silent leak, since `v5` genuinely never reaches that far
 in the real control flow at all.
-`tests/Test23SinkPastSelfDrop.idr` reproduces the same shape directly
+`tests/Test22BranchSinking.idr`'s own absorbed former
+`Test23SinkPastSelfDrop.idr` case reproduces the same shape directly
 (a chain of `IO ()` calls whose result is discarded, followed by a
 branch reading an unrelated value) as a dedicated regression,
 independent of `Data.Buffer`.
@@ -275,7 +278,8 @@ this stage alone, same convention as every other optional stage (see
 - `rc2/src/Compiler/RC2/ConAltNative.idr` -- `peelWrappers`, the
   "leading-wrapper-then-branch" idiom this pass's own wrapper-peeling
   cases mirror.
-- `tests/Test21BoxedInvariantNotHoisted.idr` -- the motivating case,
+- `tests/Test19LoopInvariantParam.idr`'s own absorbed former
+  `Test21BoxedInvariantNotHoisted.idr` case -- the motivating case,
   inside a self-tail loop (shared with `Compiler.RC2.Loop`'s own
   loop-invariant expression hoisting as its negative case).
 - `tests/Test22BranchSinking.idr` -- the general, loop-independent
@@ -285,9 +289,9 @@ this stage alone, same convention as every other optional stage (see
   level" above), `callSinkable` for sinking a plain `RAppName` call
   (see "Deciding whether `value` is even a candidate" above), and
   `skipUnrelatedLet` for sinking past an unrelated `let` (see "Sinking
-  past an unrelated `let`" above).
-- `tests/Test23SinkPastSelfDrop.idr` -- dedicated regression for the
-  most serious bug this pass produced, a real miscompile rather than a
+  past an unrelated `let`" above). Also absorbs the former, separate
+  `Test23SinkPastSelfDrop.idr`'s dedicated regression for the most
+  serious bug this pass produced, a real miscompile rather than a
   leak (see "Not peeling through `var`'s own death" above):
   reproduces `refc-suite/buffer`'s own `TestBuffer.idr` shape (a chain
   of `IO ()` calls whose result is immediately discarded, followed by
@@ -299,6 +303,7 @@ this stage alone, same convention as every other optional stage (see
   of the four real bugs documented above; no dedicated new regression
   test needed for the first two since the existing full-suite run
   already exercises both shapes (the third, `TestBuffer.idr`'s own
-  shape, got `Test23SinkPastSelfDrop.idr` as a dedicated regression
+  shape, got `Test22BranchSinking.idr`'s own absorbed former
+  `Test23SinkPastSelfDrop.idr` case as a dedicated regression
   instead, since relying on `refc-suite` alone to keep catching it
   felt too indirect for the single most serious bug found here).
