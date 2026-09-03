@@ -296,6 +296,19 @@ fork (`forkJoin`/`join`/`JoinHandle`), added because upstream's own
 same way `Mutex` was. See `rc2/doc/concurrency.md` for the full design
 history and the memory-order reasoning behind the atomic refcount.
 
+`%export "lang:name"` gets the same treatment, one direction further
+out: upstream RefC ignores the pragma entirely (no C-ABI marshalling of
+any kind), and the JS backend only unmangles the name (still a JS
+closure underneath, not a native call boundary). rc2 generates a real
+native-C-ABI wrapper -- boxing native arguments in, unboxing a native
+result back out -- for scalar-typed (`Int`/`Int8`/.../`Double`/`Char`,
+plus `IO`/`IORes` of one) exported functions, callable from plain C
+with no Idris/rc2 API involved at all (`rc2/tests/Test59ExportScalar.c`
+calls its own program's exported symbols directly). See
+`rc2/doc/export-support.md` for the scope, the design, and one
+non-obvious bug found and fixed along the way (an `%export`ed name is
+now correctly kept live through dead-code elimination).
+
 ## `%cg rc2` directives
 
 Idris2 has a generic, backend-agnostic `%cg <codegen> <directive>` source

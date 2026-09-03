@@ -27,6 +27,7 @@ import Compiler.RC2.Reuse
 import Compiler.RC2.MutualLoop
 import Compiler.RC2.Loop
 import Compiler.RC2.Sink
+import Compiler.RC2.Types
 
 import Compiler.Common
 import Compiler.LambdaLift
@@ -34,7 +35,10 @@ import Compiler.LambdaLift
 import Core.CompileExpr
 import Core.Context
 import Core.Directory
+import Core.Env
+import Core.Normalise
 import Core.Options
+import Core.Value
 
 import Data.SortedMap
 import Data.SortedSet
@@ -182,6 +186,130 @@ collectLazyCAFs = SortedSet.fromList . mapMaybe isLazyCAF
     isLazyCAF (n, _, MkNmFun [] (NmDelay _ _ _)) = Just n
     isLazyCAF _ = Nothing
 
+||| Recognizes exactly the CFTypes %export's scalar-only scope
+||| supports, plus the PrimIO IO/IORes wrapper (peeled to CFIORes so
+||| Compiler.RC2.DualABI's own peelIORes/cfTypeNative apply uniformly
+||| afterward) -- nothing for String/Ptr/Buffer/Integer/CFStruct/
+||| CFUser/CFFun, all deliberately out of %export's own narrower scope
+||| (unlike %foreign, which supports all of them via
+||| Compiler.CompileExpr's own nfToCFType/getCFTypes -- not reused here
+||| since those accept the full FFI type vocabulary %export
+||| deliberately doesn't).
+exportNfToCFType : {auto c : Ref Ctxt Defs} -> Defs -> NF [] -> Core (Maybe CFType)
+exportNfToCFType defs (NPrimVal _ (PrT ty)) = pure $ case ty of
+    IntType => Just CFInt;  Int8Type => Just CFInt8;  Int16Type => Just CFInt16
+    Int32Type => Just CFInt32; Int64Type => Just CFInt64
+    Bits8Type => Just CFUnsigned8; Bits16Type => Just CFUnsigned16
+    Bits32Type => Just CFUnsigned32; Bits64Type => Just CFUnsigned64
+    DoubleType => Just CFDouble; CharType => Just CFChar
+    WorldType => Just CFWorld
+    _ => Nothing
+-- `NS (mkNamespace "PrimIO") (UN (Basic "IO"))` confirmed empirically
+-- (a temporary `coreLift $ putStrLn "DEBUG NTCon: \{show fn}"` here,
+-- compiling a probe `%export`ed `IO Int`-returning function and
+-- observing "DEBUG NTCon: PrimIO.IO") rather than trusted from source
+-- reading alone -- `IO`/`IORes` are both genuine `data` types
+-- (`libs/prelude/PrimIO.idr`), so their `NTCon` name is exactly their
+-- own declaration site's full name, no further unmangling needed.
+exportNfToCFType defs (NTCon _ n _ args) = do
+    fn <- toFullNames n
+    case (fn, map snd args) of
+         (NS ns (UN (Basic nm)), [arg]) =>
+             if ns == mkNamespace "PrimIO" && (nm == "IO" || nm == "IORes")
+                then map CFIORes <$> (exportNfToCFType defs !(evalClosure defs arg))
+                else pure Nothing
+         _ => pure Nothing
+exportNfToCFType _ _ = pure Nothing
+
+||| Peels every leading `Pi` off a normalized closed type, `Nothing` at
+||| each position `exportNfToCFType` doesn't recognize -- mirrors
+||| upstream's own `Compiler.CompileExpr.getCFTypes`, narrowed to
+||| %export's own scalar-only vocabulary.
+exportCFSignature : {auto c : Ref Ctxt Defs} -> NF [] -> Core (List (Maybe CFType), Maybe CFType)
+exportCFSignature (NBind fc _ (Pi _ _ _ ty) sc) = do
+    defs <- get Ctxt
+    aty <- exportNfToCFType defs !(evalClosure defs ty)
+    sc' <- sc defs (toClosure defaultOpts Env.empty (Erased fc Placeholder))
+    (rest, ret) <- exportCFSignature sc'
+    pure (aty :: rest, ret)
+exportCFSignature t = do
+    defs <- get Ctxt
+    pure ([], !(exportNfToCFType defs t))
+
+isCFWorld : CFType -> Bool
+isCFWorld CFWorld = True
+isCFWorld _ = False
+
+||| Validates one %export'ed name against its own real elaborated
+||| type, deriving the native CFType signature the wrapper needs.
+||| Throws a clear, attributable GenericMsg for any unsupported shape
+||| (non-scalar argument/return, arity mismatch from an
+||| implicit/auto-implicit argument) -- same philosophy as the CFFun-
+||| %foreign-return-type fix (`checkForeignReturn`, Compiler.RC2.RC):
+||| fail immediately and attributably at the one point that still has
+||| the declaration's own Name, not via a downstream mystery.
+|||
+||| `exported cdata`'s own Name is `Resolved` (Compiler.Common's
+||| `getExports` calls `resolved`, not `toFullNames`), while
+||| `lambdaLifted cdata`'s keys are already full names -- `getFullName`
+||| bridges the two so the `SortedMap Name LiftedDef` lookup below
+||| actually finds the def instead of silently missing it.
+validateExport : {auto c : Ref Ctxt Defs} -> SortedMap Name LiftedDef -> (Name, String) -> Core (Name, String, List CFType, CFType)
+validateExport liftedByName (n, exportedName) = do
+    defs <- get Ctxt
+    n' <- getFullName n
+    Just ty <- lookupTyExact n (gamma defs)
+        | Nothing => throw $ InternalError "[rc2] %export \{exportedName}: no type for \{show n'}"
+    (argsRaw, retRaw) <- exportCFSignature !(nf defs [] ty)
+    let badPositions = mapMaybe (\(i, mt) => if isNothing mt then Just i else Nothing) (zip [0 .. length argsRaw] argsRaw)
+    when (not (isNil badPositions)) $
+        throw $ GenericMsg EmptyFC
+            "[rc2] %export declaration \{exportedName} (\{show n'})'s own argument(s) \{show badPositions} own type isn't a supported native scalar -- %export only supports scalar-typed (Int/Int8/.../Double/Char) arguments"
+    ret <- case retRaw of
+        Just r => pure r
+        Nothing => throw $ GenericMsg EmptyFC
+            "[rc2] %export declaration \{exportedName} (\{show n'})'s own return type isn't a supported native scalar -- %export only supports a scalar (or IO-of-scalar, or IO ()) return type"
+    let args = mapMaybe id argsRaw
+    let realArgs = filter (not . isCFWorld) args
+    let retPeeled = peelIORes ret
+    case retPeeled of
+         CFUnit => pure ()
+         _ => case cfTypeNative retPeeled of
+                   Just _  => pure ()
+                   Nothing => throw $ GenericMsg EmptyFC "[rc2] %export declaration \{exportedName} (\{show n'})'s own return type \{show retPeeled} isn't a supported native scalar"
+    for_ (zip [0 .. length realArgs] realArgs) $ \(i, a) =>
+        case cfTypeNative a of
+             Just _  => pure ()
+             Nothing => throw $ GenericMsg EmptyFC "[rc2] %export declaration \{exportedName} (\{show n'})'s own argument \{show i} (\{show a}) isn't a supported native scalar"
+    when (length realArgs > 20) $
+        throw $ GenericMsg EmptyFC
+            "[rc2] %export declaration \{exportedName} (\{show n'}) declares \{show (length realArgs)} argument(s) -- %export doesn't support more than 20"
+    let Just ld = lookup n' liftedByName
+        | Nothing => throw $ InternalError "[rc2] %export \{exportedName}: \{show n'} has no Lifted def"
+    ldArgs <- the (Core (List Name)) $ case ld of
+                   MkLFun largs _ _ => pure largs
+                   _ => throw $ GenericMsg EmptyFC "[rc2] %export declaration \{exportedName} (\{show n'}) isn't an ordinary function (foreign/constructor?)"
+    -- An `IO`/`IORes`-returning declaration's own compiled arity is one
+    -- more than its own source-level argument count: unlike `main`
+    -- (whose `%MkWorld` token is already applied at the very top of the
+    -- whole program, before lambda lifting, giving `__mainExpression`
+    -- its own well-known arity-0 shape), an ordinary `%export`ed
+    -- function still carries a real, un-erased trailing World
+    -- parameter (quantity 1, not 0) all the way through Lifted -- see
+    -- `rc2/doc/export-support.md`'s own "World argument" note, found by
+    -- empirically probing this exact shape (a naive `length realArgs
+    -- == length ldArgs` comparison throws a spurious arity-mismatch
+    -- error on every IO-returning export otherwise). `emitExportWrapper`
+    -- supplies this same slot as a boxed NULL constant when calling in,
+    -- mirroring `packCFType`/`extractValue`'s own existing `CFWorld`
+    -- convention.
+    let retIsIO = case ret of CFIORes _ => True; _ => False
+    let expectedArity = length realArgs + (if retIsIO then 1 else 0)
+    when (expectedArity /= Prelude.List.length ldArgs) $
+        throw $ GenericMsg EmptyFC
+            "[rc2] %export declaration \{exportedName} (\{show n'}) declares \{show (length realArgs)} scalar argument(s) but its compiled definition has arity \{show (Prelude.List.length ldArgs)} -- likely an implicit/auto-implicit argument in its own type signature, which %export doesn't support"
+    pure (n', exportedName, realArgs, ret)
+
 export
 compileExpr : Ref Ctxt Defs
            -> Ref Syn SyntaxInfo
@@ -215,8 +343,20 @@ compileExpr c s _ outputDir tm outfile =
      directiveList <- getDirectives (Other "rc2")
      let disabledStages = filter (`elem` directiveList)
                              ["noinline", "noconaltnative", "nomutualloop", "noloop", "nosink", "nodualabi", "nodeadcode"]
-     cdata <- getCompileData False Lifted tm
-     let roots = MN "__mainExpression" 0 :: map fst (exported cdata)
+     cdata <- getCompileDataWith ["RC2", "RefC", "C"] False Lifted tm
+     let liftedByName = SortedMap.fromList (lambdaLifted cdata)
+     exportedSigs <- traverse (validateExport liftedByName) (exported cdata)
+     -- `exported cdata`'s own Name is `Resolved` (Compiler.Common's
+     -- `getExports` calls `resolved`, not `toFullNames`), but every
+     -- entry in `defs`/`lambdaLifted cdata` is keyed by full name --
+     -- `Compiler.RC2.DeadCode.pruneDeadDefs`'s own reachability is a
+     -- structural `Name` set-membership check, so a root given as a
+     -- `Resolved` name would silently never match anything and get
+     -- pruned as unreachable regardless of this list's own intent.
+     -- `exportedSigs`'s own first component (`validateExport`'s
+     -- `getFullName`-resolved `n'`) is reused here rather than
+     -- re-deriving it a second time from `exported cdata` directly.
+     let roots = MN "__mainExpression" 0 :: map (\(n, _, _, _) => n) exportedSigs
      defs <- toRCDefs disabledStages roots (lambdaLifted cdata)
 
      -- `--directive dumprcexpr` / `%cg rc2 dumprcexpr`: dump the final
@@ -263,7 +403,7 @@ compileExpr c s _ outputDir tm outfile =
      let inlineRuntime = getInlineRuntime directiveList
      let injectedRuntime = extraRuntimeFiles ++ (if inlineRuntime == "" then "" else "\n" ++ inlineRuntime)
 
-     foreignLibs <- logTime 2 "rc2: C generation" $ generateCSourceFile defs injectedRuntime outn
+     foreignLibs <- logTime 2 "rc2: C generation" $ generateCSourceFile defs exportedSigs injectedRuntime outn
      Just _ <- logTime 2 "rc2: C compile" $ compileCObjectFile outn outobj dumpCC
        | Nothing => pure Nothing
      logTime 2 "rc2: C link" $ compileCFile outobj outexec foreignLibs dumpCC

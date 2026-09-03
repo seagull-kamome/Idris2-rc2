@@ -351,12 +351,21 @@ echo "=== Smoke tests ==="
 # KNOWN-BUGS.md), so only rc2 can actually compile this test. `.expected`
 # here is rc2's own manually-verified-correct output, same reasoning as
 # Test7CastMatrix/Test17ConstFold above.
-NO_REFC_DIFF_TESTS="Test7CastMatrix Test17ConstFold Test24CStructSupport Test26GCPtrAliasString Test28Utf8Strings Test29GCAnyPtrReturn Test31CgExtraRuntime Test32CgInlineRuntime Test35NetworkLoopback Test42SupportMisc Test47ConstCFStringReturn"
+#
+# Test59ExportScalar: exercises `%export`'s real native-C-ABI wrapper
+# synthesis (rc2/doc/export-support.md), which real `idris2 --cg refc`
+# doesn't implement at all -- RefC ignores the pragma entirely, so the
+# companion .c file's own `extern` declarations of
+# `idris2rc2_test_add`/`idris2rc2_test_scale` would fail to link
+# against a refc build. `.expected` here is rc2's own
+# manually-verified-correct output, same reasoning as
+# Test7CastMatrix/Test17ConstFold above.
+NO_REFC_DIFF_TESTS="Test7CastMatrix Test17ConstFold Test24CStructSupport Test26GCPtrAliasString Test28Utf8Strings Test29GCAnyPtrReturn Test31CgExtraRuntime Test32CgInlineRuntime Test35NetworkLoopback Test42SupportMisc Test47ConstCFStringReturn Test59ExportScalar"
 
 # Leak-sensitive by design (reference-counting/reuse/native-shadow
 # regression tests) -- checked with valgrind by default even without
 # --valgrind-all.
-LEAK_SENSITIVE_TESTS="Test1Basics Test9SelfTailLoop Test10MutualLoop Test11DualABILeak Test12ConAltNative Test13NativeArgChain Test14SmallFunctionInline Test15CompareFusionThroughCall Test16LoopContinuePostDrop Test17ConstFold Test18ClosureInPlaceGrow Test19LoopInvariantParam Test21BoxedInvariantNotHoisted Test22BranchSinking Test23SinkPastSelfDrop Test24CStructSupport Test26GCPtrAliasString Test27FFIDualABI Test28Utf8Strings Test29GCAnyPtrReturn Test33WideDualABIWorker Test34WideClosureDispatch Test35NetworkLoopback Test36ReuseOfferUniqueLeak Test37SystemDirectory Test40SystemProcess Test41FFIMalloc Test42SupportMisc Test43FileExtra Test44IORefExtPrimLeak Test46FastPackUnconditional Test48WideFFIDualABIWorker Test49IntegerOpReuse Test50FFIInlineNoWorker Test56NativeCallArgChain Test57LoopCallArgNativeShadow Test58LoopContinueNativePromotion"
+LEAK_SENSITIVE_TESTS="Test1Basics Test9SelfTailLoop Test10MutualLoop Test11DualABILeak Test12ConAltNative Test13NativeArgChain Test14SmallFunctionInline Test15CompareFusionThroughCall Test16LoopContinuePostDrop Test17ConstFold Test18ClosureInPlaceGrow Test19LoopInvariantParam Test21BoxedInvariantNotHoisted Test22BranchSinking Test23SinkPastSelfDrop Test24CStructSupport Test26GCPtrAliasString Test27FFIDualABI Test28Utf8Strings Test29GCAnyPtrReturn Test33WideDualABIWorker Test34WideClosureDispatch Test35NetworkLoopback Test36ReuseOfferUniqueLeak Test37SystemDirectory Test40SystemProcess Test41FFIMalloc Test42SupportMisc Test43FileExtra Test44IORefExtPrimLeak Test46FastPackUnconditional Test48WideFFIDualABIWorker Test49IntegerOpReuse Test50FFIInlineNoWorker Test56NativeCallArgChain Test57LoopCallArgNativeShadow Test58LoopContinueNativePromotion Test59ExportScalar"
 
 # KNOWN-BUGS.md's own remaining pre-existing leaks -- "definitely
 # lost" byte count, exactly. Anything else non-zero is a genuine new

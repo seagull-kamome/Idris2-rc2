@@ -1899,13 +1899,70 @@ flushStagedDecls outn h = do
 ||| to turn into `-l<name>` flags at link time, so an external library
 ||| a program's own FFI bindings depend on doesn't need `IDRIS2_LDLIBS`
 ||| set by hand.
+||| The C wrapper synthesised for one validated `%export` declaration
+||| (`Compiler.RC2.RC2.validateExport`'s own result): under the
+||| user-given `exportedCName`, with native C parameter/return types,
+||| boxing each argument, calling the original always-Boxed entry point
+||| (`cName !(getFullName n)`, never itself touched/converted -- see
+||| `rc2/doc/export-support.md`), then unboxing the trampolined result.
+||| Never `static` -- nothing in generated C calls it; it exists purely
+||| for an external caller, hand-written C included (see
+||| `Test59ExportScalar.c`). A boxed `IDRIS2RC2_Value*` return is
+||| explicitly `idris2rc2_drop`ped right after `extractValue` reads its
+||| payload out (safe and a no-op for every already-unboxed scalar, see
+||| `idris2rc2_drop`'s own `idris2rc2_is_unboxed` check) -- unlike
+||| `main`'s own footer, which can get away with never dropping its
+||| final result because the process exits immediately after, this
+||| wrapper can be called arbitrarily many times from external C, so a
+||| real heap-allocating return (`CFInt`/`CFInt64`/`CFUnsigned64`/
+||| `CFDouble`) would otherwise leak on every call.
+emitExportWrapper : {auto c : Ref Ctxt Defs}
+                  -> {auto oft : Ref OutfileText Output}
+                  -> {auto il : Ref IndentLevel Nat}
+                  -> Name -> String -> List CFType -> CFType -> Core ()
+emitExportWrapper n exportedCName fargs ret = do
+    let nargs = length fargs
+    let ret' = peelIORes ret
+    let retC = cTypeOfCFType ret'
+    let params = zip (getArgsNrList fargs 0) fargs
+    let sig = "\{retC} \{exportedCName}("
+            ++ (if nargs == 0 then "void"
+                else showSep ", " (map (\(i, ty) => cTypeOfCFType ty ++ " p_\{show i}") params))
+            ++ ")"
+    emit EmptyFC sig
+    emit EmptyFC "{"
+    increaseIndentation
+    traverse_ (\(i, ty) => emit EmptyFC "IDRIS2RC2_Value *a_\{show i} = \{packCFType ty ("p_" ++ show i)};") params
+    -- `ret`'s own un-peeled shape: an `IO`/`IORes`-returning declaration's
+    -- compiled entry point carries one extra trailing World parameter
+    -- rc2's own `%export` validation (`Compiler.RC2.RC2.validateExport`)
+    -- already confirmed is real, not erased -- see that doc comment and
+    -- `rc2/doc/export-support.md`'s "World argument" note. `CFWorld`'s
+    -- own boxed representation is always NULL, matching `packCFType`/
+    -- `extractValue`'s existing CFWorld case exactly.
+    let worldArg = case ret of CFIORes _ => ["(IDRIS2RC2_Value *)NULL"]; _ => []
+    let boxedArgs = map (\(i, _) => "a_" ++ show i) params ++ worldArg
+    fulln <- getFullName n
+    let callExpr = "\{cName fulln}(\{showSep ", " boxedArgs})"
+    let ranExpr = "idris2rc2_trampoline(\{callExpr})"
+    case ret' of
+         CFUnit => emit EmptyFC "(void)\{ranExpr};"
+         _ => do
+             emit EmptyFC "IDRIS2RC2_Value *r = \{ranExpr};"
+             emit EmptyFC "\{retC} result = \{extractValue CLangC ret' "r"};"
+             emit EmptyFC "idris2rc2_drop(r);"
+             emit EmptyFC "return result;"
+    decreaseIndentation
+    emit EmptyFC "}"
+
 export
 generateCSourceFile : {auto c : Ref Ctxt Defs}
                    -> List (Name, RCDef)
+                   -> (exports : List (Name, String, List CFType, CFType))
                    -> (injectedRuntime : String)
                    -> (outn : String)
                    -> Core (List String)
-generateCSourceFile defs injectedRuntime outn =
+generateCSourceFile defs exports injectedRuntime outn =
   do _ <- newRef ArgCounter 0
      _ <- newRef FunctionDefinitions []
      _ <- newRef ConstDef Data.SortedMap.empty
@@ -1953,6 +2010,15 @@ generateCSourceFile defs injectedRuntime outn =
          createCFunctions n d
          flushStagedDecls outn h
          flushEmitBuffer outn h) defs
+     -- `%export` wrappers: additive, generated after every ordinary def
+     -- (Pass 2 above) so the original always-Boxed entry point each one
+     -- calls is already emitted -- though C doesn't actually require
+     -- that ordering here, since Pass 1's own `collectDeclarations` already
+     -- forward-declared every def's own prototype before Pass 2 even started.
+     traverse_ (\(n, exportedCName, fargs, ret) => do
+         put OutfileText DList.Nil
+         emitExportWrapper n exportedCName fargs ret
+         flushEmitBuffer outn h) exports
      footer
      flushEmitBuffer outn h
      coreLift $ closeFile h

@@ -801,23 +801,13 @@ case needs one specifically.
   - 特定の型（例：`List Double`）に対して高階関数が呼び出されている場合、コンパイル時に型特化した関数を生成する（テンプレート化/マングリング）。
   - 特化により、`Boxed`なCONSセル走査を、ネイティブな配列走査へと置き換え、参照カウント操作を削減する。
 
-- **`%export`に対応したい**
-  rc2は`%export`を実装していない。`Compiler.RC2.RC2.toRCDefs`の`roots`引数の
-  ドキュメントコメント（`%export`ed names, currently always `[]` in practice）
-  が既存の唯一の言及。呼び出し元(`compileExpr`)が`Compiler.Common.getCompileDataWith`
-  へ渡す`exports`リストを空のまま渡している(=exportデータ収集自体をopt-outして
-  いる)のが根本原因で、`roots`まで辿り着く手前で止まっている。
-  - 調べたところ、upstream本家RefC.idr自身にも実際にexportされたC呼び出し可能
-    シンボルを吐くロジックが見当たらない(grep`exported`で0件)——つまり`%export`の
-    C側での実際の書き出しは、RefCが元々弱いところをrc2もそのまま受け継いでいる
-    形で、rc2固有の後退ではなさそう。
-  - 対応するには: (1) `exports`を実際に(`%export "ffi:名前"`プラグマ由来の
-    ターゲットFFI名リストとして)`compileExpr`から渡すよう配線、(2) 得られた
-    `(Name, String)`のexportedリストを`roots`へ実際に反映(現状の「保険として
-    含めているだけ」から実際に機能させる)、(3) `Compiler.RC2.Emit`側で、各
-    exportされた関数について実際に外部Cから呼び出し可能な(正しいCリンケージ・
-    シグネチャの)ラッパー関数を新規に生成する仕組みを追加、の3段階が必要。
-    (3)が一番手を付けられていない部分。
+- **`%export`: スカラー型のみ対応、生成ヘッダなし**
+  `%export`自体は実装済み(rc2は実ネイティブC-ABIラッパーを生成する唯一の
+  バックエンド、詳細は`rc2/doc/export-support.md`と`rc2/tests/Test59ExportScalar.idr`)。
+  残っているスコープ外項目は2つ: (1) ラッパー自身の`.h`を生成しない(呼び出し側が
+  `extern`宣言を手書きする必要がある)、(2) スカラー型(`Int`/`Int8`/.../`Double`/
+  `Char`、および`IO`/`IORes`)のみ対応で、struct・ユーザー定義ADT・`String`/`Ptr`/
+  `Buffer`/`Integer`は非対応(`%foreign`の逆方向で同等の対応が要る場合は要検討)。
 
 
 
