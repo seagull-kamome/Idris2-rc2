@@ -48,7 +48,11 @@
 #                       recognised `no<stagename>` values (noinline/
 #                       noconaltnative/nomutualloop/noloop/nosink/
 #                       nodualabi/nodeadcode -- `noreuse` was retired,
-#                       see that doc comment's own note on why) -- lets a
+#                       see that doc comment's own note on why), plus
+#                       `nomain` (not a stage disable -- suppresses the
+#                       generated C `main()` entirely, see
+#                       rc2/doc/export-support.md's "Linking as a
+#                       library" section and worked example) -- lets a
 #                       session compare compile/
 #                       run time with a given optimisation pass on vs.
 #                       off. Not applied to refc-suite (its own run.sh

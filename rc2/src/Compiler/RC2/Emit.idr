@@ -1834,6 +1834,15 @@ header = do
         ++ concat (map (\(fn, ty) => cTypeOfCFType ty ++ " " ++ fn ++ "; ") flds)
         ++ "} \{name};\n"
 
+||| Emits the generated program's own C `main()`, the process entry
+||| point that boxes nothing further and just calls
+||| `__mainExpression_0()` then trampolines its result. Skipped
+||| entirely by `generateCSourceFile` when `--directive nomain` /
+||| `%cg rc2 nomain` is in effect, so a `%export`ed program can be
+||| linked as a library into a hand-written C driver that supplies its
+||| own `main` instead, without a duplicate-symbol link error -- see
+||| `rc2/doc/export-support.md`'s own "Linking as a library" section
+||| and worked example.
 footer : {auto il : Ref IndentLevel Nat}
       -> {auto f : Ref OutfileText Output}
       -> {auto h : Ref HeaderFiles (SortedSet String)}
@@ -1955,14 +1964,22 @@ emitExportWrapper n exportedCName fargs ret = do
     decreaseIndentation
     emit EmptyFC "}"
 
+||| `noMain`: `--directive nomain` / `%cg rc2 nomain`, read by
+||| `Compiler.RC2.RC2.compileExpr` -- when `True`, `footer` (the C
+||| `main()` emitter) is skipped entirely, so the generated `.c` can be
+||| linked as a library alongside a caller-supplied `main` (e.g. a
+||| companion `.c` driving an `%export`ed symbol directly -- see
+||| `rc2/doc/export-support.md`'s own "Linking as a library" section
+||| and worked example) without a duplicate-symbol link error.
 export
 generateCSourceFile : {auto c : Ref Ctxt Defs}
                    -> List (Name, RCDef)
                    -> (exports : List (Name, String, List CFType, CFType))
+                   -> (noMain : Bool)
                    -> (injectedRuntime : String)
                    -> (outn : String)
                    -> Core (List String)
-generateCSourceFile defs exports injectedRuntime outn =
+generateCSourceFile defs exports noMain injectedRuntime outn =
   do _ <- newRef ArgCounter 0
      _ <- newRef FunctionDefinitions []
      _ <- newRef ConstDef Data.SortedMap.empty
@@ -2019,7 +2036,7 @@ generateCSourceFile defs exports injectedRuntime outn =
          put OutfileText DList.Nil
          emitExportWrapper n exportedCName fargs ret
          flushEmitBuffer outn h) exports
-     footer
+     when (not noMain) footer
      flushEmitBuffer outn h
      coreLift $ closeFile h
      log "compiler.refc" 10 $ "Generated C file " ++ outn

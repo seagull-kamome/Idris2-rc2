@@ -30,6 +30,123 @@ tag convention uses) -- so an existing `%export "RefC:..."` or
 `%export "C:..."` declaration written for another backend, or written
 generically, also works unmodified through rc2.
 
+## Worked example: compiling and calling an exported function
+
+Assumes the self-built toolchain from this repo's own top-level
+`README.md` ("Building and running") is already set up, and
+`rc2/build/exec/idris2-rc2` already exists (see also the
+`run-idris2-rc-cg` skill). Two files, in a scratch directory:
+
+`Add.idr`:
+
+```idris
+module Main
+
+%export "C:add_two_ints"
+add : Int -> Int -> Int
+add x y = x + y
+
+%foreign "C:call_add_from_c,libc,Add.h"
+prim__callAddFromC : PrimIO Int
+
+main : IO ()
+main = do
+  printLn (add 2 3)          -- ordinary Idris call, wrapper untouched
+  r <- primIO prim__callAddFromC
+  printLn r                  -- proves the export is callable from plain C
+```
+
+`Add.c` (+ a matching `Add.h` declaring both `add_two_ints` -- the
+rc2-generated wrapper, `extern`, no rc2 API involved -- and
+`call_add_from_c` for `%foreign` above to bind):
+
+```c
+#include "Add.h"
+
+int64_t call_add_from_c(void) {
+    return add_two_ints(10, 32);
+}
+```
+
+Build: compile the companion `.c` to an object file first, then point
+`idris2-rc2` at it via `IDRIS2_CFLAGS`/`IDRIS2_LDFLAGS` (the same
+upstream-Idris2 env vars `Compiler.RC2.CC`'s own
+`findCFlags`/`findLDFlags` read -- this is exactly what
+`rc2/tests/verify.sh` does for every smoke test with a companion `.c`
+file, see its own comment above `IDRIS2_LDFLAGS=...`):
+
+```sh
+source env.sh   # from the repo root; puts install/bin/idris2-rc2's
+                # runtime bits + the self-built toolchain on PATH
+
+nix-shell -p gcc --run 'gcc -c Add.c -o Add.o'
+
+IDRIS2_LDFLAGS="$PWD/Add.o" IDRIS2_CFLAGS="-I$PWD" \
+  nix-shell -p gcc gmp pkg-config --run \
+  '/path/to/idris2-rc-cg/rc2/build/exec/idris2-rc2 --cg rc2 Add.idr -o add_demo'
+
+./build/exec/add_demo
+```
+
+Expected output:
+
+```
+5
+42
+```
+
+(`5` = `add 2 3` called ordinarily from Idris; `42` = `10 + 32`
+computed by calling the same `add_two_ints` wrapper from `Add.c`, with
+no Idris/rc2 API involved on the C side at all.) Note `idris2-rc2`
+places the linked executable under `./build/exec/<name>`, same as
+upstream `idris2` -- not at the `-o` name directly in the current
+directory.
+
+### Variant: external C owns `main` (`--directive nomain`)
+
+Drop the `%foreign` round-trip and give the companion `.c` file its own
+`main()` instead -- the shape a real `%export` consumer usually wants.
+This needs `--directive nomain` (see "Linking as a library" below) so
+rc2's own generated `main()` doesn't collide with it at link time.
+
+`AddLib.idr` (same `%export` as `Add.idr` above; its own Idris `main`
+is never reached):
+
+```idris
+module Main
+
+%export "C:add_two_ints"
+add : Int -> Int -> Int
+add x y = x + y
+
+main : IO ()
+main = putStrLn "this Idris main should never run"
+```
+
+`driver.c` (owns the real `main`, calls the export directly):
+
+```c
+#include <stdint.h>
+#include <stdio.h>
+
+extern int64_t add_two_ints(int64_t, int64_t);
+
+int main(void) {
+    printf("%lld\n", (long long)add_two_ints(10, 32));
+    return 0;
+}
+```
+
+```sh
+nix-shell -p gcc --run 'gcc -c driver.c -o driver.o'
+
+IDRIS2_LDFLAGS="$PWD/driver.o" \
+  nix-shell -p gcc gmp pkg-config --run \
+  '/path/to/idris2-rc-cg/rc2/build/exec/idris2-rc2 --cg rc2 --directive nomain AddLib.idr -o addlib_demo'
+
+./build/exec/addlib_demo   # prints 42 -- driver.c's own main ran, not Idris's
+```
+
 ## Scope: scalar types only
 
 `Compiler.RC2.RC2.exportNfToCFType` recognizes exactly: `Int`,
@@ -112,6 +229,21 @@ accident.
   user-defined ADT, no `String`/`Ptr`/`Buffer`/`Integer` marshalling on
   an `%export` boundary (all of which `%foreign` already supports in
   the opposite direction).
+
+## Linking as a library (`--directive nomain`)
+
+Every generated `.c` used to unconditionally end with its own C
+`main()` (`Compiler.RC2.Emit`'s `footer`) that calls
+`__mainExpression_0()` and trampolines the result. That's fine for an
+ordinary standalone executable, but it meant a companion `.c` file that
+defines its own `main()` -- exactly the shape an `%export` consumer
+naturally wants, a hand-written C driver that owns `main` and calls
+straight into the exported symbol -- would produce a duplicate-symbol
+link error. `--directive nomain` / `%cg rc2 nomain` fixes this:
+`footer` is skipped entirely, so the generated `.c` has no `main()` of
+its own and links cleanly alongside an external one. See "Worked
+example" above ("Variant: external C owns `main`") for a complete,
+verified-working walkthrough.
 
 ## DeadCode survival
 

@@ -94,6 +94,13 @@ applyReuse d@(MkRCForeign _ _ _) = d
 ||| way was removed entirely -- `applyReuse` now always runs,
 ||| unconditionally.
 |||
+||| `nomain` is also not in this list, for the opposite reason: it's a
+||| real, currently-supported directive, just not a pipeline-stage
+||| disable -- it's read as its own plain `Bool` directly in
+||| `compileExpr` (not threaded through `toRCDefs`/`disabled` at all)
+||| and only affects whether `Emit.idr`'s `footer` emits a C `main()`.
+||| See `compileExpr`'s own `noMain` binding for what it's for.
+|||
 ||| `roots`: names `Compiler.RC2.DeadCode.pruneDeadDefs` must never drop
 ||| regardless of reachability -- `main`'s own well-known entry name
 ||| (`MN "__mainExpression" 0`, `Compiler.Common`) plus any `%export`ed
@@ -343,6 +350,16 @@ compileExpr c s _ outputDir tm outfile =
      directiveList <- getDirectives (Other "rc2")
      let disabledStages = filter (`elem` directiveList)
                              ["noinline", "noconaltnative", "nomutualloop", "noloop", "nosink", "nodualabi", "nodeadcode"]
+     -- `--directive nomain` / `%cg rc2 nomain`: NOT a pipeline-stage
+     -- disable (unlike `disabledStages` above) -- it only controls
+     -- whether `Emit.idr`'s `footer` emits a C `main()` at all, so it's
+     -- read as its own plain `Bool` instead of being folded into that
+     -- list. Exists so a `%export`ed program can be linked as a library
+     -- into a hand-written C driver that supplies its own `main`,
+     -- without a duplicate-symbol link error -- see
+     -- rc2/doc/export-support.md's "Linking as a library" section and
+     -- worked example for the end-to-end scenario this fixes.
+     let noMain = "nomain" `elem` directiveList
      cdata <- getCompileDataWith ["RC2", "RefC", "C"] False Lifted tm
      let liftedByName = SortedMap.fromList (lambdaLifted cdata)
      exportedSigs <- traverse (validateExport liftedByName) (exported cdata)
@@ -403,7 +420,7 @@ compileExpr c s _ outputDir tm outfile =
      let inlineRuntime = getInlineRuntime directiveList
      let injectedRuntime = extraRuntimeFiles ++ (if inlineRuntime == "" then "" else "\n" ++ inlineRuntime)
 
-     foreignLibs <- logTime 2 "rc2: C generation" $ generateCSourceFile defs exportedSigs injectedRuntime outn
+     foreignLibs <- logTime 2 "rc2: C generation" $ generateCSourceFile defs exportedSigs noMain injectedRuntime outn
      Just _ <- logTime 2 "rc2: C compile" $ compileCObjectFile outn outobj dumpCC
        | Nothing => pure Nothing
      logTime 2 "rc2: C link" $ compileCFile outobj outexec foreignLibs dumpCC
