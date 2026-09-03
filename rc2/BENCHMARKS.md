@@ -1,5 +1,57 @@
 # rc2 Stage 5: テストとベンチマーク結果
 
+## 2026-09-03 追記: 呼び出し境界のbox往復排除4件(tail位置FFI・呼び出しチェーン・ループ引数/戻り値)
+
+`Compiler.RC2.DualABI`/`Compiler.RC2.Loop`に、呼び出し境界でのbox化↔unbox化
+往復を消す4件の関連する最適化を追加した(コミット613c0b7/6caeba5/f9a96bd/
+a87ae5c、設計・実装の詳細は`rc2/doc/dual-abi.md`「Stage 4b」「Extending the
+promotion to call-argument chains」、`rc2/doc/loop-conversion.md`「Known
+limitation」参照):
+
+1. tail位置の`%foreign`呼び出しも(通常関数のtail呼び出しとは異なり)クロージャ
+   +トランポリン経由の遅延評価をやめ、直接インライン展開するようにした
+   (`%foreign`の呼び出し先はrc2自身のトランポリン機構に参加しない末端の生C
+   呼び出しであり、通常関数のtail呼び出しを除外している論拠——未知長の
+   tail呼び出し連鎖によるCスタック増大リスク——が成立しないため)。
+2. 呼び出し結果が、演算子のオペランドとしてではなく**別の呼び出しの
+   native引数として直接**渡されるだけの場合も、box化→即unbox化の往復を
+   回避してnativeのまま渡すようにした(`callArgNativeReads`)。
+3. ループ内でアキュムレータがヘルパー関数への**引数**として渡されるだけの
+   場合も、native shadow変数への昇格対象にした(`callArgNativeTypes`/
+   `buildCalleeTable`、`Compiler.RC2.Loop`)。
+4. 同じくループ内で、ヘルパー呼び出しの**戻り値**がそのまま次周のループ
+   継続値になる場合も、native shadow化された枠にそのままnativeで書き戻す
+   ようにした(`loopContinueNativeReads`、`Compiler.RC2.DualABI`)。
+
+### 新規マイクロベンチマーク3本(`BenchTailFFI.idr`/`BenchCallArgChain.idr`/
+`BenchLoopCallArg.idr`)
+
+上記4件のうち、既存の`Bench*.idr`はいずれも該当パターンを踏んでいなかった
+(`%foreign`呼び出しがゼロ、呼び出し結果を別呼び出しのnative引数へ直結する
+形もゼロ)ため、各パターンを専用に踏む3本を新設した。`rc2/tests/bench.sh`
+標準の rc2 vs 本家`idris2 --cg refc`(いずれも自己ビルドコンパイラ)比較、
+壁時計3回平均:
+
+| ベンチマーク | rc2(s) | refc(s) | 倍率(RefC比) |
+|---|---|---|---|
+| `BenchTailFFI.idr`(tail位置`%foreign`呼び出しを500万回) | 0.988 | 1.329 | 約1.35倍高速 |
+| `BenchCallArgChain.idr`(呼び出し結果を別呼び出しのnative引数へ直結、500万回) | 0.861 | 1.580 | 約1.83倍高速 |
+| `BenchLoopCallArg.idr`(ループアキュムレータをヘルパー呼び出し経由でのみ運ぶ、500万回) | 0.008 | 0.532 | **約66.5倍高速** |
+
+`BenchLoopCallArg`が最も劇的な改善(4件のうち3番目・4番目の最適化が両方効く
+複合形)。生成Cを直接確認したところ、この最適化を入れる前は`loop`のワーカー
+本体がアキュムレータを毎周box化/unbox化していたが(`idris2rc2_mkInt64`/
+`idris2rc2_to_i64`のペアが`goto loop;`のたびに発生)、導入後は入口の1回を
+除いてヒープ確保が一切発生しない、native `int64_t`のみで完結する`goto`
+ループになった——`Compiler.RC2.Loop`導入時の`BenchLoop.idr`(約60倍高速化)
+と同種のパターンがヘルパー呼び出しを挟む形にも広がったかたちである。
+
+新規スモークテスト`Test57LoopCallArgNativeShadow.idr`/
+`Test58LoopContinueNativePromotion.idr`(2番目・3番目の最適化それぞれの
+正当性・box除去を生成C直接確認、`verify.sh`の`LEAK_SENSITIVE_TESTS`に
+登録、valgrindで0バイトリーク確認済み)。既存の`Bench*.idr`・`Test*.idr`
+全件に回帰なし(`verify.sh`: 94 passed, 0 known, 0 failed)。
+
 ## 2026-08-18 追記: クロージャ部分適用チェーンのin-place伸長(unique closure fast path)
 
 「ループ変数になっているクロージャも、参照が1(unique)なら再利用できるはず」
