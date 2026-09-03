@@ -323,10 +323,12 @@ the **return** direction needed a bespoke wrapper path -- an argument
 `%foreign`/native-in call site already uses
 (`idris2rc2_mkString(varName)`, which copies the incoming `const char
 *` into a freshly-owned `IDRIS2RC2_String`), so it carries no special
-ownership note beyond that copy. (No dedicated `%export` test exercises
-a `String` argument specifically; the new `Test64ExportString` covers
-the return direction, which is the one with a real ownership contract
-to get right.)
+ownership note beyond that copy. `Test65ExportStringArg` pins this down
+directly -- a companion C driver passes a plain string literal (never
+Idris/rc2-managed memory) and confirms it's left unmodified after the
+call, proving rc2 never aliases or takes ownership of the caller's own
+buffer. `Test64ExportString` covers the return direction, which is the
+one with a real ownership contract to get right.
 
 **Return** needed a real fix: `extractValue`'s own `CFString` case
 aliases the *Boxed* value's own malloc'd buffer directly
@@ -514,13 +516,15 @@ DeadCode-survival guarantee above. Listed in `verify.sh`'s
 so a `--cg refc` comparison build would just fail to link the
 companion `.c` file's `extern` declarations, not validate anything.
 
-Five more tests cover the wider scope added afterward, each with a
+Six more tests cover the wider scope added afterward, each with a
 companion `.c`/`.h` calling the export as plain C: `Test60ExportPtr`
 (`CFPtr`, both directions, address-identity and liveness checked),
 `Test61ExportStruct` (`CFStruct`, by pointer, plus the struct-typedef
 liveness caveat noted under "Scope" above), `Test62ExportGCPtr`
 (`CFGCPtr`, argument only), `Test63ExportInteger` (`CFInteger`, both
 directions, GMP-range values; also in `verify.sh`'s
-`LEAK_SENSITIVE_TESTS`), and `Test64ExportString` (`CFString` return
-and its caller-`free()`s ownership contract; also
+`LEAK_SENSITIVE_TESTS`), `Test64ExportString` (`CFString` return and
+its caller-`free()`s ownership contract; also `LEAK_SENSITIVE_TESTS`),
+and `Test65ExportStringArg` (`CFString` argument, confirming the
+caller's own buffer is copied, never aliased or freed by rc2; also
 `LEAK_SENSITIVE_TESTS`).

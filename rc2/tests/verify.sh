@@ -385,7 +385,7 @@ echo "=== Smoke tests ==="
 # Integer both directions, and a String return), and real `idris2 --cg
 # refc` still doesn't implement `%export` marshalling at all regardless
 # of which CFType is involved.
-NO_REFC_DIFF_TESTS="Test7CastMatrix Test17ConstFold Test24CStructSupport Test26GCPtrAliasString Test28Utf8Strings Test31CgExtraRuntime Test32CgInlineRuntime Test35NetworkLoopback Test42SupportMisc Test47ConstCFStringReturn Test59ExportScalar Test60ExportPtr Test61ExportStruct Test62ExportGCPtr Test63ExportInteger Test64ExportString"
+NO_REFC_DIFF_TESTS="Test7CastMatrix Test17ConstFold Test24CStructSupport Test26GCPtrAliasString Test28Utf8Strings Test31CgExtraRuntime Test32CgInlineRuntime Test35NetworkLoopback Test42SupportMisc Test47ConstCFStringReturn Test59ExportScalar Test60ExportPtr Test61ExportStruct Test62ExportGCPtr Test63ExportInteger Test64ExportString Test65ExportStringArg"
 
 # Leak-sensitive by design (reference-counting/reuse/native-shadow
 # regression tests) -- checked with valgrind by default even without
@@ -402,7 +402,7 @@ NO_REFC_DIFF_TESTS="Test7CastMatrix Test17ConstFold Test24CStructSupport Test26G
 # argument-side packCFType allocation (idris2rc2_mkPointer/
 # idris2rc2_mkGCPointer) is new to %export's own argument marshalling
 # and worth the same scrutiny.
-LEAK_SENSITIVE_TESTS="Test1Basics Test9SelfTailLoop Test11DualABILeak Test12ConAltNative Test13NativeArgChain Test14SmallFunctionInline Test15CompareFusionThroughCall Test16LoopContinuePostDrop Test17ConstFold Test18ClosureInPlaceGrow Test19LoopInvariantParam Test22BranchSinking Test24CStructSupport Test26GCPtrAliasString Test27FFIDualABI Test28Utf8Strings Test33WideDualABIWorker Test35NetworkLoopback Test36ReuseOfferUniqueLeak Test37SystemMisc Test41FFIMalloc Test42SupportMisc Test44IORefExtPrimLeak Test46FastPackUnconditional Test49IntegerOpReuse Test57LoopCallArgNativeShadow Test59ExportScalar Test60ExportPtr Test61ExportStruct Test62ExportGCPtr Test63ExportInteger Test64ExportString"
+LEAK_SENSITIVE_TESTS="Test1Basics Test9SelfTailLoop Test11DualABILeak Test12ConAltNative Test13NativeArgChain Test14SmallFunctionInline Test15CompareFusionThroughCall Test16LoopContinuePostDrop Test17ConstFold Test18ClosureInPlaceGrow Test19LoopInvariantParam Test22BranchSinking Test24CStructSupport Test26GCPtrAliasString Test27FFIDualABI Test28Utf8Strings Test33WideDualABIWorker Test35NetworkLoopback Test36ReuseOfferUniqueLeak Test37SystemMisc Test41FFIMalloc Test42SupportMisc Test44IORefExtPrimLeak Test46FastPackUnconditional Test49IntegerOpReuse Test57LoopCallArgNativeShadow Test59ExportScalar Test60ExportPtr Test61ExportStruct Test62ExportGCPtr Test63ExportInteger Test64ExportString Test65ExportStringArg"
 
 # KNOWN-BUGS.md's own remaining pre-existing leaks -- "definitely
 # lost" byte count, exactly. Anything else non-zero is a genuine new
