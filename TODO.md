@@ -197,6 +197,30 @@ bites for out-of-range integers and for types with no such cache
 (`Double`, wider `Int`/`Bits` values outside 0-99) -- unmeasured how
 often that actually happens in practice.
 
+## Performance: closure-dispatch fast path doesn't cover arity > 20 (`FUNSTAR`)
+
+`idris2rc2_applyClosure`'s new fast path (`rc2/doc/closure-dispatch-optimization.md`)
+skips allocating a transient `IDRIS2RC2_Closure` when a non-unique
+closure receives its final argument, but only for arity `1..20` -- the
+typed `IDRIS2RC2_FUNn` range `idris2rc2_dispatchWithExtra` implements.
+A closure with arity greater than 20 still takes the old
+`mkClosure`-then-trampoline-then-teardown path via the generic,
+array-based `IDRIS2RC2_FUNSTAR` calling convention. Deliberately left
+out of this round's scope, not an oversight.
+
+The same allocation-skip idea could in principle extend there too:
+`FUNSTAR`'s calling convention just needs a contiguous
+`IDRIS2RC2_Value **` array to hand the target function, and that array
+doesn't need to be heap-allocated -- arity is always a fixed,
+known-small constant even past 20 (an actual runtime value, read off
+`c->arity`, but bounded at compile time by whatever the largest arity
+in the program happens to be), so a small stack buffer (e.g. a
+fixed-size local array, or `alloca`, sized to the program's own known
+maximum arity) would work just as well as `idris2rc2_mkClosure`'s heap
+allocation, without needing the closure object itself. Not attempted;
+see `rc2/doc/closure-dispatch-optimization.md` for the full context on
+the existing 1..20 fast path this would extend.
+
 ## Dropped: loop-invariant constructor-field hoisting
 
 Two entries, investigated and dropped together -- "loop-invariant

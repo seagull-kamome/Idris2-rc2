@@ -100,6 +100,11 @@ own `toRCDefs` for the exact order):
    callees into their call sites (letting comparison fusion reach
    through an interface method call), folds constant `ExtPrim`s and
    arithmetic/comparison/cast/case-of-constant expressions.
+7. **Closure-dispatch fast path**, at the runtime level rather than as
+   an IR pass (`support/rc2/runtime.c`'s `idris2rc2_applyClosure`):
+   applying a shared closure's final argument dispatches straight into
+   the target function instead of allocating a transient closure just
+   to immediately dispatch and discard it.
 
 Each pass has its own `rc2/doc/*.md` deep-dive (design rationale, bugs
 found and fixed along the way) -- see `rc2/CLAUDE.md`'s own Layout
