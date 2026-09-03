@@ -156,6 +156,126 @@ static inline IDRIS2RC2_Value *idris2rc2_dispatchClosure(IDRIS2RC2_Closure *c) {
   }
 }
 
+// Fast path for idris2rc2_applyClosure only (see its own call site) --
+// dispatches a non-unique closure's FINAL argument straight into `fn`
+// without ever materializing the grown IDRIS2RC2_Closure that
+// idris2rc2_tailcallApplyClosure's own non-unique branch would build
+// just to hand it to idris2rc2_trampoline for immediate dispatch and
+// teardown. `c->filled` existing args are dup'd (same as that branch
+// would do) and passed positionally ahead of `arg`; case N therefore
+// dups exactly N-1 of them (xs[0..N-2]) with `arg` last -- mirrors
+// idris2rc2_dispatchClosure's own switch shape, so extending it above
+// arity 20 needs the same extension there too.
+static inline IDRIS2RC2_Value *idris2rc2_dispatchWithExtra(IDRIS2RC2_Closure *c, IDRIS2RC2_Value *arg) {
+  IDRIS2RC2_Value **const xs = c->args;
+  switch (c->arity) {
+  case 1:
+    return (*(IDRIS2RC2_FUN1)c->fn)(arg);
+  case 2:
+    return (*(IDRIS2RC2_FUN2)c->fn)(idris2rc2_dup(xs[0]), arg);
+  case 3:
+    return (*(IDRIS2RC2_FUN3)c->fn)(idris2rc2_dup(xs[0]), idris2rc2_dup(xs[1]), arg);
+  case 4:
+    return (*(IDRIS2RC2_FUN4)c->fn)(idris2rc2_dup(xs[0]), idris2rc2_dup(xs[1]), idris2rc2_dup(xs[2]),
+                               arg);
+  case 5:
+    return (*(IDRIS2RC2_FUN5)c->fn)(idris2rc2_dup(xs[0]), idris2rc2_dup(xs[1]), idris2rc2_dup(xs[2]),
+                               idris2rc2_dup(xs[3]), arg);
+  case 6:
+    return (*(IDRIS2RC2_FUN6)c->fn)(idris2rc2_dup(xs[0]), idris2rc2_dup(xs[1]), idris2rc2_dup(xs[2]),
+                               idris2rc2_dup(xs[3]), idris2rc2_dup(xs[4]), arg);
+  case 7:
+    return (*(IDRIS2RC2_FUN7)c->fn)(idris2rc2_dup(xs[0]), idris2rc2_dup(xs[1]), idris2rc2_dup(xs[2]),
+                               idris2rc2_dup(xs[3]), idris2rc2_dup(xs[4]), idris2rc2_dup(xs[5]),
+                               arg);
+  case 8:
+    return (*(IDRIS2RC2_FUN8)c->fn)(idris2rc2_dup(xs[0]), idris2rc2_dup(xs[1]), idris2rc2_dup(xs[2]),
+                               idris2rc2_dup(xs[3]), idris2rc2_dup(xs[4]), idris2rc2_dup(xs[5]),
+                               idris2rc2_dup(xs[6]), arg);
+  case 9:
+    return (*(IDRIS2RC2_FUN9)c->fn)(idris2rc2_dup(xs[0]), idris2rc2_dup(xs[1]), idris2rc2_dup(xs[2]),
+                               idris2rc2_dup(xs[3]), idris2rc2_dup(xs[4]), idris2rc2_dup(xs[5]),
+                               idris2rc2_dup(xs[6]), idris2rc2_dup(xs[7]), arg);
+  case 10:
+    return (*(IDRIS2RC2_FUN10)c->fn)(idris2rc2_dup(xs[0]), idris2rc2_dup(xs[1]), idris2rc2_dup(xs[2]),
+                               idris2rc2_dup(xs[3]), idris2rc2_dup(xs[4]), idris2rc2_dup(xs[5]),
+                               idris2rc2_dup(xs[6]), idris2rc2_dup(xs[7]), idris2rc2_dup(xs[8]),
+                               arg);
+  case 11:
+    return (*(IDRIS2RC2_FUN11)c->fn)(idris2rc2_dup(xs[0]), idris2rc2_dup(xs[1]), idris2rc2_dup(xs[2]),
+                               idris2rc2_dup(xs[3]), idris2rc2_dup(xs[4]), idris2rc2_dup(xs[5]),
+                               idris2rc2_dup(xs[6]), idris2rc2_dup(xs[7]), idris2rc2_dup(xs[8]),
+                               idris2rc2_dup(xs[9]), arg);
+  case 12:
+    return (*(IDRIS2RC2_FUN12)c->fn)(idris2rc2_dup(xs[0]), idris2rc2_dup(xs[1]), idris2rc2_dup(xs[2]),
+                               idris2rc2_dup(xs[3]), idris2rc2_dup(xs[4]), idris2rc2_dup(xs[5]),
+                               idris2rc2_dup(xs[6]), idris2rc2_dup(xs[7]), idris2rc2_dup(xs[8]),
+                               idris2rc2_dup(xs[9]), idris2rc2_dup(xs[10]), arg);
+  case 13:
+    return (*(IDRIS2RC2_FUN13)c->fn)(idris2rc2_dup(xs[0]), idris2rc2_dup(xs[1]), idris2rc2_dup(xs[2]),
+                               idris2rc2_dup(xs[3]), idris2rc2_dup(xs[4]), idris2rc2_dup(xs[5]),
+                               idris2rc2_dup(xs[6]), idris2rc2_dup(xs[7]), idris2rc2_dup(xs[8]),
+                               idris2rc2_dup(xs[9]), idris2rc2_dup(xs[10]), idris2rc2_dup(xs[11]),
+                               arg);
+  case 14:
+    return (*(IDRIS2RC2_FUN14)c->fn)(idris2rc2_dup(xs[0]), idris2rc2_dup(xs[1]), idris2rc2_dup(xs[2]),
+                               idris2rc2_dup(xs[3]), idris2rc2_dup(xs[4]), idris2rc2_dup(xs[5]),
+                               idris2rc2_dup(xs[6]), idris2rc2_dup(xs[7]), idris2rc2_dup(xs[8]),
+                               idris2rc2_dup(xs[9]), idris2rc2_dup(xs[10]), idris2rc2_dup(xs[11]),
+                               idris2rc2_dup(xs[12]), arg);
+  case 15:
+    return (*(IDRIS2RC2_FUN15)c->fn)(idris2rc2_dup(xs[0]), idris2rc2_dup(xs[1]), idris2rc2_dup(xs[2]),
+                               idris2rc2_dup(xs[3]), idris2rc2_dup(xs[4]), idris2rc2_dup(xs[5]),
+                               idris2rc2_dup(xs[6]), idris2rc2_dup(xs[7]), idris2rc2_dup(xs[8]),
+                               idris2rc2_dup(xs[9]), idris2rc2_dup(xs[10]), idris2rc2_dup(xs[11]),
+                               idris2rc2_dup(xs[12]), idris2rc2_dup(xs[13]), arg);
+  case 16:
+    return (*(IDRIS2RC2_FUN16)c->fn)(idris2rc2_dup(xs[0]), idris2rc2_dup(xs[1]), idris2rc2_dup(xs[2]),
+                               idris2rc2_dup(xs[3]), idris2rc2_dup(xs[4]), idris2rc2_dup(xs[5]),
+                               idris2rc2_dup(xs[6]), idris2rc2_dup(xs[7]), idris2rc2_dup(xs[8]),
+                               idris2rc2_dup(xs[9]), idris2rc2_dup(xs[10]), idris2rc2_dup(xs[11]),
+                               idris2rc2_dup(xs[12]), idris2rc2_dup(xs[13]), idris2rc2_dup(xs[14]),
+                               arg);
+  case 17:
+    return (*(IDRIS2RC2_FUN17)c->fn)(idris2rc2_dup(xs[0]), idris2rc2_dup(xs[1]), idris2rc2_dup(xs[2]),
+                               idris2rc2_dup(xs[3]), idris2rc2_dup(xs[4]), idris2rc2_dup(xs[5]),
+                               idris2rc2_dup(xs[6]), idris2rc2_dup(xs[7]), idris2rc2_dup(xs[8]),
+                               idris2rc2_dup(xs[9]), idris2rc2_dup(xs[10]), idris2rc2_dup(xs[11]),
+                               idris2rc2_dup(xs[12]), idris2rc2_dup(xs[13]), idris2rc2_dup(xs[14]),
+                               idris2rc2_dup(xs[15]), arg);
+  case 18:
+    return (*(IDRIS2RC2_FUN18)c->fn)(idris2rc2_dup(xs[0]), idris2rc2_dup(xs[1]), idris2rc2_dup(xs[2]),
+                               idris2rc2_dup(xs[3]), idris2rc2_dup(xs[4]), idris2rc2_dup(xs[5]),
+                               idris2rc2_dup(xs[6]), idris2rc2_dup(xs[7]), idris2rc2_dup(xs[8]),
+                               idris2rc2_dup(xs[9]), idris2rc2_dup(xs[10]), idris2rc2_dup(xs[11]),
+                               idris2rc2_dup(xs[12]), idris2rc2_dup(xs[13]), idris2rc2_dup(xs[14]),
+                               idris2rc2_dup(xs[15]), idris2rc2_dup(xs[16]), arg);
+  case 19:
+    return (*(IDRIS2RC2_FUN19)c->fn)(idris2rc2_dup(xs[0]), idris2rc2_dup(xs[1]), idris2rc2_dup(xs[2]),
+                               idris2rc2_dup(xs[3]), idris2rc2_dup(xs[4]), idris2rc2_dup(xs[5]),
+                               idris2rc2_dup(xs[6]), idris2rc2_dup(xs[7]), idris2rc2_dup(xs[8]),
+                               idris2rc2_dup(xs[9]), idris2rc2_dup(xs[10]), idris2rc2_dup(xs[11]),
+                               idris2rc2_dup(xs[12]), idris2rc2_dup(xs[13]), idris2rc2_dup(xs[14]),
+                               idris2rc2_dup(xs[15]), idris2rc2_dup(xs[16]), idris2rc2_dup(xs[17]),
+                               arg);
+  case 20:
+    return (*(IDRIS2RC2_FUN20)c->fn)(idris2rc2_dup(xs[0]), idris2rc2_dup(xs[1]), idris2rc2_dup(xs[2]),
+                               idris2rc2_dup(xs[3]), idris2rc2_dup(xs[4]), idris2rc2_dup(xs[5]),
+                               idris2rc2_dup(xs[6]), idris2rc2_dup(xs[7]), idris2rc2_dup(xs[8]),
+                               idris2rc2_dup(xs[9]), idris2rc2_dup(xs[10]), idris2rc2_dup(xs[11]),
+                               idris2rc2_dup(xs[12]), idris2rc2_dup(xs[13]), idris2rc2_dup(xs[14]),
+                               idris2rc2_dup(xs[15]), idris2rc2_dup(xs[16]), idris2rc2_dup(xs[17]),
+                               idris2rc2_dup(xs[18]), arg);
+  default:
+    // Caller (idris2rc2_applyClosure) only reaches here for
+    // 1 <= c->arity <= 20; the generic FUNSTAR arity is deliberately
+    // out of scope for this fast path (falls through to the ordinary
+    // mkClosure-based path instead).
+    IDRIS2RC2_VERIFY(false, "idris2rc2_dispatchWithExtra: impossible arity %d", (int)c->arity);
+    return NULL;
+  }
+}
+
 IDRIS2RC2_Value *idris2rc2_trampoline(IDRIS2RC2_Value *it) {
   while (it && !idris2rc2_is_unboxed(it) && it->header.tag == IDRIS2RC2_TAG_CLOSURE) {
     IDRIS2RC2_Closure *c = (IDRIS2RC2_Closure *)it;
@@ -202,8 +322,23 @@ IDRIS2RC2_Value *idris2rc2_tailcallApplyClosure(IDRIS2RC2_Value *_c, IDRIS2RC2_V
   return (IDRIS2RC2_Value *)nc;
 }
 
-IDRIS2RC2_Value *idris2rc2_applyClosure(IDRIS2RC2_Value *c, IDRIS2RC2_Value *arg) {
-  return idris2rc2_trampoline(idris2rc2_tailcallApplyClosure(c, arg));
+IDRIS2RC2_Value *idris2rc2_applyClosure(IDRIS2RC2_Value *_c, IDRIS2RC2_Value *arg) {
+  IDRIS2RC2_Closure *c = (IDRIS2RC2_Closure *)_c;
+  // Unlike idris2rc2_tailcallApplyClosure's own non-unique branch (which
+  // must keep returning an undispatched closure for its tail-call
+  // callers -- see idris2rc2_dispatchWithExtra's doc comment above),
+  // this wrapper always dispatches its result immediately via
+  // idris2rc2_trampoline regardless of which branch runs, so a
+  // non-unique closure receiving its FINAL argument can skip straight
+  // to dispatch without ever materializing the grown closure that
+  // would just be trampolined and torn down again right here.
+  if (!idris2rc2_isUnique(c) && c->arity - c->filled == 1 &&
+      c->arity >= 1 && c->arity <= 20) {
+    IDRIS2RC2_Value *result = idris2rc2_dispatchWithExtra(c, arg);
+    idris2rc2_drop((IDRIS2RC2_Value *)c);
+    return idris2rc2_trampoline(result);
+  }
+  return idris2rc2_trampoline(idris2rc2_tailcallApplyClosure(_c, arg));
 }
 
 void idris2rc2_dropReuseConstructor(IDRIS2RC2_Constructor *c) {
