@@ -83,6 +83,15 @@ IDRIS2RC2_Value *idris2rc2_mkIntegerLiteral(char const *digits) {
   return (IDRIS2RC2_Value *)v;
 }
 
+// A real copy (mpz_set), not aliasing -- src is a raw mpz_t an %export
+// wrapper received straight from external C (Compiler.RC2.Emit's own
+// emitExportWrapper), whose lifetime rc2 has no ownership over.
+IDRIS2RC2_Integer *idris2rc2_mkIntegerFromMpz(mpz_t src) {
+  IDRIS2RC2_Integer *v = idris2rc2_mkInteger();
+  mpz_set(v->v, src);
+  return v;
+}
+
 IDRIS2RC2_String *idris2rc2_mkEmptyString(size_t bufLen) {
   if (bufLen == 1)
     return (IDRIS2RC2_String *)&idris2rc2_emptyStringValue;

@@ -36,6 +36,7 @@ IDRIS2RC2_Value *idris2rc2_mkInt64(int64_t i);
 
 IDRIS2RC2_Integer *idris2rc2_mkInteger(void);
 IDRIS2RC2_Value *idris2rc2_mkIntegerLiteral(char const *digits);
+IDRIS2RC2_Integer *idris2rc2_mkIntegerFromMpz(mpz_t src);
 IDRIS2RC2_String *idris2rc2_mkEmptyString(size_t bufLen); // bufLen includes the NUL
 IDRIS2RC2_String *idris2rc2_mkString(char const *s);
 

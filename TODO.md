@@ -803,13 +803,17 @@ case needs one specifically.
   - 特定の型（例：`List Double`）に対して高階関数が呼び出されている場合、コンパイル時に型特化した関数を生成する（テンプレート化/マングリング）。
   - 特化により、`Boxed`なCONSセル走査を、ネイティブな配列走査へと置き換え、参照カウント操作を削減する。
 
-- **`%export`: スカラー型のみ対応、生成ヘッダなし**
+- **`%export`: 対応型を拡大、生成ヘッダなしは未対応のまま**
   `%export`自体は実装済み(rc2は実ネイティブC-ABIラッパーを生成する唯一の
-  バックエンド、詳細は`rc2/doc/export-support.md`と`rc2/tests/Test59ExportScalar.idr`)。
-  残っているスコープ外項目は2つ: (1) ラッパー自身の`.h`を生成しない(呼び出し側が
-  `extern`宣言を手書きする必要がある)、(2) スカラー型(`Int`/`Int8`/.../`Double`/
-  `Char`、および`IO`/`IORes`)のみ対応で、struct・ユーザー定義ADT・`String`/`Ptr`/
-  `Buffer`/`Integer`は非対応(`%foreign`の逆方向で同等の対応が要る場合は要検討)。
+  バックエンド、詳細は`rc2/doc/export-support.md`と`rc2/tests/Test59ExportScalar.idr`
+  〜`Test64ExportString.idr`)。対応範囲はスカラー型(`Int`/`Int8`/.../`Double`/
+  `Char`、`IO`/`IORes`)に加え、`Ptr`/`AnyPtr`、`GCPtr`/`GCAnyPtr`(引数のみ、戻り値は
+  ファイナライザ発火タイミングの問題によりコンパイルエラー)、`Integer`(GMP、双方向)、
+  `String`(戻り値、呼び出し側`free()`必須の所有権契約つき)、struct(ポインタ経由、
+  `Ptr`と同じ仕組み)まで拡大。残っているスコープ外項目は2つ: (1) ラッパー自身の
+  `.h`を生成しない(呼び出し側が`extern`宣言を手書きする必要がある)、(2) `Buffer`・
+  ユーザー定義ADT(`List`/`Maybe`等)・関数/クロージャの引数/戻り値は非対応。詳細は
+  `rc2/doc/export-support.md`参照。
 
 
 

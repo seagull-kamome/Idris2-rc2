@@ -1925,23 +1925,46 @@ flushStagedDecls outn h = do
 ||| wrapper can be called arbitrarily many times from external C, so a
 ||| real heap-allocating return (`CFInt`/`CFInt64`/`CFUnsigned64`/
 ||| `CFDouble`) would otherwise leak on every call.
+|||
+||| Three argument/return positions can't use that generic pack-then-
+||| call / call-then-extract-then-drop shape as-is, and are special-
+||| cased below: a `CFInteger` argument (a raw incoming `mpz_t`, not
+||| already an `IDRIS2RC2_Integer*` the way `packCFType`'s own identity-
+||| passthrough CFInteger case assumes -- see its doc comment), a
+||| `CFInteger` return (GMP's `mpz_t` has no by-value C return shape at
+||| all, so the whole wrapper signature gains a leading `mpz_t out`
+||| parameter and turns `void`, mirroring `emitGenericForeignWrapper`'s
+||| own identical convention for a `%foreign` Integer return), and a
+||| `CFString` return (`extractValue`'s own CFString case aliases the
+||| Boxed value's own malloc'd buffer -- returning that pointer and
+||| *then* dropping the Boxed value it came from would hand the C
+||| caller a dangling pointer, so an independent copy is made first).
 emitExportWrapper : {auto c : Ref Ctxt Defs}
                   -> {auto oft : Ref OutfileText Output}
                   -> {auto il : Ref IndentLevel Nat}
                   -> Name -> String -> List CFType -> CFType -> Core ()
 emitExportWrapper n exportedCName fargs ret = do
-    let nargs = length fargs
     let ret' = peelIORes ret
-    let retC = cTypeOfCFType ret'
+    let isIntegerReturn = case ret' of CFInteger => True; _ => False
+    let isStringReturn = case ret' of CFString => True; _ => False
+    -- A `CFString` return is a plain, independently-`malloc`'d buffer the
+    -- C caller must `free()` (see the CFString case below) -- declaring
+    -- it `const char *` (the shared `cTypeOfCFType CFString` mapping,
+    -- meant for %foreign's borrowed-immutable-view convention) would
+    -- make that `free()` call discard a qualifier for no reason.
+    let retC = the String (if isIntegerReturn then "void"
+                            else if isStringReturn then "char *"
+                            else cTypeOfCFType ret')
     let params = zip (getArgsNrList fargs 0) fargs
+    let paramDecls = map (\(i, ty) => cTypeOfCFType ty ++ " p_\{show i}") params
+    let allParamDecls = if isIntegerReturn then "mpz_t out" :: paramDecls else paramDecls
     let sig = "\{retC} \{exportedCName}("
-            ++ (if nargs == 0 then "void"
-                else showSep ", " (map (\(i, ty) => cTypeOfCFType ty ++ " p_\{show i}") params))
+            ++ (if isNil allParamDecls then "void" else showSep ", " allParamDecls)
             ++ ")"
     emit EmptyFC sig
     emit EmptyFC "{"
     increaseIndentation
-    traverse_ (\(i, ty) => emit EmptyFC "IDRIS2RC2_Value *a_\{show i} = \{packCFType ty ("p_" ++ show i)};") params
+    traverse_ (\(i, ty) => emit EmptyFC "IDRIS2RC2_Value *a_\{show i} = \{argPack ty i};") params
     -- `ret`'s own un-peeled shape: an `IO`/`IORes`-returning declaration's
     -- compiled entry point carries one extra trailing World parameter
     -- rc2's own `%export` validation (`Compiler.RC2.RC2.validateExport`)
@@ -1956,6 +1979,24 @@ emitExportWrapper n exportedCName fargs ret = do
     let ranExpr = "idris2rc2_trampoline(\{callExpr})"
     case ret' of
          CFUnit => emit EmptyFC "(void)\{ranExpr};"
+         CFInteger => do
+             emit EmptyFC "IDRIS2RC2_Value *r = \{ranExpr};"
+             emit EmptyFC "mpz_init(out);"
+             emit EmptyFC "mpz_set(out, \{extractValue CLangC CFInteger "r"});"
+             emit EmptyFC "idris2rc2_drop(r);"
+             emit EmptyFC "return;"
+         CFString => do
+             emit EmptyFC "IDRIS2RC2_Value *r = \{ranExpr};"
+             emit EmptyFC "const char *raw = \{extractValue CLangC CFString "r"};"
+             emit EmptyFC "size_t len = strlen(raw) + 1;"
+             emit EmptyFC "char *result = malloc(len);"
+             emit EmptyFC "memcpy(result, raw, len);"
+             emit EmptyFC "idris2rc2_drop(r);"
+             -- `result` is a plain, independently-allocated buffer, not
+             -- an IDRIS2RC2_String -- the C caller now owns it and must
+             -- free() it themselves; never pass it to any idris2rc2_*
+             -- function.
+             emit EmptyFC "return result;"
          _ => do
              emit EmptyFC "IDRIS2RC2_Value *r = \{ranExpr};"
              emit EmptyFC "\{retC} result = \{extractValue CLangC ret' "r"};"
@@ -1963,6 +2004,24 @@ emitExportWrapper n exportedCName fargs ret = do
              emit EmptyFC "return result;"
     decreaseIndentation
     emit EmptyFC "}"
+  where
+    -- `packCFType`'s own CFInteger case is a bare passthrough that
+    -- assumes an `IDRIS2RC2_Integer*` was already built elsewhere (real
+    -- for a `%foreign` call site's own out-parameter convention, see
+    -- its doc comment) -- but here `p_i` is the raw incoming `mpz_t`
+    -- itself, so a fresh, independently-owned `IDRIS2RC2_Integer` has
+    -- to be copied in first.
+    -- `(IDRIS2RC2_Value *)`-cast unconditionally: several `packCFType`
+    -- cases (CFPtr/CFGCPtr/CFStruct) return an `IDRIS2RC2_Pointer*`/
+    -- `IDRIS2RC2_GCPointer*`-typed call expression, not a bare
+    -- `IDRIS2RC2_Value*` one -- every other call site in this module
+    -- assigning a `packCFType` result already carries this same cast
+    -- (e.g. `emitGenericForeignWrapper`'s own `packedRet` lines) for
+    -- exactly this reason; this one just never had an argument-
+    -- position CFPtr/CFGCPtr/CFStruct to expose the gap before.
+    argPack : CFType -> Nat -> String
+    argPack CFInteger i = "(IDRIS2RC2_Value *)idris2rc2_mkIntegerFromMpz(p_\{show i})"
+    argPack ty i = "(IDRIS2RC2_Value *)" ++ packCFType ty ("p_" ++ show i)
 
 ||| `noMain`: `--directive nomain` / `%cg rc2 nomain`, read by
 ||| `Compiler.RC2.RC2.compileExpr` -- when `True`, `footer` (the C

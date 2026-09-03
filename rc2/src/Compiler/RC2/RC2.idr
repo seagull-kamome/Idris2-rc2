@@ -193,15 +193,23 @@ collectLazyCAFs = SortedSet.fromList . mapMaybe isLazyCAF
     isLazyCAF (n, _, MkNmFun [] (NmDelay _ _ _)) = Just n
     isLazyCAF _ = Nothing
 
-||| Recognizes exactly the CFTypes %export's scalar-only scope
-||| supports, plus the PrimIO IO/IORes wrapper (peeled to CFIORes so
-||| Compiler.RC2.DualABI's own peelIORes/cfTypeNative apply uniformly
-||| afterward) -- nothing for String/Ptr/Buffer/Integer/CFStruct/
-||| CFUser/CFFun, all deliberately out of %export's own narrower scope
-||| (unlike %foreign, which supports all of them via
-||| Compiler.CompileExpr's own nfToCFType/getCFTypes -- not reused here
-||| since those accept the full FFI type vocabulary %export
-||| deliberately doesn't).
+||| Recognizes every CFType %export's own scope supports -- scalars,
+||| Ptr/AnyPtr, GCPtr/GCAnyPtr (argument-position only; validateExport
+||| itself rejects a GCPtr return, see its own doc comment), Integer,
+||| String, and any Struct (by pointer, same marshalling as Ptr --
+||| EmitUtil's own cTypeOfCFType/extractValue/packCFType CFStruct cases
+||| already alias CFPtr's verbatim) -- plus the PrimIO IO/IORes wrapper
+||| (peeled to CFIORes so Compiler.RC2.DualABI's own peelIORes applies
+||| uniformly afterward). Still nothing for Buffer/ForeignObj/CFUser/
+||| CFFun -- deliberately out of %export's own scope (Buffer is a
+||| known, separately-tracked gap; ForeignObj/CFUser/CFFun have no
+||| %export-side marshalling story at all). Unlike %foreign's own
+||| Compiler.CompileExpr.nfToCFType/getCFTypes (not reused here, since
+||| those also accept CFFun/CFUser/CFBuffer/CFForeignObj), Ptr/GCPtr/
+||| Struct are recognized by bare type-constructor name only (ignoring
+||| namespace), mirroring upstream's own `getNArgs` precedent
+||| (Compiler.CompileExpr) rather than requiring a specific namespace
+||| the way the PrimIO IO/IORes case below still does.
 exportNfToCFType : {auto c : Ref Ctxt Defs} -> Defs -> NF [] -> Core (Maybe CFType)
 exportNfToCFType defs (NPrimVal _ (PrT ty)) = pure $ case ty of
     IntType => Just CFInt;  Int8Type => Just CFInt8;  Int16Type => Just CFInt16
@@ -209,8 +217,8 @@ exportNfToCFType defs (NPrimVal _ (PrT ty)) = pure $ case ty of
     Bits8Type => Just CFUnsigned8; Bits16Type => Just CFUnsigned16
     Bits32Type => Just CFUnsigned32; Bits64Type => Just CFUnsigned64
     DoubleType => Just CFDouble; CharType => Just CFChar
+    IntegerType => Just CFInteger; StringType => Just CFString
     WorldType => Just CFWorld
-    _ => Nothing
 -- `NS (mkNamespace "PrimIO") (UN (Basic "IO"))` confirmed empirically
 -- (a temporary `coreLift $ putStrLn "DEBUG NTCon: \{show fn}"` here,
 -- compiling a probe `%export`ed `IO Int`-returning function and
@@ -220,11 +228,34 @@ exportNfToCFType defs (NPrimVal _ (PrT ty)) = pure $ case ty of
 -- own declaration site's full name, no further unmangling needed.
 exportNfToCFType defs (NTCon _ n _ args) = do
     fn <- toFullNames n
-    case (fn, map snd args) of
-         (NS ns (UN (Basic nm)), [arg]) =>
-             if ns == mkNamespace "PrimIO" && (nm == "IO" || nm == "IORes")
-                then map CFIORes <$> (exportNfToCFType defs !(evalClosure defs arg))
-                else pure Nothing
+    case fn of
+         NS ns (UN (Basic nm)) => case (nm, map snd args) of
+             ("IO", [arg]) =>
+                 if ns == mkNamespace "PrimIO"
+                    then map CFIORes <$> (exportNfToCFType defs !(evalClosure defs arg))
+                    else pure Nothing
+             ("IORes", [arg]) =>
+                 if ns == mkNamespace "PrimIO"
+                    then map CFIORes <$> (exportNfToCFType defs !(evalClosure defs arg))
+                    else pure Nothing
+             ("Ptr", [_])     => pure $ Just CFPtr
+             ("AnyPtr", [])   => pure $ Just CFPtr
+             ("GCPtr", [_])   => pure $ Just CFGCPtr
+             ("GCAnyPtr", []) => pure $ Just CFGCPtr
+             -- Field list (the Struct type's own second argument)
+             -- deliberately unread -- CFStruct's fields are only ever
+             -- consulted for generating a C typedef ahead of a
+             -- getField/setField site (EmitUtil's collectStructDefs,
+             -- populated solely from %foreign defs), never for
+             -- %export's own marshalling (cTypeOfCFType/extractValue/
+             -- packCFType's CFStruct cases already ignore them,
+             -- aliasing CFPtr verbatim) -- so an empty field list here
+             -- is not a shortcut, it's the whole story.
+             ("Struct", [nArg, _]) => do
+                 NPrimVal _ (Str sname) <- evalClosure defs nArg
+                     | _ => pure Nothing
+                 pure $ Just (CFStruct sname [])
+             _ => pure Nothing
          _ => pure Nothing
 exportNfToCFType _ _ = pure Nothing
 
@@ -247,10 +278,32 @@ isCFWorld : CFType -> Bool
 isCFWorld CFWorld = True
 isCFWorld _ = False
 
+||| %export's own allowlist -- distinct from `Compiler.RC2.Types`'s
+||| `cfTypeNative` (a much narrower, purely-scalar predicate several
+||| other codegen stages share for native/boxed Rep selection, and not
+||| widened here to avoid changing any of their behaviour): Ptr, GCPtr,
+||| Integer, String, and any Struct all have a real, already-working
+||| %export marshalling path (`EmitUtil`'s `packCFType`/`extractValue`)
+||| that has nothing to do with Rep selection.
+isExportableCFType : CFType -> Bool
+isExportableCFType CFPtr          = True
+isExportableCFType CFGCPtr        = True
+isExportableCFType CFInteger      = True
+isExportableCFType CFString       = True
+isExportableCFType (CFStruct _ _) = True
+isExportableCFType ty = case cfTypeNative ty of
+    Just _  => True
+    Nothing => False
+
+exportSupportedTypesDesc : String
+exportSupportedTypesDesc =
+    "scalar (Int/Int8/Int16/Int32/Int64/Bits8/Bits16/Bits32/Bits64/Double/Char), Ptr, GCPtr, Integer, String, or struct (Struct)"
+
 ||| Validates one %export'ed name against its own real elaborated
 ||| type, deriving the native CFType signature the wrapper needs.
 ||| Throws a clear, attributable GenericMsg for any unsupported shape
-||| (non-scalar argument/return, arity mismatch from an
+||| (an argument/return type outside `isExportableCFType`'s own
+||| allowlist, a GCPtr return specifically, arity mismatch from an
 ||| implicit/auto-implicit argument) -- same philosophy as the CFFun-
 ||| %foreign-return-type fix (`checkForeignReturn`, Compiler.RC2.RC):
 ||| fail immediately and attributably at the one point that still has
@@ -271,23 +324,34 @@ validateExport liftedByName (n, exportedName) = do
     let badPositions = mapMaybe (\(i, mt) => if isNothing mt then Just i else Nothing) (zip [0 .. length argsRaw] argsRaw)
     when (not (isNil badPositions)) $
         throw $ GenericMsg EmptyFC
-            "[rc2] %export declaration \{exportedName} (\{show n'})'s own argument(s) \{show badPositions} own type isn't a supported native scalar -- %export only supports scalar-typed (Int/Int8/.../Double/Char) arguments"
+            "[rc2] %export declaration \{exportedName} (\{show n'})'s own argument(s) \{show badPositions} own type isn't a type %export supports -- %export supports \{exportSupportedTypesDesc} arguments"
     ret <- case retRaw of
         Just r => pure r
         Nothing => throw $ GenericMsg EmptyFC
-            "[rc2] %export declaration \{exportedName} (\{show n'})'s own return type isn't a supported native scalar -- %export only supports a scalar (or IO-of-scalar, or IO ()) return type"
+            "[rc2] %export declaration \{exportedName} (\{show n'})'s own return type isn't a type %export supports -- %export supports \{exportSupportedTypesDesc} (or IO-wrapped, or IO ()) return types"
     let args = mapMaybe id argsRaw
     let realArgs = filter (not . isCFWorld) args
     let retPeeled = peelIORes ret
     case retPeeled of
          CFUnit => pure ()
-         _ => case cfTypeNative retPeeled of
-                   Just _  => pure ()
-                   Nothing => throw $ GenericMsg EmptyFC "[rc2] %export declaration \{exportedName} (\{show n'})'s own return type \{show retPeeled} isn't a supported native scalar"
+         -- Unlike every other exportable type, a GCPtr can carry a
+         -- finalizer (`Compiler.RC2.EmitUtil`'s own `packCFType
+         -- CFGCPtr` note) -- `emitExportWrapper`'s own unconditional
+         -- drop-after-return step (rc2/doc/export-support.md's
+         -- "Memory" section) could invoke it before the C caller ever
+         -- reads the returned pointer, a use-after-free the argument
+         -- position never risks (its own GCPtr is never dropped by the
+         -- wrapper at all). Same fail-fast-and-attributable philosophy
+         -- as `Compiler.RC2.RC`'s own `checkForeignReturn`.
+         CFGCPtr => throw $ GenericMsg EmptyFC
+             "[rc2] %export declaration \{exportedName} (\{show n'})'s own return type is a GC-managed pointer (GCPtr/GCAnyPtr) -- returning one via %export isn't supported: the wrapper's own drop-after-return step could invoke the pointer's finalizer (if one is attached) before the C caller ever sees the value"
+         _ => if isExportableCFType retPeeled
+                 then pure ()
+                 else throw $ GenericMsg EmptyFC "[rc2] %export declaration \{exportedName} (\{show n'})'s own return type \{show retPeeled} isn't a type %export supports -- %export supports \{exportSupportedTypesDesc} return types"
     for_ (zip [0 .. length realArgs] realArgs) $ \(i, a) =>
-        case cfTypeNative a of
-             Just _  => pure ()
-             Nothing => throw $ GenericMsg EmptyFC "[rc2] %export declaration \{exportedName} (\{show n'})'s own argument \{show i} (\{show a}) isn't a supported native scalar"
+        if isExportableCFType a
+           then pure ()
+           else throw $ GenericMsg EmptyFC "[rc2] %export declaration \{exportedName} (\{show n'})'s own argument \{show i} (\{show a}) isn't a type %export supports -- %export supports \{exportSupportedTypesDesc} arguments"
     when (length realArgs > 20) $
         throw $ GenericMsg EmptyFC
             "[rc2] %export declaration \{exportedName} (\{show n'}) declares \{show (length realArgs)} argument(s) -- %export doesn't support more than 20"

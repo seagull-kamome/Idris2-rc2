@@ -377,12 +377,32 @@ echo "=== Smoke tests ==="
 # against a refc build. `.expected` here is rc2's own
 # manually-verified-correct output, same reasoning as
 # Test7CastMatrix/Test17ConstFold above.
-NO_REFC_DIFF_TESTS="Test7CastMatrix Test17ConstFold Test24CStructSupport Test26GCPtrAliasString Test28Utf8Strings Test31CgExtraRuntime Test32CgInlineRuntime Test35NetworkLoopback Test42SupportMisc Test47ConstCFStringReturn Test59ExportScalar"
+#
+# Test60ExportPtr/Test61ExportStruct/Test62ExportGCPtr/
+# Test63ExportInteger/Test64ExportString: same reason as
+# Test59ExportScalar immediately above -- these round out `%export`'s
+# own non-scalar coverage (Ptr, a C struct handle, a GCPtr argument,
+# Integer both directions, and a String return), and real `idris2 --cg
+# refc` still doesn't implement `%export` marshalling at all regardless
+# of which CFType is involved.
+NO_REFC_DIFF_TESTS="Test7CastMatrix Test17ConstFold Test24CStructSupport Test26GCPtrAliasString Test28Utf8Strings Test31CgExtraRuntime Test32CgInlineRuntime Test35NetworkLoopback Test42SupportMisc Test47ConstCFStringReturn Test59ExportScalar Test60ExportPtr Test61ExportStruct Test62ExportGCPtr Test63ExportInteger Test64ExportString"
 
 # Leak-sensitive by design (reference-counting/reuse/native-shadow
 # regression tests) -- checked with valgrind by default even without
-# --valgrind-all.
-LEAK_SENSITIVE_TESTS="Test1Basics Test9SelfTailLoop Test11DualABILeak Test12ConAltNative Test13NativeArgChain Test14SmallFunctionInline Test15CompareFusionThroughCall Test16LoopContinuePostDrop Test17ConstFold Test18ClosureInPlaceGrow Test19LoopInvariantParam Test22BranchSinking Test24CStructSupport Test26GCPtrAliasString Test27FFIDualABI Test28Utf8Strings Test33WideDualABIWorker Test35NetworkLoopback Test36ReuseOfferUniqueLeak Test37SystemMisc Test41FFIMalloc Test42SupportMisc Test44IORefExtPrimLeak Test46FastPackUnconditional Test49IntegerOpReuse Test57LoopCallArgNativeShadow Test59ExportScalar"
+# --valgrind-all. Test63ExportInteger/Test64ExportString are the two
+# genuinely UAF-sensitive additions here -- the new mpz-copy-in helper
+# (idris2rc2_mkIntegerFromMpz) and the mpz_set-then-drop Integer-return
+# path, and the independent-copy-then-drop String-return path, are
+# exactly the shapes that would previously double-free or hand back a
+# dangling pointer if the naive generic pack/extract-then-drop path had
+# been used unmodified. Test60ExportPtr/Test61ExportStruct/
+# Test62ExportGCPtr carry no comparable UAF risk of their own (no new
+# copy/drop ordering, just the pre-existing CFPtr-shaped packCFType/
+# extractValue reused as-is) but are included anyway since their own
+# argument-side packCFType allocation (idris2rc2_mkPointer/
+# idris2rc2_mkGCPointer) is new to %export's own argument marshalling
+# and worth the same scrutiny.
+LEAK_SENSITIVE_TESTS="Test1Basics Test9SelfTailLoop Test11DualABILeak Test12ConAltNative Test13NativeArgChain Test14SmallFunctionInline Test15CompareFusionThroughCall Test16LoopContinuePostDrop Test17ConstFold Test18ClosureInPlaceGrow Test19LoopInvariantParam Test22BranchSinking Test24CStructSupport Test26GCPtrAliasString Test27FFIDualABI Test28Utf8Strings Test33WideDualABIWorker Test35NetworkLoopback Test36ReuseOfferUniqueLeak Test37SystemMisc Test41FFIMalloc Test42SupportMisc Test44IORefExtPrimLeak Test46FastPackUnconditional Test49IntegerOpReuse Test57LoopCallArgNativeShadow Test59ExportScalar Test60ExportPtr Test61ExportStruct Test62ExportGCPtr Test63ExportInteger Test64ExportString"
 
 # KNOWN-BUGS.md's own remaining pre-existing leaks -- "definitely
 # lost" byte count, exactly. Anything else non-zero is a genuine new
