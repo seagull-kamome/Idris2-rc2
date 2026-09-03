@@ -10,6 +10,7 @@ module Compiler.RC2.RC
 import Compiler.LambdaLift
 import Compiler.RC2.ConstExtPrim
 import Compiler.RC2.ConstFold
+import Compiler.RC2.DualABI
 import Compiler.RC2.RCExp
 import Compiler.RC2.Types
 import Core.CompileExpr
@@ -702,6 +703,29 @@ annotateDef d@(MkRCCon _ _ _) = pure d
 annotateDef d@(MkRCForeign _ _ _) = pure d
 annotateDef (MkRCError body) = MkRCError <$> annotate (definitionNatives body) empty body
 
+||| A `%foreign` declaration's own return type, peeled through
+||| `CFIORes` (`Compiler.RC2.DualABI.peelIORes`), must not itself be a
+||| `CFFun` -- unlike a `CFFun` *argument* (`EmitUtil.idr`'s
+||| `extractValue`, unaffected by this check: a closure handed in as an
+||| argument becomes a valid `IDRIS2RC2_Closure*` a hand-written C shim
+||| can call back into via `idris2rc2_applyClosure`), there is no
+||| working C shape for a `%foreign` call to hand *back* a closure --
+||| `EmitUtil.idr`'s own `packCFType` has no real case for it either
+||| (upstream RefC's identically-broken `makeFunction(...)` call to a
+||| function that has never existed anywhere, in either backend's own
+||| support C -- rc2 inherited the line verbatim). Left unchecked, this
+||| only surfaces as a baffling `undefined reference to 'makeFunction'`
+||| linker error at the very end of the pipeline; checked here instead,
+||| it fails immediately, attributably, at the one point that still has
+||| the declaration's own `Name` in hand.
+checkForeignReturn : Name -> LiftedDef -> Core ()
+checkForeignReturn n (MkLForeign _ _ ret) =
+    case peelIORes ret of
+         CFFun _ _ => throw $ GenericMsg EmptyFC
+             "[rc2] %foreign declaration \{show n}'s own return type is a function (CFFun) -- returning a closure from a %foreign declaration isn't supported"
+         _ => pure ()
+checkForeignReturn _ _ = pure ()
+
 ||| Between the two phases, `Compiler.RC2.ConstExtPrim`'s constant
 ||| fold runs once over Phase 1's freshly-built tree (see its own
 ||| module note for why this placement, rather than a separate
@@ -713,7 +737,8 @@ annotateDef (MkRCError body) = MkRCError <$> annotate (definitionNatives body) e
 ||| further using whatever ConstExtPrim itself just folded in (e.g.
 ||| chaining a string op onto `prim__codegen`'s folded `"rc2"`).
 export
-toRCDef : LiftedDef -> Core RCDef
-toRCDef ld = do
+toRCDef : Name -> LiftedDef -> Core RCDef
+toRCDef declName ld = do
+    checkForeignReturn declName ld
     n <- normalizeDef ld
     annotateDef (foldConstDef (foldConstExtPrimDef n))

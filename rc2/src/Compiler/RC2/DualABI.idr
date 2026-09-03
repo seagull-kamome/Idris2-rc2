@@ -326,6 +326,7 @@ applyDualABI defs = do
 
 ||| `ret`'s own peeled type -- `CFIORes t`'s payload `t`, or `ret`
 ||| itself for a non-IO (pure) `%foreign` declaration.
+export
 peelIORes : CFType -> CFType
 peelIORes (CFIORes t) = t
 peelIORes t = t

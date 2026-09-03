@@ -1484,10 +1484,17 @@ packCFType CFPtr           varName = "idris2rc2_mkPointer(" ++ varName ++ ")"
 packCFType CFGCPtr         varName = "idris2rc2_mkGCPointer(" ++ varName ++ ", NULL)"
 packCFType CFBuffer        varName = "idris2rc2_mkBuffer(" ++ varName ++ ")"
 packCFType CFWorld         _       = "(IDRIS2RC2_Value *)NULL"
-packCFType (CFFun x y)     varName = "makeFunction(" ++ varName ++ ")"
 packCFType (CFIORes x)     varName = packCFType x varName
 packCFType (CFStruct x xs) varName = "idris2rc2_mkPointer(" ++ varName ++ ")"
 packCFType (CFUser x xs)   varName = varName
+-- No `CFFun` case: a `%foreign` declaration's own return type is
+-- rejected well before Emit ever runs if its peeled type is `CFFun`
+-- (`Compiler.RC2.RC`'s own `checkForeignReturn`) -- there never was a
+-- working C shape for this (the `makeFunction(...)` this case used to
+-- emit called a function that has never existed anywhere, copied
+-- verbatim from upstream RefC's own identically-broken line). Falls
+-- through to the catch-all below, same as any other genuinely
+-- unreachable `CFType`.
 packCFType n _ = assert_total $ idris_crash ("INTERNAL ERROR: Unknown FFI type in rc2 backend: " ++ show n)
 
 ||| Every `CFStruct` reachable inside a `%foreign` def's own argument/

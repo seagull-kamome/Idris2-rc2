@@ -102,7 +102,7 @@ toRCDefs disabled roots lds0 = do
     lds <- if "noinline" `elem` disabled then pure lds0 else logTime 2 "rc2: Inline" $ applyInlineLifted lds0
     reused <- logTime 2 "rc2: RC annotate + Reuse + ConAltNative" $
                 traverse (\(n, ld) => do
-                  d0 <- toRCDef ld
+                  d0 <- toRCDef n ld
                   let d1 = applyReuse d0
                   let d2 = if "noconaltnative" `elem` disabled then d1 else applyConAltNative d1
                   pure (n, d2)) lds
