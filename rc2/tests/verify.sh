@@ -13,19 +13,30 @@
 # etc.) -- if KNOWN-BUGS.md changes, update the constants below to
 # match.
 #
-# Usage: ./verify.sh [--skip-build] [--nix-idris2] [--no-valgrind]
+# Usage: ./verify.sh [--skip-build] [--no-valgrind]
 #                     [--valgrind-all] [--regen-expected] [--directive VALUE]...
+#
+# Must be run from inside a nix-shell (or equivalent -- plain PATH setup
+# works too) that already provides everything this run needs, started
+# ONCE by the caller around the whole script -- this script itself makes
+# no internal nix-shell calls of its own (see rc2/tests/refc-suite/run.sh
+# for the same pattern). What's needed: `idris2` (only when `--skip-build`
+# is not given, or `--regen-expected` is given -- the self-built one
+# `env.sh` already puts on PATH, sourced below, normally satisfies this
+# with nothing extra to add), `gcc`, `gmp` (dev headers), `pkg-config`
+# (all three always, for compiling rc2 itself and every smoke test), and
+# `valgrind` (only unless `--no-valgrind` is given). E.g., for a normal
+# full run:
+#
+#   nix-shell -p gcc gmp pkg-config valgrind --run './verify.sh'
+#
+# or, if you don't already have an `idris2` on PATH (e.g. no self-built
+# one under install/ yet), add it to that list:
+#
+#   nix-shell -p idris2 gcc gmp pkg-config valgrind --run './verify.sh'
 #
 #   --skip-build       Don't rebuild idris2-rc2/libidris2rc2.a first
 #                       (use the existing rc2/build/exec/idris2-rc2).
-#   --nix-idris2       Use nixpkgs' `idris2` package -- for building
-#                       rc2 itself (the "Build" step) AND for
-#                       --regen-expected's own real-refc reference
-#                       compile -- instead of the default: whatever
-#                       `idris2` is already first on PATH (e.g. a
-#                       self-built one). Smoke tests themselves always
-#                       run the resulting rc2/build/exec/idris2-rc2
-#                       directly either way, never `idris2` as such.
 #   --no-valgrind      Skip the valgrind pass entirely (faster).
 #   --valgrind-all     Run valgrind on every smoke test, not just the
 #                       curated leak-sensitive subset.
@@ -145,7 +156,6 @@ REPO_DIR="$(cd "$RC2_DIR/.." && pwd)"
 IDRIS2RC2="$RC2_DIR/build/exec/idris2-rc2"
 
 SKIP_BUILD=0
-NIX_IDRIS2=0
 DO_VALGRIND=1
 VALGRIND_ALL=0
 REGEN_EXPECTED=0
@@ -153,7 +163,6 @@ EXTRA_DIRECTIVES=()
 while [ $# -gt 0 ]; do
     case "$1" in
         --skip-build) SKIP_BUILD=1; shift ;;
-        --nix-idris2) NIX_IDRIS2=1; shift ;;
         --no-valgrind) DO_VALGRIND=0; shift ;;
         --valgrind-all) VALGRIND_ALL=1; shift ;;
         --regen-expected) REGEN_EXPECTED=1; shift ;;
@@ -163,29 +172,25 @@ while [ $# -gt 0 ]; do
 done
 
 # Both rc2 itself (the "Build" step below) and --regen-expected's own
-# real-refc reference compile use whichever `idris2` is first on PATH
-# by default -- e.g. a self-built one -- rather than always forcing
-# nixpkgs' own, so a locally-built compiler under test can be picked up
-# just by adjusting PATH before invoking this script. --nix-idris2
-# restores the old always-nixpkgs behaviour for both.
-BUILD_NIX_PKGS="gcc gmp pkg-config"
-if [ "$NIX_IDRIS2" -eq 1 ]; then
-    BUILD_NIX_PKGS="idris2 $BUILD_NIX_PKGS"
-elif { [ "$SKIP_BUILD" -eq 0 ] || [ "$REGEN_EXPECTED" -eq 1 ]; } && ! command -v idris2 > /dev/null 2>&1; then
-    echo "error: no 'idris2' on PATH, and --nix-idris2 not given -- either put one on PATH or pass --nix-idris2" >&2
+# real-refc reference compile use whichever `idris2` is first on PATH --
+# e.g. a self-built one -- so a locally-built compiler under test can be
+# picked up just by adjusting PATH before invoking this script. Fail
+# fast with a clear error rather than a confusing downstream build
+# failure if that's not set up.
+if { [ "$SKIP_BUILD" -eq 0 ] || [ "$REGEN_EXPECTED" -eq 1 ]; } && ! command -v idris2 > /dev/null 2>&1; then
+    echo "error: no 'idris2' on PATH -- put one on PATH before running this script" >&2
     exit 2
 fi
 
-# Turned into a single ` --directive X --directive Y ...` string,
-# spliced straight after `--directive dumprcexpr` in every smoke-test
-# compile line below (never sent to refc-suite/run.sh, which runs as
-# its own separate process). nix-shell --run "<string>" re-parses that
-# whole string inside its own `bash -c`, so this still word-splits
-# correctly there -- just don't pass a directive value containing
-# whitespace (every recognised rc2 directive is a single identifier).
-extra_directive_args=""
+# Turned into a `--directive X --directive Y ...` array, spliced straight
+# after `--directive dumprcexpr` in every smoke-test compile line below
+# (never sent to refc-suite/run.sh, which runs as its own separate
+# process). Kept as an array (not a joined string) since every compile
+# below is now a direct argv-array invocation, not a string handed to
+# `nix-shell --run` for its own `bash -c` to re-split.
+directive_flags=()
 for d in "${EXTRA_DIRECTIVES[@]}"; do
-    extra_directive_args="$extra_directive_args --directive $d"
+    directive_flags+=(--directive "$d")
 done
 
 # Wall-clock elapsed seconds between two `date +%s.%N` samples --
@@ -235,8 +240,7 @@ else
     # regardless); needed so --install doesn't try to write into the
     # default, typically read-only, nix store location.
     (cd "$RC2_DIR" && IDRIS2_PREFIX="$(dirname "$RC2_DIR")/install" \
-        nix-shell -p $BUILD_NIX_PKGS --run \
-            'idris2 --build rc2.ipkg') \
+        idris2 --build rc2.ipkg) \
         > "$TMP/build.log" 2>&1
     if [ $? -ne 0 ]; then
         echo "FAIL  build (see rc2/tests/build/build.log)"
@@ -245,8 +249,7 @@ else
     report_pass "build (idris2-rc2)"
 
     (cd "$RC2_DIR" && IDRIS2_PREFIX="$(dirname "$RC2_DIR")/install" \
-        nix-shell -p $BUILD_NIX_PKGS --run \
-            'idris2 --install rc2.ipkg') \
+        idris2 --install rc2.ipkg) \
         > "$TMP/runtime-build.log" 2>&1
     if [ $? -ne 0 ]; then
         echo "FAIL  build (runtime, see rc2/tests/build/runtime-build.log)"
@@ -257,7 +260,7 @@ fi
 
 echo
 echo "=== refc-suite ==="
-(cd "$RC2_DIR/tests/refc-suite" && nix-shell -p gcc gmp pkg-config --run './run.sh')
+(cd "$RC2_DIR/tests/refc-suite" && ./run.sh)
 refc_suite_status=$?
 if [ "$refc_suite_status" -ne 0 ]; then
     fail=$((fail + 1))
@@ -433,7 +436,7 @@ for name in $ALL_TESTS; do
     # available to compile against the real reference compiler.
     companion_env=()
     if [ -f "$RC2_DIR/tests/$name/$name.c" ]; then
-        nix-shell -p gcc --run "gcc -c $RC2_DIR/tests/$name/$name.c -o $TMP/${name}_companion.o" \
+        gcc -c "$RC2_DIR/tests/$name/$name.c" -o "$TMP/${name}_companion.o" \
             > "$TMP/${name}_companion_compile.log" 2>&1
         if [ $? -ne 0 ]; then
             report_fail "$name" "companion C file failed to compile, see $TMP/${name}_companion_compile.log"
@@ -442,10 +445,10 @@ for name in $ALL_TESTS; do
         companion_env=("IDRIS2_LDFLAGS=$TMP/${name}_companion.o" "IDRIS2_CFLAGS=-I$RC2_DIR/tests/$name")
     fi
     # $IDRIS2RC2 is invoked directly (an already-built binary), not via
-    # a bare `idris2` command, so nix's idris2 package is never needed
-    # here regardless of --nix-idris2 -- just the C toolchain.
-    env "${companion_env[@]}" nix-shell -p gcc gmp pkg-config --run \
-        "$IDRIS2RC2 --cg rc2 -p network -p linear -p rc2base --directive dumprcexpr$extra_directive_args $RC2_DIR/tests/$name/$name.idr -o $TMP/${name}_rc2" \
+    # a bare `idris2` command -- just needs the C toolchain (gcc/gmp/
+    # pkg-config) already on PATH from the caller's own nix-shell.
+    env "${companion_env[@]}" "$IDRIS2RC2" --cg rc2 -p network -p linear -p rc2base \
+        --directive dumprcexpr "${directive_flags[@]}" "$RC2_DIR/tests/$name/$name.idr" -o "$TMP/${name}_rc2" \
         > "$TMP/${name}_compile.log" 2>&1
     compile_time="$(elapsed "$compile_t0" "$(date +%s.%N)")"
     if [ ! -x "$TMP/${name}_rc2" ]; then
@@ -487,8 +490,8 @@ for name in $ALL_TESTS; do
     else
         expected_file="$RC2_DIR/tests/$name/$name.expected"
         if [ "$REGEN_EXPECTED" -eq 1 ]; then
-            env "${companion_env[@]}" nix-shell -p $BUILD_NIX_PKGS --run \
-                "idris2 --cg refc -p network -p linear -p rc2base $RC2_DIR/tests/$name/$name.idr -o $TMP/${name}_refc" \
+            env "${companion_env[@]}" idris2 --cg refc -p network -p linear -p rc2base \
+                "$RC2_DIR/tests/$name/$name.idr" -o "$TMP/${name}_refc" \
                 > "$TMP/${name}_refc_compile.log" 2>&1
             if [ ! -x "$TMP/${name}_refc" ]; then
                 report_fail "$name" "refc compile error, see $TMP/${name}_refc_compile.log"
@@ -536,8 +539,7 @@ if [ "$DO_VALGRIND" -eq 1 ]; then
     valgrind_t0="$(date +%s.%N)"
     running=0
     for name in "${valgrind_names[@]}"; do
-        nix-shell -p valgrind --run \
-            "valgrind --leak-check=full --error-exitcode=1 $TMP/${name}_rc2" \
+        valgrind --leak-check=full --error-exitcode=1 "$TMP/${name}_rc2" \
             > "$TMP/${name}_valgrind.log" 2>&1 &
         running=$((running + 1))
         if [ "$running" -ge "$valgrind_jobs" ]; then

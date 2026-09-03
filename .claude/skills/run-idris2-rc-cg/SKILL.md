@@ -15,8 +15,16 @@ this repo).
 
 ## Prerequisites
 
-Everything is pulled in per-command via `nix-shell -p ...` (idris2, gcc,
-gmp, pkg-config, and valgrind for the full test suite) — nothing to
+Every command below expects to be run from inside a single `nix-shell
+-p ...` invocation that already provides whatever it needs (gcc, gmp,
+pkg-config, and valgrind for the full test suite) — the scripts
+themselves no longer spawn `nix-shell` internally, so wrap the whole
+invocation yourself rather than expecting per-command isolation.
+`idris2` itself is normally NOT in that `-p` list: whenever a build
+step needs it, it comes from whatever's already on `PATH` after
+`source env.sh` (the self-built one) — nixpkgs' own `idris2` package
+is bootstrap-only per this project's policy, so only add `idris2` to
+a `-p` list if you specifically lack a self-built one. Nothing to
 install ahead of time beyond `nix` itself being on `PATH`.
 
 ## Setup
@@ -32,14 +40,22 @@ libraries. `smoke.sh` sources it automatically.
 
 Skip this if `rc2/build/exec/idris2-rc2` already exists — `smoke.sh`
 only builds when that's missing or `--build` is passed. Otherwise, the
-exact commands (also what `smoke.sh --build` runs):
+exact commands (also what `smoke.sh --build` runs, from inside a
+nix-shell providing gcc/gmp/pkg-config):
 
 ```bash
-source env.sh
-export IDRIS2_PREFIX="$(pwd)/install"
-(cd rc2 && nix-shell -p idris2 gcc gmp pkg-config --run \
-  'idris2 --build rc2.ipkg && idris2 --install rc2.ipkg')
+nix-shell -p gcc gmp pkg-config --run '
+  source env.sh
+  export IDRIS2_PREFIX="$(pwd)/install"
+  cd rc2 && idris2 --build rc2.ipkg && idris2 --install rc2.ipkg
+'
 ```
+
+This builds with whatever `idris2` `source env.sh` already put first
+on `PATH` — the self-built `install/bin/idris2` by default. If that's
+not set up yet, add `idris2` back to the `-p` list above (nixpkgs'
+`idris2` package is bootstrap-only per project policy, so only reach
+for this when you specifically lack a self-built compiler).
 
 `--install` also builds and installs the runtime C library
 (`libidris2rc2.a` under `install/idris2-0.8.0/support/rc2`) via
@@ -49,8 +65,11 @@ any Idris2 program with `--cg rc2`.
 ## Run (agent path)
 
 ```bash
-.claude/skills/run-idris2-rc-cg/smoke.sh
+nix-shell -p gcc gmp pkg-config --run '.claude/skills/run-idris2-rc-cg/smoke.sh'
 ```
+
+(add `valgrind` too with `--full-tests`; add `idris2` only if you lack
+a self-built one yet and need `--build`'s bootstrap fallback.)
 
 This builds rc2 if needed, compiles a tiny Idris2 program (prints a
 string, sums a mapped list) through `--cg rc2` into a native
@@ -88,9 +107,14 @@ source ../../env.sh
 nix-shell -p gcc gmp pkg-config valgrind --run './verify.sh'
 ```
 
-Expected: `82 passed, 0 known, 0 failed` (refc-suite 19, smoke tests,
-and valgrind leak checks all included). Also reachable via
-`smoke.sh --full-tests`.
+Expected: `70 passed, 0 known, 0 failed` (refc-suite 21, 40 smoke
+tests, and valgrind leak checks all included). Also reachable via
+`smoke.sh --full-tests`. `idris2` is only needed for verify.sh's own
+Build step and comes from whatever's already on `PATH` after sourcing
+`env.sh` (the self-built one); add `--skip-build` if
+`rc2/build/exec/idris2-rc2` is already built, or add `idris2` to the
+`-p` list above only if you specifically lack a self-built compiler
+(nixpkgs' `idris2` is bootstrap-only per project policy).
 
 ## Gotchas
 
