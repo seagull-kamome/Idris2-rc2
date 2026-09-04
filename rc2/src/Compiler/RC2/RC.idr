@@ -288,7 +288,7 @@ Owned = SortedSet RCLocal
 ||| Wrap `e` in an RDup for each variable in `needed` (order doesn't
 ||| matter between independent increments).
 wrapDups : FC -> List RCLocal -> RCExp -> RCExp
-wrapDups fc needed e = foldr (RDup fc) e needed
+wrapDups fc needed e = foldr (\v, acc => RDup fc v 0 acc) e needed
 
 ||| Fold `f` over every RConAlt's own body and (if present) the default,
 ||| unioning the `SortedSet RCLocal` results -- the shared shape behind
@@ -496,7 +496,7 @@ mutual
     annotate natives owned e@(RV _ (RCEmptyCon {})) = pure e
     annotate natives owned e@(RV _ RCNull) = pure e
     annotate natives owned (RV fc v) =
-        pure $ if contains v natives || contains v owned then RV fc v else RDup fc v (RV fc v)
+        pure $ if contains v natives || contains v owned then RV fc v else RDup fc v 0 (RV fc v)
     annotate natives owned (RAppName fc lazy n args) =
         pure $ wrapDups fc (splitBorrows natives owned args) (RAppName fc lazy n args)
     annotate natives owned (RUnderApp fc n missing args) =
@@ -646,7 +646,7 @@ mutual
     annotate natives owned e@(RPrimVal _ _) = pure e
     annotate natives owned e@(RErased _) = pure e
     annotate natives owned e@(RCrash _ _) = pure e
-    annotate natives owned (RDup fc v body) = RDup fc v <$> annotate natives owned body
+    annotate natives owned (RDup fc v extra body) = RDup fc v extra <$> annotate natives owned body
     annotate natives owned (RDrop fc vars body) = RDrop fc vars <$> annotate natives owned body
     annotate natives owned (RFree fc v body) = RFree fc v <$> annotate natives owned body
     -- Never actually produced until Compiler.RC2.Reuse runs, which is

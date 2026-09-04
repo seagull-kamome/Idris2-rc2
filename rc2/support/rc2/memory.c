@@ -160,6 +160,12 @@ IDRIS2RC2_Value *idris2rc2_dup(IDRIS2RC2_Value *v) {
   return v;
 }
 
+IDRIS2RC2_Value *idris2rc2_dup_n(IDRIS2RC2_Value *v, int n) {
+  if (v && !idris2rc2_is_unboxed(v) && v->header.refCount != IDRIS2RC2_REFCOUNT_MAX)
+    atomic_fetch_add_explicit(&v->header.refCount, n, memory_order_relaxed);
+  return v;
+}
+
 // Recursively drop `v`'s children (each of which may itself still be
 // shared, so those go through the ordinary checked idris2rc2_drop) and
 // then free `v` itself. Shared by idris2rc2_drop's refcount==1 case and by

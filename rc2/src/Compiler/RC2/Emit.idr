@@ -304,8 +304,8 @@ mutual
                         -> {auto fa : Ref LoopParams (List (Int, Rep))}
                         -> {auto sd : Ref StructDefs (SortedMap String (List (String, CFType)))}
                         -> RCExp -> Core (Maybe RCExp)
-    tryEmitLoopContinue (RDup fc v cont) = do
-        dupVars [varName v]
+    tryEmitLoopContinue (RDup fc v extra cont) = do
+        dupVarExtra (varName v) extra
         tryEmitLoopContinue cont
     tryEmitLoopContinue (RDrop fc vs cont) = do
         -- `vs` is already guaranteed Boxed-only -- see the module note.
@@ -386,8 +386,8 @@ mutual
                         -> {auto fa : Ref LoopParams (List (Int, Rep))}
                         -> {auto sd : Ref StructDefs (SortedMap String (List (String, CFType)))}
                         -> Sink -> TailPositionStatus -> RCExp -> Core (Maybe RCExp)
-    tryBuildClosureInto sink tailPosition (RDup fc v cont) = do
-        dupVars [varName v]
+    tryBuildClosureInto sink tailPosition (RDup fc v extra cont) = do
+        dupVarExtra (varName v) extra
         tryBuildClosureInto sink tailPosition cont
     tryBuildClosureInto sink tailPosition (RDrop fc vs cont) = do
         -- `vs` is already guaranteed Boxed-only -- see the module note.
@@ -1243,7 +1243,7 @@ mutual
     -- (emitting their own dup/drop/free/reuse-release side effect) on
     -- the way down before ever falling back to a bare emitRC call.
     emitRC (RDrop fc locs cont) _ = throw $ InternalError "[rc2] RDrop reached emitRC directly (not intercepted by emitInto/tryBuildClosureInto)"
-    emitRC (RDup fc loc cont) _ = throw $ InternalError "[rc2] RDup reached emitRC directly (not intercepted by emitInto/tryBuildClosureInto)"
+    emitRC (RDup fc loc extra cont) _ = throw $ InternalError "[rc2] RDup reached emitRC directly (not intercepted by emitInto/tryBuildClosureInto)"
     emitRC (RFree fc loc cont) _ = throw $ InternalError "[rc2] RFree reached emitRC directly (not intercepted by emitInto/tryBuildClosureInto)"
     emitRC (RReleaseReuse fc loc cont) _ = throw $ InternalError "[rc2] RReleaseReuse reached emitRC directly (not intercepted by emitInto/tryBuildClosureInto)"
     emitRC (RReuseOffer fc sc dupOnShared dropOnUnique cont) _ = throw $ InternalError "[rc2] RReuseOffer reached emitRC directly (not intercepted by emitInto/tryBuildClosureInto)"
@@ -1377,8 +1377,8 @@ mutual
     -- where `x` is a boxed parameter needs a dup before the add), which is
     -- an entirely separate concern from whether the op's *result* ends up
     -- native. Just lower the wrapper and keep unwinding.
-    emitNativeValue ty (RDup fc loc cont) = do
-        dupVars [varName loc]
+    emitNativeValue ty (RDup fc loc extra cont) = do
+        dupVarExtra (varName loc) extra
         emitNativeValue ty cont
     emitNativeValue ty (RFree fc loc cont) = do
         freeVars [varName loc]

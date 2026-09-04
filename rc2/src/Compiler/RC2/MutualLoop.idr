@@ -53,7 +53,7 @@ import Data.Vect
 tailCallTargets : RCExp -> SortedSet Name
 tailCallTargets (RAppName fc Nothing n _) = singleton n
 tailCallTargets (RLet _ _ _ _ body) = tailCallTargets body
-tailCallTargets (RDup _ _ body) = tailCallTargets body
+tailCallTargets (RDup _ _ _ body) = tailCallTargets body
 tailCallTargets (RDrop _ _ body) = tailCallTargets body
 tailCallTargets (RFree _ _ body) = tailCallTargets body
 tailCallTargets (RReleaseReuse _ _ body) = tailCallTargets body

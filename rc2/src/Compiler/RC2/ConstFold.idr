@@ -390,7 +390,7 @@ mutual
       in case resolveConst env sc of
               Just c  => fromMaybe (RConstCase fc sc alts' mDef') (findConstAlt c alts' mDef')
               Nothing => RConstCase fc sc alts' mDef'
-  foldConst caf env (RDup fc v body) = RDup fc v (foldConst caf env body)
+  foldConst caf env (RDup fc v extra body) = RDup fc v extra (foldConst caf env body)
   foldConst caf env (RDrop fc vars body) = RDrop fc vars (foldConst caf env body)
   foldConst caf env (RFree fc v body) = RFree fc v (foldConst caf env body)
   foldConst caf env (RReleaseReuse fc v body) = RReleaseReuse fc v (foldConst caf env body)

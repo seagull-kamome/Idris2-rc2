@@ -8,6 +8,13 @@ IDRIS2RC2_Value *idris2rc2_alloc(size_t size);
 // Increments the refcount of `v` (a no-op for unboxed/NULL/immortal values)
 // and returns it, so it can be used inline: `x = idris2rc2_dup(y);`
 IDRIS2RC2_Value *idris2rc2_dup(IDRIS2RC2_Value *v);
+// Batched form of idris2rc2_dup: increments v's refcount by `n` (n >= 1)
+// in a single atomic add, equivalent in effect to n separate
+// idris2rc2_dup(v) calls but without their repeated per-call branch and
+// atomic-op overhead. Same no-op conditions as idris2rc2_dup (unboxed/
+// NULL/immortal). See Compiler.RC2.RCExp's RDup and its own `extra`
+// field for the IR-level source of a batched increment.
+IDRIS2RC2_Value *idris2rc2_dup_n(IDRIS2RC2_Value *v, int n);
 // Decrements the refcount of `v`, freeing it (recursively) once it reaches
 // zero. A no-op for unboxed/NULL/immortal values.
 void idris2rc2_drop(IDRIS2RC2_Value *v);

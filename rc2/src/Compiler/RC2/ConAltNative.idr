@@ -64,8 +64,8 @@ import Data.Vect
 ||| defeating reuse. See rc2/doc/con-alt-native.md's "Bugs found and
 ||| fixed" #2 for the leak this caused before this fix existed.
 peelWrappers : RCExp -> (RCExp -> RCExp, RCExp)
-peelWrappers (RDup fc v cont) =
-    let (rebuild, core) = peelWrappers cont in (\c => RDup fc v (rebuild c), core)
+peelWrappers (RDup fc v extra cont) =
+    let (rebuild, core) = peelWrappers cont in (\c => RDup fc v extra (rebuild c), core)
 peelWrappers (RDrop fc vs cont) =
     let (rebuild, core) = peelWrappers cont in (\c => RDrop fc vs (rebuild c), core)
 peelWrappers (RFree fc v cont) =
@@ -100,7 +100,7 @@ peelWrappers e = (id, e)
 renameOpArgsThrough : (fid : Int) -> (sid : Int) -> RCExp -> RCExp
 renameOpArgsThrough fid sid (ROp fc lazy op args postDrop) =
     ROp fc lazy op (map (\a => if a == RCLoc fid then RCLoc sid else a) args) postDrop
-renameOpArgsThrough fid sid (RDup fc v cont) = RDup fc v (renameOpArgsThrough fid sid cont)
+renameOpArgsThrough fid sid (RDup fc v extra cont) = RDup fc v extra (renameOpArgsThrough fid sid cont)
 renameOpArgsThrough fid sid (RDrop fc vs cont) = RDrop fc vs (renameOpArgsThrough fid sid cont)
 renameOpArgsThrough fid sid (RFree fc v cont) = RFree fc v (renameOpArgsThrough fid sid cont)
 renameOpArgsThrough fid sid (RReleaseReuse fc v cont) = RReleaseReuse fc v (renameOpArgsThrough fid sid cont)
@@ -123,7 +123,7 @@ markNativeOccurrences fid sid (RLet fc var rep value body) =
 markNativeOccurrences fid sid (RCmpCase fc op args postDrop t f) =
     RCmpCase fc op (map (\a => if a == RCLoc fid then RCLoc sid else a) args) postDrop
              (markNativeOccurrences fid sid t) (markNativeOccurrences fid sid f)
-markNativeOccurrences fid sid (RDup fc v cont) = RDup fc v (markNativeOccurrences fid sid cont)
+markNativeOccurrences fid sid (RDup fc v extra cont) = RDup fc v extra (markNativeOccurrences fid sid cont)
 markNativeOccurrences fid sid (RDrop fc vs cont) = RDrop fc vs (markNativeOccurrences fid sid cont)
 markNativeOccurrences fid sid (RFree fc v cont) = RFree fc v (markNativeOccurrences fid sid cont)
 markNativeOccurrences fid sid (RReleaseReuse fc v cont) = RReleaseReuse fc v (markNativeOccurrences fid sid cont)
@@ -155,7 +155,7 @@ countDupsNeeded fid owned args =
 ||| single-local, fixed-count specialisation.
 wrapNDups : FC -> Int -> Nat -> RCExp -> RCExp
 wrapNDups fc fid Z e = e
-wrapNDups fc fid (S k) e = RDup fc (RCLoc fid) (wrapNDups fc fid k e)
+wrapNDups fc fid (S k) e = RDup fc (RCLoc fid) 0 (wrapNDups fc fid k e)
 
 mutual
   ||| Rebuild ownership for exactly `fid`, from scratch, over a body
@@ -173,7 +173,7 @@ mutual
   reannotateFieldOwnership : (fid : Int) -> Bool -> RCExp -> (Bool, RCExp)
   reannotateFieldOwnership fid owned (RV fc v) =
       if v == RCLoc fid
-         then if owned then (False, RV fc v) else (False, RDup fc v (RV fc v))
+         then if owned then (False, RV fc v) else (False, RDup fc v 0 (RV fc v))
          else (owned, RV fc v)
   reannotateFieldOwnership fid owned (RAppName fc lazy n args) =
       let (nDups, owned') = countDupsNeeded fid owned args
@@ -293,8 +293,8 @@ mutual
           alts' = map (\(MkRConstAlt c body) => MkRConstAlt c (finalizeBranch fid owned' body)) alts
           mDef' = map (finalizeBranch fid owned') mDef
       in (False, wrapNDups fc fid nDups (RConstCase fc sc alts' mDef'))
-  reannotateFieldOwnership fid owned (RDup fc v cont) =
-      let (o, cont') = reannotateFieldOwnership fid owned cont in (o, RDup fc v cont')
+  reannotateFieldOwnership fid owned (RDup fc v extra cont) =
+      let (o, cont') = reannotateFieldOwnership fid owned cont in (o, RDup fc v extra cont')
   reannotateFieldOwnership fid owned (RDrop fc vs cont) =
       let (o, cont') = reannotateFieldOwnership fid owned cont in (o, RDrop fc vs cont')
   reannotateFieldOwnership fid owned (RFree fc v cont) =
@@ -403,8 +403,8 @@ mutual
       let (nextId1, alts') = applyConAltNativeConstAlts nextId alts
           (nextId2, mDef') = applyConAltNativeMaybe nextId1 mDef
       in (nextId2, RConstCase fc sc alts' mDef')
-  applyConAltNativeExp nextId (RDup fc v body) =
-      let (n, body') = applyConAltNativeExp nextId body in (n, RDup fc v body')
+  applyConAltNativeExp nextId (RDup fc v extra body) =
+      let (n, body') = applyConAltNativeExp nextId body in (n, RDup fc v extra body')
   applyConAltNativeExp nextId (RDrop fc vs body) =
       let (n, body') = applyConAltNativeExp nextId body in (n, RDrop fc vs body')
   applyConAltNativeExp nextId (RFree fc v body) =

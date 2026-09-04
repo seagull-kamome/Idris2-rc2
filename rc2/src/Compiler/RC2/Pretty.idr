@@ -82,7 +82,8 @@ mutual
   prettyExp d (RPrimVal _ c) = indent d ++ show c ++ "\n"
   prettyExp d (RErased _) = indent d ++ "erased\n"
   prettyExp d (RCrash _ msg) = indent d ++ "crash " ++ show msg ++ "\n"
-  prettyExp d (RDup _ v body) = indent d ++ "dup " ++ show v ++ "\n" ++ prettyExp d body
+  prettyExp d (RDup _ v Z body) = indent d ++ "dup " ++ show v ++ "\n" ++ prettyExp d body
+  prettyExp d (RDup _ v extra@(S _) body) = indent d ++ "dup " ++ show v ++ " x" ++ show (S extra) ++ "\n" ++ prettyExp d body
   prettyExp d (RDrop _ vs body) = indent d ++ "drop " ++ show vs ++ "\n" ++ prettyExp d body
   prettyExp d (RFree _ v body) = indent d ++ "free " ++ show v ++ "\n" ++ prettyExp d body
   prettyExp d (RReleaseReuse _ v body) = indent d ++ "releaseReuse " ++ show v ++ "\n" ++ prettyExp d body

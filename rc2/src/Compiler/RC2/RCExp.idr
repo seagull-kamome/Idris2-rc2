@@ -289,9 +289,20 @@ mutual
        RPrimVal   : FC -> Constant -> RCExp
        RErased    : FC -> RCExp
        RCrash     : FC -> String -> RCExp
-       ||| "add": increment `loc`'s refcount, then continue. See the module
+       ||| "add": increment `loc`'s refcount by `S extra` (i.e. `extra=0`
+       ||| means exactly 1 increment), then continue. See the module
        ||| note -- this is what a borrowed use of a variable lowers to.
-       RDup       : FC -> RCLocal -> RCExp -> RCExp
+       ||| Encoding the actual count as `S extra` rather than a plain
+       ||| `Nat` (which would allow a meaningless "0 increments" state)
+       ||| makes a no-op `RDup` unrepresentable at the type level without
+       ||| needing any dependent non-zero-Nat proof threaded through
+       ||| every one of this constructor's many pass-through sites across
+       ||| the whole pipeline. Every construction site as of this commit
+       ||| always passes `extra = 0` (a single increment) -- a future,
+       ||| separate optimization pass is what will eventually construct
+       ||| one with `extra > 0`, batching several individual borrowed
+       ||| uses' own increments into one runtime call.
+       RDup       : FC -> RCLocal -> (extra : Nat) -> RCExp -> RCExp
        ||| Explicit cleanup of owned variables that are dead at this point,
        ||| wrapping the rest of the computation. Emit lowers each of these
        ||| to `idris2rc2_drop(...)` calls, except for any it decides to
@@ -426,7 +437,7 @@ freeLocalsR (RConstCase _ sc alts mDef) =
     let altsFree = map (\(MkRConstAlt _ body) => freeLocalsR body) alts
         allFree = maybe altsFree (\d => freeLocalsR d :: altsFree) mDef
     in insert sc (concat allFree)
-freeLocalsR (RDup _ v body) = insert v (freeLocalsR body)
+freeLocalsR (RDup _ v _ body) = insert v (freeLocalsR body)
 freeLocalsR (RDrop _ vars body) = union (fromList vars) (freeLocalsR body)
 freeLocalsR (RFree _ v body) = insert v (freeLocalsR body)
 freeLocalsR (RReleaseReuse _ v body) = insert v (freeLocalsR body)
@@ -462,7 +473,7 @@ countUsesR l (RConstCase _ sc alts mDef) =
     (if sc == l then 1 else 0)
     + sum (map (\(MkRConstAlt _ body) => countUsesR l body) alts)
     + maybe 0 (countUsesR l) mDef
-countUsesR l (RDup _ v body) = (if v == l then 1 else 0) + countUsesR l body
+countUsesR l (RDup _ v extra body) = (if v == l then S extra else 0) + countUsesR l body
 countUsesR l (RDrop _ vars body) = length (filter (== l) vars) + countUsesR l body
 countUsesR l (RFree _ v body) = (if v == l then 1 else 0) + countUsesR l body
 countUsesR l (RReleaseReuse _ v body) = (if v == l then 1 else 0) + countUsesR l body
@@ -482,7 +493,7 @@ usedConstructorsR (RConCase _ _ alts mDef) =
 usedConstructorsR (RConstCase _ _ alts mDef) =
     let altsCons = map (\(MkRConstAlt _ body) => usedConstructorsR body) alts
     in concat (maybe altsCons (\d => usedConstructorsR d :: altsCons) mDef)
-usedConstructorsR (RDup _ _ body) = usedConstructorsR body
+usedConstructorsR (RDup _ _ _ body) = usedConstructorsR body
 usedConstructorsR (RDrop _ _ body) = usedConstructorsR body
 usedConstructorsR (RFree _ _ body) = usedConstructorsR body
 usedConstructorsR (RReleaseReuse _ _ body) = usedConstructorsR body

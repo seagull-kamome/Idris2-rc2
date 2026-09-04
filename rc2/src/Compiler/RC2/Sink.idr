@@ -69,7 +69,7 @@ genuinelyUsedR (RConstCase _ sc alts mDef) =
     let altsUsed = map (\(MkRConstAlt _ body) => genuinelyUsedR body) alts
         allUsed = maybe altsUsed (\d => genuinelyUsedR d :: altsUsed) mDef
     in insert sc (concat allUsed)
-genuinelyUsedR (RDup _ v body) = insert v (genuinelyUsedR body)
+genuinelyUsedR (RDup _ v _ body) = insert v (genuinelyUsedR body)
 genuinelyUsedR (RDrop _ _ body) = genuinelyUsedR body
 genuinelyUsedR (RFree _ _ body) = genuinelyUsedR body
 genuinelyUsedR (RReleaseReuse _ _ body) = genuinelyUsedR body
@@ -93,7 +93,7 @@ genuinelyUsedR _ = empty
 ||| already-dead arm, so a full walk is the only way to be sure.
 removeVarDrop : Int -> RCExp -> RCExp
 removeVarDrop var (RLet fc v rep value body) = RLet fc v rep value (removeVarDrop var body)
-removeVarDrop var (RDup fc v body) = RDup fc v (removeVarDrop var body)
+removeVarDrop var (RDup fc v extra body) = RDup fc v extra (removeVarDrop var body)
 removeVarDrop var (RDrop fc vars body) =
     let vars' = filter (/= RCLoc var) vars
         body' = removeVarDrop var body
@@ -155,7 +155,7 @@ consumedOperands reps = go []
     go _ (ROp _ _ _ _ postDrop) = postDrop
     go _ (RAppName _ _ _ args) = filter isBoxed args
     go dupped (RCon _ _ _ _ args _) = filter (\a => not (a `elem` dupped)) args
-    go dupped (RDup _ v cont) = go (v :: dupped) cont
+    go dupped (RDup _ v _ cont) = go (v :: dupped) cont
     go dupped (RDrop _ _ cont) = go dupped cont
     go dupped (RFree _ _ cont) = go dupped cont
     go dupped (RReleaseReuse _ _ cont) = go dupped cont
@@ -212,7 +212,7 @@ sinkEligible : RCExp -> Bool
 sinkEligible (ROp _ Nothing _ _ _) = True
 sinkEligible (RCon _ _ _ _ _ Nothing) = True
 sinkEligible (RAppName _ Nothing _ _) = True
-sinkEligible (RDup _ _ cont) = sinkEligible cont
+sinkEligible (RDup _ _ _ cont) = sinkEligible cont
 sinkEligible (RDrop _ _ cont) = sinkEligible cont
 sinkEligible (RFree _ _ cont) = sinkEligible cont
 sinkEligible (RReleaseReuse _ _ cont) = sinkEligible cont
@@ -343,8 +343,8 @@ trySinkIntoArms _ _ _ _ _ = Nothing
 ||| reasoning `isDecidingOperand` already applies to a branch's own
 ||| scrutinee/comparison operands.
 trySinkInto : SortedMap Int Rep -> Int -> Rep -> RCExp -> RCExp -> Maybe RCExp
-trySinkInto reps var rep value (RDup fc v cont) =
-    if v == RCLoc var then Nothing else map (RDup fc v) (trySinkInto reps var rep value cont)
+trySinkInto reps var rep value (RDup fc v extra cont) =
+    if v == RCLoc var then Nothing else map (RDup fc v extra) (trySinkInto reps var rep value cont)
 trySinkInto reps var rep value (RDrop fc vs cont) =
     if RCLoc var `elem` vs then Nothing else map (RDrop fc vs) (trySinkInto reps var rep value cont)
 trySinkInto reps var rep value (RFree fc v cont) =
@@ -417,7 +417,7 @@ applySinkExp reps (RConCase fc sc alts mDef) =
 applySinkExp reps (RConstCase fc sc alts mDef) =
     RConstCase fc sc (map (\(MkRConstAlt c body) => MkRConstAlt c (applySinkExp reps body)) alts)
       (map (applySinkExp reps) mDef)
-applySinkExp reps (RDup fc v body) = RDup fc v (applySinkExp reps body)
+applySinkExp reps (RDup fc v extra body) = RDup fc v extra (applySinkExp reps body)
 applySinkExp reps (RDrop fc vs body) = RDrop fc vs (applySinkExp reps body)
 applySinkExp reps (RFree fc v body) = RFree fc v (applySinkExp reps body)
 applySinkExp reps (RReleaseReuse fc v body) = RReleaseReuse fc v (applySinkExp reps body)

@@ -57,9 +57,9 @@ mutual
   mapTailAppNames f (RLet fc var rep value body) =
       let (found, body') = mapTailAppNames f body
       in (found, RLet fc var rep value body')
-  mapTailAppNames f (RDup fc v cont) =
+  mapTailAppNames f (RDup fc v extra cont) =
       let (found, cont') = mapTailAppNames f cont
-      in (found, RDup fc v cont')
+      in (found, RDup fc v extra cont')
   mapTailAppNames f (RDrop fc vs cont) =
       let (found, cont') = mapTailAppNames f cont
       in (found, RDrop fc vs cont')
@@ -128,7 +128,7 @@ mutual
       concatMap collectBoundIdsAlt alts ++ maybe [] collectBoundIds mDef
   collectBoundIds (RConstCase _ _ alts mDef) =
       concatMap collectBoundIdsConstAlt alts ++ maybe [] collectBoundIds mDef
-  collectBoundIds (RDup _ _ body) = collectBoundIds body
+  collectBoundIds (RDup _ _ _ body) = collectBoundIds body
   collectBoundIds (RDrop _ _ body) = collectBoundIds body
   collectBoundIds (RFree _ _ body) = collectBoundIds body
   collectBoundIds (RReleaseReuse _ _ body) = collectBoundIds body
@@ -202,7 +202,7 @@ mutual
   renameRCExp _ (RPrimVal fc c) = RPrimVal fc c
   renameRCExp _ (RErased fc) = RErased fc
   renameRCExp _ (RCrash fc msg) = RCrash fc msg
-  renameRCExp ren (RDup fc v body) = RDup fc (renameLocal ren v) (renameRCExp ren body)
+  renameRCExp ren (RDup fc v extra body) = RDup fc (renameLocal ren v) extra (renameRCExp ren body)
   renameRCExp ren (RDrop fc vars body) = RDrop fc (renameLocals ren vars) (renameRCExp ren body)
   renameRCExp ren (RFree fc v body) = RFree fc (renameLocal ren v) (renameRCExp ren body)
   renameRCExp ren (RReleaseReuse fc v body) = RReleaseReuse fc (renameLocal ren v) (renameRCExp ren body)
@@ -287,7 +287,7 @@ opNativeUses p ty op args =
 ||| the leak guessing here caused (Test9SelfTailLoop).
 opNativeUsesThrough : (p : Int) -> PrimType -> RCExp -> SortedSet PrimType
 opNativeUsesThrough p ty (ROp _ _ op args _) = opNativeUses p ty op args
-opNativeUsesThrough p ty (RDup _ _ cont) = opNativeUsesThrough p ty cont
+opNativeUsesThrough p ty (RDup _ _ _ cont) = opNativeUsesThrough p ty cont
 opNativeUsesThrough p ty (RDrop _ _ cont) = opNativeUsesThrough p ty cont
 opNativeUsesThrough p ty (RFree _ _ cont) = opNativeUsesThrough p ty cont
 opNativeUsesThrough p ty (RReleaseReuse _ _ cont) = opNativeUsesThrough p ty cont
@@ -330,7 +330,7 @@ nativeArgTypes p (RLet _ _ rep value body) =
 nativeArgTypes p (RCmpCase _ op args _ t f) =
     let fromArgs = fromList $ mapMaybe (\a => if a == RCLoc p then cmpArgTy op else Nothing) (toList args)
     in fromArgs `union` (nativeArgTypes p t `union` nativeArgTypes p f)
-nativeArgTypes p (RDup _ _ cont) = nativeArgTypes p cont
+nativeArgTypes p (RDup _ _ _ cont) = nativeArgTypes p cont
 nativeArgTypes p (RDrop _ _ cont) = nativeArgTypes p cont
 nativeArgTypes p (RFree _ _ cont) = nativeArgTypes p cont
 nativeArgTypes p (RReleaseReuse _ _ cont) = nativeArgTypes p cont
@@ -422,7 +422,7 @@ callArgNativeTypes calleeTable p (RConCase _ _ alts mDef) =
 callArgNativeTypes calleeTable p (RConstCase _ _ alts mDef) =
     concat (map (\(MkRConstAlt _ body) => callArgNativeTypes calleeTable p body) alts)
       `union` maybe empty (callArgNativeTypes calleeTable p) mDef
-callArgNativeTypes calleeTable p (RDup _ _ cont) = callArgNativeTypes calleeTable p cont
+callArgNativeTypes calleeTable p (RDup _ _ _ cont) = callArgNativeTypes calleeTable p cont
 callArgNativeTypes calleeTable p (RDrop _ _ cont) = callArgNativeTypes calleeTable p cont
 callArgNativeTypes calleeTable p (RFree _ _ cont) = callArgNativeTypes calleeTable p cont
 callArgNativeTypes calleeTable p (RReleaseReuse _ _ cont) = callArgNativeTypes calleeTable p cont
@@ -499,9 +499,9 @@ keepUnlessOwned _ _ = True
 
 export
 stripOwnership : SortedSet Int -> RCExp -> RCExp
-stripOwnership ids (RDup fc v body) =
+stripOwnership ids (RDup fc v extra body) =
     let body' = stripOwnership ids body
-    in if keepUnlessOwned ids v then RDup fc v body' else body'
+    in if keepUnlessOwned ids v then RDup fc v extra body' else body'
 stripOwnership ids (RDrop fc vs body) =
     let vs' = filter (keepUnlessOwned ids) vs
         body' = stripOwnership ids body
@@ -596,7 +596,7 @@ fillLoopContinuePostDrop loopParams reps (RConCase fc sc alts mDef) =
 fillLoopContinuePostDrop loopParams reps (RConstCase fc sc alts mDef) =
     RConstCase fc sc (map (\(MkRConstAlt c body) => MkRConstAlt c (fillLoopContinuePostDrop loopParams reps body)) alts)
       (map (fillLoopContinuePostDrop loopParams reps) mDef)
-fillLoopContinuePostDrop loopParams reps (RDup fc v cont) = RDup fc v (fillLoopContinuePostDrop loopParams reps cont)
+fillLoopContinuePostDrop loopParams reps (RDup fc v extra cont) = RDup fc v extra (fillLoopContinuePostDrop loopParams reps cont)
 fillLoopContinuePostDrop loopParams reps (RDrop fc vs cont) = RDrop fc vs (fillLoopContinuePostDrop loopParams reps cont)
 fillLoopContinuePostDrop loopParams reps (RFree fc v cont) = RFree fc v (fillLoopContinuePostDrop loopParams reps cont)
 fillLoopContinuePostDrop loopParams reps (RReleaseReuse fc v cont) =
@@ -629,7 +629,7 @@ collectContinueArgs (RConCase _ _ alts mDef) =
 collectContinueArgs (RConstCase _ _ alts mDef) =
     concatMap (\(MkRConstAlt _ body) => collectContinueArgs body) alts
       ++ maybe [] collectContinueArgs mDef
-collectContinueArgs (RDup _ _ cont) = collectContinueArgs cont
+collectContinueArgs (RDup _ _ _ cont) = collectContinueArgs cont
 collectContinueArgs (RDrop _ _ cont) = collectContinueArgs cont
 collectContinueArgs (RFree _ _ cont) = collectContinueArgs cont
 collectContinueArgs (RReleaseReuse _ _ cont) = collectContinueArgs cont
@@ -676,7 +676,7 @@ elideInvariantContinueArgs inv fullLoopParams (RConCase fc sc alts mDef) =
 elideInvariantContinueArgs inv fullLoopParams (RConstCase fc sc alts mDef) =
     RConstCase fc sc (map (\(MkRConstAlt c body) => MkRConstAlt c (elideInvariantContinueArgs inv fullLoopParams body)) alts)
       (map (elideInvariantContinueArgs inv fullLoopParams) mDef)
-elideInvariantContinueArgs inv fullLoopParams (RDup fc v cont) = RDup fc v (elideInvariantContinueArgs inv fullLoopParams cont)
+elideInvariantContinueArgs inv fullLoopParams (RDup fc v extra cont) = RDup fc v extra (elideInvariantContinueArgs inv fullLoopParams cont)
 elideInvariantContinueArgs inv fullLoopParams (RDrop fc vs cont) = RDrop fc vs (elideInvariantContinueArgs inv fullLoopParams cont)
 elideInvariantContinueArgs inv fullLoopParams (RFree fc v cont) = RFree fc v (elideInvariantContinueArgs inv fullLoopParams cont)
 elideInvariantContinueArgs inv fullLoopParams (RReleaseReuse fc v cont) =
@@ -725,7 +725,7 @@ noneVariant _ _ = True
 isInvariantExpr : SortedSet Int -> RCExp -> Bool
 isInvariantExpr variant (ROp _ Nothing _ args _) = all (noneVariant variant) (toList args)
 isInvariantExpr variant (RCon _ _ _ _ args Nothing) = all (noneVariant variant) args
-isInvariantExpr variant (RDup _ _ cont) = isInvariantExpr variant cont
+isInvariantExpr variant (RDup _ _ _ cont) = isInvariantExpr variant cont
 isInvariantExpr variant (RDrop _ _ cont) = isInvariantExpr variant cont
 isInvariantExpr variant (RFree _ _ cont) = isInvariantExpr variant cont
 isInvariantExpr variant (RReleaseReuse _ _ cont) = isInvariantExpr variant cont
@@ -816,8 +816,8 @@ hoistInvariantPrefix variant (RLet fc var rep value body) =
             in ((var, rep, value) :: hoisted, rest)
        else let (hoisted, rest) = hoistInvariantPrefix (insert var variant) body
             in (hoisted, RLet fc var rep value rest)
-hoistInvariantPrefix variant (RDup fc v cont) =
-    let (hoisted, rest) = hoistInvariantPrefix variant cont in (hoisted, RDup fc v rest)
+hoistInvariantPrefix variant (RDup fc v extra cont) =
+    let (hoisted, rest) = hoistInvariantPrefix variant cont in (hoisted, RDup fc v extra rest)
 hoistInvariantPrefix variant (RDrop fc vs cont) =
     let (hoisted, rest) = hoistInvariantPrefix variant cont in (hoisted, RDrop fc vs rest)
 hoistInvariantPrefix variant (RFree fc v cont) =
@@ -864,7 +864,7 @@ hoistInvariantPrefix _ e = ([], e)
 invariantOpArgsThrough : (p : Int) -> (sid : Int) -> RCExp -> RCExp
 invariantOpArgsThrough p sid (ROp fc lazy op args postDrop) =
     ROp fc lazy op (map (\a => if a == RCLoc p then RCLoc sid else a) args) postDrop
-invariantOpArgsThrough p sid (RDup fc v cont) = RDup fc v (invariantOpArgsThrough p sid cont)
+invariantOpArgsThrough p sid (RDup fc v extra cont) = RDup fc v extra (invariantOpArgsThrough p sid cont)
 invariantOpArgsThrough p sid (RDrop fc vs cont) = RDrop fc vs (invariantOpArgsThrough p sid cont)
 invariantOpArgsThrough p sid (RFree fc v cont) = RFree fc v (invariantOpArgsThrough p sid cont)
 invariantOpArgsThrough p sid (RReleaseReuse fc v cont) = RReleaseReuse fc v (invariantOpArgsThrough p sid cont)
@@ -897,7 +897,7 @@ markInvariantNative p sid (RCmpCase fc op args postDrop t f) =
              (markInvariantNative p sid t) (markInvariantNative p sid f)
 markInvariantNative p sid (RLoopContinue fc args postDrop) =
     RLoopContinue fc (map (\a => if a == RCLoc p then RCLoc sid else a) args) postDrop
-markInvariantNative p sid (RDup fc v cont) = RDup fc v (markInvariantNative p sid cont)
+markInvariantNative p sid (RDup fc v extra cont) = RDup fc v extra (markInvariantNative p sid cont)
 markInvariantNative p sid (RDrop fc vs cont) = RDrop fc vs (markInvariantNative p sid cont)
 markInvariantNative p sid (RFree fc v cont) = RFree fc v (markInvariantNative p sid cont)
 markInvariantNative p sid (RReleaseReuse fc v cont) = RReleaseReuse fc v (markInvariantNative p sid cont)
@@ -959,7 +959,7 @@ usesInvariant p e = existsInvariantUse e
         if sc == RCLoc p then True
         else if any (\(MkRConstAlt _ body) => existsInvariantUse body) alts then True
         else maybe False existsInvariantUse mDef
-    existsInvariantUse (RDup _ v body) =
+    existsInvariantUse (RDup _ v _ body) =
         if v == RCLoc p then True else existsInvariantUse body
     existsInvariantUse (RDrop _ vars body) =
         if any (== RCLoc p) vars then True else existsInvariantUse body
@@ -993,7 +993,7 @@ countInvariantDups p args = length (filter (== RCLoc p) args)
 ||| Nest `n` `RDup`s for `p` around `e`.
 wrapInvariantDups : FC -> Int -> Nat -> RCExp -> RCExp
 wrapInvariantDups fc p Z e = e
-wrapInvariantDups fc p (S k) e = RDup fc (RCLoc p) (wrapInvariantDups fc p k e)
+wrapInvariantDups fc p (S k) e = RDup fc (RCLoc p) 0 (wrapInvariantDups fc p k e)
 
 ||| Unconditionally `dup`s every surviving Boxed-context occurrence of
 ||| `p` in `e` (already known, by construction, to contain no
@@ -1006,7 +1006,7 @@ wrapInvariantDups fc p (S k) e = RDup fc (RCLoc p) (wrapInvariantDups fc p k e)
 ||| doesn't need to, see this section's own header note).
 dupInvariantBoxed : (p : Int) -> RCExp -> RCExp
 dupInvariantBoxed p (RV fc v) =
-    if v == RCLoc p then RDup fc v (RV fc v) else RV fc v
+    if v == RCLoc p then RDup fc v 0 (RV fc v) else RV fc v
 dupInvariantBoxed p (RAppName fc lazy n args) =
     wrapInvariantDups fc p (countInvariantDups p args) (RAppName fc lazy n args)
 dupInvariantBoxed p (RUnderApp fc n missing args) =
@@ -1053,7 +1053,7 @@ dupInvariantBoxed p (RConstCase fc sc alts mDef) =
     wrapInvariantDups fc p (countInvariantDups p [sc])
       (RConstCase fc sc (map (\(MkRConstAlt c body) => MkRConstAlt c (dupInvariantBoxed p body)) alts)
                          (map (dupInvariantBoxed p) mDef))
-dupInvariantBoxed p (RDup fc v cont) = RDup fc v (dupInvariantBoxed p cont)
+dupInvariantBoxed p (RDup fc v extra cont) = RDup fc v extra (dupInvariantBoxed p cont)
 dupInvariantBoxed p (RDrop fc vs cont) = RDrop fc vs (dupInvariantBoxed p cont)
 dupInvariantBoxed p (RFree fc v cont) = RFree fc v (dupInvariantBoxed p cont)
 dupInvariantBoxed p (RReleaseReuse fc v cont) = RReleaseReuse fc v (dupInvariantBoxed p cont)

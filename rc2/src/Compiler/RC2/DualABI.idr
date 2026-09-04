@@ -108,7 +108,7 @@ tailValueReps _ (RV _ _) = [Nothing]
 tailValueReps _ (ROp _ _ op _ _) = [opResultRep op]
 tailValueReps _ (RPrimVal _ c) = [litRep c]
 tailValueReps reps (RLet _ var rep value body) = tailValueReps (insert var rep reps) body
-tailValueReps reps (RDup _ _ cont) = tailValueReps reps cont
+tailValueReps reps (RDup _ _ _ cont) = tailValueReps reps cont
 tailValueReps reps (RDrop _ _ cont) = tailValueReps reps cont
 tailValueReps reps (RFree _ _ cont) = tailValueReps reps cont
 tailValueReps reps (RReleaseReuse _ _ cont) = tailValueReps reps cont
@@ -465,7 +465,7 @@ postDropFor reps argReps args =
 ||| evaluates to, never to rewrite anything itself.
 ultimateTail : RCExp -> RCExp
 ultimateTail (RLet _ _ _ _ body) = ultimateTail body
-ultimateTail (RDup _ _ cont) = ultimateTail cont
+ultimateTail (RDup _ _ _ cont) = ultimateTail cont
 ultimateTail (RDrop _ _ cont) = ultimateTail cont
 ultimateTail (RFree _ _ cont) = ultimateTail cont
 ultimateTail (RReleaseReuse _ _ cont) = ultimateTail cont
@@ -548,7 +548,7 @@ callArgNativeReads workers var (RConstCase _ _ alts mDef) =
     concat (map (\(MkRConstAlt _ body) => callArgNativeReads workers var body) alts)
       `union` maybe empty (callArgNativeReads workers var) mDef
 callArgNativeReads workers var (RLoop _ _ _ _ body) = callArgNativeReads workers var body
-callArgNativeReads workers var (RDup _ _ cont) = callArgNativeReads workers var cont
+callArgNativeReads workers var (RDup _ _ _ cont) = callArgNativeReads workers var cont
 callArgNativeReads workers var (RDrop _ _ cont) = callArgNativeReads workers var cont
 callArgNativeReads workers var (RFree _ _ cont) = callArgNativeReads workers var cont
 callArgNativeReads workers var (RReleaseReuse _ _ cont) = callArgNativeReads workers var cont
@@ -617,7 +617,7 @@ loopContinueNativeReads loopParams var (RConCase _ _ alts mDef) =
 loopContinueNativeReads loopParams var (RConstCase _ _ alts mDef) =
     concat (map (\(MkRConstAlt _ body) => loopContinueNativeReads loopParams var body) alts)
       `union` maybe empty (loopContinueNativeReads loopParams var) mDef
-loopContinueNativeReads loopParams var (RDup _ _ cont) = loopContinueNativeReads loopParams var cont
+loopContinueNativeReads loopParams var (RDup _ _ _ cont) = loopContinueNativeReads loopParams var cont
 loopContinueNativeReads loopParams var (RDrop _ _ cont) = loopContinueNativeReads loopParams var cont
 loopContinueNativeReads loopParams var (RFree _ _ cont) = loopContinueNativeReads loopParams var cont
 loopContinueNativeReads loopParams var (RReleaseReuse _ _ cont) = loopContinueNativeReads loopParams var cont
@@ -754,7 +754,7 @@ applyCallSiteRewriteBody workers reps mLoopParams inTail (RConstCase fc sc alts 
     rewriteConstAlt (MkRConstAlt c body) = MkRConstAlt c (applyCallSiteRewriteBody workers reps mLoopParams inTail body)
 applyCallSiteRewriteBody workers reps mLoopParams inTail (RLoop fc loopParams initial prologueDrop body) =
     RLoop fc loopParams initial prologueDrop (applyCallSiteRewriteBody workers (foldl (\m, (i, r) => insert i r m) reps loopParams) (Just loopParams) inTail body)
-applyCallSiteRewriteBody workers reps mLoopParams inTail (RDup fc v cont) = RDup fc v (applyCallSiteRewriteBody workers reps mLoopParams inTail cont)
+applyCallSiteRewriteBody workers reps mLoopParams inTail (RDup fc v extra cont) = RDup fc v extra (applyCallSiteRewriteBody workers reps mLoopParams inTail cont)
 applyCallSiteRewriteBody workers reps mLoopParams inTail (RDrop fc vs cont) = RDrop fc vs (applyCallSiteRewriteBody workers reps mLoopParams inTail cont)
 applyCallSiteRewriteBody workers reps mLoopParams inTail (RFree fc v cont) = RFree fc v (applyCallSiteRewriteBody workers reps mLoopParams inTail cont)
 applyCallSiteRewriteBody workers reps mLoopParams inTail (RReleaseReuse fc v cont) = RReleaseReuse fc v (applyCallSiteRewriteBody workers reps mLoopParams inTail cont)
@@ -884,7 +884,7 @@ inlineFFIWorkersExp ffiInline (RConstCase fc sc alts mDef) =
     rewriteAlt (MkRConstAlt c body) = MkRConstAlt c (inlineFFIWorkersExp ffiInline body)
 inlineFFIWorkersExp ffiInline (RLoop fc loopParams initial prologueDrop body) =
     RLoop fc loopParams initial prologueDrop (inlineFFIWorkersExp ffiInline body)
-inlineFFIWorkersExp ffiInline (RDup fc v cont) = RDup fc v (inlineFFIWorkersExp ffiInline cont)
+inlineFFIWorkersExp ffiInline (RDup fc v extra cont) = RDup fc v extra (inlineFFIWorkersExp ffiInline cont)
 inlineFFIWorkersExp ffiInline (RDrop fc vs cont) = RDrop fc vs (inlineFFIWorkersExp ffiInline cont)
 inlineFFIWorkersExp ffiInline (RFree fc v cont) = RFree fc v (inlineFFIWorkersExp ffiInline cont)
 inlineFFIWorkersExp ffiInline (RReleaseReuse fc v cont) = RReleaseReuse fc v (inlineFFIWorkersExp ffiInline cont)

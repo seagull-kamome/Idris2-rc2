@@ -78,7 +78,7 @@ rewrapDrop locs cont = RDrop emptyFC locs cont
 ||| doesn't wrap) such a construction -- not a verdict on the search as a
 ||| whole, just this one position.
 tryClaim : Name -> RCLocal -> RCExp -> Maybe RCExp
-tryClaim target sc (RDup fc v inner) = RDup fc v <$> tryClaim target sc inner
+tryClaim target sc (RDup fc v extra inner) = RDup fc v extra <$> tryClaim target sc inner
 tryClaim target sc (RCon fc n ci tag args Nothing) =
     if n == target then Just (RCon fc n ci tag args (Just sc)) else Nothing
 tryClaim target sc _ = Nothing
@@ -99,7 +99,7 @@ mutual
         case tryClaim target sc value of
              Just value' => RLet fc var rep value' body
              Nothing     => RLet fc var rep value (tryConsume target sc body)
-    tryConsume target sc (RDup fc v body) = RDup fc v (tryConsume target sc body)
+    tryConsume target sc (RDup fc v extra body) = RDup fc v extra (tryConsume target sc body)
     tryConsume target sc (RDrop fc vs body) = RDrop fc vs (tryConsume target sc body)
     tryConsume target sc (RFree fc v body) = RFree fc v (tryConsume target sc body)
     -- Not actually produced yet at the point this pass runs (nothing
@@ -153,7 +153,7 @@ mutual
     resolveReuse : RCExp -> RCExp
     resolveReuse (RLet fc var rep value body) =
         RLet fc var rep (resolveReuse value) (resolveReuse body)
-    resolveReuse (RDup fc v body) = RDup fc v (resolveReuse body)
+    resolveReuse (RDup fc v extra body) = RDup fc v extra (resolveReuse body)
     resolveReuse (RDrop fc vs body) = RDrop fc vs (resolveReuse body)
     resolveReuse (RFree fc v body) = RFree fc v (resolveReuse body)
     resolveReuse (RReleaseReuse fc v body) = RReleaseReuse fc v (resolveReuse body)
@@ -231,4 +231,4 @@ mutual
                        -- second time here would double-free.
                        outerDrop = dropped \\ conArgsRC
                    in MkRConAlt name ci tag args
-                        (foldr (RDup emptyFC) (rewrapDrop outerDrop inner) dupOnSurvive)
+                        (foldr (\v, acc => RDup emptyFC v 0 acc) (rewrapDrop outerDrop inner) dupOnSurvive)

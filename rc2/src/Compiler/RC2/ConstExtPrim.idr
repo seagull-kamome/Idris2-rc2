@@ -42,7 +42,7 @@ mutual
       RConCase fc sc (map foldConstExtPrimAlt alts) (map foldConstExtPrim mDef)
   foldConstExtPrim (RConstCase fc sc alts mDef) =
       RConstCase fc sc (map foldConstExtPrimConstAlt alts) (map foldConstExtPrim mDef)
-  foldConstExtPrim (RDup fc v body) = RDup fc v (foldConstExtPrim body)
+  foldConstExtPrim (RDup fc v extra body) = RDup fc v extra (foldConstExtPrim body)
   foldConstExtPrim (RDrop fc vars body) = RDrop fc vars (foldConstExtPrim body)
   foldConstExtPrim (RFree fc v body) = RFree fc v (foldConstExtPrim body)
   foldConstExtPrim (RReleaseReuse fc v body) = RReleaseReuse fc v (foldConstExtPrim body)

@@ -665,6 +665,23 @@ dupVars : {auto oft : Ref OutfileText Output}
            -> Core ()
 dupVars = applyFunctionToVars "idris2rc2_dup"
 
+||| Emits a single `idris2rc2_dup(v);` for `extra=0` -- the exact same
+||| output `dupVars [v]` already produces, so this stays byte-for-byte
+||| identical to today's output whenever `extra` is `0`, which is every
+||| `RDup` node anywhere in the current pipeline (the batching pass that
+||| will actually produce `extra > 0` nodes is a separate, later task).
+||| For `extra > 0` (not yet reachable from anywhere in the current
+||| pipeline, but wired up and correct), emits `idris2rc2_dup_n(v, N);`
+||| where `N = extra + 1`, a runtime primitive doing one atomic
+||| increment of `N` instead of `N` separate `idris2rc2_dup` calls. See
+||| `Compiler.RC2.RCExp`'s `RDup` and its own `extra` field.
+export
+dupVarExtra : {auto oft : Ref OutfileText Output}
+           -> {auto il : Ref IndentLevel Nat}
+           -> String -> Nat -> Core ()
+dupVarExtra v Z     = emit EmptyFC $ "idris2rc2_dup(" ++ v ++ ");"
+dupVarExtra v extra = emit EmptyFC $ "idris2rc2_dup_n(" ++ v ++ ", " ++ show (S extra) ++ ");"
+
 export
 freeVars : {auto oft : Ref OutfileText Output}
            -> {auto il : Ref IndentLevel Nat}
