@@ -213,6 +213,23 @@ mutual
                   in if contains (RCLoc var) (freeLocalsR body')
                         then RLet fc var rep value' body'
                         else body'
+              -- Mirrors the `RCConstCon` arm immediately above, for a
+              -- `let`-rebinding of an already-folded closure constant
+              -- (e.g. `let b = a` where `a` was itself folded via the
+              -- `RUnderApp _ n missing []` arm below) -- `foldConst`'s
+              -- own `RV` case already resolved `l` through `env` before
+              -- this classification ever runs, so such a rebinding's
+              -- `value'` arrives here as `RV fc (RCConstClosure n
+              -- missing)` directly, never as a fresh `RUnderApp`.
+              -- Without this arm `b` itself would never be re-entered
+              -- into `env`, silently stopping the fold from propagating
+              -- past one rebinding even though `b` denotes the exact
+              -- same constant as `a`.
+              RV _ cval@(RCConstClosure {}) =>
+                  let body' = foldConst (insert var (Element cval ItIsConstClosure2) env) body
+                  in if contains (RCLoc var) (freeLocalsR body')
+                        then RLet fc var rep value' body'
+                        else body'
               -- A literal, zero-args `RUnderApp` -- a bare reference to
               -- `n`, no captured values -- is unconditionally safe to
               -- fold: unlike `RUnderApp fc n missing (x :: xs)` (which
