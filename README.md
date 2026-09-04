@@ -12,6 +12,7 @@ without modifying) an upstream Idris2 checkout used only as a reference.
 ├── gen-env.sh       regenerates env.sh: nixpkgs' idris2 wrapper env vars, plus PATH pointing at the self-built install/bin compiler
 ├── idris2-src/      reference clone of github.com/idris-lang/Idris2 (gitignored, untouched)
 ├── install/         local install prefix for the rc2 package + runtime (gitignored, build output)
+├── libs/rc2base/    companion support-library package -- see libs/rc2base/ below
 └── rc2/             the actual deliverable -- see rc2/ below
 ```
 
@@ -117,6 +118,46 @@ dump and read the `RCExp` IR itself (`--directive dumprcexpr`).
 `rc2/tests/refc-suite/README.md` documents what's covered by (and
 diverges from) upstream's own regression tests, including every bug
 that porting/writing those tests surfaced.
+
+### `libs/rc2base/`
+
+```
+libs/rc2base/
+├── rc2base.ipkg   Idris2 package: Data.Text/Data.TextBuffer, Data.Buffer.RC2, Data.Double.RC2,
+│                  Data.Integer.GMP, Data.String.FFI, System.Concurrency.RC2,
+│                  System.FFI.C.{Array,Ptr,Sizeof}, System.IO.MemStream,
+│                  System.Random.Xoroshiro{128PlusPlus,64StarStar}
+├── src/           the above modules' own Idris2 source
+├── support/c/     the C shim (libidris2text.a) backing Data.Text, built via prebuild/postinstall hooks
+└── tests/         TestText.idr etc., run against rc2 directly (see its own README's "Build & test")
+```
+
+A companion support-library package providing what upstream's own
+`base`/`contrib` either lack entirely (a UTF-8-aware `Data.Text` type,
+distinct from codepoint-indexed `String`) or only partially serve for
+rc2's own native-C-ABI needs (`Data.Integer.GMP`'s own `mpz_t` FFI
+wrapper, `System.Concurrency.RC2`'s real OS-thread/mutex primitives,
+two from-scratch `System.Random` replacements for upstream primitives
+rc2 has no C backend for -- see `TODO.md`'s "Upstream stdlib
+`%foreign` declarations with no C/RefC backend at all" entry). See
+`libs/rc2base/README.md` for the full module-by-module rationale.
+
+Build & install (from the repo root, against this repo's own `rc2`):
+
+```sh
+source env.sh
+export IDRIS2_PREFIX="$(pwd)/libs/rc2base/.local-install"
+(cd libs/rc2base && idris2 --install rc2base.ipkg)
+```
+
+`rc2/tests/verify.sh` already depends on this for every smoke test
+(`-p rc2base`, e.g. `Test54FFIInteger`'s own `Data.Integer.GMP` usage),
+so a normal `verify.sh` run implicitly builds and exercises it -- see
+`libs/rc2base/README.md`'s own "Build & test" section for running its
+dedicated `tests/TestText.idr` directly, and its "Native library
+install location" section for why the `postinstall` hook's `lib/` copy
+step matters specifically for rc2 (unlike Chez/Racket, it never
+auto-discovers a dependency's own `lib/` directory).
 
 ## Building and running
 
@@ -380,7 +421,7 @@ The natural pairing is a *bare* `%foreign "C:funcName"` declaration --
 no lib/header field at all -- calling straight into injected code by
 plain textual order in the one generated translation unit. That skips
 building any separate static library or wiring up
-`IDRIS2_CFLAGS`/`IDRIS2_LDFLAGS` entirely; contrast with `libs/idris2-Text`'s
+`IDRIS2_CFLAGS`/`IDRIS2_LDFLAGS` entirely; contrast with `libs/rc2base`'s
 own README, which needs all of that because its C helpers live in a real
 separate `.a`.
 
