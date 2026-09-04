@@ -252,18 +252,26 @@ Two fix directions considered, both dropped:
 1. **Cache/immortalise the closure** (mint it once, reuse the same
    `IDRIS2RC2_Value*` at every call site, the same
    `IDRIS2RC2_REFCOUNT_MAX` trick the 0-99 small-int cache already
-   uses). Blocked by a genuine, previously-latent runtime bug this
-   investigation surfaced: `support/rc2/runtime.c`'s
-   `idris2rc2_tailcallApplyClosure`'s own non-unique branch
-   unconditionally does `--c->header.refCount` with no
-   `REFCOUNT_MAX`-check guard the way `idris2rc2_drop` itself has --
-   `idris2rc2_isUnique` (`refCount == 1`) correctly steers an immortal
-   closure away from the *in-place*-mutation branch (`c->args[filled] =
-   arg`), but the non-unique branch's own unconditional decrement would
-   still corrupt the immortal marker down to a real, finite count the
-   moment such a closure were ever `apply`'d. Fixing the runtime side
-   first is a precondition this document doesn't take further -- not
-   attempted.
+   uses). At the time this was investigated, `support/rc2/runtime.c`'s
+   `idris2rc2_tailcallApplyClosure`'s own non-unique branch was
+   (mistakenly) believed to unconditionally decrement
+   `c->header.refCount` with no `REFCOUNT_MAX`-check guard the way
+   `idris2rc2_drop` itself has. Re-checked against the current
+   source: that branch already calls the fully-guarded
+   `idris2rc2_drop` (which itself checks `IDRIS2RC2_REFCOUNT_MAX` and
+   returns early), so it was never actually unsafe for an immortal
+   closure. The one real unguarded decrement was in a different
+   function, `idris2rc2_trampoline` -- traced as unreachable for an
+   immortal closure under any call site as the code was written, and
+   given a matching defensive guard anyway by commit `a01eaa2` for
+   symmetry/future-proofing. That commit's own `RCConstClosure`
+   extension immortalises exactly this kind of bare closure and
+   dispatches it repeatedly through the non-unique path, confirmed
+   correct and valgrind-clean
+   (`rc2/tests/Test70ConstFoldClosureCallthrough`) -- direct, empirical
+   confirmation that immortalising a closure is safe. This blocker no
+   longer applies; not attempted for the general higher-order-argument
+   case below regardless, since reason 2 stands on its own.
 2. **Specialise the callee per statically-known argument** (clone
    `mapAppend` once per distinct function it's ever called with,
    replacing the cloned copy's own `apply` with a direct call --
@@ -288,6 +296,116 @@ Two fix directions considered, both dropped:
    trade for anything but a narrow, deliberately-curated allowlist of
    hot call sites, which this document's own design never scoped down
    to. Not implemented; not currently planned.
+
+## Performance: interface-dictionary method dispatch stays boxed even when the concrete instance is known
+
+Investigated against a real workload (`idris2-missing-containers`'
+`benchmarkHash`, five `HashAlgorithm` instances -- FNV1a/MurMur3/
+OneAtATime/Sip32/Sip64 -- all sharing one generic
+`Data.Hash.Algorithm.Internal.feedCharOfString`, called once per byte
+per word per algorithm): every interface-method call (`feed8`) goes
+through a boxed `idris2rc2_applyClosure` dispatch, even though each
+concrete instance's own `feed8` compiles to a genuinely native
+`Compiler.RC2.DualABI` worker (`uint64_t`/`uint8_t` in and out, no
+internal boxing at all -- confirmed directly in the generated C).
+The cost is real and concrete, not theoretical: `rc2/BENCHMARKS.md`
+already measured this hot path as the dominant cost in that
+benchmark.
+
+Root cause, confirmed via the actual generated C
+(`install/idris2-missing-containers/test/src/build/exec/mct_rc2.c`):
+the `HashAlgorithm` dictionary itself was built by a top-level 0-arg
+CAF (`csegen_41`) that allocated a fresh 6-field `IDRIS2RC2_Constructor`
+plus six fresh `idris2rc2_mkClosure`'d partial applications -- on
+*every call*, never memoized (rc2 has no CAF-sharing at all, see the
+"Lazy/Force" section below).
+
+**Now solved: the dictionary's own construction cost.** Commit
+`a01eaa2` adds a new `RCConstClosure` constant form to
+`Compiler.RC2.ConstFold` for a bare, zero-filled closure over a named
+top-level function (`RUnderApp fc n missing []`). The existing
+`allConstLocal` check (`RCExp.idr`'s `IsAnyConstLocal`) that used to
+accept only `RCNull`/`RCConst`/`RCEmptyCon`/`RCConstCon` fields --
+never a closure -- now also accepts `RCConstClosure`, so `RCConstCon`
+folding reaches straight through `csegen_41`'s own six closure-shaped
+fields with no cross-CAF-boundary work needed at all (the fold
+operates on `csegen_41`'s own body, where the dictionary's `RCon` is
+actually built). `csegen_41`'s whole body now collapses into one
+immortal static; the six `mkClosure` calls plus the constructor
+allocation are gone. Full design, the `Compiler.RC2.DeadCode`
+correctness gap this exposed, and the related pre-existing
+`EmitUtil.boxedConstExpr` dedup bug it exposed: see
+`rc2/doc/const-closure-fold.md`.
+
+**Still open: per-byte dispatch through the dictionary.** The fix
+above only makes *obtaining* the dictionary free -- every `feed8` call
+still reads a field out of it (`RCLoc`) and dispatches through boxed
+`idris2rc2_applyClosure`, entirely unchanged
+(`rc2/doc/const-closure-fold.md`'s own "Scope / limitations" is
+explicit that this was never in scope for that fix). Resolving *that*
+call to a direct call to (e.g.) `FNV1a`'s own concrete `feed8` worker
+is a different, still-unaddressed problem, blocked on:
+
+- **`Compiler.RC2.Inline`'s call-free criterion still excludes
+  dictionary construction**: `csegen_41`'s own body is six
+  `LUnderApp`s (closure constructions), and `isCallFree (LUnderApp {})
+  = False` unconditionally -- by design, per `rc2/doc/inlining.md`'s
+  own "Eligibility: Criterion A only" scoping. Not a blocker for
+  folding the dictionary itself (ConstFold reached that independently
+  of Inline, above) -- still a blocker for using Inline as an
+  alternate route to carry the now-known-constant value into a caller.
+- **Nothing propagates the dictionary's now-known constant value
+  across a function-call boundary**: the value would still need to
+  survive *interprocedurally* -- as an ordinary argument into
+  `feedCharOfString`, then into its own self-tail-recursive `go`
+  loop's own loop parameter -- before a rewrite could resolve the
+  `args[1]`-extraction + `apply` pair into a direct call.
+  `Compiler.RC2.Loop`'s native-shadow/invariant-parameter promotion
+  has no notion of "this loop parameter is a provably-constant
+  closure" today (a closure is always `RBoxed`, and `Loop.idr`'s own
+  invariant-hoisting explicitly excludes `RBoxed` results for an
+  unrelated, already-fixed double-free reason -- see "`Loop.idr`'s own
+  loop-carried... native shadow" above). And because `feedCharOfString`
+  is *shared* by all five instances, resolving this for one instance
+  means **cloning** the shared helper (and its loop) per distinct known
+  dictionary, not rewriting in place -- the same per-call-site
+  specialization shape (and the same code-size-growth concern) as
+  "Dropped: closure generation for statically-known higher-order
+  function arguments" above, though bounded here by however many
+  *instances* of an interface actually get used in a program (typically
+  small and enumerable), rather than by every possible function value a
+  generic higher-order helper might ever see.
+
+**A narrower fix was also investigated and found insufficient**: since
+a dictionary's own method fields are always freshly built with
+`filled = 0` (never partially applied within the dictionary itself)
+and a closure's own `fn` pointer is immutable once set
+(`idris2rc2_mkClosure`, confirmed no other write site exists), reading
+`->fn` out as a new native ("no refcount needed, unlike a real
+`IDRIS2RC2_Value*`") `Rep` case and calling it directly, bypassing
+`idris2rc2_applyClosure` entirely, is sound -- but *only* for a
+closure's *final* remaining argument, which is exactly what
+`rc2/doc/closure-dispatch-optimization.md`'s existing
+`idris2rc2_dispatchWithExtra` fast path already covers. `feed8` itself
+is arity 2, applied in two sequential steps (accumulator, then byte)
+per `RApp`'s own one-argument-at-a-time shape -- rc2's IR has no node
+for "apply K remaining arguments to an existing closure value in one
+step" -- so the *first* application (accumulator, 2 args still
+remaining) can't benefit from this trick at all: it still needs a real
+persisted intermediate object (the closure is `dup`'d fresh from the
+shared dictionary every loop iteration, so it's never unique at that
+point either). This narrower angle is complementary to, not a
+substitute for, the specialization problem above -- it only ever
+helps the *last* step of a dispatch chain, not the earlier ones.
+
+Not pursued: a real fix now needs propagating the dictionary's known
+constant value through a loop parameter (an independently-documented
+`Loop.idr` gap) and call-site-sensitive cloning of the shared generic
+function per distinct known dictionary -- a coordinated, multi-pass
+effort rather than a bounded extension of any single existing pass.
+Revisit if profiling on a real workload continues to show this
+dominating (already true for `idris2-missing-containers`, per
+`rc2/BENCHMARKS.md`).
 
 ## Performance: constructor reuse doesn't reach across a monadic-bind continuation
 
@@ -822,10 +940,14 @@ case needs one specifically.
   - 可能な限りコンパイル時にクロージャを特定し、直接呼び出しへとインライン展開するパスを実装する。
   - スコープ内で閉じている静的な定数クロージャは、最適化パスで完全にインライン化・削除を行う。
 
-- **Performance: Higher-Order Function Specialization**
-  `mapAppend`のような汎用的な高階関数は、すべて`Boxed`な値を引数に取るため、頻繁なポインタ参照とヒープ割り当てが発生している。
-  - 特定の型（例：`List Double`）に対して高階関数が呼び出されている場合、コンパイル時に型特化した関数を生成する（テンプレート化/マングリング）。
-  - 特化により、`Boxed`なCONSセル走査を、ネイティブな配列走査へと置き換え、参照カウント操作を削減する。
+- **Performance: Higher-Order Function Specialization** -- 一般の高階関数
+  (`mapAppend`等)の型特化は「Dropped: closure generation for
+  statically-known higher-order function arguments」で調査済み(コード
+  サイズ膨張のため見送り)。インターフェース辞書経由のメソッド呼び出し
+  (`feed8`等)に限定した、より狭いスコープでの特殊化は
+  「Performance: interface-dictionary method dispatch stays boxed even
+  when the concrete instance is known」で実ベンチマークに基づき調査済み
+  (複数パスにまたがる調整が必要と判明、未着手)。
 
 - **`%export`: 対応型を拡大、生成ヘッダなしは未対応のまま**
   `%export`自体は実装済み(rc2は実ネイティブC-ABIラッパーを生成する唯一の
