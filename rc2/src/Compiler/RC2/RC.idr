@@ -9,7 +9,6 @@ module Compiler.RC2.RC
 
 import Compiler.LambdaLift
 import Compiler.RC2.ConstExtPrim
-import Compiler.RC2.ConstFold
 import Compiler.RC2.DualABI
 import Compiler.RC2.RCExp
 import Compiler.RC2.Types
@@ -477,6 +476,25 @@ mutual
     -- immortal folded closure is never tracked in natives/owned either,
     -- and would otherwise get a wasted (though harmless) RDup here.
     annotate natives owned e@(RV _ (RCConstClosure {})) = pure e
+    -- `RCConst`/`RCEmptyCon`/`RCNull` need the exact same three
+    -- intercepts, for the exact same reason -- `Compiler.RC2.ConstFold`
+    -- gained the ability to fold a whole `RConCase` (a destructured
+    -- field bound via `insertConArgs`, or a whole-program CAF's own
+    -- value via `RAppName`'s own fold arm) straight down to a BARE `RV`
+    -- of one of these forms, with no enclosing `RLet` left for `annotate`
+    -- to have already special-cased -- previously only `RCConstCon`/
+    -- `RCConstClosure` could ever reach this point unaccompanied
+    -- (`splitBorrows`/`dropIfLastUse` above already exclude all five
+    -- forms uniformly; this fallthrough hadn't needed to, before that
+    -- fold existed). Without this, the generic `RV fc v` case below
+    -- wraps it in a real `RDup` (since neither set ever tracks a
+    -- constant-form value), and `Compiler.RC2.EmitUtil`'s own `varName`
+    -- has no real rendering for any of the five reaching it that way
+    -- (all five say so in their own doc comments) -- not just wasted, a
+    -- genuine C compile error.
+    annotate natives owned e@(RV _ (RCConst _)) = pure e
+    annotate natives owned e@(RV _ (RCEmptyCon {})) = pure e
+    annotate natives owned e@(RV _ RCNull) = pure e
     annotate natives owned (RV fc v) =
         pure $ if contains v natives || contains v owned then RV fc v else RDup fc v (RV fc v)
     annotate natives owned (RAppName fc lazy n args) =
@@ -733,19 +751,28 @@ checkForeignReturn n (MkLForeign _ _ ret) =
          _ => pure ()
 checkForeignReturn _ _ = pure ()
 
-||| Between the two phases, `Compiler.RC2.ConstExtPrim`'s constant
-||| fold runs once over Phase 1's freshly-built tree (see its own
-||| module note for why this placement, rather than a separate
-||| RC2.idr `toRCDefs` stage, is correct) -- so any `RExtPrim` it
-||| folds into an `RPrimVal` is annotated by Phase 2 exactly like any
-||| other literal. Compiler.RC2.ConstFold's own arithmetic/comparison/
-||| case-of-constant fold runs right after it, on the same tree, for
-||| the same reason -- and after it specifically so it can fold
-||| further using whatever ConstExtPrim itself just folded in (e.g.
-||| chaining a string op onto `prim__codegen`'s folded `"rc2"`).
+||| Phase 1 (`normalizeDef`) plus `Compiler.RC2.ConstExtPrim`'s
+||| constant fold, run once over Phase 1's freshly-built tree (see its
+||| own module note for why this placement, rather than a separate
+||| RC2.idr `toRCDefs` stage, is correct) -- so any `RExtPrim` it folds
+||| into an `RPrimVal` is annotated by Phase 2 exactly like any other
+||| literal. `Compiler.RC2.ConstFold`'s own arithmetic/comparison/
+||| case-of-constant/CAF fold does NOT run here -- it needs to see
+||| every definition in the program at once (a whole-program `CafTable`
+||| built across iterations, not just this one `LiftedDef`'s own body),
+||| so `Compiler.RC2.RC2`'s own whole-program fixpoint loop calls it
+||| separately, between this and `toRCDefPostFold` below.
 export
-toRCDef : Name -> LiftedDef -> Core RCDef
-toRCDef declName ld = do
+toRCDefPreFold : Name -> LiftedDef -> Core RCDef
+toRCDefPreFold declName ld = do
     checkForeignReturn declName ld
     n <- normalizeDef ld
-    annotateDef (foldConstDef (foldConstExtPrimDef n))
+    pure (foldConstExtPrimDef n)
+
+||| Phase 2 (`annotateDef`) only -- run once per definition, after
+||| `Compiler.RC2.RC2`'s own `ConstFold` fixpoint loop has fully
+||| converged (or hit its iteration cap) on that definition's final
+||| folded body.
+export
+toRCDefPostFold : RCDef -> Core RCDef
+toRCDefPostFold = annotateDef

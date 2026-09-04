@@ -16,6 +16,7 @@ module Compiler.RC2.RC2
 
 import Compiler.RC2.CC
 import Compiler.RC2.ConAltNative
+import Compiler.RC2.ConstFold
 import Compiler.RC2.DeadCode
 import Compiler.RC2.DualABI
 import Compiler.RC2.Emit
@@ -40,6 +41,7 @@ import Core.Normalise
 import Core.Options
 import Core.Value
 
+import Data.DPair
 import Data.SortedMap
 import Data.SortedSet
 import Data.String as String
@@ -70,7 +72,10 @@ applyReuse d@(MkRCForeign _ _ _) = d
 ||| A/B-isolation need is exactly what rc2/doc/con-alt-native.md's
 ||| "Bugs found and fixed" #1-2 describe hitting by hand, before this
 ||| mechanism existed). Recognised
-||| directives: `noinline`, `noconaltnative`, `nomutualloop`,
+||| directives: `noinline`, `noconstfold` (disables
+||| `Compiler.RC2.ConstFold`'s own whole-program fixpoint fold --
+||| `Compiler.RC2.ConstExtPrim`'s own fold, run unconditionally inside
+||| `toRCDefPreFold`, is unaffected), `noconaltnative`, `nomutualloop`,
 ||| `noloop`, `nosink`, `nodualabi` (disables both `DualABI`'s own
 ||| worker/wrapper synthesis *and* its own call-site rewriting together
 ||| -- the rewrite needs the worker table the synthesis step builds, so
@@ -108,15 +113,56 @@ applyReuse d@(MkRCForeign _ _ _) = d
 ||| currently always `[]` in practice -- rc2 doesn't otherwise implement
 ||| `%export`, but including it costs nothing and avoids a latent trap
 ||| if that ever changes).
+||| Iteration cap for `foldConstProgram`'s own whole-program fixpoint
+||| loop, chosen the same way GHC picks `-fmax-simplifier-iterations`'s
+||| default (4): monotonicity (a CAF only ever transitions from "not
+||| yet known foldable" to "foldable", never back) means the loop would
+||| naturally halt on its own once `CafTable` stops growing, bounded by
+||| the total number of 0-arg top-level definitions in the program --
+||| but a fixed cap on top guards against a pathological input still
+||| taking unboundedly many iterations to reach that point. Hitting the
+||| cap only leaves some CAFs un-inlined across a call boundary (a
+||| missed optimisation), never an incorrect fold -- see Test76's own
+||| module note for the mutual-recursion case this exists for.
+maxConstFoldIterations : Nat
+maxConstFoldIterations = 4
+
+||| Runs `Compiler.RC2.ConstFold.foldConstDef` over every definition in
+||| `defs0` (Phase 1 output, pre-`ConstFold`, from `toRCDefPreFold`),
+||| rebuilding `CafTable` after each pass via `cafValueOf` and looping
+||| again as long as the table's own key count is still growing (a CAF
+||| newly proven foldable this round might be exactly what unblocks
+||| another CAF -- or an ordinary `RAppName` call site -- next round),
+||| up to `maxConstFoldIterations`.
+foldConstProgram : List (Name, RCDef) -> List (Name, RCDef)
+foldConstProgram defs0 = go maxConstFoldIterations empty defs0
+  where
+    rebuildTable : List (Name, RCDef) -> CafTable
+    rebuildTable = foldl (\tbl, (n, d) => maybe tbl (\v => insert n v tbl) (cafValueOf d)) empty
+
+    go : Nat -> CafTable -> List (Name, RCDef) -> List (Name, RCDef)
+    go Z _ defs = defs
+    go (S fuel) table defs =
+        let folded = map (\(n, d) => (n, foldConstDef table d)) defs
+            table' = rebuildTable folded
+        in if length (SortedMap.toList table') == length (SortedMap.toList table)
+              then folded
+              else go fuel table' folded
+
 toRCDefs : {auto c : Ref Ctxt Defs} -> List String -> (roots : List Name) -> List (Name, LiftedDef) -> Core (List (Name, RCDef))
 toRCDefs disabled roots lds0 = do
     lds <- if "noinline" `elem` disabled then pure lds0 else logTime 2 "rc2: Inline" $ applyInlineLifted lds0
+    preFolded <- logTime 2 "rc2: RC normalize" $
+                   traverse (\(n, ld) => do d <- toRCDefPreFold n ld; pure (n, d)) lds
+    folded <- if "noconstfold" `elem` disabled
+                 then pure preFolded
+                 else logTime 2 "rc2: ConstFold (whole-program fixpoint)" $ pure (foldConstProgram preFolded)
     reused <- logTime 2 "rc2: RC annotate + Reuse + ConAltNative" $
-                traverse (\(n, ld) => do
-                  d0 <- toRCDef n ld
-                  let d1 = applyReuse d0
-                  let d2 = if "noconaltnative" `elem` disabled then d1 else applyConAltNative d1
-                  pure (n, d2)) lds
+                traverse (\(n, d) => do
+                  d1 <- toRCDefPostFold d
+                  let d2 = applyReuse d1
+                  let d3 = if "noconaltnative" `elem` disabled then d2 else applyConAltNative d2
+                  pure (n, d3)) folded
     merged <- if "nomutualloop" `elem` disabled then pure reused else logTime 2 "rc2: Mutual loop" $ applyMutualLoop reused
     looped <- if "noloop" `elem` disabled
                  then pure merged
@@ -413,7 +459,7 @@ compileExpr c s _ outputDir tm outfile =
      -- `dumpdualabi` (which only ever inspect its *output*).
      directiveList <- getDirectives (Other "rc2")
      let disabledStages = filter (`elem` directiveList)
-                             ["noinline", "noconaltnative", "nomutualloop", "noloop", "nosink", "nodualabi", "nodeadcode"]
+                             ["noinline", "noconstfold", "noconaltnative", "nomutualloop", "noloop", "nosink", "nodualabi", "nodeadcode"]
      -- `--directive nomain` / `%cg rc2 nomain`: NOT a pipeline-stage
      -- disable (unlike `disabledStages` above) -- it only controls
      -- whether `Emit.idr`'s `footer` emits a C `main()` at all, so it's
