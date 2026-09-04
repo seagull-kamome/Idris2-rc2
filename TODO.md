@@ -363,25 +363,113 @@ are in **`rc2/doc/reuse-monadic-bind-gap.md`**.
 
 ## Performance: constant-constructor folding doesn't cross a CAF boundary or a case scrutinee
 
-`Compiler.RC2.ConstFold`'s `RCConstCon` folding (see
-`rc2/doc/const-con-fold.md`) only folds literal constructor nesting
-*within one definition's own body* -- deliberately MVP-scoped, two
-gaps left for later:
+`Compiler.RC2.ConstFold`'s `RCConstCon`/`RCConstClosure` folding (see
+`rc2/doc/const-con-fold.md`/`rc2/doc/const-closure-fold.md`) only folds
+*within one definition's own body*, via a single pass with a fresh,
+purely-local `env` per definition (`foldConstDef`, called once per
+`RCDef`, no cross-definition state). Two gaps left open, now with a
+worked-out (not yet implemented) design for both:
 
-- A `RAppName` referencing another top-level CAF is never treated as
-  constant, even when that CAF's own body folds entirely. Folding
-  through would need whole-program dependency resolution (which CAF
-  folds first if two reference each other) this pass doesn't attempt.
-- `RConCase`/`RConstCase`'s own scrutinee (`sc`) is never resolved
-  against a folded `RCConstCon`, so a `case` over a
-  provably-constant value still compiles to a real runtime dispatch
-  instead of folding away. `Compiler.RC2.Reuse` and `Emit.idr`'s own
-  case-lowering both currently assume a scrutinee is a real heap
-  `RCLoc` -- both would need auditing before this could be lifted.
+- **CAF boundary**: a `RAppName` referencing another top-level 0-arg
+  definition (a CAF) is never treated as constant, even when that
+  CAF's own body folds entirely to a single `RCConstCon`/
+  `RCConstClosure`. Investigated whether `Compiler.RC2.Inline`
+  (which already runs before `ConstFold`, `RC2.idr:113-114`) already
+  covers this via ordinary splicing: it does, but **only for
+  constructor-shaped CAFs** -- `Inline`'s own `isCallFree`
+  (`Inline.idr:357-369`) accepts `LCon` (a data constructor
+  construction) as call-free provided its own args are, so a small,
+  call-free, constructor-only CAF (e.g. `frozen : List Int; frozen =
+  [1,2,3]`) already gets spliced into its call site and then folded
+  there intraprocedurally, as an accidental byproduct of `Inline` not
+  even knowing it's dealing with a future constant. It does **not**
+  cover closure-shaped CAFs at all: `isCallFree (LUnderApp {}) =
+  False` unconditionally excludes any body building a closure,
+  regardless of size or triviality -- confirmed as exactly why
+  `RCConstClosure` needed its own, separate intraprocedural mechanism
+  (folding *inside* a `csegen_N`-shaped dictionary CAF's own body,
+  never by inlining it at each call site) rather than reusing `Inline`.
+- **`RConCase`'s own scrutinee is never resolved** -- but
+  `RConstCase`'s **already is**: `foldConst`'s own `RConstCase` case
+  (`ConstFold.idr:305-310`) already calls `resolveConst env sc` and,
+  if `sc` resolves to a known `Constant`, `findConstAlt` collapses the
+  whole case to just the matching alt's body. `RConCase`
+  (`ConstFold.idr:303-304`) does the opposite -- `sc` is passed through
+  completely untouched, only the alt bodies are recursively folded --
+  so a `case` over a scrutinee already known to be a folded
+  `RCConstCon`/`RCEmptyCon` still compiles to a real runtime tag
+  dispatch. Not a straight copy of `RConstCase`'s own fix, though:
+  `RConCase`'s alts also bind the scrutinee's own *fields* to new
+  local names, so resolving a known-constant scrutinee needs to (a)
+  pick the matching alt by *tag* (not raw `Constant` equality) and (b)
+  substitute each of that alt's own field bindings with the
+  corresponding sub-value already sitting in the `RCConstCon`'s own
+  `args`, which `RConstCase`'s field-less alts never needed. Once
+  either case folds away entirely at compile time, `Compiler.RC2.Reuse`'s
+  reservation logic and `Emit.idr`'s own case-lowering -- both of which
+  currently assume a scrutinee is a real, runtime-destructured heap
+  `RCLoc` -- need auditing for correct dup/drop bookkeeping when that
+  destructure never actually happens at runtime; not expected to be
+  hard, but unverified.
 
-Not pursued further this round -- see `const-con-fold.md`'s own
-"Scope / limitations" and "Verification methodology" sections for the
-reasoning and what to check before extending either.
+**Design for closing the CAF-boundary gap** (covers constructor- and
+closure-shaped CAFs uniformly, unlike the `Inline`-splicing
+side-channel above, which only ever reaches the constructor case):
+fuse constant-aware call-site substitution directly into `foldConst`'s
+own existing traversal, rather than adding a separate inlining pass --
+maintain a `Name`-keyed (not `RCLocal`-index-keyed like the existing
+per-definition `env`) table of every top-level 0-arg definition
+already known to fold entirely; whenever `foldConst` encounters a
+`RAppName` calling one of those, substitute the call with the known
+constant directly, in the same walk that's already substituting
+`RCLoc`s via the local `env`. This needs no new traversal shape, only
+a second, wider table consulted alongside the existing one. The
+unavoidable remaining piece is genuinely new, though: since a
+definition processed early may not yet know a *later* definition's own
+constancy, the whole set of top-level definitions needs reprocessing
+whenever any one definition's own fold result changes, until nothing
+changes -- an outer, whole-program fixpoint loop `Compiler.RC2.ConstFold`
+doesn't have any version of today (it's a one-shot, per-definition
+pass called once by `toRCDefs`). Two safety properties make this
+tractable rather than open-ended: (1) a definition can only ever
+transition from *not fully constant* to *fully constant*, never back,
+so the loop is monotonic and bounded by the number of top-level
+definitions in the worst case; (2) a group of mutually-referencing CAFs
+that can never resolve to a flat constant (e.g. `a = Cons 1 b; b =
+Cons 2 a`) just never makes further progress on that group and is left
+as ordinary, dynamically-computed definitions -- no incorrect folding,
+no infinite loop. Even so, plan to cap the outer loop at a small, fixed
+iteration count (matching precedent -- GHC's own simplifier defaults
+`-fmax-simplifier-iterations` to 4) rather than relying solely on the
+change-detection logic to always terminate promptly: hitting the cap
+before reaching a true fixpoint only means some deeply-chained CAFs
+stay unfolded, a missed-optimization outcome, not a correctness one,
+consistent with how every other bounded pass in this codebase already
+treats its own scope limits.
+
+**Design for closing the `RConCase` scrutinee gap**: add a `RConCase`
+counterpart to `RConstCase`'s own existing `resolveConst`-then-fold
+shape (`ConstFold.idr:305-310`) -- resolve `sc` against `env` (and the
+new whole-program table above, so a case over a CAF-boundary-folded
+value also benefits), match the resolved `RCConstCon`/`RCEmptyCon`'s
+own tag against each `MkRConAlt`'s tag (mirroring `findConstAlt`'s
+value-equality search, but by tag), and on a match substitute the
+chosen alt's own field-bound names with the matching `RCConstCon`'s
+own `args` entries before folding that alt's body. Slots into the same
+fixpoint loop as the CAF-boundary work above (a scrutinee whose own
+constancy is only established by a later-processed CAF needs the same
+reprocessing), not a separate mechanism.
+
+Not implemented yet -- this is a real, if bounded, architecture
+change (`ConstFold` goes from a one-shot per-definition pass to a
+capped whole-program fixpoint with a persistent, `Name`-keyed
+constant table), not a small patch. Revisit when there's time to
+implement and verify it properly; the `Compiler.RC2.Reuse`/`Emit.idr`
+audit flagged above should happen as part of that work, not
+speculatively ahead of it. See `const-con-fold.md`'s own "Scope /
+limitations" and "Verification methodology" sections for the
+existing single-definition fold's own reasoning, still valid as the
+inner-loop mechanism this design builds on.
 
 ## Scope: deliberately unboxed types stop at scalars
 
