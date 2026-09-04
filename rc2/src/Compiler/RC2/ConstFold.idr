@@ -241,30 +241,27 @@ mutual
                         else body'
               -- Mirrors the `RCConstCon` arm immediately above, for a
               -- `let`-rebinding of an already-folded closure constant
-              -- (e.g. `let b = a` where `a` was itself folded via the
-              -- `RUnderApp _ n missing []` arm below) -- `foldConst`'s
-              -- own `RV` case already resolved `l` through `env` before
-              -- this classification ever runs, so such a rebinding's
-              -- `value'` arrives here as `RV fc (RCConstClosure n
-              -- missing)` directly, never as a fresh `RUnderApp`.
-              -- Without this arm `b` itself would never be re-entered
-              -- into `env`, silently stopping the fold from propagating
-              -- past one rebinding even though `b` denotes the exact
-              -- same constant as `a`.
+              -- (e.g. `let b = a` where `a` was itself folded to a
+              -- `RCConstClosure`) -- `foldConst`'s own `RV` case already
+              -- resolved `l` through `env` before this classification
+              -- ever runs, so such a rebinding's `value'` arrives here
+              -- as `RV fc (RCConstClosure n missing)` directly. This is
+              -- also the arm that now catches a bare, zero-args
+              -- `RUnderApp fc n missing []` used directly as a `let`'s
+              -- value: `value'` is `foldConst caf env value`, and
+              -- `foldConst`'s own top-level `RUnderApp _ n missing []`
+              -- arm (below, in this same `mutual` block) unconditionally
+              -- folds that shape to `RV fc (RCConstClosure n missing)`
+              -- before this `case` ever sees it -- so a raw `RUnderApp`
+              -- can never reach this classification any more (a
+              -- dedicated arm for it here was removed as dead code for
+              -- exactly this reason). Without this `RV`/`RCConstClosure`
+              -- arm, `b` itself would never be re-entered into `env`,
+              -- silently stopping the fold from propagating past one
+              -- rebinding even though `b` denotes the exact same
+              -- constant as `a`.
               RV _ cval@(RCConstClosure {}) =>
                   let body' = foldConst caf (insert var (Element cval ItIsConstClosure2) env) body
-                  in if contains (RCLoc var) (freeLocalsR body')
-                        then RLet fc var rep value' body'
-                        else body'
-              -- A literal, zero-args `RUnderApp` -- a bare reference to
-              -- `n`, no captured values -- is unconditionally safe to
-              -- fold: unlike `RUnderApp fc n missing (x :: xs)` (which
-              -- captures a possibly-dynamic value `x`), there's nothing
-              -- here that could ever be non-constant. `RUnderApp fc n
-              -- missing (x :: xs)` therefore falls through to the
-              -- catch-all below, still becoming a real `RLet`.
-              RUnderApp _ n missing [] =>
-                  let body' = foldConst caf (insert var (Element (RCConstClosure n missing) ItIsConstClosure2) env) body
                   in if contains (RCLoc var) (freeLocalsR body')
                         then RLet fc var rep value' body'
                         else body'
@@ -316,6 +313,21 @@ mutual
                          Just (Element cval _) => RV fc cval
                          Nothing               => RAppName fc lazy n []
               _  => RAppName fc lazy n args'
+  -- A literal, zero-args `RUnderApp` -- a bare reference to `n`, no
+  -- captured values -- denotes exactly the same constant closure value
+  -- as the `RCConstClosure` form (see `RCConstClosure`'s own doc
+  -- comment in RCExp.idr), whether it appears as a `let`-binding's
+  -- value (handled by the `RLet` case's own `RUnderApp _ n missing []`
+  -- classification above) or completely bare -- e.g. directly as a
+  -- CAF's whole body, which `RC.idr`'s own `bindMany env [] k = k []`
+  -- never wraps in a `let` at all (a zero-capture `RUnderApp` has
+  -- nothing to bind). Folding it here, unconditionally, means
+  -- `cafValueOf`'s `MkRCFun [] _ _ (RV _ cval)` pattern (RC2.idr) can
+  -- recognise such a CAF as constant-foldable too, not just one whose
+  -- body happens to already be an explicit `RLet` chain. `RUnderApp fc
+  -- n missing (x :: xs)` (a real capture) still falls through to the
+  -- catch-all below, unchanged.
+  foldConst _ env (RUnderApp fc n missing []) = RV fc (RCConstClosure n missing)
   foldConst _ env (RUnderApp fc n missing args) = RUnderApp fc n missing (map (resolveLocal env) args)
   foldConst _ env (RApp fc lazy c a) = RApp fc lazy (resolveLocal env c) (resolveLocal env a)
   foldConst _ env (RExtPrim fc lazy p args postDrop) = RExtPrim fc lazy p (map (resolveLocal env) args) postDrop
