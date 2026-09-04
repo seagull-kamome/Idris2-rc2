@@ -231,72 +231,6 @@ underlying gap wearing two different names. See
 worth doing, what the investigation found, and why neither design
 considered was pursued).
 
-## Dropped: closure generation for statically-known higher-order function arguments
-
-Investigated why `map double [1,2,3,4,5]`-shaped code pays for a fresh
-closure allocation on every call even though `double` is a statically
-known top-level function: `--directive dumplifted` (upstream's own
-debug flag) confirms Idris2's own frontend never passes a bare
-top-level reference at all -- `Compiler.LambdaLift`'s `liftExp (CRef fc
-n) = LAppName fc lazy n []` means any function value is always an
-eta-wrapped, lambda-lifted helper (`Main.{main:2} = [][{eta:0}]:
-Main.double(!{eta:0})`), reaching the call site as an `LUnderApp` with
-zero arguments filled in. `Prelude.Types.List.mapAppend` itself reads
-that closure exactly once per element via `LApp` (`!{arg:3} @
-(!{e:1})`), lowering to `Compiler.RC2.Emit`'s `apply`/
-`idris2rc2_tailcallApplyClosure` -- a tag check plus indirect dispatch,
-on top of the allocation.
-
-Two fix directions considered, both dropped:
-
-1. **Cache/immortalise the closure** (mint it once, reuse the same
-   `IDRIS2RC2_Value*` at every call site, the same
-   `IDRIS2RC2_REFCOUNT_MAX` trick the 0-99 small-int cache already
-   uses). At the time this was investigated, `support/rc2/runtime.c`'s
-   `idris2rc2_tailcallApplyClosure`'s own non-unique branch was
-   (mistakenly) believed to unconditionally decrement
-   `c->header.refCount` with no `REFCOUNT_MAX`-check guard the way
-   `idris2rc2_drop` itself has. Re-checked against the current
-   source: that branch already calls the fully-guarded
-   `idris2rc2_drop` (which itself checks `IDRIS2RC2_REFCOUNT_MAX` and
-   returns early), so it was never actually unsafe for an immortal
-   closure. The one real unguarded decrement was in a different
-   function, `idris2rc2_trampoline` -- traced as unreachable for an
-   immortal closure under any call site as the code was written, and
-   given a matching defensive guard anyway by commit `a01eaa2` for
-   symmetry/future-proofing. That commit's own `RCConstClosure`
-   extension immortalises exactly this kind of bare closure and
-   dispatches it repeatedly through the non-unique path, confirmed
-   correct and valgrind-clean
-   (`rc2/tests/Test70ConstFoldClosureCallthrough`) -- direct, empirical
-   confirmation that immortalising a closure is safe. This blocker no
-   longer applies; not attempted for the general higher-order-argument
-   case below regardless, since reason 2 stands on its own.
-2. **Specialise the callee per statically-known argument** (clone
-   `mapAppend` once per distinct function it's ever called with,
-   replacing the cloned copy's own `apply` with a direct call --
-   designed down to reusing `Compiler.RC2.Inline`'s own `Lifted`
-   Weaken/Substitutable plumbing, detecting a parameter read only via
-   `LApp` and invariant across the callee's own self-recursive calls
-   the same way `Compiler.RC2.Loop`'s `invariantLoopParamIds` detects
-   an invariant loop parameter). Note this is *not* the same thing as
-   inlining `mapAppend` itself: `mapAppend`'s own `Lifted` form is a
-   genuine self-recursive call (`Compiler.RC2.Loop`'s loop conversion
-   hasn't run yet at this pipeline stage), so it already fails
-   `Compiler.RC2.Inline`'s own `isCallFree` criterion and was never a
-   candidate for straight inlining regardless -- specialisation instead
-   means minting one *new*, still-self-recursive definition per
-   distinct callee/argument pair. **Dropped once the cost of that "one
-   new definition per distinct argument" scaling became clear**: any
-   generically-written higher-order helper called with many different
-   functions across a program (not a rare shape -- `map`/`filter`/
-   `foldl` equivalents are used pervasively) would each mint their own
-   near-duplicate specialised copy, trading a per-call allocation for a
-   permanent, unbounded growth in generated-code size -- a worse
-   trade for anything but a narrow, deliberately-curated allowlist of
-   hot call sites, which this document's own design never scoped down
-   to. Not implemented; not currently planned.
-
 ## Performance: interface-dictionary method dispatch stays boxed even when the concrete instance is known
 
 Investigated against a real workload (`idris2-missing-containers`'
@@ -369,9 +303,10 @@ is a different, still-unaddressed problem, blocked on:
   is *shared* by all five instances, resolving this for one instance
   means **cloning** the shared helper (and its loop) per distinct known
   dictionary, not rewriting in place -- the same per-call-site
-  specialization shape (and the same code-size-growth concern) as
-  "Dropped: closure generation for statically-known higher-order
-  function arguments" above, though bounded here by however many
+  specialization/cloning cost (unbounded generated-code growth from
+  minting a near-duplicate copy per distinct argument) that rules out
+  doing this generically for an arbitrary statically-known
+  higher-order-function argument, though bounded here by however many
   *instances* of an interface actually get used in a program (typically
   small and enumerable), rather than by every possible function value a
   generic higher-order helper might ever see.
@@ -941,9 +876,10 @@ case needs one specifically.
   - スコープ内で閉じている静的な定数クロージャは、最適化パスで完全にインライン化・削除を行う。
 
 - **Performance: Higher-Order Function Specialization** -- 一般の高階関数
-  (`mapAppend`等)の型特化は「Dropped: closure generation for
-  statically-known higher-order function arguments」で調査済み(コード
-  サイズ膨張のため見送り)。インターフェース辞書経由のメソッド呼び出し
+  (`mapAppend`等)の引数クロージャの割り当てコストは`RCConstClosure`の
+  定数畳み込み(`rc2/doc/const-closure-fold.md`)で解消済み。呼び出し先
+  自体をコード複製で型特化する方向は別途調査済み(コードサイズ膨張の
+  ため見送り、詳細は同ドキュメント参照)。インターフェース辞書経由のメソッド呼び出し
   (`feed8`等)に限定した、より狭いスコープでの特殊化は
   「Performance: interface-dictionary method dispatch stays boxed even
   when the concrete instance is known」で実ベンチマークに基づき調査済み

@@ -241,6 +241,163 @@ value is known statically) -- see `TODO.md`'s "Performance:
 interface-dictionary method dispatch stays boxed even when the
 concrete instance is known" for the still-open half of that gap.
 
+## Follow-up (commit `0e7c755`): alias propagation, and the general call-argument case
+
+The original pass above (commit `a01eaa2`) was scoped and verified
+against interface dictionaries -- a `RCConstClosure` field sitting
+inside a `RCon`/`RCConstCon`. A second look this session, re-verifying
+the feature end to end, found one real completeness gap and one
+untested-but-already-working generalization.
+
+### Gap: a `let`-rebinding of an already-folded closure didn't propagate
+
+`ConstFold`'s `RLet` value-classification block already had a mirror
+arm for `RCConstCon`: once `a` has folded to a constant, a further
+`let b = a` must re-enter `b` into `env` as that same constant too,
+not just leave `a`'s own uses resolved --
+
+```idris2
+RV _ cval@(RCConstCon {}) =>
+    let body' = foldConst (insert var (Element cval ItIsConstCon2) env) body
+    in if contains (RCLoc var) (freeLocalsR body')
+          then RLet fc var rep value' body'
+          else body'
+```
+
+(`ConstFold.idr:211-215`). No equivalent arm existed for
+`RCConstClosure`, so a chain like `let a = someTopLevelFn in let b = a
+in MkDict a b` folded `a` correctly but silently stopped propagating at
+`b`, even though `b` denotes the exact same immortal value -- `b`
+stayed a real runtime local, and `MkDict a b`'s own `b` field never
+reached `RCConstCon` folding's `allConstLocal` check. Not a
+correctness bug (the generated code was still valid, just a missed
+fold), but a real gap in `RCConstClosure`'s completeness as first
+committed.
+
+The fix is structurally identical to the `RCConstCon` arm -- a second
+`RV` case, differing only in which constant shape and witness
+constructor it matches:
+
+```idris2
+RV _ cval@(RCConstClosure {}) =>
+    let body' = foldConst (insert var (Element cval ItIsConstClosure2) env) body
+    in if contains (RCLoc var) (freeLocalsR body')
+          then RLet fc var rep value' body'
+          else body'
+```
+
+(`ConstFold.idr:228-232`, immediately following the `RCConstCon` arm
+and immediately preceding the `RUnderApp _ n missing []` arm that
+originally produces a `RCConstClosure` in the first place).
+
+**Verification methodology.** Getting a genuine, *surviving* `let b =
+a` (a plain local-to-local alias) into rc2's own IR turned out to be
+the hard part, not the fix itself: Idris2's own frontend eagerly
+collapses exactly this shape before Lifted IR ever sees it (confirmed
+by hand via `--directive dumplifted` -- a plain `let a = greetFn; b = a
+in ...`, written directly, never reaches `Compiler.LambdaLift`'s own
+output as two separate bindings, regardless of which function it's
+written in). `Test72ConstFoldClosureAliasFold` reproduces it instead
+via a `%noinline` passthrough helper (`mkAlias : (String -> String) ->
+(String -> String); mkAlias f = f`) -- `%noinline` keeps it a real call
+in *Lifted* IR (confirmed via `--dumplifted`: `Main.main`'s own
+definition still shows `%let b = Main.mkAlias(!a) in ...`, a genuine
+second binding), and `Compiler.RC2.Inline` -- rc2's own, separate,
+Lifted-level inliner, which does not honour upstream's `%noinline` flag
+-- then splices `mkAlias`'s body (bare parameter passthrough) into the
+call site, turning `b`'s own value into exactly `RV fc (RCLoc a)`
+before `ConstFold` ever runs. That resolves through `env` into `RV fc
+(RCConstClosure ...)`, landing precisely on the new arm. Confirmed
+structurally: without the arm, the test's own `MkDict a b` construction
+stays a genuine `RCon` in the generated `.c` (a real
+`idris2rc2_newConstructor(2, 1)` call inside `Main_main`, one field
+copied from a runtime local); with the arm, `dict` folds into a single
+immortal `RCConstCon` whose two fields both reference the *same*
+`constclosure_N` static, and `Main_main` contains no constructor-
+allocating call at all.
+
+### Generalization: the fold is not specific to constructor fields
+
+The original design section above frames `RCConstClosure` folding
+entirely in terms of `RCon`'s own `allConstLocal` check over
+constructor fields (interface dictionaries, `{__mainExpression:0}`'s
+continuation). Nothing in the fold itself is actually specific to that
+position, though: `RUnderApp _ n missing []` -> `RCConstClosure`
+happens once, uniformly, in `RLet`'s value classification, before any
+particular *consumer* of the bound variable is considered. Whatever
+later reads that binding -- a constructor field, an ordinary function
+call argument, anything -- reads it as whatever `resolveLocal`
+resolves it to, `RCConstClosure` included.
+
+`Test73ConstFoldClosureCallArg` confirms this for the case that
+originally motivated caring about any of this: a zero-filled closure
+argument passed to an ordinary function call, not a constructor field
+-- the `map double [1,2,3,4,5]` shape `TODO.md` used to track as
+"Dropped: closure generation for statically-known higher-order function
+arguments" (see "Full resolution" below). The test's `useIt : List Int
+-> List Int; useIt xs = map double xs` compiles `double`'s closure
+argument into a single immortal `constclosure_N` static baked directly
+into `useIt`'s own compiled body, confirmed by generated-C inspection
+to have **zero** `idris2rc2_mkClosure` calls anywhere for it. Calling
+`useIt` from three separate call sites in `main` (`useIt [1,2,3]`,
+`useIt [4,5,6]`, `useIt [7,8,9]`) confirms the fold happens exactly
+*once*, at compile time, not once per execution: all three calls
+reference the identical `constclosure_N` static, none of them
+allocating a fresh closure for `double` at their own call site or
+inside `useIt`.
+
+### Full resolution of `TODO.md`'s former "Dropped: closure generation..." entry
+
+`TODO.md` used to carry a section titled "Dropped: closure generation
+for statically-known higher-order function arguments", investigating
+why `map double [1,2,3,4,5]`-shaped code pays for a fresh closure
+allocation on every call even though `double` is a statically known
+top-level function. It considered two fix directions and dropped both:
+
+1. **Cache/immortalise the closure** -- dropped at the time on a belief
+   that `idris2rc2_tailcallApplyClosure`'s non-unique branch
+   unconditionally decremented a refcount with no `REFCOUNT_MAX` guard,
+   making it unsafe to hand it an immortal closure. Re-checked against
+   the actual source during this session's investigation: that branch
+   already calls the fully-guarded `idris2rc2_drop`, so it was never
+   actually unsafe. (The one real unguarded decrement was in a
+   different function, `idris2rc2_trampoline`, given a matching
+   defensive guard by commit `a01eaa2` for symmetry/future-proofing
+   regardless -- see "Defensive hardening" above.)
+2. **Specialise the callee per statically-known argument** (clone the
+   generic higher-order helper once per distinct function argument) --
+   dropped, independently of direction 1, because a pervasively-used
+   generic helper (`map`/`filter`/`foldl`-shaped) called with many
+   different functions across a program would each mint a near-
+   duplicate specialised copy, trading a per-call allocation for
+   unbounded generated-code-size growth. This reasoning is untouched by
+   anything below -- it simply turned out not to be needed.
+
+Direction 1's blocker turned out to be stale, and this document's own
+`RCConstClosure` fold -- direction 1, in effect, applied automatically
+wherever a zero-filled closure over a named function appears, not
+hand-triggered per call site -- fully resolves the motivating problem,
+confirmed empirically this session:
+
+- The exact `map double [1,2,3,4,5]` shape folds into one immortal
+  `constclosure_N` static with zero `idris2rc2_mkClosure` calls
+  remaining for it anywhere (`Test73ConstFoldClosureCallArg`, above).
+- It folds *once* at compile time, not once per execution: three
+  separate call sites into a helper that itself calls `map double xs`
+  internally all reference the identical static
+  (`Test73ConstFoldClosureCallArg`, above).
+- The one completeness gap found while re-verifying this end to end
+  (`let`-rebinding not propagating past one hop) is itself now fixed
+  (`Test72ConstFoldClosureAliasFold`, above).
+
+Direction 2 (per-call-site specialization) remains correctly dropped,
+for its own independent, still-valid code-size reason -- it simply
+turned out not to be the direction needed, since direction 1 already
+achieves the goal a different, better way: an allocation-elision
+against an existing closure representation, not a code-cloning
+transformation, so it costs nothing in generated-code size regardless
+of how many distinct functions a generic helper is ever called with.
+
 ## Files
 
 - `rc2/src/Compiler/RC2/RCExp.idr` -- `RCLocal`'s new `RCConstClosure`
@@ -248,7 +405,9 @@ concrete instance is known" for the still-open half of that gap.
   and the `Eq`/`Ord`/`Show` additions.
 - `rc2/src/Compiler/RC2/ConstFold.idr` -- the new `RLet` value-
   classification arm for `RUnderApp _ n missing []`, and
-  `isConstLocalProof`'s new case.
+  `isConstLocalProof`'s new case; plus (commit `0e7c755`) the mirror
+  `RV _ (RCConstClosure {})` arm that propagates an already-folded
+  closure constant through a further `let`-rebinding.
 - `rc2/src/Compiler/RC2/EmitUtil.idr` -- `boxedConstClosureExpr`, the
   `constDefKey` fix in `boxedConstExpr`, and the `RCConstClosure` cases
   added to `constConFieldExpr`/`inlineExprFor`/`repOfLocal`/`varName`.
@@ -277,3 +436,12 @@ concrete instance is known" for the still-open half of that gap.
   fix specifically: a method (`secret`) reachable only via a folded
   dictionary field, with a second-hop helper it alone calls, both of
   which must survive `pruneDeadDefs`.
+- `rc2/tests/Test72ConstFoldClosureAliasFold` (commit `0e7c755`) -- the
+  `RCConstClosure` mirror-arm fix: a `%noinline`-mediated `let`-alias of
+  an already-folded closure still folds `MkDict a b` into a single
+  immortal `RCConstCon`.
+- `rc2/tests/Test73ConstFoldClosureCallArg` (commit `0e7c755`) -- the
+  general call-argument case (`map double [1,2,3,4,5]`-shaped): a
+  closure argument folds into one immortal static shared identically
+  across three separate call sites, confirmed via generated-C
+  inspection to require zero `idris2rc2_mkClosure` calls.
