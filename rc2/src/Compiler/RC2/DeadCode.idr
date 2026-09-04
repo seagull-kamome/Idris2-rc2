@@ -62,13 +62,39 @@ import Core.Name
 
 import Data.SortedMap
 import Data.SortedSet
+import Data.Vect
 
 %default covering
 
+||| Every `Name` an `RCLocal` itself embeds -- only ever non-empty for
+||| `RCConstClosure` (a folded zero-filled closure over `n`, see
+||| RCExp.idr's own doc comment) and, transitively, any `RCConstCon`
+||| nesting one among its `args`. Specific to this pass's own
+||| reachability concern (not a general-purpose `RCLocal` utility worth
+||| exposing elsewhere): once `Compiler.RC2.ConstFold` can fold a
+||| dictionary-shaped `RCon` (all fields zero-filled closures) into a
+||| single `RCConstCon`, every one of those closures' own target names
+||| becomes invisible to a walker that only looks at `RCExp` nodes --
+||| `usedFunctionNamesR` below calls this on every `RCLocal`-typed field
+||| it sees, in addition to its own existing `Name`-collection, so a
+||| dictionary CAF's own immortal static keeps naming its methods live.
+||| `RCConstCon`'s own `Name` field is a *constructor* name, a different
+||| namespace from `defs`'s own function-name keys -- correctly excluded
+||| here, only its `args` are ever recursed into.
+usedFunctionNamesL : RCLocal -> SortedSet Name
+usedFunctionNamesL (RCConstClosure n _)    = singleton n
+usedFunctionNamesL (RCConstCon _ _ _ args) = concatMap usedFunctionNamesL args
+usedFunctionNamesL (RCLoc _)               = empty
+usedFunctionNamesL RCNull                  = empty
+usedFunctionNamesL (RCConst _)             = empty
+usedFunctionNamesL (RCEmptyCon {})         = empty
+
 ||| Every `Name` `e` might call directly (`RAppName`/`RAppNameRep`), or
 ||| reference as a first-class value to build a closure over
-||| (`RUnderApp`) -- i.e. every `Name` reachability needs to follow to
-||| decide whether some *other* definition stays live because of `e`.
+||| (`RUnderApp`, or a folded `RCConstClosure`/`RCConstCon` reached via
+||| `usedFunctionNamesL` on any `RCLocal`-typed field) -- i.e. every
+||| `Name` reachability needs to follow to decide whether some *other*
+||| definition stays live because of `e`.
 |||
 ||| Deliberately NOT `Compiler.RC2.RCExp.freeLocalsR`/`countUsesR`/
 ||| `usedConstructorsR`: all three have their own `_ = empty` catch-all
@@ -78,7 +104,11 @@ import Data.SortedSet
 ||| or know about `RAppNameRep`/`RAppFFIInline`, all of which only exist
 ||| this late in the pipeline (`Compiler.RC2.Loop`/`DualABI`). This
 ||| walker is exhaustive over every `RCExp` constructor precisely
-||| because it has to be, running after every one of them exists.
+||| because it has to be, running after every one of them exists -- no
+||| trailing catch-all, so a newly-added `RCExp` constructor is a
+||| coverage error here rather than a silently-missed reachability edge
+||| (exactly the gap that made a folded dictionary's own callees
+||| invisible before `usedFunctionNamesL` existed).
 |||
 ||| `RCon`'s own `Name` (a constructor, not a `defs` entry) and
 ||| `RExtPrim`'s `Name` (one of a fixed whitelist of compiler-known
@@ -87,28 +117,57 @@ import Data.SortedSet
 ||| deliberately excluded. `RAppFFIInline` carries no `Name` at all --
 ||| its target is a literal C symbol spliced from its own `ccs` field,
 ||| independent of `defs` entirely (see this module's own header note
-||| on why that independence means `MkRCForeign` isn't in scope here).
+||| on why that independence means `MkRCForeign` isn't in scope here) --
+||| but its `args`/`postDrop` can still carry a folded `RCConstClosure`,
+||| so those are still walked via `usedFunctionNamesL`.
 export
 usedFunctionNamesR : RCExp -> SortedSet Name
-usedFunctionNamesR (RAppName _ _ n _) = singleton n
-usedFunctionNamesR (RAppNameRep _ n _ _ _ _) = singleton n
-usedFunctionNamesR (RUnderApp _ n _ _) = singleton n
-usedFunctionNamesR (RAppFFIInline _ _ _ _ _ _) = empty
+usedFunctionNamesR (RV _ l) = usedFunctionNamesL l
+usedFunctionNamesR (RAppName _ _ n args) = insert n (concatMap usedFunctionNamesL args)
+usedFunctionNamesR (RAppNameRep _ n _ _ postDrop args) =
+    insert n (union (concatMap usedFunctionNamesL postDrop) (concatMap usedFunctionNamesL args))
+usedFunctionNamesR (RAppFFIInline _ _ _ _ postDrop args) =
+    union (concatMap usedFunctionNamesL postDrop) (concatMap usedFunctionNamesL args)
+usedFunctionNamesR (RUnderApp _ n _ args) = insert n (concatMap usedFunctionNamesL args)
+usedFunctionNamesR (RApp _ _ c a) = union (usedFunctionNamesL c) (usedFunctionNamesL a)
 usedFunctionNamesR (RLet _ _ _ value body) = union (usedFunctionNamesR value) (usedFunctionNamesR body)
-usedFunctionNamesR (RCmpCase _ _ _ _ t f) = union (usedFunctionNamesR t) (usedFunctionNamesR f)
-usedFunctionNamesR (RConCase _ _ alts mDef) =
+usedFunctionNamesR (RCon _ _ _ _ args reuseFrom) =
+    union (concatMap usedFunctionNamesL args) (maybe empty usedFunctionNamesL reuseFrom)
+usedFunctionNamesR (ROp _ _ _ args postDrop) =
+    union (concatMap usedFunctionNamesL (toList args)) (concatMap usedFunctionNamesL postDrop)
+usedFunctionNamesR (RExtPrim _ _ _ args postDrop) =
+    union (concatMap usedFunctionNamesL args) (concatMap usedFunctionNamesL postDrop)
+usedFunctionNamesR (RStructGet _ structVar _ _ postDrop) =
+    union (usedFunctionNamesL structVar) (concatMap usedFunctionNamesL postDrop)
+usedFunctionNamesR (RStructSet _ structVar _ _ value postDrop) =
+    union (usedFunctionNamesL structVar)
+          (union (usedFunctionNamesL value) (concatMap usedFunctionNamesL postDrop))
+usedFunctionNamesR (RCmpCase _ _ args postDrop t f) =
+    union (concatMap usedFunctionNamesL (toList args))
+          (union (concatMap usedFunctionNamesL postDrop)
+                 (union (usedFunctionNamesR t) (usedFunctionNamesR f)))
+usedFunctionNamesR (RConCase _ sc alts mDef) =
     let altsUsed = map (\(MkRConAlt _ _ _ _ body) => usedFunctionNamesR body) alts
-    in concat (maybe altsUsed (\d => usedFunctionNamesR d :: altsUsed) mDef)
-usedFunctionNamesR (RConstCase _ _ alts mDef) =
+    in union (usedFunctionNamesL sc) (concat (maybe altsUsed (\d => usedFunctionNamesR d :: altsUsed) mDef))
+usedFunctionNamesR (RConstCase _ sc alts mDef) =
     let altsUsed = map (\(MkRConstAlt _ body) => usedFunctionNamesR body) alts
-    in concat (maybe altsUsed (\d => usedFunctionNamesR d :: altsUsed) mDef)
-usedFunctionNamesR (RDup _ _ body) = usedFunctionNamesR body
-usedFunctionNamesR (RDrop _ _ body) = usedFunctionNamesR body
-usedFunctionNamesR (RFree _ _ body) = usedFunctionNamesR body
-usedFunctionNamesR (RReleaseReuse _ _ body) = usedFunctionNamesR body
-usedFunctionNamesR (RReuseOffer _ _ _ _ body) = usedFunctionNamesR body
-usedFunctionNamesR (RLoop _ _ _ _ body) = usedFunctionNamesR body
-usedFunctionNamesR _ = empty
+    in union (usedFunctionNamesL sc) (concat (maybe altsUsed (\d => usedFunctionNamesR d :: altsUsed) mDef))
+usedFunctionNamesR (RPrimVal _ _) = empty
+usedFunctionNamesR (RErased _) = empty
+usedFunctionNamesR (RCrash _ _) = empty
+usedFunctionNamesR (RDup _ v body) = union (usedFunctionNamesL v) (usedFunctionNamesR body)
+usedFunctionNamesR (RDrop _ vars body) = union (concatMap usedFunctionNamesL vars) (usedFunctionNamesR body)
+usedFunctionNamesR (RFree _ v body) = union (usedFunctionNamesL v) (usedFunctionNamesR body)
+usedFunctionNamesR (RReleaseReuse _ v body) = union (usedFunctionNamesL v) (usedFunctionNamesR body)
+usedFunctionNamesR (RLoop _ _ initial prologueDrop body) =
+    union (concatMap usedFunctionNamesL initial)
+          (union (concatMap usedFunctionNamesL prologueDrop) (usedFunctionNamesR body))
+usedFunctionNamesR (RLoopContinue _ args postDrop) =
+    union (concatMap usedFunctionNamesL args) (concatMap usedFunctionNamesL postDrop)
+usedFunctionNamesR (RReuseOffer _ sc dupOnShared dropOnUnique body) =
+    union (usedFunctionNamesL sc)
+          (union (concatMap usedFunctionNamesL dupOnShared)
+                 (union (concatMap usedFunctionNamesL dropOnUnique) (usedFunctionNamesR body)))
 
 ||| Same idea as `usedFunctionNamesR`, lifted to a whole `RCDef`.
 usedFunctionNamesD : RCDef -> SortedSet Name

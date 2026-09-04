@@ -57,9 +57,19 @@ mutual
        RCConstCon : Name -> ConInfo -> (tag : Maybe Int)
                  -> (args : List RCLocal) -> {0 argsConst : All IsAnyConstLocal args}
                  -> RCLocal
+       ||| A zero-filled closure over a named top-level function --
+       ||| `Compiler.RC2.ConstFold`'s own fold of a literal, zero-args
+       ||| `RUnderApp fc n missing []` (a bare reference to `n`, no
+       ||| captured values) into a constant, the same way `RCConstCon`
+       ||| folds a constructor of provably-constant fields. Unlike
+       ||| `RCConstCon`, this is a true leaf: a zero-filled closure has
+       ||| no captured args at all, so there's no nested `RCLocal` to
+       ||| recurse into. Only ever constructed by
+       ||| `Compiler.RC2.ConstFold`.
+       RCConstClosure : Name -> (missing : Nat) -> RCLocal
 
   ||| Witness that `l` is `RCConstCon` -- kept as its own narrow proof
-  ||| (rather than only the four-case `IsAnyConstLocal` below)
+  ||| (rather than only the five-case `IsAnyConstLocal` below)
   ||| specifically so `Compiler.RC2.EmitUtil`'s `boxedConstConExpr`, which
   ||| only ever handles this one case, can require exactly it and let
   ||| Idris2's coverage checker rule out every other `RCLocal`
@@ -70,7 +80,19 @@ mutual
   data IsConstLocal : RCLocal -> Type where
        ItIsConstCon : IsConstLocal (RCConstCon n ci t args)
 
-  ||| Witness that `l` is one of `RCLocal`'s four constant forms, never
+  ||| Witness that `l` is `RCConstClosure` -- the closure-emission
+  ||| analogue of `IsConstLocal` just above, kept as its own separate
+  ||| type rather than widening `IsConstLocal` itself: `boxedConstConExpr`
+  ||| only ever handles `RCConstCon`, so adding a `RCConstClosure` case
+  ||| to `IsConstLocal` would force a spurious `impossible` arm into code
+  ||| that was never about this shape. `Compiler.RC2.EmitUtil`'s
+  ||| `boxedConstClosureExpr` requires this one instead, for the same
+  ||| coverage-checker reason `IsConstLocal` exists at all.
+  public export
+  data IsConstClosureLocal : RCLocal -> Type where
+       ItIsConstClosure : IsConstClosureLocal (RCConstClosure n missing)
+
+  ||| Witness that `l` is one of `RCLocal`'s five constant forms, never
   ||| `RCLoc` -- no constructor targets an `RCLoc _` index, so nothing
   ||| can manufacture this proof for a variable reference. Used
   ||| wherever a value just needs to be "not a live variable" without
@@ -81,10 +103,11 @@ mutual
   ||| unwrapping one of these.
   public export
   data IsAnyConstLocal : RCLocal -> Type where
-       ItIsNull2     : IsAnyConstLocal RCNull
-       ItIsConst2    : IsAnyConstLocal (RCConst c)
-       ItIsEmptyCon2 : IsAnyConstLocal (RCEmptyCon n ci i)
-       ItIsConstCon2 : IsAnyConstLocal (RCConstCon n ci t args)
+       ItIsNull2        : IsAnyConstLocal RCNull
+       ItIsConst2       : IsAnyConstLocal (RCConst c)
+       ItIsEmptyCon2    : IsAnyConstLocal (RCEmptyCon n ci i)
+       ItIsConstCon2    : IsAnyConstLocal (RCConstCon n ci t args)
+       ItIsConstClosure2 : IsAnyConstLocal (RCConstClosure n missing)
 
 export
 covering
@@ -94,6 +117,7 @@ Eq RCLocal where
   (RCConst c1) == (RCConst c2) = c1 == c2
   (RCEmptyCon n1 _ t1) == (RCEmptyCon n2 _ t2) = n1 == n2 && t1 == t2
   (RCConstCon n1 _ t1 a1) == (RCConstCon n2 _ t2 a2) = n1 == n2 && t1 == t2 && a1 == a2
+  (RCConstClosure n1 m1) == (RCConstClosure n2 m2) = n1 == n2 && m1 == m2
   _ == _ = False
 
 export
@@ -104,27 +128,38 @@ Ord RCLocal where
   compare (RCLoc _)       (RCConst _)     = GT
   compare (RCLoc _)       (RCEmptyCon {}) = GT
   compare (RCLoc _)       (RCConstCon {}) = GT
+  compare (RCLoc _)       (RCConstClosure {}) = GT
   compare RCNull          (RCLoc _)       = LT
   compare RCNull          RCNull          = EQ
   compare RCNull          (RCConst _)     = GT
   compare RCNull          (RCEmptyCon {}) = GT
   compare RCNull          (RCConstCon {}) = GT
+  compare RCNull          (RCConstClosure {}) = GT
   compare (RCConst _)     (RCLoc _)       = LT
   compare (RCConst _)     RCNull          = LT
   compare (RCConst c1)    (RCConst c2)    = compare c1 c2
   compare (RCConst _)     (RCEmptyCon {}) = GT
   compare (RCConst _)     (RCConstCon {}) = GT
+  compare (RCConst _)     (RCConstClosure {}) = GT
   compare (RCEmptyCon {}) (RCLoc _)       = LT
   compare (RCEmptyCon {}) RCNull          = LT
   compare (RCEmptyCon {}) (RCConst _)     = LT
   compare (RCEmptyCon n1 _ t1) (RCEmptyCon n2 _ t2) = compare n1 n2 <+> compare t1 t2
   compare (RCEmptyCon {}) (RCConstCon {}) = GT
+  compare (RCEmptyCon {}) (RCConstClosure {}) = GT
   compare (RCConstCon {}) (RCLoc _)       = LT
   compare (RCConstCon {}) RCNull          = LT
   compare (RCConstCon {}) (RCConst _)     = LT
   compare (RCConstCon {}) (RCEmptyCon {}) = LT
   compare (RCConstCon n1 _ t1 a1) (RCConstCon n2 _ t2 a2) =
     compare n1 n2 <+> compare t1 t2 <+> compare a1 a2
+  compare (RCConstCon {}) (RCConstClosure {}) = GT
+  compare (RCConstClosure {}) (RCLoc _)       = LT
+  compare (RCConstClosure {}) RCNull          = LT
+  compare (RCConstClosure {}) (RCConst _)     = LT
+  compare (RCConstClosure {}) (RCEmptyCon {}) = LT
+  compare (RCConstClosure {}) (RCConstCon {}) = LT
+  compare (RCConstClosure n1 m1) (RCConstClosure n2 m2) = compare n1 n2 <+> compare m1 m2
 
 export
 covering
@@ -134,6 +169,7 @@ Show RCLocal where
   show (RCConst c) = "#" ++ show c
   show (RCEmptyCon n _ t) = "#" ++ show n ++ "@" ++ show t
   show (RCConstCon n _ t args) = "#" ++ show n ++ "@" ++ show t ++ "(" ++ show args ++ ")"
+  show (RCConstClosure n m) = "#" ++ show n ++ "/" ++ show m ++ "~closure"
 
 ||| The representation decided for an RLet-bound local, carried
 ||| directly on the RLet node (see `doc/reading-the-ir.md`'s

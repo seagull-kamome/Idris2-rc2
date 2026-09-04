@@ -144,6 +144,7 @@ isConstLocalProof RCNull                 = Just ItIsNull2
 isConstLocalProof (RCConst _)            = Just ItIsConst2
 isConstLocalProof (RCEmptyCon {})        = Just ItIsEmptyCon2
 isConstLocalProof (RCConstCon {})        = Just ItIsConstCon2
+isConstLocalProof (RCConstClosure {})    = Just ItIsConstClosure2
 
 ||| Whole-list version of `isConstLocalProof`, collecting each
 ||| element's own proof into the `All`-shaped obligation `RCConstCon`'s
@@ -209,6 +210,18 @@ mutual
                        Nothing => RLet fc var rep value' (foldConst env body)
               RV _ cval@(RCConstCon {}) =>
                   let body' = foldConst (insert var (Element cval ItIsConstCon2) env) body
+                  in if contains (RCLoc var) (freeLocalsR body')
+                        then RLet fc var rep value' body'
+                        else body'
+              -- A literal, zero-args `RUnderApp` -- a bare reference to
+              -- `n`, no captured values -- is unconditionally safe to
+              -- fold: unlike `RUnderApp fc n missing (x :: xs)` (which
+              -- captures a possibly-dynamic value `x`), there's nothing
+              -- here that could ever be non-constant. `RUnderApp fc n
+              -- missing (x :: xs)` therefore falls through to the
+              -- catch-all below, still becoming a real `RLet`.
+              RUnderApp _ n missing [] =>
+                  let body' = foldConst (insert var (Element (RCConstClosure n missing) ItIsConstClosure2) env) body
                   in if contains (RCLoc var) (freeLocalsR body')
                         then RLet fc var rep value' body'
                         else body'

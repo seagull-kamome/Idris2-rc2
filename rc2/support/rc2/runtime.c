@@ -290,7 +290,17 @@ IDRIS2RC2_Value *idris2rc2_trampoline(IDRIS2RC2_Value *it) {
     // check followed by a separate bare decrement) is what makes this
     // race-free once another thread can hold its own counted reference
     // to the same closure (see runtime.h's idris2rc2_isUnique comment).
-    if (atomic_fetch_sub_explicit(&c->header.refCount, 1, memory_order_release) == 1) {
+    //
+    // The REFCOUNT_MAX guard (mirroring idris2rc2_drop's own) is purely
+    // defensive: every call site into this function has been traced and
+    // confirmed to only ever pass a fresh function-call result, a
+    // freshly-mkClosure'd object (refCount 1), or an object that already
+    // passed idris2rc2_isUnique (refCount==1 by construction) -- an
+    // immortal (REFCOUNT_MAX) closure can never reach this decrement as
+    // the code is written today. Added anyway for symmetry/future-
+    // proofing against a caller that someday hands this an immortal one.
+    if (c->header.refCount != IDRIS2RC2_REFCOUNT_MAX &&
+        atomic_fetch_sub_explicit(&c->header.refCount, 1, memory_order_release) == 1) {
       atomic_thread_fence(memory_order_acquire);
       free(c);
     }

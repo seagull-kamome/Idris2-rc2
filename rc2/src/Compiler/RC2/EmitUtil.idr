@@ -327,6 +327,9 @@ varName (RCEmptyCon _ _ tag) = "idris2rc2_mkBits32(\{show tag})"
 -- Unreachable in practice, same reasoning as RCConst above:
 -- repOfLocal/inlineExprFor always intercept a RCConstCon first.
 varName (RCConstCon {}) = "/* [rc2] unreachable RCConstCon varName */"
+-- Unreachable in practice, same reasoning as RCConstCon above:
+-- repOfLocal/inlineExprFor always intercept a RCConstClosure first.
+varName (RCConstClosure {}) = "/* [rc2] unreachable RCConstClosure varName */"
 
 ------------------------------------------------------------------------
 -- Native (unboxed) codegen, driven by Compiler.RC2.Types' Rep inference.
@@ -690,9 +693,32 @@ repOfLocal (RCEmptyCon {}) = pure RBoxed
 -- Always Boxed -- a staged static IDRIS2RC2_Constructor is a real
 -- Value*, same as any other heap constructor, never a native scalar.
 repOfLocal (RCConstCon {}) = pure RBoxed
+-- Always Boxed, same reasoning as RCConstCon -- a staged static
+-- closure literal is a real Value*, never a native scalar.
+repOfLocal (RCConstClosure {}) = pure RBoxed
 repOfLocal (RCLoc i) = do
     reps <- get RepMap
     pure $ fromMaybe RBoxed (SortedMap.lookup i reps)
+
+||| Dedup key for `ConstDef`'s own map: `I`/`I64` stage to the exact
+||| same computed `ConstDef`/C rendering below (`genConstant`'s own
+||| cases both fold to `CDI64`/the `"Int64"` tag -- the same `I`-vs-
+||| `I64` equivalence `isReuseConsumingOp`'s own doc comment documents
+||| for `cPrimType`), so the cache key must collapse them too -- keying
+||| by the raw `Constant` left an `I x` and an `I64 x` of the same
+||| number as two distinct map entries, each independently staging the
+||| identical `idris2rc2_constant_Int64_...` name and producing a C
+||| redefinition. Only ever reachable once a native-eligible literal is
+||| forced through `boxedConstExpr` despite `litRep` covering it (i.e.
+||| from a `RCConstCon` field via `constConFieldExpr`'s `RCConst` case,
+||| never from `inlineExprFor`'s own `RCConst` arm, which renders a
+||| native-eligible literal inline instead) -- confirmed via
+||| `rc2/tests/refc-suite/integers`'s own `Cast`/`Neg` dictionaries
+||| once folding an interface dictionary into `RCConstCon` (this
+||| session's own `RCConstClosure` addition) started exposing it.
+constDefKey : Constant -> Constant
+constDefKey (I x) = I64 (cast x)
+constDefKey c      = c
 
 ||| The boxed C expression for constant `c`: a reference to an
 ||| already-staged file-scope static (`ConstDef`, if this exact value
@@ -715,14 +741,14 @@ boxedConstExpr : {auto a : Ref ArgCounter Nat}
               -> Constant -> Core String
 boxedConstExpr c = do
     constdefs <- get ConstDef
-    case lookup c constdefs of
+    case lookup (constDefKey c) constdefs of
          Just cdef => pure "((IDRIS2RC2_Value*)&\{constantName cdef})"
          Nothing => dyngen
   where
     orStagen : ConstDef -> Core String
     orStagen cdef = do
         constdefs <- get ConstDef
-        put ConstDef $ insert c cdef constdefs
+        put ConstDef $ insert (constDefKey c) cdef constdefs
         update ConstConDef $ \(names, pending) => (names, pending ++ [genConstant c cdef])
         pure "((IDRIS2RC2_Value*)&\{constantName cdef})"
     dyngen : Core String
@@ -751,6 +777,50 @@ boxedConstExpr c = do
         PrT t => pure $ cPrimType t
         WorldVal => pure "(NULL /* World */)"
 
+||| The boxed C expression for a folded zero-filled closure constant
+||| `l` (an `RCConstClosure` -- see `Compiler.RC2.ConstFold`): a
+||| reference to an already-staged file-scope static (deduplicating
+||| against the same `ConstConDef` state `boxedConstConExpr` itself
+||| uses -- once `Eq`/`Ord RCLocal` cover `RCConstClosure`, two
+||| dictionary fields folding to the same `(Name, missing)` pair become
+||| the same `RCLocal` key and hit the cache branch automatically, no
+||| separate dedup table needed), or a fresh stage-then-reference
+||| otherwise. Simpler than `boxedConstConExpr`: a zero-filled closure
+||| has no captured args to stage recursively, so no `ConstDef`/`All`
+||| plumbing is needed here at all.
+|||
+||| The staged static's own struct type deliberately does NOT mirror
+||| `IDRIS2RC2_Closure`'s real layout in full -- that struct ends in a
+||| flexible array member (`args[]`), which C has no static-initializer
+||| syntax for, and which would be empty anyway (`filled` is always `0`
+||| here, by construction: this only ever comes from a literal,
+||| zero-args `RUnderApp`). The staged type instead shares just the
+||| leading `header; fn; arity; filled` member sequence and omits the
+||| array entirely -- sound because nothing ever reads `->args[i]` for
+||| `i < filled` when `filled == 0`, and nothing computes
+||| `sizeof(IDRIS2RC2_Closure)` against this particular static (it's
+||| never heap-allocated or handed to anything assuming the real
+||| flexible-array-member layout). In particular,
+||| `idris2rc2_isUnique`/`idris2rc2_tailcallApplyClosure`'s in-place
+||| growth branch (which would write `args[filled]`) can never fire
+||| against an immortal (`REFCOUNT_MAX`) header -- `idris2rc2_isUnique`
+||| is a bare `refCount == 1` check.
+export
+boxedConstClosureExpr : {auto a : Ref ArgCounter Nat}
+                     -> {auto cc : Ref ConstConDef (SortedMap RCLocal String, List String)}
+                     -> (l : RCLocal) -> {0 prf : IsConstClosureLocal l} -> Core String
+boxedConstClosureExpr l@(RCConstClosure n missing) {prf=ItIsConstClosure} = do
+    (names, _) <- get ConstConDef
+    case lookup l names of
+         Just nm => pure "((IDRIS2RC2_Value*)&\{nm})"
+         Nothing => do
+             nm <- ("constclosure_" ++) <$> getNextCounter
+             let def = "static struct { IDRIS2RC2_Header header; void *fn; uint8_t arity; uint8_t filled; }"
+                    ++ " const \{nm} = { IDRIS2RC2_STOCKVAL(IDRIS2RC2_TAG_CLOSURE), (IDRIS2RC2_Value *(*)())\{cName n}, \{show missing}, 0 };"
+             (names', defs') <- get ConstConDef
+             put ConstConDef (insert l nm names', defs' ++ [def])
+             pure "((IDRIS2RC2_Value*)&\{nm})"
+
 mutual
     ||| C initializer text for one `RCConstCon` field: `l` is always
     ||| already one of `RCLocal`'s constant forms, enforced by `prf`
@@ -771,6 +841,7 @@ mutual
     constConFieldExpr (RCConst c)          = boxedConstExpr c
     constConFieldExpr (RCEmptyCon _ _ tag) = pure "idris2rc2_mkBits32(\{show tag})"
     constConFieldExpr l@(RCConstCon {})    = boxedConstConExpr l {prf=ItIsConstCon}
+    constConFieldExpr l@(RCConstClosure {}) = boxedConstClosureExpr l {prf=ItIsConstClosure}
     constConFieldExpr (RCLoc _) {prf=_} impossible
 
     ||| Walks `args` alongside its own `All` proof so each element's
@@ -844,6 +915,7 @@ inlineExprFor (RCConst c) = Just <$> case litRep c of
 -- the InlineMap/RNative detour (see repOfLocal above).
 inlineExprFor (RCEmptyCon {}) = pure Nothing
 inlineExprFor l@(RCConstCon {}) = Just <$> boxedConstConExpr l {prf=ItIsConstCon}
+inlineExprFor l@(RCConstClosure {}) = Just <$> boxedConstClosureExpr l {prf=ItIsConstClosure}
 inlineExprFor (RCLoc i) = do
     inlined <- get InlineMap
     pure $ SortedMap.lookup i inlined

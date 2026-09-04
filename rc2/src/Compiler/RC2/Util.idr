@@ -69,6 +69,7 @@ localRepIn reps (RCLoc i) = fromMaybe RBoxed (lookup i reps)
 localRepIn _ (RCConst c) = fromMaybe RBoxed (RNative <$> litRep c)
 localRepIn _ (RCEmptyCon {}) = RBoxed
 localRepIn _ (RCConstCon {}) = RBoxed
+localRepIn _ (RCConstClosure {}) = RBoxed
 
 ||| True for a name `Compiler.RC2.MutualLoop` itself synthesised (its
 ||| own merged function). Must never get a dual-ABI worker of its own --
