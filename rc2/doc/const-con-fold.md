@@ -206,6 +206,13 @@ confirm exactly which `RLet` was losing its `RCLoc`.
 
 ## Scope / limitations (MVP)
 
+**Both limitations below are now resolved -- see
+`rc2/doc/const-caf-fold.md`** for the whole-program `CafTable`
+fixpoint loop that closes the CAF-boundary gap and the `RConCase`
+scrutinee-resolution mechanism that closes the second one. Left as
+written here for historical context (this is what the fold looked like
+before that later extension landed):
+
 - **Other top-level CAFs are not folded through.** `RAppName`
   referencing another CAF is never treated as constant, even if that
   CAF's own body folds entirely -- doing so would need whole-program

@@ -103,7 +103,14 @@ own `toRCDefs` for the exact order):
    arithmetic/comparison/cast/case-of-constant expressions, and folds a
    zero-filled closure over a named top-level function into an
    immortal constant too -- enough to collapse an interface-dictionary-
-   shaped record of closures entirely.
+   shaped record of closures entirely. `ConstFold.idr`'s own fold runs
+   as a capped whole-program fixpoint (up to 4 rounds, disable via
+   `--directive noconstfold`): a `RAppName` call to another top-level
+   0-argument definition (a CAF) that itself folds to a constant is
+   substituted at the call site across definition boundaries, not just
+   within one function body, and a `case` whose scrutinee is already
+   known to be a folded constant constructor collapses entirely to the
+   matching branch at compile time, fields included.
 7. **Closure-dispatch fast path**, at the runtime level rather than as
    an IR pass (`support/rc2/runtime.c`'s `idris2rc2_applyClosure`):
    applying a shared closure's final argument dispatches straight into
@@ -233,8 +240,9 @@ whatever `idris2` is already first on `PATH` (the self-built one, via
 `nix-shell -p` list above instead. Useful flags: `--skip-build` (reuse
 the existing `idris2-rc2`), `--no-valgrind` (faster), `--valgrind-all`,
 `--directive VALUE` (forwarded to `idris2-rc2`, repeatable -- e.g.
-`--directive noloop` to disable one optimization stage and isolate a
-regression to it), `--regen-expected` (after adding/editing a smoke
+`--directive noloop` or `--directive noconstfold` to disable one
+optimization stage and isolate a regression to it), `--regen-expected`
+(after adding/editing a smoke
 test) -- run `./verify.sh` with no arguments to see the full list in
 its own header comment, or to rerun a single smoke test by hand once
 `idris2-rc2` exists.
