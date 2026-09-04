@@ -11,14 +11,16 @@ module Compiler.RC2.RC2
 -- 5. Branch-local sinking (`Compiler.RC2.Sink`)
 -- 6. Dual ABI synthesis (`Compiler.RC2.DualABI`)
 -- 7. Dead-code elimination (`Compiler.RC2.DeadCode`)
--- 8. C generation (`Compiler.RC2.Emit`)
--- 9. C compiler invocation (`Compiler.RC2.CC`)
+-- 8. Dup merging (`Compiler.RC2.DupMerge`)
+-- 9. C generation (`Compiler.RC2.Emit`)
+-- 10. C compiler invocation (`Compiler.RC2.CC`)
 
 import Compiler.RC2.CC
 import Compiler.RC2.ConAltNative
 import Compiler.RC2.ConstFold
 import Compiler.RC2.DeadCode
 import Compiler.RC2.DualABI
+import Compiler.RC2.DupMerge
 import Compiler.RC2.Emit
 import Compiler.RC2.Inline
 import Compiler.RC2.Pretty
@@ -81,16 +83,21 @@ applyReuse d@(MkRCForeign _ _ _) = d
 ||| -- the rewrite needs the worker table the synthesis step builds, so
 ||| splitting them wouldn't be meaningful), `nodeadcode` (disables
 ||| `Compiler.RC2.DeadCode`'s own pruning -- see that module's own
-||| header note for what it removes and why). Each stage is still purely
+||| header note for what it removes and why), `nodupmerge` (disables
+||| `Compiler.RC2.DupMerge`'s own batching of several individual RDup
+||| nodes targeting the same variable within one straight-line region
+||| into a single higher-`extra` RDup -- see that module's own header
+||| note). Each stage is still purely
 ||| additive/optional in the sense that skipping any of them should
 ||| still produce *correct*
 ||| (if less optimised, and possibly no longer byte-for-byte matching
 ||| real `idris2 --cg refc`'s own output shape) C -- none of
 ||| `Compiler.RC2.Inline`/`ConAltNative`/`MutualLoop`/`Loop`/
-||| `Sink`/`DualABI`/`DeadCode` is required by anything downstream of it
-||| for correctness, only for the optimisation it itself provides. "Not
-||| perfectly complete" by design: a coarse, whole-stage on/off switch,
-||| not fine-grained per-function/per-node control.
+||| `Sink`/`DualABI`/`DeadCode`/`DupMerge` is required by anything
+||| downstream of it for correctness, only for the optimisation it
+||| itself provides. "Not perfectly complete" by design: a coarse,
+||| whole-stage on/off switch, not fine-grained per-function/per-node
+||| control.
 |||
 ||| `noreuse` is deliberately not in this list -- retired, not merely
 ||| undocumented. See `KNOWN-BUGS.md`'s "Retired: `--directive noreuse`
@@ -179,9 +186,12 @@ toRCDefs disabled roots lds0 = do
            (ffiWorkers, ffiInlineMap) <- ffiWorkerTable sunk
            let rewritten = applyCallSiteRewrite ffiWorkers withWorkers
            pure (inlineFFIWorkers ffiInlineMap rewritten)
-    if "nodeadcode" `elem` disabled
-       then pure dualABId
-       else logTime 2 "rc2: Dead code elimination" $ pure (pruneDeadDefs roots dualABId)
+    pruned <- if "nodeadcode" `elem` disabled
+                 then pure dualABId
+                 else logTime 2 "rc2: Dead code elimination" $ pure (pruneDeadDefs roots dualABId)
+    if "nodupmerge" `elem` disabled
+       then pure pruned
+       else logTime 2 "rc2: Dup merge" $ pure (map (\(n, d) => (n, applyDupMerge d)) pruned)
 
 ||| `%cg rc2 inlineRuntime=<code>` companion to upstream's own
 ||| file-path-based `Compiler.Common.getExtraRuntime` (no inline-text
@@ -459,7 +469,7 @@ compileExpr c s _ outputDir tm outfile =
      -- `dumpdualabi` (which only ever inspect its *output*).
      directiveList <- getDirectives (Other "rc2")
      let disabledStages = filter (`elem` directiveList)
-                             ["noinline", "noconstfold", "noconaltnative", "nomutualloop", "noloop", "nosink", "nodualabi", "nodeadcode"]
+                             ["noinline", "noconstfold", "noconaltnative", "nomutualloop", "noloop", "nosink", "nodualabi", "nodeadcode", "nodupmerge"]
      -- `--directive nomain` / `%cg rc2 nomain`: NOT a pipeline-stage
      -- disable (unlike `disabledStages` above) -- it only controls
      -- whether `Emit.idr`'s `footer` emits a C `main()` at all, so it's
