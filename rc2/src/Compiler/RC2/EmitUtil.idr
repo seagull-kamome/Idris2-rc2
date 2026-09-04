@@ -789,15 +789,16 @@ boxedConstExpr c = do
 ||| has no captured args to stage recursively, so no `ConstDef`/`All`
 ||| plumbing is needed here at all.
 |||
-||| The staged static's own struct type deliberately does NOT mirror
+||| The staged static uses `IDRIS2RC2_ConstClosure` (datatypes.h), a
+||| shared named type that deliberately does NOT mirror
 ||| `IDRIS2RC2_Closure`'s real layout in full -- that struct ends in a
 ||| flexible array member (`args[]`), which C has no static-initializer
 ||| syntax for, and which would be empty anyway (`filled` is always `0`
 ||| here, by construction: this only ever comes from a literal,
-||| zero-args `RUnderApp`). The staged type instead shares just the
-||| leading `header; fn; arity; filled` member sequence and omits the
-||| array entirely -- sound because nothing ever reads `->args[i]` for
-||| `i < filled` when `filled == 0`, and nothing computes
+||| zero-args `RUnderApp`). `IDRIS2RC2_ConstClosure` instead shares just
+||| the leading `header; fn; arity; filled` member sequence and omits
+||| the array entirely -- sound because nothing ever reads `->args[i]`
+||| for `i < filled` when `filled == 0`, and nothing computes
 ||| `sizeof(IDRIS2RC2_Closure)` against this particular static (it's
 ||| never heap-allocated or handed to anything assuming the real
 ||| flexible-array-member layout). In particular,
@@ -815,8 +816,7 @@ boxedConstClosureExpr l@(RCConstClosure n missing) {prf=ItIsConstClosure} = do
          Just nm => pure "((IDRIS2RC2_Value*)&\{nm})"
          Nothing => do
              nm <- ("constclosure_" ++) <$> getNextCounter
-             let def = "static struct { IDRIS2RC2_Header header; void *fn; uint8_t arity; uint8_t filled; }"
-                    ++ " const \{nm} = { IDRIS2RC2_STOCKVAL(IDRIS2RC2_TAG_CLOSURE), (IDRIS2RC2_Value *(*)())\{cName n}, \{show missing}, 0 };"
+             let def = "static IDRIS2RC2_ConstClosure const \{nm} = { IDRIS2RC2_STOCKVAL(IDRIS2RC2_TAG_CLOSURE), (IDRIS2RC2_Value *(*)())\{cName n}, \{show missing}, 0 };"
              (names', defs') <- get ConstConDef
              put ConstConDef (insert l nm names', defs' ++ [def])
              pure "((IDRIS2RC2_Value*)&\{nm})"
@@ -876,6 +876,22 @@ mutual
     ||| `prf`'s type (`IsConstLocal`, narrower than `IsAnyConstLocal`
     ||| above) targets `RCConstCon` alone, so every other `RCLocal`
     ||| constructor is ill-typed here -- no runtime fallback needed.
+    |||
+    ||| The field count varies per constructor (`Cons` has 2, `Just` has
+    ||| 1, a 3-field record has 3, ...), unlike `boxedConstClosureExpr`'s
+    ||| always-empty trailing array, so no single shared type can cover
+    ||| every instance the way `IDRIS2RC2_ConstClosure` does. Instead
+    ||| `datatypes.h` pre-declares one fixed-size named type per field
+    ||| count from 1 (a genuinely zero-arity `RCConstCon` can't happen --
+    ||| see `ConstFold`'s `RCon`-folding comment: NIL/NOTHING/ZERO/UNIT
+    ||| take the separate `RCNull` route instead) through 20 (matching
+    ||| `IDRIS2RC2_Closure`'s own established 0-20 real-arity range --
+    ||| `idris2rc2_dispatchClosure`'s switch in runtime.c), and this
+    ||| selects `IDRIS2RC2_ConstConstructorN` by `length args`. A field
+    ||| count above 20 can't happen in practice either (it would require
+    ||| a data constructor with more than 20 fields), but is still
+    ||| handled correctly, not just assumed away: it falls back to the
+    ||| original per-call-site anonymous-struct declaration below.
     boxedConstConExpr : {auto a : Ref ArgCounter Nat}
                       -> {auto _ : Ref ConstDef (SortedMap Constant ConstDef)}
                       -> {auto cc : Ref ConstConDef (SortedMap RCLocal String, List String)}
@@ -889,7 +905,11 @@ mutual
                  nm <- ("constcon_" ++) <$> getNextCounter
                  let nameField = maybe "idris2rc2_constr_\{cName n}" (const "NULL") tag
                  let tagField = maybe "-1" show tag
-                 let def = "static struct { IDRIS2RC2_Header header; int32_t arity; int32_t tag; char const *name; IDRIS2RC2_Value *args[\{show (length args)}]; } const \{nm} = { IDRIS2RC2_STOCKVAL(IDRIS2RC2_TAG_CONSTRUCTOR), \{show (length args)}, \{tagField}, \{nameField}, { \{showSep ", " argExprs} } };"
+                 let arity = length args
+                 let tyName = if arity >= 1 && arity <= 20
+                                 then "IDRIS2RC2_ConstConstructor\{show arity}"
+                                 else "struct { IDRIS2RC2_Header header; int32_t arity; int32_t tag; char const *name; IDRIS2RC2_Value *args[\{show arity}]; }"
+                 let def = "static \{tyName} const \{nm} = { IDRIS2RC2_STOCKVAL(IDRIS2RC2_TAG_CONSTRUCTOR), \{show arity}, \{tagField}, \{nameField}, { \{showSep ", " argExprs} } };"
                  (names', defs') <- get ConstConDef
                  put ConstConDef (insert l nm names', defs' ++ [def])
                  pure "((IDRIS2RC2_Value*)&\{nm})"

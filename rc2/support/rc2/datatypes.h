@@ -135,6 +135,77 @@ typedef struct {
   IDRIS2RC2_Value *args[];
 } IDRIS2RC2_Closure;
 
+// A folded constant data constructor (Compiler.RC2.ConstFold's
+// RCConstCon)'s own static storage -- mirrors IDRIS2RC2_Constructor's
+// layout field-for-field, but with a fixed-size `args[N]` in place of
+// the flexible array member, since plain C has no static-initializer
+// syntax for a flexible array member. Unlike IDRIS2RC2_ConstClosure
+// above (whose trailing `args[]` is always empty by construction, so a
+// single shared type sharing just the leading fields suffices), a
+// constant constructor's field count varies per constructor (Cons has
+// 2, Just has 1, a 3-field record has 3, ...), so no single fixed-size
+// type can cover every instance. Instead this pre-declares one such
+// type per field count actually possible in practice: `RCConstCon`'s
+// own field count can never be 0 (Compiler.RC2.ConstFold's RCon-folding
+// comment: NIL/NOTHING/ZERO/UNIT -- the only would-be zero-arity
+// constants -- take the separate RCNull route instead, never reaching
+// RCConstCon), so the family starts at 1; it goes up to 20 to match
+// IDRIS2RC2_Closure's own established 0-20 real-arity range in this
+// codebase (see idris2rc2_dispatchClosure's switch in runtime.c, whose
+// cases run 0 through 20 with no case above 20). Compiler.RC2.EmitUtil's
+// boxedConstConExpr selects the matching IDRIS2RC2_ConstConstructorN by
+// field count, falling back to the old per-call-site anonymous-struct
+// declaration for the (in practice unreachable) N > 20 case. Like
+// IDRIS2RC2_ConstClosure, these are never heap-allocated, sizeof()'d,
+// or handed to anything assuming the real IDRIS2RC2_Constructor layout.
+#define IDRIS2RC2_DEFINE_CONST_CONSTRUCTOR(n) \
+  typedef struct { \
+    IDRIS2RC2_Header header; \
+    int32_t arity; \
+    int32_t tag; \
+    char const *name; \
+    IDRIS2RC2_Value *args[n]; \
+  } IDRIS2RC2_ConstConstructor##n;
+IDRIS2RC2_DEFINE_CONST_CONSTRUCTOR(1)
+IDRIS2RC2_DEFINE_CONST_CONSTRUCTOR(2)
+IDRIS2RC2_DEFINE_CONST_CONSTRUCTOR(3)
+IDRIS2RC2_DEFINE_CONST_CONSTRUCTOR(4)
+IDRIS2RC2_DEFINE_CONST_CONSTRUCTOR(5)
+IDRIS2RC2_DEFINE_CONST_CONSTRUCTOR(6)
+IDRIS2RC2_DEFINE_CONST_CONSTRUCTOR(7)
+IDRIS2RC2_DEFINE_CONST_CONSTRUCTOR(8)
+IDRIS2RC2_DEFINE_CONST_CONSTRUCTOR(9)
+IDRIS2RC2_DEFINE_CONST_CONSTRUCTOR(10)
+IDRIS2RC2_DEFINE_CONST_CONSTRUCTOR(11)
+IDRIS2RC2_DEFINE_CONST_CONSTRUCTOR(12)
+IDRIS2RC2_DEFINE_CONST_CONSTRUCTOR(13)
+IDRIS2RC2_DEFINE_CONST_CONSTRUCTOR(14)
+IDRIS2RC2_DEFINE_CONST_CONSTRUCTOR(15)
+IDRIS2RC2_DEFINE_CONST_CONSTRUCTOR(16)
+IDRIS2RC2_DEFINE_CONST_CONSTRUCTOR(17)
+IDRIS2RC2_DEFINE_CONST_CONSTRUCTOR(18)
+IDRIS2RC2_DEFINE_CONST_CONSTRUCTOR(19)
+IDRIS2RC2_DEFINE_CONST_CONSTRUCTOR(20)
+#undef IDRIS2RC2_DEFINE_CONST_CONSTRUCTOR
+
+// A zero-filled (Compiler.RC2.ConstFold's RCConstClosure-folded)
+// closure constant's own static storage -- shares just
+// IDRIS2RC2_Closure's own leading header/fn/arity/filled member
+// sequence and omits the trailing flexible `args[]` array entirely
+// (always empty here, by construction: `filled` is always 0 for a
+// value with this type). See Compiler.RC2.EmitUtil's
+// boxedConstClosureExpr for the full rationale. Never heap-allocated,
+// sizeof()'d, or handed to anything assuming the real IDRIS2RC2_Closure
+// layout -- an IDRIS2RC2_Value* pointing at one is only ever read as
+// far as these same leading fields (which is all any code path that
+// can see an immortal, REFCOUNT_MAX closure ever needs).
+typedef struct {
+  IDRIS2RC2_Header header;
+  void *fn;
+  uint8_t arity;
+  uint8_t filled;
+} IDRIS2RC2_ConstClosure;
+
 // `lock` guards `v` itself (the swap-and-drop-old sequence in
 // writeIORef/readIORef, ioprims.c) -- see util.h's idris2rc2_spin_lock
 // doc comment for why a bare atomic load+dup on `v` isn't enough.
