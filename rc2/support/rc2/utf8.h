@@ -21,6 +21,21 @@
 // always making forward progress.
 uint32_t idris2rc2_utf8DecodeAt(char const *s, size_t byteLen, size_t offset, size_t *consumed);
 
+// Sibling of idris2rc2_utf8DecodeAt for callers that hold only a
+// NUL-terminated `char *` with no cached byte length at hand (e.g. a
+// Data.String.Iterator representation that deliberately keeps no copy of
+// the string itself, only a byte offset into the caller-supplied original
+// -- see idris2rc2_strings.c's stringIteratorNext). Re-scanning strlen()
+// on every single character step to get a byteLen bound for
+// idris2rc2_utf8DecodeAt would turn an O(n) walk into O(n^2); this variant
+// avoids that by trusting the string's own NUL terminator directly: a
+// '\0' encountered as a would-be lead byte or as an expected continuation
+// byte is treated as end-of-data (decoding to U+FFFD, *consumed left at 1,
+// same convention as idris2rc2_utf8DecodeAt's own truncation case) rather
+// than needing a precomputed bound. Caller must still ensure offset itself
+// doesn't point past the terminating NUL.
+uint32_t idris2rc2_utf8DecodeAtNul(char const *s, size_t offset, size_t *consumed);
+
 // Number of codepoints in s[0..byteLen) (each malformed byte counts as one
 // U+FFFD "character", consistent with idris2rc2_utf8DecodeAt).
 size_t idris2rc2_utf8Length(char const *s, size_t byteLen);

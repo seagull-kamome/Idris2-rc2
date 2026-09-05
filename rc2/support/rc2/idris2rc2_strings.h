@@ -45,8 +45,12 @@ char *fastConcat(IDRIS2RC2_Value *strList)
 IDRIS2RC2_Value *idris2rc2_fastPackFixed(IDRIS2RC2_Value *charList);
 IDRIS2RC2_Value *idris2rc2_fastConcatFixed(IDRIS2RC2_Value *strList);
 
+// The iterator itself is represented as a bare tagged-integer byte offset
+// (idris2rc2_mkBits32/idris2rc2_to_u32 -- see idris2rc2_strings.c), never a
+// heap allocation: upstream's own Data.String.Iterator API re-supplies the
+// string (`str`/`s` below) at every single call, by design, so the
+// iterator never needs to hold or own the string data at all.
 IDRIS2RC2_Value *stringIteratorNew(char *str);
-IDRIS2RC2_Value *onCollectStringIterator(IDRIS2RC2_Value *ptr, void *unused);
 // `f` matches the C signature our own FFI codegen actually generates for
 // a CFFun-typed foreign argument (cast to IDRIS2RC2_Closure*, see
 // Emit.idr's `extractValue (CFFun ...)`), not the generic Value*.

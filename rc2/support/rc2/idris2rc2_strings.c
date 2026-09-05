@@ -215,54 +215,58 @@ IDRIS2RC2_Value *idris2rc2_fastConcatFixed(IDRIS2RC2_Value *strList) {
   return (IDRIS2RC2_Value *)r;
 }
 
-typedef struct {
-  char *str;
-  size_t len; // byte length of str, cached so Next doesn't rescan for NUL
-  size_t pos; // byte offset, always a character boundary
-} IDRIS2RC2_StringIter;
+// stringIteratorNew/Next/ToString implement upstream's own
+// Data.String.Iterator FFI primitives (libs/contrib's `RefC:` foreign
+// names). Upstream's own Idris-level API always re-supplies the original
+// string alongside the iterator at every call site (`uncons : (str :
+// String) -> (1 it : StringIterator str) -> UnconsResult str`), by
+// design -- its own module doc explains this is precisely so backends
+// "can just use an integer offset" for the iterator itself. rc2's own
+// reference counting (see the `annotate` pass) already guarantees that
+// re-supplied `str`/`s` argument stays alive for the whole call, since
+// it's a live local reachable at the call site by construction -- so the
+// iterator has nothing of its own left to own or keep alive. It is
+// therefore represented as a bare tagged-integer byte offset
+// (idris2rc2_mkBits32/idris2rc2_to_u32, the same unboxed-scalar scheme
+// idris2rc2_mkChar itself uses), not a heap allocation: no malloc, no
+// GC-pointer wrapper, no finalizer, and idris2rc2_dup/idris2rc2_drop on it
+// are already no-ops (unboxed values are recognized by idris2rc2_is_unboxed
+// and skipped by both).
+//
+// IDRIS2RC2_String caches no byte length (see datatypes.h), only a NUL
+// terminator, so stepping the offset can't call strlen() on every single
+// character (that would turn an O(n) walk into O(n^2)). Both
+// stringIteratorNext's own EOF check (s[pos] == '\0') and its decode step
+// (idris2rc2_utf8DecodeAtNul) instead lean on the NUL terminator directly,
+// each in O(1)/O(1-per-char).
 
 IDRIS2RC2_Value *stringIteratorNew(char *str) {
-  size_t l = strlen(str);
-  IDRIS2RC2_StringIter *it = malloc(sizeof(IDRIS2RC2_StringIter));
-  IDRIS2RC2_VERIFY(it, "malloc failed");
-  it->str = malloc(l + 1);
-  IDRIS2RC2_VERIFY(it->str, "malloc failed");
-  memcpy(it->str, str, l + 1);
-  it->len = l;
-  it->pos = 0;
-  return (IDRIS2RC2_Value *)idris2rc2_mkGCPointer(
-      it, idris2rc2_mkClosure((IDRIS2RC2_Value * (*)()) onCollectStringIterator, 2, 0));
-}
-
-IDRIS2RC2_Value *onCollectStringIterator(IDRIS2RC2_Value *ptr, void *unused) {
-  IDRIS2RC2_StringIter *it = (IDRIS2RC2_StringIter *)((IDRIS2RC2_Pointer *)ptr)->p;
-  free(it->str);
-  free(it);
-  // Own the Boxed ptr (IDRIS2RC2_Pointer*) argument the same way any
-  // compiler-generated closure body owns and disposes of it (see
-  // memory.c's own GCPointer teardown comment) -- this is a
-  // hand-written native callback, not compiler-generated, so it has
-  // to do that disposal itself rather than getting it for free from
-  // RC.idr's dropUnusedOwnedVars.
-  idris2rc2_drop(ptr);
-  return NULL;
+  // str is genuinely unused: see this section's own header comment above
+  // -- the string is re-supplied fresh at every subsequent Next/ToString
+  // call, so there's nothing to copy or remember here beyond pos=0.
+  (void)str;
+  return idris2rc2_mkBits32(0);
 }
 
 IDRIS2RC2_Value *stringIteratorToString(void *a, char *str, IDRIS2RC2_Value *it_p, IDRIS2RC2_Closure *f) {
-  IDRIS2RC2_StringIter *it = ((IDRIS2RC2_GCPointer *)it_p)->p->p;
-  IDRIS2RC2_Value *strVal = (IDRIS2RC2_Value *)idris2rc2_mkString(it->str + it->pos);
+  uint32_t pos = idris2rc2_to_u32(it_p);
+  IDRIS2RC2_Value *strVal = (IDRIS2RC2_Value *)idris2rc2_mkString(str + pos);
   return idris2rc2_applyClosure(idris2rc2_dup((IDRIS2RC2_Value *)f), strVal);
 }
 
 IDRIS2RC2_Value *stringIteratorNext(char *s, IDRIS2RC2_Value *it_p) {
-  IDRIS2RC2_StringIter *it = (IDRIS2RC2_StringIter *)((IDRIS2RC2_GCPointer *)it_p)->p->p;
-  if (it->pos >= it->len)
+  uint32_t pos = idris2rc2_to_u32(it_p);
+  if (s[pos] == '\0')
     return NULL;
   size_t consumed;
-  uint32_t cp = idris2rc2_utf8DecodeAt(it->str, it->len, it->pos, &consumed);
-  it->pos += consumed;
+  uint32_t cp = idris2rc2_utf8DecodeAtNul(s, (size_t)pos, &consumed);
   IDRIS2RC2_Constructor *r = idris2rc2_newConstructor(2, 1);
   r->args[0] = idris2rc2_mkChar(cp);
-  r->args[1] = idris2rc2_dup(it_p);
+  // A fresh tagged integer, not idris2rc2_dup(it_p): the old value was a
+  // GC-pointer needing a refcount bump to keep both the old and new
+  // iterator handles valid; this one is unboxed, so there's no shared
+  // allocation to protect at all -- a plain new tag word is both correct
+  // and cheaper.
+  r->args[1] = idris2rc2_mkBits32(pos + (uint32_t)consumed);
   return (IDRIS2RC2_Value *)r;
 }

@@ -44,6 +44,40 @@ uint32_t idris2rc2_utf8DecodeAt(char const *s, size_t byteLen, size_t offset, si
   return cp;
 }
 
+uint32_t idris2rc2_utf8DecodeAtNul(char const *s, size_t offset, size_t *consumed) {
+  unsigned char const *u = (unsigned char const *)s;
+  // Caller (stringIteratorNext) already did the O(1) EOF check itself
+  // (s[pos] == '\0') before calling in, so u[offset] is never the
+  // terminator here -- only concerned below with a multi-byte sequence's
+  // *tail* running into the NUL before it completes.
+  int n = leadByteLen(u[offset]);
+  if (n == 0) {
+    *consumed = 1;
+    return IDRIS2RC2_UTF8_REPLACEMENT;
+  }
+  uint32_t cp;
+  switch (n) {
+    case 1: cp = u[offset]; break;
+    case 2: cp = u[offset] & 0x1F; break;
+    case 3: cp = u[offset] & 0x0F; break;
+    default: cp = u[offset] & 0x07; break;
+  }
+  for (int i = 1; i < n; i++) {
+    unsigned char b = u[offset + (size_t)i];
+    // b == '\0' is the whole reason this sibling function exists: without
+    // a byteLen bound, a truncated sequence right at the string's own end
+    // would otherwise read the terminator as if it were sequence data (or
+    // worse, walk past it) instead of stopping here.
+    if (b == '\0' || !isContinuation(b)) {
+      *consumed = 1;
+      return IDRIS2RC2_UTF8_REPLACEMENT;
+    }
+    cp = (cp << 6) | (uint32_t)(b & 0x3F);
+  }
+  *consumed = (size_t)n;
+  return cp;
+}
+
 size_t idris2rc2_utf8Length(char const *s, size_t byteLen) {
   size_t n = 0, offset = 0;
   while (offset < byteLen) {
