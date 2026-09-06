@@ -67,51 +67,11 @@ applyReuse (MkRCError body) = MkRCError (resolveReuse body)
 applyReuse d@(MkRCCon _ _ _) = d
 applyReuse d@(MkRCForeign _ _ _) = d
 
-||| Optional pipeline-stage disabling, via `--directive
-||| no<stagename>`, for A/B regression isolation (e.g. "does this
-||| observed difference/leak trace back to one specific pass") without
-||| editing `toRCDefs` itself and rebuilding `idris2-rc2` (this
-||| A/B-isolation need is exactly what rc2/doc/con-alt-native.md's
-||| "Bugs found and fixed" #1-2 describe hitting by hand, before this
-||| mechanism existed). Recognised
-||| directives: `noinline`, `noconstfold` (disables
-||| `Compiler.RC2.ConstFold`'s own whole-program fixpoint fold --
-||| `Compiler.RC2.ConstExtPrim`'s own fold, run unconditionally inside
-||| `toRCDefPreFold`, is unaffected), `noconaltnative`, `nomutualloop`,
-||| `noloop`, `nosink`, `nodualabi` (disables both `DualABI`'s own
-||| worker/wrapper synthesis *and* its own call-site rewriting together
-||| -- the rewrite needs the worker table the synthesis step builds, so
-||| splitting them wouldn't be meaningful), `nodeadcode` (disables
-||| `Compiler.RC2.DeadCode`'s own pruning -- see that module's own
-||| header note for what it removes and why), `nodupmerge` (disables
-||| `Compiler.RC2.DupMerge`'s own batching of several individual RDup
-||| nodes targeting the same variable within one straight-line region
-||| into a single higher-`extra` RDup -- see that module's own header
-||| note). Each stage is still purely
-||| additive/optional in the sense that skipping any of them should
-||| still produce *correct*
-||| (if less optimised, and possibly no longer byte-for-byte matching
-||| real `idris2 --cg refc`'s own output shape) C -- none of
-||| `Compiler.RC2.Inline`/`ConAltNative`/`MutualLoop`/`Loop`/
-||| `Sink`/`DualABI`/`DeadCode`/`DupMerge` is required by anything
-||| downstream of it for correctness, only for the optimisation it
-||| itself provides. "Not perfectly complete" by design: a coarse,
-||| whole-stage on/off switch, not fine-grained per-function/per-node
-||| control.
-|||
-||| `noreuse` is deliberately not in this list -- retired, not merely
-||| undocumented. See `KNOWN-BUGS.md`'s "Retired: `--directive noreuse`
-||| no longer exists" for why: it was never actually safely
-||| independent/disableable, and the ability to disable `Reuse` this
-||| way was removed entirely -- `applyReuse` now always runs,
-||| unconditionally.
-|||
-||| `nomain` is also not in this list, for the opposite reason: it's a
-||| real, currently-supported directive, just not a pipeline-stage
-||| disable -- it's read as its own plain `Bool` directly in
-||| `compileExpr` (not threaded through `toRCDefs`/`disabled` at all)
-||| and only affects whether `Emit.idr`'s `footer` emits a C `main()`.
-||| See `compileExpr`'s own `noMain` binding for what it's for.
+||| Optional pipeline-stage disabling via `--directive no<stagename>`,
+||| for A/B regression isolation without editing `toRCDefs` itself and
+||| rebuilding `idris2-rc2`. See `rc2/doc/directives.md` for the full
+||| stage list, why `noreuse` isn't (and can't safely be) among them,
+||| and why `nomain` is a real directive but not a stage disable.
 |||
 ||| `roots`: names `Compiler.RC2.DeadCode.pruneDeadDefs` must never drop
 ||| regardless of reachability -- `main`'s own well-known entry name
@@ -194,32 +154,11 @@ toRCDefs disabled roots lds0 = do
        else logTime 2 "rc2: Dup merge" $ pure (map (\(n, d) => (n, applyDupMerge d)) pruned)
 
 ||| `%cg rc2 inlineRuntime=<code>` companion to upstream's own
-||| file-path-based `Compiler.Common.getExtraRuntime` (no inline-text
-||| equivalent exists there) -- same `key=value` directive shape,
-||| except the value is spliced as literal C text directly instead of
-||| being read from a file. MUST stay on one line: Idris2's own `%cg`
-||| lexer (`Parser.Lexer.Source`'s `cgDirective`) has a braced `{ ... }`
-||| form that stops at the *first* literal `}`, with no nesting support
-||| -- real C (any function body) always has a closing `}`, so that
-||| form would silently truncate. The plain, unbraced form it falls
-||| back to instead just consumes the rest of the line verbatim with no
-||| brace-balancing at all, which is what `inlineRuntime=` (starting
-||| with `i`, never `{`) always hits.
-|||
-||| A second, sharper landmine: the code MUST NOT end with a literal
-||| `}` after trimming. `Idris.Parser`'s `stripBraces` unconditionally
-||| strips one trailing `}` (and one leading `{`) from a %cg directive's
-||| captured text no matter which lexer alternative produced it -- it
-||| has no way to tell "this `}` is the real, load-bearing end of a C
-||| function body" from "this `}` is the braced form's own delimiter".
-||| Since any C function definition ends in `}`, this WILL silently eat
-||| it, and the resulting mangled C won't fail until gcc chokes on it
-||| much later with a confusing error far from the actual cause. Ending
-||| the directive with a trailing `;` (a harmless empty top-level C
-||| declaration) after the function's own `}` sidesteps this, since
-||| that `;` -- not the `}` before it -- becomes the new last character.
-||| See the README's own "%cg rc2 directives" section for the
-||| user-facing version of both notes.
+||| file-path-based `Compiler.Common.getExtraRuntime` -- splices the
+||| value as literal C text directly instead of reading it from a file.
+||| MUST stay on one line and MUST NOT end with a literal `}` -- see
+||| `rc2/doc/directives.md` for why (both landmines are inherent to
+||| Idris2's own `%cg` lexer/parser, not this function).
 getInlineRuntime : List String -> String
 getInlineRuntime directives = concat $ intersperse "\n" $ nub $ mapMaybe getArg $ reverse directives
   where
@@ -452,33 +391,17 @@ compileExpr c s _ outputDir tm outfile =
 
      coreLift_ $ mkdirAll outputDir
 
-     -- `--directive dumprcexpr`/`dumpdualabi`/`no<stagename>` all share
-     -- this one `directiveList` -- upstream idris2's own generic
-     -- per-invocation string passthrough (see Compiler.ES.Codegen's own
-     -- "minimal"/"compact" directives for precedent), so none of this
-     -- needs any changes to idris2-src itself. `getDirectives (Other
-     -- "rc2")` (rc2's own registered codegen name, `Main.idr`) unions
-     -- CLI `--directive` flags with any `%cg rc2 <directive>` pragma
-     -- written directly in Idris2 source -- also fully generic upstream
-     -- machinery (`Core.Context.addDirective`/`cgdirectives`, aggregated
-     -- across transitive imports, persisted in TTC); rc2 previously only
-     -- read the CLI half via `getSession`, silently ignoring any source
-     -- `%cg rc2 ...` pragma. Fetched once, up front, since `toRCDefs`'s
-     -- own pipeline-stage disabling (see its own doc comment) needs it
-     -- before `toRCDefs` runs, not just after like `dumprcexpr`/
-     -- `dumpdualabi` (which only ever inspect its *output*).
+     -- All directives share this one `directiveList` (CLI `--directive`
+     -- union `%cg rc2 <directive>` source pragmas) -- see
+     -- rc2/doc/directives.md for the mechanism and full directive list.
+     -- Fetched once, up front, since `toRCDefs`'s own stage disabling
+     -- needs it before `toRCDefs` runs.
      directiveList <- getDirectives (Other "rc2")
      let disabledStages = filter (`elem` directiveList)
                              ["noinline", "noconstfold", "noconaltnative", "nomutualloop", "noloop", "nosink", "nodualabi", "nodeadcode", "nodupmerge"]
-     -- `--directive nomain` / `%cg rc2 nomain`: NOT a pipeline-stage
-     -- disable (unlike `disabledStages` above) -- it only controls
-     -- whether `Emit.idr`'s `footer` emits a C `main()` at all, so it's
-     -- read as its own plain `Bool` instead of being folded into that
-     -- list. Exists so a `%export`ed program can be linked as a library
-     -- into a hand-written C driver that supplies its own `main`,
-     -- without a duplicate-symbol link error -- see
-     -- rc2/doc/export-support.md's "Linking as a library" section and
-     -- worked example for the end-to-end scenario this fixes.
+     -- `nomain`: not a stage disable, only controls whether `Emit.idr`'s
+     -- `footer` emits a C `main()` -- see rc2/doc/directives.md and
+     -- rc2/doc/export-support.md's "Linking as a library" section.
      let noMain = "nomain" `elem` directiveList
      cdata <- getCompileDataWith ["RC2", "RefC", "C"] False Lifted tm
      let liftedByName = SortedMap.fromList (lambdaLifted cdata)
@@ -496,46 +419,26 @@ compileExpr c s _ outputDir tm outfile =
      let roots = MN "__mainExpression" 0 :: map (\(n, _, _, _) => n) exportedSigs
      defs <- toRCDefs disabledStages roots (lambdaLifted cdata)
 
-     -- `--directive dumprcexpr` / `%cg rc2 dumprcexpr`: dump the final
-     -- RCExp -- this exact `defs`, after every non-disabled stage above
-     -- has run, i.e. precisely what generateCSourceFile is about to
-     -- consume -- to a human-readable `.crexpr` file next to the `.c`
-     -- output. Purely a debugging aid (see Pretty.idr's own module
-     -- note); idris2-src's own generic `--dumplifted`/`--dumpanf`/etc.
-     -- hooks (wired entirely inside Compiler.Common.getCompileDataWith,
-     -- already used above via getCompileData) don't reach this far --
-     -- RCExp only exists after rc2's own toRCDefs runs.
+     -- `dumprcexpr`: dump the final RCExp to a `.rcexpr` file -- see
+     -- rc2/doc/reading-the-ir.md for the format, rc2/doc/directives.md
+     -- for the directive.
      when ("dumprcexpr" `elem` directiveList) $
          coreLift_ $ writeFile (outputDir </> outfile ++ ".rcexpr")
              (prettyProgram (collectLazyCAFs (namedDefs cdata)) defs)
 
-     -- `--directive dumpdualabi` / `%cg rc2 dumpdualabi`: Stage 2's own
-     -- verification tool for the (not yet wired into this pipeline)
-     -- dual-calling-convention eligibility analysis -- see
-     -- Compiler.RC2.DualABI's own module note and doc/loop-conversion.md-
-     -- style follow-up notes once this lands. Same directive mechanism
-     -- as dumprcexpr above.
+     -- `dumpdualabi`: dump Stage 2's own eligibility analysis -- see
+     -- rc2/doc/dual-abi.md, rc2/doc/directives.md.
      when ("dumpdualabi" `elem` directiveList) $
          coreLift_ $ writeFile (outputDir </> outfile ++ ".dualabi") (dumpDualABI defs)
 
-     -- `--directive dumpcc` / `%cg rc2 dumpcc`: print the exact C
-     -- compile/link command(s) about to run to stdout -- same
-     -- directive mechanism as dumprcexpr/dumpdualabi above, but read
-     -- here (rather than only inside Compiler.RC2.CC) since it's
-     -- `compileExpr`'s own call sites that need the extra `verbose`
-     -- argument threaded through.
+     -- `dumpcc`: print the C compile/link command(s) to stdout -- see
+     -- rc2/doc/directives.md.
      let dumpCC = "dumpcc" `elem` directiveList
 
-     -- `%cg rc2 extraRuntime=<path>` / `inlineRuntime=<code>`: splice
-     -- arbitrary C straight into the generated output, right after its
-     -- own `#include`s (Emit.idr's `header`) -- `extraRuntime` reuses
-     -- upstream's own generic, backend-agnostic file-based directive
-     -- (`Compiler.Common.getExtraRuntime`, same one the Chez backend
-     -- uses for `%cg chez extraRuntime=file.ss`) verbatim; `inlineRuntime`
-     -- is this backend's own text-instead-of-a-file companion (see
-     -- `getInlineRuntime`'s own doc comment for its one-line
-     -- constraint). Real upstream RefC has no equivalent at all --
-     -- it never reads `--directive`/`%cg` for anything.
+     -- `extraRuntime=<path>` / `inlineRuntime=<code>`: splice C straight
+     -- into the generated output -- see rc2/doc/directives.md for the
+     -- mechanism, the `inlineRuntime` landmines, and the natural
+     -- `%foreign "C:funcName"` pairing.
      extraRuntimeFiles <- getExtraRuntime directiveList
      let inlineRuntime = getInlineRuntime directiveList
      let injectedRuntime = extraRuntimeFiles ++ (if inlineRuntime == "" then "" else "\n" ++ inlineRuntime)

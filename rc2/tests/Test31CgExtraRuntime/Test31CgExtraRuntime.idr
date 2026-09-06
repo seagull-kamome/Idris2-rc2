@@ -5,8 +5,8 @@ module Main
 
 -- Regression test for `%cg rc2 extraRuntime=<path>` (Compiler.RC2.RC2):
 -- splices the referenced C file's contents directly into the
--- generated .c, right after its own #includes -- see the README's own
--- "%cg rc2 directives" section. Test31CgExtraRuntimeSupport.c defines
+-- generated .c, right after its own #includes -- see
+-- rc2/doc/directives.md. Test31CgExtraRuntimeSupport.c defines
 -- a plain C function with no Idris-side header/lib wiring at all; the
 -- bare (no lib/header field) %foreign declaration below calls it
 -- directly, relying purely on textual order in the single generated

@@ -482,7 +482,7 @@ data ForeignLibs : Type where
 -- Raw C text from `%cg rc2 extraRuntime=<path>`/`inlineRuntime=<code>`
 -- (Compiler.RC2.RC2's own `compileExpr`), spliced verbatim by `header`
 -- right after the `#include`s and before any generated definition --
--- see the README's own "%cg rc2 directives" section for the design.
+-- see rc2/doc/directives.md for the design.
 export
 data InjectedRuntime : Type where
 -- The nearest enclosing `RLoop`'s own loop params (id + Rep), in order

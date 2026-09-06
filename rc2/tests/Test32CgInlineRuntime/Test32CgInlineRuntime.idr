@@ -6,9 +6,8 @@ module Main
 -- Regression test for `%cg rc2 inlineRuntime=<code>` (Compiler.RC2.RC2):
 -- like `%cg rc2 extraRuntime=<path>` (Test31CgExtraRuntime), but the C
 -- text is written directly in the directive's own value instead of
--- read from a file. MUST stay on one line -- see getInlineRuntime's
--- own doc comment (RC2.idr) and the README's "%cg rc2 directives"
--- section for why (Idris2's own `%cg { ... }` braced form can't
+-- read from a file. MUST stay on one line -- see rc2/doc/directives.md
+-- for why (Idris2's own `%cg { ... }` braced form can't
 -- survive a literal `}` inside it, so this instead relies on the
 -- lexer's unrestricted "rest of the line" fallback, which only
 -- triggers because `inlineRuntime=` doesn't start with `{`).

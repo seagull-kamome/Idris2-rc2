@@ -105,7 +105,8 @@ own `toRCDefs` for the exact order):
    immortal constant too -- enough to collapse an interface-dictionary-
    shaped record of closures entirely. `ConstFold.idr`'s own fold runs
    as a capped whole-program fixpoint (up to 4 rounds, disable via
-   `--directive noconstfold`): a `RAppName` call to another top-level
+   `--directive noconstfold` -- see `rc2/doc/directives.md`): a
+   `RAppName` call to another top-level
    0-argument definition (a CAF) that itself folds to a constant is
    substituted at the call site across definition boundaries, not just
    within one function body, and a `case` whose scrutinee is already
@@ -214,9 +215,9 @@ already shown by the upstream `Compiler.Common` wrapper, while `--timing 2`
 additionally breaks that total down into rc2's own pipeline stages (inline,
 RC annotate/reuse/ConAltNative, mutual loop, loop conversion, sink, dual
 ABI, C generation, C compile, C link), each labelled `rc2: <stage>`. A stage
-disabled via `--directive no<stagename>` (see `verify.sh`'s `--directive`
-flag below) simply has no timing line, rather than showing a spurious
-zero-duration entry.
+disabled via `--directive no<stagename>` (see `rc2/doc/directives.md`
+and `verify.sh`'s `--directive` flag below) simply has no timing line,
+rather than showing a spurious zero-duration entry.
 
 ## Testing
 
@@ -240,8 +241,9 @@ whatever `idris2` is already first on `PATH` (the self-built one, via
 `nix-shell -p` list above instead. Useful flags: `--skip-build` (reuse
 the existing `idris2-rc2`), `--no-valgrind` (faster), `--valgrind-all`,
 `--directive VALUE` (forwarded to `idris2-rc2`, repeatable -- e.g.
-`--directive noloop` or `--directive noconstfold` to disable one
-optimization stage and isolate a regression to it), `--regen-expected`
+`--directive noloop` to disable one optimization stage and isolate a
+regression to it; see `rc2/doc/directives.md` for the full directive
+list), `--regen-expected`
 (after adding/editing a smoke
 test) -- run `./verify.sh` with no arguments to see the full list in
 its own header comment, or to rerun a single smoke test by hand once
@@ -374,64 +376,15 @@ elimination).
 
 ## `%cg rc2` directives
 
-Idris2 has a generic, backend-agnostic `%cg <codegen> <directive>` source
-pragma (parsed, aggregated across transitive imports, persisted in TTC --
-no idris2-src changes needed to support a new directive for a new
-backend) that rc2 reads via `Core.Context.getDirectives (Other "rc2")`,
-unioned with any CLI `--directive` flags. Two directives splice arbitrary
-C straight into the generated `.c`, right after its own `#include`s and
-before any generated definition -- so the injected code can use rc2's
-own runtime types (`IDRIS2RC2_Value` etc.) and be called from generated
-function bodies below it:
-
-```idris2
-%cg rc2 extraRuntime=path/to/helpers.c
-%cg rc2 inlineRuntime=int64_t helper(int64_t x) { return x * 2; };
-```
-
-- `extraRuntime=<path>` reads the whole file and splices its contents in
-  verbatim -- the same generic directive (and the same
-  `Compiler.Common.getExtraRuntime`) the Chez backend already uses for
-  `%cg chez extraRuntime=file.ss`.
-- `inlineRuntime=<code>` is rc2's own text-instead-of-a-file companion
-  (no upstream equivalent). It comes with two landmines, both inherent
-  to Idris2's own `%cg` lexer/parser, not fixable without touching
-  idris2-src:
-  1. **Must stay on one line.** The `%cg name { ... }` braced form
-     stops at the *first* literal `}` with no nesting support, so any
-     real C function body (which has one) would get silently
-     truncated. Writing the code right after `inlineRuntime=` (not
-     `{`) instead hits the lexer's other, unbraced fallback, which
-     just consumes the rest of the line verbatim with no
-     brace-balancing at all -- but only if it's all on one line.
-  2. **Must not end with a literal `}`.** `Idris.Parser`'s own
-     `stripBraces` unconditionally strips one trailing `}` (and one
-     leading `{`) from *any* `%cg` directive's captured text, whichever
-     lexer form produced it -- it can't tell a real function body's own
-     closing brace from the braced form's delimiter. Since a C function
-     definition always ends in `}`, this silently eats it, and the
-     resulting mangled C only fails much later, at the gcc step, far
-     from the real cause. A trailing `;` after the function's own `}`
-     (a harmless empty top-level C declaration) sidesteps it, since
-     that `;` becomes the new last character instead. For anything
-     longer or trickier than a one-line snippet, use `extraRuntime=` and
-     a real file instead.
-
-Both are rc2-only: real upstream RefC never reads `--directive`/`%cg`
-for anything at all (nothing in `idris2-src/src/Compiler/RefC/RefC.idr`
-calls `getDirectives`/`getSession`), so there's no shared baseline
-behavior to diverge from here, and no meaningful RefC comparison for
-`rc2/tests/verify.sh` to make for the two smoke tests covering this
-(`Test31CgExtraRuntime`, `Test32CgInlineRuntime` -- both in
-`NO_REFC_DIFF_TESTS`).
-
-The natural pairing is a *bare* `%foreign "C:funcName"` declaration --
-no lib/header field at all -- calling straight into injected code by
-plain textual order in the one generated translation unit. That skips
-building any separate static library or wiring up
-`IDRIS2_CFLAGS`/`IDRIS2_LDFLAGS` entirely; contrast with `libs/rc2base`'s
-own README, which needs all of that because its C helpers live in a real
-separate `.a`.
+rc2 reads a generic `%cg rc2 <directive>` source pragma (unioned with
+any CLI `--directive VALUE` flags) for A/B disabling individual pipeline
+stages (e.g. `--directive noloop`), debug dumps (`dumprcexpr`,
+`dumpdualabi`, `dumpcc`), and splicing arbitrary C straight into the
+generated output (`extraRuntime=<path>`, `inlineRuntime=<code>` --
+pairs naturally with a bare `%foreign "C:funcName"` declaration, no
+separate static lib/CFLAGS/LDFLAGS wiring needed). See
+`rc2/doc/directives.md` for the full directive list, the two
+`inlineRuntime` landmines, and why each exists.
 
 ## Status and scope
 
