@@ -82,30 +82,61 @@ default to whatever `idris2` is first on `PATH` (the self-built one);
 their `--nix-idris2` flag is the escape hatch for that specific-need
 case. Do not regress back to nix-idris2-by-default.
 
+## Building/running a single test by hand
+
+Use `rc2/build/exec/idris2-rc2` directly with an explicit `--cg rc2`,
+never plain `idris2` with no `--cg` flag -- that silently falls back to
+upstream's default Chez backend and produces/runs a `.ss` file instead,
+which is not what you want here:
+
+```sh
+cd rc2/tests
+../build/exec/idris2-rc2 --cg rc2 TestN/TestN.idr -o build/TestN_rc2
+./build/TestN_rc2
+```
+
+See `rc2/tests/verify.sh`'s own header comment for the full version
+(cwd requirements, `TestN.c` companion files, etc.).
+
 ## コーディング規約
 以下を金言とせよ。
 
-コードには How
-テストコードには What
-コミットログには Why
-コードコメントには Why not
+コードには How を書く
+テストコードには What を書く
+コミットログには Why を書く
+コードコメントには Why not を書く
 
 C言語用 ./code-style-C.md を参照
 Idris2言語用 ./code-style-Idris2.md を参照
 
 ### コメント規約
-コード内のコメントは極力排除する。
-コード自体が何をしているか説明するような冗長なコメント(How)は禁止。
-どうしても必要場合は(Why not/特異な制約等)を除き、コメント無しのクリーンな
-コードを書きなさい。
-エピソードコメントをコード中に書くのは禁止、解決済問題の履歴は別途ドキュメントか
-コミットログに残れば十分。
 
-モジュールの先頭には、そのモジュールの役目と負うべき責任についてのコメントと
-Copyright表記を書きなさい。
+コード内のコメントは最小化する。コードから読み取れる情報や、コード自体が何をしているか説明するような冗長なコメント(How), エピソードコメント(Why)は厳に禁じる。
+設計や使用している技術に関する情報は別途ドキュメントを起こして、そこへのリンクをコメントに残す。
 
+#### ヘッダコメント
+モジュールの先頭には以下のようなヘッダコメントが必要。docコメントの無い言語では普通の行コメントで良い。
+
+```idris2
+||| <モジュールの見出し>
+||| モジュールの用途、役目、責任、なぜこのモジュールが必要かを説明する簡潔な文章
+|||  ....
+module Path.To.Module.ModuleName
 -- Copyright 2026, Hattori,Hiroki. All rights reserved.
 -- This module was licensed by BSD3.
+```
+
+### セクションコメント
+モジュール内でコードを機能別に分類してセクションに分ける事を推奨する。セクションセパレータは以下のヘッダコメントを使用。ヘッダの前後には空行を空ける。
+
+```idris2
+
+-------------------------------------------------------------------------------
+-- <セクションの見出し>
+-- （特に必要を認める場合のみ）なぜこのセクションが必要かを説明する簡潔な文章
+
+```
+
 
 
 ### テストコード
@@ -149,3 +180,6 @@ here.
 - ドキュメントを読めばわかる事はコードのコメントには書かず、参照リンクの記載に留める。
 
 
+## サブエージェント
+
+目的に応じて適切なサブエージェントを活用し、メインエージェントのコンテキストウィンドウを節約。
