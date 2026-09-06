@@ -3,9 +3,13 @@ module Compiler.RC2.ConstFold
 -- Copyright 2026, Hattori,Hiroki. All rights reserved.
 -- This module was licensed by BSD3.
 
--- Constant folding pass for arithmetic, comparisons, and case-of-constant.
--- Runs between normalization and annotation to simplify the IR after
--- inlining and ExtPrim folding.
+-- Constant folding: arithmetic/comparisons (RPrimVal/RCmpCase),
+-- constructors/closures (RCConstCon/RCConstClosure), whole-program
+-- CAF-boundary crossing, and RConCase scrutinee resolution. Runs
+-- between Compiler.RC2.Inline/ExtPrim folding and Phase 2 annotation.
+-- Four distinct designs live in one module -- see
+-- rc2/doc/const-con-fold.md, const-closure-fold.md,
+-- const-caf-fold.md, and cast-fold-scope.md.
 
 import Compiler.RC2.RCExp
 import Compiler.RC2.Types
@@ -25,38 +29,19 @@ import Data.Vect
 
 %default covering
 
-||| Cast folding mirrors upstream Compiler.Opts.ConstantFold.foldableOp
+||| Cast folding mirrors upstream's own `foldableOp`
 ||| (idris2-src/src/Compiler/Opts/ConstantFold.idr:20-25) exactly, not
-||| just "whatever Core.Primitives.getOp happens to compute" -- getOp's
-||| own Cast dispatch (idris2-src/src/Core/Primitives.idr:550-613) has
-||| no safety net of its own (it computes Double->Int8 just fine, no
-||| Nothing), so the exclusion has to live here. IntType is excluded on
-||| either side because its width is backend-dependent, not provably
-||| safe; Double is excluded because rc2's own runtime cast for it
-||| (support/rc2/numeric.h's idris2rc2_cast_Double_to_*, a raw C cast)
-||| is undefined behaviour on out-of-range/NaN/Infinity input, unlike
-||| getOp's own Chez-side clamped evaluation -- intKind already returns
-||| Nothing for it, so the exclusion is automatic here, not
-||| hand-maintained (also, `safeConst` already excludes `Db` from
-||| folding entirely, so this is belt-and-suspenders).
-|||
-||| `to = StringType` is its own case rather than folded into the
-||| generic `intKind from && intKind to` rule below, on purpose: only
-||| the from-integer direction is safe. `Cast CharType StringType`
-||| must stay excluded -- upstream's own `castString` (Primitives.idr:
-||| 42) renders a Char via `stripQuotes (show c)`, but `stripQuotes`
-||| only strips one character off each end, which is wrong for any
-||| `Show Char` output using its own multi-character escape (every
-||| codepoint above `\DEL`, plus control characters like `'\n'`):
-||| `show '\n'` is `"'\n'"`, so `stripQuotes` yields `"\n"` (backslash,
-||| n -- two characters) instead of an actual newline byte. rc2's own
-||| `constFoldOp` calls upstream's `getOp` unmodified, so it would
-||| inherit that bug verbatim. `intKind CharType = Nothing` keeps this
-||| case out of the generic rule too, so excluding it here is doubly
-||| covered, not accidentally exposed by widening the rule to `to`.
-||| See rc2/doc/cast-fold-scope.md for the full investigation (also
-||| covers why the reverse direction, String as Cast's source, stays
-||| unfolded regardless of `to`).
+||| `getOp`'s own unguarded Cast dispatch. `IntType` is excluded on
+||| either side (backend-dependent width, not provably safe); `Double`
+||| is excluded via `intKind` already returning `Nothing` for it
+||| (`safeConst` also excludes `Db` outright, belt-and-suspenders).
+||| `to = StringType` is its own case, not folded into the generic
+||| `intKind from && intKind to` rule, because only the from-integer
+||| direction is safe -- `Cast CharType StringType` in particular must
+||| stay excluded. See `rc2/doc/cast-fold-scope.md`'s "Char -> String",
+||| "Double -> String", and "String as Cast's source" sections for the
+||| full investigation of every excluded direction, including why each
+||| exclusion can't just be inferred from `intKind`'s current shape.
 foldableOp : PrimFn arity -> Bool
 foldableOp BelieveMe = False
 foldableOp (Cast IntType _) = False
@@ -65,11 +50,13 @@ foldableOp (Cast from StringType) = isJust (intKind from)
 foldableOp (Cast from to)   = isJust (intKind from) && isJust (intKind to)
 foldableOp _                = True
 
-||| Operands ConstFold itself will actually fold (i.e. not `I`/`Db`,
-||| see `constFoldOp`'s own doc comment for why) -- exported so
-||| Compiler.RC2.Inline's own `allLiteralArgs` guard can stay in
-||| lockstep with exactly what this pass folds, rather than keeping a
-||| second, hand-duplicated copy of this same distinction.
+||| Operands ConstFold itself will actually fold -- not `I` (backend-
+||| dependent width, same reasoning as `foldableOp`'s `IntType`
+||| exclusion) or `Db` (host-eval-vs-runtime-cast mismatch, see
+||| `rc2/doc/cast-fold-scope.md`'s "Double -> String"). Exported so
+||| `Compiler.RC2.Inline`'s own `allLiteralArgs` guard stays in
+||| lockstep with exactly what this pass folds, not a hand-duplicated
+||| copy.
 export
 safeConst : Constant -> Bool
 safeConst (I _) = False
@@ -86,19 +73,15 @@ constFoldOp fn cs =
                  Just (NPrimVal _ c) => Just c
                  _                   => Nothing
 
-||| Locals this pass has itself folded to a known constant value, keyed
-||| by `RCLoc`'s own `Int` id. Ids are minted by `RC.idr`'s per-
-||| `LiftedDef` `NextVar` counter (monotonically increasing, reset only
-||| at the start of the next `LiftedDef`), so a plain map with no de-
-||| Bruijn-style weakening is sufficient -- no id this pass records can
-||| ever be shadowed or reused within the one `RCDef` body it's
-||| threaded through. Values are paired with an `IsAnyConstLocal` proof
-||| (`Data.DPair.Subset`, erased at runtime) so `Env` itself can only
-||| ever hold a genuine constant form (not just `Constant` -- a folded
-||| constant *constructor*, `RCConstCon`, see its own doc comment in
-||| RCExp.idr, is tracked the same way a folded arithmetic result can
-||| be), unlike a plain `SortedMap Int RCLocal` a caller could still
-||| slip a live `RCLoc` into.
+||| Locals folded to a known constant so far, keyed by `RCLoc`'s own
+||| `Int` id -- ids are minted by `RC.idr`'s per-`LiftedDef` `NextVar`
+||| counter (monotonic, reset per definition), so no id here can ever
+||| be shadowed/reused within the one `RCDef` this is threaded through.
+||| Values carry an `IsAnyConstLocal` proof (`Subset`, erased at
+||| runtime) so `Env` can only ever hold one of `RCLocal`'s constant
+||| forms -- `RCConstCon`/`RCConstClosure` included, see
+||| `rc2/doc/const-con-fold.md`/`const-closure-fold.md` -- never a live
+||| `RCLoc`.
 Env : Type
 Env = SortedMap Int (Subset RCLocal IsAnyConstLocal)
 
@@ -119,24 +102,15 @@ resolveConst env l = case resolveLocal env l of
                            RCConst c => Just c
                            _         => Nothing
 
-||| `l` is already one of `RCLocal`'s constant forms (not a variable
-||| reference) *and* safe to stage as a static C initializer (see
-||| `Compiler.RC2.EmitUtil`'s `boxedConstConExpr`) -- the proof itself,
-||| still at its natural (non-erased) multiplicity so callers can
-||| fold into `RCConstCon`'s own `All` proof obligation (`allConstLocal`
-||| below, which needs an unrestricted-multiplicity proof to build each
-||| `All.(::)`). Excludes
-||| `RCConst (BI _)`: every other `Constant` case renders as either a
-||| plain cast/shift macro (`idris2rc2_mkInt8`, etc.) or a reference to
-||| an already-staged file-scope static (`Compiler.RC2.EmitUtil`'s
-||| `ConstDef`, via `orStagen`), both of which are compile-time
-||| constant expressions -- but `BI`'s own rendering
-||| (`idris2rc2_getSmallInteger`/`idris2rc2_mkIntegerLiteral`) is
-||| always a real function call, since GMP's `mpz_t` has no
-||| representation a C static initializer can express. (This exclusion
-||| is a value-level condition on top of `IsAnyConstLocal`, not
-||| something the proof itself encodes -- `IsAnyConstLocal` only ever
-||| means "not RCLoc".)
+||| `l` is one of `RCLocal`'s constant forms *and* safe to stage as a
+||| static C initializer -- kept at full (non-erased) multiplicity so
+||| callers can build `allConstLocal`'s own `All` proof. Excludes
+||| `RCConst (BI _)`: every other `Constant` renders as a compile-time-
+||| constant C expression, but `BI` (GMP's `mpz_t`) always needs a real
+||| function call (`idris2rc2_mkIntegerLiteral`). See
+||| `rc2/doc/const-con-fold.md`'s Bug #2 for why this exclusion is
+||| independent of -- and must be kept alongside -- the `RLet` case's
+||| own native-eligibility guard below.
 isConstLocalProof : (l : RCLocal) -> Maybe (IsAnyConstLocal l)
 isConstLocalProof (RCLoc _)        = Nothing
 isConstLocalProof (RCConst (BI _)) = Nothing
@@ -170,16 +144,12 @@ findConstAlt c [] def = def
 findConstAlt c (MkRConstAlt c' body :: rest) def =
     if c == c' then Just body else findConstAlt c rest def
 
-||| 0-arg top-level definitions (CAFs) already known to fold to a
-||| single constant value, keyed by `Name` -- a whole-program-scoped
-||| companion to `Env` above (which is keyed by `RCLoc`'s own per-
-||| `LiftedDef`-local `Int` id and can't name a CAF at all). Rebuilt
-||| each iteration of `Compiler.RC2.RC2`'s whole-program fixpoint loop
-||| and threaded alongside `Env` through every `foldConst`/
-||| `foldConstAlt`/`foldConstConstAlt` call so `RAppName fc lazy n []`
-||| (a CAF reference -- see `RAppName`'s own doc comment for why a
-||| CAF call always has empty `args`) can be resolved the same way a
-||| local variable already-known-constant is.
+||| 0-arg CAFs already known to fold to a single constant, keyed by
+||| `Name` -- a whole-program-scoped companion to `Env` above (which
+||| can't name a CAF, only a per-definition local id). Rebuilt each
+||| round of `Compiler.RC2.RC2`'s whole-program fixpoint loop. See
+||| `rc2/doc/const-caf-fold.md`'s "CAF boundary crossing" for the
+||| fixpoint algorithm and its termination argument.
 public export
 CafTable : Type
 CafTable = SortedMap Name (Subset RCLocal IsAnyConstLocal)
@@ -196,235 +166,177 @@ insertConArgs (i :: is) (v :: vs) env =
          Nothing  => insertConArgs is vs env
 insertConArgs _ _ env = env
 
-mutual
-  foldConst : CafTable -> Env -> RCExp -> RCExp
-  -- `value` is folded first (recursively -- if it's itself a `RLet`
-  -- chain building a constant constructor, e.g. a `Cons` cell nesting
-  -- another `Cons` cell as its own value, the innermost one folds to a
-  -- `RV`-of-`RCConstCon` first, then that fold result is what this
-  -- level sees as `value'`), then classified: a `RPrimVal` or a
-  -- `RV`-wrapped `RCConstCon` both mean "this variable is now a known
-  -- constant" -- insert into `env`, drop the `RLet` entirely if
-  -- nothing in `body` (post-fold) still references the variable, same
-  -- "moves a value out of `env`-tracking once truly dead" shape either
-  -- way, just for constructor values as well as primitive ones now.
-  foldConst caf env (RLet fc var rep value body) =
-      let value' = foldConst caf env value
-      in case value' of
-              -- Only a native-eligible constant (`litRep` -- see
-              -- `asConstLocal`'s own doc comment) is safe to track in
-              -- `env` and splice into other nodes' `args` in its place
-              -- (the `RAppName`/`ROp`/etc. cases below): a
-              -- non-native-eligible one (`BI`, `Str`) is a genuine
-              -- heap value RC.idr's `bindOne` deliberately always
-              -- keeps behind a real `RCLoc` (see RCExp.idr's module
-              -- note) precisely so `Compiler.RC2.RC`'s own `annotate`
-              -- tracks its ownership/postDrop normally -- `RCConst`
-              -- itself is unconditionally treated as non-Boxed
-              -- everywhere in `annotate` (`isBoxedOperand`/
-              -- `splitBorrows`/`dropIfLastUse`). Splicing one in
-              -- directly would make `annotate` silently skip dropping
-              -- a real refcounted value (`idris2rc2_mkIntegerLiteral`,
-              -- for `BI`) -- a leak, not just a missed optimisation.
-              RPrimVal _ c =>
-                  case litRep c of
-                       Just _ =>
-                           let body' = foldConst caf (insert var (Element (RCConst c) ItIsConst2) env) body
-                           in if contains (RCLoc var) (freeLocalsR body')
-                                 then RLet fc var rep value' body'
-                                 else body'
-                       Nothing => RLet fc var rep value' (foldConst caf env body)
-              RV _ cval@(RCConstCon {}) =>
-                  let body' = foldConst caf (insert var (Element cval ItIsConstCon2) env) body
-                  in if contains (RCLoc var) (freeLocalsR body')
-                        then RLet fc var rep value' body'
-                        else body'
-              -- Mirrors the `RCConstCon` arm immediately above, for a
-              -- `let`-rebinding of an already-folded closure constant
-              -- (e.g. `let b = a` where `a` was itself folded to a
-              -- `RCConstClosure`) -- `foldConst`'s own `RV` case already
-              -- resolved `l` through `env` before this classification
-              -- ever runs, so such a rebinding's `value'` arrives here
-              -- as `RV fc (RCConstClosure n missing)` directly. This is
-              -- also the arm that now catches a bare, zero-args
-              -- `RUnderApp fc n missing []` used directly as a `let`'s
-              -- value: `value'` is `foldConst caf env value`, and
-              -- `foldConst`'s own top-level `RUnderApp _ n missing []`
-              -- arm (below, in this same `mutual` block) unconditionally
-              -- folds that shape to `RV fc (RCConstClosure n missing)`
-              -- before this `case` ever sees it -- so a raw `RUnderApp`
-              -- can never reach this classification any more (a
-              -- dedicated arm for it here was removed as dead code for
-              -- exactly this reason). Without this `RV`/`RCConstClosure`
-              -- arm, `b` itself would never be re-entered into `env`,
-              -- silently stopping the fold from propagating past one
-              -- rebinding even though `b` denotes the exact same
-              -- constant as `a`.
-              RV _ cval@(RCConstClosure {}) =>
-                  let body' = foldConst caf (insert var (Element cval ItIsConstClosure2) env) body
-                  in if contains (RCLoc var) (freeLocalsR body')
-                        then RLet fc var rep value' body'
-                        else body'
-              _ => RLet fc var rep value' (foldConst caf env body)
-  foldConst _ env (RV fc l) = RV fc (resolveLocal env l)
-  -- A `RCon` whose `args` are all -- directly, or via `env` --
-  -- already-constant `RCLocal`s folds to a single `RCConstCon` value
-  -- (see its own doc comment in RCExp.idr), rendered as a `RV` of that
-  -- value so the `RLet` case above can pick it up the same way it
-  -- picks up a folded `RPrimVal`. A `reuseFrom` construction is never
-  -- folded -- the reuse reservation it's claiming would become
-  -- meaningless. Zero-arity `args` are excluded too: NIL/NOTHING/ZERO/
-  -- UNIT already take the dedicated `RCNull` route (see `RCon`'s own
-  -- `emitRC` case), so a genuinely-zero-arity `RCon` reaching here
-  -- would need a zero-length C array in its staged static, which
-  -- plain C doesn't allow. Args that don't all resolve stay a `RCon`,
-  -- but with each field rewritten to its resolved form -- a constant
-  -- field nested inside an otherwise-dynamic construction (e.g.
-  -- `Cons x constList`) still gets to reference the staged static
-  -- directly rather than re-reading a dead variable.
-  foldConst caf env (RCon fc n ci tag args Nothing) =
-      let resolvedArgs = map (resolveLocal env) args
-      in case args of
-              [] => RCon fc n ci tag args Nothing
-              _  => case allConstLocal resolvedArgs of
-                         Just argsConst => RV fc (RCConstCon n ci tag resolvedArgs {argsConst})
-                         Nothing        => RCon fc n ci tag resolvedArgs Nothing
-  -- Every other node holding `RCLocal` operands gets them resolved
-  -- against `env` too -- not for a value of its own to fold to (an
-  -- `RAppName`/`RApp`/etc. call always still happens), but so a
-  -- variable this pass already proved constant is referenced as that
-  -- constant directly rather than left as a dead `RCLoc` -- which is
-  -- what `freeLocalsR` (the `RLet` case above) uses to decide whether
-  -- the `RLet` that built it is now droppable. Left unresolved here,
-  -- every such use would keep the variable "live", permanently
-  -- defeating the whole pass.
-  --
-  -- `args = []` is exactly a CAF call (see `RAppName`'s own doc
-  -- comment, and `CafTable`'s above, for why): if the whole-program
-  -- fixpoint loop (Compiler.RC2.RC2's `foldConstProgram`) has already
-  -- proved `n` itself folds to a single constant, splice that constant
-  -- in directly (`RV`) so it flows into `env` the same way a local
-  -- `RLet`-bound constant already does (via the `RLet` case above,
-  -- unmodified) -- an unresolved CAF name stays a plain `RAppName` call.
-  foldConst caf env (RAppName fc lazy n args) =
-      let args' = map (resolveLocal env) args
-      in case args' of
-              [] => case lookup n caf of
-                         Just (Element cval _) => RV fc cval
-                         Nothing               => RAppName fc lazy n []
-              _  => RAppName fc lazy n args'
-  -- A literal, zero-args `RUnderApp` -- a bare reference to `n`, no
-  -- captured values -- denotes exactly the same constant closure value
-  -- as the `RCConstClosure` form (see `RCConstClosure`'s own doc
-  -- comment in RCExp.idr), whether it appears as a `let`-binding's
-  -- value (handled by the `RLet` case's own `RUnderApp _ n missing []`
-  -- classification above) or completely bare -- e.g. directly as a
-  -- CAF's whole body, which `RC.idr`'s own `bindMany env [] k = k []`
-  -- never wraps in a `let` at all (a zero-capture `RUnderApp` has
-  -- nothing to bind). Folding it here, unconditionally, means
-  -- `cafValueOf`'s `MkRCFun [] _ _ (RV _ cval)` pattern (RC2.idr) can
-  -- recognise such a CAF as constant-foldable too, not just one whose
-  -- body happens to already be an explicit `RLet` chain. `RUnderApp fc
-  -- n missing (x :: xs)` (a real capture) still falls through to the
-  -- catch-all below, unchanged.
-  foldConst _ env (RUnderApp fc n missing []) = RV fc (RCConstClosure n missing)
-  foldConst _ env (RUnderApp fc n missing args) = RUnderApp fc n missing (map (resolveLocal env) args)
-  foldConst _ env (RApp fc lazy c a) = RApp fc lazy (resolveLocal env c) (resolveLocal env a)
-  foldConst _ env (RExtPrim fc lazy p args postDrop) = RExtPrim fc lazy p (map (resolveLocal env) args) postDrop
-  foldConst _ env (RStructGet fc structVar sn fn postDrop) =
-      RStructGet fc (resolveLocal env structVar) sn fn postDrop
-  foldConst _ env (RStructSet fc structVar sn fn value postDrop) =
-      RStructSet fc (resolveLocal env structVar) sn fn (resolveLocal env value) postDrop
-  foldConst _ env (ROp fc lazy op args postDrop) =
-      let resolvedArgs = map (resolveLocal env) args
-      in case resolveConsts env args of
-              Just cs => case constFoldOp op cs of
-                              Just c  => RPrimVal fc c
-                              Nothing => ROp fc lazy op resolvedArgs postDrop
-              Nothing => ROp fc lazy op resolvedArgs postDrop
-  foldConst caf env (RCmpCase fc op args postDrop t f) =
-      let t' = foldConst caf env t
-          f' = foldConst caf env f
-          resolvedArgs = map (resolveLocal env) args
-      in case resolveConsts env args of
-              Just cs => case constFoldOp op cs of
-                              Just (I 1) => t'
-                              Just (I 0) => f'
-                              _          => RCmpCase fc op resolvedArgs postDrop t' f'
-              Nothing => RCmpCase fc op resolvedArgs postDrop t' f'
-  -- Mirrors `RConstCase`'s own scrutinee-resolution below, for tag
-  -- dispatch instead of literal-constant dispatch: if `sc` resolves
-  -- (directly, or via `env` -- which now also carries whatever the
-  -- `RLet`/`RAppName` cases above just spliced in) to a known constant
-  -- constructor, the whole `RConCase` disappears in favour of whichever
-  -- alt's tag matches (its field binders re-entered into `env` via
-  -- `insertConArgs`, for constant fields only -- a non-constant field
-  -- of an otherwise-constant constructor can't happen, `RCon`'s own
-  -- folding above only ever produces `RCConstCon` when *every* field is
-  -- constant). See this module's own doc comment for why leaving an
-  -- unconsumed `RConCase` over a resolved scrutinee is never allowed --
-  -- `Compiler.RC2.EmitUtil`'s `varName` has no real rendering for
-  -- `RCConstCon`/`RCConstClosure` reaching a runtime tag check.
-  -- `RCNull` (NIL/NOTHING/ZERO/UNIT) is deliberately left to the
-  -- catch-all -- out of scope here, and harmless (`varName RCNull`
-  -- already renders safely).
-  foldConst caf env (RConCase fc sc alts mDef) =
-      case resolveLocal env sc of
-           RCConstCon _ _ tag args =>
-               case findConAlt tag alts of
-                    Just (MkRConAlt _ _ _ argIds body) =>
-                        foldConst caf (insertConArgs argIds args env) body
-                    Nothing =>
-                        maybe (RCrash fc "[rc2] ConstFold: RConCase folded scrutinee matched no alt and had no default")
-                              (foldConst caf env) mDef
-           RCEmptyCon _ _ tag =>
-               case findConAlt (Just tag) alts of
-                    Just (MkRConAlt _ _ _ _ body) => foldConst caf env body
-                    Nothing =>
-                        maybe (RCrash fc "[rc2] ConstFold: RConCase folded scrutinee matched no alt and had no default")
-                              (foldConst caf env) mDef
-           _ => RConCase fc sc (map (foldConstAlt caf env) alts) (map (foldConst caf env) mDef)
-  foldConst caf env (RConstCase fc sc alts mDef) =
-      let alts' = map (foldConstConstAlt caf env) alts
-          mDef' = map (foldConst caf env) mDef
-      in case resolveConst env sc of
-              Just c  => fromMaybe (RConstCase fc sc alts' mDef') (findConstAlt c alts' mDef')
-              Nothing => RConstCase fc sc alts' mDef'
-  foldConst caf env (RDup fc v extra body) = RDup fc v extra (foldConst caf env body)
-  foldConst caf env (RDrop fc vars body) = RDrop fc vars (foldConst caf env body)
-  foldConst caf env (RFree fc v body) = RFree fc v (foldConst caf env body)
-  foldConst caf env (RReleaseReuse fc v body) = RReleaseReuse fc v (foldConst caf env body)
-  foldConst caf env (RReuseOffer fc sc dupOnShared dropOnUnique body) =
-      RReuseOffer fc sc dupOnShared dropOnUnique (foldConst caf env body)
-  -- This pass's sole caller (Compiler.RC2.RC2's whole-program fixpoint
-  -- loop, via Compiler.RC2.RC's `toRCDefPreFold`) only ever runs it on
-  -- Phase 1's direct output, before RLoop/RLoopContinue (Compiler.RC2.
-  -- Loop, much later) or RAppNameRep (Compiler.RC2.DualABI, later
-  -- still) can exist. Kept total (as a plain pass-through) rather than
-  -- assumed unreachable, same reasoning as Loop.idr's own
-  -- `renameRCExp` and Compiler.RC2.ConstExtPrim for these same two
-  -- cases.
-  foldConst caf env (RLoop fc loopParams initial prologueDrop body) =
-      RLoop fc loopParams initial prologueDrop (foldConst caf env body)
-  foldConst _ _ e = e
+-- `foldConst` is self-recursive only (never mutually recursive with a
+-- sibling function) -- its two small per-alt helpers are each called
+-- from exactly one of its own case clauses, so they live as `where`
+-- clauses on those clauses instead of a `mutual` block; each still
+-- calls `foldConst` itself directly, which is fine since it's the
+-- enclosing definition being defined.
+foldConst : CafTable -> Env -> RCExp -> RCExp
+-- `value` folds first (recursively, so a nested `RLet` chain like
+-- `[1,2,3,4,5]`'s own ANF folds inside-out), then the *fold result*
+-- (not the original shape) is classified -- see
+-- rc2/doc/const-con-fold.md's Bug #1 for why that distinction matters.
+-- A `RPrimVal`/`RCConstCon`/`RCConstClosure` result means "now a known
+-- constant": insert into `env`, drop the `RLet` if `body` (post-fold)
+-- no longer references the variable.
+foldConst caf env (RLet fc var rep value body) =
+    let value' = foldConst caf env value
+    in case value' of
+            -- Only a native-eligible constant (`litRep`) is safe to
+            -- splice into `env`/other nodes' `args` in place of the
+            -- `RCLoc` -- a non-native-eligible one (`BI`/`Str`) must
+            -- keep its real `RCLoc` so `annotate` keeps tracking its
+            -- ownership. See rc2/doc/const-con-fold.md's Bug #2: this
+            -- guard is what fixes a confirmed `BI` memory leak.
+            RPrimVal _ c =>
+                case litRep c of
+                     Just _ =>
+                         let body' = foldConst caf (insert var (Element (RCConst c) ItIsConst2) env) body
+                         in if contains (RCLoc var) (freeLocalsR body')
+                               then RLet fc var rep value' body'
+                               else body'
+                     Nothing => RLet fc var rep value' (foldConst caf env body)
+            RV _ cval@(RCConstCon {}) =>
+                let body' = foldConst caf (insert var (Element cval ItIsConstCon2) env) body
+                in if contains (RCLoc var) (freeLocalsR body')
+                      then RLet fc var rep value' body'
+                      else body'
+            -- Mirrors the `RCConstCon` arm above for a `let`-rebinding
+            -- of an already-folded closure constant, and also catches
+            -- a bare `RUnderApp fc n missing []` used directly as a
+            -- `let`'s value (the `RUnderApp` case below already folds
+            -- that shape to this same `RV` form first). See
+            -- rc2/doc/const-closure-fold.md's "Gap: a let-rebinding of
+            -- an already-folded closure didn't propagate".
+            RV _ cval@(RCConstClosure {}) =>
+                let body' = foldConst caf (insert var (Element cval ItIsConstClosure2) env) body
+                in if contains (RCLoc var) (freeLocalsR body')
+                      then RLet fc var rep value' body'
+                      else body'
+            _ => RLet fc var rep value' (foldConst caf env body)
+foldConst _ env (RV fc l) = RV fc (resolveLocal env l)
+-- A `RCon` whose `args` are all -- directly or via `env` -- already
+-- constant folds to `RV` of a single `RCConstCon`. `reuseFrom` is
+-- never folded (already excluded by matching only `Nothing`);
+-- zero-arity args are excluded too (NIL/NOTHING/ZERO/UNIT already
+-- route through `RCNull`, and C has no zero-length static array). See
+-- rc2/doc/const-con-fold.md's "Design" for the full reasoning,
+-- including the field-by-field partial fold case.
+foldConst caf env (RCon fc n ci tag args Nothing) =
+    let resolvedArgs = map (resolveLocal env) args
+    in case args of
+            [] => RCon fc n ci tag args Nothing
+            _  => case allConstLocal resolvedArgs of
+                       Just argsConst => RV fc (RCConstCon n ci tag resolvedArgs {argsConst})
+                       Nothing        => RCon fc n ci tag resolvedArgs Nothing
+-- Every other node holding `RCLocal` operands gets them resolved
+-- against `env` too, purely so `freeLocalsR` (the `RLet` case above)
+-- sees the substitution -- unresolved, a use would keep looking "live"
+-- forever, permanently blocking that `RLet` from folding away. See
+-- rc2/doc/const-con-fold.md's Bug #1.
+--
+-- `args = []` is exactly a CAF call: resolve it against `CafTable` the
+-- same way a local `RLet`-bound constant resolves against `env`. See
+-- rc2/doc/const-caf-fold.md's "CAF boundary crossing".
+foldConst caf env (RAppName fc lazy n args) =
+    let args' = map (resolveLocal env) args
+    in case args' of
+            [] => case lookup n caf of
+                       Just (Element cval _) => RV fc cval
+                       Nothing               => RAppName fc lazy n []
+            _  => RAppName fc lazy n args'
+-- A literal, zero-args `RUnderApp` denotes the same constant closure
+-- value as `RCConstClosure` -- folds unconditionally so a CAF whose
+-- whole body is a bare zero-capture closure reference (no `RLet`
+-- wrapper) is recognised as constant by `cafValueOf` too. A real
+-- capture (`RUnderApp fc n missing (x :: xs)`) falls through
+-- unchanged. See rc2/doc/const-closure-fold.md's "Design" section.
+foldConst _ env (RUnderApp fc n missing []) = RV fc (RCConstClosure n missing)
+foldConst _ env (RUnderApp fc n missing args) = RUnderApp fc n missing (map (resolveLocal env) args)
+foldConst _ env (RApp fc lazy c a) = RApp fc lazy (resolveLocal env c) (resolveLocal env a)
+foldConst _ env (RExtPrim fc lazy p args postDrop) = RExtPrim fc lazy p (map (resolveLocal env) args) postDrop
+foldConst _ env (RStructGet fc structVar sn fn postDrop) =
+    RStructGet fc (resolveLocal env structVar) sn fn postDrop
+foldConst _ env (RStructSet fc structVar sn fn value postDrop) =
+    RStructSet fc (resolveLocal env structVar) sn fn (resolveLocal env value) postDrop
+foldConst _ env (ROp fc lazy op args postDrop) =
+    let resolvedArgs = map (resolveLocal env) args
+    in case resolveConsts env args of
+            Just cs => case constFoldOp op cs of
+                            Just c  => RPrimVal fc c
+                            Nothing => ROp fc lazy op resolvedArgs postDrop
+            Nothing => ROp fc lazy op resolvedArgs postDrop
+foldConst caf env (RCmpCase fc op args postDrop t f) =
+    let t' = foldConst caf env t
+        f' = foldConst caf env f
+        resolvedArgs = map (resolveLocal env) args
+    in case resolveConsts env args of
+            Just cs => case constFoldOp op cs of
+                            Just (I 1) => t'
+                            Just (I 0) => f'
+                            _          => RCmpCase fc op resolvedArgs postDrop t' f'
+            Nothing => RCmpCase fc op resolvedArgs postDrop t' f'
+-- Mirrors `RConstCase`'s own scrutinee-resolution below, for tag
+-- dispatch: a resolved `RCConstCon`/`RCEmptyCon` scrutinee makes the
+-- whole case disappear in favour of the matching alt (fields
+-- re-entered into `env` via `insertConArgs`). See
+-- rc2/doc/const-caf-fold.md's "RConCase scrutinee resolution" for the
+-- full design, and its "Bugs found" for why `RC.idr`'s `annotate`
+-- needed three added intercepts once this could produce a bare `RV`
+-- of a non-`RCConstCon`/`RCConstClosure` constant form.
+foldConst caf env (RConCase fc sc alts mDef) =
+    case resolveLocal env sc of
+         RCConstCon _ _ tag args =>
+             case findConAlt tag alts of
+                  Just (MkRConAlt _ _ _ argIds body) =>
+                      foldConst caf (insertConArgs argIds args env) body
+                  Nothing =>
+                      maybe (RCrash fc "[rc2] ConstFold: RConCase folded scrutinee matched no alt and had no default")
+                            (foldConst caf env) mDef
+         RCEmptyCon _ _ tag =>
+             case findConAlt (Just tag) alts of
+                  Just (MkRConAlt _ _ _ _ body) => foldConst caf env body
+                  Nothing =>
+                      maybe (RCrash fc "[rc2] ConstFold: RConCase folded scrutinee matched no alt and had no default")
+                            (foldConst caf env) mDef
+         _ => RConCase fc sc (map (foldConstAlt caf env) alts) (map (foldConst caf env) mDef)
+  where
+    foldConstAlt : CafTable -> Env -> RConAlt -> RConAlt
+    foldConstAlt caf env (MkRConAlt name ci tag args body) =
+        MkRConAlt name ci tag args (foldConst caf env body)
+foldConst caf env (RConstCase fc sc alts mDef) =
+    let alts' = map (foldConstConstAlt caf env) alts
+        mDef' = map (foldConst caf env) mDef
+    in case resolveConst env sc of
+            Just c  => fromMaybe (RConstCase fc sc alts' mDef') (findConstAlt c alts' mDef')
+            Nothing => RConstCase fc sc alts' mDef'
+  where
+    foldConstConstAlt : CafTable -> Env -> RConstAlt -> RConstAlt
+    foldConstConstAlt caf env (MkRConstAlt c body) = MkRConstAlt c (foldConst caf env body)
+foldConst caf env (RDup fc v extra body) = RDup fc v extra (foldConst caf env body)
+foldConst caf env (RDrop fc vars body) = RDrop fc vars (foldConst caf env body)
+foldConst caf env (RFree fc v body) = RFree fc v (foldConst caf env body)
+foldConst caf env (RReleaseReuse fc v body) = RReleaseReuse fc v (foldConst caf env body)
+foldConst caf env (RReuseOffer fc sc dupOnShared dropOnUnique body) =
+    RReuseOffer fc sc dupOnShared dropOnUnique (foldConst caf env body)
+-- `RLoop`/`RAppNameRep` can't exist yet at the point this pass runs
+-- (before Compiler.RC2.Loop/DualABI) -- kept total as a plain
+-- pass-through rather than assumed unreachable, same reasoning as
+-- Loop.idr's `renameRCExp` and Compiler.RC2.ConstExtPrim.
+foldConst caf env (RLoop fc loopParams initial prologueDrop body) =
+    RLoop fc loopParams initial prologueDrop (foldConst caf env body)
+foldConst _ _ e = e
 
-  foldConstAlt : CafTable -> Env -> RConAlt -> RConAlt
-  foldConstAlt caf env (MkRConAlt name ci tag args body) =
-      MkRConAlt name ci tag args (foldConst caf env body)
-
-  foldConstConstAlt : CafTable -> Env -> RConstAlt -> RConstAlt
-  foldConstConstAlt caf env (MkRConstAlt c body) = MkRConstAlt c (foldConst caf env body)
-
-||| `d` a 0-arg `MkRCFun`(=CAF) whose body has already folded down to a
-||| single `RV fc cval` -- the shape `Compiler.RC2.RC2`'s own whole-
-||| program fixpoint loop looks for after each `foldConstDef` pass to
-||| grow `CafTable`. A bare `RPrimVal` body is deliberately not matched
-||| here: it's already spliced into every call site by
-||| `Compiler.RC2.Inline`'s own `isCallFree (LPrimVal _ _) = True`
-||| before `ConstFold` ever runs, so by the time this looks, a CAF that
-||| simple has already been inlined away entirely -- only the
-||| `RCConstCon`/`RCConstClosure` shapes `Inline` can't reach
-||| (`isCallFree`'s own `LCon`/`LUnderApp` cases) still need this route.
+||| A 0-arg CAF whose body has folded to a bare `RV fc cval` -- the
+||| shape `Compiler.RC2.RC2`'s own whole-program fixpoint loop looks
+||| for after each `foldConstDef` pass to grow `CafTable`. A bare
+||| `RPrimVal` body is deliberately not matched: by this point it's
+||| already been spliced into every call site by `Compiler.RC2.Inline`'s
+||| own `isCallFree`, before `ConstFold` ever runs -- only the
+||| `RCConstCon`/`RCConstClosure` shapes `Inline` can't reach still need
+||| this route. See `rc2/doc/const-caf-fold.md`'s "Design" for the
+||| fixpoint algorithm this feeds.
 export
 cafValueOf : RCDef -> Maybe (Subset RCLocal IsAnyConstLocal)
 cafValueOf (MkRCFun [] _ _ (RV _ cval)) = (\prf => Element cval prf) <$> isConstLocalProof cval

@@ -23,91 +23,99 @@ import Data.Vect
 
 %default covering
 
-mutual
-  ||| ANF-position value: a variable or a constant (see
-  ||| `doc/reading-the-ir.md`'s "## 3. Values" for the full syntax
-  ||| reference). `RCNull`/`RCEmptyCon` fold NIL/NOTHING/ZERO/UNIT and
-  ||| other zero-arg constructors into C's NULL/a tagged integer, rather
-  ||| than a genuine heap constructor. `RCConstCon` folds a constructor
-  ||| application whose fields are themselves all constant (see
-  ||| `Compiler.RC2.ConstFold`) into a single value staged once as a
-  ||| file-scope static (`Compiler.RC2.EmitUtil`'s `ConstConDef`), immortal
-  ||| the same way a small-int-cache/`ConstDef` value is -- never a
-  ||| freshly-allocated heap constructor.
-  public export
-  data RCLocal : Type where
-       RCLoc      : Int -> RCLocal
-       RCNull     : RCLocal
-       RCConst    : Constant -> RCLocal
-       RCEmptyCon : Name -> ConInfo -> Int -> RCLocal
-       ||| `argsConst` is the type-level enforcement of the old
-       ||| comment-only invariant "every element of `args` is itself one
-       ||| of `RCLocal`'s constant forms, never `RCLoc`" -- erased
-       ||| (`0`), so it costs nothing at runtime, but makes constructing
-       ||| an ill-formed `RCConstCon` (one holding a live variable
-       ||| reference) a compile error rather than a `Compiler.RC2.EmitUtil`
-       ||| `idris_crash`. Staying erased all the way through
-       ||| (`Compiler.RC2.EmitUtil`'s own `boxedConstConExpr`/
-       ||| `constConFieldExprsFor` thread it onward at `0` too, never
-       ||| widening it to a kept value) is exactly what lets Idris2
-       ||| still use it to rule out the `RCLoc` case in
-       ||| `constConFieldExpr`'s coverage check, without this proof
-       ||| existing at runtime at all. Only ever constructed by
-       ||| `Compiler.RC2.ConstFold`.
-       RCConstCon : Name -> ConInfo -> (tag : Maybe Int)
-                 -> (args : List RCLocal) -> {0 argsConst : All IsAnyConstLocal args}
-                 -> RCLocal
-       ||| A zero-filled closure over a named top-level function --
-       ||| `Compiler.RC2.ConstFold`'s own fold of a literal, zero-args
-       ||| `RUnderApp fc n missing []` (a bare reference to `n`, no
-       ||| captured values) into a constant, the same way `RCConstCon`
-       ||| folds a constructor of provably-constant fields. Unlike
-       ||| `RCConstCon`, this is a true leaf: a zero-filled closure has
-       ||| no captured args at all, so there's no nested `RCLocal` to
-       ||| recurse into. Only ever constructed by
-       ||| `Compiler.RC2.ConstFold`.
-       RCConstClosure : Name -> (missing : Nat) -> RCLocal
+-- `RCLocal` and `IsAnyConstLocal` are mutually recursive (RCConstCon's
+-- own `argsConst` field needs `IsAnyConstLocal`; `IsAnyConstLocal`'s own
+-- constructors index into `RCLocal`'s) -- forward-declared here instead
+-- of grouping everything below into one `mutual` block, since
+-- `IsConstLocal`/`IsConstClosureLocal` only ever reference `RCLocal`,
+-- never the reverse, and don't need forward declaring at all.
+data RCLocal : Type
+data IsAnyConstLocal : RCLocal -> Type
 
-  ||| Witness that `l` is `RCConstCon` -- kept as its own narrow proof
-  ||| (rather than only the five-case `IsAnyConstLocal` below)
-  ||| specifically so `Compiler.RC2.EmitUtil`'s `boxedConstConExpr`, which
-  ||| only ever handles this one case, can require exactly it and let
-  ||| Idris2's coverage checker rule out every other `RCLocal`
-  ||| constructor (`RCLoc` included) as ill-typed, rather than needing a
-  ||| runtime `idris_crash` fallback for the ones it can't otherwise
-  ||| exclude.
-  public export
-  data IsConstLocal : RCLocal -> Type where
-       ItIsConstCon : IsConstLocal (RCConstCon n ci t args)
+||| ANF-position value: a variable or a constant (see
+||| `doc/reading-the-ir.md`'s "## 3. Values" for the full syntax
+||| reference). `RCNull`/`RCEmptyCon` fold NIL/NOTHING/ZERO/UNIT and
+||| other zero-arg constructors into C's NULL/a tagged integer, rather
+||| than a genuine heap constructor. `RCConstCon` folds a constructor
+||| application whose fields are themselves all constant (see
+||| `Compiler.RC2.ConstFold`) into a single value staged once as a
+||| file-scope static (`Compiler.RC2.EmitUtil`'s `ConstConDef`), immortal
+||| the same way a small-int-cache/`ConstDef` value is -- never a
+||| freshly-allocated heap constructor.
+public export
+data RCLocal : Type where
+     RCLoc      : Int -> RCLocal
+     RCNull     : RCLocal
+     RCConst    : Constant -> RCLocal
+     RCEmptyCon : Name -> ConInfo -> Int -> RCLocal
+     ||| `argsConst` is the type-level enforcement of the old
+     ||| comment-only invariant "every element of `args` is itself one
+     ||| of `RCLocal`'s constant forms, never `RCLoc`" -- erased
+     ||| (`0`), so it costs nothing at runtime, but makes constructing
+     ||| an ill-formed `RCConstCon` (one holding a live variable
+     ||| reference) a compile error rather than a `Compiler.RC2.EmitUtil`
+     ||| `idris_crash`. Staying erased all the way through
+     ||| (`Compiler.RC2.EmitUtil`'s own `boxedConstConExpr`/
+     ||| `constConFieldExprsFor` thread it onward at `0` too, never
+     ||| widening it to a kept value) is exactly what lets Idris2
+     ||| still use it to rule out the `RCLoc` case in
+     ||| `constConFieldExpr`'s coverage check, without this proof
+     ||| existing at runtime at all. Only ever constructed by
+     ||| `Compiler.RC2.ConstFold`.
+     RCConstCon : Name -> ConInfo -> (tag : Maybe Int)
+               -> (args : List RCLocal) -> {0 argsConst : All IsAnyConstLocal args}
+               -> RCLocal
+     ||| A zero-filled closure over a named top-level function --
+     ||| `Compiler.RC2.ConstFold`'s own fold of a literal, zero-args
+     ||| `RUnderApp fc n missing []` (a bare reference to `n`, no
+     ||| captured values) into a constant, the same way `RCConstCon`
+     ||| folds a constructor of provably-constant fields. Unlike
+     ||| `RCConstCon`, this is a true leaf: a zero-filled closure has
+     ||| no captured args at all, so there's no nested `RCLocal` to
+     ||| recurse into. Only ever constructed by
+     ||| `Compiler.RC2.ConstFold`.
+     RCConstClosure : Name -> (missing : Nat) -> RCLocal
 
-  ||| Witness that `l` is `RCConstClosure` -- the closure-emission
-  ||| analogue of `IsConstLocal` just above, kept as its own separate
-  ||| type rather than widening `IsConstLocal` itself: `boxedConstConExpr`
-  ||| only ever handles `RCConstCon`, so adding a `RCConstClosure` case
-  ||| to `IsConstLocal` would force a spurious `impossible` arm into code
-  ||| that was never about this shape. `Compiler.RC2.EmitUtil`'s
-  ||| `boxedConstClosureExpr` requires this one instead, for the same
-  ||| coverage-checker reason `IsConstLocal` exists at all.
-  public export
-  data IsConstClosureLocal : RCLocal -> Type where
-       ItIsConstClosure : IsConstClosureLocal (RCConstClosure n missing)
+||| Witness that `l` is `RCConstCon` -- kept as its own narrow proof
+||| (rather than only the five-case `IsAnyConstLocal` below)
+||| specifically so `Compiler.RC2.EmitUtil`'s `boxedConstConExpr`, which
+||| only ever handles this one case, can require exactly it and let
+||| Idris2's coverage checker rule out every other `RCLocal`
+||| constructor (`RCLoc` included) as ill-typed, rather than needing a
+||| runtime `idris_crash` fallback for the ones it can't otherwise
+||| exclude.
+public export
+data IsConstLocal : RCLocal -> Type where
+     ItIsConstCon : IsConstLocal (RCConstCon n ci t args)
 
-  ||| Witness that `l` is one of `RCLocal`'s five constant forms, never
-  ||| `RCLoc` -- no constructor targets an `RCLoc _` index, so nothing
-  ||| can manufacture this proof for a variable reference. Used
-  ||| wherever a value just needs to be "not a live variable" without
-  ||| narrowing further (`RCConstCon`'s own `args`,
-  ||| `Compiler.RC2.ConstFold`'s `Env`); `constConFieldExpr`
-  ||| (`Compiler.RC2.EmitUtil`) rebuilds the narrower `IsConstLocal` it
-  ||| needs for its own `RCConstCon` case directly, rather than
-  ||| unwrapping one of these.
-  public export
-  data IsAnyConstLocal : RCLocal -> Type where
-       ItIsNull2        : IsAnyConstLocal RCNull
-       ItIsConst2       : IsAnyConstLocal (RCConst c)
-       ItIsEmptyCon2    : IsAnyConstLocal (RCEmptyCon n ci i)
-       ItIsConstCon2    : IsAnyConstLocal (RCConstCon n ci t args)
-       ItIsConstClosure2 : IsAnyConstLocal (RCConstClosure n missing)
+||| Witness that `l` is `RCConstClosure` -- the closure-emission
+||| analogue of `IsConstLocal` just above, kept as its own separate
+||| type rather than widening `IsConstLocal` itself: `boxedConstConExpr`
+||| only ever handles `RCConstCon`, so adding a `RCConstClosure` case
+||| to `IsConstLocal` would force a spurious `impossible` arm into code
+||| that was never about this shape. `Compiler.RC2.EmitUtil`'s
+||| `boxedConstClosureExpr` requires this one instead, for the same
+||| coverage-checker reason `IsConstLocal` exists at all.
+public export
+data IsConstClosureLocal : RCLocal -> Type where
+     ItIsConstClosure : IsConstClosureLocal (RCConstClosure n missing)
+
+||| Witness that `l` is one of `RCLocal`'s five constant forms, never
+||| `RCLoc` -- no constructor targets an `RCLoc _` index, so nothing
+||| can manufacture this proof for a variable reference. Used
+||| wherever a value just needs to be "not a live variable" without
+||| narrowing further (`RCConstCon`'s own `args`,
+||| `Compiler.RC2.ConstFold`'s `Env`); `constConFieldExpr`
+||| (`Compiler.RC2.EmitUtil`) rebuilds the narrower `IsConstLocal` it
+||| needs for its own `RCConstCon` case directly, rather than
+||| unwrapping one of these.
+public export
+data IsAnyConstLocal : RCLocal -> Type where
+     ItIsNull2        : IsAnyConstLocal RCNull
+     ItIsConst2       : IsAnyConstLocal (RCConst c)
+     ItIsEmptyCon2    : IsAnyConstLocal (RCEmptyCon n ci i)
+     ItIsConstCon2    : IsAnyConstLocal (RCConstCon n ci t args)
+     ItIsConstClosure2 : IsAnyConstLocal (RCConstClosure n missing)
 
 export
 covering
@@ -123,43 +131,31 @@ Eq RCLocal where
 export
 covering
 Ord RCLocal where
-  compare (RCLoc i1)      (RCLoc i2)      = compare i1 i2
-  compare (RCLoc _)       RCNull          = GT
-  compare (RCLoc _)       (RCConst _)     = GT
-  compare (RCLoc _)       (RCEmptyCon {}) = GT
-  compare (RCLoc _)       (RCConstCon {}) = GT
-  compare (RCLoc _)       (RCConstClosure {}) = GT
-  compare RCNull          (RCLoc _)       = LT
-  compare RCNull          RCNull          = EQ
-  compare RCNull          (RCConst _)     = GT
-  compare RCNull          (RCEmptyCon {}) = GT
-  compare RCNull          (RCConstCon {}) = GT
-  compare RCNull          (RCConstClosure {}) = GT
-  compare (RCConst _)     (RCLoc _)       = LT
-  compare (RCConst _)     RCNull          = LT
-  compare (RCConst c1)    (RCConst c2)    = compare c1 c2
-  compare (RCConst _)     (RCEmptyCon {}) = GT
-  compare (RCConst _)     (RCConstCon {}) = GT
-  compare (RCConst _)     (RCConstClosure {}) = GT
-  compare (RCEmptyCon {}) (RCLoc _)       = LT
-  compare (RCEmptyCon {}) RCNull          = LT
-  compare (RCEmptyCon {}) (RCConst _)     = LT
-  compare (RCEmptyCon n1 _ t1) (RCEmptyCon n2 _ t2) = compare n1 n2 <+> compare t1 t2
-  compare (RCEmptyCon {}) (RCConstCon {}) = GT
-  compare (RCEmptyCon {}) (RCConstClosure {}) = GT
-  compare (RCConstCon {}) (RCLoc _)       = LT
-  compare (RCConstCon {}) RCNull          = LT
-  compare (RCConstCon {}) (RCConst _)     = LT
-  compare (RCConstCon {}) (RCEmptyCon {}) = LT
-  compare (RCConstCon n1 _ t1 a1) (RCConstCon n2 _ t2 a2) =
-    compare n1 n2 <+> compare t1 t2 <+> compare a1 a2
-  compare (RCConstCon {}) (RCConstClosure {}) = GT
-  compare (RCConstClosure {}) (RCLoc _)       = LT
-  compare (RCConstClosure {}) RCNull          = LT
-  compare (RCConstClosure {}) (RCConst _)     = LT
-  compare (RCConstClosure {}) (RCEmptyCon {}) = LT
-  compare (RCConstClosure {}) (RCConstCon {}) = LT
-  compare (RCConstClosure n1 m1) (RCConstClosure n2 m2) = compare n1 n2 <+> compare m1 m2
+  compare l1 l2 = compare (tagOf l1) (tagOf l2) <+> sameCtor l1 l2
+    where
+      tagOf : RCLocal -> Int
+      tagOf (RCLoc _)          = 0
+      tagOf RCNull             = 1
+      tagOf (RCConst _)        = 2
+      tagOf (RCEmptyCon {})    = 3
+      tagOf (RCConstCon {})    = 4
+      tagOf (RCConstClosure {}) = 5
+
+      -- `tagOf` above already orders any differing pair of
+      -- constructors; every case reachable here has l1/l2 as the same
+      -- constructor, so the catch-all is dead code, only there to
+      -- satisfy coverage.
+      sameCtor : RCLocal -> RCLocal -> Ordering
+      sameCtor (RCLoc i1)   (RCLoc i2)   = compare i1 i2
+      sameCtor RCNull       RCNull       = EQ
+      sameCtor (RCConst c1) (RCConst c2) = compare c1 c2
+      sameCtor (RCEmptyCon n1 _ t1) (RCEmptyCon n2 _ t2) =
+        compare n1 n2 <+> compare t1 t2
+      sameCtor (RCConstCon n1 _ t1 a1) (RCConstCon n2 _ t2 a2) =
+        compare n1 n2 <+> compare t1 t2 <+> compare a1 a2
+      sameCtor (RCConstClosure n1 m1) (RCConstClosure n2 m2) =
+        compare n1 n2 <+> compare m1 m2
+      sameCtor _ _ = EQ
 
 export
 covering
@@ -182,222 +178,121 @@ Show RCLocal where
 public export
 data Rep = RBoxed | RNative PrimType | RInlineNative PrimType
 
-mutual
-  public export
-  data RCExp : Type where
-       RV         : FC -> RCLocal -> RCExp
-       RAppName   : FC -> (lazy : Maybe LazyReason) -> Name -> List RCLocal -> RCExp
-       ||| Direct, saturated call to `name`'s own dual-ABI worker variant
-       ||| (see `Compiler.RC2.DualABI`); `argReps`/`retRep` describe how
-       ||| *this* call renders each argument/its result. Never valid in
-       ||| a closure-building position -- a closure slot can only ever
-       ||| hold `IDRIS2RC2_Value *`. Only produced by
-       ||| `Compiler.RC2.DualABI`, strictly after `Compiler.RC2.Loop`.
-       ||| `postDrop` mirrors `ROp`'s own field -- see
-       ||| `doc/native-type-inference.md`'s "What's stored on the IR
-       ||| vs. re-derived" and `doc/dual-abi.md`'s Bugs found #3 for the
-       ||| full rationale and the leak it fixes.
-       RAppNameRep : FC -> Name -> (argReps : List Rep) -> (retRep : Rep) -> (postDrop : List RCLocal) -> List RCLocal -> RCExp
-       ||| Direct, saturated, inlined call to a `%foreign` declaration's own
-       ||| native C function -- splices the same marshalling logic
-       ||| `Compiler.RC2.Emit`'s `emitFFIWorker` used to emit into a standalone
-       ||| C function directly at this call site instead. `ccs`/`fargs`/`ret`
-       ||| are the original `MkRCForeign`'s own fields, carried verbatim --
-       ||| deliberately NOT precomputed `Rep`s (unlike `RAppNameRep`'s
-       ||| `argReps`/`retRep`): a `CFType`'s own `Rep` is a pure, non-analytical
-       ||| fact of the type alone (`Compiler.RC2.Types.cfTypeNative`), cheap to
-       ||| re-derive per use, unlike ownership/liveness facts that genuinely
-       ||| need storing. `postDrop` mirrors `RAppNameRep`'s own field -- in fact
-       ||| this node's `postDrop`/args are always inherited verbatim from the
-       ||| `RAppNameRep` this replaces (Stage 4's own `postDropFor` decision is
-       ||| representation-agnostic, since it only depends on `argReps`, which
-       ||| is invariant between the two node shapes). Never valid in a
-       ||| closure-building position, same reasoning as `RAppNameRep`. Only
-       ||| produced by `Compiler.RC2.DualABI`'s FFI-inline pass, strictly after
-       ||| Stage 4's own call-site rewrite (never directly by Stage 4 itself --
-       ||| see that pass's own module note for why).
-       RAppFFIInline : FC -> (ccs : List String) -> (fargs : List CFType) -> (ret : CFType)
-                    -> (postDrop : List RCLocal) -> List RCLocal -> RCExp
-       RUnderApp  : FC -> Name -> (missing : Nat) -> List RCLocal -> RCExp
-       RApp       : FC -> (lazy : Maybe LazyReason) -> RCLocal -> RCLocal -> RCExp
-       ||| `rep`: this local's representation (see `Rep`,
-       ||| `doc/native-type-inference.md`). A dead-on-arrival binding
-       ||| (never used in `body`) has no separate flag -- `body` is just
-       ||| wrapped in an ordinary RDrop/RFree for it, like anywhere else.
-       RLet       : FC -> (var : Int) -> Rep -> RCExp -> RCExp -> RCExp
-       ||| `reuseFrom`: if `Just loc`, this constructor's allocation may
-       ||| reuse `loc`'s storage (a dying same-shape constructor offered
-       ||| by an enclosing `RReuseOffer`). Decided by
-       ||| `Compiler.RC2.Reuse`'s `resolveReuse`, run after Phase 1/2 --
-       ||| see `doc/reuse-analysis.md`'s "IR additions". Phase 1/2
-       ||| always leave this `Nothing`.
-       RCon       : FC -> Name -> ConInfo -> (tag : Maybe Int) -> List RCLocal -> (reuseFrom : Maybe RCLocal) -> RCExp
-       ||| `postDrop`: every Boxed operand this op needs dropped once
-       ||| it's done reading it (one entry per *occurrence* in `args`,
-       ||| so an operand read twice, e.g. `x + x`, appears twice) --
-       ||| decided by Compiler.RC2.RC's `annotate` (Phase 2), carried
-       ||| directly on the node so Emit.idr only ever lowers it rather
-       ||| than re-deriving "which operands are Boxed" at emission time.
-       ||| Phase 1 always constructs this as `[]`; only Phase 2 fills it
-       ||| in. See `doc/native-type-inference.md`'s "What's stored on
-       ||| the IR vs. re-derived" -- the canonical explanation every
-       ||| other `postDrop` field in this file points back to.
-       ROp        : {0 arity : Nat} -> FC -> (lazy : Maybe LazyReason) -> PrimFn arity -> Vect arity RCLocal -> (postDrop : List RCLocal) -> RCExp
-       ||| `postDrop` mirrors `ROp`'s own field exactly -- one entry per
-       ||| Boxed argument occurrence this ext-prim call needs dropped
-       ||| once it's done reading it. Deliberately primitive-agnostic:
-       ||| `Compiler.RC2.RC`'s `annotate` (Phase 2) treats every
-       ||| `RExtPrim` argument under the same borrow/move contract `ROp`
-       ||| uses for its own operands, regardless of which primitive `p`
-       ||| names -- the callee's own C implementation is responsible for
-       ||| `idris2rc2_dup`-ing anything it wants to keep past the call
-       ||| (see `support/rc2/ioprims.c`), the same way any other FFI
-       ||| callee would. Phase 1 always constructs this as `[]`; only
-       ||| Phase 2 fills it in. See `doc/native-type-inference.md`'s
-       ||| "What's stored on the IR vs. re-derived".
-       RExtPrim   : FC -> (lazy : Maybe LazyReason) -> Name -> List RCLocal -> (postDrop : List RCLocal) -> RCExp
-       ||| A read of one field out of a C struct pointer (see
-       ||| `doc/c-struct-support.md`). `structName`/`fieldName` stay
-       ||| plain strings, resolved against a whole-program struct-field
-       ||| table built once in `Compiler.RC2.Emit`'s own
-       ||| `generateCSourceFile`, the same way `RPrimVal`'s own
-       ||| `dyngen`/`orStagen` resolve a literal's concrete C rendering
-       ||| late rather than pre-resolving it here. `postDrop` mirrors
-       ||| `ROp`'s own field, but a plain C pointer dereference never
-       ||| needs a `dup` the way an `ROp` operand can -- `postDrop`
-       ||| here only ever means "drop `structVar`, this was its last
-       ||| use", never "drop after an inserted `dup`". Phase 1 always
-       ||| constructs this as `[]`; only Phase 2 fills it in.
-       RStructGet : FC -> (structVar : RCLocal) -> (structName : String) -> (fieldName : String) -> (postDrop : List RCLocal) -> RCExp
-       ||| A write of one field into a C struct pointer, evaluating to
-       ||| Unit. Same reasoning as `RStructGet` for both `structVar`
-       ||| and `value` -- neither is ever duplicated, `postDrop` (0, 1,
-       ||| or 2 elements) only ever means "this was this operand's own
-       ||| last use". See `doc/c-struct-support.md`.
-       RStructSet : FC -> (structVar : RCLocal) -> (structName : String) -> (fieldName : String) -> (value : RCLocal) -> (postDrop : List RCLocal) -> RCExp
-       ||| A boolean comparison (LT/GT/EQ/LTE/GTE) fused directly into a
-       ||| two-way branch, with the Bool it would otherwise produce
-       ||| never materialised as a value. Only produced by Phase 1
-       ||| `normalize`'s `tryFuseCompare` -- see
-       ||| `doc/native-type-inference.md`'s "Comparisons are a
-       ||| separate, narrower mechanism". `postDrop` mirrors `ROp`'s
-       ||| own field above; Phase 1 always constructs this as `[]`,
-       ||| only Phase 2 fills it in.
-       RCmpCase   : FC -> PrimFn 2 -> Vect 2 RCLocal -> (postDrop : List RCLocal) -> (whenTrue : RCExp) -> (whenFalse : RCExp) -> RCExp
-       RConCase   : FC -> RCLocal -> List RConAlt -> Maybe RCExp -> RCExp
-       RConstCase : FC -> RCLocal -> List RConstAlt -> Maybe RCExp -> RCExp
-       RPrimVal   : FC -> Constant -> RCExp
-       RErased    : FC -> RCExp
-       RCrash     : FC -> String -> RCExp
-       ||| "add": increment `loc`'s refcount by `S extra` (i.e. `extra=0`
-       ||| means exactly 1 increment), then continue. See the module
-       ||| note -- this is what a borrowed use of a variable lowers to.
-       ||| Encoding the actual count as `S extra` rather than a plain
-       ||| `Nat` (which would allow a meaningless "0 increments" state)
-       ||| makes a no-op `RDup` unrepresentable at the type level without
-       ||| needing any dependent non-zero-Nat proof threaded through
-       ||| every one of this constructor's many pass-through sites across
-       ||| the whole pipeline. Every construction site as of this commit
-       ||| always passes `extra = 0` (a single increment) -- a future,
-       ||| separate optimization pass is what will eventually construct
-       ||| one with `extra > 0`, batching several individual borrowed
-       ||| uses' own increments into one runtime call.
-       RDup       : FC -> RCLocal -> (extra : Nat) -> RCExp -> RCExp
-       ||| Explicit cleanup of owned variables that are dead at this point,
-       ||| wrapping the rest of the computation. Emit lowers each of these
-       ||| to `idris2rc2_drop(...)` calls, except for any it decides to
-       ||| fold into a constructor-reuse slot instead (see module note).
-       RDrop      : FC -> List RCLocal -> RCExp -> RCExp
-       ||| Unconditional, unchecked deallocation of `loc`, then continue.
-       ||| See the module note: only ever inserted where RC.idr can prove
-       ||| statically that `loc` is a brand-new, never-shared allocation.
-       RFree      : FC -> RCLocal -> RCExp -> RCExp
-       ||| Releases a reuse candidate (`RReuseOffer`) not consumed by
-       ||| any `RCon` on this execution path -- lowers to
-       ||| `idris2rc2_dropReuseConstructor(loc)`, a no-op if the
-       ||| uniqueness check that created the offer already failed. Only
-       ||| inserted by `Compiler.RC2.Reuse` -- see
-       ||| `doc/reuse-analysis.md`'s "IR additions".
-       RReleaseReuse : FC -> RCLocal -> RCExp -> RCExp
-       ||| Explicit tail-recursive loop: `loopParams` are this loop's
-       ||| own carried locals, each with an independent `Rep`; `initial`
-       ||| supplies their starting values, evaluated once in the
-       ||| enclosing scope. `body` runs repeatedly -- an `RLoopContinue`
-       ||| reachable in tail position starts the next iteration;
-       ||| anything else exits with that value. `prologueDrop`:
-       ||| top-level args that got a native shadow here and are
-       ||| therefore dead in their original Boxed form once the shadow
-       ||| declarations run. Only produced by `Compiler.RC2.Loop`'s
-       ||| `applyLoop`. See `doc/loop-conversion.md`'s "IR shape" for
-       ||| the full field-by-field walkthrough and "`stripOwnership`"
-       ||| for why `prologueDrop` (unlike `initial`/`loopParams`) must
-       ||| also be filtered by DualABI's `synthesizeWorker`.
-       RLoop : FC -> (loopParams : List (Int, Rep)) -> (initial : List RCLocal) -> (prologueDrop : List RCLocal) -> RCExp -> RCExp
-       ||| Continue the nearest enclosing `RLoop`, supplying `args` as
-       ||| each loop param's new value. `args`'s own ownership is
-       ||| untouched by this node's introduction -- `annotate` (Phase 2)
-       ||| already computed the right dup/move decisions before
-       ||| `Compiler.RC2.Loop` ever ran, and those decisions are
-       ||| preserved as-is (only the terminal `RAppName` is swapped).
-       ||| See `doc/loop-conversion.md`'s "`applyLoop`" section.
-       |||
-       ||| `postDrop` mirrors `ROp`'s own field (a *separate* concern
-       ||| `annotate` never touches, since this node doesn't exist yet
-       ||| when it runs) -- decided by `applyLoop` once every loop
-       ||| param's final `Rep` is known. A real, `valgrind`-confirmed
-       ||| leak was found from this field's own absence -- see
-       ||| `doc/loop-conversion.md`'s "Bugs found and fixed" #5.
-       RLoopContinue : FC -> List RCLocal -> (postDrop : List RCLocal) -> RCExp
-       ||| Runtime uniqueness check deciding whether `sc`'s storage can
-       ||| be repurposed for a later `RCon` of the same shape
-       ||| (`RCon.reuseFrom`) instead of allocating fresh: if `sc` is
-       ||| unique, its storage is reserved; otherwise every
-       ||| `dupOnShared` entry (destructured straight out of `sc`, plain
-       ||| pointer aliasing) is dup'd before `sc` drops normally. Either
-       ||| way execution continues into `body` -- a setup step with two
-       ||| ways of getting there, not a two-armed branch. Exactly one
-       ||| reachable `RCon` claims the offer; every other path gets an
-       ||| `RReleaseReuse sc` instead. Only inserted by
-       ||| `Compiler.RC2.Reuse`'s `resolveAlt` (replaces the old
-       ||| `MkRConAlt.offersReuse` flag). See `doc/reuse-analysis.md`'s
-       ||| "IR additions" for this node's semantics and "`resolveAlt`"/
-       ||| "`tryConsume`/`tryClaim`" for the algorithm.
-       |||
-       ||| `dropOnUnique`: destructured-out-of-`sc`-but-never-referenced
-       ||| fields (unlike `dupOnShared`'s survivors). On the *not-unique*
-       ||| path these are freed for free by `sc`'s own ordinary recursive
-       ||| drop; on the *unique* path `sc` itself is never dropped (its
-       ||| storage is reserved for reuse instead), so that free-ride
-       ||| never happens and these need an explicit drop of their own,
-       ||| emitted only in that branch (see `EmitUtil.emitReuseOffer`).
-       ||| A real, valgrind-confirmed leak was found from this field's
-       ||| own absence -- see `doc/reuse-analysis.md`'s "Bugs found and
-       ||| fixed".
-       RReuseOffer : FC -> (sc : RCLocal) -> (dupOnShared : List RCLocal) -> (dropOnUnique : List RCLocal) -> RCExp -> RCExp
+-- `RCExp`/`RConAlt`/`RConstAlt` are mutually recursive (`RConCase`/
+-- `RConstCase` hold `List RConAlt`/`RConstAlt`; both alt types hold a
+-- nested `RCExp` in turn) -- forward-declared for the same reason as
+-- `RCLocal`/`IsAnyConstLocal` above, rather than one `mutual` block.
+data RCExp : Type
+data RConAlt : Type
+data RConstAlt : Type
 
-  public export
-  data RConAlt : Type where
-       MkRConAlt : Name -> ConInfo -> (tag : Maybe Int) -> (args : List Int) -> RCExp -> RConAlt
+public export
+data RCExp : Type where
+     RV         : FC -> RCLocal -> RCExp
+     RAppName   : FC -> (lazy : Maybe LazyReason) -> Name -> List RCLocal -> RCExp
+     ||| Direct call to `name`'s dual-ABI worker variant, never valid in
+     ||| a closure-building position. Only produced by
+     ||| `Compiler.RC2.DualABI`. `postDrop`: see `ROp`'s own doc below.
+     ||| See `doc/dual-abi.md`'s Bugs found #3 for the leak this fixed.
+     RAppNameRep : FC -> Name -> (argReps : List Rep) -> (retRep : Rep) -> (postDrop : List RCLocal) -> List RCLocal -> RCExp
+     ||| Inlined `%foreign` call, splicing `Emit.emitFFIWorker`'s own
+     ||| marshalling logic directly at the call site instead of a
+     ||| standalone C function. `ccs`/`fargs`/`ret`/`postDrop`/args are
+     ||| all inherited verbatim from the `RAppNameRep` this replaces.
+     ||| Never valid in a closure-building position. Only produced by
+     ||| `Compiler.RC2.DualABI`'s FFI-inline pass.
+     RAppFFIInline : FC -> (ccs : List String) -> (fargs : List CFType) -> (ret : CFType)
+                  -> (postDrop : List RCLocal) -> List RCLocal -> RCExp
+     RUnderApp  : FC -> Name -> (missing : Nat) -> List RCLocal -> RCExp
+     RApp       : FC -> (lazy : Maybe LazyReason) -> RCLocal -> RCLocal -> RCExp
+     ||| `rep`: this local's representation. See `doc/native-type-inference.md`.
+     RLet       : FC -> (var : Int) -> Rep -> RCExp -> RCExp -> RCExp
+     ||| `reuseFrom`: if `Just loc`, may reuse `loc`'s storage (an offer
+     ||| from an enclosing `RReuseOffer`). Decided by
+     ||| `Compiler.RC2.Reuse`, always `Nothing` before it runs. See
+     ||| `doc/reuse-analysis.md`.
+     RCon       : FC -> Name -> ConInfo -> (tag : Maybe Int) -> List RCLocal -> (reuseFrom : Maybe RCLocal) -> RCExp
+     ||| `postDrop`: Boxed operands to drop once read, one entry per
+     ||| *occurrence* in `args`. Decided by Phase 2 (`annotate`), always
+     ||| `[]` after Phase 1. Canonical explanation every other
+     ||| `postDrop` field in this file points back to:
+     ||| `doc/native-type-inference.md`'s "What's stored on the IR vs.
+     ||| re-derived".
+     ROp        : {0 arity : Nat} -> FC -> (lazy : Maybe LazyReason) -> PrimFn arity -> Vect arity RCLocal -> (postDrop : List RCLocal) -> RCExp
+     ||| `postDrop` mirrors `ROp`'s own field, primitive-agnostic -- the
+     ||| callee's own C implementation is responsible for `dup`-ing
+     ||| anything it wants to keep past the call (`support/rc2/ioprims.c`).
+     RExtPrim   : FC -> (lazy : Maybe LazyReason) -> Name -> List RCLocal -> (postDrop : List RCLocal) -> RCExp
+     ||| Read of one C struct field (`doc/c-struct-support.md`).
+     ||| `postDrop` only ever means "drop `structVar`" -- a struct read
+     ||| is never `dup`'d.
+     RStructGet : FC -> (structVar : RCLocal) -> (structName : String) -> (fieldName : String) -> (postDrop : List RCLocal) -> RCExp
+     ||| Write of one C struct field, evaluating to Unit. Same
+     ||| reasoning as `RStructGet`.
+     RStructSet : FC -> (structVar : RCLocal) -> (structName : String) -> (fieldName : String) -> (value : RCLocal) -> (postDrop : List RCLocal) -> RCExp
+     ||| A comparison fused into a two-way branch with no Bool ever
+     ||| materialised. Only produced by Phase 1's `tryFuseCompare` --
+     ||| see `doc/native-type-inference.md`'s "Comparisons are a
+     ||| separate, narrower mechanism". `postDrop` mirrors `ROp`'s own field.
+     RCmpCase   : FC -> PrimFn 2 -> Vect 2 RCLocal -> (postDrop : List RCLocal) -> (whenTrue : RCExp) -> (whenFalse : RCExp) -> RCExp
+     RConCase   : FC -> RCLocal -> List RConAlt -> Maybe RCExp -> RCExp
+     RConstCase : FC -> RCLocal -> List RConstAlt -> Maybe RCExp -> RCExp
+     RPrimVal   : FC -> Constant -> RCExp
+     RErased    : FC -> RCExp
+     RCrash     : FC -> String -> RCExp
+     ||| Increment `loc`'s refcount by `S extra` (`extra=0`: one
+     ||| increment), then continue -- what a borrowed use lowers to.
+     ||| `S extra`, not a plain `Nat`, makes a no-op `RDup`
+     ||| unrepresentable at the type level. Every construction site as
+     ||| of this commit passes `extra = 0`; a future pass batches
+     ||| several increments into one `extra > 0` call.
+     RDup       : FC -> RCLocal -> (extra : Nat) -> RCExp -> RCExp
+     ||| Cleanup of owned variables dead at this point. Lowers to
+     ||| `idris2rc2_drop` calls, except any folded into a reuse slot instead.
+     RDrop      : FC -> List RCLocal -> RCExp -> RCExp
+     ||| Unconditional, unchecked deallocation of `loc` -- only where
+     ||| RC.idr can prove it's a brand-new, never-shared allocation.
+     RFree      : FC -> RCLocal -> RCExp -> RCExp
+     ||| Releases an `RReuseOffer` not consumed by any `RCon` on this
+     ||| path. Lowers to `idris2rc2_dropReuseConstructor`. See `doc/reuse-analysis.md`.
+     RReleaseReuse : FC -> RCLocal -> RCExp -> RCExp
+     ||| Explicit tail-recursive loop. `loopParams`: this loop's carried
+     ||| locals; `initial`: their starting values; `body` runs
+     ||| repeatedly until an `RLoopContinue` starts the next iteration
+     ||| or anything else exits. `prologueDrop`: top-level args dead in
+     ||| Boxed form once their native shadow is declared. Only produced
+     ||| by `Compiler.RC2.Loop`'s `applyLoop` -- see `doc/loop-conversion.md`.
+     RLoop : FC -> (loopParams : List (Int, Rep)) -> (initial : List RCLocal) -> (prologueDrop : List RCLocal) -> RCExp -> RCExp
+     ||| Continue the nearest enclosing `RLoop` with `args` as each loop
+     ||| param's new value (ownership already decided by Phase 2,
+     ||| unchanged here). `postDrop` decided separately by `applyLoop`
+     ||| once each param's final `Rep` is known -- see
+     ||| `doc/loop-conversion.md`'s "Bugs found and fixed" #5.
+     RLoopContinue : FC -> List RCLocal -> (postDrop : List RCLocal) -> RCExp
+     ||| Runtime uniqueness check for whether `sc`'s storage can be
+     ||| reused by a later same-shape `RCon`: if unique, its storage is
+     ||| reserved; otherwise every `dupOnShared` entry is `dup`'d before
+     ||| `sc` drops normally. `dropOnUnique`: fields needing an explicit
+     ||| drop only on the unique path, where `sc` itself isn't dropped.
+     ||| Only inserted by `Compiler.RC2.Reuse`'s `resolveAlt` -- see
+     ||| `doc/reuse-analysis.md`.
+     RReuseOffer : FC -> (sc : RCLocal) -> (dupOnShared : List RCLocal) -> (dropOnUnique : List RCLocal) -> RCExp -> RCExp
 
-  public export
-  data RConstAlt : Type where
-       MkRConstAlt : Constant -> RCExp -> RConstAlt
+public export
+data RConAlt : Type where
+     MkRConAlt : Name -> ConInfo -> (tag : Maybe Int) -> (args : List Int) -> RCExp -> RConAlt
 
-||| `MkRCFun`'s own top-level parameters, each with its own `Rep` --
-||| foundation for the dual (Boxed/native) calling convention (`RBoxed`
-||| = an ordinary `IDRIS2RC2_Value *`, `RNative ty` = a raw native C
-||| scalar the caller supplies directly); `retRep` is the same idea for
-||| the return value. `isWorker` marks a `Compiler.RC2.DualABI`-
-||| synthesized worker: a function reachable *only* through a direct,
-||| statically-named, fully-saturated `RAppNameRep` call (from its own
-||| wrapper's body, or a non-tail call-site rewrite) -- never stored in
-||| a `Closure`, so never dispatched through
-||| `support/rc2/runtime.c`'s `idris2rc2_dispatchClosure` the way an
-||| ordinary function/wrapper might be. `Compiler.RC2.Emit`'s
-||| `createCFunctions` uses this to decide its own C declaration shape
-||| (see that function's own doc comment). `False` for every ordinary
-||| function and every dual-ABI wrapper (which keeps the original
-||| function's name and stays closure-dispatch-compatible).
+public export
+data RConstAlt : Type where
+     MkRConstAlt : Constant -> RCExp -> RConstAlt
+
+||| `MkRCFun`'s own top-level parameters/`retRep`: the dual (Boxed/
+||| native) calling convention foundation (`doc/dual-abi.md`).
+||| `isWorker` marks a `Compiler.RC2.DualABI`-synthesized worker,
+||| reachable only through a direct `RAppNameRep` call, never stored in
+||| a `Closure`/dispatched via `idris2rc2_dispatchClosure` -- decides
+||| `Compiler.RC2.Emit`'s `createCFunctions`'s own C declaration shape.
+||| `False` for every ordinary function and dual-ABI wrapper.
 public export
 data RCDef : Type where
      MkRCFun : (args : List (Int, Rep)) -> (retRep : Rep) -> (isWorker : Bool) -> RCExp -> RCDef
