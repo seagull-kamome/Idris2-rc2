@@ -161,8 +161,22 @@ IDRIS2RC2_Value *idris2rc2_dup(IDRIS2RC2_Value *v) {
 }
 
 IDRIS2RC2_Value *idris2rc2_dup_n(IDRIS2RC2_Value *v, int n) {
-  if (v && !idris2rc2_is_unboxed(v) && v->header.refCount != IDRIS2RC2_REFCOUNT_MAX)
-    atomic_fetch_add_explicit(&v->header.refCount, n, memory_order_relaxed);
+  if (v && !idris2rc2_is_unboxed(v)) {
+    // Unlike idris2rc2_dup's own single +1 (which can only ever land
+    // exactly on REFCOUNT_MAX before freezing there, never past it), a
+    // plain atomic_fetch_add(n) here could overshoot REFCOUNT_MAX and
+    // wrap the uint16_t back to a small value, silently losing the
+    // object's immortal/shared status -- a CAS loop clamps to
+    // REFCOUNT_MAX instead of ever adding past it.
+    uint16_t cur = atomic_load_explicit(&v->header.refCount, memory_order_relaxed);
+    while (cur != IDRIS2RC2_REFCOUNT_MAX) {
+      uint16_t next = cur > IDRIS2RC2_REFCOUNT_MAX - n
+                        ? IDRIS2RC2_REFCOUNT_MAX : (uint16_t)(cur + n);
+      if (atomic_compare_exchange_weak_explicit(&v->header.refCount, &cur, next,
+              memory_order_relaxed, memory_order_relaxed))
+        break;
+    }
+  }
   return v;
 }
 

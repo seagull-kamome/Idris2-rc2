@@ -848,6 +848,7 @@ case needs one specifically.
 - slabの様にfree-list風に高速割り当てできる固定アロケータを使えるようにしたい。
 - libgc板のランタイム。dup/drop/freeをCマクロで消去してしまい、mallocを単純に差し替える
   だけでlibgc対応できるのでは？
+- インクリメンタルコンパイル
 - **Performance: Closure Inlining and Immediate Expansion**
   `partial`呼び出しによるクロージャ生成とヒープ割り当てが、高階関数や型クラスの辞書使用時に頻発している。特に`List`操作や`mapAppend`のような高階関数において、`Boxed`なクロージャが多重生成されており、パフォーマンスを大きく阻害している。
   - 可能な限りコンパイル時にクロージャを特定し、直接呼び出しへとインライン展開するパスを実装する。
