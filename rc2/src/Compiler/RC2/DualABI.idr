@@ -3,29 +3,23 @@ module Compiler.RC2.DualABI
 -- Copyright 2026, Hattori,Hiroki. All rights reserved.
 -- This module was licensed by BSD3.
 
--- Dual calling convention: optimizes function signatures by promoting
--- parameters and return types to native (unboxed) representations
--- where statically eligible. Both eligibility analyses are purely
--- *local* to one function's own body -- no whole-program fixed point
--- is needed (see `rc2/doc/dual-abi.md`'s design section for why).
+-- Dual calling convention: promotes eligible function parameters/
+-- return values to native (unboxed) representations across an
+-- *ordinary* call boundary, not just a self-tail-call loop's own
+-- `goto` (`Compiler.RC2.Loop`). Both eligibility analyses are purely
+-- local to one function's own body -- see `rc2/doc/dual-abi.md`'s "Why
+-- no whole-program fixed point is needed".
 --
--- Tail-position calls are a deliberate, permanent scope boundary, not
--- a later stage: rewriting one into a direct, non-deferred call could
--- reintroduce unbounded C stack growth that the current closure-
--- deferral scheme bounds, and telling which call sites would be safe
--- to rewrite would need real interprocedural analysis -- exactly the
--- whole-program fixed point this effort otherwise avoids needing. A
--- tail call to an FFI worker is the one exception: a `%foreign`
--- callee is a leaf as far as this scheme is concerned (it can never
--- itself extend an otherwise-unknown-depth chain of further deferred
--- tail calls), so it's rewritten in tail position too -- see
--- `applyCallSiteRewriteBody`'s own tail-position clause (Stage 4).
+-- Tail-position calls to an ordinary worker are a deliberate,
+-- permanent scope boundary (unbounded C-stack-growth risk if
+-- rewritten -- see the doc's "Scope: non-tail-position calls only,
+-- permanently" under "Stage 4"); a tail call to an FFI worker is the
+-- one exception (see the doc's "Stage 4b"), handled in
+-- `applyCallSiteRewriteBody`'s own tail-position clause below.
 --
--- See `rc2/doc/dual-abi.md` for the full design, the Stage 2
--- verification results against the test/benchmark suite, and the
--- documented interaction with `Compiler.RC2.MutualLoop`-produced
--- merged functions (which Stage 3 must exclude from worker synthesis
--- explicitly -- see that doc's "Bugs found" section).
+-- See `rc2/doc/dual-abi.md` for the full design and the
+-- `Compiler.RC2.MutualLoop`-merged-function exclusion Stage 3 needs
+-- (that doc's "A finding that changed Stage 3's own plan").
 
 import Compiler.RC2.RCExp
 import Compiler.RC2.Types
@@ -46,34 +40,25 @@ import Data.Vect
 
 %default covering
 
-||| Find an `RLoop` reachable through a prefix of ordinary `RLet`s
-||| (`Compiler.RC2.Loop.applyLoop`'s own invariant-loop-param elision
-||| wraps an `RLoop` in exactly this shape now -- a native-shadow-
-||| eligible parameter that turned out loop-invariant gets hoisted into
-||| a one-time `RLet` ahead of the loop rather than staying loop-
-||| carried, see that function's own doc comment), collecting every id
-||| bound along the way. `Nothing` if no `RLoop` is reachable this way
-||| at all (an ordinary non-looping function, the common case).
+||| Find an `RLoop` reachable through a prefix of ordinary `RLet`s --
+||| `applyLoop`'s own loop-invariant-parameter elision wraps an `RLoop`
+||| in exactly this shape (`doc/loop-conversion.md`'s "Loop-invariant
+||| parameter elision") -- collecting every id bound along the way.
+||| `Nothing` if no `RLoop` is reachable at all (the common, non-looping
+||| case).
 findLoopThroughLets : SortedMap Int Rep -> RCExp -> Maybe (SortedMap Int Rep, List (Int, Rep))
 findLoopThroughLets acc (RLet _ var rep _ body) = findLoopThroughLets (insert var rep acc) body
 findLoopThroughLets acc (RLoop _ loopParams _ _ _) = Just (acc, loopParams)
 findLoopThroughLets _ _ = Nothing
 
-||| Every top-level parameter's own native eligibility: `Just ty` at the
-||| position(s) `Compiler.RC2.Loop`'s `nativeArgType` (or, for an
-||| already-`RLoop`-wrapped body, `loopParams` together with any
-||| invariant-parameter `RLet`s wrapping it, see `findLoopThroughLets`)
-||| finds eligible, `Nothing` otherwise. Reads `Compiler.RC2.Loop`'s own
-||| decision directly when present rather than re-deriving it, via an id
-||| lookup rather than a positional `zip` against `argIds` -- since
-||| `applyLoop`'s own invariant-parameter elision, `loopParams` can now
-||| be a strict subset of the function's own top-level parameters (with
-||| the rest either needing no entry at all -- an eliminated Boxed
-||| parameter's own id is still, and remains, the enclosing function's
-||| own argument -- or captured by one of the wrapping `RLet`s instead);
-||| an id missing from both simply means `Nothing` here, which is
-||| correct either way (an eliminated Boxed parameter was never native
-||| to begin with).
+||| Every top-level parameter's own native eligibility: `Just ty` where
+||| `Compiler.RC2.Loop`'s `nativeArgType` (or, for an `RLoop`-wrapped
+||| body, `loopParams`/its wrapping `RLet`s via `findLoopThroughLets`)
+||| finds it eligible, `Nothing` otherwise -- an id lookup rather than a
+||| positional `zip`, since loop-invariant-parameter elision can leave
+||| `loopParams` a strict subset of the top-level parameters (see
+||| `doc/loop-conversion.md`'s "Loop-invariant parameter elision", its
+||| own "DualABI interaction").
 export
 paramEligibility : List Int -> RCExp -> List (Int, Maybe PrimType)
 paramEligibility argIds body =
@@ -87,16 +72,13 @@ paramEligibility argIds body =
          Nothing => map (\p => (p, nativeArgType p body)) argIds
 
 ||| Every `Rep` a genuine (non-`RLoopContinue`) tail-position value of
-||| `e` would have, given `reps` (every local already known to be
-||| native by this point -- seeded from `paramEligibility`'s own result
-||| for the function's own parameters, extended as the walk passes
-||| through `RLet`/`RLoop`'s own bindings). `Nothing` for a tail leaf
-||| whose value is never native regardless of context (a call, closure,
-||| constructor, extprim, erasure, crash) -- this is what makes a
-||| function's return ineligible the moment *any* exit path can't be
-||| native. `RLoopContinue` contributes nothing at all (never a real
-||| exit -- it jumps back to the loop's own top, someone else's tail
-||| position handles the eventual real exit).
+||| `e` would have, given `reps` (natives known so far, seeded from
+||| `paramEligibility`, extended through `RLet`/`RLoop` bindings) --
+||| `Nothing` for a leaf never native regardless of context (a call,
+||| closure, constructor, extprim, erasure, crash), which is what makes
+||| the whole return ineligible the moment any exit can't be native.
+||| See `doc/dual-abi.md`'s "returnEligibility / tailValueReps".
+||| `RLoopContinue` contributes nothing (never a real exit).
 tailValueReps : SortedMap Int Rep -> RCExp -> List (Maybe PrimType)
 tailValueReps reps (RV _ (RCLoc i)) =
     [ case lookup i reps of
@@ -150,13 +132,11 @@ returnEligibility params body =
     let seeded = fromList $ mapMaybe (\(p, mty) => map (\ty => (p, RNative ty)) mty) params
     in allJustSame (tailValueReps seeded body)
 
-||| One line per `MkRCFun` def, reporting `paramEligibility`/
-||| `returnEligibility`'s own results -- a debugging aid only, written
-||| to `<outfile>.dualabi` whenever `--directive dumpdualabi` is passed
-||| (see `RC2.idr`'s `compileExpr`), mirroring `Compiler.RC2.Pretty`'s
-||| own `.rcexpr` dump. Stage 2's own verification tool: nothing in the
-||| main pipeline reads this back, and nothing here is synthesized or
-||| rewritten yet -- see the module note.
+||| One line per `MkRCFun` def: `paramEligibility`/`returnEligibility`'s
+||| own results, written to `<outfile>.dualabi` by `--directive
+||| dumpdualabi` -- Stage 2's own verification tool
+||| (`doc/dual-abi.md`'s "Stage 2: eligibility analysis"), nothing in
+||| the main pipeline reads it back.
 export
 describeEligibility : Name -> RCDef -> Maybe String
 describeEligibility n (MkRCFun args _ _ body) =
@@ -180,21 +160,11 @@ data FreshId : Type where
 freshId : {auto r : Ref FreshId Int} -> Core Int
 freshId = do i <- get FreshId; put FreshId (i + 1); pure i
 
-||| A fresh name for `original`'s own worker: `pfx` (the caller's own
-||| prefix, e.g. `"idris2rc2_worker_"` for an ordinary `MkRCFun` worker,
-||| `"idris2rc2_ffiworker_"` for an FFI one) plus `original`'s own
-||| mangled C name (`Compiler.RC2.EmitUtil`'s `cName`, reused directly --
-||| the exact same mangling the wrapper's own, unchanged C name already
-||| uses, so the two read as visibly related) plus a disambiguating
-||| counter (defends against, e.g., two originals whose own mangled
-||| names happen to collide after `cCleanString`'s own character
-||| sanitisation -- not expected in practice, kept only so this is
-||| provably total either way). The prefix itself makes a worker's own
-||| C name identifiable on sight, both as *generated* (matching this
-||| project's own `idris2rc2_`-prefix convention for every runtime-owned
-||| C symbol, `CLAUDE.md`) and as *whichever pass* produced it (nothing
-||| else in the compiler ever produces either of the two prefixes above),
-||| rather than the opaque `rc2_dualABI_N` counter this used to be.
+||| A fresh name for `original`'s own worker: `pfx` (`"idris2rc2_worker_"`
+||| for an ordinary `MkRCFun` worker, `"idris2rc2_ffiworker_"` for an FFI
+||| one) plus `original`'s own mangled C name (`cName`, `export`ed for
+||| this reuse) plus a disambiguating counter -- see `doc/dual-abi.md`'s
+||| "Stage 3a" step 1 for the full naming-scheme rationale.
 freshName : {auto r : Ref FreshId Int} -> (pfx : String) -> SortedSet Name -> Name -> Core Name
 freshName pfx existing original = do
     i <- freshId
@@ -205,34 +175,18 @@ freshName pfx existing original = do
 -- own doc comment there) -- reused as-is here via the existing `Util`
 -- import above.
 
-||| For one top-level function eligible for at least one native
-||| parameter and/or a native return: synthesise its own worker (fresh
-||| name; each parameter promoted to `RNative` at the eligible
-||| positions, `RBoxed` at every other; `retRep` promoted to `RNative`
-||| when `retEligible` found one, otherwise left as `wrapperRetRep`
-||| unchanged; body is the original's own body verbatim, minus the
-||| promoted parameters' now-stale ownership bookkeeping, via
-||| `Compiler.RC2.Loop`'s own `stripOwnership` -- no id renaming needed
-||| at all: the worker reuses every original parameter's own id
-||| directly, safe because it's a brand-new C function with no existing
-||| declaration under that name to collide with, unlike that module's
-||| own use of `stripOwnership` for a loop's shadow ids within the
-||| *same* function), and rewrite the original into a thin wrapper:
-||| unchanged signature (`wrapperRetRep`, always `RBoxed` in practice --
-||| every existing caller anywhere else in the program keeps working
-||| unmodified), unchanged id, body is a single `RAppNameRep` call into
-||| the worker, one argument per original parameter rendered per the
-||| worker's own decided `Rep` there, and the *call's* own `retRep`
-||| naming the worker's own (possibly native) return -- `Compiler.RC2.Emit`'s
-||| own dedicated `RAppNameRep` renderer boxes that back up via
-||| `nativeMk` before it becomes this wrapper's own (always-Boxed) tail
-||| value, see its own module note. Every wrapper argument rendered
-||| natively (an eligible position) is passed as `RAppNameRep`'s own
-||| `postDrop`: the wrapper's own top-level parameters are always
-||| `RBoxed` by construction, so any of them read natively by the call
-||| (via `rcVarToNativeC`, which never dups/drops on its own -- see
-||| `RAppNameRep`'s own doc comment in RCExp.idr) is left alive and
-||| genuinely needs this explicit drop once the call has read it.
+||| Synthesise `original`'s own worker (each parameter promoted to
+||| `RNative` at its eligible position, `RBoxed` elsewhere; `retRep`
+||| promoted when `retEligible` found one; body is the original's own
+||| body, ownership-stripped for the promoted ids via `stripOwnership`
+||| -- no id renaming needed, unlike `Compiler.RC2.Loop`'s own use of it
+||| for a loop's shadow ids: a worker is a brand-new C function with
+||| nothing existing to collide with) and rewrite `original` into a thin
+||| wrapper (unchanged signature/id; body a single `RAppNameRep` call
+||| into the worker, each natively-rendered argument explicitly
+||| `postDrop`'d since the wrapper's own params stay `RBoxed`). See
+||| `doc/dual-abi.md`'s "Stage 3a" for the full six-step design this
+||| implements.
 synthesizeWorker : {auto r : Ref FreshId Int}
                  -> SortedSet Name -> Name -> List (Int, PrimType) -> Maybe PrimType -> List (Int, Rep) -> Rep -> RCExp
                  -> Core (Name, RCDef, RCDef)
@@ -262,34 +216,19 @@ synthesizeWorker existingNames original eligible retEligible args wrapperRetRep 
         wrapperDef = MkRCFun args wrapperRetRep False wrapperBody
     pure (workerName, wrapperDef, workerDef)
 
-||| Whole-program pass: for every `MkRCFun` with at least one
-||| parameter-eligible position and/or an eligible return
-||| (`Compiler.RC2.MutualLoop`-produced merged functions excluded, see
-||| `isMutualLoopMerged`), synthesises a worker (native at whichever of
-||| its own parameters/return turned out eligible) and rewrites the
-||| original into a thin wrapper -- see the module note for the full
-||| Stage 3a+3b design. Every other definition (a function with nothing
-||| eligible at all, or any non-`MkRCFun` def) passes through
-||| completely unchanged.
+||| Whole-program pass: synthesises a worker + thin wrapper for every
+||| eligible `MkRCFun` (`Compiler.RC2.MutualLoop`-merged functions
+||| excluded, see `isMutualLoopMerged`); everything else passes through
+||| unchanged.
 |||
-||| No width limit on the worker's own parameter count, unlike an
-||| earlier version of this pass: a worker is only ever reachable via a
-||| direct, statically-named `RAppNameRep` call (from its own wrapper's
-||| body, or Stage 4's own call-site rewriting), never stored in a
-||| `Closure` and so never dispatched through
-||| `support/rc2/runtime.c`'s `idris2rc2_dispatchClosure` -- unlike an
-||| ordinary function or this pass's own wrapper (both of which keep
-||| the always-Boxed, closure-dispatch-compatible calling convention,
-||| and so DO still need `Compiler.RC2.Emit`'s `createCFunctions` to
-||| fall back to a `var_arglist[]`-style declaration past
-||| `MaxExtractFunArgs` parameters -- see that function's own doc
-||| comment). `MkRCFun`'s `isWorker` field is exactly this distinction,
-||| baked onto the IR node itself rather than re-derived: `True` only
-||| for a worker `synthesizeWorker` itself produces, `False` for its
-||| own wrapper and everywhere else. See rc2/doc/dual-abi.md's "Bugs
-||| found and fixed" #7-9 for why this exemption exists (a real,
-||| externally-sourced package's own wide lambda-lifted helper) and how
-||| far it was carried (closure-dispatch typedefs up to arity 20, the
+||| No width limit on a worker's own parameter count: a worker is only
+||| ever reached via a direct, statically-named `RAppNameRep` call,
+||| never dispatched through a `Closure` the way its own always-Boxed
+||| wrapper still can be -- `MkRCFun`'s `isWorker` field is exactly this
+||| distinction, telling `createCFunctions` whether to fall back to
+||| `var_arglist[]` past `MaxExtractFunArgs`. See `doc/dual-abi.md`'s
+||| "Bugs found and fixed" #6-9 for the crash this fixes and how far the
+||| exemption was carried (closure-dispatch typedefs to arity 20, the
 ||| FFI worker path too).
 export
 applyDualABI : List (Name, RCDef) -> Core (List (Name, RCDef))
@@ -317,12 +256,11 @@ applyDualABI defs = do
 ------------------------------------------------------------------------
 -- Stage 3c: FFI worker synthesis. Unlike Stage 3a, there is no
 -- `RCExp` body to rewrite into a thin wrapper -- a `MkRCForeign`'s own
--- always-Boxed C stub (`Compiler.RC2.Emit`'s `createCFunctions`) is
--- untouched by this pass entirely, wrapper and all. This only builds
--- the worker *table* Stage 4 needs; `Compiler.RC2.Emit` is the one
--- that actually emits a worker C function for each entry, reading this
--- exact table back via its own `FFIWorkers` ref (`RC2.idr`'s pipeline
--- threads the same `SortedMap` to both).
+-- always-Boxed C stub is untouched by this pass entirely. Only builds
+-- the worker *table* Stage 4 rewrites call sites against; Stage 5
+-- below splices each worker's own marshalling logic directly into the
+-- call site instead of ever emitting a standalone worker C function --
+-- see `doc/dual-abi.md`'s "Stage 3c"/"Stage 5".
 
 ||| `ret`'s own peeled type -- `CFIORes t`'s payload `t`, or `ret`
 ||| itself for a non-IO (pure) `%foreign` declaration.
@@ -343,41 +281,19 @@ anyNative : Rep -> Bool
 anyNative RBoxed = False
 anyNative _ = True
 
-||| Every `MkRCForeign` def's own worker-table entry, if its own
-||| `fargs`/`ret` have at least one `cfTypeNative`-eligible position.
-||| No `paramEligibility`/`returnEligibility` needed here at all -- a
-||| `%foreign` declaration's own `CFType`s already commit to a fixed C
-||| ABI, so eligibility is decided by the type alone, unconditionally,
-||| with no function body to analyse (see `Compiler.RC2.Types`'
-||| `cfTypeNative` own doc comment for why it's a narrower set than
-||| `nativeEligible`). `CFIORes`'s own payload type is what gets asked,
-||| not `CFIORes` itself; a `CFWorld` trailing argument (IO's own dummy
-||| world token) is never eligible either way, so it needs no special
-||| peeling on the parameter side -- it just stays `RBoxed`, identically
-||| to today, like every other non-eligible position.
+||| Every `MkRCForeign` def's own worker-table entry, if `fargs`/`ret`
+||| have at least one `cfTypeNative`-eligible position -- eligibility is
+||| decided by the type alone, no function body to analyse (see
+||| `doc/dual-abi.md`'s "Stage 3c": "Eligibility needs no analysis").
 |||
-||| Returns two maps built from the same single traversal: the first,
-||| keyed by the *original* `%foreign` name, is `Compiler.RC2.RC2`'s own
-||| unmodified input to `applyCallSiteRewrite` below (Stage 4 itself is
-||| untouched by this module's later FFI-inline addition -- see this
-||| module's own header note); the second, keyed by the *worker's own*
-||| synthesized name instead, is `inlineFFIWorkers`'s own input (Stage
-||| 5, below Stage 4's section) -- it needs to recognise a Stage-4-
-||| produced `RAppNameRep` by the worker name Stage 4 already put on
-||| it, not the original function's name, which no longer appears
-||| anywhere on that node.
-|||
-||| The first map's own entries carry a trailing `Bool`, always `True`
-||| here -- "safe to rewrite even in tail position" (see
-||| `applyCallSiteRewriteBody`'s own tail-position clause below for why
-||| an FFI worker specifically is safe there, unlike an ordinary
-||| `Compiler.RC2.DualABI` worker, which `workerTable` tags `False`):
-||| a `%foreign` declaration's own callee is a leaf as far as this
-||| module's own tail-call-deferral scheme is concerned -- it can never
-||| itself extend an otherwise-unknown-depth chain of further deferred
-||| Idris tail calls the way an ordinary RC2 function might, so the
-||| stack-growth risk that scope boundary exists to avoid simply
-||| doesn't apply here.
+||| Returns two maps from one traversal: keyed by the *original* name
+||| (`applyCallSiteRewrite`'s own input, unchanged from Stage 4) and
+||| keyed by the *worker's own* synthesized name (`inlineFFIWorkers`'s
+||| own input, Stage 5 -- see the doc's "Stage 5" for why the two
+||| keyings differ). The first map's trailing `Bool` is always `True`
+||| here -- safe to rewrite even in tail position, since a `%foreign`
+||| callee is always a leaf (see the doc's "Stage 4b: tail-position FFI
+||| calls").
 export
 ffiWorkerTable : List (Name, RCDef)
               -> Core (SortedMap Name (Name, List Rep, Rep, Bool),
@@ -406,18 +322,14 @@ ffiWorkerTable defs = do
 -- note for why an ordinary function's tail-position delegating calls are
 -- a deliberate, permanent scope boundary, not a later stage).
 
-||| The worker (if any) `n` -- an *original*, user-visible function
-||| name -- was rewritten to call: `(workerName, argReps, retRep)`,
-||| read directly off the wrapper's own body. `synthesizeWorker`'s own
-||| construction guarantees a wrapper's *entire* body is always exactly
-||| one bare `RAppNameRep` call into its own worker, nothing else (see
-||| its own doc comment) -- so scanning for that exact shape recovers
-||| the table without `applyDualABI` itself needing to thread a
-||| separate one out alongside its own `List (Name, RCDef)` result.
-||| Tagged `False` (unlike `ffiWorkerTable`'s own entries) -- an
-||| ordinary RC2 function's worker genuinely can chain into further
-||| deferred tail calls, so `applyCallSiteRewriteBody`'s tail-position
-||| clause must still leave a call through this table alone.
+||| The worker (if any) `n` was rewritten to call, recovered by
+||| scanning for the exact shape `synthesizeWorker` always produces for
+||| a wrapper's body (a bare `RAppNameRep` into its own worker, nothing
+||| else) -- see `doc/dual-abi.md`'s "The worker table" (Stage 4).
+||| Tagged `False` (unlike `ffiWorkerTable`'s entries): an ordinary
+||| worker can chain into further deferred tail calls, so
+||| `applyCallSiteRewriteBody`'s tail-position clause must still leave
+||| it alone.
 workerTable : List (Name, RCDef) -> SortedMap Name (Name, List Rep, Rep, Bool)
 workerTable defs = fromList (mapMaybe workerEntry defs)
   where
@@ -426,24 +338,15 @@ workerTable defs = fromList (mapMaybe workerEntry defs)
         Just (n, (workerName, argReps, retRep, False))
     workerEntry _ = Nothing
 
-||| Which of `args` (rendered per the worker's own `argReps`, same
-||| order) need an explicit drop once this call has been embedded in
-||| its own statement: exactly the positions the worker reads
-||| *natively* whose own source, per `reps`, is still genuinely
-||| `RBoxed` -- see `RAppNameRep`'s own `postDrop` doc comment in
-||| RCExp.idr for why this field exists at all (a real reference leak,
-||| found via `valgrind`, in `Compiler.RC2.DualABI`'s own earlier
-||| worker/wrapper synthesis before it did). No liveness analysis of
-||| this pass's own is needed to get this right: `Compiler.RC2.RC`'s
-||| own `annotate` already decided, for the *original* (still-
-||| `RAppName`) call this replaces, that passing a Boxed argument to a
-||| call consumes exactly one reference (dup'ing beforehand if that
-||| argument's own local is still needed after this point, transferring
-||| without a dup if this was already its last use) -- reading it
-||| natively instead and dropping it right here pays the exact same net
-||| cost, just explicitly rather than via ordinary Boxed hand-off, so
-||| whatever `annotate` already arranged around this call site (an
-||| earlier `RDup`, or none) still balances correctly either way.
+||| Which of `args` need an explicit drop once embedded in its own
+||| statement: positions the worker reads *natively* whose source, per
+||| `reps`, is still `RBoxed` -- `RAppNameRep`'s `postDrop` field exists
+||| specifically for this, added to fix a real reference leak (see
+||| `doc/dual-abi.md`'s "Bugs found and fixed" #3). No liveness analysis
+||| needed: `Compiler.RC2.RC`'s own `annotate` already decided the
+||| original (still-`RAppName`) call consumes exactly one reference per
+||| Boxed argument -- reading it natively and dropping it here instead
+||| pays the exact same net cost.
 postDropFor : SortedMap Int Rep -> List Rep -> List RCLocal -> List RCLocal
 postDropFor reps argReps args =
     mapMaybe (\(r, a) => case r of
@@ -453,16 +356,12 @@ postDropFor reps argReps args =
                                         _ => Nothing) (zip argReps args)
 
 ||| `e`'s own ultimate tail expression, peeling through every `RLet`'s
-||| own `body` and every `RDup`/`RDrop`/`RFree`/`RReleaseReuse`/
-||| `RReuseOffer`'s own `cont` -- the same peeling
-||| `Compiler.RC2.Emit`'s `tryEmitLoopContinue`/`Compiler.RC2.EmitUtil`'s
-||| `peelDrop` already do,
-||| just walking all the way to the very end instead of stopping at the
-||| first interesting shape. Used only to *inspect* what a value
-||| position (an `RLet`'s own, possibly deeply nested, `value` -- see
-||| `applyCallSiteRewriteBody`'s own doc comment for why that can
-||| itself be a further `RLet` chain, not always a flat leaf) ultimately
-||| evaluates to, never to rewrite anything itself.
+||| own `body` and every wrapper node's own `cont` -- the same peeling
+||| `tryEmitLoopContinue`/`peelDrop` already do, just walking all the
+||| way to the end instead of stopping at the first interesting shape.
+||| Inspects only, never rewrites -- used on a (possibly deeply nested,
+||| see `applyCallSiteRewriteBody`'s own doc comment) `RLet` value to
+||| see what it ultimately evaluates to.
 ultimateTail : RCExp -> RCExp
 ultimateTail (RLet _ _ _ _ body) = ultimateTail body
 ultimateTail (RDup _ _ _ cont) = ultimateTail cont
@@ -472,23 +371,13 @@ ultimateTail (RReleaseReuse _ _ cont) = ultimateTail cont
 ultimateTail (RReuseOffer _ _ _ _ cont) = ultimateTail cont
 ultimateTail e = e
 
-||| `var`'s own native `PrimType` if `e`'s own *ultimate* tail
-||| (peeling exactly as `ultimateTail` above does) is a bare (not
-||| further `RLet`-bound) `ROp` reading `var` as one of its own
-||| operands -- the one shape `Compiler.RC2.Loop`'s own `nativeArgTypes`
-||| deliberately doesn't cover, and correctly so *for that pass's own
-||| callers* (see its own doc comment: true when it runs, strictly
-||| before any function's own return eligibility is decided, that a
-||| bare tail is always Boxed regardless) -- but no longer true by the
-||| time *this* stage runs: `fib`'s own worker is the concrete case this
-||| exists for -- `let v3 = fib(n-1) in let v5 = fib(n-2) in v3 + v5`,
-||| where `v3 + v5` is *itself* the worker's own bare tail, rendered
-||| natively (`Compiler.RC2.Emit`'s own `emitNativeReturn`, Stage 3b)
-||| precisely because the worker's own `retRep` already is -- without
-||| this, neither `v3` nor `v5` would ever look like a worthwhile
-||| promotion, and `fib` itself -- the flagship motivating case for this
-||| entire effort -- would keep boxing every recursive call's own result
-||| only to immediately unbox it again.
+||| `var`'s own native `PrimType` if `e`'s own ultimate tail (peeling as
+||| `ultimateTail` does) is a bare `ROp` reading `var` as an operand --
+||| the one shape `Compiler.RC2.Loop`'s own `nativeArgTypes` correctly
+||| doesn't cover for *its own* callers (a bare tail is always Boxed
+||| when that pass runs), but no longer true by Stage 4's own point in
+||| the pipeline. See `doc/dual-abi.md`'s "Bugs found and fixed" #5 for
+||| the `fib`-worker `v3 + v5` case this exists to catch.
 bareTailNativeReads : Int -> RCExp -> SortedSet PrimType
 bareTailNativeReads var e =
     case ultimateTail e of
@@ -510,32 +399,17 @@ bareTailNativeReads var e =
     vectElemRCLoc i (x :: xs) = x == RCLoc i || vectElemRCLoc i xs
 
 ||| Every native `PrimType` at which `var` is read as a direct,
-||| saturated call argument somewhere in `e`, at a position `workers`'
-||| own table says its callee reads natively -- the same "skip the
-||| box-then-immediately-unbox round trip" idea `nativeArgTypes`/
-||| `bareTailNativeReads` already apply to an `ROp`/comparison operand
-||| or a bare tail read, now extended to a *call* consuming the value
-||| (`ffiCall2 (ffiCall1 x) y`-shaped chains, not just
-||| `fib(n-1) + fib(n-2)`-shaped ones). Walks the whole tree, the same
-||| way `nativeArgTypes` does -- a use can appear anywhere in `e`, not
-||| just its tail. Looks only at bare `RAppName` nodes, since `e` is
-||| always the *not-yet-Stage-4-rewritten* `body` at the point this is
-||| called (see `applyCallSiteRewriteBody`'s own RLet clause: the
-||| promotion decision for `var` happens before `body` itself is
-||| walked). Whether `workers`' own entry for a callee is tagged `True`
-||| (FFI) or `False` (ordinary) doesn't matter here -- both kinds are
-||| always rewritten to read a native argument directly in *non-tail*
-||| position (Stage 4's own non-tail clause ignores the tag too), and
-||| an occurrence that instead sits in a tail-position call to an
-||| ordinary (non-FFI) worker -- one Stage 4 leaves deferred via a
-||| boxed closure, see the module's own header note -- still renders
-||| correctly either way: closure slots only ever hold
-||| `IDRIS2RC2_Value *`, so `var` gets reboxed on the way in exactly
-||| like any other still-Boxed-context use elsewhere in `body` (see
-||| this function's own caller, `nativePromotionFor`, for that same
-||| "reboxed on demand, still correct" reasoning) -- promoting `var` in
-||| that case just doesn't buy anything, it doesn't cost anything
-||| either.
+||| saturated call argument somewhere in `e`, at a position `workers`
+||| says its callee reads natively -- extends the same "skip the
+||| box-then-unbox round trip" idea to a *call* consuming the value, not
+||| just an `ROp`/bare tail (`ffiCall2 (ffiCall1 x) y`-shaped chains).
+||| Walks the whole tree like `nativeArgTypes`; looks only at bare
+||| `RAppName` (`e` is always pre-Stage-4-rewrite here). Whether the
+||| callee's own tag is FFI or ordinary doesn't matter -- an occurrence
+||| in a still-deferred tail-position call to an ordinary worker just
+||| gets reboxed on the way in, same "reboxed on demand" reasoning
+||| `nativePromotionFor` relies on. See `doc/dual-abi.md`'s "Extending
+||| the promotion to call-argument chains".
 callArgNativeReads : SortedMap Name (Name, List Rep, Rep, Bool) -> Int -> RCExp -> SortedSet PrimType
 callArgNativeReads workers var (RLet _ _ _ value body) =
     callArgNativeReads workers var value `union` callArgNativeReads workers var body
@@ -576,37 +450,16 @@ callArgNativeReads _ _ _ = empty
 ||| Every native `PrimType` at which `var` is fed as the enclosing
 ||| `RLoop`'s own next value for an already native-shadowed loop-carried
 ||| parameter, via a bare `RLoopContinue` reachable in `e` -- the
-||| loop-carried analogue of `callArgNativeReads` above (there: argument
-||| of a *named* worker call; here: argument of the *implicit* self-call
-||| every `RLoopContinue` represents, `loopParams` standing in for that
-||| self-call's own fixed positional "signature"). `loopParams` is the
-||| *exact* ordered list the enclosing `RLoop` node already carries as
-||| its own field (`Compiler.RC2.Loop`'s `applyLoop` is its sole
-||| producer, strictly before this pass ever runs) -- passed down
-||| unchanged from `applyCallSiteRewriteBody`'s own `RLoop` clause, never
-||| re-derived here, and guaranteed positionally 1:1 with every
-||| `RLoopContinue`'s own `args` reachable inside that same `RLoop`'s
-||| `body` (`applyLoop`'s own `elideInvariantContinueArgs` filters both
-||| lists together from the same `fullLoopParams`, so by the time this
-||| stage runs the two are already aligned -- exactly the same guarantee
-||| `Compiler.RC2.Loop`'s own `fillLoopContinuePostDrop` already relies
-||| on for its own unguarded `zip loopParams args`).
-|||
-||| Walks only the tail-position-preserving shape
-||| `fillLoopContinuePostDrop`/`collectContinueArgs` already use (an
-||| `RLet`'s own `body` only, never `value`; `RCmpCase`'s both branches;
-||| `RConCase`/`RConstCase`'s alts and default; every `RDup`/`RDrop`/
-||| `RFree`/`RReleaseReuse`/`RReuseOffer`'s own continuation) --
-||| deliberately *not* `callArgNativeReads`'s own "walk the whole tree,
-||| including a `RLet`'s own `value`" shape: an `RLoopContinue` is only
-||| ever produced by `Compiler.RC2.Loop`'s `mapTailAppNames`, which only
-||| ever rewrites a genuine *tail-position* self-call -- it can
-||| therefore only ever sit somewhere along `e`'s own tail-preserving
-||| spine, never nested inside some other node's own value-computation.
-||| No `RLoop` case is needed either: this module's own single-`RLoop`-
-||| per-function invariant means `e`, already strictly inside the one
-||| `RLoop` this walk started from, never itself contains a second,
-||| different `RLoop` to recurse through.
+||| loop-carried analogue of `callArgNativeReads` (there: a *named*
+||| worker call's argument; here: the implicit self-call every
+||| `RLoopContinue` represents). `loopParams` is the exact, already-
+||| aligned list `applyLoop` attaches to the enclosing `RLoop` -- see
+||| `doc/loop-conversion.md`'s "Known limitation: native-shadow
+||| eligibility stops at bare top-level scalars" for why this exists
+||| and how it closes the round trip. Walks only the tail-preserving
+||| spine `fillLoopContinuePostDrop` uses (never an `RLet`'s own
+||| `value`) -- an `RLoopContinue` can only ever sit there. No `RLoop`
+||| case needed: one `RLoop` per function, so `e` never nests a second.
 loopContinueNativeReads : List (Int, Rep) -> Int -> RCExp -> SortedSet PrimType
 loopContinueNativeReads loopParams var (RLet _ _ _ _ body) = loopContinueNativeReads loopParams var body
 loopContinueNativeReads loopParams var (RCmpCase _ _ _ _ t f) =
@@ -639,36 +492,16 @@ loopContinueNativeReads loopParams var (RLoopContinue _ args _) =
 loopContinueNativeReads _ _ _ = empty
 
 ||| Whether `body` justifies promoting an `RLet`-bound worker-call
-||| result (currently `RBoxed`) all the way to `RNative ty` instead of
-||| just rewriting the call itself and boxing its result back up on the
-||| way out -- the difference between "native arguments into an
-||| otherwise-still-boxed call" and the actual point of this whole
-||| stage: skipping the box-then-immediately-unbox round trip entirely
-||| (`fib(n-1) + fib(n-2)` staying in `int64_t` throughout, not
-||| materialising a heap value for either recursive call's own result).
-|||
-||| Unions `Compiler.RC2.Loop`'s own (now exported) `nativeArgTypes`
-||| with `bareTailNativeReads` and `callArgNativeReads` above, then asks
-||| the *exact* same question `nativeArgType` itself asks about a whole
-||| function's own top-level parameter, over that combined set: does
-||| `body` (everything after this `RLet`) read `var` as a native-context
-||| operand, consistently, at `ty`? Any *other*, still-Boxed-context use
-||| of `var` elsewhere in `body` (e.g. stored into a constructor field)
-||| keeps working correctly regardless of whether this promotes --
-||| `rcVarToBoxedC`'s own on-demand reboxing of a native value handles
-||| it, as a fresh allocation instead of sharing the one this call
-||| *used* to produce, invisible to any Idris-level program (a scalar
-||| has no observable identity) -- see `stripOwnership`'s own doc
-||| comment for this exact case, already relied on by this same reuse.
-|||
-||| `mLoopParams` adds one more source, when `var`'s own `RLet` sits
-||| inside an `RLoop`: `loopContinueNativeReads` above, closing the
-||| "argument of the *implicit* self-call" case `callArgNativeReads`
-||| can't see on its own, since an `RLoopContinue` is never an
-||| `RAppName` node -- it carries no callee name, table entry, or
-||| `argReps` to look up in the first place. `Nothing` (the top-level
-||| entry point, or any `RLet` not inside a loop at all) contributes
-||| nothing, same as an absent `RLoop` case anywhere else in this file.
+||| result from `RBoxed` all the way to `RNative ty`, instead of just
+||| rewriting the call and boxing its result back up -- the actual point
+||| of Stage 4: skipping the box-then-unbox round trip entirely.
+||| Unions `nativeArgTypes`/`bareTailNativeReads`/`callArgNativeReads`
+||| (plus, inside a loop, `loopContinueNativeReads` via `mLoopParams`),
+||| then asks `nativeArgType`'s own eligibility question over that
+||| combined set. Any other, still-Boxed-context use of `var` elsewhere
+||| keeps working via `rcVarToBoxedC`'s own on-demand reboxing (a scalar
+||| has no observable identity, see `stripOwnership`'s own doc comment).
+||| See `doc/dual-abi.md`'s "The promotion: `nativePromotionFor`".
 nativePromotionFor : SortedMap Name (Name, List Rep, Rep, Bool) -> Maybe (List (Int, Rep)) -> Int -> PrimType -> RCExp -> Maybe PrimType
 nativePromotionFor workers mLoopParams var ty body =
     let fromLoop = maybe empty (\loopParams => loopContinueNativeReads loopParams var body) mLoopParams
@@ -680,37 +513,22 @@ nativePromotionFor workers mLoopParams var ty body =
             _ => Nothing
 
 ||| Rewrite every direct, saturated, non-tail-position call in `e`
-||| targeting a function `workers` has a worker for. `reps` threads
-||| this walk's own "which locals are already known native" state,
-||| exactly the same seeding/extension `paramEligibility`/
-||| `tailValueReps` (Stage 2, above) already use: a function's own
-||| top-level parameters start it off (`applyCallSiteRewrite`'s own
-||| entry point), each `RLet`'s own already-decided `Rep` extends it,
-||| and `RLoop`'s own `loopParams` extends it across a loop's own body.
-||| `inTail` tracks whether the point currently being visited is
-||| genuinely the *whole function's* own tail position (only ever
-||| `True` at the top-level entry point, and everywhere `RLet`'s own
-||| `body`/`RCmpCase`/`RConCase`/`RConstCase`/`RLoop`'s own branches/
-||| every wrapper node's own `cont` thread it straight through
-||| unchanged) -- a bare `RAppName` reached there is left alone
-||| (deliberately out of scope, see the module's own header note); one
-||| reached with `inTail = False` is always safe to rewrite.
+||| targeting a function `workers` has a worker for. `reps` threads the
+||| same known-native seeding/extension Stage 2 uses; `inTail` tracks
+||| whether the current point is genuinely the whole function's own
+||| tail position (`True` only at the top-level entry, threaded through
+||| unchanged everywhere else, always `False` descending into an
+||| `RLet`'s own `value`) -- a bare `RAppName` reached with `inTail`
+||| still `True` is the deliberate scope boundary (module header note);
+||| every other one is safe to rewrite.
 |||
-||| Critically, `inTail` is *always* `False` while walking an `RLet`'s
-||| own `value` (see this function's own first clause) -- and `value`
-||| is *not* always the flat leaf (`ROp`/`RAppName`/`RCon`/etc.) it
-||| might look like at first: Phase 1's own ANF normalisation of a call
-||| *argument* expression (e.g. `fib (n - 2)`) nests a further `RLet`
-||| *inside* the outer one's own value (`let v5 = (let v6 = n - 2 in
-||| fib v6) in ...`), so the actual call can sit arbitrarily deep in a
-||| chain of further `RLet`s, never directly as `value` itself. This
-||| function's own first clause handles that correctly by *recursing*
-||| into `value` (in non-tail mode, so any `RAppName` at *its* own
-||| ultimate tail -- reached via this same function's own catch-all
-||| below -- gets rewritten too) *before* deciding whether the
-||| resulting `value1`'s own `ultimateTail` (peeling through exactly
-||| that same kind of nested-`RLet` chain) is now a promotion
-||| candidate.
+||| The one genuine subtlety -- an `RLet`'s own `value` can itself be a
+||| further, arbitrarily deep `RLet` chain from Phase 1's own ANF
+||| normalisation of a call argument, never a flat leaf -- is handled by
+||| recursing into `value` first, then inspecting the rewritten
+||| `value1`'s own `ultimateTail`. See `doc/dual-abi.md`'s "The rewrite:
+||| `applyCallSiteRewriteBody`" for the full `let v3 = (let v4 = n - 1
+||| in fib v4) in ...` worked example.
 applyCallSiteRewriteBody : SortedMap Name (Name, List Rep, Rep, Bool)
                         -> SortedMap Int Rep
                         -> Maybe (List (Int, Rep))
@@ -759,13 +577,11 @@ applyCallSiteRewriteBody workers reps mLoopParams inTail (RDrop fc vs cont) = RD
 applyCallSiteRewriteBody workers reps mLoopParams inTail (RFree fc v cont) = RFree fc v (applyCallSiteRewriteBody workers reps mLoopParams inTail cont)
 applyCallSiteRewriteBody workers reps mLoopParams inTail (RReleaseReuse fc v cont) = RReleaseReuse fc v (applyCallSiteRewriteBody workers reps mLoopParams inTail cont)
 applyCallSiteRewriteBody workers reps mLoopParams inTail (RReuseOffer fc sc dupOnShared dropOnUnique cont) = RReuseOffer fc sc dupOnShared dropOnUnique (applyCallSiteRewriteBody workers reps mLoopParams inTail cont)
--- The main case that rewrites a call: a bare RAppName reached with
--- inTail = False (never anyone's RLet-bound value, by this point --
--- the RLet clause above already peeled through those -- so this is
--- the ultimate tail of *some* value-computation chain, not the whole
--- function's own true tail position). Rewrites through either kind of
--- table entry (ordinary worker or FFI worker) alike -- the `Bool` tag
--- only matters for the tail-position clause just below.
+-- The main rewrite: a bare RAppName reached with inTail = False is
+-- always the ultimate tail of some value-computation chain (the RLet
+-- clause above already peeled through any RLet-bound value), never
+-- the whole function's own true tail -- safe to rewrite through either
+-- table entry alike; the Bool tag only matters below.
 applyCallSiteRewriteBody workers reps _ False value@(RAppName fc _ n args) =
     case lookup n workers of
          Nothing => value
@@ -774,19 +590,12 @@ applyCallSiteRewriteBody workers reps _ False value@(RAppName fc _ n args) =
                 then value
                 else RAppNameRep fc workerName argReps workerRetRep (postDropFor reps argReps args) args
 -- A bare RAppName reached with inTail = True -- the whole function's
--- own true tail position. Left alone for an ordinary worker (tagged
--- `False`, see `workerTable`'s own doc comment: it can chain into
--- further deferred tail calls of unknown depth, so
--- `tryBuildClosureInto`'s closure-deferral scheme must still handle
--- it) -- but rewritten just the same as the non-tail case for an FFI
--- worker (tagged `True`, see `ffiWorkerTable`'s own doc comment: a
--- `%foreign` callee is a leaf, never itself another link in a
--- deferred tail-call chain, so the risk that scope boundary exists to
--- avoid doesn't apply). `Compiler.RC2.Emit`'s `emitAppFFIInlineInto`
--- already renders a `SinkReturn` correctly (return-with-drop-before-
--- return ordering, same as any other tail value), so no Emit-side
--- change is needed for this to work once Stage 5 below turns the
--- resulting `RAppNameRep` into an `RAppFFIInline`.
+-- own true tail position. Left alone for an ordinary worker (tag
+-- `False`: can still chain into further deferred tail calls, see
+-- workerTable's own doc comment); rewritten just like the non-tail
+-- case for an FFI worker (tag `True`: always a leaf, see
+-- ffiWorkerTable's own doc comment) -- see doc/dual-abi.md's "Stage
+-- 4b" for the full design; no Emit-side change was needed for this.
 applyCallSiteRewriteBody workers reps _ True value@(RAppName fc _ n args) =
     case lookup n workers of
          Just (workerName, argReps, workerRetRep, True) =>
@@ -801,26 +610,16 @@ applyCallSiteRewriteBody workers reps _ True value@(RAppName fc _ n args) =
 applyCallSiteRewriteBody _ _ _ _ e = e
 
 ||| Whole-program pass: Stage 4 itself. Every direct, saturated,
-||| non-tail-position call anywhere in the program targeting a function
-||| Stage 3a/3b gave a worker to gets redirected straight to that
-||| worker, native arguments/return where the call site already has (or
-||| can be promoted to have) them on hand -- see the module's own header
-||| note and `applyCallSiteRewriteBody`'s own doc comment for the full
-||| design. A direct, saturated, *tail*-position call gets the same
-||| treatment too, but only when it targets an FFI worker specifically
-||| (`ffiWorkers`'s own entries are tagged `True`; `workerTable`'s own
-||| are tagged `False`) -- see `applyCallSiteRewriteBody`'s own
-||| tail-position clause for why that distinction is safe. Runs after
-||| `applyDualABI` (needs its own worker table already built); every
-||| definition (wrapper, worker, or untouched) passes through the same
-||| rewrite uniformly -- nothing here needs to know which of those
-||| three a given definition is, since a wrapper's own trivial
-||| single-call body and an ordinary function's body are rewritten by
-||| exactly the same logic. Each definition's own top-level body starts
-||| `inTail = True` -- that's genuinely where the function's own real
-||| tail position is. `ffiWorkers` (Stage 3c's own table) is unioned in
-||| alongside the `MkRCFun`-derived `workerTable` -- their keys are
-||| always disjoint (a `MkRCFun`/`MkRCForeign` name can never be both),
+||| non-tail-position call targeting a worker (Stage 3a/3c) gets
+||| redirected straight to it; a tail-position call only when the
+||| target is an FFI worker (`ffiWorkers`'s entries tagged `True`,
+||| `workerTable`'s tagged `False`) -- see `applyCallSiteRewriteBody`'s
+||| own doc comment for the design, `doc/dual-abi.md`'s "Stage 4"/
+||| "Stage 4b" for why the tag distinction is safe. Runs after
+||| `applyDualABI`; every definition passes through the same rewrite
+||| uniformly, starting `inTail = True` at its own top-level body.
+||| `ffiWorkers` and the `MkRCFun`-derived `workerTable` always have
+||| disjoint keys (a name is never both `MkRCFun` and `MkRCForeign`),
 ||| so `mergeWith`'s own conflict-resolution function is never actually
 ||| exercised.
 export
@@ -837,32 +636,20 @@ applyCallSiteRewrite ffiWorkers defs =
 ------------------------------------------------------------------------
 -- Stage 5: fold each Stage-4-produced FFI worker call directly into
 -- its own marshalling logic, eliminating the standalone worker
--- function `ffiWorkerTable` above still synthesizes a name for. A
--- separate pass placed strictly after Stage 4 (rather than folded
--- into `applyCallSiteRewriteBody` itself), for the same reason
+-- function `ffiWorkerTable` synthesizes a name for. A separate pass
+-- placed strictly after Stage 4, for the same reason
 -- `Compiler.RC2.Inline` is its own pass rather than folded into
--- `Compiler.RC2.RC`: Stage 4's own `RAppName`/`RLet` rewriting logic
--- is already involved enough without also needing to know about
--- FFI-specific marshalling concerns. By the time this runs, Stage 4
--- has already made every ownership/promotion decision (`RAppNameRep`'s
--- own `postDrop`, and any enclosing `RLet`'s own native `Rep`
--- promotion) purely in terms of "is this call's own `retRep` native",
--- a question `RAppNameRep`'s `retRep` field already answers
--- identically whether the callee turns out to be an ordinary
--- `Compiler.RC2.DualABI` worker or (as only this pass knows) an FFI
--- one -- so this pass only ever needs to swap the node shape itself,
--- never re-derive or revisit any of those decisions.
+-- `Compiler.RC2.RC` -- see `doc/dual-abi.md`'s "Stage 5" for the full
+-- design and why this pass only ever needs to swap the node shape,
+-- never revisit Stage 4's own ownership/promotion decisions.
 
 ||| Structural, whole-tree rewrite: every `RAppNameRep` naming a worker
 ||| `ffiInline` has an entry for becomes `RAppFFIInline`, `postDrop`/
-||| `args` carried over completely unchanged -- see `RAppFFIInline`'s
-||| own doc comment in RCExp.idr for why this is always safe
-||| (`argReps = map repOf fargs` is invariant between the two node
-||| shapes, so whatever Stage 4 already decided stays correct). Every
-||| other node shape just recurses through -- no Rep-inference,
-||| ownership, or tail-position logic of its own, unlike Stage 4
-||| itself; much like `Loop.idr`'s own `renameRCExp` or
-||| `ConstFold.idr`'s own tree-walkers.
+||| `args` unchanged -- always safe since `argReps = map repOf fargs` is
+||| invariant between the two shapes (`RAppFFIInline`'s own doc comment
+||| in RCExp.idr). Every other node just recurses through -- no
+||| Rep-inference/ownership/tail-position logic of its own, unlike
+||| Stage 4 -- much like `Loop.idr`'s own `renameRCExp`.
 inlineFFIWorkersExp : SortedMap Name (List String, List CFType, CFType) -> RCExp -> RCExp
 inlineFFIWorkersExp ffiInline (RAppNameRep fc workerName argReps retRep postDrop args) =
     case lookup workerName ffiInline of
