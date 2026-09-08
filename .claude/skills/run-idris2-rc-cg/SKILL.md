@@ -51,6 +51,17 @@ nix-shell -p gcc gmp pkg-config --run '
 '
 ```
 
+`rc2/build/`/`install/` are shared, unlocked directories — running two
+such builds concurrently (two sessions, or a session plus a subagent
+each rebuilding to verify their own separate change) has been known to
+corrupt the resulting `idris2-rc2.so`. `smoke.sh` and
+`rc2/tests/verify.sh`/`bench.sh` all guard their own build step with
+`rc2/tests/build-lock.sh`'s `acquire_build_lock` now, so driving a
+build only through those scripts is already safe; running the raw
+commands above by hand in more than one place at once is not — prefer
+`smoke.sh --build` (or `verify.sh`, without `--skip-build`) over typing
+this block directly if concurrency is a possibility.
+
 This builds with whatever `idris2` `source env.sh` already put first
 on `PATH` — the self-built `install/bin/idris2` by default. If that's
 not set up yet, add `idris2` back to the `-p` list above (nixpkgs'
@@ -107,13 +118,15 @@ source ../../env.sh
 nix-shell -p gcc gmp pkg-config valgrind --run './verify.sh'
 ```
 
-Expected: `70 passed, 0 known, 0 failed` (refc-suite 21, 40 smoke
-tests, and valgrind leak checks all included). Also reachable via
-`smoke.sh --full-tests`. `idris2` is only needed for verify.sh's own
-Build step and comes from whatever's already on `PATH` after sourcing
-`env.sh` (the self-built one); add `--skip-build` if
-`rc2/build/exec/idris2-rc2` is already built, or add `idris2` to the
-`-p` list above only if you specifically lack a self-built compiler
+Expected: `111 passed, 0 known, 0 failed` (refc-suite, smoke tests, and
+valgrind leak checks all included). Also reachable via `smoke.sh
+--full-tests`. `idris2` is only needed for verify.sh's own Build step
+and comes from whatever's already on `PATH` after sourcing `env.sh`
+(the self-built one); add `--skip-build` if `rc2/build/exec/idris2-rc2`
+is already built (this also skips the build lock entirely, since a
+`--skip-build` run only reads the binary, never writes it — safe to
+run any number of these concurrently), or add `idris2` to the `-p`
+list above only if you specifically lack a self-built compiler
 (nixpkgs' `idris2` is bootstrap-only per project policy).
 
 ## Gotchas
@@ -134,3 +147,8 @@ Build step and comes from whatever's already on `PATH` after sourcing
   location instead of this repo's own `install/` tree, and
   `idris2-rc2 --cg rc2` then can't find `support/rc2`'s runtime
   library. Always export it relative to the repo root first.
+- **Running a build/install step by hand, outside `smoke.sh`/
+  `verify.sh`/`bench.sh`, bypasses the build lock** — if doing so
+  while another session/subagent might also be building, wrap it with
+  `source rc2/tests/build-lock.sh; acquire_build_lock` yourself first
+  (see the "Build" section above).

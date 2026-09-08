@@ -45,6 +45,10 @@ if [ "$DO_BUILD" = 1 ] || [ ! -x rc2/build/exec/idris2-rc2 ]; then
   fi
   echo "== building rc2 =="
   export IDRIS2_PREFIX="$(pwd)/install"
+  RC2_DIR="$UNIT_DIR/rc2"
+  # shellcheck source=/dev/null
+  source "$RC2_DIR/tests/build-lock.sh"
+  acquire_build_lock
   (cd rc2 && idris2 --build rc2.ipkg && idris2 --install rc2.ipkg)
 fi
 

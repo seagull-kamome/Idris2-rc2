@@ -701,23 +701,15 @@ fork" section already documents at length -- included here only so
 this survey is a complete index.
 
 ## Performance: codepoint-indexed String access is O(n) per call, not O(1)
+CStringを他バックエンドと揃える為にutf8バイト列にした為、indexの計算コスト
+が酷く劣化。
+Data.TextBufferを用意すると共に、長らく動いていなかった文字列イテレータを
+整備する事で回避策としたが、まったく透過的でないのは気に入らない。
+かといって、chez等のようにStringをコードポイント列としてしまうと、FFIの
+オーバーヘッドで更に気に入らない事になりそう。
+コード解析して透過的に昇格/降格する事も考えたが、文字列操作で予測困難な
+見えないオーバヘッドが挿入される事になる。
 
-`String`'s primitives are Unicode-codepoint-, not byte-, indexed,
-matching Idris2's own Chez backend -- see `rc2/README.md`'s "Deliberate
-differences from upstream RefC" section for that fix.
-
-One accepted, deliberately unaddressed consequence of *how* it's
-fixed: rc2 kept `String`'s existing UTF-8-byte-buffer representation,
-so `strIndex`/`strSubstr`/`strTail` must scan from the string's own
-start to translate a codepoint index into a byte offset -- O(n) per
-call. Chez's own native string type is a fixed-width character array
-(`string-ref` is O(1)), so this matches Chez's *semantics* without
-matching its *performance characteristics*. Fixing that would mean
-switching `String`'s internal representation entirely (e.g. UTF-32, or
-caching a byte-offset table) -- a much larger change than this work's
-own scope. Not currently planned; revisit only if profiling ever shows
-codepoint-indexed access on a long string actually mattering in
-practice.
 
 ## Dropped: packing short strings into a tagged pointer
 
@@ -835,7 +827,7 @@ need, and each would cost more than a one-line `%foreign` declaration
 (the whole point of what's already there). Revisit if a concrete use
 case needs one specifically.
 
-### インクリメンタルコンパイル（実装済み・動作確認済み）
+## インクリメンタルコンパイル（実装済み・動作確認済み）
 `feature/rc2-incremental-compile`ブランチで実装完了。prelude/base/
 linear/contrib/network（272モジュール）全てエラーゼロ・欠落ゼロで
 `--inc rc2`ビルド可能、`--cg rc2 --inc rc2`での実際の実行ファイル生成・
@@ -871,22 +863,22 @@ Loop/MutualLoop/DualABIは無改造で済んだ）。
   失敗したら再度`--install`を回す」運用でしのぐか等）。
 
 
-### rc2baseにwebサーバをバンドル
+## rc2baseにwebサーバをバンドル
 気軽に使えるシングルスレッドで動くもの。
 
 
-### 融合変換のインジェクション
+## 融合変換のインジェクション
 %transfor同等のものをバックエンドで持っておいてインジェクションできるようする。
   - CExpの時点で変換する
   - codeGenや、fastPack, fastConcatの読み替えもこの段階で処理できるようにする。
   - rc2baseに RC2 の名前で置いた定義も不要にしたい
     -> 上流に持っていけない定義をブラックリスト化し、不本意だがコンパイラ側で強制的に読み替えを行うようにできれば....
 
-### %world 引数, Erased の引数を削除
+## %world 引数, Erased の引数を削除
   - 無駄でしか無いので消せるものなら消したい
   - 最適化効果は薄い。気分の問題でしかない。
 
-### Lambda lift で欠落する情報の保全
+## Lambda lift で欠落する情報の保全
 現状、遅延評価についての情報が消えてただのクロージャになってしまう。
 保全してメモ化やインライン展開をしたい。
 新しい Lifted を定義し、NamedCExp からの Lamda lift を自分でやるしかないか？
@@ -898,24 +890,24 @@ Loop/MutualLoop/DualABIは無改造で済んだ）。
     小さい関数のインライン展開」参照)。他の`Lazy`引数関数についても同様の
     upstream最適化が効くかは未調査。
 
-### キャッシュ付き固定サイズメモリアロケータの導入
+## キャッシュ付き固定サイズメモリアロケータの導入
 小さいサイズの構造体確保が頻繁に発生するので、アロケーションサイズに応じて
 拘束な固定サイズアロケータを使う拘束パスを用意する。
   - サイズ別スロット
   - 事前割り当て
   - atomic なフリーリスト割り当てで高速化
 
-### カスタムランタイム、メモリアロケータ
+## カスタムランタイム、メモリアロケータ
 そもそもアロケータやdup/dropの仕組みやランタイム丸ごとすり替える事ができれば
 世代別 GC 等の恩恵をほぼ無料で受けられるのでは？
   - 他処理系への組み込みを行なったときに、ホスト側処理系のランタイムを利用できる
 
 
-### ファントム型やファントム関数の明示
+## ファントム型やファントム関数の明示
 トップレベル定義に 0 をつける。
 実行時に存在しないからいいや、ではなく存在しない事を保証する
 
-### RCExp の ROp はRLocalに持っていく -- 調査済み、却下
+## RCExp の ROp はRLocalに持っていく -- 調査済み、却下
 
 調査の結果、これは冒頭の「Architecture: RCLocal can't hold another
 RCLocal」で一度却下された`RCStructField`案と全く同じ問題(RCLocalへの
@@ -1016,7 +1008,7 @@ green、valgrind clean)は確保済みなのでこの状態でコミット、実
 起きうる領域であり、大きなコード移動によって暗黙の評価順序が
 崩れるリスクの方が、得られる行数削減より大きいと判断した。
 
-### Reuse解析とannotation(所有権挿入)の配置 -- 調査済み、方針決定
+## Reuse解析とannotation(所有権挿入)の配置 -- 調査済み、方針決定
 
 3案を調査した:
 
@@ -1082,7 +1074,7 @@ dropする指示がどこにも生成されず、静かにリークする。元�
 dup+dropペア分増えるが、正しさは保たれる)という保守的な代替案も
 検討の余地がある。
 
-### 遅延評価引数を持つ小さい関数のインライン展開 -- 調査済み、`&&`/`||`は対応不要
+## 遅延評価引数を持つ小さい関数のインライン展開 -- 調査済み、`&&`/`||`は対応不要
 
 `&&`/`||`(`Lazy Bool`引数)がインライン展開されずクロージャ化されるのでは、という
 懸念を実際にコンパイルして確認したが、問題は起きていなかった。upstream自身の
