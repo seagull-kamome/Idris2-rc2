@@ -92,11 +92,16 @@ fi
 
 # shellcheck source=/dev/null
 source "$REPO_DIR/env.sh"
+# shellcheck source=/dev/null
+source "$SCRIPT_DIR/build-lock.sh"
 
 echo "=== Build ==="
 if [ "$SKIP_BUILD" -eq 1 ]; then
     echo "SKIP  build (--skip-build)"
 else
+    # See build-lock.sh's own header comment -- guards the shared
+    # rc2/build//install/ directories from a concurrent build.
+    acquire_build_lock
     # rc2.ipkg's own postbuild/postinstall hooks build and install
     # support/rc2's runtime (libidris2rc2.a) as a side effect of these
     # two calls (see README.md's "Building and running" section) --
