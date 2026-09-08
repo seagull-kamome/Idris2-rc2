@@ -924,22 +924,62 @@ C に生成される変数を削減する。
    丸ごと後回しにする強い形は不成立。`MutualLoop`/`DualABI`は完全に
    所有権非依存(現状のままでよい)。
 
-**見つかった実利のある案(未実装、次にやるべきこと)**: `ConAltNative`
+**見つかった案 → 実験実装済み、valgrindで失敗、要再設計**: `ConAltNative`
 の適格性判定自体はPhase 1出力だけで完結し所有権情報に一切依存しない。
 現在`ConAltNative`が抱える`peelWrappers`(RDup/RDrop/RFree/RReuseOffer/
 RReleaseReuseを踏み越える処理)と`reannotateFieldOwnership`/
 `finalizeBranch`(annotateの規則をそのまま再実装したミニannotate、
 約120行、`ConAltNative.idr:43-54,136-254`)は、「ConAltNativeが
 annotateの*後*に走るせいで、既に決まった所有権を壊さず部分的に
-再計算する」ためだけに存在する。**`ConAltNative`をannotate/Reuseより
-"前"(normalize直後)に動かせば**、この約120行のミニannotate再実装が
-不要になり、`doc/con-alt-native.md`のBug#1・Bug#2の根本原因
-(「所有権決定後に構造を弄る」という順序)そのものが解消される可能性が
-ある。ただし`RReuseOffer`最外殻配置の構造的前提が新しい順序でも
-保たれるかは実装してvalgrindで再検証する必要あり -- 別ブランチで
-実験実装して確認する。
+再計算する」ためだけに存在する、という見立てのもと、`ConAltNative`を
+annotate/Reuseより"前"(normalize直後)に動かす実験を
+`experiment/conaltnative-before-annotate`ブランチで実装した
+(コミット`b6b334f`、masterにはマージしない)。
 
-### 遅延評価引数を持つ小さい関数のインライン展開 -- 調査済み、`&&`/`||`は対応不要
+**結果: `rc2/tests/verify.sh --no-valgrind`は63件全通過(出力は正しい)
+だが、valgrind込みで`Test12ConAltNative`が6,397,600 bytesのリークで
+失敗。** 原因は`step (MkAcc x y) = MkAcc (x + 1) (y + 2)`
+(destructureして即座に同じ形で再構築、Reuseとの相互作用を突く
+ケース)で顕在化: 新しい`ConAltNative`が挿入する
+`RLet fc sid (RNative ty) (RV fc (RCLoc p)) body`(Boxedな`p`を
+ネイティブshadow `sid`へ読み込む)という形を、`annotate`の汎用`RV`
+処理(`RC.idr:498-499`)が「`p`がまだownedならdup無しでそのまま」=
+**move**として扱ってしまう。しかし本来これは`p`自身の参照カウントを
+消費しないただの**borrow**であるべき。一方`branchBody`の
+`freeLocalsR`チェックは`RLet`の`value`に現れる`p`を見て「使用済み」
+と判定し、alt冒頭の無条件drop対象にも入れない。結果、「使用中だから
+触らない」路線でも「もう死んでいるから今dropする」路線でも`p`を
+dropする指示がどこにも生成されず、静かにリークする。元の(この実験で
+削除した)`reannotateFieldOwnership`は、まさに「native読み取りは
+所有権を消費しない」ことを正しく理解した手動再計算だったため、この
+穴が最初から存在しなかった。
+
+**次に検討すべき方向(未着手)**: 修正するなら`annotate`のRLet/RV
+処理そのものに「valueがネイティブ表現letへのborrow読み取りである」
+ことを認識させる拡張が必要になるが、これはConAltNativeの出力に
+限らずプログラム中の*全ての*`RLet`に影響する共有ロジックの変更に
+なるため、影響範囲の見極めが実装前に要る。あるいは、ConAltNative
+側で`p`を明示的にdupしてからnativeに変換する(実行時コストは1回の
+dup+dropペア分増えるが、正しさは保たれる)という保守的な代替案も
+検討の余地がある。
+
+### `verify.sh`/`bench.sh`の並行実行対策 -- ロックが必要
+
+`verify.sh`(`--skip-build`無し)も`bench.sh`も内部で`idris2 --build`/
+`--install`を行い、共有の`rc2/build/`/`install/`ディレクトリに書き込む。
+複数インスタンス(複数セッション、あるいは並列サブエージェントがそれぞれ
+検証のため実行するケース)が同時に走ると、片方の`--install`実行中に
+もう片方がビルド成果物を上書きし、`idris2-rc2.so`が0バイトや実行権限
+無しの壊れた状態になる、という事象が実際に発生した(この一回の作業
+セッション中に複数回再現、原因はビルドディレクトリの排他制御が
+無いこと)。`--skip-build`同士(ビルド済みバイナリを使うだけ)の並行実行
+は安全なはずだが、区別する手段が無い。
+
+改善案: スクリプト冒頭で`flock`等によるロックファイル(`rc2/build/.verify.lock`
+のような)を取得し、`--skip-build`無しの実行同士が重ならないようにする。
+単純にロック取得失敗で即座にエラー終了するだけでも、今回のような
+「静かに壊れたバイナリで低品質なテスト結果が出る」事故は防げる。
+待機してキューイングする形にするかは実装時に判断。
 `&&`/`||`(`Lazy Bool`引数)がインライン展開されずクロージャ化されるのでは、という
 懸念を実際にコンパイルして確認したが、問題は起きていなかった。upstream自身の
 `%inline`プラグマとモジュールコンパイル時の`compileAndInlineAll`が、rc2独自の
