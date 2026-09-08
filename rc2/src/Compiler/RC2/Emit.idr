@@ -96,7 +96,7 @@ EmitDeps retTy = {auto a : Ref ArgCounter Nat}
               -> {auto _ : Ref ConstDef (SortedMap Constant ConstDef)}
               -> {auto cc : Ref ConstConDef (SortedMap RCLocal String, List String)}
               -> {auto r : Ref RepMap (SortedMap Int Rep)}
-              -> {auto lm : Ref InlineMap (SortedMap Int String)}
+              -> {auto lm : Ref InlineMap (SortedMap Int (String, List String))}
               -> {auto fa : Ref LoopParams (List (Int, Rep))}
               -> {auto sd : Ref StructDefs (SortedMap String (List (String, CFType)))}
               -> retTy
@@ -183,18 +183,18 @@ ffiArgMarshal : {auto a : Ref ArgCounter Nat}
              -> {auto _ : Ref ConstDef (SortedMap Constant ConstDef)}
              -> {auto cc : Ref ConstConDef (SortedMap RCLocal String, List String)}
              -> {auto r : Ref RepMap (SortedMap Int Rep)}
-             -> {auto lm : Ref InlineMap (SortedMap Int String)}
-             -> CLang -> RCLocal -> CFType -> Core (String, Maybe String)
+             -> {auto lm : Ref InlineMap (SortedMap Int (String, List String))}
+             -> CLang -> RCLocal -> CFType -> Core (String, List String)
 ffiArgMarshal cLang v CFChar = do
-    e <- rcVarToNativeC CharType v
-    pure (nativeCharArgExpr e, Nothing)
+    (e, pending) <- rcVarToNativeC CharType v
+    pure (nativeCharArgExpr e, pending)
 ffiArgMarshal cLang v farg = case cfTypeNative farg of
     Just ty => do
-        e <- rcVarToNativeC ty v
-        pure (e, Nothing)
+        (e, pending) <- rcVarToNativeC ty v
+        pure (e, pending)
     Nothing => do
-        boxedExpr <- rcVarToBoxedC v
-        pure (extractValue cLang farg boxedExpr, Just boxedExpr)
+        (boxedExpr, pending) <- rcVarToBoxedC v
+        pure (extractValue cLang farg boxedExpr, boxedExpr :: pending)
 
 ||| Marshal every one of `fargs`'s own positions, call `fctName`, and
 ||| produce the raw (un-packed, un-widened) C return-value expression
@@ -228,13 +228,13 @@ ffiRawCall : {auto a : Ref ArgCounter Nat}
           -> {auto _ : Ref ConstDef (SortedMap Constant ConstDef)}
           -> {auto cc : Ref ConstConDef (SortedMap RCLocal String, List String)}
           -> {auto r : Ref RepMap (SortedMap Int Rep)}
-          -> {auto lm : Ref InlineMap (SortedMap Int String)}
+          -> {auto lm : Ref InlineMap (SortedMap Int (String, List String))}
           -> CLang -> Name -> List CFType -> CFType -> List RCLocal -> Core (String, List String)
 ffiRawCall cLang fctName fargs ret args = do
     let paramsInfo = zip fargs args
     marshalled <- traverse (\(farg, v) => ffiArgMarshal cLang v farg) paramsInfo
     let argExprs = map fst marshalled
-        boxedArgDrop = mapMaybe snd marshalled
+        boxedArgDrop = concatMap snd marshalled
     let callWith : List String -> String
         callWith es = "\{cName fctName}(\{showSep ", " es})"
     -- `Compiler.RC2.EmitUtil`'s own `packCFType` CFInteger case doc
@@ -317,7 +317,20 @@ emitAppFFIInlineInto : EmitDeps (Sink -> TailPositionStatus -> FC -> List String
 ||| place, right after that statement, never re-deriving which locals
 ||| need it. Get the ordering backwards (drop before the read is
 ||| actually emitted) and it's a use-after-free.
-emitRC : EmitDeps (RCExp -> TailPositionStatus -> Core String)
+|||
+||| Takes `sink` and discharges it internally (via
+||| `finalizeSinkWithDrop`) instead of just returning a Boxed expression
+||| string, unlike an older version of this function -- a leaf case that
+||| itself reads an InlineMap'd operand (`rcVarToBoxedC`/`rcVarToNativeC`,
+||| see their own doc comments) gets back a pending drop that has to be
+||| discharged only *after* the value is actually embedded in a
+||| statement; since this function is the only place that statement gets
+||| emitted (`finalizeSinkWithDrop` below), it also has to be the one
+||| that discharges the pending drop -- returning a bare string to a
+||| caller that might build it into a larger expression before ever
+||| emitting anything (as several cases below used to, e.g. RApp/RCon)
+||| would leave nowhere correct to put it.
+emitRC : EmitDeps (Sink -> RCExp -> TailPositionStatus -> Core ())
 
 mutual
     ||| Declare an `RLet`'s own binding: record its `Rep` (so later *uses*
@@ -334,7 +347,7 @@ mutual
     declareLet fc var rep value = do
         update RepMap (insert var rep)
         case (rep, value) of
-             (RNative _, RPrimVal _ c) => update InlineMap (insert var (nativeLitExpr c))
+             (RNative _, RPrimVal _ c) => update InlineMap (insert var (nativeLitExpr c, []))
              (RInlineNative ty, _) => inlineNative ty var value
              (RNative ty, _) => declareNative fc ty var value
              (RBoxed, _) => emitInto fc (SinkVar True "var_\{show var}") NotInTailPosition value
@@ -380,11 +393,12 @@ mutual
         loopParams <- get LoopParams
         temps <- traverse (\(v, (paramId, rep)) => do
             t <- getNewVarThatWillNotBeFreedAtEndOfBlock
-            (cty, valStr) <- the (Core (String, String)) $ case rep of
-                 RBoxed => (\s => ("IDRIS2RC2_Value *", s)) <$> rcVarToBoxedC v
-                 RNative ty => (\s => (nativeCType ty ++ " ", s)) <$> rcVarToNativeC ty v
-                 RInlineNative ty => (\s => (nativeCType ty ++ " ", s)) <$> rcVarToNativeC ty v
+            (cty, valStr, pending) <- the (Core (String, String, List String)) $ case rep of
+                 RBoxed => (\(s, p) => ("IDRIS2RC2_Value *", s, p)) <$> rcVarToBoxedC v
+                 RNative ty => (\(s, p) => (nativeCType ty ++ " ", s, p)) <$> rcVarToNativeC ty v
+                 RInlineNative ty => (\(s, p) => (nativeCType ty ++ " ", s, p)) <$> rcVarToNativeC ty v
             emit fc "\{cty}\{t} = \{valStr};"
+            removeVars pending
             pure (paramId, t)) (zip newArgs loopParams)
         -- `postDrop` (see emitRC's own doc comment for the rule):
         -- every still-Boxed argument just read *natively* above (a
@@ -474,11 +488,21 @@ mutual
     ||| into InlineMap instead (see `Rep.RInlineNative`'s own doc
     ||| comment). Also shared by `emitRC`'s and `emitNativeValue`'s own
     ||| RLet cases.
+    |||
+    ||| `pending` (any Boxed operand `value`'s own tail op read but
+    ||| doesn't own a further use of) is stashed into InlineMap alongside
+    ||| `valStr` itself, NOT dropped here -- `var`'s own single deferred
+    ||| use is what actually embeds `valStr` in a statement, at some
+    ||| later point this function has no visibility into, so dropping
+    ||| `pending` here would be exactly the "drop before the read is
+    ||| actually emitted" use-after-free `emitRC`'s own doc comment warns
+    ||| about. `rcVarToBoxedC`/`rcVarToNativeC` (the only readers of an
+    ||| InlineMap entry) hand `pending` back to their own caller instead,
+    ||| which is what finally discharges it.
     inlineNative : EmitDeps (PrimType -> Int -> RCExp -> Core ())
     inlineNative ty var value = do
         (valStr, pending) <- emitNativeValue ty value
-        update InlineMap (insert var valStr)
-        removeVars pending
+        update InlineMap (insert var (valStr, pending))
 
     ||| As `declareNative`, but for a `SinkReturn (RNative ty)`/
     ||| `SinkReturn (RInlineNative ty)` tail position instead of an
@@ -574,14 +598,12 @@ mutual
                      -- discharge a pending Boxed-operand drop safely in
                      -- front of a `return` in the first place (see
                      -- emitNativeReturn's own doc comment). Every other
-                     -- Sink still goes through the ordinary
-                     -- emitRC-then-finalizeSink route, unchanged.
+                     -- Sink still goes through emitRC directly, which
+                     -- discharges `sink` (and any pending drop) itself.
                      _ => case sink of
                               SinkReturn (RNative ty) => emitNativeReturn fc ty remaining
                               SinkReturn (RInlineNative ty) => emitNativeReturn fc ty remaining
-                              _ => do
-                                  valStr <- emitRC remaining tailPosition
-                                  finalizeSink fc sink valStr
+                              _ => emitRC sink remaining tailPosition
 
     ||| A case branch (or default): emit the drops RC.idr's `annotate`
     ||| already decided on (the peeled leading RDrop), then the body
@@ -648,9 +670,11 @@ mutual
         case cmpArgTy op of
              Nothing => throw $ InternalError "[rc2] RCmpCase: not a comparison op"
              Just ty => do
-                 argStrs <- rc2traverseVect (rcVarToNativeC ty) args
+                 argsWithPending <- rc2traverseVect (rcVarToNativeC ty) args
+                 let argStrs = map fst argsWithPending
                  let condVar = "cmp_" ++ !(getNextCounter)
                  emit fc $ "int " ++ condVar ++ " = " ++ nativeCmpExpr op argStrs ++ ";"
+                 removeVars $ concatMap snd (toList argsWithPending)
                  removeVars $ map varName postDrop
                  resolvedSink <- resolveSink fc sink
                  emit emptyFC "if (\{condVar}) {"
@@ -677,7 +701,7 @@ mutual
         let sc' = varName sc
         resolvedSink <- resolveSink fc sink
         emitAltChain resolvedSink
-            (conAltCondExpr sc')
+            (\alt => (\s => (s, [])) <$> conAltCondExpr sc' alt)
             (emitConAltBody resolvedSink tailPosition sc)
             (map (\body => branchBody resolvedSink body tailPosition) mDef)
             alts
@@ -705,15 +729,16 @@ mutual
         case integerSwitch alts of
             True => do
                 tmpint <- getNewVarThatWillNotBeFreedAtEndOfBlock
-                extractExpr <- the (Core String) $ case scRep of
+                (extractExpr, pending) <- the (Core (String, List String)) $ case scRep of
                      RNative ty => rcVarToNativeC ty sc
                      RInlineNative ty => rcVarToNativeC ty sc
-                     RBoxed => pure $ case alts of
+                     RBoxed => pure (case alts of
                                            (MkRConstAlt c0 _ :: _) => extractIntExpr c0 sc'
-                                           [] => "idris2rc2_extractInt(\{sc'})"
+                                           [] => "idris2rc2_extractInt(\{sc'})", [])
                 emit emptyFC "int64_t \{tmpint} = \{extractExpr};"
+                removeVars pending
                 emitAltChain resolvedSink
-                    (\(MkRConstAlt c _) => pure "\{tmpint} == \{const2Integer c 0}")
+                    (\(MkRConstAlt c _) => pure ("\{tmpint} == \{const2Integer c 0}", []))
                     (\(MkRConstAlt _ body) => branchBody resolvedSink body tailPosition)
                     defaultAction
                     alts
@@ -721,11 +746,11 @@ mutual
             False =>
                 emitAltChain resolvedSink
                     (\(MkRConstAlt c _) => case c of
-                        Str x => pure "! strcmp(\{cStringQuoted x}, ((IDRIS2RC2_String *)\{sc'})->str)"
+                        Str x => pure ("! strcmp(\{cStringQuoted x}, ((IDRIS2RC2_String *)\{sc'})->str)", [])
                         Db  x => case scRep of
-                                      RNative DoubleType => (\e => "\{e} == \{show x}") <$> rcVarToNativeC DoubleType sc
-                                      RInlineNative DoubleType => (\e => "\{e} == \{show x}") <$> rcVarToNativeC DoubleType sc
-                                      _ => pure "((IDRIS2RC2_Double *)\{sc'})->v == \{show x}"
+                                      RNative DoubleType => (\(e, p) => ("\{e} == \{show x}", p)) <$> rcVarToNativeC DoubleType sc
+                                      RInlineNative DoubleType => (\(e, p) => ("\{e} == \{show x}", p)) <$> rcVarToNativeC DoubleType sc
+                                      _ => pure ("((IDRIS2RC2_Double *)\{sc'})->v == \{show x}", [])
                         x => throw $ InternalError "[rc2] RConstCase : unsupported type. \{show fc} \{show x}")
                     (\(MkRConstAlt _ body) => branchBody resolvedSink body tailPosition)
                     defaultAction
@@ -799,12 +824,13 @@ mutual
            else declareLet fc paramId RBoxed (RV fc initVal)
     declareLoopParam inPrologueDrop fc paramId rep@(RNative ty) initVal = do
         update RepMap (insert paramId rep)
-        valStr <- rcVarToNativeC ty initVal
+        (valStr, pending) <- rcVarToNativeC ty initVal
         if inPrologueDrop
            then do
                let initValName = varName initVal
                emit fc "\{nativeCType ty} var_\{show paramId} = (\{initValName} == NULL) ? 0 : (\{valStr});"
            else emit fc "\{nativeCType ty} var_\{show paramId} = \{valStr};"
+        removeVars pending
     -- A loop param is read again every iteration, so it never has the
     -- single-use shape `RInlineNative` requires -- Compiler.RC2.Loop
     -- never actually constructs this case -- kept total (falling back
@@ -867,9 +893,7 @@ mutual
     -- is already known native by construction here (see
     -- `tailValueReps`'s own seeding), so there's nothing Boxed being
     -- read at all, unlike the ROp case below.
-    emitNativeValue ty (RV fc v) = do
-        valStr <- rcVarToNativeC ty v
-        pure (valStr, [])
+    emitNativeValue ty (RV fc v) = rcVarToNativeC ty v
     -- A direct worker call whose own result Compiler.RC2.DualABI's own
     -- Stage 4 promoted an enclosing RLet's Rep to match (see
     -- `applyCallSiteRewriteBody`'s own doc comment: "does the rest of
@@ -891,14 +915,14 @@ mutual
         -- own doc comment: always a plain, direct positional call to a
         -- dual-ABI worker, never dispatched through the closure
         -- machinery `MaxExtractFunArgs` governs.
-        argStrs <- traverse (\(rep, v) => case rep of
+        argsWithPending <- traverse (\(rep, v) => case rep of
                                  RNative t => rcVarToNativeC t v
                                  RInlineNative t => rcVarToNativeC t v
                                  RBoxed => rcVarToBoxedC v) (zip argReps args)
-        let call = "\{cName n}(\{concat $ intersperse ", " argStrs})"
+        let call = "\{cName n}(\{concat $ intersperse ", " (map fst argsWithPending)})"
         case retRep of
              RBoxed => throw $ InternalError "[rc2] emitNativeValue: RAppNameRep with Boxed retRep reached a native context"
-             _ => pure (call, map varName postDrop)
+             _ => pure (call, map varName postDrop ++ concatMap snd argsWithPending)
     -- A direct, self-contained call to a %foreign declaration's own
     -- raw C function (`RAppFFIInline`, `Compiler.RC2.DualABI`'s own
     -- Stage 5), reached here whenever an enclosing `RLet`'s own Rep
@@ -929,15 +953,17 @@ mutual
                                     _      => rawExpr
                  in pure (retExpr, map varName postDrop ++ boxedArgDrop)
     emitNativeValue ty (ROp fc _ op args postDrop) = do
-        argStrs <- rc2traverseVect (\v => rcVarToNativeC (opArgTyFor ty op) v) args
+        argsWithPending <- rc2traverseVect (\v => rcVarToNativeC (opArgTyFor ty op) v) args
         -- `postDrop` (same meaning as emitRC's boxed-ROp case, see its
         -- own doc comment) -- a native-result op still owes these
         -- operands the same cleanup, but can't drop them *here*: unlike
         -- emitRC, our caller hasn't necessarily emitted the statement
         -- that actually reads them yet (we only return an inline
-        -- expression string). Hand `postDrop` back so whoever *does*
-        -- emit that statement can drop right after it.
-        pure (nativeOpExpr op argStrs, map varName postDrop)
+        -- expression string). Hand `postDrop` back (folded in with any
+        -- InlineMap'd pending drop each operand's own read already
+        -- owed, see `rcVarToNativeC`'s own doc comment) so whoever
+        -- *does* emit that statement can drop right after it.
+        pure (nativeOpExpr op (map fst argsWithPending), map varName postDrop ++ concatMap snd (toList argsWithPending))
     emitNativeValue ty (RPrimVal fc c) = pure (nativeLitExpr c, [])
     -- RC.idr's own ANF-normalisation wraps any non-trivial operand (e.g. a
     -- literal) in a synthetic RLet before the "real" ROp/RPrimVal --
@@ -976,10 +1002,12 @@ emitAppNameRepInto sink tailPosition fc n argReps retRep postDrop args = do
     -- through `support/rc2/runtime.c`'s closure machinery, so
     -- `MaxExtractFunArgs` (which governs THAT convention) doesn't
     -- apply here.
-    argStrs <- traverse (\(rep, v) => case rep of
+    argsWithPending <- traverse (\(rep, v) => case rep of
                              RNative ty => rcVarToNativeC ty v
                              RInlineNative ty => rcVarToNativeC ty v
                              RBoxed => rcVarToBoxedC v) (zip argReps args)
+    let argStrs = map fst argsWithPending
+    let argPending = concatMap snd argsWithPending
     let call = "\{cName n}(\{concat $ intersperse ", " argStrs})"
     let valStr = case retRep of
                       RBoxed => case tailPosition of
@@ -987,17 +1015,7 @@ emitAppNameRepInto sink tailPosition fc n argReps retRep postDrop args = do
                                      NotInTailPosition => "idris2rc2_trampoline(\{call})"
                       RNative ty => nativeMk ty call
                       RInlineNative ty => nativeMk ty call
-    case postDrop of
-         [] => finalizeSink fc sink valStr
-         _  => case sink of
-                    SinkReturn _ => do
-                        tmp <- getNewVarThatWillNotBeFreedAtEndOfBlock
-                        emit fc "IDRIS2RC2_Value * \{tmp} = \{valStr};"
-                        removeVars $ map varName postDrop
-                        emit fc "return \{tmp};"
-                    _ => do
-                        finalizeSink fc sink valStr
-                        removeVars $ map varName postDrop
+    finalizeSinkWithDrop fc sink valStr (map varName postDrop ++ argPending)
 
 emitAppFFIInlineInto sink tailPosition fc ccs fargs ret postDrop args = do
     (cLang, fctName) <- resolveForeignTarget ccs
@@ -1016,59 +1034,52 @@ emitAppFFIInlineInto sink tailPosition fc ccs fargs ret postDrop args = do
     -- is already-rendered text (see `ffiArgMarshal`'s own doc
     -- comment for why it can't be a bare `varName` render).
     let allDrop = map varName postDrop ++ boxedArgDrop
-    case allDrop of
-         [] => finalizeSink fc sink valStr
-         _  => case sink of
-                    SinkReturn _ => do
-                        tmp <- getNewVarThatWillNotBeFreedAtEndOfBlock
-                        emit fc "IDRIS2RC2_Value * \{tmp} = \{valStr};"
-                        removeVars allDrop
-                        emit fc "return \{tmp};"
-                    _ => do
-                        finalizeSink fc sink valStr
-                        removeVars allDrop
+    finalizeSinkWithDrop fc sink valStr allDrop
 
-emitRC (RV fc v) _ = rcVarToBoxedC v
+emitRC sink (RV fc v) _ = do
+    (valStr, pending) <- rcVarToBoxedC v
+    finalizeSinkWithDrop fc sink valStr pending
 -- InTailPosition is unreachable here: emitInto's tryBuildClosureInto
 -- always intercepts an InTailPosition RAppName itself, building the
 -- closure straight into whichever Sink the caller handed down (see
 -- buildClosureIntoSink) -- so emitRC only ever sees RAppName in
 -- NotInTailPosition, where the call must actually be resolved
 -- (trampolined) right here rather than deferred as a closure.
-emitRC (RAppName fc _ n args) InTailPosition = throw $ InternalError "[rc2] RAppName (InTailPosition) reached emitRC directly (not intercepted by tryBuildClosureInto)"
-emitRC (RAppName fc _ n args) NotInTailPosition = do
+emitRC sink (RAppName fc _ n args) InTailPosition = throw $ InternalError "[rc2] RAppName (InTailPosition) reached emitRC directly (not intercepted by tryBuildClosureInto)"
+emitRC sink (RAppName fc _ n args) NotInTailPosition = do
     let nargs = length args
     if nargs > MaxExtractFunArgs
-       then pure "idris2rc2_trampoline(\{!(makeClosure fc n args 0)})"
+       then finalizeSink fc sink "idris2rc2_trampoline(\{!(makeClosure fc n args 0)})"
        else do
-           argStrs <- traverse rcVarToBoxedC args
-           pure "idris2rc2_trampoline(\{cName n}(\{concat $ intersperse ", " argStrs}))"
+           argsWithPending <- traverse rcVarToBoxedC args
+           let valStr = "idris2rc2_trampoline(\{cName n}(\{concat $ intersperse ", " (map fst argsWithPending)}))"
+           finalizeSinkWithDrop fc sink valStr (concatMap snd argsWithPending)
 
 -- Unreachable: emitInto's own dispatch always intercepts a leftover
 -- RAppNameRep itself (routing it to emitAppNameRepInto, which needs
--- to discharge its own postDrop -- something emitRC's own "just
--- return a Boxed expression string" contract has no room for --
--- before ever falling back to a bare emitRC call). See
--- emitAppNameRepInto's own doc comment for the full rendering this
--- case used to do directly.
-emitRC (RAppNameRep fc n argReps retRep postDrop args) _ = throw $ InternalError "[rc2] RAppNameRep reached emitRC directly (not intercepted by emitInto)"
+-- to discharge its own postDrop -- something emitRC's own "always
+-- discharge sink itself" contract has no room for -- before ever
+-- falling back to a bare emitRC call). See emitAppNameRepInto's own
+-- doc comment for the full rendering this case used to do directly.
+emitRC sink (RAppNameRep fc n argReps retRep postDrop args) _ = throw $ InternalError "[rc2] RAppNameRep reached emitRC directly (not intercepted by emitInto)"
 
 -- Unreachable: emitInto's own dispatch always intercepts a
 -- leftover RAppFFIInline itself, same reasoning as RAppNameRep's
 -- own case just above.
-emitRC (RAppFFIInline fc ccs fargs ret postDrop args) _ = throw $ InternalError "[rc2] RAppFFIInline reached emitRC directly (not intercepted by emitInto)"
+emitRC sink (RAppFFIInline fc ccs fargs ret postDrop args) _ = throw $ InternalError "[rc2] RAppFFIInline reached emitRC directly (not intercepted by emitInto)"
 
 -- Unreachable: emitInto's tryBuildClosureInto always intercepts
 -- RUnderApp itself, for any tailPosition -- a partial application is
 -- always a closure build, tail position or not (see
 -- buildClosureIntoSink).
-emitRC (RUnderApp fc n missing args) _ = throw $ InternalError "[rc2] RUnderApp reached emitRC directly (not intercepted by tryBuildClosureInto)"
-emitRC (RApp fc _ closure arg) tailPosition = do
-   closureStr <- rcVarToBoxedC closure
-   argStr <- rcVarToBoxedC arg
-   pure $ (case tailPosition of
-       NotInTailPosition => "idris2rc2_applyClosure"
-       InTailPosition    => "idris2rc2_tailcallApplyClosure") ++ "(\{closureStr}, \{argStr})"
+emitRC sink (RUnderApp fc n missing args) _ = throw $ InternalError "[rc2] RUnderApp reached emitRC directly (not intercepted by tryBuildClosureInto)"
+emitRC sink (RApp fc _ closure arg) tailPosition = do
+   (closureStr, p1) <- rcVarToBoxedC closure
+   (argStr, p2) <- rcVarToBoxedC arg
+   let fnName = the String $ case tailPosition of
+                     NotInTailPosition => "idris2rc2_applyClosure"
+                     InTailPosition    => "idris2rc2_tailcallApplyClosure"
+   finalizeSinkWithDrop fc sink "\{fnName}(\{closureStr}, \{argStr})" (p1 ++ p2)
 
 -- Unreachable in practice, same reasoning as RLoopContinue's own
 -- case below: emitInto's tryBuildClosureInto always peels an RLet
@@ -1077,11 +1088,11 @@ emitRC (RApp fc _ closure arg) tailPosition = do
 -- directly. Failing loudly here (rather than silently re-declaring
 -- `var` a second time, or worse, skipping its declaration) is the
 -- safer choice.
-emitRC (RLet fc var rep value body) _ = throw $ InternalError "[rc2] RLet reached emitRC directly (not intercepted by emitInto/tryBuildClosureInto)"
+emitRC sink (RLet fc var rep value body) _ = throw $ InternalError "[rc2] RLet reached emitRC directly (not intercepted by emitInto/tryBuildClosureInto)"
 
-emitRC (RCon fc n coninfo tag args reuseFrom) _ = do
+emitRC sink (RCon fc n coninfo tag args reuseFrom) _ = do
     if coninfo == NIL || coninfo == NOTHING || coninfo == ZERO || coninfo == UNIT
-        then pure "(NULL /* \{show n} */)"
+        then finalizeSink fc sink "(NULL /* \{show n} */)"
         else do
             let createNewConstructor = " = idris2rc2_newConstructor("
                              ++ (show (length args))
@@ -1110,12 +1121,13 @@ emitRC (RCon fc n coninfo tag args reuseFrom) _ = do
                     pure constr
             let arglist = "\{constr}->args"
             _ <- foldlC (\k, v => do
-                vStr <- rcVarToBoxedC v
+                (vStr, pending) <- rcVarToBoxedC v
                 emit EmptyFC $ "\{arglist}[\{show k}] = \{vStr};"
+                removeVars pending
                 pure (S k)) 0 args
-            pure "(IDRIS2RC2_Value*)\{constr}"
+            finalizeSink fc sink "(IDRIS2RC2_Value*)\{constr}"
 
-emitRC (ROp fc _ op args postDrop) _ = do
+emitRC sink (ROp fc _ op args postDrop) _ = do
     -- Reached only when Compiler.RC2.Types decided this op's result
     -- stays Boxed (comparisons, or a non-numeric op) -- operands may
     -- still individually be native locals (e.g. a comparison over an
@@ -1128,9 +1140,11 @@ emitRC (ROp fc _ op args postDrop) _ = do
     emit fc $ "IDRIS2RC2_Value *" ++ resultVar ++ " = " ++ cOp op argStrs ++ ";"
     -- `postDrop`: see emitRC's own doc comment. Separately, any
     -- ephemeral box `boxOpArg` had to fabricate for a Native operand
-    -- is dropped too -- `annotate` runs before `Compiler.RC2.Loop`'s
-    -- native-shadow promotion ever decides a local is Native, so it
-    -- can't have known about these.
+    -- (folded into its own returned list alongside any InlineMap'd
+    -- pending drop, see its own doc comment) is dropped too --
+    -- `annotate` runs before `Compiler.RC2.Loop`'s native-shadow
+    -- promotion ever decides a local is Native, so it can't have
+    -- known about these.
     --
     -- `isReuseConsumingOp op` skips both: its own runtime primitive
     -- (rc2/support/rc2/numeric.h) now consumes and disposes of every
@@ -1141,10 +1155,10 @@ emitRC (ROp fc _ op args postDrop) _ = do
        then pure ()
        else do
          removeVars $ map varName postDrop
-         removeVars $ mapMaybe snd (toList argsWithFresh)
-    pure resultVar
+         removeVars $ concatMap snd (toList argsWithFresh)
+    finalizeSink fc sink resultVar
 
-emitRC (RExtPrim fc _ p args postDrop) _ = do
+emitRC sink (RExtPrim fc _ p args postDrop) _ = do
     -- prim__getField/prim__setField never reach here -- Compiler.RC2.RC's
     -- own `normalize` (Phase 1) converts them straight into
     -- RStructGet/RStructSet, handled by their own cases below (see
@@ -1161,17 +1175,20 @@ emitRC (RExtPrim fc _ p args postDrop) _ = do
     -- ext-prim args follow the same borrow/move contract as an
     -- ordinary ROp's operands (see RC.idr's own annotate RExtPrim
     -- case) -- box any that happen to be native locals first.
-    argStrs <- traverse rcVarToBoxedC args
+    argsWithPending <- traverse rcVarToBoxedC args
     -- Materialize the call into a fresh C variable (like the ROp
     -- case above) BEFORE dropping any postDrop argument -- args
     -- must still be alive while the call itself actually reads
     -- them; only after that's emitted is it safe to drop them.
     let resultVar = "extprimVar_" ++ !(getNextCounter)
-    emit fc $ "IDRIS2RC2_Value *" ++ resultVar ++ " = idris2rc2_\{cName p}("++ showSep ", " argStrs ++");"
+    emit fc $ "IDRIS2RC2_Value *" ++ resultVar ++ " = idris2rc2_\{cName p}("++ showSep ", " (map fst argsWithPending) ++");"
     -- `postDrop`: see emitRC's own doc comment (same rule as the ROp
-    -- case above).
+    -- case above) -- each argument's own InlineMap'd pending drop
+    -- (`rcVarToBoxedC`'s own doc comment) needs exactly the same
+    -- timing.
     removeVars $ map varName postDrop
-    pure resultVar
+    removeVars $ concatMap snd argsWithPending
+    finalizeSink fc sink resultVar
 
 -- Part D (doc/c-struct-support.md's "Design" section): resolve
 -- structName/fieldName against StructDefs (Part B/C), then render
@@ -1180,33 +1197,35 @@ emitRC (RExtPrim fc _ p args postDrop) _ = do
 -- postDrop only ever means "this was this operand's own last use"
 -- (Compiler.RC2.RC's dropIfLastUse), never "drop after a dup", so
 -- this only ever discharges it, never inserts one.
-emitRC (RStructGet fc structVar sn fn postDrop) _ = do
+emitRC sink (RStructGet fc structVar sn fn postDrop) _ = do
     structDefs <- get StructDefs
     let Just flds = lookup sn structDefs
         | Nothing => throw $ InternalError "[rc2] RStructGet: unknown struct \{sn}"
     let Just ty = lookup fn flds
         | Nothing => throw $ InternalError "[rc2] RStructGet: unknown field \{fn} of struct \{sn}"
-    ptrBoxed <- rcVarToBoxedC structVar
+    (ptrBoxed, pending) <- rcVarToBoxedC structVar
     let ptrC = extractValue CLangC CFPtr ptrBoxed
     let resultVar = "primVar_" ++ !(getNextCounter)
     emit fc $ "IDRIS2RC2_Value *" ++ resultVar ++ " = "
                 ++ packCFType ty ("((\{sn}*)\{ptrC})->\{fn}") ++ ";"
     removeVars $ map varName postDrop
-    pure resultVar
+    removeVars pending
+    finalizeSink fc sink resultVar
 
-emitRC (RStructSet fc structVar sn fn value postDrop) _ = do
+emitRC sink (RStructSet fc structVar sn fn value postDrop) _ = do
     structDefs <- get StructDefs
     let Just flds = lookup sn structDefs
         | Nothing => throw $ InternalError "[rc2] RStructSet: unknown struct \{sn}"
     let Just ty = lookup fn flds
         | Nothing => throw $ InternalError "[rc2] RStructSet: unknown field \{fn} of struct \{sn}"
-    ptrBoxed <- rcVarToBoxedC structVar
+    (ptrBoxed, p1) <- rcVarToBoxedC structVar
     let ptrC = extractValue CLangC CFPtr ptrBoxed
-    valBoxed <- rcVarToBoxedC value
+    (valBoxed, p2) <- rcVarToBoxedC value
     let valC = extractValue CLangC ty valBoxed
     emit fc $ "((\{sn}*)\{ptrC})->\{fn} = \{valC};"
     removeVars $ map varName postDrop
-    pure "((IDRIS2RC2_Value *)NULL)"
+    removeVars (p1 ++ p2)
+    finalizeSink fc sink "((IDRIS2RC2_Value *)NULL)"
 
 -- Unreachable in practice, same reasoning as RLet's own case above:
 -- emitInto's dispatch always intercepts a leftover RCmpCase/
@@ -1216,15 +1235,15 @@ emitRC (RStructSet fc structVar sn fn value postDrop) _ = do
 -- the safer choice: reaching this would mean every branch just
 -- silently reverted to a throwaway switchReturnVar, undoing the
 -- point of that dispatch without any other visible symptom.
-emitRC (RCmpCase fc op args postDrop whenTrue whenFalse) _ = throw $ InternalError "[rc2] RCmpCase reached emitRC directly (not intercepted by emitInto)"
-emitRC (RConCase fc sc alts mDef) _ = throw $ InternalError "[rc2] RConCase reached emitRC directly (not intercepted by emitInto)"
-emitRC (RConstCase fc sc alts def) _ = throw $ InternalError "[rc2] RConstCase reached emitRC directly (not intercepted by emitInto)"
+emitRC sink (RCmpCase fc op args postDrop whenTrue whenFalse) _ = throw $ InternalError "[rc2] RCmpCase reached emitRC directly (not intercepted by emitInto)"
+emitRC sink (RConCase fc sc alts mDef) _ = throw $ InternalError "[rc2] RConCase reached emitRC directly (not intercepted by emitInto)"
+emitRC sink (RConstCase fc sc alts def) _ = throw $ InternalError "[rc2] RConstCase reached emitRC directly (not intercepted by emitInto)"
 
-emitRC (RPrimVal fc (I x)) tailPosition = emitRC (RPrimVal fc (I64 $ cast x)) tailPosition
-emitRC (RPrimVal fc c) _ = boxedConstExpr c
+emitRC sink (RPrimVal fc (I x)) tailPosition = emitRC sink (RPrimVal fc (I64 $ cast x)) tailPosition
+emitRC sink (RPrimVal fc c) _ = finalizeSink fc sink !(boxedConstExpr c)
 
-emitRC (RErased fc) _ = pure "NULL"
-emitRC (RCrash fc x) _ = pure "(NULL /* CRASH */)"
+emitRC sink (RErased fc) _ = finalizeSink fc sink "NULL"
+emitRC sink (RCrash fc x) _ = finalizeSink fc sink "(NULL /* CRASH */)"
 -- Unreachable in practice: emitInto always tries tryEmitLoopContinue
 -- first, which intercepts every RLoopContinue (however deeply
 -- RDup/RDrop/RFree/RLet-wrapped) before it could ever reach a bare
@@ -1233,22 +1252,22 @@ emitRC (RCrash fc x) _ = pure "(NULL /* CRASH */)"
 -- some placeholder string) is the safer choice: reaching this would
 -- mean the goto-loop was never emitted at all, silently turning a
 -- loop into infinite recursion.
-emitRC (RLoopContinue fc _ _) _ = throw $ InternalError "[rc2] RLoopContinue reached emitRC directly (not intercepted by tryEmitLoopContinue)"
+emitRC sink (RLoopContinue fc _ _) _ = throw $ InternalError "[rc2] RLoopContinue reached emitRC directly (not intercepted by tryEmitLoopContinue)"
 -- Unreachable in practice, same reasoning as RCmpCase/RConCase/
 -- RConstCase's own cases below: emitInto's dispatch always
 -- intercepts a leftover RLoop itself (routing it to
 -- emitLoopInto's Sink-aware handling) before ever falling back to
 -- a bare emitRC call.
-emitRC (RLoop fc loopParams initial prologueDrop body) _ = throw $ InternalError "[rc2] RLoop reached emitRC directly (not intercepted by emitInto)"
+emitRC sink (RLoop fc loopParams initial prologueDrop body) _ = throw $ InternalError "[rc2] RLoop reached emitRC directly (not intercepted by emitInto)"
 -- Unreachable in practice, same reasoning as RLet's own case above:
 -- emitInto's tryBuildClosureInto always peels these wrapper nodes
 -- (emitting their own dup/drop/free/reuse-release side effect) on
 -- the way down before ever falling back to a bare emitRC call.
-emitRC (RDrop fc locs cont) _ = throw $ InternalError "[rc2] RDrop reached emitRC directly (not intercepted by emitInto/tryBuildClosureInto)"
-emitRC (RDup fc loc extra cont) _ = throw $ InternalError "[rc2] RDup reached emitRC directly (not intercepted by emitInto/tryBuildClosureInto)"
-emitRC (RFree fc loc cont) _ = throw $ InternalError "[rc2] RFree reached emitRC directly (not intercepted by emitInto/tryBuildClosureInto)"
-emitRC (RReleaseReuse fc loc cont) _ = throw $ InternalError "[rc2] RReleaseReuse reached emitRC directly (not intercepted by emitInto/tryBuildClosureInto)"
-emitRC (RReuseOffer fc sc dupOnShared dropOnUnique cont) _ = throw $ InternalError "[rc2] RReuseOffer reached emitRC directly (not intercepted by emitInto/tryBuildClosureInto)"
+emitRC sink (RDrop fc locs cont) _ = throw $ InternalError "[rc2] RDrop reached emitRC directly (not intercepted by emitInto/tryBuildClosureInto)"
+emitRC sink (RDup fc loc extra cont) _ = throw $ InternalError "[rc2] RDup reached emitRC directly (not intercepted by emitInto/tryBuildClosureInto)"
+emitRC sink (RFree fc loc cont) _ = throw $ InternalError "[rc2] RFree reached emitRC directly (not intercepted by emitInto/tryBuildClosureInto)"
+emitRC sink (RReleaseReuse fc loc cont) _ = throw $ InternalError "[rc2] RReleaseReuse reached emitRC directly (not intercepted by emitInto/tryBuildClosureInto)"
+emitRC sink (RReuseOffer fc sc dupOnShared dropOnUnique cont) _ = throw $ InternalError "[rc2] RReuseOffer reached emitRC directly (not intercepted by emitInto/tryBuildClosureInto)"
 
 addCommaToList : List String -> List String
 addCommaToList [] = []
@@ -1388,7 +1407,7 @@ createCFunctions n (MkRCFun args retRep isWorker body) = do
     _ <- newRef RepMap (SortedMap.fromList args)
     -- Populated instead of RepMap+a declaration for any RLet whose value
     -- is a bare literal -- see InlineMap's own comment.
-    _ <- newRef InlineMap (the (SortedMap Int String) empty)
+    _ <- newRef InlineMap (the (SortedMap Int (String, List String)) empty)
     -- Empty until `body` actually contains an `RLoop` -- `emitLoopInto`
     -- overwrites this the moment it enters one; `RLoopContinue` can only
     -- ever be reachable *inside* an `RLoop`'s own body by construction

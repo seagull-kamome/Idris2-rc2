@@ -938,21 +938,28 @@ mutual
 ||| RC.idr's `bindOne` still chose to make an RCConst goes through
 ||| `boxedConstExpr`, the same staging/caching a let-bound literal of
 ||| the same value would use), `Nothing` for an ordinary declared local.
+||| Also returns any pending drop the stashed expression itself still
+||| owes (only ever non-empty for an `RCLoc` InlineMap entry -- see
+||| InlineMap's own doc comment): the caller, not this function, is what
+||| actually embeds the expression text in a statement, so it -- not
+||| this function -- must discharge the drop, and only *after* doing so
+||| (the canonical read-before-drop rule, see `Compiler.RC2.Emit`'s
+||| `emitRC` doc comment).
 export
 inlineExprFor : {auto a : Ref ArgCounter Nat}
              -> {auto _ : Ref ConstDef (SortedMap Constant ConstDef)}
              -> {auto cc : Ref ConstConDef (SortedMap RCLocal String, List String)}
-             -> {auto lm : Ref InlineMap (SortedMap Int String)}
-             -> RCLocal -> Core (Maybe String)
+             -> {auto lm : Ref InlineMap (SortedMap Int (String, List String))}
+             -> RCLocal -> Core (Maybe (String, List String))
 inlineExprFor RCNull = pure Nothing
-inlineExprFor (RCConst c) = Just <$> case litRep c of
+inlineExprFor (RCConst c) = (\e => Just (e, [])) <$> case litRep c of
     Just _  => pure $ nativeLitExpr c
     Nothing => boxedConstExpr c
 -- Nothing, same as RCNull: rendered directly by varName, not through
 -- the InlineMap/RNative detour (see repOfLocal above).
 inlineExprFor (RCEmptyCon {}) = pure Nothing
-inlineExprFor l@(RCConstCon {}) = Just <$> boxedConstConExpr l {prf=ItIsConstCon}
-inlineExprFor l@(RCConstClosure {}) = Just <$> boxedConstClosureExpr l {prf=ItIsConstClosure}
+inlineExprFor l@(RCConstCon {}) = (\e => Just (e, [])) <$> boxedConstConExpr l {prf=ItIsConstCon}
+inlineExprFor l@(RCConstClosure {}) = (\e => Just (e, [])) <$> boxedConstClosureExpr l {prf=ItIsConstClosure}
 inlineExprFor (RCLoc i) = do
     inlined <- get InlineMap
     pure $ SortedMap.lookup i inlined
@@ -965,29 +972,36 @@ inlineExprFor (RCLoc i) = do
 ||| the module note), so this never dups on its own. An InlineMap'd local
 ||| (or a non-native-eligible RCConst, see `inlineExprFor`) has no `var_N`
 ||| to read in the first place -- its expression text is used as-is.
+|||
+||| Also returns any pending drop `l`'s own stashed expression owes (see
+||| `inlineExprFor`'s own doc comment) -- the caller, not this function,
+||| is what actually embeds the returned expression text in a statement,
+||| so discharging this list is the caller's job too, and only *after*
+||| doing so.
 export
 rcVarToBoxedC : {auto a : Ref ArgCounter Nat}
              -> {auto _ : Ref ConstDef (SortedMap Constant ConstDef)}
              -> {auto cc : Ref ConstConDef (SortedMap RCLocal String, List String)}
              -> {auto r : Ref RepMap (SortedMap Int Rep)}
-             -> {auto lm : Ref InlineMap (SortedMap Int String)}
-             -> RCLocal -> Core String
+             -> {auto lm : Ref InlineMap (SortedMap Int (String, List String))}
+             -> RCLocal -> Core (String, List String)
 rcVarToBoxedC l = do
     rep <- repOfLocal l
     inlined <- inlineExprFor l
+    let (exprOrVar, pending) = fromMaybe (varName l, []) inlined
     pure $ case rep of
-                RNative ty => nativeMk ty (fromMaybe (varName l) inlined)
+                RNative ty => (nativeMk ty exprOrVar, pending)
                 -- Always InlineMap'd by construction (Rep.RInlineNative's
-                -- own doc comment) -- `fromMaybe (varName l) inlined` is
+                -- own doc comment) -- the `Nothing` fallback above is
                 -- defensive totality, not a real fallback path.
-                RInlineNative ty => nativeMk ty (fromMaybe (varName l) inlined)
+                RInlineNative ty => (nativeMk ty exprOrVar, pending)
                 -- Was unconditionally `varName l` before a non-native-
                 -- eligible RCConst (String/small Integer) could ever be
                 -- RBoxed -- every existing RBoxed local is a genuine
                 -- `RCLoc` whose `inlineExprFor` is always `Nothing`
                 -- anyway, so this is a no-op change for them, but a real
                 -- fix for the new RCConst case.
-                RBoxed => fromMaybe (varName l) inlined
+                RBoxed => (exprOrVar, pending)
 
 ||| An operand for a Boxed-result `ROp` (see its own `emitRC` case
 ||| below): an already-`RBoxed` local renders via `rcVarToBoxedC` as-is,
@@ -1002,39 +1016,45 @@ rcVarToBoxedC l = do
 ||| `Test16LoopContinuePostDrop.idr`: `Types.repOf` never promotes a
 ||| `case`/`if`-valued `RLet` to Native even when a branch's own value is
 ||| a plain native arithmetic chain, so that branch's `ROp` ends up
-||| Boxed-result while still reading a genuinely Native operand).
+||| Boxed-result while still reading a genuinely Native operand). Any
+||| pending drop `rcVarToBoxedC` itself already owed for `l` (its own
+||| InlineMap'd expression, see its own doc comment) is folded into this
+||| same returned list -- both need exactly the same "after the op has
+||| actually read this operand" discharge timing.
 export
 boxOpArg : {auto a : Ref ArgCounter Nat}
         -> {auto _ : Ref ConstDef (SortedMap Constant ConstDef)}
         -> {auto cc : Ref ConstConDef (SortedMap RCLocal String, List String)}
         -> {auto r : Ref RepMap (SortedMap Int Rep)}
-        -> {auto lm : Ref InlineMap (SortedMap Int String)}
+        -> {auto lm : Ref InlineMap (SortedMap Int (String, List String))}
         -> {auto oft : Ref OutfileText Output}
         -> {auto il : Ref IndentLevel Nat}
-        -> FC -> RCLocal -> Core (String, Maybe String)
+        -> FC -> RCLocal -> Core (String, List String)
 boxOpArg fc l = do
     rep <- repOfLocal l
-    expr <- rcVarToBoxedC l
+    (expr, pending) <- rcVarToBoxedC l
     case rep of
-         RBoxed => pure (expr, Nothing)
+         RBoxed => pure (expr, pending)
          _ => do
              let tmp = "opBox_" ++ !(getNextCounter)
              emit fc $ "IDRIS2RC2_Value *" ++ tmp ++ " = " ++ expr ++ ";"
-             pure (tmp, Just tmp)
+             pure (tmp, tmp :: pending)
 
 ||| The C expression to use for `l` as an operand of a native op expecting
 ||| type `ty`: the raw variable if it's already native, or an inline
 ||| unboxing extraction if it's boxed. Never dups/drops -- reading a value
 ||| for a native op doesn't take ownership either way. An InlineMap'd
 ||| local inlines its expression text directly instead of reading back a
-||| `var_N` that was never declared.
+||| `var_N` that was never declared. Also returns any pending drop `l`'s
+||| own stashed expression owes, same reasoning as `rcVarToBoxedC`'s own
+||| doc comment.
 export
 rcVarToNativeC : {auto a : Ref ArgCounter Nat}
               -> {auto _ : Ref ConstDef (SortedMap Constant ConstDef)}
               -> {auto cc : Ref ConstConDef (SortedMap RCLocal String, List String)}
               -> {auto r : Ref RepMap (SortedMap Int Rep)}
-              -> {auto lm : Ref InlineMap (SortedMap Int String)}
-              -> PrimType -> RCLocal -> Core String
+              -> {auto lm : Ref InlineMap (SortedMap Int (String, List String))}
+              -> PrimType -> RCLocal -> Core (String, List String)
 -- `RCNull` here is never a real value to unbox -- it only ever reaches
 -- this function as one of Compiler.RC2.MutualLoop's own `RCNull`
 -- padding slots (a smaller-arity member's unused trailing loop param,
@@ -1048,10 +1068,11 @@ rcVarToNativeC : {auto a : Ref ArgCounter Nat}
 -- otherwise unbox a literal C `NULL`, straight into a null-pointer
 -- dereference in the runtime accessor -- a real crash this exact
 -- pattern used to hit before this clause existed.
-rcVarToNativeC _ RCNull = pure "0"
+rcVarToNativeC _ RCNull = pure ("0", [])
 rcVarToNativeC ty l = do
     rep <- repOfLocal l
     inlined <- inlineExprFor l
+    let (exprOrVar, pending) = fromMaybe (varName l, []) inlined
     pure $ case rep of
                 -- Unreachable in practice: a non-native-eligible RCConst
                 -- (the only new source of an RBoxed `inlined`) is never a
@@ -1059,8 +1080,8 @@ rcVarToNativeC ty l = do
                 -- native-eligible types to begin with) -- guarded anyway
                 -- for the same reason `nativeCType`/`nativeMk`/
                 -- `nativeUnbox`'s own catch-all cases are.
-                RBoxed => nativeUnbox ty (fromMaybe (varName l) inlined)
-                _ => fromMaybe (varName l) inlined
+                RBoxed => (nativeUnbox ty exprOrVar, pending)
+                _ => (exprOrVar, pending)
 
 ||| The reuse-reservation C variable's name for scrutinee `sc` -- a pure,
 ||| deterministic function of `sc`'s own id, computed identically
@@ -1176,6 +1197,31 @@ finalizeSink fc (SinkVar True target) valStr = emit fc "IDRIS2RC2_Value * \{targ
 finalizeSink fc (SinkVar False target) valStr = emit fc "\{target} = \{valStr};"
 finalizeSink fc (SinkReturn _) valStr = emit fc "return \{valStr};"
 
+||| As `finalizeSink`, but also discharges `drop` (already-rendered
+||| `varName`s, `postDrop`-style) immediately after `valStr` has actually
+||| been embedded in a statement -- the canonical read-before-drop rule
+||| (see `Compiler.RC2.Emit`'s `emitRC` doc comment). A `SinkReturn` has
+||| no statement position after it for the drop to land in (same problem
+||| `emitNativeReturn` solves for a native return), so a non-empty `drop`
+||| captures `valStr` into a scratch temporary first. Was duplicated
+||| between `emitAppNameRepInto` and `emitAppFFIInlineInto` before both
+||| were rewritten to share this.
+export
+finalizeSinkWithDrop : {auto a : Ref ArgCounter Nat}
+                     -> {auto oft : Ref OutfileText Output}
+                     -> {auto il : Ref IndentLevel Nat}
+                     -> FC -> Sink -> String -> List String -> Core ()
+finalizeSinkWithDrop fc sink valStr [] = finalizeSink fc sink valStr
+finalizeSinkWithDrop fc sink valStr drop = case sink of
+    SinkReturn _ => do
+        tmp <- getNewVarThatWillNotBeFreedAtEndOfBlock
+        emit fc "IDRIS2RC2_Value * \{tmp} = \{valStr};"
+        removeVars drop
+        emit fc "return \{tmp};"
+    _ => do
+        finalizeSink fc sink valStr
+        removeVars drop
+
 ||| Whether a case's alts need `else`-chaining at all. Every branch
 ||| reached under `SinkReturn` is guaranteed (inductively, via
 ||| `emitInto`'s own dispatch -- see its doc comment) to end in either
@@ -1265,7 +1311,7 @@ makeClosureInto : {auto a : Ref ArgCounter Nat}
                 -> {auto _ : Ref ConstDef (SortedMap Constant ConstDef)}
                 -> {auto cc : Ref ConstConDef (SortedMap RCLocal String, List String)}
                 -> {auto r : Ref RepMap (SortedMap Int Rep)}
-                -> {auto lm : Ref InlineMap (SortedMap Int String)}
+                -> {auto lm : Ref InlineMap (SortedMap Int (String, List String))}
                 -> FC
                 -> (declare : Bool)
                 -> (target : String)
@@ -1279,8 +1325,9 @@ makeClosureInto fc declare target n args missing = do
     emit fc "\{decl}\{target} = (IDRIS2RC2_Value *)idris2rc2_mkClosure((IDRIS2RC2_Value *(*)())\{cName n}, \{show $ nargs + missing}, \{show nargs});"
     let arglist = "((IDRIS2RC2_Closure*)\{target})->args"
     _ <- foldlC (\k, v => do
-        vStr <- rcVarToBoxedC v
+        (vStr, pending) <- rcVarToBoxedC v
         emit EmptyFC $ "\{arglist}[\{show k}] = \{vStr};"
+        removeVars pending
         pure (S k)) 0 args
     pure ()
 
@@ -1295,7 +1342,7 @@ makeClosure : {auto a : Ref ArgCounter Nat}
             -> {auto _ : Ref ConstDef (SortedMap Constant ConstDef)}
             -> {auto cc : Ref ConstConDef (SortedMap RCLocal String, List String)}
             -> {auto r : Ref RepMap (SortedMap Int Rep)}
-            -> {auto lm : Ref InlineMap (SortedMap Int String)}
+            -> {auto lm : Ref InlineMap (SortedMap Int (String, List String))}
             -> FC
             -> Name
             -> List RCLocal
@@ -1321,7 +1368,7 @@ buildClosureIntoSink : {auto a : Ref ArgCounter Nat}
                      -> {auto _ : Ref ConstDef (SortedMap Constant ConstDef)}
                      -> {auto cc : Ref ConstConDef (SortedMap RCLocal String, List String)}
                      -> {auto r : Ref RepMap (SortedMap Int Rep)}
-                     -> {auto lm : Ref InlineMap (SortedMap Int String)}
+                     -> {auto lm : Ref InlineMap (SortedMap Int (String, List String))}
                      -> FC -> Sink -> Name -> List RCLocal -> Nat -> Core ()
 buildClosureIntoSink fc (SinkVar declare target) n args missing =
     makeClosureInto fc declare target n args missing
@@ -1413,18 +1460,24 @@ conAltCondExpr sc' (MkRConAlt name coninfo tag args body) = do
 ||| possible `if (...) { ...; return ...; } ...; return ...;` shape,
 ||| and a single-alt case with no default (only one constructor is even
 ||| possible) collapses further still, to no `if` at all.
+||| `condExpr`'s own second component is any pending drop its own
+||| condition string owes (InlineMap-sourced, see `rcVarToNativeC`'s own
+||| doc comment) -- discharged right after the condition is actually
+||| embedded in the `if (...)` below, the canonical read-before-drop
+||| timing (see `Compiler.RC2.Emit`'s `emitRC` doc comment).
 export
 emitAltChain : {auto oft : Ref OutfileText Output}
             -> {auto il : Ref IndentLevel Nat}
-            -> Sink -> (alt -> Core String) -> (alt -> Core ()) -> Maybe (Core ()) -> List alt -> Core ()
+            -> Sink -> (alt -> Core (String, List String)) -> (alt -> Core ()) -> Maybe (Core ()) -> List alt -> Core ()
 emitAltChain sink condExpr renderBody renderDefault alts = do
     let chained = chainsWithElse sink
     let (condAlts, tailAlt) = case (renderDefault, splitLast alts) of
              (Nothing, Just (initAlts, lastAlt)) => (initAlts, Just lastAlt)
              _ => (alts, Nothing)
     finalEls <- foldlC (\els, alt => do
-        cond <- condExpr alt
+        (cond, pending) <- condExpr alt
         emit emptyFC "\{els}if (\{cond}) {"
+        removeVars pending
         increaseIndentation
         renderBody alt
         decreaseIndentation
