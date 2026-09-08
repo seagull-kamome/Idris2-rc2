@@ -504,18 +504,19 @@ data RepMap : Type where
 --      let, purely for ANF shape; there's no sharing/evaluation-order
 --      reason to actually declare a C variable for a literal).
 --   2. A native op Compiler.RC2.RC's `annotate` decided is `RInlineNative`
---      (see Rep's own doc comment): no Boxed operands at all, and used
---      exactly once. Restricting to zero Boxed operands is what makes
---      this always safe to defer: every value such an op reads is
---      either another already-computed, stable native local (a
---      declared `var_N`, or itself a further InlineMap entry, so
---      transitively still never a Boxed read) or a literal -- nothing
---      that a dup/drop anywhere else in the function could invalidate
---      by the time the deferred read actually happens. Restricting to
---      exactly one use is what keeps this free -- inlining a multi-use
---      value would duplicate its computation. Unlike case 1 (a Phase 1
---      decision), this one is decided by Phase 2 -- postDrop/use-counts
---      aren't known yet during Phase 1's own conversion.
+--      (see Rep's own doc comment): used exactly once, which is what
+--      keeps this free -- inlining a multi-use value would duplicate its
+--      computation. Unlike case 1 (a Phase 1 decision), this one is
+--      decided by Phase 2 -- postDrop/use-counts aren't known yet during
+--      Phase 1's own conversion. Any Boxed operand the op itself still
+--      reads (`ROp.postDrop`) is stashed as this entry's own pending
+--      drop list alongside its expression text -- rather than requiring
+--      zero Boxed operands to defer safely, `rcVarToBoxedC`/
+--      `rcVarToNativeC` (the only readers of an entry, see their own
+--      doc comments) hand that pending list back to *their* own caller,
+--      which is what finally discharges it once the deferred read
+--      actually happens -- see `Compiler.RC2.RC`'s `inlineableRep` doc
+--      comment for the full reasoning.
 -- Consulted by rcVarToNativeC/rcVarToBoxedC so *uses* of such a local
 -- inline its expression text directly instead of reading back a
 -- pointless `var_N`.

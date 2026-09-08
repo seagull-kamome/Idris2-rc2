@@ -938,6 +938,47 @@ RCLocal」で一度却下された`RCStructField`案と全く同じ問題(RCLoca
 pendingリストを伝播させる形にすると、49箇所全てで「ここでdropして
 よいか」を個別に精査する規模の変更になる。着手するかは保留。
 
+**追記2(実装した)**: 上記の懸念(49箇所への影響)を検証した結果、
+実際に型変更の直接波及を受けたのは`rcVarToBoxedC`/`rcVarToNativeC`の
+呼び出し元(実質約30箇所、間接的に`emitRC`自身の契約も道連れになった
+-- 後述)にとどまった。`InlineMap`を`SortedMap Int (String, List
+String)`(式文字列+pendingのペア)に変更し、`inlineNative`は登録時に
+即`removeVars`せずpendingをそのまま保存、`rcVarToBoxedC`/
+`rcVarToNativeC`はInlineMapから読んだpendingを自分の戻り値として
+呼び出し元に返すよう変更。1点、当初の見積もりに無かった追加の波及が
+判明した: `emitRC`自身がいくつかのケース(RApp/RConなど)で複数の
+`rcVarToBoxedC`呼び出し結果を*まだCの文として発行していない式*として
+組み合わせてから`pure`で返しており、この場合pendingを安全に discharge
+する場所が`emitRC`の外(呼び出し元の`emitInto`)にしかない。対策として
+`emitRC`に`Sink`を渡し、内部で(新設の`finalizeSinkWithDrop`まで)
+完結させる設計に変更 -- `emitAppNameRepInto`が既に持っていた「postDrop
+空なら素通し、非空かつSinkReturnなら一時変数経由」というロジックを
+共通ヘルパーとして切り出し、`emitRC`にも同じものを適用した。これに
+より`emitRC`の外部呼び出し元は`emitInto`内の1箇所のみで、二次波及は
+そこで止まった。`RC.idr`側は`inlineableRep`のパターンを`ROp _ _ _ _
+[]`から`ROp {}`(任意のpostDrop)に緩和するだけで済んだ。
+
+フルテスト(111 passed, 0 failed, valgrind clean)は全て通過 -- ただし
+1件、`refc-suite`の`callingConvention`が生成Cコードの意図した変化
+(ループ内の`op +`が新たに単一使用インライン化された)で期待値
+ファイルとの単純diffが不一致になったため、その`expected`を更新して
+対応(バグではなく、この変更が実際に効いている証拠)。
+
+**実際に`postDrop != []`のROpがInlineNativeへ昇格される例**(狙って
+`--directive dumprcexpr`で確認)は、Idris2フロントエンドの変換(let-
+lifting、`Compiler.RC2.Loop`のネイティブシャドウ昇格)との相互作用で
+見た目より起こしにくいと判明: `annotate`(Phase 2)は`Compiler.RC2.Loop`
+より前に走るため、`RLoop`/`RLoopContinue`化される前の素の再帰呼び出し
+形に対して`inlineableRep`を判定しており、`Loop`が後からその変数を
+ループパラメータとして扱い直す際に`RInlineNative`判定を`RNative`へ
+差し戻すケースを実際に確認した(`v5 : Native Int`のまま、直接の`ROp`
+かつ1回しか使われないのに昇格されない)。一方、非ループの単純な関数
+(`callingConvention`の`sumLoop`)では実際に発火し、正しく動作している。
+実利(削減できるC一時変数の実数)を計測するところまでは踏み込んでおら
+ず、`Loop.idr`側の相互作用まで手を入れるかは別判断。安全性(テスト
+green、valgrind clean)は確保済みなのでこの状態でコミット、実利計測や
+`Loop.idr`側の追随は必要になった時点で再訪する。
+
 **さらに調査(Emit.idr/EmitUtil.idr全体のmutual簡略化を検討)**:
 上記の作業前提としてEmit.idr(2102行)/EmitUtil.idr(1630行)自体の
 簡略化を検討したが、結論は「大掛かりな着手は見送り」。EmitUtil.idr

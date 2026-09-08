@@ -526,23 +526,30 @@ mutual
         ||| Promote a plain `RNative ty` to `RInlineNative ty` once ownership is
         ||| fully known (called from `annotate`'s own `RLet` case, after both
         ||| `valueRC`'s `postDrop` and `bodyRC` are already computed): safe and
-        ||| worthwhile exactly when `valueRC` is a bare native op with no Boxed
-        ||| operands at all (`ROp`'s own `postDrop == []` -- the exact set of
-        ||| Boxed operands it needs dropped, see its own doc comment; empty
-        ||| means every operand is either `natives`-listed or an `RCConst`, so
-        ||| nothing a dup/drop elsewhere could invalidate by the time a deferred
-        ||| read happens) and `var` is referenced exactly once in `bodyRC`
-        ||| (otherwise inlining would duplicate the op's computation). Anything
-        ||| else (a literal-valued let, a multi-use one, one with a Boxed
-        ||| operand, or an already-`RBoxed` one) passes `rep` through unchanged
-        ||| -- this only ever *narrows* an existing `RNative`, never invents a
-        ||| new native classification `Types.repOf` didn't already decide.
-        ||| Moves what used to be `Emit.idr`'s own `tryInlineNativeOp` (a
-        ||| `countUsesR` tree-walk redone at *emission* time on every RLet) into
-        ||| a single Phase-2 decision instead, mirroring `ROp.postDrop` and
-        ||| reuse-in-place's own earlier elevations.
+        ||| worthwhile exactly when `valueRC` is a bare native op and `var` is
+        ||| referenced exactly once in `bodyRC` (otherwise inlining would
+        ||| duplicate the op's computation). Anything else (a literal-valued
+        ||| let, a multi-use one, or an already-`RBoxed` one) passes `rep`
+        ||| through unchanged -- this only ever *narrows* an existing
+        ||| `RNative`, never invents a new native classification `Types.repOf`
+        ||| didn't already decide. Moves what used to be `Emit.idr`'s own
+        ||| `tryInlineNativeOp` (a `countUsesR` tree-walk redone at *emission*
+        ||| time on every RLet) into a single Phase-2 decision instead,
+        ||| mirroring `ROp.postDrop` and reuse-in-place's own earlier
+        ||| elevations.
+        |||
+        ||| `ROp`'s own non-empty `postDrop` (any Boxed operand it reads and
+        ||| owes a drop -- see its own doc comment) is no obstacle here: it
+        ||| just rides along on `var`'s single deferred use like the rest of
+        ||| the op's own expression text. `Compiler.RC2.EmitUtil`'s InlineMap
+        ||| stashes it alongside that text (`rcVarToBoxedC`/`rcVarToNativeC`'s
+        ||| own doc comments), and the deferred use is exactly where it gets
+        ||| discharged -- the canonical read-before-drop rule
+        ||| (`Compiler.RC2.Emit`'s `emitRC` doc comment) holds regardless of
+        ||| whether the op's own C statement was emitted eagerly (an ordinary
+        ||| `RNative` `RLet`) or deferred to its single use (`RInlineNative`).
         inlineableRep : Rep -> RCExp -> Int -> RCExp -> Rep
-        inlineableRep (RNative ty) (ROp _ _ _ _ []) var bodyRC =
+        inlineableRep (RNative ty) (ROp {}) var bodyRC =
             if countUsesR (RCLoc var) bodyRC == 1 then RInlineNative ty else RNative ty
         inlineableRep rep _ _ _ = rep
 

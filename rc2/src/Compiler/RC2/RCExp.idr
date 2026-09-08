@@ -171,10 +171,13 @@ Show RCLocal where
 ||| directly on the RLet node (see `doc/reading-the-ir.md`'s
 ||| "## 4. Representation" and `doc/native-type-inference.md`).
 ||| `RInlineNative` is a Phase 2 (`annotate`) refinement of a plain
-||| `RNative`: a native op with no Boxed operands (`ROp.postDrop == []`),
-||| used exactly once, safe to splice inline instead of declaring a C
-||| variable -- Phase 1 never produces this directly, only Phase 2
-||| promotes into it.
+||| `RNative`: a native op used exactly once, safe to splice inline
+||| instead of declaring a C variable -- Phase 1 never produces this
+||| directly, only Phase 2 promotes into it. Any Boxed operand the op
+||| itself still reads (`ROp.postDrop`, see its own doc comment) rides
+||| along with the deferred splice -- `Compiler.RC2.RC`'s own
+||| `inlineableRep` doc comment has the full reasoning for why that's
+||| still safe.
 public export
 data Rep = RBoxed | RNative PrimType | RInlineNative PrimType
 
