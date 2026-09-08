@@ -892,10 +892,40 @@ whole program optimization を諦めてモジュール毎にコード生成を�
 トップレベル定義に 0 をつける。
 実行時に存在しないからいいや、ではなく存在しない事を保証する
 
-### RCExp の ROp はRLocalに持っていく
-副作用を持たず、末尾位置にあってもなんの問題も無いのでRLocalに持っていく事で
-C に生成される変数を削減する。
-  - InlineNative もいらなくなるのでは
+### RCExp の ROp はRLocalに持っていく -- 調査済み、却下
+
+調査の結果、これは冒頭の「Architecture: RCLocal can't hold another
+RCLocal」で一度却下された`RCStructField`案と全く同じ問題(RCLocalへの
+ネスト)であり、しかも規模・リスクの両面でそれを明確に上回ることが
+判明した:
+
+- `RCStructField`案は「1個のネストしたRCLocal、副作用なし」だったが、
+  `ROp`は`Vect arity RCLocal`全体をネストし、しかもROpが自分自身を
+  再帰的に埋め込め、`postDrop`という実効果(参照カウント解放)を持つ
+  フィールドまで持つ。`RCExp.idr`の`freeLocalsR`/`countUsesR`、
+  `RC.idr`の`splitBorrows`/`dropIfLastUse`/`boxedOperands`/`annotate`、
+  `Sink.idr`の`genuinelyUsedR`、`Loop.idr`の`renameLocal`(サイレントな
+  リネーム漏れという新種のバグ経路が判明)、`ConAltNative.idr`/
+  `DualABI.idr`の各所――ほぼ全パスで実質的な書き換えが必要。
+- 調査で新たに判明した障害: `EmitUtil.idr`の`rcVarToBoxedC`/
+  `rcVarToNativeC`は「文を発行できない純粋文字列関数」という契約で
+  20箇所以上から呼ばれており、ROpをネストした値として埋め込むと
+  この契約と正面衝突する。過去に実際踏んだ`postDrop`順序バグ
+  (`doc/native-type-inference.md`のBug #4、use-after-free)を埋め込み
+  位置の数だけ再現しかねない領域。
+- `inlineableRep`(`RC.idr:544-547`)の「厳密に1回しか使われない」検証は
+  ROp案でも消えず、単に検証の置き場所が変わるだけ――「InlineNativeが
+  不要になる」という期待は成立しない。
+
+**朗報**: 目的(Cに生成される変数の削減)自体は、`postDrop==[]`な
+ネイティブ演算チェーンについては既存の`inlineableRep`+`InlineMap`
+機構(`RC.idr`/`EmitUtil.idr`/`Emit.idr`)で既に達成済みと確認した。
+残る唯一の実質的ギャップは、`inlineableRep`が`postDrop == []`を
+要求する(`RC.idr:545`)ため**Boxedオペランドを1つでも読むROpは、
+使用回数が1回でも絶対にインライン化されない**という制約。これは
+`RCLocal`型自体には触れず、`RC.idr`の`inlineableRep`と`Emit.idr`の
+pending-drop伝播ロジックだけに閉じた、桁違いに小さい改修で狙える
+可能性がある -- 次にやるべきこと。
 
 ### Reuse解析とannotation(所有権挿入)の配置 -- 調査済み、方針決定
 
