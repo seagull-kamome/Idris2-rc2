@@ -897,12 +897,47 @@ whole program optimization を諦めてモジュール毎にコード生成を�
 C に生成される変数を削減する。
   - InlineNative もいらなくなるのでは
 
-### Reuse解析とannotation(所有権挿入)はもっと近くに置く
-Reuseは小さいのでRC.idrに混ぜてしまってもよい。
-いっそ同時にやって走査パスを減らせないものか。
+### Reuse解析とannotation(所有権挿入)の配置 -- 調査済み、方針決定
 
-逆にannotaionとReuse解析は独立パスにしてタイミングをもっと遅らせたほうが全体的に
-楽か？所有権がネックになっているパスより安全に後ろに持っていけるか？
+3案を調査した:
+
+1. **ReuseをRC.idrのannotateに融合** -- 却下。`Reuse.idr`の核心
+   (`resolveAlt`/`tryConsume`)は`annotate`が計算したRDropの値そのものを
+   読む後処理であり(`peelDrop`の不変条件)、技術的には融合可能だが
+   削減できるのは1定義あたり高々1walkのみ。専用モジュール・専用バグ史
+   ドキュメントの単一責務性を失うコストの方が大きく、見合わない。
+2. **annotate+Reuseをより後ろ(ConAltNative後、Loop/Sink後)に動かす**
+   -- 却下。`ConAltNative`は`RReuseOffer`の一意性チェックが先に確定
+   していることが前提(過去に順序を誤りvalgrindでリークが実証された
+   バグ史あり、`doc/con-alt-native.md`のBug#2)。`Loop.idr`の
+   `isInvariantExpr`はループ不変式ホイストの安全ガードとして
+   `RCon.reuseFrom == Nothing`を直接読んでおり、Reuseが後回しだと
+   このガードが常に無意味になる(`Loop.idr:713-716,727`)。
+3. **所有権解析(annotate)全体を、ConAltNative/MutualLoop/Loop/Sink/
+   DualABIといった構造変換パスより後ろに送る**(「構造変換パスが所有権
+   情報を壊さないよう気を遣う負担自体を無くす」という発想) -- 6パス
+   個別に「所有権情報を読んで判断に使っているか、単に構造として保持
+   しているだけか」を精査した結果、`Loop`の`reuseFrom`依存(上記2と
+   同じ)と`Sink`の`postDrop`/dup内容依存(`Sink.idr:120-135`、
+   `doc/branch-sinking.md`の"second real bug"がまさにこれの読み落とし
+   によるvalgrind確認済みリーク)という2つの真の消費点があるため、
+   丸ごと後回しにする強い形は不成立。`MutualLoop`/`DualABI`は完全に
+   所有権非依存(現状のままでよい)。
+
+**見つかった実利のある案(未実装、次にやるべきこと)**: `ConAltNative`
+の適格性判定自体はPhase 1出力だけで完結し所有権情報に一切依存しない。
+現在`ConAltNative`が抱える`peelWrappers`(RDup/RDrop/RFree/RReuseOffer/
+RReleaseReuseを踏み越える処理)と`reannotateFieldOwnership`/
+`finalizeBranch`(annotateの規則をそのまま再実装したミニannotate、
+約120行、`ConAltNative.idr:43-54,136-254`)は、「ConAltNativeが
+annotateの*後*に走るせいで、既に決まった所有権を壊さず部分的に
+再計算する」ためだけに存在する。**`ConAltNative`をannotate/Reuseより
+"前"(normalize直後)に動かせば**、この約120行のミニannotate再実装が
+不要になり、`doc/con-alt-native.md`のBug#1・Bug#2の根本原因
+(「所有権決定後に構造を弄る」という順序)そのものが解消される可能性が
+ある。ただし`RReuseOffer`最外殻配置の構造的前提が新しい順序でも
+保たれるかは実装してvalgrindで再検証する必要あり -- 別ブランチで
+実験実装して確認する。
 
 ### 遅延評価引数を持つ小さい関数のインライン展開 -- 調査済み、`&&`/`||`は対応不要
 `&&`/`||`(`Lazy Bool`引数)がインライン展開されずクロージャ化されるのでは、という
