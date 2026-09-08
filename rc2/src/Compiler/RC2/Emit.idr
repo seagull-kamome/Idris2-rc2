@@ -309,6 +309,14 @@ emitAppFFIInlineInto : {auto a : Ref ArgCounter Nat}
                      -> {auto fa : Ref LoopParams (List (Int, Rep))}
                      -> {auto sd : Ref StructDefs (SortedMap String (List (String, CFType)))}
                      -> Sink -> TailPositionStatus -> FC -> List String -> List CFType -> CFType -> List RCLocal -> List RCLocal -> Core ()
+||| Canonical statement of the `postDrop` read-before-drop rule every
+||| other `postDrop`-consuming site in this file points back to here:
+||| `postDrop` (`Compiler.RC2.RC`'s `annotate`) already lists exactly
+||| which Boxed operand/argument locals need dropping once whichever
+||| statement actually reads them has been emitted -- just lower it in
+||| place, right after that statement, never re-deriving which locals
+||| need it. Get the ordering backwards (drop before the read is
+||| actually emitted) and it's a use-after-free.
 emitRC : {auto a : Ref ArgCounter Nat}
        -> {auto oft : Ref OutfileText Output}
        -> {auto il : Ref IndentLevel Nat}
@@ -407,15 +415,14 @@ mutual
                  RInlineNative ty => (\s => (nativeCType ty ++ " ", s)) <$> rcVarToNativeC ty v
             emit fc "\{cty}\{t} = \{valStr};"
             pure (paramId, t)) (zip newArgs loopParams)
-        -- `postDrop`: every still-Boxed argument that was just read
-        -- *natively* above (a `Native`/`RInlineNative` loop param slot,
-        -- fed by a Boxed source -- e.g. a `case`-valued let, which
-        -- `Types.repOf` never promotes to Native on its own even when
-        -- every branch is native-eligible) needs its own Boxed source
-        -- dropped now that it's been read, the same "read first, drop
-        -- after" ordering `ROp`/`RCmpCase`'s own `postDrop` already
-        -- follow -- there's no separate statement position to hang an
-        -- ordinary wrapping `drop` around a native-context read. See
+        -- `postDrop` (see emitRC's own doc comment for the rule):
+        -- every still-Boxed argument just read *natively* above (a
+        -- `Native`/`RInlineNative` loop param slot fed by a Boxed
+        -- source -- e.g. a `case`-valued let, which `Types.repOf`
+        -- never promotes to Native even when every branch is
+        -- native-eligible) needs its own source dropped now, since
+        -- there's no separate statement position to hang an ordinary
+        -- wrapping `drop` around a native-context read. See
         -- `RLoopContinue`'s own doc comment (RCExp.idr) for the real
         -- leak this closes.
         removeVars (varName <$> postDrop)
@@ -717,9 +724,8 @@ mutual
     ||| Lower a fused comparison branch (see RCExp.idr's own doc comment
     ||| on RCmpCase and `nativeCmpExpr`): the comparison is evaluated once
     ||| into a raw C `int` (no heap allocation for the Bool it would
-    ||| otherwise be), `postDrop` (Compiler.RC2.RC's `annotate`) is
-    ||| lowered immediately after -- same ordering rule as ROp's own
-    ||| postDrop, see its doc comment -- and then exactly one of the two
+    ||| otherwise be), `postDrop` is lowered immediately after (see
+    ||| emitRC's own doc comment for the rule) -- and then exactly one of the two
     ||| branches runs, each writing straight into `sink` (resolved once,
     ||| before either branch -- see `resolveSink`) instead of a throwaway
     ||| `switchReturnVar`. Under `SinkReturn`, `whenTrue` is guaranteed to
@@ -1070,16 +1076,13 @@ mutual
                  in pure (retExpr, map varName postDrop ++ boxedArgDrop)
     emitNativeValue ty (ROp fc _ op args postDrop) = do
         argStrs <- rc2traverseVect (\v => rcVarToNativeC (opArgTyFor ty op) v) args
-        -- `postDrop` is exactly the Boxed operands this op needs dropped
-        -- (Compiler.RC2.RC's `annotate` already decided this, same as
-        -- emitRC's boxed-ROp case) -- a native-result op still reads
-        -- them (via rcVarToNativeC's unboxing above) and owes them that
-        -- same cleanup, we just can't emit it *here*: unlike emitRC, our
-        -- caller hasn't necessarily emitted the statement that actually
-        -- performs the read yet (we only return an inline expression
-        -- string), so dropping now could run before that read happens.
-        -- Hand `postDrop` back so whoever *does* emit that statement can
-        -- drop right after it -- see this function's own doc comment.
+        -- `postDrop` (same meaning as emitRC's boxed-ROp case, see its
+        -- own doc comment) -- a native-result op still owes these
+        -- operands the same cleanup, but can't drop them *here*: unlike
+        -- emitRC, our caller hasn't necessarily emitted the statement
+        -- that actually reads them yet (we only return an inline
+        -- expression string). Hand `postDrop` back so whoever *does*
+        -- emit that statement can drop right after it.
         pure (nativeOpExpr op argStrs, map varName postDrop)
     emitNativeValue ty (RPrimVal fc c) = pure (nativeLitExpr c, [])
     -- RC.idr's own ANF-normalisation wraps any non-trivial operand (e.g. a
@@ -1269,13 +1272,11 @@ emitRC (ROp fc _ op args postDrop) _ = do
     let argStrs = map fst argsWithFresh
     let resultVar = "primVar_" ++ !(getNextCounter)
     emit fc $ "IDRIS2RC2_Value *" ++ resultVar ++ " = " ++ cOp op argStrs ++ ";"
-    -- `postDrop` (Compiler.RC2.RC's `annotate`) already lists exactly
-    -- which *existing* Boxed operand locals need dropping now that
-    -- this op is done reading them -- just lower it, no re-deriving
-    -- here. Separately, any ephemeral box `boxOpArg` had to fabricate
-    -- for a Native operand is dropped too -- `annotate` runs before
-    -- `Compiler.RC2.Loop`'s native-shadow promotion ever decides a
-    -- local is Native, so it can't have known about these.
+    -- `postDrop`: see emitRC's own doc comment. Separately, any
+    -- ephemeral box `boxOpArg` had to fabricate for a Native operand
+    -- is dropped too -- `annotate` runs before `Compiler.RC2.Loop`'s
+    -- native-shadow promotion ever decides a local is Native, so it
+    -- can't have known about these.
     --
     -- `isReuseConsumingOp op` skips both: its own runtime primitive
     -- (rc2/support/rc2/numeric.h) now consumes and disposes of every
@@ -1313,10 +1314,8 @@ emitRC (RExtPrim fc _ p args postDrop) _ = do
     -- them; only after that's emitted is it safe to drop them.
     let resultVar = "extprimVar_" ++ !(getNextCounter)
     emit fc $ "IDRIS2RC2_Value *" ++ resultVar ++ " = idris2rc2_\{cName p}("++ showSep ", " argStrs ++");"
-    -- `postDrop` (Compiler.RC2.RC's `annotate`) already lists exactly
-    -- which *existing* Boxed argument locals need dropping now that
-    -- this call is done reading them -- just lower it, no re-deriving
-    -- here (same as the ROp case above).
+    -- `postDrop`: see emitRC's own doc comment (same rule as the ROp
+    -- case above).
     removeVars $ map varName postDrop
     pure resultVar
 
