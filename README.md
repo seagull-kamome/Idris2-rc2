@@ -386,6 +386,49 @@ separate static lib/CFLAGS/LDFLAGS wiring needed). See
 `rc2/doc/directives.md` for the full directive list, the two
 `inlineRuntime` landmines, and why each exists.
 
+## Incremental compilation (`--inc rc2`)
+
+RefC has no incremental compilation support at all -- every build is
+whole-program, from scratch, every time. rc2 does: it implements
+upstream's own `Codegen.incCompileFile`/`incExt` mechanism (the same
+one Chez uses), so `idris2-rc2 --cg rc2 --inc rc2 -o program Program.idr`
+compiles each module to its own `.o` once and reuses it on later
+builds instead of regenerating C for the whole program every time.
+Verified against a full rebuild of `prelude`/`base`/`linear`/`contrib`/
+`network` (272 modules, zero missing incremental data) plus real
+executables -- including one using `Data.List`/`Data.SortedMap`, not
+just a bare `putStrLn` -- built and run correctly with `--inc rc2`,
+and a single-file edit-and-rebuild only recompiling that one file.
+
+This needed real changes beyond just wiring the hook up, since rc2's
+own C emission had only ever been exercised against a whole-program
+`defs` list (every whole-program pass's own doc comments already
+assumed it, several implicitly): forward-declaring a constructor/
+function a module references but doesn't itself own, dropping (rather
+than hard-erroring on) a `%foreign` declaration or a struct
+`getField`/`setField` wrapper that only ever worked because
+whole-program dead-code elimination silently removed it first,
+archiving accumulated `.o` files instead of linking them directly
+(otherwise one module needed for any single reason drags in every
+*other* function it happens to define too), and giving one
+MutualLoop-internal name generator per-module-unique naming instead of
+assuming a single whole-program counter. Full writeup -- every bug
+found, several dead ends, and a cascading-fragility finding in
+upstream's own incremental machinery that isn't rc2-specific at all --
+in `rc2/doc/incremental-compile.md`.
+
+One real limitation, not planned to be lifted soon: **no C struct
+support (`getField`/`setField`/`Struct`) under `--inc rc2`** -- those
+wrappers are only well-formed once inlined into their own caller,
+which is fundamentally incompatible with compiling them once as a
+standalone reusable object file. A program using them fails to *link*
+when built incrementally (an ordinary undefined-reference error, not a
+crash or silent miscompile); whole-program compilation (the default)
+is completely unaffected. Also: real day-to-day benefit needs
+`prelude`/`base`/`contrib`/`network` themselves rebuilt with
+`--inc rc2` at least once (a one-time toolchain step, not needed
+per-project) -- see the doc's own "practical prerequisite" section.
+
 ## Status and scope
 
 Working external C backend, functionally correct against Idris2's own
@@ -395,11 +438,12 @@ reuse-in-place, native type inference (function-local and, via a dual
 calling convention, across ordinary call boundaries), self- and
 mutual-tail-call loop conversion with loop-invariant parameter/
 expression hoisting, branch-local sinking, whole-program inlining,
-constant folding, and `Data.Buffer`/`System.Clock`/the standard
-`network` package (rc2's own native `idrnet_*` port). See `TODO.md` for
-the current, actively-maintained list of known gaps and deliberately
-out-of-scope decisions (e.g. tail-position delegating calls staying
-boxed, a loop accumulator threaded only through a helper call staying
-boxed, native-shadow hoisting not reaching across a loop/dual-ABI
+constant folding, incremental compilation (see above), and
+`Data.Buffer`/`System.Clock`/the standard `network` package (rc2's own
+native `idrnet_*` port). See `TODO.md` for the current,
+actively-maintained list of known gaps and deliberately out-of-scope
+decisions (e.g. tail-position delegating calls staying boxed, a loop
+accumulator threaded only through a helper call staying boxed,
+native-shadow hoisting not reaching across a loop/dual-ABI
 boundary) -- each entry there explains what was tried, what was found,
 and why it stopped where it did.
