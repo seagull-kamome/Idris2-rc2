@@ -1711,35 +1711,6 @@ header = do
         ++ concat (map (\(fn, ty) => cTypeOfCFType ty ++ " " ++ fn ++ "; ") flds)
         ++ "} \{name};\n"
 
-||| Emits the generated program's own C `main()`, the process entry
-||| point that boxes nothing further and just calls
-||| `__mainExpression_0()` then trampolines its result. Skipped
-||| entirely by `generateCSourceFile` when `--directive nomain` /
-||| `%cg rc2 nomain` is in effect, so a `%export`ed program can be
-||| linked as a library into a hand-written C driver that supplies its
-||| own `main` instead, without a duplicate-symbol link error -- see
-||| `rc2/doc/export-support.md`'s own "Linking as a library" section
-||| and worked example.
-footer : {auto il : Ref IndentLevel Nat}
-      -> {auto f : Ref OutfileText Output}
-      -> {auto h : Ref HeaderFiles (SortedSet String)}
-      -> Core ()
-footer = do
-    emit EmptyFC """
-
-      // main function
-      int main(int argc, char *argv[])
-      {
-          \{ ifThenElse (contains "idris_support.h" !(get HeaderFiles))
-                        "idris2_setArgs(argc, argv);"
-                        ""
-          }
-          IDRIS2RC2_Value *mainExprVal = __mainExpression_0();
-          idris2rc2_trampoline(mainExprVal);
-          return 0;
-      }
-      """
-
 ||| Writes `ls` to `h`, throwing `FileErr outn err` on any failure --
 ||| unlike `System.File`'s own `HasIO`-polymorphic `fPutStrLn`, whose
 ||| `Either FileError ()` result the old single-shot write loop this
@@ -1972,7 +1943,25 @@ generateCSourceFile defs exports noMain injectedRuntime outn =
          put OutfileText DList.Nil
          emitExportWrapper n exportedCName fargs ret
          flushEmitBuffer outn h) exports
-     when (not noMain) footer
+     -- The process entry point: boxes nothing further, just calls
+     -- `__mainExpression_0()` then trampolines its result. Skipped
+     -- when `noMain` (see this function's own doc comment above for
+     -- why) so a `%export`ed program can link this `.c` as a library
+     -- alongside a caller-supplied `main` instead.
+     when (not noMain) $ emit EmptyFC """
+
+       // main function
+       int main(int argc, char *argv[])
+       {
+           \{ ifThenElse (contains "idris_support.h" !(get HeaderFiles))
+                         "idris2_setArgs(argc, argv);"
+                         ""
+           }
+           IDRIS2RC2_Value *mainExprVal = __mainExpression_0();
+           idris2rc2_trampoline(mainExprVal);
+           return 0;
+       }
+       """
      flushEmitBuffer outn h
      coreLift $ closeFile h
      log "compiler.refc" 10 $ "Generated C file " ++ outn
