@@ -21,6 +21,7 @@ module Compiler.RC2.DualABI
 -- `Compiler.RC2.MutualLoop`-merged-function exclusion Stage 3 needs
 -- (that doc's "A finding that changed Stage 3's own plan").
 
+import Compiler.Common
 import Compiler.RC2.RCExp
 import Compiler.RC2.Types
 import Compiler.RC2.Loop
@@ -284,7 +285,35 @@ anyNative _ = True
 ||| Every `MkRCForeign` def's own worker-table entry, if `fargs`/`ret`
 ||| have at least one `cfTypeNative`-eligible position -- eligibility is
 ||| decided by the type alone, no function body to analyse (see
-||| `doc/dual-abi.md`'s "Stage 3c": "Eligibility needs no analysis").
+||| `doc/dual-abi.md`'s "Stage 3c": "Eligibility needs no analysis") --
+||| *and* `ccs` actually carries a convention rc2 can use (`parseCC
+||| ffiTags ccs`). The second condition doesn't come up in whole-
+||| program compilation today (nothing calling such a declaration would
+||| still be present in `defs` at all by this point -- `defs` here is
+||| already upstream's own reachable-from-`main` set), but incremental
+||| compilation's own `toIR`-scoped `defs` (`Compiler.RC2.RC2.incCompile`)
+||| carries every declaration a module makes regardless of whether
+||| anything actually calls it, real convention or not -- see
+||| rc2/doc/incremental-compile.md's "Bugs found while implementing" for
+||| the concrete case (`Prelude.IO.prim__threadWait`, Chez/Scheme-only)
+||| this excludes. Skipping it here (rather than only in `Emit.idr`,
+||| where the same declaration's own dropped-if-unusable handling
+||| lives) matters because eligibility here runs *before* any call-site
+||| rewriting (Stage 4/5) -- without this check, a native-eligible-
+||| shaped call to a no-convention declaration would already have been
+||| rewritten into an `RAppFFIInline` node by the time `Emit.idr` ever
+||| sees it, which `Emit.idr`'s own per-declaration drop can no longer
+||| undo (that call site's own `resolveForeignTarget` would still try,
+||| and fail, to resolve a convention that was never there). Excluding
+||| it here instead means the call falls back to an ordinary `RAppName`/
+||| `RAppNameRep`, whose own callee resolution in `Emit.idr` already
+||| does the right thing in either mode: whole-program's own
+||| `collectDeclarations` still throws its usual immediately-
+||| attributable compile-time error if such a call is ever genuinely
+||| reachable (unaffected by this change, since that path was never
+||| about FFI-inlining specifically); incremental's own dropped-
+||| declaration/`externalFunctionRefsD` combination turns it into a
+||| link-time "undefined reference" instead, per that same doc.
 |||
 ||| Returns two maps from one traversal: keyed by the *original* name
 ||| (`applyCallSiteRewrite`'s own input, unchanged from Stage 4) and
@@ -309,7 +338,7 @@ ffiWorkerTable defs = do
     ffiEntry existingNames (n, MkRCForeign ccs fargs ret) =
         let argReps = map repOf fargs
             retRep = repOf (peelIORes ret)
-        in if not (any anyNative argReps) && not (anyNative retRep)
+        in if (not (any anyNative argReps) && not (anyNative retRep)) || not (isJust (parseCC ffiTags ccs))
               then pure ([], [])
               else do
                 workerName <- freshName "idris2rc2_ffiworker_" existingNames n

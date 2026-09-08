@@ -40,3 +40,24 @@ extern char const idris2rc2_constr_Integer[];
 extern char const idris2rc2_constr_Char[];
 extern char const idris2rc2_constr_String[];
 extern char const idris2rc2_constr____gt[];
+extern char const idris2rc2_constr__percentWorld[]; // see runtime.c's own comment
+IDRIS2RC2_Value *idris2rc2_freshWorld(void); // see runtime.c's own comment
+
+// idris2-src's own support/c headers are missing a handful of prototypes
+// for functions their own .c files implement just fine and libs/ own
+// %foreign declarations name directly (one-line upstream header omissions,
+// not missing symbols -- confirmed by grepping every support/c/*.c
+// definition against its own .h; a handful more turned up the same way but
+// aren't actually %foreign-referenced from anywhere in libs/, so aren't
+// declared here). Each compiles to an implicit-declaration error under
+// -Werror wherever nothing else already declared it first. Whole-program
+// compilation never notices (DeadCode/upstream's own reachability fetch
+// always removes an unused one first); --inc rc2 does, since it compiles
+// every module's own toIR regardless of local reachability -- see
+// rc2/doc/incremental-compile.md's "Major finding" section. Predeclared
+// here, same fix as idris2rc2_constr____gt above, rather than patching
+// idris2-src itself (out of scope for this project to maintain a fork of).
+int idris2_fileIsTTY(FILE *f);                    // support/c/idris_file.c
+int idris2_enableRawMode(void);                   // support/c/idris_support.c
+void idris2_resetRawMode(void);                   // support/c/idris_support.c
+void idrnet_free(void *ptr);                      // support/c/idris_memory.c

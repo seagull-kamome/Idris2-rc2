@@ -22,6 +22,7 @@ import Compiler.RC2.DeadCode
 import Compiler.RC2.DualABI
 import Compiler.RC2.DupMerge
 import Compiler.RC2.Emit
+import Compiler.RC2.EmitUtil
 import Compiler.RC2.Inline
 import Compiler.RC2.Pretty
 import Compiler.RC2.RC
@@ -39,6 +40,7 @@ import Core.CompileExpr
 import Core.Context
 import Core.Directory
 import Core.Env
+import Core.Name.Namespace
 import Core.Normalise
 import Core.Options
 import Core.Value
@@ -116,11 +118,51 @@ foldConstProgram defs0 = go maxConstFoldIterations empty defs0
               then folded
               else go fuel table' folded
 
-toRCDefs : {auto c : Ref Ctxt Defs} -> List String -> (roots : List Name) -> List (Name, LiftedDef) -> Core (List (Name, RCDef))
-toRCDefs disabled roots lds0 = do
+||| The stage names `--directive noXXX`/`%cg rc2 noXXX` can disable
+||| (`rc2/doc/directives.md`) -- factored out so whole-program
+||| `compileExprWhole` and per-module `incCompile`
+||| (rc2/doc/incremental-compile.md) derive their own `disabled` list
+||| from the very same set instead of two literals that could drift
+||| apart.
+disableableStageNames : List String
+disableableStageNames =
+    ["noinline", "noconstfold", "noconaltnative", "nomutualloop", "noloop", "nosink", "nodualabi", "nodeadcode", "nodupmerge"]
+
+||| `incremental`: `Compiler.RC2.RC.toRCDefPreFold` throws (tagged
+||| `notInlinedStructFieldMarker`) for a definition like
+||| `System.FFI.getField` itself -- one that only works once its own
+||| caller inlines it down to a literal struct/field name, never as a
+||| standalone compiled function (rc2/doc/incremental-compile.md's "no
+||| C struct support under --inc rc2"). Whole-program compilation
+||| (`incremental = False`) never actually throws this in practice
+||| (such a definition's own un-inlined form was already excluded by
+||| upstream's own reachable-from-`main` fetch before `toRCDefs` ever
+||| sees it) -- `False` here preserves that exactly, an uncaught
+||| `InternalError` if it's ever somehow reached. Incremental mode's
+||| own `toIR`-scoped `defs` has no such luxury (every definition a
+||| module makes is compiled for real, reachable or not) -- `True`
+||| catches exactly that one marker and drops the offending definition
+||| from the result instead of aborting the whole module's compile,
+||| same "unimplementable, fails at link time instead" treatment
+||| `Emit.idr`'s own `hasUsableForeignImpl` gives an unusable `%foreign`
+||| declaration.
+toRCDefs : {auto c : Ref Ctxt Defs} -> List String -> (incremental : Bool) -> (roots : List Name) -> List (Name, LiftedDef) -> Core (List (Name, RCDef))
+toRCDefs disabled incremental roots lds0 = do
     lds <- if "noinline" `elem` disabled then pure lds0 else logTime 2 "rc2: Inline" $ applyInlineLifted lds0
     preFolded <- logTime 2 "rc2: RC normalize" $
-                   traverse (\(n, ld) => do d <- toRCDefPreFold n ld; pure (n, d)) lds
+                   if not incremental
+                      then traverse (\(n, ld) => do d <- toRCDefPreFold n ld; pure (n, d)) lds
+                      else do
+                        results <- traverse (\(n, ld) =>
+                            catch (map (\d => Just (n, d)) (toRCDefPreFold n ld))
+                                  (\err => case err of
+                                                InternalError msg =>
+                                                    if isInfixOf notInlinedStructFieldMarker msg
+                                                       then pure Nothing
+                                                       else throw err
+                                                _ => throw err))
+                            lds
+                        pure (mapMaybe id results)
     folded <- if "noconstfold" `elem` disabled
                  then pure preFolded
                  else logTime 2 "rc2: ConstFold (whole-program fixpoint)" $ pure (foldConstProgram preFolded)
@@ -376,15 +418,21 @@ validateExport liftedByName (n, exportedName) = do
             "[rc2] %export declaration \{exportedName} (\{show n'}) declares \{show (length realArgs)} scalar argument(s) but its compiled definition has arity \{show (Prelude.List.length ldArgs)} -- likely an implicit/auto-implicit argument in its own type signature, which %export doesn't support"
     pure (n', exportedName, realArgs, ret)
 
-export
-compileExpr : Ref Ctxt Defs
+||| Whole-program compilation -- generates C for every reachable
+||| definition in the program (found from `tm`, the real `main`
+||| `ClosedTerm`) and links it into a single executable in one shot.
+||| `compileExpr` (below) dispatches here whenever incremental mode
+||| isn't active, and also falls back here from `compileExprInc` when
+||| some import lacks incremental compile data for `rc2` -- see
+||| rc2/doc/incremental-compile.md.
+compileExprWhole : Ref Ctxt Defs
            -> Ref Syn SyntaxInfo
            -> (tmpDir : String)
            -> (outputDir : String)
            -> ClosedTerm
            -> (outfile : String)
            -> Core (Maybe String)
-compileExpr c s _ outputDir tm outfile =
+compileExprWhole c s _ outputDir tm outfile =
   do let outn = outputDir </> outfile ++ ".c"
      let outobj = outputDir </> outfile ++ ".o"
      let outexec = outputDir </> outfile
@@ -397,8 +445,7 @@ compileExpr c s _ outputDir tm outfile =
      -- Fetched once, up front, since `toRCDefs`'s own stage disabling
      -- needs it before `toRCDefs` runs.
      directiveList <- getDirectives (Other "rc2")
-     let disabledStages = filter (`elem` directiveList)
-                             ["noinline", "noconstfold", "noconaltnative", "nomutualloop", "noloop", "nosink", "nodualabi", "nodeadcode", "nodupmerge"]
+     let disabledStages = filter (`elem` directiveList) disableableStageNames
      -- `nomain`: not a stage disable, only controls whether `Emit.idr`'s
      -- `footer` emits a C `main()` -- see rc2/doc/directives.md and
      -- rc2/doc/export-support.md's "Linking as a library" section.
@@ -417,7 +464,7 @@ compileExpr c s _ outputDir tm outfile =
      -- `getFullName`-resolved `n'`) is reused here rather than
      -- re-deriving it a second time from `exported cdata` directly.
      let roots = MN "__mainExpression" 0 :: map (\(n, _, _, _) => n) exportedSigs
-     defs <- toRCDefs disabledStages roots (lambdaLifted cdata)
+     defs <- toRCDefs disabledStages False roots (lambdaLifted cdata)
 
      -- `dumprcexpr`: dump the final RCExp to a `.rcexpr` file -- see
      -- rc2/doc/reading-the-ir.md for the format, rc2/doc/directives.md
@@ -443,10 +490,192 @@ compileExpr c s _ outputDir tm outfile =
      let inlineRuntime = getInlineRuntime directiveList
      let injectedRuntime = extraRuntimeFiles ++ (if inlineRuntime == "" then "" else "\n" ++ inlineRuntime)
 
-     foreignLibs <- logTime 2 "rc2: C generation" $ generateCSourceFile defs exportedSigs noMain injectedRuntime outn
+     foreignLibs <- logTime 2 "rc2: C generation" $ generateCSourceFile defs exportedSigs noMain Nothing False injectedRuntime outn
      Just _ <- logTime 2 "rc2: C compile" $ compileCObjectFile outn outobj dumpCC
        | Nothing => pure Nothing
-     logTime 2 "rc2: C link" $ compileCFile outobj outexec foreignLibs dumpCC
+     logTime 2 "rc2: C link" $ compileCFile [outobj] outexec foreignLibs dumpCC
+
+||| Resolves a per-module incremental object filename -- as returned by
+||| `incCompile` below and accumulated into `allIncData` (always a
+||| relative name, since it may belong to a different, already-
+||| installed package rather than this project's own build directory)
+||| -- to a real path: try this project's own ttc build directory
+||| first, then every dependency package's own installed directory.
+||| Mirrors `Compiler.Scheme.Chez.loadSO`'s identical search order for
+||| the exact same purpose (there, a per-module `.so`; here, `.o`).
+||| The `""` case mirrors `loadSO appdir ""`'s own short-circuit --
+||| `incCompile`'s own "this module compiled to no code at all" result
+||| (`rc2/doc/incremental-compile.md`).
+resolveIncObj : {auto c : Ref Ctxt Defs} -> String -> Core String
+resolveIncObj "" = pure ""
+resolveIncObj mod = do
+    bdir <- ttcBuildDirectory
+    extraDirs <- extraSearchDirectories
+    let candidates = map (</> mod) (bdir :: extraDirs)
+    Just fname <- firstAvailable candidates
+        | Nothing => throw (InternalError "[rc2] incremental compile: missing object file \{mod}")
+    pure fname
+
+||| Final incremental-mode link (`rc2/doc/incremental-compile.md`): no
+||| C codegen at all here -- every module's own `incCompile` call
+||| already produced its own `.o` (the `Main` module's own `.o` already
+||| contains `main()`, see that doc's own "no root-term recompile step"
+||| section), so this just resolves and links every accumulated
+||| per-module object plus their combined `%foreign` library list.
+||| Falls back to `compileExprWhole` (same as Chez's own
+||| `compileExprInc`) if `allIncData` has no entry for `rc2` -- some
+||| import lacks incremental compile data for this codegen, most likely
+||| because `prelude`/`base`/`contrib`/`network` haven't themselves
+||| been rebuilt with `--inc rc2` yet (see the doc's own "practical
+||| prerequisite" section).
+compileExprInc : Ref Ctxt Defs
+              -> Ref Syn SyntaxInfo
+              -> (tmpDir : String)
+              -> (outputDir : String)
+              -> ClosedTerm
+              -> (outfile : String)
+              -> Core (Maybe String)
+compileExprInc c s tmpDir outputDir tm outfile = do
+    defs <- get Ctxt
+    let Just (mods, libs) = lookup (Other "rc2") (allIncData defs)
+        | Nothing => do
+            coreLift $ putStrLn "Missing incremental compile data, reverting to whole program compilation"
+            compileExprWhole c s tmpDir outputDir tm outfile
+    directiveList <- getDirectives (Other "rc2")
+    let dumpCC = "dumpcc" `elem` directiveList
+    objs <- traverse resolveIncObj (nub mods)
+    let outexec = outputDir </> outfile
+    coreLift_ $ mkdirAll outputDir
+    -- Archived, not linked directly (`archiveObjectFiles`'s own doc
+    -- comment, `CC.idr`) -- a module whose own code is never reached
+    -- from `main` (including one that only exists to dangle a
+    -- reference to something incremental mode deliberately dropped,
+    -- e.g. `Prelude.IO`'s own `threadWait`) must not be linked in at
+    -- all, which a bare `.o` on the command line can't express but an
+    -- unreferenced archive member naturally is.
+    let outar = outputDir </> outfile ++ ".a"
+    Just _ <- logTime 2 "rc2: incremental archive" $
+        archiveObjectFiles (filter (/= "") objs) outar dumpCC
+      | Nothing => pure Nothing
+    logTime 2 "rc2: incremental link" $
+        compileCFile [outar] outexec (nub libs) dumpCC
+
+export
+compileExpr : Ref Ctxt Defs
+           -> Ref Syn SyntaxInfo
+           -> (tmpDir : String)
+           -> (outputDir : String)
+           -> ClosedTerm
+           -> (outfile : String)
+           -> Core (Maybe String)
+compileExpr c s tmpDir outputDir tm outfile = do
+    sesh <- getSession
+    if not (wholeProgram sesh) && ((Other "rc2") `elem` incrementalCGs sesh)
+       then compileExprInc c s tmpDir outputDir tm outfile
+       else compileExprWhole c s tmpDir outputDir tm outfile
+
+||| `Compiler.Common.Codegen`'s own `incCompileFile` hook -- called
+||| once per module by `Idris.ProcessIdr.process`, right after that
+||| module finishes elaborating, with exactly the definitions that
+||| module itself introduced (`getIncCompileData`'s own `toIR` scope).
+||| See rc2/doc/incremental-compile.md for the full design: why
+||| ConstFold/MutualLoop/Loop/DualABI need no change to run correctly
+||| against this narrower def list, why DeadCode must always be
+||| skipped here (`"nodeadcode"`, forced regardless of any user
+||| `--directive` setting), and why `noMain` alone (already built for
+||| the `%export`-as-library case) is enough to decide whether this
+||| particular module's own `.c` needs the C `main()` entry point --
+||| true only for the module literally named `Main`, which needs no
+||| special handling here beyond that flag: its own `Main.main` is
+||| just another definition already in `toIR` like everything else.
+incCompile : Ref Ctxt Defs -> Ref Syn SyntaxInfo ->
+             (sourceFile : String) -> Core (Maybe (String, List String))
+incCompile c s sourceFile = do
+    cdata <- getIncCompileData False Lifted
+    let ndefs = namedDefs cdata
+    if isNil ndefs
+       then pure (Just ("", []))
+            -- No code to generate, but still record that the module
+            -- was incrementally compiled (mirrors Chez's own
+            -- `incCompile` -- `missingIncremental`'s later check needs
+            -- *some* entry to exist, not necessarily a nonempty one).
+       else do
+         -- `ctxtPathToNS sourceFile` would derive the namespace from the
+         -- *file path* (e.g. "Hello" for a file named Hello.idr) -- wrong
+         -- here, since Idris2 lets a file's own `module Main` declaration
+         -- differ from its filename precisely for the entry-point case
+         -- (the same special-case `Idris.ProcessIdr.processMod`'s own
+         -- `ns /= nsAsModuleIdent mainNS` check guards against). What
+         -- `noMain` actually needs is the module's own *declared*
+         -- namespace, already recorded on `Ctxt` by the time `incCompile`
+         -- runs (elaboration of this module has already finished).
+         coreDefs <- get Ctxt
+         let noMain = currentNS coreDefs /= mainNS
+         directiveList <- getDirectives (Other "rc2")
+         let disabledStages = nub ("nodeadcode" :: filter (`elem` directiveList) disableableStageNames)
+         defs <- toRCDefs disabledStages True [] (lambdaLifted cdata)
+         -- `Main.main`'s own *compiled* arity isn't a fixed 0-or-1 --
+         -- observed both across two small test programs (a bare
+         -- `putStrLn`: arity 1, a real `%World` token; a multi-
+         -- statement `do` block calling `sort`/`SortedMap` operations:
+         -- arity 0, folded to a CAF) -- so `directEntryPoint`'s own
+         -- call expression is built from whatever `defs` (after the
+         -- very `toRCDefs` call above, so post-ConstFold/-Inline) says
+         -- `Main.main`'s real `MkRCFun` arity actually is, never
+         -- hardcoded. `__mainExpression_0` is never a member of any
+         -- module's own `toIR` at all (`Emit.idr`'s `directEntryPoint`
+         -- doc comment has the full story on why the Main module's own
+         -- footer must call `Main.main` directly instead), so
+         -- `Nothing` here would be a straight undefined-reference bug,
+         -- not a graceful fallback -- hence the `assert_total`-style
+         -- `InternalError` (not a quiet `Nothing`) if `Main.main`
+         -- somehow isn't a `MkRCFun` in `defs` at all.
+         --
+         -- Arity 0 is *not* "already a ready-to-run action, just call
+         -- it" -- confirmed wrong the hard way (a `Hello2.idr` with
+         -- pure `let`-bindings ahead of its own first real IO action
+         -- built a valid executable that silently did nothing at all:
+         -- `--directive dumprcexpr` showed `Main.main`'s own body
+         -- building its own `let`-bound values, then ending in
+         -- `partial Main.{main:31} missing=1 [v0]` -- i.e. calling
+         -- `Main_main()` with no args only *builds a closure* still
+         -- missing the `%World` argument, exactly the same
+         -- under-application `RUnderApp` compiles to anywhere else; it
+         -- never runs anything on its own). So arity 0 needs the exact
+         -- same closure-`apply` step whole-program mode's own
+         -- `PrimIO.unsafeCreateWorld` body (`apply v0 v1`) already
+         -- does for this identical reason -- `idris2rc2_applyClosure`,
+         -- the general-purpose runtime function every other
+         -- under-applied closure in the entire program is *always*
+         -- fed through, not something specific to this footer. Arity
+         -- >=1 needs no such thing: `Main.main` itself already *is*
+         -- the real C function taking the `%World` token as one of
+         -- its own genuine parameters, so a direct call already does
+         -- the equivalent of that same `apply` for free.
+         let mainMainName = NS mainNS (UN (Basic "main"))
+         directEntryPoint <- the (Core (Maybe String)) $
+             if noMain
+                then pure Nothing
+                else case lookup mainMainName defs of
+                          Just (MkRCFun [] _ _ _) => pure (Just "idris2rc2_applyClosure(\{cName mainMainName}(), idris2rc2_freshWorld())")
+                          Just (MkRCFun _ _ _ _) => pure (Just "\{cName mainMainName}(idris2rc2_freshWorld())")
+                          _ => throw $ InternalError "[rc2] incremental compile: Main module has no Main.main function"
+         when ("dumprcexpr" `elem` directiveList) $ do
+             rcexprFile <- getTTCFileName sourceFile "rcexpr"
+             coreLift_ $ writeFile rcexprFile
+                 (prettyProgram (collectLazyCAFs (namedDefs cdata)) defs)
+         extraRuntimeFiles <- getExtraRuntime directiveList
+         let inlineRuntime = getInlineRuntime directiveList
+         let injectedRuntime = extraRuntimeFiles ++ (if inlineRuntime == "" then "" else "\n" ++ inlineRuntime)
+         outC <- getTTCFileName sourceFile "c"
+         outO <- getTTCFileName sourceFile "o"
+         objRel <- getObjFileName sourceFile "o"
+         foreignLibs <- logTime 2 "rc2: incremental C generation" $
+             generateCSourceFile defs [] noMain directEntryPoint True injectedRuntime outC
+         Just _ <- logTime 2 "rc2: incremental C compile" $
+             compileCObjectFile outC outO ("dumpcc" `elem` directiveList)
+           | Nothing => pure Nothing
+         pure (Just (objRel, foreignLibs))
 
 export
 executeExpr : Ref Ctxt Defs -> Ref Syn SyntaxInfo ->
@@ -459,4 +688,4 @@ executeExpr c s tmpDir tm = do
 
 export
 codegenRC2 : Codegen
-codegenRC2 = MkCG compileExpr executeExpr Nothing Nothing
+codegenRC2 = MkCG compileExpr executeExpr (Just incCompile) (Just "o")

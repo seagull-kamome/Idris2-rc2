@@ -1280,7 +1280,22 @@ fnSignature n args retRep isWorker = do
     -- argument count: it keeps individually-typed positional
     -- parameters (native where eligible) no matter how wide it is.
     let useVarArglist = not isWorker && nargs > MaxExtractFunArgs
-    pure $ "\{retTypeStr}\{cName !(getFullName n)}"
+    -- `static`: a `MutualLoop`-merged dispatcher's own name
+    -- (`MN "rc2_mutualLoop" i`, `isMutualLoopMerged`) numbers `i` from
+    -- a fresh-per-compile counter (`Compiler.RC2.MutualLoop`'s own
+    -- `FreshId`) -- unique across the whole compile in whole-program
+    -- mode (one shared counter), but *not* across separate per-module
+    -- incremental compiles, each starting its own counter at 0 again
+    -- (`Compiler.RC2.RC2.incCompile`, rc2/doc/incremental-compile.md) --
+    -- a real "multiple definition" link error once two such modules'
+    -- own `.o`s both end up needed by the same program. `static`
+    -- (safe unconditionally -- this dispatcher is never meant to be
+    -- referenced from outside its own generated `.c` in the first
+    -- place, whole-program or incremental) sidesteps the whole
+    -- question: distinct per-TU internal linkage never collides no
+    -- matter how the two counters happen to line up.
+    let storageClass = if isMutualLoopMerged n then "static " else ""
+    pure $ "\{storageClass}\{retTypeStr}\{cName !(getFullName n)}"
             ++ (if nargs == 0 then "(void)"
                else if useVarArglist then "(IDRIS2RC2_Value *var_arglist[\{show nargs}])"
                else ("\n(\n" ++ (showSep "\n" $ addCommaToList (map declareParam args))) ++ "\n)")
@@ -1601,6 +1616,199 @@ createCFunctions n (MkRCForeign ccs fargs ret) =
 
 createCFunctions n (MkRCError exp) = throw $ InternalError "[rc2] Error with expression"
 
+||| Every untagged constructor `Name` a def's own generated C
+||| dereferences via `->name = idris2rc2_constr_<name>` -- both a
+||| dynamic `RCon` construction (this module's own `createCFunctions`
+||| `RCon` case, `when (Nothing == tag) ...` above) and a `ConstFold`-
+||| folded `RCConstCon` literal (`EmitUtil.boxedConstConExpr`'s own
+||| `nameField`) set this field exactly when the constructor's own
+||| `tag` is `Nothing`. Whole-program compilation never needs this --
+||| every `MkRCCon` the program could possibly reference already sits
+||| in the very same `defs` list `collectDeclarations` forward-declares
+||| from below -- only matters once a module compiles against a strict
+||| subset of the program (`Compiler.RC2.RC2`'s own `incCompile`, see
+||| rc2/doc/incremental-compile.md), where the referenced constructor
+||| may be owned by a module not present in `defs` at all. Found via a
+||| real `--inc rc2` prelude rebuild: `Prelude.Basics` references
+||| `Builtin.Void` this way with no declaration anywhere in its own
+||| translation unit, a plain "undeclared identifier" C compile error.
+||| A fresh, exhaustive walker mirroring `Compiler.RC2.DeadCode`'s own
+||| `usedFunctionNamesR`/`usedFunctionNamesL` shape (see that module's
+||| own doc comment for why this codebase writes a dedicated walker per
+||| concern rather than reusing `RCExp.idr`'s generic ones).
+untaggedConstructorRefsL : RCLocal -> SortedSet Name
+untaggedConstructorRefsL (RCConstCon n _ Nothing args) = insert n (concatMap untaggedConstructorRefsL args)
+untaggedConstructorRefsL (RCConstCon _ _ (Just _) args) = concatMap untaggedConstructorRefsL args
+untaggedConstructorRefsL (RCConstClosure _ _) = empty
+untaggedConstructorRefsL (RCLoc _) = empty
+untaggedConstructorRefsL RCNull = empty
+untaggedConstructorRefsL (RCConst _) = empty
+untaggedConstructorRefsL (RCEmptyCon {}) = empty
+
+untaggedConstructorRefsR : RCExp -> SortedSet Name
+untaggedConstructorRefsR (RV _ l) = untaggedConstructorRefsL l
+untaggedConstructorRefsR (RAppName _ _ _ args) = concatMap untaggedConstructorRefsL args
+untaggedConstructorRefsR (RAppNameRep _ _ _ _ postDrop args) =
+    union (concatMap untaggedConstructorRefsL postDrop) (concatMap untaggedConstructorRefsL args)
+untaggedConstructorRefsR (RAppFFIInline _ _ _ _ postDrop args) =
+    union (concatMap untaggedConstructorRefsL postDrop) (concatMap untaggedConstructorRefsL args)
+untaggedConstructorRefsR (RUnderApp _ _ _ args) = concatMap untaggedConstructorRefsL args
+untaggedConstructorRefsR (RApp _ _ c a) = union (untaggedConstructorRefsL c) (untaggedConstructorRefsL a)
+untaggedConstructorRefsR (RLet _ _ _ value body) = union (untaggedConstructorRefsR value) (untaggedConstructorRefsR body)
+untaggedConstructorRefsR (RCon _ n _ Nothing args reuseFrom) =
+    insert n (union (concatMap untaggedConstructorRefsL args) (maybe empty untaggedConstructorRefsL reuseFrom))
+untaggedConstructorRefsR (RCon _ _ _ (Just _) args reuseFrom) =
+    union (concatMap untaggedConstructorRefsL args) (maybe empty untaggedConstructorRefsL reuseFrom)
+untaggedConstructorRefsR (ROp _ _ _ args postDrop) =
+    union (concatMap untaggedConstructorRefsL (toList args)) (concatMap untaggedConstructorRefsL postDrop)
+untaggedConstructorRefsR (RExtPrim _ _ _ args postDrop) =
+    union (concatMap untaggedConstructorRefsL args) (concatMap untaggedConstructorRefsL postDrop)
+untaggedConstructorRefsR (RStructGet _ structVar _ _ postDrop) =
+    union (untaggedConstructorRefsL structVar) (concatMap untaggedConstructorRefsL postDrop)
+untaggedConstructorRefsR (RStructSet _ structVar _ _ value postDrop) =
+    union (untaggedConstructorRefsL structVar)
+          (union (untaggedConstructorRefsL value) (concatMap untaggedConstructorRefsL postDrop))
+untaggedConstructorRefsR (RCmpCase _ _ args postDrop t f) =
+    union (concatMap untaggedConstructorRefsL (toList args))
+          (union (concatMap untaggedConstructorRefsL postDrop)
+                 (union (untaggedConstructorRefsR t) (untaggedConstructorRefsR f)))
+untaggedConstructorRefsR (RConCase _ sc alts mDef) =
+    let altsUsed = map (\(MkRConAlt _ _ _ _ body) => untaggedConstructorRefsR body) alts
+    in union (untaggedConstructorRefsL sc) (concat (maybe altsUsed (\d => untaggedConstructorRefsR d :: altsUsed) mDef))
+untaggedConstructorRefsR (RConstCase _ sc alts mDef) =
+    let altsUsed = map (\(MkRConstAlt _ body) => untaggedConstructorRefsR body) alts
+    in union (untaggedConstructorRefsL sc) (concat (maybe altsUsed (\d => untaggedConstructorRefsR d :: altsUsed) mDef))
+untaggedConstructorRefsR (RPrimVal _ _) = empty
+untaggedConstructorRefsR (RErased _) = empty
+untaggedConstructorRefsR (RCrash _ _) = empty
+untaggedConstructorRefsR (RDup _ v _ body) = union (untaggedConstructorRefsL v) (untaggedConstructorRefsR body)
+untaggedConstructorRefsR (RDrop _ vars body) = union (concatMap untaggedConstructorRefsL vars) (untaggedConstructorRefsR body)
+untaggedConstructorRefsR (RFree _ v body) = union (untaggedConstructorRefsL v) (untaggedConstructorRefsR body)
+untaggedConstructorRefsR (RReleaseReuse _ v body) = union (untaggedConstructorRefsL v) (untaggedConstructorRefsR body)
+untaggedConstructorRefsR (RLoop _ _ initial prologueDrop body) =
+    union (concatMap untaggedConstructorRefsL initial)
+          (union (concatMap untaggedConstructorRefsL prologueDrop) (untaggedConstructorRefsR body))
+untaggedConstructorRefsR (RLoopContinue _ args postDrop) =
+    union (concatMap untaggedConstructorRefsL args) (concatMap untaggedConstructorRefsL postDrop)
+untaggedConstructorRefsR (RReuseOffer _ sc dupOnShared dropOnUnique body) =
+    union (untaggedConstructorRefsL sc)
+          (union (concatMap untaggedConstructorRefsL dupOnShared)
+                 (union (concatMap untaggedConstructorRefsL dropOnUnique) (untaggedConstructorRefsR body)))
+
+||| Same idea as `untaggedConstructorRefsR`, lifted to a whole `RCDef`.
+untaggedConstructorRefsD : RCDef -> SortedSet Name
+untaggedConstructorRefsD (MkRCFun _ _ _ body) = untaggedConstructorRefsR body
+untaggedConstructorRefsD (MkRCCon _ _ _) = empty
+untaggedConstructorRefsD (MkRCForeign _ _ _) = empty
+untaggedConstructorRefsD (MkRCError body) = untaggedConstructorRefsR body
+
+||| Every function `Name` a def's own generated C references but might
+||| not itself define -- a direct call (`RAppName`), a partial-
+||| application closure build (`RUnderApp`), or a `ConstFold`-folded
+||| zero-capture closure (`RCConstClosure`). Same story as
+||| `untaggedConstructorRefsD` above: a no-op set in whole-program mode
+||| (`collectDeclarations` already forward-declares every one of these
+||| from that very same `defs` list), only populated once `defs` is a
+||| single module's own subset (`Compiler.RC2.RC2`'s `incCompile`).
+||| Confirmed for real via the same `--inc rc2` prelude rebuild that
+||| found `untaggedConstructorRefsD`'s own gap: e.g. `Prelude.Num`
+||| calls `Prelude.EqOrd`'s own comparison functions directly by name,
+||| with nothing declaring them in `Prelude.Num`'s own translation
+||| unit ("implicit declaration of function" C errors).
+|||
+||| Declared with the exact arity a real `RAppName` call site to it
+||| already carries when one exists in `defs` (the true, authoritative
+||| arity for a saturated direct call to it -- every plain, non-
+||| `RAppNameRep` reference to another module's own top-level function
+||| targets that function's Boxed-ABI wrapper entry point specifically:
+||| a `RAppNameRep`/native-worker call can only ever target a function
+||| `DualABI` proved eligible from *within the same module*
+||| (rc2/doc/incremental-compile.md's "Which existing passes need to
+||| change"), so it can never appear here -- so the wrapper is always
+||| `IDRIS2RC2_Value *(...N boxed pointers...)` shaped, `N` = that call
+||| site's own argument count), or arity 0 when it's referenced only as
+||| a function-pointer *value* (`RUnderApp`/`RCConstClosure`, never
+||| called with a fixed argument list directly) -- both already only
+||| ever consumed through an explicit erased-signature cast anyway
+||| (`EmitUtil`'s own `(IDRIS2RC2_Value *(*)())` closure-struct field,
+||| the exact same cast a *locally*-declared, exact-arity closure
+||| target already goes through too), so an arity-0 declaration is
+||| harmless there. Trying a single K&R-style (empty-parens, no `void`)
+||| declaration for every case first -- relying on it to mean
+||| "unspecified arguments" the way traditional C does -- broke on this
+||| toolchain's own C standard default (which treats bare `()` as `(void)`,
+||| a real difference C23 introduced): a real 2-argument `RAppName`
+||| call to a name declared that way is a hard "too many arguments" C
+||| error, found the same way as `untaggedConstructorRefsD`'s own gap
+||| (a real `--inc rc2` prelude rebuild -- `Prelude.Num` calls
+||| `Prelude.EqOrd`'s own comparison functions directly by name).
+|||
+||| Returns `(Name, Nat)` pairs rather than a `SortedSet`/`SortedMap`
+||| directly -- plain list concatenation at every recursive step avoids
+||| any merge-order hazard between an arity-bearing `RAppName` sighting
+||| and an arity-0 `RUnderApp`/`RCConstClosure` one for the very same
+||| name (`generateCSourceFile`'s own call site resolves duplicates
+||| with `max`, so whichever order they appear in this list, the real
+||| arity always wins over the placeholder 0).
+externalFunctionRefsL : RCLocal -> List (Name, Nat)
+externalFunctionRefsL (RCConstClosure n _) = [(n, 0)]
+externalFunctionRefsL (RCConstCon _ _ _ args) = concatMap externalFunctionRefsL args
+externalFunctionRefsL (RCLoc _) = []
+externalFunctionRefsL RCNull = []
+externalFunctionRefsL (RCConst _) = []
+externalFunctionRefsL (RCEmptyCon {}) = []
+
+externalFunctionRefsR : RCExp -> List (Name, Nat)
+externalFunctionRefsR (RV _ l) = externalFunctionRefsL l
+externalFunctionRefsR (RAppName _ _ n args) = (n, length args) :: concatMap externalFunctionRefsL args
+externalFunctionRefsR (RAppNameRep _ _ _ _ postDrop args) =
+    concatMap externalFunctionRefsL postDrop ++ concatMap externalFunctionRefsL args
+externalFunctionRefsR (RAppFFIInline _ _ _ _ postDrop args) =
+    concatMap externalFunctionRefsL postDrop ++ concatMap externalFunctionRefsL args
+externalFunctionRefsR (RUnderApp _ n _ args) = (n, 0) :: concatMap externalFunctionRefsL args
+externalFunctionRefsR (RApp _ _ c a) = externalFunctionRefsL c ++ externalFunctionRefsL a
+externalFunctionRefsR (RLet _ _ _ value body) = externalFunctionRefsR value ++ externalFunctionRefsR body
+externalFunctionRefsR (RCon _ _ _ _ args reuseFrom) =
+    concatMap externalFunctionRefsL args ++ maybe [] externalFunctionRefsL reuseFrom
+externalFunctionRefsR (ROp _ _ _ args postDrop) =
+    concatMap externalFunctionRefsL (toList args) ++ concatMap externalFunctionRefsL postDrop
+externalFunctionRefsR (RExtPrim _ _ _ args postDrop) =
+    concatMap externalFunctionRefsL args ++ concatMap externalFunctionRefsL postDrop
+externalFunctionRefsR (RStructGet _ structVar _ _ postDrop) =
+    externalFunctionRefsL structVar ++ concatMap externalFunctionRefsL postDrop
+externalFunctionRefsR (RStructSet _ structVar _ _ value postDrop) =
+    externalFunctionRefsL structVar ++ externalFunctionRefsL value ++ concatMap externalFunctionRefsL postDrop
+externalFunctionRefsR (RCmpCase _ _ args postDrop t f) =
+    concatMap externalFunctionRefsL (toList args) ++ concatMap externalFunctionRefsL postDrop
+    ++ externalFunctionRefsR t ++ externalFunctionRefsR f
+externalFunctionRefsR (RConCase _ sc alts mDef) =
+    let altsUsed = concatMap (\(MkRConAlt _ _ _ _ body) => externalFunctionRefsR body) alts
+    in externalFunctionRefsL sc ++ altsUsed ++ maybe [] externalFunctionRefsR mDef
+externalFunctionRefsR (RConstCase _ sc alts mDef) =
+    let altsUsed = concatMap (\(MkRConstAlt _ body) => externalFunctionRefsR body) alts
+    in externalFunctionRefsL sc ++ altsUsed ++ maybe [] externalFunctionRefsR mDef
+externalFunctionRefsR (RPrimVal _ _) = []
+externalFunctionRefsR (RErased _) = []
+externalFunctionRefsR (RCrash _ _) = []
+externalFunctionRefsR (RDup _ v _ body) = externalFunctionRefsL v ++ externalFunctionRefsR body
+externalFunctionRefsR (RDrop _ vars body) = concatMap externalFunctionRefsL vars ++ externalFunctionRefsR body
+externalFunctionRefsR (RFree _ v body) = externalFunctionRefsL v ++ externalFunctionRefsR body
+externalFunctionRefsR (RReleaseReuse _ v body) = externalFunctionRefsL v ++ externalFunctionRefsR body
+externalFunctionRefsR (RLoop _ _ initial prologueDrop body) =
+    concatMap externalFunctionRefsL initial ++ concatMap externalFunctionRefsL prologueDrop ++ externalFunctionRefsR body
+externalFunctionRefsR (RLoopContinue _ args postDrop) =
+    concatMap externalFunctionRefsL args ++ concatMap externalFunctionRefsL postDrop
+externalFunctionRefsR (RReuseOffer _ sc dupOnShared dropOnUnique body) =
+    externalFunctionRefsL sc ++ concatMap externalFunctionRefsL dupOnShared
+    ++ concatMap externalFunctionRefsL dropOnUnique ++ externalFunctionRefsR body
+
+||| Same idea as `externalFunctionRefsR`, lifted to a whole `RCDef`.
+externalFunctionRefsD : RCDef -> List (Name, Nat)
+externalFunctionRefsD (MkRCFun _ _ _ body) = externalFunctionRefsR body
+externalFunctionRefsD (MkRCCon _ _ _) = []
+externalFunctionRefsD (MkRCForeign _ _ _) = []
+externalFunctionRefsD (MkRCError body) = externalFunctionRefsR body
+
 ||| Every file-scope declaration `def` contributes, derivable from its own
 ||| outer shape alone -- no RCExp recursion needed.
 declarationsOf : {auto c : Ref Ctxt Defs} -> Name -> RCDef -> Core (List String)
@@ -1854,6 +2062,49 @@ emitExportWrapper n exportedCName fargs ret = do
     argPack CFInteger i = "(IDRIS2RC2_Value *)idris2rc2_mkIntegerFromMpz(p_\{show i})"
     argPack ty i = "(IDRIS2RC2_Value *)" ++ packCFType ty ("p_" ++ show i)
 
+||| A `%foreign` declaration rc2 can actually implement: either
+||| diverted to rc2's own native `fastPack`/`fastConcat` replacement
+||| (`fastPackFixedReplacement`, regardless of what its own `ccs` says
+||| -- rc2 supplies a native body either way) or carrying a calling
+||| convention `parseCC` actually recognizes (`"C:..."`/`"RefC:..."`/
+||| `"RC2:..."`). A declaration with neither -- e.g.
+||| `Prelude.IO.prim__threadWait`'s `%foreign "scheme:blodwen-thread-wait"`
+||| only, no C-family convention at all since only Chez ever needed one
+||| -- is a hard whole-program compile error today
+||| (`collectDeclarations`'s own `MkRCForeign` case), unreachable in
+||| practice since `DeadCode.pruneDeadDefs` already removes an unused
+||| declaration like this before `collectDeclarations` ever sees it --
+||| deliberately kept as a hard, immediately-attributable error for
+||| whole-program mode (naming the exact Idris function) rather than
+||| softened into a link-time failure too: if it's ever genuinely
+||| reachable there, something in the program truly calls a function
+||| rc2 has no way to implement, and that's worth surfacing immediately
+||| and unambiguously, not as a mystery "undefined reference" to a
+||| mangled C name. Incremental mode, in contrast, deliberately never
+||| runs `DeadCode` at all (see rc2/doc/incremental-compile.md's "What
+||| actually needs to change") -- every module's *entire* `toIR`, used
+||| or not, real convention or not, reaches `collectDeclarations`
+||| regardless of whether anything anywhere ever actually calls it, so
+||| the same hard error would trip on every unused-in-this-module
+||| declaration like this one across the whole standard library. Only
+||| there (`dropUnimplementableForeign = True`, `Compiler.RC2.RC2`'s
+||| own `incCompile`) is a declaration like this dropped from `defs`
+||| silently instead, before this module owns anything to declare --
+||| see rc2/doc/incremental-compile.md's "Bugs found while implementing"
+||| #3 for the full reasoning and the deliberate whole-program/
+||| incremental split. Any real caller (if one exists) still gets a
+||| plain `extern` prototype via `externalFunctionRefsD` below, since a
+||| dropped name is indistinguishable from an ordinary externally-
+||| defined one at that point -- the failure becomes a link-time
+||| "undefined reference" there instead of either a compile-time stop
+||| or a runtime crash.
+hasUsableForeignImpl : (Name, RCDef) -> Bool
+hasUsableForeignImpl (n, MkRCForeign ccs fargs ret) =
+    case (fastPackFixedReplacement n, ret, fargs) of
+         (Just _, CFString, [CFUser _ _]) => True
+         _ => isJust (parseCC ffiTags ccs)
+hasUsableForeignImpl _ = True
+
 ||| `noMain`: `--directive nomain` / `%cg rc2 nomain`, read by
 ||| `Compiler.RC2.RC2.compileExpr` -- when `True`, `footer` (the C
 ||| `main()` emitter) is skipped entirely, so the generated `.c` can be
@@ -1861,16 +2112,51 @@ emitExportWrapper n exportedCName fargs ret = do
 ||| companion `.c` driving an `%export`ed symbol directly -- see
 ||| `rc2/doc/export-support.md`'s own "Linking as a library" section
 ||| and worked example) without a duplicate-symbol link error.
+|||
+||| `dropUnimplementableForeign`: see `hasUsableForeignImpl`'s own doc
+||| comment -- `False` (whole-program `compileExprWhole`) keeps
+||| today's hard compile-time error for a `%foreign` declaration with
+||| no rc2-usable convention; `True` (incremental `incCompile`) drops
+||| it silently instead, deferring to a link-time error only if
+||| something actually calls it.
+|||
+||| `directEntryPoint`: `Nothing` keeps today's whole-program footer,
+||| calling the `ClosedTerm`-synthesized `__mainExpression_0()`
+||| (`Compiler.Common.getCompileDataWith`'s own `unsafePerformIO`/
+||| `%MkWorld`/closure-`apply` chain, folded down to a single call by
+||| the time whole-program `Inline`/`ConstFold` are done with it).
+||| `Just call` (`Compiler.RC2.RC2.incCompile`'s own `Main`-module case
+||| only) splices `call` -- a complete C call expression, already
+||| built by the caller, e.g. `"Main_main(idris2rc2_freshWorld())"` or
+||| arity-0 `"Main_main()"` -- verbatim instead. This function itself
+||| deliberately knows nothing about `Main.main`'s own real arity or
+||| how to build a `%World` token; `incCompile` does, since only it can
+||| see `Main.main`'s own actual compiled `MkRCFun` shape in `defs`
+||| (observed to vary -- a bare `putStrLn` compiles `Main.main` at
+||| arity 1 with a real `%World` token, a multi-statement `do` block
+||| calling pure functions at arity 0, folded to a CAF -- hardcoding
+||| either one broke the other). `__mainExpression_0` itself is never
+||| actually a member of any module's own `toIR`
+||| (`Compiler.Common.getIncCompileData`'s own `toIR`-only fetch never
+||| produces it, unlike whole-program's `getCompileDataWith`, which
+||| synthesizes it fresh from the real `ClosedTerm` every time -- see
+||| rc2/doc/incremental-compile.md's "Bugs found while implementing")
+||| -- undefined reference otherwise. Never `Just` at the same time as
+||| `noMain = True` (mutually exclusive: no footer at all vs. a
+||| specific direct-call one).
 export
 generateCSourceFile : {auto c : Ref Ctxt Defs}
                    -> List (Name, RCDef)
                    -> (exports : List (Name, String, List CFType, CFType))
                    -> (noMain : Bool)
+                   -> (directEntryPoint : Maybe String)
+                   -> (dropUnimplementableForeign : Bool)
                    -> (injectedRuntime : String)
                    -> (outn : String)
                    -> Core (List String)
-generateCSourceFile defs exports noMain injectedRuntime outn =
-  do _ <- newRef ArgCounter 0
+generateCSourceFile defs0 exports noMain directEntryPoint dropUnimplementableForeign injectedRuntime outn =
+  do let defs = if dropUnimplementableForeign then filter hasUsableForeignImpl defs0 else defs0
+     _ <- newRef ArgCounter 0
      _ <- newRef FunctionDefinitions []
      _ <- newRef ConstDef Data.SortedMap.empty
      _ <- newRef ConstConDef (Data.SortedMap.empty, [])
@@ -1897,6 +2183,27 @@ generateCSourceFile defs exports noMain injectedRuntime outn =
      -- see `collectDeclarations`'s own doc comment), derived from each
      -- def's own signature alone, no body traversal.
      traverse_ (uncurry collectDeclarations) defs
+     -- Forward-declare (as `extern`) every untagged constructor `defs`
+     -- itself references but doesn't own -- a no-op set whenever `defs`
+     -- really is the whole program (every such constructor is already
+     -- declared by the loop just above), but not whenever it's a
+     -- single module's own subset (`Compiler.RC2.RC2`'s `incCompile`)
+     -- -- see `untaggedConstructorRefsD`'s own doc comment.
+     let locallyOwnedCons = SortedSet.fromList $ mapMaybe (\(n, d) => case d of MkRCCon _ _ _ => Just n; _ => Nothing) defs
+     let externalCons = foldl (\acc, (_, d) => union acc (untaggedConstructorRefsD d)) Data.SortedSet.empty defs
+     let externCons = filter (\n => not (contains n locallyOwnedCons)) (Prelude.toList externalCons)
+     update FunctionDefinitions (map (\n => "extern char const idris2rc2_constr_\{cName n}[];") externCons ++)
+     -- Same idea, for function names (`externalFunctionRefsD`'s own doc
+     -- comment) -- a module-local function is already forward-declared
+     -- (exact arity/`Rep`s) by the loop above, so only names outside
+     -- that set need this generic fallback declaration. `max` resolves
+     -- an arity-bearing `RAppName` sighting against an arity-0
+     -- `RUnderApp`/`RCConstClosure` one for the same name in favour of
+     -- the real arity, regardless of which order they were seen in.
+     let locallyOwnedFns = SortedSet.fromList $ mapMaybe (\(n, d) => case d of MkRCFun{} => Just n; MkRCForeign{} => Just n; _ => Nothing) defs
+     let externalFnArity = foldl (\acc, (n, ar) => insertWith max n ar acc) Data.SortedMap.empty (concatMap (externalFunctionRefsD . snd) defs)
+     let externFns = filter (\(n, _) => not (contains n locallyOwnedFns)) (SortedMap.toList externalFnArity)
+     update FunctionDefinitions (map (\(n, ar) => "extern IDRIS2RC2_Value *\{cName n}(" ++ showSep ", " (replicate ar "IDRIS2RC2_Value *") ++ ");\n") externFns ++)
      -- `withFile`'s own continuation runs in a `HasIO io`-polymorphic
      -- type, and `Core` has no `HasIO` instance -- `createCFunctions`
      -- (which needs `Core`, for e.g. `Ref Ctxt Defs`) can't run inside
@@ -1926,11 +2233,14 @@ generateCSourceFile defs exports noMain injectedRuntime outn =
          put OutfileText DList.Nil
          emitExportWrapper n exportedCName fargs ret
          flushEmitBuffer outn h) exports
-     -- The process entry point: boxes nothing further, just calls
-     -- `__mainExpression_0()` then trampolines its result. Skipped
-     -- when `noMain` (see this function's own doc comment above for
-     -- why) so a `%export`ed program can link this `.c` as a library
-     -- alongside a caller-supplied `main` instead.
+     -- The process entry point: boxes nothing further, just calls the
+     -- entry point then trampolines its result. Skipped when `noMain`
+     -- (see this function's own doc comment above for why) so a
+     -- `%export`ed program can link this `.c` as a library alongside a
+     -- caller-supplied `main` instead. `directEntryPoint`'s own doc
+     -- comment above has the full story on the two shapes `entryCall`
+     -- can take.
+     let entryCall : String = fromMaybe "__mainExpression_0()" directEntryPoint
      when (not noMain) $ emit EmptyFC """
 
        // main function
@@ -1940,7 +2250,7 @@ generateCSourceFile defs exports noMain injectedRuntime outn =
                          "idris2_setArgs(argc, argv);"
                          ""
            }
-           IDRIS2RC2_Value *mainExprVal = __mainExpression_0();
+           IDRIS2RC2_Value *mainExprVal = \{entryCall};
            idris2rc2_trampoline(mainExprVal);
            return 0;
        }

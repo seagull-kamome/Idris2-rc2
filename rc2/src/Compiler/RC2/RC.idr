@@ -24,6 +24,31 @@ import Data.Vect
 
 %default covering
 
+||| Exact, greppable prefix `normalize`'s own `prim__getField`/
+||| `prim__setField` cases (below) tag their `InternalError` with when
+||| the struct/field name isn't a literal -- i.e. a definition (like
+||| `System.FFI.getField` itself) that only works once its own caller
+||| inlines it down to a literal, never as a standalone compiled
+||| function. Whole-program compilation never actually throws this in
+||| practice (such a definition's own un-inlined form isn't reachable
+||| from `main` to begin with -- upstream's own reachable-set fetch
+||| already excludes it). Incremental compilation's own `toIR`-scoped
+||| `defs` has no such luxury -- every definition a module makes is
+||| compiled for real regardless of whether anything in the *whole*
+||| program still calls it un-inlined -- so `Compiler.RC2.RC2.toRCDefs`
+||| (its own `incremental = True` case only) catches exactly this
+||| marker and drops the offending definition instead of aborting the
+||| whole module's compile, the same "unimplementable, fails at link
+||| time instead" treatment `Emit.idr`'s own `hasUsableForeignImpl`
+||| gives a `%foreign` declaration with no usable convention -- see
+||| rc2/doc/incremental-compile.md's "no C struct support under
+||| --inc rc2". A plain prefix match (not free-text `InternalError`
+||| sniffing) so the catch site can't accidentally trap some unrelated
+||| internal error.
+export
+notInlinedStructFieldMarker : String
+notInlinedStructFieldMarker = "[rc2:not-inlined-struct-field]"
+
 ------------------------------------------------------------------------
 -- Phase 1: Lifted -> RCExp (ANF-style normalisation, our own)
 
@@ -178,14 +203,14 @@ mutual
                  (RCConst (Str structName), RCConst (Str fieldName)) =>
                      pure $ RStructGet fc svl structName fieldName []
                  _ => throw $ InternalError
-                        "[rc2] prim__getField: struct/field name must be string literals")))
+                        (notInlinedStructFieldMarker ++ " prim__getField: struct/field name must be string literals"))))
     normalize env (LExtPrim fc lazy (NS _ (UN (Basic "prim__setField"))) [sn, _, _, sv, fn, _, vl, _]) =
         bindOne env sn (\snl => bindOne env sv (\svl => bindOne env fn (\fnl => bindOne env vl (\vll =>
             case (snl, fnl) of
                  (RCConst (Str structName), RCConst (Str fieldName)) =>
                      pure $ RStructSet fc svl structName fieldName vll []
                  _ => throw $ InternalError
-                        "[rc2] prim__setField: struct/field name must be string literals"))))
+                        (notInlinedStructFieldMarker ++ " prim__setField: struct/field name must be string literals")))))
     normalize env (LExtPrim fc lazy p args) =
         -- postDrop is always [] here -- Phase 2 (`annotate`) fills it in
         -- once ownership is known (see RCExp.idr's RExtPrim doc comment).

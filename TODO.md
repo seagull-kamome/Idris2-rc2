@@ -835,17 +835,40 @@ need, and each would cost more than a one-line `%foreign` declaration
 (the whole point of what's already there). Revisit if a concrete use
 case needs one specifically.
 
-### インクリメンタルコンパイル
-whole program optimization を諦めてモジュール毎にコード生成を行うモード。
-定義の中にmainは無く、モジュール単位で全ての公開されてた定義が降ってくる。
+### インクリメンタルコンパイル（実装済み・動作確認済み）
+`feature/rc2-incremental-compile`ブランチで実装完了。prelude/base/
+linear/contrib/network（272モジュール）全てエラーゼロ・欠落ゼロで
+`--inc rc2`ビルド可能、`--cg rc2 --inc rc2`での実際の実行ファイル生成・
+実行（base機能のData.List/Data.SortedMap使用例含む）・1ファイル変更時の
+差分ビルドまで確認済み。設計・実装過程で見つかった全バグ・制限事項は
+`rc2/doc/incremental-compile.md`に記録（upstreamの
+`Codegen.incCompileFile`/`incExt`機構をrc2に実装する話。ConstFold/
+Loop/MutualLoop/DualABIは無改造で済んだ）。
 
-  - DCE(DeadCodeElimination)はスキップしなくてはならない。
-  - 定数を返すだけになった関数も消去できない
-  - 定数もモジュールを超えて共有できなくなる。
--   -> 定数の定義にはstaticをつける必要がある(コンパイルモードにかかわらず常につけてもOK)
-    -> 関数は常にexternで生成
-  - 定数の共有が出来るとよいのだが
-     -> 値からシンボルを生成すれば、確実に一致するものはlink時に共有できる
+- **制限事項（決定事項）**: `--inc rc2`（インクリメンタルコンパイル）は
+  当面C構造体サポート（`getField`/`setField`/`Struct`）に非対応。
+  `getField`等の薄いラッパーはインライン展開されて初めて
+  `prim__getField`のリテラル要求を満たせる設計のため、DCEをスキップする
+  インクリメンタルモードでは単体コンパイル不可能（同docの「Known
+  limitation」節参照）。ホールプログラムコンパイル（デフォルト）は無影響。
+- 実運用にはprelude/base/contrib/networkをrc2向けにインクリメンタル
+  再ビルドする一度切りの前提作業が要る（同docの該当節参照）。
+- **重大な発見（rc2固有のバグではなくupstream側の性質）**: `incCompile`は
+  モジュール単位とはいえ実際に`.c`生成→`gcc -c`まで行う（中間表現止まりでは
+  ない）ため、`%foreign`宣言があれば通常のホールプログラムビルドと全く
+  同じくCヘッダ・ライブラリが必要になる。パッケージ内のたった1モジュールが
+  （今回は`idris2-src`自身の`support/c/idris_file.h`に`idris2_fileIsTTY`の
+  プロトタイプ記載漏れがあったため——実装自体は`idris_file.c`にあり、
+  selfビルドも正しく機能している。ホールプログラムでも`isTTY`を使えば同様に
+  失敗するはずだが、DCEで消えるため今まで誰も気づかなかっただけ）オブジェクト
+  生成に失敗すると、`Core.Context.addImportedInc`がセッション全体で`rc2`を
+  `incrementalCGs`から削除してしまい、**同じビルド中でそれ以降処理される
+  全モジュール**（失敗モジュールと依存関係が無いものも含む）がインクリ
+  メンタルデータを失う。実際`base.ipkg`（136モジュール）で検証したところ、
+  1モジュールの失敗が原因で136中100モジュールがデータ欠落した。警告は
+  カスケード開始時に1回しか出ないため気づきにくい（同docの「Major
+  finding」節参照）。対処方針は未定（rc2側で回避するか、単に「1件でも
+  失敗したら再度`--install`を回す」運用でしのぐか等）。
 
 
 ### rc2baseにwebサーバをバンドル

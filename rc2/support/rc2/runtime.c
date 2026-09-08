@@ -419,3 +419,30 @@ char const idris2rc2_constr_Integer[] = "Integer";
 char const idris2rc2_constr_Char[] = "Char";
 char const idris2rc2_constr_String[] = "String";
 char const idris2rc2_constr____gt[] = "->";
+// `%World` joins this set for the same reason as everything else here --
+// `PrimIO.unsafeCreateWorld`'s own `%MkWorld` construction references it as
+// a bare typecase `TyCon` value (Compiler.CompileExpr.toCExpTm's `Ref fc
+// (TyCon arity) fn` case), same shape as `Int`/`(->)`/etc above, with no
+// backing top-level definition either. RefC's own support/refc/prim.c
+// doesn't have this one -- not because it's handled differently there, but
+// because whole-program compilation (rc2's own included) always inlines
+// `unsafeCreateWorld` into its own single caller before this shape ever
+// reaches Emit; only compiling PrimIO.idr in total isolation
+// (Compiler.RC2.RC2's own incCompile, rc2/doc/incremental-compile.md) ever
+// exposes it, an undefined-reference link error otherwise.
+char const idris2rc2_constr__percentWorld[] = "%World";
+
+// Builds one fresh `%World` token, the same shape `Emit.idr`'s own
+// `createCFunctions` would emit inline for an ordinary `RCon` construction
+// of an untagged, zero-arity constructor (`idris2rc2_newConstructor(0, -1)`
+// + `->name`). Used by `Compiler.RC2.RC2.incCompile`'s own Main-module
+// entry-point footer (`Emit.idr`'s `directEntryPoint`) to call `Main.main`
+// directly with a real World argument -- the generic `PrimIO.unsafePerformIO`/
+// closure-`apply` chain whole-program mode's own `__mainExpression_0`
+// goes through isn't available there (see `directEntryPoint`'s own doc
+// comment for why), so this is the direct, no-closures equivalent.
+IDRIS2RC2_Value *idris2rc2_freshWorld(void) {
+  IDRIS2RC2_Constructor *world = idris2rc2_newConstructor(0, -1);
+  world->name = idris2rc2_constr__percentWorld;
+  return (IDRIS2RC2_Value *)world;
+}
