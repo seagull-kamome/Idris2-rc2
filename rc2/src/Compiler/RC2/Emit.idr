@@ -159,43 +159,6 @@ resolveForeignTarget ccs =
                   , UN $ Basic $ fctForeignName)
          _ => throw $ InternalError "[rc2] FFI not found for foreign declaration"
 
-||| A `%foreign` declaration's own argument, marshalled per its own
-||| `CFType` -- mirrors the old `Compiler.RC2.Emit.emitFFIWorker`'s own
-||| `argExprFor`: `CFChar` needs the same narrow-cast
-||| `nativeCharArgExpr` gives a native-context `char` parameter
-||| (`cTypeOfCFType CFChar` disagrees with this backend's own native
-||| `Char` representation, `nativeCType CharType`); any other
-||| native-eligible type reads directly via `rcVarToNativeC`, no
-||| further cast needed (every other `cfTypeNative` mapping already
-||| agrees with `nativeCType` textually); anything else is genuinely
-||| Boxed, read via `rcVarToBoxedC` then narrowed to its own C
-||| representation via `extractValue` -- that same `rcVarToBoxedC`
-||| rendering is also handed back separately (`Just`) as this
-||| argument's own drop target, for `ffiRawCall`'s own use: unlike an
-||| ordinary `postDrop` entry (always a genuine `RCLoc`, safe to render
-||| via a bare `varName`), a raw FFI call argument can itself be a
-||| literal `RCConst` (e.g. a `String` literal passed directly, with no
-||| enclosing `let`), which needs this same constant-staging/InlineMap-
-||| aware rendering to drop correctly -- `varName`'s own `RCConst` case
-||| is a deliberately-unreachable placeholder everywhere else in this
-||| module precisely because nothing else ever hands it one.
-ffiArgMarshal : {auto a : Ref ArgCounter Nat}
-             -> {auto _ : Ref ConstDef (SortedMap Constant ConstDef)}
-             -> {auto cc : Ref ConstConDef (SortedMap RCLocal String, List String)}
-             -> {auto r : Ref RepMap (SortedMap Int Rep)}
-             -> {auto lm : Ref InlineMap (SortedMap Int (String, List String))}
-             -> CLang -> RCLocal -> CFType -> Core (String, List String)
-ffiArgMarshal cLang v CFChar = do
-    (e, pending) <- rcVarToNativeC CharType v
-    pure (nativeCharArgExpr e, pending)
-ffiArgMarshal cLang v farg = case cfTypeNative farg of
-    Just ty => do
-        (e, pending) <- rcVarToNativeC ty v
-        pure (e, pending)
-    Nothing => do
-        (boxedExpr, pending) <- rcVarToBoxedC v
-        pure (extractValue cLang farg boxedExpr, boxedExpr :: pending)
-
 ||| Marshal every one of `fargs`'s own positions, call `fctName`, and
 ||| produce the raw (un-packed, un-widened) C return-value expression
 ||| text -- `""` for a `CFIORes CFUnit` declaration, whose call is
@@ -212,7 +175,7 @@ ffiArgMarshal cLang v farg = case cfTypeNative farg of
 ||| Also returns every genuinely-`RBoxed`-typed argument position
 ||| (`CFWorld`'s own trailing slot on a `CFIORes`-returning declaration
 ||| included), already rendered to its own drop-ready C expression text
-||| (`ffiArgMarshal`'s own `Just` component) -- mirrors the old
+||| (`marshalArg`'s own doc comment) -- mirrors the old
 ||| `emitFFIWorker`'s own unconditional `removeVars boxedVars`, now paid
 ||| at the call site directly since no worker function exists any more
 ||| to pay it internally (see `emitAppFFIInlineInto`'s own doc comment
@@ -232,7 +195,7 @@ ffiRawCall : {auto a : Ref ArgCounter Nat}
           -> CLang -> Name -> List CFType -> CFType -> List RCLocal -> Core (String, List String)
 ffiRawCall cLang fctName fargs ret args = do
     let paramsInfo = zip fargs args
-    marshalled <- traverse (\(farg, v) => ffiArgMarshal cLang v farg) paramsInfo
+    marshalled <- traverse (uncurry marshalArg) paramsInfo
     let argExprs = map fst marshalled
         boxedArgDrop = concatMap snd marshalled
     let callWith : List String -> String
@@ -265,6 +228,26 @@ ffiRawCall cLang fctName fargs ret args = do
          CFIORes _ => pure $ callWith (discardLastArgument argExprs)
          _          => pure $ callWith argExprs
     pure (rawExpr, boxedArgDrop)
+  where
+    ||| One argument, marshalled per its own `CFType` (mirrors the old
+    ||| `emitFFIWorker`'s own `argExprFor`): `CFChar` needs
+    ||| `nativeCharArgExpr`'s own narrow cast; any other native-eligible
+    ||| type reads directly via `rcVarToNativeC`; anything else is
+    ||| genuinely Boxed, read via `rcVarToBoxedC` then narrowed via
+    ||| `extractValue`. Also hands back its own drop target (folded
+    ||| into `pending`) -- unlike an ordinary `postDrop` entry, a raw
+    ||| FFI argument can itself be a literal `RCConst` with no enclosing
+    ||| `let`, needing this same constant-staging-aware rendering to
+    ||| drop correctly.
+    marshalArg : CFType -> RCLocal -> Core (String, List String)
+    marshalArg CFChar v = do
+        (e, pending) <- rcVarToNativeC CharType v
+        pure (nativeCharArgExpr e, pending)
+    marshalArg farg v = case cfTypeNative farg of
+        Just ty => rcVarToNativeC ty v
+        Nothing => do
+            (boxedExpr, pending) <- rcVarToBoxedC v
+            pure (extractValue cLang farg boxedExpr, boxedExpr :: pending)
 
 -- emitAppNameRepInto/emitAppFFIInlineInto/emitRC are each called from
 -- within the mutual block below (emitInto's own dispatch) but never
@@ -1031,8 +1014,8 @@ emitAppFFIInlineInto sink tailPosition fc ccs fargs ret postDrop args = do
     -- `postDrop` is always genuine-`RCLoc`-only (inherited verbatim
     -- from the `RAppNameRep` this replaced, see RCExp.idr's own doc
     -- comment), safe to render via a bare `varName`; `boxedArgDrop`
-    -- is already-rendered text (see `ffiArgMarshal`'s own doc
-    -- comment for why it can't be a bare `varName` render).
+    -- is already-rendered text (see `ffiRawCall`'s own `marshalArg`
+    -- doc comment for why it can't be a bare `varName` render).
     let allDrop = map varName postDrop ++ boxedArgDrop
     finalizeSinkWithDrop fc sink valStr allDrop
 
