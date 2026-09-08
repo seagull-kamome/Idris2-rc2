@@ -795,49 +795,47 @@ boxedConstExpr c = do
         PrT t => pure $ cPrimType t
         WorldVal => pure "(NULL /* World */)"
 
-||| The boxed C expression for a folded zero-filled closure constant
-||| `l` (an `RCConstClosure` -- see `Compiler.RC2.ConstFold`): a
-||| reference to an already-staged file-scope static (deduplicating
-||| against the same `ConstConDef` state `boxedConstConExpr` itself
-||| uses -- once `Eq`/`Ord RCLocal` cover `RCConstClosure`, two
-||| dictionary fields folding to the same `(Name, missing)` pair become
-||| the same `RCLocal` key and hit the cache branch automatically, no
-||| separate dedup table needed), or a fresh stage-then-reference
-||| otherwise. Simpler than `boxedConstConExpr`: a zero-filled closure
-||| has no captured args to stage recursively, so no `ConstDef`/`All`
-||| plumbing is needed here at all.
-|||
-||| The staged static uses `IDRIS2RC2_ConstClosure` (datatypes.h), a
-||| shared named type that deliberately does NOT mirror
-||| `IDRIS2RC2_Closure`'s real layout in full -- that struct ends in a
-||| flexible array member (`args[]`), which C has no static-initializer
-||| syntax for, and which would be empty anyway (`filled` is always `0`
-||| here, by construction: this only ever comes from a literal,
-||| zero-args `RUnderApp`). `IDRIS2RC2_ConstClosure` instead shares just
-||| the leading `header; fn; arity; filled` member sequence and omits
-||| the array entirely -- sound because nothing ever reads `->args[i]`
-||| for `i < filled` when `filled == 0`, and nothing computes
-||| `sizeof(IDRIS2RC2_Closure)` against this particular static (it's
-||| never heap-allocated or handed to anything assuming the real
-||| flexible-array-member layout). In particular,
-||| `idris2rc2_isUnique`/`idris2rc2_tailcallApplyClosure`'s in-place
-||| growth branch (which would write `args[filled]`) can never fire
-||| against an immortal (`REFCOUNT_MAX`) header -- `idris2rc2_isUnique`
-||| is a bare `refCount == 1` check.
-export
-boxedConstClosureExpr : {auto a : Ref ArgCounter Nat}
-                     -> {auto cc : Ref ConstConDef (SortedMap RCLocal String, List String)}
-                     -> (l : RCLocal) -> {0 prf : IsConstClosureLocal l} -> Core String
-boxedConstClosureExpr l@(RCConstClosure n missing) {prf=ItIsConstClosure} = do
+||| Dedupe-then-reference skeleton shared by `boxedConstClosureExpr`/
+||| `boxedConstConExpr`: reuse `l`'s own already-staged file-scope
+||| static from `ConstConDef`'s own name cache if one exists, otherwise
+||| mint a fresh `prefix`-named one, ask `mkDef` for its own C
+||| definition text (called only on this fresh-staging path, never on a
+||| cache hit -- callers that recursively stage nested consts, e.g.
+||| `boxedConstConExpr`'s own field rendering, rely on that to avoid
+||| re-running that recursion pointlessly), and register both before
+||| returning the same reference form either path ends in.
+stageConstCon : {auto a : Ref ArgCounter Nat}
+             -> {auto cc : Ref ConstConDef (SortedMap RCLocal String, List String)}
+             -> RCLocal -> String -> (String -> Core String) -> Core String
+stageConstCon l nmPrefix mkDef = do
     (names, _) <- get ConstConDef
     case lookup l names of
          Just nm => pure "((IDRIS2RC2_Value*)&\{nm})"
          Nothing => do
-             nm <- ("constclosure_" ++) <$> getNextCounter
-             let def = "static IDRIS2RC2_ConstClosure const \{nm} = { IDRIS2RC2_STOCKVAL(IDRIS2RC2_TAG_CLOSURE), (IDRIS2RC2_Value *(*)())\{cName n}, \{show missing}, 0 };"
+             nm <- (nmPrefix ++) <$> getNextCounter
+             def <- mkDef nm
              (names', defs') <- get ConstConDef
              put ConstConDef (insert l nm names', defs' ++ [def])
              pure "((IDRIS2RC2_Value*)&\{nm})"
+
+||| The boxed C expression for a folded zero-filled closure constant
+||| (an `RCConstClosure` -- see `Compiler.RC2.ConstFold`), staged as an
+||| `IDRIS2RC2_ConstClosure` (datatypes.h) -- a named type that
+||| deliberately does NOT mirror `IDRIS2RC2_Closure`'s real
+||| flexible-array-member layout (no static-initializer syntax for one
+||| in C anyway, and it would be empty here regardless: `filled` is
+||| always `0`, by construction -- this only ever comes from a literal,
+||| zero-args `RUnderApp`) -- just the leading `header; fn; arity;
+||| filled` fields. Sound since nothing ever reads `->args[i]` for
+||| `i < filled` when `filled == 0`, and nothing computes
+||| `sizeof(IDRIS2RC2_Closure)` against this particular static.
+export
+boxedConstClosureExpr : {auto a : Ref ArgCounter Nat}
+                     -> {auto cc : Ref ConstConDef (SortedMap RCLocal String, List String)}
+                     -> (l : RCLocal) -> {0 prf : IsConstClosureLocal l} -> Core String
+boxedConstClosureExpr l@(RCConstClosure n missing) {prf=ItIsConstClosure} =
+    stageConstCon l "constclosure_" $ \nm =>
+        pure "static IDRIS2RC2_ConstClosure const \{nm} = { IDRIS2RC2_STOCKVAL(IDRIS2RC2_TAG_CLOSURE), (IDRIS2RC2_Value *(*)())\{cName n}, \{show missing}, 0 };"
 
 mutual
     ||| C initializer text for one `RCConstCon` field: `l` is always
@@ -880,57 +878,35 @@ mutual
         pure (e :: es)
 
     ||| The boxed C expression for constant constructor value `l` (an
-    ||| `RCConstCon` -- see `Compiler.RC2.ConstFold`): a reference to an
-    ||| already-staged file-scope static (deduplicates across the whole
-    ||| compilation unit, same as `boxedConstExpr`), or a fresh stage-
-    ||| then-reference otherwise. The staged static mirrors
-    ||| `IDRIS2RC2_Constructor`'s own layout field-for-field (see
-    ||| `emitRC`'s `RCon` case for the dynamic-allocation equivalent)
-    ||| but as a fixed-size array instead of a flexible array member --
-    ||| plain C has no static initializer for a flexible array member --
-    ||| and stamps `IDRIS2RC2_STOCKVAL` (the same immortal-refcount
-    ||| marker the small-int cache and `ConstDef` values already use)
-    ||| instead of the `refCount = 1` a fresh heap allocation gets.
-    ||| `prf`'s type (`IsConstLocal`, narrower than `IsAnyConstLocal`
-    ||| above) targets `RCConstCon` alone, so every other `RCLocal`
-    ||| constructor is ill-typed here -- no runtime fallback needed.
-    |||
-    ||| The field count varies per constructor (`Cons` has 2, `Just` has
-    ||| 1, a 3-field record has 3, ...), unlike `boxedConstClosureExpr`'s
-    ||| always-empty trailing array, so no single shared type can cover
-    ||| every instance the way `IDRIS2RC2_ConstClosure` does. Instead
-    ||| `datatypes.h` pre-declares one fixed-size named type per field
-    ||| count from 1 (a genuinely zero-arity `RCConstCon` can't happen --
-    ||| see `ConstFold`'s `RCon`-folding comment: NIL/NOTHING/ZERO/UNIT
-    ||| take the separate `RCNull` route instead) through 20 (matching
-    ||| `IDRIS2RC2_Closure`'s own established 0-20 real-arity range --
-    ||| `idris2rc2_dispatchClosure`'s switch in runtime.c), and this
-    ||| selects `IDRIS2RC2_ConstConstructorN` by `length args`. A field
-    ||| count above 20 can't happen in practice either (it would require
-    ||| a data constructor with more than 20 fields), but is still
-    ||| handled correctly, not just assumed away: it falls back to the
-    ||| original per-call-site anonymous-struct declaration below.
+    ||| `RCConstCon` -- see `Compiler.RC2.ConstFold`), staged as a
+    ||| fixed-size mirror of `IDRIS2RC2_Constructor`'s own layout (see
+    ||| `emitRC`'s `RCon` case for the dynamic-allocation equivalent) --
+    ||| a flexible array member has no static-initializer syntax in
+    ||| plain C. Unlike `boxedConstClosureExpr`'s always-empty trailing
+    ||| array, the field count varies per constructor (`Cons` has 2,
+    ||| `Just` has 1, ...), so `datatypes.h` pre-declares one fixed-size
+    ||| named type per field count from 1 (a genuinely zero-arity
+    ||| `RCConstCon` can't happen -- `ConstFold`'s own `RCon`-folding
+    ||| comment: NIL/NOTHING/ZERO/UNIT take the separate `RCNull` route)
+    ||| through 20 (`IDRIS2RC2_Closure`'s own established real-arity
+    ||| range), selected here by `length args`; a field count above 20
+    ||| can't happen in practice either but still falls back correctly
+    ||| to an anonymous per-call-site struct rather than being assumed
+    ||| away.
     boxedConstConExpr : {auto a : Ref ArgCounter Nat}
                       -> {auto _ : Ref ConstDef (SortedMap Constant ConstDef)}
                       -> {auto cc : Ref ConstConDef (SortedMap RCLocal String, List String)}
                       -> (l : RCLocal) -> {0 prf : IsConstLocal l} -> Core String
-    boxedConstConExpr l@(RCConstCon n _ tag args {argsConst}) {prf=ItIsConstCon} = do
-        (names, _) <- get ConstConDef
-        case lookup l names of
-             Just nm => pure "((IDRIS2RC2_Value*)&\{nm})"
-             Nothing => do
-                 argExprs <- constConFieldExprsFor args argsConst
-                 nm <- ("constcon_" ++) <$> getNextCounter
-                 let nameField = maybe "idris2rc2_constr_\{cName n}" (const "NULL") tag
-                 let tagField = maybe "-1" show tag
-                 let arity = length args
-                 let tyName = if arity >= 1 && arity <= 20
-                                 then "IDRIS2RC2_ConstConstructor\{show arity}"
-                                 else "struct { IDRIS2RC2_Header header; int32_t arity; int32_t tag; char const *name; IDRIS2RC2_Value *args[\{show arity}]; }"
-                 let def = "static \{tyName} const \{nm} = { IDRIS2RC2_STOCKVAL(IDRIS2RC2_TAG_CONSTRUCTOR), \{show arity}, \{tagField}, \{nameField}, { \{showSep ", " argExprs} } };"
-                 (names', defs') <- get ConstConDef
-                 put ConstConDef (insert l nm names', defs' ++ [def])
-                 pure "((IDRIS2RC2_Value*)&\{nm})"
+    boxedConstConExpr l@(RCConstCon n _ tag args {argsConst}) {prf=ItIsConstCon} =
+        stageConstCon l "constcon_" $ \nm => do
+            argExprs <- constConFieldExprsFor args argsConst
+            let nameField = maybe "idris2rc2_constr_\{cName n}" (const "NULL") tag
+            let tagField = maybe "-1" show tag
+            let arity = length args
+            let tyName = if arity >= 1 && arity <= 20
+                            then "IDRIS2RC2_ConstConstructor\{show arity}"
+                            else "struct { IDRIS2RC2_Header header; int32_t arity; int32_t tag; char const *name; IDRIS2RC2_Value *args[\{show arity}]; }"
+            pure "static \{tyName} const \{nm} = { IDRIS2RC2_STOCKVAL(IDRIS2RC2_TAG_CONSTRUCTOR), \{show arity}, \{tagField}, \{nameField}, { \{showSep ", " argExprs} } };"
 
 ||| `Just` the C expression text standing in for `l`'s never-declared
 ||| variable if it's an InlineMap-registered local, or an RCConst (see
