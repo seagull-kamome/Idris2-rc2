@@ -83,6 +83,24 @@ import Compiler.RC2.Util
 
 %default covering
 
+||| The auto-implicit `Ref`s nearly every function in this module
+||| threads through -- see each `Ref`'s own tag type (`ArgCounter`,
+||| `OutfileText`, etc.) for what it tracks. `EmitDeps retTy` stands in
+||| for the 9-line `{auto ...} -> ... -> {auto ...} ->` block a plain
+||| function signature would otherwise repeat verbatim at every one of
+||| this module's own definitions.
+0 EmitDeps : Type -> Type
+EmitDeps retTy = {auto a : Ref ArgCounter Nat}
+              -> {auto oft : Ref OutfileText Output}
+              -> {auto il : Ref IndentLevel Nat}
+              -> {auto _ : Ref ConstDef (SortedMap Constant ConstDef)}
+              -> {auto cc : Ref ConstConDef (SortedMap RCLocal String, List String)}
+              -> {auto r : Ref RepMap (SortedMap Int Rep)}
+              -> {auto lm : Ref InlineMap (SortedMap Int String)}
+              -> {auto fa : Ref LoopParams (List (Int, Rep))}
+              -> {auto sd : Ref StructDefs (SortedMap String (List (String, CFType)))}
+              -> retTy
+
 getArgsNrList : List ty -> Nat -> List Nat
 getArgsNrList [] _ = []
 getArgsNrList (x :: xs) k = k :: getArgsNrList xs (S k)
@@ -267,16 +285,7 @@ ffiRawCall cLang fctName fargs ret args = do
 ||| needs the same scratch-variable capture `emitNativeReturn` uses
 ||| (no statement position after a `return` for the drop to land in)
 ||| -- `SinkVar` always has one, so it just drops right after.
-emitAppNameRepInto : {auto a : Ref ArgCounter Nat}
-                   -> {auto oft : Ref OutfileText Output}
-                   -> {auto il : Ref IndentLevel Nat}
-                   -> {auto _ : Ref ConstDef (SortedMap Constant ConstDef)}
-                   -> {auto cc : Ref ConstConDef (SortedMap RCLocal String, List String)}
-                   -> {auto r : Ref RepMap (SortedMap Int Rep)}
-                   -> {auto lm : Ref InlineMap (SortedMap Int String)}
-                   -> {auto fa : Ref LoopParams (List (Int, Rep))}
-                   -> {auto sd : Ref StructDefs (SortedMap String (List (String, CFType)))}
-                   -> Sink -> TailPositionStatus -> FC -> Name -> List Rep -> Rep -> List RCLocal -> List RCLocal -> Core ()
+emitAppNameRepInto : EmitDeps (Sink -> TailPositionStatus -> FC -> Name -> List Rep -> Rep -> List RCLocal -> List RCLocal -> Core ())
 ||| Render a leftover `RAppFFIInline` (a direct, self-contained call
 ||| to a `%foreign` declaration's own raw C function, see its own
 ||| doc comment in RCExp.idr) into `sink` -- always produces a
@@ -299,16 +308,7 @@ emitAppNameRepInto : {auto a : Ref ArgCounter Nat}
 ||| this drop entirely, or double it up with `postDrop`) and every
 ||| FFI call with a genuinely Boxed argument leaks or double-frees
 ||| -- see `ffiRawCall`'s own doc comment for the full rationale.
-emitAppFFIInlineInto : {auto a : Ref ArgCounter Nat}
-                     -> {auto oft : Ref OutfileText Output}
-                     -> {auto il : Ref IndentLevel Nat}
-                     -> {auto _ : Ref ConstDef (SortedMap Constant ConstDef)}
-                     -> {auto cc : Ref ConstConDef (SortedMap RCLocal String, List String)}
-                     -> {auto r : Ref RepMap (SortedMap Int Rep)}
-                     -> {auto lm : Ref InlineMap (SortedMap Int String)}
-                     -> {auto fa : Ref LoopParams (List (Int, Rep))}
-                     -> {auto sd : Ref StructDefs (SortedMap String (List (String, CFType)))}
-                     -> Sink -> TailPositionStatus -> FC -> List String -> List CFType -> CFType -> List RCLocal -> List RCLocal -> Core ()
+emitAppFFIInlineInto : EmitDeps (Sink -> TailPositionStatus -> FC -> List String -> List CFType -> CFType -> List RCLocal -> List RCLocal -> Core ())
 ||| Canonical statement of the `postDrop` read-before-drop rule every
 ||| other `postDrop`-consuming site in this file points back to here:
 ||| `postDrop` (`Compiler.RC2.RC`'s `annotate`) already lists exactly
@@ -317,18 +317,7 @@ emitAppFFIInlineInto : {auto a : Ref ArgCounter Nat}
 ||| place, right after that statement, never re-deriving which locals
 ||| need it. Get the ordering backwards (drop before the read is
 ||| actually emitted) and it's a use-after-free.
-emitRC : {auto a : Ref ArgCounter Nat}
-       -> {auto oft : Ref OutfileText Output}
-       -> {auto il : Ref IndentLevel Nat}
-       -> {auto _ : Ref ConstDef (SortedMap Constant ConstDef)}
-       -> {auto cc : Ref ConstConDef (SortedMap RCLocal String, List String)}
-       -> {auto r : Ref RepMap (SortedMap Int Rep)}
-       -> {auto lm : Ref InlineMap (SortedMap Int String)}
-       -> {auto fa : Ref LoopParams (List (Int, Rep))}
-       -> {auto sd : Ref StructDefs (SortedMap String (List (String, CFType)))}
-       -> RCExp
-       -> TailPositionStatus
-       -> Core String
+emitRC : EmitDeps (RCExp -> TailPositionStatus -> Core String)
 
 mutual
     ||| Declare an `RLet`'s own binding: record its `Rep` (so later *uses*
@@ -341,16 +330,7 @@ mutual
     ||| standing between it and a closure-shaped tail expression still
     ||| needs its binding declared exactly as it would be anywhere else,
     ||| it just isn't the end of that search.
-    declareLet : {auto a : Ref ArgCounter Nat}
-               -> {auto oft : Ref OutfileText Output}
-               -> {auto il : Ref IndentLevel Nat}
-               -> {auto _ : Ref ConstDef (SortedMap Constant ConstDef)}
-               -> {auto cc : Ref ConstConDef (SortedMap RCLocal String, List String)}
-               -> {auto r : Ref RepMap (SortedMap Int Rep)}
-               -> {auto lm : Ref InlineMap (SortedMap Int String)}
-               -> {auto fa : Ref LoopParams (List (Int, Rep))}
-               -> {auto sd : Ref StructDefs (SortedMap String (List (String, CFType)))}
-               -> FC -> Int -> Rep -> RCExp -> Core ()
+    declareLet : EmitDeps (FC -> Int -> Rep -> RCExp -> Core ())
     declareLet fc var rep value = do
         update RepMap (insert var rep)
         case (rep, value) of
@@ -376,16 +356,7 @@ mutual
     ||| `goto`), or `Just leftover` using the same leftover protocol as
     ||| `tryBuildClosureInto`, for the same reason (a peeled wrapper's
     ||| side effect must not be emitted twice).
-    tryEmitLoopContinue : {auto a : Ref ArgCounter Nat}
-                        -> {auto oft : Ref OutfileText Output}
-                        -> {auto il : Ref IndentLevel Nat}
-                        -> {auto _ : Ref ConstDef (SortedMap Constant ConstDef)}
-                        -> {auto cc : Ref ConstConDef (SortedMap RCLocal String, List String)}
-                        -> {auto r : Ref RepMap (SortedMap Int Rep)}
-                        -> {auto lm : Ref InlineMap (SortedMap Int String)}
-                        -> {auto fa : Ref LoopParams (List (Int, Rep))}
-                        -> {auto sd : Ref StructDefs (SortedMap String (List (String, CFType)))}
-                        -> RCExp -> Core (Maybe RCExp)
+    tryEmitLoopContinue : EmitDeps (RCExp -> Core (Maybe RCExp))
     tryEmitLoopContinue (RDup fc v extra cont) = do
         dupVarExtra (varName v) extra
         tryEmitLoopContinue cont
@@ -457,16 +428,7 @@ mutual
     ||| second time. See `KNOWN-BUGS.md`'s "Fixed: Compiler.RC2.Emit's
     ||| tryBuildClosureInto used to double-emit a peeled wrapper's own
     ||| side effect" for why this return shape matters.
-    tryBuildClosureInto : {auto a : Ref ArgCounter Nat}
-                        -> {auto oft : Ref OutfileText Output}
-                        -> {auto il : Ref IndentLevel Nat}
-                        -> {auto _ : Ref ConstDef (SortedMap Constant ConstDef)}
-                        -> {auto cc : Ref ConstConDef (SortedMap RCLocal String, List String)}
-                        -> {auto r : Ref RepMap (SortedMap Int Rep)}
-                        -> {auto lm : Ref InlineMap (SortedMap Int String)}
-                        -> {auto fa : Ref LoopParams (List (Int, Rep))}
-                        -> {auto sd : Ref StructDefs (SortedMap String (List (String, CFType)))}
-                        -> Sink -> TailPositionStatus -> RCExp -> Core (Maybe RCExp)
+    tryBuildClosureInto : EmitDeps (Sink -> TailPositionStatus -> RCExp -> Core (Maybe RCExp))
     tryBuildClosureInto sink tailPosition (RDup fc v extra cont) = do
         dupVarExtra (varName v) extra
         tryBuildClosureInto sink tailPosition cont
@@ -501,16 +463,7 @@ mutual
     ||| `emitRC`'s and `emitNativeValue`'s own RLet cases for a plain
     ||| (non-inlined) `RNative` local -- identical in both except for
     ||| what continues afterward, which each caller keeps to itself.
-    declareNative : {auto a : Ref ArgCounter Nat}
-                  -> {auto oft : Ref OutfileText Output}
-                  -> {auto il : Ref IndentLevel Nat}
-                  -> {auto _ : Ref ConstDef (SortedMap Constant ConstDef)}
-                  -> {auto cc : Ref ConstConDef (SortedMap RCLocal String, List String)}
-                  -> {auto r : Ref RepMap (SortedMap Int Rep)}
-                  -> {auto lm : Ref InlineMap (SortedMap Int String)}
-                  -> {auto fa : Ref LoopParams (List (Int, Rep))}
-                  -> {auto sd : Ref StructDefs (SortedMap String (List (String, CFType)))}
-                  -> FC -> PrimType -> Int -> RCExp -> Core ()
+    declareNative : EmitDeps (FC -> PrimType -> Int -> RCExp -> Core ())
     declareNative fc ty var value = do
         (valStr, pending) <- emitNativeValue ty value
         emit fc $ "\{nativeCType ty} var_\{show var} = \{valStr};"
@@ -521,16 +474,7 @@ mutual
     ||| into InlineMap instead (see `Rep.RInlineNative`'s own doc
     ||| comment). Also shared by `emitRC`'s and `emitNativeValue`'s own
     ||| RLet cases.
-    inlineNative : {auto a : Ref ArgCounter Nat}
-                 -> {auto oft : Ref OutfileText Output}
-                 -> {auto il : Ref IndentLevel Nat}
-                 -> {auto _ : Ref ConstDef (SortedMap Constant ConstDef)}
-                 -> {auto cc : Ref ConstConDef (SortedMap RCLocal String, List String)}
-                 -> {auto r : Ref RepMap (SortedMap Int Rep)}
-                 -> {auto lm : Ref InlineMap (SortedMap Int String)}
-                 -> {auto fa : Ref LoopParams (List (Int, Rep))}
-                 -> {auto sd : Ref StructDefs (SortedMap String (List (String, CFType)))}
-                 -> PrimType -> Int -> RCExp -> Core ()
+    inlineNative : EmitDeps (PrimType -> Int -> RCExp -> Core ())
     inlineNative ty var value = do
         (valStr, pending) <- emitNativeValue ty value
         update InlineMap (insert var valStr)
@@ -548,16 +492,7 @@ mutual
     ||| naming `makeClosure`'s own
     ||| `getNewVarThatWillNotBeFreedAtEndOfBlock` already uses) first,
     ||| drop, then return the scratch variable.
-    emitNativeReturn : {auto a : Ref ArgCounter Nat}
-                     -> {auto oft : Ref OutfileText Output}
-                     -> {auto il : Ref IndentLevel Nat}
-                     -> {auto _ : Ref ConstDef (SortedMap Constant ConstDef)}
-                     -> {auto cc : Ref ConstConDef (SortedMap RCLocal String, List String)}
-                     -> {auto r : Ref RepMap (SortedMap Int Rep)}
-                     -> {auto lm : Ref InlineMap (SortedMap Int String)}
-                     -> {auto fa : Ref LoopParams (List (Int, Rep))}
-                     -> {auto sd : Ref StructDefs (SortedMap String (List (String, CFType)))}
-                     -> FC -> PrimType -> RCExp -> Core ()
+    emitNativeReturn : EmitDeps (FC -> PrimType -> RCExp -> Core ())
     emitNativeReturn fc ty value = do
         (valStr, pending) <- emitNativeValue ty value
         case pending of
@@ -598,16 +533,7 @@ mutual
     ||| Every "evaluate this RCExp and store/return its result" site in
     ||| this module goes through here, so the choice between those routes
     ||| is only ever written once.
-    emitInto : {auto a : Ref ArgCounter Nat}
-             -> {auto oft : Ref OutfileText Output}
-             -> {auto il : Ref IndentLevel Nat}
-             -> {auto _ : Ref ConstDef (SortedMap Constant ConstDef)}
-             -> {auto cc : Ref ConstConDef (SortedMap RCLocal String, List String)}
-             -> {auto r : Ref RepMap (SortedMap Int Rep)}
-             -> {auto lm : Ref InlineMap (SortedMap Int String)}
-             -> {auto fa : Ref LoopParams (List (Int, Rep))}
-             -> {auto sd : Ref StructDefs (SortedMap String (List (String, CFType)))}
-             -> FC -> Sink -> TailPositionStatus -> RCExp -> Core ()
+    emitInto : EmitDeps (FC -> Sink -> TailPositionStatus -> RCExp -> Core ())
     emitInto fc sink tailPosition value = do
         -- Same "resume from the leftover, not the original value" care
         -- as tryBuildClosureInto's own doc comment explains, chained
@@ -676,16 +602,7 @@ mutual
     ||| a given alt's body needs are already part of `body` itself, laid
     ||| out exactly like any other RDup/RDrop/RReuseOffer wrapper
     ||| `emitInto`'s own peeling chain already lowers mechanically.
-    branchBody : {auto a : Ref ArgCounter Nat}
-               -> {auto oft : Ref OutfileText Output}
-               -> {auto il : Ref IndentLevel Nat}
-               -> {auto _ : Ref ConstDef (SortedMap Constant ConstDef)}
-               -> {auto cc : Ref ConstConDef (SortedMap RCLocal String, List String)}
-               -> {auto r : Ref RepMap (SortedMap Int Rep)}
-               -> {auto lm : Ref InlineMap (SortedMap Int String)}
-               -> {auto fa : Ref LoopParams (List (Int, Rep))}
-               -> {auto sd : Ref StructDefs (SortedMap String (List (String, CFType)))}
-               -> Sink -> RCExp -> TailPositionStatus -> Core ()
+    branchBody : EmitDeps (Sink -> RCExp -> TailPositionStatus -> Core ())
     branchBody sink body tailPosition = do
         let (shouldDrop0, body') = peelDrop body
         -- shouldDrop0 is already guaranteed Boxed-only -- see the
@@ -704,16 +621,7 @@ mutual
     ||| whether or not this particular alt ended up needing its own
     ||| condition check (the destructuring itself doesn't depend on
     ||| that).
-    emitConAltBody : {auto a : Ref ArgCounter Nat}
-                   -> {auto oft : Ref OutfileText Output}
-                   -> {auto il : Ref IndentLevel Nat}
-                   -> {auto _ : Ref ConstDef (SortedMap Constant ConstDef)}
-                   -> {auto cc : Ref ConstConDef (SortedMap RCLocal String, List String)}
-                   -> {auto r : Ref RepMap (SortedMap Int Rep)}
-                   -> {auto lm : Ref InlineMap (SortedMap Int String)}
-                   -> {auto fa : Ref LoopParams (List (Int, Rep))}
-                   -> {auto sd : Ref StructDefs (SortedMap String (List (String, CFType)))}
-                   -> Sink -> TailPositionStatus -> RCLocal -> RConAlt -> Core ()
+    emitConAltBody : EmitDeps (Sink -> TailPositionStatus -> RCLocal -> RConAlt -> Core ())
     emitConAltBody sink tailPosition sc (MkRConAlt name coninfo tag args body) = do
         let sc' = varName sc
         _ <- foldlC (\k, arg => do
@@ -734,17 +642,8 @@ mutual
     ||| `{ }` scope -- it's already the last thing in whatever C block
     ||| contains this whole comparison, so it can just continue right
     ||| after `whenTrue`'s closing `}`, at the same indentation.
-    emitCmpCaseInto : {auto a : Ref ArgCounter Nat}
-                    -> {auto oft : Ref OutfileText Output}
-                    -> {auto il : Ref IndentLevel Nat}
-                    -> {auto _ : Ref ConstDef (SortedMap Constant ConstDef)}
-                    -> {auto cc : Ref ConstConDef (SortedMap RCLocal String, List String)}
-                    -> {auto r : Ref RepMap (SortedMap Int Rep)}
-                    -> {auto lm : Ref InlineMap (SortedMap Int String)}
-                    -> {auto fa : Ref LoopParams (List (Int, Rep))}
-                    -> {auto sd : Ref StructDefs (SortedMap String (List (String, CFType)))}
-                    -> Sink -> TailPositionStatus -> FC -> PrimFn 2 -> Vect 2 RCLocal
-                    -> List RCLocal -> RCExp -> RCExp -> Core ()
+    emitCmpCaseInto : EmitDeps (Sink -> TailPositionStatus -> FC -> PrimFn 2 -> Vect 2 RCLocal
+                    -> List RCLocal -> RCExp -> RCExp -> Core ())
     emitCmpCaseInto sink tailPosition fc op args postDrop whenTrue whenFalse = do
         case cmpArgTy op of
              Nothing => throw $ InternalError "[rc2] RCmpCase: not a comparison op"
@@ -773,16 +672,7 @@ mutual
     ||| any) writes straight into `sink` (resolved once, before any alt
     ||| -- see `resolveSink`) instead of a throwaway `switchReturnVar` --
     ||| see `emitAltChain`'s own doc comment for the `if`-chain shape.
-    emitConCaseInto : {auto a : Ref ArgCounter Nat}
-                    -> {auto oft : Ref OutfileText Output}
-                    -> {auto il : Ref IndentLevel Nat}
-                    -> {auto _ : Ref ConstDef (SortedMap Constant ConstDef)}
-                    -> {auto cc : Ref ConstConDef (SortedMap RCLocal String, List String)}
-                    -> {auto r : Ref RepMap (SortedMap Int Rep)}
-                    -> {auto lm : Ref InlineMap (SortedMap Int String)}
-                    -> {auto fa : Ref LoopParams (List (Int, Rep))}
-                    -> {auto sd : Ref StructDefs (SortedMap String (List (String, CFType)))}
-                    -> Sink -> TailPositionStatus -> FC -> RCLocal -> List RConAlt -> Maybe RCExp -> Core ()
+    emitConCaseInto : EmitDeps (Sink -> TailPositionStatus -> FC -> RCLocal -> List RConAlt -> Maybe RCExp -> Core ())
     emitConCaseInto sink tailPosition fc sc alts mDef = do
         let sc' = varName sc
         resolvedSink <- resolveSink fc sink
@@ -797,16 +687,7 @@ mutual
     ||| shape" as `emitConCaseInto`, just over `RConstCase`'s own two
     ||| dispatch strategies (a fast integer switch via `extractIntExpr`,
     ||| or the string/double equality chain).
-    emitConstCaseInto : {auto a : Ref ArgCounter Nat}
-                       -> {auto oft : Ref OutfileText Output}
-                       -> {auto il : Ref IndentLevel Nat}
-                       -> {auto _ : Ref ConstDef (SortedMap Constant ConstDef)}
-                       -> {auto cc : Ref ConstConDef (SortedMap RCLocal String, List String)}
-                       -> {auto r : Ref RepMap (SortedMap Int Rep)}
-                       -> {auto lm : Ref InlineMap (SortedMap Int String)}
-                       -> {auto fa : Ref LoopParams (List (Int, Rep))}
-                       -> {auto sd : Ref StructDefs (SortedMap String (List (String, CFType)))}
-                       -> Sink -> TailPositionStatus -> FC -> RCLocal -> List RConstAlt -> Maybe RCExp -> Core ()
+    emitConstCaseInto : EmitDeps (Sink -> TailPositionStatus -> FC -> RCLocal -> List RConstAlt -> Maybe RCExp -> Core ())
     emitConstCaseInto sink tailPosition fc sc alts def = do
         let sc' = varName sc
         resolvedSink <- resolveSink fc sink
@@ -911,16 +792,7 @@ mutual
     |||   `initVal` is dropped right here, once, whenever `inPrologueDrop`
     |||   (its caller, `emitLoopInto`, discharges the full `prologueDrop`
     |||   list as one `removeVars` after every param's own declaration).
-    declareLoopParam : {auto a : Ref ArgCounter Nat}
-                     -> {auto oft : Ref OutfileText Output}
-                     -> {auto il : Ref IndentLevel Nat}
-                     -> {auto _ : Ref ConstDef (SortedMap Constant ConstDef)}
-                     -> {auto cc : Ref ConstConDef (SortedMap RCLocal String, List String)}
-                     -> {auto r : Ref RepMap (SortedMap Int Rep)}
-                     -> {auto lm : Ref InlineMap (SortedMap Int String)}
-                     -> {auto fa : Ref LoopParams (List (Int, Rep))}
-                     -> {auto sd : Ref StructDefs (SortedMap String (List (String, CFType)))}
-                     -> (inPrologueDrop : Bool) -> FC -> (paramId : Int) -> Rep -> (initVal : RCLocal) -> Core ()
+    declareLoopParam : EmitDeps ((inPrologueDrop : Bool) -> FC -> (paramId : Int) -> Rep -> (initVal : RCLocal) -> Core ())
     declareLoopParam _ fc paramId RBoxed initVal =
         if initVal == RCLoc paramId
            then update RepMap (insert paramId RBoxed)
@@ -956,16 +828,7 @@ mutual
     ||| their own node; this one's just as much a precomputed IR fact
     ||| (`Compiler.RC2.Loop`'s own `applyLoop`), simply batched here since
     ||| every member's own drop point is this same spot regardless.
-    emitLoopInto : {auto a : Ref ArgCounter Nat}
-                 -> {auto oft : Ref OutfileText Output}
-                 -> {auto il : Ref IndentLevel Nat}
-                 -> {auto _ : Ref ConstDef (SortedMap Constant ConstDef)}
-                 -> {auto cc : Ref ConstConDef (SortedMap RCLocal String, List String)}
-                 -> {auto r : Ref RepMap (SortedMap Int Rep)}
-                 -> {auto lm : Ref InlineMap (SortedMap Int String)}
-                 -> {auto fa : Ref LoopParams (List (Int, Rep))}
-                 -> {auto sd : Ref StructDefs (SortedMap String (List (String, CFType)))}
-                 -> Sink -> TailPositionStatus -> FC -> List (Int, Rep) -> List RCLocal -> (prologueDrop : List RCLocal) -> RCExp -> Core ()
+    emitLoopInto : EmitDeps (Sink -> TailPositionStatus -> FC -> List (Int, Rep) -> List RCLocal -> (prologueDrop : List RCLocal) -> RCExp -> Core ())
     emitLoopInto sink tailPosition fc loopParams initial prologueDrop body = do
         traverse_ (\((paramId, rep), initVal) =>
                        declareLoopParam (elem initVal prologueDrop) fc paramId rep initVal) (zip loopParams initial)
@@ -992,16 +855,7 @@ mutual
     -- Compiler.RC2.Emit's emitNativeValue used to drop a native-read
     -- Boxed operand before the value was actually read" for what
     -- emitting it here unconditionally used to break.
-    emitNativeValue : {auto a : Ref ArgCounter Nat}
-                     -> {auto oft : Ref OutfileText Output}
-                     -> {auto il : Ref IndentLevel Nat}
-                     -> {auto _ : Ref ConstDef (SortedMap Constant ConstDef)}
-                     -> {auto cc : Ref ConstConDef (SortedMap RCLocal String, List String)}
-                     -> {auto r : Ref RepMap (SortedMap Int Rep)}
-                     -> {auto lm : Ref InlineMap (SortedMap Int String)}
-                     -> {auto fa : Ref LoopParams (List (Int, Rep))}
-                     -> {auto sd : Ref StructDefs (SortedMap String (List (String, CFType)))}
-                     -> PrimType -> RCExp -> Core (String, List String)
+    emitNativeValue : EmitDeps (PrimType -> RCExp -> Core (String, List String))
     -- A bare local read -- unreachable before Stage 3b (declareNative/
     -- inlineNative's own RLet callers only ever see an ROp/RPrimVal
     -- tail here, since Phase 1's own ANF normalisation binds every
