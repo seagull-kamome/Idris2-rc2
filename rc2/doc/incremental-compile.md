@@ -717,6 +717,33 @@ order, float formatting, etc.), which the current sequential-counter
 naming (`constcon_0`, `constcon_1`, ...) doesn't need to guarantee
 today.
 
+**Revisited, decided against for now.** Checked `EmitUtil.idr`'s own
+`ConstDef` naming for the plain-literal case (`genConstant`) -- turns
+out `Int`/`Int64`/`Bits64`/`Double` constants are *already* named from
+their own value (`cCleanString (show x)` etc, not a counter), so
+making just those `weak` instead of `static` would be low-risk (no
+naming change needed at all) -- but the actual payoff is marginal: it
+only saves duplicated static storage for a byte-identical constant
+that happens to be built in more than one module, a handful of bytes
+each, not a runtime performance win of any kind. `Str` constants still
+use a plain counter (`getNextCounter`), and reusing `cCleanString` for
+arbitrary string *content* (as opposed to identifier text, its actual
+job) turns out to be genuinely unsafe, not just untidy: `cCleanString`
+maps both `' '` and `'_'` to the same `"_"`, and its non-printable-
+character escape (`"u" ++ hex`) collides with a literal string that
+happens to spell out that exact escape sequence in plain ASCII (e.g.
+the literal text `"u3042"` and the single character U+3042 both mangle
+to `u3042`) -- two genuinely different string values would collide
+onto the same `weak` symbol name, and the linker would silently keep
+whichever one it happened to link first. A safe version would need a
+real content hash (e.g. 64-bit FNV-1a over the UTF-8 bytes) instead,
+written from scratch (no existing hash utility in scope). Given the
+numeric half's own benefit is already marginal, and the string half
+needs new hash-collision-safety-critical code to get a marginal benefit
+too, decided it isn't worth either the risk or the implementation cost
+right now -- left here, findings and all, rather than re-investigated
+from scratch if it comes up again.
+
 ## Known gaps for v1 (not blocking, but not solved by this design)
 
 - `%export`ed wrapper generation (`RC2.idr`'s `validateExport`/
