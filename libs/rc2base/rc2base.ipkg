@@ -13,7 +13,13 @@ modules    = Data.TextBuffer, Data.Text, Data.Buffer.RC2, Data.Double.RC2,
              System.IO.MemStream,
              System.Net.Epoll,
              System.Random.Xoroshiro128PlusPlus,
-             System.Random.Xoroshiro64StarStar
+             System.Random.Xoroshiro64StarStar,
+             Text.Regex.RE2
+-- `support/c`'s own Makefile also needs `re2`/`pkg-config`/a C++
+-- compiler on PATH (for Text.Regex.RE2's own shim) -- see
+-- doc/regex.md's "Build requirements". Not optional: `prebuild`
+-- failing there fails this whole package's build, same as any other
+-- support/c compile error.
 prebuild   = "make -C support/c"
 postclean  = "make -C support/c clean"
 
