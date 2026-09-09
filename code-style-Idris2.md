@@ -106,6 +106,38 @@ map (p ::) xs
 map (\ps => p :: ps) xs
 ```
 
+### 予約語を識別子(変数名・引数名)に使わない
+
+以下はIdris2の予約語で、変数名・引数名・関数名などの識別子には使えない
+(型名として大文字始まりで予約されている`Type`/`Int`/`String`/`Char`/
+`Double`/`Lazy`/`Inf`/`Force`/`Delay`等は除く)。
+
+```
+data module where let in do record
+auto default implicit failing mutual namespace
+parameters with proof impossible case of
+if then else forall rewrite typebind autobind
+using interface implementation open import
+public export private
+infixl infixr infix prefix
+total partial covering
+```
+
+出典: `idris2-src/src/Parser/Lexer/Source.idr`の`keywords`リスト本体。
+各語の意味はアップストリームの`idris2-src/src/Idris/Doc/Keywords.idr`
+にドキュメント化されており、`idris2`の対話環境で`:doc <keyword>`と
+打てば同じ説明が引ける(例: `:doc rewrite`)。
+
+**特に`rewrite`は要注意。** 一見「書き換え文字列」のような普通の引数
+名として使いたくなるが、予約語なので使うと**その識別子が使われた場所
+より後ろの、同じモジュール内の宣言すべてのパースが壊れる**。しかも
+エラーメッセージは`rewrite`という語には一切触れず、無関係な後続の
+宣言(の実装行)を指して`Couldn't parse declaration`とだけ表示するため、
+原因の特定が非常に困難(実例は`libs/rc2base/doc/regex.md`の
+`Text.Regex.RE2`実装時の顛末を参照)。`Couldn't parse declaration`で
+実際の構文に問題が見当たらない場合は、直前の宣言までの中に予約語を
+識別子として使っている箇所がないか確認すること。
+
 ### 独自ラッパー型より先に標準ライブラリを確認する
 
 「値と証明のペア」「リストの各要素についての証明」が必要な場面では、
