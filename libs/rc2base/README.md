@@ -533,28 +533,10 @@ nests as function calls rather than chaining with `//` the way fixed
 segments do, and why path splitting is a single pass over the string
 (no repeated `strSubstr` rescans).
 
-## `Text.Regex.RE2`: bindings to Google's RE2
+## Regular expressions: `Text.Regex.RE2`, now in its own package
 
-```idris2
-import Text.Regex.RE2
-
-Just re <- compile "([a-z]+)=([0-9]+)"
-  | Nothing => ...            -- invalid pattern
-
-fullMatch re "foo=42"                        -- True
-find re "foo=42"                             -- Just [Just "foo=42", Just "foo", Just "42"]
-replaceFirst re "[\1:\2]" "foo=42 bar=7"      -- "[foo:42] bar=7"
-globalReplace re "[\1:\2]" "foo=42 bar=7"     -- "[foo:42] [bar:7]"
-```
-
-`compile` once, reuse the result across as many `fullMatch`/
-`partialMatch`/`find`/`replaceFirst`/`globalReplace` calls as needed;
-`matches`/`findFirst` are one-off shorthands that recompile the
-pattern every call. Needs `re2`/`pkg-config`/a C++ compiler at build
-time (see `doc/regex.md`'s "Build requirements") -- not optional
-within `rc2base`'s single `.ipkg`. That doc also has a subtle Idris2
-gotcha worth knowing generally: naming a parameter `rewrite` (a
-natural name for a replacement-string argument) silently breaks
-parsing of every declaration after it in the same module, with the
-reported error pointing nowhere near the actual cause -- `rewrite` is
-Idris2's own equality-rewriting keyword, not an ordinary identifier.
+RE2 bindings used to be a module here. They moved to `libs/text-re2`
+(package `text-re2`) so `rc2base` builds with a plain C toolchain --
+RE2 is C++ and needs `g++`/`pkg-config`/abseil, which shouldn't be a
+build dependency of this whole library for one module. `import
+Text.Regex.RE2` after adding `-p text-re2`; see `libs/text-re2/README.md`.

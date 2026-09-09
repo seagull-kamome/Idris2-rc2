@@ -1,9 +1,10 @@
 ||| Bindings to Google's RE2 regular expression engine
 ||| (`support/c/re2_util.cpp`, an `extern "C"` shim over its C++ API,
-||| built into its own shared object, see `doc/regex.md` for why this
-||| needs one, unlike this package's other `%foreign` bindings).
-||| `compile` once, match/capture/replace as many times as needed;
-||| `matches`/`findFirst` are throwaway shorthands for one-off use.
+||| built into its own shared object `libidris2rc2re2` -- see
+||| `doc/regex.md` for why a C++ engine needs that, and why this lives
+||| in its own package rather than in `rc2base`). `compile` once,
+||| match/capture/replace as many times as needed; `matches`/
+||| `findFirst` are throwaway shorthands for one-off use.
 module Text.Regex.RE2
 
 -- Copyright 2026, Hattori,Hiroki. All rights reserved.

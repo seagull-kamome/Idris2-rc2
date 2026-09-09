@@ -1,0 +1,17 @@
+--- Text.Regex.RE2 ---
+compiled ([a-z]+)=([0-9]+)
+numGroups: 2
+fullMatch "foo=42": True
+fullMatch "foo=42 ": False
+partialMatch "x foo=42 y": True
+find "foo=42 bar=7": Just [Just "foo=42", Just "foo", Just "42"]
+replaceFirst: [foo:42] bar=7
+globalReplace: [foo:42] [bar:7]
+find (a)|(b) on "b": Just [Just "b", Nothing, Just "b"]
+find (a)|(b) on "a": Just [Just "a", Just "a", Nothing]
+invalid pattern rejected
+matches "[0-9]+" "12345": True
+matches "[0-9]+" "12a45": False
+findFirst "(\w)(\d)" "x7": Just [Just "x7", Just "x", Just "7"]
+findFirst "(" "x": Nothing
+--- done ---

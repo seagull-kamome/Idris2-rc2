@@ -133,7 +133,7 @@ total partial covering
 より後ろの、同じモジュール内の宣言すべてのパースが壊れる**。しかも
 エラーメッセージは`rewrite`という語には一切触れず、無関係な後続の
 宣言(の実装行)を指して`Couldn't parse declaration`とだけ表示するため、
-原因の特定が非常に困難(実例は`libs/rc2base/doc/regex.md`の
+原因の特定が非常に困難(実例は`libs/text-re2/doc/regex.md`の
 `Text.Regex.RE2`実装時の顛末を参照)。`Couldn't parse declaration`で
 実際の構文に問題が見当たらない場合は、直前の宣言までの中に予約語を
 識別子として使っている箇所がないか確認すること。

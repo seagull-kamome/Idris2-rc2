@@ -1,23 +1,17 @@
-package rc2base
+package text-re2
 
 version    = 0.1.0
 opts       = "--total"
 sourcedir  = "src"
-depends    = contrib, network
-modules    = Data.TextBuffer, Data.Text, Data.Buffer.RC2, Data.Double.RC2,
-             Data.Integer.GMP,
-             Data.String.FFI,
-             Network.HTTP.Route, Network.HTTP.Router, Network.HTTP.Server,
-             System.Concurrency.RC2,
-             System.FFI.C.Array, System.FFI.C.Ptr, System.FFI.C.Sizeof,
-             System.IO.MemStream,
-             System.Net.Epoll,
-             System.Random.Xoroshiro128PlusPlus,
-             System.Random.Xoroshiro64StarStar
--- `support/c`'s Makefile builds `libidris2rc2base.a` with a plain C
--- toolchain (`gcc`/`ar`) -- no `pkg-config`/C++/re2. The RE2 regex
--- bindings that used to need those now live in their own package,
--- `libs/text-re2`.
+modules    = Text.Regex.RE2
+
+-- `support/c`'s Makefile needs `re2`/`pkg-config`/a C++ compiler on
+-- PATH -- RE2's own API is C++ and `pkg-config --libs re2` expands to
+-- dozens of abseil `-l` flags, so the shim (`support/c/re2_util.cpp`)
+-- is compiled with g++ and linked into its own `libidris2rc2re2.so`
+-- rather than a `%foreign`-nameable `-l<name>`. See `doc/regex.md`.
+-- This is exactly the dependency `text-re2` exists to keep out of
+-- `rc2base`, which now builds with a plain C toolchain only.
 prebuild   = "make -C support/c"
 postclean  = "make -C support/c clean"
 

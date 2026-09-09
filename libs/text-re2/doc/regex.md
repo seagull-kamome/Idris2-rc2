@@ -9,7 +9,7 @@ blowup, Unicode edge cases). RE2 is a mature, linear-time C++ regex
 engine already packaged in nixpkgs -- `Text.Regex.RE2` wraps its C++
 API through a small `extern "C"` shim.
 
-## Why a separate shared object, unlike this package's other bindings
+## Why its own package, and its own shared object
 
 RE2's own API is C++, not C, and `pkg-config --libs re2` pulls in
 dozens of `-l` flags for its abseil dependencies -- not something
@@ -17,9 +17,17 @@ dozens of `-l` flags for its abseil dependencies -- not something
 `-l` name) could ever name directly. `support/c/re2_util.cpp` is
 compiled with `g++` and linked into its own `libidris2rc2re2.so`,
 with re2/abseil linked into *that* .so (see `support/c/Makefile`'s own
-comment) -- so the `%foreign` declarations in this module only ever
-need to say `libidris2rc2re2`, one name, same as every other binding
-here.
+comment) -- so the `%foreign` declarations in `Text.Regex.RE2` only
+ever need to say `libidris2rc2re2`, one name.
+
+That per-`.ipkg` `prebuild` hook is also why this is its own package
+rather than a module in `rc2base`: everything else in `rc2base` builds
+with a plain C toolchain (`gcc`, `ar`), and folding RE2 in would make
+`re2`/`pkg-config`/`g++`/abseil a hard build dependency of the whole
+library for the one module that needs them. `text-re2` keeps that
+dependency to consumers who actually `import Text.Regex.RE2`. The lib
+name still reads `libidris2rc2re2` -- kept from when this lived in
+`rc2base`, not worth a rename of every `%foreign` line.
 
 The build embeds an `-Wl,-rpath` pointing at this build's own
 `pkg-config`-resolved `libre2`/abseil location, so a consumer doesn't
@@ -30,13 +38,12 @@ a redistributable binary.
 
 ## Build requirements
 
-Building this module needs `re2`, `pkg-config`, and a C++ compiler
+Building this package needs `re2`, `pkg-config`, and a C++ compiler
 (`g++`) available -- add `re2 pkg-config` to whatever `nix-shell -p
-...` invocation builds `rc2base` (see the top-level `run-idris2-rc-cg`
-skill's own build commands). Without `pkg-config`/`re2` on `PATH`,
-`re2_util.o`'s own compile step fails outright (`<re2/re2.h>` not
-found) -- this module is not optional/gracefully-degrading within
-`rc2base`'s single `.ipkg`.
+...` invocation builds it (see `tests/verify.sh`). Without
+`pkg-config`/`re2` on `PATH`, `re2_util.o`'s own compile step fails
+outright (`<re2/re2.h>` not found) -- `prebuild` failing there fails
+the whole package build.
 
 ## API
 
