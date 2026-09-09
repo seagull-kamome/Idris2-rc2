@@ -469,3 +469,35 @@ cross-checked either against Idris's own native `Integer` arithmetic
 path) or known textbook constants (`gcd 1071 462 == 21`, the classic
 `4^13 mod 497 == 445` modular-exponentiation example, etc.), with
 values kept well outside `Int`'s 64-bit range throughout.
+
+## `Network.HTTP.Server`: a minimal event-driven HTTP server
+
+A single-threaded, `epoll`-driven HTTP/1.1 server (`System.Net.Epoll`
+for the raw event loop, `Network.HTTP.Server` for the HTTP logic on
+top). One call starts it; each request answers through a continuation
+rather than a return value, so a `Handler` can respond synchronously
+or stash the continuation and answer later, asynchronously:
+
+```idris2
+import Network.HTTP.Server
+
+handler : Handler
+handler req respond =
+  case req.path of
+    "/hello" => respond (MkResponse 200 [] "hello\n")
+    _        => respond (MkResponse 404 [] "not found\n")
+
+main : IO ()
+main = serve 8080 handler   -- binds 127.0.0.1:8080, blocks forever
+```
+
+Linux-only (`epoll`); supports request-line + headers +
+`Content-Length` body and keep-alive, not `chunked`/HTTP/1.0/TLS/
+pipelining response ordering. See `doc/http-server.md` for the full
+design and, importantly, a correctness pitfall this module's own test
+program ran into: a top-level `unsafePerformIO`'d `IORef` is **not**
+memoized under `--cg rc2` (nor upstream's own `--cg refc`) the way it
+is under `--cg chez` -- every reference gets its own fresh `IORef`
+instead of sharing one, silently. Never use that pattern to share
+state across a `Handler`; create the `IORef` in `main` and pass it in
+instead.

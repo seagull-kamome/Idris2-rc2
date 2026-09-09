@@ -663,6 +663,43 @@ into a new runtime representation plus matching `Compiler.RC2.Emit`/
 yet. Revisit starting from this writeup (particularly points 3 and 5)
 if one does.
 
+## Semantics: a plain `unsafePerformIO` CAF isn't memoized either -- same root cause, now with a real-world hit
+
+The "Semantics: `Lazy`/`Force`..." entry above already traced the root
+cause (`idris2-src/src/Compiler/LambdaLift.idr`'s `getCompileData
+doLazyAnnots = False`, plus rc2/RefC's complete lack of CAF-sharing for
+top-level 0-argument definitions -- confirmed there via
+`System.Random.Xoroshiro128PlusPlus`'s own global-state design) and
+noted "every use of `Lazy`/`force` in this codebase's own source...
+happens to be single-use, so it hasn't caused an observed problem."
+That changed while building `libs/rc2base`'s `Network.HTTP.Server`
+(see its own `doc/http-server.md`): a test program used the ordinary,
+`Lazy`-free pattern
+
+```idris2
+counter : IORef Int
+counter = unsafePerformIO (newIORef 0)
+```
+
+expecting one shared `IORef` the way `--cg chez` gives (confirmed:
+prints `0 1 2` for three successive reads/increments there). Both
+`--cg rc2` and upstream's own `--cg refc` instead print `0 0 0` --
+three independent `IORef`s, since the CAF compiles to an ordinary
+zero-argument function re-run on every reference, the identical root
+cause as the `Lazy` entry above but hit here with no `Lazy`/`Force`
+involved at all -- just a bare top-level value built through
+`unsafePerformIO`. Confirmed side-by-side across Chez/RefC/rc2 before
+writing this up, specifically to rule out an rc2-specific regression.
+
+Not a new bug, not fixed here -- same "not pursued" conclusion as the
+entry above (a real fix needs the same CAF-sharing + memoizing-closure
+work). Recorded separately because this is the first time it's
+actually bitten real code in this repo rather than being a theoretical
+gap: `Network.HTTP.Server`'s own doc warns its users off the pattern
+directly (create the `IORef` in `main`, pass it into the handler
+instead of reaching for a top-level CAF); no compiler-side mitigation
+attempted.
+
 ## Upstream stdlib `%foreign` declarations with no C/RefC backend at all
 
 Surveyed every `%foreign` declaration in `idris2-src/libs` (206 across
@@ -861,10 +898,6 @@ Loop/MutualLoop/DualABIは無改造で済んだ）。
   カスケード開始時に1回しか出ないため気づきにくい（同docの「Major
   finding」節参照）。対処方針は未定（rc2側で回避するか、単に「1件でも
   失敗したら再度`--install`を回す」運用でしのぐか等）。
-
-
-## rc2baseにwebサーバをバンドル
-気軽に使えるシングルスレッドで動くもの。
 
 
 ## 融合変換のインジェクション

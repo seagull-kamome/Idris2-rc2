@@ -3,13 +3,15 @@ package rc2base
 version    = 0.1.0
 opts       = "--total"
 sourcedir  = "src"
-depends    = contrib
+depends    = contrib, network
 modules    = Data.TextBuffer, Data.Text, Data.Buffer.RC2, Data.Double.RC2,
              Data.Integer.GMP,
              Data.String.FFI,
+             Network.HTTP.Server,
              System.Concurrency.RC2,
              System.FFI.C.Array, System.FFI.C.Ptr, System.FFI.C.Sizeof,
              System.IO.MemStream,
+             System.Net.Epoll,
              System.Random.Xoroshiro128PlusPlus,
              System.Random.Xoroshiro64StarStar
 prebuild   = "make -C support/c"
