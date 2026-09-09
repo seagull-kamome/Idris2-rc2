@@ -212,3 +212,16 @@ if diff -u "$TESTS_DIR/TestIntegerGMP.expected" "$TMP/actual12.out"; then
 else
     fail "TestIntegerGMP -- output mismatch (see diff above)"
 fi
+
+echo "=== rc2 backend: build TestHTTPServer (Network.HTTP.Server: cross-thread respond + stop) ==="
+nix-shell -p gcc gmp pkg-config --run \
+    "cd '$TESTS_DIR' && '$IDRIS2RC2' --cg rc2 -p rc2base -p network -o TestHTTPServer_verify TestHTTPServer.idr"
+
+echo "=== Run and diff against TestHTTPServer.expected ==="
+"$TESTS_DIR/build/exec/TestHTTPServer_verify" > "$TMP/actual13.out" 2>&1
+
+if diff -u "$TESTS_DIR/TestHTTPServer.expected" "$TMP/actual13.out"; then
+    echo "PASS  TestHTTPServer"
+else
+    fail "TestHTTPServer -- output mismatch (see diff above)"
+fi

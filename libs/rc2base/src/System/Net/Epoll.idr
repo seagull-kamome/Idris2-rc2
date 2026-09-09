@@ -61,6 +61,18 @@ prim__setNonBlocking : Int -> PrimIO Int
 %foreign "C:idris2rc2_set_reuseaddr, libidris2rc2base, event_util.h"
 prim__setReuseAddr : Int -> PrimIO Int
 
+%foreign "C:idris2rc2_eventfd_create, libidris2rc2base, event_util.h"
+prim__eventFdCreate : PrimIO Int
+
+%foreign "C:idris2rc2_eventfd_signal, libidris2rc2base, event_util.h"
+prim__eventFdSignal : Int -> PrimIO Int
+
+%foreign "C:idris2rc2_eventfd_drain, libidris2rc2base, event_util.h"
+prim__eventFdDrain : Int -> PrimIO Int
+
+%foreign "C:idris2rc2_close_fd, libidris2rc2base, event_util.h"
+prim__closeFd : Int -> PrimIO Int
+
 -------------------------------------------------------------------------------
 -- Event flags
 -------------------------------------------------------------------------------
@@ -122,6 +134,57 @@ export
 setReuseAddr : HasIO io => (fd : Int) -> io Bool
 setReuseAddr fd = (== 0) <$> primIO (prim__setReuseAddr fd)
 
+||| `close(2)` on a raw descriptor that isn't a `Network.Socket.Socket`
+||| -- an `EPoll`'s own fd (see `close` below) or an `EventFd`. `EINTR`
+||| is retried internally.
+export
+closeFd : HasIO io => (fd : Int) -> io Bool
+closeFd fd = (== 0) <$> primIO (prim__closeFd fd)
+
+-------------------------------------------------------------------------------
+-- Cross-thread wakeup (eventfd)
+-------------------------------------------------------------------------------
+
+||| A non-blocking `eventfd`. Register it with an `EPoll` for `epollIn`
+||| and a single-threaded `wait` loop can be woken from another thread:
+||| the other thread calls `signal`, the loop's `wait` returns with this
+||| fd ready, and the loop calls `drain` to clear it. This is the only
+||| thread-safe way to poke an otherwise single-threaded epoll loop --
+||| everything else in this module and `Network.HTTP.Server` assumes one
+||| thread.
+public export
+record EventFd where
+  constructor MkEventFd
+  fd : Int
+
+||| Creates a non-blocking `eventfd` (counter starts at 0). `Nothing` on
+||| failure (resource exhaustion -- nothing a caller can recover from).
+export
+createEventFd : HasIO io => io (Maybe EventFd)
+createEventFd = do
+  fd <- primIO prim__eventFdCreate
+  pure $ if fd == -1 then Nothing else Just (MkEventFd fd)
+
+||| Wakes a loop waiting on this `eventfd` (adds 1 to its counter).
+||| Safe to call from any thread. A saturated counter is treated as
+||| success -- the loop is already about to wake.
+export
+signalEventFd : HasIO io => EventFd -> io Bool
+signalEventFd efd = (== 0) <$> primIO (prim__eventFdSignal efd.fd)
+
+||| Clears this `eventfd`'s counter (reads until `EAGAIN`). Call once
+||| per observed wakeup, before acting on whatever the signal announced,
+||| so a signal that races in afterwards re-arms the fd instead of being
+||| lost.
+export
+drainEventFd : HasIO io => EventFd -> io Bool
+drainEventFd efd = (== 0) <$> primIO (prim__eventFdDrain efd.fd)
+
+||| `close(2)` on the underlying descriptor.
+export
+closeEventFd : HasIO io => EventFd -> io Bool
+closeEventFd efd = closeFd efd.fd
+
 -------------------------------------------------------------------------------
 -- EPoll
 -------------------------------------------------------------------------------
@@ -161,6 +224,15 @@ modify ep fd flags = (== 0) <$> primIO (prim__epollMod ep.fd fd flags.raw)
 export
 remove : HasIO io => EPoll -> (fd : Int) -> io Bool
 remove ep fd = (== 0) <$> primIO (prim__epollDel ep.fd fd)
+
+||| Closes the `epoll` instance's own descriptor. Registrations for any
+||| fds still watched are dropped by the kernel; those fds themselves
+||| are not closed. Call once, when the loop is done for good. (Named
+||| `closeEpoll`, not `close`, to stay unambiguous alongside
+||| `Network.Socket.close`.)
+export
+closeEpoll : HasIO io => EPoll -> io Bool
+closeEpoll ep = closeFd ep.fd
 
 ||| One ready descriptor from a `wait` call.
 public export

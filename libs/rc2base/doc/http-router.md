@@ -105,6 +105,14 @@ first if that matters for a given route table.
 routes of different shapes can share one plain `List RouteEntry` --
 `get`/`post`/`put`/`delete`/`patch` build one each.
 
+A matched route's `HandlerFor` handler is only handed the capture
+values and the `respond` continuation -- not `Network.HTTP.Server`'s
+auto-implicit `ServerCtx` -- so it can't call `stop`. Only the
+`notFound` argument (a full `Handler`) and any hand-written `Handler`
+you compose alongside `router` can stop the loop; give a route table
+that needs a shutdown endpoint a plain fall-through handler that checks
+for it before delegating to `router`.
+
 ## Splitting the path: one pass, not repeated substr calls
 
 `splitPath` (in `Network.HTTP.Route`) is `Data.String.split (== '/')`

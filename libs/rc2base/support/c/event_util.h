@@ -26,4 +26,25 @@ int idris2rc2_epollhup(void);
 int idris2rc2_set_nonblocking(int fd);
 int idris2rc2_set_reuseaddr(int fd);
 
+// A non-blocking eventfd, used by Network.HTTP.Server as a cross-thread
+// wakeup: the single-threaded event loop parks in epoll_wait, and any
+// other thread makes that call return by writing to this fd. Created
+// with EFD_NONBLOCK|EFD_CLOEXEC. Returns the fd, or -1 on failure.
+int idris2rc2_eventfd_create(void);
+
+// Wakes the event loop: adds 1 to the eventfd counter. Safe to call
+// from any thread. A full counter (EAGAIN) is ignored -- the loop is
+// already scheduled to wake. Returns 0 on success, -1 on a real error.
+int idris2rc2_eventfd_signal(int fd);
+
+// Clears the eventfd counter (reads until EAGAIN). The loop calls this
+// once per wakeup before draining its task queue, so a signal that
+// races in during draining re-arms the fd for the next epoll_wait
+// rather than being lost.
+int idris2rc2_eventfd_drain(int fd);
+
+// close(2) on a raw descriptor (epoll fd, eventfd) that isn't wrapped
+// by Network.Socket. EINTR is retried; other errors are returned.
+int idris2rc2_close_fd(int fd);
+
 #endif

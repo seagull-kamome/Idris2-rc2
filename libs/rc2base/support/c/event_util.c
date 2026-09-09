@@ -5,8 +5,11 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <stddef.h>
+#include <stdint.h>
 #include <sys/epoll.h>
+#include <sys/eventfd.h>
 #include <sys/socket.h>
+#include <unistd.h>
 
 #define IDRIS2RC2_EPOLL_MAX_EVENTS 64
 
@@ -65,4 +68,39 @@ int idris2rc2_set_nonblocking(int fd) {
 int idris2rc2_set_reuseaddr(int fd) {
   int one = 1;
   return setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &one, sizeof(one));
+}
+
+int idris2rc2_eventfd_create(void) {
+  return eventfd(0, EFD_NONBLOCK | EFD_CLOEXEC);
+}
+
+int idris2rc2_eventfd_signal(int fd) {
+  uint64_t one = 1;
+  ssize_t n;
+  do {
+    n = write(fd, &one, sizeof(one));
+  } while (n == -1 && errno == EINTR);
+  if (n == -1 && errno == EAGAIN) return 0;
+  return n == (ssize_t)sizeof(one) ? 0 : -1;
+}
+
+int idris2rc2_eventfd_drain(int fd) {
+  uint64_t buf;
+  ssize_t n;
+  for (;;) {
+    n = read(fd, &buf, sizeof(buf));
+    if (n == -1) {
+      if (errno == EINTR) continue;
+      if (errno == EAGAIN) return 0;
+      return -1;
+    }
+  }
+}
+
+int idris2rc2_close_fd(int fd) {
+  int r;
+  do {
+    r = close(fd);
+  } while (r == -1 && errno == EINTR);
+  return r;
 }

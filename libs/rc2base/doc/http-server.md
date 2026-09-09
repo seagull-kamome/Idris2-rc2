@@ -12,33 +12,87 @@ continuation-passing API is that: one `epoll` loop drives everything,
 and a `Handler` gets its response back not as a return value but as a
 `Response -> IO ()` continuation it can call whenever it likes.
 
+Two things beyond the bare minimum are still in scope, because doing
+them by hand on top of a single-threaded loop is error-prone:
+
+- **the `respond` continuation is safe to call from any thread**, not
+  just the loop's -- a `forkJoin`ed worker can compute a reply and
+  hand it back directly;
+- **a handler (or a thread it spawned) can stop the loop**, via a
+  `stop` action, so `serve` returns instead of blocking forever.
+
+Both are implemented the same way: the off-loop call doesn't touch a
+socket or the epoll set itself (that would race the loop). It appends a
+closure to a mutex-guarded queue and writes an `eventfd` that the loop
+also waits on; the loop wakes, drains the queue, and runs those
+closures itself. The loop stays single-threaded; only the hand-off is
+shared state.
+
 ## Architecture
 
 Two modules, layered:
 
 - `System.Net.Epoll` -- a thin FFI wrapper around Linux `epoll` plus
-  the two socket options an event-driven server needs that the
-  standard `network` package doesn't expose: non-blocking mode
+  the socket options an event-driven server needs that the standard
+  `network` package doesn't expose: non-blocking mode
   (`setNonBlocking`, via `fcntl`/`O_NONBLOCK`) and `SO_REUSEADDR`
-  (`setReuseAddr`, so a restarted server can rebind immediately). Its
-  C side (`support/c/event_util.c`) caches one `epoll_wait` call's
-  results in a single static buffer -- fine for this library's
+  (`setReuseAddr`, so a restarted server can rebind immediately). It
+  also wraps `eventfd` (`createEventFd`/`signalEventFd`/`drainEventFd`)
+  -- a descriptor the loop registers alongside its sockets so any
+  thread can break it out of `wait` -- and `closeEpoll`/`closeFd` for
+  tearing the loop's own descriptors down. Its C side
+  (`support/c/event_util.c`) caches one `epoll_wait` call's results in
+  a single static buffer -- fine for this library's
   one-`EPoll`-per-process design, but means two `EPoll`s must never
   have `wait` calls in flight at the same time.
 - `Network.HTTP.Server` -- the HTTP logic itself: request/response
   types, a minimal HTTP/1.1 parser, per-connection read/write
   buffering, and the event loop that ties it all to `System.Net.Epoll`.
-  All state lives in two records threaded through plain function
-  arguments (`ServerState` for the shared epoll handle + connection
-  table, `Conn` for one connection's buffers) -- no global/`IORef`
-  CAF anywhere in the module (see "CAFs with side effects" below for
-  why that matters).
+  All state lives in records threaded through plain function arguments
+  (`ServerState` for the epoll handle, connection table, and a
+  `ServerCtx`; `ServerCtx` for the cross-thread hand-off -- mutex, task
+  queue, stop flag, wakeup `eventfd`, and the loop thread's id; `Conn`
+  for one connection's buffers) -- no global/`IORef` CAF anywhere in
+  the module (see "CAFs with side effects" below for why that matters).
 
 Every function in `Network.HTTP.Server`'s event loop (`closeConn` ->
-`finishWrite` -> `flushWrite` -> `respond`/`tryDispatch` ->
-`handleReadable`/`handleClientEvent`/`acceptLoop` -> `loop`) is defined
-in that dependency order with no cycles, so no `mutual` block is
-needed despite how tangled a hand-rolled event loop can look.
+`finishWrite` -> `flushWrite` -> `deliver`/`respond`/`tryDispatch` ->
+`handleReadable`/`handleClientEvent`/`acceptLoop` ->
+`drainTasks`/`shutdown` -> `loop`) is defined in that dependency order
+with no cycles, so no `mutual` block is needed despite how tangled a
+hand-rolled event loop can look.
+
+### The cross-thread hand-off
+
+`ServerCtx` is threaded to every `Handler` as an **auto-implicit**, so
+handler code writes a bare `stop` and the enclosing `Handler`'s own
+implicit satisfies the search -- there's never more than one server per
+`serve` call, so nothing to disambiguate. `serve` supplies the implicit
+once, up front; internally the loop threads the already-applied
+`BoundHandler` (`Request -> (Response -> IO ()) -> IO ()`) so the
+implicit is never re-solved at each call site.
+
+- `respond` checks `getThreadId` against the loop thread's. On the loop
+  thread (an ordinary synchronous handler) it calls `deliver`
+  immediately -- identical to the old behaviour, no queue, no syscall.
+  Off the loop thread it appends `deliver` to `ServerCtx.tasks` and
+  signals the `eventfd`.
+- `stop` (and the internal `requestStop`) sets `ServerCtx.stopReq` and
+  signals the `eventfd`, from any thread.
+- `loop`, each iteration: `wait`; process ready events (a ready wakeup
+  `eventfd` is just drained); `drainTasks` (swap the task list out under
+  the lock, run the closures with the lock released, oldest first);
+  then check `stopReq` and either `shutdown` or recurse. `drainTasks`
+  every iteration plus a level-triggered `eventfd` means a signal that
+  races in during draining is never lost -- worst case it costs one
+  extra no-op wakeup.
+- `shutdown` closes every connection, the listener, the wakeup
+  `eventfd`, and the epoll fd, then `loop` and `serve` return.
+
+The mutex is held only around the list/flag swaps, never while running a
+task or doing socket I/O, so a task that itself calls `stop` or hands
+back another `respond` doesn't deadlock (the pthread mutex isn't
+recursive under `--cg rc2`).
 
 ## Wire format: what's actually supported
 
@@ -76,6 +130,13 @@ rather than deferred:
   attacker who never sends a terminating `\r\n\r\n`) grows `readBuf`
   without bound. Fine for a trusted-client / internal-tool use case,
   not for anything internet-facing without a proxy in front of it.
+- Graceful drain on `stop`. The loop finishes its current iteration --
+  so responses already queued (including cross-thread `respond`s that
+  have been enqueued) are flushed -- but a `respond` that only reaches
+  the queue *after* `shutdown` has run is silently dropped: its
+  `signalEventFd` write hits a closed fd (harmless `EBADF`), and its
+  closure is never run. Call `stop` when the async work you care about
+  has already handed its response back, or not at all.
 
 ## Platform: Linux only
 
@@ -114,14 +175,48 @@ handler pending req respond =
     _          => respond (MkResponse 404 [] "not found\n")
 ```
 
+Computing the reply on another thread and handing it back is fine too
+-- `respond` marshals itself onto the loop thread:
+
+```idris2
+handler : Handler
+handler req respond =
+  case req.path of
+    "/slow" => do ignore $ forkJoin {a = ()} $ do
+                    body <- expensive req          -- off the event loop
+                    respond (MkResponse 200 [] body)
+    _       => respond (MkResponse 404 [] "not found\n")
+```
+
+To stop the loop, call `stop` (its `ServerCtx` comes from the
+`Handler`'s auto-implicit, so no argument needed) -- from the handler,
+or from a thread it hands `stop` to. `serve` returns once the loop
+unwinds:
+
+```idris2
+handler : Handler
+handler req respond =
+  case req.path of
+    "/shutdown" => do stop
+                      respond (MkResponse 200 [] "bye\n")   -- flushed before exit
+    _           => respond (MkResponse 404 [] "not found\n")
+
+main : IO ()
+main = do serve 8080 handler
+          putStrLn "server stopped"
+```
+
 To bind somewhere other than `localhost`, pass `bindAddr` explicitly:
 `serve {bindAddr = IPv4Addr 0 0 0 0} 8080 handler` listens on every
 interface.
 
-Verified end-to-end (compiled with `--cg rc2`, exercised with `curl`):
-a synchronous handler, an asynchronous one exactly like the sketch
-above (one connection held open while a second request releases it),
-and keep-alive reuse across several requests on the same connection.
+Verified end-to-end under `--cg rc2` (`tests/TestHTTPServer.idr`, in
+`tests/verify.sh`): a synchronous handler, an async one that answers
+from a `forkJoin`ed thread, `stop` called synchronously from a handler,
+`stop` called from a forked thread (with the response still flushed
+first), and a second `serve` rebinding the same port after the first
+one's `shutdown` released it. The earlier hand-run `curl` checks (async
+hold/release across two connections, keep-alive reuse) still stand.
 
 ## Known limitation: CAFs with side effects aren't memoized under `--cg rc2` (or upstream `--cg refc`)
 

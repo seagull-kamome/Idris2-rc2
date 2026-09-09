@@ -1,0 +1,10 @@
+--- Testing Network.HTTP.Server concurrency + stop ---
+round1 sync: sync-ok
+round1 async: async-ok
+round1 /stop-async: stopping
+round1 server thread joined
+round2 sync: sync-ok
+round2 async: async-ok
+round2 /stop: bye
+round2 server thread joined
+--- Tests finished ---
