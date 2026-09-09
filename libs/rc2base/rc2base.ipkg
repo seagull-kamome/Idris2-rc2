@@ -7,7 +7,7 @@ depends    = contrib, network
 modules    = Data.TextBuffer, Data.Text, Data.Buffer.RC2, Data.Double.RC2,
              Data.Integer.GMP,
              Data.String.FFI,
-             Network.HTTP.Server,
+             Network.HTTP.Route, Network.HTTP.Router, Network.HTTP.Server,
              System.Concurrency.RC2,
              System.FFI.C.Array, System.FFI.C.Ptr, System.FFI.C.Sizeof,
              System.IO.MemStream,

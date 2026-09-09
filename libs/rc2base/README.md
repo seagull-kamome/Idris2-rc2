@@ -501,3 +501,34 @@ is under `--cg chez` -- every reference gets its own fresh `IORef`
 instead of sharing one, silently. Never use that pattern to share
 state across a `Handler`; create the `IORef` in `main` and pass it in
 instead.
+
+## `Network.HTTP.Route`/`Router`: a type-safe route table
+
+A path pattern indexed by the types its captures produce, plus an
+Express-style route table on top -- `router` builds a plain `Handler`
+straight from a `List RouteEntry`, so it drops into `serve` with no
+other change:
+
+```idris2
+import Network.HTTP.Route
+import Network.HTTP.Router
+import Network.HTTP.Server
+
+usersShow : Route [Int]
+usersShow = "users" // capture "id" Int end
+
+routes : List RouteEntry
+routes = [ get usersShow (\userId, respond => respond (MkResponse 200 [] "user #\{show userId}\n")) ]
+
+main : IO ()
+main = serve 8080 (router notFoundHandler routes)
+```
+
+A route with `n` captures requires a handler of type `ty1 -> ... ->
+tyn -> (Response -> IO ()) -> IO ()`, checked at compile time; a
+`FromSegment` parse failure (or a literal-segment/method mismatch)
+falls through to the next registered route rather than crashing. See
+`doc/http-router.md` for the full design, including why `capture`
+nests as function calls rather than chaining with `//` the way fixed
+segments do, and why path splitting is a single pass over the string
+(no repeated `strSubstr` rescans).
