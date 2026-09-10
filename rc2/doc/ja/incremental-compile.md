@@ -490,21 +490,15 @@ FFI 呼び出しではなく、rc2 が構造的に認識するプリミティブ
 論理立てられるよう選ばれた。将来のセッションがこれらのトレード
 オフをゼロから再発見しなくてよいようここに残す:
 
-- **ギャップ #1/#2 は完全な 25 ケースの `RCExp`/`RCLocal` 歩きを
-  二度重複する**(`untaggedConstructorRefsD` と
-  `externalFunctionRefsD`、`Emit/ExternRefs.idr` で互いのすぐ隣)、
-  概念的に関連する「このモジュールは何を参照するが所有しないか」
-  という 2 つの問いのために。共有汎用 fold ではなく、懸念ごとに
-  1 つの専用ウォーカーというこのコードベース自身の確立された先例
-  に一致する(`Compiler.RC2.DeadCode` 自身の `usedFunctionNamesR`
-  の doc コメントが同じ論理を明示的に述べる)が、ほぼ同一の
-  25 ケースウォーカーが 2 つあるのは、`RCExp`/`RCLocal` がいつか
-  新しいコンストラクタを増やしたら同期を保つ表面積がまだ多い --
-  3 つ目のそのようなウォーカーがいつか必要になり重複が本当に
-  痛み始めたら、両方が上に構築できる汎用の「`RCExp` 内のすべての
-  埋め込まれた `RCLocal` を訪問する」fold の価値がある(それまでは
-  YAGNI、抽象化に関するこのプロジェクト自身の一般的な姿勢の通り
-  -- `AGENT.md` を参照)。
+- ~~**ギャップ #1/#2 は完全な 25 ケースの `RCExp`/`RCLocal` 歩きを
+  二度重複する。**~~ 完了。`untaggedConstructorRefsD` と
+  `externalFunctionRefsD`(`Emit/ExternRefs.idr`)、および
+  `Compiler.RC2.DeadCode` 自身の `usedFunctionNamesD` は今や同じ
+  再帰 -- `RCExp.idr` の `foldRCNamesR`/`foldRCNamesD`、網羅的で
+  catch-all のない `Name` 収集 fold -- を、ノードごとのコールバック
+  の小さな `RCNameFold` レコードでパラメータ化したものである。
+  新しい `RCExp`/`RCLocal` コンストラクタは、その fold の 1 箇所の
+  更新を強制する、3 箇所ではない。
 - **ギャップ #1/#2 が出力する `extern` 宣言は翻訳単位間で
   型なし/チェックなし**である -- 各モジュールが外部名の形状に
   ついて自身の推測を独立に導出し(本物の呼び出しは正確なアリティ、

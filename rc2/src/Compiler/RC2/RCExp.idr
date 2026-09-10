@@ -397,3 +397,105 @@ usedConstructorsR (RFree _ _ body) = usedConstructorsR body
 usedConstructorsR (RReleaseReuse _ _ body) = usedConstructorsR body
 usedConstructorsR (RReuseOffer _ _ _ _ body) = usedConstructorsR body
 usedConstructorsR _ = empty
+
+------------------------------------------------------------------------
+-- Generic `Name`-collecting fold
+--
+-- `Compiler.RC2.DeadCode`'s reachability walk and
+-- `Compiler.RC2.Emit.ExternRefs`'s two forward-declaration walks are
+-- the same exhaustive `RCExp`/`RCLocal` recursion, differing only in
+-- which name-bearing nodes they care about. That recursion is written
+-- once here so a new `RCExp`/`RCLocal` constructor forces a single
+-- update rather than three. `freeLocalsR`/`countUsesR`/
+-- `usedConstructorsR` above stay separate on purpose: they collect
+-- `RCLocal`s / use counts / *constructor* names, a different question
+-- with a different accumulator, not a `Name`-set the callbacks below
+-- could express.
+
+||| What a name-bearing `RCExp`/`RCLocal` node contributes to a
+||| `foldRCNamesR` pass -- each field answers "given this name (and,
+||| for a call, its arguments), what does it add to the result", and
+||| the fold supplies every bit of the structural recursion.
+public export
+record RCNameFold m where
+  constructor MkRCNameFold
+  ||| `RAppName` -- a saturated direct call. `args` in full so a caller
+  ||| can take `length args` for the arity.
+  onAppName : Name -> List RCLocal -> m
+  ||| `RAppNameRep` -- a dual-ABI worker call.
+  onAppNameRep : Name -> m
+  ||| `RUnderApp` -- a partial-application closure build.
+  onUnderApp : Name -> m
+  ||| `RCon` (dynamic) and `RCConstCon` (`ConstFold`-folded literal) --
+  ||| `tag` distinguishes the untagged ones that carry a runtime
+  ||| `->name` string.
+  onCon : Name -> (tag : Maybe Int) -> m
+  ||| `RCConstClosure` -- a `ConstFold`-folded zero-capture closure.
+  onConstClosure : Name -> m
+
+||| An `RCNameFold` contributing nothing anywhere -- start from this
+||| and override only the fields a given walker cares about (record
+||| update syntax: `{ onAppName := ... } noRCNames`).
+public export
+noRCNames : Monoid m => RCNameFold m
+noRCNames = MkRCNameFold (\_,_ => neutral) (\_ => neutral) (\_ => neutral)
+                         (\_,_ => neutral) (\_ => neutral)
+
+export
+foldRCNamesL : Monoid m => RCNameFold m -> RCLocal -> m
+foldRCNamesL nf (RCConstClosure n _)      = nf.onConstClosure n
+foldRCNamesL nf (RCConstCon n _ tag args) = nf.onCon n tag <+> concatMap (foldRCNamesL nf) args
+foldRCNamesL _  (RCLoc _)                 = neutral
+foldRCNamesL _  RCNull                    = neutral
+foldRCNamesL _  (RCConst _)               = neutral
+foldRCNamesL _  (RCEmptyCon {})           = neutral
+
+export
+foldRCNamesR : Monoid m => RCNameFold m -> RCExp -> m
+foldRCNamesR nf = go
+  where
+    l : RCLocal -> m
+    l = foldRCNamesL nf
+
+    ls : List RCLocal -> m
+    ls = concatMap l
+
+    go : RCExp -> m
+    go (RV _ x) = l x
+    go (RAppName _ _ n args) = nf.onAppName n args <+> ls args
+    go (RAppNameRep _ n _ _ postDrop args) = nf.onAppNameRep n <+> ls postDrop <+> ls args
+    go (RAppFFIInline _ _ _ _ postDrop args) = ls postDrop <+> ls args
+    go (RUnderApp _ n _ args) = nf.onUnderApp n <+> ls args
+    go (RApp _ _ c a) = l c <+> l a
+    go (RLet _ _ _ value body) = go value <+> go body
+    go (RCon _ n _ tag args reuseFrom) = nf.onCon n tag <+> ls args <+> maybe neutral l reuseFrom
+    go (ROp _ _ _ args postDrop) = ls (toList args) <+> ls postDrop
+    go (RExtPrim _ _ _ args postDrop) = ls args <+> ls postDrop
+    go (RStructGet _ structVar _ _ postDrop) = l structVar <+> ls postDrop
+    go (RStructSet _ structVar _ _ value postDrop) = l structVar <+> l value <+> ls postDrop
+    go (RCmpCase _ _ args postDrop whenTrue whenFalse) =
+        ls (toList args) <+> ls postDrop <+> go whenTrue <+> go whenFalse
+    go (RConCase _ sc alts mDef) =
+        l sc <+> concatMap (\(MkRConAlt _ _ _ _ body) => go body) alts <+> maybe neutral go mDef
+    go (RConstCase _ sc alts mDef) =
+        l sc <+> concatMap (\(MkRConstAlt _ body) => go body) alts <+> maybe neutral go mDef
+    go (RPrimVal _ _) = neutral
+    go (RErased _) = neutral
+    go (RCrash _ _) = neutral
+    go (RDup _ v _ body) = l v <+> go body
+    go (RDrop _ vars body) = ls vars <+> go body
+    go (RFree _ v body) = l v <+> go body
+    go (RReleaseReuse _ v body) = l v <+> go body
+    go (RLoop _ _ initial prologueDrop body) = ls initial <+> ls prologueDrop <+> go body
+    go (RLoopContinue _ args postDrop) = ls args <+> ls postDrop
+    go (RReuseOffer _ sc dupOnShared dropOnUnique body) =
+        l sc <+> ls dupOnShared <+> ls dropOnUnique <+> go body
+
+||| `foldRCNamesR` lifted over a whole `RCDef` (only `MkRCFun`/
+||| `MkRCError` carry an `RCExp` body).
+export
+foldRCNamesD : Monoid m => RCNameFold m -> RCDef -> m
+foldRCNamesD nf (MkRCFun _ _ _ body) = foldRCNamesR nf body
+foldRCNamesD nf (MkRCError body)     = foldRCNamesR nf body
+foldRCNamesD _  (MkRCCon _ _ _)      = neutral
+foldRCNamesD _  (MkRCForeign _ _ _)  = neutral

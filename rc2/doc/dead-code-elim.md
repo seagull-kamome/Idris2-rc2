@@ -72,22 +72,25 @@ nothing and avoids a latent trap if that ever changes -- deleting a
 function meant to be called from outside the compiled program because
 nothing *inside* it calls that function either.
 
-### The walker: `usedFunctionNamesR`
+### The walker: `usedFunctionNamesD`
 
 A `Name` reachability needs to follow is any name an `RCExp` might call
 directly (`RAppName`, `RAppNameRep`) or reference as a first-class
-value to build a closure over (`RUnderApp`). This is deliberately a
-*new*, from-scratch, exhaustive walker over every `RCExp` constructor
--- not `Compiler.RC2.RCExp`'s existing `freeLocalsR`/`countUsesR`/
-`usedConstructorsR`, all three of which have their own `_ = empty`
-catch-all and were written for earlier-pipeline purposes (free-variable/
-use-count analysis in `Compiler.RC2.RC`, a local heuristic in
-`Compiler.RC2.Reuse`) that never needed to know about `RLoop`'s body or
-`RAppNameRep`/`RAppFFIInline`, both of which only exist this late
-(`Compiler.RC2.Loop`/`DualABI`). Reusing any of them here would have
-silently missed every reference living inside a loop body or a
-DualABI-rewritten call site -- exactly the two places this pass most
-needs to look.
+value to build a closure over (`RUnderApp`, or a `ConstFold`-folded
+`RCConstClosure`). `usedFunctionNamesD` is just those four `Name`
+callbacks handed to `Compiler.RC2.RCExp`'s `foldRCNamesD` -- an
+exhaustive, catch-all-free fold over every `RCExp`/`RCLocal`
+constructor, written once there and shared with
+`Compiler.RC2.Emit.ExternRefs`'s two forward-declaration walks (which
+ask a different question of the same recursion). A new constructor
+forces one update in `foldRCNamesR`, not one per walker, and there is
+no `_ = empty` arm to silently drop a reference living inside an
+`RLoop` body or a `DualABI`-rewritten call site -- exactly the two
+places this pass most needs to look. `RCExp.idr`'s older
+`freeLocalsR`/`countUsesR`/`usedConstructorsR` stay separate: they
+each accumulate something else (free `RCLocal`s, use counts,
+*constructor* names) and do carry a catch-all, so they were never a
+fit here.
 
 Two `Name`-carrying constructors are deliberately excluded:
 
@@ -106,8 +109,8 @@ for why that independence is exactly the trap this pass has to avoid).
 ### The sweep: `pruneDeadDefs`
 
 A standard worklist mark phase (`markReachable`): `seen` starts as
-`roots` and grows by following `usedFunctionNamesD` (the same walker,
-lifted to a whole `RCDef`) transitively. A single pass over the
+`roots` and grows by following `usedFunctionNamesD` transitively. A
+single pass over the
 worklist finds the *whole* transitive closure -- no fixpoint loop
 needed, unlike a "repeatedly remove defs with zero direct callers,
 until nothing changes" formulation. Reachability-from-roots already
@@ -203,10 +206,10 @@ would take.
 2. **`%default total` rejected every function in this module.** This
    module's mark-and-sweep worklist (`markReachable`) isn't structurally
    decreasing on its own list argument (it can grow mid-traversal as new
-   names are discovered), and the exhaustive `RCExp` walker
-   (`usedFunctionNamesR`) recurses into pattern-alternative lists via
-   `map`, which Idris2's termination checker doesn't see through as
-   structural recursion either. Every other `Compiler.RC2.*` module that
+   names are discovered), and the exhaustive `RCExp` walk
+   (`RCExp.idr`'s `foldRCNamesR`) recurses into pattern-alternative
+   lists via `concatMap`, which Idris2's termination checker doesn't see
+   through as structural recursion either. Every other `Compiler.RC2.*` module that
    walks `RCExp`/builds a worklist graph (`RCExp.idr`, `MutualLoop.idr`,
    `Reuse.idr`) already declares `%default covering`, not `total`, for
    exactly this reason -- switched to match rather than reach for

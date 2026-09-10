@@ -75,28 +75,30 @@ Compiler.RC2.Inline
 無いという理由で、外部から呼ばれることを意図した関数を削除して
 しまうという罠。
 
-### ウォーカー: `usedFunctionNamesR`
+### ウォーカー: `usedFunctionNamesD`
 
 到達可能性が追う必要がある `Name` とは、`RCExp` が直接呼ぶかも
 しれない(`RAppName`、`RAppNameRep`)、あるいはクロージャを構築する
-ための第一級の値として参照するかもしれない(`RUnderApp`)あらゆる
-名前である。これは意図的に、全ての `RCExp` コンストラクタにわたる
-*新しい*、ゼロからの、網羅的なウォーカーである -- `Compiler.RC2.RCExp`
-の既存の `freeLocalsR`/`countUsesR`/`usedConstructorsR` ではない。
-この 3 つはいずれも独自の `_ = empty` キャッチオールを持ち、
-より早いパイプラインの目的(`Compiler.RC2.RC` での自由変数/使用
-回数解析、`Compiler.RC2.Reuse` でのローカルなヒューリスティック)の
-ために書かれていて、`RLoop` の本体や `RAppNameRep`/`RAppFFIInline`
-(どちらもこれほど遅くにしか存在しない -- `Compiler.RC2.Loop`/
-`DualABI`)を知る必要が一度も無かった。ここでそれらのいずれかを
-再利用していたら、ループ本体や DualABI で書き換えられた呼び出し
-箇所の中に住む全ての参照を黙って見逃していただろう -- まさにこの
-パスが最も見る必要がある 2 箇所である。
+ための第一級の値として参照するかもしれない(`RUnderApp`、または
+`ConstFold` が畳み込んだ `RCConstClosure`)あらゆる名前である。
+`usedFunctionNamesD` は、その 4 つの `Name` コールバックを
+`Compiler.RC2.RCExp` の `foldRCNamesD` に渡しただけである --
+全ての `RCExp`/`RCLocal` コンストラクタにわたる、網羅的で
+catch-all のない fold で、そこに 1 度だけ書かれ、
+`Compiler.RC2.Emit.ExternRefs` の 2 つの前方宣言ウォーク(同じ
+再帰に別の問いをする)と共有される。新しいコンストラクタは
+`foldRCNamesR` の 1 箇所の更新を強制する、ウォーカーごとに 1 箇所
+ではない。そして `RLoop` の本体や `DualABI` で書き換えられた
+呼び出し箇所の中に住む参照を黙って落とす `_ = empty` の枝はない
+-- まさにこのパスが最も見る必要がある 2 箇所である。`RCExp.idr`
+の古い `freeLocalsR`/`countUsesR`/`usedConstructorsR` は別のまま:
+それぞれ別のもの(自由 `RCLocal`、使用回数、*コンストラクタ*名)
+を集積し、キャッチオールを持つので、ここには最初から合わなかった。
 
 `Name` を持つ 2 つのコンストラクタは意図的に除外されている:
 
-- `RCon` 自身の `Name` は*コンストラクタ*名であり、`defs` 自身の
-  関数名キーとは別の名前空間。
+- `RCon`/`RCConstCon` 自身の `Name` は*コンストラクタ*名であり、
+  `defs` 自身の関数名キーとは別の名前空間。
 - `RExtPrim` の `Name` は、コンパイラが知る固定のホワイトリストに
   ある基本セレクタ(`prim__newIORef` など -- `Compiler.RC2.Emit`
   自身の `emitRC` の `RExtPrim` ケース参照)の 1 つで、そのホワイト
@@ -111,8 +113,8 @@ Compiler.RC2.Inline
 ### スイープ: `pruneDeadDefs`
 
 標準的なワークリストのマークフェーズ(`markReachable`): `seen` は
-`roots` から始まり、`usedFunctionNamesD`(同じウォーカーを `RCDef`
-全体へ持ち上げたもの)を推移的に辿って成長する。ワークリストに
+`roots` から始まり、`usedFunctionNamesD` を推移的に辿って成長する。
+ワークリストに
 対する 1 回のパスで*全ての*推移的閉包を見つける -- 「直接の
 呼び出し元がゼロの定義を、何も変わらなくなるまで繰り返し削除
 する」という定式化とは異なり、不動点ループは不要。ルートからの
@@ -212,9 +214,9 @@ Compiler.RC2.Inline
    このモジュールのマーク&スイープのワークリスト(`markReachable`)は、
    自身のリスト引数に対して構造的に減少しない(新しい名前が
    発見されると走査の途中で成長しうる)。また網羅的な `RCExp`
-   ウォーカー(`usedFunctionNamesR`)は、パターン代替リストへ `map`
-   経由で再帰し、それを Idris2 の停止性チェッカは構造的再帰として
-   見通せない。`RCExp` を歩く/ワークリストグラフを構築する他の
+   ウォーク(`RCExp.idr` の `foldRCNamesR`)は、パターン代替リストへ
+   `concatMap` 経由で再帰し、それを Idris2 の停止性チェッカは
+   構造的再帰として見通せない。`RCExp` を歩く/ワークリストグラフを構築する他の
    全ての `Compiler.RC2.*` モジュール(`RCExp.idr`、`MutualLoop.idr`、
    `Reuse.idr`)は、まさにこの理由で既に `%default covering` を
    宣言していて `total` ではない -- `assert_total` に手を伸ばすの

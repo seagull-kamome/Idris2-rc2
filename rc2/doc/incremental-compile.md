@@ -461,20 +461,14 @@ The three fixes above were chosen to be minimal and locally reasoned
 about, not necessarily the best long-term shape. Left here so a future
 session doesn't have to rediscover these tradeoffs from scratch:
 
-- **Gaps #1/#2 duplicate a full 25-case `RCExp`/`RCLocal` walk twice**
-  (`untaggedConstructorRefsD` and `externalFunctionRefsD`, both right
-  next to each other in `Emit/ExternRefs.idr`) for two conceptually-related
-  "what does this module reference but not own" questions. Matches
-  this codebase's own established precedent of one dedicated walker
-  per concern (`Compiler.RC2.DeadCode`'s own `usedFunctionNamesR`'s doc
-  comment states the same reasoning explicitly) rather than a shared
-  generic fold, but two nearly-identical 25-case walkers is still a
-  lot of surface area to keep in sync if `RCExp`/`RCLocal` ever grows a
-  new constructor -- worth a generic "visit every embedded `RCLocal`
-  in an `RCExp`" fold both could be built on top of, if a third such
-  walker is ever needed and the duplication starts to hurt for real
-  (YAGNI until then, per this project's own general stance on
-  abstraction -- see `AGENT.md`).
+- ~~**Gaps #1/#2 duplicate a full 25-case `RCExp`/`RCLocal` walk twice.**~~
+  Done. `untaggedConstructorRefsD` and `externalFunctionRefsD`
+  (`Emit/ExternRefs.idr`), plus `Compiler.RC2.DeadCode`'s own
+  `usedFunctionNamesD`, are now the same recursion -- `RCExp.idr`'s
+  `foldRCNamesR`/`foldRCNamesD`, an exhaustive catch-all-free
+  `Name`-collecting fold -- parameterised by a small `RCNameFold`
+  record of per-node callbacks. A new `RCExp`/`RCLocal` constructor
+  forces one update in that fold, not three.
 - **The `extern` declarations gaps #1/#2 emit are untyped/unchecked
   across translation units** -- each module derives its own guess at
   an external name's shape (exact arity for a real call, arity 0 for a
