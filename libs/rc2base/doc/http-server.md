@@ -28,9 +28,12 @@ also waits on; the loop wakes, drains the queue, and runs those
 closures itself. The loop stays single-threaded; only the hand-off is
 shared state.
 
+Request and response bodies are raw bytes (`Data.Buffer`), not
+`String` -- see "Bodies are bytes" below.
+
 ## Architecture
 
-Two modules, layered:
+Three modules, layered:
 
 - `System.Net.Epoll` -- a thin FFI wrapper around Linux `epoll` plus
   the socket options an event-driven server needs that the standard
@@ -45,22 +48,62 @@ Two modules, layered:
   a single static buffer -- fine for this library's
   one-`EPoll`-per-process design, but means two `EPoll`s must never
   have `wait` calls in flight at the same time.
+- `Network.RC2` -- offset+length socket IO straight into and out of a
+  `Data.Buffer` (`sendBuf`/`recvBuf`), plus `isWouldBlock`. The
+  standard `network` package only moves bytes through a `String`
+  (`send`/`recv` -- truncates at the first NUL) or a `List Bits8`
+  (`sendBytes`/`recvBytes` -- one cons cell per byte); neither is
+  usable for a server shuffling binary payloads through a reused
+  accumulator. Its C side (`support/c/net_util.c`) is a two-function
+  shim over plain `send`/`recv` that does `data + off`; `errno` on a
+  failed call is read with `Network.Socket.Data.getErrno` (what
+  `network`'s own `send`/`recv` use), not a shim of its own.
 - `Network.HTTP.Server` -- the HTTP logic itself: request/response
-  types, a minimal HTTP/1.1 parser, per-connection read/write
-  buffering, and the event loop that ties it all to `System.Net.Epoll`.
-  All state lives in records threaded through plain function arguments
-  (`ServerState` for the epoll handle, connection table, and a
-  `ServerCtx`; `ServerCtx` for the cross-thread hand-off -- mutex, task
-  queue, stop flag, wakeup `eventfd`, and the loop thread's id; `Conn`
-  for one connection's buffers) -- no global/`IORef` CAF anywhere in
-  the module (see "CAFs with side effects" below for why that matters).
+  types, a byte-scanning HTTP/1.1 parser, per-connection read/write
+  buffering, and the event loop that ties it all to `System.Net.Epoll`
+  and `Network.RC2`. All state lives in records threaded through plain
+  function arguments (`ServerState` for the epoll handle, connection
+  table, a `ServerCtx`, and `maxReq`; `ServerCtx` for the cross-thread
+  hand-off -- mutex, task queue, stop flag, wakeup `eventfd`, and the
+  loop thread's id; `Conn` for one connection's read/write byte
+  accumulators) -- no global/`IORef` CAF anywhere in the module (see
+  "CAFs with side effects" below for why that matters).
 
 Every function in `Network.HTTP.Server`'s event loop (`closeConn` ->
-`finishWrite` -> `flushWrite` -> `deliver`/`respond`/`tryDispatch` ->
+`finishWrite` -> `flushWrite` -> `appendResponse` ->
+`deliver`/`respond`/`dropFront`/`tryDispatch` ->
 `handleReadable`/`handleClientEvent`/`acceptLoop` ->
 `drainTasks`/`shutdown` -> `loop`) is defined in that dependency order
 with no cycles, so no `mutual` block is needed despite how tangled a
 hand-rolled event loop can look.
+
+### Bodies are bytes
+
+`Request.body` and `Response.body` are `Data.Buffer` -- exactly the
+bytes on the wire, no NUL or encoding assumptions. `String` was the
+original choice and is wrong for binary: the `network` package's
+`send`/`recv` marshal through a C `char*` (so a body with an embedded
+`\0` is truncated on both send and receive), and `strLength`/`strSubstr`
+are codepoint-based under `--cg chez` but byte-based under
+`--cg rc2`/`refc`, so `Content-Length` arithmetic and slicing disagree
+across backends.
+
+Helpers on `Network.HTTP.Server`:
+
+- `byteLength : Buffer -> Int` -- pure, reads the buffer's size header.
+  A body carries no separate length field; this *is* its length, so
+  there is nothing to keep in sync.
+- `fromString : String -> IO Buffer` -- UTF-8-encode, for building text
+  responses. Stopgap until richer `Response` helpers land; the string
+  must be NUL-free (length via `strlen`).
+- `toString : Buffer -> IO String` -- decode a whole buffer as UTF-8,
+  for a body already known to be text.
+
+The read and write accumulators are reused `Buffer`s that grow by
+reallocation (roughly doubling), each capped: the read side at
+`maxRequestBytes` (a `serve` argument, default 8 MiB), the write side
+at a fixed 64 MiB backstop. `Network.RC2.recvBuf`/`sendBuf` read and
+write in place at the accumulator's cursor -- no per-syscall copy.
 
 ### The cross-thread hand-off
 
@@ -99,8 +142,12 @@ recursive under `--cg rc2`).
 A deliberately small HTTP/1.1 subset:
 
 - Request line + headers + an optional `Content-Length`-delimited
-  body. Header parsing is case-insensitive on the name, whitespace-
-  trimmed on the value.
+  body. The parser scans the accumulator's bytes directly for the
+  `\r\n\r\n` terminator, line breaks, spaces and colons; only the
+  method, path, and each header key/value are lifted out to `String`
+  (each on its own `getString` of its byte range), never one big head
+  string. Header key match is case-insensitive; the value is SP/HTAB-
+  trimmed. The body is handed over as raw `Buffer` bytes.
 - Keep-alive by default (HTTP/1.1's own default); an explicit
   `Connection: close` request header closes the connection after that
   response.
@@ -126,10 +173,12 @@ rather than deferred:
   synchronous handler), a real problem only for an async handler under
   a pipelining client -- not attempted here.
 - TLS. Plain TCP only.
-- Any request size limit -- an unbounded `Content-Length` (or an
-  attacker who never sends a terminating `\r\n\r\n`) grows `readBuf`
-  without bound. Fine for a trusted-client / internal-tool use case,
-  not for anything internet-facing without a proxy in front of it.
+- A polite response to an over-large request. The read accumulator is
+  capped at `maxRequestBytes` (default 8 MiB); a request whose
+  header+body would exceed it -- including an attacker who never sends
+  a terminating `\r\n\r\n` -- has its **connection dropped with no
+  response**, not a `413`. Fine for a trusted-client / internal-tool
+  use case; put a proxy in front for anything internet-facing.
 - Graceful drain on `stop`. The loop finishes its current iteration --
   so responses already queued (including cross-thread `respond`s that
   have been enqueued) are flushed -- but a `respond` that only reaches
@@ -146,17 +195,20 @@ and deployment target is Linux (see the top-level `AGENT.md`).
 
 ## Using it
 
+A body is a `Buffer`; `fromString` builds one from text.
+
 ```idris2
 import Network.HTTP.Server
 
 handler : Handler
 handler req respond =
   case req.path of
-    "/hello" => respond (MkResponse 200 [] "hello\n")
-    _        => respond (MkResponse 404 [] "not found\n")
+    "/hello" => respond (MkResponse 200 [] !(fromString "hello\n"))
+    "/echo"  => respond (MkResponse 200 [] req.body)   -- binary passthrough
+    _        => respond (MkResponse 404 [] !(fromString "not found\n"))
 
 main : IO ()
-main = serve 8080 handler   -- binds 127.0.0.1:8080, blocks forever
+main = serve 8080 handler   -- binds 127.0.0.1:8080, runs until `stop`
 ```
 
 `respond` can also be stashed and called later -- from inside a
@@ -169,10 +221,10 @@ handler pending req respond =
   case req.path of
     "/wait"    => writeIORef pending (Just respond)   -- don't respond yet
     "/release" => do Just held <- readIORef pending
-                        | Nothing => respond (MkResponse 200 [] "nothing waiting\n")
-                      held (MkResponse 200 [] "released\n")
-                      respond (MkResponse 200 [] "ok\n")
-    _          => respond (MkResponse 404 [] "not found\n")
+                        | Nothing => respond (MkResponse 200 [] !(fromString "nothing waiting\n"))
+                      held (MkResponse 200 [] !(fromString "released\n"))
+                      respond (MkResponse 200 [] !(fromString "ok\n"))
+    _          => respond (MkResponse 404 [] !(fromString "not found\n"))
 ```
 
 Computing the reply on another thread and handing it back is fine too
@@ -183,9 +235,9 @@ handler : Handler
 handler req respond =
   case req.path of
     "/slow" => do ignore $ forkJoin {a = ()} $ do
-                    body <- expensive req          -- off the event loop
+                    body <- expensive req          -- off the event loop, : IO Buffer
                     respond (MkResponse 200 [] body)
-    _       => respond (MkResponse 404 [] "not found\n")
+    _       => respond (MkResponse 404 [] !(fromString "not found\n"))
 ```
 
 To stop the loop, call `stop` (its `ServerCtx` comes from the
@@ -198,13 +250,16 @@ handler : Handler
 handler req respond =
   case req.path of
     "/shutdown" => do stop
-                      respond (MkResponse 200 [] "bye\n")   -- flushed before exit
-    _           => respond (MkResponse 404 [] "not found\n")
+                      respond (MkResponse 200 [] !(fromString "bye\n"))   -- flushed before exit
+    _           => respond (MkResponse 404 [] !(fromString "not found\n"))
 
 main : IO ()
 main = do serve 8080 handler
           putStrLn "server stopped"
 ```
+
+To cap request size differently, pass `maxRequestBytes`:
+`serve {maxRequestBytes = 65536} 8080 handler`.
 
 To bind somewhere other than `localhost`, pass `bindAddr` explicitly:
 `serve {bindAddr = IPv4Addr 0 0 0 0} 8080 handler` listens on every
@@ -214,9 +269,12 @@ Verified end-to-end under `--cg rc2` (`tests/TestHTTPServer.idr`, in
 `tests/verify.sh`): a synchronous handler, an async one that answers
 from a `forkJoin`ed thread, `stop` called synchronously from a handler,
 `stop` called from a forked thread (with the response still flushed
-first), and a second `serve` rebinding the same port after the first
-one's `shutdown` released it. The earlier hand-run `curl` checks (async
-hold/release across two connections, keep-alive reuse) still stand.
+first), a second `serve` rebinding the same port after the first one's
+`shutdown` released it, and -- for binary safety -- a POST body of 259
+bytes including four NUL bytes reported back whole by the handler, plus
+a response body containing NULs read back byte-for-byte by the client.
+The earlier hand-run `curl` checks (async hold/release across two
+connections, keep-alive reuse) still stand.
 
 ## Known limitation: CAFs with side effects aren't memoized under `--cg rc2` (or upstream `--cg refc`)
 

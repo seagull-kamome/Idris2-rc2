@@ -1,6 +1,8 @@
---- Testing Network.HTTP.Server concurrency + stop ---
+--- Testing Network.HTTP.Server ---
 round1 sync: sync-ok
 round1 async: async-ok
+round1 echo: len=259 sum=32640
+round1 blob: [1, 0, 2, 0, 255, 0, 7]
 round1 /stop-async: stopping
 round1 server thread joined
 round2 sync: sync-ok

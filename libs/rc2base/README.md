@@ -473,10 +473,13 @@ values kept well outside `Int`'s 64-bit range throughout.
 ## `Network.HTTP.Server`: a minimal event-driven HTTP server
 
 A single-threaded, `epoll`-driven HTTP/1.1 server (`System.Net.Epoll`
-for the raw event loop, `Network.HTTP.Server` for the HTTP logic on
-top). One call starts it; each request answers through a continuation
-rather than a return value, so a `Handler` can respond synchronously
-or stash the continuation and answer later, asynchronously:
+for the raw event loop, `Network.RC2` for binary-safe buffer socket IO,
+`Network.HTTP.Server` for the HTTP logic on top). One call starts it;
+each request answers through a continuation rather than a return value,
+so a `Handler` can respond synchronously, stash the continuation and
+answer later (from another thread, even), or `stop` the loop. Request
+and response bodies are raw `Data.Buffer` bytes -- binary safe;
+`fromString`/`toString` bridge text.
 
 ```idris2
 import Network.HTTP.Server
@@ -484,16 +487,19 @@ import Network.HTTP.Server
 handler : Handler
 handler req respond =
   case req.path of
-    "/hello" => respond (MkResponse 200 [] "hello\n")
-    _        => respond (MkResponse 404 [] "not found\n")
+    "/hello" => respond (MkResponse 200 [] !(fromString "hello\n"))
+    "/echo"  => respond (MkResponse 200 [] req.body)
+    _        => respond (MkResponse 404 [] !(fromString "not found\n"))
 
 main : IO ()
-main = serve 8080 handler   -- binds 127.0.0.1:8080, blocks forever
+main = serve 8080 handler   -- binds 127.0.0.1:8080, runs until `stop`
 ```
 
 Linux-only (`epoll`); supports request-line + headers +
 `Content-Length` body and keep-alive, not `chunked`/HTTP/1.0/TLS/
-pipelining response ordering. See `doc/http-server.md` for the full
+pipelining response ordering. The read accumulator is capped
+(`serve`'s `maxRequestBytes`, default 8 MiB); an over-large request is
+dropped without a response. See `doc/http-server.md` for the full
 design and, importantly, a correctness pitfall this module's own test
 program ran into: a top-level `unsafePerformIO`'d `IORef` is **not**
 memoized under `--cg rc2` (nor upstream's own `--cg refc`) the way it
