@@ -222,13 +222,13 @@ out and what extending it would need.
 
 ## Reference tests
 
-- **`Test66ClosureFastPathMap`** (`rc2/tests/Test66ClosureFastPathMap/`):
+- **`Test66ClosureFastPath` §1** (was `Test66ClosureFastPathMap`):
   `map (addN n) xs` over a 2000-element list -- `addN n` is a partial
   application (arity 2, filled 1) reused by `map` across every
   element, so it is non-unique at every application except possibly
   the last element's. Confirmed, via development-time instrumentation
   since removed, that the fast path fires exactly once per element.
-- **`Test67ClosureFastPathDictDispatch`** (`rc2/tests/Test67ClosureFastPathDictDispatch/`):
+- **`Test66ClosureFastPath` §2** (was `Test67ClosureFastPathDictDispatch`):
   the same shape sourced from a genuine interface dictionary instead
   of a hand-written function -- `map (k +) xs` where `(k +)` is `Num`'s
   own `(+)` method extracted from a runtime dictionary and partially

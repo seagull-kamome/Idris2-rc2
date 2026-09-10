@@ -375,35 +375,6 @@ materialize a boxed `Bool`, even when immediately consumed by a branch;
 only comparisons over the fixed-width/`Double`/`Char` types above skip
 that materialization.
 
-## Dropped: unwrapping `Just x` to a bare `x` (nullable-pointer `Maybe`)
-
-Investigated turning `Maybe`-shaped types' non-nullary constructor into
-a zero-allocation passthrough, matching `Nothing`'s existing `NULL`
-representation -- i.e. `Just x` would just *be* `x` (plus whatever
-`dup` ordinary variable sharing already needs), never a real
-`idris2rc2_newConstructor` heap allocation. Motivated by noticing that
-`Nothing` already compiles to a bare C `NULL`
-(`support/rc2/datatypes.h`'s "Nil/Nothing/Z/MkUnit" comment) while
-`Just x` still allocates.
-
-The mechanics turned out easy: `ConInfo`'s `JUST` (`idris2-src/src/Core/
-CompileExpr.idr`) is a shape-based tag upstream Idris2 itself assigns
-to *any* option-shaped type's non-nullary constructor, not just
-`Prelude.Maybe`'s -- one `ci == JUST` check is enough, no need to
-inspect the whole datatype. `Compiler.RC2.EmitUtil`'s
-`conAltCondExpr` already discriminates a `JUST` alt with plain `NULL !=
-sc'`, no tag comparison at all -- exactly the test this scheme needs
-and already in place. The only genuinely new code would have been:
-`Compiler.RC2.RC`'s `bindOne`/`normalize` skip constructing an `RCon`
-for a `ci == JUST` application and bind its single argument directly
-instead (so no `RCon fc n JUST ...` node is ever produced), a matching
-case in `Emit.idr`'s `emitConAltBody` (alias the scrutinee itself
-instead of reading `args[0]`), and adding `JUST` to `Reuse.idr`'s
-`resolveAlt` `erased` set (so the reuse pass doesn't try to treat a
-no-longer-boxed `JUST` scrutinee as reusable heap storage). No new
-`RCExp`/`RCLocal` node needed, no new ownership rules -- confirmed by
-reading the full pipeline before writing any code.
-
 **Dropped once a concrete soundness counterexample was found**: the
 scheme collapses `Just x` and `Nothing` into the same `NULL`
 representation whenever `x`'s own value can itself be `NULL` --
@@ -435,20 +406,6 @@ sound thing: always constructing a real `Constructor` for
 `Prelude.Maybe` specifically (a fixed library type whose `Just` tag is
 known and stable), never eliding one for an arbitrary payload type.
 
-## Runtime: RFree rarely fires in practice
-
-`RFree` (unconditional, unchecked deallocation for provably-fresh
-unshared allocations) is implemented and type-checks/reviews fine
-structurally, but was observed to essentially never appear in generated
-code for ordinary Idris2 source: Idris2's own frontend multiplicity-based
-dead-code elimination removes the only kind of binding
-(`dropDeadLet`'s target: a let-bound value that's never used) that would
-trigger it, before `RC.idr` ever sees it. Confirmed this is inherent to
-upstream Idris2's pipeline, not rc2-specific (RefC has the same
-non-firing behavior for the same reason). Not a bug to fix, but noted
-here in case a future frontend change or a different lowering strategy
-changes when `RFree` becomes reachable, so its rarely-exercised code path
-gets renewed scrutiny then.
 
 ## Semantics: `Lazy`/`Force` defers evaluation but doesn't memoize (except one Chez-only special case)
 
@@ -1161,8 +1118,9 @@ dup+dropペア分増えるが、正しさは保たれる)という保守的な�
 
 - **`%export`: 対応型を拡大、生成ヘッダなしは未対応のまま**
   `%export`自体は実装済み(rc2は実ネイティブC-ABIラッパーを生成する唯一の
-  バックエンド、詳細は`rc2/doc/export-support.md`と`rc2/tests/Test59ExportScalar.idr`
-  〜`Test64ExportString.idr`)。対応範囲はスカラー型(`Int`/`Int8`/.../`Double`/
+  バックエンド、詳細は`rc2/doc/export-support.md`と
+  `rc2/tests/Test59Export/`(CFType形状ごとに1セクションのマージ済みテスト))。
+  対応範囲はスカラー型(`Int`/`Int8`/.../`Double`/
   `Char`、`IO`/`IORes`)に加え、`Ptr`/`AnyPtr`、`GCPtr`/`GCAnyPtr`(引数のみ、戻り値は
   ファイナライザ発火タイミングの問題によりコンパイルエラー)、`Integer`(GMP、双方向)、
   `String`(戻り値、呼び出し側`free()`必須の所有権契約つき)、struct(ポインタ経由、

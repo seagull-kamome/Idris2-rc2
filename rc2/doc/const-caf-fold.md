@@ -310,23 +310,24 @@ requires a CAF or a case scrutinee to have been folded away.
 
 ## Tests
 
-Four new tests under `rc2/tests/`, three registered in
-`rc2/tests/verify.sh`'s `LEAK_SENSITIVE_TESTS` (all but Test76, which
-has nothing to leak-check -- its whole point is that folding never
-happens):
+Four regression cases, now merged as sections 5-8 of
+`rc2/tests/Test69ConstFoldClosure` (its whole file is registered in
+`rc2/tests/verify.sh`'s `LEAK_SENSITIVE_TESTS`; section 7 -- the mutual
+CAF one -- has nothing to leak-check on its own, its whole point being
+that folding never happens):
 
-- **`Test74ConstFoldCafBoundaryClosure`** -- a closure-shaped CAF
-  (`dict : Pair; dict = MkPair op1 op2`) referenced only from a
-  *separate* definition (`useDict`), never built inline inside `main`.
+- **§5 (was `Test74ConstFoldCafBoundaryClosure`)** -- a closure-shaped CAF
+  (`dict74 : Pair74; dict74 = MkPair74 d74op1 d74op2`) referenced only from a
+  *separate* definition (`useDict74`), never built inline inside `main`.
   This deliberately isolates the new whole-program `CafTable` from
   `Compiler.RC2.Inline`'s own constructor-only splicing side-channel
   (which reaches only a constructor-shaped CAF built at its own call
   site, see `const-con-fold.md`'s CAF-boundary discussion) -- if this
   folds, it's proof the new fixpoint loop did it, not `Inline`.
-  Confirmed by hand via `--directive dumprcexpr`: `Main.useDict`'s own
-  dump references `Main.dict` directly as a `RCConstCon`/
-  `RCConstClosure` literal, never a `RAppName ... "Main.dict" []` call.
-- **`Test75ConstFoldConCaseScrutinee`** -- `directCase`'s scrutinee is
+  Confirmed by hand via `--directive dumprcexpr`: `Main.useDict74`'s own
+  dump references `Main.dict74` directly as a `RCConstCon`/
+  `RCConstClosure` literal, never a `RAppName ... "Main.dict74" []` call.
+- **§6 (was `Test75ConstFoldConCaseScrutinee`)** -- `directCase`'s scrutinee is
   a known-constant `RCConstCon` bound by a `let` immediately above the
   `case`, so the whole case (tag dispatch included) must fold away to
   a single `RPrimVal`. `areaOf`'s own two calls keep a genuinely
@@ -337,21 +338,21 @@ happens):
   reservation logic and `Emit.idr`'s own case-lowering handle a
   never-actually-destructured scrutinee correctly -- see "Scope /
   limitations" below.
-- **`Test76ConstFoldMutualCafSafety`** -- a safety net, not a folding
-  test: `a = More 1 b; b = More 2 a` are two CAFs that reference each
-  other, so neither's `cafValueOf` ever stabilizes no matter how many
-  fixpoint rounds run. The only thing checked is that
+- **§7 (was `Test76ConstFoldMutualCafSafety`)** -- a safety net, not a folding
+  test: `chainA = More 1 chainB; chainB = More 2 chainA` are two CAFs that
+  reference each other, so neither's `cafValueOf` ever stabilizes no matter
+  how many fixpoint rounds run. The only thing checked is that
   `maxConstFoldIterations` bounds the loop and the program still
   compiles and runs normally (both CAFs left as ordinary, un-folded
   `RAppName` calls) instead of hanging the compiler or crashing.
-  `sumFirst 3 a` is guarded behind a condition (`length args > 100`)
+  `sumFirst 3 chainA` is guarded behind a condition (`length args > 100`)
   that's always false with no CLI arguments, so it's never actually
-  evaluated -- it exists purely to give `a`/`b` a live,
+  evaluated -- it exists purely to give `chainA`/`chainB` a live,
   statically-reachable use, so `Compiler.RC2.DeadCode` can't prune them
   away before `ConstFold` ever gets a chance to loop on them.
-- **`Test77ConstFoldCafChainCap`** -- an off-by-one regression for
+- **§8 (was `Test77ConstFoldCafChainCap`)** -- an off-by-one regression for
   `maxConstFoldIterations` itself: a 3-hop CAF alias chain over a
-  2-field record (`capC = capB; capB = capA; capA = MkBox op1 0`, two
+  2-field record (`capC = capB; capB = capA; capA = MkBox d77op1 0`, two
   fields specifically so the record isn't optimised away as a
   transparent single-field newtype, which would sidestep the CAF chain
   this test exists to exercise). Each hop only resolves once the CAF
@@ -368,7 +369,7 @@ happens):
 - **Still bounded by the 4-round cap.** A CAF chain deep enough to
   need a 5th round (or deeper) stays partially unfolded -- a missed
   optimisation, never a correctness issue, per the monotonicity
-  argument above. `Test77ConstFoldCafChainCap` confirms the cap is at
+  argument above. `Test69ConstFoldClosure` §8 confirms the cap is at
   least high enough for a realistic short chain; it does not exercise
   the cap actually being hit.
 - **`Compiler.RC2.Reuse`/`Emit.idr` audit**: `const-con-fold.md`'s own
@@ -383,7 +384,7 @@ happens):
   `Compiler.RC2.Reuse` ever runs (`ConstFold` runs first in
   `toRCDefs`, `RC2.idr:152-165`) -- there is no surviving `RConCase`
   node left for either of those later passes to see, so there is
-  nothing for them to mishandle. `Test75ConstFoldConCaseScrutinee`'s
+  nothing for them to mishandle. `Test69ConstFoldClosure` §6's
   own valgrind-clean pass through `LEAK_SENSITIVE_TESTS` is the
   empirical confirmation of this, not a formal proof; no residual
   concern is currently open.
@@ -402,14 +403,11 @@ happens):
   and its own module doc comment.
 - `rc2/src/Compiler/RC2/RC.idr` -- `annotate`'s three added intercepts
   (`RCConst`/`RCEmptyCon`/`RCNull`).
-- `rc2/tests/verify.sh` -- `Test74`/`Test75`/`Test77` added to
-  `LEAK_SENSITIVE_TESTS` (`Test76` deliberately excluded -- nothing
-  folds in it to leak-check).
-- `rc2/tests/Test74ConstFoldCafBoundaryClosure`,
-  `rc2/tests/Test75ConstFoldConCaseScrutinee`,
-  `rc2/tests/Test76ConstFoldMutualCafSafety`,
-  `rc2/tests/Test77ConstFoldCafChainCap` -- the four new regression
-  tests described above.
+- `rc2/tests/verify.sh` -- the merged `Test69ConstFoldClosure` is in
+  `LEAK_SENSITIVE_TESTS` (its §7 folds nothing to leak-check, but the
+  rest of the file does).
+- `rc2/tests/Test69ConstFoldClosure` §5-§8 -- the four regression cases
+  described above (formerly the standalone `Test74`-`Test77`).
 
 ## Verification methodology
 
@@ -425,12 +423,11 @@ happens):
    `RConCase` whose scrutinee resolved at compile time.
 3. Full `rc2/tests/verify.sh` (with valgrind) run: 101 passed, 0
    known, 0 failed, 0 bytes definitely lost across every
-   `LEAK_SENSITIVE_TESTS` entry including the three new ones --
-   `Test75ConstFoldConCaseScrutinee` in particular is the direct
-   valgrind-based confirmation that a resolved-and-discarded
-   `RConCase` scrutinee introduces no dup/drop bookkeeping error (see
-   "Scope / limitations" above).
-4. `Test76ConstFoldMutualCafSafety` (mutually-referencing CAFs) is
+   `LEAK_SENSITIVE_TESTS` entry -- `Test69ConstFoldClosure` §6 in
+   particular is the direct valgrind-based confirmation that a
+   resolved-and-discarded `RConCase` scrutinee introduces no dup/drop
+   bookkeeping error (see "Scope / limitations" above).
+4. `Test69ConstFoldClosure` §7 (mutually-referencing CAFs) is
    itself a verification device for the fixpoint loop's own
    termination guarantee -- a wrong implementation of the cap or the
    change-detection logic would hang the compiler outright on this

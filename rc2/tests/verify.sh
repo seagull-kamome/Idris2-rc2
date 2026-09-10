@@ -385,47 +385,42 @@ echo "=== Smoke tests ==="
 # here is rc2's own manually-verified-correct output, same reasoning as
 # Test7CastMatrix/Test17ConstFold above.
 #
-# Test59ExportScalar: exercises `%export`'s real native-C-ABI wrapper
+# Test59Export: exercises `%export`'s real native-C-ABI wrapper
 # synthesis (rc2/doc/export-support.md), which real `idris2 --cg refc`
 # doesn't implement at all -- RefC ignores the pragma entirely, so the
-# companion .c file's own `extern` declarations of
-# `idris2rc2_test_add`/`idris2rc2_test_scale` would fail to link
-# against a refc build. `.expected` here is rc2's own
-# manually-verified-correct output, same reasoning as
-# Test7CastMatrix/Test17ConstFold above.
-#
-# Test60ExportPtr/Test61ExportStruct/Test62ExportGCPtr/
-# Test63ExportInteger/Test64ExportString: same reason as
-# Test59ExportScalar immediately above -- these round out `%export`'s
-# own non-scalar coverage (Ptr, a C struct handle, a GCPtr argument,
-# Integer both directions, and a String return), and real `idris2 --cg
-# refc` still doesn't implement `%export` marshalling at all regardless
-# of which CFType is involved.
+# companion .c file's own `extern` declarations of the generated
+# `idris2rc2_test_*` wrappers would fail to link against a refc build.
+# `.expected` here is rc2's own manually-verified-correct output, same
+# reasoning as Test7CastMatrix/Test17ConstFold above. This one merged
+# test covers every %export CFType shape (scalars, Ptr, a C struct
+# handle, a GCPtr argument, Integer both directions, a String return
+# and a String argument) -- real `idris2 --cg refc` doesn't implement
+# `%export` marshalling for any of them.
 # Test3Data / Test8EmptyCon / Test27FFIDualABI / Test49IntegerOpReuse /
-# Test67ClosureFastPathDictDispatch / Test83DoubleString print a Double
+# Test66ClosureFastPath / Test83DoubleString print a Double
 # via show/cast, and rc2's Double->String (support/rc2/numeric.c) is now
 # the shortest round-tripping decimal, deliberately unlike RefC's fixed
 # "%f" six-digit form -- see the top-level README's "Deliberate
 # differences from upstream RefC". No shared baseline, so these check
 # against the saved .expected only.
-NO_REFC_DIFF_TESTS="Test3Data Test7CastMatrix Test8EmptyCon Test17ConstFold Test24CStructSupport Test26GCPtrAliasString Test27FFIDualABI Test28Utf8Strings Test31CgExtraRuntime Test32CgInlineRuntime Test35NetworkLoopback Test42SupportMisc Test47ConstCFStringReturn Test49IntegerOpReuse Test59ExportScalar Test60ExportPtr Test61ExportStruct Test62ExportGCPtr Test63ExportInteger Test64ExportString Test65ExportStringArg Test67ClosureFastPathDictDispatch Test82RuntimeLocale Test83DoubleString"
+NO_REFC_DIFF_TESTS="Test3Data Test7CastMatrix Test8EmptyCon Test17ConstFold Test24CStructSupport Test26GCPtrAliasString Test27FFIDualABI Test28Utf8Strings Test31CgExtraRuntime Test32CgInlineRuntime Test35NetworkLoopback Test42SupportMisc Test47ConstCFStringReturn Test49IntegerOpReuse Test59Export Test66ClosureFastPath Test82RuntimeLocale Test83DoubleString"
 
 # Leak-sensitive by design (reference-counting/reuse/native-shadow
 # regression tests) -- checked with valgrind by default even without
-# --valgrind-all. Test63ExportInteger/Test64ExportString are the two
-# genuinely UAF-sensitive additions here -- the new mpz-copy-in helper
+# --valgrind-all. Test59Export's own CFInteger and CFString sections
+# are the genuinely UAF-sensitive part -- the mpz-copy-in helper
 # (idris2rc2_mkIntegerFromMpz) and the mpz_set-then-drop Integer-return
 # path, and the independent-copy-then-drop String-return path, are
 # exactly the shapes that would previously double-free or hand back a
 # dangling pointer if the naive generic pack/extract-then-drop path had
-# been used unmodified. Test60ExportPtr/Test61ExportStruct/
-# Test62ExportGCPtr carry no comparable UAF risk of their own (no new
-# copy/drop ordering, just the pre-existing CFPtr-shaped packCFType/
-# extractValue reused as-is) but are included anyway since their own
-# argument-side packCFType allocation (idris2rc2_mkPointer/
-# idris2rc2_mkGCPointer) is new to %export's own argument marshalling
-# and worth the same scrutiny.
-LEAK_SENSITIVE_TESTS="Test1Basics Test9SelfTailLoop Test11DualABILeak Test12ConAltNative Test13NativeArgChain Test14SmallFunctionInline Test15CompareFusionThroughCall Test16LoopContinuePostDrop Test17ConstFold Test18ClosureInPlaceGrow Test19LoopInvariantParam Test22BranchSinking Test24CStructSupport Test26GCPtrAliasString Test27FFIDualABI Test28Utf8Strings Test33WideDualABIWorker Test35NetworkLoopback Test36ReuseOfferUniqueLeak Test37SystemMisc Test41FFIMalloc Test42SupportMisc Test44IORefExtPrimLeak Test46FastPackUnconditional Test49IntegerOpReuse Test57LoopCallArgNativeShadow Test59ExportScalar Test60ExportPtr Test61ExportStruct Test62ExportGCPtr Test63ExportInteger Test64ExportString Test65ExportStringArg Test66ClosureFastPathMap Test67ClosureFastPathDictDispatch Test69ConstFoldClosureDict Test70ConstFoldClosureCallthrough Test72ConstFoldClosureAliasFold Test73ConstFoldClosureCallArg Test74ConstFoldCafBoundaryClosure Test75ConstFoldConCaseScrutinee Test77ConstFoldCafChainCap Test78ConstFoldBareClosureAliasCaf Test79DupMergeStraightLine Test80DupMergeBranchBoundary Test81DupMergeLetScope"
+# been used unmodified. Its CFPtr/CFStruct/CFGCPtr sections carry no
+# comparable UAF risk of their own (no new copy/drop ordering, just the
+# pre-existing CFPtr-shaped packCFType/extractValue reused as-is) but
+# the same run covers them anyway since their own argument-side
+# packCFType allocation (idris2rc2_mkPointer/idris2rc2_mkGCPointer) is
+# new to %export's own argument marshalling and worth the same
+# scrutiny.
+LEAK_SENSITIVE_TESTS="Test1Basics Test9SelfTailLoop Test11DualABILeak Test12ConAltNative Test13NativeArgChain Test14SmallFunctionInline Test15CompareFusionThroughCall Test16LoopContinuePostDrop Test17ConstFold Test18ClosureInPlaceGrow Test19LoopInvariantParam Test22BranchSinking Test24CStructSupport Test26GCPtrAliasString Test27FFIDualABI Test28Utf8Strings Test33WideDualABIWorker Test35NetworkLoopback Test36ReuseOfferUniqueLeak Test37SystemMisc Test41FFIMalloc Test42SupportMisc Test44IORefExtPrimLeak Test46FastPackUnconditional Test49IntegerOpReuse Test57LoopCallArgNativeShadow Test59Export Test66ClosureFastPath Test69ConstFoldClosure Test70ConstFoldClosureCallthrough Test79DupMerge"
 
 # KNOWN-BUGS.md's own remaining pre-existing leaks -- "definitely
 # lost" byte count, exactly. Anything else non-zero is a genuine new

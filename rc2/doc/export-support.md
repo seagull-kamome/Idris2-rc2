@@ -192,7 +192,7 @@ GCPtr, Integer, String, or struct (Struct) arguments
 Both directions, argument and return, through exactly the same generic
 `packCFType`/`extractValue` round trip `%foreign` already uses for
 `CFPtr` -- `emitExportWrapper` needed no special-casing for either.
-`rc2/tests/Test60ExportPtr.idr`'s `identityPtr : AnyPtr -> AnyPtr` is
+`rc2/tests/Test59Export.idr`'s `identityPtr : AnyPtr -> AnyPtr` is
 called from plain C with a raw, non-Idris-owned pointer; the companion
 C checks both that the exact same address comes back and that the
 memory behind it is still readable (i.e. not freed by the wrapper's own
@@ -206,7 +206,7 @@ caveat carries over from `%foreign`'s own struct support: the struct's
 C typedef is only emitted (`Compiler.RC2.Emit`'s `StructDefs`) when a
 live `%foreign` declaration using that same struct name exists
 somewhere in the program -- an `%export` reference to the struct is not
-by itself enough to keep the typedef alive. `Test61ExportStruct.idr`
+by itself enough to keep the typedef alive. `Test59Export.idr`
 shows the pattern in practice: its `getXExport`/`scalePoint` exports
 are the only things that structurally need the `"test_point"` struct,
 but the file also keeps a `%foreign`-bound `prim__makePoint`/
@@ -217,7 +217,7 @@ exports.
 
 ### GCPtr/GCAnyPtr: argument position only
 
-Accepted as an **argument** (`Test62ExportGCPtr.idr` wraps a raw,
+Accepted as an **argument** (`Test59Export.idr` wraps a raw,
 Idris-unaware pointer via `packCFType CFGCPtr`'s own
 `idris2rc2_mkGCPointer(raw, NULL)` -- no finalizer attached, since the
 pointer isn't Idris-owned to begin with) but rejected as a **return**
@@ -273,10 +273,10 @@ unmodified:
   <extracted value>);` followed by an explicit `idris2rc2_drop` of the
   trampolined boxed result and a bare `return;`.
 
-Adapted from `rc2/tests/Test63ExportInteger/`, which exercises both
+Adapted from `rc2/tests/Test59Export/`, which exercises both
 directions with values well outside `Int`'s 64-bit range:
 
-`Test63ExportInteger.idr`:
+`Test59Export.idr`:
 
 ```idris
 %export "C:idris2rc2_test63_add"
@@ -284,7 +284,7 @@ addInteger : Integer -> Integer -> Integer
 addInteger x y = x + y
 ```
 
-`Test63ExportInteger.h` (`out` is the *first* parameter, matching
+`Test59Export.h` (`out` is the *first* parameter, matching
 GMP's own convention):
 
 ```c
@@ -304,8 +304,8 @@ idris2rc2_test63_add(out, a, b);
 
 Same build recipe as "Worked example" above (companion `.c` compiled
 to a `.o`, pointed at via `IDRIS2_LDFLAGS`), with `gmp` already on the
-`nix-shell -p gcc gmp pkg-config` line rc2 itself needs. Expected
-output (`rc2/tests/Test63ExportInteger/Test63ExportInteger.expected`):
+`nix-shell -p gcc gmp pkg-config` line rc2 itself needs. The lines this
+CFInteger section contributes to `rc2/tests/Test59Export/Test59Export.expected`:
 
 ```
 42
@@ -323,11 +323,11 @@ the **return** direction needed a bespoke wrapper path -- an argument
 `%foreign`/native-in call site already uses
 (`idris2rc2_mkString(varName)`, which copies the incoming `const char
 *` into a freshly-owned `IDRIS2RC2_String`), so it carries no special
-ownership note beyond that copy. `Test65ExportStringArg` pins this down
+ownership note beyond that copy. `Test59Export` pins this down
 directly -- a companion C driver passes a plain string literal (never
 Idris/rc2-managed memory) and confirms it's left unmodified after the
 call, proving rc2 never aliases or takes ownership of the caller's own
-buffer. `Test64ExportString` covers the return direction, which is the
+buffer. `Test59Export` covers the return direction, which is the
 one with a real ownership contract to get right.
 
 **Return** needed a real fix: `extractValue`'s own `CFString` case
@@ -360,16 +360,16 @@ it themselves once done; it must never be passed to any `idris2rc2_*`
 function (it is not an `IDRIS2RC2_String` and carries none of that
 type's header).
 
-Adapted from `rc2/tests/Test64ExportString/`:
+Adapted from `rc2/tests/Test59Export/`:
 
 ```idris
 %export "C:idris2rc2_test64_greet"
-greet : Int -> String
-greet n = "hello " ++ show n
+greetStr : Int -> String
+greetStr n = "hello " ++ show n
 ```
 
 ```c
-// Test64ExportString.h
+// Test59Export.h
 extern char *idris2rc2_test64_greet(int64_t n);
 ```
 
@@ -380,14 +380,14 @@ int64_t ok = (strcmp(s, "hello 9") == 0);
 free(s);   // caller's responsibility -- see ownership contract above
 ```
 
-Expected output (`Test64ExportString.expected`):
+The lines this CFString-return section contributes to `Test59Export.expected`:
 
 ```
 hello 7
 1
 ```
 
-(`hello 7` = `greet 7` called ordinarily from Idris via `putStrLn`;
+(`hello 7` = `greetStr 7` called ordinarily from Idris via `putStrLn`;
 `1` = the companion C's own `strcmp`-and-`free` check succeeded.)
 
 ### Buffer: still out of scope
@@ -458,7 +458,7 @@ the same leak-prevention reason.
 
 - **No generated C header.** The wrapper's own prototype has to be
   hand-declared `extern` by whatever C code calls it (see
-  `rc2/tests/Test59ExportScalar.h` for the pattern) -- rc2 doesn't
+  `rc2/tests/Test59Export.h` for the pattern) -- rc2 doesn't
   emit a `.h` of its own alongside the generated `.c` yet.
 - **Still a bounded scope**, per "Scope" above -- scalars, `Ptr`/
   `AnyPtr`, `GCPtr`/`GCAnyPtr` (argument-only), `Integer`, `String`,
@@ -508,32 +508,34 @@ pipeline `pruneDeadDefs` walks is keyed by full name -- a structural
 actually match. `roots` now reuses `validateExport`'s own
 `getFullName`-resolved name instead of re-deriving (and getting wrong)
 its own copy. Confirmed with a third export
-(`Test59ExportScalar.idr`'s `unused`) that `main` never calls: both its
+(`Test59Export.idr`'s `unused`) that `main` never calls: both its
 own wrapper and its own original always-Boxed entry point
 (`idris2rc2_test_unused`/`Main_unused`) still appear in the generated
 C.
 
 ## Reference test
 
-`rc2/tests/Test59ExportScalar.idr` + its `.c`/`.h` companion: two
-`%export`ed scalar functions (`Int`/`Double`) called both from ordinary
-Idris code and from plain hand-written C (via a `%foreign`-bound C
-function that calls the exported symbols directly, with no Idris/rc2
-API involved), plus a third, otherwise-unused export proving the
-DeadCode-survival guarantee above. Listed in `verify.sh`'s
-`NO_REFC_DIFF_TESTS` -- real RefC has no `%export` marshalling at all,
-so a `--cg refc` comparison build would just fail to link the
-companion `.c` file's `extern` declarations, not validate anything.
+`rc2/tests/Test59Export/` (`.idr` + its `.c`/`.h` companion) is one
+merged test whose seven sections cover every `%export` CFType shape,
+each called both from ordinary Idris code and from plain hand-written C
+(via a `%foreign`-bound C function that calls the exported symbols
+directly, with no Idris/rc2 API involved). It is listed in `verify.sh`'s
+`NO_REFC_DIFF_TESTS` (real RefC has no `%export` marshalling at all, so
+a `--cg refc` comparison build would just fail to link the companion
+`.c` file's `extern` declarations) and in `LEAK_SENSITIVE_TESTS` (for
+the CFInteger/CFString sections' copy-in/copy-out ownership paths).
 
-Six more tests cover the wider scope added afterward, each with a
-companion `.c`/`.h` calling the export as plain C: `Test60ExportPtr`
-(`CFPtr`, both directions, address-identity and liveness checked),
-`Test61ExportStruct` (`CFStruct`, by pointer, plus the struct-typedef
-liveness caveat noted under "Scope" above), `Test62ExportGCPtr`
-(`CFGCPtr`, argument only), `Test63ExportInteger` (`CFInteger`, both
-directions, GMP-range values; also in `verify.sh`'s
-`LEAK_SENSITIVE_TESTS`), `Test64ExportString` (`CFString` return and
-its caller-`free()`s ownership contract; also `LEAK_SENSITIVE_TESTS`),
-and `Test65ExportStringArg` (`CFString` argument, confirming the
-caller's own buffer is copied, never aliased or freed by rc2; also
-`LEAK_SENSITIVE_TESTS`).
+- §1 (was `Test59ExportScalar`) -- two scalar functions (`Int`/`Double`)
+  plus a third, otherwise-unused export proving the DeadCode-survival
+  guarantee above.
+- §2 (was `Test60ExportPtr`) -- `CFPtr`, both directions,
+  address-identity and liveness checked.
+- §3 (was `Test61ExportStruct`) -- `CFStruct`, by pointer, plus the
+  struct-typedef liveness caveat noted under "Scope" above.
+- §4 (was `Test62ExportGCPtr`) -- `CFGCPtr`, argument only.
+- §5 (was `Test63ExportInteger`) -- `CFInteger`, both directions,
+  GMP-range values.
+- §6 (was `Test64ExportString`) -- `CFString` return and its
+  caller-`free()`s ownership contract.
+- §7 (was `Test65ExportStringArg`) -- `CFString` argument, confirming
+  the caller's own buffer is copied, never aliased or freed by rc2.

@@ -1955,7 +1955,7 @@ flushStagedDecls outn h = do
 ||| `rc2/doc/export-support.md`), then unboxing the trampolined result.
 ||| Never `static` -- nothing in generated C calls it; it exists purely
 ||| for an external caller, hand-written C included (see
-||| `Test59ExportScalar.c`). A boxed `IDRIS2RC2_Value*` return is
+||| `Test59Export/Test59Export.c`). A boxed `IDRIS2RC2_Value*` return is
 ||| explicitly `idris2rc2_drop`ped right after `extractValue` reads its
 ||| payload out (safe and a no-op for every already-unboxed scalar, see
 ||| `idris2rc2_drop`'s own `idris2rc2_is_unboxed` check) -- unlike

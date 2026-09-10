@@ -51,7 +51,7 @@ rc2/
 ├── support/rc2/       the runtime library (libidris2rc2.a) linked into every rc2-compiled program
 ├── doc/               deep-dive design notes per pass -- see rc2/CLAUDE.md's own Layout section for the index
 └── tests/
-    ├── Test1Basics.idr .. Test59ExportScalar.idr  hand-written smoke tests, one per pass/bug found
+    ├── TestNName/TestNName.idr                          hand-written smoke tests, one dir per pass/bug found (several bugs may be merged into one)
     ├── Bench*.idr                                       benchmarks vs. upstream RefC
     ├── verify.sh                                        one-shot build + full regression run (see Testing below)
     ├── bench.sh                                         one-shot benchmark run (see Testing below)
@@ -367,8 +367,8 @@ finalizer-timing hazard), `Integer` (GMP, both directions), `String`
 (return needs an explicit, caller-`free()`d copy), and struct (by
 pointer, same mechanism as `Ptr`) exported functions, callable from
 plain C with no Idris/rc2 API involved at all
-(`rc2/tests/Test59ExportScalar.c` through `Test64ExportString.c` call
-their own program's exported symbols directly). See
+(`rc2/tests/Test59Export/`'s companion `.c` calls its own program's
+exported symbols directly, one section per CFType shape). See
 `rc2/doc/export-support.md` for the full scope, the ownership
 contracts, and one non-obvious bug found and fixed along the way (an
 `%export`ed name is now correctly kept live through dead-code
