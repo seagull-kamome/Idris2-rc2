@@ -238,3 +238,16 @@ if diff -u "$TESTS_DIR/TestRegexPOSIX.expected" "$TMP/actual14.out"; then
 else
     fail "TestRegexPOSIX -- output mismatch (see diff above)"
 fi
+
+echo "=== rc2 backend: build TestURL (Network.URL: parse/build + percent codec) ==="
+nix-shell -p gcc gmp pkg-config --run \
+    "cd '$TESTS_DIR' && '$IDRIS2RC2' --cg rc2 -p rc2base -o TestURL_verify TestURL.idr"
+
+echo "=== Run and diff against TestURL.expected ==="
+"$TESTS_DIR/build/exec/TestURL_verify" > "$TMP/actual15.out" 2>&1
+
+if diff -u "$TESTS_DIR/TestURL.expected" "$TMP/actual15.out"; then
+    echo "PASS  TestURL"
+else
+    fail "TestURL -- output mismatch (see diff above)"
+fi

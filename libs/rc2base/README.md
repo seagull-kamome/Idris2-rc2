@@ -542,6 +542,30 @@ nests as function calls rather than chaining with `//` the way fixed
 segments do, and why path splitting is a single pass over the string
 (no repeated `strSubstr` rescans).
 
+## `Network.URL`: URL parse/build and percent-encoding
+
+What `Network.HTTP.Router` leaves out -- query strings and the
+percent-encoding under them -- plus best-effort URL splitting. Pure
+Idris, no FFI.
+
+```idris2
+import Network.URL
+
+percentDecode "a%20b"                       -- "a b"
+parseQuery "?q=two+words&lang=en"           -- [("q","two words"),("lang","en")]
+buildQuery [("q","a b"),("n","1+2")]        -- "q=a+b&n=1%2B2"
+
+parse "https://ex.com:8443/a%20b?x=1#top"
+-- MkURL (Just "https") (Just "ex.com") (Just 8443) "/a%20b" [("x","1")] (Just "top")
+render it                                   -- back to a URL string
+pathSegments "/a%2Fb/c/"                    -- ["a/b", "c"]
+```
+
+`parse` always succeeds (best-effort, not a validator); handles
+scheme-relative `//host/p`, path-only `/p?q#f`, an IPv6 host literal,
+and drops `userinfo`. Bytes not codepoints -- lines up under
+`--cg rc2`/`refc`, see `doc/url.md` for the `--cg chez` caveat.
+
 ## `Text.Regex.POSIX`: bindings to libc `<regex.h>`
 
 `regcomp`/`regexec`/`regfree`/`regerror` -- POSIX regular expressions,

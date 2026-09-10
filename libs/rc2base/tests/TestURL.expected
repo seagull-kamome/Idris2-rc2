@@ -1,0 +1,17 @@
+--- Network.URL ---
+decode: a b/c%
+encode: a%20b%2Fc~d
+utf8 bytes: [195, 169]
+utf8 roundtrip: True
+parseQuery: [("a", "1"), ("b", "two words"), ("c", ""), ("d", "=")]
+buildQuery: k=a+b&x=1%2B1
+query roundtrip: True
+full:   scheme=Just "https" host=Just "ex.com" port=Just 8443 path="/a%20b/c" query=[("x", "1"), ("y", "t w")] frag=Just "sec"
+path:   scheme=Nothing host=Nothing port=Nothing path="/foo/bar" query=[("k", "v")] frag=Just "f"
+rel:    scheme=Nothing host=Just "cdn.example" port=Nothing path="/lib.js" query=[] frag=Nothing
+ipv6:   scheme=Just "http" host=Just "[::1]" port=Just 9000 path="/p" query=[] frag=Nothing
+bare:   scheme=Just "http" host=Just "only.host" port=Nothing path="" query=[] frag=Nothing
+render: https://ex.com:8443/a%20b/c?x=1&y=t+w#sec
+render2: http://h:80/p?a=b+c
+segments: ["a/b", "c"]
+--- done ---

@@ -134,8 +134,9 @@ comment.
 
 - **No query-string parsing.** `pathOnly` only separates the query
   string from the path; nothing here parses `key=value&...` pairs or
-  hands them to a handler in typed form. Out of scope for this pass --
-  add a separate query-parsing module if a route needs one.
+  hands them to a handler in typed form, by design. A handler that
+  needs query parameters pulls them itself with `Network.URL`'s
+  `parseQuery` (over the `?...` part of `req.path`).
 - **No route-specificity ordering** -- see "Registering and
   dispatching" above.
 - **An unrecognized HTTP method string** (anything `Method`'s
