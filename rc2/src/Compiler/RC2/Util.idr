@@ -15,6 +15,7 @@ import Compiler.RC2.RCExp
 import Compiler.RC2.Types
 
 import Core.CompileExpr
+import Core.Context
 import Core.Core
 import Core.TT
 
@@ -86,3 +87,16 @@ export
 isMutualLoopMerged : Name -> Bool
 isMutualLoopMerged (MN "rc2_mutualLoop" _) = True
 isMutualLoopMerged _ = False
+
+||| A per-pass monotonic counter, `Ref`-keyed by the empty phantom
+||| `FreshId`. `Compiler.RC2.DualABI` and `Compiler.RC2.MutualLoop` each
+||| bracket their own run with `newRef FreshId 0` and pull disambiguating
+||| ids from here; both carried a byte-identical private copy of this
+||| until now. Their own `freshName` builders stay per-module -- the
+||| naming schemes differ.
+export
+data FreshId : Type where
+
+export
+freshId : {auto r : Ref FreshId Int} -> Core Int
+freshId = do i <- get FreshId; put FreshId (i + 1); pure i

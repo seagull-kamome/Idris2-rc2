@@ -25,6 +25,7 @@ module Compiler.RC2.MutualLoop
 
 import Compiler.RC2.RCExp
 import Compiler.RC2.Loop
+import Compiler.RC2.Util
 
 import Core.CompileExpr
 import Core.Context
@@ -143,10 +144,7 @@ tarjanSCCs graph =
 ------------------------------------------------------------------------
 -- Synthesising one merged group.
 
-data FreshId : Type where
-
-freshId : {auto r : Ref FreshId Int} -> Core Int
-freshId = do i <- get FreshId; put FreshId (i + 1); pure i
+-- `FreshId`/`freshId` now live in `Compiler.RC2.Util`.
 
 freshName : {auto r : Ref FreshId Int} -> SortedSet Name -> Core Name
 freshName existing = do

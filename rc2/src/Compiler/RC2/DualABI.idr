@@ -156,10 +156,8 @@ dumpDualABI defs = fastConcat $ map (++ "\n") $ mapMaybe (uncurry describeEligib
 ------------------------------------------------------------------------
 -- Stage 3a: worker synthesis (parameters only) + wrapper rewrite.
 
-data FreshId : Type where
-
-freshId : {auto r : Ref FreshId Int} -> Core Int
-freshId = do i <- get FreshId; put FreshId (i + 1); pure i
+-- `FreshId`/`freshId` now live in `Compiler.RC2.Util` (byte-identical
+-- copy also removed from `Compiler.RC2.MutualLoop`).
 
 ||| A fresh name for `original`'s own worker: `pfx` (`"idris2rc2_worker_"`
 ||| for an ordinary `MkRCFun` worker, `"idris2rc2_ffiworker_"` for an FFI
