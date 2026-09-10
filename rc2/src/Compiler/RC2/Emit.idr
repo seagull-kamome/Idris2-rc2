@@ -189,10 +189,45 @@ mutual
              (RNative ty, _) => declareNative fc ty var value
              (RBoxed, _) => emitInto fc (SinkVar True "var_\{show var}") NotInTailPosition value
 
+    ||| Lower a leading chain of ownership/reuse wrapper nodes --
+    ||| `RDup`/`RDrop`/`RFree`/`RLet`/`RReleaseReuse`/`RReuseOffer`,
+    ||| any of which `annotate`/Phase 1 can wrap uniformly around any
+    ||| expression without changing what its tail expression actually is
+    ||| -- emitting each one's own side effect, and return the first
+    ||| non-wrapper node underneath. Shared by `tryEmitLoopContinue` and
+    ||| `tryBuildClosureInto`, which then each dispatch on that inner
+    ||| node their own way. Because every wrapper's side effect is
+    ||| emitted as it is peeled, a caller that dead-ends on the returned
+    ||| inner node must resume from *it*, never from the original
+    ||| `value` -- re-walking the original would double-emit every
+    ||| wrapper (see `KNOWN-BUGS.md`'s "Fixed: ... tryBuildClosureInto
+    ||| used to double-emit a peeled wrapper's own side effect").
+    peelWrappers : EmitDeps (RCExp -> Core RCExp)
+    peelWrappers (RDup fc v extra cont) = do
+        dupVarExtra (varName v) extra
+        peelWrappers cont
+    peelWrappers (RDrop fc vs cont) = do
+        -- `vs` is already guaranteed Boxed-only -- see the module note.
+        removeVars (varName <$> vs)
+        peelWrappers cont
+    peelWrappers (RFree fc v cont) = do
+        freeVars [varName v]
+        peelWrappers cont
+    peelWrappers (RLet fc var rep value body) = do
+        declareLet fc var rep value
+        peelWrappers body
+    peelWrappers (RReleaseReuse fc loc cont) = do
+        removeReuseConstructors [reuseVarName loc]
+        peelWrappers cont
+    peelWrappers (RReuseOffer fc sc dupOnShared dropOnUnique cont) = do
+        emitReuseOffer sc dupOnShared dropOnUnique
+        peelWrappers cont
+    peelWrappers e = pure e
+
     ||| If `value` is a continue of the nearest enclosing loop
     ||| (`RLoopContinue`, see its own doc comment) -- possibly wrapped in
-    ||| leading RDup/RDrop/RFree/RLet, same as `tryBuildClosureInto` --
-    ||| emit the loop-back: snapshot every new value into a fresh
+    ||| leading wrapper nodes `peelWrappers` lowers first, same as
+    ||| `tryBuildClosureInto` -- emit the loop-back: snapshot every new value into a fresh
     ||| temporary first (a plain simultaneous-assignment safeguard
     ||| against aliasing, e.g. `f x y = f y x` -- nothing here is an
     ||| ownership decision, `annotate` (Phase 2) already decided every
@@ -207,26 +242,8 @@ mutual
     ||| `tryBuildClosureInto`, for the same reason (a peeled wrapper's
     ||| side effect must not be emitted twice).
     tryEmitLoopContinue : EmitDeps (RCExp -> Core (Maybe RCExp))
-    tryEmitLoopContinue (RDup fc v extra cont) = do
-        dupVarExtra (varName v) extra
-        tryEmitLoopContinue cont
-    tryEmitLoopContinue (RDrop fc vs cont) = do
-        -- `vs` is already guaranteed Boxed-only -- see the module note.
-        removeVars (varName <$> vs)
-        tryEmitLoopContinue cont
-    tryEmitLoopContinue (RFree fc v cont) = do
-        freeVars [varName v]
-        tryEmitLoopContinue cont
-    tryEmitLoopContinue (RLet fc var rep value body) = do
-        declareLet fc var rep value
-        tryEmitLoopContinue body
-    tryEmitLoopContinue (RReleaseReuse fc loc cont) = do
-        removeReuseConstructors [reuseVarName loc]
-        tryEmitLoopContinue cont
-    tryEmitLoopContinue (RReuseOffer fc sc dupOnShared dropOnUnique cont) = do
-        emitReuseOffer sc dupOnShared dropOnUnique
-        tryEmitLoopContinue cont
-    tryEmitLoopContinue (RLoopContinue fc newArgs postDrop) = do
+    tryEmitLoopContinue e0 = peelWrappers e0 >>= \e => case e of
+      RLoopContinue fc newArgs postDrop => do
         loopParams <- get LoopParams
         temps <- traverse (\(v, (paramId, rep)) => do
             t <- getNewVarThatWillNotBeFreedAtEndOfBlock
@@ -251,7 +268,7 @@ mutual
         traverse_ (\(paramId, t) => emit fc "var_\{show paramId} = \{t};") temps
         emit fc "goto loop;"
         pure Nothing
-    tryEmitLoopContinue e = pure (Just e)
+      _ => pure (Just e)
 
     ||| If `value` is a partial application (RUnderApp), or an InTailPosition
     ||| tail call (RAppName -- see emitRC's own RAppName case, which only
@@ -280,32 +297,14 @@ mutual
     ||| tryBuildClosureInto used to double-emit a peeled wrapper's own
     ||| side effect" for why this return shape matters.
     tryBuildClosureInto : EmitDeps (Sink -> TailPositionStatus -> RCExp -> Core (Maybe RCExp))
-    tryBuildClosureInto sink tailPosition (RDup fc v extra cont) = do
-        dupVarExtra (varName v) extra
-        tryBuildClosureInto sink tailPosition cont
-    tryBuildClosureInto sink tailPosition (RDrop fc vs cont) = do
-        -- `vs` is already guaranteed Boxed-only -- see the module note.
-        removeVars (varName <$> vs)
-        tryBuildClosureInto sink tailPosition cont
-    tryBuildClosureInto sink tailPosition (RFree fc v cont) = do
-        freeVars [varName v]
-        tryBuildClosureInto sink tailPosition cont
-    tryBuildClosureInto sink tailPosition (RLet fc var rep value body) = do
-        declareLet fc var rep value
-        tryBuildClosureInto sink tailPosition body
-    tryBuildClosureInto sink tailPosition (RReleaseReuse fc loc cont) = do
-        removeReuseConstructors [reuseVarName loc]
-        tryBuildClosureInto sink tailPosition cont
-    tryBuildClosureInto sink tailPosition (RReuseOffer fc sc dupOnShared dropOnUnique cont) = do
-        emitReuseOffer sc dupOnShared dropOnUnique
-        tryBuildClosureInto sink tailPosition cont
-    tryBuildClosureInto sink _ (RUnderApp fc n missing args) = do
-        buildClosureIntoSink fc sink n args missing
-        pure Nothing
-    tryBuildClosureInto sink InTailPosition (RAppName fc _ n args) = do
-        buildClosureIntoSink fc sink n args 0
-        pure Nothing
-    tryBuildClosureInto _ _ e = pure (Just e)
+    tryBuildClosureInto sink tailPosition e0 = peelWrappers e0 >>= \e => case (e, tailPosition) of
+      (RUnderApp fc n missing args, _) => do
+          buildClosureIntoSink fc sink n args missing
+          pure Nothing
+      (RAppName fc _ n args, InTailPosition) => do
+          buildClosureIntoSink fc sink n args 0
+          pure Nothing
+      _ => pure (Just e)
 
     ||| Render `value`'s native expression and declare it as a plain
     ||| `TYPE var_N = ...;` C scalar, discharging its own pending
