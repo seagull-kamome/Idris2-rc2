@@ -6,7 +6,9 @@ fixed-width int/`Integer` -> `String`. This document records why three
 further directions -- `Char -> String`, `Double -> String`, and any
 `String`-sourced `Cast` -- were investigated and found unsafe to fold,
 so a future session doesn't have to re-derive any of this before
-touching `foldableOp` again.
+touching `foldableOp` again. A fourth section covers the reverse case:
+`Double` arithmetic and `int -> Double`, which *are* safe to fold but
+are currently held back by the same blanket `safeConst` `Db` exclusion.
 
 ## `Char -> String`: `stripQuotes` mishandles multi-character escapes
 
@@ -86,6 +88,57 @@ exclusion.
 
 Test: `castDoubleToStringNotFolded` in `Test17ConstFold.idr`.
 
+## `Double` arithmetic and `Int`/`Integer` -> `Double`: fold-safe, held back only by `safeConst`'s blanket `Db`
+
+`safeConst (Db _) = False` is a single blunt switch that stops
+`constFoldOp` folding **any** PrimFn whose operands include a `Db`
+literal -- not just the two `Cast` directions above but also
+`Add`/`Sub`/`Mul`/`Div`/`Neg DoubleType`, the `Double` comparisons,
+`DoubleSqrt`/`DoubleFloor`/`DoubleCeiling`, the transcendentals
+(`DoubleExp`/`Log`/`Pow`/`Sin`/`Cos`/`Tan`/`ASin`/`ACos`/`ATan`), and
+`Cast (fixed-width int / Integer) -> DoubleType`. `getOp` implements
+every one of these (`Primitives.idr:212-495`, `castDouble` at
+`:129-141`), so the only thing standing between them and a compile-time
+fold is that one guard (plus, for the `Cast _ -> Double` shape,
+`foldableOp`'s `intKind DoubleType = Nothing`).
+
+Of that set, the arithmetic and comparisons are actually **safe** to
+fold: IEEE 754 binary64 add/sub/mul/div/neg and ordered comparison are
+bit-exact and identical between the host evaluator (`getOp`'s
+`add (Db x) (Db y) = Db (x + y)` etc., whatever backend built the
+compiler) and rc2's C runtime (hardware `double`). `DoubleSqrt` is
+IEEE-mandated correctly-rounded, and `DoubleFloor`/`DoubleCeiling` are
+exact, so those three are safe too. `Cast (fixed-width int / Integer)
+-> Double` is round-to-nearest-even by IEEE, agreed on by host and
+target (a very large `Integer` only loses precision past 2^53, and
+both round it the same way).
+
+What must stay excluded even if the blanket rule is relaxed:
+
+- `Cast DoubleType StringType` and `Cast StringType DoubleType` -- the
+  formatter / parser mismatches documented in the two neighbouring
+  sections.
+- `Cast DoubleType -> (fixed-width int)` -- truncation-toward-zero of
+  an out-of-range or NaN operand is platform-defined; already blocked
+  for the `Int` target by `Cast _ IntType = False`, but not for
+  `Int64`/`Bits64`/etc.
+- The transcendentals -- `doubleOp exp` and friends call the *host's*
+  libm (via whatever backend built the compiler, e.g. Chez's `flexp`),
+  which is not guaranteed to agree with the target's C `libm` to the
+  last ULP.
+
+So enabling this is not a one-line change: `safeConst` (or a companion
+check in `constFoldOp`) has to become aware of *which* PrimFn it's
+guarding, `foldableOp` needs a `Cast from DoubleType = isJust (intKind
+from)` clause (written like the `Cast from StringType` case so
+`Char -> Double` isn't dragged in), and `Inline.idr`'s `allLiteralArgs`
+overflow guard -- which reuses `safeConst` -- has to keep working (its
+concern is fixed-width *integer* wraparound under gcc
+`-Werror=overflow`, which a `Double` chain can't trigger, so dropping
+`Db` from its `hasUnfoldableConst` is fine). Investigated 2026-09-10,
+not yet done -- see `git log` for the fusion commit this was split off
+from.
+
 ## `String` as `Cast`'s source (either direction): parser semantics unverified
 
 `Core.Primitives.getOp`'s `Cast` dispatch also admits `String` as a
@@ -151,6 +204,9 @@ Test: `castStringToIntegerNotFolded` in `Test17ConstFold.idr`.
   `idris2_nagate_Double`) -- none of these are rc2 bugs.
 - `rc2/tests/Test17ConstFold.idr` -- regression tests confirming all
   three directions above stay unfolded.
+- `rc2/src/Compiler/RC2/Inline.idr` -- `allLiteralArgs`/
+  `hasUnfoldableConst` reuse `safeConst`; any change to `Db`'s
+  treatment there has to keep the gcc `-Werror=overflow` guard working.
 
 ## Verification methodology (if reopening this)
 
@@ -162,13 +218,16 @@ Test: `castStringToIntegerNotFolded` in `Test17ConstFold.idr`.
    `show`+un-escape, not just ASCII printables.
 2. **`Double -> String`**: this can't move without first revisiting
    `safeConst`'s `Db` exclusion project-wide (it excludes `Db` from
-   every PrimFn, not just Cast) -- that's a bigger, separate decision.
-   If ever taken up, verify `idris2rc2_cast_Double_to_string`'s
-   shortest-form output against the host's own `Show Double` output
-   across a boundary-value sweep (0.0, negative zero, very large/small
-   magnitudes, values on either side of the plain/scientific threshold,
-   `|x| < 1` where the leading-zero convention differs) before trusting
-   any single example.
+   every PrimFn, not just Cast) -- that's a bigger, separate decision,
+   scoped in the "`Double` arithmetic ..." section above. If ever taken
+   up, verify `idris2rc2_cast_Double_to_string`'s shortest-form output
+   against the host's own `Show Double` output across a boundary-value
+   sweep (0.0, negative zero, very large/small magnitudes, values on
+   either side of the plain/scientific threshold, `|x| < 1` where the
+   leading-zero convention differs) before trusting any single example.
+   The arithmetic/comparison/`Sqrt`/`Floor`/`Ceiling`/`int -> Double`
+   subset needs no such sweep (IEEE-exact both sides); the
+   transcendentals do (host `libm` vs target `libm`).
 3. **`String -> Integer`**: write a repro exercising both rc2's
    `mpz_set_str`-based runtime parse and a compile-time `getOp` fold of
    the same literal, across malformed/edge-case inputs (leading `+`,

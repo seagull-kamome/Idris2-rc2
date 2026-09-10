@@ -8,7 +8,10 @@
 さらに3つの方向 -- `Char -> String`、`Double -> String`、および
 `String`を発生源とするあらゆる`Cast` -- が調査され、畳み込むのが
 安全でないと判明した理由を記録する。将来のセッションが`foldableOp`
-に再び触れる前に、これらを再度導出する必要がないように。
+に再び触れる前に、これらを再度導出する必要がないように。4つ目の節は
+逆のケースを扱う: `Double`の算術と`int -> Double`は畳み込んでも
+*安全*だが、現状は同じ包括的な`safeConst`の`Db`除外によって
+止められている。
 
 ## `Char -> String`: `stripQuotes`が複数文字エスケープを誤って扱う
 
@@ -62,31 +65,84 @@ StringType = False`節は存在しない。本書が指摘するリスクは、�
 castし、ランタイムの出力が正しいUTF-8エンコーディングであることを
 検査する。
 
-## `Double -> String`: `%f`とホスト側`Show Double`の書式の不一致
+## `Double -> String`: ホスト側`Show Double`とrc2独自のフォーマッタの不一致
 
 `castString`の`Db`ケース(`Primitives.idr:41`)は`Str (show i)`である
--- ホストのIdris2コンパイラ自身の`Show Double`が生成するもの(可変幅
-の書式、例えば`3.000000`ではなく`3.0`)。rc2自身のランタイム
-(`support/rc2/numeric.c`のDouble→文字列cast)は`snprintf(..., "%f",
-v)`を使い、常に固定6桁の小数(`0.0` -> `"0.000000"`、
-`rc2/tests/Test7CastMatrix.expected`と突き合わせ確認済み)になる。
-この2つの書式は一致しないので、畳み込みを行うと、コンパイル時に
-ランタイムcastが生成するのとは異なる文字列が黙って生成されてしまう。
+-- ホストのIdris2コンパイラ自身の`Show Double`が生成するもの(典型的
+にはChezの`number->string`)。rc2自身のランタイム
+(`support/rc2/numeric.c`の`idris2rc2_cast_Double_to_string`)は現在、
+同じdoubleへ往復する最短の10進表現を出力する -- 旧来の固定`"%f"`
+よりずっとChezに近いが、それでも1文字単位で同一である保証はない:
+指数表記へ切り替える閾値はrc2独自の選択であり(`(-6, 21]`は通常
+表記、それ以外は`<m>e<n>`)、Chezが`.5`と書くところをrc2は`0.5`と
+先頭の`0`を残す。したがって畳み込みは、コンパイル時にランタイムcast
+とはわずかに異なる文字列を生成しうる。
 
-これは既に別の層で構造的にブロックされている:
-`ConstFold.safeConst`は`Db`を(`Cast`だけでなく)*あらゆる*`PrimFn`
-から除外している(ホスト側の幅/丸め誤差の不一致リスク、`I`を除外
-しているのと同じ理由)ので、`constFoldOp`の`all safeConst cs`検査は、
-`foldableOp`が何を言おうと`Cast DoubleType StringType`の畳み込みを
-既に拒否している。`foldableOp`自身の`Cast from StringType = isJust
-(intKind from)`が2つ目の独立したブロックを加えている
+これは別の層でも構造的にブロックされている: `ConstFold.safeConst`は
+`Db`を(`Cast`だけでなく)*あらゆる*`PrimFn`から除外している
+(ホスト側の幅/丸め誤差の不一致リスク、`I`を除外しているのと同じ
+理由)ので、`constFoldOp`の`all safeConst cs`検査は、`foldableOp`が
+何を言おうと`Cast DoubleType StringType`の畳み込みを既に拒否して
+いる。`foldableOp`自身の`Cast from StringType = isJust (intKind
+from)`が2つ目の独立したブロックを加えている
 (`intKind DoubleType = Nothing`)。どちらも意図的なものである --
 もう一方が唯一のガードとして残っている間は、どちらも除去しない
-こと。この方向をいつか見直すなら、まず変更が必要になるのは
-`safeConst`の方であり、上記の`%f`対`show`の書式問題を再び開かずには
-それを変更できない。
+こと。この方向を今見直すのに必要な検査は以前より小さい(rc2の
+最短形式フォーマッタが、指数表記と先頭ゼロの慣習を含めて、境界値
+の掃引にわたってホストのものと一致するか?)が、それでも出発点は
+`safeConst`のプロジェクト全体にわたる`Db`除外である。
 
 テスト: `Test17ConstFold.idr`の`castDoubleToStringNotFolded`。
+
+## `Double`の算術と`Int`/`Integer` -> `Double`: 畳み込んで安全、`safeConst`の包括的な`Db`除外だけが妨げ
+
+`safeConst (Db _) = False`は単一の粗いスイッチで、オペランドに`Db`
+リテラルを含む**あらゆる**`PrimFn`の`constFoldOp`による畳み込みを
+止める -- 上記の2つの`Cast`方向だけでなく、
+`Add`/`Sub`/`Mul`/`Div`/`Neg DoubleType`、`Double`の比較、
+`DoubleSqrt`/`DoubleFloor`/`DoubleCeiling`、超越関数
+(`DoubleExp`/`Log`/`Pow`/`Sin`/`Cos`/`Tan`/`ASin`/`ACos`/`ATan`)、
+そして`Cast (固定幅int / Integer) -> DoubleType`も含む。`getOp`は
+これら全てを実装しており(`Primitives.idr:212-495`、`castDouble`は
+`:129-141`)、したがってこれらとコンパイル時畳み込みの間に立ちはだ
+かっているのはその1つのガードだけである(加えて`Cast _ -> Double`
+の形については`foldableOp`の`intKind DoubleType = Nothing`)。
+
+その集合のうち、算術と比較は実際に畳み込んで**安全**である:
+IEEE 754 binary64のadd/sub/mul/div/negおよび順序比較はビット単位で
+正確であり、ホスト側の評価器(`getOp`の
+`add (Db x) (Db y) = Db (x + y)`など、コンパイラを構築した
+バックエンドが何であれ)とrc2のCランタイム(ハードウェアの
+`double`)で同一である。`DoubleSqrt`はIEEEが正しい丸めを義務付けて
+おり、`DoubleFloor`/`DoubleCeiling`は正確なので、この3つも安全で
+ある。`Cast (固定幅int / Integer) -> Double`はIEEEにより
+最近接偶数への丸めであり、ホストとターゲットで一致する(非常に大きい
+`Integer`は2^53を超えて初めて精度を失うが、両者は同じ方法で丸める)。
+
+包括的なルールを緩めたとしても除外したままにすべきもの:
+
+- `Cast DoubleType StringType`と`Cast StringType DoubleType` --
+  隣接する2つの節で記録したフォーマッタ/パーサの不一致。
+- `Cast DoubleType -> (固定幅int)` -- 範囲外またはNaNのオペランドの
+  ゼロ方向への切り捨てはプラットフォーム定義である。`Int`目的型に
+  ついては`Cast _ IntType = False`で既にブロックされているが、
+  `Int64`/`Bits64`などについてはされていない。
+- 超越関数 -- `doubleOp exp`とその仲間はコンパイラを構築した
+  バックエンド経由で*ホストの*libm(例えばChezの`flexp`)を呼び出す
+  が、それがターゲットのC `libm`と最終ULPまで一致する保証はない。
+
+したがってこれを有効化するのは1行の変更ではない: `safeConst`
+(または`constFoldOp`内の相棒となる検査)が*どの*`PrimFn`をガード
+しているかを認識するようにしなければならず、`foldableOp`には
+`Cast from DoubleType = isJust (intKind from)`節が必要で
+(`Char -> Double`を巻き込まないよう`Cast from StringType`ケースと
+同じ書き方にする)、`safeConst`を再利用している`Inline.idr`の
+`allLiteralArgs`オーバーフローガードも動作し続けなければならない
+(その関心事はgcc `-Werror=overflow`下での固定幅*整数*の
+ラップアラウンドであり、`Double`のチェーンはそれを引き起こせない
+ので、その`hasUnfoldableConst`から`Db`を外して問題ない)。
+2026-09-10に調査、未実施 -- これが分離された融合コミットについては
+`git log`を参照。
 
 ## `Cast`の発生源としての`String`(どちらの方向でも): パーサの意味論が未検証
 
@@ -140,8 +196,9 @@ isJust (intKind to)`は今日のところこれを正しく処理している
   複数文字エスケープ(`showLitChar`)。
 - `idris2-src/src/Libraries/Utils/String.idr` -- `stripQuotes`。
 - `rc2/support/rc2/numeric.c` -- rc2自身のランタイムCast実装
-  (`idris2rc2_cast_Char_to_string`、Double→文字列の`%f`書式、
-  `String -> Integer/Int*/Double`パーサ)。
+  (`idris2rc2_cast_Char_to_string`、最短形式の`Double -> String`
+  フォーマッタとGMP精度の`String -> Double`パーサ、
+  `String -> Integer/Int*`パーサ)。
 - `rc2/tests/Test7CastMatrix.idr` -- ヘッダコメントが、この領域を
   調査中に見つかった`atoll`対`atoi`のString発生源の乖離と、
   3つの無関係な本家RefCランタイムのバグ(`idris2_cast_Double_to_Int8`
@@ -151,6 +208,10 @@ isJust (intKind to)`は今日のところこれを正しく処理している
   を記録している -- これらはいずれもrc2側のバグではない。
 - `rc2/tests/Test17ConstFold.idr` -- 上記3方向がいずれも畳み込まれ
   ないままであることを確認する回帰テスト。
+- `rc2/src/Compiler/RC2/Inline.idr` -- `allLiteralArgs`/
+  `hasUnfoldableConst`が`safeConst`を再利用している。そこでの`Db`の
+  扱いを変える場合は、gcc `-Werror=overflow`ガードが動作し続ける
+  ようにしなければならない。
 
 ## 検証方法(これを再び開く場合)
 
@@ -164,11 +225,15 @@ isJust (intKind to)`は今日のところこれを正しく処理している
 2. **`Double -> String`**: これはプロジェクト全体にわたる
    `safeConst`の`Db`除外(`Cast`だけでなく全ての`PrimFn`から`Db`を
    除外している)を先に見直さない限り進められない -- それはより
-   大きな、別の意思決定である。もし取り組むなら、境界値の掃引
-   (0.0、負のゼロ、非常に大きい/小さい絶対値、片方の書式でのみ
-   科学的記数法が必要になる値)にわたって`snprintf("%f", ...)`の
-   出力をホスト自身の`Show Double`の出力と突き合わせ、単一の例を
-   信頼する前に検証すること。
+   大きな、別の意思決定であり、上記の「`Double`の算術 ...」節で
+   範囲を整理している。もし取り組むなら、境界値の掃引(0.0、
+   負のゼロ、非常に大きい/小さい絶対値、通常表記/科学的記数法の
+   閾値の両側にある値、先頭ゼロの慣習が異なる`|x| < 1`)にわたって
+   `idris2rc2_cast_Double_to_string`の最短形式出力をホスト自身の
+   `Show Double`の出力と突き合わせ、単一の例を信頼する前に検証
+   すること。算術/比較/`Sqrt`/`Floor`/`Ceiling`/`int -> Double`の
+   部分集合はそのような掃引を必要としない(両側でIEEE精度どおり)。
+   超越関数は必要とする(ホストの`libm`対ターゲットの`libm`)。
 3. **`String -> Integer`**: rc2の`mpz_set_str`ベースのランタイム
    パースと、同じリテラルのコンパイル時`getOp`畳み込みの両方を、
    不正な/エッジケースの入力(先頭の`+`、空白、先頭のゼロ、空
