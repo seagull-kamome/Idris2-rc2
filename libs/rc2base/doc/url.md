@@ -9,22 +9,25 @@ them) lives here instead, in a module that has nothing to do with
 routing so a plain HTTP client can use it too. Pure Idris, no FFI, no
 new dependency.
 
-## Bytes, not codepoints
+## Percent-escapes carry UTF-8
 
-`percentDecode "%C3%A9"` is the two raw UTF-8 bytes of "é" -- what was
-on the wire. That's correct for `--cg rc2`/`--cg refc`, where `String`
-is a byte array. Under `--cg chez` a `String` is codepoints, so
-high-byte sequences would misalign -- same caveat as
-`Text.Regex.POSIX`. (Note a related rc2 quirk: a non-ASCII *source
-literal* like `"é"` is decoded to codepoints, so it won't compare equal
-to the byte string `percentDecode` produces -- compare byte lists, or
-round-trip through `percentEncode`, if you need to check.)
+`%XX` sequences on the wire are UTF-8 bytes. `percentDecode "%C3%A9"`
+reassembles them to `"é"` -- one codepoint -- and `percentEncode "é"`
+gives `"%C3%A9"` back. This is right for every backend: rc2's `String`
+is UTF-8 on the wire but *codepoint*-wise through `pack`/`unpack`
+(`unpack` decodes UTF-8, `pack` re-encodes it -- same as Chez), and the
+`%XX` bytes are routed through `Text.Encoding.UTF8` to match. A
+malformed or truncated sequence (`%FF`, a lone lead byte) decodes to
+U+FFFD, one per bad byte.
+
+`percentDecode "%C3%A9" == "é"` is `True` -- the result and a non-ASCII
+source literal are the same codepoints.
 
 ## Percent-encoding
 
 ```idris
-percentDecode : String -> String   -- %XX -> byte; '+' left alone; a bare '%' kept literal
-percentEncode : String -> String   -- every non-`unreserved` byte -> %XX; space -> %20
+percentDecode : String -> String   -- %XX run -> UTF-8 decode; '+' left alone; a bare '%' kept literal
+percentEncode : String -> String   -- every non-`unreserved` byte of the UTF-8 form -> %XX; space -> %20
 unreserved    : Char -> Bool       -- RFC 3986: A-Za-z0-9 and - . _ ~
 ```
 
@@ -76,7 +79,8 @@ inside one segment indistinguishable from a real separator. Use
 ## Verified
 
 `tests/TestURL.idr` (in `tests/verify.sh`), under `--cg rc2`: the
-percent codec (space, `/`, a trailing `%`, UTF-8 bytes, round-trip),
+percent codec (space, `/`, a trailing `%`, a 2-byte and a 3-byte UTF-8
+sequence, a malformed byte -> U+FFFD, encode/decode round-trip),
 `parseQuery`/`buildQuery` and their round-trip, `parse` on a full URL /
 path-only / scheme-relative / IPv6-host / no-path input, `render`, and
 `pathSegments`.

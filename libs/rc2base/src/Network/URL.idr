@@ -4,9 +4,11 @@
 ||| deliberately doesn't touch query strings -- this is where that
 ||| lives.
 |||
-||| Bytes, not codepoints: `percentDecode "%C3%A9"` is the two UTF-8
-||| bytes of "é", correct under `--cg rc2`/`--cg refc` (where `String`
-||| is byte-indexed) but not under `--cg chez`.
+||| Percent-escapes carry UTF-8 bytes: `percentDecode "%C3%A9"`
+||| reassembles them into "é" (one codepoint), and `percentEncode "é"`
+||| produces `"%C3%A9"`. rc2's `String` is UTF-8 on the wire but
+||| codepoint-wise through `pack`/`unpack`, so `%XX` runs are routed
+||| through `Text.Encoding.UTF8`; a malformed sequence becomes U+FFFD.
 module Network.URL
 
 -- Copyright 2026, Hattori,Hiroki. All rights reserved.
@@ -15,6 +17,8 @@ module Network.URL
 import Data.List
 import Data.List1
 import Data.String
+
+import Text.Encoding.UTF8 as UTF8
 
 -- `Data.String.strTail` isn't total upstream; the string splitting
 -- here uses a `pack . drop 1 . unpack` helper (`rest1`) instead, so
@@ -42,40 +46,49 @@ export
 unreserved : Char -> Bool
 unreserved c = isAlphaNum c || c == '-' || c == '.' || c == '_' || c == '~'
 
-pctByte : Char -> List Char
-pctByte c = let b = ord c `mod` 256 in ['%', hexDigit (b `div` 16), hexDigit (b `mod` 16)]
+-- One `%XX` triple for a byte value (0..255).
+pctByteN : Int -> List Char
+pctByteN n = let b = n `mod` 256 in ['%', hexDigit (b `div` 16), hexDigit (b `mod` 16)]
 
-||| Decode `%XX` escapes to bytes. A `+` is left as-is (it only means
-||| "space" in `application/x-www-form-urlencoded` -- see `parseQuery`).
-||| A `%` not followed by two hex digits is kept literally.
+||| Decode `%XX` escapes. The bytes are treated as a UTF-8 stream and
+||| reassembled to codepoints (`%C3%A9` -> "é"); a malformed sequence
+||| yields U+FFFD. A `+` is left as-is (it only means "space" in
+||| `application/x-www-form-urlencoded` -- see `parseQuery`). A `%` not
+||| followed by two hex digits is kept literally.
 export
 percentDecode : String -> String
-percentDecode = pack . go . unpack
+percentDecode = pack . UTF8.decode . toBytes . unpack
   where
-    go : List Char -> List Char
-    go ('%' :: h :: l :: rest) =
+    -- Flatten to the underlying UTF-8 byte stream: a literal character
+    -- back to its own bytes, a `%XX` triple to the one byte it names.
+    toBytes : List Char -> List Bits8
+    toBytes ('%' :: h :: l :: rest) =
       case (hexVal h, hexVal l) of
-        (Just hi, Just lo) => chr (hi * 16 + lo) :: go rest
-        _                  => '%' :: go (h :: l :: rest)
-    go (c :: rest) = c :: go rest
-    go []          = []
+        (Just hi, Just lo) => cast (hi * 16 + lo) :: toBytes rest
+        _                  => UTF8.encodeChar '%' ++ toBytes (h :: l :: rest)
+    toBytes (c :: rest) = UTF8.encodeChar c ++ toBytes rest
+    toBytes []          = []
 
-||| Percent-encode every byte that isn't `unreserved`. Space becomes
-||| `%20`. For a path segment or a fragment.
+||| Percent-encode every UTF-8 byte that isn't `unreserved` (non-ASCII
+||| input is encoded byte by byte, so "é" becomes `%C3%A9`). Space
+||| becomes `%20`. For a path segment or a fragment.
 export
 percentEncode : String -> String
-percentEncode = pack . concatMap enc . unpack
+percentEncode = pack . concatMap encByte . UTF8.encode . unpack
   where
-    enc : Char -> List Char
-    enc c = if unreserved c then [c] else pctByte c
+    encByte : Bits8 -> List Char
+    encByte b = let n = cast {to = Int} b in
+                if n < 0x80 && unreserved (chr n) then [chr n] else pctByteN n
 
 -- application/x-www-form-urlencoded: like percentEncode but ' ' -> '+'.
 formEncode : String -> String
-formEncode = pack . concatMap enc . unpack
+formEncode = pack . concatMap encByte . UTF8.encode . unpack
   where
-    enc : Char -> List Char
-    enc ' ' = ['+']
-    enc c   = if unreserved c then [c] else pctByte c
+    encByte : Bits8 -> List Char
+    encByte b = let n = cast {to = Int} b in
+                if n == 32                               then ['+']
+                else if n < 0x80 && unreserved (chr n)   then [chr n]
+                else                                          pctByteN n
 
 -- '+' -> ' ' first (so a literal '%2B' still decodes to '+'), then %XX.
 formDecode : String -> String

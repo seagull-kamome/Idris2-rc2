@@ -1,8 +1,12 @@
 --- Network.URL ---
 decode: a b/c%
 encode: a%20b%2Fc~d
-utf8 bytes: [195, 169]
+utf8 decode: [233]
+utf8 == literal: True
+utf8 3-byte: True
+utf8 encode: %C3%A9
 utf8 roundtrip: True
+utf8 malformed: [65533, 65533]
 parseQuery: [("a", "1"), ("b", "two words"), ("c", ""), ("d", "=")]
 buildQuery: k=a+b&x=1%2B1
 query roundtrip: True

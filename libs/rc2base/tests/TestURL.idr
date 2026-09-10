@@ -22,9 +22,14 @@ main = do
 
   putStrLn "decode: \{percentDecode "a%20b%2Fc%"}"
   putStrLn "encode: \{percentEncode "a b/c~d"}"
-  -- non-ASCII stays raw UTF-8 bytes through the codec (0xC3 0xA9 = "é")
-  putStrLn "utf8 bytes: \{show (map ord (unpack (percentDecode "%C3%A9")))}"
+  -- %XX runs are decoded as a UTF-8 stream: %C3%A9 -> "é" (one codepoint),
+  -- %E3%81%82 -> "あ"; a malformed byte/sequence -> U+FFFD (65533).
+  putStrLn "utf8 decode: \{show (map ord (unpack (percentDecode "%C3%A9")))}"
+  putStrLn "utf8 == literal: \{show (percentDecode "%C3%A9" == "é")}"
+  putStrLn "utf8 3-byte: \{show (percentDecode "%E3%81%82" == "あ")}"
+  putStrLn "utf8 encode: \{percentEncode "é"}"
   putStrLn "utf8 roundtrip: \{show (percentEncode (percentDecode "%C3%A9") == "%C3%A9")}"
+  putStrLn "utf8 malformed: \{show (map ord (unpack (percentDecode "%FF%C3")))}"
 
   putStrLn "parseQuery: \{show (parseQuery "?a=1&b=two+words&c&d=%3D")}"
   putStrLn "buildQuery: \{buildQuery [("k", "a b"), ("x", "1+1")]}"

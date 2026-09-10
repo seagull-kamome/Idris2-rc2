@@ -563,8 +563,19 @@ pathSegments "/a%2Fb/c/"                    -- ["a/b", "c"]
 
 `parse` always succeeds (best-effort, not a validator); handles
 scheme-relative `//host/p`, path-only `/p?q#f`, an IPv6 host literal,
-and drops `userinfo`. Bytes not codepoints -- lines up under
-`--cg rc2`/`refc`, see `doc/url.md` for the `--cg chez` caveat.
+and drops `userinfo`. `%XX` escapes are decoded as a UTF-8 stream
+(`%C3%A9` -> `"é"`, one codepoint; a bad byte -> U+FFFD) via
+`Text.Encoding.UTF8`; see `doc/url.md`.
+
+## `Text.Encoding.UTF8`: UTF-8 <-> codepoints
+
+`decode : List Bits8 -> List Char` / `encode : List Char -> List Bits8`
+(plus `encodeChar`). rc2's `pack`/`unpack` are already codepoint-wise
+(UTF-8 on the wire, like Chez), so this is just the piece for when you
+hold a run of raw UTF-8 *bytes* -- off a socket, a `%XX` sequence, a
+`Buffer` -- and need the codepoint list `pack` wants, or the reverse.
+Strict: an overlong form, a surrogate, a truncated sequence each decode
+to one U+FFFD. Used by `Network.URL`; exercised through `tests/TestURL`.
 
 ## `Text.Regex.POSIX`: bindings to libc `<regex.h>`
 
