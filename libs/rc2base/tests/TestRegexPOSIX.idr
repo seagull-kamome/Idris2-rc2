@@ -5,10 +5,18 @@ module Main
 
 -- Exercises Text.Regex.POSIX: ERE and BRE compile, matches / match with
 -- groups (participating vs. absent vs. empty), ignoreCase, matchAll,
--- replaceFirst / replaceAll, a BRE backreference, and rejection of an
--- invalid pattern.
+-- replaceFirst / replaceAll, a BRE backreference, rejection of an
+-- invalid pattern, and byte-offset spans resolved correctly across
+-- multi-byte UTF-8 input.
 
+import Data.String
 import Text.Regex.POSIX
+
+codes : String -> List Int
+codes = map ord . unpack
+
+showParts : Maybe (List (Maybe String)) -> String
+showParts = show . map (map (map codes))
 
 pe : {default ere flags : Flags} -> String -> IO Regex
 pe {flags} pat = do
@@ -46,6 +54,16 @@ main = do
   bref <- pe {flags = bre} "\\([a-z]\\)\\1"
   putStrLn "BRE backref (has dd): \{show (matches bref "abcdd")}"
   putStrLn "BRE backref (no double): \{show (matches bref "abcde")}"
+
+  -- byte-offset spans must survive a multi-byte char before/inside a
+  -- group. "café=αβ" is bytes 63 61 66 C3A9 3D CEB1 CEB2; group1 ends
+  -- at byte 5 (not codepoint 5), group2 starts at byte 6.
+  utf <- pe "([^=]+)=(.+)"
+  putStrLn "utf8 match: \{showParts (match utf "café=αβ")}"
+  -- replace across multi-byte context: only the ASCII digit runs go,
+  -- the Greek letters are copied by byte span.
+  ure <- pe "[0-9]+"
+  putStrLn "utf8 replaceAll: \{show (codes (replaceAll ure "#" "α1β22γ"))}"
 
   Left _ <- compile "([unclosed"
     | Right _ => putStrLn "FAIL: invalid pattern accepted"

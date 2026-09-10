@@ -1,0 +1,14 @@
+--- Data.String.RC2 ---
+slice ascii: world
+byteLength hello: 5
+byteLength cafe-acute: 5
+length cafe-acute: 4
+slice on boundary: [99, 97, 102, 233]
+slice tail char: [955]
+slice mid-codepoint: [65533]
+clamp over-len: bc
+clamp neg off: ab
+clamp neg len: []
+off past end: []
+empty in empty: []
+--- done ---

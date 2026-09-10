@@ -6,7 +6,7 @@ sourcedir  = "src"
 depends    = contrib, network
 modules    = Data.TextBuffer, Data.Text, Data.Buffer.RC2, Data.Double.RC2,
              Data.Integer.GMP,
-             Data.String.FFI,
+             Data.String.FFI, Data.String.RC2,
              Network.HTTP.Route, Network.HTTP.Router, Network.HTTP.Server,
              Network.RC2,
              Network.URL,

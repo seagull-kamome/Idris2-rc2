@@ -251,3 +251,16 @@ if diff -u "$TESTS_DIR/TestURL.expected" "$TMP/actual15.out"; then
 else
     fail "TestURL -- output mismatch (see diff above)"
 fi
+
+echo "=== rc2 backend: build TestStringRC2 (Data.String.RC2: unsafeStringByteSlice / byteLength) ==="
+nix-shell -p gcc gmp pkg-config --run \
+    "cd '$TESTS_DIR' && '$IDRIS2RC2' --cg rc2 -p rc2base -o TestStringRC2_verify TestStringRC2.idr"
+
+echo "=== Run and diff against TestStringRC2.expected ==="
+"$TESTS_DIR/build/exec/TestStringRC2_verify" > "$TMP/actual16.out" 2>&1
+
+if diff -u "$TESTS_DIR/TestStringRC2.expected" "$TMP/actual16.out"; then
+    echo "PASS  TestStringRC2"
+else
+    fail "TestStringRC2 -- output mismatch (see diff above)"
+fi

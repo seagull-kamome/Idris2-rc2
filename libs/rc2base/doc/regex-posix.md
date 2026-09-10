@@ -64,13 +64,19 @@ All inherent to POSIX `regexec`, not this binding:
   extension would allow byte-exact / binary matching against an
   explicit range; not wired up here (would want a `Buffer`-based entry
   point, and it's a GNU extension, not POSIX).
-- **Byte offsets.** `matchSpans` and the substring slicing in `match`
-  are byte-indexed. `Data.String.strSubstr` is also byte-indexed under
-  `--cg rc2`/`--cg refc` (so they line up), but codepoint-indexed under
-  `--cg chez` -- non-ASCII input would misalign there.
+- **Byte offsets.** `regexec` reports byte offsets, and `matchSpans`
+  passes them straight through (its `(Int, Int)` pairs are byte
+  offsets, not codepoint indices). `match`/`matchAll`/`replace*` cut
+  those spans out with `Data.String.RC2.unsafeStringByteSlice` -- a
+  real byte slice -- and bound their scan loops with byte length, so
+  they are UTF-8-correct: a multi-byte character before or inside a
+  group no longer shifts the result. (rc2's own `strSubstr`/`strIndex`
+  are codepoint-indexed, which is why the plain `Data.String` ones
+  can't be used against `regexec` offsets.)
 - **Leftmost-longest** ("POSIX") match, not leftmost-first (PCRE-style).
 - **No named groups.** No global-match primitive -- `matchAll` iterates
-  `regexec`, advancing one byte past an empty match so it terminates.
+  `regexec`, advancing one whole codepoint past an empty match so it
+  terminates without splitting a character.
 - Backreferences (`\1`) work in BRE and, as a glibc extension, in ERE.
   `()` group in ERE, `\(\)` in BRE.
 
@@ -80,4 +86,6 @@ All inherent to POSIX `regexec`, not this binding:
 ERE and BRE compile, `matches`/`match` with groups (participating,
 absent via `(a)|(b)`, empty via `x(a*)y`), `ignoreCase`, `matchAll`,
 `replaceFirst`/`replaceAll` with `\1`/`\2`, a BRE `\1` backreference,
-and a `Left` for an invalid pattern.
+a `Left` for an invalid pattern, and multi-byte UTF-8 input
+(`match "café=αβ"` groups land on the right bytes, `replaceAll` over
+Greek-letter context copies the non-matched runs correctly).

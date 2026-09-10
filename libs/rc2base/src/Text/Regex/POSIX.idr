@@ -6,12 +6,14 @@
 ||| Caveats, all inherent to POSIX `regexec`:
 ||| * it takes a NUL-terminated string, so a `\0` in the input ends the
 |||   search there (glibc's `REG_STARTEND` would fix this -- not wired up);
-||| * offsets are *byte* offsets. Substring extraction here uses
-|||   `Data.String.strSubstr`, which is byte-indexed under `--cg rc2`/
-|||   `refc` (so it lines up) but codepoint-indexed under `--cg chez`
-|||   (so non-ASCII input would misalign);
 ||| * leftmost-longest ("POSIX") match semantics, not leftmost-first;
 ||| * no named groups; global search is `regexec` iterated (`matchAll`).
+|||
+||| `regexec` reports *byte* offsets while rc2's `String` primitives are
+||| codepoint-wise, so every span here is cut out with
+||| `Data.String.RC2.unsafeStringByteSlice` (a genuine byte slice) and
+||| loop bounds use byte length, not `strLength` -- `match`/`matchAll`/
+||| `replace*` are UTF-8-correct, not ASCII-only.
 module Text.Regex.POSIX
 
 -- Copyright 2026, Hattori,Hiroki. All rights reserved.
@@ -20,7 +22,9 @@ module Text.Regex.POSIX
 import Data.Bits
 import Data.List
 import Data.String
+import Data.String.RC2
 import System.FFI
+import Text.Encoding.UTF8 as UTF8
 
 -- matchAll/replace loop on a byte index, not structurally -- relax
 -- rc2base.ipkg's package-wide `--total` to `covering`.
@@ -149,8 +153,20 @@ allSpans re = do
   n <- primIO (prim__nsub re.ptr)
   traverse groupSpan [0 .. n]
 
+-- `regexec` offsets are byte offsets; `strSubstr` would read them as
+-- codepoint indices. Cut the real bytes instead.
 sub : String -> (Int, Int) -> String
-sub s (a, b) = strSubstr a (b - a) s
+sub s (a, b) = unsafeStringByteSlice s a (b - a)
+
+-- The codepoint starting at byte offset `i` of `input` (a real match
+-- boundary on valid UTF-8 always is one) plus the byte offset just
+-- past it. `(Nothing, i + 1)` at or beyond the end, so an empty-match
+-- loop still makes progress.
+charFromByte : String -> Int -> (Maybe Char, Int)
+charFromByte input i =
+  case unpack (unsafeStringByteSlice input i (byteLength input - i)) of
+    []       => (Nothing, i + 1)
+    (c :: _) => (Just c, i + cast (length (UTF8.encodeChar c)))
 
 ||| Leftmost-longest match anywhere in `input`, as byte-offset spans:
 ||| index 0 the whole match, then each capturing group. A `Nothing`
@@ -183,7 +199,7 @@ matchAll re input = unsafePerformIO (go 0)
   where
     go : Int -> IO (List (List (Maybe String)))
     go start =
-      if start > strLength input
+      if start > byteLength input
         then pure []
         else do
           1 <- primIO (prim__exec re.ptr input start)
@@ -192,7 +208,7 @@ matchAll re input = unsafePerformIO (go 0)
           let here = (map . map) (sub input) spans
           case join (head' spans) of
             Nothing        => pure [here]  -- group 0 is always present on a match
-            Just (ms, me)  => (here ::) <$> go (if me > ms then me else me + 1)
+            Just (ms, me)  => (here ::) <$> go (if me > ms then me else snd (charFromByte input me))
 
 -------------------------------------------------------------------------------
 -- Replace (POSIX has no rewrite syntax; \0..\9 = group, \\ = literal \,
@@ -223,7 +239,7 @@ replaceWith : Regex -> (repl : String) -> (input : String) -> (global : Bool) ->
 replaceWith re repl input global = unsafePerformIO (go 0 [<])
   where
     tailFrom : Int -> SnocList Char -> String
-    tailFrom i acc = pack (acc <>> unpack (strSubstr i (strLength input - i) input))
+    tailFrom i acc = pack (acc <>> unpack (unsafeStringByteSlice input i (byteLength input - i)))
 
     go : Int -> SnocList Char -> IO String
     go start acc = do
@@ -239,9 +255,9 @@ replaceWith re repl input global = unsafePerformIO (go 0 [<])
             then pure (tailFrom me acc')
             else if me > ms
               then go me acc'
-              else if me < strLength input
-                then go (me + 1) (acc' :< assert_total (strIndex input me))
-                else pure (pack (acc' <>> []))
+              else case charFromByte input me of  -- empty match: copy the skipped char, step past it
+                     (Just c,  nxt) => go nxt (acc' :< c)
+                     (Nothing, _)   => pure (pack (acc' <>> []))
 
 ||| Replace the first match. `\0`..`\9` in `replacement` name groups,
 ||| `\\` is a literal backslash; any other `\x` becomes `x`.

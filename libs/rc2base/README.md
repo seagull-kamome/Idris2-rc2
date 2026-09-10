@@ -577,6 +577,23 @@ hold a run of raw UTF-8 *bytes* -- off a socket, a `%XX` sequence, a
 Strict: an overlong form, a surrogate, a truncated sequence each decode
 to one U+FFFD. Used by `Network.URL`; exercised through `tests/TestURL`.
 
+## `Data.String.RC2`: byte-level `String` access
+
+```idris2
+unsafeStringByteSlice : (s : String) -> (off, len : Int) -> String  -- byte offsets, not codepoints
+byteLength            : String -> Int                               -- strlen, vs codepoint-wise `length`
+```
+
+Every other `String` primitive on rc2 counts codepoints (`substr`,
+`strIndex`, `length`, ...). `unsafeStringByteSlice` is the exception --
+the real bytes `[off, off+len)`, for when a span arrives as raw byte
+offsets (POSIX `regexec`, a length-prefixed field). One copy, built as
+a `String` value directly (a C shim returns the finished value and the
+Idris side `believe_me`s it through -- no second marshalling copy).
+"Unsafe": `off`/`len` are clamped to `s`'s byte length (memory-safe,
+never a crash), but cutting mid-codepoint leaves a byte that reads back
+as U+FFFD. Used by `Text.Regex.POSIX`; see `tests/TestStringRC2`.
+
 ## `Text.Regex.POSIX`: bindings to libc `<regex.h>`
 
 `regcomp`/`regexec`/`regfree`/`regerror` -- POSIX regular expressions,
@@ -596,11 +613,11 @@ replaceAll re "\\1:\\2" "a=1 b=22"                -- "a:1 b:22"
 
 `compile` is `IO (Either String Regex)`; `match`/`matches`/`matchAll`/
 `replace*` are pure. A `Nothing` group element means "didn't
-participate" (distinct from `Just ""`). Caveats (all inherent to POSIX
-`regexec`): NUL-terminated input (a `\0` ends the search), *byte*
-offsets (fine under `--cg rc2`/`refc`, misaligns for non-ASCII under
-`--cg chez`), leftmost-longest semantics, no named groups. See
-`doc/regex-posix.md`.
+participate" (distinct from `Just ""`). Spans are byte offsets and are
+cut with `Data.String.RC2.unsafeStringByteSlice`, so `match`/`matchAll`/
+`replace*` are UTF-8-correct (not ASCII-only). Caveats: NUL-terminated
+input (a `\0` ends the search); leftmost-longest semantics; no named
+groups. See `doc/regex-posix.md`.
 
 ## Regular expressions with RE2: `text-re2`
 
