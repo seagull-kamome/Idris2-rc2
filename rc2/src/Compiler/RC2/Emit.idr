@@ -1548,14 +1548,25 @@ createCFunctions n (MkRCForeign ccs fargs ret) =
               increaseIndentation
               emit EmptyFC $ " // ffi call to " ++ cName fctName
               let removeVarsArgList = removeVars (mapMaybe alwaysUnboxedDropVar typeVarNameArgList)
+              -- The raw C function's own parameter list omits a
+              -- `CFIORes` declaration's trailing `%World` slot (real at
+              -- the Idris level, erased here); `init` commutes with the
+              -- `extractValue` map, so trimming the rendered list is the
+              -- same as trimming the triples first.
+              let dropWorld : Bool = case ret of CFIORes _ => True; _ => False
+              let renderedArgs = map (\(_, vn, vt) => extractValue cLang vt vn) typeVarNameArgList
+              let callArgs = if dropWorld then discardLastArgument renderedArgs else renderedArgs
+              let mkCall : List String -> String
+                  mkCall es = cName fctName ++ "(" ++ showSep ", " es ++ ")"
+              -- A bare (non-`CFIORes`) `CFUnit` return deliberately still
+              -- falls through to the generic `payloadTy` arm -- matching
+              -- this backend's existing behaviour, unusual as that C is.
               case ret of
-                  CFIORes CFUnit => do
-                      emit EmptyFC $ cName fctName
-                                  ++ "("
-                                  ++ showSep ", " (map (\(_, vn, vt) => extractValue cLang vt vn) (discardLastArgument typeVarNameArgList))
-                                  ++ ");"
-                      removeVarsArgList
-                      emit EmptyFC "return NULL;"
+                CFIORes CFUnit => do
+                    emit EmptyFC $ mkCall callArgs ++ ";"
+                    removeVarsArgList
+                    emit EmptyFC "return NULL;"
+                _ => case peelIORes ret of
                   -- `Compiler.RC2.EmitUtil`'s own `packCFType` CFInteger
                   -- case has the full rationale: GMP's own `mpz_t` has
                   -- no "return by value" C shape, so a fresh
@@ -1569,45 +1580,20 @@ createCFunctions n (MkRCForeign ccs fargs ret) =
                   -- (declared `void`) writes its result into, rather
                   -- than assigning from the call's own (nonexistent)
                   -- return value.
-                  CFIORes CFInteger => do
-                      emit EmptyFC "IDRIS2RC2_Integer *retVal = idris2rc2_mkInteger();"
-                      emit EmptyFC $ cName fctName
-                                  ++ "("
-                                  ++ showSep ", " ("retVal->v" :: map (\(_, vn, vt) => extractValue cLang vt vn) (discardLastArgument typeVarNameArgList))
-                                  ++ ");"
-                      emit EmptyFC $ "IDRIS2RC2_Value *packedRet = (IDRIS2RC2_Value*)" ++ packCFType CFInteger "retVal" ++ ";"
-                      removeVarsArgList
-                      emit EmptyFC "return packedRet;"
-                  CFIORes ret => do
-                      emit EmptyFC $ cTypeOfCFType ret ++ " retVal = " ++ cName fctName
-                                  ++ "("
-                                  ++ showSep ", " (map (\(_, vn, vt) => extractValue cLang vt vn) (discardLastArgument typeVarNameArgList))
-                                  ++ ");"
-                      -- Pack retVal before dropping the args: a CFString/CFBuffer
-                      -- retVal may alias memory owned by one of those args (e.g.
-                      -- a C function that just returns a pointer it was handed),
-                      -- so packCFType must read through it while the arg (and
-                      -- whatever finalizer freeing that memory) is still alive.
-                      emit EmptyFC $ "IDRIS2RC2_Value *packedRet = (IDRIS2RC2_Value*)" ++ packCFType ret "retVal" ++ ";"
-                      removeVarsArgList
-                      emit EmptyFC "return packedRet;"
-                  -- Same reasoning as the CFIORes CFInteger branch above.
                   CFInteger => do
                       emit EmptyFC "IDRIS2RC2_Integer *retVal = idris2rc2_mkInteger();"
-                      emit EmptyFC $ cName fctName
-                                  ++ "("
-                                  ++ showSep ", " ("retVal->v" :: map (\(_, vn, vt) => extractValue cLang vt vn) typeVarNameArgList)
-                                  ++ ");"
+                      emit EmptyFC $ mkCall ("retVal->v" :: callArgs) ++ ";"
                       emit EmptyFC $ "IDRIS2RC2_Value *packedRet = (IDRIS2RC2_Value*)" ++ packCFType CFInteger "retVal" ++ ";"
                       removeVarsArgList
                       emit EmptyFC "return packedRet;"
-                  _ => do
-                      emit EmptyFC $ cTypeOfCFType ret ++ " retVal = " ++ cName fctName
-                                  ++ "("
-                                  ++ showSep ", " (map (\(_, vn, vt) => extractValue cLang vt vn) typeVarNameArgList)
-                                  ++ ");"
-                      -- Same reasoning as the CFIORes ret branch above.
-                      emit EmptyFC $ "IDRIS2RC2_Value *packedRet = (IDRIS2RC2_Value*)" ++ packCFType ret "retVal" ++ ";"
+                  -- Pack retVal before dropping the args: a CFString/CFBuffer
+                  -- retVal may alias memory owned by one of those args (e.g.
+                  -- a C function that just returns a pointer it was handed),
+                  -- so packCFType must read through it while the arg (and
+                  -- whatever finalizer freeing that memory) is still alive.
+                  payloadTy => do
+                      emit EmptyFC $ cTypeOfCFType payloadTy ++ " retVal = " ++ mkCall callArgs ++ ";"
+                      emit EmptyFC $ "IDRIS2RC2_Value *packedRet = (IDRIS2RC2_Value*)" ++ packCFType payloadTy "retVal" ++ ";"
                       removeVarsArgList
                       emit EmptyFC "return packedRet;"
 
