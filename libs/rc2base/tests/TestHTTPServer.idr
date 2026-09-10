@@ -65,24 +65,24 @@ blob = do
 handler : Handler
 handler req respond =
   case req.path of
-    "/sync"       => respond (MkResponse 200 [] !(fromString "sync-ok"))
+    "/sync"       => respond !(text 200 "sync-ok")
     "/async"      => do
       ignore $ forkJoin {a = ()} $ do
         napMs 30
-        respond (MkResponse 200 [] !(fromString "async-ok"))
+        respond !(Response.ok "async-ok")
     "/echo"       => do
       s <- sumBytes req.body
-      respond (MkResponse 200 [] !(fromString ("len=\{show (byteLength req.body)} sum=\{show s}")))
-    "/blob"       => respond (MkResponse 200 [] !blob)
+      respond !(text 200 "len=\{show (byteLength req.body)} sum=\{show s}")
+    "/blob"       => respond (bytes 200 "application/octet-stream" !blob)
     "/stop"       => do
       stop
-      respond (MkResponse 200 [] !(fromString "bye"))
+      respond !(text 200 "bye")
     "/stop-async" => do
       ignore $ forkJoin {a = ()} $ do
         napMs 30
         stop
-      respond (MkResponse 200 [] !(fromString "stopping"))
-    _             => respond (MkResponse 404 [] !(fromString "nope"))
+      respond !(text 200 "stopping")
+    _             => respond !(Response.notFound "nope")
 
 -------------------------------------------------------------------------------
 -- Clients

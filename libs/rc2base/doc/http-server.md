@@ -93,11 +93,21 @@ Helpers on `Network.HTTP.Server`:
 - `byteLength : Buffer -> Int` -- pure, reads the buffer's size header.
   A body carries no separate length field; this *is* its length, so
   there is nothing to keep in sync.
-- `fromString : String -> IO Buffer` -- UTF-8-encode, for building text
-  responses. Stopgap until richer `Response` helpers land; the string
-  must be NUL-free (length via `strlen`).
-- `toString : Buffer -> IO String` -- decode a whole buffer as UTF-8,
-  for a body already known to be text.
+- `fromString : String -> IO Buffer` -- UTF-8-encode; the string must be
+  NUL-free (length via `strlen`). `toString : Buffer -> IO String`
+  decodes a whole buffer the other way, for a body known to be text.
+- `Response.*` constructors, under the `Response` namespace (call them
+  bare when unambiguous, `Response.text` etc. otherwise), each with an
+  optional leading implicit `headers : List (String, String)` (default
+  `[]`):
+  - `text`, `html` (`status -> body -> IO Response`) -- set
+    `Content-Type: text/plain`/`text/html; charset=utf-8`.
+  - `ok` / `created` / `badRequest` / `notFound` / `serverError`
+    (`body -> IO Response`) -- `text` at 200 / 201 / 400 / 404 / 500.
+  - `bytes` (`status -> contentType -> Buffer -> Response`) -- pure;
+    for a body you already hold.
+  - `noBody` (`status -> IO Response`) -- empty body, no `Content-Type`
+    (204, a 3xx with a `Location` header, ...).
 
 The read and write accumulators are reused `Buffer`s that grow by
 reallocation (roughly doubling), each capped: the read side at
@@ -195,7 +205,8 @@ and deployment target is Linux (see the top-level `AGENT.md`).
 
 ## Using it
 
-A body is a `Buffer`; `fromString` builds one from text.
+A body is a `Buffer`. `Response.text` (and friends) build a text
+response; `MkResponse` takes a `Buffer` directly for binary.
 
 ```idris2
 import Network.HTTP.Server
@@ -203,13 +214,17 @@ import Network.HTTP.Server
 handler : Handler
 handler req respond =
   case req.path of
-    "/hello" => respond (MkResponse 200 [] !(fromString "hello\n"))
+    "/hello" => respond !(text 200 "hello\n")
     "/echo"  => respond (MkResponse 200 [] req.body)   -- binary passthrough
-    _        => respond (MkResponse 404 [] !(fromString "not found\n"))
+    "/img"   => respond (bytes 200 "image/png" pngBuf)
+    _        => respond !(notFound "not found\n")
 
 main : IO ()
 main = serve 8080 handler   -- binds 127.0.0.1:8080, runs until `stop`
 ```
+
+Add response headers with the leading implicit:
+`respond !(ok {headers = [("Cache-Control", "no-store")]} "done")`.
 
 `respond` can also be stashed and called later -- from inside a
 different request's handler, from a `forkJoin`ed thread, from
@@ -221,10 +236,10 @@ handler pending req respond =
   case req.path of
     "/wait"    => writeIORef pending (Just respond)   -- don't respond yet
     "/release" => do Just held <- readIORef pending
-                        | Nothing => respond (MkResponse 200 [] !(fromString "nothing waiting\n"))
-                      held (MkResponse 200 [] !(fromString "released\n"))
-                      respond (MkResponse 200 [] !(fromString "ok\n"))
-    _          => respond (MkResponse 404 [] !(fromString "not found\n"))
+                        | Nothing => respond !(text 200 "nothing waiting\n")
+                      held !(text 200 "released\n")
+                      respond !(text 200 "ok\n")
+    _          => respond !(notFound "not found\n")
 ```
 
 Computing the reply on another thread and handing it back is fine too
@@ -237,7 +252,7 @@ handler req respond =
     "/slow" => do ignore $ forkJoin {a = ()} $ do
                     body <- expensive req          -- off the event loop, : IO Buffer
                     respond (MkResponse 200 [] body)
-    _       => respond (MkResponse 404 [] !(fromString "not found\n"))
+    _       => respond !(notFound "not found\n")
 ```
 
 To stop the loop, call `stop` (its `ServerCtx` comes from the
@@ -250,8 +265,8 @@ handler : Handler
 handler req respond =
   case req.path of
     "/shutdown" => do stop
-                      respond (MkResponse 200 [] !(fromString "bye\n"))   -- flushed before exit
-    _           => respond (MkResponse 404 [] !(fromString "not found\n"))
+                      respond !(text 200 "bye\n")   -- flushed before exit
+    _           => respond !(notFound "not found\n")
 
 main : IO ()
 main = do serve 8080 handler

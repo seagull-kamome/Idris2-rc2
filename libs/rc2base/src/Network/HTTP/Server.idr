@@ -129,14 +129,60 @@ record Request where
 
 ||| A `Handler`'s answer, passed to its `respond` continuation.
 ||| `Content-Length` is computed from `body` (`byteLength`) and added
-||| automatically -- don't set it in `headers`. Build `body` with
-||| `fromString` for text, or hand over any `Buffer` for binary.
+||| automatically -- don't set it in `headers`. Build one directly with
+||| `MkResponse` and a `Buffer` body, or use the `Response.*`
+||| constructors below (`Response.text`, `Response.ok`, ...).
 public export
 record Response where
   constructor MkResponse
   status  : Int
   headers : List (String, String)
   body    : Buffer
+
+||| Convenience constructors. Common enough names (`text`, `ok`, ...)
+||| that they live under the `Response` namespace -- call them bare when
+||| that's unambiguous, `Response.text` etc. when it isn't. Each takes
+||| an optional `headers` (a `(name, value)` list) as a leading implicit
+||| with a `[]` default; a `Content-Type` is prepended where noted.
+namespace Response
+
+  ||| `status` with `body` and an explicit `Content-Type`. Pure -- the
+  ||| caller already has the bytes.
+  export
+  bytes : {default [] headers : List (String, String)}
+       -> (status : Int) -> (contentType : String) -> Buffer -> Response
+  bytes {headers} status contentType body =
+    MkResponse status (("Content-Type", contentType) :: headers) body
+
+  ||| `status` with an empty body and no `Content-Type` -- 204, a 3xx
+  ||| redirect (add `Location` via `headers`), 304, ...
+  export
+  noBody : {default [] headers : List (String, String)} -> (status : Int) -> IO Response
+  noBody {headers} status = MkResponse status headers <$> newBuf 0
+
+  ||| `status` with a `text/plain; charset=utf-8` body.
+  export
+  text : {default [] headers : List (String, String)} -> (status : Int) -> String -> IO Response
+  text {headers} status body = do
+    b <- fromString body
+    pure (bytes {headers} status "text/plain; charset=utf-8" b)
+
+  ||| `status` with a `text/html; charset=utf-8` body.
+  export
+  html : {default [] headers : List (String, String)} -> (status : Int) -> String -> IO Response
+  html {headers} status body = do
+    b <- fromString body
+    pure (bytes {headers} status "text/html; charset=utf-8" b)
+
+  ||| `text` at a fixed status: 200 / 201 / 400 / 404 / 500.
+  export
+  ok, created, badRequest, notFound, serverError
+    : {default [] headers : List (String, String)} -> String -> IO Response
+  ok          {headers} = text {headers} 200
+  created     {headers} = text {headers} 201
+  badRequest  {headers} = text {headers} 400
+  notFound    {headers} = text {headers} 404
+  serverError {headers} = text {headers} 500
 
 -------------------------------------------------------------------------------
 -- Server handle: cross-thread response delivery and shutdown

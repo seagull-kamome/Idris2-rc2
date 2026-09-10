@@ -478,8 +478,10 @@ for the raw event loop, `Network.RC2` for binary-safe buffer socket IO,
 each request answers through a continuation rather than a return value,
 so a `Handler` can respond synchronously, stash the continuation and
 answer later (from another thread, even), or `stop` the loop. Request
-and response bodies are raw `Data.Buffer` bytes -- binary safe;
-`fromString`/`toString` bridge text.
+and response bodies are raw `Data.Buffer` bytes -- binary safe. The
+`Response.*` constructors (`text`/`html`/`ok`/`notFound`/`bytes`/... --
+call bare, or `Response.`-qualified on a name clash) build one; each
+takes an optional leading implicit `headers`.
 
 ```idris2
 import Network.HTTP.Server
@@ -487,9 +489,10 @@ import Network.HTTP.Server
 handler : Handler
 handler req respond =
   case req.path of
-    "/hello" => respond (MkResponse 200 [] !(fromString "hello\n"))
-    "/echo"  => respond (MkResponse 200 [] req.body)
-    _        => respond (MkResponse 404 [] !(fromString "not found\n"))
+    "/hello" => respond !(text 200 "hello\n")
+    "/echo"  => respond (MkResponse 200 [] req.body)          -- raw bytes
+    "/img"   => respond (bytes 200 "image/png" pngBuf)
+    _        => respond !(notFound "not found\n")
 
 main : IO ()
 main = serve 8080 handler   -- binds 127.0.0.1:8080, runs until `stop`

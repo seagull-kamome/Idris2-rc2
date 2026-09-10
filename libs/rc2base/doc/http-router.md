@@ -86,16 +86,16 @@ literal-segment or method mismatch would.
 ```idris2
 routes : List RouteEntry
 routes =
-  [ get  usersShow (\userId, respond => respond (MkResponse 200 [] !(fromString "user #\{show userId}\n")))
-  , post ("echo" // end) (\respond => respond (MkResponse 200 [] !(fromString "posted\n")))
+  [ get  usersShow (\userId, respond => respond !(text 200 "user #\{show userId}\n"))
+  , post ("echo" // end) (\respond => respond !(text 200 "posted\n"))
   ]
 
 main : IO ()
 main = serve 8080 (router notFoundHandler routes)
 ```
 
-(A `Response` body is a `Data.Buffer`; `fromString` from
-`Network.HTTP.Server` builds one from text -- see that module's doc.)
+(A `Response` body is a `Data.Buffer`; `Network.HTTP.Server`'s
+`Response.text`/`bytes`/... build one -- see that module's doc.)
 
 `router` tries each `RouteEntry` **in registration order** and
 dispatches to the first whose method and path both match -- no
