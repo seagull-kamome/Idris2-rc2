@@ -9,33 +9,26 @@ module Main
 --
 -- rtInit runs `setlocale(LC_ALL, "")` so a UTF-8 environment locale
 -- reaches libc -- Text.Regex.POSIX's `.` / character classes need a
--- UTF-8 LC_CTYPE to operate on codepoints instead of bytes -- then
--- `setlocale(LC_NUMERIC, "C")` so numeric.c's "%f" Double formatting
--- stays locale-independent.
+-- UTF-8 LC_CTYPE to operate on codepoints instead of bytes. verify.sh
+-- runs the suite under LC_ALL=C.UTF-8, so a companion C file reads the
+-- process's LC_CTYPE back and it must be "C.UTF-8".
 --
--- verify.sh runs the whole suite under LC_ALL=C.UTF-8, so after rtInit
--- the process locale is "C.UTF-8" for LC_CTYPE and "C" for LC_NUMERIC.
--- A companion C file (Test82RuntimeLocale.c) reads both back. The
--- Double line locks the "%f" output shape.
+-- Number formatting deliberately does NOT depend on the locale:
+-- numeric.c carries its own '.'-based Double<->String conversion, so
+-- `show`/`cast` stay stable in every environment (the `3.14` line).
 --
 -- In verify.sh's NO_REFC_DIFF_TESTS: real RefC's own main() has no
--- equivalent setlocale call, so there is no shared baseline to diff
--- against.
+-- equivalent setlocale call.
 
 %foreign "C:idris2rc2_test82_ctype,libc,Test82RuntimeLocale.h"
 prim__ctype : PrimIO String
 
-%foreign "C:idris2rc2_test82_numeric,libc,Test82RuntimeLocale.h"
-prim__numeric : PrimIO String
-
-pi100 : Double
-pi100 = 3.14
+pi3 : Double
+pi3 = 3.14
 
 main : IO ()
 main = do
   ct <- primIO prim__ctype
-  nm <- primIO prim__numeric
   putStrLn ("LC_CTYPE: " ++ ct)
-  putStrLn ("LC_NUMERIC: " ++ nm)
-  putStrLn ("double: " ++ show pi100)
+  putStrLn ("double: " ++ show pi3)
   putStrLn "done"

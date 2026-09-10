@@ -748,6 +748,21 @@ Data.TextBufferを用意すると共に、長らく動いていなかった文�
 見えないオーバヘッドが挿入される事になる。
 
 
+## Performance: `Double <-> String` cast has no fast path (GMP every call)
+
+`support/rc2/numeric.c`'s `idris2rc2_cast_string_to_Double` /
+`idris2rc2_cast_Double_to_string` are correct and locale-independent
+(GMP-exact rational parse; shortest-round-trip formatter that probes
+precisions 1..17), but every call allocates GMP temporaries -- fine for
+`show`, not for parsing a large numeric data file. The standard fast
+path is a branch-free `uint64_t`/`__uint128_t` route: Eisel-Lemire
+("fast_float" / Go `strconv` / Rust) for the parser, Grisu2 or Ryū for
+the formatter, with the current GMP code kept as the slow-path
+fallback. Deferred deliberately -- decided the simple GMP-only version
+first, fast path later. No behaviour change when it lands, only speed.
+See `rc2/doc/runtime-lifecycle.md` and `numeric.c`'s own comment.
+
+
 ## Dropped: packing short strings into a tagged pointer
 
 Considered (as a future-hope wishlist item) extending rc2's existing

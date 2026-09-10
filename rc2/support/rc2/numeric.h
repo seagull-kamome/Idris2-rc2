@@ -500,9 +500,11 @@ static inline IDRIS2RC2_Value *idris2rc2_cast_Integer_to_Double(IDRIS2RC2_Value 
 IDRIS2RC2_Value *idris2rc2_cast_Integer_to_string(IDRIS2RC2_Value *);
 
 // ---- string ----
-// idris2rc2_cast_string_to_<Char/Integer> stay in numeric.c (multi-
-// statement UTF-8 decode / GMP parse); the rest are one-liners around
-// atoi/atoll/atof.
+// idris2rc2_cast_string_to_<Char/Integer/Double> stay in numeric.c
+// (multi-statement UTF-8 decode / GMP parse); the integer ones are
+// one-liners around atoi/atoll. Double is NOT atof: it uses a
+// locale-independent, correctly-rounded GMP parser matching the
+// frontend's literal syntax (see numeric.c).
 static inline IDRIS2RC2_Value *idris2rc2_cast_string_to_Int8(IDRIS2RC2_Value *x) { return idris2rc2_mkInt8((int8_t)atoi(((IDRIS2RC2_String *)x)->str)); }
 static inline IDRIS2RC2_Value *idris2rc2_cast_string_to_Int16(IDRIS2RC2_Value *x) { return idris2rc2_mkInt16((int16_t)atoi(((IDRIS2RC2_String *)x)->str)); }
 static inline IDRIS2RC2_Value *idris2rc2_cast_string_to_Int32(IDRIS2RC2_Value *x) { return idris2rc2_mkInt32((int32_t)atoi(((IDRIS2RC2_String *)x)->str)); }
@@ -511,6 +513,6 @@ static inline IDRIS2RC2_Value *idris2rc2_cast_string_to_Bits8(IDRIS2RC2_Value *x
 static inline IDRIS2RC2_Value *idris2rc2_cast_string_to_Bits16(IDRIS2RC2_Value *x) { return idris2rc2_mkBits16((uint16_t)atoi(((IDRIS2RC2_String *)x)->str)); }
 static inline IDRIS2RC2_Value *idris2rc2_cast_string_to_Bits32(IDRIS2RC2_Value *x) { return idris2rc2_mkBits32((uint32_t)atoi(((IDRIS2RC2_String *)x)->str)); }
 static inline IDRIS2RC2_Value *idris2rc2_cast_string_to_Bits64(IDRIS2RC2_Value *x) { return idris2rc2_mkBits64((uint64_t)atoll(((IDRIS2RC2_String *)x)->str)); }
-static inline IDRIS2RC2_Value *idris2rc2_cast_string_to_Double(IDRIS2RC2_Value *x) { return idris2rc2_mkDouble(atof(((IDRIS2RC2_String *)x)->str)); }
+IDRIS2RC2_Value *idris2rc2_cast_string_to_Double(IDRIS2RC2_Value *);
 IDRIS2RC2_Value *idris2rc2_cast_string_to_Integer(IDRIS2RC2_Value *);
 IDRIS2RC2_Value *idris2rc2_cast_string_to_Char(IDRIS2RC2_Value *); // first UTF-8 codepoint, or NUL for ""

@@ -46,20 +46,20 @@ whole codepoint, character classes use the wide-character predicates.
 `Data.String.RC2.unsafeStringByteSlice` -- which is what
 `Text.Regex.POSIX` cuts spans with -- is unaffected and still correct.)
 
-`idris2rc2_rtInit` therefore runs:
+`idris2rc2_rtInit` therefore runs just:
 
 ```c
-setlocale(LC_ALL, "");        // adopt the environment's locale
-setlocale(LC_NUMERIC, "C");   // ...but keep number formatting fixed
+setlocale(LC_ALL, "");        // adopt the environment's locale, all categories
 ```
 
-The `LC_NUMERIC` pin is because `support/rc2/numeric.c` formats
-`Double` via `sprintf(buf, "%f", v)`, which *is* `LC_NUMERIC`-sensitive:
-without the pin, `LANG=de_DE.UTF-8` would make `show (3.14 : Double)`
-produce `"3,140000"`. Pinning it keeps `Double`'s textual form stable
-across every environment. (TODO: give `numeric.c` a locale-independent
-double-to-string path, then drop the pin so a program that *wants*
-localised number formatting can opt into it.)
+Every category, `LC_NUMERIC` included. Number *formatting* is not left
+to the locale by accident here: `support/rc2/numeric.c`'s
+`Double <-> String` casts carry their own `.`-based decimal conversion
+(a GMP-exact parser and a shortest-round-trip formatter), so `show` /
+`cast` produce the same text in every environment -- while a program
+that calls libc's own `printf` / `strfmon` through FFI still gets the
+localised form it asked for. See `doc/cast-fold-scope.md` and
+`numeric.c`'s own comment for the conversion itself.
 
 ## The UTF-8-compatible-locale requirement (important)
 
@@ -109,6 +109,8 @@ calling `idris2rc2_rtInit()` before the first exported call and
   generated C via the `idris2rc2_runtime.h` umbrella).
 - `rc2/src/Compiler/RC2/Emit.idr` -- `generateCSourceFile`'s `footer`,
   which emits the two calls.
-- `rc2/tests/Test82RuntimeLocale/` -- reads `LC_CTYPE` / `LC_NUMERIC`
-  back to prove both `setlocale` calls ran (`verify.sh` runs the suite
-  under `LC_ALL=C.UTF-8`).
+- `rc2/tests/Test82RuntimeLocale/` -- reads `LC_CTYPE` back to prove
+  `setlocale(LC_ALL, "")` ran, and checks a `Double`'s `show` is
+  locale-stable (`verify.sh` runs the suite under `LC_ALL=C.UTF-8`).
+- `rc2/tests/Test83DoubleString/` -- the `Double <-> String` conversion
+  itself: shortest-form `show`, `cast` parsing, round-trips.

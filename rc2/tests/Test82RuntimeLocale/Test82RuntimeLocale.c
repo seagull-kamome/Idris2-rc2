@@ -8,7 +8,3 @@
 char const *idris2rc2_test82_ctype(void) {
     return setlocale(LC_CTYPE, NULL);
 }
-
-char const *idris2rc2_test82_numeric(void) {
-    return setlocale(LC_NUMERIC, NULL);
-}

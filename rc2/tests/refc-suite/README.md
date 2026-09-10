@@ -49,11 +49,19 @@ to what upstream's own RefC-targeted version uses -- no rc2-specific
 tag needed, so the `.idr` source ported completely unmodified, unlike
 every other case in this list needing something adjusted.
 
-Three of these needed their `expected` adjusted for reasons that aren't
-rc2 bugs:
+Several of these needed their `expected` adjusted for reasons that
+aren't rc2 bugs:
 
 - **`prims`**: `printLn codegen` prints the backend name (`"refc"` vs.
   `"rc2"`) -- adjusted accordingly.
+- **`doubles`** and **`buffer`** (its one `getDouble` line): RefC's
+  `Double -> String` is `snprintf("%f")` -- always six fractional
+  digits (`2.718282`, `1.414214`). rc2 deliberately prints the shortest
+  decimal that round-trips instead (`2.718281828459045`,
+  `1.4142135623730951`), and does its own locale-independent conversion
+  -- see the top-level `README.md`'s "Deliberate differences from
+  upstream RefC" and `rc2/doc/runtime-lifecycle.md`. Same numeric
+  values, adjusted formatting.
 - **`basicpatternmatch`**: three of upstream's expected lines
   (`Bits32 0x80000000`, `Int64` min/max literal matches) encode a *known
   RefC bug*, explicitly flagged in the test source itself with `-- FIXME:

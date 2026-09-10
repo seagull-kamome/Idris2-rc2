@@ -211,8 +211,9 @@ source "$SCRIPT_DIR/build-lock.sh"
 # LC_* / LANG this shell happens to carry (nix-shell here resolves to
 # en_US.UTF-8, not C). C.UTF-8 gives a UTF-8 LC_CTYPE with plain
 # codepoint-order collation -- deterministic, and what
-# Test82RuntimeLocale asserts. (LC_NUMERIC is pinned back to "C" inside
-# the runtime, so Double "%f" output is unaffected regardless.)
+# Test82RuntimeLocale asserts. (Double<->String output is
+# locale-independent by construction -- numeric.c does its own decimal
+# conversion -- so this pin only affects regex / strftime / strerror.)
 export LC_ALL=C.UTF-8
 
 # libs/rc2base isn't one of nixpkgs' own idris2 packages env.sh's own
@@ -400,7 +401,14 @@ echo "=== Smoke tests ==="
 # Integer both directions, and a String return), and real `idris2 --cg
 # refc` still doesn't implement `%export` marshalling at all regardless
 # of which CFType is involved.
-NO_REFC_DIFF_TESTS="Test7CastMatrix Test17ConstFold Test24CStructSupport Test26GCPtrAliasString Test28Utf8Strings Test31CgExtraRuntime Test32CgInlineRuntime Test35NetworkLoopback Test42SupportMisc Test47ConstCFStringReturn Test59ExportScalar Test60ExportPtr Test61ExportStruct Test62ExportGCPtr Test63ExportInteger Test64ExportString Test65ExportStringArg Test82RuntimeLocale"
+# Test3Data / Test8EmptyCon / Test27FFIDualABI / Test49IntegerOpReuse /
+# Test67ClosureFastPathDictDispatch / Test83DoubleString print a Double
+# via show/cast, and rc2's Double->String (support/rc2/numeric.c) is now
+# the shortest round-tripping decimal, deliberately unlike RefC's fixed
+# "%f" six-digit form -- see the top-level README's "Deliberate
+# differences from upstream RefC". No shared baseline, so these check
+# against the saved .expected only.
+NO_REFC_DIFF_TESTS="Test3Data Test7CastMatrix Test8EmptyCon Test17ConstFold Test24CStructSupport Test26GCPtrAliasString Test27FFIDualABI Test28Utf8Strings Test31CgExtraRuntime Test32CgInlineRuntime Test35NetworkLoopback Test42SupportMisc Test47ConstCFStringReturn Test49IntegerOpReuse Test59ExportScalar Test60ExportPtr Test61ExportStruct Test62ExportGCPtr Test63ExportInteger Test64ExportString Test65ExportStringArg Test67ClosureFastPathDictDispatch Test82RuntimeLocale Test83DoubleString"
 
 # Leak-sensitive by design (reference-counting/reuse/native-shadow
 # regression tests) -- checked with valgrind by default even without

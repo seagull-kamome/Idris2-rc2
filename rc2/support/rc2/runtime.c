@@ -22,14 +22,13 @@ void idris2rc2_rtInit(void) {
   // LC_CTYPE switches regexec to its multibyte path (match offsets stay
   // byte offsets either way, so Data.String.RC2.unsafeStringByteSlice
   // is still correct).
+  //
+  // LC_NUMERIC is deliberately left to follow the environment too:
+  // numeric.c's Double<->String casts no longer use libc's
+  // locale-sensitive "%f"/atof, so `cast` stays '.'-based regardless,
+  // while a program that calls into libc's own printf/strfmon via FFI
+  // gets whatever the environment asked for.
   setlocale(LC_ALL, "");
-  // ...but pin LC_NUMERIC back to "C": numeric.c formats Double via
-  // sprintf(buf, "%f", v), which is LC_NUMERIC-sensitive, so an
-  // environment like LANG=de_DE.UTF-8 would otherwise make
-  // `show (3.14 : Double)` produce "3,140000". TODO: give numeric.c a
-  // locale-independent double->string path and drop this pin so a
-  // program that wants its number formatting localised can have it.
-  setlocale(LC_NUMERIC, "C");
 }
 
 void idris2rc2_rtFinish(void) {

@@ -381,14 +381,19 @@ lifecycle hooks around it -- `idris2rc2_rtInit()` first,
 `setlocale(LC_ALL, "")` so a UTF-8 environment locale actually reaches
 libc: without it a C program stays in the `"C"` locale regardless of
 `LANG`/`LC_*`, and `libs/rc2base`'s `Text.Regex.POSIX` then matches
-byte-wise (`.` is one byte, `[[:alpha:]]` is ASCII-only). It then pins
-`LC_NUMERIC` back to `"C"` so `Double`'s `"%f"` formatting
-(`support/rc2/numeric.c`) stays `.`-separated in every environment.
-`rtFinish` is `fflush(NULL)`. A `--directive nomain` build supplies its
-own `main()` and must call both hooks itself. Because rc2's `String`
-layer treats all incoming C bytes as UTF-8, adopting the environment
-locale means rc2 programs now need a UTF-8-compatible one -- see
-`KNOWN-BUGS.md` and `rc2/doc/runtime-lifecycle.md`.
+byte-wise (`.` is one byte, `[[:alpha:]]` is ASCII-only). `rtFinish` is
+`fflush(NULL)`. A `--directive nomain` build supplies its own `main()`
+and must call both hooks itself.
+
+Number formatting is deliberately kept out of that: `Double <-> String`
+(`support/rc2/numeric.c`) does its own `.`-based decimal conversion --
+a GMP-exact parser, and a formatter that emits the shortest decimal
+that round-trips (RefC prints a fixed six `"%f"` digits and follows
+`LC_NUMERIC`; rc2 does neither) -- so `show`/`cast` are byte-identical
+in every locale. Because rc2's `String` layer still treats all *other*
+incoming C bytes as UTF-8, adopting the environment locale does mean
+rc2 programs need a UTF-8-compatible one -- see `KNOWN-BUGS.md` and
+`rc2/doc/runtime-lifecycle.md`.
 
 ## `%cg rc2` directives
 

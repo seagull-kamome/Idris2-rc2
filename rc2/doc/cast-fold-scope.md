@@ -56,28 +56,33 @@ folding it, if the exclusion ever regressed, would produce a visibly
 wrong string instead of coincidentally matching) and checks the
 runtime output is the correct UTF-8 encoding.
 
-## `Double -> String`: `%f` vs. host `Show Double` formatting mismatch
+## `Double -> String`: host `Show Double` vs. rc2's own formatter
 
 `castString`'s `Db` case (`Primitives.idr:41`) is `Str (show i)` --
-whatever the host Idris2 compiler's own `Show Double` produces (a
-variable-width format, e.g. `3.0` rather than `3.000000`). rc2's own
-runtime (`support/rc2/numeric.c`'s Double-to-string cast) uses
-`snprintf(..., "%f", v)`, always six fixed decimal digits (`0.0` ->
-`"0.000000"`, confirmed against `rc2/tests/Test7CastMatrix.expected`).
-These two formats don't agree, so folding would silently produce a
-different string at compile time than the runtime cast would produce.
+whatever the *host* Idris2 compiler's own `Show Double` produces
+(typically Chez's `number->string`). rc2's own runtime
+(`support/rc2/numeric.c`'s `idris2rc2_cast_Double_to_string`) now emits
+the shortest decimal that round-trips to the same double -- much closer
+to Chez than the old fixed `"%f"` was, but still not guaranteed
+character-for-character identical: the exponent-notation threshold is
+rc2's own choice (`(-6, 21]` plain, `<m>e<n>` otherwise), and rc2 keeps
+a leading `0` on `0.5` where Chez writes `.5`. So folding could still
+produce a slightly different string at compile time than the runtime
+cast.
 
-This is already structurally blocked at a different layer:
-`ConstFold.safeConst` excludes `Db` from *every* PrimFn, not just
-`Cast` (host-width/rounding mismatch risk, same reasoning as excluding
-`I`), so `constFoldOp`'s `all safeConst cs` check already refuses to
-fold `Cast DoubleType StringType` regardless of what `foldableOp` says.
-`foldableOp`'s own `Cast from StringType = isJust (intKind from)` adds
-a second, independent block (`intKind DoubleType = Nothing`). Both are
+This stays blocked at a different layer anyway: `ConstFold.safeConst`
+excludes `Db` from *every* PrimFn, not just `Cast` (host-width/rounding
+mismatch risk, same reasoning as excluding `I`), so `constFoldOp`'s
+`all safeConst cs` check already refuses to fold `Cast DoubleType
+StringType` regardless of what `foldableOp` says. `foldableOp`'s own
+`Cast from StringType = isJust (intKind from)` adds a second,
+independent block (`intKind DoubleType = Nothing`). Both are
 intentional -- don't remove either while the other still stands as the
-sole guard; `safeConst` is the one that would need to change first if
-this direction is ever revisited, and it can't change without also
-reopening the `%f`-vs-`show` formatting question above.
+sole guard. Revisiting this direction now needs a smaller check than
+before (does rc2's shortest-form formatter agree with the host's across
+a boundary-value sweep, exponent-notation and leading-zero conventions
+included?), but still starts with `safeConst`'s project-wide `Db`
+exclusion.
 
 Test: `castDoubleToStringNotFolded` in `Test17ConstFold.idr`.
 
@@ -134,8 +139,9 @@ Test: `castStringToIntegerNotFolded` in `Test17ConstFold.idr`.
   multi-character escaping (`showLitChar`).
 - `idris2-src/src/Libraries/Utils/String.idr` -- `stripQuotes`.
 - `rc2/support/rc2/numeric.c` -- rc2's own runtime Cast
-  implementations (`idris2rc2_cast_Char_to_string`, Double-to-string
-  `%f` formatting, `String -> Integer/Int*/Double` parsers).
+  implementations (`idris2rc2_cast_Char_to_string`, the shortest-form
+  `Double -> String` formatter and GMP-exact `String -> Double` parser,
+  `String -> Integer/Int*` parsers).
 - `rc2/tests/Test7CastMatrix.idr` -- header comment documents the
   `atoll`-vs-`atoi` String-source divergence and three unrelated
   upstream RefC-runtime bugs found while investigating this area
@@ -157,10 +163,11 @@ Test: `castStringToIntegerNotFolded` in `Test17ConstFold.idr`.
 2. **`Double -> String`**: this can't move without first revisiting
    `safeConst`'s `Db` exclusion project-wide (it excludes `Db` from
    every PrimFn, not just Cast) -- that's a bigger, separate decision.
-   If ever taken up, verify `snprintf("%f", ...)` output against the
-   host's own `Show Double` output across a boundary-value sweep
-   (0.0, negative zero, very large/small magnitudes, values needing
-   scientific notation in one format but not the other) before trusting
+   If ever taken up, verify `idris2rc2_cast_Double_to_string`'s
+   shortest-form output against the host's own `Show Double` output
+   across a boundary-value sweep (0.0, negative zero, very large/small
+   magnitudes, values on either side of the plain/scientific threshold,
+   `|x| < 1` where the leading-zero convention differs) before trusting
    any single example.
 3. **`String -> Integer`**: write a repro exercising both rc2's
    `mpz_set_str`-based runtime parse and a compile-time `getOp` fold of

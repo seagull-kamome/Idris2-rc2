@@ -7,10 +7,10 @@ void idris2rc2_missingForeign(void);
 // Process lifecycle hooks. The generated `main()` (Compiler.RC2.Emit's
 // footer) calls idris2rc2_rtInit() as its first statement and
 // idris2rc2_rtFinish() right after the entry point's trampoline
-// returns. idris2rc2_rtInit runs `setlocale(LC_ALL, "")` (so a UTF-8
+// returns. idris2rc2_rtInit runs `setlocale(LC_ALL, "")` so a UTF-8
 // environment locale reaches libc -- Text.Regex.POSIX's `.` and
-// character classes need it) then pins LC_NUMERIC back to "C" (keeps
-// numeric.c's "%f" Double formatting locale-independent).
+// character classes need it. (Double<->String casts don't rely on the
+// locale: numeric.c carries its own '.'-based decimal conversion.)
 // idris2rc2_rtFinish flushes all stdio streams. A `--directive nomain`
 // build supplies its own `main()` (doc/export-support.md) and must
 // call both itself.
