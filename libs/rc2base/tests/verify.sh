@@ -225,3 +225,16 @@ if diff -u "$TESTS_DIR/TestHTTPServer.expected" "$TMP/actual13.out"; then
 else
     fail "TestHTTPServer -- output mismatch (see diff above)"
 fi
+
+echo "=== rc2 backend: build TestRegexPOSIX (Text.Regex.POSIX: libc <regex.h> bindings) ==="
+nix-shell -p gcc gmp pkg-config --run \
+    "cd '$TESTS_DIR' && '$IDRIS2RC2' --cg rc2 -p rc2base -o TestRegexPOSIX_verify TestRegexPOSIX.idr"
+
+echo "=== Run and diff against TestRegexPOSIX.expected ==="
+"$TESTS_DIR/build/exec/TestRegexPOSIX_verify" > "$TMP/actual14.out" 2>&1
+
+if diff -u "$TESTS_DIR/TestRegexPOSIX.expected" "$TMP/actual14.out"; then
+    echo "PASS  TestRegexPOSIX"
+else
+    fail "TestRegexPOSIX -- output mismatch (see diff above)"
+fi

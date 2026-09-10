@@ -1,0 +1,16 @@
+--- Text.Regex.POSIX ---
+groupCount: 2
+matches: True
+match: Just [Just "foo=42", Just "foo", Just "42"]
+no match: Nothing
+alt on b: Just [Just "b", Nothing, Just "b"]
+alt on a: Just [Just "a", Just "a", Nothing]
+empty group: Just [Just "xy", Just ""]
+ignoreCase: True
+matchAll: [[Just "12"], [Just "345"], [Just "9"]]
+replaceFirst: [a=1] b:2
+replaceAll: [a=1] [b=2]
+BRE backref (has dd): True
+BRE backref (no double): False
+invalid rejected
+--- done ---

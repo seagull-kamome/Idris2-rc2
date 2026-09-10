@@ -14,7 +14,8 @@ modules    = Data.TextBuffer, Data.Text, Data.Buffer.RC2, Data.Double.RC2,
              System.IO.MemStream,
              System.Net.Epoll,
              System.Random.Xoroshiro128PlusPlus,
-             System.Random.Xoroshiro64StarStar
+             System.Random.Xoroshiro64StarStar,
+             Text.Regex.POSIX
 -- `support/c`'s Makefile builds `libidris2rc2base.a` with a plain C
 -- toolchain (`gcc`/`ar`) -- no `pkg-config`/C++/re2. The RE2 regex
 -- bindings that used to need those now live in their own package,

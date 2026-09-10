@@ -542,10 +542,36 @@ nests as function calls rather than chaining with `//` the way fixed
 segments do, and why path splitting is a single pass over the string
 (no repeated `strSubstr` rescans).
 
-## Regular expressions: `Text.Regex.RE2`, now in its own package
+## `Text.Regex.POSIX`: bindings to libc `<regex.h>`
 
-RE2 bindings used to be a module here. They moved to `libs/text-re2`
-(package `text-re2`) so `rc2base` builds with a plain C toolchain --
-RE2 is C++ and needs `g++`/`pkg-config`/abseil, which shouldn't be a
-build dependency of this whole library for one module. `import
-Text.Regex.RE2` after adding `-p text-re2`; see `libs/text-re2/README.md`.
+`regcomp`/`regexec`/`regfree`/`regerror` -- POSIX regular expressions,
+no external dependency (it's in libc).
+
+```idris2
+import Text.Regex.POSIX
+
+Right re <- compile "([a-z]+)=([0-9]+)"           -- ERE by default; `compile {flags = bre}` for BRE
+  | Left msg => ...                               -- syntactically invalid pattern
+
+matches re "x foo=42 y"                           -- True
+match re "x foo=42 y"                             -- Just [Just "foo=42", Just "foo", Just "42"]
+matchAll re "a=1 b=22"                            -- [[Just "a=1", ...], [Just "b=22", ...]]
+replaceAll re "\\1:\\2" "a=1 b=22"                -- "a:1 b:22"
+```
+
+`compile` is `IO (Either String Regex)`; `match`/`matches`/`matchAll`/
+`replace*` are pure. A `Nothing` group element means "didn't
+participate" (distinct from `Just ""`). Caveats (all inherent to POSIX
+`regexec`): NUL-terminated input (a `\0` ends the search), *byte*
+offsets (fine under `--cg rc2`/`refc`, misaligns for non-ASCII under
+`--cg chez`), leftmost-longest semantics, no named groups. See
+`doc/regex-posix.md`.
+
+## Regular expressions with RE2: `text-re2`
+
+The RE2 bindings (`Text.Regex.RE2` -- linear-time, more features) used
+to be a module here. They moved to `libs/text-re2` (package `text-re2`)
+so `rc2base` builds with a plain C toolchain -- RE2 is C++ and needs
+`g++`/`pkg-config`/abseil, which shouldn't be a build dependency of
+this whole library for one module. `import Text.Regex.RE2` after adding
+`-p text-re2`; see `libs/text-re2/README.md`.
