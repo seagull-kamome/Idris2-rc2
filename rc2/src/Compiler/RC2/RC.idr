@@ -8,7 +8,6 @@ module Compiler.RC2.RC
 -- 2. `annotate`: Injects reference-counting primitives based on ownership.
 
 import Compiler.LambdaLift
-import Compiler.RC2.ConstExtPrim
 import Compiler.RC2.DualABI
 import Compiler.RC2.RCExp
 import Compiler.RC2.Types
@@ -783,23 +782,20 @@ checkForeignReturn n (MkLForeign _ _ ret) =
          _ => pure ()
 checkForeignReturn _ _ = pure ()
 
-||| Phase 1 (`normalizeDef`) plus `Compiler.RC2.ConstExtPrim`'s
-||| constant fold, run once over Phase 1's freshly-built tree (see its
-||| own module note for why this placement, rather than a separate
-||| RC2.idr `toRCDefs` stage, is correct) -- so any `RExtPrim` it folds
-||| into an `RPrimVal` is annotated by Phase 2 exactly like any other
-||| literal. `Compiler.RC2.ConstFold`'s own arithmetic/comparison/
-||| case-of-constant/CAF fold does NOT run here -- it needs to see
-||| every definition in the program at once (a whole-program `CafTable`
-||| built across iterations, not just this one `LiftedDef`'s own body),
-||| so `Compiler.RC2.RC2`'s own whole-program fixpoint loop calls it
+||| Phase 1 (`normalizeDef`) only, run once over each `LiftedDef`.
+||| `Compiler.RC2.ConstFold` (arithmetic/comparison/case-of-constant/
+||| CAF fold, plus the constant `ExtPrim` fold -- `prim__codegen` --
+||| that used to be a separate `Compiler.RC2.ConstExtPrim` pass here)
+||| does NOT run at this point: it needs every definition in the
+||| program at once (a whole-program `CafTable` built across
+||| iterations, not just this one `LiftedDef`'s own body), so
+||| `Compiler.RC2.RC2`'s own whole-program fixpoint loop calls it
 ||| separately, between this and `toRCDefPostFold` below.
 export
 toRCDefPreFold : Name -> LiftedDef -> Core RCDef
 toRCDefPreFold declName ld = do
     checkForeignReturn declName ld
-    n <- normalizeDef ld
-    pure (foldConstExtPrimDef n)
+    normalizeDef ld
 
 ||| Phase 2 (`annotateDef`) only -- run once per definition, after
 ||| `Compiler.RC2.RC2`'s own `ConstFold` fixpoint loop has fully

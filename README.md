@@ -34,8 +34,7 @@ rc2/
 │   ├── RC.idr           Lifted -> RCExp: Phase 1 normalize, Phase 2 annotate (dup/drop/free insertion)
 │   ├── Types.idr        native/boxed representation inference (Rep)
 │   ├── Inline.idr       whole-program inlining (lets comparison fusion reach through a call)
-│   ├── ConstExtPrim.idr constant-folds ExtPrim calls like prim__codegen
-│   ├── ConstFold.idr    arithmetic/comparison/cast/case-of-constant folding
+│   ├── ConstFold.idr    ExtPrim (prim__codegen) / arithmetic / comparison / cast / case-of-constant folding
 │   ├── Reuse.idr        constructor reuse-in-place
 │   ├── ConAltNative.idr caches a repeatedly-native-read destructured field
 │   ├── MutualLoop.idr   mutual tail recursion -> one merged self-tail-recursive function
@@ -97,7 +96,7 @@ own `toRCDefs` for the exact order):
    computation *closer* to its one use instead of further away from
    repetition.
 6. **Whole-program inlining and constant folding** (`Inline.idr`,
-   `ConstExtPrim.idr`, `ConstFold.idr`): splices small, call-free
+   `ConstFold.idr`): splices small, call-free
    callees into their call sites (letting comparison fusion reach
    through an interface method call), folds constant `ExtPrim`s and
    arithmetic/comparison/cast/case-of-constant expressions, and folds a

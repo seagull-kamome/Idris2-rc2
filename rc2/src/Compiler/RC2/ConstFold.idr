@@ -3,12 +3,13 @@ module Compiler.RC2.ConstFold
 -- Copyright 2026, Hattori,Hiroki. All rights reserved.
 -- This module was licensed by BSD3.
 
--- Constant folding: arithmetic/comparisons (RPrimVal/RCmpCase),
--- constructors/closures (RCConstCon/RCConstClosure), whole-program
--- CAF-boundary crossing, and RConCase scrutinee resolution. Runs
--- between Compiler.RC2.Inline/ExtPrim folding and Phase 2 annotation.
--- Four distinct designs live in one module -- see
--- rc2/doc/const-con-fold.md, const-closure-fold.md,
+-- Constant folding: constant `ExtPrim` calls (`prim__codegen` --
+-- formerly a separate Compiler.RC2.ConstExtPrim pass),
+-- arithmetic/comparisons (RPrimVal/RCmpCase), constructors/closures
+-- (RCConstCon/RCConstClosure), whole-program CAF-boundary crossing,
+-- and RConCase scrutinee resolution. Runs between Compiler.RC2.Inline
+-- and Phase 2 annotation. Four distinct designs live in one module --
+-- see rc2/doc/const-con-fold.md, const-closure-fold.md,
 -- const-caf-fold.md, and cast-fold-scope.md.
 
 import Compiler.RC2.RCExp
@@ -166,6 +167,18 @@ insertConArgs (i :: is) (v :: vs) env =
          Nothing  => insertConArgs is vs env
 insertConArgs _ _ env = env
 
+||| `Just` the compile-time-known value for an `RExtPrim` call site
+||| guaranteed to always evaluate to it, `Nothing` otherwise -- matched
+||| by base name only (`NS _ (UN (Basic pn))`), the same shape
+||| `Compiler.RC2.Emit`'s own known-ExtPrim whitelist uses (its
+||| `emitRC (RExtPrim ...)` case), not a fully-qualified comparison.
+||| The `RPrimVal` this produces needs no ownership handling: by the
+||| time Phase 2 sees it, it is just another literal (no refcount
+||| bookkeeping), like every other constant this module folds.
+constExtPrimValue : Name -> List RCLocal -> Maybe Constant
+constExtPrimValue (NS _ (UN (Basic "prim__codegen"))) [] = Just (Str "rc2")
+constExtPrimValue _ _ = Nothing
+
 -- `foldConst` is self-recursive only (never mutually recursive with a
 -- sibling function) -- its two small per-alt helpers are each called
 -- from exactly one of its own case clauses, so they live as `where`
@@ -255,7 +268,11 @@ foldConst caf env (RAppName fc lazy n args) =
 foldConst _ env (RUnderApp fc n missing []) = RV fc (RCConstClosure n missing)
 foldConst _ env (RUnderApp fc n missing args) = RUnderApp fc n missing (map (resolveLocal env) args)
 foldConst _ env (RApp fc lazy c a) = RApp fc lazy (resolveLocal env c) (resolveLocal env a)
-foldConst _ env (RExtPrim fc lazy p args postDrop) = RExtPrim fc lazy p (map (resolveLocal env) args) postDrop
+foldConst _ env (RExtPrim fc lazy p args postDrop) =
+    let args' = map (resolveLocal env) args
+    in case constExtPrimValue p args' of
+            Just c  => RPrimVal fc c
+            Nothing => RExtPrim fc lazy p args' postDrop
 foldConst _ env (RStructGet fc structVar sn fn postDrop) =
     RStructGet fc (resolveLocal env structVar) sn fn postDrop
 foldConst _ env (RStructSet fc structVar sn fn value postDrop) =
@@ -323,7 +340,7 @@ foldConst caf env (RReuseOffer fc sc dupOnShared dropOnUnique body) =
 -- `RLoop`/`RAppNameRep` can't exist yet at the point this pass runs
 -- (before Compiler.RC2.Loop/DualABI) -- kept total as a plain
 -- pass-through rather than assumed unreachable, same reasoning as
--- Loop.idr's `renameRCExp` and Compiler.RC2.ConstExtPrim.
+-- Loop.idr's `renameRCExp`.
 foldConst caf env (RLoop fc loopParams initial prologueDrop body) =
     RLoop fc loopParams initial prologueDrop (foldConst caf env body)
 foldConst _ _ e = e

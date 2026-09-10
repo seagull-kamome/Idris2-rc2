@@ -73,10 +73,10 @@ cmpConst =
       a = 3
   in if a < 5 then "less" else "not less"
 
--- Chained with ConstExtPrim's own prim__codegen fold: whether or not
--- this particular call site happens to get inlined into `codegen`'s
--- own body (that's Compiler.RC2.Inline's call, not ConstFold's), the
--- output must be correct either way.
+-- Chained with ConstFold's own `constExtPrimValue` prim__codegen fold:
+-- whether or not this particular call site happens to get inlined into
+-- `codegen`'s own body (that's Compiler.RC2.Inline's call, not
+-- ConstFold's), the output must be correct either way.
 codegenChain : String
 codegenChain = codegen ++ "-suffix"
 

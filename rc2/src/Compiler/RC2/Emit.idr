@@ -1321,7 +1321,7 @@ fnSignature n args retRep isWorker = do
 ||| compiled `.ttc`).
 |||
 ||| Checked by FULL namespace + base name (not just base name, unlike
-||| `Compiler.RC2.ConstExtPrim`'s own known-ExtPrim whitelist) precisely
+||| `Compiler.RC2.ConstFold`'s own `constExtPrimValue`) precisely
 ||| so this never misfires on some unrelated future function that merely
 ||| happens to share the base name "fastPack"/"fastConcat" in a
 ||| different namespace. Every caller also checks this def's own

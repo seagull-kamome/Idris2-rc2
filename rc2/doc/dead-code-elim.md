@@ -168,8 +168,8 @@ own `RConstCase` case-of-constant folding (`foldConst`'s
 resolves to a known constant, the entire node is replaced by just the
 matching alt's body, and every other alt -- along with any `%foreign`
 call inside it -- is discarded outright. A codegen-identity branch
-(`prim__codegen`/`prim__os` folded to a literal string,
-`Compiler.RC2.ConstExtPrim`) or a folded comparison feeding a boolean
+(`prim__codegen` folded to a literal string by
+`Compiler.RC2.ConstFold`'s `constExtPrimValue`) or a folded comparison feeding a boolean
 `RConstCase` compiles down to exactly this shape. A declaration whose
 *only* call site sits inside a branch eliminated this way genuinely
 does lose every caller, `MkRCForeign` included -- the removed `ccs`-

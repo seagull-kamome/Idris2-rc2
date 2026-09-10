@@ -293,10 +293,10 @@ traversal, so there is no finer-grained toggle), following the exact
 same `no<stagename>` pattern as `noinline`/`noconaltnative`/
 `nomutualloop`/`noloop`/`nosink`/`nodualabi`/`nodeadcode`
 (`RC2.idr:68-107`'s own module doc comment lists all of them together).
-`Compiler.RC2.ConstExtPrim`'s own, separate fold (constant `ExtPrim`s
-like `prim__codegen`) runs unconditionally inside `toRCDefPreFold` and
-is *not* affected by this directive -- only the `ConstFold.idr`-driven
-whole-program pass is gated:
+The constant `ExtPrim` fold (`prim__codegen`, `foldConst`'s
+`constExtPrimValue` -- formerly a separate `Compiler.RC2.ConstExtPrim`
+pass in `toRCDefPreFold`) now lives in this same traversal, so it is
+gated by `noconstfold` too:
 
 ```idris2
 folded <- if "noconstfold" `elem` disabled
