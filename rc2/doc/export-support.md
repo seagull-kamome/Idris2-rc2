@@ -1,4 +1,4 @@
-# `%export` support (`Compiler.RC2.RC2.validateExport`, `Compiler.RC2.Emit.emitExportWrapper`)
+# `%export` support (`Compiler.RC2.RC2.validateExport`, `Compiler.RC2.Emit.Foreign.emitExportWrapper`)
 
 Idris2's `%export "lang:exportedCName"` pragma (same attachment syntax
 as `%foreign`, but for the opposite direction -- making an Idris
@@ -14,7 +14,7 @@ genuine native-C-ABI entry point for an `%export`ed function.
 ## Design: an additive wrapper, not a conversion
 
 An `%export`ed function's own always-Boxed compiled entry point
-(`Main_add`, etc.) is **never touched**. `Compiler.RC2.Emit`'s
+(`Main_add`, etc.) is **never touched**. `Compiler.RC2.Emit.Foreign`'s
 `emitExportWrapper` generates one extra C function, under the
 user-given name, with native C parameter/return types: it boxes each
 native argument, calls the original entry point, trampolines the

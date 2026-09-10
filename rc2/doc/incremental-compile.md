@@ -306,7 +306,7 @@ program-fixpoint-style passes.)
    module (found via `Prelude.Basics` referencing `Builtin.Void`) got
    no declaration at all: a plain "undeclared identifier" C error.
    Fixed by a new exhaustive walker, `untaggedConstructorRefsD`
-   (`Emit.idr`), collecting every such reference across a module's own
+   (`Emit/ExternRefs.idr`), collecting every such reference across a module's own
    `defs`, subtracting the ones that module already owns, and emitting
    an `extern char const idris2rc2_constr_<name>[];` for the remainder
    -- a no-op in whole-program mode (the subtraction always empties the
@@ -463,7 +463,7 @@ session doesn't have to rediscover these tradeoffs from scratch:
 
 - **Gaps #1/#2 duplicate a full 25-case `RCExp`/`RCLocal` walk twice**
   (`untaggedConstructorRefsD` and `externalFunctionRefsD`, both right
-  next to each other in `Emit.idr`) for two conceptually-related
+  next to each other in `Emit/ExternRefs.idr`) for two conceptually-related
   "what does this module reference but not own" questions. Matches
   this codebase's own established precedent of one dedicated walker
   per concern (`Compiler.RC2.DeadCode`'s own `usedFunctionNamesR`'s doc
