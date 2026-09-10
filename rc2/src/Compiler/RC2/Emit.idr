@@ -873,16 +873,31 @@ emitAppFFIInlineInto sink tailPosition fc ccs fargs ret postDrop args = do
     let allDrop = map varName postDrop ++ boxedArgDrop
     finalizeSinkWithDrop fc sink valStr allDrop
 
+||| Bail for an `RCExp` node `emitInto`'s own dispatch chain is
+||| contractually required to intercept before any value ever reaches a
+||| bare `emitRC` call: wrapper nodes (`RDup`/`RDrop`/`RFree`/`RLet`/
+||| `RReleaseReuse`/`RReuseOffer`) have their side effect lowered and
+||| are peeled on the way down (`tryEmitLoopContinue`/
+||| `tryBuildClosureInto`); branching and loop constructs (`RCmpCase`/
+||| `RConCase`/`RConstCase`/`RLoop`/`RLoopContinue`) get their own
+||| `Sink`-aware renderer; `RAppNameRep`/`RAppFFIInline` get theirs (a
+||| bare `emitRC` couldn't discharge their `postDrop` in front of a
+||| `return` anyway); a partial application (`RUnderApp`) or an
+||| `InTailPosition` `RAppName` becomes a closure build. Reaching
+||| `emitRC` with one of them means that chain has a hole -- fail loudly
+||| and name the node rather than silently emit wrong code: a dropped
+||| `goto loop` (infinite recursion), a re-declared or skipped `let`, a
+||| branch reverted to a throwaway `switchReturnVar`. Kept as explicit
+||| per-constructor `emitRC` clauses below, not one catch-all, so adding
+||| a new `RCExp` constructor still forces a real decision here.
+unreachableInEmitRC : String -> Core a
+unreachableInEmitRC node =
+    throw $ InternalError "[rc2] \{node} reached emitRC directly (not intercepted by emitInto's dispatch)"
+
 emitRC sink (RV fc v) _ = do
     (valStr, pending) <- rcVarToBoxedC v
     finalizeSinkWithDrop fc sink valStr pending
--- InTailPosition is unreachable here: emitInto's tryBuildClosureInto
--- always intercepts an InTailPosition RAppName itself, building the
--- closure straight into whichever Sink the caller handed down (see
--- buildClosureIntoSink) -- so emitRC only ever sees RAppName in
--- NotInTailPosition, where the call must actually be resolved
--- (trampolined) right here rather than deferred as a closure.
-emitRC sink (RAppName fc _ n args) InTailPosition = throw $ InternalError "[rc2] RAppName (InTailPosition) reached emitRC directly (not intercepted by tryBuildClosureInto)"
+emitRC sink (RAppName fc _ n args) InTailPosition = unreachableInEmitRC "RAppName (InTailPosition)"
 emitRC sink (RAppName fc _ n args) NotInTailPosition = do
     let nargs = length args
     if nargs > MaxExtractFunArgs
@@ -892,24 +907,9 @@ emitRC sink (RAppName fc _ n args) NotInTailPosition = do
            let valStr = "idris2rc2_trampoline(\{cName n}(\{concat $ intersperse ", " (map fst argsWithPending)}))"
            finalizeSinkWithDrop fc sink valStr (concatMap snd argsWithPending)
 
--- Unreachable: emitInto's own dispatch always intercepts a leftover
--- RAppNameRep itself (routing it to emitAppNameRepInto, which needs
--- to discharge its own postDrop -- something emitRC's own "always
--- discharge sink itself" contract has no room for -- before ever
--- falling back to a bare emitRC call). See emitAppNameRepInto's own
--- doc comment for the full rendering this case used to do directly.
-emitRC sink (RAppNameRep fc n argReps retRep postDrop args) _ = throw $ InternalError "[rc2] RAppNameRep reached emitRC directly (not intercepted by emitInto)"
-
--- Unreachable: emitInto's own dispatch always intercepts a
--- leftover RAppFFIInline itself, same reasoning as RAppNameRep's
--- own case just above.
-emitRC sink (RAppFFIInline fc ccs fargs ret postDrop args) _ = throw $ InternalError "[rc2] RAppFFIInline reached emitRC directly (not intercepted by emitInto)"
-
--- Unreachable: emitInto's tryBuildClosureInto always intercepts
--- RUnderApp itself, for any tailPosition -- a partial application is
--- always a closure build, tail position or not (see
--- buildClosureIntoSink).
-emitRC sink (RUnderApp fc n missing args) _ = throw $ InternalError "[rc2] RUnderApp reached emitRC directly (not intercepted by tryBuildClosureInto)"
+emitRC sink (RAppNameRep fc n argReps retRep postDrop args) _ = unreachableInEmitRC "RAppNameRep"
+emitRC sink (RAppFFIInline fc ccs fargs ret postDrop args) _ = unreachableInEmitRC "RAppFFIInline"
+emitRC sink (RUnderApp fc n missing args) _ = unreachableInEmitRC "RUnderApp"
 emitRC sink (RApp fc _ closure arg) tailPosition = do
    (closureStr, p1) <- rcVarToBoxedC closure
    (argStr, p2) <- rcVarToBoxedC arg
@@ -918,14 +918,7 @@ emitRC sink (RApp fc _ closure arg) tailPosition = do
                      InTailPosition    => "idris2rc2_tailcallApplyClosure"
    finalizeSinkWithDrop fc sink "\{fnName}(\{closureStr}, \{argStr})" (p1 ++ p2)
 
--- Unreachable in practice, same reasoning as RLoopContinue's own
--- case below: emitInto's tryBuildClosureInto always peels an RLet
--- (declaring it via declareLet) before ever falling back to a bare
--- emitRC call, so this construct itself should never reach emitRC
--- directly. Failing loudly here (rather than silently re-declaring
--- `var` a second time, or worse, skipping its declaration) is the
--- safer choice.
-emitRC sink (RLet fc var rep value body) _ = throw $ InternalError "[rc2] RLet reached emitRC directly (not intercepted by emitInto/tryBuildClosureInto)"
+emitRC sink (RLet fc var rep value body) _ = unreachableInEmitRC "RLet"
 
 emitRC sink (RCon fc n coninfo tag args reuseFrom) _ = do
     if coninfo == NIL || coninfo == NOTHING || coninfo == ZERO || coninfo == UNIT
@@ -1064,47 +1057,22 @@ emitRC sink (RStructSet fc structVar sn fn value postDrop) _ = do
     removeVars (p1 ++ p2)
     finalizeSink fc sink "((IDRIS2RC2_Value *)NULL)"
 
--- Unreachable in practice, same reasoning as RLet's own case above:
--- emitInto's dispatch always intercepts a leftover RCmpCase/
--- RConCase/RConstCase itself (routing it to emitCmpCaseInto/
--- emitConCaseInto/emitConstCaseInto's Sink-aware handling) before
--- ever falling back to a bare emitRC call. Failing loudly here is
--- the safer choice: reaching this would mean every branch just
--- silently reverted to a throwaway switchReturnVar, undoing the
--- point of that dispatch without any other visible symptom.
-emitRC sink (RCmpCase fc op args postDrop whenTrue whenFalse) _ = throw $ InternalError "[rc2] RCmpCase reached emitRC directly (not intercepted by emitInto)"
-emitRC sink (RConCase fc sc alts mDef) _ = throw $ InternalError "[rc2] RConCase reached emitRC directly (not intercepted by emitInto)"
-emitRC sink (RConstCase fc sc alts def) _ = throw $ InternalError "[rc2] RConstCase reached emitRC directly (not intercepted by emitInto)"
+emitRC sink (RCmpCase fc op args postDrop whenTrue whenFalse) _ = unreachableInEmitRC "RCmpCase"
+emitRC sink (RConCase fc sc alts mDef) _ = unreachableInEmitRC "RConCase"
+emitRC sink (RConstCase fc sc alts def) _ = unreachableInEmitRC "RConstCase"
 
 emitRC sink (RPrimVal fc (I x)) tailPosition = emitRC sink (RPrimVal fc (I64 $ cast x)) tailPosition
 emitRC sink (RPrimVal fc c) _ = finalizeSink fc sink !(boxedConstExpr c)
 
 emitRC sink (RErased fc) _ = finalizeSink fc sink "NULL"
 emitRC sink (RCrash fc x) _ = finalizeSink fc sink "(NULL /* CRASH */)"
--- Unreachable in practice: emitInto always tries tryEmitLoopContinue
--- first, which intercepts every RLoopContinue (however deeply
--- RDup/RDrop/RFree/RLet-wrapped) before it could ever reach a bare
--- emitRC call -- see RLoopContinue's own doc comment. Unlike
--- varName's RCConst case, failing loudly here (rather than returning
--- some placeholder string) is the safer choice: reaching this would
--- mean the goto-loop was never emitted at all, silently turning a
--- loop into infinite recursion.
-emitRC sink (RLoopContinue fc _ _) _ = throw $ InternalError "[rc2] RLoopContinue reached emitRC directly (not intercepted by tryEmitLoopContinue)"
--- Unreachable in practice, same reasoning as RCmpCase/RConCase/
--- RConstCase's own cases below: emitInto's dispatch always
--- intercepts a leftover RLoop itself (routing it to
--- emitLoopInto's Sink-aware handling) before ever falling back to
--- a bare emitRC call.
-emitRC sink (RLoop fc loopParams initial prologueDrop body) _ = throw $ InternalError "[rc2] RLoop reached emitRC directly (not intercepted by emitInto)"
--- Unreachable in practice, same reasoning as RLet's own case above:
--- emitInto's tryBuildClosureInto always peels these wrapper nodes
--- (emitting their own dup/drop/free/reuse-release side effect) on
--- the way down before ever falling back to a bare emitRC call.
-emitRC sink (RDrop fc locs cont) _ = throw $ InternalError "[rc2] RDrop reached emitRC directly (not intercepted by emitInto/tryBuildClosureInto)"
-emitRC sink (RDup fc loc extra cont) _ = throw $ InternalError "[rc2] RDup reached emitRC directly (not intercepted by emitInto/tryBuildClosureInto)"
-emitRC sink (RFree fc loc cont) _ = throw $ InternalError "[rc2] RFree reached emitRC directly (not intercepted by emitInto/tryBuildClosureInto)"
-emitRC sink (RReleaseReuse fc loc cont) _ = throw $ InternalError "[rc2] RReleaseReuse reached emitRC directly (not intercepted by emitInto/tryBuildClosureInto)"
-emitRC sink (RReuseOffer fc sc dupOnShared dropOnUnique cont) _ = throw $ InternalError "[rc2] RReuseOffer reached emitRC directly (not intercepted by emitInto/tryBuildClosureInto)"
+emitRC sink (RLoopContinue fc _ _) _ = unreachableInEmitRC "RLoopContinue"
+emitRC sink (RLoop fc loopParams initial prologueDrop body) _ = unreachableInEmitRC "RLoop"
+emitRC sink (RDrop fc locs cont) _ = unreachableInEmitRC "RDrop"
+emitRC sink (RDup fc loc extra cont) _ = unreachableInEmitRC "RDup"
+emitRC sink (RFree fc loc cont) _ = unreachableInEmitRC "RFree"
+emitRC sink (RReleaseReuse fc loc cont) _ = unreachableInEmitRC "RReleaseReuse"
+emitRC sink (RReuseOffer fc sc dupOnShared dropOnUnique cont) _ = unreachableInEmitRC "RReuseOffer"
 
 addCommaToList : List String -> List String
 addCommaToList [] = []
