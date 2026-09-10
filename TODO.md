@@ -168,7 +168,7 @@ surviving Boxed-context reads" section) and for `Compiler.RC2.Loop`'s
 own loop-*invariant* parameter hoisting (`rc2/doc/loop-conversion.md`'s
 "Reusing the original Boxed value for a surviving Boxed-context read"
 section) -- both `dup` the original Boxed value on a surviving
-Boxed-context read now, instead of `EmitUtil.idr`'s `rcVarToBoxedC`
+Boxed-context read now, instead of `Emit/Util.idr`'s `rcVarToBoxedC`
 default cost (a fresh `nativeMk` allocation every time).
 
 **Still not fixed for `Compiler.RC2.Loop`'s own genuinely loop-*carried*
@@ -268,7 +268,7 @@ actually built). `csegen_41`'s whole body now collapses into one
 immortal static; the six `mkClosure` calls plus the constructor
 allocation are gone. Full design, the `Compiler.RC2.DeadCode`
 correctness gap this exposed, and the related pre-existing
-`EmitUtil.boxedConstExpr` dedup bug it exposed: see
+`Emit.Util.boxedConstExpr` dedup bug it exposed: see
 `rc2/doc/const-closure-fold.md`.
 
 **Still open: per-byte dispatch through the dictionary.** The fix
@@ -927,7 +927,7 @@ RCLocal」で一度却下された`RCStructField`案と全く同じ問題(RCLoca
   `Sink.idr`の`genuinelyUsedR`、`Loop.idr`の`renameLocal`(サイレントな
   リネーム漏れという新種のバグ経路が判明)、`ConAltNative.idr`/
   `DualABI.idr`の各所――ほぼ全パスで実質的な書き換えが必要。
-- 調査で新たに判明した障害: `EmitUtil.idr`の`rcVarToBoxedC`/
+- 調査で新たに判明した障害: `Emit/Util.idr`の`rcVarToBoxedC`/
   `rcVarToNativeC`は「文を発行できない純粋文字列関数」という契約で
   20箇所以上から呼ばれており、ROpをネストした値として埋め込むと
   この契約と正面衝突する。過去に実際踏んだ`postDrop`順序バグ
@@ -939,7 +939,7 @@ RCLocal」で一度却下された`RCStructField`案と全く同じ問題(RCLoca
 
 **朗報**: 目的(Cに生成される変数の削減)自体は、`postDrop==[]`な
 ネイティブ演算チェーンについては既存の`inlineableRep`+`InlineMap`
-機構(`RC.idr`/`EmitUtil.idr`/`Emit.idr`)で既に達成済みと確認した。
+機構(`RC.idr`/`Emit/Util.idr`/`Emit.idr`)で既に達成済みと確認した。
 残る唯一の実質的ギャップは、`inlineableRep`が`postDrop == []`を
 要求する(`RC.idr:545`)ため**Boxedオペランドを1つでも読むROpは、
 使用回数が1回でも絶対にインライン化されない**という制約。
@@ -952,7 +952,7 @@ RCLocal」で一度却下された`RCStructField`案と全く同じ問題(RCLoca
 別のタイミングであり、`postDrop`が非空だとdropが式の実際の使用より
 先に発行され use-after-free になりうる。安全にするには「dropの発行
 を実際の展開時点まで遅延させる」設計変更が要るが、`inlineExprFor`
-(`EmitUtil.idr:942-958`)から式を取り出す全経路(`rcVarToBoxedC`/
+(`Emit/Util.idr:942-958`)から式を取り出す全経路(`rcVarToBoxedC`/
 `rcVarToNativeC`、呼び出し元だけで**49箇所**)が「Cの文を発行できない
 純粋文字列関数」という契約になっており、これを破らずに戻り値へ
 pendingリストを伝播させる形にすると、49箇所全てで「ここでdropして
@@ -999,9 +999,9 @@ lifting、`Compiler.RC2.Loop`のネイティブシャドウ昇格)との相互�
 green、valgrind clean)は確保済みなのでこの状態でコミット、実利計測や
 `Loop.idr`側の追随は必要になった時点で再訪する。
 
-**さらに調査(Emit.idr/EmitUtil.idr全体のmutual簡略化を検討)**:
-上記の作業前提としてEmit.idr(2102行)/EmitUtil.idr(1630行)自体の
-簡略化を検討したが、結論は「大掛かりな着手は見送り」。EmitUtil.idr
+**さらに調査(Emit.idr/Emit/Util.idr全体のmutual簡略化を検討)**:
+上記の作業前提としてEmit.idr(2102行)/Emit/Util.idr(1630行)自体の
+簡略化を検討したが、結論は「大掛かりな着手は見送り」。Emit/Util.idr
 の`mutual`(3関数)は既に100%真の循環で対象外。Emit.idrの`mutual`
 (18関数、~1140行)は他の7モジュールと異なり15/18(83%)が単一の
 真の強連結成分で、削減見込みはmutual全体でも高々30-50行

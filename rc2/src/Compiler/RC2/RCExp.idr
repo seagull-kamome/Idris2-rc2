@@ -39,7 +39,7 @@ data IsAnyConstLocal : RCLocal -> Type
 ||| than a genuine heap constructor. `RCConstCon` folds a constructor
 ||| application whose fields are themselves all constant (see
 ||| `Compiler.RC2.ConstFold`) into a single value staged once as a
-||| file-scope static (`Compiler.RC2.EmitUtil`'s `ConstConDef`), immortal
+||| file-scope static (`Compiler.RC2.Emit.Util`'s `ConstConDef`), immortal
 ||| the same way a small-int-cache/`ConstDef` value is -- never a
 ||| freshly-allocated heap constructor.
 public export
@@ -53,9 +53,9 @@ data RCLocal : Type where
      ||| of `RCLocal`'s constant forms, never `RCLoc`" -- erased
      ||| (`0`), so it costs nothing at runtime, but makes constructing
      ||| an ill-formed `RCConstCon` (one holding a live variable
-     ||| reference) a compile error rather than a `Compiler.RC2.EmitUtil`
+     ||| reference) a compile error rather than a `Compiler.RC2.Emit.Util`
      ||| `idris_crash`. Staying erased all the way through
-     ||| (`Compiler.RC2.EmitUtil`'s own `boxedConstConExpr`/
+     ||| (`Compiler.RC2.Emit.Util`'s own `boxedConstConExpr`/
      ||| `constConFieldExprsFor` thread it onward at `0` too, never
      ||| widening it to a kept value) is exactly what lets Idris2
      ||| still use it to rule out the `RCLoc` case in
@@ -78,7 +78,7 @@ data RCLocal : Type where
 
 ||| Witness that `l` is `RCConstCon` -- kept as its own narrow proof
 ||| (rather than only the five-case `IsAnyConstLocal` below)
-||| specifically so `Compiler.RC2.EmitUtil`'s `boxedConstConExpr`, which
+||| specifically so `Compiler.RC2.Emit.Util`'s `boxedConstConExpr`, which
 ||| only ever handles this one case, can require exactly it and let
 ||| Idris2's coverage checker rule out every other `RCLocal`
 ||| constructor (`RCLoc` included) as ill-typed, rather than needing a
@@ -93,7 +93,7 @@ data IsConstLocal : RCLocal -> Type where
 ||| type rather than widening `IsConstLocal` itself: `boxedConstConExpr`
 ||| only ever handles `RCConstCon`, so adding a `RCConstClosure` case
 ||| to `IsConstLocal` would force a spurious `impossible` arm into code
-||| that was never about this shape. `Compiler.RC2.EmitUtil`'s
+||| that was never about this shape. `Compiler.RC2.Emit.Util`'s
 ||| `boxedConstClosureExpr` requires this one instead, for the same
 ||| coverage-checker reason `IsConstLocal` exists at all.
 public export
@@ -106,7 +106,7 @@ data IsConstClosureLocal : RCLocal -> Type where
 ||| wherever a value just needs to be "not a live variable" without
 ||| narrowing further (`RCConstCon`'s own `args`,
 ||| `Compiler.RC2.ConstFold`'s `Env`); `constConFieldExpr`
-||| (`Compiler.RC2.EmitUtil`) rebuilds the narrower `IsConstLocal` it
+||| (`Compiler.RC2.Emit.Util`) rebuilds the narrower `IsConstLocal` it
 ||| needs for its own `RCConstCon` case directly, rather than
 ||| unwrapping one of these.
 public export

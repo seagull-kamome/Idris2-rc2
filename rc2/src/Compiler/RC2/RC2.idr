@@ -22,7 +22,7 @@ import Compiler.RC2.DeadCode
 import Compiler.RC2.DualABI
 import Compiler.RC2.DupMerge
 import Compiler.RC2.Emit
-import Compiler.RC2.EmitUtil
+import Compiler.RC2.Emit.Util
 import Compiler.RC2.Inline
 import Compiler.RC2.Pretty
 import Compiler.RC2.RC
@@ -372,7 +372,7 @@ validateExport liftedByName (n, exportedName) = do
     case retPeeled of
          CFUnit => pure ()
          -- Unlike every other exportable type, a GCPtr can carry a
-         -- finalizer (`Compiler.RC2.EmitUtil`'s own `packCFType
+         -- finalizer (`Compiler.RC2.Emit.Util`'s own `packCFType
          -- CFGCPtr` note) -- `emitExportWrapper`'s own unconditional
          -- drop-after-return step (rc2/doc/export-support.md's
          -- "Memory" section) could invoke it before the C caller ever

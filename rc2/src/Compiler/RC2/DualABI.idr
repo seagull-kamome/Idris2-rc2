@@ -25,7 +25,7 @@ import Compiler.Common
 import Compiler.RC2.RCExp
 import Compiler.RC2.Types
 import Compiler.RC2.Loop
-import Compiler.RC2.EmitUtil
+import Compiler.RC2.Emit.Util
 import Compiler.RC2.Util
 
 import Core.CompileExpr

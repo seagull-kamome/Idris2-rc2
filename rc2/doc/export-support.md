@@ -159,7 +159,7 @@ precedent upstream's own `Compiler.CompileExpr` uses), and
 `Compiler.RC2.RC2.isExportableCFType` is the actual per-position gate
 `validateExport` checks: it admits `CFPtr`/`CFGCPtr`/`CFInteger`/
 `CFString`/`CFStruct` explicitly (each has a real marshalling path in
-`EmitUtil`'s `packCFType`/`extractValue`, unrelated to the narrower,
+`Emit.Util`'s `packCFType`/`extractValue`, unrelated to the narrower,
 purely-scalar `cfTypeNative` predicate several other codegen stages
 share for Rep selection) on top of the same scalar set as before.
 
@@ -200,7 +200,7 @@ drop-after-return step, since a plain `CFPtr` carries no finalizer for
 that step to invoke).
 
 A `Struct "name" [...]`-typed export uses this same mechanism, not a
-separate one -- `EmitUtil`'s `cTypeOfCFType`/`extractValue`/
+separate one -- `Emit.Util`'s `cTypeOfCFType`/`extractValue`/
 `packCFType` all alias their `CFStruct` case verbatim to `CFPtr`'s. One
 caveat carries over from `%foreign`'s own struct support: the struct's
 C typedef is only emitted (`Compiler.RC2.Emit`'s `StructDefs`) when a
@@ -425,7 +425,7 @@ spurious mismatch on every IO-returning export otherwise;
 `Compiler.RC2.RC2.validateExport` accounts for this one extra slot when
 an export's return type is `CFIORes _`, and `emitExportWrapper` supplies
 it as a boxed `NULL` constant when calling in -- the same placeholder
-`Compiler.RC2.EmitUtil`'s own `packCFType`/`extractValue` already use
+`Compiler.RC2.Emit.Util`'s own `packCFType`/`extractValue` already use
 for `CFWorld` everywhere else.
 
 ## Memory: an explicit drop after every non-`Unit` return

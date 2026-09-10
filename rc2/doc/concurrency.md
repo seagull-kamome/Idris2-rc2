@@ -137,7 +137,7 @@ Changed file: `ioprims.c` (`util.h` and `<pthread.h>` newly included).
   heap-allocated `pthread_t`, not a dedicated tag. `ThreadID` is
   `[external]` in upstream Idris2, which rc2 marshals as CFUser (an
   unconstrained `IDRIS2RC2_Value*` identity passthrough -- see
-  `Compiler.RC2.EmitUtil`'s `packCFType`/`extractValue`), so any
+  `Compiler.RC2.Emit.Util`'s `packCFType`/`extractValue`), so any
   correctly-shaped value works; since `threadWait` can never read it
   (see above), there's nothing that needs a dedicated representation.
 
@@ -247,7 +247,7 @@ What was implemented instead:
   indirection). This is what upstream's `Mutex`/`Condition` being
   declared `[external]` licenses: rc2 marshals `[external]` as CFUser,
   an unconstrained `IDRIS2RC2_Value*` identity passthrough (see
-  `Compiler.RC2.EmitUtil`'s `packCFType`/`extractValue`), so any
+  `Compiler.RC2.Emit.Util`'s `packCFType`/`extractValue`), so any
   correctly-tagged value is a valid one -- a dedicated tag with the
   pthread object inline is the simplest shape that satisfies that, and
   it lets `idris2rc2_teardown` (`memory.c`) call

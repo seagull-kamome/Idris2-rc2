@@ -64,9 +64,9 @@ RUnderApp _ n missing [] =>
 `[1,2,3,4,5]` や `Just 42` を既に畳んでいたのとまったく同じ方法で、
 これを `RCConstCon` へ畳む。
 
-### ステージング(`Compiler.RC2.EmitUtil`)
+### ステージング(`Compiler.RC2.Emit.Util`)
 
-新しい `boxedConstClosureExpr`(`EmitUtil.idr:809-826`)は、初めて
+新しい `boxedConstClosureExpr`(`Emit/Util.idr:809-826`)は、初めて
 見たときに `RCConstClosure` をステージングし、以降の参照ごとに
 ステージングされた static への参照を返し、`boxedConstConExpr` 自身が
 既に使うのと同じ `ConstConDef` 状態に対して重複排除する -- `Eq`/
@@ -135,7 +135,7 @@ dup/drop を既にランタイム no-op にする。
 `tmp_5` など)。コードの形状が変わったからではなく、エントリ
 ポイントクロージャのステージングが今や、`tmp_N`/`constcon_N`/
 `constclosure_N` 名を発行する同じ共有 `ArgCounter`
-(`EmitUtil.idr` の `getNextCounter`)を 1 回進めるからである --
+(`Emit/Util.idr` の `getNextCounter`)を 1 回進めるからである --
 意味変化ではない無害な番号のずれだが、畳み込み自身の普遍性の
 目に見える指紋。
 
@@ -155,7 +155,7 @@ dup/drop を既にランタイム no-op にする。
 れた `Name` であり、それを囲む `RCon`/`RCConstCon` 自身の `args`
 リストを `RCLocal` レベルで越えて見ないウォーカーには不可視である。
 したがって `DeadCode.pruneDeadDefs` は、畳まれた辞書フィールドを
-*通じてのみ*到達可能なメソッドを、`EmitUtil` がそのフィールドの
+*通じてのみ*到達可能なメソッドを、`Emit.Util` がそのフィールドの
 ために生成する不死の static リテラルが自身の C 初期化子内で
 シンボルによってそのメソッドを名指しているのに、デッドコードとして
 刈り取ってしまう。
@@ -193,7 +193,7 @@ dup/drop を既にランタイム no-op にする。
 ### #2: `boxedConstExpr` の `ConstDef` 重複排除キャッシュが `I`/`I64` を衝突させた
 
 この変更が新たに露出させた(それによって導入されたのではない)
-関連する既存バグ: `EmitUtil.boxedConstExpr` は `ConstDef` 重複排除
+関連する既存バグ: `Emit.Util.boxedConstExpr` は `ConstDef` 重複排除
 キャッシュを生の `Constant` でキーづけしていたので、同じ値の `I x`
 と `I64 x` -- `genConstant` 自身の `I`/`I64` 等価性
 (`isReuseConsumingOp` 自身のドキュメントコメントが `cPrimType` に
@@ -401,7 +401,7 @@ statically-known higher-order function arguments" と題した節があり、
   新しいケース; 加えて(コミット `0e7c755`)既に畳まれたクロージャ
   定数をさらなる `let` 再束縛を通じて伝播させるミラーの
   `RV _ (RCConstClosure {})` アーム。
-- `rc2/src/Compiler/RC2/EmitUtil.idr` -- `boxedConstClosureExpr`、
+- `rc2/src/Compiler/RC2/Emit/Util.idr` -- `boxedConstClosureExpr`、
   `boxedConstExpr` の `constDefKey` 修正、および
   `constConFieldExpr`/`inlineExprFor`/`repOfLocal`/`varName` へ追加
   された `RCConstClosure` ケース。

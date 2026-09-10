@@ -64,9 +64,9 @@ instead of a `RCConst`/`RCEmptyCon` -- the existing machinery folds it
 into a `RCConstCon` with zero new cross-definition analysis, exactly
 the way it already folded `[1,2,3,4,5]` or `Just 42`.
 
-### Staging (`Compiler.RC2.EmitUtil`)
+### Staging (`Compiler.RC2.Emit.Util`)
 
-A new `boxedConstClosureExpr` (`EmitUtil.idr:809-826`) stages a
+A new `boxedConstClosureExpr` (`Emit/Util.idr:809-826`) stages a
 `RCConstClosure` the first time it's seen and returns a reference to
 the staged static on every later reference, deduplicating against the
 same `ConstConDef` state `boxedConstConExpr` itself already uses --
@@ -135,7 +135,7 @@ that file's generated C shifted up by one (`tmp_4` -> `tmp_5`, etc.),
 not because any code changed shape, but because staging the
 entry-point closure now consumes one tick of the same shared
 `ArgCounter` that mints `tmp_N`/`constcon_N`/`constclosure_N` names
-(`EmitUtil.idr`'s `getNextCounter`) -- a harmless numbering shift, not
+(`Emit/Util.idr`'s `getNextCounter`) -- a harmless numbering shift, not
 a semantic change, but a visible fingerprint of the fold's own
 universality.
 
@@ -157,7 +157,7 @@ walker that never looks past the enclosing `RCon`/`RCConstCon`'s own
 `args` list at the `RCLocal` level. `DeadCode.pruneDeadDefs` would
 therefore prune a method reachable *only* through a folded dictionary
 field as dead code, even though the immortal static literal
-`EmitUtil` generates for that field still names the method by symbol
+`Emit.Util` generates for that field still names the method by symbol
 in its own C initializer.
 
 **Fix**: a new `usedFunctionNamesL : RCLocal -> SortedSet Name`
@@ -195,7 +195,7 @@ continuation folds via this exact mechanism regardless of interfaces
 ### #2: `boxedConstExpr`'s `ConstDef` dedup cache collided `I`/`I64`
 
 A related, pre-existing bug this change newly exposed (not introduced
-by it): `EmitUtil.boxedConstExpr` keyed its `ConstDef` dedup cache by
+by it): `Emit.Util.boxedConstExpr` keyed its `ConstDef` dedup cache by
 the raw `Constant`, so an `I x` and an `I64 x` of the same value --
 which already render to the identical C name per `genConstant`'s own
 `I`/`I64` equivalence (the same equivalence `isReuseConsumingOp`'s own
@@ -408,7 +408,7 @@ of how many distinct functions a generic helper is ever called with.
   `isConstLocalProof`'s new case; plus (commit `0e7c755`) the mirror
   `RV _ (RCConstClosure {})` arm that propagates an already-folded
   closure constant through a further `let`-rebinding.
-- `rc2/src/Compiler/RC2/EmitUtil.idr` -- `boxedConstClosureExpr`, the
+- `rc2/src/Compiler/RC2/Emit/Util.idr` -- `boxedConstClosureExpr`, the
   `constDefKey` fix in `boxedConstExpr`, and the `RCConstClosure` cases
   added to `constConFieldExpr`/`inlineExprFor`/`repOfLocal`/`varName`.
 - `rc2/src/Compiler/RC2/DeadCode.idr` -- `usedFunctionNamesL`, and the

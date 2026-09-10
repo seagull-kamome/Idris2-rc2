@@ -81,7 +81,7 @@ entry rather than leaving it stale.
   Test47ConstCFStringReturn.idr` cannot be built by real
   `idris2 --cg refc` at all -- it fails with exactly this
   warning-turned-error. rc2 itself no longer has this limitation:
-  `Compiler/RC2/EmitUtil.idr`'s `cTypeOfCFType CFString` was changed to
+  `Compiler/RC2/Emit/Util.idr`'s `cTypeOfCFType CFString` was changed to
   `"const char *"` (`idris2rc2_mkString` already took `char const *s`,
   so no other codegen change was needed). `Test47ConstCFStringReturn`
   is listed in `verify.sh`'s `NO_REFC_DIFF_TESTS` since there's no
@@ -143,7 +143,7 @@ until the actual invariant is found.
 
 `Compiler.RC2.DualABI`'s Stage 3c FFI worker synthesis (`ffiWorkerTable`/
 `ffiEntry`) used to exclude any `%foreign` declaration with more than
-`Compiler.RC2.EmitUtil.MaxExtractFunArgs` (20) parameters
+`Compiler.RC2.Emit.Util.MaxExtractFunArgs` (20) parameters
 unconditionally (`if length fargs > MaxExtractFunArgs then pure []
 else ...`), before ever reaching the natively-eligible-position check
 that actually decides whether synthesizing a worker is worth it at
@@ -217,7 +217,7 @@ worker name with a new `RAppFFIInline` IR node (`Compiler.RC2.RCExp`)
 instead, reusing Stage 4's own `postDrop`/`args` decisions verbatim (no
 recomputation needed -- see that node's own doc comment for why this is
 always safe). `Compiler.RC2.Emit`'s own `emitFFIWorker` and
-`Compiler.RC2.EmitUtil`'s own `FFIWorkers` ref (both mentioned in the
+`Compiler.RC2.Emit.Util`'s own `FFIWorkers` ref (both mentioned in the
 entry above) are deleted outright; a new `emitAppFFIInlineInto` (plus a
 dedicated `RAppFFIInline` case on `emitNativeValue`, for whenever an
 enclosing `RLet` promotes the call's own result straight to native) do
@@ -267,7 +267,7 @@ entire change is confined to `rc2/support/rc2/numeric.h` (10 Boxed
 `xor`/`shiftl`/`shiftr` -- now check `idris2rc2_isUnique` on their
 operand(s) and reuse a unique one's own `mpz_t` storage as the
 destination in place, falling back to a fresh allocation otherwise) plus
-a small compiler-side skip (`Compiler.RC2.EmitUtil`'s
+a small compiler-side skip (`Compiler.RC2.Emit.Util`'s
 `isReuseConsumingOp`, consulted by `Compiler.RC2.Emit`'s `ROp` case to
 stop emitting the now-redundant post-call drops for exactly those 10
 ops). `Div IntegerType` was deliberately left out of scope (a real
@@ -289,12 +289,12 @@ the multi-occurrence (`x + x`) and concurrency safety arguments.
 ## Retired: `Compiler.RC2.Emit`'s FFI wrapper treated `"RC2:"`-tagged `CFBuffer` arguments as generic-C instead of RefC-style
 
 `emitGenericForeignWrapper`'s own `cLang` binding, which chooses
-between `EmitUtil.idr`'s two `CFBuffer`-unwrap cases (`CLangRefC`,
+between `Emit/Util.idr`'s two `CFBuffer`-unwrap cases (`CLangRefC`,
 passing the whole size-header-carrying `IDRIS2RC2_Buffer` allocation
 `rc2/support/rc2/buffer.h`'s macros expect, vs `CLangC`, which skips
 past that header for generic byte-buffer functions with no notion of
 it), used to check only `lang == "RefC"` -- so every `"RC2:"`-tagged
-declaration (rc2's own `%foreign_impl` patch mechanism, `EmitUtil.idr`'s
+declaration (rc2's own `%foreign_impl` patch mechanism, `Emit/Util.idr`'s
 `ffiTags`) fell through to the `CLangC` unwrap regardless of what it
 actually targeted. Silently correct for every `"RC2:"` patch written so
 far (`System.Concurrency.RC2`), since none of those happen to take a
@@ -413,7 +413,7 @@ typedefs are signature-only and need no body recursion, and constant
 `static` definitions turned out to have no whole-program forward-
 reference requirement either, needing only to precede the first
 definition that references them -- so both can be produced/flushed
-incrementally, def by def, with `Compiler.RC2.EmitUtil`'s existing
+incrementally, def by def, with `Compiler.RC2.Emit.Util`'s existing
 `ConstConDef` pending-queue field reused as the constant-staging
 mechanism, rather than accumulating the whole file as one in-memory
 `Output`/`DList`).
@@ -585,7 +585,7 @@ back empty, that's expected, not a sign the feature is broken. See
   exactly two disjoint sets by plain set subtraction --
   `dupOnShared`/`dropOnUnique` (`dropOnUnique = conArgsRC \\
   dupOnShared`) -- with no third bucket a field could fall into and be
-  missed. `EmitUtil.idr`'s `emitReuseOffer` fully discharges both sets
+  missed. `Emit/Util.idr`'s `emitReuseOffer` fully discharges both sets
   (dup what's still needed, drop what's dead) before a reservation is
   ever claimed or abandoned, so by the time
   `idris2rc2_dropReuseConstructor` runs, every field's ownership is

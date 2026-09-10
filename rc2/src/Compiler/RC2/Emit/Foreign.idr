@@ -10,13 +10,13 @@
 ||| case) also reaches for. Split out of `Emit.idr` to keep that module
 ||| on RCExp-to-C lowering; the dependency runs one way only,
 ||| `Emit -> EmitForeign -> EmitUtil`.
-module Compiler.RC2.EmitForeign
+module Compiler.RC2.Emit.Foreign
 -- Copyright 2026, Hattori,Hiroki. All rights reserved.
 -- This module was licensed by BSD3.
 
 import Compiler.RC2.RCExp
 import Compiler.RC2.Types
-import Compiler.RC2.EmitUtil
+import Compiler.RC2.Emit.Util
 import Compiler.RC2.Util
 
 import Compiler.CompileExpr
@@ -136,7 +136,7 @@ ffiRawCall cLang fctName fargs ret args = do
         boxedArgDrop = concatMap snd marshalled
     let callWith : List String -> String
         callWith es = "\{cName fctName}(\{showSep ", " es})"
-    -- `Compiler.RC2.EmitUtil`'s own `packCFType` CFInteger case doc
+    -- `Compiler.RC2.Emit.Util`'s own `packCFType` CFInteger case doc
     -- comment has the full rationale: allocate a fresh
     -- `IDRIS2RC2_Integer` *before* the call, pass its own `->v` as an
     -- extra *leading* argument the callee writes its result into --
@@ -291,7 +291,7 @@ emitForeignDef n ccs fargs ret =
     additionalFFIStub name argTypes (CFIORes retType) = additionalFFIStub name (discardLastArgument argTypes) retType
     -- A real C function returning `Integer` is actually declared `void`,
     -- taking an extra trailing `mpz_t` out-parameter instead (see
-    -- `Compiler.RC2.EmitUtil`'s own `packCFType` CFInteger case) --
+    -- `Compiler.RC2.Emit.Util`'s own `packCFType` CFInteger case) --
     -- `cTypeOfCFType CFInteger` ("mpz_t") is only ever valid in
     -- parameter position, never as a function(-pointer)'s own return
     -- type (illegal C: a function cannot return an array type), so this
@@ -378,7 +378,7 @@ emitForeignDef n ccs fargs ret =
                     removeVarsArgList
                     emit EmptyFC "return NULL;"
                 _ => case peelIORes ret of
-                  -- `Compiler.RC2.EmitUtil`'s own `packCFType` CFInteger
+                  -- `Compiler.RC2.Emit.Util`'s own `packCFType` CFInteger
                   -- case has the full rationale: GMP's own `mpz_t` has
                   -- no "return by value" C shape, so a fresh
                   -- `IDRIS2RC2_Integer` is allocated *before* the call

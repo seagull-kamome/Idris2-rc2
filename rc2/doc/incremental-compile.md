@@ -199,7 +199,7 @@ own -- no code changes needed in these passes:
   `Inline`**: already purely per-definition or already module-local
   today (they never held a whole-program invariant to begin with).
   Nothing to change.
-- **Constant staging** (`EmitUtil.stageConstCon`/`genConstant`,
+- **Constant staging** (`Emit.Util.stageConstCon`/`genConstant`,
   `ConstDef`/`ConstConDef`): already emits every staged value/
   constructor/closure as C `static` -- safe to duplicate verbatim
   across per-module translation units with no symbol collision. Cross-
@@ -299,7 +299,7 @@ program-fixpoint-style passes.)
    constructor built without a small-int tag (`RCon`'s own `tag = Nothing`,
    or `RCConstCon`'s equivalent) sets its runtime `->name` field to a
    file-scope `idris2rc2_constr_<name>` string constant
-   (`createCFunctions`'s own `RCon` case; `EmitUtil.boxedConstConExpr`'s
+   (`createCFunctions`'s own `RCon` case; `Emit.Util.boxedConstConExpr`'s
    `nameField`). `declarationsOf`/`collectDeclarations` only forward-
    declares this for a constructor the *current* `defs` list itself
    defines -- a module that merely *references* one owned by another
@@ -482,7 +482,7 @@ session doesn't have to rediscover these tradeoffs from scratch:
   compiler could use to catch a real mismatch between what a caller
   assumes and what the definer's own module actually emits. This
   mirrors a limitation the runtime already accepts for closures
-  (`EmitUtil`'s own erased-function-pointer-cast convention already
+  (`Emit.Util`'s own erased-function-pointer-cast convention already
   can't be arity-checked by the compiler either), so it's not a new
   category of risk, but it is one incremental compilation newly
   extends to *direct* calls too, which didn't have this exposure
@@ -717,7 +717,7 @@ order, float formatting, etc.), which the current sequential-counter
 naming (`constcon_0`, `constcon_1`, ...) doesn't need to guarantee
 today.
 
-**Revisited, decided against for now.** Checked `EmitUtil.idr`'s own
+**Revisited, decided against for now.** Checked `Emit/Util.idr`'s own
 `ConstDef` naming for the plain-literal case (`genConstant`) -- turns
 out `Int`/`Int64`/`Bits64`/`Double` constants are *already* named from
 their own value (`cCleanString (show x)` etc, not a counter), so

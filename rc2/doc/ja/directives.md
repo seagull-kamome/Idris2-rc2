@@ -182,7 +182,7 @@ idris2-src に触れずには直せず、特定のディレクティブ値に固
 - `rc2/src/Compiler/RC2/RC2.idr` -- `toRCDefs` 自身の段階無効化の
   配線、`compileExpr` 自身の `directiveList` 取得とそこから読まれる
   全ディレクティブ、`getInlineRuntime`。
-- `rc2/src/Compiler/RC2/EmitUtil.idr` -- `InjectedRuntime`、2 つの
+- `rc2/src/Compiler/RC2/Emit/Util.idr` -- `InjectedRuntime`、2 つの
   コード注入ディレクティブが書き込むヘッダスコープの状態。
 - `rc2/tests/Test31CgExtraRuntime/`、`rc2/tests/Test32CgInlineRuntime/`
   -- 動機となったスモークテスト(第 6 節)。

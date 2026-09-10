@@ -58,7 +58,7 @@ assignShadowIds nextId ((p, ty) :: rest) = (p, nextId, ty) :: assignShadowIds (n
 ||| top-level function argument, or an as-yet-unseen bound local, is
 ||| always genuinely Boxed at that point -- `reps` only ever records a
 ||| *promotion* away from that default). The same lookup
-||| `Compiler.RC2.EmitUtil`'s own (`Core`-monadic, `RepMap`-backed)
+||| `Compiler.RC2.Emit.Util`'s own (`Core`-monadic, `RepMap`-backed)
 ||| `repOfLocal` performs at emission time, just written as a pure
 ||| function here for passes that have no `Core` context of their own
 ||| to thread a ref through.

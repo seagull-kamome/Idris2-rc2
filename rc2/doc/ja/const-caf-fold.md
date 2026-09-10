@@ -250,7 +250,7 @@ annotate natives owned (RV fc v) =
 ```
 
 -- がそれを実際の `RDup fc v ...` で包む。`natives` も `owned` も
-定数形式の値を決して追跡しないからである。`Compiler.RC2.EmitUtil`
+定数形式の値を決して追跡しないからである。`Compiler.RC2.Emit.Util`
 の `varName` は、この方法で `RDup` に到達するこれら 5 つの形式の
 どれに対してもレンダリングを持たない(設計上 -- これは以前は
 到達不能だった)。それが誤答でも黙ったリークでもなく、実際の C

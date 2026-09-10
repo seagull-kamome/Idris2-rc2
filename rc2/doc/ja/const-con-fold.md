@@ -67,9 +67,9 @@ RCConstCon : Name -> ConInfo -> (tag : Maybe Int) -> List RCLocal -> RCLocal
 それ自身の値へは畳まれないにもかかわらず。これは任意ではない --
 `Bugs found #1` 参照。
 
-### ステージング(`Compiler.RC2.EmitUtil`)
+### ステージング(`Compiler.RC2.Emit.Util`)
 
-既存の `ConstDef` 機構(`boxedConstExpr`、`EmitUtil.idr:637`)をほぼ
+既存の `ConstDef` 機構(`boxedConstExpr`、`Emit/Util.idr:637`)をほぼ
 そのまま鏡写しにする: 新しい `ConstConDef` 状態(名前で重複排除する
 `SortedMap RCLocal String` と、ステージング順の完成した定義テキスト
 リストのペア)が、新しい `boxedConstConExpr` によって参照される。
@@ -242,7 +242,7 @@ CAF 境界のギャップを閉じる全プログラム `CafTable` 不動点ル�
 - `rc2/src/Compiler/RC2/ConstFold.idr` -- 畳み込み自体(`RLet` の
   拡張された `case value' of`、単独の `RCon` ケース、`RAppName` 等の
   オペランド解決ケース)、`asConstLocal` の `BI` 除外。
-- `rc2/src/Compiler/RC2/EmitUtil.idr` -- `ConstConDef` 状態、
+- `rc2/src/Compiler/RC2/Emit/Util.idr` -- `ConstConDef` 状態、
   `boxedConstConExpr`/`constConFieldExpr`、`RCConstCon` ケースで
   拡張された `RCLocal` 消費ヘルパ(`varName`/`repOfLocal`/
   `inlineExprFor`)。

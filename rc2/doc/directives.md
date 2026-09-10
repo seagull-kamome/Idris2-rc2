@@ -178,7 +178,7 @@ behavior to diverge from, and no meaningful RefC comparison for
 - `rc2/src/Compiler/RC2/RC2.idr` -- `toRCDefs`'s own stage-disable
   wiring, `compileExpr`'s own `directiveList` fetch and every directive
   read from it, `getInlineRuntime`.
-- `rc2/src/Compiler/RC2/EmitUtil.idr` -- `InjectedRuntime`, the
+- `rc2/src/Compiler/RC2/Emit/Util.idr` -- `InjectedRuntime`, the
   header-scoped state the two code-injection directives write into.
 - `rc2/tests/Test31CgExtraRuntime/`, `rc2/tests/Test32CgInlineRuntime/`
   -- the motivating smoke tests (section 6).

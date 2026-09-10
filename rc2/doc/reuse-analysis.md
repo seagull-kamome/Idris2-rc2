@@ -282,7 +282,7 @@ alongside `dupOnShared` (the same peeled-drop-list analysis that already
 identifies `sc` and its destructured fields, just naming the
 complementary set: fields that die on the unique path specifically,
 because they're absent from the body's own later uses). Discharged only
-in `EmitUtil.idr`'s `emitReuseOffer`'s unique branch -- each
+in `Emit/Util.idr`'s `emitReuseOffer`'s unique branch -- each
 `dropOnUnique` entry gets an ordinary drop there, right before
 `reuse_<sc>` is claimed -- deliberately left untouched in the
 not-unique branch, since that branch's existing unconditional

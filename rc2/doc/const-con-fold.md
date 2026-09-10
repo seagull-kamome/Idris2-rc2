@@ -64,10 +64,10 @@ already-staged `constList` static, not a re-read of a dead variable.
 though none of them fold to a value of their own. This isn't
 optional -- see `Bugs found #1`.
 
-### Staging (`Compiler.RC2.EmitUtil`)
+### Staging (`Compiler.RC2.Emit.Util`)
 
 Mirrors the existing `ConstDef` machinery (`boxedConstExpr`,
-`EmitUtil.idr:637`) almost exactly: a new `ConstConDef` state
+`Emit/Util.idr:637`) almost exactly: a new `ConstConDef` state
 (`SortedMap RCLocal String` for dedup-by-name, paired with the
 finished definition text list in staging order) is consulted by a new
 `boxedConstConExpr`. Staging a `RCConstCon` recursively stages any
@@ -241,7 +241,7 @@ before that later extension landed):
   extended `case value' of`, the standalone `RCon` case, the
   `RAppName`/etc. operand-resolution cases), `asConstLocal`'s `BI`
   exclusion.
-- `rc2/src/Compiler/RC2/EmitUtil.idr` -- `ConstConDef` state,
+- `rc2/src/Compiler/RC2/Emit/Util.idr` -- `ConstConDef` state,
   `boxedConstConExpr`/`constConFieldExpr`, `RCLocal`-consuming helpers
   (`varName`/`repOfLocal`/`inlineExprFor`) extended with a
   `RCConstCon` case.

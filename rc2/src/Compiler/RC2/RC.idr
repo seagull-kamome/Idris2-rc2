@@ -512,7 +512,7 @@ mutual
     -- forms uniformly; this fallthrough hadn't needed to, before that
     -- fold existed). Without this, the generic `RV fc v` case below
     -- wraps it in a real `RDup` (since neither set ever tracks a
-    -- constant-form value), and `Compiler.RC2.EmitUtil`'s own `varName`
+    -- constant-form value), and `Compiler.RC2.Emit.Util`'s own `varName`
     -- has no real rendering for any of the five reaching it that way
     -- (all five say so in their own doc comments) -- not just wasted, a
     -- genuine C compile error.
@@ -565,7 +565,7 @@ mutual
         ||| `ROp`'s own non-empty `postDrop` (any Boxed operand it reads and
         ||| owes a drop -- see its own doc comment) is no obstacle here: it
         ||| just rides along on `var`'s single deferred use like the rest of
-        ||| the op's own expression text. `Compiler.RC2.EmitUtil`'s InlineMap
+        ||| the op's own expression text. `Compiler.RC2.Emit.Util`'s InlineMap
         ||| stashes it alongside that text (`rcVarToBoxedC`/`rcVarToNativeC`'s
         ||| own doc comments), and the deferred use is exactly where it gets
         ||| discharged -- the canonical read-before-drop rule

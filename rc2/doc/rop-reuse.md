@@ -71,7 +71,7 @@ feature needed **zero IR changes**:
 
 The whole implementation is confined to two files: the runtime contract
 (`rc2/support/rc2/numeric.h`) and a small compiler-side skip
-(`Compiler.RC2.EmitUtil`/`Compiler.RC2.Emit`) that stops emitting the
+(`Compiler.RC2.Emit.Util`/`Compiler.RC2.Emit`) that stops emitting the
 now-redundant drop calls for the ops whose runtime primitive took over
 that responsibility.
 
@@ -215,7 +215,7 @@ get one.
 
 ### Compiler side: `isReuseConsumingOp` gains matching cases
 
-`Compiler.RC2.EmitUtil`'s `isReuseConsumingOp` gained cases for
+`Compiler.RC2.Emit.Util`'s `isReuseConsumingOp` gained cases for
 `Int64Type`/`Bits64Type`/`DoubleType`, each covering exactly the ops
 that type actually has: `Bits64Type` gets the bitwise ops but no `Neg`
 (no `negate` at that type); `DoubleType` gets `Add`/`Sub`/`Mul`/`Div`/
@@ -227,7 +227,7 @@ Idris2's own set of available operations per type.
 This is the most important thing to take away from this extension, and
 it deserves its own section rather than a footnote.
 
-`EmitUtil.cPrimType` maps **both** `IntType` (Idris2's plain,
+`Emit.Util.cPrimType` maps **both** `IntType` (Idris2's plain,
 machine-width `Int`) and `Int64Type` to the identical C function name
 suffix, `"Int64"`. `Add IntType` and `Add Int64Type` both lower to a
 call to the exact same `idris2rc2_add_Int64` -- there is only one
@@ -268,7 +268,7 @@ fix, full `verify.sh --regen-expected` returned to 89/89 passing.
 
 ## Compiler-side change: `isReuseConsumingOp` and the `Emit.idr` skip
 
-`Compiler.RC2.EmitUtil` gained one new pure function:
+`Compiler.RC2.Emit.Util` gained one new pure function:
 
 ```idris
 isReuseConsumingOp : PrimFn arity -> Bool
@@ -476,7 +476,7 @@ concurrency-related code (see `doc/concurrency.md`).
   of the former single `IDRIS2RC2_INTTYPES`), `IDRIS2RC2_DEFOP_REUSE`,
   `IDRIS2RC2_DOUBLE_BINOP`, and the hand-written `Int64`/`Double`
   `negate`.
-- `rc2/src/Compiler/RC2/EmitUtil.idr` -- `isReuseConsumingOp`, including
+- `rc2/src/Compiler/RC2/Emit/Util.idr` -- `isReuseConsumingOp`, including
   (extension) the `Int64Type`/`Bits64Type`/`DoubleType` cases and the
   matching `IntType` cases added by the double-drop bug fix.
 - `rc2/src/Compiler/RC2/Emit.idr` -- `emitRC (ROp ...)`'s

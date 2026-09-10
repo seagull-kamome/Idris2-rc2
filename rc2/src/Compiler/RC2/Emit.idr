@@ -78,9 +78,9 @@ import Libraries.Utils.Path
 import System
 import System.File
 
-import Compiler.RC2.EmitExternRefs
-import Compiler.RC2.EmitForeign
-import Compiler.RC2.EmitUtil
+import Compiler.RC2.Emit.ExternRefs
+import Compiler.RC2.Emit.Foreign
+import Compiler.RC2.Emit.Util
 import Compiler.RC2.Util
 
 %default covering
@@ -1203,7 +1203,7 @@ createCFunctions n (MkRCCon Nothing _ _) = do
 createCFunctions n (MkRCCon tag arity nt) = do
   emit EmptyFC $ ( "// \{show n} Constructor tag " ++ show tag ++ " arity " ++ show arity)
 
--- `%foreign` C-wrapper codegen lives in `Compiler.RC2.EmitForeign`
+-- `%foreign` C-wrapper codegen lives in `Compiler.RC2.Emit.Foreign`
 -- (its `emitForeignDef`), together with the `%export` wrapper and the
 -- shared FFI marshalling primitives the inline-FFI lowering above uses.
 createCFunctions n (MkRCForeign ccs fargs ret) = emitForeignDef n ccs fargs ret

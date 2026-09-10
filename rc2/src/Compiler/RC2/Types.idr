@@ -69,10 +69,10 @@ alwaysUnboxed _ = False
 ||| synthesis (no function body to analyse there, unlike
 ||| `paramEligibility`/`returnEligibility` -- the C ABI a `%foreign`
 ||| declaration commits to already decides eligibility by itself).
-||| `CFChar` included even though `Compiler.RC2.EmitUtil.nativeCType
+||| `CFChar` included even though `Compiler.RC2.Emit.Util.nativeCType
 ||| CharType` (`uint32_t`, a full Idris `Char`'s own Unicode codepoint)
 ||| disagrees with `cTypeOfCFType CFChar` (a plain 1-byte C `char`,
-||| also `Compiler.RC2.EmitUtil`) -- unlike every other case here,
+||| also `Compiler.RC2.Emit.Util`) -- unlike every other case here,
 ||| where the two already agree and a native-eligible position can
 ||| cross into `%foreign`'s own call verbatim, `Compiler.RC2.Emit`'s
 ||| `emitFFIWorker` casts explicitly at that one call boundary instead

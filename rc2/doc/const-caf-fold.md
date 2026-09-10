@@ -247,7 +247,7 @@ annotate natives owned (RV fc v) =
 ```
 
 -- wraps it in a real `RDup fc v ...`, since neither `natives` nor
-`owned` ever tracks a constant-form value. `Compiler.RC2.EmitUtil`'s
+`owned` ever tracks a constant-form value. `Compiler.RC2.Emit.Util`'s
 `varName` has no rendering for any of these five forms reaching a
 `RDup` this way (by design -- this was previously unreachable), which
 surfaced as a genuine C compile error, not a wrong answer or a silent

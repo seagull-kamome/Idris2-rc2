@@ -238,7 +238,7 @@ every eligible, non-`MutualLoop`-merged function:
 1. Mint a fresh worker name (`freshName`/`freshId`/`FreshId`, the same
    `Ref`-threaded-counter pattern `MutualLoop.idr` already uses) --
    `idris2rc2_worker_` plus the *original* function's own mangled C
-   name (`Compiler.RC2.EmitUtil`'s own `cName`, `export`ed for this
+   name (`Compiler.RC2.Emit.Util`'s own `cName`, `export`ed for this
    reuse -- the exact same mangling the wrapper's own unchanged C name
    already uses) plus a disambiguating counter, e.g. `Main.fib`'s own
    worker is `idris2rc2_worker_Main_fib_0` -- deliberately legible on
@@ -341,7 +341,7 @@ return side for free -- it skips worker synthesis for a merged
 function entirely, regardless of which side turned out eligible.
 
 Landed as its own stage, after Stage 3a, specifically because it
-touches `Sink`/`SinkReturn` (`Compiler.RC2.EmitUtil`) machinery
+touches `Sink`/`SinkReturn` (`Compiler.RC2.Emit.Util`) machinery
 threaded pervasively through `Compiler.RC2.Emit`'s own emission
 engine -- exactly the "materially riskier change to some of that module's
 highest-traffic code" flagged when Stage 3a was scoped down to
@@ -732,7 +732,7 @@ Narrower than Stages 1-4 in three ways that fall directly out of a
   function is ever emitted for this table at all** -- see "Stage 5"
   below for what actually consumes it now (an earlier design did emit
   one, via a since-deleted `Compiler.RC2.Emit.emitFFIWorker` and
-  `Compiler.RC2.EmitUtil.FFIWorkers` ref; both are gone, see "Files"
+  `Compiler.RC2.Emit.Util.FFIWorkers` ref; both are gone, see "Files"
   below).
 - **Stage 4 needed zero changes for the non-tail case.** A
   `%foreign`-declared name's own call sites already appear as ordinary
@@ -1053,7 +1053,7 @@ the closest analogue to bug #2 above) passed without any fix needed.
    `RLet`'s own value at all, and the walk's own "must be tail
    position" fallback swallowed it. Fixed by threading an explicit
    `inTail : Bool` through the whole walk (mirroring
-   `Compiler.RC2.EmitUtil`'s own `TailPositionStatus`) -- `True` only at a
+   `Compiler.RC2.Emit.Util`'s own `TailPositionStatus`) -- `True` only at a
    definition's own top-level entry point, threaded straight through
    every construct that doesn't change tail-ness, and *always* `False`
    while descending into an `RLet`'s own `value` -- so the *only* place
@@ -1123,7 +1123,7 @@ the closest analogue to bug #2 above) passed without any fix needed.
    eligibility entirely, unconditionally -- regardless of what
    `paramEligibility`/`returnEligibility` would otherwise decide -- the
    same blanket-exclusion shape `isMutualLoopMerged` already uses.
-   `MaxExtractFunArgs` itself (`Compiler.RC2.EmitUtil`) is now `export`ed
+   `MaxExtractFunArgs` itself (`Compiler.RC2.Emit.Util`) is now `export`ed
    for this reuse, so the two limits can never drift apart by accident.
    Re-verified: full refc-suite (19/19), the entire
    `tests/Test*.idr`/`Bench*.idr` matrix re-diffed byte-for-byte against
@@ -1197,7 +1197,7 @@ the closest analogue to bug #2 above) passed without any fix needed.
    9`..`case 20` in `dispatchClosure` to match. A stale comment in
    `runtime.c` pointing at `Compiler/RC2/RC2.idr` for where
    `MaxExtractFunArgs` lives was also corrected to
-   `Compiler/RC2/EmitUtil.idr`, its real location. Verified with
+   `Compiler/RC2/Emit/Util.idr`, its real location. Verified with
    `rc2/tests/Test33WideDualABIWorker.idr`'s own `add20` (formerly a
    separate `Test34WideClosureDispatch.idr`, merged in) -- a
    20-parameter function reached via a genuine partial-application
@@ -1424,7 +1424,7 @@ from Stage 2.
   always-Boxed-result renderer) and a new `RAppFFIInline` case on
   `emitNativeValue` (the native-context renderer, used whenever an
   enclosing `RLet` promoted this call's own result to native). The
-  since-removed `emitFFIWorker` and `Compiler.RC2.EmitUtil`'s
+  since-removed `emitFFIWorker` and `Compiler.RC2.Emit.Util`'s
   since-removed `FFIWorkers` ref -- an earlier design's standalone
   native-signature FFI worker function and the ref that told
   `createCFunctions` to emit it -- are gone entirely; no code anywhere
