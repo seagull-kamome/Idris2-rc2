@@ -71,8 +71,8 @@ this stage sees every call site, including ones already baked into
 precompiled `network`/`base` code, with no recompilation of those
 packages needed.
 
-`fastPackFixedReplacement : Name -> Maybe String` (`Emit.idr`, ~line
-1158) matches the definition's **full namespace-qualified name**:
+`fastPackFixedReplacement : Name -> Maybe String` (`Emit/Foreign.idr`)
+matches the definition's **full namespace-qualified name**:
 
 ```idris
 fastPackFixedReplacement : Name -> Maybe String
@@ -88,9 +88,10 @@ defensive choice: a name-only match would misfire on some unrelated
 future function that merely happens to share the base name "fastPack"
 in a different namespace.
 
-`createCFunctions`'s `MkRCForeign ccs fargs ret` case (~line 1264) adds a
-**second, independent** check on the exact signature shape before
-diverting away from the normal codegen path:
+`emitForeignDef`'s dispatch (`Emit/Foreign.idr`, reached from
+`createCFunctions`'s `MkRCForeign` case) adds a **second, independent**
+check on the exact signature shape before diverting away from the
+normal codegen path:
 
 ```idris
 case (fastPackFixedReplacement n, ret, fargs) of
@@ -106,8 +107,8 @@ redirected. Both checks (name and shape) have to hold before
 `emitFastPackFixedWrapper` runs; anything else falls through to the
 untouched `emitGenericForeignWrapper`.
 
-`emitFastPackFixedWrapper` (~line 1434) emits **the same external C name
-and declared signature** `emitGenericForeignWrapper` would have produced
+`emitFastPackFixedWrapper` (`Emit/Foreign.idr`) emits **the same external
+C name and declared signature** `emitGenericForeignWrapper` would have produced
 — so every existing call site anywhere keeps linking against the same
 symbol, completely unmodified. Only the wrapper's own *body* differs: it
 calls `idris2rc2_fastPackFixed`/`idris2rc2_fastConcatFixed` directly and returns the result
@@ -140,8 +141,8 @@ cleaned up now that the redirect makes them supposedly unreachable in
 practice.
 
 The reasoning: the redirect is a codegen-level guarantee, not a
-type-level one — nothing stops a future change to `Emit.idr` from
-narrowing `fastPackFixedReplacement`'s match (or otherwise breaking the
+type-level one — nothing stops a future change to `Emit/Foreign.idr`
+from narrowing `fastPackFixedReplacement`'s match (or otherwise breaking the
 redirect) without anyone noticing immediately. If that ever happens,
 generated code would fall through to `emitGenericForeignWrapper` and
 start calling the real, leaking `fastPack`/`fastConcat` again — silently
@@ -210,8 +211,8 @@ past their own `memcpy`'d payload either).
 
 ## Files
 
-- `rc2/src/Compiler/RC2/Emit.idr` — `fastPackFixedReplacement`,
-  `createCFunctions`'s `MkRCForeign` case, `emitFastPackFixedWrapper`.
+- `rc2/src/Compiler/RC2/Emit/Foreign.idr` — `fastPackFixedReplacement`,
+  `emitForeignDef`'s dispatch, `emitFastPackFixedWrapper`.
 - `rc2/support/rc2/idris2rc2_strings.c` — `idris2rc2_fastPackFixed`/
   `idris2rc2_fastConcatFixed` (the empty-string trailing-NUL-write removal).
 - `rc2/support/rc2/idris2rc2_strings.h` — the retained `deprecated`
