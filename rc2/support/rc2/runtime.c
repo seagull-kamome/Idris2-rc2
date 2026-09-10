@@ -2,12 +2,41 @@
 #include "memory.h"
 #include "util.h"
 
+#include <locale.h>
 #include <stdio.h>
 #include <stdlib.h>
 
 void idris2rc2_missingForeign(void) {
   fprintf(stderr, "idris2rc2: foreign function declared but not defined\n");
   exit(1);
+}
+
+// Process lifecycle hooks -- see runtime.h for the contract and why the
+// generated main() (Compiler.RC2.Emit's footer) is what calls them.
+void idris2rc2_rtInit(void) {
+  // Adopt the environment's locale (LC_ALL / LC_CTYPE / LANG). Without
+  // this a C program stays in the "C" locale no matter what the
+  // environment says, and libc's <regex.h> engine (Text.Regex.POSIX)
+  // then treats every subject byte-wise: `.` matches one byte, not one
+  // codepoint, and [[:alpha:]] / case-folding are ASCII-only. A UTF-8
+  // LC_CTYPE switches regexec to its multibyte path (match offsets stay
+  // byte offsets either way, so Data.String.RC2.unsafeStringByteSlice
+  // is still correct).
+  setlocale(LC_ALL, "");
+  // ...but pin LC_NUMERIC back to "C": numeric.c formats Double via
+  // sprintf(buf, "%f", v), which is LC_NUMERIC-sensitive, so an
+  // environment like LANG=de_DE.UTF-8 would otherwise make
+  // `show (3.14 : Double)` produce "3,140000". TODO: give numeric.c a
+  // locale-independent double->string path and drop this pin so a
+  // program that wants its number formatting localised can have it.
+  setlocale(LC_NUMERIC, "C");
+}
+
+void idris2rc2_rtFinish(void) {
+  // Flush every stdio stream. A normal `return` from main() already
+  // does this, but a future teardown path (or a hook added here later)
+  // may exit less gently; belt and braces.
+  fflush(NULL);
 }
 
 typedef IDRIS2RC2_Value *(*const IDRIS2RC2_FUN0)();

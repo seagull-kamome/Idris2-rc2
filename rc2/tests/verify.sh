@@ -205,6 +205,16 @@ source "$REPO_DIR/env.sh"
 # shellcheck source=/dev/null
 source "$SCRIPT_DIR/build-lock.sh"
 
+# Pin the locale for the whole run. The rc2 runtime now does
+# `setlocale(LC_ALL, "")` in idris2rc2_rtInit (support/rc2/runtime.c),
+# so every compiled test's behaviour would otherwise follow whatever
+# LC_* / LANG this shell happens to carry (nix-shell here resolves to
+# en_US.UTF-8, not C). C.UTF-8 gives a UTF-8 LC_CTYPE with plain
+# codepoint-order collation -- deterministic, and what
+# Test82RuntimeLocale asserts. (LC_NUMERIC is pinned back to "C" inside
+# the runtime, so Double "%f" output is unaffected regardless.)
+export LC_ALL=C.UTF-8
+
 # libs/rc2base isn't one of nixpkgs' own idris2 packages env.sh's own
 # generator (gen-env.sh) draws from -- it's this repo's own local
 # package, installed once by hand into its own local prefix (see
@@ -390,7 +400,7 @@ echo "=== Smoke tests ==="
 # Integer both directions, and a String return), and real `idris2 --cg
 # refc` still doesn't implement `%export` marshalling at all regardless
 # of which CFType is involved.
-NO_REFC_DIFF_TESTS="Test7CastMatrix Test17ConstFold Test24CStructSupport Test26GCPtrAliasString Test28Utf8Strings Test31CgExtraRuntime Test32CgInlineRuntime Test35NetworkLoopback Test42SupportMisc Test47ConstCFStringReturn Test59ExportScalar Test60ExportPtr Test61ExportStruct Test62ExportGCPtr Test63ExportInteger Test64ExportString Test65ExportStringArg"
+NO_REFC_DIFF_TESTS="Test7CastMatrix Test17ConstFold Test24CStructSupport Test26GCPtrAliasString Test28Utf8Strings Test31CgExtraRuntime Test32CgInlineRuntime Test35NetworkLoopback Test42SupportMisc Test47ConstCFStringReturn Test59ExportScalar Test60ExportPtr Test61ExportStruct Test62ExportGCPtr Test63ExportInteger Test64ExportString Test65ExportStringArg Test82RuntimeLocale"
 
 # Leak-sensitive by design (reference-counting/reuse/native-shadow
 # regression tests) -- checked with valgrind by default even without

@@ -515,6 +515,43 @@ anything so far, but don't be surprised by them showing up again.
   investigation; `rc2/tests/Test16LoopContinuePostDrop.idr` is this fix's
   own dedicated regression test.
 
+## Runtime: rc2 needs a UTF-8-compatible locale (cost of the `rtInit` hook)
+
+Since the runtime lifecycle hooks landed (`idris2rc2_rtInit` /
+`idris2rc2_rtFinish`, `rc2/support/rc2/runtime.c`, called by
+`Compiler.RC2.Emit`'s generated `main()`), every rc2-compiled program
+runs `setlocale(LC_ALL, "")` at startup -- it adopts whatever locale
+the environment (`LC_ALL` / `LC_CTYPE` / `LANG`) names. This is
+deliberate: `libs/rc2base`'s `Text.Regex.POSIX` needs a UTF-8
+`LC_CTYPE` for `.` and character classes to match by codepoint instead
+of by byte (`rc2/doc/runtime-lifecycle.md`).
+
+The catch: rc2's `String` layer decodes **every** incoming C byte
+sequence as UTF-8 (`support/rc2/idris2rc2_strings.c` + `utf8.c`;
+malformed bytes -> U+FFFD). So once the runtime adopts the environment
+locale, any locale-sensitive libc output flows through that locale's
+charset --
+
+- `regexec` interpreting the subject string,
+- `strftime` / `nl_langinfo` (localised month/day names),
+- `strerror` / `gai_strerror` / `strsignal` (localised via
+  `LC_MESSAGES`),
+
+-- and if that charset is **not** UTF-8-compatible, those bytes reach
+Idris `String` as malformed UTF-8 and come out as U+FFFD. Breaks under
+non-UTF-8 multibyte locales (`ja_JP.eucJP`, `zh_CN.gb18030`,
+`zh_CN.gbk`) and 8-bit locales (`de_DE.iso88591`, `ru_RU.koi8r`). Fine
+under `C` / `POSIX` (ASCII) and any `*.UTF-8` locale.
+
+Not a regression to chase -- it's the accepted price of honouring the
+environment locale. Mitigations: run under a `*.UTF-8` locale (or force
+`LC_ALL=C`); both `verify.sh` scripts `export LC_ALL=C.UTF-8` for
+determinism; a `--directive nomain` driver simply doesn't have to call
+`idris2rc2_rtInit` if it wants the old always-`"C"` behaviour.
+`LC_NUMERIC` is separately force-pinned back to `"C"` inside `rtInit`,
+so `Double`'s `"%f"` formatting (`numeric.c`) is *not* affected by any
+of this.
+
 ## Runtime: `RFree` rarely fires in practice (not a bug)
 
 `RFree` (unconditional, unchecked deallocation for provably-fresh

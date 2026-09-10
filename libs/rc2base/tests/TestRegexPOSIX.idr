@@ -6,8 +6,13 @@ module Main
 -- Exercises Text.Regex.POSIX: ERE and BRE compile, matches / match with
 -- groups (participating vs. absent vs. empty), ignoreCase, matchAll,
 -- replaceFirst / replaceAll, a BRE backreference, rejection of an
--- invalid pattern, and byte-offset spans resolved correctly across
--- multi-byte UTF-8 input.
+-- invalid pattern, byte-offset spans resolved correctly across
+-- multi-byte UTF-8 input, and -- since rc2's runtime now does
+-- setlocale(LC_ALL, "") in idris2rc2_rtInit -- `.` and POSIX character
+-- classes operating by codepoint rather than by byte. That last group
+-- depends on a UTF-8 LC_CTYPE; verify.sh runs this under
+-- LC_ALL=C.UTF-8. Under a plain "C" locale those same lines would each
+-- give the opposite answer (byte-wise matching).
 
 import Data.String
 import Text.Regex.POSIX
@@ -64,6 +69,18 @@ main = do
   -- the Greek letters are copied by byte span.
   ure <- pe "[0-9]+"
   putStrLn "utf8 replaceAll: \{show (codes (replaceAll ure "#" "α1β22γ"))}"
+
+  -- With a UTF-8 LC_CTYPE, glibc's regex engine matches `.` and POSIX
+  -- character classes by codepoint. "café" is 5 bytes / 4 codepoints;
+  -- é (U+00E9) is [[:alpha:]] here, not under "C".
+  dot <- pe "^.$"
+  putStrLn "dot on codepoint: \{showParts (match dot "é")}"
+  alpha <- pe "^[[:alpha:]]+$"
+  putStrLn "alpha class utf8: \{show (matches alpha "café")}"
+  putStrLn "alpha class mixed: \{show (matches alpha "caf3")}"
+  quad <- pe "^.{4}$"
+  putStrLn "dot count codepoints: \{show (matches quad "café")}"
+  putStrLn "dot count too many: \{show (matches quad "caféz")}"
 
   Left _ <- compile "([unclosed"
     | Right _ => putStrLn "FAIL: invalid pattern accepted"

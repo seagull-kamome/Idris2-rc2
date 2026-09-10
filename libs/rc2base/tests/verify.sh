@@ -15,6 +15,12 @@
 
 set -euo pipefail
 
+# rc2's runtime does setlocale(LC_ALL, "") in idris2rc2_rtInit, so a
+# compiled test's behaviour follows this shell's locale. Pin it:
+# TestRegexPOSIX asserts codepoint-wise `.` / [[:alpha:]] matching,
+# which needs a UTF-8 LC_CTYPE (rc2/doc/runtime-lifecycle.md).
+export LC_ALL=C.UTF-8
+
 TESTS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PKG_DIR="$(dirname "$TESTS_DIR")"
 REPO_ROOT="$(dirname "$(dirname "$PKG_DIR")")"

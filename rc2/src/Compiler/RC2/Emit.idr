@@ -2240,18 +2240,27 @@ generateCSourceFile defs0 exports noMain directEntryPoint dropUnimplementableFor
      -- caller-supplied `main` instead. `directEntryPoint`'s own doc
      -- comment above has the full story on the two shapes `entryCall`
      -- can take.
+     --
+     -- `idris2rc2_rtInit()` / `idris2rc2_rtFinish()` (support/rc2/
+     -- runtime.c) bracket the whole run: rtInit adopts the environment
+     -- locale (`setlocale(LC_ALL, "")`, LC_NUMERIC pinned back to "C")
+     -- before any Idris code runs, rtFinish flushes stdio after. A
+     -- `noMain` build gets no `main()` here, so its hand-written driver
+     -- (doc/export-support.md) is responsible for calling both.
      let entryCall : String = fromMaybe "__mainExpression_0()" directEntryPoint
      when (not noMain) $ emit EmptyFC """
 
        // main function
        int main(int argc, char *argv[])
        {
+           idris2rc2_rtInit();
            \{ ifThenElse (contains "idris_support.h" !(get HeaderFiles))
                          "idris2_setArgs(argc, argv);"
                          ""
            }
            IDRIS2RC2_Value *mainExprVal = \{entryCall};
            idris2rc2_trampoline(mainExprVal);
+           idris2rc2_rtFinish();
            return 0;
        }
        """

@@ -55,9 +55,28 @@ this module's is: `\0`..`\9` insert that group's text (empty if the
 group didn't participate), `\\` is a literal backslash, any other `\x`
 becomes `x`.
 
+## Locale: `.` and character classes are codepoint-wise under UTF-8
+
+`regexec`'s pattern semantics are locale-dependent. In the `"C"` locale
+its engine is byte-wise: `.` matches one byte, `[[:alpha:]]` /
+`[[:digit:]]` / case-insensitive matching are ASCII-only, `.{4}` counts
+bytes. With a UTF-8 `LC_CTYPE`, glibc switches to its multibyte path --
+`.` matches a whole codepoint, character classes use the
+wide-character predicates.
+
+rc2's runtime does `setlocale(LC_ALL, "")` at startup
+(`idris2rc2_rtInit`, see `rc2/doc/runtime-lifecycle.md`), so this
+binding gets the multibyte behaviour **whenever the process runs under
+a UTF-8 locale** -- which also means the *charset must be
+UTF-8-compatible*: a subject matched under `ja_JP.eucJP` or
+`de_DE.iso88591` comes back as bytes rc2's `String` layer then
+misreads. `C.UTF-8` / `en_US.UTF-8` / ... are fine; plain `C` falls
+back to byte-wise. `matchSpans` offsets are byte offsets in every
+locale (see below), so `unsafeStringByteSlice` slicing is unaffected.
+
 ## Caveats
 
-All inherent to POSIX `regexec`, not this binding:
+Inherent to POSIX `regexec`, not this binding:
 
 - **NUL-terminated input.** `regexec` takes a `char *`, so a `\0` in
   the subject string ends the search there. glibc's `REG_STARTEND`
@@ -82,10 +101,14 @@ All inherent to POSIX `regexec`, not this binding:
 
 ## Verified
 
-`tests/TestRegexPOSIX.idr` (in `tests/verify.sh`), under `--cg rc2`:
-ERE and BRE compile, `matches`/`match` with groups (participating,
-absent via `(a)|(b)`, empty via `x(a*)y`), `ignoreCase`, `matchAll`,
+`tests/TestRegexPOSIX.idr` (in `tests/verify.sh`, run under
+`LC_ALL=C.UTF-8`), under `--cg rc2`: ERE and BRE compile,
+`matches`/`match` with groups (participating, absent via `(a)|(b)`,
+empty via `x(a*)y`), `ignoreCase`, `matchAll`,
 `replaceFirst`/`replaceAll` with `\1`/`\2`, a BRE `\1` backreference,
-a `Left` for an invalid pattern, and multi-byte UTF-8 input
+a `Left` for an invalid pattern, multi-byte UTF-8 input
 (`match "café=αβ"` groups land on the right bytes, `replaceAll` over
-Greek-letter context copies the non-matched runs correctly).
+Greek-letter context copies the non-matched runs correctly), and
+codepoint-wise pattern semantics under a UTF-8 locale (`^.$` matches
+`"é"`, `^[[:alpha:]]+$` matches `"café"`, `^.{4}$` matches `"café"`
+but not `"caféz"`).

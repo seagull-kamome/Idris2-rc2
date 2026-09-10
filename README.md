@@ -374,6 +374,22 @@ contracts, and one non-obvious bug found and fixed along the way (an
 `%export`ed name is now correctly kept live through dead-code
 elimination).
 
+Process startup is one more small divergence. RefC's generated `main()`
+just sets argv and runs the entry point; rc2's also calls two runtime
+lifecycle hooks around it -- `idris2rc2_rtInit()` first,
+`idris2rc2_rtFinish()` after (`support/rc2/runtime.c`). `rtInit` runs
+`setlocale(LC_ALL, "")` so a UTF-8 environment locale actually reaches
+libc: without it a C program stays in the `"C"` locale regardless of
+`LANG`/`LC_*`, and `libs/rc2base`'s `Text.Regex.POSIX` then matches
+byte-wise (`.` is one byte, `[[:alpha:]]` is ASCII-only). It then pins
+`LC_NUMERIC` back to `"C"` so `Double`'s `"%f"` formatting
+(`support/rc2/numeric.c`) stays `.`-separated in every environment.
+`rtFinish` is `fflush(NULL)`. A `--directive nomain` build supplies its
+own `main()` and must call both hooks itself. Because rc2's `String`
+layer treats all incoming C bytes as UTF-8, adopting the environment
+locale means rc2 programs now need a UTF-8-compatible one -- see
+`KNOWN-BUGS.md` and `rc2/doc/runtime-lifecycle.md`.
+
 ## `%cg rc2` directives
 
 rc2 reads a generic `%cg rc2 <directive>` source pragma (unioned with

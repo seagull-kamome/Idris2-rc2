@@ -75,7 +75,10 @@ Two directives that look like they belong on this list but don't:
   `main()` -- see section 5 below and `doc/export-support.md`'s
   "Linking as a library" section for the end-to-end scenario it exists
   for (linking an `%export`ed program into a hand-written C driver that
-  supplies its own `main`).
+  supplies its own `main`). Because that generated `main()` is also
+  where the runtime lifecycle hooks are called, a `nomain` driver must
+  call `idris2rc2_rtInit()` / `idris2rc2_rtFinish()` itself -- see
+  `doc/runtime-lifecycle.md`.
 
 ## 3. Debug-dump directives
 

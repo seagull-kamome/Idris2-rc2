@@ -14,5 +14,10 @@ BRE backref (has dd): True
 BRE backref (no double): False
 utf8 match: Just [Just [99, 97, 102, 233, 61, 945, 946], Just [99, 97, 102, 233], Just [945, 946]]
 utf8 replaceAll: [945, 35, 946, 35, 947]
+dot on codepoint: Just [Just [233]]
+alpha class utf8: True
+alpha class mixed: False
+dot count codepoints: True
+dot count too many: False
 invalid rejected
 --- done ---

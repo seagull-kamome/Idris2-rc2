@@ -483,6 +483,16 @@ its own and links cleanly alongside an external one. See "Worked
 example" above ("Variant: external C owns `main`") for a complete,
 verified-working walkthrough.
 
+That generated `main()` is also where the runtime lifecycle hooks are
+called (`doc/runtime-lifecycle.md`). With `nomain`, the hand-written
+driver takes on that job: call `idris2rc2_rtInit()` once before the
+first exported call (it runs `setlocale(LC_ALL, "")` +
+`setlocale(LC_NUMERIC, "C")`) and `idris2rc2_rtFinish()` (`fflush`)
+before the process exits. Both are declared in `runtime.h`, reachable
+via the `idris2rc2_runtime.h` umbrella. Skipping `rtInit` isn't a
+crash -- the program just stays in the `"C"` locale, the pre-hook
+behaviour.
+
 ## DeadCode survival
 
 An `%export`ed name is a root `Compiler.RC2.DeadCode.pruneDeadDefs`

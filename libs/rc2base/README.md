@@ -615,7 +615,13 @@ replaceAll re "\\1:\\2" "a=1 b=22"                -- "a:1 b:22"
 `replace*` are pure. A `Nothing` group element means "didn't
 participate" (distinct from `Just ""`). Spans are byte offsets and are
 cut with `Data.String.RC2.unsafeStringByteSlice`, so `match`/`matchAll`/
-`replace*` are UTF-8-correct (not ASCII-only). Caveats: NUL-terminated
+`replace*` land on the right bytes for a multi-byte subject. Pattern
+semantics (`.`, `[[:alpha:]]`, `ignoreCase`) match by codepoint when
+the process runs under a UTF-8 locale -- rc2's runtime does
+`setlocale(LC_ALL, "")` at startup, so this needs a UTF-8-compatible
+environment locale (`C.UTF-8`, `*.UTF-8`; a non-UTF-8 locale corrupts
+locale-derived strings -- see the top-level `README.md`). Under plain
+`C` they fall back to byte-wise / ASCII-only. Caveats: NUL-terminated
 input (a `\0` ends the search); leftmost-longest semantics; no named
 groups. See `doc/regex-posix.md`.
 
