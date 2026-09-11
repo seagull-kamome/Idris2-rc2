@@ -121,6 +121,39 @@ entry rather than leaving it stale.
   (manual verification), same reasoning as `Test7CastMatrix` above.
   `Test35NetworkLoopback` is listed in `verify.sh`'s `NO_REFC_DIFF_TESTS`
   since there's no real-RefC output to diff against in the first place.
+- **Upstream `System.FFI`'s `getField` elaboration doesn't scale to a
+  wide `Struct` -- a genuine OOM crash of the compiler itself, not just
+  slow.** Discovered in the sibling `idris2-curl` repo while binding
+  `curl_version_info_data` (~25 fields) via `Struct`/`getField` for the
+  first time (`%cg rc2 externStruct=curl_version_info_data`, this
+  repo's own `rc2/doc/directives.md` section 5). Declaring all ~24
+  non-array fields in one `Struct "curl_version_info_data" [...]` list
+  and reading each via `getField` crashes `idris2 --build
+  package.ipkg` outright: `out of memory`, confirmed directly against
+  **this project's own self-built reference toolchain**
+  (`idris2-src` at its currently pinned commit, via `env.sh`) with a
+  `ulimit -v 6000000` (6GB) cap in place specifically to stop it taking
+  down the whole machine, which an earlier uncapped attempt already
+  had. Confirmed **not** an rc2 bug and **not** codegen-related at
+  all: `idris2 --build` only elaborates/type-checks a library `.ipkg`,
+  no codegen backend runs at all -- purely upstream `System.FFI`
+  `getField`'s own elaboration-time cost, apparently growing very
+  badly with the `Struct`'s own field-list length. A 5-field version of
+  the same struct (`version`/`version_num`/`host`/`features`/
+  `ssl_version`) compiles fine; the real threshold between 5 and 24 was
+  not bisected, and a smaller synthetic repro (24 same-typed `Int`
+  fields, no `AnyPtr`/`String` mix, no external struct/header
+  involved) did NOT reproduce the crash -- so field *count* alone isn't
+  the whole story; something about the real binding's specific shape
+  (mixed field types, `ptrToString` on several of them, or the
+  surrounding package's own larger elaboration context) also matters,
+  not yet isolated further. See `idris2-curl`'s own
+  `doc/version-info-struct.md` ("`getField` doesn't scale to a wide
+  struct") for the full investigation -- that repo settled for the
+  5-field binding rather than chasing this further. Nothing to fix here
+  in rc2 itself (this never reaches rc2's own compiler at all), but
+  worth knowing before designing any future `Struct` binding with more
+  than a handful of fields, rc2-targeted or not.
 
 ## Retired: `--directive noreuse` no longer exists
 
@@ -401,6 +434,69 @@ hits this code path. Fixed by adding the same explicit
 convention verbatim. Re-verified: `Test24CStructSupport.idr` compiles
 and runs correctly again; full `verify.sh`/`refc-suite/run.sh` (19/19)
 unaffected.
+
+## Fixed: `Compiler.RC2.Emit`'s `RStructGet` was missing the same `(IDRIS2RC2_Value*)` cast, plus a field-type cast now papers over any real/declared mismatch
+
+Same family of bug as the `emitAppFFIInlineInto` entry above --
+`RStructGet`'s own codegen (`Emit.idr`) built `IDRIS2RC2_Value
+*resultVar = packCFType ty (fieldExpr);` with no cast at all, so it
+inherited the exact same problem: `packCFType`'s own "mk" functions
+don't all return `IDRIS2RC2_Value *` directly (`idris2rc2_mkString`
+returns `IDRIS2RC2_String *`, `idris2rc2_mkPointer`
+`IDRIS2RC2_Pointer *`, ...). Silent for a `CFInt*`/`CFDouble`-typed
+field (`idris2rc2_mkInt64`/`mkDouble` already return `IDRIS2RC2_Value
+*`), which is exactly why `Test24CStructSupport.idr`'s own `Int`/
+`Double` fields never hit it -- only surfaced with a real
+`-Wincompatible-pointer-types` compile error once a `String`/`Ptr`-
+typed struct field was bound via `getField` for the first time, in the
+sibling `idris2-curl` repo's own `curl_version_info_data` binding
+(`%cg rc2 externStruct=curl_version_info_data`, `doc/directives.md`
+section 5).
+
+A second, related problem surfaced at the same time, specific to
+`externStruct`: the real struct's own field declaration (curl/curl.h's,
+here) can be more specifically qualified than the `Struct`'s own
+declared field type says -- `ssl_version` is `const char *` in
+curl/curl.h but declared `AnyPtr` (`CFPtr`) on the Idris side, and
+`idris2rc2_mkPointer` wants a plain (non-const) `void *`, so the raw
+field-access expression itself also needed a cast, not just
+`packCFType`'s own result. A self-generated (non-`externStruct`)
+struct's own fields are never `const`-qualified at all (rc2's own
+`genStructDef` never emits `const`), so this half of the bug could only
+ever surface via `externStruct` against a real header -- unreachable
+from any test written before that directive existed.
+
+**The fix**: both an outer `(IDRIS2RC2_Value*)` cast around
+`packCFType`'s own result (matching `emitAppFFIInlineInto`'s own fix
+above) and an inner cast of the raw field-access expression to
+`cTypeOfCFType ty` -- the exact C type `packCFType`'s own wrapping call
+expects -- before handing it to `packCFType` at all. `CFInteger` is
+the one type excluded from the inner cast: `cTypeOfCFType CFInteger`
+is GMP's own `mpz_t`, a C array type with no cast syntax at all, and
+moot anyway since `packCFType`'s own `CFInteger` case is a bare
+passthrough, not a wrapping call.
+
+**Known limitation this fix itself introduces, worth remembering**:
+the inner cast is unconditional and unchecked -- it exists specifically
+to discard a real struct field's own extra qualifiers (`const`) on
+purpose, but it just as readily discards a genuine *mismatch* between
+the `Struct`'s own declared field type and the real struct's actual
+field type (wrong width, wrong signedness, a field that's actually a
+different shape entirely) with **no compiler warning at all**. Before
+this fix, such a mismatch was at least likely to surface as a
+`-Wincompatible-pointer-types`/`-Wdiscarded-qualifiers` build error (as
+this very bug did); after it, a genuinely wrong `Struct` field-type
+declaration for an `externStruct` name compiles silently and reads
+garbage (or writes past the real field's own bounds, for a width
+mismatch on a value later used past this read) at runtime instead.
+Getting a `Struct`'s own field types right against the real header --
+not merely getting them to *compile* -- is now entirely on whoever
+writes the binding, same trust level a hand-written C struct-field
+read already requires, no extra safety net from this cast. Not
+something rc2 itself can check (the C compiler is who used to catch
+some of this, and this cast specifically silences it) -- worth
+calling out at review time for any *future* `externStruct` binding,
+not just this one.
 
 ## Fixed: `Compiler.RC2.Emit`'s `generateCSourceFile` silently ignored a failed C-file write
 

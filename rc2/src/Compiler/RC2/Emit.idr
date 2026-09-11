@@ -1035,8 +1035,32 @@ emitRC sink (RStructGet fc structVar sn fn postDrop) _ = do
     (ptrBoxed, pending) <- rcVarToBoxedC structVar
     let ptrC = extractValue CLangC CFPtr ptrBoxed
     let resultVar = "primVar_" ++ !(getNextCounter)
-    emit fc $ "IDRIS2RC2_Value *" ++ resultVar ++ " = "
-                ++ packCFType ty ("((\{sn}*)\{ptrC})->\{fn}") ++ ";"
+    let rawFieldExpr = "((\{sn}*)\{ptrC})->\{fn}"
+    -- `sn`'s own real field declaration (curl/curl.h's, for an
+    -- `externStruct`-declared name -- rc2/doc/directives.md) can be
+    -- more specifically qualified than `ty` alone says (a `const
+    -- char *` field bound as plain `CFPtr`/`CFString`, say) -- an
+    -- explicit cast to `cTypeOfCFType ty` (the exact C type the
+    -- `packCFType` call below expects) is always the type this call
+    -- site actually wants, discarding any such extra qualifier on
+    -- purpose. `CFInteger` is the one type this can't apply to:
+    -- `cTypeOfCFType CFInteger` is GMP's own `mpz_t`, a C array type
+    -- with no cast syntax at all -- moot anyway, since `packCFType`'s
+    -- own `CFInteger` case is a bare passthrough (see its own doc
+    -- comment), not a wrapping call expecting any particular
+    -- argument type to begin with.
+    let fieldExpr = case ty of
+                         CFInteger => rawFieldExpr
+                         _         => "(\{cTypeOfCFType ty})(\{rawFieldExpr})"
+    -- `packCFType`'s own result is `IDRIS2RC2_Value *` only for a
+    -- handful of cases (CFInt*/CFUnsigned*/CFDouble/CFUnit/CFWorld);
+    -- every other case (CFString/CFPtr/CFGCPtr/CFBuffer/CFStruct/...)
+    -- returns its own narrower subtype pointer instead -- the same
+    -- explicit cast `ffiRawCall`'s own ordinary FFI-return handling
+    -- already applies (its own `packCFType` call, just above this
+    -- one in this file) is needed here too.
+    emit fc $ "IDRIS2RC2_Value *" ++ resultVar ++ " = (IDRIS2RC2_Value*)"
+                ++ packCFType ty fieldExpr ++ ";"
     removeVars $ map varName postDrop
     removeVars pending
     finalizeSink fc sink resultVar
