@@ -26,6 +26,8 @@ import Data.Maybe
 import Data.SortedMap
 import Data.String
 
+import Language.JSON
+
 import Network.RC2
 import Network.Socket
 import Network.Socket.Data
@@ -173,6 +175,19 @@ namespace Response
   html {headers} status body = do
     b <- fromString body
     pure (bytes {headers} status "text/html; charset=utf-8" b)
+
+  ||| `status` with a `JSON` body, serialized compactly (`Language.JSON`'s
+  ||| own `Show JSON` -- no added whitespace; run the value through
+  ||| `Language.JSON.format` first and pass the result to `text` instead
+  ||| if a pretty-printed body is wanted). `Content-Type` is bare
+  ||| `application/json`, no `charset` parameter -- unlike `text`/`html`,
+  ||| RFC 8259 mandates UTF-8 for JSON text, so there is nothing for a
+  ||| `charset` param to disambiguate.
+  export
+  json : {default [] headers : List (String, String)} -> (status : Int) -> JSON -> IO Response
+  json {headers} status body = do
+    b <- fromString (show body)
+    pure (bytes {headers} status "application/json" b)
 
   ||| `text` at a fixed status: 200 / 201 / 400 / 404 / 500.
   export

@@ -479,11 +479,12 @@ each request answers through a continuation rather than a return value,
 so a `Handler` can respond synchronously, stash the continuation and
 answer later (from another thread, even), or `stop` the loop. Request
 and response bodies are raw `Data.Buffer` bytes -- binary safe. The
-`Response.*` constructors (`text`/`html`/`ok`/`notFound`/`bytes`/... --
-call bare, or `Response.`-qualified on a name clash) build one; each
-takes an optional leading implicit `headers`.
+`Response.*` constructors (`text`/`html`/`json`/`ok`/`notFound`/
+`bytes`/... -- call bare, or `Response.`-qualified on a name clash)
+build one; each takes an optional leading implicit `headers`.
 
 ```idris2
+import Language.JSON
 import Network.HTTP.Server
 
 handler : Handler
@@ -492,6 +493,7 @@ handler req respond =
     "/hello" => respond !(text 200 "hello\n")
     "/echo"  => respond (MkResponse 200 [] req.body)          -- raw bytes
     "/img"   => respond (bytes 200 "image/png" pngBuf)
+    "/api"   => respond !(json 200 (JObject [("ok", JBoolean True)]))
     _        => respond !(notFound "not found\n")
 
 main : IO ()

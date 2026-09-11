@@ -221,7 +221,7 @@ fi
 
 echo "=== rc2 backend: build TestHTTPServer (Network.HTTP.Server: cross-thread respond + stop) ==="
 nix-shell -p gcc gmp pkg-config --run \
-    "cd '$TESTS_DIR' && '$IDRIS2RC2' --cg rc2 -p rc2base -p network -o TestHTTPServer_verify TestHTTPServer.idr"
+    "cd '$TESTS_DIR' && '$IDRIS2RC2' --cg rc2 -p rc2base -p network -p contrib -o TestHTTPServer_verify TestHTTPServer.idr"
 
 echo "=== Run and diff against TestHTTPServer.expected ==="
 "$TESTS_DIR/build/exec/TestHTTPServer_verify" > "$TMP/actual13.out" 2>&1

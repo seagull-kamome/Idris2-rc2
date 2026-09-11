@@ -102,6 +102,11 @@ Helpers on `Network.HTTP.Server`:
   `[]`):
   - `text`, `html` (`status -> body -> IO Response`) -- set
     `Content-Type: text/plain`/`text/html; charset=utf-8`.
+  - `json` (`status -> Language.JSON.JSON -> IO Response`) -- serializes
+    with `Language.JSON`'s own `Show JSON` (compact, no whitespace; use
+    `Language.JSON.format` first and hand the result to `text` for a
+    pretty-printed body instead). `Content-Type: application/json`, no
+    `charset` -- RFC 8259 already mandates UTF-8, unlike `text`/`html`.
   - `ok` / `created` / `badRequest` / `notFound` / `serverError`
     (`body -> IO Response`) -- `text` at 200 / 201 / 400 / 404 / 500.
   - `bytes` (`status -> contentType -> Buffer -> Response`) -- pure;
@@ -225,6 +230,9 @@ main = serve 8080 handler   -- binds 127.0.0.1:8080, runs until `stop`
 
 Add response headers with the leading implicit:
 `respond !(ok {headers = [("Cache-Control", "no-store")]} "done")`.
+
+A `JSON` body (`import Language.JSON`):
+`respond !(json 200 (JObject [("ok", JBoolean True)]))`.
 
 `respond` can also be stashed and called later -- from inside a
 different request's handler, from a `forkJoin`ed thread, from

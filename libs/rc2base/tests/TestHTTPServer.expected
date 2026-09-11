@@ -1,12 +1,14 @@
 --- Testing Network.HTTP.Server ---
 round1 sync: sync-ok
 round1 async: async-ok
+round1 json: {"ok":true,"n":42.0}
 round1 echo: len=259 sum=32640
 round1 blob: [1, 0, 2, 0, 255, 0, 7]
 round1 /stop-async: stopping
 round1 server thread joined
 round2 sync: sync-ok
 round2 async: async-ok
+round2 json: {"ok":true,"n":42.0}
 round2 /stop: bye
 round2 server thread joined
 --- Tests finished ---

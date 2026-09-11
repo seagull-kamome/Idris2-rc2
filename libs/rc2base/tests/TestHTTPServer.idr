@@ -9,9 +9,14 @@ module Main
 --     from another thread ("/stop-async"), after which `serve` returns;
 --   * binary safety: a request body full of NUL bytes is seen whole by
 --     the handler ("/echo" reports its length and byte-sum), and a
---     response body with NULs reaches the client intact ("/blob").
+--     response body with NULs reaches the client intact ("/blob");
+--   * `Response.json` ("/json"): a `Language.JSON` value round-trips
+--     through `show`/`fromString` as the response body with
+--     `Content-Type: application/json`.
 -- A second server on the same port afterwards shows the first one's
 -- shutdown released the listening socket.
+
+import Language.JSON
 
 import Network.HTTP.Server
 import Network.RC2
@@ -74,6 +79,7 @@ handler req respond =
       s <- sumBytes req.body
       respond !(text 200 "len=\{show (byteLength req.body)} sum=\{show s}")
     "/blob"       => respond (bytes 200 "application/octet-stream" !blob)
+    "/json"       => respond !(json 200 (JObject [("ok", JBoolean True), ("n", JNumber 42)]))
     "/stop"       => do
       stop
       respond !(text 200 "bye")
@@ -181,6 +187,7 @@ round label stopPath binary = do
   srv <- forkJoin {a = ()} $ serve {bindAddr = IPv4Addr 127 0 0 1} testPort handler
   putStrLn (label ++ " sync: " ++ !(get "/sync"))
   putStrLn (label ++ " async: " ++ !(get "/async"))
+  putStrLn (label ++ " json: " ++ !(get "/json"))
   when binary $ do
     -- 259-byte body: 0..255 then three NULs. sum of 0..255 = 32640.
     putStrLn (label ++ " echo: " ++ !(post "/echo" 259 (\i => if i < 256 then i else 0)))
