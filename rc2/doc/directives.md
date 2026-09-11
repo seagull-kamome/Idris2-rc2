@@ -153,7 +153,51 @@ static library or wiring up `IDRIS2_CFLAGS`/`IDRIS2_LDFLAGS` entirely;
 contrast with `libs/rc2base`'s own README, which needs all of that
 because its C helpers live in a real separate `.a`.
 
-## 5. Using directives in practice
+## 5. Struct-typedef suppression (`externStruct=<name>`)
+
+`Compiler.RC2.Emit`'s struct-collection pass (Part C,
+`doc/c-struct-support.md`'s "Design" section) emits a `typedef struct
+{ ... } name;` per distinct struct name reachable from any `%foreign`
+def's own `Struct "name" [...]`-typed argument/return -- unconditionally,
+with no check for whether `name` is already `typedef`'d by an included
+system/library header. A struct name real code actually wants to bind
+against (not just a program's own private struct, like
+`Test24CStructSupport`'s own `test_point`) is frequently already
+defined that way -- the sibling `idris2-curl` repo's own
+`doc/version-info-struct.md` has a real example: libcurl's own
+`curl/curl.h` already `typedef`s `curl_version_info_data`. Compiling
+both typedefs into the same translation unit fails with `error:
+conflicting types for 'name'`, from gcc, not from rc2 itself.
+
+```idris2
+%cg rc2 externStruct=curl_version_info_data
+%cg rc2 externStruct=some_other_struct_name
+```
+
+Repeatable, one name per occurrence. Each named struct is skipped only
+in `header`'s own typedef-emission step -- `StructDefs` (the field
+name/type table `RStructGet`/`RStructSet` resolve a field against) is
+never filtered, so `getField`/`setField` on a `Struct` of that name
+keep working exactly as normal, compiling to the same
+`((name*)ptr)->field` C expression as any other struct.
+
+**The Idris-side field list becomes purely nominal for a name in this
+set.** Ordinarily (no `externStruct`), that field list is
+authoritative -- it *is* rc2's own generated struct's real field order
+and layout, byte for byte. Once a name is marked `externStruct`, rc2
+emits no typedef of its own for it at all, so `((name*)ptr)->field`
+compiles against whichever real definition the included header
+actually provides -- the C compiler resolves that field's offset from
+*that* definition, never from the Idris declaration's own order. So a
+field's name and type in the `Struct` declaration still have to match
+the real external struct's own field for the resulting cast to be
+correct (same name; a C-type-compatible type per `cTypeOfCFType`), but
+the declaration's field *order* is irrelevant to correctness, and it
+never needs to list every field of the real struct -- only whichever
+subset `getField`/`setField` call sites actually touch, in whatever
+order is convenient.
+
+## 6. Using directives in practice
 
 - Directly on the `idris2-rc2` command line: `--directive VALUE`,
   repeatable (see section 1's example).
@@ -163,23 +207,27 @@ because its C helpers live in a real separate `.a`.
   noloop` or `--directive noconstfold`, without hand-editing
   `toRCDefs`/rebuilding in between runs.
 
-## 6. Motivating smoke tests
+## 7. Motivating smoke tests
 
 `rc2/tests/Test31CgExtraRuntime.idr` (`extraRuntime=`) and
 `rc2/tests/Test32CgInlineRuntime.idr` (`inlineRuntime=`) are the
-dedicated regression tests for section 4's directives. Both are listed
-in `verify.sh`'s `NO_REFC_DIFF_TESTS`, since real RefC never reads
-`--directive`/`%cg` for anything at all -- there's no shared baseline
-behavior to diverge from, and no meaningful RefC comparison for
-`verify.sh` to make.
+dedicated regression tests for section 4's directives.
+`rc2/tests/Test84CgExternStruct.idr` is section 5's own, and its own
+companion header's comment shows the `conflicting types` failure this
+directive exists to avoid. All three are listed in `verify.sh`'s
+`NO_REFC_DIFF_TESTS`, since real RefC never reads `--directive`/`%cg`
+for anything at all -- there's no shared baseline behavior to diverge
+from, and no meaningful RefC comparison for `verify.sh` to make.
 
 ## Files
 
 - `rc2/src/Compiler/RC2/RC2.idr` -- `toRCDefs`'s own stage-disable
   wiring, `compileExpr`'s own `directiveList` fetch and every directive
-  read from it, `getInlineRuntime`.
+  read from it, `getInlineRuntime`, `getExternStructs`.
 - `rc2/src/Compiler/RC2/Emit/Util.idr` -- `InjectedRuntime`, the
-  header-scoped state the two code-injection directives write into.
-- `rc2/tests/Test31CgExtraRuntime/`, `rc2/tests/Test32CgInlineRuntime/`
-  -- the motivating smoke tests (section 6).
+  header-scoped state the two code-injection directives write into;
+  `ExternStructs`, section 5's own.
+- `rc2/tests/Test31CgExtraRuntime/`, `rc2/tests/Test32CgInlineRuntime/`,
+  `rc2/tests/Test84CgExternStruct/` -- the motivating smoke tests
+  (section 7).
 - `KNOWN-BUGS.md` -- `noreuse`'s retirement history.

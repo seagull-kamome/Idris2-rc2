@@ -211,6 +211,22 @@ getInlineRuntime directives = concat $ intersperse "\n" $ nub $ mapMaybe getArg 
             then Just $ trim $ substr 1 (length v) v
             else Nothing
 
+||| `%cg rc2 externStruct=<name>`, repeatable -- names of `Struct`
+||| types `Emit.idr`'s `header` must not emit its own `typedef struct`
+||| for, because `name` is already `typedef`'d by some included system/
+||| library header instead. See `rc2/doc/directives.md` for the design
+||| (in particular why the Idris-side field list stays purely nominal
+||| for a name in this set) and `rc2/doc/c-struct-support.md`.
+getExternStructs : List String -> SortedSet String
+getExternStructs directives = SortedSet.fromList $ mapMaybe getArg directives
+  where
+    getArg : String -> Maybe String
+    getArg directive =
+      let (k, v) = String.break (== '=') directive
+      in if trim k == "externStruct"
+            then Just $ trim $ substr 1 (length v) v
+            else Nothing
+
 ||| Names of top-level definitions whose upstream CExp body is exactly
 ||| `Delay e` (`MkNmFun [] (NmDelay _ _ _)`) -- the same shape
 ||| `Compiler.Scheme.Common`'s own `schDef` special-cases for a
@@ -490,7 +506,12 @@ compileExprWhole c s _ outputDir tm outfile =
      let inlineRuntime = getInlineRuntime directiveList
      let injectedRuntime = extraRuntimeFiles ++ (if inlineRuntime == "" then "" else "\n" ++ inlineRuntime)
 
-     foreignLibs <- logTime 2 "rc2: C generation" $ generateCSourceFile defs exportedSigs noMain Nothing False injectedRuntime outn
+     -- `externStruct=<name>`: suppress `header`'s own `typedef struct`
+     -- for a name already `typedef`'d by an included header -- see
+     -- rc2/doc/directives.md.
+     let externStructs = getExternStructs directiveList
+
+     foreignLibs <- logTime 2 "rc2: C generation" $ generateCSourceFile defs exportedSigs noMain Nothing False injectedRuntime externStructs outn
      Just _ <- logTime 2 "rc2: C compile" $ compileCObjectFile outn outobj dumpCC
        | Nothing => pure Nothing
      logTime 2 "rc2: C link" $ compileCFile [outobj] outexec foreignLibs dumpCC
@@ -667,11 +688,12 @@ incCompile c s sourceFile = do
          extraRuntimeFiles <- getExtraRuntime directiveList
          let inlineRuntime = getInlineRuntime directiveList
          let injectedRuntime = extraRuntimeFiles ++ (if inlineRuntime == "" then "" else "\n" ++ inlineRuntime)
+         let externStructs = getExternStructs directiveList
          outC <- getTTCFileName sourceFile "c"
          outO <- getTTCFileName sourceFile "o"
          objRel <- getObjFileName sourceFile "o"
          foreignLibs <- logTime 2 "rc2: incremental C generation" $
-             generateCSourceFile defs [] noMain directEntryPoint True injectedRuntime outC
+             generateCSourceFile defs [] noMain directEntryPoint True injectedRuntime externStructs outC
          Just _ <- logTime 2 "rc2: incremental C compile" $
              compileCObjectFile outC outO ("dumpcc" `elem` directiveList)
            | Nothing => pure Nothing

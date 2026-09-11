@@ -1267,6 +1267,7 @@ collectDeclarations n def = do
 header : {auto f : Ref FunctionDefinitions (List String)}
       -> {auto h : Ref HeaderFiles (SortedSet String)}
       -> {auto sd : Ref StructDefs (SortedMap String (List (String, CFType)))}
+      -> {auto es : Ref ExternStructs (SortedSet String)}
       -> {auto ir : Ref InjectedRuntime String}
       -> Core (List String)
 header = do
@@ -1282,8 +1283,14 @@ header = do
     -- RStructGet/RStructSet's own `((name*)ptr)->field` rendering
     -- (Part D) has something to compile against -- emitted here,
     -- ahead of every function definition, since C needs the type
-    -- declared before any use.
+    -- declared before any use. `StructDefs` itself stays whole --
+    -- only this emission step is filtered against `ExternStructs`
+    -- (`%cg rc2 externStruct=<name>`, rc2/doc/directives.md) -- a name
+    -- in that set is already `typedef`'d by an included header, so
+    -- RStructGet/RStructSet must still resolve its own field list
+    -- normally, just without rc2 redeclaring the type itself.
     structDefs <- get StructDefs
+    externStructs <- get ExternStructs
     injectedRuntime <- get InjectedRuntime
     pure $
         [initLines] ++
@@ -1292,7 +1299,7 @@ header = do
             then []
             else ["\n// %cg rc2 extraRuntime=<path> / inlineRuntime=<code>\n", injectedRuntime, "\n"]) ++
         ["\n// struct definitions"] ++
-        map (uncurry genStructDef) (SortedMap.toList structDefs) ++
+        map (uncurry genStructDef) (filter (\(n, _) => not (contains n externStructs)) (SortedMap.toList structDefs)) ++
         ["\n// function definitions"] ++
         fns
   where
@@ -1394,9 +1401,10 @@ generateCSourceFile : {auto c : Ref Ctxt Defs}
                    -> (directEntryPoint : Maybe String)
                    -> (dropUnimplementableForeign : Bool)
                    -> (injectedRuntime : String)
+                   -> (externStructs : SortedSet String)
                    -> (outn : String)
                    -> Core (List String)
-generateCSourceFile defs0 exports noMain directEntryPoint dropUnimplementableForeign injectedRuntime outn =
+generateCSourceFile defs0 exports noMain directEntryPoint dropUnimplementableForeign injectedRuntime externStructs outn =
   do let defs = if dropUnimplementableForeign then filter hasUsableForeignImpl defs0 else defs0
      _ <- newRef ArgCounter 0
      _ <- newRef FunctionDefinitions []
@@ -1407,6 +1415,7 @@ generateCSourceFile defs0 exports noMain directEntryPoint dropUnimplementableFor
      _ <- newRef ForeignLibs empty
      _ <- newRef IndentLevel 0
      _ <- newRef InjectedRuntime injectedRuntime
+     _ <- newRef ExternStructs externStructs
      -- Part B (doc/c-struct-support.md's "Design" section): collect
      -- every CFStruct reachable from any MkRCForeign's own argument/
      -- return types, once, before any def is lowered -- so a

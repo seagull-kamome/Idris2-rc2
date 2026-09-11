@@ -530,6 +530,13 @@ data InlineMap : Type where
 -- doc/c-struct-support.md's "Design" section, Parts B/C/D.
 export
 data StructDefs : Type where
+-- Names from `%cg rc2 externStruct=<name>` (`Compiler.RC2.RC2`'s own
+-- `getExternStructs`) -- a subset of `StructDefs`'s own keys `header`
+-- must not emit its own `typedef struct` for, because `name` is
+-- already `typedef`'d by an included system/library header instead.
+-- See rc2/doc/directives.md.
+export
+data ExternStructs : Type where
 export
 data ConstDef
   = CDI64 String

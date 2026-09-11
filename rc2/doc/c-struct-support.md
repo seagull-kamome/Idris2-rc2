@@ -781,6 +781,22 @@ functions `void*`-typed rather than `test_point*`-typed, with the real
 companion C file establishing a struct name this way will hit the same
 thing), but worth knowing before writing another test like this one.
 
+**Now has a real fix**: `%cg rc2 externStruct=<name>` (`rc2/doc/directives.md`
+section 5) suppresses `header`'s own `typedef struct` for one or more
+named structs, for exactly this case -- a struct name already
+`typedef`'d by an included system/library header (a real example:
+libcurl's own `curl/curl.h` already typedefs `curl_version_info_data`,
+`idris2-curl`'s own `doc/version-info-struct.md`). `StructDefs` (this
+section's own Part B/C table) is never filtered by it, only the
+typedef *emission* in Part C -- `RStructGet`/`RStructSet` (Part D)
+resolve fields exactly as normal either way. See
+`rc2/tests/Test84CgExternStruct/` for a from-scratch example built the
+"right" way (a companion header declaring the real typedef, not a
+`void*`-typed workaround like `Test24CStructSupport.h` above).
+`Test24CStructSupport` itself is left as originally written -- its own
+`void*` sidestep still works fine and isn't wrong, just no longer the
+only option.
+
 ## Investigated: native (unboxed) `Ptr`/`CFPtr` representation -- not pursued
 
 Prompted by a direct question after the implementation landed: neither
