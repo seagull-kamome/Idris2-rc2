@@ -152,6 +152,139 @@ fires when the inner case's own alternatives are all constructor-headed
 (or there's exactly one, with no default) -- identical restriction to
 upstream's own `canCaseOfCase`.
 
+### Size budget
+
+The shape restriction above bounds *what* gets collapsed, not *how
+much* -- `doCaseOfCase`/`doCaseOfConstCase` duplicate the entire outer
+`alts`/`def` once per inner branch, and nothing bounded the size of
+`alts`/`def` itself. A chain of small, case-returning, call-free
+functions (exactly Criterion A's own target shape -- e.g. a run of
+`if pI x then ... else ...` guards, each `pI` a small enum-driven
+predicate) spliced into successive scrutinee positions compounds this
+*multiplicatively*: each level duplicates the already-collapsed result
+of the level below into every one of its own branches.
+
+This is architecturally different from upstream's own exposure to the
+same `CaseOpts` code (see "Case-of-case collapse" above): upstream's
+default automatic-inlining heuristic (`Compiler.Opts.InlineHeuristics`'s
+`simple`) explicitly excludes any callee whose body is itself a
+`CConCase`/`CConstCase`, so upstream's `caseOfCase` only ever collapses
+nesting already present in the source, never nesting its own inliner
+just created. This pass deliberately targets the opposite shape --
+inlining a small case-returning callee into a scrutinee position is the
+entire point (see Motivation above) -- so it can't adopt upstream's
+"don't inline case-shaped bodies" guard without losing its own reason
+to exist; upstream's approach genuinely doesn't transfer here.
+
+Confirmed empirically with a synthetic N-level guard chain (`if pI x
+then ... else ...`, `pI : Tri -> Bool` a 3-alt enum predicate,
+`rc2/doc/inlining.md`'s own history -- generator script not checked in):
+generated-C line counts roughly *doubled* per additional level --
+1,185 / 19,041 / 37,473 / 74,337 lines at N=5/10/11/12 -- against 1,044
+lines for the same N=10 source compiled with `--directive noinline`
+(no growth with N at all, since nothing gets spliced into a scrutinee
+position in the first place). Memory was exhausted outright around
+N=15. Crucially, `--timing 2` showed `rc2: Inline` itself finishing in
+~0ms even as it built the bloated tree (duplicating already-built nodes
+is cheap allocation); the wall-clock cost only became visible in the
+*next* stage to do real per-node work on the now-huge tree (`rc2: RC
+normalize`, 0.378s at N=10) -- so a hang or slowdown attributed to "the
+inline stage" by wall-clock/memory observation may show up downstream
+of `Compiler.RC2.Inline`'s own `logTime` line, even though the size
+blowup originates there.
+
+**Fix**: `tryCaseOfCase`'s two clauses now also require
+`duplicationCount * outerSize <= caseOfCaseSizeBudget`
+(`caseOfCaseSizeBudget = 200`), where `outerSize` is `sizeOf`/
+`sizeOfConAlt`/`sizeOfConstAlt` (the same coarse structural node count
+Criterion A's own `smallBodyThreshold` uses, moved earlier in the file
+so this guard can reuse it) applied to the outer `alts`/`def`, and
+`duplicationCount` is how many places they'd be copied into (`length
+xalts`, plus one more if `xdef` is present). Skipping a collapse is
+always semantically safe -- the result is just the original, uncollapsed
+`case (case ...) of ...`, correct but unfused past that point. Because
+the check runs bottom-up on the *already-realised* size of `alts`/`def`
+(which already reflects any duplication from collapses lower in the
+tree), a chain that would otherwise keep compounding gets capped at the
+first level where cumulative size crosses the budget; every level above
+that sees an already-at-or-over-budget input and keeps skipping, rather
+than the multiplication resuming.
+
+Re-running the same synthetic generator after the fix: generated-C line
+counts grew roughly *linearly* instead -- 729 / 822 / 862 / 922 / 1,022
+lines at N=5/10/12/15/20 (~20 lines per additional level) -- and the
+full regression suite (87/87, including `Test15CompareFusionThroughCall`
+both functionally and under `valgrind`) stayed green, confirming the
+budget doesn't interfere with the pass's own motivating case at the
+sizes that actually occur there.
+
+### Size bookkeeping: threaded, not re-scanned
+
+The synthetic N-chain benchmark above no longer crashes, but it also
+never exercised the guard's own *measurement* cost: computing
+`outerSize` via a fresh top-down `sizeOf`/`sizeOfConAlt` scan of
+`alts`/`def` at *every* candidate site. On a large real program this
+scan cost dominated `rc2: Inline`'s own wall-clock time outright --
+144s on one real large program, even though the collapse *duplication*
+itself was already correctly bounded by the budget above. The telltale
+sign: `rc2: RC normalize` immediately after showed no measurable
+difference between `--directive noinline` and default (0.20s vs.
+0.24s) on the same program, meaning the cost sat *inside* `rc2:
+Inline` itself, not downstream of it (unlike the synthetic N-chain
+case earlier, where the size blowup was real but Inline's own
+`collapseCaseOfCase` finished fast and `rc2: RC normalize` absorbed
+the visible wall-clock cost of processing the now-larger tree). A
+large real program has many scattered case-of-case candidate sites
+(not just one pathological chain), each re-walking its own,
+unboundedly large enclosing `alts`/`def` from scratch -- effectively
+O(number of candidate sites × average enclosing context size).
+
+**Fix**: `collapseCaseOfCase`/`collapseConAlt`/`collapseConstAlt` now
+return a `Sized` pair (`szOf`/`valOf`) instead of a bare tree, so each
+node's own size is computed exactly once, incrementally, as a
+byproduct of the same bottom-up fold that was already building it --
+never re-derived by a separate scan. `caseOfCaseHere`'s retry loop
+(up to 5 attempts at one tree position) threads a `CollapseState`
+(`totalSize`, `branchesSize` -- i.e. `outerSize`, and the tree itself)
+rather than a bare tree, so a *chain* of successive collapses at one
+position also never re-scans: `doCaseOfCase`/`doCaseOfConstCase`
+update both sizes via a closed-form formula instead of re-deriving them
+from the result --
+
+```
+newBranchesSize = sizeOf(xalts) + sizeOf(xdef) + duplicationCount * (1 + outerSize)
+```
+
+(`weakenNs`, used to re-index a duplicated copy of `alts`/`def` into a
+deeper scope, never changes node count, so a duplicated copy's size is
+always exactly the input `outerSize`; each of the `duplicationCount`
+copies also gains the one wrapper node `updateAlt`/`updateDef` builds
+around it, hence the `+ 1` per copy). `xalts`/`xdef` (the *inner*, just-
+spliced-in side) are still scanned fresh via the plain, unthreaded
+`sizeOf`/`sizeOfConAlt`/`sizeOfConstAlt` -- when they come from this
+pass's own inlining they're bounded by Criterion A's own
+`smallBodyThreshold` regardless of program size, and when they instead
+come from a genuinely large, naturally-occurring nested source `case`
+(this pass's `collapseCaseOfCase` runs on *every* definition, inlined
+or not), that scan was already exactly this expensive before any of
+this bookkeeping existed -- no new cost introduced on that side.
+
+Re-verified: same synthetic generator, same linear line-count growth as
+above (threading the sizes is a pure performance change, not a
+behavioural one), and the full regression suite stayed green (87/87,
+`Test15CompareFusionThroughCall` included).
+
+A separate, unrelated cost was found while chasing this: N=25 of the
+same synthetic generator took 5.6s in upstream's own "Elaborating"
+step (nothing to do with rc2 -- every `rc2:`-prefixed stage stayed at
+0.000s) -- elaborating one literal 26-deep nested `if`-`then`-`else`
+expression is apparently expensive for upstream's own elaborator,
+regardless of `--directive noinline`. Not investigated further (real
+source code essentially never writes a single-line N-deep `if` chain
+by hand at this depth; the synthetic generator did so specifically to
+isolate the case-of-case shape), but worth noting so it isn't confused
+with this pass's own behaviour if it resurfaces.
+
 ## Bugs found and fixed
 
 An earlier attempt at this pass, this session, was fully reverted after

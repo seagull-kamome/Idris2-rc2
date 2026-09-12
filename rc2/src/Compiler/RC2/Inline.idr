@@ -23,6 +23,7 @@ import Compiler.RC2.Util
 
 import Core.CompileExpr
 import Core.Context
+import Core.Context.Log
 import Core.Core
 import Core.FC
 import Core.TT
@@ -212,116 +213,13 @@ sizeOfSubst (_ :: rest) = suc (sizeOfSubst rest)
 inlineCall : {0 calleeArgs, vars : Scope} -> Lifted calleeArgs -> Subst Lifted calleeArgs vars -> Lifted vars
 inlineCall body env = substLifted zero (sizeOfSubst env) env (embed body)
 
-------------------------------------------------------------------------
--- Case-of-case collapse, ported from upstream `Compiler.CaseOpts`'s own
--- `doCaseOfCase`/`doCaseOfConstCase`/`tryCaseOfCase`/`caseOfCase`
--- (`CExp`-level) onto `Lifted` -- needed because plain substitution
--- alone, spliced into a scrutinee position, produces a "case of case"
--- shape (`case (case x of ...) of ...`) that `Compiler.RC2.RC`'s own
--- `tryFuseCompare` doesn't recognise; collapsing it back into a single
--- case over `x` (duplicating the outer case into every inner branch) is
--- what lets fusion actually fire. `Lifted` has no `LLam` (lambda-lifting
--- already eliminated every lambda), so upstream's own "lift out lambda"
--- half of `CaseOpts` (`caseLam`) has no counterpart here at all -- only
--- the case-of-case half is ported.
-
-doCaseOfCase : FC -> (x : Lifted vars) -> (xalts : List (LiftedConAlt vars)) -> (xdef : Maybe (Lifted vars)) ->
-               (alts : List (LiftedConAlt vars)) -> (def : Maybe (Lifted vars)) -> Lifted vars
-doCaseOfCase fc x xalts xdef alts def
-    = LConCase fc x (map updateAlt xalts) (map updateDef xdef)
-  where
-    updateAlt : LiftedConAlt vars -> LiftedConAlt vars
-    updateAlt (MkLConAlt n ci t args sc)
-        = MkLConAlt n ci t args $
-              LConCase fc sc (map (weakenNs (mkSizeOf args)) alts) (map (weakenNs (mkSizeOf args)) def)
-    updateDef : Lifted vars -> Lifted vars
-    updateDef sc = LConCase fc sc alts def
-
-doCaseOfConstCase : FC -> (x : Lifted vars) -> (xalts : List (LiftedConstAlt vars)) -> (xdef : Maybe (Lifted vars)) ->
-                     (alts : List (LiftedConstAlt vars)) -> (def : Maybe (Lifted vars)) -> Lifted vars
-doCaseOfConstCase fc x xalts xdef alts def
-    = LConstCase fc x (map updateAlt xalts) (map updateDef xdef)
-  where
-    updateAlt : LiftedConstAlt vars -> LiftedConstAlt vars
-    updateAlt (MkLConstAlt c sc) = MkLConstAlt c $ LConstCase fc sc alts def
-    updateDef : Lifted vars -> Lifted vars
-    updateDef sc = LConstCase fc sc alts def
-
-||| To minimise the risk of code-size blowup from duplicating the outer
-||| case into every inner branch, only collapse when the inner case's own
-||| alternatives are all constructor-headed (or there's only one, with no
-||| default) -- identical restriction to upstream's own `canCaseOfCase`.
-tryCaseOfCase : Lifted vars -> Maybe (Lifted vars)
-tryCaseOfCase (LConCase fc (LConCase fc' x xalts xdef) alts def)
-    = if canCaseOfCase xalts xdef then Just (doCaseOfCase fc' x xalts xdef alts def) else Nothing
-  where
-    isCon : Lifted vars -> Bool
-    isCon (LCon {}) = True
-    isCon _ = False
-    conCase : LiftedConAlt vars -> Bool
-    conCase (MkLConAlt _ _ _ _ (LCon {})) = True
-    conCase _ = False
-    canCaseOfCase : List (LiftedConAlt vars) -> Maybe (Lifted vars) -> Bool
-    canCaseOfCase [] _ = True
-    canCaseOfCase [_] Nothing = True
-    canCaseOfCase xs mdef = all conCase xs && maybe True isCon mdef
-tryCaseOfCase (LConstCase fc (LConstCase fc' x xalts xdef) alts def)
-    = if canCaseOfCase xalts xdef then Just (doCaseOfConstCase fc' x xalts xdef alts def) else Nothing
-  where
-    isConst : Lifted vars -> Bool
-    isConst (LPrimVal {}) = True
-    isConst _ = False
-    constCase : LiftedConstAlt vars -> Bool
-    constCase (MkLConstAlt _ (LPrimVal {})) = True
-    constCase _ = False
-    canCaseOfCase : List (LiftedConstAlt vars) -> Maybe (Lifted vars) -> Bool
-    canCaseOfCase [] _ = True
-    canCaseOfCase [_] Nothing = True
-    canCaseOfCase xs mdef = all constCase xs && maybe True isConst mdef
-tryCaseOfCase _ = Nothing
-
-||| Collapse a single node, retrying up to a small, fixed depth (matching
-||| upstream's own `caseOfCase`) -- a chain of more than a handful of
-||| nested case-of-case shapes at one spot is not a pattern this pass's
-||| own inlining is expected to ever actually produce.
-caseOfCaseHere : Lifted vars -> Lifted vars
-caseOfCaseHere tm = go 5 tm
-  where
-    go : Nat -> Lifted vars -> Lifted vars
-    go Z tm = tm
-    go (S k) tm = maybe tm (go k) (tryCaseOfCase tm)
-
--- Applies `caseOfCaseHere` throughout the whole tree, bottom-up (a
--- node's own children are collapsed first, so the collapse check at
--- this node sees its scrutinee already in its own final, smallest
--- form).
-mutual
-  collapseCaseOfCase : Lifted vars -> Lifted vars
-  collapseCaseOfCase (LAppName fc lazy n args) = LAppName fc lazy n (map collapseCaseOfCase args)
-  collapseCaseOfCase (LUnderApp fc n m args) = LUnderApp fc n m (map collapseCaseOfCase args)
-  collapseCaseOfCase (LApp fc lazy c a) = LApp fc lazy (collapseCaseOfCase c) (collapseCaseOfCase a)
-  collapseCaseOfCase (LLet fc x val sc) = LLet fc x (collapseCaseOfCase val) (collapseCaseOfCase sc)
-  collapseCaseOfCase (LCon fc n ci tag args) = LCon fc n ci tag (map collapseCaseOfCase args)
-  collapseCaseOfCase (LOp fc lazy op args) = LOp fc lazy op (map collapseCaseOfCase args)
-  collapseCaseOfCase (LExtPrim fc lazy p args) = LExtPrim fc lazy p (map collapseCaseOfCase args)
-  collapseCaseOfCase (LConCase fc sc alts def)
-      = caseOfCaseHere $ LConCase fc (collapseCaseOfCase sc) (map collapseConAlt alts) (map collapseCaseOfCase def)
-  collapseCaseOfCase (LConstCase fc sc alts def)
-      = caseOfCaseHere $ LConstCase fc (collapseCaseOfCase sc) (map collapseConstAlt alts) (map collapseCaseOfCase def)
-  collapseCaseOfCase e = e
-
-  collapseConAlt : LiftedConAlt vars -> LiftedConAlt vars
-  collapseConAlt (MkLConAlt n ci t args sc) = MkLConAlt n ci t args (collapseCaseOfCase sc)
-
-  collapseConstAlt : LiftedConstAlt vars -> LiftedConstAlt vars
-  collapseConstAlt (MkLConstAlt c sc) = MkLConstAlt c (collapseCaseOfCase sc)
-
-------------------------------------------------------------------------
--- Eligibility (Criterion A: small, call-free body)
-
 ||| A cheap, coarse structural node count -- not calibrated against
 ||| actual generated-C size, just a proxy for "small helper" to bound how
 ||| much code a single inlining decision can duplicate across call sites.
+||| Moved ahead of the case-of-case section below (originally lived next
+||| to `smallBodyThreshold`, in the eligibility section) because
+||| `tryCaseOfCase`'s own size-budget guard needs it too -- see that
+||| guard's own doc comment for why.
 sizeOf : Lifted vars -> Nat
 sizeOfConAlt : LiftedConAlt vars -> Nat
 sizeOfConstAlt : LiftedConstAlt vars -> Nat
@@ -342,6 +240,266 @@ sizeOf (LCrash _ _) = 1
 
 sizeOfConAlt (MkLConAlt _ _ _ _ sc) = sizeOf sc
 sizeOfConstAlt (MkLConstAlt _ sc) = sizeOf sc
+
+------------------------------------------------------------------------
+-- Case-of-case collapse, ported from upstream `Compiler.CaseOpts`'s own
+-- `doCaseOfCase`/`doCaseOfConstCase`/`tryCaseOfCase`/`caseOfCase`
+-- (`CExp`-level) onto `Lifted` -- needed because plain substitution
+-- alone, spliced into a scrutinee position, produces a "case of case"
+-- shape (`case (case x of ...) of ...`) that `Compiler.RC2.RC`'s own
+-- `tryFuseCompare` doesn't recognise; collapsing it back into a single
+-- case over `x` (duplicating the outer case into every inner branch) is
+-- what lets fusion actually fire. `Lifted` has no `LLam` (lambda-lifting
+-- already eliminated every lambda), so upstream's own "lift out lambda"
+-- half of `CaseOpts` (`caseLam`) has no counterpart here at all -- only
+-- the case-of-case half is ported.
+
+||| A tree paired with its own already-known `sizeOf` -- see "Size
+||| bookkeeping" below for why this is threaded through instead of
+||| calling `sizeOf` fresh wherever a size is needed.
+record Sized (a : Type) where
+  constructor MkSized
+  szOf : Nat
+  valOf : a
+
+||| State threaded through `caseOfCaseHere`'s retry loop: the current
+||| candidate tree, its own already-known total size, and the size of
+||| its own *direct* `alts`/`def` fields specifically (`tryCaseOfCase`'s
+||| own `outerSize`) -- see "Size bookkeeping" below.
+record CollapseState (vars : Scope) where
+  constructor MkCollapseState
+  totalSize : Nat
+  branchesSize : Nat
+  tree : Lifted vars
+
+doCaseOfCase : FC -> (x : Lifted vars) -> (xalts : List (LiftedConAlt vars)) -> (xdef : Maybe (Lifted vars)) ->
+               (alts : List (LiftedConAlt vars)) -> (def : Maybe (Lifted vars)) -> (outerSize : Nat) -> CollapseState vars
+doCaseOfCase fc x xalts xdef alts def outerSize
+    = MkCollapseState (1 + sizeOf x + newBranchesSize) newBranchesSize
+                      (LConCase fc x (map updateAlt xalts) (map updateDef xdef))
+  where
+    duplicationCount : Nat
+    duplicationCount = length xalts + maybe 0 (const 1) xdef
+    -- Every duplicated copy of `alts`/`def` gains one extra node (the
+    -- fresh `LConCase fc sc alts def` wrapper `updateAlt`/`updateDef`
+    -- introduce around it) on top of `outerSize` itself -- see "Size
+    -- bookkeeping" below for the full derivation.
+    newBranchesSize : Nat
+    newBranchesSize = sum (map sizeOfConAlt xalts) + maybe 0 sizeOf xdef + duplicationCount * (1 + outerSize)
+    updateAlt : LiftedConAlt vars -> LiftedConAlt vars
+    updateAlt (MkLConAlt n ci t args sc)
+        = MkLConAlt n ci t args $
+              LConCase fc sc (map (weakenNs (mkSizeOf args)) alts) (map (weakenNs (mkSizeOf args)) def)
+    updateDef : Lifted vars -> Lifted vars
+    updateDef sc = LConCase fc sc alts def
+
+doCaseOfConstCase : FC -> (x : Lifted vars) -> (xalts : List (LiftedConstAlt vars)) -> (xdef : Maybe (Lifted vars)) ->
+                     (alts : List (LiftedConstAlt vars)) -> (def : Maybe (Lifted vars)) -> (outerSize : Nat) -> CollapseState vars
+doCaseOfConstCase fc x xalts xdef alts def outerSize
+    = MkCollapseState (1 + sizeOf x + newBranchesSize) newBranchesSize
+                      (LConstCase fc x (map updateAlt xalts) (map updateDef xdef))
+  where
+    duplicationCount : Nat
+    duplicationCount = length xalts + maybe 0 (const 1) xdef
+    newBranchesSize : Nat
+    newBranchesSize = sum (map sizeOfConstAlt xalts) + maybe 0 sizeOf xdef + duplicationCount * (1 + outerSize)
+    updateAlt : LiftedConstAlt vars -> LiftedConstAlt vars
+    updateAlt (MkLConstAlt c sc) = MkLConstAlt c $ LConstCase fc sc alts def
+    updateDef : Lifted vars -> Lifted vars
+    updateDef sc = LConstCase fc sc alts def
+
+||| To minimise the risk of code-size blowup from duplicating the outer
+||| case into every inner branch, only collapse when the inner case's own
+||| alternatives are all constructor-headed (or there's only one, with no
+||| default) -- identical restriction to upstream's own `canCaseOfCase`.
+|||
+||| That restriction alone isn't enough for *this* pass, though (unlike
+||| upstream's own `Compiler.Inline`, whose default inlining heuristic
+||| -- `Compiler.Opts.InlineHeuristics`'s own `simple` -- explicitly
+||| excludes any callee whose body is itself a `CConCase`/`CConstCase`,
+||| so upstream's `caseOfCase` only ever fires on nesting already present
+||| in the source, never on nesting *its own* inliner just created):
+||| Criterion A below deliberately targets exactly the opposite shape --
+||| a small callee whose body *is* a case (e.g. `Ord Int`'s `<=`) is the
+||| whole point, so it can be spliced into a scrutinee position and then
+||| collapsed here, letting `Compiler.RC2.RC`'s `tryFuseCompare` reach it.
+||| A chain of such splices sitting in nested (or sibling, alt-nested --
+||| e.g. a run of `if p1 x then (if p2 y then ... else ...) else ...`
+||| guards, each `pI` a small case-returning predicate) call sites can
+||| then compound *multiplicatively*: each `doCaseOfCase` duplicates the
+||| entire, already-collapsed outer `alts`/`def` once per inner branch,
+||| and since this whole pass runs bottom-up (a node's own children,
+||| duplication from a lower collapse included, are already fully
+||| realised by the time this check runs on their parent), that
+||| per-level duplication factor multiplies across every level of a
+||| chain. Confirmed empirically (see `rc2/doc/inlining.md`'s own "Size
+||| budget" section): an N-deep synthetic guard chain of exactly this
+||| shape produced generated-C line counts that roughly *doubled* per
+||| additional level (19,041 / 37,473 / 74,337 lines at N=10/11/12,
+||| vs. 1,044 lines for the same source with `--directive noinline`),
+||| eventually exhausting memory outright around N=15.
+|||
+||| The guard below bounds this the same way `smallBodyThreshold` bounds
+||| Criterion A itself: compute what a collapse *would* duplicate (the
+||| outer `alts`/`def`, already in their final, bottom-up-processed
+||| form) and how many places it would land in, and skip the collapse
+||| once that product crosses a fixed budget. Skipping is always safe --
+||| the result is just the original, uncollapsed `case (case ...) of
+||| ...`, correct but unfused past that point -- and because the check
+||| uses the *already-realised* (i.e. already-duplicated-so-far) size of
+||| `alts`/`def`, a chain that would otherwise keep compounding gets
+||| capped at the first level where cumulative size crosses the budget;
+||| every level beyond that sees an input already at or near budget and
+||| keeps skipping, rather than resuming the multiplication.
+|||
+||| `outerSize` itself is *not* recomputed here -- see "Size
+||| bookkeeping" below.
+caseOfCaseSizeBudget : Nat
+caseOfCaseSizeBudget = 200
+
+tryCaseOfCase : CollapseState vars -> Maybe (CollapseState vars)
+tryCaseOfCase (MkCollapseState _ outerSize (LConCase fc (LConCase fc' x xalts xdef) alts def))
+    = if canCaseOfCase xalts xdef && collapseSizeOk then Just (doCaseOfCase fc' x xalts xdef alts def outerSize) else Nothing
+  where
+    isCon : Lifted vars -> Bool
+    isCon (LCon {}) = True
+    isCon _ = False
+    conCase : LiftedConAlt vars -> Bool
+    conCase (MkLConAlt _ _ _ _ (LCon {})) = True
+    conCase _ = False
+    canCaseOfCase : List (LiftedConAlt vars) -> Maybe (Lifted vars) -> Bool
+    canCaseOfCase [] _ = True
+    canCaseOfCase [_] Nothing = True
+    canCaseOfCase xs mdef = all conCase xs && maybe True isCon mdef
+    duplicationCount : Nat
+    duplicationCount = length xalts + maybe 0 (const 1) xdef
+    collapseSizeOk : Bool
+    collapseSizeOk = duplicationCount * outerSize <= caseOfCaseSizeBudget
+tryCaseOfCase (MkCollapseState _ outerSize (LConstCase fc (LConstCase fc' x xalts xdef) alts def))
+    = if canCaseOfCase xalts xdef && collapseSizeOk then Just (doCaseOfConstCase fc' x xalts xdef alts def outerSize) else Nothing
+  where
+    isConst : Lifted vars -> Bool
+    isConst (LPrimVal {}) = True
+    isConst _ = False
+    constCase : LiftedConstAlt vars -> Bool
+    constCase (MkLConstAlt _ (LPrimVal {})) = True
+    constCase _ = False
+    canCaseOfCase : List (LiftedConstAlt vars) -> Maybe (Lifted vars) -> Bool
+    canCaseOfCase [] _ = True
+    canCaseOfCase [_] Nothing = True
+    canCaseOfCase xs mdef = all constCase xs && maybe True isConst mdef
+    duplicationCount : Nat
+    duplicationCount = length xalts + maybe 0 (const 1) xdef
+    collapseSizeOk : Bool
+    collapseSizeOk = duplicationCount * outerSize <= caseOfCaseSizeBudget
+tryCaseOfCase _ = Nothing
+
+||| Collapse a single node, retrying up to a small, fixed depth (matching
+||| upstream's own `caseOfCase`) -- a chain of more than a handful of
+||| nested case-of-case shapes at one spot is not a pattern this pass's
+||| own inlining is expected to ever actually produce.
+caseOfCaseHere : CollapseState vars -> CollapseState vars
+caseOfCaseHere st = go 5 st
+  where
+    go : Nat -> CollapseState vars -> CollapseState vars
+    go Z st = st
+    go (S k) st = maybe st (go k) (tryCaseOfCase st)
+
+-- Applies `caseOfCaseHere` throughout the whole tree, bottom-up (a
+-- node's own children are collapsed first, so the collapse check at
+-- this node sees its scrutinee already in its own final, smallest
+-- form).
+--
+-- ## Size bookkeeping
+--
+-- `tryCaseOfCase`'s own size-budget guard needs `outerSize` (the
+-- current node's own `alts`/`def` size) at every candidate site.
+-- Computing it via a fresh top-down `sizeOf`/`sizeOfConAlt` scan (as an
+-- earlier version of this guard did) re-walks `alts`/`def` from
+-- scratch at *every* site -- for a large real program with many
+-- scattered case-of-case candidates (not just one pathological guard
+-- chain), each re-walking its own, unboundedly large enclosing
+-- `alts`/`def`, this dominated `rc2: Inline`'s own wall-clock time
+-- outright (measured 144s on a large real program, where `rc2: RC
+-- normalize` immediately after showed no inline-vs-`noinline`
+-- difference at all -- confirming the cost sat *inside* this pass, not
+-- downstream of it).
+--
+-- Fix: thread the size alongside the tree throughout, computed
+-- incrementally as this traversal already builds each node bottom-up
+-- (`collapseCaseOfCase`/`collapseConAlt`/`collapseConstAlt` return
+-- `Sized`), and update it via a closed-form formula on every
+-- *successful* collapse (`doCaseOfCase`/`doCaseOfConstCase`'s own
+-- `newBranchesSize`) rather than re-deriving it from the result.
+-- `weakenNs` (re-indexing a duplicated copy of `alts`/`def` into a
+-- deeper scope) never changes node count, so a duplicated copy's size
+-- is always exactly `outerSize`; each of the `duplicationCount` copies
+-- also gains the one `LConCase`/`LConstCase` wrapper node
+-- `updateAlt`/`updateDef` builds around it, hence `1 + outerSize` per
+-- copy. `xalts`/`xdef` (the *inner*, just-spliced-in side, as opposed
+-- to `alts`/`def`) are cheap to scan fresh regardless -- when produced
+-- by this pass's own inlining they're bounded by Criterion A's own
+-- `smallBodyThreshold`, and when they instead come from a genuinely
+-- large, naturally-nested source `case` this was already exactly as
+-- expensive before any of this bookkeeping existed, so no new cost is
+-- introduced there. `CollapseState`'s own `totalSize` similarly avoids
+-- a fresh whole-subtree re-scan on every one of `caseOfCaseHere`'s own
+-- (up to 5) retries at one tree position.
+mutual
+  collapseCaseOfCase : Lifted vars -> Sized (Lifted vars)
+  collapseCaseOfCase (LAppName fc lazy n args)
+      = let args' = map collapseCaseOfCase args
+        in MkSized (1 + sum (map szOf args')) (LAppName fc lazy n (map valOf args'))
+  collapseCaseOfCase (LUnderApp fc n m args)
+      = let args' = map collapseCaseOfCase args
+        in MkSized (1 + sum (map szOf args')) (LUnderApp fc n m (map valOf args'))
+  collapseCaseOfCase (LApp fc lazy c a)
+      = let c' = collapseCaseOfCase c
+            a' = collapseCaseOfCase a
+        in MkSized (1 + szOf c' + szOf a') (LApp fc lazy (valOf c') (valOf a'))
+  collapseCaseOfCase (LLet fc x val sc)
+      = let val' = collapseCaseOfCase val
+            sc' = collapseCaseOfCase sc
+        in MkSized (1 + szOf val' + szOf sc') (LLet fc x (valOf val') (valOf sc'))
+  collapseCaseOfCase (LCon fc n ci tag args)
+      = let args' = map collapseCaseOfCase args
+        in MkSized (1 + sum (map szOf args')) (LCon fc n ci tag (map valOf args'))
+  collapseCaseOfCase (LOp fc lazy op args)
+      = let args' = map collapseCaseOfCase args
+        in MkSized (1 + sum (toList (map szOf args'))) (LOp fc lazy op (map valOf args'))
+  collapseCaseOfCase (LExtPrim fc lazy p args)
+      = let args' = map collapseCaseOfCase args
+        in MkSized (1 + sum (map szOf args')) (LExtPrim fc lazy p (map valOf args'))
+  collapseCaseOfCase (LConCase fc sc alts def)
+      = let scS = collapseCaseOfCase sc
+            altsS = map collapseConAlt alts
+            defS = map collapseCaseOfCase def
+            outerSize0 = sum (map szOf altsS) + maybe 0 szOf defS
+            node0 = LConCase fc (valOf scS) (map valOf altsS) (map valOf defS)
+            final = caseOfCaseHere (MkCollapseState (1 + szOf scS + outerSize0) outerSize0 node0)
+        in MkSized (totalSize final) (tree final)
+  collapseCaseOfCase (LConstCase fc sc alts def)
+      = let scS = collapseCaseOfCase sc
+            altsS = map collapseConstAlt alts
+            defS = map collapseCaseOfCase def
+            outerSize0 = sum (map szOf altsS) + maybe 0 szOf defS
+            node0 = LConstCase fc (valOf scS) (map valOf altsS) (map valOf defS)
+            final = caseOfCaseHere (MkCollapseState (1 + szOf scS + outerSize0) outerSize0 node0)
+        in MkSized (totalSize final) (tree final)
+  collapseCaseOfCase e = MkSized 1 e
+
+  collapseConAlt : LiftedConAlt vars -> Sized (LiftedConAlt vars)
+  collapseConAlt (MkLConAlt n ci t args sc)
+      = let sc' = collapseCaseOfCase sc
+        in MkSized (szOf sc') (MkLConAlt n ci t args (valOf sc'))
+
+  collapseConstAlt : LiftedConstAlt vars -> Sized (LiftedConstAlt vars)
+  collapseConstAlt (MkLConstAlt c sc)
+      = let sc' = collapseCaseOfCase sc
+        in MkSized (szOf sc') (MkLConstAlt c (valOf sc'))
+
+------------------------------------------------------------------------
+-- Eligibility (Criterion A: small, call-free body)
 
 smallBodyThreshold : Nat
 smallBodyThreshold = 24
@@ -475,15 +633,34 @@ mutual
 ||| (pre-inlining) definitions -- an eligible callee is call-free by
 ||| definition, so inlining elsewhere never changes whether it itself
 ||| stays eligible.
+|||
+||| Split into three separately-`logTime`d phases (build the eligibility
+||| map; substitute; collapse case-of-case) purely for diagnosis -- the
+||| size-budget/bookkeeping work on the case-of-case side (see
+||| `rc2/doc/inlining.md`'s "Size budget"/"Size bookkeeping" sections)
+||| turned out *not* to be what a large real program's own ~140s
+||| `rc2: Inline` time was actually spent on (re-measured essentially
+||| unchanged after that fix), so this splits the pass to find out which
+||| of the three phases the real cost is actually in, at `--timing 3`
+||| (one level deeper than the `rc2: Inline` wrapper `Compiler.RC2.RC2`
+||| itself logs at `--timing 2`).
 export
-applyInlineLifted : List (Name, LiftedDef) -> Core (List (Name, LiftedDef))
-applyInlineLifted lds = traverse (inlineDef (buildEligible lds)) lds
+applyInlineLifted : {auto c : Ref Ctxt Defs} -> List (Name, LiftedDef) -> Core (List (Name, LiftedDef))
+applyInlineLifted lds = do
+    elig <- logTime 3 "rc2: Inline (build eligibility map)" $ pure (buildEligible lds)
+    substituted <- logTime 3 "rc2: Inline (substitute)" $ traverse (substituteDef elig) lds
+    logTime 3 "rc2: Inline (case-of-case collapse)" $ pure (map collapseDef substituted)
   where
-    inlineDef : SortedMap Name Eligible -> (Name, LiftedDef) -> Core (Name, LiftedDef)
-    inlineDef elig (n, MkLFun args scope body)
+    substituteDef : SortedMap Name Eligible -> (Name, LiftedDef) -> Core (Name, LiftedDef)
+    substituteDef elig (n, MkLFun args scope body)
         = do body' <- inlineLifted elig body
-             pure (n, MkLFun args scope (collapseCaseOfCase body'))
-    inlineDef elig (n, MkLError body)
+             pure (n, MkLFun args scope body')
+    substituteDef elig (n, MkLError body)
         = do body' <- inlineLifted elig body
-             pure (n, MkLError (collapseCaseOfCase body'))
-    inlineDef _ d = pure d
+             pure (n, MkLError body')
+    substituteDef _ d = pure d
+
+    collapseDef : (Name, LiftedDef) -> (Name, LiftedDef)
+    collapseDef (n, MkLFun args scope body) = (n, MkLFun args scope (valOf (collapseCaseOfCase body)))
+    collapseDef (n, MkLError body) = (n, MkLError (valOf (collapseCaseOfCase body)))
+    collapseDef d = d
