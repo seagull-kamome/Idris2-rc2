@@ -215,6 +215,14 @@ correctly stopping at (not reaching through) a nested inner loop's own
 boundary -- the *expensive* half of `TODO.md`'s existing entry, which
 the sinking transform above was specifically designed to avoid needing.
 
+**Update**: a narrower, sibling mechanism that resolves the closure
+*call itself* (`apply` -> direct `call`) without necessarily inlining
+the target's own body -- and so needs none of the nested-loop machinery
+this section describes -- is designed separately in
+`rc2/doc/speculative-closure-specialization.md`. That document also
+covers the *general* version of this same `go`-calls-a-closure shape
+(not limited to a loop-only target), with its own profitability gate.
+
 **Deliberately not pursued as part of this document's own design**:
 building the full nested-loop foundation just to unlock this second
 idea would mean paying the larger cost for a benefit that has not been

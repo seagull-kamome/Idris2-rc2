@@ -347,6 +347,27 @@ Revisit if profiling on a real workload continues to show this
 dominating (already true for `idris2-missing-containers`, per
 `rc2/BENCHMARKS.md`).
 
+**The same shape, for an ordinary higher-order closure argument (not
+just an interface dictionary), found and designed (not implemented) in
+`rc2/doc/speculative-closure-specialization.md`**: `idris2-missing-containers`'
+own `Main.go` (the `foldl`-shaped loop actually driving both the
+`write` and `read` phases of `benchmarkHashMap`) calls a closure
+argument every iteration that's always one specific known function at
+each of its own two real call sites, never a genuinely varying value --
+confirmed via `--directive dumprcexpr`. Investigated whether upstream's
+own `%spec` pragma already provides this for free: it does specialize
+through a function-typed argument (once explicitly named in the type
+signature -- an easy-to-miss precondition, confirmed empirically), but
+still requires the argument to be a genuinely *closed* term at the call
+site, which `Main.go`'s own two real call sites aren't (both capture a
+local variable). That document designs an rc2-native mechanism instead,
+built around the same profitability concern this TODO entry's own
+history has -- unrestricted specialization has caused real code-size
+blowup before, so the design's own "speculatively clone, re-fold, then
+keep only if the specific dispatch it targeted is actually gone"
+structure is a direct response to that, not a new idea invented for its
+own sake.
+
 ## Performance: constructor reuse doesn't reach across a monadic-bind continuation
 
 Investigated why `Compiler.RC2.Reuse` doesn't fire on
