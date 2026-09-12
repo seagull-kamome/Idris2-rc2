@@ -280,6 +280,18 @@ data RCExp : Type where
      ||| Only inserted by `Compiler.RC2.Reuse`'s `resolveAlt` -- see
      ||| `doc/reuse-analysis.md`.
      RReuseOffer : FC -> (sc : RCLocal) -> (dupOnShared : List RCLocal) -> (dropOnUnique : List RCLocal) -> RCExp -> RCExp
+     ||| Wraps a top-level 0-argument definition's *entire* body,
+     ||| guaranteeing it's evaluated at most once, shared across every
+     ||| reference to `name` -- see `doc/caf-memoization.md`. `name` is
+     ||| the CAF's own defining name (not a fresh counter -- already
+     ||| globally unique, already consistently mangled by `cName`
+     ||| everywhere else, and doubles as the generated static variable's
+     ||| own identity). `rep`: copied verbatim from the enclosing
+     ||| `MkRCFun`'s own `retRep`. Only ever produced by
+     ||| `Compiler.RC2.RC2`'s `insertMemoize`, right after `ConstFold`;
+     ||| never nested inside a larger expression, never produced for any
+     ||| definition with a nonempty argument list.
+     RMemoize : FC -> Name -> Rep -> RCExp -> RCExp
 
 public export
 data RConAlt : Type where
@@ -341,6 +353,7 @@ freeLocalsR (RFree _ v body) = insert v (freeLocalsR body)
 freeLocalsR (RReleaseReuse _ v body) = insert v (freeLocalsR body)
 freeLocalsR (RReuseOffer _ sc dupOnShared dropOnUnique body) =
     union (insert sc (fromList dupOnShared `union` fromList dropOnUnique)) (freeLocalsR body)
+freeLocalsR (RMemoize _ _ _ body) = freeLocalsR body
 freeLocalsR _ = empty
 
 ||| How many times `l` is referenced anywhere in `e` -- unlike
@@ -378,6 +391,7 @@ countUsesR l (RReleaseReuse _ v body) = (if v == l then 1 else 0) + countUsesR l
 countUsesR l (RReuseOffer _ sc dupOnShared dropOnUnique body) =
     (if sc == l then 1 else 0) + length (filter (== l) dupOnShared)
     + length (filter (== l) dropOnUnique) + countUsesR l body
+countUsesR l (RMemoize _ _ _ body) = countUsesR l body
 countUsesR l _ = 0
 
 export
@@ -396,6 +410,7 @@ usedConstructorsR (RDrop _ _ body) = usedConstructorsR body
 usedConstructorsR (RFree _ _ body) = usedConstructorsR body
 usedConstructorsR (RReleaseReuse _ _ body) = usedConstructorsR body
 usedConstructorsR (RReuseOffer _ _ _ _ body) = usedConstructorsR body
+usedConstructorsR (RMemoize _ _ _ body) = usedConstructorsR body
 usedConstructorsR _ = empty
 
 ------------------------------------------------------------------------
@@ -490,6 +505,7 @@ foldRCNamesR nf = go
     go (RLoopContinue _ args postDrop) = ls args <+> ls postDrop
     go (RReuseOffer _ sc dupOnShared dropOnUnique body) =
         l sc <+> ls dupOnShared <+> ls dropOnUnique <+> go body
+    go (RMemoize _ _ _ body) = go body
 
 ||| `foldRCNamesR` lifted over a whole `RCDef` (only `MkRCFun`/
 ||| `MkRCError` carry an `RCExp` body).

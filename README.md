@@ -396,6 +396,29 @@ incoming C bytes as UTF-8, adopting the environment locale does mean
 rc2 programs need a UTF-8-compatible one -- see `KNOWN-BUGS.md` and
 `rc2/doc/runtime-lifecycle.md`.
 
+CAF sharing is the newest divergence, and the largest behavioral gap
+rc2 has ever closed relative to upstream RefC specifically (not just
+"a feature RefC never had at all", like `Mutex`/`%export` above --
+RefC gets this one outright *wrong*): a plain top-level 0-argument
+definition with a real effect --
+```idris2
+counter : IORef Int
+counter = unsafePerformIO (newIORef 0)
+```
+-- used to compile to an ordinary C function, re-run (and
+re-allocating its own `IORef`) on every single reference, on **both**
+rc2 and upstream RefC alike -- three independent counters instead of
+one shared one, where `--cg chez` already gave the right answer.
+`Compiler.RC2.RCExp`'s new `RMemoize` node (`Compiler.RC2.RC2`'s
+`insertMemoize`, run once per program right after whole-program
+`ConstFold`) wraps every surviving non-constant top-level definition's
+own body in an atomic check-compute-cache-share dance
+(`support/rc2/caf_memoize.h`/`.c`) -- `rc2/tests/Test86CafMemoization`
+confirms `0 1 2`, matching Chez, where rc2 (and real RefC, still)
+print `0 0 0`. See `rc2/doc/caf-memoization.md` for the full design,
+including the one related case this doesn't fully close (`Lazy`/`Force`
+itself needs a further, larger fix on top -- not yet pursued).
+
 ## `%cg rc2` directives
 
 rc2 reads a generic `%cg rc2 <directive>` source pragma (unioned with
@@ -454,15 +477,17 @@ per-project) -- see the doc's own "practical prerequisite" section.
 ## Status and scope
 
 Working external C backend, functionally correct against Idris2's own
-RefC regression suite (`rc2/tests/refc-suite/`) plus 43 hand-written
+RefC regression suite (`rc2/tests/refc-suite/`) plus 50 hand-written
 smoke tests, all leak-clean under `valgrind`. Implemented: constructor
 reuse-in-place, native type inference (function-local and, via a dual
 calling convention, across ordinary call boundaries), self- and
 mutual-tail-call loop conversion with loop-invariant parameter/
 expression hoisting, branch-local sinking, whole-program inlining,
-constant folding, incremental compilation (see above), and
-`Data.Buffer`/`System.Clock`/the standard `network` package (rc2's own
-native `idrnet_*` port). See `TODO.md` for the current,
+constant folding, CAF memoization (a real behavioral fix over upstream
+RefC, not just a gap RefC never had -- see above), incremental
+compilation (see above), and `Data.Buffer`/`System.Clock`/the standard
+`network` package (rc2's own native `idrnet_*` port). See `TODO.md` for
+the current,
 actively-maintained list of known gaps and deliberately out-of-scope
 decisions (e.g. tail-position delegating calls staying boxed, a loop
 accumulator threaded only through a helper call staying boxed,

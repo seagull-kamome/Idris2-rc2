@@ -98,6 +98,8 @@ mutual
   prettyExp d (RLoopContinue _ args postDrop) =
       indent d ++ "continue loop " ++ show args
         ++ (if postDrop == [] then "" else " postDrop=" ++ show postDrop) ++ "\n"
+  prettyExp d (RMemoize _ n rep body) =
+      indent d ++ "memoize " ++ show n ++ " : " ++ prettyRep rep ++ "\n" ++ prettyExp (d + 1) body
 
   prettyConAlt : Nat -> RConAlt -> String
   prettyConAlt d (MkRConAlt n ci tag args body) =

@@ -1,4 +1,5 @@
 #include "runtime.h"
+#include "caf_memoize.h"
 #include "memory.h"
 #include "util.h"
 
@@ -32,6 +33,11 @@ void idris2rc2_rtInit(void) {
 }
 
 void idris2rc2_rtFinish(void) {
+  // Drop every memoized Boxed CAF's own permanent reference
+  // (Compiler.RC2.RCExp's RMemoize, rc2/doc/caf-memoization.md) --
+  // strong references, not GC'd/weak, so this is the only place they're
+  // ever released at all.
+  idris2rc2_memo_boxed_dropAll();
   // Flush every stdio stream. A normal `return` from main() already
   // does this, but a future teardown path (or a hook added here later)
   // may exit less gently; belt and braces.

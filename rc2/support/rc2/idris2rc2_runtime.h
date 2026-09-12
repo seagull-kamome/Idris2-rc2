@@ -3,6 +3,7 @@
 // Single include for generated C code (mirrors RefC's runtime.h).
 
 #include "buffer.h"
+#include "caf_memoize.h"
 #include "clock.h"
 #include "datatypes.h"
 #include "ioprims.h"

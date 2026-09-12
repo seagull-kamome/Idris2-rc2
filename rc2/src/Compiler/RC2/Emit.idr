@@ -427,6 +427,13 @@ mutual
                      -- renderer, regardless of `sink`.
                      RAppFFIInline fc' ccs fargs ret postDrop args =>
                          emitAppFFIInlineInto sink tailPosition fc' ccs fargs ret postDrop args
+                     -- See doc/caf-memoization.md. Always routed to its
+                     -- own dedicated renderer, regardless of `sink` --
+                     -- same reasoning as RCmpCase/RConCase/RConstCase
+                     -- above (a real if/else, not a single expression
+                     -- emitRC could render).
+                     RMemoize fc' n rep body =>
+                         emitMemoizeInto sink tailPosition fc' n rep body
                      -- A native SinkReturn (Compiler.RC2.DualABI's own
                      -- Stage 3b) skips emitRC entirely: emitRC's own
                      -- contract is "always render a Boxed expression
@@ -591,6 +598,61 @@ mutual
                     (\(MkRConstAlt _ body) => branchBody resolvedSink body tailPosition)
                     defaultAction
                     alts
+
+    ||| Lowers `RMemoize` (RCExp.idr's own doc comment,
+    ||| `doc/caf-memoization.md`): a top-level 0-argument definition's
+    ||| own body, evaluated at most once and shared across every
+    ||| reference to `n`. A real if/else over a file-scope static memo,
+    ||| not a single expression `emitRC` could render -- same reasoning
+    ||| as `emitCmpCaseInto`/`emitConCaseInto` above.
+    |||
+    ||| `body` is always emitted into a fresh, forced `SinkVar` -- never
+    ||| straight into this node's own `sink`/`tailPosition` -- since its
+    ||| result has to be read back here (to store into the static memo)
+    ||| before this whole node's own value goes anywhere at all; a
+    ||| `SinkReturn` sink would make that impossible (nothing can run
+    ||| after a `return`).
+    |||
+    ||| Only the `RBoxed` case is implemented. `rep` is always a direct
+    ||| copy of the enclosing `MkRCFun`'s own `retRep`
+    ||| (`Compiler.RC2.RC2`'s `insertMemoize`), and `retRep` is hardcoded
+    ||| `RBoxed` by `Compiler.RC2.RC`'s own `normalizeDef` (Phase 1) for
+    ||| every ordinary definition -- confirmed directly, not assumed:
+    ||| the only place a *native* `retRep` is ever introduced is
+    ||| `Compiler.RC2.DualABI`'s worker synthesis, a *separate* later
+    ||| definition alongside the original wrapper, strictly after
+    ||| `insertMemoize` already ran (`ConstFold` -> `insertMemoize` ->
+    ||| Phase 2 -> ... -> `DualABI`). So `RNative`/`RInlineNative` can't
+    ||| actually reach here. Thrown rather than half-implemented: `Sink`
+    ||| itself has no native-value-into-a-forced-intermediate-variable
+    ||| shape at all today (`SinkVar`'s own `finalizeSink` case always
+    ||| declares `IDRIS2RC2_Value *`, never a native C type -- see its
+    ||| own definition, `Emit/Util.idr`) -- a real native `RMemoize`
+    ||| would need that built first, not attempted here since nothing
+    ||| exercises it.
+    emitMemoizeInto : EmitDeps (Sink -> TailPositionStatus -> FC -> Name -> Rep -> RCExp -> Core ())
+    emitMemoizeInto sink tailPosition fc n RBoxed body = do
+        let memoVar = "idris2rc2_memo_\{cName n}"
+        emit fc "static idris2rc2_memo_boxed \{memoVar} = IDRIS2RC2_MEMO_BOXED_INIT;"
+        resultVar <- getNewVarThatWillNotBeFreedAtEndOfBlock
+        emit fc "IDRIS2RC2_Value *\{resultVar};"
+        emit fc "if (idris2rc2_memo_boxed_claim(&\{memoVar})) {"
+        increaseIndentation
+        bodyVar <- getNewVarThatWillNotBeFreedAtEndOfBlock
+        emitInto emptyFC (SinkVar True bodyVar) NotInTailPosition body
+        emit fc "idris2rc2_memo_boxed_store(&\{memoVar}, \{bodyVar});"
+        emit fc "\{resultVar} = \{bodyVar};"
+        decreaseIndentation
+        emit fc "} else {"
+        increaseIndentation
+        emit fc "\{resultVar} = idris2rc2_memo_boxed_wait(&\{memoVar});"
+        decreaseIndentation
+        emit fc "}"
+        finalizeSink fc sink resultVar
+    emitMemoizeInto sink tailPosition fc n (RNative _) body =
+        throw $ InternalError "[rc2] RMemoize: unexpected native retRep on \{show n} -- see emitMemoizeInto's own doc comment"
+    emitMemoizeInto sink tailPosition fc n (RInlineNative _) body =
+        throw $ InternalError "[rc2] RMemoize: unexpected native retRep on \{show n} -- see emitMemoizeInto's own doc comment"
 
     ||| Declare (and initialise) one `RLoop` loop param -- unless
     ||| `initVal` already directly *is* `paramId`'s own value, under its
@@ -1083,6 +1145,7 @@ emitRC sink (RStructSet fc structVar sn fn value postDrop) _ = do
 emitRC sink (RCmpCase fc op args postDrop whenTrue whenFalse) _ = unreachableInEmitRC "RCmpCase"
 emitRC sink (RConCase fc sc alts mDef) _ = unreachableInEmitRC "RConCase"
 emitRC sink (RConstCase fc sc alts def) _ = unreachableInEmitRC "RConstCase"
+emitRC sink (RMemoize fc n rep body) _ = unreachableInEmitRC "RMemoize"
 
 emitRC sink (RPrimVal fc (I x)) tailPosition = emitRC sink (RPrimVal fc (I64 $ cast x)) tailPosition
 emitRC sink (RPrimVal fc c) _ = finalizeSink fc sink !(boxedConstExpr c)

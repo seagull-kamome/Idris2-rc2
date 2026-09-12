@@ -232,6 +232,12 @@ mutual
   -- finished.
   renameRCExp ren (RAppFFIInline fc ccs fargs ret postDrop args) =
       RAppFFIInline fc ccs fargs ret (renameLocals ren postDrop) (renameLocals ren args)
+  -- Never actually reached in practice -- RMemoize only ever wraps a
+  -- 0-argument CAF's own whole body (doc/caf-memoization.md), and this
+  -- module's own applyLoop only ever runs on a definition with real
+  -- loop-carried parameters. Kept total (as a plain pass-through), same
+  -- reasoning as RAppNameRep/RAppFFIInline just above.
+  renameRCExp ren (RMemoize fc n rep body) = RMemoize fc n rep (renameRCExp ren body)
 
   renameConAlt : Renaming -> RConAlt -> RConAlt
   renameConAlt ren (MkRConAlt name ci tag args body) =

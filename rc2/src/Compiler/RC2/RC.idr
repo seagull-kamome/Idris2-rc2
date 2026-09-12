@@ -711,6 +711,17 @@ mutual
     -- RCExp.idr) -- kept total (as a plain pass-through), same
     -- reasoning as RAppNameRep just above.
     annotate natives owned e@(RAppFFIInline _ _ _ _ _ _) = pure e
+    -- RMemoize only ever wraps a whole top-level 0-argument definition's
+    -- entire body (Compiler.RC2.RC2's own insertMemoize, inserted right
+    -- after ConstFold, strictly before this pass runs -- see
+    -- doc/caf-memoization.md), so "how body's own final value should be
+    -- owned" is identical to "how a plain function's own return value
+    -- is owned" -- already exactly what annotateDef's own branchBody
+    -- call computes for the un-wrapped case. No sink-specific ownership
+    -- bookkeeping needed here: recurse with the same natives/owned
+    -- context, unchanged.
+    annotate natives owned (RMemoize fc n rep body) =
+        RMemoize fc n rep <$> annotate natives owned body
 
     annotateConAlt : SortedSet RCLocal -> Owned -> RCLocal -> RConAlt -> Core RConAlt
     annotateConAlt natives owned sc (MkRConAlt name ci tag args body) = do

@@ -118,6 +118,26 @@ foldConstProgram defs0 = go maxConstFoldIterations empty defs0
               then folded
               else go fuel table' folded
 
+||| Wraps every remaining non-constant top-level 0-argument
+||| definition's own body in `RMemoize` (`doc/caf-memoization.md`) --
+||| run once, right after `foldConstProgram` above has already reduced
+||| every CAF `ConstFold` can prove constant down to a bare reference.
+||| Reuses `cafValueOf` unchanged (exactly the same "is this already a
+||| bare reference to a compile-time constant" question ConstFold's own
+||| whole-program fixpoint asks) to decide which CAFs to skip -- nothing
+||| to guard for one of those; runtime-side memoization is only for
+||| whatever's left, either a real effect or a computation `ConstFold`'s
+||| own analysis couldn't fully resolve.
+insertMemoize : List (Name, RCDef) -> List (Name, RCDef)
+insertMemoize = map wrap
+  where
+    wrap : (Name, RCDef) -> (Name, RCDef)
+    wrap (n, d@(MkRCFun [] retRep isWorker body)) =
+        case cafValueOf d of
+             Just _  => (n, d)
+             Nothing => (n, MkRCFun [] retRep isWorker (RMemoize EmptyFC n retRep body))
+    wrap nd = nd
+
 ||| The stage names `--directive noXXX`/`%cg rc2 noXXX` can disable
 ||| (`rc2/doc/directives.md`) -- factored out so whole-program
 ||| `compileExprWhole` and per-module `incCompile`
@@ -166,12 +186,17 @@ toRCDefs disabled incremental roots lds0 = do
     folded <- if "noconstfold" `elem` disabled
                  then pure preFolded
                  else logTime 2 "rc2: ConstFold (whole-program fixpoint)" $ pure (foldConstProgram preFolded)
+    -- doc/caf-memoization.md: right after ConstFold (so a genuinely
+    -- constant CAF is never wrapped) and strictly before Phase 2
+    -- (toRCDefPostFold's own annotateDef needs to see RMemoize already
+    -- in place -- see RC.idr's own `annotate` case for it).
+    memoized <- logTime 2 "rc2: CAF memoization" $ pure (insertMemoize folded)
     reused <- logTime 2 "rc2: RC annotate + Reuse + ConAltNative" $
                 traverse (\(n, d) => do
                   d1 <- toRCDefPostFold d
                   let d2 = applyReuse d1
                   let d3 = if "noconaltnative" `elem` disabled then d2 else applyConAltNative d2
-                  pure (n, d3)) folded
+                  pure (n, d3)) memoized
     merged <- if "nomutualloop" `elem` disabled then pure reused else logTime 2 "rc2: Mutual loop" $ applyMutualLoop reused
     looped <- if "noloop" `elem` disabled
                  then pure merged
