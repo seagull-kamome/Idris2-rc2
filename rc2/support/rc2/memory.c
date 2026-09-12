@@ -154,31 +154,12 @@ IDRIS2RC2_Array *idris2rc2_mkArray(int length) {
   return a;
 }
 
-IDRIS2RC2_Value *idris2rc2_dup(IDRIS2RC2_Value *v) {
-  if (v && !idris2rc2_is_unboxed(v) && v->header.refCount != IDRIS2RC2_REFCOUNT_MAX)
-    atomic_fetch_add_explicit(&v->header.refCount, 1, memory_order_relaxed);
-  return v;
-}
-
-IDRIS2RC2_Value *idris2rc2_dup_n(IDRIS2RC2_Value *v, int n) {
-  if (v && !idris2rc2_is_unboxed(v)) {
-    // Unlike idris2rc2_dup's own single +1 (which can only ever land
-    // exactly on REFCOUNT_MAX before freezing there, never past it), a
-    // plain atomic_fetch_add(n) here could overshoot REFCOUNT_MAX and
-    // wrap the uint16_t back to a small value, silently losing the
-    // object's immortal/shared status -- a CAS loop clamps to
-    // REFCOUNT_MAX instead of ever adding past it.
-    uint16_t cur = atomic_load_explicit(&v->header.refCount, memory_order_relaxed);
-    while (cur != IDRIS2RC2_REFCOUNT_MAX) {
-      uint16_t next = cur > IDRIS2RC2_REFCOUNT_MAX - n
-                        ? IDRIS2RC2_REFCOUNT_MAX : (uint16_t)(cur + n);
-      if (atomic_compare_exchange_weak_explicit(&v->header.refCount, &cur, next,
-              memory_order_relaxed, memory_order_relaxed))
-        break;
-    }
-  }
-  return v;
-}
+// idris2rc2_dup/idris2rc2_dup_n/idris2rc2_drop's own hot paths are
+// `static inline` in memory.h now, not defined here -- see that header's
+// own comment for why. Only idris2rc2_teardown (below, the cold path
+// those inline functions call into once a value's last reference is
+// actually dropped) and idris2rc2_free (which always skips straight to
+// teardown) still live in this translation unit.
 
 // Recursively drop `v`'s children (each of which may itself still be
 // shared, so those go through the ordinary checked idris2rc2_drop) and
@@ -186,7 +167,7 @@ IDRIS2RC2_Value *idris2rc2_dup_n(IDRIS2RC2_Value *v, int n) {
 // idris2rc2_free, which skips straight to this without checking/
 // decrementing `v`'s own count first -- so it must only ever be called on
 // a value the caller has *statically* proven has no other references.
-static void idris2rc2_teardown(IDRIS2RC2_Value *v) {
+void idris2rc2_teardown(IDRIS2RC2_Value *v) {
   switch (v->header.tag) {
   case IDRIS2RC2_TAG_BITS32:
   case IDRIS2RC2_TAG_BITS64:
@@ -289,17 +270,6 @@ static void idris2rc2_teardown(IDRIS2RC2_Value *v) {
     break;
   }
   free(v);
-}
-
-void idris2rc2_drop(IDRIS2RC2_Value *v) {
-  if (!v || idris2rc2_is_unboxed(v))
-    return;
-  if (v->header.refCount == IDRIS2RC2_REFCOUNT_MAX)
-    return; // immortal
-  if (atomic_fetch_sub_explicit(&v->header.refCount, 1, memory_order_release) != 1)
-    return;
-  atomic_thread_fence(memory_order_acquire);
-  idris2rc2_teardown(v);
 }
 
 void idris2rc2_free(IDRIS2RC2_Value *v) {

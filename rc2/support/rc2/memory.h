@@ -5,19 +5,74 @@
 IDRIS2RC2_Value *idris2rc2_alloc(size_t size);
 #define IDRIS2RC2_NEW(t) ((t *)idris2rc2_alloc(sizeof(t)))
 
+// EXPERIMENTAL: idris2rc2_dup/idris2rc2_dup_n/idris2rc2_drop's own hot
+// path (the atomic refcount check/adjust itself) is defined here as
+// `static inline`, not as an ordinary out-of-line function in memory.c,
+// so that a program's own generated .c file -- which #includes this
+// header -- sees the plain atomic instructions directly rather than an
+// opaque call across a translation-unit boundary into the prebuilt
+// libidris2rc2.a. An opaque call is a real, avoidable cost on top of the
+// atomic RMW itself: call/ret overhead, argument/return register
+// shuffling per the calling convention, and -- the bigger effect for a
+// run of several back-to-back dup/drop calls on *different* variables
+// (e.g. reading several fields out of one destructured constructor) --
+// the compiler can never reorder or overlap the latency of separate
+// opaque calls the way it can with plain inlined instructions, even
+// though no single hardware instruction can atomically touch more than
+// one memory location at once (there is no cross-address equivalent of
+// idris2rc2_dup_n's own single-address batching). idris2rc2_teardown
+// (the actual per-tag cleanup, reached only once a value's last
+// reference is actually dropped) stays a real out-of-line call in
+// memory.c -- it is the cold path, not worth inlining or duplicating
+// into every translation unit.
+void idris2rc2_teardown(IDRIS2RC2_Value *v);
+
 // Increments the refcount of `v` (a no-op for unboxed/NULL/immortal values)
 // and returns it, so it can be used inline: `x = idris2rc2_dup(y);`
-IDRIS2RC2_Value *idris2rc2_dup(IDRIS2RC2_Value *v);
+static inline IDRIS2RC2_Value *idris2rc2_dup(IDRIS2RC2_Value *v) {
+  if (v && !idris2rc2_is_unboxed(v) && v->header.refCount != IDRIS2RC2_REFCOUNT_MAX)
+    atomic_fetch_add_explicit(&v->header.refCount, 1, memory_order_relaxed);
+  return v;
+}
+
 // Batched form of idris2rc2_dup: increments v's refcount by `n` (n >= 1)
 // in a single atomic add, equivalent in effect to n separate
 // idris2rc2_dup(v) calls but without their repeated per-call branch and
 // atomic-op overhead. Same no-op conditions as idris2rc2_dup (unboxed/
 // NULL/immortal). See Compiler.RC2.RCExp's RDup and its own `extra`
 // field for the IR-level source of a batched increment.
-IDRIS2RC2_Value *idris2rc2_dup_n(IDRIS2RC2_Value *v, int n);
+static inline IDRIS2RC2_Value *idris2rc2_dup_n(IDRIS2RC2_Value *v, int n) {
+  if (v && !idris2rc2_is_unboxed(v)) {
+    // Unlike idris2rc2_dup's own single +1 (which can only ever land
+    // exactly on REFCOUNT_MAX before freezing there, never past it), a
+    // plain atomic_fetch_add(n) here could overshoot REFCOUNT_MAX and
+    // wrap the uint16_t back to a small value, silently losing the
+    // object's immortal/shared status -- a CAS loop clamps to
+    // REFCOUNT_MAX instead of ever adding past it.
+    uint16_t cur = atomic_load_explicit(&v->header.refCount, memory_order_relaxed);
+    while (cur != IDRIS2RC2_REFCOUNT_MAX) {
+      uint16_t next = cur > IDRIS2RC2_REFCOUNT_MAX - n
+                        ? IDRIS2RC2_REFCOUNT_MAX : (uint16_t)(cur + n);
+      if (atomic_compare_exchange_weak_explicit(&v->header.refCount, &cur, next,
+              memory_order_relaxed, memory_order_relaxed))
+        break;
+    }
+  }
+  return v;
+}
+
 // Decrements the refcount of `v`, freeing it (recursively) once it reaches
 // zero. A no-op for unboxed/NULL/immortal values.
-void idris2rc2_drop(IDRIS2RC2_Value *v);
+static inline void idris2rc2_drop(IDRIS2RC2_Value *v) {
+  if (!v || idris2rc2_is_unboxed(v))
+    return;
+  if (v->header.refCount == IDRIS2RC2_REFCOUNT_MAX)
+    return; // immortal
+  if (atomic_fetch_sub_explicit(&v->header.refCount, 1, memory_order_release) != 1)
+    return;
+  atomic_thread_fence(memory_order_acquire);
+  idris2rc2_teardown(v);
+}
 // Unconditionally deallocates `v` right now, with no refcount check at
 // all -- the RFree IR primitive's lowering. Only ever safe to call on a
 // value statically proven to be a brand-new, unshared allocation (see
