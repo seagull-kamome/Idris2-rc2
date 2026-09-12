@@ -545,18 +545,33 @@ directory read-only again: now produces a clear `File error (<path>):
 ...` compiler error, no C compilation attempted, no stale binary
 produced. Full `verify.sh` (84/84) unaffected.
 
-## Pre-existing `valgrind` leaks (unrelated to whatever's currently being tested)
+## Fixed: pre-existing `valgrind` leaks found during `ConAltNative` verification
 
 Found incidentally while re-running `valgrind --leak-check=full` across
 the smoke-test matrix during `Compiler.RC2.ConAltNative`'s own
 verification (2026-08-14) -- confirmed present **with that pass's own
-pipeline entry removed entirely** too, so they predate and are
-unrelated to that work specifically. Not investigated further yet;
-small enough (a few dozen blocks) that they haven't blocked shipping
-anything so far, but don't be surprised by them showing up again.
+pipeline entry removed entirely** too, so they predated and were
+unrelated to that work specifically. All three entries originally
+listed here are now root-caused and fixed (kept below, struck through,
+for historical traceability rather than deleted outright).
 
-- **`Test1Basics.idr`: `definitely lost: 40 bytes in 2 blocks`,
-  `indirectly lost: 56 bytes in 3 blocks`** (96 bytes / 5 blocks total).
+- ~~`Test1Basics.idr`: `definitely lost: 40 bytes in 2 blocks`,
+  `indirectly lost: 56 bytes in 3 blocks`~~ (96 bytes / 5 blocks total)
+  -- **root-caused and fixed**: shared root cause with the
+  `List.(++)`-on-repeated-`IORef`-append leak found during the
+  concurrency work, `Compiler.RC2.RC`'s own `RExtPrim`
+  ownership-annotation gap -- see `rc2/doc/concurrency.md`'s own
+  "Remaining `System.Concurrency`-family primitives, joinable fork, and
+  Channel: done and verified" section. `rc2/tests/verify.sh`'s own
+  `KNOWN_LEAK_BYTES` map has been empty for this test for a while (its
+  own comment already notes the fix) -- this entry itself was simply
+  never updated to match until now. Re-verified directly (2026-09-12,
+  this project's self-built reference toolchain, rebuilt
+  `idris2-rc2`): a fresh `valgrind --leak-check=full` run on
+  `Test1Basics` reports `definitely lost: 0 bytes`, `indirectly lost: 0
+  bytes` (800 bytes / 100 blocks "still reachable" at exit -- immortal/
+  cached allocations such as the small-int cache and constant-string
+  pool, not a leak).
 - ~~`fastPack`/`fastConcat` leak their own raw `malloc`'d `char *` return
   on every call~~ -- **root-caused and fixed**: root-caused while adding
   `Test28Utf8Strings.idr` (the first `LEAK_SENSITIVE_TESTS` entry that
