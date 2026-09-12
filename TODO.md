@@ -146,6 +146,25 @@ the *innermost* enclosing loop, since a `RLoopContinue` found while
 walking one loop's body must never be matched against an outer loop's
 own `loopParams`).
 
+**Two distinct motivations found for "more than one `RLoop` per
+function", only one of which actually needs the stack above**: see
+`rc2/doc/loop-in-case-sinking.md` (designed on paper, not implemented)
+for the full writeup. (1) Sinking a loop-invariant-scrutinee `case`'s
+own loop-carrying alts into independent per-alt loops produces
+*sibling* loops only -- never nested -- so it needs neither the stack
+conversion above nor any of `Loop.idr`'s own per-body helpers to learn
+a nested-boundary check; grounded in a real, profiled cost
+(`idris2-missing-containers`' `MurMur3`: `dup v2 x2`/`dup v3 x2`/
+`dup v4 x2` re-executed every loop iteration for a case whose scrutinee
+never actually changes). (2) Splicing a small function whose entire
+body is itself a self-tail-recursive loop into a caller that is itself
+looping (currently impossible -- `Compiler.RC2.Inline`'s Criterion A
+excludes any callee containing a call, and a self-tail-recursive
+function always contains at least one at the point `Inline` runs)
+*would* produce genuine nesting and need the full stack conversion --
+this is the expensive half, deliberately kept separate, and not
+grounded in any measured case yet.
+
 ## Performance: `Loop.idr`'s own loop-carried (non-invariant) native shadow still reboxes fresh on a Boxed-context read
 
 Fixed for `Compiler.RC2.ConAltNative`'s own destructured-field caching
