@@ -1371,9 +1371,19 @@ applyLoop calleeTable self (MkRCFun args retRep isWorker body) =
                   rewritten : RCExp
                   rewritten = foldr (\(p, sid, _), acc => markInvariantNative p sid (stripOwnership (SortedSet.singleton p) acc))
                                 variantRewritten shadowedInvariant
+                  -- O(P log P) map lookup instead of a `find` (O(P)
+                  -- linear scan) called once per `p` in `argIds` (O(P)
+                  -- of them) -- the original was O(P^2), found via
+                  -- profiling a real program where several top-level
+                  -- definitions with a large captured-closure parameter
+                  -- count P but a *small* body (so none of this
+                  -- module's other, body-size-driven costs explained
+                  -- their own slowness) still took up to ~2s each.
+                  shadowedById : SortedMap Int (Int, PrimType)
+                  shadowedById = SortedMap.fromList $ map (\(p, sid, ty) => (p, (sid, ty))) (shadowedVariant ++ shadowedInvariant)
                   fullLoopParams : List (Int, Rep)
-                  fullLoopParams = map (\p => case find (\(p', _, _) => p' == p) (shadowedVariant ++ shadowedInvariant) of
-                                               Just (_, sid, ty) => (sid, RNative ty)
+                  fullLoopParams = map (\p => case lookup p shadowedById of
+                                               Just (sid, ty) => (sid, RNative ty)
                                                Nothing => (p, RBoxed)) argIds
                   withPostDrop : RCExp
                   withPostDrop = fillLoopContinuePostDrop fullLoopParams (fromList fullLoopParams) rewritten

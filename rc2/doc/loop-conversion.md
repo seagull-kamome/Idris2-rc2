@@ -1112,6 +1112,52 @@ C is entirely mechanical, living in `Emit.idr`.
    `logTimeOver` diagnostic itself was kept (not reverted) as ongoing,
    low-cost infrastructure for spotting this class of problem again.
 
+   **Follow-up: the "large B" story above was incomplete.** Extending
+   the same `logTimeOver` diagnostic to also print each flagged
+   definition's own parameter count (P) and a rough body-node count (B)
+   turned up several definitions with a *large* P but a *tiny* B --
+   e.g. `TTImp.ProcessRecord.elabGetters` at P=26, B=110, still taking
+   ~2.0s; `Idris.Elab.Implementation.methName` at P=21, B=39, ~0.66s;
+   `Core.Case.CaseBuilder.addGroup` at P=18, B=57, ~0.85s -- alongside
+   the genuinely-large-B ones already known (`TTImp.PartialEval.
+   mkRHSargs`, P=14 but B=6433, ~8.5-9.0s). A body of only a few dozen
+   nodes taking the better part of a second, for pure in-memory
+   `Int`/`SortedSet`/`SortedMap` manipulation at P in the tens, doesn't
+   fit any of this module's own O(P), O(B), O(P x B), or even O(P^2)
+   shapes at face value.
+
+   One genuine O(P^2) *was* found and fixed while chasing this:
+   `fullLoopParams` called `Data.List.find` (a linear scan) once per
+   parameter `p` in `argIds` against `shadowedVariant ++
+   shadowedInvariant` (itself up to length P) -- an O(P) lookup done
+   O(P) times. Replaced with `shadowedById`, a `SortedMap Int (Int,
+   PrimType)` built once (O(P log P)) and looked up in per parameter
+   (O(P log P) total) -- correct and strictly better complexity, kept
+   regardless, but **re-measuring showed no change at all** in the
+   flagged definitions' own times (`elabGetters` still ~2.0s, `addGroup`
+   still ~0.85s) -- P=18-26 is nowhere near large enough for an O(P^2)
+   difference to matter at real-world constant factors, so this
+   specific fix, while legitimate, was not the explanation either.
+
+   **Left unexplained as of this entry.** Two hypotheses tested by
+   direct code-level fixes (batching the native-arg-type analysis;
+   fixing the `fullLoopParams` quadratic) each failed to move these
+   specific numbers, which rules out the complexity classes this
+   module's own source-reading can identify by inspection. Whatever
+   remains is likely either a fixed, roughly-per-call overhead in one
+   of the many small helper functions `applyLoop` invokes once per
+   (small) invariant-parameter set -- plausible if most of a deeply-
+   nested elaborator closure's own many captured parameters are
+   loop-invariant, so P here is really "P_invariant" in the earlier
+   entry's own terms -- or something at the runtime level (GC pressure
+   from the surrounding pipeline, allocation patterns specific to
+   these `mutual`-block-heavy compiler-internal definitions) outside
+   what reading `Compiler.RC2.Loop`'s own source can settle. Finding it
+   would need an actual profiler on the `idris2-rc2` binary itself
+   (e.g. a Chez Scheme sampling profiler) rather than further
+   hypothesis-and-remeasure cycles -- left as a followup requiring
+   different tooling than used so far in this entry.
+
 ## Known limitation: native-shadow eligibility stops at bare top-level scalars
 
 Measured against a real third-party package

@@ -102,6 +102,45 @@ maxConstFoldIterations = 4
 slowApplyLoopThresholdNs : Integer
 slowApplyLoopThresholdNs = 500000000
 
+||| TEMP DIAGNOSTIC: a rough structural node count, purely for the
+||| `slowApplyLoopThresholdNs` message below -- not calibrated against
+||| anything, just enough to tell "how big is this body, and how many
+||| top-level parameters does it have" apart for whichever definitions
+||| `logTimeOver` flags.
+rcSizeOf : RCExp -> Nat
+rcSizeConAlt : RConAlt -> Nat
+rcSizeConstAlt : RConstAlt -> Nat
+
+rcSizeOf (RV _ _) = 1
+rcSizeOf (RAppName _ _ _ _) = 1
+rcSizeOf (RAppNameRep _ _ _ _ _ _) = 1
+rcSizeOf (RAppFFIInline _ _ _ _ _ _) = 1
+rcSizeOf (RUnderApp _ _ _ _) = 1
+rcSizeOf (RApp _ _ _ _) = 1
+rcSizeOf (RLet _ _ _ value body) = 1 + rcSizeOf value + rcSizeOf body
+rcSizeOf (RCon _ _ _ _ _ _) = 1
+rcSizeOf (ROp _ _ _ _ _) = 1
+rcSizeOf (RExtPrim _ _ _ _ _) = 1
+rcSizeOf (RStructGet _ _ _ _ _) = 1
+rcSizeOf (RStructSet _ _ _ _ _ _) = 1
+rcSizeOf (RCmpCase _ _ _ _ t f) = 1 + rcSizeOf t + rcSizeOf f
+rcSizeOf (RConCase _ _ alts mDef) = 1 + sum (map rcSizeConAlt alts) + maybe 0 rcSizeOf mDef
+rcSizeOf (RConstCase _ _ alts mDef) = 1 + sum (map rcSizeConstAlt alts) + maybe 0 rcSizeOf mDef
+rcSizeOf (RPrimVal _ _) = 1
+rcSizeOf (RErased _) = 1
+rcSizeOf (RCrash _ _) = 1
+rcSizeOf (RDup _ _ _ cont) = 1 + rcSizeOf cont
+rcSizeOf (RDrop _ _ cont) = 1 + rcSizeOf cont
+rcSizeOf (RFree _ _ cont) = 1 + rcSizeOf cont
+rcSizeOf (RReleaseReuse _ _ cont) = 1 + rcSizeOf cont
+rcSizeOf (RLoop _ _ _ _ body) = 1 + rcSizeOf body
+rcSizeOf (RLoopContinue _ _ _) = 1
+rcSizeOf (RReuseOffer _ _ _ _ cont) = 1 + rcSizeOf cont
+rcSizeOf (RMemoize _ _ _ body) = 1 + rcSizeOf body
+
+rcSizeConAlt (MkRConAlt _ _ _ _ body) = rcSizeOf body
+rcSizeConstAlt (MkRConstAlt _ body) = rcSizeOf body
+
 ||| Runs `Compiler.RC2.ConstFold.foldConstDef` over every definition in
 ||| `defs0` (Phase 1 output, pre-`ConstFold`, from `toRCDefPreFold`),
 ||| rebuilding `CafTable` after each pass via `cafValueOf` and looping
@@ -218,9 +257,14 @@ toRCDefs disabled incremental roots lds0 = do
                         -- threshold naming *which* one is slow is more
                         -- useful here than one more aggregate number.
                         logTime 3 "rc2: Loop conversion (apply)" $
-                          traverse (\(n, d) => logTimeOver slowApplyLoopThresholdNs
-                                                  (pure ("rc2: Loop conversion (apply) slow definition: " ++ show n))
-                                                  (pure (n, applyLoop calleeTable n d))) merged
+                          traverse (\(n, d) =>
+                                      let stats = case d of
+                                                       MkRCFun args _ _ dbody =>
+                                                           " (P=" ++ show (length args) ++ " B=" ++ show (rcSizeOf dbody) ++ ")"
+                                                       _ => ""
+                                      in logTimeOver slowApplyLoopThresholdNs
+                                           (pure ("rc2: Loop conversion (apply) slow definition: " ++ show n ++ stats))
+                                           (pure (n, applyLoop calleeTable n d))) merged
     sunk <- if "nosink" `elem` disabled
                then pure looped
                else logTime 2 "rc2: Sink" $ pure (map (\(n, d) => (n, applySink d)) looped)
