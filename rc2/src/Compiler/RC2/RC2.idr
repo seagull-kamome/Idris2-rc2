@@ -96,6 +96,12 @@ applyReuse d@(MkRCForeign _ _ _) = d
 maxConstFoldIterations : Nat
 maxConstFoldIterations = 4
 
+||| Nanosecond threshold for `toRCDefs`'s own per-definition
+||| `logTimeOver` diagnostic around `Compiler.RC2.Loop.applyLoop` (500ms)
+||| -- see that call site's own comment.
+slowApplyLoopThresholdNs : Integer
+slowApplyLoopThresholdNs = 500000000
+
 ||| Runs `Compiler.RC2.ConstFold.foldConstDef` over every definition in
 ||| `defs0` (Phase 1 output, pre-`ConstFold`, from `toRCDefPreFold`),
 ||| rebuilding `CafTable` after each pass via `cafValueOf` and looping
@@ -202,7 +208,19 @@ toRCDefs disabled incremental roots lds0 = do
                  then pure merged
                  else logTime 2 "rc2: Loop conversion" $ do
                         calleeTable <- logTime 3 "rc2: Loop conversion (build callee table)" $ pure (buildCalleeTable merged)
-                        logTime 3 "rc2: Loop conversion (apply)" $ pure (map (\(n, d) => (n, applyLoop calleeTable n d)) merged)
+                        -- `logTimeOver` (unconditional, not gated behind
+                        -- `--timing`) rather than one `logTime` call per
+                        -- definition -- this stage's own cost turned out
+                        -- to concentrate in a handful of pathologically
+                        -- large individual bodies rather than being
+                        -- spread evenly (see `rc2/doc/loop-conversion.md`'s
+                        -- "Bugs found and fixed" #7), so a per-definition
+                        -- threshold naming *which* one is slow is more
+                        -- useful here than one more aggregate number.
+                        logTime 3 "rc2: Loop conversion (apply)" $
+                          traverse (\(n, d) => logTimeOver slowApplyLoopThresholdNs
+                                                  (pure ("rc2: Loop conversion (apply) slow definition: " ++ show n))
+                                                  (pure (n, applyLoop calleeTable n d))) merged
     sunk <- if "nosink" `elem` disabled
                then pure looped
                else logTime 2 "rc2: Sink" $ pure (map (\(n, d) => (n, applySink d)) looped)

@@ -1068,15 +1068,49 @@ C is entirely mechanical, living in `Emit.idr`.
    (a much smaller set than "every definition in the program", unlike
    `calleeNativeParams`), and the batched version's own per-node
    `SortedMap`-merge overhead apparently outweighs whatever saving
-   there was from fewer body walks at this scale. **The real remaining
-   cost inside `rc2: Loop conversion (apply)`'s own ~41s is still
-   unidentified** -- likely one of the other per-invariant-loop-
-   parameter walks `applyLoop` runs (`markInvariantNative`,
-   `dupInvariantBoxed`, `hoistInvariantPrefix`, `stripOwnership`,
-   `usesInvariant`, each invoked once per eligible invariant parameter
-   via a `foldr`/`filter` over `shadowedInvariant`) rather than the
-   native-arg-type analysis this entry's own fix targeted -- left as a
-   followup.
+   there was from fewer body walks at this scale.
+
+   **Found the real remaining cost by adding a per-definition
+   `logTimeOver` around `applyLoop` itself** (`toRCDefs`'s own
+   `slowApplyLoopThresholdNs`, 500ms, unconditional -- not gated behind
+   `--timing` -- since this stage's own cost turned out to concentrate
+   in a handful of individual bodies rather than being spread evenly,
+   so naming *which* definition is slow is more useful than one more
+   aggregate number): on the real program used throughout this entry,
+   every name that crossed the threshold was either an upstream Idris2
+   compiler internal (`Core.Unify.unifyApp`, `TTImp.Elab.App.
+   checkAppWith'`, `TTImp.PartialEval.mkRHSargs` at 8.6s alone,
+   `TTImp.ProcessRecord.elabGetters`, `Core.Case.CaseBuilder.addGroup`,
+   ...) or a `{rc2_mutualLoop:N}` dispatcher `Compiler.RC2.MutualLoop`
+   had merged several such internals into. This real program
+   (`idris2-lsp`) depends on the `idris2` package itself as a library
+   (an LSP server needs the compiler's own elaborator internals), so
+   rc2 was compiling code at roughly "the Idris2 compiler compiling
+   itself" scale -- genuinely enormous, hand-written multi-clause
+   functions (unification, elaboration, case-tree construction), not
+   an even spread across many ordinary-sized functions. This also
+   explains why the `eligible`/`eligibleWithCallArgs` batching attempt
+   above made things worse rather than better: these specific bodies
+   have very large B (body size) but *not* especially large P (top-
+   level parameter count) -- the axis that fix optimized was the wrong
+   one for this shape.
+
+   Since parameter count isn't the multiplier here, the real lever
+   would be reducing how many *separate* full-body walks `applyLoop`
+   performs per definition in the first place (currently over ten:
+   `mapTailAppNames`, `collectBoundIds`, `invariantLoopParamIds`/
+   `collectContinueArgs`, `renameRCExp`, `stripOwnership` (once for all
+   variant parameters together, but *again* per invariant parameter),
+   `markInvariantNative` (per invariant parameter),
+   `fillLoopContinuePostDrop`, `hoistInvariantPrefix`, and
+   `wrapInvariantShadows`'s own `usesInvariant`/`dupInvariantBoxed`
+   (each per invariant parameter)) -- consolidating several of these
+   into fewer combined passes over the same body. Not attempted here:
+   a materially bigger, riskier restructuring than either fix above
+   (each existing pass carries its own carefully-reasoned invariants,
+   documented at length in this file), left as a followup. The
+   `logTimeOver` diagnostic itself was kept (not reverted) as ongoing,
+   low-cost infrastructure for spotting this class of problem again.
 
 ## Known limitation: native-shadow eligibility stops at bare top-level scalars
 
