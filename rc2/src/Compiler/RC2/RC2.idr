@@ -200,9 +200,9 @@ toRCDefs disabled incremental roots lds0 = do
     merged <- if "nomutualloop" `elem` disabled then pure reused else logTime 2 "rc2: Mutual loop" $ applyMutualLoop reused
     looped <- if "noloop" `elem` disabled
                  then pure merged
-                 else logTime 2 "rc2: Loop conversion" $
-                        let calleeTable = buildCalleeTable merged
-                        in pure (map (\(n, d) => (n, applyLoop calleeTable n d)) merged)
+                 else logTime 2 "rc2: Loop conversion" $ do
+                        calleeTable <- logTime 3 "rc2: Loop conversion (build callee table)" $ pure (buildCalleeTable merged)
+                        logTime 3 "rc2: Loop conversion (apply)" $ pure (map (\(n, d) => (n, applyLoop calleeTable n d)) merged)
     sunk <- if "nosink" `elem` disabled
                then pure looped
                else logTime 2 "rc2: Sink" $ pure (map (\(n, d) => (n, applySink d)) looped)

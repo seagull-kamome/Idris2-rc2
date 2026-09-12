@@ -82,14 +82,23 @@ Graph = SortedMap Name (SortedSet Name)
 
 record TState where
   constructor MkTState
-  index   : SortedMap Name Nat
-  lowlink : SortedMap Name Nat
-  onStack : SortedSet Name
-  stack   : List Name
-  sccs    : List (List Name)
+  index     : SortedMap Name Nat
+  lowlink   : SortedMap Name Nat
+  onStack   : SortedSet Name
+  stack     : List Name
+  sccs      : List (List Name)
+  -- Next fresh Tarjan index to assign. Carried explicitly rather than
+  -- derived as `length (SortedMap.toList (index st))` (the original
+  -- implementation, found via profiling a large real program's own
+  -- `rc2: Mutual loop` timing) -- that re-walks and re-counts the
+  -- *entire* `index` map from scratch on every single node visited,
+  -- turning Tarjan's own linear-time guarantee into O(n^2) over the
+  -- whole tail-call graph. A plain counter, incremented once per newly
+  -- discovered node, is the standard O(1)-per-assignment approach.
+  nextIndex : Nat
 
 initTState : TState
-initTState = MkTState empty empty empty [] []
+initTState = MkTState empty empty empty [] [] 0
 
 ||| Pop `stack` down to and including `v`; returns (that component's
 ||| members, the remaining stack).
@@ -104,9 +113,9 @@ popUntil v (x :: xs) =
 mutual
   strongConnect : Graph -> Name -> TState -> TState
   strongConnect graph v st0 =
-      let idx  = length (SortedMap.toList (index st0))
+      let idx  = nextIndex st0
           st1  = MkTState (insert v idx (index st0)) (insert v idx (lowlink st0))
-                          (SortedSet.insert v (onStack st0)) (v :: stack st0) (sccs st0)
+                          (SortedSet.insert v (onStack st0)) (v :: stack st0) (sccs st0) (idx + 1)
           succs = maybe [] SortedSet.toList (lookup v graph)
           st2  = foldl (visitSucc graph v) st1 succs
           vIdx = fromMaybe idx (lookup v (index st2))
@@ -114,7 +123,7 @@ mutual
       in if vLow == vIdx
             then let (comp, rest) = popUntil v (stack st2)
                      onStack' = foldl (flip SortedSet.delete) (onStack st2) comp
-                 in MkTState (index st2) (lowlink st2) onStack' rest (comp :: sccs st2)
+                 in MkTState (index st2) (lowlink st2) onStack' rest (comp :: sccs st2) (nextIndex st2)
             else st2
 
   visitSucc : Graph -> Name -> TState -> Name -> TState
@@ -124,11 +133,11 @@ mutual
              let st' = strongConnect graph w st
                  wLow = fromMaybe 0 (lookup w (lowlink st'))
                  vLow = fromMaybe 0 (lookup v (lowlink st'))
-             in MkTState (index st') (insert v (min vLow wLow) (lowlink st')) (onStack st') (stack st') (sccs st')
+             in MkTState (index st') (insert v (min vLow wLow) (lowlink st')) (onStack st') (stack st') (sccs st') (nextIndex st')
            Just wIdx =>
              if contains w (onStack st)
                 then let vLow = fromMaybe 0 (lookup v (lowlink st))
-                     in MkTState (index st) (insert v (min vLow wIdx) (lowlink st)) (onStack st) (stack st) (sccs st)
+                     in MkTState (index st) (insert v (min vLow wIdx) (lowlink st)) (onStack st) (stack st) (sccs st) (nextIndex st)
                 else st
 
 ||| Each SCC is prepended as it's found, so a caller's own component

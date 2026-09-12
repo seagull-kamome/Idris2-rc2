@@ -252,12 +252,48 @@ mutual
 -- bookkeeping `Compiler.RC2.RC`'s `annotate` left behind for one once
 -- it's promoted.
 
+||| `SortedMap.mergeWith union` -- named once for readability at every
+||| multi-id merge point below (see "Batched, multi-id native-type
+||| analysis" further down for why these exist).
+unionMaps : SortedMap Int (SortedSet PrimType) -> SortedMap Int (SortedSet PrimType) -> SortedMap Int (SortedSet PrimType)
+unionMaps = SortedMap.mergeWith union
+
+concatMaps : List (SortedMap Int (SortedSet PrimType)) -> SortedMap Int (SortedSet PrimType)
+concatMaps = foldl unionMaps empty
+
+||| If `a` is one of `tracked`'s own ids, record that it was read at
+||| native type `ty` here (unioned with whatever's already on file for
+||| it); otherwise leave `acc` unchanged.
+addTracked : SortedSet Int -> RCLocal -> PrimType -> SortedMap Int (SortedSet PrimType) -> SortedMap Int (SortedSet PrimType)
+addTracked tracked (RCLoc i) ty acc = if contains i tracked then SortedMap.insertWith union i (SortedSet.singleton ty) acc else acc
+addTracked _ _ _ acc = acc
+
+||| The single-type verdict `nativeArgType`/`callArgOrOpNativeType`
+||| themselves return: `Just ty` only if `m`'s own entry for `p` is a
+||| *consistent* singleton (every native-context read of `p` agreed on
+||| the same type); `Nothing` for no reads at all, or for conflicting
+||| ones (conservatively left `RBoxed` rather than guessing) -- same
+||| rule those two already applied, just factored out so the batched
+||| entry points below (and their singleton-callers) share it.
+singleTypeFrom : SortedMap Int (SortedSet PrimType) -> Int -> Maybe PrimType
+singleTypeFrom m p = case lookup p m of
+                           Nothing => Nothing
+                           Just tys => case Prelude.toList tys of
+                                            [ty] => Just ty
+                                            _ => Nothing
+
 ||| The C expression type a specific operand position of `op` needs,
 ||| given the enclosing `RLet`'s own native `ty` -- `p`'s contribution
 ||| to `nativeArgTypes` at every position it fills.
 opNativeUses : (p : Int) -> PrimType -> PrimFn arity -> Vect arity RCLocal -> SortedSet PrimType
 opNativeUses p ty op args =
     fromList $ mapMaybe (\a => if a == RCLoc p then Just (opArgTyFor ty op) else Nothing) (toList args)
+
+||| Multi-id version of `opNativeUses`: every one of `tracked`'s own
+||| contribution to the native-operand-type map, from this one `op`'s
+||| own argument positions, in one pass instead of one call per id.
+opNativeUsesAll : SortedSet Int -> PrimType -> PrimFn arity -> Vect arity RCLocal -> SortedMap Int (SortedSet PrimType)
+opNativeUsesAll tracked ty op args = foldr (\a, acc => addTracked tracked a (opArgTyFor ty op) acc) empty (toList args)
 
 ||| `p`'s native-operand contribution (at native type `ty`, an `RLet`'s
 ||| own decided `Rep`) if `value` is the `ROp` that let is bound to --
@@ -299,6 +335,16 @@ opNativeUsesThrough p ty (RFree _ _ cont) = opNativeUsesThrough p ty cont
 opNativeUsesThrough p ty (RReleaseReuse _ _ cont) = opNativeUsesThrough p ty cont
 opNativeUsesThrough p ty (RLet _ _ _ _ body) = opNativeUsesThrough p ty body
 opNativeUsesThrough _ _ _ = empty
+
+||| Multi-id version of `opNativeUsesThrough`.
+opNativeUsesThroughAll : SortedSet Int -> PrimType -> RCExp -> SortedMap Int (SortedSet PrimType)
+opNativeUsesThroughAll tracked ty (ROp _ _ op args _) = opNativeUsesAll tracked ty op args
+opNativeUsesThroughAll tracked ty (RDup _ _ _ cont) = opNativeUsesThroughAll tracked ty cont
+opNativeUsesThroughAll tracked ty (RDrop _ _ cont) = opNativeUsesThroughAll tracked ty cont
+opNativeUsesThroughAll tracked ty (RFree _ _ cont) = opNativeUsesThroughAll tracked ty cont
+opNativeUsesThroughAll tracked ty (RReleaseReuse _ _ cont) = opNativeUsesThroughAll tracked ty cont
+opNativeUsesThroughAll tracked ty (RLet _ _ _ _ body) = opNativeUsesThroughAll tracked ty body
+opNativeUsesThroughAll _ _ _ = empty
 
 ||| Every native `PrimType` at which top-level parameter `p` is read as
 ||| an operand of a native-result `ROp`, or of a fused `RCmpCase` -- the
@@ -356,6 +402,36 @@ nativeArgTypes p (RConstCase _ _ alts mDef) =
 -- RLet/RCmpCase/RConCase/RConstCase above already visit.
 nativeArgTypes _ _ = empty
 
+||| Multi-id version of `nativeArgTypes`: every one of `tracked`'s own
+||| native-operand-type set, computed together in *one* walk of `body`
+||| instead of one full walk per id. See "Batched, multi-id native-type
+||| analysis" below for why this exists.
+export
+nativeArgTypesFor : SortedSet Int -> RCExp -> SortedMap Int (SortedSet PrimType)
+nativeArgTypesFor tracked (RLet _ _ rep value body) =
+    let fromOp = case rep of
+             RNative ty => opNativeUsesThroughAll tracked ty value
+             RInlineNative ty => opNativeUsesThroughAll tracked ty value
+             RBoxed => empty
+    in fromOp `unionMaps` (nativeArgTypesFor tracked value `unionMaps` nativeArgTypesFor tracked body)
+nativeArgTypesFor tracked (RCmpCase _ op args _ t f) =
+    let fromArgs = case cmpArgTy op of
+             Nothing => empty
+             Just ty => foldr (\a, acc => addTracked tracked a ty acc) empty (toList args)
+    in fromArgs `unionMaps` (nativeArgTypesFor tracked t `unionMaps` nativeArgTypesFor tracked f)
+nativeArgTypesFor tracked (RDup _ _ _ cont) = nativeArgTypesFor tracked cont
+nativeArgTypesFor tracked (RDrop _ _ cont) = nativeArgTypesFor tracked cont
+nativeArgTypesFor tracked (RFree _ _ cont) = nativeArgTypesFor tracked cont
+nativeArgTypesFor tracked (RReleaseReuse _ _ cont) = nativeArgTypesFor tracked cont
+nativeArgTypesFor tracked (RReuseOffer _ _ _ _ cont) = nativeArgTypesFor tracked cont
+nativeArgTypesFor tracked (RConCase _ _ alts mDef) =
+    concatMaps (map (\(MkRConAlt _ _ _ _ body) => nativeArgTypesFor tracked body) alts)
+      `unionMaps` maybe empty (nativeArgTypesFor tracked) mDef
+nativeArgTypesFor tracked (RConstCase _ _ alts mDef) =
+    concatMaps (map (\(MkRConstAlt _ body) => nativeArgTypesFor tracked body) alts)
+      `unionMaps` maybe empty (nativeArgTypesFor tracked) mDef
+nativeArgTypesFor _ _ = empty
+
 ||| The single native `PrimType` top-level parameter `p` should be
 ||| shadowed at, if `body` reads it that way at all, and consistently
 ||| (every native-context use agrees on the same type) -- `Nothing` if
@@ -373,6 +449,20 @@ nativeArgType p body =
          [ty] => Just ty
          _ => Nothing
 
+||| Batch version of `nativeArgType`: every one of `ps`'s own verdict,
+||| computed together in one walk of `body` instead of one walk per id
+||| -- see "Batched, multi-id native-type analysis" below. A definition
+||| with many top-level parameters (routine after lambda-lifting, which
+||| turns a closure's captured environment into extra arguments) and a
+||| large body used to make calling `nativeArgType` once per parameter
+||| cost O(parameter count x body size); this is the same answer in a
+||| single O(body size) pass.
+export
+nativeArgTypeBatch : List Int -> RCExp -> SortedMap Int PrimType
+nativeArgTypeBatch ps body =
+    let found = nativeArgTypesFor (SortedSet.fromList ps) body
+    in SortedMap.fromList $ mapMaybe (\p => map (p,) (singleTypeFrom found p)) ps
+
 ||| Every declared parameter's own eligibility, exactly as `nativeArgType`
 ||| already decides it, positionally aligned with `d`'s own `args` list.
 ||| `Nothing` for anything with no ordinary RCExp body to ask this about
@@ -381,7 +471,9 @@ nativeArgType p body =
 ||| out of this function's scope).
 export
 calleeNativeParams : RCDef -> Maybe (List (Maybe PrimType))
-calleeNativeParams (MkRCFun args _ _ body) = Just (map (\(p, _) => nativeArgType p body) args)
+calleeNativeParams (MkRCFun args _ _ body) =
+    let found = nativeArgTypeBatch (map fst args) body
+    in Just (map (\(p, _) => lookup p found) args)
 calleeNativeParams _ = Nothing
 
 ||| Whole-program table built once from the post-MutualLoop/pre-Loop
@@ -443,6 +535,32 @@ callArgNativeTypes calleeTable p (RAppName _ _ n args) =
                                           (zip args paramTypes)
 callArgNativeTypes _ _ _ = empty
 
+||| Multi-id version of `callArgNativeTypes`.
+callArgNativeTypesFor : SortedMap Name (List (Maybe PrimType)) -> SortedSet Int -> RCExp -> SortedMap Int (SortedSet PrimType)
+callArgNativeTypesFor calleeTable tracked (RLet _ _ _ value body) =
+    callArgNativeTypesFor calleeTable tracked value `unionMaps` callArgNativeTypesFor calleeTable tracked body
+callArgNativeTypesFor calleeTable tracked (RCmpCase _ _ _ _ t f) =
+    callArgNativeTypesFor calleeTable tracked t `unionMaps` callArgNativeTypesFor calleeTable tracked f
+callArgNativeTypesFor calleeTable tracked (RConCase _ _ alts mDef) =
+    concatMaps (map (\(MkRConAlt _ _ _ _ body) => callArgNativeTypesFor calleeTable tracked body) alts)
+      `unionMaps` maybe empty (callArgNativeTypesFor calleeTable tracked) mDef
+callArgNativeTypesFor calleeTable tracked (RConstCase _ _ alts mDef) =
+    concatMaps (map (\(MkRConstAlt _ body) => callArgNativeTypesFor calleeTable tracked body) alts)
+      `unionMaps` maybe empty (callArgNativeTypesFor calleeTable tracked) mDef
+callArgNativeTypesFor calleeTable tracked (RDup _ _ _ cont) = callArgNativeTypesFor calleeTable tracked cont
+callArgNativeTypesFor calleeTable tracked (RDrop _ _ cont) = callArgNativeTypesFor calleeTable tracked cont
+callArgNativeTypesFor calleeTable tracked (RFree _ _ cont) = callArgNativeTypesFor calleeTable tracked cont
+callArgNativeTypesFor calleeTable tracked (RReleaseReuse _ _ cont) = callArgNativeTypesFor calleeTable tracked cont
+callArgNativeTypesFor calleeTable tracked (RReuseOffer _ _ _ _ cont) = callArgNativeTypesFor calleeTable tracked cont
+callArgNativeTypesFor calleeTable tracked (RAppName _ _ n args) =
+    case lookup n calleeTable of
+         Nothing => empty
+         Just paramTypes =>
+             if length args /= length paramTypes
+                then empty
+                else foldr (\(a, mty), acc => maybe acc (\ty => addTracked tracked a ty acc) mty) empty (zip args paramTypes)
+callArgNativeTypesFor _ _ _ = empty
+
 ||| Unions nativeArgTypes' own answer with callArgNativeTypes', giving
 ||| a single consistent-type-or-Nothing verdict the same shape
 ||| nativeArgType itself already returns.
@@ -452,6 +570,31 @@ callArgOrOpNativeType calleeTable p body =
     case Prelude.toList (nativeArgTypes p body `union` callArgNativeTypes calleeTable p body) of
          [ty] => Just ty
          _ => Nothing
+
+||| ## Batched, multi-id native-type analysis
+|||
+||| `nativeArgType`/`callArgOrOpNativeType` above each ask this
+||| question about *one* id, walking `body` in full to answer it.
+||| `applyLoop` (and, via `calleeNativeParams`, `buildCalleeTable`)
+||| originally called them once per top-level parameter -- for a
+||| definition with many parameters (routine after lambda-lifting) and
+||| a large body, that made this whole pass cost O(parameter count x
+||| body size) per definition, which dominated `rc2: Loop conversion`'s
+||| own wall-clock time outright on a large real program (measured
+||| ~41s, unchanged by the `Compiler.RC2.Inline` case-of-case fix --
+||| see `rc2/doc/inlining.md` -- since this is a wholly separate
+||| bottleneck). `nativeArgTypesFor`/`callArgNativeTypesFor` above
+||| answer the same question for a *whole set* of ids in one shared
+||| walk instead; `applyLoop` below computes its own `opTypes`/
+||| `callTypes` once (for every one of its own `argIds` together) and
+||| reuses them for both `eligible` and `eligibleWithCallArgs`, rather
+||| than re-deriving them per parameter via `nativeArgType`/
+||| `callArgOrOpNativeType`. The single-id functions above are kept
+||| unchanged (now implemented as thin wrappers where that was cheap to
+||| do, e.g. `nativeArgType`) for `Compiler.RC2.DualABI`'s own
+||| single-call use (`nativeArgTypes var body`, `paramEligibility`'s own
+||| `Nothing` branch, since updated to use `nativeArgTypeBatch` too) and
+||| `Compiler.RC2.ConAltNative`'s per-alt use (also updated).
 
 ||| Remove every `RDup`/`RDrop`/`RFree` target, and every `ROp`/
 ||| `RCmpCase` `postDrop` entry, naming one of `ids`. A native value
@@ -1167,6 +1310,11 @@ applyLoop calleeTable self (MkRCFun args retRep isWorker body) =
             else
               let nextId0 : Int
                   nextId0 = 1 + foldl max (-1) (argIds ++ collectBoundIds body')
+                  -- TEMP DIAGNOSTIC REVERT: back to one nativeArgType/
+                  -- callArgOrOpNativeType call per parameter, to isolate
+                  -- whether the batched (tracked-set) version above is
+                  -- really what regressed `rc2: Loop conversion (apply)`
+                  -- from ~41s to ~74s on a large real program.
                   eligible : List (Int, PrimType)
                   eligible = mapMaybe (\p => map (\ty => (p, ty)) (nativeArgType p body')) argIds
                   eligibleWithCallArgs : List (Int, PrimType)

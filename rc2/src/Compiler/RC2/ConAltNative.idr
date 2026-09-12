@@ -267,8 +267,14 @@ finalizeBranch fid owned body =
 shadowAltFields : (nextId : Int) -> List Int -> RCExp -> (Int, RCExp)
 shadowAltFields nextId argIds body =
     let (rebuild, core) = peelWrappers body
+        -- `nativeArgTypeBatch` walks `core` once for every one of
+        -- `argIds` together, rather than once per field via
+        -- `nativeArgType` -- see
+        -- `Compiler.RC2.Loop.callArgOrOpNativeType`'s own "Batched,
+        -- multi-id native-type analysis" section.
+        foundTypes = nativeArgTypeBatch argIds core
         eligible : List (Int, PrimType)
-        eligible = mapMaybe (\p => map (p,) (nativeArgType p core)) argIds
+        eligible = mapMaybe (\p => map (p,) (lookup p foundTypes)) argIds
     in case eligible of
             [] => (nextId, body)
             _ =>

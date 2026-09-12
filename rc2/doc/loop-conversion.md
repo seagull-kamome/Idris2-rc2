@@ -1025,6 +1025,59 @@ C is entirely mechanical, living in `Emit.idr`.
    `Rep` correctly without needing to know anything about invariance
    itself.
 
+7. **Two real algorithmic-complexity bugs, found by profiling a large
+   real program (`idris2-lsp`) that reported `rc2: Mutual loop` at
+   ~16.7s and `rc2: Loop conversion` at ~41.4s -- both dominated by
+   O(n) work repeated per node instead of computed once.**
+
+   - **`Compiler.RC2.MutualLoop`'s own Tarjan SCC (`tarjanSCCs`).**
+     `strongConnect` derived each newly-discovered node's own index as
+     `length (SortedMap.toList (index st0))` -- re-walking and
+     re-counting the *entire* `index` map from scratch on every single
+     node visited, turning Tarjan's own linear-time guarantee into
+     O(n^2) over the whole tail-call graph. Fixed by carrying a plain
+     `nextIndex : Nat` counter in `TState`, incremented once per node
+     (the standard O(1)-per-assignment approach) -- confirmed on the
+     same real program: 16.740s -> 0.574s, with the SCCs found
+     unchanged (87/87 regression suite still green).
+   - **`Compiler.RC2.Loop`'s `buildCalleeTable`/`calleeNativeParams`.**
+     `calleeNativeParams` called `nativeArgType` once per top-level
+     parameter, each call re-walking that *one* definition's own body
+     in full via `nativeArgTypes` -- O(parameter count x body size)
+     per definition, summed across every definition in the whole
+     program to build the table. Fixed by `nativeArgTypeBatch`
+     (`Compiler.RC2.Loop`'s own "Batched, multi-id native-type
+     analysis" section), which answers the same question for a whole
+     set of ids in one shared walk. Isolated via a dedicated
+     `--timing 3` sub-phase (`rc2: Loop conversion (build callee
+     table)`): confirmed independently fast (0.109s) after the fix
+     went in, on the same real program.
+
+   **A related fix to `applyLoop` itself (batching its own `eligible`/
+   `eligibleWithCallArgs` computation the same way) was tried and
+   *reverted* after direct A/B measurement showed it made things
+   *worse*, not better** -- `rc2: Loop conversion (apply)` went from
+   ~41.4s to ~74.5s with the batched (`SortedMap Int (SortedSet
+   PrimType)`-based) version, and back down to ~41.7s reverting just
+   that one change. The original hypothesis (that `applyLoop` calling
+   `nativeArgType`/`callArgOrOpNativeType` once per top-level parameter
+   was *itself* the dominant O(parameter count x body size) cost, the
+   same shape as the `calleeNativeParams` bug above) turned out to be
+   wrong for this specific call site: `applyLoop` only runs this
+   computation for definitions that are themselves self-tail-recursive
+   (a much smaller set than "every definition in the program", unlike
+   `calleeNativeParams`), and the batched version's own per-node
+   `SortedMap`-merge overhead apparently outweighs whatever saving
+   there was from fewer body walks at this scale. **The real remaining
+   cost inside `rc2: Loop conversion (apply)`'s own ~41s is still
+   unidentified** -- likely one of the other per-invariant-loop-
+   parameter walks `applyLoop` runs (`markInvariantNative`,
+   `dupInvariantBoxed`, `hoistInvariantPrefix`, `stripOwnership`,
+   `usesInvariant`, each invoked once per eligible invariant parameter
+   via a `foldr`/`filter` over `shadowedInvariant`) rather than the
+   native-arg-type analysis this entry's own fix targeted -- left as a
+   followup.
+
 ## Known limitation: native-shadow eligibility stops at bare top-level scalars
 
 Measured against a real third-party package

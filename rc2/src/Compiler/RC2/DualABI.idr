@@ -59,7 +59,11 @@ findLoopThroughLets _ _ = Nothing
 ||| positional `zip`, since loop-invariant-parameter elision can leave
 ||| `loopParams` a strict subset of the top-level parameters (see
 ||| `doc/loop-conversion.md`'s "Loop-invariant parameter elision", its
-||| own "DualABI interaction").
+||| own "DualABI interaction"). The `Nothing` branch uses
+||| `nativeArgTypeBatch` (one shared walk of `body` for every one of
+||| `argIds`, not one walk per id) -- see
+||| `Compiler.RC2.Loop.callArgOrOpNativeType`'s own "Batched, multi-id
+||| native-type analysis" section.
 export
 paramEligibility : List Int -> RCExp -> List (Int, Maybe PrimType)
 paramEligibility argIds body =
@@ -70,7 +74,8 @@ paramEligibility argIds body =
                                      Just (RNative ty) => Just ty
                                      Just (RInlineNative ty) => Just ty
                                      _ => Nothing)) argIds
-         Nothing => map (\p => (p, nativeArgType p body)) argIds
+         Nothing => let found = nativeArgTypeBatch argIds body
+                    in map (\p => (p, lookup p found)) argIds
 
 ||| Every `Rep` a genuine (non-`RLoopContinue`) tail-position value of
 ||| `e` would have, given `reps` (natives known so far, seeded from
