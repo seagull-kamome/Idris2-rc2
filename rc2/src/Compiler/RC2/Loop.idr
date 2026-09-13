@@ -1361,16 +1361,29 @@ applyLoop calleeTable self (MkRCFun args retRep isWorker body) =
                   -- (`markInvariantNative`) here -- any surviving
                   -- Boxed-context occurrence is dealt with later, in
                   -- `wrapInvariantShadows` below, once the whole rest of
-                  -- this rewrite has settled. `stripOwnership (singleton
-                  -- p)` first clears whatever stale ownership
-                  -- bookkeeping `annotate` had attached to `p` as an
-                  -- ordinary (possibly multiply-used) top-level
+                  -- this rewrite has settled. `stripOwnership` first
+                  -- clears whatever stale ownership bookkeeping
+                  -- `annotate` had attached to each invariant parameter
+                  -- as an ordinary (possibly multiply-used) top-level
                   -- argument -- the same first step
                   -- `Compiler.RC2.ConAltNative`'s own `shadowOneField`
-                  -- takes for a destructured field.
+                  -- takes for a destructured field. Run *once*, over
+                  -- every invariant parameter's own id together (rather
+                  -- than once per parameter inside the `foldr` below,
+                  -- the original shape here) -- `stripOwnership`'s own
+                  -- filtering is a pure per-node set-membership check
+                  -- with no interaction between different ids, so
+                  -- stripping the whole set in one pass is exactly
+                  -- equivalent to stripping each singleton in sequence,
+                  -- just without body-sized-walk being repeated once
+                  -- per invariant parameter (found while profiling a
+                  -- real program -- see `rc2/doc/loop-conversion.md`'s
+                  -- "Bugs found and fixed" #7's own follow-up).
+                  invariantIdsAll : SortedSet Int
+                  invariantIdsAll = SortedSet.fromList $ map (\(p, _, _) => p) shadowedInvariant
                   rewritten : RCExp
-                  rewritten = foldr (\(p, sid, _), acc => markInvariantNative p sid (stripOwnership (SortedSet.singleton p) acc))
-                                variantRewritten shadowedInvariant
+                  rewritten = foldr (\(p, sid, _), acc => markInvariantNative p sid acc)
+                                (stripOwnership invariantIdsAll variantRewritten) shadowedInvariant
                   -- O(P log P) map lookup instead of a `find` (O(P)
                   -- linear scan) called once per `p` in `argIds` (O(P)
                   -- of them) -- the original was O(P^2), found via

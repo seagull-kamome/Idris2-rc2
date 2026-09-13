@@ -1158,6 +1158,38 @@ C is entirely mechanical, living in `Emit.idr`.
    hypothesis-and-remeasure cycles -- left as a followup requiring
    different tooling than used so far in this entry.
 
+   **A third fix, also with no measurable effect, further narrows this
+   down.** The `rewritten` computation originally called
+   `stripOwnership (SortedSet.singleton p)` once per invariant
+   parameter inside a `foldr` -- since `stripOwnership`'s own filtering
+   is a pure per-node set-membership check with no interaction between
+   different ids (confirmed by reading its full case-by-case
+   definition), stripping the *whole* invariant-parameter id set in one
+   call is exactly equivalent to stripping each one in sequence, just
+   without repeating the body-sized walk once per parameter. Changed
+   accordingly (`invariantIdsAll`, one `stripOwnership` call instead of
+   up to P_invariant). Correct, and a real reduction in body walks for
+   any definition with more than one invariant parameter -- but
+   re-measured on the same real program and **again found zero change**
+   in the flagged definitions' own times (`elabGetters` still ~2.06s,
+   `methName` still ~0.68s).
+
+   Three independent, individually-verified-safe fixes -- batching the
+   native-arg-type analysis, the `fullLoopParams` quadratic, and this
+   `stripOwnership` consolidation -- have now each targeted a different
+   plausible source of per-invariant-parameter or per-argument
+   repeated work, and *none* moved these specific numbers at all. This
+   is itself informative: it means the remaining cost isn't simply
+   "too many redundant O(something) walks" in any of the forms
+   `Compiler.RC2.Loop`'s own source exposes to inspection -- three
+   different reductions in walk count/complexity, applied one at a
+   time and each independently confirmed not to regress the full
+   regression suite, produced no observable change whatsoever. Further
+   "simplify `applyLoop`" attempts guided by the same kind of
+   source-reading are unlikely to fare any better without first getting
+   an actual profile of where the time really goes; recommended
+   stopping point for this line of investigation absent that tooling.
+
 ## Known limitation: native-shadow eligibility stops at bare top-level scalars
 
 Measured against a real third-party package
