@@ -1308,17 +1308,7 @@ applyLoop calleeTable self (MkRCFun args retRep isWorker body) =
          if not found
             then body'
             else
-              let nextId0 : Int
-                  nextId0 = 1 + foldl max (-1) (argIds ++ collectBoundIds body')
-                  -- TEMP DIAGNOSTIC REVERT: back to one nativeArgType/
-                  -- callArgOrOpNativeType call per parameter, to isolate
-                  -- whether the batched (tracked-set) version above is
-                  -- really what regressed `rc2: Loop conversion (apply)`
-                  -- from ~41s to ~74s on a large real program.
-                  eligible : List (Int, PrimType)
-                  eligible = mapMaybe (\p => map (\ty => (p, ty)) (nativeArgType p body')) argIds
-                  eligibleWithCallArgs : List (Int, PrimType)
-                  eligibleWithCallArgs = mapMaybe (\p => map (\ty => (p, ty)) (callArgOrOpNativeType calleeTable p body')) argIds
+              let nextId0 : Int := 1 + foldl max (-1) (argIds ++ collectBoundIds body')
                   -- Decided *before* any renaming touches body' at all
                   -- (see this module's own header note on
                   -- `invariantOpArgsThrough`/`markInvariantNative`/
@@ -1329,24 +1319,34 @@ applyLoop calleeTable self (MkRCFun args retRep isWorker body) =
                   -- reaches exactly the same answer run here, on the
                   -- original ids, as `invariantLoopParamIds` used to
                   -- reach running after renaming.
-                  invariantIdsPre : SortedSet Int
-                  invariantIdsPre = invariantLoopParamIds (map (\p => (p, RBoxed)) argIds) (collectContinueArgs body')
-                  eligibleVariant : List (Int, PrimType)
-                  eligibleVariant = filter (\(p, _) => not (contains p invariantIdsPre)) eligibleWithCallArgs
-                  eligibleInvariant : List (Int, PrimType)
-                  eligibleInvariant = filter (\(p, _) => contains p invariantIdsPre) eligible
-                  shadowedVariant : List (Int, Int, PrimType)
-                  shadowedVariant = assignShadowIds nextId0 eligibleVariant
-                  nextId1 : Int
-                  nextId1 = nextId0 + cast (length eligibleVariant)
-                  shadowedInvariant : List (Int, Int, PrimType)
-                  shadowedInvariant = assignShadowIds nextId1 eligibleInvariant
-                  nextId2 : Int
-                  nextId2 = nextId1 + cast (length eligibleInvariant)
-                  renamingVariant : Renaming
-                  renamingVariant = fromList $ map (\(p, sid, _) => (p, sid)) shadowedVariant
-                  shadowIdsVariant : SortedSet Int
-                  shadowIdsVariant = fromList $ map (\(_, sid, _) => sid) shadowedVariant
+                  invariantIdsPre : SortedSet Int := invariantLoopParamIds (map (\p => (p, RBoxed)) argIds) (collectContinueArgs body')
+                  -- One `nativeArgType`/`callArgOrOpNativeType` call per
+                  -- parameter (not batched across `argIds` -- see this
+                  -- module's own "Batched, multi-id native-type
+                  -- analysis" section for why a batched version was
+                  -- tried here and reverted). Variant parameters get the
+                  -- richer, call-argument-aware eligibility
+                  -- (`callArgOrOpNativeType`); invariant ones
+                  -- deliberately don't (see this function's own doc
+                  -- comment above for why) -- each list folds its own
+                  -- `invariantIdsPre` membership check directly into the
+                  -- same `mapMaybe` pass rather than a separate `filter`
+                  -- afterwards, since nothing else ever reads the
+                  -- unfiltered eligibility list.
+                  eligibleVariant : List (Int, PrimType) := mapMaybe (\p => if contains p invariantIdsPre
+                                                                                then Nothing
+                                                                                else map (\ty => (p, ty)) (callArgOrOpNativeType calleeTable p body'))
+                                                                      argIds
+                  eligibleInvariant : List (Int, PrimType) := mapMaybe (\p => if contains p invariantIdsPre
+                                                                                  then map (\ty => (p, ty)) (nativeArgType p body')
+                                                                                  else Nothing)
+                                                                        argIds
+                  shadowedVariant : List (Int, Int, PrimType) := assignShadowIds nextId0 eligibleVariant
+                  nextId1 : Int := nextId0 + cast (length eligibleVariant)
+                  shadowedInvariant : List (Int, Int, PrimType) := assignShadowIds nextId1 eligibleInvariant
+                  nextId2 : Int := nextId1 + cast (length eligibleInvariant)
+                  renamingVariant : Renaming := fromList $ map (\(p, sid, _) => (p, sid)) shadowedVariant
+                  shadowIdsVariant : SortedSet Int := fromList $ map (\(_, sid, _) => sid) shadowedVariant
                   -- Every eligible *variant* parameter still gets the
                   -- original blanket treatment (every occurrence,
                   -- native and Boxed alike, redirected to the shadow) --
@@ -1379,7 +1379,6 @@ applyLoop calleeTable self (MkRCFun args retRep isWorker body) =
                   -- per invariant parameter (found while profiling a
                   -- real program -- see `rc2/doc/loop-conversion.md`'s
                   -- "Bugs found and fixed" #7's own follow-up).
-                  invariantIdsAll : SortedSet Int
                   invariantIdsAll = SortedSet.fromList $ map (\(p, _, _) => p) shadowedInvariant
                   rewritten : RCExp
                   rewritten = foldr (\(p, sid, _), acc => markInvariantNative p sid acc)
@@ -1416,11 +1415,8 @@ applyLoop calleeTable self (MkRCFun args retRep isWorker body) =
                                    (zip argIds (map fst fullLoopParams))
                   loopParams : List (Int, Rep)
                   loopParams = filter (\(p, _) => not (contains p invariantIds)) fullLoopParams
-                  initial : List RCLocal
-                  initial = map snd $ filter (\((p, _), _) => not (contains p invariantIds))
-                                              (zip fullLoopParams (map RCLoc argIds))
                   finalBody : RCExp
-                  finalBody = if null (Prelude.toList invariantIds)
+                  finalBody = if null invariantIds
                                  then withPostDrop
                                  else elideInvariantContinueArgs invariantIds fullLoopParams withPostDrop
                   -- Every *still-loop-carried* shadowed param's own
@@ -1444,16 +1440,19 @@ applyLoop calleeTable self (MkRCFun args retRep isWorker body) =
                   -- hoisted -- by this pass or the one above), so that
                   -- set alone is the right seed with nothing further to
                   -- compute.
-                  hoistResult : (List (Int, Rep, RCExp), RCExp)
-                  hoistResult = hoistInvariantPrefix (fromList (map fst loopParams)) finalBody
-                  hoistedExprs : List (Int, Rep, RCExp)
-                  hoistedExprs = fst hoistResult
-                  finalBody2 : RCExp
-                  finalBody2 = snd hoistResult
+                  hoistResult : (List (Int, Rep, RCExp), RCExp) := hoistInvariantPrefix (fromList (map fst loopParams)) finalBody
+
+                  -- `fst`/`snd hoistResult` each read exactly once
+                  -- below, so no separate `hoistedExprs`/`finalBody2`
+                  -- names -- just the two projections inline.
+                  initial : List RCLocal
+                  initial = map snd $ filter (\((p, _), _) => not (contains p invariantIds))
+                                              (zip fullLoopParams (map RCLoc argIds))
                   innerLoop : RCExp
-                  innerLoop = RLoop emptyFC loopParams initial prologueDrop finalBody2
+                  innerLoop = RLoop emptyFC loopParams initial prologueDrop (snd hoistResult)
+
                   withHoistedExprs : RCExp
-                  withHoistedExprs = foldr (\(var, rep, value), acc => RLet emptyFC var rep value acc) innerLoop hoistedExprs
+                  withHoistedExprs = foldr (\(var, rep, value), acc => RLet emptyFC var rep value acc) innerLoop (fst hoistResult)
                   -- Wrap each native-shadow-promoted invariant parameter
                   -- with its own one-time `RLet`: if no Boxed-context
                   -- occurrence of `p` survived `markInvariantNative`
