@@ -13,6 +13,7 @@ without modifying) an upstream Idris2 checkout used only as a reference.
 ├── idris2-src/      reference clone of github.com/idris-lang/Idris2 (gitignored, untouched)
 ├── install/         local install prefix for the rc2 package + runtime (gitignored, build output)
 ├── libs/rc2base/    companion support-library package -- see libs/rc2base/ below
+├── libs/text-re2/   sibling package for RE2 regex bindings, split out of rc2base -- see libs/text-re2/ below
 └── rc2/             the actual deliverable -- see rc2/ below
 ```
 
@@ -31,6 +32,7 @@ rc2/
 ├── rc2.ipkg           Idris2 package: builds the idris2-rc2 executable
 ├── src/Compiler/RC2/
 │   ├── RCExp.idr        the IR: ANF-normalized, ownership-annotated expressions
+│   ├── Util.idr         small, dependency-light helpers shared across two or more passes (leaf-level, no import cycles)
 │   ├── RC.idr           Lifted -> RCExp: Phase 1 normalize, Phase 2 annotate (dup/drop/free insertion)
 │   ├── Types.idr        native/boxed representation inference (Rep)
 │   ├── Inline.idr       whole-program inlining (lets comparison fusion reach through a call)
@@ -41,6 +43,8 @@ rc2/
 │   ├── Loop.idr         self-tail-call -> goto, native-shadow/loop-invariant param+expr promotion
 │   ├── Sink.idr         branch-local sinking: a let used on one arm only moves into it
 │   ├── DualABI.idr      dual (Boxed/native) calling convention across function boundaries
+│   ├── DeadCode.idr     whole-program mark-and-sweep dead-code elimination (pipeline's last IR-level stage)
+│   ├── DupMerge.idr     merges several RDup nodes on the same variable in one straight-line region into one batched call
 │   ├── Emit.idr         RCExp -> C emission (mechanical; no ownership decisions here)
 │   ├── Emit/Util.idr        C-rendering primitives used by Emit.idr (name mangling, literal/op
 │   │                        rendering, Boxed/native value rendering, closures, FFI CFType mapping)
@@ -132,24 +136,39 @@ that porting/writing those tests surfaced.
 
 ```
 libs/rc2base/
-├── rc2base.ipkg   Idris2 package: Data.Text/Data.TextBuffer, Data.Buffer.RC2, Data.Double.RC2,
-│                  Data.Integer.GMP, Data.String.FFI, System.Concurrency.RC2,
-│                  System.FFI.C.{Array,Ptr,Sizeof}, System.IO.MemStream,
-│                  System.Random.Xoroshiro{128PlusPlus,64StarStar}
+├── rc2base.ipkg   Idris2 package: Data.Text/Data.TextBuffer, Data.String.{FFI,RC2}, Data.Buffer.RC2,
+│                  Data.Double.RC2, Data.Integer.GMP,
+│                  Network.{RC2,URL}, Network.HTTP.{Route,Router,Server},
+│                  System.Concurrency.RC2, System.FFI.C.{Array,Ptr,Sizeof},
+│                  System.GC.RC2, System.IO.MemStream, System.Net.Epoll,
+│                  System.Random.Xoroshiro{128PlusPlus,64StarStar},
+│                  Text.Encoding.UTF8, Text.Regex.POSIX
 ├── src/           the above modules' own Idris2 source
-├── support/c/     the C shim (libidris2text.a) backing Data.Text, built via prebuild/postinstall hooks
-└── tests/         TestText.idr etc., run against rc2 directly (see its own README's "Build & test")
+├── support/c/     the C shim (libidris2rc2base.a) backing most of the above, built via prebuild/postinstall hooks
+├── doc/           design notes for the larger pieces (http-router.md, http-server.md, regex-posix.md, url.md)
+└── tests/         one TestX.idr per module, run against rc2 directly (verify.sh, mirroring rc2/tests/'s own)
 ```
 
-A companion support-library package providing what upstream's own
-`base`/`contrib` either lack entirely (a UTF-8-aware `Data.Text` type,
-distinct from codepoint-indexed `String`) or only partially serve for
-rc2's own native-C-ABI needs (`Data.Integer.GMP`'s own `mpz_t` FFI
-wrapper, `System.Concurrency.RC2`'s real OS-thread/mutex primitives,
-two from-scratch `System.Random` replacements for upstream primitives
-rc2 has no C backend for -- see `TODO.md`'s "Upstream stdlib
-`%foreign` declarations with no C/RefC backend at all" entry). See
-`libs/rc2base/README.md` for the full module-by-module rationale.
+A companion support-library package that started as just a UTF-8-aware
+`Data.Text` type (distinct from codepoint-indexed `String`) and has
+grown into rc2's general native-C-ABI toolkit: what upstream's own
+`base`/`contrib` either lack entirely, or only partially serve for
+rc2's own needs. Besides the original `Data.Text`/`Data.Integer.GMP`
+(`mpz_t` FFI)/`System.Concurrency.RC2` (real OS-thread/mutex
+primitives)/`System.Random` (two from-scratch replacements for
+upstream primitives rc2 has no C backend for -- see `TODO.md`'s
+"Upstream stdlib `%foreign` declarations with no C/RefC backend at
+all" entry), it now also has a small event-driven HTTP/1.1 server
+(`Network.HTTP.Server`, on `System.Net.Epoll`) with a type-safe,
+Express-style router (`Network.HTTP.Route`/`Router`), URL parsing
+(`Network.URL`), POSIX `<regex.h>` bindings (`Text.Regex.POSIX` --
+RE2 bindings instead live in the sibling `libs/text-re2/` package, see
+below), raw UTF-8-byte<->codepoint transforms for when you're holding
+byte offsets instead of rc2's usual codepoint-wise `String` view
+(`Text.Encoding.UTF8`), and direct access to rc2's own refcounting
+primitives for values smuggled through an opaque FFI pointer
+(`System.GC.RC2`). See `libs/rc2base/README.md` for the full
+module-by-module rationale.
 
 Build & install (from the repo root, against this repo's own `rc2`):
 
@@ -163,10 +182,36 @@ export IDRIS2_PREFIX="$(pwd)/libs/rc2base/.local-install"
 (`-p rc2base`, e.g. `Test54FFIInteger`'s own `Data.Integer.GMP` usage),
 so a normal `verify.sh` run implicitly builds and exercises it -- see
 `libs/rc2base/README.md`'s own "Build & test" section for running its
-dedicated `tests/TestText.idr` directly, and its "Native library
-install location" section for why the `postinstall` hook's `lib/` copy
+own `tests/verify.sh` (one `TestX.idr`/`.expected` pair per module)
+directly, and its "Native library install location" section for why
+the `postinstall` hook's `lib/` copy
 step matters specifically for rc2 (unlike Chez/Racket, it never
 auto-discovers a dependency's own `lib/` directory).
+
+### `libs/text-re2/`
+
+```
+libs/text-re2/
+├── text-re2.ipkg   Idris2 package: Text.Regex.RE2
+├── src/            the above module's own Idris2 source
+├── support/c/      the C++ shim (re2_util.cpp, libidris2rc2re2.so) backing it
+├── doc/regex.md    why this is its own package, not part of rc2base
+└── tests/          TestRE2.idr, run against rc2 directly
+```
+
+Bindings to Google's [RE2](https://github.com/re2) regex engine.
+Split out of `rc2base` into its own package specifically to keep
+`rc2base` on a plain C toolchain (`gcc`/`ar`): RE2's own API is C++,
+and `pkg-config --libs re2` expands to dozens of abseil `-l` flags no
+single `%foreign` `lib` field can name, so this package's own shim is
+compiled with `g++` and linked into its own `libidris2rc2re2.so`
+instead. Only a program that actually `import`s `Text.Regex.RE2` needs
+`re2`/`pkg-config`/`g++` on `PATH` at all -- `Text.Regex.POSIX` (in
+`rc2base`, libc-only, no external dependency) covers the common case.
+See `libs/text-re2/README.md` and its own `doc/regex.md` for the full
+rationale and build/install steps (the same `IDRIS2_PREFIX`/
+`IDRIS2_PACKAGE_PATH`/`IDRIS2_CFLAGS`/`IDRIS2_LDFLAGS` dance as
+`libs/rc2base/` above, against its own `.local-install`).
 
 ## Building and running
 
@@ -214,11 +259,14 @@ Upstream Idris2's own `--timing N` flag (no rc2-specific flag needed) shows
 build performance: `--timing 1` gives the "Code generation overall" total
 already shown by the upstream `Compiler.Common` wrapper, while `--timing 2`
 additionally breaks that total down into rc2's own pipeline stages (inline,
-RC annotate/reuse/ConAltNative, mutual loop, loop conversion, sink, dual
-ABI, C generation, C compile, C link), each labelled `rc2: <stage>`. A stage
-disabled via `--directive no<stagename>` (see `rc2/doc/directives.md`
-and `verify.sh`'s `--directive` flag below) simply has no timing line,
-rather than showing a spurious zero-duration entry.
+RC normalize, ConstFold, CAF memoization, RC annotate/reuse/ConAltNative,
+mutual loop, loop conversion, sink, dual ABI, dead-code elimination, dup
+merge, C generation, C compile, C link), each labelled `rc2: <stage>`; a
+couple of the heavier stages (inline, loop conversion) further break down
+into their own named sub-phases at `--timing 3`. A stage disabled via
+`--directive no<stagename>` (see `rc2/doc/directives.md` and `verify.sh`'s
+`--directive` flag below) simply has no timing line, rather than showing a
+spurious zero-duration entry.
 
 ## Testing
 
@@ -483,7 +531,8 @@ reuse-in-place, native type inference (function-local and, via a dual
 calling convention, across ordinary call boundaries), self- and
 mutual-tail-call loop conversion with loop-invariant parameter/
 expression hoisting, branch-local sinking, whole-program inlining,
-constant folding, CAF memoization (a real behavioral fix over upstream
+constant folding, whole-program dead-code elimination, dup-batching,
+CAF memoization (a real behavioral fix over upstream
 RefC, not just a gap RefC never had -- see above), incremental
 compilation (see above), and `Data.Buffer`/`System.Clock`/the standard
 `network` package (rc2's own native `idrnet_*` port). See `TODO.md` for

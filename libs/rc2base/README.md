@@ -1,11 +1,45 @@
 # rc2base
 
-A `Data.Text` type wrapping a UTF-8-derived codepoint buffer, backed by
-a small C shim (`support/c/text_util.c`, built into
-`support/c/libidris2text.a` via the package's own `prebuild` hook).
-`idris2 --install` doesn't know about that `.a`/its header on its own
+rc2's general-purpose support-library package: whatever upstream's own
+`base`/`contrib` either lack entirely or only partially serve for
+rc2's own native-C-ABI needs. Started as just a `Data.Text` type
+wrapping a UTF-8-derived codepoint buffer; has since grown a small
+event-driven HTTP/1.1 server and router, URL parsing, POSIX regex
+bindings, GMP `Integer` bindings, two from-scratch PRNGs, raw
+pointer/array/buffer FFI helpers, and more. Everything backed by a
+small set of C shims under `support/c/`, all linked into one combined
+`support/c/libidris2rc2base.a` via the package's own `prebuild` hook.
+`idris2 --install` doesn't know about that `.a`/its headers on its own
 -- see the "Native library install location" section below for how
 (and where) they end up in an installed copy of this package.
+
+## Modules
+
+| Module | What it's for |
+| --- | --- |
+| `Data.Text`/`Data.TextBuffer` | UTF-8-derived codepoint buffer -- see "API" below |
+| `Data.String.FFI` | patches upstream `Data.String` `%foreign` gaps -- see `TODO.md` |
+| `Data.String.RC2` | byte-offset `String` slicing, for when a span isn't codepoint-aligned -- see below |
+| `Data.Buffer.RC2` | patches the five upstream `Data.Buffer` primitives with no C backend -- see below |
+| `Data.Double.RC2` | patches upstream `Data.Double`'s `unitRoundoff`/`epsilon`/`nan`/`inf` -- see below |
+| `Data.Integer.GMP` | direct `%foreign` bindings onto real GMP `mpz_*` functions -- see below |
+| `Network.RC2` | binary-safe offset+length socket IO into/out of a `Data.Buffer` |
+| `Network.URL` | URL parse/build and percent-encoding -- see below |
+| `Network.HTTP.Route`/`Router` | type-safe route table on top of `Network.HTTP.Server` -- see below |
+| `Network.HTTP.Server` | minimal single-threaded, `epoll`-driven HTTP/1.1 server -- see below |
+| `System.Concurrency.RC2` | real pthread-backed `Mutex`/`Condition`/`Semaphore`/`Barrier`/`Channel`/joinable `forkJoin` -- see the top-level `README.md`'s own "Concurrency" section for the full design |
+| `System.FFI.C.Array` | a `malloc`'d, GC-freed, `Fin`-bounds-checked fixed-length array |
+| `System.FFI.C.Ptr` | raw, unchecked element-indexed fetch/store into a `Ptr`/`GCPtr` region |
+| `System.FFI.C.Sizeof` | the C `sizeof` of a scalar type, for hand-rolled buffer strides/offsets |
+| `System.GC.RC2` | raw access to rc2's own `idris2rc2_dup`/`dup_n`/`drop`, for a value smuggled out through an opaque FFI pointer |
+| `System.IO.MemStream` | an in-memory `FILE *` capture stream (POSIX `open_memstream`), for redirecting a C API's "write to this FILE*" option into memory |
+| `System.Net.Epoll` | thin `epoll` FFI wrapper backing `Network.HTTP.Server`'s event loop |
+| `System.Random.Xoroshiro128PlusPlus`/`Xoroshiro64StarStar` | two from-scratch PRNG ports -- see below |
+| `Text.Encoding.UTF8` | UTF-8 bytes <-> codepoints, pure `List` transforms -- see below |
+| `Text.Regex.POSIX` | bindings to libc `<regex.h>` -- see below |
+
+(`Text.Regex.RE2` used to live here too -- see "Regular expressions
+with RE2: `text-re2`" at the bottom for where it went and why.)
 
 ## Build & test
 
