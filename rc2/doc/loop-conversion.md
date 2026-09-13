@@ -1190,6 +1190,65 @@ C is entirely mechanical, living in `Emit.idr`.
    an actual profile of where the time really goes; recommended
    stopping point for this line of investigation absent that tooling.
 
+   **Found anyway -- the real cause was never in any of those
+   complexity classes at all.** `applyLoop`'s own `let`-bindings were
+   written in Idris2's two-line `name : Ty` / `name = value` form
+   throughout. That form is not a plain shared `let`-binding: per
+   `Idris.Parser.idr`'s own `letBlock` (`letBinder <||> letDecl`), a
+   binding whose declaration and definition sit on two separate lines
+   can only parse via the `letDecl` alternative -- a genuine *local
+   function* declaration (the same machinery a `where` clause's own
+   definitions go through), not `letBinder`'s single-clause `name [:
+   Ty] (= | := ) value` form (confirmed by reading the grammar directly
+   -- `=` and `:=` parse identically there). A 0-argument local
+   function referenced more than once has no guarantee of being
+   evaluated exactly once and shared; each reference can re-invoke it.
+   `applyLoop` has roughly two dozen such bindings, several referenced
+   from multiple places downstream (`shadowedVariant`,
+   `shadowedInvariant`, `fullLoopParams`, `invariantIds`, ...) -- if
+   Idris2 (or the Chez backend this compiler is itself bootstrapped
+   through) doesn't memoize these, every reference recomputes not just
+   that one binding but transitively everything it depends on,
+   compounding across the whole chain regardless of `P` or `B` --
+   exactly the shape that made three independent, correctly-reasoned
+   complexity fixes (batching, the `fullLoopParams` O(P^2), the
+   `stripOwnership` consolidation) all measure as *no change whatsoever*:
+   each fixed a real inefficiency in the *value being computed*, none
+   touched *how many times it got computed*.
+
+   **Fix**: rewrite the two-line form as a single `name : Ty := value`
+   clause (`letBinder`'s own form), which cannot be mistaken for a
+   local function declaration. Converted `applyLoop`'s most heavily-
+   referenced bindings this way: `nextId0`, `eligibleVariant`,
+   `eligibleInvariant`, `hoistResult`. (`letBinder` doesn't accept a
+   trailing `where` clause -- `wrapInvariantShadows`'s own
+   `wrapOneInvariant` helper, a genuine multi-argument pattern-matching
+   function, stayed in ordinary local-function form, correctly, since
+   it's not a plain value binding to begin with.)
+
+   Verified on the same real program: `rc2: Loop conversion` dropped
+   from ~44s to ~0.65s, with the per-definition `logTimeOver`
+   diagnostic (added earlier in this same investigation) no longer
+   flagging *any* definition at all -- not `elabGetters`, not
+   `mkRHSargs`, not any of the `{rc2_mutualLoop:N}` dispatchers. One
+   evaluation-model fix resolved every single one of the mystery cases
+   the previous three complexity-focused attempts had failed to touch.
+
+   **Caution found alongside this, from direct experience converting
+   many bindings at once**: Idris2's own elaborator (the "frontend"
+   compiling `Compiler.RC2.Loop` itself, not anything `Compiler.RC2.Loop`
+   emits) appears to have a real performance cliff of its own tied to
+   the number and/or shape of `:=` bindings in one `let` block --
+   converting roughly two dozen bindings in a single pass caused the
+   `idris2 --build` elaboration step itself to blow up to 14+ GB RSS
+   and had to be killed. The fix above only converts the handful of
+   bindings actually referenced more than once (which is also all that
+   was ever needed for the sharing problem itself); the remaining
+   single-reference bindings were deliberately left in their original
+   two-line form rather than converted wholesale. Anyone extending this
+   further should convert a few bindings at a time and rebuild after
+   each batch, not all at once.
+
 ## Known limitation: native-shadow eligibility stops at bare top-level scalars
 
 Measured against a real third-party package
