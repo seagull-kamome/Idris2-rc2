@@ -116,7 +116,7 @@ mutual
       let idx  = nextIndex st0
           st1  = MkTState (insert v idx (index st0)) (insert v idx (lowlink st0))
                           (SortedSet.insert v (onStack st0)) (v :: stack st0) (sccs st0) (idx + 1)
-          succs = maybe [] SortedSet.toList (lookup v graph)
+          succs = maybe [] Prelude.toList (lookup v graph)
           st2  = foldl (visitSucc graph v) st1 succs
           vIdx = fromMaybe idx (lookup v (index st2))
           vLow = fromMaybe idx (lookup v (lowlink st2))
@@ -183,9 +183,10 @@ buildGroup : {auto r : Ref FreshId Int}
           -> List Name
           -> Core (List (Name, RCDef))
 buildGroup existingNames memberDefs groupNames = do
-    -- Deterministic order (SortedSet.toList is sorted by `Ord Name`),
-    -- so tag assignment doesn't depend on SCC-traversal order.
-    let ordered = SortedSet.toList (SortedSet.fromList groupNames)
+    -- Deterministic order (SortedSet's own Foldable, Prelude.toList,
+    -- is sorted by `Ord Name`), so tag assignment doesn't depend on
+    -- SCC-traversal order.
+    let ordered = Prelude.toList (SortedSet.fromList groupNames)
     members <- the (Core (List (Name, (List Int, RCExp)))) $
                  traverse (\n => case lookup n memberDefs of
                                       Just def => pure (n, def)
@@ -224,7 +225,7 @@ buildGraph : SortedMap Name (List Int, RCExp) -> Graph
 buildGraph memberDefs =
     let allNames = SortedSet.fromList (map (\(n, _) => n) (SortedMap.toList memberDefs))
     in fromList $ map (\(n, (_, body)) =>
-           (n, SortedSet.fromList (filter (\t => contains t allNames) (SortedSet.toList (tailCallTargets body)))))
+           (n, SortedSet.fromList (filter (\t => contains t allNames) (Prelude.toList (tailCallTargets body)))))
          (SortedMap.toList memberDefs)
 
 ||| Whole-program pass: finds every group (size >= 2) of mutually
