@@ -50,7 +50,6 @@ import Data.Vect
 -- Tail-call target collection (read-only sibling of Compiler.RC2.Loop's
 -- `mapTailAppNames`, over the exact same structural notion of "tail
 -- position" -- see its own doc comment for why the two must agree).
-
 tailCallTargets : RCExp -> SortedSet Name
 tailCallTargets (RAppName fc Nothing n _) = singleton n
 tailCallTargets (RLet _ _ _ _ body) = tailCallTargets body
@@ -97,48 +96,9 @@ record TState where
   -- discovered node, is the standard O(1)-per-assignment approach.
   nextIndex : Nat
 
-initTState : TState
+total initTState : TState
 initTState = MkTState empty empty empty [] [] 0
 
-||| Pop `stack` down to and including `v`; returns (that component's
-||| members, the remaining stack).
-popUntil : Name -> List Name -> (List Name, List Name)
-popUntil v [] = ([], [])
-popUntil v (x :: xs) =
-    if x == v
-       then ([x], xs)
-       else let (popped, rest) = popUntil v xs
-            in (x :: popped, rest)
-
-mutual
-  strongConnect : Graph -> Name -> TState -> TState
-  strongConnect graph v st0 =
-      let idx  = nextIndex st0
-          st1  = MkTState (insert v idx (index st0)) (insert v idx (lowlink st0))
-                          (SortedSet.insert v (onStack st0)) (v :: stack st0) (sccs st0) (idx + 1)
-          succs = maybe [] Prelude.toList (lookup v graph)
-          st2  = foldl (visitSucc graph v) st1 succs
-          vIdx = fromMaybe idx (lookup v (index st2))
-          vLow = fromMaybe idx (lookup v (lowlink st2))
-      in if vLow == vIdx
-            then let (comp, rest) = popUntil v (stack st2)
-                     onStack' = foldl (flip SortedSet.delete) (onStack st2) comp
-                 in MkTState (index st2) (lowlink st2) onStack' rest (comp :: sccs st2) (nextIndex st2)
-            else st2
-
-  visitSucc : Graph -> Name -> TState -> Name -> TState
-  visitSucc graph v st w =
-      case lookup w (index st) of
-           Nothing =>
-             let st' = strongConnect graph w st
-                 wLow = fromMaybe 0 (lookup w (lowlink st'))
-                 vLow = fromMaybe 0 (lookup v (lowlink st'))
-             in MkTState (index st') (insert v (min vLow wLow) (lowlink st')) (onStack st') (stack st') (sccs st') (nextIndex st')
-           Just wIdx =>
-             if contains w (onStack st)
-                then let vLow = fromMaybe 0 (lookup v (lowlink st))
-                     in MkTState (index st) (insert v (min vLow wIdx) (lowlink st)) (onStack st) (stack st) (sccs st) (nextIndex st)
-                else st
 
 ||| Each SCC is prepended as it's found, so a caller's own component
 ||| ends up *earlier* in the result than a callee's -- reverse the list
@@ -146,36 +106,45 @@ mutual
 export
 tarjanSCCs : Graph -> List (List Name)
 tarjanSCCs graph =
-    let allNames = map (\(n, _) => n) (SortedMap.toList graph)
-        final = foldl (\st, v => if isJust (lookup v (index st)) then st else strongConnect graph v st) initTState allNames
-    in sccs final
+    sccs $ foldl (\st, v => if isJust (lookup v (index st)) then st else strongConnect graph v st) initTState $ keys graph
+  where
+    ||| Pop `stack` down to and including `v`; returns (that component's
+    ||| members, the remaining stack).
+    total popUntil : Name -> List Name -> (List Name, List Name)
+    popUntil v [] = ([], [])
+    popUntil v (x :: xs) =
+        if x == v
+        then ([x], xs)
+        else let (popped, rest) = popUntil v xs
+              in (x :: popped, rest)
+    visitSucc : Graph -> Name -> TState -> Name -> TState
+    strongConnect : Graph -> Name -> TState -> TState
+    strongConnect graph v st0 =
+        let idx  = nextIndex st0
+            st1  = MkTState (insert v idx (index st0)) (insert v idx (lowlink st0))
+                            (SortedSet.insert v (onStack st0)) (v :: stack st0) (sccs st0) (idx + 1)
+            st2  = maybe st1 (foldl (visitSucc graph v) st1) $ lookup v graph
+        in if (lookup v (lowlink st2)) == (lookup v (index st2))
+            then let (comp, rest) = popUntil v (stack st2)
+                     onStack' = foldl (flip SortedSet.delete) (onStack st2) comp
+                  in MkTState (index st2) (lowlink st2) onStack' rest (comp :: sccs st2) (nextIndex st2)
+            else st2
+
+    visitSucc graph v st w =
+        case lookup w (index st) of
+            Nothing =>
+                let st' = strongConnect graph w st
+                    wLow = fromMaybe 0 (lookup w (lowlink st'))
+                    vLow = fromMaybe 0 (lookup v (lowlink st'))
+                in MkTState (index st') (insert v (min vLow wLow) (lowlink st')) (onStack st') (stack st') (sccs st') (nextIndex st')
+            Just wIdx =>
+                if contains w (onStack st)
+                then let vLow = fromMaybe 0 (lookup v (lowlink st))
+                        in MkTState (index st) (insert v (min vLow wIdx) (lowlink st)) (onStack st) (stack st) (sccs st) (nextIndex st)
+                else st
 
 ------------------------------------------------------------------------
 -- Synthesising one merged group.
-
--- `FreshId`/`freshId` now live in `Compiler.RC2.Util`.
-
-freshName : {auto r : Ref FreshId Int} -> SortedSet Name -> Core Name
-freshName existing = do
-    i <- freshId
-    let cand = MN "rc2_mutualLoop" i
-    if contains cand existing then freshName existing else pure cand
-
-||| Rewrite every tail-position call (self- or cross-member alike)
-||| within an already-renamed member body into a tail call to the
-||| merged function itself, carrying the target's tag and (padded)
-||| arguments -- see the module note's ownership/invariant discussion
-||| for why no extra drop/pad-related bookkeeping is needed here beyond
-||| this substitution.
-rewriteGroupTailCalls : Name -> Nat -> SortedMap Name Int -> RCExp -> RCExp
-rewriteGroupTailCalls mergedName maxArity tagOf body =
-    snd $ mapTailAppNames
-        (\fc, n, args =>
-            case lookup n tagOf of
-                 Nothing => Nothing
-                 Just t => Just $ RAppName fc Nothing mergedName $
-                             RCConst (I64 (cast t)) :: args ++ replicate (maxArity `minus` length args) RCNull)
-        body
 
 buildGroup : {auto r : Ref FreshId Int}
           -> SortedSet Name
@@ -191,14 +160,8 @@ buildGroup existingNames memberDefs groupNames = do
                  traverse (\n => case lookup n memberDefs of
                                       Just def => pure (n, def)
                                       Nothing => throw $ InternalError "[rc2] MutualLoop: SCC member not found") ordered
-    let maxArity : Nat
-        maxArity = foldl (\acc, (_, (args, _)) => max acc (length args)) 0 members
-    let memberNames : List Name
-        memberNames = map (\(n, _) => n) members
-    let tagList : List Int
-        tagList = map (\i => the Int (cast i)) [0 .. length members `minus` 1]
-    let tagOf : SortedMap Name Int
-        tagOf = SortedMap.fromList (zip memberNames tagList)
+    let maxArity = foldl (\acc, (_, (args, _)) => max acc (length args)) Z members
+    let tagOf : SortedMap Name Int := SortedMap.fromList (zip (map (\(n, _) => n) members) [0 .. cast{to=Int} (length members `minus` 1)])
     mergedName <- freshName existingNames
     tagId <- freshId
     slotIds <- traverse (const freshId) (replicate maxArity ())
@@ -220,13 +183,28 @@ buildGroup existingNames memberDefs groupNames = do
                             (RAppName EmptyFC Nothing mergedName (RCConst (I64 (cast tag_i)) :: padded))))
                     members
     pure ((mergedName, mergedDef) :: wrappers)
+  where
+    freshName : {auto r : Ref FreshId Int} -> SortedSet Name -> Core Name
+    freshName existing = do
+        let cand = MN "rc2_mutualLoop" !(freshId{r})
+        if contains cand existing
+           then freshName{r} existing else pure cand
 
-buildGraph : SortedMap Name (List Int, RCExp) -> Graph
-buildGraph memberDefs =
-    let allNames = SortedSet.fromList (map (\(n, _) => n) (SortedMap.toList memberDefs))
-    in fromList $ map (\(n, (_, body)) =>
-           (n, SortedSet.fromList (filter (\t => contains t allNames) (Prelude.toList (tailCallTargets body)))))
-         (SortedMap.toList memberDefs)
+    ||| Rewrite every tail-position call (self- or cross-member alike)
+    ||| within an already-renamed member body into a tail call to the
+    ||| merged function itself, carrying the target's tag and (padded)
+    ||| arguments -- see the module note's ownership/invariant discussion
+    ||| for why no extra drop/pad-related bookkeeping is needed here beyond
+    ||| this substitution.
+    rewriteGroupTailCalls : Name -> Nat -> SortedMap Name Int -> RCExp -> RCExp
+    rewriteGroupTailCalls mergedName maxArity tagOf body =
+        snd $ mapTailAppNames
+            (\fc, n, args =>
+                case lookup n tagOf of
+                    Nothing => Nothing
+                    Just t => Just $ RAppName fc Nothing mergedName $
+                                RCConst (I64 (cast t)) :: args ++ replicate (maxArity `minus` length args) RCNull)
+            body
 
 ||| Whole-program pass: finds every group (size >= 2) of mutually
 ||| tail-recursive functions and replaces them with one synthesised
@@ -251,3 +229,10 @@ applyMutualLoop defs = do
     let mergedMemberNames = SortedSet.fromList (concat groups)
     let untouched = filter (\(n, _) => not (contains n mergedMemberNames)) defs
     pure (untouched ++ newDefs)
+  where
+    buildGraph : SortedMap Name (List Int, RCExp) -> Graph
+    buildGraph memberDefs =
+        let allNames = SortedSet.fromList (map (\(n, _) => n) (SortedMap.toList memberDefs))
+        in fromList $ map (\(n, (_, body)) =>
+            (n, SortedSet.fromList (filter (\t => contains t allNames) (Prelude.toList (tailCallTargets body)))))
+            (SortedMap.toList memberDefs)
