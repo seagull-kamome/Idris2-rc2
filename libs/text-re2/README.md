@@ -26,15 +26,16 @@ idris2 --build text-re2.ipkg
 ```
 
 Against `idris2-rc-cg`'s own `rc2` backend (`libs/text-re2` lives inside
-`idris2-rc-cg`, so no cross-repo `env.sh` juggling):
+`idris2-rc-cg`, so no cross-repo `env.sh` juggling). Install into the
+*same* `install/` prefix rc2 itself uses -- already first on `env.sh`'s
+own `IDRIS2_PACKAGE_PATH`, so no separate package-path setup is needed:
 ```sh
 cd idris2-rc-cg            # repo root
 source ./env.sh
-export IDRIS2_PREFIX="$(pwd)/libs/text-re2/.local-install"
+export IDRIS2_PREFIX="$(pwd)/install"
 (cd libs/text-re2 && idris2 --install text-re2.ipkg)
 
-INSTALLED_LIB="$(pwd)/libs/text-re2/.local-install/idris2-0.8.0/text-re2-0.1.0/lib"
-export IDRIS2_PACKAGE_PATH="$IDRIS2_PACKAGE_PATH:$(pwd)/libs/text-re2/.local-install/idris2-0.8.0"
+INSTALLED_LIB="$(pwd)/install/idris2-0.8.0/text-re2-0.1.0/lib"
 export IDRIS2_CFLAGS="-I$INSTALLED_LIB"
 export IDRIS2_LDFLAGS="-L$INSTALLED_LIB"
 ./rc2/build/exec/idris2-rc2 --cg rc2 -p text-re2 -o TestRE2 libs/text-re2/tests/TestRE2.idr

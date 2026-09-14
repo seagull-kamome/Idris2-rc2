@@ -213,8 +213,8 @@ instead. Only a program that actually `import`s `Text.Regex.RE2` needs
 `rc2base`, libc-only, no external dependency) covers the common case.
 See `libs/text-re2/README.md` and its own `doc/regex.md` for the full
 rationale and build/install steps (the same `IDRIS2_PREFIX`/
-`IDRIS2_PACKAGE_PATH`/`IDRIS2_CFLAGS`/`IDRIS2_LDFLAGS` dance as
-`libs/rc2base/` above, against its own `.local-install`).
+`IDRIS2_CFLAGS`/`IDRIS2_LDFLAGS` dance as `libs/rc2base/` above,
+installed into the same shared `install/` prefix).
 
 ## Building and running
 
