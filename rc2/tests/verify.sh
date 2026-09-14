@@ -216,14 +216,11 @@ source "$SCRIPT_DIR/build-lock.sh"
 # conversion -- so this pin only affects regex / strftime / strerror.)
 export LC_ALL=C.UTF-8
 
-# libs/rc2base isn't one of nixpkgs' own idris2 packages env.sh's own
-# generator (gen-env.sh) draws from -- it's this repo's own local
-# package, installed once by hand into its own local prefix (see
-# libs/rc2base/README.md's "Build & test" section for the exact
-# recipe this mirrors) -- so it's appended here rather than checked
-# into env.sh itself, which gen-env.sh would just overwrite on its
-# next run.
-export IDRIS2_PACKAGE_PATH="$IDRIS2_PACKAGE_PATH:$REPO_DIR/libs/rc2base/.local-install/idris2-0.8.0"
+# libs/rc2base is installed by hand, once, into this repo's own
+# install/ prefix (see the top-level README.md's "Building and
+# running" section) -- the same prefix rc2 itself uses, and already
+# first on env.sh's own IDRIS2_PACKAGE_PATH, so no extra package-path
+# setup is needed here.
 
 # Every generated artifact lands here -- cleaned now, at the very
 # start, then left alone for the rest of this run (and afterward, for

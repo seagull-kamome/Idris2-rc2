@@ -170,11 +170,14 @@ primitives for values smuggled through an opaque FFI pointer
 (`System.GC.RC2`). See `libs/rc2base/README.md` for the full
 module-by-module rationale.
 
-Build & install (from the repo root, against this repo's own `rc2`):
+Build & install (from the repo root, into the same `install/` prefix
+as `rc2` itself above -- already first on `env.sh`'s own
+`IDRIS2_PACKAGE_PATH`, so no separate package-path setup is needed
+afterward):
 
 ```sh
 source env.sh
-export IDRIS2_PREFIX="$(pwd)/libs/rc2base/.local-install"
+export IDRIS2_PREFIX="$(pwd)/install"
 (cd libs/rc2base && idris2 --install rc2base.ipkg)
 ```
 
@@ -256,24 +259,16 @@ program: several upstream `%foreign` primitives (`Data.Buffer`'s
 no rc2 C backend at all and are only patched in via `rc2base`'s own
 modules -- see `libs/rc2base/README.md` and this file's own
 "Deliberate differences from upstream RefC" section below. Build and
-install it once (from the repo root, its own local prefix, distinct
-from rc2's `install/` above):
+install it once, into the *same* `install/` prefix as rc2 itself
+above (already first on `env.sh`'s own `IDRIS2_PACKAGE_PATH`, so it's
+found automatically afterward -- no separate package-path setup
+needed):
 
 ```sh
 cd ..
 source env.sh
-export IDRIS2_PREFIX="$(pwd)/libs/rc2base/.local-install"
+export IDRIS2_PREFIX="$(pwd)/install"
 (cd libs/rc2base && idris2 --install rc2base.ipkg)
-```
-
-Then put it on `IDRIS2_PACKAGE_PATH` for any shell that invokes
-`idris2-rc2` (it isn't one of nixpkgs' own idris2 packages `env.sh`'s
-own generator, `gen-env.sh`, draws from -- it's this repo's own local
-package, so it's appended by hand rather than checked into `env.sh`
-itself, which `gen-env.sh` would just overwrite on its next run):
-
-```sh
-export IDRIS2_PACKAGE_PATH="$IDRIS2_PACKAGE_PATH:$(pwd)/libs/rc2base/.local-install/idris2-0.8.0"
 ```
 
 To compile an Idris2 program with rc2:
