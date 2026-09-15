@@ -531,6 +531,137 @@ golden output needed regenerating, meaning nothing currently in the
 suite actually exercises the gap this closed; the fix is aimed at the
 `Compiler.RC2.LateInline`-enabled shapes it makes newly reachable.
 
+### Fixed: a splice never propagated native-Rep, boxing-then-immediately-unboxing a provably-native value
+
+Found while updating `rc2/BENCHMARKS.md` in a later session: `BenchChain`
+(a self-recursive numeric loop calling a small non-recursive helper once
+per iteration) and `BenchLoopCallArg` (an FFI-gated helper call whose
+result feeds a loop's own accumulator) had regressed roughly 20-50x
+versus their pre-`LateInline` baselines, *despite* every eligibility
+check above being satisfied and the splice itself producing correct
+output. Three distinct, layered manifestations of the same root cause,
+each found via `--directive dumprcexpr` plus direct `time` comparison
+against a `--directive nolateinline` build as the oracle:
+
+**Layer 1 -- the callee's own substituted parameter.** `buildSplice`
+binds each actual argument via a fresh `RLet`, whose own `Rep` `argRep`
+picks from the *caller's* current `reps` environment (`RBoxed` unless
+the caller already had it native) -- but the callee's own body was
+annotated (Phase 2, before this pass ever runs, assuming the callee's
+own top-level params are always `RBoxed`) with `RDup`/`RDrop`/postDrop
+bookkeeping for a *Boxed* parameter. Declaring the fresh id `RNative`
+outright without also stripping that bookkeeping is a real C compile
+error (`idris2rc2_drop` given a raw `int64_t`); leaving it `RBoxed`
+outright (the pre-fix behaviour) boxes an argument the callee's own
+body only ever reads in native (`ROp`/`RCmpCase` operand) contexts,
+forcing a box-then-immediately-unbox round trip on every use.
+
+**Fix**: `nativeArgType` (`Loop.idr`, already existed, already
+`RLoop`-aware) says what native type, if any, every native-context read
+of a given id agrees on. A new `hasNonNativeUse ty loopSlots target e`
+walks the callee's own body exhaustively and says whether `target` has
+any occurrence *not* accounted for by a position `stripOwnership`
+already knows how to clean up -- `RDup`'s own `v`, `RDrop`'s own `vars`,
+`RFree`'s own `v`, and every node's own `postDrop` list are exempt (a
+match there is stale bookkeeping, not a genuine need for boxing);
+`RReleaseReuse`'s own `v` and `RReuseOffer`'s own `sc`/`dupOnShared`/
+`dropOnUnique` are genuine disqualifying uses (`stripOwnership`
+deliberately never touches an already-decided reuse); every other
+structural position (a real operand of a call/con/struct op) is
+genuine too. `nativeEligible paramId calleeBody` combines both:
+`Just ty` only when `nativeArgType` and `not (hasNonNativeUse ...)`
+agree. `buildSplice` then declares the fresh id `RNative ty` and
+records it in a `promoted : SortedSet Int` set; `spliceCall` runs
+`stripOwnership promoted` over the renamed body before splicing it in,
+so the stale ownership nodes `hasNonNativeUse` exempted are actually
+gone by the time the C emitter sees them.
+
+**Layer 2 -- the caller's own `RLet` wrapping the call's result.** Even
+with Layer 1 fixed, a call spliced directly as an `RLet`'s own value
+(`let v = f x in ...`) kept that `RLet`'s own declared `Rep` exactly as
+the caller's original (pre-`LateInline`) `annotate` pass decided it --
+`RBoxed`, since nothing in the *original*, un-inlined program could
+have known the callee's own tail value would turn out native. The
+spliced-in body could be fully native internally and still get boxed
+right back up the moment it reached that `RLet`.
+
+**Fix**: `Compiler.RC2.DualABI`'s own `tailValueReps` (already existed,
+already correctly answers "what native type, if any, does every tail
+position of this whole expression agree on", including through
+`RConCase`/`RConstCase`/`RCmpCase` branches and `RLoop` bodies) was
+exported specifically for this reuse. A new `uniformTailType e` wraps
+it (`Just ty` iff every entry is `Just ty`); `spliceCall` now also
+returns this alongside the spliced expression. `inlineInto`'s own `go`
+gained a case specifically for "call sits directly as an `RLet`'s own
+still-`RBoxed` value": when the splice's own tail is uniformly native
+*and* `hasNonNativeUse` (same check, now asked about `body` --
+everything downstream of the `RLet` -- instead of a callee's own body)
+finds no disqualifying use, the `RLet`'s own declaration is promoted to
+`RNative ty` and `stripOwnership {var}` runs over `body`.
+
+**Layer 3 -- the caller's own `RLoopContinue` receiving the result as
+a loop accumulator.** Even with Layers 1-2 fixed, `BenchLoopCallArg`
+(the call's result feeds directly into an enclosing `RLoop`'s own
+`RLoopContinue ... args`, as the next iteration's accumulator) still
+regressed. `hasNonNativeUse`'s original `RLoopContinue` case
+conservatively treated *any* occurrence of `target` in `args` as
+disqualifying, out of an unverified concern that the target slot's own
+declared type might not match. Checked against `Emit.idr`'s own
+`tryEmitLoopContinue`: it always renders a continue's new value via
+`rcVarToNativeC`/`rcVarToBoxedC` keyed on the *target slot's own*
+declared `Rep`, never the supplied value's own -- so a same-position,
+same-type match is provably safe to promote.
+
+**Fix**: `hasNonNativeUse` gained two new leading parameters, `ty` (the
+candidate promotion type) and `loopSlots : List (Int, Rep)` (the
+nearest enclosing `RLoop`'s own `loopParams`), and its `RLoopContinue`
+case now only counts a position as disqualifying when that position's
+`loopSlots` entry *isn't* already `RNative ty`. `inlineInto`'s own `go`
+was extended with a third parameter threading the current enclosing
+loop's own `loopParams` (`[]` outside any loop, set to `loopParams`
+when `go`'s own `RLoop` case descends into `body` -- mirroring exactly
+how `reps` is already threaded there), passed as `hasNonNativeUse`'s
+starting `loopSlots` at both call sites (the callee-parameter check in
+`nativeEligible`, which always starts at `[]` since a callee's own body
+begins outside any *caller* loop context, and the `RLet`-direct-call
+case in `go`, which needs the *caller's* current loop context). Passing
+a hardcoded `[]` at the `RLet`-direct-call site (the shape actually hit
+by `BenchLoopCallArg`, where the relevant `RLoopContinue` sits inside
+an `RLoop` `go`'s own *outer* recursion had already walked through
+before ever reaching this `RLet` -- not a *further* `RLoop` reachable
+from `body` itself) silently kept the promotion from ever firing at all.
+
+**A fourth bug found while fixing Layer 3**: promoting an `RLet` to
+`RNative ty` purely because `uniformTailType` says every tail position
+agrees on `ty` is *not* sufficient on its own -- `uniformTailType`
+happily walks through `RConCase`/`RConstCase`/`RCmpCase` branches to
+reach each one's own tail, but `Emit.idr`'s own `emitNativeValue` (the
+single inline-C-expression renderer `declareNative`/`inlineNative` use
+for an `RNative` local's own value) has no way to *render* a branch as
+one C expression -- it only understands `RAppFFIInline`/`ROp`/
+`RPrimVal` at the tail, unwinding `RLet`/`RDup`/`RFree`/`RDrop`/
+`RReleaseReuse` wrappers on the way. Enabling Layer 3's extra promotions
+newly exposed this: `Test15CompareFusionThroughCall`'s own `step`
+(`if acc <= 0 then 1 else acc + 1`, spliced into a loop whose
+accumulator feeds `RLoopContinue`) got promoted on `uniformTailType`
+alone, then crashed `declareNative` with "[rc2] internal: expected a
+native-producing expression" the moment its own `RCmpCase` reached the
+emitter. **Fix**: a new `emitNativeValueCompatible e`, mirroring
+`emitNativeValue`'s own supported-shapes list constructor-for-
+constructor, gates the `RLet`-direct-call promotion alongside
+`hasNonNativeUse` -- only a splice whose own tail, after unwinding the
+same wrapper nodes `emitNativeValue` itself unwinds, bottoms out in
+`ROp`/`RPrimVal`/`RAppFFIInline` (never a branch) is eligible.
+
+Re-verified against the full regression suite (`rc2/tests/verify.sh`
+85/0, `libs/rc2base/tests/verify.sh` 16/16) after every one of these
+four fixes, plus direct `dumprcexpr`/`time` inspection of `BenchChain`
+and `BenchLoopCallArg` against a `--directive nolateinline` build as
+the correctness oracle. Final measured results: `BenchChain` 0.0052s
+(125.31x vs RefC, exceeding its pre-regression historical record of
+81.9x); `BenchLoopCallArg` 0.0032s (168.44x vs RefC, exceeding its own
+historical baseline of ~66.7x).
+
 ### Files
 
 - `rc2/src/Compiler/RC2/LateInline.idr` -- this pass, in full.

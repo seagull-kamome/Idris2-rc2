@@ -1,5 +1,61 @@
 # rc2 Stage 5: テストとベンチマーク結果
 
+## 2026-09-16 追記: `Compiler.RC2.LateInline`(単一呼び出し元インライン化)を含む一連の変更
+
+前回計測(2026-09-04)以降の変更を反映した再計測。主な変更点(詳細は各自
+`rc2/doc/`配下の該当ドキュメント参照、ここでは要約のみ):
+
+1. **`RCLoc`変数ID生成の全コンパイル単位での統一**(VarId統一) -- パス毎に
+   独立していたカウンタを1本化し、パス間でのID衝突を構造的に排除。
+2. **`Compiler.RC2.SpecClosure`のO(キー数×プログラムサイズ)コスト修正** --
+   `rebuildCafTable`/`redirectAll`が各投機的クローンのキー毎にプログラム
+   全体を再スキャンしていた箇所を修正。
+3. **`Compiler.RC2.Emit`: 1関数内に複数の`RLoop`ノード**(並列・入れ子の
+   両方)を正しく扱えるように拡張。
+4. **`Compiler.RC2.LateInline`を新規追加** -- 全プログラムを対象に「呼び出し
+   箇所が正確に1つだけ」のコールサイトを、呼び出し元へ直接スプライスする
+   新規パス(`Compiler.RC2.Loop`/`MutualLoop`によるループ変換の後、
+   `Compiler.RC2.Sink`/`DualABI`の前に位置)。`Compiler.RC2.SpecClosure`が
+   生成する投機的クローン(呼び出し箇所が構造的に必ず1つ)を主な動機として
+   設計。詳細: `rc2/doc/inlining.md`の「Criterion B, revisited」節。
+5. **`Compiler.RC2.DualABI`のネイティブ適格性解析、複数ループ対応の修正**
+   (上記4.が複数`RLoop`を持つ関数へスプライスできるようになったことで
+   顕在化した既存の「1関数につき`RLoop`は1個」という暗黙の前提の修正)。
+6. **`Compiler.RC2.LateInline`自身のネイティブRep伝播、3層にわたるバグ修正**
+   -- スプライスされた呼び出し結果がBoxedのまま往復し、性能が大きく後退
+   していた問題(`BenchChain`/`BenchLoopCallArg`で最大約50倍の退行として
+   発覚)。(a)callee自身の引数、(b)呼び出し元の`RLet`が直接くるむ戻り値、
+   (c)呼び出し元の`RLoopContinue`のループ累積引数、の3箇所それぞれで
+   ネイティブ表現への昇格が正しく伝播していなかった。加えて、昇格の
+   健全性チェックが`Compiler.RC2.Emit`の`emitNativeValue`が実際に描画
+   できる形(分岐を含まない)を見ていなかった第4のバグも合わせて修正。
+   詳細: `rc2/doc/inlining.md`の同節、"Fixed: a splice never propagated
+   native-Rep..."以下。
+
+### マイクロベンチマーク一式(`rc2/tests/bench.sh`、rc2 vs 本家`idris2 --cg refc`、壁時計5回平均)
+
+| ベンチマーク | rc2(s) | refc(s) | 倍率(RefC比) |
+|---|---|---|---|
+| `BenchLoopCallArg.idr` | 0.0032 | 0.5390 | **168.4倍高速** |
+| `BenchChain.idr` | 0.0052 | 0.6516 | **125.3倍高速** |
+| `BenchLoop.idr` | 0.0030 | 0.1820 | **60.7倍高速** |
+| `BenchMutual.idr` | 0.0150 | 0.1858 | 12.4倍高速 |
+| `BenchConstConFold.idr` | 0.2044 | 1.4142 | 6.9倍高速 |
+| `BenchClosureChain.idr` | 0.4552 | 0.7920 | 1.7倍高速 |
+| `BenchFib.idr` | 0.1250 | 0.2038 | 1.6倍高速 |
+| `BenchTailFFI.idr` | 0.8788 | 1.3640 | 1.6倍高速 |
+| `BenchLoopInvariantBoxed.idr` | 0.2108 | 0.3130 | 1.5倍高速 |
+| `BenchCallArgChain.idr` | 1.1346 | 1.5284 | 1.4倍高速 |
+| `BenchConAltNativeBoxed.idr` | 0.2384 | 0.2478 | 約1.0倍(ほぼ同等) |
+
+`BenchChain`/`BenchLoopCallArg`はいずれも2026-09-04以前の記録
+(それぞれ81.9倍・66.7倍)を上回った -- 上記6.のバグ修正がLateInline導入
+以前より*速い*結果を実現できたことを意味する(callee側のネイティブ表現化
+が、インライン化なしでは届かない箇所まで伝播するようになったため)。
+
+回帰確認: `rc2/tests/verify.sh`(85/0)、`libs/rc2base/tests/verify.sh`
+(16/16)、いずれもvalgrind込みで全件パス。
+
 ## 2026-09-04 追記: 共有クロージャの最終引数適用の割り当て回避 + 定数クロージャ畳み込み
 
 2つの独立した最適化を追加した:

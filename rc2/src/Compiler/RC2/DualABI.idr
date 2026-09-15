@@ -95,7 +95,13 @@ paramEligibility argIds body =
 ||| closure, constructor, extprim, erasure, crash), which is what makes
 ||| the whole return ineligible the moment any exit can't be native.
 ||| See `doc/dual-abi.md`'s "returnEligibility / tailValueReps".
-||| `RLoopContinue` contributes nothing (never a real exit).
+||| `RLoopContinue` contributes nothing (never a real exit). Exported
+||| for `Compiler.RC2.LateInline`'s own reuse (the same "what native
+||| type, if any, does every tail-position exit of this body agree on"
+||| question, asked there about a spliced-in callee's own tail value
+||| instead of a whole function's own return) -- one definition of
+||| this analysis, not two kept in sync by hand.
+export
 tailValueReps : SortedMap Int Rep -> RCExp -> List (Maybe PrimType)
 tailValueReps reps (RV _ (RCLoc i)) =
     [ case lookup i reps of
