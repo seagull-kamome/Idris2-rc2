@@ -1,4 +1,4 @@
-# Speculative, profitability-gated closure-argument specialization: investigated, designed, not implemented
+# Speculative, profitability-gated closure-argument specialization: investigated, designed, implemented
 
 This document records a design considered as "Level 1" of the closure-
 specialization idea `rc2/doc/loop-in-case-sinking.md`'s own "A related,
@@ -7,8 +7,11 @@ own closure-argument `apply` to a direct named `call`, without
 necessarily inlining the target's body). It also records a full
 investigation of whether upstream Idris2's own `%spec` mechanism could
 provide this for free, and why it can't for the concrete case that
-motivated it. **Status: designed on paper, not implemented.** No code
-changes accompany this document.
+motivated it. **Status: implemented, as `Compiler.RC2.SpecClosure`**
+(disable with `--directive nospecclosure`) -- see "Implementation
+notes" below for exactly what shipped, where it deviates from the
+paper design this document otherwise still describes accurately, and
+what verification found.
 
 ## Motivation
 
@@ -211,53 +214,151 @@ ever needing to inline the target's body or produce nested `RLoop`
 nodes. **This design needs no nested-loop support at all**, unlike the
 "related, larger idea" it grew out of.
 
-## Open questions / risks, not yet resolved
+## Implementation notes: what shipped, and where it deviates
 
-- **Multiple specialized parameters on one function**: `go` only has
-  one closure parameter; a function with several would need the
-  candidate set in step 1 to be a set of *tuples* (one target per
-  parameter), multiplying the number of distinct `(g, targets...)`
-  clones attempted -- still bounded (by the product of each
-  parameter's own distinct-target count, typically small), but not
-  designed in detail here.
-- **Where in the pipeline this runs**: needs to run after `ConstFold`
-  (so `RCConstClosure`-folded targets are visible) but interacts with
-  `Compiler.RC2.Inline`'s own existing pass -- does this become a new
-  step between them, or a refinement of `Inline` itself given how much
-  machinery (splicing, Criterion A re-application) it reuses? Not
-  decided.
-- **Re-annotating a clone's own ownership**: a cloned-and-rewritten `g`
-  needs `Compiler.RC2.RC`'s `annotate` (and potentially `Reuse`/
-  `ConAltNative`) to run again over just that clone, the same way
-  `Compiler.RC2.Inline`'s own existing splicing already has to handle
-  re-deriving ownership for spliced-in code -- not a new problem, but
-  worth confirming the existing machinery covers a *clone of a whole
-  top-level definition*, not just a spliced-in call-free callee body.
-- **Interaction with `DupMerge`/`Loop`**: since this would run before
-  those (matching `RC2.idr`'s own `toRCDefs` ordering, where `Inline`
-  itself already runs early), no conflict is expected, but not verified
-  against the actual pipeline order.
+`Compiler.RC2.SpecClosure` (own module doc comment has the fuller
+version of this) implements Steps 1-3 above essentially as designed,
+running once between `Compiler.RC2.RC2`'s own `foldConstProgram` and
+`insertMemoize`. Two real gaps surfaced during implementation, both
+required for `go` itself -- this document's own motivating case -- to
+specialize at all, so neither is optional polish:
+
+- **`missing > 1` needed its own chain-walking detection/rewrite**,
+  not just a single `RApp` node. `RApp`'s own two operands are bare
+  `RCLocal`s, never a nested `RApp`, so a curried `f a1 a2` (two more
+  args needed) ANF-normalizes to `RLet tmp (RApp f a1) (RApp tmp a2)`,
+  not one node. This matters more than it might look: an ordinary
+  `String -> IO ()` callback -- exactly `go`'s own shape -- lowers to
+  `missing = 2` here (the real argument, then the hidden `%World`
+  token IO's own calling convention threads through), never
+  `missing = 1`. A first cut of this module that only handled
+  `missing == 1` compiled fine and ran correctly on everything, but
+  silently never fired on `go` itself. `chainArgs`/`chainOccursIn` in
+  `SpecClosure.idr` do this walk; only the exact shape (each apply's
+  result immediately feeding the next, nothing else interposed) is
+  recognized -- a chain interrupted by anything else is left alone,
+  conservatively.
+- **A parameter passed straight through to a self-recursive call
+  needed explicit handling.** `go`'s own trailing `go xs f` is exactly
+  this: the closure parameter isn't only applied, it's also threaded
+  unchanged into the next iteration -- the ordinary shape for any
+  structurally-recursive traversal, not a corner case. Without
+  redirecting that recursive call to the clone too
+  (`rewriteSelfCall`/`selfPassthroughOccurrences`), only the very first
+  element of any list would ever get specialized, since every
+  subsequent iteration would still recurse into the generic,
+  un-cloned `g`.
+
+**Not implemented**: re-running `Inline` on a clone, the other half of
+Step 2. `Compiler.RC2.Inline` is a whole-program `Lifted`-to-`Lifted`
+pass that already ran once, before this pipeline stage, at the
+pre-RCExp level -- re-invoking it on a single already-built RCExp
+clone isn't something its current architecture supports (this is the
+"Open questions" section's own "interacts with `Compiler.RC2.Inline`'s
+own existing pass" question below, still unresolved). Only
+`Compiler.RC2.ConstFold`'s `foldConstDef` is re-run on a clone here. A
+`target` that's itself small and call-free is therefore not
+opportunistically inlined into the clone -- it stays a real direct
+call, which is still the win Step 3 checks for, just not the
+additional one the paper design's own Step 2 also described.
+
+**Verification**: a hand-written `go`-shaped repro (two call sites,
+two distinct captured-closure targets, missing = 2 throughout)
+specializes correctly under both `--directive noloop` and the default
+pipeline -- `apply` fully resolved to a direct call, the self-
+recursive call redirected to the clone, the generic `go` itself fully
+dead-code-eliminated, correct program output. `rc2/tests/verify.sh`'s
+full suite (85 tests + valgrind) passes; `refc-suite`'s own
+`callingConvention` test needed its golden C output regenerated, not
+because of any behavior change in the code it exercises, but because
+this pass also universally specializes `PrimIO.unsafePerformIO`'s own
+boilerplate `apply` (a real, if incidental, additional case that
+matches the same shape), which shifts unrelated `tmp_N` numbering
+elsewhere in the generated file. Against a real workload
+(`idris2-missing-containers`' own `benchmarkHashMap`, this document's
+own motivating benchmark), no measurable wall-time improvement (12.04s
+vs. 12.09s, within noise) -- consistent with `rc2/BENCHMARKS.md`'s own
+prior finding (a separate investigation, made before this pass
+existed) that this specific workload's dominant costs are
+interface-dispatched hashing and `IOHashMap`'s own `IORef`/list-
+traversal write phase, neither of which is the "closure passed as an
+ordinary function argument" shape this pass targets. The design's own
+reasoning and the win it targets are still real -- `go` itself
+specializes exactly as designed -- this particular external workload
+just doesn't happen to spend its time there.
+
+## Open questions / risks
+
+- **Multiple specialized parameters on one function**: still open, not
+  implemented. `go` only has one closure parameter; a function with
+  several would need the candidate set in step 1 to be a set of
+  *tuples* (one target per parameter), multiplying the number of
+  distinct `(g, targets...)` clones attempted -- still bounded (by the
+  product of each parameter's own distinct-target count, typically
+  small), but not designed in detail here, and `SpecClosure.idr`'s
+  actual implementation only ever specializes one parameter position
+  at a time.
+- **Where in the pipeline this runs**: resolved -- a new step, right
+  after `foldConstProgram` and strictly before `insertMemoize`, *not* a
+  refinement of `Inline` itself (`Inline` stayed completely untouched;
+  see "Implementation notes" above for why re-running it on a clone
+  isn't done).
+- **Re-annotating a clone's own ownership**: resolved, and simpler than
+  expected -- a kept clone is inserted into the same `List (Name,
+  RCDef)` `toRCDefs` already threads through `annotate`/`Reuse`/
+  `ConAltNative`/`Loop`/etc. afterward, so it gets exactly the same
+  treatment as any other definition with no special-casing needed at
+  all. `SpecClosure` itself never calls `annotate`.
+- **Interaction with `DupMerge`/`Loop`**: resolved by the full
+  `rc2/tests/verify.sh` suite passing (85 tests + valgrind, 0 leaks) --
+  no conflict observed against the real pipeline order.
 - **No profiled evidence yet that keeping this bounded (memoized per
-  distinct target) actually avoids real-world blowup** -- the design
-  above is reasoned from the user's own prior experience with
-  unrestricted specialization, not from a new measurement. Worth a
-  synthetic stress case (a function called from many distinct closure
-  targets) before implementing, to confirm the memoization bound
-  behaves as expected.
+  distinct target) actually avoids real-world blowup**: partially
+  addressed -- `idris2-missing-containers`' own `benchmarkHashMap`
+  compiles and runs correctly with this pass enabled, with no observed
+  code-size or correctness issue, but its own workload doesn't happen
+  to exercise a function called from *many* distinct closure targets,
+  so the memoization bound's own behavior under real stress is still
+  unmeasured. The synthetic stress case (a function called from many
+  distinct closure targets) this entry originally called for hasn't
+  been built.
+- **Applied once per compile, not iterated to a fixpoint** (new, found
+  during implementation, by explicit request): a kept clone's own body
+  can, in principle, expose a fresh specialization opportunity of its
+  own, the same way `foldConstProgram` re-runs `ConstFold` to a
+  fixpoint because one CAF's own fold can unblock another. Not
+  attempted -- `SpecClosure.idr`'s own `applySpecClosure` doc comment
+  has the rationale and the (trivial) shape a later fixpoint wrapper
+  would take.
 
 ## Files
 
+- `rc2/src/Compiler/RC2/SpecClosure.idr` -- the actual implementation.
+  Its own module doc comment covers everything in "Implementation
+  notes" above in more detail, close to the code it describes.
+- `rc2/doc/directives.md` -- `--directive nospecclosure`, this pass's
+  own disable flag.
 - `rc2/doc/loop-in-case-sinking.md` -- the design this one's own "Level
   1" grew out of, and the "related, larger idea" section whose nested-
   loop dependency this design was specifically shaped to avoid.
 - `rc2/doc/const-closure-fold.md` -- `RCConstClosure`, the existing
-  "is this closure a compile-time constant" detection step 1 reuses.
+  "is this closure a compile-time constant" detection step 1 reuses
+  for the zero-capture case (`SpecClosure.idr`'s own `lookupKnown`
+  handles the non-zero-capture case itself, via `Bound`/`RUnderApp`
+  tracing -- `RCConstClosure` alone doesn't cover it, see that
+  function's own doc comment).
 - `rc2/src/Compiler/RC2/Inline.idr` -- Criterion A / existing splicing
-  machinery, reused (unchanged) by step 2's own re-fold and directly
-  relevant to the "why no nested-loop dependency" argument above.
+  machinery; investigated as a candidate for step 2's own "re-fold"
+  half, ultimately not reused (it's `Lifted`-level, pre-RCExp, and
+  already ran once by the time this pass runs -- see "Implementation
+  notes" above) -- still directly relevant to the "why no nested-loop
+  dependency" argument below.
 - `idris2-src/src/TTImp/PartialEval.idr` -- upstream's own `%spec`
   mechanism, fully investigated here: `specArgs`/`getSpecArgs`'s own
   naming and closedness requirements, and `mkSpecDef`'s own error-only
   (not profitability-gated) fallback.
 - `idris2-missing-containers`'s `test/src/Main.idr` -- `go`, this
-  document's own motivating real-world case.
+  document's own motivating real-world case, and `rc2/BENCHMARKS.md`
+  for the prior investigation explaining why this pass doesn't move
+  the needle on that package's own `benchmarkHashMap` despite
+  specializing `go` itself correctly.

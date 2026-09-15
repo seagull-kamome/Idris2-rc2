@@ -51,6 +51,7 @@ fine-grained per-function/per-node control.
 |---|---|
 | `noinline` | `Compiler.RC2.Inline`'s whole-program inlining (`doc/inlining.md`). |
 | `noconstfold` | `Compiler.RC2.ConstFold`'s whole-program fixpoint fold -- arithmetic/comparison/constructor/closure/CAF folding *and* the constant `ExtPrim` fold (`prim__codegen`), which since the `Compiler.RC2.ConstExtPrim` pass was merged in is also gated by this directive. |
+| `nospecclosure` | `Compiler.RC2.SpecClosure`'s speculative, profitability-gated closure-argument specialization -- cloning a function per distinct closure target observed at its call sites and resolving `apply` to a direct `call` (`doc/speculative-closure-specialization.md`). |
 | `noconaltnative` | `Compiler.RC2.ConAltNative`'s native-shadow field caching (`doc/con-alt-native.md`). |
 | `nomutualloop` | `Compiler.RC2.MutualLoop`'s mutual-tail-recursion merge. |
 | `noloop` | `Compiler.RC2.Loop`'s self-tail-call -> `goto` conversion, plus native-shadow/loop-invariant promotion (`doc/loop-conversion.md`). |
