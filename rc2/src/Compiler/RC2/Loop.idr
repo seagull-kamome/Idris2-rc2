@@ -358,13 +358,22 @@ nativeArgTypes p (RConCase _ _ alts mDef) =
 nativeArgTypes p (RConstCase _ _ alts mDef) =
     concat (map (\(MkRConstAlt _ body) => nativeArgTypes p body) alts)
       `union` maybe empty (nativeArgTypes p) mDef
+-- `RLoop` itself carries no native-context operand reads directly
+-- (`loopParams`/`initial`/`prologueDrop` are metadata, not operations
+-- to scan), but its own `body` can -- once genuinely reachable here
+-- (`Compiler.RC2.LateInline`, running after this pass, can splice a
+-- loop-converted callee into a not-yet-DualABI-processed caller;
+-- `Compiler.RC2.DualABI`'s own `paramEligibility` reuses this exact
+-- function on such a body when no loop sits behind a bare `RLet`
+-- prefix -- see rc2/doc/inlining.md's "Known limitation" section for
+-- the gap this closes).
+nativeArgTypes p (RLoop _ _ _ _ body) = nativeArgTypes p body
 -- Every other shape (RV, RAppName, RUnderApp, RApp, RCon, a bare ROp,
--- RExtPrim, RPrimVal, RErased, RCrash, RLoopContinue -- and RLoop,
--- though it never actually appears here, this pass being its sole
--- producer): no native-context operand reads live directly in these
--- (a bare ROp deliberately excepted -- see nativeArgTypes's own doc
--- comment), and none hold a further RCExp to recurse into beyond what
--- RLet/RCmpCase/RConCase/RConstCase above already visit.
+-- RExtPrim, RPrimVal, RErased, RCrash, RLoopContinue): no native-
+-- context operand reads live directly in these (a bare ROp
+-- deliberately excepted -- see nativeArgTypes's own doc comment), and
+-- none hold a further RCExp to recurse into beyond what's covered
+-- above.
 nativeArgTypes _ _ = empty
 
 ||| Multi-id version of `nativeArgTypes`: every one of `tracked`'s own
@@ -395,6 +404,10 @@ nativeArgTypesFor tracked (RConCase _ _ alts mDef) =
 nativeArgTypesFor tracked (RConstCase _ _ alts mDef) =
     concatMaps (map (\(MkRConstAlt _ body) => nativeArgTypesFor tracked body) alts)
       `unionMaps` maybe empty (nativeArgTypesFor tracked) mDef
+-- See `nativeArgTypes`'s own `RLoop` case just above for why this is
+-- reachable now, and why recursing into `body` (ignoring `loopParams`/
+-- `initial`/`prologueDrop`, metadata rather than operations) suffices.
+nativeArgTypesFor tracked (RLoop _ _ _ _ body) = nativeArgTypesFor tracked body
 nativeArgTypesFor _ _ = empty
 
 ||| The single native `PrimType` top-level parameter `p` should be

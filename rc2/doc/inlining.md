@@ -488,30 +488,48 @@ ordinary `RLet` value (this pass's own default shape, see "Every id
 gets renamed..." above) already lowers correctly, sibling or nested
 alike.
 
-### Known limitation: DualABI's own native-eligibility analysis
+### Fixed: DualABI's own native-eligibility analysis assumed one `RLoop` per function
 
 `Compiler.RC2.DualABI`'s `findLoopThroughLets`/`paramEligibility` (its
 own parameter-native-promotion decision) was written under a "one
 `RLoop` per function" assumption that was true everywhere until this
-pass existed: `findLoopThroughLets` only ever finds the *first* `RLoop`
-reachable through a pure prefix of `RLet`s, and `Loop.idr`'s own
-`nativeArgTypesFor`/`nativeArgTypes` (the fallback `paramEligibility`
-uses when no such prefix-reachable loop exists) has no `RLoop` case at
-all -- both were correct when nothing but `Compiler.RC2.Loop` itself
-(this pass's own sole producer, at the time) ever saw an `RLoop`-
-containing body.
+pass existed -- both `findLoopThroughLets` (only ever found the first
+`RLoop` reachable through a pure prefix of `RLet`s, stopping instead
+of also looking for a further one nested inside its own body) and
+`Loop.idr`'s own `nativeArgTypesFor`/`nativeArgTypes` (the fallback
+`paramEligibility` uses when no such prefix-reachable loop exists at
+all, e.g. because a `case` sits between the body's own root and the
+loop -- the common shape once this pass can splice a loop-converted
+callee in anywhere, not just at the root) had no `RLoop` case at all,
+never recursing into one's own body.
 
 Once this pass can splice a loop-converted callee into a caller that
-may *already* have its own loop (see "Multiple loops per function"
-above), a top-level parameter used only natively *inside* an inlined-
-in loop -- rather than directly in the caller's own original code --
-is now invisible to both of `paramEligibility`'s own paths, and never
-gets promoted to a native worker argument. This is a real, confirmed
-gap, not hypothetical (traced through `DualABI.idr`/`Loop.idr`
-directly) -- tracked as a follow-up fix to `findLoopThroughLets`/
-`nativeArgTypesFor` rather than addressed in this pass, since it's a
-pre-existing assumption in a different, already-delicate module, not
-something specific to how this pass itself splices.
+may already have its own loop (see "Multiple loops per function"
+above), either nested inside it or reached only past a `case`, a
+top-level parameter used only natively *inside* that inlined-in loop
+was invisible to both of `paramEligibility`'s own paths, and never got
+promoted to a native worker argument -- confirmed real, not
+hypothetical, by tracing through `DualABI.idr`/`Loop.idr` directly.
+
+**Fix**: `nativeArgTypesFor`/`nativeArgTypes` (`Loop.idr`) now
+recurse into an `RLoop`'s own `body` like any other wrapper node
+(`loopParams`/`initial`/`prologueDrop` are metadata, not operations to
+scan) -- this alone closes the gap for the common post-splice shape,
+since `findLoopThroughLets` returning `Nothing` (anything other than a
+pure `RLet`-prefix-then-loop) was already routing to this fallback.
+`findLoopThroughLets` (`DualABI.idr`) also now recurses into a found
+loop's own `body` for a *further*, genuinely nested loop, merging every
+level's own `loopParams` together -- covering the case where
+`paramEligibility` does still take its `Just` branch. A genuine
+*sibling* loop (not nested, reached some other way after the first)
+still can't be found this way regardless of the fix -- `RLoop` has no
+"and then" field of its own to continue past -- but that shape was
+already routing to the (now-fixed) fallback instead, never through
+`findLoopThroughLets`'s own `Just` branch in the first place.
+Re-verified against the full regression suite (85/0, 16/16) -- no
+golden output needed regenerating, meaning nothing currently in the
+suite actually exercises the gap this closed; the fix is aimed at the
+`Compiler.RC2.LateInline`-enabled shapes it makes newly reachable.
 
 ### Files
 
