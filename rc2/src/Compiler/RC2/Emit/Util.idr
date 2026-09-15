@@ -485,12 +485,9 @@ data ForeignLibs : Type where
 -- see rc2/doc/directives.md for the design.
 export
 data InjectedRuntime : Type where
--- The nearest enclosing `RLoop`'s own loop params (id + Rep), in order
--- -- empty until `emitLoopInto` actually enters one, consulted only by
--- `tryEmitLoopContinue`'s own `RLoopContinue` case to know which
--- var_N to reassign (boxed or native, per each param's own `Rep`) for
--- each new value (`RLoopContinue`'s own arg list is guaranteed the same
--- length and order by construction, see its doc comment in RCExp.idr).
+-- A stack (innermost first) of every `RLoop` currently being emitted --
+-- `(label, params)` per entry. See rc2/doc/loop-conversion.md's
+-- "Multiple loops per function" for why a stack, not a single slot.
 export
 data LoopParams : Type where
 export

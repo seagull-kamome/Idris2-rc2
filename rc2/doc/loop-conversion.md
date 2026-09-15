@@ -850,11 +850,11 @@ C is entirely mechanical, living in `Emit.idr`.
 
 - **`emitLoopInto`**: lowers `RLoop` itself -- declares every loop param
   (`declareLoopParam`, a no-op for the common case above), emits a
-  `loop:;` label, records the loop's own param list into a `Ref
-  LoopParams (List (Int, Rep))` (empty until a loop is actually
-  entered, consulted only by `tryEmitLoopContinue` below), then
-  recurses into `body` via the same `Sink`/`TailPositionStatus`-aware
-  `emitInto` every other construct in this module goes through.
+  freshly-numbered `loop_N:;` label, pushes `(label, params)` onto `Ref
+  LoopParams (List (String, List (Int, Rep)))` (a stack, empty until a
+  loop is actually entered), recurses into `body` via the same
+  `Sink`/`TailPositionStatus`-aware `emitInto` every other construct in
+  this module goes through, then pops the stack back before returning.
 
 - **`tryEmitLoopContinue`**: lowers `RLoopContinue` -- for each new
   value, snapshots it into a temporary first (a plain
@@ -862,11 +862,40 @@ C is entirely mechanical, living in `Emit.idr`.
   x`; nothing here is an ownership decision, `annotate` already decided
   every argument's dup/move before `Compiler.RC2.Loop` ever ran),
   rendering via `rcVarToBoxedC` or `rcVarToNativeC ty` per *that specific
-  loop param's own* `Rep` (read back from `LoopParams`) -- already
-  fully generic over `RBoxed`/`RNative`/`RInlineNative`, since it was
-  written this way from the start rather than retrofitted for native
-  shadowing specifically. Then reassigns each loop param variable from
-  its own temporary and emits `goto loop;`.
+  loop param's own* `Rep` (read back from `LoopParams`'s own top entry)
+  -- already fully generic over `RBoxed`/`RNative`/`RInlineNative`, since
+  it was written this way from the start rather than retrofitted for
+  native shadowing specifically. Then reassigns each loop param variable
+  from its own temporary and emits `goto loop_N;` for that same label.
+
+### Multiple loops per function
+
+Nothing in the pipeline produces more than one `RLoop` in a function
+yet (`applyLoop` still only ever wraps one whole definition's own
+self-recursion), but `Emit.idr` doesn't assume that either, ahead of a
+future pass (e.g. inlining an already-loop-converted callee) that
+could. `LoopParams` is a stack, not a single slot: `emitLoopInto` pushes
+and pops around its own recursion into `body`, so a sibling loop
+emitted after this one finishes sees the stack exactly as it was
+before, and a genuinely nested one only shadows this entry for its own
+duration. No id needs to be stored on `RLoop`/`RLoopContinue` in the IR
+itself for this to be correct: `RLoopContinue` is only ever produced,
+by construction, inside the very body its own matching `RLoop` wraps
+(never a call site "borrowed" from some other loop), so "goto the
+nearest-enclosing entry on the stack" is exactly what it always means,
+regardless of how many other loops exist elsewhere in the same
+function. Each label's own number comes from the same `ArgCounter` that
+also numbers `tmp_N`/`closure_N` -- harmless, since C keeps labels and
+ordinary identifiers in separate namespaces.
+
+`emitInto` was already fully generic over `RLoop` before this: its own
+dispatch table routes `RLoop` to `emitLoopInto` for *any* `sink`/
+`TailPositionStatus`, not just a tail return, and `declareLet` already
+sends any `RLet`'s `value` through that same generic `emitInto` --
+which is exactly the shape a future inliner would need to splice a
+loop-containing callee into a caller as an ordinary let-bound value.
+That path already worked with zero changes here; only the label/stack
+above needed to stop assuming a single loop.
 
 ## Bugs found and fixed (chronological)
 

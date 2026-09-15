@@ -27,17 +27,17 @@ int64_t idris2rc2_worker_Main_sumLoop_0
     int64_t var_209 = (var_7 == NULL) ? 0 : (idris2rc2_to_i64(var_7));
     idris2rc2_drop(var_6);
     idris2rc2_drop(var_7);
-    loop:;
-    int64_t tmp_18 = var_208;
-    if (tmp_18 == INT64_C(0)) {
+    loop_18:;
+    int64_t tmp_19 = var_208;
+    if (tmp_19 == INT64_C(0)) {
         return var_209;
     }
     int64_t var_8 = (var_208 - INT64_C(1));
-    int64_t tmp_19 = var_8;
-    int64_t tmp_20 = (var_209 + var_208);
-    var_208 = tmp_19;
-    var_209 = tmp_20;
-    goto loop;
+    int64_t tmp_20 = var_8;
+    int64_t tmp_21 = (var_209 + var_208);
+    var_208 = tmp_20;
+    var_209 = tmp_21;
+    goto loop_18;
 }
 --- Tail-position FFI call for tailAbs (want: inlined call + immediate return, no closure defer, rc2/doc/dual-abi.md Stage 4b) ---
 IDRIS2RC2_Value *Main_tailAbs
