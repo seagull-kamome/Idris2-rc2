@@ -402,6 +402,139 @@ Loop/MutualLoop変換の後に厳密に置く -- これより前に走らせる�
 ことであり、この修正は`Compiler.RC2.LateInline`が新たに到達可能に
 した形を狙ったものである。
 
+### 修正済み: 差し込みがネイティブRepを伝播させず、証明可能にネイティブな値をboxしてすぐ直後にunboxしていた
+
+後のセッションで`rc2/BENCHMARKS.md`を更新中に発見: `BenchChain`
+(1回のイテレーションごとに小さな非再帰ヘルパーを1回呼び出す自己再帰
+の数値ループ)と`BenchLoopCallArg`(結果がループ自身のアキュムレータ
+へ流れ込む、FFIゲート付きヘルパー呼び出し)が、上記の適格性チェック
+を全て満たし差し込み自体は正しい出力を生成しているにもかかわらず、
+`LateInline`導入前のベースラインに対しておよそ20〜50倍後退していた。
+同一の根本原因が3段階にレイヤー状に現れたもので、それぞれ
+`--directive dumprcexpr`と、オラクルとしての`--directive
+nolateinline`ビルドに対する直接の`time`比較で発見した:
+
+**レイヤー1 -- 呼び出し先自身の、置換されたパラメータ。**
+`buildSplice`は実引数ごとに新しい`RLet`で束縛し、その`Rep`は`argRep`
+が*呼び出し元*の現在の`reps`環境から選ぶ(呼び出し元が既にネイティブ
+にしていない限り`RBoxed`)-- しかし呼び出し先自身の本体は(このパス
+が走るよりも前のPhase 2で、呼び出し先自身のトップレベルパラメータは
+常に`RBoxed`だという前提の下)*Boxed*パラメータ向けの`RDup`/`RDrop`/
+postDropの記帳付きで注釈されている。その記帳を剥がさずに新しいidを
+いきなり`RNative`と宣言すると、本物のCコンパイルエラーになる
+(`idris2rc2_drop`に生の`int64_t`が渡される)。かといって単純に
+`RBoxed`のままにしておく(修正前の挙動)と、呼び出し先自身の本体が
+ネイティブ(`ROp`/`RCmpCase`のオペランド)としてしか読まない引数を
+boxし、あらゆる利用のたびにbox→即unboxの往復を強いることになる。
+
+**修正**: `nativeArgType`(`Loop.idr`、既存、`RLoop`対応済み)が、ある
+idのネイティブ文脈での読み出しが全て同じ型で一致しているならその型を
+答える。新設した`hasNonNativeUse ty loopSlots target e`は呼び出し先
+自身の本体を網羅的に走査し、`target`の出現のうち`stripOwnership`が
+既に片付け方を知っている位置で説明がつかないものがあるかを答える --
+`RDup`自身の`v`、`RDrop`自身の`vars`、`RFree`自身の`v`、そしてどの
+ノードの`postDrop`リストも対象外(そこでの一致は古びた記帳であって、
+本当にboxが必要な証拠ではない); `RReleaseReuse`自身の`v`と
+`RReuseOffer`自身の`sc`/`dupOnShared`/`dropOnUnique`は正真正銘の失格
+理由となる利用である(`stripOwnership`はすでに決定済みの再利用には
+意図的に一切触れない); それ以外の構造的な位置(呼び出し/コンスト
+ラクタ/struct演算の本物のオペランド)も同様に正真正銘の利用である。
+`nativeEligible paramId calleeBody`はこの両方を組み合わせる:
+`nativeArgType`と`not (hasNonNativeUse ...)`が両方合致したときだけ
+`Just ty`。`buildSplice`はこうして新しいidを`RNative ty`と宣言し、
+`promoted : SortedSet Int`集合へ記録する; `spliceCall`はリネーム済み
+本体を差し込む前に`stripOwnership promoted`を走らせるので、
+`hasNonNativeUse`が対象外とした古い所有権ノードは、Cエミッタが目に
+する時点で実際に消えている。
+
+**レイヤー2 -- 呼び出し元自身の、呼び出し結果を包む`RLet`。**
+レイヤー1を直しても、呼び出しが`RLet`自身の値として直接差し込まれる
+形(`let v = f x in ...`)では、その`RLet`自身の宣言された`Rep`は
+呼び出し元の元々の(`LateInline`より前の)`annotate`パスが決めた
+とおり -- `RBoxed`のまま残ってしまう。*元の*、インライン化されて
+いないプログラムでは、呼び出し先自身の末尾の値が結局ネイティブに
+なることなど知りようがなかったからである。差し込まれた本体は内部的
+には完全にネイティブでありうるのに、その`RLet`へ到達した瞬間にまた
+boxされてしまっていた。
+
+**修正**: `Compiler.RC2.DualABI`自身の`tailValueReps`(既存で、
+`RConCase`/`RConstCase`/`RCmpCase`のブランチや`RLoop`の本体を通り
+抜けてでも「この式全体のあらゆる末尾位置が同じネイティブ型に一致
+するか」を既に正しく答えられる)を、まさにこの再利用のためにexport
+した。新設の`uniformTailType e`がそれをラップする(全エントリが
+`Just ty`ならその時に限り`Just ty`); `spliceCall`は差し込んだ式と
+並べてこれも返すようになった。`inlineInto`自身の`go`は「呼び出しが
+`RLet`自身のまだ`RBoxed`な値として直接座っている」場合専用のケース
+を獲得した: 差し込み自身の末尾が一様にネイティブであり、*かつ*
+`hasNonNativeUse`(同じチェックだが、今度は呼び出し先自身の本体では
+なく`body` -- その`RLet`より下流の全て -- について問う)が失格理由と
+なる利用を一切見つけなければ、その`RLet`自身の宣言は`RNative ty`へ
+昇格され、`body`に対して`stripOwnership {var}`が走る。
+
+**レイヤー3 -- 呼び出し元自身の、結果をループのアキュムレータとして
+受け取る`RLoopContinue`。** レイヤー1・2を直しても、
+`BenchLoopCallArg`(呼び出しの結果が、次のイテレーションのアキュム
+レータとして、それを包む`RLoop`自身の`RLoopContinue ... args`へ直接
+流れ込む形)はまだ後退していた。`hasNonNativeUse`の元々の
+`RLoopContinue`ケースは、対象スロット自身の宣言された型が一致しない
+かもしれないという未検証の懸念から、`args`中の`target`の出現を
+*何であれ*保守的に失格として扱っていた。`Emit.idr`自身の
+`tryEmitLoopContinue`を確認したところ: continueの新しい値は常に
+`rcVarToNativeC`/`rcVarToBoxedC`経由で、*対象スロット自身の*宣言
+された`Rep`をキーにレンダリングされ、渡された値自身のものは一切
+使わない -- つまり同じ位置・同じ型の一致であれば、昇格しても安全だ
+と証明できる。
+
+**修正**: `hasNonNativeUse`は先頭に2つの新しいパラメータ、`ty`(昇格
+候補の型)と`loopSlots : List (Int, Rep)`(最も内側を囲む`RLoop`自身の
+`loopParams`)を獲得し、`RLoopContinue`ケースは、その位置の
+`loopSlots`エントリがまだ`RNative ty`になっていない場合*だけ*を失格
+として数えるようになった。`inlineInto`自身の`go`は、現在囲んでいる
+ループ自身の`loopParams`を持ち回す第3パラメータで拡張された(どの
+ループの外でも`[]`、`go`自身のRLoopケースが`body`へ降りるときに
+`loopParams`に設定 -- `reps`が既にそこで持ち回されているのとまさに
+同じ形)。これは両方の呼び出し箇所で`hasNonNativeUse`の開始
+`loopSlots`として渡される(`nativeEligible`内のcalleeパラメータ
+チェックは、呼び出し先自身の本体が*呼び出し元*のどんなループ文脈の
+外側から始まるので常に`[]`から始める。`go`内の`RLet`直接呼び出し
+ケースは*呼び出し元*の現在のループ文脈を必要とする)。`RLet`直接
+呼び出し箇所(まさに`BenchLoopCallArg`が踏んだ形で、該当する
+`RLoopContinue`は、`body`自身から到達できる*さらなる*`RLoop`の中に
+ではなく、`go`自身の*外側*の再帰がこの`RLet`へ到達するよりも前に
+既に通り抜けていた`RLoop`の中に座っていた)に決め打ちの`[]`を渡して
+いたことが、この昇格を密かに一度も発火させないままにしていた。
+
+**レイヤー3の修正中に見つかった4番目のバグ**: `uniformTailType`が
+「全ての末尾位置が`ty`で一致している」と言っているというだけの理由
+で`RLet`を`RNative ty`へ昇格するのは、それだけでは*不十分*だった --
+`uniformTailType`は`RConCase`/`RConstCase`/`RCmpCase`のブランチを
+平気で通り抜けてそれぞれ自身の末尾へ到達するが、`Emit.idr`自身の
+`emitNativeValue`(`declareNative`/`inlineNative`が`RNative`ローカル
+自身の値のために使う、唯一のインラインC式レンダラ)には、ブランチを
+1個のC式として*レンダリング*する手段が無い -- 末尾で理解できるのは
+`RAppFFIInline`/`ROp`/`RPrimVal`だけであり、その途中で`RLet`/`RDup`/
+`RFree`/`RDrop`/`RReleaseReuse`ラッパーを剥がしていくだけである。
+レイヤー3の追加の昇格を有効にしたことで、これが新たに露呈した:
+`Test15CompareFusionThroughCall`自身の`step`(`if acc <= 0 then 1
+else acc + 1`、アキュムレータが`RLoopContinue`へ流れ込むループへ
+差し込まれる)が`uniformTailType`だけを根拠に昇格され、その
+`RCmpCase`がエミッタへ到達した瞬間に`declareNative`が「[rc2]
+internal: expected a native-producing expression」でクラッシュした。
+**修正**: `emitNativeValue`自身のサポートされる形の一覧をコンスト
+ラクタ単位でそのまま写した新設の`emitNativeValueCompatible e`が、
+`hasNonNativeUse`と並んで`RLet`直接呼び出しの昇格にゲートをかける --
+`emitNativeValue`自身が剥がすのと同じラッパーノードを剥がした後の
+差し込み自身の末尾が、`ROp`/`RPrimVal`/`RAppFFIInline`(ブランチは
+決して不可)へ行き着く場合だけが適格になる。
+
+これら4つの修正それぞれの後に、フルの回帰スイート
+(`rc2/tests/verify.sh` 85/0、`libs/rc2base/tests/verify.sh` 16/16)
+に加え、正しさのオラクルとしての`--directive nolateinline`ビルドに
+対する`BenchChain`と`BenchLoopCallArg`の直接の`dumprcexpr`/`time`
+検査で再検証済み。最終的な実測結果: `BenchChain` 0.0052秒(RefC比
+125.31倍、後退前の過去最高記録81.9倍を上回る); `BenchLoopCallArg`
+0.0032秒(RefC比168.44倍、自身の過去のベースライン約66.7倍を上回る)。
+
 ### ファイル
 
 - `rc2/src/Compiler/RC2/LateInline.idr` -- このパスそのもの、全体。
@@ -433,30 +566,3 @@ Loop/MutualLoop変換の後に厳密に置く -- これより前に走らせる�
    削っていた呼び出し境界そのものを取り除くので、これらの特定の
    関数についてその狭い最適化がもう要らなくなるのは想定通りであり、
    後退ではない。
-
-## ファイル
-
-- `rc2/src/Compiler/RC2/Inline.idr` -- このパスそのもの、全体。
-- `rc2/src/Compiler/RC2/MutualLoop.idr` -- `Graph`/`tarjanSCCs`。
-  ここでの再利用のために`public export`/`export`にされている
-  (基準B、現時点では未実装 -- 上記参照)。
-- `rc2/src/Compiler/RC2/RC2.idr` -- `toRCDefs`自身の配線、
-  `compileExpr`自身の`"noinline"`ディレクティブ。
-- `rc2/tests/Test14SmallFunctionInline.idr`、
-  `rc2/tests/Test15CompareFusionThroughCall.idr` -- それぞれ基準A、
-  および動機となった比較融合のケース専用の回帰テスト。
-
-## 検証方法
-
-1. フルビルド+テストスイート: `CLAUDE.md`の「Build & test」節参照
-   (コンパイラ、ランタイム、続けて`rc2/tests/verify.sh` -- 19/19の
-   refc-suite、全てのスモークテスト、長らく記録されている既存の
-   `Test1Basics`のリーク1件を除く全ての`LEAK_SENSITIVE_TESTS`エントリ
-   で`valgrind`がクリーン)。
-2. `Test15CompareFusionThroughCall.idr`に対する`--directive
-   dumprcexpf`と`--directive dumprcexpf --directive noinline`の比較:
-   インターフェース呼び出しが消え、単一のネイティブ`cmp <=Int
-   [...]`に置き換わること、そしてその直接の結果として`step`自身の
-   workerパラメータが`Boxed`から`Native Int`へ変わることを確認する。
-3. `rc2/tests/bench.sh`: 既存のマイクロベンチマークスイートに
-   タイミングの後退がないこと。
