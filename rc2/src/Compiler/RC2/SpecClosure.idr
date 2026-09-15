@@ -221,11 +221,38 @@ buildClone callee argPos paramVar targetName missing capturedCount args retRep b
 stillAppliesParam : Int -> RCExp -> Bool
 stillAppliesParam paramVar e = countUsesR (RCLoc paramVar) e > 0
 
+||| One accepted clone: redirect a call to `callee` at `argPos` to
+||| `cloneName` whenever the bound closure there resolves to `target`.
+RedirectEntry : Type
+RedirectEntry = (Nat, Name, Name)
+
+||| All accepted clones, keyed by `callee` -- built once across every
+||| specialization key and applied in a single whole-program pass (see
+||| `applySpecClosure`'s own doc comment for why this replaced a
+||| per-key `redirectCallSites` call).
+RedirectTable : Type
+RedirectTable = SortedMap Name (List RedirectEntry)
+
 ||| See the doc's "Internal structure" -> "Profitability +
-||| redirection" paragraph.
-redirectCallSites : (callee : Name) -> (argPos : Nat) -> (target : Name) -> (cloneName : Name) -> RCExp -> RCExp
-redirectCallSites callee argPos target cloneName = goBound empty
+||| redirection" paragraph. Generalized to consult every accepted
+||| clone for `callee` in one pass, since a given call site's bound
+||| closure can match at most one of them.
+redirectCallSitesTable : RedirectTable -> RCExp -> RCExp
+redirectCallSitesTable table = goBound empty
   where
+    tryEntries : Bound -> FC -> Maybe LazyReason -> Name -> List RCLocal -> List RedirectEntry -> RCExp
+    tryEntries bound fc lazy n args [] = RAppName fc lazy n args
+    tryEntries bound fc lazy n args ((argPos, target, cloneName) :: rest) =
+        case splitAt argPos args of
+             (before, a :: after) =>
+                 case lookupKnown bound a of
+                      Just (MkKnownClosure t _ capturedArgs) =>
+                          if t == target
+                             then RAppName fc lazy cloneName (before ++ capturedArgs ++ after)
+                             else tryEntries bound fc lazy n args rest
+                      Nothing => tryEntries bound fc lazy n args rest
+             _ => tryEntries bound fc lazy n args rest
+
     goBound : Bound -> RCExp -> RCExp
     goBound bound (RLet fc var rep value body) =
         let bound' = case value of
@@ -233,15 +260,9 @@ redirectCallSites callee argPos target cloneName = goBound empty
                           _ => bound
         in RLet fc var rep (goBound bound value) (goBound bound' body)
     goBound bound (RAppName fc lazy n args) =
-        if n == callee
-           then case splitAt argPos args of
-                     (before, a :: after) =>
-                         case lookupKnown bound a of
-                              Just (MkKnownClosure t _ capturedArgs) =>
-                                  if t == target then RAppName fc lazy cloneName (before ++ capturedArgs ++ after) else RAppName fc lazy n args
-                              Nothing => RAppName fc lazy n args
-                     _ => RAppName fc lazy n args
-           else RAppName fc lazy n args
+        case lookup n table of
+             Nothing => RAppName fc lazy n args
+             Just entries => tryEntries bound fc lazy n args entries
     goBound bound e = mapSubExprs (goBound bound) e
 
 ------------------------------------------------------------------------
@@ -252,18 +273,34 @@ redirectCallSites callee argPos target cloneName = goBound empty
 ||| iterated to a fixpoint -- see the doc's "Open questions" -> "Applied
 ||| once per compile" entry.
 |||
-||| TEMPORARY diagnostic instrumentation below (`logTimeOver`, all at
-||| threshold 0 so every entry prints unconditionally, not gated behind
-||| any `--timing`/log-level flag): added while investigating a report
-||| that this pass never finishes compiling `idris2-lsp`. Per-key
-||| timing splits `tryOneKey`'s own three real costs apart --
-||| `rebuildCafTable`/`buildClone`+`foldConstDef`/`redirectAll` -- since
-||| both `rebuildCafTable` and `redirectAll` re-walk the *entire*
-||| accumulated `accDefs` list on every accepted key, an `O(distinct
-||| keys x program size)` cost that a program with many qualifying
-||| closure-argument functions (plausible for something the size of
-||| `idris2-lsp`) could plausibly blow up on. Remove once the actual
-||| bottleneck is confirmed and fixed.
+||| Both the CAF table and call-site redirection are computed *once*
+||| over the whole program -- `rebuildCafTable defs` up front, and a
+||| `RedirectTable` accumulated across every key and applied in a
+||| single final `redirectCallSitesTable` pass -- rather than once per
+||| distinct specialization key. An earlier version rebuilt the CAF
+||| table from, and redirected call sites across, the entire
+||| accumulated definitions list on *every accepted key*: an
+||| `O(distinct keys x program size)` cost that made this pass
+||| impractically slow on a program the size of `idris2-lsp` (many
+||| thousands of definitions, plausibly many distinct closure-argument
+||| keys). This version is `O(program size)` overall (plus a small
+||| `O(distinct keys)` for table bookkeeping). Reusing `defs`'s own CAF
+||| facts (rather than each clone's) is correctness-equivalent: a
+||| fresh clone's body only ever calls `target` (already known),
+||| itself (already resolved via `rewriteSelfCall`), or whatever `g`'s
+||| original body already called -- never another just-built clone
+||| from an earlier key in the same pass.
+|||
+||| Diagnostic instrumentation below (`logTimeOver`, all at threshold 0
+||| so every entry prints unconditionally, not gated behind any
+||| `--timing`/log-level flag) is now just the four whole-pass-level
+||| lines -- collect+group, the opportunity/key/def counts, the single
+||| `rebuildCafTable`, and the single final redirect pass -- since
+||| those are each `O(program size)` at most once per compile. The
+||| earlier per-key `tryOneKey`/`buildClone+fold` lines (one pair per
+||| distinct specialization key, unbounded on a program the size of
+||| `idris2-lsp`) were removed once the `O(distinct keys x program
+||| size)` slowdown they were added to diagnose was confirmed fixed.
 export
 applySpecClosure : List (Name, RCDef) -> Core (List (Name, RCDef))
 applySpecClosure defs = do
@@ -271,7 +308,19 @@ applySpecClosure defs = do
     keys <- logTimeOver 0 (pure "rc2: SpecClosure: collect+group opportunities") (pure (SortedMap.toList byKey))
     coreLift $ putStrLn $ "TIMING rc2: SpecClosure: " ++ show (length opportunities) ++ " opportunities, "
                            ++ show (length keys) ++ " distinct keys, " ++ show (length defs) ++ " defs"
-    goKeys defOf defs keys
+    caf <- logTimeOver 0 (pure ("rc2: SpecClosure: rebuildCafTable (" ++ show (length defs) ++ " defs, once)"))
+             (pure (rebuildCafTable defs))
+    (newClones, table) <- goKeys defOf caf [] empty keys
+    -- `newClones ++ defs`, not `defs ++ newClones`: matches the
+    -- ordering the old per-key-accumulated `accDefs` produced (each
+    -- accepted clone prepended, original defs at the tail), so
+    -- emission's own ArgCounter-derived temp-variable numbering is
+    -- unaffected by this refactor.
+    logTimeOver 0 (pure ("rc2: SpecClosure: redirectAll (" ++ show (length defs + length newClones) ++ " defs, once)"))
+      (pure $ map (\(n, d) => (n, case d of
+                                        MkRCFun a r w body => MkRCFun a r w (redirectCallSitesTable table body)
+                                        d' => d'))
+                  (newClones ++ defs))
   where
     defOf : SortedMap Name RCDef
     defOf = SortedMap.fromList defs
@@ -295,41 +344,39 @@ applySpecClosure defs = do
     rebuildCafTable : List (Name, RCDef) -> CafTable
     rebuildCafTable = foldl (\tbl, (n, d) => maybe tbl (\v => insert n v tbl) (cafValueOf d)) empty
 
-    redirectAll : Name -> Nat -> Name -> Name -> List (Name, RCDef) -> List (Name, RCDef)
-    redirectAll callee argPos target cloneName =
-        map (\(n, d) => (n, case d of
-                                 MkRCFun a r w body => MkRCFun a r w (redirectCallSites callee argPos target cloneName body)
-                                 d' => d'))
-
-    tryOneKey : {auto fr : Ref FreshId Int} -> SortedMap Name RCDef -> Name -> Nat -> Name -> Nat -> List Opportunity -> List (Name, RCDef) -> Core (List (Name, RCDef))
-    tryOneKey defOf callee argPos target missing opps accDefs =
+    ||| Builds and profitability-checks one clone for one key; `Just`
+    ||| iff accepted. `caf` is the whole-program CAF table, built once
+    ||| by the caller (see `applySpecClosure`'s own doc comment).
+    tryOneKey : {auto fr : Ref FreshId Int} -> SortedMap Name RCDef -> CafTable -> Name -> Nat -> Name -> Nat -> List Opportunity -> Core (Maybe (Name, RCDef))
+    tryOneKey defOf caf callee argPos target missing opps =
         case (lookup callee defOf, opps) of
              (Just gDef@(MkRCFun args retRep _ body), rep :: _) =>
                  case specializableParam callee argPos missing gDef of
-                      Nothing => pure accDefs
+                      Nothing => pure Nothing
                       Just paramVar => do
                           let capturedCount = length rep.closure.capturedArgs
-                          (cloneName, cloneDef) <- logTimeOver 0 (pure ("rc2: SpecClosure: buildClone+fold " ++ show callee ++ " <- " ++ show target))
-                                                       (do (cn, cd) <- buildClone callee argPos paramVar target missing capturedCount args retRep body
-                                                           caf <- logTimeOver 0 (pure ("rc2: SpecClosure: rebuildCafTable (" ++ show (length accDefs) ++ " defs) for " ++ show callee))
-                                                                    (pure (rebuildCafTable accDefs))
-                                                           pure (cn, foldConstDef caf cd))
+                          (cloneName, unfoldedDef) <- buildClone callee argPos paramVar target missing capturedCount args retRep body
+                          let cloneDef = foldConstDef caf unfoldedDef
                           let cloneDef'@(MkRCFun _ _ _ foldedBody) = cloneDef
-                              | _ => pure accDefs
-                          if stillAppliesParam paramVar foldedBody
-                             then pure accDefs
-                             else logTimeOver 0 (pure ("rc2: SpecClosure: redirectAll (" ++ show (length accDefs + 1) ++ " defs) for "
-                                                        ++ show callee ++ " <- " ++ show target))
-                                    (pure $ redirectAll callee argPos target cloneName ((cloneName, cloneDef') :: accDefs))
-             _ => pure accDefs
+                              | _ => pure Nothing
+                          pure $ if stillAppliesParam paramVar foldedBody
+                                    then Nothing
+                                    else Just (cloneName, cloneDef')
+             _ => pure Nothing
 
     -- `Core` has no `Monad` instance, so `Data.List.foldlM` doesn't
-    -- apply -- a manual left fold over the discovered keys instead.
+    -- apply -- a manual left fold over the discovered keys instead,
+    -- threading the accepted-clones list and the redirect table
+    -- (rather than a growing whole-program defs list) as the
+    -- accumulators.
     goKeys : {auto fr : Ref FreshId Int}
-          -> SortedMap Name RCDef -> List (Name, RCDef) -> List ((Name, Nat, Name, Nat), List Opportunity) -> Core (List (Name, RCDef))
-    goKeys _ accDefs [] = pure accDefs
-    goKeys defOf accDefs (((callee, argPos, target, missing), opps) :: rest) = do
-        accDefs' <- logTimeOver 0 (pure ("rc2: SpecClosure: tryOneKey " ++ show callee ++ " <- " ++ show target
-                                          ++ " (" ++ show (length accDefs) ++ " defs so far)"))
-                       (tryOneKey defOf callee argPos target missing opps accDefs)
-        goKeys defOf accDefs' rest
+          -> SortedMap Name RCDef -> CafTable -> List (Name, RCDef) -> RedirectTable
+          -> List ((Name, Nat, Name, Nat), List Opportunity) -> Core (List (Name, RCDef), RedirectTable)
+    goKeys _ _ newClones table [] = pure (newClones, table)
+    goKeys defOf caf newClones table (((callee, argPos, target, missing), opps) :: rest) = do
+        mClone <- tryOneKey defOf caf callee argPos target missing opps
+        case mClone of
+             Nothing => goKeys defOf caf newClones table rest
+             Just (cloneName, cloneDef) =>
+                 goKeys defOf caf ((cloneName, cloneDef) :: newClones)
+                        (insertWith (++) callee [(argPos, target, cloneName)] table) rest
