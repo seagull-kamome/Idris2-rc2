@@ -1,41 +1,9 @@
 ||| Speculative, profitability-gated closure-argument specialization.
-||| See `rc2/doc/speculative-closure-specialization.md` for the full
-||| design. Summary: for a function `g` whose parameter is used only
-||| via `RApp` (a boxed closure dispatch) inside `g`'s own body, and
-||| which is *always* called with one specific known closure target at
-||| some subset of `g`'s call sites (program-wide, ignoring what free
-||| variables that closure captures at each site -- weaker than
-||| `%spec`'s own closedness requirement, see the doc's "Why not %spec"
-||| section), clone `g` once per distinct target observed, rewrite the
-||| clone's own `apply` into a direct `call`, and keep the clone only
-||| if that direct call is no longer hidden behind any remaining
-||| `apply` of the same kind after a fresh `ConstFold` over just the
-||| clone -- discard it otherwise (a discarded clone is unreferenced,
-||| costs nothing, and `Compiler.RC2.DeadCode` drops it like any other).
-|||
-||| Runs once, between `foldConstProgram` and `insertMemoize`
-||| (`RC2.idr`'s `toRCDefs`) -- after `RUnderApp` targets are visible,
-||| before Phase 2 (`annotate`) ever runs, so a kept clone is just one
-||| more `MkRCFun` for the rest of the pipeline, no special handling
-||| needed from `annotate`/`Reuse`/`ConAltNative`/`Loop`/etc.
-|||
-||| **Scope limits**:
-||| - `missing > 1` (chained applies) *is* handled via `chainArgs` --
-|||   `RApp`'s own two operands are bare `RCLocal`s, so a curried
-|||   `f a1 a2` ANF-normalizes to `RLet tmp (RApp f a1) (RApp tmp a2)`,
-|||   not one node. Only the *exact* chain shape is recognized; anything
-|||   interposed leaves the whole chain unspecialized. This matters in
-|||   practice: an ordinary `String -> IO ()` callback is `missing = 2`
-|||   (real arg + the hidden `%World` token), never `missing = 1`.
-||| - Re-running `Inline` on a clone (the paper design's other half of
-|||   Step 2) is NOT implemented -- `Inline` is a whole-program
-|||   `Lifted`-to-`Lifted` pass that already ran once, pre-RCExp;
-|||   re-invoking it on one RCExp clone isn't something its current
-|||   architecture supports. Only `ConstFold`'s `foldConstDef` is
-|||   re-run here, so a call-free `target` isn't opportunistically
-|||   inlined into the clone -- it stays a real direct call.
-||| - Applied once per compile, not iterated to a fixpoint, by explicit
-|||   request -- `applySpecClosure`'s own doc comment has the rationale.
+||| Design, motivation, and the reasoning behind every non-obvious
+||| choice below live in `rc2/doc/speculative-closure-specialization.md`
+||| (its own "Internal structure" section maps directly onto this
+||| module's own functions) -- this file only comments *how*, not *why*.
+||| Disable with `--directive nospecclosure`.
 module Compiler.RC2.SpecClosure
 
 -- Copyright 2026, Hattori,Hiroki. All rights reserved.
@@ -60,14 +28,9 @@ import Data.SortedSet
 %default covering
 
 ------------------------------------------------------------------------
--- Shared structural recursion: `RLet`/`RCmpCase`/`RConCase`/
--- `RConstCase` are the only constructors that can hold a nested RCExp
--- in this pass's own input (strictly pre-Phase-2 -- no RDup/RDrop/
--- RFree/RReleaseReuse/RReuseOffer, RLoop/RLoopContinue, RAppNameRep/
--- RAppFFIInline, or RMemoize can occur here; all of those come from
--- later passes). Every walk below special-cases whichever constructor
--- it actually cares about and falls back to one of these two for the
--- rest, instead of re-deriving the same four cases repeatedly.
+-- Shared structural recursion over this pass's own RCExp subset --
+-- see the doc's "Internal structure" section, "Shared structural
+-- recursion" paragraph.
 ------------------------------------------------------------------------
 
 mapAlt : (RCExp -> RCExp) -> RConAlt -> RConAlt
@@ -97,13 +60,7 @@ foldSubExprs _ z _ _ = z
 -- Step 1: whole-program call-site discovery
 ------------------------------------------------------------------------
 
-||| A closure some call site is passing that's provably always one
-||| `RUnderApp`'s value. `target`/`missing` are that `RUnderApp`'s own
-||| first two fields (what must agree for two call sites to count as
-||| "the same target"); `capturedArgs` is its third field, the actual
-||| values closed over *at this call site* -- varies freely between
-||| sites sharing the same target (doc's own `[v85,v80]` vs.
-||| `[v200,v201]` example).
+||| See the doc's "Internal structure" -> "Records" paragraph.
 record KnownClosure where
   constructor MkKnownClosure
   target : Name
@@ -118,20 +75,12 @@ record Opportunity where
   argPos : Nat
   closure : KnownClosure
 
-||| `RCLocal`s, in the definition currently being walked, provably
-||| bound (via an enclosing `RLet`) to a known `RUnderApp`, keyed by
-||| their `Int` id. Built forward, never popped -- `normalizeDef`
-||| assigns every id once, monotonically, per definition, so no id is
-||| ever rebound within one definition's body.
+||| See the doc's "Internal structure" -> "Records" paragraph.
 Bound : Type
 Bound = SortedMap Int KnownClosure
 
-||| The `KnownClosure` an argument already carries: either `RCLoc i`
-||| traced through `bound` to an enclosing `RUnderApp`, or a bare
-||| `RCConstClosure n missing` (what a *zero*-capture `RUnderApp`
-||| already becomes -- `ConstFold`'s own narrower constant-closure
-||| folding, `doc/const-closure-fold.md`, substitutes it at every use
-||| site directly, leaving no `Bound` entry to trace back to).
+||| See the doc's "Internal structure" -> "Finding a known closure at a
+||| use site" paragraph.
 lookupKnown : Bound -> RCLocal -> Maybe KnownClosure
 lookupKnown bound (RCLoc i) = lookup i bound
 lookupKnown _ (RCConstClosure n missing) = Just (MkKnownClosure n missing [])
@@ -151,48 +100,20 @@ collectOpportunities bound e = foldSubExprs (++) [] (collectOpportunities bound)
 ------------------------------------------------------------------------
 -- Step 1 (continued): is the parameter actually used only via `apply`
 -- (possibly chained, possibly also passed through to self-recursion)?
--- If not, cloning buys nothing.
 ------------------------------------------------------------------------
 
-||| If `e` is exactly a `missing`-long apply chain rooted at `v`,
-||| returns the arguments applied, in order. `RApp`'s two operands are
-||| bare `RCLocal`s (never a nested `RApp`), so `v a1 a2` (two more
-||| args needed) ANF-normalizes to `RLet t (RApp v a1) (RApp t a2)`,
-||| not one node -- this chases that shape level by level, `v` at the
-||| first apply, each fresh intermediate at the next. The last apply
-||| may be a bare tail expression instead of `RLet`-bound (nothing
-||| inside the chain needs to name its result). `Nothing` on any other
-||| shape -- no partial credit for an interrupted chain.
+||| See the doc's "Internal structure" -> "Chain detection" paragraph.
 chainArgs : RCLocal -> Nat -> RCExp -> Maybe (List RCLocal)
 chainArgs v (S Z) (RApp _ _ c a) = if c == v then Just [a] else Nothing
 chainArgs v (S k@(S _)) (RLet _ t _ (RApp _ _ c a) cont) =
     if c == v then (a ::) <$> chainArgs (RCLoc t) k cont else Nothing
 chainArgs _ _ _ = Nothing
 
-||| `True` iff a `missing`-long `chainArgs` match for `v` occurs
-||| anywhere in `e` -- tried at every node on the way down, since a
-||| chain's own root can be any sub-expression (e.g. inside the value
-||| of an unrelated enclosing `RLet`), not just `e` itself.
-chainOccursIn : RCLocal -> Nat -> RCExp -> Bool
-chainOccursIn v missing e = isJust (chainArgs v missing e) || foldSubExprs (\a, b => a || b) False (chainOccursIn v missing) e
-
-||| `xs !! n`, `Maybe`-total.
-nthArg : Nat -> List a -> Maybe a
-nthArg _ [] = Nothing
-nthArg Z (x :: _) = Just x
-nthArg (S k) (_ :: xs) = nthArg k xs
-
-||| How many of `v`'s occurrences in `e` are argument `argPos` of a
-||| *self*-recursive call to `callee` -- `go (x::xs) f = f x >> go xs
-||| f`'s own trailing `go xs f` is exactly this, and it's *expected*,
-||| not disqualifying: any structurally-recursive traversal threads its
-||| own closure argument through unchanged. `paramLooksSpecializable`
-||| credits each of these instead of requiring `v` to occur exactly
-||| once outright -- without this, no genuinely recursive `go`-shaped
-||| function would ever qualify.
+||| See the doc's "Internal structure" -> "Self-recursive passthrough"
+||| paragraph.
 selfPassthroughOccurrences : RCLocal -> (callee : Name) -> (argPos : Nat) -> RCExp -> Nat
 selfPassthroughOccurrences v callee argPos (RAppName _ _ n args) =
-    if n == callee && nthArg argPos args == Just v then 1 else 0
+    if n == callee && getAt argPos args == Just v then 1 else 0
 selfPassthroughOccurrences v callee argPos e = foldSubExprs (+) 0 (selfPassthroughOccurrences v callee argPos) e
 
 ||| `True` iff every occurrence of `v` in `e` is accounted for by
@@ -203,19 +124,23 @@ paramLooksSpecializable v missing callee argPos e =
     let uses = countUsesR v e
         passthrough = selfPassthroughOccurrences v callee argPos e
     in uses > passthrough && (uses `minus` passthrough) == 1 && chainOccursIn v missing e
+  where
+    ||| `True` iff a `missing`-long `chainArgs` match for `v` occurs
+    ||| anywhere in `e` -- see the doc's "Chain detection" paragraph for
+    ||| why this searches every node, not just `e` itself.
+    chainOccursIn : RCLocal -> Nat -> RCExp -> Bool
+    chainOccursIn v missing e = isJust (chainArgs v missing e) || foldSubExprs (\a, b => a || b) False (chainOccursIn v missing) e
 
 ------------------------------------------------------------------------
 -- Step 2: speculative clone + rewrite, one attempt per distinct
--- (callee, argPos, target, missing) key -- `capturedArgs`'s own values
--- are deliberately not part of that key: two call sites capturing
--- different locals but naming the same target both redirect to the
--- one clone built for that target.
+-- (callee, argPos, target, missing) key -- see the doc's "The proposed
+-- rc2-native design" -> "2. Speculative clone + re-fold" for why
+-- `capturedArgs`'s own values aren't part of that key.
 ------------------------------------------------------------------------
 
 ||| Rewrites the `missing`-long apply chain rooted at `paramVar` into a
-||| direct call to `targetName`, fed `capturedParams` (new parameters
-||| standing in for whatever `target`'s own `RUnderApp` captured)
-||| followed by the chain's own applied arguments, in order.
+||| direct call to `targetName`, fed `capturedParams` followed by the
+||| chain's own applied arguments, in order.
 rewriteApply : (paramVar : Int) -> (targetName : Name) -> (missing : Nat) -> (capturedParams : List Int) -> RCExp -> RCExp
 rewriteApply paramVar targetName missing capturedParams = go
   where
@@ -224,21 +149,9 @@ rewriteApply paramVar targetName missing capturedParams = go
                 Just args => RAppName EmptyFC Nothing targetName (map RCLoc capturedParams ++ args)
                 Nothing => mapSubExprs go e
 
-||| The largest `Int` var id bound anywhere in `e` (`RLet`/`RConAlt`
-||| binders are the only sources of a *new* id; `normalizeDef` assigns
-||| every id once, monotonically, per definition, so a definition's own
-||| ids are exactly `[0 .. maxVarInBody]`, no gaps). `-1` for a body
-||| binding nothing. Needed so `buildClone`'s new captured-value
-||| parameters never collide with an id `g`'s own body already uses --
-||| allocating them from this module's own `FreshId` instead (unrelated
-||| to any one definition's own numbering) collides in practice.
-|||
-||| Deliberately does *not* go through `foldSubExprs`: unlike every
-||| other walk in this module, this one also has to count `RConAlt`/
-||| `RConstAlt`'s own pattern binders (`RConAlt`'s `args`), which
-||| `foldSubExprs`'s generic per-child recursion has no hook for --
-||| confirmed the hard way, as a real "redeclared with a different
-||| kind of symbol" C compile error, when this was first tried.
+||| See the doc's "Internal structure" -> "Safe fresh ids" paragraph
+||| (including why this can't just use `FreshId`, and why it can't go
+||| through `foldSubExprs`).
 maxVarInBody : List (Int, Rep) -> RCExp -> Int
 maxVarInBody args body = max (foldl max (-1) (map fst args)) (go body)
   where
@@ -256,28 +169,20 @@ maxVarInBody args body = max (foldl max (-1) (map fst args)) (go body)
       goConstAlt (MkRConstAlt _ body') = go body'
 
 ||| `n` fresh, sequential ids starting right after `base`
-||| (`maxVarInBody`'s own result) -- `[]` for `n = Z`. Deliberately not
-||| `[1 .. n]` range syntax: Idris2's own `Enum Nat` gives `[1 .. 0] =
-||| [1, 0]`, not `[]`, which silently manufactured two spurious
-||| captured parameters whenever `n` was genuinely 0 (caught by an
-||| actual C compile failure before this fix).
+||| (`maxVarInBody`'s own result) -- `[]` for `n = Z`. See the doc's
+||| "Safe fresh ids" paragraph for why this isn't `[1 .. n]`.
 freshIdsFrom : Int -> Nat -> List Int
 freshIdsFrom base Z = []
 freshIdsFrom base (S k) = (base + 1) :: freshIdsFrom (base + 1) k
 
-||| Rewrites every self-recursive call to `callee` that passes
-||| `paramVar` unchanged at `argPos` (`selfPassthroughOccurrences`'s
-||| own shape) into a call to `cloneName`, splicing `capturedParams`
-||| into that position instead (the clone's own signature has no slot
-||| for the original closure argument at all). Without this, `go`'s own
-||| trailing `go xs f` would keep recursing into the generic,
-||| un-specialized `g`, specializing nothing past the first call.
+||| See the doc's "Internal structure" -> "Self-recursive passthrough"
+||| paragraph.
 rewriteSelfCall : (callee : Name) -> (argPos : Nat) -> (paramVar : Int) -> (cloneName : Name) -> (capturedParams : List Int) -> RCExp -> RCExp
 rewriteSelfCall callee argPos paramVar cloneName capturedParams = go
   where
     go : RCExp -> RCExp
     go (RAppName fc lazy n args) =
-        if n == callee && nthArg argPos args == Just (RCLoc paramVar)
+        if n == callee && getAt argPos args == Just (RCLoc paramVar)
            then case splitAt argPos args of
                      (before, _ :: after) => RAppName fc lazy cloneName (before ++ map RCLoc capturedParams ++ after)
                      _ => RAppName fc lazy n args
@@ -286,10 +191,9 @@ rewriteSelfCall callee argPos paramVar cloneName capturedParams = go
 
 ||| Builds one specialized clone of `g` (`callee`; `paramVar`: the
 ||| `Int` id of its closure parameter at `argPos`) for one `(targetName,
-||| missing, capturedCount)` triple. `capturedCount` comes from one
-||| witnessing call site's own `capturedArgs` length -- consistent
-||| across every call site sharing this key by construction (same
-||| `target` name/arity everywhere). Not re-folded here --
+||| missing, capturedCount)` triple -- see the doc's "Internal
+||| structure" -> "Profitability + redirection" paragraph for
+||| `capturedCount`'s own provenance. Not re-folded here --
 ||| `applySpecClosure` does that once, after this returns.
 buildClone : {auto fr : Ref FreshId Int}
           -> (callee : Name) -> (argPos : Nat)
@@ -311,17 +215,13 @@ buildClone callee argPos paramVar targetName missing capturedCount args retRep b
 -- Step 3: profitability check + call-site redirection
 ------------------------------------------------------------------------
 
-||| `True` iff `e` still references `paramVar` -- the closure escaped
-||| somewhere the fold couldn't reach (stored, returned, applied inside
-||| an unresolved branch, ...), so the clone bought nothing.
+||| `True` iff `e` still references `paramVar` -- see the doc's "The
+||| proposed rc2-native design" -> "3. Profitability check" section.
 stillAppliesParam : Int -> RCExp -> Bool
 stillAppliesParam paramVar e = countUsesR (RCLoc paramVar) e > 0
 
-||| Every call to `callee` passing a `KnownClosure` matching `target`
-||| at `argPos`, redirected to `cloneName` with that argument replaced
-||| by its own capture list (matching the clone's reduced arity). A
-||| call site naming a *different* target is left alone -- it keeps
-||| calling the generic, un-cloned `g`.
+||| See the doc's "Internal structure" -> "Profitability +
+||| redirection" paragraph.
 redirectCallSites : (callee : Name) -> (argPos : Nat) -> (target : Name) -> (cloneName : Name) -> RCExp -> RCExp
 redirectCallSites callee argPos target cloneName = goBound empty
   where
@@ -347,16 +247,9 @@ redirectCallSites callee argPos target cloneName = goBound empty
 -- Whole-program entry point
 ------------------------------------------------------------------------
 
-||| One round of speculative closure-argument specialization.
-|||
-||| Non-iterating by explicit request: a kept clone's own body can, in
-||| principle, expose a fresh opportunity of its own (calling another
-||| generic higher-order function with a now-constant closure it didn't
-||| have before), the same way `foldConstProgram` re-runs `ConstFold`
-||| to a fixpoint because one CAF's fold can unblock another. Not
-||| attempted -- re-run this function on its own output, or a small
-||| `go fuel defs` loop mirroring `foldConstProgram`'s shape, once real
-||| evidence calls for it; nothing here needs to change to support that.
+||| One round of speculative closure-argument specialization. Not
+||| iterated to a fixpoint -- see the doc's "Open questions" -> "Applied
+||| once per compile" entry.
 export
 applySpecClosure : List (Name, RCDef) -> Core (List (Name, RCDef))
 applySpecClosure defs = do
@@ -364,9 +257,8 @@ applySpecClosure defs = do
     let defOf : SortedMap Name RCDef := SortedMap.fromList defs
     let opportunities : List Opportunity :=
             concatMap (\(_, d) => case d of MkRCFun _ _ _ body => collectOpportunities empty body; _ => []) defs
-    -- `missing` is part of the key, not just `target` -- the same
-    -- function captured at two different under-application depths
-    -- needs two different clones (differing `capturedCount`).
+    -- `missing` is part of the key, not just `target` (doc's own
+    -- "Internal structure" -> "Records" paragraph).
     let byKey : SortedMap (Name, Nat, Name, Nat) (List Opportunity) :=
             foldl (\acc, opp => insertWith (++) (opp.callee, opp.argPos, opp.closure.target, opp.closure.missing) [opp] acc)
                   (the (SortedMap (Name, Nat, Name, Nat) (List Opportunity)) empty) opportunities
@@ -376,7 +268,7 @@ applySpecClosure defs = do
     ||| `paramLooksSpecializable` for `missing`; `Nothing` otherwise.
     specializableParam : (callee : Name) -> Nat -> Nat -> RCDef -> Maybe Int
     specializableParam callee argPos missing (MkRCFun args _ _ body) =
-        case nthArg argPos args of
+        case getAt argPos args of
              Just (i, _) => if paramLooksSpecializable (RCLoc i) missing callee argPos body then Just i else Nothing
              Nothing => Nothing
     specializableParam _ _ _ _ = Nothing
@@ -406,9 +298,8 @@ applySpecClosure defs = do
                                     else redirectAll callee argPos target cloneName ((cloneName, cloneDef') :: accDefs)
              _ => pure accDefs
 
-    -- `Core` has no `Monad` instance (this project's own hand-rolled
-    -- effect monad), so `Data.List.foldlM` doesn't apply -- a manual
-    -- left fold over the discovered keys instead.
+    -- `Core` has no `Monad` instance, so `Data.List.foldlM` doesn't
+    -- apply -- a manual left fold over the discovered keys instead.
     goKeys : {auto fr : Ref FreshId Int}
           -> SortedMap Name RCDef -> List (Name, RCDef) -> List ((Name, Nat, Name, Nat), List Opportunity) -> Core (List (Name, RCDef))
     goKeys _ accDefs [] = pure accDefs

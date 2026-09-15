@@ -287,6 +287,115 @@ reasoning and the win it targets are still real -- `go` itself
 specializes exactly as designed -- this particular external workload
 just doesn't happen to spend its time there.
 
+## Internal structure (`SpecClosure.idr`)
+
+The module's own doc comments are deliberately short pointers back to
+this section now -- this is the one place the reasoning lives.
+
+**Records.** `KnownClosure` (`target`/`missing`/`capturedArgs`) mirrors
+one `RUnderApp`'s own three fields -- `target`/`missing` are the part
+that must agree for two call sites to count as "the same target";
+`capturedArgs` is the per-call-site values, which vary freely (the
+`[v85,v80]` vs. `[v200,v201]` example above). `Opportunity` records one
+call site's own `(callee, argPos, KnownClosure)`. `Bound` maps a live
+`RCLocal`'s `Int` id to the `KnownClosure` it's known to hold, built
+forward through a definition's own body and never popped: `normalizeDef`
+assigns every id once, monotonically, per definition, so no id is ever
+rebound within one definition's own body -- an entry inserted anywhere
+stays correct for the rest of that body, nested case alternatives
+included.
+
+**Finding a known closure at a use site (`lookupKnown`).** Either
+`RCLoc i` traced through `Bound` to an enclosing `RUnderApp` (the
+general, non-zero-capture case), or a bare `RCConstClosure n missing`
+sitting directly in the argument position, no `Bound` lookup needed --
+this is what a *zero*-capture `RUnderApp` already becomes by the time
+this pass runs: `ConstFold`'s own narrower constant-closure folding
+(`rc2/doc/const-closure-fold.md`) already substitutes it at every use
+site, leaving no `Bound` entry to trace back to. Confirmed the hard
+way: this module's own motivating repro (`mkTarget prefix`, `prefix` a
+string literal) takes exactly this path -- the literal folds away
+first, and an earlier version of `lookupKnown` that only ever checked
+`Bound` missed it entirely.
+
+**Chain detection (`chainArgs`/`chainOccursIn`).** `RApp`'s own two
+operands are bare `RCLocal`s, never a nested `RApp`, so a curried
+`v a1 a2` (two more args needed) ANF-normalizes to `RLet t (RApp v a1)
+(RApp t a2)`, not one node. `chainArgs` chases that shape level by
+level -- `v` at the first apply, each fresh intermediate at the next --
+allowing the *last* apply to be a bare tail expression instead of one
+more `RLet` (nothing inside the chain needs to name the final result).
+Only the exact shape matches; anything interposed (an unrelated `RLet`,
+a case split, ...) leaves the whole chain unspecialized, deliberately,
+rather than give partial credit. `chainOccursIn` tries `chainArgs` at
+every node on the way down, since a chain's own root can be any
+sub-expression -- `go`'s own real body roots one inside the *value* of
+an outer, unrelated `RLet`.
+
+**Self-recursive passthrough (`selfPassthroughOccurrences`,
+`rewriteSelfCall`).** See "Implementation notes" above for why this
+exists at all. `paramLooksSpecializable` credits each passthrough
+occurrence against `countUsesR`'s own total instead of requiring the
+parameter to occur exactly once outright. `rewriteSelfCall` then
+redirects any such recursive call, in the built clone, to the clone
+itself, splicing `capturedParams` into the position the original
+closure argument used to occupy.
+
+**Safe fresh ids (`maxVarInBody`, `freshIdsFrom`).** A clone's new
+captured-value parameters must never collide with an id `g`'s own body
+already uses. Allocating them from this module's own `FreshId` ref
+doesn't work -- it has no relationship to any one definition's own
+numbering (which itself restarts at 0 per definition, `normalizeDef`'s
+own `nextVarId`), and collided in practice, confirmed as an actual
+"redeclared with a different kind of symbol" C compile error the first
+time this was tried. `maxVarInBody` instead finds the largest `Int`
+already bound anywhere in `g`'s own body plus its own arguments, and
+`freshIdsFrom` counts up from there. Two gotchas, both confirmed by
+real compile failures rather than caught in review:
+- `maxVarInBody` must count `RConAlt`/`RConstAlt`'s own pattern-binder
+  ids too, not just `RLet`'s. It deliberately does *not* go through
+  this module's shared `foldSubExprs` combinator (below) for its
+  `RConCase`/`RConstCase` cases -- that generic per-child recursion has
+  no hook for a constructor alt's own binder list, and silently
+  dropping those ids reproduced the exact same class of id collision
+  the paragraph above describes.
+- `freshIdsFrom n` is deliberately not `[1 .. n]` range syntax:
+  Idris2's own `Enum Nat` gives `[1 .. 0] = [1, 0]`, two elements, not
+  `[]` -- which silently manufactured two spurious captured parameters
+  every time the real capture count was 0, until an actual C compile
+  failure (a clone declared with more parameters than any of its call
+  sites ever passed) caught it.
+
+**Shared structural recursion (`mapSubExprs`, `foldSubExprs`).** Every
+walk in this module that isn't `maxVarInBody` recurses into exactly
+`RLet`/`RCmpCase`/`RConCase`/`RConstCase` (the only constructors that
+can hold a nested `RCExp` in this pass's strictly-pre-Phase-2 input --
+no `RDup`/`RDrop`/`RFree`/`RReleaseReuse`/`RReuseOffer`, `RLoop`/
+`RLoopContinue`, `RAppNameRep`/`RAppFFIInline`, or `RMemoize` can occur
+here) the same way, once a node's own special case doesn't match.
+`mapSubExprs f` rebuilds a node via `f` on each child (`RCExp ->
+RCExp` rewrites); `foldSubExprs op z f` combines each child's `f`
+result with `op`, `z` for a childless leaf (`RCExp -> a` walks). Six
+near-identical hand-written copies of this collapsed into these two
+combinators; `maxVarInBody` is the one function that can't use
+`foldSubExprs`, per the gotcha above.
+
+**Profitability + redirection (`stillAppliesParam`,
+`redirectCallSites`, `buildClone`).** `stillAppliesParam` is Step 3's
+own gate: a plain `countUsesR` check on the folded clone (unlike
+`paramLooksSpecializable`'s own chain-aware count) is enough, since any
+survival of the parameter after `rewriteApply` already tried to remove
+its one occurrence means the specialization didn't fully take.
+`redirectCallSites` retraces `Bound` the same way `collectOpportunities`
+did, so it can tell which call sites share the *specific* target a kept
+clone was built for -- a call site naming a different target for the
+same `(callee, argPos)` is left calling the generic `g`, per the
+per-target memoization design. `buildClone`'s own `capturedCount`
+parameter is taken from one witnessing call site and assumed consistent
+across every call site sharing its `(callee, argPos, target, missing)`
+key, true by construction (the same `target` name/arity everywhere it's
+referenced).
+
 ## Open questions / risks
 
 - **Multiple specialized parameters on one function**: still open, not
