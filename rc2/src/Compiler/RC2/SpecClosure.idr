@@ -15,6 +15,7 @@ import Compiler.RC2.Types
 import Compiler.RC2.Util
 
 import Core.Context
+import Core.Context.Log
 import Core.Core
 import Core.FC
 import Core.TT
@@ -250,20 +251,38 @@ redirectCallSites callee argPos target cloneName = goBound empty
 ||| One round of speculative closure-argument specialization. Not
 ||| iterated to a fixpoint -- see the doc's "Open questions" -> "Applied
 ||| once per compile" entry.
+|||
+||| TEMPORARY diagnostic instrumentation below (`logTimeOver`, all at
+||| threshold 0 so every entry prints unconditionally, not gated behind
+||| any `--timing`/log-level flag): added while investigating a report
+||| that this pass never finishes compiling `idris2-lsp`. Per-key
+||| timing splits `tryOneKey`'s own three real costs apart --
+||| `rebuildCafTable`/`buildClone`+`foldConstDef`/`redirectAll` -- since
+||| both `rebuildCafTable` and `redirectAll` re-walk the *entire*
+||| accumulated `accDefs` list on every accepted key, an `O(distinct
+||| keys x program size)` cost that a program with many qualifying
+||| closure-argument functions (plausible for something the size of
+||| `idris2-lsp`) could plausibly blow up on. Remove once the actual
+||| bottleneck is confirmed and fixed.
 export
 applySpecClosure : List (Name, RCDef) -> Core (List (Name, RCDef))
 applySpecClosure defs = do
     _ <- newRef FreshId 0
-    let defOf : SortedMap Name RCDef := SortedMap.fromList defs
-    let opportunities : List Opportunity :=
-            concatMap (\(_, d) => case d of MkRCFun _ _ _ body => collectOpportunities empty body; _ => []) defs
+    keys <- logTimeOver 0 (pure "rc2: SpecClosure: collect+group opportunities") (pure (SortedMap.toList byKey))
+    coreLift $ putStrLn $ "TIMING rc2: SpecClosure: " ++ show (length opportunities) ++ " opportunities, "
+                           ++ show (length keys) ++ " distinct keys, " ++ show (length defs) ++ " defs"
+    goKeys defOf defs keys
+  where
+    defOf : SortedMap Name RCDef
+    defOf = SortedMap.fromList defs
+    opportunities : List Opportunity
+    opportunities = concatMap (\(_, d) => case d of MkRCFun _ _ _ body => collectOpportunities empty body; _ => []) defs
     -- `missing` is part of the key, not just `target` (doc's own
     -- "Internal structure" -> "Records" paragraph).
-    let byKey : SortedMap (Name, Nat, Name, Nat) (List Opportunity) :=
-            foldl (\acc, opp => insertWith (++) (opp.callee, opp.argPos, opp.closure.target, opp.closure.missing) [opp] acc)
+    byKey : SortedMap (Name, Nat, Name, Nat) (List Opportunity)
+    byKey = foldl (\acc, opp => insertWith (++) (opp.callee, opp.argPos, opp.closure.target, opp.closure.missing) [opp] acc)
                   (the (SortedMap (Name, Nat, Name, Nat) (List Opportunity)) empty) opportunities
-    goKeys defOf defs (SortedMap.toList byKey)
-  where
+
     ||| `paramVar` at `argPos` in `g`'s own args, if it passes
     ||| `paramLooksSpecializable` for `missing`; `Nothing` otherwise.
     specializableParam : (callee : Name) -> Nat -> Nat -> RCDef -> Maybe Int
@@ -290,12 +309,18 @@ applySpecClosure defs = do
                       Nothing => pure accDefs
                       Just paramVar => do
                           let capturedCount = length rep.closure.capturedArgs
-                          (cloneName, cloneDef) <- buildClone callee argPos paramVar target missing capturedCount args retRep body
-                          let cloneDef'@(MkRCFun _ _ _ foldedBody) = foldConstDef (rebuildCafTable accDefs) cloneDef
+                          (cloneName, cloneDef) <- logTimeOver 0 (pure ("rc2: SpecClosure: buildClone+fold " ++ show callee ++ " <- " ++ show target))
+                                                       (do (cn, cd) <- buildClone callee argPos paramVar target missing capturedCount args retRep body
+                                                           caf <- logTimeOver 0 (pure ("rc2: SpecClosure: rebuildCafTable (" ++ show (length accDefs) ++ " defs) for " ++ show callee))
+                                                                    (pure (rebuildCafTable accDefs))
+                                                           pure (cn, foldConstDef caf cd))
+                          let cloneDef'@(MkRCFun _ _ _ foldedBody) = cloneDef
                               | _ => pure accDefs
-                          pure $ if stillAppliesParam paramVar foldedBody
-                                    then accDefs
-                                    else redirectAll callee argPos target cloneName ((cloneName, cloneDef') :: accDefs)
+                          if stillAppliesParam paramVar foldedBody
+                             then pure accDefs
+                             else logTimeOver 0 (pure ("rc2: SpecClosure: redirectAll (" ++ show (length accDefs + 1) ++ " defs) for "
+                                                        ++ show callee ++ " <- " ++ show target))
+                                    (pure $ redirectAll callee argPos target cloneName ((cloneName, cloneDef') :: accDefs))
              _ => pure accDefs
 
     -- `Core` has no `Monad` instance, so `Data.List.foldlM` doesn't
@@ -304,5 +329,7 @@ applySpecClosure defs = do
           -> SortedMap Name RCDef -> List (Name, RCDef) -> List ((Name, Nat, Name, Nat), List Opportunity) -> Core (List (Name, RCDef))
     goKeys _ accDefs [] = pure accDefs
     goKeys defOf accDefs (((callee, argPos, target, missing), opps) :: rest) = do
-        accDefs' <- tryOneKey defOf callee argPos target missing opps accDefs
+        accDefs' <- logTimeOver 0 (pure ("rc2: SpecClosure: tryOneKey " ++ show callee ++ " <- " ++ show target
+                                          ++ " (" ++ show (length accDefs) ++ " defs so far)"))
+                       (tryOneKey defOf callee argPos target missing opps accDefs)
         goKeys defOf accDefs' rest
