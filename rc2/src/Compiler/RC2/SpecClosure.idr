@@ -150,32 +150,6 @@ rewriteApply paramVar targetName missing capturedParams = go
                 Just args => RAppName EmptyFC Nothing targetName (map RCLoc capturedParams ++ args)
                 Nothing => mapSubExprs go e
 
-||| See the doc's "Internal structure" -> "Safe fresh ids" paragraph
-||| (including why this can't just use `FreshId`, and why it can't go
-||| through `foldSubExprs`).
-maxVarInBody : List (Int, Rep) -> RCExp -> Int
-maxVarInBody args body = max (foldl max (-1) (map fst args)) (go body)
-  where
-    mutual
-      go : RCExp -> Int
-      go (RLet _ var _ value body') = max var (max (go value) (go body'))
-      go (RConCase _ _ alts mDef) = max (foldl max (-1) (map goAlt alts)) (maybe (-1) go mDef)
-      go (RConstCase _ _ alts mDef) = max (foldl max (-1) (map goConstAlt alts)) (maybe (-1) go mDef)
-      go e = foldSubExprs max (-1) go e
-
-      goAlt : RConAlt -> Int
-      goAlt (MkRConAlt _ _ _ as body') = max (foldl max (-1) as) (go body')
-
-      goConstAlt : RConstAlt -> Int
-      goConstAlt (MkRConstAlt _ body') = go body'
-
-||| `n` fresh, sequential ids starting right after `base`
-||| (`maxVarInBody`'s own result) -- `[]` for `n = Z`. See the doc's
-||| "Safe fresh ids" paragraph for why this isn't `[1 .. n]`.
-freshIdsFrom : Int -> Nat -> List Int
-freshIdsFrom base Z = []
-freshIdsFrom base (S k) = (base + 1) :: freshIdsFrom (base + 1) k
-
 ||| See the doc's "Internal structure" -> "Self-recursive passthrough"
 ||| paragraph.
 rewriteSelfCall : (callee : Name) -> (argPos : Nat) -> (paramVar : Int) -> (cloneName : Name) -> (capturedParams : List Int) -> RCExp -> RCExp
@@ -196,14 +170,22 @@ rewriteSelfCall callee argPos paramVar cloneName capturedParams = go
 ||| structure" -> "Profitability + redirection" paragraph for
 ||| `capturedCount`'s own provenance. Not re-folded here --
 ||| `applySpecClosure` does that once, after this returns.
-buildClone : {auto fr : Ref FreshId Int}
+|||
+||| `capturedParams`'s own fresh ids come from the shared, whole-
+||| compile `VarId` counter (`Compiler.RC2.Util`) -- guaranteed not to
+||| collide with `g`'s own existing ids (or anything else in the
+||| program) without needing to scan `g`'s body for its current
+||| highest id first, unlike `cloneId` (`FreshId`, a *name*-numbering
+||| counter, disjoint from `VarId`'s var-id numbering -- see that
+||| type's own doc comment for why the two stay separate).
+buildClone : {auto fr : Ref FreshId Int} -> {auto v : Ref VarId Int}
           -> (callee : Name) -> (argPos : Nat)
           -> (paramVar : Int) -> (targetName : Name) -> (missing : Nat) -> (capturedCount : Nat)
           -> (args : List (Int, Rep)) -> (retRep : Rep) -> (body : RCExp)
           -> Core (Name, RCDef)
 buildClone callee argPos paramVar targetName missing capturedCount args retRep body = do
     cloneId <- freshId
-    let capturedParams = freshIdsFrom (maxVarInBody args body) capturedCount
+    capturedParams <- traverse (const freshVarId) (replicate capturedCount ())
     let cloneName = MN "rc2_specClosure" cloneId
     let args' = concatMap (\(i, r) => if i == paramVar
                                           then map (\p => (p, RBoxed)) capturedParams
@@ -302,7 +284,7 @@ redirectCallSitesTable table = goBound empty
 ||| `idris2-lsp`) were removed once the `O(distinct keys x program
 ||| size)` slowdown they were added to diagnose was confirmed fixed.
 export
-applySpecClosure : List (Name, RCDef) -> Core (List (Name, RCDef))
+applySpecClosure : {auto v : Ref VarId Int} -> List (Name, RCDef) -> Core (List (Name, RCDef))
 applySpecClosure defs = do
     _ <- newRef FreshId 0
     keys <- logTimeOver 0 (pure "rc2: SpecClosure: collect+group opportunities") (pure (SortedMap.toList byKey))

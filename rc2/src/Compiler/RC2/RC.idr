@@ -11,6 +11,7 @@ import Compiler.LambdaLift
 import Compiler.RC2.DualABI
 import Compiler.RC2.RCExp
 import Compiler.RC2.Types
+import Compiler.RC2.Util
 import Core.CompileExpr
 import Core.Context
 import Core.Core
@@ -59,11 +60,6 @@ lookupEnv Z (x :: _) = x
 lookupEnv (S k) (_ :: xs) = lookupEnv k xs
 lookupEnv _ [] = assert_total $ idris_crash "INTERNAL ERROR: rc2 scope/env mismatch"
 
-data NextVar : Type where
-
-nextVarId : {auto v : Ref NextVar Int} -> Core Int
-nextVarId = do i <- get NextVar; put NextVar (i + 1); pure i
-
 ||| Check if Constant is a two-way Bool (0 or 1).
 constantBoolValue : Constant -> Maybe Bool
 constantBoolValue (I 0) = Just False
@@ -105,7 +101,7 @@ boolBranches _ _ = Nothing
 
 mutual
     ||| Let-bind compound expressions to fresh locals to ensure ANF normal form.
-    bindOne : {auto v : Ref NextVar Int} ->
+    bindOne : {auto v : Ref VarId Int} ->
               Env -> Lifted vars -> (RCLocal -> Core RCExp) -> Core RCExp
     bindOne env (LLocal {idx} fc p) k = k (RCLoc (lookupEnv idx env))
     bindOne env (LErased fc) k = k RCNull
@@ -126,10 +122,10 @@ mutual
                      Nothing => bindCompound env e k
     bindOne env e k = bindCompound env e k
 
-    bindCompound : {auto v : Ref NextVar Int} ->
+    bindCompound : {auto v : Ref VarId Int} ->
                    Env -> Lifted vars -> (RCLocal -> Core RCExp) -> Core RCExp
     bindCompound env e k
-        = do i <- nextVarId
+        = do i <- freshVarId
              eRC <- normalize env e
              let rep = maybe RBoxed RNative (repOf eRC)
              rest <- k (RCLoc i)
@@ -150,19 +146,19 @@ mutual
         getFC (LErased fc) = fc
         getFC (LCrash fc _) = fc
 
-    bindMany : {auto v : Ref NextVar Int} ->
+    bindMany : {auto v : Ref VarId Int} ->
                Env -> List (Lifted vars) -> (List RCLocal -> Core RCExp) -> Core RCExp
     bindMany env [] k = k []
     bindMany env (x :: xs) k =
         bindOne env x (\rx => bindMany env xs (\rxs => k (rx :: rxs)))
 
-    bindManyV : {auto v : Ref NextVar Int} ->
+    bindManyV : {auto v : Ref VarId Int} ->
                 Env -> Vect n (Lifted vars) -> (Vect n RCLocal -> Core RCExp) -> Core RCExp
     bindManyV env [] k = k []
     bindManyV env (x :: xs) k =
         bindOne env x (\rx => bindManyV env xs (\rxs => k (rx :: rxs)))
 
-    normalize : {auto v : Ref NextVar Int} -> Env -> Lifted vars -> Core RCExp
+    normalize : {auto v : Ref VarId Int} -> Env -> Lifted vars -> Core RCExp
     normalize env (LLocal {idx} fc p) = pure $ RV fc (RCLoc (lookupEnv idx env))
     normalize env (LAppName fc lazy n args) =
         bindMany env args (\locs => pure $ RAppName fc lazy n locs)
@@ -171,7 +167,7 @@ mutual
     normalize env (LApp fc lazy c a) =
         bindOne env c (\cl => bindOne env a (\al => pure $ RApp fc lazy cl al))
     normalize env (LLet fc x val body) = do
-        i <- nextVarId
+        i <- freshVarId
         valRC <- normalize env val
         let rep = maybe RBoxed RNative (repOf valRC)
         bodyRC <- normalize (i :: env) body
@@ -232,14 +228,14 @@ mutual
     normalize env (LErased fc) = pure $ RErased fc
     normalize env (LCrash fc msg) = pure $ RCrash fc msg
 
-    normalizeConAlt : {auto v : Ref NextVar Int} ->
+    normalizeConAlt : {auto v : Ref VarId Int} ->
                        Env -> LiftedConAlt vars -> Core RConAlt
     normalizeConAlt env (MkLConAlt n ci tag args body) = do
-        argIds <- traverse (const nextVarId) args
+        argIds <- traverse (const freshVarId) args
         bodyRC <- normalize (argIds ++ env) body
         pure $ MkRConAlt n ci tag argIds bodyRC
 
-    normalizeConstAlt : {auto v : Ref NextVar Int} ->
+    normalizeConstAlt : {auto v : Ref VarId Int} ->
                          Env -> LiftedConstAlt vars -> Core RConstAlt
     normalizeConstAlt env (MkLConstAlt c body) = MkRConstAlt c <$> normalize env body
 
@@ -249,7 +245,7 @@ mutual
     ||| `Types.cmpArgTy`'s arity-generic signature, precisely so `op`'s
     ||| arity unifies with `args`'s length automatically) only has to be
     ||| written once.
-    tryFuseCompareOp : {auto v : Ref NextVar Int} ->
+    tryFuseCompareOp : {auto v : Ref VarId Int} ->
                         Env -> FC -> PrimFn 2 -> PrimType -> Vect 2 (Lifted vars) ->
                         List (LiftedConstAlt vars) -> Maybe (Lifted vars) -> Core (Maybe RCExp)
     tryFuseCompareOp env fc op ty args alts mDef =
@@ -270,7 +266,7 @@ mutual
     ||| ever gets materialised. `Nothing` leaves `normalize`'s
     ||| `LConstCase` case to fall through to its ordinary, unfused
     ||| handling.
-    tryFuseCompare : {auto v : Ref NextVar Int} ->
+    tryFuseCompare : {auto v : Ref VarId Int} ->
                       Env -> Lifted vars -> List (LiftedConstAlt vars) -> Maybe (Lifted vars) ->
                       Core (Maybe RCExp)
     tryFuseCompare env (LOp fc lazy (LT ty) args) alts mDef = tryFuseCompareOp env fc (LT ty) ty args alts mDef
@@ -284,19 +280,25 @@ mutual
 ||| convention: the emitted function takes `args` first, then `reverse
 ||| scope` (`scope` is the set of enclosing free variables a lifted-out
 ||| closure body captures; empty for genuine top-level definitions).
-normalizeDef : LiftedDef -> Core RCDef
+|||
+||| `v`, the shared whole-compile `VarId` counter, comes from the
+||| caller (`Compiler.RC2.RC2.toRCDefs` allocates one, once, before
+||| this runs for the first definition) rather than a fresh `Ref`
+||| started at 0 here per definition -- see `Compiler.RC2.Util`'s own
+||| `VarId` doc comment for why every id in the program sharing one
+||| counter, from this very first phase onward, is what lets every
+||| later stage that introduces a *new* id skip scanning for the
+||| current highest one in use first.
+normalizeDef : {auto v : Ref VarId Int} -> LiftedDef -> Core RCDef
 normalizeDef (MkLFun args scope body) = do
-    v <- newRef NextVar 0
-    argIds <- traverse (const (nextVarId {v})) args
-    scopeIds <- traverse (const (nextVarId {v})) scope
+    argIds <- traverse (const freshVarId) args
+    scopeIds <- traverse (const freshVarId) scope
     let env = scopeIds ++ argIds
-    bodyRC <- normalize {v} env body
+    bodyRC <- normalize env body
     pure $ MkRCFun (map (\i => (i, RBoxed)) (argIds ++ reverse scopeIds)) RBoxed False bodyRC
 normalizeDef (MkLCon tag arity nt) = pure $ MkRCCon tag arity nt
 normalizeDef (MkLForeign ccs fargs ret) = pure $ MkRCForeign ccs fargs ret
-normalizeDef (MkLError body) = do
-    v <- newRef NextVar 0
-    MkRCError <$> normalize {v} [] body
+normalizeDef (MkLError body) = MkRCError <$> normalize [] body
 
 ------------------------------------------------------------------------
 -- Phase 2: reference-counting annotation (RCExp -> RCExp)
@@ -803,7 +805,7 @@ checkForeignReturn _ _ = pure ()
 ||| `Compiler.RC2.RC2`'s own whole-program fixpoint loop calls it
 ||| separately, between this and `toRCDefPostFold` below.
 export
-toRCDefPreFold : Name -> LiftedDef -> Core RCDef
+toRCDefPreFold : {auto v : Ref VarId Int} -> Name -> LiftedDef -> Core RCDef
 toRCDefPreFold declName ld = do
     checkForeignReturn declName ld
     normalizeDef ld

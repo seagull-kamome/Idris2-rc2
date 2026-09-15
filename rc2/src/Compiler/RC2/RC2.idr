@@ -33,6 +33,7 @@ import Compiler.RC2.MutualLoop
 import Compiler.RC2.Loop
 import Compiler.RC2.Sink
 import Compiler.RC2.Types
+import Compiler.RC2.Util
 
 import Compiler.Common
 import Compiler.LambdaLift
@@ -214,6 +215,16 @@ disableableStageNames =
 ||| declaration.
 toRCDefs : {auto c : Ref Ctxt Defs} -> List String -> (incremental : Bool) -> (roots : List Name) -> List (Name, LiftedDef) -> Core (List (Name, RCDef))
 toRCDefs disabled incremental roots lds0 = do
+    -- One `VarId` counter for the whole call: every `RCLoc`/argument
+    -- id anywhere in the program, from `normalizeDef` below through
+    -- every later stage that introduces a new one, is drawn from this
+    -- single source -- see `Compiler.RC2.Util`'s own `VarId` doc
+    -- comment for why that's what lets those later stages skip
+    -- scanning for the current highest id in use first. Scoped to one
+    -- `toRCDefs` call, same as `FreshId` already is elsewhere in this
+    -- pipeline (one whole-program compile, or one incremental module
+    -- compile).
+    _ <- newRef VarId 0
     lds <- if "noinline" `elem` disabled then pure lds0 else logTime 2 "rc2: Inline" $ applyInlineLifted lds0
     preFolded <- logTime 2 "rc2: RC normalize" $
                    if not incremental
@@ -250,7 +261,7 @@ toRCDefs disabled incremental roots lds0 = do
                 traverse (\(n, d) => do
                   d1 <- toRCDefPostFold d
                   let d2 = applyReuse d1
-                  let d3 = if "noconaltnative" `elem` disabled then d2 else applyConAltNative d2
+                  d3 <- if "noconaltnative" `elem` disabled then pure d2 else applyConAltNative d2
                   pure (n, d3)) memoized
     merged <- if "nomutualloop" `elem` disabled then pure reused else logTime 2 "rc2: Mutual loop" $ applyMutualLoop reused
     looped <- if "noloop" `elem` disabled
@@ -274,7 +285,7 @@ toRCDefs disabled incremental roots lds0 = do
                                                        _ => ""
                                       in logTimeOver slowApplyLoopThresholdNs
                                            (pure ("rc2: Loop conversion (apply) slow definition: " ++ show n ++ stats))
-                                           (pure (n, applyLoop calleeTable n d))) merged
+                                           (do d' <- applyLoop calleeTable n d; pure (n, d'))) merged
     sunk <- if "nosink" `elem` disabled
                then pure looped
                else logTime 2 "rc2: Sink" $ pure (map (\(n, d) => (n, applySink d)) looped)

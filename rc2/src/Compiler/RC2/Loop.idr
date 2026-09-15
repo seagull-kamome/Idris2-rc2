@@ -14,6 +14,8 @@ import Compiler.RC2.Types
 import Compiler.RC2.Util
 
 import Core.CompileExpr
+import Core.Context
+import Core.Core
 import Core.FC
 import Core.TT
 
@@ -109,43 +111,6 @@ mutual
   mapTailAppNamesMaybe f (Just e) =
       let (found, e') = mapTailAppNames f e
       in (found, Just e')
-
-------------------------------------------------------------------------
--- Collecting every locally-bound id in a body (RLet's own var,
--- RConAlt's own destructured args) -- everything a renaming
--- substitution needs to cover, besides a definition's own top-level
--- parameters (handled separately by each caller). Visits *every*
--- reachable subexpression (an RLet's `value`, not just its `body`),
--- since a bound id can appear anywhere in the tree -- unlike
--- `mapTailAppNames` above, this is not restricted to tail positions.
-
-mutual
-  export
-  collectBoundIds : RCExp -> List Int
-  collectBoundIds (RLet _ var _ value body) = var :: (collectBoundIds value ++ collectBoundIds body)
-  collectBoundIds (RCmpCase _ _ _ _ t f) = collectBoundIds t ++ collectBoundIds f
-  collectBoundIds (RConCase _ _ alts mDef) =
-      concatMap collectBoundIdsAlt alts ++ maybe [] collectBoundIds mDef
-  collectBoundIds (RConstCase _ _ alts mDef) =
-      concatMap collectBoundIdsConstAlt alts ++ maybe [] collectBoundIds mDef
-  collectBoundIds (RDup _ _ _ body) = collectBoundIds body
-  collectBoundIds (RDrop _ _ body) = collectBoundIds body
-  collectBoundIds (RFree _ _ body) = collectBoundIds body
-  collectBoundIds (RReleaseReuse _ _ body) = collectBoundIds body
-  collectBoundIds (RReuseOffer _ _ _ _ body) = collectBoundIds body
-  -- RV, RAppName, RUnderApp, RApp, RCon, ROp, RExtPrim, RPrimVal,
-  -- RErased, RCrash: no subexpressions, no bindings. RLoop/
-  -- RLoopContinue never actually appear here in practice either -- the
-  -- only two callers (this module's own `applyLoop`, and
-  -- Compiler.RC2.MutualLoop's `buildGroup`) always run before any
-  -- `RLoop` exists for the tree in hand.
-  collectBoundIds _ = []
-
-  collectBoundIdsAlt : RConAlt -> List Int
-  collectBoundIdsAlt (MkRConAlt _ _ _ args body) = args ++ collectBoundIds body
-
-  collectBoundIdsConstAlt : RConstAlt -> List Int
-  collectBoundIdsConstAlt (MkRConstAlt _ body) = collectBoundIds body
 
 ------------------------------------------------------------------------
 -- Renaming every RCLocal/bound-id occurrence in a body according to a
@@ -1250,13 +1215,15 @@ dupInvariantBoxed _ e = e
 ||| from; Compiler.RC2.Emit's `declareLoopParam` does the (skipped, for
 ||| an unchanged `RBoxed` param -- the common case) unboxing conversion.
 |||
-||| Fresh shadow ids start one past the highest id already used
-||| anywhere in this definition (its own top-level `args`, plus every
-||| `RLet`/`RConAlt`-bound id in `body'`, via `collectBoundIds`) -- kept
-||| a plain arithmetic maximum rather than a `Core`-threaded counter
-||| (like Compiler.RC2.MutualLoop's own `FreshId`) since this whole pass
-||| stays a pure function of one definition at a time, no cross-
-||| definition state needed.
+||| Fresh shadow ids are pulled from the shared, whole-compile `VarId`
+||| counter (`Compiler.RC2.Util`) -- its current value is already past
+||| every id used anywhere in the program (this definition's own
+||| included), so no scan for the current highest one in use is
+||| needed. `applyLoopFromId` below does the actual work as a plain
+||| pure function threading that starting id through its own return
+||| value, same as before -- only where the starting value comes from,
+||| and where the final one goes (`applyLoop`'s own thin `Core`
+||| wrapper, reading/writing the shared counter once each), changed.
 |||
 ||| A param that turns out loop-*invariant* (`invariantLoopParamIds`:
 ||| every `RLoopContinue` supplies it completely unchanged) is excluded
@@ -1299,17 +1266,20 @@ dupInvariantBoxed _ e = e
 ||| ordinary dup/deferred-drop -- just pointless to allocate the shadow
 ||| for). Left as a followup rather than also teaching
 ||| `markInvariantNative` an `RAppName` case in this change.
-export
-applyLoop : SortedMap Name (List (Maybe PrimType)) -> Name -> RCDef -> RCDef
-applyLoop calleeTable self (MkRCFun args retRep isWorker body) =
+||| The actual pass, as a plain pure function of one definition at a
+||| time -- `nextId0` (the fresh-shadow-id counter's own starting
+||| value) is a parameter rather than computed here, and its final
+||| value comes back alongside the rewritten def, both threaded by
+||| the exported `applyLoop` wrapper below against the shared `VarId`
+||| counter.
+applyLoopFromId : (nextId0 : Int) -> SortedMap Name (List (Maybe PrimType)) -> Name -> RCDef -> (Int, RCDef)
+applyLoopFromId nextId0 calleeTable self (MkRCFun args retRep isWorker body) =
     let argIds = map fst args
         (found, body') = mapTailAppNames (\fc, n, args' => if n == self then Just (RLoopContinue fc args' []) else Nothing) body
-    in MkRCFun args retRep isWorker $
-         if not found
-            then body'
-            else
-              let nextId0 : Int := 1 + foldl max (-1) (argIds ++ collectBoundIds body')
-                  -- Decided *before* any renaming touches body' at all
+    in if not found
+          then (nextId0, MkRCFun args retRep isWorker body')
+          else
+              let -- Decided *before* any renaming touches body' at all
                   -- (see this module's own header note on
                   -- `invariantOpArgsThrough`/`markInvariantNative`/
                   -- `dupInvariantBoxed` above): whether a given continue
@@ -1485,5 +1455,18 @@ applyLoop calleeTable self (MkRCFun args retRep isWorker body) =
                                in (nid + 1, RLet emptyFC sid (RNative ty) (RV emptyFC (RCLoc p))
                                               (RLet emptyFC resultVar retRep dupped
                                                 (RDrop emptyFC [RCLoc p] (RV emptyFC (RCLoc resultVar)))))
-              in snd wrapInvariantShadows
-applyLoop _ _ d = d
+              in (fst wrapInvariantShadows, MkRCFun args retRep isWorker (snd wrapInvariantShadows))
+applyLoopFromId nextId0 _ _ d = (nextId0, d)
+
+||| Reads/writes the shared, whole-compile `VarId` counter
+||| (`Compiler.RC2.Util`) once around `applyLoopFromId`'s own pure
+||| computation -- see that function's own doc comment, and this
+||| module's header note on `nextId0`, for why a scan is no longer
+||| needed to find a safe starting value.
+export
+applyLoop : {auto v : Ref VarId Int} -> SortedMap Name (List (Maybe PrimType)) -> Name -> RCDef -> Core RCDef
+applyLoop calleeTable self d = do
+    nextId0 <- get VarId
+    let (nextId', d') = applyLoopFromId nextId0 calleeTable self d
+    put VarId nextId'
+    pure d'

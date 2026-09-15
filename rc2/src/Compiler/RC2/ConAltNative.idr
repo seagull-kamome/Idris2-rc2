@@ -23,6 +23,8 @@ import Compiler.RC2.Loop
 import Compiler.RC2.Util
 
 import Core.CompileExpr
+import Core.Context
+import Core.Core
 import Core.FC
 import Core.TT
 
@@ -369,23 +371,28 @@ applyConAltNativeExp nextId (RReuseOffer fc sc dupOnShared dropOnUnique body) =
 applyConAltNativeExp nextId e = (nextId, e)
 
 ||| Apply constructor-destructured-field native shadowing to one
-||| top-level definition. Fresh shadow ids start one past the highest
-||| id already used anywhere in the definition (own top-level `args`,
-||| plus every `RLet`/`RConAlt`-bound id in `body`, via
-||| `Compiler.RC2.Loop`'s own `collectBoundIds`) -- same reasoning
-||| `applyLoop` already uses for its own shadow ids: a plain arithmetic
-||| maximum is enough since this pass is a pure function of one
-||| definition at a time, no cross-definition state needed.
+||| top-level definition. Fresh shadow ids are pulled from the shared,
+||| whole-compile `VarId` counter (`Compiler.RC2.Util`) instead of a
+||| local scan for the current highest id in use: by the time this
+||| stage runs, `VarId`'s current value is already past every id used
+||| anywhere in the program (this definition's own included -- that
+||| counter is exactly what assigned them, all the way back in
+||| `Compiler.RC2.RC.normalizeDef`), so simply reading it is already
+||| a safe starting point. `applyConAltNativeExp` itself is unchanged:
+||| still one small `Int` counter threaded purely through its own
+||| return values -- only where that counter's *starting* value comes
+||| from, and where its *final* value goes, changed.
 export
-applyConAltNative : RCDef -> RCDef
-applyConAltNative (MkRCFun args retRep isWorker body) =
-    let argIds = map fst args
-        nextId = the Int (1 + foldl max (-1) (argIds ++ collectBoundIds body))
-        (_, body') = applyConAltNativeExp nextId body
-    in MkRCFun args retRep isWorker body'
-applyConAltNative (MkRCError body) =
-    let nextId = the Int (1 + foldl max (-1) (collectBoundIds body))
-        (_, body') = applyConAltNativeExp nextId body
-    in MkRCError body'
-applyConAltNative d@(MkRCCon _ _ _) = d
-applyConAltNative d@(MkRCForeign _ _ _) = d
+applyConAltNative : {auto v : Ref VarId Int} -> RCDef -> Core RCDef
+applyConAltNative (MkRCFun args retRep isWorker body) = do
+    nextId <- get VarId
+    let (nextId', body') = applyConAltNativeExp nextId body
+    put VarId nextId'
+    pure $ MkRCFun args retRep isWorker body'
+applyConAltNative (MkRCError body) = do
+    nextId <- get VarId
+    let (nextId', body') = applyConAltNativeExp nextId body
+    put VarId nextId'
+    pure $ MkRCError body'
+applyConAltNative d@(MkRCCon _ _ _) = pure d
+applyConAltNative d@(MkRCForeign _ _ _) = pure d

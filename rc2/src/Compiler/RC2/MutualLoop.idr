@@ -40,11 +40,15 @@ import Data.Vect
 
 %default covering
 
--- `collectBoundIds`/`Renaming`/`renameRCExp` (per-member id collection
--- and substitution, used by `buildGroup` below) now live in
--- Compiler.RC2.Loop -- shared with its own native-shadow-promotion
--- rewrite, one definition instead of two kept in sync by hand. See its
--- own doc comment.
+-- `Renaming`/`renameRCExp` (substitution, used by `buildGroup` below)
+-- lives in Compiler.RC2.Loop -- shared with its own native-shadow-
+-- promotion rewrite. `buildGroup` only ever renames each member's own
+-- *top-level argument* ids onto the merged function's shared slot ids
+-- (arity unification, genuinely needed regardless); it no longer also
+-- renames every *internally*-bound id to dodge cross-member
+-- collisions, since every id in the whole program is already unique
+-- from the moment `Compiler.RC2.RC.normalizeDef` first assigns it --
+-- see `Compiler.RC2.Util`'s own `VarId` doc comment.
 
 ------------------------------------------------------------------------
 -- Tail-call target collection (read-only sibling of Compiler.RC2.Loop's
@@ -146,7 +150,7 @@ tarjanSCCs graph =
 ------------------------------------------------------------------------
 -- Synthesising one merged group.
 
-buildGroup : {auto r : Ref FreshId Int}
+buildGroup : {auto r : Ref FreshId Int} -> {auto v : Ref VarId Int}
           -> SortedSet Name
           -> SortedMap Name (List Int, RCExp)
           -> List Name
@@ -163,12 +167,10 @@ buildGroup existingNames memberDefs groupNames = do
     let maxArity = foldl (\acc, (_, (args, _)) => max acc (length args)) Z members
     let tagOf : SortedMap Name Int := SortedMap.fromList (zip (map (\(n, _) => n) members) [0 .. cast{to=Int} (length members `minus` 1)])
     mergedName <- freshName existingNames
-    tagId <- freshId
-    slotIds <- traverse (const freshId) (replicate maxArity ())
+    tagId <- freshVarId
+    slotIds <- traverse (const freshVarId) (replicate maxArity ())
     alts <- traverse (\(name_i, (args_i, body_i)) => do
-                let internalIds = collectBoundIds body_i
-                freshInternal <- traverse (const freshId) internalIds
-                let ren : Renaming = SortedMap.fromList (zip args_i slotIds ++ zip internalIds freshInternal)
+                let ren : Renaming = SortedMap.fromList (zip args_i slotIds)
                 let renamedBody = renameRCExp ren body_i
                 let tag_i = fromMaybe 0 (lookup name_i tagOf)
                 pure $ MkRConstAlt (I64 (cast tag_i)) (rewriteGroupTailCalls mergedName maxArity tagOf renamedBody))
@@ -214,7 +216,7 @@ buildGroup existingNames memberDefs groupNames = do
 ||| possibly self-recursive, functions, and every non-`MkRCFun` def)
 ||| pass through completely unchanged.
 export
-applyMutualLoop : List (Name, RCDef) -> Core (List (Name, RCDef))
+applyMutualLoop : {auto v : Ref VarId Int} -> List (Name, RCDef) -> Core (List (Name, RCDef))
 applyMutualLoop defs = do
     _ <- newRef FreshId 0
     let memberDefs = SortedMap.fromList $ mapMaybe

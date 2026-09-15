@@ -100,3 +100,28 @@ data FreshId : Type where
 export
 freshId : {auto r : Ref FreshId Int} -> Core Int
 freshId = do i <- get FreshId; put FreshId (i + 1); pure i
+
+||| A single monotonic counter for every `RCLoc`/argument variable id
+||| in the whole program, `Ref`-keyed by the empty phantom `VarId`.
+||| `Compiler.RC2.RC2.toRCDefs` allocates one with `newRef VarId 0`
+||| right at the top (before `Compiler.RC2.RC.normalizeDef` ever runs)
+||| and every later stage that introduces a *new* variable id --
+||| `Compiler.RC2.Loop`/`Compiler.RC2.ConAltNative`'s own shadow ids,
+||| `Compiler.RC2.MutualLoop`'s merged-function tag/slot ids,
+||| `Compiler.RC2.SpecClosure`'s clone captured-parameter ids -- pulls
+||| from the same counter instead of scanning its own definition's
+||| body for the current highest-used id and counting up locally. Since
+||| every id, everywhere in the program, comes from this one source,
+||| freshly-pulled ids can never collide with any id already in use,
+||| anywhere -- no scan needed. Scoped to one `toRCDefs` call (one
+||| whole-program compile, or one incremental module compile -- see
+||| `Compiler.RC2.Emit`'s own note on `FreshId` for why that scope is
+||| already right: a variable id never needs to be unique *across*
+||| separate incremental module compiles, only within the one C
+||| translation unit each produces).
+export
+data VarId : Type where
+
+export
+freshVarId : {auto v : Ref VarId Int} -> Core Int
+freshVarId = do i <- get VarId; put VarId (i + 1); pure i
