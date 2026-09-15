@@ -58,6 +58,7 @@ idris2-rc2 --cg rc2 --directive noloop --directive dumprcexpr Program.idr -o pro
 | `noconaltnative` | `Compiler.RC2.ConAltNative` のネイティブシャドウ・フィールドキャッシュ(`doc/con-alt-native.md`)。 |
 | `nomutualloop` | `Compiler.RC2.MutualLoop` の相互末尾再帰マージ。 |
 | `noloop` | `Compiler.RC2.Loop` の自己末尾呼び出し -> `goto` 変換、およびネイティブシャドウ/ループ不変量の昇格(`doc/loop-conversion.md`)。 |
+| `nolateinline` | `Compiler.RC2.LateInline` のプログラム全体・単一呼び出し元インライン化。Loop/MutualLoop変換の後に走る(`doc/inlining.md`の「基準B、再訪」)。 |
 | `nosink` | `Compiler.RC2.Sink` のブランチローカル・シンキング(`doc/branch-sinking.md`)。 |
 | `nodualabi` | `Compiler.RC2.DualABI` のワーカー/ラッパー合成*と*その呼び出し箇所の書き換えの両方をまとめて -- 書き換えは合成段階が構築するワーカーテーブルを必要とするので、分割しても意味が無い(`doc/dual-abi.md`)。 |
 | `nodeadcode` | `Compiler.RC2.DeadCode` による、呼び出し元がゼロになった定義の刈り取り(`doc/dead-code-elim.md`)。 |
