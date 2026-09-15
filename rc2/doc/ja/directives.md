@@ -54,6 +54,7 @@ idris2-rc2 --cg rc2 --directive noloop --directive dumprcexpr Program.idr -o pro
 |---|---|
 | `noinline` | `Compiler.RC2.Inline` の全プログラムインライン化(`doc/inlining.md`)。 |
 | `noconstfold` | `Compiler.RC2.ConstFold` の全プログラム不動点畳み込み -- 算術/比較/コンストラクタ/クロージャ/CAF の畳み込み*および*定数 `ExtPrim` 畳み込み(`prim__codegen`)。後者は `Compiler.RC2.ConstExtPrim` パスが統合されて以降、このディレクティブでゲートされる。 |
+| `nospecclosure` | `Compiler.RC2.SpecClosure` の投機的・採否判定付きクロージャ引数特殊化 -- 呼び出し箇所ごとに観測された別個のクロージャ対象ごとに関数を複製し、`apply` を直接の `call` へ解決する(`doc/speculative-closure-specialization.md`)。 |
 | `noconaltnative` | `Compiler.RC2.ConAltNative` のネイティブシャドウ・フィールドキャッシュ(`doc/con-alt-native.md`)。 |
 | `nomutualloop` | `Compiler.RC2.MutualLoop` の相互末尾再帰マージ。 |
 | `noloop` | `Compiler.RC2.Loop` の自己末尾呼び出し -> `goto` 変換、およびネイティブシャドウ/ループ不変量の昇格(`doc/loop-conversion.md`)。 |

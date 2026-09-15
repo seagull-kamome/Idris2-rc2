@@ -28,6 +28,7 @@ import Compiler.RC2.Pretty
 import Compiler.RC2.RC
 import Compiler.RC2.RCExp
 import Compiler.RC2.Reuse
+import Compiler.RC2.SpecClosure
 import Compiler.RC2.MutualLoop
 import Compiler.RC2.Loop
 import Compiler.RC2.Sink
@@ -191,7 +192,7 @@ insertMemoize = map wrap
 ||| apart.
 disableableStageNames : List String
 disableableStageNames =
-    ["noinline", "noconstfold", "noconaltnative", "nomutualloop", "noloop", "nosink", "nodualabi", "nodeadcode", "nodupmerge"]
+    ["noinline", "noconstfold", "nospecclosure", "noconaltnative", "nomutualloop", "noloop", "nosink", "nodualabi", "nodeadcode", "nodupmerge"]
 
 ||| `incremental`: `Compiler.RC2.RC.toRCDefPreFold` throws (tagged
 ||| `notInlinedStructFieldMarker`) for a definition like
@@ -231,11 +232,20 @@ toRCDefs disabled incremental roots lds0 = do
     folded <- if "noconstfold" `elem` disabled
                  then pure preFolded
                  else logTime 2 "rc2: ConstFold (whole-program fixpoint)" $ pure (foldConstProgram preFolded)
-    -- doc/caf-memoization.md: right after ConstFold (so a genuinely
-    -- constant CAF is never wrapped) and strictly before Phase 2
-    -- (toRCDefPostFold's own annotateDef needs to see RMemoize already
-    -- in place -- see RC.idr's own `annotate` case for it).
-    memoized <- logTime 2 "rc2: CAF memoization" $ pure (insertMemoize folded)
+    -- doc/speculative-closure-specialization.md: strictly after
+    -- ConstFold (so RUnderApp targets it already resolved are visible)
+    -- and strictly before insertMemoize/Phase 2 below -- a kept clone
+    -- is just one more plain MkRCFun by the time either of those see
+    -- it, needing no special-casing of its own from either.
+    specialized <- if "nospecclosure" `elem` disabled
+                       then pure folded
+                       else logTime 2 "rc2: Speculative closure specialization" $ applySpecClosure folded
+    -- doc/caf-memoization.md: right after ConstFold (and the
+    -- specialization pass above, whose own clones are never 0-arg CAFs
+    -- regardless) and strictly before Phase 2 (toRCDefPostFold's own
+    -- annotateDef needs to see RMemoize already in place -- see RC.idr's
+    -- own `annotate` case for it).
+    memoized <- logTime 2 "rc2: CAF memoization" $ pure (insertMemoize specialized)
     reused <- logTime 2 "rc2: RC annotate + Reuse + ConAltNative" $
                 traverse (\(n, d) => do
                   d1 <- toRCDefPostFold d
