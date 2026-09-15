@@ -324,29 +324,225 @@ before trusting any A/B comparison built on it again (see
 `Test15CompareFusionThroughCall.idr`'s own doc comments, which both
 describe exactly what to expect changed between the two builds).
 
-## Files
+## Criterion B, revisited: `Compiler.RC2.LateInline`
 
-- `rc2/src/Compiler/RC2/Inline.idr` -- this pass, in full.
-- `rc2/src/Compiler/RC2/MutualLoop.idr` -- `Graph`/`tarjanSCCs`, made
-  `public export`/`export` for reuse here (Criterion B, not currently
-  implemented -- see above).
-- `rc2/src/Compiler/RC2/RC2.idr` -- `toRCDefs`'s own wiring,
-  `compileExpr`'s own `"noinline"` directive.
-- `rc2/tests/Test14SmallFunctionInline.idr`,
-  `rc2/tests/Test15CompareFusionThroughCall.idr` -- dedicated regression
-  tests for Criterion A and the motivating comparison-fusion case
-  respectively.
+The "single call site, whole-program" criterion this doc's own
+"Eligibility" section above describes as investigated-but-shelved was
+picked back up in a later session, as its own separate pass --
+`Compiler.RC2.LateInline`, operating on `RCExp` rather than `Lifted`,
+and running much later in the pipeline than `Compiler.RC2.Inline`
+above. Disable with `--directive nolateinline`.
 
-## Verification methodology
+### Motivation
 
-1. Full build + test suite: see `CLAUDE.md`'s "Build & test" section
-   (compiler, runtime, then `rc2/tests/verify.sh` -- 19/19 refc-suite,
-   every smoke test, valgrind clean on every `LEAK_SENSITIVE_TESTS`
-   entry except the one long-recorded pre-existing `Test1Basics` leak).
-2. `--directive dumprcexpf`, compared against `--directive dumprcexpf
-   --directive noinline` on `Test15CompareFusionThroughCall.idr`:
-   confirms the interface call disappears, replaced by a single native
-   `cmp <=Int [...]`, and that `step`'s own worker parameter goes from
-   `Boxed` to `Native Int` as a direct consequence.
-3. `rc2/tests/bench.sh`: no timing regression on the existing
-   micro-benchmark suite.
+`Compiler.RC2.SpecClosure` builds a specialized clone of a
+closure-argument-taking function for each of its own call sites (see
+`rc2/doc/speculative-closure-specialization.md`) -- a clone that, if
+the original function was self-recursive, is *also* self-recursive at
+the point SpecClosure produces it. That self-recursion is exactly what
+made Criterion A's own call-free requirement (this doc's "Eligibility"
+section) reject such a clone outright: a callee containing a call
+(even to itself) isn't call-free.
+
+`Compiler.RC2.Loop` (and `MutualLoop`) already collapse ordinary self-
+(and mutual-tail-)recursion into `RLoop`/`RLoopContinue` -- a goto-based
+loop with zero remaining function calls back to the original name. A
+clone whose call graph looked recursive *before* Loop conversion looks
+completely ordinary, non-recursive, and every bit as inlinable as any
+other function *after* it. Since a SpecClosure clone is built for
+exactly one call site by construction, it's also unconditionally
+single-caller-eligible the moment Loop conversion is done with it --
+finally giving Criterion B's own single-caller criterion a concrete,
+load-bearing motivating case, where the earlier investigation found
+none.
+
+### Pipeline position
+
+```
+  -> Compiler.RC2.MutualLoop      (mutual tail recursion -> one merged function)
+  -> Compiler.RC2.Loop            (self-tail-call -> RLoop/RLoopContinue,
+                                    plus native-shadow promotion)
+  -> Compiler.RC2.LateInline      (this pass -- whole-program inlining, RCExp -> RCExp)
+  -> Compiler.RC2.Sink            (branch-local let-value sinking)
+  -> Compiler.RC2.DualABI         (worker/wrapper synthesis, call-site rewrite)
+  -> Compiler.RC2.DeadCode        (whole-program reachability pruning)
+  -> Compiler.RC2.DupMerge
+  -> Compiler.RC2.Emit            (purely mechanical RCExp -> C)
+```
+
+Strictly after Loop/MutualLoop conversion -- see "Motivation" above for
+why running any earlier would make this pass reject exactly the
+clones it exists to reach. Strictly before Sink, so a value this pass
+just spliced in (e.g. a whole loop, now living as one branch's own
+`RLet` value) is still eligible for Sink's own branch-local placement
+decision. Strictly before DualABI -- see "Known limitation: DualABI's
+own native-eligibility analysis" below for the real, found consequence
+of that choice, and why it wasn't reversed.
+
+An inlined-away original definition is never explicitly deleted here;
+`Compiler.RC2.DeadCode` (already positioned later in the pipeline)
+prunes it on its own once nothing reaches it anymore, the same as any
+other unreachable definition -- unless something *else* still
+references it (e.g. as a stored closure value, `RUnderApp`/
+`RCConstClosure`, not a direct call), in which case it correctly
+survives; this pass only ever removes the one call site it can prove
+is the *only* one, never the definition itself.
+
+### Eligibility -- and why it doubles as the profitability gate
+
+A callee is inlined at its call site when, whole-program:
+
+- it has *exactly one* `RAppName` occurrence anywhere (`analyse`'s own
+  `callCounts`, built via `RCExp.idr`'s general-purpose
+  `foldRCNamesD`/`RCNameFold` machinery rather than a bespoke walk);
+- it's a genuine `MkRCFun` (not `RCCon`/`RCForeign`/`RCError`); and
+- it isn't part of any cycle in the whole-program `RAppName` call graph
+  -- a size->=2 Tarjan SCC, or a direct self-edge (the latter catches a
+  function that's still directly self-recursive at this point in the
+  pipeline, e.g. a non-*tail* self-call `Compiler.RC2.Loop` never
+  touches -- inlining that would splice an unbounded copy).
+
+Unlike Criterion A, there's no separate size threshold. Single-caller
+inlining is *unconditionally* safe to treat as profitable on its own:
+since the callee has exactly one call site, splicing it there can
+never increase the number of copies of that code anywhere in the
+program -- at worst it's size-neutral (the call overhead itself is
+removed, so in practice always a net win). A size cap only matters once
+eligibility is ever widened to "small, multi-caller" callees (Criterion
+A's own shape) -- not attempted here; see "Known limitations" below.
+
+Processing runs in `tarjanSCCs`'s own reversed, callee-before-caller
+order (the exact same `Graph`/`tarjanSCCs` reused from
+`Compiler.RC2.MutualLoop`, `public export`ed there specifically for
+this), rather than `defs`'s own incidental order -- so if `C`'s only
+caller is `B`, and `B`'s only caller is `A`, processing `C` into `B`
+*before* processing `B` into `A` means `A` receives the fully-collapsed
+`B`-with-`C`-already-inlined in one pass, no re-run needed for the
+whole chain to collapse.
+
+### Every id gets renamed on the way in -- including the callee's own internal ones
+
+Splicing replaces a call's own top-level-argument-to-parameter binding
+with an `RLet` per argument, and renames every occurrence of the
+callee's own parameter id to that fresh `RLet`'s own id throughout the
+spliced body (`Compiler.RC2.Loop`'s own `Renaming`/`renameRCExp`,
+reused as-is). Two things about this are less obvious than they look,
+both found as real bugs during implementation:
+
+1. **Every argument gets a *fresh* id, even one that's already a bare
+   `RCLoc` in the caller.** The tempting shortcut -- when the actual
+   argument is already `RCLoc j`, just rename the parameter id directly
+   onto `j`, skipping the `RLet` -- breaks the isolation an ordinary
+   (non-inlined) call gives for free. A loop-converted callee's own
+   `RLoop` commonly reuses its own top-level parameter's id as a
+   *mutable* loop-carried variable (`Compiler.RC2.Loop`'s own "reuses
+   its own id" case, `Emit.idr`'s own `declareLoopParam`); aliasing
+   that id directly onto the caller's `j` lets the spliced-in loop
+   reassign the caller's own variable in place. **Found via**: `map (*2)
+   xs` immediately followed by `filter p xs` on the same `xs`, both
+   single-caller-eligible and spliced back to back into the same
+   caller -- `map`'s own loop mutated the shared `xs` variable down to
+   `NIL` before `filter`'s own loop ever got to read it, since both had
+   been renamed onto the very same id. `printLn (filter p xs)` printed
+   `[]` instead of the correct result.
+2. **The callee's own *internal* ids need renaming too, not just its
+   top-level params** -- despite `Compiler.RC2.Util`'s own `VarId`
+   counter already making every id globally unique from the moment
+   it's first assigned (`rc2/doc/...` -- see that module's own doc
+   comment). The exception: `Compiler.RC2.SpecClosure` builds *several*
+   clones from one shared original body, rewriting only each clone's
+   own apply-chain/self-call and leaving the rest of that body --
+   internal ids included -- copied verbatim into *every* clone. Two
+   such clones therefore legitimately share their own internal ids,
+   harmlessly, as long as each stays its own separate C function (C
+   scopes locals per function, so two unrelated functions can each
+   have their own `var_301` with zero collision). Splicing two such
+   clones into the *same* caller breaks that separation. **Found via**:
+   two SpecClosure clones of the same original `String -> ... ->
+   Boxed` helper (each with its own single call site), each containing
+   an unrelated `let v301 = call Data.String.Iterator.fromString
+   [...]` inherited verbatim from their shared original -- both spliced
+   into the same caller produced two C declarations of `var_301` in
+   one function (`error: redefinition of 'var_301'`).
+
+`collectBoundIds` (this module's own copy -- `RLet`'s own `var`,
+`RConAlt`'s own destructured `args`, `RLoop`'s own `loopParams`, the
+same node shapes `Compiler.RC2.Loop`'s and `Compiler.RC2.MutualLoop`'s
+own former copies of this covered before this session's `VarId`
+unification made theirs unnecessary) finds every one of a callee's own
+internal ids; each gets its own fresh id via `Compiler.RC2.Util`'s
+`freshVarId`, merged into the same `Renaming` the parameter
+substitution uses.
+
+### Multiple loops per function
+
+A caller that already has its own `RLoop` (its own self-recursion,
+converted before this pass ever runs), inlining a *different*,
+independently loop-converted callee into it, produces exactly the
+"more than one `RLoop` in one function" shape
+`rc2/doc/loop-conversion.md`'s "Multiple loops per function" section
+made `Emit.idr` handle correctly -- no special-casing needed here:
+`emitInto` already dispatches `RLoop` generically for any `sink`/
+`TailPositionStatus`, so a loop-containing callee spliced in as an
+ordinary `RLet` value (this pass's own default shape, see "Every id
+gets renamed..." above) already lowers correctly, sibling or nested
+alike.
+
+### Known limitation: DualABI's own native-eligibility analysis
+
+`Compiler.RC2.DualABI`'s `findLoopThroughLets`/`paramEligibility` (its
+own parameter-native-promotion decision) was written under a "one
+`RLoop` per function" assumption that was true everywhere until this
+pass existed: `findLoopThroughLets` only ever finds the *first* `RLoop`
+reachable through a pure prefix of `RLet`s, and `Loop.idr`'s own
+`nativeArgTypesFor`/`nativeArgTypes` (the fallback `paramEligibility`
+uses when no such prefix-reachable loop exists) has no `RLoop` case at
+all -- both were correct when nothing but `Compiler.RC2.Loop` itself
+(this pass's own sole producer, at the time) ever saw an `RLoop`-
+containing body.
+
+Once this pass can splice a loop-converted callee into a caller that
+may *already* have its own loop (see "Multiple loops per function"
+above), a top-level parameter used only natively *inside* an inlined-
+in loop -- rather than directly in the caller's own original code --
+is now invisible to both of `paramEligibility`'s own paths, and never
+gets promoted to a native worker argument. This is a real, confirmed
+gap, not hypothetical (traced through `DualABI.idr`/`Loop.idr`
+directly) -- tracked as a follow-up fix to `findLoopThroughLets`/
+`nativeArgTypesFor` rather than addressed in this pass, since it's a
+pre-existing assumption in a different, already-delicate module, not
+something specific to how this pass itself splices.
+
+### Files
+
+- `rc2/src/Compiler/RC2/LateInline.idr` -- this pass, in full.
+- `rc2/src/Compiler/RC2/Loop.idr` -- `Renaming`/`renameRCExp`, reused
+  as-is for the id substitution.
+- `rc2/src/Compiler/RC2/MutualLoop.idr` -- `Graph`/`tarjanSCCs`, reused
+  as-is for cycle exclusion and callee-before-caller ordering.
+- `rc2/src/Compiler/RC2/RC2.idr` -- `toRCDefs`'s own wiring (between
+  Loop conversion and Sink), `"nolateinline"` directive.
+
+### Verification methodology
+
+1. Full build + test suite: `rc2/tests/verify.sh` (85/0) and
+   `libs/rc2base/tests/verify.sh` (16/16), both including `valgrind`.
+2. Hand-written repro: a `go`/`mkTarget`-shaped self-recursive
+   higher-order function, specialized by SpecClosure at two call sites,
+   confirmed via `--directive dumprcexpr` to have both clones spliced
+   directly into `main` (no longer present as separate top-level
+   definitions), each its own `RLoop`/`loop_N:` label in the generated
+   C, correct output unchanged.
+3. `rc2/tests/refc-suite/callingConvention`'s own golden output needed
+   regenerating for a reason *beyond* the usual cosmetic `var_N`/
+   `tmp_N` renumbering this session's other changes also caused: this
+   pass now inlines `sumLoop`/`eligibleAdd`/`tailAbs` away before
+   `Compiler.RC2.DualABI` ever gets to synthesize a worker for them,
+   so those worker functions genuinely stop existing as separate C
+   functions. Confirmed the program's own stdout is unchanged
+   (verified by running the binary directly, separately from the
+   test's own C-source-structure assertions) before accepting the
+   regeneration -- inlining removes the call boundary DualABI's own
+   optimization was narrowing the cost of, so no longer needing that
+   narrower optimization for these specific functions is expected,
+   not a regression.

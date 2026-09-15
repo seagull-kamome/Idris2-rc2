@@ -29,6 +29,7 @@ import Compiler.RC2.RC
 import Compiler.RC2.RCExp
 import Compiler.RC2.Reuse
 import Compiler.RC2.SpecClosure
+import Compiler.RC2.LateInline
 import Compiler.RC2.MutualLoop
 import Compiler.RC2.Loop
 import Compiler.RC2.Sink
@@ -193,7 +194,7 @@ insertMemoize = map wrap
 ||| apart.
 disableableStageNames : List String
 disableableStageNames =
-    ["noinline", "noconstfold", "nospecclosure", "noconaltnative", "nomutualloop", "noloop", "nosink", "nodualabi", "nodeadcode", "nodupmerge"]
+    ["noinline", "noconstfold", "nospecclosure", "noconaltnative", "nomutualloop", "noloop", "nolateinline", "nosink", "nodualabi", "nodeadcode", "nodupmerge"]
 
 ||| `incremental`: `Compiler.RC2.RC.toRCDefPreFold` throws (tagged
 ||| `notInlinedStructFieldMarker`) for a definition like
@@ -286,9 +287,19 @@ toRCDefs disabled incremental roots lds0 = do
                                       in logTimeOver slowApplyLoopThresholdNs
                                            (pure ("rc2: Loop conversion (apply) slow definition: " ++ show n ++ stats))
                                            (do d' <- applyLoop calleeTable n d; pure (n, d'))) merged
+    -- rc2/doc/inlining.md's "Criterion B, revisited": strictly after
+    -- Loop/MutualLoop conversion, so a self- or mutually-tail-recursive
+    -- candidate's own recursion has already collapsed into RLoop/
+    -- RLoopContinue -- not a further RAppName call this pass would
+    -- otherwise have to refuse to inline. Strictly before DualABI, so
+    -- this pass only ever sees a callee's own original (always RBoxed)
+    -- top-level params, never a dual-ABI worker/wrapper split.
+    inlined <- if "nolateinline" `elem` disabled
+                  then pure looped
+                  else logTime 2 "rc2: Late inline" $ applyLateInline looped
     sunk <- if "nosink" `elem` disabled
-               then pure looped
-               else logTime 2 "rc2: Sink" $ pure (map (\(n, d) => (n, applySink d)) looped)
+               then pure inlined
+               else logTime 2 "rc2: Sink" $ pure (map (\(n, d) => (n, applySink d)) inlined)
     dualABId <- if "nodualabi" `elem` disabled
        then pure sunk
        else logTime 2 "rc2: DualABI" $ do
