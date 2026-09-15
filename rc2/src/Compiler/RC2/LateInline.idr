@@ -116,40 +116,16 @@ mutual
   collectBoundIdsConstAlt : RConstAlt -> List Int
   collectBoundIdsConstAlt (MkRConstAlt _ body) = collectBoundIds body
 
-||| `True` iff `target` occurs *anywhere* in `e` outside of an
-||| `ROp`/`RCmpCase`'s own operand list -- a bare read, a call/
-||| constructor/extprim argument, a struct field, a loop's own
-||| `initial`/`prologueDrop`/`RLoopContinue`'s own `args`, or anywhere
-||| else. Paired with `Compiler.RC2.Loop`'s own `nativeArgType` (which
-||| only asks "if read this way, do they all agree on one type" -- not
-||| "is this *every* way it's read"), a substituted parameter with
-||| `False` here and a `Just ty` there has *every* one of its own
-||| occurrences accounted for by a correctly-typed native-operand read
-||| -- nothing left that could ever need a genuine Boxed
-||| representation, hence nothing left needing ownership bookkeeping
-||| either (a value type is never refcounted).
-|||
-||| `ty`: the native type `target` is a candidate to be declared at --
-||| needed for the one case that isn't purely structural,
-||| `RLoopContinue`'s own `args`: a `target` entry there is safe (not a
-||| genuine non-native use) exactly when the *nearest enclosing*
-||| `RLoop`'s own loop-carried slot at that same position is *already*
-||| declared `RNative ty` too -- `Emit.idr`'s own `tryEmitLoopContinue`
-||| always renders a continue's own new value through
-||| `rcVarToNativeC`/`rcVarToBoxedC` keyed on *that slot's* own `Rep`,
-||| never the supplied value's, so this is exactly the check needed
-||| (and, since the slot's declared type is fixed independently of
-||| `target`, this is also why `ty` must already be settled before this
-||| function can answer -- unlike `Compiler.RC2.Loop`'s own
-||| `nativeArgType`, which discovers a consistent type as it goes).
-||| `loopSlots`: the nearest enclosing `RLoop`'s own `loopParams`,
-||| threaded here for exactly that check -- `[]` until this function's
-||| own `RLoop` case descends into one.
-|||
-||| Deliberately conservative about `RLoop`'s own `initial`/
-||| `prologueDrop` regardless (native-compatible in principle if the
-||| loop-carried slot itself is native too, but not verified here) --
-||| narrower than theoretically possible, never wrong.
+||| `True` iff `target` has an occurrence in `e` not accounted for by
+||| a native-operand read at type `ty`, nor by ownership bookkeeping
+||| `Compiler.RC2.Loop`'s own `stripOwnership` would strip anyway
+||| (`RDup`/`RDrop`/`RFree`, any node's own `postDrop`). `loopSlots`:
+||| the nearest enclosing `RLoop`'s own `loopParams` -- an
+||| `RLoopContinue` entry at a position whose slot is already declared
+||| `RNative ty` is safe too, since `Emit.idr`'s `tryEmitLoopContinue`
+||| always renders a continue's new value keyed on *that slot's* `Rep`,
+||| never the supplied value's. See `rc2/doc/inlining.md`'s "Criterion
+||| B, revisited" for the full design and the bugs this prevents.
 hasNonNativeUse : (ty : PrimType) -> (loopSlots : List (Int, Rep)) -> Int -> RCExp -> Bool
 hasNonNativeUse ty loopSlots target (RV _ v) = v == RCLoc target
 hasNonNativeUse ty loopSlots target (RAppName _ _ _ args) = elem (RCLoc target) args
@@ -158,79 +134,42 @@ hasNonNativeUse ty loopSlots target (RApp _ _ c a) = c == RCLoc target || a == R
 hasNonNativeUse ty loopSlots target (RLet _ _ _ value body) =
     hasNonNativeUse ty loopSlots target value || hasNonNativeUse ty loopSlots target body
 hasNonNativeUse ty loopSlots target (RCon _ _ _ _ args reuseFrom) = elem (RCLoc target) args || reuseFrom == Just (RCLoc target)
--- `args` themselves are the native-operand position `nativeArgType`
--- already verifies. `postDrop` here is ordinary ownership bookkeeping
--- (a Boxed-drop `annotate` attached, assuming `target` still needed
--- boxing) -- `Compiler.RC2.Loop`'s own `stripOwnership` (reused by
--- `spliceCall` below) already filters exactly this list, so a
--- `target` entry here is stale, not a genuine non-native use.
-hasNonNativeUse ty loopSlots target (ROp {}) = False
+hasNonNativeUse ty loopSlots target (ROp {}) = False -- postDrop-only; stale, stripOwnership handles it
 hasNonNativeUse ty loopSlots target (RExtPrim _ _ _ args postDrop) = elem (RCLoc target) args || elem (RCLoc target) postDrop
--- `stripOwnership` doesn't touch `RExtPrim`'s own `postDrop` at all
--- (unlike `ROp`/`RCmpCase`/... below) -- kept as a genuine non-native
--- use here to match, not because it can't in principle be native.
+-- Unlike ROp/RCmpCase/..., stripOwnership never touches RExtPrim's own postDrop -- a genuine use here.
 hasNonNativeUse ty loopSlots target (RStructGet _ structVar _ _ _) = structVar == RCLoc target
--- `postDrop` here is stripped by `stripOwnership` too, same as `ROp`.
 hasNonNativeUse ty loopSlots target (RStructSet _ structVar _ _ value _) = structVar == RCLoc target || value == RCLoc target
 hasNonNativeUse ty loopSlots target (RCmpCase _ _ _ _ t f) = hasNonNativeUse ty loopSlots target t || hasNonNativeUse ty loopSlots target f
--- Same reasoning as `ROp` above -- `postDrop` here is stripped too.
 hasNonNativeUse ty loopSlots target (RConCase _ sc alts mDef) =
     sc == RCLoc target || any (\(MkRConAlt _ _ _ _ body) => hasNonNativeUse ty loopSlots target body) alts
       || maybe False (hasNonNativeUse ty loopSlots target) mDef
 hasNonNativeUse ty loopSlots target (RConstCase _ sc alts mDef) =
     sc == RCLoc target || any (\(MkRConstAlt _ body) => hasNonNativeUse ty loopSlots target body) alts
       || maybe False (hasNonNativeUse ty loopSlots target) mDef
--- `RDup`/`RDrop`/`RFree`'s own target mention is itself ownership
--- bookkeeping `stripOwnership` removes outright (the whole node, for
--- `RDup`/`RFree`; just this one entry, for `RDrop`'s own list) -- a
--- `target` match here is stale too, same reasoning as `ROp`'s own
--- `postDrop` above, not a genuine non-native use.
 hasNonNativeUse ty loopSlots target (RDup _ v _ body) = hasNonNativeUse ty loopSlots target body
 hasNonNativeUse ty loopSlots target (RDrop _ vars body) = hasNonNativeUse ty loopSlots target body
 hasNonNativeUse ty loopSlots target (RFree _ v body) = hasNonNativeUse ty loopSlots target body
--- `RReleaseReuse`'s own `v` and `RReuseOffer`'s own `sc`/
--- `dupOnShared`/`dropOnUnique` are genuine structural uses (a reused
--- constructor's own storage slot) `stripOwnership` deliberately never
--- touches (see its own doc comment: never disturbing an
--- already-decided reuse) -- a value type would never appear here in
--- practice, but kept as a real non-native use for safety regardless.
 hasNonNativeUse ty loopSlots target (RReleaseReuse _ v body) = v == RCLoc target || hasNonNativeUse ty loopSlots target body
+-- RReleaseReuse's own v / RReuseOffer's own sc/dupOnShared/dropOnUnique are genuine uses --
+-- stripOwnership deliberately never touches an already-decided reuse.
 hasNonNativeUse ty loopSlots target (RReuseOffer _ sc dupOnShared dropOnUnique body) =
     sc == RCLoc target || elem (RCLoc target) dupOnShared || elem (RCLoc target) dropOnUnique
       || hasNonNativeUse ty loopSlots target body
--- `loopParams`'s own ids are binding positions (what a loop-carried
--- slot is *called*), never a use of `target` -- but `body` is now
--- checked against *this* loop's own slots (`RLoopContinue`'s own case
--- below), not whatever enclosing one `loopSlots` still held.
--- `prologueDrop` is ownership bookkeeping `stripOwnership` filters
--- too, same reasoning as `ROp`'s own `postDrop` above. `initial` is a
--- genuine use, conservatively treated as non-native (see this
--- function's own doc comment).
 hasNonNativeUse ty loopSlots target (RLoop _ loopParams initial _ body) =
     elem (RCLoc target) initial || hasNonNativeUse ty loopParams target body
--- `postDrop` here is stripped too. `args`: safe (not a genuine
--- non-native use) exactly at the positions whose own same-index
--- `loopSlots` entry is already `RNative ty` -- see this function's
--- own doc comment.
+-- body is checked against THIS loop's own slots, not the enclosing loopSlots. initial is
+-- conservatively treated as a genuine use regardless (see this function's own doc comment).
 hasNonNativeUse ty loopSlots target (RLoopContinue _ args _) =
     any (\((_, slotRep), a) => a == RCLoc target && not (matchesTy slotRep)) (zip loopSlots args)
-      || length args /= length loopSlots
-        -- Structurally shouldn't happen (`RLoopContinue`'s own arg
-        -- list is always the same length as its loop's own
-        -- `loopParams`) -- if it somehow does, `zip` would silently
-        -- drop the extra entries above, so this defensively falls
-        -- back to disqualifying instead of missing a real `target`
-        -- occurrence in the dropped tail.
-        && elem (RCLoc target) args
+      || (length args /= length loopSlots && elem (RCLoc target) args)
+        -- length mismatch shouldn't happen structurally; falls back to disqualifying rather
+        -- than risk `zip` silently dropping a real occurrence in the tail.
   where
     matchesTy : Rep -> Bool
     matchesTy (RNative ty') = ty' == ty
     matchesTy _ = False
 hasNonNativeUse ty loopSlots target (RMemoize _ _ _ body) = hasNonNativeUse ty loopSlots target body
--- RPrimVal, RErased, RCrash: no locals at all. RAppNameRep/
--- RAppFFIInline can't exist yet -- Compiler.RC2.DualABI runs strictly
--- after this pass (matches `inlineInto`'s own reasoning below).
-hasNonNativeUse _ _ _ _ = False
+hasNonNativeUse _ _ _ _ = False -- RPrimVal/RErased/RCrash: no locals. RAppNameRep/RAppFFIInline can't exist yet.
 
 ||| `Just ty` iff `paramId`'s own occurrences in `calleeBody` are
 ||| *entirely* accounted for by consistently-`ty`-typed native-operand
@@ -246,44 +185,22 @@ nativeEligible paramId calleeBody =
          Just ty => if hasNonNativeUse ty [] paramId calleeBody then Nothing else Just ty
 
 ||| Builds the renaming from `calleeArgs`'s own top-level param ids
-||| onto the actual call arguments, plus a wrapping function for any
-||| argument, bound via one `RLet` ahead of the callee's own renamed
+||| onto the actual call arguments, plus a wrapping function binding
+||| each argument via its own `RLet` ahead of the callee's own renamed
 ||| body, plus every fresh id bound purely `RNative` this way (for
 ||| `spliceCall`'s own final `stripOwnership` pass).
 |||
-||| Every argument gets its own fresh id here, even one that's already
-||| a bare `RCLoc` -- deliberately never just `insert paramId j ren`
-||| directly onto the caller's own local `j`. A loop-converted callee's
-||| own `RLoop` commonly reuses its top-level param's own id as a
-||| *mutable* loop-carried variable (`Compiler.RC2.Loop`'s own
-||| "reuses its own id" case, `Emit.idr`'s own `declareLoopParam`).
-||| Aliasing that id directly onto the caller's `j` would let the
-||| spliced-in loop reassign the caller's own variable in place --
-||| exactly the isolation an ordinary (non-inlined) call already gives
-||| for free (the callee's own parameter is always a fresh copy) and
-||| this splice must preserve. Found via a real bug: `map (*2) xs`
-||| immediately followed by `filter p xs` on the same `xs`, both single-
-||| caller-eligible, spliced back to back -- `map`'s own loop consumed
-||| the shared variable down to empty before `filter`'s own loop ever
-||| ran, since both were renamed onto the very same id.
-|||
-||| The fresh id's own `Rep`: `RBoxed` (matching the callee's own
-||| original param declaration, always `RBoxed` this early in the
-||| pipeline) *unless* the actual argument is currently native in the
-||| caller (`reps`) *and* `nativeEligible` confirms the callee's own
-||| body never needs it any other way, at the very same type. Getting
-||| this backwards -- declaring native without confirming eligibility,
-||| or declaring native while leaving the callee's own stale
-||| Boxed-assuming `RDup`/`RDrop` nodes in place -- was a real,
-||| `valgrind`-clean-but-C-compile-error-producing bug found while
-||| implementing this (`idris2rc2_drop` handed a raw `int64_t`); always
-||| defaulting to `RBoxed` instead was a real, found *performance* bug
-||| (`rc2/tests/BenchChain.idr` regressed from 0.008s to 0.39s, a ~50x
-||| slowdown, once its own `poly` helper -- purely arithmetic, single-
-||| caller-eligible -- got spliced in with every native loop
-||| accumulator boxed on the way in and unboxed straight back out on
-||| the very next operand read). See `rc2/doc/inlining.md`'s own
-||| "Criterion B, revisited" section for the full writeup of both.
+||| Every argument gets its own *fresh* id, even one that's already a
+||| bare `RCLoc` -- never aliased directly onto the caller's own local.
+||| A loop-converted callee's own `RLoop` commonly reuses its top-level
+||| param's id as a *mutable* loop-carried variable, so aliasing would
+||| let the splice reassign the caller's own variable in place, unlike
+||| an ordinary call. The fresh id's own `Rep`: `RBoxed` unless the
+||| actual argument is currently native in the caller (`reps`) *and*
+||| `nativeEligible` confirms the callee's own body never needs it any
+||| other way, at the same type. See `rc2/doc/inlining.md`'s "Criterion
+||| B, revisited" for both bugs found getting this wrong (an aliasing
+||| correctness bug, and a ~50x boxing performance regression).
 buildSplice : {auto v : Ref VarId Int} -> FC -> SortedMap Int Rep -> RCExp -> List (Int, RCLocal) -> Core (Renaming, RCExp -> RCExp, SortedSet Int)
 buildSplice fc reps calleeBody [] = pure (empty, id, empty)
 buildSplice fc reps calleeBody ((paramId, actual) :: rest) = do
@@ -306,19 +223,14 @@ buildSplice fc reps calleeBody ((paramId, actual) :: rest) = do
 ||| Every id `collectBoundIds` finds, freshened -- so it can never
 ||| collide with anything, anywhere else in the program.
 |||
-||| Needed even though `Compiler.RC2.Util`'s own `VarId` counter
-||| already makes every id globally unique from the moment it's first
-||| assigned: `Compiler.RC2.SpecClosure` builds *several* clones from
-||| one shared original body, and only rewrites each clone's own
-||| apply-chain/self-call, leaving the rest of that body -- internal
-||| ids included -- copied verbatim into every clone. Two such clones
-||| therefore legitimately share their own internal ids, harmlessly, as
-||| long as each stays its own separate C function (C scopes locals
-||| per function). Splicing two of them into the *same* caller breaks
-||| that separation -- found via a real bug: two single-caller-eligible
-||| clones, each with their own unrelated `let v301 = ...`, both
-||| spliced into the same caller produced two C declarations of
-||| `var_301` in one function.
+||| Needed even though `VarId` already makes every id globally unique
+||| from the moment it's first assigned: `Compiler.RC2.SpecClosure`
+||| builds several clones from one shared original body, copying its
+||| internal ids verbatim into every clone -- two clones legitimately
+||| share ids as long as each stays its own C function, but splicing
+||| two of them into the *same* caller breaks that separation. See
+||| `rc2/doc/inlining.md`'s "Criterion B, revisited" for the bug this
+||| was found via (`var_301` redefined in one C function).
 freshenBoundIds : {auto v : Ref VarId Int} -> List Int -> Core Renaming
 freshenBoundIds [] = pure empty
 freshenBoundIds (i :: is) = do
@@ -326,29 +238,21 @@ freshenBoundIds (i :: is) = do
     f <- freshVarId
     pure (insert i f ren)
 
-||| Whether `Compiler.RC2.Emit`'s own `emitNativeValue` (the single
-||| inline-C-expression renderer `declareNative`/`inlineNative` use for
-||| an `RNative`/`RInlineNative` local's own value) can actually render
-||| `e`. Unlike a full statement-level lowering, `emitNativeValue` has
-||| no way to represent a branch (`RConCase`/`RConstCase`/`RCmpCase`)
-||| or a nested `RLoop` as a single C expression -- it only understands
-||| `RAppFFIInline`/`ROp`/`RPrimVal` at the tail, unwinding
-||| `RLet`/`RDup`/`RFree`/`RDrop`/`RReleaseReuse` wrappers on the way
-||| (mirrored here exactly, constructor-for-constructor). `RAppFFIInline`
-||| can't actually occur in a tree this pass ever sees (`Compiler.RC2.
-||| DualABI` produces it, and runs strictly after this pass -- see the
-||| module doc's "Pipeline position"); included anyway so this stays a
-||| honest mirror of what `emitNativeValue` supports, not a guess.
-|||
-||| Needed because `uniformTailType` below only asks "does every tail
-||| position agree on one native type", which is true even when those
-||| tail positions sit behind a case-split `emitNativeValue` has no way
-||| to lower -- found via a real regression: promoting a spliced call's
-||| result to `RNative ty` on `uniformTailType` alone crashed
-||| `declareNative` with "[rc2] internal: expected a native-producing
-||| expression" the moment the callee's own body branched (e.g. an
-||| `if`/`RCmpCase` compiled by `Compiler.RC2.RC`'s own `tryFuseCompare`)
-||| before reaching its native tail.
+||| Whether `Emit.idr`'s own `emitNativeValue` (the single inline-C-
+||| expression renderer `declareNative`/`inlineNative` use for a native
+||| local's own value) can actually render `e` -- mirrors its supported
+||| shapes constructor-for-constructor: `RAppFFIInline`/`ROp`/`RPrimVal`
+||| at the tail, unwinding `RLet`/`RDup`/`RFree`/`RDrop`/`RReleaseReuse`
+||| wrappers on the way, nothing else (in particular, no branch --
+||| `RConCase`/`RConstCase`/`RCmpCase` -- and no nested `RLoop`, neither
+||| of which can be one C expression). `RAppFFIInline` can't actually
+||| occur in a tree this pass ever sees (`Compiler.RC2.DualABI` runs
+||| strictly after this pass) but is included anyway to keep this an
+||| honest mirror rather than a guess. `uniformTailType` below alone
+||| isn't sufficient for a promotion decision -- it happily says "yes"
+||| through a branch this function can't render -- see
+||| `rc2/doc/inlining.md`'s "Criterion B, revisited" for the crash this
+||| was found via.
 emitNativeValueCompatible : RCExp -> Bool
 emitNativeValueCompatible (RAppFFIInline {}) = True
 emitNativeValueCompatible (ROp {}) = True
@@ -374,36 +278,50 @@ uniformTailType e = case tailValueReps empty e of
                           (Just ty :: rest) => if all (== Just ty) rest then Just ty else Nothing
                           _ => Nothing
 
+||| `Just ty` iff an `RBoxed`-declared `RLet var value body` can be
+||| promoted to native `Rep` `ty`: `value`'s own tail is uniformly
+||| native (`uniformTailType`), `Emit.idr` can actually render it as
+||| one C expression (`emitNativeValueCompatible`), and `body` itself
+||| never needs `var` any other way (`hasNonNativeUse`). `loopSlots`:
+||| the nearest enclosing `RLoop`'s own `loopParams`, threaded through
+||| to `hasNonNativeUse`.
+|||
+||| Generic over how `value` came to exist -- not specific to splicing
+||| -- so any pass assembling a fresh `RBoxed`-declared local (e.g. a
+||| clone `Compiler.RC2.SpecClosure` builds) can reuse this to redo
+||| native-Rep promotion over the result. See `rc2/doc/inlining.md`'s
+||| "Criterion B, revisited" (Layer 2/3) for why this check exists.
+export
+promotableNativeLetRep : (loopSlots : List (Int, Rep)) -> (var : Int) -> (value : RCExp) -> (body : RCExp) -> Maybe PrimType
+promotableNativeLetRep loopSlots var value body =
+    case uniformTailType value of
+         Just ty => if emitNativeValueCompatible value && not (hasNonNativeUse ty loopSlots var body) then Just ty else Nothing
+         Nothing => Nothing
+
 ||| Replace one fully-saturated call to an eligible callee with its own
-||| (renamed) body, plus whether that whole result's own tail value is
-||| uniformly native (`uniformTailType`, for `inlineInto`'s own
-||| `RLet`-with-directly-called-value case to use). `reps`: the
-||| caller's own current `Rep` environment at this exact call site
-||| (`inlineInto`'s own walk), consulted by `buildSplice` above --
-||| never the callee's own originally-declared param `Rep`.
-spliceCall : {auto v : Ref VarId Int} -> FC -> SortedMap Int Rep -> RCDef -> List RCLocal -> Core (RCExp, Maybe PrimType)
+||| (renamed) body. `reps`: the caller's own current `Rep` environment
+||| at this exact call site (`inlineInto`'s own walk), consulted by
+||| `buildSplice` above -- never the callee's own originally-declared
+||| param `Rep`.
+spliceCall : {auto v : Ref VarId Int} -> FC -> SortedMap Int Rep -> RCDef -> List RCLocal -> Core RCExp
 spliceCall fc reps (MkRCFun calleeArgs _ _ calleeBody) actualArgs = do
     (paramRen, wrap, promoted) <- buildSplice fc reps calleeBody (zipArgs (map fst calleeArgs) actualArgs)
     let paramIds = SortedSet.fromList (map fst calleeArgs)
     internalRen <- freshenBoundIds (filter (\i => not (contains i paramIds)) (collectBoundIds calleeBody))
     let ren = foldl (\acc, (k, val) => insert k val acc) paramRen (SortedMap.toList internalRen)
-    -- `promoted` names post-rename (fresh) ids declared purely
-    -- `RNative` above -- their own inherited Boxed-assuming ownership
-    -- nodes (`Compiler.RC2.Loop`'s own `stripOwnership`, already
-    -- `RLoop`-aware) are stale now: a value type is never refcounted,
-    -- so there is nothing left to reannotate afterward either, unlike
-    -- `Compiler.RC2.ConAltNative`'s own fuller native-shadow promotion
-    -- (a field there can still have a *surviving* Boxed-context use;
-    -- `nativeEligible` above already ruled that out here).
-    let result = wrap (stripOwnership promoted (renameRCExp ren calleeBody))
-    pure (result, uniformTailType result)
+    -- `promoted` names post-rename ids declared purely `RNative` above
+    -- (a value type is never refcounted, so nothing left to
+    -- reannotate) -- unlike `Compiler.RC2.ConAltNative`'s own fuller
+    -- native-shadow promotion, where a field can still have a
+    -- *surviving* Boxed-context use.
+    pure $ wrap (stripOwnership promoted (renameRCExp ren calleeBody))
   where
     zipArgs : List Int -> List RCLocal -> List (Int, RCLocal)
     zipArgs (i :: is) (a :: as) = (i, a) :: zipArgs is as
     zipArgs _ _ = []
 -- Defensive only -- `eligible` (built from `isFun` in `analyse`) never
 -- names anything but a `MkRCFun`.
-spliceCall _ _ d _ = pure (RCrash EmptyFC "[rc2] internal: LateInline target wasn't a MkRCFun", Nothing)
+spliceCall _ _ d _ = pure $ RCrash EmptyFC "[rc2] internal: LateInline target wasn't a MkRCFun"
 
 ------------------------------------------------------------------------
 -- Whole-tree rewrite: replace every eligible call site
@@ -435,51 +353,35 @@ inlineInto defOf eligible = go empty []
     -- placed textually after every use).
     --
     -- `loopSlots` mirrors `reps` but tracks only the *nearest
-    -- enclosing* `RLoop`'s own `loopParams` (`[]` outside of any
-    -- loop) -- needed so `hasNonNativeUse`'s own `RLoopContinue` case
-    -- can be asked "is this id read back at a position whose declared
-    -- slot type already matches?" even when the `RLoopContinue` in
-    -- question isn't textually nested under a *further* `RLoop` inside
-    -- the very `RCExp` being scanned (the common case: a call's result
-    -- feeds an `RLoop` this same `go` recursion already descended
-    -- through *before* reaching the `RLet` that binds it). Passing a
-    -- hardcoded `[]` here instead reproduces a real, measured
-    -- performance bug -- see `rc2/doc/inlining.md`.
+    -- enclosing* `RLoop`'s own `loopParams` (`[]` outside any loop),
+    -- set at `go`'s own RLoop case below -- threaded separately from
+    -- `reps` because it must reflect a loop `go`'s own outer recursion
+    -- already walked through, not just one reachable from the current
+    -- subtree. See `rc2/doc/inlining.md`'s "Criterion B, revisited"
+    -- (Layer 3) for the regression a hardcoded `[]` here reproduces.
     go : SortedMap Int Rep -> List (Int, Rep) -> RCExp -> Core RCExp
     go reps loopSlots (RAppName fc lazy n args) =
         if contains n eligible
            then case lookup n defOf of
-                     Just d => fst <$> spliceCall fc reps d args
+                     Just d => spliceCall fc reps d args
                      Nothing => pure (RAppName fc lazy n args)
            else pure (RAppName fc lazy n args)
-    -- The call sits directly as an `RLet`'s own value, still `RBoxed`
-    -- (the common shape an ordinary, not-yet-`Compiler.RC2.DualABI`-
-    -- touched call site always has) -- if the whole splice's own tail
-    -- value turns out uniformly native (`spliceCall`'s own second
-    -- result), promote `var`'s own declaration to match, *and* strip
-    -- its own now-stale Boxed-assuming ownership bookkeeping from
-    -- `body` too (`Compiler.RC2.Loop`'s own `stripOwnership`) -- but
-    -- only when `body` itself never needs `var` any other way
-    -- (`hasNonNativeUse`, the same check `nativeEligible` above uses
-    -- for a callee's own parameter, here asked about the caller's own
-    -- downstream code instead). Found via a real, found *performance*
-    -- bug, the return-side twin of `buildSplice`'s own argument-side
-    -- one: leaving `var` declared `RBoxed` here boxes a provably-
-    -- native result on the way in, immediately unboxed back out at
-    -- its very next (native-operand) read -- see `rc2/doc/inlining.md`
-    -- for the measured cost.
+    -- The call sits directly as an `RLet`'s own still-`RBoxed` value
+    -- (the shape an ordinary, not-yet-`Compiler.RC2.DualABI`-touched
+    -- call site always has) -- `promotableNativeLetRep` decides
+    -- whether `var`'s own declaration can be promoted to native
+    -- (return-side twin of `buildSplice`'s own argument-side
+    -- promotion above; see `rc2/doc/inlining.md`, Layer 2/3, for the
+    -- measured cost of not doing this).
     go reps loopSlots (RLet fc var RBoxed value@(RAppName vfc lazy n args) body) =
         if contains n eligible
            then case lookup n defOf of
                      Just d => do
-                         (splicedValue, mty) <- spliceCall vfc reps d args
-                         case mty of
-                              Just ty =>
-                                  if not (emitNativeValueCompatible splicedValue) || hasNonNativeUse ty loopSlots var body
-                                     then RLet fc var RBoxed splicedValue <$> go reps loopSlots body
-                                     else do
-                                         body' <- go (insert var (RNative ty) reps) loopSlots body
-                                         pure $ RLet fc var (RNative ty) splicedValue (stripOwnership (SortedSet.singleton var) body')
+                         splicedValue <- spliceCall vfc reps d args
+                         case promotableNativeLetRep loopSlots var splicedValue body of
+                              Just ty => do
+                                  body' <- go (insert var (RNative ty) reps) loopSlots body
+                                  pure $ RLet fc var (RNative ty) splicedValue (stripOwnership (SortedSet.singleton var) body')
                               Nothing => RLet fc var RBoxed splicedValue <$> go reps loopSlots body
                      Nothing => RLet fc var RBoxed value <$> go reps loopSlots body
            else RLet fc var RBoxed value <$> go reps loopSlots body
