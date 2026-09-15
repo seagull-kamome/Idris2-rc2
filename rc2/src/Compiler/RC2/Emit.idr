@@ -99,7 +99,7 @@ EmitDeps retTy = {auto a : Ref ArgCounter Nat}
               -> {auto cc : Ref ConstConDef (SortedMap RCLocal String, List String)}
               -> {auto r : Ref RepMap (SortedMap Int Rep)}
               -> {auto lm : Ref InlineMap (SortedMap Int (String, List String))}
-              -> {auto fa : Ref LoopParams (List (Int, Rep))}
+              -> {auto fa : Ref LoopParams (List (String, List (Int, Rep)))}
               -> {auto sd : Ref StructDefs (SortedMap String (List (String, CFType)))}
               -> retTy
 
@@ -234,7 +234,8 @@ mutual
     ||| argument's dup/move before Compiler.RC2.Loop ever ran, see
     ||| `RLoopContinue`'s own doc comment), reassign each loop param
     ||| variable from its own temporary -- boxed or native, per that
-    ||| param's own `Rep` (from `LoopParams`) -- then `goto loop;`.
+    ||| param's own `Rep` (`LoopParams`'s own top-of-stack entry) --
+    ||| then `goto` that same loop's own label.
     |||
     ||| Returns `Nothing` if the loop-back was emitted (nothing left for
     ||| the caller to assign or return -- control already left via the
@@ -244,7 +245,9 @@ mutual
     tryEmitLoopContinue : EmitDeps (RCExp -> Core (Maybe RCExp))
     tryEmitLoopContinue e0 = peelWrappers e0 >>= \e => case e of
       RLoopContinue fc newArgs postDrop => do
-        loopParams <- get LoopParams
+        (label, loopParams) <- case !(get LoopParams) of
+             (top :: _) => pure top
+             [] => throw $ InternalError "[rc2] RLoopContinue reachable with no enclosing RLoop on Emit's own LoopParams stack"
         temps <- traverse (\(v, (paramId, rep)) => do
             t <- getNewVarThatWillNotBeFreedAtEndOfBlock
             (cty, valStr, pending) <- the (Core (String, String, List String)) $ case rep of
@@ -266,7 +269,7 @@ mutual
         -- leak this closes.
         removeVars (varName <$> postDrop)
         traverse_ (\(paramId, t) => emit fc "var_\{show paramId} = \{t};") temps
-        emit fc "goto loop;"
+        emit fc "goto loop_\{label};"
         pure Nothing
       _ => pure (Just e)
 
@@ -739,27 +742,35 @@ mutual
     ||| Lower an `RLoop` (see its own doc comment in RCExp.idr): declare
     ||| each loop param (`declareLoopParam`, a no-op for the common
     ||| "reuses the enclosing function's own args unchanged" case), a
-    ||| `loop:;` label, then `body` itself -- writing straight into
-    ||| `sink`, same as every other branching construct this module
-    ||| lowers (an `RLoopContinue` reachable from `body` in tail position
-    ||| is intercepted by `emitInto`'s own `tryEmitLoopContinue` call
-    ||| before ever reaching here again, so `body`'s own tail-position
-    ||| value(s), if any survive, are genuinely this whole loop's exit
-    ||| value), after each declared param's own `prologueDrop` membership
-    ||| (see `declareLoopParam`'s own doc comment) is discharged as one
-    ||| `removeVars` -- `Compiler.RC2.RC`'s `annotate`-decided ownership
-    ||| facts (`postDrop` etc.) are always discharged individually, at
-    ||| their own node; this one's just as much a precomputed IR fact
+    ||| freshly-labelled `loop_N:;`, then `body` itself -- writing
+    ||| straight into `sink`, same as every other branching construct
+    ||| this module lowers (an `RLoopContinue` reachable from `body` in
+    ||| tail position is intercepted by `emitInto`'s own
+    ||| `tryEmitLoopContinue` call before ever reaching here again, so
+    ||| `body`'s own tail-position value(s), if any survive, are
+    ||| genuinely this whole loop's exit value), after each declared
+    ||| param's own `prologueDrop` membership (see `declareLoopParam`'s
+    ||| own doc comment) is discharged as one `removeVars` --
+    ||| `Compiler.RC2.RC`'s `annotate`-decided ownership facts
+    ||| (`postDrop` etc.) are always discharged individually, at their
+    ||| own node; this one's just as much a precomputed IR fact
     ||| (`Compiler.RC2.Loop`'s own `applyLoop`), simply batched here since
     ||| every member's own drop point is this same spot regardless.
+    |||
+    ||| Pushes onto, and pops back off, `LoopParams`'s own stack around
+    ||| `body` -- see rc2/doc/loop-conversion.md's "Multiple loops per
+    ||| function" for why push/pop (not a single overwrite) is needed.
     emitLoopInto : EmitDeps (Sink -> TailPositionStatus -> FC -> List (Int, Rep) -> List RCLocal -> (prologueDrop : List RCLocal) -> RCExp -> Core ())
     emitLoopInto sink tailPosition fc loopParams initial prologueDrop body = do
         traverse_ (\((paramId, rep), initVal) =>
                        declareLoopParam (elem initVal prologueDrop) fc paramId rep initVal) (zip loopParams initial)
         removeVars (varName <$> prologueDrop)
-        emit fc "loop:;"
-        put LoopParams loopParams
+        label <- getNextCounter
+        emit fc "loop_\{label}:;"
+        outerStack <- get LoopParams
+        put LoopParams ((label, loopParams) :: outerStack)
         emitInto emptyFC sink tailPosition body
+        put LoopParams outerStack
 
     ||| The raw C expression for a value Compiler.RC2.Types has decided is
     ||| Native ty -- an `RLet`'s own tail is always an `ROp`/`RPrimVal`
@@ -1262,17 +1273,14 @@ createCFunctions n (MkRCFun args retRep isWorker body) = do
     -- Populated instead of RepMap+a declaration for any RLet whose value
     -- is a bare literal -- see InlineMap's own comment.
     _ <- newRef InlineMap (the (SortedMap Int (String, List String)) empty)
-    -- Empty until `body` actually contains an `RLoop` -- `emitLoopInto`
-    -- overwrites this the moment it enters one; `RLoopContinue` can only
-    -- ever be reachable *inside* an `RLoop`'s own body by construction
-    -- (Compiler.RC2.Loop's own `applyLoop` never produces one without
-    -- also wrapping the body in the matching `RLoop`), so it's never
-    -- read while this is still empty.
-    _ <- newRef LoopParams (the (List (Int, Rep)) [])
+    -- Empty until `body` actually contains an `RLoop` -- see
+    -- rc2/doc/loop-conversion.md's "Multiple loops per function" for
+    -- why this is a stack, not a single slot.
+    _ <- newRef LoopParams (the (List (String, List (Int, Rep))) [])
     -- emitInto's own tryEmitLoopContinue-first / RLoop-dispatch protocol
-    -- handles a loop body correctly on its own (declare params, `loop:;`,
-    -- goto, no return); for anything else, SinkReturn makes every
-    -- reachable tail leaf -- including inside a nested RCmpCase/
+    -- handles a loop body correctly on its own (declare params, its own
+    -- `loop_N:;` label, goto, no return); for anything else, SinkReturn
+    -- makes every reachable tail leaf -- including inside a nested RCmpCase/
     -- RConCase/RConstCase -- emit its own `return` directly, no
     -- intermediate switchReturnVar anywhere.
     emitInto EmptyFC (SinkReturn retRep) InTailPosition body
