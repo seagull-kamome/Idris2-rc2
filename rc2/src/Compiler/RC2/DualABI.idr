@@ -41,15 +41,26 @@ import Data.Vect
 
 %default covering
 
-||| Find an `RLoop` reachable through a prefix of ordinary `RLet`s --
-||| `applyLoop`'s own loop-invariant-parameter elision wraps an `RLoop`
-||| in exactly this shape (`doc/loop-conversion.md`'s "Loop-invariant
-||| parameter elision") -- collecting every id bound along the way.
+||| Find every `RLoop` reachable through a prefix of ordinary `RLet`s,
+||| genuinely *nested* one inside another's own body -- `applyLoop`'s
+||| own loop-invariant-parameter elision wraps an `RLoop` in exactly
+||| this shape (`doc/loop-conversion.md`'s "Loop-invariant parameter
+||| elision") -- collecting every id bound along the way, plus every
+||| nested loop's own `loopParams` too (`Compiler.RC2.LateInline` can
+||| now splice a loop-converted callee into a caller's own loop body --
+||| rc2/doc/inlining.md's "Known limitation" section). A *sibling*
+||| loop elsewhere in the body (not nested inside this one) can't be
+||| reached this way regardless -- `RLoop` has no "and then" field of
+||| its own to continue past -- `paramEligibility`'s own fallback to
+||| `nativeArgTypeBatch` covers that shape instead.
 ||| `Nothing` if no `RLoop` is reachable at all (the common, non-looping
 ||| case).
 findLoopThroughLets : SortedMap Int Rep -> RCExp -> Maybe (SortedMap Int Rep, List (Int, Rep))
 findLoopThroughLets acc (RLet _ var rep _ body) = findLoopThroughLets (insert var rep acc) body
-findLoopThroughLets acc (RLoop _ loopParams _ _ _) = Just (acc, loopParams)
+findLoopThroughLets acc (RLoop _ loopParams _ _ body) =
+    case findLoopThroughLets acc body of
+         Just (innerAcc, innerLoopParams) => Just (innerAcc, loopParams ++ innerLoopParams)
+         Nothing => Just (acc, loopParams)
 findLoopThroughLets _ _ = Nothing
 
 ||| Every top-level parameter's own native eligibility: `Just ty` where
