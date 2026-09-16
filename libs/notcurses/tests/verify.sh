@@ -47,7 +47,7 @@ IDRIS2_PREFIX="$PKG_DIR/.local-install" \
 PKG_VERSION="$(sed -n 's/^version *= *//p' "$PKG_DIR/notcurses.ipkg" | tr -d ' ')"
 INSTALLED_LIB="$PKG_DIR/.local-install/idris2-0.8.0/notcurses-$PKG_VERSION/lib"
 echo "=== Check postinstall copied the native library into lib/ ==="
-[[ -f "$INSTALLED_LIB/libidris2rc2notcurses.so" ]] || fail "postinstall didn't install libidris2rc2notcurses.so to $INSTALLED_LIB"
+[[ -f "$INSTALLED_LIB/libidris2rc2notcurses.a" ]] || fail "postinstall didn't install libidris2rc2notcurses.a to $INSTALLED_LIB"
 [[ -f "$INSTALLED_LIB/nc_util.h" ]] || fail "postinstall didn't install nc_util.h to $INSTALLED_LIB"
 
 echo "=== rc2 backend: build TestVersion (against the INSTALLED lib/) ==="
@@ -56,8 +56,10 @@ nix-shell -p gcc gmp pkg-config notcurses --run \
     "cd '$TESTS_DIR' && '$IDRIS2RC2' --cg rc2 -p notcurses -o TestVersion_verify TestVersion.idr"
 
 echo "=== Run ==="
+# No $INSTALLED_LIB here -- libidris2rc2notcurses is a static archive
+# now, baked straight into the executable, nothing to find at runtime.
 NOTCURSES_LIBDIR="$(nix-shell -p notcurses pkg-config --run 'pkg-config --variable=libdir notcurses-core')"
-export LD_LIBRARY_PATH="$INSTALLED_LIB:$REPO_ROOT/install/idris2-0.8.0/support/rc2:$NOTCURSES_LIBDIR${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+export LD_LIBRARY_PATH="$REPO_ROOT/install/idris2-0.8.0/support/rc2:$NOTCURSES_LIBDIR${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 OUT="$("$TESTS_DIR/build/exec/TestVersion_verify")"
 echo "$OUT"
 

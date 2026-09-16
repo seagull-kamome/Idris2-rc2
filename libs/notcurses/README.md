@@ -2,7 +2,7 @@
 
 `System.Notcurses` -- Idris2 bindings to [notcurses](https://notcurses.com/)'
 `notcurses-core` API, through a small shim (`support/c/nc_util.c`) built
-into its own shared object `libidris2rc2notcurses`. `rc2` backend only.
+into its own static archive `libidris2rc2notcurses.a`. `rc2` backend only.
 
 See `doc/notcurses.md` for the full design rationale (why a shim
 exists at all despite most of the binding calling straight onto
@@ -36,15 +36,14 @@ export IDRIS2_PREFIX="$(pwd)/install"
 
 ./rc2/build/exec/idris2-rc2 --cg rc2 -p notcurses -o MyProgram libs/notcurses/examples/Hello.idr
 
-INSTALLED_LIB="$(pwd)/install/idris2-0.8.0/notcurses-0.1.0/lib"
+# libidris2rc2notcurses is a static archive -- baked straight into
+# MyProgram, nothing of its own to find at runtime. notcurses-core
+# itself stays a real shared library, so it's the only one still
+# needed on LD_LIBRARY_PATH here.
 INSTALLED_NOTCURSES_LIBDIR="$(nix-shell -p notcurses pkg-config --run 'pkg-config --variable=libdir notcurses-core')"
-export LD_LIBRARY_PATH="$INSTALLED_LIB:$(pwd)/install/idris2-0.8.0/support/rc2:$INSTALLED_NOTCURSES_LIBDIR:$LD_LIBRARY_PATH"
+export LD_LIBRARY_PATH="$(pwd)/install/idris2-0.8.0/support/rc2:$INSTALLED_NOTCURSES_LIBDIR:$LD_LIBRARY_PATH"
 ./build/exec/MyProgram
 ```
-
-(`LD_LIBRARY_PATH` above is a *runtime* need for the produced
-executable to find `libidris2rc2notcurses.so`/`libnotcurses-core.so`
--- unrelated to the build-time `-I`/`-L` question.)
 
 `tests/verify.sh` automates the build+link+run steps above for a
 program that only calls `notcurses_version()` -- notcurses itself
@@ -60,10 +59,11 @@ Same convention (and same rc2-specific caveat) as `rc2base`/
 `text-re2` -- see `libs/rc2base/README.md`'s "Native library install
 location" section. `idris2 --install` copies only `.ttc`/`.ttm`/
 `.ipkg`; this package's `postinstall` hook (`make -C support/c
-install`) is what puts `libidris2rc2notcurses.so` and `nc_util.h` into
+install`) is what puts `libidris2rc2notcurses.a` and `nc_util.h` into
 `<IDRIS2_PREFIX>/idris2-<ver>/notcurses-0.1.0/lib/`. rc2's own
 `Compiler.RC2.CC.depPkgLibDirs` finds that `lib/` automatically for
 every depended-upon package (`-p notcurses` or an `.ipkg` `depends`
 entry is enough) -- no manual `IDRIS2_CFLAGS`/`IDRIS2_LDFLAGS` needed
-for *this*; the `LD_LIBRARY_PATH` shown above is a separate, runtime-
-only concern (finding the `.so`s once the program actually starts).
+for *this*. Being a static archive, `libidris2rc2notcurses.a` itself
+needs nothing on `LD_LIBRARY_PATH` at runtime (unlike `notcurses-core`,
+still a real shared library) -- see the `LD_LIBRARY_PATH` shown above.

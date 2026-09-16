@@ -98,7 +98,7 @@ const char *idris2rc2_nc_last_input_utf8(void);
  * `static inline`, not declared here + defined in nc_util.c: each is a
  * pure one-line return of a compile-time constant, no shared state
  * unlike the input-cache getters above, so there's no correctness
- * reason to force an out-of-line call through libidris2rc2notcurses.so
+ * reason to force an out-of-line call through libidris2rc2notcurses.a
  * -- defining them here lets a call site that includes this header
  * (which %foreign's own header field arranges) fold each straight down
  * to its constant, the same way notcurses.h's own `static inline`

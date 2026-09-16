@@ -70,7 +70,7 @@ through `support/c/nc_util.c`:
 `idris2rc2_nc_last_input_y`/`_x`/`_modifiers`/`_evtype`/`_utf8` and
 `idris2rc2_nc_get_blocking`/`_get_nonblock` are declared in
 `nc_util.h` and *defined* in `nc_util.c`, forcing a real out-of-line
-call through `libidris2rc2notcurses.so` -- necessary there, since they
+call through `libidris2rc2notcurses.a` -- necessary there, since they
 share one file-scope `static ncinput last_input` cache and a header-
 `static inline` copy would duplicate that cache once per translation
 unit a consuming program's generated C happens to split into,

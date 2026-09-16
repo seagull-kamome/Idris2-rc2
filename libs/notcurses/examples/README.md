@@ -8,9 +8,10 @@ outright against a pipe/file/CI sandbox) -- run these yourself after
 ```sh
 cd idris2-rc-cg
 source ./env.sh
-INSTALLED_LIB="$(pwd)/install/idris2-0.8.0/notcurses-0.1.0/lib"
+# libidris2rc2notcurses is a static archive -- nothing of its own to
+# find at runtime; notcurses-core stays a real shared library.
 INSTALLED_NOTCURSES_LIBDIR="$(nix-shell -p notcurses pkg-config --run 'pkg-config --variable=libdir notcurses-core')"
-export LD_LIBRARY_PATH="$INSTALLED_LIB:$(pwd)/install/idris2-0.8.0/support/rc2:$INSTALLED_NOTCURSES_LIBDIR:$LD_LIBRARY_PATH"
+export LD_LIBRARY_PATH="$(pwd)/install/idris2-0.8.0/support/rc2:$INSTALLED_NOTCURSES_LIBDIR:$LD_LIBRARY_PATH"
 
 nix-shell -p gcc gmp pkg-config notcurses --run '
   ./rc2/build/exec/idris2-rc2 --cg rc2 -p notcurses -o Hello  libs/notcurses/examples/Hello.idr
