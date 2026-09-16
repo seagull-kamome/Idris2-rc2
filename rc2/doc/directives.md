@@ -221,6 +221,27 @@ directive exists to avoid. All three are listed in `verify.sh`'s
 for anything at all -- there's no shared baseline behavior to diverge
 from, and no meaningful RefC comparison for `verify.sh` to make.
 
+## 8. Timing diagnostics (`timing`)
+
+Most passes already print their own wall-clock time unconditionally
+via `logTime`/`logTimeOver` at a nonzero threshold, gated by the
+ordinary upstream `log`/log-level mechanism, not by any directive here
+-- see e.g. `Compiler.RC2.RC2.toRCDefs`'s own `logTime 2 "rc2: ..."`
+calls around every stage. `Compiler.RC2.SpecClosure`'s own four
+whole-pass-level lines (collect+group, the opportunity/key/def counts,
+`rebuildCafTable`, `redirectAll`) are the one exception: they were
+originally left permanently unconditional (bypassing `log`/log-level
+*and* any directive) while diagnosing the `O(distinct keys x program
+size)` slowdown `doc/speculative-closure-specialization.md` describes
+fixing. That investigation is long concluded, so they now only print
+with `--directive timing` (`applySpecClosure`'s own
+`maybeLogTimeOver`), same as every other opt-in diagnostic in this
+document:
+
+```sh
+idris2-rc2 --cg rc2 --directive timing Program.idr -o program
+```
+
 ## Files
 
 - `rc2/src/Compiler/RC2/RC2.idr` -- `toRCDefs`'s own stage-disable
@@ -229,6 +250,8 @@ from, and no meaningful RefC comparison for `verify.sh` to make.
 - `rc2/src/Compiler/RC2/Emit/Util.idr` -- `InjectedRuntime`, the
   header-scoped state the two code-injection directives write into;
   `ExternStructs`, section 5's own.
+- `rc2/src/Compiler/RC2/SpecClosure.idr` -- `maybeLogTimeOver`, section
+  8's own `timing` gate.
 - `rc2/tests/Test31CgExtraRuntime/`, `rc2/tests/Test32CgInlineRuntime/`,
   `rc2/tests/Test84CgExternStruct/` -- the motivating smoke tests
   (section 7).

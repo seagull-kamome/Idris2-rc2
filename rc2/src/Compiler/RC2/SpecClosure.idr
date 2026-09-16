@@ -3,7 +3,9 @@
 ||| choice below live in `rc2/doc/speculative-closure-specialization.md`
 ||| (its own "Internal structure" section maps directly onto this
 ||| module's own functions) -- this file only comments *how*, not *why*.
-||| Disable with `--directive nospecclosure`.
+||| Disable with `--directive nospecclosure`. Its own whole-pass-level
+||| timing/count diagnostics (`applySpecClosure`'s own
+||| `maybeLogTimeOver`) only print with `--directive timing`.
 module Compiler.RC2.SpecClosure
 
 -- Copyright 2026, Hattori,Hiroki. All rights reserved.
@@ -18,6 +20,7 @@ import Core.Context
 import Core.Context.Log
 import Core.Core
 import Core.FC
+import Core.Options
 import Core.TT
 
 import Data.DPair
@@ -273,24 +276,35 @@ redirectCallSitesTable table = goBound empty
 ||| original body already called -- never another just-built clone
 ||| from an earlier key in the same pass.
 |||
-||| Diagnostic instrumentation below (`logTimeOver`, all at threshold 0
-||| so every entry prints unconditionally, not gated behind any
-||| `--timing`/log-level flag) is now just the four whole-pass-level
-||| lines -- collect+group, the opportunity/key/def counts, the single
-||| `rebuildCafTable`, and the single final redirect pass -- since
-||| those are each `O(program size)` at most once per compile. The
-||| earlier per-key `tryOneKey`/`buildClone+fold` lines (one pair per
-||| distinct specialization key, unbounded on a program the size of
-||| `idris2-lsp`) were removed once the `O(distinct keys x program
-||| size)` slowdown they were added to diagnose was confirmed fixed.
+||| Diagnostic instrumentation below (`logTimeOver` at threshold 0, so
+||| it would print unconditionally if reached at all) is now just the
+||| four whole-pass-level lines -- collect+group, the opportunity/key/
+||| def counts, the single `rebuildCafTable`, and the single final
+||| redirect pass -- since those are each `O(program size)` at most
+||| once per compile. The earlier per-key `tryOneKey`/`buildClone+fold`
+||| lines (one pair per distinct specialization key, unbounded on a
+||| program the size of `idris2-lsp`) were removed once the
+||| `O(distinct keys x program size)` slowdown they were added to
+||| diagnose was confirmed fixed. Originally left unconditional
+||| (bypassing `--timing`/log-level entirely) since that diagnosis was
+||| still ongoing; now gated behind `maybeLogTimeOver`'s own
+||| `--directive timing` check below, same as every other pass' own
+||| `logTime` calls, since that investigation concluded and these lines
+||| were just unconditional noise on every single build otherwise.
+maybeLogTimeOver : Bool -> Integer -> Core String -> Core a -> Core a
+maybeLogTimeOver True nsecs str act = logTimeOver nsecs str act
+maybeLogTimeOver False _ _ act = act
+
 export
-applySpecClosure : {auto v : Ref VarId Int} -> List (Name, RCDef) -> Core (List (Name, RCDef))
+applySpecClosure : {auto c : Ref Ctxt Defs} -> {auto v : Ref VarId Int} -> List (Name, RCDef) -> Core (List (Name, RCDef))
 applySpecClosure defs = do
     _ <- newRef FreshId 0
-    keys <- logTimeOver 0 (pure "rc2: SpecClosure: collect+group opportunities") (pure (SortedMap.toList byKey))
-    coreLift $ putStrLn $ "TIMING rc2: SpecClosure: " ++ show (length opportunities) ++ " opportunities, "
-                           ++ show (length keys) ++ " distinct keys, " ++ show (length defs) ++ " defs"
-    caf <- logTimeOver 0 (pure ("rc2: SpecClosure: rebuildCafTable (" ++ show (length defs) ++ " defs, once)"))
+    timingEnabled <- elem "timing" <$> getDirectives (Other "rc2")
+    keys <- maybeLogTimeOver timingEnabled 0 (pure "rc2: SpecClosure: collect+group opportunities") (pure (SortedMap.toList byKey))
+    when timingEnabled $
+      coreLift $ putStrLn $ "TIMING rc2: SpecClosure: " ++ show (length opportunities) ++ " opportunities, "
+                             ++ show (length keys) ++ " distinct keys, " ++ show (length defs) ++ " defs"
+    caf <- maybeLogTimeOver timingEnabled 0 (pure ("rc2: SpecClosure: rebuildCafTable (" ++ show (length defs) ++ " defs, once)"))
              (pure (rebuildCafTable defs))
     (newClones, table) <- goKeys defOf caf [] empty keys
     -- `newClones ++ defs`, not `defs ++ newClones`: matches the
@@ -298,7 +312,7 @@ applySpecClosure defs = do
     -- accepted clone prepended, original defs at the tail), so
     -- emission's own ArgCounter-derived temp-variable numbering is
     -- unaffected by this refactor.
-    logTimeOver 0 (pure ("rc2: SpecClosure: redirectAll (" ++ show (length defs + length newClones) ++ " defs, once)"))
+    maybeLogTimeOver timingEnabled 0 (pure ("rc2: SpecClosure: redirectAll (" ++ show (length defs + length newClones) ++ " defs, once)"))
       (pure $ map (\(n, d) => (n, case d of
                                         MkRCFun a r w body => MkRCFun a r w (redirectCallSitesTable table body)
                                         d' => d'))
