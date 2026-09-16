@@ -31,10 +31,14 @@ install ahead of time beyond `nix` itself being on `PATH`.
 
 `env.sh` must exist (it's checked into the repo already; regenerate
 with `./gen-env.sh` — needs `nix-shell -p idris2` — only if it's
-missing or stale after a nix update). It sets `CHEZ`, `IDRIS2_LIBS`,
-`IDRIS2_DATA`, `IDRIS2_PACKAGE_PATH`, `LD_LIBRARY_PATH` so the
-project's own unwrapped `idris2-rc2` binary can find the standard
-libraries. `smoke.sh` sources it automatically.
+missing or stale after a nix update). It sets `CHEZ` (Chez Scheme
+itself, needed by the Chez backend build step — the one genuinely
+external dependency; everything else the project's own unwrapped
+`idris2-rc2` binary finds on its own, self-relatively, under this
+repo's own `install/` prefix, which has been self-contained for a
+while now), `LD_LIBRARY_PATH` (so a produced executable can find
+`libidris2_support.so` at its own runtime), and `PATH`. `smoke.sh`
+sources it automatically.
 
 ## Build
 
