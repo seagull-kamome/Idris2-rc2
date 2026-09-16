@@ -870,116 +870,15 @@ case needs one specifically.
 踏まえ、現時点では追求しない。スレッドローカル版を実際に実装・実測する人が
 現れたら再訪。
 
-## カスタムランタイム、メモリアロケータ
-そもそもアロケータやdup/dropの仕組みやランタイム丸ごとすり替える事ができれば
-世代別 GC 等の恩恵をほぼ無料で受けられるのでは？
-  - 他処理系への組み込みを行なったときに、ホスト側処理系のランタイムを利用できる
-
 
 ## ファントム型やファントム関数の明示
 トップレベル定義に 0 をつける。
 実行時に存在しないからいいや、ではなく存在しない事を保証する
 
 ## RCExp の ROp はRLocalに持っていく -- 調査済み、却下
+InlineNativeだけで問題をほぼ解消できている。むしろInlineNativeを廃止
+してRCLocalへ併合する方向で考える？
 
-調査の結果、これは冒頭の「Architecture: RCLocal can't hold another
-RCLocal」で一度却下された`RCStructField`案と全く同じ問題(RCLocalへの
-ネスト)であり、しかも規模・リスクの両面でそれを明確に上回ることが
-判明した:
-
-- `RCStructField`案は「1個のネストしたRCLocal、副作用なし」だったが、
-  `ROp`は`Vect arity RCLocal`全体をネストし、しかもROpが自分自身を
-  再帰的に埋め込め、`postDrop`という実効果(参照カウント解放)を持つ
-  フィールドまで持つ。`RCExp.idr`の`freeLocalsR`/`countUsesR`、
-  `RC.idr`の`splitBorrows`/`dropIfLastUse`/`boxedOperands`/`annotate`、
-  `Sink.idr`の`genuinelyUsedR`、`Loop.idr`の`renameLocal`(サイレントな
-  リネーム漏れという新種のバグ経路が判明)、`ConAltNative.idr`/
-  `DualABI.idr`の各所――ほぼ全パスで実質的な書き換えが必要。
-- 調査で新たに判明した障害: `Emit/Util.idr`の`rcVarToBoxedC`/
-  `rcVarToNativeC`は「文を発行できない純粋文字列関数」という契約で
-  20箇所以上から呼ばれており、ROpをネストした値として埋め込むと
-  この契約と正面衝突する。過去に実際踏んだ`postDrop`順序バグ
-  (`doc/native-type-inference.md`のBug #4、use-after-free)を埋め込み
-  位置の数だけ再現しかねない領域。
-- `inlineableRep`(`RC.idr:544-547`)の「厳密に1回しか使われない」検証は
-  ROp案でも消えず、単に検証の置き場所が変わるだけ――「InlineNativeが
-  不要になる」という期待は成立しない。
-
-**朗報**: 目的(Cに生成される変数の削減)自体は、`postDrop==[]`な
-ネイティブ演算チェーンについては既存の`inlineableRep`+`InlineMap`
-機構(`RC.idr`/`Emit/Util.idr`/`Emit.idr`)で既に達成済みと確認した。
-残る唯一の実質的ギャップは、`inlineableRep`が`postDrop == []`を
-要求する(`RC.idr:545`)ため**Boxedオペランドを1つでも読むROpは、
-使用回数が1回でも絶対にインライン化されない**という制約。
-
-**追記(実装検討の結果、規模を訂正)**: 上記ギャップの解消は`RCLocal`
-型自体には触れないものの、当初見込んでいた「桁違いに小さい改修」
-ではなかった。`inlineNative`(`Emit.idr:453-456`)は式文字列を
-`InlineMap`に登録する**その時点で**`removeVars pending`を実行して
-しまうが、その式が実際にインライン展開される(後で参照される)場所は
-別のタイミングであり、`postDrop`が非空だとdropが式の実際の使用より
-先に発行され use-after-free になりうる。安全にするには「dropの発行
-を実際の展開時点まで遅延させる」設計変更が要るが、`inlineExprFor`
-(`Emit/Util.idr:942-958`)から式を取り出す全経路(`rcVarToBoxedC`/
-`rcVarToNativeC`、呼び出し元だけで**49箇所**)が「Cの文を発行できない
-純粋文字列関数」という契約になっており、これを破らずに戻り値へ
-pendingリストを伝播させる形にすると、49箇所全てで「ここでdropして
-よいか」を個別に精査する規模の変更になる。着手するかは保留。
-
-**追記2(実装した)**: 上記の懸念(49箇所への影響)を検証した結果、
-実際に型変更の直接波及を受けたのは`rcVarToBoxedC`/`rcVarToNativeC`の
-呼び出し元(実質約30箇所、間接的に`emitRC`自身の契約も道連れになった
--- 後述)にとどまった。`InlineMap`を`SortedMap Int (String, List
-String)`(式文字列+pendingのペア)に変更し、`inlineNative`は登録時に
-即`removeVars`せずpendingをそのまま保存、`rcVarToBoxedC`/
-`rcVarToNativeC`はInlineMapから読んだpendingを自分の戻り値として
-呼び出し元に返すよう変更。1点、当初の見積もりに無かった追加の波及が
-判明した: `emitRC`自身がいくつかのケース(RApp/RConなど)で複数の
-`rcVarToBoxedC`呼び出し結果を*まだCの文として発行していない式*として
-組み合わせてから`pure`で返しており、この場合pendingを安全に discharge
-する場所が`emitRC`の外(呼び出し元の`emitInto`)にしかない。対策として
-`emitRC`に`Sink`を渡し、内部で(新設の`finalizeSinkWithDrop`まで)
-完結させる設計に変更 -- `emitAppNameRepInto`が既に持っていた「postDrop
-空なら素通し、非空かつSinkReturnなら一時変数経由」というロジックを
-共通ヘルパーとして切り出し、`emitRC`にも同じものを適用した。これに
-より`emitRC`の外部呼び出し元は`emitInto`内の1箇所のみで、二次波及は
-そこで止まった。`RC.idr`側は`inlineableRep`のパターンを`ROp _ _ _ _
-[]`から`ROp {}`(任意のpostDrop)に緩和するだけで済んだ。
-
-フルテスト(111 passed, 0 failed, valgrind clean)は全て通過 -- ただし
-1件、`refc-suite`の`callingConvention`が生成Cコードの意図した変化
-(ループ内の`op +`が新たに単一使用インライン化された)で期待値
-ファイルとの単純diffが不一致になったため、その`expected`を更新して
-対応(バグではなく、この変更が実際に効いている証拠)。
-
-**実際に`postDrop != []`のROpがInlineNativeへ昇格される例**(狙って
-`--directive dumprcexpr`で確認)は、Idris2フロントエンドの変換(let-
-lifting、`Compiler.RC2.Loop`のネイティブシャドウ昇格)との相互作用で
-見た目より起こしにくいと判明: `annotate`(Phase 2)は`Compiler.RC2.Loop`
-より前に走るため、`RLoop`/`RLoopContinue`化される前の素の再帰呼び出し
-形に対して`inlineableRep`を判定しており、`Loop`が後からその変数を
-ループパラメータとして扱い直す際に`RInlineNative`判定を`RNative`へ
-差し戻すケースを実際に確認した(`v5 : Native Int`のまま、直接の`ROp`
-かつ1回しか使われないのに昇格されない)。一方、非ループの単純な関数
-(`callingConvention`の`sumLoop`)では実際に発火し、正しく動作している。
-実利(削減できるC一時変数の実数)を計測するところまでは踏み込んでおら
-ず、`Loop.idr`側の相互作用まで手を入れるかは別判断。安全性(テスト
-green、valgrind clean)は確保済みなのでこの状態でコミット、実利計測や
-`Loop.idr`側の追随は必要になった時点で再訪する。
-
-**さらに調査(Emit.idr/Emit/Util.idr全体のmutual簡略化を検討)**:
-上記の作業前提としてEmit.idr(2102行)/Emit/Util.idr(1630行)自体の
-簡略化を検討したが、結論は「大掛かりな着手は見送り」。Emit/Util.idr
-の`mutual`(3関数)は既に100%真の循環で対象外。Emit.idrの`mutual`
-(18関数、~1140行)は他の7モジュールと異なり15/18(83%)が単一の
-真の強連結成分で、削減見込みはmutual全体でも高々30-50行
-(全体の1.5-2.5%)。唯一安全に抽出できた`emitRC`/`emitAppNameRepInto`/
-`emitAppFFIInlineInto`(一方向依存のみ)の3関数はmutualの外に出した
-(コミット済み)。残り15関数は無理に`where`化しても`emitInto`が
-320-350行に肥大化するだけで複雑度は減らない。このモジュールはC生成
-の最終段階で、上記の`postDrop`タイミング問題がまさにここで実際に
-起きうる領域であり、大きなコード移動によって暗黙の評価順序が
-崩れるリスクの方が、得られる行数削減より大きいと判断した。
 
 ## Reuse解析とannotation(所有権挿入)の配置 -- 調査済み、方針決定
 
@@ -1077,7 +976,28 @@ dup+dropペア分増えるが、正しさは保たれる)という保守的な�
 区間では非アトミック版を使い、それ以外ではアトミック版と使い分ける事で負荷を軽減させる
 事が可能なはずである。
 
+そういう変数はそもそも大抵ネイティブ化されているはずなのでネイティブになれない値だけしか
+恩恵を受けられない。
 
+これをやるなら、エスケープ解析をして他スレッドに逃げる可能性の無い変数を割り出すのが先
+だろう。
+
+## foo(%1, %2)形式のFFI定義
+%foreignの自由度が上がればラッパを書く手間が減らせる。RC2専用かつC関数名が%で始まっている場合
+といった条件なら問題なさそう。%+数字を展開する時には周囲にカッコをつける必要がある事に注意。
+
+%foreignはCompiler.Commonのパーサで単純にカンマ区切りをしているらしく一筋縄では行かない。
+jsのlambda:の時にはヘッダもライブラリも必要ないので全体を一つの式としてしまっているらしい。
+
+
+## idris2-curlの取り込み
+インストール時にlibcurlへの依存が無ければrc2baseへ取り込んでも問題ないはず。
+よく使う機能はバンドルとしておきたい。あるいはpure idris2のhttp clientを実装すべき？
+
+## promiseの実装
+
+## null定数の扱い
+ランタイム側で定数にしてしまうべき。ポインタ比較演算と合わせて最適化を考える。
 
 ## Performance: Closure Inlining and Immediate Expansion
   `partial`呼び出しによるクロージャ生成とヒープ割り当てが、高階関数や型クラスの辞書使用時に頻発している。特に`List`操作や`mapAppend`のような高階関数において、`Boxed`なクロージャが多重生成されており、パフォーマンスを大きく阻害している。
