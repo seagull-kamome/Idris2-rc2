@@ -32,10 +32,7 @@ export IDRIS2_PREFIX="$(pwd)/install"
 (cd libs/notcurses && idris2 --install notcurses.ipkg)
 
 INSTALLED_LIB="$(pwd)/install/idris2-0.8.0/notcurses-0.1.0/lib"
-# -D_XOPEN_SOURCE=700 -D_DEFAULT_SOURCE: REQUIRED by every consumer of
-# this package, not just its own build -- see doc/notcurses.md's "A
-# real gotcha" section for why.
-export IDRIS2_CFLAGS="-I$INSTALLED_LIB -D_XOPEN_SOURCE=700 -D_DEFAULT_SOURCE"
+export IDRIS2_CFLAGS="-I$INSTALLED_LIB"
 export IDRIS2_LDFLAGS="-L$INSTALLED_LIB"
 ./rc2/build/exec/idris2-rc2 --cg rc2 -p notcurses -o MyProgram libs/notcurses/examples/Hello.idr
 

@@ -2,44 +2,57 @@
 #define IDRIS2RC2_NC_UTIL_H
 
 /* Every %foreign declaration touching notcurses in src/System/
- * Notcurses.idr names *this* header, never <notcurses/notcurses.h>
- * directly -- one consolidated header instead of splitting off a
- * second, narrower one just for the few declarations that don't
- * strictly need the full thing.
+ * Notcurses.idr names *this* header. It never #includes
+ * <notcurses/notcurses.h> itself -- only <notcurses/nckeys.h> (just
+ * NCKEY_* macros + stdint/stdbool, confirmed to need no glibc feature-
+ * test macros of its own).
  *
- * This does NOT, on its own, fix the `-D_XOPEN_SOURCE=700
- * -D_DEFAULT_SOURCE` requirement on every consumer's own
- * IDRIS2_CFLAGS (see doc/notcurses.md's "A real gotcha" section) --
- * tried defining `_XOPEN_SOURCE` right here, first thing in this
- * file, before this same #include; still failed the exact same way.
- * rc2's generated C always `#include <idris2rc2_runtime.h>` first,
- * unconditionally, ahead of every %foreign header including this one
- * -- and that alone already drags in glibc's <features.h> (via its
- * own buffer.h -> stdint.h) before this file is ever reached, which
- * decides glibc's feature-test state for the whole translation unit
- * right then. A `#define` anywhere after that point, in any header,
- * has no effect; only a compiler command-line `-D` (which glibc sees
- * as if it were written before the first line of the file) is early
- * enough. So the consumer-side IDRIS2_CFLAGS requirement stays,
- * regardless of which header any of this is declared against. */
-#include <notcurses/notcurses.h>
+ * Reasoning, verified by actually building both ways: notcurses.h
+ * defines ~200 `static inline` functions (channel/cell manipulation,
+ * notcurses_render, ncplane_putstr, ...), and a handful of them --
+ * unrelated to anything this package binds, e.g. nccell_strdup(),
+ * ncplane_putwstr_aligned() -- call strdup()/wcwidth()/wcswidth(),
+ * which glibc only declares under _XOPEN_SOURCE/_DEFAULT_SOURCE. A
+ * `static inline` function's body is parsed and type-checked the
+ * moment its header is #included, regardless of whether anything in
+ * that translation unit ever calls it -- so #including the whole
+ * header here, even though this package only *uses* a small slice of
+ * it, dragged every consumer's IDRIS2_CFLAGS into needing
+ * `-D_XOPEN_SOURCE=700 -D_DEFAULT_SOURCE` just to satisfy functions
+ * nobody was calling. No amount of #define-ing those macros in a
+ * header included *after* the real one helps either (rc2's generated
+ * C always #includes its own runtime prelude first, which already
+ * locks glibc's feature-test state via <stdint.h> -> <features.h>
+ * before any %foreign header is ever reached).
+ *
+ * The fix: never give consumers the real header at all.
+ *   - Functions notcurses.h marks `API` (always a real, body-less
+ *     declaration, implemented in the library itself, never inline)
+ *     are hand-declared directly below, copied verbatim from
+ *     notcurses.h's own prototypes -- these were already being bound
+ *     by symbol name via %foreign against libnotcurses-core, so this
+ *     changes nothing about what's trusted, just where the prototype
+ *     text lives.
+ *   - Functions that only exist as a `static inline` body in the
+ *     vendor header (previously bound against notcurses' separate
+ *     "-ffi" build, which exports them as real symbols too -- see
+ *     git history / doc/notcurses.md) are now wrapped instead:
+ *     `nc_util.c` is the ONLY translation unit that #includes the
+ *     real <notcurses/notcurses.h>, confining the strdup/wcwidth/
+ *     wcswidth requirement entirely inside this shim's own Makefile
+ *     (already compiles with `-D_XOPEN_SOURCE=700`). Bonus: since
+ *     nc_util.c calls these through the plain (non-NOTCURSES_FFI)
+ *     header, they're inlined straight into nc_util.c's own object
+ *     code -- libnotcurses-ffi isn't needed at all anymore, dropping
+ *     an entire external dependency (and the "-ffi" build variant
+ *     isn't guaranteed to be packaged everywhere the plain library
+ *     is).
+ */
+#include <notcurses/nckeys.h>
 #include <stdint.h>
 
-/* Everything notcurses itself exports as a real, linkable symbol (either
- * always -- anything marked `API` in notcurses.h -- or, built against
- * libnotcurses-ffi, anything that's `static inline` in the header, e.g.
- * notcurses_render/ncplane_putstr/notcurses_get_blocking) is bound
- * directly from Idris via %foreign against "libnotcurses-core" /
- * "libnotcurses-ffi" -- see src/System/Notcurses.idr. This shim exists
- * only for the handful of things %foreign genuinely cannot do itself:
- * building a `notcurses_options`/`ncplane_options` value to pass by
- * pointer (no per-field struct construction from Idris), and reading
- * back the multi-field `ncinput` an input call writes into (no portable
- * field-offset knowledge on the Idris side). See doc/notcurses.md.
- */
-
-/* `struct notcurses`/`struct ncplane` come from notcurses.h itself
- * (included above) -- no need to forward-declare them separately here. */
+struct notcurses;
+struct ncplane;
 
 /* `notcurses_core_init(opts, fp)` wrapper: builds the options struct
  * internally and fixes fp to NULL (stdout) -- exposing the raw FILE*
@@ -89,7 +102,8 @@ const char *idris2rc2_nc_last_input_utf8(void);
  * -- defining them here lets a call site that includes this header
  * (which %foreign's own header field arranges) fold each straight down
  * to its constant, the same way notcurses.h's own `static inline`
- * helpers already do. */
+ * helpers already do. nckeys.h alone (included above) is enough for
+ * these -- no strdup/wcwidth/wcswidth in sight. */
 static inline uint32_t idris2rc2_nckey_invalid(void) { return NCKEY_INVALID; }
 static inline uint32_t idris2rc2_nckey_resize(void) { return NCKEY_RESIZE; }
 static inline uint32_t idris2rc2_nckey_up(void) { return NCKEY_UP; }
@@ -108,5 +122,43 @@ static inline uint32_t idris2rc2_nckey_f01(void) { return NCKEY_F01; }
 static inline uint32_t idris2rc2_nckey_f02(void) { return NCKEY_F02; }
 static inline uint32_t idris2rc2_nckey_f03(void) { return NCKEY_F03; }
 static inline uint32_t idris2rc2_nckey_f04(void) { return NCKEY_F04; }
+
+/* -- Always-real (`API`-attributed, never inline) notcurses-core
+ * symbols -- hand-declared verbatim from notcurses.h's own
+ * prototypes, bound directly by symbol name via %foreign. No body
+ * ever exists in the vendor header for these, so there's nothing to
+ * confine -- only the declaration text needs to stay in sync with
+ * notcurses' own signatures (see doc/notcurses.md's "Keeping this up
+ * to date"). */
+const char *notcurses_version(void);
+int notcurses_stop(struct notcurses *nc);
+int ncplane_destroy(struct ncplane *n);
+struct ncplane *notcurses_stdplane(struct notcurses *nc);
+int ncplane_move_yx(struct ncplane *n, int y, int x);
+int ncplane_cursor_move_yx(struct ncplane *n, int y, int x);
+void ncplane_erase(struct ncplane *n);
+int ncplane_set_fg_rgb8(struct ncplane *n, unsigned r, unsigned g, unsigned b);
+int ncplane_set_bg_rgb8(struct ncplane *n, unsigned r, unsigned g, unsigned b);
+void ncplane_set_fg_default(struct ncplane *n);
+void ncplane_set_bg_default(struct ncplane *n);
+int ncplane_set_fg_alpha(struct ncplane *n, int alpha);
+int ncplane_set_bg_alpha(struct ncplane *n, int alpha);
+void ncplane_set_styles(struct ncplane *n, unsigned stylebits);
+
+/* -- Functions that only exist as `static inline` bodies in the
+ * vendor header -- wrapped in nc_util.c, which is the only place that
+ * #includes the real <notcurses/notcurses.h>. Bound via %foreign
+ * against libidris2rc2notcurses, same as every other shim function
+ * above (no more libnotcurses-ffi dependency at all). */
+int idris2rc2_nc_render(struct notcurses *nc);
+int idris2rc2_ncplane_putstr(struct ncplane *n, const char *gclustarr);
+int idris2rc2_ncplane_putstr_yx(struct ncplane *n, int y, int x, const char *gclusters);
+int idris2rc2_ncplane_resize_simple(struct ncplane *n, unsigned ylen, unsigned xlen);
+unsigned idris2rc2_ncplane_dim_y(const struct ncplane *n);
+unsigned idris2rc2_ncplane_dim_x(const struct ncplane *n);
+unsigned idris2rc2_ncplane_cursor_y(const struct ncplane *n);
+unsigned idris2rc2_ncplane_cursor_x(const struct ncplane *n);
+int idris2rc2_ncplane_perimeter_rounded(struct ncplane *n, uint16_t stylemask, uint64_t channels, unsigned ctlword);
+int idris2rc2_ncplane_perimeter_double(struct ncplane *n, uint16_t stylemask, uint64_t channels, unsigned ctlword);
 
 #endif

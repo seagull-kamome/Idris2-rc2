@@ -9,7 +9,7 @@ outright against a pipe/file/CI sandbox) -- run these yourself after
 cd idris2-rc-cg
 source ./env.sh
 INSTALLED_LIB="$(pwd)/install/idris2-0.8.0/notcurses-0.1.0/lib"
-export IDRIS2_CFLAGS="-I$INSTALLED_LIB -D_XOPEN_SOURCE=700 -D_DEFAULT_SOURCE"
+export IDRIS2_CFLAGS="-I$INSTALLED_LIB"
 export IDRIS2_LDFLAGS="-L$INSTALLED_LIB"
 INSTALLED_NOTCURSES_LIBDIR="$(nix-shell -p notcurses pkg-config --run 'pkg-config --variable=libdir notcurses-core')"
 export LD_LIBRARY_PATH="$INSTALLED_LIB:$(pwd)/install/idris2-0.8.0/support/rc2:$INSTALLED_NOTCURSES_LIBDIR:$LD_LIBRARY_PATH"

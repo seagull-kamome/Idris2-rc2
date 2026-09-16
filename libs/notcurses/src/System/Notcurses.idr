@@ -1,12 +1,13 @@
 ||| Bindings to [notcurses](https://notcurses.com/)' `notcurses-core`
-||| API (multimedia excluded -- no ffmpeg dependency). Most functions
-||| bind straight onto notcurses' own real symbols (`libnotcurses-core`
-||| for anything the header marks `API`, `libnotcurses-ffi` -- a
-||| notcurses-shipped build with every header-`static inline` function
-||| also exported as a real symbol -- for the rest); a small local shim
-||| (`support/c/nc_util.c`) covers only what %foreign genuinely can't do
-||| itself (building an options struct to pass by pointer, reading back
-||| a multi-field `ncinput`). See `doc/notcurses.md` for the full
+||| API (multimedia excluded -- no ffmpeg dependency). Functions
+||| notcurses.h marks `API` (always a real, body-less symbol) bind
+||| straight onto `libnotcurses-core` by name; everything else --
+||| struct-by-pointer construction, `ncinput`-field caching, and every
+||| function that only exists as a `static inline` body in notcurses'
+||| own header -- goes through this package's own shim
+||| (`support/c/nc_util.c`), the only translation unit that ever
+||| touches the real `<notcurses/notcurses.h>` (no `libnotcurses-ffi`
+||| dependency needed as a result). See `doc/notcurses.md` for the full
 ||| rationale and for what this package deliberately does not cover
 ||| (multimedia, plots, widgets, direct mode, the raw channel/cell
 ||| API, ...). `examples/` has runnable, manually-verifiable programs
@@ -122,28 +123,31 @@ prim__ncplaneSetBgAlpha : Ptr RawNCPlane -> Int -> PrimIO Int
 %foreign "C:ncplane_set_styles, libnotcurses-core, nc_util.h"
 prim__ncplaneSetStyles : Ptr RawNCPlane -> Bits32 -> PrimIO ()
 
--- libnotcurses-ffi (header `static inline` functions, exported as real
--- symbols by notcurses' own "-ffi" build variant -- see doc/notcurses.md)
+-- Functions that only exist as `static inline` bodies in notcurses'
+-- own header (previously bound against its separate "-ffi" build
+-- variant) -- now wrapped by this package's own shim instead, which
+-- confines the real header to nc_util.c alone and drops the
+-- libnotcurses-ffi dependency entirely. See doc/notcurses.md.
 
-%foreign "C:notcurses_render, libnotcurses-ffi, nc_util.h"
+%foreign "C:idris2rc2_nc_render, libidris2rc2notcurses, nc_util.h"
 prim__ncRender : Ptr RawNotcurses -> PrimIO Int
-%foreign "C:ncplane_putstr, libnotcurses-ffi, nc_util.h"
+%foreign "C:idris2rc2_ncplane_putstr, libidris2rc2notcurses, nc_util.h"
 prim__ncplanePutstr : Ptr RawNCPlane -> String -> PrimIO Int
-%foreign "C:ncplane_putstr_yx, libnotcurses-ffi, nc_util.h"
+%foreign "C:idris2rc2_ncplane_putstr_yx, libidris2rc2notcurses, nc_util.h"
 prim__ncplanePutstrYx : Ptr RawNCPlane -> Int -> Int -> String -> PrimIO Int
-%foreign "C:ncplane_resize_simple, libnotcurses-ffi, nc_util.h"
+%foreign "C:idris2rc2_ncplane_resize_simple, libidris2rc2notcurses, nc_util.h"
 prim__ncplaneResizeSimple : Ptr RawNCPlane -> Bits32 -> Bits32 -> PrimIO Int
-%foreign "C:ncplane_dim_y, libnotcurses-ffi, nc_util.h"
+%foreign "C:idris2rc2_ncplane_dim_y, libidris2rc2notcurses, nc_util.h"
 prim__ncplaneDimY : Ptr RawNCPlane -> PrimIO Bits32
-%foreign "C:ncplane_dim_x, libnotcurses-ffi, nc_util.h"
+%foreign "C:idris2rc2_ncplane_dim_x, libidris2rc2notcurses, nc_util.h"
 prim__ncplaneDimX : Ptr RawNCPlane -> PrimIO Bits32
-%foreign "C:ncplane_cursor_y, libnotcurses-ffi, nc_util.h"
+%foreign "C:idris2rc2_ncplane_cursor_y, libidris2rc2notcurses, nc_util.h"
 prim__ncplaneCursorY : Ptr RawNCPlane -> PrimIO Bits32
-%foreign "C:ncplane_cursor_x, libnotcurses-ffi, nc_util.h"
+%foreign "C:idris2rc2_ncplane_cursor_x, libidris2rc2notcurses, nc_util.h"
 prim__ncplaneCursorX : Ptr RawNCPlane -> PrimIO Bits32
-%foreign "C:ncplane_perimeter_rounded, libnotcurses-ffi, nc_util.h"
+%foreign "C:idris2rc2_ncplane_perimeter_rounded, libidris2rc2notcurses, nc_util.h"
 prim__ncplanePerimeterRounded : Ptr RawNCPlane -> Bits16 -> Bits64 -> Bits32 -> PrimIO Int
-%foreign "C:ncplane_perimeter_double, libnotcurses-ffi, nc_util.h"
+%foreign "C:idris2rc2_ncplane_perimeter_double, libidris2rc2notcurses, nc_util.h"
 prim__ncplanePerimeterDouble : Ptr RawNCPlane -> Bits16 -> Bits64 -> Bits32 -> PrimIO Int
 
 -------------------------------------------------------------------------------

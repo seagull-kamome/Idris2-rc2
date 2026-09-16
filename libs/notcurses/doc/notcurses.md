@@ -5,35 +5,26 @@ targeting `idris2-rc-cg`'s own `rc2` backend only.
 
 ## Why `notcurses-core`, not `notcurses`
 
-`pkg-config` exposes three relevant modules: `notcurses-core` (the base
-library), `notcurses` (adds multimedia -- images/video, via ffmpeg),
-and `notcurses-ffi` (see below). This package links only against
-`notcurses-core` -- multimedia support isn't in scope (see "What's not
-covered" below), and pulling it in would drag ffmpeg/libavcodec into
-every consumer's dependency closure for no benefit.
+`pkg-config` exposes `notcurses-core` (the base library) and
+`notcurses` (adds multimedia -- images/video, via ffmpeg). This
+package links only against `notcurses-core` -- multimedia support
+isn't in scope (see "What's not covered" below), and pulling it in
+would drag ffmpeg/libavcodec into every consumer's dependency closure
+for no benefit. (A third module, `notcurses-ffi`, exports every
+header `static inline` function as a real symbol too -- this package
+used to bind some functions directly against it, but no longer does;
+see "Why a C shim exists at all" below.)
 
 ## Why a C shim exists at all
 
-Most of this binding calls straight onto notcurses' own real symbols
-via `%foreign`, the same way `Data.Integer.GMP` binds directly onto
-`libgmp` -- no shim needed. Two library names show up in
-`src/System/Notcurses.idr`'s own `%foreign` declarations:
-
-- `libnotcurses-core`: every function notcurses.h marks `API` --
-  always a real, linkable symbol.
-- `libnotcurses-ffi`: notcurses ships a second build of the *same*
-  library where every header `static inline` function (there are
-  ~200 -- channel/cell manipulation, `notcurses_render`,
-  `ncplane_putstr`, `notcurses_get_blocking`, `ncplane_perimeter_*`,
-  ...) is *also* compiled in as a real exported symbol (its own
-  `NOTCURSES_FFI` build macro turns `static` into
-  `__attribute__((visibility("default")))` for the whole header).
-  `pkg-config --libs notcurses-ffi` names it; `nm -D` confirms exactly
-  which functions ended up real per notcurses version (see "Keeping
-  this up to date" below).
-
-That covers everything with a plain scalar/pointer signature. What's
-left, and what `support/c/nc_util.c` exists for:
+Only `notcurses.h` functions marked `API` (always a real, body-less,
+linkable symbol -- implemented in the library itself, never inline)
+bind straight onto notcurses' own real symbols via `%foreign`, the
+same way `Data.Integer.GMP` binds directly onto `libgmp` -- their
+prototypes are hand-declared in `nc_util.h` (copied verbatim from
+notcurses.h's own signatures) rather than pulled from the real vendor
+header, for reasons the next section covers. Everything else goes
+through `support/c/nc_util.c`:
 
 1. **`notcurses_options`/`ncplane_options`** are passed *by pointer*,
    but %foreign has no way to construct a struct value field-by-field
@@ -56,6 +47,23 @@ left, and what `support/c/nc_util.c` exists for:
    `idris2rc2_nckey_*()` in `nc_util.h` are the accessors -- see the
    next section for why they're `static inline` there rather than
    declared-in-header-defined-in-`.c` like the rest of the shim.
+4. **Everything that only exists as a `static inline` body in
+   notcurses.h** (`notcurses_render`, `ncplane_putstr`,
+   `ncplane_perimeter_rounded`, ~200 of them in total -- channel/cell
+   manipulation and more that this package doesn't bind at all) has no
+   real, linkable symbol in the plain library. notcurses ships a
+   second build of the same library, "`-ffi`" (its own `NOTCURSES_FFI`
+   macro turns `static` into `__attribute__((visibility("default")))`
+   for the whole header, so `pkg-config --libs notcurses-ffi` exposes
+   every one of them as a real exported symbol), and earlier revisions
+   of this package bound the ones it needs straight against that.
+   **This package no longer does that** -- see "Why `nc_util.h` never
+   includes the real header" below for why, and note it as the reason
+   `libnotcurses-ffi` is gone from this package's dependencies
+   entirely. `idris2rc2_nc_render`/`idris2rc2_ncplane_putstr`/... in
+   `nc_util.c` wrap each one instead, forwarding straight through to
+   the plain header's own inline definition (which the compiler
+   inlines right there, in `nc_util.c`'s own object code).
 
 ## Why the `NCKEY_*` getters are `static inline` in the header
 
@@ -76,44 +84,58 @@ own header field already arranges to `#include` this file) fold the
 call down to the constant outright, exactly like notcurses.h's own
 internal `static inline` helpers already do for each other.
 
-## A real gotcha: `-D_XOPEN_SOURCE=700 -D_DEFAULT_SOURCE` is required
+## Why `nc_util.h` never includes the real header
 
-**Any program that imports `System.Notcurses` must add
-`-D_XOPEN_SOURCE=700 -D_DEFAULT_SOURCE` to `IDRIS2_CFLAGS`** (alongside
-the usual `-I`/`-L` for this package's installed `lib/` -- see
-README.md). Found the hard way: notcurses.h's own `static inline`
-functions call `strdup`/`wcwidth`/`wcswidth`, which glibc only
-declares under those feature-test macros -- and rc2's own C compile
-step (`Compiler.RC2.CC.compileCObjectFile`) always passes `-Werror`
-with no `-std=` override, which promotes glibc's
-`-Wimplicit-function-declaration` warning for each of them into a hard
-build failure.
+An earlier revision of this package had every `%foreign` declaration
+name `nc_util.h` as its header, and `nc_util.h` itself
+`#include <notcurses/notcurses.h>` in full, reasoning that one
+consolidated header was simpler than hand-declaring anything. That
+revision required **every consumer** of this package to add
+`-D_XOPEN_SOURCE=700 -D_DEFAULT_SOURCE` to its own `IDRIS2_CFLAGS`,
+found the hard way: notcurses.h defines ~200 `static inline` functions,
+and a handful of them -- entirely unrelated to what this package binds
+at all, e.g. `nccell_strdup()` (calls `strdup`),
+`ncplane_putwstr_aligned()` (calls `wcswidth`) -- call libc functions
+glibc only declares under those feature-test macros. A `static inline`
+function's body is parsed and type-checked the instant its header is
+`#include`d, regardless of whether that translation unit ever calls
+it, so simply including the whole vendor header dragged those two
+functions' requirements into every consumer's build even though
+nothing in this package ever calls either one.
 
-Every `%foreign` declaration in `System.Notcurses` names `nc_util.h`
-as its header (never `<notcurses/notcurses.h>` directly) -- one
-consolidated header, and it's also the header `nc_util.c`'s own
-out-of-line definitions compile against, so it seemed like the natural
-place to fix this once and for all with a `#define` ahead of its own
-`#include <notcurses/notcurses.h>`. **Tried exactly that -- it doesn't
-work**, confirmed by actually removing the `IDRIS2_CFLAGS` defines and
+Tried fixing it with a `#define` ahead of `nc_util.h`'s own
+`#include <notcurses/notcurses.h>` first -- **that doesn't work**,
+confirmed by actually removing the `IDRIS2_CFLAGS` defines and
 rebuilding a consumer program: rc2's generated C always
 `#include <idris2rc2_runtime.h>` first, completely unconditionally,
-*ahead of every single `%foreign` header* including `nc_util.h`. That
-alone (`idris2rc2_runtime.h` -> `buffer.h` -> `<stdint.h>`) already
-pulls in glibc's `<features.h>` and locks in its feature-test state
-(auto-enabling `_DEFAULT_SOURCE`, but *not* `_XOPEN_SOURCE` --
-`wcwidth`/`wcswidth` need the latter specifically) for the whole
-translation unit before `nc_util.h` is ever reached. A `#define`
-anywhere after that point, in any header this package controls, has
-no effect on what glibc already decided -- confirmed by the attempt
-literally reproducing the exact same `-Wimplicit-function-declaration`
-failure regardless. A compiler-*command-line* `-D` is conceptually
-seen before the first line of the file is even read, which is the only
-reason it works -- so it has to come from the consumer's own build
-(there's no per-package "extra CFLAGS for my dependents" hook in this
-rc2 backend today for an `.ipkg` to inject it automatically). This is
-independent of which header anything here is declared against; it's
-purely about `idris2rc2_runtime.h` always winning the race.
+*ahead of every single `%foreign` header*. That alone
+(`idris2rc2_runtime.h` -> `buffer.h` -> `<stdint.h>`) already pulls in
+glibc's `<features.h>` and locks in its feature-test state for the
+whole translation unit before any package header is ever reached -- a
+`#define` anywhere after that point has no effect on what glibc
+already decided.
+
+**The actual fix: stop giving consumers the real header at all.**
+`nc_util.h` now only `#include`s `<notcurses/nckeys.h>` (just
+`NCKEY_*` macros + `stdint`/`stdbool`, confirmed to need nothing
+glibc-feature-gated) plus hand-declared `extern` prototypes for the
+`API`-marked functions this package binds directly. `nc_util.c` is the
+*only* translation unit that still `#include`s the real
+`<notcurses/notcurses.h>` -- confining the strdup/wcwidth/wcswidth
+requirement entirely inside this shim's own Makefile (already compiles
+with `-D_XOPEN_SOURCE=700`, since it needs the full struct layouts for
+`notcurses_options`/`ncplane_options`/`ncinput` regardless). Every
+function that used to be bound straight against `libnotcurses-ffi` is
+now wrapped here too (`idris2rc2_nc_render`, `idris2rc2_ncplane_putstr`,
+...), which as a side effect drops the `libnotcurses-ffi` dependency
+entirely -- calling a `static inline` vendor function from `nc_util.c`
+just inlines its body straight into this shim's own object code, no
+`-ffi` build variant needed.
+
+The trade-off: the `API`-marked prototypes hand-declared in
+`nc_util.h` are this package's own copy of notcurses' signatures, not
+pulled from the real header -- see "Keeping this up to date" below for
+what that means when notcurses' API moves.
 
 ## What's not covered (Tier 2 -- deliberately deferred)
 
@@ -162,12 +184,28 @@ omitted:
 
 ## Keeping this up to date
 
-If a future notcurses version moves a function between "always real"
-and "`static inline`" (or removes/renames one), the sign is a link
-failure (`undefined reference`) or `-Wimplicit-function-declaration`
-naming the exact symbol -- move its `%foreign` declaration's `lib`
-field between `libnotcurses-core`/`libnotcurses-ffi` accordingly.
-`nm -D <path-to-libnotcurses-ffi.so> | grep ' T '` lists every symbol
-currently real in the ffi build, straight from the installed library,
-if a fresh check is ever needed rather than trusting this doc's
-snapshot.
+Two independent things can drift out of sync with a future notcurses
+version, and they fail differently:
+
+- **A hand-declared `API` prototype in `nc_util.h`** (e.g.
+  `ncplane_set_fg_rgb8`'s signature) going stale is *silent* at this
+  package's own build -- C doesn't check declaration consistency
+  across translation units, so a mismatch only surfaces as a strange
+  runtime bug or ABI mismatch in a *consumer's* program. If notcurses'
+  changelog for a version bump mentions a signature change to any
+  function in `nc_util.h`'s "always-real" block, update the
+  hand-copied declaration there to match, verbatim, from the real
+  `notcurses.h`.
+- **A function moving between "always real" (`API`) and
+  `static inline`-only** is *loud* at `nc_util.c`'s own build --
+  wrapping a now-`API` function through `nc_util.c` still compiles
+  fine (nothing stops calling a real symbol from a shim), but a
+  function that moved the other way (was `API`, is now
+  `static inline`-only) will fail to link when `nc_util.h`'s hand-
+  declared `extern` prototype can't find a real symbol at
+  `libnotcurses-core` link time -- move its declaration out of
+  `nc_util.h`'s "always-real" block and into a `nc_util.c` wrapper
+  instead (same shape as `idris2rc2_nc_render` and friends), updating
+  `System.Notcurses.idr`'s corresponding `%foreign` declaration to
+  point at `libidris2rc2notcurses`/`idris2rc2_*` instead of
+  `libnotcurses-core`/the raw name.

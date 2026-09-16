@@ -52,9 +52,7 @@ echo "=== Check postinstall copied the native library into lib/ ==="
 
 echo "=== rc2 backend: build TestVersion (against the INSTALLED lib/) ==="
 export IDRIS2_PACKAGE_PATH="$IDRIS2_PACKAGE_PATH:$PKG_DIR/.local-install/idris2-0.8.0"
-# -D_XOPEN_SOURCE=700 -D_DEFAULT_SOURCE: required by any consumer of
-# this package -- see ../doc/notcurses.md's "A real gotcha" section.
-export IDRIS2_CFLAGS="-I$INSTALLED_LIB -D_XOPEN_SOURCE=700 -D_DEFAULT_SOURCE"
+export IDRIS2_CFLAGS="-I$INSTALLED_LIB"
 export IDRIS2_LDFLAGS="-L$INSTALLED_LIB"
 nix-shell -p gcc gmp pkg-config notcurses --run \
     "cd '$TESTS_DIR' && '$IDRIS2RC2' --cg rc2 -p notcurses -o TestVersion_verify TestVersion.idr"
