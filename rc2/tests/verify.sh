@@ -218,9 +218,8 @@ export LC_ALL=C.UTF-8
 
 # libs/rc2base is installed by hand, once, into this repo's own
 # install/ prefix (see the top-level README.md's "Building and
-# running" section) -- the same prefix rc2 itself uses, and already
-# first on env.sh's own IDRIS2_PACKAGE_PATH, so no extra package-path
-# setup is needed here.
+# running" section) -- the same prefix rc2 itself uses, which idris2
+# searches by default, so no extra package-path setup is needed here.
 
 # Every generated artifact lands here -- cleaned now, at the very
 # start, then left alone for the rest of this run (and afterward, for

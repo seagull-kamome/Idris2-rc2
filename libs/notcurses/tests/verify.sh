@@ -51,9 +51,7 @@ echo "=== Check postinstall copied the native library into lib/ ==="
 [[ -f "$INSTALLED_LIB/nc_util.h" ]] || fail "postinstall didn't install nc_util.h to $INSTALLED_LIB"
 
 echo "=== rc2 backend: build TestVersion (against the INSTALLED lib/) ==="
-export IDRIS2_PACKAGE_PATH="$IDRIS2_PACKAGE_PATH:$PKG_DIR/.local-install/idris2-0.8.0"
-export IDRIS2_CFLAGS="-I$INSTALLED_LIB"
-export IDRIS2_LDFLAGS="-L$INSTALLED_LIB"
+export IDRIS2_PACKAGE_PATH="${IDRIS2_PACKAGE_PATH:-}:$PKG_DIR/.local-install/idris2-0.8.0"
 nix-shell -p gcc gmp pkg-config notcurses --run \
     "cd '$TESTS_DIR' && '$IDRIS2RC2' --cg rc2 -p notcurses -o TestVersion_verify TestVersion.idr"
 

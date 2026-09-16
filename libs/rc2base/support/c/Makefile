@@ -1,7 +1,9 @@
 CC=gcc
 CFLAGS+=-fPIC -Wall -Wextra -O2
-CFLAGS  += $(addprefix -I,$(subst :, ,$(IDRIS2_DATA)))
-LDFLAGS += $(addprefix -L,$(subst :, ,$(IDRIS2_LIBS)))
+# rc2/util.h lives under idris2's own data dir -- ask idris2 itself
+# instead of requiring IDRIS2_DATA to be set in the environment (idris2
+# resolves this the same way by default, relative to its own prefix).
+CFLAGS  += -I$(shell idris2 --libdir)/support
 AR=ar
 
 # Must match rc2base.ipkg's own `version` field.

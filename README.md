@@ -260,9 +260,9 @@ no rc2 C backend at all and are only patched in via `rc2base`'s own
 modules -- see `libs/rc2base/README.md` and this file's own
 "Deliberate differences from upstream RefC" section below. Build and
 install it once, into the *same* `install/` prefix as rc2 itself
-above (already first on `env.sh`'s own `IDRIS2_PACKAGE_PATH`, so it's
-found automatically afterward -- no separate package-path setup
-needed):
+above -- idris2 searches its own installation prefix by default, so
+it's found automatically afterward, no separate package-path setup
+needed:
 
 ```sh
 cd ..

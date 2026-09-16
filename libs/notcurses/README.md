@@ -22,24 +22,29 @@ idris2 --build notcurses.ipkg
 
 Against `idris2-rc-cg`'s own `rc2` backend (`libs/notcurses` lives
 inside `idris2-rc-cg`, so no cross-repo `env.sh` juggling). Install
-into the *same* `install/` prefix rc2 itself uses -- already first on
-`env.sh`'s own `IDRIS2_PACKAGE_PATH`, so no separate package-path
-setup is needed:
+into the *same* `install/` prefix rc2 itself uses -- idris2 searches
+its own installation prefix by default, so no separate package-path
+setup is needed. `-p notcurses` alone is enough to build against it --
+`Compiler.RC2.CC`'s own `depPkgLibDirs` already adds `-I`/`-L` for
+every depended-upon package's own `lib/` automatically, no
+`IDRIS2_CFLAGS`/`IDRIS2_LDFLAGS` needed:
 ```sh
 cd idris2-rc-cg            # repo root
 source ./env.sh
 export IDRIS2_PREFIX="$(pwd)/install"
 (cd libs/notcurses && idris2 --install notcurses.ipkg)
 
-INSTALLED_LIB="$(pwd)/install/idris2-0.8.0/notcurses-0.1.0/lib"
-export IDRIS2_CFLAGS="-I$INSTALLED_LIB"
-export IDRIS2_LDFLAGS="-L$INSTALLED_LIB"
 ./rc2/build/exec/idris2-rc2 --cg rc2 -p notcurses -o MyProgram libs/notcurses/examples/Hello.idr
 
+INSTALLED_LIB="$(pwd)/install/idris2-0.8.0/notcurses-0.1.0/lib"
 INSTALLED_NOTCURSES_LIBDIR="$(nix-shell -p notcurses pkg-config --run 'pkg-config --variable=libdir notcurses-core')"
 export LD_LIBRARY_PATH="$INSTALLED_LIB:$(pwd)/install/idris2-0.8.0/support/rc2:$INSTALLED_NOTCURSES_LIBDIR:$LD_LIBRARY_PATH"
 ./build/exec/MyProgram
 ```
+
+(`LD_LIBRARY_PATH` above is a *runtime* need for the produced
+executable to find `libidris2rc2notcurses.so`/`libnotcurses-core.so`
+-- unrelated to the build-time `-I`/`-L` question.)
 
 `tests/verify.sh` automates the build+link+run steps above for a
 program that only calls `notcurses_version()` -- notcurses itself
@@ -56,6 +61,9 @@ Same convention (and same rc2-specific caveat) as `rc2base`/
 location" section. `idris2 --install` copies only `.ttc`/`.ttm`/
 `.ipkg`; this package's `postinstall` hook (`make -C support/c
 install`) is what puts `libidris2rc2notcurses.so` and `nc_util.h` into
-`<IDRIS2_PREFIX>/idris2-<ver>/notcurses-0.1.0/lib/`. rc2 (like
-upstream RefC) needs the consumer to point
-`IDRIS2_CFLAGS`/`IDRIS2_LDFLAGS` at it manually, as shown above.
+`<IDRIS2_PREFIX>/idris2-<ver>/notcurses-0.1.0/lib/`. rc2's own
+`Compiler.RC2.CC.depPkgLibDirs` finds that `lib/` automatically for
+every depended-upon package (`-p notcurses` or an `.ipkg` `depends`
+entry is enough) -- no manual `IDRIS2_CFLAGS`/`IDRIS2_LDFLAGS` needed
+for *this*; the `LD_LIBRARY_PATH` shown above is a separate, runtime-
+only concern (finding the `.so`s once the program actually starts).

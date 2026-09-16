@@ -58,7 +58,7 @@ echo "=== Check postinstall copied the native library into lib/ ==="
 [[ -f "$INSTALLED_LIB/ptr_util.h" ]] || fail "postinstall didn't install ptr_util.h to $INSTALLED_LIB"
 
 echo "=== rc2 backend: build TestText (against the INSTALLED lib/, not support/c) ==="
-export IDRIS2_PACKAGE_PATH="$IDRIS2_PACKAGE_PATH:$PKG_DIR/.local-install/idris2-0.8.0"
+export IDRIS2_PACKAGE_PATH="${IDRIS2_PACKAGE_PATH:-}:$PKG_DIR/.local-install/idris2-0.8.0"
 export IDRIS2_CFLAGS="-I$INSTALLED_LIB -I$REPO_ROOT/install/idris2-0.8.0/support"
 export IDRIS2_LDFLAGS="-L$INSTALLED_LIB"
 # idris2-rc2 always writes its -o output under <cwd>/build/exec/, so cd

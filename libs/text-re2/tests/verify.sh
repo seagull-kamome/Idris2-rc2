@@ -48,7 +48,7 @@ echo "=== Check postinstall copied the native library into lib/ ==="
 [[ -f "$INSTALLED_LIB/re2_util.h" ]] || fail "postinstall didn't install re2_util.h to $INSTALLED_LIB"
 
 echo "=== rc2 backend: build TestRE2 (against the INSTALLED lib/) ==="
-export IDRIS2_PACKAGE_PATH="$IDRIS2_PACKAGE_PATH:$PKG_DIR/.local-install/idris2-0.8.0"
+export IDRIS2_PACKAGE_PATH="${IDRIS2_PACKAGE_PATH:-}:$PKG_DIR/.local-install/idris2-0.8.0"
 export IDRIS2_CFLAGS="-I$INSTALLED_LIB"
 export IDRIS2_LDFLAGS="-L$INSTALLED_LIB"
 nix-shell -p gcc gmp pkg-config re2 --run \
