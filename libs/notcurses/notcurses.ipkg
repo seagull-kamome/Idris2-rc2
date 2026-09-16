@@ -1,0 +1,25 @@
+package notcurses
+
+version    = 0.1.0
+opts       = "--total"
+sourcedir  = "src"
+modules    = System.Notcurses
+
+-- `support/c`'s Makefile needs `notcurses-core`/`pkg-config`/a C
+-- compiler on PATH. notcurses-core (not the full `notcurses` module)
+-- is deliberately chosen -- it excludes multimedia support and so
+-- doesn't pull in ffmpeg/libavcodec. Roughly half of notcurses' own
+-- API (channel/cell manipulation, ncinput modifier helpers,
+-- get_blocking/get_nblock, and the options-struct constructors) is
+-- `static inline` in the header with no linkable symbol, so the shim
+-- (`support/c/nc_util.c`) re-exposes what this package needs as real
+-- symbols, built into its own shared object `libidris2rc2notcurses`.
+-- See `doc/notcurses.md`.
+prebuild   = "make -C support/c"
+postclean  = "make -C support/c clean"
+
+-- See `libs/text-re2/text-re2.ipkg`'s identical comment for why this
+-- postinstall hook exists (idris2 --install never creates/populates a
+-- package's own `lib/`) and why rc2 additionally needs the consumer to
+-- point IDRIS2_LIBS/IDRIS2_CFLAGS/IDRIS2_LDFLAGS at it manually.
+postinstall = "make -C support/c install"
