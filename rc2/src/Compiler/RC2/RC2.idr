@@ -152,19 +152,33 @@ rcSizeConstAlt (MkRConstAlt _ body) = rcSizeOf body
 ||| another CAF -- or an ordinary `RAppName` call site -- next round),
 ||| up to `maxConstFoldIterations`.
 foldConstProgram : List (Name, RCDef) -> List (Name, RCDef)
-foldConstProgram defs0 = go maxConstFoldIterations empty defs0
+foldConstProgram defs0 = go maxConstFoldIterations empty 0 defs0
   where
-    rebuildTable : List (Name, RCDef) -> CafTable
-    rebuildTable = foldl (\tbl, (n, d) => maybe tbl (\v => insert n v tbl) (cafValueOf d)) empty
+    -- Threads the table's own key count alongside it instead of
+    -- re-deriving it via `length (SortedMap.toList table)` (O(n log n))
+    -- on every one of up to `maxConstFoldIterations` rounds -- a key
+    -- only ever contributes to this count the first time it's seen,
+    -- since re-inserting an already-present key overwrites its value
+    -- without growing the table.
+    rebuildTable : List (Name, RCDef) -> (CafTable, Nat)
+    rebuildTable = foldl step (empty, 0)
+      where
+        step : (CafTable, Nat) -> (Name, RCDef) -> (CafTable, Nat)
+        step (tbl, cnt) (n, d) =
+            case cafValueOf d of
+                 Nothing => (tbl, cnt)
+                 Just v => case lookup n tbl of
+                                Just _  => (insert n v tbl, cnt)
+                                Nothing => (insert n v tbl, cnt + 1)
 
-    go : Nat -> CafTable -> List (Name, RCDef) -> List (Name, RCDef)
-    go Z _ defs = defs
-    go (S fuel) table defs =
+    go : Nat -> CafTable -> Nat -> List (Name, RCDef) -> List (Name, RCDef)
+    go Z _ _ defs = defs
+    go (S fuel) table count defs =
         let folded = map (\(n, d) => (n, foldConstDef table d)) defs
-            table' = rebuildTable folded
-        in if length (SortedMap.toList table') == length (SortedMap.toList table)
+            (table', count') = rebuildTable folded
+        in if count' == count
               then folded
-              else go fuel table' folded
+              else go fuel table' count' folded
 
 ||| Wraps every remaining non-constant top-level 0-argument
 ||| definition's own body in `RMemoize` (`doc/caf-memoization.md`) --

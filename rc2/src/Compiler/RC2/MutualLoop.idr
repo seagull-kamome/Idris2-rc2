@@ -51,25 +51,15 @@ import Data.Vect
 -- see `Compiler.RC2.Util`'s own `VarId` doc comment.
 
 ------------------------------------------------------------------------
--- Tail-call target collection (read-only sibling of Compiler.RC2.Loop's
--- `mapTailAppNames`, over the exact same structural notion of "tail
--- position" -- see its own doc comment for why the two must agree).
+-- Tail-call target collection: read-only sibling of Compiler.RC2.Loop's
+-- own tail-position tree walk, over the exact same structural notion
+-- of "tail position" -- rather than maintaining a second, independent
+-- case-for-case copy of that walk here (a real risk of the two
+-- silently drifting apart on what counts as a tail position), this is
+-- just `mapTailAppNames` itself with an always-declining `f`, keeping
+-- only the name set it collects and discarding the (unmodified) tree.
 tailCallTargets : RCExp -> SortedSet Name
-tailCallTargets (RAppName fc Nothing n _) = singleton n
-tailCallTargets (RLet _ _ _ _ body) = tailCallTargets body
-tailCallTargets (RDup _ _ _ body) = tailCallTargets body
-tailCallTargets (RDrop _ _ body) = tailCallTargets body
-tailCallTargets (RFree _ _ body) = tailCallTargets body
-tailCallTargets (RReleaseReuse _ _ body) = tailCallTargets body
-tailCallTargets (RReuseOffer _ _ _ _ body) = tailCallTargets body
-tailCallTargets (RCmpCase _ _ _ _ t f) = union (tailCallTargets t) (tailCallTargets f)
-tailCallTargets (RConCase _ _ alts mDef) =
-    let altsT = map (\(MkRConAlt _ _ _ _ body) => tailCallTargets body) alts
-    in concat (maybe altsT (\d => tailCallTargets d :: altsT) mDef)
-tailCallTargets (RConstCase _ _ alts mDef) =
-    let altsT = map (\(MkRConstAlt _ body) => tailCallTargets body) alts
-    in concat (maybe altsT (\d => tailCallTargets d :: altsT) mDef)
-tailCallTargets _ = empty
+tailCallTargets body = let (names, _, _) = mapTailAppNames (\_, _, _ => Nothing) body in names
 
 ------------------------------------------------------------------------
 -- Strongly-connected components of the tail-call graph (Tarjan), so
@@ -165,25 +155,33 @@ buildGroup existingNames memberDefs groupNames = do
                                       Just def => pure (n, def)
                                       Nothing => throw $ InternalError "[rc2] MutualLoop: SCC member not found") ordered
     let maxArity = foldl (\acc, (_, (args, _)) => max acc (length args)) Z members
-    let tagOf : SortedMap Name Int := SortedMap.fromList (zip (map (\(n, _) => n) members) [0 .. cast{to=Int} (length members `minus` 1)])
+    -- `membersWithTag` is the single source of truth for the name<->tag
+    -- correspondence: both `alts`/`wrappers` below take their `tag_i`
+    -- straight from this same zip, and `tagOf` (needed separately by
+    -- `rewriteGroupTailCalls`, which looks up *arbitrary* tail-call
+    -- targets, not just this group's own members in order) is derived
+    -- from it too -- so there is no second, independently-fallible
+    -- `lookup name_i tagOf` on the hot path that could ever silently
+    -- default to tag 0 for a member `tagOf` genuinely doesn't have.
+    let tagList : List Int = map (\i => the Int (cast i)) [0 .. length members `minus` 1]
+    let membersWithTag = zip members tagList
+    let tagOf : SortedMap Name Int := SortedMap.fromList (map (\((n, _), t) => (n, t)) membersWithTag)
     mergedName <- freshName existingNames
     tagId <- freshVarId
     slotIds <- traverse (const freshVarId) (replicate maxArity ())
-    alts <- traverse (\(name_i, (args_i, body_i)) => do
+    alts <- traverse (\((name_i, (args_i, body_i)), tag_i) => do
                 let ren : Renaming = SortedMap.fromList (zip args_i slotIds)
                 let renamedBody = renameRCExp ren body_i
-                let tag_i = fromMaybe 0 (lookup name_i tagOf)
                 pure $ MkRConstAlt (I64 (cast tag_i)) (rewriteGroupTailCalls mergedName maxArity tagOf renamedBody))
-              members
+              membersWithTag
     let mergedBody = RConstCase EmptyFC (RCLoc tagId) alts
                         (Just (RCrash EmptyFC "[rc2] internal: MutualLoop tag dispatch fell through"))
     let mergedDef = MkRCFun (map (\i => (i, RBoxed)) (tagId :: slotIds)) RBoxed False mergedBody
-    let wrappers = map (\(name_i, (args_i, _)) =>
-                      let tag_i = fromMaybe 0 (lookup name_i tagOf)
-                          padded = map RCLoc args_i ++ replicate (maxArity `minus` length args_i) RCNull
+    let wrappers = map (\((name_i, (args_i, _)), tag_i) =>
+                      let padded = map RCLoc args_i ++ replicate (maxArity `minus` length args_i) RCNull
                       in (name_i, MkRCFun (map (\i => (i, RBoxed)) args_i) RBoxed False
                             (RAppName EmptyFC Nothing mergedName (RCConst (I64 (cast tag_i)) :: padded))))
-                    members
+                    membersWithTag
     pure ((mergedName, mergedDef) :: wrappers)
   where
     freshName : {auto r : Ref FreshId Int} -> SortedSet Name -> Core Name
@@ -200,13 +198,14 @@ buildGroup existingNames memberDefs groupNames = do
     ||| this substitution.
     rewriteGroupTailCalls : Name -> Nat -> SortedMap Name Int -> RCExp -> RCExp
     rewriteGroupTailCalls mergedName maxArity tagOf body =
-        snd $ mapTailAppNames
-            (\fc, n, args =>
-                case lookup n tagOf of
-                    Nothing => Nothing
-                    Just t => Just $ RAppName fc Nothing mergedName $
-                                RCConst (I64 (cast t)) :: args ++ replicate (maxArity `minus` length args) RCNull)
-            body
+        let (_, _, rewritten) = mapTailAppNames
+                (\fc, n, args =>
+                    case lookup n tagOf of
+                        Nothing => Nothing
+                        Just t => Just $ RAppName fc Nothing mergedName $
+                                    RCConst (I64 (cast t)) :: args ++ replicate (maxArity `minus` length args) RCNull)
+                body
+        in rewritten
 
 ||| Whole-program pass: finds every group (size >= 2) of mutually
 ||| tail-recursive functions and replaces them with one synthesised

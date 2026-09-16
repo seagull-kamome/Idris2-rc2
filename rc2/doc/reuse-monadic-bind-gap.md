@@ -215,6 +215,153 @@ shaped this particular way. Not pursued; recorded here so a future
 session with a similar-looking benchmark result doesn't have to
 re-derive this chain of reasoning from scratch.
 
+## Confirmed workaround: monomorphizing to concrete `IO` sidesteps this entirely (2026-09-17)
+
+Re-verified independently while scoping whether a narrow compiler fix was
+feasible (it isn't -- see above; this session didn't change any code).
+Compiled two versions of this doc's own repro shape side by side with
+`--directive dumprcexpr` and every optimizing pass disabled (`noloop
+noconstfold noinline nolateinline nospecclosure nomutualloop nodualabi
+noconaltnative nodeadcode nodupmerge nosink`, to see the rawest possible
+shape):
+
+- **`replaceL2 : HasIO io => ... -> io (List KV)`** (this doc's own
+  shape): reproduces exactly as described above. Worth noting one more
+  detail the original investigation didn't spell out: the "coincidental"
+  reuse from the Aside section fires on the `HasIO`/`Monad`/`Applicative`
+  *dictionary* argument specifically (`v4` in this run) -- it's a
+  single-constructor, multi-field record, so it shares `_builtin.CONS`'s
+  physical shape with a list cons cell, same as the Aside's own
+  dictionary-shaped example. The real list argument (`v8`) is dropped
+  unconditionally at the point it's destructured, exactly as documented.
+- **`replaceL2 : Nat -> String -> (Nat -> IO Bool) -> List KV -> IO (List KV)`**
+  (identical body, `io` replaced by concrete `IO`, `HasIO io =>` dropped
+  entirely): `>>=`/bang-notation compiles down to plain applies over an
+  explicit threaded "world" value, entirely within `Main.replaceL2`'s own
+  single definition -- no lambda-lifted continuation, no closure, no
+  `partial ... missing=N`. `reuseOffer`/`reuse=` fires correctly on the
+  real list cell at all three reconstruction sites (`con ... reuse=v7`
+  in every branch). The gap this document describes simply does not
+  exist for concretely-`IO` code, because Idris2's own `IO` compiles via
+  direct world-token threading rather than interface-dictionary-based
+  `>>=` dispatch.
+
+### Concrete-`IO` dump (no gap)
+
+`Main.replaceL2 (fun args=["v4:Boxed"(k), "v5:Boxed"(v), "v6:Boxed"(found),
+"v7:Boxed"(xs), "v8:Boxed"(world)])`, `_builtin.CONS` branch (the `No`
+alt, the recursive/reconstructing one):
+
+```
+_builtin.CONS [cons] tag=Just 1 args=[v10, v11] ->
+  reuseOffer v7 dupOnShared=[v10, v11]
+  let v12 : Boxed =
+    let v13 : Boxed =
+      dup v10
+      call Main.key [v10]
+    dup v4
+    call Decidable.Equality.decEq [v4, v13]
+  case v12 of
+    Prelude.Types.Yes [datacon] tag=Just 0 args=[v14] ->
+      drop [v12]
+      let v15 : Boxed =
+        let v16 : Boxed =
+          dup v4
+          apply v6 v4
+        apply v16 v8
+      case v15 of
+        1 ->
+          drop [v10, v15]
+          let v17 : Boxed =
+            con _builtin.CONS [cons] tag=Just 1 [v4, v5] reuse=v7
+          con _builtin.CONS [cons] tag=Just 1 [v17, v11]
+        0 ->
+          drop [v4, v5, v15]
+          con _builtin.CONS [cons] tag=Just 1 [v10, v11] reuse=v7
+    Prelude.Types.No [datacon] tag=Just 1 args=[v18] ->
+      drop [v12]
+      let v19 : Boxed =
+        call Main.replaceL2 [v4, v5, v6, v11, v8]
+      con _builtin.CONS [cons] tag=Just 1 [v10, v19] reuse=v7
+```
+
+`case !(found k) of ...` became `apply (apply v6 v4) v8` (`v8`, the world
+token, threaded as a plain extra argument) with the `True`/`False` split
+as an ordinary `case v15 of 1 -> ... 0 -> ...` -- all inline in this one
+function, one `reuseOffer v7` at the top covering every branch below it,
+including the tail-recursive one.
+
+### `HasIO io =>` dump (the gap)
+
+Same source shape, `io` left abstract. `Main.replaceL2 (fun
+args=["v4:Boxed"(dict), "v5:Boxed"(k), "v6:Boxed"(v), "v7:Boxed"(found),
+"v8:Boxed"(xs)])` -- note `v8`, not `v4`, is the actual list argument
+here (the `HasIO`/`Monad`/`Applicative` dictionary comes first):
+
+```
+case v8 of
+  ...
+  _builtin.CONS [cons] tag=Just 1 args=[v20, v21] ->
+    dup v20
+    dup v21
+    drop [v8]                                  -- <- real list cell: unconditional drop, no reuseOffer
+    let v22 : Boxed = ... call Decidable.Equality.decEq [v5, v23]
+    case v22 of
+      Prelude.Types.Yes [datacon] tag=Just 0 args=[v24] ->
+        drop [v22]
+        case v4 of
+          _builtin.CONS [cons] tag=Just 1 args=[v25, v26] ->    -- dict, CONS-shaped
+            ...
+            let v30 : Boxed = ...                               -- Monad's own >>= method, applied
+              let v33 : Boxed = dup v5; apply v7 v5              -- `found k`
+              apply v31 v33
+            let v34 : Boxed =
+              partial Main.{replaceL2:0} missing=1 [v20, v21, v4, v5, v6]   -- continuation closure
+            apply v30 v34                                        -- >>= invokes it -- opaque to Reuse
+      Prelude.Types.No [datacon] tag=Just 1 args=[v35] -> ...    -- same shape, {replaceL2:1}
+
+def Main.{replaceL2:0}  (fun args=["v59:Boxed"(x), "v60:Boxed"(xs'), "v61:Boxed"(dict),
+                                    "v62:Boxed"(k), "v63:Boxed"(v), "v64:Boxed"(foundResult)])
+  case v64 of
+    1 ->
+      drop [v59, v64]
+      case v61 of                                    -- v61 is the CAPTURED DICT (v4), not the list
+        _builtin.CONS [cons] tag=Just 1 args=[v65, v66] ->
+          reuseOffer v61 dupOnShared=[v65] dropOnUnique=[v66]   -- "reuse" fires -- on the dictionary
+          ...
+          let v74 : Boxed =
+            let v75 : Boxed = con _builtin.CONS [cons] tag=Just 1 [v62, v63]  -- fresh alloc, no reuse=
+            con _builtin.CONS [cons] tag=Just 1 [v75, v60]                    -- fresh alloc, no reuse=
+          releaseReuse v61
+          apply v73 v74
+    0 ->
+      drop [v62, v63, v64]
+      case v61 of
+        _builtin.CONS [cons] tag=Just 1 args=[v76, v77] ->
+          reuseOffer v61 dupOnShared=[v76] dropOnUnique=[v77]
+          ...
+          let v85 : Boxed =
+            con _builtin.CONS [cons] tag=Just 1 [v59, v60] reuse=v61   -- reuses the DICT cell, not v8
+          apply v84 v85
+```
+
+The list cell (`v8`/its tail `v21`, threaded into the helper as `v60`)
+is never the reuse target anywhere in this trace -- every `reuse=`/
+`reuseOffer` in `{replaceL2:0}` is on `v61`, the captured dictionary
+(`v4`), confirming the Aside section's "reused, but the wrong cell"
+finding directly against a second, independently-constructed repro.
+
+Practical implication: a `HasIO io =>`-generic hot-path function that is,
+in practice, only ever instantiated at concrete `IO` (true for
+`Data.Container.Internal.IOHashSet`'s own `replaceL2`/`runIOHashSet`) can
+sidestep this entire gap today, with zero rc2 changes, by declaring the
+hot function directly against `IO` instead of `HasIO io =>`. This is a
+library-level source change (e.g. in `idris2-missing-containers`), not
+something rc2 can or should paper over by treating "the caller happens to
+always pass `IO`" as a compile-time guarantee for a signature that says
+otherwise -- but it's a real, low-risk mitigation worth knowing about
+before reaching for either of the two large compiler-side options above.
+
 ## Verification methodology (if reopening this)
 
 1. `cd rc2 && source ../env.sh`

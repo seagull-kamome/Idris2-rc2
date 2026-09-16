@@ -47,45 +47,55 @@ mutual
   ||| two passes can't disagree about what "tail position" means --
   ||| that would be a real correctness risk (either pass converting or
   ||| skipping a call the other pass's own TailPositionStatus-driven
-  ||| emission logic wouldn't agree is a tail position). Returns
-  ||| whether any replacement was made, alongside the (possibly
-  ||| rewritten) tree.
+  ||| emission logic wouldn't agree is a tail position). Returns the
+  ||| set of every tail-position `RAppName` target's own `Name` visited
+  ||| (whether or not `f` chose to rewrite it -- this is what lets
+  ||| Compiler.RC2.MutualLoop's `tailCallTargets` be defined as a call
+  ||| to this same walk with an always-`Nothing` `f`, instead of
+  ||| maintaining its own case-for-case duplicate of this tree walk),
+  ||| whether any replacement was made, and the (possibly rewritten)
+  ||| tree. Compiler.RC2.Loop's own call site ignores the name set;
+  ||| Compiler.RC2.MutualLoop's `tailCallTargets` ignores the other two.
   export
-  mapTailAppNames : (FC -> Name -> List RCLocal -> Maybe RCExp) -> RCExp -> (Bool, RCExp)
+  mapTailAppNames : (FC -> Name -> List RCLocal -> Maybe RCExp) -> RCExp -> (SortedSet Name, Bool, RCExp)
   mapTailAppNames f (RAppName fc Nothing n args) =
       case f fc n args of
-           Just e' => (True, e')
-           Nothing => (False, RAppName fc Nothing n args)
+           Just e' => (singleton n, True, e')
+           Nothing => (singleton n, False, RAppName fc Nothing n args)
   mapTailAppNames f (RLet fc var rep value body) =
-      let (found, body') = mapTailAppNames f body
-      in (found, RLet fc var rep value body')
+      let (names, found, body') = mapTailAppNames f body
+      in (names, found, RLet fc var rep value body')
   mapTailAppNames f (RDup fc v extra cont) =
-      let (found, cont') = mapTailAppNames f cont
-      in (found, RDup fc v extra cont')
+      let (names, found, cont') = mapTailAppNames f cont
+      in (names, found, RDup fc v extra cont')
   mapTailAppNames f (RDrop fc vs cont) =
-      let (found, cont') = mapTailAppNames f cont
-      in (found, RDrop fc vs cont')
+      let (names, found, cont') = mapTailAppNames f cont
+      in (names, found, RDrop fc vs cont')
   mapTailAppNames f (RFree fc v cont) =
-      let (found, cont') = mapTailAppNames f cont
-      in (found, RFree fc v cont')
+      let (names, found, cont') = mapTailAppNames f cont
+      in (names, found, RFree fc v cont')
   mapTailAppNames f (RReleaseReuse fc v cont) =
-      let (found, cont') = mapTailAppNames f cont
-      in (found, RReleaseReuse fc v cont')
+      let (names, found, cont') = mapTailAppNames f cont
+      in (names, found, RReleaseReuse fc v cont')
   mapTailAppNames f (RReuseOffer fc sc dupOnShared dropOnUnique cont) =
-      let (found, cont') = mapTailAppNames f cont
-      in (found, RReuseOffer fc sc dupOnShared dropOnUnique cont')
+      let (names, found, cont') = mapTailAppNames f cont
+      in (names, found, RReuseOffer fc sc dupOnShared dropOnUnique cont')
   mapTailAppNames f (RCmpCase fc op args postDrop t g) =
-      let (foundT, t') = mapTailAppNames f t
-          (foundG, g') = mapTailAppNames f g
-      in (foundT || foundG, RCmpCase fc op args postDrop t' g')
+      let (namesT, foundT, t') = mapTailAppNames f t
+          (namesG, foundG, g') = mapTailAppNames f g
+      in (union namesT namesG, foundT || foundG, RCmpCase fc op args postDrop t' g')
   mapTailAppNames f (RConCase fc sc alts mDef) =
       let altsR = map (mapTailAppNamesAlt f) alts
-          (foundDef, mDef') = mapTailAppNamesMaybe f mDef
-      in (any fst altsR || foundDef, RConCase fc sc (map snd altsR) mDef')
+          (namesDef, foundDef, mDef') = mapTailAppNamesMaybe f mDef
+          namesAlts = foldl (\acc, (ns, _, _) => union acc ns) (the (SortedSet Name) empty) altsR
+      in (union namesAlts namesDef, any (\(_, found, _) => found) altsR || foundDef,
+          RConCase fc sc (map (\(_, _, a) => a) altsR) mDef')
   mapTailAppNames f (RConstCase fc sc alts mDef) =
       let altsR = map (mapTailAppNamesConstAlt f) alts
-          (foundDef, mDef') = mapTailAppNamesMaybe f mDef
-      in (any fst altsR || foundDef, RConstCase fc sc (map snd altsR) mDef')
+          (namesDef, foundDef, mDef') = mapTailAppNamesMaybe f mDef
+          namesAlts = foldl (\acc, (ns, _, _) => union acc ns) (the (SortedSet Name) empty) altsR
+      in (union namesAlts namesDef, any (\(_, found, _) => found) altsR || foundDef,
+          RConstCase fc sc (map (\(_, _, a) => a) altsR) mDef')
   -- Every other shape (RV, RUnderApp, RApp, RCon, ROp, RExtPrim,
   -- RPrimVal, RErased, RCrash, RLoop, RLoopContinue, and a *lazy*
   -- RAppName) is either not a tail position at all or already outside
@@ -94,23 +104,23 @@ mutual
   -- that already contains one -- Compiler.RC2.Loop is the sole producer
   -- and runs at most once per definition -- so there is nothing to
   -- recurse into there in practice.)
-  mapTailAppNames _ e = (False, e)
+  mapTailAppNames _ e = (empty, False, e)
 
-  mapTailAppNamesAlt : (FC -> Name -> List RCLocal -> Maybe RCExp) -> RConAlt -> (Bool, RConAlt)
+  mapTailAppNamesAlt : (FC -> Name -> List RCLocal -> Maybe RCExp) -> RConAlt -> (SortedSet Name, Bool, RConAlt)
   mapTailAppNamesAlt f (MkRConAlt name ci tag args body) =
-      let (found, body') = mapTailAppNames f body
-      in (found, MkRConAlt name ci tag args body')
+      let (names, found, body') = mapTailAppNames f body
+      in (names, found, MkRConAlt name ci tag args body')
 
-  mapTailAppNamesConstAlt : (FC -> Name -> List RCLocal -> Maybe RCExp) -> RConstAlt -> (Bool, RConstAlt)
+  mapTailAppNamesConstAlt : (FC -> Name -> List RCLocal -> Maybe RCExp) -> RConstAlt -> (SortedSet Name, Bool, RConstAlt)
   mapTailAppNamesConstAlt f (MkRConstAlt c body) =
-      let (found, body') = mapTailAppNames f body
-      in (found, MkRConstAlt c body')
+      let (names, found, body') = mapTailAppNames f body
+      in (names, found, MkRConstAlt c body')
 
-  mapTailAppNamesMaybe : (FC -> Name -> List RCLocal -> Maybe RCExp) -> Maybe RCExp -> (Bool, Maybe RCExp)
-  mapTailAppNamesMaybe f Nothing = (False, Nothing)
+  mapTailAppNamesMaybe : (FC -> Name -> List RCLocal -> Maybe RCExp) -> Maybe RCExp -> (SortedSet Name, Bool, Maybe RCExp)
+  mapTailAppNamesMaybe f Nothing = (empty, False, Nothing)
   mapTailAppNamesMaybe f (Just e) =
-      let (found, e') = mapTailAppNames f e
-      in (found, Just e')
+      let (names, found, e') = mapTailAppNames f e
+      in (names, found, Just e')
 
 ------------------------------------------------------------------------
 -- Renaming every RCLocal/bound-id occurrence in a body according to a
@@ -1288,7 +1298,7 @@ dupInvariantBoxed _ e = e
 applyLoopFromId : (nextId0 : Int) -> SortedMap Name (List (Maybe PrimType)) -> Name -> RCDef -> (Int, RCDef)
 applyLoopFromId nextId0 calleeTable self (MkRCFun args retRep isWorker body) =
     let argIds = map fst args
-        (found, body') = mapTailAppNames (\fc, n, args' => if n == self then Just (RLoopContinue fc args' []) else Nothing) body
+        (_, found, body') = mapTailAppNames (\fc, n, args' => if n == self then Just (RLoopContinue fc args' []) else Nothing) body
     in if not found
           then (nextId0, MkRCFun args retRep isWorker body')
           else

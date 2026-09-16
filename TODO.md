@@ -1032,6 +1032,89 @@ foreign呼び出しに戻る。ただし今後もこの間接参照パターン
 ある。ただし`unsafePerformIO`検出を避けた本来の設計意図(構文パターン
 に頼らず安全側に倒す)を壊さない形にする必要があり、要調査。
 
+## rc2全体リファクタリング調査(2026-09-17)で見送った項目
+
+コード共有・速度/メモリ・証明による安全性の3観点で`rc2/src/Compiler/RC2/`
+全体を調査した際、検討はしたが実施を見送った項目のまとめ(実施した項目は
+別途コミット参照)。
+
+- **`DualABI.synthesizeWorker`と`SpecClosure.buildClone`の統合**:
+  どちらも「新しいトップレベル関数を合成し呼び出し元を書き換える」という
+  表面的な形は似ているが、前者はネイティブABI昇格(新規キャプチャ状態
+  なし)、後者は部分適用特化(`freshVarId`による新規キャプチャあり)と
+  本質的に別物。引数リスト構築・fresh変数の出所(`FreshId` vs
+  `VarId`)・書き換え意味論のすべてが異なり、無理に共有すると壊れやすい
+  抽象化になるだけで行数削減の実益もない。
+- **`DualABI.freshName`と`MutualLoop.freshName`の統合**: ほぼ同一の
+  実装(`MN`接頭辞+衝突チェックループ)だが、`Util.idr`自身の既存コメント
+  で「命名スキームがモジュールごとに違うので意図的に統合しない」と
+  明記済みの設計判断。蒸し返す理由なし。
+- **`Emit/Util.idr`の`CFType`キャッチオール(`idris_crash "Unknown FFI
+  type"`など、`cTypeOfCFType`/`extractValue`/`packCFType`)を型で
+  閉じる**: `CFType`はupstream由来のオープンな列挙型で、閉じるには
+  FFI経路全体(`RC.idr`の`checkForeignReturn`、`Emit/Foreign.idr`、
+  struct処理)を横断する書き換えが必要。これらは「この時点で到達不能
+  であることが既に十分文書化されている」防御であり実害のある穴では
+  ないため、費用対効果が悪いと判断。
+- **`RCExp`全体をarityや`PrimType`でGADT添字化**: 14パス全てが
+  パターンマッチする中心IRの全面書き換えになる。既存doc
+  (`dual-abi.md`/`con-alt-native.md`)にも明示的な棄却議論はなく
+  単に未提案なだけだが、それだけ影響範囲が大きい。`MutualLoop`の
+  タグ`Fin`化のような、局所的な箇所への証明技法の横展開で一部の
+  恩恵は代替可能と判断し、全面GADT化は見送り(ただし`RC.idr`の
+  `lookupEnv`側は下記の通り、この横展開自体がIdris2の消去規則で
+  頭打ちになることが判明した)。
+- **パス間で呼び出しグラフをそれぞれ再構築している件**
+  (`LateInline.analyse`/`MutualLoop.buildGraph`/`Loop`の
+  `buildCalleeTable`が各々`tarjanSCCs`等を呼ぶ): 各パスは自分の
+  直前の変換でエッジ集合が変わった"後"のグラフを見ているため、
+  同一データの無駄な再計算ではなく正当な再構築。対処不要。
+
+## `RC.idr`のlookupEnv: `IsVar`証明による完全な全域化はIdris2の消去規則上不可能(2026-09-17)
+
+`Compiler.RC2.RC`のPhase 1(`normalizeDef`)は`Compiler.LambdaLift`の
+`Lifted vars`を歩く際、de Bruijn添字を`Env = List Int`という
+`vars`と同じ長さである"べき"平場のリストで追跡しており、`lookupEnv`は
+添字が範囲外だと`idris_crash`する安全網を持っていた。`LLocal`自体は
+`(0 p : IsVar x idx vars)`という、`idx`が`vars`の正当な添字である
+ことを示す証明を既に持っている(`Core.TT.Var`)。当初「この証明を
+`normalizeDef`に通せば`lookupEnv`をクラッシュ無しの全域関数にできる」
+という設計(「型で保証されていた不変条件を境界で捨てている」という
+パターン)を実装しようとした。
+
+**判明した事実**: `LLocal`の`p`フィールドはupstream側で`0`量(消去)
+と宣言されている。Idris2は、消去された値のコンストラクタで分岐して
+「分岐ごとに異なる実行時データ」を返す関数の定義を一貫して拒否する
+(`Can't match on First (Erased argument)`)。これは実装の順序や
+書き方の問題ではなく、`Core.TT.Var`の`nameAt`(`nameAt {vars = n ::
+_} First = n`のような、まさに欲しかった書き方)が一見コンパイル
+できることに惑わされたが、独立した最小再現で検証したところ`nameAt`
+が許されるのは、返す値`n`が`vars`という**型レベルの添字そのもの**
+から取り出せる場合に限られており、実行時に計算された値(今回なら
+`Int`)を返す一般の関数では、引数が`p`ひとつだけの最小構成でも
+同じエラーが再現した(`myCount : (0 p : MyIsVar n idx vars) -> Int`
+相当)。つまり「消去された妥当性証明を使って、実行時データへの
+安全なインデックスアクセスを型検査だけで保証する」という設計は、
+`IsVar`がupstream側で消去されている限り、rc2側の書き方をどう工夫
+しても届かない。
+
+**実施した代替案**: `Env`を`List Int`から`Data.List.Quantifiers.All`
+経由の`Env : List Name -> Type; Env vars = All (const Int) vars`へ
+変更し、`env`の"長さ"を`vars`と型レベルで一致させた。これにより
+`normalizeDef`/`LLet`/`normalizeConAlt`など、スコープを拡張する
+すべての箇所で「`env`を`vars`の拡張と食い違ったまま構築してしまう」
+というクラス全体がコンパイルエラーになる(実行時クラッシュではなく)。
+ただし`lookupEnv`自体は結局`Nat`(`idx`)による再帰と、最終的な
+"届かないはずのcatch-all"クラッシュ節を今まで通り残さざるを得ない
+-- 縮小できたのは「`idx`自体が誤っている」場合だけに絞られた
+クラッシュ到達可能性であり、完全な全域化ではない。
+
+**今後の検討課題**: `Compiler.LambdaLift`自体(upstream)を変更して
+`LLocal`の`p`を非消去にできれば真の全域化が可能になるが、upstream
+コンパイラへの改変は本パッケージのスコープ外。あるいは、rc2独自の
+Phase 0として`Lifted`を一度、非消去の`Fin`ベースの添字を持つ独自IRへ
+変換し直す(証明を作り直すコスト)手もあるが、費用対効果は要検討。
+
 ## Performance: Closure Inlining and Immediate Expansion
   `partial`呼び出しによるクロージャ生成とヒープ割り当てが、高階関数や型クラスの辞書使用時に頻発している。特に`List`操作や`mapAppend`のような高階関数において、`Boxed`なクロージャが多重生成されており、パフォーマンスを大きく阻害している。
   - 可能な限りコンパイル時にクロージャを特定し、直接呼び出しへとインライン展開するパスを実装する。
