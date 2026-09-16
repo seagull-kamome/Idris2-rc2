@@ -55,43 +55,6 @@ prim__ncLastInputEvtype : PrimIO Int
 %foreign "C:idris2rc2_nc_last_input_utf8, libidris2rc2notcurses, nc_util.h"
 prim__ncLastInputUtf8 : PrimIO String
 
-%foreign "C:idris2rc2_nckey_invalid, libidris2rc2notcurses, nc_util.h"
-prim__nckeyInvalid : Bits32
-%foreign "C:idris2rc2_nckey_resize, libidris2rc2notcurses, nc_util.h"
-prim__nckeyResize : Bits32
-%foreign "C:idris2rc2_nckey_up, libidris2rc2notcurses, nc_util.h"
-prim__nckeyUp : Bits32
-%foreign "C:idris2rc2_nckey_down, libidris2rc2notcurses, nc_util.h"
-prim__nckeyDown : Bits32
-%foreign "C:idris2rc2_nckey_left, libidris2rc2notcurses, nc_util.h"
-prim__nckeyLeft : Bits32
-%foreign "C:idris2rc2_nckey_right, libidris2rc2notcurses, nc_util.h"
-prim__nckeyRight : Bits32
-%foreign "C:idris2rc2_nckey_ins, libidris2rc2notcurses, nc_util.h"
-prim__nckeyIns : Bits32
-%foreign "C:idris2rc2_nckey_del, libidris2rc2notcurses, nc_util.h"
-prim__nckeyDel : Bits32
-%foreign "C:idris2rc2_nckey_backspace, libidris2rc2notcurses, nc_util.h"
-prim__nckeyBackspace : Bits32
-%foreign "C:idris2rc2_nckey_pgup, libidris2rc2notcurses, nc_util.h"
-prim__nckeyPgup : Bits32
-%foreign "C:idris2rc2_nckey_pgdown, libidris2rc2notcurses, nc_util.h"
-prim__nckeyPgdown : Bits32
-%foreign "C:idris2rc2_nckey_home, libidris2rc2notcurses, nc_util.h"
-prim__nckeyHome : Bits32
-%foreign "C:idris2rc2_nckey_end, libidris2rc2notcurses, nc_util.h"
-prim__nckeyEnd : Bits32
-%foreign "C:idris2rc2_nckey_enter, libidris2rc2notcurses, nc_util.h"
-prim__nckeyEnter : Bits32
-%foreign "C:idris2rc2_nckey_f01, libidris2rc2notcurses, nc_util.h"
-prim__nckeyF01 : Bits32
-%foreign "C:idris2rc2_nckey_f02, libidris2rc2notcurses, nc_util.h"
-prim__nckeyF02 : Bits32
-%foreign "C:idris2rc2_nckey_f03, libidris2rc2notcurses, nc_util.h"
-prim__nckeyF03 : Bits32
-%foreign "C:idris2rc2_nckey_f04, libidris2rc2notcurses, nc_util.h"
-prim__nckeyF04 : Bits32
-
 -- libnotcurses-core (always-real, `API`-attributed symbols)
 
 %foreign "C:notcurses_version, libnotcurses-core, nc_util.h"
@@ -219,42 +182,54 @@ namespace NCKey
   tab = 0x09
   esc = 0x1b
 
+  -- Each is the raw %foreign declaration itself, `export`ed directly --
+  -- not a separate `xxx = prim__nckeyXxx` wrapper. That extra
+  -- indirection is what triggers rc2's CAF memoization (a top-level
+  -- 0-arg definition whose body just calls something else): confirmed
+  -- via `--directive dumprcexpr` to compile down to a heap-allocated,
+  -- reference-counted, atomically-guarded `memoize ... : Boxed` around
+  -- the foreign call. Exporting the %foreign declaration itself has no
+  -- such wrapper -- just the bare foreign call at each use site, which
+  -- nc_util.h's own `static inline` getter (see its own comment) then
+  -- folds straight down to the constant. See TODO.md's note on
+  -- unrestricted CAF memoization for the general hazard this is an
+  -- instance of.
+  %foreign "C:idris2rc2_nckey_invalid, libidris2rc2notcurses, nc_util.h"
   export invalid : Bits32
-  invalid = prim__nckeyInvalid
+  %foreign "C:idris2rc2_nckey_resize, libidris2rc2notcurses, nc_util.h"
   export resize : Bits32
-  resize = prim__nckeyResize
+  %foreign "C:idris2rc2_nckey_up, libidris2rc2notcurses, nc_util.h"
   export up : Bits32
-  up = prim__nckeyUp
+  %foreign "C:idris2rc2_nckey_down, libidris2rc2notcurses, nc_util.h"
   export down : Bits32
-  down = prim__nckeyDown
+  %foreign "C:idris2rc2_nckey_left, libidris2rc2notcurses, nc_util.h"
   export left : Bits32
-  left = prim__nckeyLeft
+  %foreign "C:idris2rc2_nckey_right, libidris2rc2notcurses, nc_util.h"
   export right : Bits32
-  right = prim__nckeyRight
+  %foreign "C:idris2rc2_nckey_ins, libidris2rc2notcurses, nc_util.h"
   export ins : Bits32
-  ins = prim__nckeyIns
+  %foreign "C:idris2rc2_nckey_del, libidris2rc2notcurses, nc_util.h"
   export del : Bits32
-  del = prim__nckeyDel
+  %foreign "C:idris2rc2_nckey_backspace, libidris2rc2notcurses, nc_util.h"
   export backspace : Bits32
-  backspace = prim__nckeyBackspace
+  %foreign "C:idris2rc2_nckey_pgup, libidris2rc2notcurses, nc_util.h"
   export pgup : Bits32
-  pgup = prim__nckeyPgup
+  %foreign "C:idris2rc2_nckey_pgdown, libidris2rc2notcurses, nc_util.h"
   export pgdown : Bits32
-  pgdown = prim__nckeyPgdown
+  %foreign "C:idris2rc2_nckey_home, libidris2rc2notcurses, nc_util.h"
   export home : Bits32
-  home = prim__nckeyHome
+  %foreign "C:idris2rc2_nckey_end, libidris2rc2notcurses, nc_util.h"
   export end : Bits32
-  end = prim__nckeyEnd
+  %foreign "C:idris2rc2_nckey_enter, libidris2rc2notcurses, nc_util.h"
   export enter : Bits32
-  enter = prim__nckeyEnter
+  %foreign "C:idris2rc2_nckey_f01, libidris2rc2notcurses, nc_util.h"
   export f01 : Bits32
-  f01 = prim__nckeyF01
+  %foreign "C:idris2rc2_nckey_f02, libidris2rc2notcurses, nc_util.h"
   export f02 : Bits32
-  f02 = prim__nckeyF02
+  %foreign "C:idris2rc2_nckey_f03, libidris2rc2notcurses, nc_util.h"
   export f03 : Bits32
-  f03 = prim__nckeyF03
+  %foreign "C:idris2rc2_nckey_f04, libidris2rc2notcurses, nc_util.h"
   export f04 : Bits32
-  f04 = prim__nckeyF04
 
 -------------------------------------------------------------------------------
 -- Lifecycle

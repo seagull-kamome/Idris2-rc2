@@ -999,6 +999,39 @@ jsのlambda:の時にはヘッダもライブラリも必要ないので全体�
 ## null定数の扱い
 ランタイム側で定数にしてしまうべき。ポインタ比較演算と合わせて最適化を考える。
 
+## 無制限のCAFメモ化(insertMemoize)が逆効果になる実例
+`rc2/doc/caf-memoization.md`の設計方針は「ConstFoldで畳み込めなかった
+0引数トップレベル定義は無条件に全部`RMemoize`で包む、コストはどうせ
+1回のアトミックチェックだけだから安全側に倒して構わない」という
+判断(同ドキュメント"Why not detect unsafePerformIO specifically"節)。
+これは`unsafePerformIO`のような真の副作用を安全に扱うためには正しいが、
+「アトミックチェック1回だけ」という前提が崩れるケースが実在する。
+
+`libs/notcurses`の`NCKey.up = prim__nckeyUp`(単に別の0引数定義を
+呼ぶだけの間接参照)が実例: `--directive dumprcexpr`で確認したところ
+`memoize NCKey.up : Boxed`として、ヒープ確保+参照カウント+
+`atomic_flag`によるCAS待ち合わせ(`caf_memoize.h`の
+`idris2rc2_memo_boxed`経路)付きでコンパイルされていた。中身は
+Cシム側で`static inline`にした純粋な定数返却関数で、メモ化さえ
+無ければコンパイル時に即値へ畳み込まれていたはずのもの。「1回の
+アトミックチェック」どころか、毎回の参照のたびに(初回はCAS+ヒープ
+確保、以降は`done`フラグのアトミックロード)無駄なコストを払っていた。
+
+対処(このケースでの回避策): `%foreign`宣言自体を`export`し、
+「別の定義を呼ぶだけの0引数ラッパー」を挟まないようにすると
+`insertMemoize`の対象(0引数`MkRCFun`)そのものから外れ、素の
+foreign呼び出しに戻る。ただし今後もこの間接参照パターン
+(`x = y`という0引数の単純委譲)は、意図せずBoxedメモ化を誘発しうる
+罠として書き手側で気をつける必要がある。
+
+**今後の検討課題**: `insertMemoize`側で「ConstFoldでは畳み込めない
+が、ネイティブ型に収まる純粋な%foreign値」を検出してBoxedではなく
+`idris2rc2_memo_native`(dup/drop無し)に倒す、あるいは「%foreignの
+0引数プリミティブへの単純な委譲」自体をConstFold相当の早い段階で
+透過的に解消してメモ化対象から除外する、といった軽量化の余地が
+ある。ただし`unsafePerformIO`検出を避けた本来の設計意図(構文パターン
+に頼らず安全側に倒す)を壊さない形にする必要があり、要調査。
+
 ## Performance: Closure Inlining and Immediate Expansion
   `partial`呼び出しによるクロージャ生成とヒープ割り当てが、高階関数や型クラスの辞書使用時に頻発している。特に`List`操作や`mapAppend`のような高階関数において、`Boxed`なクロージャが多重生成されており、パフォーマンスを大きく阻害している。
   - 可能な限りコンパイル時にクロージャを特定し、直接呼び出しへとインライン展開するパスを実装する。
