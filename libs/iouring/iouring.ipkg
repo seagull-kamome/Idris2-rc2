@@ -1,0 +1,27 @@
+package iouring
+version    = 0.1.0
+opts       = "--total"
+sourcedir  = "src"
+modules    = System.IO.Uring
+
+-- `support/c`'s Makefile needs `liburing`/`pkg-config`/a C compiler on
+-- PATH. Most of liburing's own API (every `io_uring_prep_*`,
+-- `io_uring_get_sqe`, `io_uring_sqe_set_data64`, `io_uring_submit`,
+-- `io_uring_{wait,peek}_cqe`, `io_uring_cqe_get_data64`) is `static
+-- inline` in <liburing.h> with no linkable symbol of its own -- rc2's
+-- own Compiler.RC2.Emit already #includes every %foreign header
+-- directly into the *consumer's* own generated .c file (not a separate
+-- translation unit), so these bind straight onto liburing.h with no
+-- shim needed at all. The shim (`support/c/iouring_util.c`) exists only
+-- for what genuinely can't be: `io_uring_queue_init`/`_exit` need a
+-- caller-allocated `struct io_uring` (Idris has nowhere to put one),
+-- and connecting needs a `struct sockaddr` built from a host/port pair
+-- (`getaddrinfo`, not a bare inline wrapper). See `doc/iouring.md`.
+prebuild   = "make -C support/c"
+postclean  = "make -C support/c clean"
+
+-- See `libs/text-re2/text-re2.ipkg`'s identical comment for why this
+-- postinstall hook exists (idris2 --install never creates/populates a
+-- package's own `lib/`) and why rc2 additionally needs the consumer to
+-- point IDRIS2_LIBS/IDRIS2_CFLAGS/IDRIS2_LDFLAGS at it manually.
+postinstall = "make -C support/c install"
