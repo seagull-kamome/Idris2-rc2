@@ -247,12 +247,15 @@ else
     # rc2.ipkg's own postbuild/postinstall hooks build and install
     # support/rc2's runtime (libidris2rc2.a) as a side effect of these
     # two calls -- see README.md's "Building and running" section.
-    # IDRIS2_PREFIX only steers where rc2.ipkg's *own* .ttc/.ttm end up
-    # (the runtime's own install path is fixed relative to its Makefile
-    # regardless); needed so --install doesn't try to write into the
-    # default, typically read-only, nix store location.
-    (cd "$RC2_DIR" && IDRIS2_PREFIX="$(dirname "$RC2_DIR")/install" \
-        idris2 --build rc2.ipkg) \
+    # No IDRIS2_PREFIX override here -- the self-built idris2 that
+    # env.sh puts on PATH already defaults to the *shared* install/
+    # tree on its own (baked in at bootstrap time; `idris2 --prefix`
+    # confirms it). Deriving it instead from this script's own
+    # on-disk location (as a prior version did) breaks under a git
+    # worktree checkout: $RC2_DIR there resolves to the worktree's own
+    # directory, not the shared install/ env.sh and the compiler
+    # itself already agree on.
+    (cd "$RC2_DIR" && idris2 --build rc2.ipkg) \
         > "$TMP/build.log" 2>&1
     if [ $? -ne 0 ]; then
         echo "FAIL  build (see rc2/tests/build/build.log)"
@@ -260,8 +263,7 @@ else
     fi
     report_pass "build (idris2-rc2)"
 
-    (cd "$RC2_DIR" && IDRIS2_PREFIX="$(dirname "$RC2_DIR")/install" \
-        idris2 --install rc2.ipkg) \
+    (cd "$RC2_DIR" && idris2 --install rc2.ipkg) \
         > "$TMP/runtime-build.log" 2>&1
     if [ $? -ne 0 ]; then
         echo "FAIL  build (runtime, see rc2/tests/build/runtime-build.log)"

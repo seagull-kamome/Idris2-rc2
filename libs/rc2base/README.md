@@ -64,11 +64,13 @@ itself, so no separate checkout/`env.sh` sourcing across repos is
 needed, unlike an external consumer such as `idris2-curl`). Install
 into the *same* `install/` prefix rc2 itself uses -- idris2 searches
 its own installation prefix by default, so no separate package-path
-setup is needed:
+setup is needed. No `IDRIS2_PREFIX` export needed either here, unlike
+the generic block above -- `env.sh`'s self-built `idris2` already
+defaults to this repo's own `install/` on its own (run `idris2
+--prefix` to see it):
 ```sh
 cd idris2-rc-cg   # repo root
 source ./env.sh
-export IDRIS2_PREFIX="$(pwd)/install"
 (cd libs/rc2base && idris2 --install rc2base.ipkg)
 
 INSTALLED_LIB="$(pwd)/install/idris2-0.8.0/rc2base-0.1.0/lib"

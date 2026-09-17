@@ -24,14 +24,15 @@ Against `idris2-rc-cg`'s own `rc2` backend (`libs/notcurses` lives
 inside `idris2-rc-cg`, so no cross-repo `env.sh` juggling). Install
 into the *same* `install/` prefix rc2 itself uses -- idris2 searches
 its own installation prefix by default, so no separate package-path
-setup is needed. `-p notcurses` alone is enough to build against it --
-`Compiler.RC2.CC`'s own `depPkgLibDirs` already adds `-I`/`-L` for
-every depended-upon package's own `lib/` automatically, no
-`IDRIS2_CFLAGS`/`IDRIS2_LDFLAGS` needed:
+setup is needed, and no `IDRIS2_PREFIX` export either -- `env.sh`'s
+self-built `idris2` already defaults to this repo's own `install/` on
+its own (run `idris2 --prefix` to see it). `-p notcurses` alone is
+enough to build against it -- `Compiler.RC2.CC`'s own `depPkgLibDirs`
+already adds `-I`/`-L` for every depended-upon package's own `lib/`
+automatically, no `IDRIS2_CFLAGS`/`IDRIS2_LDFLAGS` needed:
 ```sh
 cd idris2-rc-cg            # repo root
 source ./env.sh
-export IDRIS2_PREFIX="$(pwd)/install"
 (cd libs/notcurses && idris2 --install notcurses.ipkg)
 
 ./rc2/build/exec/idris2-rc2 --cg rc2 -p notcurses -o MyProgram libs/notcurses/examples/Hello.idr

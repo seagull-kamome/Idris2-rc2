@@ -173,11 +173,13 @@ module-by-module rationale.
 Build & install (from the repo root, into the same `install/` prefix
 as `rc2` itself above -- already first on `env.sh`'s own
 `IDRIS2_PACKAGE_PATH`, so no separate package-path setup is needed
-afterward):
+afterward). No need to export `IDRIS2_PREFIX` here -- the self-built
+`idris2` that `env.sh` puts on `PATH` already defaults to this repo's
+own `install/` on its own (baked in at bootstrap time; run `idris2
+--prefix` to see it):
 
 ```sh
 source env.sh
-export IDRIS2_PREFIX="$(pwd)/install"
 (cd libs/rc2base && idris2 --install rc2base.ipkg)
 ```
 
@@ -221,16 +223,24 @@ installed into the same shared `install/` prefix).
 ```sh
 cd rc2
 source ../env.sh
-export IDRIS2_PREFIX="$(cd .. && pwd)/install"
 nix-shell -p gcc gmp pkg-config --run 'idris2 --build rc2.ipkg && idris2 --install rc2.ipkg'
 ```
 
 This builds with whatever `idris2` `source ../env.sh` already put first on
-`PATH` -- the self-built `install/bin/idris2` by default. Per project
-policy, nixpkgs' `idris2` package is bootstrap-only now and shouldn't be
-used to build rc2 without a specific reason; to force it for one run
-anyway, add `idris2` back to the `-p` list: `nix-shell -p idris2 gcc gmp
-pkg-config --run 'idris2 --build rc2.ipkg && idris2 --install rc2.ipkg'`
+`PATH` -- the self-built `install/bin/idris2` by default, which already
+defaults to this repo's own `install/` prefix on its own (baked in at
+bootstrap time; run `idris2 --prefix` to see it), so no `IDRIS2_PREFIX`
+export is needed. Per project policy, nixpkgs' `idris2` package is
+bootstrap-only now and shouldn't be used to build rc2 without a specific
+reason; to force it for one run anyway, add `idris2` back to the `-p`
+list *and* export `IDRIS2_PREFIX` again -- nixpkgs' `idris2` has no such
+baked-in default (it points at its own read-only nix store path instead),
+so without it `--install` would silently miss this repo's `install/`
+tree:
+```sh
+export IDRIS2_PREFIX="$(cd .. && pwd)/install"
+nix-shell -p idris2 gcc gmp pkg-config --run 'idris2 --build rc2.ipkg && idris2 --install rc2.ipkg'
+```
 -- nix-shell prepends each `-p` package's own `bin/` ahead of the rest of
 `PATH`, so nixpkgs' `idris2` wins over `install/bin`'s self-built one for
 that shell even though `env.sh` already put the latter on `PATH` first.
@@ -242,14 +252,12 @@ standalone `Makefile` (mirroring `libs/rc2base/rc2base.ipkg`'s own
 `support/c` split) -- `rc2.ipkg`'s own `postbuild`/`postinstall` hooks
 run it automatically as part of the two commands above: `--build`
 compiles it (`make -C support/rc2`), `--install` copies the result into
-`install/idris2-0.8.0/support/rc2` (`make -C support/rc2 install`,
-`IDRIS2_PREFIX` needed so the *rc2 package's own* `.ttc`/`.ttm` this
-`--install` call also produces lands in this repo's local `install/`
-tree instead of the default, typically read-only, nix store location --
-the runtime's own install path is fixed relative to the `Makefile`
-itself either way, so this only matters for that side effect). Running
-just `make`/`make install` directly under `rc2/support/rc2` still works
-too, for a runtime-only rebuild that skips recompiling the compiler.
+`install/idris2-0.8.0/support/rc2` (`make -C support/rc2 install`; the
+runtime's own install path is fixed relative to the `Makefile` itself
+regardless of `IDRIS2_PREFIX`, which only ever affects where the *rc2
+package's own* `.ttc`/`.ttm` land). Running just `make`/`make install`
+directly under `rc2/support/rc2` still works too, for a runtime-only
+rebuild that skips recompiling the compiler.
 
 rc2 also needs its companion support-library package,
 [`libs/rc2base/`](#libsrc2base) (below), for essentially any real
@@ -262,12 +270,12 @@ modules -- see `libs/rc2base/README.md` and this file's own
 install it once, into the *same* `install/` prefix as rc2 itself
 above -- idris2 searches its own installation prefix by default, so
 it's found automatically afterward, no separate package-path setup
-needed:
+needed (and, per above, no `IDRIS2_PREFIX` export needed either --
+the self-built `idris2` already defaults there):
 
 ```sh
 cd ..
 source env.sh
-export IDRIS2_PREFIX="$(pwd)/install"
 (cd libs/rc2base && idris2 --install rc2base.ipkg)
 ```
 

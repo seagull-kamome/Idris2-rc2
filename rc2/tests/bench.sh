@@ -108,15 +108,21 @@ else
     # both are needed here (unlike a lone `--build`) so this script is
     # self-contained and doesn't silently depend on rc2/tests/verify.sh
     # having already installed the runtime in a prior run.
-    (cd "$RC2_DIR" && IDRIS2_PREFIX="$REPO_DIR/install" \
-        idris2 --build rc2.ipkg) \
+    # No IDRIS2_PREFIX override -- the self-built idris2 that env.sh
+    # puts on PATH already defaults to the *shared* install/ tree on
+    # its own (baked in at bootstrap time; `idris2 --prefix` confirms
+    # it). Deriving it instead from this script's own on-disk location
+    # (as a prior version did) breaks under a git worktree checkout:
+    # $REPO_DIR there resolves to the worktree's own directory, not
+    # the shared install/ env.sh and the compiler itself already
+    # agree on.
+    (cd "$RC2_DIR" && idris2 --build rc2.ipkg) \
         > "$RC2_DIR/tests/bench-build.log" 2>&1
     if [ $? -ne 0 ]; then
         echo "FAIL  build (see rc2/tests/bench-build.log)"
         exit 1
     fi
-    (cd "$RC2_DIR" && IDRIS2_PREFIX="$REPO_DIR/install" \
-        idris2 --install rc2.ipkg) \
+    (cd "$RC2_DIR" && idris2 --install rc2.ipkg) \
         >> "$RC2_DIR/tests/bench-build.log" 2>&1
     if [ $? -ne 0 ]; then
         echo "FAIL  build (runtime install, see rc2/tests/bench-build.log)"
