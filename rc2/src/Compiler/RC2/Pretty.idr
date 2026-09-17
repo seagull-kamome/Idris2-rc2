@@ -44,8 +44,8 @@ mutual
         ++ " postDrop=" ++ show postDrop ++ " " ++ show args ++ "\n"
   prettyExp d (RUnderApp _ n missing args) =
       indent d ++ "partial " ++ show n ++ " missing=" ++ show missing ++ " " ++ show args ++ "\n"
-  prettyExp d (RApp _ lazy c a) =
-      indent d ++ lazyPrefix lazy ++ "apply " ++ show c ++ " " ++ show a ++ "\n"
+  prettyExp d (RApp _ lazy c args) =
+      indent d ++ lazyPrefix lazy ++ "apply " ++ show c ++ " " ++ show args ++ "\n"
   prettyExp d (RLet _ var rep value body) =
       indent d ++ "let " ++ show (RCLoc var) ++ " : " ++ prettyRep rep ++ " =\n"
       ++ prettyExp (d + 1) value

@@ -130,7 +130,7 @@ hasNonNativeUse : (ty : PrimType) -> (loopSlots : List (Int, Rep)) -> Int -> RCE
 hasNonNativeUse ty loopSlots target (RV _ v) = v == RCLoc target
 hasNonNativeUse ty loopSlots target (RAppName _ _ _ args) = elem (RCLoc target) args
 hasNonNativeUse ty loopSlots target (RUnderApp _ _ _ args) = elem (RCLoc target) args
-hasNonNativeUse ty loopSlots target (RApp _ _ c a) = c == RCLoc target || a == RCLoc target
+hasNonNativeUse ty loopSlots target (RApp _ _ c args) = c == RCLoc target || elem (RCLoc target) args
 hasNonNativeUse ty loopSlots target (RLet _ _ _ value body) =
     hasNonNativeUse ty loopSlots target value || hasNonNativeUse ty loopSlots target body
 hasNonNativeUse ty loopSlots target (RCon _ _ _ _ args reuseFrom) = elem (RCLoc target) args || reuseFrom == Just (RCLoc target)

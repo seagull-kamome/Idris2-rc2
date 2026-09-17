@@ -267,7 +267,7 @@ foldConst caf env (RAppName fc lazy n args) =
 -- unchanged. See rc2/doc/const-closure-fold.md's "Design" section.
 foldConst _ env (RUnderApp fc n missing []) = RV fc (RCConstClosure n missing)
 foldConst _ env (RUnderApp fc n missing args) = RUnderApp fc n missing (map (resolveLocal env) args)
-foldConst _ env (RApp fc lazy c a) = RApp fc lazy (resolveLocal env c) (resolveLocal env a)
+foldConst _ env (RApp fc lazy c args) = RApp fc lazy (resolveLocal env c) (map (resolveLocal env) args)
 foldConst _ env (RExtPrim fc lazy p args postDrop) =
     let args' = map (resolveLocal env) args
     in case constExtPrimValue p args' of

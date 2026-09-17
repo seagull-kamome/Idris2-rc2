@@ -141,6 +141,26 @@ boolBranches [MkLConstAlt c1 b1, MkLConstAlt c2 b2] Nothing =
          _ => Nothing
 boolBranches _ _ = Nothing
 
+||| Walks a nested `LApp` spine -- built by `Compiler.LambdaLift`'s own
+||| `unload` (`f a1 a2 a3` becomes `LApp _ Nothing (LApp _ Nothing
+||| (LApp _ lazy0 f a1) a2) a3`, innermost-lazy: "only outermost [i.e.
+||| innermost-built] LApp must be lazy" per `unload`'s own comment) --
+||| down to its non-`LApp` base, collecting args in original
+||| left-to-right order. The returned `Maybe LazyReason` is the
+||| *deepest* `LApp`'s own lazy tag, i.e. exactly the one `unload`
+||| actually populated from the original call's own laziness -- every
+||| `LApp` above it carries `Nothing` by construction, so this is
+||| correct, not merely a convenient approximation. See
+||| `doc/rapp-nary-closure-apply.md` for why this collapses an entire
+||| curried closure application into one `RApp` node instead of a
+||| chain of them.
+collectAppChain : Lifted vars -> (Lifted vars, Maybe LazyReason, List (Lifted vars))
+collectAppChain (LApp _ lazy c a) =
+    case c of
+         LApp {} => let (base, lazy0, args) = collectAppChain c in (base, lazy0, args ++ [a])
+         _        => (c, lazy, [a])
+collectAppChain e = (e, Nothing, [])   -- unreachable from normalize's own LApp guard below; kept total
+
 mutual
     ||| Let-bind compound expressions to fresh locals to ensure ANF normal form.
     bindOne : {auto v : Ref VarId Int} ->
@@ -206,8 +226,9 @@ mutual
         bindMany env args (\locs => pure $ RAppName fc lazy n locs)
     normalize env (LUnderApp fc n missing args) =
         bindMany env args (\locs => pure $ RUnderApp fc n missing locs)
-    normalize env (LApp fc lazy c a) =
-        bindOne env c (\cl => bindOne env a (\al => pure $ RApp fc lazy cl al))
+    normalize env e@(LApp fc _ _ _) =
+        let (base, lazy0, args) = collectAppChain e
+        in bindOne env base (\basel => bindMany env args (\argsl => pure $ RApp fc lazy0 basel argsl))
     normalize env (LLet fc x val body) = do
         i <- freshVarId
         valRC <- normalize env val
@@ -569,8 +590,8 @@ mutual
         pure $ wrapDups fc (splitBorrows natives owned args) (RAppName fc lazy n args)
     annotate natives owned (RUnderApp fc n missing args) =
         pure $ wrapDups fc (splitBorrows natives owned args) (RUnderApp fc n missing args)
-    annotate natives owned (RApp fc lazy c a) =
-        pure $ wrapDups fc (splitBorrows natives owned [c, a]) (RApp fc lazy c a)
+    annotate natives owned (RApp fc lazy c args) =
+        pure $ wrapDups fc (splitBorrows natives owned (c :: args)) (RApp fc lazy c args)
     annotate natives owned (RLet fc var rep value body) = do
         let usedVars = freeLocalsR body
         let borrowVal = intersection owned (delete (RCLoc var) usedVars)

@@ -1,5 +1,82 @@
 # rc2 Stage 5: テストとベンチマーク結果
 
+## 2026-09-17 追記: クロージャ多引数適用の一括化(`RApp`のN引数化 + `idris2rc2_applyClosureN`) + `idris2-missing-containers`自体のHasIO直書き化
+
+2つの独立した変更を含む(詳細設計は`rc2/doc/rapp-nary-closure-apply.md`):
+
+1. **`idris2-missing-containers`自体を`HasIO io =>`多相からIO直書きへ書き換え**
+   (外部リポジトリ側のコミット、rc2の変更ではない)。`HasIO`多相のままだと
+   `Compiler.RC2.Reuse`のコンストラクタ再利用最適化が継続クロージャまで
+   届かない(`rc2/doc/reuse-monadic-bind-gap.md`で既に調査済みの制約)ため。
+2. **`Compiler.RC2.RApp`をリスト引数化**(`RCLocal -> RCLocal`から
+   `RCLocal -> List RCLocal`)し、`Compiler.RC2.RC`のPhase 1に
+   `Compiler.LambdaLift`のネストした`LApp`連鎖をその場で1本の`RApp`へ
+   畳み込む`collectAppChain`を追加。ソースレベルの`f a b c`のような
+   カリー化適用連鎖が、複数回の個別クロージャディスパッチではなく1回の
+   `idris2rc2_applyClosureN`呼び出しになる(飽和適用ならクロージャの
+   中間確保もゼロ)。クローン生成を一切伴わないため、辞書メソッド呼び出し
+   のように呼び出し先の具体的な関数が静的に分からない場合でも効く
+   (`Compiler.RC2.SpecClosure`と直交・併用可能)。
+
+実装中に`rc2/tests/verify.sh`自身が検出した実バグ2件(いずれも
+`free(): invalid size`のヒープ破損として顕在化、`valgrind
+--track-origins=yes`と新旧コンパイラの`--directive dumprcexpr`突き合わせで
+特定): (a) `idris2rc2_applyClosureN`の飽和高速路がuniqueなクロージャの
+既存引数を余分にdupしていた参照カウント不整合、(b) `Emit.idr`の末尾位置
+マルチ引数フォールバックが中間ホップまで即ディスパッチしない
+`idris2rc2_tailcallApplyClosure`で繋いでいたため、`Prelude.IO`の`io_bind`
+融合ワーカー経由で早期飽和クロージャへの境界外書き込みを起こしていた。
+両方とも修正・`verify.sh`で確認済み(85 passed, 0 known, 0 failed、
+valgrind込み)。詳細は上記ドキュメントの「Bugs found and fixed」参照。
+
+### マイクロベンチマーク一式(`rc2/tests/bench.sh`、rc2 vs 本家`idris2 --cg refc`、壁時計5回平均)
+
+| ベンチマーク | rc2(s) | refc(s) | 倍率(RefC比) |
+|---|---|---|---|
+| `BenchLoopCallArg.idr` | 0.0032 | 0.5532 | **172.9倍高速** |
+| `BenchChain.idr` | 0.0052 | 0.6558 | **126.1倍高速** |
+| `BenchLoop.idr` | 0.0030 | 0.1824 | **60.8倍高速** |
+| `BenchMutual.idr` | 0.0158 | 0.1954 | 12.4倍高速 |
+| `BenchConstConFold.idr` | 0.2036 | 1.4016 | 6.9倍高速 |
+| `BenchClosureChain.idr` | 0.4498 | 0.7790 | 1.7倍高速 |
+| `BenchFib.idr` | 0.1282 | 0.2024 | 1.6倍高速 |
+| `BenchTailFFI.idr` | 0.9112 | 1.4094 | 1.5倍高速 |
+| `BenchLoopInvariantBoxed.idr` | 0.2158 | 0.3312 | 1.5倍高速 |
+| `BenchCallArgChain.idr` | 1.1600 | 1.5604 | 1.3倍高速 |
+| `BenchConAltNativeBoxed.idr` | 0.2368 | 0.2576 | 1.1倍高速(ほぼ同等) |
+
+前回(2026-09-16)からの絶対値の変動は測定ノイズの範囲内(この一式は
+クロージャ多引数適用の一括化を直接踏む専用ベンチマークを含まない――今回の
+変更の効果は下記の外部パッケージベンチマークに表れる)。回帰無し。
+
+### 外部パッケージベンチマーク(idris2-missing-containers)再計測
+
+`rc2/tests/bench.sh --missing-containers`(壁時計5回平均、`benchmarkHashMap`
+全体――辞書/単語ファイル読込・ハッシュ関数5種・`write`/`read`を含む1プログラム
+の合計時間):
+
+| backend | avg(s) |
+|---|---|
+| rc2 | 11.72 |
+| RefC | 22.15 |
+| Chez | 9.04 |
+
+rc2はRefC比**約1.89倍高速**、Chez比では約1.30倍遅い。
+
+同一セッション内で、`write`/`read`フェーズ単体(プログラム自身の
+`clockTime`計測、985,690件書き込み・98,569件読み出し、3回平均)を
+今回の2変更の**内訳**として個別に確認した:
+
+| | 変更前(`HasIO`多相のまま) | `HasIO`除去後 | + `RApp`一括化後 |
+|---|---|---|---|
+| write | 8.87s | 8.14s(-8.2%) | **7.63s**(-6.3%、通算-14.0%) |
+| read | 0.837s | 0.807s(-3.6%) | **0.749s**(-7.2%、通算-10.5%) |
+
+`HasIO`除去単体・`RApp`一括化単体、どちらも独立して効果があり、通算では
+writeが約14%、readが約10.5%短縮した。
+
+回帰確認: `rc2/tests/verify.sh`、85 passed, 0 known, 0 failed(valgrind込み)。
+
 ## 2026-09-16 追記: `Compiler.RC2.LateInline`(単一呼び出し元インライン化)を含む一連の変更
 
 前回計測(2026-09-04)以降の変更を反映した再計測。主な変更点(詳細は各自

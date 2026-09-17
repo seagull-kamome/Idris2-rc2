@@ -121,73 +121,82 @@ typedef IDRIS2RC2_Value *(*const IDRIS2RC2_FUNSTAR)(IDRIS2RC2_Value **);
 
 // When adding arities above 20, extend this switch and MaxExtractFunArgs in
 // Compiler/RC2/EmitUtil.idr accordingly.
-static inline IDRIS2RC2_Value *idris2rc2_dispatchClosure(IDRIS2RC2_Closure *c) {
-  IDRIS2RC2_Value **const xs = c->args;
-  switch (c->arity) {
+//
+// Extracted from idris2rc2_dispatchClosure below (which just calls this
+// with c->fn/c->arity/c->args) so idris2rc2_applyClosureN can reuse the
+// exact same arity-keyed switch over its own on-stack args array,
+// without a second copy of these 21 cases -- see
+// rc2/doc/rapp-nary-closure-apply.md's own "Runtime side" section.
+static inline IDRIS2RC2_Value *idris2rc2_dispatchFn(void *fn, uint8_t arity, IDRIS2RC2_Value **xs) {
+  switch (arity) {
   default:
-    return (*(IDRIS2RC2_FUNSTAR)c->fn)(xs);
+    return (*(IDRIS2RC2_FUNSTAR)fn)(xs);
   case 0:
-    return (*(IDRIS2RC2_FUN0)c->fn)();
+    return (*(IDRIS2RC2_FUN0)fn)();
   case 1:
-    return (*(IDRIS2RC2_FUN1)c->fn)(xs[0]);
+    return (*(IDRIS2RC2_FUN1)fn)(xs[0]);
   case 2:
-    return (*(IDRIS2RC2_FUN2)c->fn)(xs[0], xs[1]);
+    return (*(IDRIS2RC2_FUN2)fn)(xs[0], xs[1]);
   case 3:
-    return (*(IDRIS2RC2_FUN3)c->fn)(xs[0], xs[1], xs[2]);
+    return (*(IDRIS2RC2_FUN3)fn)(xs[0], xs[1], xs[2]);
   case 4:
-    return (*(IDRIS2RC2_FUN4)c->fn)(xs[0], xs[1], xs[2], xs[3]);
+    return (*(IDRIS2RC2_FUN4)fn)(xs[0], xs[1], xs[2], xs[3]);
   case 5:
-    return (*(IDRIS2RC2_FUN5)c->fn)(xs[0], xs[1], xs[2], xs[3], xs[4]);
+    return (*(IDRIS2RC2_FUN5)fn)(xs[0], xs[1], xs[2], xs[3], xs[4]);
   case 6:
-    return (*(IDRIS2RC2_FUN6)c->fn)(xs[0], xs[1], xs[2], xs[3], xs[4], xs[5]);
+    return (*(IDRIS2RC2_FUN6)fn)(xs[0], xs[1], xs[2], xs[3], xs[4], xs[5]);
   case 7:
-    return (*(IDRIS2RC2_FUN7)c->fn)(xs[0], xs[1], xs[2], xs[3], xs[4], xs[5], xs[6]);
+    return (*(IDRIS2RC2_FUN7)fn)(xs[0], xs[1], xs[2], xs[3], xs[4], xs[5], xs[6]);
   case 8:
-    return (*(IDRIS2RC2_FUN8)c->fn)(xs[0], xs[1], xs[2], xs[3], xs[4], xs[5], xs[6],
+    return (*(IDRIS2RC2_FUN8)fn)(xs[0], xs[1], xs[2], xs[3], xs[4], xs[5], xs[6],
                                xs[7]);
   case 9:
-    return (*(IDRIS2RC2_FUN9)c->fn)(xs[0], xs[1], xs[2], xs[3], xs[4], xs[5], xs[6],
+    return (*(IDRIS2RC2_FUN9)fn)(xs[0], xs[1], xs[2], xs[3], xs[4], xs[5], xs[6],
                                xs[7], xs[8]);
   case 10:
-    return (*(IDRIS2RC2_FUN10)c->fn)(xs[0], xs[1], xs[2], xs[3], xs[4], xs[5], xs[6],
+    return (*(IDRIS2RC2_FUN10)fn)(xs[0], xs[1], xs[2], xs[3], xs[4], xs[5], xs[6],
                                xs[7], xs[8], xs[9]);
   case 11:
-    return (*(IDRIS2RC2_FUN11)c->fn)(xs[0], xs[1], xs[2], xs[3], xs[4], xs[5], xs[6],
+    return (*(IDRIS2RC2_FUN11)fn)(xs[0], xs[1], xs[2], xs[3], xs[4], xs[5], xs[6],
                                xs[7], xs[8], xs[9], xs[10]);
   case 12:
-    return (*(IDRIS2RC2_FUN12)c->fn)(xs[0], xs[1], xs[2], xs[3], xs[4], xs[5], xs[6],
+    return (*(IDRIS2RC2_FUN12)fn)(xs[0], xs[1], xs[2], xs[3], xs[4], xs[5], xs[6],
                                xs[7], xs[8], xs[9], xs[10], xs[11]);
   case 13:
-    return (*(IDRIS2RC2_FUN13)c->fn)(xs[0], xs[1], xs[2], xs[3], xs[4], xs[5], xs[6],
+    return (*(IDRIS2RC2_FUN13)fn)(xs[0], xs[1], xs[2], xs[3], xs[4], xs[5], xs[6],
                                xs[7], xs[8], xs[9], xs[10], xs[11], xs[12]);
   case 14:
-    return (*(IDRIS2RC2_FUN14)c->fn)(xs[0], xs[1], xs[2], xs[3], xs[4], xs[5], xs[6],
+    return (*(IDRIS2RC2_FUN14)fn)(xs[0], xs[1], xs[2], xs[3], xs[4], xs[5], xs[6],
                                xs[7], xs[8], xs[9], xs[10], xs[11], xs[12], xs[13]);
   case 15:
-    return (*(IDRIS2RC2_FUN15)c->fn)(xs[0], xs[1], xs[2], xs[3], xs[4], xs[5], xs[6],
+    return (*(IDRIS2RC2_FUN15)fn)(xs[0], xs[1], xs[2], xs[3], xs[4], xs[5], xs[6],
                                xs[7], xs[8], xs[9], xs[10], xs[11], xs[12], xs[13],
                                xs[14]);
   case 16:
-    return (*(IDRIS2RC2_FUN16)c->fn)(xs[0], xs[1], xs[2], xs[3], xs[4], xs[5], xs[6],
+    return (*(IDRIS2RC2_FUN16)fn)(xs[0], xs[1], xs[2], xs[3], xs[4], xs[5], xs[6],
                                xs[7], xs[8], xs[9], xs[10], xs[11], xs[12], xs[13],
                                xs[14], xs[15]);
   case 17:
-    return (*(IDRIS2RC2_FUN17)c->fn)(xs[0], xs[1], xs[2], xs[3], xs[4], xs[5], xs[6],
+    return (*(IDRIS2RC2_FUN17)fn)(xs[0], xs[1], xs[2], xs[3], xs[4], xs[5], xs[6],
                                xs[7], xs[8], xs[9], xs[10], xs[11], xs[12], xs[13],
                                xs[14], xs[15], xs[16]);
   case 18:
-    return (*(IDRIS2RC2_FUN18)c->fn)(xs[0], xs[1], xs[2], xs[3], xs[4], xs[5], xs[6],
+    return (*(IDRIS2RC2_FUN18)fn)(xs[0], xs[1], xs[2], xs[3], xs[4], xs[5], xs[6],
                                xs[7], xs[8], xs[9], xs[10], xs[11], xs[12], xs[13],
                                xs[14], xs[15], xs[16], xs[17]);
   case 19:
-    return (*(IDRIS2RC2_FUN19)c->fn)(xs[0], xs[1], xs[2], xs[3], xs[4], xs[5], xs[6],
+    return (*(IDRIS2RC2_FUN19)fn)(xs[0], xs[1], xs[2], xs[3], xs[4], xs[5], xs[6],
                                xs[7], xs[8], xs[9], xs[10], xs[11], xs[12], xs[13],
                                xs[14], xs[15], xs[16], xs[17], xs[18]);
   case 20:
-    return (*(IDRIS2RC2_FUN20)c->fn)(xs[0], xs[1], xs[2], xs[3], xs[4], xs[5], xs[6],
+    return (*(IDRIS2RC2_FUN20)fn)(xs[0], xs[1], xs[2], xs[3], xs[4], xs[5], xs[6],
                                xs[7], xs[8], xs[9], xs[10], xs[11], xs[12], xs[13],
                                xs[14], xs[15], xs[16], xs[17], xs[18], xs[19]);
   }
+}
+
+static inline IDRIS2RC2_Value *idris2rc2_dispatchClosure(IDRIS2RC2_Closure *c) {
+  return idris2rc2_dispatchFn(c->fn, c->arity, c->args);
 }
 
 // Fast path for idris2rc2_applyClosure only (see its own call site) --
@@ -383,6 +392,94 @@ IDRIS2RC2_Value *idris2rc2_applyClosure(IDRIS2RC2_Value *_c, IDRIS2RC2_Value *ar
     return idris2rc2_trampoline(result);
   }
   return idris2rc2_trampoline(idris2rc2_tailcallApplyClosure(_c, arg));
+}
+
+// Applies `n` new arguments to `_c` in one call, for a source-level
+// curried application (`v x y ...`) `Compiler.RC2.RC`'s
+// `collectAppChain` merged into one `RApp` node instead of `n` chained
+// single-argument ones -- see rc2/doc/rapp-nary-closure-apply.md's own
+// "Runtime side" section for the full design this mirrors. Three
+// cases, none of them duplicating idris2rc2_dispatchFn's own 0-20
+// switch or idris2rc2_tailcallApplyClosure's own grow-in-place logic:
+//   - n == remaining (this closure's own arity, <= 20): saturates in
+//     one shot, dispatched via the *same* switch idris2rc2_dispatchClosure
+//     uses, so no intermediate IDRIS2RC2_Closure is ever allocated for
+//     this call at all. Unique/non-unique split exactly mirrors
+//     idris2rc2_tailcallApplyClosure's own reasoning applied to a whole
+//     closure instead of one field: unique means `c->args[0..filled-1]`
+//     transfer ownership straight into the call (no dup, only the
+//     closure *shell* is torn down after -- re-dup'ing them here and
+//     then idris2rc2_drop-ing `c` would double-count every filled arg,
+//     an actual bug an early version of this function had, confirmed by
+//     Test1Basics' own "free(): invalid size" crash); non-unique dups
+//     each into the scratch buffer (the closure itself keeps its own
+//     copy for whoever else still references it) and then drops `c`
+//     normally.
+//   - n < remaining: still partial afterwards -- exactly
+//     idris2rc2_tailcallApplyClosure's own unique-in-place/grow-by-copy
+//     split, generalized from +1 to +n new args.
+//   - n > remaining, or arity > 20 (FUNSTAR territory, deliberately out
+//     of the fast lane above): fully generic, already-correct
+//     one-argument-at-a-time fallback through the existing
+//     idris2rc2_applyClosure -- bounded by `n` iterations, correct for
+//     any relationship between `n` and this closure's own remaining
+//     arity (including a result of the first dispatch itself being
+//     another under-applied closure that swallows more of `newArgs`).
+IDRIS2RC2_Value *idris2rc2_applyClosureN(IDRIS2RC2_Value *_c, IDRIS2RC2_Value **newArgs, uint8_t n) {
+  IDRIS2RC2_Closure *c = (IDRIS2RC2_Closure *)_c;
+  uint8_t remaining = c->arity - c->filled;
+
+  if (n == remaining && c->arity >= 1 && c->arity <= 20) {
+    IDRIS2RC2_Value *xs[20];
+    IDRIS2RC2_Value *result;
+    if (idris2rc2_isUnique(c)) {
+      for (uint8_t i = 0; i < c->filled; ++i)
+        xs[i] = c->args[i];
+      for (uint8_t i = 0; i < n; ++i)
+        xs[c->filled + i] = newArgs[i];
+      result = idris2rc2_dispatchFn(c->fn, c->arity, xs);
+      // Args were already consumed by the dispatch above (ownership
+      // passed into fn, never re-dup'd), so this only ever needs to
+      // free the closure shell itself -- same reasoning, and same
+      // unconditional-atomic-decrement race-freedom, as
+      // idris2rc2_trampoline's own teardown after its own
+      // dispatchClosure call.
+      if (c->header.refCount != IDRIS2RC2_REFCOUNT_MAX &&
+          atomic_fetch_sub_explicit(&c->header.refCount, 1, memory_order_release) == 1) {
+        atomic_thread_fence(memory_order_acquire);
+        free(c);
+      }
+    } else {
+      for (uint8_t i = 0; i < c->filled; ++i)
+        xs[i] = idris2rc2_dup(c->args[i]);
+      for (uint8_t i = 0; i < n; ++i)
+        xs[c->filled + i] = newArgs[i];
+      result = idris2rc2_dispatchFn(c->fn, c->arity, xs);
+      idris2rc2_drop((IDRIS2RC2_Value *)c);
+    }
+    return idris2rc2_trampoline(result);
+  }
+
+  if (n < remaining) {
+    if (idris2rc2_isUnique(c)) {
+      for (uint8_t i = 0; i < n; ++i)
+        c->args[c->filled + i] = newArgs[i];
+      c->filled += n;
+      return (IDRIS2RC2_Value *)c;
+    }
+    IDRIS2RC2_Closure *nc = idris2rc2_mkClosure(c->fn, c->arity, c->filled + n);
+    for (uint8_t i = 0; i < c->filled; ++i)
+      nc->args[i] = idris2rc2_dup(c->args[i]);
+    for (uint8_t i = 0; i < n; ++i)
+      nc->args[c->filled + i] = newArgs[i];
+    idris2rc2_drop((IDRIS2RC2_Value *)c);
+    return (IDRIS2RC2_Value *)nc;
+  }
+
+  IDRIS2RC2_Value *it = _c;
+  for (uint8_t i = 0; i < n; ++i)
+    it = idris2rc2_applyClosure(it, newArgs[i]);
+  return it;
 }
 
 void idris2rc2_dropReuseConstructor(IDRIS2RC2_Constructor *c) {

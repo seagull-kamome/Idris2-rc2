@@ -155,7 +155,7 @@ mutual
   renameRCExp ren (RV fc v) = RV fc (renameLocal ren v)
   renameRCExp ren (RAppName fc lazy n args) = RAppName fc lazy n (renameLocals ren args)
   renameRCExp ren (RUnderApp fc n missing args) = RUnderApp fc n missing (renameLocals ren args)
-  renameRCExp ren (RApp fc lazy c a) = RApp fc lazy (renameLocal ren c) (renameLocal ren a)
+  renameRCExp ren (RApp fc lazy c args) = RApp fc lazy (renameLocal ren c) (map (renameLocal ren) args)
   renameRCExp ren (RLet fc var rep value body) =
       RLet fc (renameId ren var) rep (renameRCExp ren value) (renameRCExp ren body)
   renameRCExp ren (RCon fc n ci tag args reuseFrom) =
@@ -1075,7 +1075,7 @@ usesInvariant p e = existsInvariantUse e
     existsInvariantUse (RV _ v) = v == RCLoc p
     existsInvariantUse (RAppName _ _ _ args) = any (== RCLoc p) args
     existsInvariantUse (RUnderApp _ _ _ args) = any (== RCLoc p) args
-    existsInvariantUse (RApp _ _ c a) = if c == RCLoc p then True else a == RCLoc p
+    existsInvariantUse (RApp _ _ c args) = if c == RCLoc p then True else any (== RCLoc p) args
     existsInvariantUse (RLet _ _ _ value body) =
         if existsInvariantUse value then True else existsInvariantUse body
     existsInvariantUse (RCon _ _ _ _ args _) = any (== RCLoc p) args
@@ -1148,8 +1148,8 @@ dupInvariantBoxed p (RAppName fc lazy n args) =
     wrapInvariantDups fc p (countInvariantDups p args) (RAppName fc lazy n args)
 dupInvariantBoxed p (RUnderApp fc n missing args) =
     wrapInvariantDups fc p (countInvariantDups p args) (RUnderApp fc n missing args)
-dupInvariantBoxed p (RApp fc lazy c a) =
-    wrapInvariantDups fc p (countInvariantDups p [c, a]) (RApp fc lazy c a)
+dupInvariantBoxed p (RApp fc lazy c args) =
+    wrapInvariantDups fc p (countInvariantDups p (c :: args)) (RApp fc lazy c args)
 dupInvariantBoxed p (RLet fc var rep value body) =
     RLet fc var rep (dupInvariantBoxed p value) (dupInvariantBoxed p body)
 dupInvariantBoxed p (RCon fc n ci tag args reuseFrom) =

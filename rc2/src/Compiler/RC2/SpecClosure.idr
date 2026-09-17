@@ -106,11 +106,26 @@ collectOpportunities bound e = foldSubExprs (++) [] (collectOpportunities bound)
 -- (possibly chained, possibly also passed through to self-recursion)?
 ------------------------------------------------------------------------
 
-||| See the doc's "Internal structure" -> "Chain detection" paragraph.
+||| See the doc's "Internal structure" -> "Chain detection" paragraph,
+||| and `doc/rapp-nary-closure-apply.md`'s own "A free simplification
+||| this exposed" section for why this only *partly* collapsed once
+||| `RApp` itself gained a `List RCLocal` args field: a source-level
+||| `v x y` now reaches here as one `RApp v [x, y]` node already
+||| (`Compiler.RC2.RC`'s `collectAppChain` merges it at Phase 1), so
+||| the exact-match case below is now the common one -- but a genuinely
+||| let-bound intermediate partial application (`let partial = v x in
+||| ... partial y ...`, two syntactically separate applications in the
+||| source) still reaches here as two distinct `RApp` nodes threaded by
+||| an `RLet`, each contributing however many args *its own* hop
+||| carries (no longer always exactly one), so the chained case still
+||| has real work to do.
 chainArgs : RCLocal -> Nat -> RCExp -> Maybe (List RCLocal)
-chainArgs v (S Z) (RApp _ _ c a) = if c == v then Just [a] else Nothing
-chainArgs v (S k@(S _)) (RLet _ t _ (RApp _ _ c a) cont) =
-    if c == v then (a ::) <$> chainArgs (RCLoc t) k cont else Nothing
+chainArgs v missing (RLet _ t _ (RApp _ _ c args) cont) =
+    if c == v && length args < missing
+       then (args ++) <$> chainArgs (RCLoc t) (missing `minus` length args) cont
+       else Nothing
+chainArgs v missing (RApp _ _ c args) =
+    if c == v && length args == missing then Just args else Nothing
 chainArgs _ _ _ = Nothing
 
 ||| See the doc's "Internal structure" -> "Self-recursive passthrough"

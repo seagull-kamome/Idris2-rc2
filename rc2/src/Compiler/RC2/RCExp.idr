@@ -207,7 +207,17 @@ data RCExp : Type where
      RAppFFIInline : FC -> (ccs : List String) -> (fargs : List CFType) -> (ret : CFType)
                   -> (postDrop : List RCLocal) -> List RCLocal -> RCExp
      RUnderApp  : FC -> Name -> (missing : Nat) -> List RCLocal -> RCExp
-     RApp       : FC -> (lazy : Maybe LazyReason) -> RCLocal -> RCLocal -> RCExp
+     ||| Apply a boxed closure value to one or more arguments in one
+     ||| step (`args` is always non-empty by construction -- built from
+     ||| `Compiler.LambdaLift`'s own nested-`LApp` spine by
+     ||| `Compiler.RC2.RC`'s `collectAppChain`, see
+     ||| `doc/rapp-nary-closure-apply.md`). Unlike `RAppName`, the
+     ||| closure's own remaining arity is never statically known here --
+     ||| `Compiler.RC2.Emit`'s `idris2rc2_applyClosureN` (or plain
+     ||| `idris2rc2_applyClosure` for the `args = [_]` case) handles
+     ||| under-/over-/exactly-saturating `args` against it uniformly at
+     ||| runtime.
+     RApp       : FC -> (lazy : Maybe LazyReason) -> RCLocal -> List RCLocal -> RCExp
      ||| `rep`: this local's representation. See `doc/native-type-inference.md`.
      RLet       : FC -> (var : Int) -> Rep -> RCExp -> RCExp -> RCExp
      ||| `reuseFrom`: if `Just loc`, may reuse `loc`'s storage (an offer
@@ -324,7 +334,7 @@ freeLocalsR : RCExp -> SortedSet RCLocal
 freeLocalsR (RV _ v) = singleton v
 freeLocalsR (RAppName _ _ _ args) = fromList args
 freeLocalsR (RUnderApp _ _ _ args) = fromList args
-freeLocalsR (RApp _ _ c a) = fromList [c, a]
+freeLocalsR (RApp _ _ c args) = fromList (c :: args)
 freeLocalsR (RLet _ var _ value body) =
     union (freeLocalsR value) (delete (RCLoc var) (freeLocalsR body))
 -- `reuseFrom` isn't counted here (or in countUsesR below) -- like
@@ -367,7 +377,7 @@ countUsesR : RCLocal -> RCExp -> Nat
 countUsesR l (RV _ v) = if v == l then 1 else 0
 countUsesR l (RAppName _ _ _ args) = length (filter (== l) args)
 countUsesR l (RUnderApp _ _ _ args) = length (filter (== l) args)
-countUsesR l (RApp _ _ c a) = length (filter (== l) [c, a])
+countUsesR l (RApp _ _ c args) = length (filter (== l) (c :: args))
 countUsesR l (RLet _ _ _ value body) = countUsesR l value + countUsesR l body
 countUsesR l (RCon _ _ _ _ args _) = length (filter (== l) args)
 countUsesR l (ROp _ _ _ args _) = length (filter (== l) (toList args))
@@ -481,7 +491,7 @@ foldRCNamesR nf = go
     go (RAppNameRep _ n _ _ postDrop args) = nf.onAppNameRep n <+> ls postDrop <+> ls args
     go (RAppFFIInline _ _ _ _ postDrop args) = ls postDrop <+> ls args
     go (RUnderApp _ n _ args) = nf.onUnderApp n <+> ls args
-    go (RApp _ _ c a) = l c <+> l a
+    go (RApp _ _ c args) = l c <+> ls args
     go (RLet _ _ _ value body) = go value <+> go body
     go (RCon _ n _ tag args reuseFrom) = nf.onCon n tag <+> ls args <+> maybe neutral l reuseFrom
     go (ROp _ _ _ args postDrop) = ls (toList args) <+> ls postDrop

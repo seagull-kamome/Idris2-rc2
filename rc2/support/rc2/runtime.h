@@ -30,6 +30,11 @@ void idris2rc2_dropReuseConstructor(IDRIS2RC2_Constructor *c);
 
 IDRIS2RC2_Value *idris2rc2_applyClosure(IDRIS2RC2_Value *closure, IDRIS2RC2_Value *arg);
 IDRIS2RC2_Value *idris2rc2_tailcallApplyClosure(IDRIS2RC2_Value *closure, IDRIS2RC2_Value *arg);
+// See runtime.c's own doc comment: applies `n` new arguments to
+// `closure` in one call (`newArgs[0..n-1]`, ownership transferred to
+// this call), used for a source-level curried application
+// `Compiler.RC2.RC`'s `collectAppChain` merged into one `RApp` node.
+IDRIS2RC2_Value *idris2rc2_applyClosureN(IDRIS2RC2_Value *closure, IDRIS2RC2_Value **newArgs, uint8_t n);
 IDRIS2RC2_Value *idris2rc2_trampoline(IDRIS2RC2_Value *v);
 
 int64_t idris2rc2_extractInt(IDRIS2RC2_Value *v);

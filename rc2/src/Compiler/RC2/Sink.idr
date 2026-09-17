@@ -38,7 +38,7 @@ genuinelyUsedR : RCExp -> SortedSet RCLocal
 genuinelyUsedR (RV _ v) = singleton v
 genuinelyUsedR (RAppName _ _ _ args) = fromList args
 genuinelyUsedR (RUnderApp _ _ _ args) = fromList args
-genuinelyUsedR (RApp _ _ c a) = fromList [c, a]
+genuinelyUsedR (RApp _ _ c args) = fromList (c :: args)
 genuinelyUsedR (RAppNameRep _ _ _ _ _ args) = fromList args
 genuinelyUsedR (RLet _ var _ value body) =
     union (genuinelyUsedR value) (delete (RCLoc var) (genuinelyUsedR body))

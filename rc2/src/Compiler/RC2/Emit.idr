@@ -982,13 +982,56 @@ emitRC sink (RAppName fc _ n args) NotInTailPosition = do
 emitRC sink (RAppNameRep fc n argReps retRep postDrop args) _ = unreachableInEmitRC "RAppNameRep"
 emitRC sink (RAppFFIInline fc ccs fargs ret postDrop args) _ = unreachableInEmitRC "RAppFFIInline"
 emitRC sink (RUnderApp fc n missing args) _ = unreachableInEmitRC "RUnderApp"
-emitRC sink (RApp fc _ closure arg) tailPosition = do
+emitRC sink (RApp fc _ closure []) _ =
+   throw $ InternalError "[rc2] RApp with empty args (collectAppChain always produces at least one)"
+emitRC sink (RApp fc _ closure [arg]) tailPosition = do
    (closureStr, p1) <- rcVarToBoxedC closure
    (argStr, p2) <- rcVarToBoxedC arg
    let fnName = the String $ case tailPosition of
                      NotInTailPosition => "idris2rc2_applyClosure"
                      InTailPosition    => "idris2rc2_tailcallApplyClosure"
    finalizeSinkWithDrop fc sink "\{fnName}(\{closureStr}, \{argStr})" (p1 ++ p2)
+-- Two or more args in one `RApp` (a source-level curried application
+-- `collectAppChain` merged into one node, doc/rapp-nary-closure-apply.md):
+-- `NotInTailPosition` builds an on-stack args array and dispatches all
+-- of them through `idris2rc2_applyClosureN` in one call, no
+-- intermediate closure materialized when it happens to saturate
+-- exactly. `InTailPosition` has no N-ary counterpart yet (see that
+-- doc's own "Open questions" -> "Tail-position N-ary apply") --
+-- degrades to exactly the pre-this-change behavior instead, chaining
+-- `idris2rc2_tailcallApplyClosure` once per argument.
+emitRC sink (RApp fc _ closure args@(_ :: _ :: _)) NotInTailPosition = do
+   (closureStr, p1) <- rcVarToBoxedC closure
+   argsWithPending <- traverse rcVarToBoxedC args
+   let arrName = "applyArgs_\{!(getNextCounter)}"
+   emit fc "IDRIS2RC2_Value *\{arrName}[] = {\{showSep ", " (map fst argsWithPending)}};"
+   let valStr = "idris2rc2_applyClosureN(\{closureStr}, \{arrName}, \{show $ length args})"
+   finalizeSinkWithDrop fc sink valStr (p1 ++ concatMap snd argsWithPending)
+emitRC sink (RApp fc _ closure args@(_ :: _ :: _)) InTailPosition = do
+   (closureStr, p1) <- rcVarToBoxedC closure
+   argsWithPending <- traverse rcVarToBoxedC args
+   -- Only the *last* hop may safely stay undispatched via
+   -- idris2rc2_tailcallApplyClosure -- every earlier one must go
+   -- through idris2rc2_applyClosure instead, exactly as the pre-merge
+   -- single-arg-at-a-time chain always did. tailcallApplyClosure
+   -- deliberately never dispatches even once its own closure reaches
+   -- `filled == arity` (see its own doc comment); an intermediate hop
+   -- can genuinely saturate the closure it's applied to before the
+   -- chain's last argument (confirmed by a real crash: Prelude.IO's
+   -- own io_bind-fused worker passes an already-partially-applied
+   -- closure through one of these positions, one argument short of
+   -- complete, so the *first* of two chained applies to it already
+   -- completes it -- chaining tailcallApplyClosure blindly for that
+   -- second hop wrote one slot past the now-full closure's own
+   -- allocation). applyClosure's own fast path correctly dispatches
+   -- and hands the chain whatever fresh value comes back instead.
+   let valStr = applyChain closureStr (map fst argsWithPending)
+   finalizeSinkWithDrop fc sink valStr (p1 ++ concatMap snd argsWithPending)
+  where
+   applyChain : String -> List String -> String
+   applyChain base [] = base
+   applyChain base [lastArg] = "idris2rc2_tailcallApplyClosure(\{base}, \{lastArg})"
+   applyChain base (a :: rest) = applyChain "idris2rc2_applyClosure(\{base}, \{a})" rest
 
 emitRC sink (RLet fc var rep value body) _ = unreachableInEmitRC "RLet"
 
