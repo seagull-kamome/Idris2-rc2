@@ -106,10 +106,14 @@ nix-shell -p gcc gmp pkg-config chez --run 'make test'
 
 ## Step 5: verify rc2 itself still builds against the new toolchain
 
+No need to export `IDRIS2_PREFIX` here — the self-built `idris2` just
+(re)installed above already defaults to this same `install/` prefix on
+its own (that's what Step 1-3's `PREFIX` baked in as `IdrisPaths.idr`'s
+`yprefix`; `idris2 --prefix` confirms it):
+
 ```bash
 cd rc2
 source ../env.sh
-export IDRIS2_PREFIX="$(cd .. && pwd)/install"
 nix-shell -p gcc gmp pkg-config --run 'idris2 --build rc2.ipkg && idris2 --install rc2.ipkg'
 ```
 
@@ -124,7 +128,10 @@ skill) to confirm nothing regressed against the new toolchain.
   that's `rc2.ipkg`'s own install-time variable, a different thing;
   `idris2-src`'s own Makefile reads `PREFIX` for itself and derives
   its own internal `IDRIS2_PREFIX` from it) before any `make`
-  invocation above.
+  invocation above. That derived `IDRIS2_PREFIX` is also exactly what
+  gets baked into the resulting `install/bin/idris2` as its own
+  default prefix (`IdrisPaths.idr`'s `yprefix`) -- which is why Step 5
+  above doesn't need to set `IDRIS2_PREFIX` itself again.
 - **Step 2 forgetting `make clean` first** can leave stale `.ttc`
   files built by a different boot-compiler version lying around,
   causing confusing "TTC data is in an older format" errors later.

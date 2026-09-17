@@ -50,10 +50,17 @@ nix-shell providing gcc/gmp/pkg-config):
 ```bash
 nix-shell -p gcc gmp pkg-config --run '
   source env.sh
-  export IDRIS2_PREFIX="$(pwd)/install"
   cd rc2 && idris2 --build rc2.ipkg && idris2 --install rc2.ipkg
 '
 ```
+
+No need to export `IDRIS2_PREFIX` here — the self-built
+`install/bin/idris2` that `env.sh` puts on `PATH` already defaults to
+this repo's own `install/` prefix on its own (baked in at bootstrap
+time as `IdrisPaths.idr`'s `yprefix`; run `idris2 --prefix` to see
+it). This only matters again if forcing nixpkgs' bootstrap `idris2`
+instead (see below) — that one has no such baked-in default and
+points at its own read-only nix store path.
 
 `rc2/build/`/`install/` are shared, unlocked directories — running two
 such builds concurrently (two sessions, or a session plus a subagent
@@ -70,7 +77,9 @@ This builds with whatever `idris2` `source env.sh` already put first
 on `PATH` — the self-built `install/bin/idris2` by default. If that's
 not set up yet, add `idris2` back to the `-p` list above (nixpkgs'
 `idris2` package is bootstrap-only per project policy, so only reach
-for this when you specifically lack a self-built compiler).
+for this when you specifically lack a self-built compiler) — and in
+that case export `IDRIS2_PREFIX="$(pwd)/install"` first, since
+nixpkgs' `idris2` has no baked-in prefix of its own.
 
 `--install` also builds and installs the runtime C library
 (`libidris2rc2.a` under `install/idris2-0.8.0/support/rc2`) via
@@ -146,11 +155,15 @@ list above only if you specifically lack a self-built compiler
   bare `cd` before the `nix-shell` call does not carry into it;
   `cd` has to happen *inside* the `--run '...'` string, which is why
   the commands above are shaped that way.
-- **Forgetting `IDRIS2_PREFIX` before `idris2 --install`** silently
-  installs into the default (often read-only, nix-store-adjacent)
-  location instead of this repo's own `install/` tree, and
-  `idris2-rc2 --cg rc2` then can't find `support/rc2`'s runtime
-  library. Always export it relative to the repo root first.
+- **`IDRIS2_PREFIX` is normally unnecessary** with the self-built
+  `idris2` from `env.sh` — it already defaults to this repo's own
+  `install/` tree on its own (`idris2 --prefix` confirms it). It only
+  becomes relevant again when deliberately forcing nixpkgs' bootstrap
+  `idris2` instead (see "Build" above): that one defaults to its own
+  read-only nix store path, so `idris2 --install` there needs
+  `IDRIS2_PREFIX` exported first or it'll silently miss this repo's
+  `install/` tree, and `idris2-rc2 --cg rc2` then can't find
+  `support/rc2`'s runtime library.
 - **Running a build/install step by hand, outside `smoke.sh`/
   `verify.sh`/`bench.sh`, bypasses the build lock** — if doing so
   while another session/subagent might also be building, wrap it with

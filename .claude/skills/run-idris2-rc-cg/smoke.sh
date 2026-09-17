@@ -44,7 +44,10 @@ if [ "$DO_BUILD" = 1 ] || [ ! -x rc2/build/exec/idris2-rc2 ]; then
     exit 1
   fi
   echo "== building rc2 =="
-  export IDRIS2_PREFIX="$(pwd)/install"
+  # No IDRIS2_PREFIX export needed: the self-built idris2 from env.sh
+  # already defaults to this repo's own install/ on its own (baked in
+  # at bootstrap time -- `idris2 --prefix` confirms it). Only the
+  # nixpkgs bootstrap fallback above would need it set explicitly.
   RC2_DIR="$UNIT_DIR/rc2"
   # shellcheck source=/dev/null
   source "$RC2_DIR/tests/build-lock.sh"
