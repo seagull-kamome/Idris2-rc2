@@ -54,9 +54,15 @@ needed only for what's below.
    wants the *caller* to already own the storage for a non-trivial-size
    `struct io_uring` (the mmap'd ring bookkeeping struct itself) --
    Idris has nowhere to put that on its own. `idris2rc2_iouring_queue_init`
-   heap-allocates one and returns the pointer (`NULL` on failure, same
-   `Maybe`-shaped contract as `libs/notcurses`'s own `init`); paired
-   with `idris2rc2_iouring_queue_exit` to tear it down and free it.
+   -- a real compiled function, `iouring_util.c` -- heap-allocates one
+   and returns the pointer (`NULL` on failure, same `Maybe`-shaped
+   contract as `libs/notcurses`'s own `init`); paired with
+   `idris2rc2_iouring_queue_exit` to unregister the ring from the
+   kernel and free that allocation (`System.FFI.free`, idris2-src's
+   own base library -- `idris2rc2_iouring_make_sockaddr`'s own return
+   value, a bare `malloc`'d block with nothing else to unregister,
+   frees the same way, straight from `System.IO.Uring`'s own `exit`;
+   no shim function of its own for that half).
 2. **`io_uring_wait_cqe`/`io_uring_peek_cqe`** write their result
    through a `struct io_uring_cqe **` out-parameter -- the same
    "nowhere to put the address of a local pointer" problem `%foreign`
@@ -75,9 +81,10 @@ needed only for what's below.
    `struct sockaddr` built from a host/port pair -- genuine work
    (`getaddrinfo`, resolving a hostname or numeric address, IPv4 or
    IPv6), not something a bare inline wrapper can do.
-   `idris2rc2_iouring_make_sockaddr` is a real compiled function
-   (`iouring_util.c`, the only genuinely non-inline piece of this
-   whole shim); `idris2rc2_iouring_sockaddr_family`/`_len` (both
+   `idris2rc2_iouring_make_sockaddr` is a real compiled function too
+   (`iouring_util.c`, alongside `queue_init`/`_exit` above -- the only
+   two genuinely non-inline pieces of this whole shim);
+   `idris2rc2_iouring_sockaddr_family`/`_len` (both
    `static inline`, reading `sockaddr`'s own `sa_family` field) let the
    Idris side compute the `addrlen` `io_uring_prep_connect` needs
    without a second out-parameter.

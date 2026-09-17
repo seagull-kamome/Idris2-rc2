@@ -46,7 +46,3 @@ void *idris2rc2_iouring_make_sockaddr(char const *host, uint16_t port) {
   freeaddrinfo(res);
   return addr;
 }
-
-void idris2rc2_iouring_free_sockaddr(void *addr) {
-  free(addr);
-}

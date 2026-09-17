@@ -53,9 +53,15 @@ test.c -luring'`——実際にリングのinit/submit/waitを一往復させる
    *呼び出し側*が既に非自明なサイズの`struct io_uring`(リング自身の
    ブックキーピング用に mmap される構造体)の記憶域を所有していることを
    前提としています——Idris側にはそれを自力で置く場所がありません。
-   `idris2rc2_iouring_queue_init`はヒープにそれを確保してポインタを返します
-   (失敗時は`NULL`——`libs/notcurses`自身の`init`と同じ`Maybe`形の契約です)。
-   対になる`idris2rc2_iouring_queue_exit`が、それを解体・解放します。
+   `idris2rc2_iouring_queue_init`(`iouring_util.c`内の、実際にコンパイル
+   される関数)はヒープにそれを確保してポインタを返します(失敗時は
+   `NULL`——`libs/notcurses`自身の`init`と同じ`Maybe`形の契約です)。対になる
+   `idris2rc2_iouring_queue_exit`が、リングをカーネルから登録解除したうえで
+   その確保分を解放します(`System.FFI.free`——idris2-src自身のbaseライブラリ
+   が提供するもの。`idris2rc2_iouring_make_sockaddr`の戻り値の方——単なる
+   `malloc`済みブロックで、登録解除すべきものが他に何もありません——も同じ
+   関数で解放しており、こちらは`System.IO.Uring`自身の`exit`から直接呼んで
+   いるだけで、専用のシム関数は用意していません)。
 2. **`io_uring_wait_cqe`/`io_uring_peek_cqe`**は、結果を`struct io_uring_cqe
    **`というout引数経由で書き込みます——「ローカル変数のポインタのアドレスを
    置く場所がない」という、`%foreign`には答えのない同じ問題です。本当に成功
@@ -72,8 +78,9 @@ test.c -luring'`——実際にリングのinit/submit/waitを一往復させる
    本物の`struct sockaddr`が必要です——これは本当の作業です(`getaddrinfo`で
    ホスト名または数値アドレスをIPv4/IPv6として解決する処理で、素のinline
    ラッパーにできることではありません)。`idris2rc2_iouring_make_sockaddr`は
-   実際にコンパイルされる関数です(`iouring_util.c`——このシム全体の中で唯一
-   本当にinlineでない部分)。`idris2rc2_iouring_sockaddr_family`/`_len`
+   こちらも実際にコンパイルされる関数です(`iouring_util.c`——上記の
+   `queue_init`/`_exit`と合わせて、このシム全体の中で本当にinlineでない
+   のはこの2箇所だけです)。`idris2rc2_iouring_sockaddr_family`/`_len`
    (どちらも`static inline`で、`sockaddr`自身の`sa_family`フィールドを読む
    だけ)は、2つ目のout引数を使わずに、`io_uring_prep_connect`が必要とする
    `addrlen`をIdris側で計算できるようにしています。

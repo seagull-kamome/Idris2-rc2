@@ -65,8 +65,6 @@ prim__prepAcceptSimple : Ptr RawSQE -> Int -> Int -> PrimIO ()
 
 %foreign "C:idris2rc2_iouring_make_sockaddr, libidris2rc2iouring, iouring_util.h"
 prim__makeSockAddr : String -> Bits16 -> PrimIO AnyPtr
-%foreign "C:idris2rc2_iouring_free_sockaddr, libidris2rc2iouring, iouring_util.h"
-prim__freeSockAddr : Ptr RawSockAddr -> PrimIO ()
 %foreign "C:idris2rc2_iouring_sockaddr_len, libidris2rc2iouring, iouring_util.h"
 prim__sockAddrLen : Ptr RawSockAddr -> PrimIO Bits32
 
@@ -180,7 +178,7 @@ exit r = do
   primIO (prim__queueExit r.ptr)
   writeIORef r.pending []
   addrs <- readIORef r.pendingAddrs
-  traverse_ (\a => primIO (prim__freeSockAddr (prim__castPtr a))) addrs
+  traverse_ free addrs
   writeIORef r.pendingAddrs []
 
 -------------------------------------------------------------------------------

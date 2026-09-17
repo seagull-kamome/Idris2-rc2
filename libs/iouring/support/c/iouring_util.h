@@ -65,12 +65,15 @@ static inline void idris2rc2_iouring_prep_accept_simple(struct io_uring_sqe *sqe
 // earlier version of this comment claimed freeing right after prepping
 // was safe, and System.IO.Uring's own `prepConnect` briefly did exactly
 // that -- produced a real `-EAFNOSUPPORT` failure every time, from the
-// kernel reading already-freed memory as the sockaddr). Free with
-// idris2rc2_iouring_free_sockaddr only once nothing needs it anymore --
-// System.IO.Uring's own `prepConnect` keeps it alive via the owning
-// `URing`'s own `pendingAddrs` until `exit` instead.
+// kernel reading already-freed memory as the sockaddr). Free only once
+// nothing needs it anymore, with `System.FFI.free` (libc `free`, from
+// idris2-src's own base library -- a bare `malloc`'d block needs
+// nothing package-specific to release, unlike `idris2rc2_iouring_queue_init`'s
+// own `struct io_uring`, which `idris2rc2_iouring_queue_exit` also has
+// to unregister from the kernel first) -- System.IO.Uring's own
+// `prepConnect` keeps it alive via the owning `URing`'s own
+// `pendingAddrs` until `exit` instead of freeing it immediately.
 void *idris2rc2_iouring_make_sockaddr(char const *host, uint16_t port);
-void idris2rc2_iouring_free_sockaddr(void *addr);
 
 // `sockaddr`'s own `sa_family` (AF_INET=2/AF_INET6=10 on Linux, stable
 // to hardcode the same way libs/notcurses's own NCKEY_MOD_* bits are --
