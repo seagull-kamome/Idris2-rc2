@@ -18,13 +18,16 @@
 ||| a `struct sockaddr` built from a host/port pair (`getaddrinfo`, a
 ||| real function, not a bare inline wrapper). See `doc/iouring.md` for
 ||| the full design, scope, and what this package deliberately doesn't
-||| cover yet (fixed buffers/files, multishot ops, linked SQEs, poll).
-||| Linux only, `--cg rc2` (every `%foreign` binding here is C-only).
+||| cover yet (fixed buffers/files, multishot recv/poll, linked SQEs --
+||| `prepMultishotAccept` is this package's only multishot operation so
+||| far). Linux only, `--cg rc2` (every `%foreign` binding here is
+||| C-only).
 module System.IO.Uring
 
 -- Copyright 2026, Hattori,Hiroki. All rights reserved.
 -- This module was licensed by BSD3.
 
+import Data.Bits
 import Data.Buffer
 import Data.IORef
 import System.FFI
@@ -62,6 +65,8 @@ prim__cqeFlags : Ptr RawCQE -> PrimIO Bits32
 
 %foreign "C:idris2rc2_iouring_prep_accept_simple, libidris2rc2iouring, iouring_util.h"
 prim__prepAcceptSimple : Ptr RawSQE -> Int -> Int -> PrimIO ()
+%foreign "C:idris2rc2_iouring_prep_multishot_accept_simple, libidris2rc2iouring, iouring_util.h"
+prim__prepMultishotAcceptSimple : Ptr RawSQE -> Int -> Int -> PrimIO ()
 
 %foreign "C:idris2rc2_iouring_make_sockaddr, libidris2rc2iouring, iouring_util.h"
 prim__makeSockAddr : String -> Bits16 -> PrimIO AnyPtr
@@ -81,6 +86,8 @@ prim__submit : Ptr RawURing -> PrimIO Int
 prim__submitAndWait : Ptr RawURing -> Bits32 -> PrimIO Int
 %foreign "C:io_uring_cqe_seen, liburing, liburing.h"
 prim__cqeSeen : Ptr RawURing -> Ptr RawCQE -> PrimIO ()
+%foreign "C:io_uring_prep_cancel64, liburing, liburing.h"
+prim__prepCancel64 : Ptr RawSQE -> Bits64 -> Int -> PrimIO ()
 
 -- `io_uring_prep_*` (all `static inline` in liburing.h -- see this
 -- module's own doc comment)
@@ -279,6 +286,84 @@ export
 prepAccept : SQE -> (fd : Int) -> (flags : Int) -> IO ()
 prepAccept sqe fd flags = primIO (prim__prepAcceptSimple sqe.ptr fd flags)
 
+||| Witnesses one still-armed multishot-accept registration (see
+||| `prepMultishotAccept`). Opaque and carries no `Ptr` of its own --
+||| once submitted, the kernel owns the SQE for as long as the
+||| registration stays armed, so there is nothing left to hold onto but
+||| the `userData` tag used to recognise its completions.
+|||
+||| This is *not* a compiler-enforced linear resource, even though a
+||| first attempt at this API tried exactly that (marking
+||| `readMultishotAccept`'s own argument multiplicity 1): a value
+||| obtained from an ordinary `IO` action via `x <- action` is bound at
+||| unrestricted multiplicity by `Prelude.Monad`'s own generic bind (its
+||| continuation type carries no multiplicity annotation of its own),
+||| regardless of what multiplicity any *later* function attaches to
+||| its own parameter -- confirmed directly, with standalone repros,
+||| during this package's own development: a `(1 t : Token) -> ...`
+||| consuming function called twice on the same do-bound `t` type-checks
+||| clean under plain `IO`, and so does never consuming an `(1 x : Int)`
+||| pattern-matched out of a wrapper type at all. Genuine compile-time
+||| protection needs the whole call chain run under
+||| `Control.Linear.LIO`'s own `L`/`L1` in place of plain `IO` (exactly
+||| the second layer the sibling `network` package's own
+||| `Control.Linear.Network` already adds on top of plain
+||| `Network.Socket`) -- tried here too, but abandoned: it does not
+||| compose with waiting on this registration's own completions
+||| *together* with unrelated ones (`prepConnect`/`prepSend`/`prepRecv`
+||| completions on the very same ring, exactly how `tests/TestSocket.idr`
+||| itself uses one) through a single shared `waitCompletion` loop,
+||| without dedicating an entire separate ring to multishot accept alone.
+|||
+||| So this is the same kind of caller obligation `SQE`'s own single-use
+||| discipline already is, documented rather than type-enforced:
+||| `readMultishotAccept` is the only function that produces or consumes
+||| one, and a fresh token is only worth continuing to use once the
+||| `Completion` just read says the registration is still armed
+||| (`hasMore`) -- once it says otherwise, treat every copy of the old
+||| `MultishotAccept` as dead and stop reading completions under its
+||| `userData`.
+export
+data MultishotAccept : Type where
+  MkMultishotAccept : (userData : Bits64) -> MultishotAccept
+
+||| Arms `fd` (a listening socket, already `bind`/`listen`ed
+||| synchronously) to keep accepting connections from a single SQE:
+||| every accepted connection generates its own `Completion` tagged with
+||| `userData`, without needing to `prepAccept` again in between --
+||| unlike `prepAccept`, this SQE is not consumed by the first
+||| completion it produces. `userData` is mandatory (not set separately
+||| via `setUserData`) because a caller needs it to pick this
+||| registration's own completions out of the ring's shared completion
+||| stream, especially with more than one multishot registration live
+||| at once. The peer's address isn't exposed, same as `prepAccept`.
+|||
+||| Each resulting `Completion`'s `res` is a newly accepted socket
+||| descriptor (or a negative `-errno`) exactly like `prepAccept`'s;
+||| feed it and the returned `MultishotAccept` token to
+||| `readMultishotAccept` to find out whether more are still coming.
+export
+prepMultishotAccept : SQE -> (fd : Int) -> (flags : Int) -> (userData : Bits64) -> IO MultishotAccept
+prepMultishotAccept sqe fd flags userData = do
+  primIO (prim__prepMultishotAcceptSimple sqe.ptr fd flags)
+  primIO (prim__sqeSetData64 sqe.ptr userData)
+  pure (MkMultishotAccept userData)
+
+||| Cancels a still-outstanding request by the `userData` its own `SQE`
+||| was tagged with (`setUserData`, or `prepMultishotAccept`'s own
+||| mandatory tag) -- `flags = 0` cancels the single matching request,
+||| `Uring.cancelAll` cancels every request currently tagged with it.
+||| This `SQE`'s own completion (`res`) reports whether anything was
+||| actually found to cancel (`0` on success, `-ENOENT` if the target
+||| had already finished or didn't exist, `-EALREADY` if cancellation
+||| is already in progress for it) -- it is not the *target*'s own
+||| completion, which (for a cancelled `MultishotAccept`) still arrives
+||| separately afterward with `hasMore = False`, same as any other way
+||| that registration could end.
+export
+prepCancel64 : SQE -> (targetUserData : Bits64) -> (flags : Int) -> IO ()
+prepCancel64 sqe targetUserData flags = primIO (prim__prepCancel64 sqe.ptr targetUserData flags)
+
 ||| Connects the socket `fd` (already created, e.g. via upstream
 ||| `Network.Socket.socket`) to `host:port` -- `host` may be a hostname
 ||| or a numeric IPv4/IPv6 address (resolved via `getaddrinfo`,
@@ -351,8 +436,9 @@ submitAndWait r waitNr = primIO (prim__submitAndWait r.ptr (cast waitNr))
 ||| result (positive/zero on success -- a byte count, a new fd, ... --
 ||| or a negative `-errno` on failure; see each `prep*` function's own
 ||| doc comment for what `res` means for it), `flags` is liburing's own
-||| `IORING_CQE_F_*` bits (`0` for every operation this package exposes
-||| so far -- none of them are multishot or use provided buffers).
+||| `IORING_CQE_F_*` bits -- `0` for every single-shot operation this
+||| package exposes, meaningful only for `prepMultishotAccept`'s own
+||| completions (see `hasMore`).
 public export
 record Completion where
   constructor MkCompletion
@@ -366,6 +452,17 @@ readCompletion cqe = do
   res <- primIO (prim__cqeRes cqe)
   fl <- primIO (prim__cqeFlags cqe)
   pure (MkCompletion ud res fl)
+
+||| `IORING_CQE_F_MORE`: whether the request that generated `c` will
+||| still generate further completions after this one -- meaningful
+||| only for a multishot-style request (currently just
+||| `prepMultishotAccept`'s own `MultishotAccept`, which threads this
+||| through `readMultishotAccept` instead of asking a caller to check
+||| it directly). `False` for any single-shot `prep*` call's own
+||| completion here too, since none of them ever set the bit.
+export
+hasMore : Completion -> Bool
+hasMore c = (c.flags .&. 0x2) /= 0
 
 ||| Blocks until at least one completion is ready, consumes exactly
 ||| one, and returns it -- combines `io_uring_wait_cqe` with the
@@ -406,6 +503,24 @@ pollCompletion r = do
        primIO (prim__cqeSeen r.ptr cqe)
        pure (Just c)
 
+||| Decodes one `Completion` known to belong to `reg` (same `userData`
+||| -- there is no way to check this statically, since `reg` only
+||| witnesses that *some* multishot accept registration is still armed,
+||| not which one a given `Completion` came from; compare `userData`
+||| yourself first whenever more than one registration may be live).
+||| Returns the accepted descriptor (or a negative `-errno`), and a
+||| *fresh* `MultishotAccept` alongside it only when `hasMore c` -- i.e.
+||| only when the kernel says this registration will keep generating
+||| completions. `Nothing` means it has stopped (an error, or a matching
+||| `prepCancel64`): treat `reg` and every copy of it as dead from here
+||| on (see `MultishotAccept`'s own doc comment for why this is a
+||| documented discipline, not something the compiler checks) -- arming
+||| `fd` for further connections needs a new `prepMultishotAccept` call.
+export
+readMultishotAccept : MultishotAccept -> (c : Completion) -> (Int, Maybe MultishotAccept)
+readMultishotAccept (MkMultishotAccept userData) c =
+  (c.res, if hasMore c then Just (MkMultishotAccept userData) else Nothing)
+
 -------------------------------------------------------------------------------
 -- Constants
 -------------------------------------------------------------------------------
@@ -437,3 +552,12 @@ namespace OpenFlags
 export
 fsyncDatasync : Bits32
 fsyncDatasync = 1
+
+||| `IORING_ASYNC_CANCEL_ALL`, for `prepCancel64`'s own `flags` -- cancel
+||| every outstanding request tagged with the given `userData` instead
+||| of just one (relevant only if more than one `SQE` was ever tagged
+||| with the same value; a single `MultishotAccept` registration only
+||| ever has the one `SQE` behind it either way).
+export
+cancelAll : Int
+cancelAll = 1

@@ -179,6 +179,31 @@ test.c -luring'`——実際にリングのinit/submit/waitを一往復させる
   コネクション単位の操作だけをカバーしています。`Socket`自身の
   `.descriptor : Int`が、ここにあるすべての`prep*`関数が`fd`として
   期待しているものです。
+- **`MultishotAccept`は、コンパイラが強制する線形リソースではなく、
+  文書化された規律である。** 実際に前者を狙った実装を試みた
+  (`readMultishotAccept`自身の引数の多重度を1と宣言し、消費済みの
+  登録を再利用する、あるいは新しく得たトークンを使わずに捨てる、と
+  いった誤りを型エラーにする、という設計)。しかし、この方式は
+  ここでは成立しない。普通の`IO`アクションから`x <- action`という形で
+  得た値は、`Prelude.Monad`自身の一般的なbindによって無制限の多重度で
+  束縛される。これは、後続のどの関数が自分自身の引数にどんな多重度を
+  宣言していようと変わらない——単独の再現コードで直接確認済みであり、
+  `(1 t : Token) -> ...`という形でトークンを消費する関数を、同じ
+  do束縛の`t`に対して2回呼んでも、素の`IO`の下では型チェックを通って
+  しまう。同様に、ラッパー型から`(1 x : Int)`としてパターンマッチで
+  取り出した値を、一度も消費しなくても型チェックを通ってしまう。
+  本物の保護を得るには、呼び出し連鎖全体を`Control.Linear.LIO`自身の
+  `L`/`L1`の上で走らせる必要がある——これは、姉妹パッケージである
+  `network`自身の`Control.Linear.Network`が、素の`Network.Socket`の上に
+  既に追加している、まさに同じ第二の層である。だが、この登録自身の
+  completionを、同じリング上の無関係なcompletion(`prepConnect`/
+  `prepSend`/`prepRecv`のcompletion——`tests/TestSocket.idr`自身が実際に
+  1つのリングをそう使っている)と一緒に、1つの共有された`waitCompletion`
+  ループで待つ用途には組み合わせられない。マルチショットaccept専用に
+  リングをまるごと1つ分けない限りである。そのため`MultishotAccept`は、
+  `SQE`自身の単発利用という規律と同じ種類の、呼び出し側の責務という
+  扱いに落ち着いた。文書化はする(`hasMore`を、`readMultishotAccept`
+  経由で確認する)が、型検査はしない。
 
 ## スコープ(意図的に先送りしている範囲)
 
@@ -187,10 +212,12 @@ test.c -luring'`——実際にリングのinit/submit/waitを一往復させる
   重く、io_uring自身のAPIの中でも最もスループットの高い部分です。本来なら
   それ自体で本格的な設計作業(バッファ/ファイルスロットのライフタイム管理)
   が必要で、ここでは試みていません。
-- **マルチショット操作**(`IORING_ACCEPT_MULTISHOT`、マルチショットの
-  recv/poll)——1つのSQEが時間をかけて複数のCQEを生成するという形は、
-  上記のこのパッケージ自身の「`waitCompletion`1回==リクエスト1件を完全に
-  消費」という設計判断に、考え直さない限り収まりません。
+- **マルチショットのrecv/poll**(`prepMultishotAccept`が、このパッケージが
+  今のところ対応している唯一のマルチショット操作です)——
+  `IORING_RECV_MULTISHOT`は、それに加えてprovided buffers
+  (`io_uring_register_buf_ring`)がなければ実用にならず、これ自体が
+  別個の、登録のライフタイム管理という設計作業であり、まだ着手して
+  いません。
 - **Linked SQE**(`IOSQE_IO_LINK`——複数の操作を連結し、カーネルが前の
   操作の成功後にのみ次を開始する仕組み)——ここにある`prep*`関数はそれぞれ
   独立しており、連結用のフラグは公開していません。
@@ -210,4 +237,7 @@ test.c -luring'`——実際にリングのinit/submit/waitを一往復させる
 accept/connect/send/recvの往復、どちらも実際の`io_uring_submit`/
 `waitCompletion`の往復を通じて最初から最後まで駆動しており、モックは
 一切使っていません。`tests/`自身の`TestNop.idr`/`TestFile.idr`/
-`TestSocket.idr`を参照してください。
+`TestSocket.idr`を参照してください——`TestSocket.idr`は、`prepAccept`
+(`singleShotTest`)と`prepMultishotAccept`(`multishotTest`:
+1つの登録から2件の接続を受け付け、最後に`prepCancel64`で終端の
+`hasMore = False`completionまで到達させる)の両方をカバーしています。

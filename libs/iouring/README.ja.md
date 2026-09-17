@@ -9,8 +9,10 @@
 ファイルへ直接`#include`します)。残った小さなシム(`support/c/iouring_util.c`)は、
 リングのライフサイクル・`sockaddr`の構築・`%foreign`では直接表現できない一部の
 out引数シグネチャだけを扱っています。設計の全容と、このパッケージが意図的にまだ
-カバーしていない範囲(fixed files/buffers、マルチショット操作、linked SQE、poll、
-`SQPOLL`)については`doc/iouring.ja.md`(英語版は`doc/iouring.md`)を参照してください。
+カバーしていない範囲(fixed files/buffers、マルチショットのrecv/poll、linked SQE、
+`SQPOLL`——マルチショット操作としては、今のところ`prepMultishotAccept`だけに
+対応しています)については`doc/iouring.ja.md`(英語版は`doc/iouring.md`)を
+参照してください。
 
 ## ビルド・テスト
 

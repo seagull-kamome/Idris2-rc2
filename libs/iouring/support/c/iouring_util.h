@@ -55,6 +55,16 @@ static inline void idris2rc2_iouring_prep_accept_simple(struct io_uring_sqe *sqe
   io_uring_prep_accept(sqe, fd, NULL, NULL, flags);
 }
 
+// Same NULL/NULL peer-address collapse as idris2rc2_iouring_prep_accept_simple
+// above, but arms the SQE to keep generating one CQE per accepted
+// connection instead of being consumed by the first one -- see
+// System.IO.Uring's own `prepMultishotAccept` doc comment for the
+// resulting completion-stream contract (an F_MORE flag on each CQE,
+// exposed there as `hasMore`).
+static inline void idris2rc2_iouring_prep_multishot_accept_simple(struct io_uring_sqe *sqe, int fd, int flags) {
+  io_uring_prep_multishot_accept(sqe, fd, NULL, NULL, flags);
+}
+
 // Resolves `host`/`port` (via getaddrinfo, so `host` may be a hostname
 // or a numeric address, IPv4 or IPv6) into a malloc'd sockaddr suitable
 // for io_uring_prep_connect's own `addr` parameter. NULL on resolution

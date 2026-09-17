@@ -22,3 +22,4 @@ rc2/tests/verify-*.log
 rc2/tests/bench-*.log
 rc2/tests/refc-suite/**/*.log
 rc2/tests/refc-suite/**/*.out
+.scratch-lintest/

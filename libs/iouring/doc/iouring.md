@@ -183,6 +183,30 @@ this shim's own `.c` file.
   operations io_uring actually speeds up. A `Socket`'s own
   `.descriptor : Int` is what every `prep*` function here expects for
   `fd`.
+- **`MultishotAccept` is a documented discipline, not a compiler-enforced
+  linear resource** -- a real attempt was made at the latter (marking
+  `readMultishotAccept`'s own argument multiplicity 1, so reusing an
+  already-consumed registration or ignoring a fresh one would be a type
+  error), and it does not work here: a value obtained from an ordinary
+  `IO` action via `x <- action` is bound at unrestricted multiplicity by
+  `Prelude.Monad`'s own generic bind, regardless of what multiplicity
+  any *later* function declares for its own parameter -- confirmed
+  directly with standalone repros (a `(1 t : Token) -> ...`-consuming
+  function called twice on the same do-bound `t` type-checks clean
+  under plain `IO`, and so does never consuming an `(1 x : Int)`
+  pattern-matched out of a wrapper type at all). Genuine protection
+  needs the whole call chain run under `Control.Linear.LIO`'s own
+  `L`/`L1` -- exactly the second layer the sibling `network` package's
+  own `Control.Linear.Network` already adds on top of plain
+  `Network.Socket` -- but that does not compose with waiting on a
+  registration's own completions *together* with unrelated ones
+  (`prepConnect`/`prepSend`/`prepRecv` completions on the very same
+  ring, exactly how `tests/TestSocket.idr` itself uses one) through a
+  single shared `waitCompletion` loop, without dedicating an entire
+  separate ring to multishot accept alone. So `MultishotAccept` ended
+  up the same kind of caller obligation `SQE`'s own single-use
+  discipline already is: documented (`hasMore`, checked via
+  `readMultishotAccept`), not type-checked.
 
 ## Scope (deliberately deferred)
 
@@ -191,10 +215,11 @@ this shim's own `.c` file.
   registration-heavy, highest-throughput end of io_uring's own API;
   real design work of its own (buffer/file-slot lifetime management),
   not attempted here.
-- **Multishot operations** (`IORING_ACCEPT_MULTISHOT`, multishot
-  recv/poll) -- one SQE producing many CQEs over time doesn't fit this
-  package's own "one `waitCompletion` == one fully-consumed request"
-  design choice above without rethinking it.
+- **Multishot recv/poll** (`prepMultishotAccept` is this package's only
+  multishot operation so far) -- `IORING_RECV_MULTISHOT` additionally
+  needs provided buffers (`io_uring_register_buf_ring`) to be workable,
+  which is its own registration-lifetime design work, not attempted
+  yet.
 - **Linked SQEs** (`IOSQE_IO_LINK`, chaining several operations so the
   kernel only starts the next once the previous succeeds) -- each
   `prep*` function here is independent; no linking flag is exposed.
@@ -212,4 +237,8 @@ mostly unautomatable), every operation this package covers is fully
 headless -- file I/O against a real temp file, and a real loopback TCP
 accept/connect/send/recv pair, both driven end to end through actual
 `io_uring_submit`/`waitCompletion` round-trips, no mocking. See
-`tests/`'s own `TestNop.idr`/`TestFile.idr`/`TestSocket.idr`.
+`tests/`'s own `TestNop.idr`/`TestFile.idr`/`TestSocket.idr` --
+the latter covers both `prepAccept` (`singleShotTest`) and
+`prepMultishotAccept` (`multishotTest`: two connections accepted from
+one registration, then a `prepCancel64` to reach its terminal,
+`hasMore = False` completion).

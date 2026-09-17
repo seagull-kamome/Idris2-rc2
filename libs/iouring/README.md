@@ -11,8 +11,9 @@ the small shim that remains (`support/c/iouring_util.c`) only handles
 ring lifetime, `sockaddr` construction, and a couple of out-parameter
 signatures `%foreign` has no way to express directly. See
 `doc/iouring.md` for the full design rationale and what this package
-deliberately doesn't cover yet (fixed files/buffers, multishot ops,
-linked SQEs, poll, `SQPOLL`).
+deliberately doesn't cover yet (fixed files/buffers, multishot recv/
+poll, linked SQEs, `SQPOLL`) -- `prepMultishotAccept` is its one
+multishot operation so far.
 
 ## Build & test
 
