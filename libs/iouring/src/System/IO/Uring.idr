@@ -41,9 +41,6 @@ data RawSQE : Type where [external]
 data RawCQE : Type where [external]
 data RawSockAddr : Type where [external]
 
-%foreign "C:idris2_isNull, libidris2_support, idris_support.h"
-prim__isNull : AnyPtr -> PrimIO Int
-
 -- idris2rc2iouring (this package's own shim; ring lifetime, cqe/sockaddr
 -- out-param collapsing -- see iouring_util.h)
 
@@ -163,7 +160,7 @@ export
 init : (queueDepth : Nat) -> IO (Maybe URing)
 init queueDepth = do
   raw <- primIO (prim__queueInit (cast queueDepth) 0)
-  isN <- primIO (prim__isNull raw)
+  let isN = prim__nullAnyPtr raw
   if isN /= 0
      then pure Nothing
      else do
@@ -209,7 +206,7 @@ export
 getSqe : URing -> IO (Maybe SQE)
 getSqe r = do
   raw <- primIO (prim__getSqe r.ptr)
-  isN <- primIO (prim__isNull raw)
+  let isN = prim__nullAnyPtr raw
   pure $ if isN /= 0 then Nothing else Just (MkSQE (prim__castPtr raw))
 
 ||| Tags `sqe` with an arbitrary 64-bit value, returned verbatim in the
@@ -381,7 +378,7 @@ export
 prepConnect : URing -> SQE -> (fd : Int) -> (host : String) -> (port : Bits16) -> IO Bool
 prepConnect ring sqe fd host port = do
   raw <- primIO (prim__makeSockAddr host port)
-  isN <- primIO (prim__isNull raw)
+  let isN = prim__nullAnyPtr raw
   if isN /= 0
      then pure False
      else do
@@ -477,7 +474,7 @@ export
 waitCompletion : URing -> IO (Maybe Completion)
 waitCompletion r = do
   raw <- primIO (prim__waitCqe r.ptr)
-  isN <- primIO (prim__isNull raw)
+  let isN = prim__nullAnyPtr raw
   if isN /= 0
      then pure Nothing
      else do
@@ -494,7 +491,7 @@ export
 pollCompletion : URing -> IO (Maybe Completion)
 pollCompletion r = do
   raw <- primIO (prim__peekCqe r.ptr)
-  isN <- primIO (prim__isNull raw)
+  let isN = prim__nullAnyPtr raw
   if isN /= 0
      then pure Nothing
      else do

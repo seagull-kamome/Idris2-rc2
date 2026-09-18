@@ -22,9 +22,6 @@ data RawRegex : Type where [external]
 %foreign "C:idris2rc2_regex_compile, libidris2rc2re2, re2_util.h"
 prim__regexCompile : String -> PrimIO AnyPtr
 
-%foreign "C:idris2_isNull, libidris2_support, idris_support.h"
-prim__isNull : AnyPtr -> PrimIO Int
-
 %foreign "C:idris2rc2_regex_free, libidris2rc2re2, re2_util.h"
 prim__regexFree : Ptr RawRegex -> PrimIO ()
 
@@ -73,8 +70,7 @@ export
 compile : String -> IO (Maybe Regex)
 compile pattern = do
   raw <- primIO (prim__regexCompile pattern)
-  isN <- primIO (prim__isNull raw)
-  case isN of
+  case prim__nullAnyPtr raw of
     0 => do
       gcPtr <- onCollect (prim__castPtr {t = RawRegex} raw) (\p => primIO (prim__regexFree p))
       pure (Just (MkRegex gcPtr))

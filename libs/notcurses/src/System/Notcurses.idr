@@ -28,9 +28,6 @@ import System.FFI
 data RawNotcurses : Type where [external]
 data RawNCPlane : Type where [external]
 
-%foreign "C:idris2_isNull, libidris2_support, idris_support.h"
-prim__isNull : AnyPtr -> PrimIO Int
-
 -- idris2rc2notcurses (this package's own shim; struct-by-pointer
 -- construction and ncinput-field caching -- see nc_util.h)
 
@@ -265,7 +262,7 @@ export
 init : (log : LogLevel) -> (marginT, marginR, marginB, marginL : Nat) -> IO (Maybe Notcurses)
 init log marginT marginR marginB marginL = do
   raw <- primIO (prim__ncInit (logLevelCode log) (cast marginT) (cast marginR) (cast marginB) (cast marginL))
-  isN <- primIO (prim__isNull raw)
+  let isN = prim__nullAnyPtr raw
   pure $ if isN /= 0 then Nothing else Just (MkNotcurses (prim__castPtr raw))
 
 ||| Restores the terminal to its pre-`init` state. `False` on failure
@@ -303,7 +300,7 @@ export
 createPlane : (parent : NCPlane) -> (y, x : Int) -> (rows, cols : Nat) -> (name : String) -> IO (Maybe NCPlane)
 createPlane parent y x rows cols name = do
   raw <- primIO (prim__ncplaneCreate parent.ptr y x (cast rows) (cast cols) name)
-  isN <- primIO (prim__isNull raw)
+  let isN = prim__nullAnyPtr raw
   pure $ if isN /= 0 then Nothing else Just (MkNCPlane (prim__castPtr raw))
 
 ||| Destroys a plane created with `createPlane`. Never call this on

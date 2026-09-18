@@ -66,9 +66,6 @@ prim__compile : String -> Int -> PrimIO AnyPtr
 %foreign "C:idris2rc2_regex_compile_errmsg, libidris2rc2base, posix_regex.h"
 prim__compileErrmsg : PrimIO String
 
-%foreign "C:idris2_isNull, libidris2_support, idris_support.h"
-prim__isNull : AnyPtr -> PrimIO Int
-
 %foreign "C:idris2rc2_regex_free, libidris2rc2base, posix_regex.h"
 prim__free : Ptr RawRegex -> PrimIO ()
 
@@ -123,10 +120,11 @@ export
 compile : {default ere flags : Flags} -> String -> IO (Either String Regex)
 compile {flags} pattern = do
   raw <- primIO (prim__compile pattern (cflagsOf flags))
-  0 <- primIO (prim__isNull raw)
-    | _ => Left <$> primIO prim__compileErrmsg
-  p <- onCollect (prim__castPtr {t = RawRegex} raw) (\q => primIO (prim__free q))
-  pure (Right (MkRegex p))
+  if prim__nullAnyPtr raw /= 0
+     then Left <$> primIO prim__compileErrmsg
+     else do
+       p <- onCollect (prim__castPtr {t = RawRegex} raw) (\q => primIO (prim__free q))
+       pure (Right (MkRegex p))
 
 ||| Number of capturing groups (not counting the whole match, group 0).
 export
@@ -215,16 +213,11 @@ matchAll re input = unsafePerformIO (go 0)
 -- \x (any other) = x)
 -------------------------------------------------------------------------------
 
-nth : Nat -> List a -> Maybe a
-nth _     []        = Nothing
-nth Z     (x :: _)  = Just x
-nth (S k) (_ :: xs) = nth k xs
-
 expandRepl : (spans : List (Maybe (Int, Int))) -> (repl : String) -> (input : String) -> String
 expandRepl spans repl input = pack (go (unpack repl))
   where
     grp : Nat -> List Char
-    grp d = case nth d spans of
+    grp d = case getAt d spans of
               Just (Just span) => unpack (sub input span)
               _                => []
     go : List Char -> List Char
