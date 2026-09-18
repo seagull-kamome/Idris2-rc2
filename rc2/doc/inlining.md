@@ -396,11 +396,11 @@ A callee is inlined at its call site when, whole-program:
   `callCounts`, built via `RCExp.idr`'s general-purpose
   `foldRCNamesD`/`RCNameFold` machinery rather than a bespoke walk);
 - it's a genuine `MkRCFun` (not `RCCon`/`RCForeign`/`RCError`); and
-- it isn't part of any cycle in the whole-program `RAppName` call graph
-  -- a size->=2 Tarjan SCC, or a direct self-edge (the latter catches a
-  function that's still directly self-recursive at this point in the
-  pipeline, e.g. a non-*tail* self-call `Compiler.RC2.Loop` never
-  touches -- inlining that would splice an unbounded copy).
+- `callsBack` says the callee doesn't directly call the caller back --
+  checked fresh at each individual splice decision, not (as originally
+  shipped) by excluding whole-program cycle membership up front. See
+  "Safe despite being part of a larger cycle" below for why this
+  weaker, local, one-hop check is enough.
 
 Unlike Criterion A, there's no separate size threshold. Single-caller
 inlining is *unconditionally* safe to treat as profitable on its own:
@@ -419,6 +419,111 @@ caller is `B`, and `B`'s only caller is `A`, processing `C` into `B`
 *before* processing `B` into `A` means `A` receives the fully-collapsed
 `B`-with-`C`-already-inlined in one pass, no re-run needed for the
 whole chain to collapse.
+
+### Safe despite being part of a larger cycle
+
+Found against a real build, not constructed: compiling `idris2-lsp`
+with `--directive dumprcexpr` turned up
+`rc2_specClosure_Prelude_IO_map_Functor_IO:4852`, a `Compiler.RC2.
+SpecClosure` clone with exactly one call site, three lines long, never
+inlined. Tracing the whole-program `RAppName` graph by hand (grepping
+the dump for `call NAME [` per definition) found why: it sits on a
+real cycle --
+
+```
+:4852 -> rewriteSub:33 -> rewriteCExp -> rewriteSub
+       -> rc2_specClosure_Core_Core__lt_star_gt:183 -> rewriteSub:36
+       -> rc2_specClosure_Core_Core__lt_star_gt:181 -> rewriteSub:34 -> :4852
+```
+
+`Compiler.Opts.Constructor.rewriteCExp`/`rewriteSub` is a classic
+recursive expression-tree rewriter; `SpecClosure` built clones at
+several distinct points *inside* that same recursive structure, each
+for a different closure target, so the clones ended up woven into the
+cycle themselves. The original whole-program cyclic-SCC exclusion
+correctly (if too bluntly) caught every one of them.
+
+**The refined criterion.** A callee `b`, single-caller from `a`, is
+safe to splice into `a` as long as `b` does not *directly* call `a`
+back -- checked locally, one hop, fresh at each splice decision
+(`callsBack`), rather than by excluding `b` for merely sitting
+somewhere on a much larger cycle it has no direct part in closing.
+
+**Proof.** Fix the invariant **I**: no function in the whole-program
+call graph has a direct edge to itself. Splicing never renames a
+call's own target `Name` (only the callee's internal `Int` var ids --
+see "Every id gets renamed on the way in" below), so after splicing
+`b` into `a`:
+
+$$\text{outEdges}'(a) = \big(\text{outEdges}(a) \setminus \{a \to b\}\big) \cup \text{outEdges}(b)$$
+
+The only edges newly added to `a`'s outgoing set are `b`'s own old
+ones. `callsBack` requires $a \notin \text{outEdges}(b)$, so this union
+still excludes $a \to a$. No other definition's own body is touched by
+this splice. So **I** holds after the splice whenever it held before
+-- by induction, it holds after any number of these splices, in any
+order, to a fixpoint or otherwise. (**I** holds initially: `Compiler.
+RC2.Loop`/`MutualLoop` already remove tail self-recursion into `RLoop`
+before this pass ever runs, and a genuine non-tail self-call inflates
+its own `callCounts` past 1 via its own `RAppName` occurrence, already
+excluding it from `eligible` on that basis alone.)
+
+**Walking the `a -> b -> c -> a` case.** `b` doesn't call `a` back
+(only `c` does), so splicing `b` into `a` is allowed; the graph
+shortens to `a -> c -> a`, a 2-cycle, still no self-loop. Now `c` *is*
+single-caller (`a`) but *does* call `a` back directly -- `callsBack`
+correctly refuses to splice it. The cascade halts exactly where
+splicing would have produced a literal self-loop, never before.
+
+**Not even load-bearing for runtime correctness.** `Emit.idr`'s own
+`emitRC` never renders an `InTailPosition` `RAppName` as a real call at
+all -- `tryBuildClosureInto` turns it into a closure build instead,
+returned up to whichever ancestor call site is `NotInTailPosition` and
+wraps its own call in `idris2rc2_trampoline(...)`, which dispatches
+that closure (and whatever further closures dispatching it produces)
+in a flat `while` loop, O(1) C stack regardless of how many times it
+iterates. This is completely generic: it doesn't matter whether the
+`RAppName` it's rendering existed before this pass ran, or was only
+just created by splicing `c` into `a` moments ago. So even the one case
+`callsBack` *does* still refuse -- `c` calling `a` back, which would
+leave `a` with a brand new direct tail self-call after splicing --
+would be runtime-safe if allowed: `a`'s own new tail position would
+just become a closure build like any other, dispatched by whatever
+called `a` from outside. `callsBack` forbids it anyway, purely to keep
+`applyLateInline`'s own fixpoint loop from ever having to reason about
+a function transiently holding a fresh self-loop mid-round -- whole-
+program `callCounts` would disqualify such a function from `eligible`
+again by the very next round regardless (its own new self-reference
+counts as an occurrence), so skipping that detour costs nothing worth
+having. A self-loop landing in *non*-tail position instead (also
+possible, depending on where in `c`'s own body the call to `a` sat)
+isn't covered by the trampoline at all -- but it isn't a new risk
+either: a direct non-tail self-call just recurses through the ordinary
+C call stack, exactly the same cost an unstructured non-tail-recursive
+function already has with no inlining involved anywhere.
+
+**Open question: native-typed tail positions, not checked.** The
+argument above is about `RAppName` specifically, which is all this
+pass ever sees -- `Compiler.RC2.LateInline` runs strictly before
+`Compiler.RC2.DualABI`, so nothing here is `RAppNameRep` yet, and
+every return type in play is still uniformly `RBoxed`. But splicing
+can change the *shape* `DualABI` sees afterward: a caller `a` that
+gains a callee's tail positions through this relaxed cyclic exclusion
+might, post-splice, present `DualABI`'s own native-worker-eligibility
+analysis (`tailValueReps`/`uniformTailType`) with a different tail-
+position mix than `a` had standalone. If that analysis ever promoted
+`a` to a *native*-returning worker over a tail position that still
+structurally needs the trampoline treatment above (a `RLoop`-conversion
+leftover, still relying on the closure-build fallback), there would be
+nothing left to defer it as -- a native scalar can't represent "come
+back later," only `RBoxed` can. `tailValueReps`'s own "every tail exit
+agrees on the same type" uniformity check is presumably what would
+catch a genuinely mixed case and refuse promotion, the same way
+"Multiple loops per function" below turned out to already be handled
+generically -- but this specific interaction (relaxed cyclic inlining
+feeding into `DualABI`'s native-worker promotion) has not actually been
+traced through or tested the way the boxed/trampoline case above has.
+Treat it as unverified, not as cleared, until someone does.
 
 ### Iterated to a fixpoint, re-pruning dead code every round
 

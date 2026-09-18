@@ -59,9 +59,13 @@ record Analysis where
   graph : Graph
   ||| Total `RAppName` occurrences of each name, whole-program.
   callCounts : SortedMap Name Nat
-  ||| Every eligible callee: exactly one call site anywhere, a genuine
-  ||| `MkRCFun` (not `RCCon`/`RCForeign`/`RCError`), and not part of any
-  ||| cycle (a size>=2 SCC, or a direct self-edge) in `graph`.
+  ||| Every eligible callee: exactly one call site anywhere, and a
+  ||| genuine `MkRCFun` (not `RCCon`/`RCForeign`/`RCError`). Being part
+  ||| of a whole-program cycle (a size>=2 SCC, or a direct self-edge) in
+  ||| `graph` does *not* disqualify a callee on its own anymore --
+  ||| `callsBack`, consulted by `inlineInto` fresh at each individual
+  ||| splice decision, is what replaces that. See `rc2/doc/inlining.md`'s
+  ||| "Safe despite being part of a larger cycle" for the full argument.
   eligible : SortedSet Name
   ||| Every name, callees before callers where the call graph orders
   ||| them at all (`tarjanSCCs`'s own bottom-up ordering, reused
@@ -76,17 +80,30 @@ analyse defs =
         callCounts = foldl (\acc, n => insertWith (+) n 1 acc) (the (SortedMap Name Nat) empty)
                        (concatMap (callOccurrencesOf . snd) defs)
         sccs = tarjanSCCs graph
-        cyclic = SortedSet.fromList (concat (filter (\g => length g >= 2) sccs))
-                   `union` SortedSet.fromList (filter (\n => contains n (fromMaybe empty (lookup n graph))) (keys graph))
         defOf = SortedMap.fromList defs
         isFun : Name -> Bool
         isFun n = case lookup n defOf of
                        Just (MkRCFun _ _ _ _) => True
                        _ => False
         eligible = SortedSet.fromList $ mapMaybe
-                     (\(n, c) => if c == 1 && isFun n && not (contains n cyclic) then Just n else Nothing)
+                     (\(n, c) => if c == 1 && isFun n then Just n else Nothing)
                      (SortedMap.toList callCounts)
     in MkAnalysis graph callCounts eligible (reverse (concat sccs))
+
+||| Whether `callee`'s own body (looked up in `defOf`) directly calls
+||| `caller` -- checked fresh at each individual splice decision
+||| (`inlineInto`'s own `RAppName` cases), rather than once, whole-
+||| program, via `analyse`'s own (removed) cyclic-SCC exclusion. See
+||| `rc2/doc/inlining.md`'s "Safe despite being part of a larger cycle"
+||| for the full argument: why this one-hop check is sufficient (no
+||| deeper, transitive check ever needed), and why it isn't even
+||| load-bearing for runtime correctness -- only for keeping
+||| `applyLateInline`'s own fixpoint-loop bookkeeping simple.
+callsBack : SortedMap Name RCDef -> (caller : Name) -> (callee : Name) -> Bool
+callsBack defOf caller callee =
+    case lookup callee defOf of
+         Just d => contains caller (calleesOf d)
+         Nothing => False
 
 ------------------------------------------------------------------------
 -- Splicing one call site
@@ -388,8 +405,13 @@ spliceCall _ _ d _ = pure $ RCrash EmptyFC "[rc2] internal: LateInline target wa
 ||| `spliceCall`'s own `buildSplice` -- see that function's own doc
 ||| comment for why this, not the callee's own declared param `Rep`,
 ||| decides how a spliced-in argument gets bound.
-inlineInto : {auto v : Ref VarId Int} -> SortedMap Name RCDef -> SortedSet Name -> RCExp -> Core RCExp
-inlineInto defOf eligible = go empty []
+|||
+||| `self`: the name of the one definition whose body this call is
+||| walking (`goOrder`'s own `n`) -- consulted, via `callsBack`, at
+||| every `RAppName` this walk finds, to refuse splicing a callee that
+||| directly calls `self` back. See `callsBack`'s own doc comment.
+inlineInto : {auto v : Ref VarId Int} -> SortedMap Name RCDef -> SortedSet Name -> (self : Name) -> RCExp -> Core RCExp
+inlineInto defOf eligible self = go empty []
   where
    mutual
     -- `where` clauses aren't implicitly `mutual` in this Idris2 version
@@ -408,7 +430,7 @@ inlineInto defOf eligible = go empty []
     -- (Layer 3) for the regression a hardcoded `[]` here reproduces.
     go : SortedMap Int Rep -> List (Int, Rep) -> RCExp -> Core RCExp
     go reps loopSlots (RAppName fc lazy n args) =
-        if contains n eligible
+        if contains n eligible && not (callsBack defOf self n)
            then case lookup n defOf of
                      Just d => spliceCall fc reps d args
                      Nothing => pure (RAppName fc lazy n args)
@@ -421,7 +443,7 @@ inlineInto defOf eligible = go empty []
     -- promotion above; see `rc2/doc/inlining.md`, Layer 2/3, for the
     -- measured cost of not doing this).
     go reps loopSlots (RLet fc var RBoxed value@(RAppName vfc lazy n args) body) =
-        if contains n eligible
+        if contains n eligible && not (callsBack defOf self n)
            then case lookup n defOf of
                      Just d => do
                          splicedValue <- spliceCall vfc reps d args
@@ -518,10 +540,10 @@ applyLateInlineOnce roots defs0 = do
     goOrder eligible (n :: rest) defOf = do
         defOf' <- case lookup n defOf of
                        Just (MkRCFun args retRep isWorker body) => do
-                           body' <- inlineInto defOf eligible body
+                           body' <- inlineInto defOf eligible n body
                            pure (insert n (MkRCFun args retRep isWorker body') defOf)
                        Just (MkRCError body) => do
-                           body' <- inlineInto defOf eligible body
+                           body' <- inlineInto defOf eligible n body
                            pure (insert n (MkRCError body') defOf)
                        _ => pure defOf
         goOrder eligible rest defOf'
