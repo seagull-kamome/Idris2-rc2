@@ -420,6 +420,53 @@ caller is `B`, and `B`'s only caller is `A`, processing `C` into `B`
 `B`-with-`C`-already-inlined in one pass, no re-run needed for the
 whole chain to collapse.
 
+### Iterated to a fixpoint, re-pruning dead code every round
+
+Originally a single whole-program pass. `analyse`'s own `eligible` set
+was computed once, from `defs` as they stood the moment this pass
+started -- a callee that only becomes single-caller *after* this pass
+already ran stayed undetected, since nothing re-derived `callCounts`
+again within one round. `applyLateInline` now wraps the single-round
+logic (`applyLateInlineOnce`) in a loop, re-running `analyse` from
+scratch against the just-updated `defs` each time, until a round finds
+nothing left to prune or splice, or `maxLateInlineIterations` (4, same
+value and rationale as `RC2.idr`'s own `maxConstFoldIterations`) is
+reached.
+
+The fixpoint loop by itself only reaches a *narrow* class of new
+opportunity -- one that genuinely only exists because of something
+*this pass's own* splicing changed. A different, initially more
+tempting case does *not* qualify: a callee with two call sites when
+some round's own `analyse` runs, one of them inside a definition that
+same round rewrites into unreachable dead weight. Nothing about
+*inlining itself* deletes a definition from `defs` -- that stale call
+site stays physically present, and `analyse`'s own `callCounts`
+(`RAppName` occurrences, full stop) can't tell "still called" apart
+from "called only from code nothing reaches anymore," so the callee
+keeps looking "more than one caller" no matter how many further rounds
+ran.
+
+Fixed by having `applyLateInlineOnce` call
+`Compiler.RC2.DeadCode.pruneDeadDefs roots` -- reused exactly as
+`Compiler.RC2.DeadCode` itself calls it, `roots` threaded in as a new
+parameter of both `applyLateInlineOnce` and `applyLateInline` -- as the
+very first thing it does, every round, before `analyse` ever counts
+anything. Deliberately *not* a reason to drop the later, separate
+`pruneDeadDefs roots` call after `DualABI`: `DualABI` runs after this
+pass entirely and can introduce fresh dead weight of its own (e.g. an
+unused worker/wrapper split) that this pass can never see, so that
+call stays exactly where it was. Also deliberately not a merge of this
+pass's own eligibility graph with `pruneDeadDefs`'s own reachability
+one into a single graph: `pruneDeadDefs`'s `usedFunctionNamesD` counts
+`RUnderApp`/`RCConstClosure` references (a value only ever *stored* as
+a closure, never `RAppName`-called) as genuine uses, on top of
+`RAppName`/`RAppNameRep`, precisely so a function reachable only that
+way survives -- `analyse`'s own `calleesOf`/`callOccurrencesOf`
+deliberately don't (a stored-closure reference is never something this
+pass could inline anyway), so reusing *that* narrower graph for
+reachability would incorrectly prune a function still alive purely as
+a closure value.
+
 ### Every id gets renamed on the way in -- including the callee's own internal ones
 
 Splicing replaces a call's own top-level-argument-to-parameter binding

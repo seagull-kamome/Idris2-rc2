@@ -12,6 +12,7 @@ module Compiler.RC2.SpecClosure
 -- This module was licensed by BSD3.
 
 import Compiler.RC2.ConstFold
+import Compiler.RC2.Emit.Util
 import Compiler.RC2.RCExp
 import Compiler.RC2.Types
 import Compiler.RC2.Util
@@ -204,7 +205,13 @@ buildClone : {auto fr : Ref FreshId Int} -> {auto v : Ref VarId Int}
 buildClone callee argPos paramVar targetName missing capturedCount args retRep body = do
     cloneId <- freshId
     capturedParams <- traverse (const freshVarId) (replicate capturedCount ())
-    let cloneName = MN "rc2_specClosure" cloneId
+    -- Embeds `callee`'s own mangled name (`cName`, exported by
+    -- `Compiler.RC2.Emit.Util` for exactly this reuse) the same way
+    -- `Compiler.RC2.DualABI`'s own `freshName` already does for a
+    -- worker's own name -- a `dumprcexpr`/generated-`.c` reader sees
+    -- which original function a given clone specializes on sight,
+    -- rather than only an opaque counter.
+    let cloneName = MN ("rc2_specClosure_" ++ cName callee) cloneId
     let args' = concatMap (\(i, r) => if i == paramVar
                                           then map (\p => (p, RBoxed)) capturedParams
                                           else [(i, r)]) args

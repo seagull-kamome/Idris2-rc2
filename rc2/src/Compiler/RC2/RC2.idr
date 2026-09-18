@@ -310,7 +310,7 @@ toRCDefs disabled incremental roots lds0 = do
     -- top-level params, never a dual-ABI worker/wrapper split.
     inlined <- if "nolateinline" `elem` disabled
                   then pure looped
-                  else logTime 2 "rc2: Late inline" $ applyLateInline looped
+                  else logTime 2 "rc2: Late inline" $ applyLateInline roots looped
     sunk <- if "nosink" `elem` disabled
                then pure inlined
                else logTime 2 "rc2: Sink" $ pure (map (\(n, d) => (n, applySink d)) inlined)

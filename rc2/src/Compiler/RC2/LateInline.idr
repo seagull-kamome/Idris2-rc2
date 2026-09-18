@@ -15,6 +15,7 @@ module Compiler.RC2.LateInline
 -- Copyright 2026, Hattori,Hiroki. All rights reserved.
 -- This module was licensed by BSD3.
 
+import Compiler.RC2.DeadCode
 import Compiler.RC2.DualABI
 import Compiler.RC2.Loop
 import Compiler.RC2.MutualLoop
@@ -467,15 +468,50 @@ inlineInto defOf eligible = go empty []
 -- Whole-program entry point
 ------------------------------------------------------------------------
 
-||| One pass over the whole program. See the doc's "Eligibility"
-||| section for why `processOrder` (not `defs`'s own order) is used --
-||| a chain of single-caller callees collapses fully in this one call.
-export
-applyLateInline : {auto v : Ref VarId Int} -> List (Name, RCDef) -> Core (List (Name, RCDef))
-applyLateInline defs = do
+||| One pass over the whole program: first drops anything already
+||| unreachable from `roots` (`Compiler.RC2.DeadCode.pruneDeadDefs`,
+||| reused as-is -- see this doc comment's own last paragraph for why
+||| this, rather than leaving cleanup entirely to the later, separate
+||| `Compiler.RC2.DeadCode` pipeline stage), then splices every
+||| remaining single-caller callee (`analyse`'s own `eligible`, now
+||| computed from only the still-reachable definitions) into its one
+||| call site. `False` (alongside `defs` unchanged) only when pruning
+||| removed nothing *and* `eligible` came back empty.
+|||
+||| See the doc's "Eligibility" section for why `processOrder` (not
+||| `defs`'s own order) is used -- a *chain* of single-caller callees
+||| already collapses fully within this one call, without needing a
+||| second round, whenever the whole chain is visible to `analyse` from
+||| the start.
+|||
+||| Pruning first, every round, is what lets `applyLateInline`'s own
+||| fixpoint loop below reach a case that a bare re-run of the splice
+||| step alone never would: a callee with two call sites when this
+||| round's own `analyse` would otherwise run, one of them inside a
+||| definition this same round is about to render (or already has
+||| rendered) unreachable. Without re-pruning first, that stale call
+||| site -- still physically present in `defs`, `analyse`'s own
+||| `callCounts` blind to whether anything still reachable actually
+||| runs it -- would keep the callee looking "more than one caller"
+||| forever, no matter how many further rounds ran; `roots`-driven
+||| dead-code removal is the only thing that can tell "still called"
+||| apart from "called only from code nothing reaches anymore."
+|||
+||| Deliberately not a replacement for the later, separate
+||| `Compiler.RC2.DeadCode.pruneDeadDefs roots` call after `DualABI` --
+||| that one has its own job (`DualABI` runs after this pass entirely
+||| and can introduce fresh dead weight of its own, e.g. an unused
+||| worker/wrapper split, that this pass can never see) and stays
+||| exactly where it is.
+applyLateInlineOnce : {auto v : Ref VarId Int} -> (roots : List Name) -> List (Name, RCDef) -> Core (Bool, List (Name, RCDef))
+applyLateInlineOnce roots defs0 = do
+    let defs = pruneDeadDefs roots defs0
     let an = analyse defs
-    final <- goOrder an.eligible an.processOrder (SortedMap.fromList defs)
-    pure $ map (\(n, d) => (n, fromMaybe d (lookup n final))) defs
+    case leftMost an.eligible of
+         Nothing => pure (length defs /= length defs0, defs)
+         Just _ => do
+             final <- goOrder an.eligible an.processOrder (SortedMap.fromList defs)
+             pure (True, map (\(n, d) => (n, fromMaybe d (lookup n final))) defs)
   where
     goOrder : SortedSet Name -> List Name -> SortedMap Name RCDef -> Core (SortedMap Name RCDef)
     goOrder eligible [] defOf = pure defOf
@@ -489,3 +525,32 @@ applyLateInline defs = do
                            pure (insert n (MkRCError body') defOf)
                        _ => pure defOf
         goOrder eligible rest defOf'
+
+||| Iteration cap for `applyLateInline`'s own whole-program fixpoint
+||| loop -- same rationale as `RC2.idr`'s own `maxConstFoldIterations`
+||| for `foldConstProgram` (chosen the same value, 4, for the same
+||| reason: GHC's own `-fmax-simplifier-iterations` default). Each
+||| round's own `eligible` set can only ever shrink -- a callee spliced
+||| away this round drops to call count 0 and can never regain
+||| eligibility -- so the loop already halts on its own the moment
+||| nothing is left to splice; this cap only guards a pathological
+||| input from iterating unboundedly.
+maxLateInlineIterations : Nat
+maxLateInlineIterations = 4
+
+||| Runs `applyLateInlineOnce` repeatedly (`roots`: same whole-program
+||| entry points `Compiler.RC2.DeadCode.pruneDeadDefs` itself is always
+||| called with -- see that function's own doc comment for why each
+||| round re-prunes with it first) -- see `applyLateInlineOnce`'s own
+||| doc comment for when a further round actually finds something new
+||| to do -- until a round finds nothing left to prune or splice, or
+||| `maxLateInlineIterations` is reached, whichever comes first.
+export
+applyLateInline : {auto v : Ref VarId Int} -> (roots : List Name) -> List (Name, RCDef) -> Core (List (Name, RCDef))
+applyLateInline roots defs0 = go maxLateInlineIterations defs0
+  where
+    go : Nat -> List (Name, RCDef) -> Core (List (Name, RCDef))
+    go Z defs = pure defs
+    go (S fuel) defs = do
+        (changed, defs') <- applyLateInlineOnce roots defs
+        if changed then go fuel defs' else pure defs'
