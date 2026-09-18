@@ -13,7 +13,7 @@
 ||| failure is read with `Network.Socket.Data.getErrno`, the same
 ||| accessor `Network.Socket`'s own `send`/`recv` use.
 |||
-||| Same spirit as `System.Net.Epoll`: the socket surface an
+||| Same spirit as `System.IO.Epoll`: the socket surface an
 ||| event-driven server needs that `network` doesn't expose in a usable
 ||| shape. Linux/POSIX, `--cg rc2` (the `%foreign` bindings are C-only).
 module Network.RC2

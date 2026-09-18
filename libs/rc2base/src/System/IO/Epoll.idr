@@ -6,7 +6,7 @@
 ||| rebind a just-restarted server's listening port). See
 ||| `libs/rc2base/doc/http-server.md` for the design this exists to
 ||| support.
-module System.Net.Epoll
+module System.IO.Epoll
 
 -- Copyright 2026, Hattori,Hiroki. All rights reserved.
 -- This module was licensed by BSD3.

@@ -224,7 +224,7 @@ this shim's own `.c` file.
   kernel only starts the next once the previous succeeds) -- each
   `prep*` function here is independent; no linking flag is exposed.
 - **Poll operations** (`io_uring_prep_poll_add`, io_uring standing in
-  for `epoll`) -- `System.Net.Epoll` already covers this project's own
+  for `epoll`) -- `System.IO.Epoll` already covers this project's own
   event-loop needs (`Network.HTTP.Server`); not duplicated here.
 - **`IORING_SETUP_SQPOLL`/advanced setup flags** -- `init`'s own
   `queueDepth` is the only knob exposed; every `io_uring_setup` flag

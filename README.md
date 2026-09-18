@@ -140,7 +140,7 @@ libs/rc2base/
 │                  Data.Double.RC2, Data.Integer.GMP,
 │                  Network.{RC2,URL}, Network.HTTP.{Route,Router,Server},
 │                  System.Concurrency.RC2, System.FFI.C.{Array,Ptr,Sizeof},
-│                  System.GC.RC2, System.IO.MemStream, System.Net.Epoll,
+│                  System.GC.RC2, System.IO.Epoll, System.IO.MemStream,
 │                  System.Random.Xoroshiro{128PlusPlus,64StarStar},
 │                  Text.Encoding.UTF8, Text.Regex.POSIX
 ├── src/           the above modules' own Idris2 source
@@ -159,7 +159,7 @@ primitives)/`System.Random` (two from-scratch replacements for
 upstream primitives rc2 has no C backend for -- see `TODO.md`'s
 "Upstream stdlib `%foreign` declarations with no C/RefC backend at
 all" entry), it now also has a small event-driven HTTP/1.1 server
-(`Network.HTTP.Server`, on `System.Net.Epoll`) with a type-safe,
+(`Network.HTTP.Server`, on `System.IO.Epoll`) with a type-safe,
 Express-style router (`Network.HTTP.Route`/`Router`), URL parsing
 (`Network.URL`), POSIX `<regex.h>` bindings (`Text.Regex.POSIX` --
 RE2 bindings instead live in the sibling `libs/text-re2/` package, see

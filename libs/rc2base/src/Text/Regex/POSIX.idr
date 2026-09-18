@@ -91,7 +91,7 @@ prim__cIcase : PrimIO Int
 prim__cNewline : PrimIO Int
 
 -- Platform REG_* values. Cached via unsafePerformIO, same pattern as
--- System.Net.Epoll's own flag constants -- OS-fixed, not per-call.
+-- System.IO.Epoll's own flag constants -- OS-fixed, not per-call.
 cExtended, cIcase, cNewline : Int
 cExtended = unsafePerformIO (primIO prim__cExtended)
 cIcase    = unsafePerformIO (primIO prim__cIcase)

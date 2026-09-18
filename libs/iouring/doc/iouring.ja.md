@@ -223,7 +223,7 @@ test.c -luring'`——実際にリングのinit/submit/waitを一往復させる
   独立しており、連結用のフラグは公開していません。
 - **Poll操作**(`io_uring_prep_poll_add`——io_uringを`epoll`の代わりに
   使う用途)——このプロジェクト自身のイベントループの必要は既に
-  `System.Net.Epoll`がカバーしており(`Network.HTTP.Server`)、ここでは
+  `System.IO.Epoll`がカバーしており(`Network.HTTP.Server`)、ここでは
   重複させていません。
 - **`IORING_SETUP_SQPOLL`/その他の高度なセットアップフラグ**——`init`
   自身の`queueDepth`だけが公開されているノブです。既定を超える

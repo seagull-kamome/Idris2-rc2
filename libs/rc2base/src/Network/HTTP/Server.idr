@@ -1,5 +1,5 @@
 ||| A minimal, single-threaded, event-driven HTTP/1.1 server.
-||| One `epoll` loop (via `System.Net.Epoll`) drives everything --
+||| One `epoll` loop (via `System.IO.Epoll`) drives everything --
 ||| accepting connections, parsing requests, and flushing responses --
 ||| on a single thread. A `Handler` answers through a `respond`
 ||| continuation rather than a return value, so it can reply either
@@ -34,7 +34,7 @@ import Network.Socket.Data
 
 import System.Concurrency
 import System.Concurrency.RC2
-import System.Net.Epoll
+import System.IO.Epoll
 
 -- The event loop itself never terminates by construction (`loop`,
 -- `acceptLoop`), and the byte-scanning parser helpers loop on an `Int`

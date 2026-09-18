@@ -32,8 +32,8 @@ small set of C shims under `support/c/`, all linked into one combined
 | `System.FFI.C.Ptr` | raw, unchecked element-indexed fetch/store into a `Ptr`/`GCPtr` region |
 | `System.FFI.C.Sizeof` | the C `sizeof` of a scalar type, for hand-rolled buffer strides/offsets |
 | `System.GC.RC2` | raw access to rc2's own `idris2rc2_dup`/`dup_n`/`drop`, for a value smuggled out through an opaque FFI pointer |
+| `System.IO.Epoll` | thin `epoll` FFI wrapper backing `Network.HTTP.Server`'s event loop |
 | `System.IO.MemStream` | an in-memory `FILE *` capture stream (POSIX `open_memstream`), for redirecting a C API's "write to this FILE*" option into memory |
-| `System.Net.Epoll` | thin `epoll` FFI wrapper backing `Network.HTTP.Server`'s event loop |
 | `System.Random.Xoroshiro128PlusPlus`/`Xoroshiro64StarStar` | two from-scratch PRNG ports -- see below |
 | `Text.Encoding.UTF8` | UTF-8 bytes <-> codepoints, pure `List` transforms -- see below |
 | `Text.Regex.POSIX` | bindings to libc `<regex.h>` -- see below |
@@ -510,7 +510,7 @@ values kept well outside `Int`'s 64-bit range throughout.
 
 ## `Network.HTTP.Server`: a minimal event-driven HTTP server
 
-A single-threaded, `epoll`-driven HTTP/1.1 server (`System.Net.Epoll`
+A single-threaded, `epoll`-driven HTTP/1.1 server (`System.IO.Epoll`
 for the raw event loop, `Network.RC2` for binary-safe buffer socket IO,
 `Network.HTTP.Server` for the HTTP logic on top). One call starts it;
 each request answers through a continuation rather than a return value,
