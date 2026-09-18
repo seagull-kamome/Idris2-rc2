@@ -47,7 +47,7 @@ main = do
      else do
        Just writeSqe <- getSqe ring
          | Nothing => putStrLn "FAIL: getSqe (write) failed"
-       prepWrite ring writeSqe fd buf (cast (length message)) 0
+       prepWrite ring writeSqe fd buf (cast (length message)) 0 0
        Just written <- runOne ring writeSqe
          | Nothing => putStrLn "FAIL: submit/wait (write) failed"
        if written /= cast (length message)
@@ -75,7 +75,7 @@ main = do
                    | Nothing => putStrLn "FAIL: newBuffer (read) failed"
                  Just readSqe <- getSqe ring
                    | Nothing => putStrLn "FAIL: getSqe (read) failed"
-                 prepRead ring readSqe readFd readBuf (cast (length message)) 0
+                 prepRead ring readSqe readFd readBuf (cast (length message)) 0 0
                  Just readRes <- runOne ring readSqe
                    | Nothing => putStrLn "FAIL: submit/wait (read) failed"
                  Just closeReadSqe <- getSqe ring

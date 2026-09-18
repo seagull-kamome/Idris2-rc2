@@ -30,6 +30,7 @@ module System.IO.Uring
 import Data.Bits
 import Data.Buffer
 import Data.IORef
+import Data.SortedMap
 import System.FFI
 
 -------------------------------------------------------------------------------
@@ -132,20 +133,33 @@ prim__prepRecv : Ptr RawSQE -> Int -> Buffer -> Bits64 -> Int -> PrimIO ()
 ||| moment the (`void`-returning, entirely opaque to rc2) `prep*` FFI
 ||| call returns, and gets dropped immediately; `prepConnect`'s own
 ||| `sockaddr` is plain `malloc`'d memory this package owns outright,
-||| with no refcounting at all to protect it if freed too early. `pending`
-||| gives every such `Buffer` a second, library-held live reference,
-||| `pendingAddrs` holds every such `sockaddr` unfreed, both for exactly
-||| as long as this `URing` itself is (freed in a batch whenever this
-||| `URing` value itself is -- `exit` -- never reclaimed retail
-||| per-completion) -- not maximally precise, but correct, and needs no
-||| cooperation from a caller who might forget to keep their own
-||| reference alive across the async boundary.
+||| with no refcounting at all to protect it if freed too early.
+|||
+||| Keyed by the exact `userData` each of those five functions' own
+||| mandatory parameter set the `SQE` to (not `setUserData` -- these
+||| five take it directly instead, precisely so this key is already
+||| known at the moment they insert into this map). `waitCompletion`/
+||| `pollCompletion` release the matching entry the instant its own
+||| `Completion` is read back, so a `Buffer`/`sockaddr` is held only for
+||| as long as the kernel might still touch it, not for this `URing`'s
+||| whole lifetime -- `exit` still frees whatever's left (an `SQE`
+||| submitted but never waited on, one `prepCancel64`-cancelled
+||| mid-flight, ...) as a final backstop, same as before.
+|||
+||| Two of these five calls in flight *concurrently* on the same ring
+||| must use distinct `userData`: unlike every other `prep*`, where a
+||| repeated tag is merely inconvenient for telling completions apart
+||| afterward, a collision here makes the second call's own insert
+||| overwrite the first's entry in this very map, dropping this
+||| package's own protective reference on the first `Buffer`/`sockaddr`
+||| while the kernel may still be about to read or write it -- exactly
+||| the use-after-free hazard this map exists to prevent.
 export
 record URing where
   constructor MkURing
   ptr : Ptr RawURing
-  pending : IORef (List Buffer)
-  pendingAddrs : IORef (List AnyPtr)
+  pending : IORef (SortedMap Bits64 Buffer)
+  pendingAddrs : IORef (SortedMap Bits64 AnyPtr)
 
 ||| Sets up a new ring with room for at least `queueDepth` in-flight
 ||| submissions (liburing itself rounds this up to the next power of
@@ -164,26 +178,29 @@ init queueDepth = do
   if isN /= 0
      then pure Nothing
      else do
-       pendingRef <- newIORef []
-       pendingAddrsRef <- newIORef []
+       pendingRef <- newIORef empty
+       pendingAddrsRef <- newIORef empty
        pure (Just (MkURing (prim__castPtr raw) pendingRef pendingAddrsRef))
 
 ||| Tears the ring down. Every `SQE` obtained from it, and every
 ||| `Completion` not yet consumed, is invalid afterward. Also releases
-||| this `URing`'s own held references to every `Buffer` any `prepRead`/
-||| `prepWrite`/`prepSend`/`prepRecv` call ever protected (see
-||| `URing.pending`'s own doc comment; each individually frees at this
-||| point only if nothing else in the caller's own program still
-||| references it), and actually `free`s every `sockaddr` any
-||| `prepConnect` call ever built.
+||| this `URing`'s own held references to every `Buffer`/`sockaddr`
+||| still in `URing.pending`/`pendingAddrs` -- normally empty by the
+||| time a caller gets here (`waitCompletion`/`pollCompletion` already
+||| release each entry as its own `Completion` comes back), so this is
+||| a backstop for whatever never got a matching completion consumed
+||| (submitted but never waited on, cancelled mid-flight, ...): each
+||| `Buffer` individually frees at this point only if nothing else in
+||| the caller's own program still references it, and every `sockaddr`
+||| is actually `free`d outright.
 export
 exit : URing -> IO ()
 exit r = do
   primIO (prim__queueExit r.ptr)
-  writeIORef r.pending []
+  writeIORef r.pending empty
   addrs <- readIORef r.pendingAddrs
-  traverse_ free addrs
-  writeIORef r.pendingAddrs []
+  traverse_ free (values addrs)
+  writeIORef r.pendingAddrs empty
 
 -------------------------------------------------------------------------------
 -- Submission
@@ -214,6 +231,13 @@ getSqe r = do
 ||| completion back to whatever it was for (an index into a table of
 ||| pending requests, a request-specific continuation key, ...). Optional:
 ||| an untagged `SQE`'s completion just carries `userData = 0`.
+|||
+||| Not for `prepRead`/`prepWrite`/`prepSend`/`prepRecv`/`prepConnect`'s
+||| own `SQE` -- those five take their own `userData` directly as a
+||| parameter instead, the same way `prepMultishotAccept`'s already
+||| does: it doubles as the key `URing.pending`/`pendingAddrs` release
+||| on once the matching `Completion` comes back, so it has to be known
+||| (and set) at `prep*` time, not layered on afterward.
 export
 setUserData : SQE -> Bits64 -> IO ()
 setUserData sqe = primIO . prim__sqeSetData64 sqe.ptr
@@ -234,22 +258,28 @@ prepNop sqe = primIO (prim__prepNop sqe.ptr)
 ||| the byte count actually read (`0` at EOF), or a negative `-errno`.
 ||| Takes `ring` (not just `sqe`) to protect `buf` from being freed
 ||| before the kernel gets to it -- see `URing.pending`'s own doc
-||| comment for why that's a real, not hypothetical, concern.
+||| comment for why that's a real, not hypothetical, concern, why
+||| `userData` is mandatory here rather than set separately via
+||| `setUserData`, and why it must be distinct from any other
+||| `prepRead`/`prepWrite`/`prepSend`/`prepRecv`/`prepConnect` call
+||| still in flight on `ring`.
 export
-prepRead : URing -> SQE -> (fd : Int) -> (buf : Buffer) -> (nbytes : Bits32) -> (fileOffset : Bits64) -> IO ()
-prepRead ring sqe fd buf nbytes fileOffset = do
+prepRead : URing -> SQE -> (fd : Int) -> (buf : Buffer) -> (nbytes : Bits32) -> (fileOffset : Bits64) -> (userData : Bits64) -> IO ()
+prepRead ring sqe fd buf nbytes fileOffset userData = do
   primIO (prim__prepRead sqe.ptr fd buf nbytes fileOffset)
-  modifyIORef ring.pending (buf ::)
+  primIO (prim__sqeSetData64 sqe.ptr userData)
+  modifyIORef ring.pending (insert userData buf)
 
 ||| `pwrite`-equivalent: writes `nbytes` from `buf`'s own start to `fd`
 ||| at `fileOffset`. The completion's `res` is the byte count actually
-||| written, or a negative `-errno`. Takes `ring` for the same reason
-||| `prepRead` does.
+||| written, or a negative `-errno`. Takes `ring` and mandates
+||| `userData` for the same reason `prepRead` does.
 export
-prepWrite : URing -> SQE -> (fd : Int) -> (buf : Buffer) -> (nbytes : Bits32) -> (fileOffset : Bits64) -> IO ()
-prepWrite ring sqe fd buf nbytes fileOffset = do
+prepWrite : URing -> SQE -> (fd : Int) -> (buf : Buffer) -> (nbytes : Bits32) -> (fileOffset : Bits64) -> (userData : Bits64) -> IO ()
+prepWrite ring sqe fd buf nbytes fileOffset userData = do
   primIO (prim__prepWrite sqe.ptr fd buf nbytes fileOffset)
-  modifyIORef ring.pending (buf ::)
+  primIO (prim__sqeSetData64 sqe.ptr userData)
+  modifyIORef ring.pending (insert userData buf)
 
 ||| `openat`-equivalent, `dirfd = Uring.atFdcwd` for a plain
 ||| CWD-relative `path` (matches the C `AT_FDCWD` convention -- see
@@ -372,11 +402,13 @@ prepCancel64 sqe targetUserData flags = primIO (prim__prepCancel64 sqe.ptr targe
 ||| kernel once `submit` runs, same timing trap as `prepRead`'s own
 ||| `buf` (confirmed by a real `-EAFNOSUPPORT` failure from freeing it
 ||| immediately here instead -- see `URing.pending`'s own doc comment)
-||| -- kept alive via `ring.pendingAddrs` until `exit` instead of freed
-||| right away.
+||| -- kept alive in `ring.pendingAddrs`, released as soon as this
+||| call's own `Completion` is read back, rather than held until
+||| `exit`. `userData` is mandatory for the same reason `prepRead`'s
+||| is, not set separately via `setUserData`.
 export
-prepConnect : URing -> SQE -> (fd : Int) -> (host : String) -> (port : Bits16) -> IO Bool
-prepConnect ring sqe fd host port = do
+prepConnect : URing -> SQE -> (fd : Int) -> (host : String) -> (port : Bits16) -> (userData : Bits64) -> IO Bool
+prepConnect ring sqe fd host port userData = do
   raw <- primIO (prim__makeSockAddr host port)
   let isN = prim__nullAnyPtr raw
   if isN /= 0
@@ -385,28 +417,32 @@ prepConnect ring sqe fd host port = do
        let addr = the (Ptr RawSockAddr) (prim__castPtr raw)
        len <- primIO (prim__sockAddrLen addr)
        primIO (prim__prepConnect sqe.ptr fd addr len)
-       modifyIORef ring.pendingAddrs (raw ::)
+       primIO (prim__sqeSetData64 sqe.ptr userData)
+       modifyIORef ring.pendingAddrs (insert userData raw)
        pure True
 
 ||| Sends `len` bytes from `buf`'s own start on the connected/accepted
 ||| socket `fd`. The completion's `res` is the byte count actually
-||| sent, or a negative `-errno`. Takes `ring` for the same
-||| buffer-lifetime reason `prepRead` does.
+||| sent, or a negative `-errno`. Takes `ring` and mandates `userData`
+||| for the same buffer-lifetime reason `prepRead` does.
 export
-prepSend : URing -> SQE -> (fd : Int) -> (buf : Buffer) -> (len : Bits64) -> (flags : Int) -> IO ()
-prepSend ring sqe fd buf len flags = do
+prepSend : URing -> SQE -> (fd : Int) -> (buf : Buffer) -> (len : Bits64) -> (flags : Int) -> (userData : Bits64) -> IO ()
+prepSend ring sqe fd buf len flags userData = do
   primIO (prim__prepSend sqe.ptr fd buf len flags)
-  modifyIORef ring.pending (buf ::)
+  primIO (prim__sqeSetData64 sqe.ptr userData)
+  modifyIORef ring.pending (insert userData buf)
 
 ||| Receives up to `len` bytes into `buf`'s own start from the socket
 ||| `fd`. The completion's `res` is the byte count actually received
 ||| (`0` means the peer closed its end), or a negative `-errno`. Takes
-||| `ring` for the same buffer-lifetime reason `prepRead` does.
+||| `ring` and mandates `userData` for the same buffer-lifetime reason
+||| `prepRead` does.
 export
-prepRecv : URing -> SQE -> (fd : Int) -> (buf : Buffer) -> (len : Bits64) -> (flags : Int) -> IO ()
-prepRecv ring sqe fd buf len flags = do
+prepRecv : URing -> SQE -> (fd : Int) -> (buf : Buffer) -> (len : Bits64) -> (flags : Int) -> (userData : Bits64) -> IO ()
+prepRecv ring sqe fd buf len flags userData = do
   primIO (prim__prepRecv sqe.ptr fd buf len flags)
-  modifyIORef ring.pending (buf ::)
+  primIO (prim__sqeSetData64 sqe.ptr userData)
+  modifyIORef ring.pending (insert userData buf)
 
 -------------------------------------------------------------------------------
 -- Submission / completion
@@ -450,6 +486,24 @@ readCompletion cqe = do
   fl <- primIO (prim__cqeFlags cqe)
   pure (MkCompletion ud res fl)
 
+||| Drops this `URing`'s own protective reference to whatever
+||| `prepRead`/`prepWrite`/`prepSend`/`prepRecv`/`prepConnect` call
+||| registered `tag` (see `URing.pending`'s own doc comment) -- a
+||| `sockaddr` is `free`d outright here, a `Buffer` just loses this
+||| map's own reference to it (freed once nothing else in the caller's
+||| own program references it, same as any other `Buffer`). A no-op if
+||| `tag` names nothing currently held -- every other `prep*` call's
+||| own completion, or one already released.
+releasePending : URing -> Bits64 -> IO ()
+releasePending r tag = do
+  modifyIORef r.pending (delete tag)
+  addrs <- readIORef r.pendingAddrs
+  case lookup tag addrs of
+       Nothing => pure ()
+       Just raw => do
+         free raw
+         writeIORef r.pendingAddrs (delete tag addrs)
+
 ||| `IORING_CQE_F_MORE`: whether the request that generated `c` will
 ||| still generate further completions after this one -- meaningful
 ||| only for a multishot-style request (currently just
@@ -469,7 +523,9 @@ hasMore c = (c.flags .&. 0x2) /= 0
 ||| the second half. `Nothing` on failure (see `man io_uring_enter`'s
 ||| own `io_uring_wait_cqe` documentation for the ways this can fail --
 ||| interruption by a signal with no handler installed is the common
-||| one).
+||| one). Also releases this `URing`'s own protective reference (if
+||| any) on whatever `Buffer`/`sockaddr` the returned `Completion`'s
+||| own `userData` names -- see `URing.pending`'s own doc comment.
 export
 waitCompletion : URing -> IO (Maybe Completion)
 waitCompletion r = do
@@ -481,12 +537,14 @@ waitCompletion r = do
        let cqe = the (Ptr RawCQE) (prim__castPtr raw)
        c <- readCompletion cqe
        primIO (prim__cqeSeen r.ptr cqe)
+       releasePending r c.userData
        pure (Just c)
 
 ||| Like `waitCompletion`, but returns immediately with `Nothing` if no
 ||| completion is ready yet, instead of blocking -- the usual way to
 ||| drain whatever's already finished inside a larger event loop
-||| without stalling it.
+||| without stalling it. Releases pending resources the same way
+||| `waitCompletion` does.
 export
 pollCompletion : URing -> IO (Maybe Completion)
 pollCompletion r = do
@@ -498,6 +556,7 @@ pollCompletion r = do
        let cqe = the (Ptr RawCQE) (prim__castPtr raw)
        c <- readCompletion cqe
        primIO (prim__cqeSeen r.ptr cqe)
+       releasePending r c.userData
        pure (Just c)
 
 ||| Decodes one `Completion` known to belong to `reg` (same `userData`

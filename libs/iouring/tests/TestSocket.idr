@@ -65,7 +65,7 @@ roundTrip ring clientFd acceptedFd msg = do
   setString sendBuf 0 msg
   Just sendSqe <- getSqe ring
     | Nothing => pure (Left "getSqe (send) failed")
-  prepSend ring sendSqe clientFd sendBuf (cast (length msg)) 0
+  prepSend ring sendSqe clientFd sendBuf (cast (length msg)) 0 0
   Just sendRes <- runOne ring sendSqe
     | Nothing => pure (Left "submit/wait (send) failed")
 
@@ -73,7 +73,7 @@ roundTrip ring clientFd acceptedFd msg = do
     | Nothing => pure (Left "newBuffer (recv) failed")
   Just recvSqe <- getSqe ring
     | Nothing => pure (Left "getSqe (recv) failed")
-  prepRecv ring recvSqe acceptedFd recvBuf (cast (length msg)) 0
+  prepRecv ring recvSqe acceptedFd recvBuf (cast (length msg)) 0 0
   Just recvRes <- runOne ring recvSqe
     | Nothing => pure (Left "submit/wait (recv) failed")
 
@@ -109,11 +109,10 @@ singleShotTest = do
 
             Just connectSqe <- getSqe ring
               | Nothing => pure (Left "getSqe (connect) failed")
-            resolved <- prepConnect ring connectSqe clientSock.descriptor "127.0.0.1" (cast port)
+            resolved <- prepConnect ring connectSqe clientSock.descriptor "127.0.0.1" (cast port) 2
             if not resolved
                then pure (Left "prepConnect address resolution failed")
                else do
-                 setUserData connectSqe 2
                  n <- submit ring
                  if n /= 2
                     then pure (Left ("submit returned " ++ show n ++ ", expected 2"))
@@ -155,11 +154,10 @@ connectClient ring tag = do
     | Left err => pure (Left ("client socket() errno=" ++ show err))
   Just connectSqe <- getSqe ring
     | Nothing => pure (Left "getSqe (connect) failed")
-  resolved <- prepConnect ring connectSqe clientSock.descriptor "127.0.0.1" (cast multishotPort)
+  resolved <- prepConnect ring connectSqe clientSock.descriptor "127.0.0.1" (cast multishotPort) tag
   if not resolved
      then pure (Left "prepConnect address resolution failed")
      else do
-       setUserData connectSqe tag
        n <- submit ring
        if n /= 1
           then pure (Left ("submit (connect) returned " ++ show n))

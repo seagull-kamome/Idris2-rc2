@@ -119,7 +119,7 @@ this shim's own `.c` file.
 ## Design choices
 
 - **`URing.pending`/`pendingAddrs` keep every in-flight buffer/sockaddr
-  alive, for the ring's own whole lifetime.** Confirmed as *real* bugs
+  alive until its own completion is consumed.** Confirmed as *real* bugs
   while writing this package, not hypotheticals -- the same root cause
   bit twice, in two different guises:
   1. `prepWrite`'s first version took no `URing` argument and didn't
@@ -146,20 +146,38 @@ this shim's own `.c` file.
   Fixed both the same way: every `prep*` function that hands the
   kernel a pointer for later additionally requires the owning `URing`
   and stashes what it just handed over into one of `URing`'s own
-  `IORef`s (`pending : IORef (List Buffer)` for buffers, `pendingAddrs
-  : IORef (List AnyPtr)` for sockaddrs) -- a second, library-held
-  reference (a live `Buffer` reference, or literally deferring the
-  `free`) that survives regardless of what the caller's own code does
-  afterward. Trade-off: neither is reclaimed until the whole `URing`
-  is (`exit` drops/frees both lists) -- imprecise, but correct, and
-  needs zero cooperation from API consumers (the earlier, broken
-  design for (1) *did* have a fix available -- keep some later
-  reference to `buf` yourself, so rc2's usual "first occurrence moves,
-  later ones dup" ownership rule protects it -- but that's an
-  easy-to-forget footgun for a caller to have to remember, not
-  something this package should rely on silently; (2) has no
-  equivalent caller-side fix at all, since a raw `malloc`'d pointer
-  isn't rc2-refcounted to begin with).
+  `IORef`s (`pending : IORef (SortedMap Bits64 Buffer)` for buffers,
+  `pendingAddrs : IORef (SortedMap Bits64 AnyPtr)` for sockaddrs) -- a
+  second, library-held reference (a live `Buffer` reference, or
+  literally deferring the `free`) that survives regardless of what the
+  caller's own code does afterward (the earlier, broken design for (1)
+  *did* have a fix available -- keep some later reference to `buf`
+  yourself, so rc2's usual "first occurrence moves, later ones dup"
+  ownership rule protects it -- but that's an easy-to-forget footgun
+  for a caller to have to remember, not something this package should
+  rely on silently; (2) has no equivalent caller-side fix at all, since
+  a raw `malloc`'d pointer isn't rc2-refcounted to begin with).
+
+  First cut, each map was a flat `List` with no key at all -- correct,
+  but every entry sat there unreclaimed until the whole `URing` was
+  (`exit`), which for a long-running caller (a server issuing many
+  reads/writes/sends/recvs/connects over its own lifetime, never
+  calling `exit` until shutdown) meant both lists only ever grew.
+  Fixed by keying each map on the exact `userData`
+  `prepRead`/`prepWrite`/`prepSend`/`prepRecv`/`prepConnect` now
+  require as a mandatory parameter (not set afterward via
+  `setUserData`, unlike every other `prep*` -- the key has to be known
+  at insertion time) and having `waitCompletion`/`pollCompletion`
+  release the matching entry the moment its own `Completion` comes
+  back; `exit` is now only a backstop for whatever never got a
+  completion consumed at all. The one caveat this trade brought in:
+  two of these five calls in flight *concurrently* on the same ring
+  must use distinct `userData`, or the second's insert silently
+  overwrites the first's map entry -- unlike a tag collision anywhere
+  else in this package (merely inconvenient for telling completions
+  apart), here it drops the protective reference on the first
+  `Buffer`/`sockaddr` while the kernel may still be about to touch it,
+  reintroducing the exact bug this whole mechanism exists to prevent.
 - **One completion, fully consumed, at a time.** `waitCompletion`/
   `pollCompletion` each combine `io_uring_wait_cqe`/`_peek_cqe` +
   reading every field + `io_uring_cqe_seen` into one atomic Idris call,
