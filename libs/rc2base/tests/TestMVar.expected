@@ -1,0 +1,8 @@
+--- Testing Control.Concurrent.MVar ---
+newMVar/takeMVar/putMVar/readMVar: True
+isEmptyMVar/tryTakeMVar/tryPutMVar: True
+swapMVar: True
+modifyMVar_/modifyMVar/withMVar: True
+concurrent modifyMVar_ (expected 4000): True
+blocking takeMVar/putMVar handoff: True
+--- Tests finished ---

@@ -17,6 +17,7 @@ small set of C shims under `support/c/`, all linked into one combined
 
 | Module | What it's for |
 | --- | --- |
+| `Control.Concurrent.MVar` | Haskell's `MVar` (thread-safe `takeMVar`/`putMVar`/`modifyMVar`/...), over `System.Concurrency`'s `Mutex`/`Condition` |
 | `Data.Text`/`Data.TextBuffer` | UTF-8-derived codepoint buffer -- see "API" below |
 | `Data.String.FFI` | patches upstream `Data.String` `%foreign` gaps -- see `TODO.md` |
 | `Data.String.RC2` | byte-offset `String` slicing, for when a span isn't codepoint-aligned -- see below |

@@ -270,3 +270,16 @@ if diff -u "$TESTS_DIR/TestStringRC2.expected" "$TMP/actual16.out"; then
 else
     fail "TestStringRC2 -- output mismatch (see diff above)"
 fi
+
+echo "=== rc2 backend: build TestMVar (Control.Concurrent.MVar: Mutex/Condition-backed MVar) ==="
+nix-shell -p gcc gmp pkg-config --run \
+    "cd '$TESTS_DIR' && '$IDRIS2RC2' --cg rc2 -p rc2base -o TestMVar_verify TestMVar.idr"
+
+echo "=== Run and diff against TestMVar.expected ==="
+"$TESTS_DIR/build/exec/TestMVar_verify" > "$TMP/actual17.out" 2>&1
+
+if diff -u "$TESTS_DIR/TestMVar.expected" "$TMP/actual17.out"; then
+    echo "PASS  TestMVar"
+else
+    fail "TestMVar -- output mismatch (see diff above)"
+fi
