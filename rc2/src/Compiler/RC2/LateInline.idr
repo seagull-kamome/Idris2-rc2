@@ -184,34 +184,72 @@ nativeEligible paramId calleeBody =
          Nothing => Nothing
          Just ty => if hasNonNativeUse ty [] paramId calleeBody then Nothing else Just ty
 
+||| Whether `target` is reused anywhere in `e` as one of an `RLoop`'s
+||| own loop-carried slot ids (`loopParams`' own `Int`) -- i.e. whether
+||| aliasing the caller's own local for `target` straight into the
+||| splice risks that local being reassigned in place by the loop,
+||| rather than only read. Mirrors `collectBoundIds`'s own traversal
+||| shape. See `buildSplice`'s own doc comment for why only this one
+||| case still needs a fresh id and a wrapping `RLet`.
+isLoopCarried : Int -> RCExp -> Bool
+isLoopCarried target (RLoop _ loopParams _ _ body) = elem target (map fst loopParams) || isLoopCarried target body
+isLoopCarried target (RLet _ _ _ value body) = isLoopCarried target value || isLoopCarried target body
+isLoopCarried target (RCmpCase _ _ _ _ t f) = isLoopCarried target t || isLoopCarried target f
+isLoopCarried target (RConCase _ _ alts mDef) =
+    any (\(MkRConAlt _ _ _ _ body) => isLoopCarried target body) alts || maybe False (isLoopCarried target) mDef
+isLoopCarried target (RConstCase _ _ alts mDef) =
+    any (\(MkRConstAlt _ body) => isLoopCarried target body) alts || maybe False (isLoopCarried target) mDef
+isLoopCarried target (RDup _ _ _ body) = isLoopCarried target body
+isLoopCarried target (RDrop _ _ body) = isLoopCarried target body
+isLoopCarried target (RFree _ _ body) = isLoopCarried target body
+isLoopCarried target (RReleaseReuse _ _ body) = isLoopCarried target body
+isLoopCarried target (RReuseOffer _ _ _ _ body) = isLoopCarried target body
+isLoopCarried target (RMemoize _ _ _ body) = isLoopCarried target body
+isLoopCarried _ _ = False
+
 ||| Builds the renaming from `calleeArgs`'s own top-level param ids
 ||| onto the actual call arguments, plus a wrapping function binding
-||| each argument via its own `RLet` ahead of the callee's own renamed
-||| body, plus every fresh id bound purely `RNative` this way (for
-||| `spliceCall`'s own final `stripOwnership` pass).
+||| each argument that still needs its own declaration via `RLet`
+||| ahead of the callee's own renamed body, plus every fresh id bound
+||| purely `RNative` this way (for `spliceCall`'s own final
+||| `stripOwnership` pass).
 |||
-||| Every argument gets its own *fresh* id, even one that's already a
-||| bare `RCLoc` -- never aliased directly onto the caller's own local.
-||| A loop-converted callee's own `RLoop` commonly reuses its top-level
-||| param's id as a *mutable* loop-carried variable, so aliasing would
+||| An argument already `RBoxed` in the caller (`reps`) whose param id
+||| is never reused as one of `calleeBody`'s own loop-carried slots
+||| (`isLoopCarried`) is aliased directly onto the caller's own local
+||| instead -- no fresh id, no wrapping `RLet` -- since both sides
+||| already share the exact same representation and nothing in the
+||| callee can reassign it out from under the caller. Every other
+||| argument still gets its own *fresh* id, even one that's already a
+||| bare `RCLoc`: either it's boxed but loop-carried (aliasing would
 ||| let the splice reassign the caller's own variable in place, unlike
-||| an ordinary call. The fresh id's own `Rep`: `RBoxed` unless the
-||| actual argument is currently native in the caller (`reps`) *and*
-||| `nativeEligible` confirms the callee's own body never needs it any
-||| other way, at the same type. See `rc2/doc/inlining.md`'s "Criterion
-||| B, revisited" for both bugs found getting this wrong (an aliasing
-||| correctness bug, and a ~50x boxing performance regression).
+||| an ordinary call -- see `rc2/doc/inlining.md`'s "Criterion B,
+||| revisited" for the bug this prevents), or it's currently native in
+||| the caller, where the fresh `RLet`'s own `Rep` -- `RNative ty`
+||| unless the actual argument is currently native in the caller
+||| (`reps`) *and* `nativeEligible` confirms the callee's own body
+||| never needs it any other way, at the same type -- is the
+||| boxing/promotion decision itself, not a redundant copy of already-
+||| identical representations. See `rc2/doc/inlining.md`'s "Criterion
+||| B, revisited" for both bugs found getting the native side of this
+||| wrong (an aliasing correctness bug, and a ~50x boxing performance
+||| regression).
 buildSplice : {auto v : Ref VarId Int} -> FC -> SortedMap Int Rep -> RCExp -> List (Int, RCLocal) -> Core (Renaming, RCExp -> RCExp, SortedSet Int)
 buildSplice fc reps calleeBody [] = pure (empty, id, empty)
-buildSplice fc reps calleeBody ((paramId, actual) :: rest) = do
+buildSplice fc reps calleeBody ((paramId, actual@(RCLoc actualId)) :: rest) = do
     (ren, wrap, promoted) <- buildSplice fc reps calleeBody rest
-    f <- freshVarId
-    let (rep, promoted') = case argRep reps actual of
-                                 RNative ty => case nativeEligible paramId calleeBody of
-                                                    Just ty' => if ty' == ty then (RNative ty, SortedSet.insert f promoted) else (RBoxed, promoted)
-                                                    Nothing => (RBoxed, promoted)
-                                 _ => (RBoxed, promoted)
-    pure (insert paramId f ren, wrap . RLet fc f rep (RV fc actual), promoted')
+    case argRep reps actual of
+         RNative ty => do
+             f <- freshVarId
+             let (rep, promoted') = case nativeEligible paramId calleeBody of
+                                          Just ty' => if ty' == ty then (RNative ty, SortedSet.insert f promoted) else (RBoxed, promoted)
+                                          Nothing => (RBoxed, promoted)
+             pure (insert paramId f ren, wrap . RLet fc f rep (RV fc actual), promoted')
+         _ => if isLoopCarried paramId calleeBody
+                 then do
+                     f <- freshVarId
+                     pure (insert paramId f ren, wrap . RLet fc f RBoxed (RV fc actual), promoted)
+                 else pure (insert paramId actualId ren, wrap, promoted)
   where
     argRep : SortedMap Int Rep -> RCLocal -> Rep
     argRep reps (RCLoc j) = case lookup j reps of
@@ -219,6 +257,14 @@ buildSplice fc reps calleeBody ((paramId, actual) :: rest) = do
                                  Just r => r
                                  Nothing => RBoxed
     argRep _ _ = RBoxed
+-- `actual` isn't a bare `RCLoc` (a constant/`RCEmptyCon`/`RCConstCon`/
+-- `RCConstClosure` folded by `Compiler.RC2.ConstFold`) -- no existing
+-- caller local to alias onto or promote, so this always needs its own
+-- fresh `RBoxed` declaration exactly as before.
+buildSplice fc reps calleeBody ((paramId, actual) :: rest) = do
+    (ren, wrap, promoted) <- buildSplice fc reps calleeBody rest
+    f <- freshVarId
+    pure (insert paramId f ren, wrap . RLet fc f RBoxed (RV fc actual), promoted)
 
 ||| Every id `collectBoundIds` finds, freshened -- so it can never
 ||| collide with anything, anywhere else in the program.

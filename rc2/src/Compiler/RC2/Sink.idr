@@ -117,17 +117,29 @@ stripIfUnused var branch =
 ||| unconditionally provide -- see doc/branch-sinking.md's "The rewrite
 ||| itself, and the second real bug it took to get right" (the
 ||| `getAt` leak this fixes).
+|||
+||| Restricted to `RCLoc` operands even where `localRepIn` alone would
+||| call a constant `RBoxed` too (`RCEmptyCon`/`RCConstCon`/
+||| `RCConstClosure` always, `RCConst` whenever `litRep` can't place it
+||| natively) -- none of `RCLocal`'s constant-shaped constructors is
+||| ever a real refcounted value with a matching `drop` to balance;
+||| `Compiler.RC2.Emit.Util`'s own `varName` has no rendering for one at
+||| all (an "unreachable" placeholder), which is exactly what a
+||| constant field of a sunk `RCon` used to reach here once
+||| `Compiler.RC2.LateInline`'s own splice stopped wrapping *every*
+||| argument in its own fresh `RLet` first.
 consumedOperands : SortedMap Int Rep -> RCExp -> List RCLocal
 consumedOperands reps = go []
   where
-    isBoxed : RCLocal -> Bool
-    isBoxed a = case localRepIn reps a of
-                     RBoxed => True
-                     _ => False
+    isDroppableBoxed : RCLocal -> Bool
+    isDroppableBoxed a@(RCLoc _) = case localRepIn reps a of
+                                         RBoxed => True
+                                         _ => False
+    isDroppableBoxed _ = False
     go : List RCLocal -> RCExp -> List RCLocal
     go _ (ROp _ _ _ _ postDrop) = postDrop
-    go _ (RAppName _ _ _ args) = filter isBoxed args
-    go dupped (RCon _ _ _ _ args _) = filter (\a => not (a `elem` dupped)) args
+    go _ (RAppName _ _ _ args) = filter isDroppableBoxed args
+    go dupped (RCon _ _ _ _ args _) = filter (\a => isDroppableBoxed a && not (a `elem` dupped)) args
     go dupped (RDup _ v _ cont) = go (v :: dupped) cont
     go dupped (RDrop _ _ cont) = go dupped cont
     go dupped (RFree _ _ cont) = go dupped cont
