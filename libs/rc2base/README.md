@@ -25,6 +25,7 @@ small set of C shims under `support/c/`, all linked into one combined
 | `Data.Double.RC2` | patches upstream `Data.Double`'s `unitRoundoff`/`epsilon`/`nan`/`inf` -- see below |
 | `Data.Double.Convert` | opt-in Eisel-Lemire/Grisu2-style fast path for `Double`<->`String`, next to (not replacing) `cast` -- see below |
 | `Data.Integer.GMP` | direct `%foreign` bindings onto real GMP `mpz_*` functions -- see below |
+| `Language.RCExpr.AST`/`Lexer`/`Parser` | parses rc2's own `--directive dumprcexpr` output into a standalone tree -- see below |
 | `Network.RC2` | binary-safe offset+length socket IO into/out of a `Data.Buffer` |
 | `Network.URL` | URL parse/build and percent-encoding -- see below |
 | `Network.HTTP.Route`/`Router` | type-safe route table on top of `Network.HTTP.Server` -- see below |
@@ -570,6 +571,50 @@ cross-checked either against Idris's own native `Integer` arithmetic
 path) or known textbook constants (`gcd 1071 462 == 21`, the classic
 `4^13 mod 497 == 445` modular-exponentiation example, etc.), with
 values kept well outside `Int`'s 64-bit range throughout.
+
+### `Language.RCExpr.AST`/`Lexer`/`Parser`
+
+A standalone parser for `--directive dumprcexpr`'s own `.rcexpr` dump
+format (`Compiler.RC2.Pretty`, in `idris2-rc-cg`'s own `rc2` package --
+the single authoritative source for this grammar). Built for
+`rc2/tools/rcexpr-lint` (an ownership-anomaly checker over the parsed
+tree, added after a `Compiler.RC2.Sink` use-after-free took hours of
+manual dump-tracing to find), but lives here rather than in `rc2`
+itself since the parser has no dependency on the compiler and is
+reusable by any other tool that wants to read this format.
+
+- `Language.RCExpr.AST` -- the parsed representation, one constructor
+  per `Pretty.idr` `prettyExp`/`prettyDef` clause. Fields that only
+  ever print through an *upstream* `Show` instance this project
+  doesn't own (a definition/constructor `Name`, a `PrimFn`, a
+  `Constant`, a constructor's own `ConInfo`/tag) are captured as
+  opaque `String`s rather than deeply parsed -- precise enough for a
+  diagnostic to echo back, never interpreted for meaning. `RCLocal`
+  itself (`vN`/`_`/`[__]`/`#...`) is parsed exactly, since ownership
+  tracking needs real identity there.
+- `Language.RCExpr.Lexer` -- tokenizes one already indentation-stripped
+  line at a time (line/indentation structure is handled separately,
+  by `Parser` itself, off plain `String`s) with upstream's own
+  `Text.Lexer`, the same library `Language.JSON.Lexer` is built on.
+- `Language.RCExpr.Parser` -- `parseProgram : String -> Either
+  ParseError RCProgram`. Indentation drives the outer tree shape
+  (`Pretty.idr`'s own `indent n` is always exactly `2*n` spaces); each
+  line's own content is parsed with upstream's `Text.Parser`
+  combinators over `Lexer`'s token stream. A handful of upstream
+  `Show` instances turned out not to fit a simple fixed-token-count
+  read (`Core.Name`'s own display can suffix a source-location `at
+  <FC>`, or wrap an operator's own name in `(...)`; `CFType`'s own
+  `Show` is recursive/variable-arity for `CFFun`/`CFStruct`/`CFUser`)
+  -- `greedyWordsG` reads name-shaped tokens until the next one looks
+  like a structural boundary, the general escape hatch for these.
+
+`tests/TestRcexprParser.idr` is a regression test built from a
+hand-written `.rcexpr` sample covering every one of the awkward shapes
+actually hit while building this against real dumps from rc2's own
+`refc-suite` -- see the test's own module note for the list, including
+a `dup vN xM` miscount this parser itself had (the count is glued onto
+`x` as one token, not two separate ones) before `rcexpr-lint` caught it
+by producing false positives on otherwise-correct programs.
 
 ## `Network.HTTP.Server`: a minimal event-driven HTTP server
 

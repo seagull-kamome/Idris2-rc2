@@ -1,0 +1,6 @@
+def TestDupCountRegression  (fun args= ["v1:Boxed"] ret= Boxed)
+  dup v1 x2
+  drop [v1]
+  drop [v1]
+  drop [v1]
+  v1

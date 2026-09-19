@@ -496,10 +496,39 @@ since `Integer` is never native-eligible): `let v2 : Boxed = op
 - Keywords (`let`, `case`, `dup`, ...) are deliberately terse and are
   **not** the real Idris constructor names -- section 5 is the
   authoritative mapping back to `RCExp.idr`.
-- Never read back by the compiler; purely a debugging aid, no format
-  stability guaranteed across rc2 changes.
+- Never read back by the compiler itself; purely a debugging aid, no
+  format stability guaranteed across rc2 changes -- `rc2/tools/
+  rcexpr-lint` (below) does read it back, but as an external tool
+  against whatever the format happens to be at the time, not a
+  compiler-internal contract.
 - Reflects only the final, fully-Reuse'd/MutualLoop'd/Loop'd state --
   see section 1 if you need an earlier pipeline stage.
+
+## 12. Checking it mechanically: `rc2/tools/rcexpr-lint`
+
+Section 10's manual walk-every-path technique works, but is slow and
+easy to get wrong by hand (a `Compiler.RC2.Sink` use-after-free this
+same technique once found took hours of dump-tracing before the actual
+bug was pinned down). `rc2/tools/rcexpr-lint` automates the "is this a
+leak/use-after-free?" check: parses a `.rcexpr` file (`Language.
+RCExpr.AST`/`Lexer`/`Parser`, in `libs/rc2base` -- a standalone parser
+for this exact grammar, reusable outside this one tool) and walks each
+`def`'s body maintaining a live-reference count per `Boxed` local,
+flagging a read or drop of one already at zero.
+
+```sh
+cd rc2/tools/rcexpr-lint && source ../../../env.sh
+nix-shell -p gcc gmp pkg-config --run \
+  'idris2 -p rc2base -p contrib -o rcexpr-lint RcexprLint.idr'
+./build/exec/rcexpr-lint path/to/out.rcexpr
+```
+
+Exits non-zero and prints one line per anomaly found; see `Lint.idr`'s
+own module note for the exact rule set and known scope limits (one
+check only -- use-after-free/double-drop, not leak detection or
+cross-branch consistency; a `case`-alt's own bound variable, which
+this dump never prints a `Rep` for at all, is conservatively treated
+as `Boxed`).
 
 ## Files
 
@@ -509,3 +538,8 @@ since `Integer` is never native-eligible): `let v2 : Boxed = op
   dumprcexpr` wiring (writes the `.rcexpr` file).
 - `rc2/src/Compiler/RC2/RCExp.idr` -- the actual IR this all renders;
   authoritative doc comments on every constructor mentioned above.
+- `rc2/tools/rcexpr-lint` -- the mechanical checker from section 12
+  (`RcexprLint.idr` the CLI, `Lint.idr` the check itself).
+- `libs/rc2base/src/Language/RCExpr/` -- the parser `rcexpr-lint` is
+  built on (`AST.idr`/`Lexer.idr`/`Parser.idr`), reusable by any other
+  tool that wants to read this format.

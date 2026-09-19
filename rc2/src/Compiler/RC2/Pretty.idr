@@ -36,14 +36,14 @@ mutual
       indent d ++ lazyPrefix lazy ++ "call " ++ show n ++ " " ++ show args ++ "\n"
   prettyExp d (RAppNameRep _ n argReps retRep postDrop args) =
       indent d ++ "callRep " ++ show n ++ " "
-        ++ show (map prettyRep argReps) ++ "->" ++ prettyRep retRep
-        ++ " postDrop=" ++ show postDrop ++ " " ++ show args ++ "\n"
+        ++ show (map prettyRep argReps) ++ " -> " ++ prettyRep retRep
+        ++ " postDrop= " ++ show postDrop ++ " " ++ show args ++ "\n"
   prettyExp d (RAppFFIInline _ ccs fargs ret postDrop args) =
       indent d ++ "callFFIInline " ++ show ccs ++ " "
-        ++ show fargs ++ "->" ++ show ret
-        ++ " postDrop=" ++ show postDrop ++ " " ++ show args ++ "\n"
+        ++ show fargs ++ " -> " ++ show ret
+        ++ " postDrop= " ++ show postDrop ++ " " ++ show args ++ "\n"
   prettyExp d (RUnderApp _ n missing args) =
-      indent d ++ "partial " ++ show n ++ " missing=" ++ show missing ++ " " ++ show args ++ "\n"
+      indent d ++ "partial " ++ show n ++ " missing= " ++ show missing ++ " " ++ show args ++ "\n"
   prettyExp d (RApp _ lazy c args) =
       indent d ++ lazyPrefix lazy ++ "apply " ++ show c ++ " " ++ show args ++ "\n"
   prettyExp d (RLet _ var rep value body) =
@@ -51,24 +51,24 @@ mutual
       ++ prettyExp (d + 1) value
       ++ prettyExp d body
   prettyExp d (RCon _ n ci tag args reuseFrom) =
-      indent d ++ "con " ++ show n ++ " " ++ show ci ++ " tag=" ++ show tag
+      indent d ++ "con " ++ show n ++ " " ++ show ci ++ " tag= " ++ show tag
         ++ " " ++ show args
-        ++ maybe "" (\r => " reuse=" ++ show r) reuseFrom ++ "\n"
+        ++ maybe "" (\r => " reuse= " ++ show r) reuseFrom ++ "\n"
   prettyExp d (ROp _ lazy op args postDrop) =
       indent d ++ lazyPrefix lazy ++ "op " ++ show op ++ " " ++ show (toList args)
-        ++ (if postDrop == [] then "" else " postDrop=" ++ show postDrop) ++ "\n"
+        ++ (if postDrop == [] then "" else " postDrop= " ++ show postDrop) ++ "\n"
   prettyExp d (RExtPrim _ lazy p args postDrop) =
       indent d ++ lazyPrefix lazy ++ "extprim " ++ show p ++ " " ++ show args
-        ++ (if postDrop == [] then "" else " postDrop=" ++ show postDrop) ++ "\n"
+        ++ (if postDrop == [] then "" else " postDrop= " ++ show postDrop) ++ "\n"
   prettyExp d (RStructGet _ structVar sn fn postDrop) =
-      indent d ++ "structGet " ++ show structVar ++ "." ++ fn ++ " (" ++ sn ++ ")"
-        ++ (if postDrop == [] then "" else " postDrop=" ++ show postDrop) ++ "\n"
+      indent d ++ "structGet " ++ show structVar ++ " . " ++ fn ++ " ( " ++ sn ++ " )"
+        ++ (if postDrop == [] then "" else " postDrop= " ++ show postDrop) ++ "\n"
   prettyExp d (RStructSet _ structVar sn fn value postDrop) =
-      indent d ++ "structSet " ++ show structVar ++ "." ++ fn ++ " (" ++ sn ++ ") = " ++ show value
-        ++ (if postDrop == [] then "" else " postDrop=" ++ show postDrop) ++ "\n"
+      indent d ++ "structSet " ++ show structVar ++ " . " ++ fn ++ " ( " ++ sn ++ " ) = " ++ show value
+        ++ (if postDrop == [] then "" else " postDrop= " ++ show postDrop) ++ "\n"
   prettyExp d (RCmpCase _ op args postDrop whenTrue whenFalse) =
       indent d ++ "cmp " ++ show op ++ " " ++ show (toList args)
-        ++ (if postDrop == [] then "" else " postDrop=" ++ show postDrop) ++ "\n"
+        ++ (if postDrop == [] then "" else " postDrop= " ++ show postDrop) ++ "\n"
       ++ indent d ++ "then\n" ++ prettyExp (d + 1) whenTrue
       ++ indent d ++ "else\n" ++ prettyExp (d + 1) whenFalse
   prettyExp d (RConCase _ sc alts mDef) =
@@ -88,23 +88,23 @@ mutual
   prettyExp d (RFree _ v body) = indent d ++ "free " ++ show v ++ "\n" ++ prettyExp d body
   prettyExp d (RReleaseReuse _ v body) = indent d ++ "releaseReuse " ++ show v ++ "\n" ++ prettyExp d body
   prettyExp d (RReuseOffer _ sc dupOnShared dropOnUnique body) =
-      indent d ++ "reuseOffer " ++ show sc ++ " dupOnShared=" ++ show dupOnShared
-        ++ (if dropOnUnique == [] then "" else " dropOnUnique=" ++ show dropOnUnique) ++ "\n" ++ prettyExp d body
+      indent d ++ "reuseOffer " ++ show sc ++ " dupOnShared= " ++ show dupOnShared
+        ++ (if dropOnUnique == [] then "" else " dropOnUnique= " ++ show dropOnUnique) ++ "\n" ++ prettyExp d body
   prettyExp d (RLoop _ loopParams initial prologueDrop body) =
       indent d ++ "loop " ++ show (map (\(i, r) => "\{show (RCLoc i)}:\{prettyRep r}") loopParams)
-        ++ " initial=" ++ show initial
-        ++ (if prologueDrop == [] then "" else " prologueDrop=" ++ show prologueDrop) ++ "\n"
+        ++ " initial= " ++ show initial
+        ++ (if prologueDrop == [] then "" else " prologueDrop= " ++ show prologueDrop) ++ "\n"
       ++ prettyExp d body
   prettyExp d (RLoopContinue _ args postDrop) =
       indent d ++ "continue loop " ++ show args
-        ++ (if postDrop == [] then "" else " postDrop=" ++ show postDrop) ++ "\n"
+        ++ (if postDrop == [] then "" else " postDrop= " ++ show postDrop) ++ "\n"
   prettyExp d (RMemoize _ n rep body) =
       indent d ++ "memoize " ++ show n ++ " : " ++ prettyRep rep ++ "\n" ++ prettyExp (d + 1) body
 
   prettyConAlt : Nat -> RConAlt -> String
   prettyConAlt d (MkRConAlt n ci tag args body) =
-      indent d ++ show n ++ " " ++ show ci ++ " tag=" ++ show tag
-        ++ " args=" ++ show (map RCLoc args) ++ " ->\n"
+      indent d ++ show n ++ " " ++ show ci ++ " tag= " ++ show tag
+        ++ " args= " ++ show (map RCLoc args) ++ " ->\n"
       ++ prettyExp (d + 1) body
 
   prettyConstAlt : Nat -> RConstAlt -> String
@@ -123,14 +123,14 @@ mutual
 ||| `delay` CAF" can still be printed at all.
 prettyDef : SortedSet Name -> Name -> RCDef -> String
 prettyDef lazyCAFs n (MkRCFun args retRep isWorker body) =
-    "def " ++ show n ++ "  (fun args=" ++ show (map (\(i, r) => "\{show (RCLoc i)}:\{prettyRep r}") args)
-      ++ " ret=" ++ prettyRep retRep
+    "def " ++ show n ++ "  (fun args= " ++ show (map (\(i, r) => "\{show (RCLoc i)}:\{prettyRep r}") args)
+      ++ " ret= " ++ prettyRep retRep
       ++ (if isWorker then " worker=True" else "")
       ++ (if contains n lazyCAFs then " lazyCAF=True" else "") ++ ")\n"
     ++ prettyExp 1 body ++ "\n"
 prettyDef _ n (MkRCCon tag arity nt) =
-    "def " ++ show n ++ "  (con tag=" ++ show tag ++ " arity=" ++ show arity
-      ++ " newtype=" ++ show nt ++ ")\n\n"
+    "def " ++ show n ++ "  (con tag= " ++ show tag ++ " arity= " ++ show arity
+      ++ " newtype= " ++ show nt ++ ")\n\n"
 prettyDef _ n (MkRCForeign ccs fargs ret) =
     "def " ++ show n ++ "  (foreign " ++ show ccs ++ " " ++ show fargs
       ++ " -> " ++ show ret ++ ")\n\n"

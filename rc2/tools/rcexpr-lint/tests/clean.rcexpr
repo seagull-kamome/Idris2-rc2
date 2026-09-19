@@ -1,0 +1,22 @@
+def TestOkDupThenUse  (fun args= ["v1:Boxed"] ret= Boxed)
+  dup v1
+  drop [v1]
+  v1
+
+def TestOkPlain  (fun args= ["v1:Boxed", "v2:Boxed"] ret= Boxed)
+  drop [v1]
+  v2
+
+def TestOkBranchIndependent  (fun args= ["v1:Boxed", "v2:Boxed"] ret= Boxed)
+  cmp ==Int [v1, v2]
+  then
+    drop [v1]
+    v2
+  else
+    drop [v1]
+    v2
+
+def TestOkPostDropChain  (fun args= ["v1:Boxed", "v2:Boxed"] ret= Boxed)
+  let v3 : Boxed =
+    op ++ [v1, v2]
+  op ++ [v3, v1] postDrop= [v3, v1, v2]

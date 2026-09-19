@@ -296,3 +296,16 @@ if diff -u "$TESTS_DIR/TestDoubleConvert.expected" "$TMP/actual18.out"; then
 else
     fail "TestDoubleConvert -- output mismatch (see diff above)"
 fi
+
+echo "=== rc2 backend: build TestRcexprParser (Language.RCExpr.{AST,Lexer,Parser}: dumprcexpr grammar edge cases) ==="
+nix-shell -p gcc gmp pkg-config --run \
+    "cd '$TESTS_DIR' && '$IDRIS2RC2' --cg rc2 -p rc2base -p contrib -o TestRcexprParser_verify TestRcexprParser.idr"
+
+echo "=== Run and diff against TestRcexprParser.expected ==="
+"$TESTS_DIR/build/exec/TestRcexprParser_verify" > "$TMP/actual19.out" 2>&1
+
+if diff -u "$TESTS_DIR/TestRcexprParser.expected" "$TMP/actual19.out"; then
+    echo "PASS  TestRcexprParser"
+else
+    fail "TestRcexprParser -- output mismatch (see diff above)"
+fi
