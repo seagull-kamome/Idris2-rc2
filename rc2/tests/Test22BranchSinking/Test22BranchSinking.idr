@@ -101,6 +101,21 @@ chainThenBranch flag a b = do
   sideEffect b
   pure (if flag then a else b)
 
+-- Regression test for three related Sink ownership bugs (found while
+-- testing rc2base's Data.Double.Convert): `b` is both one of the
+-- comparison's own operands *and* read again, twice, only inside the
+-- `True` arm (via two separate `dup`+cast reads sunk into that arm).
+-- All three were in how Sink accounts for what a sunk value's own
+-- removal from an unconditional path changes for code around it, not
+-- in the sinking condition itself -- see git log for the full writeup
+-- (`rc2: fix three Compiler.RC2.Sink use-after-free/double-drop
+-- bugs`).
+sharedOperandBranch : Double -> Double -> String
+sharedOperandBranch a b =
+  if a == b
+     then (the String (cast b)) ++ (the String (cast b))
+     else "ne"
+
 main : IO ()
 main = do
   printLn (sinkable True 3 4)
@@ -119,3 +134,5 @@ main = do
   printLn r1
   r2 <- chainThenBranch False 3 4
   printLn r2
+  putStrLn (sharedOperandBranch 3.0 3.0)
+  putStrLn (sharedOperandBranch 3.0 4.0)

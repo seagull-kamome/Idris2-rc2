@@ -512,16 +512,6 @@ one-allocation technique `Data.String.RC2`/`Data.TextBuffer` already
 use) instead of formatting into a scratch buffer and letting a plain
 `String`-typed `%foreign` return copy it a second time.
 
-**Scope note**: while testing this module, a `let a = f s; let b = g
-s; let c = h b; let d = k b in a == b && c == d`-shaped expression
-(four `let`-bound `Double`/`String` values combined in one boolean
-expression) was found to crash with a use-after-free -- reproducible
-with plain `cast` alone, no `Data.Double.Convert` involved at all, so
-it's an existing rc2 codegen bug, not something introduced here. Not
-investigated further as part of this module; `tests/
-TestDoubleConvert.idr`'s own `checkOne` works around it (splits the
-comparisons into two independent expressions instead).
-
 ### `Data.Integer.GMP`
 
 Direct `%foreign` bindings onto real GMP `mpz_*` functions -- made

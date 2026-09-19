@@ -57,21 +57,14 @@ randDecimalString g = do
 -- `cast`), then show the resulting Double with both paths (must also
 -- agree) -- exercises fastParse and fastShow together without needing
 -- a separate raw-bit-pattern Double generator.
---
--- `parseOk`/`showOk` are deliberately each their own self-contained
--- expression (not four `let`-bound Double/String values all combined
--- in one shared boolean expression) -- the latter shape triggers an
--- unrelated, pre-existing rc2 codegen bug, reproducible with plain
--- `cast` alone (no Data.Double.Convert involved at all): a `let a =
--- f s; let b = g s; let c = h b; let d = k b in a == b && c == d`
--- pattern use-after-frees the boxed Double `b`. Reported separately;
--- not something this test should trip over.
 checkOne : IOGen -> IO Bool
 checkOne g = do
   s <- randDecimalString g
-  let parseOk = fastParse s == the Double (cast s)
-  let showOk = fastShow (the Double (cast s)) == the String (cast (the Double (cast s)))
-  pure (parseOk && showOk)
+  let dFast = fastParse s
+  let dSlow = the Double (cast s)
+  let showFast = fastShow dSlow
+  let showSlow = the String (cast dSlow)
+  pure (dFast == dSlow && showFast == showSlow)
 
 allOk : IOGen -> Nat -> IO Bool
 allOk _ Z = pure True
