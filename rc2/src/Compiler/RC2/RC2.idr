@@ -20,6 +20,7 @@ import Compiler.RC2.ConAltNative
 import Compiler.RC2.ConstFold
 import Compiler.RC2.DeadCode
 import Compiler.RC2.DualABI
+import Compiler.RC2.DeadVars
 import Compiler.RC2.DupMerge
 import Compiler.RC2.Emit
 import Compiler.RC2.Emit.Util
@@ -208,7 +209,7 @@ insertMemoize = map wrap
 ||| apart.
 disableableStageNames : List String
 disableableStageNames =
-    ["noinline", "noconstfold", "nospecclosure", "noconaltnative", "nomutualloop", "noloop", "nolateinline", "nosink", "nodualabi", "nodeadcode", "nodupmerge"]
+    ["noinline", "noconstfold", "nospecclosure", "noconaltnative", "nomutualloop", "noloop", "nolateinline", "nosink", "nodualabi", "nodeadcode", "nodupmerge", "nodeadvars"]
 
 ||| `incremental`: `Compiler.RC2.RC.toRCDefPreFold` throws (tagged
 ||| `notInlinedStructFieldMarker`) for a definition like
@@ -239,7 +240,14 @@ toRCDefs disabled incremental roots lds0 = do
     -- `toRCDefs` call, same as `FreshId` already is elsewhere in this
     -- pipeline (one whole-program compile, or one incremental module
     -- compile).
-    _ <- newRef VarId 0
+    --
+    -- Starts at 1, not 0 -- `Compiler.RC2.DeadVars` reserves id 0
+    -- itself, program-wide, as its own "no real variable here" marker,
+    -- precisely because starting this one shared counter at 1 is
+    -- enough to guarantee no ordinary `freshVarId` call anywhere in
+    -- the whole pipeline ever produces it. See that module's own doc
+    -- comment for the full reasoning.
+    _ <- newRef VarId 1
     lds <- if "noinline" `elem` disabled then pure lds0 else logTime 2 "rc2: Inline" $ applyInlineLifted lds0
     preFolded <- logTime 2 "rc2: RC normalize" $
                    if not incremental
@@ -324,9 +332,12 @@ toRCDefs disabled incremental roots lds0 = do
     pruned <- if "nodeadcode" `elem` disabled
                  then pure dualABId
                  else logTime 2 "rc2: Dead code elimination" $ pure (pruneDeadDefs roots dualABId)
-    if "nodupmerge" `elem` disabled
-       then pure pruned
-       else logTime 2 "rc2: Dup merge" $ pure (map (\(n, d) => (n, applyDupMerge d)) pruned)
+    dupMerged <- if "nodupmerge" `elem` disabled
+                    then pure pruned
+                    else logTime 2 "rc2: Dup merge" $ pure (map (\(n, d) => (n, applyDupMerge d)) pruned)
+    if "nodeadvars" `elem` disabled
+       then pure dupMerged
+       else logTime 2 "rc2: Dead variable erasure" $ pure (map (\(n, d) => (n, applyDeadVars d)) dupMerged)
 
 ||| `%cg rc2 inlineRuntime=<code>` companion to upstream's own
 ||| file-path-based `Compiler.Common.getExtraRuntime` -- splices the

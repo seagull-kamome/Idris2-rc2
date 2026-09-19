@@ -160,6 +160,15 @@ Ord RCLocal where
 export
 covering
 Show RCLocal where
+  -- `0` is never a genuine variable id anywhere in the program
+  -- (`Compiler.RC2.Util`'s own `VarId` counter starts at `1` to
+  -- guarantee it) -- the only place an `RCLoc 0` value ever exists at
+  -- all is `Compiler.RC2.Pretty`'s own `prettyConAlt`, transiently
+  -- wrapping a `Compiler.RC2.DeadVars`-erased `RConAlt` field
+  -- (`args : List Int`) just to reuse this `Show` instance for
+  -- display. Rendered as `_` there instead of a `v0` that would read
+  -- as an ordinary, if oddly-numbered, bound variable.
+  show (RCLoc 0) = "_"
   show (RCLoc i) = "v" ++ show i
   show RCNull = "[__]"
   show (RCConst c) = "#" ++ show c

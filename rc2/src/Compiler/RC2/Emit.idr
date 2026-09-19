@@ -488,12 +488,19 @@ mutual
     ||| shared by every alt `emitConCaseInto`/`emitAltChain` render,
     ||| whether or not this particular alt ended up needing its own
     ||| condition check (the destructuring itself doesn't depend on
-    ||| that).
+    ||| that). A field `Compiler.RC2.DeadVars` blanked to `0` (never a
+    ||| genuine variable id -- see that module's own doc comment) gets
+    ||| no declaration at all: nothing anywhere in `body` could
+    ||| possibly reference it, that's exactly what earned it the `0` in
+    ||| the first place. `k` still increments for it regardless, same
+    ||| as any other field -- it's still real storage at that offset in
+    ||| `sc`, just not one this alt itself ever needs to name.
     emitConAltBody : EmitDeps (Sink -> TailPositionStatus -> RCLocal -> RConAlt -> Core ())
     emitConAltBody sink tailPosition sc (MkRConAlt name coninfo tag args body) = do
         let sc' = varName sc
         _ <- foldlC (\k, arg => do
-            emit emptyFC "IDRIS2RC2_Value *var_\{show arg} = ((IDRIS2RC2_Constructor*)\{sc'})->args[\{show k}];"
+            when (arg /= 0) $
+              emit emptyFC "IDRIS2RC2_Value *var_\{show arg} = ((IDRIS2RC2_Constructor*)\{sc'})->args[\{show k}];"
             pure (S k) ) 0 args
         branchBody sink body tailPosition
 

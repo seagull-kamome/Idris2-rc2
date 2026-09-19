@@ -8,8 +8,8 @@
 --- FFI worker-indirection count (want: none, inline splicing only) ---
 0
 --- FFI call-site shape (wrapper body + inlined non-tail call site + tailAbs's own inlined tail call) ---
-    int64_t var_336 = abs(var_335);
-    IDRIS2RC2_Value * var_311 = (IDRIS2RC2_Value*)idris2rc2_mkInt64(abs(idris2rc2_to_i64(var_306)));
+    int64_t var_337 = abs(var_336);
+    IDRIS2RC2_Value * var_312 = (IDRIS2RC2_Value*)idris2rc2_mkInt64(abs(idris2rc2_to_i64(var_307)));
     int64_t retVal = abs((idris2rc2_to_i64(var_1)));
 --- Compiler.RC2.Loop goto conversion for sumLoop's own worker body ---
 --- Tail-position FFI call for tailAbs (want: inlined call + immediate return, no closure defer, rc2/doc/dual-abi.md Stage 4b) ---

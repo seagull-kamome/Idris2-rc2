@@ -13,8 +13,8 @@ module Compiler.RC2.DupMerge
 -- independently rather than accumulating across them) into one RDup
 -- with a higher `extra`, trading N atomic increments (each paying its
 -- own conditional-branch-plus-atomic-add cost) for a single batched one
--- via idris2rc2_dup_n. Runs as the pipeline's very last stage, right
--- before Emit (after DeadCode), since later passes
+-- via idris2rc2_dup_n. Runs right after DeadCode (Compiler.RC2.DeadVars
+-- is the only stage after this one, right before Emit), since later passes
 -- (Compiler.RC2.Loop's wrapInvariantDups/dupInvariantBoxed,
 -- Compiler.RC2.ConAltNative's wrapNDups) are themselves what NEWLY
 -- introduces most of the individual-adjacent-RDup shapes this pass

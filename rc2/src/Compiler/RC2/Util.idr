@@ -103,9 +103,10 @@ freshId = do i <- get FreshId; put FreshId (i + 1); pure i
 
 ||| A single monotonic counter for every `RCLoc`/argument variable id
 ||| in the whole program, `Ref`-keyed by the empty phantom `VarId`.
-||| `Compiler.RC2.RC2.toRCDefs` allocates one with `newRef VarId 0`
-||| right at the top (before `Compiler.RC2.RC.normalizeDef` ever runs)
-||| and every later stage that introduces a *new* variable id --
+||| `Compiler.RC2.RC2.toRCDefs` allocates one with `newRef VarId 1`
+||| (not `0` -- see below) right at the top (before
+||| `Compiler.RC2.RC.normalizeDef` ever runs) and every later stage
+||| that introduces a *new* variable id --
 ||| `Compiler.RC2.Loop`/`Compiler.RC2.ConAltNative`'s own shadow ids,
 ||| `Compiler.RC2.MutualLoop`'s merged-function tag/slot ids,
 ||| `Compiler.RC2.SpecClosure`'s clone captured-parameter ids -- pulls
@@ -118,7 +119,12 @@ freshId = do i <- get FreshId; put FreshId (i + 1); pure i
 ||| `Compiler.RC2.Emit`'s own note on `FreshId` for why that scope is
 ||| already right: a variable id never needs to be unique *across*
 ||| separate incremental module compiles, only within the one C
-||| translation unit each produces).
+||| translation unit each produces). Starting at `1` reserves `0`
+||| program-wide as never a genuine `freshVarId` result -- exactly what
+||| lets `Compiler.RC2.DeadVars`, the pipeline's very last `RCExp`
+||| rewrite before `Compiler.RC2.Emit`, use `0` as its own "no real
+||| variable bound here" marker with no risk of colliding with an
+||| actual variable somewhere.
 export
 data VarId : Type where
 
