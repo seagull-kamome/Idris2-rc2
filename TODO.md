@@ -80,55 +80,6 @@ own call overhead -- doesn't touch the actual (now largely closed)
 boxing/reboxing gap above, just removes one small cost that used to sit
 on top of it.
 
-## Dropped: skipping `idris2rc2_trampoline` for provably non-delegating functions
-
-Investigated whether `Compiler.RC2.Emit`'s two call-emission sites that
-unconditionally wrap a non-tail call in `idris2rc2_trampoline(...)`
-(`emitRC`'s plain `RAppName` case, and `emitAppNameRepInto`'s `RBoxed`
-branch) could skip that wrap when the callee is statically known to
-never itself defer a tail call into a closure. The base property --
-every genuine tail-position leaf of a function's body is a non-call
-(`RV`/`ROp`/`RPrimVal`/`RCon`/`RErased`/`RCrash`/`RStructGet`/
-`RStructSet`), never a saturated call (`RAppName`/`RAppNameRep`/
-`RUnderApp`/`RApp`) -- is decidable per-function with no whole-program
-fixed point, the same shape `Compiler.RC2.DualABI`'s
-`paramEligibility`/`returnEligibility` already use. The natural home
-for the decision is a new field directly on `MkRCFun` itself (mirroring
-`ROp`'s own `postDrop`), not on every call site referencing it --
-`RAppName`/`RAppNameRep` would need no changes at all, and
-`Compiler.RC2.Emit` could derive a lookup set once from `defs`, the
-same way it already derives `StructDefs`.
-
-Dropped before implementation once its actual payoff was traced
-through: it provides **zero benefit for the flagship `fib`-shaped
-case** -- `Compiler.RC2.DualABI`'s own Stage 3b/4 already renders a
-native (`RNative`/`RInlineNative`) worker return without ever calling
-`idris2rc2_trampoline` at all (a native value can never be a closure),
-so this would-be optimisation only reaches the disjoint, narrower set
-of Boxed-returning, non-delegating functions (e.g. ones returning
-`List`/`Maybe`/a user ADT) plus `%foreign` calls (always eligible,
-unconditionally). Extending it to also cover *delegating* functions
-(`g x = h x`, promoting `g` once `h` is known trampoline-free) was
-considered and found unsound as a simple flag-propagation: `g`'s own
-tail call to `h` is still unconditionally deferred into a closure by
-`tryBuildClosureInto` regardless of `h`'s own properties, so skipping
-the caller's trampoline would hand back an undispatched closure as if
-it were the final value. Making it sound would require also rewriting
-`g`'s own tail-position emission to call `h` directly (no closure
-deferral) -- safe only if the delegation subgraph reachable from `g`'s
-tail position is acyclic, which in turn depends on trusting that
-`Compiler.RC2.Loop`/`Compiler.RC2.MutualLoop` have already eliminated
-every tail-recursive cycle before this pass would run (an unverified
-completeness claim), or building explicit cycle detection (SCC) as a
-safety net. This is exactly the same "pure tail-call delegation"
-territory the "tail-position delegating calls stay boxed" entry above
-already flags as deliberately unsolved, wearing a different name.
-Given the real verification burden, the reopened stack-safety
-territory `doc/dual-abi.md`'s own Stage 4 permanently excluded, and no
-profiling evidence the narrow (non-propagated) win is worth pursuing
-on its own, not implemented; revisit only if profiling shows Boxed-
-returning non-delegating call sites are a real hot path.
-
 ## Future: nested self-tail-recursive loops
 
 `Compiler.RC2.Loop`'s `applyLoop` assumes a function has at most one
@@ -225,16 +176,6 @@ maximum arity) would work just as well as `idris2rc2_mkClosure`'s heap
 allocation, without needing the closure object itself. Not attempted;
 see `rc2/doc/closure-dispatch-optimization.md` for the full context on
 the existing 1..20 fast path this would extend.
-
-## Dropped: loop-invariant constructor-field hoisting
-
-Two entries, investigated and dropped together -- "loop-invariant
-single-branch case hoisting" and `ConAltNative`'s once-planned
-extension "across loop/dual-ABI boundaries" turned out to be the same
-underlying gap wearing two different names. See
-`rc2/doc/case-hoisting-scope.md` for the full writeup (why it looked
-worth doing, what the investigation found, and why neither design
-considered was pursued).
 
 ## Performance: interface-dictionary method dispatch stays boxed even when the concrete instance is known
 
@@ -710,33 +651,6 @@ first, fast path later. No behaviour change when it lands, only speed.
 See `rc2/doc/runtime-lifecycle.md` and `numeric.c`'s own comment.
 
 
-## Dropped: packing short strings into a tagged pointer
-
-Considered (as a future-hope wishlist item) extending rc2's existing
-tagged-pointer scheme (`Int8`/`Int16`/`Int32`/`Bits8`/`Bits16`/
-`Bits32`/`Char`, see `Compiler.RC2.Types.alwaysUnboxed` and
-`support/rc2/datatypes.h`'s own module note) to short strings as well
--- packing a small enough `String` directly into the pointer word
-itself, avoiding a real heap allocation (and its `idris2rc2_dup`/
-`idris2rc2_drop` traffic) the same way these scalar types already do.
-
-Dropped without implementing: a short string overwhelmingly shows up
-in real Idris2 source as a *compile-time constant*, not a
-runtime-computed value, and constant strings already get exactly this
-class of allocation-avoidance treatment today -- `Compiler.RC2.Emit`/
-`ConstFold` stage every literal `String` constant (short or long) as
-an immortal, file-scope C static (`IDRIS2RC2_STOCKVAL`), never a fresh
-heap allocation, with `idris2rc2_dup`/`idris2rc2_drop` already
-no-ops against it (the `REFCOUNT_MAX` immortal check). Tagging short
-strings would therefore buy nothing for the overwhelmingly common
-constant case -- it could only help a short string that's *itself
-computed at runtime* (e.g. sliced/concatenated dynamically) and still
-happens to end up short, a narrow enough slice of real workloads that
-the payoff looks marginal at best. Not investigated further, not
-implemented; revisit only if profiling ever shows short,
-runtime-computed strings actually dominating some real workload's own
-allocation traffic.
-
 ## Scope: `Compiler.RC2.DeadCode` doesn't cover `MkRCForeign` removed by constant folding
 
 `Compiler.RC2.DeadCode` (see `rc2/doc/dead-code-elim.md`) deliberately
@@ -825,60 +739,15 @@ case needs one specifically.
   - 現在のLiftedでも、Force が無いだけでLazyは注釈として情報が残る
   - 特殊なクロージャを用意して型タグを使って実行時にメモ化を解決できる？
   - トップレベルの引数の無い関数はstaticで価をメモ化できる？
-  - && や || のインライン化は調査済み・対応不要と判明(下記「遅延評価引数を持つ
-    小さい関数のインライン展開」参照)。他の`Lazy`引数関数についても同様の
+  - && や || のインライン化は調査済み・対応不要と判明(upstream自身の`%inline`
+    プラグマとモジュールコンパイル時の`compileAndInlineAll`が、rc2独自の
+    `Compiler.RC2.Inline`が動くより前にクロージャを跡形もなく消し去っている)。
+    他の`Lazy`引数関数についても同様の
     upstream最適化が効くかは未調査。
-
-## キャッシュ付き固定サイズメモリアロケータの導入 -- 2度実測、2度とも悪化。単純な設計では勝てない
-
-`idris2-missing-containers`の`benchmarkHashMap`プロファイリング(このセッション、
-`rc2/BENCHMARKS.md`参照)で、`write`フェーズ(985,690件挿入、全体の約70%・
-9〜10秒)の支配的コストが`IDRIS2RC2_Constructor`/`IDRIS2RC2_Closure`の小さい
-固定サイズ確保・解放の連打(バケットの連結リスト再構築、`HashSetAction`/
-依存ペアの包み直し、`do`記法継続クロージャ)だと判明したのを受けて、この
-項目(元は人間が書いた素案)を実際に検証した。
-
-**まず素朴な仮説確認**: 「汎用の高性能アロケータに差し替えるだけで既に
-恩恵があるのでは」を`LD_PRELOAD=libjemalloc.so`で実測。結果は**12.7秒→
-15.0秒(約18%悪化)**、汎用アロケータへの単純差し替えはむしろ逆効果だった。
-
-**次にPlan A(サイズクラス別・上限付きフリーリスト)を実装して実測**:
-`rc2/support/rc2/`に`slab.h`/`slab.c`(サイズクラス=ワード数、クラスごとに
-上限256個のロックフリー(Treiberスタック、CAS)フリーリスト、
-`IDRIS2RC2_Constructor`/`IDRIS2RC2_Closure`のみ対象)を実装し、
-`memory.c`の`idris2rc2_alloc`/`idris2rc2_teardown`の`free(v)`をフックして
-実測。正当性(`testHashMap`✓✓✓、件数一致)は問題なかったが、速度は
-**12.7秒→14.5秒(約12〜15%悪化)**と、これもまた悪化した。実験用の
-`slab.h`/`slab.c`とフックは検証後に削除済み(コミットもしていない)。
-
-**原因の見立て**: glibcのmalloc(2.26以降)は既に`tcache`という
-**スレッドローカルかつアトミック命令を一切使わない**高速パスを持っており、
-直近解放した小さいオブジェクトをビン(サイズ区分)ごとに即座に再利用する。
-今回のワークロードは実質シングルスレッドで、この`tcache`の得意分野に
-ドンピシャで当てはまる。一方、今回実装したPlan Aは実装の単純さを優先して
-**グローバルな1本のロックフリースタック(CAS)**にしたため、シングルスレッド
-でも毎回アトミック命令のコストを払うことになり、「関数呼び出し1回(内部は
-非アトミックな単純リンクリスト操作)」対「CAS操作」という比較で、後者が
-負けた格好になったと考えられる。
-
-**結論**: 汎用アロケータへの単純差し替え(jemalloc)も、シンプルなグローバル
-版の自前フリーリストも、このワークロードに関しては**glibcの素のmallocに
-勝てない**ことを2回の独立した実測で確認した。本当にtcacheに勝つ可能性が
-あるとすれば、こちらも**スレッドローカルかつ非アトミック**な設計(スレッド
-ごとのキャッシュ+スレッド間の受け渡し/オーバーフロー機構)にする必要が
-あるが、これはPlan Aよりだいぶ実装量が増える。2度の否定的な実測結果を
-踏まえ、現時点では追求しない。スレッドローカル版を実際に実装・実測する人が
-現れたら再訪。
-
 
 ## ファントム型やファントム関数の明示
 トップレベル定義に 0 をつける。
 実行時に存在しないからいいや、ではなく存在しない事を保証する
-
-## RCExp の ROp はRLocalに持っていく -- 調査済み、却下
-InlineNativeだけで問題をほぼ解消できている。むしろInlineNativeを廃止
-してRCLocalへ併合する方向で考える？
-
 
 ## Reuse解析とannotation(所有権挿入)の配置 -- 調査済み、方針決定
 
@@ -946,22 +815,6 @@ dropする指示がどこにも生成されず、静かにリークする。元�
 dup+dropペア分増えるが、正しさは保たれる)という保守的な代替案も
 検討の余地がある。
 
-## 遅延評価引数を持つ小さい関数のインライン展開 -- 調査済み、`&&`/`||`は対応不要
-
-`&&`/`||`(`Lazy Bool`引数)がインライン展開されずクロージャ化されるのでは、という
-懸念を実際にコンパイルして確認したが、問題は起きていなかった。upstream自身の
-`%inline`プラグマとモジュールコンパイル時の`compileAndInlineAll`が、rc2独自の
-`Compiler.RC2.Inline`が動くより前に、完全飽和呼び出し・部分適用いずれのケースでも
-`&&`/`||`とそのクロージャを跡形もなく消し去っている(`--directive dumprcexpr`の
-ダンプで実証: `Prelude.Basics`への参照が残らず、単純な`RCmpCase`の入れ子、部分適用
-は恒等関数にまで簡約される)。rc2独自の`Inline`パス自体は`isCallFree`が`Force`由来の
-`LApp`を含む本体を弾くため`&&`/`||`をインライン化できないが、その手前で解決済みの
-ため実害なし。両辺が(プリミティブ演算ではなく)本物の関数呼び出しの場合も確認済み:
-`checkA x && checkB y`は`case checkA x of {1 => checkB y; 0 => 0}`相当の`case`分岐に
-展開され、短絡評価(`checkB`は該当する枝でのみ呼ばれる)は保たれたままクロージャは
-一切構築されない。他の(`%inline`が付いていない)`Lazy`引数関数に同じ最適化が効くかは
-未調査 -- 上の「Lambda lift で欠落する情報の保全」参照。
-  
 ## thread-local-awareなdup/dop
 マルチスレッド対応でdup/dropをアトミック操作にした結果、バスへの負荷増加やキャッシュ
 破棄等と思われるペナルティによる性能劣化が観測された。
@@ -1031,44 +884,6 @@ foreign呼び出しに戻る。ただし今後もこの間接参照パターン
 透過的に解消してメモ化対象から除外する、といった軽量化の余地が
 ある。ただし`unsafePerformIO`検出を避けた本来の設計意図(構文パターン
 に頼らず安全側に倒す)を壊さない形にする必要があり、要調査。
-
-## rc2全体リファクタリング調査(2026-09-17)で見送った項目
-
-コード共有・速度/メモリ・証明による安全性の3観点で`rc2/src/Compiler/RC2/`
-全体を調査した際、検討はしたが実施を見送った項目のまとめ(実施した項目は
-別途コミット参照)。
-
-- **`DualABI.synthesizeWorker`と`SpecClosure.buildClone`の統合**:
-  どちらも「新しいトップレベル関数を合成し呼び出し元を書き換える」という
-  表面的な形は似ているが、前者はネイティブABI昇格(新規キャプチャ状態
-  なし)、後者は部分適用特化(`freshVarId`による新規キャプチャあり)と
-  本質的に別物。引数リスト構築・fresh変数の出所(`FreshId` vs
-  `VarId`)・書き換え意味論のすべてが異なり、無理に共有すると壊れやすい
-  抽象化になるだけで行数削減の実益もない。
-- **`DualABI.freshName`と`MutualLoop.freshName`の統合**: ほぼ同一の
-  実装(`MN`接頭辞+衝突チェックループ)だが、`Util.idr`自身の既存コメント
-  で「命名スキームがモジュールごとに違うので意図的に統合しない」と
-  明記済みの設計判断。蒸し返す理由なし。
-- **`Emit/Util.idr`の`CFType`キャッチオール(`idris_crash "Unknown FFI
-  type"`など、`cTypeOfCFType`/`extractValue`/`packCFType`)を型で
-  閉じる**: `CFType`はupstream由来のオープンな列挙型で、閉じるには
-  FFI経路全体(`RC.idr`の`checkForeignReturn`、`Emit/Foreign.idr`、
-  struct処理)を横断する書き換えが必要。これらは「この時点で到達不能
-  であることが既に十分文書化されている」防御であり実害のある穴では
-  ないため、費用対効果が悪いと判断。
-- **`RCExp`全体をarityや`PrimType`でGADT添字化**: 14パス全てが
-  パターンマッチする中心IRの全面書き換えになる。既存doc
-  (`dual-abi.md`/`con-alt-native.md`)にも明示的な棄却議論はなく
-  単に未提案なだけだが、それだけ影響範囲が大きい。`MutualLoop`の
-  タグ`Fin`化のような、局所的な箇所への証明技法の横展開で一部の
-  恩恵は代替可能と判断し、全面GADT化は見送り(ただし`RC.idr`の
-  `lookupEnv`側は下記の通り、この横展開自体がIdris2の消去規則で
-  頭打ちになることが判明した)。
-- **パス間で呼び出しグラフをそれぞれ再構築している件**
-  (`LateInline.analyse`/`MutualLoop.buildGraph`/`Loop`の
-  `buildCalleeTable`が各々`tarjanSCCs`等を呼ぶ): 各パスは自分の
-  直前の変換でエッジ集合が変わった"後"のグラフを見ているため、
-  同一データの無駄な再計算ではなく正当な再構築。対処不要。
 
 ## `RC.idr`のlookupEnv: `IsVar`証明による完全な全域化はIdris2の消去規則上不可能(2026-09-17)
 
