@@ -155,8 +155,11 @@ static const char *idris2rc2_scan_decimal(const char *p, mpz_t sig, long *dexp) 
 }
 
 // The core: C-string -> double, locale-independent, correctly rounded.
-// Reused by the shortest-string formatter for its round-trip check.
-static double idris2rc2_parse_double(const char *p) {
+// Reused by the shortest-string formatter for its round-trip check, and
+// (declared in numeric.h) by libs/rc2base's Data.Double.Convert as the
+// exact fallback its Eisel-Lemire fast path defers to on any input its
+// own table-driven approximation can't resolve unambiguously.
+double idris2rc2_parse_double(const char *p) {
   while (*p == ' ' || (*p >= '\t' && *p <= '\r')) p++;
   int neg = 0;
   if (*p == '+' || *p == '-') { neg = (*p == '-'); p++; }
@@ -236,8 +239,10 @@ static void idris2rc2_place_point(char *out, const char *ds, int nd, long k) {
 // round `v` to `p` significant decimal digits with an exact GMP
 // division, form the literal, and keep the first that re-parses to
 // exactly `v`. 17 significant digits always round-trip an IEEE double,
-// so the loop always terminates with a match.
-static void idris2rc2_shortest_double(double v, char *buf) {
+// so the loop always terminates with a match. Declared in numeric.h and
+// reused by libs/rc2base's Data.Double.Convert as its Grisu2 fast path's
+// exact fallback/correctness backstop.
+void idris2rc2_shortest_double(double v, char *buf) {
   uint64_t bits;
   memcpy(&bits, &v, sizeof bits);
   int be = (int)((bits >> 52) & 0x7FF);

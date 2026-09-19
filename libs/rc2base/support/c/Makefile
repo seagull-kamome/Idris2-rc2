@@ -10,8 +10,8 @@ AR=ar
 RC2BASE_VERSION := 0.1.0
 LIBDIR = $(shell idris2 --libdir)/rc2base-$(RC2BASE_VERSION)/lib
 
-OBJS = text_util.o concurrency_util.o xoroshiro64starstar.o xoroshiro128plusplus.o memstream.o event_util.o net_util.o posix_regex.o string_rc2.o
-HDRS = text_util.h concurrency_util.h xoroshiro64starstar.h xoroshiro128plusplus.h memstream.h ptr_util.h event_util.h net_util.h posix_regex.h string_rc2.h
+OBJS = text_util.o concurrency_util.o xoroshiro64starstar.o xoroshiro128plusplus.o memstream.o event_util.o net_util.o posix_regex.o string_rc2.o double_convert.o
+HDRS = text_util.h concurrency_util.h xoroshiro64starstar.h xoroshiro128plusplus.h memstream.h ptr_util.h event_util.h net_util.h posix_regex.h string_rc2.h double_convert.h
 
 
 %.o: %.c
@@ -31,6 +31,7 @@ event_util.o: event_util.c event_util.h
 net_util.o: net_util.c net_util.h
 posix_regex.o: posix_regex.c posix_regex.h
 string_rc2.o: string_rc2.c string_rc2.h
+double_convert.o: double_convert.c double_convert.h pow5_table.h cached_powers.h
 
 install: all
 	mkdir -p $(LIBDIR)

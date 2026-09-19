@@ -505,6 +505,17 @@ IDRIS2RC2_Value *idris2rc2_cast_Integer_to_string(IDRIS2RC2_Value *);
 // one-liners around atoi/atoll. Double is NOT atof: it uses a
 // locale-independent, correctly-rounded GMP parser matching the
 // frontend's literal syntax (see numeric.c).
+//
+// The two raw (non-Value-boxed) helpers behind the Double<->string casts
+// are exposed here (not just used internally by numeric.c) so that
+// libs/rc2base's Data.Double.Convert can call them directly as the
+// exact fallback its Eisel-Lemire/Grisu2 fast paths defer to on any
+// input their own table-driven approximations can't resolve
+// unambiguously -- same "%foreign straight onto a real rc2 runtime
+// symbol, resolved at final link time" shape Data.Integer.GMP already
+// uses for real `mpz_*` symbols.
+double idris2rc2_parse_double(const char *p);
+void idris2rc2_shortest_double(double v, char *buf);
 static inline IDRIS2RC2_Value *idris2rc2_cast_string_to_Int8(IDRIS2RC2_Value *x) { return idris2rc2_mkInt8((int8_t)atoi(((IDRIS2RC2_String *)x)->str)); }
 static inline IDRIS2RC2_Value *idris2rc2_cast_string_to_Int16(IDRIS2RC2_Value *x) { return idris2rc2_mkInt16((int16_t)atoi(((IDRIS2RC2_String *)x)->str)); }
 static inline IDRIS2RC2_Value *idris2rc2_cast_string_to_Int32(IDRIS2RC2_Value *x) { return idris2rc2_mkInt32((int32_t)atoi(((IDRIS2RC2_String *)x)->str)); }

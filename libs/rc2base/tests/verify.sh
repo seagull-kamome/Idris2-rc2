@@ -283,3 +283,16 @@ if diff -u "$TESTS_DIR/TestMVar.expected" "$TMP/actual17.out"; then
 else
     fail "TestMVar -- output mismatch (see diff above)"
 fi
+
+echo "=== rc2 backend: build TestDoubleConvert (Data.Double.Convert: Eisel-Lemire/Grisu2 fast path) ==="
+nix-shell -p gcc gmp pkg-config --run \
+    "cd '$TESTS_DIR' && '$IDRIS2RC2' --cg rc2 -p rc2base -o TestDoubleConvert_verify TestDoubleConvert.idr"
+
+echo "=== Run and diff against TestDoubleConvert.expected ==="
+"$TESTS_DIR/build/exec/TestDoubleConvert_verify" > "$TMP/actual18.out" 2>&1
+
+if diff -u "$TESTS_DIR/TestDoubleConvert.expected" "$TMP/actual18.out"; then
+    echo "PASS  TestDoubleConvert"
+else
+    fail "TestDoubleConvert -- output mismatch (see diff above)"
+fi

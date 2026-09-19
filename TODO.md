@@ -636,19 +636,33 @@ Data.TextBufferを用意すると共に、長らく動いていなかった文�
 見えないオーバヘッドが挿入される事になる。
 
 
-## Performance: `Double <-> String` cast has no fast path (GMP every call)
+## Performance: `cast`'s own `Double <-> String` still has no fast path (GMP every call)
 
 `support/rc2/numeric.c`'s `idris2rc2_cast_string_to_Double` /
 `idris2rc2_cast_Double_to_string` are correct and locale-independent
 (GMP-exact rational parse; shortest-round-trip formatter that probes
 precisions 1..17), but every call allocates GMP temporaries -- fine for
-`show`, not for parsing a large numeric data file. The standard fast
-path is a branch-free `uint64_t`/`__uint128_t` route: Eisel-Lemire
-("fast_float" / Go `strconv` / Rust) for the parser, Grisu2 or Ryū for
-the formatter, with the current GMP code kept as the slow-path
-fallback. Deferred deliberately -- decided the simple GMP-only version
-first, fast path later. No behaviour change when it lands, only speed.
-See `rc2/doc/runtime-lifecycle.md` and `numeric.c`'s own comment.
+`show`, not for parsing a large numeric data file.
+
+**Now available as an opt-in library function**: `libs/rc2base`'s
+`Data.Double.Convert` (`fastParse`/`fastShow`) implements exactly the
+previously-planned branch-free `uint64_t`/`__uint128_t` route --
+Eisel-Lemire for parsing, a DiyFp/Grisu2-style scaled digit generation
+for formatting, both falling back to the exact GMP functions above
+(exposed non-`static` for this reuse) whenever their own error bound
+leaves any doubt, and the formatter additionally re-verifies every
+candidate against the exact parser before trusting it. See
+`libs/rc2base/README.md`'s own "`Data.Double.Convert`" section for the
+full design and its own correctness story (a real ambiguity-margin bug
+caught by a 5-million-case fuzz run, not by inspection).
+
+**Still open**: promoting this into `cast` itself (the compiler
+intrinsic every `Double`/`String` program already uses, no opt-in
+required) is a separate, not-yet-decided follow-up -- deliberately out
+of scope for the rc2base module above, which only needed to prove the
+fast-path design works without touching `Compiler.RC2` codegen at all.
+Revisit if a concrete program's `cast`-based (not `fastParse`/
+`fastShow`-based) numeric I/O shows up as a real bottleneck.
 
 
 ## Scope: `Compiler.RC2.DeadCode` doesn't cover `MkRCForeign` removed by constant folding
