@@ -137,7 +137,11 @@ consumedOperands reps = go []
                                          _ => False
     isDroppableBoxed _ = False
     go : List RCLocal -> RCExp -> List RCLocal
-    go _ (ROp _ _ _ _ postDrop) = postDrop
+    -- Same `dupped` exclusion as the RCon case below: a postDrop target
+    -- `value` itself already `dup`'d earlier in this same chain is
+    -- self-contained, not something the branch we don't sink into owes
+    -- a compensating drop for.
+    go dupped (ROp _ _ _ _ postDrop) = filter (\a => not (a `elem` dupped)) postDrop
     go _ (RAppName _ _ _ args) = filter isDroppableBoxed args
     go dupped (RCon _ _ _ _ args _) = filter (\a => isDroppableBoxed a && not (a `elem` dupped)) args
     go dupped (RDup _ v _ cont) = go (v :: dupped) cont
@@ -194,11 +198,20 @@ sinkEligible _ = False
 ||| branch's own deciding operand" (the `fib` miscompile this guards
 ||| against). `trySinkInto` checks this before ever calling
 ||| `trySinkIntoArms` below.
-isDecidingOperand : Int -> RCExp -> Bool
-isDecidingOperand var (RCmpCase _ _ args _ _ _) = RCLoc var `elem` toList args
-isDecidingOperand var (RConCase _ sc _ _) = sc == RCLoc var
-isDecidingOperand var (RConstCase _ sc _ _) = sc == RCLoc var
-isDecidingOperand _ _ = False
+||| Also true if `value` itself (not just `var`, the name it would be
+||| bound to) reads a deciding operand: that operand's own last owned
+||| reference may be spent by evaluating the branch condition, so
+||| moving `value`'s own read of it to after that point is just as
+||| unsafe as `var` being the deciding operand outright.
+isDecidingOperand : Int -> RCExp -> RCExp -> Bool
+isDecidingOperand var value branch =
+    let candidates = insert (RCLoc var) (genuinelyUsedR value)
+        deciders = case branch of
+                        RCmpCase _ _ args _ _ _ => fromList (toList args)
+                        RConCase _ sc _ _ => singleton sc
+                        RConstCase _ sc _ _ => singleton sc
+                        _ => empty
+    in not (null (intersection candidates deciders))
 
 ||| Try to sink `RLet _ var rep value _`'s own binding into the single
 ||| arm of `branch` that genuinely reads `var` (not itself the
@@ -275,8 +288,12 @@ trySinkIntoArms _ _ _ _ _ = Nothing
 ||| Also sees through a leading `RLet` for an unrelated local `y` (left
 ||| in place -- only survives to this point if `y` itself couldn't be
 ||| sunk, see `applySinkExp`'s own doc comment), bailing if `y`'s own
-||| value reads `var` -- see "Sinking past an unrelated let". Then
-||| checks `isDecidingOperand` (see its own doc comment) before
+||| value reads `var`, *or* if `y`'s own value and `value` (the thing
+||| being sunk) share any free local -- `y`'s value may be the sole
+||| remaining consumer of that shared local's last owned reference, so
+||| sinking `value` past it would read a reference `y`'s own value
+||| already spent. See "Sinking past an unrelated let". Then checks
+||| `isDecidingOperand` (see its own doc comment) before
 ||| dispatching to `trySinkIntoArms`.
 trySinkInto : SortedMap Int Rep -> Int -> Rep -> RCExp -> RCExp -> Maybe RCExp
 trySinkInto reps var rep value (RDup fc v extra cont) =
@@ -292,15 +309,15 @@ trySinkInto reps var rep value (RReuseOffer fc sc dupOnShared dropOnUnique cont)
        then Nothing
        else map (RReuseOffer fc sc dupOnShared dropOnUnique) (trySinkInto reps var rep value cont)
 trySinkInto reps var rep value (RLet fc y repY valueY cont) =
-    if contains (RCLoc var) (genuinelyUsedR valueY)
+    if contains (RCLoc var) (genuinelyUsedR valueY) || any (\l => contains l (genuinelyUsedR valueY)) (Prelude.toList (genuinelyUsedR value))
        then Nothing
        else map (RLet fc y repY valueY) (trySinkInto reps var rep value cont)
 trySinkInto reps var rep value branch@(RCmpCase _ _ _ _ _ _) =
-    if isDecidingOperand var branch then Nothing else trySinkIntoArms reps var rep value branch
+    if isDecidingOperand var value branch then Nothing else trySinkIntoArms reps var rep value branch
 trySinkInto reps var rep value branch@(RConCase _ _ _ _) =
-    if isDecidingOperand var branch then Nothing else trySinkIntoArms reps var rep value branch
+    if isDecidingOperand var value branch then Nothing else trySinkIntoArms reps var rep value branch
 trySinkInto reps var rep value branch@(RConstCase _ _ _ _) =
-    if isDecidingOperand var branch then Nothing else trySinkIntoArms reps var rep value branch
+    if isDecidingOperand var value branch then Nothing else trySinkIntoArms reps var rep value branch
 trySinkInto _ _ _ _ _ = Nothing
 
 ------------------------------------------------------------------------
