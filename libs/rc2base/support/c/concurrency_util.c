@@ -71,7 +71,7 @@ void idris2rc2_set_thread_data(IDRIS2RC2_Value *typeWitness, IDRIS2RC2_Value *va
 
 // prim__getThreadData's `(a : Type)` argument is likewise a real
 // (received-and-ignored) parameter, not erased.
-IDRIS2RC2_Value *idris2rc2_get_thread_data(IDRIS2RC2_Value *typeWitness) {
+IDRIS2RC2_Value *idris2rc2_get_thread_data(IDRIS2RC2_Value *) {
   return idris2rc2_dup(idris2rc2_threadLocalData);
 }
 
@@ -113,7 +113,7 @@ static void *idris2rc2_joinThreadTrampoline(void *arg) {
 // appears in the return type, so (like setThreadData/getThreadData
 // above) rc2's codegen passes its type witness as a real leading
 // argument, received-and-ignored here.
-void *idris2rc2_fork_join(IDRIS2RC2_Value *typeWitness, IDRIS2RC2_Closure *fct) {
+void *idris2rc2_fork_join(IDRIS2RC2_Value *, IDRIS2RC2_Closure *fct) {
   // Same use-after-free reasoning as idris2rc2_fork: the generated FFI
   // wrapper drops its own reference to fct right after this call
   // returns, but the spawned thread keeps using the pointer.
@@ -129,7 +129,7 @@ void *idris2rc2_fork_join(IDRIS2RC2_Value *typeWitness, IDRIS2RC2_Closure *fct) 
 
 // prim__join : JoinHandle a -> PrimIO a -- same reasoning, `a`'s type
 // witness precedes the real `handle` argument.
-IDRIS2RC2_Value *idris2rc2_join(IDRIS2RC2_Value *typeWitness, IDRIS2RC2_Value *handle) {
+IDRIS2RC2_Value *idris2rc2_join(IDRIS2RC2_Value *, IDRIS2RC2_Value *handle) {
   IDRIS2RC2_JoinHandle *h = (IDRIS2RC2_JoinHandle *)handle;
   void *result;
   pthread_join(h->tid, &result);
@@ -137,7 +137,7 @@ IDRIS2RC2_Value *idris2rc2_join(IDRIS2RC2_Value *typeWitness, IDRIS2RC2_Value *h
   return (IDRIS2RC2_Value *)result;
 }
 
-void *idris2rc2_channel_make(IDRIS2RC2_Value *typeWitness) {
+void *idris2rc2_channel_make(IDRIS2RC2_Value *) {
   IDRIS2RC2_Value *v = idris2rc2_alloc(sizeof(IDRIS2RC2_Channel));
   v->header.tag = IDRIS2RC2_TAG_CHANNEL;
   IDRIS2RC2_Channel *c = (IDRIS2RC2_Channel *)v;
@@ -148,7 +148,7 @@ void *idris2rc2_channel_make(IDRIS2RC2_Value *typeWitness) {
   return v;
 }
 
-void idris2rc2_channel_put(IDRIS2RC2_Value *typeWitness, IDRIS2RC2_Value *chan, IDRIS2RC2_Value *val) {
+void idris2rc2_channel_put(IDRIS2RC2_Value *, IDRIS2RC2_Value *chan, IDRIS2RC2_Value *val) {
   IDRIS2RC2_Channel *c = (IDRIS2RC2_Channel *)chan;
   idris2rc2_ChannelNode *node = malloc(sizeof(idris2rc2_ChannelNode));
   IDRIS2RC2_VERIFY(node, "malloc failed");
@@ -169,7 +169,7 @@ void idris2rc2_channel_put(IDRIS2RC2_Value *typeWitness, IDRIS2RC2_Value *chan, 
   pthread_mutex_unlock(&c->mutex);
 }
 
-IDRIS2RC2_Value *idris2rc2_channel_get(IDRIS2RC2_Value *typeWitness, IDRIS2RC2_Value *chan) {
+IDRIS2RC2_Value *idris2rc2_channel_get(IDRIS2RC2_Value *, IDRIS2RC2_Value *chan) {
   IDRIS2RC2_Channel *c = (IDRIS2RC2_Channel *)chan;
   pthread_mutex_lock(&c->mutex);
   while (!c->head)
@@ -205,7 +205,7 @@ static IDRIS2RC2_Value *idris2rc2_channel_wrap_just(IDRIS2RC2_Value *val) {
   return (IDRIS2RC2_Value *)just;
 }
 
-IDRIS2RC2_Value *idris2rc2_channel_get_non_blocking(IDRIS2RC2_Value *typeWitness, IDRIS2RC2_Value *chan) {
+IDRIS2RC2_Value *idris2rc2_channel_get_non_blocking(IDRIS2RC2_Value *, IDRIS2RC2_Value *chan) {
   IDRIS2RC2_Channel *c = (IDRIS2RC2_Channel *)chan;
   pthread_mutex_lock(&c->mutex);
   idris2rc2_ChannelNode *node = c->head;
@@ -222,7 +222,7 @@ IDRIS2RC2_Value *idris2rc2_channel_get_non_blocking(IDRIS2RC2_Value *typeWitness
   return idris2rc2_channel_wrap_just(val);
 }
 
-IDRIS2RC2_Value *idris2rc2_channel_get_with_timeout(IDRIS2RC2_Value *typeWitness, IDRIS2RC2_Value *chan, int64_t milliseconds) {
+IDRIS2RC2_Value *idris2rc2_channel_get_with_timeout(IDRIS2RC2_Value *, IDRIS2RC2_Value *chan, int64_t milliseconds) {
   IDRIS2RC2_Channel *c = (IDRIS2RC2_Channel *)chan;
   pthread_mutex_lock(&c->mutex);
   if (!c->head) {

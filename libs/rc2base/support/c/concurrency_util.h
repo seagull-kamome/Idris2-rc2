@@ -43,4 +43,9 @@ IDRIS2RC2_Value *idris2rc2_channel_get_non_blocking(IDRIS2RC2_Value *typeWitness
 // idris2rc2_condition_wait_timeout above, which is microseconds.
 IDRIS2RC2_Value *idris2rc2_channel_get_with_timeout(IDRIS2RC2_Value *typeWitness, IDRIS2RC2_Value *chan, int64_t milliseconds);
 
+static inline int64_t idris2rc2_concurrent_atomic_counter_next(int64_t _Atomic *counter) {
+    return atomic_fetch_add(counter, 1);
+}
+
+
 #endif
