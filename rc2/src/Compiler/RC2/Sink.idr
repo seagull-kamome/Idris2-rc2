@@ -150,17 +150,52 @@ consumedOperands reps = go []
     go dupped (RReleaseReuse _ _ cont) = go dupped cont
     go _ _ = []
 
+||| Every local that already appears in some `RDrop` anywhere within
+||| `e` -- `addOperandDrops` (below) needs this alongside
+||| `genuinelyUsedR` to recognise an operand `branch` already owes a
+||| drop for on its own (an RC-annotation-phase `drop` that predates
+||| this sink, or one an *earlier* sink operation on a different `let`
+||| already prepended to this same branch), not just one it still
+||| reads. `genuinelyUsedR` alone can't see this: it deliberately
+||| treats an `RDrop`'s own targets as not "read" (see that function's
+||| own doc comment), so a second `addOperandDrops` call for a
+||| *different* sunk `let` that happens to share an operand with the
+||| first would sail straight past that guard and stack a second,
+||| redundant `drop` for the same local on top -- a real double-drop
+||| this pass produced from real idris2-lsp source (`Core.Normalise.
+||| Eval.evalRef`'s own `evalOp` case block), caught by `rcexpr-lint`.
+||| Same traversal shape as `genuinelyUsedR` itself, so the two agree
+||| on every place a `RDrop` can turn up.
+alreadyDropped : RCExp -> SortedSet RCLocal
+alreadyDropped (RLet _ _ _ value body) = union (alreadyDropped value) (alreadyDropped body)
+alreadyDropped (RDrop _ vars body) = union (fromList vars) (alreadyDropped body)
+alreadyDropped (RDup _ _ _ body) = alreadyDropped body
+alreadyDropped (RFree _ _ body) = alreadyDropped body
+alreadyDropped (RReleaseReuse _ _ body) = alreadyDropped body
+alreadyDropped (RReuseOffer _ _ _ _ body) = alreadyDropped body
+alreadyDropped (RCmpCase _ _ _ _ t f) = union (alreadyDropped t) (alreadyDropped f)
+alreadyDropped (RConCase _ _ alts mDef) =
+    let altsD = map (\(MkRConAlt _ _ _ _ body) => alreadyDropped body) alts
+    in concat (maybe altsD (\d => alreadyDropped d :: altsD) mDef)
+alreadyDropped (RConstCase _ _ alts mDef) =
+    let altsD = map (\(MkRConstAlt _ body) => alreadyDropped body) alts
+    in concat (maybe altsD (\d => alreadyDropped d :: altsD) mDef)
+alreadyDropped (RLoop _ _ _ _ body) = alreadyDropped body
+alreadyDropped _ = empty
+
 ||| Prefixes `branch` (already `var`-stripped by `stripIfUnused`) with
 ||| a `drop` for every one of `consumed` -- see `consumedOperands`'s
-||| own doc comment. `Nothing` (fall back to not sinking) only in the
-||| vanishingly unlikely case one of them is already read in `branch`
-||| (would risk a double-drop -- costs nothing to guard against);
-||| `Just branch` unchanged when `consumed` is empty (the overwhelming
-||| common case).
+||| own doc comment. `Nothing` (fall back to not sinking) if one of
+||| them is already read in `branch` (would risk a double-drop) *or*
+||| already appears in some `RDrop` already present in `branch`
+||| (`alreadyDropped`, above -- would risk stacking a second, redundant
+||| drop on top of one `branch` already owes) -- both vanishingly
+||| unlikely, costs nothing to guard against either. `Just branch`
+||| unchanged when `consumed` is empty (the overwhelming common case).
 addOperandDrops : FC -> List RCLocal -> RCExp -> Maybe RCExp
 addOperandDrops _ [] branch = Just branch
 addOperandDrops fc consumed branch =
-    if any (\op => contains op (genuinelyUsedR branch)) consumed
+    if any (\op => contains op (genuinelyUsedR branch) || contains op (alreadyDropped branch)) consumed
        then Nothing
        else Just (RDrop fc consumed branch)
 
