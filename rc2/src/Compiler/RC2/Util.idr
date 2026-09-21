@@ -131,3 +131,29 @@ data VarId : Type where
 export
 freshVarId : {auto v : Ref VarId Int} -> Core Int
 freshVarId = do i <- get VarId; put VarId (i + 1); pure i
+
+||| Plain text (no comment-syntax wrapper of its own -- every call site
+||| embeds this in whatever comment marker its own output format
+||| needs) naming exactly which `--directive <d>` (CLI) / `%cg rc2 <d>`
+||| (source pragma) flags were active for this compile --
+||| rc2/doc/directives.md has the full list and what each one does.
+||| `Compiler.RC2.RC2`'s `compileExprWhole`/`incCompile` embed this at
+||| the very top of both the generated `.c` (via `Compiler.RC2.Emit`'s
+||| own `header`, wrapped in a `/* ... */` C comment -- C has no `--`
+||| line-comment syntax) and, when `dumprcexpr` is itself one of the
+||| active directives, the `.rcexpr` dump (via `Compiler.RC2.Pretty`'s
+||| `prettyProgram`, wrapped in a `-- ` line to match
+||| `Language.RCExpr.Parser`'s own comment convention -- its
+||| `parseProgram` skips a leading line shaped that way, see its own
+||| note, so this never needs stripping back off before a `.rcexpr`
+||| dump can be re-parsed) -- so a file found later (a bug report, a
+||| stale `install/` copy, comparing two runs that disagree) says which
+||| optimization stages actually ran, without needing to reproduce the
+||| build just to find out.
+export
+directiveText : List String -> String
+directiveText directiveList =
+    "rc2 directives: " ++
+    (if null directiveList
+        then "(none)"
+        else showSep " " (map ("--directive " ++) directiveList))

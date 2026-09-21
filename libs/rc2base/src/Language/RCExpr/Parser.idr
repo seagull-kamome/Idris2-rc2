@@ -1062,7 +1062,14 @@ parseOneDef st = do
     dropParenPrefix s = case unpack s of ('(' :: cs) => pack (reverse (drop 1 (reverse cs))); _ => s
 
 ||| Parses a whole `--directive dumprcexpr` dump into one `(name, def)`
-||| pair per `def` block, in file order.
+||| pair per `def` block, in file order. A blank line, or a line
+||| starting with `-- ` (`Compiler.RC2.Util`'s own `directiveComment`
+||| writes exactly one of these at the very top of the dump, recording
+||| which `--directive`/`%cg rc2` flags produced it), is skipped
+||| wherever it appears at this top level -- no other line of a real
+||| `def` block ever starts this way (`Compiler.RC2.Pretty`'s own
+||| format has no comment syntax of its own inside a block), so this
+||| can't be mistaken for anything else.
 export
 parseProgram : String -> Either ParseError RCProgram
 parseProgram src = go (MkLState (lines src) 1)
@@ -1071,7 +1078,7 @@ parseProgram src = go (MkLState (lines src) 1)
     go st = case st.remaining of
         [] => Right []
         (l :: rest) =>
-            if trim l == ""
+            if trim l == "" || isPrefixOf "-- " l
                then go (MkLState rest (S st.lineNo))
                else do
                    (one, st1) <- parseOneDef st

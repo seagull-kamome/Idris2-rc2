@@ -1414,11 +1414,13 @@ header : {auto f : Ref FunctionDefinitions (List String)}
       -> {auto sd : Ref StructDefs (SortedMap String (List (String, CFType)))}
       -> {auto es : Ref ExternStructs (SortedSet String)}
       -> {auto ir : Ref InjectedRuntime String}
+      -> (directiveList : List String)
       -> Core (List String)
-header = do
+header directiveList = do
     let initLines = """
       #include <idris2rc2_runtime.h>
       /* \{ generatedString "rc2" } */
+      /* \{ directiveText directiveList } */
 
       """
     let headerFiles = Prelude.toList !(get HeaderFiles)
@@ -1547,9 +1549,10 @@ generateCSourceFile : {auto c : Ref Ctxt Defs}
                    -> (dropUnimplementableForeign : Bool)
                    -> (injectedRuntime : String)
                    -> (externStructs : SortedSet String)
+                   -> (directiveList : List String)
                    -> (outn : String)
                    -> Core (List String)
-generateCSourceFile defs0 exports noMain directEntryPoint dropUnimplementableForeign injectedRuntime externStructs outn =
+generateCSourceFile defs0 exports noMain directEntryPoint dropUnimplementableForeign injectedRuntime externStructs directiveList outn =
   do let defs = if dropUnimplementableForeign then filter hasUsableForeignImpl defs0 else defs0
      _ <- newRef ArgCounter 0
      _ <- newRef FunctionDefinitions []
@@ -1607,7 +1610,7 @@ generateCSourceFile defs0 exports noMain directEntryPoint dropUnimplementableFor
      -- `coreLift` idiom `Core.Core.writeFile` already uses.
      Right h <- coreLift $ openFile outn WriteTruncate
        | Left err => throw $ FileErr outn err
-     putLines outn h !header
+     putLines outn h !(header directiveList)
      -- Pass 2: def-at-a-time body lowering (`createCFunctions`, totally
      -- unchanged, still exactly once per def) into a small per-def
      -- `OutfileText` scratch buffer, flushed straight to `h` before

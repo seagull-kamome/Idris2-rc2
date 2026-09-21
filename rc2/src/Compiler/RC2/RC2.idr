@@ -628,10 +628,15 @@ compileExprWhole c s _ outputDir tm outfile =
 
      -- `dumprcexpr`: dump the final RCExp to a `.rcexpr` file -- see
      -- rc2/doc/reading-the-ir.md for the format, rc2/doc/directives.md
-     -- for the directive.
+     -- for the directive. `directiveText`, wrapped in a `-- ` line
+     -- (`Language.RCExpr.Parser`'s own comment convention), records
+     -- the exact directive set active for this compile, so a dump
+     -- found later says which optimization stages ran without
+     -- re-running the build to find out.
      when ("dumprcexpr" `elem` directiveList) $
          coreLift_ $ writeFile (outputDir </> outfile ++ ".rcexpr")
-             (prettyProgram (collectLazyCAFs (namedDefs cdata)) defs)
+             ("-- " ++ directiveText directiveList ++ "\n" ++
+              prettyProgram (collectLazyCAFs (namedDefs cdata)) defs)
 
      -- `dumpdualabi`: dump Stage 2's own eligibility analysis -- see
      -- rc2/doc/dual-abi.md, rc2/doc/directives.md.
@@ -655,7 +660,7 @@ compileExprWhole c s _ outputDir tm outfile =
      -- rc2/doc/directives.md.
      let externStructs = getExternStructs directiveList
 
-     foreignLibs <- logTime 2 "rc2: C generation" $ generateCSourceFile defs exportedSigs noMain Nothing False injectedRuntime externStructs outn
+     foreignLibs <- logTime 2 "rc2: C generation" $ generateCSourceFile defs exportedSigs noMain Nothing False injectedRuntime externStructs directiveList outn
      Just _ <- logTime 2 "rc2: C compile" $ compileCObjectFile outn outobj dumpCC
        | Nothing => pure Nothing
      logTime 2 "rc2: C link" $ compileCFile [outobj] outexec foreignLibs dumpCC
@@ -828,7 +833,8 @@ incCompile c s sourceFile = do
          when ("dumprcexpr" `elem` directiveList) $ do
              rcexprFile <- getTTCFileName sourceFile "rcexpr"
              coreLift_ $ writeFile rcexprFile
-                 (prettyProgram (collectLazyCAFs (namedDefs cdata)) defs)
+                 ("-- " ++ directiveText directiveList ++ "\n" ++
+                  prettyProgram (collectLazyCAFs (namedDefs cdata)) defs)
          extraRuntimeFiles <- getExtraRuntime directiveList
          let inlineRuntime = getInlineRuntime directiveList
          let injectedRuntime = extraRuntimeFiles ++ (if inlineRuntime == "" then "" else "\n" ++ inlineRuntime)
@@ -837,7 +843,7 @@ incCompile c s sourceFile = do
          outO <- getTTCFileName sourceFile "o"
          objRel <- getObjFileName sourceFile "o"
          foreignLibs <- logTime 2 "rc2: incremental C generation" $
-             generateCSourceFile defs [] noMain directEntryPoint True injectedRuntime externStructs outC
+             generateCSourceFile defs [] noMain directEntryPoint True injectedRuntime externStructs directiveList outC
          Just _ <- logTime 2 "rc2: incremental C compile" $
              compileCObjectFile outC outO ("dumpcc" `elem` directiveList)
            | Nothing => pure Nothing
