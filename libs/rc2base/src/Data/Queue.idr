@@ -73,14 +73,17 @@ namespace Properties
     public export
     0 toList_enqueue  : (x : a) -> (q : Queue a) -> toList (enqueue x q) = toList q ++ [x]
     toList_enqueue x (MkQueue f b) =
-      ?toList_enqueue_rhs
+      rewrite sym (revAppend [x] b) in
+      appendAssociative f (reverse b) [x]
 
     public export
     0 toList_dequeue : (q : Queue a) -> case dequeue q of
       Nothing => toList q = []
       Just (x, q') => toList q = x :: toList q'
     toList_dequeue (MkQueue [] []) = Refl
-    toList_dequeue (MkQueue [] b) = ?prf_toList_dequeue
+    toList_dequeue (MkQueue [] b) with (reverse b) proof p
+      _ | [] = p
+      _ | (x :: f) = rewrite p in cong (x ::) (sym (appendNilRightNeutral f))
     toList_dequeue (MkQueue (x :: f) b) = Refl
 
 
