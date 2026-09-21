@@ -118,44 +118,125 @@ runG ln g s = do
 isDigitsOnly : String -> Bool
 isDigitsOnly s = s /= "" && all isDigit (unpack s)
 
-||| One name token, plus -- when immediately followed by `(` *and*
-||| that isn't a `RCConstCon`'s own `(args)` -- the parenthesised tail
-||| glued back on. `Core.Name`'s own `Show` wraps an operator's own
-||| display in `(...)` when name-spaced (`NS ns (UN (Basic n))`, `n`
-||| an operator symbol), e.g. `Prelude.Types.SnocList.` + `(<>>)` ->
-||| `"Prelude.Types.SnocList.(<>>)"` -- indistinguishable at the lexer
-||| level from a `RCConstCon`'s own recursive `#Name@tag(args)`
-||| (`Language.RCExpr.Lexer`'s own note), but easy to tell apart here:
-||| a `RCConstCon`'s own args list always starts with `[` right after
-||| the `(`, an operator's own symbols never do (`opTailG` simply
-||| fails to read even its first token there, since `[` isn't a
-||| `RcName`, and `option` falls back to no tail at all).
-anyName : Grammar () RcToken True String
-anyName = do
-    n <- match RcName
-    tail <- option "" opTailG
-    pure (n ++ tail)
-  where
-    opTailG : Grammar () RcToken True String
-    opTailG = do
-        match (RcPunct '(')
-        first <- match RcName
-        rest <- many (match RcName)
-        match (RcPunct ')')
-        pure ("(" ++ concat (intersperse " " (first :: rest)) ++ ")")
+mutual
+  ||| One name token, or a `{...}` brace group (`braceGroupG`) read as
+  ||| one unit -- `Core.Name`'s own `MN` (a machine name) can start
+  ||| straight with `{` (`{{__mainExpression:0}:0}`) rather than
+  ||| gluing onto some earlier plain name text.
+  nameAtomG : Grammar () RcToken True String
+  nameAtomG = (match RcName) <|> braceGroupG
+
+  ||| A `nameAtomG`, plus -- when immediately followed by `{` (another
+  ||| brace group) or by `(` *and* that isn't a `RCConstCon`'s own
+  ||| `(args)` -- the tail glued back on. `Core.Name`'s own `Show`
+  ||| wraps an operator's own display in `(...)` when name-spaced
+  ||| (`NS ns (UN (Basic n))`, `n` an operator symbol), e.g.
+  ||| `Prelude.Types.SnocList.` + `(<>>)` ->
+  ||| `"Prelude.Types.SnocList.(<>>)"` -- indistinguishable at the
+  ||| lexer level from a `RCConstCon`'s own recursive
+  ||| `#Name@tag(args)` (`Language.RCExpr.Lexer`'s own note), but easy
+  ||| to tell apart here: a `RCConstCon`'s own args list always starts
+  ||| with `[` right after the `(`, an operator's own symbols never do
+  ||| (`opTailG` simply fails to read even its first token there,
+  ||| since `[` isn't a `RcName`, and `<|>` falls back to no tail at
+  ||| all).
+  anyName : Grammar () RcToken True String
+  anyName = do
+      n <- nameAtomG
+      -- Only glue a following `{`/`(` onto `n` when `n` itself ends
+      -- in `.` -- `Core.Name`'s own `Show` only ever puts `{...}`
+      -- (an `MN`/`PV`) or `(...)` (an operator's own display) right
+      -- after a namespace's own trailing `.` (`show (NS ns n) =
+      -- "\{show ns}.\{show n}"`), never glued straight onto some
+      -- *other* token with no dot at all -- without this guard, a
+      -- keyword this grammar reads with `anyName` (`call`, `op`, ...)
+      -- would wrongly swallow an unrelated, merely-adjacent `{...}`/
+      -- `(...)` that starts the *next* field instead (e.g. `call
+      -- {rc2_specClosure_...}`, a real idris2-lsp dump line: `call`
+      -- doesn't end in `.`, so this guard correctly leaves the `{...}`
+      -- for a separate `anyName` read right after).
+      tail <- if isSuffixOf "." n then option "" (braceGroupG <|> opTailG) else pure ""
+      pure (n ++ tail)
+    where
+      opTailG : Grammar () RcToken True String
+      opTailG = do
+          match (RcPunct '(')
+          first <- match RcName
+          rest <- many (match RcName)
+          match (RcPunct ')')
+          pure ("(" ++ concat (intersperse " " (first :: rest)) ++ ")")
+
+  ||| `{...}` (`Core.Name`'s own `MN`/`PV` display, `"{" ++ x ++ ":" ++
+  ||| show y ++ "}"`), read structurally token-by-token rather than
+  ||| lexed as one flat run -- `x` is an arbitrary compiler-generated
+  ||| hint string that can itself embed `(`/`)` (a type's own `Show`
+  ||| output, e.g. `{fromJSON_FromJSON_((SortedMap String) $v):1}`
+  ||| seen in real idris2-lsp output) or a nested `{...}`
+  ||| (`{{__mainExpression:0}:0}`), neither of which the lexer's own
+  ||| flat character-class rule (`Language.RCExpr.Lexer`'s own note)
+  ||| can track the true end of by itself. Reconstructed back into
+  ||| roughly the same text (opaque, per this module's own
+  ||| top-of-file note), not structurally interpreted.
+  braceGroupG : Grammar () RcToken True String
+  braceGroupG = do
+      match (RcPunct '{')
+      inner <- groupBodyG
+      pure ("{" ++ inner)
+
+  ||| Everything up to and including the `}` that closes the brace
+  ||| group `braceGroupG` is currently inside -- a nested `{` recurses
+  ||| back into `braceGroupG` itself (so nesting depth is tracked by
+  ||| the call stack, not a counter), everything else is read as
+  ||| plain text and glued straight on (no extra spaces -- the aim is
+  ||| readability, not exact byte-for-byte reconstruction, and this
+  ||| grammar's own tokens never need internal spaces to stay
+  ||| unambiguous when just concatenated back together).
+  groupBodyG : Grammar () RcToken True String
+  groupBodyG = closeG <|> continueG
+    where
+      closeG : Grammar () RcToken True String
+      closeG = match (RcPunct '}') *> pure "}"
+      continueG : Grammar () RcToken True String
+      continueG = do
+          t <- oneGroupTokenG
+          rest <- groupBodyG
+          pure (t ++ rest)
+
+  ||| One token's own text, for use only inside `groupBodyG` -- unlike
+  ||| `anyName`, this never tries to glue a following `(...)`/`{...}`
+  ||| onto a name token (`groupBodyG`'s own recursion already reads
+  ||| every following token on its own, so doing it here too would
+  ||| double up).
+  oneGroupTokenG : Grammar () RcToken True String
+  oneGroupTokenG = braceGroupG <|> (match RcName) <|> quotedG <|> punctG
+    where
+      quotedG : Grammar () RcToken True String
+      quotedG = map show (match RcQuotedString)
+      punctG : Grammar () RcToken True String
+      punctG = matchP '[' <|> matchP ']' <|> matchP ',' <|> matchP '(' <|> matchP ')' <|> matchP '#'
+        where
+          matchP : Char -> Grammar () RcToken True String
+          matchP c = match (RcPunct c) *> pure (pack [c])
 
 ||| Reads name-shaped tokens greedily until the next one looks like a
 ||| structural boundary (anything that isn't a bare `RcName`, or a
-||| `key=`-shaped one) -- for the handful of upstream `Show` fields
-||| that can pad themselves with an unpredictable number of extra
-||| space-separated words: `Core.Name`'s own `Show` sometimes suffixes
-||| a constructor's display name with `at <FC>` (a `con`/case-alt
-||| header's own `name`, or a `RCConstCon`'s own nested `name`); a
-||| `WithBlock`'s own display (`"with block in " ++ outer`, a
-||| `partial`'s own `name`); `CFType`'s own `CFIORes`/`CFUser`/`CFFun`
+||| `key=`-shaped one, or a lone `:`/`->`) -- for the handful of
+||| upstream `Show` fields that can pad themselves with an
+||| unpredictable number of extra space-separated words: `Core.Name`'s
+||| own `Show` sometimes suffixes a constructor's display name with
+||| `at <FC>` (a `con`/case-alt header's own `name`, or a
+||| `RCConstCon`'s own nested `name`); a `WithBlock`/`CaseBlock`'s own
+||| display (`"with/case block in " ++ outer`, a `call`/`partial`'s
+||| own `name` -- `outer` can itself contain a bare `,` when it names
+||| more than one mutually-defined `with`-clause function, e.g. `case
+||| block in words,helper`; that bare `,` is already part of the
+||| `RcName` token itself, `Language.RCExpr.Lexer`'s own `listCommaLit`
+||| note has the full reasoning, so nothing extra is needed here to
+||| read it back correctly); `CFType`'s own `CFIORes`/`CFUser`/`CFFun`
 ||| (a `callRep`/`callFFIInline`'s own `ret`). Captured as opaque
 ||| text, same convention as everywhere else in this parser -- not
 ||| structurally interpreted, just kept readable.
+export
 greedyWordsG : Grammar () RcToken True String
 greedyWordsG = do
     n <- anyName
@@ -165,7 +246,7 @@ greedyWordsG = do
     nonBoundaryName : Grammar () RcToken True String
     nonBoundaryName = do
         v <- anyName
-        the (Grammar () RcToken False ()) (if isSuffixOf "=" v then fail "field boundary" else pure ())
+        the (Grammar () RcToken False ()) (if isSuffixOf "=" v || v == ":" || v == "->" then fail "field boundary" else pure ())
         pure v
 
 ||| Only the two shapes that are ever a single bare token: `vN` and
@@ -180,6 +261,7 @@ classifyLocal n =
               _ => Left ("not an RCLocal: " ++ n)
 
 mutual
+  export
   rcLocalG : Grammar () RcToken True RCLocal
   rcLocalG = nullG <|> hashG <|> plainVarG
     where
@@ -356,11 +438,29 @@ traverseG f (x :: xs) = do
 isLazyName : String -> Bool
 isLazyName n = case strM n of StrCons '~' _ => True; _ => False
 
+||| The line's own first "real" word, skipping an optional lazy prefix
+||| (`~Reason `) -- `dispatchBlock`/`terminal` use this instead of
+||| `isPrefixOf "kw " line`/`isInfixOf " kw " line` to decide a line's
+||| own shape, since `isInfixOf` on the raw line text is a real bug: a
+||| `RConst` string's own value can legitimately contain text that
+||| happens to look like a keyword (`op ++ [#"Foreign call ", v123]`,
+||| seen in real idris2-lsp output, was mistaken for a `call` node by
+||| `isInfixOf " call "` matching *inside* the quoted string). Only
+||| ever looking at the line's own leading word(s) makes that
+||| impossible -- whatever text sits inside a quote later on the same
+||| line is never even examined.
+firstWord : String -> String
+firstWord line =
+    let w1 = pack (takeWhile (/= ' ') (unpack line)) in
+    if isLazyName w1
+       then pack (takeWhile (/= ' ') (unpack (dropChars (length (unpack w1) + 1) line)))
+       else w1
+
 callG : Grammar () RcToken True (Bool, String, List RCLocal)
 callG = do
     n <- anyName
     let lazy = isLazyName n
-    name <- the (Grammar () RcToken True String) (if n == "call" then anyName else nameEq "call" *> anyName)
+    name <- the (Grammar () RcToken True String) (if n == "call" then greedyWordsG else nameEq "call" *> greedyWordsG)
     args <- localListG
     pure (lazy, name, args)
 
@@ -423,14 +523,14 @@ extprimG = lazyExtprimG <|> plainExtprimG
         n <- anyName
         the (Grammar () RcToken False ()) (if isLazyName n then pure () else fail "not lazy")
         nameEq "extprim"
-        pName <- anyName
+        pName <- greedyWordsG
         args <- localListG
         postDrop <- optionalField "postDrop"
         pure (True, pName, args, postDrop)
     plainExtprimG : Grammar () RcToken True (Bool, String, List RCLocal, List RCLocal)
     plainExtprimG = do
         nameEq "extprim"
-        pName <- anyName
+        pName <- greedyWordsG
         args <- localListG
         postDrop <- optionalField "postDrop"
         pure (False, pName, args, postDrop)
@@ -572,7 +672,7 @@ continueLoopG = do
 memoizeHeaderG : Grammar () RcToken True (String, RRep)
 memoizeHeaderG = do
     nameEq "memoize"
-    name <- anyName
+    name <- greedyWordsG
     nameEq ":"
     rep <- repG
     pure (name, rep)
@@ -615,7 +715,7 @@ nameListTextG = do
 callRepG : Grammar () RcToken True RCExp
 callRepG = do
     nameEq "callRep"
-    name <- anyName
+    name <- greedyWordsG
     sig <- sigG
     postDrop <- optionalField "postDrop"
     args <- localListG
@@ -723,7 +823,7 @@ mutual
           r <- runG ln callFFIInlineG line
           (_, st2) <- advanceLine st1
           Right (r, st2)
-      else if isPrefixOf "call " line || isInfixOf " call " line then do
+      else if firstWord line == "call" then do
           (lazy, name, args) <- runG ln callG line
           (_, st2) <- advanceLine st1
           Right (RCall lazy name args, st2)
@@ -731,7 +831,7 @@ mutual
           (name, missing, args) <- runG ln partialG line
           (_, st2) <- advanceLine st1
           Right (RPartial name missing args, st2)
-      else if isPrefixOf "apply " line || isInfixOf " apply " line then do
+      else if firstWord line == "apply" then do
           (lazy, c, args) <- runG ln applyG line
           (_, st2) <- advanceLine st1
           Right (RApply lazy c args, st2)
@@ -739,11 +839,11 @@ mutual
           (name, tag, args, reuseFrom) <- runG ln conG line
           (_, st2) <- advanceLine st1
           Right (RConstruct name tag args reuseFrom, st2)
-      else if isPrefixOf "op " line || isInfixOf " op " line then do
+      else if firstWord line == "op" then do
           (lazy, opName, args, postDrop) <- runG ln opG line
           (_, st2) <- advanceLine st1
           Right (ROpNode lazy opName args postDrop, st2)
-      else if isPrefixOf "extprim " line || isInfixOf " extprim " line then do
+      else if firstWord line == "extprim" then do
           (lazy, pName, args, postDrop) <- runG ln extprimG line
           (_, st2) <- advanceLine st1
           Right (RExtPrimNode lazy pName args postDrop, st2)

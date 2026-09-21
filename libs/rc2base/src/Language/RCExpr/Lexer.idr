@@ -98,26 +98,47 @@ ignored _ = False
 
 ------------------------------------------------------------------------
 
+||| The list separator `Show (List a)` actually writes is `", "`
+||| (comma *and* a following space), never a bare `,` -- but a bare
+||| `,` with no following space shows up glued directly into some
+||| `Core.Name` displays too (a `with`/`case` block naming more than
+||| one mutually-defined clause, e.g. `case block in words,helper`,
+||| seen in real idris2-lsp output). So only a `,` immediately
+||| followed by a space is the real separator here; matched via
+||| `expect` (checks, doesn't consume) so the space itself is left for
+||| `spaces`/`RcIgnore` to eat as usual. `nameLit` (below) stops
+||| *before* one of these via `someUntil`, so this rule actually gets
+||| a turn at the `,` instead of it always being swallowed as just
+||| another name character first -- a bare `,` with no trailing space
+||| is still an ordinary name character there, gluing onto whatever
+||| name surrounds it, same as the source.
+listCommaLit : Lexer
+listCommaLit = is ',' <+> expect (pred isSpace)
+
 ||| Everything except whitespace and the hard delimiters `[`, `]`,
-||| `,`, `(`, `)`, `"`, `#` (see this module's own top-of-file note
-||| for why a single greedy class is otherwise the right call here).
-||| `'` is *not* excluded -- a bare identifier with a trailing prime
-||| (`bufferData'`) or an operator's own namespaced display
-||| (`Prelude.Types.SnocList.(<>>)`, which also needs the `'`-adjacent
-||| `(`/`)` back) both rely on it staying a name character -- this is
-||| safe because `rcTokenMap` tries `rcCharLit` (below) *before* this
-||| rule, and `Text.Lexer.Core.getFirstToken` picks the first rule
-||| that matches at all, not the longest one, so a token actually
-||| starting with `'` (a `Show Char` value) is always claimed by
-||| `rcCharLit` first regardless of what `nameLit` alone could also
-||| match. `(`/`)` stay excluded so a `RCConstCon`'s own recursive
-||| `#Name@tag(args)` (`Compiler.RC2.RCExp.RCLocal`'s `Show`) can be
-||| told apart from its own leading `#Name@tag` -- `Language.RCExpr.
-||| Parser`'s own `hashLocalG`/`anyName` need `(`/`)` as their own
-||| tokens, not glued onto the name before or after them, and tell a
-||| `RCConstCon`'s own args list apart from an operator's own
-||| namespaced display by what immediately follows the `(` (`[` only
-||| for the former). `#` is its own token too (`Language.RCExpr.
+||| `(`, `)`, `{`, `}`, `"`, `#` (see this module's own top-of-file
+||| note for why a single greedy class is otherwise the right call
+||| here) -- and, per `someUntil`, stopping one character early
+||| whenever what's left starts with `listCommaLit`'s own `, `, so
+||| that rule gets a chance to claim the comma as a real list
+||| separator instead of it always being read as just another name
+||| character first. `'` is *not* excluded -- a bare identifier with a
+||| trailing prime (`bufferData'`) or an operator's own namespaced
+||| display (`Prelude.Types.SnocList.(<>>)`, which also needs the
+||| `'`-adjacent `(`/`)` back) both rely on it staying a name
+||| character -- this is safe because `rcTokenMap` tries `rcCharLit`
+||| (below) *before* this rule, and `Text.Lexer.Core.getFirstToken`
+||| picks the first rule that matches at all, not the longest one, so
+||| a token actually starting with `'` (a `Show Char` value) is always
+||| claimed by `rcCharLit` first regardless of what `nameLit` alone
+||| could also match. `(`/`)` stay excluded so a `RCConstCon`'s own
+||| recursive `#Name@tag(args)` (`Compiler.RC2.RCExp.RCLocal`'s
+||| `Show`) can be told apart from its own leading `#Name@tag` --
+||| `Language.RCExpr.Parser`'s own `hashLocalG`/`anyName` need `(`/`)`
+||| as their own tokens, not glued onto the name before or after them,
+||| and tell a `RCConstCon`'s own args list apart from an operator's
+||| own namespaced display by what immediately follows the `(` (`[`
+||| only for the former). `#` is its own token too (`Language.RCExpr.
 ||| Parser`'s own `rcLocalG` always matches it separately, then
 ||| dispatches on whatever comes right after) -- needed because a
 ||| `#`-prefixed `Show Char` constant, e.g. `#'"'` for the character
@@ -125,12 +146,21 @@ ignored _ = False
 ||| one name run before `rcCharLit` ever gets a chance to claim it (a
 ||| token's *first* character decides which rule can match it at all,
 ||| and `#` on its own matches neither `quotedStringLit` nor
-||| `rcCharLit`).
+||| `rcCharLit`). `{`/`}` stay excluded so `Language.RCExpr.Parser`'s
+||| own `braceGroupG` can read a `Core.Name` `MN`'s own machine name
+||| (`"{" ++ x ++ ":" ++ show y ++ "}"`) structurally, token by token,
+||| tracking nesting depth as it goes -- `x` is an arbitrary compiler-
+||| generated hint string that can itself embed `(`/`)` (a type's own
+||| `Show` output, e.g. `{fromJSON_FromJSON_((SortedMap String)
+||| $v):1}` seen in real idris2-lsp output) or even a nested `{...}`,
+||| neither of which a single flat lexer rule (unlike the simpler,
+||| already-balanced `{{__mainExpression:0}:0}` case this grammar
+||| handled before that discovery) can track the true end of.
 nameLit : Lexer
-nameLit = some (pred isNameChar)
+nameLit = someUntil listCommaLit (pred isNameChar)
   where
     isNameChar : Char -> Bool
-    isNameChar c = not (isSpace c) && c /= '[' && c /= ']' && c /= ',' && c /= '"' && c /= '(' && c /= ')' && c /= '#'
+    isNameChar c = not (isSpace c) && c /= '[' && c /= ']' && c /= '"' && c /= '(' && c /= ')' && c /= '#' && c /= '{' && c /= '}'
 
 quotedStringLit : Lexer
 quotedStringLit = is '"' <+> manyUntil (is '"') (escape (is '\\') any <|> any) <+> is '"'
@@ -153,9 +183,11 @@ rcTokenMap = toTokenMap $
     [ (spaces, RcIgnore)
     , (is '[', RcPunct '[')
     , (is ']', RcPunct ']')
-    , (is ',', RcPunct ',')
+    , (listCommaLit, RcPunct ',')
     , (is '(', RcPunct '(')
     , (is ')', RcPunct ')')
+    , (is '{', RcPunct '{')
+    , (is '}', RcPunct '}')
     , (is '#', RcPunct '#')
     , (quotedStringLit, RcQuotedString)
     , (rcCharLit, RcQuotedString)
