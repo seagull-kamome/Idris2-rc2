@@ -47,37 +47,37 @@ data IOGen = MkIOGen Buffer
 -- ----------------------------------------------------------------------------
 -- FFI: support/c/xoroshiro64starstar.c
 
-%foreign "C:idris2rc2_System_Random_set_system_seed,libidris2rc2base,xoroshiro64starstar.h"
+%foreign "C:idris2rc2_System_Random_set_system_seed,libidris2rc2base,idris2rc2_rc2base_xoroshiro64starstar.h"
 prim__setSystemSeed : Bits64 -> PrimIO ()
 
-%foreign "C:idris2rc2_System_Random_next_sys,libidris2rc2base,xoroshiro64starstar.h"
+%foreign "C:idris2rc2_System_Random_next_sys,libidris2rc2base,idris2rc2_rc2base_xoroshiro64starstar.h"
 prim__nextSys : PrimIO Bits32
 
-%foreign "C:idris2rc2_System_Random_next,libidris2rc2base,xoroshiro64starstar.h"
+%foreign "C:idris2rc2_System_Random_next,libidris2rc2base,idris2rc2_rc2base_xoroshiro64starstar.h"
 prim__next : Buffer -> PrimIO Bits32
 
-%foreign "C:idris2rc2_System_Random_jump,libidris2rc2base,xoroshiro64starstar.h"
+%foreign "C:idris2rc2_System_Random_jump,libidris2rc2base,idris2rc2_rc2base_xoroshiro64starstar.h"
 prim__jump : Buffer -> PrimIO ()
 
-%foreign "C:idris2rc2_System_Random_jump_sys,libidris2rc2base,xoroshiro64starstar.h"
+%foreign "C:idris2rc2_System_Random_jump_sys,libidris2rc2base,idris2rc2_rc2base_xoroshiro64starstar.h"
 prim__jumpSys : PrimIO ()
 
-%foreign "C:idris2rc2_System_Random_long_jump,libidris2rc2base,xoroshiro64starstar.h"
+%foreign "C:idris2rc2_System_Random_long_jump,libidris2rc2base,idris2rc2_rc2base_xoroshiro64starstar.h"
 prim__longJump : Buffer -> PrimIO ()
 
-%foreign "C:idris2rc2_System_Random_long_jump_sys,libidris2rc2base,xoroshiro64starstar.h"
+%foreign "C:idris2rc2_System_Random_long_jump_sys,libidris2rc2base,idris2rc2_rc2base_xoroshiro64starstar.h"
 prim__longJumpSys : PrimIO ()
 
-%foreign "C:idris2rc2_System_Random_jump_ce,libidris2rc2base,xoroshiro64starstar.h"
+%foreign "C:idris2rc2_System_Random_jump_ce,libidris2rc2base,idris2rc2_rc2base_xoroshiro64starstar.h"
 prim__jumpCE : Buffer -> Bits64 -> Bits32 -> PrimIO ()
 
-%foreign "C:idris2rc2_System_Random_jump_ce_sys,libidris2rc2base,xoroshiro64starstar.h"
+%foreign "C:idris2rc2_System_Random_jump_ce_sys,libidris2rc2base,idris2rc2_rc2base_xoroshiro64starstar.h"
 prim__jumpCESys : Bits64 -> Bits32 -> PrimIO ()
 
-%foreign "C:idris2rc2_System_Random_jump_n,libidris2rc2base,xoroshiro64starstar.h"
+%foreign "C:idris2rc2_System_Random_jump_n,libidris2rc2base,idris2rc2_rc2base_xoroshiro64starstar.h"
 prim__jumpN : Buffer -> Bits64 -> PrimIO ()
 
-%foreign "C:idris2rc2_System_Random_jump_n_sys,libidris2rc2base,xoroshiro64starstar.h"
+%foreign "C:idris2rc2_System_Random_jump_n_sys,libidris2rc2base,idris2rc2_rc2base_xoroshiro64starstar.h"
 prim__jumpNSys : Bits64 -> PrimIO ()
 
 -- ----------------------------------------------------------------------------

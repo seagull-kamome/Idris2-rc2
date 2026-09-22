@@ -1,8 +1,8 @@
-#ifndef RC2BASE_DOUBLE_CONVERT_H
-#define RC2BASE_DOUBLE_CONVERT_H
+#ifndef IDRIS2RC2_RC2BASE_DOUBLE_CONVERT_H
+#define IDRIS2RC2_RC2BASE_DOUBLE_CONVERT_H
 
-#include "datatypes.h"
-#include "memory.h"
+#include "idris2rc2_datatypes.h"
+#include "idris2rc2_memory.h"
 
 // Data.Double.Convert's native side: an opt-in, branch-free fast path
 // for Double<->String, sitting next to (never replacing) rc2's own
@@ -32,4 +32,4 @@ double idris2rc2_fastParseDouble(const char *s);
 // passes the Boxed Value* through untouched instead of re-wrapping it.
 IDRIS2RC2_Value *idris2rc2_fastShowDouble(double v);
 
-#endif /* RC2BASE_DOUBLE_CONVERT_H */
+#endif /* IDRIS2RC2_RC2BASE_DOUBLE_CONVERT_H */

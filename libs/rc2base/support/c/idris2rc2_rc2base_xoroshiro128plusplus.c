@@ -16,7 +16,7 @@ ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF OR
 IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE. */
 
 // 2026/08/28 rename functions by Hattori, Hiroki (idris2rc2_System_Random128_*
-// prefix -- distinct from xoroshiro64starstar.c's idris2rc2_System_Random_*,
+// prefix -- distinct from idris2rc2_rc2base_xoroshiro64starstar.c's idris2rc2_System_Random_*,
 // since both object files link into the same libidris2rc2base.a).
 
 #include <stdint.h>
@@ -24,8 +24,8 @@ IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE. */
 // non-_sys counterpart, defined later in this file) have a prototype in
 // scope -- without it, implicit-declaration errors under a strict C
 // compiler, since every _sys wrapper is defined before the function it
-// calls (same reasoning as xoroshiro64starstar.c's own self-include).
-#include "xoroshiro128plusplus.h"
+// calls (same reasoning as idris2rc2_rc2base_xoroshiro64starstar.c's own self-include).
+#include "idris2rc2_rc2base_xoroshiro128plusplus.h"
 
 /* This is xoroshiro128++ 1.0, one of our all-purpose, rock-solid,
    small-state generators. It is extremely (sub-ns) fast and it passes all
@@ -143,7 +143,7 @@ void idris2rc2_System_Random128_long_jump(void *sv) {
 
 #define POLY_DEG 128
 static const uint64_t charpoly[] = { 0x8dae70779760b081, 0x0031bcf2f855d6e5 };
-#include "f2x.c"
+#include "idris2rc2_rc2base_f2x.c"
 
 /* Applies the precomputed jump polynomial poly (= x^n mod charpoly for the
    desired distance n) to the state, using the same accumulate-and-step loop

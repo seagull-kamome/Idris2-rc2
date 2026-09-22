@@ -1,4 +1,4 @@
-#include "memstream.h"
+#include "idris2rc2_rc2base_memstream.h"
 
 #include <stdio.h>
 #include <stdlib.h>

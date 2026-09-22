@@ -31,10 +31,10 @@ import Network.Socket.Data
 
 -- `Buffer` is passed under rc2's generic "C:" ABI, i.e. as the raw byte
 -- pointer past the size header -- `net_util.c` then does `data + off`.
-%foreign "C:idris2rc2_buf_send, libidris2rc2base, net_util.h"
+%foreign "C:idris2rc2_buf_send, libidris2rc2base, idris2rc2_rc2base_net_util.h"
 prim__bufSend : Int -> Buffer -> Int -> Int -> PrimIO Int
 
-%foreign "C:idris2rc2_buf_recv, libidris2rc2base, net_util.h"
+%foreign "C:idris2rc2_buf_recv, libidris2rc2base, idris2rc2_rc2base_net_util.h"
 prim__bufRecv : Int -> Buffer -> Int -> Int -> PrimIO Int
 
 -------------------------------------------------------------------------------

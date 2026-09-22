@@ -1,6 +1,6 @@
 #define _GNU_SOURCE
 
-#include "event_util.h"
+#include "idris2rc2_rc2base_event_util.h"
 
 #include <errno.h>
 #include <fcntl.h>

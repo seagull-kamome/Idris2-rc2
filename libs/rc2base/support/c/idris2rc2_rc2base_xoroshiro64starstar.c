@@ -23,7 +23,7 @@ IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE. */
 // scope -- without it, implicit-declaration errors under a strict C
 // compiler, since every _sys wrapper is defined before the function it
 // calls.
-#include "xoroshiro64starstar.h"
+#include "idris2rc2_rc2base_xoroshiro64starstar.h"
 
 /* This is xoroshiro64** 1.0, our 32-bit all-purpose, rock-solid,
    small-state generator. It is extremely fast and it passes all tests we
@@ -139,7 +139,7 @@ void idris2rc2_System_Random_long_jump(void *sv) {
 
 #define POLY_DEG 64
 static const uint64_t charpoly[] = { 0x053be9da6e2286c1 };
-#include "f2x.c"
+#include "idris2rc2_rc2base_f2x.c"
 
 /* Applies the precomputed jump polynomial poly (= x^n mod charpoly for the
    desired distance n) to the state, using the same accumulate-and-step loop

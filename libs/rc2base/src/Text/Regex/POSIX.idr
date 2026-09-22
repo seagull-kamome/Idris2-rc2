@@ -60,34 +60,34 @@ bre = MkFlags False False False
 
 data RawRegex : Type where [external]
 
-%foreign "C:idris2rc2_regex_compile, libidris2rc2base, posix_regex.h"
+%foreign "C:idris2rc2_regex_compile, libidris2rc2base, idris2rc2_rc2base_posix_regex.h"
 prim__compile : String -> Int -> PrimIO AnyPtr
 
-%foreign "C:idris2rc2_regex_compile_errmsg, libidris2rc2base, posix_regex.h"
+%foreign "C:idris2rc2_regex_compile_errmsg, libidris2rc2base, idris2rc2_rc2base_posix_regex.h"
 prim__compileErrmsg : PrimIO String
 
-%foreign "C:idris2rc2_regex_free, libidris2rc2base, posix_regex.h"
+%foreign "C:idris2rc2_regex_free, libidris2rc2base, idris2rc2_rc2base_posix_regex.h"
 prim__free : Ptr RawRegex -> PrimIO ()
 
-%foreign "C:idris2rc2_regex_nsub, libidris2rc2base, posix_regex.h"
+%foreign "C:idris2rc2_regex_nsub, libidris2rc2base, idris2rc2_rc2base_posix_regex.h"
 prim__nsub : GCPtr RawRegex -> PrimIO Int
 
-%foreign "C:idris2rc2_regex_exec, libidris2rc2base, posix_regex.h"
+%foreign "C:idris2rc2_regex_exec, libidris2rc2base, idris2rc2_rc2base_posix_regex.h"
 prim__exec : GCPtr RawRegex -> String -> Int -> PrimIO Int
 
-%foreign "C:idris2rc2_regex_group_so, libidris2rc2base, posix_regex.h"
+%foreign "C:idris2rc2_regex_group_so, libidris2rc2base, idris2rc2_rc2base_posix_regex.h"
 prim__groupSo : Int -> PrimIO Int
 
-%foreign "C:idris2rc2_regex_group_eo, libidris2rc2base, posix_regex.h"
+%foreign "C:idris2rc2_regex_group_eo, libidris2rc2base, idris2rc2_rc2base_posix_regex.h"
 prim__groupEo : Int -> PrimIO Int
 
-%foreign "C:idris2rc2_regex_extended, libidris2rc2base, posix_regex.h"
+%foreign "C:idris2rc2_regex_extended, libidris2rc2base, idris2rc2_rc2base_posix_regex.h"
 prim__cExtended : PrimIO Int
 
-%foreign "C:idris2rc2_regex_icase, libidris2rc2base, posix_regex.h"
+%foreign "C:idris2rc2_regex_icase, libidris2rc2base, idris2rc2_rc2base_posix_regex.h"
 prim__cIcase : PrimIO Int
 
-%foreign "C:idris2rc2_regex_newline, libidris2rc2base, posix_regex.h"
+%foreign "C:idris2rc2_regex_newline, libidris2rc2base, idris2rc2_rc2base_posix_regex.h"
 prim__cNewline : PrimIO Int
 
 -- Platform REG_* values. Cached via unsafePerformIO, same pattern as

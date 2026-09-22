@@ -1,8 +1,8 @@
 #define _GNU_SOURCE
 
-#include "concurrency_util.h"
-#include "runtime.h"
-#include "util.h"
+#include "idris2rc2_rc2base_concurrency_util.h"
+#include "idris2rc2_rt.h"
+#include "idris2rc2_util.h"
 
 #include <time.h>
 #include <unistd.h>

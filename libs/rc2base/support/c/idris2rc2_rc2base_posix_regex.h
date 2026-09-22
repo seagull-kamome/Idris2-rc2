@@ -1,5 +1,5 @@
-#ifndef POSIX_REGEX_H
-#define POSIX_REGEX_H
+#ifndef IDRIS2RC2_RC2BASE_POSIX_REGEX_H
+#define IDRIS2RC2_RC2BASE_POSIX_REGEX_H
 
 // Bindings to POSIX <regex.h> (regcomp/regexec/regfree/regerror) for
 // Text.Regex.POSIX. libc only -- no external dependency, unlike

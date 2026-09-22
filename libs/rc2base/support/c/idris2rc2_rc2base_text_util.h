@@ -1,10 +1,10 @@
-#ifndef TEXT_UTIL_H
-#define TEXT_UTIL_H
+#ifndef IDRIS2RC2_RC2BASE_TEXT_UTIL_H
+#define IDRIS2RC2_RC2BASE_TEXT_UTIL_H
 
 #include <stdlib.h>
 #include <stdint.h>
-#include "datatypes.h"
-#include "memory.h"
+#include "idris2rc2_datatypes.h"
+#include "idris2rc2_memory.h"
 
 typedef struct {
     int len;

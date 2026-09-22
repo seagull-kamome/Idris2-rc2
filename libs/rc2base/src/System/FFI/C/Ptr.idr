@@ -11,7 +11,7 @@ module System.FFI.C.Ptr
 -- element type pick the instance. The `Int32` offset is an element
 -- index, not a byte offset -- exactly like C's own `p[offset]` array
 -- indexing against a `p` typed to the element in question (see
--- support/c/ptr_util.h, which is exactly what these expand to). Unlike
+-- support/c/idris2rc2_rc2base_ptr_util.h, which is exactly what these expand to). Unlike
 -- `Data.Buffer` there is no embedded size and no bounds checking, and
 -- values are read/written at the host's native byte order rather than
 -- Data.Buffer's portable little-endian encoding, matching how a real C
@@ -34,107 +34,107 @@ module System.FFI.C.Ptr
 -- `GCPtr` argument must stay alive for the whole fetch/store call, so
 -- these methods take it directly instead.
 
-%foreign "RC2:idris2rc2_ptr_fetch_u8,libidris2rc2base,ptr_util.h"
+%foreign "RC2:idris2rc2_ptr_fetch_u8,libidris2rc2base,idris2rc2_rc2base_ptr_util.h"
 prim__fetchBits8 : Ptr Bits8 -> Int32 -> PrimIO Bits8
-%foreign "RC2:idris2rc2_ptr_store_u8,libidris2rc2base,ptr_util.h"
+%foreign "RC2:idris2rc2_ptr_store_u8,libidris2rc2base,idris2rc2_rc2base_ptr_util.h"
 prim__storeBits8 : Ptr Bits8 -> Int32 -> Bits8 -> PrimIO ()
-%foreign "RC2:idris2rc2_ptr_fetch_u8,libidris2rc2base,ptr_util.h"
+%foreign "RC2:idris2rc2_ptr_fetch_u8,libidris2rc2base,idris2rc2_rc2base_ptr_util.h"
 prim__fetchBits8GC : GCPtr Bits8 -> Int32 -> PrimIO Bits8
-%foreign "RC2:idris2rc2_ptr_store_u8,libidris2rc2base,ptr_util.h"
+%foreign "RC2:idris2rc2_ptr_store_u8,libidris2rc2base,idris2rc2_rc2base_ptr_util.h"
 prim__storeBits8GC : GCPtr Bits8 -> Int32 -> Bits8 -> PrimIO ()
 
-%foreign "RC2:idris2rc2_ptr_fetch_u16,libidris2rc2base,ptr_util.h"
+%foreign "RC2:idris2rc2_ptr_fetch_u16,libidris2rc2base,idris2rc2_rc2base_ptr_util.h"
 prim__fetchBits16 : Ptr Bits16 -> Int32 -> PrimIO Bits16
-%foreign "RC2:idris2rc2_ptr_store_u16,libidris2rc2base,ptr_util.h"
+%foreign "RC2:idris2rc2_ptr_store_u16,libidris2rc2base,idris2rc2_rc2base_ptr_util.h"
 prim__storeBits16 : Ptr Bits16 -> Int32 -> Bits16 -> PrimIO ()
-%foreign "RC2:idris2rc2_ptr_fetch_u16,libidris2rc2base,ptr_util.h"
+%foreign "RC2:idris2rc2_ptr_fetch_u16,libidris2rc2base,idris2rc2_rc2base_ptr_util.h"
 prim__fetchBits16GC : GCPtr Bits16 -> Int32 -> PrimIO Bits16
-%foreign "RC2:idris2rc2_ptr_store_u16,libidris2rc2base,ptr_util.h"
+%foreign "RC2:idris2rc2_ptr_store_u16,libidris2rc2base,idris2rc2_rc2base_ptr_util.h"
 prim__storeBits16GC : GCPtr Bits16 -> Int32 -> Bits16 -> PrimIO ()
 
-%foreign "RC2:idris2rc2_ptr_fetch_u32,libidris2rc2base,ptr_util.h"
+%foreign "RC2:idris2rc2_ptr_fetch_u32,libidris2rc2base,idris2rc2_rc2base_ptr_util.h"
 prim__fetchBits32 : Ptr Bits32 -> Int32 -> PrimIO Bits32
-%foreign "RC2:idris2rc2_ptr_store_u32,libidris2rc2base,ptr_util.h"
+%foreign "RC2:idris2rc2_ptr_store_u32,libidris2rc2base,idris2rc2_rc2base_ptr_util.h"
 prim__storeBits32 : Ptr Bits32 -> Int32 -> Bits32 -> PrimIO ()
-%foreign "RC2:idris2rc2_ptr_fetch_u32,libidris2rc2base,ptr_util.h"
+%foreign "RC2:idris2rc2_ptr_fetch_u32,libidris2rc2base,idris2rc2_rc2base_ptr_util.h"
 prim__fetchBits32GC : GCPtr Bits32 -> Int32 -> PrimIO Bits32
-%foreign "RC2:idris2rc2_ptr_store_u32,libidris2rc2base,ptr_util.h"
+%foreign "RC2:idris2rc2_ptr_store_u32,libidris2rc2base,idris2rc2_rc2base_ptr_util.h"
 prim__storeBits32GC : GCPtr Bits32 -> Int32 -> Bits32 -> PrimIO ()
 
-%foreign "RC2:idris2rc2_ptr_fetch_u64,libidris2rc2base,ptr_util.h"
+%foreign "RC2:idris2rc2_ptr_fetch_u64,libidris2rc2base,idris2rc2_rc2base_ptr_util.h"
 prim__fetchBits64 : Ptr Bits64 -> Int32 -> PrimIO Bits64
-%foreign "RC2:idris2rc2_ptr_store_u64,libidris2rc2base,ptr_util.h"
+%foreign "RC2:idris2rc2_ptr_store_u64,libidris2rc2base,idris2rc2_rc2base_ptr_util.h"
 prim__storeBits64 : Ptr Bits64 -> Int32 -> Bits64 -> PrimIO ()
-%foreign "RC2:idris2rc2_ptr_fetch_u64,libidris2rc2base,ptr_util.h"
+%foreign "RC2:idris2rc2_ptr_fetch_u64,libidris2rc2base,idris2rc2_rc2base_ptr_util.h"
 prim__fetchBits64GC : GCPtr Bits64 -> Int32 -> PrimIO Bits64
-%foreign "RC2:idris2rc2_ptr_store_u64,libidris2rc2base,ptr_util.h"
+%foreign "RC2:idris2rc2_ptr_store_u64,libidris2rc2base,idris2rc2_rc2base_ptr_util.h"
 prim__storeBits64GC : GCPtr Bits64 -> Int32 -> Bits64 -> PrimIO ()
 
-%foreign "RC2:idris2rc2_ptr_fetch_i8,libidris2rc2base,ptr_util.h"
+%foreign "RC2:idris2rc2_ptr_fetch_i8,libidris2rc2base,idris2rc2_rc2base_ptr_util.h"
 prim__fetchInt8 : Ptr Int8 -> Int32 -> PrimIO Int8
-%foreign "RC2:idris2rc2_ptr_store_i8,libidris2rc2base,ptr_util.h"
+%foreign "RC2:idris2rc2_ptr_store_i8,libidris2rc2base,idris2rc2_rc2base_ptr_util.h"
 prim__storeInt8 : Ptr Int8 -> Int32 -> Int8 -> PrimIO ()
-%foreign "RC2:idris2rc2_ptr_fetch_i8,libidris2rc2base,ptr_util.h"
+%foreign "RC2:idris2rc2_ptr_fetch_i8,libidris2rc2base,idris2rc2_rc2base_ptr_util.h"
 prim__fetchInt8GC : GCPtr Int8 -> Int32 -> PrimIO Int8
-%foreign "RC2:idris2rc2_ptr_store_i8,libidris2rc2base,ptr_util.h"
+%foreign "RC2:idris2rc2_ptr_store_i8,libidris2rc2base,idris2rc2_rc2base_ptr_util.h"
 prim__storeInt8GC : GCPtr Int8 -> Int32 -> Int8 -> PrimIO ()
 
-%foreign "RC2:idris2rc2_ptr_fetch_i16,libidris2rc2base,ptr_util.h"
+%foreign "RC2:idris2rc2_ptr_fetch_i16,libidris2rc2base,idris2rc2_rc2base_ptr_util.h"
 prim__fetchInt16 : Ptr Int16 -> Int32 -> PrimIO Int16
-%foreign "RC2:idris2rc2_ptr_store_i16,libidris2rc2base,ptr_util.h"
+%foreign "RC2:idris2rc2_ptr_store_i16,libidris2rc2base,idris2rc2_rc2base_ptr_util.h"
 prim__storeInt16 : Ptr Int16 -> Int32 -> Int16 -> PrimIO ()
-%foreign "RC2:idris2rc2_ptr_fetch_i16,libidris2rc2base,ptr_util.h"
+%foreign "RC2:idris2rc2_ptr_fetch_i16,libidris2rc2base,idris2rc2_rc2base_ptr_util.h"
 prim__fetchInt16GC : GCPtr Int16 -> Int32 -> PrimIO Int16
-%foreign "RC2:idris2rc2_ptr_store_i16,libidris2rc2base,ptr_util.h"
+%foreign "RC2:idris2rc2_ptr_store_i16,libidris2rc2base,idris2rc2_rc2base_ptr_util.h"
 prim__storeInt16GC : GCPtr Int16 -> Int32 -> Int16 -> PrimIO ()
 
-%foreign "RC2:idris2rc2_ptr_fetch_i32,libidris2rc2base,ptr_util.h"
+%foreign "RC2:idris2rc2_ptr_fetch_i32,libidris2rc2base,idris2rc2_rc2base_ptr_util.h"
 prim__fetchInt32 : Ptr Int32 -> Int32 -> PrimIO Int32
-%foreign "RC2:idris2rc2_ptr_store_i32,libidris2rc2base,ptr_util.h"
+%foreign "RC2:idris2rc2_ptr_store_i32,libidris2rc2base,idris2rc2_rc2base_ptr_util.h"
 prim__storeInt32 : Ptr Int32 -> Int32 -> Int32 -> PrimIO ()
-%foreign "RC2:idris2rc2_ptr_fetch_i32,libidris2rc2base,ptr_util.h"
+%foreign "RC2:idris2rc2_ptr_fetch_i32,libidris2rc2base,idris2rc2_rc2base_ptr_util.h"
 prim__fetchInt32GC : GCPtr Int32 -> Int32 -> PrimIO Int32
-%foreign "RC2:idris2rc2_ptr_store_i32,libidris2rc2base,ptr_util.h"
+%foreign "RC2:idris2rc2_ptr_store_i32,libidris2rc2base,idris2rc2_rc2base_ptr_util.h"
 prim__storeInt32GC : GCPtr Int32 -> Int32 -> Int32 -> PrimIO ()
 
-%foreign "RC2:idris2rc2_ptr_fetch_i64,libidris2rc2base,ptr_util.h"
+%foreign "RC2:idris2rc2_ptr_fetch_i64,libidris2rc2base,idris2rc2_rc2base_ptr_util.h"
 prim__fetchInt64 : Ptr Int64 -> Int32 -> PrimIO Int64
-%foreign "RC2:idris2rc2_ptr_store_i64,libidris2rc2base,ptr_util.h"
+%foreign "RC2:idris2rc2_ptr_store_i64,libidris2rc2base,idris2rc2_rc2base_ptr_util.h"
 prim__storeInt64 : Ptr Int64 -> Int32 -> Int64 -> PrimIO ()
-%foreign "RC2:idris2rc2_ptr_fetch_i64,libidris2rc2base,ptr_util.h"
+%foreign "RC2:idris2rc2_ptr_fetch_i64,libidris2rc2base,idris2rc2_rc2base_ptr_util.h"
 prim__fetchInt64GC : GCPtr Int64 -> Int32 -> PrimIO Int64
-%foreign "RC2:idris2rc2_ptr_store_i64,libidris2rc2base,ptr_util.h"
+%foreign "RC2:idris2rc2_ptr_store_i64,libidris2rc2base,idris2rc2_rc2base_ptr_util.h"
 prim__storeInt64GC : GCPtr Int64 -> Int32 -> Int64 -> PrimIO ()
 
 -- `Int` reuses idris2rc2_ptr_fetch_i64/store_i64's C symbol with Int64
 -- above (both compile to `int64_t`, Compiler.RC2.EmitUtil's
 -- cTypeOfCFType) -- same trick as Data.Buffer.RC2's
 -- prim__getInt8 -> getBufferByte.
-%foreign "RC2:idris2rc2_ptr_fetch_i64,libidris2rc2base,ptr_util.h"
+%foreign "RC2:idris2rc2_ptr_fetch_i64,libidris2rc2base,idris2rc2_rc2base_ptr_util.h"
 prim__fetchInt : Ptr Int -> Int32 -> PrimIO Int
-%foreign "RC2:idris2rc2_ptr_store_i64,libidris2rc2base,ptr_util.h"
+%foreign "RC2:idris2rc2_ptr_store_i64,libidris2rc2base,idris2rc2_rc2base_ptr_util.h"
 prim__storeInt : Ptr Int -> Int32 -> Int -> PrimIO ()
-%foreign "RC2:idris2rc2_ptr_fetch_i64,libidris2rc2base,ptr_util.h"
+%foreign "RC2:idris2rc2_ptr_fetch_i64,libidris2rc2base,idris2rc2_rc2base_ptr_util.h"
 prim__fetchIntGC : GCPtr Int -> Int32 -> PrimIO Int
-%foreign "RC2:idris2rc2_ptr_store_i64,libidris2rc2base,ptr_util.h"
+%foreign "RC2:idris2rc2_ptr_store_i64,libidris2rc2base,idris2rc2_rc2base_ptr_util.h"
 prim__storeIntGC : GCPtr Int -> Int32 -> Int -> PrimIO ()
 
-%foreign "RC2:idris2rc2_ptr_fetch_f64,libidris2rc2base,ptr_util.h"
+%foreign "RC2:idris2rc2_ptr_fetch_f64,libidris2rc2base,idris2rc2_rc2base_ptr_util.h"
 prim__fetchDouble : Ptr Double -> Int32 -> PrimIO Double
-%foreign "RC2:idris2rc2_ptr_store_f64,libidris2rc2base,ptr_util.h"
+%foreign "RC2:idris2rc2_ptr_store_f64,libidris2rc2base,idris2rc2_rc2base_ptr_util.h"
 prim__storeDouble : Ptr Double -> Int32 -> Double -> PrimIO ()
-%foreign "RC2:idris2rc2_ptr_fetch_f64,libidris2rc2base,ptr_util.h"
+%foreign "RC2:idris2rc2_ptr_fetch_f64,libidris2rc2base,idris2rc2_rc2base_ptr_util.h"
 prim__fetchDoubleGC : GCPtr Double -> Int32 -> PrimIO Double
-%foreign "RC2:idris2rc2_ptr_store_f64,libidris2rc2base,ptr_util.h"
+%foreign "RC2:idris2rc2_ptr_store_f64,libidris2rc2base,idris2rc2_rc2base_ptr_util.h"
 prim__storeDoubleGC : GCPtr Double -> Int32 -> Double -> PrimIO ()
 
-%foreign "RC2:idris2rc2_ptr_fetch_ptr,libidris2rc2base,ptr_util.h"
+%foreign "RC2:idris2rc2_ptr_fetch_ptr,libidris2rc2base,idris2rc2_rc2base_ptr_util.h"
 prim__fetchAnyPtr : Ptr AnyPtr -> Int32 -> PrimIO AnyPtr
-%foreign "RC2:idris2rc2_ptr_store_ptr,libidris2rc2base,ptr_util.h"
+%foreign "RC2:idris2rc2_ptr_store_ptr,libidris2rc2base,idris2rc2_rc2base_ptr_util.h"
 prim__storeAnyPtr : Ptr AnyPtr -> Int32 -> AnyPtr -> PrimIO ()
-%foreign "RC2:idris2rc2_ptr_fetch_ptr,libidris2rc2base,ptr_util.h"
+%foreign "RC2:idris2rc2_ptr_fetch_ptr,libidris2rc2base,idris2rc2_rc2base_ptr_util.h"
 prim__fetchAnyPtrGC : GCPtr AnyPtr -> Int32 -> PrimIO AnyPtr
-%foreign "RC2:idris2rc2_ptr_store_ptr,libidris2rc2base,ptr_util.h"
+%foreign "RC2:idris2rc2_ptr_store_ptr,libidris2rc2base,idris2rc2_rc2base_ptr_util.h"
 prim__storeAnyPtrGC : GCPtr AnyPtr -> Int32 -> AnyPtr -> PrimIO ()
 
 

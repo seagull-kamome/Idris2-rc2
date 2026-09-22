@@ -17,9 +17,9 @@
 // literature-exact bound transcribed perfectly from memory. Every
 // path either produces the bit-identical answer the exact function
 // would have, or explicitly falls back to it.
-#include "double_convert.h"
-#include "pow5_table.h"
-#include "cached_powers.h"
+#include "idris2rc2_rc2base_double_convert.h"
+#include "idris2rc2_rc2base_pow5_table.h"
+#include "idris2rc2_rc2base_cached_powers.h"
 #include <stdint.h>
 #include <string.h>
 #include <ctype.h>

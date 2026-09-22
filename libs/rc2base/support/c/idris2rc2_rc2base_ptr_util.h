@@ -7,7 +7,7 @@
 // indexing, which is exactly what these expand to. Header-only
 // `static inline`, not a separate translation unit: %foreign call sites
 // #include this header directly (same pattern as idris2rc2_text_index/
-// idris2rc2_TextBuffer_unsafe_write_char below, text_util.h), so the
+// idris2rc2_TextBuffer_unsafe_write_char below, idris2rc2_rc2base_text_util.h), so the
 // cast+index is visible to the compiler at the call site and actually
 // inlines instead of costing a real function call. Trades the strict-
 // aliasing/alignment safety a memcpy-based version would have for that

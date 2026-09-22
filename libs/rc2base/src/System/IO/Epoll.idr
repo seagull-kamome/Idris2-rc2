@@ -22,55 +22,55 @@ import System.FFI
 -- Raw FFI
 -------------------------------------------------------------------------------
 
-%foreign "C:idris2rc2_epoll_create, libidris2rc2base, event_util.h"
+%foreign "C:idris2rc2_epoll_create, libidris2rc2base, idris2rc2_rc2base_event_util.h"
 prim__epollCreate : PrimIO Int
 
-%foreign "C:idris2rc2_epoll_add, libidris2rc2base, event_util.h"
+%foreign "C:idris2rc2_epoll_add, libidris2rc2base, idris2rc2_rc2base_event_util.h"
 prim__epollAdd : Int -> Int -> Int -> PrimIO Int
 
-%foreign "C:idris2rc2_epoll_mod, libidris2rc2base, event_util.h"
+%foreign "C:idris2rc2_epoll_mod, libidris2rc2base, idris2rc2_rc2base_event_util.h"
 prim__epollMod : Int -> Int -> Int -> PrimIO Int
 
-%foreign "C:idris2rc2_epoll_del, libidris2rc2base, event_util.h"
+%foreign "C:idris2rc2_epoll_del, libidris2rc2base, idris2rc2_rc2base_event_util.h"
 prim__epollDel : Int -> Int -> PrimIO Int
 
-%foreign "C:idris2rc2_epoll_wait, libidris2rc2base, event_util.h"
+%foreign "C:idris2rc2_epoll_wait, libidris2rc2base, idris2rc2_rc2base_event_util.h"
 prim__epollWait : Int -> Int -> PrimIO Int
 
-%foreign "C:idris2rc2_epoll_event_fd, libidris2rc2base, event_util.h"
+%foreign "C:idris2rc2_epoll_event_fd, libidris2rc2base, idris2rc2_rc2base_event_util.h"
 prim__epollEventFd : Int -> PrimIO Int
 
-%foreign "C:idris2rc2_epoll_event_flags, libidris2rc2base, event_util.h"
+%foreign "C:idris2rc2_epoll_event_flags, libidris2rc2base, idris2rc2_rc2base_event_util.h"
 prim__epollEventFlags : Int -> PrimIO Int
 
-%foreign "C:idris2rc2_epollin, libidris2rc2base, event_util.h"
+%foreign "C:idris2rc2_epollin, libidris2rc2base, idris2rc2_rc2base_event_util.h"
 prim__epollin : PrimIO Int
 
-%foreign "C:idris2rc2_epollout, libidris2rc2base, event_util.h"
+%foreign "C:idris2rc2_epollout, libidris2rc2base, idris2rc2_rc2base_event_util.h"
 prim__epollout : PrimIO Int
 
-%foreign "C:idris2rc2_epollerr, libidris2rc2base, event_util.h"
+%foreign "C:idris2rc2_epollerr, libidris2rc2base, idris2rc2_rc2base_event_util.h"
 prim__epollerr : PrimIO Int
 
-%foreign "C:idris2rc2_epollhup, libidris2rc2base, event_util.h"
+%foreign "C:idris2rc2_epollhup, libidris2rc2base, idris2rc2_rc2base_event_util.h"
 prim__epollhup : PrimIO Int
 
-%foreign "C:idris2rc2_set_nonblocking, libidris2rc2base, event_util.h"
+%foreign "C:idris2rc2_set_nonblocking, libidris2rc2base, idris2rc2_rc2base_event_util.h"
 prim__setNonBlocking : Int -> PrimIO Int
 
-%foreign "C:idris2rc2_set_reuseaddr, libidris2rc2base, event_util.h"
+%foreign "C:idris2rc2_set_reuseaddr, libidris2rc2base, idris2rc2_rc2base_event_util.h"
 prim__setReuseAddr : Int -> PrimIO Int
 
-%foreign "C:idris2rc2_eventfd_create, libidris2rc2base, event_util.h"
+%foreign "C:idris2rc2_eventfd_create, libidris2rc2base, idris2rc2_rc2base_event_util.h"
 prim__eventFdCreate : PrimIO Int
 
-%foreign "C:idris2rc2_eventfd_signal, libidris2rc2base, event_util.h"
+%foreign "C:idris2rc2_eventfd_signal, libidris2rc2base, idris2rc2_rc2base_event_util.h"
 prim__eventFdSignal : Int -> PrimIO Int
 
-%foreign "C:idris2rc2_eventfd_drain, libidris2rc2base, event_util.h"
+%foreign "C:idris2rc2_eventfd_drain, libidris2rc2base, idris2rc2_rc2base_event_util.h"
 prim__eventFdDrain : Int -> PrimIO Int
 
-%foreign "C:idris2rc2_close_fd, libidris2rc2base, event_util.h"
+%foreign "C:idris2rc2_close_fd, libidris2rc2base, idris2rc2_rc2base_event_util.h"
 prim__closeFd : Int -> PrimIO Int
 
 -------------------------------------------------------------------------------

@@ -1,6 +1,6 @@
 CC=gcc
 CFLAGS+=-fPIC -Wall -Wextra -O2
-# rc2/util.h lives under idris2's own data dir -- ask idris2 itself
+# idris2rc2_util.h lives under idris2's own data dir -- ask idris2 itself
 # instead of requiring IDRIS2_DATA to be set in the environment (idris2
 # resolves this the same way by default, relative to its own prefix).
 CFLAGS  += -I$(shell idris2 --libdir)/support/rc2
@@ -12,8 +12,8 @@ AR=ar
 RC2BASE_VERSION := 0.1.0
 LIBDIR = $(shell idris2 --libdir)/rc2base-$(RC2BASE_VERSION)/lib
 
-OBJS = text_util.o concurrency_util.o xoroshiro64starstar.o xoroshiro128plusplus.o memstream.o event_util.o net_util.o posix_regex.o string_rc2.o double_convert.o
-HDRS = text_util.h concurrency_util.h xoroshiro64starstar.h xoroshiro128plusplus.h memstream.h ptr_util.h event_util.h net_util.h posix_regex.h string_rc2.h double_convert.h
+OBJS = idris2rc2_rc2base_text_util.o idris2rc2_rc2base_concurrency_util.o idris2rc2_rc2base_xoroshiro64starstar.o idris2rc2_rc2base_xoroshiro128plusplus.o idris2rc2_rc2base_memstream.o idris2rc2_rc2base_event_util.o idris2rc2_rc2base_net_util.o idris2rc2_rc2base_posix_regex.o idris2rc2_rc2base_string_rc2.o idris2rc2_rc2base_double_convert.o
+HDRS = idris2rc2_rc2base_text_util.h idris2rc2_rc2base_concurrency_util.h idris2rc2_rc2base_xoroshiro64starstar.h idris2rc2_rc2base_xoroshiro128plusplus.h idris2rc2_rc2base_memstream.h idris2rc2_rc2base_ptr_util.h idris2rc2_rc2base_event_util.h idris2rc2_rc2base_net_util.h idris2rc2_rc2base_posix_regex.h idris2rc2_rc2base_string_rc2.h idris2rc2_rc2base_double_convert.h
 
 
 %.o: %.c
@@ -24,16 +24,16 @@ all: libidris2rc2base.a
 libidris2rc2base.a: $(OBJS)
 	$(AR) rcs $@ $(OBJS)
 
-text_util.o: text_util.c text_util.h
-concurrency_util.o: concurrency_util.c concurrency_util.h
-xoroshiro64starstar.o: xoroshiro64starstar.c xoroshiro64starstar.h f2x.c
-xoroshiro128plusplus.o: xoroshiro128plusplus.c xoroshiro128plusplus.h f2x.c
-memstream.o: memstream.c memstream.h
-event_util.o: event_util.c event_util.h
-net_util.o: net_util.c net_util.h
-posix_regex.o: posix_regex.c posix_regex.h
-string_rc2.o: string_rc2.c string_rc2.h
-double_convert.o: double_convert.c double_convert.h pow5_table.h cached_powers.h
+idris2rc2_rc2base_text_util.o: idris2rc2_rc2base_text_util.c idris2rc2_rc2base_text_util.h
+idris2rc2_rc2base_concurrency_util.o: idris2rc2_rc2base_concurrency_util.c idris2rc2_rc2base_concurrency_util.h
+idris2rc2_rc2base_xoroshiro64starstar.o: idris2rc2_rc2base_xoroshiro64starstar.c idris2rc2_rc2base_xoroshiro64starstar.h idris2rc2_rc2base_f2x.c
+idris2rc2_rc2base_xoroshiro128plusplus.o: idris2rc2_rc2base_xoroshiro128plusplus.c idris2rc2_rc2base_xoroshiro128plusplus.h idris2rc2_rc2base_f2x.c
+idris2rc2_rc2base_memstream.o: idris2rc2_rc2base_memstream.c idris2rc2_rc2base_memstream.h
+idris2rc2_rc2base_event_util.o: idris2rc2_rc2base_event_util.c idris2rc2_rc2base_event_util.h
+idris2rc2_rc2base_net_util.o: idris2rc2_rc2base_net_util.c idris2rc2_rc2base_net_util.h
+idris2rc2_rc2base_posix_regex.o: idris2rc2_rc2base_posix_regex.c idris2rc2_rc2base_posix_regex.h
+idris2rc2_rc2base_string_rc2.o: idris2rc2_rc2base_string_rc2.c idris2rc2_rc2base_string_rc2.h
+idris2rc2_rc2base_double_convert.o: idris2rc2_rc2base_double_convert.c idris2rc2_rc2base_double_convert.h idris2rc2_rc2base_pow5_table.h idris2rc2_rc2base_cached_powers.h
 
 install: all
 	mkdir -p $(LIBDIR)

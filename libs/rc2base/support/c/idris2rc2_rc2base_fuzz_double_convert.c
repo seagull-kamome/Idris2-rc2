@@ -3,7 +3,7 @@
 // the exact idris2rc2_parse_double/idris2rc2_shortest_double for a
 // large number of cases. Used only during development; not installed,
 // not referenced by rc2base.ipkg or the Makefile.
-#include "double_convert.h"
+#include "idris2rc2_rc2base_double_convert.h"
 #include <stdio.h>
 #include <stdint.h>
 #include <string.h>

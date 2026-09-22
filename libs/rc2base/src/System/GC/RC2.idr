@@ -1,6 +1,6 @@
 ||| Raw access to rc2's own reference-counting primitives
 ||| (`idris2rc2_dup`/`idris2rc2_dup_n`/`idris2rc2_drop`,
-||| `rc2/support/rc2/memory.h`) -- for the one case rc2's own
+||| `rc2/support/rc2/idris2rc2_memory.h`) -- for the one case rc2's own
 ||| compiler-inserted dup/drop bookkeeping can't see: a value whose
 ||| only remaining reference lives inside a raw pointer smuggled out
 ||| through an opaque FFI slot (e.g. a C callback's own `void *`

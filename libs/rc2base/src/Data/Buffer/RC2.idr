@@ -9,7 +9,7 @@ module Data.Buffer.RC2
 -- declarations with no C/RefC backend at all" entry. Unlike a
 -- from-scratch replacement (needed only when upstream has no
 -- C-reachable implementation whatsoever to patch onto), rc2's own
--- runtime (`rc2/support/rc2/buffer.h`) already has every one of these
+-- runtime (`rc2/support/rc2/idris2rc2_buffer.h`) already has every one of these
 -- under a different name -- `setInt16`/`getInt32`/`setInt32` (already
 -- usable on rc2 unpatched, via upstream's own `"RefC:..."` tags matching that
 -- runtime's own symbol names verbatim) show the same runtime was always
@@ -24,7 +24,7 @@ module Data.Buffer.RC2
 --                                        prim__getByte, a *different*
 --                                        primitive with a plain Int
 --                                        return; reused as-is rather
---                                        than renamed, see buffer.h's
+--                                        than renamed, see idris2rc2_buffer.h's
 --                                        own comment on why a rename
 --                                        here would silently break that
 --                                        other, already-shipped patch)
@@ -61,7 +61,7 @@ module Data.Buffer.RC2
 -- every non-`"RefC"` tag (including `"RC2"`) as generic-C for the
 -- purpose of unwrapping a `CFBuffer` argument (`EmitUtil.idr`'s
 -- `extractValue`'s two `CFBuffer` cases differ: `CLangRefC` passes the
--- whole size-header-carrying allocation `buffer.h`'s own functions
+-- whole size-header-carrying allocation `idris2rc2_buffer.h`'s own functions
 -- expect, `CLangC` skips past that header entirely for generic byte-
 -- buffer functions with no notion of it) -- silently correct for
 -- `System.Concurrency.RC2`, which never has a `CFBuffer`-typed

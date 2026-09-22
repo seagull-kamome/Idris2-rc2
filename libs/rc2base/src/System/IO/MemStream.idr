@@ -18,25 +18,25 @@ import System.FFI
 export
 data MemStream = MkMemStream AnyPtr
 
-%foreign "C:idris2rc2_memstream_open,libidris2rc2base,memstream.h"
+%foreign "C:idris2rc2_memstream_open,libidris2rc2base,idris2rc2_rc2base_memstream.h"
 prim__memstreamOpen : PrimIO AnyPtr
 
-%foreign "C:idris2rc2_memstream_filep,libidris2rc2base,memstream.h"
+%foreign "C:idris2rc2_memstream_filep,libidris2rc2base,idris2rc2_rc2base_memstream.h"
 prim__memstreamFilep : AnyPtr -> PrimIO AnyPtr
 
-%foreign "C:idris2rc2_memstream_close,libidris2rc2base,memstream.h"
+%foreign "C:idris2rc2_memstream_close,libidris2rc2base,idris2rc2_rc2base_memstream.h"
 prim__memstreamClose : AnyPtr -> PrimIO ()
 
-%foreign "C:idris2rc2_memstream_data,libidris2rc2base,memstream.h"
+%foreign "C:idris2rc2_memstream_data,libidris2rc2base,idris2rc2_rc2base_memstream.h"
 prim__memstreamData : AnyPtr -> PrimIO AnyPtr
 
-%foreign "C:idris2rc2_memstream_size,libidris2rc2base,memstream.h"
+%foreign "C:idris2rc2_memstream_size,libidris2rc2base,idris2rc2_rc2base_memstream.h"
 prim__memstreamSize : AnyPtr -> PrimIO Int
 
-%foreign "C:idris2rc2_memstream_free,libidris2rc2base,memstream.h"
+%foreign "C:idris2rc2_memstream_free,libidris2rc2base,idris2rc2_rc2base_memstream.h"
 prim__memstreamFree : AnyPtr -> PrimIO ()
 
-%foreign "C:idris2rc2_memstream_copy_into_buffer,libidris2rc2base,memstream.h"
+%foreign "C:idris2rc2_memstream_copy_into_buffer,libidris2rc2base,idris2rc2_rc2base_memstream.h"
 prim__memstreamCopyIntoBuffer : AnyPtr -> Buffer -> PrimIO ()
 
 ||| Opens an in-memory capture stream -- pass `filePtr`'s own result to

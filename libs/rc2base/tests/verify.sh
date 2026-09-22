@@ -1,17 +1,27 @@
 #!/usr/bin/env bash
 # One-shot correctness verification for libs/rc2base: cleans and
 # rebuilds the C support library, type-checks the package against the
-# plain Chez backend, installs it into a throwaway local prefix,
-# builds tests/TestText.idr against idris2-rc-cg's own rc2 backend,
-# runs it, and diffs its stdout against tests/TestText.expected.
-# Small-scale sibling of rc2/tests/verify.sh -- see that script's own
-# header for the fuller rationale this one deliberately doesn't repeat.
+# plain Chez backend, installs it into the *same* shared install/
+# prefix rc2 itself uses (never a separate throwaway prefix -- a
+# second, parallel install of this same package was found to go stale
+# independently of the shared one, since nothing ever re-syncs the
+# two, and its own package resolution could end up picking either one
+# depending on search-path order; installing to the one shared
+# location rc2's own env.sh already defaults to removes that
+# ambiguity entirely), builds tests/TestText.idr against
+# idris2-rc-cg's own rc2 backend, runs it, and diffs its stdout
+# against tests/TestText.expected. Small-scale sibling of
+# rc2/tests/verify.sh -- see that script's own header for the fuller
+# rationale this one deliberately doesn't repeat.
 #
 # Usage: ./verify.sh
 #
-# Requires nix-shell on PATH (used to bring in idris2/gcc/gmp/pkg-config
-# the same way rc2/tests/verify.sh does) and rc2/build/exec/idris2-rc2
-# already built (see rc2/tests/verify.sh or rc2/README.md).
+# Requires nix-shell on PATH (used to bring in gcc/gmp/pkg-config the
+# same way rc2/tests/verify.sh does -- idris2 itself comes from
+# env.sh's own PATH, the self-built one, never nix's, per AGENT.md's
+# "Policy: don't use nixpkgs' idris2 for rc2 work") and
+# rc2/build/exec/idris2-rc2 already built (see rc2/tests/verify.sh or
+# rc2/README.md).
 
 set -euo pipefail
 
@@ -41,30 +51,30 @@ nix-shell -p gnumake gcc gmp pkg-config --run \
     "make -C '$PKG_DIR/support/c' clean && make -C '$PKG_DIR/support/c'"
 
 echo "=== Chez backend: type-check ==="
-(cd "$PKG_DIR" && nix-shell -p idris2 gmp pkg-config --run 'idris2 --build rc2base.ipkg')
+(cd "$PKG_DIR" && nix-shell -p gmp pkg-config --run 'idris2 --build rc2base.ipkg')
 
-echo "=== Install into throwaway local prefix ==="
-rm -rf "$PKG_DIR/.local-install"
-IDRIS2_PREFIX="$PKG_DIR/.local-install" \
-    nix-shell -p idris2 gnumake gcc gmp pkg-config --run \
+echo "=== Install into the shared install/ prefix ==="
+nix-shell -p gnumake gcc gmp pkg-config --run \
     "cd '$PKG_DIR' && idris2 --install rc2base.ipkg"
 
 PKG_VERSION="$(sed -n 's/^version *= *//p' "$PKG_DIR/rc2base.ipkg" | tr -d ' ')"
-INSTALLED_LIB="$PKG_DIR/.local-install/idris2-0.8.0/rc2base-$PKG_VERSION/lib"
+INSTALLED_LIB="$REPO_ROOT/install/idris2-0.8.0/rc2base-$PKG_VERSION/lib"
 echo "=== Check postinstall copied the native library into lib/ ==="
 [[ -f "$INSTALLED_LIB/libidris2rc2base.a" ]] || fail "postinstall didn't install libidris2rc2base.a to $INSTALLED_LIB"
-[[ -f "$INSTALLED_LIB/text_util.h" ]] || fail "postinstall didn't install text_util.h to $INSTALLED_LIB"
-[[ -f "$INSTALLED_LIB/concurrency_util.h" ]] || fail "postinstall didn't install concurrency_util.h to $INSTALLED_LIB"
-[[ -f "$INSTALLED_LIB/ptr_util.h" ]] || fail "postinstall didn't install ptr_util.h to $INSTALLED_LIB"
+[[ -f "$INSTALLED_LIB/idris2rc2_rc2base_text_util.h" ]] || fail "postinstall didn't install idris2rc2_rc2base_text_util.h to $INSTALLED_LIB"
+[[ -f "$INSTALLED_LIB/idris2rc2_rc2base_concurrency_util.h" ]] || fail "postinstall didn't install idris2rc2_rc2base_concurrency_util.h to $INSTALLED_LIB"
+[[ -f "$INSTALLED_LIB/idris2rc2_rc2base_ptr_util.h" ]] || fail "postinstall didn't install idris2rc2_rc2base_ptr_util.h to $INSTALLED_LIB"
 
 echo "=== rc2 backend: build TestText (against the INSTALLED lib/, not support/c) ==="
-export IDRIS2_PACKAGE_PATH="${IDRIS2_PACKAGE_PATH:-}:$PKG_DIR/.local-install/idris2-0.8.0"
-# No IDRIS2_CFLAGS/IDRIS2_LDFLAGS needed: Compiler.RC2.CC's own
-# depPkgLibDirs already adds -I<...>/lib and -L<...>/lib for every
-# -p'd package's own installed lib/ (here, $INSTALLED_LIB) automatically
-# -- see libs/rc2base/README.md's "Native library install location".
-# idris2-rc2 always writes its -o output under <cwd>/build/exec/, so cd
-# into tests/ first to get a predictable, self-contained output path.
+# No IDRIS2_PACKAGE_PATH export needed: idris2 already searches its
+# own installation prefix (install/, the same one just installed into
+# above) by default. No IDRIS2_CFLAGS/IDRIS2_LDFLAGS needed either:
+# Compiler.RC2.CC's own depPkgLibDirs already adds -I<...>/lib and
+# -L<...>/lib for every -p'd package's own installed lib/ (here,
+# $INSTALLED_LIB) automatically -- see libs/rc2base/README.md's
+# "Native library install location". idris2-rc2 always writes its -o
+# output under <cwd>/build/exec/, so cd into tests/ first to get a
+# predictable, self-contained output path.
 nix-shell -p gcc gmp pkg-config --run \
     "cd '$TESTS_DIR' && '$IDRIS2RC2' --cg rc2 -p rc2base -o TestText_idris2Text_verify TestText.idr"
 

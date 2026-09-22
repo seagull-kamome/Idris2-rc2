@@ -1,4 +1,4 @@
-#include "posix_regex.h"
+#include "idris2rc2_rc2base_posix_regex.h"
 
 #include <regex.h>
 #include <stdio.h>

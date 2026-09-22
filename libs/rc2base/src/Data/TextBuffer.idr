@@ -39,28 +39,28 @@ data TextBuffer : Type where
 ||| through untouched.
 data RawStringValue : Type
 
-%foreign "C:idris2rc2_TextBuffer_mkEmpty,libidris2rc2base,text_util.h"
+%foreign "C:idris2rc2_TextBuffer_mkEmpty,libidris2rc2base,idris2rc2_rc2base_text_util.h"
 prim__TextBuffer_mkEmpty : Int -> PrimIO AnyPtr
 
-%foreign "C:idris2rc2_String_to_TextBuffer,libidris2rc2base,text_util.h"
+%foreign "C:idris2rc2_String_to_TextBuffer,libidris2rc2base,idris2rc2_rc2base_text_util.h"
 prim__String_to_TextBuffer : String -> PrimIO AnyPtr
 
-%foreign "C:idris2rc2_TextBuffer_to_string,libidris2rc2base,text_util.h"
+%foreign "C:idris2rc2_TextBuffer_to_string,libidris2rc2base,idris2rc2_rc2base_text_util.h"
 prim__TextBuffer_toString : GCAnyPtr -> PrimIO RawStringValue
 
-%foreign "C:idris2rc2_TextBuffer_free,libidris2rc2base,text_util.h"
+%foreign "C:idris2rc2_TextBuffer_free,libidris2rc2base,idris2rc2_rc2base_text_util.h"
 prim__TextBuffer_free : AnyPtr -> PrimIO ()
 
-%foreign "C:idris2rc2_TextBuffer_unsafe_write_char,libidris2rc2base,text_util.h"
+%foreign "C:idris2rc2_TextBuffer_unsafe_write_char,libidris2rc2base,idris2rc2_rc2base_text_util.h"
 prim__TextBuffer_unsafe_write_char : GCAnyPtr -> Int -> Bits32 -> PrimIO ()
 
-%foreign "C:idris2rc2_text_length,libidris2rc2base,text_util.h"
+%foreign "C:idris2rc2_text_length,libidris2rc2base,idris2rc2_rc2base_text_util.h"
 prim__textLength : GCAnyPtr -> PrimIO Int
 
-%foreign "C:idris2rc2_text_index,libidris2rc2base,text_util.h"
+%foreign "C:idris2rc2_text_index,libidris2rc2base,idris2rc2_rc2base_text_util.h"
 prim__textIndex : GCAnyPtr -> Int -> PrimIO Bits32
 
-%foreign "C:idris2rc2_TextBuffer_append,libidris2rc2base,text_util.h"
+%foreign "C:idris2rc2_TextBuffer_append,libidris2rc2base,idris2rc2_rc2base_text_util.h"
 prim__TextBuffer_append : GCAnyPtr -> GCAnyPtr -> PrimIO AnyPtr
 
 -- ---------------------------------------------------------------------------
@@ -99,7 +99,7 @@ fromString s = unsafePerformIO $ MkTextBuffer <$> (wrapBuffer =<< primIO (prim__
 -- no separate marshalling step), so this reuses the identical decode
 -- loop with no new C code, for a caller that already has a raw
 -- pointer and doesn't want to force it through a boxed String first.
-%foreign "C:idris2rc2_String_to_TextBuffer,libidris2rc2base,text_util.h"
+%foreign "C:idris2rc2_String_to_TextBuffer,libidris2rc2base,idris2rc2_rc2base_text_util.h"
 prim__RawUtf8_to_TextBuffer : AnyPtr -> PrimIO AnyPtr
 
 ||| Erased (`0`-multiplicity, zero runtime cost), `Data.So`-based proof

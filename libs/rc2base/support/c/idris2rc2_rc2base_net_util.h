@@ -1,5 +1,5 @@
-#ifndef NET_UTIL_H
-#define NET_UTIL_H
+#ifndef IDRIS2RC2_RC2BASE_NET_UTIL_H
+#define IDRIS2RC2_RC2BASE_NET_UTIL_H
 
 // Offset+length socket IO straight into/out of an Idris `Buffer`'s
 // bytes, for Network.RC2. The standard `network` package only exposes

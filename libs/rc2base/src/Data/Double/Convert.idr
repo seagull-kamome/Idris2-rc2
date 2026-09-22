@@ -25,7 +25,7 @@ module Data.Double.Convert
 -- `libs/rc2base/README.md`'s own "Data.Double.Convert" section for the
 -- user-facing summary.
 
-%foreign "C:idris2rc2_fastParseDouble, libidris2rc2base, double_convert.h"
+%foreign "C:idris2rc2_fastParseDouble, libidris2rc2base, idris2rc2_rc2base_double_convert.h"
 prim__fastParseDouble : String -> PrimIO Double
 
 ||| Same total semantics as `cast {to=Double}` (unparseable input
@@ -45,7 +45,7 @@ fastParse s = unsafePerformIO (primIO (prim__fastParseDouble s))
 ||| and `Data.TextBuffer`'s `RawStringValue`.
 data RawStr : Type
 
-%foreign "C:idris2rc2_fastShowDouble, libidris2rc2base, double_convert.h"
+%foreign "C:idris2rc2_fastShowDouble, libidris2rc2base, idris2rc2_rc2base_double_convert.h"
 prim__fastShowDouble : Double -> PrimIO RawStr
 
 ||| Same output as `cast {to=String}` (shortest round-trip decimal,

@@ -23,7 +23,7 @@ module Data.String.RC2
 ||| `Data.TextBuffer`'s `RawStringValue`.
 data RawStr : Type
 
-%foreign "C:idris2rc2_string_byte_slice,libidris2rc2base,string_rc2.h"
+%foreign "C:idris2rc2_string_byte_slice,libidris2rc2base,idris2rc2_rc2base_string_rc2.h"
 prim__stringByteSlice : String -> Int -> Int -> PrimIO RawStr
 
 ||| The `len` bytes of `s` starting at **byte** offset `off`, as a
@@ -46,7 +46,7 @@ unsafeStringByteSlice : (s : String) -> (off, len : Int) -> String
 unsafeStringByteSlice s off len =
   believe_me (unsafePerformIO (primIO (prim__stringByteSlice s off len)))
 
-%foreign "C:idris2rc2_string_byte_length,libidris2rc2base,string_rc2.h"
+%foreign "C:idris2rc2_string_byte_length,libidris2rc2base,idris2rc2_rc2base_string_rc2.h"
 prim__stringByteLength : String -> PrimIO Int
 
 ||| The on-the-wire byte length of `s` (`strlen`), as opposed to

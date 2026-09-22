@@ -1,5 +1,5 @@
-#ifndef EVENT_UTIL_H
-#define EVENT_UTIL_H
+#ifndef IDRIS2RC2_RC2BASE_EVENT_UTIL_H
+#define IDRIS2RC2_RC2BASE_EVENT_UTIL_H
 
 int idris2rc2_epoll_create(void);
 int idris2rc2_epoll_add(int epfd, int fd, int events);

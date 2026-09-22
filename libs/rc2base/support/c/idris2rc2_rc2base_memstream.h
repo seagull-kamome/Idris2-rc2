@@ -1,5 +1,5 @@
-#ifndef MEMSTREAM_H
-#define MEMSTREAM_H
+#ifndef IDRIS2RC2_RC2BASE_MEMSTREAM_H
+#define IDRIS2RC2_RC2BASE_MEMSTREAM_H
 
 typedef struct idris2rc2_MemStream idris2rc2_MemStream;
 

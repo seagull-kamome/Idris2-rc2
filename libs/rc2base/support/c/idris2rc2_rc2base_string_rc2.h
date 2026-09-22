@@ -2,11 +2,11 @@
  * or sibling-library header might also be called) and with a matching
  * include guard, so it can't shadow or be shadowed on a shared -I path.
  * Pairs with src/Data/String/RC2.idr. */
-#ifndef RC2BASE_STRING_RC2_H
-#define RC2BASE_STRING_RC2_H
+#ifndef IDRIS2RC2_RC2BASE_STRING_RC2_H
+#define IDRIS2RC2_RC2BASE_STRING_RC2_H
 
-#include "datatypes.h"
-#include "memory.h"
+#include "idris2rc2_datatypes.h"
+#include "idris2rc2_memory.h"
 
 /* Byte-exact substring: the `len` bytes of `s` starting at byte offset
  * `off`, as a freshly built IDRIS2RC2_String value.
@@ -19,7 +19,7 @@
  *
  * Returns an already-fully-formed, correctly tagged Value* (via
  * idris2rc2_mkEmptyString), NOT a bare char* -- same contract as
- * text_util.h's idris2rc2_TextBuffer_to_string. The paired %foreign
+ * idris2rc2_rc2base_text_util.h's idris2rc2_TextBuffer_to_string. The paired %foreign
  * types its return as a never-constructed opaque marker so rc2's FFI
  * marshaller passes it through untouched instead of wrapping it again. */
 IDRIS2RC2_Value *idris2rc2_string_byte_slice(char const *s, int off, int len);
@@ -29,4 +29,4 @@ IDRIS2RC2_Value *idris2rc2_string_byte_slice(char const *s, int off, int len);
  * already work in byte offsets (e.g. POSIX regex match iteration). */
 int idris2rc2_string_byte_length(char const *s);
 
-#endif /* RC2BASE_STRING_RC2_H */
+#endif /* IDRIS2RC2_RC2BASE_STRING_RC2_H */
