@@ -324,3 +324,16 @@ if diff -u "$TESTS_DIR/TestRcexprParser.expected" "$TMP/actual19.out"; then
 else
     fail "TestRcexprParser -- output mismatch (see diff above)"
 fi
+
+echo "=== rc2 backend: build TestIORefRC2 (Data.IORef.RC2: casIORef success/failure/retry loop) ==="
+nix-shell -p gcc gmp pkg-config --run \
+    "cd '$TESTS_DIR' && '$IDRIS2RC2' --cg rc2 -p rc2base -o TestIORefRC2_verify TestIORefRC2.idr"
+
+echo "=== Run and diff against TestIORefRC2.expected ==="
+"$TESTS_DIR/build/exec/TestIORefRC2_verify" > "$TMP/actual20.out" 2>&1
+
+if diff -u "$TESTS_DIR/TestIORefRC2.expected" "$TMP/actual20.out"; then
+    echo "PASS  TestIORefRC2"
+else
+    fail "TestIORefRC2 -- output mismatch (see diff above)"
+fi

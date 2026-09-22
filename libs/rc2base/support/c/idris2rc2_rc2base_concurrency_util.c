@@ -184,26 +184,13 @@ IDRIS2RC2_Value *idris2rc2_channel_get(IDRIS2RC2_Value *, IDRIS2RC2_Value *chan)
   return val;
 }
 
-// Prelude.Maybe's Just is always tag=1, arity=1 -- confirmed empirically
-// (not by reading the compiler's own source) by building a small
-// Maybe-returning program and reading the generated C: an ordinary
-// `Just x` lowers to `idris2rc2_newConstructor(1, 1)`, and ConstFold's
-// own staged-static `Just []` uses the same tag/arity. This is a
+// idris2rc2_wrapJust (idris2rc2_memory.h) always *builds* a real
+// Constructor for whatever payload it's handed -- never elides one --
+// so a payload that's itself NULL-representable (e.g. `Just []`,
+// `Just ()`) never collapses onto the same NULL as Nothing (the
 // narrower, sound relative of the "unwrap Just x to x" idea TODO.md
-// records as investigated and dropped: that one was rejected because a
-// payload that's itself NULL-representable (e.g. `Just []`, `Just ()`)
-// would collapse onto the same NULL as Nothing. Here we always *build*
-// a real Constructor for whatever payload we're handed -- we never
-// elide one -- so that failure mode doesn't apply. Only safe because
-// Prelude.Maybe is one fixed, versioned library type shared by every
-// rc2 program, not a per-program user-defined ADT whose tag assignment
-// varies; would break if a future Idris2 ever reordered Nothing/Just's
-// declaration.
-static IDRIS2RC2_Value *idris2rc2_channel_wrap_just(IDRIS2RC2_Value *val) {
-  IDRIS2RC2_Constructor *just = idris2rc2_newConstructor(1, 1);
-  just->args[0] = val;
-  return (IDRIS2RC2_Value *)just;
-}
+// records as investigated and dropped, for that exact reason).
+#define idris2rc2_channel_wrap_just idris2rc2_wrapJust
 
 IDRIS2RC2_Value *idris2rc2_channel_get_non_blocking(IDRIS2RC2_Value *, IDRIS2RC2_Value *chan) {
   IDRIS2RC2_Channel *c = (IDRIS2RC2_Channel *)chan;

@@ -1,0 +1,8 @@
+cas success: Nothing
+value after: 2
+cas failure: Just 2
+value unchanged: 2
+retry-loop result: 102
+string cas: Nothing
+string value after: world
+--- Tests finished ---
