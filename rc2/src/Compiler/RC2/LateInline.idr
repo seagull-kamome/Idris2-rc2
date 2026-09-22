@@ -26,6 +26,7 @@ import Compiler.RC2.Util
 import Core.Context
 import Core.Context.Log
 import Core.Core
+
 import Core.FC
 import Core.TT
 
@@ -87,7 +88,7 @@ record Carried where
   ||| by delta from round to round rather than re-summed from every
   ||| definition's own occurrence list, which was this pass's single
   ||| largest cost at whole-compiler scale (~5.7s per round on
-  ||| `idris2-lsp`: ~118k `insertWith`s into a `Name`-keyed map, whose
+  ||| `idris2-lsp`: ~118k increments into a `Name`-keyed map, whose
   ||| comparisons are structural over namespace lists and strings).
   ||| Only two things can shift a count: a definition whose own body
   ||| changed (`dirty`, its old occurrence list subtracted and its new
@@ -107,6 +108,11 @@ record Carried where
   ||| The previous round's own definition names -- what "pruned away
   ||| since last round" is spotted against, for the count delta above.
   names : List Name
+  ||| `Compiler.RC2.DeadCode`'s own per-name reference sets, carried for
+  ||| the same reason as `info`: each round re-prunes from `roots`, and
+  ||| without this every reachable definition's whole body is re-walked
+  ||| to re-derive an identical reference set every single round.
+  refs : RefCache
 
 ||| `cache`: every name's own `CalleeInfo` as of the last round it was
 ||| actually reprocessed (`empty` on the very first round). `dirty`:
@@ -125,8 +131,8 @@ record Carried where
 ||| cached, on round N. Returns the updated cache alongside the
 ||| `Analysis` as before, for `applyLateInlineOnce` to thread into the
 ||| next round.
-analyse : (prev : Maybe Carried) -> (dirty : SortedSet Name) -> List (Name, RCDef) -> (Analysis, Carried)
-analyse prev dirty defs =
+analyse : (prev : Maybe Carried) -> (dirty : SortedSet Name) -> (refs : RefCache) -> List (Name, RCDef) -> (Analysis, Carried)
+analyse prev dirty refs defs =
     let oldInfo : CalleeInfo = maybe empty (.info) prev
         defOf : SortedMap Name RCDef = SortedMap.fromList defs
         perDef : List (Name, (SortedSet Name, List Name)) =
@@ -135,17 +141,27 @@ analyse prev dirty defs =
                                    Just i => if contains n dirty then freshInfo d else i
                                    Nothing => freshInfo d)) defs
         info' : CalleeInfo = foldl (\acc, (n, i) => insert n i acc) oldInfo perDef
+        -- Folds each definition's own occurrence list straight into the
+        -- map. Flattening them into one list first (`concatMap`, the
+        -- obvious spelling) is quadratic: `concat` left-nests `++`, so
+        -- every definition's list gets copied past the whole prefix
+        -- built so far. Measured on `idris2-lsp` (35.5k definitions,
+        -- 118k occurrences): 9.8s to flatten, against 0.23s to compute
+        -- the very same per-definition lists.
         counts' : SortedMap Name Nat = case prev of
-                 Nothing => foldl (\acc, n => insertWith (+) n 1 acc) (the (SortedMap Name Nat) empty)
-                              (concatMap (\(_, (_, occs)) => occs) perDef)
+                 Nothing => foldl (\acc, (_, (_, occs)) => foldl inc acc occs) (the (SortedMap Name Nat) empty) perDef
                  Just p => deltaCounts p defOf info'
+        -- Same trap, same fix: this is `reverse (concat sccs)` without
+        -- ever building `concat sccs` -- prepending each component's
+        -- own names in order yields exactly the reversed concatenation.
         order' : List Name = case prev of
-                 Nothing => reverse (concat (tarjanSCCs (SortedMap.fromList (map (\(n, (cs, _)) => (n, cs)) perDef))))
+                 Nothing => foldl (\acc, scc => foldl (flip (::)) acc scc)
+                              [] (tarjanSCCs (SortedMap.fromList (map (\(n, (cs, _)) => (n, cs)) perDef)))
                  Just p => p.order
         eligible : SortedSet Name = SortedSet.fromList $ mapMaybe
               (\(n, cnt) => if cnt == 1 && isFun defOf n then Just n else Nothing)
               (SortedMap.toList counts')
-    in (MkAnalysis eligible order', MkCarried info' counts' order' (map fst defs))
+    in (MkAnalysis eligible order', MkCarried info' counts' order' (map fst defs) refs)
   where
     freshInfo : RCDef -> (SortedSet Name, List Name)
     freshInfo d = (calleesOf d, callOccurrencesOf d)
@@ -164,7 +180,9 @@ analyse prev dirty defs =
                    Nothing => m
 
     inc : SortedMap Name Nat -> Name -> SortedMap Name Nat
-    inc m n = insertWith (+) n 1 m
+    inc m n = case lookup n m of
+                   Just c => insert n (S c) m
+                   Nothing => insert n 1 m
 
     ||| `prev.counts` adjusted for exactly the two things that can have
     ||| shifted a count since it was built: a name pruned away (its own
@@ -648,14 +666,15 @@ inlineInto defOf eligible self = go empty []
 ||| `"rc2: Late inline"`'s own wall-clock cost outright.
 applyLateInlineOnce : {auto v : Ref VarId Int} -> {auto c : Ref Ctxt Defs} -> (roots : List Name) -> Maybe Carried -> SortedSet Name -> List (Name, RCDef) -> Core (Bool, List (Name, RCDef), Carried, SortedSet Name)
 applyLateInlineOnce roots prev dirty defs0 = do
-    defs <- logTime 3 "rc2: LI prune" $ do
+    (defs, refs') <- logTime 3 "rc2: LI prune" $ do
               () <- pure ()
-              let d : List (Name, RCDef) = pruneDeadDefs roots defs0
-              let n : Nat = length d
-              pure (if n == n then d else d)
+              let r : (List (Name, RCDef), RefCache) =
+                        pruneDeadDefsCached (maybe empty (.refs) prev) dirty roots defs0
+              let n : Nat = length (fst r) + length (SortedMap.toList (snd r))
+              pure (if n == n then r else r)
     (an, carried) <- logTime 3 "rc2: LI analyse" $ do
               () <- pure ()
-              let r : (Analysis, Carried) = analyse prev dirty defs
+              let r : (Analysis, Carried) = analyse prev dirty refs' defs
               let n : Nat = length (Prelude.toList (fst r).eligible)
                               + length (snd r).order
                               + length (SortedMap.toList (snd r).counts)
