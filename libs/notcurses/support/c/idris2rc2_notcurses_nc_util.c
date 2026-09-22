@@ -1,4 +1,4 @@
-#include "nc_util.h"
+#include "idris2rc2_notcurses_nc_util.h"
 #include <notcurses/notcurses.h> /* the ONLY place this shim touches the real header -- see nc_util.h's own comment on why */
 #include <string.h>
 
@@ -43,7 +43,7 @@ unsigned idris2rc2_nc_last_input_modifiers(void) { return last_input.modifiers; 
 int idris2rc2_nc_last_input_evtype(void) { return (int) last_input.evtype; }
 const char *idris2rc2_nc_last_input_utf8(void) { return last_input.utf8; }
 
-/* idris2rc2_nckey_*() are `static inline` in nc_util.h itself -- pure
+/* idris2rc2_nckey_*() are `static inline` in idris2rc2_notcurses_nc_util.h itself -- pure
  * constant getters, no shared-state reason to force them out-of-line
  * here (see that header's own comment on why). */
 

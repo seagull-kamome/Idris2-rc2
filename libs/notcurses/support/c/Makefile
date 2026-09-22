@@ -19,16 +19,16 @@ all: libidris2rc2notcurses.a
 # still resolved dynamically at the *consumer's* own final link (every
 # %foreign declaration bound directly to libnotcurses-core already
 # pulls that in, see src/System/Notcurses.idr) -- this archive only
-# ever needs to compile nc_util.o, never link anything itself.
-nc_util.o: nc_util.c nc_util.h
+# ever needs to compile idris2rc2_notcurses_nc_util.o, never link anything itself.
+idris2rc2_notcurses_nc_util.o: idris2rc2_notcurses_nc_util.c idris2rc2_notcurses_nc_util.h
 	# gnu11 + _XOPEN_SOURCE=700: notcurses.h's own inline functions use
 	# strdup/wcwidth/wcswidth, which need glibc's feature-test macros
 	# enabled -- strict c11 hides them and fails with implicit-
 	# declaration errors.
-	$(CC) -fPIC -Wall -Wextra -O2 -D_XOPEN_SOURCE=700 $(NC_CFLAGS) -std=gnu11 -c nc_util.c -o nc_util.o
+	$(CC) -fPIC -Wall -Wextra -O2 -D_XOPEN_SOURCE=700 $(NC_CFLAGS) -std=gnu11 -c idris2rc2_notcurses_nc_util.c -o idris2rc2_notcurses_nc_util.o
 
-libidris2rc2notcurses.a: nc_util.o
-	$(AR) rcs $@ nc_util.o
+libidris2rc2notcurses.a: idris2rc2_notcurses_nc_util.o
+	$(AR) rcs $@ idris2rc2_notcurses_nc_util.o
 
 install: all
 	mkdir -p $(LIBDIR)
@@ -37,7 +37,7 @@ install: all
 	# otherwise win over the .a at a consumer's link step (the linker
 	# prefers a .so when both are present on its search path).
 	rm -f $(LIBDIR)/libidris2rc2notcurses.so
-	cp libidris2rc2notcurses.a nc_util.h $(LIBDIR)/
+	cp libidris2rc2notcurses.a idris2rc2_notcurses_nc_util.h $(LIBDIR)/
 
 clean:
-	rm -f libidris2rc2notcurses.a nc_util.o
+	rm -f libidris2rc2notcurses.a idris2rc2_notcurses_nc_util.o

@@ -1,5 +1,5 @@
-#ifndef IDRIS2RC2_NC_UTIL_H
-#define IDRIS2RC2_NC_UTIL_H
+#ifndef IDRIS2RC2_NOTCURSES_NC_UTIL_H
+#define IDRIS2RC2_NOTCURSES_NC_UTIL_H
 
 /* Every %foreign declaration touching notcurses in src/System/
  * Notcurses.idr names *this* header. It never #includes
@@ -41,8 +41,8 @@
  *     real <notcurses/notcurses.h>, confining the strdup/wcwidth/
  *     wcswidth requirement entirely inside this shim's own Makefile
  *     (already compiles with `-D_XOPEN_SOURCE=700`). Bonus: since
- *     nc_util.c calls these through the plain (non-NOTCURSES_FFI)
- *     header, they're inlined straight into nc_util.c's own object
+ *     idris2rc2_notcurses_nc_util.c calls these through the plain (non-NOTCURSES_FFI)
+ *     header, they're inlined straight into idris2rc2_notcurses_nc_util.c's own object
  *     code -- libnotcurses-ffi isn't needed at all anymore, dropping
  *     an entire external dependency (and the "-ffi" build variant
  *     isn't guaranteed to be packaged everywhere the plain library
@@ -95,7 +95,7 @@ const char *idris2rc2_nc_last_input_utf8(void);
  * guessing the offset on the Idris side) if a future wrapper needs
  * one that isn't here yet.
  *
- * `static inline`, not declared here + defined in nc_util.c: each is a
+ * `static inline`, not declared here + defined in idris2rc2_notcurses_nc_util.c: each is a
  * pure one-line return of a compile-time constant, no shared state
  * unlike the input-cache getters above, so there's no correctness
  * reason to force an out-of-line call through libidris2rc2notcurses.a
@@ -146,7 +146,7 @@ int ncplane_set_bg_alpha(struct ncplane *n, int alpha);
 void ncplane_set_styles(struct ncplane *n, unsigned stylebits);
 
 /* -- Functions that only exist as `static inline` bodies in the
- * vendor header -- wrapped in nc_util.c, which is the only place that
+ * vendor header -- wrapped in idris2rc2_notcurses_nc_util.c, which is the only place that
  * #includes the real <notcurses/notcurses.h>. Bound via %foreign
  * against libidris2rc2notcurses, same as every other shim function
  * above (no more libnotcurses-ffi dependency at all). */

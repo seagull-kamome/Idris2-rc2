@@ -29,58 +29,58 @@ data RawNotcurses : Type where [external]
 data RawNCPlane : Type where [external]
 
 -- idris2rc2notcurses (this package's own shim; struct-by-pointer
--- construction and ncinput-field caching -- see nc_util.h)
+-- construction and ncinput-field caching -- see idris2rc2_notcurses_nc_util.h)
 
-%foreign "C:idris2rc2_nc_init, libidris2rc2notcurses, nc_util.h"
+%foreign "C:idris2rc2_nc_init, libidris2rc2notcurses, idris2rc2_notcurses_nc_util.h"
 prim__ncInit : Int -> Bits32 -> Bits32 -> Bits32 -> Bits32 -> PrimIO AnyPtr
 
-%foreign "C:idris2rc2_ncplane_create, libidris2rc2notcurses, nc_util.h"
+%foreign "C:idris2rc2_ncplane_create, libidris2rc2notcurses, idris2rc2_notcurses_nc_util.h"
 prim__ncplaneCreate : Ptr RawNCPlane -> Int -> Int -> Bits32 -> Bits32 -> String -> PrimIO AnyPtr
 
-%foreign "C:idris2rc2_nc_get_blocking, libidris2rc2notcurses, nc_util.h"
+%foreign "C:idris2rc2_nc_get_blocking, libidris2rc2notcurses, idris2rc2_notcurses_nc_util.h"
 prim__ncGetBlocking : Ptr RawNotcurses -> PrimIO Bits32
-%foreign "C:idris2rc2_nc_get_nonblock, libidris2rc2notcurses, nc_util.h"
+%foreign "C:idris2rc2_nc_get_nonblock, libidris2rc2notcurses, idris2rc2_notcurses_nc_util.h"
 prim__ncGetNonblock : Ptr RawNotcurses -> PrimIO Bits32
-%foreign "C:idris2rc2_nc_last_input_y, libidris2rc2notcurses, nc_util.h"
+%foreign "C:idris2rc2_nc_last_input_y, libidris2rc2notcurses, idris2rc2_notcurses_nc_util.h"
 prim__ncLastInputY : PrimIO Int
-%foreign "C:idris2rc2_nc_last_input_x, libidris2rc2notcurses, nc_util.h"
+%foreign "C:idris2rc2_nc_last_input_x, libidris2rc2notcurses, idris2rc2_notcurses_nc_util.h"
 prim__ncLastInputX : PrimIO Int
-%foreign "C:idris2rc2_nc_last_input_modifiers, libidris2rc2notcurses, nc_util.h"
+%foreign "C:idris2rc2_nc_last_input_modifiers, libidris2rc2notcurses, idris2rc2_notcurses_nc_util.h"
 prim__ncLastInputModifiers : PrimIO Bits32
-%foreign "C:idris2rc2_nc_last_input_evtype, libidris2rc2notcurses, nc_util.h"
+%foreign "C:idris2rc2_nc_last_input_evtype, libidris2rc2notcurses, idris2rc2_notcurses_nc_util.h"
 prim__ncLastInputEvtype : PrimIO Int
-%foreign "C:idris2rc2_nc_last_input_utf8, libidris2rc2notcurses, nc_util.h"
+%foreign "C:idris2rc2_nc_last_input_utf8, libidris2rc2notcurses, idris2rc2_notcurses_nc_util.h"
 prim__ncLastInputUtf8 : PrimIO String
 
 -- libnotcurses-core (always-real, `API`-attributed symbols)
 
-%foreign "C:notcurses_version, libnotcurses-core, nc_util.h"
+%foreign "C:notcurses_version, libnotcurses-core, idris2rc2_notcurses_nc_util.h"
 prim__ncVersion : PrimIO String
-%foreign "C:notcurses_stop, libnotcurses-core, nc_util.h"
+%foreign "C:notcurses_stop, libnotcurses-core, idris2rc2_notcurses_nc_util.h"
 prim__ncStop : Ptr RawNotcurses -> PrimIO Int
-%foreign "C:ncplane_destroy, libnotcurses-core, nc_util.h"
+%foreign "C:ncplane_destroy, libnotcurses-core, idris2rc2_notcurses_nc_util.h"
 prim__ncplaneDestroy : Ptr RawNCPlane -> PrimIO Int
-%foreign "C:notcurses_stdplane, libnotcurses-core, nc_util.h"
+%foreign "C:notcurses_stdplane, libnotcurses-core, idris2rc2_notcurses_nc_util.h"
 prim__ncStdplane : Ptr RawNotcurses -> PrimIO AnyPtr
-%foreign "C:ncplane_move_yx, libnotcurses-core, nc_util.h"
+%foreign "C:ncplane_move_yx, libnotcurses-core, idris2rc2_notcurses_nc_util.h"
 prim__ncplaneMoveYx : Ptr RawNCPlane -> Int -> Int -> PrimIO Int
-%foreign "C:ncplane_cursor_move_yx, libnotcurses-core, nc_util.h"
+%foreign "C:ncplane_cursor_move_yx, libnotcurses-core, idris2rc2_notcurses_nc_util.h"
 prim__ncplaneCursorMoveYx : Ptr RawNCPlane -> Int -> Int -> PrimIO Int
-%foreign "C:ncplane_erase, libnotcurses-core, nc_util.h"
+%foreign "C:ncplane_erase, libnotcurses-core, idris2rc2_notcurses_nc_util.h"
 prim__ncplaneErase : Ptr RawNCPlane -> PrimIO ()
-%foreign "C:ncplane_set_fg_rgb8, libnotcurses-core, nc_util.h"
+%foreign "C:ncplane_set_fg_rgb8, libnotcurses-core, idris2rc2_notcurses_nc_util.h"
 prim__ncplaneSetFgRgb8 : Ptr RawNCPlane -> Bits32 -> Bits32 -> Bits32 -> PrimIO Int
-%foreign "C:ncplane_set_bg_rgb8, libnotcurses-core, nc_util.h"
+%foreign "C:ncplane_set_bg_rgb8, libnotcurses-core, idris2rc2_notcurses_nc_util.h"
 prim__ncplaneSetBgRgb8 : Ptr RawNCPlane -> Bits32 -> Bits32 -> Bits32 -> PrimIO Int
-%foreign "C:ncplane_set_fg_default, libnotcurses-core, nc_util.h"
+%foreign "C:ncplane_set_fg_default, libnotcurses-core, idris2rc2_notcurses_nc_util.h"
 prim__ncplaneSetFgDefault : Ptr RawNCPlane -> PrimIO ()
-%foreign "C:ncplane_set_bg_default, libnotcurses-core, nc_util.h"
+%foreign "C:ncplane_set_bg_default, libnotcurses-core, idris2rc2_notcurses_nc_util.h"
 prim__ncplaneSetBgDefault : Ptr RawNCPlane -> PrimIO ()
-%foreign "C:ncplane_set_fg_alpha, libnotcurses-core, nc_util.h"
+%foreign "C:ncplane_set_fg_alpha, libnotcurses-core, idris2rc2_notcurses_nc_util.h"
 prim__ncplaneSetFgAlpha : Ptr RawNCPlane -> Int -> PrimIO Int
-%foreign "C:ncplane_set_bg_alpha, libnotcurses-core, nc_util.h"
+%foreign "C:ncplane_set_bg_alpha, libnotcurses-core, idris2rc2_notcurses_nc_util.h"
 prim__ncplaneSetBgAlpha : Ptr RawNCPlane -> Int -> PrimIO Int
-%foreign "C:ncplane_set_styles, libnotcurses-core, nc_util.h"
+%foreign "C:ncplane_set_styles, libnotcurses-core, idris2rc2_notcurses_nc_util.h"
 prim__ncplaneSetStyles : Ptr RawNCPlane -> Bits32 -> PrimIO ()
 
 -- Functions that only exist as `static inline` bodies in notcurses'
@@ -89,25 +89,25 @@ prim__ncplaneSetStyles : Ptr RawNCPlane -> Bits32 -> PrimIO ()
 -- confines the real header to nc_util.c alone and drops the
 -- libnotcurses-ffi dependency entirely. See doc/notcurses.md.
 
-%foreign "C:idris2rc2_nc_render, libidris2rc2notcurses, nc_util.h"
+%foreign "C:idris2rc2_nc_render, libidris2rc2notcurses, idris2rc2_notcurses_nc_util.h"
 prim__ncRender : Ptr RawNotcurses -> PrimIO Int
-%foreign "C:idris2rc2_ncplane_putstr, libidris2rc2notcurses, nc_util.h"
+%foreign "C:idris2rc2_ncplane_putstr, libidris2rc2notcurses, idris2rc2_notcurses_nc_util.h"
 prim__ncplanePutstr : Ptr RawNCPlane -> String -> PrimIO Int
-%foreign "C:idris2rc2_ncplane_putstr_yx, libidris2rc2notcurses, nc_util.h"
+%foreign "C:idris2rc2_ncplane_putstr_yx, libidris2rc2notcurses, idris2rc2_notcurses_nc_util.h"
 prim__ncplanePutstrYx : Ptr RawNCPlane -> Int -> Int -> String -> PrimIO Int
-%foreign "C:idris2rc2_ncplane_resize_simple, libidris2rc2notcurses, nc_util.h"
+%foreign "C:idris2rc2_ncplane_resize_simple, libidris2rc2notcurses, idris2rc2_notcurses_nc_util.h"
 prim__ncplaneResizeSimple : Ptr RawNCPlane -> Bits32 -> Bits32 -> PrimIO Int
-%foreign "C:idris2rc2_ncplane_dim_y, libidris2rc2notcurses, nc_util.h"
+%foreign "C:idris2rc2_ncplane_dim_y, libidris2rc2notcurses, idris2rc2_notcurses_nc_util.h"
 prim__ncplaneDimY : Ptr RawNCPlane -> PrimIO Bits32
-%foreign "C:idris2rc2_ncplane_dim_x, libidris2rc2notcurses, nc_util.h"
+%foreign "C:idris2rc2_ncplane_dim_x, libidris2rc2notcurses, idris2rc2_notcurses_nc_util.h"
 prim__ncplaneDimX : Ptr RawNCPlane -> PrimIO Bits32
-%foreign "C:idris2rc2_ncplane_cursor_y, libidris2rc2notcurses, nc_util.h"
+%foreign "C:idris2rc2_ncplane_cursor_y, libidris2rc2notcurses, idris2rc2_notcurses_nc_util.h"
 prim__ncplaneCursorY : Ptr RawNCPlane -> PrimIO Bits32
-%foreign "C:idris2rc2_ncplane_cursor_x, libidris2rc2notcurses, nc_util.h"
+%foreign "C:idris2rc2_ncplane_cursor_x, libidris2rc2notcurses, idris2rc2_notcurses_nc_util.h"
 prim__ncplaneCursorX : Ptr RawNCPlane -> PrimIO Bits32
-%foreign "C:idris2rc2_ncplane_perimeter_rounded, libidris2rc2notcurses, nc_util.h"
+%foreign "C:idris2rc2_ncplane_perimeter_rounded, libidris2rc2notcurses, idris2rc2_notcurses_nc_util.h"
 prim__ncplanePerimeterRounded : Ptr RawNCPlane -> Bits16 -> Bits64 -> Bits32 -> PrimIO Int
-%foreign "C:idris2rc2_ncplane_perimeter_double, libidris2rc2notcurses, nc_util.h"
+%foreign "C:idris2rc2_ncplane_perimeter_double, libidris2rc2notcurses, idris2rc2_notcurses_nc_util.h"
 prim__ncplanePerimeterDouble : Ptr RawNCPlane -> Bits16 -> Bits64 -> Bits32 -> PrimIO Int
 
 -------------------------------------------------------------------------------
@@ -173,7 +173,7 @@ namespace NCKey
   ||| `NCKEY_TAB`/`NCKEY_ESC`: plain ASCII control codes in notcurses.h
   ||| (`0x09`/`0x1b`), not `preterunicode`-derived -- safe to hardcode,
   ||| unlike the rest of this namespace (backed by shim getters; see
-  ||| nc_util.h's own comment on why).
+  ||| idris2rc2_notcurses_nc_util.h's own comment on why).
   public export
   tab, esc : Bits32
   tab = 0x09
@@ -187,45 +187,45 @@ namespace NCKey
   -- reference-counted, atomically-guarded `memoize ... : Boxed` around
   -- the foreign call. Exporting the %foreign declaration itself has no
   -- such wrapper -- just the bare foreign call at each use site, which
-  -- nc_util.h's own `static inline` getter (see its own comment) then
+  -- idris2rc2_notcurses_nc_util.h's own `static inline` getter (see its own comment) then
   -- folds straight down to the constant. See TODO.md's note on
   -- unrestricted CAF memoization for the general hazard this is an
   -- instance of.
-  %foreign "C:idris2rc2_nckey_invalid, libidris2rc2notcurses, nc_util.h"
+  %foreign "C:idris2rc2_nckey_invalid, libidris2rc2notcurses, idris2rc2_notcurses_nc_util.h"
   export invalid : Bits32
-  %foreign "C:idris2rc2_nckey_resize, libidris2rc2notcurses, nc_util.h"
+  %foreign "C:idris2rc2_nckey_resize, libidris2rc2notcurses, idris2rc2_notcurses_nc_util.h"
   export resize : Bits32
-  %foreign "C:idris2rc2_nckey_up, libidris2rc2notcurses, nc_util.h"
+  %foreign "C:idris2rc2_nckey_up, libidris2rc2notcurses, idris2rc2_notcurses_nc_util.h"
   export up : Bits32
-  %foreign "C:idris2rc2_nckey_down, libidris2rc2notcurses, nc_util.h"
+  %foreign "C:idris2rc2_nckey_down, libidris2rc2notcurses, idris2rc2_notcurses_nc_util.h"
   export down : Bits32
-  %foreign "C:idris2rc2_nckey_left, libidris2rc2notcurses, nc_util.h"
+  %foreign "C:idris2rc2_nckey_left, libidris2rc2notcurses, idris2rc2_notcurses_nc_util.h"
   export left : Bits32
-  %foreign "C:idris2rc2_nckey_right, libidris2rc2notcurses, nc_util.h"
+  %foreign "C:idris2rc2_nckey_right, libidris2rc2notcurses, idris2rc2_notcurses_nc_util.h"
   export right : Bits32
-  %foreign "C:idris2rc2_nckey_ins, libidris2rc2notcurses, nc_util.h"
+  %foreign "C:idris2rc2_nckey_ins, libidris2rc2notcurses, idris2rc2_notcurses_nc_util.h"
   export ins : Bits32
-  %foreign "C:idris2rc2_nckey_del, libidris2rc2notcurses, nc_util.h"
+  %foreign "C:idris2rc2_nckey_del, libidris2rc2notcurses, idris2rc2_notcurses_nc_util.h"
   export del : Bits32
-  %foreign "C:idris2rc2_nckey_backspace, libidris2rc2notcurses, nc_util.h"
+  %foreign "C:idris2rc2_nckey_backspace, libidris2rc2notcurses, idris2rc2_notcurses_nc_util.h"
   export backspace : Bits32
-  %foreign "C:idris2rc2_nckey_pgup, libidris2rc2notcurses, nc_util.h"
+  %foreign "C:idris2rc2_nckey_pgup, libidris2rc2notcurses, idris2rc2_notcurses_nc_util.h"
   export pgup : Bits32
-  %foreign "C:idris2rc2_nckey_pgdown, libidris2rc2notcurses, nc_util.h"
+  %foreign "C:idris2rc2_nckey_pgdown, libidris2rc2notcurses, idris2rc2_notcurses_nc_util.h"
   export pgdown : Bits32
-  %foreign "C:idris2rc2_nckey_home, libidris2rc2notcurses, nc_util.h"
+  %foreign "C:idris2rc2_nckey_home, libidris2rc2notcurses, idris2rc2_notcurses_nc_util.h"
   export home : Bits32
-  %foreign "C:idris2rc2_nckey_end, libidris2rc2notcurses, nc_util.h"
+  %foreign "C:idris2rc2_nckey_end, libidris2rc2notcurses, idris2rc2_notcurses_nc_util.h"
   export end : Bits32
-  %foreign "C:idris2rc2_nckey_enter, libidris2rc2notcurses, nc_util.h"
+  %foreign "C:idris2rc2_nckey_enter, libidris2rc2notcurses, idris2rc2_notcurses_nc_util.h"
   export enter : Bits32
-  %foreign "C:idris2rc2_nckey_f01, libidris2rc2notcurses, nc_util.h"
+  %foreign "C:idris2rc2_nckey_f01, libidris2rc2notcurses, idris2rc2_notcurses_nc_util.h"
   export f01 : Bits32
-  %foreign "C:idris2rc2_nckey_f02, libidris2rc2notcurses, nc_util.h"
+  %foreign "C:idris2rc2_nckey_f02, libidris2rc2notcurses, idris2rc2_notcurses_nc_util.h"
   export f02 : Bits32
-  %foreign "C:idris2rc2_nckey_f03, libidris2rc2notcurses, nc_util.h"
+  %foreign "C:idris2rc2_nckey_f03, libidris2rc2notcurses, idris2rc2_notcurses_nc_util.h"
   export f03 : Bits32
-  %foreign "C:idris2rc2_nckey_f04, libidris2rc2notcurses, nc_util.h"
+  %foreign "C:idris2rc2_nckey_f04, libidris2rc2notcurses, idris2rc2_notcurses_nc_util.h"
   export f04 : Bits32
 
 -------------------------------------------------------------------------------
