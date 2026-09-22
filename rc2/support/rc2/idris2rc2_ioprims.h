@@ -26,3 +26,10 @@ void *idris2rc2_fork(IDRIS2RC2_Closure *fct);
 // See ioprims.c for why this bare (un-namespaced) name is required --
 // it's a thin adapter to idris2rc2_fork above, not the real logic.
 void *refc_fork(IDRIS2RC2_Closure *fct);
+
+// Not an AExtPrim (no compiler-side whitelist entry, unlike the
+// idris2rc2_Data_IORef_prim__* trio above) -- an ordinary %foreign
+// function `Data.IORef.RC2.casIORef` (libs/rc2base) calls directly,
+// plain-named like idris2rc2_fork above. See ioprims.c for the
+// Maybe-returning ownership contract.
+IDRIS2RC2_Value *idris2rc2_ioref_cas(IDRIS2RC2_Value *, IDRIS2RC2_Value *ioref, IDRIS2RC2_Value *expected, IDRIS2RC2_Value *desired);

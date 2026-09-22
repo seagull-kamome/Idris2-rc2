@@ -30,6 +30,12 @@ IDRIS2RC2_Constructor *idris2rc2_newConstructor(int arity, int tag) {
   return c;
 }
 
+IDRIS2RC2_Value *idris2rc2_wrapJust(IDRIS2RC2_Value *val) {
+  IDRIS2RC2_Constructor *just = idris2rc2_newConstructor(1, 1);
+  just->args[0] = val;
+  return (IDRIS2RC2_Value *)just;
+}
+
 IDRIS2RC2_Closure *idris2rc2_mkClosure(IDRIS2RC2_Value *(*fn)(), uint8_t arity, uint8_t filled) {
   // Always allocate room for the full `arity`, not just `filled` -- lets
   // idris2rc2_tailcallApplyClosure grow a unique closure in place

@@ -82,6 +82,20 @@ void idris2rc2_free(IDRIS2RC2_Value *v);
 IDRIS2RC2_Constructor *idris2rc2_newConstructor(int arity, int tag);
 IDRIS2RC2_Closure *idris2rc2_mkClosure(IDRIS2RC2_Value *(*fn)(), uint8_t arity, uint8_t filled);
 
+// Prelude.Maybe's Just is always tag=1, arity=1 -- confirmed empirically
+// (not by reading the compiler's own source) by building a small
+// Maybe-returning program and reading the generated C: an ordinary
+// `Just x` lowers to `idris2rc2_newConstructor(1, 1)`, and ConstFold's
+// Prelude.Maybe is one fixed, versioned library type shared by every
+// rc2 program, not a per-program user-defined ADT whose tag assignment
+// varies; would break if a future Idris2 ever reordered Nothing/Just's
+// declaration. Takes ownership of `val` (stores it directly, no dup) --
+// same convention as idris2rc2_newConstructor's own callers elsewhere.
+// Nothing itself needs no equivalent helper: Compiler.RC2.Emit's own
+// RCon/RConCase represent it as a bare NULL, never a real allocation
+// (see idris2rc2_conTag's own doc comment, datatypes.h).
+IDRIS2RC2_Value *idris2rc2_wrapJust(IDRIS2RC2_Value *val);
+
 IDRIS2RC2_Value *idris2rc2_mkDouble(double d);
 
 #define idris2rc2_mkChar(x) ((IDRIS2RC2_Value *)(((uintptr_t)(uint32_t)(x) << idris2rc2_unbox_shift) + 1))

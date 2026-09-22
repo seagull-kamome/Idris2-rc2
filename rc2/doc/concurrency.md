@@ -460,6 +460,35 @@ the call returns, but the queued node outlives that call -- the same
 already documents, missed here until a concurrent `Integer`-valued
 `Channel` test crashed inside `libgmp`.
 
+**IORef atomic compare-and-swap: done and verified.** Not something
+upstream's own backend-agnostic `Data.IORef` could ever provide (`Mut
+a` is `[external]`, no visible structure at the Idris2 source level
+for any backend to build a CAS on top of) -- an rc2-specific addition
+instead, `Data.IORef.RC2.casIORef` (`libs/rc2base`), compared by
+reference identity against `expected`, not `Eq`. Reuses the exact
+spinlock `readIORef`/`writeIORef` already hold over `IDRIS2RC2_IORef`'s
+own `v` slot (`idris2rc2_ioref_cas`, `rc2/support/rc2/
+idris2rc2_ioprims.c`) rather than a lock-free hardware CAS on `v`
+alone, for the same reason this document's own "Design" sections
+elsewhere insist on it: a bare atomic pointer swap doesn't protect a
+concurrent reader's own load-then-dup sequence, so mixing a lock-free
+mutator in on the same slot would reopen exactly the
+use-after-free the spinlock exists to close. Returns `Maybe a`: success
+is `Nothing` (`Compiler.RC2.Emit`'s own `RCon`/`RConCase` already
+represent that as a bare `NULL`, so the common/hoped-for path costs no
+allocation at all), failure is `Just <the value actually there>`
+(`idris2rc2_wrapJust`, `idris2rc2_memory.c` -- promoted from a
+byte-identical `static` helper `idris2rc2_channel_get_non_blocking`/
+`idris2rc2_channel_get_with_timeout` already had, since this is now a
+second use of the exact same "Just is tag=1, arity=1" convention) --
+one allocation only on a retry loop's losing attempts, and the caller
+gets the witness value for the next attempt atomically, without a
+separate `readIORef` call that could itself race a concurrent writer
+in between. Verified via `libs/rc2base/tests/verify.sh`
+(`TestIORefRC2.idr`: success, failure-with-witness, a retry loop, and
+a Boxed (`String`) payload, all PASS) plus `valgrind --leak-check=full`
+reporting no errors.
+
 ## Outlook
 
 Every item this document's own "Not yet implemented" list (and

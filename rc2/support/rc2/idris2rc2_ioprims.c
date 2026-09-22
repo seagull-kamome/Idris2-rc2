@@ -40,6 +40,44 @@ IDRIS2RC2_Value *idris2rc2_Data_IORef_prim__writeIORef(IDRIS2RC2_Value *erased,
   return NULL;
 }
 
+// Atomic compare-and-swap against an IORef's own current value,
+// compared by reference identity (the same tagged-pointer bit pattern
+// `expected` itself is, never `Eq`) -- guarded by the same
+// idris2rc2_spin_lock every other IDRIS2RC2_IORef mutator already
+// uses (idris2rc2_util.h's own doc comment on why a lock-free hardware
+// CAS on `r->v` alone would NOT be safe here: it would let this
+// operation race a concurrent reader's own load+dup sequence, the
+// exact use-after-free the spinlock exists to rule out -- so this
+// reuses it rather than introducing a second, incompatible
+// synchronization discipline for the same field).
+//
+// Returns Nothing on success (the swap happened -- Compiler.RC2.Emit's
+// own RCon/RConCase represent that as a bare NULL, never a real
+// allocation, so the fast/common path costs nothing extra) or
+// `Just <the value actually there>` on failure (idris2rc2_wrapJust,
+// memory.h) -- one allocation only on the losing path of a retry
+// loop, and the caller gets the witness value for free instead of a
+// separate readIORef call (which would itself race a concurrent
+// writer between the two calls).
+IDRIS2RC2_Value *idris2rc2_ioref_cas(IDRIS2RC2_Value *,
+                                      IDRIS2RC2_Value *ioref,
+                                      IDRIS2RC2_Value *expected,
+                                      IDRIS2RC2_Value *desired) {
+  IDRIS2RC2_IORef *r = (IDRIS2RC2_IORef *)ioref;
+  idris2rc2_spin_lock(&r->lock);
+  if (r->v == expected) {
+    idris2rc2_dup(desired);
+    IDRIS2RC2_Value *old = r->v;
+    r->v = desired;
+    idris2rc2_spin_unlock(&r->lock);
+    idris2rc2_drop(old);
+    return NULL;
+  }
+  IDRIS2RC2_Value *current = idris2rc2_dup(r->v);
+  idris2rc2_spin_unlock(&r->lock);
+  return idris2rc2_wrapJust(current);
+}
+
 IDRIS2RC2_Value *idris2rc2_Data_IOArray_Prims_prim__newArray(
     IDRIS2RC2_Value *erased, IDRIS2RC2_Value *length, IDRIS2RC2_Value *v,
     IDRIS2RC2_Value *world) {
