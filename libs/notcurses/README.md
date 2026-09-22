@@ -40,9 +40,10 @@ source ./env.sh
 # libidris2rc2notcurses is a static archive -- baked straight into
 # MyProgram, nothing of its own to find at runtime. notcurses-core
 # itself stays a real shared library, so it's the only one still
-# needed on LD_LIBRARY_PATH here.
+# needed on LD_LIBRARY_PATH here (support/rc2 has no .so of its own
+# to add).
 INSTALLED_NOTCURSES_LIBDIR="$(nix-shell -p notcurses pkg-config --run 'pkg-config --variable=libdir notcurses-core')"
-export LD_LIBRARY_PATH="$(pwd)/install/idris2-0.8.0/support/rc2:$INSTALLED_NOTCURSES_LIBDIR:$LD_LIBRARY_PATH"
+export LD_LIBRARY_PATH="$INSTALLED_NOTCURSES_LIBDIR:$LD_LIBRARY_PATH"
 ./build/exec/MyProgram
 ```
 
@@ -65,6 +66,8 @@ install`) is what puts `libidris2rc2notcurses.a` and `nc_util.h` into
 `Compiler.RC2.CC.depPkgLibDirs` finds that `lib/` automatically for
 every depended-upon package (`-p notcurses` or an `.ipkg` `depends`
 entry is enough) -- no manual `IDRIS2_CFLAGS`/`IDRIS2_LDFLAGS` needed
-for *this*. Being a static archive, `libidris2rc2notcurses.a` itself
-needs nothing on `LD_LIBRARY_PATH` at runtime (unlike `notcurses-core`,
-still a real shared library) -- see the `LD_LIBRARY_PATH` shown above.
+for *this* (`depPkgLibDirs` only ever affects the compiler's own
+`-I`/`-L`, never the dynamic linker's own runtime search path). Being
+a static archive, `libidris2rc2notcurses.a` itself needs nothing on
+`LD_LIBRARY_PATH` at runtime (unlike `notcurses-core`, still a real
+shared library) -- see the `LD_LIBRARY_PATH` shown above.

@@ -41,20 +41,20 @@ cd idris2-rc-cg            # リポジトリのルート
 source ./env.sh
 (cd libs/iouring && idris2 --install iouring.ipkg)
 
-nix-shell -p liburing gcc gmp pkg-config --run \
-  './rc2/build/exec/idris2-rc2 --cg rc2 -p iouring -o MyProgram libs/iouring/tests/TestNop.idr'
-
-export LD_LIBRARY_PATH="$(pwd)/install/idris2-0.8.0/support/rc2:$LD_LIBRARY_PATH"
-./build/exec/MyProgram
+nix-shell -p liburing gcc gmp pkg-config --run '
+  ./rc2/build/exec/idris2-rc2 --cg rc2 -p iouring -o MyProgram libs/iouring/tests/TestNop.idr
+  ./build/exec/MyProgram
+'
 ```
-
-`liburing`自体は実体の共有ライブラリとしてリンクされます(`-luring`——これを
-名指しするすべての`%foreign`宣言によって自動的にリンクへ追加されます。この
-パッケージ自身の静的アーカイブ`libidris2rc2iouring.a`が持つのは、実際に
-コンパイルされたシム関数だけです)。そのため`notcurses`/`text-re2`と違い、
-`nix-shell -p liburing`の中でビルドする限り、独自の`LD_LIBRARY_PATH`エントリを
-追加する必要はありません(nix shell自身の環境が、コンパイル時・実行時どちらでも
-`liburing.so`を見つけられるようにしています)。
+`LD_LIBRARY_PATH`のexportは一切不要です。`liburing`自体は実体の共有ライブラリ
+としてリンクされます(`-luring`——これを名指しするすべての`%foreign`宣言によっ
+て自動的にリンクへ追加されます。このパッケージ自身の静的アーカイブ
+`libidris2rc2iouring.a`が持つのは、実際にコンパイルされたシム関数だけです)。
+そのため`notcurses`/`text-re2`と違い、`nix-shell -p liburing`の中でビルド
+(・実行)する限り、独自の`LD_LIBRARY_PATH`エントリを追加する必要はありません
+(nix shell自身の環境が、コンパイル時・実行時どちらでも`liburing.so`を見つけ
+られるようにしています)。`support/rc2`にはそもそも`.so`自体がなく、どのみち
+追加する意味はありません。
 
 `tests/verify.sh`は自動化された一式のテストを実行します: `nop`のsubmit/complete
 往復、実際の一時ファイルに対する`openat`+`write`+`fsync`+`close`+`read`での

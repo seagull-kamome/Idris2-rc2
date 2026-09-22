@@ -38,13 +38,19 @@ source ./env.sh
 (cd libs/text-re2 && idris2 --install text-re2.ipkg)
 
 INSTALLED_LIB="$(pwd)/install/idris2-0.8.0/text-re2-0.1.0/lib"
-export IDRIS2_CFLAGS="-I$INSTALLED_LIB"
-export IDRIS2_LDFLAGS="-L$INSTALLED_LIB"
 ./rc2/build/exec/idris2-rc2 --cg rc2 -p text-re2 -o TestRE2 libs/text-re2/tests/TestRE2.idr
 
-export LD_LIBRARY_PATH="$INSTALLED_LIB:$(pwd)/install/idris2-0.8.0/support/rc2:$LD_LIBRARY_PATH"
+export LD_LIBRARY_PATH="$INSTALLED_LIB:$LD_LIBRARY_PATH"
 ./build/exec/TestRE2
 ```
+No `IDRIS2_CFLAGS`/`IDRIS2_LDFLAGS` needed here at all -- `-p text-re2`
+alone is enough, `Compiler.RC2.CC`'s own `depPkgLibDirs` already adds
+`-I`/`-L` for it automatically (see "Native library install location"
+below). `libidris2rc2re2.so` is a genuine shared object though (unlike
+`rc2base`'s static `.a`), so it still needs finding at *runtime*, not
+just link time -- that's the only reason `LD_LIBRARY_PATH` is still
+needed here at all; `INSTALLED_LIB` alone is enough for it, no
+`support/rc2` needed too (that directory has no `.so` of its own).
 
 `tests/verify.sh` does exactly this end to end (clean C rebuild, Chez
 type-check, install into a throwaway prefix, `--cg rc2` build of
@@ -52,17 +58,20 @@ type-check, install into a throwaway prefix, `--cg rc2` build of
 
 ## Native library install location
 
-Same convention (and same rc2-specific caveat) as `rc2base` -- see
-`libs/rc2base/README.md`'s "Native library install location" section.
-`idris2 --install` copies only `.ttc`/`.ttm`/`.ipkg`; this package's
-`postinstall` hook (`make -C support/c install`) is what puts
-`libidris2rc2re2.so` and `re2_util.h` into
-`<IDRIS2_PREFIX>/idris2-<ver>/text-re2-0.1.0/lib/`. The Chez/Racket
-backends `dlopen` a `.so` out of that `lib/` automatically; rc2 (like
-upstream RefC) still needs the consumer to point
-`IDRIS2_CFLAGS`/`IDRIS2_LDFLAGS` at it, plus `LD_LIBRARY_PATH` at
-runtime (the `.so` is a shared object, so it must be found at load
-time, not just link time).
+Same convention as `rc2base` -- see `libs/rc2base/README.md`'s "Native
+library install location" section. `idris2 --install` copies only
+`.ttc`/`.ttm`/`.ipkg`; this package's `postinstall` hook (`make -C
+support/c install`) is what puts `libidris2rc2re2.so` and
+`re2_util.h` into
+`<IDRIS2_PREFIX>/idris2-<ver>/text-re2-0.1.0/lib/`. `Compiler.RC2.CC`'s
+own `depPkgLibDirs` finds that `lib/` automatically for every
+depended-upon package (`-p text-re2` or an `.ipkg` `depends` entry is
+enough) -- no manual `IDRIS2_CFLAGS`/`IDRIS2_LDFLAGS` needed for
+*that*. Being a genuine shared object rather than a static archive,
+`libidris2rc2re2.so` itself still needs `LD_LIBRARY_PATH` pointed at
+that same `lib/` at *runtime* (see the "Build & test" example above)
+-- `depPkgLibDirs` only ever affects the compiler's own `-I`/`-L`, never
+the dynamic linker's own runtime search path.
 
 ## API
 

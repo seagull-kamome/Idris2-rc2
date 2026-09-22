@@ -58,8 +58,9 @@ nix-shell -p gcc gmp pkg-config notcurses --run \
 echo "=== Run ==="
 # No $INSTALLED_LIB here -- libidris2rc2notcurses is a static archive
 # now, baked straight into the executable, nothing to find at runtime.
+# support/rc2 has no .so of its own to add here either.
 NOTCURSES_LIBDIR="$(nix-shell -p notcurses pkg-config --run 'pkg-config --variable=libdir notcurses-core')"
-export LD_LIBRARY_PATH="$REPO_ROOT/install/idris2-0.8.0/support/rc2:$NOTCURSES_LIBDIR${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+export LD_LIBRARY_PATH="$NOTCURSES_LIBDIR${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 OUT="$("$TESTS_DIR/build/exec/TestVersion_verify")"
 echo "$OUT"
 

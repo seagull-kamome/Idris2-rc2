@@ -583,7 +583,7 @@ values kept well outside `Int`'s 64-bit range throughout.
 A standalone parser for `--directive dumprcexpr`'s own `.rcexpr` dump
 format (`Compiler.RC2.Pretty`, in `idris2-rc-cg`'s own `rc2` package --
 the single authoritative source for this grammar). Built for
-`rc2/tools/rcexpr-lint` (an ownership-anomaly checker over the parsed
+`tools/rcexpr-lint` (an ownership-anomaly checker over the parsed
 tree, added after a `Compiler.RC2.Sink` use-after-free took hours of
 manual dump-tracing to find), but lives here rather than in `rc2`
 itself since the parser has no dependency on the compiler and is

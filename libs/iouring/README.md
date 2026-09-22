@@ -42,21 +42,20 @@ cd idris2-rc-cg            # repo root
 source ./env.sh
 (cd libs/iouring && idris2 --install iouring.ipkg)
 
-nix-shell -p liburing gcc gmp pkg-config --run \
-  './rc2/build/exec/idris2-rc2 --cg rc2 -p iouring -o MyProgram libs/iouring/tests/TestNop.idr'
-
-export LD_LIBRARY_PATH="$(pwd)/install/idris2-0.8.0/support/rc2:$LD_LIBRARY_PATH"
-./build/exec/MyProgram
+nix-shell -p liburing gcc gmp pkg-config --run '
+  ./rc2/build/exec/idris2-rc2 --cg rc2 -p iouring -o MyProgram libs/iouring/tests/TestNop.idr
+  ./build/exec/MyProgram
+'
 ```
-
-`liburing` itself links as a real shared library (`-luring`, added
-automatically to the link by every `%foreign` declaration naming it --
-this package's own static archive, `libidris2rc2iouring.a`, only ever
-carries the handful of genuinely-compiled shim functions), so unlike
-`notcurses`/`text-re2` it needs no extra `LD_LIBRARY_PATH` entry of
-its own when built inside `nix-shell -p liburing` (the nix shell's own
-environment already makes `liburing.so` findable at both compile and
-run time).
+No `LD_LIBRARY_PATH` export needed at all: `liburing` itself links as
+a real shared library (`-luring`, added automatically to the link by
+every `%foreign` declaration naming it -- this package's own static
+archive, `libidris2rc2iouring.a`, only ever carries the handful of
+genuinely-compiled shim functions), so unlike `notcurses`/`text-re2`
+it needs no extra `LD_LIBRARY_PATH` entry of its own when built (and
+run) inside `nix-shell -p liburing` (the nix shell's own environment
+already makes `liburing.so` findable at both compile and run time).
+`support/rc2` has no `.so` of its own to add either way.
 
 `tests/verify.sh` runs the full automated suite: a `nop` submit/
 complete round-trip, a real temp-file `openat`+`write`+`fsync`+`close`+

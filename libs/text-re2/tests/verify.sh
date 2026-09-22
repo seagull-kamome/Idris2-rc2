@@ -49,15 +49,19 @@ echo "=== Check postinstall copied the native library into lib/ ==="
 
 echo "=== rc2 backend: build TestRE2 (against the INSTALLED lib/) ==="
 export IDRIS2_PACKAGE_PATH="${IDRIS2_PACKAGE_PATH:-}:$PKG_DIR/.local-install/idris2-0.8.0"
-export IDRIS2_CFLAGS="-I$INSTALLED_LIB"
-export IDRIS2_LDFLAGS="-L$INSTALLED_LIB"
+# No IDRIS2_CFLAGS/IDRIS2_LDFLAGS needed: Compiler.RC2.CC's own
+# depPkgLibDirs already adds -I<...>/lib and -L<...>/lib for every
+# -p'd package's own installed lib/ (here, $INSTALLED_LIB) automatically
+# -- see libs/rc2base/README.md's "Native library install location".
 nix-shell -p gcc gmp pkg-config re2 --run \
     "cd '$TESTS_DIR' && '$IDRIS2RC2' --cg rc2 -p text-re2 -o TestRE2_verify TestRE2.idr"
 
 echo "=== Run and diff stdout against TestRE2.expected ==="
 # libidris2rc2re2.so is a shared object -- needed on LD_LIBRARY_PATH at
-# run time, not just -L at link time.
-export LD_LIBRARY_PATH="$INSTALLED_LIB:$REPO_ROOT/install/idris2-0.8.0/support/rc2${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+# run time, not just -L at link time (depPkgLibDirs only ever affects
+# the compiler's own -I/-L, never the dynamic linker's runtime search
+# path). support/rc2 has no .so of its own to add here.
+export LD_LIBRARY_PATH="$INSTALLED_LIB${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 # stdout only: RE2/abseil log to stderr unconditionally (see doc/regex.md).
 "$TESTS_DIR/build/exec/TestRE2_verify" > "$TMP/actual.out" 2>/dev/null
 
