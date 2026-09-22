@@ -1,1 +1,1 @@
-AGENT.mdを参照
+@AGENT.md
