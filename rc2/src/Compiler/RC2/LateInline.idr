@@ -24,6 +24,7 @@ import Compiler.RC2.Types
 import Compiler.RC2.Util
 
 import Core.Context
+import Core.Context.Log
 import Core.Core
 import Core.FC
 import Core.TT
@@ -50,6 +51,14 @@ calleesOf = foldRCNamesD ({ onAppName := \n, _ => singleton n } noRCNames)
 callOccurrencesOf : RCDef -> List Name
 callOccurrencesOf = foldRCNamesD ({ onAppName := \n, _ => [n] } noRCNames)
 
+||| One name's own `(calleesOf, callOccurrencesOf)`, cached across
+||| `applyLateInline`'s own rounds -- see `analyse`'s own doc comment
+||| for why a name absent from one round's own `dirty` set is always
+||| safe to reuse here verbatim, no matter how many further rounds
+||| pass, right up until it's actually reprocessed.
+CalleeInfo : Type
+CalleeInfo = SortedMap Name (SortedSet Name, List Name)
+
 record Analysis where
   constructor MkAnalysis
   ||| Whole-program call graph, `RAppName` edges only -- every
@@ -74,11 +83,37 @@ record Analysis where
   ||| one pass instead of needing to be re-run per link).
   processOrder : List Name
 
-analyse : List (Name, RCDef) -> Analysis
-analyse defs =
-    let graph = SortedMap.fromList $ map (\(n, d) => (n, calleesOf d)) defs
-        callCounts = foldl (\acc, n => insertWith (+) n 1 acc) (the (SortedMap Name Nat) empty)
-                       (concatMap (callOccurrencesOf . snd) defs)
+||| `cache`: every name's own `CalleeInfo` as of the last round it was
+||| actually reprocessed (`empty` on the very first round). `dirty`:
+||| the *previous* round's own processed set (`empty` on the first
+||| round too) -- a name absent from it has a body byte-for-byte
+||| identical to last round's (the only way a name's body ever changes
+||| during `applyLateInline` is `goOrder` actually splicing something
+||| into it -- `pruneDeadDefs` only ever *removes* names, never rewrites
+||| a survivor), so its own `calleesOf`/`callOccurrencesOf` contribution
+||| is still exactly correct and safe to reuse straight from `cache`
+||| rather than re-walking its own (possibly large) body. Every name in
+||| `defs` gets a `cache` entry either way (freshly computed the first
+||| time it's ever seen, or whenever `dirty` says it changed) -- `defs`
+||| only ever shrinks round-to-round (`pruneDeadDefs`), so a name
+||| in `defs` on round N+1 was necessarily in `defs`, and thus already
+||| cached, on round N. Returns the updated cache alongside the
+||| `Analysis` as before, for `applyLateInlineOnce` to thread into the
+||| next round.
+analyse : CalleeInfo -> SortedSet Name -> List (Name, RCDef) -> (Analysis, CalleeInfo)
+analyse cache dirty defs =
+    let perDef : List (Name, (SortedSet Name, List Name)) =
+                   map (\(n, d) =>
+                          (n, case lookup n cache of
+                                   Just info => if contains n dirty
+                                                   then (calleesOf d, callOccurrencesOf d)
+                                                   else info
+                                   Nothing => (calleesOf d, callOccurrencesOf d))) defs
+        cache' = foldl (\acc, (n, info) => insert n info acc) cache perDef
+        graph : Graph = SortedMap.fromList $ map (\(n, (cs, _)) => (n, cs)) perDef
+        callCounts : SortedMap Name Nat =
+                       foldl (\acc, n => insertWith (+) n 1 acc) (the (SortedMap Name Nat) empty)
+                         (concatMap (\(_, (_, occs)) => occs) perDef)
         sccs = tarjanSCCs graph
         defOf = SortedMap.fromList defs
         isFun : Name -> Bool
@@ -88,7 +123,7 @@ analyse defs =
         eligible = SortedSet.fromList $ mapMaybe
                      (\(n, c) => if c == 1 && isFun n then Just n else Nothing)
                      (SortedMap.toList callCounts)
-    in MkAnalysis graph callCounts eligible (reverse (concat sccs))
+    in (MkAnalysis graph callCounts eligible (reverse (concat sccs)), cache')
 
 ||| Whether `callee`'s own body (looked up in `defOf`) directly calls
 ||| `caller` -- checked fresh at each individual splice decision
@@ -525,15 +560,50 @@ inlineInto defOf eligible self = go empty []
 ||| and can introduce fresh dead weight of its own, e.g. an unused
 ||| worker/wrapper split, that this pass can never see) and stays
 ||| exactly where it is.
-applyLateInlineOnce : {auto v : Ref VarId Int} -> (roots : List Name) -> List (Name, RCDef) -> Core (Bool, List (Name, RCDef))
-applyLateInlineOnce roots defs0 = do
-    let defs = pruneDeadDefs roots defs0
-    let an = analyse defs
+|||
+||| `cache`/`dirty`: threaded straight through to `analyse` (see its
+||| own doc comment) -- `applyLateInline`'s own fixpoint loop carries
+||| the returned cache and this round's own `toProcess` (the *only*
+||| names `goOrder` below is ever handed) into the next round's call.
+|||
+||| **Only walking `toProcess`, not every name in `processOrder`, is
+||| the whole point of threading `an.graph` this far**: the overwhelming
+||| majority of a real whole-program def list never calls anything
+||| `eligible` at all, in any given round, yet the pre-caching version
+||| of this pass ran `inlineInto`'s own full structural walk-and-rebuild
+||| over *every one* of them anyway, every round, only to reconstruct an
+||| identical tree. `an.graph` already has each name's own callee set
+||| computed (`analyse`'s own `perDef`, cache-backed) -- checking it
+||| against `eligible` is one small `SortedSet` intersection per name,
+||| nowhere near the cost of walking that name's own (possibly huge)
+||| body. Found against a real build (`idris2-lsp`, `--timing 2`), whose
+||| whole-program def list is large enough (compiler-plus-LSP-server
+||| scale) to make the pre-caching version's blanket walk dominate
+||| `"rc2: Late inline"`'s own wall-clock cost outright.
+applyLateInlineOnce : {auto v : Ref VarId Int} -> (roots : List Name) -> CalleeInfo -> SortedSet Name -> List (Name, RCDef) -> Core (Bool, List (Name, RCDef), CalleeInfo, SortedSet Name)
+applyLateInlineOnce roots cache dirty defs0 = do
+    let defs : List (Name, RCDef) = pruneDeadDefs roots defs0
+    let (an, cache') : (Analysis, CalleeInfo) = analyse cache dirty defs
     case leftMost an.eligible of
-         Nothing => pure (length defs /= length defs0, defs)
+         Nothing => pure (length defs /= length defs0, defs, cache', empty)
          Just _ => do
-             final <- goOrder an.eligible an.processOrder (SortedMap.fromList defs)
-             pure (True, map (\(n, d) => (n, fromMaybe d (lookup n final))) defs)
+             -- Walks the *small* side (this one name's own, typically
+             -- tiny, callee set) doing an `eligible` membership check
+             -- per callee, rather than `intersection cs an.eligible`
+             -- (whose own cost -- depending on `Data.SortedSet`'s
+             -- implementation -- may scale with *both* sides, `eligible`
+             -- included; `eligible` can itself be large on an early
+             -- round of a big program, and this check runs once per
+             -- name in `processOrder`, so paying per-`eligible`-size
+             -- cost here, not just per-`cs`-size, would undo the whole
+             -- point of filtering to `toProcess` in the first place).
+             let touchesEligible : Name -> Bool
+                 touchesEligible n = case lookup n cache' of
+                                           Just (cs, _) => any (\c => contains c an.eligible) (Prelude.toList cs)
+                                           Nothing => False
+             let toProcess = filter touchesEligible an.processOrder
+             final <- goOrder an.eligible toProcess (SortedMap.fromList defs)
+             pure (True, map (\(n, d) => (n, fromMaybe d (lookup n final))) defs, cache', SortedSet.fromList toProcess)
   where
     goOrder : SortedSet Name -> List Name -> SortedMap Name RCDef -> Core (SortedMap Name RCDef)
     goOrder eligible [] defOf = pure defOf
@@ -567,12 +637,49 @@ maxLateInlineIterations = 4
 ||| doc comment for when a further round actually finds something new
 ||| to do -- until a round finds nothing left to prune or splice, or
 ||| `maxLateInlineIterations` is reached, whichever comes first.
+|||
+||| Each round is individually `logTime`d at the finer `--timing 3`
+||| level, on top of the aggregate `"rc2: Late inline"` timer `RC2.idr`'s
+||| own pipeline already wraps the whole call in (same
+||| coarser/finer-level split `RC2.idr`'s own "Loop conversion"/"Loop
+||| conversion (apply)" pair already uses) -- a round-by-round
+||| breakdown is what distinguishes "cost scales with fixed round
+||| count" from "cost grows round-over-round as earlier rounds' own
+||| splices inflate what later rounds have to re-`analyse`/re-walk",
+||| which the aggregate number alone can't tell apart, and is also
+||| exactly what surfaced `analyse`/`applyLateInlineOnce`'s own
+||| `CalleeInfo` cache and `toProcess` filter as worth adding in the
+||| first place (found against a real build, `idris2-lsp` -- see
+||| `applyLateInlineOnce`'s own doc comment).
+|||
+||| `cache`/`dirty` start `empty` on round 1 (nothing cached, nothing to
+||| treat as unchanged-since-last-round yet) and thread the previous
+||| round's own returned cache/`toProcess` into the next.
+|||
+||| **Open gap, not yet explained**: the `CalleeInfo` cache and
+||| `toProcess` filter above cut each individual round's own measured
+||| cost to a small fraction of a second against a real build
+||| (`idris2-lsp`) -- round 2 through 4 each ~0.1s, down from the
+||| whole pass's own former ~46s aggregate. Yet that *aggregate*
+||| `"rc2: Late inline"` number barely moved. Explicitly forcing every
+||| value this loop threads between rounds (`defs'`, `cache'`, and the
+||| `looped` argument this function is first called with) came back
+||| cheap too, each under a tenth of a second -- ruling out a deferred/
+||| thunked computation (expected: Idris2/Chez evaluation is strict
+||| here, `Core`'s own `<-` genuinely runs its action once). Raw
+||| `System.Clock` timestamps taken immediately around this whole
+||| function's own call confirmed the ~45s is real wall/process time,
+||| not a `logTime` measurement artifact. Suspected but not confirmed:
+||| GC pressure from the repeated whole-program `SortedMap`/`SortedSet`
+||| reconstruction, landing its cost somewhere `logTime`'s own
+||| before/after clock reads don't happen to bracket -- not yet
+||| confirmed (no GC-specific counter checked against this directly).
 export
-applyLateInline : {auto v : Ref VarId Int} -> (roots : List Name) -> List (Name, RCDef) -> Core (List (Name, RCDef))
-applyLateInline roots defs0 = go maxLateInlineIterations defs0
+applyLateInline : {auto v : Ref VarId Int} -> {auto c : Ref Ctxt Defs} -> (roots : List Name) -> List (Name, RCDef) -> Core (List (Name, RCDef))
+applyLateInline roots defs0 = go 1 maxLateInlineIterations empty empty defs0
   where
-    go : Nat -> List (Name, RCDef) -> Core (List (Name, RCDef))
-    go Z defs = pure defs
-    go (S fuel) defs = do
-        (changed, defs') <- applyLateInlineOnce roots defs
-        if changed then go fuel defs' else pure defs'
+    go : Nat -> Nat -> CalleeInfo -> SortedSet Name -> List (Name, RCDef) -> Core (List (Name, RCDef))
+    go round Z cache dirty defs = pure defs
+    go round (S fuel) cache dirty defs = do
+        (changed, defs', cache', dirty') <- logTime 3 "rc2: Late inline (round \{show round})" $ applyLateInlineOnce roots cache dirty defs
+        if changed then go (S round) fuel cache' dirty' defs' else pure defs'
