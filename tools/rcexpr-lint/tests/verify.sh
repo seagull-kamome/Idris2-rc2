@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# One-shot correctness verification for rc2/tools/rcexpr-lint: builds
+# One-shot correctness verification for tools/rcexpr-lint: builds
 # the CLI against rc2base+contrib (plain Chez backend -- this tool
 # never needs to run *through* rc2 itself, it only reads text files),
 # then runs it over three hand-written `.rcexpr` fixtures and checks
@@ -14,14 +14,14 @@
 # Usage: ./verify.sh
 #
 # Requires nix-shell on PATH and rc2base already built+installed
-# (rc2/tools/rcexpr-lint depends on it -- see libs/rc2base/tests/
+# (tools/rcexpr-lint depends on it -- see libs/rc2base/tests/
 # verify.sh or libs/rc2base/README.md).
 
 set -euo pipefail
 
 TESTS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 TOOL_DIR="$(dirname "$TESTS_DIR")"
-REPO_ROOT="$(cd "$TOOL_DIR/../../.." && pwd)"
+REPO_ROOT="$(cd "$TOOL_DIR/../.." && pwd)"
 
 fail() { echo "FAIL  $1"; exit 1; }
 

@@ -25,7 +25,15 @@ show up again during testing.
   under `install/` is already gitignored wholesale, so nothing needs
   adding to `.gitignore` per clone. Don't clone such things at the repo
   root.
-- `rc2/` — the actual deliverable (own package, own runtime, own tests)
+- `rc2/` — the actual deliverable: the rc2 compiler backend itself
+  (own package, own runtime, own tests) and nothing else. Anything
+  that isn't the compiler proper doesn't belong under `rc2/`, even
+  when it exists only because of something rc2-specific — a
+  standalone tool consuming rc2's own output lives at the repo root
+  (e.g. `tools/rcexpr-lint`, moved out of `rc2/tools/` for exactly
+  this reason), and a support library a program compiled with rc2 can
+  depend on lives under `libs/` (`rc2base`, `notcurses`, `iouring`,
+  `text-re2`).
 - `rc2/doc/` — implementation deep-dives for specific compiler passes,
   meant to let a future session regain context without re-deriving the
   design (currently: `reuse-analysis.md` for the constructor-reuse-in-
