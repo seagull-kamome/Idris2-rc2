@@ -3,11 +3,12 @@ module Compiler.RC2.Sink
 -- Copyright 2026, Hattori,Hiroki. All rights reserved.
 -- This module was licensed by BSD3.
 
--- Branch-local sinking: moves a `let`-bound value into the one branch
--- arm that actually reads it, dropping it everywhere else instead of
--- computing it unconditionally. Deliberately its own pass, not folded
--- into `Compiler.RC2.Loop` -- see `rc2/doc/branch-sinking.md` for the
--- full design rationale, algorithm, and bug history.
+-- Branch-local sinking: moves a `let`-bound value into every branch
+-- arm that actually reads it (duplicating it there if more than one
+-- does), dropping it everywhere else instead of computing it
+-- unconditionally. Deliberately its own pass, not folded into
+-- `Compiler.RC2.Loop` -- see `rc2/doc/branch-sinking.md` for the full
+-- design rationale, algorithm, and bug history.
 
 import Compiler.RC2.RCExp
 import Compiler.RC2.Types
@@ -109,9 +110,14 @@ stripIfUnused var branch =
        else Just (removeVarDrop var branch)
 
 ||| Every Boxed operand `value` itself *consumes* by reading it -- an
-||| `ROp`'s own `postDrop`, an `RAppName`'s Boxed args (filtered via
-||| `reps`, since a call unconditionally consumes *all* its args), or
-||| (tracked via `dupped`) any `RCon` field *not* `dup`'d first. These
+||| `ROp`'s or `RStructGet`'s own `postDrop` (both populated the same
+||| way, by `Compiler.RC2.RC`'s own `dropIfLastUse` -- see
+||| `rc2/doc/c-struct-support.md`'s own "ownership" section for why a
+||| struct pointer's read needs exactly `ROp`'s drop treatment despite
+||| having no operands of its own to `dup`), an `RAppName`'s Boxed args
+||| (filtered via `reps`, since a call unconditionally consumes *all*
+||| its args), or (tracked via `dupped`) any `RCon` field *not* `dup`'d
+||| first. These
 ||| need an explicit `drop` in every arm `value` doesn't sink into,
 ||| replacing the release `value`'s own `postDrop`/field-move used to
 ||| unconditionally provide -- see doc/branch-sinking.md's "The rewrite
@@ -142,6 +148,7 @@ consumedOperands reps = go []
     -- self-contained, not something the branch we don't sink into owes
     -- a compensating drop for.
     go dupped (ROp _ _ _ _ postDrop) = filter (\a => not (a `elem` dupped)) postDrop
+    go dupped (RStructGet _ _ _ _ postDrop) = filter (\a => not (a `elem` dupped)) postDrop
     go _ (RAppName _ _ _ args) = filter isDroppableBoxed args
     go dupped (RCon _ _ _ _ args _) = filter (\a => isDroppableBoxed a && not (a `elem` dupped)) args
     go dupped (RDup _ v _ cont) = go (v :: dupped) cont
@@ -205,17 +212,24 @@ addOperandDrops fc consumed branch =
 ||| Whether `value` (after peeling the same leading `RDup`/`RDrop`/
 ||| `RFree`/`RReleaseReuse` wrappers `Compiler.RC2.Loop`'s own
 ||| `isInvariantExpr` peels for an analogous reason) is a bare
-||| `ROp`/`RCon`/`RAppName` eligible to sink -- same exclusions as that
-||| function (non-`Lazy`, no `reuseFrom`), kept in sync deliberately
-||| rather than re-derived. Unlike hoisting, `RAppName` *is* eligible
-||| here: sinking only ever reduces how many times a call runs, never
-||| turns a skipped call into one that runs. `RApp`/`RUnderApp`/
-||| `RExtPrim` stay out of scope. See doc/branch-sinking.md's "Deciding
-||| whether value is even a candidate".
+||| `ROp`/`RCon`/`RAppName`/`RStructGet` eligible to sink -- same
+||| exclusions as `isInvariantExpr` for the first three (non-`Lazy`, no
+||| `reuseFrom`), kept in sync deliberately rather than re-derived.
+||| Unlike hoisting, `RAppName` *is* eligible here: sinking only ever
+||| reduces how many times a call runs, never turns a skipped call into
+||| one that runs. `RStructGet` needs no such guard at all -- it has
+||| neither a `lazy` nor a `reuseFrom` field to exclude on, a struct
+||| field read being unconditionally eager and never itself a reuse
+||| candidate -- but its own `postDrop` still needs `consumedOperands`
+||| (above) to compensate for, exactly like `ROp`'s. `RApp`/
+||| `RUnderApp`/`RExtPrim` stay out of scope. See
+||| doc/branch-sinking.md's "Deciding whether value is even a
+||| candidate".
 sinkEligible : RCExp -> Bool
 sinkEligible (ROp _ Nothing _ _ _) = True
 sinkEligible (RCon _ _ _ _ _ Nothing) = True
 sinkEligible (RAppName _ Nothing _ _) = True
+sinkEligible (RStructGet _ _ _ _ _) = True
 sinkEligible (RDup _ _ _ cont) = sinkEligible cont
 sinkEligible (RDrop _ _ cont) = sinkEligible cont
 sinkEligible (RFree _ _ cont) = sinkEligible cont
@@ -248,28 +262,44 @@ isDecidingOperand var value branch =
                         _ => empty
     in not (null (intersection candidates deciders))
 
-||| Try to sink `RLet _ var rep value _`'s own binding into the single
-||| arm of `branch` that genuinely reads `var` (not itself the
-||| branch's own deciding operand, see `isDecidingOperand`), stripping
-||| the stale `drop [var, ...]` from every other arm (`stripIfUnused`)
-||| and, only once that confirms `var` unused there, also patching in a
-||| `drop` for `value`'s own `consumedOperands` -- folding both fixes
-||| into one so every call site below gets the leak fix for free.
-||| `Nothing` unless usage is "exactly one arm reads it, every other
-||| doesn't" -- see doc/branch-sinking.md's "The rewrite itself" for
-||| why two-or-more/zero are both left alone. `fc` is the *enclosing
-||| branch node's* own `FC`, needed since a fresh `RDrop` needs one of
-||| its own and an arm's body isn't necessarily a branch node to borrow
-||| one from.
+||| Classifies one single arm of `branch` for sinking `RLet _ var rep
+||| value _`'s own binding: `Nothing` if `var` is genuinely read there
+||| (this arm stays exactly as-is -- the caller re-wraps it in the
+||| original `RLet`, see `sinkIntoBodies`'s/`trySinkIntoArms`'s own
+||| `pick`), `Just` the rewritten arm (its own stale `drop [var, ...]`
+||| stripped via `stripIfUnused`, plus a compensating `drop` for
+||| `value`'s own `consumedOperands`, once `stripIfUnused` confirms
+||| `var` unused there -- folding both fixes into one so every call
+||| site below gets the leak fix for free) if `var` is never read at
+||| all. The caller decides, from how many arms come back `Nothing` vs.
+||| `Just`, whether sinking into all the `Nothing` arms is even
+||| worthwhile as a whole (see `sinkIntoBodies`'s own doc comment).
+||| `fc` is the *enclosing branch node's* own `FC`, needed since a
+||| fresh `RDrop` needs one of its own and an arm's body isn't
+||| necessarily a branch node to borrow one from.
 stripForSink : Int -> FC -> List RCLocal -> RCExp -> Maybe RCExp
 stripForSink var fc consumed branch = stripIfUnused var branch >>= addOperandDrops fc consumed
 
 ||| `stripForSink` over every alt body plus the optional default body
 ||| of an `RConCase`/`RConstCase` -- shared since the two differ only
 ||| in alt shape (`MkRConAlt` vs `MkRConstAlt`), not in this logic.
-||| `Nothing` unless exactly one body is Used (see `trySinkIntoArms`'s
-||| own `RCmpCase` case just below for the same "exactly one" shape at
-||| two-arms scale).
+|||
+||| Sinks into *every* Used body at once (duplicating `value`'s own
+||| computation into each one via `pick`'s fallback), not just a single
+||| one -- unlike hoisting, this costs nothing at runtime: exactly one
+||| arm ever runs per evaluation, so a value duplicated into N Used arms
+||| still computes at most once per evaluation either way, the same as
+||| it would sitting unconditionally before the whole branch. The only
+||| real cost is code size, and `sinkEligible` already bounds `value` to
+||| a single bare `ROp`/`RCon`/`RAppName`/`RStructGet` node, never an
+||| arbitrarily large subtree, so that cost stays modest. `Nothing` in
+||| exactly two cases: `usedCount == 0` (nothing to sink, `value` would
+||| just vanish) or `usedCount == totalCount` (Used everywhere -- every
+||| arm already needs it unconditionally, so duplicating buys nothing
+||| and only bloats code size; leaving the original, single, pre-branch
+||| computation in place is strictly better). See
+||| doc/branch-sinking.md's "The rewrite itself" for the fuller
+||| rationale (formerly "exactly one arm", generalised here).
 sinkIntoBodies : FC -> Int -> Rep -> RCExp -> List RCLocal -> List RCExp -> Maybe RCExp -> Maybe (List RCExp, Maybe RCExp)
 sinkIntoBodies fc var rep value consumed altBodies mDefBody =
     let altStripped : List (RCExp, Maybe RCExp)
@@ -280,11 +310,15 @@ sinkIntoBodies fc var rep value consumed altBodies mDefBody =
         defResults = case defStripped of
                           Nothing => []
                           Just (_, r) => [r]
+        allResults : List (Maybe RCExp)
+        allResults = map snd altStripped ++ defResults
         usedCount : Nat
-        usedCount = length (filter isNothing (map snd altStripped ++ defResults))
+        usedCount = length (filter isNothing allResults)
+        totalCount : Nat
+        totalCount = length allResults
         pick : (RCExp, Maybe RCExp) -> RCExp
         pick (orig, r) = fromMaybe (RLet fc var rep value orig) r
-    in if usedCount /= 1
+    in if usedCount == 0 || usedCount == totalCount
           then Nothing
           else Just (map pick altStripped, map pick defStripped)
 

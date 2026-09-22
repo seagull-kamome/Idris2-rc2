@@ -3,6 +3,8 @@ module Main
 -- Copyright 2026, Hattori,Hiroki. All rights reserved.
 -- This module was licensed by BSD3.
 
+import System.FFI
+
 -- Exercises Compiler.RC2.Sink's branch-local sinking as a general,
 -- loop-independent pass (unlike Test21BoxedInvariantNotHoisted.idr,
 -- which exercises the same pass but specifically inside a self-tail
@@ -116,6 +118,46 @@ sharedOperandBranch a b =
      then (the String (cast b)) ++ (the String (cast b))
      else "ne"
 
+-- `sinkEligible`'s own `RStructGet` case: `fx` (a struct field read,
+-- postDrop-owning its own structVar `p` -- `p`'s only use anywhere in
+-- this function) is read only on the `True` arm, so it should sink
+-- into that arm entirely. The `False` arm, which then never evaluates
+-- the struct read at all, needs `consumedOperands`'s new `RStructGet`
+-- case to prefix it with a compensating `drop [p]` -- without it, `p`'s
+-- own last reference would leak on every call that takes that arm.
+Pair2Struct : Type
+Pair2Struct = Struct "test22_pair" [("x", Int), ("y", Int)]
+
+%foreign "C:idris2rc2_test22_make_pair,libc,Test22BranchSinking.h"
+prim__makePair : Int -> Int -> PrimIO Pair2Struct
+
+%foreign "C:idris2rc2_test22_free_pair,libc,Test22BranchSinking.h"
+prim__freePair : Pair2Struct -> PrimIO ()
+
+sinkableStructGet : Bool -> Pair2Struct -> Int
+sinkableStructGet flag p =
+  let fx : Int = getField p "x"
+  in if flag
+        then fx + fx
+        else 0
+
+-- `sinkIntoBodies`'s own multi-arm extension: `bonus` is read on two
+-- of the three `Tri` alts (`TriB`/`TriC`), not all three and not just
+-- one -- previously left alone entirely (`usedCount == 2` failed the
+-- old `== 1` check), now sunk into *both* using alts (duplicating
+-- `bonus`'s own computation, which costs nothing at runtime since only
+-- one alt ever runs per evaluation), with `TriA` getting a
+-- compensating `drop [a]` instead of ever computing it.
+data Tri = TriA | TriB Int | TriC Int
+
+multiArmSink : Tri -> Int -> Int
+multiArmSink t a =
+  let bonus = a * 2
+  in case t of
+          TriA => 0
+          TriB k => bonus + k
+          TriC k => bonus - k
+
 main : IO ()
 main = do
   printLn (sinkable True 3 4)
@@ -136,3 +178,12 @@ main = do
   printLn r2
   putStrLn (sharedOperandBranch 3.0 3.0)
   putStrLn (sharedOperandBranch 3.0 4.0)
+  p1 <- primIO (prim__makePair 3 4)
+  printLn (sinkableStructGet True p1)
+  primIO (prim__freePair p1)
+  p2 <- primIO (prim__makePair 3 4)
+  printLn (sinkableStructGet False p2)
+  primIO (prim__freePair p2)
+  printLn (multiArmSink TriA 5)
+  printLn (multiArmSink (TriB 3) 5)
+  printLn (multiArmSink (TriC 3) 5)
