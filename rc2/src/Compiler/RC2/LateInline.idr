@@ -61,17 +61,10 @@ CalleeInfo = SortedMap Name (SortedSet Name, List Name)
 
 record Analysis where
   constructor MkAnalysis
-  ||| Whole-program call graph, `RAppName` edges only -- every
-  ||| definition is a key, even a leaf with no outgoing calls (`Graph`
-  ||| itself, and `tarjanSCCs`'s own traversal, needs every node
-  ||| present to visit it).
-  graph : Graph
-  ||| Total `RAppName` occurrences of each name, whole-program.
-  callCounts : SortedMap Name Nat
   ||| Every eligible callee: exactly one call site anywhere, and a
   ||| genuine `MkRCFun` (not `RCCon`/`RCForeign`/`RCError`). Being part
-  ||| of a whole-program cycle (a size>=2 SCC, or a direct self-edge) in
-  ||| `graph` does *not* disqualify a callee on its own anymore --
+  ||| of a whole-program cycle (a size>=2 SCC, or a direct self-edge)
+  ||| does *not* disqualify a callee on its own anymore --
   ||| `callsBack`, consulted by `inlineInto` fresh at each individual
   ||| splice decision, is what replaces that. See `rc2/doc/inlining.md`'s
   ||| "Safe despite being part of a larger cycle" for the full argument.
@@ -82,6 +75,38 @@ record Analysis where
   ||| this lets a whole *chain* of single-caller callees collapse in
   ||| one pass instead of needing to be re-run per link).
   processOrder : List Name
+
+||| Everything `analyse` carries from one `applyLateInline` round into
+||| the next, so a round only pays for whatever actually changed since
+||| the last one. `Nothing` on the first round (nothing carried yet).
+record Carried where
+  constructor MkCarried
+  ||| Per-name callee info (see `CalleeInfo`).
+  info : CalleeInfo
+  ||| Whole-program `RAppName` occurrence count per name -- maintained
+  ||| by delta from round to round rather than re-summed from every
+  ||| definition's own occurrence list, which was this pass's single
+  ||| largest cost at whole-compiler scale (~5.7s per round on
+  ||| `idris2-lsp`: ~118k `insertWith`s into a `Name`-keyed map, whose
+  ||| comparisons are structural over namespace lists and strings).
+  ||| Only two things can shift a count: a definition whose own body
+  ||| changed (`dirty`, its old occurrence list subtracted and its new
+  ||| one added) and a definition pruned away entirely (its old
+  ||| occurrence list subtracted). Both are read straight off `info`,
+  ||| which still holds the pre-change entry at that point.
+  counts : SortedMap Name Nat
+  ||| `tarjanSCCs`-derived callee-before-caller processing order,
+  ||| computed once on the first round and reused verbatim afterwards.
+  ||| Safe because this order is only ever a *heuristic* -- it decides
+  ||| whether a chain of single-caller callees collapses in one round
+  ||| or needs a further one, never what the result is -- and because
+  ||| `defs` only shrinks, so a later round's own names are always a
+  ||| subset of what this order already covers; `goOrder` skips a name
+  ||| it no longer finds in `defOf`.
+  order : List Name
+  ||| The previous round's own definition names -- what "pruned away
+  ||| since last round" is spotted against, for the count delta above.
+  names : List Name
 
 ||| `cache`: every name's own `CalleeInfo` as of the last round it was
 ||| actually reprocessed (`empty` on the very first round). `dirty`:
@@ -100,30 +125,61 @@ record Analysis where
 ||| cached, on round N. Returns the updated cache alongside the
 ||| `Analysis` as before, for `applyLateInlineOnce` to thread into the
 ||| next round.
-analyse : CalleeInfo -> SortedSet Name -> List (Name, RCDef) -> (Analysis, CalleeInfo)
-analyse cache dirty defs =
-    let perDef : List (Name, (SortedSet Name, List Name)) =
+analyse : (prev : Maybe Carried) -> (dirty : SortedSet Name) -> List (Name, RCDef) -> (Analysis, Carried)
+analyse prev dirty defs =
+    let oldInfo : CalleeInfo = maybe empty (.info) prev
+        defOf : SortedMap Name RCDef = SortedMap.fromList defs
+        perDef : List (Name, (SortedSet Name, List Name)) =
                    map (\(n, d) =>
-                          (n, case lookup n cache of
-                                   Just info => if contains n dirty
-                                                   then (calleesOf d, callOccurrencesOf d)
-                                                   else info
-                                   Nothing => (calleesOf d, callOccurrencesOf d))) defs
-        cache' = foldl (\acc, (n, info) => insert n info acc) cache perDef
-        graph : Graph = SortedMap.fromList $ map (\(n, (cs, _)) => (n, cs)) perDef
-        callCounts : SortedMap Name Nat =
-                       foldl (\acc, n => insertWith (+) n 1 acc) (the (SortedMap Name Nat) empty)
-                         (concatMap (\(_, (_, occs)) => occs) perDef)
-        sccs = tarjanSCCs graph
-        defOf = SortedMap.fromList defs
-        isFun : Name -> Bool
-        isFun n = case lookup n defOf of
-                       Just (MkRCFun _ _ _ _) => True
-                       _ => False
-        eligible = SortedSet.fromList $ mapMaybe
-                     (\(n, c) => if c == 1 && isFun n then Just n else Nothing)
-                     (SortedMap.toList callCounts)
-    in (MkAnalysis graph callCounts eligible (reverse (concat sccs)), cache')
+                          (n, case lookup n oldInfo of
+                                   Just i => if contains n dirty then freshInfo d else i
+                                   Nothing => freshInfo d)) defs
+        info' : CalleeInfo = foldl (\acc, (n, i) => insert n i acc) oldInfo perDef
+        counts' : SortedMap Name Nat = case prev of
+                 Nothing => foldl (\acc, n => insertWith (+) n 1 acc) (the (SortedMap Name Nat) empty)
+                              (concatMap (\(_, (_, occs)) => occs) perDef)
+                 Just p => deltaCounts p defOf info'
+        order' : List Name = case prev of
+                 Nothing => reverse (concat (tarjanSCCs (SortedMap.fromList (map (\(n, (cs, _)) => (n, cs)) perDef))))
+                 Just p => p.order
+        eligible : SortedSet Name = SortedSet.fromList $ mapMaybe
+              (\(n, cnt) => if cnt == 1 && isFun defOf n then Just n else Nothing)
+              (SortedMap.toList counts')
+    in (MkAnalysis eligible order', MkCarried info' counts' order' (map fst defs))
+  where
+    freshInfo : RCDef -> (SortedSet Name, List Name)
+    freshInfo d = (calleesOf d, callOccurrencesOf d)
+
+    isFun : SortedMap Name RCDef -> Name -> Bool
+    isFun defOf n = case lookup n defOf of
+                         Just (MkRCFun _ _ _ _) => True
+                         _ => False
+
+    occsOf : CalleeInfo -> Name -> List Name
+    occsOf ci n = maybe [] snd (lookup n ci)
+
+    dec : SortedMap Name Nat -> Name -> SortedMap Name Nat
+    dec m n = case lookup n m of
+                   Just c => if c <= 1 then delete n m else insert n (minus c 1) m
+                   Nothing => m
+
+    inc : SortedMap Name Nat -> Name -> SortedMap Name Nat
+    inc m n = insertWith (+) n 1 m
+
+    ||| `prev.counts` adjusted for exactly the two things that can have
+    ||| shifted a count since it was built: a name pruned away (its own
+    ||| calls are gone with it) and a name `dirty` says was spliced into
+    ||| last round (its old call list replaced by its new one). Both
+    ||| read their *old* list from `prev.info`, which still holds the
+    ||| pre-change entry -- `newInfo` is where the fresh one lives.
+    deltaCounts : Carried -> SortedMap Name RCDef -> CalleeInfo -> SortedMap Name Nat
+    deltaCounts p defOf newInfo =
+        let gone : List Name = filter (\n => isNothing (lookup n defOf)) p.names
+            afterGone : SortedMap Name Nat =
+                foldl (\acc, n => foldl dec acc (occsOf p.info n)) p.counts gone
+            changed : List Name = filter (\n => isJust (lookup n defOf)) (Prelude.toList dirty)
+        in foldl (\acc, n => foldl inc (foldl dec acc (occsOf p.info n)) (occsOf newInfo n))
+             afterGone changed
 
 ||| Whether `callee`'s own body (looked up in `defOf`) directly calls
 ||| `caller` -- checked fresh at each individual splice decision
@@ -561,31 +617,51 @@ inlineInto defOf eligible self = go empty []
 ||| worker/wrapper split, that this pass can never see) and stays
 ||| exactly where it is.
 |||
-||| `cache`/`dirty`: threaded straight through to `analyse` (see its
+||| `prev`/`dirty`: threaded straight through to `analyse` (see its
 ||| own doc comment) -- `applyLateInline`'s own fixpoint loop carries
-||| the returned cache and this round's own `toProcess` (the *only*
+||| the returned `Carried` and this round's own `toProcess` (the *only*
 ||| names `goOrder` below is ever handed) into the next round's call.
 |||
-||| **Only walking `toProcess`, not every name in `processOrder`, is
-||| the whole point of threading `an.graph` this far**: the overwhelming
-||| majority of a real whole-program def list never calls anything
-||| `eligible` at all, in any given round, yet the pre-caching version
-||| of this pass ran `inlineInto`'s own full structural walk-and-rebuild
-||| over *every one* of them anyway, every round, only to reconstruct an
-||| identical tree. `an.graph` already has each name's own callee set
-||| computed (`analyse`'s own `perDef`, cache-backed) -- checking it
-||| against `eligible` is one small `SortedSet` intersection per name,
-||| nowhere near the cost of walking that name's own (possibly huge)
-||| body. Found against a real build (`idris2-lsp`, `--timing 2`), whose
+||| **The two `logTime`s here each open with `() <- pure ()` on
+||| purpose, and removing that would silently break them**: everything
+||| they wrap is a *pure* `let`, and in a strict language the argument
+||| expression is fully evaluated before `logTime` is ever entered, so
+||| a bare `logTime lvl str $ pure (heavyPureThing)` clocks nothing but
+||| the `pure`. Binding once first pushes the real work into the
+||| continuation, which only runs inside the timed region. This is not
+||| hypothetical: `analyse`'s own ~10s-per-round cost hid behind
+||| exactly that mistake here for an entire investigation, reported as
+||| a ~0.1s round while `"rc2: Late inline"` sat at ~45s.
+|||
+||| **Only walking `toProcess`, not every name in `processOrder`**: the
+||| overwhelming majority of a real whole-program def list never calls
+||| anything `eligible` at all, in any given round, yet the pre-cache
+||| version of this pass ran `inlineInto`'s own full structural
+||| walk-and-rebuild over *every one* of them anyway, every round, only
+||| to reconstruct an identical tree. `Carried.info` already has each
+||| name's own callee set -- checking it against `eligible` costs one
+||| membership test per callee, nowhere near the cost of walking that
+||| name's own (possibly huge) body. Found against a real build
+||| (`idris2-lsp`, `--timing 2`), whose
 ||| whole-program def list is large enough (compiler-plus-LSP-server
 ||| scale) to make the pre-caching version's blanket walk dominate
 ||| `"rc2: Late inline"`'s own wall-clock cost outright.
-applyLateInlineOnce : {auto v : Ref VarId Int} -> (roots : List Name) -> CalleeInfo -> SortedSet Name -> List (Name, RCDef) -> Core (Bool, List (Name, RCDef), CalleeInfo, SortedSet Name)
-applyLateInlineOnce roots cache dirty defs0 = do
-    let defs : List (Name, RCDef) = pruneDeadDefs roots defs0
-    let (an, cache') : (Analysis, CalleeInfo) = analyse cache dirty defs
+applyLateInlineOnce : {auto v : Ref VarId Int} -> {auto c : Ref Ctxt Defs} -> (roots : List Name) -> Maybe Carried -> SortedSet Name -> List (Name, RCDef) -> Core (Bool, List (Name, RCDef), Carried, SortedSet Name)
+applyLateInlineOnce roots prev dirty defs0 = do
+    defs <- logTime 3 "rc2: LI prune" $ do
+              () <- pure ()
+              let d : List (Name, RCDef) = pruneDeadDefs roots defs0
+              let n : Nat = length d
+              pure (if n == n then d else d)
+    (an, carried) <- logTime 3 "rc2: LI analyse" $ do
+              () <- pure ()
+              let r : (Analysis, Carried) = analyse prev dirty defs
+              let n : Nat = length (Prelude.toList (fst r).eligible)
+                              + length (snd r).order
+                              + length (SortedMap.toList (snd r).counts)
+              pure (if n == n then r else r)
     case leftMost an.eligible of
-         Nothing => pure (length defs /= length defs0, defs, cache', empty)
+         Nothing => pure (length defs /= length defs0, defs, carried, empty)
          Just _ => do
              -- Walks the *small* side (this one name's own, typically
              -- tiny, callee set) doing an `eligible` membership check
@@ -598,12 +674,12 @@ applyLateInlineOnce roots cache dirty defs0 = do
              -- cost here, not just per-`cs`-size, would undo the whole
              -- point of filtering to `toProcess` in the first place).
              let touchesEligible : Name -> Bool
-                 touchesEligible n = case lookup n cache' of
+                 touchesEligible n = case lookup n carried.info of
                                            Just (cs, _) => any (\c => contains c an.eligible) (Prelude.toList cs)
                                            Nothing => False
              let toProcess = filter touchesEligible an.processOrder
              final <- goOrder an.eligible toProcess (SortedMap.fromList defs)
-             pure (True, map (\(n, d) => (n, fromMaybe d (lookup n final))) defs, cache', SortedSet.fromList toProcess)
+             pure (True, map (\(n, d) => (n, fromMaybe d (lookup n final))) defs, carried, SortedSet.fromList toProcess)
   where
     goOrder : SortedSet Name -> List Name -> SortedMap Name RCDef -> Core (SortedMap Name RCDef)
     goOrder eligible [] defOf = pure defOf
@@ -676,10 +752,10 @@ maxLateInlineIterations = 4
 ||| confirmed (no GC-specific counter checked against this directly).
 export
 applyLateInline : {auto v : Ref VarId Int} -> {auto c : Ref Ctxt Defs} -> (roots : List Name) -> List (Name, RCDef) -> Core (List (Name, RCDef))
-applyLateInline roots defs0 = go 1 maxLateInlineIterations empty empty defs0
+applyLateInline roots defs0 = go 1 maxLateInlineIterations Nothing empty defs0
   where
-    go : Nat -> Nat -> CalleeInfo -> SortedSet Name -> List (Name, RCDef) -> Core (List (Name, RCDef))
-    go round Z cache dirty defs = pure defs
-    go round (S fuel) cache dirty defs = do
-        (changed, defs', cache', dirty') <- logTime 3 "rc2: Late inline (round \{show round})" $ applyLateInlineOnce roots cache dirty defs
-        if changed then go (S round) fuel cache' dirty' defs' else pure defs'
+    go : Nat -> Nat -> Maybe Carried -> SortedSet Name -> List (Name, RCDef) -> Core (List (Name, RCDef))
+    go round Z prev dirty defs = pure defs
+    go round (S fuel) prev dirty defs = do
+        (changed, defs', carried, dirty') <- logTime 3 "rc2: Late inline (round \{show round})" $ applyLateInlineOnce roots prev dirty defs
+        if changed then go (S round) fuel (Just carried) dirty' defs' else pure defs'
