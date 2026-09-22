@@ -8,7 +8,7 @@
 // dedicated wrapper struct needed, just a boxed Bits64 nanosecond count
 // (or NULL for an unimplemented optional clock), exactly like RefC.
 
-#include "datatypes.h"
+#include "idris2rc2_datatypes.h"
 
 IDRIS2RC2_Value *clockTimeMonotonic(void);
 IDRIS2RC2_Value *clockTimeUtc(void);

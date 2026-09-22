@@ -1,8 +1,8 @@
 #pragma once
 
-#include "datatypes.h"
-#include "numeric.h"
-#include "utf8.h"
+#include "idris2rc2_datatypes.h"
+#include "idris2rc2_numeric.h"
+#include "idris2rc2_utf8.h"
 
 // Length/indexing are Unicode-codepoint-wise, matching Idris2's own Chez
 // backend (Scheme strings are codepoint sequences by spec) rather than

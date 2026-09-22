@@ -1,6 +1,6 @@
 #pragma once
 
-#include "datatypes.h"
+#include "idris2rc2_datatypes.h"
 
 // Names mirror `idris2_<mangled qualified name>` as produced by
 // Compiler/RC2/RC2.idr's handling of AExtPrim nodes (see the whitelist

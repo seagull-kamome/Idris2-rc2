@@ -1,5 +1,5 @@
-#include "buffer.h"
-#include "util.h"
+#include "idris2rc2_buffer.h"
+#include "idris2rc2_util.h"
 
 #include <stdlib.h>
 #include <string.h>

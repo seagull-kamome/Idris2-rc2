@@ -432,7 +432,7 @@ nativeLocalsR _ = empty
 ||| is *why*: nativeLocalsR's locals have no refcount because they're
 ||| not even boxed; this function's locals are boxed and do have one,
 ||| it's just that idris2rc2_dup/drop/free on them were always going to
-||| be unconditional no-ops (support/rc2/datatypes.h), so generating the
+||| be unconditional no-ops (support/rc2/idris2rc2_datatypes.h), so generating the
 ||| calls at all is pure waste. Operates on Phase 1's output, same as
 ||| nativeLocalsR and for the same reason.
 ||| `args`, filtered down to the genuine `RCLoc`s among them, if `mty`

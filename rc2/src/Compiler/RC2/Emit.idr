@@ -1099,7 +1099,7 @@ emitRC sink (ROp fc _ op args postDrop) _ = do
     -- known about these.
     --
     -- `isReuseConsumingOp op` skips both: its own runtime primitive
-    -- (rc2/support/rc2/numeric.h) now consumes and disposes of every
+    -- (rc2/support/rc2/idris2rc2_numeric.h) now consumes and disposes of every
     -- operand handed to it itself, reusing a uniquely-referenced
     -- one's own heap allocation in place where possible -- see
     -- rc2/doc/rop-reuse.md.

@@ -223,7 +223,7 @@ cOp Crash         [_, msg]  = "idris2rc2_crash(" ++ msg ++ ");"
 cOp fn args = show fn ++ "(" ++ (showSep ", " $ toList args) ++ ")"
 
 ||| `True` for the Boxed `PrimFn`s whose own runtime primitive
-||| (`rc2/support/rc2/numeric.h`) now consumes every operand it's handed
+||| (`rc2/support/rc2/idris2rc2_numeric.h`) now consumes every operand it's handed
 ||| -- reusing a uniquely-referenced one's own heap storage in place
 ||| instead of allocating fresh, and dropping whichever operand it didn't
 ||| reuse itself -- rather than only reading its operands and leaving
@@ -824,7 +824,7 @@ stageConstCon l nmPrefix mkDef = do
 
 ||| The boxed C expression for a folded zero-filled closure constant
 ||| (an `RCConstClosure` -- see `Compiler.RC2.ConstFold`), staged as an
-||| `IDRIS2RC2_ConstClosure` (datatypes.h) -- a named type that
+||| `IDRIS2RC2_ConstClosure` (idris2rc2_datatypes.h) -- a named type that
 ||| deliberately does NOT mirror `IDRIS2RC2_Closure`'s real
 ||| flexible-array-member layout (no static-initializer syntax for one
 ||| in C anyway, and it would be empty here regardless: `filled` is
@@ -888,7 +888,7 @@ mutual
     ||| a flexible array member has no static-initializer syntax in
     ||| plain C. Unlike `boxedConstClosureExpr`'s always-empty trailing
     ||| array, the field count varies per constructor (`Cons` has 2,
-    ||| `Just` has 1, ...), so `datatypes.h` pre-declares one fixed-size
+    ||| `Just` has 1, ...), so `idris2rc2_datatypes.h` pre-declares one fixed-size
     ||| named type per field count from 1 (a genuinely zero-arity
     ||| `RCConstCon` can't happen -- `ConstFold`'s own `RCon`-folding
     ||| comment: NIL/NOTHING/ZERO/UNIT take the separate `RCNull` route)
@@ -1411,7 +1411,7 @@ conAltCondExpr sc' (MkRConAlt name coninfo tag args body) = do
                 -- constructor of *this* ADT, see RCEmptyCon in
                 -- RCExp.idr) as well as a real heap
                 -- IDRIS2RC2_Constructor* -- idris2rc2_conTag
-                -- (support/rc2/datatypes.h) checks which.
+                -- (support/rc2/idris2rc2_datatypes.h) checks which.
                 Just tag' => "idris2rc2_conTag(\{sc'}) == \{show tag'} /* \{show name} */"
 
 ||| Render a case's own `if`-chain against `alts`, given a `Core String`

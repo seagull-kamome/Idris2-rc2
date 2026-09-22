@@ -33,7 +33,7 @@
 #include <string.h>
 #include <unistd.h>
 
-#include "util.h"
+#include "idris2rc2_util.h"
 
 static void buf_htonl(void *buf, int len) {
   int *buf_i = (int *)buf;

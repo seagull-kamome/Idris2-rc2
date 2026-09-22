@@ -1,4 +1,4 @@
-#include "util.h"
+#include "idris2rc2_util.h"
 
 #include <stdarg.h>
 #include <stdio.h>

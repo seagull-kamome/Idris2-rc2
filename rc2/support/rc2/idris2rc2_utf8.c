@@ -1,4 +1,4 @@
-#include "utf8.h"
+#include "idris2rc2_utf8.h"
 
 // A byte >= 0x80 with the pattern 10xxxxxx is a continuation byte -- part
 // of a preceding character, never a boundary of its own.

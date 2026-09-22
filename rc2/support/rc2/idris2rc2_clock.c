@@ -1,6 +1,6 @@
-#include "clock.h"
-#include "memory.h"
-#include "util.h"
+#include "idris2rc2_clock.h"
+#include "idris2rc2_memory.h"
+#include "idris2rc2_util.h"
 
 #include <errno.h>
 #include <string.h>

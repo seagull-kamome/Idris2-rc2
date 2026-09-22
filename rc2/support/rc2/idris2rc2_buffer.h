@@ -5,7 +5,7 @@
 // declarations expect verbatim symbol names for (rc2 reuses the "RefC" FFI
 // tag, see Emit.idr's `ffiTags`). Operates purely on the raw malloc'd
 // buffer (IDRIS2RC2_RawBuffer below); the refcounted heap wrapper
-// (IDRIS2RC2_Buffer, datatypes.h) is unwrapped/wrapped at the call site by
+// (IDRIS2RC2_Buffer, idris2rc2_datatypes.h) is unwrapped/wrapped at the call site by
 // Emit.idr's `extractValue`/`packCFType` for CFBuffer, so none of these
 // functions ever see it.
 

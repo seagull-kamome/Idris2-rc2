@@ -1,6 +1,6 @@
-#include "memory.h"
-#include "runtime.h"
-#include "util.h"
+#include "idris2rc2_memory.h"
+#include "idris2rc2_rt.h"
+#include "idris2rc2_util.h"
 
 #include <pthread.h>
 

@@ -1,8 +1,8 @@
 #pragma once
 
-#include "datatypes.h"
-#include "memory.h"
-#include "runtime.h"
+#include "idris2rc2_datatypes.h"
+#include "idris2rc2_memory.h"
+#include "idris2rc2_rt.h"
 #include <math.h>
 #include <inttypes.h>
 #include <stdio.h>

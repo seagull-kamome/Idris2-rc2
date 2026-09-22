@@ -1,8 +1,8 @@
 #include "idris2rc2_strings.h"
-#include "memory.h"
-#include "runtime.h"
-#include "util.h"
-#include "utf8.h"
+#include "idris2rc2_memory.h"
+#include "idris2rc2_rt.h"
+#include "idris2rc2_util.h"
+#include "idris2rc2_utf8.h"
 
 IDRIS2RC2_Value *idris2rc2_strTail(IDRIS2RC2_Value *input) {
   IDRIS2RC2_String *s = (IDRIS2RC2_String *)input;

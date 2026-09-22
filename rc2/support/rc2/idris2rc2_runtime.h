@@ -2,16 +2,16 @@
 
 // Single include for generated C code (mirrors RefC's runtime.h).
 
-#include "buffer.h"
-#include "caf_memoize.h"
-#include "clock.h"
-#include "datatypes.h"
-#include "ioprims.h"
-#include "memory.h"
-#include "numeric.h"
-#include "runtime.h"
+#include "idris2rc2_buffer.h"
+#include "idris2rc2_caf_memoize.h"
+#include "idris2rc2_clock.h"
+#include "idris2rc2_datatypes.h"
+#include "idris2rc2_ioprims.h"
+#include "idris2rc2_memory.h"
+#include "idris2rc2_numeric.h"
+#include "idris2rc2_rt.h"
 #include "idris2rc2_strings.h"
-#include "util.h"
+#include "idris2rc2_util.h"
 
 // Upstream's own idris_support.h (the shared libidris2_support.a's own
 // header, included separately below whenever a %foreign declaration

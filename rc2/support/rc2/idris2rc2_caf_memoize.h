@@ -5,7 +5,7 @@
 // idris2rc2_memo_boxed/idris2rc2_memo_native per memoized CAF, declared
 // as a file-scope static by Compiler.RC2.Emit's own emitMemoizeInto.
 
-#include "memory.h"
+#include "idris2rc2_memory.h"
 
 #include <stdatomic.h>
 #include <stdbool.h>
@@ -49,7 +49,7 @@ void idris2rc2_memo_boxed_store(idris2rc2_memo_boxed *memo, IDRIS2RC2_Value *val
 
 // Spins until another thread's idris2rc2_memo_boxed_store finishes
 // (same "spin, no portable pause instruction" tradeoff as
-// idris2rc2_spin_lock, util.h), then returns a fresh dup of the
+// idris2rc2_spin_lock, idris2rc2_util.h), then returns a fresh dup of the
 // now-ready value.
 IDRIS2RC2_Value *idris2rc2_memo_boxed_wait(idris2rc2_memo_boxed *memo);
 

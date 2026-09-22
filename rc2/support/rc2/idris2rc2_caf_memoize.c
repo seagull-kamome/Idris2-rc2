@@ -1,4 +1,4 @@
-#include "caf_memoize.h"
+#include "idris2rc2_caf_memoize.h"
 
 // Process-wide, one node per memoized Boxed CAF -- built up by
 // idris2rc2_memo_boxed_store (a lock-free push, same shape as any other

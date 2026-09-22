@@ -1,6 +1,6 @@
 #pragma once
 
-#include "datatypes.h"
+#include "idris2rc2_datatypes.h"
 
 // UTF-8 codec shared by every String primitive that needs codepoint- (not
 // byte-) indexed semantics, matching Idris2's own Chez backend (Scheme

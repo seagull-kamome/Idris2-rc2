@@ -1,5 +1,5 @@
-#include "numeric.h"
-#include "utf8.h"
+#include "idris2rc2_numeric.h"
+#include "idris2rc2_utf8.h"
 
 #include <inttypes.h>
 #include <math.h>

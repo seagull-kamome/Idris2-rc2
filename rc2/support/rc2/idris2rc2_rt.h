@@ -1,6 +1,6 @@
 #pragma once
 
-#include "datatypes.h"
+#include "idris2rc2_datatypes.h"
 
 void idris2rc2_missingForeign(void);
 

@@ -6,7 +6,7 @@ import Data.Bits
 -- This module was licensed by BSD3.
 
 -- Regression test for Compiler.RC2.Emit's ROp reuse-in-place for Boxed
--- Integer arithmetic (rc2/support/rc2/numeric.h's Add/Sub/Mul/Mod/BAnd/
+-- Integer arithmetic (rc2/support/rc2/idris2rc2_numeric.h's Add/Sub/Mul/Mod/BAnd/
 -- BOr/BXOr/ShiftL/ShiftR/Neg now consuming both their operands and
 -- reusing a uniquely-referenced one's own mpz_t storage in place instead
 -- of always allocating fresh -- see rc2/doc/rop-reuse.md). `bigFactorial`
@@ -46,7 +46,7 @@ bigBitOps n =
 -- Extends the coverage above from `Integer` (GMP `mpz_t`-backed) to
 -- `Int64`/`Bits64`/`Double` -- formerly a separate
 -- Test50FixedWidthOpReuse.idr, merged in below: same reuse-consuming
--- idea (rc2/support/rc2/numeric.h's Add/Sub/Mul/Div/Mod/BAnd/BOr/BXOr/
+-- idea (rc2/support/rc2/idris2rc2_numeric.h's Add/Sub/Mul/Div/Mod/BAnd/BOr/BXOr/
 -- ShiftL/ShiftR/Neg on these three types), but simpler -- fixed-size
 -- payloads, so a unique operand's own struct field gets overwritten in
 -- place instead of a GMP mutation. Unlike Integer, Int8/16/32/

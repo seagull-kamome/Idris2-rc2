@@ -1,7 +1,7 @@
-#include "runtime.h"
-#include "caf_memoize.h"
-#include "memory.h"
-#include "util.h"
+#include "idris2rc2_rt.h"
+#include "idris2rc2_caf_memoize.h"
+#include "idris2rc2_memory.h"
+#include "idris2rc2_util.h"
 
 #include <locale.h>
 #include <stdio.h>

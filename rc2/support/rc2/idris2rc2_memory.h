@@ -1,6 +1,6 @@
 #pragma once
 
-#include "datatypes.h"
+#include "idris2rc2_datatypes.h"
 
 IDRIS2RC2_Value *idris2rc2_alloc(size_t size);
 #define IDRIS2RC2_NEW(t) ((t *)idris2rc2_alloc(sizeof(t)))
