@@ -1,8 +1,8 @@
 #ifndef CONCURRENCY_UTIL_H
 #define CONCURRENCY_UTIL_H
 
-#include "rc2/datatypes.h"
-#include "rc2/memory.h"
+#include "datatypes.h"
+#include "memory.h"
 
 void *idris2rc2_mutex_make(void);
 void idris2rc2_mutex_acquire(IDRIS2RC2_Value *mutex);

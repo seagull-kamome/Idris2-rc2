@@ -1,8 +1,8 @@
 #define _GNU_SOURCE
 
 #include "concurrency_util.h"
-#include "rc2/runtime.h"
-#include "rc2/util.h"
+#include "runtime.h"
+#include "util.h"
 
 #include <time.h>
 #include <unistd.h>
@@ -63,7 +63,7 @@ static _Thread_local IDRIS2RC2_Value *idris2rc2_threadLocalData = NULL;
 // the generated call passes it as a real leading argument (confirmed by
 // building and reading the generated C), so `typeWitness` here is
 // received-and-ignored, not actually absent.
-void idris2rc2_set_thread_data(IDRIS2RC2_Value *typeWitness, IDRIS2RC2_Value *val) {
+void idris2rc2_set_thread_data(IDRIS2RC2_Value *, IDRIS2RC2_Value *val) {
   IDRIS2RC2_Value *old = idris2rc2_threadLocalData;
   idris2rc2_threadLocalData = val;
   idris2rc2_drop(old);

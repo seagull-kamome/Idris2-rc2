@@ -5,8 +5,8 @@
 #ifndef RC2BASE_STRING_RC2_H
 #define RC2BASE_STRING_RC2_H
 
-#include "rc2/datatypes.h"
-#include "rc2/memory.h"
+#include "datatypes.h"
+#include "memory.h"
 
 /* Byte-exact substring: the `len` bytes of `s` starting at byte offset
  * `off`, as a freshly built IDRIS2RC2_String value.

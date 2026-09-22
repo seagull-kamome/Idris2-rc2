@@ -3,8 +3,8 @@
 
 #include <stdlib.h>
 #include <stdint.h>
-#include "rc2/datatypes.h"
-#include "rc2/memory.h"
+#include "datatypes.h"
+#include "memory.h"
 
 typedef struct {
     int len;

@@ -1,9 +1,9 @@
 #include <stdlib.h>
 #include <stdint.h>
 #include <string.h>
-#include "rc2/util.h"
-#include "rc2/utf8.h"
-#include "./text_util.h"
+#include "util.h"
+#include "utf8.h"
+#include "text_util.h"
 
 // ///////////////////////////////////////////////////////////////////////////
 

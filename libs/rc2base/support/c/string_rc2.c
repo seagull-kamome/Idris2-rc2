@@ -1,7 +1,7 @@
 #include <stddef.h>
 #include <string.h>
-#include "rc2/util.h"
-#include "./string_rc2.h"
+#include "util.h"
+#include "string_rc2.h"
 
 IDRIS2RC2_Value *idris2rc2_string_byte_slice(char const *s, int off, int len) {
     size_t total = strlen(s);

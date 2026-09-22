@@ -76,22 +76,22 @@ cd idris2-rc-cg   # repo root
 source ./env.sh
 (cd libs/rc2base && idris2 --install rc2base.ipkg)
 
-INSTALLED_LIB="$(pwd)/install/idris2-0.8.0/rc2base-0.1.0/lib"
-export IDRIS2_CFLAGS="-I$INSTALLED_LIB -I$(pwd)/install/idris2-0.8.0/support"
-export IDRIS2_LDFLAGS="-L$INSTALLED_LIB"
 ./rc2/build/exec/idris2-rc2 --cg rc2 -p rc2base -o TestText libs/rc2base/tests/TestText.idr
-
-export LD_LIBRARY_PATH="$(pwd)/install/idris2-0.8.0/support/rc2:$LD_LIBRARY_PATH"
 ./build/exec/TestText
 ```
-`IDRIS2_CFLAGS=-I...` puts `text_util.h` (installed alongside the
-compiled library -- see below) and rc2's own runtime headers
-(`rc2/datatypes.h`/`rc2/memory.h`/`rc2/utf8.h`, which `text_util.h`
-itself includes) on the include path. `IDRIS2_LDFLAGS=-L...` puts the
-installed library on the *linker's* search path -- required
-separately, see the caveat below. Note this points at the *installed*
-`lib/` directory, not `support/c/` in the source tree -- see the next
-section for why that's the correct target now.
+No `IDRIS2_CFLAGS`/`IDRIS2_LDFLAGS`/`LD_LIBRARY_PATH` exports needed
+here at all -- `-p rc2base` alone is enough. `Compiler.RC2.CC`'s own
+`depPkgLibDirs` already walks every `-p`'d package's own installed
+`lib/` directory and adds both `-I<...>/lib` (so `text_util.h`, and
+the `datatypes.h`/`memory.h`/`utf8.h` it and every other `support/c/`
+header includes by their own bare name, are found automatically) and
+`-L<...>/lib` (so `libidris2rc2base.a` links without a manual
+`IDRIS2_LDFLAGS`) -- see "Native library install location" below. The
+one shared runtime `.so` a compiled rc2 program needs at startup
+(`libidris2_support.so`) lives under the toolchain's own
+`install/idris2-0.8.0/lib`, which `env.sh` already puts on
+`LD_LIBRARY_PATH` -- `support/rc2` itself has no `.so` of its own to
+add there.
 
 ## Native library install location
 
@@ -106,22 +106,28 @@ populates `lib` on its own. This package's `postinstall` hook
 after `idris2 --install`, `libidris2text.a` and `text_util.h` land in
 `<IDRIS2_PREFIX>/idris2-<idris2 version>/rc2base-0.1.0/lib/`.
 
-One caveat worth being explicit about: this `lib` convention is
-**picked up automatically only by the Chez/Racket backends**, which
-`dlopen` a dependency's `.so`/`.dylib` out of its `lib/` directory at
-build time with zero configuration (`Compiler.Common`'s
-`locate`/`copyLib`, via `Core.Directory.findLibraryFile`). rc2, like
-upstream RefC, links `%foreign` libraries statically via plain `-L`/
-`-l` flags, and neither one ever adds a dependency's own `lib/`
-directory to that search path automatically (confirmed against
-`idris2-src/src/Idris/Driver.idr`'s `lib_dirs`, which is populated only
-from `IDRIS2_LIBS`, the toolchain's own install dir, and the current
-working directory). So for rc2 specifically, installing to `lib/` is
-still necessary groundwork (a genuinely portable, self-contained
-installed copy of this package, not scattered across a source
-checkout) but not sufficient on its own -- a consumer still has to
-point `IDRIS2_CFLAGS`/`IDRIS2_LDFLAGS` (or `IDRIS2_LIBS`) at that `lib/`
-directory themselves, same as the example above does.
+This `lib` convention is picked up automatically by the Chez/Racket
+backends for their own purposes too (`dlopen`ing a dependency's
+`.so`/`.dylib` out of its `lib/` directory at build time, zero
+configuration -- `Compiler.Common`'s `locate`/`copyLib`, via
+`Core.Directory.findLibraryFile`), but rc2 links `%foreign` libraries
+statically instead, the same way upstream RefC does -- upstream's own
+`lib_dirs` (`idris2-src/src/Idris/Driver.idr`) never adds a
+dependency's own `lib/` directory to its `-L` search path
+automatically at all (populated only from `IDRIS2_LIBS`, the
+toolchain's own install dir, and the current working directory). rc2
+has its own separate mechanism for the exact same purpose instead:
+`Compiler.RC2.CC`'s `depPkgLibDirs` (added in `ef045b0`) walks every
+currently-loaded (`-p`'d) package's own install directory and adds
+both `-I<...>/lib` and `-L<...>/lib` automatically, for every rc2
+compile -- so a consumer building with `-p rc2base` never needs to
+point `IDRIS2_CFLAGS`/`IDRIS2_LDFLAGS` at this package's `lib/`
+directory by hand (see "Build & test" above). Installing to `lib/` is
+still the necessary groundwork this all rests on (a genuinely
+portable, self-contained installed copy of this package, not
+scattered across a source checkout) -- `depPkgLibDirs` is what makes
+that groundwork *sufficient* on its own for an rc2 build, unlike
+upstream RefC.
 
 ## Caveat: the `%foreign` lib field must be a bare `-l` name, not a path
 
@@ -145,12 +151,12 @@ prim__String_to_TextBuffer : String -> PrimIO AnyPtr
 ```
 This becomes `-lidris2text`. The linker still needs to be told *where*
 `libidris2text.a` lives, since it isn't on any default search path --
-that's what `IDRIS2_LDFLAGS=-L$INSTALLED_LIB` (see the "Build & test"
-example above) is for. Plain upstream Chez/`idris2 --cg refc` builds
+`depPkgLibDirs` (see "Native library install location" above) already
+handles that automatically for a `-p rc2base` build, no manual
+`IDRIS2_LDFLAGS` needed. Plain upstream Chez/`idris2 --cg refc` builds
 don't derive `-l` flags automatically at all and don't need any of
-this rc2-specific `IDRIS2_CFLAGS`/`IDRIS2_LDFLAGS` plumbing in the
-first place (Chez's own FFI dynamically loads `%foreign`'s lib field
-by name at runtime instead).
+this rc2-specific plumbing in the first place (Chez's own FFI
+dynamically loads `%foreign`'s lib field by name at runtime instead).
 
 ## API
 

@@ -1,8 +1,8 @@
 #ifndef RC2BASE_DOUBLE_CONVERT_H
 #define RC2BASE_DOUBLE_CONVERT_H
 
-#include "rc2/datatypes.h"
-#include "rc2/memory.h"
+#include "datatypes.h"
+#include "memory.h"
 
 // Data.Double.Convert's native side: an opt-in, branch-free fast path
 // for Double<->String, sitting next to (never replacing) rc2's own

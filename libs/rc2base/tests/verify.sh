@@ -59,15 +59,20 @@ echo "=== Check postinstall copied the native library into lib/ ==="
 
 echo "=== rc2 backend: build TestText (against the INSTALLED lib/, not support/c) ==="
 export IDRIS2_PACKAGE_PATH="${IDRIS2_PACKAGE_PATH:-}:$PKG_DIR/.local-install/idris2-0.8.0"
-export IDRIS2_CFLAGS="-I$INSTALLED_LIB -I$REPO_ROOT/install/idris2-0.8.0/support"
-export IDRIS2_LDFLAGS="-L$INSTALLED_LIB"
+# No IDRIS2_CFLAGS/IDRIS2_LDFLAGS needed: Compiler.RC2.CC's own
+# depPkgLibDirs already adds -I<...>/lib and -L<...>/lib for every
+# -p'd package's own installed lib/ (here, $INSTALLED_LIB) automatically
+# -- see libs/rc2base/README.md's "Native library install location".
 # idris2-rc2 always writes its -o output under <cwd>/build/exec/, so cd
 # into tests/ first to get a predictable, self-contained output path.
 nix-shell -p gcc gmp pkg-config --run \
     "cd '$TESTS_DIR' && '$IDRIS2RC2' --cg rc2 -p rc2base -o TestText_idris2Text_verify TestText.idr"
 
 echo "=== Run and diff against TestText.expected ==="
-export LD_LIBRARY_PATH="$REPO_ROOT/install/idris2-0.8.0/support/rc2${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+# No extra LD_LIBRARY_PATH needed either: support/rc2 has no .so of its
+# own, and libidris2_support.so (the one shared runtime .so a compiled
+# rc2 program needs) already came from env.sh's own LD_LIBRARY_PATH,
+# sourced above.
 "$TESTS_DIR/build/exec/TestText_idris2Text_verify" > "$TMP/actual.out" 2>&1
 
 if diff -u "$TESTS_DIR/TestText.expected" "$TMP/actual.out"; then
