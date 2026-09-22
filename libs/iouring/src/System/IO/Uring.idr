@@ -43,32 +43,32 @@ data RawCQE : Type where [external]
 data RawSockAddr : Type where [external]
 
 -- idris2rc2iouring (this package's own shim; ring lifetime, cqe/sockaddr
--- out-param collapsing -- see iouring_util.h)
+-- out-param collapsing -- see idris2rc2_iouring_iouring_util.h)
 
-%foreign "C:idris2rc2_iouring_queue_init, libidris2rc2iouring, iouring_util.h"
+%foreign "C:idris2rc2_iouring_queue_init, libidris2rc2iouring, idris2rc2_iouring_iouring_util.h"
 prim__queueInit : Bits32 -> Bits32 -> PrimIO AnyPtr
-%foreign "C:idris2rc2_iouring_queue_exit, libidris2rc2iouring, iouring_util.h"
+%foreign "C:idris2rc2_iouring_queue_exit, libidris2rc2iouring, idris2rc2_iouring_iouring_util.h"
 prim__queueExit : Ptr RawURing -> PrimIO ()
 
-%foreign "C:idris2rc2_iouring_wait_cqe, libidris2rc2iouring, iouring_util.h"
+%foreign "C:idris2rc2_iouring_wait_cqe, libidris2rc2iouring, idris2rc2_iouring_iouring_util.h"
 prim__waitCqe : Ptr RawURing -> PrimIO AnyPtr
-%foreign "C:idris2rc2_iouring_peek_cqe, libidris2rc2iouring, iouring_util.h"
+%foreign "C:idris2rc2_iouring_peek_cqe, libidris2rc2iouring, idris2rc2_iouring_iouring_util.h"
 prim__peekCqe : Ptr RawURing -> PrimIO AnyPtr
-%foreign "C:idris2rc2_iouring_cqe_res, libidris2rc2iouring, iouring_util.h"
+%foreign "C:idris2rc2_iouring_cqe_res, libidris2rc2iouring, idris2rc2_iouring_iouring_util.h"
 prim__cqeRes : Ptr RawCQE -> PrimIO Int
-%foreign "C:idris2rc2_iouring_cqe_user_data, libidris2rc2iouring, iouring_util.h"
+%foreign "C:idris2rc2_iouring_cqe_user_data, libidris2rc2iouring, idris2rc2_iouring_iouring_util.h"
 prim__cqeUserData : Ptr RawCQE -> PrimIO Bits64
-%foreign "C:idris2rc2_iouring_cqe_flags, libidris2rc2iouring, iouring_util.h"
+%foreign "C:idris2rc2_iouring_cqe_flags, libidris2rc2iouring, idris2rc2_iouring_iouring_util.h"
 prim__cqeFlags : Ptr RawCQE -> PrimIO Bits32
 
-%foreign "C:idris2rc2_iouring_prep_accept_simple, libidris2rc2iouring, iouring_util.h"
+%foreign "C:idris2rc2_iouring_prep_accept_simple, libidris2rc2iouring, idris2rc2_iouring_iouring_util.h"
 prim__prepAcceptSimple : Ptr RawSQE -> Int -> Int -> PrimIO ()
-%foreign "C:idris2rc2_iouring_prep_multishot_accept_simple, libidris2rc2iouring, iouring_util.h"
+%foreign "C:idris2rc2_iouring_prep_multishot_accept_simple, libidris2rc2iouring, idris2rc2_iouring_iouring_util.h"
 prim__prepMultishotAcceptSimple : Ptr RawSQE -> Int -> Int -> PrimIO ()
 
-%foreign "C:idris2rc2_iouring_make_sockaddr, libidris2rc2iouring, iouring_util.h"
+%foreign "C:idris2rc2_iouring_make_sockaddr, libidris2rc2iouring, idris2rc2_iouring_iouring_util.h"
 prim__makeSockAddr : String -> Bits16 -> PrimIO AnyPtr
-%foreign "C:idris2rc2_iouring_sockaddr_len, libidris2rc2iouring, iouring_util.h"
+%foreign "C:idris2rc2_iouring_sockaddr_len, libidris2rc2iouring, idris2rc2_iouring_iouring_util.h"
 prim__sockAddrLen : Ptr RawSockAddr -> PrimIO Bits32
 
 -- liburing (always-real symbols: io_uring_queue_init/_exit proper, not
@@ -306,7 +306,7 @@ prepFsync sqe fd fsyncFlags = primIO (prim__prepFsync sqe.ptr fd fsyncFlags)
 ||| -- this package only covers the connection-oriented operations
 ||| liburing itself speeds up, not socket creation/binding). The peer's
 ||| own address isn't exposed (pass `getpeername` the resulting fd
-||| afterward if needed) -- see `iouring_util.h`'s own
+||| afterward if needed) -- see `idris2rc2_iouring_iouring_util.h`'s own
 ||| `idris2rc2_iouring_prep_accept_simple`. The completion's `res` is
 ||| the new connected socket's file descriptor, or a negative `-errno`.
 export

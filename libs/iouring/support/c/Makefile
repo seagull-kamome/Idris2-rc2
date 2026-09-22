@@ -20,16 +20,16 @@ all: libidris2rc2iouring.a
 # functions and every direct liburing.h binding in
 # src/System/IO/Uring.idr -- already pulls it in via
 # Compiler.RC2.CC's own auto-collected -l<name> flags) -- this archive
-# only ever needs to compile iouring_util.o, never link anything itself.
-iouring_util.o: iouring_util.c iouring_util.h
-	$(CC) -fPIC -Wall -Wextra -O2 $(URING_CFLAGS) -std=gnu11 -c iouring_util.c -o iouring_util.o
+# only ever needs to compile idris2rc2_iouring_iouring_util.o, never link anything itself.
+idris2rc2_iouring_iouring_util.o: idris2rc2_iouring_iouring_util.c idris2rc2_iouring_iouring_util.h
+	$(CC) -fPIC -Wall -Wextra -O2 $(URING_CFLAGS) -std=gnu11 -c idris2rc2_iouring_iouring_util.c -o idris2rc2_iouring_iouring_util.o
 
-libidris2rc2iouring.a: iouring_util.o
-	$(AR) rcs $@ iouring_util.o
+libidris2rc2iouring.a: idris2rc2_iouring_iouring_util.o
+	$(AR) rcs $@ idris2rc2_iouring_iouring_util.o
 
 install: all
 	mkdir -p $(LIBDIR)
-	cp libidris2rc2iouring.a iouring_util.h $(LIBDIR)/
+	cp libidris2rc2iouring.a idris2rc2_iouring_iouring_util.h $(LIBDIR)/
 
 clean:
-	rm -f libidris2rc2iouring.a iouring_util.o
+	rm -f libidris2rc2iouring.a idris2rc2_iouring_iouring_util.o

@@ -1,7 +1,7 @@
 #pragma once
 // Shim for what liburing's own <liburing.h> genuinely can't give a
 // %foreign binding for free -- see ../../doc/iouring.md. Everything
-// here is either a real compiled function (iouring_util.c: ring
+// here is either a real compiled function (idris2rc2_iouring_iouring_util.c: ring
 // init/exit, sockaddr construction) or `static inline` reading a
 // struct field liburing.h itself declares but doesn't expose an
 // accessor for (cqe->res/user_data/flags, sockaddr->sa_family) --
