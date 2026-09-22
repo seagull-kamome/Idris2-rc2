@@ -875,31 +875,26 @@ isNativeRep : Rep -> Bool
 isNativeRep RBoxed = False
 isNativeRep _ = True
 
-||| Pulls every loop-invariant `RLet` binding out of `e`'s own
-||| *unconditional prefix* -- the straight-line chain of `RLet`s
-||| (optionally interleaved with non-branching ownership wrappers)
-||| reached from `e` before hitting the first branch (`RConCase`/
-||| `RConstCase`/`RCmpCase`) or a leaf. Returns the hoisted bindings (in
-||| their own original relative order) alongside the rewritten
-||| remainder with them removed; everything from the first branch
-||| onward -- including a genuinely invariant `ROp`/`RCon` sitting
-||| inside just one arm of it -- is left completely untouched (that's
-||| `Compiler.RC2.Loop`'s own *single-branch case hoisting*/`RCmpCase`
-||| gap, still tracked in `TODO.md`, deliberately not attempted here).
+||| Pulls every loop-invariant `RLet` binding out of `e` -- the
+||| straight-line chain of `RLet`s (optionally interleaved with
+||| non-branching ownership wrappers), recursing into *every* arm of an
+||| `RCmpCase`/`RConCase`/`RConstCase` reached along the way rather than
+||| stopping at the first one. Returns the hoisted bindings (in their
+||| own original relative order) alongside the rewritten remainder with
+||| them removed.
 |||
-||| **Why "unconditional prefix only" is the right -- and sufficient --
-||| scope**: everything in this prefix already runs on *every* pass
-||| through `loop:;`, including the very first one (the label sits at
-||| the very top of the function's own repeating region, before any
-||| exit check). So an expression here is already guaranteed to execute
-||| at least once the moment the function is ever called at all --
-||| hoisting it to run once, ahead of the loop, instead of once per
-||| iteration, can only *reduce* how many times it runs, never turn a
-||| "never reached" execution into a "now reached" one. Something
-||| sitting inside just one arm of a branch doesn't have that
-||| guarantee -- it might never run at all if the loop exits on its
-||| very first check -- which is exactly why that shape stays out of
-||| scope here.
+||| **Why entering branch arms doesn't need the "runs at least once
+||| already" argument a prefix-only scan could rely on**: an expression
+||| sitting inside one arm of a branch might not run at all on a given
+||| iteration, so hoisting it to run *unconditionally*, once, ahead of
+||| the whole loop, is a real change in how many times it executes, not
+||| just a reduction. This is harmless only because of the *next*
+||| restriction below (`isNativeRep rep`): a native computation is pure
+||| arithmetic/construction with no allocation or refcount bookkeeping
+||| attached, so running it on iterations that never needed it costs
+||| cycles, never correctness. Entering branch arms doesn't relax the
+||| `Boxed` restriction at all -- if anything it's the reason that
+||| restriction matters more now, not less (see below).
 |||
 ||| **Why no extra ownership bookkeeping is needed for the operands
 ||| being *read***: a hoisted binding's own `postDrop`/leading `RDup`
@@ -920,32 +915,39 @@ isNativeRep _ = True
 ||| this part is essential, confirmed the hard way**: the reasoning
 ||| above is only about the operands being *read*; it says nothing
 ||| about the hoisted binding's own *result*, `var` itself. A `RBoxed`
-||| result has its own, separate liveness story *inside the loop body*
-||| that this pass's "unconditional prefix" scan never looks past: if
-||| `var` is a fresh Boxed construction only actually *used* on one arm
-||| of the branch immediately following the prefix (e.g. only in the
-||| loop's own exit value, never on the `continue`-taking arm),
-||| `Compiler.RC2.RC`'s own `annotate` already placed a `drop [var]` at
-||| the top of the *other* arm (the one that doesn't use it -- exactly
-||| the "at most one `RDrop` per branch entry" pattern this whole
-||| ownership system is built on). That drop sits *past* this pass's
-||| own scan boundary (inside a branch, not the prefix), so hoisting
-||| `var`'s construction out from under it leaves that drop stale: what
-||| used to release a fresh, per-iteration allocation now double-frees
-||| the *one*, shared, hoisted value on every iteration that takes the
-||| non-using arm. Reproduced directly: hoisting a `Boxed`-`Rep`
-||| invariant `RCon` used only in one arm crashed with `malloc():
-||| unaligned tcache chunk detected` and a `valgrind`-confirmed
-||| double-free the first time this restriction was missing. A native
-||| result sidesteps the whole issue structurally -- native values are
-||| never dup'd/dropped anywhere, so no branch can ever hold a stale
-||| drop for one -- which is why `hoistInvariantPrefix` below gates on
-||| `isNativeRep rep`, not just `isInvariantExpr`.
+||| result has its own, separate liveness story *inside the loop body*:
+||| if `var` is a fresh Boxed construction only actually *used* on one
+||| arm of a branch (e.g. only in the loop's own exit value, never on
+||| the `continue`-taking arm), `Compiler.RC2.RC`'s own `annotate`
+||| already placed a `drop [var]` at the top of the *other* arm (the one
+||| that doesn't use it -- the "at most one `RDrop` per branch entry"
+||| pattern this whole ownership system is built on). Hoisting `var`'s
+||| construction out from under that arm, to run unconditionally before
+||| the loop, leaves that drop stale: what used to release a fresh,
+||| per-iteration allocation now double-frees the *one*, shared, hoisted
+||| value on every iteration that takes the non-using arm -- fixing this
+||| up would need this pass to also patch that other arm's own drop, the
+||| same compensating-drop bookkeeping `Compiler.RC2.Sink` already does
+||| for the opposite move (sinking *into* one arm instead of hoisting
+||| out of one). Reproduced directly before this restriction existed:
+||| hoisting a `Boxed`-`Rep` invariant `RCon` used only in one arm
+||| crashed with `malloc(): unaligned tcache chunk detected`, a
+||| `valgrind`-confirmed genuine double-free. A native result sidesteps
+||| the whole issue structurally -- native values are never dup'd/
+||| dropped anywhere in this runtime, so no branch can ever hold a stale
+||| drop for one -- which is why `hoistInvariantPrefix` below still
+||| gates on `isNativeRep rep`, not just `isInvariantExpr`, now that the
+||| scan itself reaches inside every arm.
 |||
 ||| `var` itself is deliberately *not* added to `variant` when hoisted
-||| -- it's now a loop-external value too, so a later prefix binding
-||| that only reads *it* remains eligible for hoisting in the same
-||| pass, no fixed-point iteration required.
+||| -- it's now a loop-external value too, so a later binding that only
+||| reads *it*, anywhere, including a sibling arm, remains eligible for
+||| hoisting in the same pass, no fixed-point iteration required. Each
+||| `RConAlt`'s own pattern-bound `args`, by contrast, only exist for the
+||| duration of that one arm: recursing into it extends `variant` with
+||| them first, so an expression reading a just-destructured field is
+||| correctly excluded rather than hoisted somewhere it's no longer even
+||| in scope.
 hoistInvariantPrefix : SortedSet Int -> RCExp -> (List (Int, Rep, RCExp), RCExp)
 hoistInvariantPrefix variant (RLet fc var rep value body) =
     if isNativeRep rep && isInvariantExpr variant value
@@ -963,6 +965,24 @@ hoistInvariantPrefix variant (RReleaseReuse fc v cont) =
     let (hoisted, rest) = hoistInvariantPrefix variant cont in (hoisted, RReleaseReuse fc v rest)
 hoistInvariantPrefix variant (RReuseOffer fc sc dupOnShared dropOnUnique cont) =
     let (hoisted, rest) = hoistInvariantPrefix variant cont in (hoisted, RReuseOffer fc sc dupOnShared dropOnUnique rest)
+hoistInvariantPrefix variant (RCmpCase fc op args postDrop t f) =
+    let (hoistedT, t') = hoistInvariantPrefix variant t
+        (hoistedF, f') = hoistInvariantPrefix variant f
+    in (hoistedT ++ hoistedF, RCmpCase fc op args postDrop t' f')
+hoistInvariantPrefix variant (RConCase fc sc alts mDef) =
+    let altResults = map (\(MkRConAlt name ci tag args body) =>
+                             let (h, body') = hoistInvariantPrefix (union variant (fromList args)) body
+                             in (h, MkRConAlt name ci tag args body')) alts
+        defResult = map (hoistInvariantPrefix variant) mDef
+    in (concatMap fst altResults ++ maybe [] fst defResult,
+        RConCase fc sc (map snd altResults) (map snd defResult))
+hoistInvariantPrefix variant (RConstCase fc sc alts mDef) =
+    let altResults = map (\(MkRConstAlt c body) =>
+                             let (h, body') = hoistInvariantPrefix variant body
+                             in (h, MkRConstAlt c body')) alts
+        defResult = map (hoistInvariantPrefix variant) mDef
+    in (concatMap fst altResults ++ maybe [] fst defResult,
+        RConstCase fc sc (map snd altResults) (map snd defResult))
 hoistInvariantPrefix _ e = ([], e)
 
 ------------------------------------------------------------------------

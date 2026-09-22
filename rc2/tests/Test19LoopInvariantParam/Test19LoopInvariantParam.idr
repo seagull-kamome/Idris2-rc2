@@ -11,7 +11,10 @@ module Main
 -- ahead of the loop (mirroring Compiler.RC2.ConAltNative's own field
 -- caching). Also covers loop-invariant EXPRESSION hoisting, the same
 -- pass's next stage building on this (formerly a separate
--- Test20LoopInvariantExpr.idr, merged in below as `sumBounded`).
+-- Test20LoopInvariantExpr.idr, merged in below as `sumBounded`), and
+-- its own further extension to recurse into branch arms rather than
+-- stopping at the first one (`sumWithArmLocalBonus`/
+-- `sumWithArmLocalBonusNat`).
 sumWithTag : String -> Int -> Int -> Int -> Int
 sumWithTag tag limit acc n =
   if n >= limit
@@ -85,6 +88,29 @@ sumOrCtx tag extra acc n limit =
         then ctx
         else sumOrCtx tag extra (acc + n) (n + 1) limit
 
+-- `hoistInvariantPrefix` now also recurses into branch arms instead of
+-- stopping at the first one it reaches: `bonus` sits inside the loop's
+-- own continuing (`else`) arm, not the function's unconditional prefix
+-- (there is none -- the fused `RCmpCase` is the very first thing in
+-- the body), yet only reads `limit`'s own already-hoisted native
+-- shadow -- so it should still get pulled out to a one-time
+-- computation ahead of the loop instead of recomputed every iteration.
+sumWithArmLocalBonus : Int -> Int -> Int -> Int
+sumWithArmLocalBonus limit acc n =
+  if n >= limit
+     then acc
+     else let bonus = limit * 2
+          in sumWithArmLocalBonus limit (acc + n + bonus) (n + 1)
+
+-- Same extension, `RConCase` path: `bonus` sits inside the `S k` arm,
+-- reading only `limit` -- never `k`, the arm's own pattern-bound field
+-- (which must stay excluded from hoisting, unlike `limit`).
+sumWithArmLocalBonusNat : Int -> Nat -> Int -> Int
+sumWithArmLocalBonusNat limit Z acc = acc
+sumWithArmLocalBonusNat limit (S k) acc =
+  let bonus = limit * 2
+  in sumWithArmLocalBonusNat limit k (acc + bonus)
+
 main : IO ()
 main = do
   printLn (sumWithTag "ctx" 1000 0 0)
@@ -94,3 +120,5 @@ main = do
   -- absorbed from former Test21BoxedInvariantNotHoisted
   case sumOrCtx "hello" 42 0 0 3 of
        MkCtx s e => putStrLn (s ++ show e)
+  printLn (sumWithArmLocalBonus 500 0 0)
+  printLn (sumWithArmLocalBonusNat 1000 5 0)
