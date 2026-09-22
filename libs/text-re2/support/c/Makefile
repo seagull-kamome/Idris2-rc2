@@ -23,15 +23,15 @@ all: libidris2rc2re2.so
 # doesn't need LD_LIBRARY_PATH set up, at the cost of tying the .so to
 # this machine's nix store (acceptable for this project's own dev-
 # environment scope).
-re2_util.o: re2_util.cpp re2_util.h
-	$(CXX) -fPIC -Wall -Wextra -O2 $(RE2_CFLAGS) -std=c++17 -c re2_util.cpp -o re2_util.o
+idris2rc2_text_re2_re2_util.o: idris2rc2_text_re2_re2_util.cpp idris2rc2_text_re2_re2_util.h
+	$(CXX) -fPIC -Wall -Wextra -O2 $(RE2_CFLAGS) -std=c++17 -c idris2rc2_text_re2_re2_util.cpp -o idris2rc2_text_re2_re2_util.o
 
-libidris2rc2re2.so: re2_util.o
-	$(CXX) -shared -fPIC -o $@ re2_util.o $(RE2_LIBS) $(RE2_RPATH)
+libidris2rc2re2.so: idris2rc2_text_re2_re2_util.o
+	$(CXX) -shared -fPIC -o $@ idris2rc2_text_re2_re2_util.o $(RE2_LIBS) $(RE2_RPATH)
 
 install: all
 	mkdir -p $(LIBDIR)
-	cp libidris2rc2re2.so re2_util.h $(LIBDIR)/
+	cp libidris2rc2re2.so idris2rc2_text_re2_re2_util.h $(LIBDIR)/
 
 clean:
-	rm -f libidris2rc2re2.so re2_util.o
+	rm -f libidris2rc2re2.so idris2rc2_text_re2_re2_util.o

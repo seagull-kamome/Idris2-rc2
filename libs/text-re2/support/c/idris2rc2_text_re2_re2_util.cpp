@@ -1,4 +1,4 @@
-#include "re2_util.h"
+#include "idris2rc2_text_re2_re2_util.h"
 
 #include <re2/re2.h>
 

@@ -1,5 +1,5 @@
-#ifndef RE2_UTIL_H
-#define RE2_UTIL_H
+#ifndef IDRIS2RC2_TEXT_RE2_RE2_UTIL_H
+#define IDRIS2RC2_TEXT_RE2_RE2_UTIL_H
 
 #ifdef __cplusplus
 extern "C" {

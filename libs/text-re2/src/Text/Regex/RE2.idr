@@ -19,37 +19,37 @@ import System.FFI
 
 data RawRegex : Type where [external]
 
-%foreign "C:idris2rc2_regex_compile, libidris2rc2re2, re2_util.h"
+%foreign "C:idris2rc2_regex_compile, libidris2rc2re2, idris2rc2_text_re2_re2_util.h"
 prim__regexCompile : String -> PrimIO AnyPtr
 
-%foreign "C:idris2rc2_regex_free, libidris2rc2re2, re2_util.h"
+%foreign "C:idris2rc2_regex_free, libidris2rc2re2, idris2rc2_text_re2_re2_util.h"
 prim__regexFree : Ptr RawRegex -> PrimIO ()
 
-%foreign "C:idris2rc2_regex_num_groups, libidris2rc2re2, re2_util.h"
+%foreign "C:idris2rc2_regex_num_groups, libidris2rc2re2, idris2rc2_text_re2_re2_util.h"
 prim__regexNumGroups : GCPtr RawRegex -> PrimIO Int
 
-%foreign "C:idris2rc2_regex_full_match, libidris2rc2re2, re2_util.h"
+%foreign "C:idris2rc2_regex_full_match, libidris2rc2re2, idris2rc2_text_re2_re2_util.h"
 prim__regexFullMatch : GCPtr RawRegex -> String -> PrimIO Int
 
-%foreign "C:idris2rc2_regex_partial_match, libidris2rc2re2, re2_util.h"
+%foreign "C:idris2rc2_regex_partial_match, libidris2rc2re2, idris2rc2_text_re2_re2_util.h"
 prim__regexPartialMatch : GCPtr RawRegex -> String -> PrimIO Int
 
-%foreign "C:idris2rc2_regex_find, libidris2rc2re2, re2_util.h"
+%foreign "C:idris2rc2_regex_find, libidris2rc2re2, idris2rc2_text_re2_re2_util.h"
 prim__regexFind : GCPtr RawRegex -> String -> PrimIO Int
 
-%foreign "C:idris2rc2_regex_group_count, libidris2rc2re2, re2_util.h"
+%foreign "C:idris2rc2_regex_group_count, libidris2rc2re2, idris2rc2_text_re2_re2_util.h"
 prim__regexGroupCount : GCPtr RawRegex -> PrimIO Int
 
-%foreign "C:idris2rc2_regex_group_present, libidris2rc2re2, re2_util.h"
+%foreign "C:idris2rc2_regex_group_present, libidris2rc2re2, idris2rc2_text_re2_re2_util.h"
 prim__regexGroupPresent : GCPtr RawRegex -> Int -> PrimIO Int
 
-%foreign "C:idris2rc2_regex_group, libidris2rc2re2, re2_util.h"
+%foreign "C:idris2rc2_regex_group, libidris2rc2re2, idris2rc2_text_re2_re2_util.h"
 prim__regexGroup : GCPtr RawRegex -> Int -> PrimIO String
 
-%foreign "C:idris2rc2_regex_replace, libidris2rc2re2, re2_util.h"
+%foreign "C:idris2rc2_regex_replace, libidris2rc2re2, idris2rc2_text_re2_re2_util.h"
 prim__regexReplace : GCPtr RawRegex -> String -> String -> PrimIO String
 
-%foreign "C:idris2rc2_regex_global_replace, libidris2rc2re2, re2_util.h"
+%foreign "C:idris2rc2_regex_global_replace, libidris2rc2re2, idris2rc2_text_re2_re2_util.h"
 prim__regexGlobalReplace : GCPtr RawRegex -> String -> String -> PrimIO String
 
 -------------------------------------------------------------------------------
