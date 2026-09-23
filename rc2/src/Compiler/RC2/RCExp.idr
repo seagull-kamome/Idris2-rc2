@@ -446,6 +446,94 @@ export
 mentionedLocals : RCExp -> SortedSet RCLocal
 mentionedLocals = mentionedLocalsAcc empty
 
+||| One step of `ownedUsedIn`'s own accumulation: record `v`, but only
+||| if it's one of the targets and isn't recorded already (so the count
+||| alongside stays exact, which is what makes the early exit safe).
+targetHit : SortedSet RCLocal -> (SortedSet RCLocal, Nat) -> RCLocal -> (SortedSet RCLocal, Nat)
+targetHit targets st@(acc, n) v =
+    if contains v targets && not (contains v acc) then (insert v acc, S n) else st
+
+targetHits : SortedSet RCLocal -> (SortedSet RCLocal, Nat) -> List RCLocal -> (SortedSet RCLocal, Nat)
+targetHits targets st vs = foldl (targetHit targets) st vs
+
+ownedUsedGo : (targets : SortedSet RCLocal) -> (wanted : Nat)
+           -> (SortedSet RCLocal, Nat) -> RCExp -> (SortedSet RCLocal, Nat)
+ownedUsedGo targets wanted st@(_, found) e =
+    if found >= wanted then st else step e
+  where
+    hit : (SortedSet RCLocal, Nat) -> RCLocal -> (SortedSet RCLocal, Nat)
+    hit = targetHit targets
+
+    hits : (SortedSet RCLocal, Nat) -> List RCLocal -> (SortedSet RCLocal, Nat)
+    hits = targetHits targets
+
+    step : RCExp -> (SortedSet RCLocal, Nat)
+    step (RV _ v) = hit st v
+    step (RAppName _ _ _ args) = hits st args
+    step (RAppNameRep _ _ _ _ postDrop args) = hits (hits st postDrop) args
+    step (RAppFFIInline _ _ _ _ postDrop args) = hits (hits st postDrop) args
+    step (RUnderApp _ _ _ args) = hits st args
+    step (RApp _ _ c args) = hits (hit st c) args
+    -- `reuseFrom`/`postDrop` positions are deliberately not counted, to
+    -- stay exactly `freeLocalsR`'s own answer (see its own note on why
+    -- they'd be redundant there).
+    step (RCon _ _ _ _ args _) = hits st args
+    step (ROp _ _ _ args _) = hits st (toList args)
+    step (RExtPrim _ _ _ args _) = hits st args
+    step (RStructGet _ structVar _ _ _) = hit st structVar
+    step (RStructSet _ structVar _ _ value _) = hit (hit st structVar) value
+    step (RLet _ _ _ value body) =
+        ownedUsedGo targets wanted (ownedUsedGo targets wanted st value) body
+    step (RCmpCase _ _ args _ t f) =
+        ownedUsedGo targets wanted (ownedUsedGo targets wanted (hits st (toList args)) t) f
+    step (RConCase _ sc alts mDef) =
+        let st' = foldl (\a, (MkRConAlt _ _ _ _ body) => ownedUsedGo targets wanted a body)
+                        (hit st sc) alts
+        in maybe st' (ownedUsedGo targets wanted st') mDef
+    step (RConstCase _ sc alts mDef) =
+        let st' = foldl (\a, (MkRConstAlt _ body) => ownedUsedGo targets wanted a body)
+                        (hit st sc) alts
+        in maybe st' (ownedUsedGo targets wanted st') mDef
+    step (RDup _ v _ body) = ownedUsedGo targets wanted (hit st v) body
+    step (RDrop _ vars body) = ownedUsedGo targets wanted (hits st vars) body
+    step (RFree _ v body) = ownedUsedGo targets wanted (hit st v) body
+    step (RReleaseReuse _ v body) = ownedUsedGo targets wanted (hit st v) body
+    step (RReuseOffer _ sc dupOnShared dropOnUnique body) =
+        ownedUsedGo targets wanted (hits (hits (hit st sc) dupOnShared) dropOnUnique) body
+    -- `freeLocalsR` has no case for either and falls through to `empty`;
+    -- covering them here is strictly more conservative, and neither can
+    -- occur at `Compiler.RC2.RC`'s own stage anyway (both are built
+    -- later, by `Compiler.RC2.Loop`).
+    step (RLoop _ _ initial prologueDrop body) =
+        ownedUsedGo targets wanted (hits (hits st initial) prologueDrop) body
+    step (RLoopContinue _ args postDrop) = hits (hits st args) postDrop
+    step (RMemoize _ _ _ body) = ownedUsedGo targets wanted st body
+    step _ = st
+
+||| `intersection targets (freeLocalsR e)`, without ever building
+||| `freeLocalsR e`: only locals in `targets` are collected, and the
+||| walk stops as soon as all of them have been found.
+|||
+||| This is the shape every ownership decision in `Compiler.RC2.RC`
+||| actually wants -- "which of the handful of locals I currently own
+||| are still used below" -- and asking it directly rather than via
+||| `freeLocalsR` is what keeps it off the pass's own critical path.
+||| `freeLocalsR body` at every `RLet` and every branch arm builds a set
+||| of *every* local below that point, so a nested case tree or a long
+||| ANF let chain re-derives (and re-allocates) an ever-larger set per
+||| level: measured on `idris2-lsp`, 2.7s of `"rc2: RC annotate + Reuse
+||| + ConAltNative"`'s own 3.25s.
+|||
+||| Binder subtraction is deliberately skipped: a target is by
+||| construction a local already bound *above* the point being asked
+||| about, and every local id within a definition is unique
+||| (`Compiler.RC2.Util`'s own `VarId`), so nothing below can rebind
+||| one.
+export
+ownedUsedIn : (targets : SortedSet RCLocal) -> RCExp -> SortedSet RCLocal
+ownedUsedIn targets e =
+    fst (ownedUsedGo targets (length (Prelude.toList targets)) (empty, 0) e)
+
 ||| How many times `l` is referenced anywhere in `e` -- unlike
 ||| `freeLocalsR`'s set (which collapses repeats), RC.idr's
 ||| `inlineableRep` needs the exact count to tell "referenced exactly

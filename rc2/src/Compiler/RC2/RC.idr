@@ -544,17 +544,16 @@ boxedOperands natives = filter isBoxedOperand
 mutual
     branchBody : SortedSet RCLocal -> SortedSet RCLocal -> RCExp -> Core RCExp
     branchBody natives ownedWithArgs body = do
-        let (shouldDrop, actualOwned) = dropUnusedOwnedVars ownedWithArgs (freeLocalsR body)
+        -- `ownedUsedIn` rather than `intersection ... (freeLocalsR body)`:
+        -- the same answer, without building a set of every local below
+        -- this arm just to keep the handful this scope owns. See its own
+        -- doc comment for the measurement that motivated it.
+        let actualOwned = ownedUsedIn ownedWithArgs body
+        let shouldDrop = Prelude.toList (difference ownedWithArgs actualOwned)
         rest <- annotate natives actualOwned body
         pure $ case shouldDrop of
                     [] => rest
                     _  => RDrop emptyFC shouldDrop rest
-      where
-        dropUnusedOwnedVars : Owned -> SortedSet RCLocal -> (List RCLocal, Owned)
-        dropUnusedOwnedVars owned usedVars =
-            let actualOwned = intersection owned usedVars in
-            let shouldDrop = difference owned actualOwned in
-            (Prelude.toList shouldDrop, actualOwned)
 
     annotate : SortedSet RCLocal -> Owned -> RCExp -> Core RCExp
     -- Immortal, same reasoning as splitBorrows/dropIfLastUse/
@@ -593,8 +592,13 @@ mutual
     annotate natives owned (RApp fc lazy c args) =
         pure $ wrapDups fc (splitBorrows natives owned (c :: args)) (RApp fc lazy c args)
     annotate natives owned (RLet fc var rep value body) = do
-        let usedVars = freeLocalsR body
-        let borrowVal = intersection owned (delete (RCLoc var) usedVars)
+        -- Only `var` itself and the currently-owned locals are ever
+        -- asked about below, so `ownedUsedIn` answers both questions in
+        -- one early-exiting walk instead of building `freeLocalsR body`
+        -- -- a set of every local in the rest of the chain -- at every
+        -- single `RLet`. See `ownedUsedIn`'s own doc comment.
+        let usedVars = ownedUsedIn (insert (RCLoc var) owned) body
+        let borrowVal = delete (RCLoc var) usedVars
         -- Never add a `natives`-listed local to `owned` -- whether it's
         -- Native (no refcount at all) or a Boxed-but-alwaysUnboxed local
         -- (has one, but dup/drop on it are unconditional no-ops anyway,
