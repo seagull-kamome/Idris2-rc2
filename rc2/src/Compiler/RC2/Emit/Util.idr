@@ -1184,9 +1184,12 @@ finalizeSink fc (SinkReturn _) valStr = emit fc "return \{valStr};"
 ||| (see `Compiler.RC2.Emit`'s `emitRC` doc comment). A `SinkReturn` has
 ||| no statement position after it for the drop to land in (same problem
 ||| `emitNativeReturn` solves for a native return), so a non-empty `drop`
-||| captures `valStr` into a scratch temporary first. Was duplicated
-||| between `emitAppNameRepInto` and `emitAppFFIInlineInto` before both
-||| were rewritten to share this.
+||| captures `valStr` into a scratch temporary first. Every other sink
+||| assigns `valStr` straight into its own destination and drops after
+||| -- which is the whole point of routing a leaf through here rather
+||| than materialising its own unconditional scratch variable: a
+||| `SinkVar` then reads `IDRIS2RC2_Value *var_N = <expr>;` instead of
+||| a two-line `primVar_N = <expr>; var_N = primVar_N;`.
 export
 finalizeSinkWithDrop : {auto a : Ref ArgCounter Nat}
                      -> {auto oft : Ref OutfileText Output}

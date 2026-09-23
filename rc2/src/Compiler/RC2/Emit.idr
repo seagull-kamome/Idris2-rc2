@@ -1088,8 +1088,6 @@ emitRC sink (ROp fc _ op args postDrop) _ = do
     -- fabricate for a Native operand, so it can be freed below).
     argsWithFresh <- rc2traverseVect (boxOpArg fc) args
     let argStrs = map fst argsWithFresh
-    let resultVar = "primVar_" ++ !(getNextCounter)
-    emit fc $ "IDRIS2RC2_Value *" ++ resultVar ++ " = " ++ cOp op argStrs ++ ";"
     -- `postDrop`: see emitRC's own doc comment. Separately, any
     -- ephemeral box `boxOpArg` had to fabricate for a Native operand
     -- (folded into its own returned list alongside any InlineMap'd
@@ -1103,12 +1101,10 @@ emitRC sink (ROp fc _ op args postDrop) _ = do
     -- operand handed to it itself, reusing a uniquely-referenced
     -- one's own heap allocation in place where possible -- see
     -- rc2/doc/rop-reuse.md.
-    if isReuseConsumingOp op
-       then pure ()
-       else do
-         removeVars $ map varName postDrop
-         removeVars $ concatMap snd (toList argsWithFresh)
-    finalizeSink fc sink resultVar
+    let drops = if isReuseConsumingOp op
+                   then []
+                   else map varName postDrop ++ concatMap snd (toList argsWithFresh)
+    finalizeSinkWithDrop fc sink (cOp op argStrs) drops
 
 emitRC sink (RExtPrim fc _ p args postDrop) _ = do
     -- prim__getField/prim__setField never reach here -- Compiler.RC2.RC's
@@ -1128,19 +1124,13 @@ emitRC sink (RExtPrim fc _ p args postDrop) _ = do
     -- ordinary ROp's operands (see RC.idr's own annotate RExtPrim
     -- case) -- box any that happen to be native locals first.
     argsWithPending <- traverse rcVarToBoxedC args
-    -- Materialize the call into a fresh C variable (like the ROp
-    -- case above) BEFORE dropping any postDrop argument -- args
-    -- must still be alive while the call itself actually reads
-    -- them; only after that's emitted is it safe to drop them.
-    let resultVar = "extprimVar_" ++ !(getNextCounter)
-    emit fc $ "IDRIS2RC2_Value *" ++ resultVar ++ " = idris2rc2_\{cName p}("++ showSep ", " (map fst argsWithPending) ++");"
     -- `postDrop`: see emitRC's own doc comment (same rule as the ROp
     -- case above) -- each argument's own InlineMap'd pending drop
     -- (`rcVarToBoxedC`'s own doc comment) needs exactly the same
     -- timing.
-    removeVars $ map varName postDrop
-    removeVars $ concatMap snd argsWithPending
-    finalizeSink fc sink resultVar
+    finalizeSinkWithDrop fc sink
+      "idris2rc2_\{cName p}(\{showSep ", " (map fst argsWithPending)})"
+      (map varName postDrop ++ concatMap snd argsWithPending)
 
 -- Part D (doc/c-struct-support.md's "Design" section): resolve
 -- structName/fieldName against StructDefs (Part B/C), then render
@@ -1157,7 +1147,6 @@ emitRC sink (RStructGet fc structVar sn fn postDrop) _ = do
         | Nothing => throw $ InternalError "[rc2] RStructGet: unknown field \{fn} of struct \{sn}"
     (ptrBoxed, pending) <- rcVarToBoxedC structVar
     let ptrC = extractValue CLangC CFPtr ptrBoxed
-    let resultVar = "primVar_" ++ !(getNextCounter)
     let rawFieldExpr = "((\{sn}*)\{ptrC})->\{fn}"
     -- `sn`'s own real field declaration (curl/curl.h's, for an
     -- `externStruct`-declared name -- rc2/doc/directives.md) can be
@@ -1182,11 +1171,9 @@ emitRC sink (RStructGet fc structVar sn fn postDrop) _ = do
     -- explicit cast `ffiRawCall`'s own ordinary FFI-return handling
     -- already applies (its own `packCFType` call, just above this
     -- one in this file) is needed here too.
-    emit fc $ "IDRIS2RC2_Value *" ++ resultVar ++ " = (IDRIS2RC2_Value*)"
-                ++ packCFType ty fieldExpr ++ ";"
-    removeVars $ map varName postDrop
-    removeVars pending
-    finalizeSink fc sink resultVar
+    finalizeSinkWithDrop fc sink
+      ("(IDRIS2RC2_Value*)" ++ packCFType ty fieldExpr)
+      (map varName postDrop ++ pending)
 
 emitRC sink (RStructSet fc structVar sn fn value postDrop) _ = do
     structDefs <- get StructDefs
