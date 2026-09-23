@@ -324,7 +324,7 @@ applySpecClosure defs = do
     timingEnabled <- elem "timing" <$> getDirectives (Other "rc2")
     keys <- maybeLogTimeOver timingEnabled 0 (pure "rc2: SpecClosure: collect+group opportunities") (pure (SortedMap.toList byKey))
     when timingEnabled $
-      coreLift $ putStrLn $ "TIMING rc2: SpecClosure: " ++ show (length opportunities) ++ " opportunities, "
+      coreLift $ putStrLn $ "TIMING rc2: SpecClosure: " ++ show (sum (map (length . snd) keys)) ++ " opportunities, "
                              ++ show (length keys) ++ " distinct keys, " ++ show (length defs) ++ " defs"
     caf <- maybeLogTimeOver timingEnabled 0 (pure ("rc2: SpecClosure: rebuildCafTable (" ++ show (length defs) ++ " defs, once)"))
              (pure (rebuildCafTable defs))
@@ -342,13 +342,24 @@ applySpecClosure defs = do
   where
     defOf : SortedMap Name RCDef
     defOf = SortedMap.fromList defs
-    opportunities : List Opportunity
-    opportunities = concatMap (\(_, d) => case d of MkRCFun _ _ _ body => collectOpportunities empty body; _ => []) defs
     -- `missing` is part of the key, not just `target` (doc's own
     -- "Internal structure" -> "Records" paragraph).
+    addOpp : SortedMap (Name, Nat, Name, Nat) (List Opportunity) -> Opportunity
+          -> SortedMap (Name, Nat, Name, Nat) (List Opportunity)
+    addOpp acc opp = insertWith (++) (opp.callee, opp.argPos, opp.closure.target, opp.closure.missing) [opp] acc
+
+    -- Groups each definition's own opportunities into the map as they
+    -- are collected, rather than flattening them into one list first
+    -- (`concatMap`, the obvious spelling): `concat` left-nests `++`, so
+    -- every definition's list gets copied past the whole prefix built
+    -- so far. Measured on `idris2-lsp` (32.4k definitions, 12.2k
+    -- opportunities): ~0.9s of this pass's own time went there. Same
+    -- trap, and same fix, as `Compiler.RC2.LateInline`'s own `analyse`.
     byKey : SortedMap (Name, Nat, Name, Nat) (List Opportunity)
-    byKey = foldl (\acc, opp => insertWith (++) (opp.callee, opp.argPos, opp.closure.target, opp.closure.missing) [opp] acc)
-                  (the (SortedMap (Name, Nat, Name, Nat) (List Opportunity)) empty) opportunities
+    byKey = foldl (\acc, (_, d) => case d of
+                        MkRCFun _ _ _ body => foldl addOpp acc (collectOpportunities empty body)
+                        _ => acc)
+                  (the (SortedMap (Name, Nat, Name, Nat) (List Opportunity)) empty) defs
 
     ||| `paramVar` at `argPos` in `g`'s own args, if it passes
     ||| `paramLooksSpecializable` for `missing`; `Nothing` otherwise.
