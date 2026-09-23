@@ -231,15 +231,49 @@ future caller that someday hands it an immortal closure.
 
 ## Scope / limitations
 
-This only folds the dictionary's own *construction* cost -- the one
-allocation-per-call this document is about. Per-byte *dispatch
-through* the dictionary (an actual method call, `idris2rc2_applyClosure`
-against a `RCLoc`-read dictionary field) is entirely unchanged, still
-a boxed indirect call. That's a separate, much larger problem
-(specializing the call site to the concrete method once the dictionary
-value is known statically) -- see `TODO.md`'s "Performance:
+The original pass folded only the dictionary's own *construction*
+cost -- the one allocation-per-call this document is about. Dispatch
+*through* the dictionary (an actual method call,
+`idris2rc2_applyClosure`) stayed a boxed indirect call.
+
+### Saturated application of a folded closure is now a direct call
+
+The half of that gap that turns out not to be hard at all:
+`RCConstClosure` is a true leaf with **no captured values**, so its
+`missing` is the callee's whole remaining arity, and an application
+supplying exactly that many arguments leaves nothing deferred. It is
+a plain direct call. `foldConst`'s own `RApp` case rewrites it:
+
+```idris
+RApp fc lazy (RCConstClosure n missing) args   -- length args == missing
+  ==> RAppName fc lazy n args
+```
+
+What that removes per site: an `idris2rc2_applyClosure` (arity check,
+argument copy, dispatch through `support/rc2/runtime.c`'s own
+function-pointer table), the read of the `constclosure_N` static, and
+the static itself once nothing else references it
+(`Compiler.RC2.DeadCode`). What it *adds* is bigger than any of those:
+a **named** call, which `Compiler.RC2.SpecClosure`,
+`Compiler.RC2.LateInline` and `Compiler.RC2.DualABI` can all see
+through -- an `RApp` is opaque to every one of them.
+
+Measured over a whole idris2-lsp build: of 16,400 `apply` nodes, 4,842
+targeted a constant closure and 3,881 of those saturated it. `apply`
+16,400 -> 12,519, `call` 49,530 -> 53,409. An under-application
+(`length args < missing`, the remaining 961) still needs a real
+closure and is unchanged; over-application can't occur, since
+`RC.idr`'s own `collectAppChain` never merges past a saturation point.
+
+### Still open
+
+Dispatch through a dictionary field read at runtime (an
+`idris2rc2_applyClosure` against a genuine `RCLoc`) is still a boxed
+indirect call -- 11,558 of idris2-lsp's own `apply` nodes. That needs
+the call site specialized once the dictionary *value* is known, not
+just the closure constant; see `TODO.md`'s "Performance:
 interface-dictionary method dispatch stays boxed even when the
-concrete instance is known" for the still-open half of that gap.
+concrete instance is known".
 
 ## Follow-up (commit `0e7c755`): alias propagation, and the general call-argument case
 

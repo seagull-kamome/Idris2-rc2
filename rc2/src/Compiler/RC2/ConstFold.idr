@@ -43,7 +43,7 @@ import Data.Vect
 ||| "Double -> String", and "String as Cast's source" sections for the
 ||| full investigation of every excluded direction, including why each
 ||| exclusion can't just be inferred from `intKind`'s current shape.
-foldableOp : PrimFn arity -> Bool
+foldableOp : {0 arity : Nat} -> PrimFn arity -> Bool
 foldableOp BelieveMe = False
 foldableOp (Cast IntType _) = False
 foldableOp (Cast _ IntType) = False
@@ -267,7 +267,34 @@ foldConst caf env (RAppName fc lazy n args) =
 -- unchanged. See rc2/doc/const-closure-fold.md's "Design" section.
 foldConst _ env (RUnderApp fc n missing []) = RV fc (RCConstClosure n missing)
 foldConst _ env (RUnderApp fc n missing args) = RUnderApp fc n missing (map (resolveLocal env) args)
-foldConst _ env (RApp fc lazy c args) = RApp fc lazy (resolveLocal env c) (map (resolveLocal env) args)
+-- Applying a *constant* closure that this application saturates is a
+-- plain direct call: `RCConstClosure` is a true leaf with no captured
+-- values at all (see its own doc comment in RCExp.idr), so its
+-- `missing` is `n`'s whole remaining arity and supplying exactly that
+-- many arguments leaves nothing deferred. Emitting it as `RApp`
+-- instead costs an `idris2rc2_applyClosure` -- an arity check, an
+-- argument copy and a dispatch through `support/rc2/runtime.c`'s own
+-- function-pointer table -- plus the `constclosure_N` static the
+-- closure is read out of, for a callee that was statically known all
+-- along. It also leaves the call opaque to every later pass:
+-- `Compiler.RC2.SpecClosure`, `Compiler.RC2.LateInline` and
+-- `Compiler.RC2.DualABI` all key off a *named* call, and a direct one
+-- here is what lets them see through it at all.
+--
+-- An under-application (`length args < missing`) still needs a real
+-- closure and falls through unchanged; over-application can't occur
+-- (`RC.idr`'s own `collectAppChain` never merges past a saturation
+-- point). Closes `doc/const-closure-fold.md`'s "Scope / limitations"
+-- for the saturated case.
+foldConst _ env (RApp fc lazy c args) =
+    let c' = resolveLocal env c
+        args' = map (resolveLocal env) args
+    in case c' of
+            RCConstClosure n missing =>
+                if length args' == missing
+                   then RAppName fc lazy n args'
+                   else RApp fc lazy c' args'
+            _ => RApp fc lazy c' args'
 foldConst _ env (RExtPrim fc lazy p args postDrop) =
     let args' = map (resolveLocal env) args
     in case constExtPrimValue p args' of
