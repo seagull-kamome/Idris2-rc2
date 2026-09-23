@@ -5,31 +5,6 @@ scattered code comments. Nothing below is a known correctness bug in
 what's implemented -- see `rc2/tests/refc-suite/README.md` for bugs that
 were found and already fixed.
 
-## Architecture: `RCLocal` can't hold another `RCLocal`
-
-While designing `getField`/`setField` support (`rc2/doc/c-struct-support.md`),
-considered making a struct field read a new `RCLocal` variant (e.g.
-`RCStructField : RCLocal -> String -> String -> RCLocal`) instead of a
-dedicated `RCExp` node -- it's a pure, ownership-neutral read, so it
-would have been usable directly as an `ROp`/`RCon`/etc. operand, no
-`RLet` needed just to name it first. Not pursued: `RCLocal`
-(`RCLoc`/`RCNull`/`RCConst`/`RCEmptyCon`) is currently *atomic* --
-every existing user (`freeLocalsR`/`countUsesR` in `RCExp.idr`,
-`splitBorrows`/`boxedOperands` in `RC.idr`, and similar code across
-`Reuse.idr`/`Sink.idr`/`Loop.idr`/`DualABI.idr`) relies on plain `==`
-comparison and `fromList`/`filter` over `List RCLocal`, which only
-works because no variant currently holds a nested `RCLocal` of its
-own. Adding one that does (`RCStructField`'s own `structVar`) would
-mean every one of those sites needs to recurse into the nested
-`RCLocal` instead of just comparing values directly -- a broader,
-riskier change than adding a new `RCExp` node (which only affects
-`RCExp`-walking code, a smaller and more precedented surface, see
-`Compiler.RC2.RC`'s own `ROp`-shaped precedent for `RStructGet`/
-`RStructSet`). Went with the `RCExp` node instead. Worth reconsidering
-if a future feature would benefit from embeddable-value locals badly
-enough to justify auditing every `RCLocal` call site -- not currently
-planned.
-
 ## Performance: native (unboxed) `Ptr`/`CFPtr` representation -- investigated, not pursued
 
 Neither `getField`'s own result nor `setField`'s own `value`, nor a
@@ -79,292 +54,6 @@ are `static inline` in `numeric.h`, so the C compiler folds away their
 own call overhead -- doesn't touch the actual (now largely closed)
 boxing/reboxing gap above, just removes one small cost that used to sit
 on top of it.
-
-## Future: nested self-tail-recursive loops
-
-`Compiler.RC2.Loop`'s `applyLoop` assumes a function has at most one
-`RLoop` -- relied on directly by `fillLoopContinuePostDrop` and by
-`Compiler.RC2.DualABI`'s own `loopContinueNativeReads` (a single
-`Maybe (List (Int, Rep))` slot for "the enclosing loop's own
-`loopParams`", not a stack). A genuinely nested self-tail-recursive
-loop (one loop's own body containing another, independent
-self-tail-recursive loop) isn't something `applyLoop` currently
-produces or expects, so this invariant holds today -- but if nested
-loop support is ever added, every one of these single-loop
-assumptions needs revisiting (at minimum: `loopContinueNativeReads`'s
-own `Maybe (List (Int, Rep))` would need to become a stack keyed to
-the *innermost* enclosing loop, since a `RLoopContinue` found while
-walking one loop's body must never be matched against an outer loop's
-own `loopParams`).
-
-**Two distinct motivations found for "more than one `RLoop` per
-function", only one of which actually needs the stack above**: see
-`rc2/doc/loop-in-case-sinking.md` (designed on paper, not implemented)
-for the full writeup. (1) Sinking a loop-invariant-scrutinee `case`'s
-own loop-carrying alts into independent per-alt loops produces
-*sibling* loops only -- never nested -- so it needs neither the stack
-conversion above nor any of `Loop.idr`'s own per-body helpers to learn
-a nested-boundary check; grounded in a real, profiled cost
-(`idris2-missing-containers`' `MurMur3`: `dup v2 x2`/`dup v3 x2`/
-`dup v4 x2` re-executed every loop iteration for a case whose scrutinee
-never actually changes). (2) Splicing a small function whose entire
-body is itself a self-tail-recursive loop into a caller that is itself
-looping (currently impossible -- `Compiler.RC2.Inline`'s Criterion A
-excludes any callee containing a call, and a self-tail-recursive
-function always contains at least one at the point `Inline` runs)
-*would* produce genuine nesting and need the full stack conversion --
-this is the expensive half, deliberately kept separate, and not
-grounded in any measured case yet.
-
-## Performance: `Loop.idr`'s own loop-carried (non-invariant) native shadow still reboxes fresh on a Boxed-context read
-
-Fixed for `Compiler.RC2.ConAltNative`'s own destructured-field caching
-(`rc2/doc/con-alt-native.md`'s "Reusing the original Boxed field for
-surviving Boxed-context reads" section) and for `Compiler.RC2.Loop`'s
-own loop-*invariant* parameter hoisting (`rc2/doc/loop-conversion.md`'s
-"Reusing the original Boxed value for a surviving Boxed-context read"
-section) -- both `dup` the original Boxed value on a surviving
-Boxed-context read now, instead of `Emit/Util.idr`'s `rcVarToBoxedC`
-default cost (a fresh `nativeMk` allocation every time).
-
-**Still not fixed for `Compiler.RC2.Loop`'s own genuinely loop-*carried*
-(non-invariant) native-shadow promotion** -- structurally harder than
-either fix above: a loop-carried shadow's own value is reassigned every
-iteration (`continue loop [...]`), so unlike a destructured field's or
-an invariant parameter's own one-time, unchanging read, "the original
-Boxed object this shadow came from" isn't a single, fixed thing --
-after the first iteration, a loop param's own current native value
-typically comes from an arithmetic result with no Boxed original to
-`dup` at all, not from re-reading the same Boxed local. Not attempted;
-not currently planned.
-
-`Loop.idr`'s `nativeArgTypes`/`nativeArgType` (the eligibility check
-that gates promotion for `Loop.idr`/`ConAltNative.idr` alike) still
-doesn't weigh reboxing cost either way: it only asks whether a
-parameter/field is ever read in a native context at a consistent type,
-never how many *Boxed*-context reads there are. This no longer risks a
-net slowdown for `ConAltNative` or for an invariant loop parameter (a
-Boxed-context read is cheap again, an ordinary `dup`); for a genuinely
-loop-carried parameter (still unfixed, above), a variable read natively
-once but read Boxed many times across iterations could still plausibly
-get slower under promotion, not faster. `idris2rc2_mkInt64`/`mkBits64`
-do have a 0-99 small-value cache (`memory.c`), so the real cost only
-bites for out-of-range integers and for types with no such cache
-(`Double`, wider `Int`/`Bits` values outside 0-99) -- unmeasured how
-often that actually happens in practice.
-
-## Performance: closure-dispatch fast path doesn't cover arity > 20 (`FUNSTAR`)
-
-`idris2rc2_applyClosure`'s new fast path (`rc2/doc/closure-dispatch-optimization.md`)
-skips allocating a transient `IDRIS2RC2_Closure` when a non-unique
-closure receives its final argument, but only for arity `1..20` -- the
-typed `IDRIS2RC2_FUNn` range `idris2rc2_dispatchWithExtra` implements.
-A closure with arity greater than 20 still takes the old
-`mkClosure`-then-trampoline-then-teardown path via the generic,
-array-based `IDRIS2RC2_FUNSTAR` calling convention. Deliberately left
-out of this round's scope, not an oversight.
-
-The same allocation-skip idea could in principle extend there too:
-`FUNSTAR`'s calling convention just needs a contiguous
-`IDRIS2RC2_Value **` array to hand the target function, and that array
-doesn't need to be heap-allocated -- arity is always a fixed,
-known-small constant even past 20 (an actual runtime value, read off
-`c->arity`, but bounded at compile time by whatever the largest arity
-in the program happens to be), so a small stack buffer (e.g. a
-fixed-size local array, or `alloca`, sized to the program's own known
-maximum arity) would work just as well as `idris2rc2_mkClosure`'s heap
-allocation, without needing the closure object itself. Not attempted;
-see `rc2/doc/closure-dispatch-optimization.md` for the full context on
-the existing 1..20 fast path this would extend.
-
-## Performance: interface-dictionary method dispatch stays boxed even when the concrete instance is known
-
-Investigated against a real workload (`idris2-missing-containers`'
-`benchmarkHash`, five `HashAlgorithm` instances -- FNV1a/MurMur3/
-OneAtATime/Sip32/Sip64 -- all sharing one generic
-`Data.Hash.Algorithm.Internal.feedCharOfString`, called once per byte
-per word per algorithm): every interface-method call (`feed8`) goes
-through a boxed `idris2rc2_applyClosure` dispatch, even though each
-concrete instance's own `feed8` compiles to a genuinely native
-`Compiler.RC2.DualABI` worker (`uint64_t`/`uint8_t` in and out, no
-internal boxing at all -- confirmed directly in the generated C).
-The cost is real and concrete, not theoretical: `rc2/BENCHMARKS.md`
-already measured this hot path as the dominant cost in that
-benchmark.
-
-Root cause, confirmed via the actual generated C
-(`install/idris2-missing-containers/test/src/build/exec/mct_rc2.c`):
-the `HashAlgorithm` dictionary itself was built by a top-level 0-arg
-CAF (`csegen_41`) that allocated a fresh 6-field `IDRIS2RC2_Constructor`
-plus six fresh `idris2rc2_mkClosure`'d partial applications -- on
-*every call*, never memoized (rc2 has no CAF-sharing at all, see the
-"Lazy/Force" section below).
-
-**Now solved: the dictionary's own construction cost.** Commit
-`a01eaa2` adds a new `RCConstClosure` constant form to
-`Compiler.RC2.ConstFold` for a bare, zero-filled closure over a named
-top-level function (`RUnderApp fc n missing []`). The existing
-`allConstLocal` check (`RCExp.idr`'s `IsAnyConstLocal`) that used to
-accept only `RCNull`/`RCConst`/`RCEmptyCon`/`RCConstCon` fields --
-never a closure -- now also accepts `RCConstClosure`, so `RCConstCon`
-folding reaches straight through `csegen_41`'s own six closure-shaped
-fields with no cross-CAF-boundary work needed at all (the fold
-operates on `csegen_41`'s own body, where the dictionary's `RCon` is
-actually built). `csegen_41`'s whole body now collapses into one
-immortal static; the six `mkClosure` calls plus the constructor
-allocation are gone. Full design, the `Compiler.RC2.DeadCode`
-correctness gap this exposed, and the related pre-existing
-`Emit.Util.boxedConstExpr` dedup bug it exposed: see
-`rc2/doc/const-closure-fold.md`.
-
-**Still open: per-byte dispatch through the dictionary.** The fix
-above only makes *obtaining* the dictionary free -- every `feed8` call
-still reads a field out of it (`RCLoc`) and dispatches through boxed
-`idris2rc2_applyClosure`, entirely unchanged
-(`rc2/doc/const-closure-fold.md`'s own "Scope / limitations" is
-explicit that this was never in scope for that fix). Resolving *that*
-call to a direct call to (e.g.) `FNV1a`'s own concrete `feed8` worker
-is a different, still-unaddressed problem, blocked on:
-
-- **`Compiler.RC2.Inline`'s call-free criterion still excludes
-  dictionary construction**: `csegen_41`'s own body is six
-  `LUnderApp`s (closure constructions), and `isCallFree (LUnderApp {})
-  = False` unconditionally -- by design, per `rc2/doc/inlining.md`'s
-  own "Eligibility: Criterion A only" scoping. Not a blocker for
-  folding the dictionary itself (ConstFold reached that independently
-  of Inline, above) -- still a blocker for using Inline as an
-  alternate route to carry the now-known-constant value into a caller.
-- **Nothing propagates the dictionary's now-known constant value
-  across a function-call boundary**: the value would still need to
-  survive *interprocedurally* -- as an ordinary argument into
-  `feedCharOfString`, then into its own self-tail-recursive `go`
-  loop's own loop parameter -- before a rewrite could resolve the
-  `args[1]`-extraction + `apply` pair into a direct call.
-  `Compiler.RC2.Loop`'s native-shadow/invariant-parameter promotion
-  has no notion of "this loop parameter is a provably-constant
-  closure" today (a closure is always `RBoxed`, and `Loop.idr`'s own
-  invariant-hoisting explicitly excludes `RBoxed` results for an
-  unrelated, already-fixed double-free reason -- see "`Loop.idr`'s own
-  loop-carried... native shadow" above). And because `feedCharOfString`
-  is *shared* by all five instances, resolving this for one instance
-  means **cloning** the shared helper (and its loop) per distinct known
-  dictionary, not rewriting in place -- the same per-call-site
-  specialization/cloning cost (unbounded generated-code growth from
-  minting a near-duplicate copy per distinct argument) that rules out
-  doing this generically for an arbitrary statically-known
-  higher-order-function argument, though bounded here by however many
-  *instances* of an interface actually get used in a program (typically
-  small and enumerable), rather than by every possible function value a
-  generic higher-order helper might ever see.
-
-**A narrower fix was also investigated and found insufficient**: since
-a dictionary's own method fields are always freshly built with
-`filled = 0` (never partially applied within the dictionary itself)
-and a closure's own `fn` pointer is immutable once set
-(`idris2rc2_mkClosure`, confirmed no other write site exists), reading
-`->fn` out as a new native ("no refcount needed, unlike a real
-`IDRIS2RC2_Value*`") `Rep` case and calling it directly, bypassing
-`idris2rc2_applyClosure` entirely, is sound -- but *only* for a
-closure's *final* remaining argument, which is exactly what
-`rc2/doc/closure-dispatch-optimization.md`'s existing
-`idris2rc2_dispatchWithExtra` fast path already covers. `feed8` itself
-is arity 2, applied in two sequential steps (accumulator, then byte)
-per `RApp`'s own one-argument-at-a-time shape -- rc2's IR has no node
-for "apply K remaining arguments to an existing closure value in one
-step" -- so the *first* application (accumulator, 2 args still
-remaining) can't benefit from this trick at all: it still needs a real
-persisted intermediate object (the closure is `dup`'d fresh from the
-shared dictionary every loop iteration, so it's never unique at that
-point either). This narrower angle is complementary to, not a
-substitute for, the specialization problem above -- it only ever
-helps the *last* step of a dispatch chain, not the earlier ones.
-
-Not pursued: a real fix now needs propagating the dictionary's known
-constant value through a loop parameter (an independently-documented
-`Loop.idr` gap) and call-site-sensitive cloning of the shared generic
-function per distinct known dictionary -- a coordinated, multi-pass
-effort rather than a bounded extension of any single existing pass.
-Revisit if profiling on a real workload continues to show this
-dominating (already true for `idris2-missing-containers`, per
-`rc2/BENCHMARKS.md`).
-
-**The same shape, for an ordinary higher-order closure argument (not
-just an interface dictionary), implemented as `Compiler.RC2.SpecClosure`
-(`rc2/doc/speculative-closure-specialization.md`, `--directive
-nospecclosure` to disable)**: `idris2-missing-containers`' own
-`Main.go` (the `foldl`-shaped loop actually driving both the `write`
-and `read` phases of `benchmarkHashMap`) calls a closure argument
-every iteration that's always one specific known function at each of
-its own two real call sites, never a genuinely varying value -- and
-does now specialize correctly (verified directly). Doesn't move the
-needle on `benchmarkHashMap` itself, though -- that workload's own
-dominant costs (interface-dispatched hashing, `IOHashMap`'s own
-`IORef`/list-traversal write phase) turned out not to be this shape at
-all, per the doc's own "Implementation notes" section.
-
-## Performance: constructor reuse doesn't reach across a monadic-bind continuation
-
-Investigated why `Compiler.RC2.Reuse` doesn't fire on
-`idris2-missing-containers`' `benchmarkHashMap` hot path (a bucket-list
-`replaceL2` that destructures and reconstructs a same-shape `::` cell)
-despite it being a textbook reuse candidate. Root cause confirmed via
-`--directive dumprcexp`: the reconstruction happens inside a separately
-lambda-lifted definition reached only through a genuine partial
-application (a monadic-bind continuation, from `HasIO io =>`-polymorphic
-`!`-bang-notation code -- not from `with` specifically, a case-based
-rewrite of the same shape has the identical gap). `Reuse`'s own
-eligibility check is intentionally, purely intraprocedural (any call is
-a dead end); a proposed fix (inline single-call-site, fully-saturated-call
-definitions before `Reuse` runs) is sound in principle but doesn't reach
-this specific case, since the call in question is a genuine partial
-application, not a fully-saturated one. Not pursued further -- full
-investigation, both refuted hypotheses, and what a real fix would need
-are in **`rc2/doc/reuse-monadic-bind-gap.md`**.
-
-## Scope: deliberately unboxed types stop at scalars
-
-`Integer` (GMP arbitrary precision) and `String` are never candidates
-for native-representation inference -- only fixed-width numeric types
-(`Int`, `Bits8`/`16`/`32`/`64`, `Int8`/`16`/`32`/`64`, `Double`, `Char`).
-This is a deliberate scope boundary, not a bug, but revisiting it (e.g.
-a native "small string" representation) is plausible future work if
-profiling ever shows it matters. Comparison/branch fusion (`RCmpCase`,
-see `Compiler.RC2.RC`'s `tryFuseCompare`) follows the same boundary --
-`LT`/`GT`/`EQ`/`LTE`/`GTE` over `Integer` or `String` still always
-materialize a boxed `Bool`, even when immediately consumed by a branch;
-only comparisons over the fixed-width/`Double`/`Char` types above skip
-that materialization.
-
-**Dropped once a concrete soundness counterexample was found**: the
-scheme collapses `Just x` and `Nothing` into the same `NULL`
-representation whenever `x`'s own value can itself be `NULL` --
-which is exactly the case for `Just []` (`x : List a`), `Just ()`,
-`Just Nothing` (nested `Maybe`), and any user type sharing the
-NIL/NOTHING/ZERO/UNIT shape. Confirmed by building a real program and
-reading the generated C: today, `Just []` correctly compiles to a
-distinct (`ConstFold`-staged, immortal) non-`NULL` object --
-`return ((IDRIS2RC2_Value*)&constcon_12);` with `constcon_12.args[0] =
-NULL` -- while `Nothing` compiles to bare `NULL`; unwrapping `Just`
-would make both `NULL`, indistinguishable at runtime. `Compiler.RC2`
-operates on already-erased `Lifted` IR at this stage, with no general
-way to prove "this `Just`'s payload type can never itself be
-`NULL`-representable" from local syntax alone -- this isn't a
-where-to-implement-it problem (IR vs. `Emit`, hand-written C swap,
-etc. all hit the identical soundness gap), only a
-provably-safe-payload-type problem. Not implemented, not currently
-planned; would need either a narrow, conservatively-safe subset (e.g.
-only payloads whose shape is syntactically visible and provably
-non-`NULL` at the exact `Just` call site) or recovering real type
-information at this IR stage (`Compiler.RC2.Types`'s native type
-inference does something in this spirit for a much narrower purpose --
-worth a look if this is ever revisited) to be viable.
-
-Not to be confused with `libs/rc2base/support/c/concurrency_util.c`'s
-`Channel` primitives (`rc2/doc/concurrency.md`'s "Design: Channel"),
-which *do* build `Just` values directly from C -- that's a different,
-sound thing: always constructing a real `Constructor` for
-`Prelude.Maybe` specifically (a fixed library type whose `Just` tag is
-known and stable), never eliding one for an arbitrary payload type.
 
 
 ## Semantics: `Lazy`/`Force` defers evaluation but doesn't memoize (except one Chez-only special case)
@@ -635,74 +324,6 @@ Data.TextBufferを用意すると共に、長らく動いていなかった文�
 コード解析して透過的に昇格/降格する事も考えたが、文字列操作で予測困難な
 見えないオーバヘッドが挿入される事になる。
 
-
-## Performance: `cast`'s own `Double <-> String` still has no fast path (GMP every call)
-
-`support/rc2/numeric.c`'s `idris2rc2_cast_string_to_Double` /
-`idris2rc2_cast_Double_to_string` are correct and locale-independent
-(GMP-exact rational parse; shortest-round-trip formatter that probes
-precisions 1..17), but every call allocates GMP temporaries -- fine for
-`show`, not for parsing a large numeric data file.
-
-**Now available as an opt-in library function**: `libs/rc2base`'s
-`Data.Double.Convert` (`fastParse`/`fastShow`) implements exactly the
-previously-planned branch-free `uint64_t`/`__uint128_t` route --
-Eisel-Lemire for parsing, a DiyFp/Grisu2-style scaled digit generation
-for formatting, both falling back to the exact GMP functions above
-(exposed non-`static` for this reuse) whenever their own error bound
-leaves any doubt, and the formatter additionally re-verifies every
-candidate against the exact parser before trusting it. See
-`libs/rc2base/README.md`'s own "`Data.Double.Convert`" section for the
-full design and its own correctness story (a real ambiguity-margin bug
-caught by a 5-million-case fuzz run, not by inspection).
-
-**Still open**: promoting this into `cast` itself (the compiler
-intrinsic every `Double`/`String` program already uses, no opt-in
-required) is a separate, not-yet-decided follow-up -- deliberately out
-of scope for the rc2base module above, which only needed to prove the
-fast-path design works without touching `Compiler.RC2` codegen at all.
-Revisit if a concrete program's `cast`-based (not `fastParse`/
-`fastShow`-based) numeric I/O shows up as a real bottleneck.
-
-
-## Scope: `Compiler.RC2.DeadCode` doesn't cover `MkRCForeign` removed by constant folding
-
-`Compiler.RC2.DeadCode` (see `rc2/doc/dead-code-elim.md`) deliberately
-never removes a `%foreign` declaration's own `MkRCForeign` entry --
-argued there that, under `Inline`/`DualABI` alone, a `MkRCForeign`
-entry surviving to this pass can never actually lose every caller
-(`Inline` requires a callee to be call-free, so a function calling an
-FFI declaration is never Inline-eligible in the first place; `DualABI`'s
-wrapper/worker split keeps a function's own FFI calls alive inside
-whichever of its wrapper/worker is still reachable).
-
-That argument has a real gap: `Compiler.RC2.ConstFold`'s `RConstCase`
-case-of-constant folding (`foldConst`'s `findConstAlt`) replaces the
-*entire* case node with just the one matching alt's body once its
-scrutinee resolves to a known constant, discarding every other alt's
-body outright -- including any `%foreign` call inside it. This is
-exactly what a codegen-identity branch (`prim__codegen` folded to a
-literal string by `Compiler.RC2.ConstFold`'s `constExtPrimValue`) or a
-folded comparison feeding a boolean `RConstCase` compiles down to. A
-declaration whose *only* call site sits inside a branch eliminated
-this way would genuinely lose every caller, `MkRCForeign` included --
-`Compiler.RC2.DeadCode.pruneDeadDefs` would need to also track, for
-`MkRCForeign` specifically, whether its own `ccs` still appears among
-surviving `RAppFFIInline` splices (a mechanism that was actually
-implemented and then removed during that pass's own development,
-because every test constructed to exercise it went through `Inline`/
-`DualABI` instead, where it never fires -- see `dead-code-elim.md`'s
-own "Bugs found" #1 and the surrounding "Scope" section).
-
-Not pursued: this needs an actual multi-target-`%foreign`/codegen-
-branch test to hit deliberately, and is a narrow enough case (a
-`%foreign` declaration with a *single* call site sitting inside a
-statically-eliminated branch) that it wasn't judged worth the
-complexity revival for now. Revisit by reintroducing
-`usedForeignCCsR`/`usedForeignCCsD` (removed, not merely disabled) if
-this ever turns out to matter for a real generated-C size/compile-time
-concern.
-
 ## `libs/rc2base`'s `Data.Integer.GMP` doesn't cover every `mpz_*` function
 
 Deliberately scoped to two shapes only (see that module's own header
@@ -762,72 +383,6 @@ case needs one specifically.
 ## ファントム型やファントム関数の明示
 トップレベル定義に 0 をつける。
 実行時に存在しないからいいや、ではなく存在しない事を保証する
-
-## Reuse解析とannotation(所有権挿入)の配置 -- 調査済み、方針決定
-
-3案を調査した:
-
-1. **ReuseをRC.idrのannotateに融合** -- 却下。`Reuse.idr`の核心
-   (`resolveAlt`/`tryConsume`)は`annotate`が計算したRDropの値そのものを
-   読む後処理であり(`peelDrop`の不変条件)、技術的には融合可能だが
-   削減できるのは1定義あたり高々1walkのみ。専用モジュール・専用バグ史
-   ドキュメントの単一責務性を失うコストの方が大きく、見合わない。
-2. **annotate+Reuseをより後ろ(ConAltNative後、Loop/Sink後)に動かす**
-   -- 却下。`ConAltNative`は`RReuseOffer`の一意性チェックが先に確定
-   していることが前提(過去に順序を誤りvalgrindでリークが実証された
-   バグ史あり、`doc/con-alt-native.md`のBug#2)。`Loop.idr`の
-   `isInvariantExpr`はループ不変式ホイストの安全ガードとして
-   `RCon.reuseFrom == Nothing`を直接読んでおり、Reuseが後回しだと
-   このガードが常に無意味になる(`Loop.idr:713-716,727`)。
-3. **所有権解析(annotate)全体を、ConAltNative/MutualLoop/Loop/Sink/
-   DualABIといった構造変換パスより後ろに送る**(「構造変換パスが所有権
-   情報を壊さないよう気を遣う負担自体を無くす」という発想) -- 6パス
-   個別に「所有権情報を読んで判断に使っているか、単に構造として保持
-   しているだけか」を精査した結果、`Loop`の`reuseFrom`依存(上記2と
-   同じ)と`Sink`の`postDrop`/dup内容依存(`Sink.idr:120-135`、
-   `doc/branch-sinking.md`の"second real bug"がまさにこれの読み落とし
-   によるvalgrind確認済みリーク)という2つの真の消費点があるため、
-   丸ごと後回しにする強い形は不成立。`MutualLoop`/`DualABI`は完全に
-   所有権非依存(現状のままでよい)。
-
-**見つかった案 → 実験実装済み、valgrindで失敗、要再設計**: `ConAltNative`
-の適格性判定自体はPhase 1出力だけで完結し所有権情報に一切依存しない。
-現在`ConAltNative`が抱える`peelWrappers`(RDup/RDrop/RFree/RReuseOffer/
-RReleaseReuseを踏み越える処理)と`reannotateFieldOwnership`/
-`finalizeBranch`(annotateの規則をそのまま再実装したミニannotate、
-約120行、`ConAltNative.idr:43-54,136-254`)は、「ConAltNativeが
-annotateの*後*に走るせいで、既に決まった所有権を壊さず部分的に
-再計算する」ためだけに存在する、という見立てのもと、`ConAltNative`を
-annotate/Reuseより"前"(normalize直後)に動かす実験を
-`experiment/conaltnative-before-annotate`ブランチで実装した
-(コミット`b6b334f`、masterにはマージしない)。
-
-**結果: `rc2/tests/verify.sh --no-valgrind`は63件全通過(出力は正しい)
-だが、valgrind込みで`Test12ConAltNative`が6,397,600 bytesのリークで
-失敗。** 原因は`step (MkAcc x y) = MkAcc (x + 1) (y + 2)`
-(destructureして即座に同じ形で再構築、Reuseとの相互作用を突く
-ケース)で顕在化: 新しい`ConAltNative`が挿入する
-`RLet fc sid (RNative ty) (RV fc (RCLoc p)) body`(Boxedな`p`を
-ネイティブshadow `sid`へ読み込む)という形を、`annotate`の汎用`RV`
-処理(`RC.idr:498-499`)が「`p`がまだownedならdup無しでそのまま」=
-**move**として扱ってしまう。しかし本来これは`p`自身の参照カウントを
-消費しないただの**borrow**であるべき。一方`branchBody`の
-`freeLocalsR`チェックは`RLet`の`value`に現れる`p`を見て「使用済み」
-と判定し、alt冒頭の無条件drop対象にも入れない。結果、「使用中だから
-触らない」路線でも「もう死んでいるから今dropする」路線でも`p`を
-dropする指示がどこにも生成されず、静かにリークする。元の(この実験で
-削除した)`reannotateFieldOwnership`は、まさに「native読み取りは
-所有権を消費しない」ことを正しく理解した手動再計算だったため、この
-穴が最初から存在しなかった。
-
-**次に検討すべき方向(未着手)**: 修正するなら`annotate`のRLet/RV
-処理そのものに「valueがネイティブ表現letへのborrow読み取りである」
-ことを認識させる拡張が必要になるが、これはConAltNativeの出力に
-限らずプログラム中の*全ての*`RLet`に影響する共有ロジックの変更に
-なるため、影響範囲の見極めが実装前に要る。あるいは、ConAltNative
-側で`p`を明示的にdupしてからnativeに変換する(実行時コストは1回の
-dup+dropペア分増えるが、正しさは保たれる)という保守的な代替案も
-検討の余地がある。
 
 ## thread-local-awareなdup/dop
 マルチスレッド対応でdup/dropをアトミック操作にした結果、バスへの負荷増加やキャッシュ
@@ -944,36 +499,213 @@ _} First = n`のような、まさに欲しかった書き方)が一見コンパ
 Phase 0として`Lifted`を一度、非消去の`Fin`ベースの添字を持つ独自IRへ
 変換し直す(証明を作り直すコスト)手もあるが、費用対効果は要検討。
 
-## Performance: Closure Inlining and Immediate Expansion
-  `partial`呼び出しによるクロージャ生成とヒープ割り当てが、高階関数や型クラスの辞書使用時に頻発している。特に`List`操作や`mapAppend`のような高階関数において、`Boxed`なクロージャが多重生成されており、パフォーマンスを大きく阻害している。
-  - 可能な限りコンパイル時にクロージャを特定し、直接呼び出しへとインライン展開するパスを実装する。
-  - スコープ内で閉じている静的な定数クロージャは、最適化パスで完全にインライン化・削除を行う。
+## Performance: Closure Inlining and Immediate Expansion -- 静的に判明する適用は解決済み
+
+  `partial`によるクロージャ生成とヒープ割り当てが高階関数・型クラス
+  辞書で頻発する問題。このうち**呼び先が静的に判明する適用**は解決した
+  (2026-09-24、`rc2/doc/const-closure-fold.md`の
+  "Saturated application of a folded closure is now a direct call")。
+
+  - `RCConstClosure`は捕獲値ゼロの真の葉なので`missing`が呼び先の全
+    残りarityであり、**飽和適用は直接呼び出し**(`RAppName`)、
+    **部分適用は直接のクロージャ構築**(`RUnderApp`)に書き換えられる。
+    `Compiler.RC2.ConstFold`の`RApp`節と、`Compiler.RC2.LateInline`の
+    `resolveConstClosureApps`(同じ形をConstFoldの後に作り直すため)の
+    2箇所で実施。
+  - idris2-lsp全体: `apply` 16,400 → 11,295、うち静的に判明する対象は
+    4,842 → 19。実行時A/B(`tests/BenchConstClosureApply.idr`)で約21%
+    高速化、対RefC 2.71x。
+
+  **残るのは動的な対象のみ**(下記「定数引数による特殊化」を参照)。
 
 ## Performance: Higher-Order Function Specialization -- 一般の高階関数
   (`mapAppend`等)の引数クロージャの割り当てコストは`RCConstClosure`の
   定数畳み込み(`rc2/doc/const-closure-fold.md`)で解消済み。呼び出し先
   自体をコード複製で型特化する方向は別途調査済み(コードサイズ膨張の
-  ため見送り、詳細は同ドキュメント参照)。インターフェース辞書経由のメソッド呼び出し
-  (`feed8`等)に限定した、より狭いスコープでの特殊化は
-  「Performance: interface-dictionary method dispatch stays boxed even
-  when the concrete instance is known」で実ベンチマークに基づき調査済み
-  (複数パスにまたがる調整が必要と判明、未着手)。
+  ため見送り、詳細は同ドキュメント参照)。クロージャ引数についての
+  特殊化は`Compiler.RC2.SpecClosure`
+  (`rc2/doc/speculative-closure-specialization.md`)で実装済み。
+  インターフェース辞書経由のメソッド呼び出しに限定した特殊化は、
+  下記「定数引数による特殊化」に設計を起こした(未着手)。
 
-## `%export`: 対応型を拡大、生成ヘッダなしは未対応のまま
-  `%export`自体は実装済み(rc2は実ネイティブC-ABIラッパーを生成する唯一の
-  バックエンド、詳細は`rc2/doc/export-support.md`と
-  `rc2/tests/Test59Export/`(CFType形状ごとに1セクションのマージ済みテスト))。
-  対応範囲はスカラー型(`Int`/`Int8`/.../`Double`/
-  `Char`、`IO`/`IORes`)に加え、`Ptr`/`AnyPtr`、`GCPtr`/`GCAnyPtr`(引数のみ、戻り値は
-  ファイナライザ発火タイミングの問題によりコンパイルエラー)、`Integer`(GMP、双方向)、
-  `String`(戻り値、呼び出し側`free()`必須の所有権契約つき)、struct(ポインタ経由、
-  `Ptr`と同じ仕組み)まで拡大。残っているスコープ外項目は2つ: (1) ラッパー自身の
-  `.h`を生成しない(呼び出し側が`extern`宣言を手書きする必要がある)、(2) `Buffer`・
-  ユーザー定義ADT(`List`/`Maybe`等)・関数/クロージャの引数/戻り値は非対応。詳細は
-  `rc2/doc/export-support.md`参照。
+## Performance: `Integer` is always a heap GMP value -- the ceiling on native promotion
 
+Surveyed 2026-09-24 while closing the native-promotion gaps
+(`rc2/doc/dual-abi.md`, `native-type-inference.md`). Native promotion
+is now essentially at its ceiling for the code it *can* reach: across a
+whole idris2-lsp build the `op` nodes whose result stays `Boxed` are
+dominated by types that have no native representation at all --
 
+| op | count |
+|---|---|
+| `++` (String) | 462 |
+| `cast-Integer-Int` | 244 |
+| `+Integer` / `-Integer` | 232 / 180 |
+| `==String` / `==Integer` | 65 / 35 |
 
+`IDRIS2RC2_Integer` is an `mpz_t` in a heap cell unconditionally, so
+every `Nat`/`Integer` operation allocates and refcounts even when the
+value is tiny. A fixnum representation (small values as a tagged
+pointer, promoting to GMP only on overflow) is the only thing that
+moves this, and it is a runtime-representation change touching every
+`IDRIS2RC2_Integer*` site -- a project in its own right, not an
+extension of any existing pass. `rc2/support/rc2/idris2rc2_numeric.h`
+already reuses a uniquely-referenced operand's own allocation in place
+(`rc2/doc/rop-reuse.md`), which is the cheap half of the same problem.
 
+Also still open, and genuinely small: 17 box-then-unbox round trips
+survive in the test suite's own generated C (down from 210). They are
+mixed cases -- a `case` one of whose arms is Boxed, a literal minted by
+a pass other than `LateInline`, an `opBox` feeding `sqrt`. Low value.
 
+## Performance: specialize a callee on a constant-constructor argument -- implemented, measured, reverted
 
+**Do not re-implement as described below without a different
+approach.** Designed, implemented end to end, and measured against a
+whole idris2-lsp build on 2026-09-24; the measurement rejected it. The
+design is kept in full because it is sound and the machinery it needs
+is all in place -- what failed was the cost/benefit, and the numbers
+below are the reason.
+
+### Result
+
+| | without the pass | with it |
+|---|---|---|
+| idris2-lsp compile (`--cg rc2 --build`) | **27.5s** | **2m10s** |
+| `apply` nodes | 11,295 | 11,102 |
+| definitions (post-`DeadCode`) | 26,389 | 25,994 |
+| IR lines | 732,252 | 735,161 |
+
+**~103 seconds of compile time for 193 fewer indirect dispatches
+(1.7%).** Correctness was fine throughout -- `verify.sh` 87 passed /
+0 failed, valgrind clean, `rcexpr-lint` no anomalies -- and the
+definition count actually went *down* (`DeadCode` pruned more
+originals than the pass added clones, 380 kept of 1,594 keys tried).
+It simply doesn't pay.
+
+Two independent reasons the yield is low, both worth knowing before
+trying again:
+
+- **Most dictionary parameters are not scrutinee-only.** The
+  `paramIsScrutineeOnly` gate (every occurrence of the parameter is an
+  `RConCase` scrutinee) rejects a parameter that is also passed on to
+  another call or stored -- which is the common case, because a
+  dictionary is usually threaded further down.
+- **The profitability gate then rejects most of what survives.** Only
+  380 of 1,594 attempted keys produced a clone with strictly fewer
+  `RApp` nodes; the rest folded the `case` away but left the dispatch
+  somewhere the fold couldn't reach.
+
+The compile-time cost was not diagnosed to a single line. The prime
+suspect is the specialization key `(Name, Nat, RCLocal)` in a
+`SortedMap`: an `RCConstCon` key is a whole constant tree (a
+`MkOrd` dictionary is eight nested closures), and every insert and
+lookup does `O(log n)` *deep structural* comparisons of those. Anyone
+retrying should key on something cheap (an interned index) first and
+re-measure before touching anything else.
+
+The rejected implementation is ~240 lines across
+`Compiler.RC2.SpecClosure` (a `SpecConstCon` section mirroring its
+three steps), `Compiler.RC2.ConstFold` (`foldConstDefWith`, seeding
+the fold's own `Env` -- which really is the whole rewrite: seeding it
+substitutes the constant, folds the `case` away, and turns each method
+field into a direct call via the `RApp` case) and one call in
+`Compiler.RC2.RC2`'s pipeline.
+
+### The shape
+
+`Compiler.RC2.SpecClosure` already specializes a callee on a *closure*
+argument. It does not reach the interface-dictionary case, because
+there the argument is a **record that gets destructured**, not a
+closure that gets applied:
+
+```
+def Prelude.Types.elemBy  (fun args= ["v10077:Boxed", "v10078:Boxed", "v10079:Boxed"] ret= Boxed)
+  case v10077 of                                       -- (1) destructure the dictionary
+    Prelude.Interfaces.MkFoldable [record] tag= Just 0 args= [_, _, _, _, _, v10085] ->
+      dup v10085
+      drop [v10077]
+      let v10087 : Boxed =
+        apply v10078 [v10079]
+      apply v10085 [..., v10087]                       -- (2) boxed method dispatch
+```
+
+`v10077` is used *only* as a `case` scrutinee. Its callers pass a
+dictionary that `Compiler.RC2.ConstFold` has already folded to an
+`RCConstCon` whose fields are `RCConstClosure`s.
+
+### Why the rest of the machinery is already in place
+
+Nothing new is needed downstream -- only getting the constant to the
+callee body. Once it is there, the existing chain finishes the job:
+
+1. `ConstFold`'s own `RConCase` scrutinee resolution folds the `case`
+   away against the known `RCConstCon` and binds each alt field to the
+   corresponding constant (`insertConArgs`).
+2. Each method field is then an `RCConstClosure`, so `ConstFold`'s own
+   `RApp` case (2026-09-24, above) rewrites `apply` into a direct
+   `RAppName` call -- or an `RUnderApp` if under-applied.
+3. `Compiler.RC2.Inline`/`LateInline`/`DualABI` can then see through
+   the now-named call, which they never could through an `RApp`.
+
+### Design as implemented: mirror SpecClosure's own three steps
+
+Deliberately the same shape as
+`rc2/doc/speculative-closure-specialization.md`'s steps 1-3, so the
+profitability discipline that pass already established carries over
+unchanged.
+
+1. **Candidate detection.** For each call site `call g [..., c, ...]`
+   where `c` is an `RCConstCon` (post-`ConstFold`) and `g`'s parameter
+   at that position is used *only* as an `RConCase` scrutinee in `g`'s
+   own body, record the triple `(g, argPos, c)`. `SpecClosure`'s own
+   `paramLooksSpecializable` is the model for the "used only as" check,
+   with `apply` swapped for "scrutinee of an `RConCase`".
+2. **Speculative clone + re-fold, memoized per distinct triple.** Clone
+   `g` with the parameter bound to `c`, then re-run `ConstFold` on just
+   that clone -- exactly what `SpecClosure`'s own `buildClone` already
+   does. No `rewriteApply` analogue is needed: substitution plus the
+   existing fold is the whole rewrite.
+3. **Profitability gate.** Keep the clone only if it contains strictly
+   fewer `RApp` nodes than the original. `SpecClosure`'s own
+   `stillAppliesParam` is the model, generalised -- after substitution
+   the specialized parameter has disappeared entirely, so the count is
+   the honest structural question ("did this remove the dispatch it was
+   built to remove"). Discard otherwise; every call site keeps calling
+   the generic `g`.
+
+Pipeline position: alongside `SpecClosure`, after `foldConstProgram`
+and before `insertMemoize`. A clone is an ordinary entry in the same
+`List (Name, RCDef)` afterwards, so `annotate`/`Reuse`/`Loop`/`DualABI`
+treat it like any other definition -- the same "resolved, simpler than
+expected" note `SpecClosure`'s own doc records.
+
+### Measured opportunity (whole idris2-lsp build, 26,389 defs)
+
+| | count |
+|---|---|
+| `apply` nodes total | 11,295 |
+| ... targeting a dynamic local | 11,276 |
+| definitions that destructure a record and apply one of its fields | 492 |
+| call sites passing an `RCConstCon` argument | 2,672 |
+| distinct `(callee, argPos)` receiving one | 484 |
+| **distinct `(callee, argPos, constant)` triples -- the clone bound** | **1,606** |
+| ... of those, `(callee, argPos)` seeing exactly ONE distinct constant | **300 (62%)** |
+
+Those 300 are the sweet spot: one clone fully replaces the generic
+version at every call site, and `Compiler.RC2.DeadCode` may then prune
+the original outright.
+
+### Risks anticipated beforehand (and how they actually turned out)
+
+- **Code size** was the risk flagged up front: 1,606 clones against
+  26,389 definitions, a +6% upper bound. It never materialised -- the
+  profitability gate kept only 380, and `DeadCode` then pruned more
+  originals than that, so the definition count fell. **Compile time,
+  which was not flagged, is what killed it.**
+- **Multiple specialized parameters** (a function taking two
+  dictionaries) is the same open question `SpecClosure` already has,
+  and should stay out of scope the same way: one parameter position at
+  a time.
+- **Not iterated to a fixpoint**, same as `SpecClosure` -- a kept
+  clone can expose a further opportunity. Out of scope initially.
