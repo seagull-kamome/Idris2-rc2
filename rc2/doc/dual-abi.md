@@ -752,12 +752,53 @@ ever sees the call) cover both the `Int` and the `Bool` form;
 `verify.sh` re-checks on every run that neither worker's result is
 boxed at any call site, since an output diff cannot see this at all.
 
-**Still Boxed after this (73 sites):** a `let` whose *value* is itself
-a `case` every arm of which ends in a native worker call. Stage 4's own
-promotion only fires when `ultimateTail value1` is directly an
-`RAppNameRep`, so a branching value never qualifies. Left alone
-deliberately -- promoting it means making the whole `RConstCase`
-render natively into a native sink, a bigger change than this one.
+**What stays Boxed after this, and why.** Two separate things, easy to
+conflate (an earlier revision of this section did, and got both the
+shape and the count wrong -- corrected here):
+
+1. **132 direct worker calls still bound `RBoxed`** (73 `Bits8`, 55
+   `Int`, 4 `Char`). Not a missed promotion: their results flow into
+   genuinely Boxed positions -- a `call Prelude.Interfaces.guard`
+   argument, a `con Prelude.Types.Right` field, `Core.Hash.hashWithSalt`
+   -- where an `IDRIS2RC2_Value *` is what the consumer actually needs.
+   `nativePromotionFor` correctly declines these.
+
+2. **A `let` whose *value* is a branch, every arm of which produces a
+   native value.** This one *is* a real remaining gap, and a bigger one
+   than everything above. C has no expression form for a `case`, so the
+   boxing is not one wrapper around the branch -- it is **one per arm**,
+   with the consumer unboxing again afterwards:
+
+   ```c
+   IDRIS2RC2_Value * var_556 = NULL;               // sink declared Boxed
+   int64_t tmp_22 = var_555;
+   if (tmp_22 == UINT8_C(1)) {
+       var_556 = idris2rc2_mkBits8(idris2rc2_worker_..._firstCharIs_0_0(var_557));
+   } else {
+       var_556 = idris2rc2_mkBits8(UINT8_C(0));    // even a bare constant
+   }
+   IDRIS2RC2_Value * var_561 = NULL;
+   int64_t tmp_23 = idris2rc2_extractInt(var_556); // and straight back out
+   ```
+
+   Measured over the test suite's own generated C: of 1,099 branch sink
+   variables, **254 (23%) have every arm assign a freshly boxed native
+   value**, and **236 of those 254 (93%) are unboxed again by their
+   consumer** -- 849 boxing calls that buy nothing. That is roughly ten
+   times the 86 sites this section's own change removes from the same
+   corpus.
+
+   The cause is structural: `Compiler.RC2.Emit.Util`'s own `Sink` is
+   `SinkVar Bool String | SinkReturn Rep`. `SinkReturn` carries a `Rep`
+   (that is exactly what Stage 3b added, so a native tail can `return`
+   a raw scalar), but `SinkVar` carries none, so `resolveSink` always
+   declares `IDRIS2RC2_Value * target = NULL;` and every arm's
+   `finalizeSink` has to box on the way in. Closing it means generalising
+   Stage 3b from *returns* to *variables*: a `Rep` on `SinkVar`, a
+   native declaration in `resolveSink`, native assignment in
+   `finalizeSink`, and an eligibility question over a branching value
+   that `returnEligibility`/`tailValueReps` already answers in all but
+   name. Tracked in `TODO.md`.
 
 ## Stage 3c: FFI worker synthesis
 
