@@ -335,9 +335,17 @@ toRCDefs disabled incremental roots lds0 = do
     dupMerged <- if "nodupmerge" `elem` disabled
                     then pure pruned
                     else logTime 2 "rc2: Dup merge" $ pure (map (\(n, d) => (n, applyDupMerge d)) pruned)
-    if "nodeadvars" `elem` disabled
-       then pure dupMerged
-       else logTime 2 "rc2: Dead variable erasure" $ pure (map (\(n, d) => (n, applyDeadVars d)) dupMerged)
+    erased <- if "nodeadvars" `elem` disabled
+                 then pure dupMerged
+                 else logTime 2 "rc2: Dead variable erasure" $ pure (map (\(n, d) => (n, applyDeadVars d)) dupMerged)
+    -- Erasing a dead `RLet` can leave a `dup` and a `drop` of the same
+    -- local adjacent that weren't when Dup merge ran, so its own
+    -- cancellation peephole gets one more sweep here -- no re-merge,
+    -- and gated by the same directive.
+    if "nodupmerge" `elem` disabled
+       then pure erased
+       else logTime 2 "rc2: Dup/drop cancel (post dead-vars)" $
+              pure (map (\(n, d) => (n, applyCancelDupDrop d)) erased)
 
 ||| `%cg rc2 inlineRuntime=<code>` companion to upstream's own
 ||| file-path-based `Compiler.Common.getExtraRuntime` -- splices the

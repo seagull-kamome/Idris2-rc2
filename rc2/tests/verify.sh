@@ -516,8 +516,12 @@ for name in $ALL_TESTS; do
     # Invisible to an output diff -- boxing a scalar and immediately
     # unboxing it changes nothing a program can print.
     if [ "$name" = "Test13NativeArgChain" ]; then
-        boxed="$(grep -cE 'idris2rc2_mk[A-Za-z0-9]+\(idris2rc2_worker_Main_(scaledAbs|isBig)_' \
-                   "$TMP/${name}_rc2.c" || true)"
+        # `return idris2rc2_mk*(worker(...))` is the dual-ABI *wrapper*
+        # itself -- presenting a Boxed ABI is its entire job (see
+        # doc/dual-abi.md's Stage 3a), so it is excluded. What must not
+        # appear is a *call site* boxing the result.
+        boxed="$(grep -E 'idris2rc2_mk[A-Za-z0-9]+\(idris2rc2_worker_Main_(scaledAbs|isBig)_' \
+                   "$TMP/${name}_rc2.c" | grep -cvE '^[[:space:]]*return ' || true)"
         # And the branching-value promotion: `describeBoth`'s whole body
         # is `&&` over two native predicate calls, so with the branch
         # itself promoted it holds no boxing and no Boxed intermediate

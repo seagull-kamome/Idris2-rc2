@@ -74,6 +74,22 @@ cancelDupDrop (RFree fc v body) = RFree fc v (cancelDupDrop body)
 cancelDupDrop (RReleaseReuse fc v body) = RReleaseReuse fc v (cancelDupDrop body)
 cancelDupDrop (RReuseOffer fc sc dupOnShared dropOnUnique body) =
     RReuseOffer fc sc dupOnShared dropOnUnique (cancelDupDrop body)
+-- Branch/loop children are separate regions with their own
+-- `mergeDupsExp` below, which cancels them again on its own way
+-- through -- harmless (this is idempotent), and it makes this function
+-- usable standalone over a whole definition, which
+-- `applyCancelDupDrop` needs.
+cancelDupDrop (RCmpCase fc op args postDrop t f) =
+    RCmpCase fc op args postDrop (cancelDupDrop t) (cancelDupDrop f)
+cancelDupDrop (RConCase fc sc alts mDef) =
+    RConCase fc sc (map (\(MkRConAlt n ci tag as body) => MkRConAlt n ci tag as (cancelDupDrop body)) alts)
+      (map cancelDupDrop mDef)
+cancelDupDrop (RConstCase fc sc alts mDef) =
+    RConstCase fc sc (map (\(MkRConstAlt c body) => MkRConstAlt c (cancelDupDrop body)) alts)
+      (map cancelDupDrop mDef)
+cancelDupDrop (RLoop fc loopParams initial prologueDrop body) =
+    RLoop fc loopParams initial prologueDrop (cancelDupDrop body)
+cancelDupDrop (RMemoize fc n rep body) = RMemoize fc n rep (cancelDupDrop body)
 cancelDupDrop e = e
 
 ||| Collects, for every RCLocal targeted by at least one RDup anywhere
@@ -164,6 +180,21 @@ mutual
   mergeDupsExp : RCExp -> RCExp
   mergeDupsExp e = let e' = cancelDupDrop e
                    in snd (rewriteRegion (collectDupCounts e') empty e')
+
+||| `cancelDupDrop` alone over one whole definition, with no re-merge.
+||| Run once more after `Compiler.RC2.DeadVars`: erasing a dead `RLet`
+||| can leave a `dup` and a `drop` of the same local adjacent that
+||| weren't when this module's own pass ran, and nothing afterwards
+||| would notice. Measured over a whole idris2-lsp build, that is a
+||| couple of dozen pairs -- small, but there is no reason to ship
+||| them, and `rc2/tests/Test79DupMerge`'s own verify.sh check would
+||| otherwise have to tolerate a moving target.
+export
+applyCancelDupDrop : RCDef -> RCDef
+applyCancelDupDrop (MkRCFun args retRep isWorker body) = MkRCFun args retRep isWorker (cancelDupDrop body)
+applyCancelDupDrop (MkRCError body) = MkRCError (cancelDupDrop body)
+applyCancelDupDrop d@(MkRCCon _ _ _) = d
+applyCancelDupDrop d@(MkRCForeign _ _ _) = d
 
 ||| Apply dup-merging to one top-level definition.
 export

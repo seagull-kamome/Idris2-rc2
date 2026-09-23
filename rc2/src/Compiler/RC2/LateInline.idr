@@ -363,6 +363,59 @@ isLoopCarried target (RReuseOffer _ _ _ _ body) = isLoopCarried target body
 isLoopCarried target (RMemoize _ _ _ body) = isLoopCarried target body
 isLoopCarried _ _ = False
 
+||| Fresh `buildSplice` ids bound to a constant closure, keyed by id:
+||| `RCConstClosure`'s own name and `missing`, which is that callee's
+||| *whole* remaining arity (it captures nothing at all, see its doc
+||| comment in RCExp.idr).
+ConstClosureArgs : Type
+ConstClosureArgs = SortedMap Int (Name, Nat)
+
+||| Rewrite a saturated application of one of `ccs`'s own ids into a
+||| direct call. `Compiler.RC2.ConstFold` already does exactly this for
+||| an `RApp` it can resolve itself (see `doc/const-closure-fold.md`'s
+||| "Saturated application of a folded closure is now a direct call"),
+||| but it runs long before this pass -- and `buildSplice` mints
+||| precisely this shape *afterwards*: a fresh `RLet` binding the
+||| caller's own constant-closure argument, with the spliced-in callee
+||| body going on to apply it. Nothing re-folds those, so they stayed
+||| `idris2rc2_applyClosure` dispatches against a callee known at
+||| compile time.
+|||
+||| Safe to run this late, after `Compiler.RC2.RC`'s own `annotate`,
+||| *because the target is a constant closure*: an `RApp` consumes its
+||| closure reference and an `RAppName` never mentions one, but a
+||| `constclosure_N` static is immortal (`IDRIS2RC2_REFCOUNT_MAX`) and
+||| both `idris2rc2_dup` and `idris2rc2_drop` return early on it, so
+||| neither the now-unconsumed reference nor any leftover `drop` of it
+||| is observable. The `RLet` itself stays -- another use of the id may
+||| still need it, and `Compiler.RC2.DeadVars` removes it when none is.
+resolveConstClosureApps : ConstClosureArgs -> RCExp -> RCExp
+resolveConstClosureApps ccs e@(RApp fc lazy (RCLoc v) args) =
+    case lookup v ccs of
+         Nothing => e
+         Just (n, missing) => if length args == missing then RAppName fc lazy n args else e
+resolveConstClosureApps ccs (RLet fc var rep value body) =
+    RLet fc var rep (resolveConstClosureApps ccs value) (resolveConstClosureApps ccs body)
+resolveConstClosureApps ccs (RCmpCase fc op args postDrop t f) =
+    RCmpCase fc op args postDrop (resolveConstClosureApps ccs t) (resolveConstClosureApps ccs f)
+resolveConstClosureApps ccs (RConCase fc sc alts mDef) =
+    RConCase fc sc (map (\(MkRConAlt n ci tag as body) => MkRConAlt n ci tag as (resolveConstClosureApps ccs body)) alts)
+      (map (resolveConstClosureApps ccs) mDef)
+resolveConstClosureApps ccs (RConstCase fc sc alts mDef) =
+    RConstCase fc sc (map (\(MkRConstAlt c body) => MkRConstAlt c (resolveConstClosureApps ccs body)) alts)
+      (map (resolveConstClosureApps ccs) mDef)
+resolveConstClosureApps ccs (RLoop fc loopParams initial prologueDrop body) =
+    RLoop fc loopParams initial prologueDrop (resolveConstClosureApps ccs body)
+resolveConstClosureApps ccs (RDup fc v extra body) = RDup fc v extra (resolveConstClosureApps ccs body)
+resolveConstClosureApps ccs (RDrop fc vs body) = RDrop fc vs (resolveConstClosureApps ccs body)
+resolveConstClosureApps ccs (RFree fc v body) = RFree fc v (resolveConstClosureApps ccs body)
+resolveConstClosureApps ccs (RReleaseReuse fc v body) = RReleaseReuse fc v (resolveConstClosureApps ccs body)
+resolveConstClosureApps ccs (RReuseOffer fc sc dupOnShared dropOnUnique body) =
+    RReuseOffer fc sc dupOnShared dropOnUnique (resolveConstClosureApps ccs body)
+resolveConstClosureApps ccs (RMemoize fc n rep body) = RMemoize fc n rep (resolveConstClosureApps ccs body)
+-- Every other shape holds no further `RCExp` to rewrite.
+resolveConstClosureApps _ e = e
+
 ||| Builds the renaming from `calleeArgs`'s own top-level param ids
 ||| onto the actual call arguments, plus a wrapping function binding
 ||| each argument that still needs its own declaration via `RLet`
@@ -390,22 +443,22 @@ isLoopCarried _ _ = False
 ||| B, revisited" for both bugs found getting the native side of this
 ||| wrong (an aliasing correctness bug, and a ~50x boxing performance
 ||| regression).
-buildSplice : {auto v : Ref VarId Int} -> FC -> SortedMap Int Rep -> RCExp -> List (Int, RCLocal) -> Core (Renaming, RCExp -> RCExp, SortedSet Int)
-buildSplice fc reps calleeBody [] = pure (empty, id, empty)
+buildSplice : {auto v : Ref VarId Int} -> FC -> SortedMap Int Rep -> RCExp -> List (Int, RCLocal) -> Core (Renaming, RCExp -> RCExp, SortedSet Int, ConstClosureArgs)
+buildSplice fc reps calleeBody [] = pure (empty, id, empty, empty)
 buildSplice fc reps calleeBody ((paramId, actual@(RCLoc actualId)) :: rest) = do
-    (ren, wrap, promoted) <- buildSplice fc reps calleeBody rest
+    (ren, wrap, promoted, ccs) <- buildSplice fc reps calleeBody rest
     case argRep reps actual of
          RNative ty => do
              f <- freshVarId
              let (rep, promoted') = case nativeEligible paramId calleeBody of
                                           Just ty' => if ty' == ty then (RNative ty, SortedSet.insert f promoted) else (RBoxed, promoted)
                                           Nothing => (RBoxed, promoted)
-             pure (insert paramId f ren, wrap . RLet fc f rep (RV fc actual), promoted')
+             pure (insert paramId f ren, wrap . RLet fc f rep (RV fc actual), promoted', ccs)
          _ => if isLoopCarried paramId calleeBody
                  then do
                      f <- freshVarId
-                     pure (insert paramId f ren, wrap . RLet fc f RBoxed (RV fc actual), promoted)
-                 else pure (insert paramId actualId ren, wrap, promoted)
+                     pure (insert paramId f ren, wrap . RLet fc f RBoxed (RV fc actual), promoted, ccs)
+                 else pure (insert paramId actualId ren, wrap, promoted, ccs)
   where
     argRep : SortedMap Int Rep -> RCLocal -> Rep
     argRep reps (RCLoc j) = case lookup j reps of
@@ -426,7 +479,7 @@ buildSplice fc reps calleeBody ((paramId, actual@(RCLoc actualId)) :: rest) = do
 -- `RCConstClosure` -- has no native representation at all and stays
 -- `RBoxed`, which `litRep` already answers `Nothing` for.
 buildSplice fc reps calleeBody ((paramId, actual) :: rest) = do
-    (ren, wrap, promoted) <- buildSplice fc reps calleeBody rest
+    (ren, wrap, promoted, ccs) <- buildSplice fc reps calleeBody rest
     f <- freshVarId
     let (rep, promoted') = case constLitRep actual of
                                 Nothing => (RBoxed, promoted)
@@ -435,7 +488,14 @@ buildSplice fc reps calleeBody ((paramId, actual) :: rest) = do
                                                                then (RNative ty, SortedSet.insert f promoted)
                                                                else (RBoxed, promoted)
                                                 Nothing => (RBoxed, promoted)
-    pure (insert paramId f ren, wrap . RLet fc f rep (RV fc actual), promoted')
+    -- A constant *closure* argument is recorded for
+    -- `resolveConstClosureApps`: the callee's own body going on to
+    -- apply this parameter is a statically-known call, and nothing
+    -- re-folds it after this pass.
+    let ccs' = case actual of
+                    RCConstClosure n missing => insert f (n, missing) ccs
+                    _ => ccs
+    pure (insert paramId f ren, wrap . RLet fc f rep (RV fc actual), promoted', ccs')
   where
     constLitRep : RCLocal -> Maybe PrimType
     constLitRep (RCConst c) = litRep c
@@ -526,7 +586,7 @@ promotableNativeLetRep loopSlots var value body =
 ||| param `Rep`.
 spliceCall : {auto v : Ref VarId Int} -> FC -> SortedMap Int Rep -> RCDef -> List RCLocal -> Core RCExp
 spliceCall fc reps (MkRCFun calleeArgs _ _ calleeBody) actualArgs = do
-    (paramRen, wrap, promoted) <- buildSplice fc reps calleeBody (zipArgs (map fst calleeArgs) actualArgs)
+    (paramRen, wrap, promoted, ccs) <- buildSplice fc reps calleeBody (zipArgs (map fst calleeArgs) actualArgs)
     let paramIds = SortedSet.fromList (map fst calleeArgs)
     internalRen <- freshenBoundIds (filter (\i => not (contains i paramIds)) (collectBoundIds calleeBody))
     let ren = foldl (\acc, (k, val) => insert k val acc) paramRen (SortedMap.toList internalRen)
@@ -535,7 +595,7 @@ spliceCall fc reps (MkRCFun calleeArgs _ _ calleeBody) actualArgs = do
     -- reannotate) -- unlike `Compiler.RC2.ConAltNative`'s own fuller
     -- native-shadow promotion, where a field can still have a
     -- *surviving* Boxed-context use.
-    pure $ wrap (stripOwnership promoted (renameRCExp ren calleeBody))
+    pure $ wrap (resolveConstClosureApps ccs (stripOwnership promoted (renameRCExp ren calleeBody)))
   where
     zipArgs : List Int -> List RCLocal -> List (Int, RCLocal)
     zipArgs (i :: is) (a :: as) = (i, a) :: zipArgs is as
