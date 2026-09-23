@@ -647,16 +647,19 @@ inlineInto defOf eligible self = go empty []
 ||| the returned `Carried` and this round's own `toProcess` (the *only*
 ||| names `goOrder` below is ever handed) into the next round's call.
 |||
-||| **The two `logTime`s here each open with `() <- pure ()` on
-||| purpose, and removing that would silently break them**: everything
-||| they wrap is a *pure* `let`, and in a strict language the argument
-||| expression is fully evaluated before `logTime` is ever entered, so
-||| a bare `logTime lvl str $ pure (heavyPureThing)` clocks nothing but
-||| the `pure`. Binding once first pushes the real work into the
-||| continuation, which only runs inside the timed region. This is not
-||| hypothetical: `analyse`'s own ~10s-per-round cost hid behind
-||| exactly that mistake here for an entire investigation, reported as
-||| a ~0.1s round while `"rc2: Late inline"` sat at ~45s.
+||| **The `logTime`s here wrap `pure $ <pure computation>` rather than
+||| binding the same computation with a `let` above, and that
+||| distinction is the whole reason they report anything at all**: a
+||| `do`-block `let` is an ordinary `let` in the action *value*, so a
+||| strict language runs it while building the action that `logTime`
+||| then wraps -- before the clock ever starts. `x <- pure expr` puts
+||| `expr` inside the `IO` closure `pure` builds, so it runs when the
+||| action does, inside the timed region. This is not hypothetical:
+||| `analyse`'s own ~10s-per-round cost hid behind a `let` here for an
+||| entire investigation, reported as a ~0.1s round while
+||| `"rc2: Late inline"` sat at ~45s. No forcing of the result is
+||| needed on top -- evaluation is strict, so the computation is
+||| finished by the time `pure` has its value.
 |||
 ||| **Only walking `toProcess`, not every name in `processOrder`**: the
 ||| overwhelming majority of a real whole-program def list never calls
@@ -673,28 +676,14 @@ inlineInto defOf eligible self = go empty []
 ||| `"rc2: Late inline"`'s own wall-clock cost outright.
 applyLateInlineOnce : {auto v : Ref VarId Int} -> {auto c : Ref Ctxt Defs} -> (roots : List Name) -> Maybe Carried -> SortedSet Name -> List (Name, RCDef) -> Core (Bool, List (Name, RCDef), Carried, SortedSet Name)
 applyLateInlineOnce roots prev dirty defs0 = do
-    (defs, refs') <- logTime 3 "rc2: LI prune" $ do
-              () <- pure ()
-              let r : (List (Name, RCDef), RefCache) =
-                        pruneDeadDefsCached (maybe empty (.refs) prev) dirty roots defs0
-              let n : Nat = length (fst r) + length (SortedMap.toList (snd r))
-              pure (if n == n then r else r)
+    (defs, refs') <- logTime 3 "rc2: LI prune" $
+              pure $ pruneDeadDefsCached (maybe empty (.refs) prev) dirty roots defs0
     -- Built once and shared with `goOrder` below: `analyse` and the
     -- splice walk both want the same `Name`-keyed view of this round's
     -- own definitions, and building it is ~35k `Name` comparisons'
     -- worth of work to redo for nothing.
-    defOf <- logTime 3 "rc2: LI defOf" $ do
-              () <- pure ()
-              let r : SortedMap Name RCDef = SortedMap.fromList defs
-              let n : Nat = length (SortedMap.toList r)
-              pure (if n == n then r else r)
-    (an, carried) <- logTime 3 "rc2: LI analyse" $ do
-              () <- pure ()
-              let r : (Analysis, Carried) = analyse prev dirty refs' defOf defs
-              let n : Nat = length (Prelude.toList (fst r).eligible)
-                              + length (snd r).order
-                              + length (SortedMap.toList (snd r).counts)
-              pure (if n == n then r else r)
+    defOf <- logTime 3 "rc2: LI defOf" $ pure $ SortedMap.fromList defs
+    (an, carried) <- logTime 3 "rc2: LI analyse" $ pure $ analyse prev dirty refs' defOf defs
     case leftMost an.eligible of
          Nothing => pure (length defs /= length defs0, defs, carried, empty)
          Just _ => do
