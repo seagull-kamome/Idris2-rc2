@@ -393,7 +393,15 @@ resolveConstClosureApps : ConstClosureArgs -> RCExp -> RCExp
 resolveConstClosureApps ccs e@(RApp fc lazy (RCLoc v) args) =
     case lookup v ccs of
          Nothing => e
-         Just (n, missing) => if length args == missing then RAppName fc lazy n args else e
+         Just (n, missing) =>
+             if length args == missing
+                then RAppName fc lazy n args
+                else if length args < missing
+                        -- Under-application: still a closure, but built
+                        -- directly instead of dispatching to build it.
+                        -- See `Compiler.RC2.ConstFold`'s own `RApp` case.
+                        then RUnderApp fc n (minus missing (length args)) args
+                        else e
 resolveConstClosureApps ccs (RLet fc var rep value body) =
     RLet fc var rep (resolveConstClosureApps ccs value) (resolveConstClosureApps ccs body)
 resolveConstClosureApps ccs (RCmpCase fc op args postDrop t f) =

@@ -281,11 +281,18 @@ foldConst _ env (RUnderApp fc n missing args) = RUnderApp fc n missing (map (res
 -- `Compiler.RC2.DualABI` all key off a *named* call, and a direct one
 -- here is what lets them see through it at all.
 --
--- An under-application (`length args < missing`) still needs a real
--- closure and falls through unchanged; over-application can't occur
--- (`RC.idr`'s own `collectAppChain` never merges past a saturation
--- point). Closes `doc/const-closure-fold.md`'s "Scope / limitations"
--- for the saturated case.
+-- An *under*-application still needs a real closure, but not a
+-- dispatch to build one: `RUnderApp` captures `args'` directly, where
+-- `RApp` would have gone through `idris2rc2_applyClosure` only for it
+-- to allocate the very same closure (the constant it starts from
+-- captures nothing, so there is nothing to copy across either).
+-- `missing` counts what is still needed *after* the captured args, so
+-- it just goes down by however many this application supplies.
+-- Over-application can't occur -- `RC.idr`'s own `collectAppChain`
+-- never merges past a saturation point. `RApp`'s own `lazy` field is
+-- ignored at emission (see `emitRC`'s own `RApp` cases), so dropping
+-- it here changes nothing. Closes `doc/const-closure-fold.md`'s
+-- "Scope / limitations".
 foldConst _ env (RApp fc lazy c args) =
     let c' = resolveLocal env c
         args' = map (resolveLocal env) args
@@ -293,7 +300,9 @@ foldConst _ env (RApp fc lazy c args) =
             RCConstClosure n missing =>
                 if length args' == missing
                    then RAppName fc lazy n args'
-                   else RApp fc lazy c' args'
+                   else if length args' < missing
+                           then RUnderApp fc n (minus missing (length args')) args'
+                           else RApp fc lazy c' args'
             _ => RApp fc lazy c' args'
 foldConst _ env (RExtPrim fc lazy p args postDrop) =
     let args' = map (resolveLocal env) args
