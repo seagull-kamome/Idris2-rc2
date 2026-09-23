@@ -12,7 +12,9 @@ module Main
 --   * straight-line  (was Test79DupMergeStraightLine)
 --   * branch boundary (was Test80DupMergeBranchBoundary)
 --   * RLet scope      (was Test81DupMergeLetScope)
+--   * dup/drop cancellation (`cancelDupDrop`)
 
+import Data.List
 import System
 
 -- ============================================================
@@ -99,9 +101,57 @@ letThrice = do
   putStrLn s
   putStrLn s
 
+-- ============================================================
+-- Section 4: dup/drop cancellation (DupMerge's own cancelDupDrop)
+-- ============================================================
+-- A `where`-bound helper is lifted with EVERY one of its parent's own
+-- arguments as its own parameters, whether or not it reads them.
+-- `prefixPart` ignores `x` entirely, so once the helper is inlined back
+-- into its single caller the inlined body opens with the caller's own
+-- `RDup x` (the call protocol's borrow for an argument the caller still
+-- owns) immediately followed by the callee's own `RDrop [x]` (it never
+-- reads it): two atomic RMWs on the same counter with nothing in
+-- between that could observe it. `cancelDupDrop` removes both.
+--
+-- This is the exact shape idris2-lsp's own
+-- `Compiler.Opts.Constructor.mkIntrinsicName` produces -- its
+-- `where`-bound `intrinsicNS = mkNamespace "_builtin"` ignores its
+-- parent's `x` the same way. 1,539 such increment/decrement pairs came
+-- out of a whole idris2-lsp build.
+--
+-- The `case Just ... of` keeps `prefixPart`'s own result from folding
+-- straight into the `++`, and `getArgs` keeps the branch runtime-only,
+-- the same trick Section 3 uses (`getArgs` counts the program name
+-- itself, so the threshold is a plain "far more arguments than anyone
+-- passes", not zero). A normal invocation always yields "zero",
+-- deterministic across runs.
+--
+-- Confirmed by hand via `--directive dumprcexpr`: under
+-- `--directive nodupmerge` the dump shows `dup v<x>` directly followed
+-- by `drop [v<x>]` ahead of the inlined `prefixPart` body; without it
+-- both are gone. verify.sh re-checks that absence on every run (see its
+-- own Test79DupMerge case) -- nothing else in the suite exercises this
+-- peephole at all, so without that check it could stop firing entirely
+-- and every test would still pass.
+
+%noinline
+mkTag : String -> String
+mkTag x = case Just prefixPart of
+               Nothing => "u:" ++ x
+               Just p  => p ++ "/" ++ x
+  where
+    prefixPart : String
+    prefixPart = pack (reverse (unpack "nitliub_"))
+
+tagOnce : IO ()
+tagOnce = do
+  args <- getArgs
+  putStrLn (mkTag (if length args > 100 then "unreachable" else "zero"))
+
 main : IO ()
 main = do
   useThrice "dup-merge"
   maybeThrice True "left"
   maybeThrice False "left"
   letThrice
+  tagOnce

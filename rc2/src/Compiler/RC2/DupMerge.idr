@@ -20,16 +20,61 @@ module Compiler.RC2.DupMerge
 -- introduces most of the individual-adjacent-RDup shapes this pass
 -- targets -- running earlier would miss everything those later passes
 -- go on to construct.
+--
+-- Running last also makes this the right place for the complementary
+-- peephole, `cancelDupDrop`: an `RDup` whose own local is released
+-- again by an `RDrop` in the same refcount-only run, with nothing in
+-- between that could observe the count.
 
 import Compiler.RC2.RCExp
 
 import Core.FC
 
+import Data.List
 import Data.Nat
 import Data.SortedMap
 import Data.SortedSet
 
 %default covering
+
+||| Removes one occurrence of `v` from the first `RDrop` reachable
+||| through a contiguous run of refcount-only nodes (`RDup`/`RDrop` and
+||| nothing else), or `Nothing` when the run holds no such drop.
+takeDropInRun : RCLocal -> RCExp -> Maybe RCExp
+takeDropInRun v (RDup fc w extra body) = RDup fc w extra <$> takeDropInRun v body
+takeDropInRun v (RDrop fc vs body) =
+    if elem v vs
+       then Just (case delete v vs of
+                       []  => body
+                       vs' => RDrop fc vs' body)
+       else RDrop fc vs <$> takeDropInRun v body
+takeDropInRun _ _ = Nothing
+
+||| Cancels each `RDup` against a later `RDrop` of the same local
+||| within one contiguous run of refcount-only nodes. Such a run holds
+||| nothing that could observe the count between the two -- no call, no
+||| uniqueness check (`RReuseOffer` deliberately ends a run) -- so the
+||| `+1`/`-1` pair is pure overhead: two atomic RMWs buying nothing.
+||| Same region shape as `collectDupCounts`, and run BEFORE it: doing
+||| it afterwards would leave the merged `extra` re-inflating exactly
+||| what was just cancelled.
+cancelDupDrop : RCExp -> RCExp
+cancelDupDrop (RDup fc v extra body) =
+    case takeDropInRun v body of
+         Nothing => RDup fc v extra (cancelDupDrop body)
+         -- `extra` is the count MINUS one, so a plain `RDup` (extra =
+         -- Z) is fully cancelled and disappears.
+         Just body' => case extra of
+                            Z   => cancelDupDrop body'
+                            S k => cancelDupDrop (RDup fc v k body')
+cancelDupDrop (RLet fc var rep value body) =
+    RLet fc var rep (cancelDupDrop value) (cancelDupDrop body)
+cancelDupDrop (RDrop fc vs body) = RDrop fc vs (cancelDupDrop body)
+cancelDupDrop (RFree fc v body) = RFree fc v (cancelDupDrop body)
+cancelDupDrop (RReleaseReuse fc v body) = RReleaseReuse fc v (cancelDupDrop body)
+cancelDupDrop (RReuseOffer fc sc dupOnShared dropOnUnique body) =
+    RReuseOffer fc sc dupOnShared dropOnUnique (cancelDupDrop body)
+cancelDupDrop e = e
 
 ||| Collects, for every RCLocal targeted by at least one RDup anywhere
 ||| within `e`'s own straight-line region (never descending into a
@@ -117,7 +162,8 @@ mutual
   ||| handling of those four constructors).
   export
   mergeDupsExp : RCExp -> RCExp
-  mergeDupsExp e = snd (rewriteRegion (collectDupCounts e) empty e)
+  mergeDupsExp e = let e' = cancelDupDrop e
+                   in snd (rewriteRegion (collectDupCounts e') empty e')
 
 ||| Apply dup-merging to one top-level definition.
 export
