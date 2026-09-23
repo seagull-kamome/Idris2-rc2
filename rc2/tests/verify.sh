@@ -508,6 +508,23 @@ for name in $ALL_TESTS; do
         fi
     fi
 
+    # Test13NativeArgChain's own `classify`/`describe` regression-check
+    # Compiler.RC2.DualABI's own constant-`case` scrutinee promotion
+    # (`constCaseScrutineeNativeReads`, see that test's own comment):
+    # both workers return a native scalar read only as a `case`
+    # scrutinee, so no call site may box that result on the way out.
+    # Invisible to an output diff -- boxing a scalar and immediately
+    # unboxing it changes nothing a program can print.
+    if [ "$name" = "Test13NativeArgChain" ]; then
+        boxed="$(grep -cE 'idris2rc2_mk[A-Za-z0-9]+\(idris2rc2_worker_Main_(scaledAbs|isBig)_' \
+                   "$TMP/${name}_rc2.c" || true)"
+        if [ "$boxed" = "0" ]; then
+            report_pass "$name (DualABI constCaseScrutineeNativeReads -- case-scrutinee worker results stay native)"
+        else
+            report_fail "$name" "DualABI boxed $boxed case-scrutinee worker result(s) in $TMP/${name}_rc2.c"
+        fi
+    fi
+
     # Test79DupMerge's own Section 4 is the suite's ONLY exercise of
     # Compiler.RC2.DupMerge's `cancelDupDrop` peephole -- verified by
     # scanning every other test's dump and finding not one cancellable

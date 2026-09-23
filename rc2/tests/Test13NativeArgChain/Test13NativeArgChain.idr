@@ -80,8 +80,63 @@ addAbsCallArg x y = (x + prim__labs y) * 2
 chainCallArg : Int -> Int -> Int
 chainCallArg x y = addAbsCallArg (prim__abs x) y + 1
 
+-- Also covers Compiler.RC2.DualABI's own constant-`case` scrutinee
+-- promotion (`constCaseScrutineeNativeReads`), the fourth read source
+-- Stage 4 gained after the three above. `scaledAbs`'s own worker
+-- returns a native `int64_t`, and `classify` reads that result *only*
+-- as a constant-`case` scrutinee: not an ROp operand, not a bare tail,
+-- not another worker's argument -- so none of the earlier three ever
+-- saw it and the result was boxed on the way out of the call, unboxed
+-- again by the dispatch, and dropped (a no-op) in every arm.
+-- `Compiler.RC2.Emit`'s own `emitConstCaseInto` has rendered a native
+-- scrutinee per its own `Rep` since `Compiler.RC2.Loop`'s native-shadow
+-- promotion needed it; only the eligibility question was missing.
+--
+-- Both callees call an FFI declaration, so `Compiler.RC2.Inline`'s own
+-- `isCallFree` is False for each and the call genuinely survives to
+-- Stage 4 instead of being spliced away first -- the same precaution
+-- `addAbsCallArg` above takes. Each also needs a *second* caller, or
+-- `Compiler.RC2.LateInline`'s own single-caller inlining splices it
+-- into its one call site and there is no worker call left to promote
+-- at all -- hence the `*Neg` pair below rather than one caller each.
+scaledAbs : Int -> Int
+scaledAbs x = prim__labs x * 2
+
+classify : Int -> String
+classify x = case scaledAbs x of
+                  0 => "zero"
+                  2 => "two"
+                  _ => "other"
+
+classifyNeg : Int -> String
+classifyNeg x = case scaledAbs (0 - x) of
+                     0 => "n-zero"
+                     2 => "n-two"
+                     _ => "n-other"
+
+-- The same shape one type down, and by far its most common instance in
+-- real code: rc2 renders Idris2's own `Bool` as `Bits8`, so a
+-- Bool-returning worker feeding an `if` is exactly this pattern (114 of
+-- the 118 promotions this closes, across a whole idris2-lsp build, are
+-- this one).
+isBig : Int -> Bool
+isBig x = prim__labs x > 1000
+
+describe : Int -> String
+describe x = if isBig x then "big" else "small"
+
+describeNeg : Int -> String
+describeNeg x = if isBig (0 - x) then "n-big" else "n-small"
+
 main : IO ()
 main = do
     printLn (loop 0xcbf29ce484222325 [1,2,3,4,5,6,7,8,9,10])
     printLn (flat 0xdeadbeef00000001 0x100000001b3)
     printLn (chainCallArg (-123456) 654321)
+    putStrLn (classify 0)
+    putStrLn (classify (-1))
+    putStrLn (classify 7)
+    putStrLn (classifyNeg 1)
+    putStrLn (describe 2000)
+    putStrLn (describe (-3))
+    putStrLn (describeNeg (-5000))

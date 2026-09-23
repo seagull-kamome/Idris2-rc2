@@ -545,23 +545,81 @@ loopContinueNativeReads loopParams var (RLoopContinue _ args _) =
 -- of these beyond what the cases above already cover.
 loopContinueNativeReads _ _ _ = empty
 
+||| The single native `PrimType` every alt of a constant-`case`
+||| matches its scrutinee against, or `Nothing` when they disagree or
+||| the type isn't native-eligible at all. `Types.litRep` already
+||| answers `Nothing` for `BI` and `Str`, so a GMP `Integer` or
+||| `String` scrutinee keeps its Boxed read -- the only two shapes
+||| `Emit`'s own `emitConstCaseInto` has no native rendering for.
+constAltsNativeType : List RConstAlt -> Maybe PrimType
+constAltsNativeType [] = Nothing
+constAltsNativeType (MkRConstAlt c _ :: rest) =
+    case litRep c of
+         Nothing => Nothing
+         Just ty => if all (\(MkRConstAlt c' _) => litRep c' == Just ty) rest
+                       then Just ty
+                       else Nothing
+  where
+    -- `MkRConstAlt`'s own second field is an `RCExp`, deliberately
+    -- unexamined here: only the matched constant decides the type.
+    all : (RConstAlt -> Bool) -> List RConstAlt -> Bool
+    all _ [] = True
+    all f (x :: xs) = f x && all f xs
+
+||| Every native `PrimType` at which `var` is read as a constant-`case`
+||| scrutinee somewhere in `e`. `Compiler.RC2.Loop`'s own
+||| `nativeArgTypes` deliberately looks only at the *alt bodies* of an
+||| `RConstCase`, never at the scrutinee position itself -- correct for
+||| its own loop-param caller, but it means a worker call whose native
+||| result feeds straight into a `case` was boxed on the way in and
+||| unboxed again by the dispatch, for nothing. `Emit`'s own
+||| `emitConstCaseInto` has rendered a native scrutinee per its own
+||| `Rep` since `Compiler.RC2.Loop`'s native-shadow promotion needed it;
+||| this is what finally routes an ordinary worker call there too.
+||| Walks the whole tree like `callArgNativeReads`.
+constCaseScrutineeNativeReads : Int -> RCExp -> SortedSet PrimType
+constCaseScrutineeNativeReads var (RLet _ _ _ value body) =
+    constCaseScrutineeNativeReads var value `union` constCaseScrutineeNativeReads var body
+constCaseScrutineeNativeReads var (RCmpCase _ _ _ _ t f) =
+    constCaseScrutineeNativeReads var t `union` constCaseScrutineeNativeReads var f
+constCaseScrutineeNativeReads var (RConCase _ _ alts mDef) =
+    concat (map (\(MkRConAlt _ _ _ _ body) => constCaseScrutineeNativeReads var body) alts)
+      `union` maybe empty (constCaseScrutineeNativeReads var) mDef
+constCaseScrutineeNativeReads var (RConstCase _ sc alts mDef) =
+    let fromSc = if sc == RCLoc var
+                    then maybe empty SortedSet.singleton (constAltsNativeType alts)
+                    else empty
+    in fromSc
+         `union` (concat (map (\(MkRConstAlt _ body) => constCaseScrutineeNativeReads var body) alts)
+                    `union` maybe empty (constCaseScrutineeNativeReads var) mDef)
+constCaseScrutineeNativeReads var (RLoop _ _ _ _ body) = constCaseScrutineeNativeReads var body
+constCaseScrutineeNativeReads var (RDup _ _ _ cont) = constCaseScrutineeNativeReads var cont
+constCaseScrutineeNativeReads var (RDrop _ _ cont) = constCaseScrutineeNativeReads var cont
+constCaseScrutineeNativeReads var (RFree _ _ cont) = constCaseScrutineeNativeReads var cont
+constCaseScrutineeNativeReads var (RReleaseReuse _ _ cont) = constCaseScrutineeNativeReads var cont
+constCaseScrutineeNativeReads var (RReuseOffer _ _ _ _ cont) = constCaseScrutineeNativeReads var cont
+-- Every other shape holds no `RConstCase` beyond what the cases above
+-- already reach, same set `callArgNativeReads` leaves out.
+constCaseScrutineeNativeReads _ _ = empty
+
 ||| Whether `body` justifies promoting an `RLet`-bound worker-call
 ||| result from `RBoxed` all the way to `RNative ty`, instead of just
 ||| rewriting the call and boxing its result back up -- the actual point
 ||| of Stage 4: skipping the box-then-unbox round trip entirely.
-||| Unions `nativeArgTypes`/`bareTailNativeReads`/`callArgNativeReads`
-||| (plus, inside a loop, `loopContinueNativeReads` via `mLoopParams`),
-||| then asks `nativeArgType`'s own eligibility question over that
-||| combined set. Any other, still-Boxed-context use of `var` elsewhere
+||| Unions `nativeArgTypes`/`bareTailNativeReads`/`callArgNativeReads`/
+||| `constCaseScrutineeNativeReads` (plus, inside a loop,
+||| `loopContinueNativeReads` via `mLoopParams`), then asks
+||| `nativeArgType`'s own eligibility question over that combined set. Any other, still-Boxed-context use of `var` elsewhere
 ||| keeps working via `rcVarToBoxedC`'s own on-demand reboxing (a scalar
 ||| has no observable identity, see `stripOwnership`'s own doc comment).
 ||| See `doc/dual-abi.md`'s "The promotion: `nativePromotionFor`".
 nativePromotionFor : SortedMap Name (Name, List Rep, Rep, Bool) -> Maybe (List (Int, Rep)) -> Int -> PrimType -> RCExp -> Maybe PrimType
 nativePromotionFor workers mLoopParams var ty body =
     let fromLoop = maybe empty (\loopParams => loopContinueNativeReads loopParams var body) mLoopParams
-        found = ((nativeArgTypes var body `union` bareTailNativeReads var body)
-                  `union` callArgNativeReads workers var body)
-                  `union` fromLoop
+        found = (((nativeArgTypes var body `union` bareTailNativeReads var body)
+                   `union` callArgNativeReads workers var body)
+                   `union` constCaseScrutineeNativeReads var body)
+                   `union` fromLoop
     in case Prelude.toList found of
             [ty'] => if ty' == ty then Just ty else Nothing
             _ => Nothing

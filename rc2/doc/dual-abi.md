@@ -692,6 +692,73 @@ the two calls. Verified leak-free via `valgrind` (registered in
 `verify.sh`'s `LEAK_SENSITIVE_TESTS`), and against `rc2/tests/verify.sh`
 as a whole: 90 passed, 0 known, 0 failed.
 
+### Extending the promotion to `case` scrutinees: `constCaseScrutineeNativeReads`
+
+The fourth read source, and the one that turned out to matter most in
+real code. `Compiler.RC2.Loop`'s own `nativeArgTypes` looks only at the
+*alt bodies* of an `RConstCase`, never at the scrutinee position
+itself -- correct for its own loop-param caller, but it meant a worker
+call whose native result was read *only* as a `case` scrutinee matched
+none of the three sources above and stayed `RBoxed`.
+
+Nothing was missing on the emission side: `Compiler.RC2.Emit`'s own
+`emitConstCaseInto` has rendered a scrutinee per its own `Rep` (native
+or Boxed, on both its integer-switch and its `Db` equality path) ever
+since `Compiler.RC2.Loop`'s native-shadow promotion needed it. Only
+the eligibility question was absent.
+
+`constAltsNativeType` supplies the type from the alts' own matched
+constants via `Types.litRep`, which already answers `Nothing` for `BI`
+and `Str` -- so a GMP `Integer` or `String` scrutinee keeps its Boxed
+read, the two shapes `emitConstCaseInto` has no native rendering for.
+Alts that disagree on a type are rejected outright rather than guessed
+at, and `nativePromotionFor`'s own singleton check then rejects any
+conflict with the other three sources as well.
+
+Measured over a whole idris2-lsp build (24,343 definitions), by
+`--directive dumprcexpr`'s own `callRep` lines:
+
+| `RLet`'s Rep <- worker's `retRep` | before | after |
+|---|---|---|
+| `Boxed <- Native Bits8` (rc2's own `Bool`) | 187 | 73 |
+| `Boxed <- Native Char` | 8 | 4 |
+| `Native Bits8 <- Native Bits8` | 0 | 114 |
+| `Native Char <- Native Char` | 4 | 8 |
+
+118 promotions, 114 of them `Bool` -- by far this shape's most common
+instance in real code, since rc2 renders Idris2's own `Bool` as
+`Bits8` and every `if` over a predicate call is exactly it. Each site
+drops a box, an unbox, and a (no-op) `idris2rc2_drop` per arm:
+
+```c
+// before
+IDRIS2RC2_Value * var_555 = idris2rc2_mkBits8(idris2rc2_worker_..._Ord_Prec_2(var_558, ...));
+IDRIS2RC2_Value * var_556 = NULL;
+int64_t tmp_22 = idris2rc2_extractInt(var_555);
+if (tmp_22 == UINT8_C(1)) { idris2rc2_drop(var_555); ... }
+else                      { idris2rc2_drop(var_555); ... }
+
+// after
+uint8_t var_555 = idris2rc2_worker_..._Ord_Prec_2(var_558, ...);
+IDRIS2RC2_Value * var_556 = NULL;
+int64_t tmp_22 = var_555;
+if (tmp_22 == UINT8_C(1)) { ... } else { ... }
+```
+
+`rc2/tests/Test13NativeArgChain.idr`'s own `classify`/`describe` (plus
+the `*Neg` second callers that keep `Compiler.RC2.LateInline`'s own
+single-caller inlining from splicing the callee away before Stage 4
+ever sees the call) cover both the `Int` and the `Bool` form;
+`verify.sh` re-checks on every run that neither worker's result is
+boxed at any call site, since an output diff cannot see this at all.
+
+**Still Boxed after this (73 sites):** a `let` whose *value* is itself
+a `case` every arm of which ends in a native worker call. Stage 4's own
+promotion only fires when `ultimateTail value1` is directly an
+`RAppNameRep`, so a branching value never qualifies. Left alone
+deliberately -- promoting it means making the whole `RConstCase`
+render natively into a native sink, a bigger change than this one.
+
 ## Stage 3c: FFI worker synthesis
 
 Extends the same worker/wrapper idea across a `%foreign` call boundary
@@ -1375,7 +1442,8 @@ from Stage 2.
   returns *two* maps from one traversal -- the original-name-keyed one
   Stage 4 always took, plus a worker-name-keyed one for Stage 5's own
   use), `workerTable`/`applyCallSiteRewriteBody`/`applyCallSiteRewrite`/
-  `ultimateTail`/`bareTailNativeReads`/`nativePromotionFor`/
+  `ultimateTail`/`bareTailNativeReads`/`constAltsNativeType`/
+  `constCaseScrutineeNativeReads`/`nativePromotionFor`/
   `postDropFor`/`localRepIn` (Stage 4: `applyCallSiteRewrite` now takes
   Stage 3c's own original-name-keyed table as an explicit argument and
   `mergeWith const`s it into the `MkRCFun`-derived `workerTable`,
