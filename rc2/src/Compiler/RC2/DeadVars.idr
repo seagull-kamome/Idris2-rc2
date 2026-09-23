@@ -54,51 +54,57 @@ import Data.SortedSet
 
 %default covering
 
-||| `args`, but with every entry `freeLocalsR body` doesn't contain --
-||| genuinely referenced nowhere in `body`, not even by an `RDrop` --
-||| replaced by `0`. `body` is expected already fully processed by
-||| `eraseDeadVars` itself (mutual recursion below), so a field only
-||| used inside some nested `RConAlt` this same walk has already
-||| erased down to `0` correctly no longer counts as used here either.
-eraseDeadConAltFields : List Int -> RCExp -> List Int
-eraseDeadConAltFields args body =
-    let used = freeLocalsR body
-    in map (\i => if contains (RCLoc i) used then i else 0) args
+||| `args`, but with every entry `used` doesn't contain -- genuinely
+||| referenced nowhere in the definition, not even by an `RDrop` --
+||| replaced by `0`.
+|||
+||| `used` is `RCExp.mentionedLocals` over the *whole* definition,
+||| computed once by `applyDeadVars` below rather than per alt. Asking
+||| per alt instead (`freeLocalsR` of that alt's own body, as this
+||| originally did) re-walks everything below each alt once per level
+||| of case nesting, which real pattern matching produces a lot of:
+||| measured on `idris2-lsp`, that was 2.74s of this pass's own 2.82s.
+||| One whole-definition set answers the same question because every
+||| local id within a definition is unique (see `mentionedLocals`'s own
+||| doc comment), and erasing a field only ever rewrites a *binder*,
+||| never a use, so no erasure this pass performs can invalidate the
+||| set it started from.
+eraseDeadConAltFields : SortedSet RCLocal -> List Int -> List Int
+eraseDeadConAltFields used args =
+    map (\i => if contains (RCLoc i) used then i else 0) args
 
-mutual
-  eraseDeadVars : RCExp -> RCExp
-  eraseDeadVars (RLet fc var rep value body) =
-      RLet fc var rep (eraseDeadVars value) (eraseDeadVars body)
-  eraseDeadVars (RCmpCase fc op args postDrop t f) =
-      RCmpCase fc op args postDrop (eraseDeadVars t) (eraseDeadVars f)
-  eraseDeadVars (RConCase fc sc alts mDef) =
-      RConCase fc sc (map eraseDeadVarsAlt alts) (map eraseDeadVars mDef)
-  eraseDeadVars (RConstCase fc sc alts mDef) =
-      RConstCase fc sc (map (\(MkRConstAlt c body) => MkRConstAlt c (eraseDeadVars body)) alts)
-        (map eraseDeadVars mDef)
-  eraseDeadVars (RLoop fc loopParams initial prologueDrop body) =
-      RLoop fc loopParams initial prologueDrop (eraseDeadVars body)
-  eraseDeadVars (RDup fc v extra body) = RDup fc v extra (eraseDeadVars body)
-  eraseDeadVars (RDrop fc vs body) = RDrop fc vs (eraseDeadVars body)
-  eraseDeadVars (RFree fc v body) = RFree fc v (eraseDeadVars body)
-  eraseDeadVars (RReleaseReuse fc v body) = RReleaseReuse fc v (eraseDeadVars body)
-  eraseDeadVars (RReuseOffer fc sc dupOnShared dropOnUnique body) =
-      RReuseOffer fc sc dupOnShared dropOnUnique (eraseDeadVars body)
-  eraseDeadVars (RMemoize fc n rep body) = RMemoize fc n rep (eraseDeadVars body)
-  -- Every other constructor is a leaf as far as this walk is concerned
-  -- (no RConAlt reachable inside one without going through an RCExp
-  -- child already covered above).
-  eraseDeadVars e = e
-
-  eraseDeadVarsAlt : RConAlt -> RConAlt
-  eraseDeadVarsAlt (MkRConAlt n ci tag args body) =
-      let body' = eraseDeadVars body
-      in MkRConAlt n ci tag (eraseDeadConAltFields args body') body'
+eraseDeadVars : SortedSet RCLocal -> RCExp -> RCExp
+eraseDeadVars used (RLet fc var rep value body) =
+    RLet fc var rep (eraseDeadVars used value) (eraseDeadVars used body)
+eraseDeadVars used (RCmpCase fc op args postDrop t f) =
+    RCmpCase fc op args postDrop (eraseDeadVars used t) (eraseDeadVars used f)
+eraseDeadVars used (RConCase fc sc alts mDef) =
+    RConCase fc sc
+      (map (\(MkRConAlt n ci tag args body) =>
+              MkRConAlt n ci tag (eraseDeadConAltFields used args) (eraseDeadVars used body)) alts)
+      (map (eraseDeadVars used) mDef)
+eraseDeadVars used (RConstCase fc sc alts mDef) =
+    RConstCase fc sc (map (\(MkRConstAlt c body) => MkRConstAlt c (eraseDeadVars used body)) alts)
+      (map (eraseDeadVars used) mDef)
+eraseDeadVars used (RLoop fc loopParams initial prologueDrop body) =
+    RLoop fc loopParams initial prologueDrop (eraseDeadVars used body)
+eraseDeadVars used (RDup fc v extra body) = RDup fc v extra (eraseDeadVars used body)
+eraseDeadVars used (RDrop fc vs body) = RDrop fc vs (eraseDeadVars used body)
+eraseDeadVars used (RFree fc v body) = RFree fc v (eraseDeadVars used body)
+eraseDeadVars used (RReleaseReuse fc v body) = RReleaseReuse fc v (eraseDeadVars used body)
+eraseDeadVars used (RReuseOffer fc sc dupOnShared dropOnUnique body) =
+    RReuseOffer fc sc dupOnShared dropOnUnique (eraseDeadVars used body)
+eraseDeadVars used (RMemoize fc n rep body) = RMemoize fc n rep (eraseDeadVars used body)
+-- Every other constructor is a leaf as far as this walk is concerned
+-- (no RConAlt reachable inside one without going through an RCExp
+-- child already covered above).
+eraseDeadVars _ e = e
 
 ||| Apply dead-variable erasure to one top-level definition.
 export
 applyDeadVars : RCDef -> RCDef
-applyDeadVars (MkRCFun args retRep isWorker body) = MkRCFun args retRep isWorker (eraseDeadVars body)
-applyDeadVars (MkRCError body) = MkRCError (eraseDeadVars body)
+applyDeadVars (MkRCFun args retRep isWorker body) =
+    MkRCFun args retRep isWorker (eraseDeadVars (mentionedLocals body) body)
+applyDeadVars (MkRCError body) = MkRCError (eraseDeadVars (mentionedLocals body) body)
 applyDeadVars d@(MkRCCon _ _ _) = d
 applyDeadVars d@(MkRCForeign _ _ _) = d

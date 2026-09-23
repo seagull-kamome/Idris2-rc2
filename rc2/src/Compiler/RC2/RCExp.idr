@@ -375,6 +375,77 @@ freeLocalsR (RReuseOffer _ sc dupOnShared dropOnUnique body) =
 freeLocalsR (RMemoize _ _ _ body) = freeLocalsR body
 freeLocalsR _ = empty
 
+||| Every `RCLocal` named in a *use* position anywhere in `e` --
+||| `freeLocalsR` without the binder subtraction, and without its
+||| pre-`Compiler.RC2.Loop` scope: every post-`Loop`/`DualABI`
+||| constructor (`RLoop`, `RLoopContinue`, `RAppNameRep`,
+||| `RAppFFIInline`) is covered here too, since this one's only caller
+||| (`Compiler.RC2.DeadVars`) runs at the very end of the pipeline,
+||| where all four genuinely occur. `freeLocalsR` falls through to
+||| `empty` for them -- harmless for its own callers, which all run
+||| before those constructors exist.
+|||
+||| Deliberately *not* subtracting binders is what lets a caller ask
+||| the question once for a whole definition instead of once per
+||| binding scope: every local id within one definition is unique
+||| (`Compiler.RC2.Util`'s own `VarId`), so "named anywhere in this
+||| definition" and "named within its own binder's scope" answer the
+||| same for any id that definition binds.
+||| `insert` every element of `xs`, one at a time, into `acc` -- never
+||| `union (fromList xs) acc`, see `mentionedLocalsAcc`'s own note on
+||| which way round `Data.SortedSet.union` actually copies.
+insertAll : List RCLocal -> SortedSet RCLocal -> SortedSet RCLocal
+insertAll xs acc = foldl (flip insert) acc xs
+
+||| Threads one accumulator through the whole walk rather than building
+||| a set per node and merging them on the way back up. That matters
+||| more than it looks: `Data.SortedSet.union x y` is `foldr insert x y`
+||| -- it inserts all of *`y`* into `x`, the opposite of what its own
+||| doc comment says -- so the natural `union <small direct refs>
+||| <big recursive result>` spelling copies the entire accumulated set
+||| at every level, which over a long ANF `RLet` chain is quadratic.
+||| Inserting into a single accumulator has no merge step at all.
+mentionedLocalsAcc : SortedSet RCLocal -> RCExp -> SortedSet RCLocal
+mentionedLocalsAcc acc (RV _ v) = insert v acc
+mentionedLocalsAcc acc (RAppName _ _ _ args) = insertAll args acc
+mentionedLocalsAcc acc (RAppNameRep _ _ _ _ postDrop args) = insertAll args (insertAll postDrop acc)
+mentionedLocalsAcc acc (RAppFFIInline _ _ _ _ postDrop args) = insertAll args (insertAll postDrop acc)
+mentionedLocalsAcc acc (RUnderApp _ _ _ args) = insertAll args acc
+mentionedLocalsAcc acc (RApp _ _ c args) = insertAll args (insert c acc)
+mentionedLocalsAcc acc (RLet _ _ _ value body) =
+    mentionedLocalsAcc (mentionedLocalsAcc acc value) body
+mentionedLocalsAcc acc (RCon _ _ _ _ args reuseFrom) =
+    insertAll args (maybe acc (\r => insert r acc) reuseFrom)
+mentionedLocalsAcc acc (ROp _ _ _ args postDrop) = insertAll (toList args) (insertAll postDrop acc)
+mentionedLocalsAcc acc (RExtPrim _ _ _ args postDrop) = insertAll args (insertAll postDrop acc)
+mentionedLocalsAcc acc (RStructGet _ structVar _ _ postDrop) = insert structVar (insertAll postDrop acc)
+mentionedLocalsAcc acc (RStructSet _ structVar _ _ value postDrop) =
+    insert structVar (insert value (insertAll postDrop acc))
+mentionedLocalsAcc acc (RCmpCase _ _ args postDrop t f) =
+    mentionedLocalsAcc (mentionedLocalsAcc (insertAll (toList args) (insertAll postDrop acc)) t) f
+mentionedLocalsAcc acc (RConCase _ sc alts mDef) =
+    let acc' = foldl (\a, (MkRConAlt _ _ _ _ body) => mentionedLocalsAcc a body) (insert sc acc) alts
+    in maybe acc' (mentionedLocalsAcc acc') mDef
+mentionedLocalsAcc acc (RConstCase _ sc alts mDef) =
+    let acc' = foldl (\a, (MkRConstAlt _ body) => mentionedLocalsAcc a body) (insert sc acc) alts
+    in maybe acc' (mentionedLocalsAcc acc') mDef
+mentionedLocalsAcc acc (RDup _ v _ body) = mentionedLocalsAcc (insert v acc) body
+mentionedLocalsAcc acc (RDrop _ vars body) = mentionedLocalsAcc (insertAll vars acc) body
+mentionedLocalsAcc acc (RFree _ v body) = mentionedLocalsAcc (insert v acc) body
+mentionedLocalsAcc acc (RReleaseReuse _ v body) = mentionedLocalsAcc (insert v acc) body
+mentionedLocalsAcc acc (RReuseOffer _ sc dupOnShared dropOnUnique body) =
+    mentionedLocalsAcc (insertAll dupOnShared (insertAll dropOnUnique (insert sc acc))) body
+mentionedLocalsAcc acc (RLoop _ _ initial prologueDrop body) =
+    mentionedLocalsAcc (insertAll initial (insertAll prologueDrop acc)) body
+mentionedLocalsAcc acc (RLoopContinue _ args postDrop) = insertAll args (insertAll postDrop acc)
+mentionedLocalsAcc acc (RMemoize _ _ _ body) = mentionedLocalsAcc acc body
+-- RPrimVal/RErased/RCrash: no locals at all.
+mentionedLocalsAcc acc _ = acc
+
+export
+mentionedLocals : RCExp -> SortedSet RCLocal
+mentionedLocals = mentionedLocalsAcc empty
+
 ||| How many times `l` is referenced anywhere in `e` -- unlike
 ||| `freeLocalsR`'s set (which collapses repeats), RC.idr's
 ||| `inlineableRep` needs the exact count to tell "referenced exactly
