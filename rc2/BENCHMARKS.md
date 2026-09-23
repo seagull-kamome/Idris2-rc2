@@ -1049,3 +1049,48 @@ nix-shell -p idris2 gcc gmp --run \
 time /tmp/bench_rc2
 time /tmp/bench_refc
 ```
+
+## 2026-09-24 追記: 定数クロージャの飽和適用を直接呼び出しへ(Compiler.RC2.ConstFold)
+
+`RCConstClosure`は捕獲値を持たない真の葉であり、その`missing`は呼び先の
+全残りarityである。したがって同数の引数を渡す適用は何も遅延されない
+「ただの直接呼び出し」であって、`idris2rc2_applyClosure`のarity判定・
+引数コピー・関数ポインタ表dispatchを通す理由がない。`foldConst`の`RApp`節で
+`RApp fc lazy (RCConstClosure n missing) args`(`length args == missing`)を
+`RAppName fc lazy n args`へ書き換えた。
+
+より効くのは二次効果のほうで、`RApp`は後続パス全部にとって不透明である。
+`Compiler.RC2.SpecClosure`/`LateInline`/`DualABI`はいずれも**名前付き**呼び出しを
+手がかりにしているため、直接呼び出しになって初めてその先を最適化できる。
+
+### IRレベル(idris2-lsp全体、26,371定義)
+
+| | 変更前 | 変更後 |
+|---|---|---|
+| `apply`(クロージャ適用) | 16,400 | 12,519 |
+| `call`(直接呼び出し) | 49,530 | 53,409 |
+| うち定数クロージャへの`apply` | 4,842 | 961 |
+
+3,881箇所が間接dispatchから直接呼び出しになった。残る961件は真の部分適用
+(`length args < missing`)で、実際にクロージャが必要なため変更なし。
+
+### 実行時A/B(`tests/BenchConstClosureApply.idr`、同一マシン7回)
+
+`git checkout HEAD~1 -- ConstFold.idr`で旧コンパイラを作り直して直接比較した。
+
+| | 中央値 | 生成C中の`idris2rc2_applyClosure` |
+|---|---|---|
+| 変更前 | 0.475s | 3 |
+| 変更後 | 0.375s | 1 |
+
+**約21%高速**。出力は両者とも`937501`で一致。
+
+`bench.sh`での対RefC比は **2.71x**(rc2 0.366s / refc 0.993s)。
+
+### 残る課題
+
+実行時に読む辞書フィールドへの適用(真の`RCLoc`に対する
+`idris2rc2_applyClosure`)は依然boxedな間接呼び出しで、idris2-lspでは
+11,558件ある。呼び出し側をdictionaryの**値**が判明した時点で特化する必要があり、
+`TODO.md`の「Performance: interface-dictionary method dispatch stays boxed
+even when the concrete instance is known」として引き続き未解決。
