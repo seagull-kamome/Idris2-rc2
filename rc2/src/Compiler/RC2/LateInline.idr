@@ -131,16 +131,23 @@ record Carried where
 ||| cached, on round N. Returns the updated cache alongside the
 ||| `Analysis` as before, for `applyLateInlineOnce` to thread into the
 ||| next round.
-analyse : (prev : Maybe Carried) -> (dirty : SortedSet Name) -> (refs : RefCache) -> List (Name, RCDef) -> (Analysis, Carried)
-analyse prev dirty refs defs =
+analyse : (prev : Maybe Carried) -> (dirty : SortedSet Name) -> (refs : RefCache)
+       -> (defOf : SortedMap Name RCDef) -> List (Name, RCDef) -> (Analysis, Carried)
+analyse prev dirty refs defOf defs =
     let oldInfo : CalleeInfo = maybe empty (.info) prev
-        defOf : SortedMap Name RCDef = SortedMap.fromList defs
-        perDef : List (Name, (SortedSet Name, List Name)) =
+        -- Third component: whether this entry was recomputed this round
+        -- (`dirty`, or never seen before). Only those need writing back
+        -- into the cache -- re-inserting all ~35k entries every round
+        -- when a handful changed is the same "redo work nothing asked
+        -- for" shape the cache exists to avoid in the first place.
+        classified : List (Name, (SortedSet Name, List Name), Bool) =
                    map (\(n, d) =>
-                          (n, case lookup n oldInfo of
-                                   Just i => if contains n dirty then freshInfo d else i
-                                   Nothing => freshInfo d)) defs
-        info' : CalleeInfo = foldl (\acc, (n, i) => insert n i acc) oldInfo perDef
+                          case lookup n oldInfo of
+                               Just i => if contains n dirty then (n, freshInfo d, True) else (n, i, False)
+                               Nothing => (n, freshInfo d, True)) defs
+        perDef : List (Name, (SortedSet Name, List Name)) = map (\(n, i, _) => (n, i)) classified
+        info' : CalleeInfo =
+                   foldl (\acc, (n, i, fresh) => if fresh then insert n i acc else acc) oldInfo classified
         -- Folds each definition's own occurrence list straight into the
         -- map. Flattening them into one list first (`concatMap`, the
         -- obvious spelling) is quadratic: `concat` left-nests `++`, so
@@ -672,9 +679,18 @@ applyLateInlineOnce roots prev dirty defs0 = do
                         pruneDeadDefsCached (maybe empty (.refs) prev) dirty roots defs0
               let n : Nat = length (fst r) + length (SortedMap.toList (snd r))
               pure (if n == n then r else r)
+    -- Built once and shared with `goOrder` below: `analyse` and the
+    -- splice walk both want the same `Name`-keyed view of this round's
+    -- own definitions, and building it is ~35k `Name` comparisons'
+    -- worth of work to redo for nothing.
+    defOf <- logTime 3 "rc2: LI defOf" $ do
+              () <- pure ()
+              let r : SortedMap Name RCDef = SortedMap.fromList defs
+              let n : Nat = length (SortedMap.toList r)
+              pure (if n == n then r else r)
     (an, carried) <- logTime 3 "rc2: LI analyse" $ do
               () <- pure ()
-              let r : (Analysis, Carried) = analyse prev dirty refs' defs
+              let r : (Analysis, Carried) = analyse prev dirty refs' defOf defs
               let n : Nat = length (Prelude.toList (fst r).eligible)
                               + length (snd r).order
                               + length (SortedMap.toList (snd r).counts)
@@ -697,7 +713,7 @@ applyLateInlineOnce roots prev dirty defs0 = do
                                            Just (cs, _) => any (\c => contains c an.eligible) (Prelude.toList cs)
                                            Nothing => False
              let toProcess = filter touchesEligible an.processOrder
-             final <- goOrder an.eligible toProcess (SortedMap.fromList defs)
+             final <- goOrder an.eligible toProcess defOf
              pure (True, map (\(n, d) => (n, fromMaybe d (lookup n final))) defs, carried, SortedSet.fromList toProcess)
   where
     goOrder : SortedSet Name -> List Name -> SortedMap Name RCDef -> Core (SortedMap Name RCDef)
