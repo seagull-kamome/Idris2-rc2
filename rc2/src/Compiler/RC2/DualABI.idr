@@ -256,7 +256,12 @@ applyDualABI : List (Name, RCDef) -> Core (List (Name, RCDef))
 applyDualABI defs = do
     _ <- newRef FreshId 0
     let existingNames = SortedSet.fromList (map fst defs)
-    concat <$> traverse (synthesizeIfEligible existingNames) defs
+    -- `foldr (++) []`, not `concat`: `Foldable List` overrides
+    -- `foldMap` with `foldl (\acc, x => acc <+> f x) neutral`, so
+    -- `concat` (and `concatMap`) left-nest `++` and copy the whole
+    -- accumulated result once per element -- quadratic across a
+    -- whole-program def list. See `code-style-Idris2.md`.
+    foldr (++) [] <$> traverse (synthesizeIfEligible existingNames) defs
   where
     synthesizeIfEligible : {auto r : Ref FreshId Int} -> SortedSet Name -> (Name, RCDef) -> Core (List (Name, RCDef))
     synthesizeIfEligible existingNames (n, d@(MkRCFun args retRep _ body)) =
