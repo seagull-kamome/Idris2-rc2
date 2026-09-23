@@ -694,14 +694,14 @@ the two calls. Verified leak-free via `valgrind` (registered in
 `verify.sh`'s `LEAK_SENSITIVE_TESTS`), and against `rc2/tests/verify.sh`
 as a whole: 90 passed, 0 known, 0 failed.
 
-### Extending the promotion to `case` scrutinees: `constCaseScrutineeNativeReads`
+### Extending the promotion to `case` scrutinees
 
-The fourth read source, and the one that turned out to matter most in
-real code. `Compiler.RC2.Loop`'s own `nativeArgTypes` looks only at the
+The read source that turned out to matter most in real code.
+`Compiler.RC2.Loop`'s own `nativeArgTypes` used to look only at the
 *alt bodies* of an `RConstCase`, never at the scrutinee position
-itself -- correct for its own loop-param caller, but it meant a worker
-call whose native result was read *only* as a `case` scrutinee matched
-none of the three sources above and stayed `RBoxed`.
+itself, so a worker call whose native result was read *only* as a
+`case` scrutinee matched none of the sources above and stayed
+`RBoxed`.
 
 Nothing was missing on the emission side: `Compiler.RC2.Emit`'s own
 `emitConstCaseInto` has rendered a scrutinee per its own `Rep` (native
@@ -709,13 +709,33 @@ or Boxed, on both its integer-switch and its `Db` equality path) ever
 since `Compiler.RC2.Loop`'s native-shadow promotion needed it. Only
 the eligibility question was absent.
 
+The scrutinee contribution lives in `nativeArgTypes`/`nativeArgTypesFor`
+themselves, so all three of their consumers get it at once:
+`Compiler.RC2.Loop`'s own param-shadow promotion (which
+`applyLoop`'s own doc comment already said should cover "a countdown's
+own `0` check"), this Stage's `nativePromotionFor`, and
+`Compiler.RC2.LateInline`'s own `nativeEligible`. `LateInline`'s
+companion `hasNonNativeUse` had to stop treating a scrutinee
+occurrence as disqualifying in the same step, against the same shared
+`constAltsNativeType` -- the two must agree, or a value one of them
+calls native the other vetoes.
+
 `constAltsNativeType` supplies the type from the alts' own matched
 constants via `Types.litRep`, which already answers `Nothing` for `BI`
 and `Str` -- so a GMP `Integer` or `String` scrutinee keeps its Boxed
 read, the two shapes `emitConstCaseInto` has no native rendering for.
 Alts that disagree on a type are rejected outright rather than guessed
 at, and `nativePromotionFor`'s own singleton check then rejects any
-conflict with the other three sources as well.
+conflict with the other sources as well.
+
+An `RLoop`'s own `initial=` list got the same correction at the same
+time, for the same reason: `Emit`'s `declareLoopParam` renders each
+entry through `rcVarToNativeC` keyed on *that slot's* `Rep`, so
+supplying an already-`RNative` slot is a native read, not the
+"metadata" `nativeArgTypes` used to skip -- the `RLoopContinue`
+analogue one iteration earlier. `LateInline`'s `hasNonNativeUse`
+likewise stopped treating an `initial` occurrence as disqualifying,
+against the shared `Loop.nativeSlotTy`.
 
 Measured over a whole idris2-lsp build (24,343 definitions), by
 `--directive dumprcexpr`'s own `callRep` lines:
@@ -1569,9 +1589,8 @@ from Stage 2.
   returns *two* maps from one traversal -- the original-name-keyed one
   Stage 4 always took, plus a worker-name-keyed one for Stage 5's own
   use), `workerTable`/`applyCallSiteRewriteBody`/`applyCallSiteRewrite`/
-  `ultimateTail`/`bareTailNativeReads`/`constAltsNativeType`/
-  `constCaseScrutineeNativeReads`/`branchValueNativeType`/
-  `nativePromotionFor`/
+  `ultimateTail`/`bareTailNativeReads`/
+  `branchValueNativeType`/`nativePromotionFor`/
   `postDropFor`/`localRepIn` (Stage 4: `applyCallSiteRewrite` now takes
   Stage 3c's own original-name-keyed table as an explicit argument and
   `mergeWith const`s it into the `MkRCFun`-derived `workerTable`,

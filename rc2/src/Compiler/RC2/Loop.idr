@@ -243,6 +243,37 @@ addTracked : SortedSet Int -> RCLocal -> PrimType -> SortedMap Int (SortedSet Pr
 addTracked tracked (RCLoc i) ty acc = if contains i tracked then SortedMap.insertWith union i (SortedSet.singleton ty) acc else acc
 addTracked _ _ _ acc = acc
 
+||| A slot's own already-decided native `PrimType`, if it has one --
+||| shared by every "is this position read natively" check over an
+||| `RLoop`'s own `loopParams`.
+export
+nativeSlotTy : Rep -> Maybe PrimType
+nativeSlotTy (RNative ty) = Just ty
+nativeSlotTy (RInlineNative ty) = Just ty
+nativeSlotTy RBoxed = Nothing
+
+||| The single native `PrimType` every alt of a constant-`case` matches
+||| its scrutinee against, or `Nothing` when they disagree or the type
+||| isn't native-eligible at all. `Types.litRep` already answers
+||| `Nothing` for `BI` and `Str`, so a GMP `Integer` or `String`
+||| scrutinee keeps its Boxed read -- the only two shapes
+||| `Compiler.RC2.Emit`'s own `emitConstCaseInto` has no native
+||| rendering for (it has rendered every other scrutinee per its own
+||| `Rep` since this module's native-shadow promotion needed it).
+export
+constAltsNativeType : List RConstAlt -> Maybe PrimType
+constAltsNativeType [] = Nothing
+constAltsNativeType (MkRConstAlt c _ :: rest) =
+    case litRep c of
+         Nothing => Nothing
+         Just ty => if allMatch ty rest then Just ty else Nothing
+  where
+    -- `MkRConstAlt`'s own second field is an `RCExp`, deliberately
+    -- unexamined here: only the matched constant decides the type.
+    allMatch : PrimType -> List RConstAlt -> Bool
+    allMatch _ [] = True
+    allMatch ty (MkRConstAlt c' _ :: xs) = litRep c' == Just ty && allMatch ty xs
+
 ||| The single-type verdict `nativeArgType`/`callArgOrOpNativeType`
 ||| themselves return: `Just ty` only if `m`'s own entry for `p` is a
 ||| *consistent* singleton (every native-context read of `p` agreed on
@@ -365,9 +396,20 @@ nativeArgTypes p (RReuseOffer _ _ _ _ cont) = nativeArgTypes p cont
 nativeArgTypes p (RConCase _ _ alts mDef) =
     concat (map (\(MkRConAlt _ _ _ _ body) => nativeArgTypes p body) alts)
       `union` maybe empty (nativeArgTypes p) mDef
-nativeArgTypes p (RConstCase _ _ alts mDef) =
-    concat (map (\(MkRConstAlt _ body) => nativeArgTypes p body) alts)
-      `union` maybe empty (nativeArgTypes p) mDef
+-- The scrutinee position counts too: `Compiler.RC2.Emit`'s own
+-- `emitConstCaseInto` renders it per its own `Rep`, so dispatching on a
+-- native local needs no unboxing at all -- exactly the "countdown's own
+-- `0` check" this pass's own native-shadow promotion was always meant
+-- to cover (see `applyLoop`), and the shape a `Bool`-returning worker's
+-- result lands in. `RConCase`'s own scrutinee is a constructor and is
+-- correctly left out.
+nativeArgTypes p (RConstCase _ sc alts mDef) =
+    let fromSc = if sc == RCLoc p
+                    then maybe empty SortedSet.singleton (constAltsNativeType alts)
+                    else empty
+    in fromSc
+         `union` (concat (map (\(MkRConstAlt _ body) => nativeArgTypes p body) alts)
+                    `union` maybe empty (nativeArgTypes p) mDef)
 -- `RLoop` itself carries no native-context operand reads directly
 -- (`loopParams`/`initial`/`prologueDrop` are metadata, not operations
 -- to scan), but its own `body` can -- once genuinely reachable here
@@ -377,7 +419,20 @@ nativeArgTypes p (RConstCase _ _ alts mDef) =
 -- function on such a body when no loop sits behind a bare `RLet`
 -- prefix -- see rc2/doc/inlining.md's "Known limitation" section for
 -- the gap this closes).
-nativeArgTypes p (RLoop _ _ _ _ body) = nativeArgTypes p body
+-- `initial` is not just metadata after all: `Emit`'s own
+-- `declareLoopParam` renders each entry through `rcVarToNativeC` keyed
+-- on *that slot's* own `Rep`, so supplying an already-`RNative` slot is
+-- a genuine native read of `p` -- the `RLoopContinue` analogue one
+-- iteration earlier. Unreachable from `Compiler.RC2.Loop`'s own
+-- param-shadow decision (which runs before its own `RLoop` exists, and
+-- there is only ever one per function); this is for
+-- `Compiler.RC2.DualABI`'s and `Compiler.RC2.LateInline`'s own later
+-- reuse, where the loop is already built.
+nativeArgTypes p (RLoop _ loopParams initial _ body) =
+    let fromInitial = fromList $ mapMaybe (\((_, slotRep), a) =>
+                          if a == RCLoc p then nativeSlotTy slotRep else Nothing)
+                          (zip loopParams initial)
+    in fromInitial `union` nativeArgTypes p body
 -- Every other shape (RV, RAppName, RUnderApp, RApp, RCon, a bare ROp,
 -- RExtPrim, RPrimVal, RErased, RCrash, RLoopContinue): no native-
 -- context operand reads live directly in these (a bare ROp
@@ -411,13 +466,25 @@ nativeArgTypesFor tracked (RReuseOffer _ _ _ _ cont) = nativeArgTypesFor tracked
 nativeArgTypesFor tracked (RConCase _ _ alts mDef) =
     concatMaps (map (\(MkRConAlt _ _ _ _ body) => nativeArgTypesFor tracked body) alts)
       `unionMaps` maybe empty (nativeArgTypesFor tracked) mDef
-nativeArgTypesFor tracked (RConstCase _ _ alts mDef) =
-    concatMaps (map (\(MkRConstAlt _ body) => nativeArgTypesFor tracked body) alts)
-      `unionMaps` maybe empty (nativeArgTypesFor tracked) mDef
+-- See `nativeArgTypes`'s own `RConstCase` case for why the scrutinee
+-- position counts.
+nativeArgTypesFor tracked (RConstCase _ sc alts mDef) =
+    let fromSc = maybe empty (\ty => addTracked tracked sc ty empty) (constAltsNativeType alts)
+    in fromSc
+         `unionMaps` (concatMaps (map (\(MkRConstAlt _ body) => nativeArgTypesFor tracked body) alts)
+                        `unionMaps` maybe empty (nativeArgTypesFor tracked) mDef)
 -- See `nativeArgTypes`'s own `RLoop` case just above for why this is
 -- reachable now, and why recursing into `body` (ignoring `loopParams`/
 -- `initial`/`prologueDrop`, metadata rather than operations) suffices.
-nativeArgTypesFor tracked (RLoop _ _ _ _ body) = nativeArgTypesFor tracked body
+-- See `nativeArgTypes`'s own `RLoop` case just above for why `initial`
+-- counts as a native read of an already-`RNative` slot.
+nativeArgTypesFor tracked (RLoop _ loopParams initial _ body) =
+    let fromInitial : SortedMap Int (SortedSet PrimType) =
+            foldr (\((_, slotRep), a), acc =>
+                       maybe acc (\ty => addTracked tracked a ty acc) (nativeSlotTy slotRep))
+                  (the (SortedMap Int (SortedSet PrimType)) SortedMap.empty)
+                  (zip loopParams initial)
+    in fromInitial `unionMaps` nativeArgTypesFor tracked body
 nativeArgTypesFor _ _ = empty
 
 ||| The single native `PrimType` top-level parameter `p` should be

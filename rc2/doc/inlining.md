@@ -285,6 +285,47 @@ by hand at this depth; the synthetic generator did so specifically to
 isolate the case-of-case shape), but worth noting so it isn't confused
 with this pass's own behaviour if it resurfaces.
 
+## A literal argument's own Rep (`buildSplice`'s constant clause)
+
+`buildSplice`'s `RCLoc` clause has always asked `nativeEligible`
+whether the callee reads the parameter natively, and bound the fresh
+`RLet` `RNative ty` when it does. Its *constant* clause -- the one
+taking an argument `Compiler.RC2.ConstFold` already folded to an
+`RCConst`/`RCEmptyCon`/`RCConstCon`/`RCConstClosure` -- skipped that
+question entirely and always bound `RBoxed`.
+
+For a native-eligible literal (`Types.litRep`) that meant a fresh box
+which the very next statement unboxed again. The common consumer is an
+`RLoop`'s own native `initial=` slot, left behind when a
+loop-converted callee is spliced into its one caller:
+
+```
+let v402 : Boxed = #0
+let v401 : Boxed = #100000
+loop ["v400:Native Int64", "v399:Native Int64"] initial= [v401, v402] prologueDrop= [v401, v402]
+```
+
+```c
+IDRIS2RC2_Value * var_401 = idris2rc2_mkInt64(INT64_C(100000));
+int64_t var_400 = (var_401 == NULL) ? 0 : (idris2rc2_to_i64(var_401));
+```
+
+The clause now asks the same question the `RCLoc` one does. A literal
+bound `RNative` reaches `Compiler.RC2.Emit`'s own `declareLet` case for
+`(RNative _, RPrimVal _ c)`, which puts it straight into `InlineMap` --
+no C variable declared at all, the literal rendered inline at its one
+use. A non-literal constant has no native representation and stays
+`RBoxed`, which `litRep` already answers `Nothing` for.
+
+This needed two matching corrections in the shared native-read analysis
+before it could fire at all -- an `RLoop`'s own `initial=` slot and a
+constant-`case` scrutinee both had to start counting as native reads in
+`Compiler.RC2.Loop`'s `nativeArgTypes`, and stop counting as
+disqualifying uses in `hasNonNativeUse` (against the same shared
+`nativeSlotTy`/`constAltsNativeType`, so the two can't disagree). See
+`doc/dual-abi.md`'s "Extending the promotion to `case` scrutinees" for
+both, and for the measurements.
+
 ## Bugs found and fixed
 
 An earlier attempt at this pass, this session, was fully reverted after

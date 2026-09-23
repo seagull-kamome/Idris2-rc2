@@ -277,8 +277,15 @@ hasNonNativeUse ty loopSlots target (RCmpCase _ _ _ _ t f) = hasNonNativeUse ty 
 hasNonNativeUse ty loopSlots target (RConCase _ sc alts mDef) =
     sc == RCLoc target || any (\(MkRConAlt _ _ _ _ body) => hasNonNativeUse ty loopSlots target body) alts
       || maybe False (hasNonNativeUse ty loopSlots target) mDef
+-- The scrutinee is a native read when the alts match against `ty` --
+-- `Emit.idr`'s own `emitConstCaseInto` dispatches on it per its own
+-- `Rep`, the same reasoning `Compiler.RC2.Loop`'s own `nativeArgTypes`
+-- uses to count it in the first place (`constAltsNativeType` is shared
+-- with it, so the two can't disagree). `RConCase`'s own scrutinee just
+-- below is a constructor and stays a disqualifying use.
 hasNonNativeUse ty loopSlots target (RConstCase _ sc alts mDef) =
-    sc == RCLoc target || any (\(MkRConstAlt _ body) => hasNonNativeUse ty loopSlots target body) alts
+    (sc == RCLoc target && constAltsNativeType alts /= Just ty)
+      || any (\(MkRConstAlt _ body) => hasNonNativeUse ty loopSlots target body) alts
       || maybe False (hasNonNativeUse ty loopSlots target) mDef
 hasNonNativeUse ty loopSlots target (RDup _ v _ body) = hasNonNativeUse ty loopSlots target body
 hasNonNativeUse ty loopSlots target (RDrop _ vars body) = hasNonNativeUse ty loopSlots target body
@@ -289,10 +296,25 @@ hasNonNativeUse ty loopSlots target (RReleaseReuse _ v body) = v == RCLoc target
 hasNonNativeUse ty loopSlots target (RReuseOffer _ sc dupOnShared dropOnUnique body) =
     sc == RCLoc target || elem (RCLoc target) dupOnShared || elem (RCLoc target) dropOnUnique
       || hasNonNativeUse ty loopSlots target body
+-- body is checked against THIS loop's own slots, not the enclosing loopSlots.
+-- `initial` gets exactly the treatment `RLoopContinue` below already gets, and
+-- for the same reason: `Emit.idr`'s own `declareLoopParam` renders each entry
+-- through `rcVarToNativeC` keyed on *that slot's* `Rep`, never the supplied
+-- value's, so supplying an already-`RNative ty` slot is a native read, not a
+-- disqualifying one. Anything else (a Boxed slot, or a length mismatch that
+-- `zip` would silently truncate) still disqualifies.
 hasNonNativeUse ty loopSlots target (RLoop _ loopParams initial _ body) =
-    elem (RCLoc target) initial || hasNonNativeUse ty loopParams target body
--- body is checked against THIS loop's own slots, not the enclosing loopSlots. initial is
--- conservatively treated as a genuine use regardless (see this function's own doc comment).
+    initialNonNative || hasNonNativeUse ty loopParams target body
+  where
+    -- `nativeSlotTy` is `Compiler.RC2.Loop`'s own, shared with the
+    -- `RLoop` case of `nativeArgTypes` that decides `ty` in the first
+    -- place -- the two must agree on what counts as a native slot, or
+    -- a value one of them called native the other would disqualify.
+    initialNonNative : Bool
+    initialNonNative =
+        any (\((_, slotRep), a) => a == RCLoc target && nativeSlotTy slotRep /= Just ty)
+            (zip loopParams initial)
+          || (length initial /= length loopParams && elem (RCLoc target) initial)
 hasNonNativeUse ty loopSlots target (RLoopContinue _ args _) =
     any (\((_, slotRep), a) => a == RCLoc target && not (matchesTy slotRep)) (zip loopSlots args)
       || (length args /= length loopSlots && elem (RCLoc target) args)
@@ -393,12 +415,31 @@ buildSplice fc reps calleeBody ((paramId, actual@(RCLoc actualId)) :: rest) = do
     argRep _ _ = RBoxed
 -- `actual` isn't a bare `RCLoc` (a constant/`RCEmptyCon`/`RCConstCon`/
 -- `RCConstClosure` folded by `Compiler.RC2.ConstFold`) -- no existing
--- caller local to alias onto or promote, so this always needs its own
--- fresh `RBoxed` declaration exactly as before.
+-- caller local to alias onto, so this always needs its own fresh
+-- declaration. Its `Rep` still gets the same promotion question the
+-- `RCLoc` clause above asks, though: a native-eligible *literal*
+-- (`Types.litRep`) whose callee-side reads are all native at that same
+-- type is bound `RNative` and renders as a bare C literal, where
+-- `RBoxed` would box it only for the very next statement to unbox it
+-- again (an `RLoop`'s own native `initial=` slot is the common
+-- consumer). A non-literal constant -- `RCEmptyCon`/`RCConstCon`/
+-- `RCConstClosure` -- has no native representation at all and stays
+-- `RBoxed`, which `litRep` already answers `Nothing` for.
 buildSplice fc reps calleeBody ((paramId, actual) :: rest) = do
     (ren, wrap, promoted) <- buildSplice fc reps calleeBody rest
     f <- freshVarId
-    pure (insert paramId f ren, wrap . RLet fc f RBoxed (RV fc actual), promoted)
+    let (rep, promoted') = case constLitRep actual of
+                                Nothing => (RBoxed, promoted)
+                                Just ty => case nativeEligible paramId calleeBody of
+                                                Just ty' => if ty' == ty
+                                                               then (RNative ty, SortedSet.insert f promoted)
+                                                               else (RBoxed, promoted)
+                                                Nothing => (RBoxed, promoted)
+    pure (insert paramId f ren, wrap . RLet fc f rep (RV fc actual), promoted')
+  where
+    constLitRep : RCLocal -> Maybe PrimType
+    constLitRep (RCConst c) = litRep c
+    constLitRep _ = Nothing
 
 ||| Every id `collectBoundIds` finds, freshened -- so it can never
 ||| collide with anything, anywhere else in the program.
