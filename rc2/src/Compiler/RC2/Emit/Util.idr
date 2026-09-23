@@ -1143,14 +1143,33 @@ data TailPositionStatus = InTailPosition | NotInTailPosition
 ||| through, so nothing else needs to know) -- see
 ||| `Compiler.RC2.DualABI`'s own Stage 3b for what promotes a worker's
 ||| own `retRep` in the first place.
+||| `SinkVar`'s own `Rep` is the exact counterpart of `SinkReturn`'s:
+||| `RBoxed` declares an `IDRIS2RC2_Value *` slot, `RNative`/
+||| `RInlineNative` a raw C scalar every branch assigns without boxing.
+||| C has no expression form for a `case`, so a Boxed slot means one
+||| box *per arm* (plus the consumer's own unbox), not one around the
+||| branch -- see `doc/dual-abi.md`'s "What stays Boxed after this".
 public export
-data Sink = SinkVar Bool String | SinkReturn Rep
+data Sink = SinkVar Bool String Rep | SinkReturn Rep
+
+||| The C declaration prefix (type plus its own trailing space) a
+||| `Sink`'s own variable is declared with.
+sinkCType : Rep -> String
+sinkCType RBoxed = "IDRIS2RC2_Value * "
+sinkCType (RNative ty) = nativeCType ty ++ " "
+sinkCType (RInlineNative ty) = nativeCType ty ++ " "
+
+||| The pre-branch placeholder value a `Sink`'s own variable is
+||| initialised to -- see `resolveSink`.
+sinkZero : Rep -> String
+sinkZero RBoxed = "NULL"
+sinkZero _ = "0"
 
 ||| Turn a `Sink` that might still need its own variable declared
-||| (`SinkVar True _`) into one that's guaranteed already-declared
-||| (`SinkVar False _`, unchanged if already such; `SinkReturn` always
+||| (`SinkVar True _ _`) into one that's guaranteed already-declared
+||| (`SinkVar False _ _`, unchanged if already such; `SinkReturn` always
 ||| passes through unchanged) -- emitting the variable's own
-||| `NULL`-initialised declaration up front if needed. Shared by every
+||| zero-initialised declaration up front if needed. Shared by every
 ||| multi-branch construct (`RCmpCase`/`RConCase`/`RConstCase`) that must
 ||| pre-declare its result slot exactly *once*, before any branch, so
 ||| every branch can then just plainly assign into the same
@@ -1161,9 +1180,13 @@ export
 resolveSink : {auto oft : Ref OutfileText Output}
            -> {auto il : Ref IndentLevel Nat}
            -> FC -> Sink -> Core Sink
-resolveSink fc (SinkVar True target) = do
-    emit fc "IDRIS2RC2_Value * \{target} = NULL;"
-    pure (SinkVar False target)
+resolveSink fc (SinkVar True target rep) = do
+    -- A native slot is initialised too, not left indeterminate: an alt
+    -- chain whose own conditions gcc can't see are exhaustive would
+    -- otherwise read as a may-be-uninitialised warning, and the Boxed
+    -- path has always had its own `NULL` for exactly the same reason.
+    emit fc "\{sinkCType rep}\{target} = \{sinkZero rep};"
+    pure (SinkVar False target rep)
 resolveSink _ sink = pure sink
 
 ||| Emit the one statement that finally disposes of an already-evaluated
@@ -1174,8 +1197,8 @@ export
 finalizeSink : {auto oft : Ref OutfileText Output}
             -> {auto il : Ref IndentLevel Nat}
             -> FC -> Sink -> String -> Core ()
-finalizeSink fc (SinkVar True target) valStr = emit fc "IDRIS2RC2_Value * \{target} = \{valStr};"
-finalizeSink fc (SinkVar False target) valStr = emit fc "\{target} = \{valStr};"
+finalizeSink fc (SinkVar True target rep) valStr = emit fc "\{sinkCType rep}\{target} = \{valStr};"
+finalizeSink fc (SinkVar False target _) valStr = emit fc "\{target} = \{valStr};"
 finalizeSink fc (SinkReturn _) valStr = emit fc "return \{valStr};"
 
 ||| As `finalizeSink`, but also discharges `drop` (already-rendered
@@ -1221,7 +1244,7 @@ finalizeSinkWithDrop fc sink valStr drop = case sink of
 export
 chainsWithElse : Sink -> Bool
 chainsWithElse (SinkReturn _) = False
-chainsWithElse (SinkVar _ _) = True
+chainsWithElse (SinkVar _ _ _) = True
 
 export
 integerSwitch : List RConstAlt -> Bool
@@ -1354,7 +1377,7 @@ buildClosureIntoSink : {auto a : Ref ArgCounter Nat}
                      -> {auto r : Ref RepMap (SortedMap Int Rep)}
                      -> {auto lm : Ref InlineMap (SortedMap Int (String, List String))}
                      -> FC -> Sink -> Name -> List RCLocal -> Nat -> Core ()
-buildClosureIntoSink fc (SinkVar declare target) n args missing =
+buildClosureIntoSink fc (SinkVar declare target _) n args missing =
     makeClosureInto fc declare target n args missing
 buildClosureIntoSink fc (SinkReturn _) n args missing = do
     closure <- makeClosure fc n args missing

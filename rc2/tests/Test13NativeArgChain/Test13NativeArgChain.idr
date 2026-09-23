@@ -128,6 +128,18 @@ describe x = if isBig x then "big" else "small"
 describeNeg : Int -> String
 describeNeg x = if isBig (0 - x) then "n-big" else "n-small"
 
+-- And the branching-value promotion (`branchValueNativeType`): `&&`
+-- desugars to `if isBig x then isBig y else False`, so the value bound
+-- here is a *branch* whose arms are a native worker call and a native
+-- constant -- not a single worker call, which is all Stage 4's own
+-- promotion used to recognise. C has no expression form for a `case`,
+-- so a Boxed slot for it costs one box PER ARM plus the consumer's own
+-- unbox; a native slot costs none. This is verbatim the shape
+-- `Prelude.Show`'s own `showPrec` produces (`d >= App && firstCharIs
+-- ...`), which is why it is the single most common instance of it.
+describeBoth : Int -> Int -> String
+describeBoth x y = if isBig x && isBig y then "both" else "not-both"
+
 main : IO ()
 main = do
     printLn (loop 0xcbf29ce484222325 [1,2,3,4,5,6,7,8,9,10])
@@ -140,3 +152,5 @@ main = do
     putStrLn (describe 2000)
     putStrLn (describe (-3))
     putStrLn (describeNeg (-5000))
+    putStrLn (describeBoth 2000 3000)
+    putStrLn (describeBoth 2000 1)

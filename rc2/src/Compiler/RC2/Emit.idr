@@ -186,8 +186,18 @@ mutual
         case (rep, value) of
              (RNative _, RPrimVal _ c) => update InlineMap (insert var (nativeLitExpr c, []))
              (RInlineNative ty, _) => inlineNative ty var value
-             (RNative ty, _) => declareNative fc ty var value
-             (RBoxed, _) => emitInto fc (SinkVar True "var_\{show var}") NotInTailPosition value
+             -- Routed through `emitInto`, not straight to
+             -- `declareNative`, so a *branching* value reaches
+             -- `emitCmpCaseInto`/`emitConCaseInto`/`emitConstCaseInto`
+             -- with a native `Sink` and each arm assigns a raw scalar.
+             -- For every non-branching value `emitInto` falls through to
+             -- `emitNativeSinkVar`, which is `declareNative` verbatim
+             -- (same `emitNativeValue`, same declaration, same drop) --
+             -- verified byte-identical over the whole test suite's own
+             -- generated C when this routing landed.
+             (RNative ty, _) =>
+                 emitInto fc (SinkVar True "var_\{show var}" (RNative ty)) NotInTailPosition value
+             (RBoxed, _) => emitInto fc (SinkVar True "var_\{show var}" RBoxed) NotInTailPosition value
 
     ||| Lower a leading chain of ownership/reuse wrapper nodes --
     ||| `RDup`/`RDrop`/`RFree`/`RLet`/`RReleaseReuse`/`RReuseOffer`,
@@ -366,6 +376,24 @@ mutual
                  removeVars pending
                  emit fc "return \{tmp};"
 
+    ||| As `emitNativeReturn`, but writing into a `SinkVar _ _ (RNative
+    ||| ty)` / `SinkVar _ _ (RInlineNative ty)` -- `Sink`'s own
+    ||| counterpart of Stage 3b's native `return`, and what lets a
+    ||| *branching* value stay native: each arm assigns a raw scalar into
+    ||| the one slot `resolveSink` already declared, instead of boxing on
+    ||| the way in and making the consumer unbox again (see
+    ||| `doc/dual-abi.md`'s "What stays Boxed after this").
+    |||
+    ||| Unlike a `return` there is always a statement position after the
+    ||| assignment, so a pending Boxed-operand drop just lands there --
+    ||| the same reasoning `finalizeSinkWithDrop`'s own non-`SinkReturn`
+    ||| branch already relies on, and why no scratch temporary is needed.
+    emitNativeSinkVar : EmitDeps (FC -> Sink -> PrimType -> RCExp -> Core ())
+    emitNativeSinkVar fc sink ty value = do
+        (valStr, pending) <- emitNativeValue ty value
+        finalizeSink fc sink valStr
+        removeVars pending
+
     ||| Evaluate `value` (in `tailPosition`) and dispose of its result per
     ||| `sink` -- either declaring/assigning a named C variable, or (only
     ||| ever while `tailPosition` is `InTailPosition`, since nothing after
@@ -414,22 +442,6 @@ mutual
                          emitConstCaseInto sink tailPosition fc' sc alts def
                      RLoop fc' loopParams initial prologueDrop body =>
                          emitLoopInto sink tailPosition fc' loopParams initial prologueDrop body
-                     -- Always routed to its own dedicated renderer,
-                     -- regardless of `sink` -- emitRC's own contract
-                     -- ("always render a Boxed expression string") has
-                     -- no room to also discharge RAppNameRep's own
-                     -- postDrop (see its own doc comment in RCExp.idr),
-                     -- the same "can't discharge a pending Boxed-operand
-                     -- drop safely in front of a `return`" problem
-                     -- emitNativeReturn already solves for an ordinary
-                     -- native tail value, generalised here to any Sink.
-                     RAppNameRep fc' n argReps retRep postDrop args =>
-                         emitAppNameRepInto sink tailPosition fc' n argReps retRep postDrop args
-                     -- Same reasoning as the RAppNameRep case just
-                     -- above -- always routed to its own dedicated
-                     -- renderer, regardless of `sink`.
-                     RAppFFIInline fc' ccs fargs ret postDrop args =>
-                         emitAppFFIInlineInto sink tailPosition fc' ccs fargs ret postDrop args
                      -- See doc/caf-memoization.md. Always routed to its
                      -- own dedicated renderer, regardless of `sink` --
                      -- same reasoning as RCmpCase/RConCase/RConstCase
@@ -437,19 +449,46 @@ mutual
                      -- emitRC could render).
                      RMemoize fc' n rep body =>
                          emitMemoizeInto sink tailPosition fc' n rep body
-                     -- A native SinkReturn (Compiler.RC2.DualABI's own
-                     -- Stage 3b) skips emitRC entirely: emitRC's own
-                     -- contract is "always render a Boxed expression
-                     -- string", which is exactly wrong here, and can't
-                     -- discharge a pending Boxed-operand drop safely in
-                     -- front of a `return` in the first place (see
-                     -- emitNativeReturn's own doc comment). Every other
-                     -- Sink still goes through emitRC directly, which
-                     -- discharges `sink` (and any pending drop) itself.
+                     -- Everything above threads `sink` through to a
+                     -- further `emitInto` of its own (each branch arm,
+                     -- each loop body), so it must be dispatched before
+                     -- the `sink`'s own Rep is consulted. Everything
+                     -- below IS the value, so the Rep decides which
+                     -- renderer produces it.
+                     --
+                     -- A native sink -- Compiler.RC2.DualABI's own Stage
+                     -- 3b `SinkReturn`, or the native variable slot a
+                     -- branching native value assigns into (see
+                     -- `emitNativeSinkVar`) -- skips emitRC entirely:
+                     -- emitRC's own contract is "always render a Boxed
+                     -- expression string", which is exactly wrong here,
+                     -- and can't discharge a pending Boxed-operand drop
+                     -- safely in front of a `return` in the first place
+                     -- (see emitNativeReturn's own doc comment).
+                     -- `emitNativeValue` has its own native cases for
+                     -- RAppNameRep/RAppFFIInline, so those two are
+                     -- reached through here rather than short-circuited
+                     -- above -- routing them to their always-Boxed
+                     -- renderers would box a worker's own native result
+                     -- straight into a native slot.
                      _ => case sink of
                               SinkReturn (RNative ty) => emitNativeReturn fc ty remaining
                               SinkReturn (RInlineNative ty) => emitNativeReturn fc ty remaining
-                              _ => emitRC sink remaining tailPosition
+                              SinkVar _ _ (RNative ty) => emitNativeSinkVar fc sink ty remaining
+                              SinkVar _ _ (RInlineNative ty) => emitNativeSinkVar fc sink ty remaining
+                              -- A Boxed sink: RAppNameRep and
+                              -- RAppFFIInline still need their own
+                              -- dedicated renderers, since emitRC has no
+                              -- room to also discharge their `postDrop`
+                              -- (see RCExp.idr's own doc comments) --
+                              -- the same problem emitNativeReturn solves
+                              -- on the native side.
+                              _ => case remaining of
+                                       RAppNameRep fc' n argReps retRep postDrop args =>
+                                           emitAppNameRepInto sink tailPosition fc' n argReps retRep postDrop args
+                                       RAppFFIInline fc' ccs fargs ret postDrop args =>
+                                           emitAppFFIInlineInto sink tailPosition fc' ccs fargs ret postDrop args
+                                       _ => emitRC sink remaining tailPosition
 
     ||| A case branch (or default): emit the drops RC.idr's `annotate`
     ||| already decided on (the peeled leading RDrop), then the body
@@ -649,7 +688,7 @@ mutual
         emit fc "if (idris2rc2_memo_boxed_claim(&\{memoVar})) {"
         increaseIndentation
         bodyVar <- getNewVarThatWillNotBeFreedAtEndOfBlock
-        emitInto emptyFC (SinkVar True bodyVar) NotInTailPosition body
+        emitInto emptyFC (SinkVar True bodyVar RBoxed) NotInTailPosition body
         emit fc "idris2rc2_memo_boxed_store(&\{memoVar}, \{bodyVar});"
         emit fc "\{resultVar} = \{bodyVar};"
         decreaseIndentation

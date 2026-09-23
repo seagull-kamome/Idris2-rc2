@@ -128,6 +128,20 @@ tailValueReps reps (RConstCase _ _ alts mDef) =
 tailValueReps reps (RLoop _ loopParams _ _ body) =
     tailValueReps (foldl (\m, (i, r) => insert i r m) reps loopParams) body
 tailValueReps _ (RLoopContinue _ _ _) = []
+-- Only ever reachable AFTER Stage 4's own call-site rewrite has
+-- minted one, so never during Stage 2's own `returnEligibility` (which
+-- runs on the original defs, where every call is still a bare
+-- `RAppName` and is correctly `Nothing` below -- that exclusion is
+-- what makes a pure tail-call delegation chain ineligible, see the
+-- module note) nor during `Compiler.RC2.LateInline`'s own reuse
+-- (earlier in the pipeline still). `branchValueNativeType` is what
+-- asks this question post-rewrite, about a branch arm ending in a
+-- worker call whose own result is already native.
+tailValueReps _ (RAppNameRep _ _ _ retRep _ _) =
+    [ case retRep of
+           RNative ty => Just ty
+           RInlineNative ty => Just ty
+           RBoxed => Nothing ]
 -- RAppName, RUnderApp, RApp, RCon, RExtPrim, RErased, RCrash,
 -- RStructGet, RStructSet: never a native value regardless of context --
 -- a call/closure/constructor result is always Boxed today (no callee is
@@ -602,6 +616,22 @@ constCaseScrutineeNativeReads var (RReuseOffer _ _ _ _ cont) = constCaseScrutine
 -- already reach, same set `callArgNativeReads` leaves out.
 constCaseScrutineeNativeReads _ _ = empty
 
+||| The single native `PrimType` a *branching* `RLet` value produces,
+||| or `Nothing` when any arm's own tail can't be native or they
+||| disagree. C has no expression form for a `case`, so a Boxed slot
+||| costs one box per arm plus the consumer's own unbox -- see
+||| `doc/dual-abi.md`'s "What stays Boxed after this". Asked only after
+||| Stage 4 has rewritten this value's own calls, so an arm ending in a
+||| worker call reads as native via `tailValueReps`'s own
+||| `RAppNameRep` case.
+branchValueNativeType : SortedMap Int Rep -> RCExp -> Maybe PrimType
+branchValueNativeType reps e@(RCmpCase {}) = allJustSame (tailValueReps reps e)
+branchValueNativeType reps e@(RConCase {}) = allJustSame (tailValueReps reps e)
+branchValueNativeType reps e@(RConstCase {}) = allJustSame (tailValueReps reps e)
+-- Every other shape is a single value `nativePromotionFor`'s own
+-- `RAppNameRep` clause already covers (or genuinely isn't native).
+branchValueNativeType _ _ = Nothing
+
 ||| Whether `body` justifies promoting an `RLet`-bound worker-call
 ||| result from `RBoxed` all the way to `RNative ty`, instead of just
 ||| rewriting the call and boxing its result back up -- the actual point
@@ -648,16 +678,19 @@ applyCallSiteRewriteBody : SortedMap Name (Name, List Rep, Rep, Bool)
 applyCallSiteRewriteBody workers reps mLoopParams inTail (RLet fc var rep value body) =
     let value1 = applyCallSiteRewriteBody workers reps mLoopParams False value
         -- Promotion candidate iff `var` was still genuinely `RBoxed`
-        -- and `value1`'s own ultimate tail is now a worker call with a
-        -- native `retRep` -- see `nativePromotionFor`'s own doc
-        -- comment for the actual eligibility question asked about
-        -- `body`.
+        -- and `value1`'s own ultimate tail is now either a worker call
+        -- with a native `retRep`, or a branch every arm of which
+        -- produces the same native type (`branchValueNativeType`) --
+        -- see `nativePromotionFor`'s own doc comment for the actual
+        -- eligibility question then asked about `body`.
         promotedTy : Maybe PrimType
         promotedTy = case rep of
                           RBoxed => case ultimateTail value1 of
                                          RAppNameRep _ _ _ (RNative ty) _ _ => nativePromotionFor workers mLoopParams var ty body
                                          RAppNameRep _ _ _ (RInlineNative ty) _ _ => nativePromotionFor workers mLoopParams var ty body
-                                         _ => Nothing
+                                         branch => case branchValueNativeType reps branch of
+                                                        Just ty => nativePromotionFor workers mLoopParams var ty body
+                                                        Nothing => Nothing
                           _ => Nothing
     in case promotedTy of
             Just ty =>

@@ -518,10 +518,26 @@ for name in $ALL_TESTS; do
     if [ "$name" = "Test13NativeArgChain" ]; then
         boxed="$(grep -cE 'idris2rc2_mk[A-Za-z0-9]+\(idris2rc2_worker_Main_(scaledAbs|isBig)_' \
                    "$TMP/${name}_rc2.c" || true)"
-        if [ "$boxed" = "0" ]; then
-            report_pass "$name (DualABI constCaseScrutineeNativeReads -- case-scrutinee worker results stay native)"
-        else
+        # And the branching-value promotion: `describeBoth`'s whole body
+        # is `&&` over two native predicate calls, so with the branch
+        # itself promoted it holds no boxing and no Boxed intermediate
+        # at all -- a native scalar from its entry to both its returns.
+        # Scans between the definition's own `{` and `}`; the forward
+        # declaration ends `);` instead and is skipped.
+        bodyboxed="$(awk '
+            /^IDRIS2RC2_Value \*Main_describeBoth$/ { seen=1; next }
+            seen && /^\{[[:space:]]*$/ { inbody=1; seen=0; next }
+            seen && /^\)[[:space:]]*;/ { seen=0 }
+            inbody && /^\}[[:space:]]*$/ { inbody=0 }
+            inbody && /idris2rc2_mk/ { c++ }
+            inbody && /IDRIS2RC2_Value \* var_[0-9]+ = NULL;/ { c++ }
+            END { print c+0 }' "$TMP/${name}_rc2.c")"
+        if [ "$boxed" = "0" ] && [ "$bodyboxed" = "0" ]; then
+            report_pass "$name (DualABI native promotion -- case-scrutinee and branching-value worker results stay native)"
+        elif [ "$boxed" != "0" ]; then
             report_fail "$name" "DualABI boxed $boxed case-scrutinee worker result(s) in $TMP/${name}_rc2.c"
+        else
+            report_fail "$name" "DualABI left $bodyboxed boxing site(s) inside Main_describeBoth in $TMP/${name}_rc2.c"
         fi
     fi
 

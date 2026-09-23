@@ -365,7 +365,9 @@ that handles a genuine leaf expression. So:
   needed no *logic* changes at all, only pattern-widening to accept the
   new field (`SinkReturn _`) -- none of their own behaviour depends on
   *which* Rep a return carries, only on the fact that it's a `return`
-  rather than a variable assignment.
+  rather than a variable assignment. (`SinkVar` later gained a `Rep` of
+  its own for the same reason, and `resolveSink`/`finalizeSink` *do*
+  read that one -- see "Extending the promotion to branching values".)
 - **`emitInto`'s own single fallback arm** (the one place every genuine
   leaf value -- `RV`/`ROp`/`RPrimVal`/etc. -- ultimately lands) is the
   *only* place that actually inspects the Rep: `SinkReturn (RNative
@@ -764,10 +766,11 @@ shape and the count wrong -- corrected here):
    `nativePromotionFor` correctly declines these.
 
 2. **A `let` whose *value* is a branch, every arm of which produces a
-   native value.** This one *is* a real remaining gap, and a bigger one
-   than everything above. C has no expression form for a `case`, so the
-   boxing is not one wrapper around the branch -- it is **one per arm**,
-   with the consumer unboxing again afterwards:
+   native value.** This was the bigger gap by far, and is now closed --
+   see "Extending the promotion to branching values" below. The
+   problem it solved: C has no expression form for a `case`, so the
+   boxing was not one wrapper around the branch -- it was **one per
+   arm**, with the consumer unboxing again afterwards:
 
    ```c
    IDRIS2RC2_Value * var_556 = NULL;               // sink declared Boxed
@@ -788,17 +791,100 @@ shape and the count wrong -- corrected here):
    times the 86 sites this section's own change removes from the same
    corpus.
 
-   The cause is structural: `Compiler.RC2.Emit.Util`'s own `Sink` is
-   `SinkVar Bool String | SinkReturn Rep`. `SinkReturn` carries a `Rep`
-   (that is exactly what Stage 3b added, so a native tail can `return`
-   a raw scalar), but `SinkVar` carries none, so `resolveSink` always
-   declares `IDRIS2RC2_Value * target = NULL;` and every arm's
-   `finalizeSink` has to box on the way in. Closing it means generalising
-   Stage 3b from *returns* to *variables*: a `Rep` on `SinkVar`, a
-   native declaration in `resolveSink`, native assignment in
-   `finalizeSink`, and an eligibility question over a branching value
-   that `returnEligibility`/`tailValueReps` already answers in all but
-   name. Tracked in `TODO.md`.
+   The cause was structural: `Compiler.RC2.Emit.Util`'s own `Sink` used
+   to be `SinkVar Bool String | SinkReturn Rep`. `SinkReturn` carries a
+   `Rep` (that is exactly what Stage 3b added, so a native tail can
+   `return` a raw scalar), but `SinkVar` carried none, so `resolveSink`
+   always declared `IDRIS2RC2_Value * target = NULL;` and every arm's
+   `finalizeSink` had to box on the way in.
+
+### Extending the promotion to branching values: `branchValueNativeType`
+
+Generalises Stage 3b from *returns* to *variables*, in three parts:
+
+- **`Sink` carries a `Rep` on `SinkVar` too** (`SinkVar Bool String
+  Rep`). `resolveSink` declares `uint8_t target = 0;` rather than
+  `IDRIS2RC2_Value * target = NULL;` when it is native, and
+  `finalizeSink` assigns a raw scalar into it. Landing this alone,
+  with every construction site passing `RBoxed`, left the whole test
+  suite's own generated C byte-identical -- the intended check that
+  the refactor moved nothing on its own.
+- **`emitNativeSinkVar`**, the exact counterpart of `emitNativeReturn`
+  for a variable slot. Simpler than the return case: there is always a
+  statement position after an assignment, so a pending Boxed-operand
+  drop just lands there and no scratch temporary is needed.
+  `emitInto`'s own dispatch now consults the sink's `Rep` *after* the
+  constructs that thread `sink` onward (branches, `RLoop`, `RMemoize`)
+  and *before* `RAppNameRep`/`RAppFFIInline` -- those two have native
+  cases in `emitNativeValue`, and routing them to their always-Boxed
+  renderers would box a worker's own native result straight into a
+  native slot. `declareLet`'s own `RNative` case goes through
+  `emitInto` for the same reason, reaching `emitNativeSinkVar` (which
+  is `declareNative` verbatim) for every non-branching value.
+- **`branchValueNativeType`** answers the eligibility question, reusing
+  `tailValueReps`/`allJustSame` -- `Just ty` iff every arm's own tail
+  is native at the same `ty`. `tailValueReps` gains an `RAppNameRep`
+  case for this: only reachable *after* Stage 4's own rewrite, so
+  Stage 2's `returnEligibility` (which runs on the original defs, where
+  every call is still a bare `RAppName`) and `Compiler.RC2.LateInline`'s
+  own earlier reuse both see exactly what they saw before. The
+  `nativePromotionFor` gate over `body` is unchanged, so a branch whose
+  result is only ever read in a Boxed position still stays Boxed.
+
+Measured over the test suite's own generated C:
+
+| | before | after |
+|---|---|---|
+| all-arms-boxed branch sinks | 254 | **20** |
+| their boxing calls | 871 | **30** |
+| `idris2rc2_mk*` (all boxing) | 2,176 | 1,329 |
+| unboxing (`extractInt`/`to_i64`/...) | 1,269 | 1,030 |
+| `idris2rc2_drop` calls | 8,175 | **7,606** |
+| `IDRIS2RC2_Value *` declarations | 14,126 | 13,880 |
+
+and over a whole idris2-lsp build, `RLet` Reps: `Native` 1,333 ->
+**1,980** (+647), `Boxed` 114,202 -> 113,555. The 20 sinks left are
+genuine: a loop result whose other "arm" is a `goto`, read by a
+Boxed consumer.
+
+`Prelude.Show`'s own `showPrec` is the canonical before/after -- its
+`d >= App && firstCharIs ...` guard is now `uint8_t` end to end:
+
+```c
+// before
+IDRIS2RC2_Value * var_555 = idris2rc2_mkBits8(idris2rc2_worker_..._Ord_Prec_2(var_558, ...));
+IDRIS2RC2_Value * var_556 = NULL;
+int64_t tmp_22 = idris2rc2_extractInt(var_555);
+if (tmp_22 == UINT8_C(1)) {
+    idris2rc2_drop(var_555); idris2rc2_dup(var_557);
+    var_556 = idris2rc2_mkBits8(idris2rc2_worker_..._firstCharIs_0_0(var_557));
+} else {
+    idris2rc2_drop(var_555);
+    var_556 = idris2rc2_mkBits8(UINT8_C(0));
+}
+IDRIS2RC2_Value * var_561 = NULL;
+int64_t tmp_23 = idris2rc2_extractInt(var_556);
+if (tmp_23 == UINT8_C(0)) { idris2rc2_drop(var_556); ... }
+
+// after
+uint8_t var_555 = idris2rc2_worker_..._Ord_Prec_2(var_558, ...);
+uint8_t var_556 = 0;
+int64_t tmp_22 = var_555;
+if (tmp_22 == UINT8_C(1)) {
+    idris2rc2_dup(var_557);
+    var_556 = idris2rc2_worker_..._firstCharIs_0_0(var_557);
+} else {
+    var_556 = UINT8_C(0);
+}
+IDRIS2RC2_Value * var_561 = NULL;
+int64_t tmp_23 = var_556;
+if (tmp_23 == UINT8_C(0)) { ... }
+```
+
+`rc2/tests/Test13NativeArgChain.idr`'s own `describeBoth` is the
+regression test (`isBig x && isBig y` desugars to exactly this shape);
+`verify.sh` checks its whole emitted body holds no boxing and no Boxed
+intermediate at all.
 
 ## Stage 3c: FFI worker synthesis
 
@@ -1484,7 +1570,8 @@ from Stage 2.
   Stage 4 always took, plus a worker-name-keyed one for Stage 5's own
   use), `workerTable`/`applyCallSiteRewriteBody`/`applyCallSiteRewrite`/
   `ultimateTail`/`bareTailNativeReads`/`constAltsNativeType`/
-  `constCaseScrutineeNativeReads`/`nativePromotionFor`/
+  `constCaseScrutineeNativeReads`/`branchValueNativeType`/
+  `nativePromotionFor`/
   `postDropFor`/`localRepIn` (Stage 4: `applyCallSiteRewrite` now takes
   Stage 3c's own original-name-keyed table as an explicit argument and
   `mergeWith const`s it into the `MkRCFun`-derived `workerTable`,
