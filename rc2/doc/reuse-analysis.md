@@ -296,6 +296,40 @@ exactly this reuse-in-place shape. Confirmed via `--directive
 dumprcexpr` IR tracing and by inspecting the generated C, not just by
 observing the leak disappear under `valgrind`.
 
+## Addendum: a dead offer releases up front, not once per leaf
+
+`resolveAlt`'s own eligibility pre-filter is `contains name
+(usedConstructorsR inner)` -- "a same-named constructor appears
+*somewhere* below". `tryClaim` reaches far fewer positions than that,
+so the filter is optimistic: measured over a whole idris2-lsp build,
+**3,228 of 19,011 offered scrutinees (17%) are never claimed by any
+`con ... reuse=`**.
+
+`tryConsume` now reports whether it claimed anywhere. For a dead
+offer, what changes is *where the release goes*, not whether the offer
+exists:
+
+- **The branch stays.** Collapsing a dead offer to its own "shared"
+  path unconditionally was tried and **measured to be a
+  pessimization**: `idris2rc2_dropReuseConstructor` frees the shell
+  *without* recursing into the fields, so the unique path genuinely
+  avoids dup/drop-ing every surviving field. Removing it pushed
+  idris2-lsp's own `dup` count 95,020 -> 105,619 and `drop`
+  84,111 -> 92,077, to save one branch. Don't re-try this.
+- **The release moves up.** `tryConsume` scatters an `RReleaseReuse`
+  onto *every* leaf path that fails to claim -- for a dead offer that
+  is every path there is. One `RReleaseReuse` wrapped directly around
+  the body does the same job: the shell goes back to the allocator at
+  once instead of at whichever leaf happens to run, and
+  `reuseVarName sc`'s own C local stops spanning the whole body.
+
+Measured over a whole idris2-lsp build: `releaseReuse` nodes
+**33,117 -> 10,270** (-22,847, a 69% cut), each one an
+`idris2rc2_dropReuseConstructor` call site in the generated C.
+`reuseOffer` (29,452) and `reuse=` (21,829) are both unchanged -- no
+reuse opportunity is given up, only the bookkeeping for offers that
+never had one.
+
 ## Files
 
 - `rc2/src/Compiler/RC2/Reuse.idr` -- the pass itself (new module).
