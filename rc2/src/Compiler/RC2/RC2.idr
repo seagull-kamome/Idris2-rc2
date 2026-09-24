@@ -26,6 +26,7 @@ import Compiler.RC2.Emit
 import Compiler.RC2.Emit.Util
 import Compiler.RC2.Inline
 import Compiler.RC2.Pretty
+import Compiler.RC2.PushCon
 import Compiler.RC2.RC
 import Compiler.RC2.RCExp
 import Compiler.RC2.Reuse
@@ -234,7 +235,7 @@ insertMemoize = map wrap
 ||| apart.
 disableableStageNames : List String
 disableableStageNames =
-    ["noinline", "noconstfold", "noknowncon", "nospecclosure", "nospecconstcon", "noconaltnative", "nomutualloop", "noloop", "nolateinline", "nosink", "nodualabi", "nodeadcode", "nodupmerge", "nodeadvars"]
+    ["noinline", "noconstfold", "noknowncon", "nopushcon", "nospecclosure", "nospecconstcon", "noconaltnative", "nomutualloop", "noloop", "nolateinline", "nosink", "nodualabi", "nodeadcode", "nodupmerge", "nodeadvars"]
 
 ||| Optional pipeline-stage disabling via `--directive no<stagename>`,
 ||| for A/B regression isolation without editing `toRCDefs` itself and
@@ -305,14 +306,20 @@ toRCDefs disabled incremental roots lds0 = do
     folded <- if "noconstfold" `elem` disabled
                  then pure preFolded
                  else logTime 2 "rc2: ConstFold (whole-program fixpoint)" $ foldConstProgram (not ("noknowncon" `elem` disabled)) preFolded
+    -- doc/constructor-escape-analysis.md's "Rewrite B": after ConstFold,
+    -- whose known-constructor fold it relies on to finish each push, and
+    -- before the specialization passes, so their clones start pushed.
+    pushed <- if ("nopushcon" `elem` disabled) || ("noconstfold" `elem` disabled)
+                 then pure folded
+                 else logTime 2 "rc2: Push case into tails" $ applyPushCon folded
     -- doc/speculative-closure-specialization.md: strictly after
     -- ConstFold (so RUnderApp targets it already resolved are visible)
     -- and strictly before insertMemoize/Phase 2 below -- a kept clone
     -- is just one more plain MkRCFun by the time either of those see
     -- it, needing no special-casing of its own from either.
     specialized <- if "nospecclosure" `elem` disabled
-                       then pure folded
-                       else logTime 2 "rc2: Speculative closure specialization" $ applySpecClosure folded
+                       then pure pushed
+                       else logTime 2 "rc2: Speculative closure specialization" $ applySpecClosure pushed
     -- doc/constant-constructor-specialization.md: the same pipeline
     -- position and the same three steps as the closure case above, for
     -- the argument shape it cannot see -- a dictionary that gets

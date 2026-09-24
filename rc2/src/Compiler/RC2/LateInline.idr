@@ -230,6 +230,7 @@ mutual
   ||| own destructured `args`, `RLoop`'s own `loopParams`. Everything
   ||| the callee's own body binds *besides* its top-level params, which
   ||| `spliceCall` renames separately.
+  export
   collectBoundIds : RCExp -> List Int
   collectBoundIds (RLet _ var _ value body) = var :: (collectBoundIds value ++ collectBoundIds body)
   collectBoundIds (RCmpCase _ _ _ _ t f) = collectBoundIds t ++ collectBoundIds f
@@ -520,6 +521,7 @@ buildSplice fc reps calleeBody ((paramId, actual) :: rest) = do
 ||| two of them into the *same* caller breaks that separation. See
 ||| `rc2/doc/inlining.md`'s "Criterion B, revisited" for the bug this
 ||| was found via (`var_301` redefined in one C function).
+export
 freshenBoundIds : {auto v : Ref VarId Int} -> List Int -> Core Renaming
 freshenBoundIds [] = pure empty
 freshenBoundIds (i :: is) = do

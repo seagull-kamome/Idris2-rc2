@@ -67,8 +67,8 @@ show up again during testing.
   `where`-clause trap" section is worth reading before adding any
   `where`-bound collection to a pass, `constructor-escape-analysis.md` for
   dropping a constructor built and only `case`-matched in the same
-  function (the direct shape is `ConstFold`'s known-constructor fold;
-  the rest is still design), `dead-code-elim.md` for the
+  function (`ConstFold`'s known-constructor fold and
+  `Compiler.RC2.PushCon`; the post-`LateInline` part is still design), `dead-code-elim.md` for the
   whole-program mark-and-sweep pass that drops definitions rc2's own
   optimizations (Inline, DualABI's Stage 3a wrapper split) leave with
   zero remaining callers, run as `toRCDefs`'s own final stage,

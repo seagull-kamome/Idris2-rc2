@@ -1,7 +1,7 @@
 # Constructor escape analysis: dropping constructors that never escape
 
-**Status:** rewrite A implemented (2026-09-25). Rewrite B and the
-post-`LateInline` cleanup are designed, not yet implemented; tracked in
+**Status:** rewrites A and B implemented (2026-09-25). The
+post-`LateInline` cleanup is designed, not yet implemented; tracked in
 `TODO.md`.
 
 ## The problem
@@ -192,60 +192,122 @@ where this pre-RC fold can't reach (see "Pipeline placement").
 faster). The loop body allocates a `Just` and a box per call without
 the fold, and only the box with it.
 
-## Rewrite B: pushing the consumer into the producer's tails
+## Rewrite B: pushing the consumer into the producer's tails -- implemented
 
-For `RLet v value (RConCase v alts def)` (or `RConstCase`) where `v`
-does not escape, and `value` is not a bare `RCon` (that is rewrite A):
+`Compiler.RC2.PushCon`, a stage of its own right after ConstFold
+(`--directive nopushcon` to disable). For `RLet v value (RConCase v
+alts def)` (or `RConstCase`) where the `case` is the whole body, `v`
+is read nowhere in the alts, and `value` has at least two tails:
 
 1. Find `value`'s **tails**. A tail is where `value`'s result is
    produced: through `RLet`'s body, every arm of
    `RConCase`/`RConstCase`/`RCmpCase`, and nothing else.
-2. Replace each tail `t` by the consumer applied to it:
-   - `t` is `RCon K args` (or `RV` of a known constructor / constant
-     form, via the maps from rewrite A): the alt for `K` alone, fields
-     renamed to `args` -- no allocation, no `case`.
-   - `t` is `RCrash`: `t` unchanged; the consumer never runs.
-   - otherwise (an unknown value, e.g. a call's result): `RLet v' t
-     (RConCase v' alts def)` with a fresh `v'` -- the original
-     consumer, just moved down.
-3. The outer `RLet v` disappears; `value`, rewritten, takes its place.
+2. Work out where each tail **lands** on the consumer:
+   - `t` is `RCon K args` (reuse-free, as always pre-RC), `RV` of an
+     `RCConstCon`/`RCEmptyCon`, or for an `RConstCase` consumer a
+     constant: the alt it selects (or the default).
+   - `t` is `RCrash`: nowhere; `t` stays as is.
+   - otherwise (an unknown value, e.g. a call's result): the whole
+     consumer.
+3. Replace each tail `t` by `RLet v' t <what lands there>`, with a
+   fresh `v'` and the landed part freshly renamed. For a known
+   constructor that is a single-alt `case v' of K ...`, which
+   rewrite A folds away. The stage refolds each changed definition
+   with `foldConstDef` itself, so no later ConstFold run is needed.
+   For a known constant the alt body goes in directly.
+4. The outer `RLet v` disappears; `value`, rewritten, takes its place.
 
 This is case-of-case where the inner `case`'s arms don't have to be
 constructor-*headed*, only constructor-*ending*. Inline's `Lifted`
 version requires the former and so misses the `Core` chain.
 
-**Code size.** Each consumer alt is copied once per tail that lands on
-it; an unknown tail lands *every* alt. The typical `Core` chain costs
-almost nothing. The inner `case` has N `Left`-propagating tails and one
-`Right` tail, so the consumer's small `Left` alt is copied N times and
-its large `Right` alt exactly once. Budget it the way `tryCaseOfCase`
-does (`caseOfCaseSizeBudget`): the added size is the sum over tails of
-the size of what lands there, minus the consumer's own size, and the
-rewrite is skipped if that exceeds the budget. On top of that, a
-large alt (above a threshold, as `smallBodyThreshold`) may land at most
-once, so a chain can't compound multiplicatively. That is the failure
-mode `rc2/doc/inlining.md`'s "Size budget" documents for the `Lifted`
-version.
+Leaving the field binding to rewrite A, rather than renaming fields
+here, means B inherits its native-field rule ("boxed once") for free.
 
-**Fresh ids.** A copied alt must get fresh ids for everything it binds
-(all copies but one), because later passes assume ids are unique per
-definition. That needs the `VarId` counter (`Compiler.RC2.Util`), so
-this rewrite runs in `Core`, not inside the pure `foldConst`. The
-renaming machinery `LateInline` already uses (`collectBoundIds`,
-`freshenBoundIds`, `renameRCExp`) is the model.
+**Code size.** Each consumer part is copied once per tail that lands on
+it, and an unknown tail lands *every* part. The typical `Core` chain
+costs almost nothing. The inner `case` has N `Left`-propagating tails
+and one `Right` tail, so the consumer's small `Left` alt is copied N
+times and its large `Right` alt exactly once. The rewrite is skipped
+unless all of these hold (`pushOk`):
 
-**Order.** Run bottom-up: a consumer that ends up at a tail sits in
-tail position of the enclosing `value`. If that consumer itself matches
-`let w = ..; case w of`, it is rewritten when its own level is
-processed, with its already-rewritten size.
+- at least one tail is known, so something actually folds;
+- no part larger than `bigAltThreshold` (24, as Inline's
+  `smallBodyThreshold`) lands more than once, so a chain can't compound
+  multiplicatively. That is the failure mode `rc2/doc/inlining.md`'s
+  "Size budget" documents for the `Lifted` version;
+- the total landed size is at most the consumer's own size plus
+  `pushSizeBudget` (200, as `caseOfCaseSizeBudget`).
+
+**Fresh ids.** Every copy gets fresh ids for everything it binds
+(`LateInline`'s `collectBoundIds`/`freshenBoundIds`, exported for this,
+and `Loop`'s `renameRCExp`), because later passes assume ids are unique
+per definition. That needs the `VarId` counter, so this runs in `Core`,
+not inside the pure `foldConst`. Consuming ids shifts later variable
+numbers in generated C. One refc-suite test that greps generated C
+(`callingConvention`) had its expected output renumbered for exactly
+that.
+
+**Order.** Bottom-up: a consumer that ends up at a tail sits in tail
+position of the enclosing `value`, already rewritten.
+
+### Where the allocation goes
+
+A pushed tail's constructor is never built. Whether that removes a
+`malloc` depends on what building it cost:
+
+- **The constructor's cell.** If `Compiler.RC2.Reuse` would have built
+  it in a cell just freed by the inner `case` (`Left e` re-wrapped from
+  the `Left e` it matched), there was no `malloc` to save. The cell is
+  now freed instead of recycled. Only a freshly allocated one is
+  saved.
+- **Its fields' boxes.** A native field has to be boxed to go into a
+  constructor (`idris2rc2_mkInt64` allocates outside 0..99). Pushed,
+  the value stays native all the way to the consumer's use. In the `Core`-shaped
+  chain the final `Right (a + b)` is exactly this. Its cell was
+  reused, but its sum was boxed.
+
+The first draft of `tests/BenchPushCon.idr` showed no difference in
+`malloc` count because both were already free there. Its fields came
+from calls (already Boxed) and every cell was reused.
+
+### Measured (2026-09-25)
+
+idris2-lsp, `--directive nopushcon` vs on (both with rewrite A):
+
+| | off | on |
+|---|---|---|
+| shape B (`let v = case ..; case v of`) | 2,327 | **1,625** (-702) |
+| `con` nodes in the final IR | 59,570 | 60,475 (+905) |
+| IR lines | 717,609 | 720,428 (+0.4%) |
+| stage time | -- | 0.22s |
+
+`con` nodes go *up* statically: the small alts are copied into every
+tail. Any one run still goes through only one of the copies, and the
+constructor it replaced is no longer built on that path. Static counts
+can't show the dynamic effect, and idris2-lsp can't be run under rc2
+(its FFI isn't resolvable), so the runtime evidence is the benchmark.
+
+`tests/BenchPushCon.idr`: valgrind over 100,000 iterations counts
+1,999,977 allocations off and 1,899,992 on, one fewer per call (the
+sum's box). Wall clock over 5,000,000 iterations, 5 runs: 3.54s off,
+3.45s on (about 2.6% faster).
+
+Of the 1,625 left, about half are created by `LateInline` after RC
+annotation (1,232 of the 2,327 exist with `--directive nolateinline`),
+where this pre-RC stage can't reach. The benchmark shows the same
+thing: `check1`/`check2` are spliced into `score` by `LateInline`, and
+the `let v = if .. then Left .. else Right ..; case v of` each one
+leaves behind is still there. Those tails allocate fresh, so they are
+the more valuable half.
 
 ## Pipeline placement
 
 | where | what | why there |
 |---|---|---|
 | inside `ConstFold` (first fixpoint round only, plus the clones SpecClosure folds) | rewrite A (implemented) | Cheap: extra maps in the existing walk, plus one use walk per definition. Removes most of shape A before SpecClosure, SpecConstCon and RC annotation ever see it, so they process less. |
-| new stage right after `ConstFold`, before `SpecClosure` (`nopushcon` to disable) | rewrite B, then a `foldConstDef` over each changed definition | Needs `Core` for fresh ids. Folding the result once more lets rewrite A and the constant folds act on the fields B just exposed. |
-| after `LateInline` (later phase) | an RC-aware version of A/B for the 166 sites left after rewrite A, mostly created by LateInline | See below. |
+| `Compiler.RC2.PushCon`, right after `ConstFold`, before `SpecClosure` (`nopushcon` to disable) | rewrite B (implemented), then a `foldConstDef` over each changed definition | Needs `Core` for fresh ids. Folding the result once more lets rewrite A and the constant folds act on the fields B just exposed. |
+| after `LateInline` (later phase) | an RC-aware version of A/B for what LateInline creates: 166 shape-A sites, and about half of the 1,625 shape-B ones | See below. |
 
 Doing the bulk pre-RC, then a separate cleanup after LateInline, is
 the right split. `LateInline` splices already-annotated bodies (it
@@ -264,21 +326,17 @@ them:
   it was reusing no longer exists), so the saving there is the `case`
   and the uniqueness check, not the allocation.
 
-That is more machinery for under 10% of the original sites, so it is a
-separate, later phase.
+That is more machinery, so it is a separate, later phase. Its tails
+allocate fresh more often than the pre-RC ones do (see "Where the
+allocation goes"), so it is likely worth it.
 
-## Things to verify while implementing rewrite B
+## Correctness notes on rewrite B
 
-- **Native field args.** Settled by rewrite A: aliasing a native
-  argument works downstream, but reading it as Boxed in more than one
-  place boxes it more than once. Rewrite B has to reuse rewrite A's
-  "boxed once" rule rather than rename fields blindly.
-- **`RCEmptyCon`/`RCNull` tails.** A zero-field constructor tail
-  matches by tag and substitutes nothing. `RCNull` needs checking
-  against what it stands for before treating it as a known tag.
-- **Laziness.** `RCon` has no `lazy` field, and rewrite B only moves
-  the consumer *after* `value`'s computation (to its tails), never
-  before it, so evaluation order is preserved.
+- **`RCNull` tails** are treated as unknown: it is not a constructor
+  tag PushCon can match on.
+- **Laziness.** `RCon` has no `lazy` field, and the consumer only moves
+  *after* `value`'s computation (to its tails), never before it, so
+  evaluation order is preserved.
 - **`RMemoize`** doesn't exist yet at this point (`insertMemoize` runs
   after SpecConstCon), so it needs no handling.
 
@@ -287,14 +345,14 @@ separate, later phase.
 - `tests/Test88KnownConFold` covers rewrite A (`bump`: two matches on
   one non-escaping `Just` with a native field; `keep`: a matched `Just`
   that is rebuilt and returned), with a `verify.sh` assertion that
-  `bump` builds no `Just`. Its `useHalf` and `M`-monad chain are the
-  shape-B cases, output-only until rewrite B lands.
-- `tests/BenchKnownCon.idr` measures rewrite A (numbers above).
-- For rewrite B, a `Core`-style benchmark is still needed. A first
-  attempt, an `M` monad over `IO (Either String a)` with `%inline`
-  `io_bind`-based bind, did not reproduce idris2-lsp's shape: its
+  `bump` builds no `Just`. Its `score` is rewrite B's case (an
+  inlined `Either` bind chain matched straight away), with an assertion
+  that the chain result is never built. `useHalf` and the `M`-monad
+  chain are output-only: they reach shape B only after `LateInline`
+  or, through closures, never.
+- `tests/BenchKnownCon.idr` and `tests/BenchPushCon.idr` measure the two
+  rewrites (numbers above). An `M` monad over `IO (Either String a)`
+  with an `%inline` `io_bind`-based bind was tried first as B's
+  benchmark and doesn't reproduce idris2-lsp's shape: its
   continuations stay lambda-lifted closures, so no constructor and
   `case` ever meet in one function.
-- idris2-lsp: the shape A/B counts above before and after, whole-build
-  compile time (ignoring the known FFI-resolution failure, which is
-  structural to idris2-lsp under rc2), and generated C size.

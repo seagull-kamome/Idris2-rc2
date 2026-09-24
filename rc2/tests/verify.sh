@@ -623,6 +623,15 @@ for name in $ALL_TESTS; do
         else
             report_fail "$name" "bump still builds $justs Just(s) in $TMP/${name}_rc2.rcexpr"
         fi
+        # `score`'s chain result `Right (a + b)` is the only `Right`
+        # built in a matched cell (`reuse=`); PushCon's push
+        # (`--directive nopushcon` fails this) means it's never built.
+        rights="$(awk '/^def \{idris2rc2_worker_Main_score:/{p=1; next} /^def /{p=0} p && /con Prelude.Types.Right .* reuse=/' "$TMP/${name}_rc2.rcexpr" | wc -l)"
+        if [ "$rights" = "0" ]; then
+            report_pass "$name (case pushed into tails -- score's chain result never built)"
+        else
+            report_fail "$name" "score still builds its chain result Right in $TMP/${name}_rc2.rcexpr"
+        fi
     fi
 
     run_t0="$(date +%s.%N)"

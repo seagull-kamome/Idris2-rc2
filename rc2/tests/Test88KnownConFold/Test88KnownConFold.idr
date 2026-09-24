@@ -12,9 +12,13 @@ module Main
 -- `keep`: the matched `Just` is rebuilt and returned on one path, so
 -- the local stays Boxed-shared, not re-boxed per use.
 --
--- `useHalf` and the `M` monad chain: a `case` whose arms end in
--- constructors, immediately matched again -- the shape the design
--- doc's "Rewrite B" targets. Output-only coverage for now.
+-- `score`: an inlined `Either` bind chain matched straight away, the
+-- shape `Compiler.RC2.PushCon` ("Rewrite B") pushes the `case` into.
+-- Every tail meets its own alt, so the final `Right (a + b)` is never
+-- built.
+--
+-- `useHalf` and the `M` monad chain reach the same shape only after
+-- `LateInline` (or never, through closures). Output-only coverage.
 
 record M a where
   constructor MkM
@@ -66,6 +70,23 @@ bump n =
   let m = Just (n + 1) in
   (case m of Just v => v; Nothing => 0) + (case m of Just w => w * 2; Nothing => 1)
 
+checkA : Int -> Either Int Int
+checkA x = if x > 50 then Left x else Right (x * 3)
+
+checkB : Int -> Either Int Int
+checkB x = if x < 0 then Left (x + 1) else Right (x + 7)
+
+%inline
+bindE : Either Int a -> (a -> Either Int b) -> Either Int b
+bindE (Left e) _ = Left e
+bindE (Right x) f = f x
+
+%noinline
+score : Int -> Int
+score x = case checkA x `bindE` \a => checkB a `bindE` \b => Right (a + b) of
+  Left e => e + 13
+  Right v => v + 1009
+
 report : Either String Int -> IO ()
 report (Left e) = putStrLn ("error: " ++ e)
 report (Right v) = printLn v
@@ -76,6 +97,8 @@ main = do
   report !(runM (chain 70))
   printLn (useHalf 9)
   printLn (useHalf (-4))
+  printLn (score 5)
+  printLn (score 60)
   printLn (bump 4)
   printLn (bump 10)
   printLn (keep 20 Nothing)

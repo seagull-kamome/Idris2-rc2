@@ -589,13 +589,13 @@ own `IO` wrapper around the `Either`.
 
 ## Performance: constructors built and matched in the same function -- rest of the escape analysis
 
-The direct shape (`let v = con ..` only ever `case`-matched) is folded
-by `ConstFold` since 2026-09-25 (1,784 -> 166 across idris2-lsp). Still
-open, both designed in `rc2/doc/constructor-escape-analysis.md`:
-
-- Rewrite B: the 1,742 `let v = case ..; case v of` chains whose arms
-  end in constructors -- the `Core` `do`-block bind chain. Needs a
-  benchmark that actually reproduces the shape first (see the doc's
-  "Tests and benchmarks").
-- The 166 direct-shape sites left, mostly created by `LateInline` after
-  RC annotation, which need an RC-aware version of the fold.
+Since 2026-09-25, the direct shape (`let v = con ..` only ever
+`case`-matched) is folded by `ConstFold` (1,784 -> 166 across
+idris2-lsp), and `Compiler.RC2.PushCon` pushes a `case` into the tails
+of a value whose arms end in constructors (2,327 -> 1,625). Still open,
+designed in `rc2/doc/constructor-escape-analysis.md`'s "Pipeline
+placement": both shapes as `LateInline` creates them after RC
+annotation (the 166, and about half of the 1,625), which needs an
+RC-aware version of the fold. In `tests/BenchPushCon.idr` those tails
+allocate fresh while the pre-RC ones reused cells, so they may well be
+the more valuable half.
