@@ -1,0 +1,172 @@
+# rcexpr-lint
+
+A static reference-counting checker over the `RCExp` IR that rc2 dumps
+with `--directive dumprcexpr`.
+
+It re-derives every definition's ownership counts from the dump and
+reports the places where rc2's own passes have produced an
+inconsistent program -- **before** that becomes a crash, a leak, or
+silent corruption in the generated C.
+
+```
+$ rcexpr-lint build/exec/prog.rcexpr
+build/exec/prog.rcexpr: Main.render: v42 use-after-free (op args)
+build/exec/prog.rcexpr: Main.render: v42 double-drop (drop)
+rcexpr-lint: 2 anomalies found
+```
+
+Exit code `0` with no anomalies, `1` otherwise (and also `1` if the
+file can't be read or parsed), so it drops straight into a script.
+
+## Why it exists
+
+`Compiler.RC2.Sink` shipped this exact bug class three separate times,
+from three unrelated root causes, and each one was found by hours of
+reading IR dumps by hand. The other two safety nets both miss it:
+
+- **An output diff misses it entirely.** Dropping a reference one time
+  too many changes nothing a program prints -- until the allocator
+  hands that block to something else.
+- **Valgrind only catches it by luck.** It needs a test that actually
+  triggers the path *and* a freed block that actually gets reused
+  before the read. rc2's own immortality convention
+  (`IDRIS2RC2_REFCOUNT_MAX`) hides some of these outright.
+
+This check needs neither. It reads the IR of any program that
+compiles, so a single run over a large external package (idris2-lsp:
+~26,000 definitions) exercises far more shapes than the smoke-test
+suite ever will.
+
+## What it checks
+
+Two anomalies, both about a `Boxed` local whose owned reference count
+has already reached zero:
+
+| anomaly | meaning |
+|---|---|
+| `use-after-free` | the local is **read** again after its count reached zero |
+| `double-drop` | the local is **dropped** again when its count is already zero |
+
+A report line is `<def>: v<N> <anomaly> (<context>)`, where the context
+names the node that did it -- `RV`, `drop`, `free`, `releaseReuse`,
+`call`, `apply target`, `apply args`, `op args`, `op postDrop`, `con
+args`, `con reuse`, `cmp args`, `case scrutinee`, `loop initial`,
+`continue loop args`, `reuseOffer dupOnShared`, and so on. The context
+is what tells you *which* of several reads on one line was the
+offending one.
+
+### How the count is derived
+
+- Each definition starts from its own `args=[...]`: every `Boxed`
+  parameter gets a live count of 1. A non-`Boxed` (native) local is
+  never tracked at all -- it has no refcount to get wrong.
+- `let v : Boxed = ...` introduces `v` with a count of 1.
+- `dup v` adds 1; `dup v xN` adds N.
+- `drop [...]`, `free`, `releaseReuse`, `reuseOffer`'s own
+  `dropOnUnique`, and **every** `postDrop=` list each subtract 1.
+- Any read of a tracked local at zero is a use-after-free; any further
+  subtraction at zero is a double-drop.
+- A local absent from the map is untracked, never treated as zero --
+  so an unknown local is silently skipped rather than falsely flagged.
+
+## What it deliberately does not check
+
+- **Leaks.** A count left above zero at the end of a definition is not
+  reported. Doing that properly needs full path enumeration and merging
+  across branches, which this tool does not attempt.
+- **Cross-branch consistency.** `cmp`/`case` fork the count map into
+  each arm independently and the arms are never merged afterwards.
+  That is correct for what this *does* check -- an anomaly inside one
+  arm does not depend on what the other arm did -- but it means "these
+  two arms leave `v` in different states" goes unreported.
+- **Anything outside one definition.** There is no interprocedural
+  reasoning; a callee's own `postDrop=` annotation is trusted as
+  written.
+
+## Known imprecision: a false positive is possible
+
+A `case`-alt's own bound variables carry **no `Rep` in the dump** --
+`Compiler.RC2.Pretty` never prints one, because
+`Compiler.RC2.RCExp.RConAlt` does not carry one either (the field's
+real type lives in the constructor's type information, which is not
+part of this grammar).
+
+They are therefore tracked as `Boxed` with an initial count of 1, which
+is the common case for a normalized RC tree. A genuinely *native* field
+can consequently be reported. That trade was deliberate: an occasional
+false positive is easy to notice and dismiss by hand, whereas silently
+skipping those fields would hide real bugs in exactly the
+destructure-then-consume shapes `Reuse` and `ConAltNative` rewrite most
+heavily.
+
+If a report looks wrong, check whether the named variable is a
+constructor field, and whether its type is a native scalar.
+
+A loop's own parameters are *not* affected -- those do carry a `Rep` in
+the dump, so a native one is correctly left untracked. They share only
+the assumed initial count of 1, which is right for a local rebound on
+every iteration.
+
+## Usage
+
+```sh
+source env.sh
+
+# Compile anything with the dump directive
+rc2/build/exec/idris2-rc2 --cg rc2 --directive dumprcexpr Prog.idr -o prog
+tools/rcexpr-lint/build/exec/rcexpr-lint build/exec/prog.rcexpr
+```
+
+The dump lands next to the produced executable, as
+`<output>.rcexpr`. See `rc2/doc/reading-the-ir.md` for how to read the
+format by hand, and `rc2/doc/directives.md` for `dumprcexpr` itself.
+
+A whole external package works the same way and is the more valuable
+run -- it covers shapes no hand-written test does:
+
+```sh
+cd install/idris2-lsp
+"$REPO/rc2/build/exec/idris2-rc2" --cg rc2 --directive dumprcexpr --build idris2-lsp.ipkg
+"$REPO/tools/rcexpr-lint/build/exec/rcexpr-lint" build/exec/idris2-lsp.rcexpr
+```
+
+**Run this after changing any pass that inserts, moves or removes
+`dup`/`drop`** -- `RC`'s own annotation, `Reuse`, `Sink`, `DupMerge`,
+`DeadVars`, `LateInline`, `DualABI`.
+
+## Building and testing
+
+```sh
+cd tools/rcexpr-lint/tests
+./verify.sh
+```
+
+`verify.sh` builds the CLI and runs it over three hand-written fixtures,
+checking both the exit code and the exact report text:
+
+| fixture | covers |
+|---|---|
+| `clean.rcexpr` | a correct program produces no anomalies (guards against the check silently doing nothing) |
+| `anomalies.rcexpr` | every anomaly/context combination fires: plain read after drop, double drop, a drop inside one `cmp` arm, and a `postDrop=`-consumed local read afterwards |
+| `dupcount.rcexpr` | regression for a real parser bug -- `dup vN xM`'s repeat count was glued onto `x` as one token and silently undercounted if read as two |
+
+It builds with the plain Chez backend (`idris2 -p rc2base -p contrib`):
+this tool only reads text files and never needs to run *through* rc2
+itself. It needs `rc2base` already built and installed -- see
+`libs/rc2base/README.md`.
+
+## Layout
+
+| file | |
+|---|---|
+| `RcexprLint.idr` | CLI: read, parse, report, set the exit code |
+| `Lint.idr` | the check itself; its module note carries the rule list this README summarises |
+| `tests/` | fixtures and `verify.sh` |
+
+The `.rcexpr` grammar itself is **not** here: `Language.RCExpr.AST`,
+`.Lexer` and `.Parser` live in `libs/rc2base/` as reusable library
+modules, since other tools may want to read the same dumps. Only the
+tool-specific logic lives in this directory.
+
+This directory sits under `tools/`, not `rc2/`, because `rc2/` holds
+the compiler backend and nothing else -- see `AGENT.md`'s "Layout".

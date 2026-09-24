@@ -14,6 +14,7 @@ without modifying) an upstream Idris2 checkout used only as a reference.
 ├── install/         local install prefix for the rc2 package + runtime (gitignored, build output)
 ├── libs/rc2base/    companion support-library package -- see libs/rc2base/ below
 ├── libs/text-re2/   sibling package for RE2 regex bindings, split out of rc2base -- see libs/text-re2/ below
+├── tools/           standalone tools consuming rc2's own output -- see tools/rcexpr-lint/ below
 └── rc2/             the actual deliverable -- see rc2/ below
 ```
 
@@ -218,6 +219,49 @@ rationale and build/install steps (the same `IDRIS2_PREFIX`/
 `IDRIS2_CFLAGS`/`IDRIS2_LDFLAGS` dance as `libs/rc2base/` above,
 installed into the same shared `install/` prefix).
 
+### `tools/rcexpr-lint/`
+
+```
+tools/rcexpr-lint/
+├── RcexprLint.idr  CLI: read a .rcexpr file, print one line per anomaly
+├── Lint.idr        the check itself (see its own module note for the rules)
+├── README.md       what it catches, what it deliberately doesn't, how to read a report
+└── tests/          hand-written .rcexpr fixtures + verify.sh
+```
+
+A static checker for the `RCExp` IR that rc2 dumps with
+`--directive dumprcexpr`. It re-derives each definition's reference
+counts from the dump and reports two things the generated C would
+otherwise only show as a crash, a leak, or nothing at all:
+
+- **use-after-free** -- a `Boxed` local read again after its owned
+  count already reached zero;
+- **double-drop** -- a `Boxed` local dropped again when its count is
+  already zero.
+
+It exists because that is exactly the bug class `Compiler.RC2.Sink`
+shipped three separate times, each found only by hours of manual
+dump-tracing. A valgrind run catches such a bug only if the test that
+triggers it exists and the freed memory is actually reused; this
+catches it in the IR of *any* program that can be compiled, including
+whole external packages.
+
+```sh
+source env.sh
+# any program, compiled with the dump directive
+rc2/build/exec/idris2-rc2 --cg rc2 --directive dumprcexpr Prog.idr -o prog
+tools/rcexpr-lint/build/exec/rcexpr-lint build/exec/prog.rcexpr
+```
+
+Exit code is 0 with no anomalies, 1 otherwise, so it drops into a
+script. See `tools/rcexpr-lint/README.md` for the full rule list, the
+known imprecision (a `case`-alt's bound fields carry no `Rep` in the
+dump and are assumed `Boxed`, so a native field can produce a false
+positive), and how to build and test it.
+
+It lives under `tools/`, not `rc2/`, because `rc2/` holds the compiler
+backend and nothing else -- see `AGENT.md`'s "Layout".
+
 ## Building and running
 
 ```sh
@@ -346,6 +390,20 @@ benchmark (needs `chez` added to the `nix-shell -p` list too -- see
 `rc2/BENCHMARKS.md`'s own methodology section for what that needs
 set up first). See `rc2/BENCHMARKS.md` for recorded results and how to
 read them.
+
+```sh
+cd tools/rcexpr-lint/tests
+./verify.sh
+```
+
+`tools/rcexpr-lint` is the third leg: a static reference-counting check
+over the dumped `RCExp` IR, covering the use-after-free/double-drop
+class that neither an output diff nor valgrind reliably catches -- see
+`tools/rcexpr-lint/` above and that tool's own `README.md`. Its
+`tests/verify.sh` builds the tool and checks it against hand-written
+fixtures; pointing the built CLI at a real program's own `.rcexpr` dump
+is the part worth doing after changing any pass that inserts or moves
+`dup`/`drop`.
 
 ## Deliberate differences from upstream RefC
 
