@@ -481,21 +481,43 @@ scrutineeUses p e@(RConCase _ sc _ _) =
     (if sc == p then 1 else 0) + foldSubExprs (+) 0 (scrutineeUses p) e
 scrutineeUses p e = foldSubExprs (+) 0 (scrutineeUses p) e
 
-||| `True` iff every occurrence of `p` in `e` is an `RConCase`
-||| scrutinee. Anything else -- stored into a constructor, passed on to
-||| another call, returned -- means substituting the constant would
-||| duplicate it into positions the fold can't collapse, so the clone
-||| would be a second copy of the same work rather than a
+||| `True` iff `p` is scrutinised at least once and every one of its
+||| occurrences in `e` is either an `RConCase` scrutinee or a
+||| passthrough of `p` at the *same* argument position of a
+||| self-recursive call to `callee`. Anything else -- stored into a
+||| constructor, passed to some other call, passed to `callee` at a
+||| different position, returned -- means substituting the constant
+||| would duplicate it into positions the fold can't collapse, so the
+||| clone would be a second copy of the same work rather than a
 ||| specialization. The profitability gate would reject such a clone
-||| anyway; refusing here just avoids building it.
+||| anyway; refusing here just avoids building it. The `scrut > 0`
+||| half is the same economy: a parameter *only* threaded onward and
+||| never destructured has no dispatch to resolve, so its clone is
+||| certain to be rejected.
+|||
+||| Discounting the self-passthrough is what reaches the common
+||| dictionary shape -- a recursive `go` carrying its dictionary along
+||| on every step -- and it is exactly the allowance
+||| `paramLooksSpecializable` already makes for the closure case, via
+||| the same `selfPassthroughOccurrences`.
+|||
+||| Nothing extra is needed to keep such a clone consistent. The seeded
+||| fold substitutes the constant into the self-call too, leaving it
+||| calling the *generic* callee with the constant spelled out; the
+||| whole-program `redirectConstCallSites` sweep at the end runs over
+||| the clones as well as the originals, so that call matches this very
+||| key's own redirect entry and becomes a call to the clone itself,
+||| with the argument dropped. The recursion specializes for free.
 |||
 ||| Note this pass runs *before* `Compiler.RC2.RC`'s own `annotate`, so
 ||| there are no `RDup`/`RDrop` occurrences to discount yet -- see
 ||| `applySpecClosure`'s own pipeline position.
-paramIsScrutineeOnly : RCLocal -> RCExp -> Bool
-paramIsScrutineeOnly p e =
+paramIsScrutineeOnly : RCLocal -> (callee : Name) -> (argPos : Nat) -> RCExp -> Bool
+paramIsScrutineeOnly p callee argPos e =
     let uses = countUsesR p e
-    in uses > 0 && uses == scrutineeUses p e
+        scrut = scrutineeUses p e
+        passthrough = selfPassthroughOccurrences p callee argPos e
+    in scrut > 0 && uses == scrut + passthrough
 
 ||| Total `RApp` (boxed closure dispatch) nodes in `e` -- the
 ||| profitability measure for this half of the pass.
@@ -513,16 +535,21 @@ defApps _ = 0
 ||| signature and its id seeded to `value` for the fold. The body is
 ||| handed over unchanged -- `foldConstDefWith` does the substitution,
 ||| the `case` collapse and the `apply`-to-`call` rewrite in one go.
+|||
+||| The `Bool` says whether `paramIsScrutineeOnly` let this key
+||| through, independently of whether the profitability gate then kept
+||| the clone -- the two are counted separately for the `--directive
+||| timing` breakdown, since they fail for different reasons.
 buildConstClone : {auto fr : Ref FreshId Int}
                -> CafTable -> (callee : Name) -> (argPos : Nat) -> (value : RCLocal)
                -> (args : List (Int, Rep)) -> (retRep : Rep) -> (body : RCExp)
-               -> Core (Maybe (Name, RCDef))
+               -> Core (Bool, Maybe (Name, RCDef))
 buildConstClone caf callee argPos value args retRep body =
     case getAt argPos args of
-         Nothing => pure Nothing
+         Nothing => pure (False, Nothing)
          Just (paramVar, _) =>
-             if not (paramIsScrutineeOnly (RCLoc paramVar) body)
-                then pure Nothing
+             if not (paramIsScrutineeOnly (RCLoc paramVar) callee argPos body)
+                then pure (False, Nothing)
                 else do
                     cloneId <- freshId
                     -- Same naming scheme as `buildClone` above, with
@@ -531,7 +558,7 @@ buildConstClone caf callee argPos value args retRep body =
                     let cloneName = MN ("rc2_specConst_" ++ cName callee) cloneId
                     let args' = filter (\(i, _) => i /= paramVar) args
                     let folded = foldConstDefWith caf [(paramVar, value)] (MkRCFun args' retRep False body)
-                    pure $ if defApps folded < countApps body then Just (cloneName, folded) else Nothing
+                    pure (True, if defApps folded < countApps body then Just (cloneName, folded) else Nothing)
 
 ||| One accepted constant-constructor clone: redirect a call to
 ||| `callee` to `cloneName`, dropping argument `argPos`, whenever the
@@ -592,7 +619,18 @@ applySpecConstCon defs = do
     -- this right the same way, by passing its own `defOf` to its own
     -- `goKeys` rather than referring to it per call site.
     let defOf : SortedMap Name RCDef := SortedMap.fromList defs
-    (newClones, table) <- goKeys defOf caf [] empty keys
+    (gatePassed, newClones, table) <- goKeys defOf caf 0 [] empty keys
+    -- The two gates separately, because they fail for different
+    -- reasons and only the breakdown says where the remaining yield
+    -- is: `paramIsScrutineeOnly` rejects a dictionary threaded on to
+    -- some *other* callee (which would need interprocedural
+    -- specialization, out of scope), while the profitability gate
+    -- rejects a clone that folded the `case` away but left the
+    -- dispatch somewhere the fold couldn't reach.
+    when timingEnabled $
+      coreLift $ putStrLn $ "TIMING rc2: SpecConstCon: " ++ show gatePassed
+                             ++ " keys past the scrutinee-only gate, "
+                             ++ show (length newClones) ++ " clones kept"
     pure $ map (\(n, d) => (n, case d of
                                     MkRCFun a r w body => MkRCFun a r w (redirectConstCallSites table body)
                                     d' => d'))
@@ -616,19 +654,21 @@ applySpecConstCon defs = do
     rebuildCafTable = foldl (\tbl, (n, d) => maybe tbl (\v => insert n v tbl) (cafValueOf d)) empty
 
     goKeys : {auto fr : Ref FreshId Int}
-          -> SortedMap Name RCDef -> CafTable -> List (Name, RCDef) -> ConstRedirectTable
-          -> List ((Name, Nat, RCLocal), ()) -> Core (List (Name, RCDef), ConstRedirectTable)
-    goKeys _ _ newClones table [] = pure (newClones, table)
-    goKeys defOf caf newClones table (((callee, argPos, value), _) :: rest) =
+          -> SortedMap Name RCDef -> CafTable -> (gatePassed : Nat)
+          -> List (Name, RCDef) -> ConstRedirectTable
+          -> List ((Name, Nat, RCLocal), ()) -> Core (Nat, List (Name, RCDef), ConstRedirectTable)
+    goKeys _ _ gatePassed newClones table [] = pure (gatePassed, newClones, table)
+    goKeys defOf caf gatePassed newClones table (((callee, argPos, value), _) :: rest) =
         case lookup callee defOf of
              Just (MkRCFun args retRep False body) => do
-                 mClone <- buildConstClone caf callee argPos value args retRep body
+                 (passed, mClone) <- buildConstClone caf callee argPos value args retRep body
+                 let gatePassed' : Nat = if passed then 1 + gatePassed else gatePassed
                  case mClone of
-                      Nothing => goKeys defOf caf newClones table rest
+                      Nothing => goKeys defOf caf gatePassed' newClones table rest
                       Just (cloneName, cloneDef) =>
-                          goKeys defOf caf ((cloneName, cloneDef) :: newClones)
+                          goKeys defOf caf gatePassed' ((cloneName, cloneDef) :: newClones)
                                  (insertWith (++) callee [(argPos, value, cloneName)] table) rest
              -- A worker (`isWorker`) can't exist yet at this point in
              -- the pipeline, and anything that isn't a plain function
              -- has no parameter to specialize.
-             _ => goKeys defOf caf newClones table rest
+             _ => goKeys defOf caf gatePassed newClones table rest

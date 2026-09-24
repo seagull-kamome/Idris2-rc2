@@ -54,15 +54,30 @@ transformation.
 ## The three steps
 
 1. **Candidate detection.** For each call site `call g [..., c, ...]`
-   where `c` is an `RCConstCon` and `g`'s parameter at that position is
-   used *only* as an `RConCase` scrutinee in `g`'s body, record the
-   triple `(g, argPos, c)`. `paramIsScrutineeOnly` is the gate --
-   modelled on the closure half's `paramLooksSpecializable`, with
-   `apply` swapped for "scrutinee of an `RConCase`". Because
-   `ConstFold` has already run to a fixpoint over the whole program by
-   this point, a constant argument is spelled out right at the call
-   site and never still behind an `RLet`, so unlike the closure half
-   there is no `Bound` environment to thread.
+   where `c` is an `RCConstCon`, and `g`'s parameter at that position
+   is scrutinised at least once and used *nowhere* except as an
+   `RConCase` scrutinee or as a passthrough of itself at the same
+   argument position of `g`'s own recursive call, record the triple
+   `(g, argPos, c)`. `paramIsScrutineeOnly` is the gate -- modelled on
+   the closure half's `paramLooksSpecializable`, with `apply` swapped
+   for "scrutinee of an `RConCase`" and sharing its
+   `selfPassthroughOccurrences` verbatim. Because `ConstFold` has
+   already run to a fixpoint over the whole program by this point, a
+   constant argument is spelled out right at the call site and never
+   still behind an `RLet`, so unlike the closure half there is no
+   `Bound` environment to thread.
+
+   **The self-passthrough allowance needs no machinery of its own**,
+   which is why it is worth stating explicitly. A recursive `go`
+   carrying its dictionary along on every step is the shape a real
+   interface dictionary almost always has, and refusing it was
+   rejecting most of the opportunity. Allowing it just works: the
+   seeded fold substitutes the constant into the recursive call too,
+   leaving it calling the *generic* callee with the constant spelled
+   out, and step 3's whole-program redirect sweep runs over the clones
+   as well as the originals -- so that call matches this very key's own
+   redirect entry and becomes a call to the clone itself, argument
+   dropped. The recursion specializes all the way down for free.
 
 2. **Speculative clone + re-fold**, memoized per distinct triple.
    Clone `g` with the parameter dropped from the signature and its id
@@ -138,38 +153,58 @@ Whole `idris2-lsp` build, against the same build with
 
 | | off | on |
 |---|---|---|
-| `apply` nodes | 11,384 | **11,191** (-193) |
-| definitions after `DeadCode` | 26,387 | **25,992** (-395) |
-| successful constructor reuses (`reuse=`) | 21,829 | **22,194** (+365) |
-| native `RLet`s | 3,349 | 3,396 (+47) |
-| IR lines | 732,238 | 735,147 (+0.4%) |
-| `dup` / `drop` | 93,645 / 77,223 | 94,107 / 77,729 (+0.5%) |
-| compile time (median of 3) | 27.54s | 28.16s (+2.3%) |
+| `apply` nodes | 11,384 | **11,182** (-202) |
+| definitions after `DeadCode` | 26,387 | **25,978** (-409) |
+| successful constructor reuses (`reuse=`) | 21,829 | **22,195** (+366) |
+| native `RLet`s | 3,349 | 3,422 (+73) |
+| IR lines | 732,238 | 735,646 (+0.5%) |
+| `dup` / `drop` | 93,645 / 77,223 | 94,165 / 77,813 (+0.6%) |
+| compile time (median of 3) | 27.49s | 28.59s (+4.0%) |
 
 The definition count *falls* despite the clones: `DeadCode` prunes more
 newly-callerless originals than the profitability gate keeps clones.
 
-Runtime, `rc2/tests/BenchSpecConstCon.idr` (the dictionary-destructure
-shape in a hot loop), median of 5:
+Runtime, median of 5, each benchmark A/B'd against itself with
+`--directive nospecconstcon`:
 
-| | off | on |
-|---|---|---|
-| wall clock | 0.48s | **0.37s** (~23% faster) |
-| `idris2rc2_applyClosure` call sites in its generated C | 4 | **0** |
+| | off | on | |
+|---|---|---|---|
+| `rc2/tests/BenchSpecConstCon.idr` | 0.48s | **0.37s** | ~23% faster |
+| `rc2/tests/BenchSpecConstConRec.idr` | 0.49s | **0.40s** | ~18% faster |
 
-## Why the whole-program yield is only 1.7%
+`idris2rc2_applyClosure` call sites in each one's generated C go 4 to
+0. The two cover the gate's two halves: the first reaches a
+non-recursive callee, the second threads the dictionary through its
+own recursion.
 
-Both reasons are inherent to the gate, not bugs:
+**The whole-program IR counts understate this.** Nine fewer `apply`
+nodes is what the self-passthrough allowance is worth *statically* on
+`idris2-lsp`, but a dictionary-threading recursion is a loop: the
+dispatch it removes is paid once per iteration, not once per node.
+`BenchSpecConstConRec` is the honest measure of that shape, and the
+shape is the common one in ordinary Idris code.
 
-- **Most dictionary parameters are not scrutinee-only.**
-  `paramIsScrutineeOnly` rejects a parameter that is also passed on to
-  another call, which is the common case -- a dictionary is usually
-  threaded further down (a recursive `go` takes it along on every
-  step).
-- **The profitability gate rejects most of what survives.** On
-  `idris2-lsp`, 668 of 1,598 keys pass the scrutinee-only gate and 551
-  clones are kept; the discarded ones folded the `case` away but left
-  the dispatch somewhere the fold could not reach.
+## Why the whole-program yield is only ~1.8%
+
+Both reasons are inherent to the gate, not bugs. On `idris2-lsp`, of
+1,598 distinct keys:
+
+- **903 (57%) fail the scrutinee-only gate** -- the dictionary is
+  passed on to some *other* callee, not just scrutinised and carried
+  through its own recursion. Resolving those needs interprocedural
+  specialization (propagating the constant down a call chain), which
+  is a different and much larger feature.
+- **117 more fail the profitability gate** -- 695 keys pass the first
+  gate and 578 clones are kept. The discarded ones folded the `case`
+  away but left the dispatch somewhere the fold could not reach.
+
+Of the 578 clones the pass keeps, 73 survive to the final IR. That is
+not 505 wasted: a clone with exactly one caller is precisely what
+`LateInline` splices away, which is better than the call it replaced.
+
+The `--directive timing` output prints this breakdown (`N distinct
+keys`, then `N keys past the scrutinee-only gate, M clones kept`), so
+it can be re-derived on any program without rebuilding the compiler.
 
 ## Open
 
@@ -178,12 +213,10 @@ Both reasons are inherent to the gate, not bugs:
   scope the same way: one parameter position at a time.
 - **Not iterated to a fixpoint**, same as the closure half: a kept
   clone can expose a further opportunity.
-- **Relaxing scrutinee-only to "scrutinee, or passed at the same
-  position to a self-recursive call"** would reach the threaded-
-  dictionary case above, which is where the remaining yield is. The
-  closure half already does exactly this with
-  `selfPassthroughOccurrences`; porting it is the obvious next step and
-  has not been attempted.
+- **Interprocedural propagation** -- the 903 keys above, where the
+  dictionary is handed to a different callee. This is where all the
+  remaining yield is, and it is not a relaxation of this gate but a
+  separate analysis.
 
 ## Files
 
@@ -195,4 +228,6 @@ Both reasons are inherent to the gate, not bugs:
   in `disableableStageNames`.
 - `rc2/tests/Test87SpecConstCon/` -- correctness, plus `verify.sh`'s own
   assertion that clones are kept and no boxed dispatch survives.
-- `rc2/tests/BenchSpecConstCon.idr` -- the runtime A/B above.
+- `rc2/tests/BenchSpecConstCon.idr`,
+  `rc2/tests/BenchSpecConstConRec.idr` -- the two runtime A/Bs above,
+  one per half of the gate.
