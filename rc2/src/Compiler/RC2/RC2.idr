@@ -87,18 +87,28 @@ applyReuse d@(MkRCForeign _ _ _) = d
 ||| `%export`, but including it costs nothing and avoids a latent trap
 ||| if that ever changes).
 ||| Iteration cap for `foldConstProgram`'s own whole-program fixpoint
-||| loop, chosen the same way GHC picks `-fmax-simplifier-iterations`'s
-||| default (4): monotonicity (a CAF only ever transitions from "not
-||| yet known foldable" to "foldable", never back) means the loop would
-||| naturally halt on its own once `CafTable` stops growing, bounded by
-||| the total number of 0-arg top-level definitions in the program --
-||| but a fixed cap on top guards against a pathological input still
-||| taking unboundedly many iterations to reach that point. Hitting the
-||| cap only leaves some CAFs un-inlined across a call boundary (a
-||| missed optimisation), never an incorrect fold -- see Test76's own
-||| module note for the mutual-recursion case this exists for.
+||| loop: monotonicity (a CAF only ever transitions from "not yet known
+||| foldable" to "foldable", never back) means the loop would naturally
+||| halt on its own once `CafTable` stops growing, bounded by the total
+||| number of 0-arg top-level definitions in the program -- but a fixed
+||| cap on top guards against a pathological input still taking
+||| unboundedly many iterations to reach that point. Hitting the cap
+||| only leaves some CAFs un-inlined across a call boundary (a missed
+||| optimisation), never an incorrect fold -- see Test76's own module
+||| note for the mutual-recursion case this exists for.
+|||
+||| Was 4, GHC's own `-fmax-simplifier-iterations` default. Raised to 8
+||| because the `round n/m` log this loop now emits showed a real build
+||| (`idris2-lsp`) running straight into the old cap with the CAF table
+||| still growing at the last round -- the cap, not convergence, was
+||| what stopped it. At 8 the same build converges on round 5 (table
+||| 0 -> 925 -> 1006 -> 1012 -> 1014, then steady), for two more folded
+||| CAFs: the `Integral`/`Ord` dictionaries behind `Core.TTC.fromBuf`/
+||| `toBuf` and `Prelude.Types.rangeFrom`/`rangeFromTo`, each now a
+||| file-scope constant at its call site instead of a call. Round 5
+||| costs about a tenth of a second on that build.
 maxConstFoldIterations : Nat
-maxConstFoldIterations = 4
+maxConstFoldIterations = 8
 
 ||| Nanosecond threshold for `toRCDefs`'s own per-definition
 ||| `logTimeOver` diagnostic around `Compiler.RC2.Loop.applyLoop` (500ms)
@@ -152,8 +162,25 @@ rcSizeConstAlt (MkRConstAlt _ body) = rcSizeOf body
 ||| newly proven foldable this round might be exactly what unblocks
 ||| another CAF -- or an ordinary `RAppName` call site -- next round),
 ||| up to `maxConstFoldIterations`.
-foldConstProgram : List (Name, RCDef) -> List (Name, RCDef)
-foldConstProgram defs0 = go maxConstFoldIterations empty 0 defs0
+||| Each round is individually `logTime`d at the finer `--timing 3`
+||| level (same coarser/finer split the "Loop conversion"/"Loop
+||| conversion (apply)" pair already uses), labelled `round n/m` against
+||| `maxConstFoldIterations` so the log says at a glance whether the
+||| loop converged on its own or ran into the cap -- `n` reaching `m`
+||| means the cap bound it, anything less means `count' == count` fired.
+||| The carried-in CAF count rides along on the same label, since that
+||| is the one quantity the loop's own termination test looks at: it is
+||| the previous round's own result, so it is already known when the
+||| label is built.
+|||
+||| Per-round *times* are only indicative: `foldConstDef` is forced no
+||| further than `rebuildTable`'s own `cafValueOf` demands, so some of
+||| each round's real cost lands wherever the result is finally forced
+||| (the same laziness caveat `Compiler.RC2.LateInline.applyLateInline`
+||| records for its own rounds). The round *count* is exact regardless,
+||| which is what the cap question actually needs.
+foldConstProgram : {auto c : Ref Ctxt Defs} -> List (Name, RCDef) -> Core (List (Name, RCDef))
+foldConstProgram defs0 = go 1 maxConstFoldIterations empty 0 defs0
   where
     -- Threads the table's own key count alongside it instead of
     -- re-deriving it via `length (SortedMap.toList table)` (O(n log n))
@@ -172,14 +199,17 @@ foldConstProgram defs0 = go maxConstFoldIterations empty 0 defs0
                                 Just _  => (insert n v tbl, cnt)
                                 Nothing => (insert n v tbl, cnt + 1)
 
-    go : Nat -> CafTable -> Nat -> List (Name, RCDef) -> List (Name, RCDef)
-    go Z _ _ defs = defs
-    go (S fuel) table count defs =
-        let folded = map (\(n, d) => (n, foldConstDef table d)) defs
-            (table', count') = rebuildTable folded
-        in if count' == count
-              then folded
-              else go fuel table' count' folded
+    go : Nat -> Nat -> CafTable -> Nat -> List (Name, RCDef) -> Core (List (Name, RCDef))
+    go _ Z _ _ defs = pure defs
+    go round (S fuel) table count defs = do
+        (folded, table', count') <-
+            logTime 3 "rc2: ConstFold (round \{show round}/\{show maxConstFoldIterations}, \{show count} CAFs in)" $
+              do let folded = map (\(n, d) => (n, foldConstDef table d)) defs
+                 let (table', count') = rebuildTable folded
+                 pure (folded, table', count')
+        if count' == count
+           then pure folded
+           else go (S round) fuel table' count' folded
 
 ||| Wraps every remaining non-constant top-level 0-argument
 ||| definition's own body in `RMemoize` (`doc/caf-memoization.md`) --
@@ -265,7 +295,7 @@ toRCDefs disabled incremental roots lds0 = do
                         pure (mapMaybe id results)
     folded <- if "noconstfold" `elem` disabled
                  then pure preFolded
-                 else logTime 2 "rc2: ConstFold (whole-program fixpoint)" $ pure (foldConstProgram preFolded)
+                 else logTime 2 "rc2: ConstFold (whole-program fixpoint)" $ foldConstProgram preFolded
     -- doc/speculative-closure-specialization.md: strictly after
     -- ConstFold (so RUnderApp targets it already resolved are visible)
     -- and strictly before insertMemoize/Phase 2 below -- a kept clone

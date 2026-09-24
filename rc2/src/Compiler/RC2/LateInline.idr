@@ -806,13 +806,67 @@ applyLateInlineOnce roots prev dirty defs0 = do
              -- name in `processOrder`, so paying per-`eligible`-size
              -- cost here, not just per-`cs`-size, would undo the whole
              -- point of filtering to `toProcess` in the first place).
-             let touchesEligible : Name -> Bool
-                 touchesEligible n = case lookup n carried.info of
-                                           Just (cs, _) => any (\c => contains c an.eligible) (Prelude.toList cs)
-                                           Nothing => False
-             let toProcess = filter touchesEligible an.processOrder
+             --
+             -- The membership test is the *same* condition
+             -- `inlineInto`'s own two `RAppName` cases splice on
+             -- (`contains n eligible && not (callsBack defOf self n)`),
+             -- not just its first half. Both halves matter, for two
+             -- separate reasons:
+             --
+             --   * Cost: a name whose every eligible callee calls it
+             --     back is walked and rebuilt into an identical tree
+             --     for nothing -- exactly the waste `toProcess` exists
+             --     to cut.
+             --   * Termination: `eligible` holds a callee that
+             --     `callsBack` permanently refuses until *something
+             --     else* changes, so "`eligible` is non-empty" is not
+             --     the same question as "this round will change
+             --     something" -- and the loop below reports `changed`
+             --     off `toProcess`, so getting this wrong left it
+             --     spinning to `maxLateInlineIterations` on every
+             --     non-trivial program.
+             --
+             -- `callsBack` itself is *not* reused here: it re-derives
+             -- the callee's own `calleesOf` with a full body walk,
+             -- which is precisely what `carried.info` already holds
+             -- (see `analyse`'s own doc comment for why a non-`dirty`
+             -- entry stays exactly correct).
+             let callsBackCached : Name -> Name -> Bool
+                 callsBackCached caller callee =
+                     case lookup callee carried.info of
+                          Just (cs, _) => contains caller cs
+                          Nothing => False
+             --
+             -- The `defOf` membership test is load-bearing, not a
+             -- cheap guard duplicating `goOrder`'s own: neither of the
+             -- two maps consulted below is pruned when a definition
+             -- is. `analyse`'s own `info'` only ever *inserts* into the
+             -- previous round's map (deliberately -- rewriting all
+             -- ~35k entries per round is the cost its cache exists to
+             -- avoid), and `processOrder` is round 1's order reused
+             -- verbatim, so both keep naming definitions
+             -- `pruneDeadDefsCached` has long since removed. Such a
+             -- name still answers this filter from its stale entry,
+             -- and `goOrder` then skips it on `lookup n defOf` without
+             -- a word -- which is why this went unnoticed while the
+             -- round only ever *wasted* work on it. Once `toProcess`
+             -- also decides `changed`, the same staleness stops the
+             -- loop converging at all: measured on `idris2-lsp`, 366
+             -- already-pruned names re-qualified every single round,
+             -- forever, and the pass ran to its cap producing a final
+             -- program byte-for-byte identical to the one it already
+             -- had four rounds earlier.
+             let splicesInto : Name -> Bool
+                 splicesInto n =
+                     isJust (lookup n defOf) &&
+                     (case lookup n carried.info of
+                           Just (cs, _) => any (\c => contains c an.eligible && not (callsBackCached n c))
+                                               (Prelude.toList cs)
+                           Nothing => False)
+             let toProcess = filter splicesInto an.processOrder
              final <- goOrder an.eligible toProcess defOf
-             pure (True, map (\(n, d) => (n, fromMaybe d (lookup n final))) defs, carried, SortedSet.fromList toProcess)
+             pure (not (isNil toProcess) || length defs /= length defs0,
+                   map (\(n, d) => (n, fromMaybe d (lookup n final))) defs, carried, SortedSet.fromList toProcess)
   where
     goOrder : SortedSet Name -> List Name -> SortedMap Name RCDef -> Core (SortedMap Name RCDef)
     goOrder eligible [] defOf = pure defOf
@@ -829,15 +883,23 @@ applyLateInlineOnce roots prev dirty defs0 = do
 
 ||| Iteration cap for `applyLateInline`'s own whole-program fixpoint
 ||| loop -- same rationale as `RC2.idr`'s own `maxConstFoldIterations`
-||| for `foldConstProgram` (chosen the same value, 4, for the same
-||| reason: GHC's own `-fmax-simplifier-iterations` default). Each
+||| for `foldConstProgram`, and kept at the same value as it. Each
 ||| round's own `eligible` set can only ever shrink -- a callee spliced
 ||| away this round drops to call count 0 and can never regain
 ||| eligibility -- so the loop already halts on its own the moment
 ||| nothing is left to splice; this cap only guards a pathological
 ||| input from iterating unboundedly.
+|||
+||| Was 4, raised to 8 as headroom once the loop was made to converge
+||| on its own (see `applyLateInlineOnce`'s own `splicesInto`). It is
+||| headroom and nothing more: a whole `idris2-lsp` build settles in 5
+||| rounds, its per-round splice count falling 9967 -> 409 -> 14 -> 0,
+||| so the cap is not what stops it and raising it further changes the
+||| emitted program not at all (verified: cap 8 and cap 16 produce
+||| byte-identical output). Under the old cap of 4 the same build was
+||| genuinely cut off mid-descent, at 14 splices still to go.
 maxLateInlineIterations : Nat
-maxLateInlineIterations = 4
+maxLateInlineIterations = 8
 
 ||| Runs `applyLateInlineOnce` repeatedly (`roots`: same whole-program
 ||| entry points `Compiler.RC2.DeadCode.pruneDeadDefs` itself is always
@@ -890,5 +952,18 @@ applyLateInline roots defs0 = go 1 maxLateInlineIterations Nothing empty defs0
     go : Nat -> Nat -> Maybe Carried -> SortedSet Name -> List (Name, RCDef) -> Core (List (Name, RCDef))
     go round Z prev dirty defs = pure defs
     go round (S fuel) prev dirty defs = do
-        (changed, defs', carried, dirty') <- logTime 3 "rc2: Late inline (round \{show round})" $ applyLateInlineOnce roots prev dirty defs
+        -- `dirty` is the *previous* round's own `toProcess` -- the
+        -- definitions it actually spliced into -- so it is already
+        -- known when this round's label is built, the same way
+        -- `RC2.foldConstProgram` carries its CAF count forward. Printed
+        -- because the round number alone says only *that* the loop kept
+        -- going, never whether it is converging: a tail of one or two
+        -- spliced definitions a round looks identical to real work
+        -- until this number is next to it.
+        let carriedNote = if round == 1
+                             then "first pass"
+                             else "\{show (length (Prelude.toList dirty))} spliced last round"
+        (changed, defs', carried, dirty') <-
+            logTime 3 "rc2: Late inline (round \{show round}/\{show maxLateInlineIterations}, \{carriedNote})" $
+              applyLateInlineOnce roots prev dirty defs
         if changed then go (S round) fuel (Just carried) dirty' defs' else pure defs'
