@@ -1091,6 +1091,51 @@ time /tmp/bench_refc
 
 実行時に読む辞書フィールドへの適用(真の`RCLoc`に対する
 `idris2rc2_applyClosure`)は依然boxedな間接呼び出しで、idris2-lspでは
-11,558件ある。呼び出し側をdictionaryの**値**が判明した時点で特化する必要があり、
-`TODO.md`の「Performance: interface-dictionary method dispatch stays boxed
-even when the concrete instance is known」として引き続き未解決。
+11,558件ある。呼び出し側をdictionaryの**値**が判明した時点で特化する必要がある。
+→ その一部は下記の定数コンストラクタ特化で解消した。
+
+## 定数コンストラクタ(interface辞書)引数の特化
+
+`Compiler.RC2.SpecClosure.applySpecConstCon`。設計・計測の全体は
+`doc/constant-constructor-specialization.md`を参照。
+
+上の定数クロージャ畳み込みが届かなかった形 —— 引数が**適用される**クロージャ
+ではなく**分解される**レコード(interface辞書)である場合 —— を扱う。呼び出し側が
+常に同じ定数辞書を渡す callee を、その定数を代入した複製に差し替える。代入すると
+分解の`case`が畳まれ、各メソッドフィールドが`RCConstClosure`になるので、
+既存の`RApp`畳み込みがそのまま直接呼び出しに変える。
+
+### idris2-lsp全体(`--directive nospecconstcon`との対比)
+
+| | OFF | ON |
+|---|---|---|
+| `apply` | 11,384 | **11,191** (−193) |
+| DeadCode後の定義数 | 26,387 | **25,992** (−395) |
+| `reuse=`(再利用成功) | 21,829 | **22,194** (+365) |
+| Nativeな`RLet` | 3,349 | 3,396 (+47) |
+| IR行数 | 732,238 | 735,147 (+0.4%) |
+| `dup` / `drop` | 93,645 / 77,223 | 94,107 / 77,729 (+0.5%) |
+| コンパイル時間(3回の中央値) | 27.54s | 28.16s (+2.3%) |
+
+複製を足しているのに定義数が**減る**のは、呼び出し元を失った元定義を
+`DeadCode`が複製より多く刈るため。
+
+### 実行時A/B(`tests/BenchSpecConstCon.idr`、同一マシン5回)
+
+| | 中央値 | 生成C中の`idris2rc2_applyClosure` |
+|---|---|---|
+| OFF | 0.48s | 4 |
+| ON | **0.37s** | **0** |
+
+**約23%高速**。出力は両者とも`937501`で一致。
+
+### 経緯についての注記
+
+このパスは一度「idris2-lspのコンパイルが27.5s→2m10s」として却下され、
+`TODO.md`に再実装禁止として記録された。その103秒は最適化の本質的コストでは
+なく、`where`節に書いた`defOf : SortedMap Name RCDef`が
+(Idris2の`where`はラムダリフトされるため)参照のたびに38,000件のマップを
+再構築していたことによる。本体で一度だけ束縛して引数で渡す形に直したところ
+`goKeys`は102.9s→0.010sになった。詳細な切り分けは
+`doc/constant-constructor-specialization.md`の
+「The `where`-clause trap that got this reverted once」にある。

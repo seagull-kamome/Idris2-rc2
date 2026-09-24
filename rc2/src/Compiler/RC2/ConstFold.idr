@@ -401,3 +401,29 @@ foldConstDef caf (MkRCFun args retRep isWorker body) = MkRCFun args retRep isWor
 foldConstDef caf (MkRCError body) = MkRCError (foldConst caf empty body)
 foldConstDef _ d@(MkRCCon _ _ _) = d
 foldConstDef _ d@(MkRCForeign _ _ _) = d
+
+||| As `foldConstDef`, but with `seed` already in `Env`: each `(i, l)`
+||| binds local id `i` to the constant `l`, exactly as if this pass had
+||| folded it there itself. An `l` that isn't one of `RCLocal`'s own
+||| constant forms (`isConstLocalProof`) is skipped rather than
+||| rejected, so a caller needn't reconstruct the proof machinery.
+|||
+||| Exists for `Compiler.RC2.SpecClosure`'s own constant-constructor
+||| specialization: seeding a parameter with the dictionary its call
+||| sites always pass is the *whole* rewrite -- `resolveLocal`
+||| substitutes it, the `RConCase` case folds the destructuring away
+||| against it, and the `RApp` case then turns each method field (now
+||| an `RCConstClosure`) into a direct call. See
+||| `rc2/doc/constant-constructor-specialization.md`'s "Why nothing new
+||| is needed downstream".
+export
+foldConstDefWith : CafTable -> List (Int, RCLocal) -> RCDef -> RCDef
+foldConstDefWith caf seed d =
+    let env : Env = foldl (\acc, (i, l) =>
+                               maybe acc (\prf => insert i (Element l prf) acc) (isConstLocalProof l))
+                          (the Env SortedMap.empty) seed
+    in case d of
+            MkRCFun args retRep isWorker body => MkRCFun args retRep isWorker (foldConst caf env body)
+            MkRCError body => MkRCError (foldConst caf env body)
+            d'@(MkRCCon _ _ _) => d'
+            d'@(MkRCForeign _ _ _) => d'

@@ -59,7 +59,13 @@ show up again during testing.
   `String`-sourced `Cast`, `const-con-fold.md` for folding a
   constructor whose fields are all recursively constant into a single
   immortal file-scope static (`RCConstCon`) instead of a fresh heap
-  allocation on every evaluation), `dead-code-elim.md` for the
+  allocation on every evaluation),
+  `speculative-closure-specialization.md` for cloning a callee per
+  distinct closure argument seen at its call sites, and
+  `constant-constructor-specialization.md` for its sibling that does
+  the same for a constant interface dictionary -- whose own "The
+  `where`-clause trap" section is worth reading before adding any
+  `where`-bound collection to a pass, `dead-code-elim.md` for the
   whole-program mark-and-sweep pass that drops definitions rc2's own
   optimizations (Inline, DualABI's Stage 3a wrapper split) leave with
   zero remaining callers, run as `toRCDefs`'s own final stage,

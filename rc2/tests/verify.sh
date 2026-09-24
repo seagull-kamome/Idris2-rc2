@@ -418,7 +418,7 @@ NO_REFC_DIFF_TESTS="Test3Data Test7CastMatrix Test8EmptyCon Test17ConstFold Test
 # packCFType allocation (idris2rc2_mkPointer/idris2rc2_mkGCPointer) is
 # new to %export's own argument marshalling and worth the same
 # scrutiny.
-LEAK_SENSITIVE_TESTS="Test1Basics Test9SelfTailLoop Test11DualABILeak Test12ConAltNative Test13NativeArgChain Test14SmallFunctionInline Test15CompareFusionThroughCall Test16LoopContinuePostDrop Test17ConstFold Test18ClosureInPlaceGrow Test19LoopInvariantParam Test22BranchSinking Test24CStructSupport Test26GCPtrAliasString Test27FFIDualABI Test28Utf8Strings Test33WideDualABIWorker Test35NetworkLoopback Test36ReuseOfferUniqueLeak Test37SystemMisc Test41FFIMalloc Test42SupportMisc Test44IORefExtPrimLeak Test46FastPackUnconditional Test49IntegerOpReuse Test57LoopCallArgNativeShadow Test59Export Test66ClosureFastPath Test69ConstFoldClosure Test70ConstFoldClosureCallthrough Test79DupMerge Test84CgExternStruct Test85CgExternStructPtrField Test86CafMemoization"
+LEAK_SENSITIVE_TESTS="Test1Basics Test9SelfTailLoop Test11DualABILeak Test12ConAltNative Test13NativeArgChain Test14SmallFunctionInline Test15CompareFusionThroughCall Test16LoopContinuePostDrop Test17ConstFold Test18ClosureInPlaceGrow Test19LoopInvariantParam Test22BranchSinking Test24CStructSupport Test26GCPtrAliasString Test27FFIDualABI Test28Utf8Strings Test33WideDualABIWorker Test35NetworkLoopback Test36ReuseOfferUniqueLeak Test37SystemMisc Test41FFIMalloc Test42SupportMisc Test44IORefExtPrimLeak Test46FastPackUnconditional Test49IntegerOpReuse Test57LoopCallArgNativeShadow Test59Export Test66ClosureFastPath Test69ConstFoldClosure Test70ConstFoldClosureCallthrough Test79DupMerge Test84CgExternStruct Test85CgExternStructPtrField Test86CafMemoization Test87SpecConstCon"
 
 # KNOWN-BUGS.md's own remaining pre-existing leaks -- "definitely
 # lost" byte count, exactly. Anything else non-zero is a genuine new
@@ -579,6 +579,35 @@ for name in $ALL_TESTS; do
             report_pass "$name (DupMerge cancelDupDrop -- no dup left paired with a later drop of the same local)"
         else
             report_fail "$name" "DupMerge cancelDupDrop left $leftover dup/drop pair(s) uncancelled in $TMP/${name}_rc2.rcexpr"
+        fi
+    fi
+
+    # Test87SpecConstCon is the suite's only exercise of
+    # Compiler.RC2.SpecClosure's own constant-constructor
+    # specialization (doc/constant-constructor-specialization.md).
+    # Entirely invisible to an output diff -- dispatching a method
+    # through idris2rc2_applyClosure and calling it directly print the
+    # same thing -- so without this the pass could stop firing and the
+    # whole suite would still pass. Two checks, because either alone
+    # can be satisfied for the wrong reason: a clone must actually have
+    # been built AND kept (the profitability gate discards most
+    # attempts), and the boxed dispatch it exists to remove must be
+    # gone from the generated C. `classify`'s two call sites pass two
+    # distinct constant dictionaries, so both clones have to land.
+    #
+    # Like Test13's and Test79's checks above, this one asserts that a
+    # stage *fired*, so `--directive nospecconstcon` makes it FAIL by
+    # design -- that run is for confirming the stage doesn't change any
+    # test's own output, and this line is the one expected exception.
+    if [ "$name" = "Test87SpecConstCon" ]; then
+        clones="$(grep -cE '^def \{rc2_specConst_' "$TMP/${name}_rc2.rcexpr" || true)"
+        dispatches="$(grep -c 'idris2rc2_applyClosure' "$TMP/${name}_rc2.c" || true)"
+        if [ "$clones" -ge 2 ] && [ "$dispatches" = "0" ]; then
+            report_pass "$name (SpecConstCon -- $clones clone(s) kept, no boxed closure dispatch left)"
+        elif [ "$clones" -lt 2 ]; then
+            report_fail "$name" "SpecConstCon kept $clones clone(s), expected at least 2, in $TMP/${name}_rc2.rcexpr"
+        else
+            report_fail "$name" "SpecConstCon left $dispatches idris2rc2_applyClosure call(s) in $TMP/${name}_rc2.c"
         fi
     fi
 

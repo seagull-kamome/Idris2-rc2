@@ -6,6 +6,14 @@
 ||| Disable with `--directive nospecclosure`. Its own whole-pass-level
 ||| timing/count diagnostics (`applySpecClosure`'s own
 ||| `maybeLogTimeOver`) only print with `--directive timing`.
+|||
+||| A second, sibling pass lives in this module's own lower half:
+||| `applySpecConstCon`, which specializes on a *constant-constructor*
+||| argument (an interface dictionary) rather than a closure one. It
+||| shares this module's structural helpers and pipeline position but
+||| is a separate stage, disabled separately with
+||| `--directive nospecconstcon`; see
+||| `rc2/doc/constant-constructor-specialization.md`.
 module Compiler.RC2.SpecClosure
 
 -- Copyright 2026, Hattori,Hiroki. All rights reserved.
@@ -340,6 +348,13 @@ applySpecClosure defs = do
                                         d' => d'))
                   (newClones ++ defs))
   where
+    -- Referenced exactly once, at the `goKeys defOf ...` call above,
+    -- which then threads it as a parameter. That is load-bearing, not
+    -- style: a `where` definition is lambda-lifted into a function of
+    -- the enclosing pattern variables it mentions, so every *further*
+    -- reference here would rebuild the whole map. See
+    -- `applySpecConstCon`'s own `defOf` for what that costs when the
+    -- reference sits inside the per-key loop instead.
     defOf : SortedMap Name RCDef
     defOf = SortedMap.fromList defs
     -- `missing` is part of the key, not just `target` (doc's own
@@ -409,3 +424,211 @@ applySpecClosure defs = do
              Just (cloneName, cloneDef) =>
                  goKeys defOf caf ((cloneName, cloneDef) :: newClones)
                         (insertWith (++) callee [(argPos, target, cloneName)] table) rest
+
+------------------------------------------------------------------------
+-- Constant-constructor argument specialization
+--
+-- The sibling of everything above, aimed at the one remaining
+-- structurally-resolvable source of boxed `idris2rc2_applyClosure`
+-- dispatch: an interface dictionary. There the specialized parameter
+-- isn't a closure that gets *applied*, it's a record that gets
+-- *destructured*, so none of the machinery above recognises it:
+--
+--   def Prelude.Types.elemBy (args= [v10077, v10078, v10079])
+--     case v10077 of                                    -- destructure
+--       MkFoldable [record] args= [_, _, _, _, _, v10085] ->
+--         apply v10085 [..., v10087]                    -- boxed dispatch
+--
+-- Nothing new is needed downstream -- only getting the constant to the
+-- callee's own body. `Compiler.RC2.ConstFold` then folds the `case`
+-- away against it, binds each alt field to the corresponding constant,
+-- and (since each method field is an `RCConstClosure`) rewrites every
+-- `apply` of one into a direct `RAppName` call. That is why this needs
+-- no `rewriteApply` analogue at all: seeding the fold IS the rewrite.
+--
+-- Steps 1-3 deliberately mirror the closure case above, so its own
+-- profitability discipline carries over unchanged. See
+-- `rc2/doc/constant-constructor-specialization.md` for the design, the
+-- measured opportunity, and why this pass was once rejected outright
+-- over a cost that turned out not to be its own.
+------------------------------------------------------------------------
+
+||| One call site passing constant constructor `value` at argument
+||| `argPos` of a call to `callee`.
+record ConstOpportunity where
+  constructor MkConstOpportunity
+  callee : Name
+  argPos : Nat
+  value : RCLocal
+
+||| Every `ConstOpportunity` in `e`. Unlike `collectOpportunities`
+||| above there is no `Bound` to thread: `ConstFold` has already run to
+||| a fixpoint over the whole program by the time this pass does, so a
+||| constant argument is already spelled out as an `RCConstCon` right
+||| at the call site, never still behind an `RLet`.
+collectConstOpportunities : RCExp -> List ConstOpportunity
+collectConstOpportunities (RAppName _ _ callee args) =
+    mapMaybe (\(i, a) => case a of
+                              RCConstCon {} => Just (MkConstOpportunity callee i a)
+                              _ => Nothing)
+             (zip [0 .. length args] args)
+collectConstOpportunities e = foldSubExprs (++) [] collectConstOpportunities e
+
+||| Occurrences of `p` sitting in an `RConCase`'s own scrutinee
+||| position, anywhere in `e`.
+scrutineeUses : RCLocal -> RCExp -> Nat
+scrutineeUses p e@(RConCase _ sc _ _) =
+    (if sc == p then 1 else 0) + foldSubExprs (+) 0 (scrutineeUses p) e
+scrutineeUses p e = foldSubExprs (+) 0 (scrutineeUses p) e
+
+||| `True` iff every occurrence of `p` in `e` is an `RConCase`
+||| scrutinee. Anything else -- stored into a constructor, passed on to
+||| another call, returned -- means substituting the constant would
+||| duplicate it into positions the fold can't collapse, so the clone
+||| would be a second copy of the same work rather than a
+||| specialization. The profitability gate would reject such a clone
+||| anyway; refusing here just avoids building it.
+|||
+||| Note this pass runs *before* `Compiler.RC2.RC`'s own `annotate`, so
+||| there are no `RDup`/`RDrop` occurrences to discount yet -- see
+||| `applySpecClosure`'s own pipeline position.
+paramIsScrutineeOnly : RCLocal -> RCExp -> Bool
+paramIsScrutineeOnly p e =
+    let uses = countUsesR p e
+    in uses > 0 && uses == scrutineeUses p e
+
+||| Total `RApp` (boxed closure dispatch) nodes in `e` -- the
+||| profitability measure for this half of the pass.
+countApps : RCExp -> Nat
+countApps e@(RApp {}) = 1 + foldSubExprs (+) 0 countApps e
+countApps e = foldSubExprs (+) 0 countApps e
+
+||| `countApps` over a whole definition.
+defApps : RCDef -> Nat
+defApps (MkRCFun _ _ _ body) = countApps body
+defApps (MkRCError body) = countApps body
+defApps _ = 0
+
+||| Clone `callee` with its `argPos` parameter dropped from the
+||| signature and its id seeded to `value` for the fold. The body is
+||| handed over unchanged -- `foldConstDefWith` does the substitution,
+||| the `case` collapse and the `apply`-to-`call` rewrite in one go.
+buildConstClone : {auto fr : Ref FreshId Int}
+               -> CafTable -> (callee : Name) -> (argPos : Nat) -> (value : RCLocal)
+               -> (args : List (Int, Rep)) -> (retRep : Rep) -> (body : RCExp)
+               -> Core (Maybe (Name, RCDef))
+buildConstClone caf callee argPos value args retRep body =
+    case getAt argPos args of
+         Nothing => pure Nothing
+         Just (paramVar, _) =>
+             if not (paramIsScrutineeOnly (RCLoc paramVar) body)
+                then pure Nothing
+                else do
+                    cloneId <- freshId
+                    -- Same naming scheme as `buildClone` above, with
+                    -- its own prefix so the two are told apart on sight
+                    -- in a `dumprcexpr`/generated-`.c` read.
+                    let cloneName = MN ("rc2_specConst_" ++ cName callee) cloneId
+                    let args' = filter (\(i, _) => i /= paramVar) args
+                    let folded = foldConstDefWith caf [(paramVar, value)] (MkRCFun args' retRep False body)
+                    pure $ if defApps folded < countApps body then Just (cloneName, folded) else Nothing
+
+||| One accepted constant-constructor clone: redirect a call to
+||| `callee` to `cloneName`, dropping argument `argPos`, whenever the
+||| argument there is exactly `value`.
+ConstRedirectEntry : Type
+ConstRedirectEntry = (Nat, RCLocal, Name)
+
+ConstRedirectTable : Type
+ConstRedirectTable = SortedMap Name (List ConstRedirectEntry)
+
+redirectConstCallSites : ConstRedirectTable -> RCExp -> RCExp
+redirectConstCallSites table = go
+  where
+    tryEntries : FC -> Maybe LazyReason -> Name -> List RCLocal -> List ConstRedirectEntry -> RCExp
+    tryEntries fc lazy n args [] = RAppName fc lazy n args
+    tryEntries fc lazy n args ((argPos, value, cloneName) :: rest) =
+        case splitAt argPos args of
+             (before, a :: after) =>
+                 if a == value
+                    then RAppName fc lazy cloneName (before ++ after)
+                    else tryEntries fc lazy n args rest
+             _ => tryEntries fc lazy n args rest
+
+    go : RCExp -> RCExp
+    go (RAppName fc lazy n args) =
+        case lookup n table of
+             Nothing => RAppName fc lazy n args
+             Just entries => tryEntries fc lazy n args entries
+    go e = mapSubExprs go e
+
+||| One round of constant-constructor argument specialization, run
+||| straight after `applySpecClosure` and sharing its pipeline
+||| position. Structured exactly like it: group call sites by
+||| `(callee, argPos, value)`, attempt one memoized clone per distinct
+||| key, accumulate a redirect table, and apply it in a single
+||| whole-program pass at the end.
+export
+applySpecConstCon : {auto c : Ref Ctxt Defs} -> List (Name, RCDef) -> Core (List (Name, RCDef))
+applySpecConstCon defs = do
+    _ <- newRef FreshId 0
+    timingEnabled <- elem "timing" <$> getDirectives (Other "rc2")
+    let keys = SortedMap.toList byKey
+    when timingEnabled $
+      coreLift $ putStrLn $ "TIMING rc2: SpecConstCon: " ++ show (length keys)
+                             ++ " distinct keys, " ++ show (length defs) ++ " defs"
+    let caf = rebuildCafTable defs
+    -- Bound in the body, ONCE, and threaded into `goKeys` as a
+    -- parameter -- deliberately NOT a `where` clause. A `where`
+    -- definition is lambda-lifted into a function of whatever
+    -- enclosing pattern variables it mentions, so a nullary-looking
+    -- `defOf = SortedMap.fromList defs` there is really `defOf defs`,
+    -- rebuilt from scratch at *every* use. `goKeys`'s own `lookup
+    -- callee defOf` runs once per key, so writing it that way cost
+    -- ~1600 rebuilds of a 38k-entry map: 103s of a 131s whole-
+    -- `idris2-lsp` build, against 0.01s once hoisted. That single
+    -- difference is what made this pass look unaffordable and get
+    -- reverted the first time round. `applySpecClosure` above gets
+    -- this right the same way, by passing its own `defOf` to its own
+    -- `goKeys` rather than referring to it per call site.
+    let defOf : SortedMap Name RCDef := SortedMap.fromList defs
+    (newClones, table) <- goKeys defOf caf [] empty keys
+    pure $ map (\(n, d) => (n, case d of
+                                    MkRCFun a r w body => MkRCFun a r w (redirectConstCallSites table body)
+                                    d' => d'))
+               (newClones ++ defs)
+  where
+    addOpp : SortedMap (Name, Nat, RCLocal) () -> ConstOpportunity -> SortedMap (Name, Nat, RCLocal) ()
+    addOpp acc opp = insert (opp.callee, opp.argPos, opp.value) () acc
+
+    -- Only the distinct keys matter here (unlike the closure case,
+    -- where one representative opportunity carries the captured-arg
+    -- count), so this groups into a set rather than a list-valued map
+    -- -- and, same trap as above, folds into it per definition instead
+    -- of flattening every definition's own list together first.
+    byKey : SortedMap (Name, Nat, RCLocal) ()
+    byKey = foldl (\acc, (_, d) => case d of
+                        MkRCFun _ _ _ body => foldl addOpp acc (collectConstOpportunities body)
+                        _ => acc)
+                  (the (SortedMap (Name, Nat, RCLocal) ()) empty) defs
+
+    rebuildCafTable : List (Name, RCDef) -> CafTable
+    rebuildCafTable = foldl (\tbl, (n, d) => maybe tbl (\v => insert n v tbl) (cafValueOf d)) empty
+
+    goKeys : {auto fr : Ref FreshId Int}
+          -> SortedMap Name RCDef -> CafTable -> List (Name, RCDef) -> ConstRedirectTable
+          -> List ((Name, Nat, RCLocal), ()) -> Core (List (Name, RCDef), ConstRedirectTable)
+    goKeys _ _ newClones table [] = pure (newClones, table)
+    goKeys defOf caf newClones table (((callee, argPos, value), _) :: rest) =
+        case lookup callee defOf of
+             Just (MkRCFun args retRep False body) => do
+                 mClone <- buildConstClone caf callee argPos value args retRep body
+                 case mClone of
+                      Nothing => goKeys defOf caf newClones table rest
+                      Just (cloneName, cloneDef) =>
+                          goKeys defOf caf ((cloneName, cloneDef) :: newClones)
+                                 (insertWith (++) callee [(argPos, value, cloneName)] table) rest
+             -- A worker (`isWorker`) can't exist yet at this point in
+             -- the pipeline, and anything that isn't a plain function
+             -- has no parameter to specialize.
+             _ => goKeys defOf caf newClones table rest

@@ -239,7 +239,7 @@ insertMemoize = map wrap
 ||| apart.
 disableableStageNames : List String
 disableableStageNames =
-    ["noinline", "noconstfold", "nospecclosure", "noconaltnative", "nomutualloop", "noloop", "nolateinline", "nosink", "nodualabi", "nodeadcode", "nodupmerge", "nodeadvars"]
+    ["noinline", "noconstfold", "nospecclosure", "nospecconstcon", "noconaltnative", "nomutualloop", "noloop", "nolateinline", "nosink", "nodualabi", "nodeadcode", "nodupmerge", "nodeadvars"]
 
 ||| `incremental`: `Compiler.RC2.RC.toRCDefPreFold` throws (tagged
 ||| `notInlinedStructFieldMarker`) for a definition like
@@ -304,12 +304,22 @@ toRCDefs disabled incremental roots lds0 = do
     specialized <- if "nospecclosure" `elem` disabled
                        then pure folded
                        else logTime 2 "rc2: Speculative closure specialization" $ applySpecClosure folded
+    -- doc/constant-constructor-specialization.md: the same pipeline
+    -- position and the same three steps as the closure case above, for
+    -- the argument shape it cannot see -- a dictionary that gets
+    -- destructured rather than applied. It consumes the pass above's
+    -- own clones (a clone is an ordinary MkRCFun by now) and its own
+    -- clones are likewise ordinary by the time insertMemoize/Phase 2
+    -- see them.
+    dictSpecialized <- if "nospecconstcon" `elem` disabled
+                          then pure specialized
+                          else logTime 2 "rc2: Constant-constructor specialization" $ applySpecConstCon specialized
     -- doc/caf-memoization.md: right after ConstFold (and the
     -- specialization pass above, whose own clones are never 0-arg CAFs
     -- regardless) and strictly before Phase 2 (toRCDefPostFold's own
     -- annotateDef needs to see RMemoize already in place -- see RC.idr's
     -- own `annotate` case for it).
-    memoized <- logTime 2 "rc2: CAF memoization" $ pure (insertMemoize specialized)
+    memoized <- logTime 2 "rc2: CAF memoization" $ pure (insertMemoize dictSpecialized)
     reused <- logTime 2 "rc2: RC annotate + Reuse + ConAltNative" $
                 traverse (\(n, d) => do
                   d1 <- toRCDefPostFold d
