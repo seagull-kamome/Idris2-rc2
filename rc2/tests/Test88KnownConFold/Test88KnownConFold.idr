@@ -17,8 +17,7 @@ module Main
 -- Every tail meets its own alt, so the final `Right (a + b)` is never
 -- built.
 --
--- `useHalf` and the `M` monad chain reach the same shape only after
--- `LateInline` (or never, through closures). Output-only coverage.
+-- `useHalf` and the `M` monad chain: output-only coverage.
 
 record M a where
   constructor MkM

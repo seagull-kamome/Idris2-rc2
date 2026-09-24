@@ -10,10 +10,11 @@ module Main
 -- field is a native `Int` sum, so building it also boxes the sum
 -- (past `idris2rc2_mkInt64`'s small-int cache). With the push each
 -- tail meets its own alt, `ConstFold` folds it, and the sum stays
--- native -- one allocation fewer per call.
+-- native -- fewer allocations per call.
 --
--- `check1`/`check2` stay calls when the push runs (LateInline splices
--- them only later), so their own results are what the chain matches.
+-- `check1`/`check2` each have one caller, so `Compiler.RC2.Inline`'s
+-- Criterion B inlines them before the push runs, and their own
+-- constructors are folded away along with the chain's.
 --
 -- A/B it with `--directive nopushcon`.
 

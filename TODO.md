@@ -589,13 +589,17 @@ own `IO` wrapper around the `Either`.
 
 ## Performance: constructors built and matched in the same function -- rest of the escape analysis
 
-Since 2026-09-25, the direct shape (`let v = con ..` only ever
-`case`-matched) is folded by `ConstFold` (1,784 -> 166 across
-idris2-lsp), and `Compiler.RC2.PushCon` pushes a `case` into the tails
-of a value whose arms end in constructors (2,327 -> 1,625). Still open,
-designed in `rc2/doc/constructor-escape-analysis.md`'s "Pipeline
-placement": both shapes as `LateInline` creates them after RC
-annotation (the 166, and about half of the 1,625), which needs an
-RC-aware version of the fold. In `tests/BenchPushCon.idr` those tails
-allocate fresh while the pre-RC ones reused cells, so they may well be
-the more valuable half.
+Since 2026-09-25: `ConstFold` folds a `case` on a non-escaping
+constructor and an `apply` of a non-escaping partial application,
+`Compiler.RC2.PushCon` pushes a `case` into the tails of a value whose
+arms end in constructors, and `Compiler.RC2.Inline` inlines loop-free
+single-caller callees before RC annotation so their constructors meet
+those folds. See `rc2/doc/constructor-escape-analysis.md`.
+
+Still open: the shapes `LateInline` creates after RC annotation (311
+shape-A and 1,787 shape-B sites across idris2-lsp). Only 3,158 callees
+qualify for early inlining against the ~11,800 `LateInline` splices;
+presumably most of those become single-caller only once ConstFold and
+SpecClosure turn closure applications into direct calls (not
+verified). What remains is the RC-aware fold, option (1) in the doc's
+"The shapes `LateInline` creates".

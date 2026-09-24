@@ -75,7 +75,8 @@ reuse gap (`rc2/doc/reuse-monadic-bind-gap.md`) and not otherwise
 load-bearing for any currently-known gap. Not implemented here, to keep
 this pass's own blast radius matched to the problem it actually solves;
 `Graph`/`tarjanSCCs` were still made `public export`/`export` in
-`MutualLoop.idr` in case a future session revisits this.
+`MutualLoop.idr` in case a future session revisits this. It has since been
+implemented for loop-free callees: see "Criterion B at `Lifted`" below.
 
 ## The `allLiteralArgs` guard
 
@@ -364,6 +365,59 @@ before trusting any A/B comparison built on it again (see
 `rc2/tests/Test14SmallFunctionInline.idr`'s and
 `Test15CompareFusionThroughCall.idr`'s own doc comments, which both
 describe exactly what to expect changed between the two builds).
+
+## Criterion B at `Lifted`: loop-free single-caller callees (2026-09-25)
+
+The second criterion, dropped above as not load-bearing, became
+load-bearing once ConstFold's known-constructor fold and
+`Compiler.RC2.PushCon` existed (`constructor-escape-analysis.md`). A
+callee that returns a constructor its only caller immediately matches
+leaves the construction and the `case` in one function only once it
+is inlined. `LateInline` does inline it, but after RC annotation, where
+those folds can't reach. It runs that late only for callees that are
+recursive until `Loop` converts them; a callee that never recursed
+doesn't need to wait.
+
+A callee is inlined here, at its one call site, when:
+
+- it is a top-level `MkLFun` with at least one argument (a 0-argument
+  definition is a CAF, evaluated once however often it is referenced);
+- it has exactly one saturated `LAppName` occurrence, whole-program;
+- it is in no call-graph cycle, a self-call included (`MutualLoop`'s
+  `tarjanSCCs` over the `LAppName` graph);
+- that call site isn't lazy (`LAppName`'s `lazy` is `Nothing`); and
+- the caller isn't itself a CAF. Splicing whole bodies into a memoized
+  CAF leaves them optimised less than in an ordinary function: `main`'s
+  own `unsafePerformIO` was the case found, where native-type
+  inference and DualABI's FFI splicing stopped reaching the spliced
+  code.
+
+Definitions are processed callees first (the reverse of `tarjanSCCs`'
+order, as `LateInline` does), and an eligible callee enters the map in
+its already-processed form, so a chain `A -> B -> C` collapses in one
+pass. There is no size limit, as for `LateInline`: one call site means
+no copy is added. `%noinline` isn't consulted, as it isn't by
+Criterion A or `LateInline` either.
+
+**Arguments are now bound, not substituted.** Splicing substituted
+each argument expression for every occurrence of its parameter, so a
+parameter used twice evaluated its argument twice, and an unused one
+never evaluated it. `sq x = x * x` inlined at `sq (expensive y)`
+computed `expensive y` twice. Criterion A has done this since it was
+written. Criterion B's bodies are arbitrary, so it had to be fixed
+before B could use the same splice. `spliceArgs` now binds every
+non-atomic argument (anything but a local, a literal or an erased
+value) with an `LLet` first, and substitutes only locals. The fix
+covers both criteria.
+
+Measured on idris2-lsp, together with ConstFold's known-partial fold
+(`constructor-escape-analysis.md`), against the build before either:
+`apply` 11,326 -> 10,039, `partial` 16,448 -> 15,788, allocating `con`
+39,741 -> 38,257, IR lines -1.2%, compile 27.9s -> 29.3s. 3,158
+callees qualify at `Lifted`, against the roughly 11,800 `LateInline`
+splices; presumably most of those become single-caller only after
+ConstFold and SpecClosure turn closure applications into direct calls
+(not verified).
 
 ## Criterion B, revisited: `Compiler.RC2.LateInline`
 

@@ -86,9 +86,9 @@ KnownCon = (Name, Maybe Int, List RCLocal, Maybe Nat)
 ||| How a definition's locals are used, computed in one walk before
 ||| folding it -- the escape classification of
 ||| `rc2/doc/constructor-escape-analysis.md`. `escaping`: read anywhere
-||| other than as an `RConCase` scrutinee. `natives`: bound with a
-||| native `Rep`. `boxedUses`: read somewhere only a Boxed value can
-||| go.
+||| other than as an `RConCase` scrutinee or the closure an `RApp`
+||| applies. `natives`: bound with a native `Rep`. `boxedUses`: read
+||| somewhere only a Boxed value can go.
 record UseInfo where
   constructor MkUseInfo
   escaping : SortedSet RCLocal
@@ -110,7 +110,7 @@ useInfo = go (MkUseInfo empty empty empty)
     go acc (RAppNameRep _ _ _ _ _ args) = boxed args acc
     go acc (RAppFFIInline _ _ _ _ _ args) = boxed args acc
     go acc (RUnderApp _ _ _ args) = boxed args acc
-    go acc (RApp _ _ c args) = boxed (c :: args) acc
+    go acc (RApp _ _ c args) = boxed args ({ boxedUses $= insert c } acc)
     go acc (RCon _ _ _ _ args _) = boxed args acc
     go acc (RExtPrim _ _ _ args _) = boxed args acc
     go acc (ROp _ _ _ args _) = reads (toList args) acc
@@ -151,18 +151,20 @@ useInfo = go (MkUseInfo empty empty empty)
 ||| `RCLoc`. `aliases` maps a folded-away constructor field's own id to
 ||| the local the constructor was built from, and `knownCons` the
 ||| constructors themselves -- only non-escaping ones, and only when
-||| `uses` is there at all.
+||| `uses` is there at all. `knownPartials` is the same for a
+||| partial application (`RUnderApp`) that is only ever applied.
 record Env where
   constructor MkEnv
   uses : Maybe UseInfo
   consts : SortedMap Int (Subset RCLocal IsAnyConstLocal)
   aliases : SortedMap Int RCLocal
   knownCons : SortedMap Int KnownCon
+  knownPartials : SortedMap Int (Name, Nat, List RCLocal)
 
 ||| `knownCons`: whether to fold known constructors at all, which costs
 ||| a `useInfo` walk up front.
 emptyEnv : (knownCons : Bool) -> RCExp -> Env
-emptyEnv knownCons body = MkEnv (if knownCons then Just (useInfo body) else Nothing) empty empty empty
+emptyEnv knownCons body = MkEnv (if knownCons then Just (useInfo body) else Nothing) empty empty empty empty
 
 insertConst : Int -> Subset RCLocal IsAnyConstLocal -> Env -> Env
 insertConst i c = { consts $= insert i c }
@@ -328,6 +330,16 @@ foldConst caf env (RLet fc var rep value body) =
                                   in wrap $ if contains (RCLoc var) (ownedUsedIn (singleton (RCLoc var)) body')
                                                then RLet fc var rep (maybe con (\k => boxOf k args) boxPos) body'
                                                else body'
+                      -- The same for a partial application only ever applied:
+                      -- each saturating `RApp` of it becomes a direct call, so
+                      -- the closure is never built.
+                      (wrap, pa@(RUnderApp _ n missing args@(_ :: _))) =>
+                          if maybe True (\u => contains (RCLoc var) u.escaping) env.uses
+                             then RLet fc var rep value' (foldConst caf env body)
+                             else let body' = foldConst caf ({ knownPartials $= insert var (n, missing, args) } env) body
+                                  in wrap $ if contains (RCLoc var) (ownedUsedIn (singleton (RCLoc var)) body')
+                                               then RLet fc var rep pa body'
+                                               else body'
                       _ => RLet fc var rep value' (foldConst caf env body)
   where
     splitLetChain : RCExp -> (RCExp -> RCExp, RCExp)
@@ -426,6 +438,15 @@ foldConst _ env (RApp fc lazy c args) =
                    else if length args' < missing
                            then RUnderApp fc n (minus missing (length args')) args'
                            else RApp fc lazy c' args'
+            RCLoc i =>
+                case lookup i env.knownPartials of
+                     Just (n, missing, captured) =>
+                         if length args' == missing
+                            then RAppName fc lazy n (captured ++ args')
+                            else if length args' < missing
+                                    then RUnderApp fc n (minus missing (length args')) (captured ++ args')
+                                    else RApp fc lazy c' args'
+                     Nothing => RApp fc lazy c' args'
             _ => RApp fc lazy c' args'
 foldConst _ env (RExtPrim fc lazy p args postDrop) =
     let args' = map (resolveLocal env) args
@@ -567,10 +588,14 @@ cafValueOf : RCDef -> Maybe (Subset RCLocal IsAnyConstLocal)
 cafValueOf (MkRCFun [] _ _ (RV _ cval)) = (\prf => Element cval prf) <$> isConstLocalProof cval
 cafValueOf _ = Nothing
 
-||| `knownCons`: see `emptyEnv`.
+||| `knownCons`: see `emptyEnv`. Never in a CAF: a partial application
+||| folded to a direct call there lets `LateInline` splice whole bodies
+||| into the memoized CAF, which later passes optimise less than an
+||| ordinary function (`main`'s own `unsafePerformIO` was the case
+||| found).
 export
 foldConstDef : (knownCons : Bool) -> CafTable -> RCDef -> RCDef
-foldConstDef kc caf (MkRCFun args retRep isWorker body) = MkRCFun args retRep isWorker (foldConst caf (emptyEnv kc body) body)
+foldConstDef kc caf (MkRCFun args retRep isWorker body) = MkRCFun args retRep isWorker (foldConst caf (emptyEnv (kc && not (null args)) body) body)
 foldConstDef kc caf (MkRCError body) = MkRCError (foldConst caf (emptyEnv kc body) body)
 foldConstDef _ _ d@(MkRCCon _ _ _) = d
 foldConstDef _ _ d@(MkRCForeign _ _ _) = d

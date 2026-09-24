@@ -1,8 +1,9 @@
 # Constructor escape analysis: dropping constructors that never escape
 
-**Status:** rewrites A and B implemented (2026-09-25). The
-post-`LateInline` cleanup is designed, not yet implemented; tracked in
-`TODO.md`.
+**Status:** rewrites A and B, the known-partial fold, and early
+inlining of loop-free single-caller callees implemented (2026-09-25).
+An RC-aware fold after `LateInline` for what it still creates is
+designed, not implemented; tracked in `TODO.md`.
 
 ## The problem
 
@@ -329,6 +330,88 @@ them:
 That is more machinery, so it is a separate, later phase. Its tails
 allocate fresh more often than the pre-RC ones do (see "Where the
 allocation goes"), so it is likely worth it.
+
+## The shapes `LateInline` creates -- (2) implemented
+
+With rewrites A and B on, idris2-lsp:
+
+| | `--directive nolateinline` | normal |
+|---|---|---|
+| shape A | 22 | 166 |
+| shape B | 503 | 1,625 |
+
+So nearly all of what was left came from `LateInline`. It splices a
+single-caller callee whose body ends in constructors right where the
+caller matches the result, but after RC annotation, where A and B can't
+reach. Two ways were considered:
+
+- **(1) An RC-aware fold after `LateInline`**: A and B on annotated IR,
+  rebalancing every `dup`/`drop`/`reuseOffer`/`releaseReuse`/`reuse=`
+  around the construction and the alt, and inserting boxes by hand
+  since Reps are final by then. A mistake is a leak or a double free.
+- **(2) Inline loop-free single-caller callees before RC annotation.**
+  `LateInline` runs after `Loop` only for callees that are recursive
+  until `Loop` converts them. Of the definitions it removes from
+  idris2-lsp (about 11,800), about 1,700 contain a loop.
+
+(2) is implemented, as `Compiler.RC2.Inline`'s Criterion B
+(`inlining.md`, "Criterion B at `Lifted`"). Two findings came with it.
+
+**Criterion A duplicated arguments.** Splicing substituted argument
+expressions for their parameters, so `sq (expensive y)` computed
+`expensive y` twice. Non-atomic arguments are now `let`-bound first,
+for both criteria.
+
+**Partial applications are the closure analogue of rewrite A.** Once
+`unsafePerformIO` (single caller: `main`) was inlined at `Lifted`, its
+lifted lambda appeared as `partial f missing=1 [act]`, applied to the
+world straight away. That `apply` stayed a boxed closure dispatch
+(Test87 caught it). ConstFold now treats a non-escaping local bound to
+an `RUnderApp` as it treats a known constructor. `escaping` no longer
+counts being the closure an `RApp` applies. Each `RApp` of the local
+with exactly the missing argument count becomes `RAppName f (captured
+++ args)`, and one with fewer becomes a smaller `RUnderApp`. Once
+nothing reads the local, the closure is never allocated. This also
+fires well beyond the case that prompted it: idris2-lsp's `apply` count
+dropped 11% (see below).
+
+**Neither fold nor Criterion B works inside a CAF.** A direct call
+where there used to be a closure dispatch let `LateInline` splice
+`main`'s whole body into the memoized `__mainExpression` CAF. Later
+passes optimised it less there: its arithmetic stayed Boxed, and
+DualABI no longer inlined the FFI call `callingConvention` checks. So
+`foldConstDef` doesn't fold known constructors or partials in a
+0-argument definition, and Criterion B isn't applied in one.
+
+### Measured (2026-09-25)
+
+idris2-lsp, before this step vs after:
+
+| | before | after |
+|---|---|---|
+| `apply` | 11,326 | **10,039** (-11%) |
+| `partial` | 16,448 | **15,788** |
+| allocating `con` (no `reuse=`) | 39,741 | **38,257** |
+| `dup` / `drop` | 92,764 / 76,253 | 92,136 / 75,857 |
+| definitions | 26,033 | 25,556 |
+| IR lines | 720,428 | 711,725 (-1.2%) |
+| shape A / shape B | 175 / 1,625 | 311 / 1,787 |
+| compile time (median of 3) | 27.9s | 29.3s (+5%) |
+
+Shapes A and B go *up*: calls that were closure dispatches are direct
+now, so `LateInline` splices more, and some of that splicing forms
+new shapes after RC annotation. Only 3,158 callees qualify at
+`Lifted`, against `LateInline`'s ~11,800. The likely reason, not
+verified, is that most of the latter become single-caller only after
+ConstFold and SpecClosure turn closure applications into direct calls;
+if so, what's left for (1) is not only loop-bearing callees.
+
+`tests/BenchPushCon.idr`: `check1`/`check2` are now inlined at
+`Lifted`, so their constructors meet the pushed `case` before RC and
+fold away too. valgrind, 100,000 iterations: 1,999,976 allocations
+with `nopushcon`, **1,500,052** with everything on. Wall clock over
+5,000,000 iterations, 5 runs: 3.42s with `nopushcon`, **2.80s** on
+(about 18% faster). Before this step the same benchmark took 3.45s.
 
 ## Correctness notes on rewrite B
 
