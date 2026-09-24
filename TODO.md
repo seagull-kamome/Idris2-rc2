@@ -557,3 +557,45 @@ Also still open, and genuinely small: 17 box-then-unbox round trips
 survive in the test suite's own generated C (down from 210). They are
 mixed cases -- a `case` one of whose arms is Boxed, a literal minted by
 a pass other than `LateInline`, an `opBox` feeding `sqrt`. Low value.
+
+## Performance: constructor return values are always heap cells -- return small constructors by value (struct return)
+
+Important. A function returning a constructor always heap-allocates it,
+even when every caller immediately pattern-matches the result and drops
+it. The dominant case is upstream's own `Core a = IO (Either Error a)`:
+every `Core` action returns a fresh `Left`/`Right` cell that its caller
+destructures on the spot. Across a whole idris2-lsp build (2026-09-25,
+final `dumprcexpr`), 17,458 `let v = ... ; case v of` pairs exist; the
+bound value is a direct `call` in 7,021 of them and a DualABI `callRep`
+in 357 more -- the call-boundary share this item targets. (The 1,796
+whose value is a `con` built in the same function need no call-boundary
+change at all; they are the separate, intraprocedural
+case-of-known-constructor fold.)
+
+Direction: extend `Compiler.RC2.DualABI`'s worker signature with a
+by-value return for a small constructor type -- a C struct of the tag
+plus the fields (fields themselves Boxed or native per the existing
+`Rep` machinery), returned in registers under the SysV ABI for up to
+two words. A caller that immediately scrutinises the result switches on
+the struct's tag and binds the fields directly, with no allocation, no
+`reuseOffer`, and no drop of the cell; the existing Boxed wrapper
+materialises the cell for every other caller, exactly as DualABI's
+native-return workers already do. Open questions: which types qualify
+(fixed field count per constructor, a size cap on the widest
+constructor), how reuse analysis treats a scrutinee that no longer has
+a cell to reuse, and how this interacts with tail-position calls (see
+"tail-position delegating calls stay boxed" above) and with `Core`'s
+own `IO` wrapper around the `Either`.
+
+## Performance: constructors built and matched in the same function -- rest of the escape analysis
+
+The direct shape (`let v = con ..` only ever `case`-matched) is folded
+by `ConstFold` since 2026-09-25 (1,784 -> 166 across idris2-lsp). Still
+open, both designed in `rc2/doc/constructor-escape-analysis.md`:
+
+- Rewrite B: the 1,742 `let v = case ..; case v of` chains whose arms
+  end in constructors -- the `Core` `do`-block bind chain. Needs a
+  benchmark that actually reproduces the shape first (see the doc's
+  "Tests and benchmarks").
+- The 166 direct-shape sites left, mostly created by `LateInline` after
+  RC annotation, which need an RC-aware version of the fold.

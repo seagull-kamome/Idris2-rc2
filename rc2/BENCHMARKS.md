@@ -1149,3 +1149,39 @@ idris2-lsp全体で`apply`が9件しか減らないのは自己持ち回り許�
 `goKeys`は102.9s→0.010sになった。詳細な切り分けは
 `doc/constant-constructor-specialization.md`の
 「The `where`-clause trap that got this reverted once」にある。
+
+## 同一関数内で作って分解するだけのコンストラクタの除去(既知コンストラクタ畳み込み)
+
+`Compiler.RC2.ConstFold`の書き換えA。設計・計測の全体は
+`doc/constructor-escape-analysis.md`を参照。
+
+`let v = con K [a]`と作り、同じ関数の中で`case v of`で分解するだけ
+(どこにも逃げない)のコンストラクタを、コンパイル時に分岐を確定させて
+作らないようにする。主な発生源は`Core`モナドのbindをインライン展開した
+あとに残る`Right x`。
+
+### idris2-lsp全体(`--directive noknowncon`との対比)
+
+| | OFF | ON |
+|---|---|---|
+| 対象の形(`let v = con`のあと`case v of`) | 1,784 | **166** |
+| 最終IRの`con` | 62,788 | **59,570** (−5.1%) |
+| `case` | 49,824 | **48,167** |
+| `dup` / `drop` | 94,116 / 77,708 | 92,317 / 76,142 |
+| `reuse=`(再利用成功) | 22,159 | 20,479 |
+| IR行数 | 735,274 | 717,609 (−2.4%) |
+| コンパイル時間(3回の中央値) | 27.71s | 27.87s (+0.6%) |
+
+`reuse=`が減るのは、消えたコンストラクタの多くが次のコンストラクタの
+再利用元だったため(照合した`Left e`をそのまま`Left e`で包み直す形)。
+そのセルはそもそも確保されなくなった。残る166件は主に、RC注釈の後に
+走る`LateInline`が作るもの。
+
+### 実行時A/B(同一マシン5回、`--directive noknowncon`と対比)
+
+| | OFF | ON | |
+|---|---|---|---|
+| `tests/BenchKnownCon.idr` | 3.51s | **3.33s** | 約5%高速 |
+
+出力はいずれも`966699`で一致。1回の呼び出しあたり、OFFでは`Just`のセルと
+フィールドの`Int`のボックスを確保し、ONではボックスだけを確保する。

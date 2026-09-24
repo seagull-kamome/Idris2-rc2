@@ -22,6 +22,7 @@ import Core.TT
 import Core.Value
 
 import Data.DPair
+import Data.List
 import Data.List.Quantifiers
 import Data.Maybe
 import Data.SortedMap
@@ -74,24 +75,108 @@ constFoldOp fn cs =
                  Just (NPrimVal _ c) => Just c
                  _                   => Nothing
 
-||| Locals folded to a known constant so far, keyed by `RCLoc`'s own
-||| `Int` id -- ids are minted by `RC.idr`'s per-`LiftedDef` `NextVar`
-||| counter (monotonic, reset per definition), so no id here can ever
-||| be shadowed/reused within the one `RCDef` this is threaded through.
-||| Values carry an `IsAnyConstLocal` proof (`Subset`, erased at
-||| runtime) so `Env` can only ever hold one of `RCLocal`'s constant
+||| A local bound directly to a constructor with at least one
+||| non-constant field: its name, tag, (already resolved) field locals,
+||| and the position of its one native field if it has exactly one --
+||| the local's own id then names that field's box instead. See
+||| `rc2/doc/constructor-escape-analysis.md`'s "Rewrite A".
+KnownCon : Type
+KnownCon = (Name, Maybe Int, List RCLocal, Maybe Nat)
+
+||| How a definition's locals are used, computed in one walk before
+||| folding it -- the escape classification of
+||| `rc2/doc/constructor-escape-analysis.md`. `escaping`: read anywhere
+||| other than as an `RConCase` scrutinee. `natives`: bound with a
+||| native `Rep`. `boxedUses`: read somewhere only a Boxed value can
+||| go.
+record UseInfo where
+  constructor MkUseInfo
+  escaping : SortedSet RCLocal
+  natives : SortedSet Int
+  boxedUses : SortedSet RCLocal
+
+useInfo : RCExp -> UseInfo
+useInfo = go (MkUseInfo empty empty empty)
+  where
+    reads : List RCLocal -> UseInfo -> UseInfo
+    reads ls = { escaping $= \s => foldl (flip insert) s ls }
+
+    boxed : List RCLocal -> UseInfo -> UseInfo
+    boxed ls = { boxedUses $= \s => foldl (flip insert) s ls } . reads ls
+
+    go : UseInfo -> RCExp -> UseInfo
+    go acc (RV _ v) = boxed [v] acc
+    go acc (RAppName _ _ _ args) = boxed args acc
+    go acc (RAppNameRep _ _ _ _ _ args) = boxed args acc
+    go acc (RAppFFIInline _ _ _ _ _ args) = boxed args acc
+    go acc (RUnderApp _ _ _ args) = boxed args acc
+    go acc (RApp _ _ c args) = boxed (c :: args) acc
+    go acc (RCon _ _ _ _ args _) = boxed args acc
+    go acc (RExtPrim _ _ _ args _) = boxed args acc
+    go acc (ROp _ _ _ args _) = reads (toList args) acc
+    go acc (RStructGet _ structVar _ _ _) = boxed [structVar] acc
+    go acc (RStructSet _ structVar _ _ value _) = boxed [structVar, value] acc
+    go acc (RLet _ var rep value body) =
+        let acc' = go (go acc value) body
+        in case rep of
+                RBoxed => acc'
+                _ => { natives $= insert var } acc'
+    go acc (RCmpCase _ _ args _ t f) = go (go (reads (toList args) acc) t) f
+    go acc (RConCase _ _ alts mDef) =
+        let acc' = foldl (\a, (MkRConAlt _ _ _ _ b) => go a b) acc alts
+        in maybe acc' (go acc') mDef
+    go acc (RConstCase _ sc alts mDef) =
+        let acc' = foldl (\a, (MkRConstAlt _ b) => go a b) (reads [sc] acc) alts
+        in maybe acc' (go acc') mDef
+    go acc (RDup _ _ _ b) = go acc b
+    go acc (RDrop _ _ b) = go acc b
+    go acc (RFree _ _ b) = go acc b
+    go acc (RReleaseReuse _ _ b) = go acc b
+    go acc (RReuseOffer _ _ _ _ b) = go acc b
+    go acc (RLoop _ _ initial _ b) = go (boxed initial acc) b
+    go acc (RLoopContinue _ args _) = boxed args acc
+    go acc (RMemoize _ _ _ b) = go acc b
+    go acc _ = acc
+
+||| Everything this pass knows about a definition's locals, keyed by
+||| `RCLoc`'s own `Int` id -- ids are minted by `RC.idr`'s per-
+||| `LiftedDef` `NextVar` counter (monotonic, reset per definition), so
+||| no id here can ever be shadowed/reused within the one `RCDef` this
+||| is threaded through.
+|||
+||| `consts` values carry an `IsAnyConstLocal` proof (`Subset`, erased
+||| at runtime) so they can only ever be one of `RCLocal`'s constant
 ||| forms -- `RCConstCon`/`RCConstClosure` included, see
 ||| `rc2/doc/const-con-fold.md`/`const-closure-fold.md` -- never a live
-||| `RCLoc`.
-Env : Type
-Env = SortedMap Int (Subset RCLocal IsAnyConstLocal)
+||| `RCLoc`. `aliases` maps a folded-away constructor field's own id to
+||| the local the constructor was built from, and `knownCons` the
+||| constructors themselves -- only non-escaping ones, and only when
+||| `uses` is there at all.
+record Env where
+  constructor MkEnv
+  uses : Maybe UseInfo
+  consts : SortedMap Int (Subset RCLocal IsAnyConstLocal)
+  aliases : SortedMap Int RCLocal
+  knownCons : SortedMap Int KnownCon
+
+||| `knownCons`: whether to fold known constructors at all, which costs
+||| a `useInfo` walk up front.
+emptyEnv : (knownCons : Bool) -> RCExp -> Env
+emptyEnv knownCons body = MkEnv (if knownCons then Just (useInfo body) else Nothing) empty empty empty
+
+insertConst : Int -> Subset RCLocal IsAnyConstLocal -> Env -> Env
+insertConst i c = { consts $= insert i c }
 
 ||| Resolve `l` against `env` if it's a variable this pass has already
-||| folded to a known constant value -- otherwise `l` unchanged (still
-||| `RCLoc`, or already one of the other constant forms, which are
-||| never looked up).
+||| folded to a known constant value or an alias of another local --
+||| otherwise `l` unchanged (still `RCLoc`, or already one of the other
+||| constant forms, which are never looked up). An alias target is
+||| resolved when it's recorded, so one lookup is enough.
 resolveLocal : Env -> RCLocal -> RCLocal
-resolveLocal env l@(RCLoc i) = fromMaybe l (fst <$> lookup i env)
+resolveLocal env l@(RCLoc i) =
+    case lookup i env.aliases of
+         Just l' => l'
+         Nothing => fromMaybe l (fst <$> lookup i env.consts)
 resolveLocal _   l           = l
 
 ||| `RCConst` is already a literal (no `RLet` involved, see `bindOne`'s
@@ -163,7 +248,7 @@ findConAlt tag (alt@(MkRConAlt _ _ tag' _ _) :: rest) =
 insertConArgs : List Int -> List RCLocal -> Env -> Env
 insertConArgs (i :: is) (v :: vs) env =
     case isConstLocalProof v of
-         Just prf => insertConArgs is vs (insert i (Element v prf) env)
+         Just prf => insertConArgs is vs (insertConst i (Element v prf) env)
          Nothing  => insertConArgs is vs env
 insertConArgs _ _ env = env
 
@@ -205,13 +290,13 @@ foldConst caf env (RLet fc var rep value body) =
             RPrimVal _ c =>
                 case litRep c of
                      Just _ =>
-                         let body' = foldConst caf (insert var (Element (RCConst c) ItIsConst2) env) body
+                         let body' = foldConst caf (insertConst var (Element (RCConst c) ItIsConst2) env) body
                          in if contains (RCLoc var) (freeLocalsR body')
                                then RLet fc var rep value' body'
                                else body'
                      Nothing => RLet fc var rep value' (foldConst caf env body)
             RV _ cval@(RCConstCon {}) =>
-                let body' = foldConst caf (insert var (Element cval ItIsConstCon2) env) body
+                let body' = foldConst caf (insertConst var (Element cval ItIsConstCon2) env) body
                 in if contains (RCLoc var) (freeLocalsR body')
                       then RLet fc var rep value' body'
                       else body'
@@ -223,11 +308,49 @@ foldConst caf env (RLet fc var rep value body) =
             -- rc2/doc/const-closure-fold.md's "Gap: a let-rebinding of
             -- an already-folded closure didn't propagate".
             RV _ cval@(RCConstClosure {}) =>
-                let body' = foldConst caf (insert var (Element cval ItIsConstClosure2) env) body
+                let body' = foldConst caf (insertConst var (Element cval ItIsConstClosure2) env) body
                 in if contains (RCLoc var) (freeLocalsR body')
                       then RLet fc var rep value' body'
                       else body'
-            _ => RLet fc var rep value' (foldConst caf env body)
+            -- A non-escaping constructor with a non-constant field,
+            -- possibly at the end of a let chain: the chain's bindings
+            -- are floated out so the fields stay in scope for `body`.
+            -- Its local, if still used afterwards, is its one native
+            -- field's box. An escaping one is left alone: its native
+            -- fields would be boxed again at every use instead of once.
+            -- See rc2/doc/constructor-escape-analysis.md's "Rewrite A".
+            _ => case splitLetChain value' of
+                      (wrap, con@(RCon _ n _ tag args Nothing)) =>
+                          if maybe True (\u => contains (RCLoc var) u.escaping) env.uses || any isBigLiteral args
+                             then RLet fc var rep value' (foldConst caf env body)
+                             else let boxPos = singleNative args
+                                      body' = foldConst caf ({ knownCons $= insert var (n, tag, args, boxPos) } env) body
+                                  in wrap $ if contains (RCLoc var) (ownedUsedIn (singleton (RCLoc var)) body')
+                                               then RLet fc var rep (maybe con (\k => boxOf k args) boxPos) body'
+                                               else body'
+                      _ => RLet fc var rep value' (foldConst caf env body)
+  where
+    splitLetChain : RCExp -> (RCExp -> RCExp, RCExp)
+    splitLetChain (RLet fc' v r e b) = let (wrap, t) = splitLetChain b in (RLet fc' v r e . wrap, t)
+    splitLetChain e = (id, e)
+
+    -- A `BI` field must keep a real `RCLoc` for ownership
+    -- (rc2/doc/const-con-fold.md's Bug #2), so it can't be aliased.
+    isBigLiteral : RCLocal -> Bool
+    isBigLiteral (RCConst (BI _)) = True
+    isBigLiteral _ = False
+
+    isNative : RCLocal -> Bool
+    isNative (RCLoc j) = maybe False (\u => contains j u.natives) env.uses
+    isNative _ = False
+
+    singleNative : List RCLocal -> Maybe Nat
+    singleNative args = case filter (isNative . snd) (zip [0 .. length args] args) of
+                             [(k, _)] => Just k
+                             _ => Nothing
+
+    boxOf : Nat -> List RCLocal -> RCExp
+    boxOf k args = maybe (RCrash fc "[rc2] ConstFold: known constructor lost its native field") (RV fc) (getAt k args)
 foldConst _ env (RV fc l) = RV fc (resolveLocal env l)
 -- A `RCon` whose `args` are all -- directly or via `env` -- already
 -- constant folds to `RV` of a single `RCConstCon`. `reuseFrom` is
@@ -353,18 +476,67 @@ foldConst caf env (RConCase fc sc alts mDef) =
                   Nothing =>
                       maybe (RCrash fc "[rc2] ConstFold: RConCase folded scrutinee matched no alt and had no default")
                             (foldConst caf env) mDef
+         sc'@(RCLoc i) =>
+             fromMaybe (RConCase fc sc' (map (foldConstAlt caf env) alts) (map (foldConst caf env) mDef))
+                       (foldKnown i)
          _ => RConCase fc sc (map (foldConstAlt caf env) alts) (map (foldConst caf env) mDef)
   where
     foldConstAlt : CafTable -> Env -> RConAlt -> RConAlt
     foldConstAlt caf env (MkRConAlt name ci tag args body) =
         MkRConAlt name ci tag args (foldConst caf env body)
+
+    findKnownAlt : Name -> Maybe Int -> List RConAlt -> Maybe RConAlt
+    findKnownAlt n Nothing = Data.List.find (\(MkRConAlt n' _ _ _ _) => n == n')
+    findKnownAlt _ tag = findConAlt tag
+
+    -- Each field becomes an alias of its argument, except a native
+    -- argument whose field is read as Boxed somewhere: that one reads
+    -- the box the scrutinee's own local now names (`boxVar`) if it is
+    -- the constructor's one native field, and is otherwise boxed once
+    -- by a `let` -- never again at every Boxed read. `Nothing` when
+    -- the field lists don't line up.
+    bindKnownConArgs : (boxVar : Int) -> Maybe Nat -> Nat -> List Int -> List RCLocal -> Env
+                    -> Maybe (Env, RCExp -> RCExp)
+    bindKnownConArgs _ _ _ [] [] env = Just (env, id)
+    bindKnownConArgs boxVar boxPos k (i :: is) (v :: vs) env =
+        let rest = bindKnownConArgs boxVar boxPos (S k) is vs
+        in case v of
+                RCLoc j =>
+                    if maybe False (\u => contains j u.natives && contains (RCLoc i) u.boxedUses) env.uses
+                       then if boxPos == Just k
+                               then rest ({ aliases $= insert i (RCLoc boxVar) } env)
+                               else (\(env', wrap) => (env', RLet fc i RBoxed (RV fc v) . wrap)) <$> rest env
+                       else rest ({ aliases $= insert i v } env)
+                _ => rest (insertConArgs [i] [v] env)
+    bindKnownConArgs _ _ _ _ _ _ = Nothing
+
+    -- See rc2/doc/constructor-escape-analysis.md's "Rewrite A". A
+    -- field-count mismatch can't come from a well-typed program, and
+    -- the scrutinee's local may already name a box instead of the
+    -- constructor, so it crashes rather than falling back to a `case`.
+    foldKnown : Int -> Maybe RCExp
+    foldKnown i = do
+        (n, tag, args, boxPos) <- lookup i env.knownCons
+        Just $ case findKnownAlt n tag alts of
+                    Just (MkRConAlt _ _ _ argIds body) =>
+                        case bindKnownConArgs i boxPos 0 argIds args env of
+                             Just (env', wrap) => foldConst caf env' (wrap body)
+                             Nothing => RCrash fc "[rc2] ConstFold: known constructor's field count doesn't match its alt"
+                    Nothing =>
+                        maybe (RCrash fc "[rc2] ConstFold: RConCase known scrutinee matched no alt and had no default")
+                              (foldConst caf env) mDef
 foldConst caf env (RConstCase fc sc alts mDef) =
     let alts' = map (foldConstConstAlt caf env) alts
         mDef' = map (foldConst caf env) mDef
     in case resolveConst env sc of
             Just c  => fromMaybe (RConstCase fc sc alts' mDef') (findConstAlt c alts' mDef')
-            Nothing => RConstCase fc sc alts' mDef'
+            Nothing => RConstCase fc (aliasOf sc) alts' mDef'
   where
+    aliasOf : RCLocal -> RCLocal
+    aliasOf l = case resolveLocal env l of
+                     l'@(RCLoc _) => l'
+                     _ => l
+
     foldConstConstAlt : CafTable -> Env -> RConstAlt -> RConstAlt
     foldConstConstAlt caf env (MkRConstAlt c body) = MkRConstAlt c (foldConst caf env body)
 foldConst caf env (RDup fc v extra body) = RDup fc v extra (foldConst caf env body)
@@ -395,12 +567,13 @@ cafValueOf : RCDef -> Maybe (Subset RCLocal IsAnyConstLocal)
 cafValueOf (MkRCFun [] _ _ (RV _ cval)) = (\prf => Element cval prf) <$> isConstLocalProof cval
 cafValueOf _ = Nothing
 
+||| `knownCons`: see `emptyEnv`.
 export
-foldConstDef : CafTable -> RCDef -> RCDef
-foldConstDef caf (MkRCFun args retRep isWorker body) = MkRCFun args retRep isWorker (foldConst caf empty body)
-foldConstDef caf (MkRCError body) = MkRCError (foldConst caf empty body)
-foldConstDef _ d@(MkRCCon _ _ _) = d
-foldConstDef _ d@(MkRCForeign _ _ _) = d
+foldConstDef : (knownCons : Bool) -> CafTable -> RCDef -> RCDef
+foldConstDef kc caf (MkRCFun args retRep isWorker body) = MkRCFun args retRep isWorker (foldConst caf (emptyEnv kc body) body)
+foldConstDef kc caf (MkRCError body) = MkRCError (foldConst caf (emptyEnv kc body) body)
+foldConstDef _ _ d@(MkRCCon _ _ _) = d
+foldConstDef _ _ d@(MkRCForeign _ _ _) = d
 
 ||| As `foldConstDef`, but with `seed` already in `Env`: each `(i, l)`
 ||| binds local id `i` to the constant `l`, exactly as if this pass had
@@ -419,11 +592,13 @@ foldConstDef _ d@(MkRCForeign _ _ _) = d
 export
 foldConstDefWith : CafTable -> List (Int, RCLocal) -> RCDef -> RCDef
 foldConstDefWith caf seed d =
-    let env : Env = foldl (\acc, (i, l) =>
-                               maybe acc (\prf => insert i (Element l prf) acc) (isConstLocalProof l))
-                          (the Env SortedMap.empty) seed
-    in case d of
-            MkRCFun args retRep isWorker body => MkRCFun args retRep isWorker (foldConst caf env body)
-            MkRCError body => MkRCError (foldConst caf env body)
-            d'@(MkRCCon _ _ _) => d'
-            d'@(MkRCForeign _ _ _) => d'
+    case d of
+         MkRCFun args retRep isWorker body => MkRCFun args retRep isWorker (foldConst caf (seeded body) body)
+         MkRCError body => MkRCError (foldConst caf (seeded body) body)
+         d'@(MkRCCon _ _ _) => d'
+         d'@(MkRCForeign _ _ _) => d'
+  where
+    seeded : RCExp -> Env
+    seeded body = foldl (\acc, (i, l) =>
+                            maybe acc (\prf => insertConst i (Element l prf) acc) (isConstLocalProof l))
+                       (emptyEnv True body) seed

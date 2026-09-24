@@ -418,7 +418,7 @@ NO_REFC_DIFF_TESTS="Test3Data Test7CastMatrix Test8EmptyCon Test17ConstFold Test
 # packCFType allocation (idris2rc2_mkPointer/idris2rc2_mkGCPointer) is
 # new to %export's own argument marshalling and worth the same
 # scrutiny.
-LEAK_SENSITIVE_TESTS="Test1Basics Test9SelfTailLoop Test11DualABILeak Test12ConAltNative Test13NativeArgChain Test14SmallFunctionInline Test15CompareFusionThroughCall Test16LoopContinuePostDrop Test17ConstFold Test18ClosureInPlaceGrow Test19LoopInvariantParam Test22BranchSinking Test24CStructSupport Test26GCPtrAliasString Test27FFIDualABI Test28Utf8Strings Test33WideDualABIWorker Test35NetworkLoopback Test36ReuseOfferUniqueLeak Test37SystemMisc Test41FFIMalloc Test42SupportMisc Test44IORefExtPrimLeak Test46FastPackUnconditional Test49IntegerOpReuse Test57LoopCallArgNativeShadow Test59Export Test66ClosureFastPath Test69ConstFoldClosure Test70ConstFoldClosureCallthrough Test79DupMerge Test84CgExternStruct Test85CgExternStructPtrField Test86CafMemoization Test87SpecConstCon"
+LEAK_SENSITIVE_TESTS="Test1Basics Test9SelfTailLoop Test11DualABILeak Test12ConAltNative Test13NativeArgChain Test14SmallFunctionInline Test15CompareFusionThroughCall Test16LoopContinuePostDrop Test17ConstFold Test18ClosureInPlaceGrow Test19LoopInvariantParam Test22BranchSinking Test24CStructSupport Test26GCPtrAliasString Test27FFIDualABI Test28Utf8Strings Test33WideDualABIWorker Test35NetworkLoopback Test36ReuseOfferUniqueLeak Test37SystemMisc Test41FFIMalloc Test42SupportMisc Test44IORefExtPrimLeak Test46FastPackUnconditional Test49IntegerOpReuse Test57LoopCallArgNativeShadow Test59Export Test66ClosureFastPath Test69ConstFoldClosure Test70ConstFoldClosureCallthrough Test79DupMerge Test84CgExternStruct Test85CgExternStructPtrField Test86CafMemoization Test87SpecConstCon Test88KnownConFold"
 
 # KNOWN-BUGS.md's own remaining pre-existing leaks -- "definitely
 # lost" byte count, exactly. Anything else non-zero is a genuine new
@@ -608,6 +608,20 @@ for name in $ALL_TESTS; do
             report_fail "$name" "SpecConstCon kept $clones clone(s), expected at least 2, in $TMP/${name}_rc2.rcexpr"
         else
             report_fail "$name" "SpecConstCon left $dispatches idris2rc2_applyClosure call(s) in $TMP/${name}_rc2.c"
+        fi
+    fi
+
+    # Test88KnownConFold: ConstFold's known-constructor fold
+    # (doc/constructor-escape-analysis.md, "Rewrite A") is invisible to
+    # an output diff, so assert on the dump that `bump`'s non-escaping
+    # `Just` is gone. Like Test87's check, `--directive noconstfold`
+    # makes this FAIL by design.
+    if [ "$name" = "Test88KnownConFold" ]; then
+        justs="$(awk '/^def \{idris2rc2_worker_Main_bump:/{p=1; next} /^def /{p=0} p && /con _builtin.JUST/' "$TMP/${name}_rc2.rcexpr" | wc -l)"
+        if [ "$justs" = "0" ]; then
+            report_pass "$name (known-constructor fold -- bump's Just never built)"
+        else
+            report_fail "$name" "bump still builds $justs Just(s) in $TMP/${name}_rc2.rcexpr"
         fi
     fi
 

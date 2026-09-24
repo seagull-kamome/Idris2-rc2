@@ -65,7 +65,10 @@ show up again during testing.
   `constant-constructor-specialization.md` for its sibling that does
   the same for a constant interface dictionary -- whose own "The
   `where`-clause trap" section is worth reading before adding any
-  `where`-bound collection to a pass, `dead-code-elim.md` for the
+  `where`-bound collection to a pass, `constructor-escape-analysis.md` for
+  dropping a constructor built and only `case`-matched in the same
+  function (the direct shape is `ConstFold`'s known-constructor fold;
+  the rest is still design), `dead-code-elim.md` for the
   whole-program mark-and-sweep pass that drops definitions rc2's own
   optimizations (Inline, DualABI's Stage 3a wrapper split) leave with
   zero remaining callers, run as `toRCDefs`'s own final stage,

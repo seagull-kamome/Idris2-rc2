@@ -166,8 +166,12 @@ rcSizeConstAlt (MkRConstAlt _ body) = rcSizeOf body
 ||| (the same laziness caveat `Compiler.RC2.LateInline.applyLateInline`
 ||| records for its own rounds). The round *count* is exact regardless,
 ||| which is what the cap question actually needs.
-foldConstProgram : {auto c : Ref Ctxt Defs} -> List (Name, RCDef) -> Core (List (Name, RCDef))
-foldConstProgram defs0 = go 1 maxConstFoldIterations empty 0 defs0
+|||
+||| `knownCons`: `False` under `--directive noknowncon`, turning off
+||| `ConstFold`'s known-constructor fold here (the clones
+||| `Compiler.RC2.SpecClosure` folds itself keep it).
+foldConstProgram : {auto c : Ref Ctxt Defs} -> (knownCons : Bool) -> List (Name, RCDef) -> Core (List (Name, RCDef))
+foldConstProgram knownCons defs0 = go 1 maxConstFoldIterations empty 0 defs0
   where
     -- Threads the table's own key count alongside it instead of
     -- re-deriving it via `length (SortedMap.toList table)` (O(n log n))
@@ -191,7 +195,11 @@ foldConstProgram defs0 = go 1 maxConstFoldIterations empty 0 defs0
     go round (S fuel) table count defs = do
         (folded, table', count') <-
             logTime 3 "rc2: ConstFold (round \{show round}/\{show maxConstFoldIterations}, \{show count} CAFs in)" $
-              do let folded = map (\(n, d) => (n, foldConstDef table d)) defs
+              do -- Only round 1 folds known constructors: later rounds
+                 -- differ only by CAF substitution, which seldom leaves a
+                 -- constructor newly non-escaping -- not worth a use walk
+                 -- per round (rc2/doc/constructor-escape-analysis.md).
+                 let folded = map (\(n, d) => (n, foldConstDef (knownCons && round == 1) table d)) defs
                  let (table', count') = rebuildTable folded
                  pure (folded, table', count')
         if count' == count
@@ -226,7 +234,7 @@ insertMemoize = map wrap
 ||| apart.
 disableableStageNames : List String
 disableableStageNames =
-    ["noinline", "noconstfold", "nospecclosure", "nospecconstcon", "noconaltnative", "nomutualloop", "noloop", "nolateinline", "nosink", "nodualabi", "nodeadcode", "nodupmerge", "nodeadvars"]
+    ["noinline", "noconstfold", "noknowncon", "nospecclosure", "nospecconstcon", "noconaltnative", "nomutualloop", "noloop", "nolateinline", "nosink", "nodualabi", "nodeadcode", "nodupmerge", "nodeadvars"]
 
 ||| Optional pipeline-stage disabling via `--directive no<stagename>`,
 ||| for A/B regression isolation without editing `toRCDefs` itself and
@@ -296,7 +304,7 @@ toRCDefs disabled incremental roots lds0 = do
                         pure (mapMaybe id results)
     folded <- if "noconstfold" `elem` disabled
                  then pure preFolded
-                 else logTime 2 "rc2: ConstFold (whole-program fixpoint)" $ foldConstProgram preFolded
+                 else logTime 2 "rc2: ConstFold (whole-program fixpoint)" $ foldConstProgram (not ("noknowncon" `elem` disabled)) preFolded
     -- doc/speculative-closure-specialization.md: strictly after
     -- ConstFold (so RUnderApp targets it already resolved are visible)
     -- and strictly before insertMemoize/Phase 2 below -- a kept clone

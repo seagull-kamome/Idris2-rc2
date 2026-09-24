@@ -400,7 +400,7 @@ applySpecClosure defs = do
                       Just paramVar => do
                           let capturedCount = length rep.closure.capturedArgs
                           (cloneName, unfoldedDef) <- buildClone callee argPos paramVar target missing capturedCount args retRep body
-                          let cloneDef = foldConstDef caf unfoldedDef
+                          let cloneDef = foldConstDef True caf unfoldedDef
                           let cloneDef'@(MkRCFun _ _ _ foldedBody) = cloneDef
                               | _ => pure Nothing
                           pure $ if stillAppliesParam paramVar foldedBody
