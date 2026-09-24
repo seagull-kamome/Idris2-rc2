@@ -77,9 +77,9 @@ show up again during testing.
   `directives.md` for the `--directive`/`%cg rc2 <directive>` mechanism
   itself -- pipeline-stage disabling, debug dumps, and C code injection
   -- rather than any one specific pass, `caf-memoization.md` for the
-  new `RMemoize` IR node fixing a plain top-level `unsafePerformIO`
-  CAF's own missing memoization -- a living document, design recorded
-  before implementation started. Not
+  `RMemoize` IR node that memoizes a plain top-level `unsafePerformIO`
+  CAF (Boxed CAFs only; the doc explains why the native case turned
+  out unreachable). Not
   a replacement for `TODO.md` — those stay the changelog
   and gap tracker; `rc2/doc/` is where the *why* and the
   bugs-found-along-the-way for a specific subsystem live.

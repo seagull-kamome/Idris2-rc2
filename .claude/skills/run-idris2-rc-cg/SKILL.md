@@ -131,8 +131,9 @@ source ../../env.sh
 nix-shell -p gcc gmp pkg-config valgrind --run './verify.sh'
 ```
 
-Expected: `111 passed, 0 known, 0 failed` (refc-suite, smoke tests, and
-valgrind leak checks all included). Also reachable via `smoke.sh
+Expected: `0 failed` on both summary lines verify.sh prints (the
+refc-suite one, then the smoke-test-plus-valgrind one), with pass
+counts equal to the previous run's plus any tests added since. Also reachable via `smoke.sh
 --full-tests`. `idris2` is only needed for verify.sh's own Build step
 and comes from whatever's already on `PATH` after sourcing `env.sh`
 (the self-built one); add `--skip-build` if `rc2/build/exec/idris2-rc2`
@@ -166,6 +167,11 @@ list above only if you specifically lack a self-built compiler
   `support/rc2`'s runtime library.
 - **Running a build/install step by hand, outside `smoke.sh`/
   `verify.sh`/`bench.sh`, bypasses the build lock** — if doing so
-  while another session/subagent might also be building, wrap it with
-  `source rc2/tests/build-lock.sh; acquire_build_lock` yourself first
-  (see the "Build" section above).
+  while another session/subagent might also be building, take the lock
+  yourself first, from the repo root and inside the same `nix-shell
+  --run` string as the build: `export RC2_DIR="$(pwd)/rc2"; source
+  rc2/tests/build-lock.sh; acquire_build_lock`. `build-lock.sh` finds
+  its lock file through `$RC2_DIR`; without it the lock path becomes
+  `/build/.build.lock`, the `mkdir` fails, and the call exits at once
+  with a misleading "another build is still holding ... after 600s"
+  message.
