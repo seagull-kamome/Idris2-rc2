@@ -275,7 +275,11 @@ record CollapseState (vars : Scope) where
 doCaseOfCase : FC -> (x : Lifted vars) -> (xalts : List (LiftedConAlt vars)) -> (xdef : Maybe (Lifted vars)) ->
                (alts : List (LiftedConAlt vars)) -> (def : Maybe (Lifted vars)) -> (outerSize : Nat) -> CollapseState vars
 doCaseOfCase fc x xalts xdef alts def outerSize
-    = MkCollapseState (1 + sizeOf x + newBranchesSize) newBranchesSize
+    -- Bound once: a `where` value is re-evaluated at every reference
+    -- (doc/constant-constructor-specialization.md, "The `where`-clause
+    -- trap").
+    = let nb : Nat := newBranchesSize in
+      MkCollapseState (1 + sizeOf x + nb) nb
                       (LConCase fc x (map updateAlt xalts) (map updateDef xdef))
   where
     duplicationCount : Nat
@@ -296,7 +300,11 @@ doCaseOfCase fc x xalts xdef alts def outerSize
 doCaseOfConstCase : FC -> (x : Lifted vars) -> (xalts : List (LiftedConstAlt vars)) -> (xdef : Maybe (Lifted vars)) ->
                      (alts : List (LiftedConstAlt vars)) -> (def : Maybe (Lifted vars)) -> (outerSize : Nat) -> CollapseState vars
 doCaseOfConstCase fc x xalts xdef alts def outerSize
-    = MkCollapseState (1 + sizeOf x + newBranchesSize) newBranchesSize
+    -- Bound once: a `where` value is re-evaluated at every reference
+    -- (doc/constant-constructor-specialization.md, "The `where`-clause
+    -- trap").
+    = let nb : Nat := newBranchesSize in
+      MkCollapseState (1 + sizeOf x + nb) nb
                       (LConstCase fc x (map updateAlt xalts) (map updateDef xdef))
   where
     duplicationCount : Nat

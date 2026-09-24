@@ -73,19 +73,6 @@ applyReuse (MkRCError body) = MkRCError (resolveReuse body)
 applyReuse d@(MkRCCon _ _ _) = d
 applyReuse d@(MkRCForeign _ _ _) = d
 
-||| Optional pipeline-stage disabling via `--directive no<stagename>`,
-||| for A/B regression isolation without editing `toRCDefs` itself and
-||| rebuilding `idris2-rc2`. See `rc2/doc/directives.md` for the full
-||| stage list, why `noreuse` isn't (and can't safely be) among them,
-||| and why `nomain` is a real directive but not a stage disable.
-|||
-||| `roots`: names `Compiler.RC2.DeadCode.pruneDeadDefs` must never drop
-||| regardless of reachability -- `main`'s own well-known entry name
-||| (`MN "__mainExpression" 0`, `Compiler.Common`) plus any `%export`ed
-||| names, both supplied by `compileExpr`'s own call site (the latter is
-||| currently always `[]` in practice -- rc2 doesn't otherwise implement
-||| `%export`, but including it costs nothing and avoids a latent trap
-||| if that ever changes).
 ||| Iteration cap for `foldConstProgram`'s own whole-program fixpoint
 ||| loop: monotonicity (a CAF only ever transitions from "not yet known
 ||| foldable" to "foldable", never back) means the loop would naturally
@@ -241,6 +228,20 @@ disableableStageNames : List String
 disableableStageNames =
     ["noinline", "noconstfold", "nospecclosure", "nospecconstcon", "noconaltnative", "nomutualloop", "noloop", "nolateinline", "nosink", "nodualabi", "nodeadcode", "nodupmerge", "nodeadvars"]
 
+||| Optional pipeline-stage disabling via `--directive no<stagename>`,
+||| for A/B regression isolation without editing `toRCDefs` itself and
+||| rebuilding `idris2-rc2`. See `rc2/doc/directives.md` for the full
+||| stage list, why `noreuse` isn't (and can't safely be) among them,
+||| and why `nomain` is a real directive but not a stage disable.
+|||
+||| `roots`: names `Compiler.RC2.DeadCode.pruneDeadDefs` must never drop
+||| regardless of reachability -- `main`'s own well-known entry name
+||| (`MN "__mainExpression" 0`, `Compiler.Common`) plus any `%export`ed
+||| names, both supplied by `compileExpr`'s own call site (the latter is
+||| currently always `[]` in practice -- rc2 doesn't otherwise implement
+||| `%export`, but including it costs nothing and avoids a latent trap
+||| if that ever changes).
+|||
 ||| `incremental`: `Compiler.RC2.RC.toRCDefPreFold` throws (tagged
 ||| `notInlinedStructFieldMarker`) for a definition like
 ||| `System.FFI.getField` itself -- one that only works once its own
