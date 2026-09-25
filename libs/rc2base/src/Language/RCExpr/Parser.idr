@@ -374,13 +374,20 @@ opNameG = twoWordG <|> oneWordG
 ||| any other upstream `Show` field with an unpredictable word count
 ||| (`CFType`'s own `CFIORes`/`CFUser`/`CFFun`, per its own note).
 repG : Grammar () RcToken True RRep
-repG = boxedG <|> nativeG
+repG = boxedG <|> ret1G <|> nativeG
   where
     boxedG : Grammar () RcToken True RRep
     boxedG = do
         n <- anyName
         the (Grammar () RcToken False ()) (if n == "Boxed" then pure () else fail "not Boxed")
         pure Boxed
+    -- A by-value struct (rc2's `doc/struct-return.md`) has no
+    -- reference count of its own, so it reads as a non-Boxed Rep.
+    ret1G : Grammar () RcToken True RRep
+    ret1G = do
+        n <- anyName
+        the (Grammar () RcToken False ()) (if n == "Ret1" then pure () else fail "not Ret1")
+        pure (NativeRep "Ret1")
     nativeG : Grammar () RcToken True RRep
     nativeG = do
         n <- anyName
@@ -534,6 +541,17 @@ extprimG = lazyExtprimG <|> plainExtprimG
         args <- localListG
         postDrop <- optionalField "postDrop"
         pure (False, pName, args, postDrop)
+
+||| `Pretty.idr`'s `retpack <name> tag= N [field]`, the list empty for a
+||| nullary constructor.
+retpackG : Grammar () RcToken True (String, String, Maybe RCLocal)
+retpackG = do
+    nameEq "retpack"
+    name <- greedyWordsG
+    nameEq "tag="
+    tag <- anyName
+    field <- localListG
+    pure (name, tag, head' field)
 
 conG : Grammar () RcToken True (String, String, List RCLocal, Maybe RCLocal)
 conG = do
@@ -835,6 +853,10 @@ mutual
           (lazy, c, args) <- runG ln applyG line
           (_, st2) <- advanceLine st1
           Right (RApply lazy c args, st2)
+      else if isPrefixOf "retpack " line then do
+          (name, tag, field) <- runG ln retpackG line
+          (_, st2) <- advanceLine st1
+          Right (RRetPackNode name tag field, st2)
       else if isPrefixOf "con " line then do
           (name, tag, args, reuseFrom) <- runG ln conG line
           (_, st2) <- advanceLine st1

@@ -47,3 +47,12 @@ def TestMetricsCaf  (fun args= [] ret= Boxed)
 def _builtin.JUST  (con tag= Just 1 arity= 1 newtype= Nothing)
 
 def Main.prim__abs  (foreign ["C:abs,libc,stdlib.h"] [Int] -> Int)
+
+def {idris2rc2_worker_TestMetricsRet1:0}  (fun args= ["v1:Boxed"] ret= Ret1 worker=True)
+  let v2 : Ret1 =
+    callRep {idris2rc2_worker_Main_k:0} ["Boxed"] -> Ret1 postDrop= [] [v1]
+  case v2 of
+    _builtin.NOTHING [nothing] tag= Just 0 args= [] ->
+      retpack _builtin.NOTHING tag= 0 []
+    _builtin.JUST [just] tag= Just 1 args= [v3] ->
+      retpack _builtin.JUST tag= 1 [v3]

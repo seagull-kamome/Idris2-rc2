@@ -154,6 +154,7 @@ mutual
   walk dn st (RConstruct _ _ args reuseFrom) =
       (st, checkReads dn "con args" st args
              ++ maybe [] (checkRead dn "con reuse" st) reuseFrom)
+  walk dn st (RRetPackNode _ _ field) = (st, maybe [] (checkRead dn "retpack field" st) field)
   walk dn st (ROpNode _ _ args postDrop) =
       let readAs = checkReads dn "op args" st args
           (st', dropAs) = doDrops dn "op postDrop" st postDrop

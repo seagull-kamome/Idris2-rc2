@@ -66,6 +66,7 @@ check "clean.rcexpr (no anomalies)" "$TESTS_DIR/clean.rcexpr" 0 \
 metrics (places in the IR, not executions):
   definitions        4  (functions 4, workers 0, constructors 0, foreign 0, error 0)
   con                0  (fresh 0, reusing a cell 0)
+  retpack            0  (constructors returned by value, no cell)
   partial            0  (closures built)
   apply              0  (closure calls)
   call               0  (plain 0, callRep 0, FFI inline 0)
@@ -91,6 +92,7 @@ rcexpr-lint: 5 anomalies found
 metrics (places in the IR, not executions):
   definitions        4  (functions 4, workers 0, constructors 0, foreign 0, error 0)
   con                0  (fresh 0, reusing a cell 0)
+  retpack            0  (constructors returned by value, no cell)
   partial            0  (closures built)
   apply              0  (closure calls)
   call               0  (plain 0, callRep 0, FFI inline 0)
@@ -112,6 +114,7 @@ rcexpr-lint: 1 anomalies found
 metrics (places in the IR, not executions):
   definitions        1  (functions 1, workers 0, constructors 0, foreign 0, error 0)
   con                0  (fresh 0, reusing a cell 0)
+  retpack            0  (constructors returned by value, no cell)
   partial            0  (closures built)
   apply              0  (closure calls)
   call               0  (plain 0, callRep 0, FFI inline 0)
@@ -128,16 +131,17 @@ metrics (places in the IR, not executions):
   crash              0"
 
 check "metrics.rcexpr (every counted node kind)" "$TESTS_DIR/metrics.rcexpr" 0 \
-"rcexpr-lint: metrics.rcexpr: 6 defs, no anomalies found
+"rcexpr-lint: metrics.rcexpr: 7 defs, no anomalies found
 metrics (places in the IR, not executions):
-  definitions        6  (functions 3, workers 1, constructors 1, foreign 1, error 0)
+  definitions        7  (functions 3, workers 2, constructors 1, foreign 1, error 0)
   con                2  (fresh 1, reusing a cell 1)
+  retpack            2  (constructors returned by value, no cell)
   partial            1  (closures built)
   apply              1  (closure calls)
-  call               5  (plain 3, callRep 1, FFI inline 1)
+  call               6  (plain 3, callRep 2, FFI inline 1)
   op                 2  (op 1, extprim 1)
-  let                9  (Boxed 7, native 2)
-  case               2  (constructor 1, constant 1, cmp 0)
+  let               10  (Boxed 7, native 3)
+  case               3  (constructor 2, constant 1, cmp 0)
   dup                2  (increments, in 1 dup nodes)
   drop               2  (decrements, in 2 drop nodes)
   postDrop           2  (decrements attached to another node: postDrop, dropOnUnique, prologueDrop)
@@ -157,6 +161,7 @@ rcexpr-lint: 5 anomalies found
 metrics (places in the IR, not executions):
   definitions        5  (functions 5, workers 0, constructors 0, foreign 0, error 0)
   con                1  (fresh 1, reusing a cell 0)
+  retpack            0  (constructors returned by value, no cell)
   partial            0  (closures built)
   apply              0  (closure calls)
   call               0  (plain 0, callRep 0, FFI inline 0)

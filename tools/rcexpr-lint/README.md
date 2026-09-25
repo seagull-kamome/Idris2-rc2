@@ -117,6 +117,7 @@ valgrind.
 |---|---|
 | `definitions` | every `def`, by kind; `workers` are DualABI's `worker=True` functions |
 | `con` | constructor builds; `reusing a cell` has `reuse=`, `fresh` allocates |
+| `retpack` | constructors a struct-returning worker returns by value (rc2's `doc/struct-return.md`), no cell at all |
 | `partial` / `apply` | closures built, closures applied |
 | `call` | direct calls: `call`, DualABI's `callRep`, inlined FFI calls |
 | `op` | primitive operations and `extprim` calls |
