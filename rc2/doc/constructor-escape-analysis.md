@@ -1,9 +1,10 @@
 # Constructor escape analysis: dropping constructors that never escape
 
-**Status:** rewrites A and B, the known-partial fold, and early
-inlining of loop-free single-caller callees implemented (2026-09-25).
-An RC-aware fold after `LateInline` for what it still creates is
-designed, not implemented; tracked in `TODO.md`.
+**Status:** rewrites A and B, the known-partial fold, and single-caller
+inlining before RC annotation (at `Lifted`, and again as "Early
+inline") implemented (2026-09-25). An RC-aware fold after
+`LateInline` for what it still creates is designed, not implemented;
+tracked in `TODO.md`.
 
 ## The problem
 
@@ -404,10 +405,9 @@ idris2-lsp, before this step vs after:
 Shapes A and B go *up*: calls that were closure dispatches are direct
 now, so `LateInline` splices more, and some of that splicing forms
 new shapes after RC annotation. Only 3,158 callees qualify at
-`Lifted`, against `LateInline`'s ~11,800. The likely reason, not
-verified, is that most of the latter become single-caller only after
-ConstFold and SpecClosure turn closure applications into direct calls;
-if so, what's left for (1) is not only loop-bearing callees.
+`Lifted`, against `LateInline`'s ~11,800. The likely reason (confirmed under "Early inline" below) is that most
+of the latter become single-caller only after ConstFold and SpecClosure
+turn closure applications into direct calls.
 
 `tests/BenchPushCon.idr`: `check1`/`check2` are now inlined at
 `Lifted`, so their constructors meet the pushed `case` before RC and
@@ -415,6 +415,57 @@ fold away too. valgrind, 100,000 iterations: 1,999,976 allocations
 with `nopushcon`, **1,500,052** with everything on. Wall clock over
 5,000,000 iterations, 5 runs: 3.42s with `nopushcon`, **2.80s** on
 (about 18% faster). Before this step the same benchmark took 3.45s.
+
+### Early inline: `LateInline` once more, before RC annotation (2026-09-25)
+
+Counting at the point just before RC annotation (after SpecConstCon)
+confirmed the guess above. 8,126 callees there have arguments, exactly
+one call site, and no call cycle, against 3,158 at `Lifted`: ConstFold
+and the specialization passes turn closure applications into direct
+calls, and many callees only become single-caller then.
+
+So `RC2.idr` now runs `LateInline`'s own splicing a second time, as the
+"Early inline" stage right after SpecConstCon, and refolds the result
+with `foldConstDef` and `PushCon`. Before RC annotation the splice
+needs no ownership work, and `LateInline`'s param-`Rep` promotion
+already works on Phase 1 reps. The early run differs in two ways
+(`applyLateInline`'s `early` flag):
+
+- **No CAF.** `insertMemoize` hasn't run, so a spliced CAF body would
+  be evaluated once per run of its caller (`caf-memoization.md`,
+  "Limitations").
+- **No callee in a call cycle** (`cyclicNames`). Splicing one shortens
+  the cycle until a callee calls its own caller back, which the later
+  run refuses to splice, even though after `Loop` it could have. Found
+  with a SpecClosure clone of `mapAppend` inside
+  `Compiler.ANF.freeVariables`: its loop stayed a separate function
+  until cycle members were excluded.
+
+The later `LateInline` stage is unchanged and takes what is left:
+loop-bearing callees, and whatever only becomes single-caller later.
+
+Running it exposed four more passes that skipped memoized CAF bodies
+(Reuse, RC's two native-local scans, ConAltNative), since code now
+lands inside `__mainExpression` before RC annotation. See
+`caf-memoization.md`'s "Threading through the rest of the pipeline".
+
+Measured on idris2-lsp, `--directive noearlyinline` vs on:
+
+| | off | on |
+|---|---|---|
+| `partial` (closures built) | 15,790 | **11,115** (-30%) |
+| allocating `con` | 38,241 | **34,916** (-9%) |
+| `dup` increments / `drop` decrements | 105,628 / 201,069 | **92,240 / 188,058** |
+| definitions | 25,550 | 22,522 |
+| shape A / shape B | 308 / 1,785 | **72 / 1,189** |
+| compile time (3 runs each, interleaved) | 33.8s | 36.9s (+9%) |
+
+The stage itself takes about 6.4s and `LateInline`'s later run drops
+from about 7.1s to 4.9s. The machine was under other load (load
+average about 2) during these runs, so absolute times are above this
+doc's earlier figures, but both columns ran interleaved in the same
+period. The micro-benchmarks show no difference: their shapes were
+already handled by the earlier steps.
 
 ## Correctness notes on rewrite B
 

@@ -596,10 +596,11 @@ arms end in constructors, and `Compiler.RC2.Inline` inlines loop-free
 single-caller callees before RC annotation so their constructors meet
 those folds. See `rc2/doc/constructor-escape-analysis.md`.
 
-Still open: the shapes `LateInline` creates after RC annotation (311
-shape-A and 1,787 shape-B sites across idris2-lsp). Only 3,158 callees
-qualify for early inlining against the ~11,800 `LateInline` splices;
-presumably most of those become single-caller only once ConstFold and
-SpecClosure turn closure applications into direct calls (not
-verified). What remains is the RC-aware fold, option (1) in the doc's
-"The shapes `LateInline` creates".
+The "Early inline" stage now also runs `LateInline`'s single-caller
+splicing before RC annotation (no CAFs, no callees in a call cycle).
+
+Still open: the shapes the later `LateInline` run still creates after
+RC annotation (72 shape-A and 1,189 shape-B sites across idris2-lsp),
+from loop-bearing callees and ones that become single-caller only
+later. What remains is the RC-aware fold, option (1) in the doc's "The
+shapes `LateInline` creates".

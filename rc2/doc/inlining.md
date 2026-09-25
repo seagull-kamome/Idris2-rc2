@@ -416,9 +416,11 @@ Measured on idris2-lsp, together with ConstFold's known-partial fold
 `apply` 11,326 -> 10,039, `partial` 16,448 -> 15,788, allocating `con`
 39,741 -> 38,257, IR lines -1.2%, compile 27.9s -> 29.3s. 3,158
 callees qualify at `Lifted`, against the roughly 11,800 `LateInline`
-splices; presumably most of those become single-caller only after
-ConstFold and SpecClosure turn closure applications into direct calls
-(not verified).
+splices. Most of those become single-caller only after ConstFold and
+SpecClosure turn closure applications into direct calls (8,126 qualify
+just before RC annotation), so `LateInline`'s own splicing now also
+runs once there, as the "Early inline" stage
+(`constructor-escape-analysis.md`, "Early inline").
 
 ## Criterion B, revisited: `Compiler.RC2.LateInline`
 

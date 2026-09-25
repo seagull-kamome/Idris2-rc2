@@ -105,6 +105,10 @@ resolveReuse (RDup fc v extra body) = RDup fc v extra (resolveReuse body)
 resolveReuse (RDrop fc vs body) = RDrop fc vs (resolveReuse body)
 resolveReuse (RFree fc v body) = RFree fc v (resolveReuse body)
 resolveReuse (RReleaseReuse fc v body) = RReleaseReuse fc v (resolveReuse body)
+-- Without this, a memoized CAF body keeps `annotate`'s drops with none
+-- of the field dups this pass owes them (doc/caf-memoization.md,
+-- "Limitations").
+resolveReuse (RMemoize fc n rep body) = RMemoize fc n rep (resolveReuse body)
 resolveReuse (RConCase fc sc alts mDef) =
     RConCase fc sc (map (resolveAlt sc) alts) (map resolveReuse mDef)
   where

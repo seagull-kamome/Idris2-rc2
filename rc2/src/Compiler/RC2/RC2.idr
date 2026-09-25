@@ -235,7 +235,7 @@ insertMemoize = map wrap
 ||| apart.
 disableableStageNames : List String
 disableableStageNames =
-    ["noinline", "noconstfold", "noknowncon", "nopushcon", "nospecclosure", "nospecconstcon", "noconaltnative", "nomutualloop", "noloop", "nolateinline", "nosink", "nodualabi", "nodeadcode", "nodupmerge", "nodeadvars"]
+    ["noinline", "noconstfold", "noknowncon", "nopushcon", "nospecclosure", "nospecconstcon", "noconaltnative", "nomutualloop", "noloop", "noearlyinline", "nolateinline", "nosink", "nodualabi", "nodeadcode", "nodupmerge", "nodeadvars"]
 
 ||| Optional pipeline-stage disabling via `--directive no<stagename>`,
 ||| for A/B regression isolation without editing `toRCDefs` itself and
@@ -330,12 +330,24 @@ toRCDefs disabled incremental roots lds0 = do
     dictSpecialized <- if "nospecconstcon" `elem` disabled
                           then pure specialized
                           else logTime 2 "rc2: Constant-constructor specialization" $ applySpecConstCon specialized
+    -- doc/constructor-escape-analysis.md's "The shapes `LateInline`
+    -- creates": LateInline's single-caller splicing, run once already
+    -- here, before RC annotation, so ConstFold's folds and PushCon see
+    -- what it exposes. No callee in a call cycle (it may still need Loop
+    -- conversion) and no CAF (not memoized yet) qualifies this early. The splices are refolded and re-pushed here;
+    -- the later LateInline stage handles whatever is left.
+    earlyInlined <- if ("noearlyinline" `elem` disabled) || ("nolateinline" `elem` disabled) || ("noconstfold" `elem` disabled)
+                       then pure dictSpecialized
+                       else logTime 2 "rc2: Early inline" $ do
+                              spliced <- applyLateInline "Early inline" True roots dictSpecialized
+                              let refolded = map (\(n, d) => (n, foldConstDef True empty d)) spliced
+                              if "nopushcon" `elem` disabled then pure refolded else applyPushCon refolded
     -- doc/caf-memoization.md: right after ConstFold (and the
     -- specialization pass above, whose own clones are never 0-arg CAFs
     -- regardless) and strictly before Phase 2 (toRCDefPostFold's own
     -- annotateDef needs to see RMemoize already in place -- see RC.idr's
     -- own `annotate` case for it).
-    memoized <- logTime 2 "rc2: CAF memoization" $ pure (insertMemoize dictSpecialized)
+    memoized <- logTime 2 "rc2: CAF memoization" $ pure (insertMemoize earlyInlined)
     reused <- logTime 2 "rc2: RC annotate + Reuse + ConAltNative" $
                 traverse (\(n, d) => do
                   d1 <- toRCDefPostFold d
@@ -374,7 +386,7 @@ toRCDefs disabled incremental roots lds0 = do
     -- top-level params, never a dual-ABI worker/wrapper split.
     inlined <- if "nolateinline" `elem` disabled
                   then pure looped
-                  else logTime 2 "rc2: Late inline" $ applyLateInline roots looped
+                  else logTime 2 "rc2: Late inline" $ applyLateInline "Late inline" False roots looped
     sunk <- if "nosink" `elem` disabled
                then pure inlined
                else logTime 2 "rc2: Sink" $ pure (map (\(n, d) => (n, applySink d)) inlined)

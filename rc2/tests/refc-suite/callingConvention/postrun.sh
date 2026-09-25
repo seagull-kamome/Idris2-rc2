@@ -14,6 +14,22 @@
 set -u
 c=build/exec/test.c
 strip_loc() { sed -E 's#[[:space:]]+// [A-Za-z_.]+:[0-9]+:[0-9]+.*$##'; }
+# C locals are numbered from rc2's whole-program id counter, so any pass
+# that mints ids shifts them. Renumbered here in order of first
+# appearance: which names coincide is kept, the counter values aren't.
+# A worker's own numeric suffix is the same kind of counter.
+renumber() {
+    sed -E 's/(idris2rc2_worker_Main_[A-Za-z]+)_[0-9]+/\1_N/g' |
+    awk '{ out = ""; s = $0
+           while (match(s, /var_[0-9]+/)) {
+               v = substr(s, RSTART, RLENGTH)
+               if (!(v in m)) m[v] = "var_" (++n)
+               out = out substr(s, 1, RSTART - 1) m[v]; s = substr(s, RSTART + RLENGTH)
+           }
+           print out s }'
+}
+
+{
 
 echo "--- DualABI worker for eligibleAdd (native return, rc2/doc/dual-abi.md) ---"
 awk '/^int64_t idris2rc2_worker_Main_eligibleAdd_[0-9]+$/{p=1} p{print} p&&/^\);$/{exit}' "$c"
@@ -32,3 +48,4 @@ awk '/^int64_t idris2rc2_worker_Main_sumLoop_[0-9]+$/{n++; if (n==2) p=1} p{prin
 
 echo "--- Tail-position FFI call for tailAbs (want: inlined call + immediate return, no closure defer, rc2/doc/dual-abi.md Stage 4b) ---"
 awk '/^IDRIS2RC2_Value \*Main_tailAbs$/{n++; if (n==2) p=1} p{print} p&&/^}/{exit}' "$c" | strip_loc
+} | renumber

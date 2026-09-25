@@ -52,6 +52,15 @@ calleesOf = foldRCNamesD ({ onAppName := \n, _ => singleton n } noRCNames)
 callOccurrencesOf : RCDef -> List Name
 callOccurrencesOf = foldRCNamesD ({ onAppName := \n, _ => [n] } noRCNames)
 
+||| Every definition in a direct-call cycle, a self-call included.
+cyclicNames : List (Name, RCDef) -> SortedSet Name
+cyclicNames defs =
+    let graph : SortedMap Name (SortedSet Name) := SortedMap.fromList (map (\(n, d) => (n, calleesOf d)) defs)
+    in foldl (\acc, scc => case scc of
+                               [n] => if maybe False (contains n) (lookup n graph) then insert n acc else acc
+                               _ => foldl (flip insert) acc scc)
+             empty (tarjanSCCs graph)
+
 ||| One name's own `(calleesOf, callOccurrencesOf)`, cached across
 ||| `applyLateInline`'s own rounds -- see `analyse`'s own doc comment
 ||| for why a name absent from one round's own `dirty` set is always
@@ -131,9 +140,9 @@ record Carried where
 ||| cached, on round N. Returns the updated cache alongside the
 ||| `Analysis` as before, for `applyLateInlineOnce` to thread into the
 ||| next round.
-analyse : (prev : Maybe Carried) -> (dirty : SortedSet Name) -> (refs : RefCache)
+analyse : (early : Maybe (SortedSet Name)) -> (prev : Maybe Carried) -> (dirty : SortedSet Name) -> (refs : RefCache)
        -> (defOf : SortedMap Name RCDef) -> List (Name, RCDef) -> (Analysis, Carried)
-analyse prev dirty refs defOf defs =
+analyse early prev dirty refs defOf defs =
     let oldInfo : CalleeInfo = maybe empty (.info) prev
         -- Third component: whether this entry was recomputed this round
         -- (`dirty`, or never seen before). Only those need writing back
@@ -166,16 +175,19 @@ analyse prev dirty refs defOf defs =
                               [] (tarjanSCCs (SortedMap.fromList (map (\(n, (cs, _)) => (n, cs)) perDef)))
                  Just p => p.order
         eligible : SortedSet Name = SortedSet.fromList $ mapMaybe
-              (\(n, cnt) => if cnt == 1 && isFun defOf n then Just n else Nothing)
+              (\(n, cnt) => if cnt == 1 && isFun defOf n && not (maybe False (contains n) early) then Just n else Nothing)
               (SortedMap.toList counts')
     in (MkAnalysis eligible order', MkCarried info' counts' order' (map fst defs) refs)
   where
     freshInfo : RCDef -> (SortedSet Name, List Name)
     freshInfo d = (calleesOf d, callOccurrencesOf d)
 
+    -- No CAF in the early run: `insertMemoize` hasn't wrapped it yet, so
+    -- splicing its body would evaluate it once per run of the caller
+    -- (doc/caf-memoization.md, "Limitations").
     isFun : SortedMap Name RCDef -> Name -> Bool
     isFun defOf n = case lookup n defOf of
-                         Just (MkRCFun _ _ _ _) => True
+                         Just (MkRCFun args _ _ _) => isNothing early || not (null args)
                          _ => False
 
     occsOf : CalleeInfo -> Name -> List Name
@@ -785,8 +797,8 @@ inlineInto defOf eligible self = go empty []
 ||| whole-program def list is large enough (compiler-plus-LSP-server
 ||| scale) to make the pre-caching version's blanket walk dominate
 ||| `"rc2: Late inline"`'s own wall-clock cost outright.
-applyLateInlineOnce : {auto v : Ref VarId Int} -> {auto c : Ref Ctxt Defs} -> (roots : List Name) -> Maybe Carried -> SortedSet Name -> List (Name, RCDef) -> Core (Bool, List (Name, RCDef), Carried, SortedSet Name)
-applyLateInlineOnce roots prev dirty defs0 = do
+applyLateInlineOnce : {auto v : Ref VarId Int} -> {auto c : Ref Ctxt Defs} -> (early : Maybe (SortedSet Name)) -> (roots : List Name) -> Maybe Carried -> SortedSet Name -> List (Name, RCDef) -> Core (Bool, List (Name, RCDef), Carried, SortedSet Name)
+applyLateInlineOnce early roots prev dirty defs0 = do
     (defs, refs') <- logTime 3 "rc2: LI prune" $
               pure $ pruneDeadDefsCached (maybe empty (.refs) prev) dirty roots defs0
     -- Built once and shared with `goOrder` below: `analyse` and the
@@ -794,7 +806,7 @@ applyLateInlineOnce roots prev dirty defs0 = do
     -- own definitions, and building it is ~35k `Name` comparisons'
     -- worth of work to redo for nothing.
     defOf <- logTime 3 "rc2: LI defOf" $ pure $ SortedMap.fromList defs
-    (an, carried) <- logTime 3 "rc2: LI analyse" $ pure $ analyse prev dirty refs' defOf defs
+    (an, carried) <- logTime 3 "rc2: LI analyse" $ pure $ analyse early prev dirty refs' defOf defs
     case leftMost an.eligible of
          Nothing => pure (length defs /= length defs0, defs, carried, empty)
          Just _ => do
@@ -948,12 +960,22 @@ maxLateInlineIterations = 8
 ||| before/after clock reads don't happen to bracket -- not yet
 ||| confirmed (no GC-specific counter checked against this directly).
 export
-applyLateInline : {auto v : Ref VarId Int} -> {auto c : Ref Ctxt Defs} -> (roots : List Name) -> List (Name, RCDef) -> Core (List (Name, RCDef))
-applyLateInline roots defs0 = go 1 maxLateInlineIterations Nothing empty defs0
+applyLateInline : {auto v : Ref VarId Int} -> {auto c : Ref Ctxt Defs} -> (label : String) -> (early : Bool)
+               -> (roots : List Name) -> List (Name, RCDef) -> Core (List (Name, RCDef))
+applyLateInline label early roots defs0 =
+    -- The early run (before RC annotation, so before `Loop`) skips every
+    -- callee in a call cycle: splicing one would turn the cycle into a
+    -- direct call back to the caller, which the later run then refuses
+    -- to splice, where after `Loop` it could have
+    -- (constructor-escape-analysis.md, "Early inline"). Bound here, not
+    -- in `where`, so it is computed once (constant-constructor-
+    -- specialization.md, "The `where`-clause trap").
+    let excluded : Maybe (SortedSet Name) := if early then Just (cyclicNames defs0) else Nothing
+    in go excluded 1 maxLateInlineIterations Nothing empty defs0
   where
-    go : Nat -> Nat -> Maybe Carried -> SortedSet Name -> List (Name, RCDef) -> Core (List (Name, RCDef))
-    go round Z prev dirty defs = pure defs
-    go round (S fuel) prev dirty defs = do
+    go : Maybe (SortedSet Name) -> Nat -> Nat -> Maybe Carried -> SortedSet Name -> List (Name, RCDef) -> Core (List (Name, RCDef))
+    go _ round Z prev dirty defs = pure defs
+    go excluded round (S fuel) prev dirty defs = do
         -- `dirty` is the *previous* round's own `toProcess` -- the
         -- definitions it actually spliced into -- so it is already
         -- known when this round's label is built, the same way
@@ -966,6 +988,6 @@ applyLateInline roots defs0 = go 1 maxLateInlineIterations Nothing empty defs0
                              then "first pass"
                              else "\{show (length (Prelude.toList dirty))} spliced last round"
         (changed, defs', carried, dirty') <-
-            logTime 3 "rc2: Late inline (round \{show round}/\{show maxLateInlineIterations}, \{carriedNote})" $
-              applyLateInlineOnce roots prev dirty defs
-        if changed then go (S round) fuel (Just carried) dirty' defs' else pure defs'
+            logTime 3 "rc2: \{label} (round \{show round}/\{show maxLateInlineIterations}, \{carriedNote})" $
+              applyLateInlineOnce excluded roots prev dirty defs
+        if changed then go excluded (S round) fuel (Just carried) dirty' defs' else pure defs'

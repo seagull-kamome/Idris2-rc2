@@ -58,6 +58,7 @@ fine-grained per-function/per-node control.
 | `noconaltnative` | `Compiler.RC2.ConAltNative`'s native-shadow field caching (`doc/con-alt-native.md`). |
 | `nomutualloop` | `Compiler.RC2.MutualLoop`'s mutual-tail-recursion merge. |
 | `noloop` | `Compiler.RC2.Loop`'s self-tail-call -> `goto` conversion, plus native-shadow/loop-invariant promotion (`doc/loop-conversion.md`). |
+| `noearlyinline` | The early run of `Compiler.RC2.LateInline`'s single-caller splicing, right after SpecConstCon and before RC annotation, followed by a ConstFold/PushCon refold of the result (`doc/constructor-escape-analysis.md`, "The shapes `LateInline` creates"). It never splices a CAF. Implied by `nolateinline` and `noconstfold`. |
 | `nolateinline` | `Compiler.RC2.LateInline`'s whole-program single-caller inlining, run after Loop/MutualLoop conversion (`doc/inlining.md`'s "Criterion B, revisited"). |
 | `nosink` | `Compiler.RC2.Sink`'s branch-local sinking (`doc/branch-sinking.md`). |
 | `nodualabi` | Both `Compiler.RC2.DualABI`'s worker/wrapper synthesis *and* its call-site rewriting together -- the rewrite needs the worker table the synthesis step builds, so splitting them wouldn't be meaningful (`doc/dual-abi.md`). |

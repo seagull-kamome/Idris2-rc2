@@ -182,10 +182,19 @@ inlining started putting `main`'s whole IO body inside the
 `__mainExpression` CAF (`constructor-escape-analysis.md`); all three
 now pass through `RMemoize`, and `tests/Test89CafDualABI` checks it.
 
+The next step (splicing single-caller callees before RC annotation)
+put more code in CAF bodies, and found four more of the same:
+`Compiler.RC2.Reuse`'s `resolveReuse`, which also inserts the field
+`dup`s `annotate` leaves to it (a use-after-free in `refc-suite/clock`),
+`Compiler.RC2.RC`'s `nativeLocalsR` and `alwaysUnboxedBoxedLocalsR`
+(a native local treated as Boxed: a `drop` of an undeclared C
+variable in `refc-suite/doubles`), and `ConAltNative`'s walk.
+
 Two files needed a one-line pass-through from the start:
 `Compiler.RC2.Loop`'s own `renameRCExp` (its self-tail-call renaming
-walk *is* exhaustive over `RCExp`, even though `RMemoize` can never actually reach it in practice -- a 0-arg CAF has
-no loop-carried parameters for `applyLoop` to ever run on) and
+walk *is* exhaustive over `RCExp`, even though `RMemoize` can never
+actually reach it in practice -- a 0-arg CAF has no loop-carried
+parameters for `applyLoop` to ever run on) and
 `Pretty.idr`'s `prettyExp` (`dumprcexpr`'s own renderer).
 
 ### Limitations
@@ -199,6 +208,14 @@ into `RMemoize` with "not in tail" -- DualABI's
 catch-all clause needs an explicit `RMemoize` case, since the coverage
 checker won't ask for one.
 
+Helpers that only ever meet an `RMemoize` that `LateInline` has moved
+into another body can safely skip it: the moved body is a CAF's, so it
+is closed and never reads a local of the body it now sits in. Sink's
+use and drop scans, DualABI's tail analyses, DupMerge's region
+helpers and ConAltNative's per-alt helpers rely on that. Any pass that
+walks a whole definition, though, does meet one at the top of every
+CAF and needs the case.
+
 An `RMemoize` may be moved but never copied. Its memo slot is a C
 `static` named after the CAF (`idris2rc2_memo_<name>`), so it stays
 unique and evaluated once wherever it lands -- `LateInline` splicing a
@@ -208,6 +225,11 @@ functions, or in two blocks of one) and evaluate the body twice. No
 pass after `insertMemoize` copies code that could contain one today:
 `LateInline` only splices single-caller callees, and `Sink` copies
 single nodes only.
+
+Before `insertMemoize` a CAF may not be spliced at all: its body
+would land unwrapped and be evaluated once per run of the caller. The
+early `LateInline` run (`RC2.idr`'s "Early inline", before RC
+annotation) therefore passes `inlineCafs = False`.
 
 ## Emit-side C codegen
 

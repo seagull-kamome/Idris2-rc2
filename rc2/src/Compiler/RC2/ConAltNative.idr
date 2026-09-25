@@ -363,6 +363,8 @@ applyConAltNativeExp nextId (RReleaseReuse fc v body) =
     let (n, body') = applyConAltNativeExp nextId body in (n, RReleaseReuse fc v body')
 applyConAltNativeExp nextId (RReuseOffer fc sc dupOnShared dropOnUnique body) =
     let (n, body') = applyConAltNativeExp nextId body in (n, RReuseOffer fc sc dupOnShared dropOnUnique body')
+applyConAltNativeExp nextId (RMemoize fc name rep body) =
+    let (n, body') = applyConAltNativeExp nextId body in (n, RMemoize fc name rep body')
 -- Every other shape (RV, RAppName, RUnderApp, RApp, RCon, ROp,
 -- RExtPrim, RPrimVal, RErased, RCrash, RLoopContinue, RAppNameRep,
 -- RStructGet, RStructSet -- and RLoop, though this pass runs strictly

@@ -415,6 +415,7 @@ nativeLocalsR (RLet _ var rep value body) =
 nativeLocalsR (RConCase _ _ alts mDef) = foldConAltsR nativeLocalsR alts mDef
 nativeLocalsR (RConstCase _ _ alts mDef) = foldConstAltsR nativeLocalsR alts mDef
 nativeLocalsR (RCmpCase _ _ _ _ t f) = union (nativeLocalsR t) (nativeLocalsR f)
+nativeLocalsR (RMemoize _ _ _ body) = nativeLocalsR body
 nativeLocalsR _ = empty
 
 ||| Every genuine RCLoc used as an operand of a native op at a position
@@ -461,6 +462,7 @@ alwaysUnboxedBoxedLocalsR (RConstCase _ _ alts mDef) = foldConstAltsR alwaysUnbo
 alwaysUnboxedBoxedLocalsR (RCmpCase _ op args _ t f) =
     union (alwaysUnboxedArgs (cmpArgTy op) args)
           (union (alwaysUnboxedBoxedLocalsR t) (alwaysUnboxedBoxedLocalsR f))
+alwaysUnboxedBoxedLocalsR (RMemoize _ _ _ body) = alwaysUnboxedBoxedLocalsR body
 alwaysUnboxedBoxedLocalsR _ = empty
 
 ||| Which of `vars` need a dup: thread (and shrink) `owned` exactly as
