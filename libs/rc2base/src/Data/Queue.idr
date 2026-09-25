@@ -20,10 +20,10 @@ record Queue a where
 
 namespace Queue
 
-    public export empty : Queue a
+    %inline public export empty : Queue a
     empty = MkQueue [] []
 
-    public export singleton : a -> Queue a
+    %inline public export singleton : a -> Queue a
     singleton x = MkQueue [x] []
 
     
@@ -70,27 +70,27 @@ namespace Queue
 namespace Properties
 
 
-    public export
-    0 toList_enqueue  : (x : a) -> (q : Queue a) -> toList (enqueue x q) = toList q ++ [x]
-    toList_enqueue x (MkQueue f b) =
-      rewrite sym (revAppend [x] b) in
-      appendAssociative f (reverse b) [x]
+  public export
+  0 toList_enqueue  : (x : a) -> (q : Queue a) -> toList (enqueue x q) = toList q ++ [x]
+  toList_enqueue x (MkQueue f b) =
+    rewrite sym (revAppend [x] b) in
+    appendAssociative f (reverse b) [x]
 
-    public export
-    0 toList_dequeue : (q : Queue a) -> case dequeue q of
-      Nothing => toList q = []
-      Just (x, q') => toList q = x :: toList q'
-    toList_dequeue (MkQueue [] []) = Refl
-    toList_dequeue (MkQueue [] b) with (reverse b) proof p
-      _ | [] = p
-      _ | (x :: f) = rewrite p in cong (x ::) (sym (appendNilRightNeutral f))
-    toList_dequeue (MkQueue (x :: f) b) = Refl
+  public export
+  0 toList_dequeue : (q : Queue a) -> case dequeue q of
+    Nothing => toList q = []
+    Just (x, q') => toList q = x :: toList q'
+  toList_dequeue (MkQueue [] []) = Refl
+  toList_dequeue (MkQueue [] b) with (reverse b) proof p
+    _ | [] = p
+    _ | (x :: f) = rewrite p in cong (x ::) (sym (appendNilRightNeutral f))
+  toList_dequeue (MkQueue (x :: f) b) = Refl
 
 
-    public export
-    0 toList_fromList : (q:Queue a) -> toList (fromList (toList q)) = toList q
-    toList_fromList (MkQueue f b) =
-      rewrite appendNilRightNeutral (f ++ reverseOnto [] b) in
-      Refl
+  public export
+  0 toList_fromList : (q:Queue a) -> toList (fromList (toList q)) = toList q
+  toList_fromList (MkQueue f b) =
+    rewrite appendNilRightNeutral (f ++ reverseOnto [] b) in
+    Refl
 
 
