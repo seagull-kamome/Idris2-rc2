@@ -236,6 +236,12 @@ data RCExp : Type where
      ||| `Compiler.RC2.Reuse`, always `Nothing` before it runs. See
      ||| `doc/reuse-analysis.md`.
      RCon       : FC -> Name -> ConInfo -> (tag : Maybe Int) -> List RCLocal -> (reuseFrom : Maybe RCLocal) -> RCExp
+     ||| A constructor of at most one field returned by value as an
+     ||| `IDRIS2RC2_Ret1` (`doc/struct-return.md`): only ever a tail of a
+     ||| function whose `retRep` is `RRet1`, and only produced by
+     ||| `Compiler.RC2.DualABI`. The field, if any, is consumed like an
+     ||| `RCon` argument; `Nothing` is a nullary constructor.
+     RRetPack   : FC -> Name -> (tag : Int) -> Maybe RCLocal -> RCExp
      ||| `postDrop`: Boxed operands to drop once read, one entry per
      ||| *occurrence* in `args`. Decided by Phase 2 (`annotate`), always
      ||| `[]` after Phase 1. Canonical explanation every other
@@ -353,6 +359,7 @@ freeLocalsR (RLet _ var _ value body) =
 -- real binding site (the enclosing RConCase's `sc`), so adding it
 -- again would only be redundant, never additive.
 freeLocalsR (RCon _ _ _ _ args _) = fromList args
+freeLocalsR (RRetPack _ _ _ field) = maybe empty singleton field
 freeLocalsR (ROp _ _ _ args _) = fromList (toList args)
 freeLocalsR (RExtPrim _ _ _ args _) = fromList args
 freeLocalsR (RStructGet _ structVar _ _ _) = singleton structVar
@@ -418,6 +425,7 @@ mentionedLocalsAcc acc (RLet _ _ _ value body) =
     mentionedLocalsAcc (mentionedLocalsAcc acc value) body
 mentionedLocalsAcc acc (RCon _ _ _ _ args reuseFrom) =
     insertAll args (maybe acc (\r => insert r acc) reuseFrom)
+mentionedLocalsAcc acc (RRetPack _ _ _ field) = maybe acc (\f => insert f acc) field
 mentionedLocalsAcc acc (ROp _ _ _ args postDrop) = insertAll (toList args) (insertAll postDrop acc)
 mentionedLocalsAcc acc (RExtPrim _ _ _ args postDrop) = insertAll args (insertAll postDrop acc)
 mentionedLocalsAcc acc (RStructGet _ structVar _ _ postDrop) = insert structVar (insertAll postDrop acc)
@@ -480,6 +488,7 @@ ownedUsedGo targets wanted st@(_, found) e =
     -- stay exactly `freeLocalsR`'s own answer (see its own note on why
     -- they'd be redundant there).
     step (RCon _ _ _ _ args _) = hits st args
+    step (RRetPack _ _ _ field) = hits st (toList field)
     step (ROp _ _ _ args _) = hits st (toList args)
     step (RExtPrim _ _ _ args _) = hits st args
     step (RStructGet _ structVar _ _ _) = hit st structVar
@@ -550,6 +559,7 @@ countUsesR l (RUnderApp _ _ _ args) = length (filter (== l) args)
 countUsesR l (RApp _ _ c args) = length (filter (== l) (c :: args))
 countUsesR l (RLet _ _ _ value body) = countUsesR l value + countUsesR l body
 countUsesR l (RCon _ _ _ _ args _) = length (filter (== l) args)
+countUsesR l (RRetPack _ _ _ field) = if field == Just l then 1 else 0
 countUsesR l (ROp _ _ _ args _) = length (filter (== l) (toList args))
 countUsesR l (RExtPrim _ _ _ args _) = length (filter (== l) args)
 countUsesR l (RStructGet _ structVar _ _ _) = if structVar == l then 1 else 0
@@ -578,6 +588,7 @@ export
 usedConstructorsR : RCExp -> SortedSet Name
 usedConstructorsR (RLet _ _ _ value body) = union (usedConstructorsR value) (usedConstructorsR body)
 usedConstructorsR (RCon _ n _ _ _ _) = singleton n
+usedConstructorsR (RRetPack _ n _ _) = singleton n
 usedConstructorsR (RCmpCase _ _ _ _ t f) = union (usedConstructorsR t) (usedConstructorsR f)
 usedConstructorsR (RConCase _ _ alts mDef) =
     let altsCons = map (\(MkRConAlt _ _ _ _ body) => usedConstructorsR body) alts
@@ -664,6 +675,7 @@ foldRCNamesR nf = go
     go (RApp _ _ c args) = l c <+> ls args
     go (RLet _ _ _ value body) = go value <+> go body
     go (RCon _ n _ tag args reuseFrom) = nf.onCon n tag <+> ls args <+> maybe neutral l reuseFrom
+    go (RRetPack _ n tag field) = nf.onCon n (Just tag) <+> maybe neutral l field
     go (ROp _ _ _ args postDrop) = ls (toList args) <+> ls postDrop
     go (RExtPrim _ _ _ args postDrop) = ls args <+> ls postDrop
     go (RStructGet _ structVar _ _ postDrop) = l structVar <+> ls postDrop

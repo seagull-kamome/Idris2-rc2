@@ -55,6 +55,8 @@ mutual
       indent d ++ "con " ++ show n ++ " " ++ show ci ++ " tag= " ++ show tag
         ++ " " ++ show args
         ++ maybe "" (\r => " reuse= " ++ show r) reuseFrom ++ "\n"
+  prettyExp d (RRetPack _ n tag field) =
+      indent d ++ "retpack " ++ show n ++ " tag= " ++ show tag ++ " " ++ show (toList field) ++ "\n"
   prettyExp d (ROp _ lazy op args postDrop) =
       indent d ++ lazyPrefix lazy ++ "op " ++ show op ++ " " ++ show (toList args)
         ++ (if postDrop == [] then "" else " postDrop= " ++ show postDrop) ++ "\n"

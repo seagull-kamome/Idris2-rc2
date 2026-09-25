@@ -121,6 +121,7 @@ rcSizeOf (RUnderApp _ _ _ _) = 1
 rcSizeOf (RApp _ _ _ _) = 1
 rcSizeOf (RLet _ _ _ value body) = 1 + rcSizeOf value + rcSizeOf body
 rcSizeOf (RCon _ _ _ _ _ _) = 1
+rcSizeOf (RRetPack _ _ _ _) = 1
 rcSizeOf (ROp _ _ _ _ _) = 1
 rcSizeOf (RExtPrim _ _ _ _ _) = 1
 rcSizeOf (RStructGet _ _ _ _ _) = 1
@@ -240,7 +241,7 @@ disableableStageNames =
 ||| Stages that are off unless asked for with `--directive <name>`. They
 ||| travel to `toRCDefs` in the same list as the disables above.
 optInStageNames : List String
-optInStageNames = ["latepushcon"]
+optInStageNames = ["latepushcon", "structreturn"]
 
 ||| Every directive `toRCDefs` consults: the disables and the opt-ins.
 stageDirectiveNames : List String
@@ -413,7 +414,12 @@ toRCDefs disabled incremental roots lds0 = do
     dualABId <- if "nodualabi" `elem` disabled
        then pure sunk
        else logTime 2 "rc2: DualABI" $ do
-           withWorkers <- applyDualABI sunk
+           withNative <- applyDualABI sunk
+           -- doc/struct-return.md: opt-in (`--directive structreturn`)
+           -- until the call sites are rewritten too (its step 3).
+           withWorkers <- if "structreturn" `elem` disabled
+                             then applyStructReturn withNative
+                             else pure withNative
            (ffiWorkers, ffiInlineMap) <- ffiWorkerTable sunk
            let rewritten = applyCallSiteRewrite ffiWorkers withWorkers
            pure (inlineFFIWorkers ffiInlineMap rewritten)

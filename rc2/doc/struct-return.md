@@ -1,8 +1,10 @@
 # Returning small constructors by value (struct return): design
 
-Status: step 1 of "Order of implementation" done (2026-09-25): the
-`RRet1` Rep, the runtime typedef and the eligibility analysis, shown by
-`--directive dumpdualabi`. Nothing uses them yet. Tracks
+Status (2026-09-25): steps 1, 2 and 4 of "Order of implementation" are
+done, behind the opt-in `--directive structreturn`. Struct workers and
+the wrappers that rebuild the cell exist, and tail calls between struct
+workers are direct; callers outside those tails still call the wrapper
+(step 3). Tracks
 `TODO.md`'s "constructor return values are always heap cells" item.
 
 ## The problem
@@ -316,6 +318,21 @@ longer allocate a closure each.
    materialising wrapper; every caller still calls the wrapper. This
    exercises the worker's tail emission and the wrapper's materialisation
    on every eligible function while the call sites stay unchanged.
+   Done as `applyStructReturn`, a pass of its own right after Stage 3a's
+   native worker synthesis, so a function that already has a native
+   worker keeps it and only its `retRep` changes. It had to include
+   step 4: a struct worker's tail call must yield a struct, so it goes
+   to the callee's struct worker directly. Two details the plan did not
+   foresee:
+   - `structReturnPlan` records how each function built each constructor
+     it returns, by tag, and the wrapper rebuilds exactly that: a nullary
+     tail is copied verbatim (`RCNull` for Nothing/Nil stays `NULL`, an
+     `RCEmptyCon` stays a tagged pointer). A function whose reachable
+     constructors disagree for one tag is left out.
+   - Until step 3, a function with native parameters loses Stage 4's
+     native call sites: its wrapper no longer has the single-call shape
+     `workerTable` looks for, so its callers box their arguments again.
+     This is why the stage stays opt-in for now.
 3. **Cased call sites.** Rewrite use-1 sites with the RC table above.
 4. **Tail calls between workers.** Rewrite use-2 sites to direct calls.
 5. **Measure.** Static metrics, the new benchmark and `verify.sh`, all

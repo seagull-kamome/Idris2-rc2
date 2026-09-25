@@ -189,9 +189,28 @@ describeEligibility _ _ = Nothing
 ------------------------------------------------------------------------
 -- Struct return: eligibility (doc/struct-return.md, step 1).
 
+||| How the original function built one constructor it returns, so the
+||| wrapper can build the same cell from the worker's struct.
+data ConShape = ShapeUnary Name ConInfo
+              | ||| The original nullary tail itself (`RCon` with no field,
+                ||| `RCEmptyCon`, a fieldless `RCConstCon`, or `RCNull`):
+                ||| the wrapper returns exactly that value.
+                ShapeNullary Name ConInfo RCExp
+
+||| Placeholder constructor name for an `RCNull` tail, which carries
+||| none; only ever printed.
+nullConName : Name
+nullConName = UN (Basic "rc2_null")
+
+||| Two shapes for one tag must agree, or the wrapper can't rebuild it.
+sameShape : ConShape -> ConShape -> Bool
+sameShape (ShapeUnary n _) (ShapeUnary m _) = n == m
+sameShape (ShapeNullary n _ _) (ShapeNullary m _ _) = n == m
+sameShape _ _ = False
+
 ||| How one tail of a function body ends, as far as returning it by
-||| value is concerned.
-data RetTail = TailCon | TailNull | TailCall Name | TailCrash | TailOther
+||| value is concerned. `TailCon`'s `Bool` is False only for `RCNull`.
+data RetTail = TailCon Bool Int ConShape | TailCall Name | TailCrash | TailOther
 
 ||| Every tail of `body`, through the RC wrappers, branches and loop
 ||| exits (`RLoopContinue` is not a tail). A constructor tail counts only
@@ -213,10 +232,16 @@ retTails (RConstCase _ _ alts mDef) =
     foldr (\(MkRConstAlt _ body), acc => retTails body ++ acc) (maybe [] retTails mDef) alts
 retTails (RLoop _ _ _ _ body) = retTails body
 retTails (RLoopContinue _ _ _) = []
-retTails (RCon _ _ _ (Just _) args _) = [if length args <= 1 then TailCon else TailOther]
-retTails (RV _ (RCEmptyCon _ _ _)) = [TailCon]
-retTails (RV _ RCNull) = [TailNull]
-retTails (RV _ (RCConstCon _ _ (Just _) args)) = [if length args <= 1 then TailCon else TailOther]
+retTails (RCon fc n ci (Just t) args _) = case args of
+    [] => [TailCon True t (ShapeNullary n ci (RCon fc n ci (Just t) [] Nothing))]
+    [_] => [TailCon True t (ShapeUnary n ci)]
+    _ => [TailOther]
+retTails e@(RV _ (RCEmptyCon n ci t)) = [TailCon True t (ShapeNullary n ci e)]
+retTails e@(RV _ (RCConstCon n ci (Just t) args)) = case args of
+    [] => [TailCon True t (ShapeNullary n ci e)]
+    [_] => [TailCon True t (ShapeUnary n ci)]
+    _ => [TailOther]
+retTails e@(RV _ RCNull) = [TailCon False 0 (ShapeNullary nullConName DATACON e)]
 retTails (RAppName _ Nothing n _) = [TailCall n]
 retTails (RAppNameRep _ n _ _ _ _) = [TailCall n]
 retTails (RCrash _ _) = [TailCrash]
@@ -224,24 +249,20 @@ retTails (RCrash _ _) = [TailCrash]
 -- lazy calls, closures, applies, FFI, prims, literals, a bare local.
 retTails _ = [TailOther]
 
-||| The functions that may return by value: every tail is an eligible
-||| constructor, a crash, or a tail call to another such function (a
-||| greatest fixpoint), at least one constructor is reachable, and the
-||| function is in no cycle of tail calls among them -- the bound that
-||| lets their tail calls become direct C calls (doc/struct-return.md's
-||| "Tail calls"). `MutualLoop`'s merged functions are excluded, as they
-||| are from every other DualABI worker.
+||| The functions that may return by value, each with the constructors
+||| its wrapper rebuilds, by tag. Every tail is an eligible constructor,
+||| a crash, or a tail call to another such function (a greatest
+||| fixpoint); at least one real constructor is reachable; the function
+||| is in no cycle of tail calls among them -- the bound that lets their
+||| tail calls become direct C calls (doc/struct-return.md's "Tail
+||| calls"); and every constructor reachable for one tag has one shape.
+||| `MutualLoop`'s merged functions are excluded, as they are from every
+||| other DualABI worker.
 export
-structReturnEligible : List (Name, RCDef) -> SortedSet Name
-structReturnEligible defs =
+structReturnPlan : List (Name, RCDef) -> SortedMap Name (SortedMap Int ConShape)
+structReturnPlan defs =
     let tbl : SortedMap Name (List RetTail) := SortedMap.fromList (mapMaybe funTails defs)
-        entries : List (Name, List RetTail) := SortedMap.toList tbl
-        closed : SortedSet Name := shrink tbl (fromList (namesWhere (all (not . isOther)) entries))
-        seeds : SortedSet Name := fromList (filter (\n => contains n closed) (namesWhere (any isCon) entries))
-        producing : SortedSet Name := reach tbl closed seeds
-        graph : Graph := fromList (map (edgesOf tbl producing) (SortedSet.toList producing))
-        cyclic : SortedSet Name := fromList (concat (filter (isCycle graph) (tarjanSCCs graph)))
-    in difference producing cyclic
+    in settle tbl empty
   where
     funTails : (Name, RCDef) -> Maybe (Name, List RetTail)
     funTails (n, MkRCFun _ _ _ body) = if isMutualLoopMerged n then Nothing else Just (n, retTails body)
@@ -251,25 +272,31 @@ structReturnEligible defs =
     isOther TailOther = True
     isOther _ = False
 
-    isCon : RetTail -> Bool
-    isCon TailCon = True
-    isCon _ = False
+    isRealCon : RetTail -> Bool
+    isRealCon (TailCon real _ _) = real
+    isRealCon _ = False
 
     callees : List RetTail -> List Name
     callees = mapMaybe (\t => case t of { TailCall g => Just g; _ => Nothing })
+
+    ownShapes : List RetTail -> List (Int, ConShape)
+    ownShapes = mapMaybe (\t => case t of { TailCon _ tag s => Just (tag, s); _ => Nothing })
 
     okIn : SortedSet Name -> RetTail -> Bool
     okIn el (TailCall g) = contains g el
     okIn _ _ = True
 
+    tailsOf : SortedMap Name (List RetTail) -> Name -> List RetTail
+    tailsOf tbl n = fromMaybe [] (lookup n tbl)
+
     shrink : SortedMap Name (List RetTail) -> SortedSet Name -> SortedSet Name
     shrink tbl el =
-        let el' = fromList (filter (\n => all (okIn el) (fromMaybe [] (lookup n tbl))) (SortedSet.toList el))
+        let el' = fromList (filter (\n => all (okIn el) (tailsOf tbl n)) (SortedSet.toList el))
         in if length (SortedSet.toList el') == length (SortedSet.toList el) then el' else shrink tbl el'
 
     reach : SortedMap Name (List RetTail) -> SortedSet Name -> SortedSet Name -> SortedSet Name
     reach tbl el ps =
-        let ps' = fromList (filter (\n => contains n ps || any (\g => contains g ps) (callees (fromMaybe [] (lookup n tbl))))
+        let ps' = fromList (filter (\n => contains n ps || any (\g => contains g ps) (callees (tailsOf tbl n)))
                                    (SortedSet.toList el))
         in if length (SortedSet.toList ps') == length (SortedSet.toList ps) then ps' else reach tbl el ps'
 
@@ -277,22 +304,64 @@ structReturnEligible defs =
     isCycle g [n] = contains n (fromMaybe empty (lookup n g))
     isCycle _ c = length c > 1
 
-    namesWhere : (List RetTail -> Bool) -> List (Name, List RetTail) -> List Name
-    namesWhere p = mapMaybe (\e => if p (snd e) then Just (fst e) else Nothing)
-
     edgesOf : SortedMap Name (List RetTail) -> SortedSet Name -> Name -> (Name, SortedSet Name)
-    edgesOf tbl ps n = (n, fromList (filter (\g => contains g ps) (callees (fromMaybe [] (lookup n tbl)))))
+    edgesOf tbl ps n = (n, fromList (filter (\g => contains g ps) (callees (tailsOf tbl n))))
+
+    eligible : SortedMap Name (List RetTail) -> SortedSet Name -> SortedSet Name
+    eligible tbl excluded =
+        let entries : List (Name, List RetTail) := SortedMap.toList tbl
+            shaped : SortedSet Name := fromList (mapMaybe (\e => if contains (fst e) excluded || any isOther (snd e) then Nothing else Just (fst e)) entries)
+            closed : SortedSet Name := shrink tbl shaped
+            seeds : SortedSet Name := fromList (mapMaybe (\e => if contains (fst e) closed && any isRealCon (snd e) then Just (fst e) else Nothing) entries)
+            producing : SortedSet Name := reach tbl closed seeds
+            graph : Graph := fromList (map (edgesOf tbl producing) (SortedSet.toList producing))
+            cyclic : SortedSet Name := fromList (concat (filter (isCycle graph) (tarjanSCCs graph)))
+        in difference producing cyclic
+
+    ||| Adds `(tag, s)`; `Nothing` when `tag` already has another shape.
+    addShape : SortedMap Int ConShape -> (Int, ConShape) -> Maybe (SortedMap Int ConShape)
+    addShape m (tag, s) = case lookup tag m of
+        Nothing => Just (insert tag s m)
+        Just s' => if sameShape s s' then Just m else Nothing
+
+    ||| One round: every function's own shapes plus its callees' current
+    ||| ones, or `Nothing` for a function whose shapes disagree.
+    shapeRound : SortedMap Name (List RetTail) -> SortedSet Name -> SortedMap Name (SortedMap Int ConShape)
+               -> SortedMap Name (Maybe (SortedMap Int ConShape))
+    shapeRound tbl el cur =
+        fromList (map (\n => (n, foldlM addShape empty
+                                   (ownShapes (tailsOf tbl n)
+                                    ++ concatMap (\g => maybe [] SortedMap.toList (lookup g cur)) (callees (tailsOf tbl n)))))
+                      (SortedSet.toList el))
+
+    shapeFix : SortedMap Name (List RetTail) -> SortedSet Name -> SortedMap Name (SortedMap Int ConShape)
+             -> (SortedSet Name, SortedMap Name (SortedMap Int ConShape))
+    shapeFix tbl el cur =
+        let next = shapeRound tbl el cur
+            bad : List Name := mapMaybe (\e => if isJust (snd e) then Nothing else Just (fst e)) (SortedMap.toList next)
+            good : SortedMap Name (SortedMap Int ConShape) := fromList (mapMaybe (\e => map (\m => (fst e, m)) (snd e)) (SortedMap.toList next))
+            size : SortedMap Name (SortedMap Int ConShape) -> Nat
+            size m = sum (map (length . SortedMap.toList . snd) (SortedMap.toList m))
+        in if not (null bad) then (fromList bad, good)
+           else if size good == size cur then (empty, good)
+           else shapeFix tbl el good
+
+    settle : SortedMap Name (List RetTail) -> SortedSet Name -> SortedMap Name (SortedMap Int ConShape)
+    settle tbl excluded =
+        let el = eligible tbl excluded
+            (bad, shapes) = shapeFix tbl el empty
+        in if null (SortedSet.toList bad) then shapes else settle tbl (union bad excluded)
 
 ||| `describeEligibility`'s lines, each marked ` ret1` when
-||| `structReturnEligible` accepts the function, after a count of those.
+||| `structReturnPlan` accepts the function, after a count of those.
 export
 dumpDualABI : List (Name, RCDef) -> String
 dumpDualABI defs =
-    let ret1 = structReturnEligible defs
+    let ret1 = structReturnPlan defs
         mark : (Name, RCDef) -> Maybe String
-        mark (n, d) = map (\l => if contains n ret1 then l ++ " ret1" else l) (describeEligibility n d)
+        mark (n, d) = map (\l => if isJust (lookup n ret1) then l ++ " ret1" else l) (describeEligibility n d)
     in fastConcat $ map (++ "\n") $
-         ("-- struct return (doc/struct-return.md): \{show (length (SortedSet.toList ret1))} eligible") :: mapMaybe mark defs
+         ("-- struct return (doc/struct-return.md): \{show (length (SortedMap.toList ret1))} eligible") :: mapMaybe mark defs
 
 ------------------------------------------------------------------------
 -- Stage 3a: worker synthesis (parameters only) + wrapper rewrite.
@@ -890,3 +959,118 @@ inlineFFIWorkers ffiInline defs = map (rewriteDef ffiInline) defs
     rewriteDef ffiInline' (n, MkRCFun args retRep isWorker body) =
         (n, MkRCFun args retRep isWorker (inlineFFIWorkersExp ffiInline' body))
     rewriteDef _ (n, d) = (n, d)
+
+------------------------------------------------------------------------
+-- Struct return: worker and wrapper (doc/struct-return.md, step 2).
+
+||| The worker a struct-returning function's struct comes from, and the
+||| Reps of its arguments.
+StructWorker : Type
+StructWorker = (Name, List Rep)
+
+||| A struct-returning worker's body with every tail handing back a
+||| struct: a constructor becomes an `RRetPack` (first releasing the cell
+||| it would have reused), and a tail call goes to the callee's own
+||| struct worker. `reps` holds each local's Rep so a native argument
+||| read from a Boxed local gets its `postDrop`, as in
+||| `applyCallSiteRewriteBody`.
+packTails : SortedMap Name StructWorker -> SortedSet Name -> SortedMap Int Rep -> RCExp -> RCExp
+packTails ws wNames reps (RLet fc v rep value body) = RLet fc v rep value (packTails ws wNames (insert v rep reps) body)
+packTails ws wNames reps (RDup fc v extra cont) = RDup fc v extra (packTails ws wNames reps cont)
+packTails ws wNames reps (RDrop fc vs cont) = RDrop fc vs (packTails ws wNames reps cont)
+packTails ws wNames reps (RFree fc v cont) = RFree fc v (packTails ws wNames reps cont)
+packTails ws wNames reps (RReleaseReuse fc v cont) = RReleaseReuse fc v (packTails ws wNames reps cont)
+packTails ws wNames reps (RReuseOffer fc sc dupOnShared dropOnUnique cont) =
+    RReuseOffer fc sc dupOnShared dropOnUnique (packTails ws wNames reps cont)
+packTails ws wNames reps (RCmpCase fc op args postDrop t f) =
+    RCmpCase fc op args postDrop (packTails ws wNames reps t) (packTails ws wNames reps f)
+packTails ws wNames reps (RConCase fc sc alts mDef) =
+    RConCase fc sc (map (\(MkRConAlt n ci tag as body) => MkRConAlt n ci tag as (packTails ws wNames reps body)) alts)
+      (map (packTails ws wNames reps) mDef)
+packTails ws wNames reps (RConstCase fc sc alts mDef) =
+    RConstCase fc sc (map (\(MkRConstAlt c body) => MkRConstAlt c (packTails ws wNames reps body)) alts)
+      (map (packTails ws wNames reps) mDef)
+packTails ws wNames reps (RLoop fc loopParams initial prologueDrop body) =
+    RLoop fc loopParams initial prologueDrop
+      (packTails ws wNames (foldl (\m, (i, r) => insert i r m) reps loopParams) body)
+packTails _ _ _ (RCon fc n _ (Just tag) args reuseFrom) =
+    maybe id (RReleaseReuse fc) reuseFrom (RRetPack fc n tag (head' args))
+packTails _ _ _ (RV fc (RCEmptyCon n _ tag)) = RRetPack fc n tag Nothing
+packTails _ _ _ (RV fc (RCConstCon n _ (Just tag) args)) = RRetPack fc n tag (head' args)
+packTails _ _ _ (RV fc RCNull) = RRetPack fc nullConName 0 Nothing
+packTails ws _ reps e@(RAppName fc Nothing g args) = case lookup g ws of
+    Just (w, argReps) => RAppNameRep fc w argReps RRet1 (postDropFor reps argReps args) args
+    Nothing => e
+packTails _ wNames _ e@(RAppNameRep fc g argReps _ postDrop args) =
+    if contains g wNames then RAppNameRep fc g argReps RRet1 postDrop args else e
+-- RLoopContinue, RCrash; anything else never reaches a tail of a
+-- function `structReturnPlan` accepted.
+packTails _ _ _ e = e
+
+||| The wrapper's body: call the struct worker, then build the cell the
+||| original function returned, one alt per tag.
+materialize : {auto v : Ref VarId Int}
+           -> Name -> List Rep -> List RCLocal -> List RCLocal -> SortedMap Int ConShape -> Core RCExp
+materialize w argReps postDrop args shapes = do
+    r <- freshVarId
+    alts <- traverse alt (SortedMap.toList shapes)
+    pure $ RLet emptyFC r RRet1 (RAppNameRep emptyFC w argReps RRet1 postDrop args)
+             (RConCase emptyFC (RCLoc r) alts Nothing)
+  where
+    alt : (Int, ConShape) -> Core RConAlt
+    alt (tag, ShapeUnary n ci) = do
+        f <- freshVarId
+        pure (MkRConAlt n ci (Just tag) [f] (RCon emptyFC n ci (Just tag) [RCLoc f] Nothing))
+    alt (tag, ShapeNullary n ci e) = pure (MkRConAlt n ci (Just tag) [] e)
+
+||| Every function `structReturnPlan` accepts returns its constructor
+||| through a worker with `retRep = RRet1`, and keeps its own name and
+||| Boxed signature as a wrapper that builds the cell. A function that
+||| already has a native-parameter worker (Stage 3a) reuses it; any
+||| other gets a new one. Callers are not rewritten here: every call
+||| still reaches the wrapper, except tail calls between struct workers.
+export
+applyStructReturn : {auto v : Ref VarId Int} -> List (Name, RCDef) -> Core (List (Name, RCDef))
+applyStructReturn defs = do
+    _ <- newRef FreshId 0
+    let plan = structReturnPlan defs
+        existing = SortedSet.fromList (map fst defs)
+    planned <- traverse (workerFor existing plan) defs
+    let ws : SortedMap Name StructWorker := fromList (mapMaybe (\((n, _), p) => map (\(w, reps, _) => (n, (w, reps))) p) planned)
+        wNames : SortedSet Name := fromList (map (fst . snd) (SortedMap.toList ws))
+    foldr (++) [] <$> traverse (rewrite' ws wNames plan) planned
+  where
+    ||| `Just (worker, argReps, isNew)` for a planned function.
+    workerFor : {auto r : Ref FreshId Int} -> SortedSet Name -> SortedMap Name (SortedMap Int ConShape) -> (Name, RCDef)
+              -> Core ((Name, RCDef), Maybe (Name, List Rep, Bool))
+    workerFor existing plan (n, d@(MkRCFun args _ isWorker body)) =
+        if isNothing (lookup n plan) then pure ((n, d), Nothing)
+        else case (isWorker, body) of
+                  (True, _) => pure ((n, d), Just (n, map snd args, False))
+                  (False, RAppNameRep _ w argReps _ _ _) =>
+                      if isJust (lookup w plan) then pure ((n, d), Just (w, argReps, False))
+                      else pure ((n, d), Nothing)
+                  _ => do
+                      w <- freshName "idris2rc2_worker_" existing n
+                      pure ((n, d), Just (w, map snd args, True))
+    workerFor _ _ nd = pure (nd, Nothing)
+
+    seed : List (Int, Rep) -> SortedMap Int Rep
+    seed = fromList
+
+    rewrite' : SortedMap Name StructWorker -> SortedSet Name -> SortedMap Name (SortedMap Int ConShape)
+             -> ((Name, RCDef), Maybe (Name, List Rep, Bool)) -> Core (List (Name, RCDef))
+    rewrite' _ _ _ (nd, Nothing) = pure [nd]
+    rewrite' ws wNames plan ((n, MkRCFun args retRep isWorker body), Just (w, argReps, isNew)) = do
+        let shapes = fromMaybe empty (lookup n plan)
+        case (isWorker, isNew, body) of
+             (True, _, _) =>
+                 pure [(n, MkRCFun args RRet1 True (packTails ws wNames (seed args) body))]
+             (False, False, RAppNameRep _ _ _ _ postDrop callArgs) => do
+                 wrapper <- materialize w argReps postDrop callArgs shapes
+                 pure [(n, MkRCFun args retRep False wrapper)]
+             _ => do
+                 wrapper <- materialize w argReps [] (map (RCLoc . fst) args) shapes
+                 pure [ (n, MkRCFun args retRep False wrapper)
+                      , (w, MkRCFun args RRet1 True (packTails ws wNames (seed args) body)) ]
+    rewrite' _ _ _ (nd, _) = pure [nd]

@@ -1,10 +1,10 @@
 module Main
 
--- Struct return (rc2/doc/struct-return.md). Step 1 only computes which
--- functions may return by value; verify.sh checks the `.dualabi` marks.
--- The output itself is just diffed against refc.
+-- Struct return (rc2/doc/struct-return.md), opted in below until it is
+-- on by default. verify.sh checks which workers return `Ret1` in the dump;
+-- the output itself is diffed against refc.
 
-%cg rc2 dumpdualabi
+%cg rc2 structreturn
 
 -- Every level cases on the level below and rebuilds the same Either:
 -- eligible (a one-field constructor in every tail).

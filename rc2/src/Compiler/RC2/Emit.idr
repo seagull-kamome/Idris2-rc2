@@ -203,7 +203,7 @@ mutual
              (RNative ty, _) =>
                  emitInto fc (SinkVar True "var_\{show var}" (RNative ty)) NotInTailPosition value
              (RBoxed, _) => emitInto fc (SinkVar True "var_\{show var}" RBoxed) NotInTailPosition value
-             (RRet1, _) => ret1Unsupported "declareLet"
+             (RRet1, _) => emitInto fc (SinkVar True "var_\{show var}" RRet1) NotInTailPosition value
 
     ||| Lower a leading chain of ownership/reuse wrapper nodes --
     ||| `RDup`/`RDrop`/`RFree`/`RLet`/`RReleaseReuse`/`RReuseOffer`,
@@ -479,6 +479,8 @@ mutual
                      -- renderers would box a worker's own native result
                      -- straight into a native slot.
                      _ => case sink of
+                              SinkReturn RRet1 => emitRet1Into sink tailPosition remaining
+                              SinkVar _ _ RRet1 => emitRet1Into sink tailPosition remaining
                               SinkReturn (RNative ty) => emitNativeReturn fc ty remaining
                               SinkReturn (RInlineNative ty) => emitNativeReturn fc ty remaining
                               SinkVar _ _ (RNative ty) => emitNativeSinkVar fc sink ty remaining
@@ -496,6 +498,19 @@ mutual
                                        RAppFFIInline fc' ccs fargs ret postDrop args =>
                                            emitAppFFIInlineInto sink tailPosition fc' ccs fargs ret postDrop args
                                        _ => emitRC sink remaining tailPosition
+
+    ||| A leaf whose value is a struct (an `RRet1` sink,
+    ||| `doc/struct-return.md`): a pack, a call to a struct-returning
+    ||| worker, a struct local passed on unchanged, or a crash.
+    emitRet1Into : EmitDeps (Sink -> TailPositionStatus -> RCExp -> Core ())
+    emitRet1Into sink _ (RRetPack fc _ tag field) = do
+        (f, pending) <- maybe (pure ("NULL", [])) rcVarToBoxedC field
+        finalizeSinkWithDrop fc sink "(IDRIS2RC2_Ret1){ \{show tag}, \{f} }" pending
+    emitRet1Into sink tailPosition (RAppNameRep fc n argReps retRep postDrop args) =
+        emitAppNameRepInto sink tailPosition fc n argReps retRep postDrop args
+    emitRet1Into sink _ (RV fc l@(RCLoc _)) = finalizeSink fc sink (varName l)
+    emitRet1Into sink _ (RCrash fc _) = finalizeSink fc sink "(IDRIS2RC2_Ret1){ 0, NULL } /* CRASH */"
+    emitRet1Into _ _ _ = ret1Unsupported "a Ret1 sink"
 
     ||| A case branch (or default): emit the drops RC.idr's `annotate`
     ||| already decided on (the peeled leading RDrop), then the body
@@ -544,9 +559,14 @@ mutual
     emitConAltBody : EmitDeps (Sink -> TailPositionStatus -> RCLocal -> RConAlt -> Core ())
     emitConAltBody sink tailPosition sc (MkRConAlt name coninfo tag args body) = do
         let sc' = varName sc
+        scRep <- repOfLocal sc
+        let field : Nat -> String
+            field k = case scRep of
+                           RRet1 => "\{sc'}.f0"
+                           _ => "((IDRIS2RC2_Constructor*)\{sc'})->args[\{show k}]"
         _ <- foldlC (\k, arg => do
             when (arg /= 0) $
-              emit emptyFC "IDRIS2RC2_Value *var_\{show arg} = ((IDRIS2RC2_Constructor*)\{sc'})->args[\{show k}];"
+              emit emptyFC "IDRIS2RC2_Value *var_\{show arg} = \{field k};"
             pure (S k) ) 0 args
         branchBody sink body tailPosition
 
@@ -599,8 +619,13 @@ mutual
     emitConCaseInto sink tailPosition fc sc alts mDef = do
         let sc' = varName sc
         resolvedSink <- resolveSink fc sink
+        scRep <- repOfLocal sc
+        let condFor : RConAlt -> Core String
+            condFor alt = case scRep of
+                               RRet1 => ret1AltCondExpr sc' alt
+                               _ => conAltCondExpr sc' alt
         emitAltChain resolvedSink
-            (\alt => (\s => (s, [])) <$> conAltCondExpr sc' alt)
+            (\alt => (\s => (s, [])) <$> condFor alt)
             (emitConAltBody resolvedSink tailPosition sc)
             (map (\body => branchBody resolvedSink body tailPosition) mDef)
             alts
@@ -983,7 +1008,7 @@ emitAppNameRepInto sink tailPosition fc n argReps retRep postDrop args = do
                                   NotInTailPosition => "idris2rc2_trampoline(\{call})"
                    RNative ty => pure (nativeMk ty call)
                    RInlineNative ty => pure (nativeMk ty call)
-                   RRet1 => ret1Unsupported "emitAppNameRepInto"
+                   RRet1 => pure call
     finalizeSinkWithDrop fc sink valStr (map varName postDrop ++ argPending)
 
 emitAppFFIInlineInto sink tailPosition fc ccs fargs ret postDrop args = do
@@ -1253,6 +1278,7 @@ emitRC sink (RPrimVal fc c) _ = finalizeSink fc sink !(boxedConstExpr c)
 
 emitRC sink (RErased fc) _ = finalizeSink fc sink "NULL"
 emitRC sink (RCrash fc x) _ = finalizeSink fc sink "(NULL /* CRASH */)"
+emitRC sink (RRetPack fc _ _ _) _ = unreachableInEmitRC "RRetPack"
 emitRC sink (RLoopContinue fc _ _) _ = unreachableInEmitRC "RLoopContinue"
 emitRC sink (RLoop fc loopParams initial prologueDrop body) _ = unreachableInEmitRC "RLoop"
 emitRC sink (RDrop fc locs cont) _ = unreachableInEmitRC "RDrop"

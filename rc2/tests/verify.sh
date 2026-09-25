@@ -418,7 +418,7 @@ NO_REFC_DIFF_TESTS="Test3Data Test7CastMatrix Test8EmptyCon Test17ConstFold Test
 # packCFType allocation (idris2rc2_mkPointer/idris2rc2_mkGCPointer) is
 # new to %export's own argument marshalling and worth the same
 # scrutiny.
-LEAK_SENSITIVE_TESTS="Test1Basics Test9SelfTailLoop Test11DualABILeak Test12ConAltNative Test13NativeArgChain Test14SmallFunctionInline Test15CompareFusionThroughCall Test16LoopContinuePostDrop Test17ConstFold Test18ClosureInPlaceGrow Test19LoopInvariantParam Test22BranchSinking Test24CStructSupport Test26GCPtrAliasString Test27FFIDualABI Test28Utf8Strings Test33WideDualABIWorker Test35NetworkLoopback Test36ReuseOfferUniqueLeak Test37SystemMisc Test41FFIMalloc Test42SupportMisc Test44IORefExtPrimLeak Test46FastPackUnconditional Test49IntegerOpReuse Test57LoopCallArgNativeShadow Test59Export Test66ClosureFastPath Test69ConstFoldClosure Test70ConstFoldClosureCallthrough Test79DupMerge Test84CgExternStruct Test85CgExternStructPtrField Test86CafMemoization Test87SpecConstCon Test88KnownConFold Test89CafDualABI"
+LEAK_SENSITIVE_TESTS="Test1Basics Test9SelfTailLoop Test11DualABILeak Test12ConAltNative Test13NativeArgChain Test14SmallFunctionInline Test15CompareFusionThroughCall Test16LoopContinuePostDrop Test17ConstFold Test18ClosureInPlaceGrow Test19LoopInvariantParam Test22BranchSinking Test24CStructSupport Test26GCPtrAliasString Test27FFIDualABI Test28Utf8Strings Test33WideDualABIWorker Test35NetworkLoopback Test36ReuseOfferUniqueLeak Test37SystemMisc Test41FFIMalloc Test42SupportMisc Test44IORefExtPrimLeak Test46FastPackUnconditional Test49IntegerOpReuse Test57LoopCallArgNativeShadow Test59Export Test66ClosureFastPath Test69ConstFoldClosure Test70ConstFoldClosureCallthrough Test79DupMerge Test84CgExternStruct Test85CgExternStructPtrField Test86CafMemoization Test87SpecConstCon Test88KnownConFold Test89CafDualABI Test90StructReturn"
 
 # KNOWN-BUGS.md's own remaining pre-existing leaks -- "definitely
 # lost" byte count, exactly. Anything else non-zero is a genuine new
@@ -648,19 +648,19 @@ for name in $ALL_TESTS; do
         fi
     fi
 
-    # Test90StructReturn: struct-return eligibility (doc/struct-return.md,
-    # step 1) is only visible in the `.dualabi` dump its own `%cg rc2
-    # dumpdualabi` pragma writes: `step`'s worker and `lookupAge` (a
-    # `Nothing` tail) marked `ret1`, `halves` (a pair) not.
+    # Test90StructReturn: struct return (doc/struct-return.md) is opted in
+    # by the test's own `%cg rc2 structreturn`, so the dump shows which
+    # workers return a struct: `step`'s and `lookupAge`'s (a `Nothing`
+    # tail), not `halves` (a pair). `--directive nodualabi` fails this.
     if [ "$name" = "Test90StructReturn" ]; then
-        dump="$TMP/${name}_rc2.dualabi"
-        stepMarked="$(grep -c '^{idris2rc2_worker_Main_step:[0-9]*}: .* ret1$' "$dump" || true)"
-        lookupMarked="$(grep -c '^Main.lookupAge: .* ret1$' "$dump" || true)"
-        halvesMarked="$(grep -c '^Main.halves: .* ret1$' "$dump" || true)"
-        if [ "$stepMarked" = "1" ] && [ "$lookupMarked" = "1" ] && [ "$halvesMarked" = "0" ]; then
-            report_pass "$name (struct-return eligibility -- step and lookupAge marked, halves not)"
+        dump="$TMP/${name}_rc2.rcexpr"
+        stepRet1="$(grep -c '^def {idris2rc2_worker_Main_step:[0-9]*} .* ret= Ret1 ' "$dump" || true)"
+        lookupRet1="$(grep -c '^def {idris2rc2_worker_Main_lookupAge:[0-9]*} .* ret= Ret1 ' "$dump" || true)"
+        halvesRet1="$(grep -c '^def .*Main_halves.* ret= Ret1 ' "$dump" || true)"
+        if [ "$stepRet1" = "1" ] && [ "$lookupRet1" = "1" ] && [ "$halvesRet1" = "0" ]; then
+            report_pass "$name (struct return -- step and lookupAge return Ret1, halves not)"
         else
-            report_fail "$name" "ret1 marks step=$stepMarked lookupAge=$lookupMarked halves=$halvesMarked in $dump"
+            report_fail "$name" "Ret1 workers step=$stepRet1 lookupAge=$lookupRet1 halves=$halvesRet1 in $dump"
         fi
     fi
 

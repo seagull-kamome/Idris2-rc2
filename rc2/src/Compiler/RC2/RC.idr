@@ -782,6 +782,9 @@ mutual
     -- RCExp.idr) -- kept total (as a plain pass-through), same
     -- reasoning as RAppNameRep just above.
     annotate natives owned e@(RAppFFIInline _ _ _ _ _ _) = pure e
+    -- Only produced by Compiler.RC2.DualABI (doc/struct-return.md), same
+    -- reasoning as RAppNameRep above.
+    annotate natives owned e@(RRetPack _ _ _ _) = pure e
     -- RMemoize only ever wraps a whole top-level 0-argument definition's
     -- entire body (Compiler.RC2.RC2's own insertMemoize, inserted right
     -- after ConstFold, strictly before this pass runs -- see

@@ -1224,9 +1224,9 @@ finalizeSinkWithDrop : {auto a : Ref ArgCounter Nat}
                      -> FC -> Sink -> String -> List String -> Core ()
 finalizeSinkWithDrop fc sink valStr [] = finalizeSink fc sink valStr
 finalizeSinkWithDrop fc sink valStr drop = case sink of
-    SinkReturn _ => do
+    SinkReturn rep => do
         tmp <- getNewVarThatWillNotBeFreedAtEndOfBlock
-        emit fc "IDRIS2RC2_Value * \{tmp} = \{valStr};"
+        emit fc "\{sinkCType rep}\{tmp} = \{valStr};"
         removeVars drop
         emit fc "return \{tmp};"
     _ => do
@@ -1420,6 +1420,14 @@ splitLast : List a -> Maybe (List a, a)
 splitLast xs = case reverse xs of
     [] => Nothing
     (l :: ls) => Just (reverse ls, l)
+
+||| `conAltCondExpr` for a struct scrutinee (`doc/struct-return.md`):
+||| only the tag, since a struct holds no NULL or tagged-pointer form.
+export
+ret1AltCondExpr : String -> RConAlt -> Core String
+ret1AltCondExpr sc' (MkRConAlt name _ (Just t) _ _) = pure "\{sc'}.tag == \{show t} /* \{show name} */"
+ret1AltCondExpr _ (MkRConAlt name _ Nothing _ _) =
+    throw $ InternalError "[rc2] struct-return case on untagged constructor \{show name}"
 
 ||| The raw boolean C expression (no `if (...)` wrapper) deciding
 ||| whether scrutinee `sc'` (already rendered via `varName`) matches
