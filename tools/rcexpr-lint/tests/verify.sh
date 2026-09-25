@@ -2,7 +2,7 @@
 # One-shot correctness verification for tools/rcexpr-lint: builds
 # the CLI against rc2base+contrib (plain Chez backend -- this tool
 # never needs to run *through* rc2 itself, it only reads text files),
-# then runs it over four hand-written `.rcexpr` fixtures and checks
+# then runs it over five hand-written `.rcexpr` fixtures and checks
 # both the exit code and the exact report (anomalies and metrics)
 # against what's expected. `clean.rcexpr`/`anomalies.rcexpr` cover the
 # ownership check itself (Lint.idr's own module note has the full rule list);
@@ -12,6 +12,10 @@
 # `Language.RCExpr.Parser.dupG`'s own doc comment.
 # `metrics.rcexpr` holds every node kind `Metrics.idr` counts, so each
 # figure is checked against a hand count at least once.
+# `fieldborrow.rcexpr` covers a case-alt field borrowing its
+# scrutinee's reference, including the exact shape of a real
+# use-after-free (a field read after its scrutinee was dropped).
+
 #
 # Usage: ./verify.sh
 #
@@ -142,5 +146,30 @@ metrics (places in the IR, not executions):
   loop               1  (continue 1)
   memoize            1
   crash              1"
+
+check "fieldborrow.rcexpr (fields borrow from their scrutinee)" "$TESTS_DIR/fieldborrow.rcexpr" 1 \
+"fieldborrow.rcexpr: TestFieldReadAfterScrutineeDrop: v2 use-after-free (dup)
+fieldborrow.rcexpr: TestFieldReadAfterScrutineeDrop: v3 use-after-free (con args)
+fieldborrow.rcexpr: TestFieldReadAfterScrutineeDrop: v4 use-after-free (con args)
+fieldborrow.rcexpr: TestNestedFieldAfterOuterDrop: v3 use-after-free (RV)
+fieldborrow.rcexpr: TestDropOfBorrowedField: v2 double-drop (drop)
+rcexpr-lint: 5 anomalies found
+metrics (places in the IR, not executions):
+  definitions        5  (functions 5, workers 0, constructors 0, foreign 0, error 0)
+  con                1  (fresh 1, reusing a cell 0)
+  partial            0  (closures built)
+  apply              0  (closure calls)
+  call               0  (plain 0, callRep 0, FFI inline 0)
+  op                 0  (op 0, extprim 0)
+  let                1  (Boxed 1, native 0)
+  case               6  (constructor 6, constant 0, cmp 0)
+  dup                3  (increments, in 3 dup nodes)
+  drop               4  (decrements, in 4 drop nodes)
+  postDrop           1  (decrements attached to another node: postDrop, dropOnUnique, prologueDrop)
+  free               0
+  reuseOffer         1  (releaseReuse 1)
+  loop               0  (continue 0)
+  memoize            0
+  crash              0"
 
 echo "=== All rcexpr-lint checks passed ==="

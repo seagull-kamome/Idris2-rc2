@@ -33,16 +33,16 @@ module Lint
 -- never prints one for them -- `Compiler.RC2.RCExp.RConAlt` itself
 -- doesn't carry one either, the field's real type lives only in the
 -- constructor's own type information, which isn't part of this
--- grammar). Treated as `Boxed` with an initial count of 1 -- the
--- common case for a normalized RC tree -- rather than left untracked,
--- since rc2's own `Reuse`/annotation passes always insert an explicit
--- `dup`/`drop`/use for a genuinely boxed field; an occasional false
--- positive here (a field that's actually native) is easier to notice
--- and dismiss by hand than a silently-skipped real bug would be.
+-- grammar). Treated as `Boxed`, borrowing its scrutinee's reference
+-- (`Entry`) -- the common case for a normalized RC tree -- rather than
+-- left untracked; an occasional false positive here (a field that's
+-- actually native, read after its scrutinee is dropped) is easier to
+-- notice and dismiss by hand than a silently-skipped real bug would be.
 
 import Language.RCExpr.AST
 
 import Data.List
+import Data.Maybe
 import Data.SortedMap
 
 %default covering
@@ -67,31 +67,54 @@ public export
 Show Anomaly where
   show a = a.defName ++ ": v" ++ show a.var ++ " " ++ show a.kind ++ " (" ++ a.context ++ ")"
 
-||| Live-reference count per tracked (`Boxed`) local. A local absent
-||| from this map is either never `Boxed` or out of scope -- never
-||| checked either way (`checkRead`/`doDrop` both treat "absent" as
-||| "not tracked", not as zero).
+||| One tracked (`Boxed`) local: the references it owns itself, and,
+||| for a field bound by a `case` alt, the scrutinee it was taken from.
+||| A field starts out owning nothing -- it borrows its scrutinee's own
+||| reference, and stays readable only while that scrutinee (or,
+||| transitively, *its* parent) is alive or it has been `dup`'d. This is
+||| what rc2's own `annotate`/`Reuse` rely on: a field read after its
+||| scrutinee is dropped needs a `dup` first.
+record Entry where
+  constructor MkEntry
+  owned : Nat
+  parent : Maybe Int
+
+||| A local absent from this map is either never `Boxed` or out of
+||| scope -- never checked either way (`checkRead`/`doDrop` both treat
+||| "absent" as "not tracked", not as dead).
 OwnState : Type
-OwnState = SortedMap Int Nat
+OwnState = SortedMap Int Entry
+
+owning : Nat -> Entry
+owning n = MkEntry n Nothing
+
+||| Whether local `i` still has a reference to read through: its own, or
+||| a live parent's. An untracked local always counts as alive.
+alive : OwnState -> Int -> Bool
+alive st i = case lookup i st of
+    Nothing => True
+    Just e => e.owned > 0 || maybe False (alive st) e.parent
 
 isBoxedRep : RRep -> Bool
 isBoxedRep Boxed = True
 isBoxedRep (NativeRep _) = False
 
 checkRead : String -> String -> OwnState -> RCLocal -> List Anomaly
-checkRead defName ctx st (RVar i) = case lookup i st of
-    Just Z => [MkAnomaly defName UseAfterFree i ctx]
-    _ => []
+checkRead defName ctx st (RVar i) =
+    if alive st i then [] else [MkAnomaly defName UseAfterFree i ctx]
 checkRead _ _ _ _ = []
 
 checkReads : String -> String -> OwnState -> List RCLocal -> List Anomaly
 checkReads defName ctx st = concatMap (checkRead defName ctx st)
 
+||| A drop spends one of the local's own references. A field that owns
+||| none cannot give one back even while its scrutinee is alive: that
+||| would release a reference only the scrutinee holds.
 doDrop : String -> String -> (OwnState, List Anomaly) -> RCLocal -> (OwnState, List Anomaly)
 doDrop defName ctx (st, anomalies) (RVar i) = case lookup i st of
     Nothing => (st, anomalies)
-    Just Z => (st, anomalies ++ [MkAnomaly defName DoubleDrop i ctx])
-    Just (S n) => (insert i n st, anomalies)
+    Just (MkEntry (S n) p) => (insert i (MkEntry n p) st, anomalies)
+    Just (MkEntry Z _) => (st, anomalies ++ [MkAnomaly defName DoubleDrop i ctx])
 doDrop _ _ acc _ = acc
 
 doDrops : String -> String -> OwnState -> List RCLocal -> (OwnState, List Anomaly)
@@ -99,13 +122,14 @@ doDrops defName ctx st vars = foldl (doDrop defName ctx) (st, []) vars
 
 ||| `RDupNode`'s own `count` is already the *total* number of extra
 ||| references gained (`Pretty.idr`'s `dup v` -> 1, `dup v xN` -> N,
-||| `Language.RCExpr.Parser.dupG`'s own reading of that) -- added
-||| straight to the tracked count.
-doDup : OwnState -> RCLocal -> Int -> OwnState
-doDup st (RVar i) n = case lookup i st of
-    Nothing => st
-    Just c => insert i (c + integerToNat (cast n)) st
-doDup st _ _ = st
+||| `Language.RCExpr.Parser.dupG`'s own reading of that). A dup reads
+||| the local, so it has to be alive.
+doDup : String -> OwnState -> RCLocal -> Int -> (OwnState, List Anomaly)
+doDup defName st v@(RVar i) n = case lookup i st of
+    Nothing => (st, [])
+    Just e => ( insert i ({ owned $= (+ integerToNat (cast n)) } e) st
+              , checkRead defName "dup" st v )
+doDup _ st _ _ = (st, [])
 
 mutual
   walk : String -> OwnState -> RCExp -> (OwnState, List Anomaly)
@@ -124,7 +148,7 @@ mutual
       (st, checkRead dn "apply target" st c ++ checkReads dn "apply args" st args)
   walk dn st (RLetIn var rep value body) =
       let (stAfterValue, valueAs) = walk dn st value
-          stWithVar = if isBoxedRep rep then insert var 1 stAfterValue else stAfterValue
+          stWithVar = if isBoxedRep rep then insert var (owning 1) stAfterValue else stAfterValue
           (stFinal, bodyAs) = walk dn stWithVar body
       in (stFinal, valueAs ++ bodyAs)
   walk dn st (RConstruct _ _ args reuseFrom) =
@@ -154,7 +178,7 @@ mutual
       in (stAfterDrop, readAs ++ dropAs ++ trueAs ++ falseAs)
   walk dn st (RConCaseNode sc alts mDef) =
       let readAs = checkRead dn "case scrutinee" st sc
-          altsAs = concatMap (walkConAlt dn st) alts
+          altsAs = concatMap (walkConAlt dn st sc) alts
           defAs = maybe [] (\b => snd (walk dn st b)) mDef
       in (st, readAs ++ altsAs ++ defAs)
   walk dn st (RConstCaseNode sc alts mDef) =
@@ -166,8 +190,9 @@ mutual
   walk dn st RErasedNode = (st, [])
   walk dn st (RCrashNode _) = (st, [])
   walk dn st (RDupNode var count body) =
-      let st' = doDup st var count
-      in walk dn st' body
+      let (st', dupAs) = doDup dn st var count
+          (stFinal, bodyAs) = walk dn st' body
+      in (stFinal, dupAs ++ bodyAs)
   walk dn st (RDropNode vars body) =
       let (st', dropAs) = doDrops dn "drop" st vars
           (stFinal, bodyAs) = walk dn st' body
@@ -180,18 +205,25 @@ mutual
       let (st', dropAs) = doDrop dn "releaseReuse" (st, []) var
           (stFinal, bodyAs) = walk dn st' body
       in (stFinal, dropAs ++ bodyAs)
+  -- Either path leaves every `dupOnShared` field owning one reference
+  -- (dup'd on the shared path, handed over from the reserved cell on
+  -- the unique one), and every `dropOnUnique` field owning none
+  -- (handed over and dropped at once on the unique path, never
+  -- acquired on the shared one).
   walk dn st (RReuseOfferNode sc dupOnShared dropOnUnique body) =
-      let readAs = checkRead dn "reuseOffer scrutinee" st sc ++ checkReads dn "reuseOffer dupOnShared" st dupOnShared
-          (st', dropAs) = doDrops dn "reuseOffer dropOnUnique" st dropOnUnique
+      let readAs = checkRead dn "reuseOffer scrutinee" st sc
+                     ++ checkReads dn "reuseOffer dupOnShared" st dupOnShared
+                     ++ checkReads dn "reuseOffer dropOnUnique" st dropOnUnique
+          st' = foldl (\s, v => fst (doDup dn s v 1)) st dupOnShared
           (stFinal, bodyAs) = walk dn st' body
-      in (stFinal, readAs ++ dropAs ++ bodyAs)
+      in (stFinal, readAs ++ bodyAs)
   walk dn st (RLoopNode params initial prologueDrop body) =
       let readAs = checkReads dn "loop initial" st initial
           (stAfterDrop, dropAs) = doDrops dn "loop prologueDrop" st prologueDrop
           -- Loop params (fresh `Boxed`-or-not locals rebound each
           -- iteration) get the same treatment as a con-alt's own
           -- bound vars -- see this module's own top-of-file note.
-          stWithParams = foldl (\s, (i, r) => if isBoxedRep r then insert i 1 s else s) stAfterDrop params
+          stWithParams = foldl (\s, (i, r) => if isBoxedRep r then insert i (owning 1) s else s) stAfterDrop params
           (stFinal, bodyAs) = walk dn stWithParams body
       in (stFinal, readAs ++ dropAs ++ bodyAs)
   walk dn st (RLoopContinueNode args postDrop) =
@@ -200,9 +232,15 @@ mutual
       in (st', readAs ++ dropAs)
   walk dn st (RMemoizeNode _ _ body) = walk dn st body
 
-  walkConAlt : String -> OwnState -> RConAlt -> List Anomaly
-  walkConAlt dn st alt =
-      let stWithArgs = foldl (\s, i => insert i 1 s) st alt.args
+  -- A field borrows from a tracked scrutinee (see `Entry`); from an
+  -- untracked one (a constant, or a local this walk never saw bound)
+  -- it is assumed to own its reference, as before.
+  walkConAlt : String -> OwnState -> RCLocal -> RConAlt -> List Anomaly
+  walkConAlt dn st sc alt =
+      let fieldEntry = case sc of
+                            RVar s => if isJust (lookup s st) then MkEntry 0 (Just s) else owning 1
+                            _ => owning 1
+          stWithArgs = foldl (\s, i => insert i fieldEntry s) st alt.args
       in snd (walk dn stWithArgs alt.altBody)
 
 ||| One `def`'s own anomalies, starting from its own `args=[...]`
@@ -213,7 +251,7 @@ mutual
 export
 lintDef : String -> RCDef -> List Anomaly
 lintDef name (RCFun args _ _ body) =
-    let initial = foldl (\s, (i, r) => if isBoxedRep r then insert i 1 s else s) (the OwnState empty) args
+    let initial = foldl (\s, (i, r) => if isBoxedRep r then insert i (owning 1) s else s) (the OwnState empty) args
     in snd (walk name initial body)
 lintDef name (RCErrorDef body) = snd (walk name (the OwnState empty) body)
 lintDef _ (RCCon _ _ _) = []

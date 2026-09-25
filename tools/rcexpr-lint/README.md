@@ -65,8 +65,17 @@ offending one.
 - `dup v` adds 1; `dup v xN` adds N.
 - `drop [...]`, `free`, `releaseReuse`, `reuseOffer`'s own
   `dropOnUnique`, and **every** `postDrop=` list each subtract 1.
-- Any read of a tracked local at zero is a use-after-free; any further
-  subtraction at zero is a double-drop.
+- A field bound by a `case` alt owns **nothing** at first: it borrows
+  its scrutinee's reference, and is readable only while the scrutinee
+  (or, for a field of a field, any ancestor) is still alive, or after a
+  `dup` has given it its own. This is the rule rc2's `annotate` and
+  `Reuse` work to: a field still needed after its scrutinee is dropped
+  must be `dup`'d first. `reuseOffer`'s `dupOnShared` fields each end up
+  owning one reference; its `dropOnUnique` fields none.
+- Any read of a tracked local with no reference to read through is a
+  use-after-free; any subtraction from a local that owns none is a
+  double-drop (for a field, releasing a reference only its scrutinee
+  holds).
 - A local absent from the map is untracked, never treated as zero --
   so an unknown local is silently skipped rather than falsely flagged.
 
@@ -142,9 +151,10 @@ A `case`-alt's own bound variables carry **no `Rep` in the dump** --
 real type lives in the constructor's type information, which is not
 part of this grammar).
 
-They are therefore tracked as `Boxed` with an initial count of 1, which
-is the common case for a normalized RC tree. A genuinely *native* field
-can consequently be reported. That trade was deliberate: an occasional
+They are therefore tracked as `Boxed` fields borrowing from their
+scrutinee, which is the common case for a normalized RC tree. A
+genuinely *native* field read after its scrutinee is dropped can
+consequently be reported (none is, on idris2-lsp). That trade was deliberate: an occasional
 false positive is easy to notice and dismiss by hand, whereas silently
 skipping those fields would hide real bugs in exactly the
 destructure-then-consume shapes `Reuse` and `ConAltNative` rewrite most
@@ -192,7 +202,7 @@ cd tools/rcexpr-lint/tests
 ./verify.sh
 ```
 
-`verify.sh` builds the CLI and runs it over four hand-written fixtures,
+`verify.sh` builds the CLI and runs it over five hand-written fixtures,
 checking both the exit code and the exact report text, metrics
 included:
 
@@ -201,6 +211,7 @@ included:
 | `clean.rcexpr` | a correct program produces no anomalies (guards against the check silently doing nothing) |
 | `anomalies.rcexpr` | every anomaly/context combination fires: plain read after drop, double drop, a drop inside one `cmp` arm, and a `postDrop=`-consumed local read afterwards |
 | `dupcount.rcexpr` | regression for a real parser bug -- `dup vN xM`'s repeat count was glued onto `x` as one token and silently undercounted if read as two |
+| `fieldborrow.rcexpr` | field borrowing: a field read after its scrutinee is dropped (the exact shape of a real use-after-free in `refc-suite/clock`, 2026-09-25), a field of a field, and the correct forms -- dup before the drop, `reuseOffer` |
 | `metrics.rcexpr` | every node kind the metrics count, so each figure is checked against a hand count at least once |
 
 It builds with the plain Chez backend (`idris2 -p rc2base -p contrib`):

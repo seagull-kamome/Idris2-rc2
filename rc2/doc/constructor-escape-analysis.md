@@ -467,6 +467,90 @@ doc's earlier figures, but both columns ran interleaved in the same
 period. The micro-benchmarks show no difference: their shapes were
 already handled by the earlier steps.
 
+### What is left after Early inline, and the RC-aware fold (design, 2026-09-25)
+
+**What is left.** idris2-lsp after Early inline, counted on the final
+dump:
+
+- 587 sites where a local bound to a value with at least one known
+  constructor tail is immediately `case`-matched (shape A and shape B
+  together). 168 of the shape-B ones have a loop inside the value
+  (a spliced loop-bearing callee).
+- Their constructor tails: 1,676 allocate fresh, 2,099 reuse a cell
+  (`reuse=`), 741 are constants.
+- Their 1,114 consumer alts release the scrutinee in one of two ways:
+  678 through `reuseOffer v` (the alt rebuilds a same-shaped
+  constructor in `v`'s cell), 341 through `drop [v, ...]`.
+
+All of this is post-RC: `LateInline`'s later run created it after RC
+annotation, from loop-bearing callees and callees that become
+single-caller only after `Loop`/`MutualLoop`/`DeadCode`.
+
+**The rewrite.** Rewrite B again, with each tail/alt pair rebalanced
+by hand instead of left to `annotate`. Push the consumer into the
+value's tails as `PushCon` does. A loop's tails are its exits, and an
+`RLoopContinue` is never a tail. Then fold a known tail `con K
+[a1..an]` against the alt `K [x1..xn] -> P` it selects:
+
+1. **Fields.** Rename each `xi` to `ai`. Building the constructor
+   moved one owned reference of each `ai` into `v`, and the fold
+   hands it to `P` instead.
+   - A `dup xi` in the alt's prologue was the alt taking its own
+     reference before `v` goes. Remove one such `dup` per field.
+   - A field the alt never `dup`s (unused, or `_`) was released by
+     `v`'s drop. Emit `drop [ai]` in its place.
+2. **The scrutinee, `drop` path.** Remove `v` from the `drop` list.
+   With a fresh tail constructor this is where a `malloc` and a
+   `free` disappear.
+3. **The scrutinee, `reuseOffer` path.** `v` is known unique (fresh,
+   never escaped), so only the unique path of the offer ever ran.
+   - `dupOnShared` fields already own their reference (step 1).
+   - `dropOnUnique` fields get `drop [ai]`.
+   - The reservation `v` was offering has to go somewhere:
+     - Tail `con K [..] reuse= w` (it was itself built in `w`'s
+       cell): hand `w`'s reservation over. The alt's `con ... reuse=
+       v` becomes `reuse= w`, and a `releaseReuse v` becomes
+       `releaseReuse w`. Same shape, same size, same path, and no
+       allocation either before or after.
+     - Tail allocated fresh: there is no cell left to hand over. The
+       alt's `con ... reuse= v` allocates fresh, and `releaseReuse v`
+       disappears. One `malloc` either way. What is saved is the tag
+       and field writes and the uniqueness check.
+4. **Constant tails** (`#K(...)`): the fields are constants. Substitute
+   them and drop every RC operation on those field ids (constants are
+   immortal).
+5. **Unknown tails** get the whole consumer on a fresh `v'`, as in
+   `PushCon`. Post-RC that stays balanced as it is: `v'` owns exactly
+   what `v` owned.
+
+**Restrictions.**
+- A tail whose field argument is a native local is left unfolded
+  (kept as `let v' = con ..; case v' of <alt>`). Reps are final by
+  now, and aliasing a Boxed field to a native local would need boxes
+  inserted by hand (`ConstFold`'s rewrite A shows why that has to be
+  done once, not per use).
+- `v` must be non-escaping: read only as the scrutinee and in the RC
+  operations above, and never `dup`'d. That is what makes it unique
+  at the `reuseOffer`, so that only the unique path is live.
+- The same size budget as `PushCon`.
+
+**Where.** A new stage right after the later `LateInline`, before
+`Sink` and `DualABI`, so both still see the result. Reusing
+`PushCon`'s tail machinery with a post-RC fold instead of
+`foldConstDef`.
+
+**Checking it.** Every rule above is an ownership transfer. rcexpr-lint
+now models exactly that: a field borrows its scrutinee's reference
+until `dup`'d. So a mistake in any step shows up as a use-after-free
+or double-drop when the lint runs over idris2-lsp's dump, alongside
+valgrind on the suite.
+
+**Expected yield.** The `malloc`s saved are the fresh-tail, `drop`-path
+pairs (step 2). The 341 `drop`-path alts are an upper bound on the
+static sites; how often they run is unknown. The `reuseOffer` path
+saves no allocation but removes a tag write, field writes and a
+uniqueness check per run.
+
 ## Correctness notes on rewrite B
 
 - **`RCNull` tails** are treated as unknown: it is not a constructor

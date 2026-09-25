@@ -1,0 +1,43 @@
+def TestFieldReadAfterScrutineeDrop  (fun args= ["v1:Boxed"] ret= Boxed)
+  case v1 of
+    System.Clock.MkClock [record] tag= Just 0 args= [v2, v3, v4] ->
+      drop [v1]
+      let v5 : Boxed =
+        dup v2
+        con System.Clock.MkClock [record] tag= Just 0 [v2, v3, v4]
+      v5
+
+def TestOkFieldDupBeforeDrop  (fun args= ["v1:Boxed"] ret= Boxed)
+  case v1 of
+    _builtin.CONS [cons] tag= Just 1 args= [v2, v3] ->
+      dup v2
+      drop [v1]
+      v2
+    _builtin.NIL [nil] tag= Just 0 args= [] ->
+      v1
+
+def TestOkFieldViaReuseOffer  (fun args= ["v1:Boxed"] ret= Boxed)
+  case v1 of
+    _builtin.CONS [cons] tag= Just 1 args= [v2, v3] ->
+      reuseOffer v1 dupOnShared= [v2] dropOnUnique= [v3]
+      releaseReuse v1
+      v2
+    _builtin.NIL [nil] tag= Just 0 args= [] ->
+      v1
+
+def TestNestedFieldAfterOuterDrop  (fun args= ["v1:Boxed"] ret= Boxed)
+  case v1 of
+    _builtin.JUST [just] tag= Just 1 args= [v2] ->
+      case v2 of
+        _builtin.CONS [cons] tag= Just 1 args= [v3, v4] ->
+          dup v4
+          drop [v1]
+          v3
+    _builtin.NOTHING [nothing] tag= Just 0 args= [] ->
+      v1
+
+def TestDropOfBorrowedField  (fun args= ["v1:Boxed"] ret= Boxed)
+  case v1 of
+    _builtin.JUST [just] tag= Just 1 args= [v2] ->
+      drop [v2]
+      v1
