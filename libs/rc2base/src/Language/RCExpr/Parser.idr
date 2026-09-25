@@ -382,12 +382,14 @@ repG = boxedG <|> ret1G <|> nativeG
         the (Grammar () RcToken False ()) (if n == "Boxed" then pure () else fail "not Boxed")
         pure Boxed
     -- A by-value struct (rc2's `doc/struct-return.md`) has no
-    -- reference count of its own, so it reads as a non-Boxed Rep.
+    -- reference count of its own, so it reads as a non-Boxed Rep. Its
+    -- layout rides on the same token: `Ret1:1=Int` carries tag 1's field
+    -- natively.
     ret1G : Grammar () RcToken True RRep
     ret1G = do
         n <- anyName
-        the (Grammar () RcToken False ()) (if n == "Ret1" then pure () else fail "not Ret1")
-        pure (NativeRep "Ret1")
+        the (Grammar () RcToken False ()) (if n == "Ret1" || isPrefixOf "Ret1:" n then pure () else fail "not Ret1")
+        pure (NativeRep n)
     nativeG : Grammar () RcToken True RRep
     nativeG = do
         n <- anyName

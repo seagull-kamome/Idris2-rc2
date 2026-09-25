@@ -352,6 +352,93 @@ structReturnPlan defs =
             (bad, shapes) = shapeFix tbl el empty
         in if null (SortedSet.toList bad) then shapes else settle tbl (union bad excluded)
 
+||| The native types a struct's field can carry in `IDRIS2RC2_Ret1`'s
+||| union: every fixed-width integer, `Char` and `Double`.
+ret1Carries : PrimType -> Bool
+ret1Carries ty = case ty of
+    IntType => True; Int8Type => True; Int16Type => True; Int32Type => True; Int64Type => True
+    Bits8Type => True; Bits16Type => True; Bits32Type => True; Bits64Type => True
+    CharType => True; DoubleType => True
+    _ => False
+
+||| Every one-field constructor tail of a body, by tag, with how its field
+||| arrives: the native type of a native local or literal, or `Nothing`
+||| for a Boxed value.
+tailFields : SortedMap Int Rep -> RCExp -> List (Int, Maybe PrimType)
+tailFields reps (RLet _ x rep _ body) = tailFields (insert x rep reps) body
+tailFields reps (RDup _ _ _ k) = tailFields reps k
+tailFields reps (RDrop _ _ k) = tailFields reps k
+tailFields reps (RFree _ _ k) = tailFields reps k
+tailFields reps (RReleaseReuse _ _ k) = tailFields reps k
+tailFields reps (RReuseOffer _ _ _ _ k) = tailFields reps k
+tailFields reps (RCmpCase _ _ _ _ t f) = tailFields reps t ++ tailFields reps f
+tailFields reps (RConCase _ _ alts mDef) =
+    foldr (\(MkRConAlt _ _ _ _ b), acc => tailFields reps b ++ acc) (maybe [] (tailFields reps) mDef) alts
+tailFields reps (RConstCase _ _ alts mDef) =
+    foldr (\(MkRConstAlt _ b), acc => tailFields reps b ++ acc) (maybe [] (tailFields reps) mDef) alts
+tailFields reps (RLoop _ ps _ _ body) = tailFields (foldl (\m, (i, r) => insert i r m) reps ps) body
+tailFields reps (RCon _ _ _ (Just t) [a] _) = [(t, fieldKind reps a)]
+  where
+    fieldKind : SortedMap Int Rep -> RCLocal -> Maybe PrimType
+    fieldKind reps (RCLoc i) = case lookup i reps of
+        Just (RNative ty) => if ret1Carries ty then Just ty else Nothing
+        Just (RInlineNative ty) => if ret1Carries ty then Just ty else Nothing
+        _ => Nothing
+    fieldKind _ (RCConst c) = litRep c >>= \ty => if ret1Carries ty then Just ty else Nothing
+    fieldKind _ _ = Nothing
+tailFields reps (RV _ (RCConstCon _ _ (Just t) [RCConst c])) =
+    [(t, litRep c >>= \ty => if ret1Carries ty then Just ty else Nothing)]
+tailFields reps (RV _ (RCConstCon _ _ (Just t) [_])) = [(t, Nothing)]
+tailFields _ _ = []
+
+||| Each planned function's struct layout (`RRet1`'s): a tag carries its
+||| field natively only when every tail building it, in this function
+||| and in every function its struct passes through unchanged by a tail
+||| call, delivers the same native type. Tail-call neighbours share one
+||| layout, since the struct crosses between them as it is.
+ret1Layouts : List (Name, RCDef) -> SortedSet Name -> SortedMap Name (List (Int, PrimType))
+ret1Layouts defs planned =
+    let own : SortedMap Name (SortedMap Int (Maybe PrimType)) :=
+            fromList (mapMaybe ownOf defs)
+        edges : List (Name, Name) :=
+            concatMap (\(n, d) => case d of
+                                       MkRCFun _ _ _ body => if contains n planned then map (\g => (n, g)) (filter (\g => contains g planned) (callees (retTails body))) else []
+                                       _ => []) defs
+        final = settle edges own
+    in map (\m => mapMaybe (\(t, k) => map (\ty => (t, ty)) k) (SortedMap.toList m)) final
+  where
+    meet : Maybe PrimType -> Maybe PrimType -> Maybe PrimType
+    meet (Just a) (Just b) = if a == b then Just a else Nothing
+    meet _ _ = Nothing
+
+    addField : SortedMap Int (Maybe PrimType) -> (Int, Maybe PrimType) -> SortedMap Int (Maybe PrimType)
+    addField m (t, k) = insert t (maybe k (meet k) (lookup t m)) m
+
+    ownOf : (Name, RCDef) -> Maybe (Name, SortedMap Int (Maybe PrimType))
+    ownOf (n, MkRCFun args _ _ body) =
+        if contains n planned then Just (n, foldl addField empty (tailFields (fromList args) body)) else Nothing
+    ownOf _ = Nothing
+
+    callees : List RetTail -> List Name
+    callees = mapMaybe (\t => case t of { TailCall g => Just g; _ => Nothing })
+
+    merged : SortedMap Int (Maybe PrimType) -> SortedMap Int (Maybe PrimType) -> SortedMap Int (Maybe PrimType)
+    merged a b = foldl addField a (SortedMap.toList b)
+
+    measure : SortedMap Name (SortedMap Int (Maybe PrimType)) -> (Nat, Nat)
+    measure m = foldl (\(ks, ns), fm => (ks + length (SortedMap.toList fm), ns + length (filter (isJust . snd) (SortedMap.toList fm))))
+                      (0, 0) (map snd (SortedMap.toList m))
+
+    step : SortedMap Name (SortedMap Int (Maybe PrimType)) -> (Name, Name) -> SortedMap Name (SortedMap Int (Maybe PrimType))
+    step cur (f, g) =
+        let m = merged (fromMaybe empty (lookup f cur)) (fromMaybe empty (lookup g cur))
+        in insert g m (insert f m cur)
+
+    settle : List (Name, Name) -> SortedMap Name (SortedMap Int (Maybe PrimType)) -> SortedMap Name (SortedMap Int (Maybe PrimType))
+    settle es cur =
+        let next = foldl step cur es
+        in if measure next == measure cur then next else settle es next
+
 ||| `describeEligibility`'s lines, each marked ` ret1` when
 ||| `structReturnPlan` accepts the function, after a count of those.
 export
@@ -963,10 +1050,10 @@ inlineFFIWorkers ffiInline defs = map (rewriteDef ffiInline) defs
 ------------------------------------------------------------------------
 -- Struct return: worker and wrapper (doc/struct-return.md, step 2).
 
-||| The worker a struct-returning function's struct comes from, and the
-||| Reps of its arguments.
+||| The worker a struct-returning function's struct comes from, the Reps
+||| of its arguments, and its struct's layout (`ret1Layouts`).
 StructWorker : Type
-StructWorker = (Name, List Rep)
+StructWorker = (Name, List Rep, List (Int, PrimType))
 
 ||| A struct-returning worker's body with every tail handing back a
 ||| struct: a constructor becomes an `RRetPack` (first releasing the cell
@@ -999,10 +1086,11 @@ packTails _ _ _ (RV fc (RCEmptyCon n _ tag)) = RRetPack fc n tag Nothing
 packTails _ _ _ (RV fc (RCConstCon n _ (Just tag) args)) = RRetPack fc n tag (head' args)
 packTails _ _ _ (RV fc RCNull) = RRetPack fc nullConName 0 Nothing
 packTails ws _ reps e@(RAppName fc Nothing g args) = case lookup g ws of
-    Just (w, argReps) => RAppNameRep fc w argReps RRet1 (postDropFor reps argReps args) args
+    Just (w, argReps, l) => RAppNameRep fc w argReps (RRet1 l) (postDropFor reps argReps args) args
     Nothing => e
-packTails _ wNames _ e@(RAppNameRep fc g argReps _ postDrop args) =
-    if contains g wNames then RAppNameRep fc g argReps RRet1 postDrop args else e
+packTails ws _ _ e@(RAppNameRep fc g argReps _ postDrop args) = case lookup g ws of
+    Just (_, _, l) => RAppNameRep fc g argReps (RRet1 l) postDrop args
+    Nothing => e
 -- RLoopContinue, RCrash; anything else never reaches a tail of a
 -- function `structReturnPlan` accepted.
 packTails _ _ _ e = e
@@ -1010,11 +1098,11 @@ packTails _ _ _ e = e
 ||| The wrapper's body: call the struct worker, then build the cell the
 ||| original function returned, one alt per tag.
 materialize : {auto v : Ref VarId Int}
-           -> Name -> List Rep -> List RCLocal -> List RCLocal -> SortedMap Int ConShape -> Core RCExp
-materialize w argReps postDrop args shapes = do
+           -> Name -> List Rep -> List (Int, PrimType) -> List RCLocal -> List RCLocal -> SortedMap Int ConShape -> Core RCExp
+materialize w argReps layout postDrop args shapes = do
     r <- freshVarId
     alts <- traverse alt (SortedMap.toList shapes)
-    pure $ RLet emptyFC r RRet1 (RAppNameRep emptyFC w argReps RRet1 postDrop args)
+    pure $ RLet emptyFC r (RRet1 layout) (RAppNameRep emptyFC w argReps (RRet1 layout) postDrop args)
              (RConCase emptyFC (RCLoc r) alts Nothing)
   where
     alt : (Int, ConShape) -> Core RConAlt
@@ -1064,24 +1152,50 @@ caseOn _ _ = Nothing
 ||| The same value with its final call to a struct-returning function `g`
 ||| sent to `g`'s struct worker instead; `Nothing` when it ends in
 ||| anything else.
-retargetCall : SortedMap Name StructWorker -> SortedMap Int Rep -> RCExp -> Maybe (Name, RCExp)
+retargetCall : SortedMap Name StructWorker -> SortedMap Int Rep -> RCExp -> Maybe (Name, List (Int, PrimType), RCExp)
 retargetCall ws reps (RLet fc x rep value body) =
-    map (\(g, b) => (g, RLet fc x rep value b)) (retargetCall ws (insert x rep reps) body)
-retargetCall ws reps (RDup fc x n k) = map (\(g, b) => (g, RDup fc x n b)) (retargetCall ws reps k)
-retargetCall ws reps (RDrop fc vs k) = map (\(g, b) => (g, RDrop fc vs b)) (retargetCall ws reps k)
+    map (\(g, l, b) => (g, l, RLet fc x rep value b)) (retargetCall ws (insert x rep reps) body)
+retargetCall ws reps (RDup fc x n k) = map (\(g, l, b) => (g, l, RDup fc x n b)) (retargetCall ws reps k)
+retargetCall ws reps (RDrop fc vs k) = map (\(g, l, b) => (g, l, RDrop fc vs b)) (retargetCall ws reps k)
 retargetCall ws reps (RAppName fc Nothing g args) = do
-    (w, argReps) <- lookup g ws
-    pure (g, RAppNameRep fc w argReps RRet1 (postDropFor reps argReps args) args)
+    (w, argReps, l) <- lookup g ws
+    pure (g, l, RAppNameRep fc w argReps (RRet1 l) (postDropFor reps argReps args) args)
 retargetCall _ _ _ = Nothing
 
+||| `e` with every ownership operation on `f` gone: a field the struct
+||| carries natively has no reference count. A Boxed use of it is boxed
+||| afresh at that point by Emit, which is what the removed `dup` paid for.
+dropOwnership : Int -> RCExp -> RCExp
+dropOwnership f (RDup fc x n k) = if x == RCLoc f then dropOwnership f k else RDup fc x n (dropOwnership f k)
+dropOwnership f (RDrop fc vs k) =
+    let vs' = filter (/= RCLoc f) vs
+    in (if null vs' then id else RDrop fc vs') (dropOwnership f k)
+dropOwnership f (RFree fc x k) = if x == RCLoc f then dropOwnership f k else RFree fc x (dropOwnership f k)
+dropOwnership f (ROp fc lazy op args pd) = ROp fc lazy op args (filter (/= RCLoc f) pd)
+dropOwnership f (RExtPrim fc lazy p args pd) = RExtPrim fc lazy p args (filter (/= RCLoc f) pd)
+dropOwnership f (RAppNameRep fc n argReps retRep pd args) = RAppNameRep fc n argReps retRep (filter (/= RCLoc f) pd) args
+dropOwnership f (RAppFFIInline fc ccs fargs ret pd args) = RAppFFIInline fc ccs fargs ret (filter (/= RCLoc f) pd) args
+dropOwnership f (RStructGet fc sv sn fn pd) = RStructGet fc sv sn fn (filter (/= RCLoc f) pd)
+dropOwnership f (RStructSet fc sv sn fn val pd) = RStructSet fc sv sn fn val (filter (/= RCLoc f) pd)
+dropOwnership f (RCmpCase fc op args pd t e) =
+    RCmpCase fc op args (filter (/= RCLoc f) pd) (dropOwnership f t) (dropOwnership f e)
+dropOwnership f (RLoopContinue fc args pd) = RLoopContinue fc args (filter (/= RCLoc f) pd)
+dropOwnership f (RLoop fc ps initial pd k) = RLoop fc ps initial (filter (/= RCLoc f) pd) (dropOwnership f k)
+dropOwnership f (RReuseOffer fc sc ds us k) =
+    RReuseOffer fc sc (filter (/= RCLoc f) ds) (filter (/= RCLoc f) us) (dropOwnership f k)
+dropOwnership f e = mapChildren (dropOwnership f) e
+
 ||| One alt, rewritten for a struct scrutinee: a known tag and at most
-||| one field, as every constructor a struct worker returns has.
-structAlt : Int -> RConAlt -> Maybe RConAlt
-structAlt v (MkRConAlt n ci (Just tag) as b) = case as of
+||| one field, as every constructor a struct worker returns has. A field
+||| the layout carries natively owns nothing (`dropOwnership`).
+structAlt : List (Int, PrimType) -> Int -> RConAlt -> Maybe RConAlt
+structAlt layout v (MkRConAlt n ci (Just tag) as b) = case as of
     [] => MkRConAlt n ci (Just tag) as <$> structRC v Nothing b
-    [f] => MkRConAlt n ci (Just tag) as <$> structRC v (Just (RCLoc f)) b
+    [f] => case lookup tag layout of
+        Just _ => MkRConAlt n ci (Just tag) as . dropOwnership f <$> structRC v Nothing b
+        Nothing => MkRConAlt n ci (Just tag) as <$> structRC v (Just (RCLoc f)) b
     _ => Nothing
-structAlt _ _ = Nothing
+structAlt _ _ _ = Nothing
 
 ||| The function a value ends in a direct call to, through the lets and
 ||| RC wrappers in front of it.
@@ -1100,7 +1214,7 @@ casedCallees acc e@(RLet _ x RBoxed value body) =
           g <- finalCallee value
           (_, _, alts, mDef) <- caseOn x body
           the (Maybe ()) (if maybe False (\d => contains (RCLoc x) (mentionedLocals d)) mDef then Nothing else Just ())
-          _ <- traverse (structAlt x) alts
+          _ <- traverse (structAlt [] x) alts
           pure g
     in foldl casedCallees (maybe acc (:: acc) here) (children e)
 casedCallees acc e = foldl casedCallees acc (children e)
@@ -1158,21 +1272,21 @@ structSites ws plan reps (RLet fc x RBoxed value body) = do
     body' <- structSites ws plan (insert x RBoxed reps) body
     case retargetCall ws reps value' of
          Nothing => pure (RLet fc x RBoxed value' body')
-         Just (g, call) =>
+         Just (g, layout, call) =>
              let cased = do
                    (wrap, cfc, alts, mDef) <- caseOn x body'
                    the (Maybe ()) (if maybe False (\d => contains (RCLoc x) (mentionedLocals d)) mDef then Nothing else Just ())
-                   alts' <- traverse (structAlt x) alts
+                   alts' <- traverse (structAlt layout x) alts
                    pure (wrap (RConCase cfc (RCLoc x) alts' mDef))
              in case cased of
-                     Just body'' => pure (RLet fc x RRet1 call body'')
+                     Just body'' => pure (RLet fc x (RRet1 layout) call body'')
                      Nothing => case lookup g ws of
-                         Just (_, argReps) =>
+                         Just (_, argReps, _) =>
                              if any isNative argReps
                                 then do
                                     r <- freshVarId
                                     cell <- buildCell r (fromMaybe empty (lookup g plan))
-                                    pure (RLet fc r RRet1 call (RLet fc x RBoxed cell body'))
+                                    pure (RLet fc r (RRet1 layout) call (RLet fc x RBoxed cell body'))
                                 else pure (RLet fc x RBoxed value' body')
                          Nothing => pure (RLet fc x RBoxed value' body')
   where
@@ -1224,7 +1338,10 @@ applyStructReturn defs = do
     let plan = prunePlan defs (structReturnPlan defs)
         existing = SortedSet.fromList (map fst defs)
     planned <- traverse (workerFor existing plan) defs
-    let ws : SortedMap Name StructWorker := fromList (mapMaybe (\((n, _), p) => map (\(w, reps, _) => (n, (w, reps))) p) planned)
+    let layouts = ret1Layouts defs (fromList (keys plan))
+        layoutOf : Name -> List (Int, PrimType)
+        layoutOf n = fromMaybe [] (lookup n layouts)
+        ws : SortedMap Name StructWorker := fromList (mapMaybe (\((n, _), p) => map (\(w, reps, _) => (n, (w, reps, layoutOf n))) p) planned)
         wNames : SortedSet Name := fromList (map (fst . snd) (SortedMap.toList ws))
     foldr (++) [] <$> traverse (rewrite' ws wNames plan) planned
   where
@@ -1257,17 +1374,19 @@ applyStructReturn defs = do
     rewrite' _ _ _ (nd, Nothing) = pure [nd]
     rewrite' ws wNames plan ((n, MkRCFun args retRep isWorker body), Just (w, argReps, isNew)) = do
         let shapes = fromMaybe empty (lookup n plan)
+            layout : List (Int, PrimType)
+            layout = case lookup n ws of { Just (_, _, l) => l; Nothing => [] }
         -- Call sites first: `packTails` would otherwise turn a `reuse=`
         -- of a struct into a `releaseReuse` of it.
         struct <- packTails ws wNames (seed args) <$> structSites ws plan (seed args) body
         case (isWorker, isNew, body) of
              (True, _, _) =>
-                 pure [(n, MkRCFun args RRet1 True struct)]
+                 pure [(n, MkRCFun args (RRet1 layout) True struct)]
              (False, False, RAppNameRep _ _ _ _ postDrop callArgs) => do
-                 wrapper <- materialize w argReps postDrop callArgs shapes
+                 wrapper <- materialize w argReps layout postDrop callArgs shapes
                  pure [(n, MkRCFun args retRep False wrapper)]
              _ => do
-                 wrapper <- materialize w argReps [] (map (RCLoc . fst) args) shapes
+                 wrapper <- materialize w argReps layout [] (map (RCLoc . fst) args) shapes
                  pure [ (n, MkRCFun args retRep False wrapper)
-                      , (w, MkRCFun args RRet1 True struct) ]
+                      , (w, MkRCFun args (RRet1 layout) True struct) ]
     rewrite' _ _ _ (nd, _) = pure [nd]

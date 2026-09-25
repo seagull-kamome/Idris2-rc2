@@ -651,15 +651,16 @@ for name in $ALL_TESTS; do
     # Test90StructReturn: struct return (doc/struct-return.md) shows in the
     # dump as the workers that return a struct: `step`'s and `lookupAge`'s
     # (a `Nothing` tail), not `halfOf` (only ever a closure, so no caller
-    # gains) nor `halves` (a pair). `--directive nostructreturn` fails this.
+    # gains) nor `halves` (a pair); `step`'s struct carries its `Int`
+    # natively (`Ret1:1=Int`). `--directive nostructreturn` fails this.
     if [ "$name" = "Test90StructReturn" ]; then
         dump="$TMP/${name}_rc2.rcexpr"
-        stepRet1="$(grep -c '^def {idris2rc2_worker_Main_step:[0-9]*} .* ret= Ret1 ' "$dump" || true)"
+        stepRet1="$(grep -c '^def {idris2rc2_worker_Main_step:[0-9]*} .* ret= Ret1:1=Int ' "$dump" || true)"
         lookupRet1="$(grep -c '^def {idris2rc2_worker_Main_lookupAge:[0-9]*} .* ret= Ret1 ' "$dump" || true)"
         halvesRet1="$(grep -c '^def .*Main_halves.* ret= Ret1 ' "$dump" || true)"
         halfOfRet1="$(grep -c '^def .*Main_halfOf.* ret= Ret1 ' "$dump" || true)"
         if [ "$stepRet1" = "1" ] && [ "$lookupRet1" = "1" ] && [ "$halfOfRet1" = "0" ] && [ "$halvesRet1" = "0" ]; then
-            report_pass "$name (struct return -- step and lookupAge return Ret1, halfOf and halves not)"
+            report_pass "$name (struct return -- step (native Int field) and lookupAge return Ret1, halfOf and halves not)"
         else
             report_fail "$name" "Ret1 workers step=$stepRet1 lookupAge=$lookupRet1 halfOf=$halfOfRet1 halves=$halvesRet1 in $dump"
         fi

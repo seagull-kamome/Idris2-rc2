@@ -130,7 +130,11 @@ typedef struct {
 // A constructor of at most one field returned by value: rc2/doc/struct-return.md.
 typedef struct {
   int64_t tag;
-  IDRIS2RC2_Value *f0;
+  union {
+    IDRIS2RC2_Value *p;
+    int64_t i;
+    double d;
+  } f0;
 } IDRIS2RC2_Ret1;
 
 typedef struct {

@@ -6,7 +6,9 @@ module Main
 
 -- Every level cases on the level below and rebuilds the same Either:
 -- eligible (a one-field constructor in every tail), and its own
--- recursive call is a site that gains.
+-- recursive call is a site that gains. Every `Right` carries a native
+-- `Int`, so the struct holds it unboxed (`Ret1:1=Int`); `step 4 1000`
+-- returns values past the small-int cache, which would each need a box.
 step : Int -> Int -> Either String Int
 step 0 x = if x < 0 then Left "neg" else Right x
 step d x = case step (d - 1) (x + 1) of
@@ -44,6 +46,7 @@ main : IO ()
 main = do
   printLn (step 3 10)
   printLn (step 2 (-5))
+  printLn (step 4 1000)
   putStrLn (describe "b" [("a", 1), ("b", 2)])
   putStrLn (describe "z" [("a", 1)])
   printLn (known "a" [("a", 1)])

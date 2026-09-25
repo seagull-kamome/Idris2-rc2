@@ -24,7 +24,7 @@ prettyRep : Rep -> String
 prettyRep RBoxed = "Boxed"
 prettyRep (RNative ty) = "Native " ++ show ty
 prettyRep (RInlineNative ty) = "InlineNative " ++ show ty
-prettyRep RRet1 = "Ret1"
+prettyRep (RRet1 layout) = "Ret1" ++ concatMap (\(t, ty) => ":" ++ show t ++ "=" ++ show ty) layout
 
 lazyPrefix : Maybe LazyReason -> String
 lazyPrefix Nothing = ""

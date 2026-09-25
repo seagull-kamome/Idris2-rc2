@@ -188,9 +188,11 @@ Show RCLocal where
 ||| `inlineableRep` doc comment has the full reasoning for why that's
 ||| still safe.
 ||| `RRet1`: a small constructor held by value as an `IDRIS2RC2_Ret1`
-||| struct -- see `doc/struct-return.md`.
+||| struct -- see `doc/struct-return.md`. Its layout lists the tags whose
+||| field the struct carries natively, and as which type; every other
+||| tag's field is Boxed.
 public export
-data Rep = RBoxed | RNative PrimType | RInlineNative PrimType | RRet1
+data Rep = RBoxed | RNative PrimType | RInlineNative PrimType | RRet1 (List (Int, PrimType))
 
 -- `RCExp`/`RConAlt`/`RConstAlt` are mutually recursive (`RConCase`/
 -- `RConstCase` hold `List RConAlt`/`RConstAlt`; both alt types hold a

@@ -349,6 +349,19 @@ nativeCType DoubleType = "double"
 nativeCType CharType = "uint32_t"
 nativeCType _ = "void*" -- unreachable: Types.nativeEligible excludes these
 
+||| The member of `IDRIS2RC2_Ret1.f0` a native field of type `ty` is kept
+||| in (`doc/struct-return.md`), and that member's C type: every integer
+||| type widens to `int64_t`.
+export
+ret1Member : PrimType -> String
+ret1Member DoubleType = "d"
+ret1Member _ = "i"
+
+export
+ret1MemberCType : PrimType -> String
+ret1MemberCType DoubleType = "double"
+ret1MemberCType _ = "int64_t"
+
 export
 nativeMk : PrimType -> String -> String
 nativeMk IntType x = "idris2rc2_mkInt64(" ++ x ++ ")"
@@ -971,7 +984,7 @@ rcVarToBoxedC l = do
     inlined <- inlineExprFor l
     let (exprOrVar, pending) = fromMaybe (varName l, []) inlined
     case rep of
-         RRet1 => throw $ InternalError "[rc2] rcVarToBoxedC: a struct-return local (Ret1) reached a Boxed context, see doc/struct-return.md"
+         RRet1 _ => throw $ InternalError "[rc2] rcVarToBoxedC: a struct-return local (Ret1) reached a Boxed context, see doc/struct-return.md"
          _ => pure $ case rep of
                 RNative ty => (nativeMk ty exprOrVar, pending)
                 -- Always InlineMap'd by construction (Rep.RInlineNative's
@@ -1160,13 +1173,13 @@ sinkCType : Rep -> String
 sinkCType RBoxed = "IDRIS2RC2_Value * "
 sinkCType (RNative ty) = nativeCType ty ++ " "
 sinkCType (RInlineNative ty) = nativeCType ty ++ " "
-sinkCType RRet1 = "IDRIS2RC2_Ret1 "
+sinkCType (RRet1 _) = "IDRIS2RC2_Ret1 "
 
 ||| The pre-branch placeholder value a `Sink`'s own variable is
 ||| initialised to -- see `resolveSink`.
 sinkZero : Rep -> String
 sinkZero RBoxed = "NULL"
-sinkZero RRet1 = "(IDRIS2RC2_Ret1){ 0, NULL }"
+sinkZero (RRet1 _) = "(IDRIS2RC2_Ret1){ 0, { .p = NULL } }"
 sinkZero _ = "0"
 
 ||| Turn a `Sink` that might still need its own variable declared

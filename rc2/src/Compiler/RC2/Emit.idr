@@ -203,7 +203,7 @@ mutual
              (RNative ty, _) =>
                  emitInto fc (SinkVar True "var_\{show var}" (RNative ty)) NotInTailPosition value
              (RBoxed, _) => emitInto fc (SinkVar True "var_\{show var}" RBoxed) NotInTailPosition value
-             (RRet1, _) => emitInto fc (SinkVar True "var_\{show var}" RRet1) NotInTailPosition value
+             (RRet1 l, _) => emitInto fc (SinkVar True "var_\{show var}" (RRet1 l)) NotInTailPosition value
 
     ||| Lower a leading chain of ownership/reuse wrapper nodes --
     ||| `RDup`/`RDrop`/`RFree`/`RLet`/`RReleaseReuse`/`RReuseOffer`,
@@ -270,7 +270,7 @@ mutual
                  RBoxed => (\(s, p) => ("IDRIS2RC2_Value *", s, p)) <$> rcVarToBoxedC v
                  RNative ty => (\(s, p) => (nativeCType ty ++ " ", s, p)) <$> rcVarToNativeC ty v
                  RInlineNative ty => (\(s, p) => (nativeCType ty ++ " ", s, p)) <$> rcVarToNativeC ty v
-                 RRet1 => ret1Unsupported "RLoopContinue"
+                 RRet1 _ => ret1Unsupported "RLoopContinue"
             emit fc "\{cty}\{t} = \{valStr};"
             removeVars pending
             pure (paramId, t)) (zip newArgs loopParams)
@@ -479,8 +479,8 @@ mutual
                      -- renderers would box a worker's own native result
                      -- straight into a native slot.
                      _ => case sink of
-                              SinkReturn RRet1 => emitRet1Into sink tailPosition remaining
-                              SinkVar _ _ RRet1 => emitRet1Into sink tailPosition remaining
+                              SinkReturn (RRet1 _) => emitRet1Into sink tailPosition remaining
+                              SinkVar _ _ (RRet1 _) => emitRet1Into sink tailPosition remaining
                               SinkReturn (RNative ty) => emitNativeReturn fc ty remaining
                               SinkReturn (RInlineNative ty) => emitNativeReturn fc ty remaining
                               SinkVar _ _ (RNative ty) => emitNativeSinkVar fc sink ty remaining
@@ -504,12 +504,20 @@ mutual
     ||| worker, a struct local passed on unchanged, or a crash.
     emitRet1Into : EmitDeps (Sink -> TailPositionStatus -> RCExp -> Core ())
     emitRet1Into sink _ (RRetPack fc _ tag field) = do
-        (f, pending) <- maybe (pure ("NULL", [])) rcVarToBoxedC field
-        finalizeSinkWithDrop fc sink "(IDRIS2RC2_Ret1){ \{show tag}, \{f} }" pending
+        let layout : List (Int, PrimType)
+            layout = case sink of
+                          SinkReturn (RRet1 l) => l
+                          SinkVar _ _ (RRet1 l) => l
+                          _ => []
+        (member, f, pending) <- case (lookup tag layout, field) of
+            (Just ty, Just x) => (\(s, p) => (ret1Member ty, "(\{ret1MemberCType ty})(\{s})", p)) <$> rcVarToNativeC ty x
+            (_, Just x) => (\(s, p) => ("p", s, p)) <$> rcVarToBoxedC x
+            (_, Nothing) => pure ("p", "NULL", [])
+        finalizeSinkWithDrop fc sink "(IDRIS2RC2_Ret1){ \{show tag}, { .\{member} = \{f} } }" pending
     emitRet1Into sink tailPosition (RAppNameRep fc n argReps retRep postDrop args) =
         emitAppNameRepInto sink tailPosition fc n argReps retRep postDrop args
     emitRet1Into sink _ (RV fc l@(RCLoc _)) = finalizeSink fc sink (varName l)
-    emitRet1Into sink _ (RCrash fc _) = finalizeSink fc sink "(IDRIS2RC2_Ret1){ 0, NULL } /* CRASH */"
+    emitRet1Into sink _ (RCrash fc _) = finalizeSink fc sink "(IDRIS2RC2_Ret1){ 0, { .p = NULL } } /* CRASH */"
     emitRet1Into _ _ _ = ret1Unsupported "a Ret1 sink"
 
     ||| A case branch (or default): emit the drops RC.idr's `annotate`
@@ -560,13 +568,17 @@ mutual
     emitConAltBody sink tailPosition sc (MkRConAlt name coninfo tag args body) = do
         let sc' = varName sc
         scRep <- repOfLocal sc
-        let field : Nat -> String
-            field k = case scRep of
-                           RRet1 => "\{sc'}.f0"
-                           _ => "((IDRIS2RC2_Constructor*)\{sc'})->args[\{show k}]"
+        let native : Maybe PrimType
+            native = case (scRep, tag) of
+                          (RRet1 l, Just t) => lookup t l
+                          _ => Nothing
         _ <- foldlC (\k, arg => do
-            when (arg /= 0) $
-              emit emptyFC "IDRIS2RC2_Value *var_\{show arg} = \{field k};"
+            when (arg /= 0) $ case (scRep, native) of
+                 (RRet1 _, Just ty) => do
+                     update RepMap (insert arg (RNative ty))
+                     emit emptyFC "\{nativeCType ty} var_\{show arg} = (\{nativeCType ty})\{sc'}.f0.\{ret1Member ty};"
+                 (RRet1 _, Nothing) => emit emptyFC "IDRIS2RC2_Value *var_\{show arg} = \{sc'}.f0.p;"
+                 _ => emit emptyFC "IDRIS2RC2_Value *var_\{show arg} = ((IDRIS2RC2_Constructor*)\{sc'})->args[\{show k}];"
             pure (S k) ) 0 args
         branchBody sink body tailPosition
 
@@ -622,7 +634,7 @@ mutual
         scRep <- repOfLocal sc
         let condFor : RConAlt -> Core String
             condFor alt = case scRep of
-                               RRet1 => ret1AltCondExpr sc' alt
+                               RRet1 _ => ret1AltCondExpr sc' alt
                                _ => conAltCondExpr sc' alt
         emitAltChain resolvedSink
             (\alt => (\s => (s, [])) <$> condFor alt)
@@ -656,7 +668,7 @@ mutual
                 (extractExpr, pending) <- the (Core (String, List String)) $ case scRep of
                      RNative ty => rcVarToNativeC ty sc
                      RInlineNative ty => rcVarToNativeC ty sc
-                     RRet1 => ret1Unsupported "RConstCase"
+                     RRet1 _ => ret1Unsupported "RConstCase"
                      RBoxed => pure (case alts of
                                            (MkRConstAlt c0 _ :: _) => extractIntExpr c0 sc'
                                            [] => "idris2rc2_extractInt(\{sc'})", [])
@@ -735,7 +747,7 @@ mutual
         throw $ InternalError "[rc2] RMemoize: unexpected native retRep on \{show n} -- see emitMemoizeInto's own doc comment"
     emitMemoizeInto sink tailPosition fc n (RInlineNative _) body =
         throw $ InternalError "[rc2] RMemoize: unexpected native retRep on \{show n} -- see emitMemoizeInto's own doc comment"
-    emitMemoizeInto sink tailPosition fc n RRet1 body = ret1Unsupported "RMemoize"
+    emitMemoizeInto sink tailPosition fc n (RRet1 _) body = ret1Unsupported "RMemoize"
 
     ||| Declare (and initialise) one `RLoop` loop param -- unless
     ||| `initVal` already directly *is* `paramId`'s own value, under its
@@ -818,7 +830,7 @@ mutual
     -- to a plain native declaration) rather than assumed unreachable.
     declareLoopParam inPrologueDrop fc paramId (RInlineNative ty) initVal =
         declareLoopParam inPrologueDrop fc paramId (RNative ty) initVal
-    declareLoopParam _ _ _ RRet1 _ = ret1Unsupported "RLoop param"
+    declareLoopParam _ _ _ (RRet1 _) _ = ret1Unsupported "RLoop param"
 
     ||| Lower an `RLoop` (see its own doc comment in RCExp.idr): declare
     ||| each loop param (`declareLoopParam`, a no-op for the common
@@ -909,11 +921,11 @@ mutual
                                  RNative t => rcVarToNativeC t v
                                  RInlineNative t => rcVarToNativeC t v
                                  RBoxed => rcVarToBoxedC v
-                                 RRet1 => ret1Unsupported "worker argument") (zip argReps args)
+                                 RRet1 _ => ret1Unsupported "worker argument") (zip argReps args)
         let call = "\{cName n}(\{concat $ intersperse ", " (map fst argsWithPending)})"
         case retRep of
              RBoxed => throw $ InternalError "[rc2] emitNativeValue: RAppNameRep with Boxed retRep reached a native context"
-             RRet1 => ret1Unsupported "emitNativeValue"
+             RRet1 _ => ret1Unsupported "emitNativeValue"
              _ => pure (call, map varName postDrop ++ concatMap snd argsWithPending)
     -- A direct, self-contained call to a %foreign declaration's own
     -- raw C function (`RAppFFIInline`, `Compiler.RC2.DualABI`'s own
@@ -998,7 +1010,7 @@ emitAppNameRepInto sink tailPosition fc n argReps retRep postDrop args = do
                              RNative ty => rcVarToNativeC ty v
                              RInlineNative ty => rcVarToNativeC ty v
                              RBoxed => rcVarToBoxedC v
-                             RRet1 => ret1Unsupported "worker argument") (zip argReps args)
+                             RRet1 _ => ret1Unsupported "worker argument") (zip argReps args)
     let argStrs = map fst argsWithPending
     let argPending = concatMap snd argsWithPending
     let call = "\{cName n}(\{concat $ intersperse ", " argStrs})"
@@ -1008,7 +1020,7 @@ emitAppNameRepInto sink tailPosition fc n argReps retRep postDrop args = do
                                   NotInTailPosition => "idris2rc2_trampoline(\{call})"
                    RNative ty => pure (nativeMk ty call)
                    RInlineNative ty => pure (nativeMk ty call)
-                   RRet1 => pure call
+                   RRet1 _ => pure call
     finalizeSinkWithDrop fc sink valStr (map varName postDrop ++ argPending)
 
 emitAppFFIInlineInto sink tailPosition fc ccs fargs ret postDrop args = do
@@ -1303,12 +1315,12 @@ fnSignature n args retRep isWorker = do
         declareParam (i, RBoxed) = "  IDRIS2RC2_Value * var_" ++ show i
         declareParam (i, RNative ty) = "  " ++ nativeCType ty ++ " var_" ++ show i
         declareParam (i, RInlineNative ty) = "  " ++ nativeCType ty ++ " var_" ++ show i
-        declareParam (i, RRet1) = "  IDRIS2RC2_Ret1 var_" ++ show i
+        declareParam (i, RRet1 _) = "  IDRIS2RC2_Ret1 var_" ++ show i
     let retTypeStr : String = case retRep of
                                     RBoxed => "IDRIS2RC2_Value *"
                                     RNative ty => nativeCType ty ++ " "
                                     RInlineNative ty => nativeCType ty ++ " "
-                                    RRet1 => "IDRIS2RC2_Ret1 "
+                                    RRet1 _ => "IDRIS2RC2_Ret1 "
     -- `MaxExtractFunArgs`'s own `var_arglist[]` fallback only exists to
     -- match `support/rc2/runtime.c`'s closure-dispatch function-pointer
     -- types (see that constant's own doc comment) -- a dual-ABI
