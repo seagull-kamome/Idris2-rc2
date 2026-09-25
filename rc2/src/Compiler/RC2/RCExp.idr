@@ -707,3 +707,94 @@ foldRCNamesD nf (MkRCFun _ _ _ body) = foldRCNamesR nf body
 foldRCNamesD nf (MkRCError body)     = foldRCNamesR nf body
 foldRCNamesD _  (MkRCCon _ _ _)      = neutral
 foldRCNamesD _  (MkRCForeign _ _ _)  = neutral
+
+------------------------------------------------------------------------
+-- Generic post-RC walks, shared by Compiler.RC2.PushCon and
+-- Compiler.RC2.DualABI's struct return.
+
+||| The operands a node reads itself, leaving out the positions that
+||| only release or reuse a local (`drop`, `reuseOffer`'s scrutinee,
+||| `releaseReuse`, a constructor's `reuse=`).
+export
+directReads : RCExp -> List RCLocal
+directReads (RV _ l) = [l]
+directReads (RAppName _ _ _ args) = args
+directReads (RAppNameRep _ _ _ _ pd args) = pd ++ args
+directReads (RAppFFIInline _ _ _ _ pd args) = pd ++ args
+directReads (RUnderApp _ _ _ args) = args
+directReads (RApp _ _ c args) = c :: args
+directReads (RCon _ _ _ _ args _) = args
+directReads (RRetPack _ _ _ field) = toList field
+directReads (ROp _ _ _ args pd) = toList args ++ pd
+directReads (RExtPrim _ _ _ args pd) = args ++ pd
+directReads (RStructGet _ sv _ _ pd) = sv :: pd
+directReads (RStructSet _ sv _ _ val pd) = sv :: val :: pd
+directReads (RCmpCase _ _ args pd _ _) = toList args ++ pd
+directReads (RConCase _ sc _ _) = [sc]
+directReads (RConstCase _ sc _ _) = [sc]
+directReads (RDup _ x _ _) = [x]
+directReads (RFree _ x _) = [x]
+directReads (RReuseOffer _ _ ds us _) = ds ++ us
+directReads (RLoop _ _ initial pd _) = initial ++ pd
+directReads (RLoopContinue _ args pd) = args ++ pd
+directReads _ = []
+
+export
+children : RCExp -> List RCExp
+children (RLet _ _ _ value body) = [value, body]
+children (RCmpCase _ _ _ _ t f) = [t, f]
+children (RConCase _ _ alts mDef) = map (\(MkRConAlt _ _ _ _ b) => b) alts ++ maybe [] pure mDef
+children (RConstCase _ _ alts mDef) = map (\(MkRConstAlt _ b) => b) alts ++ maybe [] pure mDef
+children (RDup _ _ _ k) = [k]
+children (RDrop _ _ k) = [k]
+children (RFree _ _ k) = [k]
+children (RReleaseReuse _ _ k) = [k]
+children (RReuseOffer _ _ _ _ k) = [k]
+children (RLoop _ _ _ _ k) = [k]
+children (RMemoize _ _ _ k) = [k]
+children _ = []
+
+||| `v` is only ever released or reused below, never read or `dup`'d:
+||| the post-RC form of "`v` doesn't escape", which also makes it unique.
+export
+onlyReleased : Int -> RCExp -> Bool
+onlyReleased v e = not (elem (RCLoc v) (directReads e)) && all (onlyReleased v) (children e)
+
+||| Rebuilds `e` with `f` applied to each immediate child.
+export
+mapChildren : (RCExp -> RCExp) -> RCExp -> RCExp
+mapChildren f (RLet fc v r value body) = RLet fc v r (f value) (f body)
+mapChildren f (RCmpCase fc op args pd t e) = RCmpCase fc op args pd (f t) (f e)
+mapChildren f (RConCase fc sc alts mDef) =
+    RConCase fc sc (map (\(MkRConAlt n ci t as b) => MkRConAlt n ci t as (f b)) alts) (map f mDef)
+mapChildren f (RConstCase fc sc alts mDef) =
+    RConstCase fc sc (map (\(MkRConstAlt c b) => MkRConstAlt c (f b)) alts) (map f mDef)
+mapChildren f (RDup fc x n k) = RDup fc x n (f k)
+mapChildren f (RDrop fc vs k) = RDrop fc vs (f k)
+mapChildren f (RFree fc x k) = RFree fc x (f k)
+mapChildren f (RReleaseReuse fc x k) = RReleaseReuse fc x (f k)
+mapChildren f (RReuseOffer fc sc ds us k) = RReuseOffer fc sc ds us (f k)
+mapChildren f (RLoop fc ps initial pd k) = RLoop fc ps initial pd (f k)
+mapChildren f (RMemoize fc n r k) = RMemoize fc n r (f k)
+mapChildren _ e = e
+
+||| `mapChildren` in an `Applicative`: rebuilds `e` with `f` run on each
+||| immediate child, left to right.
+export
+traverseChildren : Applicative f => (RCExp -> f RCExp) -> RCExp -> f RCExp
+traverseChildren f (RLet fc v r value body) = RLet fc v r <$> f value <*> f body
+traverseChildren f (RCmpCase fc op args pd t e) = RCmpCase fc op args pd <$> f t <*> f e
+traverseChildren f (RConCase fc sc alts mDef) =
+    RConCase fc sc <$> traverse (\(MkRConAlt n ci tag as b) => MkRConAlt n ci tag as <$> f b) alts
+                   <*> traverse f mDef
+traverseChildren f (RConstCase fc sc alts mDef) =
+    RConstCase fc sc <$> traverse (\(MkRConstAlt c b) => MkRConstAlt c <$> f b) alts
+                     <*> traverse f mDef
+traverseChildren f (RDup fc x n k) = RDup fc x n <$> f k
+traverseChildren f (RDrop fc vs k) = RDrop fc vs <$> f k
+traverseChildren f (RFree fc x k) = RFree fc x <$> f k
+traverseChildren f (RReleaseReuse fc x k) = RReleaseReuse fc x <$> f k
+traverseChildren f (RReuseOffer fc sc ds us k) = RReuseOffer fc sc ds us <$> f k
+traverseChildren f (RLoop fc ps initial pd k) = RLoop fc ps initial pd <$> f k
+traverseChildren f (RMemoize fc n r k) = RMemoize fc n r <$> f k
+traverseChildren _ e = pure e

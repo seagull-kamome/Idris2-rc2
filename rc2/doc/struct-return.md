@@ -1,10 +1,8 @@
 # Returning small constructors by value (struct return): design
 
-Status (2026-09-25): steps 1, 2 and 4 of "Order of implementation" are
-done, behind the opt-in `--directive structreturn`. Struct workers and
-the wrappers that rebuild the cell exist, and tail calls between struct
-workers are direct; callers outside those tails still call the wrapper
-(step 3). Tracks
+Status (2026-09-25): steps 1 to 4 of "Order of implementation" are
+done, behind the opt-in `--directive structreturn`; whether to turn it
+on by default is open (step 5). Tracks
 `TODO.md`'s "constructor return values are always heap cells" item.
 
 ## The problem
@@ -334,10 +332,42 @@ longer allocate a closure each.
      `workerTable` looks for, so its callers box their arguments again.
      This is why the stage stays opt-in for now.
 3. **Cased call sites.** Rewrite use-1 sites with the RC table above.
+   Done as `structSites`, run on every body before `packTails`. A site
+   is left alone when the struct would be read any other way, when the
+   `case` has a default that mentions it, or when an alt has more than
+   one field (a constructor the callee never returns). It also closes
+   step 2's gap: a call to a worker with native parameters whose result
+   is *not* switched on reaches the worker too, and builds the cell
+   right there, so it keeps passing its arguments natively.
 4. **Tail calls between workers.** Rewrite use-2 sites to direct calls.
-5. **Measure.** Static metrics, the new benchmark and `verify.sh`, all
+5. **Measure.** Measured 2026-09-25, see "Results" below. Static metrics, the new benchmark and `verify.sh`, all
    with and without a `nostructreturn` directive (added in step 2,
    documented in `directives.md`).
+
+## Results (2026-09-25)
+
+`tests/BenchStructReturn.idr` (a four-level `Either` chain, five
+million calls, best of five): 674 ms without struct return, **475 ms**
+with it (about 30% faster), identical output. valgrind counts 10.0M
+allocations without and **5.0M** with: the `Either` cell is gone
+entirely; the one allocation left per call is `mod x 64` boxing its
+operand, unrelated to this work.
+
+idris2-lsp, final `dumprcexpr` (C generation is not reached, see
+`TODO.md`), against the default pipeline:
+
+| | default | `structreturn` |
+|---|---|---|
+| definitions | 22,522 | 29,609 (+7,087 workers) |
+| `con` | 53,957 | **49,167** (−8.9%) |
+| `retpack` | 0 | 17,643 |
+| `reuseOffer` | 25,765 | **17,865** (−31%) |
+| `dup` / `drop` | 92,240 / 188,058 | 90,967 / 187,437 |
+| `let ... : Ret1` | 0 | 13,011 |
+| DualABI stage | — | 2.0 s |
+
+`rcexpr-lint` finds no anomaly in either dump. `verify.sh` passes with
+and without `--directive structreturn` on every test, valgrind included.
 
 ## Tests
 

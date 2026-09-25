@@ -95,11 +95,12 @@ Directives that look like they belong on this list but don't:
   `Compiler.RC2.DualABI`'s struct return (`applyStructReturn`): a
   function whose every tail is a constructor of at most one field gets a
   worker returning an `IDRIS2RC2_Ret1` struct, and keeps its name as a
-  wrapper that builds the cell (`doc/struct-return.md`). Off until its
-  step 3 rewrites the call sites too; until then every caller still goes
-  through the wrapper. `Test90StructReturn` opts in with `%cg rc2
-  structreturn`; run `verify.sh --directive structreturn` after touching
-  it to exercise every other test with it on.
+  wrapper that builds the cell (`doc/struct-return.md`); a call whose
+  result is switched on at once reaches the worker directly. Off by
+  default until it is measured on a real workload. `Test90StructReturn`
+  opts in with `%cg rc2 structreturn`; run `verify.sh --directive
+  structreturn` after touching it to exercise every other test with it
+  on.
 - **`nomain` is a real, currently-supported directive, just not a
   pipeline-stage disable.** It's read as its own plain `Bool` directly
   in `compileExpr`, not threaded through `toRCDefs`/`disabled` at all,
