@@ -62,6 +62,7 @@ fine-grained per-function/per-node control.
 | `nolateinline` | `Compiler.RC2.LateInline`'s whole-program single-caller inlining, run after Loop/MutualLoop conversion (`doc/inlining.md`'s "Criterion B, revisited"). |
 | `nosink` | `Compiler.RC2.Sink`'s branch-local sinking (`doc/branch-sinking.md`). |
 | `nodualabi` | Both `Compiler.RC2.DualABI`'s worker/wrapper synthesis *and* its call-site rewriting together -- the rewrite needs the worker table the synthesis step builds, so splitting them wouldn't be meaningful (`doc/dual-abi.md`). |
+| `nostructreturn` | `Compiler.RC2.DualABI`'s struct return (`applyStructReturn`): a function whose every tail is a constructor of at most one field, and which some caller gains from, gets a worker returning an `IDRIS2RC2_Ret1` struct; a call that switches on the result at once reaches that worker (`doc/struct-return.md`). Implied by `nodualabi`. |
 | `nodeadcode` | `Compiler.RC2.DeadCode`'s pruning of definitions left with zero remaining callers (`doc/dead-code-elim.md`). |
 | `nodupmerge` | `Compiler.RC2.DupMerge`'s batching of several individual `RDup` nodes into one higher-`extra` `RDup`, *and* its `cancelDupDrop` peephole (an `RDup` whose local an `RDrop` in the same refcount-only run releases again). |
 
@@ -80,7 +81,7 @@ Directives that look like they belong on this list but don't:
   is dropped has no reference of its own -- the use-after-free a missing
   `RMemoize` case in the same function caused in `refc-suite/clock`
   (`doc/caf-memoization.md`).
-- **`latepushcon` is an opt-in stage.** It turns *on*
+- **`latepushcon` is the one opt-in stage.** It turns *on*
   `Compiler.RC2.PushCon`'s post-RC push (`applyPushConRC`), right after
   the later `LateInline` run: the same case-into-tails push, with each
   known tail folded against its alt by explicit ownership transfer
@@ -91,16 +92,6 @@ Directives that look like they belong on this list but don't:
   `verify.sh --directive latepushcon` after touching it, since the
   default suite never exercises it. Travels in the same list as the
   disables (`RC2.idr`'s `optInStageNames`).
-- **`structreturn` is the other opt-in stage.** It turns *on*
-  `Compiler.RC2.DualABI`'s struct return (`applyStructReturn`): a
-  function whose every tail is a constructor of at most one field gets a
-  worker returning an `IDRIS2RC2_Ret1` struct, and keeps its name as a
-  wrapper that builds the cell (`doc/struct-return.md`); a call whose
-  result is switched on at once reaches the worker directly. Off by
-  default until it is measured on a real workload. `Test90StructReturn`
-  opts in with `%cg rc2 structreturn`; run `verify.sh --directive
-  structreturn` after touching it to exercise every other test with it
-  on.
 - **`nomain` is a real, currently-supported directive, just not a
   pipeline-stage disable.** It's read as its own plain `Bool` directly
   in `compileExpr`, not threaded through `toRCDefs`/`disabled` at all,

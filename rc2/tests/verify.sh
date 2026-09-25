@@ -648,11 +648,10 @@ for name in $ALL_TESTS; do
         fi
     fi
 
-    # Test90StructReturn: struct return (doc/struct-return.md) is opted in
-    # by the test's own `%cg rc2 structreturn`, so the dump shows which
-    # workers return a struct: `step`'s and `lookupAge`'s (a `Nothing`
-    # tail), not `halfOf` (only ever a closure, so no caller gains) nor
-    # `halves` (a pair). `--directive nodualabi` fails this.
+    # Test90StructReturn: struct return (doc/struct-return.md) shows in the
+    # dump as the workers that return a struct: `step`'s and `lookupAge`'s
+    # (a `Nothing` tail), not `halfOf` (only ever a closure, so no caller
+    # gains) nor `halves` (a pair). `--directive nostructreturn` fails this.
     if [ "$name" = "Test90StructReturn" ]; then
         dump="$TMP/${name}_rc2.rcexpr"
         stepRet1="$(grep -c '^def {idris2rc2_worker_Main_step:[0-9]*} .* ret= Ret1 ' "$dump" || true)"

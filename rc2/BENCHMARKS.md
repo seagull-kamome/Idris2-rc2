@@ -1268,11 +1268,11 @@ idris2-lsp全体(`--directive noearlyinline`との対比):
 両列は同じ時間帯に交互に実行した。マイクロベンチマークには差が出ない(その形は
 以前の変更で既に処理済み)。
 
-## 小さなコンストラクタの値返し(構造体返し、`--directive structreturn`)
+## 小さなコンストラクタの値返し(構造体返し、`--directive nostructreturn`で無効化)
 
 末尾がすべてフィールド1個以下のコンストラクタになる関数に、`{tag, f0}`の構造体を
 レジスタで返すworkerを作り、呼び出し直後に`case`する箇所はそのworkerを直接呼ぶ。
-既定では無効。`doc/struct-return.md`を参照。
+当初は既定で無効(末尾の追記を参照)。`doc/struct-return.md`を参照。
 
 `tests/BenchStructReturn.idr`(4段の`Either`の連鎖を500万回、5回の最良値):
 
@@ -1309,3 +1309,5 @@ workerからの末尾呼び出し)がある関数だけにworkerを作るよう�
 (12.11sと12.12s)。`BenchStructReturn`は変わらず(667msと468ms)。
 idris2-lspでは構造体を返すworkerが7,844個から644個に減り、定義数の増加は
 +7,087から+235になった。`reuseOffer`の削減(25,765→17,865)は絞り込み前と同数。
+
+2026-09-25、この段を既定で有効にした(`--directive nostructreturn`で無効化)。

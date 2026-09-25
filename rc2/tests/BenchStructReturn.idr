@@ -11,7 +11,7 @@ module Main
 -- return the result travels as a `{tag, f0}` pair in registers and no
 -- cell is built at all.
 --
--- A/B it with `--directive structreturn` (opt-in for now).
+-- A/B it with `--directive nostructreturn`.
 
 step : Int -> Int -> Either String Int
 step 0 x = if x < 0 then Left "neg" else Right (mod x 64)

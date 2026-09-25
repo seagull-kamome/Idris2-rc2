@@ -1,10 +1,8 @@
 module Main
 
--- Struct return (rc2/doc/struct-return.md), opted in below until it is
--- on by default. verify.sh checks which workers return `Ret1` in the dump;
--- the output itself is diffed against refc.
-
-%cg rc2 structreturn
+-- Struct return (rc2/doc/struct-return.md). verify.sh checks which
+-- workers return `Ret1` in the dump; the output itself is diffed against
+-- refc.
 
 -- Every level cases on the level below and rebuilds the same Either:
 -- eligible (a one-field constructor in every tail), and its own

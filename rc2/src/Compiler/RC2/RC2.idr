@@ -236,12 +236,12 @@ insertMemoize = map wrap
 ||| apart.
 disableableStageNames : List String
 disableableStageNames =
-    ["noinline", "noconstfold", "noknowncon", "nopushcon", "nospecclosure", "nospecconstcon", "noconaltnative", "nomutualloop", "noloop", "noearlyinline", "nolateinline", "nosink", "nodualabi", "nodeadcode", "nodupmerge", "nodeadvars"]
+    ["noinline", "noconstfold", "noknowncon", "nopushcon", "nospecclosure", "nospecconstcon", "noconaltnative", "nomutualloop", "noloop", "noearlyinline", "nolateinline", "nosink", "nodualabi", "nostructreturn", "nodeadcode", "nodupmerge", "nodeadvars"]
 
 ||| Stages that are off unless asked for with `--directive <name>`. They
 ||| travel to `toRCDefs` in the same list as the disables above.
 optInStageNames : List String
-optInStageNames = ["latepushcon", "structreturn"]
+optInStageNames = ["latepushcon"]
 
 ||| Every directive `toRCDefs` consults: the disables and the opt-ins.
 stageDirectiveNames : List String
@@ -415,11 +415,10 @@ toRCDefs disabled incremental roots lds0 = do
        then pure sunk
        else logTime 2 "rc2: DualABI" $ do
            withNative <- applyDualABI sunk
-           -- doc/struct-return.md: opt-in (`--directive structreturn`)
-           -- until the call sites are rewritten too (its step 3).
-           withWorkers <- if "structreturn" `elem` disabled
-                             then applyStructReturn withNative
-                             else pure withNative
+           -- doc/struct-return.md
+           withWorkers <- if "nostructreturn" `elem` disabled
+                             then pure withNative
+                             else applyStructReturn withNative
            (ffiWorkers, ffiInlineMap) <- ffiWorkerTable sunk
            let rewritten = applyCallSiteRewrite ffiWorkers withWorkers
            pure (inlineFFIWorkers ffiInlineMap rewritten)

@@ -84,7 +84,7 @@ show up again during testing.
   CAF (Boxed CAFs only; the doc explains why the native case turned
   out unreachable), `struct-return.md` for returning a constructor
   of at most one field as a by-value `{tag, f0}` struct from a DualABI
-  worker (design only so far). Not
+  worker. Not
   a replacement for `TODO.md` — those stay the changelog
   and gap tracker; `rc2/doc/` is where the *why* and the
   bugs-found-along-the-way for a specific subsystem live.

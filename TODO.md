@@ -572,8 +572,8 @@ whose value is a `con` built in the same function need no call-boundary
 change at all; they are the separate, intraprocedural
 case-of-known-constructor fold.)
 
-Design and implementation (2026-09-25): `rc2/doc/struct-return.md`,
-opt-in with `--directive structreturn`. A
+Design and implementation (2026-09-25): `rc2/doc/struct-return.md`, on
+by default (`--directive nostructreturn` turns it off). A
 new DualABI stage returns a constructor with at most one field as a
 fixed 16-byte `{tag, f0}` struct in registers; the Boxed wrapper
 materialises the cell for every other caller. On idris2-lsp that covers
@@ -583,9 +583,9 @@ already erased (`Core` returns a bare `Either`), reuse analysis already
 limits today's cost to one malloc per chain, and tail calls between
 eligible functions form no cycle, so they can become direct C calls.
 Implemented through the call-site rewrite; `tests/BenchStructReturn.idr`
-runs 30% faster and allocates half as often. Left: decide whether to
-turn it on by default, which wants a run-time measurement on a real
-workload (idris2-lsp cannot reach C generation yet); constructors of
+runs 30% faster and allocates half as often. Left: a run-time
+measurement on a workload full of `Core`-style chains (idris2-lsp
+cannot reach C generation, and that is not being worked on); constructors of
 two to four fields (about 2,200 functions on idris2-lsp) and native
 payloads are further extensions.
 

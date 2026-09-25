@@ -1,8 +1,7 @@
 # Returning small constructors by value (struct return): design
 
-Status (2026-09-25): steps 1 to 4 of "Order of implementation" are
-done, behind the opt-in `--directive structreturn`; whether to turn it
-on by default is open (step 5). Tracks
+Status (2026-09-25): implemented and on by default (`--directive
+nostructreturn` turns it off), after the measurements in "Results". Tracks
 `TODO.md`'s "constructor return values are always heap cells" item.
 
 ## The problem
@@ -330,7 +329,7 @@ longer allocate a closure each.
    - Until step 3, a function with native parameters loses Stage 4's
      native call sites: its wrapper no longer has the single-call shape
      `workerTable` looks for, so its callers box their arguments again.
-     This is why the stage stays opt-in for now.
+     Step 3 closed this gap.
 3. **Cased call sites.** Rewrite use-1 sites with the RC table above.
    Done as `structSites`, run on every body before `packTails`. A site
    is left alone when the struct would be read any other way, when the
@@ -341,7 +340,8 @@ longer allocate a closure each.
    right there, so it keeps passing its arguments natively.
 4. **Tail calls between workers.** Rewrite use-2 sites to direct calls.
 5. **Measure.** Measured 2026-09-25, see "Results" below. Static metrics, the new benchmark and `verify.sh`, all
-   with and without a `nostructreturn` directive (added in step 2,
+   with and without a `nostructreturn` directive (`structreturn` was
+   opt-in until 2026-09-25; the directive flipped when it went default,
    documented in `directives.md`).
 
 ## Results (2026-09-25)
@@ -371,7 +371,7 @@ drops is the workers nobody calls directly, and the cells their
 wrappers rebuilt.
 
 `rcexpr-lint` finds no anomaly in either dump. `verify.sh` passes with
-and without `--directive structreturn` on every test, valgrind included.
+and without struct return on every test, valgrind included.
 
 idris2-missing-containers (`test/src/Main.idr`, a hash-map benchmark,
 run from the package root; five alternating runs, the first of each
