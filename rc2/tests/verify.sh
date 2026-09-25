@@ -418,7 +418,7 @@ NO_REFC_DIFF_TESTS="Test3Data Test7CastMatrix Test8EmptyCon Test17ConstFold Test
 # packCFType allocation (idris2rc2_mkPointer/idris2rc2_mkGCPointer) is
 # new to %export's own argument marshalling and worth the same
 # scrutiny.
-LEAK_SENSITIVE_TESTS="Test1Basics Test9SelfTailLoop Test11DualABILeak Test12ConAltNative Test13NativeArgChain Test14SmallFunctionInline Test15CompareFusionThroughCall Test16LoopContinuePostDrop Test17ConstFold Test18ClosureInPlaceGrow Test19LoopInvariantParam Test22BranchSinking Test24CStructSupport Test26GCPtrAliasString Test27FFIDualABI Test28Utf8Strings Test33WideDualABIWorker Test35NetworkLoopback Test36ReuseOfferUniqueLeak Test37SystemMisc Test41FFIMalloc Test42SupportMisc Test44IORefExtPrimLeak Test46FastPackUnconditional Test49IntegerOpReuse Test57LoopCallArgNativeShadow Test59Export Test66ClosureFastPath Test69ConstFoldClosure Test70ConstFoldClosureCallthrough Test79DupMerge Test84CgExternStruct Test85CgExternStructPtrField Test86CafMemoization Test87SpecConstCon Test88KnownConFold Test89CafDualABI Test90StructReturn"
+LEAK_SENSITIVE_TESTS="Test1Basics Test9SelfTailLoop Test11DualABILeak Test12ConAltNative Test13NativeArgChain Test14SmallFunctionInline Test15CompareFusionThroughCall Test16LoopContinuePostDrop Test17ConstFold Test18ClosureInPlaceGrow Test19LoopInvariantParam Test22BranchSinking Test24CStructSupport Test26GCPtrAliasString Test27FFIDualABI Test28Utf8Strings Test33WideDualABIWorker Test35NetworkLoopback Test36ReuseOfferUniqueLeak Test37SystemMisc Test41FFIMalloc Test42SupportMisc Test44IORefExtPrimLeak Test46FastPackUnconditional Test49IntegerOpReuse Test57LoopCallArgNativeShadow Test59Export Test66ClosureFastPath Test69ConstFoldClosure Test70ConstFoldClosureCallthrough Test79DupMerge Test84CgExternStruct Test85CgExternStructPtrField Test86CafMemoization Test87SpecConstCon Test88KnownConFold Test89CafDualABI Test90StructReturn Test91IntConstFold"
 
 # KNOWN-BUGS.md's own remaining pre-existing leaks -- "definitely
 # lost" byte count, exactly. Anything else non-zero is a genuine new
@@ -663,6 +663,19 @@ for name in $ALL_TESTS; do
             report_pass "$name (struct return -- step (native Int field) and lookupAge return Ret1, halfOf and halves not)"
         else
             report_fail "$name" "Ret1 workers step=$stepRet1 lookupAge=$lookupRet1 halfOf=$halfOfRet1 halves=$halvesRet1 in $dump"
+        fi
+    fi
+
+    # Test91IntConstFold: `Int` literals and casts fold like `Int64`, and a
+    # large `Integer` literal lends its value to the cast reading it, so
+    # the literal-only half of each line builds no `Integer` at run time.
+    # `--directive noconstfold` fails this.
+    if [ "$name" = "Test91IntConstFold" ]; then
+        leftovers="$(grep -cE 'mkIntegerLiteral\("(18446744073709551621|9223372036854775807|4611686018427387904)"\)' "$TMP/${name}_rc2.c" || true)"
+        if [ "$leftovers" = "0" ]; then
+            report_pass "$name (Int constant folding -- no literal Integer left behind a folded cast)"
+        else
+            report_fail "$name" "$leftovers Integer literal(s) still built for a foldable Int cast in $TMP/${name}_rc2.c"
         fi
     fi
 

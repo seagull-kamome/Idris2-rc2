@@ -1334,3 +1334,18 @@ idris2-lspでは効く箇所がほとんどない(`retpack` 3,679件のうちネ
 idris2-missing-containers(交互に6回、1回目を除いた平均):対象0件のため
 無効10.35s・有効10.37sで差なし。前日の計測(12.1s前後)より全体に速いのは
 計測時のマシンの負荷の違いで、両列は同じ時間帯に交互に実行した。
+
+## `Int`の定数畳み込み(2026-09-26)
+
+rc2の`Int`はCの`int64_t`なので、ConstFoldで`Int`を`Int64`と同じく畳み込む
+ようにし、100以上の`Integer`リテラル(letで束縛される)も演算の引数として
+読めるようにした。`Int`のリテラル(`fromInteger n` = `cast-Integer-Int`)が
+実行時に`Integer`を作らなくなる。`doc/cast-fold-scope.md`を参照。
+
+`tests/BenchStructReturnNative.idr`: 864ms・確保2,000万回 → **54ms・35回**
+(ループが整数演算だけになり、gccがまとめて最適化できるようになった)。
+
+idris2-missing-containers(交互に6回、1回目を除いた平均):10.36s → **9.69s**
+(約6.5%高速)。出力は一致、生成Cの`idris2rc2_mkIntegerLiteral`は12→4箇所。
+idris2-lspの最終IRでは`cast-Integer-Int`が416→211箇所、`op`が211箇所、
+`let`が263箇所減った。

@@ -15,15 +15,18 @@ set -u
 c=build/exec/test.c
 strip_loc() { sed -E 's#[[:space:]]+// [A-Za-z_.]+:[0-9]+:[0-9]+.*$##'; }
 # C locals are numbered from rc2's whole-program id counter, so any pass
-# that mints ids shifts them. Renumbered here in order of first
-# appearance: which names coincide is kept, the counter values aren't.
-# A worker's own numeric suffix is the same kind of counter.
+# that mints ids shifts them; Emit's `tmp_`/`loop_` names come from a
+# counter of its own that shifts the same way. Renumbered here in order
+# of first appearance, per prefix: which names coincide is kept, the
+# counter values aren't. A worker's own numeric suffix is the same kind
+# of counter.
 renumber() {
     sed -E 's/(idris2rc2_worker_Main_[A-Za-z]+)_[0-9]+/\1_N/g' |
     awk '{ out = ""; s = $0
-           while (match(s, /var_[0-9]+/)) {
+           while (match(s, /(var|tmp|loop)_[0-9]+/)) {
                v = substr(s, RSTART, RLENGTH)
-               if (!(v in m)) m[v] = "var_" (++n)
+               pfx = substr(v, 1, index(v, "_"))
+               if (!(v in m)) m[v] = pfx (++n[pfx])
                out = out substr(s, 1, RSTART - 1) m[v]; s = substr(s, RSTART + RLENGTH)
            }
            print out s }'

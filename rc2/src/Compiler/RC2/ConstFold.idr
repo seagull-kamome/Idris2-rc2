@@ -32,9 +32,11 @@ import Data.Vect
 %default covering
 
 ||| Cast folding mirrors upstream's own `foldableOp`
-||| (idris2-src/src/Compiler/Opts/ConstantFold.idr:20-25) exactly, not
-||| `getOp`'s own unguarded Cast dispatch. `IntType` is excluded on
-||| either side (backend-dependent width, not provably safe); `Double`
+||| (idris2-src/src/Compiler/Opts/ConstantFold.idr:20-25), not `getOp`'s
+||| own unguarded Cast dispatch, except that `IntType` is allowed:
+||| upstream excludes it because its width is backend-dependent, but in
+||| rc2 `Int` is C's `int64_t`, emitted exactly like `Int64` (and `getOp`
+||| evaluates both alike), so it folds the way `Int64` does; `Double`
 ||| is excluded via `intKind` already returning `Nothing` for it
 ||| (`safeConst` also excludes `Db` outright, belt-and-suspenders).
 ||| `to = StringType` is its own case, not folded into the generic
@@ -46,22 +48,18 @@ import Data.Vect
 ||| exclusion can't just be inferred from `intKind`'s current shape.
 foldableOp : {0 arity : Nat} -> PrimFn arity -> Bool
 foldableOp BelieveMe = False
-foldableOp (Cast IntType _) = False
-foldableOp (Cast _ IntType) = False
 foldableOp (Cast from StringType) = isJust (intKind from)
 foldableOp (Cast from to)   = isJust (intKind from) && isJust (intKind to)
 foldableOp _                = True
 
-||| Operands ConstFold itself will actually fold -- not `I` (backend-
-||| dependent width, same reasoning as `foldableOp`'s `IntType`
-||| exclusion) or `Db` (host-eval-vs-runtime-cast mismatch, see
+||| Operands ConstFold itself will actually fold -- not `Db`
+||| (host-eval-vs-runtime-cast mismatch, see
 ||| `rc2/doc/cast-fold-scope.md`'s "Double -> String"). Exported so
 ||| `Compiler.RC2.Inline`'s own `allLiteralArgs` guard stays in
 ||| lockstep with exactly what this pass folds, not a hand-duplicated
 ||| copy.
 export
 safeConst : Constant -> Bool
-safeConst (I _) = False
 safeConst (Db _) = False
 safeConst _ = True
 
@@ -152,7 +150,10 @@ useInfo = go (MkUseInfo empty empty empty)
 ||| the local the constructor was built from, and `knownCons` the
 ||| constructors themselves -- only non-escaping ones, and only when
 ||| `uses` is there at all. `knownPartials` is the same for a
-||| partial application (`RUnderApp`) that is only ever applied.
+||| partial application (`RUnderApp`) that is only ever applied. `bigLits`
+||| holds the `Integer` literals too large for `RCConst` (`RC.idr`'s
+||| `bindOne`): they keep their `let`, for ownership, but an op can still
+||| read their value.
 record Env where
   constructor MkEnv
   uses : Maybe UseInfo
@@ -160,11 +161,12 @@ record Env where
   aliases : SortedMap Int RCLocal
   knownCons : SortedMap Int KnownCon
   knownPartials : SortedMap Int (Name, Nat, List RCLocal)
+  bigLits : SortedMap Int Constant
 
 ||| `knownCons`: whether to fold known constructors at all, which costs
 ||| a `useInfo` walk up front.
 emptyEnv : (knownCons : Bool) -> RCExp -> Env
-emptyEnv knownCons body = MkEnv (if knownCons then Just (useInfo body) else Nothing) empty empty empty empty
+emptyEnv knownCons body = MkEnv (if knownCons then Just (useInfo body) else Nothing) empty empty empty empty empty
 
 insertConst : Int -> Subset RCLocal IsAnyConstLocal -> Env -> Env
 insertConst i c = { consts $= insert i c }
@@ -188,6 +190,7 @@ resolveLocal _   l           = l
 resolveConst : Env -> RCLocal -> Maybe Constant
 resolveConst env l = case resolveLocal env l of
                            RCConst c => Just c
+                           RCLoc i   => lookup i env.bigLits
                            _         => Nothing
 
 ||| `l` is one of `RCLocal`'s constant forms *and* safe to stage as a
@@ -296,7 +299,16 @@ foldConst caf env (RLet fc var rep value body) =
                          in if contains (RCLoc var) (freeLocalsR body')
                                then RLet fc var rep value' body'
                                else body'
-                     Nothing => RLet fc var rep value' (foldConst caf env body)
+                     -- A large `Integer` literal keeps its `let` (see
+                     -- above) but lends its value to the ops reading it;
+                     -- once they have all folded, nothing needs it.
+                     Nothing => case c of
+                         BI _ =>
+                             let body' = foldConst caf ({ bigLits $= insert var c } env) body
+                             in if contains (RCLoc var) (freeLocalsR body')
+                                   then RLet fc var rep value' body'
+                                   else body'
+                         _ => RLet fc var rep value' (foldConst caf env body)
             RV _ cval@(RCConstCon {}) =>
                 let body' = foldConst caf (insertConst var (Element cval ItIsConstCon2) env) body
                 in if contains (RCLoc var) (freeLocalsR body')

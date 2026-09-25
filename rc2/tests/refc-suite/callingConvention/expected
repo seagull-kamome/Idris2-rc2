@@ -17,7 +17,7 @@ int64_t idris2rc2_worker_Main_eligibleAdd_N
 0
 --- FFI call-site shape (wrapper body + inlined non-tail call site + tailAbs's own inlined tail call) ---
         int64_t var_3 = abs(var_4);
-    IDRIS2RC2_Value * tmp_11 = (IDRIS2RC2_Value*)idris2rc2_mkInt64(abs(idris2rc2_to_i64(var_5)));
+    IDRIS2RC2_Value * tmp_1 = (IDRIS2RC2_Value*)idris2rc2_mkInt64(abs(idris2rc2_to_i64(var_5)));
     int64_t retVal = abs((idris2rc2_to_i64(var_6)));
     int64_t var_7 = abs(INT64_C(0));
 --- Compiler.RC2.Loop goto conversion for sumLoop's own worker body ---
@@ -31,17 +31,17 @@ int64_t idris2rc2_worker_Main_sumLoop_N
     int64_t var_11 = (var_9 == NULL) ? 0 : (idris2rc2_to_i64(var_9));
     idris2rc2_drop(var_8);
     idris2rc2_drop(var_9);
-    loop_12:;
-    int64_t tmp_13 = var_10;
-    if (tmp_13 == INT64_C(0)) {
+    loop_1:;
+    int64_t tmp_2 = var_10;
+    if (tmp_2 == INT64_C(0)) {
         return var_11;
     }
     int64_t var_12 = (var_10 - INT64_C(1));
-    int64_t tmp_14 = var_12;
-    int64_t tmp_15 = (var_11 + var_10);
-    var_10 = tmp_14;
-    var_11 = tmp_15;
-    goto loop_12;
+    int64_t tmp_3 = var_12;
+    int64_t tmp_4 = (var_11 + var_10);
+    var_10 = tmp_3;
+    var_11 = tmp_4;
+    goto loop_1;
 }
 --- Tail-position FFI call for tailAbs (want: inlined call + immediate return, no closure defer, rc2/doc/dual-abi.md Stage 4b) ---
 IDRIS2RC2_Value *Main_tailAbs
@@ -49,8 +49,8 @@ IDRIS2RC2_Value *Main_tailAbs
     IDRIS2RC2_Value * var_5
 )
 {
-    IDRIS2RC2_Value * tmp_11 = (IDRIS2RC2_Value*)idris2rc2_mkInt64(abs(idris2rc2_to_i64(var_5)));
+    IDRIS2RC2_Value * tmp_1 = (IDRIS2RC2_Value*)idris2rc2_mkInt64(abs(idris2rc2_to_i64(var_5)));
 
     idris2rc2_drop(var_5);
-    return tmp_11;
+    return tmp_1;
 }

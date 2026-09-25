@@ -589,7 +589,7 @@ isPrimVal _ = False
 
 ||| Never inline a call whose arguments are all bare literal constants
 ||| *and* include at least one Compiler.RC2.ConstFold itself won't fold
-||| away (an `I`/`Db` literal -- see its own `safeConst`, reused here
+||| away (a `Db` literal -- see its own `safeConst`, reused here
 ||| so this stays in lockstep with exactly what it folds): gcc's own
 ||| `-Werror=overflow` can statically prove an intentional fixed-width
 ||| wraparound "overflows" once every operand of a folded arithmetic

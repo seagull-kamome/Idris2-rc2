@@ -119,9 +119,8 @@ What must stay excluded even if the blanket rule is relaxed:
   formatter / parser mismatches documented in the two neighbouring
   sections.
 - `Cast DoubleType -> (fixed-width int)` -- truncation-toward-zero of
-  an out-of-range or NaN operand is platform-defined; already blocked
-  for the `Int` target by `Cast _ IntType = False`, but not for
-  `Int64`/`Bits64`/etc.
+  an out-of-range or NaN operand is platform-defined; blocked for every
+  integer target by `intKind DoubleType = Nothing`.
 - The transcendentals -- `doubleOp exp` and friends call the *host's*
   libm (via whatever backend built the compiler, e.g. Chez's `flexp`),
   which is not guaranteed to agree with the target's C `libm` to the
@@ -168,8 +167,8 @@ integer targets, via `constantIntegerValue`,
 Bits8` and friends already return `Nothing` from `getOp` itself,
 independent of anything `foldableOp` does. Only `String -> Integer/Int
 (unsuffixed)/Double` are live enough at the `getOp` layer to need an
-explicit exclusion, and `Int`/`Double` are already excluded on other
-grounds (`Cast _ IntType = False`, `intKind DoubleType = Nothing`).
+explicit exclusion; `String -> Int` and `String -> Double` are both
+kept out by `intKind StringType = Nothing` in the general rule.
 `String -> Integer` is the one combination that's both live at the
 `getOp` layer and not otherwise excluded, so `foldableOp`'s general
 `Cast from to = isJust (intKind from) && isJust (intKind to)` rule
@@ -239,3 +238,31 @@ Test: `castStringToIntegerNotFolded` in `Test17ConstFold.idr`.
    repro confirms whether a given `Cast` folded (`RPrimVal`) or stayed
    a runtime `op cast-...` -- the fastest way to check `foldableOp`'s
    actual behaviour without reading generated C.
+
+## `Int` folds like `Int64` (2026-09-26)
+
+Upstream's `foldableOp` refuses `Cast IntType _` and `Cast _ IntType`,
+and rc2's `safeConst` used to refuse every `I` operand: `Int`'s width is
+backend-dependent. In rc2 it is not -- `Int` is C's `int64_t`, emitted
+exactly as `Int64` is (`nativeCType`, `isSigned`, `intBits`, the
+`idris2rc2_ediv_i64`/`emod_i64` pair), and `getOp` evaluates `I` and
+`I64` alike (64-bit wraparound, Euclidean `div`/`mod`, low 64 bits of an
+`Integer` on a cast) -- so both exclusions are gone and `Int` folds the
+way `Int64` always has. Every direction the sections above exclude stays
+excluded by `intKind` alone.
+
+That alone didn't reach the common case: an `Int` literal is
+`fromInteger n`, i.e. `cast-Integer-Int` of an `Integer` literal, and a
+literal of 100 or more is let-bound by `RC.idr`'s `bindOne` instead of
+being an `RCConst`, so the cast had no constant to read. ConstFold now
+keeps such literals in `Env.bigLits`: the `let` stays for ownership
+(`const-con-fold.md`'s Bug #2), but an op reading it folds, and the `let`
+goes once nothing reads it. `Test91IntConstFold` checks each folded
+value against the same computation done at run time.
+
+`i + 1000` on `Int` in a loop used to build and cast the `Integer`
+`1000` on every iteration: `tests/BenchStructReturnNative.idr` went from
+864 ms and 20M allocations to 54 ms and 35.
+idris2-missing-containers runs 10.36 s -> 9.69 s (6.5% faster; the
+generated C builds 4 `Integer` literals instead of 12), and idris2-lsp's
+final IR has 211 `cast-Integer-Int` ops instead of 416.

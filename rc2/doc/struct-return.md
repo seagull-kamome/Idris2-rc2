@@ -445,9 +445,9 @@ names. Numeric chains are what gain: `tests/BenchStructReturnNative.idr`
 (`BenchStructReturn` with every payload above the small-int cache) runs
 1,723 ms without struct return and **864 ms** with it, and allocates
 50.0M times without and 20.0M with. The worker allocates nothing; what
-is left is `i + 1000` in the benchmark's own loop building the literal
-`1000` as an `Integer` and casting it every iteration, unrelated to
-this work (`TODO.md`).
+was left was `i + 1000` in the benchmark's own loop building the literal
+`1000` as an `Integer` every iteration, since folded
+(`cast-fold-scope.md`, 54 ms and 35 allocations).
 
 ## Open questions
 

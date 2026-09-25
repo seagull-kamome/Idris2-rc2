@@ -558,14 +558,6 @@ survive in the test suite's own generated C (down from 210). They are
 mixed cases -- a `case` one of whose arms is Boxed, a literal minted by
 a pass other than `LateInline`, an `opBox` feeding `sqrt`. Low value.
 
-Seen 2026-09-26 (`rc2/tests/BenchStructReturnNative.idr`): `i + 1000` on
-`Int` in a loop still builds the literal `1000` as an `Integer`
-(`idris2rc2_mkIntegerLiteral("1000")`) and casts it with
-`cast-Integer-Int` on every iteration, four allocations per iteration.
-A `cast-Integer-Int` of an `Integer` literal could fold to an `Int`
-literal at compile time; small literals (below 100) already come from
-the static cache, which is why the smaller benchmarks don't show it.
-
 ## Performance: constructor return values are always heap cells -- return small constructors by value (struct return)
 
 Important. A function returning a constructor always heap-allocates it,
