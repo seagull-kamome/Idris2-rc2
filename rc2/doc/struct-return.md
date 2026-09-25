@@ -1,6 +1,8 @@
 # Returning small constructors by value (struct return): design
 
-Status: design only, nothing implemented yet (2026-09-25). Tracks
+Status: step 1 of "Order of implementation" done (2026-09-25): the
+`RRet1` Rep, the runtime typedef and the eligibility analysis, shown by
+`--directive dumpdualabi`. Nothing uses them yet. Tracks
 `TODO.md`'s "constructor return values are always heap cells" item.
 
 ## The problem
@@ -199,9 +201,13 @@ Struct return is another worker/wrapper split, so it belongs in
   - a static constant constructor (`RCConstCon`/`RCEmptyCon`) of at
     most one field;
   - an `RCrash`;
-  - an `RAppName`/`RAppNameRep` to another eligible function.
+  - a non-lazy `RAppName`, or an `RAppNameRep`, to another eligible
+    function;
+  - `RV RCNull`. Phase 1 folds Nil/Nothing/Z/MkUnit into `RCNull`, all
+    tag 0, but an erased value is `RCNull` too, so such a tail is
+    accepted without counting as a constructor.
 
-  The function must also reach at least one constructor. `MutualLoop`'s
+  The function must also reach at least one real constructor tail. `MutualLoop`'s
   merged functions and CAFs (bodies under `RMemoize`) are excluded, and
   so is any member of a tail-call cycle among eligible functions. That
   set is empty on idris2-lsp today, but the check keeps the "Tail calls"
@@ -299,7 +305,13 @@ longer allocate a closure each.
 1. **Eligibility dump only.** Add `RRet1` to `Rep` and the runtime
    typedef, and compute eligibility, printed by `--directive
    dumpdualabi`. Check it against the scratchpad tool's figures on
-   idris2-lsp. No code changes behaviour.
+   idris2-lsp. No code changes behaviour. Done: `structReturnEligible` in
+   `Compiler.RC2.DualABI`; each line of the `.dualabi` dump ends in
+   ` ret1` for an eligible function, after a count line. On idris2-lsp
+   it accepts 8,005 functions. The scratchpad tool's 8,039 differs mainly
+   because it keys functions by their printed name, and distinct
+   `Name`s print alike (16 different definitions print as
+   `Core.Context.full`).
 2. **Worker and wrapper.** Synthesise the `RRet1` worker and the
    materialising wrapper; every caller still calls the wrapper. This
    exercises the worker's tail emission and the wrapper's materialisation

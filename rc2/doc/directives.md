@@ -115,7 +115,9 @@ produced its result (unlike section 2's stage disables, which
   one.
 - **`dumpdualabi`** -- dumps `Compiler.RC2.DualABI`'s own Stage 2
   eligibility analysis to a `.dualabi` file, same directive mechanism as
-  `dumprcexpr`. See `doc/dual-abi.md`.
+  `dumprcexpr`. See `doc/dual-abi.md`. A first line counts the functions
+  eligible to return by value, and each such function's line ends in
+  ` ret1` (`doc/struct-return.md`).
 - **`dumpcc`** -- prints the exact C compile/link command(s) about to
   run, to stdout.
 

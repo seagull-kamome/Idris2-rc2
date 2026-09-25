@@ -103,6 +103,11 @@ EmitDeps retTy = {auto a : Ref ArgCounter Nat}
               -> {auto sd : Ref StructDefs (SortedMap String (List (String, CFType)))}
               -> retTy
 
+||| A `Ret1` value reached a place that has no struct rendering (yet) --
+||| see `doc/struct-return.md`.
+ret1Unsupported : String -> Core a
+ret1Unsupported site = throw $ InternalError "[rc2] \{site}: a struct-return (Ret1) value has no rendering here, see doc/struct-return.md"
+
 -- emitAppNameRepInto/emitAppFFIInlineInto/emitRC are each called from
 -- within the mutual block below (emitInto's own dispatch) but never
 -- call back into it themselves -- forward-declared here and defined
@@ -198,6 +203,7 @@ mutual
              (RNative ty, _) =>
                  emitInto fc (SinkVar True "var_\{show var}" (RNative ty)) NotInTailPosition value
              (RBoxed, _) => emitInto fc (SinkVar True "var_\{show var}" RBoxed) NotInTailPosition value
+             (RRet1, _) => ret1Unsupported "declareLet"
 
     ||| Lower a leading chain of ownership/reuse wrapper nodes --
     ||| `RDup`/`RDrop`/`RFree`/`RLet`/`RReleaseReuse`/`RReuseOffer`,
@@ -264,6 +270,7 @@ mutual
                  RBoxed => (\(s, p) => ("IDRIS2RC2_Value *", s, p)) <$> rcVarToBoxedC v
                  RNative ty => (\(s, p) => (nativeCType ty ++ " ", s, p)) <$> rcVarToNativeC ty v
                  RInlineNative ty => (\(s, p) => (nativeCType ty ++ " ", s, p)) <$> rcVarToNativeC ty v
+                 RRet1 => ret1Unsupported "RLoopContinue"
             emit fc "\{cty}\{t} = \{valStr};"
             removeVars pending
             pure (paramId, t)) (zip newArgs loopParams)
@@ -624,6 +631,7 @@ mutual
                 (extractExpr, pending) <- the (Core (String, List String)) $ case scRep of
                      RNative ty => rcVarToNativeC ty sc
                      RInlineNative ty => rcVarToNativeC ty sc
+                     RRet1 => ret1Unsupported "RConstCase"
                      RBoxed => pure (case alts of
                                            (MkRConstAlt c0 _ :: _) => extractIntExpr c0 sc'
                                            [] => "idris2rc2_extractInt(\{sc'})", [])
@@ -702,6 +710,7 @@ mutual
         throw $ InternalError "[rc2] RMemoize: unexpected native retRep on \{show n} -- see emitMemoizeInto's own doc comment"
     emitMemoizeInto sink tailPosition fc n (RInlineNative _) body =
         throw $ InternalError "[rc2] RMemoize: unexpected native retRep on \{show n} -- see emitMemoizeInto's own doc comment"
+    emitMemoizeInto sink tailPosition fc n RRet1 body = ret1Unsupported "RMemoize"
 
     ||| Declare (and initialise) one `RLoop` loop param -- unless
     ||| `initVal` already directly *is* `paramId`'s own value, under its
@@ -784,6 +793,7 @@ mutual
     -- to a plain native declaration) rather than assumed unreachable.
     declareLoopParam inPrologueDrop fc paramId (RInlineNative ty) initVal =
         declareLoopParam inPrologueDrop fc paramId (RNative ty) initVal
+    declareLoopParam _ _ _ RRet1 _ = ret1Unsupported "RLoop param"
 
     ||| Lower an `RLoop` (see its own doc comment in RCExp.idr): declare
     ||| each loop param (`declareLoopParam`, a no-op for the common
@@ -873,10 +883,12 @@ mutual
         argsWithPending <- traverse (\(rep, v) => case rep of
                                  RNative t => rcVarToNativeC t v
                                  RInlineNative t => rcVarToNativeC t v
-                                 RBoxed => rcVarToBoxedC v) (zip argReps args)
+                                 RBoxed => rcVarToBoxedC v
+                                 RRet1 => ret1Unsupported "worker argument") (zip argReps args)
         let call = "\{cName n}(\{concat $ intersperse ", " (map fst argsWithPending)})"
         case retRep of
              RBoxed => throw $ InternalError "[rc2] emitNativeValue: RAppNameRep with Boxed retRep reached a native context"
+             RRet1 => ret1Unsupported "emitNativeValue"
              _ => pure (call, map varName postDrop ++ concatMap snd argsWithPending)
     -- A direct, self-contained call to a %foreign declaration's own
     -- raw C function (`RAppFFIInline`, `Compiler.RC2.DualABI`'s own
@@ -960,16 +972,18 @@ emitAppNameRepInto sink tailPosition fc n argReps retRep postDrop args = do
     argsWithPending <- traverse (\(rep, v) => case rep of
                              RNative ty => rcVarToNativeC ty v
                              RInlineNative ty => rcVarToNativeC ty v
-                             RBoxed => rcVarToBoxedC v) (zip argReps args)
+                             RBoxed => rcVarToBoxedC v
+                             RRet1 => ret1Unsupported "worker argument") (zip argReps args)
     let argStrs = map fst argsWithPending
     let argPending = concatMap snd argsWithPending
     let call = "\{cName n}(\{concat $ intersperse ", " argStrs})"
-    let valStr = case retRep of
-                      RBoxed => case tailPosition of
-                                     InTailPosition => call
-                                     NotInTailPosition => "idris2rc2_trampoline(\{call})"
-                      RNative ty => nativeMk ty call
-                      RInlineNative ty => nativeMk ty call
+    valStr <- case retRep of
+                   RBoxed => pure $ case tailPosition of
+                                  InTailPosition => call
+                                  NotInTailPosition => "idris2rc2_trampoline(\{call})"
+                   RNative ty => pure (nativeMk ty call)
+                   RInlineNative ty => pure (nativeMk ty call)
+                   RRet1 => ret1Unsupported "emitAppNameRepInto"
     finalizeSinkWithDrop fc sink valStr (map varName postDrop ++ argPending)
 
 emitAppFFIInlineInto sink tailPosition fc ccs fargs ret postDrop args = do
@@ -1263,10 +1277,12 @@ fnSignature n args retRep isWorker = do
         declareParam (i, RBoxed) = "  IDRIS2RC2_Value * var_" ++ show i
         declareParam (i, RNative ty) = "  " ++ nativeCType ty ++ " var_" ++ show i
         declareParam (i, RInlineNative ty) = "  " ++ nativeCType ty ++ " var_" ++ show i
+        declareParam (i, RRet1) = "  IDRIS2RC2_Ret1 var_" ++ show i
     let retTypeStr : String = case retRep of
                                     RBoxed => "IDRIS2RC2_Value *"
                                     RNative ty => nativeCType ty ++ " "
                                     RInlineNative ty => nativeCType ty ++ " "
+                                    RRet1 => "IDRIS2RC2_Ret1 "
     -- `MaxExtractFunArgs`'s own `var_arglist[]` fallback only exists to
     -- match `support/rc2/runtime.c`'s closure-dispatch function-pointer
     -- types (see that constant's own doc comment) -- a dual-ABI

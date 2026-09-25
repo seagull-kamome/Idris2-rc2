@@ -25,6 +25,7 @@ import Compiler.Common
 import Compiler.RC2.RCExp
 import Compiler.RC2.Types
 import Compiler.RC2.Loop
+import Compiler.RC2.MutualLoop
 import Compiler.RC2.Emit.Util
 import Compiler.RC2.Util
 
@@ -141,7 +142,7 @@ tailValueReps _ (RAppNameRep _ _ _ retRep _ _) =
     [ case retRep of
            RNative ty => Just ty
            RInlineNative ty => Just ty
-           RBoxed => Nothing ]
+           _ => Nothing ]
 -- RAppName, RUnderApp, RApp, RCon, RExtPrim, RErased, RCrash,
 -- RStructGet, RStructSet: never a native value regardless of context --
 -- a call/closure/constructor result is always Boxed today (no callee is
@@ -185,9 +186,113 @@ describeEligibility n (MkRCFun args _ _ body) =
          " ret=" ++ maybe "Boxed" show ret
 describeEligibility _ _ = Nothing
 
+------------------------------------------------------------------------
+-- Struct return: eligibility (doc/struct-return.md, step 1).
+
+||| How one tail of a function body ends, as far as returning it by
+||| value is concerned.
+data RetTail = TailCon | TailNull | TailCall Name | TailCrash | TailOther
+
+||| Every tail of `body`, through the RC wrappers, branches and loop
+||| exits (`RLoopContinue` is not a tail). A constructor tail counts only
+||| with a known tag and at most one field. `RCNull` is either an erased
+||| value or one of Nil/Nothing/Z/MkUnit, all tag 0 (`Compiler.RC2.RC`'s
+||| `bindOne`): acceptable in a tail, but never evidence on its own that
+||| the function returns a constructor.
+retTails : RCExp -> List RetTail
+retTails (RLet _ _ _ _ body) = retTails body
+retTails (RDup _ _ _ cont) = retTails cont
+retTails (RDrop _ _ cont) = retTails cont
+retTails (RFree _ _ cont) = retTails cont
+retTails (RReleaseReuse _ _ cont) = retTails cont
+retTails (RReuseOffer _ _ _ _ cont) = retTails cont
+retTails (RCmpCase _ _ _ _ t f) = retTails t ++ retTails f
+retTails (RConCase _ _ alts mDef) =
+    foldr (\(MkRConAlt _ _ _ _ body), acc => retTails body ++ acc) (maybe [] retTails mDef) alts
+retTails (RConstCase _ _ alts mDef) =
+    foldr (\(MkRConstAlt _ body), acc => retTails body ++ acc) (maybe [] retTails mDef) alts
+retTails (RLoop _ _ _ _ body) = retTails body
+retTails (RLoopContinue _ _ _) = []
+retTails (RCon _ _ _ (Just _) args _) = [if length args <= 1 then TailCon else TailOther]
+retTails (RV _ (RCEmptyCon _ _ _)) = [TailCon]
+retTails (RV _ RCNull) = [TailNull]
+retTails (RV _ (RCConstCon _ _ (Just _) args)) = [if length args <= 1 then TailCon else TailOther]
+retTails (RAppName _ Nothing n _) = [TailCall n]
+retTails (RAppNameRep _ n _ _ _ _) = [TailCall n]
+retTails (RCrash _ _) = [TailCrash]
+-- RMemoize (a CAF: moved, never copied, see doc/caf-memoization.md),
+-- lazy calls, closures, applies, FFI, prims, literals, a bare local.
+retTails _ = [TailOther]
+
+||| The functions that may return by value: every tail is an eligible
+||| constructor, a crash, or a tail call to another such function (a
+||| greatest fixpoint), at least one constructor is reachable, and the
+||| function is in no cycle of tail calls among them -- the bound that
+||| lets their tail calls become direct C calls (doc/struct-return.md's
+||| "Tail calls"). `MutualLoop`'s merged functions are excluded, as they
+||| are from every other DualABI worker.
+export
+structReturnEligible : List (Name, RCDef) -> SortedSet Name
+structReturnEligible defs =
+    let tbl : SortedMap Name (List RetTail) := SortedMap.fromList (mapMaybe funTails defs)
+        entries : List (Name, List RetTail) := SortedMap.toList tbl
+        closed : SortedSet Name := shrink tbl (fromList (namesWhere (all (not . isOther)) entries))
+        seeds : SortedSet Name := fromList (filter (\n => contains n closed) (namesWhere (any isCon) entries))
+        producing : SortedSet Name := reach tbl closed seeds
+        graph : Graph := fromList (map (edgesOf tbl producing) (SortedSet.toList producing))
+        cyclic : SortedSet Name := fromList (concat (filter (isCycle graph) (tarjanSCCs graph)))
+    in difference producing cyclic
+  where
+    funTails : (Name, RCDef) -> Maybe (Name, List RetTail)
+    funTails (n, MkRCFun _ _ _ body) = if isMutualLoopMerged n then Nothing else Just (n, retTails body)
+    funTails _ = Nothing
+
+    isOther : RetTail -> Bool
+    isOther TailOther = True
+    isOther _ = False
+
+    isCon : RetTail -> Bool
+    isCon TailCon = True
+    isCon _ = False
+
+    callees : List RetTail -> List Name
+    callees = mapMaybe (\t => case t of { TailCall g => Just g; _ => Nothing })
+
+    okIn : SortedSet Name -> RetTail -> Bool
+    okIn el (TailCall g) = contains g el
+    okIn _ _ = True
+
+    shrink : SortedMap Name (List RetTail) -> SortedSet Name -> SortedSet Name
+    shrink tbl el =
+        let el' = fromList (filter (\n => all (okIn el) (fromMaybe [] (lookup n tbl))) (SortedSet.toList el))
+        in if length (SortedSet.toList el') == length (SortedSet.toList el) then el' else shrink tbl el'
+
+    reach : SortedMap Name (List RetTail) -> SortedSet Name -> SortedSet Name -> SortedSet Name
+    reach tbl el ps =
+        let ps' = fromList (filter (\n => contains n ps || any (\g => contains g ps) (callees (fromMaybe [] (lookup n tbl))))
+                                   (SortedSet.toList el))
+        in if length (SortedSet.toList ps') == length (SortedSet.toList ps) then ps' else reach tbl el ps'
+
+    isCycle : Graph -> List Name -> Bool
+    isCycle g [n] = contains n (fromMaybe empty (lookup n g))
+    isCycle _ c = length c > 1
+
+    namesWhere : (List RetTail -> Bool) -> List (Name, List RetTail) -> List Name
+    namesWhere p = mapMaybe (\e => if p (snd e) then Just (fst e) else Nothing)
+
+    edgesOf : SortedMap Name (List RetTail) -> SortedSet Name -> Name -> (Name, SortedSet Name)
+    edgesOf tbl ps n = (n, fromList (filter (\g => contains g ps) (callees (fromMaybe [] (lookup n tbl)))))
+
+||| `describeEligibility`'s lines, each marked ` ret1` when
+||| `structReturnEligible` accepts the function, after a count of those.
 export
 dumpDualABI : List (Name, RCDef) -> String
-dumpDualABI defs = fastConcat $ map (++ "\n") $ mapMaybe (uncurry describeEligibility) defs
+dumpDualABI defs =
+    let ret1 = structReturnEligible defs
+        mark : (Name, RCDef) -> Maybe String
+        mark (n, d) = map (\l => if contains n ret1 then l ++ " ret1" else l) (describeEligibility n d)
+    in fastConcat $ map (++ "\n") $
+         ("-- struct return (doc/struct-return.md): \{show (length (SortedSet.toList ret1))} eligible") :: mapMaybe mark defs
 
 ------------------------------------------------------------------------
 -- Stage 3a: worker synthesis (parameters only) + wrapper rewrite.
@@ -505,7 +610,7 @@ callArgNativeReads workers var (RAppName _ _ n args) =
                                                           then case r of
                                                                     RNative ty => Just ty
                                                                     RInlineNative ty => Just ty
-                                                                    RBoxed => Nothing
+                                                                    _ => Nothing
                                                           else Nothing)
                                           (zip args argReps)
 -- Every other shape (RV, RAppNameRep, RUnderApp, RApp, RCon, a bare
@@ -549,7 +654,7 @@ loopContinueNativeReads loopParams var (RLoopContinue _ args _) =
                                  then case paramRep of
                                            RNative ty => Just ty
                                            RInlineNative ty => Just ty
-                                           RBoxed => Nothing
+                                           _ => Nothing
                                  else Nothing)
                          (zip loopParams args)
 -- Every other shape (RV, RAppName, RAppNameRep, RUnderApp, RApp, RCon,

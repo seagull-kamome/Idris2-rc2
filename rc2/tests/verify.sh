@@ -648,6 +648,22 @@ for name in $ALL_TESTS; do
         fi
     fi
 
+    # Test90StructReturn: struct-return eligibility (doc/struct-return.md,
+    # step 1) is only visible in the `.dualabi` dump its own `%cg rc2
+    # dumpdualabi` pragma writes: `step`'s worker and `lookupAge` (a
+    # `Nothing` tail) marked `ret1`, `halves` (a pair) not.
+    if [ "$name" = "Test90StructReturn" ]; then
+        dump="$TMP/${name}_rc2.dualabi"
+        stepMarked="$(grep -c '^{idris2rc2_worker_Main_step:[0-9]*}: .* ret1$' "$dump" || true)"
+        lookupMarked="$(grep -c '^Main.lookupAge: .* ret1$' "$dump" || true)"
+        halvesMarked="$(grep -c '^Main.halves: .* ret1$' "$dump" || true)"
+        if [ "$stepMarked" = "1" ] && [ "$lookupMarked" = "1" ] && [ "$halvesMarked" = "0" ]; then
+            report_pass "$name (struct-return eligibility -- step and lookupAge marked, halves not)"
+        else
+            report_fail "$name" "ret1 marks step=$stepMarked lookupAge=$lookupMarked halves=$halvesMarked in $dump"
+        fi
+    fi
+
     run_t0="$(date +%s.%N)"
     actual="$("$TMP/${name}_rc2" 2>&1)"
     run_time="$(elapsed "$run_t0" "$(date +%s.%N)")"

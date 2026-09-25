@@ -127,6 +127,12 @@ typedef struct {
 // rather than always dereferencing as a heap object.
 #define idris2rc2_conTag(p) (idris2rc2_is_unboxed(p) ? (int32_t)idris2rc2_to_u32(p) : ((IDRIS2RC2_Constructor *)(p))->tag)
 
+// A constructor of at most one field returned by value: rc2/doc/struct-return.md.
+typedef struct {
+  int64_t tag;
+  IDRIS2RC2_Value *f0;
+} IDRIS2RC2_Ret1;
+
 typedef struct {
   IDRIS2RC2_Header header;
   void *fn; // cast to the right arity's function pointer type to call

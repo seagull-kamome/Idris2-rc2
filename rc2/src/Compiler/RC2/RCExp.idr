@@ -187,8 +187,10 @@ Show RCLocal where
 ||| along with the deferred splice -- `Compiler.RC2.RC`'s own
 ||| `inlineableRep` doc comment has the full reasoning for why that's
 ||| still safe.
+||| `RRet1`: a small constructor held by value as an `IDRIS2RC2_Ret1`
+||| struct -- see `doc/struct-return.md`.
 public export
-data Rep = RBoxed | RNative PrimType | RInlineNative PrimType
+data Rep = RBoxed | RNative PrimType | RInlineNative PrimType | RRet1
 
 -- `RCExp`/`RConAlt`/`RConstAlt` are mutually recursive (`RConCase`/
 -- `RConstCase` hold `List RConAlt`/`RConstAlt`; both alt types hold a

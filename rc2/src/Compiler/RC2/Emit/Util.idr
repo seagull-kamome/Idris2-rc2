@@ -970,7 +970,9 @@ rcVarToBoxedC l = do
     rep <- repOfLocal l
     inlined <- inlineExprFor l
     let (exprOrVar, pending) = fromMaybe (varName l, []) inlined
-    pure $ case rep of
+    case rep of
+         RRet1 => throw $ InternalError "[rc2] rcVarToBoxedC: a struct-return local (Ret1) reached a Boxed context, see doc/struct-return.md"
+         _ => pure $ case rep of
                 RNative ty => (nativeMk ty exprOrVar, pending)
                 -- Always InlineMap'd by construction (Rep.RInlineNative's
                 -- own doc comment) -- the `Nothing` fallback above is
@@ -982,7 +984,7 @@ rcVarToBoxedC l = do
                 -- `RCLoc` whose `inlineExprFor` is always `Nothing`
                 -- anyway, so this is a no-op change for them, but a real
                 -- fix for the new RCConst case.
-                RBoxed => (exprOrVar, pending)
+                _ => (exprOrVar, pending)
 
 ||| An operand for a Boxed-result `ROp` (see its own `emitRC` case
 ||| below): an already-`RBoxed` local renders via `rcVarToBoxedC` as-is,
@@ -1158,11 +1160,13 @@ sinkCType : Rep -> String
 sinkCType RBoxed = "IDRIS2RC2_Value * "
 sinkCType (RNative ty) = nativeCType ty ++ " "
 sinkCType (RInlineNative ty) = nativeCType ty ++ " "
+sinkCType RRet1 = "IDRIS2RC2_Ret1 "
 
 ||| The pre-branch placeholder value a `Sink`'s own variable is
 ||| initialised to -- see `resolveSink`.
 sinkZero : Rep -> String
 sinkZero RBoxed = "NULL"
+sinkZero RRet1 = "(IDRIS2RC2_Ret1){ 0, NULL }"
 sinkZero _ = "0"
 
 ||| Turn a `Sink` that might still need its own variable declared

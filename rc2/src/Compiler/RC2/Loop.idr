@@ -250,7 +250,7 @@ export
 nativeSlotTy : Rep -> Maybe PrimType
 nativeSlotTy (RNative ty) = Just ty
 nativeSlotTy (RInlineNative ty) = Just ty
-nativeSlotTy RBoxed = Nothing
+nativeSlotTy _ = Nothing
 
 ||| The single native `PrimType` every alt of a constant-`case` matches
 ||| its scrutinee against, or `Nothing` when they disagree or the type
@@ -383,7 +383,7 @@ nativeArgTypes p (RLet _ _ rep value body) =
     let fromOp = case rep of
              RNative ty => opNativeUsesThrough p ty value
              RInlineNative ty => opNativeUsesThrough p ty value
-             RBoxed => empty
+             _ => empty
     in fromOp `union` (nativeArgTypes p value `union` nativeArgTypes p body)
 nativeArgTypes p (RCmpCase _ op args _ t f) =
     let fromArgs = fromList $ mapMaybe (\a => if a == RCLoc p then cmpArgTy op else Nothing) (toList args)
@@ -451,7 +451,7 @@ nativeArgTypesFor tracked (RLet _ _ rep value body) =
     let fromOp = case rep of
              RNative ty => opNativeUsesThroughAll tracked ty value
              RInlineNative ty => opNativeUsesThroughAll tracked ty value
-             RBoxed => empty
+             _ => empty
     in fromOp `unionMaps` (nativeArgTypesFor tracked value `unionMaps` nativeArgTypesFor tracked body)
 nativeArgTypesFor tracked (RCmpCase _ op args _ t f) =
     let fromArgs = case cmpArgTy op of
