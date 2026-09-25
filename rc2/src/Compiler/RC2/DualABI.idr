@@ -1083,6 +1083,67 @@ structAlt v (MkRConAlt n ci (Just tag) as b) = case as of
     _ => Nothing
 structAlt _ _ = Nothing
 
+||| The function a value ends in a direct call to, through the lets and
+||| RC wrappers in front of it.
+finalCallee : RCExp -> Maybe Name
+finalCallee (RLet _ _ _ _ body) = finalCallee body
+finalCallee (RDup _ _ _ k) = finalCallee k
+finalCallee (RDrop _ _ k) = finalCallee k
+finalCallee (RAppName _ Nothing g _) = Just g
+finalCallee _ = Nothing
+
+||| Every function called at a site `structSites` would rewrite: the
+||| result switched on at once, and used no other way.
+casedCallees : List Name -> RCExp -> List Name
+casedCallees acc e@(RLet _ x RBoxed value body) =
+    let here = do
+          g <- finalCallee value
+          (_, _, alts, mDef) <- caseOn x body
+          the (Maybe ()) (if maybe False (\d => contains (RCLoc x) (mentionedLocals d)) mDef then Nothing else Just ())
+          _ <- traverse (structAlt x) alts
+          pure g
+    in foldl casedCallees (maybe acc (:: acc) here) (children e)
+casedCallees acc e = foldl casedCallees acc (children e)
+
+||| `plan` cut down to the functions some caller gains from: one called
+||| at a site `structSites` rewrites, or one tail-called by a function
+||| that stays. Anything else only gains an extra call through its
+||| wrapper -- a function passed around as a closure, say, is always
+||| called through `apply`, which reaches the wrapper. Dropping one can
+||| leave a tail call from another planned function with no struct to
+||| return, so that one goes too; repeated until nothing changes.
+prunePlan : List (Name, RCDef) -> SortedMap Name (SortedMap Int ConShape) -> SortedMap Name (SortedMap Int ConShape)
+prunePlan defs plan =
+    let bodies : List RCExp := mapMaybe bodyOf defs
+        cased : SortedSet Name := fromList (foldl casedCallees [] bodies)
+        tailCallees : SortedMap Name (List Name) :=
+            fromList (mapMaybe (\(n, d) => case d of
+                                             MkRCFun _ _ _ body => if isJust (lookup n plan) then Just (n, callees (retTails body)) else Nothing
+                                             _ => Nothing) defs)
+        tailCallers : SortedMap Name (List Name) := foldl addCallers empty (SortedMap.toList tailCallees)
+        kept = go cased tailCallees tailCallers (fromList (keys plan))
+    in fromList (filter (\(n, _) => contains n kept) (SortedMap.toList plan))
+  where
+    addCallers : SortedMap Name (List Name) -> (Name, List Name) -> SortedMap Name (List Name)
+    addCallers m (g, fs) = foldl (\m2, f => insert f (g :: fromMaybe [] (lookup f m2)) m2) m fs
+
+    bodyOf : (Name, RCDef) -> Maybe RCExp
+    bodyOf (_, MkRCFun _ _ _ body) = Just body
+    bodyOf (_, MkRCError body) = Just body
+    bodyOf _ = Nothing
+
+    callees : List RetTail -> List Name
+    callees = mapMaybe (\t => case t of { TailCall g => Just g; _ => Nothing })
+
+    go : SortedSet Name -> SortedMap Name (List Name) -> SortedMap Name (List Name) -> SortedSet Name -> SortedSet Name
+    go cased tailCallees tailCallers kept =
+        let keep : Name -> Bool
+            keep f = (contains f cased || any (\g => contains g kept) (fromMaybe [] (lookup f tailCallers)))
+                     && all (\h => contains h kept) (fromMaybe [] (lookup f tailCallees))
+            kept' : SortedSet Name := SortedSet.fromList (filter keep (SortedSet.toList kept))
+        in if length (SortedSet.toList kept') == length (SortedSet.toList kept) then kept'
+           else go cased tailCallees tailCallers kept'
+
 ||| Every call to a struct-returning function whose result is switched
 ||| on at once now reaches the struct worker, the `case` switching on the
 ||| struct itself. A call whose result goes elsewhere keeps the wrapper,
@@ -1160,7 +1221,7 @@ export
 applyStructReturn : {auto v : Ref VarId Int} -> List (Name, RCDef) -> Core (List (Name, RCDef))
 applyStructReturn defs = do
     _ <- newRef FreshId 0
-    let plan = structReturnPlan defs
+    let plan = prunePlan defs (structReturnPlan defs)
         existing = SortedSet.fromList (map fst defs)
     planned <- traverse (workerFor existing plan) defs
     let ws : SortedMap Name StructWorker := fromList (mapMaybe (\((n, _), p) => map (\(w, reps, _) => (n, (w, reps))) p) planned)

@@ -356,15 +356,19 @@ operand, unrelated to this work.
 idris2-lsp, final `dumprcexpr` (C generation is not reached, see
 `TODO.md`), against the default pipeline:
 
-| | default | `structreturn` |
-|---|---|---|
-| definitions | 22,522 | 29,609 (+7,087 workers) |
-| `con` | 53,957 | **49,167** (−8.9%) |
-| `retpack` | 0 | 17,643 |
-| `reuseOffer` | 25,765 | **17,865** (−31%) |
-| `dup` / `drop` | 92,240 / 188,058 | 90,967 / 187,437 |
-| `let ... : Ret1` | 0 | 13,011 |
-| DualABI stage | — | 2.0 s |
+| | default | `structreturn` before `prunePlan` | `structreturn` |
+|---|---|---|---|
+| definitions | 22,522 | 29,609 (+7,087 workers) | 22,757 (+235) |
+| struct workers | 0 | 7,844 | 644 |
+| `con` | 53,957 | 49,167 (−8.9%) | **51,175** (−5.2%) |
+| `retpack` | 0 | 17,643 | 3,679 |
+| `reuseOffer` | 25,765 | 17,865 (−31%) | **17,865** (−31%) |
+| `let ... : Ret1` | 0 | 13,011 | 5,929 |
+
+`prunePlan` (below) keeps every call site that gains: the `reuseOffer`
+count, one per rebuilt cell a caller switched on, is unchanged. What it
+drops is the workers nobody calls directly, and the cells their
+wrappers rebuilt.
 
 `rcexpr-lint` finds no anomaly in either dump. `verify.sh` passes with
 and without `--directive structreturn` on every test, valgrind included.
@@ -372,14 +376,21 @@ and without `--directive structreturn` on every test, valgrind included.
 idris2-missing-containers (`test/src/Main.idr`, a hash-map benchmark,
 run from the package root; five alternating runs, the first of each
 left out as warm-up): wall time 12.13 s without, 12.29 s with (+1.3%),
+before `prunePlan`;
 every phase the program times itself within noise or slightly slower.
 Only five functions qualify there, and none has a direct call site that
 benefits: they are lambdas (`{read:0}` and the like) passed as closures,
 so every call goes through `apply`, reaches the wrapper, and pays one
-extra call and a rebuild of the cell. A function should get a struct
-worker only when some caller gains from it: a call whose result is
-switched on at once, a tail call from another struct worker, or native
-arguments.
+extra call and a rebuild of the cell. So a function now gets a struct
+worker only when some caller gains from it (`prunePlan`): a call whose
+result is switched on at once, or a tail call from another function
+that keeps one. Native arguments alone don't count: Stage 4 already
+passes them natively to the Boxed-returning worker. Dropping a function
+can leave another planned function tail-calling it with no struct to
+return, so the cut repeats until nothing changes.
+With it, no function qualifies on idris2-missing-containers any more,
+and the program times as without struct return (12.11 s and 12.12 s);
+`BenchStructReturn` is unaffected (667 ms and 468 ms).
 
 ## Tests
 

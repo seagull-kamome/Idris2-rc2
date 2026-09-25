@@ -1,5 +1,8 @@
 Right 16
 Left "neg"
-Just 2
-Nothing
+b: 2
+z: unknown
+True
+[Nothing, Just 1, Nothing, Just 2]
+[Just 5, Nothing]
 ([1, 3, 5], [2, 4])
