@@ -170,17 +170,44 @@ pass-through case for `RMemoize` (this file's own stated design goal:
 - `usedConstructorsR (RMemoize _ _ _ body) = usedConstructorsR body`
 - `foldRCNamesR`'s own `go` -- pass through into `body` the same way.
 
-`Reuse`/`ConAltNative`/`MutualLoop`/`Sink`/`DualABI`/`DeadCode`/
-`DupMerge` needed no changes at all, confirmed empirically (Idris2's
-own coverage checker flags every non-total pattern match as a build
-error, so building after adding the constructor is a complete,
-mechanical audit, not a manual one) -- none of them pattern-match
-`RCExp` exhaustively in a way `RMemoize` reaches. Two files did need a
-one-line pass-through: `Compiler.RC2.Loop`'s own `renameRCExp` (its
-self-tail-call renaming walk *is* exhaustive over `RCExp`, even though
-`RMemoize` can never actually reach it in practice -- a 0-arg CAF has
+`Reuse`/`ConAltNative`/`MutualLoop`/`DeadCode`/`DupMerge` needed no
+changes. Building after adding the constructor was taken as a complete
+audit, since Idris2's coverage checker flags every non-total pattern
+match -- but that only covers matches *without* a catch-all. `Sink`'s
+`applySinkExp` and DualABI's `applyCallSiteRewriteBody`/
+`inlineFFIWorkersExp` end in `_ = e`, so they built fine and silently
+left every memoized body untouched: no native call-site rewrite, no
+inline FFI splicing, no sinking inside a CAF. Found 2026-09-25, once
+inlining started putting `main`'s whole IO body inside the
+`__mainExpression` CAF (`constructor-escape-analysis.md`); all three
+now pass through `RMemoize`, and `tests/Test89CafDualABI` checks it.
+
+Two files needed a one-line pass-through from the start:
+`Compiler.RC2.Loop`'s own `renameRCExp` (its self-tail-call renaming
+walk *is* exhaustive over `RCExp`, even though `RMemoize` can never actually reach it in practice -- a 0-arg CAF has
 no loop-carried parameters for `applyLoop` to ever run on) and
 `Pretty.idr`'s `prettyExp` (`dumprcexpr`'s own renderer).
+
+### Limitations
+
+A memoized body's tail is not the function's tail: its value is
+stored in the memo slot before it is returned, so a call there must
+never be treated as a tail call (deferred through a closure or a
+trampoline). Any pass that distinguishes tail position has to descend
+into `RMemoize` with "not in tail" -- DualABI's
+`applyCallSiteRewriteBody` does. And any post-annotation pass with a
+catch-all clause needs an explicit `RMemoize` case, since the coverage
+checker won't ask for one.
+
+An `RMemoize` may be moved but never copied. Its memo slot is a C
+`static` named after the CAF (`idris2rc2_memo_<name>`), so it stays
+unique and evaluated once wherever it lands -- `LateInline` splicing a
+single-caller CAF into its caller moves 156 of idris2-lsp's 426 this
+way. Two copies, though, would be two separate statics (in two
+functions, or in two blocks of one) and evaluate the body twice. No
+pass after `insertMemoize` copies code that could contain one today:
+`LateInline` only splices single-caller callees, and `Sink` copies
+single nodes only.
 
 ## Emit-side C codegen
 

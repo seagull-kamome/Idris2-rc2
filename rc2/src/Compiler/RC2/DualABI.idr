@@ -665,6 +665,11 @@ applyCallSiteRewriteBody workers reps mLoopParams inTail (RDrop fc vs cont) = RD
 applyCallSiteRewriteBody workers reps mLoopParams inTail (RFree fc v cont) = RFree fc v (applyCallSiteRewriteBody workers reps mLoopParams inTail cont)
 applyCallSiteRewriteBody workers reps mLoopParams inTail (RReleaseReuse fc v cont) = RReleaseReuse fc v (applyCallSiteRewriteBody workers reps mLoopParams inTail cont)
 applyCallSiteRewriteBody workers reps mLoopParams inTail (RReuseOffer fc sc dupOnShared dropOnUnique cont) = RReuseOffer fc sc dupOnShared dropOnUnique (applyCallSiteRewriteBody workers reps mLoopParams inTail cont)
+-- A memoized CAF body's own tail is not the function's: its value is
+-- stored before it is returned, so no call there may be deferred
+-- (doc/caf-memoization.md, "Limitations").
+applyCallSiteRewriteBody workers reps mLoopParams _ (RMemoize fc n rep body) =
+    RMemoize fc n rep (applyCallSiteRewriteBody workers reps mLoopParams False body)
 -- The main rewrite: a bare RAppName reached with inTail = False is
 -- always the ultimate tail of some value-computation chain (the RLet
 -- clause above already peeled through any RLet-bound value), never
@@ -765,6 +770,7 @@ inlineFFIWorkersExp ffiInline (RFree fc v cont) = RFree fc v (inlineFFIWorkersEx
 inlineFFIWorkersExp ffiInline (RReleaseReuse fc v cont) = RReleaseReuse fc v (inlineFFIWorkersExp ffiInline cont)
 inlineFFIWorkersExp ffiInline (RReuseOffer fc sc dupOnShared dropOnUnique cont) =
     RReuseOffer fc sc dupOnShared dropOnUnique (inlineFFIWorkersExp ffiInline cont)
+inlineFFIWorkersExp ffiInline (RMemoize fc n rep body) = RMemoize fc n rep (inlineFFIWorkersExp ffiInline body)
 inlineFFIWorkersExp _ e = e
 
 ||| Whole-program pass: Stage 5 itself. See `inlineFFIWorkersExp`'s own

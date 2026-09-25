@@ -14,9 +14,11 @@ module Main
 prim__abs : Int -> Int
 
 -- Dual-ABI-eligible: every position (both args, the return) is a
--- native Int -- gets both a Boxed wrapper and a native worker.
+-- native Int -- gets both a Boxed wrapper and a native worker. The
+-- `prim__abs 0` makes it not call-free, so `Compiler.RC2.Inline`'s
+-- Criterion A doesn't inline it at every call site.
 eligibleAdd : Int -> Int -> Int
-eligibleAdd x y = x + y
+eligibleAdd x y = x + y + prim__abs 0
 
 -- Dual-ABI-ineligible: a real (not call-free, so never
 -- Compiler.RC2.Inline-eligible either) computation with a Boxed
@@ -52,3 +54,10 @@ main = do
     -- Non-literal argument, same reasoning as above, at a tail call
     -- site this time (tailAbs's own entire body).
     printLn (tailAbs (n - 105))
+    -- A second call site each: a function called from exactly one
+    -- place is spliced into it (`Compiler.RC2.Inline`'s Criterion B,
+    -- `LateInline`), leaving no worker, loop or wrapper for the
+    -- sections above to find.
+    printLn (eligibleAdd n 1)
+    printLn (sumLoop n 0)
+    printLn (tailAbs (n - 1))

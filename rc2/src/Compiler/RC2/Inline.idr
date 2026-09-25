@@ -747,7 +747,7 @@ applyInlineLifted lds = do
         let sccs : List (List Name) := tarjanSCCs (map SortedSet.fromList callees)
         pure (singleCallerCallees defOf callees sccs, calleesFirst sccs)
     substituted <- logTime 3 "rc2: Inline (substitute)" $
-                     substituteAll defOf single elig elig empty order
+                     substituteAll defOf single elig empty order
     logTime 3 "rc2: Inline (case-of-case collapse)" $
       pure (map (\(n, d) => collapseDef (n, fromMaybe d (lookup n substituted))) lds)
   where
@@ -760,23 +760,19 @@ applyInlineLifted lds = do
 
     -- Callees first, so a Criterion B callee is spliced with its own
     -- callees already inlined into it (`inlining.md`, "Criterion B").
-    -- `eligA` alone for a CAF: splicing whole bodies into a memoized
-    -- CAF leaves them optimised less than in an ordinary function
-    -- (`main`'s own `unsafePerformIO`).
-    substituteAll : SortedMap Name LiftedDef -> SortedSet Name -> (eligA : SortedMap Name Eligible)
-                 -> SortedMap Name Eligible -> SortedMap Name LiftedDef -> List Name
-                 -> Core (SortedMap Name LiftedDef)
-    substituteAll _ _ _ _ done [] = pure done
-    substituteAll defOf single eligA elig done (n :: ns) =
+    substituteAll : SortedMap Name LiftedDef -> SortedSet Name -> SortedMap Name Eligible
+                 -> SortedMap Name LiftedDef -> List Name -> Core (SortedMap Name LiftedDef)
+    substituteAll _ _ _ done [] = pure done
+    substituteAll defOf single elig done (n :: ns) =
         case lookup n defOf of
-             Nothing => substituteAll defOf single eligA elig done ns
+             Nothing => substituteAll defOf single elig done ns
              Just d => do
-                 d' <- substituteDef (case d of { MkLFun [] _ _ => eligA; _ => elig }) d
+                 d' <- substituteDef elig d
                  let elig' = case d' of
                                   MkLFun args [] body =>
                                       if contains n single then insert n (MkEligible args body True) elig else elig
                                   _ => elig
-                 substituteAll defOf single eligA elig' (insert n d' done) ns
+                 substituteAll defOf single elig' (insert n d' done) ns
 
     collapseDef : (Name, LiftedDef) -> (Name, LiftedDef)
     collapseDef (n, MkLFun args scope body) = (n, MkLFun args scope (valOf (collapseCaseOfCase body)))

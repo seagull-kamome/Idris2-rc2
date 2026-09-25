@@ -431,6 +431,7 @@ applySinkExp reps (RReleaseReuse fc v body) = RReleaseReuse fc v (applySinkExp r
 applySinkExp reps (RReuseOffer fc sc dupOnShared dropOnUnique body) = RReuseOffer fc sc dupOnShared dropOnUnique (applySinkExp reps body)
 applySinkExp reps (RLoop fc loopParams initial prologueDrop body) =
     RLoop fc loopParams initial prologueDrop (applySinkExp (foldl (\m, (i, r) => insert i r m) reps loopParams) body)
+applySinkExp reps (RMemoize fc n rep body) = RMemoize fc n rep (applySinkExp reps body)
 applySinkExp _ e = e
 
 ||| Apply branch-local sinking to one top-level definition. Every

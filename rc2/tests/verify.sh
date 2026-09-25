@@ -418,7 +418,7 @@ NO_REFC_DIFF_TESTS="Test3Data Test7CastMatrix Test8EmptyCon Test17ConstFold Test
 # packCFType allocation (idris2rc2_mkPointer/idris2rc2_mkGCPointer) is
 # new to %export's own argument marshalling and worth the same
 # scrutiny.
-LEAK_SENSITIVE_TESTS="Test1Basics Test9SelfTailLoop Test11DualABILeak Test12ConAltNative Test13NativeArgChain Test14SmallFunctionInline Test15CompareFusionThroughCall Test16LoopContinuePostDrop Test17ConstFold Test18ClosureInPlaceGrow Test19LoopInvariantParam Test22BranchSinking Test24CStructSupport Test26GCPtrAliasString Test27FFIDualABI Test28Utf8Strings Test33WideDualABIWorker Test35NetworkLoopback Test36ReuseOfferUniqueLeak Test37SystemMisc Test41FFIMalloc Test42SupportMisc Test44IORefExtPrimLeak Test46FastPackUnconditional Test49IntegerOpReuse Test57LoopCallArgNativeShadow Test59Export Test66ClosureFastPath Test69ConstFoldClosure Test70ConstFoldClosureCallthrough Test79DupMerge Test84CgExternStruct Test85CgExternStructPtrField Test86CafMemoization Test87SpecConstCon Test88KnownConFold"
+LEAK_SENSITIVE_TESTS="Test1Basics Test9SelfTailLoop Test11DualABILeak Test12ConAltNative Test13NativeArgChain Test14SmallFunctionInline Test15CompareFusionThroughCall Test16LoopContinuePostDrop Test17ConstFold Test18ClosureInPlaceGrow Test19LoopInvariantParam Test22BranchSinking Test24CStructSupport Test26GCPtrAliasString Test27FFIDualABI Test28Utf8Strings Test33WideDualABIWorker Test35NetworkLoopback Test36ReuseOfferUniqueLeak Test37SystemMisc Test41FFIMalloc Test42SupportMisc Test44IORefExtPrimLeak Test46FastPackUnconditional Test49IntegerOpReuse Test57LoopCallArgNativeShadow Test59Export Test66ClosureFastPath Test69ConstFoldClosure Test70ConstFoldClosureCallthrough Test79DupMerge Test84CgExternStruct Test85CgExternStructPtrField Test86CafMemoization Test87SpecConstCon Test88KnownConFold Test89CafDualABI"
 
 # KNOWN-BUGS.md's own remaining pre-existing leaks -- "definitely
 # lost" byte count, exactly. Anything else non-zero is a genuine new
@@ -631,6 +631,20 @@ for name in $ALL_TESTS; do
             report_pass "$name (case pushed into tails -- score's chain result never built)"
         else
             report_fail "$name" "score still builds its chain result Right in $TMP/${name}_rc2.rcexpr"
+        fi
+    fi
+
+    # Test89CafDualABI: DualABI's rewrites must reach inside a memoized
+    # CAF body (doc/caf-memoization.md, "Limitations"). Both `abs` calls
+    # in `table` spliced inline, none left as a call to the wrapper.
+    if [ "$name" = "Test89CafDualABI" ]; then
+        tableBody="$(awk '/^def Main.table /{p=1; next} /^def /{p=0} p' "$TMP/${name}_rc2.rcexpr")"
+        inlined="$(grep -c 'callFFIInline' <<< "$tableBody" || true)"
+        wrapped="$(grep -c 'call Main.prim__abs' <<< "$tableBody" || true)"
+        if [ "$inlined" = "2" ] && [ "$wrapped" = "0" ]; then
+            report_pass "$name (DualABI inside a memoized CAF -- both FFI calls inlined)"
+        else
+            report_fail "$name" "table has $inlined inlined and $wrapped wrapper FFI call(s) in $TMP/${name}_rc2.rcexpr"
         fi
     fi
 

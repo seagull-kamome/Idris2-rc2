@@ -588,14 +588,10 @@ cafValueOf : RCDef -> Maybe (Subset RCLocal IsAnyConstLocal)
 cafValueOf (MkRCFun [] _ _ (RV _ cval)) = (\prf => Element cval prf) <$> isConstLocalProof cval
 cafValueOf _ = Nothing
 
-||| `knownCons`: see `emptyEnv`. Never in a CAF: a partial application
-||| folded to a direct call there lets `LateInline` splice whole bodies
-||| into the memoized CAF, which later passes optimise less than an
-||| ordinary function (`main`'s own `unsafePerformIO` was the case
-||| found).
+||| `knownCons`: see `emptyEnv`.
 export
 foldConstDef : (knownCons : Bool) -> CafTable -> RCDef -> RCDef
-foldConstDef kc caf (MkRCFun args retRep isWorker body) = MkRCFun args retRep isWorker (foldConst caf (emptyEnv (kc && not (null args)) body) body)
+foldConstDef kc caf (MkRCFun args retRep isWorker body) = MkRCFun args retRep isWorker (foldConst caf (emptyEnv kc body) body)
 foldConstDef kc caf (MkRCError body) = MkRCError (foldConst caf (emptyEnv kc body) body)
 foldConstDef _ _ d@(MkRCCon _ _ _) = d
 foldConstDef _ _ d@(MkRCForeign _ _ _) = d

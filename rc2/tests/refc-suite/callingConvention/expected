@@ -2,14 +2,55 @@
 "value=7"
 5000050000
 100
+6
+15
+4
 --- DualABI worker for eligibleAdd (native return, rc2/doc/dual-abi.md) ---
+int64_t idris2rc2_worker_Main_eligibleAdd_2
+(
+    int64_t var_107
+,   int64_t var_108
+);
 --- DualABI worker count for ineligibleShow (want: none) ---
 0
 --- FFI worker-indirection count (want: none, inline splicing only) ---
 0
 --- FFI call-site shape (wrapper body + inlined non-tail call site + tailAbs's own inlined tail call) ---
-    int64_t var_417 = abs(var_416);
-    IDRIS2RC2_Value * var_392 = (IDRIS2RC2_Value*)idris2rc2_mkInt64(abs(var_391));
+        int64_t var_528 = abs(var_527);
+    IDRIS2RC2_Value * tmp_11 = (IDRIS2RC2_Value*)idris2rc2_mkInt64(abs(idris2rc2_to_i64(var_55)));
     int64_t retVal = abs((idris2rc2_to_i64(var_1)));
+    int64_t var_110 = abs(INT64_C(0));
 --- Compiler.RC2.Loop goto conversion for sumLoop's own worker body ---
+int64_t idris2rc2_worker_Main_sumLoop_1
+(
+    IDRIS2RC2_Value * var_56
+,   IDRIS2RC2_Value * var_57
+)
+{
+    int64_t var_428 = (var_56 == NULL) ? 0 : (idris2rc2_to_i64(var_56));
+    int64_t var_429 = (var_57 == NULL) ? 0 : (idris2rc2_to_i64(var_57));
+    idris2rc2_drop(var_56);
+    idris2rc2_drop(var_57);
+    loop_12:;
+    int64_t tmp_13 = var_428;
+    if (tmp_13 == INT64_C(0)) {
+        return var_429;
+    }
+    int64_t var_58 = (var_428 - INT64_C(1));
+    int64_t tmp_14 = var_58;
+    int64_t tmp_15 = (var_429 + var_428);
+    var_428 = tmp_14;
+    var_429 = tmp_15;
+    goto loop_12;
+}
 --- Tail-position FFI call for tailAbs (want: inlined call + immediate return, no closure defer, rc2/doc/dual-abi.md Stage 4b) ---
+IDRIS2RC2_Value *Main_tailAbs
+(
+    IDRIS2RC2_Value * var_55
+)
+{
+    IDRIS2RC2_Value * tmp_11 = (IDRIS2RC2_Value*)idris2rc2_mkInt64(abs(idris2rc2_to_i64(var_55)));
+
+    idris2rc2_drop(var_55);
+    return tmp_11;
+}

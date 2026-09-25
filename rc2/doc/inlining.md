@@ -385,12 +385,13 @@ A callee is inlined here, at its one call site, when:
 - it has exactly one saturated `LAppName` occurrence, whole-program;
 - it is in no call-graph cycle, a self-call included (`MutualLoop`'s
   `tarjanSCCs` over the `LAppName` graph);
-- that call site isn't lazy (`LAppName`'s `lazy` is `Nothing`); and
-- the caller isn't itself a CAF. Splicing whole bodies into a memoized
-  CAF leaves them optimised less than in an ordinary function: `main`'s
-  own `unsafePerformIO` was the case found, where native-type
-  inference and DualABI's FFI splicing stopped reaching the spliced
-  code.
+- that call site isn't lazy (`LAppName`'s `lazy` is `Nothing`).
+
+The caller may be a CAF. A first version excluded CAF callers, because
+code spliced into `main`'s memoized body came out unoptimised. The
+real cause was that DualABI and Sink never entered `RMemoize` at all
+(`caf-memoization.md`, "Limitations"). That is fixed, and the
+exclusion is gone.
 
 Definitions are processed callees first (the reverse of `tarjanSCCs`'
 order, as `LateInline` does), and an eligible callee enters the map in

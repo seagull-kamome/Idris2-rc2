@@ -375,13 +375,16 @@ nothing reads the local, the closure is never allocated. This also
 fires well beyond the case that prompted it: idris2-lsp's `apply` count
 dropped 11% (see below).
 
-**Neither fold nor Criterion B works inside a CAF.** A direct call
-where there used to be a closure dispatch let `LateInline` splice
-`main`'s whole body into the memoized `__mainExpression` CAF. Later
-passes optimised it less there: its arithmetic stayed Boxed, and
-DualABI no longer inlined the FFI call `callingConvention` checks. So
-`foldConstDef` doesn't fold known constructors or partials in a
-0-argument definition, and Criterion B isn't applied in one.
+**It exposed passes that skipped CAF bodies.** A direct call where
+there used to be a closure dispatch let `LateInline` splice `main`'s
+whole body into the memoized `__mainExpression` CAF, where its
+arithmetic stayed Boxed and DualABI no longer inlined the FFI call
+`callingConvention` checks. This was first worked around by keeping
+both folds and Criterion B out of CAFs. The actual cause was that
+DualABI's call-site rewrite and FFI splicing and Sink ended in a
+catch-all that never entered `RMemoize`, so *every* non-constant CAF
+body had always gone without them (`caf-memoization.md`,
+"Limitations"). They now pass through it, and the workaround is gone.
 
 ### Measured (2026-09-25)
 

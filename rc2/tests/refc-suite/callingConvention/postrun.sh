@@ -8,12 +8,15 @@
 # Trailing `// <file>:<line>:<col>--...` source-location comments are
 # stripped since they shift with unrelated line-number edits to
 # Main.idr, not with a genuine shape change.
+# Definitions are matched by their own header line (a prototype first,
+# then the body), with the worker's numeric suffix as `[0-9]+`: the
+# suffix is a counter that shifts whenever another worker is added.
 set -u
 c=build/exec/test.c
 strip_loc() { sed -E 's#[[:space:]]+// [A-Za-z_.]+:[0-9]+:[0-9]+.*$##'; }
 
 echo "--- DualABI worker for eligibleAdd (native return, rc2/doc/dual-abi.md) ---"
-awk '/^int64_t idris2rc2_worker_Main_eligibleAdd_1$/{p=1} p{print} p&&/^\);$/{exit}' "$c"
+awk '/^int64_t idris2rc2_worker_Main_eligibleAdd_[0-9]+$/{p=1} p{print} p&&/^\);$/{exit}' "$c"
 
 echo "--- DualABI worker count for ineligibleShow (want: none) ---"
 grep -c 'idris2rc2_worker_Main_ineligibleShow' "$c"
@@ -25,7 +28,7 @@ echo "--- FFI call-site shape (wrapper body + inlined non-tail call site + tailA
 grep -E '\babs\(' "$c" | strip_loc
 
 echo "--- Compiler.RC2.Loop goto conversion for sumLoop's own worker body ---"
-awk '/idris2rc2_worker_Main_sumLoop_0/{n++; if (n==2) p=1} p{print} p&&/^}/{exit}' "$c" | strip_loc
+awk '/^int64_t idris2rc2_worker_Main_sumLoop_[0-9]+$/{n++; if (n==2) p=1} p{print} p&&/^}/{exit}' "$c" | strip_loc
 
 echo "--- Tail-position FFI call for tailAbs (want: inlined call + immediate return, no closure defer, rc2/doc/dual-abi.md Stage 4b) ---"
-awk '/Main_tailAbs/{n++; if (n==2) p=1} p{print} p&&/^}/{exit}' "$c" | strip_loc
+awk '/^IDRIS2RC2_Value \*Main_tailAbs$/{n++; if (n==2) p=1} p{print} p&&/^}/{exit}' "$c" | strip_loc
