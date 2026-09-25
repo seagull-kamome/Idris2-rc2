@@ -139,8 +139,13 @@ compileCObjectFile sourceFile objectFile verbose
          -- for the rest of this same fix (archiving instead of linking
          -- bare `.o`s solves it at whole-module granularity; this
          -- solves what's left at per-function granularity).
+         -- `-O2`: the default optimisation level for generated code
+         -- (the runtime library itself is already built with `-O2`, see
+         -- `support/rc2/Makefile`). Placed before `cFlags` on purpose:
+         -- gcc/clang honour the last `-O` given, so `CFLAGS=-O0` (or
+         -- `IDRIS2_CFLAGS=-O0`) still turns it back off.
          let runccobj = (escapeCmd $
-             [cc, "-Werror", "-Wno-error=deprecated-declarations",
+             [cc, "-O2", "-Werror", "-Wno-error=deprecated-declarations",
                   "-ffunction-sections", "-fdata-sections", "-c", sourceFile,
                   "-o", objectFile,
                   "-I" ++ rc2Dir,

@@ -339,6 +339,12 @@ nix-shell -p gcc gmp pkg-config --run \
   './rc2/build/exec/idris2-rc2 --cg rc2 -p rc2base Program.idr -o program'
 ```
 
+The generated C is compiled with `-O2` by default, the same level the
+runtime library uses. `IDRIS2_CFLAGS` (or, if that is unset, `CFLAGS`)
+comes after it on the command line, and the last `-O` wins, so
+`CFLAGS=-O0` turns optimisation back off. (Upstream RefC passes no `-O`
+at all.)
+
 Upstream Idris2's own `--timing N` flag (no rc2-specific flag needed) shows
 build performance: `--timing 1` gives the "Code generation overall" total
 already shown by the upstream `Compiler.Common` wrapper, while `--timing 2`
