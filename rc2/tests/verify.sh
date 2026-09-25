@@ -705,7 +705,10 @@ for name in $ALL_TESTS; do
     fi
 done
 
-if [ "$DO_VALGRIND" -eq 1 ]; then
+if [ "$DO_VALGRIND" -eq 1 ] && ! command -v valgrind >/dev/null 2>&1; then
+    echo
+    report_fail "valgrind" "not on PATH -- run inside nix-shell -p ... valgrind, or pass --no-valgrind"
+elif [ "$DO_VALGRIND" -eq 1 ]; then
     echo
     echo "=== valgrind (leak-sensitive tests) ==="
 
@@ -731,7 +734,7 @@ if [ "$DO_VALGRIND" -eq 1 ]; then
     valgrind_t0="$(date +%s.%N)"
     running=0
     for name in "${valgrind_names[@]}"; do
-        valgrind --leak-check=full --error-exitcode=1 "$TMP/${name}_rc2" \
+        valgrind --leak-check=full --errors-for-leak-kinds=none --error-exitcode=1 "$TMP/${name}_rc2" \
             > "$TMP/${name}_valgrind.log" 2>&1 &
         running=$((running + 1))
         if [ "$running" -ge "$valgrind_jobs" ]; then
@@ -746,11 +749,20 @@ if [ "$DO_VALGRIND" -eq 1 ]; then
     # (not folded into the launch loop above) so PASS/KNOWN/FAIL lines
     # print in the same deterministic $ALL_TESTS order regardless of
     # which background job happened to finish first.
+    # A log with no `ERROR SUMMARY` means valgrind never ran the program
+    # to the end (a missing shared library, a crash of its own); a
+    # non-zero one is an invalid read/write or free, which a leak count
+    # alone would never show.
     for name in "${valgrind_names[@]}"; do
         leaked="$(grep -oP 'definitely lost: \K[0-9,]+(?= bytes)' "$TMP/${name}_valgrind.log" | tr -d ',')"
         leaked="${leaked:-0}"
         expected_leak="${KNOWN_LEAK_BYTES[$name]:-0}"
-        if [ "$leaked" -eq 0 ]; then
+        errors="$(grep -oP 'ERROR SUMMARY: \K[0-9,]+(?= errors)' "$TMP/${name}_valgrind.log" | tr -d ',')"
+        if [ -z "$errors" ]; then
+            report_fail "$name (valgrind)" "no ERROR SUMMARY, valgrind did not finish -- see $TMP/${name}_valgrind.log"
+        elif [ "$errors" -ne 0 ]; then
+            report_fail "$name (valgrind)" "$errors memory error(s) -- see $TMP/${name}_valgrind.log"
+        elif [ "$leaked" -eq 0 ]; then
             report_pass "$name (valgrind, 0 bytes definitely lost)"
         elif [ "$leaked" -eq "$expected_leak" ]; then
             report_known "$name (valgrind)" "$leaked bytes definitely lost, matches recorded pre-existing leak"

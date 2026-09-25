@@ -371,7 +371,9 @@ nix-shell -p gcc gmp pkg-config valgrind --run './verify.sh'
 (`rc2/tests/refc-suite/`, see its own `README.md`), compiles and diffs
 every hand-written smoke test (`rc2/tests/Test*.idr`) against a saved
 expected output, and runs `valgrind --leak-check=full` on the
-leak-sensitive subset -- see `KNOWN-BUGS.md` for the few
+leak-sensitive subset, failing on any memory error as well as on a leak,
+and failing outright when `valgrind` is not on `PATH` (pass
+`--no-valgrind` to skip it) -- see `KNOWN-BUGS.md` for the few
 already-investigated quirks it deliberately doesn't flag as failures
 (pre-existing leaks, a reference-RefC-library blocker, etc.). Both the
 build and `--regen-expected`'s own real-refc reference compile use
