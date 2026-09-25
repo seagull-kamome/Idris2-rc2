@@ -36,8 +36,9 @@ rc2/
 │   ├── Util.idr         small, dependency-light helpers shared across two or more passes (leaf-level, no import cycles)
 │   ├── RC.idr           Lifted -> RCExp: Phase 1 normalize, Phase 2 annotate (dup/drop/free insertion)
 │   ├── Types.idr        native/boxed representation inference (Rep)
-│   ├── Inline.idr       whole-program inlining (lets comparison fusion reach through a call)
-│   ├── ConstFold.idr    ExtPrim (prim__codegen) / arithmetic / comparison / cast / case-of-constant folding
+│   ├── Inline.idr       whole-program inlining: small call-free callees everywhere, loop-free callees at their one call site
+│   ├── ConstFold.idr    ExtPrim (prim__codegen) / arithmetic / comparison / cast / case-of-constant folding, plus non-escaping constructors and partial applications
+│   ├── PushCon.idr      pushes a `case` into the tails of the value it matches, so constructor tails fold away
 │   ├── Reuse.idr        constructor reuse-in-place
 │   ├── ConAltNative.idr caches a repeatedly-native-read destructured field
 │   ├── MutualLoop.idr   mutual tail recursion -> one merged self-tail-recursive function
@@ -223,8 +224,9 @@ installed into the same shared `install/` prefix).
 
 ```
 tools/rcexpr-lint/
-├── RcexprLint.idr  CLI: read a .rcexpr file, print one line per anomaly
+├── RcexprLint.idr  CLI: read a .rcexpr file, print one line per anomaly, then the metrics
 ├── Lint.idr        the check itself (see its own module note for the rules)
+├── Metrics.idr     static counts: definitions, constructions, closures, calls, dup/drop
 ├── README.md       what it catches, what it deliberately doesn't, how to read a report
 └── tests/          hand-written .rcexpr fixtures + verify.sh
 ```
@@ -245,6 +247,13 @@ dump-tracing. A valgrind run catches such a bug only if the test that
 triggers it exists and the freed memory is actually reused; this
 catches it in the IR of *any* program that can be compiled, including
 whole external packages.
+
+After the anomalies it prints static metrics for the whole dump:
+definitions by kind, constructions (fresh or reusing a cell), closures
+built and applied, calls, `let`s by representation, branches, and
+`dup`/`drop` counts. They count places in the IR, not executions, and
+are meant for comparing two dumps of one program, e.g. with and
+without a pass (`--directive no<stage>`).
 
 ```sh
 source env.sh

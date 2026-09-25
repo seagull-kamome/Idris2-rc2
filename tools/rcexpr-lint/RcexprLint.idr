@@ -12,6 +12,7 @@ module Main
 import Language.RCExpr.AST
 import Language.RCExpr.Parser
 import Lint
+import Metrics
 
 import System
 import System.File
@@ -36,11 +37,19 @@ runOn path = do
     reportAnomalies path prog =
         let anomalies = lintProgram prog in
         case anomalies of
-             [] => putStrLn ("rcexpr-lint: " ++ path ++ ": " ++ show (length prog) ++ " defs, no anomalies found")
+             [] => do
+                 putStrLn ("rcexpr-lint: " ++ path ++ ": " ++ show (length prog) ++ " defs, no anomalies found")
+                 reportMetrics
              _ => do
                  traverse_ (\a => putStrLn (path ++ ": " ++ show a)) anomalies
                  putStrLn ("rcexpr-lint: " ++ show (length anomalies) ++ " anomalies found")
+                 reportMetrics
                  exitFailure
+      where
+        reportMetrics : IO ()
+        reportMetrics = do
+            putStrLn "metrics (places in the IR, not executions):"
+            traverse_ putStrLn (renderMetrics (metricsOf prog))
 
 main : IO ()
 main = do

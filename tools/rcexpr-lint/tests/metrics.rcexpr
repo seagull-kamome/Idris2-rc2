@@ -1,0 +1,49 @@
+def TestMetricsCons  (fun args= ["v1:Boxed", "v2:Boxed"] ret= Boxed)
+  case v2 of
+    _builtin.JUST [just] tag= Just 1 args= [v3] ->
+      reuseOffer v2 dupOnShared= [v3]
+      let v4 : Boxed =
+        con _builtin.JUST [just] tag= Just 1 [v3] reuse= v2
+      con _builtin.CONS [cons] tag= Just 1 [v1, v4]
+    _builtin.NOTHING [nothing] tag= Just 0 args= [] ->
+      drop [v1]
+      crash "unreachable"
+
+def TestMetricsClosures  (fun args= ["v1:Boxed", "v2:Boxed"] ret= Boxed)
+  let v3 : Boxed =
+    dup v1 x2
+    partial Main.f missing= 1 [v1]
+  let v4 : Boxed =
+    apply v3 [v2]
+  let v5 : Boxed =
+    extprim Data.IORef.prim__readIORef [[__], v1] postDrop= [v1]
+  let v6 : Native Int =
+    callFFIInline ["C:abs,libc,stdlib.h"] [Int] -> Int postDrop= [] [v5]
+  drop [v5]
+  call Main.g [v4, v1]
+
+def {idris2rc2_worker_TestMetricsLoop:0}  (fun args= ["v1:Native Int", "v2:Boxed"] ret= Boxed worker=True)
+  loop ["v3:Native Int", "v2:Boxed"] initial= [v1, v2] prologueDrop= []
+  case v3 of
+    0 ->
+      v2
+    _ ->
+      let v4 : Native Int =
+        op -Int [v3, #1]
+      let v5 : Boxed =
+        callRep {idris2rc2_worker_Main_h:1} ["Native Int"] -> Boxed postDrop= [] [v4]
+      continue loop [v4, v5] postDrop= [v2]
+
+def TestMetricsCaf  (fun args= [] ret= Boxed)
+  memoize TestMetricsCaf : Boxed
+    let v1 : Boxed =
+      call Main.mk []
+    let v2 : Boxed =
+      call Main.mk []
+    free v2
+    releaseReuse v1
+    #0
+
+def _builtin.JUST  (con tag= Just 1 arity= 1 newtype= Nothing)
+
+def Main.prim__abs  (foreign ["C:abs,libc,stdlib.h"] [Int] -> Int)

@@ -17,6 +17,7 @@ rcexpr-lint: 2 anomalies found
 
 Exit code `0` with no anomalies, `1` otherwise (and also `1` if the
 file can't be read or parsed), so it drops straight into a script.
+The static metrics described under "Metrics" follow the report.
 
 ## Why it exists
 
@@ -68,6 +69,56 @@ offending one.
   subtraction at zero is a double-drop.
 - A local absent from the map is untracked, never treated as zero --
   so an unknown local is silently skipped rather than falsely flagged.
+
+## Metrics
+
+After the anomaly report (or the "no anomalies found" line), every run
+prints static counts over the whole dump. The run is idris2-lsp at
+commit `5bddcb2`:
+
+```
+metrics (places in the IR, not executions):
+  definitions    25556  (functions 23337, workers 561, constructors 1559, foreign 99, error 0)
+  con            58973  (fresh 38257, reusing a cell 20716)
+  partial        15788  (closures built)
+  apply          10039  (closure calls)
+  call           57237  (plain 54228, callRep 2948, FFI inline 61)
+  op             11230  (op 9108, extprim 2122)
+  let           114494  (Boxed 110981, native 3513)
+  case           48159  (constructor 42151, constant 5544, cmp 464)
+  dup           105738  (increments, in 92136 dup nodes)
+  drop          201119  (decrements, in 75857 drop nodes)
+  postDrop       16422  (decrements attached to another node: postDrop, dropOnUnique, prologueDrop)
+  free             255
+  reuseOffer     27628  (releaseReuse 10059)
+  loop            2445  (continue 4128)
+  memoize          426
+  crash             78
+```
+
+Every figure counts **places in the IR**, not how often they run: a
+`con` inside a loop body counts once. So they answer "did this pass
+remove or add code of this kind", not "does the program allocate
+less". Compare two dumps of the same program, typically with and
+without one pass (`--directive no<stage>`, see
+`rc2/doc/directives.md`); for run-time counts, run the program under
+valgrind.
+
+| figure | counts |
+|---|---|
+| `definitions` | every `def`, by kind; `workers` are DualABI's `worker=True` functions |
+| `con` | constructor builds; `reusing a cell` has `reuse=`, `fresh` allocates |
+| `partial` / `apply` | closures built, closures applied |
+| `call` | direct calls: `call`, DualABI's `callRep`, inlined FFI calls |
+| `op` | primitive operations and `extprim` calls |
+| `let` | bindings, by representation |
+| `case` | branches: on a constructor, on a constant, fused comparisons (`cmp`) |
+| `dup` | reference-count increments (`dup v x3` counts 3), and the nodes holding them |
+| `drop` | decrements in `drop [...]` nodes, and the nodes |
+| `postDrop` | decrements riding on another node instead of a `drop` |
+| `free`, `reuseOffer`, `releaseReuse` | unconditional frees and the reuse protocol |
+| `loop`, `continue` | converted loops and their back edges |
+| `memoize`, `crash` | memoized CAF bodies, `crash` nodes |
 
 ## What it deliberately does not check
 
@@ -141,14 +192,16 @@ cd tools/rcexpr-lint/tests
 ./verify.sh
 ```
 
-`verify.sh` builds the CLI and runs it over three hand-written fixtures,
-checking both the exit code and the exact report text:
+`verify.sh` builds the CLI and runs it over four hand-written fixtures,
+checking both the exit code and the exact report text, metrics
+included:
 
 | fixture | covers |
 |---|---|
 | `clean.rcexpr` | a correct program produces no anomalies (guards against the check silently doing nothing) |
 | `anomalies.rcexpr` | every anomaly/context combination fires: plain read after drop, double drop, a drop inside one `cmp` arm, and a `postDrop=`-consumed local read afterwards |
 | `dupcount.rcexpr` | regression for a real parser bug -- `dup vN xM`'s repeat count was glued onto `x` as one token and silently undercounted if read as two |
+| `metrics.rcexpr` | every node kind the metrics count, so each figure is checked against a hand count at least once |
 
 It builds with the plain Chez backend (`idris2 -p rc2base -p contrib`):
 this tool only reads text files and never needs to run *through* rc2
@@ -161,6 +214,7 @@ itself. It needs `rc2base` already built and installed -- see
 |---|---|
 | `RcexprLint.idr` | CLI: read, parse, report, set the exit code |
 | `Lint.idr` | the check itself; its module note carries the rule list this README summarises |
+| `Metrics.idr` | the static counts printed after the report |
 | `tests/` | fixtures and `verify.sh` |
 
 The `.rcexpr` grammar itself is **not** here: `Language.RCExpr.AST`,
