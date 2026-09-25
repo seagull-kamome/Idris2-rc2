@@ -237,6 +237,15 @@ disableableStageNames : List String
 disableableStageNames =
     ["noinline", "noconstfold", "noknowncon", "nopushcon", "nospecclosure", "nospecconstcon", "noconaltnative", "nomutualloop", "noloop", "noearlyinline", "nolateinline", "nosink", "nodualabi", "nodeadcode", "nodupmerge", "nodeadvars"]
 
+||| Stages that are off unless asked for with `--directive <name>`. They
+||| travel to `toRCDefs` in the same list as the disables above.
+optInStageNames : List String
+optInStageNames = ["latepushcon"]
+
+||| Every directive `toRCDefs` consults: the disables and the opt-ins.
+stageDirectiveNames : List String
+stageDirectiveNames = disableableStageNames ++ optInStageNames
+
 ||| Optional pipeline-stage disabling via `--directive no<stagename>`,
 ||| for A/B regression isolation without editing `toRCDefs` itself and
 ||| rebuilding `idris2-rc2`. See `rc2/doc/directives.md` for the full
@@ -387,9 +396,20 @@ toRCDefs disabled incremental roots lds0 = do
     inlined <- if "nolateinline" `elem` disabled
                   then pure looped
                   else logTime 2 "rc2: Late inline" $ applyLateInline "Late inline" False roots looped
+    -- doc/constructor-escape-analysis.md's "What is left after Early
+    -- inline, and the RC-aware fold": PushCon's push again, for what
+    -- LateInline has just created, with each known tail folded by hand
+    -- now that ownership is explicit. Before Sink and DualABI, so both
+    -- still see the result.
+    -- Off by default (`--directive latepushcon` turns it on): on
+    -- idris2-lsp it folds 243 tails yet leaves the static constructor
+    -- count unchanged (constructor-escape-analysis.md).
+    latePushed <- if not ("latepushcon" `elem` disabled) || ("nopushcon" `elem` disabled)
+                     then pure inlined
+                     else logTime 2 "rc2: Push case into tails (post-RC)" $ applyPushConRC inlined
     sunk <- if "nosink" `elem` disabled
-               then pure inlined
-               else logTime 2 "rc2: Sink" $ pure (map (\(n, d) => (n, applySink d)) inlined)
+               then pure latePushed
+               else logTime 2 "rc2: Sink" $ pure (map (\(n, d) => (n, applySink d)) latePushed)
     dualABId <- if "nodualabi" `elem` disabled
        then pure sunk
        else logTime 2 "rc2: DualABI" $ do
@@ -681,7 +701,7 @@ compileExprWhole c s _ outputDir tm outfile =
      -- Fetched once, up front, since `toRCDefs`'s own stage disabling
      -- needs it before `toRCDefs` runs.
      directiveList <- getDirectives (Other "rc2")
-     let disabledStages = filter (`elem` directiveList) disableableStageNames
+     let disabledStages = filter (`elem` directiveList) stageDirectiveNames
      -- `nomain`: not a stage disable, only controls whether `Emit.idr`'s
      -- `footer` emits a C `main()` -- see rc2/doc/directives.md and
      -- rc2/doc/export-support.md's "Linking as a library" section.
@@ -858,7 +878,7 @@ incCompile c s sourceFile = do
          coreDefs <- get Ctxt
          let noMain = currentNS coreDefs /= mainNS
          directiveList <- getDirectives (Other "rc2")
-         let disabledStages = nub ("nodeadcode" :: filter (`elem` directiveList) disableableStageNames)
+         let disabledStages = nub ("nodeadcode" :: filter (`elem` directiveList) stageDirectiveNames)
          defs <- toRCDefs disabledStages True [] (lambdaLifted cdata)
          -- `Main.main`'s own *compiled* arity isn't a fixed 0-or-1 --
          -- observed both across two small test programs (a bare

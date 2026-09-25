@@ -74,6 +74,23 @@ Two directives that look like they belong on this list but don't:
   for the full history. `applyReuse` now always runs unconditionally;
   passing `--directive noreuse` today is a harmless no-op, same as any
   other unrecognized directive string.
+  The likely root cause surfaced on 2026-09-25: `Reuse`'s `resolveReuse`
+  also inserts the field `dup`s `annotate` leaves to it (its
+  `dupOnSurvive`), so without `Reuse` a field read after its scrutinee
+  is dropped has no reference of its own -- the use-after-free a missing
+  `RMemoize` case in the same function caused in `refc-suite/clock`
+  (`doc/caf-memoization.md`).
+- **`latepushcon` is the one opt-in stage.** It turns *on*
+  `Compiler.RC2.PushCon`'s post-RC push (`applyPushConRC`), right after
+  the later `LateInline` run: the same case-into-tails push, with each
+  known tail folded against its alt by explicit ownership transfer
+  (`doc/constructor-escape-analysis.md`, "What is left after Early
+  inline, and the RC-aware fold"). Off by default because on
+  idris2-lsp it folds 243 tails but leaves the static constructor count
+  unchanged. Kept so it can be measured on real workloads; run
+  `verify.sh --directive latepushcon` after touching it, since the
+  default suite never exercises it. Travels in the same list as the
+  disables (`RC2.idr`'s `optInStageNames`).
 - **`nomain` is a real, currently-supported directive, just not a
   pipeline-stage disable.** It's read as its own plain `Bool` directly
   in `compileExpr`, not threaded through `toRCDefs`/`disabled` at all,

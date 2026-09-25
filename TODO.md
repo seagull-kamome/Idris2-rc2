@@ -602,5 +602,8 @@ splicing before RC annotation (no CAFs, no callees in a call cycle).
 Still open: the shapes the later `LateInline` run still creates after
 RC annotation (72 shape-A and 1,189 shape-B sites across idris2-lsp),
 from loop-bearing callees and ones that become single-caller only
-later. What remains is the RC-aware fold, option (1) in the doc's "The
-shapes `LateInline` creates".
+later. The RC-aware fold for them exists but is opt-in
+(`--directive latepushcon`): it leaves the static constructor count
+unchanged on idris2-lsp, and whether its fresh-tail savings matter at
+run time needs a real workload to measure. Loop-bearing values (168
+sites) aren't pushed into at all yet.

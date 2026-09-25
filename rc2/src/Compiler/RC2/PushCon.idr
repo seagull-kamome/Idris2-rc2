@@ -32,6 +32,7 @@ import Data.List
 import Data.Maybe
 import Data.SortedMap
 import Data.SortedSet
+import Data.Vect
 
 %default covering
 
@@ -55,6 +56,15 @@ sizeOf (RConCase _ _ alts mDef) =
     1 + sum (map (\(MkRConAlt _ _ _ _ b) => sizeOf b) alts) + maybe 0 sizeOf mDef
 sizeOf (RConstCase _ _ alts mDef) =
     1 + sum (map (\(MkRConstAlt _ b) => sizeOf b) alts) + maybe 0 sizeOf mDef
+-- The post-RC wrappers count too: nearly every post-RC alt starts with
+-- them, and sizing one as 1 let a large alt be copied freely.
+sizeOf (RDup _ _ _ k) = 1 + sizeOf k
+sizeOf (RDrop _ _ k) = 1 + sizeOf k
+sizeOf (RFree _ _ k) = 1 + sizeOf k
+sizeOf (RReleaseReuse _ _ k) = 1 + sizeOf k
+sizeOf (RReuseOffer _ _ _ _ k) = 1 + sizeOf k
+sizeOf (RLoop _ _ _ _ k) = 1 + sizeOf k
+sizeOf (RMemoize _ _ _ k) = 1 + sizeOf k
 sizeOf _ = 1
 
 -------------------------------------------------------------------------------
@@ -76,6 +86,15 @@ mapTails f (RConstCase fc sc alts mDef) = do
     alts' <- traverse (\(MkRConstAlt c b) => MkRConstAlt c <$> mapTails f b) alts
     mDef' <- traverseOpt (mapTails f) mDef
     pure (RConstCase fc sc alts' mDef')
+-- Post-RC only (`applyPushConRC`): ownership wrappers pass the tail
+-- through, a loop is opaque (its exits sit next to `RLoopContinue`s
+-- and loop-converted native shadows), and a `continue` is never a tail.
+mapTails f (RDup fc v n k) = RDup fc v n <$> mapTails f k
+mapTails f (RDrop fc vs k) = RDrop fc vs <$> mapTails f k
+mapTails f (RFree fc v k) = RFree fc v <$> mapTails f k
+mapTails f (RReleaseReuse fc v k) = RReleaseReuse fc v <$> mapTails f k
+mapTails f (RReuseOffer fc sc ds us k) = RReuseOffer fc sc ds us <$> mapTails f k
+mapTails f e@(RLoopContinue {}) = pure e
 mapTails f e = f e
 
 tailsOf : RCExp -> List RCExp
@@ -88,6 +107,12 @@ tailsOf = go
         concatMap (\(MkRConAlt _ _ _ _ b) => go b) alts ++ maybe [] go mDef
     go (RConstCase _ _ alts mDef) =
         concatMap (\(MkRConstAlt _ b) => go b) alts ++ maybe [] go mDef
+    go (RDup _ _ _ k) = go k
+    go (RDrop _ _ k) = go k
+    go (RFree _ _ k) = go k
+    go (RReleaseReuse _ _ k) = go k
+    go (RReuseOffer _ _ _ _ k) = go k
+    go (RLoopContinue {}) = []
     go t = [t]
 
 -------------------------------------------------------------------------------
@@ -113,7 +138,7 @@ landingOf (ConC _ alts mDef) t =
                 Nothing => Nothing
   where
     knownTag : RCExp -> Maybe (Name, Maybe Int)
-    knownTag (RCon _ n _ tag _ Nothing) = Just (n, tag)
+    knownTag (RCon _ n _ tag _ _) = Just (n, tag)
     knownTag (RV _ (RCConstCon n _ tag _)) = Just (n, tag)
     knownTag (RV _ (RCEmptyCon n _ tag)) = Just (n, Just tag)
     knownTag _ = Nothing
@@ -255,4 +280,219 @@ applyPushCon = traverse pushDef
     pushDef (n, MkRCFun args retRep isWorker body) = do
         (body', changed) <- pushExp body
         pure (n, if changed then foldConstDef True empty (MkRCFun args retRep isWorker body') else MkRCFun args retRep isWorker body)
+    pushDef d = pure d
+
+-------------------------------------------------------------------------------
+-- After RC annotation: the same push, with each known tail folded by hand
+-- The shapes `LateInline` creates after RC annotation. Each fold moves
+-- ownership explicitly; see constructor-escape-analysis.md, "What is
+-- left after Early inline, and the RC-aware fold".
+
+||| The operands a node reads itself, leaving out the positions that
+||| only release or reuse a local (`drop`, `reuseOffer`'s scrutinee,
+||| `releaseReuse`, a constructor's `reuse=`).
+directReads : RCExp -> List RCLocal
+directReads (RV _ l) = [l]
+directReads (RAppName _ _ _ args) = args
+directReads (RAppNameRep _ _ _ _ pd args) = pd ++ args
+directReads (RAppFFIInline _ _ _ _ pd args) = pd ++ args
+directReads (RUnderApp _ _ _ args) = args
+directReads (RApp _ _ c args) = c :: args
+directReads (RCon _ _ _ _ args _) = args
+directReads (ROp _ _ _ args pd) = Prelude.toList args ++ pd
+directReads (RExtPrim _ _ _ args pd) = args ++ pd
+directReads (RStructGet _ sv _ _ pd) = sv :: pd
+directReads (RStructSet _ sv _ _ val pd) = sv :: val :: pd
+directReads (RCmpCase _ _ args pd _ _) = Prelude.toList args ++ pd
+directReads (RConCase _ sc _ _) = [sc]
+directReads (RConstCase _ sc _ _) = [sc]
+directReads (RDup _ x _ _) = [x]
+directReads (RFree _ x _) = [x]
+directReads (RReuseOffer _ _ ds us _) = ds ++ us
+directReads (RLoop _ _ initial pd _) = initial ++ pd
+directReads (RLoopContinue _ args pd) = args ++ pd
+directReads _ = []
+
+children : RCExp -> List RCExp
+children (RLet _ _ _ value body) = [value, body]
+children (RCmpCase _ _ _ _ t f) = [t, f]
+children (RConCase _ _ alts mDef) = map (\(MkRConAlt _ _ _ _ b) => b) alts ++ maybe [] pure mDef
+children (RConstCase _ _ alts mDef) = map (\(MkRConstAlt _ b) => b) alts ++ maybe [] pure mDef
+children (RDup _ _ _ k) = [k]
+children (RDrop _ _ k) = [k]
+children (RFree _ _ k) = [k]
+children (RReleaseReuse _ _ k) = [k]
+children (RReuseOffer _ _ _ _ k) = [k]
+children (RLoop _ _ _ _ k) = [k]
+children (RMemoize _ _ _ k) = [k]
+children _ = []
+
+||| `v` is only ever released or reused below, never read or `dup`'d:
+||| the post-RC form of "`v` doesn't escape", which also makes it unique.
+onlyReleased : Int -> RCExp -> Bool
+onlyReleased v e = not (elem (RCLoc v) (directReads e)) && all (onlyReleased v) (children e)
+
+||| Rebuilds `e` with `f` applied to each immediate child.
+mapChildren : (RCExp -> RCExp) -> RCExp -> RCExp
+mapChildren f (RLet fc v r value body) = RLet fc v r (f value) (f body)
+mapChildren f (RCmpCase fc op args pd t e) = RCmpCase fc op args pd (f t) (f e)
+mapChildren f (RConCase fc sc alts mDef) =
+    RConCase fc sc (map (\(MkRConAlt n ci t as b) => MkRConAlt n ci t as (f b)) alts) (map f mDef)
+mapChildren f (RConstCase fc sc alts mDef) =
+    RConstCase fc sc (map (\(MkRConstAlt c b) => MkRConstAlt c (f b)) alts) (map f mDef)
+mapChildren f (RDup fc x n k) = RDup fc x n (f k)
+mapChildren f (RDrop fc vs k) = RDrop fc vs (f k)
+mapChildren f (RFree fc x k) = RFree fc x (f k)
+mapChildren f (RReleaseReuse fc x k) = RReleaseReuse fc x (f k)
+mapChildren f (RReuseOffer fc sc ds us k) = RReuseOffer fc sc ds us (f k)
+mapChildren f (RLoop fc ps initial pd k) = RLoop fc ps initial pd (f k)
+mapChildren f (RMemoize fc n r k) = RMemoize fc n r (f k)
+mapChildren _ e = e
+
+||| `v`'s cell reservation handed to `w`, or dropped when there is no `w`.
+retargetReuse : Int -> Maybe RCLocal -> RCExp -> RCExp
+retargetReuse v w (RCon fc n ci tag args (Just (RCLoc r))) =
+    if r == v then RCon fc n ci tag args w else RCon fc n ci tag args (Just (RCLoc r))
+retargetReuse v w (RReleaseReuse fc (RCLoc r) k) =
+    if r == v then maybe (retargetReuse v w k) (\w' => RReleaseReuse fc w' (retargetReuse v w k)) w
+              else RReleaseReuse fc (RCLoc r) (retargetReuse v w k)
+retargetReuse v w e = mapChildren (retargetReuse v w) e
+
+||| Removes one element equal to `x`, if any.
+removeOne : Int -> List Int -> (Bool, List Int)
+removeOne x [] = (False, [])
+removeOne x (y :: ys) = if x == y then (True, ys) else let (b, ys') = removeOne x ys in (b, y :: ys')
+
+||| The alt body `p` for a tail constructor built from `args` (already
+||| renamed into `p`) with cell `reuseFrom`, without that constructor or
+||| the scrutinee `v`: `Nothing` when `v`'s release isn't in `p`'s
+||| straight-line prologue in a shape this handles.
+foldAlt : FC -> Int -> List Int -> Maybe RCLocal -> RCExp -> Maybe RCExp
+foldAlt fc v pending reuseFrom p = go pending p
+  where
+    drops : List Int -> RCExp -> RCExp
+    drops [] k = k
+    drops is k = RDrop fc (map RCLoc is) k
+
+    locId : RCLocal -> Maybe Int
+    locId (RCLoc i) = Just i
+    locId _ = Nothing
+
+    releaseTail : RCExp -> RCExp
+    releaseTail k = maybe k (\w => RReleaseReuse fc w k) reuseFrom
+
+    go : List Int -> RCExp -> Maybe RCExp
+    -- A field `dup`'d before `v` goes was taking its own reference; the
+    -- constructor's is handed over instead.
+    go pend (RDup dfc x@(RCLoc i) n k) =
+        let (hit, pend') = removeOne i pend
+        in if not hit then RDup dfc x n <$> go pend k
+           else case n of
+                     Z => go pend' k
+                     S m => RDup dfc x m <$> go pend' k
+    go pend (RDrop dfc vs k) =
+        if elem (RCLoc v) vs
+           then let rest = filter (/= RCLoc v) vs
+                in Just $ (if null rest then id else RDrop dfc rest) (drops pend (releaseTail k))
+           else RDrop dfc vs <$> go pend k
+    go pend (RReuseOffer rfc (RCLoc s) ds us k) =
+        if s == v && pend == pending
+           then Just $ drops (mapMaybe locId us) (retargetReuse v reuseFrom k)
+           else RReuseOffer rfc (RCLoc s) ds us <$> go pend k
+    go pend (RFree ffc x k) = RFree ffc x <$> go pend k
+    go pend (RReleaseReuse rfc x k) = RReleaseReuse rfc x <$> go pend k
+    go _ _ = Nothing
+
+isNativeRep : Rep -> Bool
+isNativeRep RBoxed = False
+isNativeRep _ = True
+
+||| One tail, post-RC. A constructor tail whose fields are all Boxed
+||| locals is folded against its alt (`foldAlt`); anything else gets the
+||| part of the consumer it lands on, on a fresh local, as `pushInto`.
+pushIntoRC : {auto vid : Ref VarId Int} -> SortedMap Int Rep -> Int -> Rep -> Consumer -> RCExp -> Core RCExp
+pushIntoRC reps v rep consumer t =
+    case (consumer, landingOf consumer t, t) of
+         (ConC fc alts _, Just (Just (Just i)), RCon tfc _ _ _ args reuseFrom) =>
+             case (getAt i alts, traverse boxedLoc args) of
+                  (Just alt, Just argIds) => do
+                      -- Freshen the alt's own binders (its fields included)
+                      -- while keeping `v`, which the fold removes.
+                      RConCase _ _ [MkRConAlt _ _ _ fields body] _ <- freshCopy v v (RConCase fc (RCLoc v) [alt] Nothing)
+                          | _ => pushInto v rep consumer t
+                      let ren = SortedMap.fromList (zip fields argIds)
+                      case foldAlt tfc v argIds reuseFrom (renameRCExp ren body) of
+                           Just folded => pure folded
+                           Nothing => pushInto v rep consumer t
+                  _ => pushInto v rep consumer t
+         _ => pushInto v rep consumer t
+  where
+    boxedLoc : RCLocal -> Maybe Int
+    boxedLoc (RCLoc j) = if maybe False isNativeRep (lookup j reps) then Nothing else Just j
+    boxedLoc _ = Nothing
+
+||| Every `Rep` bound by an `RLet` or a loop anywhere in `e`: a tail's own
+||| fields can be locals bound inside the value it ends.
+letReps : SortedMap Int Rep -> RCExp -> SortedMap Int Rep
+letReps acc (RLet _ v r value body) = letReps (letReps (insert v r acc) value) body
+letReps acc (RLoop _ ps _ _ k) = letReps (foldl (\m, (i, r) => insert i r m) acc ps) k
+letReps acc e = foldl letReps acc (children e)
+
+||| As `pushExp`, post-RC: `v` may only be released or reused by the
+||| consumer (`onlyReleased`), and a single tail is enough (shape A is
+||| a one-tail value). `reps` tracks each local's `Rep` on the way down.
+pushExpRC : {auto vid : Ref VarId Int} -> SortedMap Int Rep -> RCExp -> Core (RCExp, Bool)
+pushExpRC reps (RLet fc v rep value body) = do
+    let reps' = insert v rep reps
+    (value', c1) <- pushExpRC reps value
+    (body', c2) <- pushExpRC reps' body
+    let unchanged = pure (RLet fc v rep value' body', c1 || c2)
+    case body' of
+         RConCase cfc (RCLoc s) alts mDef =>
+             let consumer = ConC cfc alts mDef
+                 tails = tailsOf value'
+                 landings = mapMaybe (landingOf consumer) tails
+             in if s /= v || not (all (onlyReleased v) (children body'))
+                   || not (any isKnown landings) || not (pushOk consumer landings)
+                   then unchanged
+                   else do value'' <- mapTails (pushIntoRC (letReps reps value') v rep consumer) value'
+                           pure (value'', True)
+         _ => unchanged
+  where
+    isKnown : Landing -> Bool
+    isKnown (Just (Just _)) = True
+    isKnown _ = False
+pushExpRC reps (RLoop fc ps initial pd k) = do
+    (k', c) <- pushExpRC (foldl (\m, (i, r) => insert i r m) reps ps) k
+    pure (RLoop fc ps initial pd k', c)
+pushExpRC reps e = do
+    results <- traverse (pushExpRC reps) (children e)
+    pure (rebuild e (map fst results), any snd results)
+  where
+    -- `children`'s order, put back.
+    rebuild : RCExp -> List RCExp -> RCExp
+    rebuild (RCmpCase fc op args pd _ _) [t, f] = RCmpCase fc op args pd t f
+    rebuild (RConCase fc sc alts mDef) ks =
+        let (altKs, defK) = splitAt (length alts) ks
+        in RConCase fc sc (zipWith (\(MkRConAlt n ci t as _), b => MkRConAlt n ci t as b) alts altKs) (map (const (fromMaybe (RCrash fc "") (head' defK))) mDef)
+    rebuild (RConstCase fc sc alts mDef) ks =
+        let (altKs, defK) = splitAt (length alts) ks
+        in RConstCase fc sc (zipWith (\(MkRConstAlt c _), b => MkRConstAlt c b) alts altKs) (map (const (fromMaybe (RCrash fc "") (head' defK))) mDef)
+    rebuild (RDup fc x n _) [k] = RDup fc x n k
+    rebuild (RDrop fc vs _) [k] = RDrop fc vs k
+    rebuild (RFree fc x _) [k] = RFree fc x k
+    rebuild (RReleaseReuse fc x _) [k] = RReleaseReuse fc x k
+    rebuild (RReuseOffer fc sc ds us _) [k] = RReuseOffer fc sc ds us k
+    rebuild (RMemoize fc n r _) [k] = RMemoize fc n r k
+    rebuild e _ = e
+
+||| The post-RC stage, run after `LateInline`.
+export
+applyPushConRC : {auto vid : Ref VarId Int} -> List (Name, RCDef) -> Core (List (Name, RCDef))
+applyPushConRC = traverse pushDef
+  where
+    pushDef : (Name, RCDef) -> Core (Name, RCDef)
+    pushDef (n, MkRCFun args retRep isWorker body) = do
+        (body', _) <- pushExpRC (SortedMap.fromList args) body
+        pure (n, MkRCFun args retRep isWorker body')
     pushDef d = pure d

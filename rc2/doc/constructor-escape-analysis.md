@@ -3,8 +3,8 @@
 **Status:** rewrites A and B, the known-partial fold, and single-caller
 inlining before RC annotation (at `Lifted`, and again as "Early
 inline") implemented (2026-09-25). An RC-aware fold after
-`LateInline` for what it still creates is designed, not implemented;
-tracked in `TODO.md`.
+`LateInline` for what it still creates is implemented but opt-in
+(`--directive latepushcon`); tracked in `TODO.md`.
 
 ## The problem
 
@@ -467,7 +467,7 @@ doc's earlier figures, but both columns ran interleaved in the same
 period. The micro-benchmarks show no difference: their shapes were
 already handled by the earlier steps.
 
-### What is left after Early inline, and the RC-aware fold (design, 2026-09-25)
+### What is left after Early inline, and the RC-aware fold (2026-09-25)
 
 **What is left.** idris2-lsp after Early inline, counted on the final
 dump:
@@ -550,6 +550,47 @@ pairs (step 2). The 341 `drop`-path alts are an upper bound on the
 static sites; how often they run is unknown. The `reuseOffer` path
 saves no allocation but removes a tag write, field writes and a
 uniqueness check per run.
+
+**Result: implemented, off by default** (`--directive latepushcon`).
+`PushCon.applyPushConRC`, run right after the later `LateInline`.
+Values with a loop inside are not pushed into (a loop is opaque to
+`mapTails`: its exits sit beside `RLoopContinue`s and Loop's native
+shadows), and a tail with a native or constant field argument falls
+back to a copied single-alt `case`. On idris2-lsp, where rcexpr-lint
+stays clean:
+
+| outcome at a candidate `let` | count |
+|---|---|
+| tail folded | 243 |
+| refused by the size budget | 308 |
+| `v` read or `dup`'d by the consumer | 166 |
+| native/constant field argument | 11 |
+| release not in the alt's prologue | 11 |
+
+Every budget refusal was a part of 25-48 nodes landing twice. Raising
+the post-RC "large part" threshold to 48 was tried: shape B went from
+1,189 to 1,097, but `con` nodes went *up* by 161 and IR lines by 0.3%.
+The copies of small consumer alts (a `Left e` re-wrapped per tail)
+outweigh the tail constructors removed. At the original 24 the static
+constructor count is unchanged (53,957 -> 53,956), with fresh and
+reusing sites trading places (the `reuseOffer` path: see step 3). The
+`malloc`s it can save sit only on fresh-tail, `drop`-path pairs, whose
+run-time frequency idris2-lsp can't be run to measure. So it stays
+opt-in, kept for measuring on real workloads.
+
+Two bugs found getting it right, both specific to post-RC IR:
+
+- **`sizeOf` must count through the ownership wrappers.** It sized an
+  `RDup`/`RDrop`/`RReuseOffer` as 1 without its continuation, and
+  almost every post-RC alt starts with one. Large alts looked tiny and
+  were copied freely: Sink went from 0.4s to 14s and DupMerge from
+  0.2s to 10s on idris2-lsp.
+- **A tail's field can be bound inside the value it ends.** The `Rep`
+  map passed to the fold held only the locals in scope at `let v`, so a
+  native `let a : InlineNative = ..` right before `con K [a]` looked
+  Boxed and got a `drop [a]`. The C compiler rejected it as an
+  undeclared variable (`Test83DoubleString`). `letReps` now collects
+  the value's own bindings too.
 
 ## Correctness notes on rewrite B
 
