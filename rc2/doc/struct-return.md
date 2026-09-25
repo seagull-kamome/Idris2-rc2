@@ -369,6 +369,18 @@ idris2-lsp, final `dumprcexpr` (C generation is not reached, see
 `rcexpr-lint` finds no anomaly in either dump. `verify.sh` passes with
 and without `--directive structreturn` on every test, valgrind included.
 
+idris2-missing-containers (`test/src/Main.idr`, a hash-map benchmark,
+run from the package root; five alternating runs, the first of each
+left out as warm-up): wall time 12.13 s without, 12.29 s with (+1.3%),
+every phase the program times itself within noise or slightly slower.
+Only five functions qualify there, and none has a direct call site that
+benefits: they are lambdas (`{read:0}` and the like) passed as closures,
+so every call goes through `apply`, reaches the wrapper, and pays one
+extra call and a rebuild of the cell. A function should get a struct
+worker only when some caller gains from it: a call whose result is
+switched on at once, a tail call from another struct worker, or native
+arguments.
+
 ## Tests
 
 A new `Test90StructReturn` covering:
