@@ -572,20 +572,15 @@ whose value is a `con` built in the same function need no call-boundary
 change at all; they are the separate, intraprocedural
 case-of-known-constructor fold.)
 
-Direction: extend `Compiler.RC2.DualABI`'s worker signature with a
-by-value return for a small constructor type -- a C struct of the tag
-plus the fields (fields themselves Boxed or native per the existing
-`Rep` machinery), returned in registers under the SysV ABI for up to
-two words. A caller that immediately scrutinises the result switches on
-the struct's tag and binds the fields directly, with no allocation, no
-`reuseOffer`, and no drop of the cell; the existing Boxed wrapper
-materialises the cell for every other caller, exactly as DualABI's
-native-return workers already do. Open questions: which types qualify
-(fixed field count per constructor, a size cap on the widest
-constructor), how reuse analysis treats a scrutinee that no longer has
-a cell to reuse, and how this interacts with tail-position calls (see
-"tail-position delegating calls stay boxed" above) and with `Core`'s
-own `IO` wrapper around the `Either`.
+Design (2026-09-25, not implemented yet): `rc2/doc/struct-return.md`. A
+new DualABI stage returns a constructor with at most one field as a
+fixed 16-byte `{tag, f0}` struct in registers; the Boxed wrapper
+materialises the cell for every other caller. On idris2-lsp that covers
+8,039 functions and 3,648 of the 4,959 call-then-`case` pairs; a
+hand-written model of an `Either` chain runs 17-38% faster. `IO` is
+already erased (`Core` returns a bare `Either`), reuse analysis already
+limits today's cost to one malloc per chain, and tail calls between
+eligible functions form no cycle, so they can become direct C calls.
 
 ## Performance: constructors built and matched in the same function -- rest of the escape analysis
 
