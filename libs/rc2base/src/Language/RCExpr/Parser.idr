@@ -374,7 +374,7 @@ opNameG = twoWordG <|> oneWordG
 ||| any other upstream `Show` field with an unpredictable word count
 ||| (`CFType`'s own `CFIORes`/`CFUser`/`CFFun`, per its own note).
 repG : Grammar () RcToken True RRep
-repG = boxedG <|> ret1G <|> nativeG
+repG = boxedG <|> retG <|> nativeG
   where
     boxedG : Grammar () RcToken True RRep
     boxedG = do
@@ -383,12 +383,16 @@ repG = boxedG <|> ret1G <|> nativeG
         pure Boxed
     -- A by-value struct (rc2's `doc/struct-return.md`) has no
     -- reference count of its own, so it reads as a non-Boxed Rep. Its
-    -- layout rides on the same token: `Ret1:1=Int` carries tag 1's field
-    -- natively.
-    ret1G : Grammar () RcToken True RRep
-    ret1G = do
+    -- width and layout ride on the same token: `Ret2:1=Int,Boxed`, two
+    -- fields wide, carries tag 1's first field natively and its second
+    -- Boxed.
+    isRet : List Char -> Bool
+    isRet ('R' :: 'e' :: 't' :: d :: rest) = isDigit d && (null rest || take 1 rest == [':'])
+    isRet _ = False
+    retG : Grammar () RcToken True RRep
+    retG = do
         n <- anyName
-        the (Grammar () RcToken False ()) (if n == "Ret1" || isPrefixOf "Ret1:" n then pure () else fail "not Ret1")
+        the (Grammar () RcToken False ()) (if isRet (unpack n) then pure () else fail "not RetN")
         pure (NativeRep n)
     nativeG : Grammar () RcToken True RRep
     nativeG = do
@@ -546,14 +550,14 @@ extprimG = lazyExtprimG <|> plainExtprimG
 
 ||| `Pretty.idr`'s `retpack <name> tag= N [field]`, the list empty for a
 ||| nullary constructor.
-retpackG : Grammar () RcToken True (String, String, Maybe RCLocal)
+retpackG : Grammar () RcToken True (String, String, List RCLocal)
 retpackG = do
     nameEq "retpack"
     name <- greedyWordsG
     nameEq "tag="
     tag <- anyName
-    field <- localListG
-    pure (name, tag, head' field)
+    fields <- localListG
+    pure (name, tag, fields)
 
 conG : Grammar () RcToken True (String, String, List RCLocal, Maybe RCLocal)
 conG = do
@@ -856,9 +860,9 @@ mutual
           (_, st2) <- advanceLine st1
           Right (RApply lazy c args, st2)
       else if isPrefixOf "retpack " line then do
-          (name, tag, field) <- runG ln retpackG line
+          (name, tag, fields) <- runG ln retpackG line
           (_, st2) <- advanceLine st1
-          Right (RRetPackNode name tag field, st2)
+          Right (RRetPackNode name tag fields, st2)
       else if isPrefixOf "con " line then do
           (name, tag, args, reuseFrom) <- runG ln conG line
           (_, st2) <- advanceLine st1

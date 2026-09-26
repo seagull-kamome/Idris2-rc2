@@ -13,6 +13,7 @@ import Core.TT
 
 import Data.List
 import Data.SortedSet
+import Data.String
 import Data.Vect
 
 %default covering
@@ -24,7 +25,8 @@ prettyRep : Rep -> String
 prettyRep RBoxed = "Boxed"
 prettyRep (RNative ty) = "Native " ++ show ty
 prettyRep (RInlineNative ty) = "InlineNative " ++ show ty
-prettyRep (RRet1 layout) = "Ret1" ++ concatMap (\(t, ty) => ":" ++ show t ++ "=" ++ show ty) layout
+prettyRep (RRet n layout) =
+    "Ret" ++ show n ++ concatMap (\(t, fs) => ":" ++ show t ++ "=" ++ joinBy "," (map (maybe "Boxed" show) (toList fs))) layout
 
 lazyPrefix : Maybe LazyReason -> String
 lazyPrefix Nothing = ""
@@ -55,8 +57,8 @@ mutual
       indent d ++ "con " ++ show n ++ " " ++ show ci ++ " tag= " ++ show tag
         ++ " " ++ show args
         ++ maybe "" (\r => " reuse= " ++ show r) reuseFrom ++ "\n"
-  prettyExp d (RRetPack _ n tag field) =
-      indent d ++ "retpack " ++ show n ++ " tag= " ++ show tag ++ " " ++ show (toList field) ++ "\n"
+  prettyExp d (RRetPack _ n tag fields) =
+      indent d ++ "retpack " ++ show n ++ " tag= " ++ show tag ++ " " ++ show fields ++ "\n"
   prettyExp d (ROp _ lazy op args postDrop) =
       indent d ++ lazyPrefix lazy ++ "op " ++ show op ++ " " ++ show (toList args)
         ++ (if postDrop == [] then "" else " postDrop= " ++ show postDrop) ++ "\n"

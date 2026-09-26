@@ -127,15 +127,20 @@ typedef struct {
 // rather than always dereferencing as a heap object.
 #define idris2rc2_conTag(p) (idris2rc2_is_unboxed(p) ? (int32_t)idris2rc2_to_u32(p) : ((IDRIS2RC2_Constructor *)(p))->tag)
 
-// A constructor of at most one field returned by value: rc2/doc/struct-return.md.
-typedef struct {
-  int64_t tag;
-  union {
-    IDRIS2RC2_Value *p;
-    int64_t i;
-    double d;
-  } f0;
-} IDRIS2RC2_Ret1;
+// A constructor of at most four fields returned by value:
+// rc2/doc/struct-return.md. IDRIS2RC2_Ret<n> has room for n fields;
+// IDRIS2RC2_Ret1 (16 bytes) comes back in two registers, a wider one
+// through memory the caller provides.
+typedef union {
+  IDRIS2RC2_Value *p;
+  int64_t i;
+  double d;
+} IDRIS2RC2_RetField;
+
+typedef struct { int64_t tag; IDRIS2RC2_RetField f0; } IDRIS2RC2_Ret1;
+typedef struct { int64_t tag; IDRIS2RC2_RetField f0, f1; } IDRIS2RC2_Ret2;
+typedef struct { int64_t tag; IDRIS2RC2_RetField f0, f1, f2; } IDRIS2RC2_Ret3;
+typedef struct { int64_t tag; IDRIS2RC2_RetField f0, f1, f2, f3; } IDRIS2RC2_Ret4;
 
 typedef struct {
   IDRIS2RC2_Header header;

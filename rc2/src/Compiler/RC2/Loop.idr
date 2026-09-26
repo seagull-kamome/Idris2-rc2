@@ -160,7 +160,7 @@ mutual
       RLet fc (renameId ren var) rep (renameRCExp ren value) (renameRCExp ren body)
   renameRCExp ren (RCon fc n ci tag args reuseFrom) =
       RCon fc n ci tag (renameLocals ren args) (renameMaybeLocal ren reuseFrom)
-  renameRCExp ren (RRetPack fc n tag field) = RRetPack fc n tag (renameMaybeLocal ren field)
+  renameRCExp ren (RRetPack fc n tag fields) = RRetPack fc n tag (renameLocals ren fields)
   renameRCExp ren (ROp fc lazy op args postDrop) =
       ROp fc lazy op (renameLocalsV ren args) (renameLocals ren postDrop)
   renameRCExp ren (RExtPrim fc lazy p args postDrop) =

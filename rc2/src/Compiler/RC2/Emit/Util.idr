@@ -349,18 +349,24 @@ nativeCType DoubleType = "double"
 nativeCType CharType = "uint32_t"
 nativeCType _ = "void*" -- unreachable: Types.nativeEligible excludes these
 
-||| The member of `IDRIS2RC2_Ret1.f0` a native field of type `ty` is kept
-||| in (`doc/struct-return.md`), and that member's C type: every integer
-||| type widens to `int64_t`.
+||| The C type of a struct-return value of `n` fields
+||| (`doc/struct-return.md`).
 export
-ret1Member : PrimType -> String
-ret1Member DoubleType = "d"
-ret1Member _ = "i"
+retCType : Nat -> String
+retCType n = "IDRIS2RC2_Ret" ++ show n
+
+||| The member of an `IDRIS2RC2_RetField` a native field of type `ty` is
+||| kept in (`doc/struct-return.md`), and that member's C type: every
+||| integer type widens to `int64_t`.
+export
+retMember : PrimType -> String
+retMember DoubleType = "d"
+retMember _ = "i"
 
 export
-ret1MemberCType : PrimType -> String
-ret1MemberCType DoubleType = "double"
-ret1MemberCType _ = "int64_t"
+retMemberCType : PrimType -> String
+retMemberCType DoubleType = "double"
+retMemberCType _ = "int64_t"
 
 export
 nativeMk : PrimType -> String -> String
@@ -984,7 +990,7 @@ rcVarToBoxedC l = do
     inlined <- inlineExprFor l
     let (exprOrVar, pending) = fromMaybe (varName l, []) inlined
     case rep of
-         RRet1 _ => throw $ InternalError "[rc2] rcVarToBoxedC: a struct-return local (Ret1) reached a Boxed context, see doc/struct-return.md"
+         RRet _ _ => throw $ InternalError "[rc2] rcVarToBoxedC: a struct-return local (RetN) reached a Boxed context, see doc/struct-return.md"
          _ => pure $ case rep of
                 RNative ty => (nativeMk ty exprOrVar, pending)
                 -- Always InlineMap'd by construction (Rep.RInlineNative's
@@ -1173,13 +1179,13 @@ sinkCType : Rep -> String
 sinkCType RBoxed = "IDRIS2RC2_Value * "
 sinkCType (RNative ty) = nativeCType ty ++ " "
 sinkCType (RInlineNative ty) = nativeCType ty ++ " "
-sinkCType (RRet1 _) = "IDRIS2RC2_Ret1 "
+sinkCType (RRet n _) = retCType n ++ " "
 
 ||| The pre-branch placeholder value a `Sink`'s own variable is
 ||| initialised to -- see `resolveSink`.
 sinkZero : Rep -> String
 sinkZero RBoxed = "NULL"
-sinkZero (RRet1 _) = "(IDRIS2RC2_Ret1){ 0, { .p = NULL } }"
+sinkZero (RRet n _) = "(\{retCType n}){ 0 }"
 sinkZero _ = "0"
 
 ||| Turn a `Sink` that might still need its own variable declared
@@ -1437,9 +1443,9 @@ splitLast xs = case reverse xs of
 ||| `conAltCondExpr` for a struct scrutinee (`doc/struct-return.md`):
 ||| only the tag, since a struct holds no NULL or tagged-pointer form.
 export
-ret1AltCondExpr : String -> RConAlt -> Core String
-ret1AltCondExpr sc' (MkRConAlt name _ (Just t) _ _) = pure "\{sc'}.tag == \{show t} /* \{show name} */"
-ret1AltCondExpr _ (MkRConAlt name _ Nothing _ _) =
+retAltCondExpr : String -> RConAlt -> Core String
+retAltCondExpr sc' (MkRConAlt name _ (Just t) _ _) = pure "\{sc'}.tag == \{show t} /* \{show name} */"
+retAltCondExpr _ (MkRConAlt name _ Nothing _ _) =
     throw $ InternalError "[rc2] struct-return case on untagged constructor \{show name}"
 
 ||| The raw boolean C expression (no `if (...)` wrapper) deciding

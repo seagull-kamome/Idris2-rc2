@@ -112,8 +112,8 @@ mutual
     RLetIn       : (var : Int) -> RRep -> (value : RCExp) -> (body : RCExp) -> RCExp
     RConstruct   : (name : String) -> (tag : String) -> List RCLocal -> (reuseFrom : Maybe RCLocal) -> RCExp
     ||| `retpack`: a struct built in a struct-returning worker's tail
-    ||| (rc2's `doc/struct-return.md`); the field, if any, is consumed.
-    RRetPackNode : (name : String) -> (tag : String) -> (field : Maybe RCLocal) -> RCExp
+    ||| (rc2's `doc/struct-return.md`); its fields are consumed.
+    RRetPackNode : (name : String) -> (tag : String) -> (fields : List RCLocal) -> RCExp
     ROpNode      : (isLazy : Bool) -> (op : String) -> List RCLocal -> (postDrop : List RCLocal) -> RCExp
     RExtPrimNode : (isLazy : Bool) -> (prim : String) -> List RCLocal -> (postDrop : List RCLocal) -> RCExp
     RStructGetNode : (structVar : RCLocal) -> (field : String) -> (postDrop : List RCLocal) -> RCExp

@@ -574,8 +574,8 @@ case-of-known-constructor fold.)
 
 Design and implementation (2026-09-25): `rc2/doc/struct-return.md`, on
 by default (`--directive nostructreturn` turns it off). A
-new DualABI stage returns a constructor with at most one field as a
-fixed 16-byte `{tag, f0}` struct in registers; the Boxed wrapper
+new DualABI stage returns a constructor with at most four fields as a
+fixed `{tag, f0, ...}` struct (16 bytes, in registers, for one field); the Boxed wrapper
 materialises the cell for every other caller. On idris2-lsp that covers
 8,039 functions and 3,648 of the 4,959 call-then-`case` pairs; a
 hand-written model of an `Either` chain runs 17-38% faster. `IO` is
@@ -585,10 +585,9 @@ eligible functions form no cycle, so they can become direct C calls.
 Implemented through the call-site rewrite; `tests/BenchStructReturn.idr`
 runs 30% faster and allocates half as often. Left: a run-time
 measurement on a workload full of `Core`-style chains (idris2-lsp
-cannot reach C generation, and that is not being worked on); constructors of
-two to four fields (about 2,200 functions on idris2-lsp, but only a few
-hundred more call sites that gain) are a further extension. Native
-fields are done (2026-09-26, `Ret1:1=Int`).
+cannot reach C generation, and that is not being worked on). Native
+fields (2026-09-26, `Ret1:1=Int`) and constructors of up to four fields
+(2026-09-26, idris2-missing-containers 15% faster) are done.
 
 ## Performance: constructors built and matched in the same function -- rest of the escape analysis
 

@@ -187,12 +187,25 @@ Show RCLocal where
 ||| along with the deferred splice -- `Compiler.RC2.RC`'s own
 ||| `inlineableRep` doc comment has the full reasoning for why that's
 ||| still safe.
-||| `RRet1`: a small constructor held by value as an `IDRIS2RC2_Ret1`
-||| struct -- see `doc/struct-return.md`. Its layout lists the tags whose
-||| field the struct carries natively, and as which type; every other
-||| tag's field is Boxed.
+||| `RRet n layout`: a small constructor held by value as an
+||| `IDRIS2RC2_Ret<n>` struct of `n` fields (1-4) -- see
+||| `doc/struct-return.md`. Its layout lists the tags with a field the
+||| struct carries natively, each with one entry per field: `Just ty`
+||| carries it as `ty`, `Nothing` as a Boxed pointer (or not at all, past
+||| the tag's own arity). A tag not listed has every field Boxed.
 public export
-data Rep = RBoxed | RNative PrimType | RInlineNative PrimType | RRet1 (List (Int, PrimType))
+data Rep : Type where
+     RBoxed : Rep
+     RNative : PrimType -> Rep
+     RInlineNative : PrimType -> Rep
+     RRet : (n : Nat) -> List (Int, Vect n (Maybe PrimType)) -> Rep
+
+||| The native type `RRet`'s layout carries field `k` of `tag` as, if any.
+export
+retFieldType : {n : Nat} -> List (Int, Vect n (Maybe PrimType)) -> Int -> Nat -> Maybe PrimType
+retFieldType [] _ _ = Nothing
+retFieldType ((t, fs) :: rest) tag k =
+    if t == tag then natToFin k n >>= \i => index i fs else retFieldType rest tag k
 
 -- `RCExp`/`RConAlt`/`RConstAlt` are mutually recursive (`RConCase`/
 -- `RConstCase` hold `List RConAlt`/`RConstAlt`; both alt types hold a
@@ -238,12 +251,12 @@ data RCExp : Type where
      ||| `Compiler.RC2.Reuse`, always `Nothing` before it runs. See
      ||| `doc/reuse-analysis.md`.
      RCon       : FC -> Name -> ConInfo -> (tag : Maybe Int) -> List RCLocal -> (reuseFrom : Maybe RCLocal) -> RCExp
-     ||| A constructor of at most one field returned by value as an
-     ||| `IDRIS2RC2_Ret1` (`doc/struct-return.md`): only ever a tail of a
-     ||| function whose `retRep` is `RRet1`, and only produced by
-     ||| `Compiler.RC2.DualABI`. The field, if any, is consumed like an
-     ||| `RCon` argument; `Nothing` is a nullary constructor.
-     RRetPack   : FC -> Name -> (tag : Int) -> Maybe RCLocal -> RCExp
+     ||| A constructor of at most four fields returned by value as an
+     ||| `IDRIS2RC2_Ret<n>` (`doc/struct-return.md`): only ever a tail of
+     ||| a function whose `retRep` is `RRet`, and only produced by
+     ||| `Compiler.RC2.DualABI`. The fields are consumed like `RCon`
+     ||| arguments; `[]` is a nullary constructor.
+     RRetPack   : FC -> Name -> (tag : Int) -> List RCLocal -> RCExp
      ||| `postDrop`: Boxed operands to drop once read, one entry per
      ||| *occurrence* in `args`. Decided by Phase 2 (`annotate`), always
      ||| `[]` after Phase 1. Canonical explanation every other
@@ -361,7 +374,7 @@ freeLocalsR (RLet _ var _ value body) =
 -- real binding site (the enclosing RConCase's `sc`), so adding it
 -- again would only be redundant, never additive.
 freeLocalsR (RCon _ _ _ _ args _) = fromList args
-freeLocalsR (RRetPack _ _ _ field) = maybe empty singleton field
+freeLocalsR (RRetPack _ _ _ fields) = fromList fields
 freeLocalsR (ROp _ _ _ args _) = fromList (toList args)
 freeLocalsR (RExtPrim _ _ _ args _) = fromList args
 freeLocalsR (RStructGet _ structVar _ _ _) = singleton structVar
@@ -427,7 +440,7 @@ mentionedLocalsAcc acc (RLet _ _ _ value body) =
     mentionedLocalsAcc (mentionedLocalsAcc acc value) body
 mentionedLocalsAcc acc (RCon _ _ _ _ args reuseFrom) =
     insertAll args (maybe acc (\r => insert r acc) reuseFrom)
-mentionedLocalsAcc acc (RRetPack _ _ _ field) = maybe acc (\f => insert f acc) field
+mentionedLocalsAcc acc (RRetPack _ _ _ fields) = foldl (\a, f => insert f a) acc fields
 mentionedLocalsAcc acc (ROp _ _ _ args postDrop) = insertAll (toList args) (insertAll postDrop acc)
 mentionedLocalsAcc acc (RExtPrim _ _ _ args postDrop) = insertAll args (insertAll postDrop acc)
 mentionedLocalsAcc acc (RStructGet _ structVar _ _ postDrop) = insert structVar (insertAll postDrop acc)
@@ -490,7 +503,7 @@ ownedUsedGo targets wanted st@(_, found) e =
     -- stay exactly `freeLocalsR`'s own answer (see its own note on why
     -- they'd be redundant there).
     step (RCon _ _ _ _ args _) = hits st args
-    step (RRetPack _ _ _ field) = hits st (toList field)
+    step (RRetPack _ _ _ fields) = hits st fields
     step (ROp _ _ _ args _) = hits st (toList args)
     step (RExtPrim _ _ _ args _) = hits st args
     step (RStructGet _ structVar _ _ _) = hit st structVar
@@ -561,7 +574,7 @@ countUsesR l (RUnderApp _ _ _ args) = length (filter (== l) args)
 countUsesR l (RApp _ _ c args) = length (filter (== l) (c :: args))
 countUsesR l (RLet _ _ _ value body) = countUsesR l value + countUsesR l body
 countUsesR l (RCon _ _ _ _ args _) = length (filter (== l) args)
-countUsesR l (RRetPack _ _ _ field) = if field == Just l then 1 else 0
+countUsesR l (RRetPack _ _ _ fields) = length (filter (== l) fields)
 countUsesR l (ROp _ _ _ args _) = length (filter (== l) (toList args))
 countUsesR l (RExtPrim _ _ _ args _) = length (filter (== l) args)
 countUsesR l (RStructGet _ structVar _ _ _) = if structVar == l then 1 else 0
@@ -677,7 +690,7 @@ foldRCNamesR nf = go
     go (RApp _ _ c args) = l c <+> ls args
     go (RLet _ _ _ value body) = go value <+> go body
     go (RCon _ n _ tag args reuseFrom) = nf.onCon n tag <+> ls args <+> maybe neutral l reuseFrom
-    go (RRetPack _ n tag field) = nf.onCon n (Just tag) <+> maybe neutral l field
+    go (RRetPack _ n tag fields) = nf.onCon n (Just tag) <+> ls fields
     go (ROp _ _ _ args postDrop) = ls (toList args) <+> ls postDrop
     go (RExtPrim _ _ _ args postDrop) = ls args <+> ls postDrop
     go (RStructGet _ structVar _ _ postDrop) = l structVar <+> ls postDrop
@@ -726,7 +739,7 @@ directReads (RAppFFIInline _ _ _ _ pd args) = pd ++ args
 directReads (RUnderApp _ _ _ args) = args
 directReads (RApp _ _ c args) = c :: args
 directReads (RCon _ _ _ _ args _) = args
-directReads (RRetPack _ _ _ field) = toList field
+directReads (RRetPack _ _ _ fields) = fields
 directReads (ROp _ _ _ args pd) = toList args ++ pd
 directReads (RExtPrim _ _ _ args pd) = args ++ pd
 directReads (RStructGet _ sv _ _ pd) = sv :: pd
