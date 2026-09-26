@@ -86,7 +86,9 @@ show up again during testing.
   of at most four fields as a by-value `{tag, f0, ...}` struct from a DualABI
   worker, `world-arity-raising.md` for the pass that
   passes the world to a function returning a closure waiting for it,
-  so its callers call instead of applying. Not
+  so its callers call instead of applying, `trmc.md` for tail recursion
+  modulo constructor, which turns `x :: f xs`-shaped recursion into a
+  loop that fills each cell's hole. Not
   a replacement for `TODO.md` — those stay the changelog
   and gap tracker; `rc2/doc/` is where the *why* and the
   bugs-found-along-the-way for a specific subsystem live.

@@ -16,6 +16,7 @@ module Compiler.RC2.RC2
 -- 10. C compiler invocation (`Compiler.RC2.CC`)
 
 import Compiler.RC2.ArityRaise
+import Compiler.RC2.Trmc
 import Compiler.RC2.CC
 import Compiler.RC2.ConAltNative
 import Compiler.RC2.ConstFold
@@ -127,6 +128,7 @@ rcSizeOf (ROp _ _ _ _ _) = 1
 rcSizeOf (RExtPrim _ _ _ _ _) = 1
 rcSizeOf (RStructGet _ _ _ _ _) = 1
 rcSizeOf (RStructSet _ _ _ _ _ _) = 1
+rcSizeOf (RFill _ _ _ _ _) = 1
 rcSizeOf (RCmpCase _ _ _ _ t f) = 1 + rcSizeOf t + rcSizeOf f
 rcSizeOf (RConCase _ _ alts mDef) = 1 + sum (map rcSizeConAlt alts) + maybe 0 rcSizeOf mDef
 rcSizeOf (RConstCase _ _ alts mDef) = 1 + sum (map rcSizeConstAlt alts) + maybe 0 rcSizeOf mDef
@@ -237,7 +239,7 @@ insertMemoize = map wrap
 ||| apart.
 disableableStageNames : List String
 disableableStageNames =
-    ["noinline", "noarityraise", "noapplyfold", "noconstfold", "noknowncon", "nopushcon", "nospecclosure", "nospecconstcon", "noconaltnative", "nomutualloop", "noloop", "noearlyinline", "nolateinline", "nosink", "nodualabi", "nostructreturn", "nodeadcode", "nodupmerge", "nodeadvars"]
+    ["noinline", "noarityraise", "noapplyfold", "notrmc", "noconstfold", "noknowncon", "nopushcon", "nospecclosure", "nospecconstcon", "noconaltnative", "nomutualloop", "noloop", "noearlyinline", "nolateinline", "nosink", "nodualabi", "nostructreturn", "nodeadcode", "nodupmerge", "nodeadvars"]
 
 ||| Stages that are off unless asked for with `--directive <name>`. They
 ||| travel to `toRCDefs` in the same list as the disables above.
@@ -369,7 +371,10 @@ toRCDefs disabled incremental roots lds0 = do
     reraised <- if "noarityraise" `elem` disabled
                    then pure earlyInlined
                    else logTime 2 "rc2: Arity raise (after early inline)" $ applyArityRaise earlyInlined
-    memoized <- logTime 2 "rc2: CAF memoization" $ pure (insertMemoize reraised)
+    trmced <- if "notrmc" `elem` disabled
+                 then pure reraised
+                 else logTime 2 "rc2: TRMC" $ applyTrmc reraised
+    memoized <- logTime 2 "rc2: CAF memoization" $ pure (insertMemoize trmced)
     reused <- logTime 2 "rc2: RC annotate + Reuse + ConAltNative" $
                 traverse (\(n, d) => do
                   d1 <- toRCDefPostFold d

@@ -712,6 +712,9 @@ mutual
         pure $ RStructGet fc structVar sn fn (dropIfLastUse natives owned [structVar])
     annotate natives owned (RStructSet fc structVar sn fn value _) =
         pure $ RStructSet fc structVar sn fn value (dropIfLastUse natives owned [structVar, value])
+    -- `value` is consumed like an `RCon` field; `cell` is only borrowed.
+    annotate natives owned (RFill fc cell k value _) =
+        pure $ wrapDups fc (splitBorrows natives owned [value]) (RFill fc cell k value (dropIfLastUse natives owned [cell]))
     annotate natives owned (RCmpCase fc op args _ t f) = do
         -- Unlike ROp (always a "value" with the caller -- an enclosing
         -- RLet -- responsible for pre-shrinking `owned` before handing

@@ -56,6 +56,7 @@ walk m (ROpNode _ _ _ pd) = { ops $= S, postDrops $= (+ length pd) } m
 walk m (RExtPrimNode _ _ _ pd) = { extPrims $= S, postDrops $= (+ length pd) } m
 walk m (RStructGetNode _ _ pd) = { postDrops $= (+ length pd) } m
 walk m (RStructSetNode _ _ _ pd) = { postDrops $= (+ length pd) } m
+walk m (RFillNode _ _ _ pd) = { postDrops $= (+ length pd) } m
 walk m (RCmp _ _ pd t f) = walk (walk ({ cmps $= S, postDrops $= (+ length pd) } m) t) f
 walk m (RConCaseNode _ alts mDef) =
     let m' = foldl (\acc, (MkRConAlt _ _ _ b) => walk acc b) (the Metrics ({ conCases $= S } m)) alts

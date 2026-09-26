@@ -220,6 +220,13 @@ reannotateFieldOwnership fid owned (RStructSet fc structVar sn fn value postDrop
 -- Returning the pre-branch `owned` here instead was a real bug
 -- (double-drop + use-after-free) -- see `doc/con-alt-native.md`'s
 -- "Reusing the original Boxed field..." section, bug #2.
+-- `value` is consumed like an `RCon` field; `cell` is only borrowed,
+-- like `RStructSet`'s `structVar`.
+reannotateFieldOwnership fid owned (RFill fc cell k value postDrop) =
+    let (nDups, owned1) = countDupsNeeded fid owned [value]
+        isCell = cell == RCLoc fid
+        postDrop' = postDrop ++ (if isCell && owned1 then [RCLoc fid] else [])
+    in (if isCell then False else owned1, wrapNDups fc fid nDups (RFill fc cell k value postDrop'))
 reannotateFieldOwnership fid owned (RCmpCase fc op args postDrop t f) =
     -- markNativeOccurrences already redirected every native-context
     -- occurrence in `args` to the shadow id -- args is left untouched

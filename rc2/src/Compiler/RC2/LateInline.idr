@@ -286,6 +286,7 @@ hasNonNativeUse ty loopSlots target (RExtPrim _ _ _ args postDrop) = elem (RCLoc
 -- Unlike ROp/RCmpCase/..., stripOwnership never touches RExtPrim's own postDrop -- a genuine use here.
 hasNonNativeUse ty loopSlots target (RStructGet _ structVar _ _ _) = structVar == RCLoc target
 hasNonNativeUse ty loopSlots target (RStructSet _ structVar _ _ value _) = structVar == RCLoc target || value == RCLoc target
+hasNonNativeUse ty loopSlots target (RFill _ cell _ value _) = cell == RCLoc target || value == RCLoc target
 hasNonNativeUse ty loopSlots target (RCmpCase _ _ _ _ t f) = hasNonNativeUse ty loopSlots target t || hasNonNativeUse ty loopSlots target f
 hasNonNativeUse ty loopSlots target (RConCase _ sc alts mDef) =
     sc == RCLoc target || any (\(MkRConAlt _ _ _ _ body) => hasNonNativeUse ty loopSlots target body) alts
@@ -478,7 +479,9 @@ buildSplice fc reps calleeBody ((paramId, actual@(RCLoc actualId)) :: rest) = do
                                           Just ty' => if ty' == ty then (RNative ty, SortedSet.insert f promoted) else (RBoxed, promoted)
                                           Nothing => (RBoxed, promoted)
              pure (insert paramId f ren, wrap . RLet fc f rep (RV fc actual), promoted', ccs)
-         _ => if isLoopCarried paramId calleeBody
+         -- Two params aliased onto one caller local would also share its
+         -- `reuseOffer` reservation, letting two cells claim one slot.
+         _ => if isLoopCarried paramId calleeBody || elem actual (map snd rest)
                  then do
                      f <- freshVarId
                      pure (insert paramId f ren, wrap . RLet fc f RBoxed (RV fc actual), promoted, ccs)

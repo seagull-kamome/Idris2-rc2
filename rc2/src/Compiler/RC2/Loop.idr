@@ -169,6 +169,8 @@ mutual
       RStructGet fc (renameLocal ren structVar) sn fn (renameLocals ren postDrop)
   renameRCExp ren (RStructSet fc structVar sn fn value postDrop) =
       RStructSet fc (renameLocal ren structVar) sn fn (renameLocal ren value) (renameLocals ren postDrop)
+  renameRCExp ren (RFill fc cell k value postDrop) =
+      RFill fc (renameLocal ren cell) k (renameLocal ren value) (renameLocals ren postDrop)
   renameRCExp ren (RCmpCase fc op args postDrop t f) =
       RCmpCase fc op (renameLocalsV ren args) (renameLocals ren postDrop) (renameRCExp ren t) (renameRCExp ren f)
   renameRCExp ren (RConCase fc sc alts mDef) =
@@ -750,6 +752,8 @@ stripOwnership ids (RStructGet fc structVar sn fn postDrop) =
     RStructGet fc structVar sn fn (filter (keepUnlessOwned ids) postDrop)
 stripOwnership ids (RStructSet fc structVar sn fn value postDrop) =
     RStructSet fc structVar sn fn value (filter (keepUnlessOwned ids) postDrop)
+stripOwnership ids (RFill fc cell k value postDrop) =
+    RFill fc cell k value (filter (keepUnlessOwned ids) postDrop)
 -- RV, RAppName, RUnderApp, RApp, RCon, RExtPrim, RPrimVal, RErased,
 -- RCrash: no ownership-tracking positions of their own.
 stripOwnership _ e = e
@@ -1172,6 +1176,7 @@ usesInvariant p e = existsInvariantUse e
     existsInvariantUse (RStructGet _ structVar _ _ _) = structVar == RCLoc p
     existsInvariantUse (RStructSet _ structVar _ _ value _) =
         if structVar == RCLoc p then True else value == RCLoc p
+    existsInvariantUse (RFill _ cell _ value _) = cell == RCLoc p || value == RCLoc p
     existsInvariantUse (RCmpCase _ _ args _ t f) =
         if any (== RCLoc p) (toList args) then True
         else if existsInvariantUse t then True
@@ -1265,6 +1270,8 @@ dupInvariantBoxed p (RStructGet fc structVar sn fn postDrop) =
     wrapInvariantDups fc p (countInvariantDups p [structVar]) (RStructGet fc structVar sn fn postDrop)
 dupInvariantBoxed p (RStructSet fc structVar sn fn value postDrop) =
     wrapInvariantDups fc p (countInvariantDups p [structVar, value]) (RStructSet fc structVar sn fn value postDrop)
+dupInvariantBoxed p (RFill fc cell k value postDrop) =
+    wrapInvariantDups fc p (countInvariantDups p [cell, value]) (RFill fc cell k value postDrop)
 dupInvariantBoxed p (RCmpCase fc op args postDrop t f) =
     -- markInvariantNative already redirected every native-context
     -- occurrence in `args` to the shadow id -- args is left untouched

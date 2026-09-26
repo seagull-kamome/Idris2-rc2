@@ -1,8 +1,9 @@
-# Tail recursion modulo constructor (TRMC) -- design
+# Tail recursion modulo constructor (TRMC)
 
-Status: design, not implemented (2026-09-26). Tracked in `TODO.md`
-("tail recursion modulo constructor"). Motivation is in `KNOWN-BUGS.md`
-("deep non-tail recursion overflows the C stack").
+Status: phase 1 implemented (2026-09-26, `Compiler.RC2.Trmc`); phases 2-4
+are tracked in `TODO.md` ("tail recursion modulo constructor").
+Motivation is in `KNOWN-BUGS.md` ("deep non-tail recursion overflows
+the C stack").
 
 ## Problem
 
@@ -198,3 +199,60 @@ A `notrmc` directive disables the pass, like every other stage.
    difference lists, which is `TODO.md`'s "closure-valued loop
    parameters": represent `zs . (y ::)` as `(res, last)`, making
    composition and application O(1).
+
+## Phase 1 results (2026-09-26)
+
+**Correctness.** `Test95Trmc` builds lists and a `Link`/`End` chain of
+a million elements through `map`, `filter`, `zipWith` and
+count-up-to builders, and runs clean under valgrind. With
+`--directive notrmc` the same test overflows the C stack.
+`Data.List.mergeBy` also merges two 1M lists now; before this pass it
+crashed at 100k.
+
+**idris2-lsp** (static counts from the final RCExp, using the same
+measurement as `TODO.md`):
+
+| Remaining sites | before | after |
+|---|---|---|
+| `::`, one recursive field, self | 247 | 10 |
+| other constructor, one recursive field, self | 314 | 211 |
+| mutual (phase 2) | 87 | 84 |
+| two or more recursive fields (phase 3) | 151 | 133 |
+
+- 59 `rc2_trmc_*` functions survive to the final program. The rest were
+  spliced into their entry by LateInline or dropped as dead.
+- 202 of the 211 remaining one-field sites on other constructors are
+  in functions whose sites build several different constructors (`Bind`
+  and `App` in one term traversal). Their holes sit at different field
+  indexes, which phase 1 declines; that is phase 3.
+- `rcexpr-lint` finds no anomalies in the dump.
+
+**Build time.** The pass itself takes 0.1s on idris2-lsp. The
+following stages together grow by about 0.3s (RC annotate +0.15s,
+DeadCode +0.07s, ...).
+
+**Speed.** A loop that maps, filters and sums a 50k-element list 200
+times runs in 3.19s instead of 3.47s (-8%). Peak RSS falls from
+10.0 MB to 6.7 MB, because the recursion no longer uses the stack.
+
+**Still crashing at 1M elements** (`KNOWN-BUGS.md`):
+- `[1 .. n]`: the list is built fine, but freeing it in one `drop`
+  recurses in `idris2rc2_teardown`.
+- `sort`: `splitRec`'s closure accumulator (phase 4 / `TODO.md`).
+
+## Bugs found
+
+1. **LateInline aliased two parameters onto one caller local.**
+   `mergeBy xs xs` passes the same local twice. Once TRMC made
+   `mergeBy`'s entry non-recursive, LateInline could splice it, and
+   `buildSplice` aliased both parameters onto that one local. The two
+   `reuseOffer`s then shared one reservation, and two new cells were
+   built in the same storage, so `mergeBy xs xs` returned a truncated
+   list. `buildSplice` now binds a fresh local for a parameter whose
+   argument also appears later in the same call, as it already did for
+   a loop-carried parameter.
+2. **`where`-bound sets in `applyTrmc`.** The pass first took 20s on
+   idris2-lsp. The set of newtype constructors was bound in `where`,
+   so it was rebuilt for every definition (the "`where`-clause trap"
+   in `constant-constructor-specialization.md`). Binding it with
+   `<- pure` brought the pass down to 0.1s.

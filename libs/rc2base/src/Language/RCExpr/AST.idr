@@ -118,6 +118,10 @@ mutual
     RExtPrimNode : (isLazy : Bool) -> (prim : String) -> List RCLocal -> (postDrop : List RCLocal) -> RCExp
     RStructGetNode : (structVar : RCLocal) -> (field : String) -> (postDrop : List RCLocal) -> RCExp
     RStructSetNode : (structVar : RCLocal) -> (field : String) -> (value : RCLocal) -> (postDrop : List RCLocal) -> RCExp
+    ||| `fill`: store `value` into field `field` of `cell`, a hole left by
+    ||| rc2's TRMC (rc2's `doc/trmc.md`). `value` is consumed; `postDrop`
+    ||| only ever drops `cell`.
+    RFillNode    : (cell : RCLocal) -> (field : String) -> (value : RCLocal) -> (postDrop : List RCLocal) -> RCExp
     RCmp         : (op : String) -> List RCLocal -> (postDrop : List RCLocal) -> (whenTrue : RCExp) -> (whenFalse : RCExp) -> RCExp
     RConCaseNode : (scrutinee : RCLocal) -> List RConAlt -> (defBody : Maybe RCExp) -> RCExp
     RConstCaseNode : (scrutinee : RCLocal) -> List RConstAlt -> (defBody : Maybe RCExp) -> RCExp

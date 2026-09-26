@@ -1207,6 +1207,7 @@ dropOwnership f (RAppNameRep fc n argReps retRep pd args) = RAppNameRep fc n arg
 dropOwnership f (RAppFFIInline fc ccs fargs ret pd args) = RAppFFIInline fc ccs fargs ret (filter (/= RCLoc f) pd) args
 dropOwnership f (RStructGet fc sv sn fn pd) = RStructGet fc sv sn fn (filter (/= RCLoc f) pd)
 dropOwnership f (RStructSet fc sv sn fn val pd) = RStructSet fc sv sn fn val (filter (/= RCLoc f) pd)
+dropOwnership f (RFill fc cell k val pd) = RFill fc cell k val (filter (/= RCLoc f) pd)
 dropOwnership f (RCmpCase fc op args pd t e) =
     RCmpCase fc op args (filter (/= RCLoc f) pd) (dropOwnership f t) (dropOwnership f e)
 dropOwnership f (RLoopContinue fc args pd) = RLoopContinue fc args (filter (/= RCLoc f) pd)

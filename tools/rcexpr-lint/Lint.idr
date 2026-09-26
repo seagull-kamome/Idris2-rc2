@@ -171,6 +171,10 @@ mutual
       let readAs = checkRead dn "structSet target" st sv ++ checkRead dn "structSet value" st value
           (st', dropAs) = doDrops dn "structSet postDrop" st postDrop
       in (st', readAs ++ dropAs)
+  walk dn st (RFillNode cell _ value postDrop) =
+      let readAs = checkRead dn "fill cell" st cell ++ checkRead dn "fill value" st value
+          (st', dropAs) = doDrops dn "fill postDrop" st postDrop
+      in (st', readAs ++ dropAs)
   walk dn st (RCmp _ args postDrop whenTrue whenFalse) =
       let readAs = checkReads dn "cmp args" st args
           (stAfterDrop, dropAs) = doDrops dn "cmp postDrop" st postDrop

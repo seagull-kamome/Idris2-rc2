@@ -680,22 +680,51 @@ back empty, that's expected, not a sign the feature is broken. See
 
 ## Runtime: deep non-tail recursion overflows the C stack (Chez doesn't)
 
-rc2 runs Idris code on the C stack (8 MB by default), and no pass turns
-non-tail recursion into a loop yet. Chez grows its stack on demand, so
-the same program runs to completion there. Measured 2026-09-26, with
-`ulimit -s` at 8192:
+rc2 runs Idris code on the C stack (8 MB by default). Chez grows its
+stack on demand, so the same programs run to completion there. The
+crash is a stack overflow, not a miscompile: every size that fits
+returns the right result.
 
-| Operation | 10k | 100k | 1M |
+Measured 2026-09-26 with `ulimit -s` at 8192. "Before" is before
+TRMC (`rc2/doc/trmc.md`, phase 1); "after" is with it.
+
+| Operation | before: 100k | before: 1M | after: 1M |
 |---|---|---|---|
-| `mergeBy` (`x :: mergeBy ...`) | ok | SEGV | SEGV |
-| `[1 .. n]` | ok | SEGV | SEGV |
-| `sortBy`'s `splitRec`, applying its accumulated `zs` | ok | ok | SEGV |
-| `Data.List.sort` | ok | ok | SEGV |
+| `mergeBy` (`x :: mergeBy ...`) | SEGV | SEGV | ok |
+| `[1 .. n]` | SEGV | SEGV | SEGV (teardown, below) |
+| `sortBy`'s `splitRec`, applying its accumulated `zs` | ok | SEGV | SEGV |
+| `Data.List.sort` | ok | SEGV | SEGV (`splitRec`) |
 
-Chez sorts the 1M list in 1.23s. The crash is a stack overflow, not
-a miscompile: every size that fits returns the right result. Tracked as
-future work in `TODO.md` ("tail recursion modulo constructor" and
-"closure-valued loop parameters").
+Chez sorts the 1M list in 1.23s. Two causes remain:
+
+- **`splitRec`'s closure accumulator.** Applying `zs` walks the
+  composed closures non-tail-recursively. See `TODO.md`,
+  "closure-valued loop parameters".
+- **Teardown.** `idris2rc2_teardown` (`support/rc2/idris2rc2_memory.c`)
+  drops a constructor's fields recursively. Freeing a long unique list
+  in one `drop` therefore recurses once per cell. A list consumed front
+  to back never hits this, because each cell's tail is still shared
+  when the cell dies. The fix is to loop on the last field instead of
+  recursing into it.
+
+## LateInline + native compare: `mergeBy compare` leaks the second list's boxed elements
+
+Found 2026-09-26 and unrelated to TRMC: `--directive notrmc` leaks the
+same amount, and `--directive nolateinline` leaks nothing. Reproduce
+with:
+
+```idris
+sumList 0 (mergeBy compare (upto 1 n) (upto 1 n))
+```
+
+`definitely lost` is one 16-byte block per element of the second list
+that is not a small cached `Int` (901 blocks at n=1000).
+
+In the final RCExp of `rc2_specClosure_Data_List_mergeBy`, the second
+head `v56` gets a `dup` before its native read (`let v308 : Native Int
+= v56`) that nothing drops. The first head `v54` has no such dup. The
+dup is left over from the boxed call to `compare` that LateInline
+spliced in. Not investigated further yet.
 
 ## Explicitly *not* a known bug (resolved, documented so it isn't rediscovered as one)
 

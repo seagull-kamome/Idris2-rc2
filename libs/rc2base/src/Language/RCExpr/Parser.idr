@@ -597,6 +597,17 @@ structSetG = do
     postDrop <- optionalField "postDrop"
     pure (sv, field, value, postDrop)
 
+fillG : Grammar () RcToken True (RCLocal, String, RCLocal, List RCLocal)
+fillG = do
+    nameEq "fill"
+    cell <- rcLocalG
+    nameEq "."
+    field <- anyName
+    nameEq "="
+    value <- rcLocalG
+    postDrop <- optionalField "postDrop"
+    pure (cell, field, value, postDrop)
+
 cmpG : Grammar () RcToken True (String, List RCLocal, List RCLocal)
 cmpG = do
     nameEq "cmp"
@@ -883,6 +894,10 @@ mutual
           (sv, field, value, postDrop) <- runG ln structSetG line
           (_, st2) <- advanceLine st1
           Right (RStructSetNode sv field value postDrop, st2)
+      else if isPrefixOf "fill " line then do
+          (cell, field, value, postDrop) <- runG ln fillG line
+          (_, st2) <- advanceLine st1
+          Right (RFillNode cell field value postDrop, st2)
       else if isPrefixOf "cmp " line then do
           (op, args, postDrop) <- runG ln cmpG line
           (_, st2) <- advanceLine st1

@@ -275,6 +275,13 @@ data RCExp : Type where
      ||| Write of one C struct field, evaluating to Unit. Same
      ||| reasoning as `RStructGet`.
      RStructSet : FC -> (structVar : RCLocal) -> (structName : String) -> (fieldName : String) -> (value : RCLocal) -> (postDrop : List RCLocal) -> RCExp
+     ||| Store `value` into field `field` of the constructor cell `cell`,
+     ||| evaluating to Unit: the hole a TRMC-built cell left open
+     ||| (`doc/trmc.md`). The old content is a hole and is not dropped;
+     ||| `value` is consumed; `cell` is only borrowed, so `postDrop` only
+     ||| ever means "drop `cell`", as for `RStructSet`. Only produced by
+     ||| `Compiler.RC2.Trmc`.
+     RFill : FC -> (cell : RCLocal) -> (field : Nat) -> (value : RCLocal) -> (postDrop : List RCLocal) -> RCExp
      ||| A comparison fused into a two-way branch with no Bool ever
      ||| materialised. Only produced by Phase 1's `tryFuseCompare` --
      ||| see `doc/native-type-inference.md`'s "Comparisons are a
@@ -379,6 +386,7 @@ freeLocalsR (ROp _ _ _ args _) = fromList (toList args)
 freeLocalsR (RExtPrim _ _ _ args _) = fromList args
 freeLocalsR (RStructGet _ structVar _ _ _) = singleton structVar
 freeLocalsR (RStructSet _ structVar _ _ value _) = fromList [structVar, value]
+freeLocalsR (RFill _ cell _ value _) = fromList [cell, value]
 freeLocalsR (RCmpCase _ _ args _ t f) =
     union (fromList (toList args)) (union (freeLocalsR t) (freeLocalsR f))
 freeLocalsR (RConCase _ sc alts mDef) =
@@ -446,6 +454,8 @@ mentionedLocalsAcc acc (RExtPrim _ _ _ args postDrop) = insertAll args (insertAl
 mentionedLocalsAcc acc (RStructGet _ structVar _ _ postDrop) = insert structVar (insertAll postDrop acc)
 mentionedLocalsAcc acc (RStructSet _ structVar _ _ value postDrop) =
     insert structVar (insert value (insertAll postDrop acc))
+mentionedLocalsAcc acc (RFill _ cell _ value postDrop) =
+    insert cell (insert value (insertAll postDrop acc))
 mentionedLocalsAcc acc (RCmpCase _ _ args postDrop t f) =
     mentionedLocalsAcc (mentionedLocalsAcc (insertAll (toList args) (insertAll postDrop acc)) t) f
 mentionedLocalsAcc acc (RConCase _ sc alts mDef) =
@@ -508,6 +518,7 @@ ownedUsedGo targets wanted st@(_, found) e =
     step (RExtPrim _ _ _ args _) = hits st args
     step (RStructGet _ structVar _ _ _) = hit st structVar
     step (RStructSet _ structVar _ _ value _) = hit (hit st structVar) value
+    step (RFill _ cell _ value _) = hit (hit st cell) value
     step (RLet _ _ _ value body) =
         ownedUsedGo targets wanted (ownedUsedGo targets wanted st value) body
     step (RCmpCase _ _ args _ t f) =
@@ -579,6 +590,7 @@ countUsesR l (ROp _ _ _ args _) = length (filter (== l) (toList args))
 countUsesR l (RExtPrim _ _ _ args _) = length (filter (== l) args)
 countUsesR l (RStructGet _ structVar _ _ _) = if structVar == l then 1 else 0
 countUsesR l (RStructSet _ structVar _ _ value _) = length (filter (== l) [structVar, value])
+countUsesR l (RFill _ cell _ value _) = length (filter (== l) [cell, value])
 countUsesR l (RCmpCase _ _ args _ t f) =
     length (filter (== l) (toList args)) + countUsesR l t + countUsesR l f
 countUsesR l (RConCase _ sc alts mDef) =
@@ -695,6 +707,7 @@ foldRCNamesR nf = go
     go (RExtPrim _ _ _ args postDrop) = ls args <+> ls postDrop
     go (RStructGet _ structVar _ _ postDrop) = l structVar <+> ls postDrop
     go (RStructSet _ structVar _ _ value postDrop) = l structVar <+> l value <+> ls postDrop
+    go (RFill _ cell _ value postDrop) = l cell <+> l value <+> ls postDrop
     go (RCmpCase _ _ args postDrop whenTrue whenFalse) =
         ls (toList args) <+> ls postDrop <+> go whenTrue <+> go whenFalse
     go (RConCase _ sc alts mDef) =
@@ -744,6 +757,7 @@ directReads (ROp _ _ _ args pd) = toList args ++ pd
 directReads (RExtPrim _ _ _ args pd) = args ++ pd
 directReads (RStructGet _ sv _ _ pd) = sv :: pd
 directReads (RStructSet _ sv _ _ val pd) = sv :: val :: pd
+directReads (RFill _ cell _ val pd) = cell :: val :: pd
 directReads (RCmpCase _ _ args pd _ _) = toList args ++ pd
 directReads (RConCase _ sc _ _) = [sc]
 directReads (RConstCase _ sc _ _) = [sc]

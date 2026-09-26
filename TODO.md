@@ -621,51 +621,30 @@ unchanged on idris2-lsp, and whether its fresh-tail savings matter at
 run time needs a real workload to measure. Loop-bearing values (168
 sites) aren't pushed into at all yet.
 
-## Robustness/performance: tail recursion modulo constructor (TRMC)
+## Robustness/performance: tail recursion modulo constructor (TRMC), phases 2-4
 
-Design: `rc2/doc/trmc.md`.
+Phase 1 is done: self recursion with one recursive field, filled at the
+same field index everywhere in the function. `rc2/doc/trmc.md` has the
+design and the measured results. Still open:
 
-A self-call under a constructor, as in `x :: mergeBy order xs ys`, is
-not a tail call, so it uses one C stack frame per element. Around 100k
-elements that is enough to overflow the C stack (`KNOWN-BUGS.md`,
-"deep non-tail recursion"). The same shape appears in `[1 .. n]`,
-`map`, `filter` and `++`.
-
-The fix is destination-passing: allocate the cell with an empty tail,
-loop on the recursive call, and write each result into the previous
-cell's hole. A fresh cell stays unique until the function returns, so
-writing into it in place is safe. Koka's "constructor contexts"
-generalize this to any constructor. That generalization also covers
-the difference-list case in the next entry: represent `zs . (y ::)` as
-a head plus a hole pointer, so composition and final application are
-both O(1).
-
-Measured on idris2-lsp's final RCExp on 2026-09-26 (`lsp-b1.rcexpr`,
-17,846 functions). A site is a tail constructor with a field bound to
-a call of the function itself (self), or of a function that calls it
-back (mutual). 364 functions have at least one site, 799 sites in all:
-
-| Shape | self | mutual |
-|---|---|---|
-| `::` with one recursive field | 247 | 36 |
-| other constructor, one recursive field | 314 | 51 |
-| any constructor, two or more recursive fields | 114 | 37 |
-
-- The `::` sites are list builders that the Prelude's `%transform`
-  rules don't already make tail recursive. The largest groups are
-  `Data.Vect.map` (33 specialised copies), `List01.map`,
-  `Data.List.zipWith`, `Prelude.Types.takeUntil` (behind `[1 .. n]`),
-  `List.filter`, `foldr` and `mergeBy`.
-- The other one-field sites are mostly `TTImp`/`Core.TT` term
-  traversals (`Bind`, `IPi`, `App`, `TDelay`, ...). Their depth is the
-  term's depth, not a list's length.
-- With two or more recursive fields (tree maps), only one field can be
-  filled by destination-passing; the other calls stay ordinary
-  recursion.
-
-Destination-passing for a single `::` field therefore covers most of
-the list-length-deep recursion. Generalizing it to any constructor
-field would add the term traversals.
+- **Phase 2, mutual recursion.** 84 sites in idris2-lsp.
+  - 29 of them are `::`, mostly a function and its own `case block`
+    helper (`words`, `collectDefs`, `mkDoLets`, `compressLefts`, ...).
+  - 55 are on other constructors, e.g. seven clones of `Maybe`'s `map`
+    and the `TTImp` traversals.
+  - Apply the rewrite over a MutualLoop group, carrying `res`/`last` in
+    the group's shared slots.
+- **Phase 3, varying field index and multi-field sites.**
+  - 211 one-field sites remain; 202 of them are in functions that build
+    several different constructors, whose holes sit at different
+    indexes. Carry `k` as a native loop parameter, or `last`'s hole
+    address.
+  - 133 sites have two or more recursive fields. Rewrite the
+    last-evaluated call only.
+- **Phase 4.**
+  - A raw hole address, if the refcount traffic on `last` shows up in
+    benchmarks.
+  - Constructor contexts for the difference lists in the next entry.
 
 ## Performance: closure-valued loop parameters
 
