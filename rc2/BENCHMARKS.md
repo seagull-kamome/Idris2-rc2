@@ -1406,3 +1406,12 @@ LateInline(RC注釈の後)が非`%inline`の`bind`を展開して残す「その
 `BenchArityRaise`の`bind`を非`%inline`にしたもの(Test93と同じ形、5回):
 1.77s → **1.18s**。`%inline`版は1.02sで変わらず。idris2-lspの最終IR:
 `apply` 3,771 → 3,507、同じ関数内の`partial`への`apply` 110 → 25。
+
+### MutualLoopの枠を型の組ごとに共有(2026-09-26)
+
+相互末尾再帰をまとめた関数の引数の枠を、関数ごとの専用区画から「Loopが昇格させる
+ネイティブ型」の組ごとの共有に戻した(`doc/loop-conversion.md`の"Bugs found" 8)。
+idris2-lspでまとめた関数の引数は合計1,567 → 383(最大330 → 20)、Loop conversionは
+4.40s → 0.51s、ビルド全体(既知のエラーまで)は42.6s → 37.4s。
+`BenchArityRaise`(主ループがまとめた相互再帰): 1.02s → **0.75s**(状態遷移ごとの
+`RCNull`書き込みが減った)。

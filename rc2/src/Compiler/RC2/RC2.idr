@@ -376,7 +376,7 @@ toRCDefs disabled incremental roots lds0 = do
                   let d2 = applyReuse d1
                   d3 <- if "noconaltnative" `elem` disabled then pure d2 else applyConAltNative d2
                   pure (n, d3)) memoized
-    merged <- if "nomutualloop" `elem` disabled then pure reused else logTime 2 "rc2: Mutual loop" $ applyMutualLoop reused
+    (merged, noPromotes) <- if "nomutualloop" `elem` disabled then pure (reused, SortedMap.empty) else logTime 2 "rc2: Mutual loop" $ applyMutualLoop reused
     looped <- if "noloop" `elem` disabled
                  then pure merged
                  else logTime 2 "rc2: Loop conversion" $ do
@@ -398,7 +398,7 @@ toRCDefs disabled incremental roots lds0 = do
                                                        _ => ""
                                       in logTimeOver slowApplyLoopThresholdNs
                                            (pure ("rc2: Loop conversion (apply) slow definition: " ++ show n ++ stats))
-                                           (do d' <- applyLoop calleeTable n d; pure (n, d'))) merged
+                                           (do d' <- applyLoop calleeTable (fromMaybe SortedSet.empty (lookup n noPromotes)) n d; pure (n, d'))) merged
     -- rc2/doc/inlining.md's "Criterion B, revisited": strictly after
     -- Loop/MutualLoop conversion, so a self- or mutually-tail-recursive
     -- candidate's own recursion has already collapsed into RLoop/

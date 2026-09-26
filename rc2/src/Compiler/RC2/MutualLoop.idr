@@ -141,11 +141,12 @@ tarjanSCCs graph =
 -- Synthesising one merged group.
 
 buildGroup : {auto r : Ref FreshId Int} -> {auto v : Ref VarId Int}
+          -> SortedMap Name (List (Maybe PrimType))
           -> SortedSet Name
           -> SortedMap Name (List Int, RCExp)
           -> List Name
-          -> Core (List (Name, RCDef))
-buildGroup existingNames memberDefs groupNames = do
+          -> Core (List (Name, RCDef), (Name, SortedSet Int))
+buildGroup calleeTable existingNames memberDefs groupNames = do
     -- Deterministic order (SortedSet's own Foldable, Prelude.toList,
     -- is sorted by `Ord Name`), so tag assignment doesn't depend on
     -- SCC-traversal order.
@@ -163,36 +164,55 @@ buildGroup existingNames memberDefs groupNames = do
     -- `lookup name_i tagOf` on the hot path that could ever silently
     -- default to tag 0 for a member `tagOf` genuinely doesn't have.
     let tagList : List Int = map (\i => the Int (cast i)) [0 .. length members `minus` 1]
-    -- Each member owns its own block of slots (`offsets`), so one slot
-    -- only ever carries one member's one parameter: Loop's native-shadow
-    -- promotion of a slot one member reads natively is then sound for
-    -- every value that slot can hold. Every other block is `RCNull`
-    -- (rc2/doc/loop-conversion.md's "MutualLoop" section).
-    let arities : List Nat := map (\(_, (args, _)) => length args) members
-    let slotCount = sum arities
-    let offsets : List Nat := reverse (snd (foldl (\ao, a => (fst ao + a, fst ao :: snd ao)) (the (Nat, List Nat) (Z, [])) arities))
+    -- Slots are shared by position only within one class of parameter:
+    -- the native type `Compiler.RC2.Loop` would promote it to on its own
+    -- member (`callArgOrOpNativeType`), or `Nothing`. A native class's
+    -- values all have that type, so promoting its slot is sound; a
+    -- `Nothing` slot may hold values of different types, so Loop must
+    -- never promote it (`noPromote`). rc2/doc/loop-conversion.md's
+    -- "MutualLoop" section and its "Bugs found" 8.
+    let classesOf : List (List (Maybe PrimType)) :=
+            map (\(_, (args, body)) => map (\p => callArgOrOpNativeType calleeTable p body) args) members
+    let classes : List (Maybe PrimType) := nub (concat classesOf)
+    let widths : List Nat := map (\k => foldl max Z (map (\ks => length (filter (== k) ks)) classesOf)) classes
+    let classOffsets : List Nat := reverse (snd (foldl (\ao, a => (fst ao + a, fst ao :: snd ao)) (the (Nat, List Nat) (Z, [])) widths))
+    let slotCount = sum widths
+    let offsetOf : Maybe PrimType -> Nat
+        offsetOf k = fromMaybe Z (lookup k (zip classes classOffsets))
+    -- Each parameter's slot: its class's offset plus how many earlier
+    -- parameters of the same member share its class.
+    let positionsOf : List (Maybe PrimType) -> List Nat
+        positionsOf ks = zipWith (\i, k => offsetOf k + length (filter (== k) (take i ks))) [0 .. length ks] ks
+    let positions : List (List Nat) := map positionsOf classesOf
     let membersWithTag = zip members tagList
-    let tagOf : SortedMap Name (Int, Nat) := SortedMap.fromList (zipWith (\((n, _), t), o => (n, (t, o))) membersWithTag offsets)
+    let tagOf : SortedMap Name (Int, List Nat) := SortedMap.fromList (zipWith (\((n, _), t), ps => (n, (t, ps))) membersWithTag positions)
     mergedName <- freshName existingNames
     tagId <- freshVarId
     slotIds <- traverse (const freshVarId) (replicate slotCount ())
-    alts <- traverse (\(((name_i, (args_i, body_i)), tag_i), off_i) => do
-                let ren : Renaming = SortedMap.fromList (zip args_i (drop off_i slotIds))
+    let slotAt : Nat -> Int
+        slotAt g = fromMaybe 0 (lookup g (zip [0 .. slotCount] slotIds))
+    alts <- traverse (\(((name_i, (args_i, body_i)), tag_i), pos_i) => do
+                let ren : Renaming = SortedMap.fromList (zip args_i (map slotAt pos_i))
                 let renamedBody = renameRCExp ren body_i
                 pure $ MkRConstAlt (I64 (cast tag_i)) (rewriteGroupTailCalls mergedName slotCount tagOf renamedBody))
-              (zip membersWithTag offsets)
+              (zip membersWithTag positions)
     let mergedBody = RConstCase EmptyFC (RCLoc tagId) alts
                         (Just (RCrash EmptyFC "[rc2] internal: MutualLoop tag dispatch fell through"))
     let mergedDef = MkRCFun (map (\i => (i, RBoxed)) (tagId :: slotIds)) RBoxed False mergedBody
-    let wrappers = map (\(((name_i, (args_i, _)), tag_i), off_i) =>
+    let wrappers = map (\(((name_i, (args_i, _)), tag_i), pos_i) =>
                       (name_i, MkRCFun (map (\i => (i, RBoxed)) args_i) RBoxed False
-                            (RAppName EmptyFC Nothing mergedName (RCConst (I64 (cast tag_i)) :: placed slotCount off_i (map RCLoc args_i)))))
-                    (zip membersWithTag offsets)
-    pure ((mergedName, mergedDef) :: wrappers)
+                            (RAppName EmptyFC Nothing mergedName (RCConst (I64 (cast tag_i)) :: placed slotCount pos_i (map RCLoc args_i)))))
+                    (zip membersWithTag positions)
+    let boxedSlots : SortedSet Int :=
+            SortedSet.fromList (concatMap (\(k, o, w) => if isJust k then [] else map slotAt (take w [o ..]))
+                                          (zip3 classes classOffsets widths))
+    pure ((mergedName, mergedDef) :: wrappers, (mergedName, boxedSlots))
   where
-    ||| `args` at `off` in `slotCount` slots, `RCNull` everywhere else.
-    placed : Nat -> Nat -> List RCLocal -> List RCLocal
-    placed slotCount off args = replicate off RCNull ++ args ++ replicate (slotCount `minus` (off + length args)) RCNull
+    ||| `args` at their slots `pos` among `slotCount`, `RCNull` everywhere else.
+    placed : Nat -> List Nat -> List RCLocal -> List RCLocal
+    placed slotCount pos args =
+        let at = zip pos args
+        in map (\g => fromMaybe RCNull (lookup g at)) (take slotCount [0 ..])
 
     freshName : {auto r : Ref FreshId Int} -> SortedSet Name -> Core Name
     freshName existing = do
@@ -203,18 +223,17 @@ buildGroup existingNames memberDefs groupNames = do
     ||| Rewrite every tail-position call (self- or cross-member alike)
     ||| within an already-renamed member body into a tail call to the
     ||| merged function itself, carrying the target's tag and its
-    ||| arguments in the target's own block of slots -- see the module
-    ||| note's ownership/invariant discussion for why no extra
-    ||| drop/pad-related bookkeeping is needed here beyond this
-    ||| substitution.
-    rewriteGroupTailCalls : Name -> Nat -> SortedMap Name (Int, Nat) -> RCExp -> RCExp
+    ||| arguments in the target's own slots -- see the module note's
+    ||| ownership/invariant discussion for why no extra drop/pad-related
+    ||| bookkeeping is needed here beyond this substitution.
+    rewriteGroupTailCalls : Name -> Nat -> SortedMap Name (Int, List Nat) -> RCExp -> RCExp
     rewriteGroupTailCalls mergedName slotCount tagOf body =
         let (_, _, rewritten) = mapTailAppNames
                 (\fc, n, args =>
                     case lookup n tagOf of
                         Nothing => Nothing
-                        Just (t, off) => Just $ RAppName fc Nothing mergedName $
-                                    RCConst (I64 (cast t)) :: placed slotCount off args)
+                        Just (t, pos) => Just $ RAppName fc Nothing mergedName $
+                                    RCConst (I64 (cast t)) :: placed slotCount pos args)
                 body
         in rewritten
 
@@ -224,9 +243,10 @@ buildGroup existingNames memberDefs groupNames = do
 ||| module note for the full design. Definitions this pass doesn't
 ||| touch (everything outside a size->=2 group -- including ordinary,
 ||| possibly self-recursive, functions, and every non-`MkRCFun` def)
-||| pass through completely unchanged.
+||| pass through completely unchanged. Also returns, per merged function,
+||| the slots Loop must never promote (`buildGroup`'s `noPromote`).
 export
-applyMutualLoop : {auto v : Ref VarId Int} -> List (Name, RCDef) -> Core (List (Name, RCDef))
+applyMutualLoop : {auto v : Ref VarId Int} -> List (Name, RCDef) -> Core (List (Name, RCDef), SortedMap Name (SortedSet Int))
 applyMutualLoop defs = do
     _ <- newRef FreshId 0
     let memberDefs = SortedMap.fromList $ mapMaybe
@@ -237,10 +257,12 @@ applyMutualLoop defs = do
     let graph = buildGraph memberDefs
     let groups = filter (\g => length g >= 2) (tarjanSCCs graph)
     let existingNames = SortedSet.fromList (map (\(n, _) => n) defs)
-    newDefs <- concat <$> traverse (buildGroup existingNames memberDefs) groups
+    let calleeTable = buildCalleeTable defs
+    built <- traverse (buildGroup calleeTable existingNames memberDefs) groups
+    let newDefs = foldr (++) [] (map fst built)
     let mergedMemberNames = SortedSet.fromList (concat groups)
     let untouched = filter (\(n, _) => not (contains n mergedMemberNames)) defs
-    pure (untouched ++ newDefs)
+    pure (untouched ++ newDefs, SortedMap.fromList (map snd built))
   where
     buildGraph : SortedMap Name (List Int, RCExp) -> Graph
     buildGraph memberDefs =

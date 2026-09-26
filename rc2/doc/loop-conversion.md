@@ -707,13 +707,18 @@ wrapper that just calls the merged function once with its own tag and
 arguments and returns whatever comes back.
 
 Because all of rc2's own calling convention is uniformly `Value*`, the
-merged function's parameters are just `tag` and one block of slots per
-member, each as wide as that member's arity -- every ordinary
-`RCLocal`, nothing backend-specific. A member only ever reads its own
-block, and every caller (wrapper or in-group transition) fills every
-other block with `RCNull`. (Until 2026-09-26 the members shared one
-set of `max arity` slots by position; see "Bugs found" 8 for why that
-went.)
+merged function's parameters are just `tag` and a set of slots -- every
+ordinary `RCLocal`, nothing backend-specific. Each member parameter is
+classed by the native type `Compiler.RC2.Loop` would promote it to on
+its own member (`callArgOrOpNativeType`, against a callee table built
+before merging), or `Nothing`, and parameters share slots by position
+only within one class: the slots are, per class, as many as the most
+any one member has of that class. A member only ever reads its own
+slots, and every caller (wrapper or in-group transition) fills every
+other slot with `RCNull`. A native class's values all have its type, so
+promoting its slot is sound; a `Nothing` slot may hold values of
+different types, so `applyMutualLoop` hands it to Loop as never to be
+promoted. (See "Bugs found" 8 for the sharing this replaced.)
 
 ### Cycle detection: Tarjan's SCC, not just direct pairs
 
@@ -787,13 +792,13 @@ sound without this pass ever needing to reason about ownership itself.
 The one thing this pass *does* need to get right on its own, since it's
 building genuinely new tree shape that never went through `annotate`,
 is the padding invariant: whenever a transition enters member
-`j`, `j`'s own block of slots always holds real, freshly-supplied values for
-`j`, and every other block is always `RCNull`. This holds
+`j`, `j`'s own slots always hold real, freshly-supplied values for
+`j`, and every other slot is always `RCNull`. This holds
 *inductively* as long as *every* transition (wrapper call or in-group
-tail call) fills every other block with `RCNull` -- which
+tail call) fills every other slot with `RCNull` -- which
 `rewriteGroupTailCalls`/the wrapper construction always does. Under
 that invariant, a member's own body only ever needs to reason about its
-own block exactly as it always did (that's exactly what
+own slots exactly as it always did (that's exactly what
 `annotate` already determined for its original, pre-merge argument
 list); nothing beyond that is ever read, so nothing beyond that ever
 needs an extra drop this pass would have to invent. `idris2rc2_drop`/
@@ -1291,10 +1296,16 @@ above needed to stop assuming a single loop.
    continuation's `apply` got a boxed `Int` as its closure (`malloc():
    corrupted top size`, valgrind: an invalid write in
    `idris2rc2_tailcallApplyClosure`). Nothing in the IR says what type
-   a parameter has, so the slots cannot be matched by type; each
-   member now owns its own block of slots instead, and one slot only
-   ever holds one member's one parameter. Every other block is
-   `RCNull`, which bug 4's two guards already cover.
+   a parameter has, only how it is read; each
+   member first got its own block of slots, one slot only ever holding
+   one member's one parameter -- which made the merged functions of
+   idris2-lsp take 1,567 parameters in all (330 for one of 28 members)
+   and Loop conversion 4.4 s instead of 0.5 s, and made every transition
+   write `RCNull` into every other member's block. Members now share
+   slots by position again, but only within one class of parameter
+   (above), and a `Nothing`-class slot is never promoted: 383 parameters
+   in all, at most 20, Loop conversion 0.5 s; `BenchArityRaise`, whose
+   main loop is such a merged group, runs 1.02 s → 0.75 s.
 
 ## Known limitation: native-shadow eligibility stops at bare top-level scalars
 

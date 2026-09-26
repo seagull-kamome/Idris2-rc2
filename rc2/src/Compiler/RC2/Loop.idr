@@ -1383,8 +1383,8 @@ dupInvariantBoxed _ e = e
 ||| value comes back alongside the rewritten def, both threaded by
 ||| the exported `applyLoop` wrapper below against the shared `VarId`
 ||| counter.
-applyLoopFromId : (nextId0 : Int) -> SortedMap Name (List (Maybe PrimType)) -> Name -> RCDef -> (Int, RCDef)
-applyLoopFromId nextId0 calleeTable self (MkRCFun args retRep isWorker body) =
+applyLoopFromId : (nextId0 : Int) -> SortedMap Name (List (Maybe PrimType)) -> (noPromote : SortedSet Int) -> Name -> RCDef -> (Int, RCDef)
+applyLoopFromId nextId0 calleeTable noPromote self (MkRCFun args retRep isWorker body) =
     let argIds = map fst args
         (_, found, body') = mapTailAppNames (\fc, n, args' => if n == self then Just (RLoopContinue fc args' []) else Nothing) body
     in if not found
@@ -1414,11 +1414,11 @@ applyLoopFromId nextId0 calleeTable self (MkRCFun args retRep isWorker body) =
                   -- same `mapMaybe` pass rather than a separate `filter`
                   -- afterwards, since nothing else ever reads the
                   -- unfiltered eligibility list.
-                  eligibleVariant : List (Int, PrimType) := mapMaybe (\p => if contains p invariantIdsPre
+                  eligibleVariant : List (Int, PrimType) := mapMaybe (\p => if contains p invariantIdsPre || contains p noPromote
                                                                                 then Nothing
                                                                                 else map (\ty => (p, ty)) (callArgOrOpNativeType calleeTable p body'))
                                                                       argIds
-                  eligibleInvariant : List (Int, PrimType) := mapMaybe (\p => if contains p invariantIdsPre
+                  eligibleInvariant : List (Int, PrimType) := mapMaybe (\p => if contains p invariantIdsPre && not (contains p noPromote)
                                                                                   then map (\ty => (p, ty)) (nativeArgType p body')
                                                                                   else Nothing)
                                                                         argIds
@@ -1567,7 +1567,7 @@ applyLoopFromId nextId0 calleeTable self (MkRCFun args retRep isWorker body) =
                                               (RLet emptyFC resultVar retRep dupped
                                                 (RDrop emptyFC [RCLoc p] (RV emptyFC (RCLoc resultVar)))))
               in (fst wrapInvariantShadows, MkRCFun args retRep isWorker (snd wrapInvariantShadows))
-applyLoopFromId nextId0 _ _ d = (nextId0, d)
+applyLoopFromId nextId0 _ _ _ d = (nextId0, d)
 
 ||| Reads/writes the shared, whole-compile `VarId` counter
 ||| (`Compiler.RC2.Util`) once around `applyLoopFromId`'s own pure
@@ -1575,9 +1575,9 @@ applyLoopFromId nextId0 _ _ d = (nextId0, d)
 ||| module's header note on `nextId0`, for why a scan is no longer
 ||| needed to find a safe starting value.
 export
-applyLoop : {auto v : Ref VarId Int} -> SortedMap Name (List (Maybe PrimType)) -> Name -> RCDef -> Core RCDef
-applyLoop calleeTable self d = do
+applyLoop : {auto v : Ref VarId Int} -> SortedMap Name (List (Maybe PrimType)) -> SortedSet Int -> Name -> RCDef -> Core RCDef
+applyLoop calleeTable noPromote self d = do
     nextId0 <- get VarId
-    let (nextId', d') = applyLoopFromId nextId0 calleeTable self d
+    let (nextId', d') = applyLoopFromId nextId0 calleeTable noPromote self d
     put VarId nextId'
     pure d'

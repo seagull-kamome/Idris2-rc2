@@ -181,7 +181,9 @@ Two existing bugs surfaced on the new shapes, both fixed with it:
   one slot could hold one member's closure and another member's `Int`,
   and native-shadow promotion then unboxed the closure
   (`loop-conversion.md`'s "Bugs found" 8); `BenchArityRaise` crashed
-  on it. Each member now owns its own block of slots.
+  on it. Members now share slots only within one class of parameter
+  (by the native type Loop would promote it to), and a class-less slot
+  is never promoted.
 
 ## Results (2026-09-26)
 
