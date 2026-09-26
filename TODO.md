@@ -648,6 +648,8 @@ design and the measured results. Still open:
 
 ## Performance: closure-valued loop parameters
 
+Design: `rc2/doc/closure-accumulator.md` (the difference-list shape).
+
 `Data.List.sortBy`'s `splitRec` carries a difference list `zs`
 (`zs . ((::) y)`, starting from `id`) as a loop parameter. Each step
 allocates two closures, and the final `zs []` walks the whole chain
