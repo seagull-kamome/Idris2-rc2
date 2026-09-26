@@ -621,26 +621,21 @@ unchanged on idris2-lsp, and whether its fresh-tail savings matter at
 run time needs a real workload to measure. Loop-bearing values (168
 sites) aren't pushed into at all yet.
 
-## Robustness/performance: tail recursion modulo constructor (TRMC), phases 2-4
+## Robustness/performance: tail recursion modulo constructor (TRMC), phases 2 and 4
 
-Phase 1 is done: self recursion with one recursive field, filled at the
-same field index everywhere in the function. `rc2/doc/trmc.md` has the
-design and the measured results. Still open:
+Phases 1 and 3 are done: self recursion, with holes at any field index
+and, of several recursive fields, the last-evaluated one. `rc2/doc/trmc.md`
+has the design and the measured results. Still open:
 
-- **Phase 2, mutual recursion.** 84 sites in idris2-lsp.
-  - 29 of them are `::`, mostly a function and its own `case block`
-    helper (`words`, `collectDefs`, `mkDoLets`, `compressLefts`, ...).
-  - 55 are on other constructors, e.g. seven clones of `Maybe`'s `map`
-    and the `TTImp` traversals.
+- **Phase 2, mutual recursion.** 155 sites in idris2-lsp have a field
+  computed by a function that calls back (`trmc.md`, "Phase 3
+  results"), 22 of them `::`.
+  - Typical shapes: a function and its own `case block` helper
+    (`words`, `compressLefts`, ...), the 19 clones of `Maybe`'s `map`,
+    and term traversals whose last field maps over a list through a
+    helper that calls back (`substEnv`'s `CApp`).
   - Apply the rewrite over a MutualLoop group, carrying `res`/`last` in
     the group's shared slots.
-- **Phase 3, varying field index and multi-field sites.**
-  - 211 one-field sites remain; 202 of them are in functions that build
-    several different constructors, whose holes sit at different
-    indexes. Carry `k` as a native loop parameter, or `last`'s hole
-    address.
-  - 133 sites have two or more recursive fields. Rewrite the
-    last-evaluated call only.
 - **Phase 4.**
   - A raw hole address, if the refcount traffic on `last` shows up in
     benchmarks.

@@ -1,7 +1,7 @@
 # Tail recursion modulo constructor (TRMC)
 
-Status: phase 1 implemented (2026-09-26, `Compiler.RC2.Trmc`); phases 2-4
-are tracked in `TODO.md` ("tail recursion modulo constructor").
+Status: phases 1 and 3 implemented (2026-09-26 and 2026-09-27,
+`Compiler.RC2.Trmc`); phases 2 and 4 are tracked in `TODO.md` ("tail recursion modulo constructor").
 Motivation is in `KNOWN-BUGS.md` ("deep non-tail recursion overflows
 the C stack").
 
@@ -72,6 +72,33 @@ After Loop conversion, `f#` is a loop over the original parameters plus
 `reuse=` of the dying input cell), one field store, and one extra
 refcount on the cell passed along as `last`.
 
+### Several hole indexes (phase 3)
+
+When the sites fill different field indexes, such as `Bind` and `App`
+in one term traversal, `f#` takes a third extra parameter, `hk`: the
+index of `last`'s hole. Each site passes its own index as a constant.
+A fill becomes a `case` over `hk` with one static `RFill` per index:
+
+```
+case hk of
+  0 -> let _ = fill last . 0 = c; call f# as' res c #1
+  _ -> let _ = fill last . 1 = c; call f# as' res c #1
+```
+
+`RFill` itself keeps a static field, so no pass that knows it changes.
+The code after the fill (a tail call, or returning `res`) has no
+`let`s, so each branch gets its own copy of it. A function with a
+single index gets no `hk`, exactly as in phase 1. `hk` is always small,
+so Loop keeps it as a native loop parameter.
+
+### Several recursive fields (phase 3)
+
+Of a site such as `Node (f l) x (f r)`, only the last-evaluated
+recursive call becomes the hole. The earlier ones stay ordinary calls
+to `f` (the entry, which uses `f#` in turn). A tree map therefore loops
+down its right spine and recurses only as deep as the tree's left
+branches.
+
 ### Why `last` is an owned reference, not a raw hole address
 
 A raw `Value **` hole would need a new non-refcounted `Rep`, which
@@ -132,8 +159,8 @@ A function `f` is rewritten when all of the following hold.
    - exactly one of whose `args` is a local bound (through any nest of
      `let`s) to a strict, saturated `RAppName f as'`;
    - that local is used nowhere else.
-2. All its recursive sites use the same constructor field index `k`.
-   `::` always uses field 1. Differing sites are phase 3.
+2. (Phase 1 only; lifted by phase 3.) All its recursive sites use the
+   same constructor field index `k`. `::` always uses field 1.
 3. The `C` of each site is a real heap constructor: arity ≥ 1, not a
    newtype, not one of the NULL-represented nullary ones.
 4. No `let` evaluated between the recursive call and the `RCon` has an
@@ -146,8 +173,8 @@ A function `f` is rewritten when all of the following hold.
    body produced by MutualLoop. Mutual recursion is phase 2.
 
 When a site has two or more recursive fields, the last-evaluated call
-is the one to rewrite; the others stay ordinary calls. This is
-phase 3.
+is the one to rewrite; the others stay ordinary calls (phase 3). They are evaluated before it,
+so they are not among the lets that eligibility 4 checks.
 
 ## Pipeline position
 
@@ -192,8 +219,8 @@ A `notrmc` directive disables the pass, like every other stage.
 2. **Phase 2:** mutual recursion. Apply the same rewrite over a
    MutualLoop group, with `res`/`last` added to the group's shared
    slots (36 `::` and 51 other sites).
-3. **Phase 3:** differing field indexes (carry `k` as a native loop
-   parameter) and multi-field sites (rewrite the last-evaluated call).
+3. **Phase 3 (done):** differing field indexes (`hk`) and multi-field
+   sites (rewrite the last-evaluated call).
 4. **Phase 4:** an optional raw hole address, if the refcount traffic
    on `last` shows up. Also constructor contexts (Koka's `ctx`) for
    difference lists, which is `TODO.md`'s "closure-valued loop
@@ -239,6 +266,41 @@ times runs in 3.19s instead of 3.47s (-8%). Peak RSS falls from
 `splitRec`'s closure accumulator (phase 4 / `TODO.md`). `[1 .. n]` also
 crashed, in the runtime's recursive teardown; that is fixed separately.
 
+## Phase 3 results (2026-09-27)
+
+**Correctness.** `Test100TrmcHoles` covers:
+- a million-long chain alternating `A Int Alt` and `B Alt Int` (holes
+  at fields 1 and 0);
+- a map over a million-deep right spine of a tree, with the left
+  subtree an ordinary call;
+- the same map over a small balanced tree.
+
+Its output matches Chez's, and it is clean under valgrind. With
+`--directive notrmc` it overflows the C stack.
+
+**idris2-lsp** (same measurement as phase 1; both columns built from the
+same tree, with only `Trmc.idr` differing):
+
+| | phase 1 only | with phase 3 |
+|---|---|---|
+| functions with a remaining site | 108 | 94 |
+| of which self recursion only | 50 | 15 |
+| sites, one recursive field | 305 | 130 |
+| sites, two or more recursive fields | 133 | 52 |
+| sites whose fields call only `f` itself | 329 | 27 |
+| sites with a field calling a function that calls `f` back | 109 | 155 |
+| `rc2_trmc_*` functions in the final program | 59 | 97 |
+
+- The self sites left are ineligible. For example, `addLocs` reads
+  the recursive result again to build the head.
+- The rest involve mutual recursion (phase 2). 46 sites moved from
+  the self to the mutual row. `substEnv`'s `CApp` is one: its
+  last-evaluated field maps over the argument list through a
+  specialised `mapAppend` that calls `substEnv` back, so phase 3 cannot
+  make the self call the hole. Why the measurement counted it as self
+  recursion before phase 3 was not tracked down.
+- `rcexpr-lint` finds no anomalies. The pass still takes 0.12s.
+
 ## Bugs found
 
 1. **LateInline aliased two parameters onto one caller local.**
@@ -255,3 +317,10 @@ crashed, in the runtime's recursive teardown; that is fixed separately.
    so it was rebuilt for every definition (the "`where`-clause trap"
    in `constant-constructor-specialization.md`). Binding it with
    `<- pure` brought the pass down to 0.1s.
+3. **Reuse offered a field-less constructor.** Phase 3's tree test
+   crashed in `mapT f Leaf = Leaf`, with or without TRMC. Reuse
+   offered the scrutinee's cell to the `Leaf` built in that branch, so
+   Emit called `idris2rc2_isUnique` on it. But a folded constant holds
+   `Leaf` as a tagged pointer (`RCEmptyCon`), not a cell, and reading
+   its refcount faulted. A field-less alternative has nothing worth
+   reusing, so `Reuse.resolveAlt` no longer offers one.

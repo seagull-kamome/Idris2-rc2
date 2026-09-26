@@ -120,7 +120,10 @@ resolveReuse (RConCase fc sc alts mDef) =
     resolveAlt : RCLocal -> RConAlt -> RConAlt
     resolveAlt sc (MkRConAlt name ci tag args body) =
         let body1 = resolveReuse body
-            erased = ci == NIL || ci == NOTHING || ci == ZERO || ci == UNIT
+            -- A field-less alternative has no cell worth reusing, and its
+            -- scrutinee may not be a cell at all: a folded constant
+            -- holds such a constructor as a tagged pointer (RCEmptyCon).
+            erased = ci == NIL || ci == NOTHING || ci == ZERO || ci == UNIT || null args
             (dropped, inner) = peelDrop body1
         in if not erased && elem sc dropped && contains name (usedConstructorsR inner)
               then let -- A dead offer (nothing claimed it anywhere)

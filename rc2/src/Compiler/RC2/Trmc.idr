@@ -61,18 +61,26 @@ heapCon _ = False
 ||| Every recursive site in `f`'s tails. `env` maps a let-bound local to
 ||| its let's position and the final expression of its value; `barrier`
 ||| is the position of the latest let that must not move before a
-||| recursive call bound earlier.
+||| recursive call bound earlier. Of a site with several recursive
+||| fields, only the last-evaluated call becomes the hole; the others
+||| stay ordinary calls.
 findSites : Name -> SortedSet Name -> RCExp -> Sites
 findSites f newtypes body = go empty 0 (-1) body
   where
-    recCall : SortedMap Int (Int, RCExp) -> Int -> RCLocal -> Maybe (Int, List RCLocal)
+    recCall : SortedMap Int (Int, RCExp) -> Int -> RCLocal -> Maybe (Int, Int, List RCLocal)
     recCall env barrier (RCLoc v) = case lookup v env of
         Just (pos, RAppName _ Nothing g as') =>
             if g == f && pos >= barrier && countUsesR (RCLoc v) body == 1
-               then Just (v, as')
+               then Just (v, pos, as')
                else Nothing
         _ => Nothing
     recCall _ _ _ = Nothing
+
+    latest : List (Int, Int, List RCLocal, Nat) -> Maybe (Int, List RCLocal, Nat)
+    latest [] = Nothing
+    latest (c :: cs) =
+        let (v, _, as', k) = foldl (\a@(_, pa, _, _), b@(_, pb, _, _) => if pb > pa then b else a) c cs
+        in Just (v, as', k)
 
     go : SortedMap Int (Int, RCExp) -> Int -> Int -> RCExp -> Sites
     go env pos barrier (RLet _ var _ value rest) =
@@ -80,9 +88,9 @@ findSites f newtypes body = go empty 0 (-1) body
         in go (insert var (pos, finalOf value) env) (pos + 1) barrier' rest
     go env _ barrier (RCon _ n ci _ args Nothing) =
         if not (heapCon ci) || contains n newtypes then empty
-        else case mapMaybe (\(k, a) => map (\(v, as') => (v, as', k)) (recCall env barrier a)) (zip [0 .. length args] args) of
-                  [(v, as', k)] => singleton v (as', k)
-                  _ => empty
+        else case latest (mapMaybe (\(k, a) => map (\(v, p, as') => (v, p, as', k)) (recCall env barrier a)) (zip [0 .. length args] args)) of
+                  Just (v, as', k) => singleton v (as', k)
+                  Nothing => empty
     go env pos barrier (RCmpCase _ _ _ _ t e) = mergeLeft (go env pos barrier t) (go env pos barrier e)
     go env pos barrier (RConCase _ _ alts mDef) =
         foldr (\(MkRConAlt _ _ _ _ b), acc => mergeLeft (go env pos barrier b) acc) (maybe empty (go env pos barrier) mDef) alts
@@ -93,10 +101,11 @@ findSites f newtypes body = go empty 0 (-1) body
 -------------------------------------------------------------------------------
 -- Rewriting
 
-||| `Entry` rewrites `f` itself; `Acc res last` rewrites the body of
+||| `Entry` rewrites `f` itself; `Acc res last hk` rewrites the body of
 ||| `f#`, whose `res` is the chain's first cell and `last` the cell whose
-||| hole is open.
-data Mode = Entry | Acc Int Int
+||| hole is open. `hk` holds that hole's field index when the sites use
+||| more than one.
+data Mode = Entry | Acc Int Int (Maybe Int)
 
 ||| `value` without its final expression (the recursive call), its
 ||| leading lets kept in front of `rest`.
@@ -104,36 +113,52 @@ withoutFinal : RCExp -> RCExp -> RCExp
 withoutFinal (RLet fc var rep value body) rest = RLet fc var rep value (withoutFinal body rest)
 withoutFinal _ rest = rest
 
-rewriteBody : {auto v : Ref VarId Int} -> Name -> Name -> Nat -> Sites -> Mode -> RCExp -> Core RCExp
-rewriteBody f f' k sites mode = go
+||| `ks` are the sites' distinct hole indexes; with more than one, `f#`
+||| takes the current one as an extra argument.
+rewriteBody : {auto v : Ref VarId Int} -> Name -> Name -> List Nat -> Sites -> Mode -> RCExp -> Core RCExp
+rewriteBody f f' ks sites mode = go
   where
-    fill : FC -> Int -> RCLocal -> RCExp -> Core RCExp
-    fill fc last value rest = do
+    fillAt : FC -> Int -> RCLocal -> RCExp -> Nat -> Core RCExp
+    fillAt fc last value rest k = do
         u <- freshVarId
         pure $ RLet fc u RBoxed (RFill fc (RCLoc last) k value []) rest
 
-    siteArgs : List RCLocal -> Maybe (List RCLocal)
+    -- `rest` is let-free (a result or a tail call), so each branch can
+    -- carry its own copy.
+    fill : FC -> Int -> Maybe Int -> RCLocal -> RCExp -> Core RCExp
+    fill fc last Nothing value rest = fillAt fc last value rest (fromMaybe 0 (head' ks))
+    fill fc last (Just hk) value rest = do
+        branches <- traverse (\k => (k,) <$> fillAt fc last value rest k) ks
+        case reverse branches of
+             ((_, dflt) :: others) =>
+                 pure $ RConstCase fc (RCLoc hk) (map (\(k, b) => MkRConstAlt (I (cast k)) b) (reverse others)) (Just dflt)
+             [] => pure rest
+
+    holeArg : Nat -> List RCLocal
+    holeArg k = if length ks > 1 then [RCConst (I (cast k))] else []
+
+    siteArgs : List RCLocal -> Maybe (List RCLocal, Nat)
     siteArgs args = case mapMaybe (\a => case a of
-                                             RCLoc x => map fst (lookup x sites)
+                                             RCLoc x => lookup x sites
                                              _ => Nothing) args of
-                         [as'] => Just as'
+                         [site] => Just site
                          _ => Nothing
 
-    finish : Int -> Int -> RCExp -> Core RCExp
-    finish res last e = do
+    finish : Int -> Int -> Maybe Int -> RCExp -> Core RCExp
+    finish res last hk e = do
         r <- freshVarId
-        RLet emptyFC r RBoxed e <$> fill emptyFC last (RCLoc r) (RV emptyFC (RCLoc res))
+        RLet emptyFC r RBoxed e <$> fill emptyFC last hk (RCLoc r) (RV emptyFC (RCLoc res))
 
     other : RCExp -> Core RCExp
     other e = case mode of
         Entry => pure e
-        Acc res last => case e of
+        Acc res last hk => case e of
             RAppName fc Nothing g as' =>
-                if g == f then pure (RAppName fc Nothing f' (as' ++ [RCLoc res, RCLoc last]))
-                          else finish res last e
+                if g == f then pure (RAppName fc Nothing f' (as' ++ [RCLoc res, RCLoc last] ++ map RCLoc (toList hk)))
+                          else finish res last hk e
             RCrash _ _ => pure e
-            RV fc x => fill fc last x (RV fc (RCLoc res))
-            _ => finish res last e
+            RV fc x => fill fc last hk x (RV fc (RCLoc res))
+            _ => finish res last hk e
 
     go : RCExp -> Core RCExp
     go (RLet fc var rep value rest) =
@@ -149,16 +174,16 @@ rewriteBody f f' k sites mode = go
                          <*> traverseOpt go mDef
     go e@(RCon fc n ci tag args Nothing) = case siteArgs args of
         Nothing => other e
-        Just as' => do
+        Just (as', k) => do
             c <- freshVarId
             let holed = map (\a => case a of
                                         RCLoc x => if isJust (lookup x sites) then RCNull else a
                                         _ => a) args
                 cell = RCon fc n ci tag holed Nothing
             case mode of
-                 Entry => pure $ RLet fc c RBoxed cell (RAppName fc Nothing f' (as' ++ [RCLoc c, RCLoc c]))
-                 Acc res last =>
-                     RLet fc c RBoxed cell <$> fill fc last (RCLoc c) (RAppName fc Nothing f' (as' ++ [RCLoc res, RCLoc c]))
+                 Entry => pure $ RLet fc c RBoxed cell (RAppName fc Nothing f' (as' ++ [RCLoc c, RCLoc c] ++ holeArg k))
+                 Acc res last hk =>
+                     RLet fc c RBoxed cell <$> fill fc last hk (RCLoc c) (RAppName fc Nothing f' (as' ++ [RCLoc res, RCLoc c] ++ holeArg k))
     go e = other e
 
 -------------------------------------------------------------------------------
@@ -188,13 +213,14 @@ applyTrmc defs = do
     one newtypes existing (n, d@(MkRCFun args@(_ :: _) RBoxed False body)) =
         let sites = findSites n newtypes body
         in case nub (map snd (values sites)) of
-                [k] => do
+                [] => pure [(n, d)]
+                ks => do
                     n' <- fresh existing n
                     res <- freshVarId
                     last <- freshVarId
-                    entry <- rewriteBody n n' k sites Entry body
-                    acc <- rewriteBody n n' k sites (Acc res last) body
+                    hk <- if length ks > 1 then Just <$> freshVarId else pure Nothing
+                    entry <- rewriteBody n n' ks sites Entry body
+                    acc <- rewriteBody n n' ks sites (Acc res last hk) body
                     pure [ (n, MkRCFun args RBoxed False entry)
-                         , (n', MkRCFun (args ++ [(res, RBoxed), (last, RBoxed)]) RBoxed False acc) ]
-                _ => pure [(n, d)]
+                         , (n', MkRCFun (args ++ [(res, RBoxed), (last, RBoxed)] ++ map (, RBoxed) (toList hk)) RBoxed False acc) ]
     one _ _ nd = pure [nd]
