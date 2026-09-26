@@ -235,10 +235,9 @@ DeadCode +0.07s, ...).
 times runs in 3.19s instead of 3.47s (-8%). Peak RSS falls from
 10.0 MB to 6.7 MB, because the recursion no longer uses the stack.
 
-**Still crashing at 1M elements** (`KNOWN-BUGS.md`):
-- `[1 .. n]`: the list is built fine, but freeing it in one `drop`
-  recurses in `idris2rc2_teardown`.
-- `sort`: `splitRec`'s closure accumulator (phase 4 / `TODO.md`).
+**Still crashing at 1M elements** (`KNOWN-BUGS.md`): `sort`, because of
+`splitRec`'s closure accumulator (phase 4 / `TODO.md`). `[1 .. n]` also
+crashed, in the runtime's recursive teardown; that is fixed separately.
 
 ## Bugs found
 

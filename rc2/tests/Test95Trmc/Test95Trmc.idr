@@ -2,9 +2,7 @@ module Main
 
 -- Tail recursion modulo constructor (rc2/doc/trmc.md): each builder
 -- below recurses under a constructor, a million elements deep, which
--- overflows the C stack unless it becomes a loop. Every result is
--- consumed front to back so no single drop tears down a whole list
--- (KNOWN-BUGS.md, "deep non-tail recursion": teardown still recurses).
+-- overflows the C stack unless it becomes a loop.
 
 
 data Chain = Link Int Chain | End

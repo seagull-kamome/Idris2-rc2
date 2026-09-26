@@ -686,26 +686,37 @@ crash is a stack overflow, not a miscompile: every size that fits
 returns the right result.
 
 Measured 2026-09-26 with `ulimit -s` at 8192. "Before" is before
-TRMC (`rc2/doc/trmc.md`, phase 1); "after" is with it.
+TRMC (`rc2/doc/trmc.md`, phase 1) and the teardown fix below; "now" is
+with both.
 
-| Operation | before: 100k | before: 1M | after: 1M |
-|---|---|---|---|
-| `mergeBy` (`x :: mergeBy ...`) | SEGV | SEGV | ok |
-| `[1 .. n]` | SEGV | SEGV | SEGV (teardown, below) |
-| `sortBy`'s `splitRec`, applying its accumulated `zs` | ok | SEGV | SEGV |
-| `Data.List.sort` | ok | SEGV | SEGV (`splitRec`) |
+| Operation | before: 100k | before: 1M | now: 1M | now: 4M |
+|---|---|---|---|---|
+| `mergeBy` (`x :: mergeBy ...`) | SEGV | SEGV | ok | ok |
+| `[1 .. n]` | SEGV | SEGV | ok | ok |
+| `sortBy`'s `splitRec`, applying its accumulated `zs` | ok | SEGV | SEGV | SEGV |
+| `Data.List.sort` | ok | SEGV | SEGV (`splitRec`) | SEGV |
 
-Chez sorts the 1M list in 1.23s. Two causes remain:
+Chez sorts the 1M list in 1.23s. One cause remains: `splitRec`'s
+closure accumulator. Applying `zs` walks the composed closures
+non-tail-recursively; see `TODO.md`, "closure-valued loop parameters".
 
-- **`splitRec`'s closure accumulator.** Applying `zs` walks the
-  composed closures non-tail-recursively. See `TODO.md`,
-  "closure-valued loop parameters".
-- **Teardown.** `idris2rc2_teardown` (`support/rc2/idris2rc2_memory.c`)
-  drops a constructor's fields recursively. Freeing a long unique list
-  in one `drop` therefore recurses once per cell. A list consumed front
-  to back never hits this, because each cell's tail is still shared
-  when the cell dies. The fix is to loop on the last field instead of
-  recursing into it.
+**Fixed 2026-09-26: teardown.** `idris2rc2_teardown`
+(`support/rc2/idris2rc2_memory.c`) used to drop every field of a dying
+constructor or closure recursively. Freeing a long unique list in one
+`drop` therefore recursed once per cell, which is what crashed `[1 ..
+n]`.
+
+It now loops instead of recursing into the first dying child that
+itself holds children. Only the other dying children recurse, so the
+depth is bounded by how bushy the structure is (a tree's height), not
+by its length. That covers the recursive field in either position: a
+list's is last, a `SnocList`'s first.
+
+A general worklist was tried first. It cost 5-7% more instructions on
+a free-heavy benchmark, because every teardown paid to set it up. The
+loop costs 1.4% (`perf stat`), within run-to-run noise in wall-clock
+time. `Test96TeardownDeep` covers a 1M list, `SnocList` and closure
+chain, each dropped in one go.
 
 ## LateInline + native compare: `mergeBy compare` leaks the second list's boxed elements
 

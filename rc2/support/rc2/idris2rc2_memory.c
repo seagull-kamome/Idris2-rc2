@@ -167,13 +167,39 @@ IDRIS2RC2_Array *idris2rc2_mkArray(int length) {
 // actually dropped) and idris2rc2_free (which always skips straight to
 // teardown) still live in this translation unit.
 
-// Recursively drop `v`'s children (each of which may itself still be
-// shared, so those go through the ordinary checked idris2rc2_drop) and
+// Whether `v` can hold further heap values: the one child of such a kind
+// that dies with its parent is torn down by looping rather than by
+// recursion, so a long list, `SnocList` or closure chain needs no C
+// stack proportional to its length. Recursion is left for any other
+// dying child, so its depth is bounded by how bushy the structure is
+// (a tree's height), not by how long it is.
+static inline int idris2rc2_hasChildren(IDRIS2RC2_Value *v) {
+  return v->header.tag == IDRIS2RC2_TAG_CONSTRUCTOR || v->header.tag == IDRIS2RC2_TAG_CLOSURE;
+}
+
+// Whether dropping `v` released its last reference, like idris2rc2_drop
+// minus the teardown itself.
+static inline int idris2rc2_releaseLast(IDRIS2RC2_Value *v) {
+  if (!v || idris2rc2_is_unboxed(v))
+    return 0;
+  if (v->header.refCount == IDRIS2RC2_REFCOUNT_MAX)
+    return 0;
+  if (atomic_fetch_sub_explicit(&v->header.refCount, 1, memory_order_release) != 1)
+    return 0;
+  atomic_thread_fence(memory_order_acquire);
+  return 1;
+}
+
+// Drop `v`'s children (each of which may itself still be shared, so
+// each goes through the same checked decrement as idris2rc2_drop) and
 // then free `v` itself. Shared by idris2rc2_drop's refcount==1 case and by
 // idris2rc2_free, which skips straight to this without checking/
 // decrementing `v`'s own count first -- so it must only ever be called on
 // a value the caller has *statically* proven has no other references.
 void idris2rc2_teardown(IDRIS2RC2_Value *v) {
+  IDRIS2RC2_Value *next;
+again:
+  next = NULL;
   switch (v->header.tag) {
   case IDRIS2RC2_TAG_BITS32:
   case IDRIS2RC2_TAG_BITS64:
@@ -191,13 +217,23 @@ void idris2rc2_teardown(IDRIS2RC2_Value *v) {
   case IDRIS2RC2_TAG_CLOSURE: {
     IDRIS2RC2_Closure *c = (IDRIS2RC2_Closure *)v;
     for (int i = 0; i < c->filled; ++i)
-      idris2rc2_drop(c->args[i]);
+      if (idris2rc2_releaseLast(c->args[i])) {
+        if (!next && idris2rc2_hasChildren(c->args[i]))
+          next = c->args[i];
+        else
+          idris2rc2_teardown(c->args[i]);
+      }
     break;
   }
   case IDRIS2RC2_TAG_CONSTRUCTOR: {
     IDRIS2RC2_Constructor *c = (IDRIS2RC2_Constructor *)v;
     for (int i = 0; i < c->arity; ++i)
-      idris2rc2_drop(c->args[i]);
+      if (idris2rc2_releaseLast(c->args[i])) {
+        if (!next && idris2rc2_hasChildren(c->args[i]))
+          next = c->args[i];
+        else
+          idris2rc2_teardown(c->args[i]);
+      }
     break;
   }
   case IDRIS2RC2_TAG_IOREF:
@@ -276,6 +312,10 @@ void idris2rc2_teardown(IDRIS2RC2_Value *v) {
     break;
   }
   free(v);
+  if (next) {
+    v = next;
+    goto again;
+  }
 }
 
 void idris2rc2_free(IDRIS2RC2_Value *v) {
