@@ -1,7 +1,8 @@
-# Raising a closure-returning function's arity (world arity raising): design
+# Raising a closure-returning function's arity (world arity raising)
 
-Status (2026-09-26): investigated and designed, not implemented. Grew out
-of `struct-return.md`'s "`apply` tails" open question.
+Status: implemented and on by default since 2026-09-26
+(`Compiler.RC2.ArityRaise`, `--directive noarityraise` turns it off).
+Grew out of `struct-return.md`'s "`apply` tails" open question.
 
 ## The problem
 
@@ -128,7 +129,10 @@ A call site `let c = call f xs` in `R` whose `c` is used exactly once,
 by an `apply c [w]` evaluated right after it (the `let`'s body, or the
 value of the next `let`, as in the examples), becomes
 `call f# (xs ++ [w])`. Moving the call past nothing keeps evaluation
-order intact. Everything else keeps the closure.
+order intact. The call may end a chain of `let`s in the value
+(`let c = (let a = ...; call f [a]); apply c [w]`, what an inlined
+argument leaves); the raised call takes its place at the end of that
+chain. Everything else keeps the closure.
 
 `R` is a greatest fixpoint, like struct return's plan: tails are read
 through `let` bodies and the branches of every `case`, and a function
@@ -160,18 +164,50 @@ self tail call into a `goto`, and any other goes through the trampoline
 as before. Before the rewrite, `f` returned the closure to its caller's
 `apply` instead, which is no deeper.
 
-## Implementation plan
+## Implementation
 
-1. `Compiler.RC2.ArityRaise` (new module): `R`, `f#` synthesis
-   (`MN "rc2_raised_<f>"`, the naming `SpecClosure` uses), the call-site
-   rewrite, and a `noarityraise` directive in `disableableStageNames`,
-   documented in `directives.md`.
-2. A `dumpdualabi`-style count of `R` to check against the figures
-   above.
-3. Tests: a `Core` clone like the one above (pattern matching, a
-   constant closure, a bare wrapper, a closure kept and applied later,
-   self recursion); `verify.sh` checks that the cased sites call `f#`
-   and that `f#` returns a struct. Leak-sensitive.
-4. Measure: idris2-lsp's final IR (`apply`, `partial`, struct workers,
-   cased struct sites) and a `Core`-chain benchmark, since idris2-lsp
-   does not reach C generation.
+`Compiler.RC2.ArityRaise.applyArityRaise` runs twice on the pre-RC
+`RCExp`: right before `ConstFold`, and again after the early inline.
+The second run sees sites the passes in between exposed (an inlined
+`bind`, say), and a function the first run raised is a bare wrapper of
+its raised version by then, so its new sites call that directly.
+
+Two existing bugs surfaced on the new shapes, both fixed with it:
+
+- `Sink` moved a `let` whose value reads a local past a `drop` of that
+  local (`branch-sinking.md`'s "Not sinking a read past its operand's
+  drop"); `rcexpr-lint` caught it on idris2-lsp.
+- `MutualLoop` shared parameter slots between members by position, so
+  one slot could hold one member's closure and another member's `Int`,
+  and native-shadow promotion then unboxed the closure
+  (`loop-conversion.md`'s "Bugs found" 8); `BenchArityRaise` crashed
+  on it. Each member now owns its own block of slots.
+
+## Results (2026-09-26)
+
+idris2-lsp, final `dumprcexpr`, `rcexpr-lint` clean both ways:
+
+| | `noarityraise` | raised |
+|---|---|---|
+| definitions | 22,798 | 19,530 (1,325 raised) |
+| `apply` | 9,161 | **3,771** (−59%) |
+| `partial` | 11,115 | 8,556 |
+| struct workers | 726 | 1,345 |
+| `let ... : RetN` (cased struct sites) | 6,164 | **9,952** (+61%) |
+| `reuseOffer` | 17,768 | 12,658 |
+| `con` | 51,038 | 49,498 |
+
+The definitions that go are mostly the closures' own lambdas
+(`{f:0}`), now called only from the raised version and inlined into it,
+and the originals whose every site was rewritten.
+
+`tests/BenchArityRaise.idr` (`BenchStructReturn`'s `step` chain against
+a `Core` clone whose `pure` and `>>=` are `%inline`, as upstream's are;
+five million calls, best of five): **2.15 s → 1.02 s**. Without the
+`%inline` the `bind` is only inlined after RC annotation, where this
+pass no longer runs, and the gain is 3.21 s → 1.77 s. `Test92ArityRaise`
+covers pattern matching, a constant closure, a tail delegation, closures
+kept in a list and applied later, and a plain `IO` function.
+
+idris2-missing-containers (two such sites; six alternating runs, the first
+left out, averaged): 8.05 s → 7.83 s (−2.8%), identical output.

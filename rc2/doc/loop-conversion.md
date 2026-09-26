@@ -707,11 +707,13 @@ wrapper that just calls the merged function once with its own tag and
 arguments and returns whatever comes back.
 
 Because all of rc2's own calling convention is uniformly `Value*`, the
-merged function's parameters are just `tag, slot_0 .. slot_k` (`k` =
-the largest arity among the group's members) -- every ordinary
-`RCLocal`, nothing backend-specific. Members with a smaller arity
-simply never reference their own unused trailing slots, and every
-caller (wrapper or in-group transition) always pads them with `RCNull`.
+merged function's parameters are just `tag` and one block of slots per
+member, each as wide as that member's arity -- every ordinary
+`RCLocal`, nothing backend-specific. A member only ever reads its own
+block, and every caller (wrapper or in-group transition) fills every
+other block with `RCNull`. (Until 2026-09-26 the members shared one
+set of `max arity` slots by position; see "Bugs found" 8 for why that
+went.)
 
 ### Cycle detection: Tarjan's SCC, not just direct pairs
 
@@ -784,14 +786,14 @@ sound without this pass ever needing to reason about ownership itself.
 
 The one thing this pass *does* need to get right on its own, since it's
 building genuinely new tree shape that never went through `annotate`,
-is the arity-padding invariant: whenever a transition enters member
-`j`, slots `< arity(j)` always hold real, freshly-supplied values for
-`j`, and slots `>= arity(j)` are always `RCNull`. This holds
+is the padding invariant: whenever a transition enters member
+`j`, `j`'s own block of slots always holds real, freshly-supplied values for
+`j`, and every other block is always `RCNull`. This holds
 *inductively* as long as *every* transition (wrapper call or in-group
-tail call) pads unused trailing slots with `RCNull` -- which
+tail call) fills every other block with `RCNull` -- which
 `rewriteGroupTailCalls`/the wrapper construction always does. Under
 that invariant, a member's own body only ever needs to reason about its
-own `[0, arity)` slots exactly as it always did (that's exactly what
+own block exactly as it always did (that's exactly what
 `annotate` already determined for its original, pre-merge argument
 list); nothing beyond that is ever read, so nothing beyond that ever
 needs an extra drop this pass would have to invent. `idris2rc2_drop`/
@@ -1277,6 +1279,22 @@ above needed to stop assuming a single loop.
    two-line form rather than converted wholesale. Anyone extending this
    further should convert a few bindings at a time and rebuild after
    each batch, not all at once.
+
+8. **A shared slot carried different types for different members
+   (2026-09-26).** Members used to share `slot_0 .. slot_k` by
+   position, so one slot held one member's closure and another
+   member's `Int`. Native-shadow promotion promotes a whole slot once
+   *some* member reads it natively (the same group-wide effect as bug
+   4), and then unboxed the closure as an `Int`: after world arity
+   raising (`world-arity-raising.md`) made `run` and a closure-applying
+   continuation of `BenchArityRaise.idr` mutually tail-recursive, the
+   continuation's `apply` got a boxed `Int` as its closure (`malloc():
+   corrupted top size`, valgrind: an invalid write in
+   `idris2rc2_tailcallApplyClosure`). Nothing in the IR says what type
+   a parameter has, so the slots cannot be matched by type; each
+   member now owns its own block of slots instead, and one slot only
+   ever holds one member's one parameter. Every other block is
+   `RCNull`, which bug 4's two guards already cover.
 
 ## Known limitation: native-shadow eligibility stops at bare top-level scalars
 

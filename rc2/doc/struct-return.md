@@ -515,8 +515,8 @@ Identical output apart from the timings.
 - **`apply` tails.** 790 functions (at one field) end in a closure call.
   Investigated 2026-09-26: allowing every such tail would add only 411
   cased sites; the closure is mostly a callee's result waiting for the
-  world, which `world-arity-raising.md` turns into a direct call (1,247
-  more cased struct sites). A dictionary method or a parameter would need
+  world, which `world-arity-raising.md` turns into a direct call (since
+  2026-09-26: cased struct sites 6,164 → 9,952). A dictionary method or a parameter would need
   specialisation and is not pursued.
 - **Dynamic benefit.** The static counts and the model bound the gain.
   How often these chains actually run in idris2-lsp is unmeasured.

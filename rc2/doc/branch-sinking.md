@@ -252,6 +252,19 @@ in the real control flow at all.
 branch reading an unrelated value) as a dedicated regression,
 independent of `Data.Buffer`.
 
+### Not sinking a read past its operand's drop
+
+The same wrapper clauses also bail when the wrapper releases a local
+that `value` itself reads (`readBy`): a `drop`, `free`, `releaseReuse`
+or `reuseOffer` of it. Found by `rcexpr-lint` on idris2-lsp after world
+arity raising (2026-09-26) changed its shapes: in `searchType`,
+`let v1 = (dup n; op -Integer [n, #1] postDrop= [n])` sat before a
+`case`, and one arm dropped `n` early (`drop [n, t]`) before calling on.
+Sinking `v1` into that arm's `Right` branch moved `dup n` past the
+`drop [n, ...]` -- a use after free. Checking only `var` (the previous
+section) cannot see this: `var` is the new binding, and the operand it
+reads is a different local.
+
 ## Pipeline position
 
 Runs after `Compiler.RC2.Loop` (self-tail-call conversion), before

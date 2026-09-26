@@ -84,7 +84,7 @@ show up again during testing.
   CAF (Boxed CAFs only; the doc explains why the native case turned
   out unreachable), `struct-return.md` for returning a constructor
   of at most four fields as a by-value `{tag, f0, ...}` struct from a DualABI
-  worker, `world-arity-raising.md` for a design (not yet implemented) that
+  worker, `world-arity-raising.md` for the pass that
   passes the world to a function returning a closure waiting for it,
   so its callers call instead of applying. Not
   a replacement for `TODO.md` — those stay the changelog

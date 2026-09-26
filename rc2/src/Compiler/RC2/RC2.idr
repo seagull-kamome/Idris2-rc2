@@ -15,6 +15,7 @@ module Compiler.RC2.RC2
 -- 9. C generation (`Compiler.RC2.Emit`)
 -- 10. C compiler invocation (`Compiler.RC2.CC`)
 
+import Compiler.RC2.ArityRaise
 import Compiler.RC2.CC
 import Compiler.RC2.ConAltNative
 import Compiler.RC2.ConstFold
@@ -236,7 +237,7 @@ insertMemoize = map wrap
 ||| apart.
 disableableStageNames : List String
 disableableStageNames =
-    ["noinline", "noconstfold", "noknowncon", "nopushcon", "nospecclosure", "nospecconstcon", "noconaltnative", "nomutualloop", "noloop", "noearlyinline", "nolateinline", "nosink", "nodualabi", "nostructreturn", "nodeadcode", "nodupmerge", "nodeadvars"]
+    ["noinline", "noarityraise", "noconstfold", "noknowncon", "nopushcon", "nospecclosure", "nospecconstcon", "noconaltnative", "nomutualloop", "noloop", "noearlyinline", "nolateinline", "nosink", "nodualabi", "nostructreturn", "nodeadcode", "nodupmerge", "nodeadvars"]
 
 ||| Stages that are off unless asked for with `--directive <name>`. They
 ||| travel to `toRCDefs` in the same list as the disables above.
@@ -313,9 +314,14 @@ toRCDefs disabled incremental roots lds0 = do
                                                 _ => throw err))
                             lds
                         pure (mapMaybe id results)
-    folded <- if "noconstfold" `elem` disabled
+    -- doc/world-arity-raising.md: before ConstFold, so every later pass
+    -- sees the direct calls.
+    raised <- if "noarityraise" `elem` disabled
                  then pure preFolded
-                 else logTime 2 "rc2: ConstFold (whole-program fixpoint)" $ foldConstProgram (not ("noknowncon" `elem` disabled)) preFolded
+                 else logTime 2 "rc2: Arity raise" $ applyArityRaise preFolded
+    folded <- if "noconstfold" `elem` disabled
+                 then pure raised
+                 else logTime 2 "rc2: ConstFold (whole-program fixpoint)" $ foldConstProgram (not ("noknowncon" `elem` disabled)) raised
     -- doc/constructor-escape-analysis.md's "Rewrite B": after ConstFold,
     -- whose known-constructor fold it relies on to finish each push, and
     -- before the specialization passes, so their clones start pushed.
@@ -357,7 +363,13 @@ toRCDefs disabled incremental roots lds0 = do
     -- regardless) and strictly before Phase 2 (toRCDefPostFold's own
     -- annotateDef needs to see RMemoize already in place -- see RC.idr's
     -- own `annotate` case for it).
-    memoized <- logTime 2 "rc2: CAF memoization" $ pure (insertMemoize earlyInlined)
+    -- Once more: the passes since expose sites the first run could not
+    -- see (an inlined `bind`, say), and a function raised then is a
+    -- bare wrapper now, whose sites call its raised version directly.
+    reraised <- if "noarityraise" `elem` disabled
+                   then pure earlyInlined
+                   else logTime 2 "rc2: Arity raise (after early inline)" $ applyArityRaise earlyInlined
+    memoized <- logTime 2 "rc2: CAF memoization" $ pure (insertMemoize reraised)
     reused <- logTime 2 "rc2: RC annotate + Reuse + ConAltNative" $
                 traverse (\(n, d) => do
                   d1 <- toRCDefPostFold d

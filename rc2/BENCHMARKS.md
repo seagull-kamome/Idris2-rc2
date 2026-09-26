@@ -1373,3 +1373,26 @@ idris2-missing-containers(交互に6回、1回目を除いた平均)では、ハ
 出力は時間以外一致。idris2-lspの最終IRでは、構造体を返すworkerが644→727個
 (`Ret2` 77、`Ret3` 3、`Ret4` 3)、2フィールド以上の構造体で受ける呼び出し
 箇所が238、`reuseOffer`が17,865→17,768。
+
+## world 引数の arity raising(2026-09-26)
+
+`IO`/`Core` を返す関数が引数で場合分けすると、world のラムダが各枝に入り、
+関数は「world 待ちの閉包」を返して呼び出し元がすぐ `apply` する形になる。
+その関数に world を引数として足した版を作り、すぐ `apply` される呼び出しを
+直接呼び出しに変える(`doc/world-arity-raising.md`)。
+
+`tests/BenchArityRaise.idr`(`BenchStructReturn`の`step`連鎖を`Core`の複製で
+書いたもの。上流と同じく`pure`と`>>=`は`%inline`、500万回、5回):
+
+| | `noarityraise` | 既定 |
+|---|---|---|
+| 壁時計 | 2.15s | **1.02s**(−53%) |
+
+`%inline`なしの`bind`では3.21s → 1.77s(−45%)。`bind`の展開がRC注釈の後
+(LateInline)になり、そこではこのパスが走らないため(TODOに記録)。
+
+idris2-lspの最終IR: `apply` 9,161 → 3,771、構造体で受ける箇所 6,164 → 9,952、
+構造体を返すworker 726 → 1,345、`reuseOffer` 17,768 → 12,658。
+
+idris2-missing-containers(対象は2箇所、交互に6回、1回目を除いた平均):
+8.05s → 7.83s(−2.8%)、出力は一致。

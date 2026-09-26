@@ -154,7 +154,6 @@ buildGroup existingNames memberDefs groupNames = do
                  traverse (\n => case lookup n memberDefs of
                                       Just def => pure (n, def)
                                       Nothing => throw $ InternalError "[rc2] MutualLoop: SCC member not found") ordered
-    let maxArity = foldl (\acc, (_, (args, _)) => max acc (length args)) Z members
     -- `membersWithTag` is the single source of truth for the name<->tag
     -- correspondence: both `alts`/`wrappers` below take their `tag_i`
     -- straight from this same zip, and `tagOf` (needed separately by
@@ -164,26 +163,37 @@ buildGroup existingNames memberDefs groupNames = do
     -- `lookup name_i tagOf` on the hot path that could ever silently
     -- default to tag 0 for a member `tagOf` genuinely doesn't have.
     let tagList : List Int = map (\i => the Int (cast i)) [0 .. length members `minus` 1]
+    -- Each member owns its own block of slots (`offsets`), so one slot
+    -- only ever carries one member's one parameter: Loop's native-shadow
+    -- promotion of a slot one member reads natively is then sound for
+    -- every value that slot can hold. Every other block is `RCNull`
+    -- (rc2/doc/loop-conversion.md's "MutualLoop" section).
+    let arities : List Nat := map (\(_, (args, _)) => length args) members
+    let slotCount = sum arities
+    let offsets : List Nat := reverse (snd (foldl (\ao, a => (fst ao + a, fst ao :: snd ao)) (the (Nat, List Nat) (Z, [])) arities))
     let membersWithTag = zip members tagList
-    let tagOf : SortedMap Name Int := SortedMap.fromList (map (\((n, _), t) => (n, t)) membersWithTag)
+    let tagOf : SortedMap Name (Int, Nat) := SortedMap.fromList (zipWith (\((n, _), t), o => (n, (t, o))) membersWithTag offsets)
     mergedName <- freshName existingNames
     tagId <- freshVarId
-    slotIds <- traverse (const freshVarId) (replicate maxArity ())
-    alts <- traverse (\((name_i, (args_i, body_i)), tag_i) => do
-                let ren : Renaming = SortedMap.fromList (zip args_i slotIds)
+    slotIds <- traverse (const freshVarId) (replicate slotCount ())
+    alts <- traverse (\(((name_i, (args_i, body_i)), tag_i), off_i) => do
+                let ren : Renaming = SortedMap.fromList (zip args_i (drop off_i slotIds))
                 let renamedBody = renameRCExp ren body_i
-                pure $ MkRConstAlt (I64 (cast tag_i)) (rewriteGroupTailCalls mergedName maxArity tagOf renamedBody))
-              membersWithTag
+                pure $ MkRConstAlt (I64 (cast tag_i)) (rewriteGroupTailCalls mergedName slotCount tagOf renamedBody))
+              (zip membersWithTag offsets)
     let mergedBody = RConstCase EmptyFC (RCLoc tagId) alts
                         (Just (RCrash EmptyFC "[rc2] internal: MutualLoop tag dispatch fell through"))
     let mergedDef = MkRCFun (map (\i => (i, RBoxed)) (tagId :: slotIds)) RBoxed False mergedBody
-    let wrappers = map (\((name_i, (args_i, _)), tag_i) =>
-                      let padded = map RCLoc args_i ++ replicate (maxArity `minus` length args_i) RCNull
-                      in (name_i, MkRCFun (map (\i => (i, RBoxed)) args_i) RBoxed False
-                            (RAppName EmptyFC Nothing mergedName (RCConst (I64 (cast tag_i)) :: padded))))
-                    membersWithTag
+    let wrappers = map (\(((name_i, (args_i, _)), tag_i), off_i) =>
+                      (name_i, MkRCFun (map (\i => (i, RBoxed)) args_i) RBoxed False
+                            (RAppName EmptyFC Nothing mergedName (RCConst (I64 (cast tag_i)) :: placed slotCount off_i (map RCLoc args_i)))))
+                    (zip membersWithTag offsets)
     pure ((mergedName, mergedDef) :: wrappers)
   where
+    ||| `args` at `off` in `slotCount` slots, `RCNull` everywhere else.
+    placed : Nat -> Nat -> List RCLocal -> List RCLocal
+    placed slotCount off args = replicate off RCNull ++ args ++ replicate (slotCount `minus` (off + length args)) RCNull
+
     freshName : {auto r : Ref FreshId Int} -> SortedSet Name -> Core Name
     freshName existing = do
         let cand = MN "rc2_mutualLoop" !(freshId{r})
@@ -192,18 +202,19 @@ buildGroup existingNames memberDefs groupNames = do
 
     ||| Rewrite every tail-position call (self- or cross-member alike)
     ||| within an already-renamed member body into a tail call to the
-    ||| merged function itself, carrying the target's tag and (padded)
-    ||| arguments -- see the module note's ownership/invariant discussion
-    ||| for why no extra drop/pad-related bookkeeping is needed here beyond
-    ||| this substitution.
-    rewriteGroupTailCalls : Name -> Nat -> SortedMap Name Int -> RCExp -> RCExp
-    rewriteGroupTailCalls mergedName maxArity tagOf body =
+    ||| merged function itself, carrying the target's tag and its
+    ||| arguments in the target's own block of slots -- see the module
+    ||| note's ownership/invariant discussion for why no extra
+    ||| drop/pad-related bookkeeping is needed here beyond this
+    ||| substitution.
+    rewriteGroupTailCalls : Name -> Nat -> SortedMap Name (Int, Nat) -> RCExp -> RCExp
+    rewriteGroupTailCalls mergedName slotCount tagOf body =
         let (_, _, rewritten) = mapTailAppNames
                 (\fc, n, args =>
                     case lookup n tagOf of
                         Nothing => Nothing
-                        Just t => Just $ RAppName fc Nothing mergedName $
-                                    RCConst (I64 (cast t)) :: args ++ replicate (maxArity `minus` length args) RCNull)
+                        Just (t, off) => Just $ RAppName fc Nothing mergedName $
+                                    RCConst (I64 (cast t)) :: placed slotCount off args)
                 body
         in rewritten
 

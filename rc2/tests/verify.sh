@@ -418,7 +418,7 @@ NO_REFC_DIFF_TESTS="Test3Data Test7CastMatrix Test8EmptyCon Test17ConstFold Test
 # packCFType allocation (idris2rc2_mkPointer/idris2rc2_mkGCPointer) is
 # new to %export's own argument marshalling and worth the same
 # scrutiny.
-LEAK_SENSITIVE_TESTS="Test1Basics Test9SelfTailLoop Test11DualABILeak Test12ConAltNative Test13NativeArgChain Test14SmallFunctionInline Test15CompareFusionThroughCall Test16LoopContinuePostDrop Test17ConstFold Test18ClosureInPlaceGrow Test19LoopInvariantParam Test22BranchSinking Test24CStructSupport Test26GCPtrAliasString Test27FFIDualABI Test28Utf8Strings Test33WideDualABIWorker Test35NetworkLoopback Test36ReuseOfferUniqueLeak Test37SystemMisc Test41FFIMalloc Test42SupportMisc Test44IORefExtPrimLeak Test46FastPackUnconditional Test49IntegerOpReuse Test57LoopCallArgNativeShadow Test59Export Test66ClosureFastPath Test69ConstFoldClosure Test70ConstFoldClosureCallthrough Test79DupMerge Test84CgExternStruct Test85CgExternStructPtrField Test86CafMemoization Test87SpecConstCon Test88KnownConFold Test89CafDualABI Test90StructReturn Test91IntConstFold"
+LEAK_SENSITIVE_TESTS="Test1Basics Test9SelfTailLoop Test11DualABILeak Test12ConAltNative Test13NativeArgChain Test14SmallFunctionInline Test15CompareFusionThroughCall Test16LoopContinuePostDrop Test17ConstFold Test18ClosureInPlaceGrow Test19LoopInvariantParam Test22BranchSinking Test24CStructSupport Test26GCPtrAliasString Test27FFIDualABI Test28Utf8Strings Test33WideDualABIWorker Test35NetworkLoopback Test36ReuseOfferUniqueLeak Test37SystemMisc Test41FFIMalloc Test42SupportMisc Test44IORefExtPrimLeak Test46FastPackUnconditional Test49IntegerOpReuse Test57LoopCallArgNativeShadow Test59Export Test66ClosureFastPath Test69ConstFoldClosure Test70ConstFoldClosureCallthrough Test79DupMerge Test84CgExternStruct Test85CgExternStructPtrField Test86CafMemoization Test87SpecConstCon Test88KnownConFold Test89CafDualABI Test90StructReturn Test91IntConstFold Test92ArityRaise"
 
 # KNOWN-BUGS.md's own remaining pre-existing leaks -- "definitely
 # lost" byte count, exactly. Anything else non-zero is a genuine new
@@ -684,6 +684,22 @@ for name in $ALL_TESTS; do
             report_pass "$name (Int constant folding -- no literal Integer left behind a folded cast)"
         else
             report_fail "$name" "$leftovers Integer literal(s) still built for a foldable Int cast in $TMP/${name}_rc2.c"
+        fi
+    fi
+
+    # Test92ArityRaise: `sumPos` returns a closure waiting for the world;
+    # raised (doc/world-arity-raising.md), its recursive call is a direct
+    # call, so its raised version gets a struct-returning worker with a
+    # native `Int` (`Ret1:1=Int`) and no `apply` of its own. `--directive
+    # noarityraise` fails this.
+    if [ "$name" = "Test92ArityRaise" ]; then
+        dump="$TMP/${name}_rc2.rcexpr"
+        raised="$(grep -c '^def {idris2rc2_worker_rc2_raised_Main_sumPos_[0-9]*:[0-9]*} .* ret= Ret1:1=Int ' "$dump" || true)"
+        applies="$(awk '/^def /{d=$2} /^ *apply /{if (d ~ /rc2_raised_Main_sumPos/) n++} END{print n+0}' "$dump")"
+        if [ "$raised" = "1" ] && [ "$applies" = "0" ]; then
+            report_pass "$name (arity raising -- sumPos's raised version returns Ret1:1=Int, no apply)"
+        else
+            report_fail "$name" "raised struct worker=$raised, applies in it=$applies in $dump"
         fi
     fi
 

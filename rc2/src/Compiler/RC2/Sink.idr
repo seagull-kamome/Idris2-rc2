@@ -347,6 +347,12 @@ trySinkIntoArms reps var rep value (RConstCase fc sc alts mDef) =
                defBody'
 trySinkIntoArms _ _ _ _ _ = Nothing
 
+||| Whether `value` reads `l`: sinking `value` past a wrapper that drops,
+||| frees or offers `l` would move that read after `l`'s release. See
+||| doc/branch-sinking.md's "Not sinking a read past its operand's drop".
+readBy : RCExp -> RCLocal -> Bool
+readBy value l = contains l (genuinelyUsedR value)
+
 ||| Sees through the same leading `RDup`/`RDrop`/`RFree`/
 ||| `RReleaseReuse`/`RReuseOffer` wrappers `stripIfUnused` does,
 ||| bailing (`Nothing`) if a wrapper's own target is `var` itself --
@@ -368,13 +374,14 @@ trySinkInto : SortedMap Int Rep -> Int -> Rep -> RCExp -> RCExp -> Maybe RCExp
 trySinkInto reps var rep value (RDup fc v extra cont) =
     if v == RCLoc var then Nothing else map (RDup fc v extra) (trySinkInto reps var rep value cont)
 trySinkInto reps var rep value (RDrop fc vs cont) =
-    if RCLoc var `elem` vs then Nothing else map (RDrop fc vs) (trySinkInto reps var rep value cont)
+    if (RCLoc var `elem` vs) || any (readBy value) vs then Nothing else map (RDrop fc vs) (trySinkInto reps var rep value cont)
 trySinkInto reps var rep value (RFree fc v cont) =
-    if v == RCLoc var then Nothing else map (RFree fc v) (trySinkInto reps var rep value cont)
+    if v == RCLoc var || readBy value v then Nothing else map (RFree fc v) (trySinkInto reps var rep value cont)
 trySinkInto reps var rep value (RReleaseReuse fc v cont) =
-    if v == RCLoc var then Nothing else map (RReleaseReuse fc v) (trySinkInto reps var rep value cont)
+    if v == RCLoc var || readBy value v then Nothing else map (RReleaseReuse fc v) (trySinkInto reps var rep value cont)
 trySinkInto reps var rep value (RReuseOffer fc sc dupOnShared dropOnUnique cont) =
     if (sc == RCLoc var) || (RCLoc var `elem` dupOnShared) || (RCLoc var `elem` dropOnUnique)
+         || any (readBy value) (sc :: dupOnShared ++ dropOnUnique)
        then Nothing
        else map (RReuseOffer fc sc dupOnShared dropOnUnique) (trySinkInto reps var rep value cont)
 trySinkInto reps var rep value (RLet fc y repY valueY cont) =
