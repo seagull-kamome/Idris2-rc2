@@ -512,6 +512,15 @@ foldConst caf env (RConCase fc sc alts mDef) =
                   Nothing =>
                       maybe (RCrash fc "[rc2] ConstFold: RConCase folded scrutinee matched no alt and had no default")
                             (foldConst caf env) mDef
+         -- Nil, Nothing, Z and MkUnit are all NULL, so a NULL scrutinee
+         -- takes whichever of their alternatives the case has. Left as a
+         -- case, it would still name a local whose let this pass drops.
+         RCNull =>
+             case Data.List.find (\(MkRConAlt _ ci _ _ _) => ci == NIL || ci == NOTHING || ci == ZERO || ci == UNIT) alts of
+                  Just (MkRConAlt _ _ _ _ body) => foldConst caf env body
+                  Nothing =>
+                      maybe (RCrash fc "[rc2] ConstFold: RConCase NULL scrutinee matched no alt and had no default")
+                            (foldConst caf env) mDef
          sc'@(RCLoc i) =>
              fromMaybe (RConCase fc sc' (map (foldConstAlt caf env) alts) (map (foldConst caf env) mDef))
                        (foldKnown i)

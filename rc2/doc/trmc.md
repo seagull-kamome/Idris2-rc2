@@ -1,10 +1,9 @@
 # Tail recursion modulo constructor (TRMC)
 
-Status: phases 1 and 3 implemented (2026-09-26 and 2026-09-27,
-`Compiler.RC2.Trmc`); phase 2 is designed below; phases 2 and 4 are
-tracked in `TODO.md` ("tail recursion modulo constructor"). Motivation
-is in `KNOWN-BUGS.md` ("deep non-tail recursion overflows the C
-stack").
+Status: phases 1 to 3 implemented (2026-09-26 and 2026-09-27,
+`Compiler.RC2.Trmc`); phase 4 is tracked in `TODO.md` ("tail recursion
+modulo constructor"). Motivation is in `KNOWN-BUGS.md` ("deep non-tail
+recursion overflows the C stack").
 
 ## Problem
 
@@ -217,7 +216,7 @@ A `notrmc` directive disables the pass, like every other stage.
      elements, under valgrind.
    - Re-measure with the `scratchpad` `trmc` tool (sites left), the
      `sort` benchmark against Chez, and idris2-lsp's `--timing 3`.
-2. **Phase 2:** mutual recursion. See "Phase 2 design" below.
+2. **Phase 2 (done):** mutual recursion. See "Phase 2 design" below.
 3. **Phase 3 (done):** differing field indexes (`hk`) and multi-field
    sites (rewrite the last-evaluated call).
 4. **Phase 4:** an optional raw hole address, if the refcount traffic
@@ -226,7 +225,7 @@ A `notrmc` directive disables the pass, like every other stage.
    parameters": represent `zs . (y ::)` as `(res, last)`, making
    composition and application O(1).
 
-## Phase 2 design: mutual recursion (2026-09-27, not implemented)
+## Phase 2 design: mutual recursion (2026-09-27)
 
 ### Shapes
 
@@ -316,8 +315,14 @@ accumulators at once.
 `Test101TrmcMutual` covers two cases, at a million elements each:
 - a function and a helper that builds `x :: f xs` (the helper
   pattern);
-- a chain through `Maybe`: `data E = Node Int (Maybe E)` mapped by
-  `mapE (Node x m) = Node (f x) (map mapE m)`.
+- a chain through a second type, `Node Int Opt`, where `mapOpt` fills
+  the recursive field of `One`, `Two` or `Three` at index 0, 1 or 2.
+  With `mapE`'s own hole at field 1, the group's holes use indexes 0 to 2.
+
+Both helpers are larger than Inline's threshold. A small helper is
+inlined into its caller before this pass, and the pair becomes plain
+self recursion. The same happens to `Maybe`'s own `map`: inlined, it
+leaves a `case` inside the field, which no phase handles.
 
 The expected output comes from Chez. The test must run clean under
 valgrind, and overflow the C stack with `--directive notrmc`.
@@ -396,6 +401,41 @@ same tree, with only `Trmc.idr` differing):
   recursion before phase 3 was not tracked down.
 - `rcexpr-lint` finds no anomalies. The pass still takes 0.12s.
 
+## Phase 2 results (2026-09-27)
+
+**Correctness.** `Test101TrmcMutual` matches Chez's output and runs
+clean under valgrind. With `--directive notrmc` it overflows the C
+stack. In its dump, both pairs end up as one MutualLoop loop that
+dispatches on the member tag and on `hk`.
+
+**idris2-lsp** (same measurement as phases 1 and 3):
+
+| | phase 3 | with phase 2 |
+|---|---|---|
+| functions with a remaining site | 94 | 57 |
+| sites | 182 | 104 |
+| sites with a field calling a function that calls `f` back | 155 | 77 |
+| `rc2_trmc_*` functions in the final program | 97 | 100 |
+
+The design predicted 65 of the mutual sites; 78 went. `rcexpr-lint`
+finds no anomalies.
+
+**Build time.** The pass went from 0.12s to 0.51s on idris2-lsp:
+
+| Stage | Time |
+|---|---|
+| sites | 0.13s |
+| call graph | 0.10s |
+| SCCs | 0.13s |
+| groups | 0.04s |
+| rewrite | 0.02s |
+
+The graph and SCC stages are new; finding sites now considers calls to
+any function, not only to `f`. A first version fed every function to
+Tarjan and took 0.60s. The graph now leaves out self edges and
+functions without an edge to another function, since a one-member
+group needs no SCC.
+
 ## Bugs found
 
 1. **LateInline aliased two parameters onto one caller local.**
@@ -419,3 +459,11 @@ same tree, with only `Trmc.idr` differing):
    `Leaf` as a tagged pointer (`RCEmptyCon`), not a cell, and reading
    its refcount faulted. A field-less alternative has nothing worth
    reusing, so `Reuse.resolveAlt` no longer offers one.
+4. **ConstFold left a `case` over a folded `Nothing`.** Phase 2's test
+   failed to compile, with or without TRMC: an undeclared C local in
+   `case v of Nothing -> ..`. After Inline, a `case` read the `Nothing`
+   field of a pair that ConstFold had folded. The field's local
+   resolved to `RCNull`, which the `RConCase` case had no clause for.
+   So the `case` kept naming the local, whose `let` was gone from the
+   output. Which pass dropped it was not tracked down. A `NULL` scrutinee now selects the alternative of
+   `Nil`, `Nothing`, `Z` or `MkUnit`, whichever the `case` has.

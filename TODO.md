@@ -621,23 +621,21 @@ unchanged on idris2-lsp, and whether its fresh-tail savings matter at
 run time needs a real workload to measure. Loop-bearing values (168
 sites) aren't pushed into at all yet.
 
-## Robustness/performance: tail recursion modulo constructor (TRMC), phases 2 and 4
+## Robustness/performance: tail recursion modulo constructor (TRMC), what remains
 
-Phases 1 and 3 are done: self recursion, with holes at any field index
-and, of several recursive fields, the last-evaluated one. `rc2/doc/trmc.md`
-has the design and the measured results. Still open:
+Phases 1 to 3 are done: self and mutual recursion, with holes at any
+field index and, of several recursive fields, the last-evaluated one.
+`rc2/doc/trmc.md` has the design and the measured results. Still open:
 
-- **Phase 2, mutual recursion.** 155 sites in idris2-lsp have a field
-  computed by a function that calls back (`trmc.md`, "Phase 3
-  results"), 22 of them `::`.
-  - Designed: `trmc.md`, "Phase 2 design". Groups of functions linked by
-    tail calls and holes get accumulators together, and MutualLoop
-    merges those into one loop.
-  - It takes 65 of the sites: 19 `::` sites in function and
-    `case block` helper pairs (`buildDoLets`, `collectDefs`, ...), and
-    term traversals paired with a specialised `Maybe` `map`.
-  - The other 90 reach back only through a non-tail call (`substEnv`'s
-    `CApp` through a `mapAppend` clone) and stay recursive.
+- **Mutual sites reached back only through a non-tail call.** Most of
+  the 77 mutual sites left in idris2-lsp, e.g. `substEnv`'s `CApp`,
+  whose last field maps the arguments through a `mapAppend` clone that
+  calls `substEnv` per head.
+  Their depth is the term's, not a list's.
+- **A hole under a `case` in a field.** Once Inline has spliced
+  `Maybe`'s `map`, `Node x (map f m)` becomes `Node x (case m of ..
+  Just (f e))`. Pushing the outer constructor into the branches would
+  make it a nested-constructor site, which no phase takes either.
 - **Phase 4.**
   - A raw hole address, if the refcount traffic on `last` shows up in
     benchmarks.
