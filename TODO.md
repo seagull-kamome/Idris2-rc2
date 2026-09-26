@@ -620,3 +620,81 @@ later. The RC-aware fold for them exists but is opt-in
 unchanged on idris2-lsp, and whether its fresh-tail savings matter at
 run time needs a real workload to measure. Loop-bearing values (168
 sites) aren't pushed into at all yet.
+
+## Robustness/performance: tail recursion modulo constructor (TRMC)
+
+A self-call under a constructor, as in `x :: mergeBy order xs ys`, is
+not a tail call, so it uses one C stack frame per element. Around 100k
+elements that is enough to overflow the C stack (`KNOWN-BUGS.md`,
+"deep non-tail recursion"). The same shape appears in `[1 .. n]`,
+`map`, `filter` and `++`.
+
+The fix is destination-passing: allocate the cell with an empty tail,
+loop on the recursive call, and write each result into the previous
+cell's hole. A fresh cell stays unique until the function returns, so
+writing into it in place is safe. Koka's "constructor contexts"
+generalize this to any constructor. That generalization also covers
+the difference-list case in the next entry: represent `zs . (y ::)` as
+a head plus a hole pointer, so composition and final application are
+both O(1).
+
+Measured on idris2-lsp's final RCExp on 2026-09-26 (`lsp-b1.rcexpr`,
+17,846 functions). A site is a tail constructor with a field bound to
+a call of the function itself (self), or of a function that calls it
+back (mutual). 364 functions have at least one site, 799 sites in all:
+
+| Shape | self | mutual |
+|---|---|---|
+| `::` with one recursive field | 247 | 36 |
+| other constructor, one recursive field | 314 | 51 |
+| any constructor, two or more recursive fields | 114 | 37 |
+
+- The `::` sites are list builders that the Prelude's `%transform`
+  rules don't already make tail recursive. The largest groups are
+  `Data.Vect.map` (33 specialised copies), `List01.map`,
+  `Data.List.zipWith`, `Prelude.Types.takeUntil` (behind `[1 .. n]`),
+  `List.filter`, `foldr` and `mergeBy`.
+- The other one-field sites are mostly `TTImp`/`Core.TT` term
+  traversals (`Bind`, `IPi`, `App`, `TDelay`, ...). Their depth is the
+  term's depth, not a list's length.
+- With two or more recursive fields (tree maps), only one field can be
+  filled by destination-passing; the other calls stay ordinary
+  recursion.
+
+Destination-passing for a single `::` field therefore covers most of
+the list-length-deep recursion. Generalizing it to any constructor
+field would add the term traversals.
+
+## Performance: closure-valued loop parameters
+
+`Data.List.sortBy`'s `splitRec` carries a difference list `zs`
+(`zs . ((::) y)`, starting from `id`) as a loop parameter. Each step
+allocates two closures, and the final `zs []` walks the whole chain
+through indirect, non-tail calls. That walk is n/2 frames deep, which
+overflows the C stack at 1M elements.
+
+Defunctionalization applies when:
+- every `RLoopContinue` passes `partial L missing=1 [captures..., c]`
+  for the parameter `c`;
+- `L`'s body is `apply c [e(captures, x)]`.
+
+Then `c` can carry a stack of capture frames instead. The final
+`apply c [v]` becomes a loop that pops a frame and sets
+`v := e(frame, v)`. For `splitRec` that is one cons per element, with
+no closures and constant stack depth.
+
+A LateInline bug in exactly this shape (9c6f49e,
+`Test94LoopConstClosureParam`) is how this pattern was found.
+
+The same measurement found 10 such loop parameters in idris2-lsp's
+2,266 loops:
+- `Data.List.sortBy`'s `splitRec`;
+- `Data.Vect.foldr`'s `foldrImpl`;
+- three `treeToList'` (`SortedMap.Dependent`, `UserNameMap`,
+  `StringMap`);
+- `mkClosedElab`;
+- `ProcessData.shaped`;
+- the three scheme backends' `applyLams`.
+
+This is rare statically, but `sortBy` and the map `toList` traversals
+run over whole collections, so they are the ones that matter.

@@ -678,6 +678,25 @@ reason). If a `grep idris2rc2_free` across generated `.c` output comes
 back empty, that's expected, not a sign the feature is broken. See
 `TODO.md`'s own "Runtime: RFree rarely fires in practice" entry.
 
+## Runtime: deep non-tail recursion overflows the C stack (Chez doesn't)
+
+rc2 runs Idris code on the C stack (8 MB by default), and no pass turns
+non-tail recursion into a loop yet. Chez grows its stack on demand, so
+the same program runs to completion there. Measured 2026-09-26, with
+`ulimit -s` at 8192:
+
+| Operation | 10k | 100k | 1M |
+|---|---|---|---|
+| `mergeBy` (`x :: mergeBy ...`) | ok | SEGV | SEGV |
+| `[1 .. n]` | ok | SEGV | SEGV |
+| `sortBy`'s `splitRec`, applying its accumulated `zs` | ok | ok | SEGV |
+| `Data.List.sort` | ok | ok | SEGV |
+
+Chez sorts the 1M list in 1.23s. The crash is a stack overflow, not
+a miscompile: every size that fits returns the right result. Tracked as
+future work in `TODO.md` ("tail recursion modulo constructor" and
+"closure-valued loop parameters").
+
 ## Explicitly *not* a known bug (resolved, documented so it isn't rediscovered as one)
 
 - **`idris2rc2_dropReuseConstructor` (`support/rc2/runtime.c`) not
