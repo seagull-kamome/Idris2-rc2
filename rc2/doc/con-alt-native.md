@@ -170,6 +170,31 @@ bytes/49 blocks) were confirmed present, identical in size, with this
 whole pass's own pipeline entry removed entirely -- unrelated to this
 work, not investigated further here.
 
+3. **A stale `dup` among the peeled wrappers (2026-09-26).**
+   `shadowOneField` clears a field's stale ownership (`stripOwnership`)
+   and rebuilds it from "fully owned", but only over `core`. The
+   wrappers peeled off in front of `core` can hold a stale `dup` too.
+
+   `mergeBy compare`, once `compare` is inlined, reads both heads
+   natively. The inner alt's wrappers were
+   `reuseOffer v53 dupOnShared=[v56, v57]` followed by `dup v56`, the
+   dup `annotate` placed for the head's first (borrowed) read. That
+   read moved to the shadow, but the dup survived in the wrappers, so
+   every boxed element of the second list leaked: 901 blocks at
+   n=1000. The outer head's dup sat inside `core` and was cleared
+   correctly.
+
+   The wrappers are now rebuilt without such dups. A field's one owned
+   reference is already established by either of:
+   - a `reuseOffer` listing it in `dupOnShared`;
+   - the first `dup` that moves it out of a scrutinee dropped whole
+     (`dup v317; drop [v312]`).
+
+   Any further leading `dup` of that field is dropped. The first fix
+   dropped every leading `dup` of the field, including the moving one;
+   that freed the element early and crashed a `sumList` loop.
+   `Test97ConAltNativeLeadingDup` covers both cases under valgrind.
+
 ## Reusing the original Boxed field for surviving Boxed-context reads
 
 Point 4 above used to mean an unconditional re-box: `rcVarToBoxedC`

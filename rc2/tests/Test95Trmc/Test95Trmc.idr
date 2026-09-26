@@ -4,6 +4,7 @@ module Main
 -- below recurses under a constructor, a million elements deep, which
 -- overflows the C stack unless it becomes a loop.
 
+import Data.List
 
 data Chain = Link Int Chain | End
 
@@ -43,5 +44,6 @@ main = do
   printLn (sumList 0 (evens (upto 1 n)))
   printLn (sumList 0 (zipSum (upto 1 n) (upto 1 n)))
   printLn (sumChain 0 (chain n))
+  printLn (sumList 0 (mergeBy compare (upto 1 n) (upto 1 n)))
   printLn (mapI (+ 1) [1, 2, 3])
   printLn (evens [])

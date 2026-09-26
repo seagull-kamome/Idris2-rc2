@@ -291,8 +291,32 @@ shadowAltFields nextId argIds body =
                   shadowed = assignShadowIds nextId eligible
                   wrappedCore : RCExp
                   wrappedCore = foldr shadowOneField core shadowed
-              in (nextId + cast (length eligible), rebuild wrappedCore)
+                  -- A leading wrapper can hold a stale `dup` of a shadowed
+                  -- field too: annotate's, for a first read now redirected
+                  -- to the shadow. `shadowOneField` rebuilds that field's
+                  -- ownership from fully owned, so it must go as well.
+                  rebuild' : RCExp -> RCExp
+                  rebuild' = fst (peelWrappers (stripLeading (fromList (map fst eligible)) empty body))
+              in (nextId + cast (length eligible), rebuild' wrappedCore)
   where
+    -- `owned`: fields whose one owned reference the wrappers already
+    -- established, by a `reuseOffer` (its `dupOnShared`) or by the first
+    -- `dup` that moves the field out of a scrutinee dropped whole. Any
+    -- further leading `dup` of such a field is the stale kind.
+    stripLeading : SortedSet Int -> SortedSet Int -> RCExp -> RCExp
+    stripLeading ids owned (RDup fc v@(RCLoc i) extra cont) =
+        if not (contains i ids) then RDup fc v extra (stripLeading ids owned cont)
+        else if contains i owned then stripLeading ids owned cont
+        else RDup fc v 0 (stripLeading ids (insert i owned) cont)
+    stripLeading ids owned (RDup fc v extra cont) = RDup fc v extra (stripLeading ids owned cont)
+    stripLeading ids owned (RDrop fc vs cont) = RDrop fc vs (stripLeading ids owned cont)
+    stripLeading ids owned (RFree fc v cont) = RFree fc v (stripLeading ids owned cont)
+    stripLeading ids owned (RReleaseReuse fc v cont) = RReleaseReuse fc v (stripLeading ids owned cont)
+    stripLeading ids owned (RReuseOffer fc sc dupOnShared dropOnUnique cont) =
+        let owned' = foldl (\s, v => case v of { RCLoc i => if contains i ids then insert i s else s; _ => s }) owned dupOnShared
+        in RReuseOffer fc sc dupOnShared dropOnUnique (stripLeading ids owned' cont)
+    stripLeading _ _ e = e
+
     ||| Wrap `acc` with `p`'s own shadow `RLet`: clear `p`'s stale
     ||| ownership (`stripOwnership`), redirect native-context
     ||| occurrences to `sid` (`markNativeOccurrences`), then rebuild

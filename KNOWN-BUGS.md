@@ -718,25 +718,6 @@ loop costs 1.4% (`perf stat`), within run-to-run noise in wall-clock
 time. `Test96TeardownDeep` covers a 1M list, `SnocList` and closure
 chain, each dropped in one go.
 
-## LateInline + native compare: `mergeBy compare` leaks the second list's boxed elements
-
-Found 2026-09-26 and unrelated to TRMC: `--directive notrmc` leaks the
-same amount, and `--directive nolateinline` leaks nothing. Reproduce
-with:
-
-```idris
-sumList 0 (mergeBy compare (upto 1 n) (upto 1 n))
-```
-
-`definitely lost` is one 16-byte block per element of the second list
-that is not a small cached `Int` (901 blocks at n=1000).
-
-In the final RCExp of `rc2_specClosure_Data_List_mergeBy`, the second
-head `v56` gets a `dup` before its native read (`let v308 : Native Int
-= v56`) that nothing drops. The first head `v54` has no such dup. The
-dup is left over from the boxed call to `compare` that LateInline
-spliced in. Not investigated further yet.
-
 ## Explicitly *not* a known bug (resolved, documented so it isn't rediscovered as one)
 
 - **`idris2rc2_dropReuseConstructor` (`support/rc2/runtime.c`) not
