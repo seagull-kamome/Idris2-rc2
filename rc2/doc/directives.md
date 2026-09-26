@@ -62,6 +62,7 @@ fine-grained per-function/per-node control.
 | `nolateinline` | `Compiler.RC2.LateInline`'s whole-program single-caller inlining, run after Loop/MutualLoop conversion (`doc/inlining.md`'s "Criterion B, revisited"). |
 | `nosink` | `Compiler.RC2.Sink`'s branch-local sinking (`doc/branch-sinking.md`). |
 | `nodualabi` | Both `Compiler.RC2.DualABI`'s worker/wrapper synthesis *and* its call-site rewriting together -- the rewrite needs the worker table the synthesis step builds, so splitting them wouldn't be meaningful (`doc/dual-abi.md`). |
+| `noapplyfold` | `Compiler.RC2.ArityRaise.applyFoldApplied`, right after `LateInline`: a closure built and applied at once (and otherwise only dropped) becomes a call (`doc/world-arity-raising.md`'s "Post-RC fold"). |
 | `noarityraise` | `Compiler.RC2.ArityRaise`: a function returning a closure waiting for one more argument (the world) gets a version taking it, and a call whose closure is applied at once calls that version (`doc/world-arity-raising.md`). |
 | `nostructreturn` | `Compiler.RC2.DualABI`'s struct return (`applyStructReturn`): a function whose every tail is a constructor of at most four fields, and which some caller gains from, gets a worker returning an `IDRIS2RC2_Ret1`..`IDRIS2RC2_Ret4` struct; a call that switches on the result at once reaches that worker (`doc/struct-return.md`). Implied by `nodualabi`. |
 | `nodeadcode` | `Compiler.RC2.DeadCode`'s pruning of definitions left with zero remaining callers (`doc/dead-code-elim.md`). |

@@ -211,3 +211,64 @@ kept in a list and applied later, and a plain `IO` function.
 
 idris2-missing-containers (two such sites; six alternating runs, the first
 left out, averaged): 8.05 s → 7.83 s (−2.8%), identical output.
+
+## After `LateInline` (investigated 2026-09-26)
+
+The pass runs before RC annotation, so a site that only `LateInline`
+exposes afterwards keeps its closure. idris2-lsp's final IR has 3,788
+`apply` sites left; by where the closure comes from:
+
+| closure | `apply` sites | without `LateInline` |
+|---|---|---|
+| a parameter (a continuation, a higher-order argument) | 1,161 | 2,467 |
+| a call result | 1,092 | 860 |
+| a constructor field (a dictionary method) | 857 | 848 |
+| a `case` and the like | 318+ | 262+ |
+| a `partial` in the same function | **110** (52 exact, 58 with more arguments) | 75 |
+
+Of the call results, 186 apply the result of a raised function's
+wrapper (`partial f# missing= 1`) at once (72 without `LateInline`).
+Upstream's `>>=` is `%inline`, so its splice happens before RC
+annotation and this pass sees it; only a non-`%inline` `bind`, like
+`BenchArityRaise` without it, leaves the shape to `LateInline`. So the
+post-`LateInline` part is about 300 sites: the "post-RC fold" below.
+
+The remaining call results mostly come from callees whose tails mix a
+`partial` with other closures: `partial`+`apply` (190), `partial`+a
+variable (72), only `apply` (226), only a call (218). Raising those
+too (a tail `apply h ys` becomes `apply h (ys ++ [w])`, a variable `x`
+becomes `apply x [w]`, a call to an unraised function `h` becomes
+`let c = call h ...; apply c [w]`) is sound, but saves a closure only in
+the `partial` branches. Not pursued yet (`TODO.md`).
+
+### Post-RC fold (implemented 2026-09-26, `--directive noapplyfold`)
+
+Right after `LateInline`, before `Sink` and DualABI, a `let c` whose
+value ends (through leading `let`s and `dup`s) in `partial g m xs`, or
+in a call to a bare wrapper `f xs = partial g m xs`, and whose `c` is
+applied exactly once afterwards, by an `apply c ys` outside any loop, and
+otherwise only dropped:
+
+- `|ys| == m`: the `apply` becomes `call g (xs ++ ys)`;
+- `|ys| == m + 1` and `g` is itself a bare wrapper of `h` missing one:
+  it becomes `call h (xs ++ ys)`.
+
+The value's leading `let`s and `dup`s stay where they were; only the
+closure's construction moves to the `apply`. No `dup`/`drop` changes:
+`partial`, `call` and `apply` all consume their arguments, and moving
+the construction later keeps every reference count the same until
+then, since the closure's references to `xs` were the ones the code in
+between never touched. Annotation has every path consume `c` somewhere,
+so every path either applies it there or drops it (below).
+
+A `drop c` on a path that never applies the closure becomes a `drop`
+of what the closure held, its Boxed captured arguments: the closure is
+fresh and nobody else holds it, so dropping it would have dropped
+exactly those. A captured `RInlineNative` local (spliced where it is
+read) keeps the closure in place, since its read must not move.
+
+Results: `BenchArityRaise` with a non-`%inline` `bind` (Test93's shape)
+runs 1.77 s → **1.18 s** (with `%inline`: 1.02 s, unchanged). On
+idris2-lsp, `apply` goes 3,771 → 3,507, a `partial` applied in its own
+function 110 → 25, cased struct sites 9,952 → 9,984; `rcexpr-lint`
+clean. `Test93ApplyFold` checks `run` is left with no `apply`.

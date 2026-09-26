@@ -589,17 +589,16 @@ cannot reach C generation, and that is not being worked on). Native
 fields (2026-09-26, `Ret1:1=Int`) and constructors of up to four fields
 (2026-09-26, idris2-missing-containers 15% faster) are done.
 
-## Performance: closures applied at once, exposed only after RC annotation
+## Performance: closure-returning functions with mixed tails
 
-World arity raising (`rc2/doc/world-arity-raising.md`, 2026-09-26)
-turns a call returning a closure waiting for the world, applied at
-once, into a direct call -- but only before RC annotation, where it
-runs. A site `Compiler.RC2.LateInline` exposes afterwards (inlining a
-`bind` that is not `%inline`, say) keeps its `partial` and `apply`:
-`BenchArityRaise` without `%inline` gains 45%, with it 53%. Left: a
-post-RC fold of `apply (partial g m xs) ys` for a local `partial`
-(with `dup`/`drop` translation), or running LateInline's candidates
-through the pre-RC inliner instead.
+World arity raising (`rc2/doc/world-arity-raising.md`) raises only a
+function whose every tail builds a closure missing one argument. On
+idris2-lsp 1,092 `apply` sites still apply a call's result at once,
+mostly from callees whose tails mix a `partial` with an `apply` (190),
+a variable (72), only `apply` (226) or only a call (218). Raising those
+too is sound (the doc's "After `LateInline`" section has the tail
+rules) but saves a closure only in the `partial` branches; measure
+before doing it.
 
 ## Performance: constructors built and matched in the same function -- rest of the escape analysis
 

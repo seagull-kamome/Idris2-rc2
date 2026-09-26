@@ -237,7 +237,7 @@ insertMemoize = map wrap
 ||| apart.
 disableableStageNames : List String
 disableableStageNames =
-    ["noinline", "noarityraise", "noconstfold", "noknowncon", "nopushcon", "nospecclosure", "nospecconstcon", "noconaltnative", "nomutualloop", "noloop", "noearlyinline", "nolateinline", "nosink", "nodualabi", "nostructreturn", "nodeadcode", "nodupmerge", "nodeadvars"]
+    ["noinline", "noarityraise", "noapplyfold", "noconstfold", "noknowncon", "nopushcon", "nospecclosure", "nospecconstcon", "noconaltnative", "nomutualloop", "noloop", "noearlyinline", "nolateinline", "nosink", "nodualabi", "nostructreturn", "nodeadcode", "nodupmerge", "nodeadvars"]
 
 ||| Stages that are off unless asked for with `--directive <name>`. They
 ||| travel to `toRCDefs` in the same list as the disables above.
@@ -409,6 +409,11 @@ toRCDefs disabled incremental roots lds0 = do
     inlined <- if "nolateinline" `elem` disabled
                   then pure looped
                   else logTime 2 "rc2: Late inline" $ applyLateInline "Late inline" False roots looped
+    -- doc/world-arity-raising.md's "Post-RC fold": a closure LateInline
+    -- left built and applied at once becomes a call.
+    applyFolded <- if "noapplyfold" `elem` disabled
+                      then pure inlined
+                      else logTime 2 "rc2: Fold applied closures" $ pure (applyFoldApplied inlined)
     -- doc/constructor-escape-analysis.md's "What is left after Early
     -- inline, and the RC-aware fold": PushCon's push again, for what
     -- LateInline has just created, with each known tail folded by hand
@@ -418,8 +423,8 @@ toRCDefs disabled incremental roots lds0 = do
     -- idris2-lsp it folds 243 tails yet leaves the static constructor
     -- count unchanged (constructor-escape-analysis.md).
     latePushed <- if not ("latepushcon" `elem` disabled) || ("nopushcon" `elem` disabled)
-                     then pure inlined
-                     else logTime 2 "rc2: Push case into tails (post-RC)" $ applyPushConRC inlined
+                     then pure applyFolded
+                     else logTime 2 "rc2: Push case into tails (post-RC)" $ applyPushConRC applyFolded
     sunk <- if "nosink" `elem` disabled
                then pure latePushed
                else logTime 2 "rc2: Sink" $ pure (map (\(n, d) => (n, applySink d)) latePushed)

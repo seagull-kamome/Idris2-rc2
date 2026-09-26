@@ -1396,3 +1396,13 @@ idris2-lspの最終IR: `apply` 9,161 → 3,771、構造体で受ける箇所 6,1
 
 idris2-missing-containers(対象は2箇所、交互に6回、1回目を除いた平均):
 8.05s → 7.83s(−2.8%)、出力は一致。
+
+### RC後の畳み込み(2026-09-26)
+
+LateInline(RC注釈の後)が非`%inline`の`bind`を展開して残す「その場で作って
+すぐ`apply`する閉包」を直接呼び出しにする(`doc/world-arity-raising.md`の
+"Post-RC fold"、`--directive noapplyfold`で無効化)。
+
+`BenchArityRaise`の`bind`を非`%inline`にしたもの(Test93と同じ形、5回):
+1.77s → **1.18s**。`%inline`版は1.02sで変わらず。idris2-lspの最終IR:
+`apply` 3,771 → 3,507、同じ関数内の`partial`への`apply` 110 → 25。

@@ -192,3 +192,126 @@ applyArityRaise defs = do
         pure [(n, MkRCFun args retRep isWorker (rewriteSites ts body))]
     raise ts (n, MkRCError body, _) = pure [(n, MkRCError (rewriteSites ts body))]
     raise _ (n, d, _) = pure [(n, d)]
+
+------------------------------------------------------------------------
+-- After `LateInline`: folding a closure applied at once (post-RC).
+-- doc/world-arity-raising.md's "Post-RC fold".
+
+||| Every mention of `l` in `e`, release positions included.
+mentions : RCLocal -> RCExp -> Nat
+mentions l e = length (filter (== l) (directReads e ++ releases e)) + sum (map (mentions l) (children e))
+  where
+    releases : RCExp -> List RCLocal
+    releases (RDrop _ vs _) = vs
+    releases (RReuseOffer _ sc _ _ _) = [sc]
+    releases (RReleaseReuse _ x _) = [x]
+    releases (RCon _ _ _ _ _ reuseFrom) = toList reuseFrom
+    releases _ = []
+
+||| The locals of a body that carry no reference count: bound with a
+||| native Rep, as a parameter or `let` or loop parameter. The second
+||| set holds the `RInlineNative` ones, spliced where they are read, so
+||| their read must not move.
+nativeLocals : List (Int, Rep) -> RCExp -> (SortedSet Int, SortedSet Int)
+nativeLocals args body =
+    let (ns, inl) = go body
+    in (union ns (fromList (mapMaybe (\(i, r) => if isBoxed r then Nothing else Just i) args)), inl)
+  where
+    isBoxed : Rep -> Bool
+    isBoxed RBoxed = True
+    isBoxed _ = False
+
+    both : List (SortedSet Int, SortedSet Int) -> (SortedSet Int, SortedSet Int)
+    both = foldl (\(a, b), (c, d) => (union a c, union b d)) (empty, empty)
+
+    go : RCExp -> (SortedSet Int, SortedSet Int)
+    go e@(RLet _ x rep _ _) =
+        let (ns, inl) = both (map go (children e))
+        in case rep of
+                RInlineNative _ => (insert x ns, insert x inl)
+                RBoxed => (ns, inl)
+                _ => (insert x ns, inl)
+    go e@(RLoop _ ps _ _ _) =
+        let (ns, inl) = both (map go (children e))
+        in (union ns (fromList (mapMaybe (\(i, r) => if isBoxed r then Nothing else Just i) ps)), inl)
+    go e = both (map go (children e))
+
+||| Each bare wrapper `f params = partial g m params` (m > 0), as `(g, m)`.
+bareWrappers : List (Name, RCDef) -> SortedMap Name (Name, Nat)
+bareWrappers defs = fromList (mapMaybe wrapperOf defs)
+  where
+    wrapperOf : (Name, RCDef) -> Maybe (Name, (Name, Nat))
+    wrapperOf (n, MkRCFun args _ _ (RUnderApp _ g m xs)) =
+        if m > 0 && xs == map (RCLoc . fst) args then Just (n, (g, m)) else Nothing
+    wrapperOf _ = Nothing
+
+||| A value that ends, through leading `let`s and `dup`s, in a closure
+||| (a `partial`, or a call to a bare wrapper): those leading nodes as a
+||| function of what follows them, and the closure's target, missing
+||| count and captured arguments.
+closureValue : SortedMap Name (Name, Nat) -> RCExp -> Maybe (RCExp -> RCExp, Name, Nat, List RCLocal)
+closureValue ws (RLet fc x rep v b) = map (\(k, g, m, xs) => (RLet fc x rep v . k, g, m, xs)) (closureValue ws b)
+closureValue ws (RDup fc x n b) = map (\(k, g, m, xs) => (RDup fc x n . k, g, m, xs)) (closureValue ws b)
+closureValue _ (RUnderApp _ g m xs) = if m > 0 then Just (id, g, m, xs) else Nothing
+closureValue ws (RAppName _ Nothing f xs) = map (\(g, m) => (id, g, m, xs)) (lookup f ws)
+closureValue _ _ = Nothing
+
+||| How often `c` is named in a `drop` in `e`.
+dropMentions : RCLocal -> RCExp -> Nat
+dropMentions c (RDrop _ vs k) = length (filter (== c) vs) + dropMentions c k
+dropMentions c e = sum (map (dropMentions c) (children e))
+
+||| `e` with its one `apply c ys` built by `mk` instead, and each
+||| `drop` of `c` dropping `owned` (what the closure held) instead;
+||| `Nothing` when `c` sits inside a loop, or `mk` declines.
+replaceApply : Int -> List RCLocal -> (FC -> List RCLocal -> Maybe RCExp) -> RCExp -> Maybe RCExp
+replaceApply c _ mk e@(RApp fc Nothing (RCLoc c') ys) = if c' == c then mk fc ys else Just e
+replaceApply c owned mk (RDrop fc vs k) =
+    let vs' = concatMap (\v => if v == RCLoc c then owned else [v]) vs
+    in (\k' => if null vs' then k' else RDrop fc vs' k') <$> replaceApply c owned mk k
+replaceApply c _ _ e@(RLoop _ _ _ _ _) = if mentions (RCLoc c) e > 0 then Nothing else Just e
+replaceApply c owned mk e = if mentions (RCLoc c) e == 0 then Just e else traverseChildren (replaceApply c owned mk) e
+
+||| Every `let c = <closure>` whose `c` is then applied once, supplying
+||| exactly what it misses (or one more, to a bare wrapper missing one),
+||| and otherwise only dropped, becomes a call at that `apply`; each drop
+||| of it drops the closure's captured Boxed arguments instead.
+foldAppliedExp : SortedMap Name (Name, Nat) -> (SortedSet Int, SortedSet Int) -> RCExp -> RCExp
+foldAppliedExp ws nat e = here (mapChildren (foldAppliedExp ws nat) e)
+  where
+    target : Name -> Nat -> List RCLocal -> FC -> List RCLocal -> Maybe RCExp
+    target g m xs fc ys =
+        if length ys == m then Just (RAppName fc Nothing g (xs ++ ys))
+        else if length ys == S m
+                then case lookup g ws of
+                          Just (h, 1) => Just (RAppName fc Nothing h (xs ++ ys))
+                          _ => Nothing
+                else Nothing
+
+    isLoc : (Int -> Bool) -> RCLocal -> Bool
+    isLoc p (RCLoc i) = p i
+    isLoc _ _ = False
+
+    here : RCExp -> RCExp
+    here e@(RLet _ c RBoxed value body) = fromMaybe e $ do
+        (lead, g, m, xs) <- closureValue ws value
+        let owned = filter (isLoc (\i => not (contains i (fst nat)))) xs
+            n = mentions (RCLoc c) body
+        the (Maybe ()) (if any (isLoc (\i => contains i (snd nat))) xs || n /= S (dropMentions (RCLoc c) body)
+                           then Nothing else Just ())
+        body' <- replaceApply c owned (target g m xs) body
+        the (Maybe ()) (if mentions (RCLoc c) body' == 0 then Just () else Nothing)
+        pure (lead body')
+    here e = e
+
+||| The post-RC fold over every definition.
+export
+applyFoldApplied : List (Name, RCDef) -> List (Name, RCDef)
+applyFoldApplied defs =
+    let ws = bareWrappers defs
+    in map (\(n, d) => (n, foldDef ws d)) defs
+  where
+    foldDef : SortedMap Name (Name, Nat) -> RCDef -> RCDef
+    foldDef ws (MkRCFun args retRep isWorker body) = MkRCFun args retRep isWorker (foldAppliedExp ws (nativeLocals args body) body)
+    foldDef ws (MkRCError body) = MkRCError (foldAppliedExp ws (nativeLocals [] body) body)
+    foldDef _ d = d
