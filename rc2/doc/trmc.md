@@ -219,11 +219,11 @@ A `notrmc` directive disables the pass, like every other stage.
 2. **Phase 2 (done):** mutual recursion. See "Phase 2 design" below.
 3. **Phase 3 (done):** differing field indexes (`hk`) and multi-field
    sites (rewrite the last-evaluated call).
-4. **Phase 4:** an optional raw hole address, if the refcount traffic
-   on `last` shows up. Also constructor contexts (Koka's `ctx`) for
-   difference lists, which is `TODO.md`'s "closure-valued loop
-   parameters": represent `zs . (y ::)` as `(res, last)`, making
-   composition and application O(1).
+4. **Phase 4 (measured, not pursued):** an optional raw hole address,
+   if the refcount traffic on `last` shows up. It does not; see "Phase 4
+   measured, not pursued". Also constructor contexts (Koka's `ctx`) for
+   difference lists, representing `zs . (y ::)` as `(res, last)`: done
+   by `Compiler.RC2.ClosureCtx` (`closure-accumulator.md`).
 
 ## Phase 2 design: mutual recursion (2026-09-27)
 
@@ -435,6 +435,29 @@ any function, not only to `f`. A first version fed every function to
 Tarjan and took 0.60s. The graph now leaves out self edges and
 functions without an edge to another function, since a one-member
 group needs no SCC.
+
+## Phase 4 measured, not pursued (2026-09-27)
+
+**A raw hole address instead of an owned `last`.** It would save one
+`dup` of each new cell and one `drop` of the previous one. The saving
+was measured without implementing it:
+- the generated C of a benchmark that maps and filters a 1M-element
+  list 50 times was edited by hand, deleting `last`'s `dup`s and
+  `drop`s in both TRMC loops (entry, each site, each finish);
+- the edited program ran clean under valgrind, with the same memory
+  still in use at exit as the original.
+
+It ran in 27.33s instead of 27.39s (0.3%). Both counts touch a cell
+that was just written and is still in cache, so they are cheap. The
+cost of these loops lies elsewhere: Chez runs the same benchmark in
+7.4s. perf puts most of rc2's time on loading the input cells'
+refcounts (cache misses) and on atomic `dup`/`drop` of their fields,
+plus `malloc`: the input list is shared, so `map` cannot reuse its
+cells.
+
+**A hole under a `case` in a field** (`Node x (case m of .. Just (f
+e))`, left by inlining `Maybe`'s `map`) occurs 3 times in idris2-lsp.
+Not worth a pass.
 
 ## Bugs found
 

@@ -632,14 +632,8 @@ field index and, of several recursive fields, the last-evaluated one.
   whose last field maps the arguments through a `mapAppend` clone that
   calls `substEnv` per head.
   Their depth is the term's, not a list's.
-- **A hole under a `case` in a field.** Once Inline has spliced
-  `Maybe`'s `map`, `Node x (map f m)` becomes `Node x (case m of ..
-  Just (f e))`. Pushing the outer constructor into the branches would
-  make it a nested-constructor site, which no phase takes either.
-- **Phase 4.**
-  - A raw hole address, if the refcount traffic on `last` shows up in
-    benchmarks.
-  - Constructor contexts generalized beyond `ClosureCtx`'s difference lists.
+- A raw hole address (phase 4) and holes under a `case` in a field were
+  measured and dropped: `trmc.md`, "Phase 4 measured, not pursued".
 
 ## Performance: closure-valued loop parameters, beyond difference lists
 
