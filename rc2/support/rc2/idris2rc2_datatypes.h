@@ -148,11 +148,13 @@ typedef struct { int64_t tag; IDRIS2RC2_RetField f0, f1; } IDRIS2RC2_Ret2;
 typedef struct { int64_t tag; IDRIS2RC2_RetField f0, f1, f2; } IDRIS2RC2_Ret3;
 typedef struct { int64_t tag; IDRIS2RC2_RetField f0, f1, f2, f3; } IDRIS2RC2_Ret4;
 
+// `arity`/`filled` sit in the header's alignment gap, before `fn`:
+// rc2/doc/constructor-layout.md, "Closures".
 typedef struct {
   IDRIS2RC2_Header header;
-  void *fn; // cast to the right arity's function pointer type to call
   uint8_t arity;
   uint8_t filled;
+  void *fn; // cast to the right arity's function pointer type to call
   IDRIS2RC2_Value *args[];
 } IDRIS2RC2_Closure;
 
@@ -210,7 +212,7 @@ IDRIS2RC2_DEFINE_CONST_CONSTRUCTOR(20)
 
 // A zero-filled (Compiler.RC2.ConstFold's RCConstClosure-folded)
 // closure constant's own static storage -- shares just
-// IDRIS2RC2_Closure's own leading header/fn/arity/filled member
+// IDRIS2RC2_Closure's own leading header/arity/filled/fn member
 // sequence and omits the trailing flexible `args[]` array entirely
 // (always empty here, by construction: `filled` is always 0 for a
 // value with this type). See Compiler.RC2.EmitUtil's
@@ -221,9 +223,9 @@ IDRIS2RC2_DEFINE_CONST_CONSTRUCTOR(20)
 // can see an immortal, REFCOUNT_MAX closure ever needs).
 typedef struct {
   IDRIS2RC2_Header header;
-  void *fn;
   uint8_t arity;
   uint8_t filled;
+  void *fn;
 } IDRIS2RC2_ConstClosure;
 
 // `lock` guards `v` itself (the swap-and-drop-old sequence in

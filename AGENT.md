@@ -92,7 +92,8 @@ show up again during testing.
   its sibling that keeps a `c . (y ::)` difference list as such a chain
   of cells, `dead-args.md` for removing the unused arguments the
   frontend gives `where` functions, `constructor-layout.md` for the
-  constructor cell's field layout and why it is that size. Not
+  field layout of constructor and closure cells, and why they are that
+  size. Not
   a replacement for `TODO.md` — those stay the changelog
   and gap tracker; `rc2/doc/` is where the *why* and the
   bugs-found-along-the-way for a specific subsystem live.

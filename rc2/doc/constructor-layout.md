@@ -1,6 +1,6 @@
-# Constructor cell layout (`IDRIS2RC2_Constructor`)
+# Constructor and closure cell layout
 
-## Layout
+## Constructors
 
 | Bytes | Field |
 |---|---|
@@ -70,6 +70,40 @@ Instruction counts are unchanged, so the time saved is all memory
 traffic. The gain is modest. The stalls loading list cells come mostly
 from cells scattered across the heap, and from each boxed `Int` being
 one more pointer to chase, not from the cells' size.
+
+## Closures
+
+`IDRIS2RC2_Closure` had the same gap. `fn` sat right after the header,
+and `arity`/`filled` (one byte each) came after it:
+
+| | Before | After |
+|---|---|---|
+| header | 0..4 | 0..4 |
+| `arity`, `filled` | 16..18 | 4..6 |
+| `fn` | 8..16 | 8..16 |
+| `args` | 24.. | 16.. |
+
+A heap closure always has room for its full arity, so it takes
+16 + 8·arity bytes, 8 fewer than before. `IDRIS2RC2_ConstClosure`, the
+static form of a closure with nothing filled yet, has the same leading
+fields. Its initializer (`boxedConstClosureExpr`) now names them, so it
+no longer depends on their order.
+
+Whether the 8 bytes pay off depends on the allocator. glibc hands out
+chunks in 16-byte steps. With 8 bytes of chunk overhead, an even arity
+stays in the same chunk size, and only an odd arity moves down one.
+Measured on building and folding 1M closures, 20 times
+(2026-09-26, same generated C linked against either runtime):
+
+| Closure | Allocator | Before | After |
+|---|---|---|---|
+| arity 3 | glibc | 3.89s, 128MB | 3.71s, 112MB |
+| arity 3 | mimalloc | 3.46s, 134MB | 3.15s, 102MB |
+| arity 2 | glibc | 3.70s, 112MB | 3.73s, 112MB |
+
+The arity-2 run allocates 8% fewer bytes (valgrind), but neither its time
+nor its RSS moved, under glibc or mimalloc. `sort` is unaffected,
+since its comparator closure is built once.
 
 ## Pitfall: the runtime `Makefile`
 

@@ -729,15 +729,3 @@ In the 1.81s run:
   `dispatchFn`, wrapper, worker, `trampoline`. There is no allocation;
   it costs about 25ns per comparison.
 - **`split` is 8% and teardown 5%.**
-
-6. **Closure cells have the same padding.** `IDRIS2RC2_Closure` is laid
-   out as:
-   - header, then 4 bytes of padding;
-   - `fn`;
-   - `arity`/`filled`, then 6 bytes of padding;
-   - `args`.
-
-   Moving `arity`/`filled` right after the header would shrink the part
-   before `args` from 24 to 16 bytes, by reordering, without packing.
-   It matters for `sort`'s comparator closures and for partial
-   applications generally. Not measured yet.

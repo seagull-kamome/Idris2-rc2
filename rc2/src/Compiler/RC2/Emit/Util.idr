@@ -856,9 +856,9 @@ stageConstCon l nmPrefix mkDef = do
 ||| flexible-array-member layout (no static-initializer syntax for one
 ||| in C anyway, and it would be empty here regardless: `filled` is
 ||| always `0`, by construction -- this only ever comes from a literal,
-||| zero-args `RUnderApp`) -- just the leading `header; fn; arity;
-||| filled` fields. Sound since nothing ever reads `->args[i]` for
-||| `i < filled` when `filled == 0`, and nothing computes
+||| zero-args `RUnderApp`) -- just the leading `header; arity; filled;
+||| fn` fields, in the same order. Sound since nothing ever reads
+||| `->args[i]` for `i < filled` when `filled == 0`, and nothing computes
 ||| `sizeof(IDRIS2RC2_Closure)` against this particular static.
 export
 boxedConstClosureExpr : {auto a : Ref ArgCounter Nat}
@@ -866,7 +866,7 @@ boxedConstClosureExpr : {auto a : Ref ArgCounter Nat}
                      -> (l : RCLocal) -> {0 prf : IsConstClosureLocal l} -> Core String
 boxedConstClosureExpr l@(RCConstClosure n missing) {prf=ItIsConstClosure} =
     stageConstCon l "constclosure_" $ \nm =>
-        pure "static IDRIS2RC2_ConstClosure const \{nm} = { IDRIS2RC2_STOCKVAL(IDRIS2RC2_TAG_CLOSURE), (IDRIS2RC2_Value *(*)())\{cName n}, \{show missing}, 0 };"
+        pure "static IDRIS2RC2_ConstClosure const \{nm} = { .header = IDRIS2RC2_STOCKVAL(IDRIS2RC2_TAG_CLOSURE), .arity = \{show missing}, .filled = 0, .fn = (IDRIS2RC2_Value *(*)())\{cName n} };"
 
 mutual
     ||| C initializer text for one `RCConstCon` field: `l` is always
