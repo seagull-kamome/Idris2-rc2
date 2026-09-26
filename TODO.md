@@ -589,6 +589,18 @@ cannot reach C generation, and that is not being worked on). Native
 fields (2026-09-26, `Ret1:1=Int`) and constructors of up to four fields
 (2026-09-26, idris2-missing-containers 15% faster) are done.
 
+## Performance: `IO` functions return a closure waiting for the world
+
+A function returning `IO`/`Core` that pattern-matches on its arguments
+gets the world's lambda inside each branch, so it returns a closure
+(`partial g missing= 1`) that every caller applies at once: a closure
+allocation, a `dup` per captured argument and an `apply` per call, and
+the `Either` behind the `apply` stays out of struct return's reach. On
+idris2-lsp 622 functions have this shape, and 4,069 `apply` sites
+saturate them, 2,826 switched on at once; passing the world as an extra
+parameter makes 1,247 of those cased struct-return sites. Designed
+(2026-09-26), not implemented: `rc2/doc/world-arity-raising.md`.
+
 ## Performance: constructors built and matched in the same function -- rest of the escape analysis
 
 Since 2026-09-25: `ConstFold` folds a `case` on a non-escaping
