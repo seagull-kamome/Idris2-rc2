@@ -93,7 +93,8 @@ show up again during testing.
   of cells, `dead-args.md` for removing the unused arguments the
   frontend gives `where` functions, `constructor-layout.md` for the
   field layout of constructor and closure cells, and why they are that
-  size. Not
+  size, `hybrid-refcount.md` for plain refcount operations until a
+  process-wide flag says the program went multi-threaded (design). Not
   a replacement for `TODO.md` — those stay the changelog
   and gap tracker; `rc2/doc/` is where the *why* and the
   bugs-found-along-the-way for a specific subsystem live.
