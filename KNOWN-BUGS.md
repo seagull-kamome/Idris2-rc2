@@ -19,6 +19,21 @@ entry rather than leaving it stale.
 
 ## Real reference-installation bugs (not rc2 bugs)
 
+- **The frontend gives `where` functions unused extra arguments --
+  handled in rc2.** Idris2's elaborator lifts a `where` function to the
+  top level with every variable of the enclosing clause as an extra
+  argument, whether it uses it or not. This is visible in
+  `--dumpcases`, before lambda lifting: `Data.List.splitRec` receives
+  `sortBy`'s `cmp` and outer `xs` and only passes them to itself.
+
+  Carried through a loop, such an argument holds its value until the
+  loop exits. That cost `sort` 23% and 2.36x its allocations.
+
+  rc2 removes these arguments in its own pass,
+  `Compiler.RC2.DeadArgs` (`rc2/doc/dead-args.md`, test
+  `Test99DeadArgs`), so this needs no further investigation when it
+  shows up in a dump. It is off only under
+  `--directive nodeadargs` and in incremental compilation.
 - **`Test7CastMatrix.idr` can't be diff-checked against real
   `idris2 --cg refc` at all.** Originally because the reference RefC
   support library's `idris2_negate_Double` was typo'd as

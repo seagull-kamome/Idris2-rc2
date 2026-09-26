@@ -90,7 +90,8 @@ show up again during testing.
   modulo constructor, which turns `x :: f xs`-shaped recursion into a
   loop that fills each cell's hole, `closure-accumulator.md` for
   its sibling that keeps a `c . (y ::)` difference list as such a chain
-  of cells. Not
+  of cells, `dead-args.md` for removing the unused arguments the
+  frontend gives `where` functions. Not
   a replacement for `TODO.md` — those stay the changelog
   and gap tracker; `rc2/doc/` is where the *why* and the
   bugs-found-along-the-way for a specific subsystem live.

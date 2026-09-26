@@ -63,6 +63,7 @@ fine-grained per-function/per-node control.
 | `nosink` | `Compiler.RC2.Sink`'s branch-local sinking (`doc/branch-sinking.md`). |
 | `nodualabi` | Both `Compiler.RC2.DualABI`'s worker/wrapper synthesis *and* its call-site rewriting together -- the rewrite needs the worker table the synthesis step builds, so splitting them wouldn't be meaningful (`doc/dual-abi.md`). |
 | `noapplyfold` | `Compiler.RC2.ArityRaise.applyFoldApplied`, right after `LateInline`: a closure built and applied at once (and otherwise only dropped) becomes a call (`doc/world-arity-raising.md`'s "Post-RC fold"). |
+| `nodeadargs` | `Compiler.RC2.DeadArgs`: removes a parameter whose only use is being passed on to another dead parameter, and its argument at every call (`doc/dead-args.md`). Always off in incremental compilation. |
 | `noarityraise` | `Compiler.RC2.ArityRaise`: a function returning a closure waiting for one more argument (the world) gets a version taking it, and a call whose closure is applied at once calls that version (`doc/world-arity-raising.md`). |
 | `notrmc` | `Compiler.RC2.Trmc`: a function whose recursive call sits under a constructor (`x :: f xs`) gets an accumulating twin that fills the previous cell's hole and loops (`doc/trmc.md`). |
 | `noctx` | `Compiler.RC2.ClosureCtx`: a parameter extended with `c . (y ::)` on every self call and applied once becomes a chain of cells with an open hole (`doc/closure-accumulator.md`). |

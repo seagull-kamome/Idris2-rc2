@@ -667,3 +667,44 @@ Nine such loops remain in idris2-lsp, in three other shapes:
 `toList` traversals can build long enough continuation chains to
 overflow has not been measured.
 
+
+## Performance: `sort` against Chez -- stacked causes (measured 2026-09-26)
+
+`Data.List.sort` of 1M pseudo-random `Int`s took 4.18s on rc2 and
+1.23s on Chez. Cause 1 is fixed (`Compiler.RC2.DeadArgs`,
+`rc2/doc/dead-args.md`), which brings `sort` to 3.21s. The rest remain.
+Each cause was isolated by an experiment on copies of `Data.List`'s own
+code:
+
+| Variant | Time |
+|---|---|
+| `Data.List.sort` (before `DeadArgs`; 3.21s with it) | 4.18s |
+| the same code copied into `Main` (B) | 3.21s |
+| B plus one unused passthrough argument on `splitRec` | 4.19s |
+| B with `order x y` replaced by `compare x y` (specialised) | 2.62s |
+| B specialised to `x < y` | 2.03s |
+| `x < y` version, non-atomic `dup`/`drop` + mimalloc | 0.99s |
+
+1. **Fixed: an unused argument kept the input list alive** (~1.0s).
+   The frontend's extra `where` arguments (`KNOWN-BUGS.md`) held the
+   list's head through `splitRec`'s loop, defeating cell reuse; see
+   `rc2/doc/dead-args.md`.
+2. **The comparator is never specialised** (~0.6s). `mergeBy` calls
+   `apply cmp [x, y]` through `idris2rc2_applyClosureN`. SpecClosure
+   only clones a callee that *applies* its closure parameter; `sortBy`
+   only forwards it. Design: `rc2/doc/speculative-closure-specialization.md`,
+   "Transitive specialisation".
+3. **Atomic reference counts** (-20% on the `x < y` version). Every
+   `dup`/`drop` is a `lock` instruction even single-threaded; see
+   "thread-local-awareなdup/dop" above. A process-wide "no thread
+   spawned yet" flag selecting the plain increment would be the
+   cheapest first step.
+4. **glibc malloc** (-24..31%). Besides the per-cell cost, the first
+   larger allocation after the sort (stdout's buffer, in `printLn`)
+   makes glibc consolidate every freed small chunk at once:
+   `malloc_consolidate` + `unlink_chunk` are ~14% of the profile.
+   Options: size-class free lists in `idris2rc2_alloc`, or linking
+   mimalloc.
+5. **Boxed `Int`** (the rest). An `Int` outside 0..99 is a heap
+   `IDRIS2RC2_Int64`, so every comparison chases two pointers; Chez's
+   fixnums are immediate.

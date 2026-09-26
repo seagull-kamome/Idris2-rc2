@@ -440,6 +440,123 @@ referenced).
   has the rationale and the (trivial) shape a later fixpoint wrapper
   would take.
 
+## Transitive specialisation (design, 2026-09-26)
+
+Status: design, not implemented. Motivation is in `TODO.md`,
+"`sort` against Chez": the unspecialised comparator costs about 0.6s
+of a 1M-element `sort`'s 4.18s, the second-largest cause.
+
+### The gap
+
+`Data.List.sortBy cmp xs` never applies `cmp` itself. It passes it on:
+- to `mergeBy cmp`, which applies it;
+- to `sortBy` again, as a self-recursive passthrough.
+
+`paramLooksSpecializable` requires exactly one apply chain, so
+`sortBy`'s `cmp` does not qualify. `mergeBy` is only ever called with
+`sortBy`'s parameter, never with a known closure, so it has no
+opportunity either. Even `sortBy compare xs` written directly in `main`
+therefore stays generic. Every comparison then costs an
+`idris2rc2_applyClosureN` dispatch, refcount traffic on the closure and
+its arguments, and a boxed `Ordering`.
+
+### Forwarding as a third kind of use
+
+A closure parameter `v` of `g` may be used in three ways:
+
+1. **Applied:** an apply chain of length `missing`, as today. This is
+   now allowed any number of times, not exactly once.
+2. **Self passthrough:** the same argument position of a self call, as
+   today.
+3. **Forwarded (new):** passed at position `q` of a call to another
+   function `h`.
+
+Eligibility becomes a whole-program property of a
+`(function, argPos, missing)` triple. Call a triple *closed* when every
+use of its parameter is one of the three, and every forwarding target
+`(h, q, missing)` is itself closed.
+
+This is a greatest fixpoint: start with every triple whose uses are
+only of those three kinds, then repeatedly remove triples that forward
+to a removed one. Mutual forwarding (`g` to `h` to `g`) stays in.
+
+### Building the clones
+
+Keys stay `(callee, argPos, target, missing)`. The work list starts
+with today's opportunities.
+
+Building a clone for key `(g, p, target, missing)` does what
+`buildClone` does now:
+- the parameter becomes the captured parameters;
+- apply chains become direct calls to `target`;
+- self calls go to the clone.
+
+In addition, every forwarding site `h [.. v@q ..]` in the clone
+becomes an opportunity for key `(h, q, target, missing)`. Its known
+closure is the clone's own captured parameters, so the key is added
+to the work list if it is not there already.
+
+For the redirect to recognise the forwarded value, the clone rebinds
+`v` at entry, and only if it has forwarding sites:
+- with no captures (a constant closure such as `compare`), `v` is
+  simply the constant, `RCConstClosure target missing`;
+- with captures, `v` is `let v = partial target missing [captured..]`.
+
+`redirectCallSitesTable` then treats a forwarding site like any other
+call site with a known closure. Once every forwarding site has been
+redirected, nothing reads `v`. The constant case leaves nothing
+behind; the partial case leaves a dead `let`, which must be deleted
+before RC (a later round of ConstFold on the clone, or a
+dead-pure-let sweep).
+
+### Acceptance
+
+A clone is accepted when its parameter is no longer referenced once
+its forwarding sites are redirected to *accepted* clones. That is again
+a greatest fixpoint over the clones built in this round:
+- start with all clones whose apply chains folded away;
+- drop any clone with a forwarding site whose target clone was dropped;
+- repeat until nothing changes.
+
+The redirect table then holds the accepted set. It is applied once over
+the original definitions plus the accepted clones, as today.
+
+### Pipeline position: unchanged
+
+`sort`'s comparator is already a constant when SpecClosure runs.
+`Compiler.RC2.Inline` splices `sort` into its caller at the `Lifted`
+level, and ConstFold folds `compare` out of the constant `Ord Int`
+dictionary. A dump with `--directive noearlyinline --directive
+nolateinline` shows `call Data.List.sortBy [#{{csegen:25}:2}/2~closure,
+..]` in `main`.
+
+So the transitive extension alone covers both `sort` and a direct
+`sortBy compare`. A second round after SpecConstCon would only matter
+for a dictionary that SpecConstCon alone makes constant. It stays
+under the "applied once per compile" question above.
+
+### Bounds
+
+- **New keys** come only from forwarding a known closure along a call
+  chain. Each key is built at most once (memoised by key), so the round
+  terminates.
+- **Code size:** a clone per `(function, target)` along the chain.
+  idris2-lsp's clone count and build time are the numbers to watch
+  (`--timing 3`, and the pass's own `--directive timing` counts).
+
+### Plan
+
+1. Implement the fixpoint eligibility, forwarding sites and fixpoint
+   acceptance in `SpecClosure.idr`.
+2. Add a test covering:
+   - `sortBy compare` and `sort` on `Int` (the comparator must end up a
+     direct call: check the dump for no `apply` in the `mergeBy` clone);
+   - a closure with captures forwarded two levels deep;
+   - mutual forwarding;
+   - a forwarded parameter that also escapes (must stay generic).
+3. Measure `sort` 1M against the table in `TODO.md`, and idris2-lsp's
+   clone count and build time.
+
 ## Files
 
 - `rc2/src/Compiler/RC2/SpecClosure.idr` -- the actual implementation.

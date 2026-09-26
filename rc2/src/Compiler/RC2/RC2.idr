@@ -17,6 +17,7 @@ module Compiler.RC2.RC2
 
 import Compiler.RC2.ArityRaise
 import Compiler.RC2.ClosureCtx
+import Compiler.RC2.DeadArgs
 import Compiler.RC2.Trmc
 import Compiler.RC2.CC
 import Compiler.RC2.ConAltNative
@@ -240,7 +241,7 @@ insertMemoize = map wrap
 ||| apart.
 disableableStageNames : List String
 disableableStageNames =
-    ["noinline", "noarityraise", "noapplyfold", "notrmc", "noctx", "noconstfold", "noknowncon", "nopushcon", "nospecclosure", "nospecconstcon", "noconaltnative", "nomutualloop", "noloop", "noearlyinline", "nolateinline", "nosink", "nodualabi", "nostructreturn", "nodeadcode", "nodupmerge", "nodeadvars"]
+    ["noinline", "nodeadargs", "noarityraise", "noapplyfold", "notrmc", "noctx", "noconstfold", "noknowncon", "nopushcon", "nospecclosure", "nospecconstcon", "noconaltnative", "nomutualloop", "noloop", "noearlyinline", "nolateinline", "nosink", "nodualabi", "nostructreturn", "nodeadcode", "nodupmerge", "nodeadvars"]
 
 ||| Stages that are off unless asked for with `--directive <name>`. They
 ||| travel to `toRCDefs` in the same list as the disables above.
@@ -317,11 +318,16 @@ toRCDefs disabled incremental roots lds0 = do
                                                 _ => throw err))
                             lds
                         pure (mapMaybe id results)
+    -- Signatures change, so not per module: another module's calls are
+    -- out of sight (doc/dead-args.md).
+    deadArged <- if incremental || ("nodeadargs" `elem` disabled)
+                    then pure preFolded
+                    else logTime 2 "rc2: Dead arguments" $ applyDeadArgs roots preFolded
     -- doc/world-arity-raising.md: before ConstFold, so every later pass
     -- sees the direct calls.
     raised <- if "noarityraise" `elem` disabled
-                 then pure preFolded
-                 else logTime 2 "rc2: Arity raise" $ applyArityRaise preFolded
+                 then pure deadArged
+                 else logTime 2 "rc2: Arity raise" $ applyArityRaise deadArged
     folded <- if "noconstfold" `elem` disabled
                  then pure raised
                  else logTime 2 "rc2: ConstFold (whole-program fixpoint)" $ foldConstProgram (not ("noknowncon" `elem` disabled)) raised
