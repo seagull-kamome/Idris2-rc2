@@ -14,6 +14,7 @@ import Compiler.RC2.Util
 import Core.Core
 import Core.FC
 import Core.Context
+import Core.Context.Log
 
 import Data.List
 import Data.SortedMap
@@ -154,14 +155,17 @@ rewriteSites ts e = here (mapChildren (rewriteSites ts) e)
 ||| `f#` (`rc2_raised_<f>`) with one more parameter, and becomes a bare
 ||| wrapper of it; every body's call sites are rewritten.
 export
-applyArityRaise : {auto v : Ref VarId Int} -> List (Name, RCDef) -> Core (List (Name, RCDef))
+applyArityRaise : {auto c : Ref Ctxt Defs} -> {auto v : Ref VarId Int} -> List (Name, RCDef) -> Core (List (Name, RCDef))
 applyArityRaise defs = do
     _ <- newRef FreshId 0
-    let plan = raisePlan defs
+    plan <- logTime 3 "rc2: Arity raise (plan)" $ pure (raisePlan defs)
+    let
         existing : SortedSet Name := fromList (map fst defs)
-    named <- traverse (nameOf plan existing) defs
+    named <- logTime 3 "rc2: Arity raise (names)" $ traverse (nameOf plan existing) defs
     let targets : SortedMap Name Name := fromList (mapMaybe (\(n, _, t) => map (\t' => (n, t')) t) named)
-    concat <$> traverse (raise targets) named
+    -- `foldr (++)`, not `concat`: that is `foldMap`, a left fold of `++`,
+    -- quadratic over the whole program.
+    logTime 3 "rc2: Arity raise (rewrite)" $ foldr (++) [] <$> traverse (raise targets) named
   where
     nameOf : {auto r : Ref FreshId Int} -> SortedSet Name -> SortedSet Name -> (Name, RCDef)
            -> Core (Name, RCDef, Maybe Name)
