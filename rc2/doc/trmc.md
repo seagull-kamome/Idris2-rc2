@@ -1,9 +1,10 @@
 # Tail recursion modulo constructor (TRMC)
 
 Status: phases 1 and 3 implemented (2026-09-26 and 2026-09-27,
-`Compiler.RC2.Trmc`); phases 2 and 4 are tracked in `TODO.md` ("tail recursion modulo constructor").
-Motivation is in `KNOWN-BUGS.md` ("deep non-tail recursion overflows
-the C stack").
+`Compiler.RC2.Trmc`); phase 2 is designed below; phases 2 and 4 are
+tracked in `TODO.md` ("tail recursion modulo constructor"). Motivation
+is in `KNOWN-BUGS.md` ("deep non-tail recursion overflows the C
+stack").
 
 ## Problem
 
@@ -216,9 +217,7 @@ A `notrmc` directive disables the pass, like every other stage.
      elements, under valgrind.
    - Re-measure with the `scratchpad` `trmc` tool (sites left), the
      `sort` benchmark against Chez, and idris2-lsp's `--timing 3`.
-2. **Phase 2:** mutual recursion. Apply the same rewrite over a
-   MutualLoop group, with `res`/`last` added to the group's shared
-   slots (36 `::` and 51 other sites).
+2. **Phase 2:** mutual recursion. See "Phase 2 design" below.
 3. **Phase 3 (done):** differing field indexes (`hk`) and multi-field
    sites (rewrite the last-evaluated call).
 4. **Phase 4:** an optional raw hole address, if the refcount traffic
@@ -226,6 +225,102 @@ A `notrmc` directive disables the pass, like every other stage.
    difference lists, which is `TODO.md`'s "closure-valued loop
    parameters": represent `zs . (y ::)` as `(res, last)`, making
    composition and application O(1).
+
+## Phase 2 design: mutual recursion (2026-09-27, not implemented)
+
+### Shapes
+
+Measured on idris2-lsp built with `--directive nomutualloop`, so that
+MutualLoop has not merged anything yet. Take the tail constructors
+whose last-evaluated field is a call to another function. In 65 of
+them, the callee reaches back to the caller through tail calls and such
+fields alone. Only these can become loops. They come in two kinds:
+
+- **A function and its `case block` helper (19 `::` sites and a few
+  others).** `buildDoLets`, `collectDefs`, `mergeStrLit`,
+  `compressLefts`, `words`, `getOpts`, ... The helper builds
+  `x :: f xs`, and `f` tail-calls the helper. The recursion is as deep
+  as the list is long, so these can overflow the stack today.
+- **A term traversal and a specialised `Maybe` `map` (38 sites).** For
+  example, `substEnv`'s `CConCase` ends in `map (substEnv ..) mDef`,
+  and that clone of `map` builds `Just (substEnv .. x)`. The recursion
+  is only as deep as the term, but the rewrite handles it the same way.
+
+The other 90 mutual sites cannot become loops. Their last-evaluated
+call reaches back only through a non-tail call: `substEnv`'s `CApp`
+ends in a `mapAppend` clone that calls `substEnv` for each head.
+
+### Rewrite
+
+Phases 1 and 3 treat "the function" as the only target of a site.
+Phase 2 makes it a set, a *group*:
+
+1. **Edges.** For every eligible function (a `RCFun` returning
+   `RBoxed`, with parameters), collect:
+   - its tail calls;
+   - the callee of each hole candidate. That is the last-evaluated
+     call bound to a field of a tail `RCon`, used once, with no
+     unreorderable `let` after it: phase 3's rules, with any callee
+     allowed.
+
+   Only edges between eligible functions count.
+2. **Groups.** A group is a strongly connected component of that graph
+   (`MutualLoop.tarjanSCCs`) with at least one site. A one-member group
+   is exactly the phase 1 and 3 case.
+3. **Accumulators.** Every member `m` gets `m#`. Its parameters are
+   `m`'s own plus `res`, `last`, and `hk` if the group's sites use more
+   than one hole index. Every member takes the same extra parameters,
+   including a member with no site of its own (`f` in the helper
+   pattern), because the chain passes through it.
+4. **Bodies.** A member's `m#` body is `m` with each tail rewritten as
+   in phase 1, where "`f`" now means any member:
+   - a site calling member `g`:
+     `let c = C [.., NULL, ..]; fill last := c; call g# as' res c k`;
+   - a tail call to member `g`: `call g# as' res last hk`;
+   - any other tail: fill `last` with it and return `res`.
+
+   The fill dispatches on `hk` over the group's indexes (phase 3).
+5. **Entries.** Each `m` keeps its name and signature. Only its sites
+   change, to `let c = C [..]; call g# as' c c k`. Its tail calls to
+   other members stay calls to their entries, so no caller changes.
+
+The `m#` functions now tail-call each other and nothing else in the
+group. MutualLoop runs after RC. It merges them into one function, as
+it does any mutual tail recursion, and Loop turns that into one loop.
+Nothing downstream changes: `hk`, `res` and `last` are ordinary
+parameters to MutualLoop's slot sharing.
+
+### Why a group, not per-function rewriting
+
+Rewriting `f` alone cannot help the helper pattern. `f`'s site calls
+`g`, and `g` has no site that calls itself. Each accumulator must
+continue into the *callee's* accumulator, so the whole cycle needs
+accumulators at once.
+
+### Costs and risks
+
+- **Code size.** Every member is duplicated, including the 19 `Maybe`
+  `map` clones. LateInline and DeadCode shrink what ends up unused, as
+  in phase 1.
+- **MutualLoop groups grow.** A merged `m#` group has one alternative
+  per member. The entries are not part of it: each calls into one `m#`
+  once.
+- **Order of evaluation.** Unchanged from phase 1, eligibility 4, per
+  site.
+- **Members that already tail-call each other.** Their entries remain
+  such a group, and MutualLoop merges them as before. The `m#` versions
+  form a second, separate group.
+
+### Test
+
+`Test101TrmcMutual` covers two cases, at a million elements each:
+- a function and a helper that builds `x :: f xs` (the helper
+  pattern);
+- a chain through `Maybe`: `data E = Node Int (Maybe E)` mapped by
+  `mapE (Node x m) = Node (f x) (map mapE m)`.
+
+The expected output comes from Chez. The test must run clean under
+valgrind, and overflow the C stack with `--directive notrmc`.
 
 ## Phase 1 results (2026-09-26)
 

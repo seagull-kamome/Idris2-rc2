@@ -630,12 +630,14 @@ has the design and the measured results. Still open:
 - **Phase 2, mutual recursion.** 155 sites in idris2-lsp have a field
   computed by a function that calls back (`trmc.md`, "Phase 3
   results"), 22 of them `::`.
-  - Typical shapes: a function and its own `case block` helper
-    (`words`, `compressLefts`, ...), the 19 clones of `Maybe`'s `map`,
-    and term traversals whose last field maps over a list through a
-    helper that calls back (`substEnv`'s `CApp`).
-  - Apply the rewrite over a MutualLoop group, carrying `res`/`last` in
-    the group's shared slots.
+  - Designed: `trmc.md`, "Phase 2 design". Groups of functions linked by
+    tail calls and holes get accumulators together, and MutualLoop
+    merges those into one loop.
+  - It takes 65 of the sites: 19 `::` sites in function and
+    `case block` helper pairs (`buildDoLets`, `collectDefs`, ...), and
+    term traversals paired with a specialised `Maybe` `map`.
+  - The other 90 reach back only through a non-tail call (`substEnv`'s
+    `CApp` through a `mapAppend` clone) and stay recursive.
 - **Phase 4.**
   - A raw hole address, if the refcount traffic on `last` shows up in
     benchmarks.
