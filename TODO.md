@@ -592,13 +592,13 @@ fields (2026-09-26, `Ret1:1=Int`) and constructors of up to four fields
 ## Performance: closure-returning functions with mixed tails
 
 World arity raising (`rc2/doc/world-arity-raising.md`) raises only a
-function whose every tail builds a closure missing one argument. On
-idris2-lsp 1,092 `apply` sites still apply a call's result at once,
-mostly from callees whose tails mix a `partial` with an `apply` (190),
-a variable (72), only `apply` (226) or only a call (218). Raising those
-too is sound (the doc's "After `LateInline`" section has the tail
-rules) but saves a closure only in the `partial` branches; measure
-before doing it.
+function whose every tail builds a closure missing one argument.
+Estimated 2026-09-26 (that doc's "Raising functions whose tails mix
+closures"): 839 idris2-lsp sites apply the result of a function whose
+tails mix closures; about 300-570 would save a closure, with next to no
+new struct-return sites -- one to two tenths of the pass itself. If
+done, start with callees whose tails are only `partial`s and `apply`s
+(292 sites, only the `apply` rule on top of the pass). Low priority.
 
 ## Performance: constructors built and matched in the same function -- rest of the escape analysis
 

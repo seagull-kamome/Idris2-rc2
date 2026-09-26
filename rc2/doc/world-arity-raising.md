@@ -272,3 +272,30 @@ runs 1.77 s → **1.18 s** (with `%inline`: 1.02 s, unchanged). On
 idris2-lsp, `apply` goes 3,771 → 3,507, a `partial` applied in its own
 function 110 → 25, cased struct sites 9,952 → 9,984; `rcexpr-lint`
 clean. `Test93ApplyFold` checks `run` is left with no `apply`.
+
+### Raising functions whose tails mix closures: estimate (2026-09-26)
+
+Not implemented. On idris2-lsp's final IR (with the pass and the
+post-RC fold), 915 `apply` sites still apply a call's result at once;
+for 839 of them (84 callees; 374 switched on at once, 66 in a tail)
+every tail of the callee is some closure. Weighting each callee's tails
+equally, per site:
+
+| raised tail | weight | closure allocation |
+|---|---|---|
+| `partial ... missing= 1` → a call | 250 | saved, as in the pass itself |
+| `partial ... missing= m > 1` → `partial ... missing= m - 1` | 51 | one saved |
+| `apply h ys` → `apply h (ys ++ [w])` | 270 | saved when `h` was under-applied (most) |
+| a variable `x` → `apply x [w]` | 47 | none (the `apply` just moves) |
+| a call to an unraised `h` → `let c = call h ...; apply c [w]` | 222 | none |
+
+About 300 sites save a closure for certain, 570 counting the `apply`
+tails: one to two tenths of what the pass itself reached (4,069). An
+`apply` or variable tail leaves the raised function's result shape
+unknown, so struct return gains next to nothing, unlike the pass
+itself. The best candidates are mostly-`partial` functions with a few
+`apply` tails (`goPTerm` 97 sites, `schExp` 80, `processDecl` 12);
+restricted to callees whose tails are only `partial`s and `apply`s,
+292 sites (188 cased) remain, and the rewrite needs only the `apply`
+rule on top of the pass. How often these run is unknown while
+idris2-lsp cannot reach C generation.
