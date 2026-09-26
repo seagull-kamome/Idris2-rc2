@@ -644,40 +644,26 @@ design and the measured results. Still open:
 - **Phase 4.**
   - A raw hole address, if the refcount traffic on `last` shows up in
     benchmarks.
-  - Constructor contexts for the difference lists in the next entry.
+  - Constructor contexts generalized beyond `ClosureCtx`'s difference lists.
 
-## Performance: closure-valued loop parameters
+## Performance: closure-valued loop parameters, beyond difference lists
 
-Design: `rc2/doc/closure-accumulator.md` (the difference-list shape).
+The difference-list shape (`c . (y ::)`, as in `sortBy`'s `splitRec`)
+is done; `rc2/doc/closure-accumulator.md` has the design and results.
+Nine such loops remain in idris2-lsp, in three other shapes:
 
-`Data.List.sortBy`'s `splitRec` carries a difference list `zs`
-(`zs . ((::) y)`, starting from `id`) as a loop parameter. Each step
-allocates two closures, and the final `zs []` walks the whole chain
-through indirect, non-tail calls. That walk is n/2 frames deep, which
-overflows the C stack at 1M elements.
+- **`c (e x)` for an arbitrary pure `e`.** One loop:
+  `Data.Vect.foldr`'s `foldrImpl`, `go . f x`.
+  - The chain of closures is already a list of frames. Applying it
+    could unwind iteratively instead of recursing.
+  - That needs an IR `case` over a closure: test its function, read its
+    captures. It is sketched under "Later" in the design doc.
+- **Continuation passing.** Six loops: the three `treeToList'` and the
+  scheme backends' `applyLams`. The continuation calls the traversal
+  again and wraps its result, so there is no single hole to fill.
+- **Other.** Two loops: `mkClosedElab`, `ProcessData.shaped`.
 
-Defunctionalization applies when:
-- every `RLoopContinue` passes `partial L missing=1 [captures..., c]`
-  for the parameter `c`;
-- `L`'s body is `apply c [e(captures, x)]`.
+`sortBy` was the one that crashed (`KNOWN-BUGS.md`). Whether the map
+`toList` traversals can build long enough continuation chains to
+overflow has not been measured.
 
-Then `c` can carry a stack of capture frames instead. The final
-`apply c [v]` becomes a loop that pops a frame and sets
-`v := e(frame, v)`. For `splitRec` that is one cons per element, with
-no closures and constant stack depth.
-
-A LateInline bug in exactly this shape (9c6f49e,
-`Test94LoopConstClosureParam`) is how this pattern was found.
-
-The same measurement found 10 such loop parameters in idris2-lsp's
-2,266 loops:
-- `Data.List.sortBy`'s `splitRec`;
-- `Data.Vect.foldr`'s `foldrImpl`;
-- three `treeToList'` (`SortedMap.Dependent`, `UserNameMap`,
-  `StringMap`);
-- `mkClosedElab`;
-- `ProcessData.shaped`;
-- the three scheme backends' `applyLams`.
-
-This is rare statically, but `sortBy` and the map `toList` traversals
-run over whole collections, so they are the ones that matter.

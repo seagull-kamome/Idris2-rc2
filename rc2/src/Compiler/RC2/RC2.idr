@@ -16,6 +16,7 @@ module Compiler.RC2.RC2
 -- 10. C compiler invocation (`Compiler.RC2.CC`)
 
 import Compiler.RC2.ArityRaise
+import Compiler.RC2.ClosureCtx
 import Compiler.RC2.Trmc
 import Compiler.RC2.CC
 import Compiler.RC2.ConAltNative
@@ -239,7 +240,7 @@ insertMemoize = map wrap
 ||| apart.
 disableableStageNames : List String
 disableableStageNames =
-    ["noinline", "noarityraise", "noapplyfold", "notrmc", "noconstfold", "noknowncon", "nopushcon", "nospecclosure", "nospecconstcon", "noconaltnative", "nomutualloop", "noloop", "noearlyinline", "nolateinline", "nosink", "nodualabi", "nostructreturn", "nodeadcode", "nodupmerge", "nodeadvars"]
+    ["noinline", "noarityraise", "noapplyfold", "notrmc", "noctx", "noconstfold", "noknowncon", "nopushcon", "nospecclosure", "nospecconstcon", "noconaltnative", "nomutualloop", "noloop", "noearlyinline", "nolateinline", "nosink", "nodualabi", "nostructreturn", "nodeadcode", "nodupmerge", "nodeadvars"]
 
 ||| Stages that are off unless asked for with `--directive <name>`. They
 ||| travel to `toRCDefs` in the same list as the disables above.
@@ -374,7 +375,10 @@ toRCDefs disabled incremental roots lds0 = do
     trmced <- if "notrmc" `elem` disabled
                  then pure reraised
                  else logTime 2 "rc2: TRMC" $ applyTrmc reraised
-    memoized <- logTime 2 "rc2: CAF memoization" $ pure (insertMemoize trmced)
+    ctxed <- if "noctx" `elem` disabled
+                then pure trmced
+                else logTime 2 "rc2: Closure contexts" $ applyClosureCtx trmced
+    memoized <- logTime 2 "rc2: CAF memoization" $ pure (insertMemoize ctxed)
     reused <- logTime 2 "rc2: RC annotate + Reuse + ConAltNative" $
                 traverse (\(n, d) => do
                   d1 <- toRCDefPostFold d

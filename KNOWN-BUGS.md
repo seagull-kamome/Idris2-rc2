@@ -686,19 +686,25 @@ crash is a stack overflow, not a miscompile: every size that fits
 returns the right result.
 
 Measured 2026-09-26 with `ulimit -s` at 8192. "Before" is before
-TRMC (`rc2/doc/trmc.md`, phase 1) and the teardown fix below; "now" is
-with both.
+TRMC (`rc2/doc/trmc.md`, phase 1), the difference-list rewrite
+(`rc2/doc/closure-accumulator.md`) and the teardown fix below; "now" is
+with all three.
 
 | Operation | before: 100k | before: 1M | now: 1M | now: 4M |
 |---|---|---|---|---|
 | `mergeBy` (`x :: mergeBy ...`) | SEGV | SEGV | ok | ok |
 | `[1 .. n]` | SEGV | SEGV | ok | ok |
-| `sortBy`'s `splitRec`, applying its accumulated `zs` | ok | SEGV | SEGV | SEGV |
-| `Data.List.sort` | ok | SEGV | SEGV (`splitRec`) | SEGV |
+| `sortBy`'s `splitRec`, applying its accumulated `zs` | ok | SEGV | ok | ok |
+| `Data.List.sort` | ok | SEGV | ok | ok |
 
-Chez sorts the 1M list in 1.23s. One cause remains: `splitRec`'s
-closure accumulator. Applying `zs` walks the composed closures
-non-tail-recursively; see `TODO.md`, "closure-valued loop parameters".
+Chez sorts the 1M list in 1.23s; rc2 now takes 4.17s. Any non-tail
+recursion none of these passes covers still overflows at a large
+enough depth:
+- mutual recursion, and sites filling different fields (`TODO.md`,
+  TRMC phases 2-4);
+- continuation-passing traversals and other closure chains
+  (`TODO.md`, "closure-valued loop parameters, beyond difference
+  lists").
 
 **Fixed 2026-09-26: teardown.** `idris2rc2_teardown`
 (`support/rc2/idris2rc2_memory.c`) used to drop every field of a dying

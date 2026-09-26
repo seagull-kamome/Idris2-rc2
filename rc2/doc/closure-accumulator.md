@@ -1,6 +1,7 @@
-# Closure-valued loop parameters -- design
+# Closure-valued loop parameters
 
-Status: design, not implemented (2026-09-26). Tracked in `TODO.md`
+Status: the difference-list shape is implemented (2026-09-26,
+`Compiler.RC2.ClosureCtx`); the rest is tracked in `TODO.md`
 ("closure-valued loop parameters"). Builds on `trmc.md`, whose `RFill`
 node and `res`/`last` pair this reuses.
 
@@ -126,17 +127,16 @@ The pass runs right after TRMC, still before RC. It needs:
 
 ## Folding `apply id [res]`
 
-For `sortBy`, `k` is the constant closure `id`. After LateInline
-splices `f#` into `sortBy`, `c` is a loop parameter that every
-`RLoopContinue` passes back unchanged. The `9c6f49e` fix makes
-`resolveConstClosureApps` forget every loop parameter, so
-`apply c [res]` would stay a dynamic application of `id`. That is
-correct but wasteful.
+For `sortBy`, `k` is the constant closure `id`. The design expected
+`apply c [res]` to stay a dynamic application of `id`, and planned to
+make `resolveConstClosureApps` keep a loop parameter that every
+`RLoopContinue` passes back unchanged.
 
-The pass should therefore make `resolveConstClosureApps` keep a loop
-parameter that every `RLoopContinue` passes back in its own position:
-such a parameter really is its constant. Checking this is one walk of
-the loop body.
+That turned out unnecessary. In `sortBy`'s final RCExp, the invariant
+`c` is not among the loop's parameters: Loop conversion keeps a
+parameter passed back unchanged out of the loop. It stays an ordinary
+local bound before the loop, so LateInline's constant-closure
+resolution already turns `apply c [res]` into a direct call.
 
 ## Evaluation order
 
@@ -173,9 +173,7 @@ part of this design.
 
 ## Plan
 
-1. Implement the pass for shape 1. That needs:
-   - the `resolveConstClosureApps` refinement above;
-   - a `noctx` directive.
+1. Implement the pass for shape 1, with a `noctx` directive.
 2. Add a test covering:
    - `splitRec` itself and `sort` at 1M elements (plus a smaller size
      under valgrind);
@@ -187,3 +185,34 @@ part of this design.
    - the `scratchpad` `trmc` tool's closure-accumulator count on
      idris2-lsp;
    - build time with `--timing 3`.
+
+## Results (2026-09-26)
+
+**Correctness.** `Test98ClosureCtx` checks, against Chez's output:
+- `splitRec`;
+- `sort` of 1M elements;
+- a difference list started from `\xs => 7 :: xs`;
+- a context applied once in each of two branches.
+
+It also checks a context applied twice on one path (`twice`). That one
+stays as closures: the dump still has its `partial`. The test is clean
+under valgrind.
+
+**Stack.** `splitRec` and `sort` now run at 1M and 4M elements; both
+crashed at 1M before.
+
+**Speed.** `sort` of 100k pseudo-random `Int`s takes 0.283s, against
+0.493s with `--directive notrmc --directive noctx` and 0.157s on Chez.
+At 1M it takes 4.17s, against Chez's 1.23s. Two thirds of the profile
+is:
+- the TRMC'd `mergeBy` (35%);
+- `split` (18%);
+- dynamic calls of the `compare` dictionary closure.
+
+That gap is not this pass's.
+
+**idris2-lsp.** `splitRec` is the one loop of the ten that has this
+shape; the other nine remain, as expected. The pass takes 0.08s. A
+first version took 0.54s, because it walked every function once per
+parameter; it now first checks whether the function builds an
+extender at all. `rcexpr-lint` finds no anomalies.
