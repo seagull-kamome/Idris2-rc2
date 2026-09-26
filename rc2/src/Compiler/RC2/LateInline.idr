@@ -425,8 +425,11 @@ resolveConstClosureApps ccs (RConCase fc sc alts mDef) =
 resolveConstClosureApps ccs (RConstCase fc sc alts mDef) =
     RConstCase fc sc (map (\(MkRConstAlt c body) => MkRConstAlt c (resolveConstClosureApps ccs body)) alts)
       (map (resolveConstClosureApps ccs) mDef)
+-- A loop parameter starts out as its constant closure but every
+-- `RLoopContinue` rebinds it, so inside the body it is no longer known.
 resolveConstClosureApps ccs (RLoop fc loopParams initial prologueDrop body) =
-    RLoop fc loopParams initial prologueDrop (resolveConstClosureApps ccs body)
+    RLoop fc loopParams initial prologueDrop
+          (resolveConstClosureApps (foldl (\m, (i, _) => delete i m) ccs loopParams) body)
 resolveConstClosureApps ccs (RDup fc v extra body) = RDup fc v extra (resolveConstClosureApps ccs body)
 resolveConstClosureApps ccs (RDrop fc vs body) = RDrop fc vs (resolveConstClosureApps ccs body)
 resolveConstClosureApps ccs (RFree fc v body) = RFree fc v (resolveConstClosureApps ccs body)

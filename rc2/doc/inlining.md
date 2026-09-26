@@ -912,6 +912,31 @@ the correctness oracle. Final measured results: `BenchChain` 0.0052s
 81.9x); `BenchLoopCallArg` 0.0032s (168.44x vs RefC, exceeding its own
 historical baseline of ~66.7x).
 
+### Fixed: constant closures and loop parameters (2026-09-26)
+
+`buildSplice` records every argument that is a constant closure
+(`RCConstClosure`) in `ConstClosureArgs`. `resolveConstClosureApps` then
+rewrites an `apply` of that id in the spliced body into a direct call.
+That id can also be one of the callee's loop parameters, though: its
+constant is only the loop's *initial* value, and every
+`RLoopContinue` rebinds it.
+
+`Data.List.sort` hit exactly this. Its `splitRec` becomes a self-tail
+loop that carries a difference list `zs` (`zs . ((::) y)`), started
+from `id`. Once `splitRec` was spliced into `sortBy`, whose call
+passes `id` literally, the base case `zs []` was rewritten into a call
+to `id`. It returned `[]` instead of the elements the loop had
+collected, so `sort [5, 3, 0, 9]` came out as `[9]`.
+
+The rewrite has to stop at the loop boundary. Every `RLoop` case of
+`resolveConstClosureApps` now removes that loop's own `loopParams`
+from the map before it walks the body. The loop's `initial` list is
+left alone, since it is read before the first iteration.
+
+Why disabling other stages also hid the bug: `noloop` leaves no loop,
+and `noconstfold` means the argument isn't a folded constant closure.
+Regression test: `Test94LoopConstClosureParam`.
+
 ### Files
 
 - `rc2/src/Compiler/RC2/LateInline.idr` -- this pass, in full.
