@@ -1145,6 +1145,7 @@ emitRC sink (RCon fc n coninfo tag args reuseFrom) _ = do
     if coninfo == NIL || coninfo == NOTHING || coninfo == ZERO || coninfo == UNIT
         then finalizeSink fc sink "(NULL /* \{show n} */)"
         else do
+            checkConLayout n (length args) tag
             let createNewConstructor = " = idris2rc2_newConstructor("
                              ++ (show (length args))
                              ++ ", "  ++ maybe "-1" show tag  ++ ");"
@@ -1168,7 +1169,7 @@ emitRC sink (RCon fc n coninfo tag args reuseFrom) _ = do
                 Nothing => do
                     let constr = "constructor_\{!(getNextCounter)}"
                     emit fc $ "IDRIS2RC2_Constructor* " ++ constr ++ createNewConstructor
-                    when (Nothing == tag) $ emit fc "\{constr}->name = idris2rc2_constr_\{cName n};"
+                    when (Nothing == tag) $ emit fc "idris2rc2_setConName(\{constr}, idris2rc2_constr_\{cName n});"
                     pure constr
             let arglist = "\{constr}->args"
             _ <- foldlC (\k, v => do

@@ -77,17 +77,14 @@ initializer can only take the address of an *already-declared*
 static (no forward references at file scope).
 
 The staged C shape mirrors `IDRIS2RC2_Constructor`'s own layout
-field-for-field, but as a fixed-size array instead of a flexible
-array member (plain C has no static initializer for one):
+(`constructor-layout.md`) field-for-field, but as a fixed-size array
+instead of a flexible array member (plain C has no static initializer
+for one). An untagged constructor gets one more slot, for its name.
 
 ```c
-static struct {
-    IDRIS2RC2_Header header;
-    int32_t arity; int32_t tag; char const *name;
-    IDRIS2RC2_Value *args[N];
-} const constcon_7 = {
+static IDRIS2RC2_ConstConstructor2 const constcon_7 = {
     IDRIS2RC2_STOCKVAL(IDRIS2RC2_TAG_CONSTRUCTOR),
-    2, 1, NULL,
+    2, 1,
     { (IDRIS2RC2_Value*)(&idris2rc2_smallInt64[5]), NULL }
 };
 ```

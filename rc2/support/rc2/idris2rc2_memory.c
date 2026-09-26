@@ -22,11 +22,12 @@ IDRIS2RC2_Value *idris2rc2_alloc(size_t size) {
 
 IDRIS2RC2_Constructor *idris2rc2_newConstructor(int arity, int tag) {
   IDRIS2RC2_Constructor *c = (IDRIS2RC2_Constructor *)idris2rc2_alloc(
-      sizeof(IDRIS2RC2_Constructor) + sizeof(IDRIS2RC2_Value *) * arity);
+      sizeof(IDRIS2RC2_Constructor) + sizeof(IDRIS2RC2_Value *) * (arity + (tag < 0 ? 1 : 0)));
   c->header.tag = IDRIS2RC2_TAG_CONSTRUCTOR;
-  c->arity = arity;
-  c->tag = tag;
-  c->name = NULL;
+  c->arity = (uint16_t)arity;
+  c->tag = (int16_t)tag;
+  if (tag < 0)
+    idris2rc2_setConName(c, NULL);
   return c;
 }
 

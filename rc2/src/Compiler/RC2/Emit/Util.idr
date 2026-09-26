@@ -118,6 +118,14 @@ cName (CaseBlock x y) = "case__" ++ cCleanString (show x) ++ "_" ++ cCleanString
 cName (WithBlock x y) = "with__" ++ cCleanString (show x) ++ "_" ++ cCleanString (show y)
 cName (Resolved i) = "fn__" ++ cCleanString (show i)
 
+||| Fails unless `IDRIS2RC2_Constructor`'s 16-bit fields can hold the
+||| constructor's field count and tag (`rc2/doc/constructor-layout.md`).
+export
+checkConLayout : Name -> (arity : Nat) -> (tag : Maybe Int) -> Core ()
+checkConLayout n arity tag =
+    when (arity > 65535 || maybe False (\t => t < 0 || t > 32767) tag) $
+        throw $ InternalError "[rc2] constructor \{show n}: \{show arity} fields, tag \{show tag} exceed IDRIS2RC2_Constructor's 16-bit arity/tag"
+
 ||| A C expression for `c`'s codepoint: a quoted char literal for
 ||| printable/alphanumeric chars (Idris's own `show` conveniently doubles
 ||| as valid C syntax for those), or a bare decimal codepoint otherwise.
@@ -922,14 +930,17 @@ mutual
                       -> (l : RCLocal) -> {0 prf : IsConstLocal l} -> Core String
     boxedConstConExpr l@(RCConstCon n _ tag args {argsConst}) {prf=ItIsConstCon} =
         stageConstCon l "constcon_" $ \nm => do
+            checkConLayout n (length args) tag
             argExprs <- constConFieldExprsFor args argsConst
-            let nameField = maybe "idris2rc2_constr_\{cName n}" (const "NULL") tag
             let tagField = maybe "-1" show tag
             let arity = length args
-            let tyName = if arity >= 1 && arity <= 20
+            -- An untagged constructor carries its name in one extra slot
+            -- after its fields, as `idris2rc2_newConstructor` lays it out.
+            let slots = maybe (argExprs ++ ["(IDRIS2RC2_Value *)(void *)idris2rc2_constr_\{cName n}"]) (const argExprs) tag
+            let tyName = if isJust tag && arity >= 1 && arity <= 20
                             then "IDRIS2RC2_ConstConstructor\{show arity}"
-                            else "struct { IDRIS2RC2_Header header; int32_t arity; int32_t tag; char const *name; IDRIS2RC2_Value *args[\{show arity}]; }"
-            pure "static \{tyName} const \{nm} = { IDRIS2RC2_STOCKVAL(IDRIS2RC2_TAG_CONSTRUCTOR), \{show arity}, \{tagField}, \{nameField}, { \{showSep ", " argExprs} } };"
+                            else "struct { IDRIS2RC2_Header header; uint16_t arity; int16_t tag; IDRIS2RC2_Value *args[\{show (length slots)}]; }"
+            pure "static \{tyName} const \{nm} = { IDRIS2RC2_STOCKVAL(IDRIS2RC2_TAG_CONSTRUCTOR), \{show arity}, \{tagField}, { \{showSep ", " slots} } };"
 
 ||| `Just` the C expression text standing in for `l`'s never-declared
 ||| variable if it's an InlineMap-registered local, or an RCConst (see
@@ -1463,7 +1474,7 @@ conAltCondExpr sc' (MkRConAlt name coninfo tag args body) = do
                 -- zero-argument+tagged, so RCEmptyCon never covers them
                 -- -- sc' is always a real heap IDRIS2RC2_Constructor*
                 -- here.
-                Nothing   => "! strcmp(((IDRIS2RC2_Constructor *)\{sc'})->name, idris2rc2_constr_\{cName name})"
+                Nothing   => "! strcmp(idris2rc2_conName(\{sc'}), idris2rc2_constr_\{cName name})"
                 -- sc' may be a tagged pointer (a zero-argument
                 -- constructor of *this* ADT, see RCEmptyCon in
                 -- RCExp.idr) as well as a real heap

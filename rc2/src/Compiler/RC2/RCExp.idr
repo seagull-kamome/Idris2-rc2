@@ -661,7 +661,7 @@ record RCNameFold m where
   onUnderApp : Name -> m
   ||| `RCon` (dynamic) and `RCConstCon` (`ConstFold`-folded literal) --
   ||| `tag` distinguishes the untagged ones that carry a runtime
-  ||| `->name` string.
+  ||| name string (`doc/constructor-layout.md`).
   onCon : Name -> (tag : Maybe Int) -> m
   ||| `RCConstClosure` -- a `ConstFold`-folded zero-capture closure.
   onConstClosure : Name -> m

@@ -297,11 +297,11 @@ program-fixpoint-style passes.)
 
 1. **Untagged constructor name references across modules.** A
    constructor built without a small-int tag (`RCon`'s own `tag = Nothing`,
-   or `RCConstCon`'s equivalent) sets its runtime `->name` field to a
-   file-scope `idris2rc2_constr_<name>` string constant
-   (`createCFunctions`'s own `RCon` case; `Emit.Util.boxedConstConExpr`'s
-   `nameField`). `declarationsOf`/`collectDeclarations` only forward-
-   declares this for a constructor the *current* `defs` list itself
+   or `RCConstCon`'s equivalent) stores a file-scope
+   `idris2rc2_constr_<name>` string constant in its name slot
+   (`constructor-layout.md`; `createCFunctions`'s own `RCon` case,
+   `Emit.Util.boxedConstConExpr`). `declarationsOf`/`collectDeclarations`
+   only forward-declares this for a constructor the *current* `defs` list itself
    defines -- a module that merely *references* one owned by another
    module (found via `Prelude.Basics` referencing `Builtin.Void`) got
    no declaration at all: a plain "undeclared identifier" C error.

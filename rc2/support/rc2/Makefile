@@ -24,6 +24,10 @@ $(TARGET): $(OBJS)
 	$(AR) rc $@ $^
 	$(RANLIB) $@
 
+# Every object depends on every header: a layout change in
+# idris2rc2_datatypes.h must recompile all of them.
+$(OBJS): $(wildcard *.h)
+
 %.o: %.c
 	$(CC) $(CFLAGS) $(CPPFLAGS) -c $< -o $@
 

@@ -672,7 +672,8 @@ overflow has not been measured.
 
 `Data.List.sort` of 1M pseudo-random `Int`s took 4.18s on rc2 and
 1.23s on Chez. Cause 1 is fixed (`Compiler.RC2.DeadArgs`,
-`rc2/doc/dead-args.md`), which brings `sort` to 3.21s. The rest remain.
+`rc2/doc/dead-args.md`), which brings `sort` to 3.21s, and the smaller
+constructor cells of `rc2/doc/constructor-layout.md` to 3.12s. The rest remain.
 Each cause was isolated by an experiment on copies of `Data.List`'s own
 code:
 
@@ -708,3 +709,35 @@ code:
 5. **Boxed `Int`** (the rest). An `Int` outside 0..99 is a heap
    `IDRIS2RC2_Int64`, so every comparison chases two pointers; Chez's
    fixnums are immediate.
+
+Re-measured after `DeadArgs` (3.21s):
+
+| Variant | Time |
+|---|---|
+| as is | 3.21s |
+| non-atomic `dup`/`drop` | 2.55s |
+| mimalloc | 2.45s |
+| both | 1.81s |
+
+In the 1.81s run:
+- **The TRMC'd `mergeBy` loop is 42%.** About two thirds of that is
+  memory stalls:
+  - loading the list cells' fields (37% of the loop);
+  - touching the boxed `Int`s' refcounts to `dup` them for the
+    comparator (30%).
+- **The comparator call path is about 28%:** `applyClosureN`,
+  `dispatchFn`, wrapper, worker, `trampoline`. There is no allocation;
+  it costs about 25ns per comparison.
+- **`split` is 8% and teardown 5%.**
+
+6. **Closure cells have the same padding.** `IDRIS2RC2_Closure` is laid
+   out as:
+   - header, then 4 bytes of padding;
+   - `fn`;
+   - `arity`/`filled`, then 6 bytes of padding;
+   - `args`.
+
+   Moving `arity`/`filled` right after the header would shrink the part
+   before `args` from 24 to 16 bytes, by reordering, without packing.
+   It matters for `sort`'s comparator closures and for partial
+   applications generally. Not measured yet.

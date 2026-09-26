@@ -106,13 +106,19 @@ typedef struct {
   char *str; // NUL-terminated, UTF-8 bytes; indexing is byte-based
 } IDRIS2RC2_String;
 
+// `tag` is -1 for a constructor identified by name instead, which keeps
+// its name in one extra slot after its fields: rc2/doc/constructor-layout.md.
 typedef struct {
   IDRIS2RC2_Header header;
-  int32_t arity;
-  int32_t tag; // -1 if this constructor is identified by name instead
-  char const *name;
+  uint16_t arity;
+  int16_t tag;
   IDRIS2RC2_Value *args[];
 } IDRIS2RC2_Constructor;
+
+#define idris2rc2_conName(p) \
+  ((char const *)((IDRIS2RC2_Constructor *)(p))->args[((IDRIS2RC2_Constructor *)(p))->arity])
+#define idris2rc2_setConName(c, nm) \
+  ((c)->args[(c)->arity] = (IDRIS2RC2_Value *)(void *)(nm))
 
 // A zero-argument, tagged data constructor other than Nil/Nothing/Z/
 // MkUnit (those four are represented as a bare NULL instead, matched by
@@ -176,9 +182,8 @@ typedef struct {
 #define IDRIS2RC2_DEFINE_CONST_CONSTRUCTOR(n) \
   typedef struct { \
     IDRIS2RC2_Header header; \
-    int32_t arity; \
-    int32_t tag; \
-    char const *name; \
+    uint16_t arity; \
+    int16_t tag; \
     IDRIS2RC2_Value *args[n]; \
   } IDRIS2RC2_ConstConstructor##n;
 IDRIS2RC2_DEFINE_CONST_CONSTRUCTOR(1)
