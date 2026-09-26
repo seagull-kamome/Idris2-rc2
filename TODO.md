@@ -623,6 +623,8 @@ sites) aren't pushed into at all yet.
 
 ## Robustness/performance: tail recursion modulo constructor (TRMC)
 
+Design: `rc2/doc/trmc.md`.
+
 A self-call under a constructor, as in `x :: mergeBy order xs ys`, is
 not a tail call, so it uses one C stack frame per element. Around 100k
 elements that is enough to overflow the C stack (`KNOWN-BUGS.md`,
