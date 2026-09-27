@@ -40,6 +40,8 @@
 #   --no-valgrind      Skip the valgrind pass entirely (faster).
 #   --valgrind-all     Run valgrind on every smoke test, not just the
 #                       curated leak-sensitive subset.
+#   --no-tsan          Skip the ThreadSanitizer pass (tsan.sh) over the
+#                       tests that run Idris code on several threads.
 #
 # VALGRIND_JOBS=N (env var, not a flag) -- how many valgrind runs to
 # execute concurrently (default: nproc/2, floored at 1). Each run is
@@ -157,6 +159,7 @@ IDRIS2RC2="$RC2_DIR/build/exec/idris2-rc2"
 
 SKIP_BUILD=0
 DO_VALGRIND=1
+DO_TSAN=1
 VALGRIND_ALL=0
 REGEN_EXPECTED=0
 EXTRA_DIRECTIVES=()
@@ -164,6 +167,7 @@ while [ $# -gt 0 ]; do
     case "$1" in
         --skip-build) SKIP_BUILD=1; shift ;;
         --no-valgrind) DO_VALGRIND=0; shift ;;
+        --no-tsan) DO_TSAN=0; shift ;;
         --valgrind-all) VALGRIND_ALL=1; shift ;;
         --regen-expected) REGEN_EXPECTED=1; shift ;;
         --directive) EXTRA_DIRECTIVES+=("$2"); shift 2 ;;
@@ -418,7 +422,7 @@ NO_REFC_DIFF_TESTS="Test3Data Test7CastMatrix Test8EmptyCon Test17ConstFold Test
 # packCFType allocation (idris2rc2_mkPointer/idris2rc2_mkGCPointer) is
 # new to %export's own argument marshalling and worth the same
 # scrutiny.
-LEAK_SENSITIVE_TESTS="Test1Basics Test9SelfTailLoop Test11DualABILeak Test12ConAltNative Test13NativeArgChain Test14SmallFunctionInline Test15CompareFusionThroughCall Test16LoopContinuePostDrop Test17ConstFold Test18ClosureInPlaceGrow Test19LoopInvariantParam Test22BranchSinking Test24CStructSupport Test26GCPtrAliasString Test27FFIDualABI Test28Utf8Strings Test33WideDualABIWorker Test35NetworkLoopback Test36ReuseOfferUniqueLeak Test37SystemMisc Test41FFIMalloc Test42SupportMisc Test44IORefExtPrimLeak Test46FastPackUnconditional Test49IntegerOpReuse Test57LoopCallArgNativeShadow Test59Export Test66ClosureFastPath Test69ConstFoldClosure Test70ConstFoldClosureCallthrough Test79DupMerge Test84CgExternStruct Test85CgExternStructPtrField Test86CafMemoization Test87SpecConstCon Test88KnownConFold Test89CafDualABI Test90StructReturn Test91IntConstFold Test92ArityRaise Test93ApplyFold Test94LoopConstClosureParam Test95Trmc Test96TeardownDeep Test97ConAltNativeLeadingDup Test98ClosureCtx Test99DeadArgs Test100TrmcHoles Test101TrmcMutual Test102MultiThreadSwitch"
+LEAK_SENSITIVE_TESTS="Test1Basics Test9SelfTailLoop Test11DualABILeak Test12ConAltNative Test13NativeArgChain Test14SmallFunctionInline Test15CompareFusionThroughCall Test16LoopContinuePostDrop Test17ConstFold Test18ClosureInPlaceGrow Test19LoopInvariantParam Test22BranchSinking Test24CStructSupport Test26GCPtrAliasString Test27FFIDualABI Test28Utf8Strings Test33WideDualABIWorker Test35NetworkLoopback Test36ReuseOfferUniqueLeak Test37SystemMisc Test41FFIMalloc Test42SupportMisc Test44IORefExtPrimLeak Test46FastPackUnconditional Test49IntegerOpReuse Test57LoopCallArgNativeShadow Test59Export Test66ClosureFastPath Test69ConstFoldClosure Test70ConstFoldClosureCallthrough Test79DupMerge Test84CgExternStruct Test85CgExternStructPtrField Test86CafMemoization Test87SpecConstCon Test88KnownConFold Test89CafDualABI Test90StructReturn Test91IntConstFold Test92ArityRaise Test93ApplyFold Test94LoopConstClosureParam Test95Trmc Test96TeardownDeep Test97ConAltNativeLeadingDup Test98ClosureCtx Test99DeadArgs Test100TrmcHoles Test101TrmcMutual Test102MultiThreadSwitch Test104ThreadStress"
 
 # KNOWN-BUGS.md's own remaining pre-existing leaks -- "definitely
 # lost" byte count, exactly. Anything else non-zero is a genuine new
@@ -824,6 +828,18 @@ elif [ "$DO_VALGRIND" -eq 1 ]; then
         fi
     done
     echo "(valgrind phase: ${valgrind_time}s wall, ${#valgrind_names[@]} tests, $valgrind_jobs parallel jobs)"
+fi
+
+if [ "$DO_TSAN" -eq 1 ]; then
+    echo
+    echo "=== ThreadSanitizer (tsan.sh) ==="
+    while IFS= read -r line; do
+        case "$line" in
+            "PASS  "*) report_pass "${line#PASS  }" ;;
+            "FAIL  "*) report_fail "${line#FAIL  }" ;;
+            *) echo "$line" ;;
+        esac
+    done < <("$SCRIPT_DIR/tsan.sh" 2>&1)
 fi
 
 echo

@@ -198,14 +198,17 @@ in `idris2rc2_memory.h`.
   multithreaded`.
 - rc2base `TestMultiThreadRC2`: it is up after `enableMultiThreading`,
   and a `forkJoin` afterwards still works.
+- `Test104ThreadStress`: eight `forkJoin` threads map over one shared
+  2,000-element list and return new lists, dropped on the main thread.
 
-**ThreadSanitizer, by hand.** Not part of `verify.sh`. The runtime and
-rc2base's C were built with `-fsanitize=thread`, and linked with the
-generated C of these programs:
-- rc2base's `TestConcurrency` and `TestMVar`;
-- `Test102` and `TestMultiThreadRC2`;
-- a stress program in which eight `forkJoin` threads map over one
-  shared 2,000-element list and return new lists.
+**ThreadSanitizer: `tests/tsan.sh`**, run as `verify.sh`'s last phase
+(`--no-tsan` skips it). It builds the runtime and rc2base's C with
+`-fsanitize=thread`, links them with the generated C of these programs,
+and fails on any TSan warning:
+- `Test102` and `Test104`;
+- rc2base's `TestConcurrency`, `TestMVar` and `TestMultiThreadRC2`.
 
-Over 10 runs each, they produced no warnings. The pre-existing runtime
-had fence false positives in 6 of 45 runs (see "Runtime operations").
+Each runs `TSAN_RUNS` times (default 3), since a race may show up in
+only some interleavings. Over 10 runs each they produced no warnings;
+the pre-existing runtime had fence false positives in 6 of 45 runs (see
+"Runtime operations").
