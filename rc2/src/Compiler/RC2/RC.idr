@@ -157,6 +157,7 @@ boolBranches _ _ = Nothing
 ||| `doc/rapp-nary-closure-apply.md` for why this collapses an entire
 ||| curried closure application into one `RApp` node instead of a
 ||| chain of them.
+total
 collectAppChain : Lifted vars -> Maybe LazyReason -> Lifted vars -> (Lifted vars, Maybe LazyReason, List1 (Lifted vars))
 collectAppChain (LApp _ lazy c a) _ x =
     let (base, lazy0, args) = collectAppChain c lazy a in (base, lazy0, appendl args [x])

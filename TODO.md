@@ -819,10 +819,6 @@ both sources.
 
 ### A. 小さく閉じた置き換え(1箇所ずつ、他の変換へ波及しにくい)
 
-- **`toSubst`の引数個数**(`Inline.idr:194`「call arity mismatch」)。
-  呼び出し側で`length args = length calleeArgs`を一度だけ判定し、
-  その等式を渡せば`toSubst`自体は全域になる。判定の失敗は
-  「インライン化しない」に落とせるので、例外も要らなくなる。
 - **コンストラクタのarity/tagが16bitに収まる**(`Emit/Util.idr:127`)。
   上流から来る値なので証明は作れないが、`ConInfo`を受け取る所で一度
   検査して、検査済みを示す型(`Bounded16`など)に包めば、Emit側の

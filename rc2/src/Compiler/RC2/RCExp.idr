@@ -228,6 +228,7 @@ CmpOp = Subset (PrimFn 2) IsCmp
 
 ||| The operand type of a comparison.
 export
+total
 cmpOpTy : CmpOp -> PrimType
 cmpOpTy (Element (LT ty) _) = ty
 cmpOpTy (Element (GT ty) _) = ty

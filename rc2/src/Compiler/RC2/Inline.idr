@@ -30,6 +30,7 @@ import Core.FC
 import Core.TT
 
 import Data.List
+import Data.Nat
 import Data.SortedMap
 import Data.SortedSet
 import Data.Vect
@@ -183,15 +184,11 @@ mutual
 
 ||| Builds the positional substitution environment for a call, matching
 ||| `calleeArgs`'s own order one-for-one against the call's own argument
-||| list -- `Core`-level failure (never expected to actually trigger: a
-||| fully-saturated `LAppName` call's own arity always matches its
-||| target's declared arity) rather than a partial function, so a future
-||| change elsewhere that broke this invariant would fail loudly instead
-||| of silently miscompiling.
-toSubst : {0 vars : Scope} -> (calleeArgs : Scope) -> List (Lifted vars) -> Core (Subst Lifted calleeArgs vars)
-toSubst [] [] = pure []
-toSubst (_ :: ds) (a :: as) = (a ::) <$> toSubst ds as
-toSubst _ _ = throw (InternalError "[rc2] Compiler.RC2.Inline: call arity mismatch")
+||| list, whose length the caller has already checked against it.
+total
+toSubst : {0 vars : Scope} -> (calleeArgs : Scope) -> Vect (length calleeArgs) (Lifted vars) -> Subst Lifted calleeArgs vars
+toSubst [] [] = []
+toSubst (_ :: ds) (a :: as) = a :: toSubst ds as
 
 ||| `calleeArgs` is erased in `inlineCall`'s own context (see
 ||| `FreelyEmbeddable Lifted`'s own note -- `Lifted`'s scope index carries
@@ -219,8 +216,8 @@ inlineCall body env = substLifted zero (sizeOfSubst env) env (embed body)
 ||| `let` first: substituted directly, an argument would be evaluated
 ||| once per use of its parameter in `body` (or never, for an unused
 ||| one), where the call evaluated it exactly once, before the body.
-spliceArgs : FC -> (eargs : List Name) -> Lifted eargs -> List (Lifted vars) -> Core (Lifted vars)
-spliceArgs fc eargs body args = go args []
+spliceArgs : FC -> (eargs : List Name) -> Lifted eargs -> Vect (length eargs) (Lifted vars) -> Lifted vars
+spliceArgs fc eargs body args = go args [] (plusZeroRightNeutral _)
   where
     atomic : Lifted vs -> Bool
     atomic (LLocal _ _) = True
@@ -228,13 +225,14 @@ spliceArgs fc eargs body args = go args []
     atomic (LErased _) = True
     atomic _ = False
 
-    go : List (Lifted vs) -> List (Lifted vs) -> Core (Lifted vs)
-    go [] acc = inlineCall body <$> toSubst eargs (reverse acc)
-    go (a :: as) acc =
+    go : {0 m, k : Nat} -> Vect m (Lifted vs) -> Vect k (Lifted vs) -> (0 _ : m + k = length eargs) -> Lifted vs
+    go [] acc prf = inlineCall body (toSubst eargs (reverse (replace {p = \n => Vect n (Lifted vs)} prf acc)))
+    go {m = S m'} {k} (a :: as) acc prf =
         if atomic a
-           then go as (a :: acc)
-           else LLet fc (MN "inlineArg" 0) a <$>
+           then go as (a :: acc) (trans (sym (plusSuccRightSucc m' k)) prf)
+           else LLet fc (MN "inlineArg" 0) a $
                   go (map weaken as) (LLocal {idx = 0} fc First :: map weaken acc)
+                     (trans (sym (plusSuccRightSucc m' k)) prf)
 
 ||| A cheap, coarse structural node count -- not calibrated against
 ||| actual generated-C size, just a proxy for "small helper" to bound how
@@ -687,13 +685,16 @@ mutual
   inlineLifted : SortedMap Name Eligible -> Lifted vars -> Core (Lifted vars)
   inlineLifted elig (LAppName fc lazy n args)
       = do args' <- traverse (inlineLifted elig) args
-           case SortedMap.lookup n elig of
+           let call = LAppName fc lazy n args'
+           pure $ case SortedMap.lookup n elig of
                 Just (MkEligible eargs ebody single) =>
-                    if length eargs == length args' && not (allLiteralArgs args')
-                          && not (single && isJust lazy)
-                       then spliceArgs fc eargs ebody args'
-                       else pure $ LAppName fc lazy n args'
-                Nothing => pure $ LAppName fc lazy n args'
+                    case exactLength (length eargs) (fromList args') of
+                         Just vargs =>
+                             if not (allLiteralArgs args') && not (single && isJust lazy)
+                                then spliceArgs fc eargs ebody vargs
+                                else call
+                         Nothing => call
+                Nothing => call
   inlineLifted elig (LUnderApp fc n m args)
       = LUnderApp fc n m <$> traverse (inlineLifted elig) args
   inlineLifted elig (LApp fc lazy c a)
