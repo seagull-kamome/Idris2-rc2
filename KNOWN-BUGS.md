@@ -169,6 +169,22 @@ entry rather than leaving it stale.
   in rc2 itself (this never reaches rc2's own compiler at all), but
   worth knowing before designing any future `Struct` binding with more
   than a handful of fields, rc2-targeted or not.
+- **A failed C compile still exits 0, with no "Compilation failed".**
+  `idris2-rc2 --cg rc2 -o prog Prog.idr` whose generated C fails in gcc
+  (e.g. a `%foreign "C:no_such_function"`) prints gcc's errors, writes
+  no executable, and exits 0. Real `idris2 --cg refc` does the same. The
+  cause is the frontend, not the backend: rc2's `compileExpr` returns
+  `Nothing` (`rc2/src/Compiler/RC2/RC2.idr`, `compileExprWhole`) and
+  `compileExp` turns that into `CompilationFailed`
+  (`idris2-src/src/Idris/REPL.idr`), but `-o`'s `postOptions` discards
+  it with `ignore $ compileExp ...` (`idris2-src/src/Idris/SetOptions.idr`),
+  and so does an ipkg build's executable step
+  (`idris2-src/src/Idris/Package.idr`). A script driving the compiler
+  must therefore check that the executable exists rather than trust the
+  exit code -- `rc2/tests/verify.sh` does (`[ -x ... ]`). Found
+  2026-09-27 through idris2-curl's `verify.sh`, which checked the exit
+  code and so reported an rc2 gcc failure as "no such file" at run
+  time.
 
 ## Retired: `--directive noreuse` no longer exists
 
