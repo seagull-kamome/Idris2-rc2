@@ -49,12 +49,50 @@ typedef struct {
   // Values that reach the maximum reference count are treated as immortal
   // (never freed). This also covers statically-allocated values.
 #define IDRIS2RC2_REFCOUNT_MAX UINT16_MAX
-  _Atomic uint16_t refCount;
+  union {
+    _Atomic uint16_t refCount;
+    uint16_t rc;
+  };
   uint8_t tag;
   uint8_t reserved;
 } IDRIS2RC2_Header;
 
-#define IDRIS2RC2_STOCKVAL(t) {IDRIS2RC2_REFCOUNT_MAX, (t), 0}
+// Plain refcount updates until the program goes multi-threaded, atomic
+// from then on: rc2/doc/hybrid-refcount.md.
+extern bool idris2rc2_threaded;
+
+static inline void idris2rc2_rc_retain(IDRIS2RC2_Header *h) {
+  if (__builtin_expect(idris2rc2_threaded, 0)) {
+    uint16_t c = atomic_load_explicit(&h->refCount, memory_order_relaxed);
+    if (c != IDRIS2RC2_REFCOUNT_MAX)
+      atomic_fetch_add_explicit(&h->refCount, 1, memory_order_relaxed);
+    return;
+  }
+  if (h->rc != IDRIS2RC2_REFCOUNT_MAX)
+    h->rc++;
+}
+
+// Drops one reference; true if it was the last, so the caller tears the
+// object down. Once threaded, the acquire before that is a load, not
+// atomic_thread_fence: ThreadSanitizer does not model fences and reports
+// every such teardown as a race.
+static inline bool idris2rc2_rc_release(IDRIS2RC2_Header *h) {
+  if (__builtin_expect(idris2rc2_threaded, 0)) {
+    uint16_t c = atomic_load_explicit(&h->refCount, memory_order_relaxed);
+    if (c == IDRIS2RC2_REFCOUNT_MAX ||
+        atomic_fetch_sub_explicit(&h->refCount, 1, memory_order_release) != 1)
+      return false;
+    (void)atomic_load_explicit(&h->refCount, memory_order_acquire);
+    return true;
+  }
+  uint16_t c = h->rc;
+  if (c == IDRIS2RC2_REFCOUNT_MAX)
+    return false;
+  h->rc = (uint16_t)(c - 1);
+  return c == 1;
+}
+
+#define IDRIS2RC2_STOCKVAL(t) {{IDRIS2RC2_REFCOUNT_MAX}, (t), 0}
 
 typedef struct {
   IDRIS2RC2_Header header;

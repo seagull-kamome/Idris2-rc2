@@ -342,9 +342,7 @@ IDRIS2RC2_Value *idris2rc2_trampoline(IDRIS2RC2_Value *it) {
     // immortal (REFCOUNT_MAX) closure can never reach this decrement as
     // the code is written today. Added anyway for symmetry/future-
     // proofing against a caller that someday hands this an immortal one.
-    if (c->header.refCount != IDRIS2RC2_REFCOUNT_MAX &&
-        atomic_fetch_sub_explicit(&c->header.refCount, 1, memory_order_release) == 1) {
-      atomic_thread_fence(memory_order_acquire);
+    if (idris2rc2_rc_release(&c->header)) {
       free(c);
     }
   }
@@ -444,9 +442,7 @@ IDRIS2RC2_Value *idris2rc2_applyClosureN(IDRIS2RC2_Value *_c, IDRIS2RC2_Value **
       // unconditional-atomic-decrement race-freedom, as
       // idris2rc2_trampoline's own teardown after its own
       // dispatchClosure call.
-      if (c->header.refCount != IDRIS2RC2_REFCOUNT_MAX &&
-          atomic_fetch_sub_explicit(&c->header.refCount, 1, memory_order_release) == 1) {
-        atomic_thread_fence(memory_order_acquire);
+      if (idris2rc2_rc_release(&c->header)) {
         free(c);
       }
     } else {
@@ -485,14 +481,12 @@ IDRIS2RC2_Value *idris2rc2_applyClosureN(IDRIS2RC2_Value *_c, IDRIS2RC2_Value **
 void idris2rc2_dropReuseConstructor(IDRIS2RC2_Constructor *c) {
   if (!c)
     return;
-  IDRIS2RC2_VERIFY(c->header.refCount > 0, "refCount %d", (int)c->header.refCount);
+  IDRIS2RC2_VERIFY(c->header.rc > 0, "refCount %d", (int)c->header.rc);
   // Only ever called on a value whose uniqueness idris2rc2_isUnique has
   // already established statically (see Reuse.idr/reuse-analysis.md), so
-  // no other thread can concurrently touch this refCount -- atomicity
-  // here is just so the operation itself is a well-defined memory access
-  // alongside every other refCount op, not a response to a real race.
-  if (atomic_fetch_sub_explicit(&c->header.refCount, 1, memory_order_release) == 1) {
-    atomic_thread_fence(memory_order_acquire);
+  // no other thread can concurrently touch this refCount; it still goes
+  // through idris2rc2_rc_release like every other decrement.
+  if (idris2rc2_rc_release(&c->header)) {
     free(c);
   }
 }

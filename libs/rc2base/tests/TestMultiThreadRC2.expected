@@ -1,0 +1,3 @@
+at start: False
+after enableMultiThreading: True
+sum on another thread: 500500, here: 500500

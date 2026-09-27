@@ -4,6 +4,19 @@
 
 #include <pthread.h>
 
+bool idris2rc2_threaded = false;
+
+void idris2rc2_enableMultiThreading(void) {
+  // Only the first call may write: later ones can run while other threads
+  // read the flag.
+  if (!idris2rc2_threaded)
+    idris2rc2_threaded = true;
+}
+
+int idris2rc2_isMultiThreaded(void) {
+  return idris2rc2_threaded;
+}
+
 IDRIS2RC2_Value *idris2rc2_alloc(size_t size) {
   size_t aligned = ((size + sizeof(void *) - 1) / sizeof(void *)) * sizeof(void *);
   IDRIS2RC2_Value *v;
@@ -14,7 +27,7 @@ IDRIS2RC2_Value *idris2rc2_alloc(size_t size) {
   v = (IDRIS2RC2_Value *)malloc(aligned);
 #endif
   IDRIS2RC2_VERIFY(v && !idris2rc2_is_unboxed(v), "allocation failed");
-  v->header.refCount = 1;
+  v->header.rc = 1;
   v->header.tag = IDRIS2RC2_TAG_NONE;
   v->header.reserved = 0;
   return v;
@@ -181,14 +194,7 @@ static inline int idris2rc2_hasChildren(IDRIS2RC2_Value *v) {
 // Whether dropping `v` released its last reference, like idris2rc2_drop
 // minus the teardown itself.
 static inline int idris2rc2_releaseLast(IDRIS2RC2_Value *v) {
-  if (!v || idris2rc2_is_unboxed(v))
-    return 0;
-  if (v->header.refCount == IDRIS2RC2_REFCOUNT_MAX)
-    return 0;
-  if (atomic_fetch_sub_explicit(&v->header.refCount, 1, memory_order_release) != 1)
-    return 0;
-  atomic_thread_fence(memory_order_acquire);
-  return 1;
+  return v && !idris2rc2_is_unboxed(v) && idris2rc2_rc_release(&v->header);
 }
 
 // Drop `v`'s children (each of which may itself still be shared, so
@@ -327,9 +333,9 @@ void idris2rc2_free(IDRIS2RC2_Value *v) {
   // never real heap allocations to begin with.
   if (!v || idris2rc2_is_unboxed(v))
     return;
-  IDRIS2RC2_VERIFY(v->header.refCount == 1,
+  IDRIS2RC2_VERIFY(v->header.rc == 1,
                    "idris2rc2_free called on a shared value (refCount=%d)",
-                   (int)v->header.refCount);
+                   (int)v->header.rc);
   idris2rc2_teardown(v);
 }
 
@@ -362,7 +368,7 @@ static pthread_once_t idris2rc2_smallIntegerOnce = PTHREAD_ONCE_INIT;
 
 static void idris2rc2_initSmallInteger(void) {
   for (int i = 0; i < 100; ++i) {
-    idris2rc2_smallInteger[i].header.refCount = IDRIS2RC2_REFCOUNT_MAX;
+    idris2rc2_smallInteger[i].header.rc = IDRIS2RC2_REFCOUNT_MAX;
     idris2rc2_smallInteger[i].header.tag = IDRIS2RC2_TAG_INTEGER;
     idris2rc2_smallInteger[i].header.reserved = 0;
     mpz_init(idris2rc2_smallInteger[i].v);

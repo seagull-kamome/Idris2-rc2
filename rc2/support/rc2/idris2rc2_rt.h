@@ -25,7 +25,9 @@ void idris2rc2_rtFinish(void);
 // struct starting with an IDRIS2RC2_Header `header` field, matching every
 // call site's own concrete pointer type (e.g. IDRIS2RC2_Closure *).
 #define idris2rc2_isUnique(x)                                                \
-  (atomic_load_explicit(&(x)->header.refCount, memory_order_acquire) == 1)
+  ((idris2rc2_threaded                                                        \
+        ? atomic_load_explicit(&(x)->header.refCount, memory_order_acquire)  \
+        : (x)->header.rc) == 1)
 void idris2rc2_dropReuseConstructor(IDRIS2RC2_Constructor *c);
 
 IDRIS2RC2_Value *idris2rc2_applyClosure(IDRIS2RC2_Value *closure, IDRIS2RC2_Value *arg);

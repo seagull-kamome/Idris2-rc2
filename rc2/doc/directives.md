@@ -108,6 +108,11 @@ Directives that look like they belong on this list but don't:
   where the runtime lifecycle hooks are called, a `nomain` driver must
   call `idris2rc2_rtInit()` / `idris2rc2_rtFinish()` itself -- see
   `doc/runtime-lifecycle.md`.
+- **`multithreaded`** makes the generated `main()` switch reference
+  counting to atomic operations right after `idris2rc2_rtInit()`, for a
+  program whose threads start where the runtime cannot see them
+  (`doc/hybrid-refcount.md`). A `nomain` driver calls
+  `idris2rc2_enableMultiThreading()` itself instead.
 
 ## 3. Debug-dump directives
 

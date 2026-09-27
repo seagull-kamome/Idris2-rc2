@@ -27,11 +27,17 @@ IDRIS2RC2_Value *idris2rc2_alloc(size_t size);
 // into every translation unit.
 void idris2rc2_teardown(IDRIS2RC2_Value *v);
 
+// Switches every refcount update to atomic operations for good; called
+// before any thread other than the first can touch an Idris value
+// (rc2/doc/hybrid-refcount.md).
+void idris2rc2_enableMultiThreading(void);
+int idris2rc2_isMultiThreaded(void);
+
 // Increments the refcount of `v` (a no-op for unboxed/NULL/immortal values)
 // and returns it, so it can be used inline: `x = idris2rc2_dup(y);`
 static inline IDRIS2RC2_Value *idris2rc2_dup(IDRIS2RC2_Value *v) {
-  if (v && !idris2rc2_is_unboxed(v) && v->header.refCount != IDRIS2RC2_REFCOUNT_MAX)
-    atomic_fetch_add_explicit(&v->header.refCount, 1, memory_order_relaxed);
+  if (v && !idris2rc2_is_unboxed(v))
+    idris2rc2_rc_retain(&v->header);
   return v;
 }
 
@@ -49,6 +55,13 @@ static inline IDRIS2RC2_Value *idris2rc2_dup_n(IDRIS2RC2_Value *v, int n) {
     // wrap the uint16_t back to a small value, silently losing the
     // object's immortal/shared status -- a CAS loop clamps to
     // REFCOUNT_MAX instead of ever adding past it.
+    if (!idris2rc2_threaded) {
+      uint16_t cur = v->header.rc;
+      if (cur != IDRIS2RC2_REFCOUNT_MAX)
+        v->header.rc = cur > IDRIS2RC2_REFCOUNT_MAX - n
+                         ? IDRIS2RC2_REFCOUNT_MAX : (uint16_t)(cur + n);
+      return v;
+    }
     uint16_t cur = atomic_load_explicit(&v->header.refCount, memory_order_relaxed);
     while (cur != IDRIS2RC2_REFCOUNT_MAX) {
       uint16_t next = cur > IDRIS2RC2_REFCOUNT_MAX - n
@@ -64,14 +77,8 @@ static inline IDRIS2RC2_Value *idris2rc2_dup_n(IDRIS2RC2_Value *v, int n) {
 // Decrements the refcount of `v`, freeing it (recursively) once it reaches
 // zero. A no-op for unboxed/NULL/immortal values.
 static inline void idris2rc2_drop(IDRIS2RC2_Value *v) {
-  if (!v || idris2rc2_is_unboxed(v))
-    return;
-  if (v->header.refCount == IDRIS2RC2_REFCOUNT_MAX)
-    return; // immortal
-  if (atomic_fetch_sub_explicit(&v->header.refCount, 1, memory_order_release) != 1)
-    return;
-  atomic_thread_fence(memory_order_acquire);
-  idris2rc2_teardown(v);
+  if (v && !idris2rc2_is_unboxed(v) && idris2rc2_rc_release(&v->header))
+    idris2rc2_teardown(v);
 }
 // Unconditionally deallocates `v` right now, with no refcount check at
 // all -- the RFree IR primitive's lowering. Only ever safe to call on a

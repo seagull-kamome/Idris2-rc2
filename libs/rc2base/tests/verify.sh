@@ -337,3 +337,16 @@ if diff -u "$TESTS_DIR/TestIORefRC2.expected" "$TMP/actual20.out"; then
 else
     fail "TestIORefRC2 -- output mismatch (see diff above)"
 fi
+
+echo "=== rc2 backend: build TestMultiThreadRC2 (System.GC.RC2: the switch to atomic reference counting) ==="
+nix-shell -p gcc gmp pkg-config --run \
+    "cd '$TESTS_DIR' && '$IDRIS2RC2' --cg rc2 -p rc2base -o TestMultiThreadRC2_verify TestMultiThreadRC2.idr"
+
+echo "=== Run and diff against TestMultiThreadRC2.expected ==="
+"$TESTS_DIR/build/exec/TestMultiThreadRC2_verify" > "$TMP/actual21.out" 2>&1
+
+if diff -u "$TESTS_DIR/TestMultiThreadRC2.expected" "$TMP/actual21.out"; then
+    echo "PASS  TestMultiThreadRC2"
+else
+    fail "TestMultiThreadRC2 -- output mismatch (see diff above)"
+fi

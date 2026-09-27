@@ -419,9 +419,10 @@ case needs one specifically.
   一度だけ立てる「マルチスレッド」フラグで切り替える。
 - refCountを`_Atomic`のままrelaxedで読み書きした試作は効果が半分しか出なかった。
   普通の`uint16_t`とのunionにして非atomic側は全てそちらを通すと大きく改善する。
-- 残りの差(missing-containersで6%)はフラグ確認そのもの。逃げない事が判っている
-  変数を非atomic版で固定するエスケープ解析で削れる。
-- 設計: `rc2/doc/hybrid-refcount.md`。
+- 実装済み(2026-09-27): プロセス全体のフラグで切り替える方式。`rc2/doc/hybrid-refcount.md`。
+  missing-containersで-16%、sortで-23%。
+- 残り: 逃げない事が判っている変数を非atomic版で固定するエスケープ解析。上限は
+  missing-containersで8ポイント(全て非atomicとの差)。
 
 ## foo(%1, %2)形式のFFI定義
 %foreignの自由度が上がればラッパを書く手間が減らせる。RC2専用かつC関数名が%で始まっている場合

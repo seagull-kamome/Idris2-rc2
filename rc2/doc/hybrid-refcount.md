@@ -1,7 +1,8 @@
 # Plain reference counting until the program goes multi-threaded
 
-Status: design (2026-09-27), not implemented. The original motivation
-is in `TODO.md`, "thread-local-awareなdup/dop".
+Status: implemented (2026-09-27), except the escape analysis at the end,
+which is tracked in `TODO.md` ("thread-local-awareなdup/dop") with the
+original motivation.
 
 ## Problem
 
@@ -77,45 +78,79 @@ combine or reorder accesses to an `_Atomic` object, even relaxed ones.
 
 ### Runtime operations
 
-Two helpers carry the check:
-- `idris2rc2_rc_add(h, n)`: a plain add, or a relaxed atomic add;
-- `idris2rc2_rc_sub(h)`: a plain subtract, or a release subtract.
+Two helpers in `idris2rc2_datatypes.h` carry the check. Each tests the
+flag once, then does the whole update, `REFCOUNT_MAX` check included,
+either plainly or atomically:
 
-Every refcount update in the runtime goes through them, including those
-in `rt.c`:
-- `dup`, `dup_n`, `drop`, `releaseLast`;
+| Helper | Once the flag is up |
+|---|---|
+| `idris2rc2_rc_retain(h)` | relaxed load, relaxed add |
+| `idris2rc2_rc_release(h)` | relaxed load, release subtract, acquire load at zero; true if it was the last reference |
+
+Every refcount update in the runtime goes through them, including
+`rt.c`'s:
+- `dup`, `drop`, `releaseLast`;
 - the closure `trampoline`, `tailcallApplyClosure`,
   `dropReuseConstructor`.
 
-The acquire fence after a count reaches zero, and `dup_n`'s CAS loop,
-run only when the flag is set. `isUnique` does an acquire load when the
-flag is set, and a plain load otherwise.
+A first version had four helpers: load, add, subtract, acquire. `dup`
+and `drop` then tested the flag twice, once for the `REFCOUNT_MAX` check
+and once for the update. That cost `missing-containers` 1.5 points
+(-14.9% instead of -16.4%).
+
+Apart from `dup_n`'s own flag-down path, only three places touch `rc`
+directly, each on an object no other thread can reach:
+- a fresh allocation;
+- the small-integer cache's one-time initialisation;
+- the `VERIFY`s on a value already proven unique.
+
+`dup_n`'s CAS loop runs only when the flag is up. `isUnique` does an
+acquire load when the flag is up, and a plain load otherwise.
+
+**The acquire before a teardown is a load, not a fence.** It used to be
+`atomic_thread_fence(memory_order_acquire)`. ThreadSanitizer does not
+model fences, so it reported every teardown that followed another
+thread's release-decrement as a race: 6 of 45 runs of the
+pre-existing runtime, 186 warnings over 50 runs of this one. An acquire
+load of the same count is equivalent, costs one load of a line already
+in cache, and TSan understands it: 0 warnings over 50 runs.
+
+**The `REFCOUNT_MAX` checks are part of the helpers.** A first version
+read `rc` directly there. Once other threads were running,
+those plain reads raced with the atomic updates: TSan reported 1,289
+races in one run of rc2base's `TestMVar`.
 
 ## Measurements (2026-09-27)
 
-The same generated C was linked against each runtime; each figure is
-the best of 3 runs.
+Each program's generated C was linked against:
+- the runtime before this change (atomic);
+- a runtime with every refcount operation plain;
+- the runtime as implemented.
 
-| | atomic (today) | all plain | flag + union |
+Each figure is the best of 3 runs.
+
+| | atomic (before) | all plain | implemented |
 |---|---|---|---|
-| `idris2-missing-containers` | 8.06s | 6.20s (-23%) | 6.68s (-17%) |
-| `sort`, 1M `Int`s | 3.17s | 2.37s (-25%) | 2.44s (-23%) |
-| closures, 1M x 20 | 3.67s | 2.61s (-29%) | 2.72s (-26%) |
-| map/filter, 300k x 50 | 7.31s | 6.70s (-8%) | 6.71s (-8%) |
-| BenchKnownCon | 0.76s | 0.56s | 0.57s |
-| BenchPushCon | 0.31s | 0.22s | 0.22s |
+| `idris2-missing-containers` | 8.11s | 6.18s (-24%) | 6.78s (-16%) |
+| `sort`, 1M `Int`s | 3.17s | 2.38s (-25%) | 2.45s (-23%) |
+| closures, 1M x 20 | 3.66s | 2.60s (-29%) | 2.69s (-27%) |
+| map/filter, 300k x 50 | 7.31s | 6.69s (-8%) | 6.71s (-8%) |
+| BenchKnownCon | 0.76s | 0.57s | 0.57s |
 | BenchClosureChain | 0.17s | 0.10s | 0.10s |
+| BenchPushCon | 0.31s | 0.22s | 0.24s |
 
-- The micro-benchmarks keep almost all of the gain. On
-  `missing-containers`, the flag costs 7% more instructions and 8% more
-  cycles than all-plain. That is one load and test per refcount
+- The micro-benchmarks keep almost all of the gain.
+- On `missing-containers`, the flag costs 7% more instructions and 8%
+  more cycles than all-plain. That is one load and test per refcount
   operation, in a program with a large generated body.
-- Two variants did not help:
-  - fences and `dup_n` still unconditional;
-  - the atomic path moved out of line (`noinline, cold`), which was
-    slightly slower on the micro-benchmarks.
-- map/filter is bound by the input list's cache misses and `malloc`,
+- Map/filter is bound by the input list's cache misses and `malloc`,
   not by counting.
+
+Two variants did not help:
+- gating only the updates, and leaving the fences and `dup_n`
+  unconditional;
+- moving the atomic path out of line (`noinline, cold`), which was
+  slightly slower on the micro-benchmarks.
 
 ## Escape analysis: fixed plain operations (later)
 
@@ -133,9 +168,9 @@ one updating its count. Emit writes `idris2rc2_dup_local` /
 
 `TODO.md` already notes the catch: most such values are unboxed or
 eliminated by the existing constructor escape analysis
-(`constructor-escape-analysis.md`). The ceiling is the 6% between the
-last two columns above. Measure how much of it the analysis reaches
-before building it.
+(`constructor-escape-analysis.md`). The ceiling is the gap between the
+last two columns above: 8 points on `missing-containers`. Measure how
+much of it the analysis reaches before building it.
 
 ## API
 
@@ -155,21 +190,22 @@ export isMultiThreaded : IO Bool
 C code gets `idris2rc2_enableMultiThreading()` and `idris2rc2_threaded`
 in `idris2rc2_memory.h`.
 
-## Plan
+## Tests
 
-1. **Runtime and library.**
-   - Runtime: the flag, the union, the helpers, and every refcount
-     update routed through them.
-   - Raising the flag in `refc_fork` and rc2base's thread starts.
-   - The `multithreaded` directive, set in `idris2rc2_rtInit`.
-   - The `System.GC.RC2` API.
-2. **Tests.**
-   - A new test checks that `isMultiThreaded` is false at start and
-     true after `fork`, after `enableMultiThreading`, and under the
-     directive.
-   - The existing concurrency tests, built with `-fsanitize=thread`:
-     fork, `forkJoin`, `Channel`, Mutex/Condition, and a
-     `TaskWorker`-style pool through a CAF `IORef`.
-   - `verify.sh` under valgrind as usual.
-3. **Measure** against the table above, then decide on the escape
-   analysis.
+- `Test102MultiThreadSwitch`: the flag is down at start, and up after
+  `fork`. Also under valgrind.
+- `Test103MultiThreadedDirective`: it is up at start under `%cg rc2
+  multithreaded`.
+- rc2base `TestMultiThreadRC2`: it is up after `enableMultiThreading`,
+  and a `forkJoin` afterwards still works.
+
+**ThreadSanitizer, by hand.** Not part of `verify.sh`. The runtime and
+rc2base's C were built with `-fsanitize=thread`, and linked with the
+generated C of these programs:
+- rc2base's `TestConcurrency` and `TestMVar`;
+- `Test102` and `TestMultiThreadRC2`;
+- a stress program in which eight `forkJoin` threads map over one
+  shared 2,000-element list and return new lists.
+
+Over 10 runs each, they produced no warnings. The pre-existing runtime
+had fence false positives in 6 of 45 runs (see "Runtime operations").

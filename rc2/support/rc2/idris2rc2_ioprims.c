@@ -184,6 +184,7 @@ static void *idris2rc2_threadTrampoline(void *arg) {
 }
 
 void *idris2rc2_fork(IDRIS2RC2_Closure *fct) {
+  idris2rc2_enableMultiThreading();
   // Prelude.IO's generated prim__fork wrapper drops its own reference to
   // fct right after this call returns (the ordinary "FFI call consumed
   // its argument" convention) -- but the spawned thread keeps using the

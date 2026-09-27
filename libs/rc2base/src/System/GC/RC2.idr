@@ -31,6 +31,9 @@
 ||| doubled one) and the failure mode is the ordinary refcounting one
 ||| instead: a use-after-free or a leak, typically far away from and
 ||| long after the actual mistake.
+|||
+||| It also holds the switch to atomic reference counting for threads
+||| the runtime does not start itself (`enableMultiThreading`).
 module System.GC.RC2
 
 -- Copyright 2026, Hattori,Hiroki. All rights reserved.
@@ -48,6 +51,12 @@ prim__unsafeGCDupN : Boxed -> Int -> PrimIO Boxed
 
 %inline %foreign "RC2:idris2rc2_drop"
 prim__unsafeGCDrop : Boxed -> PrimIO ()
+
+%foreign "RC2:idris2rc2_enableMultiThreading"
+prim__enableMultiThreading : PrimIO ()
+
+%foreign "RC2:idris2rc2_isMultiThreaded"
+prim__isMultiThreaded : PrimIO Int
 
 -------------------------------------------------------------------------------
 
@@ -84,3 +93,19 @@ unsafeGCDupN x n = do
 export
 unsafeGCDrop : a -> IO ()
 unsafeGCDrop x = primIO $ prim__unsafeGCDrop $ believe_me x
+
+-------------------------------------------------------------------------------
+-- Multi-threading switch (rc2/doc/hybrid-refcount.md)
+
+||| Switches rc2's reference counting to atomic operations, for the rest
+||| of the run. Call it once, before a thread the runtime does not start
+||| itself (a C library's own thread running an Idris callback) can touch
+||| any Idris value. `fork` and `forkJoin` already do it.
+export
+enableMultiThreading : IO ()
+enableMultiThreading = primIO prim__enableMultiThreading
+
+||| Whether reference counting has been switched to atomic operations.
+export
+isMultiThreaded : IO Bool
+isMultiThreaded = (/= 0) <$> primIO prim__isMultiThreaded

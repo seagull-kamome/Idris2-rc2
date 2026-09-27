@@ -56,6 +56,12 @@ riskier reverse-engineering pass done under time pressure.
 
 ## Design: atomic refcount, and why these memory orders
 
+Since 2026-09-27 these atomic operations are used only once the program
+goes multi-threaded; until then every refcount update is plain, and the
+acquire before a teardown is a load rather than a fence. See
+`hybrid-refcount.md`. The memory orders below are still the ones used
+once it is.
+
 Changed files at this step: `datatypes.h`, `memory.c`, `runtime.h`.
 `memory.h`/`runtime.c` were unchanged here (see "Resolving the races
 unlocked by real thread spawning" below for why that was safe at the

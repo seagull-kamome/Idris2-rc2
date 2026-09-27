@@ -114,6 +114,7 @@ static void *idris2rc2_joinThreadTrampoline(void *arg) {
 // above) rc2's codegen passes its type witness as a real leading
 // argument, received-and-ignored here.
 void *idris2rc2_fork_join(IDRIS2RC2_Value *, IDRIS2RC2_Closure *fct) {
+  idris2rc2_enableMultiThreading();
   // Same use-after-free reasoning as idris2rc2_fork: the generated FFI
   // wrapper drops its own reference to fct right after this call
   // returns, but the spawned thread keeps using the pointer.

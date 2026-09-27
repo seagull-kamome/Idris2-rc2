@@ -1752,6 +1752,10 @@ generateCSourceFile defs0 exports noMain directEntryPoint dropUnimplementableFor
        int main(int argc, char *argv[])
        {
            idris2rc2_rtInit();
+           \{ ifThenElse ("multithreaded" `elem` directiveList)
+                         "idris2rc2_enableMultiThreading();"
+                         ""
+           }
            \{ ifThenElse (contains "idris_support.h" !(get HeaderFiles))
                          "idris2_setArgs(argc, argv);"
                          ""
