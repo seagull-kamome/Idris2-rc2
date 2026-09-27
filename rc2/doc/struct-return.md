@@ -510,6 +510,26 @@ as one field only: nothing qualified there) against with it:
 
 Identical output apart from the timings.
 
+## Bug found: a narrowed worker under a wider case (2026-09-27)
+
+After transitive closure specialisation, a program using
+idris2-missing-containers' `IOHashMap` failed to compile:
+`'IDRIS2RC2_Ret1' has no member named 'f1'`. It came from
+`IOHashSet.replaceL2`'s `case !(notfound) of`.
+
+The specialised clone of the action returned only one-field
+constructors, so its worker became `Ret1`. The `case` over its result
+still had the two-field `InsertOrReplace` alternative. That alternative
+can never match, but it read `.f1` all the same.
+
+`emitConCaseInto` now leaves out every alternative with more fields
+than the scrutinee's struct is wide. A worker is exactly as wide as the
+widest constructor it returns, so such an alternative is unreachable.
+A small test program did not reproduce the shape: Inline folds the
+pieces together before they narrow. The reproduction is a program
+calling `IOHashMap`'s `read` and `write`, as `missing-containers`'
+benchmark does.
+
 ## Open questions
 
 - **`apply` tails.** 790 functions (at one field) end in a closure call.

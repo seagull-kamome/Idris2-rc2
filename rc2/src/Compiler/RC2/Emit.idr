@@ -645,11 +645,19 @@ mutual
             condFor alt = case scRep of
                                RRet _ _ => retAltCondExpr sc' alt
                                _ => conAltCondExpr sc' alt
+            -- A struct is as wide as the widest constructor the worker
+            -- returns, so an alt with more fields can never match, and
+            -- its fields past the width do not exist in the C struct.
+            -- Specialisation can narrow a worker below its callers' cases.
+            reachable : RConAlt -> Bool
+            reachable (MkRConAlt _ _ _ args _) = case scRep of
+                                                      RRet n _ => length args <= n
+                                                      _ => True
         emitAltChain resolvedSink
             (\alt => (\s => (s, [])) <$> condFor alt)
             (emitConAltBody resolvedSink tailPosition sc)
             (map (\body => branchBody resolvedSink body tailPosition) mDef)
-            alts
+            (filter reachable alts)
 
     ||| Lower a constant/tag switch: same "each alt writes straight into
     ||| the once-resolved `sink`, via `emitAltChain`'s shared `if`-chain
