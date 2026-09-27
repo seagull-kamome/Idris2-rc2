@@ -422,7 +422,13 @@ case needs one specifically.
 - 実装済み(2026-09-27): プロセス全体のフラグで切り替える方式。`rc2/doc/hybrid-refcount.md`。
   missing-containersで-16%、sortで-23%。
 - 残り: 逃げない事が判っている変数を非atomic版で固定するエスケープ解析。上限は
-  missing-containersで8ポイント(全て非atomicとの差)。
+  missing-containersで8ポイント(全て非atomicとの差)。関数内で閉じた解析で固定
+  できるのはidris2-lspで297,911箇所中57箇所しかなく無意味(計測は
+  hybrid-refcount.md)。やるなら関数をまたいでスレッドへ逃げうる値を追う
+  全体解析と、引数がスレッドに閉じている呼び出し元向けの関数の複製が要る。
+- 関数の引数を通して連鎖させる粗い全体解析(複製なし)も見積もった。idris2-lspで5.3%、
+  missing-containersで該当箇所を非atomicに固定しても6.48s→6.37s(-1.7%)で、全て
+  非atomic(5.95s)との差の2割しか埋まらない。打ち切り。
 
 ## foo(%1, %2)形式のFFI定義
 %foreignの自由度が上がればラッパを書く手間が減らせる。RC2専用かつC関数名が%で始まっている場合

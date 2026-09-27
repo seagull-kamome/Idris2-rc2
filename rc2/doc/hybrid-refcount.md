@@ -1,8 +1,8 @@
 # Plain reference counting until the program goes multi-threaded
 
-Status: implemented (2026-09-27), except the escape analysis at the end,
-which is tracked in `TODO.md` ("thread-local-awareなdup/dop") with the
-original motivation.
+Status: implemented (2026-09-27). The escape analysis at the end was
+measured and not pursued. The original motivation is in `TODO.md`
+("thread-local-awareなdup/dop").
 
 ## Problem
 
@@ -171,6 +171,52 @@ eliminated by the existing constructor escape analysis
 (`constructor-escape-analysis.md`). The ceiling is the gap between the
 last two columns above: 8 points on `missing-containers`. Measure how
 much of it the analysis reaches before building it.
+
+**Measured (2026-09-27): an intra-procedural analysis is not worth
+building.** Counted on the final RCExp, over every `dup`, `drop` and
+`postDrop`:
+
+| | sites | on a cell built in the same function | of which never leaves it |
+|---|---|---|---|
+| idris2-lsp | 297,911 | 4,063 | 57 |
+| `missing-containers` | 806 | 10 | 0 |
+
+"Leaves" means passed to a call, stored in a field, returned,
+loop-carried or aliased. Such cells are already gone: unboxed, or
+folded by the constructor escape analysis. Almost every `dup`/`drop`
+acts on a value the function received as a parameter or read out of
+one, a list cell that `map` drops, for example. Fixing those to plain
+operations would need:
+- a whole-program analysis of which values can reach one of the
+  runtime's escape points (`fork`, `Channel`, a shared `IORef`, FFI, a
+  CAF);
+- a clone of each callee for callers whose arguments are known to be
+  thread-local.
+
+**Measured (2026-09-27): chaining through parameters is not worth it
+either.** A rough whole-program estimate:
+- values that may alias or contain each other are joined: aliases,
+  constructor fields, `case` binders, arguments and parameters,
+  results, loop parameters;
+- a group touching FFI, closure application, a CAF, a primitive, or a
+  function also used as a closure may be shared;
+- no cloning.
+
+It finds 15,768 of idris2-lsp's 297,911 sites (5.3%). 7,737 of its
+17,870 functions are also partially applied, so their parameters have
+unknown callers. On `missing-containers` it finds 283 of 806 sites. The
+236 of them that could be located in the generated C were made plain by
+hand:
+
+| `missing-containers` | time |
+|---|---|
+| as implemented | 6.48s |
+| those sites plain | 6.37s (-1.7%) |
+| every refcount operation plain | 5.95s |
+
+That recovers a fifth of the gap, before whatever a sound
+implementation would have to give up. Not pursued; the allocator is
+the larger remaining cost.
 
 ## API
 
