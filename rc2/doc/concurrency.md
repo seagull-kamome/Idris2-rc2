@@ -97,7 +97,7 @@ time, and what changed once real thread spawning landed).
   the decrement is left as a plain, non-atomic comparison -- safe
   because a value that has reached immortal status never has its
   `refCount` written again by anything (see `idris2rc2_dup`'s own
-  `!= IDRIS2RC2_REFCOUNT_MAX` guard and the small-integer-cache
+  `!= IDRIS2RC2_REFCOUNT_MAX` guard and the then small-integer-cache
   initialization in `idris2rc2_getSmallInteger`), so there is no write
   for a concurrent reader of that field to race with.
 - **`runtime.h`, `idris2rc2_isUnique`**: now

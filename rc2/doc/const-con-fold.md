@@ -184,7 +184,7 @@ own invariant already required. `asConstLocal` (deciding whether a
 `RCon` field is "constant enough" to fold into a `RCConstCon`) has a
 second, independent exclusion for the same underlying reason but a
 different mechanism -- `RCConst (BI _)` specifically, because `BI`'s
-own C rendering (`idris2rc2_getSmallInteger`/`idris2rc2_mkIntegerLiteral`)
+own C rendering outside the immediate range (`idris2rc2_mkIntegerLiteral`)
 is a real function call, never a compile-time constant expression a
 static initializer could hold, even setting the leak aside.
 

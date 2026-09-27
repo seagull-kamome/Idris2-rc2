@@ -117,9 +117,6 @@ IDRIS2RC2_Value *idris2rc2_mkDouble(double d);
 IDRIS2RC2_Value *idris2rc2_mkBits64(uint64_t i);
 IDRIS2RC2_Value *idris2rc2_mkInt64(int64_t i);
 
-IDRIS2RC2_Integer *idris2rc2_mkInteger(void);
-IDRIS2RC2_Value *idris2rc2_mkIntegerLiteral(char const *digits);
-IDRIS2RC2_Integer *idris2rc2_mkIntegerFromMpz(mpz_t src);
 IDRIS2RC2_String *idris2rc2_mkEmptyString(size_t bufLen); // bufLen includes the NUL
 IDRIS2RC2_String *idris2rc2_mkString(char const *s);
 
@@ -131,6 +128,40 @@ IDRIS2RC2_Array *idris2rc2_mkArray(int length);
 // with a bare free() when the wrapper's refcount reaches zero.
 IDRIS2RC2_Buffer *idris2rc2_mkBuffer(void *buf);
 
-extern IDRIS2RC2_Integer idris2rc2_smallInteger[100];
-IDRIS2RC2_Value *idris2rc2_getSmallInteger(int n);
 extern IDRIS2RC2_String const idris2rc2_emptyStringValue;
+
+// Integer: an immediate (the Int64 layout) when it lies in
+// [IDRIS2RC2_IMM_I64_MIN, IDRIS2RC2_IMM_I64_LIMIT), a boxed mpz otherwise
+// -- never a boxed mpz for a value that fits (rc2/doc/immediate-ints.md).
+_Static_assert(GMP_NUMB_BITS == 64, "an immediate Integer is viewed as one GMP limb");
+IDRIS2RC2_Integer *idris2rc2_mkInteger(void);
+IDRIS2RC2_Value *idris2rc2_mkIntegerLiteral(char const *digits);
+IDRIS2RC2_Value *idris2rc2_mkIntegerFromMpz(mpz_srcptr src);
+IDRIS2RC2_Value *idris2rc2_mkIntegerBoxedI64(int64_t n);
+IDRIS2RC2_Value *idris2rc2_mkIntegerBoxedU64(uint64_t n);
+IDRIS2RC2_Value *idris2rc2_integerNormalize(IDRIS2RC2_Integer *r);
+
+static inline IDRIS2RC2_Value *idris2rc2_mkIntegerI64(int64_t n) {
+  if (n >= IDRIS2RC2_IMM_I64_MIN && n < IDRIS2RC2_IMM_I64_LIMIT)
+    return IDRIS2RC2_IMM_INT64(n);
+  return idris2rc2_mkIntegerBoxedI64(n);
+}
+static inline IDRIS2RC2_Value *idris2rc2_mkIntegerU64(uint64_t n) {
+  if (n < (uint64_t)IDRIS2RC2_IMM_I64_LIMIT)
+    return IDRIS2RC2_IMM_INT64(n);
+  return idris2rc2_mkIntegerBoxedU64(n);
+}
+
+// Stack storage letting an immediate Integer be read as a read-only mpz.
+typedef struct {
+  __mpz_struct z;
+  mp_limb_t limb;
+} IDRIS2RC2_IntegerView;
+
+static inline mpz_srcptr idris2rc2_integerView(IDRIS2RC2_Value *x, IDRIS2RC2_IntegerView *buf) {
+  if (!idris2rc2_is_unboxed(x))
+    return ((IDRIS2RC2_Integer *)x)->v;
+  int64_t n = idris2rc2_imm_signed(x);
+  buf->limb = n < 0 ? -(uint64_t)n : (uint64_t)n;
+  return mpz_roinit_n(&buf->z, &buf->limb, n < 0 ? -1 : 1);
+}

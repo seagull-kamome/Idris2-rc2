@@ -1,4 +1,4 @@
-# Immediate `Int`, `Int64` and `Bits64`
+# Immediate `Int`, `Int64`, `Bits64` and `Integer`
 
 Status: implemented (2026-09-27).
 
@@ -83,6 +83,82 @@ straight from memory without a shift.
 integer constant cast to a pointer, so it is also valid in a static
 initializer, such as a folded constant constructor's field. A literal
 out of range keeps its static box.
+
+## `Integer`
+
+`Integer` (and `Nat`, which compiles to it) uses the same immediate as
+`Int64`: `value << 1 | 1`, range [-2^62, 2^62). It replaces the 0..99
+static cache of `IDRIS2RC2_Integer` cells.
+
+### Canonical form
+
+An `Integer` in range is *always* immediate; a boxed mpz always holds a
+value out of range. Every operation normalizes its result
+(`idris2rc2_integerNormalize`, `idris2rc2_mkIntegerI64`). So:
+- equality with an immediate is one word comparison, and an immediate
+  never equals a boxed value;
+- an `RConstCase` alt on an in-range `Integer` constant is a word
+  comparison (`integerAltCond`). Out-of-range constants compare through
+  GMP (`idris2rc2_integerEqualsLiteral`);
+- an in-range literal is a C constant, so it needs no `let`
+  (`bindOne`) and can sit in a folded constant constructor
+  (`isConstLocalProof`).
+
+### Operations
+
+- Both operands immediate: `int64_t` arithmetic. Add and subtract
+  cannot overflow 64 bits from 63-bit operands; multiply checks with
+  `__builtin_mul_overflow`. `and`/`or`/`xor` of in-range values stay in
+  range. `mod`, `div` (Euclidean) and the shifts follow GMP's
+  semantics (`mpz_mod`, `mpz_fdiv_q_2exp`).
+- Otherwise: the GMP slow path in `numeric.c`. An immediate operand is
+  read as a read-only mpz through `idris2rc2_integerView`, which points
+  `mpz_roinit_n` at one stack limb, so it never allocates. A unique
+  boxed operand is reused for the result as before (`rop-reuse.md`).
+
+GMP's own mixed functions (`mpz_add_ui`, `mpz_mul_si`, ...) would save
+little over the view: the slow path is only reached with a value past
+2^62, where GMP does the real work anyway.
+
+### Foreign calls
+
+- An `Integer` argument is passed as
+  `idris2rc2_integerView(x, &(IDRIS2RC2_IntegerView){0})`. The compound
+  literal lives until the end of the enclosing block, which contains
+  the call. The callee must only read it, as before.
+- An `Integer` result is still written into a fresh
+  `IDRIS2RC2_Integer`'s mpz (GMP's `rop`-first convention), then
+  normalized (`packCFType CFInteger`).
+- `%export` copies an incoming mpz with `idris2rc2_mkIntegerFromMpz`,
+  which normalizes too.
+
+### Found along the way
+
+- `cast {to = Double}` of a boxed `Integer` used `mpz_get_d`, which
+  truncates: 2^63 - 1 became 2^63 - 1024, where Chez rounds to 2^63. It
+  now rounds to nearest through the same helper as `String -> Double`.
+- `RConstCase` over `Integer` read the scrutinee with `mpz_get_si`,
+  which keeps only the low bits: 2^64 + 5 matched an alt `5`.
+
+`Test108ImmediateInteger` covers every operation, cast and case on both
+sides of ±2^62, ±2^63 and ±2^64, with negative operands and divisors,
+against Chez.
+
+### Results (2026-09-27)
+
+Before: HEAD's generated C on HEAD's runtime. After: this change. Best
+of 3; every program's output is unchanged.
+
+| | before | after | Chez |
+|---|---|---|---|
+| `Nat` fib 30, Collatz to 300k, `Nat` list of 2M | 10.65s | 1.70s | 1.94s |
+| `sort`, 1M `Int`s | 1.12s | 1.13s | |
+| map/filter | 3.32s | 3.31s | |
+| closures | 1.87s | 1.82s | |
+| `Char` list | 5.86s | 5.90s | |
+| `idris2-missing-containers` | 5.63s | 5.67s | |
+
+The programs without `Integer` stay within noise.
 
 ## Tests
 

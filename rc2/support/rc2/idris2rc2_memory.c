@@ -93,19 +93,46 @@ IDRIS2RC2_Integer *idris2rc2_mkInteger(void) {
   return v;
 }
 
+IDRIS2RC2_Value *idris2rc2_integerNormalize(IDRIS2RC2_Integer *r) {
+  int size = r->v->_mp_size;
+  if (size == 0) {
+    idris2rc2_drop((IDRIS2RC2_Value *)r);
+    return IDRIS2RC2_IMM_INT64(0);
+  }
+  if (size != 1 && size != -1)
+    return (IDRIS2RC2_Value *)r;
+  uint64_t mag = r->v->_mp_d[0];
+  if (size > 0 ? mag >= (uint64_t)IDRIS2RC2_IMM_I64_LIMIT : mag > (uint64_t)IDRIS2RC2_IMM_I64_LIMIT)
+    return (IDRIS2RC2_Value *)r;
+  idris2rc2_drop((IDRIS2RC2_Value *)r);
+  return IDRIS2RC2_IMM_INT64(size > 0 ? (int64_t)mag : -(int64_t)mag);
+}
+
+IDRIS2RC2_Value *idris2rc2_mkIntegerBoxedI64(int64_t n) {
+  IDRIS2RC2_Integer *v = idris2rc2_mkInteger();
+  mpz_set_si(v->v, n);
+  return (IDRIS2RC2_Value *)v;
+}
+
+IDRIS2RC2_Value *idris2rc2_mkIntegerBoxedU64(uint64_t n) {
+  IDRIS2RC2_Integer *v = idris2rc2_mkInteger();
+  mpz_set_ui(v->v, n);
+  return (IDRIS2RC2_Value *)v;
+}
+
 IDRIS2RC2_Value *idris2rc2_mkIntegerLiteral(char const *digits) {
   IDRIS2RC2_Integer *v = idris2rc2_mkInteger();
   mpz_set_str(v->v, digits, 10);
-  return (IDRIS2RC2_Value *)v;
+  return idris2rc2_integerNormalize(v);
 }
 
 // A real copy (mpz_set), not aliasing -- src is a raw mpz_t an %export
 // wrapper received straight from external C (Compiler.RC2.Emit's own
 // emitExportWrapper), whose lifetime rc2 has no ownership over.
-IDRIS2RC2_Integer *idris2rc2_mkIntegerFromMpz(mpz_t src) {
+IDRIS2RC2_Value *idris2rc2_mkIntegerFromMpz(mpz_srcptr src) {
   IDRIS2RC2_Integer *v = idris2rc2_mkInteger();
   mpz_set(v->v, src);
-  return v;
+  return idris2rc2_integerNormalize(v);
 }
 
 IDRIS2RC2_String *idris2rc2_mkEmptyString(size_t bufLen) {
@@ -337,22 +364,3 @@ void idris2rc2_free(IDRIS2RC2_Value *v) {
 
 IDRIS2RC2_String const idris2rc2_emptyStringValue = {IDRIS2RC2_STOCKVAL(IDRIS2RC2_TAG_STRING), ""};
 
-IDRIS2RC2_Integer idris2rc2_smallInteger[100];
-
-static pthread_once_t idris2rc2_smallIntegerOnce = PTHREAD_ONCE_INIT;
-
-static void idris2rc2_initSmallInteger(void) {
-  for (int i = 0; i < 100; ++i) {
-    idris2rc2_smallInteger[i].header.rc = IDRIS2RC2_REFCOUNT_MAX;
-    idris2rc2_smallInteger[i].header.tag = IDRIS2RC2_TAG_INTEGER;
-    idris2rc2_smallInteger[i].header.reserved = 0;
-    mpz_init(idris2rc2_smallInteger[i].v);
-    mpz_set_si(idris2rc2_smallInteger[i].v, i);
-  }
-}
-
-IDRIS2RC2_Value *idris2rc2_getSmallInteger(int n) {
-  IDRIS2RC2_VERIFY(n >= 0 && n < 100, "out of range: %d", n);
-  pthread_once(&idris2rc2_smallIntegerOnce, idris2rc2_initSmallInteger);
-  return (IDRIS2RC2_Value *)&idris2rc2_smallInteger[n];
-}

@@ -146,9 +146,8 @@ ffiRawCall cLang fctName fargs ret args = do
     -- directly to a real GMP function's own signature with no wrapper
     -- of its own needed. Emit the call as a bare statement (its real C
     -- return type is `void`), and hand the fresh Integer back as this
-    -- call's own "result" -- already fully formed, no further packing
-    -- needed (`packCFType CFInteger` is a bare passthrough for exactly
-    -- this reason).
+    -- call's own "result" -- `packCFType CFInteger` (applied by the
+    -- caller) normalizes it to an immediate when it fits.
     let ffiIntegerOutParam : List String -> Core String
         ffiIntegerOutParam es = do
             retVar <- getNewVarThatWillNotBeFreedAtEndOfBlock
@@ -433,8 +432,8 @@ emitForeignDef n ccs fargs ret =
 ||| Three argument/return positions can't use that generic pack-then-
 ||| call / call-then-extract-then-drop shape as-is, and are special-
 ||| cased below: a `CFInteger` argument (a raw incoming `mpz_t`, not
-||| already an `IDRIS2RC2_Integer*` the way `packCFType`'s own identity-
-||| passthrough CFInteger case assumes -- see its doc comment), a
+||| already an `IDRIS2RC2_Integer*` out-parameter the way `packCFType`'s
+||| own CFInteger case assumes -- see its doc comment), a
 ||| `CFInteger` return (GMP's `mpz_t` has no by-value C return shape at
 ||| all, so the whole wrapper signature gains a leading `mpz_t out`
 ||| parameter and turns `void`, mirroring `emitGenericForeignWrapper`'s
@@ -510,7 +509,7 @@ emitExportWrapper n exportedCName fargs ret = do
     decreaseIndentation
     emit EmptyFC "}"
   where
-    -- `packCFType`'s own CFInteger case is a bare passthrough that
+    -- `packCFType`'s own CFInteger case normalizes an out-parameter that
     -- assumes an `IDRIS2RC2_Integer*` was already built elsewhere (real
     -- for a `%foreign` call site's own out-parameter convention, see
     -- its doc comment) -- but here `p_i` is the raw incoming `mpz_t`

@@ -701,6 +701,7 @@ mutual
                 emitAltChain resolvedSink
                     (\(MkRConstAlt c _) => case c of
                         Str x => pure ("! strcmp(\{cStringQuoted x}, ((IDRIS2RC2_String *)\{sc'})->str)", [])
+                        BI x => pure (integerAltCond sc' x, [])
                         Db  x => case scRep of
                                       RNative DoubleType => (\(e, p) => ("\{e} == \{show x}", p)) <$> rcVarToNativeC DoubleType sc
                                       RInlineNative DoubleType => (\(e, p) => ("\{e} == \{show x}", p)) <$> rcVarToNativeC DoubleType sc
@@ -1265,13 +1266,9 @@ emitRC sink (RStructGet fc structVar sn fn postDrop) _ = do
     -- site actually wants, discarding any such extra qualifier on
     -- purpose. `CFInteger` is the one type this can't apply to:
     -- `cTypeOfCFType CFInteger` is GMP's own `mpz_t`, a C array type
-    -- with no cast syntax at all -- moot anyway, since `packCFType`'s
-    -- own `CFInteger` case is a bare passthrough (see its own doc
-    -- comment), not a wrapping call expecting any particular
-    -- argument type to begin with.
-    let fieldExpr = case ty of
-                         CFInteger => rawFieldExpr
-                         _         => "(\{cTypeOfCFType ty})(\{rawFieldExpr})"
+    -- with no cast syntax at all, and `packCFType CFInteger` expects an
+    -- out-parameter `IDRIS2RC2_Integer *`, not a field -- the field's
+    -- value is copied instead.
     -- `packCFType`'s own result is `IDRIS2RC2_Value *` only for a
     -- handful of cases (CFInt*/CFUnsigned*/CFDouble/CFUnit/CFWorld);
     -- every other case (CFString/CFPtr/CFGCPtr/CFBuffer/CFStruct/...)
@@ -1279,9 +1276,10 @@ emitRC sink (RStructGet fc structVar sn fn postDrop) _ = do
     -- explicit cast `ffiRawCall`'s own ordinary FFI-return handling
     -- already applies (its own `packCFType` call, just above this
     -- one in this file) is needed here too.
-    finalizeSinkWithDrop fc sink
-      ("(IDRIS2RC2_Value*)" ++ packCFType ty fieldExpr)
-      (map varName postDrop ++ pending)
+    let packed = case ty of
+                      CFInteger => "idris2rc2_mkIntegerFromMpz(\{rawFieldExpr})"
+                      _         => "(IDRIS2RC2_Value*)" ++ packCFType ty "(\{cTypeOfCFType ty})(\{rawFieldExpr})"
+    finalizeSinkWithDrop fc sink packed (map varName postDrop ++ pending)
 
 emitRC sink (RStructSet fc structVar sn fn value postDrop) _ = do
     structDefs <- get StructDefs

@@ -95,7 +95,7 @@ show up again during testing.
   field layout of constructor and closure cells, and why they are that
   size, `hybrid-refcount.md` for plain refcount operations until a
   process-wide flag says the program went multi-threaded,
-  `immediate-ints.md` for keeping `Int`/`Int64`/`Bits64` in the pointer
+  `immediate-ints.md` for keeping `Int`/`Int64`/`Bits64`/`Integer` in the pointer
   word when they fit in 62 bits. Not
   a replacement for `TODO.md` — those stay the changelog
   and gap tracker; `rc2/doc/` is where the *why* and the

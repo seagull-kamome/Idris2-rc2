@@ -160,6 +160,13 @@ opResultRep DoubleFloor = Just DoubleType
 opResultRep DoubleCeiling = Just DoubleType
 opResultRep _ = Nothing
 
+||| The range of an immediate Int/Int64 or Integer, [-2^62, 2^62)
+||| (doc/immediate-ints.md). An `Integer` in it is always immediate, so
+||| such a literal is a C constant like any fixed-width one.
+export
+immInt64 : Integer -> Bool
+immInt64 v = v >= -4611686018427387904 && v < 4611686018427387904
+
 ||| Exported so both RC.idr's `bindOne` (deciding whether a literal
 ||| operand needs an RCConst at all, see RCExp.idr's module note) and
 ||| Emit.idr's `repOfLocal` (rendering one) can share this single

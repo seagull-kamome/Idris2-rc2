@@ -172,7 +172,7 @@ mutual
              Just _  => k (RCConst c)
              Nothing => case c of
                   Str _ => k (RCConst c)
-                  BI x  => if x >= 0 && x < 100
+                  BI x  => if immInt64 x
                               then k (RCConst c)
                               else bindCompound env e k
                   _     => bindCompound env e k

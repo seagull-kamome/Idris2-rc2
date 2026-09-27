@@ -12,22 +12,83 @@
 // numeric.h instead, so the C compiler can inline it at each call site
 // rather than always paying for a real function call. Only the genuinely
 // multi-statement functions below -- a real algorithm (Euclidean division
-// for Integer), a shared non-trivial helper (`idris2rc2_mpz_lsb`) plus its
+// for Integer), a shared non-trivial helper (`idris2rc2_integerLsb`) plus its
 // dependent callers (can't move just the callers: the helper is `static`,
 // so a copy would be needed in every translation unit that inlines a
 // caller, and it isn't a one-liner itself), or measure-then-format string
 // conversions -- stay defined here.
 
 // ---- Integer (arbitrary precision, via GMP) ----
+IDRIS2RC2_Value *idris2rc2_integerBinopSlow(IDRIS2RC2_Value *x, IDRIS2RC2_Value *y, idris2rc2_mpz_binop fn) {
+  IDRIS2RC2_IntegerView xb, yb;
+  mpz_srcptr xv = idris2rc2_integerView(x, &xb);
+  mpz_srcptr yv = idris2rc2_integerView(y, &yb);
+  IDRIS2RC2_Integer *dst = idris2rc2_isUnique(x) ? (IDRIS2RC2_Integer *)x
+                          : idris2rc2_isUnique(y) ? (IDRIS2RC2_Integer *)y
+                          : idris2rc2_mkInteger();
+  fn(dst->v, xv, yv);
+  if ((IDRIS2RC2_Value *)dst != x) idris2rc2_drop(x);
+  if ((IDRIS2RC2_Value *)dst != y) idris2rc2_drop(y);
+  return idris2rc2_integerNormalize(dst);
+}
+
+IDRIS2RC2_Value *idris2rc2_integerShiftSlow(IDRIS2RC2_Value *x, IDRIS2RC2_Value *y, int left) {
+  IDRIS2RC2_IntegerView xb, yb;
+  mpz_srcptr xv = idris2rc2_integerView(x, &xb);
+  mp_bitcnt_t count = (mp_bitcnt_t)mpz_get_ui(idris2rc2_integerView(y, &yb));
+  IDRIS2RC2_Integer *dst = idris2rc2_isUnique(x) ? (IDRIS2RC2_Integer *)x : idris2rc2_mkInteger();
+  if (left)
+    mpz_mul_2exp(dst->v, xv, count);
+  else
+    mpz_fdiv_q_2exp(dst->v, xv, count);
+  if ((IDRIS2RC2_Value *)dst != x) idris2rc2_drop(x);
+  idris2rc2_drop(y);
+  return idris2rc2_integerNormalize(dst);
+}
+
+IDRIS2RC2_Value *idris2rc2_integerNegateSlow(IDRIS2RC2_Value *x) {
+  IDRIS2RC2_Integer *dst = idris2rc2_isUnique(x) ? (IDRIS2RC2_Integer *)x : idris2rc2_mkInteger();
+  mpz_neg(dst->v, ((IDRIS2RC2_Integer *)x)->v);
+  if ((IDRIS2RC2_Value *)dst != x) idris2rc2_drop(x);
+  return idris2rc2_integerNormalize(dst);
+}
+
+int idris2rc2_integerCmpSlow(IDRIS2RC2_Value *x, IDRIS2RC2_Value *y) {
+  IDRIS2RC2_IntegerView xb, yb;
+  return mpz_cmp(idris2rc2_integerView(x, &xb), idris2rc2_integerView(y, &yb));
+}
+
+int idris2rc2_integerEqualsLiteral(IDRIS2RC2_Value *x, char const *digits) {
+  if (idris2rc2_is_unboxed(x))
+    return 0;
+  mpz_t lit;
+  mpz_init_set_str(lit, digits, 10);
+  int eq = mpz_cmp(((IDRIS2RC2_Integer *)x)->v, lit) == 0;
+  mpz_clear(lit);
+  return eq;
+}
+
+// Euclidean: the remainder is never negative.
 IDRIS2RC2_Value *idris2rc2_div_Integer(IDRIS2RC2_Value *x, IDRIS2RC2_Value *y) {
+  if (idris2rc2_integer_both_imm(x, y) && idris2rc2_imm_signed(y) != 0) {
+    int64_t a = idris2rc2_imm_signed(x);
+    int64_t b = idris2rc2_imm_signed(y);
+    int64_t q = a / b;
+    if (a % b < 0)
+      q += b > 0 ? -1 : 1;
+    return idris2rc2_mkIntegerI64(q);
+  }
+  IDRIS2RC2_IntegerView xb, yb;
+  mpz_srcptr xv = idris2rc2_integerView(x, &xb);
+  mpz_srcptr yv = idris2rc2_integerView(y, &yb);
   mpz_t rem, yq;
   mpz_inits(rem, yq, NULL);
-  mpz_mod(rem, ((IDRIS2RC2_Integer *)x)->v, ((IDRIS2RC2_Integer *)y)->v);
-  mpz_sub(yq, ((IDRIS2RC2_Integer *)x)->v, rem);
+  mpz_mod(rem, xv, yv);
+  mpz_sub(yq, xv, rem);
   IDRIS2RC2_Integer *r = idris2rc2_mkInteger();
-  mpz_divexact(r->v, yq, ((IDRIS2RC2_Integer *)y)->v);
+  mpz_divexact(r->v, yq, yv);
   mpz_clears(rem, yq, NULL);
-  return (IDRIS2RC2_Value *)r;
+  return idris2rc2_integerNormalize(r);
 }
 
 // ---- casts to fixed-width string ----
@@ -107,6 +168,18 @@ static double idris2rc2_ratio_to_double(mpz_t num_in, mpz_t den_in) {
   double result = ldexp(mant, (int)(-s));
   mpz_clears(num, den, q, r, r2, NULL);
   return result;
+}
+
+// mpz_get_d truncates; a cast from Integer rounds to nearest, as on Chez.
+double idris2rc2_integerToDoubleSlow(IDRIS2RC2_Value *x) {
+  mpz_srcptr v = ((IDRIS2RC2_Integer *)x)->v;
+  mpz_t mag, one;
+  mpz_init(mag);
+  mpz_abs(mag, v);
+  mpz_init_set_ui(one, 1);
+  double d = idris2rc2_ratio_to_double(mag, one);
+  mpz_clears(mag, one, NULL);
+  return mpz_sgn(v) < 0 ? -d : d;
 }
 
 // Parse a bare decimal (no sign, no leading space) starting at `p` into
@@ -335,35 +408,38 @@ IDRIS2RC2_Value *idris2rc2_cast_Char_to_string(IDRIS2RC2_Value *x) {
 }
 
 // ---- Integer ----
-static uint64_t idris2rc2_mpz_lsb(mpz_t i, mp_bitcnt_t bits) {
+// The low `bits` bits, two's complement, as a cast from Integer takes them.
+static uint64_t idris2rc2_integerLsb(IDRIS2RC2_Value *x, mp_bitcnt_t bits) {
+  if (idris2rc2_is_unboxed(x))
+    return (uint64_t)idris2rc2_imm_signed(x);
   mpz_t r;
   mpz_init(r);
-  mpz_fdiv_r_2exp(r, i, bits);
+  mpz_fdiv_r_2exp(r, ((IDRIS2RC2_Integer *)x)->v, bits);
   uint64_t v = mpz_get_ui(r);
   mpz_clear(r);
   return v;
 }
-IDRIS2RC2_Value *idris2rc2_cast_Integer_to_Int8(IDRIS2RC2_Value *x) { return idris2rc2_mkInt8((int8_t)idris2rc2_mpz_lsb(((IDRIS2RC2_Integer *)x)->v, 8)); }
-IDRIS2RC2_Value *idris2rc2_cast_Integer_to_Int16(IDRIS2RC2_Value *x) { return idris2rc2_mkInt16((int16_t)idris2rc2_mpz_lsb(((IDRIS2RC2_Integer *)x)->v, 16)); }
-IDRIS2RC2_Value *idris2rc2_cast_Integer_to_Int32(IDRIS2RC2_Value *x) { return idris2rc2_mkInt32((int32_t)idris2rc2_mpz_lsb(((IDRIS2RC2_Integer *)x)->v, 32)); }
-IDRIS2RC2_Value *idris2rc2_cast_Integer_to_Int64(IDRIS2RC2_Value *x) { return idris2rc2_mkInt64((int64_t)idris2rc2_mpz_lsb(((IDRIS2RC2_Integer *)x)->v, 64)); }
-IDRIS2RC2_Value *idris2rc2_cast_Integer_to_Bits8(IDRIS2RC2_Value *x) { return idris2rc2_mkBits8((uint8_t)idris2rc2_mpz_lsb(((IDRIS2RC2_Integer *)x)->v, 8)); }
-IDRIS2RC2_Value *idris2rc2_cast_Integer_to_Bits16(IDRIS2RC2_Value *x) { return idris2rc2_mkBits16((uint16_t)idris2rc2_mpz_lsb(((IDRIS2RC2_Integer *)x)->v, 16)); }
-IDRIS2RC2_Value *idris2rc2_cast_Integer_to_Bits32(IDRIS2RC2_Value *x) { return idris2rc2_mkBits32((uint32_t)idris2rc2_mpz_lsb(((IDRIS2RC2_Integer *)x)->v, 32)); }
-IDRIS2RC2_Value *idris2rc2_cast_Integer_to_Bits64(IDRIS2RC2_Value *x) { return idris2rc2_mkBits64((uint64_t)idris2rc2_mpz_lsb(((IDRIS2RC2_Integer *)x)->v, 64)); }
+IDRIS2RC2_Value *idris2rc2_cast_Integer_to_Int8(IDRIS2RC2_Value *x) { return idris2rc2_mkInt8((int8_t)idris2rc2_integerLsb(x, 8)); }
+IDRIS2RC2_Value *idris2rc2_cast_Integer_to_Int16(IDRIS2RC2_Value *x) { return idris2rc2_mkInt16((int16_t)idris2rc2_integerLsb(x, 16)); }
+IDRIS2RC2_Value *idris2rc2_cast_Integer_to_Int32(IDRIS2RC2_Value *x) { return idris2rc2_mkInt32((int32_t)idris2rc2_integerLsb(x, 32)); }
+IDRIS2RC2_Value *idris2rc2_cast_Integer_to_Int64(IDRIS2RC2_Value *x) { return idris2rc2_mkInt64((int64_t)idris2rc2_integerLsb(x, 64)); }
+IDRIS2RC2_Value *idris2rc2_cast_Integer_to_Bits8(IDRIS2RC2_Value *x) { return idris2rc2_mkBits8((uint8_t)idris2rc2_integerLsb(x, 8)); }
+IDRIS2RC2_Value *idris2rc2_cast_Integer_to_Bits16(IDRIS2RC2_Value *x) { return idris2rc2_mkBits16((uint16_t)idris2rc2_integerLsb(x, 16)); }
+IDRIS2RC2_Value *idris2rc2_cast_Integer_to_Bits32(IDRIS2RC2_Value *x) { return idris2rc2_mkBits32((uint32_t)idris2rc2_integerLsb(x, 32)); }
+IDRIS2RC2_Value *idris2rc2_cast_Integer_to_Bits64(IDRIS2RC2_Value *x) { return idris2rc2_mkBits64((uint64_t)idris2rc2_integerLsb(x, 64)); }
+// Out-of-range and surrogate values give NUL rather than whatever low
+// bits survive a truncation.
 IDRIS2RC2_Value *idris2rc2_cast_Integer_to_Char(IDRIS2RC2_Value *x) {
-  IDRIS2RC2_Integer *i = (IDRIS2RC2_Integer *)x;
-  // mpz_lsb below would silently reinterpret a magnitude past 0x10FFFF
-  // (or negative) into some unrelated low-32-bit codepoint; compare
-  // against GMP's own arbitrary-precision value directly instead of
-  // narrowing first, so a huge Integer is correctly rejected rather
-  // than aliasing whatever bits happened to survive truncation.
-  if ((mpz_cmp_si(i->v, 0) >= 0 && mpz_cmp_ui(i->v, 0xD7FF) <= 0) ||
-      (mpz_cmp_ui(i->v, 0xE000) >= 0 && mpz_cmp_ui(i->v, 0x10FFFF) <= 0))
-    return idris2rc2_mkChar((uint32_t)mpz_get_ui(i->v));
+  if (!idris2rc2_is_unboxed(x))
+    return idris2rc2_mkChar(0);
+  int64_t c = idris2rc2_imm_signed(x);
+  if ((c >= 0 && c <= 0xD7FF) || (c >= 0xE000 && c <= 0x10FFFF))
+    return idris2rc2_mkChar((uint32_t)c);
   return idris2rc2_mkChar(0);
 }
 IDRIS2RC2_Value *idris2rc2_cast_Integer_to_string(IDRIS2RC2_Value *x) {
+  if (idris2rc2_is_unboxed(x))
+    return idris2rc2_cast_Int64_to_string(x);
   IDRIS2RC2_String *r = IDRIS2RC2_NEW(IDRIS2RC2_String);
   r->header.tag = IDRIS2RC2_TAG_STRING;
   r->str = mpz_get_str(NULL, 10, ((IDRIS2RC2_Integer *)x)->v);
@@ -374,7 +450,7 @@ IDRIS2RC2_Value *idris2rc2_cast_Integer_to_string(IDRIS2RC2_Value *x) {
 IDRIS2RC2_Value *idris2rc2_cast_string_to_Integer(IDRIS2RC2_Value *x) {
   IDRIS2RC2_Integer *r = idris2rc2_mkInteger();
   mpz_set_str(r->v, ((IDRIS2RC2_String *)x)->str, 10);
-  return (IDRIS2RC2_Value *)r;
+  return idris2rc2_integerNormalize(r);
 }
 IDRIS2RC2_Value *idris2rc2_cast_string_to_Char(IDRIS2RC2_Value *x) {
   char const *s = ((IDRIS2RC2_String *)x)->str;

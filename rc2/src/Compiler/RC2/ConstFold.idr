@@ -205,7 +205,7 @@ resolveConst env l = case resolveLocal env l of
 ||| own native-eligibility guard below.
 isConstLocalProof : (l : RCLocal) -> Maybe (IsAnyConstLocal l)
 isConstLocalProof (RCLoc _)        = Nothing
-isConstLocalProof (RCConst (BI _)) = Nothing
+isConstLocalProof (RCConst (BI x)) = if immInt64 x then Just ItIsConst2 else Nothing
 isConstLocalProof RCNull                 = Just ItIsNull2
 isConstLocalProof (RCConst _)            = Just ItIsConst2
 isConstLocalProof (RCEmptyCon {})        = Just ItIsEmptyCon2
@@ -362,7 +362,7 @@ foldConst caf env (RLet fc var rep value body) =
     -- A `BI` field must keep a real `RCLoc` for ownership
     -- (rc2/doc/const-con-fold.md's Bug #2), so it can't be aliased.
     isBigLiteral : RCLocal -> Bool
-    isBigLiteral (RCConst (BI _)) = True
+    isBigLiteral (RCConst (BI x)) = not (immInt64 x)
     isBigLiteral _ = False
 
     isNative : RCLocal -> Bool

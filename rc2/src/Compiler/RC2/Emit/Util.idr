@@ -775,15 +775,15 @@ constDefKey c      = c
 ||| already-staged file-scope static (`ConstDef`, if this exact value
 ||| has been staged before -- deduplicates across the *whole
 ||| compilation unit*, not just one definition), or (`dyngen`) a
-||| small-value cache lookup, a fresh stage-and-reference (`orStagen`),
+||| C constant (an immediate), a fresh stage-and-reference (`orStagen`),
 ||| or -- values with neither available -- a fresh allocation minted
 ||| right here every time it's evaluated. Shared by `emitRC`'s own
 ||| `RPrimVal` case (an ordinary let-bound literal) and
 ||| `inlineExprFor`'s `RCConst` case (a non-native-eligible literal
 ||| RC.idr's `bindOne` decided needs no let-binding at all -- currently
-||| only `Str` and a small-range `BI`, both of which always land in the
-||| small-cache/`orStagen` branches below, never the "fresh allocation
-||| every read" `BI`-outside-the-cache one -- see `bindOne`'s own
+||| only `Str` and an in-range `BI`, both of which always land in the
+||| immediate/`orStagen` branches below, never the "fresh allocation
+||| every read" out-of-range `BI` one -- see `bindOne`'s own
 ||| comment for why that one is deliberately excluded from RCConst).
 export
 boxedConstExpr : {auto a : Ref ArgCounter Nat}
@@ -796,10 +796,6 @@ boxedConstExpr c = do
          Just cdef => pure "((IDRIS2RC2_Value*)&\{constantName cdef})"
          Nothing => dyngen
   where
-    -- IDRIS2RC2_IMM_INT64's range, [-2^62, 2^62) (doc/immediate-ints.md).
-    immInt64 : Integer -> Bool
-    immInt64 v = v >= -4611686018427387904 && v < 4611686018427387904
-
     orStagen : ConstDef -> Core String
     orStagen cdef = do
         constdefs <- get ConstDef
@@ -817,8 +813,8 @@ boxedConstExpr c = do
         I64 x => if immInt64 (cast x)
             then pure "IDRIS2RC2_IMM_INT64(INT64_C(\{show x}))"
             else orStagen $ CDI64 $ cCleanString $ show x
-        BI x => if x >= 0 && x < 100
-            then pure "idris2rc2_getSmallInteger(\{show x})"
+        BI x => if immInt64 x
+            then pure "IDRIS2RC2_IMM_INT64(INT64_C(\{show x}))"
             else pure "idris2rc2_mkIntegerLiteral(\"\{show x}\")"
         B8 x  => pure "idris2rc2_mkBits8(UINT8_C(\{show x}))"
         B16 x => pure "idris2rc2_mkBits16(UINT16_C(\{show x}))"
@@ -1300,7 +1296,6 @@ integerSwitch (MkRConstAlt c _  :: _) =
         (B16 x) => True
         (B32 x) => True
         (B64 x) => True
-        (BI x) => True
         (Ch x) => True
         _ => False
 
@@ -1322,6 +1317,15 @@ extractIntExpr (B32 _) x = "idris2rc2_to_u32(\{x})"
 extractIntExpr (B64 _) x = "(int64_t)idris2rc2_to_u64(\{x})"
 extractIntExpr (Ch _) x = "idris2rc2_to_char(\{x})"
 extractIntExpr _ x = "idris2rc2_extractInt(\{x})"
+
+||| The test an `RConstCase` alt on an `Integer` constant makes. An
+||| Integer that fits is always immediate (doc/immediate-ints.md), so
+||| one word comparison decides such a constant.
+export
+integerAltCond : String -> Integer -> String
+integerAltCond sc x = if immInt64 x
+    then "\{sc} == IDRIS2RC2_IMM_INT64(INT64_C(\{show x}))"
+    else "idris2rc2_integerEqualsLiteral(\{sc}, \"\{show x}\")"
 
 export
 const2Integer : Constant -> Integer -> String
@@ -1634,17 +1638,11 @@ extractValue _ CFUnsigned64     varName = "(idris2rc2_to_u64(" ++ varName ++ "))
 extractValue _ CFString         varName = "((IDRIS2RC2_String*)" ++ varName ++ ")->str"
 extractValue _ CFDouble         varName = "(idris2rc2_to_double(" ++ varName ++ "))"
 extractValue _ CFChar           varName = "((char)idris2rc2_to_char(" ++ varName ++ "))"
--- `IDRIS2RC2_Integer.v` is a GMP `mpz_t` -- itself defined by GMP as a
--- one-element array type, so this expression already decays to the
--- `mpz_t`/`mpz_ptr` a real GMP-based C function expects, with no copy.
--- %foreign argument only (see TODO.md's "`Integer` (`CFInteger`) has
--- no `%foreign` codegen support at all" and `packCFType`'s own
--- CFInteger case below): this hands the callee the *actual* mutable
--- GMP state backing this Idris `Integer` value, not a defensive copy --
--- a callee that mutates it in place is corrupting a value Idris's own
--- semantics promise is immutable and may be shared (aliased,
--- refcounted) elsewhere in the program. Safe to read; never to write.
-extractValue _ CFInteger        varName = "((IDRIS2RC2_Integer*)" ++ varName ++ ")->v"
+-- The Integer as a read-only `mpz_t`: a boxed one's own GMP state, or an
+-- immediate one viewed through a compound literal living as long as the
+-- enclosing block -- the call it is an argument of (doc/immediate-ints.md).
+-- A callee must never write through it.
+extractValue _ CFInteger        varName = "((mpz_ptr)idris2rc2_integerView(" ++ varName ++ ", &(IDRIS2RC2_IntegerView){0}))"
 extractValue _ CFPtr            varName = "((IDRIS2RC2_Pointer*)" ++ varName ++ ")->p"
 extractValue _ CFGCPtr          varName = "((IDRIS2RC2_GCPointer*)" ++ varName ++ ")->p->p"
 extractValue CLangRefC CFBuffer varName = "((IDRIS2RC2_Buffer*)" ++ varName ++ ")->buf"
@@ -1680,23 +1678,13 @@ packCFType CFUnsigned8     varName = "idris2rc2_mkBits8(" ++ varName ++ ")"
 packCFType CFString        varName = "idris2rc2_mkString(" ++ varName ++ ")"
 packCFType CFDouble        varName = "idris2rc2_mkDouble(" ++ varName ++ ")"
 packCFType CFChar          varName = "idris2rc2_mkChar((unsigned char)" ++ varName ++ ")"
--- A bare passthrough, same shape as `CFUser` below: GMP's own `mpz_t`
--- has no valid "return by value" C shape at all -- every real GMP
--- function needing to hand back an arbitrary-precision result takes an
--- output `mpz_t` as its own *first* parameter instead, returning
--- `void` (`mpz_add(rop, op1, op2)`, `mpz_set_str(rop, str, base)`,
--- etc. -- `rop` always leads) -- so an `Integer`-returning `%foreign`
--- declaration's own call site (`Emit.idr`'s `ffiRawCall`/
--- `emitGenericForeignWrapper`) allocates a fresh `IDRIS2RC2_Integer`
--- *before* the call and passes its own `->v` as an extra, implicit
--- *leading* argument for the callee to write its result into, matching
--- that same convention exactly (not merely "an out-param somewhere")
--- so a declaration can bind directly to a real GMP function's own
--- signature with no wrapper of its own needed. By the time this case
--- ever runs, `varName` already names that freshly-built, already-
--- fully-formed `IDRIS2RC2_Integer *` -- nothing left to do but hand it
--- back unchanged.
-packCFType CFInteger       varName = varName
+-- An `Integer`-returning `%foreign` call passes a fresh
+-- `IDRIS2RC2_Integer`'s own `mpz_t` as an extra leading out-parameter,
+-- GMP's own `rop`-first convention (`mpz_add(rop, op1, op2)`), so a
+-- declaration binds straight onto a real GMP function. `varName` names
+-- that `IDRIS2RC2_Integer *`; packing only normalizes it to an immediate
+-- when it fits (doc/immediate-ints.md).
+packCFType CFInteger       varName = "idris2rc2_integerNormalize(" ++ varName ++ ")"
 packCFType CFPtr           varName = "idris2rc2_mkPointer(" ++ varName ++ ")"
 packCFType CFGCPtr         varName = "idris2rc2_mkGCPointer(" ++ varName ++ ", NULL)"
 packCFType CFBuffer        varName = "idris2rc2_mkBuffer(" ++ varName ++ ")"

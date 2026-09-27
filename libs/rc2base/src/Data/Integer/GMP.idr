@@ -5,9 +5,9 @@ module Data.Integer.GMP
 
 -- Direct `%foreign` bindings onto real GMP `mpz_*` functions, made
 -- possible by `Compiler.RC2.Emit`'s own `Integer`-as-`%foreign`-
--- argument-and-return support: `IDRIS2RC2_Integer.v` (the very state
--- backing every ordinary Idris `Integer` in this runtime) is a GMP
--- `mpz_t`, so a `%foreign` declaration whose Idris signature is
+-- argument-and-return support: an Idris `Integer` is passed as a
+-- read-only GMP `mpz_t` (a boxed one's own, or a view of an immediate --
+-- rc2/doc/immediate-ints.md), so a `%foreign` declaration whose Idris signature is
 -- `Integer -> ... -> Integer` compiles to a call with a freshly
 -- allocated `mpz_t` passed as an extra, implicit *leading* argument
 -- (see `Compiler.RC2.EmitUtil`'s own `packCFType` `CFInteger` case) --

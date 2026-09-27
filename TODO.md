@@ -576,32 +576,9 @@ Phase 0として`Lifted`を一度、非消去の`Fin`ベースの添字を持つ
   インターフェース辞書経由のメソッド呼び出しに限定した特殊化は、
   下記「定数引数による特殊化」に設計を起こした(未着手)。
 
-## Performance: `Integer` is always a heap GMP value -- the ceiling on native promotion
+## Performance: box-then-unbox round trips left after native promotion
 
-Surveyed 2026-09-24 while closing the native-promotion gaps
-(`rc2/doc/dual-abi.md`, `native-type-inference.md`). Native promotion
-is now essentially at its ceiling for the code it *can* reach: across a
-whole idris2-lsp build the `op` nodes whose result stays `Boxed` are
-dominated by types that have no native representation at all --
-
-| op | count |
-|---|---|
-| `++` (String) | 462 |
-| `cast-Integer-Int` | 244 |
-| `+Integer` / `-Integer` | 232 / 180 |
-| `==String` / `==Integer` | 65 / 35 |
-
-`IDRIS2RC2_Integer` is an `mpz_t` in a heap cell unconditionally, so
-every `Nat`/`Integer` operation allocates and refcounts even when the
-value is tiny. A fixnum representation (small values as a tagged
-pointer, promoting to GMP only on overflow) is the only thing that
-moves this, and it is a runtime-representation change touching every
-`IDRIS2RC2_Integer*` site -- a project in its own right, not an
-extension of any existing pass. `rc2/support/rc2/idris2rc2_numeric.h`
-already reuses a uniquely-referenced operand's own allocation in place
-(`rc2/doc/rop-reuse.md`), which is the cheap half of the same problem.
-
-Also still open, and genuinely small: 17 box-then-unbox round trips
+17 box-then-unbox round trips
 survive in the test suite's own generated C (down from 210). They are
 mixed cases -- a `case` one of whose arms is Boxed, a literal minted by
 a pass other than `LateInline`, an `opBox` feeding `sqrt`. Low value.

@@ -354,65 +354,105 @@ static inline IDRIS2RC2_Value *idris2rc2_lte_string(IDRIS2RC2_Value *a, IDRIS2RC
 static inline IDRIS2RC2_Value *idris2rc2_gte_string(IDRIS2RC2_Value *a, IDRIS2RC2_Value *b) { return idris2rc2_mkBool(strcmp(((IDRIS2RC2_String *)a)->str, ((IDRIS2RC2_String *)b)->str) >= 0); }
 
 // ---- Integer (arbitrary precision, via GMP) ----
-// idris2rc2_div_Integer stays in numeric.c: a real multi-statement
-// algorithm (Euclidean division built from mpz_mod/mpz_sub/mpz_divexact),
-// not a one-liner.
+// Both operands immediate: plain int64_t arithmetic. Otherwise GMP, with
+// an immediate operand read through idris2rc2_integerView; the result is
+// normalized back to an immediate when it fits (rc2/doc/immediate-ints.md).
+// The slow paths live in numeric.c.
 //
-// Add/Sub/Mul/Mod/And/Or/Xor/ShiftL/ShiftR/Neg consume both Boxed operands
-// (Compiler.RC2.Emit's ROp lowering hands them over already dup'd for any
-// use past this call, exactly like a dying RCon field -- see
-// rc2/doc/rop-reuse.md) rather than only reading them: if an operand is
-// uniquely referenced (idris2rc2_isUnique, the same runtime check
-// constructor reuse-in-place already relies on), its own mpz_t limb
-// storage becomes the result in place instead of allocating a fresh
-// IDRIS2RC2_Integer -- safe regardless of which operand mpz_* writes into,
-// since every mpz_* function here is documented by GMP to tolerate its
-// destination aliasing either source operand. Whichever operand wasn't
-// reused this way is dropped here instead of by the caller.
-#define IDRIS2RC2_INTEGER_BINOP(OPNAME, MPZFN)                                     \
-  static inline IDRIS2RC2_Value *idris2rc2_##OPNAME##_Integer(IDRIS2RC2_Value *x, IDRIS2RC2_Value *y) { \
-    IDRIS2RC2_Integer *dst = idris2rc2_isUnique(x) ? (IDRIS2RC2_Integer *)x        \
-                            : idris2rc2_isUnique(y) ? (IDRIS2RC2_Integer *)y       \
-                            : idris2rc2_mkInteger();                               \
-    MPZFN(dst->v, ((IDRIS2RC2_Integer *)x)->v, ((IDRIS2RC2_Integer *)y)->v);       \
-    if ((IDRIS2RC2_Value *)dst != x) idris2rc2_drop(x);                           \
-    if ((IDRIS2RC2_Value *)dst != y) idris2rc2_drop(y);                           \
-    return (IDRIS2RC2_Value *)dst;                                                \
+// Add/Sub/Mul/Mod/And/Or/Xor/ShiftL/ShiftR/Neg consume both operands
+// (rc2/doc/rop-reuse.md): a uniquely referenced boxed operand's mpz
+// becomes the result in place.
+#define idris2rc2_integer_both_imm(x, y) ((uintptr_t)(x) & (uintptr_t)(y) & 1)
+
+typedef void (*idris2rc2_mpz_binop)(mpz_ptr, mpz_srcptr, mpz_srcptr);
+IDRIS2RC2_Value *idris2rc2_integerBinopSlow(IDRIS2RC2_Value *x, IDRIS2RC2_Value *y, idris2rc2_mpz_binop fn);
+IDRIS2RC2_Value *idris2rc2_integerShiftSlow(IDRIS2RC2_Value *x, IDRIS2RC2_Value *y, int left);
+IDRIS2RC2_Value *idris2rc2_integerNegateSlow(IDRIS2RC2_Value *x);
+int idris2rc2_integerCmpSlow(IDRIS2RC2_Value *x, IDRIS2RC2_Value *y);
+int idris2rc2_integerEqualsLiteral(IDRIS2RC2_Value *x, char const *digits);
+double idris2rc2_integerToDoubleSlow(IDRIS2RC2_Value *x);
+
+static inline IDRIS2RC2_Value *idris2rc2_add_Integer(IDRIS2RC2_Value *x, IDRIS2RC2_Value *y) {
+  if (idris2rc2_integer_both_imm(x, y))
+    return idris2rc2_mkIntegerI64(idris2rc2_imm_signed(x) + idris2rc2_imm_signed(y));
+  return idris2rc2_integerBinopSlow(x, y, mpz_add);
+}
+static inline IDRIS2RC2_Value *idris2rc2_sub_Integer(IDRIS2RC2_Value *x, IDRIS2RC2_Value *y) {
+  if (idris2rc2_integer_both_imm(x, y))
+    return idris2rc2_mkIntegerI64(idris2rc2_imm_signed(x) - idris2rc2_imm_signed(y));
+  return idris2rc2_integerBinopSlow(x, y, mpz_sub);
+}
+static inline IDRIS2RC2_Value *idris2rc2_mul_Integer(IDRIS2RC2_Value *x, IDRIS2RC2_Value *y) {
+  int64_t r;
+  if (idris2rc2_integer_both_imm(x, y) &&
+      !__builtin_mul_overflow(idris2rc2_imm_signed(x), idris2rc2_imm_signed(y), &r))
+    return idris2rc2_mkIntegerI64(r);
+  return idris2rc2_integerBinopSlow(x, y, mpz_mul);
+}
+// mpz_mod: the remainder is never negative, whatever the divisor's sign.
+static inline IDRIS2RC2_Value *idris2rc2_mod_Integer(IDRIS2RC2_Value *x, IDRIS2RC2_Value *y) {
+  if (idris2rc2_integer_both_imm(x, y) && idris2rc2_imm_signed(y) != 0) {
+    int64_t b = idris2rc2_imm_signed(y);
+    int64_t r = idris2rc2_imm_signed(x) % b;
+    return IDRIS2RC2_IMM_INT64(r < 0 ? r + (b < 0 ? -b : b) : r);
   }
-IDRIS2RC2_INTEGER_BINOP(add, mpz_add)
-IDRIS2RC2_INTEGER_BINOP(sub, mpz_sub)
-IDRIS2RC2_INTEGER_BINOP(mul, mpz_mul)
-IDRIS2RC2_INTEGER_BINOP(mod, mpz_mod)
-IDRIS2RC2_INTEGER_BINOP(and, mpz_and)
-IDRIS2RC2_INTEGER_BINOP(or, mpz_ior)
-IDRIS2RC2_INTEGER_BINOP(xor, mpz_xor)
+  return idris2rc2_integerBinopSlow(x, y, mpz_mod);
+}
+#define IDRIS2RC2_INTEGER_BITOP(OPNAME, OP, MPZFN)                                 \
+  static inline IDRIS2RC2_Value *idris2rc2_##OPNAME##_Integer(IDRIS2RC2_Value *x, IDRIS2RC2_Value *y) { \
+    if (idris2rc2_integer_both_imm(x, y))                                         \
+      return IDRIS2RC2_IMM_INT64(idris2rc2_imm_signed(x) OP idris2rc2_imm_signed(y)); \
+    return idris2rc2_integerBinopSlow(x, y, MPZFN);                               \
+  }
+IDRIS2RC2_INTEGER_BITOP(and, &, mpz_and)
+IDRIS2RC2_INTEGER_BITOP(or, |, mpz_ior)
+IDRIS2RC2_INTEGER_BITOP(xor, ^, mpz_xor)
 
 static inline IDRIS2RC2_Value *idris2rc2_negate_Integer(IDRIS2RC2_Value *x) {
-  IDRIS2RC2_Integer *dst = idris2rc2_isUnique(x) ? (IDRIS2RC2_Integer *)x : idris2rc2_mkInteger();
-  mpz_neg(dst->v, ((IDRIS2RC2_Integer *)x)->v);
-  if ((IDRIS2RC2_Value *)dst != x) idris2rc2_drop(x);
-  return (IDRIS2RC2_Value *)dst;
+  if (idris2rc2_is_unboxed(x))
+    return idris2rc2_mkIntegerI64(-idris2rc2_imm_signed(x));
+  return idris2rc2_integerNegateSlow(x);
 }
 
-// Shift amount `y` is never itself a reuse candidate -- it's the operand
-// count, not "the same kind of value" as the shifted result, and in
-// practice always a small cached-immortal Integer (never isUnique) --
-// only `x` (the value being shifted) is checked.
-#define IDRIS2RC2_INTEGER_SHIFTOP(OPNAME, MPZFN)                                   \
-  static inline IDRIS2RC2_Value *idris2rc2_##OPNAME##_Integer(IDRIS2RC2_Value *x, IDRIS2RC2_Value *y) { \
-    IDRIS2RC2_Integer *dst = idris2rc2_isUnique(x) ? (IDRIS2RC2_Integer *)x : idris2rc2_mkInteger(); \
-    MPZFN(dst->v, ((IDRIS2RC2_Integer *)x)->v, (mp_bitcnt_t)mpz_get_ui(((IDRIS2RC2_Integer *)y)->v)); \
-    if ((IDRIS2RC2_Value *)dst != x) idris2rc2_drop(x);                           \
-    idris2rc2_drop(y);                                                            \
-    return (IDRIS2RC2_Value *)dst;                                                \
+// The shift count is read as its magnitude, as mpz_get_ui does.
+static inline IDRIS2RC2_Value *idris2rc2_shiftl_Integer(IDRIS2RC2_Value *x, IDRIS2RC2_Value *y) {
+  if (idris2rc2_integer_both_imm(x, y)) {
+    int64_t a = idris2rc2_imm_signed(x);
+    int64_t c = idris2rc2_imm_signed(y);
+    if (c < 0) c = -c;
+    if (c < 62) {
+      int64_t r = (int64_t)((uint64_t)a << c);
+      if ((r >> c) == a)
+        return idris2rc2_mkIntegerI64(r);
+    }
   }
-IDRIS2RC2_INTEGER_SHIFTOP(shiftl, mpz_mul_2exp)
-IDRIS2RC2_INTEGER_SHIFTOP(shiftr, mpz_fdiv_q_2exp)
-static inline IDRIS2RC2_Value *idris2rc2_lt_Integer(IDRIS2RC2_Value *x, IDRIS2RC2_Value *y) { return idris2rc2_mkBool(mpz_cmp(((IDRIS2RC2_Integer *)x)->v, ((IDRIS2RC2_Integer *)y)->v) < 0); }
-static inline IDRIS2RC2_Value *idris2rc2_gt_Integer(IDRIS2RC2_Value *x, IDRIS2RC2_Value *y) { return idris2rc2_mkBool(mpz_cmp(((IDRIS2RC2_Integer *)x)->v, ((IDRIS2RC2_Integer *)y)->v) > 0); }
-static inline IDRIS2RC2_Value *idris2rc2_eq_Integer(IDRIS2RC2_Value *x, IDRIS2RC2_Value *y) { return idris2rc2_mkBool(mpz_cmp(((IDRIS2RC2_Integer *)x)->v, ((IDRIS2RC2_Integer *)y)->v) == 0); }
-static inline IDRIS2RC2_Value *idris2rc2_lte_Integer(IDRIS2RC2_Value *x, IDRIS2RC2_Value *y) { return idris2rc2_mkBool(mpz_cmp(((IDRIS2RC2_Integer *)x)->v, ((IDRIS2RC2_Integer *)y)->v) <= 0); }
-static inline IDRIS2RC2_Value *idris2rc2_gte_Integer(IDRIS2RC2_Value *x, IDRIS2RC2_Value *y) { return idris2rc2_mkBool(mpz_cmp(((IDRIS2RC2_Integer *)x)->v, ((IDRIS2RC2_Integer *)y)->v) >= 0); }
+  return idris2rc2_integerShiftSlow(x, y, 1);
+}
+static inline IDRIS2RC2_Value *idris2rc2_shiftr_Integer(IDRIS2RC2_Value *x, IDRIS2RC2_Value *y) {
+  if (idris2rc2_integer_both_imm(x, y)) {
+    int64_t c = idris2rc2_imm_signed(y);
+    if (c < 0) c = -c;
+    return IDRIS2RC2_IMM_INT64(idris2rc2_imm_signed(x) >> (c > 63 ? 63 : c));
+  }
+  return idris2rc2_integerShiftSlow(x, y, 0);
+}
+
+// Order of two immediates is the order of their words.
+static inline int idris2rc2_integerCmp(IDRIS2RC2_Value *x, IDRIS2RC2_Value *y) {
+  if (idris2rc2_integer_both_imm(x, y))
+    return ((intptr_t)x > (intptr_t)y) - ((intptr_t)x < (intptr_t)y);
+  return idris2rc2_integerCmpSlow(x, y);
+}
+static inline IDRIS2RC2_Value *idris2rc2_lt_Integer(IDRIS2RC2_Value *x, IDRIS2RC2_Value *y) { return idris2rc2_mkBool(idris2rc2_integerCmp(x, y) < 0); }
+static inline IDRIS2RC2_Value *idris2rc2_gt_Integer(IDRIS2RC2_Value *x, IDRIS2RC2_Value *y) { return idris2rc2_mkBool(idris2rc2_integerCmp(x, y) > 0); }
+static inline IDRIS2RC2_Value *idris2rc2_lte_Integer(IDRIS2RC2_Value *x, IDRIS2RC2_Value *y) { return idris2rc2_mkBool(idris2rc2_integerCmp(x, y) <= 0); }
+static inline IDRIS2RC2_Value *idris2rc2_gte_Integer(IDRIS2RC2_Value *x, IDRIS2RC2_Value *y) { return idris2rc2_mkBool(idris2rc2_integerCmp(x, y) >= 0); }
+// An immediate never equals a boxed Integer.
+static inline IDRIS2RC2_Value *idris2rc2_eq_Integer(IDRIS2RC2_Value *x, IDRIS2RC2_Value *y) {
+  if (idris2rc2_is_unboxed(x) || idris2rc2_is_unboxed(y))
+    return idris2rc2_mkBool(x == y);
+  return idris2rc2_mkBool(idris2rc2_integerCmpSlow(x, y) == 0);
+}
 
 IDRIS2RC2_Value *idris2rc2_div_Integer(IDRIS2RC2_Value *, IDRIS2RC2_Value *);
 
@@ -442,32 +482,19 @@ IDRIS2RC2_Value *idris2rc2_div_Integer(IDRIS2RC2_Value *, IDRIS2RC2_Value *);
 
 IDRIS2RC2_INTTYPES(IDRIS2RC2_CAST_TO_INT_MATRIX)
 
-// Split signed/unsigned (rather than one macro over all of
-// IDRIS2RC2_INTTYPES): mpz_set_si takes a signed `long`, so routing an
-// unsigned FCTY (e.g. Bits64's UINT64_MAX) through it reinterprets the
-// value as negative before GMP ever sees it -- e.g. UINT64_MAX cast to
-// Integer became -1 instead of 18446744073709551615. mpz_set_ui preserves
-// the full unsigned magnitude.
-#define IDRIS2RC2_CAST_SIGNED_TO_INTEGER(FROM, FCTY, FGET, FMK)                    \
+// A source of at most 32 bits always fits an immediate Integer.
+#define IDRIS2RC2_CAST_SMALL_TO_INTEGER(FROM, FGET)                                \
   static inline IDRIS2RC2_Value *idris2rc2_cast_##FROM##_to_Integer(IDRIS2RC2_Value *x) { \
-    IDRIS2RC2_Integer *r = idris2rc2_mkInteger();                                  \
-    mpz_set_si(r->v, (long)FGET(x));                                               \
-    return (IDRIS2RC2_Value *)r;                                                   \
+    return IDRIS2RC2_IMM_INT64(FGET(x));                                           \
   }
-#define IDRIS2RC2_CAST_UNSIGNED_TO_INTEGER(FROM, FCTY, FGET, FMK)                  \
-  static inline IDRIS2RC2_Value *idris2rc2_cast_##FROM##_to_Integer(IDRIS2RC2_Value *x) { \
-    IDRIS2RC2_Integer *r = idris2rc2_mkInteger();                                  \
-    mpz_set_ui(r->v, (unsigned long)FGET(x));                                      \
-    return (IDRIS2RC2_Value *)r;                                                   \
-  }
-IDRIS2RC2_CAST_SIGNED_TO_INTEGER(Int8, int8_t, idris2rc2_to_i8, idris2rc2_mkInt8)
-IDRIS2RC2_CAST_SIGNED_TO_INTEGER(Int16, int16_t, idris2rc2_to_i16, idris2rc2_mkInt16)
-IDRIS2RC2_CAST_SIGNED_TO_INTEGER(Int32, int32_t, idris2rc2_to_i32, idris2rc2_mkInt32)
-IDRIS2RC2_CAST_SIGNED_TO_INTEGER(Int64, int64_t, idris2rc2_to_i64, idris2rc2_mkInt64)
-IDRIS2RC2_CAST_UNSIGNED_TO_INTEGER(Bits8, uint8_t, idris2rc2_to_u8, idris2rc2_mkBits8)
-IDRIS2RC2_CAST_UNSIGNED_TO_INTEGER(Bits16, uint16_t, idris2rc2_to_u16, idris2rc2_mkBits16)
-IDRIS2RC2_CAST_UNSIGNED_TO_INTEGER(Bits32, uint32_t, idris2rc2_to_u32, idris2rc2_mkBits32)
-IDRIS2RC2_CAST_UNSIGNED_TO_INTEGER(Bits64, uint64_t, idris2rc2_to_u64, idris2rc2_mkBits64)
+IDRIS2RC2_CAST_SMALL_TO_INTEGER(Int8, idris2rc2_to_i8)
+IDRIS2RC2_CAST_SMALL_TO_INTEGER(Int16, idris2rc2_to_i16)
+IDRIS2RC2_CAST_SMALL_TO_INTEGER(Int32, idris2rc2_to_i32)
+IDRIS2RC2_CAST_SMALL_TO_INTEGER(Bits8, idris2rc2_to_u8)
+IDRIS2RC2_CAST_SMALL_TO_INTEGER(Bits16, idris2rc2_to_u16)
+IDRIS2RC2_CAST_SMALL_TO_INTEGER(Bits32, idris2rc2_to_u32)
+static inline IDRIS2RC2_Value *idris2rc2_cast_Int64_to_Integer(IDRIS2RC2_Value *x) { return idris2rc2_mkIntegerI64(idris2rc2_to_i64(x)); }
+static inline IDRIS2RC2_Value *idris2rc2_cast_Bits64_to_Integer(IDRIS2RC2_Value *x) { return idris2rc2_mkIntegerU64(idris2rc2_to_u64(x)); }
 
 // Char is a full Unicode scalar value (0..0x10FFFF, surrogate range
 // 0xD800..0xDFFF excluded), not a C `char` -- an out-of-range source
@@ -503,7 +530,15 @@ static inline IDRIS2RC2_Value *idris2rc2_cast_Double_to_Bits8(IDRIS2RC2_Value *x
 static inline IDRIS2RC2_Value *idris2rc2_cast_Double_to_Bits16(IDRIS2RC2_Value *x) { return idris2rc2_mkBits16((uint16_t)idris2rc2_to_double(x)); }
 static inline IDRIS2RC2_Value *idris2rc2_cast_Double_to_Bits32(IDRIS2RC2_Value *x) { return idris2rc2_mkBits32((uint32_t)idris2rc2_to_double(x)); }
 static inline IDRIS2RC2_Value *idris2rc2_cast_Double_to_Bits64(IDRIS2RC2_Value *x) { return idris2rc2_mkBits64((uint64_t)idris2rc2_to_double(x)); }
-static inline IDRIS2RC2_Value *idris2rc2_cast_Double_to_Integer(IDRIS2RC2_Value *x) { IDRIS2RC2_Integer *r = idris2rc2_mkInteger(); mpz_set_d(r->v, idris2rc2_to_double(x)); return (IDRIS2RC2_Value *)r; }
+// mpz_set_d also truncates toward zero; NaN and the infinities take it.
+static inline IDRIS2RC2_Value *idris2rc2_cast_Double_to_Integer(IDRIS2RC2_Value *x) {
+  double d = idris2rc2_to_double(x);
+  if (d > -0x1p62 && d < 0x1p62)
+    return IDRIS2RC2_IMM_INT64((int64_t)d);
+  IDRIS2RC2_Integer *r = idris2rc2_mkInteger();
+  mpz_set_d(r->v, d);
+  return idris2rc2_integerNormalize(r);
+}
 static inline IDRIS2RC2_Value *idris2rc2_cast_Double_to_Char(IDRIS2RC2_Value *x) { return idris2rc2_mkChar(idris2rc2_charFromCodepoint((int64_t)idris2rc2_to_double(x))); }
 // idris2rc2_cast_Double_to_string stays in numeric.c (multi-statement).
 IDRIS2RC2_Value *idris2rc2_cast_Double_to_string(IDRIS2RC2_Value *);
@@ -517,15 +552,15 @@ static inline IDRIS2RC2_Value *idris2rc2_cast_Char_to_Bits8(IDRIS2RC2_Value *x) 
 static inline IDRIS2RC2_Value *idris2rc2_cast_Char_to_Bits16(IDRIS2RC2_Value *x) { return idris2rc2_mkBits16((uint16_t)idris2rc2_to_char(x)); }
 static inline IDRIS2RC2_Value *idris2rc2_cast_Char_to_Bits32(IDRIS2RC2_Value *x) { return idris2rc2_mkBits32((uint32_t)idris2rc2_to_char(x)); }
 static inline IDRIS2RC2_Value *idris2rc2_cast_Char_to_Bits64(IDRIS2RC2_Value *x) { return idris2rc2_mkBits64((uint64_t)idris2rc2_to_char(x)); }
-static inline IDRIS2RC2_Value *idris2rc2_cast_Char_to_Integer(IDRIS2RC2_Value *x) { IDRIS2RC2_Integer *r = idris2rc2_mkInteger(); mpz_set_si(r->v, (long)idris2rc2_to_char(x)); return (IDRIS2RC2_Value *)r; }
+static inline IDRIS2RC2_Value *idris2rc2_cast_Char_to_Integer(IDRIS2RC2_Value *x) { return IDRIS2RC2_IMM_INT64(idris2rc2_to_char(x)); }
 // idris2rc2_cast_Char_to_string stays in numeric.c (multi-statement UTF-8
 // encoding).
 IDRIS2RC2_Value *idris2rc2_cast_Char_to_string(IDRIS2RC2_Value *);
 
 // ---- Integer ----
 // idris2rc2_cast_Integer_to_<Int8/16/32/64/Bits8/16/32/64/Char> and their
-// shared idris2rc2_mpz_lsb helper, plus idris2rc2_cast_Integer_to_string,
-// stay in numeric.c: mpz_lsb is itself multi-statement, and a `static`
+// shared idris2rc2_integerLsb helper, plus idris2rc2_cast_Integer_to_string,
+// stay in numeric.c: integerLsb is itself multi-statement, and a `static`
 // (file-local) helper can't be called from another translation unit's own
 // inline copy of a caller, so anything built on it has to stay there too.
 IDRIS2RC2_Value *idris2rc2_cast_Integer_to_Int8(IDRIS2RC2_Value *);
@@ -537,7 +572,11 @@ IDRIS2RC2_Value *idris2rc2_cast_Integer_to_Bits16(IDRIS2RC2_Value *);
 IDRIS2RC2_Value *idris2rc2_cast_Integer_to_Bits32(IDRIS2RC2_Value *);
 IDRIS2RC2_Value *idris2rc2_cast_Integer_to_Bits64(IDRIS2RC2_Value *);
 IDRIS2RC2_Value *idris2rc2_cast_Integer_to_Char(IDRIS2RC2_Value *);
-static inline IDRIS2RC2_Value *idris2rc2_cast_Integer_to_Double(IDRIS2RC2_Value *x) { return idris2rc2_mkDouble(mpz_get_d(((IDRIS2RC2_Integer *)x)->v)); }
+static inline IDRIS2RC2_Value *idris2rc2_cast_Integer_to_Double(IDRIS2RC2_Value *x) {
+  if (idris2rc2_is_unboxed(x))
+    return idris2rc2_mkDouble((double)idris2rc2_imm_signed(x));
+  return idris2rc2_mkDouble(idris2rc2_integerToDoubleSlow(x));
+}
 IDRIS2RC2_Value *idris2rc2_cast_Integer_to_string(IDRIS2RC2_Value *);
 
 // ---- string ----
