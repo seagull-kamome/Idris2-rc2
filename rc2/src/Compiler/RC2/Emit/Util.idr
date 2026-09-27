@@ -435,8 +435,10 @@ nativeOpExpr (Mod ty)    [x, y] =
     if isSigned ty then "idris2rc2_emod_i" ++ intBits ty ++ "(" ++ x ++ ", " ++ y ++ ")"
                    else "(" ++ x ++ " % " ++ y ++ ")"
 nativeOpExpr (Neg ty)    [x]    = "(-(" ++ x ++ "))"
-nativeOpExpr (ShiftL ty) [x, y] = "(" ++ x ++ " << " ++ y ++ ")"
-nativeOpExpr (ShiftR ty) [x, y] = "(" ++ x ++ " >> " ++ y ++ ")"
+-- Not C's `<<`/`>>`: a count of the width or more is undefined there
+-- (idris2rc2_numeric.h's shift helpers).
+nativeOpExpr (ShiftL ty) [x, y] = "idris2rc2_shl_" ++ cPrimType ty ++ "(" ++ x ++ ", " ++ y ++ ")"
+nativeOpExpr (ShiftR ty) [x, y] = "idris2rc2_shr_" ++ cPrimType ty ++ "(" ++ x ++ ", " ++ y ++ ")"
 nativeOpExpr (BAnd ty)   [x, y] = "(" ++ x ++ " & " ++ y ++ ")"
 nativeOpExpr (BOr ty)    [x, y] = "(" ++ x ++ " | " ++ y ++ ")"
 nativeOpExpr (BXOr ty)   [x, y] = "(" ++ x ++ " ^ " ++ y ++ ")"

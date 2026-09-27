@@ -108,6 +108,34 @@ static inline int64_t idris2rc2_emod_i64(int64_t n, int64_t d) {
 // algorithms, or ones built on a shared non-trivial helper) stay defined in
 // numeric.c, declared here as ordinary external functions same as before.
 
+// Idris shifts act on the unbounded integer and truncate it to the type, as
+// Chez's `ash` does: a count of the type's width or more gives 0, or -1 when
+// a negative value is shifted right. C leaves such shifts undefined (x86
+// masks the count), and shifts a negative value left undefined too, hence
+// the unsigned detour. Used by native and boxed shifts alike.
+#define IDRIS2RC2_SHIFTS_UNSIGNED(TY, CTY, BITS)                                  \
+  static inline CTY idris2rc2_shl_##TY(CTY x, uint64_t y) {                   \
+    return y >= BITS ? (CTY)0 : (CTY)((uint64_t)x << y);                      \
+  }                                                                           \
+  static inline CTY idris2rc2_shr_##TY(CTY x, uint64_t y) {                   \
+    return y >= BITS ? (CTY)0 : (CTY)(x >> y);                                \
+  }
+#define IDRIS2RC2_SHIFTS_SIGNED(TY, CTY, BITS)                                    \
+  static inline CTY idris2rc2_shl_##TY(CTY x, uint64_t y) {                   \
+    return y >= BITS ? (CTY)0 : (CTY)((uint64_t)x << y);                      \
+  }                                                                           \
+  static inline CTY idris2rc2_shr_##TY(CTY x, uint64_t y) {                   \
+    return y >= BITS ? (CTY)(x < 0 ? -1 : 0) : (CTY)(x >> y);                 \
+  }
+IDRIS2RC2_SHIFTS_SIGNED(Int8, int8_t, 8)
+IDRIS2RC2_SHIFTS_SIGNED(Int16, int16_t, 16)
+IDRIS2RC2_SHIFTS_SIGNED(Int32, int32_t, 32)
+IDRIS2RC2_SHIFTS_SIGNED(Int64, int64_t, 64)
+IDRIS2RC2_SHIFTS_UNSIGNED(Bits8, uint8_t, 8)
+IDRIS2RC2_SHIFTS_UNSIGNED(Bits16, uint16_t, 16)
+IDRIS2RC2_SHIFTS_UNSIGNED(Bits32, uint32_t, 32)
+IDRIS2RC2_SHIFTS_UNSIGNED(Bits64, uint64_t, 64)
+
 // ---- fixed-width integer arithmetic/bitwise ops (wrapping, matching C's
 //      own overflow behaviour for the underlying width) ----
 
@@ -119,8 +147,12 @@ static inline int64_t idris2rc2_emod_i64(int64_t n, int64_t d) {
 #define IDRIS2RC2_ADD_DEF(TY, CTY, GET, MK) IDRIS2RC2_DEFOP(add, TY, CTY, GET, MK, +)
 #define IDRIS2RC2_SUB_DEF(TY, CTY, GET, MK) IDRIS2RC2_DEFOP(sub, TY, CTY, GET, MK, -)
 #define IDRIS2RC2_MUL_DEF(TY, CTY, GET, MK) IDRIS2RC2_DEFOP(mul, TY, CTY, GET, MK, *)
-#define IDRIS2RC2_SHL_DEF(TY, CTY, GET, MK) IDRIS2RC2_DEFOP(shiftl, TY, CTY, GET, MK, <<)
-#define IDRIS2RC2_SHR_DEF(TY, CTY, GET, MK) IDRIS2RC2_DEFOP(shiftr, TY, CTY, GET, MK, >>)
+#define IDRIS2RC2_DEFSHIFT(OPNAME, FN, TY, CTY, GET, MK)                            \
+  static inline IDRIS2RC2_Value *idris2rc2_##OPNAME##_##TY(IDRIS2RC2_Value *a, IDRIS2RC2_Value *b) {  \
+    return MK(idris2rc2_##FN##_##TY(GET(a), (uint64_t)GET(b)));             \
+  }
+#define IDRIS2RC2_SHL_DEF(TY, CTY, GET, MK) IDRIS2RC2_DEFSHIFT(shiftl, shl, TY, CTY, GET, MK)
+#define IDRIS2RC2_SHR_DEF(TY, CTY, GET, MK) IDRIS2RC2_DEFSHIFT(shiftr, shr, TY, CTY, GET, MK)
 #define IDRIS2RC2_AND_DEF(TY, CTY, GET, MK) IDRIS2RC2_DEFOP(and, TY, CTY, GET, MK, &)
 #define IDRIS2RC2_OR_DEF(TY, CTY, GET, MK) IDRIS2RC2_DEFOP(or, TY, CTY, GET, MK, |)
 #define IDRIS2RC2_XOR_DEF(TY, CTY, GET, MK) IDRIS2RC2_DEFOP(xor, TY, CTY, GET, MK, ^)
@@ -152,8 +184,17 @@ IDRIS2RC2_INTTYPES_TAGGED(IDRIS2RC2_XOR_DEF)
 #define IDRIS2RC2_ADD_REUSE_DEF(TY, CTY, GET, MK) IDRIS2RC2_DEFOP_REUSE(add, TY, CTY, GET, MK, +)
 #define IDRIS2RC2_SUB_REUSE_DEF(TY, CTY, GET, MK) IDRIS2RC2_DEFOP_REUSE(sub, TY, CTY, GET, MK, -)
 #define IDRIS2RC2_MUL_REUSE_DEF(TY, CTY, GET, MK) IDRIS2RC2_DEFOP_REUSE(mul, TY, CTY, GET, MK, *)
-#define IDRIS2RC2_SHL_REUSE_DEF(TY, CTY, GET, MK) IDRIS2RC2_DEFOP_REUSE(shiftl, TY, CTY, GET, MK, <<)
-#define IDRIS2RC2_SHR_REUSE_DEF(TY, CTY, GET, MK) IDRIS2RC2_DEFOP_REUSE(shiftr, TY, CTY, GET, MK, >>)
+#define IDRIS2RC2_DEFSHIFT_REUSE(OPNAME, FN, TY, CTY, GET, MK)                      \
+  static inline IDRIS2RC2_Value *idris2rc2_##OPNAME##_##TY(IDRIS2RC2_Value *a, IDRIS2RC2_Value *b) { \
+    CTY result = idris2rc2_##FN##_##TY(GET(a), (uint64_t)GET(b));           \
+    IDRIS2RC2_Value *dst;                                                    \
+    if (idris2rc2_isUnique(a))      { ((IDRIS2RC2_##TY *)a)->v = result; dst = a; idris2rc2_drop(b); } \
+    else if (idris2rc2_isUnique(b)) { ((IDRIS2RC2_##TY *)b)->v = result; dst = b; idris2rc2_drop(a); } \
+    else                             { dst = MK(result); idris2rc2_drop(a); idris2rc2_drop(b); }        \
+    return dst;                                                              \
+  }
+#define IDRIS2RC2_SHL_REUSE_DEF(TY, CTY, GET, MK) IDRIS2RC2_DEFSHIFT_REUSE(shiftl, shl, TY, CTY, GET, MK)
+#define IDRIS2RC2_SHR_REUSE_DEF(TY, CTY, GET, MK) IDRIS2RC2_DEFSHIFT_REUSE(shiftr, shr, TY, CTY, GET, MK)
 #define IDRIS2RC2_AND_REUSE_DEF(TY, CTY, GET, MK) IDRIS2RC2_DEFOP_REUSE(and, TY, CTY, GET, MK, &)
 #define IDRIS2RC2_OR_REUSE_DEF(TY, CTY, GET, MK) IDRIS2RC2_DEFOP_REUSE(or, TY, CTY, GET, MK, |)
 #define IDRIS2RC2_XOR_REUSE_DEF(TY, CTY, GET, MK) IDRIS2RC2_DEFOP_REUSE(xor, TY, CTY, GET, MK, ^)
