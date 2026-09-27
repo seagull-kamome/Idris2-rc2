@@ -705,11 +705,11 @@ code:
    The frontend's extra `where` arguments (`KNOWN-BUGS.md`) held the
    list's head through `splitRec`'s loop, defeating cell reuse; see
    `rc2/doc/dead-args.md`.
-2. **The comparator is never specialised** (~0.6s). `mergeBy` calls
-   `apply cmp [x, y]` through `idris2rc2_applyClosureN`. SpecClosure
-   only clones a callee that *applies* its closure parameter; `sortBy`
-   only forwards it. Design: `rc2/doc/speculative-closure-specialization.md`,
-   "Transitive specialisation".
+2. **Fixed: the comparator is never specialised.** SpecClosure now
+   follows a closure forwarded from `sortBy` to `mergeBy`: `sort` 1.49s
+   to 1.11s, below Chez's 1.23s
+   (`rc2/doc/speculative-closure-specialization.md`, "Transitive
+   specialisation").
 3. **Fixed: atomic reference counts.** Plain until the program goes
    multi-threaded: `sort` 3.17s to 2.45s (`rc2/doc/hybrid-refcount.md`).
 4. **glibc malloc** (-33% with mimalloc). See "a small-object

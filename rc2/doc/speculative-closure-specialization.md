@@ -233,7 +233,7 @@ specialize at all, so neither is optional polish:
   token IO's own calling convention threads through), never
   `missing = 1`. A first cut of this module that only handled
   `missing == 1` compiled fine and ran correctly on everything, but
-  silently never fired on `go` itself. `chainArgs`/`chainOccursIn` in
+  silently never fired on `go` itself. `chainArgs`/`chainCount` in
   `SpecClosure.idr` do this walk; only the exact shape (each apply's
   result immediately feeding the next, nothing else interposed) is
   recognized -- a chain interrupted by anything else is left alone,
@@ -318,7 +318,7 @@ string literal) takes exactly this path -- the literal folds away
 first, and an earlier version of `lookupKnown` that only ever checked
 `Bound` missed it entirely.
 
-**Chain detection (`chainArgs`/`chainOccursIn`).** `RApp`'s own two
+**Chain detection (`chainArgs`/`chainCount`).** `RApp`'s own two
 operands are bare `RCLocal`s, never a nested `RApp`, so a curried
 `v a1 a2` (two more args needed) ANF-normalizes to `RLet t (RApp v a1)
 (RApp t a2)`, not one node. `chainArgs` chases that shape level by
@@ -327,14 +327,14 @@ allowing the *last* apply to be a bare tail expression instead of one
 more `RLet` (nothing inside the chain needs to name the final result).
 Only the exact shape matches; anything interposed (an unrelated `RLet`,
 a case split, ...) leaves the whole chain unspecialized, deliberately,
-rather than give partial credit. `chainOccursIn` tries `chainArgs` at
+rather than give partial credit. `chainCount` tries `chainArgs` at
 every node on the way down, since a chain's own root can be any
 sub-expression -- `go`'s own real body roots one inside the *value* of
 an outer, unrelated `RLet`.
 
 **Self-recursive passthrough (`selfPassthroughOccurrences`,
 `rewriteSelfCall`).** See "Implementation notes" above for why this
-exists at all. `paramLooksSpecializable` credits each passthrough
+exists at all. `paramUses` credits each passthrough
 occurrence against `countUsesR`'s own total instead of requiring the
 parameter to occur exactly once outright. `rewriteSelfCall` then
 redirects any such recursive call, in the built clone, to the clone
@@ -383,7 +383,7 @@ combinators; `maxVarInBody` is the one function that can't use
 **Profitability + redirection (`stillAppliesParam`,
 `redirectCallSites`, `buildClone`).** `stillAppliesParam` is Step 3's
 own gate: a plain `countUsesR` check on the folded clone (unlike
-`paramLooksSpecializable`'s own chain-aware count) is enough, since any
+`paramUses`'s own chain-aware count) is enough, since any
 survival of the parameter after `rewriteApply` already tried to remove
 its one occurrence means the specialization didn't fully take.
 `redirectCallSites` retraces `Bound` the same way `collectOpportunities`
@@ -440,9 +440,10 @@ referenced).
   has the rationale and the (trivial) shape a later fixpoint wrapper
   would take.
 
-## Transitive specialisation (design, 2026-09-26)
+## Transitive specialisation (2026-09-26, implemented 2026-09-27)
 
-Status: design, not implemented. Motivation is in `TODO.md`,
+Status: implemented, with the deviations noted under "Results".
+Motivation is in `TODO.md`,
 "`sort` against Chez": the unspecialised comparator costs about 0.6s
 of a 1M-element `sort`'s 4.18s, the second-largest cause.
 
@@ -452,7 +453,7 @@ of a 1M-element `sort`'s 4.18s, the second-largest cause.
 - to `mergeBy cmp`, which applies it;
 - to `sortBy` again, as a self-recursive passthrough.
 
-`paramLooksSpecializable` requires exactly one apply chain, so
+`paramLooksSpecializable` (now `paramUses`) required exactly one apply chain, so
 `sortBy`'s `cmp` does not qualify. `mergeBy` is only ever called with
 `sortBy`'s parameter, never with a known closure, so it has no
 opportunity either. Even `sortBy compare xs` written directly in `main`
@@ -464,8 +465,8 @@ its arguments, and a boxed `Ordering`.
 
 A closure parameter `v` of `g` may be used in three ways:
 
-1. **Applied:** an apply chain of length `missing`, as today. This is
-   now allowed any number of times, not exactly once.
+1. **Applied:** an apply chain of length `missing`, as today, at most
+   once (see "Results").
 2. **Self passthrough:** the same argument position of a self call, as
    today.
 3. **Forwarded (new):** passed at position `q` of a call to another
@@ -544,18 +545,66 @@ under the "applied once per compile" question above.
   idris2-lsp's clone count and build time are the numbers to watch
   (`--timing 3`, and the pass's own `--directive timing` counts).
 
-### Plan
+### Results (2026-09-27)
 
-1. Implement the fixpoint eligibility, forwarding sites and fixpoint
-   acceptance in `SpecClosure.idr`.
-2. Add a test covering:
-   - `sortBy compare` and `sort` on `Int` (the comparator must end up a
-     direct call: check the dump for no `apply` in the `mergeBy` clone);
-   - a closure with captures forwarded two levels deep;
-   - mutual forwarding;
-   - a forwarded parameter that also escapes (must stay generic).
-3. Measure `sort` 1M against the table in `TODO.md`, and idris2-lsp's
-   clone count and build time.
+**Implementation.** In `SpecClosure.idr`:
+- `paramUses` replaces `paramLooksSpecializable` and returns the
+  forwarding sites.
+- `buildClone` rewrites the forwarding sites to pass a known closure.
+- A work list (`buildAll`) adds each clone's forwarding keys.
+- `acceptClosed` keeps the greatest subset whose forwarding sites all
+  find an accepted clone.
+- `dropDeadEntryClosure` removes the entry-bound closure once the
+  redirect has used it.
+
+Eligibility is not computed up front as a whole-program fixpoint.
+A key whose callee uses the parameter any other way simply builds no
+clone, and acceptance then drops everything that forwards to it.
+
+**At most one apply chain.** The design allowed any number. On
+idris2-lsp that accepted 8,860 clones instead of about 6,300. Of those,
+987 applied the closure more than once and 1,605 forwarded it, and the
+final RCExp grew by 18%. `sort` needs no second chain (`mergeBy`
+applies `cmp` once), so the rule stays at one:
+
+| idris2-lsp, final RCExp | before | any number of chains | at most one |
+|---|---|---|---|
+| definitions | 19,528 | 19,807 | 19,149 |
+| `rc2_specClosure_*` definitions | 740 | 1,606 | 906 |
+| lines | 668,914 | 792,159 (+18%) | 694,148 (+3.8%) |
+
+With at most one chain, 7,299 clones are accepted, 1,086 of them
+forwarding. The pass takes about 1.1s on idris2-lsp. `rcexpr-lint`
+finds no anomalies.
+
+**Speed.** `sort` of 1M `Int`s takes 1.11s instead of 1.49s (Chez:
+1.23s). The comparator in the `mergeBy` clone is now a direct worker
+call.
+
+**Executable size** (text, bytes):
+
+| | before | after |
+|---|---|---|
+| `sort` | 87,588 | 91,316 (+4.3%) |
+| map/filter | 70,835 | 70,595 |
+| closures | 66,035 | 65,787 |
+| `missing-containers` | 114,573 | 114,573 |
+| the 69 other smoke tests, summed | 4,007,625 | 4,004,761 |
+
+Only `sort` grew: it now holds a specialised `sortBy` and `mergeBy`.
+Where a clone replaces generic code outright, the generic version is
+dropped as dead, so some programs shrink.
+
+**Tests.** `Test106TransitiveSpec`, compared against Chez:
+- `sortBy compare`, `sort`, and a descending `sortBy`.
+- A closure capturing `k`, forwarded through `twice` to `applyAll`.
+  With `--directive nolateinline`, the dump shows both clones, the
+  captured value passed straight through, and no leftover partial.
+- `evens`/`odds`, forwarding to each other.
+- `stash`, which also stores its closure and so stays generic.
+
+Its helpers are larger than Inline's threshold, and `twice` has two
+callers, so none of them is inlined before this pass.
 
 ## Files
 

@@ -144,20 +144,31 @@ selfPassthroughOccurrences v callee argPos (RAppName _ _ n args) =
     if n == callee && getAt argPos args == Just v then 1 else 0
 selfPassthroughOccurrences v callee argPos e = foldSubExprs (+) 0 (selfPassthroughOccurrences v callee argPos) e
 
-||| `True` iff every occurrence of `v` in `e` is accounted for by
-||| exactly one `missing`-long apply chain rooted at `v`, plus zero or
-||| more self-recursive passthrough calls.
-paramLooksSpecializable : RCLocal -> Nat -> (callee : Name) -> (argPos : Nat) -> RCExp -> Bool
-paramLooksSpecializable v missing callee argPos e =
-    let uses = countUsesR v e
-        passthrough = selfPassthroughOccurrences v callee argPos e
-    in uses > passthrough && (uses `minus` passthrough) == 1 && chainOccursIn v missing e
-  where
-    ||| `True` iff a `missing`-long `chainArgs` match for `v` occurs
-    ||| anywhere in `e` -- see the doc's "Chain detection" paragraph for
-    ||| why this searches every node, not just `e` itself.
-    chainOccursIn : RCLocal -> Nat -> RCExp -> Bool
-    chainOccursIn v missing e = isJust (chainArgs v missing e) || foldSubExprs (\a, b => a || b) False (chainOccursIn v missing) e
+||| The `missing`-long apply chains rooted at `v` in `e`.
+chainCount : RCLocal -> Nat -> RCExp -> Nat
+chainCount v missing e = (if isJust (chainArgs v missing e) then 1 else 0) + foldSubExprs (+) 0 (chainCount v missing) e
+
+||| Every position at which `e` passes `v` on to a call other than
+||| `callee`'s own self passthrough at `argPos`: to another function, or
+||| to `callee` at another position. See the doc's "Transitive
+||| specialisation" -> "Forwarding as a third kind of use".
+forwardSites : RCLocal -> (callee : Name) -> (argPos : Nat) -> RCExp -> List (Name, Nat)
+forwardSites v callee argPos (RAppName _ _ n args) =
+    mapMaybe (\(q, a) => if a == v && not (n == callee && q == argPos) then Just (n, q) else Nothing)
+             (zip [0 .. length args] args)
+forwardSites v callee argPos e = foldSubExprs (++) [] (forwardSites v callee argPos) e
+
+||| `Just` the forwarding sites of `v` if every use of it in `e` is a
+||| `missing`-long apply chain, a self passthrough or a forwarding site,
+||| with at most one chain and at least one chain or forwarding site;
+||| `Nothing` otherwise. More than one chain is refused to bound code
+||| size (doc's "Transitive specialisation" -> "Results").
+paramUses : RCLocal -> Nat -> (callee : Name) -> (argPos : Nat) -> RCExp -> Maybe (List (Name, Nat))
+paramUses v missing callee argPos e =
+    let chains = chainCount v missing e
+        fwds = forwardSites v callee argPos e
+        accounted = chains + selfPassthroughOccurrences v callee argPos e + length fwds
+    in if accounted == countUsesR v e && not (chains > 1) && (chains > 0 || not (null fwds)) then Just fwds else Nothing
 
 ------------------------------------------------------------------------
 -- Step 2: speculative clone + rewrite, one attempt per distinct
@@ -225,7 +236,23 @@ buildClone callee argPos paramVar targetName missing capturedCount args retRep b
                                           else [(i, r)]) args
     let body' = rewriteSelfCall callee argPos paramVar cloneName capturedParams
                     (rewriteApply paramVar targetName missing capturedParams body)
-    pure (cloneName, MkRCFun args' retRep False body')
+    -- Each forwarding site now passes a known closure instead of the
+    -- parameter, so that the redirect can send it to that callee's own
+    -- clone: the constant itself, or a closure over the captured
+    -- parameters, bound once at entry and dropped again by
+    -- `dropDeadEntryClosure` once every site is redirected.
+    fwdVar <- freshVarId
+    let known = if capturedCount == 0 then RCConstClosure targetName missing else RCLoc fwdVar
+        body'' = rewriteForward known body'
+        body''' = if countUsesR (RCLoc fwdVar) body'' > 0
+                     then RLet EmptyFC fwdVar RBoxed (RUnderApp EmptyFC targetName missing (map RCLoc capturedParams)) body''
+                     else body''
+    pure (cloneName, MkRCFun args' retRep False body''')
+  where
+    rewriteForward : RCLocal -> RCExp -> RCExp
+    rewriteForward known (RAppName fc lazy n as) =
+        RAppName fc lazy n (map (\a => if a == RCLoc paramVar then known else a) as)
+    rewriteForward known e = mapSubExprs (rewriteForward known) e
 
 ------------------------------------------------------------------------
 -- Step 3: profitability check + call-site redirection
@@ -235,6 +262,13 @@ buildClone callee argPos paramVar targetName missing capturedCount args retRep b
 ||| proposed rc2-native design" -> "3. Profitability check" section.
 stillAppliesParam : Int -> RCExp -> Bool
 stillAppliesParam paramVar e = countUsesR (RCLoc paramVar) e > 0
+
+||| Drops the closure `buildClone` binds at a clone's entry for its
+||| forwarding sites, once the redirect has sent all of them to clones.
+dropDeadEntryClosure : RCDef -> RCDef
+dropDeadEntryClosure d@(MkRCFun as r w (RLet _ v _ (RUnderApp _ _ _ _) body)) =
+    if countUsesR (RCLoc v) body == 0 then MkRCFun as r w body else d
+dropDeadEntryClosure d = d
 
 ||| One accepted clone: redirect a call to `callee` at `argPos` to
 ||| `cloneName` whenever the bound closure there resolves to `target`.
@@ -325,6 +359,20 @@ maybeLogTimeOver : Bool -> Integer -> Core String -> Core a -> Core a
 maybeLogTimeOver True nsecs str act = logTimeOver nsecs str act
 maybeLogTimeOver False _ _ act = act
 
+||| A specialisation key: callee, argument position, target, missing.
+SpecKey : Type
+SpecKey = (Name, Nat, Name, Nat)
+
+||| One clone built for `key`, and the keys of the clones its forwarding
+||| sites need (doc's "Transitive specialisation" -> "Acceptance").
+record Built where
+  constructor MkBuilt
+  key : SpecKey
+  name : Name
+  def : RCDef
+  needs : List SpecKey
+  chains : Nat
+
 export
 applySpecClosure : {auto c : Ref Ctxt Defs} -> {auto v : Ref VarId Int} -> List (Name, RCDef) -> Core (List (Name, RCDef))
 applySpecClosure defs = do
@@ -336,19 +384,30 @@ applySpecClosure defs = do
                              ++ show (length keys) ++ " distinct keys, " ++ show (length defs) ++ " defs"
     caf <- maybeLogTimeOver timingEnabled 0 (pure ("rc2: SpecClosure: rebuildCafTable (" ++ show (length defs) ++ " defs, once)"))
              (pure (rebuildCafTable defs))
-    (newClones, table) <- goKeys defOf caf [] empty keys
+    built <- buildAll defOf caf empty [] (map (\(k, opps) => (k, capturedOf opps)) keys)
+    let accepted = acceptClosed built
+    when timingEnabled $
+      coreLift $ putStrLn $ "TIMING rc2: SpecClosure: " ++ show (length built) ++ " clones built, "
+                             ++ show (length accepted) ++ " accepted"
+                             ++ " (" ++ show (length (filter (not . null . (.needs)) accepted)) ++ " forwarding, "
+                             ++ show (length (filter (\b => null b.needs && b.chains > 1) accepted)) ++ " applying more than once)"
+    let table = foldl (\t, b => let (callee, argPos, target, _) = b.key
+                                in insertWith (++) callee [(argPos, target, b.name)] t)
+                      (the RedirectTable empty) accepted
     -- `newClones ++ defs`, not `defs ++ newClones`: matches the
     -- ordering the old per-key-accumulated `accDefs` produced (each
     -- accepted clone prepended, original defs at the tail), so
     -- emission's own ArgCounter-derived temp-variable numbering is
     -- unaffected by this refactor.
-    maybeLogTimeOver timingEnabled 0 (pure ("rc2: SpecClosure: redirectAll (" ++ show (length defs + length newClones) ++ " defs, once)"))
-      (pure $ map (\(n, d) => (n, case d of
-                                        MkRCFun a r w body => MkRCFun a r w (redirectCallSitesTable table body)
-                                        d' => d'))
-                  (newClones ++ defs))
+    maybeLogTimeOver timingEnabled 0 (pure ("rc2: SpecClosure: redirectAll (" ++ show (length defs + length accepted) ++ " defs, once)"))
+      (pure $ map (\b => (b.name, dropDeadEntryClosure (redirectDef table b.def))) accepted
+              ++ map (\(n, d) => (n, redirectDef table d)) defs)
   where
-    -- Referenced exactly once, at the `goKeys defOf ...` call above,
+    redirectDef : RedirectTable -> RCDef -> RCDef
+    redirectDef table (MkRCFun a r w body) = MkRCFun a r w (redirectCallSitesTable table body)
+    redirectDef _ d = d
+
+    -- Referenced exactly once, at the `buildAll defOf ...` call above,
     -- which then threads it as a parameter. That is load-bearing, not
     -- style: a `where` definition is lambda-lifted into a function of
     -- the enclosing pattern variables it mentions, so every *further*
@@ -359,8 +418,7 @@ applySpecClosure defs = do
     defOf = SortedMap.fromList defs
     -- `missing` is part of the key, not just `target` (doc's own
     -- "Internal structure" -> "Records" paragraph).
-    addOpp : SortedMap (Name, Nat, Name, Nat) (List Opportunity) -> Opportunity
-          -> SortedMap (Name, Nat, Name, Nat) (List Opportunity)
+    addOpp : SortedMap SpecKey (List Opportunity) -> Opportunity -> SortedMap SpecKey (List Opportunity)
     addOpp acc opp = insertWith (++) (opp.callee, opp.argPos, opp.closure.target, opp.closure.missing) [opp] acc
 
     -- Groups each definition's own opportunities into the map as they
@@ -370,60 +428,66 @@ applySpecClosure defs = do
     -- so far. Measured on `idris2-lsp` (32.4k definitions, 12.2k
     -- opportunities): ~0.9s of this pass's own time went there. Same
     -- trap, and same fix, as `Compiler.RC2.LateInline`'s own `analyse`.
-    byKey : SortedMap (Name, Nat, Name, Nat) (List Opportunity)
+    byKey : SortedMap SpecKey (List Opportunity)
     byKey = foldl (\acc, (_, d) => case d of
                         MkRCFun _ _ _ body => foldl addOpp acc (collectOpportunities empty body)
                         _ => acc)
-                  (the (SortedMap (Name, Nat, Name, Nat) (List Opportunity)) empty) defs
+                  (the (SortedMap SpecKey (List Opportunity)) empty) defs
 
-    ||| `paramVar` at `argPos` in `g`'s own args, if it passes
-    ||| `paramLooksSpecializable` for `missing`; `Nothing` otherwise.
-    specializableParam : (callee : Name) -> Nat -> Nat -> RCDef -> Maybe Int
-    specializableParam callee argPos missing (MkRCFun args _ _ body) =
-        case getAt argPos args of
-             Just (i, _) => if paramLooksSpecializable (RCLoc i) missing callee argPos body then Just i else Nothing
-             Nothing => Nothing
-    specializableParam _ _ _ _ = Nothing
+    capturedOf : List Opportunity -> Nat
+    capturedOf (o :: _) = length o.closure.capturedArgs
+    capturedOf [] = 0
 
     rebuildCafTable : List (Name, RCDef) -> CafTable
     rebuildCafTable = foldl (\tbl, (n, d) => maybe tbl (\v => insert n v tbl) (cafValueOf d)) empty
 
-    ||| Builds and profitability-checks one clone for one key; `Just`
-    ||| iff accepted. `caf` is the whole-program CAF table, built once
-    ||| by the caller (see `applySpecClosure`'s own doc comment).
-    tryOneKey : {auto fr : Ref FreshId Int} -> SortedMap Name RCDef -> CafTable -> Name -> Nat -> Name -> Nat -> List Opportunity -> Core (Maybe (Name, RCDef))
-    tryOneKey defOf caf callee argPos target missing opps =
-        case (lookup callee defOf, opps) of
-             (Just gDef@(MkRCFun args retRep _ body), rep :: _) =>
-                 case specializableParam callee argPos missing gDef of
+    ||| Builds one clone for one key and checks that its parameter is
+    ||| gone once folded; `Nothing` if the parameter is used some other
+    ||| way, or survives. `caf` is the whole-program CAF table, built
+    ||| once by the caller (see `applySpecClosure`'s own doc comment).
+    tryOneKey : {auto fr : Ref FreshId Int} -> SortedMap Name RCDef -> CafTable -> SpecKey -> Nat -> Core (Maybe Built)
+    tryOneKey defOf caf k@(callee, argPos, target, missing) capturedCount =
+        case lookup callee defOf of
+             Just (MkRCFun args retRep _ body) =>
+                 case getAt argPos args of
+                      Just (paramVar, _) =>
+                          case paramUses (RCLoc paramVar) missing callee argPos body of
+                               Nothing => pure Nothing
+                               Just fwds => do
+                                   (cloneName, unfoldedDef) <- buildClone callee argPos paramVar target missing capturedCount args retRep body
+                                   let MkRCFun a r w foldedBody = foldConstDef True caf unfoldedDef
+                                       | _ => pure Nothing
+                                   pure $ if stillAppliesParam paramVar foldedBody
+                                             then Nothing
+                                             else Just (MkBuilt k cloneName (MkRCFun a r w foldedBody)
+                                                                (map (\(h, q) => (h, q, target, missing)) fwds)
+                                                                (chainCount (RCLoc paramVar) missing body))
                       Nothing => pure Nothing
-                      Just paramVar => do
-                          let capturedCount = length rep.closure.capturedArgs
-                          (cloneName, unfoldedDef) <- buildClone callee argPos paramVar target missing capturedCount args retRep body
-                          let cloneDef = foldConstDef True caf unfoldedDef
-                          let cloneDef'@(MkRCFun _ _ _ foldedBody) = cloneDef
-                              | _ => pure Nothing
-                          pure $ if stillAppliesParam paramVar foldedBody
-                                    then Nothing
-                                    else Just (cloneName, cloneDef')
              _ => pure Nothing
 
-    -- `Core` has no `Monad` instance, so `Data.List.foldlM` doesn't
-    -- apply -- a manual left fold over the discovered keys instead,
-    -- threading the accepted-clones list and the redirect table
-    -- (rather than a growing whole-program defs list) as the
-    -- accumulators.
-    goKeys : {auto fr : Ref FreshId Int}
-          -> SortedMap Name RCDef -> CafTable -> List (Name, RCDef) -> RedirectTable
-          -> List ((Name, Nat, Name, Nat), List Opportunity) -> Core (List (Name, RCDef), RedirectTable)
-    goKeys _ _ newClones table [] = pure (newClones, table)
-    goKeys defOf caf newClones table (((callee, argPos, target, missing), opps) :: rest) = do
-        mClone <- tryOneKey defOf caf callee argPos target missing opps
-        case mClone of
-             Nothing => goKeys defOf caf newClones table rest
-             Just (cloneName, cloneDef) =>
-                 goKeys defOf caf ((cloneName, cloneDef) :: newClones)
-                        (insertWith (++) callee [(argPos, target, cloneName)] table) rest
+    -- A work list: every clone's forwarding sites add the keys of the
+    -- clones they need, each key built at most once. `Core` has no
+    -- `Monad` instance, so this is a manual loop rather than a fold.
+    buildAll : {auto fr : Ref FreshId Int}
+            -> SortedMap Name RCDef -> CafTable -> SortedSet SpecKey -> List Built -> List (SpecKey, Nat)
+            -> Core (List Built)
+    buildAll _ _ _ acc [] = pure acc
+    buildAll defOf caf seen acc ((k, captured) :: rest) =
+        if contains k seen
+           then buildAll defOf caf seen acc rest
+           else do
+               mBuilt <- tryOneKey defOf caf k captured
+               case mBuilt of
+                    Nothing => buildAll defOf caf (insert k seen) acc rest
+                    Just b => buildAll defOf caf (insert k seen) (b :: acc) (map (, captured) b.needs ++ rest)
+
+    ||| The greatest subset of `bs` in which every clone's forwarding
+    ||| sites find the clones they need.
+    acceptClosed : List Built -> List Built
+    acceptClosed bs =
+        let keys = the (SortedSet SpecKey) (fromList (map (.key) bs))
+            bs' = filter (\b => all (\k => contains k keys) b.needs) bs
+        in if length bs' == length bs then bs else acceptClosed bs'
 
 ------------------------------------------------------------------------
 -- Constant-constructor argument specialization
@@ -498,7 +562,7 @@ scrutineeUses p e = foldSubExprs (+) 0 (scrutineeUses p) e
 ||| Discounting the self-passthrough is what reaches the common
 ||| dictionary shape -- a recursive `go` carrying its dictionary along
 ||| on every step -- and it is exactly the allowance
-||| `paramLooksSpecializable` already makes for the closure case, via
+||| `paramUses` already makes for the closure case, via
 ||| the same `selfPassthroughOccurrences`.
 |||
 ||| Nothing extra is needed to keep such a clone consistent. The seeded

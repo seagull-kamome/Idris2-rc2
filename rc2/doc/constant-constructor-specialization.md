@@ -59,7 +59,7 @@ transformation.
    `RConCase` scrutinee or as a passthrough of itself at the same
    argument position of `g`'s own recursive call, record the triple
    `(g, argPos, c)`. `paramIsScrutineeOnly` is the gate -- modelled on
-   the closure half's `paramLooksSpecializable`, with `apply` swapped
+   the closure half's `paramUses`, with `apply` swapped
    for "scrutinee of an `RConCase`" and sharing its
    `selfPassthroughOccurrences` verbatim. Because `ConstFold` has
    already run to a fixpoint over the whole program by this point, a
