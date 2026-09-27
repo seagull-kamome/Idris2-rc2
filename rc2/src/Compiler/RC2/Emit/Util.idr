@@ -794,9 +794,9 @@ boxedConstExpr c = do
          Just cdef => pure "((IDRIS2RC2_Value*)&\{constantName cdef})"
          Nothing => dyngen
   where
-    -- IDRIS2RC2_IMM_INT64's range, [-2^61, 2^61) (doc/immediate-ints.md).
+    -- IDRIS2RC2_IMM_INT64's range, [-2^62, 2^62) (doc/immediate-ints.md).
     immInt64 : Integer -> Bool
-    immInt64 v = v >= -2305843009213693952 && v < 2305843009213693952
+    immInt64 v = v >= -4611686018427387904 && v < 4611686018427387904
 
     orStagen : ConstDef -> Core String
     orStagen cdef = do
@@ -821,7 +821,7 @@ boxedConstExpr c = do
         B8 x  => pure "idris2rc2_mkBits8(UINT8_C(\{show x}))"
         B16 x => pure "idris2rc2_mkBits16(UINT16_C(\{show x}))"
         B32 x => pure "idris2rc2_mkBits32(UINT32_C(\{show x}))"
-        B64 x => if cast x < the Integer 4611686018427387904
+        B64 x => if cast x < the Integer 9223372036854775808
            then pure "IDRIS2RC2_IMM_BITS64(UINT64_C(\{show x}))"
            else orStagen $ CDB64 $ show x
         Db x => orStagen $ CDDb $ cCleanString $ show x
@@ -1302,23 +1302,23 @@ integerSwitch (MkRConstAlt c _  :: _) =
         (Ch x) => True
         _ => False
 
-||| Correctly sign-aware int64 extraction for RConstCase's "integer
-||| switch" fast path below, dispatched on the constant type of the alt
-||| being matched (every alt in an integer-switch shares the same
-||| underlying type, per `integerSwitch`). The pointer-tagged unboxed
-||| representation used for Int8/Int16/Int32 (like Bits8/Bits16/Bits32/
-||| Char) carries no runtime type tag of its own to say whether the stored
-||| bit pattern should be read back signed or unsigned -- unlike
-||| `idris2rc2_extractInt`'s generic fallback (always an unsigned
-||| zero-extend, harmless for the unsigned types but wrong for negative
-||| Int8/16/32 literals, e.g. -128 would extract as 128), this picks the
-||| same type-specific signed accessor the native-unboxing path already
-||| uses (see `rcVarToNativeC`/`nativeUnbox`).
+||| The int64 an RConstCase "integer switch" compares, read with the
+||| accessor for the alts' constant type (every alt shares one, per
+||| `integerSwitch`). An immediate carries no type of its own
+||| (doc/immediate-ints.md): `idris2rc2_extractInt` reads it as signed,
+||| which is wrong for a `Bits64` of 2^62 or more.
 export
 extractIntExpr : Constant -> String -> String
 extractIntExpr (I8 _) x = "idris2rc2_to_i8(\{x})"
 extractIntExpr (I16 _) x = "idris2rc2_to_i16(\{x})"
 extractIntExpr (I32 _) x = "idris2rc2_to_i32(\{x})"
+extractIntExpr (I64 _) x = "idris2rc2_to_i64(\{x})"
+extractIntExpr (I _) x = "idris2rc2_to_i64(\{x})"
+extractIntExpr (B8 _) x = "idris2rc2_to_u8(\{x})"
+extractIntExpr (B16 _) x = "idris2rc2_to_u16(\{x})"
+extractIntExpr (B32 _) x = "idris2rc2_to_u32(\{x})"
+extractIntExpr (B64 _) x = "(int64_t)idris2rc2_to_u64(\{x})"
+extractIntExpr (Ch _) x = "idris2rc2_to_char(\{x})"
 extractIntExpr _ x = "idris2rc2_extractInt(\{x})"
 
 export

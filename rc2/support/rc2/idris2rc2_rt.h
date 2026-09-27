@@ -41,6 +41,9 @@ IDRIS2RC2_Value *idris2rc2_tailcallApplyClosure(IDRIS2RC2_Value *closure, IDRIS2
 IDRIS2RC2_Value *idris2rc2_applyClosureN(IDRIS2RC2_Value *closure, IDRIS2RC2_Value **newArgs, uint8_t n);
 IDRIS2RC2_Value *idris2rc2_trampoline(IDRIS2RC2_Value *v);
 
+// Reads an Int or Int64: an immediate carries no type, and those two are the
+// only ones laid out as a shifted 63-bit value that a signed read gets
+// right. Narrower types and Bits64 have their own idris2rc2_to_* accessors.
 int64_t idris2rc2_extractInt(IDRIS2RC2_Value *v);
 
 IDRIS2RC2_Value *idris2rc2_crash(IDRIS2RC2_Value *msg);

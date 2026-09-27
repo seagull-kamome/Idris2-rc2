@@ -1,7 +1,7 @@
 module Main
 
 -- Int, Int64 and Bits64 values stored in a heap cell are immediate within
--- 62 bits and boxed beyond (rc2/doc/immediate-ints.md). Each value below
+-- 63 bits and boxed beyond (rc2/doc/immediate-ints.md). Each value below
 -- sits in a list, so it is stored in that form; the arithmetic runs on
 -- both sides of each boundary and must keep full 64-bit semantics.
 
@@ -11,7 +11,7 @@ import Data.String
 ints : List Int
 ints = [ 0, 1, -1, 99, 100, -100
        , 2305843009213693951, 2305843009213693952, -2305843009213693952, -2305843009213693953
-       , 4611686018427387903, 4611686018427387904, -4611686018427387904
+       , 4611686018427387903, 4611686018427387904, -4611686018427387904, -4611686018427387905
        , 9223372036854775807, -9223372036854775808 ]
 
 int64s : List Int64
@@ -20,7 +20,7 @@ int64s = [ 0, -1, 2305843009213693951, 2305843009213693952, -2305843009213693953
 
 bits64s : List Bits64
 bits64s = [ 0, 1, 99, 100, 4611686018427387903, 4611686018427387904
-          , 9223372036854775808, 18446744073709551615 ]
+          , 9223372036854775807, 9223372036854775808, 18446744073709551615 ]
 
 intOps : Int -> String
 intOps x = unwords
