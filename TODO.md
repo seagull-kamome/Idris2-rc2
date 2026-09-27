@@ -277,6 +277,28 @@ pattern) but is now fixed; see `rc2/doc/caf-memoization.md`'s own
 "Scope" section for exactly where the boundary between "fixed" and
 "still open here" (`Lazy`/`Force` itself) falls.
 
+## Compatibility: `show` of a `Double` picks exponent notation differently from Chez (found 2026-09-27)
+
+Both print the same value, in different notation:
+
+| value | Chez | rc2 |
+|---|---|---|
+| `1.0e10` | `1e10` | `10000000000.0` |
+| `123456789012.5` | `1.234567890125e11` | `123456789012.5` |
+| `2.305843009213694e18` | `2.305843009213694e18` | `2305843009213694000.0` |
+| `1.0e-5` | `1e-5` | `0.00001` |
+| `1.0e21`, `1.0e-7`, `1.0e9`, `0.001` | same | same |
+
+- **Chez** (`number->string`) switches to exponent notation whenever it
+  is the shorter spelling.
+- **rc2** does so only at 1e21 and above, or below 1e-6, as JavaScript
+  does.
+
+Only programs that print large or small doubles see it. Found when
+comparing `Test105ImmediateInts`' `Int` to `Double` casts against Chez;
+that test now avoids such values. Decide whether rc2 should follow
+Chez's rule; nothing in Idris itself fixes the format.
+
 ## Upstream stdlib `%foreign` declarations with no C/RefC backend at all
 
 Surveyed every `%foreign` declaration in `idris2-src/libs` (206 across
@@ -780,3 +802,23 @@ the locality without an external dependency. The open problems:
 - **Foreign code** that frees or reallocates runtime values.
   `idris2rc2_free` and teardown are the only exits today; verify that
   nothing else calls `free` on a value.
+
+**Another case (2026-09-27): `idris2-missing-containers`' `read`.**
+It is the one step of that benchmark still slower than Chez: 0.378s
+against 0.338s, best of 3. Allocation dominates it:
+- `malloc`, `free` and teardown are 38% of its profile;
+- under mimalloc it takes 0.346s, level with Chez.
+
+Two sources of allocations:
+- **Each character of a hashed string.** `Hashable String` walks the
+  key with `Data.String.Iterator.uncons`. The runtime's
+  `stringIteratorNext` returns a fresh `Character c it` cell per
+  character, which the caller matches and frees at once.
+- **Each lookup.** The IO actions `IOHashSet` passes around are
+  closures, and it builds `Op`, `Maybe` and pair cells.
+
+Returning `uncons` by value would remove the first, but only by giving
+one foreign function special treatment in the compiler, which rc2 does
+not do. An allocator that makes small short-lived cells cheap covers
+both sources.
+
