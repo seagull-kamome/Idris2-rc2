@@ -1,5 +1,65 @@
 # rc2 Stage 5: テストとベンチマーク結果
 
+## 2026-09-27 追記: 09-17以降の変更一式を通した再計測
+
+計測時点: idris2-rc-cg `7c40173`、idris2-missing-containers `60083f8`、gcc 15.3.0。
+`rc2/tests/bench.sh --runs 5 --missing-containers`(壁時計5回平均)。
+
+09-17以降の`rc2/src`への主な変更(69コミット):
+
+- 生成Cを既定で`-O2`コンパイル(`RC2/CC`)
+- `DualABI`の構造体返し(4フィールドまでのコンストラクタを値で返す、
+  ネイティブフィールドを非ボックスで運ぶ)を既定で有効化
+- 末尾再帰modulo constructor(`RC2/Trmc`、phase 1〜3)
+- `ArityRaise`、`DeadArgs`、`ClosureCtx`(差分リスト引数をセル連鎖で保持)、
+  `SpecClosure`の転送関数追跡
+- 値表現: 即値タグを1ビットにし、`Int`/`Int64`/`Bits64`をポインタ語に
+  収める(63ビット)。小さな`Integer`も即値化
+- コンストラクタセルを40→24バイトに縮小、クロージャのarity/filledを
+  ヘッダの隙間へ移動
+- マルチスレッド化するまで参照カウントを非atomicで扱う
+- `LateInline`等のコンパイル時間の二乗コストの解消
+
+### マイクロベンチマーク一式(rc2 vs 本家`idris2 --cg refc`、壁時計5回平均)
+
+| ベンチマーク | rc2(s) | refc(s) | 倍率(RefC比) | 09-17のrc2(s) |
+|---|---|---|---|---|
+| `BenchTailFFI.idr` | 0.0050 | 1.3372 | **267.4倍高速** | 0.9112 |
+| `BenchCallArgChain.idr` | 0.0064 | 1.5966 | **249.5倍高速** | 1.1600 |
+| `BenchLoopCallArg.idr` | 0.0032 | 0.5350 | **167.2倍高速** | 0.0032 |
+| `BenchLoop.idr` | 0.0014 | 0.1788 | **127.7倍高速** | 0.0030 |
+| `BenchChain.idr` | 0.0052 | 0.6562 | **126.2倍高速** | 0.0052 |
+| `BenchMutual.idr` | 0.0030 | 0.1800 | 60.0倍高速 | 0.0158 |
+| `BenchFib.idr` | 0.0040 | 0.2256 | 56.4倍高速 | 0.1282 |
+| `BenchStructReturnNative.idr` | 0.0512 | 2.6656 | 52.1倍高速 | (新規) |
+| `BenchClosureChain.idr` | 0.0170 | 0.8100 | 47.6倍高速 | 0.4498 |
+| `BenchPushCon.idr` | 0.0934 | 3.8400 | 41.1倍高速 | (新規) |
+| `BenchLoopInvariantBoxed.idr` | 0.0082 | 0.3200 | 39.0倍高速 | 0.2158 |
+| `BenchConstClosureApply.idr` | 0.0414 | 1.0420 | 25.2倍高速 | (新規) |
+| `BenchSpecConstCon.idr` | 0.0410 | 0.9848 | 24.0倍高速 | (新規) |
+| `BenchSpecConstConRec.idr` | 0.0402 | 0.8090 | 20.1倍高速 | (新規) |
+| `BenchKnownCon.idr` | 0.2914 | 3.8246 | 13.1倍高速 | (新規) |
+| `BenchStructReturn.idr` | 0.1708 | 1.7920 | 10.5倍高速 | (新規) |
+| `BenchConstConFold.idr` | 0.1342 | 1.3916 | 10.4倍高速 | 0.2036 |
+| `BenchArityRaise.idr` | 0.4316 | 3.7276 | 8.6倍高速 | (新規) |
+| `BenchConAltNativeBoxed.idr` | 0.0594 | 0.2524 | 4.2倍高速 | 0.2368 |
+
+09-17から継続する11本はすべて同等か高速化しており、回帰は無い。
+`BenchTailFFI`/`BenchCallArgChain`/`BenchFib`/`BenchClosureChain`は
+1桁以上縮んだ。数msの項目は計測の分解能に近く、倍率の大小は目安に留まる。
+
+### 外部パッケージベンチマーク(idris2-missing-containers)
+
+| backend | avg(s) | 09-17 avg(s) |
+|---|---|---|
+| rc2 | **5.90** | 11.72 |
+| RefC | 21.09 | 22.15 |
+| Chez | 8.59 | 9.04 |
+
+rc2はRefC比**約3.58倍高速**、Chez比でも**約1.46倍高速**になった
+(09-17時点ではChez比約1.30倍遅かった)。rc2単体では09-17比で約50%短縮。
+RefC/Chezの変動(-5%前後)は計測環境のばらつきの範囲。
+
 ## 2026-09-17 追記: クロージャ多引数適用の一括化(`RApp`のN引数化 + `idris2rc2_applyClosureN`) + `idris2-missing-containers`自体のHasIO直書き化
 
 2つの独立した変更を含む(詳細設計は`rc2/doc/rapp-nary-closure-apply.md`):
