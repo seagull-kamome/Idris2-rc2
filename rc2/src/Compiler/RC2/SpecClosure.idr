@@ -34,6 +34,7 @@ import Core.TT
 
 import Data.DPair
 import Data.List
+import Data.List1
 import Data.Maybe
 import Data.SortedMap
 import Data.SortedSet
@@ -131,10 +132,10 @@ collectOpportunities bound e = foldSubExprs (++) [] (collectOpportunities bound)
 chainArgs : RCLocal -> Nat -> RCExp -> Maybe (List RCLocal)
 chainArgs v missing (RLet _ t _ (RApp _ _ c args) cont) =
     if c == v && length args < missing
-       then (args ++) <$> chainArgs (RCLoc t) (missing `minus` length args) cont
+       then (\rest => forget args ++ rest) <$> chainArgs (RCLoc t) (missing `minus` length args) cont
        else Nothing
 chainArgs v missing (RApp _ _ c args) =
-    if c == v && length args == missing then Just args else Nothing
+    if c == v && length args == missing then Just (forget args) else Nothing
 chainArgs _ _ _ = Nothing
 
 ||| See the doc's "Internal structure" -> "Self-recursive passthrough"

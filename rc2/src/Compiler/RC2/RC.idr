@@ -19,7 +19,9 @@ import Core.FC
 import Core.Name.Scoped
 import Core.TT
 
+import Data.DPair
 import Data.List.Quantifiers
+import Data.List1
 import Data.SortedSet
 import Data.Vect
 
@@ -141,7 +143,8 @@ boolBranches [MkLConstAlt c1 b1, MkLConstAlt c2 b2] Nothing =
          _ => Nothing
 boolBranches _ _ = Nothing
 
-||| Walks a nested `LApp` spine -- built by `Compiler.LambdaLift`'s own
+||| Walks the nested `LApp` spine of `LApp _ lazy c x`, given its `c`,
+||| `lazy` and `x` -- built by `Compiler.LambdaLift`'s own
 ||| `unload` (`f a1 a2 a3` becomes `LApp _ Nothing (LApp _ Nothing
 ||| (LApp _ lazy0 f a1) a2) a3`, innermost-lazy: "only outermost [i.e.
 ||| innermost-built] LApp must be lazy" per `unload`'s own comment) --
@@ -154,12 +157,10 @@ boolBranches _ _ = Nothing
 ||| `doc/rapp-nary-closure-apply.md` for why this collapses an entire
 ||| curried closure application into one `RApp` node instead of a
 ||| chain of them.
-collectAppChain : Lifted vars -> (Lifted vars, Maybe LazyReason, List (Lifted vars))
-collectAppChain (LApp _ lazy c a) =
-    case c of
-         LApp {} => let (base, lazy0, args) = collectAppChain c in (base, lazy0, args ++ [a])
-         _        => (c, lazy, [a])
-collectAppChain e = (e, Nothing, [])   -- unreachable from normalize's own LApp guard below; kept total
+collectAppChain : Lifted vars -> Maybe LazyReason -> Lifted vars -> (Lifted vars, Maybe LazyReason, List1 (Lifted vars))
+collectAppChain (LApp _ lazy c a) _ x =
+    let (base, lazy0, args) = collectAppChain c lazy a in (base, lazy0, appendl args [x])
+collectAppChain c lazy x = (c, lazy, singleton x)
 
 mutual
     ||| Let-bind compound expressions to fresh locals to ensure ANF normal form.
@@ -226,9 +227,9 @@ mutual
         bindMany env args (\locs => pure $ RAppName fc lazy n locs)
     normalize env (LUnderApp fc n missing args) =
         bindMany env args (\locs => pure $ RUnderApp fc n missing locs)
-    normalize env e@(LApp fc _ _ _) =
-        let (base, lazy0, args) = collectAppChain e
-        in bindOne env base (\basel => bindMany env args (\argsl => pure $ RApp fc lazy0 basel argsl))
+    normalize env (LApp fc lazy c a) =
+        let (base, lazy0, x ::: xs) = collectAppChain c lazy a
+        in bindOne env base (\basel => bindOne env x (\xl => bindMany env xs (\xsl => pure $ RApp fc lazy0 basel (xl ::: xsl))))
     normalize env (LLet fc x val body) = do
         i <- freshVarId
         valRC <- normalize env val
@@ -302,17 +303,14 @@ mutual
                          Env vars -> LiftedConstAlt vars -> Core RConstAlt
     normalizeConstAlt env (MkLConstAlt c body) = MkRConstAlt c <$> normalize env body
 
-    ||| Shared body for each `tryFuseCompare` clause below -- factored out
-    ||| so the arity-2 refinement each specific comparison constructor
-    ||| brings (matched directly in the caller's own pattern, not via
-    ||| `Types.cmpArgTy`'s arity-generic signature, precisely so `op`'s
-    ||| arity unifies with `args`'s length automatically) only has to be
-    ||| written once.
+    ||| Shared body for each `tryFuseCompare` clause below, each of which
+    ||| matches one comparison constructor directly so that `args` is a
+    ||| `Vect 2` and the `IsCmp` proof is at hand.
     tryFuseCompareOp : {auto v : Ref VarId Int} ->
-                        Env vars -> FC -> PrimFn 2 -> PrimType -> Vect 2 (Lifted vars) ->
+                        Env vars -> FC -> CmpOp -> Vect 2 (Lifted vars) ->
                         List (LiftedConstAlt vars) -> Maybe (Lifted vars) -> Core (Maybe RCExp)
-    tryFuseCompareOp env fc op ty args alts mDef =
-        if not (nativeEligible ty)
+    tryFuseCompareOp env fc op args alts mDef =
+        if not (nativeEligible (cmpOpTy op))
            then pure Nothing
            else case boolBranches alts mDef of
                      Nothing => pure Nothing
@@ -332,11 +330,11 @@ mutual
     tryFuseCompare : {auto v : Ref VarId Int} ->
                       Env vars -> Lifted vars -> List (LiftedConstAlt vars) -> Maybe (Lifted vars) ->
                       Core (Maybe RCExp)
-    tryFuseCompare env (LOp fc lazy (LT ty) args) alts mDef = tryFuseCompareOp env fc (LT ty) ty args alts mDef
-    tryFuseCompare env (LOp fc lazy (GT ty) args) alts mDef = tryFuseCompareOp env fc (GT ty) ty args alts mDef
-    tryFuseCompare env (LOp fc lazy (EQ ty) args) alts mDef = tryFuseCompareOp env fc (EQ ty) ty args alts mDef
-    tryFuseCompare env (LOp fc lazy (LTE ty) args) alts mDef = tryFuseCompareOp env fc (LTE ty) ty args alts mDef
-    tryFuseCompare env (LOp fc lazy (GTE ty) args) alts mDef = tryFuseCompareOp env fc (GTE ty) ty args alts mDef
+    tryFuseCompare env (LOp fc lazy (LT ty) args) alts mDef = tryFuseCompareOp env fc (Element (LT ty) IsLT) args alts mDef
+    tryFuseCompare env (LOp fc lazy (GT ty) args) alts mDef = tryFuseCompareOp env fc (Element (GT ty) IsGT) args alts mDef
+    tryFuseCompare env (LOp fc lazy (EQ ty) args) alts mDef = tryFuseCompareOp env fc (Element (EQ ty) IsEQ) args alts mDef
+    tryFuseCompare env (LOp fc lazy (LTE ty) args) alts mDef = tryFuseCompareOp env fc (Element (LTE ty) IsLTE) args alts mDef
+    tryFuseCompare env (LOp fc lazy (GTE ty) args) alts mDef = tryFuseCompareOp env fc (Element (GTE ty) IsGTE) args alts mDef
     tryFuseCompare _ _ _ _ = pure Nothing
 
 ||| args ordering matches Compiler.LambdaLift.MkLFun's own documented
@@ -442,7 +440,7 @@ nativeLocalsR _ = empty
 ||| only differ in *how* they derive `mty`: an `ROp`'s own operand type
 ||| needs `opArgTyFor`'s Cast-source refinement (its operand type can
 ||| differ from its result type); a comparison's is already exactly its
-||| shared operand type (`cmpArgTy`), no refinement needed.
+||| shared operand type (`cmpOpTy`), no refinement needed.
 alwaysUnboxedArgs : Maybe PrimType -> Vect n RCLocal -> SortedSet RCLocal
 alwaysUnboxedArgs Nothing _ = empty
 alwaysUnboxedArgs (Just ty) args =
@@ -460,7 +458,7 @@ alwaysUnboxedBoxedLocalsR (ROp _ _ op args _) =
 alwaysUnboxedBoxedLocalsR (RConCase _ _ alts mDef) = foldConAltsR alwaysUnboxedBoxedLocalsR alts mDef
 alwaysUnboxedBoxedLocalsR (RConstCase _ _ alts mDef) = foldConstAltsR alwaysUnboxedBoxedLocalsR alts mDef
 alwaysUnboxedBoxedLocalsR (RCmpCase _ op args _ t f) =
-    union (alwaysUnboxedArgs (cmpArgTy op) args)
+    union (alwaysUnboxedArgs (Just (cmpOpTy op)) args)
           (union (alwaysUnboxedBoxedLocalsR t) (alwaysUnboxedBoxedLocalsR f))
 alwaysUnboxedBoxedLocalsR (RMemoize _ _ _ body) = alwaysUnboxedBoxedLocalsR body
 alwaysUnboxedBoxedLocalsR _ = empty
@@ -592,7 +590,7 @@ mutual
     annotate natives owned (RUnderApp fc n missing args) =
         pure $ wrapDups fc (splitBorrows natives owned args) (RUnderApp fc n missing args)
     annotate natives owned (RApp fc lazy c args) =
-        pure $ wrapDups fc (splitBorrows natives owned (c :: args)) (RApp fc lazy c args)
+        pure $ wrapDups fc (splitBorrows natives owned (c :: forget args)) (RApp fc lazy c args)
     annotate natives owned (RLet fc var rep value body) = do
         -- Only `var` itself and the currently-owned locals are ever
         -- asked about below, so `ownedUsedIn` answers both questions in

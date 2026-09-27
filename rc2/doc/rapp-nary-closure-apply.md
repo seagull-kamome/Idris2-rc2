@@ -39,8 +39,11 @@ stuck at exactly one argument is the odd one out, not the norm, in this
 GADT. Generalizing it:
 
 ```idris
-RApp : FC -> (lazy : Maybe LazyReason) -> RCLocal -> List RCLocal -> RCExp
+RApp : FC -> (lazy : Maybe LazyReason) -> RCLocal -> List1 RCLocal -> RCExp
 ```
+
+(`List1`: an `RApp` always has at least one argument, so `Emit` has no
+empty case to reject.)
 
 is strictly *less* code than adding a sibling node: every existing
 `RApp fc lazy c a` clause across the pipeline (`RCExp.idr`'s own
@@ -86,28 +89,27 @@ second pass rediscovering the same chain later from `RLet`-threaded
 `RApp`s:
 
 ```idris
-||| Walks a nested LApp spine (built by Compiler.LambdaLift's own
-||| `unload`, innermost-lazy) down to its non-LApp base, collecting
-||| args in original left-to-right order. The base's own `lazy` tag is
+||| Walks the nested LApp spine of `LApp _ lazy c x`, given its `c`,
+||| `lazy` and `x` (built by Compiler.LambdaLift's own `unload`,
+||| innermost-lazy), down to its non-LApp base, collecting args in
+||| original left-to-right order. The base's own `lazy` tag is
 ||| `unload`'s "only outermost [i.e. innermost-built] LApp must be
 ||| lazy" one; every LApp above it carries Nothing by construction, so
 ||| looking at the *deepest* LApp's own lazy field is correct, not
 ||| approximate.
-collectAppChain : Lifted vars -> (Lifted vars, Maybe LazyReason, List (Lifted vars))
-collectAppChain (LApp _ lazy c a) =
-    case c of
-         LApp _ _ _ _ => let (base, lazy0, args) = collectAppChain c in (base, lazy0, args ++ [a])
-         _             => (c, lazy, [a])
-collectAppChain e = (e, Nothing, [])   -- unreachable from normalize's own LApp guard; total for reuse elsewhere
+collectAppChain : Lifted vars -> Maybe LazyReason -> Lifted vars -> (Lifted vars, Maybe LazyReason, List1 (Lifted vars))
+collectAppChain (LApp _ lazy c a) _ x =
+    let (base, lazy0, args) = collectAppChain c lazy a in (base, lazy0, appendl args [x])
+collectAppChain c lazy x = (c, lazy, singleton x)
 ```
 
 `normalize env (LApp fc lazy c a)`'s existing body (`bindOne env c
 (\cl => bindOne env a (\al => pure $ RApp fc lazy cl al))`) becomes:
 
 ```idris
-normalize env e@(LApp fc _ _ _) =
-    let (base, lazy0, args) = collectAppChain e
-    in bindOne env base (\basel => bindMany env args (\argsl => pure $ RApp fc lazy0 basel argsl))
+normalize env (LApp fc lazy c a) =
+    let (base, lazy0, x ::: xs) = collectAppChain c lazy a
+    in bindOne env base (\basel => bindOne env x (\xl => bindMany env xs (\xsl => pure $ RApp fc lazy0 basel (xl ::: xsl))))
 ```
 
 `fc` here is the *outermost* application's own source position (already

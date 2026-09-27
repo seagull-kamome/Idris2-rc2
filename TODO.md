@@ -805,3 +805,88 @@ one foreign function special treatment in the compiler, which rc2 does
 not do. An allocator that makes small short-lived cells cheap covers
 both sources.
 
+## 安全性: 証明・線形型で実行時エラーを型エラーへ移せる箇所(調査 2026-09-28)
+
+`rc2/src`の`idris_crash`(4箇所)、`believe_me`(1)、`InternalError`
+(約35)、「起こらないはず」とコメントだけで守っている不変条件を
+洗い出した。既に型で守っている先例は`RCConstCon`の
+`{0 argsConst : All IsAnyConstLocal args}`と`IsConstLocal`
+(`RCExp.idr`)、`RC.idr`の`Env vars = All (const Int) vars`。
+**注意**: 消去された証明(`0`)で分岐して実行時の値を返すことは
+できない(上の「`RC.idr`のlookupEnv」節)。以下はどれもその制約を
+避けられる形、つまり「データの形そのものを型で絞る」か「非消去の
+添字を持つ」形で考えている。手軽なものから順に並べる。
+
+### A. 小さく閉じた置き換え(1箇所ずつ、他の変換へ波及しにくい)
+
+- **`toSubst`の引数個数**(`Inline.idr:194`「call arity mismatch」)。
+  呼び出し側で`length args = length calleeArgs`を一度だけ判定し、
+  その等式を渡せば`toSubst`自体は全域になる。判定の失敗は
+  「インライン化しない」に落とせるので、例外も要らなくなる。
+- **コンストラクタのarity/tagが16bitに収まる**(`Emit/Util.idr:127`)。
+  上流から来る値なので証明は作れないが、`ConInfo`を受け取る所で一度
+  検査して、検査済みを示す型(`Bounded16`など)に包めば、Emit側の
+  例外を境界の1箇所へ寄せられる。
+- **MutualLoopのSCCメンバ探索**(`MutualLoop.idr:157`)。`groupNames`
+  と`memberDefs`を別々に持たず、最初から`(Name, def)`の組のリストで
+  持てば探索自体が不要になる(証明ではなくデータ構造の変更)。
+- **FFI型の`cTypeOfCFType`/`extractValue`/`packCFType`の
+  catch-all**(`Emit/Util.idr:1613/1655/1703`)。`%foreign`を受け
+  取った時点で`CFType`をrc2が扱える部分集合の型(`RC2CFType`)へ
+  変換し、非対応はそこでユーザー向けエラーにする。以降の3関数は
+  全域になる。
+
+### B. IRの型に不変条件を載せる(複数パスに波及、効果大)
+
+- **Rep(boxed/native/RetN)で`RCExp`を添字付けする**。現状、
+  `Emit.idr:945/971/1018`(native文脈にboxedが来た)、
+  `Emit/Util.idr:1006`と`Emit.idr:110`(RetNがboxed文脈に来た)、
+  `Emit.idr:765/767`(RMemoizeにnative)がすべて「表現の食い違い」の
+  実行時検出。`RLet`が持つ`Rep`と、`RV`/`RAppNameRep`などが生む値の
+  表現を型レベルで一致させれば、このクラス全体がコンパイルエラーに
+  なる。ただし全パスが`RCExp`を作り替えるので改修は大きい。まず
+  `emitNativeValue`に渡す部分式だけを別の型(`NativeExp ty`)に
+  切り出す、という段階的な入り方が現実的。
+- **`RLoopContinue`は`RLoop`の内側にしか現れない**(`Emit.idr:267`)。
+  `RCExp`を「ループの中か」(あるいはループ引数の`List Rep`)で添字
+  付けすれば、`RLoopContinue`の引数の個数・表現もループ引数と一致
+  することまで保証できる。`Loop.idr`/`MutualLoop.idr`/`Trmc.idr`が
+  作る側。
+- **`emitRC`に届かないはずのノード**(`Emit.idr:1082`「not
+  intercepted by emitInto's dispatch」)。文(`RLet`/`RCase`系)と
+  値を生む式を別の型に分ければ、ディスパッチ漏れが型エラーになる。
+- **`RStructGet`/`RStructSet`の構造体名・フィールド名**
+  (`Emit.idr:1254-1289`)。Phase 1で構造体定義を引いて、名前の
+  代わりに「その構造体に存在するフィールド」の証拠(`Elem`など)を
+  持たせる。Emitでの探索と失敗が無くなる。
+- **`Inline.idr:134`の`FreelyEmbeddable Lifted`(`believe_me`)**。
+  上流の`Term`と同じ手口で、上流の`Lifted`の表現に依存している。
+  上流が`LLocal`の添字の表現を変えると黙って壊れるので、少なくとも
+  `embed`が恒等であることを確かめる回帰テストを置く。証明で置き
+  換えるには`Lifted`を歩いて作り直す必要があり、コストに見合うかは
+  要検討。
+
+### C. 線形型(量1)で資源の扱いを守る
+
+- **参照カウントのdup/drop対応**。Phase 2(`annotate`)が各変数を
+  「所有」か「借用」かに分け、`postDrop`/`RDup`/`RDrop`/
+  `RReuseOffer`の`dupOnShared`/`dropOnUnique`へ振り分けている。
+  「所有する変数はどの経路でもちょうど1回消費される(使うか、drop
+  するか、reuseに渡す)」は線形性そのもので、rc2の正しさの核心。
+  ただし`Core`モナドは線形に対応しておらず、`SortedSet`で所有集合
+  を持つ今の書き方を線形な所有トークンへ直すのは大改修になる。
+  段階案: (1)まずPhase 2の出力を検査する独立した検証パス(各経路で
+  所有変数の消費回数を数える)をデバッグ用に作る、(2)それで
+  検出できる不具合の種類を見てから、線形型での作り直しを判断する。
+- **Emitの「後で出すdrop」(`rcVarToBoxedC`などが返す`pending`)**。
+  インライン展開した式が借りたboxed値のdropを、呼び出し側が必ず
+  1回だけ出す約束になっている。`pending`を線形な値として返せば、
+  捨てた・二重に出した、がコンパイルエラーになる。ただしこれも
+  `Core`の中なので、純粋な部分に切り出せるかの調査が先。
+- **`CFPtr`の寿命**(上の「native (unboxed) `Ptr`/`CFPtr`」節)。
+  unboxedにしたときに失われる寿命の追跡を、rc2base側の線形な
+  ハンドル型で補えないか。rc2のコンパイラ本体ではなくライブラリ側
+  の課題。
+
+関連: 上の「ファントム型やファントム関数の明示」(量0で実行時に
+存在しないことを保証する)も同じ方向の課題。

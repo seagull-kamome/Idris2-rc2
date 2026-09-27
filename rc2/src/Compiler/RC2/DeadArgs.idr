@@ -19,6 +19,7 @@ import Core.FC
 import Core.Name
 
 import Data.List
+import Data.List1
 import Data.Maybe
 import Data.SortedMap
 import Data.SortedSet
@@ -57,7 +58,7 @@ usesIn = go empty
     go acc (RV _ v) = one acc v
     go acc (RAppName _ _ g args) = foldl slot acc (zip (map (\j => (g, j)) [0 .. length args]) args)
     go acc (RUnderApp _ _ _ args) = many acc args
-    go acc (RApp _ _ c args) = many acc (c :: args)
+    go acc (RApp _ _ c args) = many acc (c :: forget args)
     go acc (RLet _ _ _ value body) = go (go acc value) body
     go acc (RCon _ _ _ _ args _) = many acc args
     go acc (RRetPack _ _ _ fields) = many acc fields
@@ -72,7 +73,7 @@ usesIn = go empty
     go acc (RConstCase _ sc alts mDef) =
         maybe id (flip go) mDef (foldl (\a, (MkRConstAlt _ b) => go a b) (one acc sc) alts)
     go acc (RMemoize _ _ _ body) = go acc body
-    go acc e = if null (SortedSet.toList (freeLocalsR e)) then acc else many acc (SortedSet.toList (freeLocalsR e))
+    go acc e = if null (Prelude.toList (freeLocalsR e)) then acc else many acc (Prelude.toList (freeLocalsR e))
 
 ||| The slots a parameter reaches when every one of its uses is an
 ||| argument of a call; `Nothing` if any use is something else.
@@ -155,8 +156,8 @@ applyDeadArgs roots defs = do
     fixed <- logTime 3 "rc2: Dead arguments (pinned)" $ pure (pinned roots arity defs)
     slots <- logTime 3 "rc2: Dead arguments (slots)" $ pure (deadSlots fixed defs)
     dead <- pure $ the (SortedMap Name (SortedSet Nat)) $
-                foldl (\m, (n, i) => insert n (insert i (fromMaybe empty (lookup n m))) m) SortedMap.empty (SortedSet.toList slots)
-    if null (SortedSet.toList slots)
+                foldl (\m, (n, i) => insert n (insert i (fromMaybe empty (lookup n m))) m) SortedMap.empty (Prelude.toList slots)
+    if null (Prelude.toList slots)
        then pure defs
        else logTime 3 "rc2: Dead arguments (rewrite)" $ pure (map (rewriteDef dead) defs)
   where

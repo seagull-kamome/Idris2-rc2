@@ -9,7 +9,7 @@ module Compiler.RC2.Types
 -- boxed representation remains for function boundaries.
 -- Out of scope: a two-way match on Idris2's own Bool encoding, which
 -- Compiler.RC2.RC's `normalize` fuses into a dedicated `RCmpCase` node
--- instead (see `cmpArgTy` below and RCExp.idr's own doc comment on
+-- instead (see RCExp.idr's own `CmpOp` and doc comment on
 -- RCmpCase) -- a distinct, narrower optimisation from the let-bound-
 -- local Rep this module otherwise decides.
 
@@ -105,24 +105,6 @@ export
 opArgTyFor : PrimType -> PrimFn arity -> PrimType
 opArgTyFor _ (Cast i _) = i
 opArgTyFor ty _         = ty
-
-||| The shared operand PrimType for a boolean comparison (LT/GT/EQ/LTE/
-||| GTE), `Nothing` for anything else. Comparisons have no *result*
-||| PrimType of their own (`opResultRep` deliberately excludes them --
-||| the Bool they produce is Idris2's own False=0/True=1 Constant
-||| encoding, not something rc2 boxes itself) but this is consulted by
-||| RC.idr's `normalize` (deciding whether a comparison feeding directly
-||| into a two-way Bool match is eligible to fuse into `RCmpCase`,
-||| skipping the boxed Bool entirely) and by Emit.idr (choosing the
-||| operand C type for the fused native comparison expression).
-export
-cmpArgTy : PrimFn arity -> Maybe PrimType
-cmpArgTy (LT ty) = Just ty
-cmpArgTy (GT ty) = Just ty
-cmpArgTy (EQ ty) = Just ty
-cmpArgTy (LTE ty) = Just ty
-cmpArgTy (GTE ty) = Just ty
-cmpArgTy _ = Nothing
 
 ||| The Rep a PrimFn's result would have, if native-eligible. Comparisons
 ||| are deliberately absent (always Boxed Bool in this increment).

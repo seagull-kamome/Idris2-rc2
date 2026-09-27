@@ -11,7 +11,9 @@ import Compiler.RC2.RCExp
 import Core.CompileExpr
 import Core.TT
 
+import Data.DPair
 import Data.List
+import Data.List1
 import Data.SortedSet
 import Data.String
 import Data.Vect
@@ -48,7 +50,7 @@ mutual
   prettyExp d (RUnderApp _ n missing args) =
       indent d ++ "partial " ++ show n ++ " missing= " ++ show missing ++ " " ++ show args ++ "\n"
   prettyExp d (RApp _ lazy c args) =
-      indent d ++ lazyPrefix lazy ++ "apply " ++ show c ++ " " ++ show args ++ "\n"
+      indent d ++ lazyPrefix lazy ++ "apply " ++ show c ++ " " ++ show (forget args) ++ "\n"
   prettyExp d (RLet _ var rep value body) =
       indent d ++ "let " ++ show (RCLoc var) ++ " : " ++ prettyRep rep ++ " =\n"
       ++ prettyExp (d + 1) value
@@ -75,7 +77,7 @@ mutual
       indent d ++ "fill " ++ show cell ++ " . " ++ show k ++ " = " ++ show value
         ++ (if postDrop == [] then "" else " postDrop= " ++ show postDrop) ++ "\n"
   prettyExp d (RCmpCase _ op args postDrop whenTrue whenFalse) =
-      indent d ++ "cmp " ++ show op ++ " " ++ show (toList args)
+      indent d ++ "cmp " ++ show op.fst ++ " " ++ show (toList args)
         ++ (if postDrop == [] then "" else " postDrop= " ++ show postDrop) ++ "\n"
       ++ indent d ++ "then\n" ++ prettyExp (d + 1) whenTrue
       ++ indent d ++ "else\n" ++ prettyExp (d + 1) whenFalse

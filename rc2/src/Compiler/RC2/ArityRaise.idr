@@ -17,6 +17,7 @@ import Core.Context
 import Core.Context.Log
 
 import Data.List
+import Data.List1
 import Data.SortedMap
 import Data.SortedSet
 
@@ -48,7 +49,7 @@ raisePlan defs =
     let arities : SortedMap Name Nat := fromList (mapMaybe arityOf defs)
         tbl : SortedMap Name (List ClosureTail) := fromList (mapMaybe (tailsOf arities) defs)
         closed = shrink tbl (fromList (keys tbl))
-    in reach tbl closed (fromList (filter (\n => any isPartial (fromMaybe [] (lookup n tbl))) (SortedSet.toList closed)))
+    in reach tbl closed (fromList (filter (\n => any isPartial (fromMaybe [] (lookup n tbl))) (Prelude.toList closed)))
   where
     arityOf : (Name, RCDef) -> Maybe (Name, Nat)
     arityOf (n, MkRCFun args _ _ _) = Just (n, length args)
@@ -81,14 +82,14 @@ raisePlan defs =
 
     shrink : SortedMap Name (List ClosureTail) -> SortedSet Name -> SortedSet Name
     shrink tbl s =
-        let s' = fromList (filter (\n => all (okIn s) (fromMaybe [] (lookup n tbl))) (SortedSet.toList s))
-        in if length (SortedSet.toList s') == length (SortedSet.toList s) then s' else shrink tbl s'
+        let s' = fromList (filter (\n => all (okIn s) (fromMaybe [] (lookup n tbl))) (Prelude.toList s))
+        in if length (Prelude.toList s') == length (Prelude.toList s) then s' else shrink tbl s'
 
     reach : SortedMap Name (List ClosureTail) -> SortedSet Name -> SortedSet Name -> SortedSet Name
     reach tbl closed ps =
         let ps' = fromList (filter (\n => contains n ps || any (callsIn ps) (fromMaybe [] (lookup n tbl)))
-                                   (SortedSet.toList closed))
-        in if length (SortedSet.toList ps') == length (SortedSet.toList ps) then ps' else reach tbl closed ps'
+                                   (Prelude.toList closed))
+        in if length (Prelude.toList ps') == length (Prelude.toList ps) then ps' else reach tbl closed ps'
 
 ||| `f`'s body is exactly `partial g missing= 1 [its parameters]`: its
 ||| callers can call `g` directly, no raised version needed.
@@ -131,7 +132,7 @@ rewriteSites ts e = here (mapChildren (rewriteSites ts) e)
     finalCall _ = Nothing
 
     raisedCall : Int -> RCExp -> RCExp -> Maybe RCExp
-    raisedCall c value (RApp _ Nothing (RCLoc c') [w]) =
+    raisedCall c value (RApp _ Nothing (RCLoc c') (w ::: [])) =
         if c' /= c || w == RCLoc c then Nothing
         else do
             (fc, f, xs, k) <- finalCall value
@@ -269,7 +270,7 @@ dropMentions c e = sum (map (dropMentions c) (children e))
 ||| `drop` of `c` dropping `owned` (what the closure held) instead;
 ||| `Nothing` when `c` sits inside a loop, or `mk` declines.
 replaceApply : Int -> List RCLocal -> (FC -> List RCLocal -> Maybe RCExp) -> RCExp -> Maybe RCExp
-replaceApply c _ mk e@(RApp fc Nothing (RCLoc c') ys) = if c' == c then mk fc ys else Just e
+replaceApply c _ mk e@(RApp fc Nothing (RCLoc c') ys) = if c' == c then mk fc (forget ys) else Just e
 replaceApply c owned mk (RDrop fc vs k) =
     let vs' = concatMap (\v => if v == RCLoc c then owned else [v]) vs
     in (\k' => if null vs' then k' else RDrop fc vs' k') <$> replaceApply c owned mk k

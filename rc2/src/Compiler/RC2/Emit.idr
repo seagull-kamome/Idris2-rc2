@@ -65,10 +65,12 @@ import Core.Context
 import Idris.Syntax
 
 import Libraries.Data.DList
+import Data.DPair
 import Data.List
 import Data.List.Quantifiers
-import Data.SortedSet
+import Data.List1
 import Data.SortedMap
+import Data.SortedSet
 import Data.String
 import Data.Vect
 
@@ -204,7 +206,7 @@ mutual
              (RNative ty, _) =>
                  emitInto fc (SinkVar True "var_\{show var}" (RNative ty)) NotInTailPosition value
              (RBoxed, _) => emitInto fc (SinkVar True "var_\{show var}" RBoxed) NotInTailPosition value
-             (RRet n l, _) => emitInto fc (SinkVar True "var_\{show var}" (RRet n l)) NotInTailPosition value
+             (r@(RRet _ _), _) => emitInto fc (SinkVar True "var_\{show var}" r) NotInTailPosition value
 
     ||| Lower a leading chain of ownership/reuse wrapper nodes --
     ||| `RDup`/`RDrop`/`RFree`/`RLet`/`RReleaseReuse`/`RReuseOffer`,
@@ -604,33 +606,30 @@ mutual
     ||| `{ }` scope -- it's already the last thing in whatever C block
     ||| contains this whole comparison, so it can just continue right
     ||| after `whenTrue`'s closing `}`, at the same indentation.
-    emitCmpCaseInto : EmitDeps (Sink -> TailPositionStatus -> FC -> PrimFn 2 -> Vect 2 RCLocal
+    emitCmpCaseInto : EmitDeps (Sink -> TailPositionStatus -> FC -> CmpOp -> Vect 2 RCLocal
                     -> List RCLocal -> RCExp -> RCExp -> Core ())
     emitCmpCaseInto sink tailPosition fc op args postDrop whenTrue whenFalse = do
-        case cmpArgTy op of
-             Nothing => throw $ InternalError "[rc2] RCmpCase: not a comparison op"
-             Just ty => do
-                 argsWithPending <- rc2traverseVect (rcVarToNativeC ty) args
-                 let argStrs = map fst argsWithPending
-                 let condVar = "cmp_" ++ !(getNextCounter)
-                 emit fc $ "int " ++ condVar ++ " = " ++ nativeCmpExpr op argStrs ++ ";"
-                 removeVars $ concatMap snd (toList argsWithPending)
-                 removeVars $ map varName postDrop
-                 resolvedSink <- resolveSink fc sink
-                 emit emptyFC "if (\{condVar}) {"
-                 increaseIndentation
-                 emitInto emptyFC resolvedSink tailPosition whenTrue
-                 decreaseIndentation
-                 if chainsWithElse resolvedSink
-                    then do
-                        emit emptyFC "} else {"
-                        increaseIndentation
-                        emitInto emptyFC resolvedSink tailPosition whenFalse
-                        decreaseIndentation
-                        emit emptyFC "}"
-                    else do
-                        emit emptyFC "}"
-                        emitInto emptyFC resolvedSink tailPosition whenFalse
+        argsWithPending <- rc2traverseVect (rcVarToNativeC (cmpOpTy op)) args
+        let argStrs = map fst argsWithPending
+        let condVar = "cmp_" ++ !(getNextCounter)
+        emit fc $ "int " ++ condVar ++ " = " ++ nativeCmpExpr op.fst argStrs ++ ";"
+        removeVars $ concatMap snd (toList argsWithPending)
+        removeVars $ map varName postDrop
+        resolvedSink <- resolveSink fc sink
+        emit emptyFC "if (\{condVar}) {"
+        increaseIndentation
+        emitInto emptyFC resolvedSink tailPosition whenTrue
+        decreaseIndentation
+        if chainsWithElse resolvedSink
+           then do
+               emit emptyFC "} else {"
+               increaseIndentation
+               emitInto emptyFC resolvedSink tailPosition whenFalse
+               decreaseIndentation
+               emit emptyFC "}"
+           else do
+               emit emptyFC "}"
+               emitInto emptyFC resolvedSink tailPosition whenFalse
 
     ||| Lower a constructor-tag switch: each alt (and the default, if
     ||| any) writes straight into `sink` (resolved once, before any alt
@@ -1097,9 +1096,7 @@ emitRC sink (RAppName fc _ n args) NotInTailPosition = do
 emitRC sink (RAppNameRep fc n argReps retRep postDrop args) _ = unreachableInEmitRC "RAppNameRep"
 emitRC sink (RAppFFIInline fc ccs fargs ret postDrop args) _ = unreachableInEmitRC "RAppFFIInline"
 emitRC sink (RUnderApp fc n missing args) _ = unreachableInEmitRC "RUnderApp"
-emitRC sink (RApp fc _ closure []) _ =
-   throw $ InternalError "[rc2] RApp with empty args (collectAppChain always produces at least one)"
-emitRC sink (RApp fc _ closure [arg]) tailPosition = do
+emitRC sink (RApp fc _ closure (arg ::: [])) tailPosition = do
    (closureStr, p1) <- rcVarToBoxedC closure
    (argStr, p2) <- rcVarToBoxedC arg
    let fnName = the String $ case tailPosition of
@@ -1115,16 +1112,16 @@ emitRC sink (RApp fc _ closure [arg]) tailPosition = do
 -- doc's own "Open questions" -> "Tail-position N-ary apply") --
 -- degrades to exactly the pre-this-change behavior instead, chaining
 -- `idris2rc2_tailcallApplyClosure` once per argument.
-emitRC sink (RApp fc _ closure args@(_ :: _ :: _)) NotInTailPosition = do
+emitRC sink (RApp fc _ closure (x ::: xs@(_ :: _))) NotInTailPosition = do
    (closureStr, p1) <- rcVarToBoxedC closure
-   argsWithPending <- traverse rcVarToBoxedC args
+   argsWithPending <- traverse rcVarToBoxedC (x :: xs)
    let arrName = "applyArgs_\{!(getNextCounter)}"
    emit fc "IDRIS2RC2_Value *\{arrName}[] = {\{showSep ", " (map fst argsWithPending)}};"
-   let valStr = "idris2rc2_applyClosureN(\{closureStr}, \{arrName}, \{show $ length args})"
+   let valStr = "idris2rc2_applyClosureN(\{closureStr}, \{arrName}, \{show $ length argsWithPending})"
    finalizeSinkWithDrop fc sink valStr (p1 ++ concatMap snd argsWithPending)
-emitRC sink (RApp fc _ closure args@(_ :: _ :: _)) InTailPosition = do
+emitRC sink (RApp fc _ closure (x ::: xs@(_ :: _))) InTailPosition = do
    (closureStr, p1) <- rcVarToBoxedC closure
-   argsWithPending <- traverse rcVarToBoxedC args
+   argsWithPending <- traverse rcVarToBoxedC (x :: xs)
    -- Only the *last* hop may safely stay undispatched via
    -- idris2rc2_tailcallApplyClosure -- every earlier one must go
    -- through idris2rc2_applyClosure instead, exactly as the pre-merge

@@ -118,6 +118,11 @@ on a real workload have not been measured.
 lives (`layout` is in "Native fields" below), and one new node
 builds one. Everything else is an existing node.
 
+Two erased proofs on `RRet`, `IsSucc n` and `LT n 5`, keep `n` to the
+widths `IDRIS2RC2_Ret1`..`Ret4` exist for; `retLayouts` checks them where
+it computes the width, and `applyStructReturn` stops with an internal
+error if a planned function's width fails.
+
 | what | IR | new? |
 |---|---|---|
 | a function returns a struct | `MkRCFun ... (retRep = RRet n layout)` | the Rep only |

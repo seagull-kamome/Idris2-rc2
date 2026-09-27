@@ -31,6 +31,7 @@ import Core.FC
 import Core.TT
 
 import Data.List
+import Data.List1
 import Data.Maybe
 import Data.SortedMap
 import Data.SortedSet
@@ -409,12 +410,12 @@ resolveConstClosureApps ccs e@(RApp fc lazy (RCLoc v) args) =
          Nothing => e
          Just (n, missing) =>
              if length args == missing
-                then RAppName fc lazy n args
+                then RAppName fc lazy n (forget args)
                 else if length args < missing
                         -- Under-application: still a closure, but built
                         -- directly instead of dispatching to build it.
                         -- See `Compiler.RC2.ConstFold`'s own `RApp` case.
-                        then RUnderApp fc n (minus missing (length args)) args
+                        then RUnderApp fc n (minus missing (length args)) (forget args)
                         else e
 resolveConstClosureApps ccs (RLet fc var rep value body) =
     RLet fc var rep (resolveConstClosureApps ccs value) (resolveConstClosureApps ccs body)

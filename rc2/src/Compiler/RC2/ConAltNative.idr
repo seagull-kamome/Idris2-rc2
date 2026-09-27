@@ -29,6 +29,7 @@ import Core.FC
 import Core.TT
 
 import Data.List
+import Data.List1
 import Data.SortedMap
 import Data.SortedSet
 import Data.Vect
@@ -157,7 +158,7 @@ reannotateFieldOwnership fid owned (RUnderApp fc n missing args) =
     let (nDups, owned') = countDupsNeeded fid owned args
     in (owned', wrapNDups fc fid nDups (RUnderApp fc n missing args))
 reannotateFieldOwnership fid owned (RApp fc lazy c args) =
-    let (nDups, owned') = countDupsNeeded fid owned (c :: args)
+    let (nDups, owned') = countDupsNeeded fid owned (c :: forget args)
     in (owned', wrapNDups fc fid nDups (RApp fc lazy c args))
 reannotateFieldOwnership fid owned (RLet fc var rep value body) =
     -- Mirrors RC.idr's own `annotate`/`borrowVal`: whether `fid` is

@@ -36,6 +36,7 @@ import Core.FC
 import Core.TT
 
 import Data.List
+import Data.Nat
 import Data.SortedMap
 import Data.SortedSet
 import Data.Vect
@@ -298,14 +299,14 @@ structReturnPlan defs =
 
     shrink : SortedMap Name (List RetTail) -> SortedSet Name -> SortedSet Name
     shrink tbl el =
-        let el' = fromList (filter (\n => all (okIn el) (tailsOf tbl n)) (SortedSet.toList el))
-        in if length (SortedSet.toList el') == length (SortedSet.toList el) then el' else shrink tbl el'
+        let el' = fromList (filter (\n => all (okIn el) (tailsOf tbl n)) (Prelude.toList el))
+        in if length (Prelude.toList el') == length (Prelude.toList el) then el' else shrink tbl el'
 
     reach : SortedMap Name (List RetTail) -> SortedSet Name -> SortedSet Name -> SortedSet Name
     reach tbl el ps =
         let ps' = fromList (filter (\n => contains n ps || any (\g => contains g ps) (callees (tailsOf tbl n)))
-                                   (SortedSet.toList el))
-        in if length (SortedSet.toList ps') == length (SortedSet.toList ps) then ps' else reach tbl el ps'
+                                   (Prelude.toList el))
+        in if length (Prelude.toList ps') == length (Prelude.toList ps) then ps' else reach tbl el ps'
 
     isCycle : Graph -> List Name -> Bool
     isCycle g [n] = contains n (fromMaybe empty (lookup n g))
@@ -321,7 +322,7 @@ structReturnPlan defs =
             closed : SortedSet Name := shrink tbl shaped
             seeds : SortedSet Name := fromList (mapMaybe (\e => if contains (fst e) closed && any isRealCon (snd e) then Just (fst e) else Nothing) entries)
             producing : SortedSet Name := reach tbl closed seeds
-            graph : Graph := fromList (map (edgesOf tbl producing) (SortedSet.toList producing))
+            graph : Graph := fromList (map (edgesOf tbl producing) (Prelude.toList producing))
             cyclic : SortedSet Name := fromList (concat (filter (isCycle graph) (tarjanSCCs graph)))
         in difference producing cyclic
 
@@ -339,7 +340,7 @@ structReturnPlan defs =
         fromList (map (\n => (n, foldlM addShape empty
                                    (ownShapes (tailsOf tbl n)
                                     ++ concatMap (\g => maybe [] SortedMap.toList (lookup g cur)) (callees (tailsOf tbl n)))))
-                      (SortedSet.toList el))
+                      (Prelude.toList el))
 
     shapeFix : SortedMap Name (List RetTail) -> SortedSet Name -> SortedMap Name (SortedMap Int ConShape)
              -> (SortedSet Name, SortedMap Name (SortedMap Int ConShape))
@@ -357,7 +358,7 @@ structReturnPlan defs =
     settle tbl excluded =
         let el = eligible tbl excluded
             (bad, shapes) = shapeFix tbl el empty
-        in if null (SortedSet.toList bad) then shapes else settle tbl (union bad excluded)
+        in if null (Prelude.toList bad) then shapes else settle tbl (union bad excluded)
 
 ||| The native types a struct's field can carry in an
 ||| `IDRIS2RC2_RetField`: every fixed-width integer, `Char` and `Double`.
@@ -411,8 +412,9 @@ padFields (S n) (f :: fs) = f :: padFields n fs
 ||| in every function its struct passes through unchanged by a tail
 ||| call, delivers the same native type there. Tail-call neighbours share
 ||| one struct, since it crosses between them as it is: the widest
-||| constructor any of them returns sets the width.
-retLayouts : List (Name, RCDef) -> SortedSet Name -> SortedMap Name Rep
+||| constructor any of them returns sets the width. `Nothing` when that
+||| width has no struct type.
+retLayouts : List (Name, RCDef) -> SortedSet Name -> SortedMap Name (Maybe Rep)
 retLayouts defs planned =
     let own : SortedMap Name (SortedMap Int (List (Maybe PrimType))) :=
             fromList (mapMaybe ownOf defs)
@@ -458,11 +460,13 @@ retLayouts defs planned =
         let next = foldl step cur es
         in if flat next == flat cur then next else settle es next
 
-    toRep : SortedMap Int (List (Maybe PrimType)) -> Rep
+    toRep : SortedMap Int (List (Maybe PrimType)) -> Maybe Rep
     toRep m =
         let tags : List (Int, List (Maybe PrimType)) := SortedMap.toList m
             width : Nat := foldl (\w, tf => max w (length (snd tf))) 1 tags
-        in RRet width (mapMaybe (\(t, fs) => if any isJust fs then Just (t, padFields width fs) else Nothing) tags)
+        in case (isItSucc width, isLT width 5) of
+               (Yes nz, Yes lt) => Just (RRet width {nz} {lt} (mapMaybe (\(t, fs) => if any isJust fs then Just (t, padFields width fs) else Nothing) tags))
+               _ => Nothing
 
 ||| `describeEligibility`'s lines, each marked ` ret1` when
 ||| `structReturnPlan` accepts the function, after a count of those.
@@ -1292,8 +1296,8 @@ prunePlan defs plan =
         let keep : Name -> Bool
             keep f = (contains f cased || any (\g => contains g kept) (fromMaybe [] (lookup f tailCallers)))
                      && all (\h => contains h kept) (fromMaybe [] (lookup f tailCallees))
-            kept' : SortedSet Name := SortedSet.fromList (filter keep (SortedSet.toList kept))
-        in if length (SortedSet.toList kept') == length (SortedSet.toList kept) then kept'
+            kept' : SortedSet Name := SortedSet.fromList (filter keep (Prelude.toList kept))
+        in if length (Prelude.toList kept') == length (Prelude.toList kept) then kept'
            else go cased tailCallees tailCallers kept'
 
 ||| Every call to a struct-returning function whose result is switched
@@ -1368,10 +1372,15 @@ applyStructReturn defs = do
         existing = SortedSet.fromList (map fst defs)
     planned <- traverse (workerFor existing plan) defs
     let layouts = retLayouts defs (fromList (keys plan))
-        structRepOf : Name -> Rep
-        structRepOf n = fromMaybe (RRet 1 []) (lookup n layouts)
-        ws : SortedMap Name StructWorker := fromList (mapMaybe (\((n, _), p) => map (\(w, reps, _) => (n, (w, reps, structRepOf n))) p) planned)
-        wNames : SortedSet Name := fromList (map (fst . snd) (SortedMap.toList ws))
+        structRepOf : Name -> Core Rep
+        structRepOf n = case lookup n layouts of
+            Nothing => pure (RRet 1 [])
+            Just (Just rep) => pure rep
+            Just Nothing => throw $ InternalError "[rc2] struct return: \{show n} returns a constructor wider than \{show maxRetFields} fields"
+    ws <- the (Core (SortedMap Name StructWorker)) $ fromList <$>
+            traverse (\(n, w, reps) => (\rep => (n, (w, reps, rep))) <$> structRepOf n)
+                     (mapMaybe (\((n, _), p) => map (\(w, reps, _) => (n, w, reps)) p) planned)
+    let wNames : SortedSet Name := fromList (map (fst . snd) (SortedMap.toList ws))
     foldr (++) [] <$> traverse (rewrite' ws wNames plan) planned
   where
     ||| `Just (worker, argReps, isNew)` for a planned function.

@@ -97,10 +97,11 @@ back up; it is not where the decision is made.
   unconditional no-ops regardless, so generating the calls at all is
   pure waste. Consulted by `RC.idr`'s `alwaysUnboxedBoxedLocalsR` (see
   "The `natives` set" below).
-- `cmpArgTy : PrimFn arity -> Maybe PrimType` -- added alongside
-  comparison/branch fusion (see below); extracts the shared operand
-  type for `LT`/`GT`/`EQ`/`LTE`/`GTE` specifically, since these have no
-  `opResultRep` entry of their own to hang an operand-type lookup off.
+- `cmpOpTy : CmpOp -> PrimType` (`RCExp.idr`) -- added alongside
+  comparison/branch fusion (see below); the shared operand type of
+  `LT`/`GT`/`EQ`/`LTE`/`GTE`, which have no `opResultRep` entry of their
+  own. `CmpOp` pairs the op with an erased `IsCmp` proof, so `RCmpCase`
+  can only ever hold one of those five.
 
 ### `RCLocal.RCConst` -- literals skip `RLet` entirely
 

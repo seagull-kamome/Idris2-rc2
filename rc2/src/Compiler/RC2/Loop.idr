@@ -20,6 +20,7 @@ import Core.FC
 import Core.TT
 
 import Data.List
+import Data.List1
 import Data.SortedMap
 import Data.SortedSet
 import Data.Vect
@@ -389,7 +390,7 @@ nativeArgTypes p (RLet _ _ rep value body) =
              _ => empty
     in fromOp `union` (nativeArgTypes p value `union` nativeArgTypes p body)
 nativeArgTypes p (RCmpCase _ op args _ t f) =
-    let fromArgs = fromList $ mapMaybe (\a => if a == RCLoc p then cmpArgTy op else Nothing) (toList args)
+    let fromArgs = fromList $ mapMaybe (\a => if a == RCLoc p then Just (cmpOpTy op) else Nothing) (toList args)
     in fromArgs `union` (nativeArgTypes p t `union` nativeArgTypes p f)
 nativeArgTypes p (RDup _ _ _ cont) = nativeArgTypes p cont
 nativeArgTypes p (RDrop _ _ cont) = nativeArgTypes p cont
@@ -457,9 +458,7 @@ nativeArgTypesFor tracked (RLet _ _ rep value body) =
              _ => empty
     in fromOp `unionMaps` (nativeArgTypesFor tracked value `unionMaps` nativeArgTypesFor tracked body)
 nativeArgTypesFor tracked (RCmpCase _ op args _ t f) =
-    let fromArgs = case cmpArgTy op of
-             Nothing => empty
-             Just ty => foldr (\a, acc => addTracked tracked a ty acc) empty (toList args)
+    let fromArgs = foldr (\a, acc => addTracked tracked a (cmpOpTy op) acc) empty (toList args)
     in fromArgs `unionMaps` (nativeArgTypesFor tracked t `unionMaps` nativeArgTypesFor tracked f)
 nativeArgTypesFor tracked (RDup _ _ _ cont) = nativeArgTypesFor tracked cont
 nativeArgTypesFor tracked (RDrop _ _ cont) = nativeArgTypesFor tracked cont
@@ -1242,7 +1241,7 @@ dupInvariantBoxed p (RAppName fc lazy n args) =
 dupInvariantBoxed p (RUnderApp fc n missing args) =
     wrapInvariantDups fc p (countInvariantDups p args) (RUnderApp fc n missing args)
 dupInvariantBoxed p (RApp fc lazy c args) =
-    wrapInvariantDups fc p (countInvariantDups p (c :: args)) (RApp fc lazy c args)
+    wrapInvariantDups fc p (countInvariantDups p (c :: forget args)) (RApp fc lazy c args)
 dupInvariantBoxed p (RLet fc var rep value body) =
     RLet fc var rep (dupInvariantBoxed p value) (dupInvariantBoxed p body)
 dupInvariantBoxed p (RCon fc n ci tag args reuseFrom) =

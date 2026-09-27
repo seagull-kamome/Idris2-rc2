@@ -20,6 +20,7 @@ import Core.Context
 
 import Data.Fin
 import Data.List
+import Data.List1
 import Data.Maybe
 import Data.SortedMap
 import Data.SortedSet
@@ -50,7 +51,7 @@ heapCon _ = False
 extenderOf : SortedSet Name -> RCDef -> Maybe Extender
 extenderOf newtypes (MkRCFun params _ False
                       (RLet _ cell _ (RCon fc n ci tag fields Nothing)
-                            (RApp _ Nothing (RCLoc c) [RCLoc cell']))) = do
+                            (RApp _ Nothing (RCLoc c) (RCLoc cell' ::: [])))) = do
     let ids = map fst params
     guard (cell == cell' && heapCon ci && not (contains n newtypes))
     x <- last' ids
@@ -114,7 +115,7 @@ contextSites f j c exts body = go empty body
                                 pure r
                         else if mentions c value then Nothing else go pending rest
                  Nothing => if mentions c value then Nothing else go pending rest
-        RApp _ Nothing (RCLoc c') [a] =>
+        RApp _ Nothing (RCLoc c') (a ::: []) =>
             if c' == c
                then if a /= RCLoc c && not (mentions c rest) then go pending rest else Nothing
                else if mentions c value then Nothing else go pending rest
@@ -122,7 +123,7 @@ contextSites f j c exts body = go empty body
     go pending (RAppName _ Nothing g args) =
         if g == f then selfArgOk pending args
         else if any (== RCLoc c) args then Nothing else pure empty
-    go _ (RApp _ Nothing (RCLoc c') [a]) =
+    go _ (RApp _ Nothing (RCLoc c') (a ::: [])) =
         if c' == c && a /= RCLoc c then pure empty
         else if a == RCLoc c then Nothing else pure empty
     go pending (RCmpCase _ _ args _ t e) =
@@ -158,8 +159,8 @@ rewriteBody f f' j c k exts sites mode = go
 
     applied : FC -> RCLocal -> Core RCExp
     applied fc a = case mode of
-        Entry => pure (RApp fc Nothing (RCLoc c) [a])
-        Acc res last => fill fc last a (RApp fc Nothing (RCLoc c) [RCLoc res])
+        Entry => pure (RApp fc Nothing (RCLoc c) (a ::: []))
+        Acc res last => fill fc last a (RApp fc Nothing (RCLoc c) (RCLoc res ::: []))
 
     go : RCExp -> Core RCExp
     go (RLet fc v rep value rest) = case lookup v sites of
@@ -171,7 +172,7 @@ rewriteBody f f' j c k exts sites mode = go
                      Acc _ last => RLet fc v RBoxed (cellFor e caps) <$> fill fc last (RCLoc v) rest'
             Nothing => RLet fc v rep value <$> go rest
         Nothing => case value of
-            RApp afc Nothing (RCLoc c') [a] =>
+            RApp afc Nothing (RCLoc c') (a ::: []) =>
                 if c' == c then RLet fc v rep <$> applied afc a <*> go rest
                 else RLet fc v rep value <$> go rest
             _ => RLet fc v rep value <$> go rest
@@ -188,7 +189,7 @@ rewriteBody f f' j c k exts sites mode = go
                                 Entry => pure (RAppName fc Nothing f' (args' ++ [RCLoc v, RCLoc v]))
                                 Acc res _ => pure (RAppName fc Nothing f' (args' ++ [RCLoc res, RCLoc v]))
             _ => pure e
-    go e@(RApp fc Nothing (RCLoc c') [a]) = if c' == c then applied fc a else pure e
+    go e@(RApp fc Nothing (RCLoc c') (a ::: [])) = if c' == c then applied fc a else pure e
     go (RCmpCase fc op args pd t e) = RCmpCase fc op args pd <$> go t <*> go e
     go (RConCase fc sc alts mDef) =
         RConCase fc sc <$> traverse (\(MkRConAlt n ci tag as b) => MkRConAlt n ci tag as <$> go b) alts

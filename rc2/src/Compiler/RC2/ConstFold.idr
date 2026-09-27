@@ -24,6 +24,7 @@ import Core.Value
 import Data.DPair
 import Data.List
 import Data.List.Quantifiers
+import Data.List1
 import Data.Maybe
 import Data.SortedMap
 import Data.SortedSet
@@ -108,7 +109,7 @@ useInfo = go (MkUseInfo empty empty empty)
     go acc (RAppNameRep _ _ _ _ _ args) = boxed args acc
     go acc (RAppFFIInline _ _ _ _ _ args) = boxed args acc
     go acc (RUnderApp _ _ _ args) = boxed args acc
-    go acc (RApp _ _ c args) = boxed args ({ boxedUses $= insert c } acc)
+    go acc (RApp _ _ c args) = boxed (forget args) ({ boxedUses $= insert c } acc)
     go acc (RCon _ _ _ _ args _) = boxed args acc
     go acc (RExtPrim _ _ _ args _) = boxed args acc
     go acc (ROp _ _ _ args _) = reads (toList args) acc
@@ -447,17 +448,17 @@ foldConst _ env (RApp fc lazy c args) =
     in case c' of
             RCConstClosure n missing =>
                 if length args' == missing
-                   then RAppName fc lazy n args'
+                   then RAppName fc lazy n (forget args')
                    else if length args' < missing
-                           then RUnderApp fc n (minus missing (length args')) args'
+                           then RUnderApp fc n (minus missing (length args')) (forget args')
                            else RApp fc lazy c' args'
             RCLoc i =>
                 case lookup i env.knownPartials of
                      Just (n, missing, captured) =>
                          if length args' == missing
-                            then RAppName fc lazy n (captured ++ args')
+                            then RAppName fc lazy n (captured ++ forget args')
                             else if length args' < missing
-                                    then RUnderApp fc n (minus missing (length args')) (captured ++ args')
+                                    then RUnderApp fc n (minus missing (length args')) (captured ++ forget args')
                                     else RApp fc lazy c' args'
                      Nothing => RApp fc lazy c' args'
             _ => RApp fc lazy c' args'
@@ -484,7 +485,7 @@ foldConst caf env (RCmpCase fc op args postDrop t f) =
         f' = foldConst caf env f
         resolvedArgs = map (resolveLocal env) args
     in case resolveConsts env args of
-            Just cs => case constFoldOp op cs of
+            Just cs => case constFoldOp op.fst cs of
                             Just (I 1) => t'
                             Just (I 0) => f'
                             _          => RCmpCase fc op resolvedArgs postDrop t' f'

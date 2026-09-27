@@ -17,7 +17,10 @@ import Core.CompileExpr
 import Core.FC
 import Core.TT
 
+import Data.DPair
 import Data.List.Quantifiers
+import Data.List1
+import Data.Nat
 import Data.SortedSet
 import Data.Vect
 
@@ -193,12 +196,14 @@ Show RCLocal where
 ||| struct carries natively, each with one entry per field: `Just ty`
 ||| carries it as `ty`, `Nothing` as a Boxed pointer (or not at all, past
 ||| the tag's own arity). A tag not listed has every field Boxed.
+||| `nz`/`lt` restrict `n` to the widths the runtime defines a struct for, so
+||| `Compiler.RC2.Emit.Util`'s `retCType` never names a missing one.
 public export
 data Rep : Type where
      RBoxed : Rep
      RNative : PrimType -> Rep
      RInlineNative : PrimType -> Rep
-     RRet : (n : Nat) -> List (Int, Vect n (Maybe PrimType)) -> Rep
+     RRet : (n : Nat) -> {auto 0 nz : IsSucc n} -> {auto 0 lt : LT n 5} -> List (Int, Vect n (Maybe PrimType)) -> Rep
 
 ||| The native type `RRet`'s layout carries field `k` of `tag` as, if any.
 export
@@ -206,6 +211,29 @@ retFieldType : {n : Nat} -> List (Int, Vect n (Maybe PrimType)) -> Int -> Nat ->
 retFieldType [] _ _ = Nothing
 retFieldType ((t, fs) :: rest) tag k =
     if t == tag then natToFin k n >>= \i => index i fs else retFieldType rest tag k
+
+||| Witness that a binary primitive is one of the five comparisons
+||| `RCmpCase` can branch on.
+public export
+data IsCmp : PrimFn 2 -> Type where
+     IsLT  : IsCmp (LT ty)
+     IsGT  : IsCmp (GT ty)
+     IsEQ  : IsCmp (EQ ty)
+     IsLTE : IsCmp (LTE ty)
+     IsGTE : IsCmp (GTE ty)
+
+public export
+0 CmpOp : Type
+CmpOp = Subset (PrimFn 2) IsCmp
+
+||| The operand type of a comparison.
+export
+cmpOpTy : CmpOp -> PrimType
+cmpOpTy (Element (LT ty) _) = ty
+cmpOpTy (Element (GT ty) _) = ty
+cmpOpTy (Element (EQ ty) _) = ty
+cmpOpTy (Element (LTE ty) _) = ty
+cmpOpTy (Element (GTE ty) _) = ty
 
 -- `RCExp`/`RConAlt`/`RConstAlt` are mutually recursive (`RConCase`/
 -- `RConstCase` hold `List RConAlt`/`RConstAlt`; both alt types hold a
@@ -234,16 +262,15 @@ data RCExp : Type where
                   -> (postDrop : List RCLocal) -> List RCLocal -> RCExp
      RUnderApp  : FC -> Name -> (missing : Nat) -> List RCLocal -> RCExp
      ||| Apply a boxed closure value to one or more arguments in one
-     ||| step (`args` is always non-empty by construction -- built from
-     ||| `Compiler.LambdaLift`'s own nested-`LApp` spine by
-     ||| `Compiler.RC2.RC`'s `collectAppChain`, see
+     ||| step (built from `Compiler.LambdaLift`'s own nested-`LApp` spine
+     ||| by `Compiler.RC2.RC`'s `collectAppChain`, see
      ||| `doc/rapp-nary-closure-apply.md`). Unlike `RAppName`, the
      ||| closure's own remaining arity is never statically known here --
      ||| `Compiler.RC2.Emit`'s `idris2rc2_applyClosureN` (or plain
      ||| `idris2rc2_applyClosure` for the `args = [_]` case) handles
      ||| under-/over-/exactly-saturating `args` against it uniformly at
      ||| runtime.
-     RApp       : FC -> (lazy : Maybe LazyReason) -> RCLocal -> List RCLocal -> RCExp
+     RApp       : FC -> (lazy : Maybe LazyReason) -> RCLocal -> List1 RCLocal -> RCExp
      ||| `rep`: this local's representation. See `doc/native-type-inference.md`.
      RLet       : FC -> (var : Int) -> Rep -> RCExp -> RCExp -> RCExp
      ||| `reuseFrom`: if `Just loc`, may reuse `loc`'s storage (an offer
@@ -286,7 +313,7 @@ data RCExp : Type where
      ||| materialised. Only produced by Phase 1's `tryFuseCompare` --
      ||| see `doc/native-type-inference.md`'s "Comparisons are a
      ||| separate, narrower mechanism". `postDrop` mirrors `ROp`'s own field.
-     RCmpCase   : FC -> PrimFn 2 -> Vect 2 RCLocal -> (postDrop : List RCLocal) -> (whenTrue : RCExp) -> (whenFalse : RCExp) -> RCExp
+     RCmpCase   : FC -> CmpOp -> Vect 2 RCLocal -> (postDrop : List RCLocal) -> (whenTrue : RCExp) -> (whenFalse : RCExp) -> RCExp
      RConCase   : FC -> RCLocal -> List RConAlt -> Maybe RCExp -> RCExp
      RConstCase : FC -> RCLocal -> List RConstAlt -> Maybe RCExp -> RCExp
      RPrimVal   : FC -> Constant -> RCExp
@@ -373,7 +400,7 @@ freeLocalsR : RCExp -> SortedSet RCLocal
 freeLocalsR (RV _ v) = singleton v
 freeLocalsR (RAppName _ _ _ args) = fromList args
 freeLocalsR (RUnderApp _ _ _ args) = fromList args
-freeLocalsR (RApp _ _ c args) = fromList (c :: args)
+freeLocalsR (RApp _ _ c args) = fromList (c :: forget args)
 freeLocalsR (RLet _ var _ value body) =
     union (freeLocalsR value) (delete (RCLoc var) (freeLocalsR body))
 -- `reuseFrom` isn't counted here (or in countUsesR below) -- like
@@ -443,7 +470,7 @@ mentionedLocalsAcc acc (RAppName _ _ _ args) = insertAll args acc
 mentionedLocalsAcc acc (RAppNameRep _ _ _ _ postDrop args) = insertAll args (insertAll postDrop acc)
 mentionedLocalsAcc acc (RAppFFIInline _ _ _ _ postDrop args) = insertAll args (insertAll postDrop acc)
 mentionedLocalsAcc acc (RUnderApp _ _ _ args) = insertAll args acc
-mentionedLocalsAcc acc (RApp _ _ c args) = insertAll args (insert c acc)
+mentionedLocalsAcc acc (RApp _ _ c args) = insertAll (forget args) (insert c acc)
 mentionedLocalsAcc acc (RLet _ _ _ value body) =
     mentionedLocalsAcc (mentionedLocalsAcc acc value) body
 mentionedLocalsAcc acc (RCon _ _ _ _ args reuseFrom) =
@@ -508,7 +535,7 @@ ownedUsedGo targets wanted st@(_, found) e =
     step (RAppNameRep _ _ _ _ postDrop args) = hits (hits st postDrop) args
     step (RAppFFIInline _ _ _ _ postDrop args) = hits (hits st postDrop) args
     step (RUnderApp _ _ _ args) = hits st args
-    step (RApp _ _ c args) = hits (hit st c) args
+    step (RApp _ _ c args) = hits (hit st c) (forget args)
     -- `reuseFrom`/`postDrop` positions are deliberately not counted, to
     -- stay exactly `freeLocalsR`'s own answer (see its own note on why
     -- they'd be redundant there).
@@ -582,7 +609,7 @@ countUsesR : RCLocal -> RCExp -> Nat
 countUsesR l (RV _ v) = if v == l then 1 else 0
 countUsesR l (RAppName _ _ _ args) = length (filter (== l) args)
 countUsesR l (RUnderApp _ _ _ args) = length (filter (== l) args)
-countUsesR l (RApp _ _ c args) = length (filter (== l) (c :: args))
+countUsesR l (RApp _ _ c args) = length (filter (== l) (c :: forget args))
 countUsesR l (RLet _ _ _ value body) = countUsesR l value + countUsesR l body
 countUsesR l (RCon _ _ _ _ args _) = length (filter (== l) args)
 countUsesR l (RRetPack _ _ _ fields) = length (filter (== l) fields)
@@ -699,7 +726,7 @@ foldRCNamesR nf = go
     go (RAppNameRep _ n _ _ postDrop args) = nf.onAppNameRep n <+> ls postDrop <+> ls args
     go (RAppFFIInline _ _ _ _ postDrop args) = ls postDrop <+> ls args
     go (RUnderApp _ n _ args) = nf.onUnderApp n <+> ls args
-    go (RApp _ _ c args) = l c <+> ls args
+    go (RApp _ _ c args) = l c <+> ls (forget args)
     go (RLet _ _ _ value body) = go value <+> go body
     go (RCon _ n _ tag args reuseFrom) = nf.onCon n tag <+> ls args <+> maybe neutral l reuseFrom
     go (RRetPack _ n tag fields) = nf.onCon n (Just tag) <+> ls fields
@@ -750,7 +777,7 @@ directReads (RAppName _ _ _ args) = args
 directReads (RAppNameRep _ _ _ _ pd args) = pd ++ args
 directReads (RAppFFIInline _ _ _ _ pd args) = pd ++ args
 directReads (RUnderApp _ _ _ args) = args
-directReads (RApp _ _ c args) = c :: args
+directReads (RApp _ _ c args) = c :: forget args
 directReads (RCon _ _ _ _ args _) = args
 directReads (RRetPack _ _ _ fields) = fields
 directReads (ROp _ _ _ args pd) = toList args ++ pd
