@@ -492,6 +492,10 @@ void idris2rc2_dropReuseConstructor(IDRIS2RC2_Constructor *c) {
 }
 
 int64_t idris2rc2_extractInt(IDRIS2RC2_Value *v) {
+  if (idris2rc2_is_imm_i64(v))
+    return idris2rc2_to_i64(v);
+  if (idris2rc2_is_imm_u64(v))
+    return (int64_t)idris2rc2_to_u64(v);
   if (idris2rc2_is_unboxed(v))
     return (int64_t)((uintptr_t)v >> idris2rc2_unbox_shift);
   switch (v->header.tag) {

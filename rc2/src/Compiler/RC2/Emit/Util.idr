@@ -794,6 +794,10 @@ boxedConstExpr c = do
          Just cdef => pure "((IDRIS2RC2_Value*)&\{constantName cdef})"
          Nothing => dyngen
   where
+    -- IDRIS2RC2_IMM_INT64's range, [-2^61, 2^61) (doc/immediate-ints.md).
+    immInt64 : Integer -> Bool
+    immInt64 v = v >= -2305843009213693952 && v < 2305843009213693952
+
     orStagen : ConstDef -> Core String
     orStagen cdef = do
         constdefs <- get ConstDef
@@ -802,14 +806,14 @@ boxedConstExpr c = do
         pure "((IDRIS2RC2_Value*)&\{constantName cdef})"
     dyngen : Core String
     dyngen = case c of
-        I x => if x >= 0 && x < 100
-            then pure "(IDRIS2RC2_Value*)(&idris2rc2_smallInt64[\{show x}])"
+        I x => if immInt64 (cast x)
+            then pure "IDRIS2RC2_IMM_INT64(INT64_C(\{show x}))"
             else orStagen $ CDI64 $ cCleanString $ show x
         I8 x  => pure "idris2rc2_mkInt8(INT8_C(\{show x}))"
         I16 x => pure "idris2rc2_mkInt16(INT16_C(\{show x}))"
         I32 x => pure "idris2rc2_mkInt32(INT32_C(\{show x}))"
-        I64 x => if x >= 0 && x < 100
-            then pure "(IDRIS2RC2_Value*)(&idris2rc2_smallInt64[\{show x}])"
+        I64 x => if immInt64 (cast x)
+            then pure "IDRIS2RC2_IMM_INT64(INT64_C(\{show x}))"
             else orStagen $ CDI64 $ cCleanString $ show x
         BI x => if x >= 0 && x < 100
             then pure "idris2rc2_getSmallInteger(\{show x})"
@@ -817,8 +821,8 @@ boxedConstExpr c = do
         B8 x  => pure "idris2rc2_mkBits8(UINT8_C(\{show x}))"
         B16 x => pure "idris2rc2_mkBits16(UINT16_C(\{show x}))"
         B32 x => pure "idris2rc2_mkBits32(UINT32_C(\{show x}))"
-        B64 x => if x >= 0 && x < 100
-           then pure "(IDRIS2RC2_Value*)(&idris2rc2_smallBits64[\{show x}])"
+        B64 x => if cast x < the Integer 4611686018427387904
+           then pure "IDRIS2RC2_IMM_BITS64(UINT64_C(\{show x}))"
            else orStagen $ CDB64 $ show x
         Db x => orStagen $ CDDb $ cCleanString $ show x
         Ch x  => pure "idris2rc2_mkChar(\{escapeChar x})"

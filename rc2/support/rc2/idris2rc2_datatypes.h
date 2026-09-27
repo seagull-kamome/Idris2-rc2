@@ -99,12 +99,23 @@ typedef struct {
   // Payload follows, depending on `header.tag` (see IDRIS2RC2_* structs below).
 } IDRIS2RC2_Value;
 
-// bit0 set => unboxed scalar payload packed into the pointer word itself.
+// A value word's low two bits say what it holds (rc2/doc/immediate-ints.md):
+// 00 a heap object or NULL, 01 a scalar of at most 32 bits in the upper
+// half, 10 a signed 62-bit Int/Int64, 11 an unsigned 62-bit Bits64.
 #define idris2rc2_is_unboxed(p) ((uintptr_t)(p)&3)
 #define idris2rc2_unbox_shift 32
+#define idris2rc2_is_imm_i64(p) (((uintptr_t)(p)&3) == 2)
+#define idris2rc2_is_imm_u64(p) (((uintptr_t)(p)&3) == 3)
+#define IDRIS2RC2_IMM_I64_MIN (-((int64_t)1 << 61))
+#define IDRIS2RC2_IMM_I64_LIMIT ((int64_t)1 << 61)
+#define IDRIS2RC2_IMM_U64_LIMIT ((uint64_t)1 << 62)
+#define IDRIS2RC2_IMM_INT64(x) ((IDRIS2RC2_Value *)(((uintptr_t)(int64_t)(x) << 2) | 2))
+#define IDRIS2RC2_IMM_BITS64(x) ((IDRIS2RC2_Value *)(((uintptr_t)(uint64_t)(x) << 2) | 3))
 
-#define idris2rc2_to_i64(p) (((IDRIS2RC2_Int64 *)(p))->v)
-#define idris2rc2_to_u64(p) (((IDRIS2RC2_Bits64 *)(p))->v)
+#define idris2rc2_to_i64(p)                                                  \
+  (idris2rc2_is_imm_i64(p) ? (int64_t)((intptr_t)(p) >> 2) : ((IDRIS2RC2_Int64 *)(p))->v)
+#define idris2rc2_to_u64(p)                                                  \
+  (idris2rc2_is_imm_u64(p) ? (uint64_t)((uintptr_t)(p) >> 2) : ((IDRIS2RC2_Bits64 *)(p))->v)
 #define idris2rc2_to_u32(p) ((uint32_t)((uintptr_t)(p) >> idris2rc2_unbox_shift))
 #define idris2rc2_to_i32(p) ((int32_t)((uintptr_t)(p) >> idris2rc2_unbox_shift))
 #define idris2rc2_to_u16(p) ((uint16_t)((uintptr_t)(p) >> idris2rc2_unbox_shift))

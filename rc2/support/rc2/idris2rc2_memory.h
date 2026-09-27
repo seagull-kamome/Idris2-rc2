@@ -131,8 +131,6 @@ IDRIS2RC2_Array *idris2rc2_mkArray(int length);
 // with a bare free() when the wrapper's refcount reaches zero.
 IDRIS2RC2_Buffer *idris2rc2_mkBuffer(void *buf);
 
-extern IDRIS2RC2_Int64 const idris2rc2_smallInt64[100];
-extern IDRIS2RC2_Bits64 const idris2rc2_smallBits64[100];
 extern IDRIS2RC2_Integer idris2rc2_smallInteger[100];
 IDRIS2RC2_Value *idris2rc2_getSmallInteger(int n);
 extern IDRIS2RC2_String const idris2rc2_emptyStringValue;

@@ -69,8 +69,8 @@ IDRIS2RC2_Value *idris2rc2_mkDouble(double d) {
 }
 
 IDRIS2RC2_Value *idris2rc2_mkBits64(uint64_t i) {
-  if (i < 100)
-    return (IDRIS2RC2_Value *)&idris2rc2_smallBits64[i];
+  if (i < IDRIS2RC2_IMM_U64_LIMIT)
+    return IDRIS2RC2_IMM_BITS64(i);
   IDRIS2RC2_Bits64 *v = IDRIS2RC2_NEW(IDRIS2RC2_Bits64);
   v->header.tag = IDRIS2RC2_TAG_BITS64;
   v->v = i;
@@ -78,8 +78,8 @@ IDRIS2RC2_Value *idris2rc2_mkBits64(uint64_t i) {
 }
 
 IDRIS2RC2_Value *idris2rc2_mkInt64(int64_t i) {
-  if (i >= 0 && i < 100)
-    return (IDRIS2RC2_Value *)&idris2rc2_smallInt64[i];
+  if (i >= IDRIS2RC2_IMM_I64_MIN && i < IDRIS2RC2_IMM_I64_LIMIT)
+    return IDRIS2RC2_IMM_INT64(i);
   IDRIS2RC2_Int64 *v = IDRIS2RC2_NEW(IDRIS2RC2_Int64);
   v->header.tag = IDRIS2RC2_TAG_INT64;
   v->v = i;
@@ -334,27 +334,6 @@ void idris2rc2_free(IDRIS2RC2_Value *v) {
                    (int)v->header.rc);
   idris2rc2_teardown(v);
 }
-
-#define IDRIS2RC2_MK10(t, n)                                                       \
-  {IDRIS2RC2_STOCKVAL(t), (n + 0)}, {IDRIS2RC2_STOCKVAL(t), (n + 1)},                    \
-      {IDRIS2RC2_STOCKVAL(t), (n + 2)}, {IDRIS2RC2_STOCKVAL(t), (n + 3)},                \
-      {IDRIS2RC2_STOCKVAL(t), (n + 4)}, {IDRIS2RC2_STOCKVAL(t), (n + 5)},                \
-      {IDRIS2RC2_STOCKVAL(t), (n + 6)}, {IDRIS2RC2_STOCKVAL(t), (n + 7)},                \
-      {IDRIS2RC2_STOCKVAL(t), (n + 8)}, { IDRIS2RC2_STOCKVAL(t), (n + 9) }
-
-IDRIS2RC2_Int64 const idris2rc2_smallInt64[100] = {
-    IDRIS2RC2_MK10(IDRIS2RC2_TAG_INT64, 0),  IDRIS2RC2_MK10(IDRIS2RC2_TAG_INT64, 10),
-    IDRIS2RC2_MK10(IDRIS2RC2_TAG_INT64, 20), IDRIS2RC2_MK10(IDRIS2RC2_TAG_INT64, 30),
-    IDRIS2RC2_MK10(IDRIS2RC2_TAG_INT64, 40), IDRIS2RC2_MK10(IDRIS2RC2_TAG_INT64, 50),
-    IDRIS2RC2_MK10(IDRIS2RC2_TAG_INT64, 60), IDRIS2RC2_MK10(IDRIS2RC2_TAG_INT64, 70),
-    IDRIS2RC2_MK10(IDRIS2RC2_TAG_INT64, 80), IDRIS2RC2_MK10(IDRIS2RC2_TAG_INT64, 90)};
-
-IDRIS2RC2_Bits64 const idris2rc2_smallBits64[100] = {
-    IDRIS2RC2_MK10(IDRIS2RC2_TAG_BITS64, 0),  IDRIS2RC2_MK10(IDRIS2RC2_TAG_BITS64, 10),
-    IDRIS2RC2_MK10(IDRIS2RC2_TAG_BITS64, 20), IDRIS2RC2_MK10(IDRIS2RC2_TAG_BITS64, 30),
-    IDRIS2RC2_MK10(IDRIS2RC2_TAG_BITS64, 40), IDRIS2RC2_MK10(IDRIS2RC2_TAG_BITS64, 50),
-    IDRIS2RC2_MK10(IDRIS2RC2_TAG_BITS64, 60), IDRIS2RC2_MK10(IDRIS2RC2_TAG_BITS64, 70),
-    IDRIS2RC2_MK10(IDRIS2RC2_TAG_BITS64, 80), IDRIS2RC2_MK10(IDRIS2RC2_TAG_BITS64, 90)};
 
 IDRIS2RC2_String const idris2rc2_emptyStringValue = {IDRIS2RC2_STOCKVAL(IDRIS2RC2_TAG_STRING), ""};
 

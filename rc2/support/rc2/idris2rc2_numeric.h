@@ -502,7 +502,8 @@ IDRIS2RC2_Value *idris2rc2_cast_Integer_to_string(IDRIS2RC2_Value *);
 // ---- string ----
 // idris2rc2_cast_string_to_<Char/Integer/Double> stay in numeric.c
 // (multi-statement UTF-8 decode / GMP parse); the integer ones are
-// one-liners around atoi/atoll. Double is NOT atof: it uses a
+// one-liners around atoi/atoll, except Bits64: strtoull, since atoll stops
+// at INT64_MAX. Double is NOT atof: it uses a
 // locale-independent, correctly-rounded GMP parser matching the
 // frontend's literal syntax (see numeric.c).
 //
@@ -523,7 +524,7 @@ static inline IDRIS2RC2_Value *idris2rc2_cast_string_to_Int64(IDRIS2RC2_Value *x
 static inline IDRIS2RC2_Value *idris2rc2_cast_string_to_Bits8(IDRIS2RC2_Value *x) { return idris2rc2_mkBits8((uint8_t)atoi(((IDRIS2RC2_String *)x)->str)); }
 static inline IDRIS2RC2_Value *idris2rc2_cast_string_to_Bits16(IDRIS2RC2_Value *x) { return idris2rc2_mkBits16((uint16_t)atoi(((IDRIS2RC2_String *)x)->str)); }
 static inline IDRIS2RC2_Value *idris2rc2_cast_string_to_Bits32(IDRIS2RC2_Value *x) { return idris2rc2_mkBits32((uint32_t)atoi(((IDRIS2RC2_String *)x)->str)); }
-static inline IDRIS2RC2_Value *idris2rc2_cast_string_to_Bits64(IDRIS2RC2_Value *x) { return idris2rc2_mkBits64((uint64_t)atoll(((IDRIS2RC2_String *)x)->str)); }
+static inline IDRIS2RC2_Value *idris2rc2_cast_string_to_Bits64(IDRIS2RC2_Value *x) { return idris2rc2_mkBits64((uint64_t)strtoull(((IDRIS2RC2_String *)x)->str, NULL, 10)); }
 IDRIS2RC2_Value *idris2rc2_cast_string_to_Double(IDRIS2RC2_Value *);
 IDRIS2RC2_Value *idris2rc2_cast_string_to_Integer(IDRIS2RC2_Value *);
 IDRIS2RC2_Value *idris2rc2_cast_string_to_Char(IDRIS2RC2_Value *); // first UTF-8 codepoint, or NUL for ""

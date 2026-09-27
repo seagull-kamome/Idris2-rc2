@@ -714,9 +714,8 @@ code:
    multi-threaded: `sort` 3.17s to 2.45s (`rc2/doc/hybrid-refcount.md`).
 4. **glibc malloc** (-33% with mimalloc). See "a small-object
    allocator in the runtime" below.
-5. **Boxed `Int`** (the rest). An `Int` outside 0..99 is a heap
-   `IDRIS2RC2_Int64`, so every comparison chases two pointers; Chez's
-   fixnums are immediate.
+5. **Fixed: boxed `Int`.** An `Int` within 62 bits is now immediate
+   (`rc2/doc/immediate-ints.md`).
 
 Re-measured after `DeadArgs` (3.21s):
 

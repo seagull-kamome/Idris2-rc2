@@ -24,8 +24,10 @@ void idris2rc2_rtFinish(void);
 // Kept as a macro (not a typed inline function) so it stays generic over any
 // struct starting with an IDRIS2RC2_Header `header` field, matching every
 // call site's own concrete pointer type (e.g. IDRIS2RC2_Closure *).
+// An immediate (unboxed) value has no cell, so it is never unique.
 #define idris2rc2_isUnique(x)                                                \
-  ((idris2rc2_threaded                                                        \
+  (!idris2rc2_is_unboxed(x) &&                                               \
+   (idris2rc2_threaded                                                         \
         ? atomic_load_explicit(&(x)->header.refCount, memory_order_acquire)  \
         : (x)->header.rc) == 1)
 void idris2rc2_dropReuseConstructor(IDRIS2RC2_Constructor *c);
