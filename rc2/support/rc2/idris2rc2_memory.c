@@ -18,14 +18,10 @@ int idris2rc2_isMultiThreaded(void) {
 }
 
 IDRIS2RC2_Value *idris2rc2_alloc(size_t size) {
-  size_t aligned = ((size + sizeof(void *) - 1) / sizeof(void *)) * sizeof(void *);
-  IDRIS2RC2_Value *v;
-#if defined(__STDC_VERSION__) && (__STDC_VERSION__ >= 201112L) &&            \
-    !defined(__APPLE__) && !defined(_WIN32)
-  v = (IDRIS2RC2_Value *)aligned_alloc(sizeof(void *), aligned);
-#else
-  v = (IDRIS2RC2_Value *)malloc(aligned);
-#endif
+  // Plain malloc, not aligned_alloc: malloc already aligns to 16, which
+  // leaves the tag bits free, and aligned_alloc takes a slow path in some
+  // allocators (TODO.md, "a small-object allocator in the runtime").
+  IDRIS2RC2_Value *v = (IDRIS2RC2_Value *)malloc(size);
   IDRIS2RC2_VERIFY(v && !idris2rc2_is_unboxed(v), "allocation failed");
   v->header.rc = 1;
   v->header.tag = IDRIS2RC2_TAG_NONE;

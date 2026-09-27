@@ -710,17 +710,10 @@ code:
    only clones a callee that *applies* its closure parameter; `sortBy`
    only forwards it. Design: `rc2/doc/speculative-closure-specialization.md`,
    "Transitive specialisation".
-3. **Atomic reference counts** (-20% on the `x < y` version). Every
-   `dup`/`drop` is a `lock` instruction even single-threaded; see
-   "thread-local-awareなdup/dop" above. A process-wide "no thread
-   spawned yet" flag selecting the plain increment would be the
-   cheapest first step.
-4. **glibc malloc** (-24..31%). Besides the per-cell cost, the first
-   larger allocation after the sort (stdout's buffer, in `printLn`)
-   makes glibc consolidate every freed small chunk at once:
-   `malloc_consolidate` + `unlink_chunk` are ~14% of the profile.
-   Options: size-class free lists in `idris2rc2_alloc`, or linking
-   mimalloc.
+3. **Fixed: atomic reference counts.** Plain until the program goes
+   multi-threaded: `sort` 3.17s to 2.45s (`rc2/doc/hybrid-refcount.md`).
+4. **glibc malloc** (-33% with mimalloc). See "a small-object
+   allocator in the runtime" below.
 5. **Boxed `Int`** (the rest). An `Int` outside 0..99 is a heap
    `IDRIS2RC2_Int64`, so every comparison chases two pointers; Chez's
    fixnums are immediate.
@@ -744,3 +737,47 @@ In the 1.81s run:
   `dispatchFn`, wrapper, worker, `trampoline`. There is no allocation;
   it costs about 25ns per comparison.
 - **`split` is 8% and teardown 5%.**
+
+## Performance: a small-object allocator in the runtime (measured 2026-09-27)
+
+`idris2rc2_alloc` is plain `malloc`. Every cell, box and closure goes
+through glibc, which is the largest remaining cost on list-heavy code.
+The table compares allocators swapped in with `LD_PRELOAD`, which any
+user can do without the compiler's help:
+
+| | glibc | mimalloc |
+|---|---|---|
+| map/filter, 300k x 50 | 6.73s | 1.08s |
+| `sort`, 1M `Int`s | 2.45s | 1.63s |
+| `idris2-missing-containers` | 6.46s | 6.05s |
+
+- **Why glibc is slow here:** tearing down a long list pushes its cells
+  onto glibc's LIFO fastbins in scattered order. The next allocations
+  pop them in that order, and each pop reads the next chunk's header,
+  a cache miss. `_int_malloc` was 33% of map/filter's profile, almost
+  all on that one load: 106M cache misses against mimalloc's 20M.
+  mimalloc keeps each page's free cells together, so consecutive
+  allocations stay close.
+- **Raising glibc's tcache** (`GLIBC_TUNABLES=glibc.malloc.tcache_count=65535`)
+  made map/filter slower (8.27s).
+- **`aligned_alloc` was a slow path in mimalloc.** With it,
+  `missing-containers` took 7.16s under mimalloc, slower than glibc.
+  `idris2rc2_alloc` now calls `malloc`. Under glibc that saves about 2%
+  (best of 7: 6.58s to 6.46s); map/filter and `sort` are unchanged.
+
+**Idea:** size-class pages inside the runtime, allocated in order and
+freed back to per-page free lists, as mimalloc does. That would get
+the locality without an external dependency. The open problems:
+- **Threads.** A page per thread avoids locks, but a cell freed on
+  another thread has to go back to its owner (mimalloc's delayed free
+  list). `idris2rc2_threaded` could keep the single-threaded path
+  lock-free.
+- **Returning memory.** Empty pages must go back to the OS, or a peak
+  of one size class is never reusable by another.
+- **Sizes.** Which classes, and what falls through to `malloc`: big
+  closures, strings, GMP.
+- **Interaction with reuse.** `reuse=` already recycles a dying cell
+  in place; the allocator only sees what reuse misses.
+- **Foreign code** that frees or reallocates runtime values.
+  `idris2rc2_free` and teardown are the only exits today; verify that
+  nothing else calls `free` on a value.
