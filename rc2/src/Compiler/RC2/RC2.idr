@@ -371,8 +371,8 @@ toRCDefs disabled incremental roots lds0 = do
                        then pure dictSpecialized
                        else logTime 2 "rc2: Early inline" $ do
                               spliced <- applyLateInline "Early inline" True roots dictSpecialized
-                              let refolded = map (\(n, d) => (n, foldConstDef True empty d)) spliced
-                              if "nopushcon" `elem` disabled then pure refolded else applyPushCon refolded
+                              refolded <- logTime 3 "rc2: Early inline (refold)" $ pure $ map (\(n, d) => (n, foldConstDef True empty d)) spliced
+                              if "nopushcon" `elem` disabled then pure refolded else logTime 3 "rc2: Early inline (PushCon)" $ applyPushCon refolded
     -- doc/caf-memoization.md: right after ConstFold (and the
     -- specialization pass above, whose own clones are never 0-arg CAFs
     -- regardless) and strictly before Phase 2 (toRCDefPostFold's own
@@ -452,14 +452,14 @@ toRCDefs disabled incremental roots lds0 = do
     dualABId <- if "nodualabi" `elem` disabled
        then pure sunk
        else logTime 2 "rc2: DualABI" $ do
-           withNative <- applyDualABI sunk
+           withNative <- logTime 3 "rc2: DualABI (workers)" $ applyDualABI sunk
            -- doc/struct-return.md
            withWorkers <- if "nostructreturn" `elem` disabled
                              then pure withNative
-                             else applyStructReturn withNative
-           (ffiWorkers, ffiInlineMap) <- ffiWorkerTable sunk
-           let rewritten = applyCallSiteRewrite ffiWorkers withWorkers
-           pure (inlineFFIWorkers ffiInlineMap rewritten)
+                             else logTime 3 "rc2: DualABI (struct return)" $ applyStructReturn withNative
+           (ffiWorkers, ffiInlineMap) <- logTime 3 "rc2: DualABI (FFI worker table)" $ ffiWorkerTable sunk
+           rewritten <- logTime 3 "rc2: DualABI (call-site rewrite)" $ pure $ applyCallSiteRewrite ffiWorkers withWorkers
+           logTime 3 "rc2: DualABI (FFI inline)" $ pure $ inlineFFIWorkers ffiInlineMap rewritten
     pruned <- if "nodeadcode" `elem` disabled
                  then pure dualABId
                  else logTime 2 "rc2: Dead code elimination" $ pure (pruneDeadDefs roots dualABId)

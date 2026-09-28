@@ -926,15 +926,19 @@ ConstFold 1.32s。
 
 ### 1. 計測を分ける(他の案の前提)
 
-- **DualABI(3.02s)に内訳が無い。** Stage 3a/3c/4/5 と構造体返し
-  (`applyStructReturn`)にそれぞれ`logTime 3`を付ける。
+- **DualABI(3.03s)の大半は構造体返し。** 計測を分けた結果(2026-09-29):
+  workers 0.11s、**struct return(`applyStructReturn`) 2.60s**、FFI worker
+  table 0.05s、call-site rewrite 0.21s、FFI inline 0.07s。構造体返しの
+  中(`structReturnPlan`/`prunePlan`の不動点、`retLayouts`の`settle`、
+  `structSites`)をさらに分けて、どこが重いかを調べる。
 - **「RC annotate + Reuse + ConAltNative」(3.03s)は3パスの合計。**
   定義ごとに3つを続けて回しているので、パスごとの合計時間を別々に
   出す(`logTime`を定義ごとに付けると件数が多すぎるので、各パスの
   時間を足し上げて最後に1行出す形)。
-- **Early inline(6.66s)の内訳が半分しか見えない。** ラウンド2〜4は
-  計2.24sだが、第1ラウンドの時間はログでエラー出力と混ざって読めず、
-  展開後の再畳み込み(`foldConstDef`)と`applyPushCon`には計測が無い。
+- **Early inline(6.68s)の内訳。** 計測を分けた結果(2026-09-29): ラウンド1
+  2.25s、ラウンド2〜4 計2.23s、展開後の再畳み込み(`foldConstDef`、全定義)
+  1.12s、PushCon 0.23s。再畳み込みは展開された定義だけに限れるかを調べる
+  (`applyLateInline`が展開した定義の集合を返せば足りる)。
 - **C生成の時間が idris2-lsp では測れない。** 既知のエラーで止まる
   ため。C生成まで通る大きなプログラムを計測用に決めておく。
 
