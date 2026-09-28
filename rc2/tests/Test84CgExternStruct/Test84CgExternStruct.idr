@@ -25,13 +25,29 @@ module Main
 -- getX/getY/setX/setY pattern, reused here), since StructDefs itself
 -- (Compiler.RC2.Emit.Util) is never filtered, only the typedef
 -- emission is.
+--
+-- Several names at once: `test_size` is a second directive in this
+-- module and `test_pair` a third one in the imported
+-- Test84CgExternStruct.Pair. The companion header typedefs all three,
+-- so any directive that got lost would fail the C compile the same way.
 
 import System.FFI
+import Test84CgExternStruct.Pair
 
 %cg rc2 externStruct=test_point
+%cg rc2 externStruct=test_size
 
 Point : Type
 Point = Struct "test_point" [("x", Int), ("y", Double)]
+
+Size : Type
+Size = Struct "test_size" [("w", Int), ("h", Int)]
+
+%foreign "C:idris2rc2_test84_make_size,libc,Test84CgExternStruct.h"
+prim__makeSize : Int -> Int -> PrimIO Size
+
+%foreign "C:idris2rc2_test84_free_point,libc,Test84CgExternStruct.h"
+prim__freeSize : Size -> PrimIO ()
 
 %foreign "C:idris2rc2_test84_make_point,libc,Test84CgExternStruct.h"
 prim__makePoint : Int -> Double -> PrimIO Point
@@ -56,3 +72,9 @@ main = do
   setY p 9.0
   printLn (getY p)
   primIO (prim__freePoint p)
+  s <- primIO (prim__makeSize 6 7)
+  printLn (the Int (getField s "w") * getField s "h")
+  primIO (prim__freeSize s)
+  q <- primIO (prim__makePair 1.25 2.5)
+  printLn (sumPair q)
+  primIO (prim__freePair q)

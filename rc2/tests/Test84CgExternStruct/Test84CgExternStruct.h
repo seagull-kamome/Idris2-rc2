@@ -12,6 +12,10 @@
 #include <stdint.h>
 
 typedef struct { int64_t x; double y; } test_point;
+typedef struct { int64_t w; int64_t h; } test_size;
+typedef struct { double a; double b; } test_pair;
 
 void *idris2rc2_test84_make_point(int64_t x, double y);
+void *idris2rc2_test84_make_size(int64_t w, int64_t h);
+void *idris2rc2_test84_make_pair(double a, double b);
 void idris2rc2_test84_free_point(void *p);

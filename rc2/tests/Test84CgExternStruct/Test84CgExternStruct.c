@@ -17,6 +17,20 @@ void *idris2rc2_test84_make_point(int64_t x, double y) {
     return p;
 }
 
+void *idris2rc2_test84_make_size(int64_t w, int64_t h) {
+    test_size *s = malloc(sizeof(test_size));
+    s->w = w;
+    s->h = h;
+    return s;
+}
+
+void *idris2rc2_test84_make_pair(double a, double b) {
+    test_pair *p = malloc(sizeof(test_pair));
+    p->a = a;
+    p->b = b;
+    return p;
+}
+
 void idris2rc2_test84_free_point(void *p) {
     free(p);
 }
