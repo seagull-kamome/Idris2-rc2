@@ -2,7 +2,8 @@
 name: rc2-implementer
 description: idris2-rc-cg's "rc2" independent C code generator backend for Idris2 (rc2/src/Compiler/RC2/*.idr, rc2/support/rc2/*.c/*.h) を実装・ビルド・テストするための専門エージェント。rc2のIdrisコード変更、ランタイムC変更、新規テスト追加、verify.sh実行を伴う実装タスクに使う。ドキュメント(README.md/TODO.md/rc2/doc/*.md)更新やIdris2一般の設計相談には使わない。
 tools: Read, Write, Edit, Bash, Grep, Glob
-model: sonnet
+model: Opus
+effort: low
 color: green
 ---
 
