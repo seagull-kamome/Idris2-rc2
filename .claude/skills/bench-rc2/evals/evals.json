@@ -1,0 +1,8 @@
+{
+  "skill_name": "bench-rc2",
+  "evals": [
+    {"id": 1, "prompt": "rc2のベンチマークはmissing-containers込みで取り終わっていて、ログは fixtures/bench-normal.log にある。これを使って BENCHMARKS.md を更新して", "expected_output": "New dated entry at top with both tables, previous values, commit hashes, change summary, 回帰は無い", "files": ["fixtures/bench-normal.log", "fixtures/BENCHMARKS.md"]},
+    {"id": 2, "prompt": "ベンチマーク取ったよ。ログは fixtures/bench-regress.log。BENCHMARKS.md に追記して、前回から遅くなったものがあれば教えて", "expected_output": "Entry written; BenchFib and BenchConstConFold flagged as regressions in doc and report", "files": ["fixtures/bench-regress.log", "fixtures/BENCHMARKS.md"]},
+    {"id": 3, "prompt": "ベンチマークのログ fixtures/bench-failed.log で BENCHMARKS.md を更新しておいて", "expected_output": "No entry written; reports the idris2-not-on-PATH failure and the env.sh-first fix", "files": ["fixtures/bench-failed.log", "fixtures/BENCHMARKS.md"]}
+  ]
+}
