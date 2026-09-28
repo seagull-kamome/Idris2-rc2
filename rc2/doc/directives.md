@@ -75,9 +75,7 @@ Directives that look like they belong on this list but don't:
 
 - **`noreuse` is retired, not merely undocumented.** It used to disable
   `Compiler.RC2.Reuse`, but disabling it reliably corrupted the heap in
-  most smoke tests, for a root cause never diagnosed -- see
-  `KNOWN-BUGS.md`'s "Retired: `--directive noreuse` no longer exists"
-  for the full history. `applyReuse` now always runs unconditionally;
+  most smoke tests, for a root cause never diagnosed. `applyReuse` now always runs unconditionally;
   passing `--directive noreuse` today is a harmless no-op, same as any
   other unrecognized directive string.
   The likely root cause surfaced on 2026-09-25: `Reuse`'s `resolveReuse`
@@ -233,6 +231,16 @@ never needs to list every field of the real struct -- only whichever
 subset `getField`/`setField` call sites actually touch, in whatever
 order is convenient.
 
+**A wrong field type is not caught.** `RStructGet` casts the raw field
+read to `cTypeOfCFType ty` before boxing it, so that a real header's
+extra qualifiers (`const char *ssl_version` declared `AnyPtr` on the
+Idris side) don't fail the build. The same cast also silences a genuine
+mismatch -- wrong width, wrong signedness, a different shape entirely
+-- and the binding then reads garbage at run time with no warning.
+Matching each declared type to the header is on whoever writes the
+binding; check it at review time for every `externStruct` binding.
+`Test85CgExternStructPtrField` covers the `const` case.
+
 ## 6. Using directives in practice
 
 - Directly on the `idris2-rc2` command line: `--directive VALUE`,
@@ -289,4 +297,3 @@ idris2-rc2 --cg rc2 --directive timing Program.idr -o program
 - `rc2/tests/Test31CgExtraRuntime/`, `rc2/tests/Test32CgInlineRuntime/`,
   `rc2/tests/Test84CgExternStruct/` -- the motivating smoke tests
   (section 7).
-- `KNOWN-BUGS.md` -- `noreuse`'s retirement history.

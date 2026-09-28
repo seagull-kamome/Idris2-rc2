@@ -401,8 +401,7 @@ only became visible once a patch that does (this one) was written.
 Fixed by a one-line change treating `"RC2"` the same as `"RefC"` for
 this one purpose; verified against rc2's full regression suite
 (`rc2/tests/verify.sh`, refc-suite 19/19, smoke+valgrind 82/82) with
-no other change. See `KNOWN-BUGS.md`'s own "Retired: ..." entry for
-this fix's own writeup.
+no other change.
 
 ### `Data.Double.RC2`
 

@@ -41,8 +41,8 @@ module Main
 -- entirely pre-existing bug -- nothing here depends on
 -- `Compiler.RC2.Inline` at all, and it's the same shape
 -- `Test9SelfTailLoop.idr`'s own `collatzLike` was already hitting via
--- its own `(acc * 3) + 1` chain (its own long-`KNOWN-BUGS.md`-
--- documented 784-byte leak, now also fixed by this same change).
+-- its own `(acc * 3) + 1` chain (a 784-byte leak there, fixed by
+-- this same change).
 --
 -- `acc` starts well outside the small-int cache range ([0,100),
 -- immortal) and only grows from there, so the leaking branch's own

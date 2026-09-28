@@ -258,8 +258,7 @@ unnoticed, and both sets are fully discharged (dup'd or dropped)
 *before* a reservation is ever claimed or released. By the time
 `idris2rc2_dropReuseConstructor` runs, every field's ownership is
 already resolved -- there is nothing left for it to recursively drop.
-`idris2rc2_dropReuseConstructor` needs no change. See `KNOWN-BUGS.md`'s
-own matching entry (under "Explicitly not a known bug").
+`idris2rc2_dropReuseConstructor` needs no change.
 
 ## Addendum: `dropOnUnique` -- a destructured field leaking on the reuse-in-place (unique) path
 

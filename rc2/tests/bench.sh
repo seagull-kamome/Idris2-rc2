@@ -45,8 +45,8 @@
 #                            never test/src/ or below -- Main.idr opens
 #                            its own data files via package-root-relative
 #                            paths with no error branch coded for a wrong
-#                            cwd (see KNOWN-BUGS.md's own resolved-not-a-bug
-#                            entry for exactly this mistake).
+#                            cwd (see rc2/BENCHMARKS.md's 訂正 note on
+#                            benchmarkHashMap).
 #
 # Prints wall-clock averages per backend and the rc2-vs-refc speedup
 # ratio. Not a pass/fail script (there's no "correct" answer to a timing
@@ -202,7 +202,7 @@ if [ "$DO_MISSING_CONTAINERS" -eq 1 ]; then
 
     # Critical: run from the package's own ROOT, not test/src/ -- Main.idr
     # opens its own data files via package-root-relative paths. See this
-    # script's own header comment / KNOWN-BUGS.md.
+    # script's own header comment.
     printf '%-14s %10s\n' "backend" "avg(s)"
     for label_bin in "rc2:$rc2_bin" "refc:$refc_bin" "chez:$chez_bin"; do
         label="${label_bin%%:*}"

@@ -219,8 +219,7 @@ mutual
     ||| emitted as it is peeled, a caller that dead-ends on the returned
     ||| inner node must resume from *it*, never from the original
     ||| `value` -- re-walking the original would double-emit every
-    ||| wrapper (see `KNOWN-BUGS.md`'s "Fixed: ... tryBuildClosureInto
-    ||| used to double-emit a peeled wrapper's own side effect").
+    ||| wrapper.
     peelWrappers : EmitDeps (RCExp -> Core RCExp)
     peelWrappers (RDup fc v extra cont) = do
         dupVarExtra (varName v) extra
@@ -316,9 +315,7 @@ mutual
     ||| caller must resume from what's left (the innermost un-peeled
     ||| expression), not restart from `value` -- re-running `emitRC` on
     ||| the original `value` would emit every wrapper's side effect a
-    ||| second time. See `KNOWN-BUGS.md`'s "Fixed: Compiler.RC2.Emit's
-    ||| tryBuildClosureInto used to double-emit a peeled wrapper's own
-    ||| side effect" for why this return shape matters.
+    ||| second time.
     tryBuildClosureInto : EmitDeps (Sink -> TailPositionStatus -> RCExp -> Core (Maybe RCExp))
     tryBuildClosureInto sink tailPosition e0 = peelWrappers e0 >>= \e => case (e, tailPosition) of
       (RUnderApp fc n missing args, _) => do
@@ -896,10 +893,8 @@ mutual
     -- statement the caller embeds it in. The caller (either emitRC's
     -- RLet case below, or this function's own RLet case) is what emits
     -- that statement, so it -- not this function -- is what must emit the
-    -- drop, and only *after* doing so. See KNOWN-BUGS.md's "Fixed:
-    -- Compiler.RC2.Emit's emitNativeValue used to drop a native-read
-    -- Boxed operand before the value was actually read" for what
-    -- emitting it here unconditionally used to break.
+    -- drop, and only *after* doing so: dropped here, the operand would be
+    -- freed before the statement that reads it.
     emitNativeValue : EmitDeps (PrimType -> RCExp -> Core (String, List String))
     -- A bare local read -- unreachable before Stage 3b (declareNative/
     -- inlineNative's own RLet callers only ever see an ROp/RPrimVal

@@ -210,8 +210,8 @@ linkLibName lib =
 ||| idris2rc2_strings.c` already has leak-free replacements
 ||| (`idris2rc2_fastPackFixed`/`idris2rc2_fastConcatFixed`, returning an already-fully-built
 ||| `IDRIS2RC2_Value*` directly, the same way any `CFUser` return is
-||| already passed straight through with no copy). See `KNOWN-BUGS.md`
-||| and `rc2/doc/fastpack-fix.md` for the full writeup, including why
+||| already passed straight through with no copy). See
+||| `rc2/doc/fastpack-fix.md` for the full writeup, including why
 ||| this is intercepted here (at C-emission time, universally, for
 ||| every call site project-wide -- including ones already baked into
 ||| precompiled `network`/`base` code) rather than via upstream's own
@@ -323,7 +323,7 @@ emitForeignDef n ccs fargs ret =
         emitFDef n typeVarNameArgList
         emit EmptyFC "{"
         increaseIndentation
-        emit EmptyFC $ " // rc2's own leak-free replacement for " ++ show n ++ " -- see KNOWN-BUGS.md / rc2/doc/fastpack-fix.md"
+        emit EmptyFC $ " // rc2's own leak-free replacement for " ++ show n ++ " -- see rc2/doc/fastpack-fix.md"
         let removeVarsArgList = removeVars (mapMaybe alwaysUnboxedDropVar typeVarNameArgList)
         emit EmptyFC $ "IDRIS2RC2_Value *retVal = " ++ fixedFnName
                     ++ "("

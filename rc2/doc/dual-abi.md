@@ -1465,10 +1465,7 @@ the closest analogue to bug #2 above) passed without any fix needed.
    `verify.sh --regen-expected` (full suite, 85/85) and
    `refc-suite/run.sh` (19/19) both still pass; `valgrind
    --leak-check=full` reports `0 bytes definitely lost` for this test
-   (registered in `verify.sh`'s `LEAK_SENSITIVE_TESTS`). See
-   `KNOWN-BUGS.md`'s "Retired: FFI worker synthesis (Stage 3c) no
-   longer has its own argument-count limit" for the closed-out
-   `TODO.md` entry this resolves.
+   (registered in `verify.sh`'s `LEAK_SENSITIVE_TESTS`).
 10. **A literal-constant FFI argument broke the Boxed-argument-drop
     tracking, a C compile failure.** Found while building Stage 5's own
     `emitAppFFIInlineInto`/`ffiRawCall`: an earlier version of

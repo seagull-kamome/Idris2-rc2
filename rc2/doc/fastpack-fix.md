@@ -1,7 +1,6 @@
 # Leak-free `fastPack`/`fastConcat`: Emit-time interception (fixed)
 
-Write-up of the fix for the `fastPack`/`fastConcat` leak recorded under
-`KNOWN-BUGS.md`'s "Pre-existing `valgrind` leaks" section, including why
+Write-up of the fix for the leak `fastPack`/`fastConcat` had, including why
 the first attempt at fixing it (`Prelude.Fix.RC2` + `%transform`) fell
 short, the actual Emit-time redirect that replaced it, and a second,
 unrelated bug (an empty-string SIGSEGV) found while making the fix

@@ -210,6 +210,9 @@ IDRIS2RC2_Array *idris2rc2_mkArray(int length) {
 // stack proportional to its length. Recursion is left for any other
 // dying child, so its depth is bounded by how bushy the structure is
 // (a tree's height), not by how long it is.
+// Not a general worklist: that cost 5-7% more instructions on a
+// free-heavy benchmark, since every teardown paid to set it up; this
+// loop costs 1.4% (`perf stat`, 2026-09-26).
 static inline int idris2rc2_hasChildren(IDRIS2RC2_Value *v) {
   return v->header.tag == IDRIS2RC2_TAG_CONSTRUCTOR || v->header.tag == IDRIS2RC2_TAG_CLOSURE;
 }

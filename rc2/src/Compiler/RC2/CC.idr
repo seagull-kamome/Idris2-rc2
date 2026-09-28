@@ -109,7 +109,7 @@ compileCObjectFile sourceFile objectFile verbose
 
          -- `-Wno-error=deprecated-declarations`: the deprecated attribute
          -- on `fastPack`/`fastConcat` (idris2rc2_strings.h -- both leak
-         -- their own malloc'd buffer, see KNOWN-BUGS.md) is a safety net,
+         -- their own malloc'd buffer, see rc2/doc/fastpack-fix.md) is a safety net,
          -- not something normal builds are expected to hit:
          -- `Compiler.RC2.Emit`'s own `createCFunctions` (see
          -- `fastPackFixedReplacement`) always redirects every

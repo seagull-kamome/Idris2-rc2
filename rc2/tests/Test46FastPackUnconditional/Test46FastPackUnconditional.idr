@@ -5,8 +5,8 @@ module Main
 
 -- Regression test for Compiler.RC2.Emit's own C-emission-time
 -- interception of Prelude.Types.fastPack/fastConcat (see
--- fastPackFixedReplacement's own doc comment in Emit.idr, KNOWN-BUGS.md,
--- and rc2/doc/fastpack-fix.md for the full writeup): both leak their own
+-- fastPackFixedReplacement's own doc comment in Emit.idr and
+-- rc2/doc/fastpack-fix.md for the full writeup): both leak their own
 -- raw malloc'd char* return through the generic CFString-return FFI
 -- wrapper codegen, which copies it into a fresh IDRIS2RC2_String and
 -- never frees the original. Fixed by redirecting the wrapper's own

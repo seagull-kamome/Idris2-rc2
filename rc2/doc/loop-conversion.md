@@ -1042,8 +1042,7 @@ above needed to stop assuming a single loop.
    needed too before it went fully clean. See that test's own doc comment
    for the exact shape. Verified against the full matrix again: 19/19
    refc-suite, all smoke tests, valgrind-clean on every leak-sensitive
-   test except the one long-recorded pre-existing `Test1Basics` leak (see
-   `KNOWN-BUGS.md`).
+   test except the then pre-existing `Test1Basics` leak (since fixed).
 6. **`markInvariantNative` missed a loop-invariant parameter's own
    occurrence inside `RLoopContinue`'s own `args`, causing a spurious
    drop on every continue.** `fillLoopContinuePostDrop` (added by bug 5

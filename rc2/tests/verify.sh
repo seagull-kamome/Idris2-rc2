@@ -7,11 +7,10 @@
 # --leak-check=full` on the leak-sensitive subset -- all the steps
 # rc2/doc/*.md's own "Verification methodology" sections and past
 # sessions have done by hand, in one deterministic, exit-code-driven
-# script. See KNOWN-BUGS.md for every already-investigated quirk this
-# script deliberately does NOT flag as a failure (pre-existing leak
-# byte counts, Test7CastMatrix's own nixpkgs-RefC-library blocker,
-# etc.) -- if KNOWN-BUGS.md changes, update the constants below to
-# match.
+# script. See KNOWN-BUGS.md for the upstream defects this script
+# deliberately does NOT flag as a failure (tests real RefC can't build,
+# listed in NO_REFC_DIFF_TESTS) -- if KNOWN-BUGS.md changes, update the
+# constants below to match.
 #
 # Usage: ./verify.sh [--skip-build] [--no-valgrind]
 #                     [--valgrind-all] [--regen-expected] [--directive VALUE]...
@@ -424,36 +423,10 @@ NO_REFC_DIFF_TESTS="Test3Data Test7CastMatrix Test8EmptyCon Test17ConstFold Test
 # scrutiny.
 LEAK_SENSITIVE_TESTS="Test1Basics Test9SelfTailLoop Test11DualABILeak Test12ConAltNative Test13NativeArgChain Test14SmallFunctionInline Test15CompareFusionThroughCall Test16LoopContinuePostDrop Test17ConstFold Test18ClosureInPlaceGrow Test19LoopInvariantParam Test22BranchSinking Test24CStructSupport Test26GCPtrAliasString Test27FFIDualABI Test28Utf8Strings Test33WideDualABIWorker Test35NetworkLoopback Test36ReuseOfferUniqueLeak Test37SystemMisc Test41FFIMalloc Test42SupportMisc Test44IORefExtPrimLeak Test46FastPackUnconditional Test49IntegerOpReuse Test57LoopCallArgNativeShadow Test59Export Test66ClosureFastPath Test69ConstFoldClosure Test70ConstFoldClosureCallthrough Test79DupMerge Test84CgExternStruct Test85CgExternStructPtrField Test86CafMemoization Test87SpecConstCon Test88KnownConFold Test89CafDualABI Test90StructReturn Test91IntConstFold Test92ArityRaise Test93ApplyFold Test94LoopConstClosureParam Test95Trmc Test96TeardownDeep Test97ConAltNativeLeadingDup Test98ClosureCtx Test99DeadArgs Test100TrmcHoles Test101TrmcMutual Test102MultiThreadSwitch Test104ThreadStress Test105ImmediateInts Test106TransitiveSpec Test108ImmediateInteger"
 
-# KNOWN-BUGS.md's own remaining pre-existing leaks -- "definitely
-# lost" byte count, exactly. Anything else non-zero is a genuine new
-# failure. (Test9SelfTailLoop's own former 784-byte entry was
-# root-caused and fixed -- RLoopContinue's own missing postDrop field,
-# see KNOWN-BUGS.md -- and is expected to be clean now.)
-#
-# Test28Utf8Strings/Test35NetworkLoopback/Test37SystemMisc's own former
-# Test40SystemProcess half used to have entries here for the
-# fastPack/fastConcat leak (Test28's own `pack` calls; Test35's via
-# `Network.Socket.Data.parseIPv4`; Test40's via `System.File.ReadWrite`'s
-# `fRead'`, the latter two originating
-# inside the pre-compiled `network`/`base` packages' own already-
-# elaborated code). All three are genuinely clean (0 bytes) now, not
-# just KNOWN: Compiler.RC2.Emit's own `createCFunctions` intercepts
-# `Prelude.Types.fastPack`/`fastConcat` by full name+signature at
-# C-emission time and redirects to rc2's own leak-free
-# `idris2rc2_fastPackFixed`/`idris2rc2_fastConcatFixed` unconditionally, project-wide --
-# reaching every call site regardless of which package it originates
-# from, unlike the retired `Prelude.Fix.RC2` module's own `%transform`,
-# which could only ever rewrite a call site within its own importer's
-# elaboration scope. See KNOWN-BUGS.md / rc2/doc/fastpack-fix.md for
-# the full writeup. Test46FastPackUnconditional is this fix's own
-# dedicated regression test (no opt-in import at all, unlike the
-# retired module).
-#
-# Test1Basics no longer needs an entry here either: its own 40-byte leak
-# (KNOWN-BUGS.md's prior attribution to fastPack/fastConcat was wrong --
-# it was actually the RExtPrim ownership-annotation gap, see
-# doc/c-struct-support.md's own addendum) is genuinely fixed now, not
-# just reclassified.
+# Pre-existing leaks still tolerated, as "definitely lost" bytes per
+# test; anything else non-zero is a new failure. Empty: every leak once
+# listed here is fixed (the fastPack/fastConcat ones: see
+# rc2/doc/fastpack-fix.md, regression test Test46FastPackUnconditional).
 declare -A KNOWN_LEAK_BYTES=( )
 
 is_in() { local x; for x in $2; do [ "$x" = "$1" ] && return 0; done; return 1; }

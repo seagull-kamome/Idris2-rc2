@@ -8,8 +8,7 @@ below), written to let a future session (or a future you) regain full
 context without re-deriving the design. Closes out `TODO.md`'s former
 "Performance:
 `ROp`'s Boxed arithmetic never reuses a dying/unique operand's own heap
-allocation" section (see `KNOWN-BUGS.md`'s matching "Retired:" entry for
-the short version and the closure precedent this follows). See also
+allocation" section. See also
 `doc/reuse-analysis.md` for the constructor-reuse-in-place pass this
 document deliberately contrasts itself against throughout.
 

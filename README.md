@@ -373,9 +373,9 @@ every hand-written smoke test (`rc2/tests/Test*.idr`) against a saved
 expected output, and runs `valgrind --leak-check=full` on the
 leak-sensitive subset, failing on any memory error as well as on a leak,
 and failing outright when `valgrind` is not on `PATH` (pass
-`--no-valgrind` to skip it) -- see `KNOWN-BUGS.md` for the few
-already-investigated quirks it deliberately doesn't flag as failures
-(pre-existing leaks, a reference-RefC-library blocker, etc.). Both the
+`--no-valgrind` to skip it) -- see `KNOWN-BUGS.md` for the upstream
+reference-RefC defects that keep a few tests from being diffed against
+real RefC. Both the
 build and `--regen-expected`'s own real-refc reference compile use
 whatever `idris2` is already first on `PATH` (the self-built one, via
 `env.sh`, sourced above); if that's not set up, add `idris2` to the
@@ -547,7 +547,7 @@ that round-trips (RefC prints a fixed six `"%f"` digits and follows
 `LC_NUMERIC`; rc2 does neither) -- so `show`/`cast` are byte-identical
 in every locale. Because rc2's `String` layer still treats all *other*
 incoming C bytes as UTF-8, adopting the environment locale does mean
-rc2 programs need a UTF-8-compatible one -- see `KNOWN-BUGS.md` and
+rc2 programs need a UTF-8-compatible one -- see
 `rc2/doc/runtime-lifecycle.md`.
 
 CAF sharing is the newest divergence, and the largest behavioral gap

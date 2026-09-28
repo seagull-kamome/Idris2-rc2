@@ -3,9 +3,8 @@ module Main
 -- Copyright 2026, Hattori,Hiroki. All rights reserved.
 -- This module was licensed by BSD3.
 
--- Regression test for Emit.idr's RStructGet fix (KNOWN-BUGS.md's own
--- "Emit.idr's RStructGet was missing the same (IDRIS2RC2_Value*)
--- cast..." entry): unlike Test84CgExternStruct (Int/Double fields
+-- Regression test for Emit.idr's RStructGet casts (rc2/doc/directives.md,
+-- section 5): unlike Test84CgExternStruct (Int/Double fields
 -- only, which never needed the outer cast at all --
 -- idris2rc2_mkInt64/mkDouble already return IDRIS2RC2_Value*
 -- directly), this test's own "name" field is CFString
