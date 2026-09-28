@@ -887,3 +887,31 @@ both sources.
 
 関連: 上の「ファントム型やファントム関数の明示」(量0で実行時に
 存在しないことを保証する)も同じ方向の課題。
+
+## FFIでまだ扱えない`CFType`(調査 2026-09-29)
+
+`Compiler.RC2.Emit.Util`の`cTypeOfCFType`/`extractValue`/`packCFType`と、
+`%foreign`の戻り値検査(`RC.idr`の`checkForeignReturn`)、`%export`の型の
+認識(`RC2.idr`の`exportNfToCFType`)から洗い出した。
+
+### `%foreign`(Idrisから C を呼ぶ)
+
+| `CFType` | 引数 | 戻り値 | 今の挙動 |
+|---|---|---|---|
+| `CFForeignObj` | 不可 | 不可 | 3関数のどれにも節が無く、catch-allの`idris_crash`でコンパイラが落ちる |
+| `CFFun` | クロージャの構造体へのポインタが渡る | 不可 | 引数: Cの関数ポインタではないので、C側から直接は呼べない(`idris2rc2_applyClosure`を使うシムが要る)。戻り値: `checkForeignReturn`がエラーにする |
+| `CFStruct` | ポインタのみ | ポインタのみ | 構造体の値渡し・値返しはできない(値返しは上の「FFI関数からの構造体返し」) |
+
+### `%export`(Cから Idrisを呼ぶ)
+
+| `CFType` | 引数 | 戻り値 | 今の挙動 |
+|---|---|---|---|
+| `CFBuffer` | 不可 | 不可 | `exportNfToCFType`が認識しない |
+| `CFForeignObj` | 不可 | 不可 | 同上 |
+| `CFUser` | 不可 | 不可 | 同上 |
+| `CFFun` | 不可 | 不可 | 同上 |
+| `CFGCPtr` | 可 | 不可 | `validateExport`が戻り値を拒否する |
+
+`CFForeignObj`でコンパイラが落ちる件は、上の「安全性」の節の「FFI型の
+catch-all」(扱える型への事前変換と、非対応の`%foreign`を呼ばれたら止まる
+スタブにする案)で解消する。
