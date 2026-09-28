@@ -301,6 +301,15 @@ section derived independently, then gave up on it.
 
 ## Design: dedicated `RStructGet`/`RStructSet` nodes, resolved in `Emit.idr`
 
+**Now resolved in Phase 1.** The nodes carry a `StructField`
+(`RCExp.idr`): the struct's field list from its `%foreign` signatures,
+the field's name and `CFType`, and an erased `Elem` proof that the field
+is in the list. `toRCDefs` builds the table (`StructTable`) from every
+`%foreign` definition, `normalize` resolves each `getField`/`setField`
+against it and reports an unknown struct or field there, and `Emit.idr`
+renders the node without a lookup. The rest of this section is the
+original design, where the names stayed strings until `Emit.idr`.
+
 An earlier draft of this design kept `getField`/`setField` as plain
 `RExtPrim` calls all the way to `Emit.idr`, special-cased only there.
 Current direction, decided after finding the ownership gap below:

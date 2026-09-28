@@ -47,8 +47,8 @@ genuinelyUsedR (RLet _ var _ value body) =
 genuinelyUsedR (RCon _ _ _ _ args _) = fromList args
 genuinelyUsedR (ROp _ _ _ args _) = fromList (toList args)
 genuinelyUsedR (RExtPrim _ _ _ args _) = fromList args
-genuinelyUsedR (RStructGet _ structVar _ _ _) = singleton structVar
-genuinelyUsedR (RStructSet _ structVar _ _ value _) = fromList [structVar, value]
+genuinelyUsedR (RStructGet _ structVar _ _) = singleton structVar
+genuinelyUsedR (RStructSet _ structVar _ value _) = fromList [structVar, value]
 genuinelyUsedR (RFill _ cell _ value _) = fromList [cell, value]
 genuinelyUsedR (RCmpCase _ _ args _ t f) =
     union (fromList (toList args)) (union (genuinelyUsedR t) (genuinelyUsedR f))
@@ -150,7 +150,7 @@ consumedOperands reps = go []
     -- self-contained, not something the branch we don't sink into owes
     -- a compensating drop for.
     go dupped (ROp _ _ _ _ postDrop) = filter (\a => not (a `elem` dupped)) postDrop
-    go dupped (RStructGet _ _ _ _ postDrop) = filter (\a => not (a `elem` dupped)) postDrop
+    go dupped (RStructGet _ _ _ postDrop) = filter (\a => not (a `elem` dupped)) postDrop
     go _ (RAppName _ _ _ args) = filter isDroppableBoxed args
     go dupped (RCon _ _ _ _ args _) = filter (\a => isDroppableBoxed a && not (a `elem` dupped)) args
     go dupped (RDup _ v _ cont) = go (v :: dupped) cont
@@ -231,7 +231,7 @@ sinkEligible : RCExp -> Bool
 sinkEligible (ROp _ Nothing _ _ _) = True
 sinkEligible (RCon _ _ _ _ _ Nothing) = True
 sinkEligible (RAppName _ Nothing _ _) = True
-sinkEligible (RStructGet _ _ _ _ _) = True
+sinkEligible (RStructGet _ _ _ _) = True
 sinkEligible (RDup _ _ _ cont) = sinkEligible cont
 sinkEligible (RDrop _ _ cont) = sinkEligible cont
 sinkEligible (RFree _ _ cont) = sinkEligible cont

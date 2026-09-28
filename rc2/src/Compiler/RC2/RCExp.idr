@@ -18,11 +18,13 @@ import Core.FC
 import Core.TT
 
 import Data.DPair
+import public Data.List.Elem
 import Data.List.Quantifiers
 import Data.List1
 import Data.Nat
 import Data.SortedSet
 import Data.Vect
+import Decidable.Equality
 
 %default covering
 
@@ -236,6 +238,28 @@ cmpOpTy (Element (EQ ty) _) = ty
 cmpOpTy (Element (LTE ty) _) = ty
 cmpOpTy (Element (GTE ty) _) = ty
 
+||| One field of a C struct, as read or written by `RStructGet`/`RStructSet`:
+||| the struct's declared field list (from a `%foreign` signature, see
+||| `doc/c-struct-support.md`) and the proof that the field is in it, so
+||| Emit renders it without looking the struct up again.
+public export
+record StructField where
+  constructor MkStructField
+  structName : String
+  fields : List (String, CFType)
+  fieldName : String
+  fieldType : CFType
+  0 isField : Elem (fieldName, fieldType) fields
+
+||| `name`'s type in `fields`, with the proof that it is there.
+export
+total
+lookupField : (name : String) -> (fields : List (String, CFType)) -> Maybe (Subset CFType (\ty => Elem (name, ty) fields))
+lookupField _ [] = Nothing
+lookupField name ((n, ty) :: rest) = case decEq name n of
+    Yes Refl => Just (Element ty Here)
+    No _ => (\(Element t p) => Element t (There p)) <$> lookupField name rest
+
 -- `RCExp`/`RConAlt`/`RConstAlt` are mutually recursive (`RConCase`/
 -- `RConstCase` hold `List RConAlt`/`RConstAlt`; both alt types hold a
 -- nested `RCExp` in turn) -- forward-declared for the same reason as
@@ -299,10 +323,10 @@ data RCExp : Type where
      ||| Read of one C struct field (`doc/c-struct-support.md`).
      ||| `postDrop` only ever means "drop `structVar`" -- a struct read
      ||| is never `dup`'d.
-     RStructGet : FC -> (structVar : RCLocal) -> (structName : String) -> (fieldName : String) -> (postDrop : List RCLocal) -> RCExp
+     RStructGet : FC -> (structVar : RCLocal) -> StructField -> (postDrop : List RCLocal) -> RCExp
      ||| Write of one C struct field, evaluating to Unit. Same
      ||| reasoning as `RStructGet`.
-     RStructSet : FC -> (structVar : RCLocal) -> (structName : String) -> (fieldName : String) -> (value : RCLocal) -> (postDrop : List RCLocal) -> RCExp
+     RStructSet : FC -> (structVar : RCLocal) -> StructField -> (value : RCLocal) -> (postDrop : List RCLocal) -> RCExp
      ||| Store `value` into field `field` of the constructor cell `cell`,
      ||| evaluating to Unit: the hole a TRMC-built cell left open
      ||| (`doc/trmc.md`). The old content is a hole and is not dropped;
@@ -412,8 +436,8 @@ freeLocalsR (RCon _ _ _ _ args _) = fromList args
 freeLocalsR (RRetPack _ _ _ fields) = fromList fields
 freeLocalsR (ROp _ _ _ args _) = fromList (toList args)
 freeLocalsR (RExtPrim _ _ _ args _) = fromList args
-freeLocalsR (RStructGet _ structVar _ _ _) = singleton structVar
-freeLocalsR (RStructSet _ structVar _ _ value _) = fromList [structVar, value]
+freeLocalsR (RStructGet _ structVar _ _) = singleton structVar
+freeLocalsR (RStructSet _ structVar _ value _) = fromList [structVar, value]
 freeLocalsR (RFill _ cell _ value _) = fromList [cell, value]
 freeLocalsR (RCmpCase _ _ args _ t f) =
     union (fromList (toList args)) (union (freeLocalsR t) (freeLocalsR f))
@@ -479,8 +503,8 @@ mentionedLocalsAcc acc (RCon _ _ _ _ args reuseFrom) =
 mentionedLocalsAcc acc (RRetPack _ _ _ fields) = foldl (\a, f => insert f a) acc fields
 mentionedLocalsAcc acc (ROp _ _ _ args postDrop) = insertAll (toList args) (insertAll postDrop acc)
 mentionedLocalsAcc acc (RExtPrim _ _ _ args postDrop) = insertAll args (insertAll postDrop acc)
-mentionedLocalsAcc acc (RStructGet _ structVar _ _ postDrop) = insert structVar (insertAll postDrop acc)
-mentionedLocalsAcc acc (RStructSet _ structVar _ _ value postDrop) =
+mentionedLocalsAcc acc (RStructGet _ structVar _ postDrop) = insert structVar (insertAll postDrop acc)
+mentionedLocalsAcc acc (RStructSet _ structVar _ value postDrop) =
     insert structVar (insert value (insertAll postDrop acc))
 mentionedLocalsAcc acc (RFill _ cell _ value postDrop) =
     insert cell (insert value (insertAll postDrop acc))
@@ -544,8 +568,8 @@ ownedUsedGo targets wanted st@(_, found) e =
     step (RRetPack _ _ _ fields) = hits st fields
     step (ROp _ _ _ args _) = hits st (toList args)
     step (RExtPrim _ _ _ args _) = hits st args
-    step (RStructGet _ structVar _ _ _) = hit st structVar
-    step (RStructSet _ structVar _ _ value _) = hit (hit st structVar) value
+    step (RStructGet _ structVar _ _) = hit st structVar
+    step (RStructSet _ structVar _ value _) = hit (hit st structVar) value
     step (RFill _ cell _ value _) = hit (hit st cell) value
     step (RLet _ _ _ value body) =
         ownedUsedGo targets wanted (ownedUsedGo targets wanted st value) body
@@ -616,8 +640,8 @@ countUsesR l (RCon _ _ _ _ args _) = length (filter (== l) args)
 countUsesR l (RRetPack _ _ _ fields) = length (filter (== l) fields)
 countUsesR l (ROp _ _ _ args _) = length (filter (== l) (toList args))
 countUsesR l (RExtPrim _ _ _ args _) = length (filter (== l) args)
-countUsesR l (RStructGet _ structVar _ _ _) = if structVar == l then 1 else 0
-countUsesR l (RStructSet _ structVar _ _ value _) = length (filter (== l) [structVar, value])
+countUsesR l (RStructGet _ structVar _ _) = if structVar == l then 1 else 0
+countUsesR l (RStructSet _ structVar _ value _) = length (filter (== l) [structVar, value])
 countUsesR l (RFill _ cell _ value _) = length (filter (== l) [cell, value])
 countUsesR l (RCmpCase _ _ args _ t f) =
     length (filter (== l) (toList args)) + countUsesR l t + countUsesR l f
@@ -733,8 +757,8 @@ foldRCNamesR nf = go
     go (RRetPack _ n tag fields) = nf.onCon n (Just tag) <+> ls fields
     go (ROp _ _ _ args postDrop) = ls (toList args) <+> ls postDrop
     go (RExtPrim _ _ _ args postDrop) = ls args <+> ls postDrop
-    go (RStructGet _ structVar _ _ postDrop) = l structVar <+> ls postDrop
-    go (RStructSet _ structVar _ _ value postDrop) = l structVar <+> l value <+> ls postDrop
+    go (RStructGet _ structVar _ postDrop) = l structVar <+> ls postDrop
+    go (RStructSet _ structVar _ value postDrop) = l structVar <+> l value <+> ls postDrop
     go (RFill _ cell _ value postDrop) = l cell <+> l value <+> ls postDrop
     go (RCmpCase _ _ args postDrop whenTrue whenFalse) =
         ls (toList args) <+> ls postDrop <+> go whenTrue <+> go whenFalse
@@ -783,8 +807,8 @@ directReads (RCon _ _ _ _ args _) = args
 directReads (RRetPack _ _ _ fields) = fields
 directReads (ROp _ _ _ args pd) = toList args ++ pd
 directReads (RExtPrim _ _ _ args pd) = args ++ pd
-directReads (RStructGet _ sv _ _ pd) = sv :: pd
-directReads (RStructSet _ sv _ _ val pd) = sv :: val :: pd
+directReads (RStructGet _ sv _ pd) = sv :: pd
+directReads (RStructSet _ sv _ val pd) = sv :: val :: pd
 directReads (RFill _ cell _ val pd) = cell :: val :: pd
 directReads (RCmpCase _ _ args pd _ _) = toList args ++ pd
 directReads (RConCase _ sc _ _) = [sc]

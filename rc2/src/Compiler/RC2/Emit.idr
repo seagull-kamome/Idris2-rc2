@@ -1240,12 +1240,7 @@ emitRC sink (RExtPrim fc _ p args postDrop) _ = do
 -- postDrop only ever means "this was this operand's own last use"
 -- (Compiler.RC2.RC's dropIfLastUse), never "drop after a dup", so
 -- this only ever discharges it, never inserts one.
-emitRC sink (RStructGet fc structVar sn fn postDrop) _ = do
-    structDefs <- get StructDefs
-    let Just flds = lookup sn structDefs
-        | Nothing => throw $ InternalError "[rc2] RStructGet: unknown struct \{sn}"
-    let Just ty = lookup fn flds
-        | Nothing => throw $ InternalError "[rc2] RStructGet: unknown field \{fn} of struct \{sn}"
+emitRC sink (RStructGet fc structVar (MkStructField sn _ fn ty _) postDrop) _ = do
     (ptrBoxed, pending) <- rcVarToBoxedC structVar
     let ptrC = extractValue CLangC CFPtr ptrBoxed
     let rawFieldExpr = "((\{sn}*)\{ptrC})->\{fn}"
@@ -1273,12 +1268,7 @@ emitRC sink (RStructGet fc structVar sn fn postDrop) _ = do
                       _         => "(IDRIS2RC2_Value*)" ++ packCFType ty "(\{cTypeOfCFType ty})(\{rawFieldExpr})"
     finalizeSinkWithDrop fc sink packed (map varName postDrop ++ pending)
 
-emitRC sink (RStructSet fc structVar sn fn value postDrop) _ = do
-    structDefs <- get StructDefs
-    let Just flds = lookup sn structDefs
-        | Nothing => throw $ InternalError "[rc2] RStructSet: unknown struct \{sn}"
-    let Just ty = lookup fn flds
-        | Nothing => throw $ InternalError "[rc2] RStructSet: unknown field \{fn} of struct \{sn}"
+emitRC sink (RStructSet fc structVar (MkStructField sn _ fn ty _) value postDrop) _ = do
     (ptrBoxed, p1) <- rcVarToBoxedC structVar
     let ptrC = extractValue CLangC CFPtr ptrBoxed
     (valBoxed, p2) <- rcVarToBoxedC value

@@ -113,8 +113,8 @@ useInfo = go (MkUseInfo empty empty empty)
     go acc (RCon _ _ _ _ args _) = boxed args acc
     go acc (RExtPrim _ _ _ args _) = boxed args acc
     go acc (ROp _ _ _ args _) = reads (toList args) acc
-    go acc (RStructGet _ structVar _ _ _) = boxed [structVar] acc
-    go acc (RStructSet _ structVar _ _ value _) = boxed [structVar, value] acc
+    go acc (RStructGet _ structVar _ _) = boxed [structVar] acc
+    go acc (RStructSet _ structVar _ value _) = boxed [structVar, value] acc
     go acc (RFill _ cell _ value _) = boxed [cell, value] acc
     go acc (RLet _ var rep value body) =
         let acc' = go (go acc value) body
@@ -467,10 +467,10 @@ foldConst _ env (RExtPrim fc lazy p args postDrop) =
     in case constExtPrimValue p args' of
             Just c  => RPrimVal fc c
             Nothing => RExtPrim fc lazy p args' postDrop
-foldConst _ env (RStructGet fc structVar sn fn postDrop) =
-    RStructGet fc (resolveLocal env structVar) sn fn postDrop
-foldConst _ env (RStructSet fc structVar sn fn value postDrop) =
-    RStructSet fc (resolveLocal env structVar) sn fn (resolveLocal env value) postDrop
+foldConst _ env (RStructGet fc structVar sf postDrop) =
+    RStructGet fc (resolveLocal env structVar) sf postDrop
+foldConst _ env (RStructSet fc structVar sf value postDrop) =
+    RStructSet fc (resolveLocal env structVar) sf (resolveLocal env value) postDrop
 foldConst _ env (RFill fc cell k value postDrop) =
     RFill fc (resolveLocal env cell) k (resolveLocal env value) postDrop
 foldConst _ env (ROp fc lazy op args postDrop) =

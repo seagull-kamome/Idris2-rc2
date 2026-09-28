@@ -67,10 +67,10 @@ mutual
   prettyExp d (RExtPrim _ lazy p args postDrop) =
       indent d ++ lazyPrefix lazy ++ "extprim " ++ show p ++ " " ++ show args
         ++ (if postDrop == [] then "" else " postDrop= " ++ show postDrop) ++ "\n"
-  prettyExp d (RStructGet _ structVar sn fn postDrop) =
+  prettyExp d (RStructGet _ structVar (MkStructField sn _ fn _ _) postDrop) =
       indent d ++ "structGet " ++ show structVar ++ " . " ++ fn ++ " ( " ++ sn ++ " )"
         ++ (if postDrop == [] then "" else " postDrop= " ++ show postDrop) ++ "\n"
-  prettyExp d (RStructSet _ structVar sn fn value postDrop) =
+  prettyExp d (RStructSet _ structVar (MkStructField sn _ fn _ _) value postDrop) =
       indent d ++ "structSet " ++ show structVar ++ " . " ++ fn ++ " ( " ++ sn ++ " ) = " ++ show value
         ++ (if postDrop == [] then "" else " postDrop= " ++ show postDrop) ++ "\n"
   prettyExp d (RFill _ cell k value postDrop) =

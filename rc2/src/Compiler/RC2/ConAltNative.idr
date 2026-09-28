@@ -199,13 +199,13 @@ reannotateFieldOwnership fid owned (RExtPrim fc lazy p args postDrop) =
         (nDups, owned') = countDupsNeeded fid owned args
         postDrop' = postDrop ++ List.replicate occ (RCLoc fid)
     in (owned', wrapNDups fc fid nDups (RExtPrim fc lazy p args postDrop'))
-reannotateFieldOwnership fid owned (RStructGet fc structVar sn fn postDrop) =
+reannotateFieldOwnership fid owned (RStructGet fc structVar sf postDrop) =
     let isField = structVar == RCLoc fid
         dropHere = isField && owned
         owned' = if isField then False else owned
         postDrop' = if dropHere then postDrop ++ [RCLoc fid] else postDrop
-    in (owned', RStructGet fc structVar sn fn postDrop')
-reannotateFieldOwnership fid owned (RStructSet fc structVar sn fn value postDrop) =
+    in (owned', RStructGet fc structVar sf postDrop')
+reannotateFieldOwnership fid owned (RStructSet fc structVar sf value postDrop) =
     let scField = structVar == RCLoc fid
         valField = value == RCLoc fid
         dropSc = scField && owned
@@ -214,7 +214,7 @@ reannotateFieldOwnership fid owned (RStructSet fc structVar sn fn value postDrop
         owned2 = if valField then False else owned1
         postDrop' = postDrop ++ (if dropSc then [RCLoc fid] else [])
                              ++ (if dropVal then [RCLoc fid] else [])
-    in (owned2, RStructSet fc structVar sn fn value postDrop')
+    in (owned2, RStructSet fc structVar sf value postDrop')
 -- Every branch case below returns `False` unconditionally --
 -- `finalizeBranch` leaves `fid` fully consumed on every arm it
 -- processes, so it's provably spent regardless of which arm runs.

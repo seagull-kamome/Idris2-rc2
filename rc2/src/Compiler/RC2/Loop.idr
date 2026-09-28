@@ -166,10 +166,10 @@ mutual
       ROp fc lazy op (renameLocalsV ren args) (renameLocals ren postDrop)
   renameRCExp ren (RExtPrim fc lazy p args postDrop) =
       RExtPrim fc lazy p (renameLocals ren args) (renameLocals ren postDrop)
-  renameRCExp ren (RStructGet fc structVar sn fn postDrop) =
-      RStructGet fc (renameLocal ren structVar) sn fn (renameLocals ren postDrop)
-  renameRCExp ren (RStructSet fc structVar sn fn value postDrop) =
-      RStructSet fc (renameLocal ren structVar) sn fn (renameLocal ren value) (renameLocals ren postDrop)
+  renameRCExp ren (RStructGet fc structVar sf postDrop) =
+      RStructGet fc (renameLocal ren structVar) sf (renameLocals ren postDrop)
+  renameRCExp ren (RStructSet fc structVar sf value postDrop) =
+      RStructSet fc (renameLocal ren structVar) sf (renameLocal ren value) (renameLocals ren postDrop)
   renameRCExp ren (RFill fc cell k value postDrop) =
       RFill fc (renameLocal ren cell) k (renameLocal ren value) (renameLocals ren postDrop)
   renameRCExp ren (RCmpCase fc op args postDrop t f) =
@@ -747,10 +747,10 @@ stripOwnership ids (RLoop fc loopParams initial prologueDrop body) =
     RLoop fc loopParams initial
       (filter (keepUnlessOwned ids) prologueDrop)
       (stripOwnership ids body)
-stripOwnership ids (RStructGet fc structVar sn fn postDrop) =
-    RStructGet fc structVar sn fn (filter (keepUnlessOwned ids) postDrop)
-stripOwnership ids (RStructSet fc structVar sn fn value postDrop) =
-    RStructSet fc structVar sn fn value (filter (keepUnlessOwned ids) postDrop)
+stripOwnership ids (RStructGet fc structVar sf postDrop) =
+    RStructGet fc structVar sf (filter (keepUnlessOwned ids) postDrop)
+stripOwnership ids (RStructSet fc structVar sf value postDrop) =
+    RStructSet fc structVar sf value (filter (keepUnlessOwned ids) postDrop)
 stripOwnership ids (RFill fc cell k value postDrop) =
     RFill fc cell k value (filter (keepUnlessOwned ids) postDrop)
 -- RV, RAppName, RUnderApp, RApp, RCon, RExtPrim, RPrimVal, RErased,
@@ -1172,8 +1172,8 @@ usesInvariant p e = existsInvariantUse e
     existsInvariantUse (RCon _ _ _ _ args _) = any (== RCLoc p) args
     existsInvariantUse (ROp _ _ _ args _) = any (== RCLoc p) (toList args)
     existsInvariantUse (RExtPrim _ _ _ args _) = any (== RCLoc p) args
-    existsInvariantUse (RStructGet _ structVar _ _ _) = structVar == RCLoc p
-    existsInvariantUse (RStructSet _ structVar _ _ value _) =
+    existsInvariantUse (RStructGet _ structVar _ _) = structVar == RCLoc p
+    existsInvariantUse (RStructSet _ structVar _ value _) =
         if structVar == RCLoc p then True else value == RCLoc p
     existsInvariantUse (RFill _ cell _ value _) = cell == RCLoc p || value == RCLoc p
     existsInvariantUse (RCmpCase _ _ args _ t f) =
@@ -1265,10 +1265,10 @@ dupInvariantBoxed p (ROp fc lazy op args postDrop) =
 dupInvariantBoxed p (RExtPrim fc lazy nm args postDrop) =
     let occ = countInvariantDups p args
     in wrapInvariantDups fc p occ (RExtPrim fc lazy nm args (postDrop ++ List.replicate occ (RCLoc p)))
-dupInvariantBoxed p (RStructGet fc structVar sn fn postDrop) =
-    wrapInvariantDups fc p (countInvariantDups p [structVar]) (RStructGet fc structVar sn fn postDrop)
-dupInvariantBoxed p (RStructSet fc structVar sn fn value postDrop) =
-    wrapInvariantDups fc p (countInvariantDups p [structVar, value]) (RStructSet fc structVar sn fn value postDrop)
+dupInvariantBoxed p (RStructGet fc structVar sf postDrop) =
+    wrapInvariantDups fc p (countInvariantDups p [structVar]) (RStructGet fc structVar sf postDrop)
+dupInvariantBoxed p (RStructSet fc structVar sf value postDrop) =
+    wrapInvariantDups fc p (countInvariantDups p [structVar, value]) (RStructSet fc structVar sf value postDrop)
 dupInvariantBoxed p (RFill fc cell k value postDrop) =
     wrapInvariantDups fc p (countInvariantDups p [cell, value]) (RFill fc cell k value postDrop)
 dupInvariantBoxed p (RCmpCase fc op args postDrop t f) =

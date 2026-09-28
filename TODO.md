@@ -823,9 +823,6 @@ both sources.
   上流から来る値なので証明は作れないが、`ConInfo`を受け取る所で一度
   検査して、検査済みを示す型(`Bounded16`など)に包めば、Emit側の
   例外を境界の1箇所へ寄せられる。
-- **MutualLoopのSCCメンバ探索**(`MutualLoop.idr:157`)。`groupNames`
-  と`memberDefs`を別々に持たず、最初から`(Name, def)`の組のリストで
-  持てば探索自体が不要になる(証明ではなくデータ構造の変更)。
 - **FFI型の`cTypeOfCFType`/`extractValue`/`packCFType`の
   catch-all**(`Emit/Util.idr:1613/1655/1703`)。`%foreign`を受け
   取った時点で`CFType`をrc2が扱える部分集合の型(`RC2CFType`)へ
@@ -859,10 +856,6 @@ both sources.
 - **`emitRC`に届かないはずのノード**(`Emit.idr:1082`「not
   intercepted by emitInto's dispatch」)。文(`RLet`/`RCase`系)と
   値を生む式を別の型に分ければ、ディスパッチ漏れが型エラーになる。
-- **`RStructGet`/`RStructSet`の構造体名・フィールド名**
-  (`Emit.idr:1254-1289`)。Phase 1で構造体定義を引いて、名前の
-  代わりに「その構造体に存在するフィールド」の証拠(`Elem`など)を
-  持たせる。Emitでの探索と失敗が無くなる。
 - **`Inline.idr:134`の`FreelyEmbeddable Lifted`(`believe_me`)**。
   上流の`Term`と同じ手口で、上流の`Lifted`の表現に依存している。
   上流が`LLocal`の添字の表現を変えると黙って壊れるので、少なくとも

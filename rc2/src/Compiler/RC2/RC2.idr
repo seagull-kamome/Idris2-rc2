@@ -128,8 +128,8 @@ rcSizeOf (RCon _ _ _ _ _ _) = 1
 rcSizeOf (RRetPack _ _ _ _) = 1
 rcSizeOf (ROp _ _ _ _ _) = 1
 rcSizeOf (RExtPrim _ _ _ _ _) = 1
-rcSizeOf (RStructGet _ _ _ _ _) = 1
-rcSizeOf (RStructSet _ _ _ _ _ _) = 1
+rcSizeOf (RStructGet _ _ _ _) = 1
+rcSizeOf (RStructSet _ _ _ _ _) = 1
 rcSizeOf (RFill _ _ _ _ _) = 1
 rcSizeOf (RCmpCase _ _ _ _ t f) = 1 + rcSizeOf t + rcSizeOf f
 rcSizeOf (RConCase _ _ alts mDef) = 1 + sum (map rcSizeConAlt alts) + maybe 0 rcSizeOf mDef
@@ -304,6 +304,12 @@ toRCDefs disabled incremental roots lds0 = do
     -- comment for the full reasoning.
     _ <- newRef VarId 1
     lds <- if "noinline" `elem` disabled then pure lds0 else logTime 2 "rc2: Inline" $ applyInlineLifted lds0
+    structs <- logTime 3 "rc2: struct table" $ pure $
+           foldl (\acc, (_, ld) => case ld of
+                                        MkLForeign _ fargs ret => foldl (flip collectStructDefs) (collectStructDefs ret acc) fargs
+                                        _ => acc)
+                 SortedMap.empty lds
+    _ <- newRef StructTable structs
     preFolded <- logTime 2 "rc2: RC normalize" $
                    if not incremental
                       then traverse (\(n, ld) => do d <- toRCDefPreFold n ld; pure (n, d)) lds

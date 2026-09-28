@@ -22,6 +22,7 @@ import Core.TT
 import Data.DPair
 import Data.List.Quantifiers
 import Data.List1
+import Data.SortedMap
 import Data.SortedSet
 import Data.Vect
 
@@ -51,6 +52,12 @@ import Data.Vect
 export
 notInlinedStructFieldMarker : String
 notInlinedStructFieldMarker = "[rc2:not-inlined-struct-field]"
+
+||| Every C struct declared by a `%foreign` signature in the program,
+||| with its field list (`Compiler.RC2.Emit.Util.collectStructDefs`), for
+||| `normalize` to resolve a `getField`/`setField` against.
+export
+data StructTable : Type where
 
 ------------------------------------------------------------------------
 -- Phase 1: Lifted -> RCExp (ANF-style normalisation, our own)
@@ -163,9 +170,21 @@ collectAppChain (LApp _ lazy c a) _ x =
     let (base, lazy0, args) = collectAppChain c lazy a in (base, lazy0, appendl args [x])
 collectAppChain c lazy x = (c, lazy, singleton x)
 
+||| `fieldName` of the C struct `structName`, resolved against the program's
+||| `%foreign` signatures (`StructTable`).
+structField : {auto st : Ref StructTable (SortedMap String (List (String, CFType)))} ->
+              FC -> (structName : String) -> (fieldName : String) -> Core StructField
+structField fc structName fieldName = do
+    tbl <- get StructTable
+    let Just fs = lookup structName tbl
+        | Nothing => throw $ GenericMsg fc "[rc2] struct \{structName} is used by getField/setField but appears in no %foreign signature"
+    let Just (Element ty isField) = lookupField fieldName fs
+        | Nothing => throw $ GenericMsg fc "[rc2] struct \{structName} has no field \{fieldName} in its %foreign declaration"
+    pure (MkStructField structName fs fieldName ty isField)
+
 mutual
     ||| Let-bind compound expressions to fresh locals to ensure ANF normal form.
-    bindOne : {auto v : Ref VarId Int} ->
+    bindOne : {auto v : Ref VarId Int} -> {auto st : Ref StructTable (SortedMap String (List (String, CFType)))} ->
               Env vars -> Lifted vars -> (RCLocal -> Core RCExp) -> Core RCExp
     bindOne env (LLocal {idx} fc p) k = k (RCLoc (lookupEnv idx env))
     bindOne env (LErased fc) k = k RCNull
@@ -186,7 +205,7 @@ mutual
                      Nothing => bindCompound env e k
     bindOne env e k = bindCompound env e k
 
-    bindCompound : {auto v : Ref VarId Int} ->
+    bindCompound : {auto v : Ref VarId Int} -> {auto st : Ref StructTable (SortedMap String (List (String, CFType)))} ->
                    Env vars -> Lifted vars -> (RCLocal -> Core RCExp) -> Core RCExp
     bindCompound env e k
         = do i <- freshVarId
@@ -210,19 +229,19 @@ mutual
         getFC (LErased fc) = fc
         getFC (LCrash fc _) = fc
 
-    bindMany : {auto v : Ref VarId Int} ->
+    bindMany : {auto v : Ref VarId Int} -> {auto st : Ref StructTable (SortedMap String (List (String, CFType)))} ->
                Env vars -> List (Lifted vars) -> (List RCLocal -> Core RCExp) -> Core RCExp
     bindMany env [] k = k []
     bindMany env (x :: xs) k =
         bindOne env x (\rx => bindMany env xs (\rxs => k (rx :: rxs)))
 
-    bindManyV : {auto v : Ref VarId Int} ->
+    bindManyV : {auto v : Ref VarId Int} -> {auto st : Ref StructTable (SortedMap String (List (String, CFType)))} ->
                 Env vars -> Vect n (Lifted vars) -> (Vect n RCLocal -> Core RCExp) -> Core RCExp
     bindManyV env [] k = k []
     bindManyV env (x :: xs) k =
         bindOne env x (\rx => bindManyV env xs (\rxs => k (rx :: rxs)))
 
-    normalize : {auto v : Ref VarId Int} -> Env vars -> Lifted vars -> Core RCExp
+    normalize : {auto v : Ref VarId Int} -> {auto st : Ref StructTable (SortedMap String (List (String, CFType)))} -> Env vars -> Lifted vars -> Core RCExp
     normalize env (LLocal {idx} fc p) = pure $ RV fc (RCLoc (lookupEnv idx env))
     normalize env (LAppName fc lazy n args) =
         bindMany env args (\locs => pure $ RAppName fc lazy n locs)
@@ -261,14 +280,14 @@ mutual
         bindOne env sn (\snl => bindOne env sv (\svl => bindOne env fn (\fnl =>
             case (snl, fnl) of
                  (RCConst (Str structName), RCConst (Str fieldName)) =>
-                     pure $ RStructGet fc svl structName fieldName []
+                     (\sf => RStructGet fc svl sf []) <$> structField fc structName fieldName
                  _ => throw $ InternalError
                         (notInlinedStructFieldMarker ++ " prim__getField: struct/field name must be string literals"))))
     normalize env (LExtPrim fc lazy (NS _ (UN (Basic "prim__setField"))) [sn, _, _, sv, fn, _, vl, _]) =
         bindOne env sn (\snl => bindOne env sv (\svl => bindOne env fn (\fnl => bindOne env vl (\vll =>
             case (snl, fnl) of
                  (RCConst (Str structName), RCConst (Str fieldName)) =>
-                     pure $ RStructSet fc svl structName fieldName vll []
+                     (\sf => RStructSet fc svl sf vll []) <$> structField fc structName fieldName
                  _ => throw $ InternalError
                         (notInlinedStructFieldMarker ++ " prim__setField: struct/field name must be string literals")))))
     normalize env (LExtPrim fc lazy p args) =
@@ -293,21 +312,21 @@ mutual
     normalize env (LErased fc) = pure $ RErased fc
     normalize env (LCrash fc msg) = pure $ RCrash fc msg
 
-    normalizeConAlt : {auto v : Ref VarId Int} ->
+    normalizeConAlt : {auto v : Ref VarId Int} -> {auto st : Ref StructTable (SortedMap String (List (String, CFType)))} ->
                        Env vars -> LiftedConAlt vars -> Core RConAlt
     normalizeConAlt env (MkLConAlt n ci tag args body) = do
         argIds <- freshIdsFor args
         bodyRC <- normalize (argIds ++ env) body
         pure $ MkRConAlt n ci tag (forget argIds) bodyRC
 
-    normalizeConstAlt : {auto v : Ref VarId Int} ->
+    normalizeConstAlt : {auto v : Ref VarId Int} -> {auto st : Ref StructTable (SortedMap String (List (String, CFType)))} ->
                          Env vars -> LiftedConstAlt vars -> Core RConstAlt
     normalizeConstAlt env (MkLConstAlt c body) = MkRConstAlt c <$> normalize env body
 
     ||| Shared body for each `tryFuseCompare` clause below, each of which
     ||| matches one comparison constructor directly so that `args` is a
     ||| `Vect 2` and the `IsCmp` proof is at hand.
-    tryFuseCompareOp : {auto v : Ref VarId Int} ->
+    tryFuseCompareOp : {auto v : Ref VarId Int} -> {auto st : Ref StructTable (SortedMap String (List (String, CFType)))} ->
                         Env vars -> FC -> CmpOp -> Vect 2 (Lifted vars) ->
                         List (LiftedConstAlt vars) -> Maybe (Lifted vars) -> Core (Maybe RCExp)
     tryFuseCompareOp env fc op args alts mDef =
@@ -328,7 +347,7 @@ mutual
     ||| ever gets materialised. `Nothing` leaves `normalize`'s
     ||| `LConstCase` case to fall through to its ordinary, unfused
     ||| handling.
-    tryFuseCompare : {auto v : Ref VarId Int} ->
+    tryFuseCompare : {auto v : Ref VarId Int} -> {auto st : Ref StructTable (SortedMap String (List (String, CFType)))} ->
                       Env vars -> Lifted vars -> List (LiftedConstAlt vars) -> Maybe (Lifted vars) ->
                       Core (Maybe RCExp)
     tryFuseCompare env (LOp fc lazy (LT ty) args) alts mDef = tryFuseCompareOp env fc (Element (LT ty) IsLT) args alts mDef
@@ -351,7 +370,7 @@ mutual
 ||| counter, from this very first phase onward, is what lets every
 ||| later stage that introduces a *new* id skip scanning for the
 ||| current highest one in use first.
-normalizeDef : {auto v : Ref VarId Int} -> LiftedDef -> Core RCDef
+normalizeDef : {auto v : Ref VarId Int} -> {auto st : Ref StructTable (SortedMap String (List (String, CFType)))} -> LiftedDef -> Core RCDef
 normalizeDef (MkLFun args scope body) = do
     argIds <- freshIdsFor args
     scopeIds <- freshIdsFor scope
@@ -707,10 +726,10 @@ mutual
     -- comment and doc/c-struct-support.md's "Design" section: neither
     -- structVar nor value is ever duplicated, only dropped if this use
     -- is genuinely the last one.
-    annotate natives owned (RStructGet fc structVar sn fn _) =
-        pure $ RStructGet fc structVar sn fn (dropIfLastUse natives owned [structVar])
-    annotate natives owned (RStructSet fc structVar sn fn value _) =
-        pure $ RStructSet fc structVar sn fn value (dropIfLastUse natives owned [structVar, value])
+    annotate natives owned (RStructGet fc structVar sf _) =
+        pure $ RStructGet fc structVar sf (dropIfLastUse natives owned [structVar])
+    annotate natives owned (RStructSet fc structVar sf value _) =
+        pure $ RStructSet fc structVar sf value (dropIfLastUse natives owned [structVar, value])
     -- `value` is consumed like an `RCon` field; `cell` is only borrowed.
     annotate natives owned (RFill fc cell k value _) =
         pure $ wrapDups fc (splitBorrows natives owned [value]) (RFill fc cell k value (dropIfLastUse natives owned [cell]))
@@ -879,7 +898,7 @@ checkForeignReturn _ _ = pure ()
 ||| `Compiler.RC2.RC2`'s own whole-program fixpoint loop calls it
 ||| separately, between this and `toRCDefPostFold` below.
 export
-toRCDefPreFold : {auto v : Ref VarId Int} -> Name -> LiftedDef -> Core RCDef
+toRCDefPreFold : {auto v : Ref VarId Int} -> {auto st : Ref StructTable (SortedMap String (List (String, CFType)))} -> Name -> LiftedDef -> Core RCDef
 toRCDefPreFold declName ld = do
     checkForeignReturn declName ld
     normalizeDef ld
