@@ -63,3 +63,8 @@ void idris2rc2_test50_noop(int64_t n) {
 char idris2rc2_test50_bumpChar(char c) {
     return (char)((unsigned char)c + 1);
 }
+
+int64_t idris2rc2_test27_ignoreClosure(void *f, int64_t n) {
+    (void)f;
+    return n + 1;
+}

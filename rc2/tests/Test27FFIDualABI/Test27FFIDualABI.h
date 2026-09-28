@@ -16,3 +16,7 @@ int64_t idris2rc2_test50_add(int64_t a, int64_t b);
 int64_t idris2rc2_test50_mixed(int64_t n, const char *tag);
 void idris2rc2_test50_noop(int64_t n);
 char idris2rc2_test50_bumpChar(char c);
+
+// Takes an Idris closure it never calls: only how the argument is passed
+// and dropped matters (see check.sh).
+int64_t idris2rc2_test27_ignoreClosure(void *f, int64_t n);

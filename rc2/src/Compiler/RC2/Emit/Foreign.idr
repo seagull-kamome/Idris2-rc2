@@ -164,6 +164,14 @@ ffiRawCall cLang fctName fargs ret args = do
          _          => pure $ callWith argExprs
     pure (rawExpr, boxedArgDrop)
   where
+    ||| Whether the Boxed value `v` renders to is a reference this call
+    ||| owns: a variable, or a native literal boxed right here. Every other
+    ||| constant renders to a static or immediate value that is never freed.
+    owned : RCLocal -> Bool
+    owned (RCLoc _) = True
+    owned (RCConst c) = isJust (litRep c)
+    owned _ = False
+
     ||| One argument, marshalled per its own `CFType` (mirrors the old
     ||| `emitFFIWorker`'s own `argExprFor`): `CFChar` needs
     ||| `nativeCharArgExpr`'s own narrow cast; any other native-eligible
@@ -182,7 +190,7 @@ ffiRawCall cLang fctName fargs ret args = do
         Just ty => rcVarToNativeC ty v
         Nothing => do
             (boxedExpr, pending) <- rcVarToBoxedC v
-            pure (extractValue cLang farg boxedExpr, boxedExpr :: pending)
+            pure (extractValue cLang farg boxedExpr, if owned v then boxedExpr :: pending else pending)
 
 ||| Turn a `%foreign` lib field ("libcurl", "libc 6", ...) into the
 ||| bare name a linker's own `-l` flag needs: drop the "lib" prefix

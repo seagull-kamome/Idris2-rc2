@@ -95,6 +95,9 @@ prim__noop50 : Int -> PrimIO ()
 %foreign "C:idris2rc2_test50_bumpChar,libc,Test27FFIDualABI.h"
 prim__bumpChar50 : Char -> Char
 
+%foreign "C:idris2rc2_test27_ignoreClosure,libc,Test27FFIDualABI.h"
+prim__ignoreClosure : (Int -> Int) -> Int -> Int
+
 inlineLoop : Int -> Int -> Int
 inlineLoop 0 acc = acc
 inlineLoop n acc = inlineLoop (n - 1) (acc + prim__add50 (n + 999999) (n + 1000001))
@@ -117,3 +120,4 @@ main = do
     primIO (prim__noop50 5)
     printLn (ord (prim__bumpChar50 (chr 254)))
     putStrLn "done"
+    printLn (prim__ignoreClosure (\x => x * 2) 41)
