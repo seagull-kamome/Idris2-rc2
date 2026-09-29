@@ -48,27 +48,32 @@ import Data.SortedSet
 calleesOf : RCDef -> SortedSet Name
 calleesOf = foldRCNamesD ({ onAppName := \n, _ => singleton n } noRCNames)
 
-||| One `[n]` per `RAppName` call to `n`, whole-program -- summed into
-||| `callCounts` below.
-callOccurrencesOf : RCDef -> List Name
-callOccurrencesOf = foldRCNamesD ({ onAppName := \n, _ => [n] } noRCNames)
+||| How many `RAppName` calls `d`'s own body makes to each name: its
+||| keys are `calleesOf d`, and its counts are what `Carried.counts`
+||| sums, so one walk serves both.
+callCountsOf : RCDef -> SortedMap Name Nat
+callCountsOf d = foldl (\m, n => insert n (S (fromMaybe 0 (lookup n m))) m) empty
+                       (foldRCNamesD ({ onAppName := \n, _ => [n] } noRCNames) d)
+
+||| One name's own `callCountsOf`, cached across `applyLateInline`'s own
+||| rounds -- see `analyse`'s own doc comment for why a name absent from
+||| one round's own `dirty` set is always safe to reuse here verbatim,
+||| no matter how many further rounds pass, right up until it's
+||| actually reprocessed.
+CalleeInfo : Type
+CalleeInfo = SortedMap Name (SortedMap Name Nat)
+
+||| The direct-call graph `info` describes, as `tarjanSCCs` takes it.
+callGraph : List (Name, SortedMap Name Nat) -> SortedMap Name (SortedSet Name)
+callGraph = SortedMap.fromList . map (\(n, cs) => (n, SortedSet.fromList (keys cs)))
 
 ||| Every definition in a direct-call cycle, a self-call included.
-cyclicNames : List (Name, RCDef) -> SortedSet Name
-cyclicNames defs =
-    let graph : SortedMap Name (SortedSet Name) := SortedMap.fromList (map (\(n, d) => (n, calleesOf d)) defs)
-    in foldl (\acc, scc => case scc of
-                               [n] => if maybe False (contains n) (lookup n graph) then insert n acc else acc
-                               _ => foldl (flip insert) acc scc)
-             empty (tarjanSCCs graph)
-
-||| One name's own `(calleesOf, callOccurrencesOf)`, cached across
-||| `applyLateInline`'s own rounds -- see `analyse`'s own doc comment
-||| for why a name absent from one round's own `dirty` set is always
-||| safe to reuse here verbatim, no matter how many further rounds
-||| pass, right up until it's actually reprocessed.
-CalleeInfo : Type
-CalleeInfo = SortedMap Name (SortedSet Name, List Name)
+cyclicNames : CalleeInfo -> SortedSet Name
+cyclicNames info =
+    foldl (\acc, scc => case scc of
+                            [n] => if maybe False (isJust . lookup n) (lookup n info) then insert n acc else acc
+                            _ => foldl (flip insert) acc scc)
+          empty (tarjanSCCs (callGraph (SortedMap.toList info)))
 
 record Analysis where
   constructor MkAnalysis
@@ -141,21 +146,21 @@ record Carried where
 ||| cached, on round N. Returns the updated cache alongside the
 ||| `Analysis` as before, for `applyLateInlineOnce` to thread into the
 ||| next round.
-analyse : (early : Maybe (SortedSet Name)) -> (prev : Maybe Carried) -> (dirty : SortedSet Name) -> (refs : RefCache)
+analyse : (early : Maybe (SortedSet Name)) -> (seed : CalleeInfo) -> (prev : Maybe Carried) -> (dirty : SortedSet Name) -> (refs : RefCache)
        -> (defOf : SortedMap Name RCDef) -> List (Name, RCDef) -> (Analysis, Carried)
-analyse early prev dirty refs defOf defs =
-    let oldInfo : CalleeInfo = maybe empty (.info) prev
+analyse early seed prev dirty refs defOf defs =
+    let oldInfo : CalleeInfo = maybe seed (.info) prev
         -- Third component: whether this entry was recomputed this round
         -- (`dirty`, or never seen before). Only those need writing back
         -- into the cache -- re-inserting all ~35k entries every round
         -- when a handful changed is the same "redo work nothing asked
         -- for" shape the cache exists to avoid in the first place.
-        classified : List (Name, (SortedSet Name, List Name), Bool) =
+        classified : List (Name, SortedMap Name Nat, Bool) =
                    map (\(n, d) =>
                           case lookup n oldInfo of
-                               Just i => if contains n dirty then (n, freshInfo d, True) else (n, i, False)
-                               Nothing => (n, freshInfo d, True)) defs
-        perDef : List (Name, (SortedSet Name, List Name)) = map (\(n, i, _) => (n, i)) classified
+                               Just i => if contains n dirty then (n, callCountsOf d, True) else (n, i, False)
+                               Nothing => (n, callCountsOf d, True)) defs
+        perDef : List (Name, SortedMap Name Nat) = map (\(n, i, _) => (n, i)) classified
         info' : CalleeInfo =
                    foldl (\acc, (n, i, fresh) => if fresh then insert n i acc else acc) oldInfo classified
         -- Folds each definition's own occurrence list straight into the
@@ -166,23 +171,20 @@ analyse early prev dirty refs defOf defs =
         -- 118k occurrences): 9.8s to flatten, against 0.23s to compute
         -- the very same per-definition lists.
         counts' : SortedMap Name Nat = case prev of
-                 Nothing => foldl (\acc, (_, (_, occs)) => foldl inc acc occs) (the (SortedMap Name Nat) empty) perDef
+                 Nothing => foldl (\acc, (_, cs) => addAll acc cs) (the (SortedMap Name Nat) empty) perDef
                  Just p => deltaCounts p defOf info'
         -- Same trap, same fix: this is `reverse (concat sccs)` without
         -- ever building `concat sccs` -- prepending each component's
         -- own names in order yields exactly the reversed concatenation.
         order' : List Name = case prev of
                  Nothing => foldl (\acc, scc => foldl (flip (::)) acc scc)
-                              [] (tarjanSCCs (SortedMap.fromList (map (\(n, (cs, _)) => (n, cs)) perDef)))
+                              [] (tarjanSCCs (callGraph perDef))
                  Just p => p.order
         eligible : SortedSet Name = SortedSet.fromList $ mapMaybe
               (\(n, cnt) => if cnt == 1 && isFun defOf n && not (maybe False (contains n) early) then Just n else Nothing)
               (SortedMap.toList counts')
     in (MkAnalysis eligible order', MkCarried info' counts' order' (map fst defs) refs)
   where
-    freshInfo : RCDef -> (SortedSet Name, List Name)
-    freshInfo d = (calleesOf d, callOccurrencesOf d)
-
     -- No CAF in the early run: `insertMemoize` hasn't wrapped it yet, so
     -- splicing its body would evaluate it once per run of the caller
     -- (doc/caf-memoization.md, "Limitations").
@@ -191,18 +193,19 @@ analyse early prev dirty refs defOf defs =
                          Just (MkRCFun args _ _ _) => isNothing early || not (null args)
                          _ => False
 
-    occsOf : CalleeInfo -> Name -> List Name
-    occsOf ci n = maybe [] snd (lookup n ci)
+    callsIn : CalleeInfo -> Name -> List (Name, Nat)
+    callsIn ci n = maybe [] SortedMap.toList (lookup n ci)
 
-    dec : SortedMap Name Nat -> Name -> SortedMap Name Nat
-    dec m n = case lookup n m of
-                   Just c => if c <= 1 then delete n m else insert n (minus c 1) m
-                   Nothing => m
+    sub : SortedMap Name Nat -> (Name, Nat) -> SortedMap Name Nat
+    sub m (n, k) = case lookup n m of
+                        Just c => if c <= k then delete n m else insert n (minus c k) m
+                        Nothing => m
 
-    inc : SortedMap Name Nat -> Name -> SortedMap Name Nat
-    inc m n = case lookup n m of
-                   Just c => insert n (S c) m
-                   Nothing => insert n 1 m
+    add : SortedMap Name Nat -> (Name, Nat) -> SortedMap Name Nat
+    add m (n, k) = insert n (k + fromMaybe 0 (lookup n m)) m
+
+    addAll : SortedMap Name Nat -> SortedMap Name Nat -> SortedMap Name Nat
+    addAll m cs = foldl add m (SortedMap.toList cs)
 
     ||| `prev.counts` adjusted for exactly the two things that can have
     ||| shifted a count since it was built: a name pruned away (its own
@@ -214,9 +217,9 @@ analyse early prev dirty refs defOf defs =
     deltaCounts p defOf newInfo =
         let gone : List Name = filter (\n => isNothing (lookup n defOf)) p.names
             afterGone : SortedMap Name Nat =
-                foldl (\acc, n => foldl dec acc (occsOf p.info n)) p.counts gone
+                foldl (\acc, n => foldl sub acc (callsIn p.info n)) p.counts gone
             changed : List Name = filter (\n => isJust (lookup n defOf)) (Prelude.toList dirty)
-        in foldl (\acc, n => foldl inc (foldl dec acc (occsOf p.info n)) (occsOf newInfo n))
+        in foldl (\acc, n => foldl add (foldl sub acc (callsIn p.info n)) (callsIn newInfo n))
              afterGone changed
 
 ||| Whether `callee`'s own body (looked up in `defOf`) directly calls
@@ -804,8 +807,8 @@ inlineInto defOf eligible self = go empty []
 ||| whole-program def list is large enough (compiler-plus-LSP-server
 ||| scale) to make the pre-caching version's blanket walk dominate
 ||| `"rc2: Late inline"`'s own wall-clock cost outright.
-applyLateInlineOnce : {auto v : Ref VarId Int} -> {auto c : Ref Ctxt Defs} -> (early : Maybe (SortedSet Name)) -> (roots : List Name) -> Maybe Carried -> SortedSet Name -> List (Name, RCDef) -> Core (Bool, List (Name, RCDef), Carried, SortedSet Name)
-applyLateInlineOnce early roots prev dirty defs0 = do
+applyLateInlineOnce : {auto v : Ref VarId Int} -> {auto c : Ref Ctxt Defs} -> (early : Maybe (SortedSet Name)) -> (seed : CalleeInfo) -> (roots : List Name) -> Maybe Carried -> SortedSet Name -> List (Name, RCDef) -> Core (Bool, List (Name, RCDef), Carried, SortedSet Name)
+applyLateInlineOnce early seed roots prev dirty defs0 = do
     (defs, refs') <- logTime 3 "rc2: LI prune" $
               pure $ pruneDeadDefsCached (maybe empty (.refs) prev) dirty roots defs0
     -- Built once and shared with `goOrder` below: `analyse` and the
@@ -813,7 +816,7 @@ applyLateInlineOnce early roots prev dirty defs0 = do
     -- own definitions, and building it is ~35k `Name` comparisons'
     -- worth of work to redo for nothing.
     defOf <- logTime 3 "rc2: LI defOf" $ pure $ SortedMap.fromList defs
-    (an, carried) <- logTime 3 "rc2: LI analyse" $ pure $ analyse early prev dirty refs' defOf defs
+    (an, carried) <- logTime 3 "rc2: LI analyse" $ pure $ analyse early seed prev dirty refs' defOf defs
     case leftMost an.eligible of
          Nothing => pure (length defs /= length defs0, defs, carried, empty)
          Just _ => do
@@ -855,7 +858,7 @@ applyLateInlineOnce early roots prev dirty defs0 = do
              let callsBackCached : Name -> Name -> Bool
                  callsBackCached caller callee =
                      case lookup callee carried.info of
-                          Just (cs, _) => contains caller cs
+                          Just cs => isJust (lookup caller cs)
                           Nothing => False
              --
              -- The `defOf` membership test is load-bearing, not a
@@ -881,8 +884,8 @@ applyLateInlineOnce early roots prev dirty defs0 = do
                  splicesInto n =
                      isJust (lookup n defOf) &&
                      (case lookup n carried.info of
-                           Just (cs, _) => any (\c => contains c an.eligible && not (callsBackCached n c))
-                                               (Prelude.toList cs)
+                           Just cs => any (\c => contains c an.eligible && not (callsBackCached n c))
+                                          (keys cs)
                            Nothing => False)
              let toProcess = filter splicesInto an.processOrder
              final <- goOrder an.eligible toProcess defOf
@@ -977,12 +980,13 @@ applyLateInline label early roots defs0 =
     -- (constructor-escape-analysis.md, "Early inline"). Bound here, not
     -- in `where`, so it is computed once (constant-constructor-
     -- specialization.md, "The `where`-clause trap").
-    let excluded : Maybe (SortedSet Name) := if early then Just (cyclicNames defs0) else Nothing
-    in go excluded 1 maxLateInlineIterations Nothing empty defs0
+    do seed <- logTime 3 "rc2: \{label} (call counts)" $ pure $ SortedMap.fromList (map (\(n, d) => (n, callCountsOf d)) defs0)
+       excluded <- if early then logTime 3 "rc2: \{label} (call cycles)" $ pure $ Just (cyclicNames seed) else pure Nothing
+       go seed excluded 1 maxLateInlineIterations Nothing empty defs0
   where
-    go : Maybe (SortedSet Name) -> Nat -> Nat -> Maybe Carried -> SortedSet Name -> List (Name, RCDef) -> Core (List (Name, RCDef))
-    go _ round Z prev dirty defs = pure defs
-    go excluded round (S fuel) prev dirty defs = do
+    go : CalleeInfo -> Maybe (SortedSet Name) -> Nat -> Nat -> Maybe Carried -> SortedSet Name -> List (Name, RCDef) -> Core (List (Name, RCDef))
+    go _ _ round Z prev dirty defs = pure defs
+    go seed excluded round (S fuel) prev dirty defs = do
         -- `dirty` is the *previous* round's own `toProcess` -- the
         -- definitions it actually spliced into -- so it is already
         -- known when this round's label is built, the same way
@@ -996,5 +1000,5 @@ applyLateInline label early roots defs0 =
                              else "\{show (length (Prelude.toList dirty))} spliced last round"
         (changed, defs', carried, dirty') <-
             logTime 3 "rc2: \{label} (round \{show round}/\{show maxLateInlineIterations}, \{carriedNote})" $
-              applyLateInlineOnce excluded roots prev dirty defs
-        if changed then go excluded (S round) fuel (Just carried) dirty' defs' else pure defs'
+              applyLateInlineOnce excluded seed roots prev dirty defs
+        if changed then go seed excluded (S round) fuel (Just carried) dirty' defs' else pure defs'
