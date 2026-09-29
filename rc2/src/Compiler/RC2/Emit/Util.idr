@@ -1028,7 +1028,7 @@ rcVarToBoxedC l = do
 ||| someone else), an `ROp` argument has nowhere to hand it to: the C
 ||| primitive only reads it, so the fresh box must be named here and
 ||| dropped once the op is done reading it, or it leaks (found via
-||| `Test16LoopContinuePostDrop.idr`: `Types.repOf` never promotes a
+||| `Test110Loop/LoopContinuePostDrop.idr`: `Types.repOf` never promotes a
 ||| `case`/`if`-valued `RLet` to Native even when a branch's own value is
 ||| a plain native arithmetic chain, so that branch's `ROp` ends up
 ||| Boxed-result while still reading a genuinely Native operand). Any

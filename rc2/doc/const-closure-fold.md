@@ -331,7 +331,7 @@ collapses exactly this shape before Lifted IR ever sees it (confirmed
 by hand via `--directive dumplifted` -- a plain `let a = greetFn; b = a
 in ...`, written directly, never reaches `Compiler.LambdaLift`'s own
 output as two separate bindings, regardless of which function it's
-written in). `Test69ConstFoldClosure` reproduces it instead
+written in). `Test115ConstFoldClosure/ConstFoldClosure.idr` reproduces it instead
 via a `%noinline` passthrough helper (`mkAlias : (String -> String) ->
 (String -> String); mkAlias f = f`) -- `%noinline` keeps it a real call
 in *Lifted* IR (confirmed via `--dumplifted`: `Main.main`'s own
@@ -363,7 +363,7 @@ later reads that binding -- a constructor field, an ordinary function
 call argument, anything -- reads it as whatever `resolveLocal`
 resolves it to, `RCConstClosure` included.
 
-`Test69ConstFoldClosure` confirms this for the case that
+`Test115ConstFoldClosure/ConstFoldClosure.idr` confirms this for the case that
 originally motivated caring about any of this: a zero-filled closure
 argument passed to an ordinary function call, not a constructor field
 -- the `map double [1,2,3,4,5]` shape `TODO.md` used to track as
@@ -415,14 +415,14 @@ confirmed empirically this session:
 
 - The exact `map double [1,2,3,4,5]` shape folds into one immortal
   `constclosure_N` static with zero `idris2rc2_mkClosure` calls
-  remaining for it anywhere (`Test69ConstFoldClosure`, above).
+  remaining for it anywhere (`Test115ConstFoldClosure/ConstFoldClosure.idr`, above).
 - It folds *once* at compile time, not once per execution: three
   separate call sites into a helper that itself calls `map double xs`
   internally all reference the identical static
-  (`Test69ConstFoldClosure`, above).
+  (`Test115ConstFoldClosure/ConstFoldClosure.idr`, above).
 - The one completeness gap found while re-verifying this end to end
   (`let`-rebinding not propagating past one hop) is itself now fixed
-  (`Test69ConstFoldClosure`, above).
+  (`Test115ConstFoldClosure/ConstFoldClosure.idr`, above).
 
 Direction 2 (per-call-site specialization) remains correctly dropped,
 for its own independent, still-valid code-size reason -- it simply
@@ -457,7 +457,7 @@ of how many distinct functions a generic helper is ever called with.
 - `rc2/support/rc2/datatypes.h` -- `IDRIS2RC2_Closure`'s real layout
   (referenced, not modified) and `IDRIS2RC2_STOCKVAL`/
   `IDRIS2RC2_REFCOUNT_MAX` (reused as-is).
-- `rc2/tests/Test69ConstFoldClosure` -- merged regression suite for
+- `rc2/tests/Test115ConstFoldClosure/ConstFoldClosure.idr` -- merged regression suite for
   this fold; the relevant sections here are:
   - §1 (was `Test69ConstFoldClosureDict`) -- structural regression: a
     3-method `Greeter Dog` instance dictionary folds into a single
@@ -477,7 +477,7 @@ of how many distinct functions a generic helper is ever called with.
     closure argument folds into one immortal static shared identically
     across three separate call sites, confirmed via generated-C
     inspection to require zero `idris2rc2_mkClosure` calls.
-- `rc2/tests/Test70ConstFoldClosureCallthrough` -- correctness/
+- `rc2/tests/Test115ConstFoldClosure/ConstFoldClosureCallthrough.idr` -- correctness/
   valgrind-cleanliness of 500 iterations of dispatch through the
   resulting immortal closure, modeled on `Test18ClosureInPlaceGrow`'s
   own rigor. (Kept its own test -- its long loop under valgrind doesn't

@@ -202,12 +202,12 @@ Confirmed against the existing test/benchmark suite:
 - `Main.sumTo` (`tests/BenchLoop.idr`) -> `params=[Int, Int] ret=Int`,
   correctly read straight off `Compiler.RC2.Loop`'s own `RLoop`
   decision.
-- `Main.countDown`/`Main.collatzLike` (`tests/Test9SelfTailLoop.idr`) ->
+- `Main.countDown`/`Main.collatzLike` (`tests/Test110Loop/SelfTailLoop.idr`) ->
   correct *mixed* eligibility (one native parameter, one Boxed) within
   the same function.
 - `Main.swapLoop`, and every `Compiler.RC2.MutualLoop`-produced
   per-member wrapper (`Main.isEvenM`/`isOddM`/`stepA`/`stepB` in
-  `Test9SelfTailLoop.idr`) -> nothing eligible, correctly (no
+  `Test110Loop/SelfTailLoop.idr`) -> nothing eligible, correctly (no
   `ROp`/`RCmpCase` use of their own parameters at all -- a wrapper's own
   body is just a forwarding call to the merged function).
 
@@ -217,7 +217,7 @@ Confirmed against the existing test/benchmark suite:
 to its per-member wrappers above) **can** show real eligibility for a
 shared slot some group member reads natively, even though a
 *different*, smaller-arity member only ever supplies `RCNull` there --
-confirmed directly against `Test9SelfTailLoop.idr`'s own `stepA`/`stepB`
+confirmed directly against `Test110Loop/SelfTailLoop.idr`'s own `stepA`/`stepB`
 group (`{rc2_mutualLoop:0}: params=["1:Boxed", "2:Boxed", "3:Int",
 "4:Int"]`). This is the *exact* shape that already caused two real
 crashes during `Compiler.RC2.Loop`'s own native-shadow promotion (see
@@ -1065,7 +1065,7 @@ return) but under the new design, registered in `verify.sh`'s
 refc` byte-for-byte, leak-free (`valgrind --leak-check=full`,
 `definitely lost: 0 bytes`), and -- by hand -- `grep -c
 idris2rc2_ffiworker_` against the generated `.c` for `Test27FFIDualABI`/
-`Test33WideDualABIWorker` all return `0`:
+`Test118FFI/WideDualABIWorker.idr` all return `0`:
 no standalone FFI worker C function is emitted anywhere any more,
 confirming the earlier `emitFFIWorker`-based design is genuinely gone,
 not merely dead code.
@@ -1163,7 +1163,7 @@ this shape.
    when `initVal` was already native.** Found by the project's own
    full verification sweep (not just refc-suite -- this is exactly why
    that broader sweep is part of the standing methodology), in
-   `Test1Basics.idr`'s own `Main.loop` and `Test9SelfTailLoop.idr`'s
+   `Test111Basics/Basics.idr`'s own `Main.loop` and `Test110Loop/SelfTailLoop.idr`'s
    `countDown`/`collatzLike`: a `-Wall`-clean build failed with
    `comparison between pointer and integer` inside a synthesised
    worker. Root cause: a function that is *both* self-tail-recursive
@@ -1384,7 +1384,7 @@ the closest analogue to bug #2 above) passed without any fix needed.
    eligible) positional parameters regardless of its own width.
    `applyDualABI`'s `synthesizeIfEligible` no longer excludes wide
    functions at all (only `isMutualLoopMerged` remains). Verified with
-   `rc2/tests/Test33WideDualABIWorker.idr` (10 parameters: nine native-
+   `rc2/tests/Test118FFI/WideDualABIWorker.idr` (10 parameters: nine native-
    eligible `Int`s + one `Boxed` `String`, mirroring the original
    `idris2-missing-containers` shape) -- generated C declares
    `idris2rc2_worker_Main_wideAdd_0` with ten individual parameters
@@ -1412,7 +1412,7 @@ the closest analogue to bug #2 above) passed without any fix needed.
    `runtime.c` pointing at `Compiler/RC2/RC2.idr` for where
    `MaxExtractFunArgs` lives was also corrected to
    `Compiler/RC2/Emit/Util.idr`, its real location. Verified with
-   `rc2/tests/Test33WideDualABIWorker.idr`'s own `add20` (formerly a
+   `rc2/tests/Test118FFI/WideDualABIWorker.idr`'s own `add20` (formerly a
    separate `Test34WideClosureDispatch.idr`, merged in) -- a
    20-parameter function reached via a genuine partial-application
    chain (not a direct/saturated call), forcing it through a real
@@ -1451,7 +1451,7 @@ the closest analogue to bug #2 above) passed without any fix needed.
    natively-eligible-position check (`if not (any anyNative argReps)
    && not (anyNative retRep) then pure [] else ...`) regardless of its
    own arity, with no width-based exclusion left anywhere in Stage 3c.
-   Verified with `rc2/tests/Test33WideDualABIWorker.idr`'s own
+   Verified with `rc2/tests/Test118FFI/WideDualABIWorker.idr`'s own
    `prim__wide` (formerly a separate `Test48WideFFIDualABIWorker.idr`,
    merged in) -- a 15-parameter `%foreign` declaration -- 12
    native-eligible `Int`s + 3 `Boxed` `String`s, a "mostly native, some

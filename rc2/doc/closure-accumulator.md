@@ -188,7 +188,7 @@ part of this design.
 
 ## Results (2026-09-26)
 
-**Correctness.** `Test98ClosureCtx` checks, against Chez's output:
+**Correctness.** `Test113DeepRecursion/ClosureCtx.idr` checks, against Chez's output:
 - `splitRec`;
 - `sort` of 1M elements;
 - a difference list started from `\xs => 7 :: xs`;

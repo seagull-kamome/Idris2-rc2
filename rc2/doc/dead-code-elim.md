@@ -217,7 +217,7 @@ would take.
 
 ## Verification
 
-`rc2/tests/Test51DeadCodeInline.idr` (an Inline-orphaned definition,
+`rc2/tests/Test114Inline/DeadCodeInline.idr` (an Inline-orphaned definition,
 which itself further fans out into its own dead DualABI wrapper+worker
 pair, and also absorbs the former, separate `Test52DeadCodeDualABIWrapper.idr`'s
 coverage of a DualABI wrapper with no tail-position callers) confirms, by hand:

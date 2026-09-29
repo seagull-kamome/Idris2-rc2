@@ -138,7 +138,7 @@ prim__runCheck62 : PrimIO Int
 -- outside Int's 64-bit range -- proving the argument-side
 -- `idris2rc2_mkIntegerFromMpz` copy-in and the return-side `mpz_t
 -- out`-parameter convention (mirroring `%foreign`'s own established
--- Integer-return shape, see Test54FFIInteger) are both genuinely
+-- Integer-return shape, see Test118FFI/FFIInteger.idr) are both genuinely
 -- GMP-correct, not just Int64-range-correct. Leak/UAF-sensitive by
 -- design.
 

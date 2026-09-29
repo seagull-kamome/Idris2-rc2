@@ -239,7 +239,7 @@ mismatch -- wrong width, wrong signedness, a different shape entirely
 -- and the binding then reads garbage at run time with no warning.
 Matching each declared type to the header is on whoever writes the
 binding; check it at review time for every `externStruct` binding.
-`Test85CgExternStructPtrField` covers the `const` case.
+`Test120CStruct/CgExternStructPtrField.idr` covers the `const` case.
 
 ## 6. Using directives in practice
 
@@ -253,10 +253,10 @@ binding; check it at review time for every `externStruct` binding.
 
 ## 7. Motivating smoke tests
 
-`rc2/tests/Test31CgExtraRuntime.idr` (`extraRuntime=`) and
-`rc2/tests/Test32CgInlineRuntime.idr` (`inlineRuntime=`) are the
+`rc2/tests/Test121CgRuntime/CgExtraRuntime.idr` (`extraRuntime=`) and
+`rc2/tests/Test121CgRuntime/CgInlineRuntime.idr` (`inlineRuntime=`) are the
 dedicated regression tests for section 4's directives.
-`rc2/tests/Test84CgExternStruct.idr` is section 5's own, and its own
+`rc2/tests/Test120CStruct/CgExternStruct.idr` is section 5's own, and its own
 companion header's comment shows the `conflicting types` failure this
 directive exists to avoid. All three are listed in `verify.sh`'s
 `NO_REFC_DIFF_TESTS`, since real RefC never reads `--directive`/`%cg`
@@ -294,6 +294,6 @@ idris2-rc2 --cg rc2 --directive timing Program.idr -o program
   `ExternStructs`, section 5's own.
 - `rc2/src/Compiler/RC2/SpecClosure.idr` -- `maybeLogTimeOver`, section
   8's own `timing` gate.
-- `rc2/tests/Test31CgExtraRuntime/`, `rc2/tests/Test32CgInlineRuntime/`,
-  `rc2/tests/Test84CgExternStruct/` -- the motivating smoke tests
+- `rc2/tests/Test121CgRuntime/`, `rc2/tests/Test121CgRuntime/`,
+  `rc2/tests/Test120CStruct/` -- the motivating smoke tests
   (section 7).

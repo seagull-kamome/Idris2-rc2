@@ -278,7 +278,7 @@ shadow-eligible:
   own `applyLoop` reuses it verbatim, wrapping the whole loop rather
   than one alt's own body).
 
-Worked example -- `Test19LoopInvariantParam.idr`'s `sumWithTag tag
+Worked example -- `Test110Loop/LoopInvariantParam.idr`'s `sumWithTag tag
 limit acc n = if n >= limit then acc + cast (length tag) else
 sumWithTag tag limit (acc + n) (n + 1)` (`tag : String` and `limit :
 Int` are both threaded through every recursive call completely
@@ -320,7 +320,7 @@ argument directly, exactly as if this pass had never run.
 Beyond whole parameters, a `let` sitting in the loop body's own
 *unconditional prefix* (before the first `case`/`cmp`) whose value
 reads only loop-external operands gets hoisted the same way, outside
-`loop [...]` entirely -- `tests/Test19LoopInvariantParam.idr`'s
+`loop [...]` entirely -- `tests/Test110Loop/LoopInvariantParam.idr`'s
 loop-invariant-expression-hoisting coverage (merged in at the end of
 that file), `bound = limit * 2` (both `Native Int`, `limit` itself already a
 hoisted native-shadow parameter per section 8.5):
@@ -343,7 +343,7 @@ whatever hoisted parameter binding it itself depends on. Only a
 `Boxed` one always stays inside `loop [...]`, even when its own value
 reads nothing but loop-invariant operands, because its *own* liveness
 past that point may still depend on which branch a given iteration
-takes (`tests/Test19LoopInvariantParam.idr`'s own absorbed former
+takes (`tests/Test110Loop/LoopInvariantParam.idr`'s own absorbed former
 `Test21BoxedInvariantNotHoisted.idr` case is the dedicated
 negative-case test for exactly this; see `rc2/doc/loop-conversion.md`'s
 "Loop-invariant expression hoisting" section for the full reasoning,
@@ -362,7 +362,7 @@ it, running it even less often (only when that arm is actually
 reached, versus hoisting's "once per call regardless"). Unlike
 sections 8.5/8.6, nothing about this needs a loop at all --
 `tests/Test22BranchSinking.idr`'s own dump shows the identical shape in
-an ordinary non-recursive function; `tests/Test19LoopInvariantParam.idr`'s
+an ordinary non-recursive function; `tests/Test110Loop/LoopInvariantParam.idr`'s
 own absorbed former `Test21BoxedInvariantNotHoisted.idr` case's own
 post-`Sink` dump shows it
 firing on the very `let v5 = ...` section 8.6 above deliberately leaves
@@ -372,7 +372,7 @@ competing, for that exact binding -- see `doc/branch-sinking.md`'s own
 
 ## 9. Worked examples
 
-### Constructor-reuse-in-place (`List.takeUntil`-shaped code, from `Test1Basics.idr`)
+### Constructor-reuse-in-place (`List.takeUntil`-shaped code, from `Test111Basics/Basics.idr`)
 
 ```
 case v1 of
@@ -409,7 +409,7 @@ line here since it's folded into `reuseOffer`'s own `dupOnShared`
 protocol -- both fields survive into the new `Cons` regardless of which
 path the runtime check takes).
 
-### Mutual tail recursion, merged (`isEvenM`/`isOddM`, from `Test9SelfTailLoop.idr`)
+### Mutual tail recursion, merged (`isEvenM`/`isOddM`, from `Test110Loop/SelfTailLoop.idr`)
 
 ```
 def Main.isEvenM  (fun args=[v0])

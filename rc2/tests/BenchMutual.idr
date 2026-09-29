@@ -3,7 +3,7 @@ module Main
 -- Mutual tail recursion throughput, same total iteration count as
 -- BenchLoop.idr's sumTo, but split across two functions that tail-call
 -- each other on every step -- exercises Compiler.RC2.MutualLoop's
--- merge+goto conversion under a real timing workload (Test9SelfTailLoop.idr,
+-- merge+goto conversion under a real timing workload (Test110Loop/SelfTailLoop.idr,
 -- which absorbed the former Test10MutualLoop.idr, already covers
 -- correctness/edge cases).
 

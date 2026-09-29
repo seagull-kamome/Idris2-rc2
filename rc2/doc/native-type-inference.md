@@ -247,7 +247,7 @@ the full design and its own bug (a double-free in `annotate`'s
    last-use as "consumed." But `Emit.idr`'s `emitNativeValue` (unlike
    `emitRC`'s boxed-`ROp` case) had no matching cleanup at all -- every
    Boxed operand read only through a native unboxing extraction leaked
-   one reference per call. Found via `Test6NativeInts.idr`; this is
+   one reference per call. Found via `Test112Numeric/NativeInts.idr`; this is
    what `ROp.postDrop` (above) now exists specifically to make
    impossible to get wrong again (a single Phase-2-computed field both
    `emitRC` and `emitNativeValue` lower identically, rather than two
@@ -349,7 +349,7 @@ the full design and its own bug (a double-free in `annotate`'s
 
 1. Build + regression baseline: see `CLAUDE.md`'s "Build & test" section
    (`idris2 --build rc2.ipkg`, then `tests/refc-suite/run.sh`, expect 19/19).
-2. `tests/Test6NativeInts.idr` specifically exercises all 8 fixed-width
+2. `tests/Test112Numeric/NativeInts.idr` specifically exercises all 8 fixed-width
    integer types (signed/unsigned, all widths) through the same
    arithmetic chain, byte-diffed against real `idris2 --cg refc` output
    including boundary-value wraparound -- this is the test that found
@@ -368,7 +368,7 @@ the full design and its own bug (a double-free in `annotate`'s
 5. Bug 6 above (the two dual-ABI wrapper paths that missed
    `alwaysUnboxed`) has its own separate regression coverage, since
    neither path is reachable through `RC.idr`'s own `annotate` pass
-   that `Test6NativeInts.idr` above was written to exercise: hand-check
+   that `Test112Numeric/NativeInts.idr` above was written to exercise: hand-check
    `tests/build/Test6NativeInts_rc2.c`'s `Main_chainInt8`/`chainInt16`/
    `chainInt32` (and the Bits8/16/32 equivalents) to confirm their
    dual-ABI wrappers no longer call `idris2rc2_drop` on their arguments

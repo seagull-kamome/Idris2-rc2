@@ -9,7 +9,7 @@ module Compiler.RC2.DeadCode
 -- "Motivation" for why upstream's own reachability analysis (fixed
 -- before any rc2 pass runs) can leave a definition genuinely dead only
 -- after `Inline`/`DualABI` rewrite it (confirmed via
--- `rc2/tests/Test51DeadCodeInline.idr`), and its "Scope" section for
+-- `rc2/tests/Test114Inline/DeadCodeInline.idr`), and its "Scope" section for
 -- why only `MkRCFun` is ever pruned here -- `MkRCForeign` structurally
 -- can't actually lose every caller via `Inline`/`DualABI` alone (a
 -- first attempt at tracking it anyway never removed anything in

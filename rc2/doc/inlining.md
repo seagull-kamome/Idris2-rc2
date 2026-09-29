@@ -18,7 +18,7 @@ caller's own fusion analysis.
 callee's own body directly into its call site, run once, before
 `Compiler.RC2.RC`'s own Phase 1 (`normalize`) ever sees the program --
 so from `RC.idr`'s point of view, the call was never there. See
-`rc2/tests/Test15CompareFusionThroughCall.idr` for the exact motivating
+`rc2/tests/Test114Inline/CompareFusionThroughCall.idr` for the exact motivating
 shape and how to check it via `--directive dumprcexpr`/`--directive
 noinline`.
 
@@ -82,7 +82,7 @@ implemented for loop-free callees: see "Criterion B at `Lifted`" below.
 
 A call whose arguments are *all* bare `LPrimVal` literals is never
 inlined, even if otherwise eligible. Found necessary via
-`Test6NativeInts.idr`'s own `chainInt8 100 100`-shaped calls: once a
+`Test112Numeric/NativeInts.idr`'s own `chainInt8 100 100`-shaped calls: once a
 fixed-width arithmetic chain is spliced in with every operand a
 compile-time constant, gcc's own `-Werror=overflow` can statically prove
 an intentional two's-complement wraparound "overflows," turning a
@@ -214,7 +214,7 @@ than the multiplication resuming.
 Re-running the same synthetic generator after the fix: generated-C line
 counts grew roughly *linearly* instead -- 729 / 822 / 862 / 922 / 1,022
 lines at N=5/10/12/15/20 (~20 lines per additional level) -- and the
-full regression suite (87/87, including `Test15CompareFusionThroughCall`
+full regression suite (87/87, including `Test114Inline/CompareFusionThroughCall.idr`
 both functionally and under `valgrind`) stayed green, confirming the
 budget doesn't interfere with the pass's own motivating case at the
 sizes that actually occur there.
@@ -273,7 +273,7 @@ this bookkeeping existed -- no new cost introduced on that side.
 Re-verified: same synthetic generator, same linear line-count growth as
 above (threading the sizes is a pure performance change, not a
 behavioural one), and the full regression suite stayed green (87/87,
-`Test15CompareFusionThroughCall` included).
+`Test114Inline/CompareFusionThroughCall.idr` included).
 
 A separate, unrelated cost was found while chasing this: N=25 of the
 same synthetic generator took 5.6s in upstream's own "Elaborating"
@@ -331,7 +331,7 @@ both, and for the measurements.
 
 An earlier attempt at this pass, this session, was fully reverted after
 the full regression suite surfaced a real, `valgrind`-confirmed leak in
-`Test9SelfTailLoop`'s own `collatzLike` once inlining made comparison
+`Test110Loop/SelfTailLoop.idr`'s own `collatzLike` once inlining made comparison
 fusion reach a self-tail-loop's own accumulator for the first time. Two
 rounds of narrowing the case-of-case collapse (bounding it, then
 disabling it outright) left the leak byte-for-byte unchanged, and the
@@ -362,8 +362,8 @@ conclusion ("the leak is pre-existing, unrelated to this pass") since
 both compared builds secretly had inlining enabled. Re-verified this
 time by diffing the generated C with and without `--directive noinline`
 before trusting any A/B comparison built on it again (see
-`rc2/tests/Test14SmallFunctionInline.idr`'s and
-`Test15CompareFusionThroughCall.idr`'s own doc comments, which both
+`rc2/tests/Test114Inline/SmallFunctionInline.idr`'s and
+`Test114Inline/CompareFusionThroughCall.idr`'s own doc comments, which both
 describe exactly what to expect changed between the two builds).
 
 ## Criterion B at `Lifted`: loop-free single-caller callees (2026-09-25)
@@ -891,7 +891,7 @@ for an `RNative` local's own value) has no way to *render* a branch as
 one C expression -- it only understands `RAppFFIInline`/`ROp`/
 `RPrimVal` at the tail, unwinding `RLet`/`RDup`/`RFree`/`RDrop`/
 `RReleaseReuse` wrappers on the way. Enabling Layer 3's extra promotions
-newly exposed this: `Test15CompareFusionThroughCall`'s own `step`
+newly exposed this: `Test114Inline/CompareFusionThroughCall.idr`'s own `step`
 (`if acc <= 0 then 1 else acc + 1`, spliced into a loop whose
 accumulator feeds `RLoopContinue`) got promoted on `uniformTailType`
 alone, then crashed `declareNative` with "[rc2] internal: expected a
@@ -935,7 +935,7 @@ left alone, since it is read before the first iteration.
 
 Why disabling other stages also hid the bug: `noloop` leaves no loop,
 and `noconstfold` means the argument isn't a folded constant closure.
-Regression test: `Test94LoopConstClosureParam`.
+Regression test: `Test110Loop/LoopConstClosureParam.idr`.
 
 ### Files
 

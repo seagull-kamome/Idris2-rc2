@@ -186,7 +186,7 @@ source env.sh
 ```
 
 `rc2/tests/verify.sh` already depends on this for every smoke test
-(`-p rc2base`, e.g. `Test54FFIInteger`'s own `Data.Integer.GMP` usage),
+(`-p rc2base`, e.g. `Test118FFI/FFIInteger.idr`'s own `Data.Integer.GMP` usage),
 so a normal `verify.sh` run implicitly builds and exercises it -- see
 `libs/rc2base/README.md`'s own "Build & test" section for running its
 own `tests/verify.sh` (one `TestX.idr`/`.expected` pair per module)

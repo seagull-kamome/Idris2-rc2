@@ -336,7 +336,7 @@ opNativeUsesAll tracked ty op args = foldr (\a, acc => addTracked tracked a (opA
 ||| `Compiler.RC2.Loop`'s own loop-param promotion -- which has no such
 ||| pairing and runs before any return-eligibility decision exists at
 ||| all. See rc2/doc/loop-conversion.md's "Known limitation" section for
-||| the leak guessing here caused (Test9SelfTailLoop).
+||| the leak guessing here caused (Test110Loop/SelfTailLoop.idr).
 opNativeUsesThrough : (p : Int) -> PrimType -> RCExp -> SortedSet PrimType
 opNativeUsesThrough p ty (ROp _ _ op args _) = opNativeUses p ty op args
 opNativeUsesThrough p ty (RDup _ _ _ cont) = opNativeUsesThrough p ty cont
@@ -380,7 +380,7 @@ opNativeUsesThroughAll _ _ _ = empty
 ||| does, still render Boxed at that point, and treating it as native
 ||| anyway strips ownership bookkeeping a since-still-Boxed rendering
 ||| genuinely needs. See rc2/doc/loop-conversion.md's "Known limitation"
-||| section for the Test9SelfTailLoop valgrind leak this caused.
+||| section for the Test110Loop/SelfTailLoop.idr valgrind leak this caused.
 export
 nativeArgTypes : (p : Int) -> RCExp -> SortedSet PrimType
 nativeArgTypes p (RLet _ _ rep value body) =
@@ -1150,7 +1150,7 @@ markInvariantNative _ _ e = e
 ||| there is, almost always, the `RLoop` itself, or an `RLet` wrapping
 ||| one). See rc2/doc/loop-conversion.md's "Loop-invariant parameter
 ||| elision" section for the crash a local copy of `countUsesR` without
-||| these two cases caused (Test19LoopInvariantParam).
+||| these two cases caused (Test110Loop/LoopInvariantParam.idr).
 |||
 ||| A yes/no question needs only the *first* occurrence, not an exact
 ||| tally -- `existsInvariantUse` short-circuits on it (each `if`

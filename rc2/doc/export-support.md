@@ -269,7 +269,7 @@ unmodified:
   leading `mpz_t out` parameter and its own C return type becomes
   `void` -- mirroring `emitGenericForeignWrapper`'s own identical
   out-parameter convention for a `%foreign`-side Integer return (see
-  `Test54FFIInteger`). The body is `mpz_init(out); mpz_set(out,
+  `Test118FFI/FFIInteger.idr`). The body is `mpz_init(out); mpz_set(out,
   <extracted value>);` followed by an explicit `idris2rc2_drop` of the
   trampolined boxed result and a bare `return;`.
 

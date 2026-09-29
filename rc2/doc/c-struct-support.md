@@ -774,7 +774,7 @@ implementation, not just an rc2/RefC-provided primitive. Joins
 `NO_REFC_DIFF_TESTS` (real RefC has no `getField`/`setField` to diff
 against) with a hand-verified `.expected`, and `LEAK_SENSITIVE_TESTS`
 (ownership correctness is the whole point of this test). Full
-`verify.sh` run: 39 passed, 1 known pre-existing (`Test1Basics`'s own
+`verify.sh` run: 39 passed, 1 known pre-existing (`Test111Basics/Basics.idr`'s own
 recorded leak, unrelated), 0 failed -- including this test's own
 `valgrind` pass at 0 bytes definitely lost.
 
@@ -799,7 +799,7 @@ libcurl's own `curl/curl.h` already typedefs `curl_version_info_data`,
 section's own Part B/C table) is never filtered by it, only the
 typedef *emission* in Part C -- `RStructGet`/`RStructSet` (Part D)
 resolve fields exactly as normal either way. See
-`rc2/tests/Test84CgExternStruct/` for a from-scratch example built the
+`rc2/tests/Test120CStruct/` for a from-scratch example built the
 "right" way (a companion header declaring the real typedef, not a
 `void*`-typed workaround like `Test24CStructSupport.h` above).
 `Test24CStructSupport` itself is left as originally written -- its own

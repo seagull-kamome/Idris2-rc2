@@ -28,7 +28,7 @@ addConst =
 strConst : String
 strConst = "foo" ++ "bar"
 
--- Same-width wraparound check, mirroring Test6NativeInts.idr's own
+-- Same-width wraparound check, mirroring Test112Numeric/NativeInts.idr's own
 -- chainInt8 (100+100 style) -- both operands compile-time constants,
 -- so Compiler.RC2.ConstFold folds the whole chain at compile time
 -- instead of Emit ever seeing a `+` (which is what Compiler.RC2.

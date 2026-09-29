@@ -591,7 +591,7 @@ isPrimVal _ = False
 ||| so this stays in lockstep with exactly what it folds): gcc's own
 ||| `-Werror=overflow` can statically prove an intentional fixed-width
 ||| wraparound "overflows" once every operand of a folded arithmetic
-||| chain is a compile-time literal (found via `Test6NativeInts.idr`'s
+||| chain is a compile-time literal (found via `Test112Numeric/NativeInts.idr`'s
 ||| own `chainInt8 100 100`-shaped calls, which this guard exists to
 ||| keep working) -- but only when the resulting literal chain has an
 ||| actual chance of reaching Emit unfolded. Everything else

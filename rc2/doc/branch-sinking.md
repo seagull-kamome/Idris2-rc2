@@ -9,7 +9,7 @@ into that one arm instead -- every other arm no longer knows `var`
 exists at all, and its own now-stale `drop [var, ...]` (if it had one)
 is removed.
 
-Found while reading `tests/Test19LoopInvariantParam.idr`'s own
+Found while reading `tests/Test110Loop/LoopInvariantParam.idr`'s own
 absorbed former `Test21BoxedInvariantNotHoisted.idr` dump (the
 deliberately-not-hoisted negative case from
 `rc2/doc/loop-conversion.md`'s "Loop-invariant expression hoisting"
@@ -149,7 +149,7 @@ dead code, not this pass's problem to clean up).
 structurally impossible when `value` computes the very thing being
 branched on. This was a real bug caught during development: `let v1 =
 v0 - 1 in case v1 of 0 => ...; _ => (uses v1 to compute v0's own fib)`
-(`tests/Test2Recursion.idr`'s own `fib`) looks, to a check that only
+(`tests/Test111Basics/Recursion.idr`'s own `fib`) looks, to a check that only
 scans each arm's own body, exactly like "one arm uses it (`_`), the
 other doesn't (`0` never reads `v1` again)" -- sinking `v1`'s own
 binding into the `_` arm produced `case v1 of ...` referencing `v1`
@@ -171,7 +171,7 @@ shallower position because it runs before either).
 **`value`'s own consumed operands need the same treatment, in every arm
 it *doesn't* sink into** (`consumedOperands`, `addOperandDrops`). This
 was the second real, `valgrind`-confirmed bug found while building this
-pass: `tests/Test9SelfTailLoop.idr` transitively pulls in
+pass: `tests/Test110Loop/SelfTailLoop.idr` transitively pulls in
 `Prelude.Types.getAt`, which has (before sinking) `let v4 = op -Integer
 [v0, #1] postDrop=[v0] in case v1 of Cons ... => ...v4...; Nil => (v4
 unused, so `drop [v4]`)`. `postDrop=[v0]` means `value`'s own
@@ -187,7 +187,7 @@ an `ROp`'s own `postDrop` list, or (tracking which ids a leading
 `RDup` already protected with an extra reference) any `RCon` field
 *not* `dup`'d first, whose own sole remaining reference moves straight
 into the new constructor rather than surviving independently
-(`tests/Test19LoopInvariantParam.idr`'s own absorbed former
+(`tests/Test110Loop/LoopInvariantParam.idr`'s own absorbed former
 `Test21BoxedInvariantNotHoisted.idr` case, `dup v0; dup v1; con
 _ [v0, v1]`, `dup`s both fields first, so correctly contributes nothing
 here). `addOperandDrops` prefixes every arm `value` doesn't sink into
@@ -291,7 +291,7 @@ this stage alone, same convention as every other optional stage (see
 - `rc2/src/Compiler/RC2/ConAltNative.idr` -- `peelWrappers`, the
   "leading-wrapper-then-branch" idiom this pass's own wrapper-peeling
   cases mirror.
-- `tests/Test19LoopInvariantParam.idr`'s own absorbed former
+- `tests/Test110Loop/LoopInvariantParam.idr`'s own absorbed former
   `Test21BoxedInvariantNotHoisted.idr` case -- the motivating case,
   inside a self-tail loop (shared with `Compiler.RC2.Loop`'s own
   loop-invariant expression hoisting as its negative case).
@@ -310,7 +310,7 @@ this stage alone, same convention as every other optional stage (see
   of `IO ()` calls whose result is immediately discarded, followed by
   a branch reading an unrelated value) directly, independent of
   `Data.Buffer`.
-- `tests/Test2Recursion.idr`/`tests/Test9SelfTailLoop.idr`/
+- `tests/Test111Basics/Recursion.idr`/`tests/Test110Loop/SelfTailLoop.idr`/
   `refc-suite/buffer/TestBuffer.idr` -- existing tests (the first two
   via Prelude functions they transitively pull in) that caught three
   of the four real bugs documented above; no dedicated new regression

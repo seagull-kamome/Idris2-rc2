@@ -295,7 +295,7 @@ Both print the same value, in different notation:
   does.
 
 Only programs that print large or small doubles see it. Found when
-comparing `Test105ImmediateInts`' `Int` to `Double` casts against Chez;
+comparing `Test112Numeric/ImmediateInts.idr`' `Int` to `Double` casts against Chez;
 that test now avoids such values. Decide whether rc2 should follow
 Chez's rule; nothing in Idris itself fixes the format.
 
@@ -993,3 +993,42 @@ Early inline も同じ形(ラウンド4で展開1件、0.42s)。案:
 部分木の繰り返し走査)は、過去に LateInline・SpecClosure・DualABI・
 RC.annotate・DeadVars で実際に数秒を失った。1の計測で重いと分かった
 パスから順に、同じ形が残っていないかを点検する。
+
+## テストの穴(監査 2026-09-29)
+
+テストを72本から51本にまとめ(`rc2/tests/README.md`)、コンパイラの
+パスと実行時の機能をテストの一覧と突き合わせた結果。大きいものから。
+
+- **rcexpr-lint が verify に組み込まれていない。** `verify.sh`は全スモーク
+  テストの IR を`--directive dumprcexpr`で出しているのに、lint にかけて
+  いない。参照カウントの食い違いは出力の diff にも valgrind にも出にくい
+  (`tools/rcexpr-lint/README.md`)。組み込む前に、lint が`%foreign`の型の
+  `struct "名前" (...)`を読めない件を直す(Test24/Test120 の IR で
+  `parse error`になる)。
+- **失敗すべきプログラムのテストが無い。** verify はコンパイルが通る
+  プログラムしか試さない。rc2 が利用者向けのエラーにする経路
+  (`%foreign`の戻り値が関数、`getField`の構造体やフィールドが見つからない、
+  名前がリテラルでない`getField`など)が、エラーを出すことも、内部エラーに
+  ならないことも確かめられていない。期待するエラー文をファイルに置き、
+  コンパイラの出力と diff する形にする。
+- **遅延評価のテストが無い。** `Lazy`/`Force`/`Delay`/`Inf`を主題にした
+  テストが無い(Test35 に出てくるだけ)。上の「Semantics: `Lazy`/`Force`」
+  の節にある、メモ化しない挙動も確かめられていない。
+- **インクリメンタルコンパイル(`--inc rc2`)のテストが無い。** verify は
+  全体コンパイルしか試さない。
+- **パスを止めた構成を試していない。** verify は既定のパイプラインだけで
+  走る。`--directive no<stage>`で1つずつ止めても出力が変わらないことは、
+  `--directive`を手で渡したときしか確かめられない(`noreuse`が実際に
+  壊れていた前例がある)。定期的に、各`no<stage>`でスモークテストを回す
+  スクリプトがあるとよい。
+- **大きな外部プログラムが verify に無い。** idris2-lsp は C の出力で既知の
+  エラーで止まり、idris2-missing-containers は bench.sh でしか動かさない。
+  少なくとも idris2-lsp の IR を lint にかける手順があると、スモーク
+  テストに無い形を広く試せる。
+- **専用のテストが無いパス。** `DeadVars`(死んだ let の消去)は他の
+  テストで間接的に通るだけ。`MutualLoop`は Test110Loop の SelfTailLoop の
+  中の間接的な循環1つだけ。
+- **まとめたテストの注意。** Test113DeepRecursion は、まとめたことで
+  `mod`がワーカー呼び出しになる、`mergeBy`の特殊化の展開が変わるなど、
+  元のテストと IR が違う。100万段で C スタックが溢れないことは実行で
+  確かめているが、元のテストと同じ形を狙いたい場合は分け直す。

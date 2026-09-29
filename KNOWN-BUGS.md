@@ -90,12 +90,12 @@ If one of these stops reproducing, or a fix lands, remove the entry.
   `const`) still collides with `-Werror`/`-Wdiscarded-qualifiers` on
   any `const char *`-returning C function** (e.g.
   `curl_easy_strerror`). Confirmed directly: `rc2/tests/
-  Test47ConstCFStringReturn.idr` cannot be built by real
+  Test119FFINoRefc/ConstCFStringReturn.idr` cannot be built by real
   `idris2 --cg refc` at all -- it fails with exactly this
   warning-turned-error. rc2 itself no longer has this limitation:
   `Compiler/RC2/Emit/Util.idr`'s `cTypeOfCFType CFString` was changed to
   `"const char *"` (`idris2rc2_mkString` already took `char const *s`,
-  so no other codegen change was needed). `Test47ConstCFStringReturn`
+  so no other codegen change was needed). `Test119FFINoRefc/ConstCFStringReturn.idr`
   is listed in `verify.sh`'s `NO_REFC_DIFF_TESTS` since there's no
   real-RefC output to diff against for it. Re-verified directly against
   this project's self-built reference toolchain (`idris2-src` at its
@@ -192,7 +192,7 @@ returns the right result.
 
 TRMC (`rc2/doc/trmc.md`, phase 1), the difference-list rewrite
 (`rc2/doc/closure-accumulator.md`) and a non-recursive
-`idris2rc2_teardown` for long lists (`Test96TeardownDeep`) cover
+`idris2rc2_teardown` for long lists (`Test113DeepRecursion/TeardownDeep.idr`) cover
 `mergeBy`, `[1 .. n]`, `sortBy`'s `splitRec` and `Data.List.sort`: all
 four run at 4M elements with `ulimit -s` 8192 (measured 2026-09-26).
 Chez sorts a 1M list in 1.23s; rc2 takes 4.17s.

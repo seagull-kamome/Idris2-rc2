@@ -312,7 +312,7 @@ accumulators at once.
 
 ### Test
 
-`Test101TrmcMutual` covers two cases, at a million elements each:
+`Test113DeepRecursion/TrmcMutual.idr` covers two cases, at a million elements each:
 - a function and a helper that builds `x :: f xs` (the helper
   pattern);
 - a chain through a second type, `Node Int Opt`, where `mapOpt` fills
@@ -329,7 +329,7 @@ valgrind, and overflow the C stack with `--directive notrmc`.
 
 ## Phase 1 results (2026-09-26)
 
-**Correctness.** `Test95Trmc` builds lists and a `Link`/`End` chain of
+**Correctness.** `Test113DeepRecursion/Trmc.idr` builds lists and a `Link`/`End` chain of
 a million elements through `map`, `filter`, `zipWith` and
 count-up-to builders, and runs clean under valgrind. With
 `--directive notrmc` the same test overflows the C stack.
@@ -368,7 +368,7 @@ crashed, in the runtime's recursive teardown; that is fixed separately.
 
 ## Phase 3 results (2026-09-27)
 
-**Correctness.** `Test100TrmcHoles` covers:
+**Correctness.** `Test113DeepRecursion/TrmcHoles.idr` covers:
 - a million-long chain alternating `A Int Alt` and `B Alt Int` (holes
   at fields 1 and 0);
 - a map over a million-deep right spine of a tree, with the left
@@ -403,7 +403,7 @@ same tree, with only `Trmc.idr` differing):
 
 ## Phase 2 results (2026-09-27)
 
-**Correctness.** `Test101TrmcMutual` matches Chez's output and runs
+**Correctness.** `Test113DeepRecursion/TrmcMutual.idr` matches Chez's output and runs
 clean under valgrind. With `--directive notrmc` it overflows the C
 stack. In its dump, both pairs end up as one MutualLoop loop that
 dispatches on the member tag and on `hk`.

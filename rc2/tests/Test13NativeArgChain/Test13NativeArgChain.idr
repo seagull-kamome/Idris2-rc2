@@ -18,7 +18,7 @@ import Data.Bits
 -- body is a single, *unguarded* `ROp` with no enclosing `let` at all,
 -- deliberately stays `RBoxed` -- an earlier, broader fix that treated
 -- any bare `ROp` as native regardless of context caused a real,
--- `valgrind`-caught leak in Test9SelfTailLoop; see
+-- `valgrind`-caught leak in Test110Loop/SelfTailLoop.idr; see
 -- rc2/doc/native-type-inference.md and TODO.md's git history for the
 -- full investigation, which originally misattributed this gap to a
 -- newtype-style constructor wrapper -- ruled out by reproducing with a
@@ -56,7 +56,7 @@ chain v b = (v `xor` cast b) * 0x100000001b3
 
 -- Deliberately still RBoxed (see above) -- kept as a control so a
 -- future change to this analysis that starts promoting it is a
--- visible prompt to re-check the Test9SelfTailLoop hazard, not a
+-- visible prompt to re-check the Test110Loop/SelfTailLoop.idr hazard, not a
 -- silent behaviour change.
 flat : Bits64 -> Bits64 -> Bits64
 flat v k = v * k

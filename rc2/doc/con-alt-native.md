@@ -110,7 +110,7 @@ included), are left completely untouched, not even renamed into.
    genuinely has no Boxed source anywhere to release, a destructured
    field's own Boxed *origin* still needs exactly one
    `idris2rc2_drop` somewhere, or it leaks. Confirmed with `valgrind
-   --leak-check=full` against `tests/Test12ConAltNative.idr`'s own
+   --leak-check=full` against `tests/Test117ConAltNative/ConAltNative.idr`'s own
    `step` (destructures `Acc = MkAcc Int Int` and immediately
    reconstructs the same shape, deliberately chosen to also exercise
    `Compiler.RC2.Reuse`'s own constructor-reuse-in-place path): ~6.4MB
@@ -157,7 +157,7 @@ included), are left completely untouched, not even renamed into.
    never touched by this pass in the first place.
 
 Re-verified after the fix: `valgrind --leak-check=full` against
-`tests/Test12ConAltNative.idr` (`step`'s own reuse-in-place case,
+`tests/Test117ConAltNative/ConAltNative.idr` (`step`'s own reuse-in-place case,
 `repeatedRead`'s own field-read-three-times case, `mixedUse`'s own
 native-and-Boxed-same-field case) reports `definitely lost: 0 bytes in
 0 blocks` (`800 bytes in 100 blocks still reachable` -- exactly the
@@ -165,7 +165,7 @@ immortal small-int cache, not a leak). Full refc-suite (19/19) and the
 entire `tests/Test*.idr` smoke-test matrix re-diffed byte-for-byte
 against real `idris2 --cg refc`, unaffected. Two small, *pre-existing*
 leaks found incidentally while re-running `valgrind` across the smoke
-tests (`Test1Basics`: 96 bytes/5 blocks; `Test9SelfTailLoop`: 784
+tests (`Test111Basics/Basics.idr`: 96 bytes/5 blocks; `Test110Loop/SelfTailLoop.idr`: 784
 bytes/49 blocks) were confirmed present, identical in size, with this
 whole pass's own pipeline entry removed entirely -- unrelated to this
 work, not investigated further here.
@@ -193,7 +193,7 @@ work, not investigated further here.
    Any further leading `dup` of that field is dropped. The first fix
    dropped every leading `dup` of the field, including the moving one;
    that freed the element early and crashed a `sumList` loop.
-   `Test97ConAltNativeLeadingDup` covers both cases under valgrind.
+   `Test117ConAltNative/ConAltNativeLeadingDup.idr` covers both cases under valgrind.
 
 ## Reusing the original Boxed field for surviving Boxed-context reads
 
@@ -234,7 +234,7 @@ rather than batched:
 Two real, `valgrind`-silent bugs (both compiled, ran, and printed the
 *correct* result while still leaking or, in the second case, actively
 corrupting memory) were found landing this, both via
-`tests/Test12ConAltNative.idr`'s own new `multiBoxedUse`/`branchingUse`
+`tests/Test117ConAltNative/ConAltNative.idr`'s own new `multiBoxedUse`/`branchingUse`
 cases (see "Files" below):
 
 1. **A `freeLocalsR` lookahead in the naive left-to-right version of
@@ -287,7 +287,7 @@ cases (see "Files" below):
    still own.
 
 Re-verified after both fixes: `valgrind --leak-check=full` against
-`tests/Test12ConAltNative.idr` (`step`'s own reuse-in-place case,
+`tests/Test117ConAltNative/ConAltNative.idr` (`step`'s own reuse-in-place case,
 `repeatedRead`'s own field-read-three-times case, `mixedUse`'s own
 native-and-Boxed-same-field case, `multiBoxedUse`'s own repeated-dup
 case, `branchingUse`'s own asymmetric-branch case) reports `definitely
@@ -322,7 +322,7 @@ lost: 0 bytes in 0 blocks` (`800 bytes in 100 blocks still reachable`
   (`applyConAltNative` right after `applyReuse`, before
   `applyMutualLoop`).
 - `rc2/rc2.ipkg` -- new module added to the `modules` list.
-- `rc2/tests/Test12ConAltNative.idr` (new) -- `step` (reuse-in-place
+- `rc2/tests/Test117ConAltNative/ConAltNative.idr` (new) -- `step` (reuse-in-place
   interaction), `repeatedRead` (a field read natively three times,
   confirms the caching itself), `mixedUse` (the same field read both
   natively and in Boxed context), `multiBoxedUse` (a field read
@@ -335,7 +335,7 @@ lost: 0 bytes in 0 blocks` (`800 bytes in 100 blocks still reachable`
 
 1. Build + regression baseline: see `CLAUDE.md`'s "Build & test" section
    (`idris2 --build rc2.ipkg`, then `tests/refc-suite/run.sh`, expect 19/19).
-2. `tests/Test12ConAltNative.idr` is this feature's own canonical smoke
+2. `tests/Test117ConAltNative/ConAltNative.idr` is this feature's own canonical smoke
    test -- diff its output against real `idris2 --cg refc`'s own
    (byte-for-byte), and read `Main_step`'s own generated C directly:
    the field reads should be `int64_t var_N = idris2rc2_to_i64(var_M);`
@@ -352,7 +352,7 @@ lost: 0 bytes in 0 blocks` (`800 bytes in 100 blocks still reachable`
    to `ConAltNative.idr`, or to `Compiler.RC2.Reuse`'s own
    `resolveAlt`/`Compiler.RC2.Loop`'s own `stripOwnership`/`nativeArgTypes`
    (all reused or mirrored here), should be re-checked with `valgrind
-   --leak-check=full` against `tests/Test12ConAltNative.idr` specifically
+   --leak-check=full` against `tests/Test117ConAltNative/ConAltNative.idr` specifically
    (its own `step` runs 200k iterations, deliberately large enough that
    a per-iteration leak is unmistakable in the summary rather than lost
    in noise; `multiBoxedUse`/`branchingUse` are the dedicated regressions

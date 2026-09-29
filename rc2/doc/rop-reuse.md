@@ -250,8 +250,8 @@ runtime function name needs the compiler-side gate to recognize *every*
 like the "real" owner of it.
 
 It was caught by a full `verify.sh` regression run: four PRE-EXISTING,
-previously-passing tests -- `Test16LoopContinuePostDrop`,
-`Test19LoopInvariantParam`, `Test3Data`, `Test9SelfTailLoop` -- started
+previously-passing tests -- `Test110Loop/LoopContinuePostDrop.idr`,
+`Test110Loop/LoopInvariantParam.idr`, `Test3Data`, `Test110Loop/SelfTailLoop.idr` -- started
 producing wrong output. Not crashes: corrupted values from the
 use-after-free, and still 0 bytes "definitely lost" under valgrind,
 since the freed memory was reused/still mapped rather than actually

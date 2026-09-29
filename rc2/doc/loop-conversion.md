@@ -542,7 +542,7 @@ wrapping one). Every parameter with a real, live Boxed-context read
 *inside* the loop's own body was invisible to this check, and got
 dropped immediately instead -- a real, `valgrind`-confirmed crash
 (`malloc(): unaligned tcache chunk detected`) caught via
-`tests/Test19LoopInvariantParam.idr`'s own `sumWithBoxedContinuePath`/
+`tests/Test110Loop/LoopInvariantParam.idr`'s own `sumWithBoxedContinuePath`/
 `sumWithBoxedExitOnly` during development. Fixed with a
 dedicated `usesInvariant` (`Loop.idr`'s own local copy of
 `countUsesR`'s logic, `RLoop`/`RLoopContinue` cases added) rather than
@@ -637,7 +637,7 @@ directly while implementing this pass -- a `Boxed`-`Rep` invariant
 `RCon` used only on the loop's exit arm crashed with `malloc():
 unaligned tcache chunk detected`, `valgrind`-confirmed as a genuine
 double-free, before the `isNativeRep` guard existed (see
-`tests/Test19LoopInvariantParam.idr`'s own absorbed former
+`tests/Test110Loop/LoopInvariantParam.idr`'s own absorbed former
 `Test21BoxedInvariantNotHoisted.idr` case, a permanent regression test
 for exactly this shape). A native result sidesteps the entire issue
 structurally: native values are never dup'd/dropped anywhere in this
@@ -664,7 +664,7 @@ final `RLoop` in one `RLet` per hoisted triple -- reusing the plain
 invariant-shadow-parameter `RLet`s (see the section above), since a
 hoisted expression may itself read one of those (e.g. a native-shadowed
 invariant parameter's own shadow id, exactly `bound = limit * 2` in
-`tests/Test19LoopInvariantParam.idr`'s own worked example -- its
+`tests/Test110Loop/LoopInvariantParam.idr`'s own worked example -- its
 loop-invariant-expression-hoisting coverage, merged in at the end of
 that file).
 
@@ -702,7 +702,7 @@ solves.
 Each original member's own top-level name keeps working as a normal,
 independently-callable function (for external callers, and for any
 *non*-tail use -- e.g. being passed around as a closure, which
-`Test9SelfTailLoop.idr` specifically exercises) -- it becomes a thin
+`Test110Loop/SelfTailLoop.idr` specifically exercises) -- it becomes a thin
 wrapper that just calls the merged function once with its own tag and
 arguments and returns whatever comes back.
 
@@ -734,7 +734,7 @@ Idris2's own totality/stack constraints rather than a naive recursive
 Tarjan) implementation of Tarjan's strongly-connected-components
 algorithm over that graph. Using SCCs rather than only looking for
 direct pairs is what lets `applyMutualLoop` find *indirect* cycles too
-(`A -> B -> C -> A`, not just `A -> B -> A`) -- `Test9SelfTailLoop.idr`'s
+(`A -> B -> C -> A`, not just `A -> B -> A`) -- `Test110Loop/SelfTailLoop.idr`'s
 own `cycleA`/`cycleB`/`cycleC` group specifically exercises this. Only
 components of size `>= 2` are merged; a size-1 component is just an
 ordinary (possibly self-recursive) function, already `Compiler.RC2.Loop`'s
@@ -954,7 +954,7 @@ above needed to stop assuming a single loop.
    shared slot can be promoted to `RNative` because *some* group member
    reads it natively, even though *other* members only ever receive
    `RCNull` there (their own arity is smaller). Found via
-   `Test9SelfTailLoop.idr`'s own differing-arity `stepA`/`stepB` group
+   `Test110Loop/SelfTailLoop.idr`'s own differing-arity `stepA`/`stepB` group
    (`stepA : Nat -> Int -> Int -> Int`, `stepB : Nat -> Int -> Int`),
    which segfaulted after native-shadow promotion landed even though
    every other test still passed.
@@ -973,7 +973,7 @@ above needed to stop assuming a single loop.
      C type this can be (`int64_t`, `double`, unsigned widths, all
      accept a bare `0`).
    - **Site 2 -- loop entry, via `declareLoopParam`**: a *first* fix
-     (site 1 alone) didn't fully resolve the crash -- `Test9SelfTailLoop.idr`
+     (site 1 alone) didn't fully resolve the crash -- `Test110Loop/SelfTailLoop.idr`
      still segfaulted. The actual crash was one level earlier:
      `declareLoopParam`'s own unboxing of `initial`'s value (reading
      the merged function's own top-level parameter, at genuine function
@@ -998,7 +998,7 @@ above needed to stop assuming a single loop.
      provably unnecessary.
 
    Both fixes were verified against the full matrix again: 19/19
-   refc-suite, all smoke tests (`Test1Basics.idr`-`Test9SelfTailLoop.idr`),
+   refc-suite, all smoke tests (`Test111Basics/Basics.idr`-`Test110Loop/SelfTailLoop.idr`),
    all benchmarks, byte-for-byte/crash-free against `idris2 --cg refc`.
 5. **`RLoopContinue` never dropped a natively-read Boxed continuation
    argument, and a second, independent leak in `ROp`'s own Boxed-result
@@ -1035,14 +1035,14 @@ above needed to stop assuming a single loop.
      by `boxOpArg`, which names any freshly-fabricated box and drops it
      right after the op is done reading it.
 
-   Both bugs together explain why `rc2/tests/Test16LoopContinuePostDrop.idr`
+   Both bugs together explain why `rc2/tests/Test110Loop/LoopContinuePostDrop.idr`
    (a dedicated repro built specifically to exercise them without any
    dependency on the inlining pass that first surfaced them) only had its
    leak *halved* by the `RLoopContinue` fix alone -- the `ROp` fix was
    needed too before it went fully clean. See that test's own doc comment
    for the exact shape. Verified against the full matrix again: 19/19
    refc-suite, all smoke tests, valgrind-clean on every leak-sensitive
-   test except the then pre-existing `Test1Basics` leak (since fixed).
+   test except the then pre-existing `Test111Basics/Basics.idr` leak (since fixed).
 6. **`markInvariantNative` missed a loop-invariant parameter's own
    occurrence inside `RLoopContinue`'s own `args`, causing a spurious
    drop on every continue.** `fillLoopContinuePostDrop` (added by bug 5
@@ -1052,7 +1052,7 @@ above needed to stop assuming a single loop.
    `RBoxed` by that lookup's own default, and got a spurious drop added
    to *every* continue, once per iteration -- a real, `valgrind`-
    confirmed double-free/crash caught via
-   `tests/Test19LoopInvariantParam.idr` during development. Fixed by
+   `tests/Test110Loop/LoopInvariantParam.idr` during development. Fixed by
    redirecting `p`'s own occurrence in a continue's `args` to its
    shadow id `sid` here too, alongside every other occurrence
    `markInvariantNative` already rewrites, so
@@ -1353,7 +1353,7 @@ native `RLet` anywhere above it at all -- as native, reasoning from the
 op's own `opResultRep` alone (the same source of truth
 `Compiler.RC2.DualABI`'s own `tailValueReps` already uses for *return*-
 value eligibility). That version caused a real, `valgrind`-caught leak
-in `Test9SelfTailLoop`: unlike `tailValueReps`'s own paired, in-lockstep
+in `Test110Loop/SelfTailLoop.idr`: unlike `tailValueReps`'s own paired, in-lockstep
 use (return eligibility for the very same op, computed together, so the
 two can never disagree), `nativeArgTypes`'s result also feeds
 `Compiler.RC2.Loop`'s own loop-param promotion, which runs *before* any
@@ -1407,7 +1407,7 @@ Two scope limits remain deliberate, not oversights:
 
 This closed the *argument*-feeding side of the round trip identified
 above (confirmed via `--directive dumprcexpr`/generated-C diff on
-`rc2/tests/Test57LoopCallArgNativeShadow.idr`: the call into `step`'s
+`rc2/tests/Test110Loop/LoopCallArgNativeShadow.idr`: the call into `step`'s
 own worker now reads the loop-carried accumulator directly as a native
 `int64_t`, no `idris2rc2_to_i64` conversion at the call site any more).
 
@@ -1425,7 +1425,7 @@ native-context consumer of a preceding `RLet`. Fixed by
 the same tail-preserving spine `fillLoopContinuePostDrop` does, and
 asks whether the `RLet`-bound value is fed straight into the enclosing
 `RLoop`'s own `RLoopContinue` at a position `loopParams` already marks
-native. Confirmed via `rc2/tests/Test57LoopCallArgNativeShadow.idr`'s
+native. Confirmed via `rc2/tests/Test110Loop/LoopCallArgNativeShadow.idr`'s
 own absorbed former `Test58LoopContinueNativePromotion.idr` case
 (reuses the same file's own `step`/`loop` shape verbatim): the `RLet` binding `step`'s call
 result now shows `Native Int`, and the generated C declares that local
@@ -1485,7 +1485,7 @@ benchmark:
 
 1. Build + regression baseline: see `CLAUDE.md`'s "Build & test" section
    (`idris2 --build rc2.ipkg`, then `tests/refc-suite/run.sh`, expect 19/19).
-2. `tests/Test9SelfTailLoop.idr` -- self-tail-call conversion's own
+2. `tests/Test110Loop/SelfTailLoop.idr` -- self-tail-call conversion's own
    dedicated coverage: parameter swapping (aliasing hazard for the
    simultaneous-assignment temp-snapshot), multiple distinct recursive
    branches in one function, an argument passed straight through
@@ -1496,7 +1496,7 @@ benchmark:
    alongside its `String` passthrough) and of a loop parameter promoted
    via its `RConstCase` use rather than an `ROp`/`RCmpCase` one (see
    "Bugs found" #3).
-3. `tests/Test9SelfTailLoop.idr` (same file as item 2 above, absorbing
+3. `tests/Test110Loop/SelfTailLoop.idr` (same file as item 2 above, absorbing
    the former `Test10MutualLoop.idr`) -- mutual-loop conversion's own
    dedicated coverage: differing-arity group members (slot padding --
    the specific shape that caught "Bugs found" #4), a 3-way cycle (SCC
@@ -1519,7 +1519,7 @@ benchmark:
    `loop [...]` (converted) and which of its own params show `Native
    <ty>` in that line (promoted) -- `doc/reading-the-ir.md`'s own
    section 7/8 walks through exactly this.
-6. `tests/Test19LoopInvariantParam.idr` -- loop-invariant parameter
+6. `tests/Test110Loop/LoopInvariantParam.idr` -- loop-invariant parameter
    elision's own dedicated coverage: one Boxed (`tag`) and one
    native-shadow-eligible (`limit`) parameter, both threaded unchanged
    through every recursive call alongside a genuinely varying
@@ -1538,14 +1538,14 @@ benchmark:
    unmistakable, and to measure the resulting wall-clock difference
    (~25% faster than the pre-fix reboxing-every-time behaviour on this
    shape, `rc2/tests/bench.sh`).
-7. `tests/Test19LoopInvariantParam.idr` (further down in the same
+7. `tests/Test110Loop/LoopInvariantParam.idr` (further down in the same
    file) -- loop-invariant expression hoisting's own positive case:
    `bound = limit * 2`, a `Native Int` `ROp` in the loop body's own
    unconditional prefix depending only on an already-hoisted
    native-shadow parameter, confirmed via `--directive dumprcexpr` to
    land outside `loop [...]` entirely, nested inside that parameter's
    own `RLet`.
-8. `tests/Test19LoopInvariantParam.idr`'s own `sumOrCtx` (further down
+8. `tests/Test110Loop/LoopInvariantParam.idr`'s own `sumOrCtx` (further down
    in the same file, absorbing the former `Test21BoxedInvariantNotHoisted.idr`)
    -- the negative case, and
    the single most important regression test this section's own work

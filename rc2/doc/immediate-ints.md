@@ -140,7 +140,7 @@ little over the view: the slow path is only reached with a value past
 - `RConstCase` over `Integer` read the scrutinee with `mpz_get_si`,
   which keeps only the low bits: 2^64 + 5 matched an alt `5`.
 
-`Test108ImmediateInteger` covers every operation, cast and case on both
+`Test112Numeric/ImmediateInteger.idr` covers every operation, cast and case on both
 sides of ±2^62, ±2^63 and ±2^64, with negative operands and divisors,
 against Chez.
 
@@ -162,7 +162,7 @@ The programs without `Integer` stay within noise.
 
 ## Tests
 
-`Test105ImmediateInts` puts `Int`, `Int64` and `Bits64` values into
+`Test112Numeric/ImmediateInts.idr` puts `Int`, `Int64` and `Bits64` values into
 lists, so that they are stored in their boxed form, on both sides of
 each boundary:
 - ±2^61 and ±2^62 for `Int` and `Int64`;

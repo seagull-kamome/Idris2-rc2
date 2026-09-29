@@ -409,7 +409,7 @@ IDRIS2RC2_Value *idris2rc2_applyClosure(IDRIS2RC2_Value *_c, IDRIS2RC2_Value *ar
 //     closure *shell* is torn down after -- re-dup'ing them here and
 //     then idris2rc2_drop-ing `c` would double-count every filled arg,
 //     an actual bug an early version of this function had, confirmed by
-//     Test1Basics' own "free(): invalid size" crash); non-unique dups
+//     Test111Basics/Basics.idr' own "free(): invalid size" crash); non-unique dups
 //     each into the scratch buffer (the closure itself keeps its own
 //     copy for whoever else still references it) and then drops `c`
 //     normally.

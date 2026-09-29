@@ -135,8 +135,8 @@ set -u
 # $RC2_DIR/$REPO_DIR-prefixed absolute paths, so cwd doesn't normally
 # matter -- but a handful of tests' own `%cg rc2
 # extraRuntime=<relative path>` source pragmas (e.g.
-# Test31CgExtraRuntime's own
-# `extraRuntime=Test31CgExtraRuntime/Test31CgExtraRuntimeSupport.c`,
+# Test121CgRuntime/CgExtraRuntime.idr's own
+# `extraRuntime=Test121CgRuntime/Test31CgExtraRuntimeSupport.c`,
 # resolved relative to rc2/tests -- this script's own required cwd --
 # since each test now lives one level deeper, under its own
 # rc2/tests/TestN/ folder)
@@ -147,7 +147,7 @@ set -u
 # and those tests fail with a misleading "File Not Found" that has
 # nothing to do with whatever you were actually testing (confirmed by
 # hand: running from the repo root instead of here breaks
-# Test31CgExtraRuntime this way). Deliberately NOT `cd`-ed into
+# Test121CgRuntime/CgExtraRuntime.idr this way). Deliberately NOT `cd`-ed into
 # automatically here -- this script won't change a cwd the caller
 # didn't ask it to.
 
@@ -297,7 +297,7 @@ echo "=== Smoke tests ==="
 # because real RefC doesn't implement getField/setField at all (see
 # rc2/doc/c-struct-support.md's "What's confirmed" -- this is the
 # exact gap rc2 closes), so there's no real refc output to diff
-# against in the first place. Test26GCPtrAliasString is a fourth
+# against in the first place. Test119FFINoRefc/GCPtrAliasString.idr is a fourth
 # reason: real RefC's own createCFunctions has the identical drop-
 # before-pack ordering bug this test regression-checks rc2 for (see
 # idris2-src/src/Compiler/RefC/RefC.idr, out of scope to fix there),
@@ -312,15 +312,15 @@ echo "=== Smoke tests ==="
 # every line not involving its own companion-C-only malformed-string
 # case (Chez has no `scheme:`-tagged binding for that one test-only
 # foreign function, so there is nothing meaningful to diff there).
-# Test26GCPtrAliasString's own former Test29GCAnyPtrReturn half
+# Test119FFINoRefc/GCPtrAliasString.idr's own former Test29GCAnyPtrReturn half
 # (merged in, see that test's own doc comment) is a sixth reason, the
 # same shape as its first half above: real RefC's own packCFType
 # CFGCPtr case (idris2-src/src/Compiler/RefC/RefC.idr:783) has the
 # identical GCPointer-vs-plain-Pointer packing mismatch that half
 # regression-checks rc2 for -- diffing against it would hit the same
 # bug there (out of scope to fix in that separate reference tree)
-# instead of checking against a correctness oracle. Test31CgExtraRuntime and
-# Test32CgInlineRuntime are a seventh reason, different in kind from
+# instead of checking against a correctness oracle. Test121CgRuntime/CgExtraRuntime.idr and
+# Test121CgRuntime/CgInlineRuntime.idr are a seventh reason, different in kind from
 # the others above: real RefC never reads `--directive`/`%cg` at all
 # (see README.md's "%cg rc2 directives" section), so their own bare
 # %foreign call sites would hit a genuine *link* error under
@@ -373,7 +373,7 @@ echo "=== Smoke tests ==="
 # manually-verified-correct output, same reasoning as
 # Test7CastMatrix/Test17ConstFold above.
 #
-# Test47ConstCFStringReturn: exercises binding a real `const char *`-
+# Test119FFINoRefc/ConstCFStringReturn.idr: exercises binding a real `const char *`-
 # returning C function, which real `idris2 --cg refc` cannot compile --
 # RefC.idr's own `cTypeOfCFType CFString = "char *"` (no `const`,
 # unchanged upstream) makes its generated wrapper declare a plain,
@@ -404,7 +404,7 @@ echo "=== Smoke tests ==="
 # "%f" six-digit form -- see the top-level README's "Deliberate
 # differences from upstream RefC". No shared baseline, so these check
 # against the saved .expected only.
-NO_REFC_DIFF_TESTS="Test3Data Test7CastMatrix Test8EmptyCon Test17ConstFold Test24CStructSupport Test26GCPtrAliasString Test27FFIDualABI Test28Utf8Strings Test31CgExtraRuntime Test32CgInlineRuntime Test35NetworkLoopback Test42SupportMisc Test47ConstCFStringReturn Test49IntegerOpReuse Test59Export Test66ClosureFastPath Test82RuntimeLocale Test83DoubleString Test84CgExternStruct Test85CgExternStructPtrField Test86CafMemoization"
+NO_REFC_DIFF_TESTS="Test3Data Test7CastMatrix Test8EmptyCon Test17ConstFold Test27FFIDualABI Test28Utf8Strings Test35NetworkLoopback Test42SupportMisc Test49IntegerOpReuse Test59Export Test66ClosureFastPath Test82RuntimeLocale Test83DoubleString Test86CafMemoization Test119FFINoRefc Test121CgRuntime Test24CStructSupport Test120CStruct"
 
 # Leak-sensitive by design (reference-counting/reuse/native-shadow
 # regression tests) -- checked with valgrind by default even without
@@ -421,7 +421,7 @@ NO_REFC_DIFF_TESTS="Test3Data Test7CastMatrix Test8EmptyCon Test17ConstFold Test
 # packCFType allocation (idris2rc2_mkPointer/idris2rc2_mkGCPointer) is
 # new to %export's own argument marshalling and worth the same
 # scrutiny.
-LEAK_SENSITIVE_TESTS="Test1Basics Test9SelfTailLoop Test11DualABILeak Test12ConAltNative Test13NativeArgChain Test14SmallFunctionInline Test15CompareFusionThroughCall Test16LoopContinuePostDrop Test17ConstFold Test18ClosureInPlaceGrow Test19LoopInvariantParam Test22BranchSinking Test24CStructSupport Test26GCPtrAliasString Test27FFIDualABI Test28Utf8Strings Test33WideDualABIWorker Test35NetworkLoopback Test36ReuseOfferUniqueLeak Test37SystemMisc Test41FFIMalloc Test42SupportMisc Test44IORefExtPrimLeak Test46FastPackUnconditional Test49IntegerOpReuse Test57LoopCallArgNativeShadow Test59Export Test66ClosureFastPath Test69ConstFoldClosure Test70ConstFoldClosureCallthrough Test79DupMerge Test84CgExternStruct Test85CgExternStructPtrField Test86CafMemoization Test87SpecConstCon Test88KnownConFold Test89CafDualABI Test90StructReturn Test91IntConstFold Test92ArityRaise Test93ApplyFold Test94LoopConstClosureParam Test95Trmc Test96TeardownDeep Test97ConAltNativeLeadingDup Test98ClosureCtx Test99DeadArgs Test100TrmcHoles Test101TrmcMutual Test102MultiThreadSwitch Test104ThreadStress Test105ImmediateInts Test106TransitiveSpec Test108ImmediateInteger"
+LEAK_SENSITIVE_TESTS="Test11DualABILeak Test13NativeArgChain Test17ConstFold Test22BranchSinking Test27FFIDualABI Test28Utf8Strings Test35NetworkLoopback Test36ReuseOfferUniqueLeak Test37SystemMisc Test42SupportMisc Test44IORefExtPrimLeak Test46FastPackUnconditional Test49IntegerOpReuse Test59Export Test66ClosureFastPath Test79DupMerge Test86CafMemoization Test87SpecConstCon Test88KnownConFold Test89CafDualABI Test90StructReturn Test91IntConstFold Test92ArityRaise Test93ApplyFold Test99DeadArgs Test102MultiThreadSwitch Test104ThreadStress Test106TransitiveSpec Test110Loop Test111Basics Test112Numeric Test113DeepRecursion Test114Inline Test115ConstFoldClosure Test18ClosureInPlaceGrow Test117ConAltNative Test118FFI Test119FFINoRefc Test24CStructSupport Test120CStruct"
 
 # Pre-existing leaks still tolerated, as "definitely lost" bytes per
 # test; anything else non-zero is a new failure. Empty: every leak once

@@ -311,7 +311,7 @@ requires a CAF or a case scrutinee to have been folded away.
 ## Tests
 
 Four regression cases, now merged as sections 5-8 of
-`rc2/tests/Test69ConstFoldClosure` (its whole file is registered in
+`rc2/tests/Test115ConstFoldClosure/ConstFoldClosure.idr` (its whole file is registered in
 `rc2/tests/verify.sh`'s `LEAK_SENSITIVE_TESTS`; section 7 -- the mutual
 CAF one -- has nothing to leak-check on its own, its whole point being
 that folding never happens):
@@ -369,7 +369,7 @@ that folding never happens):
 - **Still bounded by the 4-round cap.** A CAF chain deep enough to
   need a 5th round (or deeper) stays partially unfolded -- a missed
   optimisation, never a correctness issue, per the monotonicity
-  argument above. `Test69ConstFoldClosure` §8 confirms the cap is at
+  argument above. `Test115ConstFoldClosure/ConstFoldClosure.idr` §8 confirms the cap is at
   least high enough for a realistic short chain; it does not exercise
   the cap actually being hit.
 - **`Compiler.RC2.Reuse`/`Emit.idr` audit**: `const-con-fold.md`'s own
@@ -384,7 +384,7 @@ that folding never happens):
   `Compiler.RC2.Reuse` ever runs (`ConstFold` runs first in
   `toRCDefs`, `RC2.idr:152-165`) -- there is no surviving `RConCase`
   node left for either of those later passes to see, so there is
-  nothing for them to mishandle. `Test69ConstFoldClosure` §6's
+  nothing for them to mishandle. `Test115ConstFoldClosure/ConstFoldClosure.idr` §6's
   own valgrind-clean pass through `LEAK_SENSITIVE_TESTS` is the
   empirical confirmation of this, not a formal proof; no residual
   concern is currently open.
@@ -403,10 +403,10 @@ that folding never happens):
   and its own module doc comment.
 - `rc2/src/Compiler/RC2/RC.idr` -- `annotate`'s three added intercepts
   (`RCConst`/`RCEmptyCon`/`RCNull`).
-- `rc2/tests/verify.sh` -- the merged `Test69ConstFoldClosure` is in
+- `rc2/tests/verify.sh` -- the merged `Test115ConstFoldClosure/ConstFoldClosure.idr` is in
   `LEAK_SENSITIVE_TESTS` (its §7 folds nothing to leak-check, but the
   rest of the file does).
-- `rc2/tests/Test69ConstFoldClosure` §5-§8 -- the four regression cases
+- `rc2/tests/Test115ConstFoldClosure/ConstFoldClosure.idr` §5-§8 -- the four regression cases
   described above (formerly the standalone `Test74`-`Test77`).
 
 ## Verification methodology
@@ -423,11 +423,11 @@ that folding never happens):
    `RConCase` whose scrutinee resolved at compile time.
 3. Full `rc2/tests/verify.sh` (with valgrind) run: 101 passed, 0
    known, 0 failed, 0 bytes definitely lost across every
-   `LEAK_SENSITIVE_TESTS` entry -- `Test69ConstFoldClosure` §6 in
+   `LEAK_SENSITIVE_TESTS` entry -- `Test115ConstFoldClosure/ConstFoldClosure.idr` §6 in
    particular is the direct valgrind-based confirmation that a
    resolved-and-discarded `RConCase` scrutinee introduces no dup/drop
    bookkeeping error (see "Scope / limitations" above).
-4. `Test69ConstFoldClosure` §7 (mutually-referencing CAFs) is
+4. `Test115ConstFoldClosure/ConstFoldClosure.idr` §7 (mutually-referencing CAFs) is
    itself a verification device for the fixpoint loop's own
    termination guarantee -- a wrong implementation of the cap or the
    change-detection logic would hang the compiler outright on this

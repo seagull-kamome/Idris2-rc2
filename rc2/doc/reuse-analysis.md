@@ -355,7 +355,7 @@ never had one.
    `idris2rc2_isUnique` and `idris2rc2_dropReuseConstructor` to confirm
    the optimization is actually firing (both consume and release paths)
    rather than silently never triggering.
-3. Full `tests/*.idr` smoke-test suite (`Test1Basics`..`Test7CastMatrix`)
+3. Full `tests/*.idr` smoke-test suite (`Test111Basics/Basics.idr`..`Test7CastMatrix`)
    diffed against real `idris2 --cg refc` output (or the saved
    `.expected` file for `Test7CastMatrix`, whose RefC comparison is
    blocked by unrelated nixpkgs RefC-runtime bugs -- see its own module

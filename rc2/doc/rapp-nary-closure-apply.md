@@ -216,7 +216,7 @@ arg) tailPosition`) dispatches on `length args`:
   use `idris2rc2_tailcallApplyClosure`; every earlier one must go
   through `idris2rc2_applyClosure`. A first attempt chained
   `tailcallApplyClosure` for every hop and crashed for real
-  (`Test1Basics`, `free(): invalid size`): `tailcallApplyClosure`
+  (`Test111Basics/Basics.idr`, `free(): invalid size`): `tailcallApplyClosure`
   deliberately never dispatches even once `filled == arity` (that's
   its whole contract, letting a tail loop keep accumulating without
   paying for a dispatch+trampoline every step), so if an *earlier* hop
@@ -328,7 +328,7 @@ localize it:
   `c->args[i]` into the dispatch directly (no dup) and frees only the
   closure *shell* afterward (mirroring `idris2rc2_trampoline`'s own
   teardown); non-unique keeps the original dup-then-drop. Manifested
-  as `Test1Basics` printing nothing at all and crashing with glibc's
+  as `Test111Basics/Basics.idr` printing nothing at all and crashing with glibc's
   `free(): invalid size` (heap corruption detected far downstream of
   the actual bad free, at a whole unrelated later `idris2rc2_trampoline`
   call) -- confirmed as *this* bug specifically via a minimal isolated
@@ -359,7 +359,7 @@ localize it:
   `tailcallApplyClosure` -- exactly what the pre-merge, one-`RApp`-per-
   hop code already did node-by-node. Manifested as the same
   `free(): invalid size` crash, reached through a different call path
-  (`Test1Basics`' own three chained `IORef` operations in its `do`
+  (`Test111Basics/Basics.idr`' own three chained `IORef` operations in its `do`
   block).
 
 Both bugs were specific to code this change introduced (the
