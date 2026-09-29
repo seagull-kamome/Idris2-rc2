@@ -96,7 +96,9 @@ history, not there.
   size, `hybrid-refcount.md` for plain refcount operations until a
   process-wide flag says the program went multi-threaded,
   `immediate-ints.md` for keeping `Int`/`Int64`/`Bits64`/`Integer` in the pointer
-  word when they fit in 62 bits. Not
+  word when they fit in 62 bits, `lambda-lifting.md` for rc2 lifting
+  lambdas itself instead of taking upstream's `Lifted`, and what lifting
+  loses. Not
   a replacement for `TODO.md` — those stay the changelog
   and gap tracker; `rc2/doc/` is where the *why* and the
   bugs-found-along-the-way for a specific subsystem live.

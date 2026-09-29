@@ -29,6 +29,7 @@ import Compiler.RC2.DupMerge
 import Compiler.RC2.Emit
 import Compiler.RC2.Emit.Util
 import Compiler.RC2.Inline
+import Compiler.RC2.LambdaLift
 import Compiler.RC2.Pretty
 import Compiler.RC2.PushCon
 import Compiler.RC2.RC
@@ -647,7 +648,7 @@ exportSupportedTypesDesc =
 |||
 ||| `exported cdata`'s own Name is `Resolved` (Compiler.Common's
 ||| `getExports` calls `resolved`, not `toFullNames`), while
-||| `lambdaLifted cdata`'s keys are already full names -- `getFullName`
+||| the lifted definitions' keys are already full names -- `getFullName`
 ||| bridges the two so the `SortedMap Name LiftedDef` lookup below
 ||| actually finds the def instead of silently missing it.
 validateExport : {auto c : Ref Ctxt Defs} -> SortedMap Name LiftedDef -> (Name, String) -> Core (Name, String, List CFType, CFType)
@@ -749,12 +750,13 @@ compileExprWhole c s _ outputDir tm outfile =
      -- `footer` emits a C `main()` -- see rc2/doc/directives.md and
      -- rc2/doc/export-support.md's "Linking as a library" section.
      let noMain = "nomain" `elem` directiveList
-     cdata <- getCompileDataWith ["RC2", "RefC", "C"] False Lifted tm
-     let liftedByName = SortedMap.fromList (lambdaLifted cdata)
+     cdata <- getCompileDataWith ["RC2", "RefC", "C"] False Cases tm
+     lifted <- logTime 2 "rc2: Lambda lift" $ lambdaLiftProgram True cdata
+     let liftedByName = SortedMap.fromList lifted
      exportedSigs <- traverse (validateExport liftedByName) (exported cdata)
      -- `exported cdata`'s own Name is `Resolved` (Compiler.Common's
      -- `getExports` calls `resolved`, not `toFullNames`), but every
-     -- entry in `defs`/`lambdaLifted cdata` is keyed by full name --
+     -- entry in `defs`/`lifted` is keyed by full name --
      -- `Compiler.RC2.DeadCode.pruneDeadDefs`'s own reachability is a
      -- structural `Name` set-membership check, so a root given as a
      -- `Resolved` name would silently never match anything and get
@@ -763,7 +765,7 @@ compileExprWhole c s _ outputDir tm outfile =
      -- `getFullName`-resolved `n'`) is reused here rather than
      -- re-deriving it a second time from `exported cdata` directly.
      let roots = MN "__mainExpression" 0 :: map (\(n, _, _, _) => n) exportedSigs
-     defs <- toRCDefs disabledStages False roots (lambdaLifted cdata)
+     defs <- toRCDefs disabledStages False roots lifted
 
      -- `dumprcexpr`: dump the final RCExp to a `.rcexpr` file -- see
      -- rc2/doc/reading-the-ir.md for the format, rc2/doc/directives.md
@@ -900,7 +902,7 @@ compileExpr c s tmpDir outputDir tm outfile = do
 incCompile : Ref Ctxt Defs -> Ref Syn SyntaxInfo ->
              (sourceFile : String) -> Core (Maybe (String, List String))
 incCompile c s sourceFile = do
-    cdata <- getIncCompileData False Lifted
+    cdata <- getIncCompileData False Cases
     let ndefs = namedDefs cdata
     if isNil ndefs
        then pure (Just ("", []))
@@ -922,7 +924,8 @@ incCompile c s sourceFile = do
          let noMain = currentNS coreDefs /= mainNS
          directiveList <- getDirectives (Other "rc2")
          let disabledStages = nub ("nodeadcode" :: filter (`elem` directiveList) stageDirectiveNames)
-         defs <- toRCDefs disabledStages True [] (lambdaLifted cdata)
+         lifted <- logTime 2 "rc2: Lambda lift" $ lambdaLiftProgram False cdata
+         defs <- toRCDefs disabledStages True [] lifted
          -- `Main.main`'s own *compiled* arity isn't a fixed 0-or-1 --
          -- observed both across two small test programs (a bare
          -- `putStrLn`: arity 1, a real `%World` token; a multi-
