@@ -301,3 +301,32 @@ restricted to callees whose tails are only `partial`s and `apply`s,
 292 sites (188 cased) remain, and the rewrite needs only the `apply`
 rule on top of the pass. How often these run is unknown while
 idris2-lsp cannot reach C generation.
+
+## On the case trees (2026-09-29)
+
+The first run moved before lambda lifting (`Compiler.RC2.ArityRaiseCExp`),
+after inlining and dead-argument removal, which the "Placement" section
+above ruled out only because the case trees were then de Bruijn
+indexed: rc2 now reads them by name. A function whose every tail is a
+lambda, a crash or a saturated tail call to another such function gets
+`rc2_raised_f` taking the world `w` last; a tail lambda `\x => b`
+becomes `let x = w in b`, so its body sits in the raised function
+instead of a lifted definition it calls, and `f` becomes `\w => rc2_raised_f
+args w`. Every `(f xs) w` calls `rc2_raised_f` directly. The run after
+early inline stays on the pre-RC `RCExp`.
+
+idris2-lsp, `rcexpr-lint` clean, against the RCExp version:
+
+| | before | after |
+|---|---|---|
+| definitions | 18,921 | 18,213 |
+| `con` | 51,716 | 48,571 |
+| `partial` / `apply` | 8,019 / 4,006 | 7,499 / 3,672 |
+| `dup` / `drop` | 89,424 / 179,394 | 83,513 / 171,149 |
+| constructors returned by value | 8,923 | 9,507 |
+| `MutualLoop` fall-through crashes | 459 | 96 |
+
+A raised function that called its own lifted lambda, which called it
+back, is now simply self-recursive, so fewer mutual loops are merged.
+Arity raise takes 0.14s instead of 0.45s, early inline 4.76s instead
+of 5.52s, and the run after early inline 0.27s instead of 0.77s.

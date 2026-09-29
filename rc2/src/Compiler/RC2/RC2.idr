@@ -16,6 +16,7 @@ module Compiler.RC2.RC2
 -- 10. C compiler invocation (`Compiler.RC2.CC`)
 
 import Compiler.RC2.ArityRaise
+import Compiler.RC2.ArityRaiseCExp
 import Compiler.RC2.ClosureCtx
 import Compiler.RC2.DeadArgs
 import Compiler.RC2.Trmc
@@ -234,6 +235,12 @@ insertMemoize = map wrap
              Nothing => (n, MkRCFun [] retRep isWorker (RMemoize EmptyFC n retRep body))
     wrap nd = nd
 
+||| Arity raising before lifting (doc/world-arity-raising.md).
+raiseNamed : {auto c : Ref Ctxt Defs} -> List String -> Maybe NamedCExp -> List (Name, FC, NamedDef) -> Core (Maybe NamedCExp, List (Name, FC, NamedDef))
+raiseNamed disabled main defs =
+    if "noarityraise" `elem` disabled then pure (main, defs)
+    else logTime 2 "rc2: Arity raise" $ applyArityRaiseCExp main defs
+
 ||| rc2's inlining (`noinline` turns it off with the case-of-case
 ||| collapse), before lifting.
 inlineNamed : {auto c : Ref Ctxt Defs} -> List String -> Maybe (SortedSet Name) -> Maybe NamedCExp -> List (Name, FC, NamedDef) -> Core (Maybe NamedCExp, List (Name, FC, NamedDef))
@@ -333,12 +340,9 @@ toRCDefs disabled incremental roots lds = do
                         pure (mapMaybe id results)
     -- doc/world-arity-raising.md: before ConstFold, so every later pass
     -- sees the direct calls.
-    raised <- if "noarityraise" `elem` disabled
-                 then pure preFolded
-                 else logTime 2 "rc2: Arity raise" $ applyArityRaise preFolded
     folded <- if "noconstfold" `elem` disabled
-                 then pure raised
-                 else logTime 2 "rc2: ConstFold (whole-program fixpoint)" $ foldConstProgram (not ("noknowncon" `elem` disabled)) raised
+                 then pure preFolded
+                 else logTime 2 "rc2: ConstFold (whole-program fixpoint)" $ foldConstProgram (not ("noknowncon" `elem` disabled)) preFolded
     -- doc/constructor-escape-analysis.md's "Rewrite B": after ConstFold,
     -- whose known-constructor fold it relies on to finish each push, and
     -- before the specialization passes, so their clones start pushed.
@@ -760,7 +764,8 @@ compileExprWhole c s _ outputDir tm outfile =
                              then pure (mainInl, namedInl)
                              else logTime 2 "rc2: Dead arguments" $
                                     applyDeadArgs (MN "__mainExpression" 0 :: exportNames) mainInl namedInl
-     (lifted, liftInfos) <- logTime 2 "rc2: Lambda lift" $ lambdaLiftProgram mainIn namedIn
+     (mainR, namedR) <- raiseNamed disabledStages mainIn namedIn
+     (lifted, liftInfos) <- logTime 2 "rc2: Lambda lift" $ lambdaLiftProgram mainR namedR
      let liftedByName = SortedMap.fromList lifted
      exportedSigs <- traverse (validateExport liftedByName) (exported cdata)
      -- `exported cdata`'s own Name is `Resolved` (Compiler.Common's
@@ -938,7 +943,8 @@ incCompile c s sourceFile = do
          let noMain = currentNS coreDefs /= mainNS
          directiveList <- getDirectives (Other "rc2")
          let disabledStages = nub ("nodeadcode" :: filter (`elem` directiveList) stageDirectiveNames)
-         (_, namedIn) <- inlineNamed disabledStages Nothing Nothing (namedDefs cdata)
+         (_, namedInl) <- inlineNamed disabledStages Nothing Nothing (namedDefs cdata)
+         (_, namedIn) <- raiseNamed disabledStages Nothing namedInl
          (lifted, _) <- logTime 2 "rc2: Lambda lift" $ lambdaLiftProgram Nothing namedIn
          defs <- toRCDefs disabledStages True [] lifted
          -- `Main.main`'s own *compiled* arity isn't a fixed 0-or-1 --
