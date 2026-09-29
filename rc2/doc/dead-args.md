@@ -38,8 +38,9 @@ reproduced both numbers exactly (`TODO.md`, "`sort` against Chez").
 
 A *slot* is a function and one of its parameter positions. A slot is
 dead when both of these hold:
-- every use of its parameter is an argument of a saturated call
-  (`RAppName`);
+- every use of its parameter is an argument of a call with as many
+  arguments as the callee takes (`NmApp (NmRef g) args`), in a lambda
+  too;
 - each of those argument positions is itself a dead slot.
 
 That is a greatest fixpoint, which also covers mutual forwarding:
@@ -47,17 +48,18 @@ That is a greatest fixpoint, which also covers mutual forwarding:
 pass one to each other.
 
 Every dead parameter is then removed from its function, and the
-matching argument from every call. An argument is always an atom, so
-dropping it drops no work. A `let` that only fed it becomes an ordinary
-dead binding.
+matching argument from every call. When a dropped argument does work,
+every argument of that call that does is first bound by a `let`, in
+order, so each is still evaluated once and in its place; the `let` that
+only fed a dropped argument becomes an ordinary dead binding.
 
 ## What keeps a signature
 
 A function keeps its parameters when changing them would break some
 reference that isn't a plain call:
-- **Referenced as a value:** `RUnderApp` (a partial application),
-  `RCConstClosure`, `RAppNameRep` (not produced yet at this point).
-  The closure's arity has to stay.
+- **Referenced other than by such a call:** a bare `NmRef`, or a
+  `Force` of one. (A partial application is a lambda around a
+  saturated call on the case trees, which is fine.)
 - **Called with a different number of arguments** than it takes.
 - **A root** (entry points, exports).
 - **Incremental compilation** (`doc/incremental-compile.md`): another
@@ -65,12 +67,20 @@ reference that isn't a plain call:
 
 ## Pipeline position
 
-The pass runs first on RCExp, right after "RC normalize". Every later
-pass then sees the leaner signatures: ArityRaise, ConstFold,
-SpecClosure, TRMC, RC itself, Loop.
+The pass runs on the named case trees, right after inlining and before
+lambda lifting (`Compiler.RC2.DeadArgs`, 2026-09-29; before that it ran
+on RCExp right after "RC normalize"). Every later pass sees the leaner
+signatures, lambda lifting included: a lambda that only forwarded a
+dead value no longer captures it.
 
-The one input it needs is that calls are still plain `RAppName`s with
-atom arguments, which RC normalize guarantees.
+That is also why the case trees find more. On RCExp such a lambda was
+a lifted definition holding the value, referenced by a partial
+application, so it kept its signature and the value counted as used.
+On idris2-lsp the pass removes 4,718 of 19,219 parameters of top-level
+functions, against 1,875 of 66,385 (lifted lambdas included) on
+RCExp; `rcexpr-lint` finds no anomalies, with 2,964 fewer `dup`
+increments, 16,378 fewer `drop` decrements and 28 fewer closures.
+The pass takes 0.87s instead of 0.65s.
 
 ## Results (2026-09-26)
 

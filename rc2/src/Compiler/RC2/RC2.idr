@@ -331,16 +331,11 @@ toRCDefs disabled incremental roots lds = do
                                                 _ => throw err))
                             lds
                         pure (mapMaybe id results)
-    -- Signatures change, so not per module: another module's calls are
-    -- out of sight (doc/dead-args.md).
-    deadArged <- if incremental || ("nodeadargs" `elem` disabled)
-                    then pure preFolded
-                    else logTime 2 "rc2: Dead arguments" $ applyDeadArgs roots preFolded
     -- doc/world-arity-raising.md: before ConstFold, so every later pass
     -- sees the direct calls.
     raised <- if "noarityraise" `elem` disabled
-                 then pure deadArged
-                 else logTime 2 "rc2: Arity raise" $ applyArityRaise deadArged
+                 then pure preFolded
+                 else logTime 2 "rc2: Arity raise" $ applyArityRaise preFolded
     folded <- if "noconstfold" `elem` disabled
                  then pure raised
                  else logTime 2 "rc2: ConstFold (whole-program fixpoint)" $ foldConstProgram (not ("noknowncon" `elem` disabled)) raised
@@ -758,7 +753,13 @@ compileExprWhole c s _ outputDir tm outfile =
      let noMain = "nomain" `elem` directiveList
      cdata <- getCompileDataWith ["RC2", "RefC", "C"] False Cases tm
      exportNames <- traverse (\(n, _) => getFullName n) (exported cdata)
-     (mainIn, namedIn) <- inlineNamed disabledStages (Just (SortedSet.fromList exportNames)) (Just (forget (mainExpr cdata))) (namedDefs cdata)
+     (mainInl, namedInl) <- inlineNamed disabledStages (Just (SortedSet.fromList exportNames)) (Just (forget (mainExpr cdata))) (namedDefs cdata)
+     -- Signatures change, so not in `incCompile`: another module's calls
+     -- are out of sight (doc/dead-args.md).
+     (mainIn, namedIn) <- if "nodeadargs" `elem` disabledStages
+                             then pure (mainInl, namedInl)
+                             else logTime 2 "rc2: Dead arguments" $
+                                    applyDeadArgs (MN "__mainExpression" 0 :: exportNames) mainInl namedInl
      (lifted, liftInfos) <- logTime 2 "rc2: Lambda lift" $ lambdaLiftProgram mainIn namedIn
      let liftedByName = SortedMap.fromList lifted
      exportedSigs <- traverse (validateExport liftedByName) (exported cdata)
