@@ -751,7 +751,7 @@ compileExprWhole c s _ outputDir tm outfile =
      -- rc2/doc/export-support.md's "Linking as a library" section.
      let noMain = "nomain" `elem` directiveList
      cdata <- getCompileDataWith ["RC2", "RefC", "C"] False Cases tm
-     lifted <- logTime 2 "rc2: Lambda lift" $ lambdaLiftProgram True cdata
+     (lifted, liftInfos) <- logTime 2 "rc2: Lambda lift" $ lambdaLiftProgram True cdata
      let liftedByName = SortedMap.fromList lifted
      exportedSigs <- traverse (validateExport liftedByName) (exported cdata)
      -- `exported cdata`'s own Name is `Resolved` (Compiler.Common's
@@ -783,6 +783,11 @@ compileExprWhole c s _ outputDir tm outfile =
      -- rc2/doc/dual-abi.md, rc2/doc/directives.md.
      when ("dumpdualabi" `elem` directiveList) $
          coreLift_ $ writeFile (outputDir </> outfile ++ ".dualabi") (dumpDualABI defs)
+
+     -- `dumplifts`: where each lifted definition came from -- see
+     -- rc2/doc/lambda-lifting.md.
+     when ("dumplifts" `elem` directiveList) $
+         coreLift_ $ writeFile (outputDir </> outfile ++ ".lifts") (dumpLifts liftInfos)
 
      -- `dumpcc`: print the C compile/link command(s) to stdout -- see
      -- rc2/doc/directives.md.
@@ -924,7 +929,7 @@ incCompile c s sourceFile = do
          let noMain = currentNS coreDefs /= mainNS
          directiveList <- getDirectives (Other "rc2")
          let disabledStages = nub ("nodeadcode" :: filter (`elem` directiveList) stageDirectiveNames)
-         lifted <- logTime 2 "rc2: Lambda lift" $ lambdaLiftProgram False cdata
+         (lifted, _) <- logTime 2 "rc2: Lambda lift" $ lambdaLiftProgram False cdata
          defs <- toRCDefs disabledStages True [] lifted
          -- `Main.main`'s own *compiled* arity isn't a fixed 0-or-1 --
          -- observed both across two small test programs (a bare

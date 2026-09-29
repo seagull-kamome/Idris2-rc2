@@ -68,6 +68,7 @@ program's generated C.
 | `Test111Basics/Closures` | closures, higher-order functions, partial application (the boxed path) | refc valgrind |
 | `Test3Data` | ADTs mixing native and boxed fields, nested `Maybe`/`List` | saved |
 | `Test8EmptyCon` | nullary constructors as operands need no binding (`RCNull`/`RCEmptyCon`) | saved |
+| `Test122LiftOrigin` | lambda lifting records where each lifted definition came from: parent, lambda or `Lazy`/`Inf` delay (`doc/lambda-lifting.md`) | refc valgrind check.sh |
 
 ## Numbers
 

@@ -114,7 +114,7 @@ Directives that look like they belong on this list but don't:
 
 ## 3. Debug-dump directives
 
-All three share `directiveList`, checked *after* `toRCDefs` has already
+All four share `directiveList`, checked *after* `toRCDefs` has already
 produced its result (unlike section 2's stage disables, which
 `toRCDefs` itself needs to consult *before* it runs).
 
@@ -129,6 +129,10 @@ produced its result (unlike section 2's stage disables, which
   ` ret1` (`doc/struct-return.md`).
 - **`dumpcc`** -- prints the exact C compile/link command(s) about to
   run, to stdout.
+- **`dumplifts`** -- writes a `.lifts` file listing each lifted
+  definition with the top-level definition it came from, whether it
+  was a lambda or a `Delay` (with its `LazyReason`), and its own
+  parameter count. See `doc/lambda-lifting.md`.
 
 ## 4. Code-injection directives
 

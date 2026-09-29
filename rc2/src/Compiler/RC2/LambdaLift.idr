@@ -18,6 +18,7 @@ import Core.CompileExpr
 import Core.Context
 import Core.TT
 
+import Data.SortedMap
 import Data.Vect
 
 import Libraries.Data.List.Extra
@@ -190,6 +191,23 @@ dropUnused {vars} {outer} unused (LConstCase fc sc alts def) =
     dropConstCase (MkLConstAlt c val) = MkLConstAlt c (dropUnused unused val)
 
 -------------------------------------------------------------------------------
+-- What lifting loses, kept per lifted definition
+
+public export
+data LiftOrigin = FromLambda | FromDelay LazyReason
+
+||| A lifted definition's source: the top-level definition it was lifted
+||| out of, whether it was a lambda or a `Delay`, and how many
+||| parameters of its own it takes (after the captured ones). A `Delay`
+||| of a lambda is merged with it, so it can take more than one.
+public export
+record LiftInfo where
+  constructor MkLiftInfo
+  parent : Name
+  origin : LiftOrigin
+  params : Nat
+
+-------------------------------------------------------------------------------
 -- Lifting
 
 data Lifts : Type where
@@ -198,6 +216,7 @@ record LiftState where
   constructor MkLiftState
   basename : Name
   lifted : List (Name, LiftedDef)
+  infos : List (Name, LiftInfo)
   nextName : Int
 
 genName : {auto l : Ref Lifts LiftState} -> Core Name
@@ -216,14 +235,15 @@ genName = do
 
 mutual
   makeLam : {vars : _} -> {auto l : Ref Lifts LiftState} ->
-            FC -> (bound : Scope) -> NamedCExp -> Core (Lifted vars)
-  makeLam fc bound (NmLam _ x sc) = makeLam fc (x :: bound) sc
-  makeLam fc bound sc = do
+            FC -> LiftOrigin -> (bound : Scope) -> NamedCExp -> Core (Lifted vars)
+  makeLam fc origin bound (NmLam _ x sc) = makeLam fc origin (x :: bound) sc
+  makeLam fc origin bound sc = do
       scl <- liftExp {vars = bound ++ vars} sc
       let unused = getUnused (contractUsedMany {remove = bound} (usedVars initUsed scl))
           scl' = dropUnused {outer = bound} unused scl
       n <- genName
-      update Lifts { lifted $= ((n, MkLFun (dropped vars unused) bound scl') ::) }
+      update Lifts $ \st => { lifted $= ((n, MkLFun (dropped vars unused) bound scl') ::),
+                            infos $= ((n, MkLiftInfo (basename st) origin (length bound)) ::) } st
       pure $ LUnderApp fc n (length bound) (allVars vars unused)
     where
       allPrfs : (vs : Scope) -> SizeOf seen -> (unused : Vect (length vs) Bool) -> List (Var (seen <>> vs))
@@ -239,7 +259,7 @@ mutual
       Just (MkVar p) => pure (LLocal fc p)
       Nothing => throw $ InternalError "[rc2] lambda lifting: \{show x} is not in scope"
   liftExp (NmRef fc n) = pure $ LAppName fc Nothing n []
-  liftExp (NmLam fc x sc) = makeLam fc [x] sc
+  liftExp (NmLam fc x sc) = makeLam fc FromLambda [x] sc
   liftExp (NmLet fc x val sc) = pure $ LLet fc x !(liftExp val) !(liftExp {vars = x :: vars} sc)
   liftExp (NmApp fc (NmRef _ n) args) = LAppName fc Nothing n <$> traverse liftExp args
   liftExp (NmApp fc f args) = unload fc Nothing !(liftExp f) !(traverse liftExp args)
@@ -251,7 +271,7 @@ mutual
       traverseVect (a :: as) = pure $ !(liftExp a) :: !(traverseVect as)
   liftExp (NmExtPrim fc p args) = LExtPrim fc Nothing p <$> traverse liftExp args
   liftExp (NmForce fc _ tm) = liftExp (NmApp fc tm [NmErased fc])
-  liftExp (NmDelay fc _ tm) = makeLam fc [MN "act" 0] tm
+  liftExp (NmDelay fc lr tm) = makeLam fc (FromDelay lr) [MN "act" 0] tm
   liftExp (NmConCase fc sc alts def)
       = pure $ LConCase fc !(liftExp sc) !(traverse liftConAlt alts) !(traverseOpt liftExp def)
     where
@@ -266,32 +286,53 @@ mutual
   liftExp (NmErased fc) = pure $ LErased fc
   liftExp (NmCrash fc msg) = pure $ LCrash fc msg
 
-liftBody : Name -> (vars : Scope) -> NamedCExp -> Core (Lifted vars, List (Name, LiftedDef))
-liftBody n vars tm = do
-    l <- newRef Lifts (MkLiftState n [] 0)
-    tml <- liftExp {vars} tm
-    pure (tml, lifted !(get Lifts))
+LiftResult : Type
+LiftResult = (List (Name, LiftedDef), List (Name, LiftInfo))
 
-liftDef : (Name, FC, NamedDef) -> Core (List (Name, LiftedDef))
+liftBody : Name -> (vars : Scope) -> NamedCExp -> Core (Lifted vars, LiftResult)
+liftBody n vars tm = do
+    l <- newRef Lifts (MkLiftState n [] [] 0)
+    tml <- liftExp {vars} tm
+    st <- get Lifts
+    pure (tml, (lifted st, infos st))
+
+liftDef : (Name, FC, NamedDef) -> Core LiftResult
 liftDef (n, _, MkNmFun args body) = do
-    (b, ds) <- liftBody n args body
-    pure ((n, MkLFun args Scope.empty b) :: ds)
-liftDef (n, _, MkNmCon t a nt) = pure [(n, MkLCon t a nt)]
-liftDef (n, _, MkNmForeign ccs fargs ret) = pure [(n, MkLForeign ccs fargs ret)]
+    (b, (ds, is)) <- liftBody n args body
+    pure ((n, MkLFun args Scope.empty b) :: ds, is)
+liftDef (n, _, MkNmCon t a nt) = pure ([(n, MkLCon t a nt)], [])
+liftDef (n, _, MkNmForeign ccs fargs ret) = pure ([(n, MkLForeign ccs fargs ret)], [])
 liftDef (n, _, MkNmError body) = do
-    (b, ds) <- liftBody n Scope.empty body
-    pure ((n, MkLError b) :: ds)
+    (b, (ds, is)) <- liftBody n Scope.empty body
+    pure ((n, MkLError b) :: ds, is)
 
 ||| Every definition of `cdata`, lifted, in the order upstream's
-||| `lambdaLifted` has them. With `withMain`, `__mainExpression` and its
-||| lifts come first (incremental compilation has no main expression).
+||| `lambdaLifted` has them, and a `LiftInfo` for each lifted one. With
+||| `withMain`, `__mainExpression` and its lifts come first (incremental
+||| compilation has no main expression).
 export
-lambdaLiftProgram : (withMain : Bool) -> CompileData -> Core (List (Name, LiftedDef))
+lambdaLiftProgram : (withMain : Bool) -> CompileData ->
+                    Core (List (Name, LiftedDef), SortedMap Name LiftInfo)
 lambdaLiftProgram withMain cdata = do
-    defs <- foldr (++) [] <$> traverse liftDef (namedDefs cdata)
+    perDef <- traverse liftDef (namedDefs cdata)
+    let defs = foldr (\(ds, _), acc => ds ++ acc) [] perDef
+        infos = foldr (\(_, is), acc => is ++ acc) [] perDef
     if not withMain
-       then pure defs
+       then pure (defs, fromList infos)
        else do
          let mainName = MN "__mainExpression" 0
-         (m, mdefs) <- liftBody mainName Scope.empty (forget (mainExpr cdata))
-         pure ((mainName, MkLFun Scope.empty Scope.empty m) :: (mdefs ++ defs))
+         (m, (mdefs, minfos)) <- liftBody mainName Scope.empty (forget (mainExpr cdata))
+         pure ((mainName, MkLFun Scope.empty Scope.empty m) :: (mdefs ++ defs), fromList (minfos ++ infos))
+
+||| One line per lifted definition, for the `dumplifts` directive.
+export
+dumpLifts : SortedMap Name LiftInfo -> String
+dumpLifts m = fastConcat (map line (SortedMap.toList m))
+  where
+    originText : LiftOrigin -> String
+    originText FromLambda = "lambda"
+    originText (FromDelay lr) = "delay " ++ show lr
+
+    line : (Name, LiftInfo) -> String
+    line (n, i) = show n ++ "  from " ++ show (parent i) ++ "  " ++ originText (origin i)
+                  ++ "  params " ++ show (params i) ++ "\n"
