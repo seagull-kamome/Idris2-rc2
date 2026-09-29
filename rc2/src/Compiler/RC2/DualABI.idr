@@ -271,7 +271,7 @@ export
 structReturnPlan : List (Name, RCDef) -> SortedMap Name (SortedMap Int ConShape)
 structReturnPlan defs =
     let tbl : SortedMap Name (List RetTail) := SortedMap.fromList (mapMaybe funTails defs)
-    in settle tbl empty
+    in settle tbl (tailCallers tbl) empty
   where
     funTails : (Name, RCDef) -> Maybe (Name, List RetTail)
     funTails (n, MkRCFun _ _ _ body) = if isMutualLoopMerged n then Nothing else Just (n, retTails body)
@@ -298,16 +298,35 @@ structReturnPlan defs =
     tailsOf : SortedMap Name (List RetTail) -> Name -> List RetTail
     tailsOf tbl n = fromMaybe [] (lookup n tbl)
 
-    shrink : SortedMap Name (List RetTail) -> SortedSet Name -> SortedSet Name
-    shrink tbl el =
-        let el' = fromList (filter (\n => all (okIn el) (tailsOf tbl n)) (Prelude.toList el))
-        in if length (Prelude.toList el') == length (Prelude.toList el) then el' else shrink tbl el'
+    ||| Every name that tail-calls `g`, for each `g`: what `shrink` and
+    ||| `reach` revisit when `g` leaves or joins their set.
+    tailCallers : SortedMap Name (List RetTail) -> SortedMap Name (List Name)
+    tailCallers tbl =
+        foldl (\m, (n, ts) => foldl (\m', g => insert g (n :: fromMaybe [] (lookup g m')) m') m (callees ts))
+              empty (SortedMap.toList tbl)
 
-    reach : SortedMap Name (List RetTail) -> SortedSet Name -> SortedSet Name -> SortedSet Name
-    reach tbl el ps =
-        let ps' = fromList (filter (\n => contains n ps || any (\g => contains g ps) (callees (tailsOf tbl n)))
-                                   (Prelude.toList el))
-        in if length (Prelude.toList ps') == length (Prelude.toList ps) then ps' else reach tbl el ps'
+    ||| The largest subset of `el` whose every tail call stays inside it.
+    ||| A worklist: removing a name rechecks only its tail callers.
+    shrink : SortedMap Name (List RetTail) -> SortedMap Name (List Name) -> SortedSet Name -> SortedSet Name
+    shrink tbl rev el = go el (Prelude.toList el)
+      where
+        go : SortedSet Name -> List Name -> SortedSet Name
+        go s [] = s
+        go s (n :: q) =
+            if contains n s && not (all (okIn s) (tailsOf tbl n))
+               then go (delete n s) (fromMaybe [] (lookup n rev) ++ q)
+               else go s q
+
+    ||| `ps` plus every name in `el` that tail-calls, directly or through
+    ||| others in `el`, a name in `ps`: a walk up `rev` from `ps`.
+    reach : SortedMap Name (List Name) -> SortedSet Name -> SortedSet Name -> SortedSet Name
+    reach rev el ps = go ps (Prelude.toList ps)
+      where
+        go : SortedSet Name -> List Name -> SortedSet Name
+        go s [] = s
+        go s (g :: q) =
+            let new = filter (\n => contains n el && not (contains n s)) (fromMaybe [] (lookup g rev))
+            in go (foldl (flip insert) s new) (new ++ q)
 
     isCycle : Graph -> List Name -> Bool
     isCycle g [n] = contains n (fromMaybe empty (lookup n g))
@@ -316,13 +335,13 @@ structReturnPlan defs =
     edgesOf : SortedMap Name (List RetTail) -> SortedSet Name -> Name -> (Name, SortedSet Name)
     edgesOf tbl ps n = (n, fromList (filter (\g => contains g ps) (callees (tailsOf tbl n))))
 
-    eligible : SortedMap Name (List RetTail) -> SortedSet Name -> SortedSet Name
-    eligible tbl excluded =
+    eligible : SortedMap Name (List RetTail) -> SortedMap Name (List Name) -> SortedSet Name -> SortedSet Name
+    eligible tbl rev excluded =
         let entries : List (Name, List RetTail) := SortedMap.toList tbl
             shaped : SortedSet Name := fromList (mapMaybe (\e => if contains (fst e) excluded || any isOther (snd e) then Nothing else Just (fst e)) entries)
-            closed : SortedSet Name := shrink tbl shaped
+            closed : SortedSet Name := shrink tbl rev shaped
             seeds : SortedSet Name := fromList (mapMaybe (\e => if contains (fst e) closed && any isRealCon (snd e) then Just (fst e) else Nothing) entries)
-            producing : SortedSet Name := reach tbl closed seeds
+            producing : SortedSet Name := reach rev closed seeds
             graph : Graph := fromList (map (edgesOf tbl producing) (Prelude.toList producing))
             cyclic : SortedSet Name := fromList (concat (filter (isCycle graph) (tarjanSCCs graph)))
         in difference producing cyclic
@@ -335,31 +354,46 @@ structReturnPlan defs =
 
     ||| One round: every function's own shapes plus its callees' current
     ||| ones, or `Nothing` for a function whose shapes disagree.
-    shapeRound : SortedMap Name (List RetTail) -> SortedSet Name -> SortedMap Name (SortedMap Int ConShape)
-               -> SortedMap Name (Maybe (SortedMap Int ConShape))
-    shapeRound tbl el cur =
-        fromList (map (\n => (n, foldlM addShape empty
-                                   (ownShapes (tailsOf tbl n)
-                                    ++ concatMap (\g => maybe [] SortedMap.toList (lookup g cur)) (callees (tailsOf tbl n)))))
-                      (Prelude.toList el))
+    ||| `n`'s shapes: its own tails' plus what `cur` holds for its tail callees.
+    shapeOf : SortedMap Name (List RetTail) -> SortedMap Name (SortedMap Int ConShape) -> Name -> Maybe (SortedMap Int ConShape)
+    shapeOf tbl cur n =
+        foldlM addShape empty
+               (ownShapes (tailsOf tbl n)
+                ++ concatMap (\g => maybe [] SortedMap.toList (lookup g cur)) (callees (tailsOf tbl n)))
 
-    shapeFix : SortedMap Name (List RetTail) -> SortedSet Name -> SortedMap Name (SortedMap Int ConShape)
+    ||| Rounds of `shapeOf` over `el`, each reading only the previous
+    ||| round's shapes, until one has a conflict (those names are returned
+    ||| as bad) or nothing grows. A shape map only ever gains tags, so a
+    ||| round recomputes just the tail callers of the names that grew in
+    ||| the round before: every other name would get its old map again.
+    shapeFix : SortedMap Name (List RetTail) -> SortedMap Name (List Name) -> SortedSet Name
              -> (SortedSet Name, SortedMap Name (SortedMap Int ConShape))
-    shapeFix tbl el cur =
-        let next = shapeRound tbl el cur
-            bad : List Name := mapMaybe (\e => if isJust (snd e) then Nothing else Just (fst e)) (SortedMap.toList next)
-            good : SortedMap Name (SortedMap Int ConShape) := fromList (mapMaybe (\e => map (\m => (fst e, m)) (snd e)) (SortedMap.toList next))
-            size : SortedMap Name (SortedMap Int ConShape) -> Nat
-            size m = sum (map (length . SortedMap.toList . snd) (SortedMap.toList m))
-        in if not (null bad) then (fromList bad, good)
-           else if size good == size cur then (empty, good)
-           else shapeFix tbl el good
+    shapeFix tbl rev el = go (Prelude.toList el) empty
+      where
+        size : SortedMap Int ConShape -> Nat
+        size = length . SortedMap.toList
 
-    settle : SortedMap Name (List RetTail) -> SortedSet Name -> SortedMap Name (SortedMap Int ConShape)
-    settle tbl excluded =
-        let el = eligible tbl excluded
-            (bad, shapes) = shapeFix tbl el empty
-        in if null (Prelude.toList bad) then shapes else settle tbl (union bad excluded)
+        callersOf : Name -> List Name
+        callersOf g = fromMaybe [] (lookup g rev)
+
+        go : List Name -> SortedMap Name (SortedMap Int ConShape) -> (SortedSet Name, SortedMap Name (SortedMap Int ConShape))
+        go todo cur =
+            let results = map (\n => (n, shapeOf tbl cur n)) todo
+                bad : List Name := mapMaybe (\(n, r) => if isJust r then Nothing else Just n) results
+                fresh : List (Name, SortedMap Int ConShape) := mapMaybe (\(n, r) => map (\m => (n, m)) r) results
+                cur' = foldl (\acc, (n, m) => insert n m acc) cur fresh
+                grown : List Name := mapMaybe (\(n, m) => if size m > maybe 0 size (lookup n cur) then Just n else Nothing) fresh
+                next : SortedSet Name := foldl (\s, g => foldl (\s', n => if contains n el then insert n s' else s') s (callersOf g))
+                                               (the (SortedSet Name) empty) grown
+            in if not (null bad) then (fromList bad, cur')
+               else if null grown then (empty, cur')
+               else go (Prelude.toList next) cur'
+
+    settle : SortedMap Name (List RetTail) -> SortedMap Name (List Name) -> SortedSet Name -> SortedMap Name (SortedMap Int ConShape)
+    settle tbl rev excluded =
+        let el = eligible tbl rev excluded
+            (bad, shapes) = shapeFix tbl rev el
+        in if null (Prelude.toList bad) then shapes else settle tbl rev (union bad excluded)
 
 ||| The native types a struct's field can carry in an
 ||| `IDRIS2RC2_RetField`: every fixed-width integer, `Char` and `Double`.
