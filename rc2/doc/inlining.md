@@ -1,4 +1,9 @@
-# `Compiler.RC2.Inline`: whole-program `Lifted`-to-`Lifted` inlining
+# Whole-program inlining: `Compiler.RC2.InlineCExp` and `Compiler.RC2.Inline`
+
+Criterion A runs on the named case trees before lambda lifting
+(`Compiler.RC2.InlineCExp`); Criterion B and the case-of-case collapse
+run on `Lifted` (`Compiler.RC2.Inline`). See "Criterion A on the case
+trees" below for the move.
 
 ## Motivation
 
@@ -25,8 +30,10 @@ noinline`.
 ## Pipeline position
 
 ```
-Lifted (Compiler.LambdaLift)
-  -> Compiler.RC2.Inline          (this module -- whole-program inlining, Lifted -> Lifted)
+NamedCExp (upstream, phase Cases)
+  -> Compiler.RC2.InlineCExp      (Criterion A, NamedCExp -> NamedCExp)
+  -> Compiler.RC2.LambdaLift      (rc2's own lifting, doc/lambda-lifting.md)
+  -> Compiler.RC2.Inline          (Criterion B, case-of-case collapse, Lifted -> Lifted)
   -> Compiler.RC2.RC.normalize    (Phase 1: ANF-style, native type inference)
   -> Compiler.RC2.RC.annotate     (Phase 2: ownership -- RDup/RDrop/RFree)
   -> Compiler.RC2.Reuse           (constructor-reuse-in-place)
@@ -38,9 +45,9 @@ Lifted (Compiler.LambdaLift)
   -> Compiler.RC2.Emit            (purely mechanical RCExp -> C)
 ```
 
-Run first, before anything RC2-specific exists at all -- `Compiler.RC2.RC2`'s
-own `toRCDefs` calls `applyInlineLifted` on the raw `lambdaLifted` list
-before any other stage. `--directive noinline` skips it, for the same
+Criterion A runs before lifting, in `compileExpr` and `incCompile`;
+`toRCDefs` calls `applyInlineLifted` on the lifted list before any
+other stage. `--directive noinline` skips both, for the same
 kind of A/B regression isolation `noloop`/`noconaltnative`/etc. already
 provide (see `RC2.idr`'s own module note on `toRCDefs`).
 
@@ -90,6 +97,35 @@ correct, deliberate test into a compile error. Vacuously true for a
 nullary call (no arguments to be "all literal" over), so the guard only
 ever actually fires once there's at least one argument -- a nullary
 call has no such folding risk in the first place.
+
+## Criterion A on the case trees (2026-09-29)
+
+Criterion A moved from `Lifted` to upstream's named case trees
+(`NamedCExp`), before rc2's own lambda lifting (`lambda-lifting.md`).
+The rules are the same, read on the tree lifting would produce from it:
+
+- "call-free" excludes everything lifting turns into a call, a closure
+  or an application: `NmRef` (bare too), `NmApp`, `NmLam`, `NmDelay`,
+  `NmForce`, `NmExtPrim`. A call-free body therefore lifts to itself,
+  and `sizeOf` counts exactly what it counted on `Lifted`;
+- a bare `NmRef f` and `Force f` lift to calls of `f` with no argument
+  and with an erased one, so both are inlined as those calls;
+- a non-atomic argument is bound by a `let` first, as before.
+
+Names replace de Bruijn indices, so a splice renames every binder it
+copies (`let`s and case-alt arguments) to a fresh `MN "rc2inl" i`,
+counted once per program. The lifter resolves a name to its innermost
+binder, so a capture would not fail; it would read the wrong variable.
+
+What changed in the output: capture analysis now runs after the
+splice, so a lambda whose call to a Criterion A callee dropped an
+argument no longer captures it. On idris2-lsp 47 lifted definitions
+take fewer arguments, and their callers and the clones specialised
+from them follow; `rcexpr-lint` finds no anomalies, with 17 fewer
+`partial`s, 511 fewer `dup` increments and 675 fewer `drop`
+decrements. Every other definition is identical once variables are
+renumbered. Inlining takes as long as before (0.25s here plus 1.35s on
+`Lifted`, against 1.56s).
 
 ## IR plumbing: `Weaken`/`Substitutable` for `Lifted`
 

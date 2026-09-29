@@ -1,13 +1,11 @@
-||| Whole-program `Lifted`-to-`Lifted` inlining pass: splices a small,
-||| call-free callee's own body directly into its call site, so
-||| `Compiler.RC2.RC`'s comparison-fusion analysis (`tryFuseCompare`)
-||| can reach a comparison hidden behind an interface method call
-||| (e.g. `Ord Int`'s `<=`) the same way it already reaches a bare one.
+||| Whole-program `Lifted`-to-`Lifted` inlining: Criterion B, a
+||| loop-free callee spliced into its only call site, then the
+||| case-of-case collapse that lets `Compiler.RC2.RC`'s `tryFuseCompare`
+||| reach a comparison spliced into a scrutinee. Criterion A runs
+||| earlier, on the case trees (`Compiler.RC2.InlineCExp`).
 |||
-||| See `rc2/doc/inlining.md` for the full motivation, the two
-||| eligibility criteria (Criterion A -- small, call-free callees, at
-||| every call site; Criterion B -- a loop-free callee with exactly one
-||| call site, see "Criterion B at `Lifted`"), and the "Bugs found
+||| See `rc2/doc/inlining.md` for the motivation, both criteria, and
+||| the "Bugs found
 ||| and fixed" history -- in particular a leak this pass's own
 ||| inlining first exposed, that root-caused to two pre-existing,
 ||| unrelated bugs in `Compiler.RC2.Loop`/`Emit` rather than to this
@@ -348,7 +346,7 @@ doCaseOfConstCase fc x xalts xdef alts def outerSize
 ||| excludes any callee whose body is itself a `CConCase`/`CConstCase`,
 ||| so upstream's `caseOfCase` only ever fires on nesting already present
 ||| in the source, never on nesting *its own* inliner just created):
-||| Criterion A below deliberately targets exactly the opposite shape --
+||| Criterion A (`Compiler.RC2.InlineCExp`) deliberately targets exactly the opposite shape --
 ||| a small callee whose body *is* a case (e.g. `Ord Int`'s `<=`) is the
 ||| whole point, so it can be spliced into a scrutinee position and then
 ||| collapsed here, letting `Compiler.RC2.RC`'s `tryFuseCompare` reach it.
@@ -528,58 +526,16 @@ mutual
         in MkSized (szOf sc') (MkLConstAlt c (valOf sc'))
 
 ------------------------------------------------------------------------
--- Eligibility (Criterion A: small, call-free body)
+-- Eligibility
 
-smallBodyThreshold : Nat
-smallBodyThreshold = 24
-
-||| True if `e` contains no function invocation of any kind -- Criterion
-||| A's own defining requirement: such a callee can never itself contain
-||| a further call to inline, so splicing it in never needs a second
-||| inlining pass over the result (see `inlineLifted`'s own module note).
-isCallFree : Lifted vars -> Bool
-isCallFreeConAlt : LiftedConAlt vars -> Bool
-isCallFreeConstAlt : LiftedConstAlt vars -> Bool
-
-isCallFree (LLocal _ _) = True
-isCallFree (LAppName {}) = False
-isCallFree (LUnderApp {}) = False
-isCallFree (LApp {}) = False
-isCallFree (LExtPrim {}) = False
-isCallFree (LLet _ _ val sc) = isCallFree val && isCallFree sc
-isCallFree (LCon _ _ _ _ args) = all isCallFree args
-isCallFree (LOp _ _ _ args) = all isCallFree (toList args)
-isCallFree (LConCase _ sc alts def) = isCallFree sc && all isCallFreeConAlt alts && maybe True isCallFree def
-isCallFree (LConstCase _ sc alts def) = isCallFree sc && all isCallFreeConstAlt alts && maybe True isCallFree def
-isCallFree (LPrimVal _ _) = True
-isCallFree (LErased _) = True
-isCallFree (LCrash _ _) = True
-
-isCallFreeConAlt (MkLConAlt _ _ _ _ sc) = isCallFree sc
-isCallFreeConstAlt (MkLConstAlt _ sc) = isCallFree sc
-
-||| A Criterion-A-eligible callee: its own parameter names, in order, and
-||| its own body -- necessarily closed over exactly those names (only a
-||| definition with an empty `scope`, i.e. a genuine top-level definition
-||| rather than a lifted-out closure helper, is ever considered, see
-||| `buildEligible`), so `eligBody`'s own type can reference `eligArgs`
-||| directly with no further embedding needed at this stage.
+||| A callee to splice: its parameter names, in order, and its body,
+||| closed over exactly those names.
 record Eligible where
   constructor MkEligible
   eligArgs : List Name
   eligBody : Lifted eligArgs
   ||| Criterion B (the only call site, whole-program) rather than A.
   singleCaller : Bool
-
-buildEligible : List (Name, LiftedDef) -> SortedMap Name Eligible
-buildEligible lds = SortedMap.fromList $ mapMaybe toEntry lds
-  where
-    toEntry : (Name, LiftedDef) -> Maybe (Name, Eligible)
-    toEntry (n, MkLFun args [] body)
-        = if isCallFree body && sizeOf body <= smallBodyThreshold
-             then Just (n, MkEligible args body False)
-             else Nothing
-    toEntry _ = Nothing
 
 isPrimVal : Lifted vars -> Bool
 isPrimVal (LPrimVal _ _) = True
@@ -741,7 +697,7 @@ mutual
 export
 applyInlineLifted : {auto c : Ref Ctxt Defs} -> List (Name, LiftedDef) -> Core (List (Name, LiftedDef))
 applyInlineLifted lds = do
-    elig <- logTime 3 "rc2: Inline (build eligibility map)" $ pure (buildEligible lds)
+    let elig : SortedMap Name Eligible := empty
     let defOf : SortedMap Name LiftedDef := SortedMap.fromList lds
     (single, order) <- logTime 3 "rc2: Inline (call graph)" $ do
         let callees : SortedMap Name (List Name) := map calledNames defOf

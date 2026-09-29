@@ -29,6 +29,7 @@ import Compiler.RC2.DupMerge
 import Compiler.RC2.Emit
 import Compiler.RC2.Emit.Util
 import Compiler.RC2.Inline
+import Compiler.RC2.InlineCExp
 import Compiler.RC2.LambdaLift
 import Compiler.RC2.Pretty
 import Compiler.RC2.PushCon
@@ -233,6 +234,13 @@ insertMemoize = map wrap
              Just _  => (n, d)
              Nothing => (n, MkRCFun [] retRep isWorker (RMemoize EmptyFC n retRep body))
     wrap nd = nd
+
+||| Criterion A of inlining (`noinline` turns it off with the rest),
+||| before lifting.
+inlineNamed : {auto c : Ref Ctxt Defs} -> List String -> Maybe NamedCExp -> List (Name, FC, NamedDef) -> Core (Maybe NamedCExp, List (Name, FC, NamedDef))
+inlineNamed disabled main defs =
+    if "noinline" `elem` disabled then pure (main, defs)
+    else logTime 2 "rc2: Inline (A, before lifting)" $ inlineCExp main defs
 
 ||| The stage names `--directive noXXX`/`%cg rc2 noXXX` can disable
 ||| (`rc2/doc/directives.md`) -- factored out so whole-program
@@ -751,7 +759,8 @@ compileExprWhole c s _ outputDir tm outfile =
      -- rc2/doc/export-support.md's "Linking as a library" section.
      let noMain = "nomain" `elem` directiveList
      cdata <- getCompileDataWith ["RC2", "RefC", "C"] False Cases tm
-     (lifted, liftInfos) <- logTime 2 "rc2: Lambda lift" $ lambdaLiftProgram True cdata
+     (mainIn, namedIn) <- inlineNamed disabledStages (Just (forget (mainExpr cdata))) (namedDefs cdata)
+     (lifted, liftInfos) <- logTime 2 "rc2: Lambda lift" $ lambdaLiftProgram mainIn namedIn
      let liftedByName = SortedMap.fromList lifted
      exportedSigs <- traverse (validateExport liftedByName) (exported cdata)
      -- `exported cdata`'s own Name is `Resolved` (Compiler.Common's
@@ -929,7 +938,8 @@ incCompile c s sourceFile = do
          let noMain = currentNS coreDefs /= mainNS
          directiveList <- getDirectives (Other "rc2")
          let disabledStages = nub ("nodeadcode" :: filter (`elem` directiveList) stageDirectiveNames)
-         (lifted, _) <- logTime 2 "rc2: Lambda lift" $ lambdaLiftProgram False cdata
+         (_, namedIn) <- inlineNamed disabledStages Nothing (namedDefs cdata)
+         (lifted, _) <- logTime 2 "rc2: Lambda lift" $ lambdaLiftProgram Nothing namedIn
          defs <- toRCDefs disabledStages True [] lifted
          -- `Main.main`'s own *compiled* arity isn't a fixed 0-or-1 --
          -- observed both across two small test programs (a bare

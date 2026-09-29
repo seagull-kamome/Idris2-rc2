@@ -12,7 +12,6 @@
 ||| Copyright (c) 2020 Edwin Brady, BSD-3-Clause (idris2-src/LICENSE).
 module Compiler.RC2.LambdaLift
 
-import Compiler.Common
 import Compiler.LambdaLift
 import Core.CompileExpr
 import Core.Context
@@ -306,22 +305,22 @@ liftDef (n, _, MkNmError body) = do
     (b, (ds, is)) <- liftBody n Scope.empty body
     pure ((n, MkLError b) :: ds, is)
 
-||| Every definition of `cdata`, lifted, in the order upstream's
-||| `lambdaLifted` has them, and a `LiftInfo` for each lifted one. With
-||| `withMain`, `__mainExpression` and its lifts come first (incremental
-||| compilation has no main expression).
+||| Every definition, lifted, in the order upstream's `lambdaLifted`
+||| has them, and a `LiftInfo` for each lifted one. A main expression
+||| becomes `__mainExpression`, first, followed by its lifts
+||| (incremental compilation has none).
 export
-lambdaLiftProgram : (withMain : Bool) -> CompileData ->
+lambdaLiftProgram : (main : Maybe NamedCExp) -> List (Name, FC, NamedDef) ->
                     Core (List (Name, LiftedDef), SortedMap Name LiftInfo)
-lambdaLiftProgram withMain cdata = do
-    perDef <- traverse liftDef (namedDefs cdata)
+lambdaLiftProgram main named = do
+    perDef <- traverse liftDef named
     let defs = foldr (\(ds, _), acc => ds ++ acc) [] perDef
         infos = foldr (\(_, is), acc => is ++ acc) [] perDef
-    if not withMain
-       then pure (defs, fromList infos)
-       else do
+    case main of
+       Nothing => pure (defs, fromList infos)
+       Just mainExp => do
          let mainName = MN "__mainExpression" 0
-         (m, (mdefs, minfos)) <- liftBody mainName Scope.empty (forget (mainExpr cdata))
+         (m, (mdefs, minfos)) <- liftBody mainName Scope.empty mainExp
          pure ((mainName, MkLFun Scope.empty Scope.empty m) :: (mdefs ++ defs), fromList (minfos ++ infos))
 
 ||| One line per lifted definition, for the `dumplifts` directive.
