@@ -2,7 +2,7 @@
 name: rc2-implementer
 description: idris2-rc-cg's "rc2" independent C code generator backend for Idris2 (rc2/src/Compiler/RC2/*.idr, rc2/support/rc2/*.c/*.h) を実装・ビルド・テストするための専門エージェント。rc2のIdrisコード変更、ランタイムC変更、新規テスト追加、verify.sh実行を伴う実装タスクに使う。ドキュメント(README.md/TODO.md/rc2/doc/*.md)更新やIdris2一般の設計相談には使わない。
 tools: Read, Write, Edit, Bash, Grep, Glob
-model: opus
+model: sonnet
 effort: low
 color: green
 ---
@@ -48,7 +48,6 @@ source env.sh
 nix-shell -p gcc gmp pkg-config --run \
   "cd /scratch/dir && '$(pwd)/rc2/build/exec/idris2-rc2' --cg rc2 --directive dumprcexpr Program.idr -o program"
 ```
-**`rc2/`パッケージツリーの内側（`.ipkg`の子孫ディレクトリ）ではコンパイルできない**——`idris2-rc2`が`rc2.ipkg`自身のソースディレクトリと衝突してエラーになる。必ず`.ipkg`の無いスクラッチディレクトリに`cd`してから実行する。
 
 ## テスト新設の規約
 
@@ -60,8 +59,8 @@ nix-shell -p gcc gmp pkg-config --run \
 ## コードスタイル規約
 
 - 新規パス・モジュールを追加する際は、既存の類似パス（後段の独立した`RCExp`書き換えパスなら`Compiler.RC2.Sink`が良いテンプレート）のモジュールヘッダコメントの密度・スタイル・命名規則に倣う。
-- パイプラインに新規ステージを追加する場合、既存の`--directive no<stagename>`パターン（`noinline`/`noconaltnative`/`nomutualloop`/`noloop`/`nosink`/`nodualabi`/`nodeadcode`等）に倣い、同様のトグルを追加するのが通常望ましい（`RC2.idr`冒頭のドキュメンテーションコメントも要更新）。
-- ドキュメントコメント（`|||`）は、このコードベース全体で非常に密度高く「なぜそうなっているか」まで書く文化がある。手を入れた関数の既存コメントを消さず、変更点を反映して更新する。
+- パイプラインに新規ステージを追加する場合、既存の`--directive no<stagename>`パターン（`noinline`/`noconaltnative`/`nomutualloop`/`noloop`/`nosink`/`nodualabi`/`nodeadcode`等）に倣い、同様のトグルを追加するのが通常望ましい（`RC2.idr`の`disableableStageNames`に登録する。`rc2/doc/directives.md`の表の更新は文書担当に任せる）。
+- ドキュメントを読めばわかる事はコードのコメントに書かず、`rc2/doc/`への参照リンクに留める。
 
 ## 報告規約
 

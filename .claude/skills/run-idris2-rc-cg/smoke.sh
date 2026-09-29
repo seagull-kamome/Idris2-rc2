@@ -56,7 +56,7 @@ if [ "$DO_BUILD" = 1 ] || [ ! -x rc2/build/exec/idris2-rc2 ]; then
 fi
 
 echo "== smoke-compiling a test program through rc2 =="
-WORKDIR="$(mktemp -d)"
+WORKDIR="$(mktemp -d ${CLAUDE_CODE_TMPDIR:+-p "$CLAUDE_CODE_TMPDIR"})"
 trap 'rm -rf "$WORKDIR"' EXIT
 
 cat > "$WORKDIR/Hello.idr" <<'EOF'

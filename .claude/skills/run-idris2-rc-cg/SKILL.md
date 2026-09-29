@@ -18,8 +18,7 @@ this repo).
 Every command below expects to be run from inside a single `nix-shell
 -p ...` invocation that already provides whatever it needs (gcc, gmp,
 pkg-config, and valgrind for the full test suite) — the scripts
-themselves no longer spawn `nix-shell` internally, so wrap the whole
-invocation yourself rather than expecting per-command isolation.
+don't spawn `nix-shell` themselves, so wrap the whole invocation.
 `idris2` itself is normally NOT in that `-p` list: whenever a build
 step needs it, it comes from whatever's already on `PATH` after
 `source env.sh` (the self-built one) — nixpkgs' own `idris2` package
@@ -34,9 +33,8 @@ with `./gen-env.sh` — needs `nix-shell -p idris2` — only if it's
 missing or stale after a nix update). It sets `CHEZ` (Chez Scheme
 itself, needed by the Chez backend build step — the one genuinely
 external dependency; everything else the project's own unwrapped
-`idris2-rc2` binary finds on its own, self-relatively, under this
-repo's own `install/` prefix, which has been self-contained for a
-while now), `LD_LIBRARY_PATH` (so a produced executable can find
+`idris2-rc2` binary finds on its own under this repo's
+`install/` prefix), `LD_LIBRARY_PATH` (so a produced executable can find
 `libidris2_support.so` at its own runtime), and `PATH`. `smoke.sh`
 sources it automatically.
 
@@ -97,7 +95,8 @@ a self-built one yet and need `--build`'s bootstrap fallback.)
 
 This builds rc2 if needed, compiles a tiny Idris2 program (prints a
 string, sums a mapped list) through `--cg rc2` into a native
-executable in a scratch temp dir, runs it, and diffs the output
+executable in a scratch dir (under `$CLAUDE_CODE_TMPDIR` when set,
+else `mktemp`'s default), runs it, and diffs the output
 against the expected `hello from rc2` / `30`. Exit 0 + `== smoke test
 OK ==` means the backend genuinely produces working native binaries,
 not just that the compiler itself built.
@@ -112,9 +111,7 @@ Flags:
 
 ## Run (human path)
 
-Compile an arbitrary Idris2 program with rc2 directly — must be run
-with the working directory *outside* the `rc2/` package tree (see
-Gotchas):
+Compile an arbitrary Idris2 program with rc2 directly:
 
 ```bash
 source env.sh
@@ -145,13 +142,6 @@ list above only if you specifically lack a self-built compiler
 
 ## Gotchas
 
-- **Compiling from inside `rc2/` (or any directory whose ancestor has
-  an `.ipkg`) fails** with `Source file "..." is not in the source
-  directory "..."` — `idris2-rc2` auto-detects `rc2.ipkg` itself
-  (`sourcedir = "src"`) and tries to resolve your program against
-  *that* package's source dir. Always `cd` to a scratch directory
-  with no `.ipkg` above it before invoking `idris2-rc2 --cg rc2` on
-  your own program (`smoke.sh` does this via `mktemp -d`).
 - **`nix-shell --run` resets the shell's cwd on this machine** — a
   bare `cd` before the `nix-shell` call does not carry into it;
   `cd` has to happen *inside* the `--run '...'` string, which is why

@@ -1,8 +1,8 @@
 # CLAUDE.md
 
 This repo hosts **rc2**, an independent external C code generator backend
-for Idris2. See `README.md`, `TODO.md` for project
-overview, history, and known gaps; `KNOWN-BUGS.md` for bugs still present,
+for Idris2. See `README.md` for the project overview, `TODO.md` for
+open gaps; `KNOWN-BUGS.md` for bugs still present,
 upstream or in rc2, that don't need re-investigating when they show
 up again during testing. Fixed bugs go to `rc2/doc/` and the git
 history, not there.
@@ -98,9 +98,8 @@ history, not there.
   `immediate-ints.md` for keeping `Int`/`Int64`/`Bits64`/`Integer` in the pointer
   word when they fit in 62 bits, `lambda-lifting.md` for rc2 lifting
   lambdas itself instead of taking upstream's `Lifted`, and what lifting
-  loses. Not
-  a replacement for `TODO.md` — those stay the changelog
-  and gap tracker; `rc2/doc/` is where the *why* and the
+  loses. `TODO.md` holds only open gaps, and history lives in the git
+  log; `rc2/doc/` is where the *why* and the
   bugs-found-along-the-way for a specific subsystem live.
   `rc2/doc/ja/` holds Japanese translations of some files directly
   under `rc2/doc/` (same filenames) — the English originals are always
@@ -145,17 +144,12 @@ See `rc2/tests/verify.sh`'s own header comment for the full version
 
 ### テストコード
 
-退行テスト、スモークテストの期待出力はあらかじめテキストファイルを作っておき、
-diffのみで成否判定できるようにする。
-全てのテストを順番に実行して成否判定するシェルスクリプト'tests/verify.sh'を用意する。
-テストの実施はこのスクリプトで行い成否判定の手間を簡略化する。
-新しいテストを作成したらスクリプトも更新する。
-テストを単体で走らせる必要が生じた場合の手順はこのスクリプトを見ればわかるようにしておく。
-テストの結果生じる生成物(生成したCコード、IRダンプ、テスト出力)はtests/build以下に
-置きテスト終了時には消さずに後で確認できるように残しおく。このディレクトリはテストスクリプト
-の先頭で掃除してからテストが実施されるようにしておく。
-
-ベンチマークテストも同様にシェルスクリプト'tests/bench.sh'を用意しテスト手順のミスを減らす。
+退行テストとスモークテストは、期待出力をテキストファイルに置き、diffだけで成否を判定する。
+テストは`rc2/tests/verify.sh`で実行する。`Test*/`は自動で拾われるが、
+`LEAK_SENSITIVE_TESTS`・`NO_REFC_DIFF_TESTS`への登録は手で行う。単体で走らせる手順は
+このスクリプトの冒頭コメントに保つ。生成物(Cコード、IRダンプ、テスト出力)は
+`rc2/tests/build/`に残り、次回の実行開始時に掃除される。
+ベンチマークは`rc2/tests/bench.sh`で取る。
 
 
 ## Build & test
@@ -186,4 +180,14 @@ here.
 
 ## サブエージェント
 
-目的に応じて適切なサブエージェントを活用し、メインエージェントのコンテキストウィンドウを節約。
+目的に応じて適切なサブエージェントを活用し、トークン消費量の削減に務める事。
+例えば、
+
+- よく練られた設計がすでに存在する機能の実装は rc2-implementer（Sonnet、Low effort）に任せる。
+  解決困難な問題に衝突したらその時点で作業を止め、状況をまとめてメインに返させる。
+  メインが判断し、SendMessage で同じエージェントに続きを指示する。
+- ログやダンプの解析は思考する必要が無い単純作業なので log-analyzer（Sonnet、Low effort）
+  に任せ、結果の要点だけをメインエージェントに戻す。
+- 探すべきものが判っている調査も log-analyzer に任せる。
+- effort は呼び出し時に指定できないので、エージェント定義の frontmatter で固定する。
+
