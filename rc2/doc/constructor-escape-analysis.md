@@ -19,7 +19,7 @@ is left as is.
 
 Upstream Idris2 folds a `case` on a known constructor at the `CExp`
 level, before rc2 sees the program. The shapes below are created
-afterwards, by rc2's own inlining (`Compiler.RC2.Inline`,
+afterwards, by rc2's own inlining (`Compiler.RC2.InlineCExp`,
 `Compiler.RC2.LateInline`) and ANF conversion, so upstream's fold never
 sees them.
 
@@ -68,7 +68,7 @@ chain one level up. Each bind's inner `case` propagates `Left e` as
 `con Left [e]` and finishes with `con Right [...]` on success, and the
 outer `case` immediately takes the value apart again. In the dump,
 the TTC decoder that builds a `Core.Context.MkTransform` out of five
-successive `fromBuf` calls is a clear example. `Compiler.RC2.Inline`'s case-of-case collapse
+successive `fromBuf` calls is a clear example. `Compiler.RC2.InlineCExp`'s case-of-case collapse
 (`tryCaseOfCase`, `rc2/doc/inlining.md`) doesn't fire on these. It
 requires *every* inner arm to be constructor-headed, and the success
 arm's head is a `let`/`case` chain that only *ends* in a constructor.
@@ -355,7 +355,7 @@ reach. Two ways were considered:
   until `Loop` converts them. Of the definitions it removes from
   idris2-lsp (about 11,800), about 1,700 contain a loop.
 
-(2) is implemented, as `Compiler.RC2.Inline`'s Criterion B
+(2) is implemented, as `Compiler.RC2.InlineCExp`'s Criterion B
 (`inlining.md`, "Criterion B at `Lifted`"). Two findings came with it.
 
 **Criterion A duplicated arguments.** Splicing substituted argument

@@ -192,7 +192,7 @@ nesting.
 
 Prompted by the same conversation this design came out of: once a
 function can produce more than one `RLoop`, does that also open the
-door to `Compiler.RC2.Inline` splicing a small function whose *entire*
+door to `Compiler.RC2.InlineCExp` splicing a small function whose *entire*
 body is itself a self-tail-recursive loop into a caller that is itself
 looping? Today it cannot: `Inline`'s Criterion A (`rc2/doc/inlining.md`)
 requires a call-free callee, and a self-tail-recursive function always
@@ -200,7 +200,7 @@ contains at least one call (to itself) at the point `Inline` runs
 (before `Compiler.RC2.Loop` has turned that self-call into an
 `RLoopContinue`) -- so such a function is never Inline-eligible today,
 regardless of size, the same disjointness `rc2/doc/caf-memoization.md`'s
-own "Interaction with Compiler.RC2.Inline" section already found for
+own "Interaction with Compiler.RC2.InlineCExp" section already found for
 CAFs.
 
 This is a genuinely different shape from the sinking transform above:
@@ -247,7 +247,7 @@ scoping an implementation.
   field confirmed *not* needing a stack for this document's own narrow
   (sibling-only) scope, but which would for the "related, larger idea"
   section's own loop-inlining shape.
-- `rc2/src/Compiler/RC2/Inline.idr` -- Criterion A (`isCallFree`), the
+- `rc2/src/Compiler/RC2/InlineCExp.idr` -- Criterion A (`isCallFree`), the
   reason a loop-only function is never spliced today; relevant only to
   this document's own "related, larger idea" section.
 - `rc2/BENCHMARKS.md` -- idris2-missing-containers' `MurMur3` example,

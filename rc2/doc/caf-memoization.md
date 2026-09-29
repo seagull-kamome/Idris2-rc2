@@ -63,7 +63,7 @@ backing static variable as long as the `Name` travels with it --
 memoization survives duplication for free, rather than needing every
 pass that might copy an expression to specifically know not to.
 
-### Interaction with `Compiler.RC2.Inline`
+### Interaction with `Compiler.RC2.InlineCExp`
 
 `Inline`'s own Criterion A (`buildEligible`) requires a callee's body
 to be `isCallFree` (no function invocation of any kind) before it's

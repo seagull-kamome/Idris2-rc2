@@ -138,7 +138,7 @@ defensive pass-through case for it, same reasoning as their existing
 
 ```
 Lifted (Compiler.LambdaLift)
-  -> Compiler.RC2.Inline          (whole-program inlining, Lifted -> Lifted)
+  -> Compiler.RC2.InlineCExp      (whole-program inlining, before lambda lifting)
   -> Compiler.RC2.RC.normalize    (Phase 1: ANF-style, native type inference)
   -> Compiler.RC2.RC.annotate     (Phase 2: ownership -- RDup/RDrop/RFree)
   -> Compiler.RC2.Reuse           (constructor-reuse-in-place)
@@ -674,7 +674,7 @@ correct" reasoning `nativePromotionFor` itself already relies on.
 `rc2/tests/Test13NativeArgChain.idr`'s own `chainCallArg`/`addAbsCallArg`
 (formerly a separate `Test56NativeCallArgChain.idr`, merged in) is the
 concrete before/after (`addAbsCallArg`'s own body calls an FFI declaration, so
-it's never `Compiler.RC2.Inline`-eligible, and its first parameter is
+it's never `Compiler.RC2.InlineCExp`-eligible, and its first parameter is
 native only via the nested-`RLet`-body fix this same file's own `chain`
 covers -- both deliberately chosen so the call itself, and a genuinely
 native target argument, both survive to Stage 4 intact):
@@ -992,7 +992,7 @@ verbatim, everything `RAppFFIInline` needs to render the call directly.
 walk) runs as its own whole-program pass, strictly after Stage 4's
 `applyCallSiteRewrite` -- a separate pass rather than folded into
 `applyCallSiteRewriteBody` itself, for the same reason
-`Compiler.RC2.Inline` is its own pass rather than folded into
+`Compiler.RC2.InlineCExp` is its own pass rather than folded into
 `Compiler.RC2.RC`: Stage 4's own `RAppName`/`RLet` rewriting logic is
 already involved enough without also needing FFI-specific marshalling
 concerns. It's a purely structural, whole-tree rewrite with no

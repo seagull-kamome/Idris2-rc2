@@ -336,7 +336,7 @@ via a `%noinline` passthrough helper (`mkAlias : (String -> String) ->
 (String -> String); mkAlias f = f`) -- `%noinline` keeps it a real call
 in *Lifted* IR (confirmed via `--dumplifted`: `Main.main`'s own
 definition still shows `%let b = Main.mkAlias(!a) in ...`, a genuine
-second binding), and `Compiler.RC2.Inline` -- rc2's own, separate,
+second binding), and `Compiler.RC2.InlineCExp` -- rc2's own, separate,
 Lifted-level inliner, which does not honour upstream's `%noinline` flag
 -- then splices `mkAlias`'s body (bare parameter passthrough) into the
 call site, turning `b`'s own value into exactly `RV fc (RCLoc a)`

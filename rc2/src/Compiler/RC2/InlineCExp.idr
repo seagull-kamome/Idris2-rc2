@@ -3,8 +3,8 @@
 ||| every saturated call to it, so `Compiler.RC2.RC`'s comparison fusion
 ||| sees through an interface method such as `Ord Int`'s `<=`. Criterion
 ||| B: a loop-free function called once is spliced there, so a
-||| constructor it returns meets the caller's `case`. The case-of-case
-||| collapse stays in `Compiler.RC2.Inline`, on `Lifted`.
+||| constructor it returns meets the caller's `case`. Then the
+||| case-of-case collapse, for the nesting a splice leaves in a scrutinee.
 ||| Design: `rc2/doc/inlining.md`.
 |||
 ||| Copyright 2026, Hattori,Hiroki. All rights reserved.
@@ -244,6 +244,136 @@ singleCallerCallees defOf callees sccs =
         _ => False
 
 -------------------------------------------------------------------------------
+-- Case-of-case collapse
+--
+-- A splice into a scrutinee leaves `case (case x of ...) of alts`, which
+-- `Compiler.RC2.RC`'s `tryFuseCompare` doesn't recognise; one `case`
+-- over `x`, `alts` copied into each inner branch, is what lets it fuse.
+-- Ported from upstream `Compiler.CaseOpts`; names need no re-indexing
+-- when `alts` move under an inner branch's binders, since those are
+-- distinct from every name in scope. Design, the size budget and its
+-- bookkeeping: `rc2/doc/inlining.md`, "Case-of-case collapse".
+
+-- Unlike `sizeOf` above, for any tree: a lambda counts its body, which
+-- a copy duplicates.
+treeSize : NamedCExp -> Nat
+treeSize (NmLam _ _ b) = 1 + treeSize b
+treeSize (NmLet _ _ v b) = 1 + treeSize v + treeSize b
+treeSize (NmApp _ g args) = 1 + treeSize g + sum (map treeSize args)
+treeSize (NmCon _ _ _ _ args) = 1 + sum (map treeSize args)
+treeSize (NmOp _ _ args) = 1 + sum (toList (map treeSize args))
+treeSize (NmExtPrim _ _ args) = 1 + sum (map treeSize args)
+treeSize (NmForce _ _ t) = 1 + treeSize t
+treeSize (NmDelay _ _ t) = 1 + treeSize t
+treeSize (NmConCase _ sc alts def) =
+    1 + treeSize sc + sum (map (\(MkNConAlt _ _ _ _ b) => treeSize b) alts) + maybe 0 treeSize def
+treeSize (NmConstCase _ sc alts def) =
+    1 + treeSize sc + sum (map (\(MkNConstAlt _ b) => treeSize b) alts) + maybe 0 treeSize def
+treeSize _ = 1
+
+conAltsSize : List NamedConAlt -> Nat
+conAltsSize = foldl (\acc, (MkNConAlt _ _ _ _ b) => acc + treeSize b) 0
+
+constAltsSize : List NamedConstAlt -> Nat
+constAltsSize = foldl (\acc, (MkNConstAlt _ b) => acc + treeSize b) 0
+
+record Sized where
+  constructor MkSized
+  szOf : Nat
+  valOf : NamedCExp
+
+-- The candidate, its size, and the size of its own alternatives and
+-- default (what a collapse copies).
+record Collapse where
+  constructor MkCollapse
+  totalSize : Nat
+  branchesSize : Nat
+  tree : NamedCExp
+
+caseOfCaseSizeBudget : Nat
+caseOfCaseSizeBudget = 200
+
+tryCaseOfCase : Collapse -> Maybe Collapse
+tryCaseOfCase (MkCollapse _ outerSize (NmConCase fc (NmConCase fc' x xalts xdef) alts def)) =
+    let copies : Nat = length xalts + maybe 0 (const 1) xdef in
+    if canCollapse xalts xdef && copies * outerSize <= caseOfCaseSizeBudget
+       then let nb : Nat = conAltsSize xalts + maybe 0 treeSize xdef + copies * (1 + outerSize)
+            in Just (MkCollapse (1 + treeSize x + nb) nb
+                       (NmConCase fc' x (map (\(MkNConAlt n ci t as b) => MkNConAlt n ci t as (NmConCase fc b alts def)) xalts)
+                                        (map (\b => NmConCase fc b alts def) xdef)))
+       else Nothing
+  where
+    isCon : NamedCExp -> Bool
+    isCon (NmCon {}) = True
+    isCon _ = False
+    canCollapse : List NamedConAlt -> Maybe NamedCExp -> Bool
+    canCollapse [] _ = True
+    canCollapse [_] Nothing = True
+    canCollapse xs mdef = all (\(MkNConAlt _ _ _ _ b) => isCon b) xs && maybe True isCon mdef
+tryCaseOfCase (MkCollapse _ outerSize (NmConstCase fc (NmConstCase fc' x xalts xdef) alts def)) =
+    let copies : Nat = length xalts + maybe 0 (const 1) xdef in
+    if canCollapse xalts xdef && copies * outerSize <= caseOfCaseSizeBudget
+       then let nb : Nat = constAltsSize xalts + maybe 0 treeSize xdef + copies * (1 + outerSize)
+            in Just (MkCollapse (1 + treeSize x + nb) nb
+                       (NmConstCase fc' x (map (\(MkNConstAlt c b) => MkNConstAlt c (NmConstCase fc b alts def)) xalts)
+                                          (map (\b => NmConstCase fc b alts def) xdef)))
+       else Nothing
+  where
+    isConst : NamedCExp -> Bool
+    isConst (NmPrimVal {}) = True
+    isConst _ = False
+    canCollapse : List NamedConstAlt -> Maybe NamedCExp -> Bool
+    canCollapse [] _ = True
+    canCollapse [_] Nothing = True
+    canCollapse xs mdef = all (\(MkNConstAlt _ b) => isConst b) xs && maybe True isConst mdef
+tryCaseOfCase _ = Nothing
+
+-- At most 5 collapses at one node, as upstream's `caseOfCase`.
+caseOfCaseHere : Collapse -> Collapse
+caseOfCaseHere = go 5
+  where
+    go : Nat -> Collapse -> Collapse
+    go Z st = st
+    go (S k) st = maybe st (go k) (tryCaseOfCase st)
+
+-- Bottom-up, sizes carried along instead of re-counted at every node.
+collapse : NamedCExp -> Sized
+collapse (NmLam fc x b) = let b' = collapse b in MkSized (1 + szOf b') (NmLam fc x (valOf b'))
+collapse (NmLet fc x v b) =
+    let v' = collapse v
+        b' = collapse b
+    in MkSized (1 + szOf v' + szOf b') (NmLet fc x (valOf v') (valOf b'))
+collapse (NmApp fc g args) =
+    let g' = collapse g
+        args' = map collapse args
+    in MkSized (1 + szOf g' + sum (map szOf args')) (NmApp fc (valOf g') (map valOf args'))
+collapse (NmCon fc n ci t args) =
+    let args' = map collapse args in MkSized (1 + sum (map szOf args')) (NmCon fc n ci t (map valOf args'))
+collapse (NmOp fc op args) =
+    let args' = map collapse args in MkSized (1 + sum (toList (map szOf args'))) (NmOp fc op (map valOf args'))
+collapse (NmExtPrim fc p args) =
+    let args' = map collapse args in MkSized (1 + sum (map szOf args')) (NmExtPrim fc p (map valOf args'))
+collapse (NmForce fc lr t) = let t' = collapse t in MkSized (1 + szOf t') (NmForce fc lr (valOf t'))
+collapse (NmDelay fc lr t) = let t' = collapse t in MkSized (1 + szOf t') (NmDelay fc lr (valOf t'))
+collapse (NmConCase fc sc alts def) =
+    let sc' = collapse sc
+        alts' = map (\(MkNConAlt n ci t as b) => let b' = collapse b in (szOf b', MkNConAlt n ci t as (valOf b'))) alts
+        def' = map collapse def
+        outer = sum (map fst alts') + maybe 0 szOf def'
+        final = caseOfCaseHere (MkCollapse (1 + szOf sc' + outer) outer
+                                  (NmConCase fc (valOf sc') (map snd alts') (map valOf def')))
+    in MkSized (totalSize final) (tree final)
+collapse (NmConstCase fc sc alts def) =
+    let sc' = collapse sc
+        alts' = map (\(MkNConstAlt c b) => let b' = collapse b in (szOf b', MkNConstAlt c (valOf b'))) alts
+        def' = map collapse def
+        outer = sum (map fst alts') + maybe 0 szOf def'
+        final = caseOfCaseHere (MkCollapse (1 + szOf sc' + outer) outer
+                                  (NmConstCase fc (valOf sc') (map snd alts') (map valOf def')))
+    in MkSized (totalSize final) (tree final)
+collapse e = MkSized 1 e
+
+-------------------------------------------------------------------------------
 -- The pass
 
 ||| Criteria A and B over `main` and every definition. Definitions are
@@ -281,8 +411,8 @@ inlineCExp keep main defs = do
     calleesFirst = foldl (\acc, scc => foldl (flip (::)) acc scc) []
 
     rewriteDef : {auto f : Ref Fresh Int} -> SortedMap Name Eligible -> NamedDef -> Core NamedDef
-    rewriteDef elig (MkNmFun args b) = MkNmFun args <$> inline elig b
-    rewriteDef elig (MkNmError b) = MkNmError <$> inline elig b
+    rewriteDef elig (MkNmFun args b) = MkNmFun args . valOf . collapse <$> inline elig b
+    rewriteDef elig (MkNmError b) = MkNmError . valOf . collapse <$> inline elig b
     rewriteDef _ d = pure d
 
     rewriteAll : {auto f : Ref Fresh Int} -> SortedMap Name NamedDef -> SortedSet Name -> SortedMap Name Eligible

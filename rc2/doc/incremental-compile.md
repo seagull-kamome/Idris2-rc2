@@ -391,7 +391,7 @@ it's a primitive rc2 recognizes structurally. `getField` above is
 deliberately generic (`n : String` is an ordinary bound parameter, not
 a literal) -- every *real* call site in a real program supplies a
 literal (`getField myStruct "x"`), and whole-program compilation never
-notices because `Compiler.RC2.Inline` always inlines a function this
+notices because `Compiler.RC2.InlineCExp` always inlines a function this
 small into every call site, so `prim__getField`'s own arguments at the
 only place it's ever actually emitted are already the caller's own
 literals; `getField`'s own standalone definition (with `n` still a
@@ -434,7 +434,7 @@ went on to reveal.
 
 The forcing-unconditional-inlining alternative floated earlier (forcing
 `prim__getField`/`prim__setField`-wrapping functions to always inline
-regardless of `Compiler.RC2.Inline`'s normal size/eligibility
+regardless of `Compiler.RC2.InlineCExp`'s normal size/eligibility
 heuristics, so a *caller's* own incremental compile still inlines them
 down to literals even though `getField` itself is never compiled as a
 standalone function anywhere) was not pursued, in favor of the

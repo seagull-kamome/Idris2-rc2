@@ -95,7 +95,7 @@ cafValueOf _ = Nothing
 (`ConstFold.idr:417-419`) -- a 0-arg `MkRCFun` whose body has folded
 down to a bare `RV fc cval`. A bare `RPrimVal` body is deliberately
 *not* matched here: a CAF that simple is already spliced into every
-call site by `Compiler.RC2.Inline`'s own `isCallFree (LPrimVal _ _) =
+call site by `Compiler.RC2.InlineCExp`'s own `isCallFree (LPrimVal _ _) =
 True` before `ConstFold` ever runs, so by the time `cafValueOf` looks,
 it's gone; only the `RCConstCon`/`RCConstClosure` shapes `Inline` can't
 reach (`isCallFree`'s own `LCon`/`LUnderApp` cases, see
@@ -320,7 +320,7 @@ that folding never happens):
   (`dict74 : Pair74; dict74 = MkPair74 d74op1 d74op2`) referenced only from a
   *separate* definition (`useDict74`), never built inline inside `main`.
   This deliberately isolates the new whole-program `CafTable` from
-  `Compiler.RC2.Inline`'s own constructor-only splicing side-channel
+  `Compiler.RC2.InlineCExp`'s own constructor-only splicing side-channel
   (which reaches only a constructor-shaped CAF built at its own call
   site, see `const-con-fold.md`'s CAF-boundary discussion) -- if this
   folds, it's proof the new fixpoint loop did it, not `Inline`.

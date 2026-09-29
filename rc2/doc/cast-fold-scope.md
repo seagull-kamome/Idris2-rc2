@@ -203,7 +203,7 @@ Test: `castStringToIntegerNotFolded` in `Test17ConstFold.idr`.
   `idris2_nagate_Double`) -- none of these are rc2 bugs.
 - `rc2/tests/Test17ConstFold.idr` -- regression tests confirming all
   three directions above stay unfolded.
-- `rc2/src/Compiler/RC2/Inline.idr` -- `allLiteralArgs`/
+- `rc2/src/Compiler/RC2/InlineCExp.idr` -- `allLiteralArgs`/
   `hasUnfoldableConst` reuse `safeConst`; any change to `Db`'s
   treatment there has to keep the gcc `-Werror=overflow` guard working.
 

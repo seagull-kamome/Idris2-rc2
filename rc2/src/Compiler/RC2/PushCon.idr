@@ -38,7 +38,7 @@ import Data.Vect
 
 -------------------------------------------------------------------------------
 -- Size budget
--- Same scale as `Compiler.RC2.Inline`'s `caseOfCaseSizeBudget` and
+-- Same scale as `Compiler.RC2.InlineCExp`'s `caseOfCaseSizeBudget` and
 -- `smallBodyThreshold`, see rc2/doc/inlining.md's "Size budget".
 
 ||| Most nodes one push may add, over the consumer it replaces.

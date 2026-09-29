@@ -28,7 +28,6 @@ import Compiler.RC2.DeadVars
 import Compiler.RC2.DupMerge
 import Compiler.RC2.Emit
 import Compiler.RC2.Emit.Util
-import Compiler.RC2.Inline
 import Compiler.RC2.InlineCExp
 import Compiler.RC2.LambdaLift
 import Compiler.RC2.Pretty
@@ -294,7 +293,7 @@ stageDirectiveNames = disableableStageNames ++ optInStageNames
 ||| `Emit.idr`'s own `hasUsableForeignImpl` gives an unusable `%foreign`
 ||| declaration.
 toRCDefs : {auto c : Ref Ctxt Defs} -> List String -> (incremental : Bool) -> (roots : List Name) -> List (Name, LiftedDef) -> Core (List (Name, RCDef))
-toRCDefs disabled incremental roots lds0 = do
+toRCDefs disabled incremental roots lds = do
     -- One `VarId` counter for the whole call: every `RCLoc`/argument
     -- id anywhere in the program, from `normalizeDef` below through
     -- every later stage that introduces a new one, is drawn from this
@@ -312,7 +311,6 @@ toRCDefs disabled incremental roots lds0 = do
     -- the whole pipeline ever produces it. See that module's own doc
     -- comment for the full reasoning.
     _ <- newRef VarId 1
-    lds <- if "noinline" `elem` disabled then pure lds0 else logTime 2 "rc2: Inline (case-of-case collapse)" $ pure $ applyCaseOfCase lds0
     structs <- logTime 3 "rc2: struct table" $ pure $
            foldl (\acc, (_, ld) => case ld of
                                         MkLForeign _ fargs ret => foldl (flip collectStructDefs) (collectStructDefs ret acc) fargs

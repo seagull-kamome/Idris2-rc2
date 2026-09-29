@@ -49,7 +49,7 @@ history, not there.
   shadow, `reuse-monadic-bind-gap.md` for an investigated-but-not-
   pursued gap: constructor reuse doesn't reach across a monadic-bind
   continuation, `inlining.md` for the whole-program inlining (on the case
-  trees before lifting, then on `Lifted`) that lets an interface-dispatched comparison fuse into
+  trees, before lifting) that lets an interface-dispatched comparison fuse into
   `RCmpCase` through a call boundary, `branch-sinking.md` for the
   loop-independent pass that moves a `let`-bound value into the one
   branch arm that actually reads it, dropping it everywhere else

@@ -49,7 +49,7 @@ fine-grained per-function/per-node control.
 
 | Directive | Disables |
 |---|---|
-| `noinline` | `Compiler.RC2.Inline`'s whole-program inlining, both criteria: small call-free callees at every call site, and loop-free callees at their only call site (`doc/inlining.md`). |
+| `noinline` | `Compiler.RC2.InlineCExp`'s whole-program inlining, before lambda lifting, both criteria: small call-free callees at every call site, and loop-free callees at their only call site, and the case-of-case collapse after it (`doc/inlining.md`). |
 | `noconstfold` | `Compiler.RC2.ConstFold`'s whole-program fixpoint fold -- arithmetic/comparison/constructor/closure/CAF folding *and* the constant `ExtPrim` fold (`prim__codegen`), which since the `Compiler.RC2.ConstExtPrim` pass was merged in is also gated by this directive. |
 | `noknowncon` | Only `Compiler.RC2.ConstFold`'s known-constructor fold -- resolving a `case` on a non-escaping constructor built in the same function, which drops the construction (`doc/constructor-escape-analysis.md`, "Rewrite A") -- and its closure analogue, turning each saturating `apply` of a non-escaping partial application into a direct call. The rest of `ConstFold` still runs; implied by `noconstfold`. The clones `Compiler.RC2.SpecClosure` folds itself keep the fold. |
 | `nopushcon` | `Compiler.RC2.PushCon`, which pushes a `case` into the tails of the value it scrutinises so each constructor-building tail meets only its own alt and is folded away (`doc/constructor-escape-analysis.md`, "Rewrite B"). Implied by `noconstfold`, since the push relies on ConstFold to finish. |

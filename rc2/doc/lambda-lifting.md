@@ -77,9 +77,8 @@ No pass reads it yet. What it cannot serve as it stands:
   Memoizing `Lazy` needs a mark at each `Force` or a thunk that updates
   itself, designed from the `Delay` side alone.
 - **Definitions after later passes.** The table describes them as they
-  were lifted, after inlining. The case-of-case collapse rewrites
-  `Lifted`, SpecClosure clones, Early and Late inline splice, DeadCode
-  prunes; a clone has no entry. A consumer
+  were lifted, after inlining. SpecClosure clones, Early and Late
+  inline splice, DeadCode prunes; a clone has no entry. A consumer
   must run early or treat a missing name as unknown; one that runs
   late wants the information carried on `RCDef` instead.
 - **Incremental compilation.** The table there covers only the module

@@ -136,7 +136,7 @@ inferring it from Chez's behaviour:
   struct-name/field-name string literals against it. This is a
   different shape from most optimization passes rc2 has today (which
   transform one `RCDef` at a time, independently) -- but it's exactly
-  the shape `Compiler.RC2.Inline` already establishes: `buildEligible
+  the shape `Compiler.RC2.InlineCExp` already establishes: `buildEligible
   lds : SortedMap Name Eligible` scans every definition once to build a
   lookup table, then `applyInlineLifted lds = traverse (inlineDef
   (buildEligible lds)) lds` traverses the whole program again using
@@ -946,7 +946,7 @@ lifetime question above -- not currently planned.
 - `idris2-src/src/Compiler/LambdaLift.idr` -- `LiftedDef`'s
   `MkLForeign`, `Lifted`'s `LExtPrim` -- where struct field types do
   (and don't) survive into the `Lifted` IR rc2's own `RC.idr` consumes.
-- `rc2/src/Compiler/RC2/Inline.idr` -- `buildEligible`/
+- `rc2/src/Compiler/RC2/InlineCExp.idr` -- `buildEligible`/
   `applyInlineLifted`, the whole-program collect-then-traverse shape a
   struct-field table would follow.
 - `idris2-src/src/Idris/CommandLine.idr`, `idris2-src/src/Compiler/Common.idr`

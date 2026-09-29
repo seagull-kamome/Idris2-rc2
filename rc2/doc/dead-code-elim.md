@@ -15,7 +15,7 @@ But some of those rewrites make a definition genuinely unreachable
 *within rc2's own final program*, in ways upstream's analysis (fixed
 before any of this ran) has no way to know about:
 
-- **`Compiler.RC2.Inline`** splices an eligible callee's body into
+- **`Compiler.RC2.InlineCExp`** splices an eligible callee's body into
   *every* one of its own call sites (`rc2/doc/inlining.md`'s own
   "every call site" eligibility rule). The original definition is left
   behind with zero remaining callers -- and since nothing downstream of
@@ -39,7 +39,7 @@ below.
 ## Pipeline position
 
 ```
-Compiler.RC2.Inline
+Compiler.RC2.InlineCExp
   -> Compiler.RC2.RC.normalize/annotate + Reuse + ConAltNative
   -> Compiler.RC2.MutualLoop
   -> Compiler.RC2.Loop
@@ -136,10 +136,10 @@ position callers left ends up just as dead as an ordinary function's
 wrapper would?
 
 Pruning it is awkward to implement (see "Bugs found" #1 below), and --
-via `Compiler.RC2.Inline`/`Compiler.RC2.DualABI` specifically -- a
+via `Compiler.RC2.InlineCExp`/`Compiler.RC2.DualABI` specifically -- a
 truly-dead `MkRCForeign` entry can't actually arise at all:
 
-- `Compiler.RC2.Inline`'s own eligibility requires a callee's body to
+- `Compiler.RC2.InlineCExp`'s own eligibility requires a callee's body to
   be call-free (`isCallFree`, `rc2/doc/inlining.md`). A function that
   itself calls an FFI declaration is therefore *never* Inline-eligible
   -- there is no way for "the only function calling this FFI

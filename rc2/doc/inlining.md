@@ -1,9 +1,9 @@
-# Whole-program inlining: `Compiler.RC2.InlineCExp` and `Compiler.RC2.Inline`
+# Whole-program inlining: `Compiler.RC2.InlineCExp`
 
-Criteria A and B run on the named case trees before lambda lifting
-(`Compiler.RC2.InlineCExp`); the case-of-case collapse runs on `Lifted`
-(`Compiler.RC2.Inline`). See "Inlining on the case trees" below for the
-move.
+Criteria A and B and the case-of-case collapse run on the named case
+trees before lambda lifting (`Compiler.RC2.InlineCExp`); until
+2026-09-29 they ran on `Lifted`, in `Compiler.RC2.Inline`. See
+"Inlining on the case trees" below for the move.
 
 ## Motivation
 
@@ -19,7 +19,7 @@ native-eligible to begin with), fusion never fires on its own. The
 comparison sits inside `<=`'s own separate definition, invisible to the
 caller's own fusion analysis.
 
-`Compiler.RC2.Inline` closes this by splicing a small, call-free
+Inlining closes this by splicing a small, call-free
 callee's own body directly into its call site, run once, before
 `Compiler.RC2.RC`'s own Phase 1 (`normalize`) ever sees the program --
 so from `RC.idr`'s point of view, the call was never there. See
@@ -31,9 +31,8 @@ noinline`.
 
 ```
 NamedCExp (upstream, phase Cases)
-  -> Compiler.RC2.InlineCExp      (Criteria A and B, NamedCExp -> NamedCExp)
+  -> Compiler.RC2.InlineCExp      (Criteria A and B, case-of-case collapse, NamedCExp -> NamedCExp)
   -> Compiler.RC2.LambdaLift      (rc2's own lifting, doc/lambda-lifting.md)
-  -> Compiler.RC2.Inline          (case-of-case collapse, Lifted -> Lifted)
   -> Compiler.RC2.RC.normalize    (Phase 1: ANF-style, native type inference)
   -> Compiler.RC2.RC.annotate     (Phase 2: ownership -- RDup/RDrop/RFree)
   -> Compiler.RC2.Reuse           (constructor-reuse-in-place)
@@ -45,9 +44,8 @@ NamedCExp (upstream, phase Cases)
   -> Compiler.RC2.Emit            (purely mechanical RCExp -> C)
 ```
 
-Inlining runs before lifting, in `compileExpr` and `incCompile`;
-`toRCDefs` calls `applyCaseOfCase` on the lifted list before any other
-stage. `--directive noinline` skips both, for the same
+Inlining runs before lifting, in `compileExpr` and `incCompile`.
+`--directive noinline` skips it, for the same
 kind of A/B regression isolation `noloop`/`noconaltnative`/etc. already
 provide (see `RC2.idr`'s own module note on `toRCDefs`).
 
@@ -153,7 +151,7 @@ decrements (2 fewer fused comparisons, 471 of 473). Inlining takes
 1.34s plus 0.11s for the collapse, and every stage up to DualABI is
 faster (Early inline 6.21s to 5.48s): about 1.5s less in all.
 
-## IR plumbing: renaming on the case trees, `Weaken` for the collapse
+## IR plumbing: renaming on the case trees
 
 Inlining works on named case trees, so a splice substitutes by name:
 each parameter maps to the argument (a local, a literal or an erased
@@ -164,27 +162,29 @@ only on a clash, is what keeps it capture-free: the lifter resolves a
 name to its innermost binder, so a capture would not fail, it would
 read the wrong variable.
 
-The case-of-case collapse still runs on `Lifted` and duplicates the
-outer alternatives under an inner alternative's binders, which
-re-indexes them. `Compiler.RC2.Inline` keeps the `insertNames`/
-`GenWeaken` instances ported from `Core.TT.Term` for that, with the
-extra `appendAssociative` reshuffle a multi-name `LiftedConAlt` binder
-needs (from upstream `Compiler.CaseOpts`'s `shiftBinderConAlt`). The
-de Bruijn substitution and the `believe_me` `FreelyEmbeddable Lifted`
-that splicing on `Lifted` needed are gone.
+The case-of-case collapse moves the outer alternatives under an inner
+alternative's binders. With names nothing is re-indexed, and nothing
+can be captured: those binders are distinct from every name in scope
+there, which is all the outer alternatives can refer to. On `Lifted`
+this needed de Bruijn weakening and substitution ported from
+`Core.TT.Term`, and a `believe_me` `FreelyEmbeddable Lifted`; all of it
+is gone.
 
 
 ## Case-of-case collapse
 
 Substituting a call's own scrutinee-shaped argument into a `case`
 position produces a "case of case" -- `case (case x of ...) of ...` --
-that `tryFuseCompare` doesn't recognise on its own. `collapseCaseOfCase`
-ports upstream `Compiler.CaseOpts`'s own `doCaseOfCase`/
-`doCaseOfConstCase`/`tryCaseOfCase` (the `CExp`-level case-of-case half
-only -- `Lifted` has no `LLam` at all, since lambda-lifting already
-eliminated every lambda, so upstream's own "lift out lambda" half,
-`caseLam`, has no counterpart here) onto `Lifted`, and applies it
-bottom-up across the whole tree after inlining. To bound the risk of
+that `tryFuseCompare` doesn't recognise on its own. `collapse` ports
+upstream `Compiler.CaseOpts`'s `doCaseOfCase`/`doCaseOfConstCase`/
+`tryCaseOfCase` (the case-of-case half only) onto the named case trees
+and applies it bottom-up over each definition right after inlining it.
+Upstream has already collapsed the nesting its own inliner left, so
+what is left is what rc2's splices create. The size a copy adds counts
+a lambda's body (`treeSize`), since on the case trees copying an
+alternative copies its lambdas, each lifted separately; on `Lifted` a
+lambda was one reference. On idris2-lsp that changes nothing measurable:
+the same 471 fused comparisons, one `let` fewer. To bound the risk of
 duplicating a large outer case into every inner branch, collapsing only
 fires when the inner case's own alternatives are all constructor-headed
 (or there's exactly one, with no default) -- identical restriction to
@@ -464,7 +464,7 @@ The "single call site, whole-program" criterion this doc's own
 "Eligibility" section above describes as investigated-but-shelved was
 picked back up in a later session, as its own separate pass --
 `Compiler.RC2.LateInline`, operating on `RCExp` rather than `Lifted`,
-and running much later in the pipeline than `Compiler.RC2.Inline`
+and running much later in the pipeline than `Compiler.RC2.InlineCExp`
 above. Disable with `--directive nolateinline`.
 
 ### Motivation

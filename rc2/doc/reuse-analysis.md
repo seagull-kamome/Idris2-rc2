@@ -29,7 +29,7 @@ once by a dedicated pass, with Emit.idr left to just lower it.
 
 ```
 Lifted (Compiler.LambdaLift)
-  -> Compiler.RC2.Inline          (whole-program inlining, Lifted -> Lifted)
+  -> Compiler.RC2.InlineCExp      (whole-program inlining, before lambda lifting)
   -> Compiler.RC2.RC.normalize    (Phase 1: ANF-style, native type inference)
   -> Compiler.RC2.RC.annotate     (Phase 2: ownership -- RDup/RDrop/RFree)
   -> Compiler.RC2.Reuse.resolveReuse   (this pass)
