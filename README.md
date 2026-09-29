@@ -14,7 +14,7 @@ without modifying) an upstream Idris2 checkout used only as a reference.
 ├── install/         local install prefix for the rc2 package + runtime (gitignored, build output)
 ├── libs/rc2base/    companion support-library package -- see libs/rc2base/ below
 ├── libs/text-re2/   sibling package for RE2 regex bindings, split out of rc2base -- see libs/text-re2/ below
-├── tools/           standalone tools consuming rc2's own output -- see tools/rcexpr-lint/ below
+├── tools/           standalone tools consuming rc2's own output -- see tools/rcexpr-lint/ and tools/rcexpr-diff/ below
 └── rc2/             the actual deliverable -- see rc2/ below
 ```
 
@@ -270,6 +270,21 @@ positive), and how to build and test it.
 
 It lives under `tools/`, not `rc2/`, because `rc2/` holds the compiler
 backend and nothing else -- see `AGENT.md`'s "Layout".
+
+### `tools/rcexpr-diff/`
+
+```
+tools/rcexpr-diff/
+├── RcexprDiff.idr  CLI: compare two .rcexpr dumps definition by definition
+├── README.md       what counts as the same, options
+└── tests/          two hand-written dumps + verify.sh
+```
+
+Compares two IR dumps definition by definition, after renaming
+variables in order of appearance and dropping the counters in names rc2
+generates. It says which definitions a change to rc2 touched, where a
+byte diff shows the whole file (every variable id after the first
+changed node shifts). See `tools/rcexpr-diff/README.md`.
 
 ## Building and running
 

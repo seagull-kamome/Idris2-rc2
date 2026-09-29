@@ -1,0 +1,27 @@
+-- rc2 directives: --directive dumprcexpr
+def Main.same  (fun args= ["v10:Boxed", "v11:Boxed"] ret= Boxed)
+  drop [v10]
+  v11
+
+def Main.clone  (fun args= ["v3:Boxed"] ret= Boxed)
+  call {rc2_specClosure_Main_map_12:40} [v3]
+
+def {idris2rc2_worker_rc2_specClosure_Main_map_12:7}  (fun args= ["v5:Boxed"] ret= Boxed)
+  v5
+
+def Main.lifted  (fun args= ["v1:Boxed"] ret= Boxed)
+  partial Main.{lifted:0} missing= 1 [v1]
+
+def Main.changed  (fun args= ["v1:Boxed"] ret= Boxed)
+  dup v1
+  v1
+
+def Main.gone  (fun args= [] ret= Boxed)
+  #0
+
+def {rc2_specClosure_Main_fold_3:50}  (fun args= ["v1:Boxed"] ret= Boxed)
+  v1
+
+def {rc2_specClosure_Main_fold_4:51}  (fun args= ["v1:Boxed"] ret= Boxed)
+  drop [v1]
+  #1

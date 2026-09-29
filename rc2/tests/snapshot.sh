@@ -8,10 +8,11 @@
 #
 # Usage: run verify.sh on the code before the change, `save`, change
 # the code, run verify.sh again, `diff`. Any difference names the test
-# and the file (*.rcexpr is the IR, *.c the C); `diff -u` on the two
-# copies shows where. For a bigger program, compile it with
-# `--directive dumprcexpr` before and after and `cmp` the two dumps
-# (idris2-lsp is the largest, see rc2/BENCHMARKS.md).
+# and the file (*.rcexpr is the IR, *.c the C); for a dump,
+# tools/rcexpr-diff says which definitions changed and how. For a bigger
+# program, compile it with `--directive dumprcexpr` before and after and
+# `cmp` the two dumps, then rcexpr-diff them (idris2-lsp is the largest,
+# see rc2/BENCHMARKS.md).
 #
 # Not for a change meant to alter the output (a new optimization):
 # there the diff is the thing to read, not to keep empty.
