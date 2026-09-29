@@ -3,11 +3,10 @@ module Compiler.RC2.RC
 -- Copyright 2026, Hattori,Hiroki. All rights reserved.
 -- This module was licensed by BSD3.
 
--- Transforms `Lifted` to `RCExp` in two phases:
--- 1. `normalize`: ANF-style conversion with in-place native type inference.
+-- Transforms upstream's named case trees to `RCExp` in two phases:
+-- 1. `normalize`: lambda lifting and ANF-style conversion, with native type inference.
 -- 2. `annotate`: Injects reference-counting primitives based on ownership.
 
-import Compiler.LambdaLift
 import Compiler.RC2.DualABI
 import Compiler.RC2.RCExp
 import Compiler.RC2.Types
@@ -16,10 +15,11 @@ import Core.CompileExpr
 import Core.Context
 import Core.Core
 import Core.FC
-import Core.Name.Scoped
 import Core.TT
 
 import Data.DPair
+import Data.List
+import Data.String
 import Data.List.Quantifiers
 import Data.List1
 import Data.SortedMap
@@ -60,56 +60,73 @@ export
 data StructTable : Type where
 
 ------------------------------------------------------------------------
--- Phase 1: Lifted -> RCExp (ANF-style normalisation, our own)
+-- Phase 1: the named case trees -> RCExp, lambda lifting and ANF
+-- normalisation in one walk (doc/lambda-lifting.md)
 
-||| `Env vars`'s own shape mirrors `Lifted vars`'s scope exactly (`All`,
-||| `Data.List.Quantifiers`, is a `List`-indexed heterogeneous list --
-||| here every element is `Int`, but its *length* is tied to `vars` at
-||| the type level). This upgrades `Env` from "a `List Int` the whole
-||| module has to keep in sync with `vars` purely by convention" to
-||| "a value the type checker itself refuses to let drift out of sync
-||| with `vars`" -- every place below that used to build a same-length-
-||| by-convention `List Int` (`normalizeDef`'s own `scopeIds ++ argIds`,
-||| `LLet`'s `i :: env`, `normalizeConAlt`'s `argIds ++ env`) is now
-||| forced, as a compile error otherwise, to actually produce something
-||| of the matching extended `Env`.
-|||
-||| This does *not* make `lookupEnv` below fully crash-free, though --
-||| see its own doc comment for why not (`Compiler.LambdaLift`'s own
-||| `IsVar` scope-membership proof, which would otherwise make that
-||| possible, is `0`-quantity/erased by upstream's own declaration, and
-||| Idris2 will not let a function branch on an erased value's
-||| constructor to select a *runtime-relevant* result that differs by
-||| branch -- confirmed by direct experiment, not assumed; see
-||| `TODO.md`'s "rc2全体リファクタリング調査" note). What this buys
-||| instead: the crash branch's own reachability is now narrowed to
-||| "`idx` itself is wrong", never "`env` silently fell out of sync with
-||| `vars` somewhere earlier in this module" -- the latter class is
-||| ruled out by the type checker instead.
-Env : List Name -> Type
-Env vars = All (const Int) vars
+||| Where a lifted definition came from: the top-level definition it was
+||| lifted out of, a lambda or a `Delay` (with its `LazyReason`), and how
+||| many parameters of its own it takes after the captured ones (a
+||| `Delay` of a lambda is one definition, taking both).
+public export
+data LiftOrigin = FromLambda | FromDelay LazyReason
 
-||| Still needs a `Nat`-driven walk (not proof-driven) and still ends in
-||| a crash branch -- see `Env`'s own doc comment above for exactly what
-||| is and isn't proven here, and why full totality (eliminating this
-||| branch by construction) turns out to be unreachable given how
-||| `Compiler.LambdaLift.Lifted.LLocal` declares its own `IsVar` field.
-lookupEnv : Nat -> Env vars -> Int
-lookupEnv Z (x :: _) = x
-lookupEnv (S k) (_ :: xs) = lookupEnv k xs
-lookupEnv _ [] = assert_total $ idris_crash "INTERNAL ERROR: rc2 scope/env mismatch"
+public export
+record LiftInfo where
+  constructor MkLiftInfo
+  parent : Name
+  origin : LiftOrigin
+  params : Nat
 
-||| Allocates one fresh id per element of `xs`, preserving `xs`'s own
-||| shape in the result's type -- the scope-indexed counterpart to
-||| `traverse (const freshVarId) xs`, needed everywhere a `Lifted`-scope
-||| extension (a new `Env` matching a new, longer `vars`) has to be
-||| built rather than just a same-length plain `List Int`.
-freshIdsFor : {auto v : Ref VarId Int} -> (xs : List Name) -> Core (Env xs)
-freshIdsFor [] = pure []
-freshIdsFor (_ :: xs) = do
-    i <- freshVarId
-    is <- freshIdsFor xs
-    pure (i :: is)
+data Lifts : Type where
+data Captures : Type where
+
+record LiftState where
+  constructor MkLiftState
+  basename : Name
+  nextName : Int
+  lifted : List (Name, RCDef)
+  infos : List (Name, LiftInfo)
+
+||| One function body being normalized: the id of every name bound in it,
+||| its scope innermost first (the order a lifted lambda takes its
+||| captures in), and, in a lambda, the outer names it captures, each
+||| numbered where it is first read.
+record Frame where
+  constructor MkFrame
+  env : SortedMap Name Int
+  scope : List Name
+  captures : Maybe (Ref Captures (SortedMap Name Int))
+
+bindName : Name -> Int -> Frame -> Frame
+bindName x i fr = { env $= insert x i, scope $= (x ::) } fr
+
+lookupVar : {auto v : Ref VarId Int} -> Frame -> Name -> Core Int
+lookupVar fr x = case lookup x (env fr) of
+    Just i => pure i
+    Nothing => case captures fr of
+        Nothing => throw $ InternalError "[rc2] normalize: \{show x} is not in scope"
+        Just ref => do
+            caps <- get Captures {ref}
+            case lookup x caps of
+                 Just i => pure i
+                 Nothing => do
+                     i <- freshVarId
+                     put Captures {ref} (insert x i caps)
+                     pure i
+
+genName : {auto l : Ref Lifts LiftState} -> Core Name
+genName = do
+    st <- get Lifts
+    put Lifts ({ nextName := nextName st + 1 } st)
+    pure $ mkName (basename st) (nextName st)
+  where
+    mkName : Name -> Int -> Name
+    mkName (NS ns b) i = NS ns (mkName b i)
+    mkName (UN n) i = MN (displayUserName n) i
+    mkName (DN _ n) i = mkName n i
+    mkName (CaseBlock outer inner) i = MN ("case block in " ++ outer ++ " (" ++ show inner ++ ")") i
+    mkName (WithBlock outer inner) i = MN ("with block in " ++ outer ++ " (" ++ show inner ++ ")") i
+    mkName n i = MN (show n) i
 
 ||| Check if Constant is a two-way Bool (0 or 1).
 constantBoolValue : Constant -> Maybe Bool
@@ -137,38 +154,46 @@ constantBoolValue _ = Nothing
 
 ||| If `alts` and `mDef` form an exhaustive two-way Bool match,
 ||| return the (True, False) branch pair; otherwise Nothing.
-boolBranches : List (LiftedConstAlt vars) -> Maybe (Lifted vars) -> Maybe (Lifted vars, Lifted vars)
-boolBranches [MkLConstAlt c body] (Just other) =
+boolBranches : List NamedConstAlt -> Maybe NamedCExp -> Maybe (NamedCExp, NamedCExp)
+boolBranches [MkNConstAlt c body] (Just other) =
     case constantBoolValue c of
          Just True  => Just (body, other)
          Just False => Just (other, body)
          Nothing    => Nothing
-boolBranches [MkLConstAlt c1 b1, MkLConstAlt c2 b2] Nothing =
+boolBranches [MkNConstAlt c1 b1, MkNConstAlt c2 b2] Nothing =
     case (constantBoolValue c1, constantBoolValue c2) of
          (Just True, Just False) => Just (b1, b2)
          (Just False, Just True) => Just (b2, b1)
          _ => Nothing
 boolBranches _ _ = Nothing
 
-||| Walks the nested `LApp` spine of `LApp _ lazy c x`, given its `c`,
-||| `lazy` and `x` -- built by `Compiler.LambdaLift`'s own
-||| `unload` (`f a1 a2 a3` becomes `LApp _ Nothing (LApp _ Nothing
-||| (LApp _ lazy0 f a1) a2) a3`, innermost-lazy: "only outermost [i.e.
-||| innermost-built] LApp must be lazy" per `unload`'s own comment) --
-||| down to its non-`LApp` base, collecting args in original
-||| left-to-right order. The returned `Maybe LazyReason` is the
-||| *deepest* `LApp`'s own lazy tag, i.e. exactly the one `unload`
-||| actually populated from the original call's own laziness -- every
-||| `LApp` above it carries `Nothing` by construction, so this is
-||| correct, not merely a convenient approximation. See
-||| `doc/rapp-nary-closure-apply.md` for why this collapses an entire
-||| curried closure application into one `RApp` node instead of a
-||| chain of them.
-total
-collectAppChain : Lifted vars -> Maybe LazyReason -> Lifted vars -> (Lifted vars, Maybe LazyReason, List1 (Lifted vars))
-collectAppChain (LApp _ lazy c a) _ x =
-    let (base, lazy0, args) = collectAppChain c lazy a in (base, lazy0, appendl args [x])
-collectAppChain c lazy x = (c, lazy, singleton x)
+||| A closure application's head and all its arguments: nested
+||| applications of something other than a name, and a `Force` (an
+||| application to an erased value), are one application
+||| (`doc/rapp-nary-closure-apply.md`).
+appChain : NamedCExp -> List NamedCExp -> (NamedCExp, List NamedCExp)
+appChain e@(NmApp _ (NmRef _ _) _) acc = (e, acc)
+appChain (NmApp _ g as) acc = appChain g (as ++ acc)
+appChain (NmForce fc _ t@(NmRef _ _)) acc = (NmApp fc t [NmErased fc], acc)
+appChain (NmForce fc _ t) acc = appChain t (NmErased fc :: acc)
+appChain g acc = (g, acc)
+
+nmFC : NamedCExp -> FC
+nmFC (NmLocal fc _) = fc
+nmFC (NmRef fc _) = fc
+nmFC (NmLam fc _ _) = fc
+nmFC (NmLet fc _ _ _) = fc
+nmFC (NmApp fc _ _) = fc
+nmFC (NmCon fc _ _ _ _) = fc
+nmFC (NmOp fc _ _) = fc
+nmFC (NmExtPrim fc _ _) = fc
+nmFC (NmForce fc _ _) = fc
+nmFC (NmDelay fc _ _) = fc
+nmFC (NmConCase fc _ _ _) = fc
+nmFC (NmConstCase fc _ _ _) = fc
+nmFC (NmPrimVal fc _) = fc
+nmFC (NmErased fc) = fc
+nmFC (NmCrash fc _) = fc
 
 ||| `fieldName` of the C struct `structName`, resolved against the program's
 ||| `%foreign` signatures (`StructTable`).
@@ -182,204 +207,171 @@ structField fc structName fieldName = do
         | Nothing => throw $ GenericMsg fc "[rc2] struct \{structName} has no field \{fieldName} in its %foreign declaration"
     pure (MkStructField structName fs fieldName ty isField)
 
+0 Norm : Type -> Type
+Norm a = {auto v : Ref VarId Int} -> {auto st : Ref StructTable (SortedMap String (List (String, CFType)))} ->
+         {auto l : Ref Lifts LiftState} -> a
+
 mutual
     ||| Let-bind compound expressions to fresh locals to ensure ANF normal form.
-    bindOne : {auto v : Ref VarId Int} -> {auto st : Ref StructTable (SortedMap String (List (String, CFType)))} ->
-              Env vars -> Lifted vars -> (RCLocal -> Core RCExp) -> Core RCExp
-    bindOne env (LLocal {idx} fc p) k = k (RCLoc (lookupEnv idx env))
-    bindOne env (LErased fc) k = k RCNull
-    bindOne env e@(LPrimVal fc c) k =
+    bindOne : Norm (Frame -> NamedCExp -> (RCLocal -> Core RCExp) -> Core RCExp)
+    bindOne fr (NmLocal fc x) k = k (RCLoc !(lookupVar fr x))
+    bindOne fr (NmErased fc) k = k RCNull
+    bindOne fr e@(NmPrimVal fc c) k =
         case litRep c of
              Just _  => k (RCConst c)
              Nothing => case c of
                   Str _ => k (RCConst c)
                   BI x  => if immInt64 x
                               then k (RCConst c)
-                              else bindCompound env e k
-                  _     => bindCompound env e k
-    bindOne env e@(LCon fc n ci tag []) k =
+                              else bindCompound fr e k
+                  _     => bindCompound fr e k
+    bindOne fr e@(NmCon fc n ci tag []) k =
         if ci == NIL || ci == NOTHING || ci == ZERO || ci == UNIT
            then k RCNull
            else case tag of
                      Just t  => k (RCEmptyCon n ci t)
-                     Nothing => bindCompound env e k
-    bindOne env e k = bindCompound env e k
+                     Nothing => bindCompound fr e k
+    bindOne fr e k = bindCompound fr e k
 
-    bindCompound : {auto v : Ref VarId Int} -> {auto st : Ref StructTable (SortedMap String (List (String, CFType)))} ->
-                   Env vars -> Lifted vars -> (RCLocal -> Core RCExp) -> Core RCExp
-    bindCompound env e k
+    bindCompound : Norm (Frame -> NamedCExp -> (RCLocal -> Core RCExp) -> Core RCExp)
+    bindCompound fr e k
         = do i <- freshVarId
-             eRC <- normalize env e
+             eRC <- normalize fr e
              let rep = maybe RBoxed RNative (repOf eRC)
              rest <- k (RCLoc i)
-             pure $ RLet (getFC e) i rep eRC rest
-      where
-        getFC : Lifted vars -> FC
-        getFC (LLocal fc _) = fc
-        getFC (LAppName fc _ _ _) = fc
-        getFC (LUnderApp fc _ _ _) = fc
-        getFC (LApp fc _ _ _) = fc
-        getFC (LLet fc _ _ _) = fc
-        getFC (LCon fc _ _ _ _) = fc
-        getFC (LOp fc _ _ _) = fc
-        getFC (LExtPrim fc _ _ _) = fc
-        getFC (LConCase fc _ _ _) = fc
-        getFC (LConstCase fc _ _ _) = fc
-        getFC (LPrimVal fc _) = fc
-        getFC (LErased fc) = fc
-        getFC (LCrash fc _) = fc
+             pure $ RLet (nmFC e) i rep eRC rest
 
-    bindMany : {auto v : Ref VarId Int} -> {auto st : Ref StructTable (SortedMap String (List (String, CFType)))} ->
-               Env vars -> List (Lifted vars) -> (List RCLocal -> Core RCExp) -> Core RCExp
-    bindMany env [] k = k []
-    bindMany env (x :: xs) k =
-        bindOne env x (\rx => bindMany env xs (\rxs => k (rx :: rxs)))
+    bindMany : Norm (Frame -> List NamedCExp -> (List RCLocal -> Core RCExp) -> Core RCExp)
+    bindMany fr [] k = k []
+    bindMany fr (x :: xs) k =
+        bindOne fr x (\rx => bindMany fr xs (\rxs => k (rx :: rxs)))
 
-    bindManyV : {auto v : Ref VarId Int} -> {auto st : Ref StructTable (SortedMap String (List (String, CFType)))} ->
-                Env vars -> Vect n (Lifted vars) -> (Vect n RCLocal -> Core RCExp) -> Core RCExp
-    bindManyV env [] k = k []
-    bindManyV env (x :: xs) k =
-        bindOne env x (\rx => bindManyV env xs (\rxs => k (rx :: rxs)))
+    bindManyV : Norm (Frame -> Vect n NamedCExp -> (Vect n RCLocal -> Core RCExp) -> Core RCExp)
+    bindManyV fr [] k = k []
+    bindManyV fr (x :: xs) k =
+        bindOne fr x (\rx => bindManyV fr xs (\rxs => k (rx :: rxs)))
 
-    normalize : {auto v : Ref VarId Int} -> {auto st : Ref StructTable (SortedMap String (List (String, CFType)))} -> Env vars -> Lifted vars -> Core RCExp
-    normalize env (LLocal {idx} fc p) = pure $ RV fc (RCLoc (lookupEnv idx env))
-    normalize env (LAppName fc lazy n args) =
-        bindMany env args (\locs => pure $ RAppName fc lazy n locs)
-    normalize env (LUnderApp fc n missing args) =
-        bindMany env args (\locs => pure $ RUnderApp fc n missing locs)
-    normalize env (LApp fc lazy c a) =
-        let (base, lazy0, x ::: xs) = collectAppChain c lazy a
-        in bindOne env base (\basel => bindOne env x (\xl => bindMany env xs (\xsl => pure $ RApp fc lazy0 basel (xl ::: xsl))))
-    normalize env (LLet fc x val body) = do
+    normalize : Norm (Frame -> NamedCExp -> Core RCExp)
+    normalize fr (NmLocal fc x) = pure $ RV fc (RCLoc !(lookupVar fr x))
+    normalize fr (NmRef fc n) = pure $ RAppName fc Nothing n []
+    normalize fr (NmLam fc x b) = lambda fr fc FromLambda [x] b
+    normalize fr (NmDelay fc lr b) = lambda fr fc (FromDelay lr) [MN "act" 0] b
+    normalize fr (NmApp fc (NmRef _ n) args) =
+        bindMany fr args (\locs => pure $ RAppName fc Nothing n locs)
+    normalize fr e@(NmApp fc _ _) = applyChain fr fc e
+    normalize fr e@(NmForce fc _ _) = applyChain fr fc e
+    normalize fr (NmLet fc x val body) = do
         i <- freshVarId
-        valRC <- normalize env val
+        valRC <- normalize fr val
         let rep = maybe RBoxed RNative (repOf valRC)
-        bodyRC <- normalize (the (Env (x :: vars)) (i :: env)) body
+        bodyRC <- normalize (bindName x i fr) body
         pure $ RLet fc i rep valRC bodyRC
-    normalize env (LCon fc n ci tag args) =
+    normalize fr (NmCon fc n ci tag args) =
         -- reuseFrom is always Nothing here -- Compiler.RC2.Reuse fills
         -- it in as its own dedicated pass, after Phase 1 and 2 are both
         -- done (see RCExp.idr's own doc comment on RCon).
-        bindMany env args (\locs => pure $ RCon fc n ci tag locs Nothing)
-    normalize env (LOp fc lazy op args) =
+        bindMany fr args (\locs => pure $ RCon fc n ci tag locs Nothing)
+    normalize fr (NmOp fc op args) =
         -- postDrop is always [] here -- Phase 2 (`annotate`) fills it in
         -- once ownership is known (see RCExp.idr's ROp doc comment).
-        bindManyV env args (\locs => pure $ ROp fc lazy op locs [])
+        bindManyV fr args (\locs => pure $ ROp fc Nothing op locs [])
     -- `getField`/`setField` become dedicated RStructGet/RStructSet
-    -- nodes here rather than staying RExtPrim -- see
-    -- doc/c-struct-support.md's own "Design" section for why (RExtPrim's
-    -- own `annotate` case is a bare pass-through with no ownership
-    -- tracking, wrong for an operand that can be read more than once).
-    -- `args`' own shape (struct name, two erased fs/ty placeholders,
-    -- the struct pointer, the field name, the FieldType position
-    -- integer -- discarded, redundant with the field name and not
-    -- needed by any backend) is confirmed by `doc/c-struct-support.md`'s
-    -- own "A concrete example" section, from an actual `--dumplifted`
-    -- run, not assumed.
-    normalize env (LExtPrim fc lazy (NS _ (UN (Basic "prim__getField"))) [sn, _, _, sv, fn, _]) =
-        bindOne env sn (\snl => bindOne env sv (\svl => bindOne env fn (\fnl =>
+    -- nodes (doc/c-struct-support.md, "Design"); the argument shapes
+    -- are that document's "A concrete example".
+    normalize fr (NmExtPrim fc (NS _ (UN (Basic "prim__getField"))) [sn, _, _, sv, fn, _]) =
+        bindOne fr sn (\snl => bindOne fr sv (\svl => bindOne fr fn (\fnl =>
             case (snl, fnl) of
                  (RCConst (Str structName), RCConst (Str fieldName)) =>
                      (\sf => RStructGet fc svl sf []) <$> structField fc structName fieldName
                  _ => throw $ InternalError
                         (notInlinedStructFieldMarker ++ " prim__getField: struct/field name must be string literals"))))
-    normalize env (LExtPrim fc lazy (NS _ (UN (Basic "prim__setField"))) [sn, _, _, sv, fn, _, vl, _]) =
-        bindOne env sn (\snl => bindOne env sv (\svl => bindOne env fn (\fnl => bindOne env vl (\vll =>
+    normalize fr (NmExtPrim fc (NS _ (UN (Basic "prim__setField"))) [sn, _, _, sv, fn, _, vl, _]) =
+        bindOne fr sn (\snl => bindOne fr sv (\svl => bindOne fr fn (\fnl => bindOne fr vl (\vll =>
             case (snl, fnl) of
                  (RCConst (Str structName), RCConst (Str fieldName)) =>
                      (\sf => RStructSet fc svl sf vll []) <$> structField fc structName fieldName
                  _ => throw $ InternalError
                         (notInlinedStructFieldMarker ++ " prim__setField: struct/field name must be string literals")))))
-    normalize env (LExtPrim fc lazy p args) =
-        -- postDrop is always [] here -- Phase 2 (`annotate`) fills it in
-        -- once ownership is known (see RCExp.idr's RExtPrim doc comment).
-        bindMany env args (\locs => pure $ RExtPrim fc lazy p locs [])
-    normalize env (LConCase fc sc alts mDef) =
-        bindOne env sc (\scl => do
-            alts' <- traverse (normalizeConAlt env) alts
-            mDef' <- traverseOpt (normalize env) mDef
+    normalize fr (NmExtPrim fc p args) =
+        bindMany fr args (\locs => pure $ RExtPrim fc Nothing p locs [])
+    normalize fr (NmConCase fc sc alts mDef) =
+        bindOne fr sc (\scl => do
+            alts' <- traverse (normalizeConAlt fr) alts
+            mDef' <- traverseOpt (normalize fr) mDef
             pure $ RConCase fc scl alts' mDef')
-    normalize env (LConstCase fc sc alts mDef) = do
-        fused <- tryFuseCompare env sc alts mDef
+    normalize fr (NmConstCase fc sc alts mDef) = do
+        fused <- tryFuseCompare fr sc alts mDef
         case fused of
              Just e => pure e
              Nothing =>
-                 bindOne env sc (\scl => do
-                     alts' <- traverse (normalizeConstAlt env) alts
-                     mDef' <- traverseOpt (normalize env) mDef
+                 bindOne fr sc (\scl => do
+                     alts' <- traverse (\(MkNConstAlt c b) => MkRConstAlt c <$> normalize fr b) alts
+                     mDef' <- traverseOpt (normalize fr) mDef
                      pure $ RConstCase fc scl alts' mDef')
-    normalize env (LPrimVal fc c) = pure $ RPrimVal fc c
-    normalize env (LErased fc) = pure $ RErased fc
-    normalize env (LCrash fc msg) = pure $ RCrash fc msg
+    normalize fr (NmPrimVal fc c) = pure $ RPrimVal fc c
+    normalize fr (NmErased fc) = pure $ RErased fc
+    normalize fr (NmCrash fc msg) = pure $ RCrash fc msg
 
-    normalizeConAlt : {auto v : Ref VarId Int} -> {auto st : Ref StructTable (SortedMap String (List (String, CFType)))} ->
-                       Env vars -> LiftedConAlt vars -> Core RConAlt
-    normalizeConAlt env (MkLConAlt n ci tag args body) = do
-        argIds <- freshIdsFor args
-        bodyRC <- normalize (argIds ++ env) body
-        pure $ MkRConAlt n ci tag (forget argIds) bodyRC
+    applyChain : Norm (Frame -> FC -> NamedCExp -> Core RCExp)
+    applyChain fr fc e = case appChain e [] of
+        (base, []) => normalize fr base
+        (base, x :: xs) =>
+            bindOne fr base (\basel => bindOne fr x (\xl => bindMany fr xs (\xsl => pure $ RApp fc Nothing basel (xl ::: xsl))))
 
-    normalizeConstAlt : {auto v : Ref VarId Int} -> {auto st : Ref StructTable (SortedMap String (List (String, CFType)))} ->
-                         Env vars -> LiftedConstAlt vars -> Core RConstAlt
-    normalizeConstAlt env (MkLConstAlt c body) = MkRConstAlt c <$> normalize env body
+    normalizeConAlt : Norm (Frame -> NamedConAlt -> Core RConAlt)
+    normalizeConAlt fr (MkNConAlt n ci tag args body) = do
+        argIds <- traverse (const freshVarId) args
+        let fr' = foldr (\(x, i), f => bindName x i f) fr (zip args argIds)
+        MkRConAlt n ci tag argIds <$> normalize fr' body
+
+    ||| A lambda (nested ones merged) becomes a definition of its own,
+    ||| taking the names it captures, in scope order, then its own
+    ||| parameters; here it is a partial application of that definition.
+    lambda : Norm (Frame -> FC -> LiftOrigin -> List Name -> NamedCExp -> Core RCExp)
+    lambda fr fc origin bound (NmLam _ x b) = lambda fr fc origin (x :: bound) b
+    lambda fr fc origin bound body = do
+        ref <- newRef Captures (the (SortedMap Name Int) empty)
+        boundIds <- traverse (const freshVarId) bound
+        let inner = MkFrame (fromList (zip bound boundIds)) (bound ++ scope fr) (Just ref)
+        bodyRC <- normalize inner body
+        caps <- get Captures {ref}
+        let ordered = sortBy (\(a, _), (b, _) => compare (position a) (position b)) (SortedMap.toList caps)
+        locs <- traverse (\(x, _) => RCLoc <$> lookupVar fr x) ordered
+        n <- genName
+        st <- get Lifts
+        put Lifts ({ lifted $= ((n, MkRCFun (map (\(_, i) => (i, RBoxed)) ordered ++ map (\i => (i, RBoxed)) (reverse boundIds)) RBoxed False bodyRC) ::)
+                   , infos $= ((n, MkLiftInfo (basename st) origin (length bound)) ::) } st)
+        pure $ RUnderApp fc n (length bound) locs
+      where
+        position : Name -> Nat
+        position x = maybe (length (scope fr)) finToNat (findIndex (== x) (scope fr))
 
     ||| Shared body for each `tryFuseCompare` clause below, each of which
     ||| matches one comparison constructor directly so that `args` is a
     ||| `Vect 2` and the `IsCmp` proof is at hand.
-    tryFuseCompareOp : {auto v : Ref VarId Int} -> {auto st : Ref StructTable (SortedMap String (List (String, CFType)))} ->
-                        Env vars -> FC -> CmpOp -> Vect 2 (Lifted vars) ->
-                        List (LiftedConstAlt vars) -> Maybe (Lifted vars) -> Core (Maybe RCExp)
-    tryFuseCompareOp env fc op args alts mDef =
+    tryFuseCompareOp : Norm (Frame -> FC -> CmpOp -> Vect 2 NamedCExp ->
+                             List NamedConstAlt -> Maybe NamedCExp -> Core (Maybe RCExp))
+    tryFuseCompareOp fr fc op args alts mDef =
         if not (nativeEligible (cmpOpTy op))
            then pure Nothing
            else case boolBranches alts mDef of
                      Nothing => pure Nothing
                      Just (trueL, falseL) => do
-                         trueRC <- normalize env trueL
-                         falseRC <- normalize env falseL
-                         Just <$> bindManyV env args (\locs => pure $ RCmpCase fc op locs [] trueRC falseRC)
+                         trueRC <- normalize fr trueL
+                         falseRC <- normalize fr falseL
+                         Just <$> bindManyV fr args (\locs => pure $ RCmpCase fc op locs [] trueRC falseRC)
 
-    ||| If `sc` is a native-eligible boolean comparison (LT/GT/EQ/LTE/
-    ||| GTE) and `alts`/`mDef` together form a two-way match on Idris2's
-    ||| own Bool encoding (`boolBranches`), fuse the whole thing directly
-    ||| into an `RCmpCase`: neither the comparison's Boxed Bool result
-    ||| nor the scrutinee variable `bindOne` would otherwise introduce
-    ||| ever gets materialised. `Nothing` leaves `normalize`'s
-    ||| `LConstCase` case to fall through to its ordinary, unfused
-    ||| handling.
-    tryFuseCompare : {auto v : Ref VarId Int} -> {auto st : Ref StructTable (SortedMap String (List (String, CFType)))} ->
-                      Env vars -> Lifted vars -> List (LiftedConstAlt vars) -> Maybe (Lifted vars) ->
-                      Core (Maybe RCExp)
-    tryFuseCompare env (LOp fc lazy (LT ty) args) alts mDef = tryFuseCompareOp env fc (Element (LT ty) IsLT) args alts mDef
-    tryFuseCompare env (LOp fc lazy (GT ty) args) alts mDef = tryFuseCompareOp env fc (Element (GT ty) IsGT) args alts mDef
-    tryFuseCompare env (LOp fc lazy (EQ ty) args) alts mDef = tryFuseCompareOp env fc (Element (EQ ty) IsEQ) args alts mDef
-    tryFuseCompare env (LOp fc lazy (LTE ty) args) alts mDef = tryFuseCompareOp env fc (Element (LTE ty) IsLTE) args alts mDef
-    tryFuseCompare env (LOp fc lazy (GTE ty) args) alts mDef = tryFuseCompareOp env fc (Element (GTE ty) IsGTE) args alts mDef
+    ||| If `sc` is a native-eligible boolean comparison and `alts`/`mDef`
+    ||| form a two-way match on Idris2's own Bool encoding, fuse the whole
+    ||| thing into an `RCmpCase`: the comparison's Boxed Bool is never
+    ||| materialised. `Nothing` leaves `normalize` to its ordinary case.
+    tryFuseCompare : Norm (Frame -> NamedCExp -> List NamedConstAlt -> Maybe NamedCExp -> Core (Maybe RCExp))
+    tryFuseCompare fr (NmOp fc (LT ty) args) alts mDef = tryFuseCompareOp fr fc (Element (LT ty) IsLT) args alts mDef
+    tryFuseCompare fr (NmOp fc (GT ty) args) alts mDef = tryFuseCompareOp fr fc (Element (GT ty) IsGT) args alts mDef
+    tryFuseCompare fr (NmOp fc (EQ ty) args) alts mDef = tryFuseCompareOp fr fc (Element (EQ ty) IsEQ) args alts mDef
+    tryFuseCompare fr (NmOp fc (LTE ty) args) alts mDef = tryFuseCompareOp fr fc (Element (LTE ty) IsLTE) args alts mDef
+    tryFuseCompare fr (NmOp fc (GTE ty) args) alts mDef = tryFuseCompareOp fr fc (Element (GTE ty) IsGTE) args alts mDef
     tryFuseCompare _ _ _ _ = pure Nothing
-
-||| args ordering matches Compiler.LambdaLift.MkLFun's own documented
-||| convention: the emitted function takes `args` first, then `reverse
-||| scope` (`scope` is the set of enclosing free variables a lifted-out
-||| closure body captures; empty for genuine top-level definitions).
-|||
-||| `v`, the shared whole-compile `VarId` counter, comes from the
-||| caller (`Compiler.RC2.RC2.toRCDefs` allocates one, once, before
-||| this runs for the first definition) rather than a fresh `Ref`
-||| started at 0 here per definition -- see `Compiler.RC2.Util`'s own
-||| `VarId` doc comment for why every id in the program sharing one
-||| counter, from this very first phase onward, is what lets every
-||| later stage that introduces a *new* id skip scanning for the
-||| current highest one in use first.
-normalizeDef : {auto v : Ref VarId Int} -> {auto st : Ref StructTable (SortedMap String (List (String, CFType)))} -> LiftedDef -> Core RCDef
-normalizeDef (MkLFun args scope body) = do
-    argIds <- freshIdsFor args
-    scopeIds <- freshIdsFor scope
-    let env = scopeIds ++ argIds
-    bodyRC <- normalize env body
-    pure $ MkRCFun (map (\i => (i, RBoxed)) (forget argIds ++ reverse (forget scopeIds))) RBoxed False bodyRC
-normalizeDef (MkLCon tag arity nt) = pure $ MkRCCon tag arity nt
-normalizeDef (MkLForeign ccs fargs ret) = pure $ MkRCForeign ccs fargs ret
-normalizeDef (MkLError body) = MkRCError <$> normalize [] body
 
 ------------------------------------------------------------------------
 -- Phase 2: reference-counting annotation (RCExp -> RCExp)
@@ -867,41 +859,71 @@ annotateDef (MkRCError body) = MkRCError <$> annotate (definitionNatives body) e
 
 ||| A `%foreign` declaration's own return type, peeled through
 ||| `CFIORes` (`Compiler.RC2.DualABI.peelIORes`), must not itself be a
-||| `CFFun` -- unlike a `CFFun` *argument* (`EmitUtil.idr`'s
-||| `extractValue`, unaffected by this check: a closure handed in as an
-||| argument becomes a valid `IDRIS2RC2_Closure*` a hand-written C shim
-||| can call back into via `idris2rc2_applyClosure`), there is no
-||| working C shape for a `%foreign` call to hand *back* a closure --
-||| `EmitUtil.idr`'s own `packCFType` has no real case for it either
-||| (upstream RefC's identically-broken `makeFunction(...)` call to a
-||| function that has never existed anywhere, in either backend's own
-||| support C -- rc2 inherited the line verbatim). Left unchecked, this
-||| only surfaces as a baffling `undefined reference to 'makeFunction'`
-||| linker error at the very end of the pipeline; checked here instead,
-||| it fails immediately, attributably, at the one point that still has
-||| the declaration's own `Name` in hand.
-checkForeignReturn : Name -> LiftedDef -> Core ()
-checkForeignReturn n (MkLForeign _ _ ret) =
+||| `CFFun`: there is no working C shape for a `%foreign` call to hand
+||| back a closure (upstream RefC's `makeFunction(...)` names a function
+||| that exists nowhere). Unchecked, it surfaces only as an undefined
+||| reference at link time; here it fails with the declaration's name.
+checkForeignReturn : Name -> CFType -> Core ()
+checkForeignReturn n ret =
     case peelIORes ret of
          CFFun _ _ => throw $ GenericMsg EmptyFC
              "[rc2] %foreign declaration \{show n}'s own return type is a function (CFFun) -- returning a closure from a %foreign declaration isn't supported"
          _ => pure ()
-checkForeignReturn _ _ = pure ()
 
-||| Phase 1 (`normalizeDef`) only, run once over each `LiftedDef`.
-||| `Compiler.RC2.ConstFold` (arithmetic/comparison/case-of-constant/
-||| CAF fold, plus the constant `ExtPrim` fold -- `prim__codegen` --
-||| that used to be a separate `Compiler.RC2.ConstExtPrim` pass here)
-||| does NOT run at this point: it needs every definition in the
-||| program at once (a whole-program `CafTable` built across
-||| iterations, not just this one `LiftedDef`'s own body), so
-||| `Compiler.RC2.RC2`'s own whole-program fixpoint loop calls it
-||| separately, between this and `toRCDefPostFold` below.
+||| One top-level definition, then the lambdas lifted out of it, newest
+||| first, and their `LiftInfo`s.
+normalizeTop : {auto v : Ref VarId Int} -> {auto st : Ref StructTable (SortedMap String (List (String, CFType)))} ->
+               Name -> NamedDef -> Core (List (Name, RCDef), List (Name, LiftInfo))
+normalizeTop n d = do
+    l <- newRef Lifts (MkLiftState n 0 [] [])
+    top <- case d of
+        MkNmFun args body => do
+            argIds <- traverse (const freshVarId) args
+            let fr = MkFrame (fromList (zip args argIds)) args Nothing
+            MkRCFun (map (\i => (i, RBoxed)) argIds) RBoxed False <$> normalize fr body
+        MkNmError body => MkRCError <$> normalize (MkFrame empty [] Nothing) body
+        MkNmCon tag arity nt => pure $ MkRCCon tag arity nt
+        MkNmForeign ccs fargs ret => do
+            checkForeignReturn n ret
+            pure $ MkRCForeign ccs fargs ret
+    st <- get Lifts
+    pure ((n, top) :: lifted st, infos st)
+
+||| Phase 1 over the whole program: `main` (as `__mainExpression`) and
+||| its lifts first, then each definition followed by its own. In an
+||| incremental compile, a definition whose `getField`/`setField` names
+||| aren't literals (a constructor argument not yet inlined) is left
+||| out with its lifts, to fail at link time only if it is used.
 export
-toRCDefPreFold : {auto v : Ref VarId Int} -> {auto st : Ref StructTable (SortedMap String (List (String, CFType)))} -> Name -> LiftedDef -> Core RCDef
-toRCDefPreFold declName ld = do
-    checkForeignReturn declName ld
-    normalizeDef ld
+normalizeProgram : {auto v : Ref VarId Int} -> {auto st : Ref StructTable (SortedMap String (List (String, CFType)))} ->
+                   (incremental : Bool) -> Maybe NamedCExp -> List (Name, FC, NamedDef) ->
+                   Core (List (Name, RCDef), SortedMap Name LiftInfo)
+normalizeProgram incremental main defs = do
+    let mainDef = maybe [] (\m => [(MN "__mainExpression" 0, MkNmFun [] m)]) main
+    groups <- traverse one (mainDef ++ map (\(n, _, d) => (n, d)) defs)
+    pure (foldr (\(ds, _), acc => ds ++ acc) [] groups, fromList (foldr (\(_, is), acc => is ++ acc) [] groups))
+  where
+    one : (Name, NamedDef) -> Core (List (Name, RCDef), List (Name, LiftInfo))
+    one (n, d) =
+        if not incremental then normalizeTop n d
+        else catch (normalizeTop n d)
+                   (\err => case err of
+                                 InternalError msg =>
+                                     if isInfixOf notInlinedStructFieldMarker msg then pure ([], []) else throw err
+                                 _ => throw err)
+
+||| One line per lifted definition, for the `dumplifts` directive.
+export
+dumpLifts : SortedMap Name LiftInfo -> String
+dumpLifts m = fastConcat (map line (SortedMap.toList m))
+  where
+    originText : LiftOrigin -> String
+    originText FromLambda = "lambda"
+    originText (FromDelay lr) = "delay " ++ show lr
+
+    line : (Name, LiftInfo) -> String
+    line (n, i) = show n ++ "  from " ++ show (parent i) ++ "  " ++ originText (origin i)
+                  ++ "  params " ++ show (params i) ++ "\n"
 
 ||| Phase 2 (`annotateDef`) only -- run once per definition, after
 ||| `Compiler.RC2.RC2`'s own `ConstFold` fixpoint loop has fully

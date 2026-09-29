@@ -1,9 +1,11 @@
 # Lambda lifting
 
-rc2 lifts lambdas itself (`Compiler.RC2.LambdaLift`) instead of taking
-upstream's `lambdaLifted` from `getCompileDataWith`. For now the output
-is exactly upstream's; owning the step is groundwork for keeping what
-lifting throws away (below).
+rc2 lifts lambdas itself instead of taking upstream's `lambdaLifted`
+from `getCompileDataWith`, in the same walk that turns the case trees
+into `RCExp` (`Compiler.RC2.RC`'s Phase 1, `normalizeProgram`). Owning
+the step is what keeps what lifting throws away (below), and lets every
+pass before it (inlining, dead arguments, arity raising) work on the
+case trees.
 
 ## Where the input comes from
 
@@ -20,34 +22,53 @@ lambdas, fixing arities, CSE):
 - `mainExpr`: the closed main expression, turned into a `NamedCExp`
   with `forget`. Incremental compilation has none.
 
-Nothing converts the named code back to indices first: the lifter
-resolves each `NmLocal` against the current scope (`isVar`) as it goes.
-
 ## What it produces
 
-`lambdaLiftProgram` returns what upstream's `lambdaLifted` would with
-`doLazyAnnots = False` (the value rc2 always passed):
+What upstream's `lambdaLifted` with `doLazyAnnots = False` would give,
+already normalized:
 
 - `__mainExpression`, then the lambdas lifted out of it, then each
-  definition followed by its own lifted lambdas.
+  definition followed by its own lifted lambdas, newest first.
 - Nested lambdas are merged into one lifted function taking all their
   arguments.
-- A lifted function captures only the enclosing variables its body
-  uses (the capture analysis is upstream's, copied since it is
-  private), and the lambda becomes `LUnderApp` of it applied to those.
+- A lifted function takes the enclosing variables its body uses, in
+  scope order (innermost first), then its own parameters; the lambda
+  becomes `RUnderApp` of it applied to those. The captures are found in
+  the same walk: in a lambda's body, a name bound outside it gets a
+  fresh id where it is first read, and is resolved in the enclosing
+  body once the lambda's body is done (which may capture it there in
+  turn).
 - `Delay x` becomes a lambda of one ignored argument, `Force x` an
   application of `x` to an erased value.
 - Lifted names count up per definition, in the order the lambdas
-  finish (inner before outer), as upstream's `genName` does.
+  finish (inner before outer).
 
-Binder names can differ from upstream's (`uniqueName` renames shadowing
-binders), which nothing downstream reads: `Compiler.RC2.RC` numbers
-every variable afresh.
+Until 2026-09-30 this took two walks: rc2's own lifter produced
+upstream's `Lifted`, which Phase 1 then normalized. The output of one
+walk is the same program: on idris2-lsp every `rcexpr-lint` figure is
+unchanged, and the 776 definitions `rcexpr-diff` reports differ only
+in variable order (a `drop` list sorted by id), since ids are now
+handed out as the walk meets them. The walk takes 0.55s instead of
+0.67s for the two, but Late inline got slower (see below), so the
+whole compile is not faster: the point is that `Lifted`, which kept
+what lifting knows from reaching `RCExp`, is gone.
+
+### Late inline is sensitive to id order
+
+A lifted definition's captured parameters now get their ids where the
+body first reads them, so they are larger than some of the body's own,
+and a parent's ids interleave with its lambdas'. On idris2-lsp that
+alone makes Late inline's first round 2.2s instead of 1.5s (4.7s
+instead of 4.1s in all), for the same splices. Renumbering every
+definition afterwards (parameters in order, then binders as they
+appear) brought it back to 4.0s, but the renumbering itself took
+0.38s, so it isn't done. Why the order matters is not known yet
+(TODO.md).
 
 ## What lifting loses
 
-These are gone from `Lifted`, and several rc2 passes exist to
-rediscover them:
+These are gone once a lambda is lifted, and several rc2 passes exist
+to rediscover them:
 
 - **Where a lambda was.** Its body moves to a separate definition;
   the call site keeps a name and an argument count.
@@ -62,7 +83,7 @@ rediscover them:
 
 ## What is kept: `LiftInfo`
 
-`lambdaLiftProgram` also returns a `LiftInfo` for every lifted
+`normalizeProgram` also returns a `LiftInfo` for every lifted
 definition: the top-level definition it came from, whether it was a
 lambda or a `Delay` (with the `LazyReason`, `Lazy` or `Inf`), and how
 many parameters of its own it takes after the captured ones. A `Delay`
@@ -73,7 +94,7 @@ whose body is a lambda is merged with it, so it can take more than one.
 No pass reads it yet. What it cannot serve as it stands:
 
 - **`Force` sites.** A `Force` is an ordinary application to an erased
-  value in `Lifted`, and the table only describes definitions.
+  value once lifted, and the table only describes definitions.
   Memoizing `Lazy` needs a mark at each `Force` or a thunk that updates
   itself, designed from the `Delay` side alone.
 - **Definitions after later passes.** The table describes them as they
@@ -86,9 +107,8 @@ No pass reads it yet. What it cannot serve as it stands:
 - **The enclosing lambda.** A lambda is named after its body is lifted,
   so an inner lambda gets its name before the outer one exists; the
   table records only the top-level definition.
-- **`InlineOk`.** It belongs to one `let`, which neither `Lifted` nor a
-  table keyed by lifted name can hold; it waits for lifting straight
-  into `RCExp`.
+- **`InlineOk`.** It belongs to one `let`; the one walk could carry it
+  onto `RLet`, but nothing would read it yet.
 
 ## Verification
 

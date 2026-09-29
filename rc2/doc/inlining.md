@@ -32,8 +32,7 @@ noinline`.
 ```
 NamedCExp (upstream, phase Cases)
   -> Compiler.RC2.InlineCExp      (Criteria A and B, case-of-case collapse, NamedCExp -> NamedCExp)
-  -> Compiler.RC2.LambdaLift      (rc2's own lifting, doc/lambda-lifting.md)
-  -> Compiler.RC2.RC.normalize    (Phase 1: ANF-style, native type inference)
+  -> Compiler.RC2.RC.normalize    (lambda lifting and Phase 1 in one walk, doc/lambda-lifting.md)
   -> Compiler.RC2.RC.annotate     (Phase 2: ownership -- RDup/RDrop/RFree)
   -> Compiler.RC2.Reuse           (constructor-reuse-in-place)
   -> Compiler.RC2.ConAltNative    (native-shadow field caching)

@@ -30,7 +30,6 @@ import Compiler.RC2.DupMerge
 import Compiler.RC2.Emit
 import Compiler.RC2.Emit.Util
 import Compiler.RC2.InlineCExp
-import Compiler.RC2.LambdaLift
 import Compiler.RC2.Pretty
 import Compiler.RC2.PushCon
 import Compiler.RC2.RC
@@ -299,47 +298,8 @@ stageDirectiveNames = disableableStageNames ++ optInStageNames
 ||| same "unimplementable, fails at link time instead" treatment
 ||| `Emit.idr`'s own `hasUsableForeignImpl` gives an unusable `%foreign`
 ||| declaration.
-toRCDefs : {auto c : Ref Ctxt Defs} -> List String -> (incremental : Bool) -> (roots : List Name) -> List (Name, LiftedDef) -> Core (List (Name, RCDef))
-toRCDefs disabled incremental roots lds = do
-    -- One `VarId` counter for the whole call: every `RCLoc`/argument
-    -- id anywhere in the program, from `normalizeDef` below through
-    -- every later stage that introduces a new one, is drawn from this
-    -- single source -- see `Compiler.RC2.Util`'s own `VarId` doc
-    -- comment for why that's what lets those later stages skip
-    -- scanning for the current highest id in use first. Scoped to one
-    -- `toRCDefs` call, same as `FreshId` already is elsewhere in this
-    -- pipeline (one whole-program compile, or one incremental module
-    -- compile).
-    --
-    -- Starts at 1, not 0 -- `Compiler.RC2.DeadVars` reserves id 0
-    -- itself, program-wide, as its own "no real variable here" marker,
-    -- precisely because starting this one shared counter at 1 is
-    -- enough to guarantee no ordinary `freshVarId` call anywhere in
-    -- the whole pipeline ever produces it. See that module's own doc
-    -- comment for the full reasoning.
-    _ <- newRef VarId 1
-    structs <- logTime 3 "rc2: struct table" $ pure $
-           foldl (\acc, (_, ld) => case ld of
-                                        MkLForeign _ fargs ret => foldl (flip collectStructDefs) (collectStructDefs ret acc) fargs
-                                        _ => acc)
-                 SortedMap.empty lds
-    _ <- newRef StructTable structs
-    preFolded <- logTime 2 "rc2: RC normalize" $
-                   if not incremental
-                      then traverse (\(n, ld) => do d <- toRCDefPreFold n ld; pure (n, d)) lds
-                      else do
-                        results <- traverse (\(n, ld) =>
-                            catch (map (\d => Just (n, d)) (toRCDefPreFold n ld))
-                                  (\err => case err of
-                                                InternalError msg =>
-                                                    if isInfixOf notInlinedStructFieldMarker msg
-                                                       then pure Nothing
-                                                       else throw err
-                                                _ => throw err))
-                            lds
-                        pure (mapMaybe id results)
-    -- doc/world-arity-raising.md: before ConstFold, so every later pass
-    -- sees the direct calls.
+toRCDefs : {auto c : Ref Ctxt Defs} -> {auto v : Ref VarId Int} -> List String -> (incremental : Bool) -> (roots : List Name) -> List (Name, RCDef) -> Core (List (Name, RCDef))
+toRCDefs disabled incremental roots preFolded = do
     folded <- if "noconstfold" `elem` disabled
                  then pure preFolded
                  else logTime 2 "rc2: ConstFold (whole-program fixpoint)" $ foldConstProgram (not ("noknowncon" `elem` disabled)) preFolded
@@ -641,6 +601,25 @@ exportSupportedTypesDesc : String
 exportSupportedTypesDesc =
     "scalar (Int/Int8/Int16/Int32/Int64/Bits8/Bits16/Bits32/Bits64/Double/Char), Ptr, GCPtr, Integer, String, or struct (Struct)"
 
+||| Phase 1 (lambda lifting and normalisation, `Compiler.RC2.RC`) and
+||| every later stage, under one `VarId` counter for the whole compile
+||| (`Compiler.RC2.Util`'s `VarId`; it starts at 1 because
+||| `Compiler.RC2.DeadVars` reserves 0), with the struct table the
+||| program's `%foreign` signatures declare.
+lowerProgram : {auto c : Ref Ctxt Defs} -> List String -> (incremental : Bool) -> (roots : List Name) ->
+               Maybe NamedCExp -> List (Name, FC, NamedDef) -> Core (List (Name, RCDef), SortedMap Name LiftInfo)
+lowerProgram disabled incremental roots main defs = do
+    _ <- newRef VarId 1
+    structs <- logTime 3 "rc2: struct table" $ pure $
+           foldl (\acc, (_, _, d) => case d of
+                                        MkNmForeign _ fargs ret => foldl (flip collectStructDefs) (collectStructDefs ret acc) fargs
+                                        _ => acc)
+                 SortedMap.empty defs
+    _ <- newRef StructTable structs
+    (preFolded, infos) <- logTime 2 "rc2: Lambda lift + RC normalize" $ normalizeProgram incremental main defs
+    rc <- toRCDefs disabled incremental roots preFolded
+    pure (rc, infos)
+
 ||| Validates one %export'ed name against its own real elaborated
 ||| type, deriving the native CFType signature the wrapper needs.
 ||| Throws a clear, attributable GenericMsg for any unsupported shape
@@ -653,11 +632,11 @@ exportSupportedTypesDesc =
 |||
 ||| `exported cdata`'s own Name is `Resolved` (Compiler.Common's
 ||| `getExports` calls `resolved`, not `toFullNames`), while
-||| the lifted definitions' keys are already full names -- `getFullName`
-||| bridges the two so the `SortedMap Name LiftedDef` lookup below
+||| the definitions' keys are already full names -- `getFullName`
+||| bridges the two so the `SortedMap Name NamedDef` lookup below
 ||| actually finds the def instead of silently missing it.
-validateExport : {auto c : Ref Ctxt Defs} -> SortedMap Name LiftedDef -> (Name, String) -> Core (Name, String, List CFType, CFType)
-validateExport liftedByName (n, exportedName) = do
+validateExport : {auto c : Ref Ctxt Defs} -> SortedMap Name NamedDef -> (Name, String) -> Core (Name, String, List CFType, CFType)
+validateExport byName (n, exportedName) = do
     defs <- get Ctxt
     n' <- getFullName n
     Just ty <- lookupTyExact n (gamma defs)
@@ -697,10 +676,10 @@ validateExport liftedByName (n, exportedName) = do
     when (length realArgs > 20) $
         throw $ GenericMsg EmptyFC
             "[rc2] %export declaration \{exportedName} (\{show n'}) declares \{show (length realArgs)} argument(s) -- %export doesn't support more than 20"
-    let Just ld = lookup n' liftedByName
-        | Nothing => throw $ InternalError "[rc2] %export \{exportedName}: \{show n'} has no Lifted def"
+    let Just ld = lookup n' byName
+        | Nothing => throw $ InternalError "[rc2] %export \{exportedName}: \{show n'} has no definition"
     ldArgs <- the (Core (List Name)) $ case ld of
-                   MkLFun largs _ _ => pure largs
+                   MkNmFun largs _ => pure largs
                    _ => throw $ GenericMsg EmptyFC "[rc2] %export declaration \{exportedName} (\{show n'}) isn't an ordinary function (foreign/constructor?)"
     -- An `IO`/`IORes`-returning declaration's own compiled arity is one
     -- more than its own source-level argument count: unlike `main`
@@ -765,9 +744,7 @@ compileExprWhole c s _ outputDir tm outfile =
                              else logTime 2 "rc2: Dead arguments" $
                                     applyDeadArgs (MN "__mainExpression" 0 :: exportNames) mainInl namedInl
      (mainR, namedR) <- raiseNamed disabledStages mainIn namedIn
-     (lifted, liftInfos) <- logTime 2 "rc2: Lambda lift" $ lambdaLiftProgram mainR namedR
-     let liftedByName = SortedMap.fromList lifted
-     exportedSigs <- traverse (validateExport liftedByName) (exported cdata)
+     exportedSigs <- traverse (validateExport (SortedMap.fromList (map (\(n, _, d) => (n, d)) namedR))) (exported cdata)
      -- `exported cdata`'s own Name is `Resolved` (Compiler.Common's
      -- `getExports` calls `resolved`, not `toFullNames`), but every
      -- entry in `defs`/`lifted` is keyed by full name --
@@ -779,7 +756,7 @@ compileExprWhole c s _ outputDir tm outfile =
      -- `getFullName`-resolved `n'`) is reused here rather than
      -- re-deriving it a second time from `exported cdata` directly.
      let roots = MN "__mainExpression" 0 :: map (\(n, _, _, _) => n) exportedSigs
-     defs <- toRCDefs disabledStages False roots lifted
+     (defs, liftInfos) <- lowerProgram disabledStages False roots mainR namedR
 
      -- `dumprcexpr`: dump the final RCExp to a `.rcexpr` file -- see
      -- rc2/doc/reading-the-ir.md for the format, rc2/doc/directives.md
@@ -945,8 +922,7 @@ incCompile c s sourceFile = do
          let disabledStages = nub ("nodeadcode" :: filter (`elem` directiveList) stageDirectiveNames)
          (_, namedInl) <- inlineNamed disabledStages Nothing Nothing (namedDefs cdata)
          (_, namedIn) <- raiseNamed disabledStages Nothing namedInl
-         (lifted, _) <- logTime 2 "rc2: Lambda lift" $ lambdaLiftProgram Nothing namedIn
-         defs <- toRCDefs disabledStages True [] lifted
+         (defs, _) <- lowerProgram disabledStages True [] Nothing namedIn
          -- `Main.main`'s own *compiled* arity isn't a fixed 0-or-1 --
          -- observed both across two small test programs (a bare
          -- `putStrLn`: arity 1, a real `%World` token; a multi-
