@@ -31,6 +31,7 @@ import Compiler.RC2.Util
 
 import Core.CompileExpr
 import Core.Context
+import Core.Context.Log
 import Core.Core
 import Core.FC
 import Core.TT
@@ -1365,14 +1366,15 @@ structSites _ _ _ e = pure e
 ||| other gets a new one. Callers are not rewritten here: every call
 ||| still reaches the wrapper, except tail calls between struct workers.
 export
-applyStructReturn : {auto v : Ref VarId Int} -> List (Name, RCDef) -> Core (List (Name, RCDef))
+applyStructReturn : {auto c : Ref Ctxt Defs} -> {auto v : Ref VarId Int} -> List (Name, RCDef) -> Core (List (Name, RCDef))
 applyStructReturn defs = do
     _ <- newRef FreshId 0
-    let plan = prunePlan defs (structReturnPlan defs)
-        existing = SortedSet.fromList (map fst defs)
-    planned <- traverse (workerFor existing plan) defs
-    let layouts = retLayouts defs (fromList (keys plan))
-        structRepOf : Name -> Core Rep
+    plan0 <- logTime 3 "rc2: struct return (plan)" $ pure $ structReturnPlan defs
+    plan <- logTime 3 "rc2: struct return (prune plan)" $ pure $ prunePlan defs plan0
+    let existing = SortedSet.fromList (map fst defs)
+    planned <- logTime 3 "rc2: struct return (worker names)" $ traverse (workerFor existing plan) defs
+    layouts <- logTime 3 "rc2: struct return (layouts)" $ pure $ retLayouts defs (fromList (keys plan))
+    let structRepOf : Name -> Core Rep
         structRepOf n = case lookup n layouts of
             Nothing => pure (RRet 1 [])
             Just (Just rep) => pure rep
@@ -1381,7 +1383,7 @@ applyStructReturn defs = do
             traverse (\(n, w, reps) => (\rep => (n, (w, reps, rep))) <$> structRepOf n)
                      (mapMaybe (\((n, _), p) => map (\(w, reps, _) => (n, w, reps)) p) planned)
     let wNames : SortedSet Name := fromList (map (fst . snd) (SortedMap.toList ws))
-    foldr (++) [] <$> traverse (rewrite' ws wNames plan) planned
+    logTime 3 "rc2: struct return (rewrite)" $ foldr (++) [] <$> traverse (rewrite' ws wNames plan) planned
   where
     ||| `Just (worker, argReps, isNew)` for a planned function.
     workerFor : {auto r : Ref FreshId Int} -> SortedSet Name -> SortedMap Name (SortedMap Int ConShape) -> (Name, RCDef)

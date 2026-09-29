@@ -928,9 +928,14 @@ ConstFold 1.32s。
 
 - **DualABI(3.03s)の大半は構造体返し。** 計測を分けた結果(2026-09-29):
   workers 0.11s、**struct return(`applyStructReturn`) 2.60s**、FFI worker
-  table 0.05s、call-site rewrite 0.21s、FFI inline 0.07s。構造体返しの
-  中(`structReturnPlan`/`prunePlan`の不動点、`retLayouts`の`settle`、
-  `structSites`)をさらに分けて、どこが重いかを調べる。
+  table 0.05s、call-site rewrite 0.21s、FFI inline 0.07s。構造体返しの中は
+  plan(`structReturnPlan`) **1.60s**、prune plan 0.35s、worker names 0.02s、
+  layouts 0.14s、rewrite 0.44s。planは`settle`(合わない関数を除外して
+  収束まで)の各周で`eligible`を一から計算し直し、その中の`shrink`/`reach`も
+  周ごとに集合全体を`filter`して`length (SortedSet.toList ...)`で数え直す
+  ので、周回数×定義数に比例すると見込まれる(コードを読んだ推定。周回数は
+  未計測なので、まず数える)。変化した名前だけを次の周に回すワークリスト
+  方式にすれば、1周目以降のコストは変化分に比例する。
 - **「RC annotate + Reuse + ConAltNative」(3.03s)は3パスの合計。**
   定義ごとに3つを続けて回しているので、パスごとの合計時間を別々に
   出す(`logTime`を定義ごとに付けると件数が多すぎるので、各パスの
