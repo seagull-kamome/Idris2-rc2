@@ -807,7 +807,7 @@ both sources.
 
 ## 安全性: 証明・線形型で実行時エラーを型エラーへ移せる箇所(調査 2026-09-28)
 
-`rc2/src`の`idris_crash`(4箇所)、`believe_me`(1)、`InternalError`
+`rc2/src`の`idris_crash`(4箇所)、`InternalError`
 (約35)、「起こらないはず」とコメントだけで守っている不変条件を
 洗い出した。既に型で守っている先例は`RCConstCon`の
 `{0 argsConst : All IsAnyConstLocal args}`と`IsConstLocal`
@@ -856,12 +856,6 @@ both sources.
 - **`emitRC`に届かないはずのノード**(`Emit.idr:1082`「not
   intercepted by emitInto's dispatch」)。文(`RLet`/`RCase`系)と
   値を生む式を別の型に分ければ、ディスパッチ漏れが型エラーになる。
-- **`Inline.idr:134`の`FreelyEmbeddable Lifted`(`believe_me`)**。
-  上流の`Term`と同じ手口で、上流の`Lifted`の表現に依存している。
-  上流が`LLocal`の添字の表現を変えると黙って壊れるので、少なくとも
-  `embed`が恒等であることを確かめる回帰テストを置く。証明で置き
-  換えるには`Lifted`を歩いて作り直す必要があり、コストに見合うかは
-  要検討。
 
 ### C. 線形型(量1)で資源の扱いを守る
 

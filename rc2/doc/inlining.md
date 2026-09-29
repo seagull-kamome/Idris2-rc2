@@ -1,9 +1,9 @@
 # Whole-program inlining: `Compiler.RC2.InlineCExp` and `Compiler.RC2.Inline`
 
-Criterion A runs on the named case trees before lambda lifting
-(`Compiler.RC2.InlineCExp`); Criterion B and the case-of-case collapse
-run on `Lifted` (`Compiler.RC2.Inline`). See "Criterion A on the case
-trees" below for the move.
+Criteria A and B run on the named case trees before lambda lifting
+(`Compiler.RC2.InlineCExp`); the case-of-case collapse runs on `Lifted`
+(`Compiler.RC2.Inline`). See "Inlining on the case trees" below for the
+move.
 
 ## Motivation
 
@@ -31,9 +31,9 @@ noinline`.
 
 ```
 NamedCExp (upstream, phase Cases)
-  -> Compiler.RC2.InlineCExp      (Criterion A, NamedCExp -> NamedCExp)
+  -> Compiler.RC2.InlineCExp      (Criteria A and B, NamedCExp -> NamedCExp)
   -> Compiler.RC2.LambdaLift      (rc2's own lifting, doc/lambda-lifting.md)
-  -> Compiler.RC2.Inline          (Criterion B, case-of-case collapse, Lifted -> Lifted)
+  -> Compiler.RC2.Inline          (case-of-case collapse, Lifted -> Lifted)
   -> Compiler.RC2.RC.normalize    (Phase 1: ANF-style, native type inference)
   -> Compiler.RC2.RC.annotate     (Phase 2: ownership -- RDup/RDrop/RFree)
   -> Compiler.RC2.Reuse           (constructor-reuse-in-place)
@@ -45,9 +45,9 @@ NamedCExp (upstream, phase Cases)
   -> Compiler.RC2.Emit            (purely mechanical RCExp -> C)
 ```
 
-Criterion A runs before lifting, in `compileExpr` and `incCompile`;
-`toRCDefs` calls `applyInlineLifted` on the lifted list before any
-other stage. `--directive noinline` skips both, for the same
+Inlining runs before lifting, in `compileExpr` and `incCompile`;
+`toRCDefs` calls `applyCaseOfCase` on the lifted list before any other
+stage. `--directive noinline` skips both, for the same
 kind of A/B regression isolation `noloop`/`noconaltnative`/etc. already
 provide (see `RC2.idr`'s own module note on `toRCDefs`).
 
@@ -98,7 +98,7 @@ nullary call (no arguments to be "all literal" over), so the guard only
 ever actually fires once there's at least one argument -- a nullary
 call has no such folding risk in the first place.
 
-## Criterion A on the case trees (2026-09-29)
+## Inlining on the case trees (2026-09-29)
 
 Criterion A moved from `Lifted` to upstream's named case trees
 (`NamedCExp`), before rc2's own lambda lifting (`lambda-lifting.md`).
@@ -127,51 +127,52 @@ decrements. Every other definition is identical once variables are
 renumbered. Inlining takes as long as before (0.25s here plus 1.35s on
 `Lifted`, against 1.56s).
 
-## IR plumbing: `Weaken`/`Substitutable` for `Lifted`
+Criterion B followed, in the same pass: definitions are rewritten
+callees first (Tarjan order over the whole program), and a callee
+called once and in no cycle is added to the callees to splice once its
+own calls are inlined. Two things differ from `Lifted`:
 
-Splicing a callee's body into a call site is a capture-avoiding
-substitution: replace every occurrence of a callee argument with the
-corresponding caller-side expression, correctly re-indexing every local
-variable reference along the way. `Lifted`'s own `LLocal` uses the exact
-same `IsVar`-based de Bruijn representation as `Core.TT.Term`'s own
-`Local`, so this module ports `Core.TT.Term`'s own `insertNames`/
-`GenWeaken`/`FreelyEmbeddable` instances and `Core.TT.Term.Subst`'s own
-`substTerm`, verbatim in structure, onto `Lifted`/`LiftedConAlt`/
-`LiftedConstAlt` -- no `Lifted`- or rc2-specific capture-avoidance
-machinery needed at all; the generic `Core.TT.Var`/`Core.TT.Subst`
-combinators (`insertNVarNames`, `find`) do all the actual index
-arithmetic.
+- **The call graph.** Every `NmRef` in a definition is one of its
+  calls, inside a lambda too. On `Lifted` a lambda was a definition of
+  its own and its parent had no edge to it, so a recursion through a
+  closure (`f`'s lambda calls `g`, `g` calls `f`) was no cycle there and
+  is one here. On idris2-lsp 2,744 callees are spliced instead of
+  2,813.
+- **What a splice copies.** A Criterion B body may hold lambdas; they
+  are copied into the caller and lifted there. The callee itself, left
+  with no call, would lift a second copy of each, and every stage up to
+  `DeadCode` would carry them: so a whole-program compile drops it
+  before lifting, unless it is `%export`ed. An incremental compile keeps
+  it, since other modules may call it.
 
-Two things `Term`'s own instances never needed, since `Term`'s own
-`Bind` only ever introduces one name at a time:
+Result on idris2-lsp: `rcexpr-lint` finds no anomalies; against the
+Criterion-A-only step there are 225 fewer definitions, 256 fewer
+`partial`s, 45 fewer `apply`s, 348 fewer `con`s, 331 more constructors
+returned by value, 1,174 fewer `dup` increments and 2,595 fewer `drop`
+decrements (2 fewer fused comparisons, 471 of 473). Inlining takes
+1.34s plus 0.11s for the collapse, and every stage up to DualABI is
+faster (Early inline 6.21s to 5.48s): about 1.5s less in all.
 
-- **`LiftedConAlt`'s multi-name binder.** A constructor alternative
-  binds a whole *list* of names (`args`) at once
-  (`Lifted (args ++ vars)`), not just one -- `insertNamesConAlt`/
-  `substConAlt` need one extra `appendAssociative` reshuffle to line the
-  types up, ported from upstream `Compiler.CaseOpts`'s own
-  `shiftBinderConAlt`, which already solves the identical shape for
-  `CConAlt`.
-- **Erasure.** `Lifted`'s own `vars` scope index is never used at
-  runtime by *any* constructor except inside an already-erased `IsVar`
-  proof (`LLocal`'s own `(0 p : IsVar x idx vars)`) -- Idris2's own
-  forced-argument detection erases it throughout automatically. Every
-  helper this module adds that mentions a scope-list implicit by name
-  (`insertNamesConAlt`, `substConAlt`, `toSubst`, `inlineCall`) has to
-  mark it `0` explicitly to match, or the compiler rejects the call with
-  "`<name>` is not accessible in this context" -- `Lifted`'s own erased
-  index simply doesn't carry the runtime information a non-erased
-  parameter would need. This is also *why* `FreelyEmbeddable Lifted`'s
-  own `embed` (append-on-the-right, used to widen a closed callee body
-  into the caller's own scope before substituting) can just be
-  `believe_me`: with zero runtime information in the index either way,
-  there is nothing an unsafe cast could get wrong.
-- **`SizeOf` from a `Subst`'s own spine, not `mkSizeOf`.** `inlineCall`
-  needs a `SizeOf calleeArgs` to seed the substitution, but `calleeArgs`
-  is erased in its own context, so `mkSizeOf calleeArgs` (which
-  genuinely counts a real list's length) can't be used. `env`'s own
-  `Subst` value already encodes that length as real, non-erased
-  cons-spine structure, so `sizeOfSubst` reads it from there instead.
+## IR plumbing: renaming on the case trees, `Weaken` for the collapse
+
+Inlining works on named case trees, so a splice substitutes by name:
+each parameter maps to the argument (a local, a literal or an erased
+value) or to the `let` bound to a non-atomic one, and every binder the
+copy introduces (lambda, `let`, alt arguments) gets a fresh
+`MN "rc2inl" i`, counted once per program. Renaming every binder, not
+only on a clash, is what keeps it capture-free: the lifter resolves a
+name to its innermost binder, so a capture would not fail, it would
+read the wrong variable.
+
+The case-of-case collapse still runs on `Lifted` and duplicates the
+outer alternatives under an inner alternative's binders, which
+re-indexes them. `Compiler.RC2.Inline` keeps the `insertNames`/
+`GenWeaken` instances ported from `Core.TT.Term` for that, with the
+extra `appendAssociative` reshuffle a multi-name `LiftedConAlt` binder
+needs (from upstream `Compiler.CaseOpts`'s `shiftBinderConAlt`). The
+de Bruijn substitution and the `believe_me` `FreelyEmbeddable Lifted`
+that splicing on `Lifted` needed are gone.
+
 
 ## Case-of-case collapse
 
@@ -402,7 +403,7 @@ before trusting any A/B comparison built on it again (see
 `Test114Inline/CompareFusionThroughCall.idr`'s own doc comments, which both
 describe exactly what to expect changed between the two builds).
 
-## Criterion B at `Lifted`: loop-free single-caller callees (2026-09-25)
+## Criterion B: loop-free single-caller callees (2026-09-25; on the case trees since 2026-09-29)
 
 The second criterion, dropped above as not load-bearing, became
 load-bearing once ConstFold's known-constructor fold and
@@ -416,12 +417,11 @@ doesn't need to wait.
 
 A callee is inlined here, at its one call site, when:
 
-- it is a top-level `MkLFun` with at least one argument (a 0-argument
+- it is a `MkNmFun` with at least one argument (a 0-argument
   definition is a CAF, evaluated once however often it is referenced);
-- it has exactly one saturated `LAppName` occurrence, whole-program;
+- its name occurs exactly once (`NmRef`), whole-program;
 - it is in no call-graph cycle, a self-call included (`MutualLoop`'s
-  `tarjanSCCs` over the `LAppName` graph);
-- that call site isn't lazy (`LAppName`'s `lazy` is `Nothing`).
+  `tarjanSCCs` over the `NmRef` graph).
 
 The caller may be a CAF. A first version excluded CAF callers, because
 code spliced into `main`'s memoized body came out unoptimised. The

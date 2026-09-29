@@ -1271,8 +1271,12 @@ emitRC sink (RStructGet fc structVar (MkStructField sn _ fn ty _) postDrop) _ = 
 emitRC sink (RStructSet fc structVar (MkStructField sn _ fn ty _) value postDrop) _ = do
     (ptrBoxed, p1) <- rcVarToBoxedC structVar
     let ptrC = extractValue CLangC CFPtr ptrBoxed
-    (valBoxed, p2) <- rcVarToBoxedC value
-    let valC = extractValue CLangC ty valBoxed
+    -- A native field reads the value natively, so a constant is written
+    -- as a literal instead of being boxed and never freed.
+    (valC, p2) <- case cfTypeNative ty of
+        Just CharType => mapFst ("(char)" ++) <$> rcVarToNativeC CharType value
+        Just pt => rcVarToNativeC pt value
+        Nothing => mapFst (extractValue CLangC ty) <$> rcVarToBoxedC value
     emit fc $ "((\{sn}*)\{ptrC})->\{fn} = \{valC};"
     removeVars $ map varName postDrop
     removeVars (p1 ++ p2)

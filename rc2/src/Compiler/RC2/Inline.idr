@@ -1,24 +1,15 @@
-||| Whole-program `Lifted`-to-`Lifted` inlining: Criterion B, a
-||| loop-free callee spliced into its only call site, then the
-||| case-of-case collapse that lets `Compiler.RC2.RC`'s `tryFuseCompare`
-||| reach a comparison spliced into a scrutinee. Criterion A runs
-||| earlier, on the case trees (`Compiler.RC2.InlineCExp`).
-|||
-||| See `rc2/doc/inlining.md` for the motivation, both criteria, and
-||| the "Bugs found
-||| and fixed" history -- in particular a leak this pass's own
-||| inlining first exposed, that root-caused to two pre-existing,
-||| unrelated bugs in `Compiler.RC2.Loop`/`Emit` rather than to this
-||| pass's own logic.
+||| The case-of-case collapse on `Lifted`: a `case` whose scrutinee is
+||| itself a `case`, which inlining leaves when it splices a small
+||| case-returning callee into a scrutinee, becomes one `case`, so
+||| `Compiler.RC2.RC`'s `tryFuseCompare` reaches the comparison. The
+||| inlining itself runs earlier, on the case trees
+||| (`Compiler.RC2.InlineCExp`). Design: `rc2/doc/inlining.md`.
 module Compiler.RC2.Inline
 
 -- Copyright 2026, Hattori,Hiroki. All rights reserved.
 -- This module was licensed by BSD3.
 
 import Compiler.LambdaLift
-import Compiler.RC2.ConstFold
-import Compiler.RC2.MutualLoop
-import Compiler.RC2.Util
 
 import Core.CompileExpr
 import Core.Context
@@ -38,19 +29,13 @@ import Libraries.Data.List.SizeOf
 %default covering
 
 ------------------------------------------------------------------------
--- IR plumbing: `Weaken`/`Substitutable` for `Lifted`, ported from
--- `Core.TT.Term`'s own `insertNames`/`GenWeaken`/`FreelyEmbeddable`
--- instances and `Core.TT.Term.Subst`'s own `substTerm`. `Lifted`'s own
--- `LLocal` uses the exact same `IsVar`-based representation as `Term`'s
--- own `Local`, so the same generic `Core.TT.Var`/`Core.TT.Subst`
--- combinators (`insertNVarNames`, `find`) apply directly -- no fresh
--- capture-avoidance machinery needed, and no dependency on anything
--- `Lifted`- or rc2-specific. The `LiftedConAlt` cases need one extra
--- `appendAssociative` reshuffle `Term`'s own single-name `Bind` case
--- never needed, since a constructor alt binds a whole *list* of names
--- (`args`) at once -- ported from `Compiler.CaseOpts`'s own
--- `shiftBinderConAlt`, which already solves the identical shape for
--- `CConAlt`.
+-- `Weaken` for `Lifted`, ported from `Core.TT.Term`'s own `insertNames`/
+-- `GenWeaken` instances: duplicating the outer alternatives under an
+-- inner alternative's binders re-indexes them. The `LiftedConAlt` case
+-- needs one extra `appendAssociative` reshuffle `Term`'s single-name
+-- `Bind` never needed, since a constructor alt binds a whole list of
+-- names at once -- ported from `Compiler.CaseOpts`'s own
+-- `shiftBinderConAlt`, which solves the identical shape for `CConAlt`.
 
 mutual
   insertNamesLifted : GenWeakenable Lifted
@@ -120,117 +105,6 @@ export
 %hint
 WeakenLiftedConstAlt : Weaken LiftedConstAlt
 WeakenLiftedConstAlt = GenWeakenWeakens
-
-||| `Lifted`'s own scope index is a purely erased bookkeeping device (every
-||| runtime-relevant field -- `idx : Nat` included -- is otherwise
-||| unaffected by *appending* extra names on the right, unlike weakening on
-||| the left, which genuinely has to shift every `LLocal`'s own `idx`) --
-||| so `embed` (append-on-the-right) can use the free, `believe_me`-based
-||| default `FreelyEmbeddable` provides for exactly this "nameless
-||| representation" situation, same as `Core.TT.Term`'s own instance.
-export
-FreelyEmbeddable Lifted where
-  embed = believe_me
-
--- Substitution: replace every occurrence of a `dropped` name with the
--- corresponding `vars`-scoped value from `env`, leaving any `outer`
--- (more-recently-bound, i.e. introduced *after* the substitution site)
--- name untouched. Ported from `Core.TT.Term.Subst`'s own `substTerm`;
--- the `LiftedConAlt` case needs the same extra `appendAssociative`
--- reshuffle `insertNamesConAlt` above does, for the same reason.
-mutual
-  substLifted : Substitutable Lifted Lifted
-  substLifted outer dropped env (LLocal fc p)
-      = find (\(MkVar p') => LLocal fc p') outer dropped (MkVar p) env
-  substLifted outer dropped env (LAppName fc lazy n args)
-      = LAppName fc lazy n (map (substLifted outer dropped env) args)
-  substLifted outer dropped env (LUnderApp fc n m args)
-      = LUnderApp fc n m (map (substLifted outer dropped env) args)
-  substLifted outer dropped env (LApp fc lazy c a)
-      = LApp fc lazy (substLifted outer dropped env c) (substLifted outer dropped env a)
-  substLifted outer dropped env (LLet fc x val sc)
-      = LLet fc x (substLifted outer dropped env val) (substLifted (suc outer) dropped env sc)
-  substLifted outer dropped env (LCon fc n ci tag args)
-      = LCon fc n ci tag (map (substLifted outer dropped env) args)
-  substLifted outer dropped env (LOp fc lazy op args)
-      = LOp fc lazy op (map (substLifted outer dropped env) args)
-  substLifted outer dropped env (LExtPrim fc lazy p args)
-      = LExtPrim fc lazy p (map (substLifted outer dropped env) args)
-  substLifted outer dropped env (LConCase fc sc alts def)
-      = LConCase fc (substLifted outer dropped env sc)
-                    (map (substConAlt outer dropped env) alts)
-                    (map (substLifted outer dropped env) def)
-  substLifted outer dropped env (LConstCase fc sc alts def)
-      = LConstCase fc (substLifted outer dropped env sc)
-                      (map (substConstAlt outer dropped env) alts)
-                      (map (substLifted outer dropped env) def)
-  substLifted outer dropped env (LPrimVal fc c) = LPrimVal fc c
-  substLifted outer dropped env (LErased fc) = LErased fc
-  substLifted outer dropped env (LCrash fc msg) = LCrash fc msg
-
-  substConAlt : {0 outSc, dropSc, vars : Scope} -> SizeOf outSc -> SizeOf dropSc -> Subst Lifted dropSc vars ->
-                LiftedConAlt (outSc ++ (dropSc ++ vars)) -> LiftedConAlt (outSc ++ vars)
-  substConAlt outer dropped env (MkLConAlt n ci tag args body)
-      = let body' : Lifted ((args ++ outSc) ++ (dropSc ++ vars))
-                  = rewrite sym (appendAssociative args outSc (dropSc ++ vars)) in body
-        in MkLConAlt n ci tag args $
-             rewrite appendAssociative args outSc vars
-               in substLifted (mkSizeOf args + outer) dropped env body'
-
-  substConstAlt : Substitutable Lifted LiftedConstAlt
-  substConstAlt outer dropped env (MkLConstAlt c body) = MkLConstAlt c (substLifted outer dropped env body)
-
-||| Builds the positional substitution environment for a call, matching
-||| `calleeArgs`'s own order one-for-one against the call's own argument
-||| list, whose length the caller has already checked against it.
-total
-toSubst : {0 vars : Scope} -> (calleeArgs : Scope) -> Vect (length calleeArgs) (Lifted vars) -> Subst Lifted calleeArgs vars
-toSubst [] [] = []
-toSubst (_ :: ds) (a :: as) = a :: toSubst ds as
-
-||| `calleeArgs` is erased in `inlineCall`'s own context (see
-||| `FreelyEmbeddable Lifted`'s own note -- `Lifted`'s scope index carries
-||| no runtime information at all), so its own length can't be counted
-||| via `mkSizeOf calleeArgs` directly; `env`'s own cons-spine already
-||| encodes that length as genuine runtime data, so read it from there
-||| instead.
-sizeOfSubst : Subst tm ds vars -> SizeOf ds
-sizeOfSubst [] = zero
-sizeOfSubst (_ :: rest) = suc (sizeOfSubst rest)
-
-||| Splices a closed callee's own body (referencing only its own
-||| `calleeArgs`, since only a genuine top-level definition -- `scope =
-||| []` -- is ever considered eligible, see `buildEligible`) into a call
-||| site, substituting each argument reference with the corresponding
-||| caller-side expression in `env`. `embed` first widens `body`'s own
-||| closed scope to include the caller's own `vars` (free, since
-||| `Lifted`'s own scope index is nameless at runtime -- see
-||| `FreelyEmbeddable Lifted` above), then `substLifted` (with an empty
-||| `outer`) replaces every one of `calleeArgs`'s own occurrences.
-inlineCall : {0 calleeArgs, vars : Scope} -> Lifted calleeArgs -> Subst Lifted calleeArgs vars -> Lifted vars
-inlineCall body env = substLifted zero (sizeOfSubst env) env (embed body)
-
-||| `inlineCall` at a call with `args`, each non-atomic one bound by a
-||| `let` first: substituted directly, an argument would be evaluated
-||| once per use of its parameter in `body` (or never, for an unused
-||| one), where the call evaluated it exactly once, before the body.
-spliceArgs : FC -> (eargs : List Name) -> Lifted eargs -> Vect (length eargs) (Lifted vars) -> Lifted vars
-spliceArgs fc eargs body args = go args [] (plusZeroRightNeutral _)
-  where
-    atomic : Lifted vs -> Bool
-    atomic (LLocal _ _) = True
-    atomic (LPrimVal _ _) = True
-    atomic (LErased _) = True
-    atomic _ = False
-
-    go : {0 m, k : Nat} -> Vect m (Lifted vs) -> Vect k (Lifted vs) -> (0 _ : m + k = length eargs) -> Lifted vs
-    go [] acc prf = inlineCall body (toSubst eargs (reverse (replace {p = \n => Vect n (Lifted vs)} prf acc)))
-    go {m = S m'} {k} (a :: as) acc prf =
-        if atomic a
-           then go as (a :: acc) (trans (sym (plusSuccRightSucc m' k)) prf)
-           else LLet fc (MN "inlineArg" 0) a $
-                  go (map weaken as) (LLocal {idx = 0} fc First :: map weaken acc)
-                     (trans (sym (plusSuccRightSucc m' k)) prf)
 
 ||| A cheap, coarse structural node count -- not calibrated against
 ||| actual generated-C size, just a proxy for "small helper" to bound how
@@ -525,212 +399,11 @@ mutual
       = let sc' = collapseCaseOfCase sc
         in MkSized (szOf sc') (MkLConstAlt c (valOf sc'))
 
-------------------------------------------------------------------------
--- Eligibility
-
-||| A callee to splice: its parameter names, in order, and its body,
-||| closed over exactly those names.
-record Eligible where
-  constructor MkEligible
-  eligArgs : List Name
-  eligBody : Lifted eligArgs
-  ||| Criterion B (the only call site, whole-program) rather than A.
-  singleCaller : Bool
-
-isPrimVal : Lifted vars -> Bool
-isPrimVal (LPrimVal _ _) = True
-isPrimVal _ = False
-
-||| Never inline a call whose arguments are all bare literal constants
-||| *and* include at least one Compiler.RC2.ConstFold itself won't fold
-||| away (a `Db` literal -- see its own `safeConst`, reused here
-||| so this stays in lockstep with exactly what it folds): gcc's own
-||| `-Werror=overflow` can statically prove an intentional fixed-width
-||| wraparound "overflows" once every operand of a folded arithmetic
-||| chain is a compile-time literal (found via `Test112Numeric/NativeInts.idr`'s
-||| own `chainInt8 100 100`-shaped calls, which this guard exists to
-||| keep working) -- but only when the resulting literal chain has an
-||| actual chance of reaching Emit unfolded. Everything else
-||| Compiler.RC2.ConstFold *does* fold (fixed-width ints, BigInteger,
-||| strings) gets computed down to a single RPrimVal by the time
-||| Compiler.RC2.RC's `toRCDef` finishes, well before Emit ever sees an
-||| arithmetic expression -- so inlining those poses no such risk and
-||| is allowed through. Vacuously true for a nullary call, which has no
-||| such folding risk at all (nothing to fold), so this only ever
-||| actually fires once there's at least one argument.
-allLiteralArgs : List (Lifted vars) -> Bool
-allLiteralArgs [] = False
-allLiteralArgs args = all isPrimVal args && any hasUnfoldableConst args
-  where
-    hasUnfoldableConst : Lifted vars -> Bool
-    hasUnfoldableConst (LPrimVal _ c) = not (safeConst c)
-    hasUnfoldableConst _ = False
-
-------------------------------------------------------------------------
--- Eligibility (Criterion B: the only call site, whole-program)
-
-||| Every saturated call's target in `d`, once per call.
-calledNames : LiftedDef -> List Name
-calledNames (MkLFun _ _ body) = go [] body
-  where
-    mutual
-      go : List Name -> Lifted vs -> List Name
-      go acc (LAppName _ _ n args) = foldl go (n :: acc) args
-      go acc (LUnderApp _ _ _ args) = foldl go acc args
-      go acc (LApp _ _ c a) = go (go acc c) a
-      go acc (LLet _ _ val sc) = go (go acc val) sc
-      go acc (LCon _ _ _ _ args) = foldl go acc args
-      go acc (LOp _ _ _ args) = foldl go acc (toList args)
-      go acc (LExtPrim _ _ _ args) = foldl go acc args
-      go acc (LConCase _ sc alts def) = maybe id (flip go) def (foldl goConAlt (go acc sc) alts)
-      go acc (LConstCase _ sc alts def) = maybe id (flip go) def (foldl goConstAlt (go acc sc) alts)
-      go acc _ = acc
-
-      goConAlt : List Name -> LiftedConAlt vs -> List Name
-      goConAlt acc (MkLConAlt _ _ _ _ sc) = go acc sc
-
-      goConstAlt : List Name -> LiftedConstAlt vs -> List Name
-      goConstAlt acc (MkLConstAlt _ sc) = go acc sc
-calledNames (MkLError body) = calledNames (MkLFun [] [] body)
-calledNames _ = []
-
-||| Definitions ordered callees before callers (`tarjanSCCs` lists a
-||| caller's component first, so this is its reverse, never built by
-||| concatenating -- see `Compiler.RC2.LateInline`'s `analyse`).
-calleesFirst : List (List Name) -> List Name
-calleesFirst = foldl (\acc, scc => foldl (flip (::)) acc scc) []
-
-||| Criterion B: a top-level function with arguments, called from
-||| exactly one place in the whole program, and not part of any call
-||| cycle (a self-call included) -- the callees `LateInline` would
-||| otherwise only reach after RC annotation, though they never needed
-||| to wait for `Loop` (`constructor-escape-analysis.md`, "Remaining").
-||| A 0-argument definition is a CAF, evaluated once however often it's
-||| referenced, so it is never inlined this way.
-singleCallerCallees : SortedMap Name LiftedDef -> SortedMap Name (List Name) -> (sccs : List (List Name)) -> SortedSet Name
-singleCallerCallees defOf callees sccs =
-    let counts : SortedMap Name Nat :=
-            foldl (\acc, ns => foldl (\m, n => insert n (1 + fromMaybe 0 (lookup n m)) m) acc ns)
-                  (the (SortedMap Name Nat) empty) (values callees)
-        cyclic : SortedSet Name :=
-            foldl (\acc, scc => case scc of
-                                     [_] => acc
-                                     _ => foldl (flip insert) acc scc)
-                  (the (SortedSet Name) empty) sccs
-    in SortedSet.fromList $ mapMaybe (\(n, cnt) => if cnt == 1 && ok n cyclic then Just n else Nothing)
-                                     (SortedMap.toList counts)
-  where
-    ok : Name -> SortedSet Name -> Bool
-    ok n cyclic = case lookup n defOf of
-        Just (MkLFun (_ :: _) [] _) =>
-            not (contains n cyclic) && not (elem n (fromMaybe [] (lookup n callees)))
-        _ => False
-
-------------------------------------------------------------------------
--- The whole-program rewrite
-
--- Walks `e`, replacing every fully-saturated call to a Criterion-A-
--- eligible function with that function's own body, substituted with the
--- call's own (already-processed) arguments. Bottom-up: a call's own
--- arguments are inlined first, so a nested eligible call inside an
--- argument is caught before the outer call is even considered. No
--- second pass over a freshly-spliced body is needed -- Criterion A's own
--- "call-free" requirement guarantees an eligible callee's body has
--- nothing left to inline.
-mutual
-  inlineLifted : SortedMap Name Eligible -> Lifted vars -> Core (Lifted vars)
-  inlineLifted elig (LAppName fc lazy n args)
-      = do args' <- traverse (inlineLifted elig) args
-           let call = LAppName fc lazy n args'
-           pure $ case SortedMap.lookup n elig of
-                Just (MkEligible eargs ebody single) =>
-                    case exactLength (length eargs) (fromList args') of
-                         Just vargs =>
-                             if not (allLiteralArgs args') && not (single && isJust lazy)
-                                then spliceArgs fc eargs ebody vargs
-                                else call
-                         Nothing => call
-                Nothing => call
-  inlineLifted elig (LUnderApp fc n m args)
-      = LUnderApp fc n m <$> traverse (inlineLifted elig) args
-  inlineLifted elig (LApp fc lazy c a)
-      = LApp fc lazy <$> inlineLifted elig c <*> inlineLifted elig a
-  inlineLifted elig (LLet fc x val sc)
-      = LLet fc x <$> inlineLifted elig val <*> inlineLifted elig sc
-  inlineLifted elig (LCon fc n ci tag args)
-      = LCon fc n ci tag <$> traverse (inlineLifted elig) args
-  inlineLifted elig (LOp fc lazy op args)
-      = LOp fc lazy op <$> rc2traverseVect (inlineLifted elig) args
-  inlineLifted elig (LExtPrim fc lazy p args)
-      = LExtPrim fc lazy p <$> traverse (inlineLifted elig) args
-  inlineLifted elig (LConCase fc sc alts def)
-      = LConCase fc <$> inlineLifted elig sc <*> traverse (inlineConAlt elig) alts <*> traverseOpt (inlineLifted elig) def
-  inlineLifted elig (LConstCase fc sc alts def)
-      = LConstCase fc <$> inlineLifted elig sc <*> traverse (inlineConstAlt elig) alts <*> traverseOpt (inlineLifted elig) def
-  inlineLifted elig e = pure e
-
-  inlineConAlt : SortedMap Name Eligible -> LiftedConAlt vars -> Core (LiftedConAlt vars)
-  inlineConAlt elig (MkLConAlt n ci t args sc) = MkLConAlt n ci t args <$> inlineLifted elig sc
-
-  inlineConstAlt : SortedMap Name Eligible -> LiftedConstAlt vars -> Core (LiftedConstAlt vars)
-  inlineConstAlt elig (MkLConstAlt c sc) = MkLConstAlt c <$> inlineLifted elig sc
-
-||| Applies Criterion-A inlining, followed by a case-of-case collapse
-||| pass, to every top-level definition's own body -- one pass, not
-||| iterated to a fixpoint (see `inlineLifted`'s own module note for why a
-||| second pass over a freshly-spliced body is never needed). The
-||| eligible-callee map is built once, up front, from the *original*
-||| (pre-inlining) definitions -- an eligible callee is call-free by
-||| definition, so inlining elsewhere never changes whether it itself
-||| stays eligible.
-|||
-||| Split into three separately-`logTime`d phases (build the eligibility
-||| map; substitute; collapse case-of-case) purely for diagnosis -- the
-||| size-budget/bookkeeping work on the case-of-case side (see
-||| `rc2/doc/inlining.md`'s "Size budget"/"Size bookkeeping" sections)
-||| turned out *not* to be what a large real program's own ~140s
-||| `rc2: Inline` time was actually spent on (re-measured essentially
-||| unchanged after that fix), so this splits the pass to find out which
-||| of the three phases the real cost is actually in, at `--timing 3`
-||| (one level deeper than the `rc2: Inline` wrapper `Compiler.RC2.RC2`
-||| itself logs at `--timing 2`).
+||| The case-of-case collapse over every function and error body.
 export
-applyInlineLifted : {auto c : Ref Ctxt Defs} -> List (Name, LiftedDef) -> Core (List (Name, LiftedDef))
-applyInlineLifted lds = do
-    let elig : SortedMap Name Eligible := empty
-    let defOf : SortedMap Name LiftedDef := SortedMap.fromList lds
-    (single, order) <- logTime 3 "rc2: Inline (call graph)" $ do
-        let callees : SortedMap Name (List Name) := map calledNames defOf
-        let sccs : List (List Name) := tarjanSCCs (map SortedSet.fromList callees)
-        pure (singleCallerCallees defOf callees sccs, calleesFirst sccs)
-    substituted <- logTime 3 "rc2: Inline (substitute)" $
-                     substituteAll defOf single elig empty order
-    logTime 3 "rc2: Inline (case-of-case collapse)" $
-      pure (map (\(n, d) => collapseDef (n, fromMaybe d (lookup n substituted))) lds)
+applyCaseOfCase : List (Name, LiftedDef) -> List (Name, LiftedDef)
+applyCaseOfCase = map collapseDef
   where
-    substituteDef : SortedMap Name Eligible -> LiftedDef -> Core LiftedDef
-    substituteDef elig (MkLFun args scope body)
-        = MkLFun args scope <$> inlineLifted elig body
-    substituteDef elig (MkLError body)
-        = MkLError <$> inlineLifted elig body
-    substituteDef _ d = pure d
-
-    -- Callees first, so a Criterion B callee is spliced with its own
-    -- callees already inlined into it (`inlining.md`, "Criterion B").
-    substituteAll : SortedMap Name LiftedDef -> SortedSet Name -> SortedMap Name Eligible
-                 -> SortedMap Name LiftedDef -> List Name -> Core (SortedMap Name LiftedDef)
-    substituteAll _ _ _ done [] = pure done
-    substituteAll defOf single elig done (n :: ns) =
-        case lookup n defOf of
-             Nothing => substituteAll defOf single elig done ns
-             Just d => do
-                 d' <- substituteDef elig d
-                 let elig' = case d' of
-                                  MkLFun args [] body =>
-                                      if contains n single then insert n (MkEligible args body True) elig else elig
-                                  _ => elig
-                 substituteAll defOf single elig' (insert n d' done) ns
-
     collapseDef : (Name, LiftedDef) -> (Name, LiftedDef)
     collapseDef (n, MkLFun args scope body) = (n, MkLFun args scope (valOf (collapseCaseOfCase body)))
     collapseDef (n, MkLError body) = (n, MkLError (valOf (collapseCaseOfCase body)))

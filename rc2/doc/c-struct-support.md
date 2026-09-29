@@ -591,6 +591,13 @@ tells this code exactly which of `structVar`/`value` (if either) to
 drop -- the same contract every other `postDrop`-carrying node already
 has, Emit.idr doesn't re-derive ownership here.
 
+**A native field reads the value natively** (2026-09-29). Rendering
+`value` Boxed and extracting it leaked a constant: inlining a setter
+into its only caller (`inlining.md`, Criterion B) passed `9.0` itself,
+which `rcVarToBoxedC` boxes and nothing frees (Test24 and Test120,
+16 bytes under valgrind). A field of a type `cfTypeNative` maps now goes
+through `rcVarToNativeC`, so a constant is written as a literal.
+
 ### What can actually be ported from upstream, concretely
 
 rc2 is a fully independent package that never edits `idris2-src`

@@ -235,12 +235,12 @@ insertMemoize = map wrap
              Nothing => (n, MkRCFun [] retRep isWorker (RMemoize EmptyFC n retRep body))
     wrap nd = nd
 
-||| Criterion A of inlining (`noinline` turns it off with the rest),
-||| before lifting.
-inlineNamed : {auto c : Ref Ctxt Defs} -> List String -> Maybe NamedCExp -> List (Name, FC, NamedDef) -> Core (Maybe NamedCExp, List (Name, FC, NamedDef))
-inlineNamed disabled main defs =
+||| rc2's inlining (`noinline` turns it off with the case-of-case
+||| collapse), before lifting.
+inlineNamed : {auto c : Ref Ctxt Defs} -> List String -> Maybe (SortedSet Name) -> Maybe NamedCExp -> List (Name, FC, NamedDef) -> Core (Maybe NamedCExp, List (Name, FC, NamedDef))
+inlineNamed disabled keep main defs =
     if "noinline" `elem` disabled then pure (main, defs)
-    else logTime 2 "rc2: Inline (A, before lifting)" $ inlineCExp main defs
+    else logTime 2 "rc2: Inline (before lifting)" $ inlineCExp keep main defs
 
 ||| The stage names `--directive noXXX`/`%cg rc2 noXXX` can disable
 ||| (`rc2/doc/directives.md`) -- factored out so whole-program
@@ -312,7 +312,7 @@ toRCDefs disabled incremental roots lds0 = do
     -- the whole pipeline ever produces it. See that module's own doc
     -- comment for the full reasoning.
     _ <- newRef VarId 1
-    lds <- if "noinline" `elem` disabled then pure lds0 else logTime 2 "rc2: Inline" $ applyInlineLifted lds0
+    lds <- if "noinline" `elem` disabled then pure lds0 else logTime 2 "rc2: Inline (case-of-case collapse)" $ pure $ applyCaseOfCase lds0
     structs <- logTime 3 "rc2: struct table" $ pure $
            foldl (\acc, (_, ld) => case ld of
                                         MkLForeign _ fargs ret => foldl (flip collectStructDefs) (collectStructDefs ret acc) fargs
@@ -759,7 +759,8 @@ compileExprWhole c s _ outputDir tm outfile =
      -- rc2/doc/export-support.md's "Linking as a library" section.
      let noMain = "nomain" `elem` directiveList
      cdata <- getCompileDataWith ["RC2", "RefC", "C"] False Cases tm
-     (mainIn, namedIn) <- inlineNamed disabledStages (Just (forget (mainExpr cdata))) (namedDefs cdata)
+     exportNames <- traverse (\(n, _) => getFullName n) (exported cdata)
+     (mainIn, namedIn) <- inlineNamed disabledStages (Just (SortedSet.fromList exportNames)) (Just (forget (mainExpr cdata))) (namedDefs cdata)
      (lifted, liftInfos) <- logTime 2 "rc2: Lambda lift" $ lambdaLiftProgram mainIn namedIn
      let liftedByName = SortedMap.fromList lifted
      exportedSigs <- traverse (validateExport liftedByName) (exported cdata)
@@ -938,7 +939,7 @@ incCompile c s sourceFile = do
          let noMain = currentNS coreDefs /= mainNS
          directiveList <- getDirectives (Other "rc2")
          let disabledStages = nub ("nodeadcode" :: filter (`elem` directiveList) stageDirectiveNames)
-         (_, namedIn) <- inlineNamed disabledStages Nothing (namedDefs cdata)
+         (_, namedIn) <- inlineNamed disabledStages Nothing Nothing (namedDefs cdata)
          (lifted, _) <- logTime 2 "rc2: Lambda lift" $ lambdaLiftProgram Nothing namedIn
          defs <- toRCDefs disabledStages True [] lifted
          -- `Main.main`'s own *compiled* arity isn't a fixed 0-or-1 --

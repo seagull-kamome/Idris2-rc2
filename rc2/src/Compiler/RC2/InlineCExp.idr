@@ -1,8 +1,10 @@
-||| Criterion A of rc2's inlining on the named case trees, before lambda
-||| lifting: a small, call-free function's body replaces every saturated
-||| call to it, so `Compiler.RC2.RC`'s comparison fusion sees through an
-||| interface method such as `Ord Int`'s `<=`. Criterion B and the
-||| case-of-case collapse stay in `Compiler.RC2.Inline`, on `Lifted`.
+||| rc2's whole-program inlining, on the named case trees before lambda
+||| lifting. Criterion A: a small, call-free function's body replaces
+||| every saturated call to it, so `Compiler.RC2.RC`'s comparison fusion
+||| sees through an interface method such as `Ord Int`'s `<=`. Criterion
+||| B: a loop-free function called once is spliced there, so a
+||| constructor it returns meets the caller's `case`. The case-of-case
+||| collapse stays in `Compiler.RC2.Inline`, on `Lifted`.
 ||| Design: `rc2/doc/inlining.md`.
 |||
 ||| Copyright 2026, Hattori,Hiroki. All rights reserved.
@@ -10,6 +12,7 @@
 module Compiler.RC2.InlineCExp
 
 import Compiler.RC2.ConstFold
+import Compiler.RC2.MutualLoop
 
 import Core.CompileExpr
 import Core.Context
@@ -18,6 +21,7 @@ import Core.TT
 
 import Data.List
 import Data.SortedMap
+import Data.SortedSet
 import Data.Vect
 
 %default covering
@@ -98,15 +102,22 @@ fresh hint = do
 -- its innermost binder, so a capture would silently read the wrong one.
 copy : {auto f : Ref Fresh Int} -> SortedMap Name NamedCExp -> NamedCExp -> Core NamedCExp
 copy env e@(NmLocal _ x) = pure (fromMaybe e (lookup x env))
+copy env (NmLam fc x sc) = do
+    x' <- fresh "rc2inl"
+    NmLam fc x' <$> copy (insert x (NmLocal fc x') env) sc
 copy env (NmLet fc x val sc) = do
     x' <- fresh "rc2inl"
     pure $ NmLet fc x' !(copy env val) !(copy (insert x (NmLocal fc x') env) sc)
+copy env (NmApp fc g args) = NmApp fc <$> copy env g <*> traverse (copy env) args
 copy env (NmCon fc n ci t args) = NmCon fc n ci t <$> traverse (copy env) args
 copy env (NmOp fc op args) = NmOp fc op <$> traverseVect args
   where
     traverseVect : Vect k NamedCExp -> Core (Vect k NamedCExp)
     traverseVect [] = pure []
     traverseVect (a :: as) = pure $ !(copy env a) :: !(traverseVect as)
+copy env (NmExtPrim fc p args) = NmExtPrim fc p <$> traverse (copy env) args
+copy env (NmForce fc lr t) = NmForce fc lr <$> copy env t
+copy env (NmDelay fc lr t) = NmDelay fc lr <$> copy env t
 copy env (NmConCase fc sc alts def) =
     pure $ NmConCase fc !(copy env sc) !(traverse alt alts) !(traverseOpt (copy env) def)
   where
@@ -183,20 +194,105 @@ mutual
                    else pure orig
       Nothing => pure orig
 
-||| Criterion A over `main` and every definition, callees chosen from the
-||| definitions as given. One pass: a call-free body has nothing left to
-||| inline once spliced.
-export
-inlineCExp : Maybe NamedCExp -> List (Name, FC, NamedDef) -> Core (Maybe NamedCExp, List (Name, FC, NamedDef))
-inlineCExp main defs = do
-    f <- newRef Fresh 0
-    let mainDef = maybe [] (\m => [(MN "__mainExpression" 0, MkNmFun [] m)]) main
-        elig = eligible (mainDef ++ map (\(n, _, d) => (n, d)) defs)
-    main' <- traverseOpt (inline elig) main
-    defs' <- traverse (\(n, fc, d) => (n, fc,) <$> inlineDef elig d) defs
-    pure (main', defs')
+-------------------------------------------------------------------------------
+-- Criterion B: a loop-free function with exactly one call, whole-program
+
+-- Every name the body calls, once per call: every `NmRef` lifts to a
+-- call, in a lambda too.
+calledNames : NamedCExp -> List Name
+calledNames = go []
   where
-    inlineDef : {auto f : Ref Fresh Int} -> SortedMap Name Eligible -> NamedDef -> Core NamedDef
-    inlineDef elig (MkNmFun args b) = MkNmFun args <$> inline elig b
-    inlineDef elig (MkNmError b) = MkNmError <$> inline elig b
-    inlineDef _ d = pure d
+    go : List Name -> NamedCExp -> List Name
+    go acc (NmRef _ n) = n :: acc
+    go acc (NmLam _ _ b) = go acc b
+    go acc (NmLet _ _ v b) = go (go acc v) b
+    go acc (NmApp _ g args) = foldl go (go acc g) args
+    go acc (NmCon _ _ _ _ args) = foldl go acc args
+    go acc (NmOp _ _ args) = foldl go acc (toList args)
+    go acc (NmExtPrim _ _ args) = foldl go acc args
+    go acc (NmForce _ _ t) = go acc t
+    go acc (NmDelay _ _ t) = go acc t
+    go acc (NmConCase _ sc alts def) =
+        maybe id (flip go) def (foldl (\a, (MkNConAlt _ _ _ _ b) => go a b) (go acc sc) alts)
+    go acc (NmConstCase _ sc alts def) =
+        maybe id (flip go) def (foldl (\a, (MkNConstAlt _ b) => go a b) (go acc sc) alts)
+    go acc _ = acc
+
+defCalls : NamedDef -> List Name
+defCalls (MkNmFun _ b) = calledNames b
+defCalls (MkNmError b) = calledNames b
+defCalls _ = []
+
+-- Called once in the whole program, in no call cycle (a self-call
+-- included), and taking arguments: a CAF is evaluated once however
+-- often it is referenced.
+singleCallerCallees : SortedMap Name NamedDef -> SortedMap Name (List Name) -> List (List Name) -> SortedSet Name
+singleCallerCallees defOf callees sccs =
+    let counts : SortedMap Name Nat :=
+            foldl (\acc, ns => foldl (\m, n => insert n (1 + fromMaybe 0 (lookup n m)) m) acc ns)
+                  (the (SortedMap Name Nat) empty) (values callees)
+        cyclic : SortedSet Name :=
+            foldl (\acc, scc => case scc of
+                                     [_] => acc
+                                     _ => foldl (flip insert) acc scc)
+                  (the (SortedSet Name) empty) sccs
+    in fromList $ mapMaybe (\(n, k) => if k == 1 && ok cyclic n then Just n else Nothing) (SortedMap.toList counts)
+  where
+    ok : SortedSet Name -> Name -> Bool
+    ok cyclic n = case lookup n defOf of
+        Just (MkNmFun (_ :: _) _) => not (contains n cyclic) && not (elem n (fromMaybe [] (lookup n callees)))
+        _ => False
+
+-------------------------------------------------------------------------------
+-- The pass
+
+||| Criteria A and B over `main` and every definition. Definitions are
+||| rewritten callees first, so a Criterion B callee is spliced with its
+||| own calls already inlined; a Criterion A body, call-free, needs no
+||| second pass. With `keep`, a whole-program compile, a Criterion B callee
+||| left with no call is dropped unless `keep` has it (an `%export`):
+||| lifted, it would only duplicate the lambdas now lifted in its caller
+||| until `Compiler.RC2.DeadCode` removes it.
+export
+inlineCExp : (keep : Maybe (SortedSet Name)) -> Maybe NamedCExp -> List (Name, FC, NamedDef) ->
+             Core (Maybe NamedCExp, List (Name, FC, NamedDef))
+inlineCExp keep main defs = do
+    f <- newRef Fresh 0
+    let mainName = MN "__mainExpression" 0
+        allDefs : List (Name, NamedDef) := mainDef mainName main ++ map (\(n, _, d) => (n, d)) defs
+        defOf : SortedMap Name NamedDef := fromList allDefs
+        callees : SortedMap Name (List Name) := map defCalls defOf
+        sccs = tarjanSCCs (map SortedSet.fromList callees)
+        single = singleCallerCallees defOf callees sccs
+    done <- rewriteAll defOf single (eligible allDefs) empty (calleesFirst sccs)
+    let final = \n, d => fromMaybe d (lookup n done)
+        called : SortedSet Name := foldl (\s, d => foldl (flip insert) s (defCalls d)) empty (values done)
+        gone = \n => maybe False (\k => contains n single && not (contains n called) && not (contains n k)) keep
+    pure ( map (\m => case final mainName (MkNmFun [] m) of
+                           MkNmFun _ b => b
+                           _ => m) main
+         , mapMaybe (\(n, fc, d) => if gone n then Nothing else Just (n, fc, final n d)) defs )
+  where
+    mainDef : Name -> Maybe NamedCExp -> List (Name, NamedDef)
+    mainDef _ Nothing = []
+    mainDef n (Just m) = [(n, MkNmFun [] m)]
+
+    calleesFirst : List (List Name) -> List Name
+    calleesFirst = foldl (\acc, scc => foldl (flip (::)) acc scc) []
+
+    rewriteDef : {auto f : Ref Fresh Int} -> SortedMap Name Eligible -> NamedDef -> Core NamedDef
+    rewriteDef elig (MkNmFun args b) = MkNmFun args <$> inline elig b
+    rewriteDef elig (MkNmError b) = MkNmError <$> inline elig b
+    rewriteDef _ d = pure d
+
+    rewriteAll : {auto f : Ref Fresh Int} -> SortedMap Name NamedDef -> SortedSet Name -> SortedMap Name Eligible
+              -> SortedMap Name NamedDef -> List Name -> Core (SortedMap Name NamedDef)
+    rewriteAll _ _ _ done [] = pure done
+    rewriteAll defOf single elig done (n :: ns) = case lookup n defOf of
+        Nothing => rewriteAll defOf single elig done ns
+        Just d => do
+            d' <- rewriteDef elig d
+            let elig' = case d' of
+                             MkNmFun args b => if contains n single then insert n (MkEligible args b) elig else elig
+                             _ => elig
+            rewriteAll defOf single elig' (insert n d' done) ns
