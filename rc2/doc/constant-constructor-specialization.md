@@ -231,3 +231,20 @@ it can be re-derived on any program without rebuilding the compiler.
 - `rc2/tests/BenchSpecConstCon.idr`,
   `rc2/tests/BenchSpecConstConRec.idr` -- the two runtime A/Bs above,
   one per half of the gate.
+
+## Tried before lambda lifting, not kept (2026-09-29)
+
+A version on the named case trees, before lifting, was built and
+measured on idris2-lsp: clone a callee per constant dictionary (a CAF
+whose value is a constructor of closed fields), fold the `case` on it,
+and beta-reduce each call of a method lambda. It kept 75 clones, but
+the program got worse: 1,031 more definitions, 43 more closures built,
+41 more `apply`s, 594 fewer struct returns. Run before this pass
+instead of in place of it, it saved 3 `apply`s for 232 more definitions.
+
+The case trees have no counterpart of `RCConstCon`/`RCConstClosure`: a
+dictionary can't be one shared static value there. Every copy of a
+method lambda is lifted separately and built as a closure where it is
+not applied at once, and a dictionary reached through another one (a
+superclass field) is not a constant until `ConstFold` has run. That is
+why this pass stays on RCExp, after `ConstFold`.
