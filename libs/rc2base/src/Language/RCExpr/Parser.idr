@@ -249,6 +249,40 @@ greedyWordsG = do
         the (Grammar () RcToken False ()) (if isSuffixOf "=" v || v == ":" || v == "->" then fail "field boundary" else pure ())
         pure v
 
+||| A `CFType`'s own text, read as opaque words like `greedyWordsG`,
+||| but also taking what `Core.CompileExpr`'s `Show CFType` puts in a
+||| struct type: a quoted name and parenthesised `("field", Type)`
+||| pairs (`struct "point" ("x", Int) ("y", Double)`). With `arrows`
+||| a `->` is part of the type (a `CFFun` argument, `Int -> Int`), as
+||| inside an `[a, b]` list where `,` is the only separator; without
+||| it `->` ends the type, as after `callFFIInline`'s own `ret`.
+export
+cfTypeWordsG : (arrows : Bool) -> Grammar () RcToken True String
+cfTypeWordsG arrows = do
+    n <- anyName
+    rest <- many piece
+    pure (n ++ concatMap (" " ++) rest)
+  where
+    boundary : String -> Bool
+    boundary v = isSuffixOf "=" v || v == ":" || (not arrows && v == "->")
+    word : Grammar () RcToken True String
+    word = do
+        v <- anyName
+        the (Grammar () RcToken False ()) (if boundary v then fail "field boundary" else pure ())
+        pure v
+    quoted : Grammar () RcToken True String
+    quoted = map show (match RcQuotedString)
+    inner : Grammar () RcToken True String
+    inner = word <|> quoted <|> (match (RcPunct ',') *> pure ",")
+    group : Grammar () RcToken True String
+    group = do
+        match (RcPunct '(')
+        xs <- many inner
+        match (RcPunct ')')
+        pure ("(" ++ unwords xs ++ ")")
+    piece : Grammar () RcToken True String
+    piece = word <|> quoted <|> group
+
 ||| Only the two shapes that are ever a single bare token: `vN` and
 ||| `_`. Every `#`-prefixed shape is `hashG`'s own job (it needs
 ||| `localListG`, so it can't live here without a `mutual` block --
@@ -397,7 +431,7 @@ repG = boxedG <|> retG <|> nativeG
     nativeG : Grammar () RcToken True RRep
     nativeG = do
         n <- anyName
-        ty <- greedyWordsG
+        ty <- cfTypeWordsG False
         pure (NativeRep (n ++ " " ++ ty))
 
 ||| `Core.CompileExpr`'s own `Show ConInfo` -- always a literal
@@ -738,7 +772,7 @@ sigG = do
 nameListTextG : Grammar () RcToken True String
 nameListTextG = do
     match (RcPunct '[')
-    xs <- sepBy (match (RcPunct ',')) anyName
+    xs <- sepBy (match (RcPunct ',')) (cfTypeWordsG True)
     match (RcPunct ']')
     pure ("[" ++ joinComma xs ++ "]")
   where
@@ -769,7 +803,7 @@ callFFIInlineG = do
         pure xs
     fargs <- nameListTextG
     nameEq "->"
-    ret <- greedyWordsG
+    ret <- cfTypeWordsG False
     let desc = "[" ++ joinCommaShown ccs ++ "] " ++ fargs ++ " -> " ++ ret
     postDrop <- optionalField "postDrop"
     args <- localListG

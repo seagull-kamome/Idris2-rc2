@@ -177,4 +177,25 @@ metrics (places in the IR, not executions):
   memoize            0
   crash              0"
 
+check "foreigntypes.rcexpr (struct and function types in %foreign signatures)" "$TESTS_DIR/foreigntypes.rcexpr" 0 \
+"rcexpr-lint: foreigntypes.rcexpr: 2 defs, no anomalies found
+metrics (places in the IR, not executions):
+  definitions        2  (functions 2, workers 0, constructors 0, foreign 0, error 0)
+  con                0  (fresh 0, reusing a cell 0)
+  retpack            0  (constructors returned by value, no cell)
+  partial            0  (closures built)
+  apply              0  (closure calls)
+  call               2  (plain 0, callRep 0, FFI inline 2)
+  op                 0  (op 0, extprim 0)
+  let                2  (Boxed 2, native 0)
+  case               0  (constructor 0, constant 0, cmp 0)
+  dup                0  (increments, in 0 dup nodes)
+  drop               2  (decrements, in 2 drop nodes)
+  postDrop           0  (decrements attached to another node: postDrop, dropOnUnique, prologueDrop)
+  free               0
+  reuseOffer         0  (releaseReuse 0)
+  loop               0  (continue 0)
+  memoize            0
+  crash              0"
+
 echo "=== All rcexpr-lint checks passed ==="

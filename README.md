@@ -390,6 +390,16 @@ test) -- run `./verify.sh` with no arguments to see the full list in
 its own header comment, or to rerun a single smoke test by hand once
 `idris2-rc2` exists.
 
+Two more scripts sit next to `verify.sh`. Both are for changes that
+should not alter what rc2 emits (a refactoring, a speed-up):
+`snapshot.sh save DIR` / `snapshot.sh diff DIR` compare the IR dumps and
+C that two `verify.sh` runs left in `rc2/tests/build/`, byte for byte;
+`nopass.sh` runs the smoke tests once per optimization stage with that
+stage switched off, to find a pass another pass silently depends on
+(a test whose `check.sh` looks for that stage's effect fails then, as
+it should). Every smoke test's IR dump is also run through
+`tools/rcexpr-lint` by `verify.sh`.
+
 ```sh
 cd rc2/tests
 nix-shell -p gcc gmp pkg-config --run './bench.sh'

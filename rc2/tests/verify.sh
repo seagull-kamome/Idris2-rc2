@@ -41,6 +41,9 @@
 #                       curated leak-sensitive subset.
 #   --no-tsan          Skip the ThreadSanitizer pass (tsan.sh) over the
 #                       tests that run Idris code on several threads.
+#   --no-refc-suite    Skip the refc-suite pass (its programs never see
+#                       --directive, so a run that only varies directives
+#                       gains nothing from it; see nopass.sh).
 #
 # VALGRIND_JOBS=N (env var, not a flag) -- how many valgrind runs to
 # execute concurrently (default: nproc/2, floored at 1). Each run is
@@ -155,10 +158,12 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 RC2_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 REPO_DIR="$(cd "$RC2_DIR/.." && pwd)"
 IDRIS2RC2="$RC2_DIR/build/exec/idris2-rc2"
+RCEXPR_LINT="$REPO_DIR/tools/rcexpr-lint/build/exec/rcexpr-lint"
 
 SKIP_BUILD=0
 DO_VALGRIND=1
 DO_TSAN=1
+DO_REFC_SUITE=1
 VALGRIND_ALL=0
 REGEN_EXPECTED=0
 EXTRA_DIRECTIVES=()
@@ -167,6 +172,7 @@ while [ $# -gt 0 ]; do
         --skip-build) SKIP_BUILD=1; shift ;;
         --no-valgrind) DO_VALGRIND=0; shift ;;
         --no-tsan) DO_TSAN=0; shift ;;
+        --no-refc-suite) DO_REFC_SUITE=0; shift ;;
         --valgrind-all) VALGRIND_ALL=1; shift ;;
         --regen-expected) REGEN_EXPECTED=1; shift ;;
         --directive) EXTRA_DIRECTIVES+=("$2"); shift 2 ;;
@@ -273,15 +279,27 @@ else
         exit 1
     fi
     report_pass "build (libidris2rc2.a)"
+
+    # Checks every smoke test's IR dump below (tools/rcexpr-lint/README.md).
+    (cd "$REPO_DIR/tools/rcexpr-lint" && idris2 -p rc2base -p contrib -o rcexpr-lint RcexprLint.idr) \
+        > "$TMP/lint-build.log" 2>&1
+    if [ $? -ne 0 ]; then
+        echo "FAIL  build (rcexpr-lint, see rc2/tests/build/lint-build.log)"
+        exit 1
+    fi
+    report_pass "build (rcexpr-lint)"
 fi
 
-echo
-echo "=== refc-suite ==="
-(cd "$RC2_DIR/tests/refc-suite" && ./run.sh)
-refc_suite_status=$?
-if [ "$refc_suite_status" -ne 0 ]; then
-    fail=$((fail + 1))
-    failed_names+=("refc-suite")
+refc_suite_status=0
+if [ "$DO_REFC_SUITE" -eq 1 ]; then
+    echo
+    echo "=== refc-suite ==="
+    (cd "$RC2_DIR/tests/refc-suite" && ./run.sh)
+    refc_suite_status=$?
+    if [ "$refc_suite_status" -ne 0 ]; then
+        fail=$((fail + 1))
+        failed_names+=("refc-suite")
+    fi
 fi
 
 echo
@@ -481,6 +499,15 @@ for name in $ALL_TESTS; do
                 *) echo "$line" ;;
             esac
         done < <("$RC2_DIR/tests/$name/check.sh" "$TMP" "$name" 2>&1)
+    fi
+
+    # An output diff and valgrind both miss a drop that is one too many.
+    if [ -x "$RCEXPR_LINT" ]; then
+        if lint_out="$("$RCEXPR_LINT" "$TMP/${name}_rc2.rcexpr" 2>&1)"; then
+            report_pass "$name (rcexpr-lint, no anomalies)"
+        else
+            report_fail "$name" "rcexpr-lint: $(printf '%s\n' "$lint_out" | head -3 | tr '\n' ';')"
+        fi
     fi
 
     run_t0="$(date +%s.%N)"

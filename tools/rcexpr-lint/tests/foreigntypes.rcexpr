@@ -1,0 +1,11 @@
+def TestStructReturn  (fun args= ["v1:Boxed"] ret= Boxed)
+  let v2 : Boxed =
+    callFFIInline ["C:make_point,libc,p.h"] [Int, Double, %World] -> IORes struct "test_point" ("x", Int) ("y", Double) postDrop= [] [#3, #4.5, v1]
+  drop [v2]
+  #0
+
+def TestClosureArg  (fun args= [] ret= Boxed)
+  let v1 : Boxed =
+    callFFIInline ["C:apply_twice,libc,c.h"] [Int -> Int, Int] -> Int postDrop= [] [#Main.f/1~closure, #41]
+  drop [v1]
+  #0

@@ -23,3 +23,4 @@ rc2/tests/bench-*.log
 rc2/tests/refc-suite/**/*.log
 rc2/tests/refc-suite/**/*.out
 .scratch-lintest/
+rc2/tests/nopass-*.log

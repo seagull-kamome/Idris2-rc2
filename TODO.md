@@ -999,12 +999,6 @@ RC.annotate・DeadVars で実際に数秒を失った。1の計測で重いと�
 テストを72本から51本にまとめ(`rc2/tests/README.md`)、コンパイラの
 パスと実行時の機能をテストの一覧と突き合わせた結果。大きいものから。
 
-- **rcexpr-lint が verify に組み込まれていない。** `verify.sh`は全スモーク
-  テストの IR を`--directive dumprcexpr`で出しているのに、lint にかけて
-  いない。参照カウントの食い違いは出力の diff にも valgrind にも出にくい
-  (`tools/rcexpr-lint/README.md`)。組み込む前に、lint が`%foreign`の型の
-  `struct "名前" (...)`を読めない件を直す(Test24/Test120 の IR で
-  `parse error`になる)。
 - **失敗すべきプログラムのテストが無い。** verify はコンパイルが通る
   プログラムしか試さない。rc2 が利用者向けのエラーにする経路
   (`%foreign`の戻り値が関数、`getField`の構造体やフィールドが見つからない、
@@ -1016,11 +1010,6 @@ RC.annotate・DeadVars で実際に数秒を失った。1の計測で重いと�
   の節にある、メモ化しない挙動も確かめられていない。
 - **インクリメンタルコンパイル(`--inc rc2`)のテストが無い。** verify は
   全体コンパイルしか試さない。
-- **パスを止めた構成を試していない。** verify は既定のパイプラインだけで
-  走る。`--directive no<stage>`で1つずつ止めても出力が変わらないことは、
-  `--directive`を手で渡したときしか確かめられない(`noreuse`が実際に
-  壊れていた前例がある)。定期的に、各`no<stage>`でスモークテストを回す
-  スクリプトがあるとよい。
 - **大きな外部プログラムが verify に無い。** idris2-lsp は C の出力で既知の
   エラーで止まり、idris2-missing-containers は bench.sh でしか動かさない。
   少なくとも idris2-lsp の IR を lint にかける手順があると、スモーク
