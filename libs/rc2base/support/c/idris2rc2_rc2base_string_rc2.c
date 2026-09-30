@@ -3,28 +3,14 @@
 #include "idris2rc2_util.h"
 #include "idris2rc2_rc2base_string_rc2.h"
 
-IDRIS2RC2_Value *idris2rc2_string_byte_slice(char const *s, int off, int len) {
-    size_t total = strlen(s);
+IDRIS2RC2_Value *idris2rc2_string_byte_slice(char const *s, int64_t total, int64_t off, int64_t len) {
+    size_t n = total < 0 ? 0u : (size_t)total;
 
     size_t start = off < 0 ? 0u : (size_t)off;
-    if (start > total) start = total;
+    if (start > n) start = n;
 
     size_t take = len < 0 ? 0u : (size_t)len;
-    if (take > total - start) take = total - start;
+    if (take > n - start) take = n - start;
 
-    /* idris2rc2_mkEmptyString(1) hands back the shared immutable
-     * empty-string singleton (memory.c) -- must be returned as-is for
-     * the empty case, never written into. Mirrors
-     * idris2rc2_TextBuffer_to_string's own outLen == 0 guard. */
-    if (take == 0)
-        return (IDRIS2RC2_Value *)idris2rc2_mkEmptyString(1);
-
-    IDRIS2RC2_String *r = idris2rc2_mkEmptyString(take + 1);
-    memcpy(r->str, s + start, take);
-    r->str[take] = '\0';
-    return (IDRIS2RC2_Value *)r;
-}
-
-int idris2rc2_string_byte_length(char const *s) {
-    return (int)strlen(s);
+    return (IDRIS2RC2_Value *)idris2rc2_mkStringLen(s + start, take);
 }

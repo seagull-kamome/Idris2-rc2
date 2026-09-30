@@ -1,6 +1,7 @@
 #pragma once
 
 #include "idris2rc2_datatypes.h"
+#include "idris2rc2_util.h"
 
 IDRIS2RC2_Value *idris2rc2_alloc(size_t size);
 #define IDRIS2RC2_NEW(t) ((t *)idris2rc2_alloc(sizeof(t)))
@@ -117,8 +118,26 @@ IDRIS2RC2_Value *idris2rc2_mkDouble(double d);
 IDRIS2RC2_Value *idris2rc2_mkBits64(uint64_t i);
 IDRIS2RC2_Value *idris2rc2_mkInt64(int64_t i);
 
-IDRIS2RC2_String *idris2rc2_mkEmptyString(size_t bufLen); // bufLen includes the NUL
+// Aborts if `n` can't fit `len`'s own uint32_t (datatypes.h) -- shared by
+// every String constructor/concatenation that sums or measures a byte
+// count, so an oversized result fails loudly instead of silently
+// wrapping into a corrupt, too-short `len`.
+static inline uint32_t idris2rc2_checkedStrLen(size_t n) {
+  IDRIS2RC2_VERIFY(n <= UINT32_MAX, "string too large (%zu bytes)", n);
+  return (uint32_t)n;
+}
+
+// bufLen includes the NUL. Sets len = bufLen - 1: the caller must fill
+// exactly that many content bytes (embedded NUL allowed) -- the trailing
+// byte at str[bufLen - 1] is already the terminator, left at '\0' by this
+// function's own memset.
+IDRIS2RC2_String *idris2rc2_mkEmptyString(size_t bufLen);
+// strlen-based: for a plain C string with no embedded NUL (e.g. an
+// external library's char* return).
 IDRIS2RC2_String *idris2rc2_mkString(char const *s);
+// Copies exactly `len` bytes of `s` (which may contain embedded NUL) and
+// appends a NUL terminator.
+IDRIS2RC2_String *idris2rc2_mkStringLen(char const *s, size_t len);
 
 IDRIS2RC2_Pointer *idris2rc2_mkPointer(void *raw);
 IDRIS2RC2_GCPointer *idris2rc2_mkGCPointer(void *raw, IDRIS2RC2_Closure *onCollect);

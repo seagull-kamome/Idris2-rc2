@@ -11,22 +11,27 @@
 /* Byte-exact substring: the `len` bytes of `s` starting at byte offset
  * `off`, as a freshly built IDRIS2RC2_String value.
  *
- * `off`/`len` are clamped to [0, strlen(s)] here, so an out-of-range
+ * `total` is s's byte length (Data.String.RC2.byteLength), so a NUL
+ * inside s is just another byte. `off`/`len` are clamped to [0, total] here, so an out-of-range
  * request can never read past the source -- it just yields a shorter
  * (possibly empty) result. Cutting inside a multi-byte UTF-8 sequence
  * is allowed and produces an invalid-at-the-edge string (the Idris
  * side documents that).
  *
  * Returns an already-fully-formed, correctly tagged Value* (via
- * idris2rc2_mkEmptyString), NOT a bare char* -- same contract as
+ * idris2rc2_mkStringLen), NOT a bare char* -- same contract as
  * idris2rc2_rc2base_text_util.h's idris2rc2_TextBuffer_to_string. The paired %foreign
  * types its return as a never-constructed opaque marker so rc2's FFI
  * marshaller passes it through untouched instead of wrapping it again. */
-IDRIS2RC2_Value *idris2rc2_string_byte_slice(char const *s, int off, int len);
+IDRIS2RC2_Value *idris2rc2_string_byte_slice(char const *s, int64_t total, int64_t off, int64_t len);
 
-/* strlen(s) as an int -- the on-the-wire byte length, the counterpart
+/* The String's byte length -- the on-the-wire length, the counterpart
  * to codepoint-wise `Data.String.length`. Needed to bound loops that
- * already work in byte offsets (e.g. POSIX regex match iteration). */
-int idris2rc2_string_byte_length(char const *s);
+ * already work in byte offsets (e.g. POSIX regex match iteration). Takes the
+ * String value itself (not `->str`), and is inline so reading `len` costs
+ * no call. */
+static inline int64_t idris2rc2_string_byte_length(IDRIS2RC2_Value *s) {
+    return (int64_t)((IDRIS2RC2_String *)s)->len;
+}
 
 #endif /* IDRIS2RC2_RC2BASE_STRING_RC2_H */

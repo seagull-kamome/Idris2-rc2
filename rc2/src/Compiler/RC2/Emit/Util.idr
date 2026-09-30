@@ -602,7 +602,14 @@ genConstant c cdef = case c of
   I64 x => go cdef "Int64" "INT64" (showInt64Min x)
   B64 x => go cdef "Bits64" "BITS64" "UINT64_C(\{show x})"
   Db x  => go cdef "Double" "DOUBLE" (show x)
-  Str x => go cdef "String" "STRING" (cStringQuoted x)
+  -- IDRIS2RC2_String carries an explicit byte length (datatypes.h) --
+  -- `sizeof(lit) - 1` reads it straight off the very literal `lit`
+  -- itself (a compile-time constant, valid in a static initializer),
+  -- so it can never disagree with what `lit`'s own escaping actually
+  -- emits, whatever codepoints or embedded NULs `x` contains.
+  Str x => let lit = cStringQuoted x in
+             "static IDRIS2RC2_String const \{constantName cdef}"
+               ++ " = { IDRIS2RC2_STOCKVAL(IDRIS2RC2_TAG_STRING), sizeof(\{lit}) - 1, \{lit} };"
   _ => "/* bad constant */"
   where go : ConstDef -> String -> String -> String -> String
         go cdef ty tag v =

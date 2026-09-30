@@ -16,8 +16,8 @@ idris2rc2_TextBuffer* idris2rc2_TextBuffer_mkEmpty(int len) {
 }
 
 
-idris2rc2_TextBuffer* idris2rc2_String_to_TextBuffer(const char* utf8_str) {
-    size_t byteLen = strlen(utf8_str);
+idris2rc2_TextBuffer* idris2rc2_String_to_TextBuffer(const char* utf8_str, int64_t byteLenI) {
+    size_t byteLen = byteLenI < 0 ? 0u : (size_t)byteLenI;
     size_t len = idris2rc2_utf8Length(utf8_str, byteLen);
     idris2rc2_TextBuffer* buffer = idris2rc2_TextBuffer_mkEmpty((int)len);
     size_t offset = 0;
@@ -27,6 +27,10 @@ idris2rc2_TextBuffer* idris2rc2_String_to_TextBuffer(const char* utf8_str) {
         offset += consumed;
     }
     return buffer;
+}
+
+idris2rc2_TextBuffer* idris2rc2_RawUtf8_to_TextBuffer(const char* utf8_str) {
+    return idris2rc2_String_to_TextBuffer(utf8_str, (int64_t)strlen(utf8_str));
 }
 
 

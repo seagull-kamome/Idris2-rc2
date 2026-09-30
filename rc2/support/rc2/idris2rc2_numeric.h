@@ -346,12 +346,29 @@ static inline IDRIS2RC2_Value *idris2rc2_gte_Char(IDRIS2RC2_Value *a, IDRIS2RC2_
 
 // ---- string (byte-wise; matches RefC's simplification of the spec) ----
 // Conversions to/from string stay in numeric.c (multi-statement -- see the
-// module note there); only these bare strcmp wrappers are one-liners.
-static inline IDRIS2RC2_Value *idris2rc2_lt_string(IDRIS2RC2_Value *a, IDRIS2RC2_Value *b) { return idris2rc2_mkBool(strcmp(((IDRIS2RC2_String *)a)->str, ((IDRIS2RC2_String *)b)->str) < 0); }
-static inline IDRIS2RC2_Value *idris2rc2_gt_string(IDRIS2RC2_Value *a, IDRIS2RC2_Value *b) { return idris2rc2_mkBool(strcmp(((IDRIS2RC2_String *)a)->str, ((IDRIS2RC2_String *)b)->str) > 0); }
-static inline IDRIS2RC2_Value *idris2rc2_eq_string(IDRIS2RC2_Value *a, IDRIS2RC2_Value *b) { return idris2rc2_mkBool(strcmp(((IDRIS2RC2_String *)a)->str, ((IDRIS2RC2_String *)b)->str) == 0); }
-static inline IDRIS2RC2_Value *idris2rc2_lte_string(IDRIS2RC2_Value *a, IDRIS2RC2_Value *b) { return idris2rc2_mkBool(strcmp(((IDRIS2RC2_String *)a)->str, ((IDRIS2RC2_String *)b)->str) <= 0); }
-static inline IDRIS2RC2_Value *idris2rc2_gte_string(IDRIS2RC2_Value *a, IDRIS2RC2_Value *b) { return idris2rc2_mkBool(strcmp(((IDRIS2RC2_String *)a)->str, ((IDRIS2RC2_String *)b)->str) >= 0); }
+// module note there); only these bare comparison wrappers are one-liners.
+//
+// Length-then-memcmp, not strcmp: a String's byte content may contain an
+// embedded NUL (datatypes.h), which strcmp would treat as an early
+// terminator. Ties on the shared prefix fall back to length, matching
+// strcmp's own convention that a proper prefix sorts before its
+// extension (a NUL byte -- absent past the shorter string's own end --
+// would otherwise have sorted lower than any real content byte there).
+static inline int idris2rc2_strcmp3(IDRIS2RC2_Value *a, IDRIS2RC2_Value *b) {
+  IDRIS2RC2_String *sa = (IDRIS2RC2_String *)a, *sb = (IDRIS2RC2_String *)b;
+  size_t n = sa->len < sb->len ? sa->len : sb->len;
+  int c = n ? memcmp(sa->str, sb->str, n) : 0;
+  if (c != 0) return c;
+  return (sa->len > sb->len) - (sa->len < sb->len);
+}
+static inline IDRIS2RC2_Value *idris2rc2_lt_string(IDRIS2RC2_Value *a, IDRIS2RC2_Value *b) { return idris2rc2_mkBool(idris2rc2_strcmp3(a, b) < 0); }
+static inline IDRIS2RC2_Value *idris2rc2_gt_string(IDRIS2RC2_Value *a, IDRIS2RC2_Value *b) { return idris2rc2_mkBool(idris2rc2_strcmp3(a, b) > 0); }
+static inline IDRIS2RC2_Value *idris2rc2_eq_string(IDRIS2RC2_Value *a, IDRIS2RC2_Value *b) {
+  IDRIS2RC2_String *sa = (IDRIS2RC2_String *)a, *sb = (IDRIS2RC2_String *)b;
+  return idris2rc2_mkBool(sa->len == sb->len && (sa->len == 0 || memcmp(sa->str, sb->str, sa->len) == 0));
+}
+static inline IDRIS2RC2_Value *idris2rc2_lte_string(IDRIS2RC2_Value *a, IDRIS2RC2_Value *b) { return idris2rc2_mkBool(idris2rc2_strcmp3(a, b) <= 0); }
+static inline IDRIS2RC2_Value *idris2rc2_gte_string(IDRIS2RC2_Value *a, IDRIS2RC2_Value *b) { return idris2rc2_mkBool(idris2rc2_strcmp3(a, b) >= 0); }
 
 // ---- Integer (arbitrary precision, via GMP) ----
 // Both operands immediate: plain int64_t arithmetic. Otherwise GMP, with

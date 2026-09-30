@@ -696,7 +696,15 @@ mutual
             False =>
                 emitAltChain resolvedSink
                     (\(MkRConstAlt c _) => case c of
-                        Str x => pure ("! strcmp(\{cStringQuoted x}, ((IDRIS2RC2_String *)\{sc'})->str)", [])
+                        -- Length-then-memcmp, not strcmp: `sc'` may carry
+                        -- an embedded NUL (datatypes.h), which strcmp
+                        -- would treat as an early terminator. `sizeof(lit)
+                        -- - 1` reads the literal's own true byte length --
+                        -- see genConstant's matching comment in Emit/
+                        -- Util.idr for why that's used over a separately
+                        -- computed count.
+                        Str x => let lit = cStringQuoted x in
+                                   pure ("(((IDRIS2RC2_String *)\{sc'})->len == sizeof(\{lit}) - 1 && ! memcmp(\{lit}, ((IDRIS2RC2_String *)\{sc'})->str, sizeof(\{lit}) - 1))", [])
                         BI x => pure (integerAltCond sc' x, [])
                         Db  x => case scRep of
                                       RNative DoubleType => (\(e, p) => ("\{e} == \{show x}", p)) <$> rcVarToNativeC DoubleType sc
@@ -1477,8 +1485,8 @@ collectDeclarations n (MkRCError exp) = throw $ InternalError "[rc2] Error with 
 collectDeclarations n def@(MkRCForeign ccs fargs ret) = do
     decls <- declarationsOf n def
     update FunctionDefinitions $ \otherDefs => decls ++ otherDefs
-    case (fastPackFixedReplacement n, ret, fargs) of
-         (Just _, CFString, [CFUser _ _]) => pure ()
+    case (fastPackFixedReplacement n, fastPackFixedShape ret fargs) of
+         (Just _, True) => pure ()
          _ => case parseCC ffiTags ccs of
                    Just (lang, _ :: extLibOpts) =>
                        when (elem lang ffiTags) $

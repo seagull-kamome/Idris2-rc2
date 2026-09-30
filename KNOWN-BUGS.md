@@ -59,6 +59,15 @@ If one of these stops reproducing, or a fix lands, remove the entry.
   bug -- its `expected` file reflects the *correct* result, which is
   why it doesn't literally match what a naive read of upstream's own
   `expected` would suggest. See `rc2/tests/refc-suite/README.md`.
+  The same test's `"abcde\0fg" => "1st\02nd"` case (flagged
+  `-- Issue 3161` in its own source) is the identical story for a
+  `String` pattern with an embedded NUL: real RefC's byte-string
+  `strcmp`-based case dispatch truncates at the NUL and matches
+  `"abcde"` (`"L"`) instead, but rc2's `String` now carries an
+  explicit byte length (`IDRIS2RC2_String`'s own `len` field,
+  datatypes.h) and compares the full byte content, so it correctly
+  falls into the `"abcde\0fg"` arm (`"1st\STXnd"`). `expected`
+  reflects this correct result too.
 - **`refc-suite`'s `clock` test: real RefC's own `clockTimeMonotonic`
   isn't actually monotonic** -- it just reuses RefC's second-granularity
   UTC clock (`time()`), so `monotonicStart < monotonicEnd` reads

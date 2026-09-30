@@ -443,6 +443,7 @@ IDRIS2RC2_Value *idris2rc2_cast_Integer_to_string(IDRIS2RC2_Value *x) {
   IDRIS2RC2_String *r = IDRIS2RC2_NEW(IDRIS2RC2_String);
   r->header.tag = IDRIS2RC2_TAG_STRING;
   r->str = mpz_get_str(NULL, 10, ((IDRIS2RC2_Integer *)x)->v);
+  r->len = idris2rc2_checkedStrLen(strlen(r->str));
   return (IDRIS2RC2_Value *)r;
 }
 
@@ -454,7 +455,7 @@ IDRIS2RC2_Value *idris2rc2_cast_string_to_Integer(IDRIS2RC2_Value *x) {
 }
 IDRIS2RC2_Value *idris2rc2_cast_string_to_Char(IDRIS2RC2_Value *x) {
   char const *s = ((IDRIS2RC2_String *)x)->str;
-  size_t byteLen = strlen(s);
+  size_t byteLen = ((IDRIS2RC2_String *)x)->len;
   if (byteLen == 0)
     return idris2rc2_mkChar(0);
   size_t consumed;

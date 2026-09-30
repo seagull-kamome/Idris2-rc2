@@ -244,7 +244,34 @@ fastPackFixedReplacement (NS ns (UN (Basic "fastPack"))) =
     if ns == mkNamespace "Prelude.Types" then Just "idris2rc2_fastPackFixed" else Nothing
 fastPackFixedReplacement (NS ns (UN (Basic "fastConcat"))) =
     if ns == mkNamespace "Prelude.Types" then Just "idris2rc2_fastConcatFixed" else Nothing
+-- Not leaks: `fastUnpack` and the two `Data.String.Iterator` calls that
+-- read the string take a `char *`, which loses a String's length at its
+-- first NUL, so they are sent to replacements taking the String itself.
+fastPackFixedReplacement (NS ns (UN (Basic "fastUnpack"))) =
+    if ns == mkNamespace "Prelude.Types" then Just "idris2rc2_fastUnpackFixed" else Nothing
+fastPackFixedReplacement (NS ns (UN (Basic "uncons"))) =
+    if ns == mkNamespace "Data.String.Iterator" then Just "idris2rc2_stringIteratorNextFixed" else Nothing
+fastPackFixedReplacement (NS ns (UN (Basic "withIteratorString"))) =
+    if ns == mkNamespace "Data.String.Iterator" then Just "idris2rc2_stringIteratorToStringFixed" else Nothing
 fastPackFixedReplacement _ = Nothing
+
+||| Whether a `fastPackFixedReplacement` target has a signature its
+||| replacement wrapper handles: every argument passed on as the boxed
+||| value it already is, and a boxed value returned as is.
+export
+fastPackFixedShape : CFType -> List CFType -> Bool
+fastPackFixedShape ret fargs = boxedRet ret && all boxedArg fargs
+  where
+    boxedRet : CFType -> Bool
+    boxedRet CFString = True
+    boxedRet (CFUser _ _) = True
+    boxedRet _ = False
+
+    boxedArg : CFType -> Bool
+    boxedArg CFString = True
+    boxedArg (CFUser _ _) = True
+    boxedArg (CFFun _ _) = True
+    boxedArg _ = False
 
 ||| Lower a `MkRCForeign` declaration to its C wrapper function -- the
 ||| `createCFunctions` `MkRCForeign` clause's whole body, standalone so
@@ -258,8 +285,8 @@ emitForeignDef : {auto oft : Ref OutfileText Output}
               -> {auto il : Ref IndentLevel Nat}
               -> Name -> (ccs : List String) -> (fargs : List CFType) -> (ret : CFType) -> Core ()
 emitForeignDef n ccs fargs ret =
-  case (fastPackFixedReplacement n, ret, fargs) of
-       (Just fixedFnName, CFString, [CFUser _ _]) => emitFastPackFixedWrapper fixedFnName
+  case (fastPackFixedReplacement n, fastPackFixedShape ret fargs) of
+       (Just fixedFnName, True) => emitFastPackFixedWrapper fixedFnName
        _ => emitGenericForeignWrapper
   where
     createFFIArgList : List CFType
@@ -335,7 +362,7 @@ emitForeignDef n ccs fargs ret =
         let removeVarsArgList = removeVars (mapMaybe alwaysUnboxedDropVar typeVarNameArgList)
         emit EmptyFC $ "IDRIS2RC2_Value *retVal = " ++ fixedFnName
                     ++ "("
-                    ++ showSep ", " (map (\(_, vn, vt) => extractValue CLangC vt vn) typeVarNameArgList)
+                    ++ showSep ", " (map (\(_, vn, _) => "(IDRIS2RC2_Value*)" ++ vn) typeVarNameArgList)
                     ++ ");"
         removeVarsArgList
         emit EmptyFC "return retVal;"
@@ -574,7 +601,7 @@ emitExportWrapper n exportedCName fargs ret = do
 export
 hasUsableForeignImpl : (Name, RCDef) -> Bool
 hasUsableForeignImpl (n, MkRCForeign ccs fargs ret) =
-    case (fastPackFixedReplacement n, ret, fargs) of
-         (Just _, CFString, [CFUser _ _]) => True
+    case (fastPackFixedReplacement n, fastPackFixedShape ret fargs) of
+         (Just _, True) => True
          _ => isJust (parseCC ffiTags ccs)
 hasUsableForeignImpl _ = True

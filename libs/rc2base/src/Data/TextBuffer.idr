@@ -4,6 +4,7 @@ module Data.TextBuffer
 -- This module was licensed by BSD3.
 
 import System.FFI
+import Data.String.RC2
 import Data.Fin
 import Data.So
 import Data.Vect
@@ -43,7 +44,7 @@ data RawStringValue : Type
 prim__TextBuffer_mkEmpty : Int -> PrimIO AnyPtr
 
 %foreign "C:idris2rc2_String_to_TextBuffer,libidris2rc2base,idris2rc2_rc2base_text_util.h"
-prim__String_to_TextBuffer : String -> PrimIO AnyPtr
+prim__String_to_TextBuffer : String -> Int -> PrimIO AnyPtr
 
 %foreign "C:idris2rc2_TextBuffer_to_string,libidris2rc2base,idris2rc2_rc2base_text_util.h"
 prim__TextBuffer_toString : GCAnyPtr -> PrimIO RawStringValue
@@ -89,21 +90,16 @@ build len action = unsafePerformIO $ do
 ||| Convert a String to Text.
 export
 fromString : String -> TextBuffer
-fromString s = unsafePerformIO $ MkTextBuffer <$> (wrapBuffer =<< primIO (prim__String_to_TextBuffer s))
+fromString s = unsafePerformIO $ MkTextBuffer <$> (wrapBuffer =<< primIO (prim__String_to_TextBuffer s (byteLength s)))
 
--- Same C symbol as prim__String_to_TextBuffer above, just typed
--- against an already-raw AnyPtr instead of a boxed Idris String --
--- idris2rc2_String_to_TextBuffer only ever sees a plain, NUL-
--- terminated `const char *` at the C ABI level regardless (an Idris
--- `String` %foreign argument is itself passed to C as a raw `char *`,
--- no separate marshalling step), so this reuses the identical decode
--- loop with no new C code, for a caller that already has a raw
--- pointer and doesn't want to force it through a boxed String first.
-%foreign "C:idris2rc2_String_to_TextBuffer,libidris2rc2base,idris2rc2_rc2base_text_util.h"
+-- The same decoding as prim__String_to_TextBuffer above, for a caller
+-- that already has a raw NUL-terminated UTF-8 pointer and doesn't want
+-- to force it through a boxed String first.
+%foreign "C:idris2rc2_RawUtf8_to_TextBuffer,libidris2rc2base,idris2rc2_rc2base_text_util.h"
 prim__RawUtf8_to_TextBuffer : AnyPtr -> PrimIO AnyPtr
 
 ||| Erased (`0`-multiplicity, zero runtime cost), `Data.So`-based proof
-||| that a raw `AnyPtr` is non-NULL. `idris2rc2_String_to_TextBuffer`
+||| that a raw `AnyPtr` is non-NULL. `idris2rc2_RawUtf8_to_TextBuffer`
 ||| (`prim__RawUtf8_to_TextBuffer` below) unconditionally dereferences
 ||| its own argument with no NULL check of its own (same contract as
 ||| `strlen`) -- rather than leave that precondition as a doc comment a

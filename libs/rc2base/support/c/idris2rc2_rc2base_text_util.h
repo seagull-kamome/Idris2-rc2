@@ -13,7 +13,11 @@ typedef struct {
 
 
 idris2rc2_TextBuffer* idris2rc2_TextBuffer_mkEmpty(int len);
-idris2rc2_TextBuffer* idris2rc2_String_to_TextBuffer(const char* utf8_str);
+// `byteLen` is the String's byte length (Data.String.RC2.byteLength), so a
+// NUL inside it is decoded like any other character.
+idris2rc2_TextBuffer* idris2rc2_String_to_TextBuffer(const char* utf8_str, int64_t byteLen);
+// The same decoding for a raw NUL-terminated UTF-8 buffer (strlen-measured).
+idris2rc2_TextBuffer* idris2rc2_RawUtf8_to_TextBuffer(const char* utf8_str);
 idris2rc2_TextBuffer* idris2rc2_TextBuffer_append(const idris2rc2_TextBuffer* a, const idris2rc2_TextBuffer* b);
 
 // Builds a fully-formed, correctly refcounted/tagged IDRIS2RC2_String

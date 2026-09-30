@@ -140,6 +140,7 @@ IDRIS2RC2_String *idris2rc2_mkEmptyString(size_t bufLen) {
     return (IDRIS2RC2_String *)&idris2rc2_emptyStringValue;
   IDRIS2RC2_String *v = IDRIS2RC2_NEW(IDRIS2RC2_String);
   v->header.tag = IDRIS2RC2_TAG_STRING;
+  v->len = idris2rc2_checkedStrLen(bufLen - 1);
   v->str = malloc(bufLen);
   IDRIS2RC2_VERIFY(v->str, "malloc failed");
   memset(v->str, 0, bufLen);
@@ -149,12 +150,19 @@ IDRIS2RC2_String *idris2rc2_mkEmptyString(size_t bufLen) {
 IDRIS2RC2_String *idris2rc2_mkString(char const *s) {
   if (s[0] == '\0')
     return (IDRIS2RC2_String *)&idris2rc2_emptyStringValue;
-  size_t l = strlen(s);
+  return idris2rc2_mkStringLen(s, strlen(s));
+}
+
+IDRIS2RC2_String *idris2rc2_mkStringLen(char const *s, size_t len) {
+  if (len == 0)
+    return (IDRIS2RC2_String *)&idris2rc2_emptyStringValue;
   IDRIS2RC2_String *v = IDRIS2RC2_NEW(IDRIS2RC2_String);
   v->header.tag = IDRIS2RC2_TAG_STRING;
-  v->str = malloc(l + 1);
+  v->len = idris2rc2_checkedStrLen(len);
+  v->str = malloc(len + 1);
   IDRIS2RC2_VERIFY(v->str, "malloc failed");
-  memcpy(v->str, s, l + 1);
+  memcpy(v->str, s, len);
+  v->str[len] = '\0';
   return v;
 }
 
@@ -365,5 +373,5 @@ void idris2rc2_free(IDRIS2RC2_Value *v) {
   idris2rc2_teardown(v);
 }
 
-IDRIS2RC2_String const idris2rc2_emptyStringValue = {IDRIS2RC2_STOCKVAL(IDRIS2RC2_TAG_STRING), ""};
+IDRIS2RC2_String const idris2rc2_emptyStringValue = {IDRIS2RC2_STOCKVAL(IDRIS2RC2_TAG_STRING), 0, ""};
 

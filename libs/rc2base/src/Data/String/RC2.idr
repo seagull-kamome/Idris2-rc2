@@ -21,10 +21,22 @@ module Data.String.RC2
 ||| constructor maps to `CFUser`, whose pack/extract are the identity
 ||| -- so the `Value*` flows straight through. Same trick as
 ||| `Data.TextBuffer`'s `RawStringValue`.
+||| `prim__stringByteLength` takes it too, with `believe_me`: a `String`
+||| argument reaches C as `->str` only, and the length is in the value.
 data RawStr : Type
 
+%foreign "C:idris2rc2_string_byte_length,libidris2rc2base,idris2rc2_rc2base_string_rc2.h"
+prim__stringByteLength : RawStr -> PrimIO Int
+
+||| The on-the-wire byte length of `s`, as opposed to
+||| `Data.String.length`'s codepoint count. For pure-ASCII input the
+||| two agree.
+export %inline
+byteLength : String -> Int
+byteLength s = unsafePerformIO (primIO (prim__stringByteLength (believe_me s)))
+
 %foreign "C:idris2rc2_string_byte_slice,libidris2rc2base,idris2rc2_rc2base_string_rc2.h"
-prim__stringByteSlice : String -> Int -> Int -> PrimIO RawStr
+prim__stringByteSlice : String -> Int -> Int -> Int -> PrimIO RawStr
 
 ||| The `len` bytes of `s` starting at **byte** offset `off`, as a
 ||| fresh `String`. One copy (`len` bytes, in C); the result is built
@@ -44,14 +56,4 @@ prim__stringByteSlice : String -> Int -> Int -> PrimIO RawStr
 export
 unsafeStringByteSlice : (s : String) -> (off, len : Int) -> String
 unsafeStringByteSlice s off len =
-  believe_me (unsafePerformIO (primIO (prim__stringByteSlice s off len)))
-
-%foreign "C:idris2rc2_string_byte_length,libidris2rc2base,idris2rc2_rc2base_string_rc2.h"
-prim__stringByteLength : String -> PrimIO Int
-
-||| The on-the-wire byte length of `s` (`strlen`), as opposed to
-||| `Data.String.length`'s codepoint count. For pure-ASCII input the
-||| two agree.
-export
-byteLength : String -> Int
-byteLength s = unsafePerformIO (primIO (prim__stringByteLength s))
+  believe_me (unsafePerformIO (primIO (prim__stringByteSlice s (byteLength s) off len)))

@@ -116,21 +116,21 @@ IDRIS2RC2_Value *idris2rc2_Data_IOArray_Prims_prim__arraySet(
 IDRIS2RC2_String const idris2rc2_osString = {
     IDRIS2RC2_STOCKVAL(IDRIS2RC2_TAG_STRING),
 #if defined(_WIN32)
-    "windows"
+    sizeof("windows") - 1, "windows"
 #elif defined(__APPLE__) || defined(__MACH__)
-    "macOS"
+    sizeof("macOS") - 1, "macOS"
 #elif defined(__linux__)
-    "Linux"
+    sizeof("Linux") - 1, "Linux"
 #elif defined(__FreeBSD__)
-    "FreeBSD"
+    sizeof("FreeBSD") - 1, "FreeBSD"
 #elif defined(__OpenBSD__)
-    "OpenBSD"
+    sizeof("OpenBSD") - 1, "OpenBSD"
 #elif defined(__NetBSD__)
-    "NetBSD"
+    sizeof("NetBSD") - 1, "NetBSD"
 #elif defined(__unix__) || defined(__unix)
-    "Unix"
+    sizeof("Unix") - 1, "Unix"
 #else
-    "Other"
+    sizeof("Other") - 1, "Other"
 #endif
 };
 
@@ -139,7 +139,7 @@ IDRIS2RC2_String const idris2rc2_osString = {
    prim__codegen calls into at compile time -- update both if this
    value ever changes. */
 IDRIS2RC2_String const idris2rc2_codegenString = {
-    IDRIS2RC2_STOCKVAL(IDRIS2RC2_TAG_STRING), "rc2"};
+    IDRIS2RC2_STOCKVAL(IDRIS2RC2_TAG_STRING), sizeof("rc2") - 1, "rc2"};
 
 IDRIS2RC2_Value *idris2rc2_Prelude_IO_prim__onCollect(IDRIS2RC2_Value *erased,
                                                         IDRIS2RC2_Value *anyPtr,

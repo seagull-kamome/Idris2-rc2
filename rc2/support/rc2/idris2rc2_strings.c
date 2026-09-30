@@ -6,7 +6,7 @@
 
 IDRIS2RC2_Value *idris2rc2_strTail(IDRIS2RC2_Value *input) {
   IDRIS2RC2_String *s = (IDRIS2RC2_String *)input;
-  size_t byteLen = strlen(s->str);
+  size_t byteLen = s->len;
   size_t offset = idris2rc2_utf8ByteOffsetOfChar(s->str, byteLen, 1);
   if (offset >= byteLen)
     return (IDRIS2RC2_Value *)&idris2rc2_emptyStringValue;
@@ -17,7 +17,7 @@ IDRIS2RC2_Value *idris2rc2_strTail(IDRIS2RC2_Value *input) {
 
 IDRIS2RC2_Value *idris2rc2_strReverse(IDRIS2RC2_Value *str) {
   IDRIS2RC2_String *in = (IDRIS2RC2_String *)str;
-  size_t byteLen = strlen(in->str);
+  size_t byteLen = in->len;
   size_t n = idris2rc2_utf8Length(in->str, byteLen);
   // Per-character byte offsets in original order, so the second pass can
   // copy whole characters (not bytes) into their mirrored position --
@@ -47,7 +47,7 @@ IDRIS2RC2_Value *idris2rc2_strReverse(IDRIS2RC2_Value *str) {
 
 IDRIS2RC2_Value *idris2rc2_strIndex(IDRIS2RC2_Value *str, IDRIS2RC2_Value *i) {
   IDRIS2RC2_String *s = (IDRIS2RC2_String *)str;
-  size_t byteLen = strlen(s->str);
+  size_t byteLen = s->len;
   int64_t idx = idris2rc2_extractInt(i);
   size_t offset = idris2rc2_utf8ByteOffsetOfChar(s->str, byteLen, (size_t)idx);
   size_t consumed;
@@ -56,7 +56,7 @@ IDRIS2RC2_Value *idris2rc2_strIndex(IDRIS2RC2_Value *str, IDRIS2RC2_Value *i) {
 
 IDRIS2RC2_Value *idris2rc2_strCons(IDRIS2RC2_Value *c, IDRIS2RC2_Value *str) {
   IDRIS2RC2_String *s = (IDRIS2RC2_String *)str;
-  size_t byteLen = strlen(s->str);
+  size_t byteLen = s->len;
   uint32_t cp = idris2rc2_to_char(c);
   int cpLen = idris2rc2_utf8EncodeLen(cp);
   IDRIS2RC2_String *r = idris2rc2_mkEmptyString((size_t)cpLen + byteLen + 1);
@@ -66,9 +66,9 @@ IDRIS2RC2_Value *idris2rc2_strCons(IDRIS2RC2_Value *c, IDRIS2RC2_Value *str) {
 }
 
 IDRIS2RC2_Value *idris2rc2_strAppend(IDRIS2RC2_Value *a, IDRIS2RC2_Value *b) {
-  size_t la = strlen(((IDRIS2RC2_String *)a)->str);
-  size_t lb = strlen(((IDRIS2RC2_String *)b)->str);
-  IDRIS2RC2_String *r = idris2rc2_mkEmptyString(la + lb + 1);
+  size_t la = ((IDRIS2RC2_String *)a)->len;
+  size_t lb = ((IDRIS2RC2_String *)b)->len;
+  IDRIS2RC2_String *r = idris2rc2_mkEmptyString(idris2rc2_checkedStrLen(la + lb) + 1);
   memcpy(r->str, ((IDRIS2RC2_String *)a)->str, la);
   memcpy(r->str + la, ((IDRIS2RC2_String *)b)->str, lb);
   return (IDRIS2RC2_Value *)r;
@@ -76,7 +76,7 @@ IDRIS2RC2_Value *idris2rc2_strAppend(IDRIS2RC2_Value *a, IDRIS2RC2_Value *b) {
 
 IDRIS2RC2_Value *idris2rc2_strSubstr(IDRIS2RC2_Value *start, IDRIS2RC2_Value *len, IDRIS2RC2_Value *s) {
   IDRIS2RC2_String *in = (IDRIS2RC2_String *)s;
-  size_t byteLen = strlen(in->str);
+  size_t byteLen = in->len;
   int64_t startIdx = idris2rc2_extractInt(start);
   int64_t lenIdx = idris2rc2_extractInt(len);
   if (startIdx < 0 || lenIdx < 0)
@@ -137,7 +137,7 @@ IDRIS2RC2_Value *idris2rc2_fastPackFixed(IDRIS2RC2_Value *charList) {
   // SIGSEGV once this function started being reached unconditionally
   // for every fastPack call, including `pack []`, project-wide -- see
   // rc2/doc/fastpack-fix.md).
-  IDRIS2RC2_String *r = idris2rc2_mkEmptyString(byteLen + 1);
+  IDRIS2RC2_String *r = idris2rc2_mkEmptyString(idris2rc2_checkedStrLen(byteLen) + 1);
   size_t pos = 0;
   cur = (IDRIS2RC2_Constructor *)charList;
   while (cur != NULL) {
@@ -147,8 +147,7 @@ IDRIS2RC2_Value *idris2rc2_fastPackFixed(IDRIS2RC2_Value *charList) {
   return (IDRIS2RC2_Value *)r;
 }
 
-IDRIS2RC2_Value *fastUnpack(char *str) {
-  size_t byteLen = strlen(str);
+static IDRIS2RC2_Value *unpackBytes(char const *str, size_t byteLen) {
   if (byteLen == 0)
     return NULL;
   size_t offset = 0, consumed;
@@ -167,11 +166,20 @@ IDRIS2RC2_Value *fastUnpack(char *str) {
   return (IDRIS2RC2_Value *)head;
 }
 
+IDRIS2RC2_Value *fastUnpack(char *str) {
+  return unpackBytes(str, strlen(str));
+}
+
+IDRIS2RC2_Value *idris2rc2_fastUnpackFixed(IDRIS2RC2_Value *str) {
+  IDRIS2RC2_String *s = (IDRIS2RC2_String *)str;
+  return unpackBytes(s->str, s->len);
+}
+
 char *fastConcat(IDRIS2RC2_Value *strList) {
   size_t total = 0;
   IDRIS2RC2_Constructor *cur = (IDRIS2RC2_Constructor *)strList;
   while (cur != NULL) {
-    total += strlen(((IDRIS2RC2_String *)cur->args[0])->str);
+    total += ((IDRIS2RC2_String *)cur->args[0])->len;
     cur = (IDRIS2RC2_Constructor *)cur->args[1];
   }
   char *out = malloc(total + 1);
@@ -179,10 +187,9 @@ char *fastConcat(IDRIS2RC2_Value *strList) {
   size_t offset = 0;
   cur = (IDRIS2RC2_Constructor *)strList;
   while (cur != NULL) {
-    char *s = ((IDRIS2RC2_String *)cur->args[0])->str;
-    size_t l = strlen(s);
-    memcpy(out + offset, s, l);
-    offset += l;
+    IDRIS2RC2_String *s = (IDRIS2RC2_String *)cur->args[0];
+    memcpy(out + offset, s->str, s->len);
+    offset += s->len;
     cur = (IDRIS2RC2_Constructor *)cur->args[1];
   }
   out[total] = '\0';
@@ -193,7 +200,7 @@ IDRIS2RC2_Value *idris2rc2_fastConcatFixed(IDRIS2RC2_Value *strList) {
   size_t total = 0;
   IDRIS2RC2_Constructor *cur = (IDRIS2RC2_Constructor *)strList;
   while (cur != NULL) {
-    total += strlen(((IDRIS2RC2_String *)cur->args[0])->str);
+    total += ((IDRIS2RC2_String *)cur->args[0])->len;
     cur = (IDRIS2RC2_Constructor *)cur->args[1];
   }
   // See idris2rc2_fastPackFixed's own matching comment: no explicit trailing-NUL
@@ -202,14 +209,13 @@ IDRIS2RC2_Value *idris2rc2_fastConcatFixed(IDRIS2RC2_Value *strList) {
   // immortal idris2rc2_emptyStringValue, a `const` static, so writing
   // to it would fault; the malloc'd path is already memset() to zero,
   // so the terminator's already correct without an explicit write.
-  IDRIS2RC2_String *r = idris2rc2_mkEmptyString(total + 1);
+  IDRIS2RC2_String *r = idris2rc2_mkEmptyString(idris2rc2_checkedStrLen(total) + 1);
   size_t offset = 0;
   cur = (IDRIS2RC2_Constructor *)strList;
   while (cur != NULL) {
-    char *s = ((IDRIS2RC2_String *)cur->args[0])->str;
-    size_t l = strlen(s);
-    memcpy(r->str + offset, s, l);
-    offset += l;
+    IDRIS2RC2_String *s = (IDRIS2RC2_String *)cur->args[0];
+    memcpy(r->str + offset, s->str, s->len);
+    offset += s->len;
     cur = (IDRIS2RC2_Constructor *)cur->args[1];
   }
   return (IDRIS2RC2_Value *)r;
@@ -233,12 +239,13 @@ IDRIS2RC2_Value *idris2rc2_fastConcatFixed(IDRIS2RC2_Value *strList) {
 // are already no-ops (unboxed values are recognized by idris2rc2_is_unboxed
 // and skipped by both).
 //
-// IDRIS2RC2_String caches no byte length (see datatypes.h), only a NUL
-// terminator, so stepping the offset can't call strlen() on every single
-// character (that would turn an O(n) walk into O(n^2)). Both
-// stringIteratorNext's own EOF check (s[pos] == '\0') and its decode step
-// (idris2rc2_utf8DecodeAtNul) instead lean on the NUL terminator directly,
-// each in O(1)/O(1-per-char).
+// These three get the string as a bare `char *` (a String argument crosses
+// the FFI as `->str`), so its length is out of reach and stepping the
+// offset can't call strlen() on every single character (that would turn
+// an O(n) walk into O(n^2)). Both stringIteratorNext's own EOF check
+// (s[pos] == '\0') and its decode step (idris2rc2_utf8DecodeAtNul) instead
+// lean on the NUL terminator directly, each in O(1)/O(1-per-char); an
+// embedded NUL ends the iteration.
 
 IDRIS2RC2_Value *stringIteratorNew(char *str) {
   // str is genuinely unused: see this section's own header comment above
@@ -269,4 +276,29 @@ IDRIS2RC2_Value *stringIteratorNext(char *s, IDRIS2RC2_Value *it_p) {
   // and cheaper.
   r->args[1] = idris2rc2_mkBits32(pos + (uint32_t)consumed);
   return (IDRIS2RC2_Value *)r;
+}
+
+// What Data.String.Iterator's uncons and withIteratorString are sent to
+// instead of the two above (Emit/Foreign.idr's fastPackFixedReplacement):
+// they get the String itself and stop at its length, not at a NUL.
+IDRIS2RC2_Value *idris2rc2_stringIteratorNextFixed(IDRIS2RC2_Value *str, IDRIS2RC2_Value *it_p) {
+  IDRIS2RC2_String *s = (IDRIS2RC2_String *)str;
+  uint32_t pos = idris2rc2_to_u32(it_p);
+  if (pos >= s->len)
+    return NULL;
+  size_t consumed;
+  uint32_t cp = idris2rc2_utf8DecodeAt(s->str, s->len, pos, &consumed);
+  IDRIS2RC2_Constructor *r = idris2rc2_newConstructor(2, 1);
+  r->args[0] = idris2rc2_mkChar(cp);
+  r->args[1] = idris2rc2_mkBits32(pos + (uint32_t)consumed);
+  return (IDRIS2RC2_Value *)r;
+}
+
+IDRIS2RC2_Value *idris2rc2_stringIteratorToStringFixed(IDRIS2RC2_Value *a, IDRIS2RC2_Value *str,
+                                                      IDRIS2RC2_Value *it_p, IDRIS2RC2_Value *f) {
+  (void)a;
+  IDRIS2RC2_String *s = (IDRIS2RC2_String *)str;
+  uint32_t pos = idris2rc2_to_u32(it_p);
+  IDRIS2RC2_Value *rest = (IDRIS2RC2_Value *)idris2rc2_mkStringLen(s->str + pos, s->len - pos);
+  return idris2rc2_applyClosure(idris2rc2_dup(f), rest);
 }

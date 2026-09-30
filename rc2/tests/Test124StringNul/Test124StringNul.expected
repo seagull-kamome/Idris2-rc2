@@ -1,0 +1,24 @@
+6
+"ab\NUL1cd"
+"ab\NUL1cd!!"
+"\NUL1"
+'\NUL'
+Just ('a', "b\NUL1cd")
+"b\NUL1cd"
+"#ab\NUL1cd"
+"dc1\NULba"
+True
+False
+LT
+['a', 'b', '\NUL', '1', 'c', 'd']
+True
+6
+"b\NUL1cd"
+6
+"b\NUL1"
+(6, True)
+"0"
+case: matched own literal
+case: correctly distinct past the NUL
+ab
+done

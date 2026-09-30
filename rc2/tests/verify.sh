@@ -422,7 +422,7 @@ echo "=== Smoke tests ==="
 # "%f" six-digit form -- see the top-level README's "Deliberate
 # differences from upstream RefC". No shared baseline, so these check
 # against the saved .expected only.
-NO_REFC_DIFF_TESTS="Test3Data Test7CastMatrix Test8EmptyCon Test17ConstFold Test27FFIDualABI Test28Utf8Strings Test35NetworkLoopback Test42SupportMisc Test49IntegerOpReuse Test59Export Test66ClosureFastPath Test82RuntimeLocale Test83DoubleString Test86CafMemoization Test119FFINoRefc Test121CgRuntime Test24CStructSupport Test120CStruct"
+NO_REFC_DIFF_TESTS="Test3Data Test7CastMatrix Test8EmptyCon Test17ConstFold Test27FFIDualABI Test28Utf8Strings Test35NetworkLoopback Test42SupportMisc Test49IntegerOpReuse Test59Export Test66ClosureFastPath Test82RuntimeLocale Test83DoubleString Test86CafMemoization Test119FFINoRefc Test121CgRuntime Test24CStructSupport Test120CStruct Test124StringNul"
 
 # Leak-sensitive by design (reference-counting/reuse/native-shadow
 # regression tests) -- checked with valgrind by default even without
@@ -439,7 +439,7 @@ NO_REFC_DIFF_TESTS="Test3Data Test7CastMatrix Test8EmptyCon Test17ConstFold Test
 # packCFType allocation (idris2rc2_mkPointer/idris2rc2_mkGCPointer) is
 # new to %export's own argument marshalling and worth the same
 # scrutiny.
-LEAK_SENSITIVE_TESTS="Test11DualABILeak Test13NativeArgChain Test17ConstFold Test22BranchSinking Test27FFIDualABI Test28Utf8Strings Test35NetworkLoopback Test36ReuseOfferUniqueLeak Test37SystemMisc Test42SupportMisc Test44IORefExtPrimLeak Test46FastPackUnconditional Test49IntegerOpReuse Test59Export Test66ClosureFastPath Test79DupMerge Test86CafMemoization Test87SpecConstCon Test88KnownConFold Test89CafDualABI Test90StructReturn Test91IntConstFold Test92ArityRaise Test93ApplyFold Test99DeadArgs Test102MultiThreadSwitch Test104ThreadStress Test106TransitiveSpec Test110Loop Test111Basics Test112Numeric Test113DeepRecursion Test114Inline Test115ConstFoldClosure Test18ClosureInPlaceGrow Test117ConAltNative Test118FFI Test119FFINoRefc Test24CStructSupport Test120CStruct Test122LiftOrigin"
+LEAK_SENSITIVE_TESTS="Test11DualABILeak Test13NativeArgChain Test17ConstFold Test22BranchSinking Test27FFIDualABI Test28Utf8Strings Test35NetworkLoopback Test36ReuseOfferUniqueLeak Test37SystemMisc Test42SupportMisc Test44IORefExtPrimLeak Test46FastPackUnconditional Test49IntegerOpReuse Test59Export Test66ClosureFastPath Test79DupMerge Test86CafMemoization Test87SpecConstCon Test88KnownConFold Test89CafDualABI Test90StructReturn Test91IntConstFold Test92ArityRaise Test93ApplyFold Test99DeadArgs Test102MultiThreadSwitch Test104ThreadStress Test106TransitiveSpec Test110Loop Test111Basics Test112Numeric Test113DeepRecursion Test114Inline Test115ConstFoldClosure Test18ClosureInPlaceGrow Test117ConAltNative Test118FFI Test119FFINoRefc Test24CStructSupport Test120CStruct Test122LiftOrigin Test124StringNul"
 
 # Pre-existing leaks still tolerated, as "definitely lost" bytes per
 # test; anything else non-zero is a new failure. Empty: every leak once
@@ -478,7 +478,7 @@ for name in $ALL_TESTS; do
     # $IDRIS2RC2 is invoked directly (an already-built binary), not via
     # a bare `idris2` command -- just needs the C toolchain (gcc/gmp/
     # pkg-config) already on PATH from the caller's own nix-shell.
-    env "${companion_env[@]}" "$IDRIS2RC2" --cg rc2 -p network -p linear -p rc2base \
+    env "${companion_env[@]}" "$IDRIS2RC2" --cg rc2 -p contrib -p network -p linear -p rc2base \
         --directive dumprcexpr "${directive_flags[@]}" "$RC2_DIR/tests/$name/$name.idr" -o "$TMP/${name}_rc2" \
         > "$TMP/${name}_compile.log" 2>&1
     compile_time="$(elapsed "$compile_t0" "$(date +%s.%N)")"

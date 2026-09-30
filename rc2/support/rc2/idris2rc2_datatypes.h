@@ -158,8 +158,12 @@ typedef struct {
 } IDRIS2RC2_Double;
 typedef struct {
   IDRIS2RC2_Header header;
-  char *str; // NUL-terminated, UTF-8 bytes; indexing is byte-based
+  uint32_t len; // byte length of str's content, excluding the terminator
+  char *str; // NUL-terminated, UTF-8 bytes; may contain embedded NUL bytes;
+             // indexing is byte-based
 } IDRIS2RC2_String;
+_Static_assert(sizeof(IDRIS2RC2_String) == 16,
+               "len fills the header's existing padding before the pointer");
 
 // `tag` is -1 for a constructor identified by name instead, which keeps
 // its name in one extra slot after its fields: rc2/doc/constructor-layout.md.

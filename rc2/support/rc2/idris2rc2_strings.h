@@ -10,7 +10,7 @@
 // "Deliberate differences from upstream RefC".
 #define idris2rc2_strLength(x)                                                     \
   (idris2rc2_mkInt64((int64_t)idris2rc2_utf8Length(                                \
-      ((IDRIS2RC2_String *)(x))->str, strlen(((IDRIS2RC2_String *)(x))->str))))
+      ((IDRIS2RC2_String *)(x))->str, ((IDRIS2RC2_String *)(x))->len)))
 #define idris2rc2_strHead(x) (idris2rc2_cast_string_to_Char(x))
 
 IDRIS2RC2_Value *idris2rc2_strTail(IDRIS2RC2_Value *str);
@@ -30,6 +30,10 @@ IDRIS2RC2_Value *idris2rc2_strSubstr(IDRIS2RC2_Value *start, IDRIS2RC2_Value *le
 char *fastPack(IDRIS2RC2_Value *charList)
     __attribute__((deprecated("leaks its own malloc'd buffer -- Compiler.RC2.Emit's own createCFunctions should always redirect Prelude.Types.fastPack to idris2rc2_fastPackFixed instead, so reaching this is an rc2 bug, not something to work around (see rc2/doc/fastpack-fix.md)")));
 IDRIS2RC2_Value *fastUnpack(char *str);
+// What Prelude.Types.fastUnpack is sent to instead (Emit/Foreign.idr's
+// fastPackFixedReplacement): it reads the String's own length, so an
+// embedded NUL doesn't end the list.
+IDRIS2RC2_Value *idris2rc2_fastUnpackFixed(IDRIS2RC2_Value *str);
 char *fastConcat(IDRIS2RC2_Value *strList)
     __attribute__((deprecated("leaks its own malloc'd buffer -- Compiler.RC2.Emit's own createCFunctions should always redirect Prelude.Types.fastConcat to idris2rc2_fastConcatFixed instead, so reaching this is an rc2 bug, not something to work around (see rc2/doc/fastpack-fix.md)")));
 
@@ -56,3 +60,8 @@ IDRIS2RC2_Value *stringIteratorNew(char *str);
 // Emit.idr's `extractValue (CFFun ...)`), not the generic Value*.
 IDRIS2RC2_Value *stringIteratorToString(void *a, char *str, IDRIS2RC2_Value *it, IDRIS2RC2_Closure *f);
 IDRIS2RC2_Value *stringIteratorNext(char *s, IDRIS2RC2_Value *it);
+// Length-aware replacements for the two above (Emit/Foreign.idr's
+// fastPackFixedReplacement).
+IDRIS2RC2_Value *idris2rc2_stringIteratorNextFixed(IDRIS2RC2_Value *str, IDRIS2RC2_Value *it);
+IDRIS2RC2_Value *idris2rc2_stringIteratorToStringFixed(IDRIS2RC2_Value *a, IDRIS2RC2_Value *str,
+                                                      IDRIS2RC2_Value *it, IDRIS2RC2_Value *f);
