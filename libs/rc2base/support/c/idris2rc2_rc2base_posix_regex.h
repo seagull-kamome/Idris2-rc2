@@ -1,6 +1,8 @@
 #ifndef IDRIS2RC2_RC2BASE_POSIX_REGEX_H
 #define IDRIS2RC2_RC2BASE_POSIX_REGEX_H
 
+#include <stdint.h>
+
 // Bindings to POSIX <regex.h> (regcomp/regexec/regfree/regerror) for
 // Text.Regex.POSIX. libc only -- no external dependency, unlike
 // text-re2's RE2 engine.
@@ -25,8 +27,11 @@ void idris2rc2_regex_free(void *preg);
 // with REG_NOTBOL folded in when start_byte > 0. Returns 1 on match,
 // 0 on REG_NOMATCH, -1 on any other error (including OOM growing the
 // thread-local match buffer). Offsets are stashed thread-locally; read
-// them with the accessors below.
-int idris2rc2_regex_exec(void *preg, const char *s, int start_byte);
+// them with the accessors below. `total` is s's byte length
+// (Data.String.RC2.byteLength): where the C library has REG_STARTEND the
+// search ends there rather than at a NUL, so a NUL inside the String is
+// searched past (`.` still doesn't match it, `[^...]` does).
+int idris2rc2_regex_exec(void *preg, const char *s, int64_t total, int start_byte);
 
 // rm_so / rm_eo of group `i` from the last idris2rc2_regex_exec on this
 // thread, as an offset into the whole original string (start_byte added

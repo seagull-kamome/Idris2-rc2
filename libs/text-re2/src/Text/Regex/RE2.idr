@@ -1,5 +1,5 @@
 ||| Bindings to Google's RE2 regular expression engine
-||| (`support/c/re2_util.cpp`, an `extern "C"` shim over its C++ API,
+||| (`support/c/idris2rc2_text_re2_re2_util.cpp`, an `extern "C"` shim over its C++ API,
 ||| built into its own shared object `libidris2rc2re2` -- see
 ||| `doc/regex.md` for why a C++ engine needs that, and why this lives
 ||| in its own package rather than in `rc2base`). `compile` once,
@@ -11,6 +11,7 @@ module Text.Regex.RE2
 -- This module was licensed by BSD3.
 
 import Data.List
+import Data.String.RC2
 import System.FFI
 
 -------------------------------------------------------------------------------
@@ -19,38 +20,44 @@ import System.FFI
 
 data RawRegex : Type where [external]
 
-%foreign "C:idris2rc2_regex_compile, libidris2rc2re2, idris2rc2_text_re2_re2_util.h"
-prim__regexCompile : String -> PrimIO AnyPtr
+%foreign "C:idris2rc2_re2_compile, libidris2rc2re2, idris2rc2_text_re2_re2_util.h"
+prim__regexCompile : String -> Int -> PrimIO AnyPtr
 
-%foreign "C:idris2rc2_regex_free, libidris2rc2re2, idris2rc2_text_re2_re2_util.h"
+%foreign "C:idris2rc2_re2_free, libidris2rc2re2, idris2rc2_text_re2_re2_util.h"
 prim__regexFree : Ptr RawRegex -> PrimIO ()
 
-%foreign "C:idris2rc2_regex_num_groups, libidris2rc2re2, idris2rc2_text_re2_re2_util.h"
+%foreign "C:idris2rc2_re2_num_groups, libidris2rc2re2, idris2rc2_text_re2_re2_util.h"
 prim__regexNumGroups : GCPtr RawRegex -> PrimIO Int
 
-%foreign "C:idris2rc2_regex_full_match, libidris2rc2re2, idris2rc2_text_re2_re2_util.h"
-prim__regexFullMatch : GCPtr RawRegex -> String -> PrimIO Int
+%foreign "C:idris2rc2_re2_full_match, libidris2rc2re2, idris2rc2_text_re2_re2_util.h"
+prim__regexFullMatch : GCPtr RawRegex -> String -> Int -> PrimIO Int
 
-%foreign "C:idris2rc2_regex_partial_match, libidris2rc2re2, idris2rc2_text_re2_re2_util.h"
-prim__regexPartialMatch : GCPtr RawRegex -> String -> PrimIO Int
+%foreign "C:idris2rc2_re2_partial_match, libidris2rc2re2, idris2rc2_text_re2_re2_util.h"
+prim__regexPartialMatch : GCPtr RawRegex -> String -> Int -> PrimIO Int
 
-%foreign "C:idris2rc2_regex_find, libidris2rc2re2, idris2rc2_text_re2_re2_util.h"
-prim__regexFind : GCPtr RawRegex -> String -> PrimIO Int
+%foreign "C:idris2rc2_re2_find, libidris2rc2re2, idris2rc2_text_re2_re2_util.h"
+prim__regexFind : GCPtr RawRegex -> String -> Int -> PrimIO Int
 
-%foreign "C:idris2rc2_regex_group_count, libidris2rc2re2, idris2rc2_text_re2_re2_util.h"
+%foreign "C:idris2rc2_re2_group_count, libidris2rc2re2, idris2rc2_text_re2_re2_util.h"
 prim__regexGroupCount : GCPtr RawRegex -> PrimIO Int
 
-%foreign "C:idris2rc2_regex_group_present, libidris2rc2re2, idris2rc2_text_re2_re2_util.h"
+%foreign "C:idris2rc2_re2_group_present, libidris2rc2re2, idris2rc2_text_re2_re2_util.h"
 prim__regexGroupPresent : GCPtr RawRegex -> Int -> PrimIO Int
 
-%foreign "C:idris2rc2_regex_group, libidris2rc2re2, idris2rc2_text_re2_re2_util.h"
-prim__regexGroup : GCPtr RawRegex -> Int -> PrimIO String
+%foreign "C:idris2rc2_re2_group, libidris2rc2re2, idris2rc2_text_re2_re2_util.h"
+prim__regexGroup : GCPtr RawRegex -> Int -> PrimIO AnyPtr
 
-%foreign "C:idris2rc2_regex_replace, libidris2rc2re2, idris2rc2_text_re2_re2_util.h"
-prim__regexReplace : GCPtr RawRegex -> String -> String -> PrimIO String
+%foreign "C:idris2rc2_re2_group_len, libidris2rc2re2, idris2rc2_text_re2_re2_util.h"
+prim__regexGroupLen : GCPtr RawRegex -> Int -> PrimIO Int
 
-%foreign "C:idris2rc2_regex_global_replace, libidris2rc2re2, idris2rc2_text_re2_re2_util.h"
-prim__regexGlobalReplace : GCPtr RawRegex -> String -> String -> PrimIO String
+%foreign "C:idris2rc2_re2_replace, libidris2rc2re2, idris2rc2_text_re2_re2_util.h"
+prim__regexReplace : GCPtr RawRegex -> String -> Int -> String -> Int -> PrimIO AnyPtr
+
+%foreign "C:idris2rc2_re2_global_replace, libidris2rc2re2, idris2rc2_text_re2_re2_util.h"
+prim__regexGlobalReplace : GCPtr RawRegex -> String -> Int -> String -> Int -> PrimIO AnyPtr
+
+%foreign "C:idris2rc2_re2_result_len, libidris2rc2re2, idris2rc2_text_re2_re2_util.h"
+prim__regexResultLen : PrimIO Int
 
 -------------------------------------------------------------------------------
 -- Regex
@@ -69,7 +76,7 @@ record Regex where
 export
 compile : String -> IO (Maybe Regex)
 compile pattern = do
-  raw <- primIO (prim__regexCompile pattern)
+  raw <- primIO (prim__regexCompile pattern (byteLength pattern))
   case prim__nullAnyPtr raw of
     0 => do
       gcPtr <- onCollect (prim__castPtr {t = RawRegex} raw) (\p => primIO (prim__regexFree p))
@@ -85,19 +92,22 @@ numGroups re = unsafePerformIO (primIO (prim__regexNumGroups re.ptr))
 ||| Whether the whole of `text` matches the pattern.
 export
 fullMatch : Regex -> String -> Bool
-fullMatch re text = unsafePerformIO (primIO (prim__regexFullMatch re.ptr text)) /= 0
+fullMatch re text = unsafePerformIO (primIO (prim__regexFullMatch re.ptr text (byteLength text))) /= 0
 
 ||| Whether the pattern matches anywhere in `text`.
 export
 partialMatch : Regex -> String -> Bool
-partialMatch re text = unsafePerformIO (primIO (prim__regexPartialMatch re.ptr text)) /= 0
+partialMatch re text = unsafePerformIO (primIO (prim__regexPartialMatch re.ptr text (byteLength text))) /= 0
 
 readGroup : GCPtr RawRegex -> Int -> IO (Maybe String)
 readGroup ptr i = do
   present <- primIO (prim__regexGroupPresent ptr i)
   case present of
     0 => pure Nothing
-    _ => Just <$> primIO (prim__regexGroup ptr i)
+    _ => do
+      p <- primIO (prim__regexGroup ptr i)
+      n <- primIO (prim__regexGroupLen ptr i)
+      Just <$> unsafeStringFromBytes p n
 
 ||| Finds the leftmost match, returning the whole match (index 0)
 ||| followed by every capturing group left to right. A `Nothing` in
@@ -108,7 +118,7 @@ readGroup ptr i = do
 export
 find : Regex -> String -> Maybe (List (Maybe String))
 find re text = unsafePerformIO $ do
-  ok <- primIO (prim__regexFind re.ptr text)
+  ok <- primIO (prim__regexFind re.ptr text (byteLength text))
   n  <- primIO (prim__regexGroupCount re.ptr)
   groups <- traverse (readGroup re.ptr) [0 .. n - 1]
   pure (if ok == 0 then Nothing else Just groups)
@@ -131,12 +141,16 @@ find re text = unsafePerformIO $ do
 ||| file down to a two-line reproduction).
 export
 replaceFirst : Regex -> String -> String -> String
-replaceFirst re replacement text = unsafePerformIO (primIO (prim__regexReplace re.ptr text replacement))
+replaceFirst re replacement text = unsafePerformIO $ do
+  p <- primIO (prim__regexReplace re.ptr text (byteLength text) replacement (byteLength replacement))
+  unsafeStringFromBytes p !(primIO prim__regexResultLen)
 
 ||| Like `replaceFirst`, but every non-overlapping match.
 export
 globalReplace : Regex -> String -> String -> String
-globalReplace re replacement text = unsafePerformIO (primIO (prim__regexGlobalReplace re.ptr text replacement))
+globalReplace re replacement text = unsafePerformIO $ do
+  p <- primIO (prim__regexGlobalReplace re.ptr text (byteLength text) replacement (byteLength replacement))
+  unsafeStringFromBytes p !(primIO prim__regexResultLen)
 
 -------------------------------------------------------------------------------
 -- Throwaway shorthands

@@ -34,4 +34,9 @@ static inline int64_t idris2rc2_string_byte_length(IDRIS2RC2_Value *s) {
     return (int64_t)((IDRIS2RC2_String *)s)->len;
 }
 
+/* A String of the `len` bytes at `p` (NUL bytes included), for C code that
+ * hands back a pointer and a length instead of a NUL-terminated string.
+ * Returns a finished Value*, like idris2rc2_string_byte_slice. */
+IDRIS2RC2_Value *idris2rc2_string_from_bytes(void const *p, int64_t len);
+
 #endif /* IDRIS2RC2_RC2BASE_STRING_RC2_H */

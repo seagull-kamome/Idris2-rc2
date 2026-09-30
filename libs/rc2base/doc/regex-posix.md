@@ -78,11 +78,12 @@ locale (see below), so `unsafeStringByteSlice` slicing is unaffected.
 
 Inherent to POSIX `regexec`, not this binding:
 
-- **NUL-terminated input.** `regexec` takes a `char *`, so a `\0` in
-  the subject string ends the search there. glibc's `REG_STARTEND`
-  extension would allow byte-exact / binary matching against an
-  explicit range; not wired up here (would want a `Buffer`-based entry
-  point, and it's a GNU extension, not POSIX).
+- **A NUL in the subject.** The search is bounded by the String's byte
+  length through `REG_STARTEND` (glibc and the BSDs; not POSIX), so a
+  `\0` in the subject is searched past and `[^...]` or `[[:cntrl:]]`
+  can match it. `.` does not match it, and it is no line boundary for
+  `^`/`$`. Where the C library lacks `REG_STARTEND`, the search stops at
+  the first `\0`.
 - **Byte offsets.** `regexec` reports byte offsets, and `matchSpans`
   passes them straight through (its `(Int, Int)` pairs are byte
   offsets, not codepoint indices). `match`/`matchAll`/`replace*` cut

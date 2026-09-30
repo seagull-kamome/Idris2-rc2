@@ -19,5 +19,8 @@ alpha class utf8: True
 alpha class mixed: False
 dot count codepoints: True
 dot count too many: False
+past NUL: True
+class over NUL: True
+replaceAll past NUL: [97, 0, 35, 98, 35]
 invalid rejected
 --- done ---

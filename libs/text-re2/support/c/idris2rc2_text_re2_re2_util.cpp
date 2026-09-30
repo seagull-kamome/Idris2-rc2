@@ -10,13 +10,19 @@ struct IDRIS2RC2_Regex {
   std::vector<std::string> lastMatch;
   std::vector<bool> lastMatchPresent;
 
-  explicit IDRIS2RC2_Regex(const char *pattern) : re(pattern) {}
+  explicit IDRIS2RC2_Regex(absl::string_view pattern) : re(pattern) {}
 };
+
+static absl::string_view view(const char *s, int64_t len) {
+  return absl::string_view(s, len < 0 ? 0 : (size_t)len);
+}
+
+static thread_local std::string tl_result;
 
 extern "C" {
 
-IDRIS2RC2_Regex *idris2rc2_regex_compile(const char *pattern) {
-  IDRIS2RC2_Regex *re = new IDRIS2RC2_Regex(pattern);
+IDRIS2RC2_Regex *idris2rc2_re2_compile(const char *pattern, int64_t patternLen) {
+  IDRIS2RC2_Regex *re = new IDRIS2RC2_Regex(view(pattern, patternLen));
   if (!re->re.ok()) {
     delete re;
     return nullptr;
@@ -24,26 +30,26 @@ IDRIS2RC2_Regex *idris2rc2_regex_compile(const char *pattern) {
   return re;
 }
 
-void idris2rc2_regex_free(IDRIS2RC2_Regex *re) {
+void idris2rc2_re2_free(IDRIS2RC2_Regex *re) {
   delete re;
 }
 
-int idris2rc2_regex_num_groups(IDRIS2RC2_Regex *re) {
+int idris2rc2_re2_num_groups(IDRIS2RC2_Regex *re) {
   return re->re.NumberOfCapturingGroups();
 }
 
-int idris2rc2_regex_full_match(IDRIS2RC2_Regex *re, const char *text) {
-  return RE2::FullMatch(text, re->re) ? 1 : 0;
+int idris2rc2_re2_full_match(IDRIS2RC2_Regex *re, const char *text, int64_t textLen) {
+  return RE2::FullMatch(view(text, textLen), re->re) ? 1 : 0;
 }
 
-int idris2rc2_regex_partial_match(IDRIS2RC2_Regex *re, const char *text) {
-  return RE2::PartialMatch(text, re->re) ? 1 : 0;
+int idris2rc2_re2_partial_match(IDRIS2RC2_Regex *re, const char *text, int64_t textLen) {
+  return RE2::PartialMatch(view(text, textLen), re->re) ? 1 : 0;
 }
 
-int idris2rc2_regex_find(IDRIS2RC2_Regex *re, const char *text) {
+int idris2rc2_re2_find(IDRIS2RC2_Regex *re, const char *text, int64_t textLen) {
   int n = re->re.NumberOfCapturingGroups() + 1;
   std::vector<absl::string_view> submatch((size_t)n);
-  absl::string_view subject(text);
+  absl::string_view subject = view(text, textLen);
   bool ok = re->re.Match(subject, 0, subject.size(), RE2::UNANCHORED, submatch.data(), n);
 
   re->lastMatch.clear();
@@ -60,32 +66,41 @@ int idris2rc2_regex_find(IDRIS2RC2_Regex *re, const char *text) {
   return 1;
 }
 
-int idris2rc2_regex_group_count(IDRIS2RC2_Regex *re) {
+int idris2rc2_re2_group_count(IDRIS2RC2_Regex *re) {
   return (int)re->lastMatch.size();
 }
 
-int idris2rc2_regex_group_present(IDRIS2RC2_Regex *re, int index) {
+int idris2rc2_re2_group_present(IDRIS2RC2_Regex *re, int index) {
   if (index < 0 || (size_t)index >= re->lastMatchPresent.size()) return 0;
   return re->lastMatchPresent[(size_t)index] ? 1 : 0;
 }
 
-const char *idris2rc2_regex_group(IDRIS2RC2_Regex *re, int index) {
-  if (index < 0 || (size_t)index >= re->lastMatch.size()) return "";
-  return re->lastMatch[(size_t)index].c_str();
+void *idris2rc2_re2_group(IDRIS2RC2_Regex *re, int index) {
+  if (index < 0 || (size_t)index >= re->lastMatch.size()) return const_cast<char *>("");
+  return re->lastMatch[(size_t)index].data();
 }
 
-const char *idris2rc2_regex_replace(IDRIS2RC2_Regex *re, const char *text, const char *rewrite) {
-  static thread_local std::string result;
-  result.assign(text);
-  RE2::Replace(&result, re->re, rewrite);
-  return result.c_str();
+int64_t idris2rc2_re2_group_len(IDRIS2RC2_Regex *re, int index) {
+  if (index < 0 || (size_t)index >= re->lastMatch.size()) return 0;
+  return (int64_t)re->lastMatch[(size_t)index].size();
 }
 
-const char *idris2rc2_regex_global_replace(IDRIS2RC2_Regex *re, const char *text, const char *rewrite) {
-  static thread_local std::string result;
-  result.assign(text);
-  RE2::GlobalReplace(&result, re->re, rewrite);
-  return result.c_str();
+void *idris2rc2_re2_replace(IDRIS2RC2_Regex *re, const char *text, int64_t textLen,
+                              const char *rewrite, int64_t rewriteLen) {
+  tl_result.assign(view(text, textLen));
+  RE2::Replace(&tl_result, re->re, view(rewrite, rewriteLen));
+  return tl_result.data();
+}
+
+void *idris2rc2_re2_global_replace(IDRIS2RC2_Regex *re, const char *text, int64_t textLen,
+                                     const char *rewrite, int64_t rewriteLen) {
+  tl_result.assign(view(text, textLen));
+  RE2::GlobalReplace(&tl_result, re->re, view(rewrite, rewriteLen));
+  return tl_result.data();
+}
+
+int64_t idris2rc2_re2_result_len(void) {
+  return (int64_t)tl_result.size();
 }
 
 } // extern "C"

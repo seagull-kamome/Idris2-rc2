@@ -14,4 +14,8 @@ matches "[0-9]+" "12345": True
 matches "[0-9]+" "12a45": False
 findFirst "(\w)(\d)" "x7": Just [Just "x7", Just "x", Just "7"]
 findFirst "(" "x": Nothing
+find b(.)c over NUL: Just [Just "b\NULc", Just "\NUL"]
+findFirst past NUL: Just [Just "xyz"]
+pattern with NUL: True
+globalReplace past NUL: "a\NUL#b#"
 --- done ---

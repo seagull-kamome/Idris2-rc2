@@ -14,3 +14,7 @@ IDRIS2RC2_Value *idris2rc2_string_byte_slice(char const *s, int64_t total, int64
 
     return (IDRIS2RC2_Value *)idris2rc2_mkStringLen(s + start, take);
 }
+
+IDRIS2RC2_Value *idris2rc2_string_from_bytes(void const *p, int64_t len) {
+    return (IDRIS2RC2_Value *)idris2rc2_mkStringLen((char const *)p, len < 0 ? 0u : (size_t)len);
+}

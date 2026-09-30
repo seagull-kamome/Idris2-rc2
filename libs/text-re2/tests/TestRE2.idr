@@ -43,4 +43,15 @@ main = do
   putStrLn $ "findFirst \"(\\w)(\\d)\" \"x7\": " ++ show (findFirst "(\\w)(\\d)" "x7")
   putStrLn $ "findFirst \"(\" \"x\": " ++ show (findFirst "(" "x")
 
+
+  -- A NUL byte is data in both directions: in the subject, in the
+  -- pattern, and in a group or a replacement result.
+  Just nul <- compile "b(.)c"
+    | Nothing => putStrLn "FAIL: b(.)c rejected"
+  putStrLn $ "find b(.)c over NUL: " ++ show (find nul "ab\NULcd")
+  putStrLn $ "findFirst past NUL: " ++ show (findFirst "xyz" "ab\NULcd-xyz")
+  putStrLn $ "pattern with NUL: " ++ show (matches "a\NULb" "a\NULb")
+  Just digit <- compile "[0-9]"
+    | Nothing => putStrLn "FAIL: [0-9] rejected"
+  putStrLn $ "globalReplace past NUL: " ++ show (globalReplace digit "#" "a\NUL1b2")
   putStrLn "--- done ---"

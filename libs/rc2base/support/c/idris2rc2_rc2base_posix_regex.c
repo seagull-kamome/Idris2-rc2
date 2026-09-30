@@ -44,7 +44,7 @@ static _Thread_local size_t tl_pm_cap = 0;
 static _Thread_local int tl_nmatch = 0;
 static _Thread_local int tl_start = 0;
 
-int idris2rc2_regex_exec(void *preg, const char *s, int start_byte) {
+int idris2rc2_regex_exec(void *preg, const char *s, int64_t total, int start_byte) {
   regex_t *rx = (regex_t *)preg;
   size_t nmatch = rx->re_nsub + 1;
   if (nmatch > tl_pm_cap) {
@@ -54,6 +54,16 @@ int idris2rc2_regex_exec(void *preg, const char *s, int start_byte) {
     tl_pm_cap = nmatch;
   }
   int eflags = start_byte > 0 ? REG_NOTBOL : 0;
+#ifdef REG_STARTEND
+  // The span is given by length, not by the NUL, so an embedded NUL in
+  // the String is searched past (glibc, the BSDs). Offsets stay relative
+  // to (s + start_byte), since rm_so is 0.
+  tl_pm[0].rm_so = 0;
+  tl_pm[0].rm_eo = total > start_byte ? (regoff_t)(total - start_byte) : 0;
+  eflags |= REG_STARTEND;
+#else
+  (void)total;
+#endif
   int rc = regexec(rx, s + start_byte, nmatch, tl_pm, eflags);
   if (rc == 0) {
     tl_nmatch = (int)nmatch;

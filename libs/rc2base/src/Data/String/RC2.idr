@@ -57,3 +57,19 @@ export
 unsafeStringByteSlice : (s : String) -> (off, len : Int) -> String
 unsafeStringByteSlice s off len =
   believe_me (unsafePerformIO (primIO (prim__stringByteSlice s (byteLength s) off len)))
+
+%foreign "C:idris2rc2_string_from_bytes,libidris2rc2base,idris2rc2_rc2base_string_rc2.h"
+prim__stringFromBytes : AnyPtr -> Int -> PrimIO RawStr
+
+||| A fresh `String` holding the `len` bytes at `p`, NUL bytes included --
+||| for a C library that returns a pointer and a length rather than a
+||| NUL-terminated string (a `String`-typed `%foreign` return is measured
+||| with `strlen`, so it stops at the first NUL).
+|||
+||| Unsafe: `p` must point at `len` readable bytes of valid UTF-8, and
+||| stay valid until this returns; nothing checks either.
+export
+unsafeStringFromBytes : HasIO io => (p : AnyPtr) -> (len : Int) -> io String
+unsafeStringFromBytes p len = do
+  raw <- primIO (prim__stringFromBytes p len)
+  pure (believe_me raw)

@@ -61,7 +61,7 @@ echo "=== rc2 backend: build TestRE2 (against the INSTALLED lib/) ==="
 # -p'd package's own installed lib/ (here, $INSTALLED_LIB) automatically
 # -- see libs/rc2base/README.md's "Native library install location".
 nix-shell -p gcc gmp pkg-config re2 --run \
-    "cd '$TESTS_DIR' && '$IDRIS2RC2' --cg rc2 -p text-re2 -o TestRE2_verify TestRE2.idr"
+    "cd '$TESTS_DIR' && '$IDRIS2RC2' --cg rc2 -p rc2base -p text-re2 -o TestRE2_verify TestRE2.idr"
 
 echo "=== Run and diff stdout against TestRE2.expected ==="
 # libidris2rc2re2.so is a shared object -- needed on LD_LIBRARY_PATH at

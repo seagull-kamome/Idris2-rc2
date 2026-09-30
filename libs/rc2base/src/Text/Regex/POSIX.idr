@@ -73,7 +73,7 @@ prim__free : Ptr RawRegex -> PrimIO ()
 prim__nsub : GCPtr RawRegex -> PrimIO Int
 
 %foreign "C:idris2rc2_regex_exec, libidris2rc2base, idris2rc2_rc2base_posix_regex.h"
-prim__exec : GCPtr RawRegex -> String -> Int -> PrimIO Int
+prim__exec : GCPtr RawRegex -> String -> Int -> Int -> PrimIO Int
 
 %foreign "C:idris2rc2_regex_group_so, libidris2rc2base, idris2rc2_rc2base_posix_regex.h"
 prim__groupSo : Int -> PrimIO Int
@@ -173,7 +173,7 @@ charFromByte input i =
 export
 matchSpans : Regex -> String -> Maybe (List (Maybe (Int, Int)))
 matchSpans re input = unsafePerformIO $ do
-  1 <- primIO (prim__exec re.ptr input 0)
+  1 <- primIO (prim__exec re.ptr input (byteLength input) 0)
     | _ => pure Nothing
   Just <$> allSpans re
 
@@ -186,7 +186,7 @@ match re input = (map . map . map) (sub input) (matchSpans re input)
 ||| Does the pattern match anywhere in `input`?
 export
 matches : Regex -> String -> Bool
-matches re input = unsafePerformIO ((== 1) <$> primIO (prim__exec re.ptr input 0))
+matches re input = unsafePerformIO ((== 1) <$> primIO (prim__exec re.ptr input (byteLength input) 0))
 
 ||| Every non-overlapping match, left to right -- each element is what
 ||| `match` would return for that match. An empty match advances one
@@ -200,7 +200,7 @@ matchAll re input = unsafePerformIO (go 0)
       if start > byteLength input
         then pure []
         else do
-          1 <- primIO (prim__exec re.ptr input start)
+          1 <- primIO (prim__exec re.ptr input (byteLength input) start)
             | _ => pure []
           spans <- allSpans re
           let here = (map . map) (sub input) spans
@@ -236,7 +236,7 @@ replaceWith re repl input global = unsafePerformIO (go 0 [<])
 
     go : Int -> SnocList Char -> IO String
     go start acc = do
-      1 <- primIO (prim__exec re.ptr input start)
+      1 <- primIO (prim__exec re.ptr input (byteLength input) start)
         | _ => pure (tailFrom start acc)
       spans <- allSpans re
       case join (head' spans) of

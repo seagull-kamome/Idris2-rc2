@@ -790,4 +790,5 @@ to be a module here. They moved to `libs/text-re2` (package `text-re2`)
 so `rc2base` builds with a plain C toolchain -- RE2 is C++ and needs
 `g++`/`pkg-config`/abseil, which shouldn't be a build dependency of
 this whole library for one module. `import Text.Regex.RE2` after adding
-`-p text-re2`; see `libs/text-re2/README.md`.
+`-p rc2base -p text-re2` (it uses `Data.String.RC2`); see
+`libs/text-re2/README.md`.

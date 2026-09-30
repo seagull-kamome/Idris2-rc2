@@ -2,12 +2,13 @@ package text-re2
 
 version    = 0.1.0
 opts       = "--total"
+depends    = rc2base
 sourcedir  = "src"
 modules    = Text.Regex.RE2
 
 -- `support/c`'s Makefile needs `re2`/`pkg-config`/a C++ compiler on
 -- PATH -- RE2's own API is C++ and `pkg-config --libs re2` expands to
--- dozens of abseil `-l` flags, so the shim (`support/c/re2_util.cpp`)
+-- dozens of abseil `-l` flags, so the shim (`support/c/idris2rc2_text_re2_re2_util.cpp`)
 -- is compiled with g++ and linked into its own `libidris2rc2re2.so`
 -- rather than a `%foreign`-nameable `-l<name>`. See `doc/regex.md`.
 -- This is exactly the dependency `text-re2` exists to keep out of
@@ -22,7 +23,7 @@ postclean  = "make -C support/c clean"
 -- and copies .ttc/.ttm/.ipkg there; it never knows to create `lib` or
 -- populate it, so a postinstall hook has to do that itself. Note this
 -- only gets picked up *automatically* by the Chez/Racket backends'
--- .so dlopen mechanism -- rc2 (like upstream RefC) still needs the
--- consumer to point IDRIS2_LIBS/IDRIS2_CFLAGS/IDRIS2_LDFLAGS at this
--- directory manually (see README.md's "Build & test" section).
+-- .so dlopen mechanism. rc2 adds -I/-L for it itself for every package
+-- named with -p (Compiler.RC2.CC's depPkgLibDirs); only the dynamic
+-- linker still needs LD_LIBRARY_PATH (see README.md's "Build & test").
 postinstall = "make -C support/c install"

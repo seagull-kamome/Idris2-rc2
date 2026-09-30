@@ -82,6 +82,14 @@ main = do
   putStrLn "dot count codepoints: \{show (matches quad "café")}"
   putStrLn "dot count too many: \{show (matches quad "caféz")}"
 
+
+  -- A NUL in the subject is searched past: the search is bounded by the
+  -- String's byte length (REG_STARTEND), not by the NUL.
+  xyz <- pe "xyz"
+  putStrLn "past NUL: \{show (matches xyz "ab\NULcd-xyz")}"
+  across <- pe "b[^x]c"
+  putStrLn "class over NUL: \{show (matches across "ab\NULcd")}"
+  putStrLn "replaceAll past NUL: \{show (codes (replaceAll ure "#" "a\NUL1b22"))}"
   Left _ <- compile "([unclosed"
     | Right _ => putStrLn "FAIL: invalid pattern accepted"
   putStrLn "invalid rejected"
