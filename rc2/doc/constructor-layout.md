@@ -1,4 +1,4 @@
-# Constructor and closure cell layout
+# Constructor, closure, and String cell layout
 
 ## Constructors
 
@@ -104,6 +104,38 @@ Measured on building and folding 1M closures, 20 times
 The arity-2 run allocates 8% fewer bytes (valgrind), but neither its time
 nor its RSS moved, under glibc or mimalloc. `sort` is unaffected,
 since its comparator closure is built once.
+
+## Strings
+
+```c
+typedef struct {
+  IDRIS2RC2_Header header;
+  uint32_t len; // byte length of str's content, excluding the terminator
+  char *str;    // NUL-terminated, UTF-8 bytes; may contain embedded NUL
+                // bytes; indexing is byte-based
+} IDRIS2RC2_String;
+```
+
+Also 16 bytes (`_Static_assert`-checked in `idris2rc2_datatypes.h`):
+`len` sits in the same 4 bytes of header-alignment padding the
+Constructor/Closure layouts above reuse for their own extra fields,
+right before `str`. `len` is the string's byte length, not its
+codepoint count (see README.md's "Deliberate differences from upstream
+RefC" for why `String` is codepoint-indexed at the API level while
+`len` itself counts bytes) -- and, unlike a plain `strlen`, it lets a
+`String` hold an embedded NUL byte: every primitive that needs the
+string's extent (comparison, `++`, `pack`/`unpack`, pattern-matching a
+literal) reads `len`, not the terminator. `str` itself stays
+NUL-terminated regardless, purely so it can still be handed to C as an
+ordinary `char *` -- crossing that boundary (an FFI argument, a
+`%export`ed return, a `String`-to-number cast) still cuts at the first
+embedded NUL, an accepted limitation covered in
+`rc2/doc/fastpack-fix.md` and README.md.
+
+A result whose byte length would overflow `len`'s own `uint32_t`
+(over 4 GiB) aborts at the point it would be constructed
+(`idris2rc2_checkedStrLen`, `idris2rc2_memory.h`) rather than silently
+wrapping into a corrupt, too-short `len`.
 
 ## Pitfall: the runtime `Makefile`
 

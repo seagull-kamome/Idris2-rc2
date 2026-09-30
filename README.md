@@ -490,6 +490,39 @@ work didn't reach (byte-based `String`<->`Char` conversions of
 malformed/adversarial input aside, the *value's own storage width* was
 already fixed by the `Char` work above).
 
+One more consequence of treating `String` as a genuine byte buffer
+rather than a NUL-terminated C string: upstream RefC's own `String`
+representation (a bare `char *`) can't hold an embedded NUL byte at all
+-- anything past the first NUL is simply gone. `IDRIS2RC2_String`
+(`rc2/support/rc2/idris2rc2_datatypes.h`) instead carries an explicit
+byte-length field (`len`, sized to reuse padding the header's own
+alignment already left before the pointer -- see
+`rc2/doc/constructor-layout.md`) alongside the buffer itself, so a
+`String` can hold and correctly round-trip a NUL byte: `length`,
+`substr`, `++`, equality/ordering (byte length then `memcmp`, not
+`strcmp`), `pack`/`unpack`, and pattern-matching a `String` literal
+(`case`, compiled as a `len`-then-`memcmp` check, not `strcmp`) all use
+`len`, not the buffer's own terminator. `cast '\0' : String` is
+therefore `"\NUL"`, not `""`. `rc2/tests/Test124StringNul` is the
+regression test for this. `rc2/tests/refc-suite`'s own
+`basicpatternmatch` test (`"abcde\0fg" => "1st\02nd"`, flagged
+`-- Issue 3161` in its own source) is the same story from upstream's
+own test suite: real RefC's `strcmp`-based case dispatch truncates at
+the NUL and matches the wrong arm, while rc2 doesn't -- see
+`KNOWN-BUGS.md` for how that test's own `expected` file reflects this.
+The buffer itself (`str`) stays NUL-terminated regardless, so it can
+still be handed to C as a plain `char *`; that's also this design's one
+accepted limitation, not fully closed by the `len` field: a `String`
+crossing an ordinary `char *`-typed FFI boundary (a `%foreign`
+argument, a plain `%export`ed `String` return, a `String`-to-number
+cast) is still read via `->str`/`strlen`, so it's cut at the first
+embedded NUL there. `rc2/doc/fastpack-fix.md` covers the specific
+`Prelude`/`Data.String.Iterator` primitives this affects and how rc2
+routes around it where it can (`fastPack`/`fastConcat`/`fastUnpack`/
+`Data.String.Iterator.uncons`/`withIteratorString`); a length in excess
+of `UINT32_MAX` bytes aborts rather than silently wrapping
+(`idris2rc2_checkedStrLen`).
+
 Concurrency tells a similar story, at a larger scale. Upstream Idris2's
 `System.Concurrency` module (`Mutex`/`Condition`/`Semaphore`/`Barrier`/
 `Channel`/`getThreadId`/`setThreadData`/`getThreadData`) declares every

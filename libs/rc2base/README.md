@@ -734,7 +734,7 @@ to one U+FFFD. Used by `Network.URL`; exercised through `tests/TestURL`.
 
 ```idris2
 unsafeStringByteSlice : (s : String) -> (off, len : Int) -> String  -- byte offsets, not codepoints
-byteLength            : String -> Int                               -- strlen, vs codepoint-wise `length`
+byteLength            : String -> Int                               -- on-the-wire byte count, vs codepoint-wise `length`
 ```
 
 Every other `String` primitive on rc2 counts codepoints (`substr`,
@@ -745,7 +745,12 @@ a `String` value directly (a C shim returns the finished value and the
 Idris side `believe_me`s it through -- no second marshalling copy).
 "Unsafe": `off`/`len` are clamped to `s`'s byte length (memory-safe,
 never a crash), but cutting mid-codepoint leaves a byte that reads back
-as U+FFFD. Used by `Text.Regex.POSIX`; see `tests/TestStringRC2`.
+as U+FFFD. Both keep an embedded NUL byte intact -- `byteLength` reads
+`IDRIS2RC2_String`'s own `len` field directly (a `static inline` C
+function, and `byteLength` itself is `%inline`, so it compiles to a
+field read, not a `strlen` call) and `unsafeStringByteSlice` slices by
+that same `len`, not to the first NUL. Used by `Text.Regex.POSIX`; see
+`tests/TestStringRC2`.
 
 ## `Text.Regex.POSIX`: bindings to libc `<regex.h>`
 

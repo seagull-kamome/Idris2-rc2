@@ -43,9 +43,9 @@ char *fastConcat(IDRIS2RC2_Value *strList)
 // FFI wrapper to copy-and-never-free (that copy-and-leak is correct for a
 // real external library's char* return, which the caller must not free --
 // wrong only for these two, which malloc a buffer this project itself owns;
-// see rc2/doc/fastpack-fix.md). Returns an already-fully-built IDRIS2RC2_Value*,
-// opted into by Idris code via Prelude.Fix.RC2's `Raw` pass-through type +
-// %transform, not used unless that module is imported.
+// see rc2/doc/fastpack-fix.md). Returns an already-fully-built IDRIS2RC2_Value*;
+// every call to Prelude.Types.fastPack/fastConcat is sent here
+// (Emit/Foreign.idr's fastPackFixedReplacement).
 IDRIS2RC2_Value *idris2rc2_fastPackFixed(IDRIS2RC2_Value *charList);
 IDRIS2RC2_Value *idris2rc2_fastConcatFixed(IDRIS2RC2_Value *strList);
 

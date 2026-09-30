@@ -330,6 +330,17 @@ call, proving rc2 never aliases or takes ownership of the caller's own
 buffer. `Test59Export` covers the return direction, which is the
 one with a real ownership contract to get right.
 
+Both directions cross through a plain `char *`, and `idris2rc2_mkString`
+is `strlen`-based -- so a plain C string argument (or, on the return
+side below, an Idris `String` result) that happens to contain an
+embedded NUL byte is cut at the first one either way, same as any other
+`char *`-typed FFI boundary in this project (`rc2/doc/fastpack-fix.md`,
+top-level `README.md`'s "Deliberate differences from upstream RefC").
+An `IDRIS2RC2_String` value passed *between* two rc2-compiled functions
+doesn't have this limitation -- it only applies to a value actually
+crossing to/from plain C, which is what every `%export`/`%foreign`
+`CFString` does.
+
 **Return** needed a real fix: `extractValue`'s own `CFString` case
 aliases the *Boxed* value's own malloc'd buffer directly
 (`((IDRIS2RC2_String*)v)->str`) rather than copying it -- returning
@@ -346,6 +357,13 @@ memcpy(result, raw, len);
 idris2rc2_drop(r);
 return result;
 ```
+
+`strlen` here (rather than reading `r`'s own `len` field,
+`rc2/doc/constructor-layout.md`) is what produces the embedded-NUL
+truncation noted above -- deliberately so, since the wrapper's own
+return type is a bare `char *` with no separate length out-parameter
+for a plain C caller to read; there is no length-preserving `char
+*`-only convention to fall back on instead.
 
 The wrapper's own C return type for this case is plain `char *` --
 **not** `const char *` (the usual `cTypeOfCFType CFString` mapping,
