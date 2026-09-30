@@ -969,6 +969,14 @@ maxLateInlineIterations = 8
 ||| reconstruction, landing its cost somewhere `logTime`'s own
 ||| before/after clock reads don't happen to bracket -- not yet
 ||| confirmed (no GC-specific counter checked against this directly).
+||| Update (2026-09-30): a GC counter *was* checked, though against a
+||| different symptom (round 1's `"LI prune"` looking id-order-
+||| sensitive, `rc2/doc/lambda-lifting.md`) rather than this one. Chez's
+||| own `sstats-gc-real` around that prune showed 654ms of its 1.163s
+||| spent in GC (100 collections), against only 11-66ms of GC in every
+||| other round's prune -- support for the GC-pressure suspicion above,
+||| even though that specific case turned out to be a GC left over from
+||| an earlier stage landing in the prune, not a leak from this loop.
 export
 applyLateInline : {auto v : Ref VarId Int} -> {auto c : Ref Ctxt Defs} -> (label : String) -> (early : Bool)
                -> (roots : List Name) -> List (Name, RCDef) -> Core (List (Name, RCDef))

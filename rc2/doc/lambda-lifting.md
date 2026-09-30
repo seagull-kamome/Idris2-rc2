@@ -49,21 +49,27 @@ walk is the same program: on idris2-lsp every `rcexpr-lint` figure is
 unchanged, and the 776 definitions `rcexpr-diff` reports differ only
 in variable order (a `drop` list sorted by id), since ids are now
 handed out as the walk meets them. The walk takes 0.55s instead of
-0.67s for the two, but Late inline got slower (see below), so the
+0.67s for the two, but Late inline's round 1 looks slower (see below), so the
 whole compile is not faster: the point is that `Lifted`, which kept
 what lifting knows from reaching `RCExp`, is gone.
 
-### Late inline is sensitive to id order
+### Late inline's round 1 and GC
 
 A lifted definition's captured parameters now get their ids where the
 body first reads them, so they are larger than some of the body's own,
 and a parent's ids interleave with its lambdas'. On idris2-lsp that
-alone makes Late inline's first round 2.2s instead of 1.5s (4.7s
-instead of 4.1s in all), for the same splices. Renumbering every
-definition afterwards (parameters in order, then binders as they
-appear) brought it back to 4.0s, but the renumbering itself took
-0.38s, so it isn't done. Why the order matters is not known yet
-(TODO.md).
+looked at first like it made Late inline's first round slower (2.2s
+instead of 1.5s), but the id order turns out not to be why: measured
+with Chez's own GC counters, round 1's first "LI prune" takes 1.163s, 654ms of it GC
+(100 collections), against 11-66ms of GC in every other round's prune.
+Rebuilding every definition with the same ids (renaming with the
+identity, so nothing about the order changes) speeds it up as much as
+renumbering did, to a 0.563s prune and a 1.51s round 1 -- it is a large GC left over from an
+earlier stage that happens to land in that prune, and moving it around
+(as renumbering also does) only shifts where it lands: the rebuild
+itself costs about 1.1s, so Late inline in total goes from 4.72s to
+5.18s and the whole rc2 stage sum from 23.14s to 23.71s. There is
+nothing to fix here.
 
 ## What lifting loses
 
