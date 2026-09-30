@@ -975,9 +975,20 @@ applyCallSiteRewriteBody workers reps mLoopParams inTail (RCmpCase fc op args po
 applyCallSiteRewriteBody workers reps mLoopParams inTail (RConCase fc sc alts mDef) =
     RConCase fc sc (map rewriteConAlt alts) (map (applyCallSiteRewriteBody workers reps mLoopParams inTail) mDef)
   where
+    -- A field a struct scrutinee carries natively is a native local in
+    -- its alt, owning nothing: without it in `reps`, `postDropFor`
+    -- would take it for a Boxed argument and drop it after the call
+    -- (doc/struct-return.md, "Native fields").
+    fieldReps : Maybe Int -> List Int -> SortedMap Int Rep
+    fieldReps tag args = case (localRepIn reps sc, tag) of
+        (RRet _ l, Just t) =>
+            foldl (\m, (k, a) => maybe m (\ty => insert a (RNative ty) m) (retFieldType l t k))
+                  reps (zip [0 .. length args] args)
+        _ => reps
+
     rewriteConAlt : RConAlt -> RConAlt
     rewriteConAlt (MkRConAlt name ci tag args body) =
-        MkRConAlt name ci tag args (applyCallSiteRewriteBody workers reps mLoopParams inTail body)
+        MkRConAlt name ci tag args (applyCallSiteRewriteBody workers (fieldReps tag args) mLoopParams inTail body)
 applyCallSiteRewriteBody workers reps mLoopParams inTail (RConstCase fc sc alts mDef) =
     RConstCase fc sc (map rewriteConstAlt alts) (map (applyCallSiteRewriteBody workers reps mLoopParams inTail) mDef)
   where
