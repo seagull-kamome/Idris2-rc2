@@ -19,6 +19,7 @@ import Core.Context
 import Core.Core
 import Core.TT
 
+import Data.List
 import Data.SortedMap
 import Data.Vect
 
@@ -156,4 +157,4 @@ directiveText directiveList =
     "rc2 directives: " ++
     (if null directiveList
         then "(none)"
-        else showSep " " (map ("--directive " ++) directiveList))
+        else showSep " " (map ("--directive " ++) (nub directiveList)))

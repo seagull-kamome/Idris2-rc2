@@ -98,6 +98,22 @@ Four `<kind>`s, one per `RCDef` constructor:
 Only `(fun ...)`/`(error)` have a body to read further; the rest of this
 document is about that body.
 
+**Names**: every name shown anywhere in the dump -- a `def` header, a
+`call`/`callRep`/`partial`/`con`/`retpack`/`memoize` target, a case-alt's
+own constructor name, or a `#Name@tag`/`#Name/n~closure` constant value
+-- goes through `dumpName` (`RCExp.idr`). That's upstream's own `Show
+Name` (`idris2-src/src/Core/Name.idr`), with two adjustments. First, a
+`DN` (display name -- e.g. an interface implementation's method) shows the
+name it *stands for* instead of its own short display string, the same
+name `Compiler.RC2.Emit.Util`'s `cName` uses for the actual C symbol:
+`Prelude.Show.(show_Show_(List $a))`, not a bare `Prelude.Show.show`
+shared by every `Show` implementation. Second, a `CaseBlock`/`WithBlock`
+name includes its own index (`case block in f:3`, not a bare `case block
+in f` repeated for every case block inside `f`). So every distinct
+definition has a distinct name in the dump, and a `def <Name>` header,
+or any `call`/`callRep`/`partial` reference to it, can be used as a key
+when counting or diffing definitions.
+
 ## 3. Values (`RCLocal`)
 
 Every place a value is *read* (an operand, an argument, a scrutinee)

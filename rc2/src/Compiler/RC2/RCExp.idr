@@ -162,6 +162,23 @@ Ord RCLocal where
         compare n1 n2 <+> compare m1 m2
       sameCtor _ _ = EQ
 
+||| A name as the `.rcexpr` dump shows it: upstream's `Show Name`,
+||| except that a `DN` shows the name it stands for (as `Emit.Util`'s
+||| `cName` does) and a `CaseBlock`/`WithBlock` shows its index, so no
+||| two distinct definitions read the same in a dump.
+export
+dumpName : Name -> String
+dumpName = show . distinct
+  where
+    distinct : Name -> Name
+    distinct (NS ns n) = NS ns (distinct n)
+    distinct (DN _ n) = distinct n
+    distinct (PV n d) = PV (distinct n) d
+    distinct (Nested ij n) = Nested ij (distinct n)
+    distinct (CaseBlock outer i) = CaseBlock (outer ++ ":" ++ show i) i
+    distinct (WithBlock outer i) = WithBlock (outer ++ ":" ++ show i) i
+    distinct n = n
+
 export
 covering
 Show RCLocal where
@@ -177,9 +194,9 @@ Show RCLocal where
   show (RCLoc i) = "v" ++ show i
   show RCNull = "[__]"
   show (RCConst c) = "#" ++ show c
-  show (RCEmptyCon n _ t) = "#" ++ show n ++ "@" ++ show t
-  show (RCConstCon n _ t args) = "#" ++ show n ++ "@" ++ show t ++ "(" ++ show args ++ ")"
-  show (RCConstClosure n m) = "#" ++ show n ++ "/" ++ show m ++ "~closure"
+  show (RCEmptyCon n _ t) = "#" ++ dumpName n ++ "@" ++ show t
+  show (RCConstCon n _ t args) = "#" ++ dumpName n ++ "@" ++ show t ++ "(" ++ show args ++ ")"
+  show (RCConstClosure n m) = "#" ++ dumpName n ++ "/" ++ show m ++ "~closure"
 
 ||| The representation decided for an RLet-bound local, carried
 ||| directly on the RLet node (see `doc/reading-the-ir.md`'s

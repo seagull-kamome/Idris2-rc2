@@ -21,6 +21,10 @@ module Main
 --   - `Prelude.Types.SnocList.(<>>)` -- an operator's own namespaced
 --     display, syntactically identical up to the `(` to a
 --     `RCConstCon`'s own args list.
+--   - `Prelude.Show.(show_Show_(List $a))` -- the same, with the
+--     parentheses nested (an interface method implementation's name).
+--   - `Idris.Pretty.prettyPrec_Pretty_IdrisSyntax_(PBinder' KindedName)`
+--     -- parentheses glued onto the middle of a name, not after a `.`.
 --   - `bufferData'` -- an ordinary identifier with a trailing prime.
 --   - `Foo.Bar at Foo:1:1--2:2` -- `Core.Name`'s own `Show` can
 --     suffix a display name with source-location text.
@@ -64,13 +68,23 @@ def Main.example  (fun args= ["v2:Boxed"] ret= Boxed)
 def Main.emptyCon  (con tag= Nothing arity= 0 newtype= Nothing)
 
 def Main.foreignStub  (foreign scheme:blodwen-noop [] -> Unit)
+
+def Main.nestedOp  (fun args= ["v1:Boxed"] ret= Boxed)
+  call Prelude.Show.(show_Show_(List $a)) [v1]
+
+def Main.midParen  (fun args= ["v1:Boxed"] ret= Boxed)
+  call Idris.Pretty.prettyPrec_Pretty_IdrisSyntax_(PBinder' KindedName) [v1]
 """
 
 main : IO ()
 main = case parseProgram sample of
     Left err => putStrLn ("PARSE ERROR: " ++ show err)
     Right prog => do
-        printLn (length prog == 3)
+        printLn (length prog == 5)
+        traverse_ (\d => case lookup d prog of
+                              Just (RCFun _ _ _ (RCall _ n _)) => putStrLn n
+                              _ => putStrLn (d ++ " not found or not a single call"))
+                  ["Main.nestedOp", "Main.midParen"]
         case lookup "Main.example" prog of
              Just (RCFun _ _ _ body) => case body of
                  RLetIn 10 Boxed _ (RDupNode (RVar 10) 3 rest) => printLn (checkRest rest)

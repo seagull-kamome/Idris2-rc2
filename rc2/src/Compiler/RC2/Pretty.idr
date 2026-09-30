@@ -38,9 +38,9 @@ mutual
   prettyExp : Nat -> RCExp -> String
   prettyExp d (RV _ v) = indent d ++ show v ++ "\n"
   prettyExp d (RAppName _ lazy n args) =
-      indent d ++ lazyPrefix lazy ++ "call " ++ show n ++ " " ++ show args ++ "\n"
+      indent d ++ lazyPrefix lazy ++ "call " ++ dumpName n ++ " " ++ show args ++ "\n"
   prettyExp d (RAppNameRep _ n argReps retRep postDrop args) =
-      indent d ++ "callRep " ++ show n ++ " "
+      indent d ++ "callRep " ++ dumpName n ++ " "
         ++ show (map prettyRep argReps) ++ " -> " ++ prettyRep retRep
         ++ " postDrop= " ++ show postDrop ++ " " ++ show args ++ "\n"
   prettyExp d (RAppFFIInline _ ccs fargs ret postDrop args) =
@@ -48,7 +48,7 @@ mutual
         ++ show fargs ++ " -> " ++ show ret
         ++ " postDrop= " ++ show postDrop ++ " " ++ show args ++ "\n"
   prettyExp d (RUnderApp _ n missing args) =
-      indent d ++ "partial " ++ show n ++ " missing= " ++ show missing ++ " " ++ show args ++ "\n"
+      indent d ++ "partial " ++ dumpName n ++ " missing= " ++ show missing ++ " " ++ show args ++ "\n"
   prettyExp d (RApp _ lazy c args) =
       indent d ++ lazyPrefix lazy ++ "apply " ++ show c ++ " " ++ show (forget args) ++ "\n"
   prettyExp d (RLet _ var rep value body) =
@@ -56,11 +56,11 @@ mutual
       ++ prettyExp (d + 1) value
       ++ prettyExp d body
   prettyExp d (RCon _ n ci tag args reuseFrom) =
-      indent d ++ "con " ++ show n ++ " " ++ show ci ++ " tag= " ++ show tag
+      indent d ++ "con " ++ dumpName n ++ " " ++ show ci ++ " tag= " ++ show tag
         ++ " " ++ show args
         ++ maybe "" (\r => " reuse= " ++ show r) reuseFrom ++ "\n"
   prettyExp d (RRetPack _ n tag fields) =
-      indent d ++ "retpack " ++ show n ++ " tag= " ++ show tag ++ " " ++ show fields ++ "\n"
+      indent d ++ "retpack " ++ dumpName n ++ " tag= " ++ show tag ++ " " ++ show fields ++ "\n"
   prettyExp d (ROp _ lazy op args postDrop) =
       indent d ++ lazyPrefix lazy ++ "op " ++ show op ++ " " ++ show (toList args)
         ++ (if postDrop == [] then "" else " postDrop= " ++ show postDrop) ++ "\n"
@@ -109,11 +109,11 @@ mutual
       indent d ++ "continue loop " ++ show args
         ++ (if postDrop == [] then "" else " postDrop= " ++ show postDrop) ++ "\n"
   prettyExp d (RMemoize _ n rep body) =
-      indent d ++ "memoize " ++ show n ++ " : " ++ prettyRep rep ++ "\n" ++ prettyExp (d + 1) body
+      indent d ++ "memoize " ++ dumpName n ++ " : " ++ prettyRep rep ++ "\n" ++ prettyExp (d + 1) body
 
   prettyConAlt : Nat -> RConAlt -> String
   prettyConAlt d (MkRConAlt n ci tag args body) =
-      indent d ++ show n ++ " " ++ show ci ++ " tag= " ++ show tag
+      indent d ++ dumpName n ++ " " ++ show ci ++ " tag= " ++ show tag
         ++ " args= " ++ show (map RCLoc args) ++ " ->\n"
       ++ prettyExp (d + 1) body
 
@@ -133,19 +133,19 @@ mutual
 ||| `delay` CAF" can still be printed at all.
 prettyDef : SortedSet Name -> Name -> RCDef -> String
 prettyDef lazyCAFs n (MkRCFun args retRep isWorker body) =
-    "def " ++ show n ++ "  (fun args= " ++ show (map (\(i, r) => "\{show (RCLoc i)}:\{prettyRep r}") args)
+    "def " ++ dumpName n ++ "  (fun args= " ++ show (map (\(i, r) => "\{show (RCLoc i)}:\{prettyRep r}") args)
       ++ " ret= " ++ prettyRep retRep
       ++ (if isWorker then " worker=True" else "")
       ++ (if contains n lazyCAFs then " lazyCAF=True" else "") ++ ")\n"
     ++ prettyExp 1 body ++ "\n"
 prettyDef _ n (MkRCCon tag arity nt) =
-    "def " ++ show n ++ "  (con tag= " ++ show tag ++ " arity= " ++ show arity
+    "def " ++ dumpName n ++ "  (con tag= " ++ show tag ++ " arity= " ++ show arity
       ++ " newtype= " ++ show nt ++ ")\n\n"
 prettyDef _ n (MkRCForeign ccs fargs ret) =
-    "def " ++ show n ++ "  (foreign " ++ show ccs ++ " " ++ show fargs
+    "def " ++ dumpName n ++ "  (foreign " ++ show ccs ++ " " ++ show fargs
       ++ " -> " ++ show ret ++ ")\n\n"
 prettyDef _ n (MkRCError err) =
-    "def " ++ show n ++ "  (error)\n" ++ prettyExp 1 err ++ "\n"
+    "def " ++ dumpName n ++ "  (error)\n" ++ prettyExp 1 err ++ "\n"
 
 ||| The whole program's final RCExp, one `def` block per top-level
 ||| name, in the same order `Compiler.RC2.RC2.toRCDefs` produced them.

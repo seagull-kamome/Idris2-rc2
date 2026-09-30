@@ -9,6 +9,8 @@
 ||| This module was licensed by BSD3. see LICENSE file for detail.
 module Compiler.RC2.ArityRaiseCExp
 
+import Compiler.RC2.Emit.Util
+
 import Core.CompileExpr
 import Core.Context
 import Core.Core
@@ -91,7 +93,7 @@ raisePlan defs =
 -- Rewrite
 
 raisedName : Name -> Name
-raisedName n = MN ("rc2_raised_" ++ show n) 0
+raisedName n = MN ("rc2_raised_" ++ cName n) 0
 
 ||| `body`'s tails handed `w`: a lambda binds its parameter to it, a tail
 ||| call calls the raised version, a crash stays.

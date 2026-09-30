@@ -1,2 +1,4 @@
 True
+Prelude.Show.(show_Show_(List $a))
+Idris.Pretty.prettyPrec_Pretty_IdrisSyntax_(PBinder' KindedName)
 True

@@ -142,29 +142,42 @@ mutual
   ||| all).
   anyName : Grammar () RcToken True String
   anyName = do
-      n <- nameAtomG
-      -- Only glue a following `{`/`(` onto `n` when `n` itself ends
-      -- in `.` -- `Core.Name`'s own `Show` only ever puts `{...}`
-      -- (an `MN`/`PV`) or `(...)` (an operator's own display) right
-      -- after a namespace's own trailing `.` (`show (NS ns n) =
-      -- "\{show ns}.\{show n}"`), never glued straight onto some
-      -- *other* token with no dot at all -- without this guard, a
-      -- keyword this grammar reads with `anyName` (`call`, `op`, ...)
-      -- would wrongly swallow an unrelated, merely-adjacent `{...}`/
-      -- `(...)` that starts the *next* field instead (e.g. `call
-      -- {rc2_specClosure_...}`, a real idris2-lsp dump line: `call`
-      -- doesn't end in `.`, so this guard correctly leaves the `{...}`
-      -- for a separate `anyName` read right after).
-      tail <- if isSuffixOf "." n then option "" (braceGroupG <|> opTailG) else pure ""
-      pure (n ++ tail)
+      n <- bounds nameAtomG
+      -- Only glue a following `{`/`(` onto `n` when nothing separates
+      -- them: a name's own `{...}` (an `MN`/`PV`) or `(...)` (an
+      -- operator's display, `Prelude.Types.SnocList.(<>>)`, or a
+      -- method implementation's, `prettyPrec_Pretty_IdrisSyntax_(PBinder'
+      -- KindedName)`) is written straight after it. A keyword this
+      -- grammar reads with `anyName` (`call`, `op`, ...) is followed by
+      -- a space, so the next field's `{...}`/`(...)` (e.g. `call
+      -- {rc2_specClosure_...}`) is left for a separate `anyName` read.
+      tail <- option "" (adjacentTo n.bounds (braceGroupG <|> opTailG))
+      pure (n.val ++ tail)
     where
+      adjacentTo : Bounds -> Grammar () RcToken True String -> Grammar () RcToken True String
+      adjacentTo prev g = do
+          t <- bounds g
+          the (Grammar () RcToken False String) $
+              if t.bounds.startLine == prev.endLine && t.bounds.startCol == prev.endCol
+                 then pure t.val
+                 else fail "not adjacent"
+
+      -- The parenthesised part can nest: a name standing in for an
+      -- interface method's implementation reads e.g.
+      -- `Prelude.Show.(show_Show_(List $a))`.
       opTailG : Grammar () RcToken True String
       opTailG = do
           match (RcPunct '(')
-          first <- match RcName
-          rest <- many (match RcName)
+          parts <- some (map Left opTailG <|> map Right (match RcName))
           match (RcPunct ')')
-          pure ("(" ++ concat (intersperse " " (first :: rest)) ++ ")")
+          pure ("(" ++ joinParts (forget parts) ++ ")")
+        where
+          -- Spaces go only between two plain words; a nested group
+          -- glues onto whatever is next to it, as in the source.
+          joinParts : List (Either String String) -> String
+          joinParts (Right a :: rest@(Right _ :: _)) = a ++ " " ++ joinParts rest
+          joinParts (p :: rest) = either id id p ++ joinParts rest
+          joinParts [] = ""
 
   ||| `{...}` (`Core.Name`'s own `MN`/`PV` display, `"{" ++ x ++ ":" ++
   ||| show y ++ "}"`), read structurally token-by-token rather than
