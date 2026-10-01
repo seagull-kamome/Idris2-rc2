@@ -110,6 +110,95 @@ raiseTails r fc w (NmApp afc (NmRef rfc g) args) =
     NmApp afc (NmRef rfc (raisedName g)) (args ++ [NmLocal fc w])
 raiseTails _ _ _ e = e
 
+mutual
+  ||| Occurrences of the local `x` in `e` (not minding shadowing; a
+  ||| rebinding of `x` makes `moveInto` give up anyway).
+  uses : Name -> NamedCExp -> Nat
+  uses x (NmLocal _ y) = if x == y then 1 else 0
+  uses x (NmLam _ _ b) = uses x b
+  uses x (NmLet _ _ v b) = uses x v + uses x b
+  uses x (NmApp _ g args) = uses x g + usesAll x args
+  uses x (NmCon _ _ _ _ args) = usesAll x args
+  uses x (NmOp _ _ args) = usesAll x (toList args)
+  uses x (NmExtPrim _ _ args) = usesAll x args
+  uses x (NmForce _ _ t) = uses x t
+  uses x (NmDelay _ _ t) = uses x t
+  uses x (NmConCase _ sc alts def) =
+      uses x sc + sum (map (\(MkNConAlt _ _ _ _ b) => uses x b) alts) + maybe 0 (uses x) def
+  uses x (NmConstCase _ sc alts def) =
+      uses x sc + sum (map (\(MkNConstAlt _ b) => uses x b) alts) + maybe 0 (uses x) def
+  uses _ _ = 0
+
+  usesAll : Name -> List NamedCExp -> Nat
+  usesAll x = sum . map (uses x)
+
+||| Every local `e` names.
+localsIn : NamedCExp -> List Name
+localsIn (NmLocal _ y) = [y]
+localsIn (NmLam _ _ b) = localsIn b
+localsIn (NmLet _ _ v b) = localsIn v ++ localsIn b
+localsIn (NmApp _ g args) = localsIn g ++ concatMap localsIn args
+localsIn (NmCon _ _ _ _ args) = concatMap localsIn args
+localsIn (NmOp _ _ args) = concatMap localsIn (toList args)
+localsIn (NmExtPrim _ _ args) = concatMap localsIn args
+localsIn (NmForce _ _ t) = localsIn t
+localsIn (NmDelay _ _ t) = localsIn t
+localsIn (NmConCase _ sc alts def) =
+    localsIn sc ++ concatMap (\(MkNConAlt _ _ _ _ b) => localsIn b) alts ++ maybe [] localsIn def
+localsIn (NmConstCase _ sc alts def) =
+    localsIn sc ++ concatMap (\(MkNConstAlt _ b) => localsIn b) alts ++ maybe [] localsIn def
+localsIn _ = []
+
+||| `e` with its one use of `x`, an application `x w rest`, replaced by
+||| `mk w rest`; `Nothing` if that use is anything else, or if a binder
+||| on the way to it rebinds a name in `bad` (`x` and the names the moved
+||| expression reads), which would capture them.
+moveInto : Name -> List Name -> (NamedCExp -> List NamedCExp -> NamedCExp) -> NamedCExp -> Maybe NamedCExp
+moveInto x bad mk e = go e
+  where
+    has : NamedCExp -> Bool
+    has t = uses x t > 0
+
+    binds : Name -> Bool
+    binds y = elem y bad
+
+    -- The one argument holding the use, rewritten; the others as they are.
+    goList : List NamedCExp -> Maybe (List NamedCExp)
+
+    go : NamedCExp -> Maybe NamedCExp
+    go (NmApp fc h@(NmLocal _ y) (w :: rest)) =
+        if y == x && not (has w) && not (any has rest)
+           then Just (mk w rest)
+           else NmApp fc h <$> goList (w :: rest)
+    go (NmLam fc y b) = if binds y then Nothing else NmLam fc y <$> go b
+    go (NmLet fc y v b) =
+        if has v then (\v' => NmLet fc y v' b) <$> go v
+        else if binds y then Nothing else NmLet fc y v <$> go b
+    go (NmApp fc g args) =
+        if has g then (\g' => NmApp fc g' args) <$> go g else NmApp fc g <$> goList args
+    go (NmCon fc n ci t args) = NmCon fc n ci t <$> goList args
+    go (NmExtPrim fc p args) = NmExtPrim fc p <$> goList args
+    go (NmForce fc lr t) = NmForce fc lr <$> go t
+    go (NmDelay fc lr t) = NmDelay fc lr <$> go t
+    go (NmConCase fc sc alts def) =
+        if has sc then (\sc' => NmConCase fc sc' alts def) <$> go sc
+        else case break (\(MkNConAlt _ _ _ _ b) => has b) alts of
+                  (pre, MkNConAlt n ci t as b :: post) =>
+                      if any binds as then Nothing
+                      else (\b' => NmConCase fc sc (pre ++ MkNConAlt n ci t as b' :: post) def) <$> go b
+                  (_, []) => (\d => NmConCase fc sc alts (Just d)) <$> (def >>= go)
+    go (NmConstCase fc sc alts def) =
+        if has sc then (\sc' => NmConstCase fc sc' alts def) <$> go sc
+        else case break (\(MkNConstAlt _ b) => has b) alts of
+                  (pre, MkNConstAlt c b :: post) =>
+                      (\b' => NmConstCase fc sc (pre ++ MkNConstAlt c b' :: post) def) <$> go b
+                  (_, []) => (\d => NmConstCase fc sc alts (Just d)) <$> (def >>= go)
+    -- Anything else (an `NmOp`'s argument, say) is left alone.
+    go _ = Nothing
+
+    goList [] = Nothing
+    goList (a :: as) = if has a then (:: as) <$> go a else (a ::) <$> goList as
+
 ||| Every `(f xs) w` with `f` raised and `xs` saturating it calls the
 ||| raised version instead.
 rewriteSites : SortedSet Name -> SortedMap Name Nat -> NamedCExp -> NamedCExp
@@ -126,7 +215,24 @@ rewriteSites r arity = go
                      in if null rest' then call else NmApp fc call rest'
                 else NmApp fc (NmApp ifc (NmRef rfc f) xs') (w' :: rest')
       go (NmLam fc x b) = NmLam fc x (go b)
-      go (NmLet fc x v b) = NmLet fc x (go v) (go b)
+      -- `let x = f xs in ... x w ...`, `x`'s only use: the closure is
+      -- applied at once there too, so that use calls the raised version
+      -- (a recursive call bound before the world's lambda, say). Building
+      -- the closure computes nothing, so it can move to its use.
+      go (NmLet fc x v b) =
+          let v' = go v
+              b' = go b
+              kept = NmLet fc x v' b'
+          in case v' of
+                  NmApp ifc (NmRef rfc f) xs =>
+                      if contains f r && lookup f arity == Just (length xs) && uses x b' == 1
+                         then fromMaybe kept $
+                                moveInto x (x :: concatMap localsIn xs)
+                                  (\w', rest => let call = NmApp ifc (NmRef rfc (raisedName f)) (xs ++ [w'])
+                                                in if null rest then call else NmApp ifc call rest)
+                                  b'
+                         else kept
+                  _ => kept
       go (NmApp fc g args) = NmApp fc (go g) (map go args)
       go (NmCon fc n ci t args) = NmCon fc n ci t (map go args)
       go (NmOp fc op args) = NmOp fc op (map go args)
