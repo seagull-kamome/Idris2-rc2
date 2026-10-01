@@ -33,7 +33,7 @@ for arg in "$@"; do
 done
 
 if [ ! -f env.sh ]; then
-  echo "env.sh missing -- run ./gen-env.sh first (needs nix-shell -p idris2)" >&2
+  echo "env.sh missing -- run ./gen-env.sh first (needs Chez Scheme on PATH as 'scheme')" >&2
   exit 1
 fi
 source env.sh

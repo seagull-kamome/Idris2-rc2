@@ -11,7 +11,7 @@ without modifying) an upstream Idris2 checkout used only as a reference.
 ```
 .
 ├── env.sh          generated environment (source before building/running rc2) (gitignored)
-├── gen-env.sh       regenerates env.sh: nixpkgs' idris2 wrapper env vars, plus PATH pointing at the self-built install/bin compiler
+├── gen-env.sh       regenerates env.sh: PATH pointing at the self-built install/bin compiler, plus its support library path (needs Chez Scheme on PATH as `scheme`)
 ├── idris2-src/      clone of github.com/idris-lang/Idris2: reference, and the source of the self-built idris2 (gitignored, untouched)
 ├── install/         self-built idris2 toolchain + local install prefix for the rc2 package and runtime (gitignored, build output)
 ├── libs/rc2base/    companion support-library package -- see libs/rc2base/ below

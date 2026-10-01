@@ -10,7 +10,7 @@
 ```
 .
 ├── env.sh          生成された環境設定（rc2のビルド・実行前にsourceする）（gitignore対象）
-├── gen-env.sh       env.shを再生成する: nixpkgsのidris2ラッパーの環境変数に加え、自前ビルドのinstall/binコンパイラを指すPATHを設定
+├── gen-env.sh       env.shを再生成する。自前ビルドのinstall/binコンパイラを指すPATHと、そのサポートライブラリのパスを設定する（Chez Schemeが`scheme`という名前でPATHにある必要がある）
 ├── idris2-src/      github.com/idris-lang/Idris2のクローン: 参照用であり、自前ビルドidris2のソースでもある（gitignore対象、無変更）
 ├── install/         自前ビルドのidris2ツールチェーン＋rc2パッケージとランタイムのローカルインストール先（gitignore対象、ビルド成果物）
 ├── libs/rc2base/    付属のサポートライブラリパッケージ（下記libs/rc2base/を参照）

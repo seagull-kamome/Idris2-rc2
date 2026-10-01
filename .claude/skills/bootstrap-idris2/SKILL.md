@@ -33,9 +33,10 @@ one of the triggers above genuinely applies. This can take a while
 ## Prerequisites
 
 - `idris2-src/` exists and is up to date.
-- `env.sh` exists at the repo root (`./gen-env.sh` if missing/stale —
-  needs `nix-shell -p idris2`, the same one-time-bootstrap-only
-  exception as below).
+- Chez Scheme is on `PATH` as `scheme` (idris2 finds it there when
+  `CHEZ` is unset).
+- `env.sh` exists at the repo root (`./gen-env.sh` if missing; it
+  needs only `scheme` on `PATH`, not nixpkgs' `idris2`).
 
 ## Step 1: first-pass build, using nixpkgs' idris2 as the boot compiler
 
@@ -137,8 +138,9 @@ skill) to confirm nothing regressed against the new toolchain.
   causing confusing "TTC data is in an older format" errors later.
 - **Step 2/3 forgetting to `source ../env.sh`** makes the freshly
   built `install/bin/idris2` (used as `$IDRIS2_BOOT`) fail to find
-  Chez/its own support libraries, since it's a plain unwrapped binary
-  unlike nixpkgs' own wrapped one.
+  its own support libraries, since it's a plain unwrapped binary
+  unlike nixpkgs' own wrapped one (Chez itself comes from `scheme`
+  on `PATH`).
 - **Step 3 (`install-api`) run with `IDRIS2_BOOT` still `idris2`
   (nixpkgs')** instead of the self-built one produces an API package
   whose intermediate `.ttc` versions don't match the self-hosted
