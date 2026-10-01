@@ -45,6 +45,12 @@
 #                       --directive, so a run that only varies directives
 #                       gains nothing from it; see nopass.sh).
 #
+# TEST_TIMEOUT=SECONDS (env var, default 60) -- how long one run of a
+# test program may take before it is killed and reported as timed out,
+# so a program that never finishes fails instead of stalling the whole
+# run. valgrind and ThreadSanitizer runs get ten times as long; refc-suite
+# (run.sh) and tsan.sh read the same variable.
+#
 # VALGRIND_JOBS=N (env var, not a flag) -- how many valgrind runs to
 # execute concurrently (default: nproc/2, floored at 1). Each run is
 # an independent single-threaded process on its own binary/log file,
@@ -166,6 +172,8 @@ DO_TSAN=1
 DO_REFC_SUITE=1
 VALGRIND_ALL=0
 REGEN_EXPECTED=0
+TEST_TIMEOUT="${TEST_TIMEOUT:-60}"
+export TEST_TIMEOUT
 EXTRA_DIRECTIVES=()
 while [ $# -gt 0 ]; do
     case "$1" in
@@ -450,6 +458,7 @@ declare -A KNOWN_LEAK_BYTES=( )
 is_in() { local x; for x in $2; do [ "$x" = "$1" ] && return 0; done; return 1; }
 
 ALL_TESTS="$(cd "$RC2_DIR/tests" && ls -d Test*/ 2>/dev/null | sed 's#/$##' | sort)"
+TIMED_OUT_TESTS=""
 
 for name in $ALL_TESTS; do
     compile_t0="$(date +%s.%N)"
@@ -511,8 +520,15 @@ for name in $ALL_TESTS; do
     fi
 
     run_t0="$(date +%s.%N)"
-    actual="$("$TMP/${name}_rc2" 2>&1)"
+    actual="$(timeout --kill-after=5 "$TEST_TIMEOUT" "$TMP/${name}_rc2" 2>&1)"
+    run_status=$?
     run_time="$(elapsed "$run_t0" "$(date +%s.%N)")"
+    # 124: `timeout` stopped it; 137: it had to be killed as well.
+    if [ "$run_status" -eq 124 ] || [ "$run_status" -eq 137 ]; then
+        report_fail "$name" "timed out after ${TEST_TIMEOUT}s (TEST_TIMEOUT)"
+        TIMED_OUT_TESTS="$TIMED_OUT_TESTS $name"
+        continue
+    fi
 
     if is_in "$name" "$NO_REFC_DIFF_TESTS"; then
         if [ -f "$RC2_DIR/tests/$name/$name.expected" ]; then
@@ -535,7 +551,7 @@ for name in $ALL_TESTS; do
                 report_fail "$name" "refc compile error, see $TMP/${name}_refc_compile.log"
                 continue
             fi
-            "$TMP/${name}_refc" > "$expected_file" 2>&1
+            timeout --kill-after=5 "$TEST_TIMEOUT" "$TMP/${name}_refc" > "$expected_file" 2>&1
         fi
         if [ ! -f "$expected_file" ]; then
             report_fail "$name" "no saved .expected -- run with --regen-expected first"
@@ -573,6 +589,8 @@ elif [ "$DO_VALGRIND" -eq 1 ]; then
         if [ "$VALGRIND_ALL" -eq 0 ] && ! is_in "$name" "$LEAK_SENSITIVE_TESTS"; then
             continue
         fi
+        # It would only time out again, ten times slower.
+        is_in "$name" "$TIMED_OUT_TESTS" && continue
         [ -x "$TMP/${name}_rc2" ] || continue
         valgrind_names+=("$name")
     done
@@ -580,8 +598,14 @@ elif [ "$DO_VALGRIND" -eq 1 ]; then
     valgrind_t0="$(date +%s.%N)"
     running=0
     for name in "${valgrind_names[@]}"; do
-        valgrind --leak-check=full --errors-for-leak-kinds=none --error-exitcode=1 "$TMP/${name}_rc2" \
-            > "$TMP/${name}_valgrind.log" 2>&1 &
+        # The exit status goes to a file: a run `timeout` stopped still
+        # leaves a leak summary in the log, of whatever was live then.
+        {
+            timeout --kill-after=5 "$((TEST_TIMEOUT * 10))" \
+                valgrind --leak-check=full --errors-for-leak-kinds=none --error-exitcode=1 "$TMP/${name}_rc2" \
+                > "$TMP/${name}_valgrind.log" 2>&1
+            echo $? > "$TMP/${name}_valgrind.status"
+        } &
         running=$((running + 1))
         if [ "$running" -ge "$valgrind_jobs" ]; then
             wait -n
@@ -604,8 +628,11 @@ elif [ "$DO_VALGRIND" -eq 1 ]; then
         leaked="${leaked:-0}"
         expected_leak="${KNOWN_LEAK_BYTES[$name]:-0}"
         errors="$(grep -oP 'ERROR SUMMARY: \K[0-9,]+(?= errors)' "$TMP/${name}_valgrind.log" | tr -d ',')"
-        if [ -z "$errors" ]; then
-            report_fail "$name (valgrind)" "no ERROR SUMMARY, valgrind did not finish -- see $TMP/${name}_valgrind.log"
+        vg_status="$(cat "$TMP/${name}_valgrind.status" 2>/dev/null)"
+        if [ "$vg_status" = 124 ] || [ "$vg_status" = 137 ]; then
+            report_fail "$name (valgrind)" "timed out after $((TEST_TIMEOUT * 10))s (10 x TEST_TIMEOUT) -- see $TMP/${name}_valgrind.log"
+        elif [ -z "$errors" ]; then
+            report_fail "$name (valgrind)" "no ERROR SUMMARY: valgrind did not finish (a crash of its own) -- see $TMP/${name}_valgrind.log"
         elif [ "$errors" -ne 0 ]; then
             report_fail "$name (valgrind)" "$errors memory error(s) -- see $TMP/${name}_valgrind.log"
         elif [ "$leaked" -eq 0 ]; then

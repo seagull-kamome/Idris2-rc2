@@ -85,7 +85,13 @@ for p in "${PROGRAMS[@]}"; do
     for run in $(seq 1 "$RUNS"); do
         # TSan's shadow memory needs a fixed address layout; newer kernels
         # randomise too much of it otherwise.
-        setarch -R "$work/$name" > /dev/null 2> "$OUT/$name.$run.log"
+        # Ten times verify.sh's TEST_TIMEOUT: TSan slows a program down a lot.
+        timeout --kill-after=5 "$((${TEST_TIMEOUT:-60} * 10))" \
+            setarch -R "$work/$name" > /dev/null 2> "$OUT/$name.$run.log"
+        case $? in
+            124|137) echo "timed out after $((${TEST_TIMEOUT:-60} * 10))s (TEST_TIMEOUT)" >> "$OUT/$name.$run.log"
+                     warnings=$((warnings + 1)) ;;
+        esac
         n="$(grep -c 'WARNING: ThreadSanitizer' "$OUT/$name.$run.log")"
         warnings=$((warnings + n))
     done

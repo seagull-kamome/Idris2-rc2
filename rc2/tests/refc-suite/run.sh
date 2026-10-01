@@ -67,17 +67,27 @@ for dir in "$SUITE_DIR"/*/; do
             exit 1
         fi
 
+        # TEST_TIMEOUT (verify.sh's, default 60s) bounds every run; 124 is
+        # `timeout` stopping it, 137 having to kill it as well.
+        limit="${TEST_TIMEOUT:-60}"
+        timed_out=0
         actual_out=""
         if [ -f runs ]; then
             while read -r run_args; do
                 # shellcheck disable=SC2086
-                out="$(./build/exec/"$exename" $run_args 2>&1)"
+                out="$(timeout --kill-after=5 "$limit" ./build/exec/"$exename" $run_args 2>&1)"
+                case $? in 124|137) timed_out=1 ;; esac
                 actual_out="${actual_out}${out}
 "
             done < runs
         else
-            actual_out="$(./build/exec/"$exename" 2>&1)
+            actual_out="$(timeout --kill-after=5 "$limit" ./build/exec/"$exename" 2>&1)
 "
+            case $? in 124|137) timed_out=1 ;; esac
+        fi
+        if [ "$timed_out" -eq 1 ]; then
+            echo "FAIL  $name (timed out after ${limit}s, TEST_TIMEOUT)"
+            exit 1
         fi
         # Optional post-run hook: some upstream tests inspect a file the
         # program wrote (e.g. buffer's `base64 testWrite.buf`) rather than
