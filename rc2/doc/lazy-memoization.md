@@ -1,14 +1,22 @@
-# Memoizing `Lazy` and `Inf` (design)
+# Memoizing `Lazy` and `Inf`
 
-Status: design, not implemented. Today `Delay e` is lifted to a function
-of one ignored argument and `Force t` to an application of `t` to an
-erased value, so a delayed value is re-evaluated on every `force`
-(TODO.md, "Semantics: `Lazy`/`Force`"). This document is the plan for
-evaluating each delayed value at most once per cell.
+**Status: implemented, in two stages.** `RDelay`/`RForce` are their own
+`RCExp` nodes, lowered to a lazy cell (`IDRIS2RC2_TAG_LAZY`) whose first
+stored result `idris2rc2_force` shares with every later force (a race
+between two threads forcing the same cell may run the thunk twice, but
+only the first result stored is ever kept -- see "`Force`" below); a
+`Delay` that computes nothing (a constant, a lambda, or a
+constructor of atoms) is that value instead, with no cell at all.
+`Compiler.RC2.LazyCaf` folds a 0-ary top-level `Delay` definition onto
+the existing CAF memoization instead of giving it its own cell, and
+`Compiler.RC2.LazyFold` turns a local delay forced exactly once into a
+direct call of its thunk. See "Measured" and "Verification" below for
+what changed and how it was checked.
 
 ## How much there is
 
-Counted in upstream's `NamedCExp` (`--dumpcases`, 2026-10-01):
+Counted before either stage existed, in upstream's `NamedCExp`
+(`--dumpcases`, 2026-10-01):
 
 | | rc2 itself | idris2-lsp |
 |---|---|---|
@@ -59,6 +67,19 @@ rc2 memoizes `Lazy` and `Inf` alike. There are no weak references under
 reference counting; a cell and its value are freed as soon as nothing
 refers to the cell, so a stream's evaluated prefix lives exactly as long
 as something holds its head, as in call-by-need.
+
+## Measured
+
+rc2 compiling itself, counted in the final IR (`--directive
+dumprcexpr`): before lazy cells existed at all (`Delay`/`Force` lowered
+to a plain lambda and an application of it) compiling rc2 itself
+produced 19,797 definitions and 3,993 closure applications (`apply` in
+the dump). Stage 1 (every `Delay` gets a cell) produced 21,546
+definitions, 3,765 `delay`s and 5,073 `force`s. Stage 2 (a `Delay` of a
+constant/lambda/atom-constructor needs no cell, plus `LazyCaf` and
+`LazyFold`) produced 19,616 definitions, 1,731 `delay`s, 202 `force`s,
+and 3,454 closure applications. Compiling idris2-lsp under stage 2:
+18,048 definitions, 1,676 `delay`s, 227 `force`s.
 
 ## Runtime representation
 
@@ -125,7 +146,11 @@ for a cell or the other way round.
 - **0-ary top-level definitions whose body is a `Delay`** (218/214) get
   no cell. Every non-constant CAF is already memoized (`RMemoize`,
   `insertMemoize` in `RC2.idr`, `caf-memoization.md`), so a cell would
-  memoize the same value twice. On the `NamedCExp`, before lifting:
+  memoize the same value twice. `Compiler.RC2.LazyCaf` (`applyLazyCaf`)
+  does this rewrite on the whole program, before lifting, once, in
+  `RC2.idr`'s `compileExpr` -- not per module, because another module's
+  own reference to the same definition is out of sight by the time a
+  per-module version would run. On the `NamedCExp`:
   `x = Delay e` becomes `x = e` (memoized, or folded to a constant);
   `Force (x [])` becomes `x []`; any other reference `x []`, a lazy
   value passed on unforced, becomes `Delay (x [])`, so `e` is still not
@@ -147,11 +172,12 @@ for a cell or the other way round.
 - **The closure.** The cell owns it until a result is stored. An
   evaluating thread holds its own reference (taken under the lock), so
   the cell dropping its reference mid-evaluation is harmless.
-- **Tail calls.** Today a `Force` in tail position is an ordinary
-  application and goes through the trampoline without growing the C
-  stack. A memoizing `Force` has to store the result, so it is never a
-  tail call: a long chain of thunks that each force the next grows the
-  C stack by one frame per link. Accepted.
+- **Tail calls.** `idris2rc2_force` has to store the thunk's result
+  after it returns, so `Emit.idr` lowers `RForce` to a plain C call,
+  `idris2rc2_force(v)`, never through the closure-dispatch trampoline an
+  ordinary tail call uses -- a `Force` can never be a tail call. A long
+  chain of thunks that each force the next therefore grows the C stack
+  by one frame per link. Accepted.
 - **Freeing.** A cell is torn down like a constructor field (deferred
   through `idris2rc2_teardown`'s loop), so freeing a long forced stream
   does not recurse once per element.
@@ -165,46 +191,85 @@ for a cell or the other way round.
 
 - `RDelay fc lr thunk captures`: consumes `captures`, builds the cell.
   `RForce fc lr v`: borrows `v`. Both print in the dump (`delay`,
-  `force`) and must be read back by `Language.RCExpr.Parser`.
-- Lifting: the body of a `Delay` that isn't already a value is lifted
-  to a thunk function taking its captures. A `Delay` whose body is a
-  lambda is no longer merged with it (`LiftInfo`'s "params" case); the
-  thunk returns the closure. `ArityRaise` relies on the merged shape
-  and needs updating.
-- `ConstFold`: `RForce` of an `RDelay` folds to the thunk's call, and
-  `RForce` of a value known not to be a cell folds to the value.
+  `force`) and are read back by `Language.RCExpr.Parser`
+  (`libs/rc2base`).
+- Lifting: a `Delay` whose body isn't already a value calls `RC.idr`'s
+  `lift` directly with no bound parameters of its own
+  (origin `FromDelay lr`), so the resulting thunk takes only its
+  captures, never merged with a lambda inside it. A `Delay` whose body
+  is a lambda is one of the "already a value" cases above instead: it
+  is lifted exactly as that lambda would be on its own, through
+  `lambda` (which accumulates the lambda's own parameters before
+  calling `lift` in turn, origin `FromLambda`) -- nothing in `LiftInfo`
+  marks that it ever was a `Delay` at all.
+- To `children`/`mapChildren`/`traverseChildren` (`RCExp.idr`),
+  `RDelay`/`RForce` are leaves -- no `RCExp` child to recurse into -- so
+  a pass that walks the tree only through those three needs no case of
+  its own. `captures`/`v` are still locals, though, and anything that
+  reads, renames or substitutes locals needs an explicit case even on a
+  leaf: `freeLocalsR`, `countUsesR`, `mentionedLocalsAcc` and
+  `directReads` (`RCExp.idr`) each have one, and so does `ConstFold`'s
+  own `foldConst` substitution. A pass with a catch-all clause that
+  forgets one of these would silently skip `RDelay`/`RForce` instead --
+  the same silent-miss shape `caf-memoization.md`'s own "Limitations"
+  section documents for `RMemoize`.
 
-## What the change touches
+## `ConstFold`
 
-`RCExp`, lambda lifting (`RC.idr`), `ArityRaise`, `ConstFold`,
-`SpecClosure` and `ClosureCtx` (they act on today's delay closures),
-`DeadCode`, RC annotation and every RC pass (`RDelay` consumes,
-`RForce` borrows), `Loop`/`TRMC`/`DualABI` (new node kinds to pass
-through), `Emit`, the runtime (`IDRIS2RC2_TAG_LAZY`, `idris2rc2_force`,
-teardown of a cell), `Pretty`, the rcexpr parser in rc2base,
-`rcexpr-lint` and `rcexpr-diff`.
+`Compiler.RC2.ConstFold.foldConst` itself does not fold a `Force` of a
+`Delay` -- its own `RDelay`/`RForce` cases only resolve `captures`/`v`
+against whatever `resolveLocal` already knows (an alias or a folded
+constant), the same as any other operand. Folding a `Force`-of-a-`Delay`
+pair is
+`Compiler.RC2.LazyFold`'s own job: it runs right after Early inline
+(`RC2.idr`'s `rc2: Lazy fold`, the line `--timing 2` prints for it),
+once inlining has had a chance to bring a `Delay` and its one `Force`
+into the same function. `foldSingleForce` finds a `let v = delay
+thunk caps` whose body uses `v` exactly once, as a `Force`'s own operand
+and nowhere else, and replaces the whole `let`+body with a direct call
+of `thunk` on `caps` -- the cell is never built. It runs before RC
+annotation (no ownership yet to disturb) and before loop conversion (a
+`Force` inside a loop could otherwise run many times for one binding).
 
-## Risks
+## Known limitations
 
-- Delay arguments are plain closures today, so `ConstFold`'s apply fold
-  and `SpecClosure` see through them (the 93 direct calls above). A cell
-  hides them; the `ConstFold` rules above have to recover that.
-  Compare `bench.sh` before and after.
-- A delayed value that stays delayed costs two allocations (cell and
-  closure) instead of one.
-- `Force` crashes on anything built as a `Lazy`/`Inf` value without
-  `Delay`. Check upstream's base and contrib for `believe_me` into
-  `Lazy`/`Inf` and `%foreign` signatures mentioning them before
-  enabling.
+- A delayed value that stays delayed -- not folded away by `Delay`'s
+  "already a value" cases above, nor by `LazyFold` -- costs two
+  allocations (the cell, and the closure it holds until first forced)
+  instead of one.
+- `idris2rc2_force`'s first check is "not a cell" (see "`Force`" above),
+  so forcing a value that was never built through `Delay` at all (a
+  `believe_me`'d `Lazy`/`Inf`, or a `%foreign` signature mentioning
+  either type) just returns it unchanged rather than crashing. Whether
+  every such value in upstream's `base`/`contrib` is actually safe to
+  hand to `force` this way has not been checked.
 
-## Order of work
+## Known upstream behaviour
 
-1. Runtime cell and `idris2rc2_force`, `RDelay`/`RForce`, lifting,
-   RC annotation, Emit, dump and parser; every `Delay` gets a cell.
-   Tests: a side effect runs once across two forces, `Inf` streams,
-   `Lazy` of a function, two threads forcing one cell, a cell forcing
-   itself.
-2. Values instead of cells (constants, lambdas, value constructors),
-   the rewrite of delayed top-level constants onto CAF memoization, the
-   `ConstFold` rules; `bench.sh` against step 1 and against today.
-3. TODO.md's "Semantics: `Lazy`/`Force`" entry is rewritten.
+Idris2's own compiler erases a `Lazy` in some places before rc2's
+pipeline ever sees it -- confirmed for two shapes: a `Lazy` nested
+inside a type argument (e.g. `IORef (Lazy Int)`), and a one-off `delay`
+bound directly in `main`. For both, no `Delay`/`Force` node reaches rc2
+at all, so nothing in this document applies to them. The exact upstream
+pass responsible wasn't traced further.
+
+## Verification
+
+`rc2/tests/Test125LazyMemo` checks: a value forced twice through a
+shared binding runs its side effect once; an `Inf` stream's tails each
+evaluate once across two separate `take`s of the same stream; a long
+forced stream (`iterate`/`index`) tears down without recursing once per
+element; and several threads (`forkJoin`) forcing the same cell
+together all read back the same value (consistency under a race, not a
+count of how many times the thunk ran -- the test never reads how many
+times its own side effect fired). Not covered by any test today: a
+cell that forces itself (the runtime aborts with "a lazy value forces
+itself" -- see "`Force`" above).
+
+`rc2/tests/Test122LiftOrigin`'s `check.sh` checks lifting: a non-value
+`Delay`'s thunk takes only its own captures (`delay Lazy`/`delay Inf`,
+`params 0` in the `.lifts` dump), and a `Delay` of a lambda is lifted as
+that lambda with no thunk and no cell at all (`lambda`, not `delay`, in
+the same dump).
+
+All tests pass; `bench.sh` shows no regression from this work.

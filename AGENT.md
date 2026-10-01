@@ -97,8 +97,9 @@ history, not there.
   process-wide flag says the program went multi-threaded,
   `immediate-ints.md` for keeping `Int`/`Int64`/`Bits64`/`Integer` in the pointer
   word when they fit in 62 bits, `lambda-lifting.md` for rc2 lifting
-  lambdas itself instead of taking upstream's `Lifted`, and what lifting
-  loses. `TODO.md` holds only open gaps, and history lives in the git
+  lambdas itself instead of taking upstream's `Lifted` (and what lifting
+  loses), and `lazy-memoization.md` for memoizing a `Lazy`/`Inf` value
+  behind a lazy cell. `TODO.md` holds only open gaps, and history lives in the git
   log; `rc2/doc/` is where the *why* and the
   bugs-found-along-the-way for a specific subsystem live.
   `rc2/doc/ja/` holds Japanese translations of some files directly

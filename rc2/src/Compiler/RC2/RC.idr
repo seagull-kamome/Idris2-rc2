@@ -65,8 +65,8 @@ data StructTable : Type where
 
 ||| Where a lifted definition came from: the top-level definition it was
 ||| lifted out of, a lambda or a `Delay` (with its `LazyReason`), and how
-||| many parameters of its own it takes after the captured ones (a
-||| `Delay` of a lambda is one definition, taking both).
+||| many parameters of its own it takes after the captured ones (none
+||| for a `Delay`'s thunk; doc/lazy-memoization.md).
 public export
 data LiftOrigin = FromLambda | FromDelay LazyReason
 

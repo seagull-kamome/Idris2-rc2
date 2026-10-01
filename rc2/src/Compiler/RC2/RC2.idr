@@ -487,10 +487,9 @@ getExternStructs directives = SortedSet.fromList $ mapMaybe getArg directives
 ||| `Delay e` (`MkNmFun [] (NmDelay _ _ _)`) -- the same shape
 ||| `Compiler.Scheme.Common`'s own `schDef` special-cases for a
 ||| memoized top-level lazy definition on the Chez backend (see
-||| `TODO.md`'s "Semantics: `Lazy`/`Force`..." entry). rc2 doesn't
-||| implement that memoization (see the same TODO.md entry's own
-||| follow-up for why it's more than a small fix), but the detection
-||| itself is free: `CompileData.namedDefs` is populated unconditionally
+||| doc/lazy-memoization.md). rc2 memoizes such a definition too, once
+||| `Compiler.RC2.LazyCaf` takes its `Delay` off (`RMemoize`); the
+||| detection here only marks it in the dump, and is free: `CompileData.namedDefs` is populated unconditionally
 ||| by `getCompileDataWith` regardless of the requested `UsePhase`, so
 ||| no extra compilation pass is needed to build this set purely for
 ||| `dumprcexpr`'s own benefit (`Compiler.RC2.Pretty.prettyDef`'s

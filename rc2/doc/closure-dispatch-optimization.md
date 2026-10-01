@@ -3,8 +3,9 @@
 Implementation notes for a small, runtime-only optimization in
 `idris2rc2_applyClosure` -- rc2's non-tail-call closure-application
 entry point, used by generic higher-order code (`map`/`Foldable`/
-interface-dictionary-method dispatch) and by `Force`'s own repeated
-re-evaluation of a shared `Delay` closure. Unlike every other
+interface-dictionary-method dispatch). `Force`'s own evaluation of a
+`Delay`'s thunk goes through a separate runtime entry point instead,
+not through here at all -- see "Laziness" below. Unlike every other
 `rc2/doc/*.md` companion document, this one touches no compiler pass
 and no `RCExp` IR shape at all -- the change is confined entirely to
 `rc2/support/rc2/runtime.c`, the hand-written C runtime library linked
@@ -34,13 +35,11 @@ emitRC (RApp fc _ closure arg) tailPosition = do
 by one argument. When the closure is uniquely owned, this is a plain
 field write. When it's non-unique (shared, refcount > 1 -- e.g. a
 partial application like `addN n` that `map` reuses across every list
-element, or the closure `Force` re-applies against the same `Delay`
-site every time it's forced), it must instead allocate a *new*
-`IDRIS2RC2_Closure` via `idris2rc2_mkClosure`, `idris2rc2_dup` each
-already-filled argument into it, and drop the original -- because some
-other owner (the caller of `map`, the still-live `Delay` thunk) still
-holds a reference to the original closure at its old arity and must
-keep seeing it that way.
+element), it must instead allocate a *new* `IDRIS2RC2_Closure` via
+`idris2rc2_mkClosure`, `idris2rc2_dup` each already-filled argument into
+it, and drop the original -- because some other owner (the caller of
+`map`) still holds a reference to the original closure at its old arity
+and must keep seeing it that way.
 
 `idris2rc2_applyClosure` (`runtime.c:325-342`, before this change) was
 simply:
@@ -190,21 +189,16 @@ get a fully-dispatched result back, synchronously, either way. Nothing
 observable about dispatch timing changes; only the transient
 allocation is removed.
 
-## Laziness: no memoized state to disturb
+## Laziness: handled by a separate runtime entry point
 
-`Force t` compiles to a plain `idris2rc2_applyClosure` call on
-`Delay e`'s own closure (confirmed directly in generated C: a value
-forced twice compiles to two independent
-`idris2rc2_applyClosure(var_0, NULL)` calls with nothing cached
-between them) -- see `TODO.md`'s existing "Semantics: `Lazy`/`Force`
-defers evaluation but doesn't memoize" section for the full
-derivation. Since `Force` already unconditionally dispatches
-immediately on every call, with no "leave a saturated-but-undispatched
-closure around for a later, separate re-use" state anywhere in the
-codebase, there was nothing for this optimization to disturb here: the
-fast path changes *how* that immediate dispatch is reached (skip the
-allocation), never *whether* re-forcing recomputes (it still does,
-exactly as before).
+`Force`'s evaluation of a `Delay`'s thunk does not go through
+`idris2rc2_applyClosure` at all. `idris2rc2_force`
+(`rc2/doc/lazy-memoization.md`) dispatches the thunk directly via
+`idris2rc2_dispatchFn`/`idris2rc2_trampoline`, and stores the result in
+the lazy cell, so a later `force` of the same cell returns it without
+evaluating anything. This fast path has nothing to do with laziness
+either way: there is no `idris2rc2_applyClosure` call on a `Delay`'s
+closure here for it to speed up or leave undisturbed.
 
 ## Scope: arity 1..20 only
 

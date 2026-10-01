@@ -56,237 +56,23 @@ boxing/reboxing gap above, just removes one small cost that used to sit
 on top of it.
 
 
-## Semantics: `Lazy`/`Force` defers evaluation but doesn't memoize (except one Chez-only special case)
+## `believe_me`された`Lazy`/`Inf`値を`force`する安全性が未確認
 
-Confirmed by direct experiment (a `Lazy Int` built via `delay
-(unsafePerformIO (do putStrLn "computing!"; pure 42))`, forced twice
-through a shared function parameter) that rc2's `Lazy`/`delay`/`force`
-provides deferred-evaluation *timing* only, not call-by-need *sharing*:
-forcing the same delayed value twice re-runs the underlying computation
-from scratch both times (`computing!` printed twice), rather than
-computing once and reusing the cached result the way Haskell's lazy
-thunks do. The deferred-timing half still works correctly (a separate
-experiment confirms the sequenced side effect inside `delay` doesn't
-run until the first `force`, not at the `delay` call site itself).
+`idris2rc2_force`は、渡された値がセル(`IDRIS2RC2_TAG_LAZY`)でなければそのまま
+返す(`rc2/doc/lazy-memoization.md`「`Force`」節)。`Delay`を経由せずに
+`believe_me`で作られた`Lazy`/`Inf`値や、`Lazy`/`Inf`に触れる
+`%foreign`宣言がこの経路を通るはずだが、upstreamの`base`/`contrib`に
+実在するそうした値のすべてがこの扱いで安全かどうかは未調査のまま。
 
-Root cause, traced to `idris2-src/src/Compiler/LambdaLift.idr`: both
-`rc2/src/Compiler/RC2/RC2.idr` and upstream `Compiler.RefC.RefC` call
-`getCompileData` with `doLazyAnnots = False` (`RC2.idr`'s own call site,
-`RefC.idr:1005`) -- **not rc2-specific**, the identical choice upstream
-RefC itself makes. Under that flag, `LambdaLift.idr`'s `liftExp`
-compiles `Delay e` to a plain zero-argument closure (`CLam (MN "act" 0)
-e`) and `Force t` to a plain call on it (`CApp t [CErased]`) -- no
-memo cell, no "already forced?" check, nothing beyond an ordinary
-closure and an ordinary application. Confirmed directly in rc2's own
-generated C too: a `force`d-twice value compiles to two independent
-`idris2rc2_applyClosure(var_0, NULL)` calls with nothing cached between
-them.
+## `Lazy`/`Inf` のメモ化後: force した値への無駄な reuse 解析を省く
 
-**Not actually a Chez-vs-RefC gap in general**, despite first looking
-like one: a naive `idris2 --cg chez` run of the same experiment prints
-`computing!` only *once*, but that turned out to be a narrow special
-case, not `Force`/`Delay` sharing in general -- confirmed by re-running
-the same experiment with the `Lazy` value built from a runtime
-parameter instead of a closed literal (so it can't be floated to a
-top-level binding), which prints `computing!` *twice* under `idris2
---cg chez` too, identical to rc2/RefC. The one-time-only result only
-happens for a top-level definition (or a `let`-binding the compiler
-floats to one, which happens whenever nothing in it depends on a
-function argument) whose entire body is literally `Delay e`:
-`Compiler.Scheme.Common.idr`'s `schDef` has a dedicated case for
-exactly that shape (`MkNmFun [] (NmDelay _ _ exp)`, its own comment:
-"Special version for memoized toplevel lazy definitions"), emitting
-Scheme's own native `(define name (delay expr))` instead of going
-through the generic `LazyExprProc`-driven `(lambda () expr)`/`(expr)`
-pair every other `Delay`/`Force` site uses (`defaultLaziness`, same
-file) -- and that native `delay` only ends up evaluated once *because*
-Chez's own top-level `define`s are genuinely shared CAFs, unlike rc2/
-RefC's (a top-level 0-argument definition is a plain function re-run on
-every reference on this backend, no memoization at all -- confirmed
-separately in this project's own investigation of `System.Random.
-Xoroshiro128PlusPlus`'s global-state design). So the real picture: a
-`Lazy` value that's a closed top-level constant is memoized on Chez
-(CAF-sharing + the native-`delay` special case working together) but
-never on rc2/RefC (no CAF-sharing at all); a `Lazy` value built at
-runtime from live data -- the ordinary/common case, e.g. a `Lazy`-typed
-function argument -- is *not* memoized on **any** of the three checked
-here (Chez included).
-
-Also investigated in passing: `LambdaLift.idr`'s other branch,
-`doLazyAnnots = True`, is not a path to memoization either. Under it,
-`Delay e`/`Force t` are erased entirely rather than becoming a closure
--- `e`/`t` gets lifted in place, evaluated exactly where it's written,
-with only a `lazy : Maybe LazyReason` marker left on whatever call/op
-node it lifts to (`Compiler.RC2.RCExp`'s own `lazy` fields on
-`RAppName`/`RApp`/`ROp`/`RExtPrim` exist for this, currently always
-`Nothing` since rc2 never sets `doLazyAnnots = True`). Flipping it
-would *remove* rc2's current (working) deferred-timing guarantee
-entirely -- `Delay`'s side effect would fire immediately, not at first
-`Force` -- and buys no memoization on its own; the `lazy` marker itself
-drives no runtime behavior anywhere in `Compiler.RC2.Emit` today, and
-would need real new codegen (something like a C-side version of Chez's
-own memoizing-thunk helper, `blodwen-lazy` in
-`idris2-src/support/chez/support.ss`: a heap-allocated closure plus an
-"already forced?" flag and a cached result slot) to turn that marker
-into anything. No backend currently ships with `doLazyAnnots = True`
-(checked Chez/Racket/Gambit/RefC/the VM interpreter -- all pass
-`False`); it reads as unused groundwork for some future ANF/VM-style
-backend, not a switch rc2 could usefully flip today.
-
-Not a bug to fix -- this is RefC-family behavior rc2 deliberately
-inherits unchanged, and every use of `Lazy`/`force` in this codebase's
-own source (this survey's own search) happens to be single-use, so it
-hasn't caused an observed problem. Noted here because it's a real,
-easy-to-miss semantic gap from Haskell-style (and, for the narrow
-top-level-constant case, Chez-style) lazy evaluation: code written
-assuming a `Lazy` value (particularly a `Lazy`-typed function argument,
-forced more than once inside the function) is evaluated at most once
-will silently get O(n) re-execution instead on rc2 (and on real `idris2
---cg refc`) -- functionally correct for a referentially transparent
-computation, but wrong for anything relying on the *once-only*
-guarantee (a genuine side effect, or the performance assumption that
-memoizing an expensive pure computation behind `Lazy` actually
-memoizes it here). Revisit only if a concrete program actually needs
-shared-thunk semantics badly enough to justify a real memoizing-thunk
-implementation (a mutable "forced?" cell wrapping the closure, roughly
-the same shape `IDRIS2RC2_IORef` already uses) -- non-trivial given it
-would need to interact correctly with this project's own reference-
-counting/reuse machinery, and no concrete need has surfaced yet.
-
-**Follow-up investigated, not implemented**: could the narrow, common
-"top-level constant defined as exactly `delay expr`" case (the one
-Chez memoizes via its own special case, see above) be given the same
-treatment on rc2, using the `lazy : Maybe LazyReason` markers
-`doLazyAnnots = True` would populate? Worth checking since it looked,
-at first, like a small, targeted win rather than a general memoizing-
-thunk implementation. Four things came out of chasing it:
-
-1. **Flipping `doLazyAnnots` globally is not safe.**
-   `Prelude.Basics`'s `(&&)`/`(||)` are implemented over `Lazy Bool`
-   for short-circuiting (`(&&) True x = x; (&&) False x = False`), and
-   general corecursive structures (`Stream`, `Colist`, ...) depend on
-   `Delay` never running early. Turning `doLazyAnnots` on for the whole
-   program erases *every* `Delay` into immediate evaluation (this
-   entry's own "Semantics" discussion above), which would break both
-   outright. Any safe version of this idea has to detect and special-
-   case only the exact `MkNmFun [] (NmDelay _ _ exp)` shape -- matching
-   `Compiler.Scheme.Common.idr`'s own `schDef` case for it -- while
-   leaving `doLazyAnnots = False` (and hence every other `Delay`/`Force`
-   site's existing, correct, deferred-but-non-memoizing closure
-   compilation) untouched.
-
-2. **That detection is free, as it turns out.** Traced
-   `idris2-src/src/Compiler/Common.idr`'s `getCompileDataWith`: the
-   `namedDefs <- traverse getNamedDef cseDefs` line runs unconditionally,
-   regardless of the requested `UsePhase` -- so rc2's own existing single
-   `getCompileData False Lifted tm` call already produces a fully
-   populated `cdata.namedDefs : List (Name, FC, NamedDef)`, with the
-   exact `NamedDef`/`NamedCExp` shape (`MkNmFun [] (NmDelay _ _ exp)`)
-   Chez's own `schDef` pattern-matches on. No second compilation pass
-   needed to build the "these top-level names are pure `delay expr`
-   constants" set.
-
-3. **But changing just the 0-argument CAF's own codegen turns out not to
-   be enough.** Under `doLazyAnnots = False`, `Delay e` compiles to a
-   closure (`CLam (MN "act" 0) (weaken e)`), so a CAF like `sideEffect :
-   Lazy Int; sideEffect = delay e` compiles to a genuine 0-argument C
-   function that *builds and returns a closure object*
-   (`Main_sideEffect(void) { return
-   idris2rc2_mkClosure(Main_sideEffect_1, ...); }` -- confirmed against
-   real generated C, not assumed; also confirmed rc2's own pipeline
-   never pads a 0-argument top-level definition with a dummy parameter
-   for any reason -- the only "dummy argument" concept anywhere in
-   `Compiler.RC2` is `DualABI.idr`'s `CFWorld` token, which belongs to
-   `IO a`'s own FFI representation, unrelated to a plain `Lazy a` CAF).
-   `Force t`'s own compiled form is unconditionally `CApp fc tm
-   [CErased fc]` -- "apply whatever `tm` evaluates to as a closure" --
-   so memoizing only `Main_sideEffect` itself (making it return the
-   *same* closure object every call, fixable with an atomic
-   compare-and-swap-guarded static cache) is not sufficient on its own:
-   the closure *object itself* (its body function, e.g.
-   `Main_sideEffect_1`, the thing `idris2rc2_applyClosure` actually
-   invokes) still has no "already forced, here's the cached result"
-   state, so a second `force` on the same (now correctly shared) closure
-   would still recompute. A real fix needs *both* the CAF-sharing half
-   above *and* a new memoizing closure representation (a "forced?" flag
-   plus a cached-value slot, checked by `idris2rc2_applyClosure` or
-   equivalent) -- touching `datatypes.h`'s own closure layout, not just
-   `Compiler.RC2.Emit`'s codegen for 0-argument top-level definitions.
-   Meaningfully bigger than the initially-hoped-for "just change how a
-   0-arg CAF compiles."
-
-4. Were this pursued, the natural choice for guarding the memoizing
-   closure's first-computation race (rc2 has real OS threads,
-   `doc/concurrency.md`) is an atomic compare-and-swap/double-checked
-   pattern rather than a `Mutex` -- lock-free, and acceptable since the
-   worst case under a genuine race is redundant (not incorrect)
-   recomputation for a referentially transparent value, the same
-   tradeoff this whole entry already accepts for the *unmemoized*
-   general case.
-
-5. Point 3's conclusion (a new representation is unavoidable) isn't
-   speculation -- upstream itself already ships exactly this tradeoff
-   for the *general* (non-CAF) case, opt-in only, on the Scheme
-   backends: `--directive lazy=weakMemo` / `%cg chez lazy=weakMemo`
-   (`Compiler.Common.getWeakMemoLazy`, read only by
-   `Compiler.Scheme.{Chez,Racket,Gambit}`, never by RefC or rc2) swaps
-   every generic `Delay`/`Force` site from the default `(lambda ()
-   expr)` / `(expr)` pair (`Compiler.Scheme.Common.defaultLaziness` --
-   the same non-memoizing shape rc2/RefC always use) to
-   `weakMemoLaziness`: `(blodwen-delay-lazy (lambda () expr))` /
-   `(blodwen-force-lazy expr)`. Confirmed by compiling a `Lazy` value
-   built from runtime data (can't be floated to a CAF) with and without
-   the directive: `computing!` prints twice by default, once with
-   `lazy=weakMemo` on. `idris2-src/support/chez/support.ss`'s own
-   implementation:
-   ```scheme
-   (define (blodwen-delay-lazy f) (weak-cons #!bwp f))
-   (define (blodwen-force-lazy e)
-     (let ((exval (car e)))
-       (if (bwp-object? exval)
-           (let ((val ((cdr e)))) (set-car! e val) val)
-           exval)))
-   ```
-   -- a genuinely new representation (a `weak-cons` pair: `car` starts
-   as the not-yet-computed sentinel `#!bwp` and is overwritten with the
-   result on first force, `cdr` holds the thunk), not a flag on the
-   existing closure shape. And it's deliberately *weak*: `car`'s cached
-   result can be GC'd if nothing else references it, silently forcing a
-   recomputation on the next `force` -- "memoized as long as memory
-   pressure allows", not the strict once-only guarantee the top-level-
-   CAF special case's real `(delay ...)` gives via strong references.
-   Confirms this dial exists precisely because unconditional *strong*
-   memoization for every `Delay`/`Force` has a real memory cost upstream
-   itself isn't willing to pay by default (matters for long corecursive
-   chains, `Stream`/`Colist`, where pinning every historical thunk's
-   result forever would defeat the point of streaming in the first
-   place) -- a consideration any real rc2 implementation of point 3
-   would inherit too.
-
-Not implemented -- point 3 changes this from a small, contained fix
-into a new runtime representation plus matching `Compiler.RC2.Emit`/
-`idris2rc2_applyClosure` work, and no concrete program has needed it
-yet. Revisit starting from this writeup (particularly points 3 and 5)
-if one does.
-
-The *plain* (non-`Lazy`) 0-argument CAF case -- a bare top-level value
-built through `unsafePerformIO`, no `Lazy`/`Force` involved at all --
-used to have the exact same bug (a real-world hit, `Network.HTTP.Server`'s
-own `counter : IORef Int; counter = unsafePerformIO (newIORef 0)`
-pattern) but is now fixed; see `rc2/doc/caf-memoization.md`'s own
-"Scope" section for exactly where the boundary between "fixed" and
-"still open here" (`Lazy`/`Force` itself) falls.
-
-## Lazy のメモ化の後: force した値への無駄な reuse 解析を省く
-
-`Lazy`/`Inf` のメモ化(`rc2/doc/lazy-memoization.md`、未実装)を入れると、
-force した値はセルが生きている間ずっとセルと共有され、一意にならないので、
-その場での再利用(reuse)は実行時に外れる。force がセルの最後の使用で、直後に
-セルが解放される場合だけは一意に戻り、再利用が効く。それ以外(force の後も
+`rc2/doc/lazy-memoization.md`で実装した`Lazy`/`Inf`のメモ化により、force
+した値はセルが生きている間ずっとセルと共有され、一意にならないので、その場
+での再利用(reuse)は実行時に外れる。force がセルの最後の使用で、直後に
+セルが解放される場合だけは一意に戻り、再利用できる。それ以外(force の後も
 セルが生きている)の値に対する reuse 解析(`reuseOffer`/`releaseReuse` の挿入)
 はコンパイル時間と生成コードの無駄なので、そうした値には reuse を試みない
-ようにする。
-メモ化を実装した後に、残る `reuseOffer` の数を数えて効果を確かめる。
+ようにしたい。残る `reuseOffer` の数を数えて効果を確かめる。
 
 ## Compatibility: `show` of a `Double` picks exponent notation differently from Chez (found 2026-09-27)
 
@@ -399,19 +185,13 @@ case needs one specifically.
   - 無駄でしか無いので消せるものなら消したい
   - 最適化効果は薄い。気分の問題でしかない。
 
-## Lambda lift で欠落する情報の保全
-現状、遅延評価についての情報が消えてただのクロージャになってしまう。
-保全してメモ化やインライン展開をしたい。
-新しい Lifted を定義し、NamedCExp からの Lamda lift を自分でやるしかないか？
-
-  - 現在のLiftedでも、Force が無いだけでLazyは注釈として情報が残る
-  - 特殊なクロージャを用意して型タグを使って実行時にメモ化を解決できる？
-  - トップレベルの引数の無い関数はstaticで価をメモ化できる？
-  - && や || のインライン化は調査済み・対応不要と判明(upstream自身の`%inline`
-    プラグマとモジュールコンパイル時の`compileAndInlineAll`が、rc2独自の
-    `Compiler.RC2.Inline`が動くより前にクロージャを跡形もなく消し去っている)。
-    他の`Lazy`引数関数についても同様の
-    upstream最適化が効くかは未調査。
+## 他の`Lazy`引数関数にもupstreamのインライン展開が及ぶかは未調査
+`&&`/`||`は`Lazy Bool`の短絡評価のために`Delay`に依存しているが、upstream
+自身の`%inline`プラグマとモジュールコンパイル時の`compileAndInlineAll`が、
+rc2が`NamedCExp`を受け取るより前に`&&`/`||`の呼び出しを展開してしまうため、
+`Delay`/`Force`のノード自体がrc2側に渡ってこないと判明した(rc2側の対応は
+不要)。他の`Lazy`引数を取る関数についても同様のupstream最適化が及ぶかは
+未調査のまま。
 
 ## ファントム型やファントム関数の明示
 トップレベル定義に 0 をつける。
@@ -1010,9 +790,10 @@ RC.annotate・DeadVars で実際に数秒を失った。1の計測で重いと�
   名前がリテラルでない`getField`など)が、エラーを出すことも、内部エラーに
   ならないことも確かめられていない。期待するエラー文をファイルに置き、
   コンパイラの出力と diff する形にする。
-- **遅延評価のテストが無い。** `Lazy`/`Force`/`Delay`/`Inf`を主題にした
-  テストが無い(Test35 に出てくるだけ)。上の「Semantics: `Lazy`/`Force`」
-  の節にある、メモ化しない挙動も確かめられていない。
+- **遅延評価のテストの穴。** `Test125LazyMemo`が`Lazy`/`Force`/`Delay`/`Inf`
+  のメモ化を、`Test122LiftOrigin`がそのlift結果を確かめているが、セルが
+  自分自身を`force`して中断する経路(`rc2/doc/lazy-memoization.md`
+  「Verification」節)のテストが無い。
 - **インクリメンタルコンパイル(`--inc rc2`)のテストが無い。** verify は
   全体コンパイルしか試さない。
 - **大きな外部プログラムが verify に無い。** idris2-lsp は C の出力で既知の

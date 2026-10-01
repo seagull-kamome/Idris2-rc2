@@ -131,11 +131,10 @@ mutual
 ||| `collectLazyCAFs`, built off `CompileData.namedDefs` -- see that
 ||| function's own doc comment) -- purely an observational annotation
 ||| for this dump, not consumed by any other pass or by codegen: by the
-||| time a definition reaches `RCDef`, `Delay`/`Force` have already
-||| been erased into ordinary closures/calls with no trace of their own
-||| (`TODO.md`'s "Semantics: `Lazy`/`Force`..." entry has the full
-||| writeup of why), so this is the only point left where "this was a
-||| `delay` CAF" can still be printed at all.
+||| time a definition reaches `RCDef`, `Compiler.RC2.LazyCaf` has taken
+||| such a CAF's `Delay` off and left its memoization to `RMemoize`
+||| (doc/lazy-memoization.md), so this is the only point left where
+||| "this was a `delay` CAF" can still be printed at all.
 prettyDef : SortedSet Name -> Name -> RCDef -> String
 prettyDef lazyCAFs n (MkRCFun args retRep isWorker body) =
     "def " ++ dumpName n ++ "  (fun args= " ++ show (map (\(i, r) => "\{show (RCLoc i)}:\{prettyRep r}") args)
