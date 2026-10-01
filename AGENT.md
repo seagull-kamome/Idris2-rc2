@@ -117,9 +117,11 @@ self-built compiler ONLY -- never for building rc2, never for
 reference/comparison test runs, unless there's a specific genuine need
 (e.g. isolating whether a bug is specific to the self-built compiler's
 own dev-snapshot state). `rc2/tests/verify.sh` and `rc2/tests/bench.sh`
-default to whatever `idris2` is first on `PATH` (the self-built one);
-their `--nix-idris2` flag is the escape hatch for that specific-need
-case. Do not regress back to nix-idris2-by-default.
+use whatever `idris2` is first on `PATH` after they source `env.sh`,
+which puts the self-built `install/bin` first -- so neither script can
+switch to nixpkgs' `idris2` while the self-built one exists. For that
+specific-need case, run the compile by hand inside `nix-shell -p idris2`
+without sourcing `env.sh`. Do not regress back to nix-idris2-by-default.
 
 ## Building/running a single test by hand
 
