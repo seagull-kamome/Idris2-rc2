@@ -876,7 +876,11 @@ mutual
     ||| `body` -- see rc2/doc/loop-conversion.md's "Multiple loops per
     ||| function" for why push/pop (not a single overwrite) is needed.
     emitLoopInto : EmitDeps (Sink -> TailPositionStatus -> FC -> List (Int, Rep) -> List RCLocal -> (prologueDrop : List RCLocal) -> RCExp -> Core ())
-    emitLoopInto sink tailPosition fc loopParams initial prologueDrop body = do
+    emitLoopInto sink0 tailPosition fc loopParams initial prologueDrop body = do
+        -- Declared up front, like a case's own result slot: a loop
+        -- with no exit never reaches the leaf that would declare it,
+        -- yet the code after it still names the variable.
+        sink <- resolveSink fc sink0
         traverse_ (\((paramId, rep), initVal) =>
                        declareLoopParam (elem initVal prologueDrop) fc paramId rep initVal) (zip loopParams initial)
         removeVars (varName <$> prologueDrop)
