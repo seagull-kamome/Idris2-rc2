@@ -253,9 +253,30 @@ mutual
     normalize fr (NmLocal fc x) = pure $ RV fc (RCLoc !(lookupVar fr x))
     normalize fr (NmRef fc n) = pure $ RAppName fc Nothing n []
     normalize fr (NmLam fc x b) = lambda fr fc FromLambda [x] b
-    normalize fr (NmDelay fc lr b) = do
-        (n, locs) <- lift fr fc (FromDelay lr) [] b
-        pure $ RDelay fc lr n locs
+    -- A body that is already a value computes nothing when forced, so it
+    -- is that value, with no cell; `RForce` returns a non-cell as is
+    -- (doc/lazy-memoization.md, "`Delay`").
+    normalize fr (NmDelay fc lr b) =
+        if isValue b
+           then normalize fr b
+           else do
+               (n, locs) <- lift fr fc (FromDelay lr) [] b
+               pure $ RDelay fc lr n locs
+      where
+        atom : NamedCExp -> Bool
+        atom (NmLocal _ _) = True
+        atom (NmPrimVal _ _) = True
+        atom (NmErased _) = True
+        atom _ = False
+
+        -- Not a bare variable: it may itself be a lazy value, which
+        -- `Force` must return rather than force.
+        isValue : NamedCExp -> Bool
+        isValue (NmPrimVal _ _) = True
+        isValue (NmErased _) = True
+        isValue (NmLam _ _ _) = True
+        isValue (NmCon _ _ _ _ args) = all atom args
+        isValue _ = False
     normalize fr (NmApp fc (NmRef _ n) args) =
         bindMany fr args (\locs => pure $ RAppName fc Nothing n locs)
     normalize fr e@(NmApp fc _ _) = applyChain fr fc e

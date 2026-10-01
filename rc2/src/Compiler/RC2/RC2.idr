@@ -37,6 +37,8 @@ import Compiler.RC2.RCExp
 import Compiler.RC2.Reuse
 import Compiler.RC2.SpecClosure
 import Compiler.RC2.LateInline
+import Compiler.RC2.LazyCaf
+import Compiler.RC2.LazyFold
 import Compiler.RC2.MutualLoop
 import Compiler.RC2.Loop
 import Compiler.RC2.Sink
@@ -349,9 +351,12 @@ toRCDefs disabled incremental roots preFolded = do
     -- Once more: the passes since expose sites the first run could not
     -- see (an inlined `bind`, say), and a function raised then is a
     -- bare wrapper now, whose sites call its raised version directly.
+    -- A local lazy value forced once becomes a call, now that inlining has
+    -- brought delays and forces together (doc/lazy-memoization.md).
+    lazyFolded <- logTime 2 "rc2: Lazy fold" $ pure $ map (\(n, d) => (n, foldSingleForceDef d)) earlyInlined
     reraised <- if "noarityraise" `elem` disabled
-                   then pure earlyInlined
-                   else logTime 2 "rc2: Arity raise (after early inline)" $ applyArityRaise earlyInlined
+                   then pure lazyFolded
+                   else logTime 2 "rc2: Arity raise (after early inline)" $ applyArityRaise lazyFolded
     trmced <- if "notrmc" `elem` disabled
                  then pure reraised
                  else logTime 2 "rc2: TRMC" $ applyTrmc reraised
@@ -738,7 +743,11 @@ compileExprWhole c s _ outputDir tm outfile =
      let noMain = "nomain" `elem` directiveList
      cdata <- getCompileDataWith ["RC2", "RefC", "C"] False Cases tm
      exportNames <- traverse (\(n, _) => getFullName n) (exported cdata)
-     (mainInl, namedInl) <- inlineNamed disabledStages (Just (SortedSet.fromList exportNames)) (Just (forget (mainExpr cdata))) (namedDefs cdata)
+     -- Top-level `Delay` definitions onto CAF memoization; whole program
+     -- only, since another module's references are out of sight
+     -- (doc/lazy-memoization.md).
+     let (mainLz, namedLz) = applyLazyCaf (Just (forget (mainExpr cdata))) (namedDefs cdata)
+     (mainInl, namedInl) <- inlineNamed disabledStages (Just (SortedSet.fromList exportNames)) mainLz namedLz
      -- Signatures change, so not in `incCompile`: another module's calls
      -- are out of sight (doc/dead-args.md).
      (mainIn, namedIn) <- if "nodeadargs" `elem` disabledStages
