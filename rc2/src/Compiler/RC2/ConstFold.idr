@@ -109,11 +109,13 @@ useInfo = go (MkUseInfo empty empty empty)
     go acc (RAppNameRep _ _ _ _ _ args) = boxed args acc
     go acc (RAppFFIInline _ _ _ _ _ args) = boxed args acc
     go acc (RUnderApp _ _ _ args) = boxed args acc
+    go acc (RDelay _ _ _ caps) = boxed caps acc
     go acc (RApp _ _ c args) = boxed (forget args) ({ boxedUses $= insert c } acc)
     go acc (RCon _ _ _ _ args _) = boxed args acc
     go acc (RExtPrim _ _ _ args _) = boxed args acc
     go acc (ROp _ _ _ args _) = reads (toList args) acc
     go acc (RStructGet _ structVar _ _) = boxed [structVar] acc
+    go acc (RForce _ _ v _) = boxed [v] acc
     go acc (RStructSet _ structVar _ value _) = boxed [structVar, value] acc
     go acc (RFill _ cell _ value _) = boxed [cell, value] acc
     go acc (RLet _ var rep value body) =
@@ -469,6 +471,8 @@ foldConst _ env (RExtPrim fc lazy p args postDrop) =
             Nothing => RExtPrim fc lazy p args' postDrop
 foldConst _ env (RStructGet fc structVar sf postDrop) =
     RStructGet fc (resolveLocal env structVar) sf postDrop
+foldConst _ env (RDelay fc lr n caps) = RDelay fc lr n (map (resolveLocal env) caps)
+foldConst _ env (RForce fc lr v postDrop) = RForce fc lr (resolveLocal env v) postDrop
 foldConst _ env (RStructSet fc structVar sf value postDrop) =
     RStructSet fc (resolveLocal env structVar) sf (resolveLocal env value) postDrop
 foldConst _ env (RFill fc cell k value postDrop) =

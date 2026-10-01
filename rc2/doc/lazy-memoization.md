@@ -73,8 +73,10 @@ for a cell or the other way round.
   saturated closure in `v` always means "not evaluated yet".
 - A thunk with no captures is a 0-ary closure; `idris2rc2_dispatchFn`
   already handles arity 0.
-- `header.reserved` counts the threads currently evaluating the cell
-  (see Force), so the cell stays the size of an IORef.
+- `header.reserved` is 1 once a value is stored. Whether a cell is
+  evaluated is decided by this flag, never by looking at `v`: an
+  unevaluated `v` is a closure another thread may free at any moment.
+  The cell stays the size of an IORef.
 
 ## `Force`
 
@@ -82,26 +84,27 @@ for a cell or the other way round.
 
 1. Not a cell (tag is not `LAZY`): return `v` itself (dup'd). This is
    what lets a delayed value be a plain value (below).
-2. A cell whose `v` is evaluated: return `v` dup'd. No lock: a value is
-   written once and never replaced while the cell lives, so an acquire
-   load of `v` is enough.
+2. An evaluated cell (an acquire load of `reserved` reads 1): return
+   `v` dup'd, without the lock. A value is written once and never
+   replaced while the cell lives.
 3. A cell whose `v` is a saturated closure:
-   - If `reserved` is non-zero and the cell is on this thread's stack of
-     cells being evaluated, abort with "a lazy value forces itself".
+   - If the cell is on this thread's stack of cells being evaluated,
+     abort with "a lazy value forces itself". The stack is only searched
+     here, on the way to evaluating, which costs far more.
    - Otherwise, under the lock, re-read `v` and, if it is still the
      closure, dup the closure itself (not just its captures: another
      thread may store a result and drop the cell's reference to the
      closure at any moment after the lock is released). Release the
-     lock, push the cell on this thread's stack, increment `reserved`,
-     and evaluate through that reference: dup the captures and call
+     lock, push the cell on this thread's stack, and evaluate through
+     that reference: dup the captures and call
      the function, as `idris2rc2_dispatchWithExtra` does for a shared
      closure, then trampoline, then drop the reference. The closure
      stays in the cell, so another thread can evaluate it at the same
      time.
-   - Pop, decrement `reserved`, take the lock. If `v` is still the
-     closure, store the result (a release store) with one dup, so the
-     cell and the caller each own a reference, and drop the cell's
-     reference to the closure; if another thread stored first, drop
+   - Pop, take the lock. If `reserved` is still 0, store the result
+     with one dup, so the cell and the caller each own a reference, set
+     `reserved` (a release store), and drop the cell's reference to the
+     closure; if another thread stored first, drop
      this result and return the stored one dup'd. A thunk
      may run more than once when two threads force it together; that
      is accepted.
@@ -149,6 +152,9 @@ for a cell or the other way round.
   stack. A memoizing `Force` has to store the result, so it is never a
   tail call: a long chain of thunks that each force the next grows the
   C stack by one frame per link. Accepted.
+- **Freeing.** A cell is torn down like a constructor field (deferred
+  through `idris2rc2_teardown`'s loop), so freeing a long forced stream
+  does not recurse once per element.
 - **Cycles.** A cell whose value refers back to the cell can't be freed
   by reference counting. A thunk's captures exist before its cell does
   and Idris has no recursive `let`, so such a cycle can only arise

@@ -1256,6 +1256,7 @@ dropOwnership f (RExtPrim fc lazy p args pd) = RExtPrim fc lazy p args (filter (
 dropOwnership f (RAppNameRep fc n argReps retRep pd args) = RAppNameRep fc n argReps retRep (filter (/= RCLoc f) pd) args
 dropOwnership f (RAppFFIInline fc ccs fargs ret pd args) = RAppFFIInline fc ccs fargs ret (filter (/= RCLoc f) pd) args
 dropOwnership f (RStructGet fc sv sf pd) = RStructGet fc sv sf (filter (/= RCLoc f) pd)
+dropOwnership f (RForce fc lr v pd) = RForce fc lr v (filter (/= RCLoc f) pd)
 dropOwnership f (RStructSet fc sv sf val pd) = RStructSet fc sv sf val (filter (/= RCLoc f) pd)
 dropOwnership f (RFill fc cell k val pd) = RFill fc cell k val (filter (/= RCLoc f) pd)
 dropOwnership f (RCmpCase fc op args pd t e) =

@@ -144,6 +144,7 @@ mutual
           (st', dropAs) = doDrops dn "callFFIInline postDrop" st postDrop
       in (st', readAs ++ dropAs)
   walk dn st (RPartial _ _ args) = (st, checkReads dn "partial" st args)
+  walk dn st (RDelayNode _ _ caps) = (st, checkReads dn "delay" st caps)
   walk dn st (RApply _ c args) =
       (st, checkRead dn "apply target" st c ++ checkReads dn "apply args" st args)
   walk dn st (RLetIn var rep value body) =
@@ -162,6 +163,10 @@ mutual
   walk dn st (RExtPrimNode _ _ args postDrop) =
       let readAs = checkReads dn "extprim args" st args
           (st', dropAs) = doDrops dn "extprim postDrop" st postDrop
+      in (st', readAs ++ dropAs)
+  walk dn st (RForceNode _ v postDrop) =
+      let readAs = checkRead dn "force" st v
+          (st', dropAs) = doDrops dn "force postDrop" st postDrop
       in (st', readAs ++ dropAs)
   walk dn st (RStructGetNode sv _ postDrop) =
       let readAs = checkRead dn "structGet" st sv

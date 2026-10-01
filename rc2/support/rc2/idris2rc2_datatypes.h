@@ -44,6 +44,7 @@
 #define IDRIS2RC2_TAG_JOINHANDLE 29
 #define IDRIS2RC2_TAG_CHANNEL 30
 #define IDRIS2RC2_TAG_THREADID 31
+#define IDRIS2RC2_TAG_LAZY 32
 
 typedef struct {
   // Values that reach the maximum reference count are treated as immortal
@@ -295,6 +296,18 @@ typedef struct {
   atomic_flag lock;
   IDRIS2RC2_Value *v;
 } IDRIS2RC2_IORef;
+
+// A lazy value (rc2/doc/lazy-memoization.md): an IORef with its own tag.
+// `v` holds a saturated closure until the first force stores the value;
+// a value is written once and then only read, so a forced cell is read
+// without the lock. `header.reserved` is 1 once the value is stored.
+typedef struct {
+  IDRIS2RC2_Header header;
+  atomic_flag lock;
+  IDRIS2RC2_Value *_Atomic v;
+} IDRIS2RC2_Lazy;
+_Static_assert(sizeof(IDRIS2RC2_Lazy) == sizeof(IDRIS2RC2_IORef),
+               "a lazy cell has an IORef's layout");
 
 typedef struct {
   IDRIS2RC2_Header header;

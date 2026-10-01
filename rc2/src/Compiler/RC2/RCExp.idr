@@ -410,6 +410,14 @@ data RCExp : Type where
      ||| never nested inside a larger expression, never produced for any
      ||| definition with a nonempty argument list.
      RMemoize : FC -> Name -> Rep -> RCExp -> RCExp
+     ||| A lazy cell holding an unevaluated `thunk` over `captures`
+     ||| (`thunk` takes exactly the captures, so its closure is
+     ||| saturated). Consumes `captures`, like `RUnderApp`.
+     ||| `doc/lazy-memoization.md`.
+     RDelay : FC -> LazyReason -> (thunk : Name) -> (captures : List RCLocal) -> RCExp
+     ||| The value of a lazy value: evaluates and stores it on first use
+     ||| (`idris2rc2_force`). Borrows `v`; `postDrop` as on `ROp`.
+     RForce : FC -> LazyReason -> (v : RCLocal) -> (postDrop : List RCLocal) -> RCExp
 
 public export
 data RConAlt : Type where
@@ -474,6 +482,8 @@ freeLocalsR (RReleaseReuse _ v body) = insert v (freeLocalsR body)
 freeLocalsR (RReuseOffer _ sc dupOnShared dropOnUnique body) =
     union (insert sc (fromList dupOnShared `union` fromList dropOnUnique)) (freeLocalsR body)
 freeLocalsR (RMemoize _ _ _ body) = freeLocalsR body
+freeLocalsR (RDelay _ _ _ caps) = fromList caps
+freeLocalsR (RForce _ _ v _) = fromList [v]
 freeLocalsR _ = empty
 
 ||| Every `RCLocal` named in a *use* position anywhere in `e` --
@@ -543,6 +553,8 @@ mentionedLocalsAcc acc (RLoop _ _ initial prologueDrop body) =
     mentionedLocalsAcc (insertAll initial (insertAll prologueDrop acc)) body
 mentionedLocalsAcc acc (RLoopContinue _ args postDrop) = insertAll args (insertAll postDrop acc)
 mentionedLocalsAcc acc (RMemoize _ _ _ body) = mentionedLocalsAcc acc body
+mentionedLocalsAcc acc (RDelay _ _ _ caps) = insertAll caps acc
+mentionedLocalsAcc acc (RForce _ _ v postDrop) = insertAll (v :: postDrop) acc
 -- RPrimVal/RErased/RCrash: no locals at all.
 mentionedLocalsAcc acc _ = acc
 
@@ -577,6 +589,8 @@ ownedUsedGo targets wanted st@(_, found) e =
     step (RAppNameRep _ _ _ _ postDrop args) = hits (hits st postDrop) args
     step (RAppFFIInline _ _ _ _ postDrop args) = hits (hits st postDrop) args
     step (RUnderApp _ _ _ args) = hits st args
+    step (RDelay _ _ _ caps) = hits st caps
+    step (RForce _ _ v _) = hit st v
     step (RApp _ _ c args) = hits (hit st c) (forget args)
     -- `reuseFrom`/`postDrop` positions are deliberately not counted, to
     -- stay exactly `freeLocalsR`'s own answer (see its own note on why
@@ -678,6 +692,8 @@ countUsesR l (RReuseOffer _ sc dupOnShared dropOnUnique body) =
     (if sc == l then 1 else 0) + length (filter (== l) dupOnShared)
     + length (filter (== l) dropOnUnique) + countUsesR l body
 countUsesR l (RMemoize _ _ _ body) = countUsesR l body
+countUsesR l (RDelay _ _ _ caps) = length (filter (== l) caps)
+countUsesR l (RForce _ _ v _) = if v == l then 1 else 0
 countUsesR l _ = 0
 
 export
@@ -768,6 +784,8 @@ foldRCNamesR nf = go
     go (RAppNameRep _ n _ _ postDrop args) = nf.onAppNameRep n <+> ls postDrop <+> ls args
     go (RAppFFIInline _ _ _ _ postDrop args) = ls postDrop <+> ls args
     go (RUnderApp _ n _ args) = nf.onUnderApp n <+> ls args
+    go (RDelay _ _ n caps) = nf.onUnderApp n <+> ls caps
+    go (RForce _ _ v postDrop) = l v <+> ls postDrop
     go (RApp _ _ c args) = l c <+> ls (forget args)
     go (RLet _ _ _ value body) = go value <+> go body
     go (RCon _ n _ tag args reuseFrom) = nf.onCon n tag <+> ls args <+> maybe neutral l reuseFrom
@@ -819,6 +837,8 @@ directReads (RAppName _ _ _ args) = args
 directReads (RAppNameRep _ _ _ _ pd args) = pd ++ args
 directReads (RAppFFIInline _ _ _ _ pd args) = pd ++ args
 directReads (RUnderApp _ _ _ args) = args
+directReads (RDelay _ _ _ caps) = caps
+directReads (RForce _ _ v pd) = v :: pd
 directReads (RApp _ _ c args) = c :: forget args
 directReads (RCon _ _ _ _ args _) = args
 directReads (RRetPack _ _ _ fields) = fields
@@ -850,6 +870,8 @@ children (RReleaseReuse _ _ k) = [k]
 children (RReuseOffer _ _ _ _ k) = [k]
 children (RLoop _ _ _ _ k) = [k]
 children (RMemoize _ _ _ k) = [k]
+children (RDelay _ _ _ _) = []
+children (RForce _ _ _ _) = []
 children _ = []
 
 ||| `v` is only ever released or reused below, never read or `dup`'d:
@@ -874,6 +896,8 @@ mapChildren f (RReleaseReuse fc x k) = RReleaseReuse fc x (f k)
 mapChildren f (RReuseOffer fc sc ds us k) = RReuseOffer fc sc ds us (f k)
 mapChildren f (RLoop fc ps initial pd k) = RLoop fc ps initial pd (f k)
 mapChildren f (RMemoize fc n r k) = RMemoize fc n r (f k)
+mapChildren f e@(RDelay _ _ _ _) = e
+mapChildren f e@(RForce _ _ _ _) = e
 mapChildren _ e = e
 
 ||| `mapChildren` in an `Applicative`: rebuilds `e` with `f` run on each
@@ -895,4 +919,6 @@ traverseChildren f (RReleaseReuse fc x k) = RReleaseReuse fc x <$> f k
 traverseChildren f (RReuseOffer fc sc ds us k) = RReuseOffer fc sc ds us <$> f k
 traverseChildren f (RLoop fc ps initial pd k) = RLoop fc ps initial pd <$> f k
 traverseChildren f (RMemoize fc n r k) = RMemoize fc n r <$> f k
+traverseChildren f e@(RDelay _ _ _ _) = pure e
+traverseChildren f e@(RForce _ _ _ _) = pure e
 traverseChildren _ e = pure e

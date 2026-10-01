@@ -16,8 +16,10 @@ fi
 expect() {
     if grep -qxF "$2" "$lifts"; then pass "$1"; else fail "$1 -- no line '$2' in $lifts"; fi
 }
-expect "Lazy delay" "Main.{lazyValue:0}  from Main.lazyValue  delay Lazy  params 1"
-expect "Inf delay" "Main.{countFrom:0}  from Main.countFrom  delay Inf  params 1"
-expect "delay of a lambda, merged" "Main.{lazyAdder:0}  from Main.lazyAdder  delay Lazy  params 2"
+# A thunk takes only its captures (rc2/doc/lazy-memoization.md).
+expect "Lazy delay" "Main.{lazyValue:0}  from Main.lazyValue  delay Lazy  params 0"
+expect "Inf delay" "Main.{countFrom:0}  from Main.countFrom  delay Inf  params 0"
+expect "lambda inside a delay" "Main.{lazyAdder:0}  from Main.lazyAdder  lambda  params 1"
+expect "delay of a lambda, not merged" "Main.{lazyAdder:1}  from Main.lazyAdder  delay Lazy  params 0"
 expect "inner lambda, named first" "Main.{nested:0}  from Main.nested  lambda  params 1"
 expect "outer lambda" "Main.{nested:1}  from Main.nested  lambda  params 1"

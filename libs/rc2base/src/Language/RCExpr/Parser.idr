@@ -622,6 +622,22 @@ conG = do
 -- Language.RCExpr.Lexer's own note), so they're matched here as
 -- ordinary `RcName` tokens (`Compiler.RC2.Pretty`'s own dump puts a
 -- space either side, so they're never glued onto a neighbour).
+delayG : Grammar () RcToken True (String, String, List RCLocal)
+delayG = do
+    nameEq "delay"
+    reason <- anyName
+    name <- greedyWordsG
+    caps <- localListG
+    pure (reason, name, caps)
+
+forceG : Grammar () RcToken True (String, RCLocal, List RCLocal)
+forceG = do
+    nameEq "force"
+    reason <- anyName
+    v <- rcLocalG
+    postDrop <- optionalField "postDrop"
+    pure (reason, v, postDrop)
+
 structGetG : Grammar () RcToken True (RCLocal, String, List RCLocal)
 structGetG = do
     nameEq "structGet"
@@ -933,6 +949,14 @@ mutual
           (lazy, pName, args, postDrop) <- runG ln extprimG line
           (_, st2) <- advanceLine st1
           Right (RExtPrimNode lazy pName args postDrop, st2)
+      else if isPrefixOf "delay " line then do
+          (reason, name, caps) <- runG ln delayG line
+          (_, st2) <- advanceLine st1
+          Right (RDelayNode reason name caps, st2)
+      else if isPrefixOf "force " line then do
+          (reason, v, postDrop) <- runG ln forceG line
+          (_, st2) <- advanceLine st1
+          Right (RForceNode reason v postDrop, st2)
       else if isPrefixOf "structGet " line then do
           (sv, field, postDrop) <- runG ln structGetG line
           (_, st2) <- advanceLine st1

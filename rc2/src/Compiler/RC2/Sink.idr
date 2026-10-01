@@ -40,6 +40,7 @@ genuinelyUsedR : RCExp -> SortedSet RCLocal
 genuinelyUsedR (RV _ v) = singleton v
 genuinelyUsedR (RAppName _ _ _ args) = fromList args
 genuinelyUsedR (RUnderApp _ _ _ args) = fromList args
+genuinelyUsedR (RDelay _ _ _ caps) = fromList caps
 genuinelyUsedR (RApp _ _ c args) = fromList (c :: forget args)
 genuinelyUsedR (RAppNameRep _ _ _ _ _ args) = fromList args
 genuinelyUsedR (RLet _ var _ value body) =
@@ -48,6 +49,7 @@ genuinelyUsedR (RCon _ _ _ _ args _) = fromList args
 genuinelyUsedR (ROp _ _ _ args _) = fromList (toList args)
 genuinelyUsedR (RExtPrim _ _ _ args _) = fromList args
 genuinelyUsedR (RStructGet _ structVar _ _) = singleton structVar
+genuinelyUsedR (RForce _ _ v _) = singleton v
 genuinelyUsedR (RStructSet _ structVar _ value _) = fromList [structVar, value]
 genuinelyUsedR (RFill _ cell _ value _) = fromList [cell, value]
 genuinelyUsedR (RCmpCase _ _ args _ t f) =

@@ -146,6 +146,8 @@ rcSizeOf (RLoop _ _ _ _ body) = 1 + rcSizeOf body
 rcSizeOf (RLoopContinue _ _ _) = 1
 rcSizeOf (RReuseOffer _ _ _ _ cont) = 1 + rcSizeOf cont
 rcSizeOf (RMemoize _ _ _ body) = 1 + rcSizeOf body
+rcSizeOf (RDelay _ _ _ _) = 1
+rcSizeOf (RForce _ _ _ _) = 1
 
 rcSizeConAlt (MkRConAlt _ _ _ _ body) = rcSizeOf body
 rcSizeConstAlt (MkRConstAlt _ body) = rcSizeOf body

@@ -6,6 +6,7 @@
 #include <locale.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 
 void idris2rc2_missingForeign(void) {
   fprintf(stderr, "idris2rc2: foreign function declared but not defined\n");
@@ -570,4 +571,105 @@ IDRIS2RC2_Value *idris2rc2_freshWorld(void) {
   IDRIS2RC2_Constructor *world = idris2rc2_newConstructor(0, -1);
   idris2rc2_setConName(world, idris2rc2_constr__percentWorld);
   return (IDRIS2RC2_Value *)world;
+}
+
+// ---- Lazy values (rc2/doc/lazy-memoization.md) ----
+
+IDRIS2RC2_Value *idris2rc2_mkLazy(IDRIS2RC2_Value *thunk) {
+  IDRIS2RC2_Lazy *c = IDRIS2RC2_NEW(IDRIS2RC2_Lazy);
+  c->header.tag = IDRIS2RC2_TAG_LAZY;
+  c->header.reserved = 0;
+  atomic_flag_clear(&c->lock);
+  atomic_init(&c->v, thunk);
+  return (IDRIS2RC2_Value *)c;
+}
+
+// The cells this thread is evaluating, innermost last: a cell found here
+// is forcing itself. A fixed thread-local array first; a deeper nesting
+// moves to the heap, freed again once the stack is empty, so a thread
+// that exits leaves nothing behind.
+#define IDRIS2RC2_FORCING_INLINE 64
+static _Thread_local IDRIS2RC2_Lazy *tl_forcingInline[IDRIS2RC2_FORCING_INLINE];
+static _Thread_local IDRIS2RC2_Lazy **tl_forcing = NULL;
+static _Thread_local size_t tl_forcingLen = 0;
+static _Thread_local size_t tl_forcingCap = 0;
+
+static bool forcingHere(IDRIS2RC2_Lazy *c) {
+  for (size_t i = tl_forcingLen; i > 0; --i)
+    if (tl_forcing[i - 1] == c)
+      return true;
+  return false;
+}
+
+static void pushForcing(IDRIS2RC2_Lazy *c) {
+  if (!tl_forcing) {
+    tl_forcing = tl_forcingInline;
+    tl_forcingCap = IDRIS2RC2_FORCING_INLINE;
+  }
+  if (tl_forcingLen == tl_forcingCap) {
+    size_t cap = tl_forcingCap * 2;
+    IDRIS2RC2_Lazy **p = malloc(cap * sizeof *p);
+    IDRIS2RC2_VERIFY(p, "out of memory");
+    memcpy(p, tl_forcing, tl_forcingLen * sizeof *p);
+    if (tl_forcing != tl_forcingInline)
+      free(tl_forcing);
+    tl_forcing = p;
+    tl_forcingCap = cap;
+  }
+  tl_forcing[tl_forcingLen++] = c;
+}
+
+static void popForcing(void) {
+  if (--tl_forcingLen == 0 && tl_forcing != tl_forcingInline) {
+    free(tl_forcing);
+    tl_forcing = tl_forcingInline;
+    tl_forcingCap = IDRIS2RC2_FORCING_INLINE;
+  }
+}
+
+IDRIS2RC2_Value *idris2rc2_force(IDRIS2RC2_Value *v) {
+  if (!v || idris2rc2_is_unboxed(v) || v->header.tag != IDRIS2RC2_TAG_LAZY)
+    return idris2rc2_dup(v);
+  IDRIS2RC2_Lazy *c = (IDRIS2RC2_Lazy *)v;
+  // Evaluated: the value is written once and stays while the cell lives.
+  // Decided by the cell's own flag, never by looking at `v`: an
+  // unevaluated `v` is a closure another thread may free at any moment.
+  if (__atomic_load_n(&c->header.reserved, __ATOMIC_ACQUIRE))
+    return idris2rc2_dup(atomic_load_explicit(&c->v, memory_order_relaxed));
+
+  IDRIS2RC2_VERIFY(!forcingHere(c), "a lazy value forces itself");
+
+  // Take our own reference to the closure under the lock: once the lock is
+  // released another thread may store a result and drop the cell's.
+  idris2rc2_spin_lock(&c->lock);
+  IDRIS2RC2_Value *x = atomic_load_explicit(&c->v, memory_order_relaxed);
+  if (c->header.reserved) {
+    IDRIS2RC2_Value *r = idris2rc2_dup(x);
+    idris2rc2_spin_unlock(&c->lock);
+    return r;
+  }
+  idris2rc2_dup(x);
+  idris2rc2_spin_unlock(&c->lock);
+
+  pushForcing(c);
+  IDRIS2RC2_Closure *k = (IDRIS2RC2_Closure *)x;
+  for (int i = 0; i < k->filled; ++i)
+    idris2rc2_dup(k->args[i]);
+  IDRIS2RC2_Value *r = idris2rc2_trampoline(idris2rc2_dispatchFn(k->fn, k->arity, k->args));
+  popForcing();
+
+  idris2rc2_spin_lock(&c->lock);
+  if (!c->header.reserved) {
+    atomic_store_explicit(&c->v, idris2rc2_dup(r), memory_order_relaxed);
+    __atomic_store_n(&c->header.reserved, 1, __ATOMIC_RELEASE);
+    idris2rc2_spin_unlock(&c->lock);
+    idris2rc2_drop(x); // the cell's reference
+  } else {
+    IDRIS2RC2_Value *stored = idris2rc2_dup(atomic_load_explicit(&c->v, memory_order_relaxed));
+    idris2rc2_spin_unlock(&c->lock);
+    idris2rc2_drop(r);
+    r = stored;
+  }
+  idris2rc2_drop(x); // ours
+  return r;
 }

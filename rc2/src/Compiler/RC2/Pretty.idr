@@ -110,6 +110,11 @@ mutual
         ++ (if postDrop == [] then "" else " postDrop= " ++ show postDrop) ++ "\n"
   prettyExp d (RMemoize _ n rep body) =
       indent d ++ "memoize " ++ dumpName n ++ " : " ++ prettyRep rep ++ "\n" ++ prettyExp (d + 1) body
+  prettyExp d (RDelay _ lr n caps) =
+      indent d ++ "delay " ++ show lr ++ " " ++ dumpName n ++ " " ++ show caps ++ "\n"
+  prettyExp d (RForce _ lr v postDrop) =
+      indent d ++ "force " ++ show lr ++ " " ++ show v
+        ++ (if postDrop == [] then "" else " postDrop= " ++ show postDrop) ++ "\n"
 
   prettyConAlt : Nat -> RConAlt -> String
   prettyConAlt d (MkRConAlt n ci tag args body) =
