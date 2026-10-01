@@ -422,7 +422,7 @@ echo "=== Smoke tests ==="
 # "%f" six-digit form -- see the top-level README's "Deliberate
 # differences from upstream RefC". No shared baseline, so these check
 # against the saved .expected only.
-NO_REFC_DIFF_TESTS="Test3Data Test7CastMatrix Test8EmptyCon Test17ConstFold Test27FFIDualABI Test28Utf8Strings Test35NetworkLoopback Test42SupportMisc Test49IntegerOpReuse Test59Export Test66ClosureFastPath Test82RuntimeLocale Test83DoubleString Test86CafMemoization Test119FFINoRefc Test121CgRuntime Test24CStructSupport Test120CStruct Test124StringNul Test125LazyMemo"
+NO_REFC_DIFF_TESTS="Test3Data Test7CastMatrix Test8EmptyCon Test17ConstFold Test27FFIDualABI Test28Utf8Strings Test35NetworkLoopback Test42SupportMisc Test49IntegerOpReuse Test59Export Test66ClosureFastPath Test82RuntimeLocale Test83DoubleString Test86CafMemoization Test119FFINoRefc Test121CgRuntime Test24CStructSupport Test120CStruct Test124StringNul Test125LazyMemo Test126LazySelfForce"
 
 # Leak-sensitive by design (reference-counting/reuse/native-shadow
 # regression tests) -- checked with valgrind by default even without

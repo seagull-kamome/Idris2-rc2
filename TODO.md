@@ -790,10 +790,6 @@ RC.annotate・DeadVars で実際に数秒を失った。1の計測で重いと�
   名前がリテラルでない`getField`など)が、エラーを出すことも、内部エラーに
   ならないことも確かめられていない。期待するエラー文をファイルに置き、
   コンパイラの出力と diff する形にする。
-- **遅延評価のテストの穴。** `Test125LazyMemo`が`Lazy`/`Force`/`Delay`/`Inf`
-  のメモ化を、`Test122LiftOrigin`がそのlift結果を確かめているが、セルが
-  自分自身を`force`して中断する経路(`rc2/doc/lazy-memoization.md`
-  「Verification」節)のテストが無い。
 - **インクリメンタルコンパイル(`--inc rc2`)のテストが無い。** verify は
   全体コンパイルしか試さない。
 - **大きな外部プログラムが verify に無い。** idris2-lsp は C の出力で既知の

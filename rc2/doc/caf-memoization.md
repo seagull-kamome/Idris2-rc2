@@ -309,6 +309,18 @@ the existing `cName` mangling -- no separate counter/allocation scheme.
 `idris2rc2_memo_boxed_dropAll` -- a new call there, not a new lifecycle
 hook.
 
+## A CAF that depends on itself
+
+The thread that claims a memo records itself in it (`owner`, the address
+of a thread-local). A wait that finds its own thread there is a CAF whose
+evaluation needs its own value -- `x = x + 1`, or a top-level `Delay`
+that forces itself once `LazyCaf` has made it a CAF
+(`lazy-memoization.md`) -- and would otherwise wait for itself forever.
+It stops with "idris2rc2: a top-level value depends on itself" on stderr
+and exit status 1 (`idris2rc2_memo_cycle`). A wait on a memo another
+thread is evaluating still waits. `rc2/tests/Test126LazySelfForce`
+covers it.
+
 ## Incremental compilation
 
 `static` C variables have internal linkage, so no cross-module symbol

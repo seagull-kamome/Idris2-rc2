@@ -228,15 +228,26 @@ foldConstProgram knownCons defs0 = go 1 maxConstFoldIterations empty 0 defs0
 ||| to guard for one of those; runtime-side memoization is only for
 ||| whatever's left, either a real effect or a computation `ConstFold`'s
 ||| own analysis couldn't fully resolve.
-insertMemoize : List (Name, RCDef) -> List (Name, RCDef)
-insertMemoize = map wrap
+insertMemoize : (thunks : SortedSet Name) -> List (Name, RCDef) -> List (Name, RCDef)
+insertMemoize thunks = map wrap
   where
-    wrap : (Name, RCDef) -> (Name, RCDef)
-    wrap (n, d@(MkRCFun [] retRep isWorker body)) =
+    wrapCaf : (Name, RCDef) -> (Name, RCDef)
+    wrapCaf (n, d@(MkRCFun [] retRep isWorker body)) =
         case cafValueOf d of
              Just _  => (n, d)
              Nothing => (n, MkRCFun [] retRep isWorker (RMemoize EmptyFC n retRep body))
-    wrap nd = nd
+    wrapCaf nd = nd
+
+    wrap : (Name, RCDef) -> (Name, RCDef)
+    -- A `Delay`'s thunk with no captures is 0-ary too, but its lazy cell
+    -- already memoizes it, per cell and freed with the cell; a CAF would
+    -- keep the value for the whole run (doc/lazy-memoization.md).
+    wrap nd@(n, _) = if contains n thunks then nd else wrapCaf nd
+
+
+isDelay : LiftOrigin -> Bool
+isDelay (FromDelay _) = True
+isDelay FromLambda = False
 
 ||| Arity raising before lifting (doc/world-arity-raising.md).
 raiseNamed : {auto c : Ref Ctxt Defs} -> List String -> Maybe NamedCExp -> List (Name, FC, NamedDef) -> Core (Maybe NamedCExp, List (Name, FC, NamedDef))
@@ -302,8 +313,9 @@ stageDirectiveNames = disableableStageNames ++ optInStageNames
 ||| same "unimplementable, fails at link time instead" treatment
 ||| `Emit.idr`'s own `hasUsableForeignImpl` gives an unusable `%foreign`
 ||| declaration.
-toRCDefs : {auto c : Ref Ctxt Defs} -> {auto v : Ref VarId Int} -> List String -> (incremental : Bool) -> (roots : List Name) -> List (Name, RCDef) -> Core (List (Name, RCDef))
-toRCDefs disabled incremental roots preFolded = do
+toRCDefs : {auto c : Ref Ctxt Defs} -> {auto v : Ref VarId Int} -> List String -> (incremental : Bool) -> (roots : List Name)
+        -> (thunks : SortedSet Name) -> List (Name, RCDef) -> Core (List (Name, RCDef))
+toRCDefs disabled incremental roots thunks preFolded = do
     folded <- if "noconstfold" `elem` disabled
                  then pure preFolded
                  else logTime 2 "rc2: ConstFold (whole-program fixpoint)" $ foldConstProgram (not ("noknowncon" `elem` disabled)) preFolded
@@ -363,7 +375,7 @@ toRCDefs disabled incremental roots preFolded = do
     ctxed <- if "noctx" `elem` disabled
                 then pure trmced
                 else logTime 2 "rc2: Closure contexts" $ applyClosureCtx trmced
-    memoized <- logTime 2 "rc2: CAF memoization" $ pure (insertMemoize ctxed)
+    memoized <- logTime 2 "rc2: CAF memoization" $ pure (insertMemoize thunks ctxed)
     reused <- logTime 2 "rc2: RC annotate + Reuse + ConAltNative" $
                 traverse (\(n, d) => do
                   d1 <- toRCDefPostFold d
@@ -623,7 +635,9 @@ lowerProgram disabled incremental roots main defs = do
                  SortedMap.empty defs
     _ <- newRef StructTable structs
     (preFolded, infos) <- logTime 2 "rc2: Lambda lift + RC normalize" $ normalizeProgram incremental main defs
-    rc <- toRCDefs disabled incremental roots preFolded
+    -- `Delay` thunks, which their lazy cells memoize (`insertMemoize`).
+    let thunks = SortedSet.fromList [n | (n, i) <- SortedMap.toList infos, isDelay i.origin]
+    rc <- toRCDefs disabled incremental roots thunks preFolded
     pure (rc, infos)
 
 ||| Validates one %export'ed name against its own real elaborated

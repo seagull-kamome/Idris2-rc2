@@ -284,7 +284,7 @@ again:
   case IDRIS2RC2_TAG_LAZY: {
     // Deferred like a constructor field, so freeing a long forced stream
     // (cons -> cell -> cons -> ...) loops instead of recursing.
-    IDRIS2RC2_Value *x = atomic_load_explicit(&((IDRIS2RC2_Lazy *)v)->v, memory_order_acquire);
+    IDRIS2RC2_Value *x = atomic_load_explicit(&((IDRIS2RC2_IORef *)v)->av, memory_order_acquire);
     if (idris2rc2_releaseLast(x)) {
       if (idris2rc2_hasChildren(x))
         next = x;

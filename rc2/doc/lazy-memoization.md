@@ -83,9 +83,11 @@ and 3,454 closure applications. Compiling idris2-lsp under stage 2:
 
 ## Runtime representation
 
-A lazy cell has `IDRIS2RC2_IORef`'s layout (`header`, `lock`, `v`) and
-its own tag, `IDRIS2RC2_TAG_LAZY`, so a `Lazy (IORef a)` can't be taken
-for a cell or the other way round.
+A lazy cell is an `IDRIS2RC2_IORef` with its own tag,
+`IDRIS2RC2_TAG_LAZY`, so a `Lazy (IORef a)` can't be taken for a cell or
+the other way round. Its contents sit in the same word as an IORef's `v`,
+through the struct's atomic member `av` (a union with `v`): a cell is
+only ever read and written through `av`, an IORef only through `v`.
 
 - **Unevaluated**: `v` is a saturated closure (`filled == arity`) over
   the thunk function and its captures.
@@ -110,7 +112,8 @@ for a cell or the other way round.
    replaced while the cell lives.
 3. A cell whose `v` is a saturated closure:
    - If the cell is on this thread's stack of cells being evaluated,
-     abort with "a lazy value forces itself". The stack is only searched
+     stop with "idris2rc2: a lazy value forces itself" on stderr and exit
+     status 1. The stack is only searched
      here, on the way to evaluating, which costs far more.
    - Otherwise, under the lock, re-read `v` and, if it is still the
      closure, dup the closure itself (not just its captures: another
@@ -156,6 +159,11 @@ for a cell or the other way round.
   value passed on unforced, becomes `Delay (x [])`, so `e` is still not
   evaluated until something forces it. That `Delay` only calls the
   memoized CAF, and is a plain value when `x` folds to a constant.
+- **A thunk with no captures** is a 0-ary definition, but it is never
+  memoized as a CAF: `insertMemoize` skips every name `LiftInfo` marks
+  as lifted from a `Delay`. Its cell memoizes it, once per cell and
+  freed with the cell; a CAF would share one value across every cell
+  built from that `Delay` and keep it for the whole run.
 
 ## Ownership
 
@@ -185,7 +193,7 @@ for a cell or the other way round.
   by reference counting. A thunk's captures exist before its cell does
   and Idris has no recursive `let`, so such a cycle can only arise
   through top-level definitions, which are never freed anyway; a
-  thunk that forces its own cell aborts (Force, step 3).
+  thunk that forces its own cell stops the program (Force, step 3).
 
 ## IR
 
@@ -262,9 +270,13 @@ forced stream (`iterate`/`index`) tears down without recursing once per
 element; and several threads (`forkJoin`) forcing the same cell
 together all read back the same value (consistency under a race, not a
 count of how many times the thunk ran -- the test never reads how many
-times its own side effect fired). Not covered by any test today: a
-cell that forces itself (the runtime aborts with "a lazy value forces
-itself" -- see "`Force`" above).
+times its own side effect fired). `rc2/tests/Test126LazySelfForce`
+checks that a value whose evaluation needs itself stops: its top-level
+`Delay` becomes a CAF (`LazyCaf`), so it is CAF memoization that finds
+the cycle and stops with "a top-level value depends on itself"
+(caf-memoization.md). A cell forcing itself stops with "a lazy value
+forces itself" (see "`Force`" above); with LazyCaf a self-reference can
+only come through top-level definitions, so no test program reaches it.
 
 `rc2/tests/Test122LiftOrigin`'s `check.sh` checks lifting: a non-value
 `Delay`'s thunk takes only its own captures (`delay Lazy`/`delay Inf`,

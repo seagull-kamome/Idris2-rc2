@@ -870,8 +870,6 @@ children (RReleaseReuse _ _ k) = [k]
 children (RReuseOffer _ _ _ _ k) = [k]
 children (RLoop _ _ _ _ k) = [k]
 children (RMemoize _ _ _ k) = [k]
-children (RDelay _ _ _ _) = []
-children (RForce _ _ _ _) = []
 children _ = []
 
 ||| `v` is only ever released or reused below, never read or `dup`'d:
@@ -896,8 +894,6 @@ mapChildren f (RReleaseReuse fc x k) = RReleaseReuse fc x (f k)
 mapChildren f (RReuseOffer fc sc ds us k) = RReuseOffer fc sc ds us (f k)
 mapChildren f (RLoop fc ps initial pd k) = RLoop fc ps initial pd (f k)
 mapChildren f (RMemoize fc n r k) = RMemoize fc n r (f k)
-mapChildren f e@(RDelay _ _ _ _) = e
-mapChildren f e@(RForce _ _ _ _) = e
 mapChildren _ e = e
 
 ||| `mapChildren` in an `Applicative`: rebuilds `e` with `f` run on each
@@ -919,6 +915,4 @@ traverseChildren f (RReleaseReuse fc x k) = RReleaseReuse fc x <$> f k
 traverseChildren f (RReuseOffer fc sc ds us k) = RReuseOffer fc sc ds us <$> f k
 traverseChildren f (RLoop fc ps initial pd k) = RLoop fc ps initial pd <$> f k
 traverseChildren f (RMemoize fc n r k) = RMemoize fc n r <$> f k
-traverseChildren f e@(RDelay _ _ _ _) = pure e
-traverseChildren f e@(RForce _ _ _ _) = pure e
 traverseChildren _ e = pure e

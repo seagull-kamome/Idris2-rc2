@@ -291,23 +291,24 @@ typedef struct {
 // `lock` guards `v` itself (the swap-and-drop-old sequence in
 // writeIORef/readIORef, ioprims.c) -- see util.h's idris2rc2_spin_lock
 // doc comment for why a bare atomic load+dup on `v` isn't enough.
+//
+// A lazy value (rc2/doc/lazy-memoization.md) is this struct too, tagged
+// IDRIS2RC2_TAG_LAZY, and uses only `av`: a saturated closure until the
+// first force stores the value, which is written once and then only read,
+// so a forced cell is read without the lock. `header.reserved` is 1 once
+// the value is stored. An IORef uses only `v`; no object mixes the two.
 typedef struct {
   IDRIS2RC2_Header header;
   atomic_flag lock;
-  IDRIS2RC2_Value *v;
+  union {
+    IDRIS2RC2_Value *v;
+    IDRIS2RC2_Value *_Atomic av;
+  };
 } IDRIS2RC2_IORef;
-
-// A lazy value (rc2/doc/lazy-memoization.md): an IORef with its own tag.
-// `v` holds a saturated closure until the first force stores the value;
-// a value is written once and then only read, so a forced cell is read
-// without the lock. `header.reserved` is 1 once the value is stored.
-typedef struct {
-  IDRIS2RC2_Header header;
-  atomic_flag lock;
-  IDRIS2RC2_Value *_Atomic v;
-} IDRIS2RC2_Lazy;
-_Static_assert(sizeof(IDRIS2RC2_Lazy) == sizeof(IDRIS2RC2_IORef),
-               "a lazy cell has an IORef's layout");
+// `av` must overlay `v` exactly, and never hide a lock of its own.
+_Static_assert(sizeof(IDRIS2RC2_Value *_Atomic) == sizeof(IDRIS2RC2_Value *),
+               "an atomic pointer has a plain pointer's size");
+_Static_assert(ATOMIC_POINTER_LOCK_FREE == 2, "atomic pointers are always lock-free");
 
 typedef struct {
   IDRIS2RC2_Header header;
