@@ -31,9 +31,10 @@ record Metrics where
   dropNodes, dropCount, postDrops : Nat
   frees, reuseOffers, releaseReuses : Nat
   loops, continues, memoizes, crashes : Nat
+  delays, forces : Nat
 
 emptyMetrics : Metrics
-emptyMetrics = MkMetrics 0 0 0 0 0  0 0 0  0 0  0 0 0  0 0  0 0  0 0 0  0 0  0 0 0  0 0 0  0 0 0 0
+emptyMetrics = MkMetrics 0 0 0 0 0  0 0 0  0 0  0 0 0  0 0  0 0  0 0 0  0 0  0 0 0  0 0 0  0 0 0 0  0 0
 
 isBoxed : RRep -> Bool
 isBoxed Boxed = True
@@ -45,6 +46,8 @@ walk m (RCall _ _ _) = { calls $= S } m
 walk m (RCallRep _ _ pd _) = { callReps $= S, postDrops $= (+ length pd) } m
 walk m (RCallFFI _ pd _) = { ffiCalls $= S, postDrops $= (+ length pd) } m
 walk m (RPartial _ _ _) = { partials $= S } m
+walk m (RDelayNode _ _ _) = { delays $= S } m
+walk m (RForceNode _ _ pd) = { forces $= S, postDrops $= (+ length pd) } m
 walk m (RApply _ _ _) = { applies $= S } m
 walk m (RLetIn _ rep value body) =
     let m' = if isBoxed rep then { boxedLets $= S } m else { nativeLets $= S } m
@@ -112,6 +115,8 @@ renderMetrics m =
       , ("reuseOffer", m.reuseOffers, "releaseReuse \{show m.releaseReuses}")
       , ("loop", m.loops, "continue \{show m.continues}")
       , ("memoize", m.memoizes, "")
+      , ("delay", m.delays, "lazy cells built")
+      , ("force", m.forces, "")
       , ("crash", m.crashes, "")
       ]
   where

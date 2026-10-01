@@ -136,6 +136,11 @@ mutual
     RLoopNode    : (params : List (Int, RRep)) -> (initial : List RCLocal) -> (prologueDrop : List RCLocal) -> (body : RCExp) -> RCExp
     RLoopContinueNode : (args : List RCLocal) -> (postDrop : List RCLocal) -> RCExp
     RMemoizeNode : (name : String) -> RRep -> (body : RCExp) -> RCExp
+    ||| `delay`: a lazy cell over `thunk`'s saturated closure; `captures`
+    ||| are consumed (rc2's `doc/lazy-memoization.md`).
+    RDelayNode   : (reason : String) -> (thunk : String) -> (captures : List RCLocal) -> RCExp
+    ||| `force`: reads `v` (a lazy cell or a plain value); `postDrop` as on `op`.
+    RForceNode   : (reason : String) -> (v : RCLocal) -> (postDrop : List RCLocal) -> RCExp
 
   ||| `Compiler.RC2.RCExp.RConAlt` -- `args` are always plain `RCLoc`
   ||| variable ids (`Pretty.idr`'s own `map RCLoc args`), never one of

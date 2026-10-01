@@ -8,8 +8,7 @@ native case was found unreachable rather than implemented.
 
 ## The bug this fixes
 
-`TODO.md`'s own "Semantics: a plain `unsafePerformIO` CAF isn't
-memoized either" entry: a top-level 0-argument definition
+Without it, a top-level 0-argument definition
 
 ```idris2
 counter : IORef Int
@@ -18,28 +17,23 @@ counter = unsafePerformIO (newIORef 0)
 
 compiles to an ordinary C function re-run on every reference -- three
 independent `IORef`s instead of one shared one, confirmed identically
-on `--cg rc2` and upstream `--cg refc` (Chez shares it correctly). Same
-root cause as the earlier "Semantics: `Lazy`/`Force`..." entry
-(`idris2-src`'s `getCompileData doLazyAnnots = False`, plus rc2/RefC's
-complete lack of CAF-sharing for top-level 0-argument definitions) --
-see both TODO.md entries for the full history.
+on `--cg rc2` and upstream `--cg refc` (Chez shares it correctly).
+`Lazy`/`Inf` memoization (`rc2/doc/lazy-memoization.md`) builds on this
+node for 0-ary top-level `Delay` definitions.
 
 **Scope of this design**: fixes the plain-CAF case above (a bare
 0-argument definition with a real, possibly-effectful body) --
 `RMemoize` wraps a CAF's own body and guarantees it's evaluated at
-most once. It does **not**, on its own, fully fix `Lazy`/`Force`: a
-`Lazy a` CAF's own compiled form builds and returns a *closure*
-(`Delay e` compiles to `CLam`, per the `Lazy`/`Force` TODO entry's own
-point 3), so wrapping the CAF's own top-level slot in `RMemoize` only
-guarantees every *reference* to the CAF gets the same closure object
--- a real improvement, but `Force t` unconditionally compiles to
-`CApp fc tm [CErased fc]` (call whatever `tm` evaluates to), so a
-*second* `force` on that now-shared closure still re-invokes its body.
-Making that not happen needs the separate "memoizing closure
-representation" the `Lazy`/`Force` entry's points 3/5 already describe
-(a forced-flag + cached-value slot on the closure itself, touching
-`datatypes.h`) -- out of scope here, revisit from that entry if it's
-ever pursued.
+most once. A 0-ary top-level `Delay` definition is handled separately,
+before this node is ever inserted: `Compiler.RC2.LazyCaf` rewrites it
+away to a plain `x = e` first, so this `RMemoize` node ends up
+memoizing the real value `e` directly (`rc2/doc/lazy-memoization.md`'s
+"`Delay`"). Left as a `Delay`, `RMemoize` would still be correct --
+wrapping the CAF's own top-level slot shares one `RDelay`-built cell
+across every reference, and that cell already caches its own value on
+a second `force` -- but it would be two memoization layers doing one
+job. `LazyCaf`'s own module comment calls this out directly: "a cell
+would memoize the same value twice."
 
 ## The IR node
 
@@ -155,9 +149,10 @@ cheap atomic check per reference and changes no observable behavior
 a performance question only); for a real effect, it's exactly the fix
 needed. `Compiler.RC2.RC2.collectLazyCAFs`/`isLazyCAF` already exists
 (currently only for `dumprcexpr`'s own benefit) and is exactly this
-kind of free, already-tested detection, reusable if the `Lazy`-specific
-sub-case (see "Scope" above) ever needs its own special-casing on top
-of this.
+kind of detection. `Compiler.RC2.LazyCaf` (see "Scope" above), once it
+needed the same "0-ary top-level `Delay`" shape, ended up with its own
+copy of the same one-clause match (`lazyCaf` in `LazyCaf.idr`) rather
+than calling `isLazyCAF` -- the two have never been unified.
 
 ## Threading through the rest of the pipeline
 
@@ -313,6 +308,18 @@ the existing `cName` mangling -- no separate counter/allocation scheme.
 `idris2rc2_rtFinish` (`runtime.c`, `doc/runtime-lifecycle.md`) calls
 `idris2rc2_memo_boxed_dropAll` -- a new call there, not a new lifecycle
 hook.
+
+## A CAF that depends on itself
+
+The thread that claims a memo records itself in it (`owner`, the address
+of a thread-local). A wait that finds its own thread there is a CAF whose
+evaluation needs its own value -- `x = x + 1`, or a top-level `Delay`
+that forces itself once `LazyCaf` has made it a CAF
+(`lazy-memoization.md`) -- and would otherwise wait for itself forever.
+It stops with "idris2rc2: a top-level value depends on itself" on stderr
+and exit status 1 (`idris2rc2_memo_cycle`). A wait on a memo another
+thread is evaluating still waits. `rc2/tests/Test126LazySelfForce`
+covers it.
 
 ## Incremental compilation
 

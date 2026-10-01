@@ -157,6 +157,9 @@ reannotateFieldOwnership fid owned (RAppName fc lazy n args) =
 reannotateFieldOwnership fid owned (RUnderApp fc n missing args) =
     let (nDups, owned') = countDupsNeeded fid owned args
     in (owned', wrapNDups fc fid nDups (RUnderApp fc n missing args))
+reannotateFieldOwnership fid owned (RDelay fc lr n caps) =
+    let (nDups, owned') = countDupsNeeded fid owned caps
+    in (owned', wrapNDups fc fid nDups (RDelay fc lr n caps))
 reannotateFieldOwnership fid owned (RApp fc lazy c args) =
     let (nDups, owned') = countDupsNeeded fid owned (c :: forget args)
     in (owned', wrapNDups fc fid nDups (RApp fc lazy c args))
@@ -205,6 +208,12 @@ reannotateFieldOwnership fid owned (RStructGet fc structVar sf postDrop) =
         owned' = if isField then False else owned
         postDrop' = if dropHere then postDrop ++ [RCLoc fid] else postDrop
     in (owned', RStructGet fc structVar sf postDrop')
+reannotateFieldOwnership fid owned (RForce fc lr v postDrop) =
+    let isField = v == RCLoc fid
+        dropHere = isField && owned
+        owned' = if isField then False else owned
+        postDrop' = if dropHere then postDrop ++ [RCLoc fid] else postDrop
+    in (owned', RForce fc lr v postDrop')
 reannotateFieldOwnership fid owned (RStructSet fc structVar sf value postDrop) =
     let scField = structVar == RCLoc fid
         valField = value == RCLoc fid

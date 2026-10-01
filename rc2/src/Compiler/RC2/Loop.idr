@@ -156,6 +156,7 @@ mutual
   renameRCExp ren (RV fc v) = RV fc (renameLocal ren v)
   renameRCExp ren (RAppName fc lazy n args) = RAppName fc lazy n (renameLocals ren args)
   renameRCExp ren (RUnderApp fc n missing args) = RUnderApp fc n missing (renameLocals ren args)
+  renameRCExp ren (RDelay fc lr n caps) = RDelay fc lr n (renameLocals ren caps)
   renameRCExp ren (RApp fc lazy c args) = RApp fc lazy (renameLocal ren c) (map (renameLocal ren) args)
   renameRCExp ren (RLet fc var rep value body) =
       RLet fc (renameId ren var) rep (renameRCExp ren value) (renameRCExp ren body)
@@ -168,6 +169,8 @@ mutual
       RExtPrim fc lazy p (renameLocals ren args) (renameLocals ren postDrop)
   renameRCExp ren (RStructGet fc structVar sf postDrop) =
       RStructGet fc (renameLocal ren structVar) sf (renameLocals ren postDrop)
+  renameRCExp ren (RForce fc lr v postDrop) =
+      RForce fc lr (renameLocal ren v) (renameLocals ren postDrop)
   renameRCExp ren (RStructSet fc structVar sf value postDrop) =
       RStructSet fc (renameLocal ren structVar) sf (renameLocal ren value) (renameLocals ren postDrop)
   renameRCExp ren (RFill fc cell k value postDrop) =
@@ -749,6 +752,8 @@ stripOwnership ids (RLoop fc loopParams initial prologueDrop body) =
       (stripOwnership ids body)
 stripOwnership ids (RStructGet fc structVar sf postDrop) =
     RStructGet fc structVar sf (filter (keepUnlessOwned ids) postDrop)
+stripOwnership ids (RForce fc lr v postDrop) =
+    RForce fc lr v (filter (keepUnlessOwned ids) postDrop)
 stripOwnership ids (RStructSet fc structVar sf value postDrop) =
     RStructSet fc structVar sf value (filter (keepUnlessOwned ids) postDrop)
 stripOwnership ids (RFill fc cell k value postDrop) =
@@ -1166,6 +1171,7 @@ usesInvariant p e = existsInvariantUse e
     existsInvariantUse (RV _ v) = v == RCLoc p
     existsInvariantUse (RAppName _ _ _ args) = any (== RCLoc p) args
     existsInvariantUse (RUnderApp _ _ _ args) = any (== RCLoc p) args
+    existsInvariantUse (RDelay _ _ _ caps) = any (== RCLoc p) caps
     existsInvariantUse (RApp _ _ c args) = if c == RCLoc p then True else any (== RCLoc p) args
     existsInvariantUse (RLet _ _ _ value body) =
         if existsInvariantUse value then True else existsInvariantUse body
@@ -1173,6 +1179,7 @@ usesInvariant p e = existsInvariantUse e
     existsInvariantUse (ROp _ _ _ args _) = any (== RCLoc p) (toList args)
     existsInvariantUse (RExtPrim _ _ _ args _) = any (== RCLoc p) args
     existsInvariantUse (RStructGet _ structVar _ _) = structVar == RCLoc p
+    existsInvariantUse (RForce _ _ v _) = v == RCLoc p
     existsInvariantUse (RStructSet _ structVar _ value _) =
         if structVar == RCLoc p then True else value == RCLoc p
     existsInvariantUse (RFill _ cell _ value _) = cell == RCLoc p || value == RCLoc p
@@ -1240,6 +1247,8 @@ dupInvariantBoxed p (RAppName fc lazy n args) =
     wrapInvariantDups fc p (countInvariantDups p args) (RAppName fc lazy n args)
 dupInvariantBoxed p (RUnderApp fc n missing args) =
     wrapInvariantDups fc p (countInvariantDups p args) (RUnderApp fc n missing args)
+dupInvariantBoxed p (RDelay fc lr n caps) =
+    wrapInvariantDups fc p (countInvariantDups p caps) (RDelay fc lr n caps)
 dupInvariantBoxed p (RApp fc lazy c args) =
     wrapInvariantDups fc p (countInvariantDups p (c :: forget args)) (RApp fc lazy c args)
 dupInvariantBoxed p (RLet fc var rep value body) =
@@ -1267,6 +1276,8 @@ dupInvariantBoxed p (RExtPrim fc lazy nm args postDrop) =
     in wrapInvariantDups fc p occ (RExtPrim fc lazy nm args (postDrop ++ List.replicate occ (RCLoc p)))
 dupInvariantBoxed p (RStructGet fc structVar sf postDrop) =
     wrapInvariantDups fc p (countInvariantDups p [structVar]) (RStructGet fc structVar sf postDrop)
+dupInvariantBoxed p (RForce fc lr v postDrop) =
+    wrapInvariantDups fc p (countInvariantDups p [v]) (RForce fc lr v postDrop)
 dupInvariantBoxed p (RStructSet fc structVar sf value postDrop) =
     wrapInvariantDups fc p (countInvariantDups p [structVar, value]) (RStructSet fc structVar sf value postDrop)
 dupInvariantBoxed p (RFill fc cell k value postDrop) =

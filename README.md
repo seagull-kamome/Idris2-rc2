@@ -627,9 +627,18 @@ one shared one, where `--cg chez` already gave the right answer.
 own body in an atomic check-compute-cache-share dance
 (`support/rc2/caf_memoize.h`/`.c`) -- `rc2/tests/Test86CafMemoization`
 confirms `0 1 2`, matching Chez, where rc2 (and real RefC, still)
-print `0 0 0`. See `rc2/doc/caf-memoization.md` for the full design,
-including the one related case this doesn't fully close (`Lazy`/`Force`
-itself needs a further, larger fix on top -- not yet pursued).
+print `0 0 0`. See `rc2/doc/caf-memoization.md` for the full design.
+
+`Lazy`/`Inf` memoization closes the related gap, one level up. Upstream
+RefC takes upstream's own lambda lifting, which turns a `Delay` into a
+plain closure and a `Force` into an application of it, so forcing the
+same delayed value more than once re-runs it from scratch every time.
+rc2 lifts lambdas itself instead (`rc2/doc/lambda-lifting.md`) and keeps
+`Delay`/`Force` as their own `RDelay`/`RForce` IR nodes over a lazy
+cell: `idris2rc2_force` stores the first result and shares it with
+every later force of the same cell. See `rc2/doc/lazy-memoization.md`'s
+"What Chez does" for where Chez's own native `(delay e)`/`(force e)`
+does and doesn't already help with this on that backend.
 
 ## `%cg rc2` directives
 
@@ -696,7 +705,7 @@ calling convention, across ordinary call boundaries), self- and
 mutual-tail-call loop conversion with loop-invariant parameter/
 expression hoisting, branch-local sinking, whole-program inlining,
 constant folding, whole-program dead-code elimination, dup-batching,
-CAF memoization (a real behavioral fix over upstream
+CAF and `Lazy`/`Inf` memoization (a real behavioral fix over upstream
 RefC, not just a gap RefC never had -- see above), incremental
 compilation (see above), and `Data.Buffer`/`System.Clock`/the standard
 `network` package (rc2's own native `idrnet_*` port). See `TODO.md` for

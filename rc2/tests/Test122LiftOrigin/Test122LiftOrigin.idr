@@ -2,8 +2,8 @@ module Main
 
 -- Lambda lifting records where each lifted definition came from
 -- (rc2/doc/lambda-lifting.md). `check.sh` reads the `dumplifts` output:
--- a `Lazy` and an `Inf` delay, a delay of a lambda (one definition
--- taking the lambda's argument too), and a lambda lifted out of
+-- a `Lazy` and an `Inf` delay, a delay of a lambda (just the lambda:
+-- a value needs no thunk), and a lambda lifted out of
 -- another lambda, both credited to the top-level definition. Each
 -- function is called twice, so inlining a single caller's callee
 -- doesn't move its lambdas into `main`.

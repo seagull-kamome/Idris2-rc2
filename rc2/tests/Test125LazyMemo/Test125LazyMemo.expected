@@ -1,0 +1,9 @@
+84
+Lazy evaluations: 1
+[0, 1, 2, 3, 4]
+[0, 1, 2, 3, 4]
+Inf tail evaluations: 5
+23
+999999
+0
+[100, 100, 100, 100]

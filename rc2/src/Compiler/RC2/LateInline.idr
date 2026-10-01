@@ -289,6 +289,8 @@ hasNonNativeUse ty loopSlots target (ROp {}) = False -- postDrop-only; stale, st
 hasNonNativeUse ty loopSlots target (RExtPrim _ _ _ args postDrop) = elem (RCLoc target) args || elem (RCLoc target) postDrop
 -- Unlike ROp/RCmpCase/..., stripOwnership never touches RExtPrim's own postDrop -- a genuine use here.
 hasNonNativeUse ty loopSlots target (RStructGet _ structVar _ _) = structVar == RCLoc target
+hasNonNativeUse ty loopSlots target (RDelay _ _ _ caps) = elem (RCLoc target) caps
+hasNonNativeUse ty loopSlots target (RForce _ _ v _) = v == RCLoc target
 hasNonNativeUse ty loopSlots target (RStructSet _ structVar _ value _) = structVar == RCLoc target || value == RCLoc target
 hasNonNativeUse ty loopSlots target (RFill _ cell _ value _) = cell == RCLoc target || value == RCLoc target
 hasNonNativeUse ty loopSlots target (RCmpCase _ _ _ _ t f) = hasNonNativeUse ty loopSlots target t || hasNonNativeUse ty loopSlots target f

@@ -1303,6 +1303,13 @@ emitRC sink (RCmpCase fc op args postDrop whenTrue whenFalse) _ = unreachableInE
 emitRC sink (RConCase fc sc alts mDef) _ = unreachableInEmitRC "RConCase"
 emitRC sink (RConstCase fc sc alts def) _ = unreachableInEmitRC "RConstCase"
 emitRC sink (RMemoize fc n rep body) _ = unreachableInEmitRC "RMemoize"
+-- doc/lazy-memoization.md: a cell over a saturated closure of the thunk.
+emitRC sink (RDelay fc _ n caps) _ = do
+    closure <- makeClosure fc n caps 0
+    finalizeSink fc sink "idris2rc2_mkLazy(\{closure})"
+emitRC sink (RForce fc _ v postDrop) _ = do
+    (vStr, pending) <- rcVarToBoxedC v
+    finalizeSinkWithDrop fc sink "idris2rc2_force(\{vStr})" (map varName postDrop ++ pending)
 
 emitRC sink (RPrimVal fc (I x)) tailPosition = emitRC sink (RPrimVal fc (I64 $ cast x)) tailPosition
 emitRC sink (RPrimVal fc c) _ = finalizeSink fc sink !(boxedConstExpr c)

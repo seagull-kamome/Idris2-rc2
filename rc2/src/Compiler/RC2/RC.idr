@@ -65,8 +65,8 @@ data StructTable : Type where
 
 ||| Where a lifted definition came from: the top-level definition it was
 ||| lifted out of, a lambda or a `Delay` (with its `LazyReason`), and how
-||| many parameters of its own it takes after the captured ones (a
-||| `Delay` of a lambda is one definition, taking both).
+||| many parameters of its own it takes after the captured ones (none
+||| for a `Delay`'s thunk; doc/lazy-memoization.md).
 public export
 data LiftOrigin = FromLambda | FromDelay LazyReason
 
@@ -168,14 +168,12 @@ boolBranches [MkNConstAlt c1 b1, MkNConstAlt c2 b2] Nothing =
 boolBranches _ _ = Nothing
 
 ||| A closure application's head and all its arguments: nested
-||| applications of something other than a name, and a `Force` (an
-||| application to an erased value), are one application
-||| (`doc/rapp-nary-closure-apply.md`).
+||| applications of something other than a name are one application
+||| (`doc/rapp-nary-closure-apply.md`). A `Force` is not an application
+||| (`RForce`, `doc/lazy-memoization.md`).
 appChain : NamedCExp -> List NamedCExp -> (NamedCExp, List NamedCExp)
 appChain e@(NmApp _ (NmRef _ _) _) acc = (e, acc)
 appChain (NmApp _ g as) acc = appChain g (as ++ acc)
-appChain (NmForce fc _ t@(NmRef _ _)) acc = (NmApp fc t [NmErased fc], acc)
-appChain (NmForce fc _ t) acc = appChain t (NmErased fc :: acc)
 appChain g acc = (g, acc)
 
 nmFC : NamedCExp -> FC
@@ -255,11 +253,34 @@ mutual
     normalize fr (NmLocal fc x) = pure $ RV fc (RCLoc !(lookupVar fr x))
     normalize fr (NmRef fc n) = pure $ RAppName fc Nothing n []
     normalize fr (NmLam fc x b) = lambda fr fc FromLambda [x] b
-    normalize fr (NmDelay fc lr b) = lambda fr fc (FromDelay lr) [MN "act" 0] b
+    -- A body that is already a value computes nothing when forced, so it
+    -- is that value, with no cell; `RForce` returns a non-cell as is
+    -- (doc/lazy-memoization.md, "`Delay`").
+    normalize fr (NmDelay fc lr b) =
+        if isValue b
+           then normalize fr b
+           else do
+               (n, locs) <- lift fr fc (FromDelay lr) [] b
+               pure $ RDelay fc lr n locs
+      where
+        atom : NamedCExp -> Bool
+        atom (NmLocal _ _) = True
+        atom (NmPrimVal _ _) = True
+        atom (NmErased _) = True
+        atom _ = False
+
+        -- Not a bare variable: it may itself be a lazy value, which
+        -- `Force` must return rather than force.
+        isValue : NamedCExp -> Bool
+        isValue (NmPrimVal _ _) = True
+        isValue (NmErased _) = True
+        isValue (NmLam _ _ _) = True
+        isValue (NmCon _ _ _ _ args) = all atom args
+        isValue _ = False
     normalize fr (NmApp fc (NmRef _ n) args) =
         bindMany fr args (\locs => pure $ RAppName fc Nothing n locs)
     normalize fr e@(NmApp fc _ _) = applyChain fr fc e
-    normalize fr e@(NmForce fc _ _) = applyChain fr fc e
+    normalize fr (NmForce fc lr t) = bindOne fr t (\tl => pure $ RForce fc lr tl [])
     normalize fr (NmLet fc x val body) = do
         i <- freshVarId
         valRC <- normalize fr val
@@ -330,6 +351,14 @@ mutual
     lambda : Norm (Frame -> FC -> LiftOrigin -> List Name -> NamedCExp -> Core RCExp)
     lambda fr fc origin bound (NmLam _ x b) = lambda fr fc origin (x :: bound) b
     lambda fr fc origin bound body = do
+        (n, locs) <- lift fr fc origin bound body
+        pure $ RUnderApp fc n (length bound) locs
+
+    ||| The definition `lambda` builds, and the captures to pass it. A
+    ||| `Delay` uses it directly with no parameters of its own (its body
+    ||| is never merged with a lambda inside it): the thunk.
+    lift : Norm (Frame -> FC -> LiftOrigin -> List Name -> NamedCExp -> Core (Name, List RCLocal))
+    lift fr fc origin bound body = do
         ref <- newRef Captures (the (SortedMap Name Int) empty)
         boundIds <- traverse (const freshVarId) bound
         let inner = MkFrame (fromList (zip bound boundIds)) (bound ++ scope fr) (Just ref)
@@ -341,7 +370,7 @@ mutual
         st <- get Lifts
         put Lifts ({ lifted $= ((n, MkRCFun (map (\(_, i) => (i, RBoxed)) ordered ++ map (\i => (i, RBoxed)) (reverse boundIds)) RBoxed False bodyRC) ::)
                    , infos $= ((n, MkLiftInfo (basename st) origin (length bound)) ::) } st)
-        pure $ RUnderApp fc n (length bound) locs
+        pure (n, locs)
       where
         position : Name -> Nat
         position x = maybe (length (scope fr)) finToNat (findIndex (== x) (scope fr))
@@ -601,6 +630,8 @@ mutual
         pure $ wrapDups fc (splitBorrows natives owned args) (RAppName fc lazy n args)
     annotate natives owned (RUnderApp fc n missing args) =
         pure $ wrapDups fc (splitBorrows natives owned args) (RUnderApp fc n missing args)
+    annotate natives owned (RDelay fc lr n caps) =
+        pure $ wrapDups fc (splitBorrows natives owned caps) (RDelay fc lr n caps)
     annotate natives owned (RApp fc lazy c args) =
         pure $ wrapDups fc (splitBorrows natives owned (c :: forget args)) (RApp fc lazy c args)
     annotate natives owned (RLet fc var rep value body) = do
@@ -720,6 +751,8 @@ mutual
     -- is genuinely the last one.
     annotate natives owned (RStructGet fc structVar sf _) =
         pure $ RStructGet fc structVar sf (dropIfLastUse natives owned [structVar])
+    annotate natives owned (RForce fc lr v _) =
+        pure $ RForce fc lr v (dropIfLastUse natives owned [v])
     annotate natives owned (RStructSet fc structVar sf value _) =
         pure $ RStructSet fc structVar sf value (dropIfLastUse natives owned [structVar, value])
     -- `value` is consumed like an `RCon` field; `cell` is only borrowed.

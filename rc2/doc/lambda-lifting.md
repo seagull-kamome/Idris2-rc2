@@ -24,8 +24,9 @@ lambdas, fixing arities, CSE):
 
 ## What it produces
 
-What upstream's `lambdaLifted` with `doLazyAnnots = False` would give,
-already normalized:
+What upstream's `lambdaLifted` with `doLazyAnnots = False` would give
+for an ordinary lambda, already normalized, plus rc2's own `RDelay`/
+`RForce` nodes for `Delay`/`Force` (`rc2/doc/lazy-memoization.md`):
 
 - `__mainExpression`, then the lambdas lifted out of it, then each
   definition followed by its own lifted lambdas, newest first.
@@ -38,8 +39,12 @@ already normalized:
   fresh id where it is first read, and is resolved in the enclosing
   body once the lambda's body is done (which may capture it there in
   turn).
-- `Delay x` becomes a lambda of one ignored argument, `Force x` an
-  application of `x` to an erased value.
+- `Delay e` becomes `RDelay` over a thunk taking only `e`'s own
+  captures, unless `e` is already a value (a constant, a lambda, or a
+  constructor of atoms), in which case the whole `Delay` is just that
+  value, lifted exactly as it would be on its own; `Force t` becomes
+  `RForce` of `t` (see `rc2/doc/lazy-memoization.md`'s "`Delay`" for the
+  full case split).
 - Lifted names count up per definition, in the order the lambdas
   finish (inner before outer).
 
@@ -81,9 +86,6 @@ to rediscover them:
   `ArityRaise`'s apply fold, `ConstFold`'s fold of a closure applied
   where it is built, `SpecClosure`, `ArityRaise` and `ClosureCtx` all
   look for this again.
-- **Laziness.** `Delay`/`Force` and their `LazyReason` become an
-  ordinary lambda and application, so a `Lazy` value can't be memoized
-  (TODO.md, "Semantics: `Lazy`/`Force`").
 - **Which definition a lambda came from, and what it captured.**
 - **`CLet`'s `InlineOk` flag.**
 
@@ -91,18 +93,19 @@ to rediscover them:
 
 `normalizeProgram` also returns a `LiftInfo` for every lifted
 definition: the top-level definition it came from, whether it was a
-lambda or a `Delay` (with the `LazyReason`, `Lazy` or `Inf`), and how
-many parameters of its own it takes after the captured ones. A `Delay`
-whose body is a lambda is merged with it, so it can take more than one.
-`--directive dumplifts` writes the table to `<output>.lifts`
-(`tests/Test122LiftOrigin` checks it).
+lambda or a non-value `Delay` (with the `LazyReason`, `Lazy` or `Inf`),
+and how many parameters of its own it takes after the captured ones. A
+`Delay` whose body is already a value (a lambda among them, see "What
+it produces" above) is lifted exactly as that value would be on its
+own: a `Delay` of a lambda is recorded with origin `FromLambda`, taking
+that lambda's own parameters, with nothing in `LiftInfo` marking that it
+was ever a `Delay` at all. `--directive dumplifts` writes the table to
+`<output>.lifts` (`tests/Test122LiftOrigin` checks it, including this
+case: a `Delay` of a lambda shows up as `lambda`, never `delay`, in the
+dump).
 
 No pass reads it yet. What it cannot serve as it stands:
 
-- **`Force` sites.** A `Force` is an ordinary application to an erased
-  value once lifted, and the table only describes definitions.
-  Memoizing `Lazy` needs a mark at each `Force` or a thunk that updates
-  itself, designed from the `Delay` side alone.
 - **Definitions after later passes.** The table describes them as they
   were lifted, after inlining. SpecClosure clones, Early and Late
   inline splice, DeadCode prunes; a clone has no entry. A consumer

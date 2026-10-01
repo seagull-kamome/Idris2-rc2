@@ -50,6 +50,7 @@ reorderable (ROp _ Nothing _ _ _) = True
 reorderable (RPrimVal _ _) = True
 reorderable (RErased _) = True
 reorderable (RUnderApp _ _ _ _) = True
+reorderable (RDelay _ _ _ _) = True
 reorderable _ = False
 
 ||| Constructors whose cells are real heap objects with an `args` array.

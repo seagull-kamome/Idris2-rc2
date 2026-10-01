@@ -37,6 +37,8 @@ import Compiler.RC2.RCExp
 import Compiler.RC2.Reuse
 import Compiler.RC2.SpecClosure
 import Compiler.RC2.LateInline
+import Compiler.RC2.LazyCaf
+import Compiler.RC2.LazyFold
 import Compiler.RC2.MutualLoop
 import Compiler.RC2.Loop
 import Compiler.RC2.Sink
@@ -146,6 +148,8 @@ rcSizeOf (RLoop _ _ _ _ body) = 1 + rcSizeOf body
 rcSizeOf (RLoopContinue _ _ _) = 1
 rcSizeOf (RReuseOffer _ _ _ _ cont) = 1 + rcSizeOf cont
 rcSizeOf (RMemoize _ _ _ body) = 1 + rcSizeOf body
+rcSizeOf (RDelay _ _ _ _) = 1
+rcSizeOf (RForce _ _ _ _) = 1
 
 rcSizeConAlt (MkRConAlt _ _ _ _ body) = rcSizeOf body
 rcSizeConstAlt (MkRConstAlt _ body) = rcSizeOf body
@@ -224,15 +228,26 @@ foldConstProgram knownCons defs0 = go 1 maxConstFoldIterations empty 0 defs0
 ||| to guard for one of those; runtime-side memoization is only for
 ||| whatever's left, either a real effect or a computation `ConstFold`'s
 ||| own analysis couldn't fully resolve.
-insertMemoize : List (Name, RCDef) -> List (Name, RCDef)
-insertMemoize = map wrap
+insertMemoize : (thunks : SortedSet Name) -> List (Name, RCDef) -> List (Name, RCDef)
+insertMemoize thunks = map wrap
   where
-    wrap : (Name, RCDef) -> (Name, RCDef)
-    wrap (n, d@(MkRCFun [] retRep isWorker body)) =
+    wrapCaf : (Name, RCDef) -> (Name, RCDef)
+    wrapCaf (n, d@(MkRCFun [] retRep isWorker body)) =
         case cafValueOf d of
              Just _  => (n, d)
              Nothing => (n, MkRCFun [] retRep isWorker (RMemoize EmptyFC n retRep body))
-    wrap nd = nd
+    wrapCaf nd = nd
+
+    wrap : (Name, RCDef) -> (Name, RCDef)
+    -- A `Delay`'s thunk with no captures is 0-ary too, but its lazy cell
+    -- already memoizes it, per cell and freed with the cell; a CAF would
+    -- keep the value for the whole run (doc/lazy-memoization.md).
+    wrap nd@(n, _) = if contains n thunks then nd else wrapCaf nd
+
+
+isDelay : LiftOrigin -> Bool
+isDelay (FromDelay _) = True
+isDelay FromLambda = False
 
 ||| Arity raising before lifting (doc/world-arity-raising.md).
 raiseNamed : {auto c : Ref Ctxt Defs} -> List String -> Maybe NamedCExp -> List (Name, FC, NamedDef) -> Core (Maybe NamedCExp, List (Name, FC, NamedDef))
@@ -298,8 +313,9 @@ stageDirectiveNames = disableableStageNames ++ optInStageNames
 ||| same "unimplementable, fails at link time instead" treatment
 ||| `Emit.idr`'s own `hasUsableForeignImpl` gives an unusable `%foreign`
 ||| declaration.
-toRCDefs : {auto c : Ref Ctxt Defs} -> {auto v : Ref VarId Int} -> List String -> (incremental : Bool) -> (roots : List Name) -> List (Name, RCDef) -> Core (List (Name, RCDef))
-toRCDefs disabled incremental roots preFolded = do
+toRCDefs : {auto c : Ref Ctxt Defs} -> {auto v : Ref VarId Int} -> List String -> (incremental : Bool) -> (roots : List Name)
+        -> (thunks : SortedSet Name) -> List (Name, RCDef) -> Core (List (Name, RCDef))
+toRCDefs disabled incremental roots thunks preFolded = do
     folded <- if "noconstfold" `elem` disabled
                  then pure preFolded
                  else logTime 2 "rc2: ConstFold (whole-program fixpoint)" $ foldConstProgram (not ("noknowncon" `elem` disabled)) preFolded
@@ -347,16 +363,19 @@ toRCDefs disabled incremental roots preFolded = do
     -- Once more: the passes since expose sites the first run could not
     -- see (an inlined `bind`, say), and a function raised then is a
     -- bare wrapper now, whose sites call its raised version directly.
+    -- A local lazy value forced once becomes a call, now that inlining has
+    -- brought delays and forces together (doc/lazy-memoization.md).
+    lazyFolded <- logTime 2 "rc2: Lazy fold" $ pure $ map (\(n, d) => (n, foldSingleForceDef d)) earlyInlined
     reraised <- if "noarityraise" `elem` disabled
-                   then pure earlyInlined
-                   else logTime 2 "rc2: Arity raise (after early inline)" $ applyArityRaise earlyInlined
+                   then pure lazyFolded
+                   else logTime 2 "rc2: Arity raise (after early inline)" $ applyArityRaise lazyFolded
     trmced <- if "notrmc" `elem` disabled
                  then pure reraised
                  else logTime 2 "rc2: TRMC" $ applyTrmc reraised
     ctxed <- if "noctx" `elem` disabled
                 then pure trmced
                 else logTime 2 "rc2: Closure contexts" $ applyClosureCtx trmced
-    memoized <- logTime 2 "rc2: CAF memoization" $ pure (insertMemoize ctxed)
+    memoized <- logTime 2 "rc2: CAF memoization" $ pure (insertMemoize thunks ctxed)
     reused <- logTime 2 "rc2: RC annotate + Reuse + ConAltNative" $
                 traverse (\(n, d) => do
                   d1 <- toRCDefPostFold d
@@ -480,10 +499,9 @@ getExternStructs directives = SortedSet.fromList $ mapMaybe getArg directives
 ||| `Delay e` (`MkNmFun [] (NmDelay _ _ _)`) -- the same shape
 ||| `Compiler.Scheme.Common`'s own `schDef` special-cases for a
 ||| memoized top-level lazy definition on the Chez backend (see
-||| `TODO.md`'s "Semantics: `Lazy`/`Force`..." entry). rc2 doesn't
-||| implement that memoization (see the same TODO.md entry's own
-||| follow-up for why it's more than a small fix), but the detection
-||| itself is free: `CompileData.namedDefs` is populated unconditionally
+||| doc/lazy-memoization.md). rc2 memoizes such a definition too, once
+||| `Compiler.RC2.LazyCaf` takes its `Delay` off (`RMemoize`); the
+||| detection here only marks it in the dump, and is free: `CompileData.namedDefs` is populated unconditionally
 ||| by `getCompileDataWith` regardless of the requested `UsePhase`, so
 ||| no extra compilation pass is needed to build this set purely for
 ||| `dumprcexpr`'s own benefit (`Compiler.RC2.Pretty.prettyDef`'s
@@ -617,7 +635,9 @@ lowerProgram disabled incremental roots main defs = do
                  SortedMap.empty defs
     _ <- newRef StructTable structs
     (preFolded, infos) <- logTime 2 "rc2: Lambda lift + RC normalize" $ normalizeProgram incremental main defs
-    rc <- toRCDefs disabled incremental roots preFolded
+    -- `Delay` thunks, which their lazy cells memoize (`insertMemoize`).
+    let thunks = SortedSet.fromList [n | (n, i) <- SortedMap.toList infos, isDelay i.origin]
+    rc <- toRCDefs disabled incremental roots thunks preFolded
     pure (rc, infos)
 
 ||| Validates one %export'ed name against its own real elaborated
@@ -736,7 +756,11 @@ compileExprWhole c s _ outputDir tm outfile =
      let noMain = "nomain" `elem` directiveList
      cdata <- getCompileDataWith ["RC2", "RefC", "C"] False Cases tm
      exportNames <- traverse (\(n, _) => getFullName n) (exported cdata)
-     (mainInl, namedInl) <- inlineNamed disabledStages (Just (SortedSet.fromList exportNames)) (Just (forget (mainExpr cdata))) (namedDefs cdata)
+     -- Top-level `Delay` definitions onto CAF memoization; whole program
+     -- only, since another module's references are out of sight
+     -- (doc/lazy-memoization.md).
+     let (mainLz, namedLz) = applyLazyCaf (Just (forget (mainExpr cdata))) (namedDefs cdata)
+     (mainInl, namedInl) <- inlineNamed disabledStages (Just (SortedSet.fromList exportNames)) mainLz namedLz
      -- Signatures change, so not in `incCompile`: another module's calls
      -- are out of sight (doc/dead-args.md).
      (mainIn, namedIn) <- if "nodeadargs" `elem` disabledStages

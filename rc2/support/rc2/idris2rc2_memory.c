@@ -222,7 +222,8 @@ IDRIS2RC2_Array *idris2rc2_mkArray(int length) {
 // free-heavy benchmark, since every teardown paid to set it up; this
 // loop costs 1.4% (`perf stat`, 2026-09-26).
 static inline int idris2rc2_hasChildren(IDRIS2RC2_Value *v) {
-  return v->header.tag == IDRIS2RC2_TAG_CONSTRUCTOR || v->header.tag == IDRIS2RC2_TAG_CLOSURE;
+  return v->header.tag == IDRIS2RC2_TAG_CONSTRUCTOR || v->header.tag == IDRIS2RC2_TAG_CLOSURE ||
+         v->header.tag == IDRIS2RC2_TAG_LAZY;
 }
 
 // Whether dropping `v` released its last reference, like idris2rc2_drop
@@ -280,6 +281,18 @@ again:
   case IDRIS2RC2_TAG_IOREF:
     idris2rc2_drop(((IDRIS2RC2_IORef *)v)->v);
     break;
+  case IDRIS2RC2_TAG_LAZY: {
+    // Deferred like a constructor field, so freeing a long forced stream
+    // (cons -> cell -> cons -> ...) loops instead of recursing.
+    IDRIS2RC2_Value *x = atomic_load_explicit(&((IDRIS2RC2_IORef *)v)->av, memory_order_acquire);
+    if (idris2rc2_releaseLast(x)) {
+      if (idris2rc2_hasChildren(x))
+        next = x;
+      else
+        idris2rc2_teardown(x);
+    }
+    break;
+  }
   case IDRIS2RC2_TAG_ARRAY: {
     IDRIS2RC2_Array *a = (IDRIS2RC2_Array *)v;
     for (int i = 0; i < a->capacity; ++i)

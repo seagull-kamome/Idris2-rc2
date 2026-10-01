@@ -11,6 +11,12 @@
 #include <stdbool.h>
 #include <stdint.h>
 
+// This thread's mark for a memo it is evaluating (its address differs per
+// thread): a wait that finds its own mark is a CAF depending on itself,
+// which would otherwise wait for itself forever.
+extern _Thread_local char idris2rc2_memo_self;
+_Noreturn void idris2rc2_memo_cycle(void);
+
 // `claimed`/`done` are two separate fields on purpose: an earlier design
 // shared one field as both "already computed" flag and "next node in a
 // global cleanup list", which made the very first CAF ever memoized in
@@ -20,6 +26,7 @@
 typedef struct idris2rc2_memo_boxed {
   atomic_flag claimed;
   _Atomic bool done;
+  void *_Atomic owner;
   IDRIS2RC2_Value *value;
   // Only ever written once, by whichever caller idris2rc2_memo_boxed_claim
   // returned true to, before that same caller publishes this node onto
@@ -29,14 +36,17 @@ typedef struct idris2rc2_memo_boxed {
   struct idris2rc2_memo_boxed *cleanup_next;
 } idris2rc2_memo_boxed;
 
-#define IDRIS2RC2_MEMO_BOXED_INIT { ATOMIC_FLAG_INIT, false, NULL, NULL }
+#define IDRIS2RC2_MEMO_BOXED_INIT { ATOMIC_FLAG_INIT, false, NULL, NULL, NULL }
 
 // True exactly once per `memo`, for whichever caller's own call happens
 // to win the race -- that caller must then compute the CAF's own value
 // and call idris2rc2_memo_boxed_store below. Every other caller (this
 // returns false to) must instead call idris2rc2_memo_boxed_wait.
 static inline bool idris2rc2_memo_boxed_claim(idris2rc2_memo_boxed *memo) {
-  return !atomic_flag_test_and_set_explicit(&memo->claimed, memory_order_acquire);
+  if (atomic_flag_test_and_set_explicit(&memo->claimed, memory_order_acquire))
+    return false;
+  atomic_store_explicit(&memo->owner, &idris2rc2_memo_self, memory_order_relaxed);
+  return true;
 }
 
 // Stores a fresh dup of `value` as `memo`'s own permanent reference (the
@@ -67,13 +77,17 @@ void idris2rc2_memo_boxed_dropAll(void);
 typedef struct idris2rc2_memo_native {
   atomic_flag claimed;
   _Atomic bool done;
+  void *_Atomic owner;
   union { int64_t i; uint64_t u; double d; } value;
 } idris2rc2_memo_native;
 
-#define IDRIS2RC2_MEMO_NATIVE_INIT { ATOMIC_FLAG_INIT, false, { 0 } }
+#define IDRIS2RC2_MEMO_NATIVE_INIT { ATOMIC_FLAG_INIT, false, NULL, { 0 } }
 
 static inline bool idris2rc2_memo_native_claim(idris2rc2_memo_native *memo) {
-  return !atomic_flag_test_and_set_explicit(&memo->claimed, memory_order_acquire);
+  if (atomic_flag_test_and_set_explicit(&memo->claimed, memory_order_acquire))
+    return false;
+  atomic_store_explicit(&memo->owner, &idris2rc2_memo_self, memory_order_relaxed);
+  return true;
 }
 
 // Caller stores its own computed value into memo->value's own matching
@@ -84,6 +98,7 @@ static inline void idris2rc2_memo_native_publish(idris2rc2_memo_native *memo) {
 
 static inline void idris2rc2_memo_native_wait(idris2rc2_memo_native *memo) {
   while (!atomic_load_explicit(&memo->done, memory_order_acquire)) {
-    // busy-wait
+    if (atomic_load_explicit(&memo->owner, memory_order_relaxed) == &idris2rc2_memo_self)
+      idris2rc2_memo_cycle();
   }
 }

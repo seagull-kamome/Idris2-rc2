@@ -99,7 +99,7 @@ Only `(fun ...)`/`(error)` have a body to read further; the rest of this
 document is about that body.
 
 **Names**: every name shown anywhere in the dump -- a `def` header, a
-`call`/`callRep`/`partial`/`con`/`retpack`/`memoize` target, a case-alt's
+`call`/`callRep`/`partial`/`con`/`retpack`/`memoize`/`delay` target, a case-alt's
 own constructor name, or a `#Name@tag`/`#Name/n~closure` constant value
 -- goes through `dumpName` (`RCExp.idr`). That's upstream's own `Show
 Name` (`idris2-src/src/Core/Name.idr`), with two adjustments. First, a
@@ -141,8 +141,14 @@ Shown on every `let`-binding and every `loop`'s own param list:
 
 Every `RCExp` constructor, in the terse keyword `Compiler.RC2.Pretty`
 renders it as. `~<reason>` is an optional prefix meaning "lazy, under
-this Idris `LazyReason`" (`~Rec`, `~Force`, ...) -- present on calls/ops
-Idris2 marked lazy; most lines never show it.
+this Idris `LazyReason`" (`~Lazy`, `~Inf`, `~Unknown`), carried by
+`RAppName`/`RApp`/`ROp`/`RExtPrim`'s own `lazy` field. Every
+construction site of these four in `RC.idr` sets that field to
+`Nothing`, and no later pass ever constructs a `LazyReason` of its own
+to put there, so it never actually shows in a dump. `delay`/`force`
+below show a `LazyReason` unconditionally instead, bare (`Lazy`/`Inf`/
+`Unknown`, not `~Lazy`/`~Inf`/`~Unknown`) -- a different,
+always-populated field (`RDelay`/`RForce`'s own `lr`), not this one.
 
 | Syntax | `RCExp` | Meaning |
 |---|---|---|
@@ -167,6 +173,8 @@ Idris2 marked lazy; most lines never show it.
 | `reuseOffer v0 dupOnShared=[v1, v2]`<br>`<body>` | `RReuseOffer` | A runtime uniqueness check: if `v0` turns out to be the sole reference, its storage is reserved for a later `con ... reuse=v0` in the same tree; otherwise every field in `dupOnShared` gets an extra reference (they're about to survive `v0`'s own ordinary recursive drop) and `v0` is dropped normally. See section 9. |
 | `loop ["v4:Native Int", "v5:Native Int"] initial=[v0, v1]`<br>`<body>` | `RLoop` | The whole of a self- or (post-`MutualLoop`-merge) mutually-tail-recursive loop. Each loop param's own id and `Rep`; `initial` supplies each one's starting value (same order, evaluated once, in the *enclosing* scope, before the loop first runs). See section 8. |
 | `continue loop [v2, v3]` | `RLoopContinue` | Jump back to the nearest enclosing `loop`'s own top, supplying these as each param's new value -- positional, same order as that `loop`'s own param list. Lowers to a plain C `goto`. |
+| `delay Lazy thunkName [v0, v1]` | `RDelay` | Builds a lazy cell over `thunkName`'s own closure, saturated with these captures (consumes them). `Lazy`, `Inf` or `Unknown` is Idris2's own `LazyReason` (`show`n, not prefixed with `~`). The first `force` of the cell evaluates and stores the result; every later `force` just returns what's stored. See `doc/lazy-memoization.md`. |
+| `force Lazy v0 postDrop=[v1]` | `RForce` | Reads `v0` (borrowed): a lazy cell's stored value if already evaluated, the cell's own thunk run and cached otherwise, or `v0` itself unchanged if it isn't a cell at all (a `Delay` that needed no cell -- see `doc/lazy-memoization.md`'s "`Delay`"). `postDrop` as on `op`. |
 
 Alt syntax (used inside `case`, one line + indented body per alt):
 
