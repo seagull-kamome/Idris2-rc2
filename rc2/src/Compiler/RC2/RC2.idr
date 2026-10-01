@@ -3,17 +3,29 @@ module Compiler.RC2.RC2
 -- Copyright 2026, Hattori,Hiroki. All rights reserved.
 -- This module was licensed by BSD3.
 
--- Pipeline orchestration:
--- 1. Lifted -> RCExp (`Compiler.RC2.RC`)
--- 2. Constructor reuse (`Compiler.RC2.Reuse`)
--- 3. Native shadow caching (`Compiler.RC2.ConAltNative`)
--- 4. Loop/Tail call conversion (`Compiler.RC2.MutualLoop`, `Compiler.RC2.Loop`)
--- 5. Branch-local sinking (`Compiler.RC2.Sink`)
--- 6. Dual ABI synthesis (`Compiler.RC2.DualABI`)
--- 7. Dead-code elimination (`Compiler.RC2.DeadCode`)
--- 8. Dup merging (`Compiler.RC2.DupMerge`)
--- 9. C generation (`Compiler.RC2.Emit`)
--- 10. C compiler invocation (`Compiler.RC2.CC`)
+-- Pipeline orchestration, in broad strokes (`toRCDefs` and
+-- `compileExprWhole` have the exact order and the stages each
+-- `--directive noXXX` turns off):
+-- 1. On the case trees, before lifting: `Delay` CAFs (`LazyCaf`),
+--    inlining (`InlineCExp`), dead arguments (`DeadArgs`), world arity
+--    raising (`ArityRaiseCExp`)
+-- 2. Lambda lifting + normalization into RCExp (`Compiler.RC2.RC`)
+-- 3. Constant folding (`ConstFold`), case into tails (`PushCon`),
+--    closure/constant-constructor specialization (`SpecClosure`),
+--    early inline (`LateInline`)
+-- 4. Single-force lazy values (`LazyFold`), world arity raising again
+--    (`ArityRaise`), TRMC (`Trmc`), difference lists (`ClosureCtx`),
+--    CAF memoization (`insertMemoize`)
+-- 5. RC annotation, constructor reuse, native shadow caching (`RC`,
+--    `Reuse`, `ConAltNative`)
+-- 6. Loop/tail call conversion (`MutualLoop`, `Loop`)
+-- 7. Late inline (`LateInline`), applied-closure folding (`ArityRaise`),
+--    post-RC case into tails (`PushCon`)
+-- 8. Branch-local sinking (`Sink`), dual ABI and struct return
+--    (`DualABI`)
+-- 9. Dead-code elimination (`DeadCode`), dup merging (`DupMerge`),
+--    dead variable erasure (`DeadVars`)
+-- 10. C generation (`Emit`) and C compiler invocation (`CC`)
 
 import Compiler.RC2.ArityRaise
 import Compiler.RC2.ArityRaiseCExp
