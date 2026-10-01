@@ -82,18 +82,27 @@ for a cell or the other way round.
 
 1. Not a cell (tag is not `LAZY`): return `v` itself (dup'd). This is
    what lets a delayed value be a plain value (below).
-2. A cell whose `v` is evaluated: return `v` dup'd.
+2. A cell whose `v` is evaluated: return `v` dup'd. No lock: a value is
+   written once and never replaced while the cell lives, so an acquire
+   load of `v` is enough.
 3. A cell whose `v` is a saturated closure:
    - If `reserved` is non-zero and the cell is on this thread's stack of
      cells being evaluated, abort with "a lazy value forces itself".
-   - Otherwise push the cell on that stack, increment `reserved`, and
-     evaluate a copy: dup the captures and call the function, as
-     `idris2rc2_dispatchWithExtra` does for a shared closure, then
-     trampoline. The closure stays in the cell, so another thread can
-     evaluate it at the same time.
+   - Otherwise, under the lock, re-read `v` and, if it is still the
+     closure, dup the closure itself (not just its captures: another
+     thread may store a result and drop the cell's reference to the
+     closure at any moment after the lock is released). Release the
+     lock, push the cell on this thread's stack, increment `reserved`,
+     and evaluate through that reference: dup the captures and call
+     the function, as `idris2rc2_dispatchWithExtra` does for a shared
+     closure, then trampoline, then drop the reference. The closure
+     stays in the cell, so another thread can evaluate it at the same
+     time.
    - Pop, decrement `reserved`, take the lock. If `v` is still the
-     closure, store the result and drop the closure; if another thread
-     stored first, drop this result and use the stored one. A thunk
+     closure, store the result (a release store) with one dup, so the
+     cell and the caller each own a reference, and drop the cell's
+     reference to the closure; if another thread stored first, drop
+     this result and return the stored one dup'd. A thunk
      may run more than once when two threads force it together; that
      is accepted.
    - Evaluation never runs under the lock: a thunk that forces another
@@ -110,9 +119,41 @@ for a cell or the other way round.
 - **A variable** stays delayed: it may itself be a lazy value
   (`Lazy (Lazy a)`), which `Force` must return, not force.
 - **Everything else** allocates a cell holding a saturated closure.
-- **0-ary top-level definitions whose body is a `Delay`** (218/214)
-  become a static cell: writable (the emitted constants are
-  `static const`) and immortal, so the value is computed once per run.
+- **0-ary top-level definitions whose body is a `Delay`** (218/214) get
+  no cell. Every non-constant CAF is already memoized (`RMemoize`,
+  `insertMemoize` in `RC2.idr`, `caf-memoization.md`), so a cell would
+  memoize the same value twice. On the `NamedCExp`, before lifting:
+  `x = Delay e` becomes `x = e` (memoized, or folded to a constant);
+  `Force (x [])` becomes `x []`; any other reference `x []`, a lazy
+  value passed on unforced, becomes `Delay (x [])`, so `e` is still not
+  evaluated until something forces it. That `Delay` only calls the
+  memoized CAF, and is a plain value when `x` folds to a constant.
+
+## Ownership
+
+- **The cell.** `RForce` borrows it; when the force is its last use the
+  cell is dropped after the call (a `postDrop`, as on `ROp`). If that
+  frees the cell, its reference to the value goes with it; the caller
+  keeps its own.
+- **The value.** After a force, the cell and the caller each own a
+  reference, so a forced value is shared for as long as the cell lives.
+  In-place constructor reuse fails on it unless the force was the
+  cell's last use and freed the cell; that only costs speed, since
+  uniqueness is checked at run time (TODO.md: skip reuse analysis on
+  values whose cell outlives the force).
+- **The closure.** The cell owns it until a result is stored. An
+  evaluating thread holds its own reference (taken under the lock), so
+  the cell dropping its reference mid-evaluation is harmless.
+- **Tail calls.** Today a `Force` in tail position is an ordinary
+  application and goes through the trampoline without growing the C
+  stack. A memoizing `Force` has to store the result, so it is never a
+  tail call: a long chain of thunks that each force the next grows the
+  C stack by one frame per link. Accepted.
+- **Cycles.** A cell whose value refers back to the cell can't be freed
+  by reference counting. A thunk's captures exist before its cell does
+  and Idris has no recursive `let`, so such a cycle can only arise
+  through top-level definitions, which are never freed anyway; a
+  thunk that forces its own cell aborts (Force, step 3).
 
 ## IR
 
@@ -158,6 +199,6 @@ teardown of a cell), `Pretty`, the rcexpr parser in rc2base,
    `Lazy` of a function, two threads forcing one cell, a cell forcing
    itself.
 2. Values instead of cells (constants, lambdas, value constructors),
-   static cells for delayed top-level constants, the `ConstFold`
-   rules; `bench.sh` against step 1 and against today.
+   the rewrite of delayed top-level constants onto CAF memoization, the
+   `ConstFold` rules; `bench.sh` against step 1 and against today.
 3. TODO.md's "Semantics: `Lazy`/`Force`" entry is rewritten.

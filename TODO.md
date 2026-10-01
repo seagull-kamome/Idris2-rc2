@@ -277,6 +277,17 @@ pattern) but is now fixed; see `rc2/doc/caf-memoization.md`'s own
 "Scope" section for exactly where the boundary between "fixed" and
 "still open here" (`Lazy`/`Force` itself) falls.
 
+## Lazy のメモ化の後: force した値への無駄な reuse 解析を省く
+
+`Lazy`/`Inf` のメモ化(`rc2/doc/lazy-memoization.md`、未実装)を入れると、
+force した値はセルが生きている間ずっとセルと共有され、一意にならないので、
+その場での再利用(reuse)は実行時に外れる。force がセルの最後の使用で、直後に
+セルが解放される場合だけは一意に戻り、再利用が効く。それ以外(force の後も
+セルが生きている)の値に対する reuse 解析(`reuseOffer`/`releaseReuse` の挿入)
+はコンパイル時間と生成コードの無駄なので、そうした値には reuse を試みない
+ようにする。
+メモ化を実装した後に、残る `reuseOffer` の数を数えて効果を確かめる。
+
 ## Compatibility: `show` of a `Double` picks exponent notation differently from Chez (found 2026-09-27)
 
 Both print the same value, in different notation:
