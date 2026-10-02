@@ -136,8 +136,9 @@ Every consumer of `natives` (`splitBorrows`, `boxedOperands`, the `RV`
 case, `RLet`'s `owned'`/`dropDeadLet`, `annotateConAlt`) treats both
 identically: never dup/drop/free, regardless of how or how many times
 the local is used. This dual sourcing (and the requirement that every
-consumer treat both the same way) is itself the fix for a real bug
-found during the always-unboxed-elision work -- see below.
+consumer treat both the same way) is what let the always-unboxed
+elision land without any new decision logic; item 6 of "Bugs found and
+fixed" below covers two wrapper-generation paths that later missed it.
 
 ## What's stored on the IR vs. re-derived at emission
 

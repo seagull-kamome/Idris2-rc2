@@ -9,7 +9,7 @@ not -- and rc2, having copied RefC's own ExtPrim whitelist and
 `extractValue`/`packCFType` verbatim, inherited the identical gap. This
 document records what was confirmed, what upstream's own issue tracker
 already says about this gap, the design ("Design: dedicated
-`RStructGet`/`RStructSet` nodes, resolved in `Emit.idr`" below,
+`RStructGet`/`RStructSet` nodes, resolved in `normalize`" below,
 verified against actual `RCExp`/generated-C output before any code was
 written), and the implementation itself (on the `c-struct-support`
 branch) -- see "Implementation status" below for what's actually done,
@@ -299,304 +299,216 @@ section derived independently, then gave up on it.
   (basic scalar-field `getField`/`setField`), but worth knowing about
   as a direction upstream's own `System.FFI` module may move in.
 
-## Design: dedicated `RStructGet`/`RStructSet` nodes, resolved in `Emit.idr`
+## Design: dedicated `RStructGet`/`RStructSet` nodes, resolved in `normalize`
 
-**Now resolved in Phase 1.** The nodes carry a `StructField`
-(`RCExp.idr`): the struct's field list from its `%foreign` signatures,
-the field's name and `CFType`, and an erased `Elem` proof that the field
-is in the list. `toRCDefs` builds the table (`StructTable`) from every
-`%foreign` definition, `normalize` resolves each `getField`/`setField`
-against it and reports an unknown struct or field there, and `Emit.idr`
-renders the node without a lookup. The rest of this section is the
-original design, where the names stayed strings until `Emit.idr`.
-
-An earlier draft of this design kept `getField`/`setField` as plain
-`RExtPrim` calls all the way to `Emit.idr`, special-cased only there.
-Current direction, decided after finding the ownership gap below:
-convert `prim__getField`/`prim__setField` into two new, dedicated
-`RCExp` nodes early (`Compiler.RC2.RC`'s own `normalize`, Phase 1), and
-resolve *those* against the struct-field table in `Emit.idr`, instead
-of pattern-matching `RExtPrim`'s own generic `args : List RCLocal`
-shape at emission time. Struct-name/field-name stay plain `String`s on
-the new nodes -- resolving them against a whole-program table stays
-exactly where the earlier draft put it (`Emit.idr`'s own
-`generateCSourceFile`); only *which node* carries them to that table
-changes.
+`getField`/`setField` do not stay `RExtPrim` calls. Phase 1 of
+`Compiler.RC2.RC` (`normalize`, which lowers the named case trees to
+`RCExp`) turns `prim__getField`/`prim__setField` into two dedicated
+`RCExp` nodes, `RStructGet`/`RStructSet`, and resolves the struct and
+field names there, against a table built from the program's `%foreign`
+signatures. By the time `Emit` runs, a node already carries the struct's
+field list and the field's `CFType`; `Emit` never looks a name up. The
+lowering to C is a plain pointer dereference. The parts below follow the
+data: the nodes, the two phases that build and annotate them, then the
+emission side (Parts A to D).
 
 ### Why a dedicated node instead of lowering `RExtPrim` directly
 
-Two facts, confirmed by actually compiling a struct-using program with
-rc2 and reading both the `RCExp` dump and `RC.idr`'s own source (not
-assumed from constructor shapes alone):
+Two facts decided it.
 
-1. A `getField`/`setField` call site's struct-name and field-name
-   arguments are `RCConst (Str ...)` in `RCExp` itself, not something
-   staged behind a runtime lookup -- directly pattern-matchable at
-   compile time, no extra plumbing needed to recover them (unchanged
-   from the earlier draft, still true).
-2. **`RExtPrim` doesn't actually get the same ownership treatment as
-   every other operand-consuming node.** `RAppName`/`RUnderApp`/
-   `RApp`/`RCon`/`ROp`'s own `annotate` (Phase 2, `RC.idr`) cases all
-   go through the same `wrapDups fc (splitBorrows natives owned args)
-   (...)` pattern -- `splitBorrows` walks `args` against the current
-   `owned` set, leaving still-alive operands to be `dup`'d
-   (`wrapDups`) and letting operands used for the last time transfer
-   ownership as-is. `RExtPrim`'s own case, by contrast
-   (`annotate natives owned (RExtPrim fc lazy p args) = pure $ RExtPrim
-   fc lazy p args`, `RC.idr:504`), is a bare pass-through -- no
-   `splitBorrows`, no `wrapDups`, `owned` doesn't even get consulted.
+1. The struct-name and field-name arguments of a `getField`/`setField`
+   call site are `RCConst (Str ...)` locals in the normalized code (see
+   "A concrete example" above), so they can be pattern-matched at
+   compile time and no runtime lookup is involved.
+2. A struct accessor needs a different ownership rule from every other
+   operand-consuming node. `ROp`'s (and `RExtPrim`'s) `annotate` case
+   goes through `wrapDups fc (splitBorrows natives owned args) ...`: an
+   operand that is still alive afterwards is `dup`'d, and the consumer
+   later `drop`s its own reference. `getField`/`setField` lower to
+   `((sn*)p)->f` and `((sn*)p)->f = v`; reading or writing through a
+   pointer neither consumes nor needs a copy of the `IDRIS2RC2_Pointer`
+   box, so a `dup` would be pure waste. When this design was made,
+   `RExtPrim`'s `annotate` was a bare pass-through that never
+   consulted `owned`; that gap has since been fixed separately (it leaked
+   IORef cells and array prims' arguments, `tests/Test44IORefExtPrimLeak`),
+   and `RExtPrim` now uses `splitBorrows`/`wrapDups`/`boxedOperands` like
+   `ROp`. That does not make `ROp`'s shape right for a struct accessor,
+   which is why the nodes have a rule of their own.
 
-   Confirmed by compiling the worked example above through rc2 itself
-   (`--directive dumprcexpr`, `idris2-rc2 --cg rc2`) and reading what
-   `annotate` actually decided, rather than assuming:
-
-   ```
-   def Main.getX  (fun args=["v0:Boxed"] ret=Boxed)
-     extprim System.FFI.prim__getField [#"point", [__], [__], v0, #"x", #0]
-   ```
-
-   No `RDrop`/`RDup` wraps `v0` anywhere in `getX`'s own body -- it
-   reaches the `extprim` call with no wrapping at all, which happens to
-   be *correct* for a struct pointer used exactly once (this is the
-   only use, so passing it as-is, ownership and all, is right) -- but
-   nothing about `RExtPrim`'s own `annotate` case would keep computing
-   the right answer if the same struct pointer were read by two
-   `getField` calls in the same function: with `owned` never consulted,
-   the second call would receive an already-consumed reference. This
-   isn't a bug this document needs to fix generally (every current
-   `RExtPrim` user -- `prim__newIORef`, array prims, etc. -- happens to
-   only ever appear in a tail/single-use position in practice), but it
-   means `RExtPrim`'s existing ownership handling isn't something a
-   new, potentially-multiply-used struct accessor should inherit as-is.
-
-A dedicated node sidesteps this -- but working out exactly *how much*
-ownership machinery it needs took three passes, not one, each corrected
-by direct feedback while designing this. Recorded here so a future
-session doesn't have to re-walk the same wrong turns:
-
-**Pass 1 (wrong): reuse `ROp`'s `postDrop`/`splitBorrows`/`wrapDups`
-pattern outright**, treating `structVar` as a consumed operand the way
-`ROp`'s own operands are. Rejected: `getField`/`setField` lower to a
-plain C pointer dereference/assignment (`s->x`, `s->y = v`) -- reading
-or writing through a pointer never touches that pointer's own refcount,
-so there's no *function call* left to model as "consuming its
-argument" the way the earlier `RExtPrim`-based design's own `postDrop`
-did.
-
-**Pass 2 (also wrong): drop all ownership machinery, on both operands,
-entirely** -- no `postDrop` field on either node at all, reasoning that
-`structVar`/`value` are never consumed so there's nothing to track.
-This is *half* right (see "What's actually true" below) but misses a
-real case: a variable read only through `RStructGet`/`RStructSet` and
-never again (e.g. `f s = getField s "x"`, where `s` is never used
-afterward) still needs dropping *eventually*, or it leaks. The
-"whatever scope it was bound in will drop it via the ordinary
-`dropDeadLet` machinery" reasoning this pass relied on doesn't actually
-hold: `dropDeadLet`/`dropUnusedOwnedVars` (`RC.idr`, `branchBody`)
-decide whether to drop a variable by checking whether `freeLocalsR`
-still reports it as used *later* in the body -- and once `RStructGet`
-correctly reports `structVar` as one of its own free locals (as it
-must, for liveness to be tracked at all), that check finds `s` "still
-used" at the `getField` call site and therefore never drops it there
-either. With neither the call site nor the enclosing scope dropping
-it, `s` leaks. Confirmed by tracing `annotateDef`/`branchBody`/
-`dropUnusedOwnedVars` by hand against exactly this repro.
-
-**What's actually true, and the resulting design:** `structVar`/`value`
-are never *duplicated* (no C-level reason to copy a pointer, or reread
-an already-Boxed operand's own field, just to use it once or a hundred
-times) -- Pass 2's core insight survives. But *dropping* is still
-needed exactly when the current use is the operand's own last one,
-same as any other Boxed local. This is a real, if narrower, third
-shape -- not `ROp`'s "always dup-if-still-live, always drop
-afterward," not Pass 2's "never dup, never drop":
-
-```idris2
-||| [v] if this use is v's own last use in the enclosing scope (v is
-||| still in `owned` -- nothing upstream has already claimed or
-||| dropped it) and it isn't Native; [] otherwise (still alive
-||| afterward -- borrowed, no dup needed either way, since reading
-||| through a pointer never requires a copy -- or a Native local,
-||| which is never Boxed-refcounted in the first place). Never dup's,
-||| unlike splitBorrows: an operand that's still alive afterward needs
-||| no action here at all.
-dropIfLastUse : SortedSet RCLocal -> Owned -> RCLocal -> List RCLocal
-dropIfLastUse natives owned v =
-    if contains v owned && not (contains v natives) then [v] else []
-```
+**What the rule is, and two designs that were rejected.** The first
+attempt reused `ROp`'s `splitBorrows`/`wrapDups` pattern outright, but
+there is no call left to model as consuming its operand. The second
+dropped all ownership handling on the grounds that a pointer read
+consumes nothing; that leaks a variable whose last use is the access
+(`f s = getField s "x"`). Nothing else drops it: `branchBody` and
+`dropDeadLet` (`RC.idr`) decide whether to drop a local by asking whether
+it is still free in the rest of the body, and an `RStructGet` correctly
+reports `structVar` as one of its free locals, so the access itself looks
+like a use that keeps it alive. The accessor has to drop its operand
+itself when this use is the operand's last one, and never `dup` it. That
+is `dropIfLastUse` (`RC.idr`), described under "Phase 2" below.
 
 ### The new nodes
 
-```idris2
-||| A read of one field out of a C struct pointer -- pure, and never
-||| duplicates structVar (a C pointer dereference, not a call that
-||| consumes anything -- see "Why a dedicated node" above). structVar
-||| still needs dropping if this is its own last use, though --
-||| postDrop captures that (0 or 1 elements, computed by
-||| Compiler.RC2.RC's annotate via dropIfLastUse, mirroring ROp's own
-||| field but never triggering a dup the way ROp's can).
-||| structName/fieldName stay plain strings -- resolved against a
-||| whole-program struct-field table built once in Emit.idr's own
-||| generateCSourceFile (see "Part B/C/D" below), the same way
-||| RPrimVal's own dyngen/orStagen resolve a literal's concrete C
-||| rendering late, rather than being pre-resolved to a CFType here.
-RStructGet : FC -> (structVar : RCLocal) -> (structName : String) ->
-             (fieldName : String) -> (postDrop : List RCLocal) -> RCExp
+Defined in `RCExp.idr`:
 
-||| A write of one field into a C struct pointer, evaluating to Unit.
-||| Same reasoning as RStructGet for both structVar and value -- either
-||| may end up in postDrop (0, 1, or 2 elements) if this use is its
-||| own last one; neither is ever duplicated.
-RStructSet : FC -> (structVar : RCLocal) -> (structName : String) ->
-             (fieldName : String) -> (value : RCLocal) ->
-             (postDrop : List RCLocal) -> RCExp
+```idris2
+record StructField where
+  constructor MkStructField
+  structName : String
+  fields : List (String, CFType)
+  fieldName : String
+  fieldType : CFType
+  0 isField : Elem (fieldName, fieldType) fields
+
+RStructGet : FC -> (structVar : RCLocal) -> StructField -> (postDrop : List RCLocal) -> RCExp
+RStructSet : FC -> (structVar : RCLocal) -> StructField -> (value : RCLocal) -> (postDrop : List RCLocal) -> RCExp
 ```
 
-Both nodes keep `ROp`'s own `postDrop` field but never its
-`splitBorrows`/`wrapDups` dup-insertion half -- a real hybrid shape,
-not simply `ROp`'s or simply `RV`'s. Every place that already knows how
-to treat an `ROp` node's `postDrop` (`freeLocalsR`/`countUsesR`/
-`usedConstructorsR` in `RCExp.idr`, `Compiler.RC2.Reuse`,
-`Compiler.RC2.Sink`'s `consumedOperands`, `Compiler.RC2.Loop`'s
-`stripOwnership`) gets a close structural precedent to copy rather than
-inventing a new pattern -- this document doesn't attempt to enumerate
-every one of those sites' own required changes yet (that's
-implementation work, not design).
+A `StructField` is the struct's declared field list, the field's name and
+`CFType`, and an erased proof that the field is in the list. `RStructSet`
+evaluates to Unit. `postDrop` has the same role as `ROp`'s `postDrop`
+field but a narrower meaning: it lists the operands (`structVar`, and for
+`RStructSet` also `value`) for which this node is the last use, so they
+are dropped after the read or write. It is `[]` after Phase 1. Neither
+node ever inserts a `dup`. Every pass that walks `RCExp` has cases for
+them (`freeLocalsR`/`countUsesR`/`mentionedLocalsAcc` in `RCExp.idr`,
+`Loop.idr`'s `stripOwnership`, `Sink.idr`'s `genuinelyUsedR`,
+`ConAltNative.idr`, `ConstFold.idr`, `DualABI.idr`, `LateInline.idr` and
+so on); `structVar` and `value` always count as uses of those locals.
+`DualABI` never treats the result of either node as a native value
+(it is always the Boxed value `packCFType` renders).
 
-### Phase 1 (`normalize`): converting `LExtPrim`/`RExtPrim` to the new nodes
+### Phase 1 (`normalize`): `prim__getField`/`prim__setField` to the new nodes
 
-In `Compiler.RC2.RC`'s `normalize`, add a case ahead of the generic
-`LExtPrim fc lazy p args => bindMany env args (\locs => pure $ RExtPrim
-fc lazy p locs)` (`RC.idr:163-164`) matching `p`'s name against
-`prim__getField`/`prim__setField` specifically. `args`' own shape is
-already confirmed (see "A concrete example" above): pull the
-struct-name/field-name `String`s straight out of their `RCConst (Str
-...)` positions, keep the struct-pointer/value `RCLocal`s, and discard
-the erased `fs`/`ty` placeholders and the `FieldType` position integer
-(confirmed elsewhere in this document to be redundant with the
-field-name string, and not something any implementation should depend
-on). Build `RStructGet`/`RStructSet` directly -- `postDrop` starts
-empty here, the same way `ROp`'s own Phase 1 shape always constructs
-`postDrop = []` and leaves filling it in to Phase 2 (see the `ROp`
-constructor's own doc comment in `RCExp.idr`).
+`normalize` (`RC.idr`) matches `NmExtPrim` on `prim__getField` (in any namespace)
+with the six arguments `[sn, _, _, sv, fn, _]` (the
+erased field list and type, the struct pointer, the field name and the
+`FieldType` position), and `prim__setField` with
+`[sn, _, _, sv, fn, _, vl, _]` (the same plus the value and its erased
+slot), ahead of the generic `NmExtPrim` case. It binds the arguments to
+locals and requires `sn` and `fn` to be string literals. The
+`FieldType` position is ignored: it is redundant with the field-name
+string. The names are then resolved by `structField`:
+
+- the program's struct table is the `StructTable` reference that
+  `lowerProgram` (`RC2.idr`) fills before `normalizeProgram` runs, by
+  folding `collectStructDefs` (Part B) over the `CFType`s of every
+  `MkNmForeign` definition;
+- a struct that appears in no `%foreign` signature, or a field it does
+  not declare, is a compile-time `GenericMsg` error ("struct ... is used
+  by getField/setField but appears in no %foreign signature" / "has no
+  field ... in its %foreign declaration"). This is the same contract the
+  Chez backend enforces, only earlier (see "Open questions" below);
+- a call whose struct or field name is not a literal (for example a
+  constructor argument that was not inlined) throws an `InternalError`
+  prefixed with `notInlinedStructFieldMarker`. A normal compile reports
+  it. An incremental compile (`--inc rc2`) catches exactly that prefix in
+  `normalizeProgram`, drops the definition and its lifts, and so fails
+  only at link time if the definition is actually used
+  (`doc/incremental-compile.md`).
 
 ### Phase 2 (`annotate`): ownership
 
 ```idris2
-annotate natives owned (RStructGet fc structVar sn fn _) =
-    pure $ RStructGet fc structVar sn fn (dropIfLastUse natives owned structVar)
-annotate natives owned (RStructSet fc structVar sn fn value _) =
-    pure $ RStructSet fc structVar sn fn value
-             (dropIfLastUse natives owned structVar ++ dropIfLastUse natives owned value)
+annotate natives owned (RStructGet fc structVar sf _) =
+    pure $ RStructGet fc structVar sf (dropIfLastUse natives owned [structVar])
+annotate natives owned (RStructSet fc structVar sf value _) =
+    pure $ RStructSet fc structVar sf value (dropIfLastUse natives owned [structVar, value])
 ```
 
-(`dropIfLastUse` defined in "Why a dedicated node" above.) Neither case
-calls `splitBorrows`/`wrapDups` -- no `dup` is ever inserted, since
-reading through a pointer or rereading an already-Boxed operand's own
-field never needs a copy -- but both consult `owned` to decide whether
-*this* use is the operand's own last one, exactly the check Pass 2
-above skipped and got wrong. This closes the gap "Why a dedicated node"
-found in `RExtPrim`'s own handling, but via a genuinely new pattern
-(`dropIfLastUse`), not by reusing `ROp`'s pattern outright the way Pass
-1 first tried, nor by dropping ownership tracking entirely the way Pass
-2 then tried.
+`dropIfLastUse natives owned vars` returns the operands of `vars` that
+this use is the last one of: still in `owned`, not a native local, and
+not an immortal operand (`RCNull`/`RCConst`/`RCEmptyCon`/`RCConstCon`/
+`RCConstClosure`). It walks `vars` left to right and removes each hit
+from `owned`, so a local that occurs twice in one node (for example the
+same local as `structVar` and `value`) is dropped once. It never
+inserts a `dup`: an operand that is still alive afterwards needs no
+action. `RForce` (`RC.idr`) uses the same function for its own operand.
 
-### Part A: struct-by-pointer FFI itself needs no new logic -- `CFStruct` can reuse `CFPtr`'s existing handling verbatim
+### Part A: `CFStruct` is handled like `CFPtr`
 
-Confirmed by comparing the two side by side: `cTypeOfCFType CFPtr =
-"void *"` and `cTypeOfCFType (CFStruct x ys) = "void *"` already agree
-(`Emit.idr:2241`/`2247`) -- a struct is always accessed by pointer in
-this design (matches the "every struct name must appear in a
-`%foreign` signature" contract already confirmed above, and matches
-what Chez itself assumes -- see #36 in "What upstream's issue tracker
-says" for what breaks when that assumption doesn't hold). So the two
-genuinely broken cases --
+A struct is always accessed by pointer: every struct name has to appear
+in some `%foreign` signature (the contract Chez enforces too, see #36 in
+"What upstream's issue tracker says"), and a `%foreign` function takes or
+returns a pointer to it. So `Emit/Util.idr` gives `CFStruct` exactly
+`CFPtr`'s rendering:
 
 ```idris2
-extractValue _ (CFStruct x xs) varName = idris_crash "..." -- Emit.idr:2295
-packCFType (CFStruct x xs)     varName = "makeStruct(" ++ varName ++ ")" -- Emit.idr:2319, undefined function
-```
-
--- can become direct copies of `CFPtr`'s own already-working lines:
-
-```idris2
+cTypeOfCFType (CFStruct x ys) = "void *"
 extractValue _ (CFStruct x xs) varName = "((IDRIS2RC2_Pointer*)" ++ varName ++ ")->p"
 packCFType (CFStruct x xs)     varName = "idris2rc2_mkPointer(" ++ varName ++ ")"
 ```
 
-This alone fixes `%foreign` functions that take or return a struct
-pointer (`prim__makePoint`/`prim__pointFree` in the worked example
-above) -- independent of `getField`/`setField`, and low-risk: reusing
-an already-verified code path, not new logic.
+Before this, `extractValue` crashed and `packCFType` called a
+`makeStruct` that does not exist (both copied from RefC). The change
+alone makes `%foreign` functions that take or return a struct pointer
+work (`prim__makePoint`/`prim__pointFree` in the worked example),
+independently of `getField`/`setField`. `cTypeOfCFType`, `extractValue`
+and `packCFType` are top-level functions in `Emit/Util.idr` so that
+`emitRC` can share them for a field's `CFType`.
 
-### Part B: collection phase
+### Part B: collecting the struct declarations
 
-At the top of `generateCSourceFile`, before `traverse_ (uncurry
-createCFunctions) defs` runs, walk every `(Name, RCDef)` pair looking
-for `MkRCForeign ccs fargs ret`, and recurse into `fargs`/`ret`'s own
-`CFType`s the same way Chez's `mkStruct` does (`Compiler/Scheme/Chez.idr`,
-cited above) -- through `CFIORes`/`CFFun` to find a `CFStruct n flds`
-possibly nested inside. Collect every `(n, flds)` seen into a new
-`Ref StructDefs (SortedMap String (List (String, CFType)))`, registered
-alongside the existing `ConstDef`/`OutfileText`/etc. refs
-`generateCSourceFile` already sets up. This is a direct structural port
-of Chez's `Structs`/`mkStruct` -- same recursion shape, same "first
-struct name seen wins, don't re-emit" dedup -- just building a
-`SortedMap` instead of threading a `List String` `Ref`, and with no
-Scheme code to emit.
+`collectStructDefs` (`Emit/Util.idr`) maps a `CFType` to the structs it
+mentions, `SortedMap String (List (String, CFType))`. It recurses through
+`CFIORes`/`CFFun` and into the field types of a struct (a field can be a
+nested struct pointer). The first declaration of a name wins and later
+ones are assumed identical, like Chez's `mkStruct`/`Structs`. It is run
+over the `%foreign` definitions twice, once per consumer:
+
+- `lowerProgram` (`RC2.idr`) builds the `StructTable` that `normalize`
+  resolves `getField`/`setField` against (Phase 1);
+- `generateCSourceFile` (`Emit.idr`) builds the `StructDefs` reference
+  from the `MkRCForeign` definitions before any definition is lowered,
+  so `header` sees every struct regardless of definition order.
+
+A `%foreign`-declared struct type is the only way to bring a struct into
+either table. `%export` signatures (`exportNfToCFType`, `RC2.idr`)
+produce `CFStruct sname []` with an empty field list: only pointers cross
+that boundary, and the table is not filled from them.
 
 ### Part C: emitting the C struct definitions
 
-In `header` (`Emit.idr`, called right after the `traverse_` in
-`generateCSourceFile`, so field-type resolution during `createCFunctions`
-doesn't depend on emission order), emit one `typedef struct { ... }
-name;` per entry in the `StructDefs` table, translating each field's
-`CFType` via the existing `cTypeOfCFType` -- no new type-to-C-type logic
-needed, it's already there for `%foreign` arg/return types and a
-struct field is the same kind of type.
+`header` (`Emit.idr`) writes one `typedef struct { <ctype> <field>; ... }
+name;` for every entry of `StructDefs`, in a "struct definitions" block
+ahead of all function definitions, with each field's C type taken from
+`cTypeOfCFType` (a nested struct field is a `void *`). Names given as
+`%cg rc2 externStruct=<name>` (`doc/directives.md`, section 5) are
+filtered out of the emission only, because an included header already
+`typedef`s them. `StructDefs` itself is not filtered, and field access to
+such a struct resolves as usual.
 
 ### Part D: lowering `RStructGet`/`RStructSet` in `emitRC`
 
-Add cases to `emitRC` (`Emit.idr:1882`, alongside the existing
-`RExtPrim` case -- `prim__getField`/`prim__setField` no longer reach it
-at all once Phase 1 converts them, so the existing `RExtPrim` case's
-own whitelist/generic-call logic doesn't need touching):
+`emitRC` (`Emit.idr`) has one case per node, and no table lookup is
+needed because the `StructField` is in the node. `prim__getField`/
+`prim__setField` no longer reach the `RExtPrim` case, whose whitelist no
+longer lists them.
 
-```idris2
-emitRC (RStructGet fc structVar sn fn postDrop) _ = do
-    fields <- getStructFields sn   -- looks up the Ref from Part B
-    let Just ty = lookup fn fields | Nothing => throw (InternalError ...)
-    ptr <- rcVarToC structVar      -- reuses extractValue CFPtr's rendering (Part A)
-    removeVars $ map varName postDrop   -- drops structVar iff this was its last use
-    pure $ packCFType ty ("((\{sn}*)\{ptr})->\{fn}")
-emitRC (RStructSet fc structVar sn fn value postDrop) _ = do
-    fields <- getStructFields sn
-    let Just ty = lookup fn fields | Nothing => throw (InternalError ...)
-    ptr <- rcVarToC structVar       -- neither is ever duplicated to get here --
-    valC <- rcVarToC value          -- extractValue ty, since value's own Rep matches ty
-    removeVars $ map varName postDrop   -- drops whichever of structVar/value (0, 1,
-                                         -- or both) this was the last use of
-    pure $ "(((\{sn}*)\{ptr})->\{fn} = \{extractValue ty valC}, (IDRIS2RC2_Value*)NULL)"
-```
+- `RStructGet`: the struct pointer is read from its Boxed local
+  (`rcVarToBoxedC`) and unwrapped with `extractValue CLangC CFPtr`. The
+  expression `((sn*)ptr)->field` is cast to `cTypeOfCFType` of the
+  field's type, because the real declaration (for an `externStruct`
+  struct, a header's) may carry qualifiers such as `const char *`, and
+  packed with `packCFType` (and a further `(IDRIS2RC2_Value*)` cast,
+  since the packers of pointer-like types return a narrower pointer
+  type). `CFInteger` is the exception: `mpz_t` has no cast syntax and
+  `packCFType CFInteger` expects an out-parameter, so it is copied with
+  `idris2rc2_mkIntegerFromMpz`. The `postDrop` operands are then
+  dropped (`finalizeSinkWithDrop`).
+- `RStructSet`: emits the statement `((sn*)ptr)->field = value;`, drops
+  the `postDrop` operands, and evaluates to `(IDRIS2RC2_Value *)NULL`.
+  A field of a type `cfTypeNative` maps reads `value` natively
+  (`rcVarToNativeC`; `(char)`-cast for `CFChar`), so a constant is
+  written as a literal. Rendering it Boxed and extracting it leaked a
+  constant: inlining a setter into its only caller (`inlining.md`,
+  Criterion B) passed `9.0` itself, which `rcVarToBoxedC` boxes and
+  nothing frees (Test24 and Test120, 16 bytes under valgrind). Any other
+  field type is read from the Boxed `value` through `extractValue`.
 
-(Sketch, not final syntax -- `getStructFields` denotes "look up
-`StructDefs`, the `Ref` Part B populates"; exact plumbing for
-`Ref`/error handling/how a C statement-vs-expression position gets
-threaded follows whatever convention the surrounding `emitRC` cases
-already use, not designed further here.) `packCFType`/`extractValue`
-are the same existing functions Part A already fixed for `CFStruct`
-itself -- reused again here for a *field's* `CFType`, not the struct
-pointer's own. `postDrop` (computed by `dropIfLastUse`, Phase 2 above)
-tells this code exactly which of `structVar`/`value` (if either) to
-drop -- the same contract every other `postDrop`-carrying node already
-has, Emit.idr doesn't re-derive ownership here.
-
-**A native field reads the value natively** (2026-09-29). Rendering
-`value` Boxed and extracting it leaked a constant: inlining a setter
-into its only caller (`inlining.md`, Criterion B) passed `9.0` itself,
-which `rcVarToBoxedC` boxes and nothing frees (Test24 and Test120,
-16 bytes under valgrind). A field of a type `cfTypeNative` maps now goes
-through `rcVarToNativeC`, so a constant is written as a literal.
+`postDrop` is computed by Phase 2, so `Emit` only discharges it and does
+not derive ownership itself.
 
 ### What can actually be ported from upstream, concretely
 
@@ -619,16 +531,14 @@ not copying files. What that comes down to, concretely:
 - **Not portable, has to be written fresh**: `chezExtPrim`'s
   `GetField`/`SetField` cases emit Scheme (`ftype-ref`/`ftype-set!`)
   and rely on Chez Scheme's own macro-expansion-time type resolution;
-  rc2 emits C directly and does its own resolution against the
-  `StructDefs` table built in Part B. Same problem, structurally
+  rc2 emits C directly and resolves names itself, in `normalize`
+  against the `StructTable` of Part B. Same problem, structurally
   unrelated solution -- Part D (and the `RStructGet`/`RStructSet`
   nodes/Phase 1/Phase 2 machinery above) is original design, not a
-  port. Chez also has no equivalent of this design's dedicated-node
-  step at all -- Scheme's own dynamic typing means `chezExtPrim` can
-  lower `GetField`/`SetField` directly from `ExtPrim`, with no
-  ownership-tracking gap to work around the way rc2's `RExtPrim` has
-  (see "Why a dedicated node" above) -- so that part of the design has
-  no upstream analogue to port from at all.
+  port. Chez also has no equivalent of the dedicated-node step at all:
+  Scheme's dynamic typing means `chezExtPrim` lowers `GetField`/
+  `SetField` directly from `ExtPrim`, with no reference counts to
+  track, so that part of the design has no upstream analogue.
 
 ## Open questions for rc2's own design
 
@@ -665,8 +575,9 @@ not copying files. What that comes down to, concretely:
   real C layout for "a slot holding a pointer this GC's own lifetime
   is tied to" the way there is for an `int`/`double`/plain pointer
   field. So `RStructGet`/`RStructSet`'s own field-type lookup can
-  treat a `CFUser`-typed field as out of scope (an error at struct-
-  collection time, Part B) rather than as a case needing real
+  treat a `CFUser`-typed field as out of scope (nothing rejects it
+  today: `collectStructDefs` (Part B) keeps it and `cTypeOfCFType`
+  renders it as `void *`) rather than as a case needing real
   ownership design -- `getField`/`setField`'s read/write is always a
   `packCFType`/`extractValue` conversion against a genuine C-typed
   slot, never an aliased read of an already-Boxed value, so no `dup`
@@ -918,37 +829,33 @@ lifetime question above -- not currently planned.
   `cTypeOfCFType`/`extractValue`/`packCFType`'s own `CFStruct` cases
   (the same gaps rc2 copied).
 - `rc2/src/Compiler/RC2/Emit.idr` -- `emitRC`'s `RExtPrim` case (the
-  `prims` whitelist), `cTypeOfCFType`/`extractValue`/`packCFType`'s own
-  `CFStruct` cases (`extractValue`'s `idris_crash`, `packCFType`'s
-  undefined `makeStruct` call), `generateCSourceFile`/`header` -- the
-  proposed collection pass's own home, and the new `emitRC` cases for
-  `RStructGet`/`RStructSet` (see "Design" above).
-- `rc2/src/Compiler/RC2/RCExp.idr` -- `MkRCForeign`, where a
-  `%foreign` def's own `CFType` list currently ends up; `ROp`, whose
-  `postDrop` field `RStructGet`/`RStructSet` reuse (without `ROp`'s own
-  `splitBorrows`/`wrapDups` dup-insertion half); `freeLocalsR`/
-  `countUsesR`/`usedConstructorsR`, the structural-analysis functions a
-  new node needs cases added to.
-- `rc2/src/Compiler/RC2/RC.idr` -- `normalize`'s `LExtPrim`/`MkLForeign`
-  cases (`RC.idr:163-164`/`244`, where the new
-  `prim__getField`/`prim__setField` case slots in, and the direct
-  `Lifted` -> `RCExp` `MkLForeign`/`MkRCForeign` copy this document's
-  "How struct field types actually appear" section traces), `annotate`'s
-  `ROp`/`RExtPrim` cases (`RC.idr:501-504`, the pattern
-  `RStructGet`/`RStructSet`'s own `annotate`/`dropIfLastUse` diverges
-  from -- `ROp`'s own `splitBorrows`/`wrapDups` inserts `dup`s,
-  `dropIfLastUse` never does), `branchBody`/`dropUnusedOwnedVars`
-  (`RC.idr:397-409`, the top-level "drop what `freeLocalsR` says is
-  unused" machinery that Pass 2 above wrongly assumed would cover
-  `structVar`/`value` on its own), `annotateDef`/`definitionNatives`
-  (`RC.idr:596-613`, traced by hand against the `f s = getField s "x"`
-  repro to find Pass 2's bug).
+  `prims` whitelist, which no longer lists `prim__getField`/
+  `prim__setField`), the `RStructGet`/`RStructSet` cases, and
+  `generateCSourceFile`/`header` (the `StructDefs` collection and the
+  `typedef struct` emission, Parts B and C of "Design" above).
+- `rc2/src/Compiler/RC2/Emit/Util.idr` -- `cTypeOfCFType`/`extractValue`/
+  `packCFType`'s own `CFStruct` cases (Part A: `CFPtr`'s rendering; they
+  used to be an `idris_crash` and a call to an undefined `makeStruct`),
+  and `collectStructDefs` (Part B).
+- `rc2/src/Compiler/RC2/RCExp.idr` -- `StructField`, the `RStructGet`/
+  `RStructSet` nodes (their `postDrop` has `ROp`'s role without its
+  `splitBorrows`/`wrapDups` dup-insertion half), `MkRCForeign`, where a
+  `%foreign` def's own `CFType` list ends up, and the structural-analysis
+  functions (`freeLocalsR`/`countUsesR`/`mentionedLocalsAcc`) that have
+  cases for the nodes.
+- `rc2/src/Compiler/RC2/RC.idr` -- `normalize`'s `prim__getField`/
+  `prim__setField` cases and `structField` (Phase 1), `annotate`'s
+  `RStructGet`/`RStructSet` cases and `dropIfLastUse` (Phase 2; `ROp`'s
+  `splitBorrows`/`wrapDups` inserts `dup`s, `dropIfLastUse` never
+  does), `branchBody`/`dropDeadLet` (the "drop what is not used any
+  more" machinery that "Design" above explains cannot cover
+  `structVar`/`value` on its own), and `normalizeProgram`'s catch of
+  `notInlinedStructFieldMarker` for incremental compiles.
+- `rc2/src/Compiler/RC2/RC2.idr` -- `lowerProgram`, which builds the
+  `StructTable` from the `%foreign` definitions before Phase 1.
 - `idris2-src/src/Compiler/LambdaLift.idr` -- `LiftedDef`'s
   `MkLForeign`, `Lifted`'s `LExtPrim` -- where struct field types do
   (and don't) survive into the `Lifted` IR rc2's own `RC.idr` consumes.
-- `rc2/src/Compiler/RC2/InlineCExp.idr` -- `buildEligible`/
-  `applyInlineLifted`, the whole-program collect-then-traverse shape a
-  struct-field table would follow.
 - `idris2-src/src/Idris/CommandLine.idr`, `idris2-src/src/Compiler/Common.idr`
   -- `--dumplifted`, the debug flag used to produce the example above.
 - `idris2-src/src/TTImp/ProcessData.idr` -- `calcNaty`, the general

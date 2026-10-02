@@ -34,28 +34,33 @@ ever constructed by `Compiler.RC2.ConstFold`.
 
 ### Folding (`Compiler.RC2.ConstFold`)
 
-The fold itself is a single new `RLet` value-classification arm
-(`ConstFold.idr:223-227`):
+The fold is a single `foldConst` clause (`ConstFold.idr:419`) that
+turns a literal, zero-args `RUnderApp` into the constant, as an `RV`:
 
 ```idris2
-RUnderApp _ n missing [] =>
-    let body' = foldConst (insert var (Element (RCConstClosure n missing) ItIsConstClosure2) env) body
-    in if contains (RCLoc var) (freeLocalsR body')
-          then RLet fc var rep value' body'
-          else body'
+foldConst _ env (RUnderApp fc n missing []) = RV fc (RCConstClosure n missing)
 ```
+
+An `RLet` whose value folds to that `RV` is then classified by its
+`RV _ cval@(RCConstClosure {})` arm (`ConstFold.idr:328-332`, shown in
+full under "Gap: a `let`-rebinding ..." below): it inserts the constant
+into `env` and drops the `RLet` once `body` no longer references the
+variable. There is no `RLet` arm matching `RUnderApp` itself -- the
+`RUnderApp` clause has already folded it by the time the `RLet` sees
+`value'`.
 
 The literal-empty-args match (`RUnderApp fc n missing []`) is exactly
 what distinguishes a safe-to-fold bare reference to `n` from an
 unsafe-to-fold partial application capturing a possibly-dynamic value
-(`RUnderApp fc n missing (x :: xs)`, which falls through to the
-existing catch-all and stays a real `RLet`) -- there is nothing inside
-a zero-args `RUnderApp` that could ever be non-constant.
+(`RUnderApp fc n missing (x :: xs)`, which `foldConst`'s next clause
+keeps as an `RUnderApp` with only its captured args resolved, so the
+`RLet` stays real) -- there is nothing inside a zero-args `RUnderApp`
+that could ever be non-constant.
 
-Beyond this one arm plus the `isConstLocalProof` case that recognises
-`RCConstClosure` as an `IsAnyConstLocal`, **no other code in
-`ConstFold.idr` changed**. `RCon`'s own folding case (`ConstFold.idr:
-245-251`, `allConstLocal` over the constructor's resolved `args`) is
+Beyond this one clause, the `RV` arm and the `isConstLocalProof` case
+that recognises `RCConstClosure` as an `IsAnyConstLocal`, **no other
+code in `ConstFold.idr` changed**. `RCon`'s own folding case
+(`ConstFold.idr:390-396`, `allConstLocal` over the constructor's resolved `args`) is
 untouched: it already only cared whether each field satisfies
 `IsAnyConstLocal`, not which of the five (now six) constant shapes
 that field takes. An interface dictionary is, structurally, just a
@@ -298,7 +303,7 @@ RV _ cval@(RCConstCon {}) =>
           else body'
 ```
 
-(`ConstFold.idr:211-215`). No equivalent arm existed for
+(`ConstFold.idr:316-320`). No equivalent arm existed for
 `RCConstClosure`, so a chain like `let a = someTopLevelFn in let b = a
 in MkDict a b` folded `a` correctly but silently stopped propagating at
 `b`, even though `b` denotes the exact same immortal value -- `b`
@@ -320,9 +325,10 @@ RV _ cval@(RCConstClosure {}) =>
           else body'
 ```
 
-(`ConstFold.idr:228-232`, immediately following the `RCConstCon` arm
-and immediately preceding the `RUnderApp _ n missing []` arm that
-originally produces a `RCConstClosure` in the first place).
+(`ConstFold.idr:328-332`, immediately following the `RCConstCon` arm).
+This same arm also records a bare `let a = someTopLevelFn`:
+`foldConst`'s `RUnderApp fc n missing []` clause has already folded
+that value to `RV fc (RCConstClosure n missing)`, so it lands here too.
 
 **Verification methodology.** Getting a genuine, *surviving* `let b =
 a` (a plain local-to-local alias) into rc2's own IR turned out to be
@@ -357,7 +363,8 @@ entirely in terms of `RCon`'s own `allConstLocal` check over
 constructor fields (interface dictionaries, `{__mainExpression:0}`'s
 continuation). Nothing in the fold itself is actually specific to that
 position, though: `RUnderApp _ n missing []` -> `RCConstClosure`
-happens once, uniformly, in `RLet`'s value classification, before any
+happens once, uniformly, in `foldConst`'s own `RUnderApp` clause (the
+`RLet` value classification then records the result in `env`), before any
 particular *consumer* of the bound variable is considered. Whatever
 later reads that binding -- a constructor field, an ordinary function
 call argument, anything -- reads it as whatever `resolveLocal`
@@ -437,11 +444,12 @@ of how many distinct functions a generic helper is ever called with.
 - `rc2/src/Compiler/RC2/RCExp.idr` -- `RCLocal`'s new `RCConstClosure`
   case, `IsConstClosureLocal`, `IsAnyConstLocal`'s fifth constructor,
   and the `Eq`/`Ord`/`Show` additions.
-- `rc2/src/Compiler/RC2/ConstFold.idr` -- the new `RLet` value-
-  classification arm for `RUnderApp _ n missing []`, and
-  `isConstLocalProof`'s new case; plus (commit `0e7c755`) the mirror
-  `RV _ (RCConstClosure {})` arm that propagates an already-folded
-  closure constant through a further `let`-rebinding.
+- `rc2/src/Compiler/RC2/ConstFold.idr` -- the `foldConst` clause for
+  `RUnderApp fc n missing []` (folds to `RV fc (RCConstClosure ..)`),
+  the `RLet` value-classification arm `RV _ (RCConstClosure {})` (puts
+  that constant into `env`, and propagates an already-folded closure
+  constant through a further `let`-rebinding; commit `0e7c755`), and
+  `isConstLocalProof`'s new case.
 - `rc2/src/Compiler/RC2/Emit/Util.idr` -- `boxedConstClosureExpr`, the
   `constDefKey` fix in `boxedConstExpr`, and the `RCConstClosure` cases
   added to `constConFieldExpr`/`inlineExprFor`/`repOfLocal`/`varName`.
