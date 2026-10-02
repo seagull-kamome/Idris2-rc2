@@ -116,7 +116,7 @@ already runs, reusing the same "is this closure argument a compile-time
 constant" detection `RCConstClosure` (`rc2/doc/const-closure-fold.md`)
 already provides -- which captures exactly the "code pointer invariant,
 environment may differ" property `%spec`'s own closedness check cannot,
-since `ConstFold`/`Inline`'s own reasoning already operates after
+since `ConstFold`/`InlineCExp`'s own reasoning already operates after
 lambda-lifting, on the *lifted* closure value itself (`partial
 Main.{benchmarkHashMap:19} missing=2 [v85, v80]`), not the pre-lift
 surface term with its free-variable captures.
@@ -146,12 +146,12 @@ share it, bounding the total number of clones to the number of
 - Clone `g`'s own body, rewriting every `apply` of the specialized
   parameter into a direct `call target [...]` (with `target`'s own
   captured/free arguments threaded through as extra parameters on the
-  clone, the same shape `Compiler.RC2.Inline`'s own existing splicing
+  clone, the same shape `Compiler.RC2.InlineCExp`'s own existing splicing
   machinery already handles for an ordinary call-free callee).
-- Re-run `ConstFold`/`Inline` on *just this clone* (not the whole
+- Re-run `ConstFold`/`InlineCExp` on *just this clone* (not the whole
   program again) to let any further folding this direct call newly
   exposes actually happen -- e.g. if `target` is itself small and
-  call-free, `Inline`'s existing Criterion A can now reach it, since
+  call-free, `InlineCExp`'s existing Criterion A can now reach it, since
   the call is no longer hidden behind `apply`.
 
 ### 3. Profitability check -- the actual gate
@@ -181,7 +181,7 @@ of the already-folded clone, no separate cost model needed.
 
 ## Why this is architecturally new for rc2
 
-Every existing rc2 pass (`Inline`'s Criterion A, `ConAltNative`,
+Every existing rc2 pass (`InlineCExp`'s Criterion A, `ConAltNative`,
 `ConstFold` itself, the sinking transform in `loop-in-case-sinking.md`)
 decides eligibility *before* transforming, from the untransformed
 input's own shape -- a pure, one-directional "check, then rewrite"
@@ -203,7 +203,7 @@ needs genuine nested-loop support (`Compiler.RC2.DualABI`'s
 and-inlined target itself turns out to be (or contain) a loop. This
 document's own design is deliberately narrower and avoids that
 dependency entirely: step 2 above resolves `apply` to a direct `call`
-and opportunistically re-folds via `Inline`'s own existing (unchanged)
+and opportunistically re-folds via `InlineCExp`'s own existing (unchanged)
 Criterion A -- it never forces inlining of a target that Criterion A
 itself would reject (e.g. because the target contains its own further
 calls, or is itself a loop). A target that happens to be a loop simply
@@ -249,13 +249,13 @@ specialize at all, so neither is optional polish:
   subsequent iteration would still recurse into the generic,
   un-cloned `g`.
 
-**Not implemented**: re-running `Inline` on a clone, the other half of
-Step 2. `Compiler.RC2.Inline` is a whole-program `Lifted`-to-`Lifted`
+**Not implemented**: re-running `InlineCExp` on a clone, the other half of
+Step 2. `Compiler.RC2.InlineCExp` is a whole-program `NamedCExp`-to-`NamedCExp`
 pass that already ran once, before this pipeline stage, at the
 pre-RCExp level -- re-invoking it on a single already-built RCExp
 clone isn't something its current architecture supports (this is the
-"Open questions" section's own "interacts with `Compiler.RC2.Inline`'s
-own existing pass" question below, still unresolved). Only
+"Open questions" section's own "Where in the pipeline this runs"
+question below, resolved that way). Only
 `Compiler.RC2.ConstFold`'s `foldConstDef` is re-run on a clone here. A
 `target` that's itself small and call-free is therefore not
 opportunistically inlined into the clone -- it stays a real direct
@@ -409,7 +409,7 @@ referenced).
   at a time.
 - **Where in the pipeline this runs**: resolved -- a new step, right
   after `foldConstProgram` and strictly before `insertMemoize`, *not* a
-  refinement of `Inline` itself (`Inline` stayed completely untouched;
+  refinement of `InlineCExp` itself (`InlineCExp` stayed completely untouched;
   see "Implementation notes" above for why re-running it on a clone
   isn't done).
 - **Re-annotating a clone's own ownership**: resolved, and simpler than
@@ -525,8 +525,8 @@ the original definitions plus the accepted clones, as today.
 ### Pipeline position: unchanged
 
 `sort`'s comparator is already a constant when SpecClosure runs.
-`Compiler.RC2.Inline` splices `sort` into its caller at the `Lifted`
-level, and ConstFold folds `compare` out of the constant `Ord Int`
+`Compiler.RC2.InlineCExp` splices `sort` into its caller on the named
+case trees, and ConstFold folds `compare` out of the constant `Ord Int`
 dictionary. A dump with `--directive noearlyinline --directive
 nolateinline` shows `call Data.List.sortBy [#{{csegen:25}:2}/2~closure,
 ..]` in `main`.
@@ -603,7 +603,7 @@ dropped as dead, so some programs shrink.
 - `evens`/`odds`, forwarding to each other.
 - `stash`, which also stores its closure and so stays generic.
 
-Its helpers are larger than Inline's threshold, and `twice` has two
+Its helpers are larger than InlineCExp's threshold, and `twice` has two
 callers, so none of them is inlined before this pass.
 
 ## Files
@@ -622,9 +622,9 @@ callers, so none of them is inlined before this pass.
   handles the non-zero-capture case itself, via `Bound`/`RUnderApp`
   tracing -- `RCConstClosure` alone doesn't cover it, see that
   function's own doc comment).
-- `rc2/src/Compiler/RC2/Inline.idr` -- Criterion A / existing splicing
+- `rc2/src/Compiler/RC2/InlineCExp.idr` -- Criterion A / existing splicing
   machinery; investigated as a candidate for step 2's own "re-fold"
-  half, ultimately not reused (it's `Lifted`-level, pre-RCExp, and
+  half, ultimately not reused (it works on named case trees, pre-RCExp, and
   already ran once by the time this pass runs -- see "Implementation
   notes" above) -- still directly relevant to the "why no nested-loop
   dependency" argument below.

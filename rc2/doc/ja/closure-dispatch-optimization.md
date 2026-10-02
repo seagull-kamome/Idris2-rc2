@@ -7,7 +7,7 @@
 `map`・`Foldable`・インターフェース辞書のメソッド呼び出しといった、汎用の高階関数の
 コードが利用する。`Force` が `Delay` のサンクを評価する処理は、別のランタイム関数を
 通り、ここは通らない(後述の「遅延評価」を参照)。この最適化は、`rc2/doc/` にある
-ほかの補足ドキュメントとは異なり、コンパイラのパスにも `RCExp` の IR の形にも一切
+ほかの補足ドキュメントとは異なり、コンパイラのパスにも `RCExp` のIRの形にも一切
 触れない。変更は、rc2 でコンパイルしたすべてのプログラムにリンクされる手書きの
 C ランタイムライブラリ `rc2/support/rc2/runtime.c` に限られる。
 
@@ -37,7 +37,7 @@ emitRC (RApp fc _ closure arg) tailPosition = do
 そうはいかない。たとえば `addN n` のような部分適用を、`map` がリストのすべての
 要素に使い回す場合である。この場合は、`idris2rc2_mkClosure` で*新しい*
 `IDRIS2RC2_Closure` を割り当て、すでに埋まっている各引数を `idris2rc2_dup` して
-そこにコピーし、元のクロージャを drop しなければならない。`map` の呼び出し元など、
+そこにコピーし、元のクロージャをdropしなければならない。`map` の呼び出し元など、
 ほかの所有者が元のクロージャを以前のアリティのまま参照しており、それが変わっては
 困るからである。
 
@@ -63,10 +63,10 @@ IDRIS2RC2_Value *idris2rc2_applyClosure(IDRIS2RC2_Value *c, IDRIS2RC2_Value *arg
 ## 修正: `idris2rc2_dispatchWithExtra` と高速経路の条件
 
 新しいヘルパー関数 `idris2rc2_dispatchWithExtra`(`runtime.c:169-277`)は、クロージャ
-にすでに埋まっている引数を dup し、`arg` を最後の引数にして、対象の
+にすでに埋まっている引数をdupし、`arg` を最後の引数にして、対象の
 `IDRIS2RC2_FUNn` の関数ポインタを直接呼び出す。対応するアリティは、型付きの
 `1..20` の範囲全体である。これは、飽和済みのクロージャに対して
-`idris2rc2_dispatchClosure`(`runtime.c:90-157`)がすでに switch で分けている範囲と
+`idris2rc2_dispatchClosure`(`runtime.c:90-157`)がすでにswitchで分けている範囲と
 同じである。以下は、20個のうち 1、2、3 の場合を示した代表例で、残りは
 `idris2rc2_dup` の呼び出しを増やしながら同じパターンを延長したものである。
 
@@ -122,10 +122,10 @@ IDRIS2RC2_Value *idris2rc2_applyClosure(IDRIS2RC2_Value *_c, IDRIS2RC2_Value *ar
 - `c->arity >= 1 && c->arity <= 20` -- `idris2rc2_dispatchWithExtra` が実装している、
   型付きの `FUNn` の範囲に限定する。後述の「適用範囲」を参照。
 
-条件が成り立つと、元のクロージャの引数は、対象関数の呼び出しに直接 dup して渡される
+条件が成り立つと、元のクロージャの引数は、対象関数の呼び出しに直接dupして渡される
 (`idris2rc2_tailcallApplyClosure` の非ユニーク分岐が、`mkClosure` で作った置き換え用の
 クロージャにコピーしていたものと、まったく同じ内容である)。元のクロージャは drop
-される。このクロージャは変更されていないので、これは通常のチェック付きの drop であり、
+される。このクロージャは変更されていないので、これは通常のチェック付きのdropであり、
 トランポリン自身の無条件デクリメントの流儀ではない。結果は、これまでどおりトランポリン
 にかけられる。この適用のために `IDRIS2RC2_Closure` が割り当てられることは、一度も
 ない。
@@ -186,8 +186,8 @@ IDRIS2RC2_Value *idris2rc2_applyClosure(IDRIS2RC2_Value *_c, IDRIS2RC2_Value *ar
 ## 適用範囲: アリティ 1..20 のみ
 
 `idris2rc2_dispatchWithExtra` が実装しているのは、型付きの `FUNn` の範囲だけである。
-これは `idris2rc2_dispatchClosure` の、型付きの switch のケースと同じ範囲である。
-アリティが 20 を超えるクロージャは、配列ベースの汎用の `IDRIS2RC2_FUNSTAR` 呼び出し規約
+これは `idris2rc2_dispatchClosure` の、型付きのswitchのケースと同じ範囲である。
+アリティが20を超えるクロージャは、配列ベースの汎用の `IDRIS2RC2_FUNSTAR` 呼び出し規約
 を使う(`idris2rc2_dispatchClosure` の `default:` のケース)。そのため、
 `idris2rc2_applyClosure` の高速経路の条件(`c->arity <= 20`)から除外され、従来の
 `idris2rc2_tailcallApplyClosure` に続けてトランポリンにかける経路を、そのまま通る。
@@ -197,17 +197,17 @@ doesn't cover arity > 20 (`FUNSTAR`)」の項目を参照。
 
 ## 参考テスト
 
-- **`Test66ClosureFastPath` §1**(旧 `Test66ClosureFastPathMap`):
+- **`Test66ClosureFastPath` §1**(旧 `Test66ClosureFastPathMap`)。
   2000要素のリストに対する `map (addN n) xs`。`addN n` は部分適用(アリティ 2、
   filled 1)で、`map` が全要素に使い回す。そのため、最後の要素を除いて、どの適用でも
   非ユニークである。開発中に計測用のコードを入れて確認した(のちに削除済み)ところ、
   高速経路は要素ごとにちょうど1回発動した。
-- **`Test66ClosureFastPath` §2**(旧 `Test67ClosureFastPathDictDispatch`):
+- **`Test66ClosureFastPath` §2**(旧 `Test67ClosureFastPathDictDispatch`)。
   同じ形だが、手書きの関数ではなく、本物のインターフェース辞書に由来するもの。
   `map (k +) xs` で、`(k +)` は、実行時の辞書から取り出した `Num` の `(+)` メソッド
   に、捕捉した定数を部分適用したものである。同様に、要素ごとに1回発動することを確認
   した。
-- **`Test68ClosureFastPathStackSafety`**(`rc2/tests/Test68ClosureFastPathStackSafety/`):
+- **`Test68ClosureFastPathStackSafety`**(`rc2/tests/Test68ClosureFastPathStackSafety/`)。
   上述の安全性の議論に対する、専用の回帰テスト。自己参照する(knot-tied な)
   `IORef (Int -> Int)` に保存されたクロージャを読み出し、**末尾位置**で再び適用する
   処理を、10,000,000 回行う。この適用はすべて、実際に非ユニークである(反復のたびに

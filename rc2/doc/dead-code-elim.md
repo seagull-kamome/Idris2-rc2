@@ -32,9 +32,8 @@ before any of this ran) has no way to know about:
   every one of its callers gets redirected to the worker, and the
   wrapper itself ends up with zero remaining callers.
 
-Both are confirmed real via `rc2/tests/Test51DeadCode*`/
-`Test52DeadCode*` -- see their own header comments and "Verification"
-below.
+Both are confirmed real via `rc2/tests/Test114Inline/DeadCodeInline.idr`
+-- see its own header comment and "Verification" below.
 
 ## Pipeline position
 
@@ -150,7 +149,7 @@ truly-dead `MkRCForeign` entry can't actually arise at all:
   function's *entire* original body -- FFI calls and all -- into the
   synthesized worker; the wrapper's own body is just a thin `RAppNameRep`
   into that worker. So even when a wrapper itself goes dead (exactly
-  `rc2/tests/Test52DeadCode*`'s own scenario), any FFI call the
+  `rc2/tests/Test114Inline/DeadCodeInline.idr`'s `helper`), any FFI call the
   original function made is still sitting in the worker, which stays
   reachable for as long as anything genuinely calls the function --
   wrapper or worker, whichever the call site was rewritten to target.
@@ -233,7 +232,7 @@ coverage of a DualABI wrapper with no tail-position callers) confirms, by hand:
   matching `rc2/doc/dual-abi.md`'s own "not merely dead code" standard
   of proof for its Stage 5 removal claim.
 
-Both tests are part of the ordinary `rc2/tests/verify.sh` smoke suite
+That test is part of the ordinary `rc2/tests/verify.sh` smoke suite
 (auto-discovered, no special registration needed) and ran clean under
 the full `--directive nodeadcode` A/B comparison across the whole
 suite, confirming this pass never changes any other test's own

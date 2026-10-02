@@ -435,7 +435,7 @@ def Prelude.EqOrd.==  (fun args=[v0, v1])
 
 ## 12. 機械的に確認する: `tools/rcexpr-lint`
 
-第10節の、すべての経路を手でたどる手法は有効だが、遅く、手作業では間違えやすい。
+第6節の、すべての経路を手でたどる手法は有効だが、遅く、手作業では間違えやすい。
 同じ手法で見つけた`Compiler.RC2.Sink`のuse-after-freeは、実際のバグが特定されるまでに、ダンプのトレースに何時間もかかった。
 `tools/rcexpr-lint`は、「これはリークかuse-after-freeか」の確認を自動化する。
 `.rcexpr`ファイルをパースし(`Language.RCExpr.AST`/`Lexer`/`Parser`。`libs/rc2base`にある、この文法専用の独立したパーサーで、このツール以外でも再利用できる)、各`def`の本体を歩きながら、`Boxed`のローカル変数ごとに生きている参照の数を保持する。

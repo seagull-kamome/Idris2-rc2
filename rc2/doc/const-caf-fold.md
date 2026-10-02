@@ -188,9 +188,10 @@ foldConst caf env (RConCase fc sc alts mDef) =
 ```
 
 (`ConstFold.idr:359-374`). `insertConArgs` calling `isConstLocalProof`
-on each field is not optional plumbing: `RCon`'s own folding
+on each field supplies the `IsAnyConstLocal` proof `env` needs in order
+to record a field, and it never fails in practice: `RCon`'s own folding
 (`ConstFold.idr:288-294`) only ever produces a `RCConstCon` when
-*every* field already satisfies `IsAnyConstLocal`, so in practice every
+*every* field already satisfies `IsAnyConstLocal`, so every
 field substituted here does have a proof and gets tracked in `env`
 exactly like a genuinely folded local would -- the `Nothing` branch
 exists for totality, not because it's expected to fire on a

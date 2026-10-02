@@ -65,7 +65,7 @@ A callee is inlined at *every* one of its own call sites when:
 
 This is deliberately narrower than a general "inline small functions"
 pass. The call-free requirement means an eligible callee can never
-itself contain a further call to inline -- so `inlineLifted`'s own
+itself contain a further call to inline -- so `inlineCExp`'s own
 whole-program rewrite needs only one pass, never a fixpoint: splicing in
 a call-free body can't expose a *new* inlining opportunity inside what
 was just spliced (only inside the call's own *arguments*, which are
@@ -80,7 +80,7 @@ load-bearing for any currently-known gap. Not implemented here, to keep
 this pass's own blast radius matched to the problem it actually solves;
 `Graph`/`tarjanSCCs` were still made `public export`/`export` in
 `MutualLoop.idr` in case a future session revisits this. It has since been
-implemented for loop-free callees: see "Criterion B at `Lifted`" below.
+implemented for loop-free callees: see "Criterion B: loop-free single-caller callees" below.
 
 ## The `allLiteralArgs` guard
 
@@ -383,7 +383,7 @@ neither one in this pass -- see `rc2/doc/loop-conversion.md`'s "Bugs
 found and fixed" #5 for the full write-up of both.
 
 Both are fixed independently of this pass -- neither
-fix touches `Inline.idr` at all. This pass's own logic (the IR plumbing,
+fix touches `InlineCExp.idr` at all. This pass's own logic (the IR plumbing,
 the case-of-case collapse, both eligibility criteria) was already
 correct at the point the original leak was found, confirmed via
 `--directive dumprcexpr` on the motivating comparison-fusion case both
@@ -462,7 +462,7 @@ runs once there, as the "Early inline" stage
 The "single call site, whole-program" criterion this doc's own
 "Eligibility" section above describes as investigated-but-shelved was
 picked back up in a later session, as its own separate pass --
-`Compiler.RC2.LateInline`, operating on `RCExp` rather than `Lifted`,
+`Compiler.RC2.LateInline`, operating on `RCExp` rather than named case trees,
 and running much later in the pipeline than `Compiler.RC2.InlineCExp`
 above. Disable with `--directive nolateinline`.
 
@@ -508,9 +508,9 @@ why running any earlier would make this pass reject exactly the
 clones it exists to reach. Strictly before Sink, so a value this pass
 just spliced in (e.g. a whole loop, now living as one branch's own
 `RLet` value) is still eligible for Sink's own branch-local placement
-decision. Strictly before DualABI -- see "Known limitation: DualABI's
-own native-eligibility analysis" below for the real, found consequence
-of that choice, and why it wasn't reversed.
+decision. Strictly before DualABI -- see "Fixed: DualABI's own native-eligibility
+analysis assumed one `RLoop` per function" below for the real, found
+consequence of that choice, and why the order wasn't reversed.
 
 An inlined-away original definition is never explicitly deleted here;
 `Compiler.RC2.DeadCode` (already positioned later in the pipeline)

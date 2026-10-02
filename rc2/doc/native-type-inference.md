@@ -369,7 +369,7 @@ the full design and its own bug (a double-free in `annotate`'s
    `alwaysUnboxed`) has its own separate regression coverage, since
    neither path is reachable through `RC.idr`'s own `annotate` pass
    that `Test112Numeric/NativeInts.idr` above was written to exercise: hand-check
-   `tests/build/Test6NativeInts_rc2.c`'s `Main_chainInt8`/`chainInt16`/
+   `tests/build/Test112Numeric_rc2.c`'s `Main_chainInt8`/`chainInt16`/
    `chainInt32` (and the Bits8/16/32 equivalents) to confirm their
    dual-ABI wrappers no longer call `idris2rc2_drop` on their arguments
    at all, while `Main_chainInt64` (native-eligible but *not*

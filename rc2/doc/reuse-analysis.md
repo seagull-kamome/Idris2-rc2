@@ -36,6 +36,7 @@ Lifted (Compiler.LambdaLift)
   -> Compiler.RC2.ConAltNative    (native-shadow field caching)
   -> Compiler.RC2.MutualLoop      (mutual tail recursion -> one merged function)
   -> Compiler.RC2.Loop            (self-tail-call -> RLoop/RLoopContinue)
+  -> Compiler.RC2.Sink            (branch-local sinking, see doc/branch-sinking.md)
   -> Compiler.RC2.DualABI         (worker/wrapper synthesis, call-site rewrite)
   -> Compiler.RC2.Emit            (purely mechanical RCExp -> C)
 ```
@@ -140,10 +141,10 @@ An alt is eligible when, in its own peeled drop list:
    matched constructor name somewhere.
 
 If eligible: `sc` is pulled out of the flat drop list (its fate becomes
-the offer, not an unconditional drop), `offersReuse` is set to `Just
-sc`, and `tryConsume` walks the body to find-and-claim (or release) the
-offer. Ineligible alts (including the default branch, which has no
-known scrutinee shape at all) are left with `offersReuse = Nothing` and
+the offer, not an unconditional drop), the alt's body is wrapped in an
+`RReuseOffer sc ...`, and `tryConsume` walks the body to find-and-claim
+(or release) the offer. Ineligible alts (including the default branch,
+which has no known scrutinee shape at all) get no `RReuseOffer` and
 their drop list untouched.
 
 ### `tryConsume` / `tryClaim` -- finding a consumer
@@ -202,7 +203,7 @@ coordination beyond "process children first."
 defaults) originally special-cased the "dup surviving destructured
 fields, then drop the parent without also flat-dropping them
 individually" protocol as something that only applied when
-`offersReuse` was set -- i.e. only on the actual reuse-offering path.
+an `RReuseOffer` was present -- i.e. only on the actual reuse-offering path.
 This is wrong: it's required on **every** matched-constructor branch
 whose scrutinee dies there, independent of whether reuse fires at all,
 because an ordinary `idris2rc2_drop` on the parent *recursively* drops
@@ -223,7 +224,7 @@ the "not actually offering reuse" case -- still unconditionally did
 conArgs` for the caller's flat drop) and restoring that as
 `branchBody`'s unconditional behavior, with the reuse-specific
 uniqueness check layered on top only for the `sc` itself, only when
-`offersReuse` is set. See `branchBody`'s own doc comment in `Emit.idr`
+an `RReuseOffer` is present. See `branchBody`'s own doc comment in `Emit.idr`
 for the final, correct version. Verified via the full refc-suite (all
 19 tests), all 7 `tests/*.idr` smoke tests byte-identical to real RefC,
 and all 3 benchmarks, with `idris2rc2_isUnique`/
@@ -333,7 +334,7 @@ never had one.
 
 - `rc2/src/Compiler/RC2/Reuse.idr` -- the pass itself (new module).
 - `rc2/src/Compiler/RC2/RCExp.idr` -- `RCon.reuseFrom`,
-  `MkRConAlt.offersReuse`, `RReleaseReuse`, `RReuseOffer.dropOnUnique`
+  `RReleaseReuse`, `RReuseOffer.dropOnUnique`
   (see the `dropOnUnique` addendum above).
 - `rc2/src/Compiler/RC2/RC.idr` -- Phase 1/2 always leave the new
   fields `Nothing`/`[]` as appropriate; no ownership-logic changes.

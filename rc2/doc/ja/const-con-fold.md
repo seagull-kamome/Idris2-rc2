@@ -33,7 +33,7 @@ RCConstCon : Name -> ConInfo -> (tag : Maybe Int) -> List RCLocal -> RCLocal
 
 ### ステージング(`Compiler.RC2.Emit.Util`)
 
-既存の`ConstDef`の仕組み(`boxedConstExpr`、`Emit/Util.idr:637`)をほぼそのまま写している。新しい`ConstConDef`の状態は、名前による重複排除のための`SortedMap RCLocal String`と、ステージング順に並べた完成した定義テキストのリストの組である。この状態を、新しい`boxedConstConExpr`が参照する。`RCConstCon`をステージングするときは、ネストした`RCConstCon`のフィールドを、先に再帰的にステージングする。そのため、子は必ず親より前に定義リストへ入る。これは、Cのstaticの初期化子が、*すでに宣言された* staticのアドレスしか取れないために必要である(ファイルスコープでは前方参照ができない)。
+既存の`ConstDef`の仕組み(`boxedConstExpr`、`Emit/Util.idr:796`)をほぼそのまま写している。新しい`ConstConDef`の状態は、名前による重複排除のための`SortedMap RCLocal String`と、ステージング順に並べた完成した定義テキストのリストの組である。この状態を、新しい`boxedConstConExpr`が参照する。`RCConstCon`をステージングするときは、ネストした`RCConstCon`のフィールドを、先に再帰的にステージングする。そのため、子は必ず親より前に定義リストへ入る。これは、Cのstaticの初期化子が、*すでに宣言された* staticのアドレスしか取れないために必要である(ファイルスコープでは前方参照ができない)。
 
 ステージングされるCの形は、`IDRIS2RC2_Constructor`自身のレイアウト(`constructor-layout.md`)をフィールド単位でそのまま写している。違いは、可変長配列メンバではなく固定サイズの配列にしている点である(素のCには、可変長配列メンバに対するstaticの初期化子がない)。タグなしのコンストラクタには、名前を入れるためのスロットがもう1つ付く。
 
@@ -87,7 +87,7 @@ static IDRIS2RC2_ConstConstructor2 const constcon_7 = {
 - `rc2/src/Compiler/RC2/Emit.idr`: `header`関数のstatic定義リストの出力。
 - `rc2/src/Compiler/RC2/RC.idr`: `annotate`の`splitBorrows`/`dropIfLastUse`/`isBoxedOperand`/`(RV fc v)`のケースを拡張し、`RCConstCon`を不死として扱う(dup/dropを追跡する必要がない)ようにした。
 - `rc2/src/Compiler/RC2/Sink.idr`、`rc2/src/Compiler/RC2/DualABI.idr`: `localRepIn`の`RCConstCon`のケース(常に`RBoxed`)。
-- `rc2/support/rc2/datatypes.h`: `IDRIS2RC2_Constructor`のレイアウト(参照するだけで、変更していない)と、`IDRIS2RC2_STOCKVAL`/`IDRIS2RC2_REFCOUNT_MAX`(そのまま再利用)。
+- `rc2/support/rc2/idris2rc2_datatypes.h`: `IDRIS2RC2_Constructor`のレイアウト(参照するだけで、変更していない)と、`IDRIS2RC2_STOCKVAL`/`IDRIS2RC2_REFCOUNT_MAX`(そのまま再利用)。
 - `rc2/tests/Test17ConstFold.idr`: 回帰テスト(そのファイルの末尾に統合した)。完全な畳み込み(`constList`/`constMaybe`/`nestedConst`)、部分的な畳み込み(`partialConst`)、同じ不死の値を複数の箇所で分解するケース(`headOf`/`tailOf`/`unwrapMaybe`。それぞれ複数回呼ぶ)を含む。最後のケースは、dup/dropが何もしないという安全性の性質を直接検査する。
 - `rc2/tests/BenchConstConFold.idr`: 定数の10要素のリストを300万回合計する。畳み込みを元に戻した同じrc2のビルドより約3.4倍速く、本物のRefCより約4.5倍速い。
 

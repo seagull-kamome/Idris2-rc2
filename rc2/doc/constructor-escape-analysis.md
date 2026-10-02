@@ -309,7 +309,7 @@ the more valuable half.
 |---|---|---|
 | inside `ConstFold` (first fixpoint round only, plus the clones SpecClosure folds) | rewrite A (implemented) | Cheap: extra maps in the existing walk, plus one use walk per definition. Removes most of shape A before SpecClosure, SpecConstCon and RC annotation ever see it, so they process less. |
 | `Compiler.RC2.PushCon`, right after `ConstFold`, before `SpecClosure` (`nopushcon` to disable) | rewrite B (implemented), then a `foldConstDef` over each changed definition | Needs `Core` for fresh ids. Folding the result once more lets rewrite A and the constant folds act on the fields B just exposed. |
-| after `LateInline` (later phase) | an RC-aware version of A/B for what LateInline creates: 166 shape-A sites, and about half of the 1,625 shape-B ones | See below. |
+| after `LateInline` (`latepushcon`, implemented, off by default) | an RC-aware version of A/B for what LateInline creates: 166 shape-A sites, and about half of the 1,625 shape-B ones | See below. |
 
 Doing the bulk pre-RC, then a separate cleanup after LateInline, is
 the right split. `LateInline` splices already-annotated bodies (it

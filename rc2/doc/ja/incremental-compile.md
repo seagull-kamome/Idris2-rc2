@@ -89,10 +89,12 @@ Cのモジュール間リンクは**静的**(通常のリンカによるシン�
 この定義は`Main`モジュール自身の`toIR`に入るので、`Main.idr`が定義する他のものと同じ`incCompileFile`呼び出しで`Main.o`にコンパイルされる。
 欠けているのは、それを呼び出すCの`int main(void)`というエントリポイントだけである。
 これは単なる定型コードで、Chezの`compileExprInc`が必要とする`ClosedTerm`には依存しない。
+ただし、プログラム全体向けのフッターが呼ぶ`__mainExpression_0()`は、どのモジュールの`toIR`にも含まれないラッパーの名前である。
+そのため`Main`モジュールのフッターは、代わりに`Main.main`を直接呼ばなければならない(`directEntryPoint`。「エンドツーエンドの検証」のバグ3と4を参照)。
 このための引数は、`Emit.idr`の`generateCSourceFile`にすでにある。
 `%export`をライブラリとして使う場面のために先に追加した`noMain`である(`rc2/doc/export-support.md`の「ライブラリとしてのリンク」)。
 インクリメンタルモードはこれをそのまま再利用する。
-各モジュール自身の`.c`を生成するとき、`noMain = (moduleNS /= nsAsModuleIdent mainNS)`を渡す。
+各モジュール自身の`.c`を生成するとき、`noMain = currentNS coreDefs /= mainNS`を渡す(ファイルパスから導出した名前空間ではなく、`Ctxt`から読み出したモジュール自身の*宣言された*名前空間である。「エンドツーエンドの検証」のバグ1を参照)。
 これは、`Main`という名前のモジュール以外のすべてで真になる。
 `Idris.ProcessIdr.processMod`が`ns /= nsAsModuleIdent mainNS`のガードで行っているのと同じ判定である。
 
@@ -162,8 +164,8 @@ Cのモジュール間リンクは**静的**(通常のリンカによるシン�
      実際の出力がなくても、そのモジュールをインクリメンタルコンパイルしたことは記録しておく必要がある。
      後続の`missingIncremental`のチェックを通すためである。
    - 空でなければ、次の手順で進める。
-     まず、`sourcefile`からモジュール自身の`ModuleIdent`を求める(`ctxtPathToNS`。`getObjFileName`/`getTTCFileName`がすでに使っているのと同じヘルパーである)。
-     これを`noMain`(前述)の判定と、出力パスの計算に使う。
+     まず、`noMain`を、モジュールの宣言された名前空間から判定する(前述)。
+     出力パスは、`sourcefile`から求める(`getObjFileName`/`getTTCFileName`)。
      次に、`toRCDefs (nub ("nodeadcode" :: disabledStages))[] (lambdaLifted cdata)`を実行する。
      続いて、`generateCSourceFile`でttcビルドディレクトリ内の`<modpath>.c`に出力し(`getTTCFileName sourcefile "c"`)、それを`compileCObjectFile`で`<modpath>.o`にコンパイルする。
      この段階ではリンクしないので、`compileCFile`は呼ばない。
@@ -437,7 +439,7 @@ getField s n = prim__getField s n fieldok
    プログラム全体モードの`PrimIO.unsafeCreateWorld`の本体(`apply v0 v1`)も、これとまったく同じ理由で同じことをしている。
    アリティが1以上なら、以前の直接呼び出しを維持する(これはもともと正しい。そこの`%World`トークンは型付きの本物のCパラメータなので、直接呼び出しで`apply`に相当することがすでに行われる)。
    壊れた1つの形だけでなく、両方の形で再テストして確認した。
-5. **複数モジュールの実プログラムをリンクして見つかった、さらに2つのモジュール間リンクの落とし穴**
+5. **複数モジュールの実プログラムをリンクして見つかった、さらに3つのモジュール間リンクの落とし穴**
    (小さなプログラムで`Data.List`/`Data.SortedMap`を使った。素の`putStrLn`ではなく、あえてそうした。`base`の136モジュールのクリーンな再ビルドが証明するのは、各モジュールが単独でコンパイルできることだけで、複数が正しくリンクされて動くことではない)。
    - **`.o`を丸ごとリンクすると、3番目の問題の「取り除いて、リンク時に失敗する」仕組みが働かなくなる。**
      `compileExprInc`の最終リンクステップは、蓄積されたすべての`.o`をリンカのコマンドラインに直接並べていた。
@@ -498,10 +500,6 @@ getField s n = prim__getField s n fieldok
   エクスポートされた名前のラッパーを、モジュールごとに出力できるかどうかである(その名前自身のシグネチャだけが必要なので、おそらくできる)。
 - `%cg rc2 extraRuntime=<path>`/`inlineRuntime=<code>`ディレクティブ(`rc2/doc/directives.md`)は、現在、プログラム全体で1つのファイルに生のCを差し込む。
   モジュール単位のモードで、どのモジュールがこれを受け取るかは決まっていない(外部リンケージが必要なすべてのモジュールか、重複させて`static`にするか)。
-- まだテストしていないこと: インクリメンタルコンパイル済みのrc2オブジェクトファイルを自分で配布する依存パッケージ。
-  上流の汎用的な`allIncData`/`installFrom`の仕組みが透過的に処理するはずだが、rc2はこの経路をまだ試していない。
-  上の「実際上の前提条件」の節を参照する。
-  `prelude`/`base`/`contrib`/`network`のすべてに、実プログラムが恩恵を受ける前にこれが必要だが、まだ誰もやっていない。
 
 ## 検証: 2つのステップとも完了
 

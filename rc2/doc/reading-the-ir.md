@@ -530,7 +530,7 @@ since `Integer` is never native-eligible): `let v2 : Boxed = op
 
 ## 12. Checking it mechanically: `tools/rcexpr-lint`
 
-Section 10's manual walk-every-path technique works, but is slow and
+Section 6's manual walk-every-path technique works, but is slow and
 easy to get wrong by hand (a `Compiler.RC2.Sink` use-after-free this
 same technique once found took hours of dump-tracing before the actual
 bug was pinned down). `tools/rcexpr-lint` automates the "is this a

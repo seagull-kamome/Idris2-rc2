@@ -33,7 +33,7 @@ rc2は`getCompileDataWith`(と`getIncCompileData`)に、フェーズ`Cases`を�
 
 ラムダを持ち上げると、次の情報が失われる。rc2のパスには、これらを再発見するために存在するものがいくつもある。
 
-- **ラムダがあった場所。** 本体は別の定義に移り、呼び出し箇所には名前と引数の個数だけが残る。`ArityRaise`のapply畳み込み、ラムダを作った場所でそのクロージャを適用する`ConstFold`の畳み込み、`SpecClosure`、`ArityRaise`、`ClosureCtx`は、いずれもこれを探し直す。
+- **ラムダがあった場所。** 本体は別の定義に移り、呼び出し箇所には名前と引数の個数だけが残る。`ArityRaise`のapply畳み込み、ラムダを作った場所でそのクロージャを適用する`ConstFold`の畳み込み、`SpecClosure`、`ClosureCtx`は、いずれもこれを探し直す。
 - **ラムダがどの定義から来たか、何をキャプチャしたか。**
 - **`CLet`の`InlineOk`フラグ。**
 
@@ -52,4 +52,4 @@ rc2は`getCompileDataWith`(と`getIncCompileData`)に、フェーズ`Cases`を�
 
 ## 検証
 
-リフタの変更は、idris2-lspのIRダンプ(`--directive dumprcexpr`)と、すべてのスモークテスト(`rc2/tests/snapshot.sh`)のIRおよびCを、upstreamのリフティングを使うビルドとバイト単位で比較して確認した。
+リフタの変更は、idris2-lspのIRダンプ(`--directive dumprcexpr`)と、すべてのスモークテスト(`rc2/tests/snapshot.sh`)のIRおよびCを、upstreamのリフティングを使うビルドとバイト単位で比較して確認した。差が出た箇所(前述の776個の定義)は、`rcexpr-diff`によれば変数の順序だけの違いである。

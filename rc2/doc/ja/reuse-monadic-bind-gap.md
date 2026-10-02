@@ -365,7 +365,7 @@ rc2 が取り繕えるものでも、取り繕うべきものでもない。シ�
    ックに `!` 記法を使い、判別対象自身のコンストラクタを再構築する case
    の枝の中に置く(上の再現プログラムを参照)。
 3. `nix-shell -p idris2 gcc gmp pkg-config --run 'build/exec/idris2-rc2 --cg rc2 --directive dumprcexpr <file>.idr -o <out>'`
-4. `build/exec/<out>.crexpr` を読む(`rc2/doc/reading-the-ir.md` を参照)。
+4. `build/exec/<out>.rcexpr` を読む(`rc2/doc/reading-the-ir.md` を参照)。
    分解された判別対象について、`drop [...]`(無条件)と
    `reuseOffer`/`reuse=` のどちらがあるかを探し、再構築が
    `partial ... missing=N` の呼び出し(bind の継続で、インライン化は安全

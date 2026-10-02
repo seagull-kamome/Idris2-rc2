@@ -20,18 +20,18 @@
   呼び出し箇所に展開する(`rc2/doc/inlining.md` の適格性の規則「すべての呼び出し
   箇所」を参照)。元の定義は、呼び出し元が1つもないまま残る。Inline より後段の
   どのパスも、このことに気づかない。そのため `Compiler.RC2.DualABI` の Stage 3a は、
-  このすでに死んでいる定義を、生きた関数と同じように wrapper と worker の組に分割
+  このすでに死んでいる定義を、生きた関数と同じようにwrapperとworkerの組に分割
   してしまう(分割後の2つも、当然死んでいる)。
 - **`Compiler.RC2.DualABI` の Stage 3a の wrapper。** ネイティブ表現でディスパッチ
-  できる関数は、常に Boxed な wrapper(`IDRIS2RC2_Value*` でしか受け渡しできない
-  呼び出し元のために残す)と、ネイティブの呼び出し規約を持つ worker に分けられる。
-  Stage 4 は、その関数の呼び出し箇所を worker の直接呼び出しに書き換える。書き換え
+  できる関数は、常にBoxedな wrapper(`IDRIS2RC2_Value*` でしか受け渡しできない
+  呼び出し元のために残す)と、ネイティブの呼び出し規約を持つworkerに分けられる。
+  Stage 4 は、その関数の呼び出し箇所をworkerの直接呼び出しに書き換える。書き換え
   の対象は、末尾位置でないものに限られる(`rc2/doc/dual-abi.md` に書かれた恒久的な
   適用範囲の境界)。もともと末尾位置の呼び出し元がない関数では、呼び出し元がすべて
   worker に付け替えられ、wrapper を呼ぶものが1つもなくなる。
 
-どちらも、`rc2/tests/Test51DeadCode*` / `Test52DeadCode*` で実際に起こることが確認
-されている。詳細は、これらのテストの冒頭コメントと、後述の「検証」を参照。
+どちらも、`rc2/tests/Test114Inline/DeadCodeInline.idr` で実際に起こることが確認
+されている。詳細は、このテストの冒頭コメントと、後述の「検証」を参照。
 
 ## パイプライン上の位置
 
@@ -76,7 +76,7 @@ A/B 比較のための切り分けの規約である(`RC2.idr` の `toRCDefs` �
 参照する名前(`RUnderApp`、および `ConstFold` が畳み込んだ `RCConstClosure`)である。
 `usedFunctionNamesD` は、これら4種類の `Name` に対するコールバックを、
 `Compiler.RC2.RCExp` の `foldRCNamesD` に渡しただけのものである。`foldRCNamesD` は、
-すべての `RCExp` / `RCLocal` のコンストラクタを網羅する、catch-all のない fold で、
+すべての `RCExp` / `RCLocal` のコンストラクタを網羅する、catch-all のないfoldで、
 `RCExp` 側に1回だけ書かれている。`Compiler.RC2.Emit.ExternRefs` にある2つの前方宣言用
 のウォークも、これを共有している(同じ再帰に対して、異なる問いを立てている)。新しい
 コンストラクタを追加したときに更新が必要なのは `foldRCNamesR` の1か所だけで、
@@ -120,11 +120,11 @@ A/B 比較のための切り分けの規約である(`RC2.idr` の `toRCDefs` �
 ## 適用範囲: `MkRCForeign` を意図的に除外している
 
 このパスが `MkRCFun` について解決している「呼び出し元がゼロになる」という状況は、
-一見すると、`%foreign` 宣言の、常に Boxed な wrapper のスタブ(`MkRCForeign`)でも
+一見すると、`%foreign` 宣言の、常にBoxedなwrapperのスタブ(`MkRCForeign`)でも
 起こるように思える。`Compiler.RC2.DualABI` の `ffiWorkerTable` と `inlineFFIWorkers`
 (Stage 3c/5)は、末尾位置でない適格な呼び出し箇所を*すべて*、`RAppFFIInline` の
 展開に直接書き換える。worker の `Name` は一切作られない。それなら、末尾位置の
-呼び出し元が残っていない宣言は、通常の関数の wrapper と同じように死んでいるはず
+呼び出し元が残っていない宣言は、通常の関数のwrapperと同じように死んでいるはず
 ではないか、というわけである。
 
 しかし、これを削除する実装は厄介である(後述の「見つかって修正したバグ」の1を参照)。
@@ -133,15 +133,15 @@ A/B 比較のための切り分けの規約である(`RC2.idr` の `toRCDefs` �
 
 - `Compiler.RC2.InlineCExp` の適格性の条件は、呼び出し先の本体が呼び出しを含まない
   こと(`isCallFree`。`rc2/doc/inlining.md` を参照)である。したがって、FFI 宣言を
-  呼び出す関数が Inline の対象になることは*決して*ない。「この FFI 宣言を呼ぶ唯一
+  呼び出す関数がInlineの対象になることは*決して*ない。「この FFI 宣言を呼ぶ唯一
   の関数が完全にインライン化されて消えた」という状況は、呼び出し元の本体にもともと
   呼び出しが1つもなかった場合にしか起こらないので、起こりえない。
 - `Compiler.RC2.DualABI` の Stage 3a の wrapper/worker の分割は、関数の元の本体
-  *全体*を、FFI 呼び出しも含めて、合成された worker に移す。wrapper の本体は、その
+  *全体*を、FFI 呼び出しも含めて、合成されたworkerに移す。wrapper の本体は、その
   worker への薄い `RAppNameRep` にすぎない。そのため、wrapper 自体が死んだ場合
-  (これは `rc2/tests/Test52DeadCode*` のシナリオそのものである)でも、元の関数が行っ
-  ていた FFI 呼び出しは worker の中に残る。その関数を実際に呼ぶものがある限り、
-  呼び出し箇所の書き換え先が wrapper と worker のどちらであっても、worker は到達可能
+  (これは `rc2/tests/Test114Inline/DeadCodeInline.idr` の `helper` のシナリオそのものである)でも、元の関数が行っ
+  ていた FFI 呼び出しはworkerの中に残る。その関数を実際に呼ぶものがある限り、
+  呼び出し箇所の書き換え先がwrapperとworkerのどちらであっても、worker は到達可能
   なままである。
 
 次のことを直接確かめた。このパスに、`ccs`(宣言自身の `%foreign` 呼び出し規約を表す
@@ -152,7 +152,7 @@ A/B 比較のための切り分けの規約である(`RC2.idr` の `toRCDefs` �
 テストされず、実際には到達しない複雑さを出荷するのではなく、この版は取り除いた。
 
 **ただし、これで話が尽きるわけではない。** `Compiler.RC2.ConstFold` の `RConstCase`
-による「定数に対する case の畳み込み」(`foldConst` の `findConstAlt`)は、`Inline` /
+による「定数に対するcaseの畳み込み」(`foldConst` の `findConstAlt`)は、`Inline` /
 `DualABI` とはまったく無関係の*3つ目の*仕組みであり、部分木をまるごと捨てる。
 case のスクルティニーが既知の定数に解決されると、ノード全体がマッチした枝の本体だけ
 に置き換えられ、ほかのすべての枝は、中にある `%foreign` 呼び出しも含めて、そのまま
@@ -197,7 +197,7 @@ case のスクルティニーが既知の定数に解決されると、ノード
 ## 検証
 
 `rc2/tests/Test114Inline/DeadCodeInline.idr` は、Inline で孤立した定義を扱う。その
-定義は、さらに死んだ DualABI の wrapper と worker の組へと広がる。また、以前は別
+定義は、さらに死んだDualABIのwrapperとworkerの組へと広がる。また、以前は別
 ファイルだった `Test52DeadCodeDualABIWrapper.idr`(末尾位置の呼び出し元がない
 DualABI の wrapper)の検証内容も、このファイルが吸収している。このテストで、次の点を
 手作業で確認している。
@@ -212,7 +212,7 @@ DualABI の wrapper)の検証内容も、このファイルが吸収している
   `rc2/doc/dual-abi.md` が Stage 5 の削除を主張する際に掲げる「単なるデッドコード
   ではない」という証明の水準と同じである。
 
-2つのテストはいずれも、通常の `rc2/tests/verify.sh` のスモークスイートの一部である
+このテストは、通常の `rc2/tests/verify.sh` のスモークスイートの一部である
 (自動的に検出され、特別な登録は不要)。また、スイート全体で `--directive nodeadcode`
 との A/B 比較を完全に実施しても問題なく通った。このパスがほかのどのテストの挙動も
 変えないことを、これで確認している。

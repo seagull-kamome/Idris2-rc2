@@ -367,7 +367,7 @@ Idris2 自身のコンパイル済み IR(`Lifted`)は、すべての値を一様
    路)には、独立した回帰の確認がある。どちらの経路も、上の
    `Test112Numeric/NativeInts.idr` が検証するために書かれた `RC.idr` の
    `annotate` パスからは到達できないためである。
-   `tests/build/Test6NativeInts_rc2.c` の `Main_chainInt8`/`chainInt16`/
+   `tests/build/Test112Numeric_rc2.c` の `Main_chainInt8`/`chainInt16`/
    `chainInt32`(と Bits8/16/32 の対応するもの)を手作業で確認し、二重
    ABI のラッパーが引数に対して `idris2rc2_drop` をまったく呼ばなくなっ
    たことを確かめる。一方 `Main_chainInt64`(ネイティブ化の対象だが

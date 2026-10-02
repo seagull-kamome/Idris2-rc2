@@ -1044,8 +1044,9 @@ Stage 3b(ネイティブな戻り値)では、新しいバグは見つからな�
    これは15パラメータの`%foreign`宣言で、ネイティブで適格な`Int`が12個、`Boxed`の`String`が3個である。
    「大半はネイティブで、一部がBoxed」という形であり、しかも、以前の上限なら除外されていた幅である。
    `main`から完全に飽和した形で呼び、Stage 4の呼び出し箇所の書き換えが発火するようにした。
-   生成されたCを手で調べると、`idris2rc2_ffiworker_Main_prim__wide_0`が、個別の型を持つ`int64_t`パラメータ12個と`IDRIS2RC2_Value *`パラメータ3個で宣言されている(`var_arglist[]`はどこにもない)。
+   生成されたCを手で調べると(この項目の時点、つまりStage 5が単独のFFI workerを廃止する前の話である)、`idris2rc2_ffiworker_Main_prim__wide_0`が、個別の型を持つ`int64_t`パラメータ12個と`IDRIS2RC2_Value *`パラメータ3個で宣言されている(`var_arglist[]`はどこにもない)。
    `main`の呼び出し箇所は、workerを直接呼んでおり、Stage 4の書き換えが発火したことが確認できた。
+   Stage 5では、そのような関数は出力されず、呼び出しはインラインに展開される。
    `verify.sh --regen-expected`(スイート全体で85/85)と`refc-suite/run.sh`(19/19)は、どちらも引き続き通る。
    `valgrind --leak-check=full`は、このテストについて`0 bytes definitely lost`と報告した(`verify.sh`の`LEAK_SENSITIVE_TESTS`に登録済み)。
 10. **リテラル定数のFFI引数が、Boxed引数のdropの追跡を壊し、Cのコンパイルが失敗した。**
@@ -1169,7 +1170,7 @@ refc-suite全体(19/19)と、スモークテスト/ベンチマークのマト�
    (c) **Stage 4が実装された現在は**、元の関数の再帰呼び出しが、*worker*(`Main_fib`ではなく`idris2rc2_worker_Main_fib_0`)を直接呼んでおり、どちらの呼び出しの周りにも、`idris2rc2_mkInt64`/`idris2rc2_to_i64`の組が残っていないこと。
    `tests/BenchLoop.idr`の`Main.sumTo`は、ループとの組み合わせのスモークテストである。そのworkerのループ脱出の末尾値は、同じネイティブの経路を通って出力されなければならない。
 4. `tests/Test*.idr`/`tests/Bench*.idr`のスイート全体を、本物の`idris2 --cg refc`の出力とdiffする。このプロジェクトのほかのすべてのStageと同じである。
-   どちらのStageも、純粋に構造的な、コード生成の変更であるはずなので、*すべての*テストが、観測できる挙動の違いなしに、バイト単位で一致しなければならない。
+   どのStageも、純粋に構造的な、コード生成の変更であるはずなので、*すべての*テストが、観測できる挙動の違いなしに、バイト単位で一致しなければならない。
    `Test7CastMatrix.idr`だけは、現状、本物の`idris2 --cg refc`とのdiffによる確認ができない。
    nixpkgsに同梱されたRefCのサポートライブラリ自体が、コンパイルに失敗するからである(ヘッダ内で`idris2_negate_Double`が`idris2_nagate_Double`とタイプミスされており、さらに宣言の欠けがいくつかある)。
    これは、参照用のインストール自体の欠陥であり、rc2とは無関係であると確認している。

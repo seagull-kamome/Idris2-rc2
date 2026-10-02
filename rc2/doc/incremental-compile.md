@@ -139,13 +139,19 @@ compiled into `Main.o` by the very same per-module `incCompileFile`
 call as everything else `Main.idr` defines. The only thing missing is
 the literal C `int main(void)` entry point that calls it, which is
 pure boilerplate with no dependence on the `ClosedTerm` Chez's
-`compileExprInc` needs. `Emit.idr`'s `generateCSourceFile` already has
+`compileExprInc` needs -- except that the whole-program footer's own
+call, `__mainExpression_0()`, names a wrapper that is no module's
+`toIR` member, so the `Main` module's footer must call `Main.main`
+directly instead (`directEntryPoint`; see bugs 3 and 4 under
+"End-to-end verification"). `Emit.idr`'s `generateCSourceFile` already has
 exactly the parameter to control this: `noMain`, added earlier for the
 `%export`-as-library scenario (`rc2/doc/export-support.md`, "Linking
 as a library"). Incremental mode reuses it verbatim: pass
-`noMain = (moduleNS /= nsAsModuleIdent mainNS)` when generating a
-module's own `.c` -- true for every module except the one literally
-named `Main` (same check `Idris.ProcessIdr.processMod` already makes
+`noMain = currentNS coreDefs /= mainNS` (the module's own *declared*
+namespace read off `Ctxt`, not one derived from the file path; see bug
+1 under "End-to-end verification") when generating a module's own
+`.c` -- true for every module except the one literally named `Main`
+(same check `Idris.ProcessIdr.processMod` already makes
 at its own `ns /= nsAsModuleIdent mainNS` guard).
 
 Consequence: rc2's final whole-program `compileExpr`, in incremental
@@ -242,10 +248,9 @@ Only `DeadCode.pruneDeadDefs` and the top-level driver
      Chez -- record that the module was incrementally compiled with no
      actual output, still needed for `missingIncremental`'s later
      check to pass).
-   - Otherwise: derive the module's own `ModuleIdent` from `sourcefile`
-     (`ctxtPathToNS`, same helper `getObjFileName`/`getTTCFileName`
-     already use) to decide `noMain` (see above) and to compute output
-     paths; run `toRCDefs (nub ("nodeadcode" :: disabledStages)) [] (lambdaLifted cdata)`;
+   - Otherwise: decide `noMain` from the module's declared namespace
+     (see above); output paths come from `sourcefile`
+     (`getObjFileName`/`getTTCFileName`); run `toRCDefs (nub ("nodeadcode" :: disabledStages)) [] (lambdaLifted cdata)`;
      `generateCSourceFile` into the ttc build directory's own
      `<modpath>.c` (`getTTCFileName sourcefile "c"`); `compileCObjectFile`
      it into `<modpath>.o` (skip `compileCFile` -- no link at this
@@ -649,7 +654,7 @@ the next. `rc2/tests/verify.sh` stayed at 111/0/0 after every one.
    parameter, so a direct call already does the equivalent `apply` for
    free). Verified against both shapes afterward, not just re-tested
    against the one that broke.
-5. **Two more cross-linking hazards, found linking a real multi-module
+5. **Three more cross-linking hazards, found linking a real multi-module
    program** (a small program using `Data.List`/`Data.SortedMap`,
    deliberately not just a bare `putStrLn` -- `base`'s own 136-module
    clean rebuild only proves each module compiles standalone, not that
@@ -751,12 +756,6 @@ from scratch if it comes up again.
   file today; which module(s) should receive them in per-module mode
   (every module needing external linkage vs. duplicated-and-`static`)
   isn't decided yet.
-- Not yet tested: a dependency package that itself ships incrementally-
-  compiled rc2 object files (upstream's own generic `allIncData`/
-  `installFrom` machinery should handle this transparently, but rc2
-  hasn't exercised that path) -- see the "practical prerequisite"
-  section above: `prelude`/`base`/`contrib`/`network` all need this
-  before any real program can benefit, and nothing does it yet.
 
 ## Verification: done, both steps
 

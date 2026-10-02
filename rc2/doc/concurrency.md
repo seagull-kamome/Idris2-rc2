@@ -62,12 +62,12 @@ acquire before a teardown is a load rather than a fence. See
 `hybrid-refcount.md`. The memory orders below are still the ones used
 once it is.
 
-Changed files at this step: `datatypes.h`, `memory.c`, `runtime.h`.
+Changed files at this step: `idris2rc2_datatypes.h`, `memory.c`, `runtime.h`.
 `memory.h`/`runtime.c` were unchanged here (see "Resolving the races
 unlocked by real thread spawning" below for why that was safe at the
 time, and what changed once real thread spawning landed).
 
-- **`datatypes.h`**: `IDRIS2RC2_Header.refCount` changed from
+- **`idris2rc2_datatypes.h`**: `IDRIS2RC2_Header.refCount` changed from
   `uint16_t` to `_Atomic uint16_t` (`<stdatomic.h>` now included). The
   header's own top-of-file comment, which used to describe "a
   non-atomic reference count," is updated to match.
@@ -139,13 +139,15 @@ Changed file: `ioprims.c` (`util.h` and `<pthread.h>` newly included).
   unreachable from rc2 (or RefC) regardless of what `refc_fork` itself
   does. A fire-and-forget detached thread is therefore not a shortcut;
   it's the only behavior any caller can currently observe.
-- The returned `ThreadID` is a plain `IDRIS2RC2_Pointer` wrapping a
-  heap-allocated `pthread_t`, not a dedicated tag. `ThreadID` is
+- The returned `ThreadID` is a dedicated `IDRIS2RC2_TAG_THREADID` value
+  (`idris2rc2_datatypes.h`) embedding the `pthread_t` directly, not a generic
+  `IDRIS2RC2_Pointer` wrapping a heap-allocated one (whose teardown
+  would never free it; see "Status"). `ThreadID` is
   `[external]` in upstream Idris2, which rc2 marshals as CFUser (an
   unconstrained `IDRIS2RC2_Value*` identity passthrough -- see
   `Compiler.RC2.Emit.Util`'s `packCFType`/`extractValue`), so any
   correctly-shaped value works; since `threadWait` can never read it
-  (see above), there's nothing that needs a dedicated representation.
+  (see above), the tag exists only so the value is freed correctly.
 
 ## Resolving the races unlocked by real thread spawning
 
@@ -247,7 +249,7 @@ What was implemented instead:
   work completely unchanged from there; no new types or functions are
   introduced anywhere.
 - **Two new native `IDRIS2RC2_Value` tags**,
-  `IDRIS2RC2_TAG_MUTEX`/`IDRIS2RC2_TAG_CONDITION` (`datatypes.h`), each
+  `IDRIS2RC2_TAG_MUTEX`/`IDRIS2RC2_TAG_CONDITION` (`idris2rc2_datatypes.h`), each
   a single-allocation struct with a `pthread_mutex_t`/`pthread_cond_t`
   embedded directly in the header-prefixed value (no extra pointer
   indirection). This is what upstream's `Mutex`/`Condition` being
@@ -277,7 +279,7 @@ Same pattern as Mutex/Condition above, and for the same reason: upstream
 implementation. `%foreign_impl` (`libs/rc2base/src/System/Concurrency/
 RC2.idr`) attaches C implementations onto those existing declarations
 without touching upstream. Two new native tags,
-`IDRIS2RC2_TAG_SEMAPHORE`/`IDRIS2RC2_TAG_BARRIER` (`datatypes.h`), embed
+`IDRIS2RC2_TAG_SEMAPHORE`/`IDRIS2RC2_TAG_BARRIER` (`idris2rc2_datatypes.h`), embed
 a `sem_t`/`pthread_barrier_t` directly in the header-prefixed value,
 the same single-allocation shape `IDRIS2RC2_TAG_MUTEX`/`_CONDITION`
 already use; `idris2rc2_teardown` (`memory.c`) calls `sem_destroy`/
@@ -313,7 +315,7 @@ backend, `threadWait` being Scheme-only, exactly the unreachability
 System/Concurrency/RC2.idr`), not a `%foreign_impl` patch -- this is
 genuinely new Idris-level API surface, absent from upstream entirely.
 
-A new tag, `IDRIS2RC2_TAG_JOINHANDLE` (`datatypes.h`), holds the raw
+A new tag, `IDRIS2RC2_TAG_JOINHANDLE` (`idris2rc2_datatypes.h`), holds the raw
 `pthread_t` plus a `joined : bool` flag. `idris2rc2_fork_join`
 (`concurrency_util.c`) mirrors `idris2rc2_fork`'s own trampoline
 (`ioprims.c`) -- including `dup`ing the closure before `pthread_create`
@@ -370,7 +372,7 @@ rc2 program, not a per-program user-defined ADT, and would break if a
 future Idris2 ever reordered `Nothing`/`Just`'s own declaration.
 
 `Channel a` is backed by a new native tag, `IDRIS2RC2_TAG_CHANNEL`
-(`datatypes.h`): an embedded `pthread_mutex_t`/`pthread_cond_t` guarding
+(`idris2rc2_datatypes.h`): an embedded `pthread_mutex_t`/`pthread_cond_t` guarding
 a singly-linked FIFO queue of owned `IDRIS2RC2_Value*` nodes.
 `channelPut` appends a node and signals (`idris2rc2_dup`ing the value
 first -- the generated FFI wrapper drops its own reference to every
@@ -412,7 +414,7 @@ from first principles.
 
 ## Status
 
-**Reference count made atomic: done and verified.** `datatypes.h`,
+**Reference count made atomic: done and verified.** `idris2rc2_datatypes.h`,
 `memory.c`, `runtime.h` as described above. Verified via
 `rc2/tests/verify.sh` (refc-suite 19/19 PASS, smoke tests 32/32 PASS,
 `valgrind` reporting zero errors) and `rc2/tests/bench.sh` (no measured
@@ -456,7 +458,7 @@ leak turned out to share a root cause with `Compiler.RC2.RC`'s own
 `IDRIS2RC2_Pointer`, whose teardown deliberately never frees an
 externally-owned payload -- wrong for a pointer rc2 itself allocated)
 is fixed by giving `ThreadID` its own dedicated tag
-(`IDRIS2RC2_TAG_THREADID`, `datatypes.h`) that embeds the `pthread_t`
+(`IDRIS2RC2_TAG_THREADID`, `idris2rc2_datatypes.h`) that embeds the `pthread_t`
 directly, the same single-allocation idiom already used for
 `Mutex`/`Condition`/`Semaphore`/`Barrier`/`JoinHandle`. Channel's own revisit additionally
 fixed a genuine use-after-free found while testing it: `channelPut`'s
@@ -497,8 +499,8 @@ reporting no errors.
 
 ## Outlook
 
-Every item this document's own "Not yet implemented" list (and
-`TODO.md`'s Concurrency section) used to name is now implemented. Two
+Every item that earlier stages of this document left unimplemented
+(and that `TODO.md` used to track) is now implemented. Two
 things worth keeping in mind for future work here, neither blocking
 anything today:
 

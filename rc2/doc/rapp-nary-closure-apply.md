@@ -153,15 +153,25 @@ IDRIS2RC2_Value *idris2rc2_applyClosureN(IDRIS2RC2_Value *_c, IDRIS2RC2_Value **
   IDRIS2RC2_Closure *c = (IDRIS2RC2_Closure *)_c;
   uint8_t remaining = c->arity - c->filled;
 
-  if (n == remaining && c->arity <= 20) {
-    // Saturating in one shot: no intermediate closure at all, dup the
-    // existing filled args into a stack scratch buffer alongside the
-    // new ones, then reuse the *same* switch dispatchClosure uses.
+  if (n == remaining && c->arity >= 1 && c->arity <= 20) {
+    // Saturating in one shot: no intermediate closure at all. Gather the
+    // filled args and the new ones in a stack scratch buffer, then reuse
+    // the *same* switch dispatchClosure uses.
     IDRIS2RC2_Value *xs[20];
-    for (uint8_t i = 0; i < c->filled; ++i) xs[i] = idris2rc2_dup(c->args[i]);
-    for (uint8_t i = 0; i < n; ++i) xs[c->filled + i] = newArgs[i];
-    IDRIS2RC2_Value *result = idris2rc2_dispatchFn(c->fn, c->arity, xs);
-    idris2rc2_drop((IDRIS2RC2_Value *)c);
+    IDRIS2RC2_Value *result;
+    if (idris2rc2_isUnique(c)) {
+      // Unique: the filled args transfer into the call (no dup), so
+      // only the closure shell is freed afterward.
+      for (uint8_t i = 0; i < c->filled; ++i) xs[i] = c->args[i];
+      for (uint8_t i = 0; i < n; ++i) xs[c->filled + i] = newArgs[i];
+      result = idris2rc2_dispatchFn(c->fn, c->arity, xs);
+      if (idris2rc2_rc_release(&c->header)) free(c);
+    } else {
+      for (uint8_t i = 0; i < c->filled; ++i) xs[i] = idris2rc2_dup(c->args[i]);
+      for (uint8_t i = 0; i < n; ++i) xs[c->filled + i] = newArgs[i];
+      result = idris2rc2_dispatchFn(c->fn, c->arity, xs);
+      idris2rc2_drop((IDRIS2RC2_Value *)c);
+    }
     return idris2rc2_trampoline(result);
   }
 
