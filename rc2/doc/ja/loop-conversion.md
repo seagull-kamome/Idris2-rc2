@@ -30,6 +30,7 @@ Lifted (Compiler.LambdaLift)
   -> Compiler.RC2.Loop             (self-tail-call, incl. MutualLoop's own
                                      merged functions -> RLoop/RLoopContinue,
                                      plus native-shadow promotion -- this document)
+  -> Compiler.RC2.Sink             (branch-local sinking, see doc/branch-sinking.md)
   -> Compiler.RC2.DualABI          (worker/wrapper synthesis, call-site rewrite)
   -> Compiler.RC2.Emit             (purely mechanical RCExp -> C)
 ```
@@ -93,7 +94,7 @@ applyLoop : Name -> RCDef -> RCDef
 **適格な`(p, ty)`の組が決まった後の書き換え手順は、次のとおりである。**
 
 1. `assignShadowIds`が、適格なパラメータ1つにつき新しいidを1つ割り当てる。起点は、定義内ですでに使われている最大のidの次の値である(`args`と、書き換え後の本体にある`RLet`/`RConAlt`が束縛するすべてのid。`collectBoundIds`で集める)。`Core`を通して持ち回るカウンタではなく、単なる算術上の最大値を使う。このパスは全体として、一度に1つの定義だけを入力とする純粋関数に保たれているためである(`MutualLoop`の`FreshId`は対照的で、プログラム全体にわたって持ち回る必要がある)。
-2. `renameRCExp`(後述)が、昇格した各パラメータの元のidのすべての出現を、新しいシャドウidで本体全体にわたって一律に置換する。ネイティブコンテキストの読み取りの中だけではなく、**すべての**出現が対象である。Boxedコンテキストでの使用(コンストラクタのフィールド、呼び出しの引数、ループ自身の最終的な戻り値)も向け直されるが、これで正しい。ネイティブな`Rep`を持つローカルに`rcVarToBoxedC`を適用すると、その場で新たにbox化するので、向け直されたBoxedコンテキストの読み取りも正しい*値*を生む。違いは、元のオブジェクトの同一性を共有せず、新しいアロケーションを経由する点だけである(実在するコストだが許容範囲のトレードオフであり、正しさの問題ではない)。
+2. `renameRCExp`(後述)が、昇格した各パラメータの元のidのすべての出現を、新しいシャドウidで本体全体にわたって一律に置換する。ネイティブコンテキストの読み取りの中だけではなく、**すべての**出現が対象である。Boxedコンテキストでの使用(コンストラクタのフィールド、呼び出しの引数、ループ自身の最終的な戻り値)も向け直されるが、これで正しい。ネイティブな`Rep`を持つローカルに`rcVarToBoxedC`を適用すると、その場で新たにbox化するので、向け直されたBoxedコンテキストの読み取りも正しい*値*を生む。違いは、元のオブジェクトの同一性を共有せず、新しいアロケーションを経由する点だけである(実在するコストだが許容範囲のトレードオフであり、正しさの問題ではない)。この一括リネームが適用されるのは、現在はループ内で持ち回られるパラメータだけである。ループ不変のパラメータは、ネイティブコンテキストの読み取りだけが向け直される(後述の「生き残ったBoxedコンテキストの読み取りに元のBoxed値を再利用する」を参照)。
 3. `stripOwnership`(後述)が、`annotate`が*元の*パラメータについて計算した、もう不要な所有権の記録を取り除く。キーにするのは、リネーム後の*シャドウ*idである。
 4. `loopParams`は、関数自身の`args`を走査して作る。適格なパラメータは`(shadowId, RNative ty)`を出す。それ以外のパラメータは、`(p, RBoxed)`をそのまま出す(自分自身のidを再利用する。これによって、`Compiler.RC2.Emit`の`declareLoopParam`が宣言を丸ごと省ける。後述)。`initial`は常に`map RCLoc args`である。どのループパラメータの初期値も、実際には、元の常にBoxedなパラメータから読み取る値だからである。`Compiler.RC2.Emit`の`declareLoopParam`が、unbox化の変換を行う(変更のない`RBoxed`パラメータでは省かれる)。
 
@@ -101,7 +102,7 @@ applyLoop : Name -> RCDef -> RCDef
 
 外部パッケージ自身のホットループについて`--directive dumprcexpr`の出力を読んでいたときに見つかった問題である(`rc2/BENCHMARKS.md`の2026-08-18の項を参照)。どの反復でも実際には変化しない、ループ内で持ち回るパラメータが、`loopParams`、`initial`、およびすべての`continue`の`args`に残っており、本当に変化するパラメータとダンプ上で区別がつかなかった。動機は速度ではなくIRの*正確さ*である。(`Compiler.RC2.Emit`の`zip`ベースの変換が、その結果として小さくなることもあるが、副次的な効果にすぎず、目的ではない。)`.rcexpr`ダンプの読み手は、`loopParams`に、ループが実際に再代入する値だけが並んでいると信頼できるべきである。
 
-**検出**: `applyLoop`の既存のネイティブシャドウ昇格(上の手順4までのすべて。`fullLoopParams`、`withPostDrop`)がまったく変更されないまま終わった後で、`collectContinueArgs`が本体を走査し、すべての`RLoopContinue`の`args`リストを集める。走査する木の形は、`fillLoopContinuePostDrop`がすでに走査しているものと同じである。構造上、1つの関数に`RLoop`は1つしかなく、入れ子の`RLoop`を気にする必要はない。`invariantLoopParamIds`は、集めたリストすべてにわたって畳み込む。出発点は「すべての位置が不変」であり、集めた`args`リストごとに、「この`continue`は、この位置に*まったく同じローカル*を渡しているか」という条件をANDで重ねる。ここでの「同じローカル」とは、ループパラメータ自身のidの`RCLoc`である。シャドウ化されたものはシャドウid、そうでなければ元のパラメータidを指す。位置が生き残るのは、すべての`continue`が文字どおり一致する場合だけである。Boxedの位置とネイティブシャドウ化された位置は、同じように検査する。ここでは両者を区別しない。
+**検出**: 最初に作ったときは、`applyLoop`のネイティブシャドウ昇格(上の手順1〜4)の後で実行していた。現在はリネームより*前*に、末尾呼び出し変換済みの本体に対して実行する。理由と、それで答えが変わらない理由は、後述の「生き残ったBoxedコンテキストの読み取りに元のBoxed値を再利用する」を参照。どちらの場合も、`collectContinueArgs`が本体を走査し、すべての`RLoopContinue`の`args`リストを集める。走査する木の形は、`fillLoopContinuePostDrop`がすでに走査しているものと同じである。構造上、1つの関数に`RLoop`は1つしかなく、入れ子の`RLoop`を気にする必要はない。`invariantLoopParamIds`は、集めたリストすべてにわたって畳み込む。出発点は「すべての位置が不変」であり、集めた`args`リストごとに、「この`continue`は、この位置に*まったく同じローカル*を渡しているか」という条件をANDで重ねる。ここでの「同じローカル」とは、ループパラメータ自身のidの`RCLoc`である。位置が生き残るのは、すべての`continue`が文字どおり一致する場合だけである。Boxedの位置とネイティブシャドウ化された位置は、同じように検査する。ここでは両者を区別しない。
 
 **書き換え**: 生き残った位置は、`loopParams`と`initial`から取り除かれ(`elideInvariantContinueArgs`による。木の走査の形はこれも同じで、すべての`RLoopContinue`の`args`から該当するスロットを落とす)、ネイティブシャドウ化されていたかどうかで、次の2通りのどちらかに処理される。
 
@@ -190,13 +191,13 @@ rc2の呼び出し規約はすべて一様に`Value*`なので、統合した関
 1つのSCC(`groupNames`)について、次の手順を踏む。
 
 1. メンバーを決定的な順序に並べる(`SortedSet.toList`で、`Ord Name`の順に並ぶ)。タグの割り当てがSCCの走査順序に依存しないようにするためである。出力を再現可能にするための安定性であり、正しさのためではない。
-2. `maxArity`は、グループのメンバーのうち最大のアリティである。`tagOf : SortedMap Name Int`が、各メンバーに小さな整数のタグ`0..length members - 1`を割り当てる。
-3. 統合した関数の新しい名前を作り(`freshName`。プログラム全体で使用済みのすべての名前との衝突を避ける)、タグパラメータ(`tagId`)と、共有する各引数スロット(`slotIds`、`maxArity`個)に、新しいidを割り当てる。
+2. メンバーの各パラメータを、`Compiler.RC2.Loop`がそのメンバー単独で昇格させるネイティブ型(`callArgOrOpNativeType`)、または`Nothing`に分類する。`slotCount`は、クラスごとに、1つのメンバーが持つそのクラスのパラメータ数の最大値を足し合わせた数である(「見つかったバグ」の8)。`tagOf : SortedMap Name (Int, List Nat)`が、各メンバーに小さな整数のタグ`0..length members - 1`と、各パラメータのスロット位置(そのクラスの先頭オフセットに、同じクラスの先行パラメータの数を足したもの)を割り当てる。
+3. 統合した関数の新しい名前を作り(`freshName`。プログラム全体で使用済みのすべての名前との衝突を避ける)、タグパラメータ(`tagId`)と、共有する各引数スロット(`slotIds`、`slotCount`個)に、新しいidを割り当てる。
 4. メンバーごとに、そのメンバーの`RConstAlt`を作る。
    - `collectBoundIds`が、メンバーの本体が内部で束縛するid(メンバー自身のトップレベルパラメータは別に扱うので除く)をすべて見つける。`freshId`が、そのidごとに新しい代替のidを1つ作る。
-   - `Renaming`が、メンバー自身のトップレベルパラメータを*共有された*`slotIds`に対応づけ、すべての内部idを、それぞれの新しい代替idに対応づける。共有された`slotIds`は任意の新しいidではない。それらは、いまや統合した関数の実際のパラメータだからである。
+   - `Renaming`が、メンバー自身のトップレベルパラメータを、上の位置にある*共有された*`slotIds`に対応づけ、すべての内部idを、それぞれの新しい代替idに対応づける。共有された`slotIds`は任意の新しいidではない。それらは、いまや統合した関数の実際のパラメータだからである。
    - `renameRCExp`が、このリネームをメンバー自身の本体に適用する。
-   - `rewriteGroupTailCalls`が、*リネーム済みの*本体の末尾位置を(共有の`mapTailAppNames`で)走査し、グループの*どの*メンバーを対象とする末尾呼び出しも(`tagOf`で引く。対象が同じメンバーか別のメンバーかは問わない)、統合した関数自身への通常の末尾呼び出しに置き換える。そのとき、対象のタグを先頭に付け、引数リストを`RCNull`で`maxArity`までパディングする。
+   - `rewriteGroupTailCalls`が、*リネーム済みの*本体の末尾位置を(共有の`mapTailAppNames`で)走査し、グループの*どの*メンバーを対象とする末尾呼び出しも(`tagOf`で引く。対象が同じメンバーか別のメンバーかは問わない)、統合した関数自身への通常の末尾呼び出しに置き換える。そのとき、対象のタグを先頭に付け、引数を対象自身のスロット位置に置き、それ以外のスロットはすべて`RCNull`で埋める。
 5. 統合した本体は`RConstCase EmptyFC (RCLoc tagId) alts (Just crash)`である。クラッシュするdefaultは、実際には到達しない(`tagId`が持つのは、`alts`のどれかが生成した値だけである)。検査のない部分的なマッチにせず、防御的な`RCrash`として残している。
 6. 元のメンバーはそれぞれ薄いラッパーになる: `MkRCFun args_i (RAppName ... mergedName (tag :: padded args))`。
 
@@ -284,7 +285,7 @@ rc2の呼び出し規約はすべて一様に`Value*`なので、統合した関
 
 修正として、`opNativeUsesThrough`が、入れ子の`RLet`の`body`にも再帰するようにした。外側ですでに決まっている*同じ*ネイティブの`Rep`を、連鎖の最後にある裸の`ROp`まで伝える。保守性は以前と同じである(入れ子の`RLet`自身の別の`value`には、ここでは特別な扱いをしない。`nativeArgTypes`の既存の無条件の再帰が、それを独立してすでにカバーしており、*そのlet*自身の`Rep`で制御されている)。これより前の、より広い修正の試みでは、*どんな*裸の`ROp`も、その上に囲むネイティブの`RLet`が一切なくても、ネイティブとして扱っていた。根拠は、その演算自身の`opResultRep`だけで、これは`Compiler.RC2.DualABI`の`tailValueReps`が、*戻り値*の適格性にすでに使っているのと同じ、信頼できる情報源である。この版は、`Test110Loop/SelfTailLoop.idr`で、`valgrind`が検出する実際のリークを起こした。`tailValueReps`は、まったく同じ演算についての戻り値の適格性を、組にして同時に計算するので、両者が食い違うことは決してない。これと違って、`nativeArgTypes`の結果は、`Compiler.RC2.Loop`自身のループパラメータの昇格にも使われる。その昇格は、どの関数の戻り値の適格性が決まるよりも*前*に走る。そのため、裸の末尾は、その時点ではまだBoxedとして描画されることがありえて、実際にそうなった。推測したネイティブ性に基づいて、まだBoxedな読み取りの所有権の記録を剥がしたため、新たにre-boxされた値には、それをdropするものが何も残らなかった。`rc2/tests/Test13NativeArgChain.idr`を参照(`chain`が修正対象の形である。`flat`は、囲む`let`が一切ない、保護されていない単一の`ROp`で、意図的に`RBoxed`のままにしてある。対照として、同じテストファイルに入れている)。
 
-この修正は、*ループではない*関数のパラメータについても、同じ問題を解消する。同様に、`Compiler.RC2.DualABI`のワーカーパラメータの適格性も解消する(たとえば、ループの内側から呼ばれる、`step`のような要素ごとのヘルパー)。`--directive dumprcexpr`で確認したところ、そのようなヘルパーのワーカーは、このパラメータを、`Boxed`ではなく`Native`と正しく宣言するようになった。
+この修正は、*ループではない*関数のパラメータについても、同じ問題を解消する。同様に、`Compiler.RC2.DualABI`のワーカーパラメータの適格性も解消する(たとえば、ループの内側から、ループのアキュムレータを引数にして呼ばれる、要素ごとのヘルパー`step`)。`--directive dumprcexpr`で確認したところ、そのようなヘルパーのワーカーは、このパラメータを、`Boxed`ではなく`Native`と正しく宣言するようになった。
 
 **一般的なケースについては、解消済みである。** 上記の`step`のようなヘルパーへの呼び出しだけを通じて持ち回られる、ループ内のパラメータが、`ROp`/`RCmpCase`のオペランドとして直接読まれる場合と同じ、ネイティブシャドウへの昇格を受けるようになった。`Compiler.RC2.Loop`の`calleeNativeParams`/`buildCalleeTable`は、`MutualLoop`の後、`Loop`の前の定義リストから、プログラム全体のテーブルを一度だけ作る。各エントリは、その1つの定義自身の(変更のない)`nativeArgType`の判定をパラメータごとに記録するだけで、他のエントリを参照することはない。そのため、不動点や循環の処理は必要ない(`MutualLoop`が統合したディスパッチャは、`isMutualLoopMerged`で除外する。これは`Compiler.RC2.DualABI`の中にだけあったのを、`Compiler.RC2.Util`に移して共有している)。次に`callArgNativeTypes`/`callArgOrOpNativeType`が、トップレベルパラメータ`p`について、テーブルが示す、その位置で独立にネイティブ適格になっている呼び出し先に、直接かつ飽和した引数として渡されているかどうかを問う。`applyLoop`は、この結果を`eligibleVariant`に合併する(`RC2.idr`の`toRCDefs`から引き回す、新しい`calleeTable`引数を使う)。
 
@@ -293,7 +294,7 @@ rc2の呼び出し規約はすべて一様に`Value*`なので、統合した関
 - **呼び出しの1段までしか追わない。** 多段の委譲の連鎖(`loop`の`acc`が`mid`に渡され、`mid`はそれを`step`に転送するだけ)は対象外である。`mid`のパラメータが、*それ自体で*すでに`nativeArgType`適格(`mid`の中で、演算や比較のオペランドとして直接読まれる)である必要があるが、単なる素通しのパラメータは、決してそうならない。
 - **変化するループパラメータだけが対象。** ループ*不変*パラメータ(すべての`RLoopContinue`で変化しない)は、意図的に除外している。不変パラメータのネイティブな出現を、そのシャドウに向け直す唯一の場所は`markInvariantNative`だが、これには`RAppName`のケースがない。呼び出し引数としての出現だけを根拠に昇格させると、何からも読まれないシャドウが作られる。無駄にはなるが、安全ではある(`dupInvariantBoxed`の汎用の`RAppName`のケースが、向け直されていない出現を、通常のdupと遅延されたdropによって、どのみち正しく処理する)。`markInvariantNative`に`RAppName`のケースを教える作業とあわせて、後続の課題として残した。
 
-これにより、前に述べた往復のうち、*引数*を渡す側が解消した(`rc2/tests/Test110Loop/LoopCallArgNativeShadow.idr`の`--directive dumprcexpr`と生成されたCの差分で確認した。`step`のワーカーへの呼び出しは、ループ内で持ち回るアキュムレータを、ネイティブの`int64_t`として直接読み、呼び出し地点での`idris2rc2_to_i64`の変換はもうない)。
+これにより、box化とunbox化の往復(ループで持ち回るアキュムレータを、`step`に渡すためにbox化し、`step`のワーカーが再びunbox化する)のうち、*引数*を渡す側が解消した(`rc2/tests/Test110Loop/LoopCallArgNativeShadow.idr`の`--directive dumprcexpr`と生成されたCの差分で確認した。`step`のワーカーへの呼び出しは、ループ内で持ち回るアキュムレータを、ネイティブの`int64_t`として直接読み、呼び出し地点での`idris2rc2_to_i64`の変換はもうない)。
 
 **そのような呼び出しから次の反復の持ち回る値へ戻る*結果*の側も、解消した。** 以前は、呼び出し先のワーカーがすでにネイティブを返しているのに、結果は`idris2rc2_mkInt64`でbox化された後、次の反復のシャドウのために、すぐに`idris2rc2_to_i64`でunbox化されていた。`Compiler.RC2.DualABI`の呼び出し地点の書き換え(`nativePromotionFor`)に、`RLoopContinue`の引数位置を、直前の`RLet`の値を受け取るネイティブコンテキストの消費者として認識するケースがなかったためである。修正は、`Compiler.RC2.DualABI`に新しく加えた`loopContinueNativeReads`で行った。これを`nativePromotionFor`の適格性の判定に、`nativeArgTypes`/`bareTailNativeReads`/`callArgNativeReads`と並べて合併する。この関数は、`fillLoopContinuePostDrop`と同じ、末尾を保つ骨格を走査し、`RLet`が束縛した値が、囲む`RLoop`の`RLoopContinue`の、`loopParams`がすでにネイティブとしている位置に直接渡されているかどうかを問う。`rc2/tests/Test110Loop/LoopCallArgNativeShadow.idr`に取り込んだ、元の`Test58LoopContinueNativePromotion.idr`のケース(同じファイルの`step`/`loop`の形をそのまま再利用している)で確認した。`step`の呼び出し結果を束縛する`RLet`は`Native Int`と表示される。生成されたCは、そのローカルをワーカーの呼び出しから直接宣言し(`int64_t var_4 = idris2rc2_worker_...`)、`goto loop;`の再代入までの間に、boxやunboxの呼び出しはない。
 

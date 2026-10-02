@@ -67,7 +67,7 @@ optional -- see `Bugs found #1`.
 ### Staging (`Compiler.RC2.Emit.Util`)
 
 Mirrors the existing `ConstDef` machinery (`boxedConstExpr`,
-`Emit/Util.idr:637`) almost exactly: a new `ConstConDef` state
+`Emit/Util.idr:796`) almost exactly: a new `ConstConDef` state
 (`SortedMap RCLocal String` for dedup-by-name, paired with the
 finished definition text list in staging order) is consulted by a new
 `boxedConstConExpr`. Staging a `RCConstCon` recursively stages any
@@ -249,7 +249,7 @@ before that later extension landed):
   treat `RCConstCon` as immortal (never needs a dup/drop tracked).
 - `rc2/src/Compiler/RC2/Sink.idr`, `rc2/src/Compiler/RC2/DualABI.idr`
   -- `localRepIn`'s own `RCConstCon` case (always `RBoxed`).
-- `rc2/support/rc2/datatypes.h` -- `IDRIS2RC2_Constructor`'s layout
+- `rc2/support/rc2/idris2rc2_datatypes.h` -- `IDRIS2RC2_Constructor`'s layout
   (referenced, not modified) and `IDRIS2RC2_STOCKVAL`/
   `IDRIS2RC2_REFCOUNT_MAX` (reused as-is).
 - `rc2/tests/Test17ConstFold.idr` -- regression test (merged in at the

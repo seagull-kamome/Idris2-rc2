@@ -21,6 +21,7 @@ Lifted (Compiler.LambdaLift)
   -> Compiler.RC2.ConAltNative    (native-shadow field caching)
   -> Compiler.RC2.MutualLoop      (mutual tail recursion -> one merged function)
   -> Compiler.RC2.Loop            (self-tail-call -> RLoop/RLoopContinue)
+  -> Compiler.RC2.Sink            (branch-local sinking, see doc/branch-sinking.md)
   -> Compiler.RC2.DualABI         (worker/wrapper synthesis, call-site rewrite)
   -> Compiler.RC2.Emit            (purely mechanical RCExp -> C)
 ```
@@ -61,7 +62,7 @@ altが再利用の資格を持つのは、そのaltのdropリスト(`peelDrop`�
 2. erasedな形(NIL/NOTHING/ZERO/UNIT)ではない。これらは実際のヒープオブジェクトを持たないNULLチェックであり、再利用するものがない。
 3. (`peelDrop`後の)本体に対する`usedConstructorsR`の結果に、alt自身が照合したコンストラクタ名が含まれている。
 
-資格がある場合の処理は次のとおり。`sc`をフラットなdropリストから取り除く(`sc`の運命は無条件のdropではなく、申し出で決まる)。`offersReuse`を`Just sc`にする。`tryConsume`が本体を走査して、申し出を確保する(または解放する)相手を探す。資格のないaltは、`offersReuse = Nothing`のまま、dropリストにも手を付けずに残す。デフォルト分岐も資格を持たない。スクルティニーの形が分からないからである。
+資格がある場合の処理は次のとおり。`sc`をフラットなdropリストから取り除く(`sc`の運命は無条件のdropではなく、申し出で決まる)。altの本体を`RReuseOffer sc ...`で包む。`tryConsume`が本体を走査して、申し出を確保する(または解放する)相手を探す。資格のないaltには`RReuseOffer`を付けず、dropリストにも手を付けずに残す。デフォルト分岐も資格を持たない。スクルティニーの形が分からないからである。
 
 ### `tryConsume` / `tryClaim`: 確保する相手の探索
 
@@ -83,9 +84,9 @@ altが再利用の資格を持つのは、そのaltのdropリスト(`peelDrop`�
 
 ### 配線中に見つかった二重解放のバグ
 
-`branchBody`は、`RConCase`/`RConstCase`のaltとデフォルト分岐に共通の下ろし処理である。当初の`branchBody`は、「分解して取り出したフィールドのうち生き残るものをdupし、それらを個別にフラットdropせずに親だけをdropする」というプロトコルを、`offersReuse`が設定されている場合、つまり再利用を申し出る経路だけの特別扱いにしていた。これは誤りである。このプロトコルは、再利用が起きるかどうかにかかわらず、スクルティニーがその場で死ぬ、一致したコンストラクタの**すべての**分岐で必要になる。通常の`idris2rc2_drop`は親のフィールドをすべて再帰的にdropするからである。あるフィールドが、分岐内でこの後も必要なのに、`sc->args[k]`経由のエイリアスにすぎず独立には参照カウントされていないとする。その場合、親の領域が再利用されようと、普通に解放されようと、この再帰的な破棄の前にdupが必要である。
+`branchBody`は、`RConCase`/`RConstCase`のaltとデフォルト分岐に共通の下ろし処理である。当初の`branchBody`は、「分解して取り出したフィールドのうち生き残るものをdupし、それらを個別にフラットdropせずに親だけをdropする」というプロトコルを、`RReuseOffer`がある場合、つまり再利用を申し出る経路だけの特別扱いにしていた。これは誤りである。このプロトコルは、再利用が起きるかどうかにかかわらず、スクルティニーがその場で死ぬ、一致したコンストラクタの**すべての**分岐で必要になる。通常の`idris2rc2_drop`は親のフィールドをすべて再帰的にdropするからである。あるフィールドが、分岐内でこの後も必要なのに、`sc->args[k]`経由のエイリアスにすぎず独立には参照カウントされていないとする。その場合、親の領域が再利用されようと、普通に解放されようと、この再帰的な破棄の前にdupが必要である。
 
-このバグは、refc-suiteの`wasm32cmp001`/`integers`テストで、実際に`free(): unaligned chunk detected`というクラッシュとして現れた。比較演算子は`Prelude.EqOrd`のインスタンスメソッドを経由し、そのメソッドがコンストラクタをパターンマッチしたあと、フィールドの1つを使い続けるためである。原因は、リファクタリング前のコミットの`Emit.idr`を`git show <pre-refactor commit>:.../Emit.idr`で読み、元の`addReuseConstructor`の正確な挙動を復元して突き止めた。元の実装では、`else`の枝(再利用を申し出ない場合)でも、`dupVars (conArgs \\ shouldDrop)`を無条件に行ってから、呼び出し側のフラットdrop用に`shouldDrop \\ conArgs`を返していた。この挙動を`branchBody`の無条件の動作として復元し、再利用固有の一意性チェックは、`sc`自身に対して、かつ`offersReuse`が設定されているときだけ、その上に重ねた。最終的な正しい版は`Emit.idr`の`branchBody`自身のdocコメントを参照すること。
+このバグは、refc-suiteの`wasm32cmp001`/`integers`テストで、実際に`free(): unaligned chunk detected`というクラッシュとして現れた。比較演算子は`Prelude.EqOrd`のインスタンスメソッドを経由し、そのメソッドがコンストラクタをパターンマッチしたあと、フィールドの1つを使い続けるためである。原因は、リファクタリング前のコミットの`Emit.idr`を`git show <pre-refactor commit>:.../Emit.idr`で読み、元の`addReuseConstructor`の正確な挙動を復元して突き止めた。元の実装では、`else`の枝(再利用を申し出ない場合)でも、`dupVars (conArgs \\ shouldDrop)`を無条件に行ってから、呼び出し側のフラットdrop用に`shouldDrop \\ conArgs`を返していた。この挙動を`branchBody`の無条件の動作として復元し、再利用固有の一意性チェックは、`sc`自身に対して、かつ`RReuseOffer`があるときだけ、その上に重ねた。最終的な正しい版は`Emit.idr`の`branchBody`自身のdocコメントを参照すること。
 
 検証は次のとおり行った。refc-suiteの全19テスト、`tests/*.idr`のスモークテスト全7件(本物のRefCの出力とバイト単位で一致)、ベンチマーク全3件。さらに、複数のrefc-suiteテストで`idris2rc2_isUnique`と`idris2rc2_dropReuseConstructor`の両方が実際に呼ばれていることを確認した(このパスが黙って死んでいるわけではない)。
 
@@ -121,7 +122,7 @@ idris2-lspのビルド全体での計測では、`releaseReuse`ノードが **33
 ## ファイル
 
 - `rc2/src/Compiler/RC2/Reuse.idr`: パス本体(新規モジュール)。
-- `rc2/src/Compiler/RC2/RCExp.idr`: `RCon.reuseFrom`、`MkRConAlt.offersReuse`、`RReleaseReuse`、`RReuseOffer.dropOnUnique`(上記の`dropOnUnique`補遺を参照)。
+- `rc2/src/Compiler/RC2/RCExp.idr`: `RCon.reuseFrom`、`RReleaseReuse`、`RReuseOffer.dropOnUnique`(上記の`dropOnUnique`補遺を参照)。
 - `rc2/src/Compiler/RC2/RC.idr`: Phase 1/2は、新しいフィールドを必要に応じて`Nothing`/`[]`にしておくだけである。所有権のロジックには変更がない。
 - `rc2/src/Compiler/RC2/Emit.idr`: `reuseVarName`、`emitReuseOffer`、`branchBody`(後から追加したRUnderApp/RAppNameのクロージャ構築の特別扱い(コミット`22ade30`)は再利用とは無関係で、たまたま同じ関数にあるだけである)。
 - `rc2/src/Compiler/RC2/RC2.idr`: `applyReuse`、パイプラインへの組み込み。

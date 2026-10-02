@@ -85,7 +85,7 @@ static struct { IDRIS2RC2_Header header; void *fn; uint8_t arity; uint8_t filled
 ```
 
 This deliberately does **not** mirror `IDRIS2RC2_Closure`'s real
-layout in full. `datatypes.h`'s actual struct is
+layout in full. `idris2rc2_datatypes.h`'s actual struct is
 
 ```c
 typedef struct {
@@ -454,7 +454,7 @@ of how many distinct functions a generic helper is ever called with.
   case (always `RBoxed`).
 - `rc2/support/rc2/runtime.c` -- the defensive `REFCOUNT_MAX` guard in
   `idris2rc2_trampoline`.
-- `rc2/support/rc2/datatypes.h` -- `IDRIS2RC2_Closure`'s real layout
+- `rc2/support/rc2/idris2rc2_datatypes.h` -- `IDRIS2RC2_Closure`'s real layout
   (referenced, not modified) and `IDRIS2RC2_STOCKVAL`/
   `IDRIS2RC2_REFCOUNT_MAX` (reused as-is).
 - `rc2/tests/Test115ConstFoldClosure/ConstFoldClosure.idr` -- merged regression suite for

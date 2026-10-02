@@ -39,7 +39,7 @@ castString [NPrimVal fc (Ch i)] = Just (NPrimVal fc (Str (stripQuotes (show i)))
 バグをそのまま引き継ぐ。手作業で確認したところ、`cast 'あ'` を `castString` で畳み
 込むと、誤ったエスケープ文字列になる。rc2 自身のランタイム
 (`support/rc2/numeric.c` の `idris2rc2_cast_Char_to_string`。コードポイントを
-UTF-8 のバイト列に変換するだけで、エスケープは一切しない)が返す正しい UTF-8 とは
+UTF-8 のバイト列に変換するだけで、エスケープは一切しない)が返す正しいUTF-8とは
 異なる結果である。
 
 `foldableOp` の `Cast from StringType` のケースは `isJust (intKind from)` で
@@ -53,20 +53,20 @@ isJust (intKind to)` に統合したとしても、`Char` は(同じ理由で)�
 `foldableOp` を広げても安全になったかどうかを再検討しないまま残ることである。
 
 テストは、`rc2/tests/Test17ConstFold.idr` の `castCharToStringNotFolded` である。
-このテストは `'あ'` をキャストする。普通の英字ではなく非 ASCII のコードポイントを
+このテストは `'あ'` をキャストする。普通の英字ではなく非ASCIIのコードポイントを
 選んだのは、除外が壊れて畳み込まれてしまった場合に、偶然一致することなく明らかに
-誤った文字列になるからである。テストでは、実行時の出力が正しい UTF-8 であることを
+誤った文字列になるからである。テストでは、実行時の出力が正しいUTF-8であることを
 検査する。
 
 ## `Double -> String`: ホスト側の `Show Double` と rc2 自身のフォーマッタ
 
 `castString` の `Db` のケース(`Primitives.idr:41`)は `Str (show i)` である。これは
-*ホスト*の Idris2 コンパイラ自身の `Show Double` が生成する文字列(通常は Chez の
+*ホスト*の Idris2 コンパイラ自身の `Show Double` が生成する文字列(通常はChezの
 `number->string`)をそのまま使う。rc2 自身のランタイム
 (`support/rc2/numeric.c` の `idris2rc2_cast_Double_to_string`)は、現在は同じ
-double に往復できる最短の十進表現を出力する。以前の固定の `"%f"` よりは Chez にずっと
-近いが、1文字単位で一致する保証はない。指数表記に切り替える閾値は rc2 が独自に決めた
-もの(`(-6, 21]` は小数表記、それ以外は `<m>e<n>`)であり、`0.5` の先頭の `0` も rc2 は
+double に往復できる最短の十進表現を出力する。以前の固定の `"%f"` よりはChezにずっと
+近いが、1文字単位で一致する保証はない。指数表記に切り替える閾値はrc2が独自に決めた
+もの(`(-6, 21]` は小数表記、それ以外は `<m>e<n>`)であり、`0.5` の先頭の `0` もrc2は
 残すのに対し、Chez は `.5` と書く。そのため、畳み込みを許せば、コンパイル時に得られる
 文字列が、実行時のキャストの結果と微妙に食い違うおそれがある。
 
@@ -86,8 +86,8 @@ double に往復できる最短の十進表現を出力する。以前の固定�
 
 ## `Double` の算術と `Int`/`Integer` -> `Double`: 畳み込んで安全だが、`safeConst` の一律の `Db` 除外で止まっている
 
-`safeConst (Db _) = False` は、大づかみなスイッチ1つである。このスイッチが、`Db` の
-リテラルをオペランドに含む PrimFn を、**どれも** `constFoldOp` に畳み込ませない。
+`safeConst (Db _) = False` は、大づかみなスイッチ1つで、`Db` の
+リテラルをオペランドに含むPrimFnを、**どれも** `constFoldOp` に畳み込ませない。
 上の2つの `Cast` の方向だけでなく、次のものがすべて対象になる。
 
 - `Add` / `Sub` / `Mul` / `Div` / `Neg DoubleType`
@@ -101,13 +101,13 @@ double に往復できる最短の十進表現を出力する。以前の固定�
 `Cast _ -> Double` の形については、これに加えて `foldableOp` の
 `intKind DoubleType = Nothing` も妨げになっている。
 
-このうち、算術演算と比較は実際に畳み込んで**安全**である。IEEE 754 の binary64 の
+このうち、算術演算と比較は実際に畳み込んで**安全**である。IEEE 754 のbinary64の
 加減乗除、符号反転、順序比較は、ビット単位で厳密に決まる。ホスト側の評価器
 (`getOp` の `add (Db x) (Db y) = Db (x + y)` など。コンパイラをどのバックエンドで
 ビルドしたかによらない)と、rc2 の C ランタイム(ハードウェアの `double`)で、結果は
-同一である。`DoubleSqrt` は IEEE が正しく丸めることを要求しており、`DoubleFloor` と
+同一である。`DoubleSqrt` はIEEEが正しく丸めることを要求しており、`DoubleFloor` と
 `DoubleCeiling` は厳密な演算なので、この3つも安全である。`Cast (固定幅整数 /
-Integer) -> Double` は IEEE により最近接偶数への丸めと決まっており、ホストとターゲット
+Integer) -> Double` はIEEEにより最近接偶数への丸めと決まっており、ホストとターゲット
 で一致する(非常に大きな `Integer` は 2^53 を超えると精度を失うが、双方とも同じように
 丸める)。
 
@@ -115,12 +115,12 @@ Integer) -> Double` は IEEE により最近接偶数への丸めと決まって
 
 - `Cast DoubleType StringType` と `Cast StringType DoubleType`。前後の節に書いた
   フォーマッタとパーサの不一致が原因である。
-- `Cast DoubleType -> (固定幅整数)`。範囲外や NaN のオペランドをゼロ方向に切り捨てる
+- `Cast DoubleType -> (固定幅整数)`。範囲外やNaNのオペランドをゼロ方向に切り捨てる
   処理は、プラットフォーム依存である。`intKind DoubleType = Nothing` により、すべての
   整数の変換先でこの方向は遮断されている。
 - 超越関数。`doubleOp exp` などは、(コンパイラをビルドしたバックエンド、たとえば
   Chez の `flexp` 経由で)*ホストの* libm を呼び出す。これがターゲットの C の `libm` と
-  最後の ULP まで一致する保証はない。
+  最後のULPまで一致する保証はない。
 
 したがって、これを有効にするのは1行の変更では済まない。必要な作業は次のとおりである。
 
@@ -190,9 +190,9 @@ Chez でビルドされたもの)が、コンパイル時にそのどちらか�
   String を変換元とするキャストの食い違いが書かれている。また、この周辺を調べる中で
   見つかった、上流の RefC ランタイムの無関係なバグ3件も書かれている。
   `idris2_cast_Double_to_Int8` が存在しない、`idris2_cast_String_to_*` が大文字の S で
-  定義されているのに RefC のコンパイラ自身は小文字の形を呼び出すコードを出力する、
+  定義されているのにRefCのコンパイラ自身は小文字の形を呼び出すコードを出力する、
   `idris2_negate_Double` が `idris2_nagate_Double` と誤記されている、の3件である。
-  いずれも rc2 のバグではない。
+  いずれもrc2のバグではない。
 - `rc2/tests/Test17ConstFold.idr` -- 上記3方向が畳み込まれないままであることを
   確認する回帰テスト。
 - `rc2/src/Compiler/RC2/InlineCExp.idr` -- `allLiteralArgs` / `hasUnfoldableConst` は
@@ -208,14 +208,14 @@ Chez でビルドされたもの)が、コンパイル時にそのどちらか�
    文字だけでなくすべてのコードポイントが、`show` とエスケープ解除を通して正しく往復
    できるかを、あらためて導出する。
 2. **`Double -> String`**: プロジェクト全体にかかる `safeConst` の `Db` の除外を先に
-   見直さない限り、先へ進めない。この除外は `Cast` だけでなくすべての PrimFn から
+   見直さない限り、先へ進めない。この除外は `Cast` だけでなくすべてのPrimFnから
    `Db` を除外しており、見直しは別の大きな判断になる。その範囲は、上の「`Double` の
    算術と ...」の節に整理してある。着手する場合は、1つの例を信用する前に、境界値を
    一通り試して、`idris2rc2_cast_Double_to_string` の最短形式の出力を、ホスト自身の
    `Show Double` の出力と照合する。試す値は、0.0、負のゼロ、非常に大きい値と小さい値、
    小数表記と指数表記の閾値の両側、先頭のゼロの慣習が異なる `|x| < 1` である。
    算術・比較・`Sqrt`・`Floor`・`Ceiling`・`int -> Double` の部分集合には、こうした
-   検証は要らない(どちら側でも IEEE で厳密に決まる)。超越関数には必要である
+   検証は要らない(どちら側でもIEEEで厳密に決まる)。超越関数には必要である
    (ホストの `libm` とターゲットの `libm` の違い)。
 3. **`String -> Integer`**: rc2 の `mpz_set_str` ベースの実行時パースと、同じリテラル
    に対するコンパイル時の `getOp` による畳み込みの両方を試す再現コードを書く。入力は
@@ -253,4 +253,4 @@ Chez でビルドされたもの)が、コンパイル時にそのどちらか�
 キャストしていた。`tests/BenchStructReturnNative.idr` は、864 ms・割り当て 20M 回から
 54 ms・35 回になった。idris2-missing-containers の実行時間は 10.36 s から 9.69 s に
 なった(6.5% 高速化。生成された C が作る `Integer` リテラルは12個から4個に減った)。
-idris2-lsp の最終 IR にある `cast-Integer-Int` の演算は、416個から211個になった。
+idris2-lsp の最終IRにある `cast-Integer-Int` の演算は、416個から211個になった。

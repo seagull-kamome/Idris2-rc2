@@ -43,7 +43,7 @@ static struct { IDRIS2RC2_Header header; void *fn; uint8_t arity; uint8_t filled
     const constclosure_7 = { IDRIS2RC2_STOCKVAL(IDRIS2RC2_TAG_CLOSURE), (IDRIS2RC2_Value *(*)())Main_greet_Dog, 1, 0 };
 ```
 
-これは、`IDRIS2RC2_Closure` の本当のレイアウトを完全に写したものでは、意図的に**ない**。`datatypes.h` の実際の構造体は次のとおりである。
+これは、`IDRIS2RC2_Closure` の本当のレイアウトを完全に写したものでは、意図的に**ない**。`idris2rc2_datatypes.h` の実際の構造体は次のとおりである。
 
 ```c
 typedef struct {
@@ -168,7 +168,7 @@ RV _ cval@(RCConstClosure {}) =>
 - `rc2/src/Compiler/RC2/RC.idr`: `annotate` の `splitBorrows`/`dropIfLastUse`/`isBoxedOperand`/`(RV fc v)` のケース。`RCConstClosure` を不死として扱うように拡張した。
 - `rc2/src/Compiler/RC2/Util.idr`: `localRepIn` の `RCConstClosure` のケース(常に `RBoxed`)。
 - `rc2/support/rc2/runtime.c`: `idris2rc2_trampoline` の防御的な `REFCOUNT_MAX` のガード。
-- `rc2/support/rc2/datatypes.h`: `IDRIS2RC2_Closure` の本当のレイアウト(参照しただけで、変更していない)と、`IDRIS2RC2_STOCKVAL`/`IDRIS2RC2_REFCOUNT_MAX`(そのまま再利用した)。
+- `rc2/support/rc2/idris2rc2_datatypes.h`: `IDRIS2RC2_Closure` の本当のレイアウト(参照しただけで、変更していない)と、`IDRIS2RC2_STOCKVAL`/`IDRIS2RC2_REFCOUNT_MAX`(そのまま再利用した)。
 - `rc2/tests/Test115ConstFoldClosure/ConstFoldClosure.idr`: この畳み込みの回帰テストを統合したスイート。関連する節は次のとおり。
   - §1(旧 `Test69ConstFoldClosureDict`): 構造の回帰テスト。3 メソッドの `Greeter Dog` のインスタンス辞書が、3 つの `RCConstClosure` フィールドを持つ 1 つの `RCConstCon` に畳み込まれる。`--directive dumprcexpr` で確認し、辞書を構築する `idris2rc2_mkClosure` の呼び出しが生成された `.c` にないことを grep で確認した。
   - §2(旧 `Test71ConstFoldClosureDeadCodeSurvival`): `DeadCode` の修正に特化したテスト。畳み込み済みの辞書フィールド経由でしか到達できないメソッド(`secretG`)と、そのメソッドだけが呼ぶ 2 ホップ目のヘルパーの、どちらも `pruneDeadDefs` を生き延びなければならない。

@@ -327,8 +327,8 @@ ownership note beyond that copy. `Test59Export` pins this down
 directly -- a companion C driver passes a plain string literal (never
 Idris/rc2-managed memory) and confirms it's left unmodified after the
 call, proving rc2 never aliases or takes ownership of the caller's own
-buffer. `Test59Export` covers the return direction, which is the
-one with a real ownership contract to get right.
+buffer. The return direction, which is the one with a real ownership contract
+to get right, is covered below.
 
 Both directions cross through a plain `char *`, and `idris2rc2_mkString`
 is `strlen`-based -- so a plain C string argument (or, on the return
@@ -459,8 +459,9 @@ result's native payload out, the wrapper explicitly
 unlike `main`'s own footer (which can get away with never dropping its
 final result, since the process exits immediately after), this wrapper
 can be called an arbitrary number of times from external C, and a
-heap-allocating return (`CFInt`/`CFInt64`/`CFUnsigned64`/`CFDouble`)
-would otherwise leak on every single call. The drop is unconditional
+heap-allocating return (`CFDouble`, or a `CFInt`/`CFInt64`/`CFUnsigned64`
+value outside the immediate range of `immediate-ints.md`) would
+otherwise leak on every such call. The drop is unconditional
 (including for `CFChar`/`CFInt8`/.../`CFUnsigned32`, whose values are
 never real heap allocations) because `idris2rc2_drop` already no-ops
 safely on an always-unboxed or `NULL` value -- see

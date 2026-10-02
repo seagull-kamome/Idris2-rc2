@@ -298,6 +298,6 @@ idris2-rc2 --cg rc2 --directive timing Program.idr -o program
   `ExternStructs`, section 5's own.
 - `rc2/src/Compiler/RC2/SpecClosure.idr` -- `maybeLogTimeOver`, section
   8's own `timing` gate.
-- `rc2/tests/Test121CgRuntime/`, `rc2/tests/Test121CgRuntime/`,
+- `rc2/tests/Test121CgRuntime/`,
   `rc2/tests/Test120CStruct/` -- the motivating smoke tests
   (section 7).

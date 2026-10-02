@@ -124,4 +124,4 @@ idris2-rc2 --cg rc2 --directive timing Program.idr -o program
 - `rc2/src/Compiler/RC2/RC2.idr`: `toRCDefs`の段階の無効化の配線、`compileExpr`の`directiveList`の取得とそこから読まれるすべてのディレクティブ、`getInlineRuntime`、`getExternStructs`。
 - `rc2/src/Compiler/RC2/Emit/Util.idr`: `InjectedRuntime`(2つのコード注入のディレクティブが書き込む、`header`スコープの状態)。`ExternStructs`(第5節のもの)。
 - `rc2/src/Compiler/RC2/SpecClosure.idr`: `maybeLogTimeOver`(第8節の`timing`のゲート)。
-- `rc2/tests/Test121CgRuntime/`、`rc2/tests/Test121CgRuntime/`、`rc2/tests/Test120CStruct/`: 動機となったスモークテスト(第7節)。
+- `rc2/tests/Test121CgRuntime/`、`rc2/tests/Test120CStruct/`: 動機となったスモークテスト(第7節)。

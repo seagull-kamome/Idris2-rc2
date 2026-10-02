@@ -1,9 +1,10 @@
 # Tail recursion modulo constructor (TRMC)
 
 Status: phases 1 to 3 implemented (2026-09-26 and 2026-09-27,
-`Compiler.RC2.Trmc`); phase 4 is tracked in `TODO.md` ("tail recursion
-modulo constructor"). Motivation is in `KNOWN-BUGS.md` ("deep non-tail
-recursion overflows the C stack").
+`Compiler.RC2.Trmc`); phase 4 was measured, dropped or done elsewhere (see "Plan"). What
+remains is tracked in `TODO.md` ("tail recursion modulo constructor").
+Motivation is in `KNOWN-BUGS.md` ("deep non-tail recursion overflows
+the C stack").
 
 ## Problem
 
@@ -211,9 +212,10 @@ A `notrmc` directive disables the pass, like every other stage.
 
 1. **Phase 1 (this document):** self recursion, one recursive field,
    one field index per function; `RFill`; the `notrmc` directive.
-   - Test95 covers `mergeBy`, `[1 .. n]`, `Data.Vect.map`, and a
-     `filter` that mixes self tail calls with `::` sites, each at 1M
-     elements, under valgrind.
+   - `Test113DeepRecursion/Trmc.idr` covers `mergeBy`, `map`, `zipWith`,
+     count-up-to builders, a `Link`/`End` chain, and a `filter` that
+     mixes self tail calls with `::` sites, each at 1M elements, under
+     valgrind.
    - Re-measure with the `scratchpad` `trmc` tool (sites left), the
      `sort` benchmark against Chez, and idris2-lsp's `--timing 3`.
 2. **Phase 2 (done):** mutual recursion. See "Phase 2 design" below.

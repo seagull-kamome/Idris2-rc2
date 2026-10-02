@@ -3,9 +3,10 @@
 (原文: `doc/trmc.md`。内容が乖離した場合は原文を正とする。)
 
 状態: フェーズ1から3まで実装済み(2026-09-26と2026-09-27、
-`Compiler.RC2.Trmc`)。フェーズ4は`TODO.md`の「tail recursion modulo
-constructor」で管理している。動機は`KNOWN-BUGS.md`の「deep non-tail
-recursion overflows the C stack」にある。
+`Compiler.RC2.Trmc`)。フェーズ4は測定のうえ見送ったか、別の仕組みで実装済みである(「計画」を
+参照)。残る課題は`TODO.md`の「tail recursion modulo constructor」で
+管理している。動機は`KNOWN-BUGS.md`の「deep non-tail recursion
+overflows the C stack」にある。
 
 ## 問題
 
@@ -223,7 +224,8 @@ TRMCは「Arity raise (after early inline)」の後、「CAF memoization」と
 
 1. **フェーズ1(本書):** 自己再帰、再帰フィールド1つ、関数あたり
    フィールド番号1つ。`RFill`と`notrmc`ディレクティブ。
-   - Test95で`mergeBy`、`[1 .. n]`、`Data.Vect.map`、および自己末尾
+   - `Test113DeepRecursion/Trmc.idr`で`mergeBy`、`map`、`zipWith`、
+     count-up-to系のビルダー、`Link`/`End`のチェーン、および自己末尾
      呼び出しと`::`の箇所が混在する`filter`を、それぞれ100万要素で、
      valgrind下で検証する。
    - `scratchpad`の`trmc`ツール(残りの箇所数)、Chezとの`sort`

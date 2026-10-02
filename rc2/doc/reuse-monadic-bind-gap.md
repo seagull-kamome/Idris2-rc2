@@ -369,7 +369,7 @@ before reaching for either of the two large compiler-side options above.
    on an effectful callback inside a case branch that reconstructs the
    scrutinee's own constructor (see the repro above).
 3. `nix-shell -p idris2 gcc gmp pkg-config --run 'build/exec/idris2-rc2 --cg rc2 --directive dumprcexpr <file>.idr -o <out>'`
-4. Read `build/exec/<out>.crexpr` (see `rc2/doc/reading-the-ir.md`) --
+4. Read `build/exec/<out>.rcexpr` (see `rc2/doc/reading-the-ir.md`) --
    look for `drop [...]` (unconditional) vs. `reuseOffer`/`reuse=` on the
    destructured scrutinee, and check whether the reconstruction is a
    `partial ... missing=N` call (bind continuation, unsafe to inline) or

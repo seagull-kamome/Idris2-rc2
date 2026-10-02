@@ -154,7 +154,7 @@ idris2-lsp、`--directive nopushcon`(オフ)とオンの比較(どちらも書�
 |---|---|---|
 | `ConstFold`の内部(最初の不動点ラウンドのみ。それに加えてSpecClosureが畳み込むクローン) | 書き換えA(実装済み) | 低コストである。既存の走査にmapを足し、定義ごとに使用の走査を1回足すだけで済む。形状Aの大部分を、SpecClosure、SpecConstCon、RC注釈の目に触れる前に除去するので、それらの処理量が減る。 |
 | `Compiler.RC2.PushCon`。`ConstFold`の直後、`SpecClosure`の前(無効化は`nopushcon`) | 書き換えB(実装済み)。続いて、変更した各定義への`foldConstDef` | 新しいidのために`Core`が必要である。結果をもう一度畳み込むと、Bが露出させたフィールドに書き換えAと定数畳み込みが働く。 |
-| `LateInline`の後(後のフェーズ) | `LateInline`が作るものに対する、RCを考慮したA/B。形状Aの166箇所と、形状Bの1,625箇所のうち約半分 | 以下を参照。 |
+| `LateInline`の後(`latepushcon`、実装済み、デフォルトでは無効) | `LateInline`が作るものに対する、RCを考慮したA/B。形状Aの166箇所と、形状Bの1,625箇所のうち約半分 | 以下を参照。 |
 
 大部分をRC前に処理し、`LateInline`の後に別の後始末を行う、という分担が適切である。`LateInline`は注釈済みの本体をスプライスする(リネームして`stripOwnership`を実行する。モジュールのドキュメントを参照)。そのため、`LateInline`が作るものはすべてRC後である。そこにある形は`dup`/`drop`/`reuseOffer`を伴い、コンストラクタ生成を除去するときには、それらの釣り合いを取り直さなければならない。
 

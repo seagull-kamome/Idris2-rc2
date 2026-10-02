@@ -95,15 +95,25 @@ IDRIS2RC2_Value *idris2rc2_applyClosureN(IDRIS2RC2_Value *_c, IDRIS2RC2_Value **
   IDRIS2RC2_Closure *c = (IDRIS2RC2_Closure *)_c;
   uint8_t remaining = c->arity - c->filled;
 
-  if (n == remaining && c->arity <= 20) {
-    // 1回で全引数が揃う場合: 中間クロージャは作らない。既存の充填済み
-    // 引数をdupしてスタック上の作業バッファに置き、新しい引数をその後ろに
-    // 並べて、dispatchClosureと*同じ*switchを再利用する。
+  if (n == remaining && c->arity >= 1 && c->arity <= 20) {
+    // 1回で全引数が揃う場合: 中間クロージャは作らない。充填済みの
+    // 引数と新しい引数をスタック上の作業バッファに集め、
+    // dispatchClosureと*同じ*switchを再利用する。
     IDRIS2RC2_Value *xs[20];
-    for (uint8_t i = 0; i < c->filled; ++i) xs[i] = idris2rc2_dup(c->args[i]);
-    for (uint8_t i = 0; i < n; ++i) xs[c->filled + i] = newArgs[i];
-    IDRIS2RC2_Value *result = idris2rc2_dispatchFn(c->fn, c->arity, xs);
-    idris2rc2_drop((IDRIS2RC2_Value *)c);
+    IDRIS2RC2_Value *result;
+    if (idris2rc2_isUnique(c)) {
+      // 一意の場合: 充填済みの引数は呼び出しへ所有権ごと渡す(dupしない)。
+      // そのため、後で解放するのはクロージャの殻だけである。
+      for (uint8_t i = 0; i < c->filled; ++i) xs[i] = c->args[i];
+      for (uint8_t i = 0; i < n; ++i) xs[c->filled + i] = newArgs[i];
+      result = idris2rc2_dispatchFn(c->fn, c->arity, xs);
+      if (idris2rc2_rc_release(&c->header)) free(c);
+    } else {
+      for (uint8_t i = 0; i < c->filled; ++i) xs[i] = idris2rc2_dup(c->args[i]);
+      for (uint8_t i = 0; i < n; ++i) xs[c->filled + i] = newArgs[i];
+      result = idris2rc2_dispatchFn(c->fn, c->arity, xs);
+      idris2rc2_drop((IDRIS2RC2_Value *)c);
+    }
     return idris2rc2_trampoline(result);
   }
 

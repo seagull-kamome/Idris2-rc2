@@ -188,10 +188,11 @@ foldConst caf env (RConCase fc sc alts mDef) =
 ```
 
 (`ConstFold.idr:359-374`)。`insertConArgs` が各フィールドに
-`isConstLocalProof` を呼ぶのは、省略できない配線である。`RCon` 自身の畳み
+`isConstLocalProof` を呼ぶのは、`env` がフィールドを記録するのに必要な
+`IsAnyConstLocal` の証明を得るためであり、実際に失敗することはない。`RCon` 自身の畳み
 込み(`ConstFold.idr:288-294`)が `RCConstCon` を作るのは、全フィールドが
 すでに `IsAnyConstLocal` を満たすときだけだからである。そのため、ここで置
-換するフィールドには実際にはすべて証明があり、本当に畳み込まれたローカル
+換するフィールドにはすべて証明があり、本当に畳み込まれたローカル
 と同じように `env` で追跡される。`Nothing` の枝は全域性のために置いてある
 のであって、`RCConstCon` 自身の `args` で実行されることは想定していない。
 `RCEmptyCon`(NIL/NOTHING/ZERO/UNIT)は、構造上フィールドを持たないので、

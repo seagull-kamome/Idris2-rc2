@@ -337,8 +337,11 @@ constraint `ConstFold` itself already accepts.
 ## Known remaining edge case (low priority)
 
 A CAF whose own computation reaches back into itself before finishing
-(direct or mutual recursion through other CAFs) would deadlock (the
-spin-wait never sees "done") under this design. Not a new failure mode
+on the same thread (direct or mutual recursion through other CAFs) is
+caught by `idris2rc2_memo_cycle` ("A CAF that depends on itself"). One
+whose cycle runs through another thread would still deadlock (the
+spin-wait never sees "done"), because the check only compares the
+waiter with the thread that claimed the memo. Not a new failure mode
 this introduces -- a genuinely circular, non-lazy top-level value
 reference was already undefined/diverging before this design existed
 -- not pursued further here.

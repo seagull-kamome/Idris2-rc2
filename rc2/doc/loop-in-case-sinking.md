@@ -5,8 +5,7 @@ This document records a design considered as a follow-up to
 mirror-image transform -- hoisting a loop-invariant `case` *out of* a
 loop). It exists so a future session can pick this idea back up (or
 decide against it) without re-deriving the analysis below. **Status:
-designed on paper, not implemented.** No code changes accompany this
-document.
+designed on paper, not implemented.**
 
 ## Motivation
 
@@ -19,7 +18,7 @@ destructured field that survives to be used inside the loop body, not
 one dup total.** Confirmed directly in this project's own `--directive
 dumprcexpr` dump of `idris2-missing-containers`' `MurMur3`
 `HashAlgorithm` implementation (`rc2/BENCHMARKS.md`'s own
-idris2-missing-containers section, this session):
+idris2-missing-containers section):
 
 ```
 case v1 of

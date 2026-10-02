@@ -1458,10 +1458,13 @@ the closest analogue to bug #2 above) passed without any fix needed.
    Boxed" shape but past what the old limit would
    have excluded -- called fully saturated from `main` so Stage 4's own
    call-site rewriting fires): the generated C was inspected by hand
-   and shows `idris2rc2_ffiworker_Main_prim__wide_0` declared with 12
+   and (as of this item, before Stage 5 removed standalone FFI workers) shows
+   `idris2rc2_ffiworker_Main_prim__wide_0` declared with 12
    individually-typed `int64_t` parameters plus 3 `IDRIS2RC2_Value *`
    parameters (no `var_arglist[]` anywhere), and `main`'s own call site
-   calling the worker directly, confirming Stage 4's own rewrite fired.
+   calling the worker directly, confirming Stage 4's own rewrite fired;
+   under Stage 5 no such function is emitted and the call is spliced
+   inline instead.
    `verify.sh --regen-expected` (full suite, 85/85) and
    `refc-suite/run.sh` (19/19) both still pass; `valgrind
    --leak-check=full` reports `0 bytes definitely lost` for this test
@@ -1698,7 +1701,7 @@ from Stage 2.
    through the same native path.
 4. Full `tests/Test*.idr`/`tests/Bench*.idr` suite, diffed against real
    `idris2 --cg refc` output, same as every other stage in this
-   project -- both stages are supposed to be purely structural/codegen
+   project -- every stage is supposed to be purely structural/codegen
    changes, so *every* test must still match byte-for-byte, with zero
    observable behaviour difference. `Test7CastMatrix.idr` can't be
    diff-checked against real `idris2 --cg refc` at all right now: the

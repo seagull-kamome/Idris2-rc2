@@ -60,6 +60,7 @@ Lifted (Compiler.LambdaLift)
   -> Compiler.RC2.Loop             (self-tail-call, incl. MutualLoop's own
                                      merged functions -> RLoop/RLoopContinue,
                                      plus native-shadow promotion -- this document)
+  -> Compiler.RC2.Sink             (branch-local sinking, see doc/branch-sinking.md)
   -> Compiler.RC2.DualABI          (worker/wrapper synthesis, call-site rewrite)
   -> Compiler.RC2.Emit             (purely mechanical RCExp -> C)
 ```
@@ -286,7 +287,10 @@ found" below for how this was diagnosed.
    a native-Rep'd local boxes it fresh on the spot, so a redirected
    Boxed-context read still produces the right *value*, just via a
    fresh allocation rather than sharing the original object's identity
-   (a real but acceptable trade-off, not a correctness issue).
+   (a real but acceptable trade-off, not a correctness issue). This
+   blanket rename now applies only to loop-*carried* parameters; a
+   loop-*invariant* one only has its native-context reads redirected
+   (see "Reusing the original Boxed value" below).
 3. `stripOwnership` (see below) removes the now-stale ownership
    bookkeeping `annotate` had computed for the *original* parameter,
    keyed off the *shadow* ids (post-rename).
@@ -313,17 +317,18 @@ a direct consequence, but that's a side effect, not the point) -- a
 reader of the `.rcexpr` dump should be able to trust that `loopParams`
 lists exactly the values a loop actually reassigns.
 
-**Detection**: after `applyLoop`'s existing native-shadow promotion has
-already run (`fullLoopParams`, `withPostDrop` -- everything through
-step 4 above, completely unchanged), `collectContinueArgs` walks the
+**Detection**: as first built, this ran after `applyLoop`'s native-shadow
+promotion (steps 1-4 above); it now runs *before* any renaming, on the
+tail-call-converted body -- see "Reusing the original Boxed value for a
+surviving Boxed-context read" below, which also explains why that gives
+the same answer. Either way, `collectContinueArgs` walks the
 body collecting every `RLoopContinue`'s own `args` list (same tree
 shape `fillLoopContinuePostDrop` itself already walks -- one function,
 one `RLoop`, by construction, so there's never a nested one to worry
 about). `invariantLoopParamIds` then folds over all of them: starting
 from "every position is invariant" and, for each collected `args` list,
 ANDing in "does this continue supply *this exact same local* (`RCLoc`
-of the loop param's own id -- a shadow id where native-shadowed, the
-original parameter id otherwise) at this position" -- a position
+of the loop param's own id) at this position" -- a position
 survives only if literally every continue agrees. Boxed and native-
 shadowed positions are checked identically; nothing here distinguishes
 them.
@@ -748,20 +753,25 @@ For one SCC (`groupNames`):
    `Ord Name`) so tag assignment doesn't depend on SCC-traversal order
    -- a stability property that matters for reproducible output, not
    correctness.
-2. `maxArity` = the largest arity among the group's members;
-   `tagOf : SortedMap Name Int` assigns each member a small integer tag,
-   `0..length members - 1`.
+2. Classify every member parameter by the native type `Compiler.RC2.Loop`
+   would promote it to on its own member (`callArgOrOpNativeType`), or
+   `Nothing`; `slotCount` = the sum, over classes, of the most
+   parameters of that class any one member has ("Bugs found" 8).
+   `tagOf : SortedMap Name (Int, List Nat)` assigns each member a small
+   integer tag, `0..length members - 1`, and the slot position of each
+   of its parameters (its class's offset plus the number of earlier
+   same-class parameters).
 3. Mint a fresh merged function name (`freshName`, avoiding collision
    with every name already in the whole program) and fresh ids for the
    tag parameter (`tagId`) and each shared argument slot (`slotIds`,
-   `maxArity` of them).
+   `slotCount` of them).
 4. For each member, build its own `RConstAlt`:
    - `collectBoundIds` finds every id the member's own body binds
      internally (besides its own top-level parameters, handled
      separately below); `freshId` mints one fresh replacement per such
      id.
    - A `Renaming` maps the member's own top-level parameters onto the
-     *shared* `slotIds` (not arbitrary fresh ones -- those genuinely
+     *shared* `slotIds` at those positions (not arbitrary fresh ones -- those genuinely
      *are* the merged function's real parameters now) and every
      internal id onto its own fresh replacement.
    - `renameRCExp` applies that renaming to the member's own body.
@@ -770,8 +780,9 @@ For one SCC (`groupNames`):
      tail call targeting *any* group member (looked up in `tagOf`,
      regardless of whether the target is this same member or a
      different one) with an ordinary tail call to the merged function
-     itself, prepending the target's own tag and padding the argument
-     list out to `maxArity` with `RCNull`.
+     itself, prepending the target's own tag, placing the arguments at the
+     target's own slot positions and filling every other slot with
+     `RCNull`.
 5. The merged body is `RConstCase EmptyFC (RCLoc tagId) alts (Just
    crash)` -- the crash default is unreachable in practice (`tagId`
    only ever holds a value one of the `alts` produced), kept as a
@@ -1367,8 +1378,8 @@ deliberately left `RBoxed` -- kept in the same test file as a control).
 
 This closes the gap for a *non-loop* function's own parameters and,
 identically, `Compiler.RC2.DualABI`'s worker-parameter eligibility for
-one (e.g. a `step`-shaped per-element helper called from inside a
-loop) -- confirmed via `--directive dumprcexpr`: such a helper's own
+one (e.g. a per-element helper `step` called from inside a
+loop, with the loop's accumulator as its argument) -- confirmed via `--directive dumprcexpr`: such a helper's own
 worker now correctly declares that parameter `Native`, not `Boxed`.
 
 **Now closed** for the common case: a loop-carried parameter threaded
@@ -1405,8 +1416,9 @@ Two scope limits remain deliberate, not oversights:
   dup/deferred-drop). Left as a followup rather than also teaching
   `markInvariantNative` an `RAppName` case.
 
-This closed the *argument*-feeding side of the round trip identified
-above (confirmed via `--directive dumprcexpr`/generated-C diff on
+This closed the *argument*-feeding side of the box/unbox round trip
+(the loop-carried accumulator boxed to be passed to `step`, whose worker
+unboxes it again; confirmed via `--directive dumprcexpr`/generated-C diff on
 `rc2/tests/Test110Loop/LoopCallArgNativeShadow.idr`: the call into `step`'s
 own worker now reads the loop-carried accumulator directly as a native
 `int64_t`, no `idris2rc2_to_i64` conversion at the call site any more).

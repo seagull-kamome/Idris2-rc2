@@ -124,4 +124,5 @@ No pass reads it yet. What it cannot serve as it stands:
 The change of lifter was checked by comparing, byte for byte, the IR
 dump (`--directive dumprcexpr`) of idris2-lsp and the IR and C of every
 smoke test (`rc2/tests/snapshot.sh`) against the build with upstream's
-lifting.
+lifting. Where they differ (the 776 definitions above), `rcexpr-diff`
+shows only variable order.
