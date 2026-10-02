@@ -11,7 +11,7 @@ trees before lambda lifting (`Compiler.RC2.InlineCExp`); until
 immediately consumed by a two-way Bool match into a single native
 `RCmpCase` -- no boxed `Bool` is ever materialised, and the branch reads
 its operands natively. This only fires when the comparison is a bare
-`LOp`/`ROp` sitting right next to the match, though: when the comparison
+`NmOp` sitting right next to the match, though: when the comparison
 is reached through an interface method call instead (e.g. `acc <= 0` via
 `Ord Int`'s `<=`, a genuine, statically-resolved top-level function, not
 a dictionary-parameterised one -- only fixed-width scalar types are ever
@@ -48,52 +48,57 @@ Inlining runs before lifting, in `compileExpr` and `incCompile`.
 kind of A/B regression isolation `noloop`/`noconaltnative`/etc. already
 provide (see `RC2.idr`'s own module note on `toRCDefs`).
 
-## Eligibility: Criterion A only
+## Eligibility: Criterion A
 
 A callee is inlined at *every* one of its own call sites when:
 
-- it's a genuine top-level definition (`MkLFun args scope body` with
-  `scope = []` -- a lifted-out closure helper, which always has a
-  non-empty `scope` of its own captured free variables, is never
-  eligible: inlining requires a *closed* body, referencing only its own
-  `args`);
-- its own body is *call-free* (`isCallFree`: no `LAppName`/`LUnderApp`/
-  `LApp`/`LExtPrim` anywhere in it); and
+- it is a top-level function definition (`MkNmFun args body`). Lambda
+  lifting has not run yet, so its body refers only to its own `args` and
+  to binders inside the body; no captured variables exist to be
+  mishandled. A definition with no arguments (a CAF) qualifies the same
+  way, and is spliced at each bare reference to it;
+- its own body is *call-free* (`isCallFree`). The only nodes allowed are
+  `NmLocal`, `NmLet`, `NmCon`, `NmOp`, `NmConCase`, `NmConstCase`,
+  `NmPrimVal`, `NmErased` and `NmCrash`. Everything lambda lifting turns
+  into a call, a closure or an application (`NmRef`, `NmApp`, `NmLam`,
+  `NmDelay`, `NmForce`, `NmExtPrim`) disqualifies the body, so a
+  call-free body lifts to itself; and
 - its own body is small (`sizeOf body <= smallBodyThreshold`, currently
-  24 -- a coarse structural node count, not calibrated against actual
-  generated-C size).
+  24). `sizeOf` counts one per node, plus the sub-expressions of a
+  `let`, a constructor, an operator and a `case` (scrutinee, alternatives
+  and default). It is a coarse structural count, not calibrated against
+  actual generated-C size.
+
+A call is inlined only when it is saturated exactly: the argument count
+equals the callee's parameter count (a `NmApp` of a `NmRef`, or a bare
+`NmRef` for a callee with no parameters). A partial or over-applied call
+is left alone, and so is a call that `allLiteralArgs` rejects (next
+section).
 
 This is deliberately narrower than a general "inline small functions"
 pass. The call-free requirement means an eligible callee can never
-itself contain a further call to inline -- so `inlineCExp`'s own
-whole-program rewrite needs only one pass, never a fixpoint: splicing in
-a call-free body can't expose a *new* inlining opportunity inside what
-was just spliced (only inside the call's own *arguments*, which are
-processed bottom-up before the call itself is considered).
+itself contain a further call to inline -- so the rewrite needs only one
+pass over a definition, never a fixpoint: splicing in a call-free body
+can't expose a *new* inlining opportunity inside what was just spliced
+(only inside the call's own *arguments*, which are processed bottom-up
+before the call itself is considered).
 
-A second criterion (single call site, whole-program, ordered via a
-Tarjan-SCC call graph reusing `Compiler.RC2.MutualLoop`'s own `Graph`/
-`tarjanSCCs`) was investigated in an earlier session alongside Criterion
-A, but confirmed *not* to reach the separately-documented monadic-bind
-reuse gap (`rc2/doc/reuse-monadic-bind-gap.md`) and not otherwise
-load-bearing for any currently-known gap. Not implemented here, to keep
-this pass's own blast radius matched to the problem it actually solves;
-`Graph`/`tarjanSCCs` were still made `public export`/`export` in
-`MutualLoop.idr` in case a future session revisits this. It has since been
-implemented for loop-free callees: see "Criterion B: loop-free single-caller callees" below.
+Criterion B, a loop-free callee with exactly one call site, runs in the
+same pass and adds callees to the same map as it goes; see "Criterion B:
+loop-free single-caller callees" below. Its call graph reuses
+`Compiler.RC2.MutualLoop`'s `Graph`/`tarjanSCCs`.
 
 ## The `allLiteralArgs` guard
 
-A call whose arguments are *all* bare `LPrimVal` literals is never
-inlined, even if otherwise eligible. Found necessary via
-`Test112Numeric/NativeInts.idr`'s own `chainInt8 100 100`-shaped calls: once a
-fixed-width arithmetic chain is spliced in with every operand a
-compile-time constant, gcc's own `-Werror=overflow` can statically prove
-an intentional two's-complement wraparound "overflows," turning a
-correct, deliberate test into a compile error. Vacuously true for a
-nullary call (no arguments to be "all literal" over), so the guard only
-ever actually fires once there's at least one argument -- a nullary
-call has no such folding risk in the first place.
+A call whose arguments are *all* bare `NmPrimVal` literals, at least one
+of them a `Double` (`ConstFold.safeConst` is `False` only for `Db`), is
+never inlined, even if otherwise eligible: spliced in with every operand
+a compile-time constant, a floating-point chain would reach gcc as a
+constant expression that it can reject under `-Werror=overflow`. Without
+a `Double` among the literals the call is inlined as usual. A call with
+no arguments is never blocked (there is nothing to fold), and the guard
+applies to Criterion B's splices as well, since both go through the same
+`callTo`.
 
 ## Inlining on the case trees (2026-09-29)
 
@@ -192,7 +197,7 @@ upstream's own `canCaseOfCase`.
 ### Size budget
 
 The shape restriction above bounds *what* gets collapsed, not *how
-much* -- `doCaseOfCase`/`doCaseOfConstCase` duplicate the entire outer
+much* -- a collapse (`tryCaseOfCase`) duplicates the entire outer
 `alts`/`def` once per inner branch, and nothing bounded the size of
 `alts`/`def` itself. A chain of small, case-returning, call-free
 functions (exactly Criterion A's own target shape -- e.g. a run of
@@ -227,16 +232,15 @@ is cheap allocation); the wall-clock cost only became visible in the
 *next* stage to do real per-node work on the now-huge tree (`rc2: RC
 normalize`, 0.378s at N=10) -- so a hang or slowdown attributed to "the
 inline stage" by wall-clock/memory observation may show up downstream
-of `Compiler.RC2.Inline`'s own `logTime` line, even though the size
+of the `rc2: Inline (before lifting)` timing line, even though the size
 blowup originates there.
 
 **Fix**: `tryCaseOfCase`'s two clauses now also require
-`duplicationCount * outerSize <= caseOfCaseSizeBudget`
-(`caseOfCaseSizeBudget = 200`), where `outerSize` is `sizeOf`/
-`sizeOfConAlt`/`sizeOfConstAlt` (the same coarse structural node count
-Criterion A's own `smallBodyThreshold` uses, moved earlier in the file
-so this guard can reuse it) applied to the outer `alts`/`def`, and
-`duplicationCount` is how many places they'd be copied into (`length
+`copies * outerSize <= caseOfCaseSizeBudget`
+(`caseOfCaseSizeBudget = 200`), where `outerSize` is `treeSize` (a
+structural node count like Criterion A's `sizeOf`, except that it also
+counts a lambda's body) applied to the outer `alts`/`def`, and
+`copies` is how many places they'd be copied into (`length
 xalts`, plus one more if `xdef` is present). Skipping a collapse is
 always semantically safe -- the result is just the original, uncollapsed
 `case (case ...) of ...`, correct but unfused past that point. Because
@@ -259,7 +263,7 @@ sizes that actually occur there.
 
 The synthetic N-chain benchmark above no longer crashes, but it also
 never exercised the guard's own *measurement* cost: computing
-`outerSize` via a fresh top-down `sizeOf`/`sizeOfConAlt` scan of
+`outerSize` via a fresh top-down `treeSize` scan of
 `alts`/`def` at *every* candidate site. On a large real program this
 scan cost dominated `rc2: Inline`'s own wall-clock time outright --
 144s on one real large program, even though the collapse *duplication*
@@ -276,34 +280,32 @@ large real program has many scattered case-of-case candidate sites
 unboundedly large enclosing `alts`/`def` from scratch -- effectively
 O(number of candidate sites × average enclosing context size).
 
-**Fix**: `collapseCaseOfCase`/`collapseConAlt`/`collapseConstAlt` now
-return a `Sized` pair (`szOf`/`valOf`) instead of a bare tree, so each
+**Fix**: `collapse` now
+returns a `Sized` pair (`szOf`/`valOf`) instead of a bare tree, so each
 node's own size is computed exactly once, incrementally, as a
 byproduct of the same bottom-up fold that was already building it --
 never re-derived by a separate scan. `caseOfCaseHere`'s retry loop
-(up to 5 attempts at one tree position) threads a `CollapseState`
+(up to 5 attempts at one tree position) threads a `Collapse`
 (`totalSize`, `branchesSize` -- i.e. `outerSize`, and the tree itself)
 rather than a bare tree, so a *chain* of successive collapses at one
-position also never re-scans: `doCaseOfCase`/`doCaseOfConstCase`
-update both sizes via a closed-form formula instead of re-deriving them
+position also never re-scans: `tryCaseOfCase`
+updates both sizes via a closed-form formula instead of re-deriving them
 from the result --
 
 ```
-newBranchesSize = sizeOf(xalts) + sizeOf(xdef) + duplicationCount * (1 + outerSize)
+newBranchesSize = size(xalts) + size(xdef) + copies * (1 + outerSize)
 ```
 
-(`weakenNs`, used to re-index a duplicated copy of `alts`/`def` into a
-deeper scope, never changes node count, so a duplicated copy's size is
-always exactly the input `outerSize`; each of the `duplicationCount`
-copies also gains the one wrapper node `updateAlt`/`updateDef` builds
-around it, hence the `+ 1` per copy). `xalts`/`xdef` (the *inner*, just-
+(A duplicated copy of `alts`/`def` has exactly the input `outerSize`
+nodes -- on the named case trees no re-indexing is needed -- and each of
+the `copies` copies also gains the one wrapper `case` node built around
+it, hence the `+ 1` per copy.) `xalts`/`xdef` (the *inner*, just-
 spliced-in side) are still scanned fresh via the plain, unthreaded
-`sizeOf`/`sizeOfConAlt`/`sizeOfConstAlt` -- when they come from this
-pass's own inlining they're bounded by Criterion A's own
-`smallBodyThreshold` regardless of program size, and when they instead
-come from a genuinely large, naturally-occurring nested source `case`
-(this pass's `collapseCaseOfCase` runs on *every* definition, inlined
-or not), that scan was already exactly this expensive before any of
+`treeSize` (`conAltsSize`/`constAltsSize`) -- when they come from a
+Criterion A splice they're bounded by `smallBodyThreshold` regardless of
+program size, and when they instead come from a genuinely large,
+naturally-occurring nested source `case` (this pass's `collapse` runs on
+*every* definition, inlined or not), that scan was already exactly this expensive before any of
 this bookkeeping existed -- no new cost introduced on that side.
 
 Re-verified: same synthetic generator, same linear line-count growth as
@@ -441,16 +443,16 @@ parameter used twice evaluated its argument twice, and an unused one
 never evaluated it. `sq x = x * x` inlined at `sq (expensive y)`
 computed `expensive y` twice. Criterion A has done this since it was
 written. Criterion B's bodies are arbitrary, so it had to be fixed
-before B could use the same splice. `spliceArgs` now binds every
+before B could use the same splice. `splice` now binds every
 non-atomic argument (anything but a local, a literal or an erased
-value) with an `LLet` first, and substitutes only locals. The fix
+value) with an `NmLet` first, and substitutes only those three. The fix
 covers both criteria.
 
 Measured on idris2-lsp, together with ConstFold's known-partial fold
 (`constructor-escape-analysis.md`), against the build before either:
 `apply` 11,326 -> 10,039, `partial` 16,448 -> 15,788, allocating `con`
 39,741 -> 38,257, IR lines -1.2%, compile 27.9s -> 29.3s. 3,158
-callees qualify at `Lifted`, against the roughly 11,800 `LateInline`
+callees qualified when the pass still ran on `Lifted`, against the roughly 11,800 `LateInline`
 splices. Most of those become single-caller only after ConstFold and
 SpecClosure turn closure applications into direct calls (8,126 qualify
 just before RC annotation), so `LateInline`'s own splicing now also
@@ -459,9 +461,8 @@ runs once there, as the "Early inline" stage
 
 ## Criterion B, revisited: `Compiler.RC2.LateInline`
 
-The "single call site, whole-program" criterion this doc's own
-"Eligibility" section above describes as investigated-but-shelved was
-picked back up in a later session, as its own separate pass --
+A "single call site, whole-program" criterion also exists on `RCExp`,
+as its own separate pass --
 `Compiler.RC2.LateInline`, operating on `RCExp` rather than named case trees,
 and running much later in the pipeline than `Compiler.RC2.InlineCExp`
 above. Disable with `--directive nolateinline`.
@@ -542,7 +543,7 @@ never increase the number of copies of that code anywhere in the
 program -- at worst it's size-neutral (the call overhead itself is
 removed, so in practice always a net win). A size cap only matters once
 eligibility is ever widened to "small, multi-caller" callees (Criterion
-A's own shape) -- not attempted here; see "Known limitations" below.
+A's own shape) -- not attempted here.
 
 Processing runs in `tarjanSCCs`'s own reversed, callee-before-caller
 order (the exact same `Graph`/`tarjanSCCs` reused from

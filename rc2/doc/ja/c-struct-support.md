@@ -8,7 +8,7 @@
 
 - 調査で確認できたこと。
 - この欠落について、上流のissueトラッカーがすでに述べていること。
-- 設計。下の「設計: 専用の`RStructGet`/`RStructSet`ノードを`Emit.idr`で解決する」の節にある。コードを書く前に、実際の`RCExp`と生成されたCの出力で検証した。
+- 設計。下の「設計: 専用の`RStructGet`/`RStructSet`ノードを`normalize`で解決する」の節にある。コードを書く前に、実際の`RCExp`と生成されたCの出力で検証した。
 - 実装そのもの (`c-struct-support`ブランチ)。実際に何が完了したか、途中で見つけて直した問題は、下の「実装状況」を参照。
 
 回帰テストは`rc2/tests/Test24CStructSupport.idr`である。このテストのために、`rc2/tests/verify.sh`を拡張して、テストごとに補助のCファイルを使えるようにした。補助のCが必要なのは、rc2でもChezでも、実際の`%foreign`シグネチャを通して構造体名を確立する必要があるためである。
@@ -133,152 +133,90 @@ Main.{setY:0} = [{arg:2}, {arg:3}][{eta:0}]:
 - **[#36 "Nested Structs in FFI not read correctly"](https://github.com/idris-lang/Idris2/issues/36)** (2020年、未解決): *Chez固有*のバグである。構造体の値そのものを持つフィールド (`Ptr`ではないもの) が、誤った値で読まれる。`Struct`が、`define-ftype`のフィールドリストの中も含めて、あらゆる場所で暗黙にポインタだと仮定されているためである。メンテナの`edwinb`自身のコメントによれば、この区別をChez Schemeに伝える方法はない。スカラのフィールドだけを扱うrc2の最初の実装では対象外だが、将来ネストした構造体のフィールドをサポートするなら、先行する実際のバグとして知っておく価値がある。またrc2は、このバグを自然に回避できる可能性がある。ChezのようにSchemeの`ftype`を出力するのではなく、実際のCの`typedef struct`を出力するので、C自体にはこのポインタか値かの曖昧さがない。
 - **[#3809 "FFI improvements (explicit Ptr) and additions (Union type and nested data fields)"](https://github.com/idris-lang/Idris2/issues/3809)** (2026-07-08起票、未解決、コメントはまだない): 最近の、より野心的な提案である。ポインタの`Struct`に明示的な`Ptr`を付けること、ネストしたフィールドへのアクセスパス、ポインタでない構造体のフィールド、`union`のサポートが含まれる。ChezバックエンドのPRが添付されているという話もある。この文書の対象 (基本的なスカラのフィールドの`getField`/`setField`) をはるかに超えるが、上流の`System.FFI`モジュールが向かうかもしれない方向として知っておく価値がある。
 
-## 設計: 専用の`RStructGet`/`RStructSet`ノードを`Emit.idr`で解決する
+## 設計: 専用の`RStructGet`/`RStructSet`ノードを`normalize`で解決する
 
-**Phase 1で解決済みである。** ノードは`StructField` (`RCExp.idr`) を持つ。これには、`%foreign`シグネチャから得た構造体のフィールドリスト、フィールドの名前と`CFType`、そのフィールドがリストに含まれることの、消去される`Elem`の証明が入る。`toRCDefs`が、すべての`%foreign`定義から表 (`StructTable`) を作る。`normalize`が、各`getField`/`setField`をこの表に対して解決し、未知の構造体やフィールドをそこで報告する。`Emit.idr`は、表を引かずにノードを出力する。以降のこの節の残りは当初の設計であり、そこでは名前が`Emit.idr`まで文字列のままだった。
-
-以前の設計案では、`getField`/`setField`を`Emit.idr`まで素の`RExtPrim`の呼び出しとして残し、そこでだけ特別扱いする形だった。以下で述べる所有権の欠落を見つけたあとで、現在の方針に決めた。`prim__getField`/`prim__setField`を、早い段階で2つの新しい専用の`RCExp`ノードに変換する (`Compiler.RC2.RC`の`normalize`、Phase 1)。そして、それらのノードを`Emit.idr`で構造体フィールドの表に対して解決する。出力の時点で`RExtPrim`の汎用的な`args : List RCLocal`の形をパターンマッチする方法は採らない。構造体名とフィールド名は、新しいノードの上でも素の`String`のままである。プログラム全体の表に対する解決は、以前の案と同じ場所 (`Emit.idr`の`generateCSourceFile`) で行う。変わるのは、それらを表まで運ぶノードだけである。
+`getField`/`setField`は、`RExtPrim`の呼び出しのままにはしない。`Compiler.RC2.RC`のPhase 1 (`normalize`。名前付きのcase treeを`RCExp`に下げる段階) が、`prim__getField`/`prim__setField`を2つの専用の`RCExp`ノード`RStructGet`/`RStructSet`に変換する。構造体名とフィールド名も、ここでプログラムの`%foreign`シグネチャから作った表に対して解決する。`Emit`が走る時点では、ノードがすでに構造体のフィールドリストとフィールドの`CFType`を持っており、`Emit`が名前を引くことはない。Cへの下げは、素のポインタの参照外しである。以降は、データの流れに沿って、ノード、それを作って注釈する2つのフェーズ、出力側 (Part A〜D) の順に述べる。
 
 ### `RExtPrim`を直接下げず、専用ノードにする理由
 
-次の2つの事実がある。どちらも、コンストラクタの形だけから想定したものではない。構造体を使うプログラムを実際にrc2でコンパイルし、`RCExp`のダンプと`RC.idr`のソースの両方を読んで確認した。
+次の2つの事実が、決め手になった。
 
-1. `getField`/`setField`の呼び出し箇所にある構造体名とフィールド名の引数は、`RCExp`の中で`RCConst (Str ...)`になっている。実行時の検索の背後に隠れてはおらず、コンパイル時に直接パターンマッチできる。回復のために追加の仕組みは要らない (以前の案から変わらず、今も成り立つ)。
-2. **`RExtPrim`は、実は、オペランドを消費するほかのすべてのノードと同じ所有権の扱いを受けていない。** `RAppName`/`RUnderApp`/`RApp`/`RCon`/`ROp`の`annotate` (Phase 2、`RC.idr`) のケースは、どれも同じ`wrapDups fc (splitBorrows natives owned args) (...)`というパターンを通る。`splitBorrows`は`args`を現在の`owned`の集合と突き合わせて走査する。まだ生きているオペランドは`dup`の対象として残し (`wrapDups`)、最後の使用になるオペランドは所有権をそのまま移す。ところが、`RExtPrim`の`annotate`のケース (`annotate natives owned (RExtPrim fc lazy p args) = pure $ RExtPrim fc lazy p args`、`RC.idr:504`) は、単なる素通しである。`splitBorrows`も`wrapDups`も使わず、`owned`を参照すらしない。
+1. `getField`/`setField`の呼び出し箇所にある構造体名とフィールド名の引数は、正規化後のコードでは`RCConst (Str ...)`のローカルになっている (上の「`--dumplifted`による具体例」を参照)。そのためコンパイル時に直接パターンマッチでき、実行時の検索は要らない。
+2. 構造体アクセサには、オペランドを消費するほかのノードとは別の所有権の規則が要る。`ROp` (および`RExtPrim`) の`annotate`のケースは、`wrapDups fc (splitBorrows natives owned args) ...`というパターンを通る。まだ生きているオペランドは`dup`され、消費側が自分の参照をあとで`drop`する。ところが`getField`/`setField`は、`((sn*)p)->f`や`((sn*)p)->f = v`に下げられる。ポインタを通した読み書きは、`IDRIS2RC2_Pointer`の箱を消費もコピーもしないので、`dup`は無駄でしかない。この設計を作った当時、`RExtPrim`の`annotate`は`owned`を一度も参照しない素通しだった。その欠落はその後、別に直された (IORefのセルや配列プリミティブの引数がリークしていた。`tests/Test44IORefExtPrimLeak`)。現在の`RExtPrim`は、`ROp`と同じく`splitBorrows`/`wrapDups`/`boxedOperands`を使う。だからといって、`ROp`の形が構造体アクセサに合うようになったわけではない。ノードが独自の規則を持つのはそのためである。
 
-   これを、上の実例をrc2自身でコンパイルして (`--directive dumprcexpr`、`idris2-rc2 --cg rc2`)、`annotate`が実際に何を決めたかを読んで確認した。
-
-   ```
-   def Main.getX  (fun args=["v0:Boxed"] ret=Boxed)
-     extprim System.FFI.prim__getField [#"point", [__], [__], v0, #"x", #0]
-   ```
-
-   `getX`の本体のどこにも、`v0`を包む`RDrop`/`RDup`はない。`v0`は、何の包みもなく`extprim`の呼び出しに届く。構造体のポインタが1回だけ使われる場合は、これがたまたま*正しい*。唯一の使用なので、所有権ごとそのまま渡すのが正しいためである。しかし、同じ構造体のポインタを同じ関数内で2つの`getField`が読む場合、`RExtPrim`の`annotate`のケースが正しい答えを出し続ける保証はない。`owned`が一度も参照されないため、2回目の呼び出しは、すでに消費済みの参照を受け取ることになる。この文書が、一般にこれを直す必要があるわけではない。現在の`RExtPrim`の利用者 (`prim__newIORef`、配列のプリミティブなど) は、実際にはどれも末尾位置か単一使用の位置にしか現れないためである。それでも、`RExtPrim`の既存の所有権の扱いは、複数回使われうる新しい構造体アクセサが、そのまま引き継いでよいものではない。
-
-専用のノードにすれば、この問題は避けられる。ただし、*どこまで*の所有権の仕組みがそのノードに必要かを突き止めるのに、1回ではなく3回の試行がかかった。それぞれ、設計の最中に受けた直接のフィードバックで修正された。将来のセッションが同じ誤った道筋を歩き直さずに済むよう、ここに記録する。
-
-**試行1 (誤り): `ROp`の`postDrop`/`splitBorrows`/`wrapDups`のパターンをそのまま再利用する。** `structVar`を、`ROp`自身のオペランドと同じように、消費されるオペランドとして扱う案である。これは却下した。`getField`/`setField`は、素のCのポインタの参照外しや代入 (`s->x`、`s->y = v`) に下げられる。ポインタを通した読み書きは、ポインタ自身の参照カウントには一切触れない。したがって、以前の`RExtPrim`ベースの設計の`postDrop`がやっていたように、「引数を消費する」ものとしてモデル化する*関数呼び出し*が、もう残っていない。
-
-**試行2 (これも誤り): 両方のオペランドから、所有権の仕組みをすべて取り除く。** どちらのノードにも`postDrop`フィールドを持たせない案である。`structVar`/`value`は決して消費されないので、追跡するものがない、という推論に基づく。これは*半分は*正しい (下の「実際に成り立つこと」を参照)。しかし、実際にあるケースを見落としている。`RStructGet`/`RStructSet`を通してしか読まれず、その後は二度と使われない変数 (例: `f s = getField s "x"`で、`s`はその後使われない) は、*最終的には*dropが必要で、さもなければリークする。この試行が拠り所にした「束縛されたスコープが、通常の`dropDeadLet`の仕組みでdropしてくれる」という推論は、実際には成り立たない。`dropDeadLet`/`dropUnusedOwnedVars` (`RC.idr`、`branchBody`) は、`freeLocalsR`がその変数をそのあとの本体で*まだ*使われているものとして報告するかどうかを調べて、dropするかを決める。`RStructGet`が`structVar`を自身の自由ローカルの1つとして正しく報告すると (生存を追跡するにはそうしなければならない)、この検査は`getField`の呼び出し箇所で`s`を「まだ使われている」と判断する。その結果、そこでもdropされない。呼び出し箇所も外側のスコープもdropしないので、`s`はリークする。まさにこの再現コードに対して、`annotateDef`/`branchBody`/`dropUnusedOwnedVars`を手でたどって確認した。
-
-**実際に成り立つことと、そこから決まる設計。** `structVar`/`value`は、決して*複製*されない。ポインタを1回使うだけでも100回使うだけでも、コピーするC上の理由はなく、すでにBoxedなオペランドのフィールドを読み直す理由もない。この点で、試行2の中心的な洞察は生き残る。ただし、現在の使用がそのオペランドの最後の使用であるときには、ほかのBoxedのローカルと同じように*drop* が必要である。これは、狭くはあるが、本物の3つ目の形である。「まだ生きていれば常にdupし、使用後は常にdropする」という`ROp`の形でも、「dupもdropもしない」という試行2の形でもない。
-
-```idris2
-||| [v] if this use is v's own last use in the enclosing scope (v is
-||| still in `owned` -- nothing upstream has already claimed or
-||| dropped it) and it isn't Native; [] otherwise (still alive
-||| afterward -- borrowed, no dup needed either way, since reading
-||| through a pointer never requires a copy -- or a Native local,
-||| which is never Boxed-refcounted in the first place). Never dup's,
-||| unlike splitBorrows: an operand that's still alive afterward needs
-||| no action here at all.
-dropIfLastUse : SortedSet RCLocal -> Owned -> RCLocal -> List RCLocal
-dropIfLastUse natives owned v =
-    if contains v owned && not (contains v natives) then [v] else []
-```
+**規則の中身と、却下した2つの設計。** 最初の案は、`ROp`の`splitBorrows`/`wrapDups`のパターンをそのまま再利用するものだった。しかし、オペランドを消費するものとしてモデル化すべき呼び出しが、もう残っていない。2つ目の案は、ポインタの読み出しは何も消費しないという理由で、所有権の扱いをすべて省くものだった。これでは、最後の使用がそのアクセスである変数 (`f s = getField s "x"`) がリークする。ほかのどこもそれをdropしないためである。`branchBody`と`dropDeadLet` (`RC.idr`) は、ローカルをdropするかどうかを、本体の残りにまだ自由変数として現れるかで決める。`RStructGet`は`structVar`を自身の自由ローカルとして正しく報告するので、アクセスそのものが、変数を生かし続ける使用に見えてしまう。したがってアクセサは、その使用がオペランドの最後の使用であるときは自分でdropし、`dup`は決してしなければならない。これが`dropIfLastUse` (`RC.idr`) であり、下の「Phase 2」で述べる。
 
 ### 新しいノード
 
-```idris2
-||| A read of one field out of a C struct pointer -- pure, and never
-||| duplicates structVar (a C pointer dereference, not a call that
-||| consumes anything -- see "Why a dedicated node" above). structVar
-||| still needs dropping if this is its own last use, though --
-||| postDrop captures that (0 or 1 elements, computed by
-||| Compiler.RC2.RC's annotate via dropIfLastUse, mirroring ROp's own
-||| field but never triggering a dup the way ROp's can).
-||| structName/fieldName stay plain strings -- resolved against a
-||| whole-program struct-field table built once in Emit.idr's own
-||| generateCSourceFile (see "Part B/C/D" below), the same way
-||| RPrimVal's own dyngen/orStagen resolve a literal's concrete C
-||| rendering late, rather than being pre-resolved to a CFType here.
-RStructGet : FC -> (structVar : RCLocal) -> (structName : String) ->
-             (fieldName : String) -> (postDrop : List RCLocal) -> RCExp
+`RCExp.idr`で定義されている。
 
-||| A write of one field into a C struct pointer, evaluating to Unit.
-||| Same reasoning as RStructGet for both structVar and value -- either
-||| may end up in postDrop (0, 1, or 2 elements) if this use is its
-||| own last one; neither is ever duplicated.
-RStructSet : FC -> (structVar : RCLocal) -> (structName : String) ->
-             (fieldName : String) -> (value : RCLocal) ->
-             (postDrop : List RCLocal) -> RCExp
+```idris2
+record StructField where
+  constructor MkStructField
+  structName : String
+  fields : List (String, CFType)
+  fieldName : String
+  fieldType : CFType
+  0 isField : Elem (fieldName, fieldType) fields
+
+RStructGet : FC -> (structVar : RCLocal) -> StructField -> (postDrop : List RCLocal) -> RCExp
+RStructSet : FC -> (structVar : RCLocal) -> StructField -> (value : RCLocal) -> (postDrop : List RCLocal) -> RCExp
 ```
 
-どちらのノードも、`ROp`の`postDrop`フィールドは持つが、`splitBorrows`/`wrapDups`によるdupの挿入という半分は持たない。これは`ROp`の形でも単純な`RV`の形でもない、本物の混合形である。`ROp`の`postDrop`の扱いをすでに知っている箇所には、構造的な前例が近くにあり、新しいパターンを作らずに写せる。該当するのは、`RCExp.idr`の`freeLocalsR`/`countUsesR`/`usedConstructorsR`、`Compiler.RC2.Reuse`、`Compiler.RC2.Sink`の`consumedOperands`、`Compiler.RC2.Loop`の`stripOwnership`である。この文書では、それらの箇所がそれぞれ必要とする変更を、まだ列挙しようとはしていない。それは設計ではなく、実装作業である。
+`StructField`は、構造体の宣言済みのフィールドリスト、フィールドの名前と`CFType`、そのフィールドがリストに含まれることの、消去される証明である。`RStructSet`はUnitに評価される。`postDrop`は`ROp`の`postDrop`フィールドと同じ役割だが、意味はより狭い。このノードが最後の使用になるオペランド (`structVar`、`RStructSet`では`value`も) を並べたもので、読み書きのあとにdropされる。Phase 1の直後は`[]`である。どちらのノードも、`dup`は一切挿入しない。`RCExp`を走査するすべてのパスに、2つのノードのケースがある (`RCExp.idr`の`freeLocalsR`/`countUsesR`/`mentionedLocalsAcc`、`Loop.idr`の`stripOwnership`、`Sink.idr`の`genuinelyUsedR`、`ConAltNative.idr`、`ConstFold.idr`、`DualABI.idr`、`LateInline.idr`など)。`structVar`と`value`は、常にそれらのローカルの使用として数えられる。`DualABI`は、どちらのノードの結果もネイティブな値としては扱わない (結果は常に、`packCFType`が出力するBoxedな値である)。
 
-### Phase 1 (`normalize`): `LExtPrim`/`RExtPrim`を新しいノードに変換する
+### Phase 1 (`normalize`): `prim__getField`/`prim__setField`を新しいノードに変換する
 
-`Compiler.RC2.RC`の`normalize`で、汎用の`LExtPrim fc lazy p args => bindMany env args (\locs => pure $ RExtPrim fc lazy p locs)` (`RC.idr:163-164`) の前に、新しいケースを追加する。このケースは、`p`の名前を`prim__getField`/`prim__setField`に限って照合する。`args`の形は、すでに確認してある (上の「`--dumplifted`による具体例」を参照)。
+`normalize` (`RC.idr`) は、汎用の`NmExtPrim`のケースの前で、`NmExtPrim`のうち`prim__getField` (名前空間は問わない) で引数が6個の`[sn, _, _, sv, fn, _]`のものを照合する。引数は、構造体名、消去されたフィールドリストと型、構造体のポインタ、フィールド名、`FieldType`の位置である。`prim__setField`は、これに値と消去されたスロットが加わった`[sn, _, _, sv, fn, _, vl, _]`で照合する。引数をローカルに束縛し、`sn`と`fn`が文字列リテラルであることを要求する。`FieldType`の位置は無視する。フィールド名の文字列と重複しているためである。名前は、`structField`で解決する。
 
-- 構造体名とフィールド名の`String`は、`RCConst (Str ...)`の位置から直接取り出す。
-- 構造体ポインタと値の`RCLocal`は、そのまま残す。
-- 消去された`fs`/`ty`のプレースホルダは捨てる。
-- `FieldType`の位置を表す整数も捨てる。この文書のほかの箇所で確認したとおり、フィールド名の文字列と重複しており、どの実装も頼るべきものではない。
-
-`RStructGet`/`RStructSet`は、これらから直接作る。ここでは`postDrop`を空にしておく。`ROp`のPhase 1の形でも、常に`postDrop = []`で構築し、埋める作業をPhase 2に任せている (`RCExp.idr`の`ROp`コンストラクタのドキュメントコメントを参照)。
+- プログラムの構造体の表は`StructTable`のrefであり、`normalizeProgram`の前に`lowerProgram` (`RC2.idr`) が埋める。すべての`MkNmForeign`定義の`CFType`に`collectStructDefs` (Part B) を畳み込んで作る。
+- どの`%foreign`シグネチャにも現れない構造体や、その構造体が宣言していないフィールドは、コンパイル時の`GenericMsg`エラーになる ("struct ... is used by getField/setField but appears in no %foreign signature" / "has no field ... in its %foreign declaration")。これはChezバックエンドが強制しているのと同じ取り決めであり、強制するのが早いだけである (下の「rc2自身の設計に関する未解決の問い」を参照)。
+- 構造体名やフィールド名がリテラルでない呼び出し (たとえば、まだインライン展開されていないコンストラクタの引数) は、`notInlinedStructFieldMarker`を先頭に付けた`InternalError`を投げる。通常のコンパイルではそのまま報告される。インクリメンタルコンパイル (`--inc rc2`) では、`normalizeProgram`がちょうどその接頭辞だけを捕まえ、その定義とそこからlambda liftされたものを落とす。そのため、その定義が実際に使われる場合に限り、リンク時に失敗する (`doc/incremental-compile.md`)。
 
 ### Phase 2 (`annotate`): 所有権
 
 ```idris2
-annotate natives owned (RStructGet fc structVar sn fn _) =
-    pure $ RStructGet fc structVar sn fn (dropIfLastUse natives owned structVar)
-annotate natives owned (RStructSet fc structVar sn fn value _) =
-    pure $ RStructSet fc structVar sn fn value
-             (dropIfLastUse natives owned structVar ++ dropIfLastUse natives owned value)
+annotate natives owned (RStructGet fc structVar sf _) =
+    pure $ RStructGet fc structVar sf (dropIfLastUse natives owned [structVar])
+annotate natives owned (RStructSet fc structVar sf value _) =
+    pure $ RStructSet fc structVar sf value (dropIfLastUse natives owned [structVar, value])
 ```
 
-`dropIfLastUse`は、「専用ノードにする理由」の節に示した定義である。どちらのケースも`splitBorrows`/`wrapDups`を呼ばない。ポインタを通して読むことも、すでにBoxedなオペランドのフィールドを読み直すことも、コピーを必要としないので、dupは一切挿入されない。一方で、*今回の*使用がそのオペランドの最後の使用かどうかを判断するために、どちらのケースも`owned`を参照する。これは、試行2が省いたせいで誤った、まさにその検査である。こうして、「専用ノードにする理由」で`RExtPrim`の扱いに見つけた欠落は埋まる。ただしその方法は、試行1のように`ROp`のパターンをそのまま再利用することでも、試行2のように所有権の追跡を全面的にやめることでもない。新しいパターン (`dropIfLastUse`) を用いる。
+`dropIfLastUse natives owned vars`は、`vars`のうち、今回の使用が最後の使用になるものを返す。条件は、まだ`owned`にあり、ネイティブのローカルではなく、不死のオペランド (`RCNull`/`RCConst`/`RCEmptyCon`/`RCConstCon`/`RCConstClosure`) でもないことである。`vars`を左から右へ走査し、見つけるたびに`owned`から取り除く。したがって、1つのノードに同じローカルが2回現れる場合 (たとえば、`structVar`と`value`が同じローカルのとき) は、1回だけdropされる。`dup`は決して挿入しない。まだ生きているオペランドには、何もする必要がないためである。`RForce` (`RC.idr`) も、自身のオペランドに同じ関数を使う。
 
-### Part A: ポインタ渡しの構造体FFIそのものに新しいロジックは要らない。`CFStruct`は`CFPtr`の既存の処理をそのまま使える
+### Part A: `CFStruct`は`CFPtr`と同じに扱う
 
-2つを並べて比べて確認した。`cTypeOfCFType CFPtr = "void *"`と`cTypeOfCFType (CFStruct x ys) = "void *"`は、すでに一致している (`Emit.idr:2241`/`2247`)。この設計では、構造体は常にポインタを介してアクセスされる。これは、上で確認した「すべての構造体名は`%foreign`のシグネチャに現れなければならない」という取り決めと合致し、Chez自身の前提とも合致する (この前提が成り立たないときに何が壊れるかは、「上流Idris2のissueトラッカーが述べていること」の #36を参照)。そのため、実際に壊れている次の2つのケースは、
-
-```idris2
-extractValue _ (CFStruct x xs) varName = idris_crash "..." -- Emit.idr:2295
-packCFType (CFStruct x xs)     varName = "makeStruct(" ++ varName ++ ")" -- Emit.idr:2319, undefined function
-```
-
-`CFPtr`の、すでに動いている行をそのまま写せば直せる。
+構造体は常にポインタを介してアクセスされる。すべての構造体名は、どこかの`%foreign`シグネチャに現れなければならず (Chezも強制している取り決めである。「上流Idris2のissueトラッカーが述べていること」の#36を参照)、`%foreign`関数は構造体へのポインタを受け取るか返す。そのため`Emit/Util.idr`は、`CFStruct`に`CFPtr`とまったく同じ出力を与えている。
 
 ```idris2
+cTypeOfCFType (CFStruct x ys) = "void *"
 extractValue _ (CFStruct x xs) varName = "((IDRIS2RC2_Pointer*)" ++ varName ++ ")->p"
 packCFType (CFStruct x xs)     varName = "idris2rc2_mkPointer(" ++ varName ++ ")"
 ```
 
-これだけで、構造体のポインタを引数に取る、または返す`%foreign`関数 (上の例の`prim__makePoint`/`prim__pointFree`) が直る。`getField`/`setField`とは無関係である。すでに検証済みのコード経路を再利用するだけで、新しいロジックではないので、リスクも低い。
+これより前は、`extractValue`がクラッシュし、`packCFType`は存在しない`makeStruct`を呼んでいた (どちらもRefCから写したものである)。この変更だけで、構造体のポインタを引数に取る、または返す`%foreign`関数 (上の例の`prim__makePoint`/`prim__pointFree`) が動く。`getField`/`setField`とは無関係である。`cTypeOfCFType`/`extractValue`/`packCFType`は、`emitRC`がフィールドの`CFType`について共用できるように、`Emit/Util.idr`のトップレベルの関数になっている。
 
-### Part B: 収集フェーズ
+### Part B: 構造体の宣言を集める
 
-`generateCSourceFile`の冒頭、`traverse_ (uncurry createCFunctions) defs`が走る前に、すべての`(Name, RCDef)`の組を走査して`MkRCForeign ccs fargs ret`を探す。その`fargs`/`ret`の`CFType`には、Chezの`mkStruct` (`Compiler/Scheme/Chez.idr`、前述) と同じ方法で再帰する。`CFIORes`/`CFFun`を通り抜けて、その中に入れ子になっているかもしれない`CFStruct n flds`を探す。見つかったすべての`(n, flds)`を、新しい`Ref StructDefs (SortedMap String (List (String, CFType)))`に集める。この`Ref`は、`generateCSourceFile`がすでに用意している`ConstDef`/`OutfileText`などのrefと並べて登録する。これは、Chezの`Structs`/`mkStruct`を構造としてそのまま移植したものである。再帰の形も、「最初に見た構造体名を採用し、再出力しない」という重複除去も同じになる。違いは、`List String`の`Ref`を持ち回る代わりに`SortedMap`を作る点と、出力すべきSchemeのコードがない点である。
+`collectStructDefs` (`Emit/Util.idr`) は、`CFType`から、そこに現れる構造体の`SortedMap String (List (String, CFType))`を作る。`CFIORes`/`CFFun`を通り抜け、構造体のフィールドの型にも再帰する (フィールドが、ネストした構造体のポインタであることがある)。ある名前の最初の宣言を採用し、あとで同じ名前が現れても同一とみなす。Chezの`mkStruct`/`Structs`と同じ方針である。これを`%foreign`定義に対して2回、利用側ごとに1回ずつ走らせる。
+
+- `lowerProgram` (`RC2.idr`) が、`normalize`が`getField`/`setField`を解決する先の`StructTable`を作る (Phase 1)。
+- `generateCSourceFile` (`Emit.idr`) が、どの定義を下げるよりも前に、`MkRCForeign`定義から`StructDefs`のrefを作る。これにより、`header`は定義の順序によらずすべての構造体を見られる。
+
+構造体の型を表に入れる方法は、`%foreign`で宣言することだけである。`%export`のシグネチャ (`RC2.idr`の`exportNfToCFType`) は、フィールドリストが空の`CFStruct sname []`を作る。その境界を越えるのはポインタだけであり、表はそこからは埋められない。
 
 ### Part C: Cの構造体定義の出力
 
-`header` (`Emit.idr`) で、`StructDefs`の表のエントリごとに`typedef struct { ... } name;`を1つ出力する。`header`は、`generateCSourceFile`の`traverse_`の直後に呼ばれるので、`createCFunctions`の間に行うフィールドの型の解決は、出力の順序に左右されない。各フィールドの`CFType`は、既存の`cTypeOfCFType`で変換する。型からCの型への新しいロジックは要らない。`%foreign`の引数と戻り値の型のために、すでにあるものであり、構造体のフィールドも同じ種類の型だからである。
+`header` (`Emit.idr`) は、`StructDefs`のエントリごとに`typedef struct { <ctype> <field>; ... } name;`を1つ、すべての関数定義より前の「struct definitions」のブロックに出力する。各フィールドのC型は`cTypeOfCFType`で決める (ネストした構造体のフィールドは`void *`になる)。`%cg rc2 externStruct=<name>`で指定された名前 (`doc/directives.md`の5節) は、出力の対象からだけ外す。インクルードされたヘッダがすでに`typedef`しているためである。`StructDefs`自体は絞り込まず、そのような構造体のフィールドアクセスも通常どおり解決される。
 
 ### Part D: `emitRC`での`RStructGet`/`RStructSet`の下げ
 
-`emitRC` (`Emit.idr:1882`) に、既存の`RExtPrim`のケースと並べてケースを追加する。Phase 1が`prim__getField`/`prim__setField`を変換すれば、これらは`RExtPrim`のケースにはまったく届かなくなる。そのため、既存の`RExtPrim`のケースにあるホワイトリストと汎用の呼び出しのロジックには、手を加えなくてよい。
+`emitRC` (`Emit.idr`) には、ノードごとに1つのケースがある。`StructField`がノードの中にあるので、表を引く必要はない。`prim__getField`/`prim__setField`は、もう`RExtPrim`のケースには届かず、そのホワイトリストにも載っていない。
 
-```idris2
-emitRC (RStructGet fc structVar sn fn postDrop) _ = do
-    fields <- getStructFields sn   -- looks up the Ref from Part B
-    let Just ty = lookup fn fields | Nothing => throw (InternalError ...)
-    ptr <- rcVarToC structVar      -- reuses extractValue CFPtr's rendering (Part A)
-    removeVars $ map varName postDrop   -- drops structVar iff this was its last use
-    pure $ packCFType ty ("((\{sn}*)\{ptr})->\{fn}")
-emitRC (RStructSet fc structVar sn fn value postDrop) _ = do
-    fields <- getStructFields sn
-    let Just ty = lookup fn fields | Nothing => throw (InternalError ...)
-    ptr <- rcVarToC structVar       -- neither is ever duplicated to get here --
-    valC <- rcVarToC value          -- extractValue ty, since value's own Rep matches ty
-    removeVars $ map varName postDrop   -- drops whichever of structVar/value (0, 1,
-                                         -- or both) this was the last use of
-    pure $ "(((\{sn}*)\{ptr})->\{fn} = \{extractValue ty valC}, (IDRIS2RC2_Value*)NULL)"
-```
+- `RStructGet`: 構造体のポインタをBoxedのローカルから読み (`rcVarToBoxedC`)、`extractValue CLangC CFPtr`で取り出す。式`((sn*)ptr)->field`は、フィールドの型の`cTypeOfCFType`へのキャストを付け、`packCFType`でBoxedにする。キャストするのは、実際の宣言 (`externStruct`の構造体なら、ヘッダのもの) が`const char *`のような修飾を持つことがあるためである。さらに`(IDRIS2RC2_Value*)`へのキャストも付ける。ポインタ系の型のpackerは、より狭いポインタ型を返すためである。例外は`CFInteger`で、`mpz_t`にはキャストの構文がなく、`packCFType CFInteger`は出力引数を期待する。そのため、`idris2rc2_mkIntegerFromMpz`でコピーする。`postDrop`のオペランドは、そのあとでdropされる (`finalizeSinkWithDrop`)。
+- `RStructSet`: 文`((sn*)ptr)->field = value;`を出力し、`postDrop`のオペランドをdropして、`(IDRIS2RC2_Value *)NULL`に評価される。`cfTypeNative`が写す型のフィールドでは、`value`をネイティブのまま読む (`rcVarToNativeC`。`CFChar`は`(char)`キャストを付ける)。そのため、定数はリテラルとして書き出される。Boxedのまま出力して取り出すと、定数がリークしていた。setterを唯一の呼び出し元にインライン展開すると (`inlining.md`、基準B)、`9.0`そのものが渡される。これを`rcVarToBoxedC`がボックス化するが、誰も解放しない (Test24とTest120で、valgrind下で16バイト)。それ以外の型のフィールドは、Boxedの`value`から`extractValue`で読む。
 
-これは最終的な構文ではなくスケッチである。`getStructFields`は、「Part Bが値を入れる`Ref`の`StructDefs`を引く」ことを指す。`Ref`の具体的な配線、エラー処理、Cの文と式のどちらの位置に出すかの扱いは、周囲の`emitRC`のケースがすでに使っている慣例に従う。それ以上の設計は、ここでは行わない。`packCFType`/`extractValue`は、Part Aが`CFStruct`について直したのと同じ既存の関数である。ここでは、構造体のポインタ自体ではなく、*フィールド*の`CFType`に対して再利用する。Phase 2で`dropIfLastUse`が計算した`postDrop`は、`structVar`/`value`のどちらを (あるいは両方を) dropすべきかを、このコードに正確に伝える。`postDrop`を持つほかのすべてのノードと同じ取り決めであり、`Emit.idr`がここで所有権を導き直すことはない。
-
-**ネイティブなフィールドは、値をネイティブのまま読む** (2026-09-29)。`value`をBoxedのまま出力して取り出す方法は、定数をリークさせていた。setterを唯一の呼び出し元にインライン展開すると (`inlining.md`、基準B)、`9.0`そのものが渡される。これを`rcVarToBoxedC`がボックス化するが、誰も解放しない (Test24とTest120で、valgrind下で16バイト)。`cfTypeNative`が写す型のフィールドは、現在は`rcVarToNativeC`を通すので、定数はリテラルとして書き出される。
+`postDrop`はPhase 2が計算するので、`Emit`はそれを実行するだけで、所有権を自分では導かない。
 
 ### 上流から具体的に移植できるもの
 
@@ -286,7 +224,7 @@ rc2は完全に独立したパッケージであり、`idris2-src`を編集す�
 
 - **直接アルゴリズムを移植するもの** (形は同じで、rc2の流儀で書き直す): 構造体名ごとに1度だけ集める`Structs`のrefと`mkStruct`のパターン (上のPart B)。これは、「同じ考え方を別の言語で書く」ことそのものであり、`%foreign`定義の戻り値型と引数型の中の`CFIORes`/`CFFun`への再帰も含む。
 - **既存のrc2のコードがすでにカバーしており、まったく不要なもの**: Chezの`cftySpec` (`CFType`ごとのSchemeの型文字列の生成) に対応するものを、rc2で新しく書く必要はない。ほかのすべての`CFType`について、`cTypeOfCFType`/`extractValue`/`packCFType`が同じ役割をすでに果たしている。`CFStruct`は、Part A/Cで行うとおり、既存のケースごとの関数に追加するだけでよく、ゼロから再実装するものではない。
-- **移植できず、新規に書く必要があるもの**: `chezExtPrim`の`GetField`/`SetField`のケースは、Scheme (`ftype-ref`/`ftype-set!`) を出力し、Chez Scheme自身のマクロ展開時の型解決に頼っている。rc2はCを直接出力し、Part Bで作る`StructDefs`の表に対して自前で解決する。問題は同じだが、解決方法は構造的に無関係である。Part D (および上の`RStructGet`/`RStructSet`のノードとPhase 1/Phase 2の仕組み) は、移植ではなく独自の設計である。この設計にある専用ノードという段階に相当するものは、Chezにはまったくない。Schemeは動的型付けなので、`chezExtPrim`は`ExtPrim`から`GetField`/`SetField`を直接下げることができ、rc2の`RExtPrim`にあるような所有権追跡の欠落を回避する必要もない (上の「専用ノードにする理由」を参照)。したがって、設計のこの部分には、移植元になる上流の対応物がそもそもない。
+- **移植できず、新規に書く必要があるもの**: `chezExtPrim`の`GetField`/`SetField`のケースは、Scheme (`ftype-ref`/`ftype-set!`) を出力し、Chez Scheme自身のマクロ展開時の型解決に頼っている。rc2はCを直接出力し、名前は`normalize`の中で、Part Bの`StructTable`に対して自前で解決する。問題は同じだが、解決方法は構造的に無関係である。Part D (および上の`RStructGet`/`RStructSet`のノードとPhase 1/Phase 2の仕組み) は、移植ではなく独自の設計である。専用ノードという段階に相当するものは、Chezにはまったくない。Schemeは動的型付けなので、`chezExtPrim`は`ExtPrim`から`GetField`/`SetField`を直接下げることができ、追跡すべき参照カウントもない。したがって、設計のこの部分には、移植元になる上流の対応物がそもそもない。
 
 ## rc2自身の設計に関する未解決の問い
 
@@ -295,7 +233,7 @@ rc2は完全に独立したパッケージであり、`idris2-src`を編集す�
 
   `CFUser : Name -> List CFType -> CFType`は、任意のIdris2の型を表す (`extractValue`の`(CFUser x xs) varName = "(IDRIS2RC2_Value*)" ++ varName`のケースにより、Boxedとして出力される)。型の*文法*には存在するが、参照カウントされる本物のBoxedなIdris2の値には、Cの構造体メンバとしての意味のある記憶域がない。`int`/`double`/素のポインタのフィールドと違って、「このGC自身の生存期間に結び付いたポインタを保持するスロット」には、実際のCのレイアウトがないためである。
 
-  そのため、`RStructGet`/`RStructSet`のフィールドの型の検索では、`CFUser`型のフィールドを対象外として扱ってよい。本物の所有権の設計が必要なケースとしてではなく、構造体の収集時 (Part B) のエラーとして扱う。`getField`/`setField`の読み書きは、常に本物のCの型の領域に対する`packCFType`/`extractValue`の変換であり、すでにBoxedな値を別名で読むことはない。したがって、読み出し側に`dup`は一切不要である。コンストラクタを分解したフィールドは、Boxedの記憶域への直接の別名なので事情が違うが、それは`Compiler.RC2.ConAltNative`の問題であり、ここの問題ではない。
+  そのため、`RStructGet`/`RStructSet`のフィールドの型の検索では、`CFUser`型のフィールドを対象外として扱ってよい。本物の所有権の設計が必要なケースとしてではなく、対象外として扱う。現在これを拒否するものはなく、`collectStructDefs` (Part B) はそのまま保持し、`cTypeOfCFType`は`void *`として出力する。`getField`/`setField`の読み書きは、常に本物のCの型の領域に対する`packCFType`/`extractValue`の変換であり、すでにBoxedな値を別名で読むことはない。したがって、読み出し側に`dup`は一切不要である。コンストラクタを分解したフィールドは、Boxedの記憶域への直接の別名なので事情が違うが、それは`Compiler.RC2.ConAltNative`の問題であり、ここの問題ではない。
 
   スカラのフィールドをネイティブ (アンボックス) のまま読み書きして、すぐにネイティブの文脈で使う値について`packCFType`/`extractValue`の往復を省くことは、将来の作業として引き続き妥当である。通常のコンストラクタから分解したフィールドに対して、`Compiler.RC2.ConAltNative`がすでに行っているのと同じ形である (`rc2/doc/con-alt-native.md`)。ただし、これは、動作する常にBoxedな版の上に載せる性能最適化であり、その版を作るための前提条件ではない。
 - ~~未列挙: `RStructGet`/`RStructSet`のケースを追加する必要があるすべての箇所~~ **完了。下の「実装状況」を参照。** `RCExp`に触れるすべてのパスを監査した。実際の欠落が2件見つかって修正した (`Loop.idr`の`stripOwnership`、`Sink.idr`の`genuinelyUsedR`)。残りは、それぞれのワイルドカードのフォールスルーで、すでに正しいことを確認した。
@@ -374,14 +312,15 @@ rc2は完全に独立したパッケージであり、`idris2-src`を編集す�
 - `idris2-src/libs/base/System/FFI.idr`: `Struct`/`FieldType`/`getField`/`setField`/`prim__getField`/`prim__setField`。
 - `idris2-src/src/Compiler/Scheme/Chez.idr`: `chezExtPrim`の`GetField`/`SetField`のケース、`mkStruct`、`Structs`、`cftySpec`の`CFStruct`のケース、`schFgnDef` (`%foreign`定義ごとに`mkStruct`を呼ぶ場所)。
 - `idris2-src/src/Compiler/RefC/RefC.idr`: `cStatementsFromANF`の`AExtPrim`のディスパッチ (RefCとrc2が共有する`prims`ホワイトリスト)、`cTypeOfCFType`/`extractValue`/`packCFType`の`CFStruct`のケース (rc2が写した欠落と同じもの)。
-- `rc2/src/Compiler/RC2/Emit.idr`: `emitRC`の`RExtPrim`のケース (`prims`ホワイトリスト)、`cTypeOfCFType`/`extractValue`/`packCFType`の`CFStruct`のケース (`extractValue`の`idris_crash`、`packCFType`の未定義の`makeStruct`呼び出し)、`generateCSourceFile`/`header` (提案した収集パスの置き場所)、`RStructGet`/`RStructSet`のための新しい`emitRC`のケース (上の「設計」を参照)。
-- `rc2/src/Compiler/RC2/RCExp.idr`: `MkRCForeign` (`%foreign`定義の`CFType`のリストが、現在行き着く場所)。`ROp` (その`postDrop`フィールドを`RStructGet`/`RStructSet`が再利用する。ただし`ROp`の`splitBorrows`/`wrapDups`によるdupの挿入という半分は再利用しない)。`freeLocalsR`/`countUsesR`/`usedConstructorsR` (新しいノードにケースを追加する必要がある構造解析の関数)。
+- `rc2/src/Compiler/RC2/Emit.idr`: `emitRC`の`RExtPrim`のケース (`prims`ホワイトリスト。`prim__getField`/`prim__setField`はもう載っていない)、`RStructGet`/`RStructSet`のケース、`generateCSourceFile`/`header` (`StructDefs`の収集と`typedef struct`の出力。上の「設計」のPart BとC)。
+- `rc2/src/Compiler/RC2/Emit/Util.idr`: `cTypeOfCFType`/`extractValue`/`packCFType`の`CFStruct`のケース (Part A。`CFPtr`と同じ出力である。以前は`idris_crash`と、未定義の`makeStruct`の呼び出しだった)、および`collectStructDefs` (Part B)。
+- `rc2/src/Compiler/RC2/RCExp.idr`: `StructField`、`RStructGet`/`RStructSet`のノード (その`postDrop`は`ROp`と同じ役割を持つが、`ROp`の`splitBorrows`/`wrapDups`によるdupの挿入という半分は持たない)、`%foreign`定義の`CFType`のリストが行き着く`MkRCForeign`、およびこれらのノードのケースを持つ構造解析の関数 (`freeLocalsR`/`countUsesR`/`mentionedLocalsAcc`)。
 - `rc2/src/Compiler/RC2/RC.idr`に関する項目は次のとおり。
-  - `normalize`の`LExtPrim`/`MkLForeign`のケース (`RC.idr:163-164`/`244`)。新しい`prim__getField`/`prim__setField`のケースが入る場所であり、この文書の「構造体のフィールドの型は`Lifted`にどう現れるか」の節がたどる`Lifted`から`RCExp`への`MkLForeign`/`MkRCForeign`の直接のコピーでもある。
-  - `annotate`の`ROp`/`RExtPrim`のケース (`RC.idr:501-504`)。`RStructGet`/`RStructSet`の`annotate`/`dropIfLastUse`が、このパターンから外れる。`ROp`の`splitBorrows`/`wrapDups`は`dup`を挿入するが、`dropIfLastUse`は決して挿入しない。
-  - `branchBody`/`dropUnusedOwnedVars` (`RC.idr:397-409`)。`freeLocalsR`が未使用と報告するものをdropする、最上位の仕組みである。上の試行2が、`structVar`/`value`までこれが面倒を見てくれると誤って想定した。
-  - `annotateDef`/`definitionNatives` (`RC.idr:596-613`)。`f s = getField s "x"`の再現コードに対して手でたどり、試行2のバグを見つけた箇所である。
+  - `normalize`の`prim__getField`/`prim__setField`のケースと`structField` (Phase 1)。
+  - `annotate`の`RStructGet`/`RStructSet`のケースと`dropIfLastUse` (Phase 2)。`ROp`の`splitBorrows`/`wrapDups`はdupを挿入するが、`dropIfLastUse`は決して挿入しない。
+  - `branchBody`/`dropDeadLet`。使われなくなったものをdropする仕組みであり、上の「設計」が述べるとおり、それだけでは`structVar`/`value`をカバーできない。
+  - `normalizeProgram`が行う、インクリメンタルコンパイルでの`notInlinedStructFieldMarker`の捕捉。
+- `rc2/src/Compiler/RC2/RC2.idr`: `lowerProgram`。Phase 1の前に、`%foreign`定義から`StructTable`を作る。
 - `idris2-src/src/Compiler/LambdaLift.idr`: `LiftedDef`の`MkLForeign`と`Lifted`の`LExtPrim`。構造体のフィールドの型が、rc2自身の`RC.idr`が消費する`Lifted` IRに、(残る場合も残らない場合も) どう届くかを示す箇所である。
-- `rc2/src/Compiler/RC2/InlineCExp.idr`: `buildEligible`/`applyInlineLifted`。構造体フィールドの表が従うことになる、プログラム全体を収集してから走査する形である。
 - `idris2-src/src/Idris/CommandLine.idr`、`idris2-src/src/Compiler/Common.idr`: `--dumplifted`。上の例の出力に使ったデバッグ用フラグである。
 - `idris2-src/src/TTImp/ProcessData.idr`: `calcNaty`。`FieldType`が引き金になる、一般的な「Natに似た型」の構造検出である (`Nat`専用の特別扱いではない)。`idris2-src/src/Core/CompileExpr.idr`: この検出が割り当てる`ConInfo`の`ZERO`/`SUCC`タグ。

@@ -1,7 +1,9 @@
 # Raising a closure-returning function's arity (world arity raising)
 
 Status: implemented and on by default since 2026-09-26
-(`Compiler.RC2.ArityRaise`, `--directive noarityraise` turns it off).
+(`Compiler.RC2.ArityRaiseCExp` on the case trees and
+`Compiler.RC2.ArityRaise` on `RCExp`; `--directive noarityraise` turns it
+off).
 Grew out of `struct-return.md`'s "`apply` tails" open question.
 
 ## The problem
@@ -142,35 +144,85 @@ built once and shared, see `caf-memoization.md`).
 
 ## Placement
 
-On the pre-RC `RCExp`, right after "RC normalize" and before `ConstFold`:
+World arity raising happens at three points of the pipeline
+(`Compiler.RC2.RC2`'s `compileExprWhole` and `toRCDefs`), the first two
+raising functions and the third a fold:
 
-- no `dup`/`drop` exists yet, so the rewrite is purely structural and
-  `annotate` decides ownership for the new calls as for any other;
-- `ConstFold`, `PushCon`, the specialisations and the inliners see
-  direct calls. A small `f#` may inline into its caller, a known
-  constructor coming back from it may fold;
-- DualABI then gives `f#` native parameters and a struct return like
-  any other function.
+1. **On the named case trees, before lambda lifting**
+   (`Compiler.RC2.ArityRaiseCExp`, `raiseNamed`): after `LazyCaf`,
+   `InlineCExp` and dead-argument removal (`DeadArgs`), right before
+   lambda lifting and RC normalization. The case trees name locals by
+   name, so a parameter can be added without renumbering anything. A
+   lambda in a tail position is turned into a `let` in place, so its
+   body sits in the raised function instead of in a lifted definition
+   that the raised function calls. An incremental compile (`--inc rc2`,
+   `incCompile`) runs it too, after inlining but without dead-argument
+   removal.
+2. **On the pre-RC `RCExp`** (`Compiler.RC2.ArityRaise.applyArityRaise`),
+   in `toRCDefs` after the early inline and the lazy fold, before TRMC,
+   `ClosureCtx`, CAF memoization and RC annotation. It catches what the
+   first run could not see (an `%inline` function's `bind` is only
+   spliced in at the early inline, say), and a function raised by the
+   first run is a bare wrapper of its raised version by then, so the new
+   sites call that directly. No `dup`/`drop` exists yet at this point, so
+   the rewrite is purely structural and `annotate` decides ownership for
+   the new calls as for any other.
+3. **Post-RC fold** (`Compiler.RC2.ArityRaise.applyFoldApplied`), on the
+   annotated, loop-converted `RCExp`, right after `LateInline` and before
+   the optional post-RC `PushCon`, `Sink` and DualABI. See "Post-RC fold"
+   below.
 
-Floating the lambda out of the `case` in the case trees
-(`\x => case x of { A => \w => a; B => \w => b }` to
-`\x, w => case x of { A => a; B => b }`) would fix the shape at its
-source, but the case trees, like lambda lifting's `Lifted`, are scoped
-by de Bruijn index, and adding a parameter means re-indexing the body;
-the pre-RC `RCExp` names locals by id.
+Everything after the first run sees direct calls: `ConstFold`, `PushCon`,
+the specialisations and the inliners. A small raised function may inline
+into its caller, and a known constructor coming back from it may fold.
+DualABI then gives the raised function native parameters and a struct
+return like any other function.
 
-A tail call to `g` inside `f#` is an ordinary tail call: `Loop` turns a
-self tail call into a `goto`, and any other goes through the trampoline
-as before. Before the rewrite, `f` returned the closure to its caller's
-`apply` instead, which is no deeper.
+`--directive noarityraise` turns off both raising runs and
+`--directive noapplyfold` the fold.
+
+A tail call to `g` inside a raised function is an ordinary tail call:
+`Loop` turns a self tail call into a `goto`, and any other goes through
+the trampoline as before. Before the rewrite, the function returned the
+closure to its caller's `apply` instead, which is no deeper.
 
 ## Implementation
 
-`Compiler.RC2.ArityRaise.applyArityRaise` runs twice on the pre-RC
-`RCExp`: right before `ConstFold`, and again after the early inline.
-The second run sees sites the passes in between exposed (an inlined
-`bind`, say), and a function the first run raised is a bare wrapper of
-its raised version by then, so its new sites call that directly.
+**Case-tree run** (`ArityRaiseCExp.applyArityRaiseCExp`). `raisePlan`
+reads each function's tails through `let` bodies and every `case`
+branch: a tail is a lambda, a crash, a saturated call to a named
+function, or something else. The functions to raise are the greatest
+fixpoint of "every tail is a lambda, a crash or a saturated call to
+another function in the set" that reach at least one lambda; a function
+with no arguments (a CAF) is never in the set. For each function `f` in
+the set:
+
+- `rc2_raised_f` takes the arguments of `f` and a world `w` last. A tail
+  lambda `\x => b` becomes `let x = w in b`, a tail call to `g` in the set
+  becomes a call to `rc2_raised_g` with `w` appended, a crash stays;
+- `f` itself becomes `\w => rc2_raised_f args w`, for a caller that keeps
+  the closure.
+
+Call sites everywhere (including `main`) are rewritten: an application
+`(f xs) w rest` with `f` in the set and `xs` saturating it becomes
+`rc2_raised_f (xs ++ [w])`, applied to `rest` if any. A `let x = f xs`
+whose `x` is used exactly once, as `x w rest` somewhere inside the body,
+is rewritten the same way at that use (building the closure computes
+nothing, so it may move there); a binder on the way that would capture
+a name the moved call reads makes it give up.
+
+**`RCExp` run** (`ArityRaise.applyArityRaise`). It makes the same
+transformation as described in "The transformation" above, on the shapes
+`partial`/`call`/`apply`: `raisePlan` finds the functions whose tails are
+closures missing exactly one argument, crashes and calls to others in
+the set (a function that is a bare wrapper of another, `partial g
+missing= 1 [its parameters]`, needs no raised version of its own: its
+sites call `g`); each planned `f` gets a fresh `rc2_raised_f` definition
+(`raiseTails`), is replaced by a bare `partial` wrapper of it, and every
+body's `let c = call f xs; apply c [w]` is rewritten by `rewriteSites`.
+
+**Fold** (`ArityRaise.applyFoldApplied`) is described under "Post-RC
+fold".
 
 Two existing bugs surfaced on the new shapes, both fixed with it:
 
@@ -305,9 +357,9 @@ idris2-lsp cannot reach C generation.
 ## On the case trees (2026-09-29)
 
 The first run moved before lambda lifting (`Compiler.RC2.ArityRaiseCExp`),
-after inlining and dead-argument removal, which the "Placement" section
-above ruled out only because the case trees were then de Bruijn
-indexed: rc2 now reads them by name. A function whose every tail is a
+after inlining and dead-argument removal (see "Placement" above). It used to
+run on the pre-RC `RCExp`, because the case trees were then de Bruijn
+indexed; rc2 now reads them by name. A function whose every tail is a
 lambda, a crash or a saturated tail call to another such function gets
 `rc2_raised_f` taking the world `w` last; a tail lambda `\x => b`
 becomes `let x = w in b`, so its body sits in the raised function

@@ -18,19 +18,17 @@ RCConstClosure : Name -> (missing : Nat) -> RCLocal
 
 ### 畳み込み(`Compiler.RC2.ConstFold`)
 
-畳み込み自体は、`RLet` の値を分類する新しいアーム 1 つ(`ConstFold.idr:223-227`)である。
+畳み込みは、`foldConst` の節 1 つ(`ConstFold.idr:419`)である。この節が、リテラルで引数が 0 個の `RUnderApp` を、定数として `RV` に変換する。
 
 ```idris2
-RUnderApp _ n missing [] =>
-    let body' = foldConst (insert var (Element (RCConstClosure n missing) ItIsConstClosure2) env) body
-    in if contains (RCLoc var) (freeLocalsR body')
-          then RLet fc var rep value' body'
-          else body'
+foldConst _ env (RUnderApp fc n missing []) = RV fc (RCConstClosure n missing)
 ```
 
-引数リストがリテラルに空であるというマッチ(`RUnderApp fc n missing []`)が、畳み込んでよい `n` への素の参照と、畳み込めない部分適用を区別する。後者は、動的な値かもしれないものを捕捉する(`RUnderApp fc n missing (x :: xs)`)。これは既存の包括的なケースに落ちて、本物の `RLet` のまま残る。引数が 0 個の `RUnderApp` の中には、非定数になりうるものが何もない。
+この `RV` に畳み込まれた値を持つ `RLet` は、続いて `RV _ cval@(RCConstClosure {})` のアーム(`ConstFold.idr:328-332`。全体は後述の「ギャップ: `let` による再束縛 ...」の節に示す)で分類される。このアームは、定数を `env` に挿入し、`body` がその変数をもう参照しなければ `RLet` を取り除く。`RUnderApp` そのものに一致する `RLet` のアームはない。`RLet` が `value'` を見る時点で、`RUnderApp` の節がすでにそれを畳み込んでいるからである。
 
-このアーム 1 つと、`RCConstClosure` を `IsAnyConstLocal` として認識する `isConstLocalProof` のケースを除けば、**`ConstFold.idr` のほかのコードは変わっていない**。`RCon` 自身の畳み込みのケース(`ConstFold.idr:245-251`。コンストラクタの解決済みの `args` に対する `allConstLocal`)も、変更していない。このケースがもともと気にしているのは、各フィールドが `IsAnyConstLocal` を満たすかどうかだけであり、5 つ(今は 6 つ)ある定数の形のどれであるかは問わない。インターフェース辞書は、構造上は単なる `RCon` であり、そのすべてのフィールドが、たまたま `RCConst`/`RCEmptyCon` ではなく `RCConstClosure` に解決されたものである。既存の仕組みは、定義をまたぐ新しい解析をまったく足さずに、これを `RCConstCon` に畳み込む。`[1,2,3,4,5]` や `Just 42` をすでに畳み込んでいるのと、まったく同じ方法である。
+引数リストがリテラルに空であるというマッチ(`RUnderApp fc n missing []`)が、畳み込んでよい `n` への素の参照と、畳み込めない部分適用を区別する。後者は、動的な値かもしれないものを捕捉する(`RUnderApp fc n missing (x :: xs)`)。これは `foldConst` の次の節に落ちて、捕捉した引数だけが解決された `RUnderApp` のまま残るので、`RLet` は本物のまま残る。引数が 0 個の `RUnderApp` の中には、非定数になりうるものが何もない。
+
+この節 1 つと、`RV` のアーム、`RCConstClosure` を `IsAnyConstLocal` として認識する `isConstLocalProof` のケースを除けば、**`ConstFold.idr` のほかのコードは変わっていない**。`RCon` 自身の畳み込みのケース(`ConstFold.idr:390-396`。コンストラクタの解決済みの `args` に対する `allConstLocal`)も、変更していない。このケースがもともと気にしているのは、各フィールドが `IsAnyConstLocal` を満たすかどうかだけであり、5 つ(今は 6 つ)ある定数の形のどれであるかは問わない。インターフェース辞書は、構造上は単なる `RCon` であり、そのすべてのフィールドが、たまたま `RCConst`/`RCEmptyCon` ではなく `RCConstClosure` に解決されたものである。既存の仕組みは、定義をまたぐ新しい解析をまったく足さずに、これを `RCConstCon` に畳み込む。`[1,2,3,4,5]` や `Just 42` をすでに畳み込んでいるのと、まったく同じ方法である。
 
 ### ステージング(`Compiler.RC2.Emit.Util`)
 
@@ -122,7 +120,7 @@ RV _ cval@(RCConstCon {}) =>
           else body'
 ```
 
-(`ConstFold.idr:211-215`)。`RCConstClosure` には、これに相当するアームがなかった。そのため、`let a = someTopLevelFn in let b = a in MkDict a b` のような連鎖では、`a` は正しく畳み込まれるのに、`b` のところで気づかないうちに伝播が止まっていた。`b` は、まったく同じ不死の値を指しているにもかかわらず、実行時の本物のローカルのままになり、`MkDict a b` の `b` フィールドは、`RCConstCon` の畳み込みの `allConstLocal` の検査に届かなかった。生成されるコードは有効だったので、正当性のバグではなく、畳み込みの取りこぼしである。ただし、最初にコミットした `RCConstClosure` の完全性には、実際にギャップがあった。
+(`ConstFold.idr:316-320`)。`RCConstClosure` には、これに相当するアームがなかった。そのため、`let a = someTopLevelFn in let b = a in MkDict a b` のような連鎖では、`a` は正しく畳み込まれるのに、`b` のところで気づかないうちに伝播が止まっていた。`b` は、まったく同じ不死の値を指しているにもかかわらず、実行時の本物のローカルのままになり、`MkDict a b` の `b` フィールドは、`RCConstCon` の畳み込みの `allConstLocal` の検査に届かなかった。生成されるコードは有効だったので、正当性のバグではなく、畳み込みの取りこぼしである。ただし、最初にコミットした `RCConstClosure` の完全性には、実際にギャップがあった。
 
 修正は、`RCConstCon` のアームと構造がまったく同じで、2 つ目の `RV` のケースを足すだけである。違うのは、一致させる定数の形と、ウィットネスのコンストラクタだけである。
 
@@ -134,13 +132,13 @@ RV _ cval@(RCConstClosure {}) =>
           else body'
 ```
 
-(`ConstFold.idr:228-232`。`RCConstCon` のアームの直後にあり、そもそも `RCConstClosure` を生み出している `RUnderApp _ n missing []` のアームの直前にある。)
+(`ConstFold.idr:328-332`。`RCConstCon` のアームの直後にある。)この同じアームは、素の `let a = someTopLevelFn` も記録する。`foldConst` の `RUnderApp fc n missing []` の節が、この値をすでに `RV fc (RCConstClosure n missing)` に畳み込んでいるので、これもここに行き着く。
 
 **検証の方法。** 本当に*残る*、`let b = a`(ローカルからローカルへの単なるエイリアス)を rc2 自身の IR に載せるのが難しく、修正そのものは難しくなかった。Idris2 自身のフロントエンドは、まさにこの形を、Lifted IR に届く前に先回りして畳み込んでしまう(`--directive dumplifted` で手作業で確認した。`let a = greetFn; b = a in ...` と直接書いても、どの関数の中に書いても、`Compiler.LambdaLift` の出力には、2 つの別々の束縛として届かない)。`Test115ConstFoldClosure/ConstFoldClosure.idr` は、代わりに `%noinline` を付けた素通しのヘルパーを使って、これを再現している(`mkAlias : (String -> String) -> (String -> String); mkAlias f = f`)。`%noinline` は、*Lifted* IR ではこれを本物の呼び出しのまま残す(`--dumplifted` で確認した。`Main.main` 自身の定義には、`%let b = Main.mkAlias(!a) in ...` が残っており、本物の 2 つ目の束縛である)。その後 `Compiler.RC2.InlineCExp`(rc2 自身の、独立した、Lifted レベルのインライナーで、上流の `%noinline` フラグを尊重しない)が、`mkAlias` の本体(引数をそのまま返すだけ)を呼び出し箇所に展開し、`ConstFold` が動く前に、`b` 自身の値をちょうど `RV fc (RCLoc a)` にする。これが `env` を通って `RV fc (RCConstClosure ...)` に解決され、新しいアームにまさに行き当たる。構造として確認した。アームがなければ、テスト自身の `MkDict a b` の構築は、生成された `.c` の中で本物の `RCon` のまま残る(`Main_main` の中に、本物の `idris2rc2_newConstructor(2, 1)` の呼び出しがあり、フィールドの 1 つは実行時のローカルからコピーされる)。アームがあれば、`dict` は 1 つの不死の `RCConstCon` に畳み込まれ、その 2 つのフィールドは、*同じ* `constclosure_N` の static を参照する。そして `Main_main` には、コンストラクタを確保する呼び出しがまったく残らない。
 
 ### 一般化: この畳み込みはコンストラクタのフィールドに限らない
 
-上の設計の節は、`RCConstClosure` の畳み込みを、もっぱら、コンストラクタのフィールドに対する `RCon` 自身の `allConstLocal` の検査(インターフェース辞書や、`{__mainExpression:0}` の継続)の話として組み立てている。しかし、畳み込みそのものは、実際には、その位置に固有のものではない。`RUnderApp _ n missing []` から `RCConstClosure` への変換は、`RLet` の値の分類の中で、束縛された変数を使う特定の*利用側*を考える前に、一様に、1 度だけ行われる。その束縛をあとから読むものは、コンストラクタのフィールドでも、普通の関数呼び出しの引数でも、何であっても、`resolveLocal` が解決した結果(`RCConstClosure` を含む)として読む。
+上の設計の節は、`RCConstClosure` の畳み込みを、もっぱら、コンストラクタのフィールドに対する `RCon` 自身の `allConstLocal` の検査(インターフェース辞書や、`{__mainExpression:0}` の継続)の話として組み立てている。しかし、畳み込みそのものは、実際には、その位置に固有のものではない。`RUnderApp _ n missing []` から `RCConstClosure` への変換は、`foldConst` 自身の `RUnderApp` の節の中で(`RLet` の値の分類は、その結果を `env` に記録する)、束縛された変数を使う特定の*利用側*を考える前に、一様に、1 度だけ行われる。その束縛をあとから読むものは、コンストラクタのフィールドでも、普通の関数呼び出しの引数でも、何であっても、`resolveLocal` が解決した結果(`RCConstClosure` を含む)として読む。
 
 `Test115ConstFoldClosure/ConstFoldClosure.idr` は、そもそもこの作業に関心を持つきっかけになったケースについて、これを確認している。コンストラクタのフィールドではなく、普通の関数呼び出しに渡す、引数を何も埋めていないクロージャである。`TODO.md` がかつて "Dropped: closure generation for statically-known higher-order function arguments" として追跡していた、`map double [1,2,3,4,5]` の形である(後述の「完全な解決」を参照)。このテストの `useIt : List Int -> List Int; useIt xs = map double xs` は、`double` のクロージャ引数を、1 つの不死の `constclosure_N` の static にコンパイルし、`useIt` 自身のコンパイル済みの本体に直接埋め込む。生成された C を調べて、そのための `idris2rc2_mkClosure` の呼び出しが、どこにも**1 つも**ないことを確認した。`main` の 3 か所の呼び出し箇所(`useIt [1,2,3]`、`useIt [4,5,6]`、`useIt [7,8,9]`)から `useIt` を呼んでも、畳み込みが起きるのは、実行のたびではなく、コンパイル時の*1 回*だけであることが確認できる。3 つの呼び出しはすべて、同一の `constclosure_N` の static を参照し、自身の呼び出し箇所でも `useIt` の中でも、`double` のための新しいクロージャを確保するものはない。
 
@@ -162,7 +160,7 @@ RV _ cval@(RCConstClosure {}) =>
 ## ファイル
 
 - `rc2/src/Compiler/RC2/RCExp.idr`: `RCLocal` の新しい `RCConstClosure` のケース、`IsConstClosureLocal`、`IsAnyConstLocal` の 5 つ目のコンストラクタ、および `Eq`/`Ord`/`Show` への追加。
-- `rc2/src/Compiler/RC2/ConstFold.idr`: `RUnderApp _ n missing []` に対する、`RLet` の値を分類する新しいアームと、`isConstLocalProof` の新しいケース。加えて(コミット `0e7c755`)、畳み込み済みのクロージャ定数を、さらなる `let` による再束縛へ伝播させる、対になる `RV _ (RCConstClosure {})` のアーム。
+- `rc2/src/Compiler/RC2/ConstFold.idr`: `RUnderApp fc n missing []` に対する `foldConst` の節(`RV fc (RCConstClosure ..)` に畳み込む)と、`RLet` の値を分類するアーム `RV _ (RCConstClosure {})`(その定数を `env` に入れる。加えて、畳み込み済みのクロージャ定数を、さらなる `let` による再束縛へ伝播させる。コミット `0e7c755`)と、`isConstLocalProof` の新しいケース。
 - `rc2/src/Compiler/RC2/Emit/Util.idr`: `boxedConstClosureExpr`、`boxedConstExpr` の `constDefKey` の修正、および `constConFieldExpr`/`inlineExprFor`/`repOfLocal`/`varName` に追加した `RCConstClosure` のケース。
 - `rc2/src/Compiler/RC2/DeadCode.idr`: `usedFunctionNamesL`、および `usedFunctionNamesR` の網羅的な書き直し。
 - `rc2/src/Compiler/RC2/RC.idr`: `annotate` の `splitBorrows`/`dropIfLastUse`/`isBoxedOperand`/`(RV fc v)` のケース。`RCConstClosure` を不死として扱うように拡張した。
