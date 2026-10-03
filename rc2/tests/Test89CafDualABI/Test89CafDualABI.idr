@@ -8,7 +8,7 @@ module Main
 -- `%noinline` function, so ConstFold can't fold it and the call has
 -- to be spliced inside the memoized body.
 
-%foreign "C:abs,libc,stdlib.h"
+%foreign "C:labs,libc,stdlib.h"
 prim__abs : Int -> Int
 
 %noinline

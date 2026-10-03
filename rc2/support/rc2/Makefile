@@ -7,7 +7,7 @@ AR ?= ar
 RANLIB ?= ranlib
 CFLAGS += -O2 -Wall -Wno-unused-function
 INSTALL_ROOT ?= $(shell idris2 --libdir)/support/rc2
-IDRIS2_PREFIX ?= ${shell idris2 --prefix}
+PREFIX ?= ${shell idris2 --prefix}
 
 TARGET = libidris2rc2.a
 SRCS := $(wildcard *.c)
@@ -33,10 +33,11 @@ $(OBJS): $(wildcard *.h)
 
 .PHONY: install
 install: $(TARGET)
-	install -d $(INSTALL_ROOT) ${IDRIS2_PREFIX}//bin/idris2-rc2_app
+	echo Installing to ${PREFIX} ...
+	install -d $(INSTALL_ROOT) ${PREFIX}/bin/idris2-rc2_app
 	install -m 644 $(TARGET) *.h $(INSTALL_ROOT)
-	install ../../build/exec/idris2-rc2_app/* $(IDRIS2_PREFIX)/bin/idris2-rc2_app
-	install -m 755 ../../build/exec/idris2-rc2 $(IDRIS2_PREFIX)/bin/
+	install ../../build/exec/idris2-rc2_app/* $(PREFIX)/bin/idris2-rc2_app
+	install -m 755 ../../build/exec/idris2-rc2 $(PREFIX)/bin/
 
 .PHONY: clean
 clean:
