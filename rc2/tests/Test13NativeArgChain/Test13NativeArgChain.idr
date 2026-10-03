@@ -65,7 +65,7 @@ loop : Bits64 -> List Bits8 -> Bits64
 loop acc [] = acc
 loop acc (b :: bs) = loop (chain acc b) bs
 
-%foreign "C:abs,libc,stdlib.h"
+%foreign "C:llabs,libc,stdlib.h"
 prim__abs : Int -> Int
 
 %foreign "C:labs,libc,stdlib.h"
