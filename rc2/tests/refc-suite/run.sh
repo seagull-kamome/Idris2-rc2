@@ -17,7 +17,7 @@
 set -u
 
 SUITE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-IDRIS2RC2="${IDRIS2RC2:-/home/hhiroki/projects/idris2-rc-cg/rc2/build/exec/idris2-rc2}"
+IDRIS2RC2="${IDRIS2RC2:-$SUITE_DIR/../../build/exec/idris2-rc2}"
 
 pass=0
 fail=0
