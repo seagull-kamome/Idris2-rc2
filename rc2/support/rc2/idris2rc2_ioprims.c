@@ -1,14 +1,15 @@
 #include "idris2rc2_ioprims.h"
-#include "idris2rc2_memory.h"
-#include "idris2rc2_rt.h"
-#include "idris2rc2_util.h"
 
 #include <pthread.h>
 #include <stdio.h>
 
+#include "idris2rc2_memory.h"
+#include "idris2rc2_rt.h"
+#include "idris2rc2_util.h"
+
 IDRIS2RC2_Value *idris2rc2_Data_IORef_prim__newIORef(IDRIS2RC2_Value *erased,
-                                                       IDRIS2RC2_Value *v,
-                                                       IDRIS2RC2_Value *world) {
+						     IDRIS2RC2_Value *v,
+						     IDRIS2RC2_Value *world) {
   IDRIS2RC2_IORef *r = IDRIS2RC2_NEW(IDRIS2RC2_IORef);
   r->header.tag = IDRIS2RC2_TAG_IOREF;
   atomic_flag_clear(&r->lock);
@@ -17,8 +18,8 @@ IDRIS2RC2_Value *idris2rc2_Data_IORef_prim__newIORef(IDRIS2RC2_Value *erased,
 }
 
 IDRIS2RC2_Value *idris2rc2_Data_IORef_prim__readIORef(IDRIS2RC2_Value *erased,
-                                                        IDRIS2RC2_Value *ioref,
-                                                        IDRIS2RC2_Value *world) {
+						      IDRIS2RC2_Value *ioref,
+						      IDRIS2RC2_Value *world) {
   IDRIS2RC2_IORef *r = (IDRIS2RC2_IORef *)ioref;
   idris2rc2_spin_lock(&r->lock);
   IDRIS2RC2_Value *result = idris2rc2_dup(r->v);
@@ -26,10 +27,9 @@ IDRIS2RC2_Value *idris2rc2_Data_IORef_prim__readIORef(IDRIS2RC2_Value *erased,
   return result;
 }
 
-IDRIS2RC2_Value *idris2rc2_Data_IORef_prim__writeIORef(IDRIS2RC2_Value *erased,
-                                                         IDRIS2RC2_Value *ioref,
-                                                         IDRIS2RC2_Value *newValue,
-                                                         IDRIS2RC2_Value *world) {
+IDRIS2RC2_Value *idris2rc2_Data_IORef_prim__writeIORef(
+    IDRIS2RC2_Value *erased, IDRIS2RC2_Value *ioref, IDRIS2RC2_Value *newValue,
+    IDRIS2RC2_Value *world) {
   IDRIS2RC2_IORef *r = (IDRIS2RC2_IORef *)ioref;
   idris2rc2_dup(newValue);
   idris2rc2_spin_lock(&r->lock);
@@ -59,10 +59,10 @@ IDRIS2RC2_Value *idris2rc2_Data_IORef_prim__writeIORef(IDRIS2RC2_Value *erased,
 // loop, and the caller gets the witness value for free instead of a
 // separate readIORef call (which would itself race a concurrent
 // writer between the two calls).
-IDRIS2RC2_Value *idris2rc2_ioref_cas(IDRIS2RC2_Value *,
-                                      IDRIS2RC2_Value *ioref,
-                                      IDRIS2RC2_Value *expected,
-                                      IDRIS2RC2_Value *desired) {
+IDRIS2RC2_Value *idris2rc2_ioref_cas(IDRIS2RC2_Value *erased,
+				     IDRIS2RC2_Value *ioref,
+				     IDRIS2RC2_Value *expected,
+				     IDRIS2RC2_Value *desired) {
   IDRIS2RC2_IORef *r = (IDRIS2RC2_IORef *)ioref;
   idris2rc2_spin_lock(&r->lock);
   if (r->v == expected) {
@@ -83,8 +83,7 @@ IDRIS2RC2_Value *idris2rc2_Data_IOArray_Prims_prim__newArray(
     IDRIS2RC2_Value *world) {
   int len = (int)idris2rc2_extractInt(length);
   IDRIS2RC2_Array *a = idris2rc2_mkArray(len);
-  for (int i = 0; i < len; i++)
-    a->items[i] = idris2rc2_dup(v);
+  for (int i = 0; i < len; i++) a->items[i] = idris2rc2_dup(v);
   return (IDRIS2RC2_Value *)a;
 }
 
@@ -142,9 +141,9 @@ IDRIS2RC2_String const idris2rc2_codegenString = {
     IDRIS2RC2_STOCKVAL(IDRIS2RC2_TAG_STRING), sizeof("rc2") - 1, "rc2"};
 
 IDRIS2RC2_Value *idris2rc2_Prelude_IO_prim__onCollect(IDRIS2RC2_Value *erased,
-                                                        IDRIS2RC2_Value *anyPtr,
-                                                        IDRIS2RC2_Value *onFree,
-                                                        IDRIS2RC2_Value *world) {
+						      IDRIS2RC2_Value *anyPtr,
+						      IDRIS2RC2_Value *onFree,
+						      IDRIS2RC2_Value *world) {
   IDRIS2RC2_GCPointer *r = IDRIS2RC2_NEW(IDRIS2RC2_GCPointer);
   r->header.tag = IDRIS2RC2_TAG_GCPOINTER;
   r->p = (IDRIS2RC2_Pointer *)idris2rc2_dup(anyPtr);
@@ -152,9 +151,8 @@ IDRIS2RC2_Value *idris2rc2_Prelude_IO_prim__onCollect(IDRIS2RC2_Value *erased,
   return (IDRIS2RC2_Value *)r;
 }
 
-IDRIS2RC2_Value *idris2rc2_Prelude_IO_prim__onCollectAny(IDRIS2RC2_Value *anyPtr,
-                                                           IDRIS2RC2_Value *onFree,
-                                                           IDRIS2RC2_Value *world) {
+IDRIS2RC2_Value *idris2rc2_Prelude_IO_prim__onCollectAny(
+    IDRIS2RC2_Value *anyPtr, IDRIS2RC2_Value *onFree, IDRIS2RC2_Value *world) {
   IDRIS2RC2_GCPointer *r = IDRIS2RC2_NEW(IDRIS2RC2_GCPointer);
   r->header.tag = IDRIS2RC2_TAG_GCPOINTER;
   r->p = (IDRIS2RC2_Pointer *)idris2rc2_dup(anyPtr);
@@ -178,7 +176,8 @@ static void *idris2rc2_threadTrampoline(void *arg) {
   // `fct : PrimIO ()` is `(1 w : %World) -> ()` -- a single application
   // of the erased world token runs it, same as idris2rc2_teardown's
   // GCPointer onCollect case (memory.c) does for its own bare PrimIO ().
-  IDRIS2RC2_Value *result = idris2rc2_applyClosure((IDRIS2RC2_Value *)arg, NULL);
+  IDRIS2RC2_Value *result =
+      idris2rc2_applyClosure((IDRIS2RC2_Value *)arg, NULL);
   idris2rc2_drop(result);
   return NULL;
 }
@@ -211,6 +210,4 @@ void *idris2rc2_fork(IDRIS2RC2_Closure *fct) {
 // %foreign "C:refc_fork" declaration mandates (see ioprims.h) -- the real
 // implementation lives in idris2rc2_fork, matching rc2's own naming
 // convention everywhere else.
-void *refc_fork(IDRIS2RC2_Closure *fct) {
-  return idris2rc2_fork(fct);
-}
+void *refc_fork(IDRIS2RC2_Closure *fct) { return idris2rc2_fork(fct); }

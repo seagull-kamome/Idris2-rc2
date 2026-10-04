@@ -34,11 +34,43 @@ void idris2rc2_teardown(IDRIS2RC2_Value *v);
 void idris2rc2_enableMultiThreading(void);
 int idris2rc2_isMultiThreaded(void);
 
+// Plain refcount updates until the program goes multi-threaded, atomic
+// from then on: rc2/doc/hybrid-refcount.md.
+extern bool idris2rc2_threaded;
+
+// Drops one reference; true if it was the last, so the caller tears the
+// object down. Once threaded, the acquire before that is a load, not
+// atomic_thread_fence: ThreadSanitizer does not model fences and reports
+// every such teardown as a race.
+static inline bool idris2rc2_rc_release(IDRIS2RC2_Header *h) {
+  if (__builtin_expect(idris2rc2_threaded, 0)) {
+    uint16_t c = atomic_load_explicit(&h->refCount, memory_order_relaxed);
+    if (c == IDRIS2RC2_REFCOUNT_MAX ||
+	atomic_fetch_sub_explicit(&h->refCount, 1, memory_order_release) != 1)
+      return false;
+    (void)atomic_load_explicit(&h->refCount, memory_order_acquire);
+    return true;
+  }
+  uint16_t c = h->rc;
+  if (c == IDRIS2RC2_REFCOUNT_MAX) return false;
+  h->rc = (uint16_t)(c - 1);
+  return c == 1;
+}
+
 // Increments the refcount of `v` (a no-op for unboxed/NULL/immortal values)
 // and returns it, so it can be used inline: `x = idris2rc2_dup(y);`
 static inline IDRIS2RC2_Value *idris2rc2_dup(IDRIS2RC2_Value *v) {
-  if (v && !idris2rc2_is_unboxed(v))
-    idris2rc2_rc_retain(&v->header);
+  if (v && !idris2rc2_is_unboxed(v)) {
+    if (__builtin_expect(idris2rc2_threaded, 0)) {
+      uint16_t c =
+	  atomic_load_explicit(&v->header.refCount, memory_order_relaxed);
+      if (c != IDRIS2RC2_REFCOUNT_MAX)
+	atomic_fetch_add_explicit(&v->header.refCount, 1, memory_order_relaxed);
+      return v;
+    }
+    if (v->header.rc != IDRIS2RC2_REFCOUNT_MAX) v->header.rc++;
+  }
+
   return v;
 }
 
@@ -59,17 +91,19 @@ static inline IDRIS2RC2_Value *idris2rc2_dup_n(IDRIS2RC2_Value *v, int n) {
     if (!idris2rc2_threaded) {
       uint16_t cur = v->header.rc;
       if (cur != IDRIS2RC2_REFCOUNT_MAX)
-        v->header.rc = cur > IDRIS2RC2_REFCOUNT_MAX - n
-                         ? IDRIS2RC2_REFCOUNT_MAX : (uint16_t)(cur + n);
+	v->header.rc = cur > IDRIS2RC2_REFCOUNT_MAX - n ? IDRIS2RC2_REFCOUNT_MAX
+							: (uint16_t)(cur + n);
       return v;
     }
-    uint16_t cur = atomic_load_explicit(&v->header.refCount, memory_order_relaxed);
+    uint16_t cur =
+	atomic_load_explicit(&v->header.refCount, memory_order_relaxed);
     while (cur != IDRIS2RC2_REFCOUNT_MAX) {
-      uint16_t next = cur > IDRIS2RC2_REFCOUNT_MAX - n
-                        ? IDRIS2RC2_REFCOUNT_MAX : (uint16_t)(cur + n);
+      uint16_t next = cur > IDRIS2RC2_REFCOUNT_MAX - n ? IDRIS2RC2_REFCOUNT_MAX
+						       : (uint16_t)(cur + n);
       if (atomic_compare_exchange_weak_explicit(&v->header.refCount, &cur, next,
-              memory_order_relaxed, memory_order_relaxed))
-        break;
+						memory_order_relaxed,
+						memory_order_relaxed))
+	break;
     }
   }
   return v;
@@ -88,7 +122,8 @@ static inline void idris2rc2_drop(IDRIS2RC2_Value *v) {
 void idris2rc2_free(IDRIS2RC2_Value *v);
 
 IDRIS2RC2_Constructor *idris2rc2_newConstructor(int arity, int tag);
-IDRIS2RC2_Closure *idris2rc2_mkClosure(IDRIS2RC2_Value *(*fn)(), uint8_t arity, uint8_t filled);
+IDRIS2RC2_Closure *idris2rc2_mkClosure(IDRIS2RC2_Value *(*fn)(), uint8_t arity,
+				       uint8_t filled);
 
 // Prelude.Maybe's Just is always tag=1, arity=1 -- confirmed empirically
 // (not by reading the compiler's own source) by building a small
@@ -106,13 +141,26 @@ IDRIS2RC2_Value *idris2rc2_wrapJust(IDRIS2RC2_Value *val);
 
 IDRIS2RC2_Value *idris2rc2_mkDouble(double d);
 
-#define idris2rc2_mkChar(x) ((IDRIS2RC2_Value *)(((uintptr_t)(uint32_t)(x) << idris2rc2_unbox_shift) + 1))
-#define idris2rc2_mkBits8(x) ((IDRIS2RC2_Value *)(((uintptr_t)(uint8_t)(x) << idris2rc2_unbox_shift) + 1))
-#define idris2rc2_mkBits16(x) ((IDRIS2RC2_Value *)(((uintptr_t)(uint16_t)(x) << idris2rc2_unbox_shift) + 1))
-#define idris2rc2_mkBits32(x) ((IDRIS2RC2_Value *)(((uintptr_t)(uint32_t)(x) << idris2rc2_unbox_shift) + 1))
-#define idris2rc2_mkInt8(x) ((IDRIS2RC2_Value *)(((uintptr_t)(uint8_t)(int8_t)(x) << idris2rc2_unbox_shift) + 1))
-#define idris2rc2_mkInt16(x) ((IDRIS2RC2_Value *)(((uintptr_t)(uint16_t)(int16_t)(x) << idris2rc2_unbox_shift) + 1))
-#define idris2rc2_mkInt32(x) ((IDRIS2RC2_Value *)(((uintptr_t)(uint32_t)(int32_t)(x) << idris2rc2_unbox_shift) + 1))
+#define idris2rc2_mkChar(x) \
+  ((IDRIS2RC2_Value *)(((uintptr_t)(uint32_t)(x) << idris2rc2_unbox_shift) + 1))
+#define idris2rc2_mkBits8(x) \
+  ((IDRIS2RC2_Value *)(((uintptr_t)(uint8_t)(x) << idris2rc2_unbox_shift) + 1))
+#define idris2rc2_mkBits16(x) \
+  ((IDRIS2RC2_Value *)(((uintptr_t)(uint16_t)(x) << idris2rc2_unbox_shift) + 1))
+#define idris2rc2_mkBits32(x) \
+  ((IDRIS2RC2_Value *)(((uintptr_t)(uint32_t)(x) << idris2rc2_unbox_shift) + 1))
+#define idris2rc2_mkInt8(x)                             \
+  ((IDRIS2RC2_Value *)(((uintptr_t)(uint8_t)(int8_t)(x) \
+			<< idris2rc2_unbox_shift) +     \
+		       1))
+#define idris2rc2_mkInt16(x)                              \
+  ((IDRIS2RC2_Value *)(((uintptr_t)(uint16_t)(int16_t)(x) \
+			<< idris2rc2_unbox_shift) +       \
+		       1))
+#define idris2rc2_mkInt32(x)                              \
+  ((IDRIS2RC2_Value *)(((uintptr_t)(uint32_t)(int32_t)(x) \
+			<< idris2rc2_unbox_shift) +       \
+		       1))
 #define idris2rc2_mkBool(x) (idris2rc2_mkInt8(x))
 
 IDRIS2RC2_Value *idris2rc2_mkBits64(uint64_t i);
@@ -140,7 +188,8 @@ IDRIS2RC2_String *idris2rc2_mkString(char const *s);
 IDRIS2RC2_String *idris2rc2_mkStringLen(char const *s, size_t len);
 
 IDRIS2RC2_Pointer *idris2rc2_mkPointer(void *raw);
-IDRIS2RC2_GCPointer *idris2rc2_mkGCPointer(void *raw, IDRIS2RC2_Closure *onCollect);
+IDRIS2RC2_GCPointer *idris2rc2_mkGCPointer(void *raw,
+					   IDRIS2RC2_Closure *onCollect);
 IDRIS2RC2_ThreadID *idris2rc2_mkThreadID(pthread_t tid);
 IDRIS2RC2_Array *idris2rc2_mkArray(int length);
 // Wraps a raw buffer.c allocation (see buffer.h); takes ownership -- freed
@@ -152,7 +201,8 @@ extern IDRIS2RC2_String const idris2rc2_emptyStringValue;
 // Integer: an immediate (the Int64 layout) when it lies in
 // [IDRIS2RC2_IMM_I64_MIN, IDRIS2RC2_IMM_I64_LIMIT), a boxed mpz otherwise
 // -- never a boxed mpz for a value that fits (rc2/doc/immediate-ints.md).
-_Static_assert(GMP_NUMB_BITS == 64, "an immediate Integer is viewed as one GMP limb");
+_Static_assert(GMP_NUMB_BITS == 64,
+	       "an immediate Integer is viewed as one GMP limb");
 IDRIS2RC2_Integer *idris2rc2_mkInteger(void);
 IDRIS2RC2_Value *idris2rc2_mkIntegerLiteral(char const *digits);
 IDRIS2RC2_Value *idris2rc2_mkIntegerFromMpz(mpz_srcptr src);
@@ -166,8 +216,7 @@ static inline IDRIS2RC2_Value *idris2rc2_mkIntegerI64(int64_t n) {
   return idris2rc2_mkIntegerBoxedI64(n);
 }
 static inline IDRIS2RC2_Value *idris2rc2_mkIntegerU64(uint64_t n) {
-  if (n < (uint64_t)IDRIS2RC2_IMM_I64_LIMIT)
-    return IDRIS2RC2_IMM_INT64(n);
+  if (n < (uint64_t)IDRIS2RC2_IMM_I64_LIMIT) return IDRIS2RC2_IMM_INT64(n);
   return idris2rc2_mkIntegerBoxedU64(n);
 }
 
@@ -177,9 +226,9 @@ typedef struct {
   mp_limb_t limb;
 } IDRIS2RC2_IntegerView;
 
-static inline mpz_srcptr idris2rc2_integerView(IDRIS2RC2_Value *x, IDRIS2RC2_IntegerView *buf) {
-  if (!idris2rc2_is_unboxed(x))
-    return ((IDRIS2RC2_Integer *)x)->v;
+static inline mpz_srcptr idris2rc2_integerView(IDRIS2RC2_Value *x,
+					       IDRIS2RC2_IntegerView *buf) {
+  if (!idris2rc2_is_unboxed(x)) return ((IDRIS2RC2_Integer *)x)->v;
   int64_t n = idris2rc2_imm_signed(x);
   buf->limb = n < 0 ? -(uint64_t)n : (uint64_t)n;
   return mpz_roinit_n(&buf->z, &buf->limb, n < 0 ? -1 : 1);

@@ -58,42 +58,8 @@ typedef struct {
   uint8_t reserved;
 } IDRIS2RC2_Header;
 
-// Plain refcount updates until the program goes multi-threaded, atomic
-// from then on: rc2/doc/hybrid-refcount.md.
-extern bool idris2rc2_threaded;
-
-static inline void idris2rc2_rc_retain(IDRIS2RC2_Header *h) {
-  if (__builtin_expect(idris2rc2_threaded, 0)) {
-    uint16_t c = atomic_load_explicit(&h->refCount, memory_order_relaxed);
-    if (c != IDRIS2RC2_REFCOUNT_MAX)
-      atomic_fetch_add_explicit(&h->refCount, 1, memory_order_relaxed);
-    return;
-  }
-  if (h->rc != IDRIS2RC2_REFCOUNT_MAX)
-    h->rc++;
-}
-
-// Drops one reference; true if it was the last, so the caller tears the
-// object down. Once threaded, the acquire before that is a load, not
-// atomic_thread_fence: ThreadSanitizer does not model fences and reports
-// every such teardown as a race.
-static inline bool idris2rc2_rc_release(IDRIS2RC2_Header *h) {
-  if (__builtin_expect(idris2rc2_threaded, 0)) {
-    uint16_t c = atomic_load_explicit(&h->refCount, memory_order_relaxed);
-    if (c == IDRIS2RC2_REFCOUNT_MAX ||
-        atomic_fetch_sub_explicit(&h->refCount, 1, memory_order_release) != 1)
-      return false;
-    (void)atomic_load_explicit(&h->refCount, memory_order_acquire);
-    return true;
-  }
-  uint16_t c = h->rc;
-  if (c == IDRIS2RC2_REFCOUNT_MAX)
-    return false;
-  h->rc = (uint16_t)(c - 1);
-  return c == 1;
-}
-
-#define IDRIS2RC2_STOCKVAL(t) {{IDRIS2RC2_REFCOUNT_MAX}, (t), 0}
+#define IDRIS2RC2_STOCKVAL(t) \
+  { {IDRIS2RC2_REFCOUNT_MAX}, (t), 0 }
 
 typedef struct {
   IDRIS2RC2_Header header;
@@ -119,17 +85,22 @@ typedef struct {
 #define IDRIS2RC2_IMM_INT64(x) IDRIS2RC2_IMM((int64_t)(x))
 #define IDRIS2RC2_IMM_BITS64(x) IDRIS2RC2_IMM((uint64_t)(x))
 
-#define idris2rc2_to_i64(p)                                                  \
-  (idris2rc2_is_unboxed(p) ? idris2rc2_imm_signed(p) : ((IDRIS2RC2_Int64 *)(p))->v)
-#define idris2rc2_to_u64(p)                                                  \
-  (idris2rc2_is_unboxed(p) ? idris2rc2_imm_unsigned(p) : ((IDRIS2RC2_Bits64 *)(p))->v)
-#define idris2rc2_to_u32(p) ((uint32_t)((uintptr_t)(p) >> idris2rc2_unbox_shift))
+#define idris2rc2_to_i64(p)                          \
+  (idris2rc2_is_unboxed(p) ? idris2rc2_imm_signed(p) \
+			   : ((IDRIS2RC2_Int64 *)(p))->v)
+#define idris2rc2_to_u64(p)                            \
+  (idris2rc2_is_unboxed(p) ? idris2rc2_imm_unsigned(p) \
+			   : ((IDRIS2RC2_Bits64 *)(p))->v)
+#define idris2rc2_to_u32(p) \
+  ((uint32_t)((uintptr_t)(p) >> idris2rc2_unbox_shift))
 #define idris2rc2_to_i32(p) ((int32_t)((uintptr_t)(p) >> idris2rc2_unbox_shift))
-#define idris2rc2_to_u16(p) ((uint16_t)((uintptr_t)(p) >> idris2rc2_unbox_shift))
+#define idris2rc2_to_u16(p) \
+  ((uint16_t)((uintptr_t)(p) >> idris2rc2_unbox_shift))
 #define idris2rc2_to_i16(p) ((int16_t)((uintptr_t)(p) >> idris2rc2_unbox_shift))
 #define idris2rc2_to_u8(p) ((uint8_t)((uintptr_t)(p) >> idris2rc2_unbox_shift))
 #define idris2rc2_to_i8(p) ((int8_t)((uintptr_t)(p) >> idris2rc2_unbox_shift))
-#define idris2rc2_to_char(p) ((uint32_t)((uintptr_t)(p) >> idris2rc2_unbox_shift))
+#define idris2rc2_to_char(p) \
+  ((uint32_t)((uintptr_t)(p) >> idris2rc2_unbox_shift))
 #define idris2rc2_to_bool(p) (idris2rc2_to_i8(p))
 #define idris2rc2_to_double(p) (((IDRIS2RC2_Double *)(p))->v)
 
@@ -159,12 +130,12 @@ typedef struct {
 } IDRIS2RC2_Double;
 typedef struct {
   IDRIS2RC2_Header header;
-  uint32_t len; // byte length of str's content, excluding the terminator
-  char *str; // NUL-terminated, UTF-8 bytes; may contain embedded NUL bytes;
-             // indexing is byte-based
+  uint32_t len;	 // byte length of str's content, excluding the terminator
+  char *str;	 // NUL-terminated, UTF-8 bytes; may contain embedded NUL bytes;
+		 // indexing is byte-based
 } IDRIS2RC2_String;
 _Static_assert(sizeof(IDRIS2RC2_String) == 16,
-               "len fills the header's existing padding before the pointer");
+	       "len fills the header's existing padding before the pointer");
 
 // `tag` is -1 for a constructor identified by name instead, which keeps
 // its name in one extra slot after its fields: rc2/doc/constructor-layout.md.
@@ -175,8 +146,9 @@ typedef struct {
   IDRIS2RC2_Value *args[];
 } IDRIS2RC2_Constructor;
 
-#define idris2rc2_conName(p) \
-  ((char const *)((IDRIS2RC2_Constructor *)(p))->args[((IDRIS2RC2_Constructor *)(p))->arity])
+#define idris2rc2_conName(p)                    \
+  ((char const *)((IDRIS2RC2_Constructor *)(p)) \
+       ->args[((IDRIS2RC2_Constructor *)(p))->arity])
 #define idris2rc2_setConName(c, nm) \
   ((c)->args[(c)->arity] = (IDRIS2RC2_Value *)(void *)(nm))
 
@@ -191,7 +163,9 @@ typedef struct {
 // which alternative it happens to hold at runtime, so any tag-based
 // dispatch (Compiler.RC2.Emit's RConCase) must check is_unboxed first
 // rather than always dereferencing as a heap object.
-#define idris2rc2_conTag(p) (idris2rc2_is_unboxed(p) ? (int32_t)idris2rc2_to_u32(p) : ((IDRIS2RC2_Constructor *)(p))->tag)
+#define idris2rc2_conTag(p)                               \
+  (idris2rc2_is_unboxed(p) ? (int32_t)idris2rc2_to_u32(p) \
+			   : ((IDRIS2RC2_Constructor *)(p))->tag)
 
 // A constructor of at most four fields returned by value:
 // rc2/doc/struct-return.md. IDRIS2RC2_Ret<n> has room for n fields;
@@ -203,10 +177,22 @@ typedef union {
   double d;
 } IDRIS2RC2_RetField;
 
-typedef struct { int64_t tag; IDRIS2RC2_RetField f0; } IDRIS2RC2_Ret1;
-typedef struct { int64_t tag; IDRIS2RC2_RetField f0, f1; } IDRIS2RC2_Ret2;
-typedef struct { int64_t tag; IDRIS2RC2_RetField f0, f1, f2; } IDRIS2RC2_Ret3;
-typedef struct { int64_t tag; IDRIS2RC2_RetField f0, f1, f2, f3; } IDRIS2RC2_Ret4;
+typedef struct {
+  int64_t tag;
+  IDRIS2RC2_RetField f0;
+} IDRIS2RC2_Ret1;
+typedef struct {
+  int64_t tag;
+  IDRIS2RC2_RetField f0, f1;
+} IDRIS2RC2_Ret2;
+typedef struct {
+  int64_t tag;
+  IDRIS2RC2_RetField f0, f1, f2;
+} IDRIS2RC2_Ret3;
+typedef struct {
+  int64_t tag;
+  IDRIS2RC2_RetField f0, f1, f2, f3;
+} IDRIS2RC2_Ret4;
 
 // `arity`/`filled` sit in the header's alignment gap, before `fn`:
 // rc2/doc/constructor-layout.md, "Closures".
@@ -214,7 +200,7 @@ typedef struct {
   IDRIS2RC2_Header header;
   uint8_t arity;
   uint8_t filled;
-  void *fn; // cast to the right arity's function pointer type to call
+  void *fn;  // cast to the right arity's function pointer type to call
   IDRIS2RC2_Value *args[];
 } IDRIS2RC2_Closure;
 
@@ -242,11 +228,11 @@ typedef struct {
 // IDRIS2RC2_ConstClosure, these are never heap-allocated, sizeof()'d,
 // or handed to anything assuming the real IDRIS2RC2_Constructor layout.
 #define IDRIS2RC2_DEFINE_CONST_CONSTRUCTOR(n) \
-  typedef struct { \
-    IDRIS2RC2_Header header; \
-    uint16_t arity; \
-    int16_t tag; \
-    IDRIS2RC2_Value *args[n]; \
+  typedef struct {                            \
+    IDRIS2RC2_Header header;                  \
+    uint16_t arity;                           \
+    int16_t tag;                              \
+    IDRIS2RC2_Value *args[n];                 \
   } IDRIS2RC2_ConstConstructor##n;
 IDRIS2RC2_DEFINE_CONST_CONSTRUCTOR(1)
 IDRIS2RC2_DEFINE_CONST_CONSTRUCTOR(2)
@@ -307,8 +293,9 @@ typedef struct {
 } IDRIS2RC2_IORef;
 // `av` must overlay `v` exactly, and never hide a lock of its own.
 _Static_assert(sizeof(IDRIS2RC2_Value *_Atomic) == sizeof(IDRIS2RC2_Value *),
-               "an atomic pointer has a plain pointer's size");
-_Static_assert(ATOMIC_POINTER_LOCK_FREE == 2, "atomic pointers are always lock-free");
+	       "an atomic pointer has a plain pointer's size");
+_Static_assert(ATOMIC_POINTER_LOCK_FREE == 2,
+	       "atomic pointers are always lock-free");
 
 typedef struct {
   IDRIS2RC2_Header header;
