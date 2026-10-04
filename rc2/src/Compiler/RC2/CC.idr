@@ -236,6 +236,7 @@ compileCFile objectFiles outFile foreignLibs verbose
          dirs <- getDirs
          rc2Dir <- findDataFile "rc2"
          supportFile <- findLibraryFile "libidris2_support.a"
+         --libdir <- pkgGlobalDirectory
          depLibDirs <- depPkgLibDirs
 
          -- `-lidris2rc2` must resolve before `supportFile` (the shared
@@ -258,11 +259,13 @@ compileCFile objectFiles outFile foreignLibs verbose
          -- mode's own per-module `.o`s.
          let runcc = (escapeCmd $
              [cc, "-Werror", "-Wno-error=deprecated-declarations", "-Wl,--gc-sections"] ++ objectFiles ++ [
-                  "-o", outFile,
-                  "-L" ++ rc2Dir,
-                  "-lidris2rc2"
-                  ] ++ map ("-l" ++) foreignLibs ++ [
-                  supportFile
+                  "-o", outFile
+                  -- "-L" ++ libdir ++ "/lib",
+                  -- "-Wl,-rpath," ++ libdir ++ "/lib",
+                  -- "-lidris2_support"
+                  ] ++ map ("-l" ++) (filter (/= "idris2_support") foreignLibs) ++ [
+                    "-L" ++ rc2Dir, "-lidris2rc2",
+                    supportFile
                   ] ++ clibdirs (lib_dirs dirs) ++ clibdirs depLibDirs ++ [
                   "-lgmp", "-lm", "-lpthread"])
                   ++ " " ++ (unwords [cFlags, ldFlags, ldLibs])
