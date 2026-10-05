@@ -546,43 +546,75 @@ scrutineeUses p e@(RConCase _ sc _ _) =
     (if sc == p then 1 else 0) + foldSubExprs (+) 0 (scrutineeUses p) e
 scrutineeUses p e = foldSubExprs (+) 0 (scrutineeUses p) e
 
-||| `True` iff `p` is scrutinised at least once and every one of its
-||| occurrences in `e` is either an `RConCase` scrutinee or a
-||| passthrough of `p` at the *same* argument position of a
-||| self-recursive call to `callee`. Anything else -- stored into a
-||| constructor, passed to some other call, passed to `callee` at a
-||| different position, returned -- means substituting the constant
+||| `Just` the forwarding sites of `p` iff every occurrence of it in `e`
+||| is an `RConCase` scrutinee, a passthrough of `p` at the *same*
+||| argument position of a self-recursive call to `callee`, or a
+||| *forwarding site* (`forwardSites`: handed to a parameter of some
+||| other call), and there is at least one scrutinee or forwarding
+||| site. Anything else -- stored into a constructor or closure capture,
+||| returned, used by an `RUnderApp` -- means substituting the constant
 ||| would duplicate it into positions the fold can't collapse, so the
 ||| clone would be a second copy of the same work rather than a
-||| specialization. The profitability gate would reject such a clone
-||| anyway; refusing here just avoids building it. The `scrut > 0`
-||| half is the same economy: a parameter *only* threaded onward and
-||| never destructured has no dispatch to resolve, so its clone is
-||| certain to be rejected.
+||| specialization; that stays excluded. The "at least one" half is the
+||| same economy: a parameter only carried along its own recursion has
+||| nothing to resolve.
 |||
 ||| Discounting the self-passthrough is what reaches the common
 ||| dictionary shape -- a recursive `go` carrying its dictionary along
-||| on every step -- and it is exactly the allowance
-||| `paramUses` already makes for the closure case, via
-||| the same `selfPassthroughOccurrences`.
+||| on every step. Nothing extra is needed to keep such a clone
+||| consistent: the seeded fold substitutes the constant into the
+||| self-call too, leaving it calling the *generic* callee with the
+||| constant spelled out, and the whole-program `redirectConstCallSites`
+||| sweep at the end runs over the clones as well as the originals, so
+||| that call matches this very key's own redirect entry and becomes a
+||| call to the clone itself.
 |||
-||| Nothing extra is needed to keep such a clone consistent. The seeded
-||| fold substitutes the constant into the self-call too, leaving it
-||| calling the *generic* callee with the constant spelled out; the
-||| whole-program `redirectConstCallSites` sweep at the end runs over
-||| the clones as well as the originals, so that call matches this very
-||| key's own redirect entry and becomes a call to the clone itself,
-||| with the argument dropped. The recursion specializes for free.
+||| The forwarding sites are what make the specialization transitive:
+||| after the seeded fold each is a call spelling the same constant at
+||| another function's parameter, i.e. exactly another key, which
+||| `applySpecConstCon` then builds in turn. See the doc's "Transitive
+||| specialisation". The closure half's `paramUses` is the model.
 |||
 ||| Note this pass runs *before* `Compiler.RC2.RC`'s own `annotate`, so
-||| there are no `RDup`/`RDrop` occurrences to discount yet -- see
-||| `applySpecClosure`'s own pipeline position.
-paramIsScrutineeOnly : RCLocal -> (callee : Name) -> (argPos : Nat) -> RCExp -> Bool
-paramIsScrutineeOnly p callee argPos e =
+||| there are no `RDup`/`RDrop` occurrences to discount yet.
+constParamUses : RCLocal -> (callee : Name) -> (argPos : Nat) -> RCExp -> Maybe (List (Name, Nat))
+constParamUses p callee argPos e =
     let uses = countUsesR p e
         scrut = scrutineeUses p e
         passthrough = selfPassthroughOccurrences p callee argPos e
-    in scrut > 0 && uses == scrut + passthrough
+        fwds = forwardSites p callee argPos e
+    in if uses == scrut + passthrough + length fwds && (scrut > 0 || not (null fwds))
+          then Just fwds
+          else Nothing
+
+||| Occurrences of `p` stored into a constructor or closure capture.
+||| Measurement only (`--directive timing`).
+storedUses : RCLocal -> RCExp -> Nat
+storedUses p e@(RCon _ _ _ _ args _) = count (== p) args + foldSubExprs (+) 0 (storedUses p) e
+storedUses p e@(RUnderApp _ _ _ args) = count (== p) args + foldSubExprs (+) 0 (storedUses p) e
+storedUses p e = foldSubExprs (+) 0 (storedUses p) e
+
+||| Why `paramIsScrutineeOnly` failed, as a bucket index, for the
+||| `--directive timing` breakdown only: 0 forward-only with scrutinee,
+||| 1 forward-only without scrutinee, 2 forward mixed with stored or
+||| other, 3 stored (no forward), 4 other escaping (no forward, no
+||| store), 5 no scrutinee and no other use, 6 anything else.
+gateFailBucket : RCLocal -> (callee : Name) -> (argPos : Nat) -> RCExp -> Nat
+gateFailBucket p callee argPos e =
+    let uses = countUsesR p e
+        scrut = scrutineeUses p e
+        pass = selfPassthroughOccurrences p callee argPos e
+        fwd = length (forwardSites p callee argPos e)
+        stored = storedUses p e
+        rest = minus uses (scrut + pass + fwd)
+    in if fwd > 0 then (if rest == 0 then (if scrut > 0 then 0 else 1) else 2)
+       else if stored > 0 then 3
+       else if rest > 0 then 4
+       else if scrut == 0 then 5
+       else 6
+
+bump : Nat -> List Nat -> List Nat
+bump i = zipWith (\j, n => if j == i then S n else n) [0 .. 8]
 
 ||| Total `RApp` (boxed closure dispatch) nodes in `e` -- the
 ||| profitability measure for this half of the pass.
@@ -596,34 +628,142 @@ defApps (MkRCFun _ _ _ body) = countApps body
 defApps (MkRCError body) = countApps body
 defApps _ = 0
 
+||| A constant-constructor specialisation key: callee, argument
+||| position, the constant passed there.
+ConstKey : Type
+ConstKey = (Name, Nat, RCLocal)
+
+||| One clone built for `key`. `own` says it removed an `RApp` by
+||| itself (the profitability gate); `needs` are the keys of the
+||| clones its forwarding sites call, read off the *folded* body.
+record ConstBuilt where
+  constructor MkConstBuilt
+  key : ConstKey
+  name : Name
+  def : RCDef
+  own : Bool
+  needs : List ConstKey
+
+||| The keys a folded clone body still asks for: every call that spells
+||| `value` at a parameter position, bar the clone's own self-call at
+||| `argPos` (that one is this very key). Deduplicated.
+constNeeds : RCLocal -> (callee : Name) -> (argPos : Nat) -> RCExp -> List ConstKey
+constNeeds value callee argPos body =
+    SortedSet.toList (the (SortedSet ConstKey) (fromList (go body)))
+  where
+    go : RCExp -> List ConstKey
+    go (RAppName _ _ n args) =
+        mapMaybe (\(q, a) => if a == value && not (n == callee && q == argPos) then Just (n, q, value) else Nothing)
+                 (zip [0 .. length args] args)
+    go e = foldSubExprs (++) [] go e
+
+||| What attempting one key produced: `Left bucket` when the gate
+||| refused it (`gateFailBucket`, `7` for a missing parameter, `8` for a
+||| callee that is not a plain function), `Right Nothing` when it
+||| passed but the clone is worth nothing, else the built clone.
+ConstTry : Type
+ConstTry = Either Nat (Maybe ConstBuilt)
+
 ||| Clone `callee` with its `argPos` parameter dropped from the
 ||| signature and its id seeded to `value` for the fold. The body is
 ||| handed over unchanged -- `foldConstDefWith` does the substitution,
 ||| the `case` collapse and the `apply`-to-`call` rewrite in one go.
 |||
-||| The `Bool` says whether `paramIsScrutineeOnly` let this key
-||| through, independently of whether the profitability gate then kept
-||| the clone -- the two are counted separately for the `--directive
-||| timing` breakdown, since they fail for different reasons.
-buildConstClone : {auto fr : Ref FreshId Int}
-               -> CafTable -> (callee : Name) -> (argPos : Nat) -> (value : RCLocal)
-               -> (args : List (Int, Rep)) -> (retRep : Rep) -> (body : RCExp)
-               -> Core (Bool, Maybe (Name, RCDef))
-buildConstClone caf callee argPos value args retRep body =
-    case getAt argPos args of
-         Nothing => pure (False, Nothing)
-         Just (paramVar, _) =>
-             if not (paramIsScrutineeOnly (RCLoc paramVar) callee argPos body)
-                then pure (False, Nothing)
-                else do
-                    cloneId <- freshId
-                    -- Same naming scheme as `buildClone` above, with
-                    -- its own prefix so the two are told apart on sight
-                    -- in a `dumprcexpr`/generated-`.c` read.
-                    let cloneName = MN ("rc2_specConst_" ++ cName callee) cloneId
-                    let args' = filter (\(i, _) => i /= paramVar) args
-                    let folded = foldConstDefWith caf [(paramVar, value)] (MkRCFun args' retRep False body)
-                    pure (True, if defApps folded < countApps body then Just (cloneName, folded) else Nothing)
+||| The clone is kept (pending `acceptConst`) if it holds strictly fewer
+||| `RApp` nodes than the original, or if it forwards the constant on
+||| to other keys (`needs`). The latter is the transitive case: its
+||| worth is only the clones it reaches.
+tryConstKey : {auto fr : Ref FreshId Int}
+           -> SortedMap Name RCDef -> CafTable -> ConstKey -> Core ConstTry
+tryConstKey defOf caf key@(callee, argPos, value) =
+    case lookup callee defOf of
+         Just (MkRCFun args retRep False body) =>
+             case getAt argPos args of
+                  Nothing => pure (Left 7)
+                  Just (paramVar, _) =>
+                      case constParamUses (RCLoc paramVar) callee argPos body of
+                           Nothing => pure (Left (gateFailBucket (RCLoc paramVar) callee argPos body))
+                           Just _ => do
+                               cloneId <- freshId
+                               -- Same naming scheme as `buildClone` above, with
+                               -- its own prefix so the two are told apart on sight
+                               -- in a `dumprcexpr`/generated-`.c` read.
+                               let cloneName = MN ("rc2_specConst_" ++ cName callee) cloneId
+                               let args' = filter (\(i, _) => i /= paramVar) args
+                               let folded = foldConstDefWith caf [(paramVar, value)] (MkRCFun args' retRep False body)
+                               let own = defApps folded < countApps body
+                               let needs = case folded of
+                                                MkRCFun _ _ _ fb => constNeeds value callee argPos fb
+                                                _ => []
+                               pure $ Right $ if own || not (null needs)
+                                                 then Just (MkConstBuilt key cloneName folded own needs)
+                                                 else Nothing
+         -- A worker (`isWorker`) can't exist yet at this point in
+         -- the pipeline, and anything that isn't a plain function
+         -- has no parameter to specialize.
+         _ => pure (Left 8)
+
+||| Everything the work list threads: keys already attempted, clones
+||| built, and the counters for `--directive timing`.
+record ConstState where
+  constructor MkConstState
+  seen : SortedSet ConstKey
+  built : List ConstBuilt
+  gatePassed : Nat
+  buckets : List Nat
+  transitive : Nat
+
+||| The work list: every built clone's `needs` are queued, each key is
+||| attempted at most once (memoised in `seen`, failures included), so
+||| the chain is built transitively and the loop terminates. `initial`
+||| is the set of keys that had a call site of their own, to count the
+||| ones only reached by forwarding. Passed in, never a `where` binding
+||| -- see the doc's "The `where`-clause trap".
+buildConstAll : {auto fr : Ref FreshId Int}
+             -> SortedMap Name RCDef -> CafTable -> SortedSet ConstKey
+             -> ConstState -> List ConstKey -> Core ConstState
+buildConstAll _ _ _ st [] = pure st
+buildConstAll defOf caf initial st (k :: rest) =
+    if contains k st.seen
+       then buildConstAll defOf caf initial st rest
+       else do
+           r <- tryConstKey defOf caf k
+           let seen' = insert k st.seen
+           let trans' = if contains k initial then st.transitive else S st.transitive
+           case r of
+                Left b => buildConstAll defOf caf initial
+                            ({ seen := seen', buckets $= bump b, transitive := trans' } st) rest
+                Right Nothing => buildConstAll defOf caf initial
+                                   ({ seen := seen', gatePassed $= S, transitive := trans' } st) rest
+                Right (Just b) => buildConstAll defOf caf initial
+                                    ({ seen := seen', gatePassed $= S, transitive := trans'
+                                     , built $= (b ::) } st) (b.needs ++ rest)
+
+||| The greatest subset of `bs` that is worth keeping and closed: a
+||| clone stays if it is profitable on its own (`own` -- its forwarded
+||| calls then simply stay calls to the generic callee with the
+||| constant spelled out, which is correct), or if it is a pure
+||| forwarder whose every need is itself accepted. The forwarders are
+||| first cut down to the *useful* ones -- those that reach a
+||| profitable clone, least fixpoint -- so a cycle of mutually
+||| forwarding clones, none profitable, cannot justify itself.
+acceptConst : List ConstBuilt -> List ConstBuilt
+acceptConst bs = closed (useful (filter (.own) bs) (filter (not . (.own)) bs))
+  where
+    keysOf : List ConstBuilt -> SortedSet ConstKey
+    keysOf xs = fromList (map (.key) xs)
+
+    useful : List ConstBuilt -> List ConstBuilt -> List ConstBuilt
+    useful acc pending =
+        let ks = keysOf acc
+            (hit, miss) = partition (\b => any (\k => contains k ks) b.needs) pending
+        in if null hit then acc else useful (hit ++ acc) miss
+
+    closed : List ConstBuilt -> List ConstBuilt
+    closed xs =
+        let ks = keysOf xs
+            xs' = filter (\b => b.own || all (\k => contains k ks) b.needs) xs
+        in if length xs' == length xs then xs else closed xs'
 
 ||| One accepted constant-constructor clone: redirect a call to
 ||| `callee` to `cloneName`, dropping argument `argPos`, whenever the
@@ -670,38 +810,48 @@ applySpecConstCon defs = do
       coreLift $ putStrLn $ "TIMING rc2: SpecConstCon: " ++ show (length keys)
                              ++ " distinct keys, " ++ show (length defs) ++ " defs"
     let caf = rebuildCafTable defs
-    -- Bound in the body, ONCE, and threaded into `goKeys` as a
+    -- Bound in the body, ONCE, and threaded into `buildConstAll` as a
     -- parameter -- deliberately NOT a `where` clause. A `where`
     -- definition is lambda-lifted into a function of whatever
     -- enclosing pattern variables it mentions, so a nullary-looking
     -- `defOf = SortedMap.fromList defs` there is really `defOf defs`,
-    -- rebuilt from scratch at *every* use. `goKeys`'s own `lookup
-    -- callee defOf` runs once per key, so writing it that way cost
-    -- ~1600 rebuilds of a 38k-entry map: 103s of a 131s whole-
-    -- `idris2-lsp` build, against 0.01s once hoisted. That single
-    -- difference is what made this pass look unaffordable and get
-    -- reverted the first time round. `applySpecClosure` above gets
-    -- this right the same way, by passing its own `defOf` to its own
-    -- `goKeys` rather than referring to it per call site.
+    -- rebuilt from scratch at *every* use. The per-key lookup runs
+    -- once per key, so writing it that way cost ~1600 rebuilds of a
+    -- 38k-entry map: 103s of a 131s whole-`idris2-lsp` build, against
+    -- 0.01s once hoisted. That single difference is what made this
+    -- pass look unaffordable and get reverted the first time round.
+    -- The same goes for `initial` below.
     let defOf : SortedMap Name RCDef := SortedMap.fromList defs
-    (gatePassed, newClones, table) <- goKeys defOf caf 0 [] empty keys
+    let initial : SortedSet ConstKey := fromList (map fst keys)
+    st <- buildConstAll defOf caf initial
+            (MkConstState empty [] 0 (replicate 9 0) 0) (map fst keys)
+    let accepted = acceptConst st.built
+    let table = foldl (\t, b => let (callee, argPos, value) = b.key
+                                in insertWith (++) callee [(argPos, value, b.name)] t)
+                      (the ConstRedirectTable empty) accepted
     -- The two gates separately, because they fail for different
     -- reasons and only the breakdown says where the remaining yield
-    -- is: `paramIsScrutineeOnly` rejects a dictionary threaded on to
-    -- some *other* callee (which would need interprocedural
-    -- specialization, out of scope), while the profitability gate
-    -- rejects a clone that folded the `case` away but left the
-    -- dispatch somewhere the fold couldn't reach.
-    when timingEnabled $
-      coreLift $ putStrLn $ "TIMING rc2: SpecConstCon: " ++ show gatePassed
-                             ++ " keys past the scrutinee-only gate, "
-                             ++ show (length newClones) ++ " clones kept"
+    -- is: the use gate (`constParamUses`) rejects a dictionary that is
+    -- stored or escapes, while the profitability gate rejects a clone
+    -- that folded the `case` away but left the dispatch somewhere the
+    -- fold couldn't reach.
+    when timingEnabled $ do
+      coreLift $ putStrLn $ "TIMING rc2: SpecConstCon: " ++ show st.gatePassed
+                             ++ " keys past the use gate, "
+                             ++ show (length accepted) ++ " clones kept"
+      coreLift $ putStrLn $ "TIMING rc2: SpecConstCon: " ++ show st.transitive
+                             ++ " keys reached only by forwarding, "
+                             ++ show (length st.built) ++ " clones built, "
+                             ++ show (length accepted) ++ " accepted, "
+                             ++ show (length (filter (not . (.own)) accepted)) ++ " pure forwarders accepted"
+      coreLift $ putStrLn $ "TIMING rc2: SpecConstCon: gate-fail buckets [fwdOnly+scrut, fwdOnly-noscrut, fwdMixed, stored, otherEscape, noScrutNoUse, else, noParam, notPlainFun] = "
+                             ++ show st.buckets
     pure $ map (\(n, d) => (n, case d of
                                     MkRCFun a r w body => MkRCFun a r w (redirectConstCallSites table body)
                                     d' => d'))
-               (newClones ++ defs)
+               (map (\b => (b.name, b.def)) accepted ++ defs)
   where
-    addOpp : SortedMap (Name, Nat, RCLocal) () -> ConstOpportunity -> SortedMap (Name, Nat, RCLocal) ()
+    addOpp : SortedMap ConstKey () -> ConstOpportunity -> SortedMap ConstKey ()
     addOpp acc opp = insert (opp.callee, opp.argPos, opp.value) () acc
 
     -- Only the distinct keys matter here (unlike the closure case,
@@ -709,31 +859,11 @@ applySpecConstCon defs = do
     -- count), so this groups into a set rather than a list-valued map
     -- -- and, same trap as above, folds into it per definition instead
     -- of flattening every definition's own list together first.
-    byKey : SortedMap (Name, Nat, RCLocal) ()
+    byKey : SortedMap ConstKey ()
     byKey = foldl (\acc, (_, d) => case d of
                         MkRCFun _ _ _ body => foldl addOpp acc (collectConstOpportunities body)
                         _ => acc)
-                  (the (SortedMap (Name, Nat, RCLocal) ()) empty) defs
+                  (the (SortedMap ConstKey ()) empty) defs
 
     rebuildCafTable : List (Name, RCDef) -> CafTable
     rebuildCafTable = foldl (\tbl, (n, d) => maybe tbl (\v => insert n v tbl) (cafValueOf d)) empty
-
-    goKeys : {auto fr : Ref FreshId Int}
-          -> SortedMap Name RCDef -> CafTable -> (gatePassed : Nat)
-          -> List (Name, RCDef) -> ConstRedirectTable
-          -> List ((Name, Nat, RCLocal), ()) -> Core (Nat, List (Name, RCDef), ConstRedirectTable)
-    goKeys _ _ gatePassed newClones table [] = pure (gatePassed, newClones, table)
-    goKeys defOf caf gatePassed newClones table (((callee, argPos, value), _) :: rest) =
-        case lookup callee defOf of
-             Just (MkRCFun args retRep False body) => do
-                 (passed, mClone) <- buildConstClone caf callee argPos value args retRep body
-                 let gatePassed' : Nat = if passed then 1 + gatePassed else gatePassed
-                 case mClone of
-                      Nothing => goKeys defOf caf gatePassed' newClones table rest
-                      Just (cloneName, cloneDef) =>
-                          goKeys defOf caf gatePassed' ((cloneName, cloneDef) :: newClones)
-                                 (insertWith (++) callee [(argPos, value, cloneName)] table) rest
-             -- A worker (`isWorker`) can't exist yet at this point in
-             -- the pipeline, and anything that isn't a plain function
-             -- has no parameter to specialize.
-             _ => goKeys defOf caf gatePassed newClones table rest
