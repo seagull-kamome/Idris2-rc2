@@ -15,16 +15,12 @@ this repo).
 
 ## Prerequisites
 
-Every command below expects to be run from inside a single `nix-shell
--p ...` invocation that already provides whatever it needs (gcc, gmp,
-pkg-config, and valgrind for the full test suite) — the scripts
-don't spawn `nix-shell` themselves, so wrap the whole invocation.
-`idris2` itself is normally NOT in that `-p` list: whenever a build
-step needs it, it comes from whatever's already on `PATH` after
-`source env.sh` (the self-built one) — nixpkgs' own `idris2` package
-is bootstrap-only per this project's policy, so only add `idris2` to
-a `-p` list if you specifically lack a self-built one. Nothing to
-install ahead of time beyond `nix` itself being on `PATH`.
+Every command below expects a shell whose `PATH` already provides
+whatever it needs (gcc, gmp, pkg-config, and valgrind for the full test
+suite); no `nix-shell` wrapper is needed. The scripts don't spawn
+`nix-shell` themselves. `idris2` itself comes from whatever is on
+`PATH` after `source env.sh` (the self-built one) — nixpkgs' own
+`idris2` package is bootstrap-only per this project's policy.
 
 ## Setup
 
@@ -43,14 +39,12 @@ sources `env.sh` automatically.
 
 Skip this if `rc2/build/exec/idris2-rc2` already exists — `smoke.sh`
 only builds when that's missing or `--build` is passed. Otherwise, the
-exact commands (also what `smoke.sh --build` runs, from inside a
-nix-shell providing gcc/gmp/pkg-config):
+exact commands (also what `smoke.sh --build` runs, from a shell with
+gcc/gmp/pkg-config on `PATH`):
 
 ```bash
-nix-shell -p gcc gmp pkg-config --run '
-  source env.sh
-  cd rc2 && idris2 --build rc2.ipkg && idris2 --install rc2.ipkg
-'
+source env.sh
+(cd rc2 && idris2 --build rc2.ipkg && idris2 --install rc2.ipkg)
 ```
 
 No need to export `IDRIS2_PREFIX` here — the self-built
@@ -88,7 +82,7 @@ any Idris2 program with `--cg rc2`.
 ## Run (agent path)
 
 ```bash
-nix-shell -p gcc gmp pkg-config --run '.claude/skills/run-idris2-rc-cg/smoke.sh'
+.claude/skills/run-idris2-rc-cg/smoke.sh
 ```
 
 (add `valgrind` too with `--full-tests`; add `idris2` only if you lack
@@ -116,8 +110,7 @@ Compile an arbitrary Idris2 program with rc2 directly:
 
 ```bash
 source env.sh
-nix-shell -p gcc gmp pkg-config --run \
-  "cd /some/scratch/dir && '$(pwd)/rc2/build/exec/idris2-rc2' --cg rc2 Program.idr -o program"
+(cd /some/scratch/dir && "$OLDPWD/rc2/build/exec/idris2-rc2" --cg rc2 Program.idr -o program)
 /some/scratch/dir/build/exec/program
 ```
 
@@ -126,7 +119,7 @@ nix-shell -p gcc gmp pkg-config --run \
 ```bash
 cd rc2/tests
 source ../../env.sh
-nix-shell -p gcc gmp pkg-config valgrind --run './verify.sh'
+./verify.sh
 ```
 
 Expected: `0 failed` on both summary lines verify.sh prints (the
@@ -143,10 +136,6 @@ list above only if you specifically lack a self-built compiler
 
 ## Gotchas
 
-- **`nix-shell --run` resets the shell's cwd on this machine** — a
-  bare `cd` before the `nix-shell` call does not carry into it;
-  `cd` has to happen *inside* the `--run '...'` string, which is why
-  the commands above are shaped that way.
 - **`IDRIS2_PREFIX` is normally unnecessary** with the self-built
   `idris2` from `env.sh` — it already defaults to this repo's own
   `install/` tree on its own (`idris2 --prefix` confirms it). It only
@@ -159,8 +148,7 @@ list above only if you specifically lack a self-built compiler
 - **Running a build/install step by hand, outside `smoke.sh`/
   `verify.sh`/`bench.sh`, bypasses the build lock** — if doing so
   while another session/subagent might also be building, take the lock
-  yourself first, from the repo root and inside the same `nix-shell
-  --run` string as the build: `export RC2_DIR="$(pwd)/rc2"; source
+  yourself first, from the repo root, in the same shell as the build: `export RC2_DIR="$(pwd)/rc2"; source
   rc2/tests/build-lock.sh; acquire_build_lock`. `build-lock.sh` finds
   its lock file through `$RC2_DIR`; without it the lock path becomes
   `/build/.build.lock`, the `mkdir` fails, and the call exits at once

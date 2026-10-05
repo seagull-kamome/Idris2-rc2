@@ -71,7 +71,7 @@ source env.sh
 ```sh
 cd rc2
 source ../env.sh
-nix-shell -p gcc gmp pkg-config --run 'idris2 --build rc2.ipkg && idris2 --install rc2.ipkg'
+idris2 --build rc2.ipkg && idris2 --install rc2.ipkg
 ```
 
 `source ../env.sh`により、`PATH`先頭の自前ビルド`install/bin/idris2`が使われます。このコンパイラは`install/`プレフィックスを初めから保持しているため、`IDRIS2_PREFIX`のexportは不要です。  
@@ -96,8 +96,7 @@ source env.sh
 Idris 2ソースコードをrc2バックエンドでコンパイルします。
 
 ```sh
-nix-shell -p gcc gmp pkg-config --run \
-  './rc2/build/exec/idris2-rc2 --cg rc2 -p rc2base Program.idr -o program'
+./rc2/build/exec/idris2-rc2 --cg rc2 -p rc2base Program.idr -o program
 ./program
 ```
 
@@ -366,7 +365,7 @@ rc2では、テストスイートと各種サニタイザによって高い信�
 ```sh
 cd rc2/tests
 source ../../env.sh
-nix-shell -p gcc gmp pkg-config valgrind --run './verify.sh'
+./verify.sh
 ```
 
 `verify.sh`は以下のテストをまとめて実行します。
@@ -398,7 +397,7 @@ nix-shell -p gcc gmp pkg-config valgrind --run './verify.sh'
 
 ```sh
 cd rc2/tests
-nix-shell -p gcc gmp pkg-config --run './bench.sh'
+./bench.sh
 ```
 
 `rc2/tests/Bench*.idr`を対象に、`idris2-rc2`と上流`idris2 --cg refc`の双方でコンパイル・実行し、実時間での速度向上比を計測・比較します（`--runs N`で試行回数指定、`--missing-containers`で外部データ構造ベンチマークを追加）。計測データと分析結果は[`rc2/BENCHMARKS.md`](rc2/BENCHMARKS.md)に記録されています。

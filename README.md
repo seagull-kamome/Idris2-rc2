@@ -72,7 +72,7 @@ source env.sh
 ```sh
 cd rc2
 source ../env.sh
-nix-shell -p gcc gmp pkg-config --run 'idris2 --build rc2.ipkg && idris2 --install rc2.ipkg'
+idris2 --build rc2.ipkg && idris2 --install rc2.ipkg
 ```
 
 - Sourcing `../env.sh` places the self-built `install/bin/idris2` first on `PATH`. Because this compiler embeds `install/` as its default prefix at bootstrap time, exporting `IDRIS2_PREFIX` is not required.
@@ -97,8 +97,7 @@ source env.sh
 Compile Idris 2 programs using the `rc2` codegen backend:
 
 ```sh
-nix-shell -p gcc gmp pkg-config --run \
-  './rc2/build/exec/idris2-rc2 --cg rc2 -p rc2base Program.idr -o program'
+./rc2/build/exec/idris2-rc2 --cg rc2 -p rc2base Program.idr -o program
 ./program
 ```
 
@@ -354,7 +353,7 @@ idris2-rc2 --cg rc2 --inc rc2 -o program Program.idr
 ```sh
 cd rc2/tests
 source ../../env.sh
-nix-shell -p gcc gmp pkg-config valgrind --run './verify.sh'
+./verify.sh
 ```
 
 `verify.sh` executes the comprehensive test pipeline:
@@ -384,7 +383,7 @@ For refactorings and optimizations that should preserve compiler output identica
 
 ```sh
 cd rc2/tests
-nix-shell -p gcc gmp pkg-config --run './bench.sh'
+./bench.sh
 ```
 
 Times `rc2/tests/Bench*.idr` compiled with both `idris2-rc2` and upstream `idris2 --cg refc`, reporting wall-clock speedup ratios (`--runs N` sets iterations; `--missing-containers` adds external container benchmarks). Results and methodology are recorded in [`rc2/BENCHMARKS.md`](rc2/BENCHMARKS.md).

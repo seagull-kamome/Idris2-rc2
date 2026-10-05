@@ -18,10 +18,11 @@
 #
 # Usage: ./verify.sh
 #
-# Requires nix-shell on PATH (brings in gcc/gmp/pkg-config/notcurses --
-# idris2 itself comes from env.sh's own PATH, the self-built one, never
-# nix's, per AGENT.md's "Policy: don't use nixpkgs' idris2 for rc2
-# work") and rc2/build/exec/idris2-rc2 already built.
+# Requires gcc, gmp, pkg-config and notcurses (headers and libraries)
+# on the build environment's PATH or compiler flags -- no nix-shell is
+# used. idris2 itself is the self-built one, never nixpkgs', per
+# AGENT.md's "Policy: don't use nixpkgs' idris2 for rc2 work", and
+# rc2/build/exec/idris2-rc2 must already be built.
 
 set -euo pipefail
 
@@ -39,15 +40,13 @@ fi
 source "$REPO_ROOT/env.sh"
 
 echo "=== Clean rebuild of support/c ==="
-nix-shell -p gnumake gcc pkg-config notcurses --run \
-    "make -C '$PKG_DIR/support/c' clean && make -C '$PKG_DIR/support/c'"
+( make -C "$PKG_DIR/support/c" clean && make -C "$PKG_DIR/support/c" )
 
 echo "=== Chez backend: type-check ==="
-(cd "$PKG_DIR" && nix-shell -p gnumake gcc pkg-config notcurses --run 'idris2 --build notcurses.ipkg')
+(cd "$PKG_DIR" && idris2 --build notcurses.ipkg)
 
 echo "=== Install into the shared install/ prefix ==="
-nix-shell -p gnumake gcc pkg-config notcurses --run \
-    "cd '$PKG_DIR' && idris2 --install notcurses.ipkg"
+( cd "$PKG_DIR" && idris2 --install notcurses.ipkg )
 
 PKG_VERSION="$(sed -n 's/^version *= *//p' "$PKG_DIR/notcurses.ipkg" | tr -d ' ')"
 INSTALLED_LIB="$REPO_ROOT/install/idris2-0.8.0/notcurses-$PKG_VERSION/lib"
@@ -59,14 +58,13 @@ echo "=== rc2 backend: build TestVersion (against the INSTALLED lib/) ==="
 # No IDRIS2_PACKAGE_PATH export needed: idris2 already searches its
 # own installation prefix (install/, the same one just installed into
 # above) by default.
-nix-shell -p gcc gmp pkg-config notcurses --run \
-    "cd '$TESTS_DIR' && '$IDRIS2RC2' --cg rc2 -p notcurses -o TestVersion_verify TestVersion.idr"
+( cd "$TESTS_DIR" && "$IDRIS2RC2" --cg rc2 -p notcurses -o TestVersion_verify TestVersion.idr )
 
 echo "=== Run ==="
 # No $INSTALLED_LIB here -- libidris2rc2notcurses is a static archive
 # now, baked straight into the executable, nothing to find at runtime.
 # support/rc2 has no .so of its own to add here either.
-NOTCURSES_LIBDIR="$(nix-shell -p notcurses pkg-config --run 'pkg-config --variable=libdir notcurses-core')"
+NOTCURSES_LIBDIR="$(pkg-config --variable=libdir notcurses-core)"
 export LD_LIBRARY_PATH="$NOTCURSES_LIBDIR${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 OUT="$("$TESTS_DIR/build/exec/TestVersion_verify")"
 echo "$OUT"

@@ -8,11 +8,10 @@
 #
 # Usage: ./bench.sh [--skip-build] [--runs N] [--missing-containers]
 #
-# Must be run from inside a nix-shell (or equivalent -- plain PATH setup
-# works too) that already provides everything this run needs, started
-# ONCE by the caller around the whole script -- this script itself makes
-# no internal nix-shell calls of its own (see rc2/tests/refc-suite/run.sh
-# for the same pattern). What's needed: the self-built `idris2` (always
+# Must be run from a shell whose PATH already provides everything this
+# run needs. This script makes no internal nix-shell calls of its own (see
+# rc2/tests/refc-suite/run.sh for the same pattern). What's needed: the
+# self-built `idris2` (always
 # -- even `--skip-build` only skips rc2's own build step, every
 # benchmark's own real-`idris2 --cg refc` comparison side still runs
 # unconditionally), `gcc`, `gmp`, `pkg-config` (always, for compiling rc2
@@ -23,14 +22,14 @@
 # gitignored), which puts install/bin first on PATH. The check for
 # `idris2` on PATH below runs BEFORE this script sources env.sh, so
 # source it yourself first. nixpkgs' `idris2` is for the one-time
-# bootstrap only (see AGENT.md), so don't add it to the `-p` list. E.g.:
+# bootstrap only (see AGENT.md). E.g.:
 #
-#   nix-shell -p gcc gmp pkg-config --run 'source ../../env.sh && ./bench.sh'
+#   source ../../env.sh && ./bench.sh
 #
 # and under --missing-containers (with Chez Scheme already on PATH as
-# `scheme`, or added to the `-p` list):
+# `scheme`):
 #
-#   nix-shell -p gcc gmp pkg-config --run 'source ../../env.sh && ./bench.sh --missing-containers'
+#   source ../../env.sh && ./bench.sh --missing-containers
 #
 #   --skip-build           Don't rebuild idris2-rc2 first.
 #   --runs N                Repeat each binary N times (default 3).

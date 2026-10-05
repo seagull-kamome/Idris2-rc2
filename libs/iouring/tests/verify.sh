@@ -14,10 +14,11 @@
 #
 # Usage: ./verify.sh
 #
-# Requires nix-shell on PATH (brings in gcc/gmp/pkg-config/liburing --
-# idris2 itself comes from env.sh's own PATH, the self-built one, never
-# nix's, per AGENT.md's "Policy: don't use nixpkgs' idris2 for rc2
-# work") and rc2/build/exec/idris2-rc2 already built.
+# Requires gcc, gmp, pkg-config and liburing (headers and libraries)
+# on the build environment's PATH or compiler flags -- no nix-shell is
+# used. idris2 itself is the self-built one, never nixpkgs', per
+# AGENT.md's "Policy: don't use nixpkgs' idris2 for rc2 work", and
+# rc2/build/exec/idris2-rc2 must already be built.
 
 set -euo pipefail
 
@@ -35,15 +36,13 @@ fi
 source "$REPO_ROOT/env.sh"
 
 echo "=== Clean rebuild of support/c ==="
-nix-shell -p gnumake gcc pkg-config liburing --run \
-    "make -C '$PKG_DIR/support/c' clean && make -C '$PKG_DIR/support/c'"
+( make -C "$PKG_DIR/support/c" clean && make -C "$PKG_DIR/support/c" )
 
 echo "=== Chez backend: type-check ==="
-(cd "$PKG_DIR" && nix-shell -p gnumake gcc pkg-config liburing --run 'idris2 --build iouring.ipkg')
+(cd "$PKG_DIR" && idris2 --build iouring.ipkg)
 
 echo "=== Install into the shared install/ prefix ==="
-nix-shell -p gnumake gcc pkg-config liburing --run \
-    "cd '$PKG_DIR' && idris2 --install iouring.ipkg"
+( cd "$PKG_DIR" && idris2 --install iouring.ipkg )
 
 PKG_VERSION="$(sed -n 's/^version *= *//p' "$PKG_DIR/iouring.ipkg" | tr -d ' ')"
 INSTALLED_LIB="$REPO_ROOT/install/idris2-0.8.0/iouring-$PKG_VERSION/lib"
@@ -58,8 +57,7 @@ echo "=== Check postinstall copied the native library into lib/ ==="
 run_test() {
     local name="$1"
     echo "=== rc2 backend: build+run $name ==="
-    nix-shell -p gcc gmp pkg-config liburing --run \
-        "cd '$TESTS_DIR' && '$IDRIS2RC2' --cg rc2 -p iouring -p network -o ${name}_verify ${name}.idr"
+    ( cd "$TESTS_DIR" && "$IDRIS2RC2" --cg rc2 -p iouring -p network -o ${name}_verify ${name}.idr )
     local out
     out="$("$TESTS_DIR/build/exec/${name}_verify")"
     echo "$out"

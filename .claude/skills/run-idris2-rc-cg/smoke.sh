@@ -3,14 +3,12 @@
 # Builds rc2 (if not already built), compiles a small smoke-test Idris2
 # program through the rc2 backend, runs it, and checks the output.
 #
-# Must be run from inside a nix-shell (or equivalent PATH setup)
-# providing gcc, gmp and pkg-config -- add valgrind too if passing
-# --full-tests. Building rc2 (no existing rc2/build/exec/idris2-rc2
+# Must be run from a shell whose PATH provides gcc, gmp and pkg-config
+# (plus valgrind if passing --full-tests). Building rc2 (no existing rc2/build/exec/idris2-rc2
 # yet, or --build) also needs idris2, but that should already be on
 # PATH via `source env.sh` below (the self-built one) -- nixpkgs' own
-# idris2 is bootstrap-only per project policy, so don't add it to the
-# -p list unless you specifically lack a self-built one. E.g.:
-#   nix-shell -p gcc gmp pkg-config valgrind --run './smoke.sh'
+# idris2 is bootstrap-only per project policy. E.g.:
+#   ./smoke.sh
 #
 # Usage: ./smoke.sh [--build] [--full-tests]
 #   --build       run `idris2 --build`/`--install` first (skip if you
@@ -83,7 +81,7 @@ echo "== smoke test OK =="
 
 if [ "$DO_FULL" = 1 ]; then
   if ! command -v valgrind > /dev/null 2>&1; then
-    echo "error: --full-tests needs 'valgrind' on PATH too -- run this script from inside e.g. nix-shell -p gcc gmp pkg-config valgrind --run './smoke.sh --full-tests'" >&2
+    echo "error: --full-tests needs 'valgrind' on PATH too -- put valgrind on PATH and run ./smoke.sh --full-tests" >&2
     exit 1
   fi
   echo "== running full verify.sh (refc-suite + smoke + valgrind) =="

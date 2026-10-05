@@ -13,10 +13,11 @@
 #
 # Usage: ./verify.sh
 #
-# Requires nix-shell on PATH (brings in gcc/g++/gmp/pkg-config/re2 --
-# idris2 itself comes from env.sh's own PATH, the self-built one, never
-# nix's, per AGENT.md's "Policy: don't use nixpkgs' idris2 for rc2
-# work") and rc2/build/exec/idris2-rc2 already built.
+# Requires gcc, g++, gmp, pkg-config and re2 (headers and libraries)
+# on the build environment's PATH or compiler flags -- no nix-shell is
+# used. idris2 itself is the self-built one, never nixpkgs', per
+# AGENT.md's "Policy: don't use nixpkgs' idris2 for rc2 work", and
+# rc2/build/exec/idris2-rc2 must already be built.
 
 set -euo pipefail
 
@@ -36,15 +37,13 @@ fi
 source "$REPO_ROOT/env.sh"
 
 echo "=== Clean rebuild of support/c ==="
-nix-shell -p gnumake gcc gmp pkg-config re2 --run \
-    "make -C '$PKG_DIR/support/c' clean && make -C '$PKG_DIR/support/c'"
+( make -C "$PKG_DIR/support/c" clean && make -C "$PKG_DIR/support/c" )
 
 echo "=== Chez backend: type-check ==="
-(cd "$PKG_DIR" && nix-shell -p gnumake gcc gmp pkg-config re2 --run 'idris2 --build text-re2.ipkg')
+(cd "$PKG_DIR" && idris2 --build text-re2.ipkg)
 
 echo "=== Install into the shared install/ prefix ==="
-nix-shell -p gnumake gcc gmp pkg-config re2 --run \
-    "cd '$PKG_DIR' && idris2 --install text-re2.ipkg"
+( cd "$PKG_DIR" && idris2 --install text-re2.ipkg )
 
 PKG_VERSION="$(sed -n 's/^version *= *//p' "$PKG_DIR/text-re2.ipkg" | tr -d ' ')"
 INSTALLED_LIB="$REPO_ROOT/install/idris2-0.8.0/text-re2-$PKG_VERSION/lib"
@@ -60,8 +59,7 @@ echo "=== rc2 backend: build TestRE2 (against the INSTALLED lib/) ==="
 # depPkgLibDirs already adds -I<...>/lib and -L<...>/lib for every
 # -p'd package's own installed lib/ (here, $INSTALLED_LIB) automatically
 # -- see libs/rc2base/README.md's "Native library install location".
-nix-shell -p gcc gmp pkg-config re2 --run \
-    "cd '$TESTS_DIR' && '$IDRIS2RC2' --cg rc2 -p rc2base -p text-re2 -o TestRE2_verify TestRE2.idr"
+( cd "$TESTS_DIR" && "$IDRIS2RC2" --cg rc2 -p rc2base -p text-re2 -o TestRE2_verify TestRE2.idr )
 
 echo "=== Run and diff stdout against TestRE2.expected ==="
 # libidris2rc2re2.so is a shared object -- needed on LD_LIBRARY_PATH at

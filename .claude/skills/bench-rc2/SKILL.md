@@ -16,8 +16,7 @@ LOG=install/bench-$(date +%Y%m%d).log
   echo "missing-containers: $(git -C install/idris2-missing-containers rev-parse --short HEAD)"
 } > "$LOG"
 source env.sh && (cd rc2/tests && \
-  nix-shell -p gcc gmp pkg-config chez \
-    --run 'gcc --version | head -1; ./bench.sh --runs 5 --missing-containers') \
+  { gcc --version | head -1; ./bench.sh --runs 5 --missing-containers; }) \
   >> "$LOG" 2>&1; echo "exit=$?" >> "$LOG"
 ```
 
@@ -26,11 +25,11 @@ measured, so the entry can quote them even if HEAD moves before it is
 written. For an older log without them, write the current HEAD but say
 so in the entry.
 
-- **Source `env.sh` first, outside nix-shell.** bench.sh checks
+- **Source `env.sh` first.** bench.sh checks
   `command -v idris2` before it sources env.sh itself, so without this
   it stops at once with "no 'idris2' on PATH" (exit 2).
 - `--runs 5` matches past entries; keep it so numbers stay comparable.
-  Drop `--missing-containers` (and `chez`) only if the user asks for
+  Drop `--missing-containers` (which needs Chez Scheme as `scheme` on PATH) only if the user asks for
   micro-benchmarks alone.
 - It rebuilds idris2-rc2 first and takes well over ten minutes. Start
   it with Bash `run_in_background` and wait for the completion notice
