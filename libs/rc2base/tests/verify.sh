@@ -16,11 +16,10 @@
 #
 # Usage: ./verify.sh
 #
-# Requires nix-shell on PATH (used to bring in gcc/gmp/pkg-config the
-# same way rc2/tests/verify.sh does -- idris2 itself comes from
-# env.sh's own PATH, the self-built one, never nix's, per AGENT.md's
-# "Policy: don't use nixpkgs' idris2 for rc2 work") and
-# rc2/build/exec/idris2-rc2 already built (see rc2/tests/verify.sh or
+# Requires gcc, gmp, pkg-config and make on PATH (the same way
+# rc2/tests/verify.sh does -- idris2 itself is the self-built one,
+# never nixpkgs', per AGENT.md's "Policy: don't use nixpkgs' idris2 for
+# rc2 work") and rc2/build/exec/idris2-rc2 already built (see rc2/tests/verify.sh or
 # rc2/README.md).
 
 set -euo pipefail
@@ -47,15 +46,13 @@ fi
 source "$REPO_ROOT/env.sh"
 
 echo "=== Clean rebuild of support/c ==="
-nix-shell -p gnumake gcc gmp pkg-config --run \
-    "make -C '$PKG_DIR/support/c' clean && make -C '$PKG_DIR/support/c'"
+( make -C "$PKG_DIR/support/c" clean && make -C "$PKG_DIR/support/c" )
 
 echo "=== Chez backend: type-check ==="
-(cd "$PKG_DIR" && nix-shell -p gmp pkg-config --run 'idris2 --build rc2base.ipkg')
+(cd "$PKG_DIR" && idris2 --build rc2base.ipkg)
 
 echo "=== Install into the shared install/ prefix ==="
-nix-shell -p gnumake gcc gmp pkg-config --run \
-    "cd '$PKG_DIR' && idris2 --install rc2base.ipkg"
+( cd "$PKG_DIR" && idris2 --install rc2base.ipkg )
 
 PKG_VERSION="$(sed -n 's/^version *= *//p' "$PKG_DIR/rc2base.ipkg" | tr -d ' ')"
 INSTALLED_LIB="$REPO_ROOT/install/idris2-0.8.0/rc2base-$PKG_VERSION/lib"
@@ -75,8 +72,7 @@ echo "=== rc2 backend: build TestText (against the INSTALLED lib/, not support/c
 # "Native library install location". idris2-rc2 always writes its -o
 # output under <cwd>/build/exec/, so cd into tests/ first to get a
 # predictable, self-contained output path.
-nix-shell -p gcc gmp pkg-config --run \
-    "cd '$TESTS_DIR' && '$IDRIS2RC2' --cg rc2 -p rc2base -o TestText_idris2Text_verify TestText.idr"
+( cd "$TESTS_DIR" && "$IDRIS2RC2" --cg rc2 -p rc2base -o TestText_idris2Text_verify TestText.idr )
 
 echo "=== Run and diff against TestText.expected ==="
 # No extra LD_LIBRARY_PATH needed either: support/rc2 has no .so of its
@@ -92,8 +88,7 @@ else
 fi
 
 echo "=== rc2 backend: build TestTextTree (Data.Text, the finger-tree rope) ==="
-nix-shell -p gcc gmp pkg-config --run \
-    "cd '$TESTS_DIR' && '$IDRIS2RC2' --cg rc2 -p rc2base -p contrib -o TestTextTree_verify TestTextTree.idr"
+( cd "$TESTS_DIR" && "$IDRIS2RC2" --cg rc2 -p rc2base -p contrib -o TestTextTree_verify TestTextTree.idr )
 
 echo "=== Run and diff against TestTextTree.expected ==="
 "$TESTS_DIR/build/exec/TestTextTree_verify" > "$TMP/actual2.out" 2>&1
@@ -105,8 +100,7 @@ else
 fi
 
 echo "=== rc2 backend: build TestConcurrency (fork + System.Concurrency.RC2's Mutex/Condition) ==="
-nix-shell -p gcc gmp pkg-config --run \
-    "cd '$TESTS_DIR' && '$IDRIS2RC2' --cg rc2 -p rc2base -o TestConcurrency_verify TestConcurrency.idr"
+( cd "$TESTS_DIR" && "$IDRIS2RC2" --cg rc2 -p rc2base -o TestConcurrency_verify TestConcurrency.idr )
 
 echo "=== Run and diff against TestConcurrency.expected ==="
 "$TESTS_DIR/build/exec/TestConcurrency_verify" > "$TMP/actual3.out" 2>&1
@@ -118,8 +112,7 @@ else
 fi
 
 echo "=== rc2 backend: build TestXoroshiro128PlusPlus (System.Random.Xoroshiro128PlusPlus) ==="
-nix-shell -p gcc gmp pkg-config --run \
-    "cd '$TESTS_DIR' && '$IDRIS2RC2' --cg rc2 -p rc2base -o TestXoroshiro128PlusPlus_verify TestXoroshiro128PlusPlus.idr"
+( cd "$TESTS_DIR" && "$IDRIS2RC2" --cg rc2 -p rc2base -o TestXoroshiro128PlusPlus_verify TestXoroshiro128PlusPlus.idr )
 
 echo "=== Run and diff against TestXoroshiro128PlusPlus.expected ==="
 "$TESTS_DIR/build/exec/TestXoroshiro128PlusPlus_verify" > "$TMP/actual4.out" 2>&1
@@ -131,8 +124,7 @@ else
 fi
 
 echo "=== rc2 backend: build TestBufferRC2 (Data.Buffer.RC2's %foreign_impl patches) ==="
-nix-shell -p gcc gmp pkg-config --run \
-    "cd '$TESTS_DIR' && '$IDRIS2RC2' --cg rc2 -p rc2base -o TestBufferRC2_verify TestBufferRC2.idr"
+( cd "$TESTS_DIR" && "$IDRIS2RC2" --cg rc2 -p rc2base -o TestBufferRC2_verify TestBufferRC2.idr )
 
 echo "=== Run and diff against TestBufferRC2.expected ==="
 "$TESTS_DIR/build/exec/TestBufferRC2_verify" > "$TMP/actual5.out" 2>&1
@@ -144,8 +136,7 @@ else
 fi
 
 echo "=== rc2 backend: build TestDoubleRC2 (Data.Double.RC2's %foreign_impl patches) ==="
-nix-shell -p gcc gmp pkg-config --run \
-    "cd '$TESTS_DIR' && '$IDRIS2RC2' --cg rc2 -p rc2base -o TestDoubleRC2_verify TestDoubleRC2.idr"
+( cd "$TESTS_DIR" && "$IDRIS2RC2" --cg rc2 -p rc2base -o TestDoubleRC2_verify TestDoubleRC2.idr )
 
 echo "=== Run and diff against TestDoubleRC2.expected ==="
 "$TESTS_DIR/build/exec/TestDoubleRC2_verify" > "$TMP/actual6.out" 2>&1
@@ -157,8 +148,7 @@ else
 fi
 
 echo "=== rc2 backend: build TestXoroshiro64StarStar (System.Random.Xoroshiro64StarStar) ==="
-nix-shell -p gcc gmp pkg-config --run \
-    "cd '$TESTS_DIR' && '$IDRIS2RC2' --cg rc2 -p rc2base -o TestXoroshiro64StarStar_verify TestXoroshiro64StarStar.idr"
+( cd "$TESTS_DIR" && "$IDRIS2RC2" --cg rc2 -p rc2base -o TestXoroshiro64StarStar_verify TestXoroshiro64StarStar.idr )
 
 echo "=== Run and diff against TestXoroshiro64StarStar.expected ==="
 "$TESTS_DIR/build/exec/TestXoroshiro64StarStar_verify" > "$TMP/actual7.out" 2>&1
@@ -170,8 +160,7 @@ else
 fi
 
 echo "=== rc2 backend: build TestStringFFI (Data.String.FFI's ptrToString) ==="
-nix-shell -p gcc gmp pkg-config --run \
-    "cd '$TESTS_DIR' && '$IDRIS2RC2' --cg rc2 -p rc2base -o TestStringFFI_verify TestStringFFI.idr"
+( cd "$TESTS_DIR" && "$IDRIS2RC2" --cg rc2 -p rc2base -o TestStringFFI_verify TestStringFFI.idr )
 
 echo "=== Run and diff against TestStringFFI.expected ==="
 "$TESTS_DIR/build/exec/TestStringFFI_verify" > "$TMP/actual8.out" 2>&1
@@ -183,8 +172,7 @@ else
 fi
 
 echo "=== rc2 backend: build TestPtrRC2 (System.FFI.C.Ptr's raw fetch/store) ==="
-nix-shell -p gcc gmp pkg-config --run \
-    "cd '$TESTS_DIR' && '$IDRIS2RC2' --cg rc2 -p rc2base -o TestPtrRC2_verify TestPtrRC2.idr"
+( cd "$TESTS_DIR" && "$IDRIS2RC2" --cg rc2 -p rc2base -o TestPtrRC2_verify TestPtrRC2.idr )
 
 echo "=== Run and diff against TestPtrRC2.expected ==="
 "$TESTS_DIR/build/exec/TestPtrRC2_verify" > "$TMP/actual9.out" 2>&1
@@ -196,8 +184,7 @@ else
 fi
 
 echo "=== rc2 backend: build TestSizeofRC2 (System.FFI.C.Sizeof's Sizeof instances) ==="
-nix-shell -p gcc gmp pkg-config --run \
-    "cd '$TESTS_DIR' && '$IDRIS2RC2' --cg rc2 -p rc2base -o TestSizeofRC2_verify TestSizeofRC2.idr"
+( cd "$TESTS_DIR" && "$IDRIS2RC2" --cg rc2 -p rc2base -o TestSizeofRC2_verify TestSizeofRC2.idr )
 
 echo "=== Run and diff against TestSizeofRC2.expected ==="
 "$TESTS_DIR/build/exec/TestSizeofRC2_verify" > "$TMP/actual10.out" 2>&1
@@ -209,8 +196,7 @@ else
 fi
 
 echo "=== rc2 backend: build TestArrayRC2 (System.FFI.C.Array's CArray) ==="
-nix-shell -p gcc gmp pkg-config --run \
-    "cd '$TESTS_DIR' && '$IDRIS2RC2' --cg rc2 -p rc2base -o TestArrayRC2_verify TestArrayRC2.idr"
+( cd "$TESTS_DIR" && "$IDRIS2RC2" --cg rc2 -p rc2base -o TestArrayRC2_verify TestArrayRC2.idr )
 
 echo "=== Run and diff against TestArrayRC2.expected ==="
 "$TESTS_DIR/build/exec/TestArrayRC2_verify" > "$TMP/actual11.out" 2>&1
@@ -222,8 +208,7 @@ else
 fi
 
 echo "=== rc2 backend: build TestIntegerGMP (Data.Integer.GMP's direct GMP bindings) ==="
-nix-shell -p gcc gmp pkg-config --run \
-    "cd '$TESTS_DIR' && '$IDRIS2RC2' --cg rc2 -p rc2base -o TestIntegerGMP_verify TestIntegerGMP.idr"
+( cd "$TESTS_DIR" && "$IDRIS2RC2" --cg rc2 -p rc2base -o TestIntegerGMP_verify TestIntegerGMP.idr )
 
 echo "=== Run and diff against TestIntegerGMP.expected ==="
 "$TESTS_DIR/build/exec/TestIntegerGMP_verify" > "$TMP/actual12.out" 2>&1
@@ -235,8 +220,7 @@ else
 fi
 
 echo "=== rc2 backend: build TestHTTPServer (Network.HTTP.Server: cross-thread respond + stop) ==="
-nix-shell -p gcc gmp pkg-config --run \
-    "cd '$TESTS_DIR' && '$IDRIS2RC2' --cg rc2 -p rc2base -p network -p contrib -o TestHTTPServer_verify TestHTTPServer.idr"
+( cd "$TESTS_DIR" && "$IDRIS2RC2" --cg rc2 -p rc2base -p network -p contrib -o TestHTTPServer_verify TestHTTPServer.idr )
 
 echo "=== Run and diff against TestHTTPServer.expected ==="
 "$TESTS_DIR/build/exec/TestHTTPServer_verify" > "$TMP/actual13.out" 2>&1
@@ -248,8 +232,7 @@ else
 fi
 
 echo "=== rc2 backend: build TestRegexPOSIX (Text.Regex.POSIX: libc <regex.h> bindings) ==="
-nix-shell -p gcc gmp pkg-config --run \
-    "cd '$TESTS_DIR' && '$IDRIS2RC2' --cg rc2 -p rc2base -o TestRegexPOSIX_verify TestRegexPOSIX.idr"
+( cd "$TESTS_DIR" && "$IDRIS2RC2" --cg rc2 -p rc2base -o TestRegexPOSIX_verify TestRegexPOSIX.idr )
 
 echo "=== Run and diff against TestRegexPOSIX.expected ==="
 "$TESTS_DIR/build/exec/TestRegexPOSIX_verify" > "$TMP/actual14.out" 2>&1
@@ -261,8 +244,7 @@ else
 fi
 
 echo "=== rc2 backend: build TestURL (Network.URL: parse/build + percent codec) ==="
-nix-shell -p gcc gmp pkg-config --run \
-    "cd '$TESTS_DIR' && '$IDRIS2RC2' --cg rc2 -p rc2base -o TestURL_verify TestURL.idr"
+( cd "$TESTS_DIR" && "$IDRIS2RC2" --cg rc2 -p rc2base -o TestURL_verify TestURL.idr )
 
 echo "=== Run and diff against TestURL.expected ==="
 "$TESTS_DIR/build/exec/TestURL_verify" > "$TMP/actual15.out" 2>&1
@@ -274,8 +256,7 @@ else
 fi
 
 echo "=== rc2 backend: build TestStringRC2 (Data.String.RC2: unsafeStringByteSlice / byteLength) ==="
-nix-shell -p gcc gmp pkg-config --run \
-    "cd '$TESTS_DIR' && '$IDRIS2RC2' --cg rc2 -p rc2base -o TestStringRC2_verify TestStringRC2.idr"
+( cd "$TESTS_DIR" && "$IDRIS2RC2" --cg rc2 -p rc2base -o TestStringRC2_verify TestStringRC2.idr )
 
 echo "=== Run and diff against TestStringRC2.expected ==="
 "$TESTS_DIR/build/exec/TestStringRC2_verify" > "$TMP/actual16.out" 2>&1
@@ -287,8 +268,7 @@ else
 fi
 
 echo "=== rc2 backend: build TestMVar (Control.Concurrent.MVar: Mutex/Condition-backed MVar) ==="
-nix-shell -p gcc gmp pkg-config --run \
-    "cd '$TESTS_DIR' && '$IDRIS2RC2' --cg rc2 -p rc2base -o TestMVar_verify TestMVar.idr"
+( cd "$TESTS_DIR" && "$IDRIS2RC2" --cg rc2 -p rc2base -o TestMVar_verify TestMVar.idr )
 
 echo "=== Run and diff against TestMVar.expected ==="
 "$TESTS_DIR/build/exec/TestMVar_verify" > "$TMP/actual17.out" 2>&1
@@ -300,8 +280,7 @@ else
 fi
 
 echo "=== rc2 backend: build TestDoubleConvert (Data.Double.Convert: Eisel-Lemire/Grisu2 fast path) ==="
-nix-shell -p gcc gmp pkg-config --run \
-    "cd '$TESTS_DIR' && '$IDRIS2RC2' --cg rc2 -p rc2base -o TestDoubleConvert_verify TestDoubleConvert.idr"
+( cd "$TESTS_DIR" && "$IDRIS2RC2" --cg rc2 -p rc2base -o TestDoubleConvert_verify TestDoubleConvert.idr )
 
 echo "=== Run and diff against TestDoubleConvert.expected ==="
 "$TESTS_DIR/build/exec/TestDoubleConvert_verify" > "$TMP/actual18.out" 2>&1
@@ -313,8 +292,7 @@ else
 fi
 
 echo "=== rc2 backend: build TestRcexprParser (Language.RCExpr.{AST,Lexer,Parser}: dumprcexpr grammar edge cases) ==="
-nix-shell -p gcc gmp pkg-config --run \
-    "cd '$TESTS_DIR' && '$IDRIS2RC2' --cg rc2 -p rc2base -p contrib -o TestRcexprParser_verify TestRcexprParser.idr"
+( cd "$TESTS_DIR" && "$IDRIS2RC2" --cg rc2 -p rc2base -p contrib -o TestRcexprParser_verify TestRcexprParser.idr )
 
 echo "=== Run and diff against TestRcexprParser.expected ==="
 "$TESTS_DIR/build/exec/TestRcexprParser_verify" > "$TMP/actual19.out" 2>&1
@@ -326,8 +304,7 @@ else
 fi
 
 echo "=== rc2 backend: build TestIORefRC2 (Data.IORef.RC2: casIORef success/failure/retry loop) ==="
-nix-shell -p gcc gmp pkg-config --run \
-    "cd '$TESTS_DIR' && '$IDRIS2RC2' --cg rc2 -p rc2base -o TestIORefRC2_verify TestIORefRC2.idr"
+( cd "$TESTS_DIR" && "$IDRIS2RC2" --cg rc2 -p rc2base -o TestIORefRC2_verify TestIORefRC2.idr )
 
 echo "=== Run and diff against TestIORefRC2.expected ==="
 "$TESTS_DIR/build/exec/TestIORefRC2_verify" > "$TMP/actual20.out" 2>&1
@@ -339,8 +316,7 @@ else
 fi
 
 echo "=== rc2 backend: build TestMultiThreadRC2 (System.GC.RC2: the switch to atomic reference counting) ==="
-nix-shell -p gcc gmp pkg-config --run \
-    "cd '$TESTS_DIR' && '$IDRIS2RC2' --cg rc2 -p rc2base -o TestMultiThreadRC2_verify TestMultiThreadRC2.idr"
+( cd "$TESTS_DIR" && "$IDRIS2RC2" --cg rc2 -p rc2base -o TestMultiThreadRC2_verify TestMultiThreadRC2.idr )
 
 echo "=== Run and diff against TestMultiThreadRC2.expected ==="
 "$TESTS_DIR/build/exec/TestMultiThreadRC2_verify" > "$TMP/actual21.out" 2>&1

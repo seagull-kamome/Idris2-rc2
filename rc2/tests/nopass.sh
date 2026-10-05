@@ -7,7 +7,7 @@
 # Usage: ./nopass.sh [STAGE...]     (default: every stage rc2 lists as
 #                                    disableable, read from RC2.idr)
 #
-# Run inside the same nix-shell as verify.sh. rc2 must already be built.
+# Run from the same shell setup as verify.sh. rc2 must already be built.
 # Each run is `verify.sh --skip-build --no-valgrind --no-tsan
 # --no-refc-suite --directive <stage>`; its full output goes to
 # nopass-<stage>.log next to this script.

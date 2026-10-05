@@ -431,14 +431,41 @@ referenced).
   unmeasured. The synthetic stress case (a function called from many
   distinct closure targets) this entry originally called for hasn't
   been built.
-- **Applied once per compile, not iterated to a fixpoint** (new, found
-  during implementation, by explicit request): a kept clone's own body
-  can, in principle, expose a fresh specialization opportunity of its
-  own, the same way `foldConstProgram` re-runs `ConstFold` to a
-  fixpoint because one CAF's own fold can unblock another. Not
-  attempted -- `SpecClosure.idr`'s own `applySpecClosure` doc comment
-  has the rationale and the (trivial) shape a later fixpoint wrapper
-  would take.
+
+## Iteration
+
+Both specialization halves run in rounds: `applySpecRounds` (SpecClosure.idr)
+runs the closure half then the constant-constructor half, and repeats
+until a round keeps no new clone, because a kept clone's own body can
+expose a key for either half (a clone's folded body passing a now-known
+closure on, or a constant-constructor clone whose bound field is a
+constant closure handed to another function). Each round works on the
+previous round's rewritten program; the kept keys and the redirect
+tables are carried over, so a key kept earlier is never cloned again and
+a call site a new clone exposes is still redirected to an earlier clone.
+`FreshId` is bracketed once around the whole loop, so clone names are
+unique across rounds. The cost per round is one call-site collection and
+one redirect pass; keys that failed in an earlier round are re-attempted.
+Test129SpecIterate needs the second round (`applyAll incr` only exists inside
+the constant-constructor clone of `run`; `applyAll` applies its closure exactly once because the closure half refuses more than one apply chain).
+
+Measured on `idris2-lsp` (`--directive timing` prints a `SpecRound` line
+per round), clones kept per round (closure / constant-constructor):
+
+| Round | closure | const-con |
+|---|---|---|
+| 1 | 6292 | 1429 |
+| 2 | 747 | 163 |
+| 3 | 122 | 13 |
+| 4 | 0 | 1 |
+| 5 | 0 | 0 |
+
+Convergence is in 4 productive rounds plus one confirming round, and the
+later rounds are tiny. The cap `specMaxRounds` is 8: the observed
+convergence plus a margin of three rounds. It is a safety bound; the
+loop normally ends by the no-new-clone test. Result against the single
+round: the RCExp dump grows from 666,813 to 668,089 lines (+0.2%),
+`apply` nodes drop from 2,923 to 2,887, compile time is unchanged (52.1 s).
 
 ## Transitive specialisation (2026-09-26, implemented 2026-09-27)
 
@@ -532,9 +559,9 @@ nolateinline` shows `call Data.List.sortBy [#{{csegen:25}:2}/2~closure,
 ..]` in `main`.
 
 So the transitive extension alone covers both `sort` and a direct
-`sortBy compare`. A second round after SpecConstCon would only matter
-for a dictionary that SpecConstCon alone makes constant. It stays
-under the "applied once per compile" question above.
+`sortBy compare`. The rounds under "Iteration" cover a dictionary that
+SpecConstCon alone makes constant. It stays
+by the iteration described under "Iteration" above.
 
 ### Bounds
 

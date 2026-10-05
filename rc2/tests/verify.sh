@@ -15,11 +15,9 @@
 # Usage: ./verify.sh [--skip-build] [--no-valgrind]
 #                     [--valgrind-all] [--regen-expected] [--directive VALUE]...
 #
-# Must be run from inside a nix-shell (or equivalent -- plain PATH setup
-# works too) that already provides everything this run needs, started
-# ONCE by the caller around the whole script -- this script itself makes
-# no internal nix-shell calls of its own (see rc2/tests/refc-suite/run.sh
-# for the same pattern). What's needed: the self-built `idris2` (only
+# Must be run from a shell whose PATH already provides everything this
+# run needs. This script makes no internal nix-shell calls of its own (see
+# rc2/tests/refc-suite/run.sh for the same pattern). What's needed: the self-built `idris2` (only
 # when `--skip-build` is not given, or `--regen-expected` is given),
 # `gcc`, `gmp` (dev headers), `pkg-config` (all three always, for
 # compiling rc2 itself and every smoke test), and `valgrind` (only
@@ -29,10 +27,9 @@
 # gitignored), which puts install/bin first on PATH. The check for
 # `idris2` on PATH below runs BEFORE this script sources env.sh, so
 # source it yourself first. nixpkgs' `idris2` is for the one-time
-# bootstrap only (see AGENT.md), so don't add it to the `-p` list. E.g.,
-# for a normal full run:
+# bootstrap only (see AGENT.md). E.g., for a normal full run:
 #
-#   nix-shell -p gcc gmp pkg-config valgrind --run 'source ../../env.sh && ./verify.sh'
+#   source ../../env.sh && ./verify.sh
 #
 #   --skip-build       Don't rebuild idris2-rc2/libidris2rc2.a first
 #                       (use the existing rc2/build/exec/idris2-rc2).
@@ -203,8 +200,7 @@ fi
 # after `--directive dumprcexpr` in every smoke-test compile line below
 # (never sent to refc-suite/run.sh, which runs as its own separate
 # process). Kept as an array (not a joined string) since every compile
-# below is now a direct argv-array invocation, not a string handed to
-# `nix-shell --run` for its own `bash -c` to re-split.
+# below is a direct argv-array invocation.
 directive_flags=()
 for d in "${EXTRA_DIRECTIVES[@]}"; do
     directive_flags+=(--directive "$d")
@@ -225,7 +221,7 @@ source "$SCRIPT_DIR/build-lock.sh"
 # Pin the locale for the whole run. The rc2 runtime now does
 # `setlocale(LC_ALL, "")` in idris2rc2_rtInit (support/rc2/runtime.c),
 # so every compiled test's behaviour would otherwise follow whatever
-# LC_* / LANG this shell happens to carry (nix-shell here resolves to
+# LC_* / LANG this shell happens to carry (commonly
 # en_US.UTF-8, not C). C.UTF-8 gives a UTF-8 LC_CTYPE with plain
 # codepoint-order collation -- deterministic, and what
 # Test82RuntimeLocale asserts. (Double<->String output is
@@ -447,7 +443,7 @@ NO_REFC_DIFF_TESTS="Test3Data Test7CastMatrix Test8EmptyCon Test17ConstFold Test
 # packCFType allocation (idris2rc2_mkPointer/idris2rc2_mkGCPointer) is
 # new to %export's own argument marshalling and worth the same
 # scrutiny.
-LEAK_SENSITIVE_TESTS="Test11DualABILeak Test13NativeArgChain Test17ConstFold Test22BranchSinking Test27FFIDualABI Test28Utf8Strings Test35NetworkLoopback Test36ReuseOfferUniqueLeak Test37SystemMisc Test42SupportMisc Test44IORefExtPrimLeak Test46FastPackUnconditional Test49IntegerOpReuse Test59Export Test66ClosureFastPath Test79DupMerge Test86CafMemoization Test87SpecConstCon Test88KnownConFold Test89CafDualABI Test90StructReturn Test91IntConstFold Test92ArityRaise Test93ApplyFold Test99DeadArgs Test102MultiThreadSwitch Test104ThreadStress Test106TransitiveSpec Test110Loop Test111Basics Test112Numeric Test113DeepRecursion Test114Inline Test115ConstFoldClosure Test18ClosureInPlaceGrow Test117ConAltNative Test118FFI Test119FFINoRefc Test24CStructSupport Test120CStruct Test122LiftOrigin Test124StringNul Test125LazyMemo"
+LEAK_SENSITIVE_TESTS="Test11DualABILeak Test13NativeArgChain Test17ConstFold Test22BranchSinking Test27FFIDualABI Test28Utf8Strings Test35NetworkLoopback Test36ReuseOfferUniqueLeak Test37SystemMisc Test42SupportMisc Test44IORefExtPrimLeak Test46FastPackUnconditional Test49IntegerOpReuse Test59Export Test66ClosureFastPath Test79DupMerge Test86CafMemoization Test87SpecConstCon Test88KnownConFold Test89CafDualABI Test90StructReturn Test91IntConstFold Test92ArityRaise Test93ApplyFold Test99DeadArgs Test102MultiThreadSwitch Test104ThreadStress Test106TransitiveSpec Test110Loop Test111Basics Test112Numeric Test113DeepRecursion Test114Inline Test115ConstFoldClosure Test18ClosureInPlaceGrow Test117ConAltNative Test118FFI Test119FFINoRefc Test24CStructSupport Test120CStruct Test122LiftOrigin Test124StringNul Test125LazyMemo Test128SpecConstConFwd Test129SpecIterate"
 
 # Pre-existing leaks still tolerated, as "definitely lost" bytes per
 # test; anything else non-zero is a new failure. Empty: every leak once
@@ -486,7 +482,7 @@ for name in $ALL_TESTS; do
     fi
     # $IDRIS2RC2 is invoked directly (an already-built binary), not via
     # a bare `idris2` command -- just needs the C toolchain (gcc/gmp/
-    # pkg-config) already on PATH from the caller's own nix-shell.
+    # pkg-config) already on PATH.
     env "${companion_env[@]}" "$IDRIS2RC2" --cg rc2 -p contrib -p network -p linear -p rc2base \
         --directive dumprcexpr "${directive_flags[@]}" "$RC2_DIR/tests/$name/$name.idr" -o "$TMP/${name}_rc2" \
         > "$TMP/${name}_compile.log" 2>&1
@@ -569,7 +565,7 @@ done
 
 if [ "$DO_VALGRIND" -eq 1 ] && ! command -v valgrind >/dev/null 2>&1; then
     echo
-    report_fail "valgrind" "not on PATH -- run inside nix-shell -p ... valgrind, or pass --no-valgrind"
+    report_fail "valgrind" "not on PATH -- install valgrind, or pass --no-valgrind"
 elif [ "$DO_VALGRIND" -eq 1 ]; then
     echo
     echo "=== valgrind (leak-sensitive tests) ==="

@@ -55,13 +55,15 @@ transformation.
 
 1. **Candidate detection.** For each call site `call g [..., c, ...]`
    where `c` is an `RCConstCon`, and `g`'s parameter at that position
-   is scrutinised at least once and used *nowhere* except as an
-   `RConCase` scrutinee or as a passthrough of itself at the same
-   argument position of `g`'s own recursive call, record the triple
-   `(g, argPos, c)`. `paramIsScrutineeOnly` is the gate -- modelled on
+   is used *nowhere* except as an `RConCase` scrutinee, as a
+   passthrough of itself at the same argument position of `g`'s own
+   recursive call, or as a *forwarding site* (handed to a parameter of
+   another call; see "Transitive specialisation" below), with at least
+   one scrutinee or forwarding site, record the triple
+   `(g, argPos, c)`. `constParamUses` is the gate -- modelled on
    the closure half's `paramUses`, with `apply` swapped
    for "scrutinee of an `RConCase`" and sharing its
-   `selfPassthroughOccurrences` verbatim. Because `ConstFold` has
+   `selfPassthroughOccurrences` and `forwardSites` verbatim. Because `ConstFold` has
    already run to a fixpoint over the whole program by this point, a
    constant argument is spelled out right at the call site and never
    still behind an `RLet`, so unlike the closure half there is no
@@ -89,12 +91,54 @@ transformation.
    specialized parameter has disappeared entirely, so this is the
    honest structural question: did this remove the dispatch it was
    built to remove? Otherwise discard, and every call site keeps
-   calling the generic `g`.
+   calling the generic `g`. The one exception is the pure forwarder
+   of the next section, which is judged by what it reaches.
 
 Pipeline position: straight after `applySpecClosure`, so it consumes
 that pass's own clones (a clone is an ordinary `MkRCFun` by then), and
 strictly before `insertMemoize`/Phase 2, so its own clones are likewise
 ordinary by the time those see them.
+
+## Transitive specialisation
+
+A dictionary is very often not scrutinised by the function that receives
+it but handed on (`f c x = g c x`, `g` does the `case`). The strict gate
+refused all of those. The extension mirrors the closure half's
+"Transitive specialisation" (`speculative-closure-specialization.md`):
+
+- **Forwarding sites as a third kind of use.** `forwardSites` lists the
+  saturated `RAppName` argument positions where the parameter is passed
+  on (the self passthrough at the same position excluded). A parameter
+  whose every other use is a forwarding site is eligible, and a
+  scrutinee count of 0 is fine when there is at least one forward. A
+  stored or escaping use still makes it ineligible.
+- **A work list, not a one-shot per key.** Each built clone's `needs`
+  (`constNeeds`) are read off the *folded* body: every call that spells
+  the same constant at a parameter position, i.e. the keys
+  `(callee', pos', same constant)`. `buildConstAll` queues them; the
+  `seen` set memoises every attempt, failures included, so each key is
+  built once and the loop terminates. The keys stay
+  `(callee, argPos, constant)`.
+- **Acceptance (`acceptConst`).** The greatest closed subset: a clone is
+  kept if it is profitable on its own (`own`: fewer `RApp` nodes; its
+  forwarded calls then merely stay calls to the generic callee, which
+  is correct), or if it is a pure forwarder all of whose needs are
+  accepted. Forwarders are first cut down to those that reach a
+  profitable clone (a least fixpoint), so a cycle of forwarders none of
+  which does any work cannot justify itself; then anything whose need
+  is not accepted is dropped, like the closure half's `acceptClosed`.
+- **No new rewrite for the forwarded calls.** The seeded fold already
+  substitutes the constant into the forwarding call, and the one
+  whole-program `redirectConstCallSites` sweep, which covers the clones
+  as well as the originals, turns it into a call to the next clone. This
+  is the same mechanism as the self passthrough.
+
+`rc2/tests/Test128SpecConstConFwd/` covers a two-link forwarding chain
+(`chain2 -> chain1 -> classify`), a recursive pure forwarder
+(`countAll -> countOne`) and a function that stores its dictionary
+(`stash`) and must stay generic; its `check.sh` asserts that the
+forwarders' clones exist and contain neither a boxed dispatch nor a
+call to the generic chain.
 
 ## The `where`-clause trap that got this reverted once
 
@@ -184,9 +228,39 @@ dispatch it removes is paid once per iteration, not once per node.
 `BenchSpecConstConRec` is the honest measure of that shape, and the
 shape is the common one in ordinary Idris code.
 
-## Why the whole-program yield is only ~1.8%
+## Measured after the transitive extension
 
-Both reasons are inherent to the gate, not bugs. On `idris2-lsp`, of
+Whole `idris2-lsp` build (32,600 definitions entering the pass), against
+the same build with `--directive nospecconstcon` (final-`RCExp` dump,
+`--directive dumprcexpr`):
+
+| | before the extension (earlier measurement) | after | `nospecconstcon` |
+|---|---|---|---|
+| distinct keys with a call site of their own | 2,113 | 2,113 | - |
+| keys reached only by forwarding | - | 483 | - |
+| keys past the use gate | 1,030 | 2,075 (of 2,596 attempted) | - |
+| clones built | not measured | 1,752 | - |
+| clones kept | 858 | **1,429** (394 pure forwarders) | 0 |
+| final `RCExp` definitions | not measured | 17,934 | 18,871 |
+| final `RCExp` lines | not measured | 666,813 (+1.2%) | 659,209 |
+| `apply` nodes in the final dump | not measured | 2,924 | 3,575 |
+| whole build, wall clock | not measured | 52.1s | 52.0s |
+
+The 521 keys that still fail the gate: 122 forward mixed with a store or
+escape, 320 stored only, 79 other escape. Growth is within the 4% budget
+that was set for adding a bound, so none was added (no cap on
+forwarding depth or total clones).
+
+Runtime, median of 5, against `--directive nospecconstcon`:
+`BenchSpecConstConRec` 0.072s to 0.044s; `BenchSpecConstCon` and
+`BenchConstClosureApply` 0.044s both ways. Those two are at the process
+floor, so they say nothing in either direction. The pre-extension
+runtime numbers above are unchanged.
+
+## Why the pre-extension yield was only ~1.8%
+
+Historical: measured before the transitive extension above. Both
+reasons were inherent to the strict gate, not bugs. On `idris2-lsp`, of
 1,598 distinct keys:
 
 - **903 (57%) fail the scrutinee-only gate** -- the dictionary is
@@ -206,17 +280,25 @@ The `--directive timing` output prints this breakdown (`N distinct
 keys`, then `N keys past the scrutinee-only gate, M clones kept`), so
 it can be re-derived on any program without rebuilding the compiler.
 
+## Iteration
+
+This half runs after the closure half in every round of
+`applySpecRounds`, repeated until a round keeps no new clone; a kept
+clone's body can now expose a new constant argument, and a closure clone
+an new dictionary. Mechanics, the `idris2-lsp` convergence table (constant-
+constructor clones kept per round: 1429, 163, 13, 1, 0) and the reasoning
+behind the cap of 8 rounds are in `speculative-closure-specialization.md`,
+"Iteration".
+
 ## Open
 
 - **Multiple specialized parameters** (a function taking two
   dictionaries) -- the same open question the closure half has, out of
   scope the same way: one parameter position at a time.
-- **Not iterated to a fixpoint**, same as the closure half: a kept
-  clone can expose a further opportunity.
-- **Interprocedural propagation** -- the 903 keys above, where the
-  dictionary is handed to a different callee. This is where all the
-  remaining yield is, and it is not a relaxation of this gate but a
-  separate analysis.
+- **Dictionaries that are stored or escape** -- 320 stored-only, 79
+  other escape and 122 forward-mixed-with-store keys on `idris2-lsp`
+  still stay generic. Resolving them needs a different analysis, not a
+  relaxation of the gate.
 
 ## Files
 

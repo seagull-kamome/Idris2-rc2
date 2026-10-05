@@ -25,28 +25,25 @@ color: green
 
 ビルド（`rc2/build/exec/idris2-rc2`が無い、またはIdrisソースを変更した後）:
 ```bash
-nix-shell -p gcc gmp pkg-config --run '
-  source env.sh
-  export RC2_DIR="$(pwd)/rc2"; source rc2/tests/build-lock.sh; acquire_build_lock
-  cd rc2 && idris2 --build rc2.ipkg && idris2 --install rc2.ipkg
-'
+source env.sh
+export RC2_DIR="$(pwd)/rc2"; source rc2/tests/build-lock.sh; acquire_build_lock
+cd rc2 && idris2 --build rc2.ipkg && idris2 --install rc2.ipkg
 ```
-3行目のロックは、別セッションや別エージェントのビルドと同時に`rc2/build/`・`install/`へ書き込んで`idris2-rc2.so`を壊す事故を防ぐためのもの（`verify.sh`・`bench.sh`は自分でロックを取るので、そちら経由でビルドするなら不要）。`RC2_DIR`を設定しないと`build-lock.sh`はロックファイルを作れずに失敗する。
-（`idris2`はこの`nix-shell -p`リストに含めない——`source env.sh`後にPATH上にある自前ビルド版を使うのが前提。自前ビルドが無い場合のみ、ブートストラップ用に`-p`へ`idris2`を追加する。`IDRIS2_PREFIX`の`export`は不要——自前ビルド版`idris2`はビルド時に焼き込まれた自分自身のprefix（このリポジトリの`install/`）を`idris2 --prefix`で確認できる通り最初から知っている。nixpkgs版`idris2`にブートストラップ用フォールバックする場合のみ、`export IDRIS2_PREFIX="$(pwd)/install"`を先に実行すること。）
+2行目のロックは、別セッションや別エージェントのビルドと同時に`rc2/build/`・`install/`へ書き込んで`idris2-rc2.so`を壊す事故を防ぐためのもの（`verify.sh`・`bench.sh`は自分でロックを取るので、そちら経由でビルドするなら不要）。`RC2_DIR`を設定しないと`build-lock.sh`はロックファイルを作れずに失敗する。
+（`gcc`・`gmp`・`pkg-config`はPATH上にある前提で、`nix-shell`は使わない。`idris2`は`source env.sh`後にPATH上にある自前ビルド版を使うのが前提。自前ビルドが無い場合のみ、ブートストラップ用にnixpkgs版`idris2`を使う。`IDRIS2_PREFIX`の`export`は不要——自前ビルド版`idris2`はビルド時に焼き込まれた自分自身のprefix（このリポジトリの`install/`）を`idris2 --prefix`で確認できる通り最初から知っている。nixpkgs版`idris2`にブートストラップ用フォールバックする場合のみ、`export IDRIS2_PREFIX="$(pwd)/install"`を先に実行すること。）
 
 フルテスト（valgrind込み、既存の全回帰確認）:
 ```bash
 cd rc2/tests
 source ../../env.sh
-nix-shell -p gcc gmp pkg-config valgrind --run './verify.sh'
+./verify.sh
 ```
 既にビルド済みなら`./verify.sh --skip-build`で高速化できる。**期待される結果は、その時点での既知の合格件数（例：直近の実装セッションで確認済みの件数）と完全一致すること**——件数が食い違ったら、それを「まあ大体合ってる」と流さず、原因を調べてから報告する。新規テストを追加した分だけ件数は増えるので、増分が自分の追加テスト数と一致するか確認する。
 
 `rc2/build/exec/idris2-rc2`を直接使ってIdris2プログラムを単体コンパイルする場合（`--directive dumprcexpr`で構造確認する時など）:
 ```bash
 source env.sh
-nix-shell -p gcc gmp pkg-config --run \
-  "cd /scratch/dir && '$(pwd)/rc2/build/exec/idris2-rc2' --cg rc2 --directive dumprcexpr Program.idr -o program"
+(cd /scratch/dir && "$OLDPWD/rc2/build/exec/idris2-rc2" --cg rc2 --directive dumprcexpr Program.idr -o program)
 ```
 
 ## テスト新設の規約
