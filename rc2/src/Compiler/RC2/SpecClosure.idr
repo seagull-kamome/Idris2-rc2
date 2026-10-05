@@ -319,9 +319,10 @@ redirectCallSitesTable table = goBound empty
 -- Whole-program entry point
 ------------------------------------------------------------------------
 
-||| One round of speculative closure-argument specialization. Not
-||| iterated to a fixpoint -- see the doc's "Open questions" -> "Applied
-||| once per compile" entry.
+||| One round of speculative closure-argument specialization, driven to a
+||| fixpoint by `applySpecRounds`. `prevTable`/`done` carry the clones
+||| kept in earlier rounds: their keys are not rebuilt, and the table is
+||| applied again so a call site a new clone exposes is redirected too.
 |||
 ||| Both the CAF table and call-site redirection are computed *once*
 ||| over the whole program -- `rebuildCafTable defs` up front, and a
@@ -346,7 +347,7 @@ redirectCallSitesTable table = goBound empty
 ||| four whole-pass-level lines -- collect+group, the opportunity/key/
 ||| def counts, the single `rebuildCafTable`, and the single final
 ||| redirect pass -- since those are each `O(program size)` at most
-||| once per compile. The earlier per-key `tryOneKey`/`buildClone+fold`
+||| once per round. The earlier per-key `tryOneKey`/`buildClone+fold`
 ||| lines (one pair per distinct specialization key, unbounded on a
 ||| program the size of `idris2-lsp`) were removed once the
 ||| `O(distinct keys x program size)` slowdown they were added to
@@ -374,19 +375,20 @@ record Built where
   needs : List SpecKey
   chains : Nat
 
-export
-applySpecClosure : {auto c : Ref Ctxt Defs} -> {auto v : Ref VarId Int} -> List (Name, RCDef) -> Core (List (Name, RCDef))
-applySpecClosure defs = do
-    _ <- newRef FreshId 0
+applySpecClosure : {auto c : Ref Ctxt Defs} -> {auto v : Ref VarId Int} -> {auto fr : Ref FreshId Int}
+                 -> RedirectTable -> SortedSet SpecKey -> List (Name, RCDef)
+                 -> Core (List (Name, RCDef), RedirectTable, SortedSet SpecKey, Nat)
+applySpecClosure prevTable done defs = do
     timingEnabled <- elem "timing" <$> getDirectives (Other "rc2")
-    keys <- maybeLogTimeOver timingEnabled 0 (pure "rc2: SpecClosure: collect+group opportunities") (pure (SortedMap.toList byKey))
+    keys <- maybeLogTimeOver timingEnabled 0 (pure "rc2: SpecClosure: collect+group opportunities")
+             (pure (filter (\(k, _) => not (contains k done)) (SortedMap.toList byKey)))
     when timingEnabled $
       coreLift $ putStrLn $ "TIMING rc2: SpecClosure: " ++ show (sum (map (length . snd) keys)) ++ " opportunities, "
                              ++ show (length keys) ++ " distinct keys, " ++ show (length defs) ++ " defs"
     caf <- maybeLogTimeOver timingEnabled 0 (pure ("rc2: SpecClosure: rebuildCafTable (" ++ show (length defs) ++ " defs, once)"))
              (pure (rebuildCafTable defs))
-    built <- buildAll defOf caf empty [] (map (\(k, opps) => (k, capturedOf opps)) keys)
-    let accepted = acceptClosed built
+    built <- buildAll defOf caf done [] (map (\(k, opps) => (k, capturedOf opps)) keys)
+    let accepted = acceptClosed done built
     when timingEnabled $
       coreLift $ putStrLn $ "TIMING rc2: SpecClosure: " ++ show (length built) ++ " clones built, "
                              ++ show (length accepted) ++ " accepted"
@@ -394,15 +396,17 @@ applySpecClosure defs = do
                              ++ show (length (filter (\b => null b.needs && b.chains > 1) accepted)) ++ " applying more than once)"
     let table = foldl (\t, b => let (callee, argPos, target, _) = b.key
                                 in insertWith (++) callee [(argPos, target, b.name)] t)
-                      (the RedirectTable empty) accepted
+                      prevTable accepted
+    let done' = foldl (\s, b => insert b.key s) done accepted
     -- `newClones ++ defs`, not `defs ++ newClones`: matches the
     -- ordering the old per-key-accumulated `accDefs` produced (each
     -- accepted clone prepended, original defs at the tail), so
     -- emission's own ArgCounter-derived temp-variable numbering is
     -- unaffected by this refactor.
-    maybeLogTimeOver timingEnabled 0 (pure ("rc2: SpecClosure: redirectAll (" ++ show (length defs + length accepted) ++ " defs, once)"))
+    out <- maybeLogTimeOver timingEnabled 0 (pure ("rc2: SpecClosure: redirectAll (" ++ show (length defs + length accepted) ++ " defs, once)"))
       (pure $ map (\b => (b.name, dropDeadEntryClosure (redirectDef table b.def))) accepted
               ++ map (\(n, d) => (n, redirectDef table d)) defs)
+    pure (out, table, done', length accepted)
   where
     redirectDef : RedirectTable -> RCDef -> RCDef
     redirectDef table (MkRCFun a r w body) = MkRCFun a r w (redirectCallSitesTable table body)
@@ -446,7 +450,7 @@ applySpecClosure defs = do
     ||| gone once folded; `Nothing` if the parameter is used some other
     ||| way, or survives. `caf` is the whole-program CAF table, built
     ||| once by the caller (see `applySpecClosure`'s own doc comment).
-    tryOneKey : {auto fr : Ref FreshId Int} -> SortedMap Name RCDef -> CafTable -> SpecKey -> Nat -> Core (Maybe Built)
+    tryOneKey : SortedMap Name RCDef -> CafTable -> SpecKey -> Nat -> Core (Maybe Built)
     tryOneKey defOf caf k@(callee, argPos, target, missing) capturedCount =
         case lookup callee defOf of
              Just (MkRCFun args retRep _ body) =>
@@ -469,8 +473,7 @@ applySpecClosure defs = do
     -- A work list: every clone's forwarding sites add the keys of the
     -- clones they need, each key built at most once. `Core` has no
     -- `Monad` instance, so this is a manual loop rather than a fold.
-    buildAll : {auto fr : Ref FreshId Int}
-            -> SortedMap Name RCDef -> CafTable -> SortedSet SpecKey -> List Built -> List (SpecKey, Nat)
+    buildAll : SortedMap Name RCDef -> CafTable -> SortedSet SpecKey -> List Built -> List (SpecKey, Nat)
             -> Core (List Built)
     buildAll _ _ _ acc [] = pure acc
     buildAll defOf caf seen acc ((k, captured) :: rest) =
@@ -484,11 +487,11 @@ applySpecClosure defs = do
 
     ||| The greatest subset of `bs` in which every clone's forwarding
     ||| sites find the clones they need.
-    acceptClosed : List Built -> List Built
-    acceptClosed bs =
+    acceptClosed : SortedSet SpecKey -> List Built -> List Built
+    acceptClosed done bs =
         let keys = the (SortedSet SpecKey) (fromList (map (.key) bs))
-            bs' = filter (\b => all (\k => contains k keys) b.needs) bs
-        in if length bs' == length bs then bs else acceptClosed bs'
+            bs' = filter (\b => all (\k => contains k keys || contains k done) b.needs) bs
+        in if length bs' == length bs then bs else acceptClosed done bs'
 
 ------------------------------------------------------------------------
 -- Constant-constructor argument specialization
@@ -747,8 +750,8 @@ buildConstAll defOf caf initial st (k :: rest) =
 ||| first cut down to the *useful* ones -- those that reach a
 ||| profitable clone, least fixpoint -- so a cycle of mutually
 ||| forwarding clones, none profitable, cannot justify itself.
-acceptConst : List ConstBuilt -> List ConstBuilt
-acceptConst bs = closed (useful (filter (.own) bs) (filter (not . (.own)) bs))
+acceptConst : SortedSet ConstKey -> List ConstBuilt -> List ConstBuilt
+acceptConst done bs = closed (useful (filter (.own) bs) (filter (not . (.own)) bs))
   where
     keysOf : List ConstBuilt -> SortedSet ConstKey
     keysOf xs = fromList (map (.key) xs)
@@ -762,7 +765,7 @@ acceptConst bs = closed (useful (filter (.own) bs) (filter (not . (.own)) bs))
     closed : List ConstBuilt -> List ConstBuilt
     closed xs =
         let ks = keysOf xs
-            xs' = filter (\b => b.own || all (\k => contains k ks) b.needs) xs
+            xs' = filter (\b => b.own || all (\k => contains k ks || contains k done) b.needs) xs
         in if length xs' == length xs then xs else closed xs'
 
 ||| One accepted constant-constructor clone: redirect a call to
@@ -795,17 +798,17 @@ redirectConstCallSites table = go
     go e = mapSubExprs go e
 
 ||| One round of constant-constructor argument specialization, run
-||| straight after `applySpecClosure` and sharing its pipeline
-||| position. Structured exactly like it: group call sites by
+||| straight after `applySpecClosure` within each round of
+||| `applySpecRounds` (same `prevTable`/`done` threading). Structured exactly like it: group call sites by
 ||| `(callee, argPos, value)`, attempt one memoized clone per distinct
 ||| key, accumulate a redirect table, and apply it in a single
 ||| whole-program pass at the end.
-export
-applySpecConstCon : {auto c : Ref Ctxt Defs} -> List (Name, RCDef) -> Core (List (Name, RCDef))
-applySpecConstCon defs = do
-    _ <- newRef FreshId 0
+applySpecConstCon : {auto c : Ref Ctxt Defs} -> {auto fr : Ref FreshId Int}
+                  -> ConstRedirectTable -> SortedSet ConstKey -> List (Name, RCDef)
+                  -> Core (List (Name, RCDef), ConstRedirectTable, SortedSet ConstKey, Nat)
+applySpecConstCon prevTable done defs = do
     timingEnabled <- elem "timing" <$> getDirectives (Other "rc2")
-    let keys = SortedMap.toList byKey
+    let keys = filter (\(k, _) => not (contains k done)) (SortedMap.toList byKey)
     when timingEnabled $
       coreLift $ putStrLn $ "TIMING rc2: SpecConstCon: " ++ show (length keys)
                              ++ " distinct keys, " ++ show (length defs) ++ " defs"
@@ -824,11 +827,12 @@ applySpecConstCon defs = do
     let defOf : SortedMap Name RCDef := SortedMap.fromList defs
     let initial : SortedSet ConstKey := fromList (map fst keys)
     st <- buildConstAll defOf caf initial
-            (MkConstState empty [] 0 (replicate 9 0) 0) (map fst keys)
-    let accepted = acceptConst st.built
+            (MkConstState done [] 0 (replicate 9 0) 0) (map fst keys)
+    let accepted = acceptConst done st.built
     let table = foldl (\t, b => let (callee, argPos, value) = b.key
                                 in insertWith (++) callee [(argPos, value, b.name)] t)
-                      (the ConstRedirectTable empty) accepted
+                      prevTable accepted
+    let done' = foldl (\s, b => insert b.key s) done accepted
     -- The two gates separately, because they fail for different
     -- reasons and only the breakdown says where the remaining yield
     -- is: the use gate (`constParamUses`) rejects a dictionary that is
@@ -846,10 +850,10 @@ applySpecConstCon defs = do
                              ++ show (length (filter (not . (.own)) accepted)) ++ " pure forwarders accepted"
       coreLift $ putStrLn $ "TIMING rc2: SpecConstCon: gate-fail buckets [fwdOnly+scrut, fwdOnly-noscrut, fwdMixed, stored, otherEscape, noScrutNoUse, else, noParam, notPlainFun] = "
                              ++ show st.buckets
-    pure $ map (\(n, d) => (n, case d of
+    pure (map (\(n, d) => (n, case d of
                                     MkRCFun a r w body => MkRCFun a r w (redirectConstCallSites table body)
                                     d' => d'))
-               (map (\b => (b.name, b.def)) accepted ++ defs)
+               (map (\b => (b.name, b.def)) accepted ++ defs), table, done', length accepted)
   where
     addOpp : SortedMap ConstKey () -> ConstOpportunity -> SortedMap ConstKey ()
     addOpp acc opp = insert (opp.callee, opp.argPos, opp.value) () acc
@@ -867,3 +871,67 @@ applySpecConstCon defs = do
 
     rebuildCafTable : List (Name, RCDef) -> CafTable
     rebuildCafTable = foldl (\tbl, (n, d) => maybe tbl (\v => insert n v tbl) (cafValueOf d)) empty
+
+------------------------------------------------------------------------
+-- Fixpoint driver
+------------------------------------------------------------------------
+
+||| Total `RCExp` nodes in `e`; only used for the `--directive timing`
+||| per-round size line.
+nodeCount : RCExp -> Nat
+nodeCount e = S (foldSubExprs (+) 0 nodeCount e)
+
+||| Everything the round loop threads from one round to the next: the
+||| redirect tables and kept-key sets of both halves (so a clone kept in
+||| an earlier round is neither rebuilt nor left unredirected at a call
+||| site a later clone exposes), and the program itself.
+record SpecState where
+  constructor MkSpecState
+  closureTable : RedirectTable
+  closureDone : SortedSet SpecKey
+  constTable : ConstRedirectTable
+  constDone : SortedSet ConstKey
+  prog : List (Name, RCDef)
+
+||| Safety bound on the rounds below, not the expected path: a round
+||| that keeps no new clone ends the loop. `idris2-lsp` keeps clones in
+||| rounds 1-4 and none in round 5, so 8 leaves three rounds of margin
+||| over the observed convergence; see the docs' "Iteration" sections.
+specMaxRounds : Nat
+specMaxRounds = 8
+
+specLoop : {auto c : Ref Ctxt Defs} -> {auto v : Ref VarId Int} -> {auto fr : Ref FreshId Int}
+        -> (closureOn : Bool) -> (constOn : Bool) -> (timing : Bool) -> (round : Nat) -> (fuel : Nat)
+        -> SpecState -> Core (List (Name, RCDef))
+specLoop _ _ _ _ Z st = pure st.prog
+specLoop closureOn constOn timing round (S fuel) st = do
+    r1 <- if closureOn then applySpecClosure st.closureTable st.closureDone st.prog
+                                     else pure (st.prog, st.closureTable, st.closureDone, 0)
+    let (p1, ct, cd, k1) = the (List (Name, RCDef), RedirectTable, SortedSet SpecKey, Nat) r1
+    r2 <- if constOn then applySpecConstCon st.constTable st.constDone p1
+                                   else pure (p1, st.constTable, st.constDone, 0)
+    let (p2, kt, kd, k2) = the (List (Name, RCDef), ConstRedirectTable, SortedSet ConstKey, Nat) r2
+    when timing $
+      coreLift $ putStrLn $ "TIMING rc2: SpecRound " ++ show round ++ ": " ++ show k1 ++ " closure clones kept, "
+                             ++ show k2 ++ " const-con clones kept, " ++ show (length p2) ++ " defs ("
+                             ++ show (minus (length p2) (length st.prog)) ++ " new), "
+                             ++ show (sum (map (\(_, d) => case d of
+                                                             MkRCFun _ _ _ b => nodeCount b
+                                                             _ => 0) p2)) ++ " nodes"
+    if k1 + k2 == 0
+       then pure p2
+       else specLoop closureOn constOn timing (S round) fuel (MkSpecState ct cd kt kd p2)
+
+||| Closure-argument then constant-constructor specialization, repeated
+||| until a round keeps no new clone (at most `specMaxRounds` rounds),
+||| since a kept clone's own body can expose a key for either half.
+||| `FreshId` is bracketed once here, so clone names never repeat across
+||| rounds. Each half is skipped when its flag is `False`
+||| (`nospecclosure` / `nospecconstcon`).
+export
+applySpecRounds : {auto c : Ref Ctxt Defs} -> {auto v : Ref VarId Int}
+               -> (closureOn : Bool) -> (constOn : Bool) -> List (Name, RCDef) -> Core (List (Name, RCDef))
+applySpecRounds closureOn constOn defs = do
+    _ <- newRef FreshId 0
+    timing <- elem "timing" <$> getDirectives (Other "rc2")
+    specLoop closureOn constOn timing 1 specMaxRounds (MkSpecState empty empty empty empty defs)

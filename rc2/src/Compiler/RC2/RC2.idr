@@ -342,9 +342,6 @@ toRCDefs disabled incremental roots thunks preFolded = do
     -- and strictly before insertMemoize/Phase 2 below -- a kept clone
     -- is just one more plain MkRCFun by the time either of those see
     -- it, needing no special-casing of its own from either.
-    specialized <- if "nospecclosure" `elem` disabled
-                       then pure pushed
-                       else logTime 2 "rc2: Speculative closure specialization" $ applySpecClosure pushed
     -- doc/constant-constructor-specialization.md: the same pipeline
     -- position and the same three steps as the closure case above, for
     -- the argument shape it cannot see -- a dictionary that gets
@@ -352,9 +349,10 @@ toRCDefs disabled incremental roots thunks preFolded = do
     -- own clones (a clone is an ordinary MkRCFun by now) and its own
     -- clones are likewise ordinary by the time insertMemoize/Phase 2
     -- see them.
-    dictSpecialized <- if "nospecconstcon" `elem` disabled
-                          then pure specialized
-                          else logTime 2 "rc2: Constant-constructor specialization" $ applySpecConstCon specialized
+    dictSpecialized <- if ("nospecclosure" `elem` disabled) && ("nospecconstcon" `elem` disabled)
+                          then pure pushed
+                          else logTime 2 "rc2: Speculative specialization (closure + constant-constructor rounds)" $
+                                 applySpecRounds (not ("nospecclosure" `elem` disabled)) (not ("nospecconstcon" `elem` disabled)) pushed
     -- doc/constructor-escape-analysis.md's "The shapes `LateInline`
     -- creates": LateInline's single-caller splicing, run once already
     -- here, before RC annotation, so ConstFold's folds and PushCon see

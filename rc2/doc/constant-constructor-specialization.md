@@ -280,15 +280,21 @@ The `--directive timing` output prints this breakdown (`N distinct
 keys`, then `N keys past the scrutinee-only gate, M clones kept`), so
 it can be re-derived on any program without rebuilding the compiler.
 
+## Iteration
+
+This half runs after the closure half in every round of
+`applySpecRounds`, repeated until a round keeps no new clone; a kept
+clone's body can now expose a new constant argument, and a closure clone
+an new dictionary. Mechanics, the `idris2-lsp` convergence table (constant-
+constructor clones kept per round: 1429, 163, 13, 1, 0) and the reasoning
+behind the cap of 8 rounds are in `speculative-closure-specialization.md`,
+"Iteration".
+
 ## Open
 
 - **Multiple specialized parameters** (a function taking two
   dictionaries) -- the same open question the closure half has, out of
   scope the same way: one parameter position at a time.
-- **Not iterated to a fixpoint**, same as the closure half: a kept
-  clone can expose a further opportunity (the transitive work list
-  reaches forwarded keys within one round, but a constant a clone
-  newly exposes as an argument is only seen by the next round).
 - **Dictionaries that are stored or escape** -- 320 stored-only, 79
   other escape and 122 forward-mixed-with-store keys on `idris2-lsp`
   still stay generic. Resolving them needs a different analysis, not a
