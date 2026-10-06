@@ -398,7 +398,9 @@ referenced).
 
 ## Open questions / risks
 
-- **Multiple specialized parameters on one function**: still open, not
+- **Multiple specialized parameters on one function**: measured and not
+  worth implementing (see "Multiple specialized parameters and stored
+  uses: measured, not pursued" at the end of this file); not
   implemented. `go` only has one closure parameter; a function with
   several would need the candidate set in step 1 to be a set of
   *tuples* (one target per parameter), multiplying the number of
@@ -706,3 +708,53 @@ which stay generic.
 **Speed.** A micro-benchmark of a 1M-element `sort` plus a non-tail
 recursive function applying its constant closure twice runs in 1.13s
 instead of 1.33s.
+
+### Multiple specialized parameters and stored uses: measured, not pursued (2026-10-06)
+
+Item "multiple specialized parameters" was measured on `idris2-lsp`
+after the fixpoint iteration and the multi-apply relaxation, before
+deciding whether to build joint clones.
+
+**Leftover call sites.** After the last round 657 closure-half call
+sites (31 distinct `(callee, position set)` tuples) and 153
+constant-constructor call sites (27 tuples) still pass known values in
+two or more argument positions. The rounds already cover the sequential
+case: specialising one position makes the next position's key appear in
+the next round. What remains is not a missing multi-position clone but
+the way the parameter is used.
+
+**Why one-position clones did not cover them** (closure half, per
+position; the const-con half is smaller): stored 1,123, escape 133,
+apply with a different argument count 41, captured with several apply
+chains 7. A joint clone over the final bodies succeeded for 3 tuples
+(about 9 nodes) in the closure half and none in the const-con half, out
+of 362,304 nodes, so joint clones would add under 0.003%. Multiple
+specialized parameters are therefore not worth implementing.
+
+**What "stored" is.** `storedUses` counts a constructor field and a
+captured argument of a partial application. For the closure half it is
+almost entirely the second: 1,121 of 1,123 are an `RUnderApp` capture
+(a closure held by another closure), 2 are a constructor field. 998 of
+them are a callee that is itself a bare wrapper made by
+`ArityRaiseCExp` (`f = \w => rc2_raised_f args w`), which captures its
+own arguments, so arity raising cannot remove them; most are
+`schExtCommon`, the Chez backend's code generator inside `idris2-lsp`,
+so this is skewed towards that one input. Of the capturing lambdas that
+have the shape arity raising targets (missing one argument, in tail
+position), only 72 key-position pairs remain and 62 of them are outside
+the raise plan because the tail is an `apply` (54) or a plain value (8);
+the second arity raise, which runs after specialization, does not
+include them either.
+
+**Running arity raising before specialization.** Adding one pre-RC
+`applyArityRaise` before `applySpecRounds` cut stored from 1,123 to 117
+but moved the leftovers to "alone-OK but a second known position"
+(21 to 1,027). The result on `idris2-lsp` was 39 fewer applies
+(2,875 to 2,836), 0.05% fewer lines and a slightly longer build (one
+run each, noise not measured); the seven related tests passed either
+way. Left as is.
+
+Not tried: expanding a bare wrapper at its call sites so the raised
+body is specialised directly; joint clones for the 1,027 "second known
+position" keys, which the final-body trial above suggests are not
+joint-profitable.

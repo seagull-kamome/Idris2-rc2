@@ -293,8 +293,10 @@ behind the cap of 8 rounds are in `speculative-closure-specialization.md`,
 ## Open
 
 - **Multiple specialized parameters** (a function taking two
-  dictionaries) -- the same open question the closure half has, out of
-  scope the same way: one parameter position at a time.
+  dictionaries) -- measured: 153 call sites on `idris2-lsp` still pass
+  two or more known dictionaries, but a joint clone over the final
+  bodies succeeds for none of them, so it is not worth implementing
+  (details at the end of `speculative-closure-specialization.md`).
 - **Dictionaries that are stored or escape** -- 320 stored-only, 79
   other escape and 122 forward-mixed-with-store keys on `idris2-lsp`
   still stay generic. Resolving them needs a different analysis, not a
