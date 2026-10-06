@@ -159,17 +159,28 @@ forwardSites v callee argPos (RAppName _ _ n args) =
              (zip [0 .. length args] args)
 forwardSites v callee argPos e = foldSubExprs (++) [] (forwardSites v callee argPos) e
 
+||| Total `RCExp` nodes in `e`: the callee-size measure for
+||| `multiApplyMaxSize` and the `--directive timing` per-round size line.
+nodeCount : RCExp -> Nat
+nodeCount e = S (foldSubExprs (+) 0 nodeCount e)
+
+||| Largest callee body (in `nodeCount` nodes) accepted, for a closure with no captured values, when it applies
+||| the closure parameter more than once; bounds code growth (doc's
+||| "Transitive specialisation" -> "Multiple apply chains").
+multiApplyMaxSize : Nat
+multiApplyMaxSize = 16
+
 ||| `Just` the forwarding sites of `v` if every use of it in `e` is a
 ||| `missing`-long apply chain, a self passthrough or a forwarding site,
-||| with at most one chain and at least one chain or forwarding site;
-||| `Nothing` otherwise. More than one chain is refused to bound code
-||| size (doc's "Transitive specialisation" -> "Results").
-paramUses : RCLocal -> Nat -> (callee : Name) -> (argPos : Nat) -> RCExp -> Maybe (List (Name, Nat))
-paramUses v missing callee argPos e =
+||| with at least one chain or forwarding site, and (for more than one
+||| chain) a closure with no captured values (`captured`) and a body of at most `multiApplyMaxSize` nodes; `Nothing` otherwise.
+paramUses : Nat -> RCLocal -> Nat -> (callee : Name) -> (argPos : Nat) -> RCExp -> Maybe (List (Name, Nat))
+paramUses captured v missing callee argPos e =
     let chains = chainCount v missing e
         fwds = forwardSites v callee argPos e
         accounted = chains + selfPassthroughOccurrences v callee argPos e + length fwds
-    in if accounted == countUsesR v e && not (chains > 1) && (chains > 0 || not (null fwds)) then Just fwds else Nothing
+        sizeOk = chains <= 1 || (captured == 0 && nodeCount e <= multiApplyMaxSize)
+    in if accounted == countUsesR v e && sizeOk && (chains > 0 || not (null fwds)) then Just fwds else Nothing
 
 ------------------------------------------------------------------------
 -- Step 2: speculative clone + rewrite, one attempt per distinct
@@ -456,7 +467,7 @@ applySpecClosure prevTable done defs = do
              Just (MkRCFun args retRep _ body) =>
                  case getAt argPos args of
                       Just (paramVar, _) =>
-                          case paramUses (RCLoc paramVar) missing callee argPos body of
+                          case paramUses capturedCount (RCLoc paramVar) missing callee argPos body of
                                Nothing => pure Nothing
                                Just fwds => do
                                    (cloneName, unfoldedDef) <- buildClone callee argPos paramVar target missing capturedCount args retRep body
@@ -875,11 +886,6 @@ applySpecConstCon prevTable done defs = do
 ------------------------------------------------------------------------
 -- Fixpoint driver
 ------------------------------------------------------------------------
-
-||| Total `RCExp` nodes in `e`; only used for the `--directive timing`
-||| per-round size line.
-nodeCount : RCExp -> Nat
-nodeCount e = S (foldSubExprs (+) 0 nodeCount e)
 
 ||| Everything the round loop threads from one round to the next: the
 ||| redirect tables and kept-key sets of both halves (so a clone kept in

@@ -447,7 +447,7 @@ a call site a new clone exposes is still redirected to an earlier clone.
 unique across rounds. The cost per round is one call-site collection and
 one redirect pass; keys that failed in an earlier round are re-attempted.
 Test129SpecIterate needs the second round (`applyAll incr` only exists inside
-the constant-constructor clone of `run`; `applyAll` applies its closure exactly once because the closure half refuses more than one apply chain).
+the constant-constructor clone of `run`; `applyAll` applies its closure exactly once; it would qualify with more chains too, see "Multiple apply chains").
 
 Measured on `idris2-lsp` (`--directive timing` prints a `SpecRound` line
 per round), clones kept per round (closure / constant-constructor):
@@ -492,8 +492,8 @@ its arguments, and a boxed `Ordering`.
 
 A closure parameter `v` of `g` may be used in three ways:
 
-1. **Applied:** an apply chain of length `missing`, as today, at most
-   once (see "Results").
+1. **Applied:** an apply chain of length `missing`, as today. More than
+   one chain is allowed only under the bound in "Multiple apply chains".
 2. **Self passthrough:** the same argument position of a self call, as
    today.
 3. **Forwarded (new):** passed at position `q` of a call to another
@@ -588,11 +588,12 @@ Eligibility is not computed up front as a whole-program fixpoint.
 A key whose callee uses the parameter any other way simply builds no
 clone, and acceptance then drops everything that forwards to it.
 
-**At most one apply chain.** The design allowed any number. On
+**Apply chains (historical experiment).** The design allowed any number. On
 idris2-lsp that accepted 8,860 clones instead of about 6,300. Of those,
 987 applied the closure more than once and 1,605 forwarded it, and the
 final RCExp grew by 18%. `sort` needs no second chain (`mergeBy`
-applies `cmp` once), so the rule stays at one:
+applies `cmp` once), so the rule was limited to one chain (later relaxed,
+see "Multiple apply chains"):
 
 | idris2-lsp, final RCExp | before | any number of chains | at most one |
 |---|---|---|---|
@@ -664,3 +665,44 @@ callers, so none of them is inlined before this pass.
   for the prior investigation explaining why this pass doesn't move
   the needle on that package's own `benchmarkHashMap` despite
   specializing `go` itself correctly.
+
+### Multiple apply chains
+
+The closure half accepts a callee that applies its closure parameter
+more than once only when both hold (`paramUses`, `multiApplyMaxSize`
+in `SpecClosure.idr`):
+
+- the closure has no captured values (a constant closure), and
+- the callee's body has at most 16 `RCExp` nodes.
+
+A callee with at most one chain is accepted as before. `rewriteApply`
+already rewrites every chain, so the bound is a code-size policy, not a
+correctness condition.
+
+Why a bound: the unbounded experiment above grew the final RCExp by 18%.
+A later measurement on idris2-lsp found 339 keys rejected only for
+having more than one chain (279 constant closures, 60 capturing), and a
+naive estimate from callee sizes (sum of body sizes) said +1.5% to +2.1%.
+The real growth is larger because accepted clones expose forwarding
+clones. Final idris2-lsp RCExp, same machine, after the fixpoint:
+
+| variant | lines | definitions | `apply` | compile |
+|---|---|---|---|---|
+| at most one chain (previous rule) | 668,089 | 17,552 | 2,887 | 53.9s |
+| any closure, body <= 64 | 710,312 (+6.3%) | 18,203 | 2,863 | 54.4s |
+| any closure, body <= 32 | 708,416 (+6.0%) | 18,188 | 2,869 | 54.5s |
+| constant closure, body <= 64 or <= 32 | 705,357 (+5.6%) | 18,126 | 2,875 | 54.4s |
+| constant closure, body <= 24 | 668,152 (+0.01%) | 17,550 | 2,875 | 53.7s |
+| constant closure, body <= 16 (chosen) | 668,152 (+0.01%) | 17,550 | 2,875 | 53.7s |
+
+The growth jumps between 24 and 32 nodes, and 16 and 24 measure the
+same, so 16 is chosen for the larger margin below the jump. With the bound
+at 16, 181 multi-apply clones are kept (507 forwarding clones in all,
+against 426), and the `apply` count drops by 12. Test130MultiApplySpec
+covers a callee applying its closure two and three times (also through
+a forwarding `map f`), a callee over the bound and a capturing closure,
+which stay generic.
+
+**Speed.** A micro-benchmark of a 1M-element `sort` plus a non-tail
+recursive function applying its constant closure twice runs in 1.13s
+instead of 1.33s.
