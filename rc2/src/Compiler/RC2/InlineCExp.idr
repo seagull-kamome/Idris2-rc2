@@ -65,13 +65,16 @@ record Eligible where
   params : List Name
   body : NamedCExp
 
-eligible : List (Name, NamedDef) -> SortedMap Name Eligible
-eligible defs = fromList (mapMaybe entry defs)
-  where
-    entry : (Name, NamedDef) -> Maybe (Name, Eligible)
-    entry (n, MkNmFun args b) =
-        if isCallFree b && sizeOf b <= smallBodyThreshold then Just (n, MkEligible args b) else Nothing
-    entry _ = Nothing
+-- The bound for a body that became call-free only through its own
+-- Criterion A rewrite; `inlining.md`, "Eligibility: Criterion A".
+delegatingThreshold : Nat
+delegatingThreshold = 20
+
+-- `orig` is the body before, `b` the body after the callee's own rewrite.
+-- A function on a call cycle keeps a call to a cycle member, never in the
+-- map, so `b` is not call-free.
+smallCallFree : NamedCExp -> NamedCExp -> Bool
+smallCallFree orig b = isCallFree b && sizeOf b <= (if isCallFree orig then smallBodyThreshold else delegatingThreshold)
 
 -- All-literal arguments with a `Double` among them would reach gcc as a
 -- constant expression it can reject under `-Werror=overflow`
@@ -378,8 +381,9 @@ collapse e = MkSized 1 e
 
 ||| Criteria A and B over `main` and every definition. Definitions are
 ||| rewritten callees first, so a Criterion B callee is spliced with its
-||| own calls already inlined; a Criterion A body, call-free, needs no
-||| second pass. With `keep`, a whole-program compile, a Criterion B callee
+||| own calls already inlined; a Criterion A callee is judged on its
+||| rewritten body, call-free once its callees are in, so no second pass.
+||| With `keep`, a whole-program compile, a Criterion B callee
 ||| left with no call is dropped unless `keep` has it (an `%export`):
 ||| lifted, it would only duplicate the lambdas now lifted in its caller
 ||| until `Compiler.RC2.DeadCode` removes it.
@@ -394,7 +398,7 @@ inlineCExp keep main defs = do
         callees : SortedMap Name (List Name) := map defCalls defOf
         sccs = tarjanSCCs (map SortedSet.fromList callees)
         single = singleCallerCallees defOf callees sccs
-    done <- rewriteAll defOf single (eligible allDefs) empty (calleesFirst sccs)
+    done <- rewriteAll defOf single empty empty (calleesFirst sccs)
     let final = \n, d => fromMaybe d (lookup n done)
         called : SortedSet Name := foldl (\s, d => foldl (flip insert) s (defCalls d)) empty (values done)
         gone = \n => maybe False (\k => contains n single && not (contains n called) && not (contains n k)) keep
@@ -415,6 +419,11 @@ inlineCExp keep main defs = do
     rewriteDef elig (MkNmError b) = MkNmError . valOf . collapse <$> inline elig b
     rewriteDef _ d = pure d
 
+    origBody : NamedDef -> NamedCExp
+    origBody (MkNmFun _ o) = o
+    origBody (MkNmError o) = o
+    origBody _ = NmErased emptyFC
+
     rewriteAll : {auto f : Ref Fresh Int} -> SortedMap Name NamedDef -> SortedSet Name -> SortedMap Name Eligible
               -> SortedMap Name NamedDef -> List Name -> Core (SortedMap Name NamedDef)
     rewriteAll _ _ _ done [] = pure done
@@ -423,6 +432,6 @@ inlineCExp keep main defs = do
         Just d => do
             d' <- rewriteDef elig d
             let elig' = case d' of
-                             MkNmFun args b => if contains n single then insert n (MkEligible args b) elig else elig
+                             MkNmFun args b => if smallCallFree (origBody d) b || contains n single then insert n (MkEligible args b) elig else elig
                              _ => elig
             rewriteAll defOf single elig' (insert n d' done) ns

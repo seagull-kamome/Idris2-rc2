@@ -57,14 +57,16 @@ A callee is inlined at *every* one of its own call sites when:
   to binders inside the body; no captured variables exist to be
   mishandled. A definition with no arguments (a CAF) qualifies the same
   way, and is spliced at each bare reference to it;
-- its own body is *call-free* (`isCallFree`). The only nodes allowed are
+- its own body, *after its own Criterion A rewrite* (see "Callee first"
+  below), is *call-free* (`isCallFree`). The only nodes allowed are
   `NmLocal`, `NmLet`, `NmCon`, `NmOp`, `NmConCase`, `NmConstCase`,
   `NmPrimVal`, `NmErased` and `NmCrash`. Everything lambda lifting turns
   into a call, a closure or an application (`NmRef`, `NmApp`, `NmLam`,
   `NmDelay`, `NmForce`, `NmExtPrim`) disqualifies the body, so a
   call-free body lifts to itself; and
-- its own body is small (`sizeOf body <= smallBodyThreshold`, currently
-  24). `sizeOf` counts one per node, plus the sub-expressions of a
+- that rewritten body is small (`sizeOf body <= smallBodyThreshold`,
+  currently 24; 20 for a body that was not call-free before the rewrite,
+  `delegatingThreshold`). `sizeOf` counts one per node, plus the sub-expressions of a
   `let`, a constructor, an operator and a `case` (scrutinee, alternatives
   and default). It is a coarse structural count, not calibrated against
   actual generated-C size.
@@ -82,6 +84,48 @@ pass over a definition, never a fixpoint: splicing in a call-free body
 can't expose a *new* inlining opportunity inside what was just spliced
 (only inside the call's own *arguments*, which are processed bottom-up
 before the call itself is considered).
+
+### Callee first (2026-10-06)
+
+Eligibility used to be judged on the bodies as the frontend left them, so
+a function whose only calls are to eligible functions (`/=` on `Ordering`,
+which calls `==`; `<=` on `Nat`, which composes `compare` and `/=`) was
+never eligible. Now the definitions are rewritten callees first (the
+order Criterion B already used, `tarjanSCCs` reversed), and a function
+enters the eligible map *after* its own rewrite, with its rewritten body.
+The map holds no pre-rewrite body, and `smallBodyThreshold` is applied to
+the rewritten size, so growth stays bounded.
+
+One pass still suffices. When a definition `f` is rewritten, every
+callee of `f` outside a call cycle sits in an earlier component, so it
+is already judged and, if eligible, already in the map with a call-free
+body. Every call to it in `f` is inlined, and splicing a call-free body
+adds no call, so nothing new is left to inline in `f`. A function on a
+call cycle (a self-call included) is never eligible: it keeps a call to a
+member of its cycle, and no member is ever in the map, so its body does
+not become call-free.
+
+A body that only became call-free through the rewrite is held to
+`delegatingThreshold` (20), tighter than the 24 for a body that was call-free
+to begin with: at 24 the whole of `idris2-lsp` grew by 3.3%.
+
+Measured on `idris2-lsp` (final `RCExp` dump):
+
+| | master | callee first, T=24 | callee first, delegating T=20 |
+|---|---|---|---|
+| lines | 668,152 | 690,362 (+3.3%) | 683,129 (+2.2%) |
+| `def` | 17,550 | 17,442 | 17,447 |
+| `apply` lines | 2,875 | 2,865 | 2,865 |
+| Inline pass | 1.51s | 1.53s | 1.51s |
+| compile | 53.9s | 55.1s | 54.8s |
+
+Delegating T=12 and 16 give 670,185 (+0.3%) and 680,350 (+1.8%) lines, but
+the `Ordering` `/=` that motivates this has a rewritten size between 17 and 20,
+so T=16 would not inline it.
+Run time (median of 5): `BenchKnownCon` 0.54s on master, 0.45s at T=24,
+0.49s at T=16 (T=20 not timed); `BenchStructReturn`, `BenchSpecConstCon`, `BenchLoop` and
+a 1M-element `sort` of `Int` and `Nat` do not change beyond noise. The gain is that a call to such a function is no longer a
+call in the dump the later passes see (`Test131InlineCalleeFirst`).
 
 Criterion B, a loop-free callee with exactly one call site, runs in the
 same pass and adds callees to the same map as it goes; see "Criterion B:
