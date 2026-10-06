@@ -803,3 +803,68 @@ RC.annotate・DeadVars で実際に数秒を失った。1の計測で重いと�
   `mod`がワーカー呼び出しになる、`mergeBy`の特殊化の展開が変わるなど、
   元のテストと IR が違う。100万段で C スタックが溢れないことは実行で
   確かめているが、元のテストと同じ形を狙いたい場合は分け直す。
+
+## dup/dropの非効率改善
+idris2rc2\_rt\_retainと idris2rc2\_rt\_releaseはdup/dropまとめる。必要無いのに関数を分割して複雑性を導入してはいけない。
+
+# gen-env.shは今度こそ要らないはずなので削除
+ドキュメントも修正
+
+# rc2base/test/verify.shがni-shellを要求している
+- rc2自身同様nix-shellは使わない。必要なパッケージは外側でロード済とみなす。
+- 各テストに専用ディレクトリを用意し、テストコード、.expected、後処理スクリプトを
+  テスト単位にまとめる
+
+
+## 比較の入れ子の合成: `<`と`==`の対を`<=`へ(調査 2026-10-06)
+
+`x <= y`を`compare x y /= GT`で書いた形は、Criterion Aのcallee-first展開
+(`rc2/doc/inlining.md`)でcompareが展開されると、次の入れ子の比較になる。
+
+```
+cmp <Int [x, y]  then A  else  cmp ==Int [x, y]  then A  else B
+```
+
+これは`cmp <=Int [x, y] then A else B`と同じ意味。`>`と`==`の対なら`>=`。
+比較演算子の`LTE`/`GTE`は`RCExp.idr`の`IsCmp`に既にあるが、入れ子を
+まとめる処理は無い。
+
+- idris2-lspのdump(2026-10-06)で、`else`の直後に`cmp ==`が来る組は42か所
+  (比較の分岐は全体で551)。全体では小さい。利用者のプログラムで`compare`
+  経由の`<=`/`>=`が多ければもっと出る。
+- 実装するなら、dup/dropが入る前のRCExp(`ConstFold`の近く)に小さな変形を
+  足す。条件は、外側と内側が同じ2引数・同じ型の比較であること、演算子の組が
+  `{<, ==}`か`{>, ==}`であること、外側と内側のthen枝が構造的に等しいこと。
+  dump上の`postDrop`はdup/drop挿入後の表現なので、そこでは扱いにくい。
+- `Nat`版(`compare x y /= GT`)が`cmp`に融合されないのは別の問題で、原因は
+  インライン展開ではなく`Integer`の比較が融合の対象外であること(調査
+  2026-10-06)。
+  - `Ord Nat`は`compare = compareNat`(`Prelude/Types.idr:93-94`)で、
+    コンパイラのnat hack(`Opts/Constructor.idr:92-93`)が`compareInteger`の
+    呼び出しに置き換える。実体は`compare_Ord_Integer`で、本体は
+    `op <Integer`を`case`し、`0`なら`op ==Integer`を`case`して`2`か`1`か`0`を
+    返す。`Ord Int`/`Ord Integer`は`compare`を持たず、クラスのデフォルト
+    (`EqOrd.idr:168-181`)を使う。
+  - 融合の入口`tryFuseCompareOp`は`nativeEligible (cmpOpTy op)`が偽なら
+    何もしない(`RC.idr:383-385`)。`nativeEligible`が真なのは`Int`系・`Bits`系・
+    `Double`・`Char`で、`Integer`は偽(`Types.idr:23-35`)。したがって
+    `compare_Ord_Integer`を展開しても`op <Integer`と`case`のままで、`cmp`には
+    ならない。
+  - 規模: idris2-lspで`compare_Ord_Integer`のworker呼び出しは18か所(直後が
+    `case`なのは17か所)。idris2-lspは`Nat`をあまり使わないコードなので、
+    `Vect`の添字や長さ、ループの添字で`Nat`を多用する利用者のプログラムでは
+    もっと出る可能性がある。この数字は一般化できない。
+  - 対処の案。(1)何もしない: 数字が小さいので閉じる。(2)`Integer`の比較も
+    融合の対象にする。`Integer`は即値(62ビット以内)とGMPの2通りなので、
+    `cmp`の生成と`nativeEligible`の意味を広げる必要があり、リスクが高い。
+    (3)`compare`の結果で分岐する形を2段の`op`の分岐へ展開する。`Integer`では
+    融合が効かないので効果はほぼ無い。今は(1)。
+  - 宿題: `Nat`を多用する実際のプログラムで、`compare_Ord_Integer`の出現数と
+    実行時の寄与を測る。大きければ(2)を再検討する。
+  - 未確認: `compare_Ord_Integer`がそもそも展開されない理由。`InlineCExp`
+    時点の本体の大きさが`delegatingThreshold`(20)を超えている可能性がある
+    が、測っていない。
+- 同じ結果を返す複数の`case`の枝(`0 -> 10; 1 -> 10; _ -> 10`)を1つにまとめる
+  処理は、`ConstFold`/`Sink`/`DeadVars`/`DupMerge`/`Emit`/`RC`/`Reuse`の
+  grepの範囲では見つからなかった(`DupMerge`はdup/dropの統合で別物)。
+  入れるなら`ConstFold`の`case`の簡約の近くが候補だが、未調査。
