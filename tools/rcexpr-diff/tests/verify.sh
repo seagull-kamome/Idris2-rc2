@@ -20,7 +20,7 @@ fail() { echo "FAIL  $1"; exit 1; }
 source "$REPO_ROOT/env.sh"
 
 echo "=== Build rcexpr-diff ==="
-nix-shell -p gcc gmp pkg-config --run "cd '$TOOL_DIR' && idris2 -o rcexpr-diff RcexprDiff.idr"
+(cd "$TOOL_DIR" && idris2 -o rcexpr-diff RcexprDiff.idr)
 
 RCEXPR_DIFF="$TOOL_DIR/build/exec/rcexpr-diff"
 [[ -x "$RCEXPR_DIFF" ]] || fail "build did not produce $RCEXPR_DIFF"

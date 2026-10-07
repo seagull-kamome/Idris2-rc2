@@ -27,7 +27,7 @@
 #
 # Usage: ./verify.sh
 #
-# Requires nix-shell on PATH and rc2base already built+installed
+# Requires gcc/gmp/pkg-config on PATH (no nix-shell) and rc2base already built+installed
 # (tools/rcexpr-lint depends on it -- see libs/rc2base/tests/
 # verify.sh or libs/rc2base/README.md).
 
@@ -42,8 +42,7 @@ fail() { echo "FAIL  $1"; exit 1; }
 source "$REPO_ROOT/env.sh"
 
 echo "=== Build rcexpr-lint ==="
-nix-shell -p gcc gmp pkg-config --run \
-    "cd '$TOOL_DIR' && idris2 -p rc2base -p contrib -o rcexpr-lint RcexprLint.idr"
+(cd "$TOOL_DIR" && idris2 -p rc2base -p contrib -o rcexpr-lint RcexprLint.idr)
 
 RCEXPR_LINT="$TOOL_DIR/build/exec/rcexpr-lint"
 [[ -x "$RCEXPR_LINT" ]] || fail "build did not produce $RCEXPR_LINT"

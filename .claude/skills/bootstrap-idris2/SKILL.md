@@ -49,7 +49,7 @@ time.
 ```bash
 cd idris2-src
 export PREFIX="$(cd .. && pwd)/install"
-nix-shell -p idris2 gcc gmp pkg-config --run 'make all && make install'
+nix-shell -p idris2 --run 'make all && make install'
 ```
 
 This produces a working `install/bin/idris2`, but one built BY
@@ -69,7 +69,7 @@ source ../env.sh
 make clean
 export PREFIX="$(cd .. && pwd)/install"
 export IDRIS2_BOOT="$(cd .. && pwd)/install/bin/idris2"
-nix-shell -p gcc gmp pkg-config --run 'make all && make install'
+make all && make install
 ```
 
 (`source ../env.sh` is needed here because `$IDRIS2_BOOT` is now a
@@ -91,7 +91,7 @@ cd idris2-src
 source ../env.sh
 export PREFIX="$(cd .. && pwd)/install"
 export IDRIS2_BOOT="$(cd .. && pwd)/install/bin/idris2"
-nix-shell -p gcc gmp pkg-config --run 'make install-api'
+make install-api
 ```
 
 ## Step 4 (optional but recommended): run upstream's own test suite
@@ -102,7 +102,7 @@ it for rc2 work:
 ```bash
 cd idris2-src
 source ../env.sh
-nix-shell -p gcc gmp pkg-config chez --run 'make test'
+nix-shell -p chez --run 'make test'
 ```
 
 ## Step 5: verify rc2 itself still builds against the new toolchain
@@ -115,7 +115,7 @@ its own (that's what Step 1-3's `PREFIX` baked in as `IdrisPaths.idr`'s
 ```bash
 cd rc2
 source ../env.sh
-nix-shell -p gcc gmp pkg-config --run 'idris2 --build rc2.ipkg && idris2 --install rc2.ipkg'
+idris2 --build rc2.ipkg && idris2 --install rc2.ipkg
 ```
 
 Then run `rc2/tests/verify.sh` as usual (see the `run-idris2-rc-cg`

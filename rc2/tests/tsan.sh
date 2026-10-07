@@ -4,7 +4,7 @@
 # its last phase; also runs on its own:
 #
 #   cd rc2/tests
-#   nix-shell -p gcc gmp pkg-config --run ./tsan.sh
+#   source ../../env.sh && ./tsan.sh
 #
 # It builds its own copies of the rc2 runtime (rc2/support/rc2) and of
 # rc2base's C support with -fsanitize=thread under build/tsan/, compiles
