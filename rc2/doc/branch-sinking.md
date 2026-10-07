@@ -265,6 +265,20 @@ Sinking `v1` into that arm's `Right` branch moved `dup n` past the
 section) cannot see this: `var` is the new binding, and the operand it
 reads is a different local.
 
+### Sinking a call whose operands were dup'd first
+
+Found by `rcexpr-lint` on idris2-lsp (`{rc2_mutualLoop:18}`, a
+`branch-imbalance` on a `Binder` field): `let r = (dup a; dup b; call
+g [a, b])` sunk into one arm of a `case`, and `consumedOperands` gave
+every other arm `drop [a, b]` as if the call had spent the *original*
+references. The leading `dup`s are sunk together with the call, so the
+call spends only the references they added; the other arm owes
+nothing. When `a` and `b` were read again after the branch this was a
+real double drop (heap corruption under `malloc`, reproduced by
+`tests/Test133SinkCallDupOperand`). The `RCon`/`ROp` cases already
+excluded `dup`'d operands; `RAppName` did not. Fix: `consumedOperands`
+now cancels one `dup`'d reference per call operand occurrence.
+
 ## Pipeline position
 
 Runs after `Compiler.RC2.Loop` (self-tail-call conversion), before
