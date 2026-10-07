@@ -8,7 +8,8 @@ module Compiler.RC2.DualABI
 -- *ordinary* call boundary, not just a self-tail-call loop's own
 -- `goto` (`Compiler.RC2.Loop`). Both eligibility analyses are purely
 -- local to one function's own body -- see `rc2/doc/dual-abi.md`'s "Why
--- no whole-program fixed point is needed".
+-- no whole-program fixed point is needed" -- except the Bool return
+-- (`boolReturnPlan`), a fixpoint over tail calls ("Bool return").
 --
 -- Tail-position calls to an ordinary worker are a deliberate,
 -- permanent scope boundary (unbounded C-stack-growth risk if
@@ -91,6 +92,30 @@ paramEligibility argIds body =
          Nothing => let found = nativeArgTypeBatch argIds body
                     in map (\p => (p, lookup p found)) argIds
 
+||| Every genuine (non-`RLoopContinue`) tail-position leaf of `e`, mapped
+||| by `leaf` (given `reps`, the natives known so far: threaded through
+||| `RLet`/`RLoop` bindings). The walk `tailValueReps` and
+||| `boolReturnPlan` share.
+export
+tailLeaves : (SortedMap Int Rep -> RCExp -> a) -> SortedMap Int Rep -> RCExp -> List a
+tailLeaves leaf reps (RLet _ var rep _ body) = tailLeaves leaf (insert var rep reps) body
+tailLeaves leaf reps (RDup _ _ _ cont) = tailLeaves leaf reps cont
+tailLeaves leaf reps (RDrop _ _ cont) = tailLeaves leaf reps cont
+tailLeaves leaf reps (RFree _ _ cont) = tailLeaves leaf reps cont
+tailLeaves leaf reps (RReleaseReuse _ _ cont) = tailLeaves leaf reps cont
+tailLeaves leaf reps (RReuseOffer _ _ _ _ cont) = tailLeaves leaf reps cont
+tailLeaves leaf reps (RCmpCase _ _ _ _ t f) = tailLeaves leaf reps t ++ tailLeaves leaf reps f
+tailLeaves leaf reps (RConCase _ _ alts mDef) =
+    concatMap (\(MkRConAlt _ _ _ _ body) => tailLeaves leaf reps body) alts
+      ++ maybe [] (tailLeaves leaf reps) mDef
+tailLeaves leaf reps (RConstCase _ _ alts mDef) =
+    concatMap (\(MkRConstAlt _ body) => tailLeaves leaf reps body) alts
+      ++ maybe [] (tailLeaves leaf reps) mDef
+tailLeaves leaf reps (RLoop _ loopParams _ _ body) =
+    tailLeaves leaf (foldl (\m, (i, r) => insert i r m) reps loopParams) body
+tailLeaves _ _ (RLoopContinue _ _ _) = []
+tailLeaves leaf reps e = [leaf reps e]
+
 ||| Every `Rep` a genuine (non-`RLoopContinue`) tail-position value of
 ||| `e` would have, given `reps` (natives known so far, seeded from
 ||| `paramEligibility`, extended through `RLet`/`RLoop` bindings) --
@@ -106,53 +131,39 @@ paramEligibility argIds body =
 ||| this analysis, not two kept in sync by hand.
 export
 tailValueReps : SortedMap Int Rep -> RCExp -> List (Maybe PrimType)
-tailValueReps reps (RV _ (RCLoc i)) =
-    [ case lookup i reps of
-           Just (RNative ty) => Just ty
-           Just (RInlineNative ty) => Just ty
-           _ => Nothing ]
-tailValueReps _ (RV _ (RCConst c)) = [litRep c]
-tailValueReps _ (RV _ _) = [Nothing]
-tailValueReps _ (ROp _ _ op _ _) = [opResultRep op]
-tailValueReps _ (RPrimVal _ c) = [litRep c]
-tailValueReps reps (RLet _ var rep value body) = tailValueReps (insert var rep reps) body
-tailValueReps reps (RDup _ _ _ cont) = tailValueReps reps cont
-tailValueReps reps (RDrop _ _ cont) = tailValueReps reps cont
-tailValueReps reps (RFree _ _ cont) = tailValueReps reps cont
-tailValueReps reps (RReleaseReuse _ _ cont) = tailValueReps reps cont
-tailValueReps reps (RReuseOffer _ _ _ _ cont) = tailValueReps reps cont
-tailValueReps reps (RCmpCase _ _ _ _ t f) = tailValueReps reps t ++ tailValueReps reps f
-tailValueReps reps (RConCase _ _ alts mDef) =
-    concatMap (\(MkRConAlt _ _ _ _ body) => tailValueReps reps body) alts
-      ++ maybe [] (tailValueReps reps) mDef
-tailValueReps reps (RConstCase _ _ alts mDef) =
-    concatMap (\(MkRConstAlt _ body) => tailValueReps reps body) alts
-      ++ maybe [] (tailValueReps reps) mDef
-tailValueReps reps (RLoop _ loopParams _ _ body) =
-    tailValueReps (foldl (\m, (i, r) => insert i r m) reps loopParams) body
-tailValueReps _ (RLoopContinue _ _ _) = []
--- Only ever reachable AFTER Stage 4's own call-site rewrite has
--- minted one, so never during Stage 2's own `returnEligibility` (which
--- runs on the original defs, where every call is still a bare
--- `RAppName` and is correctly `Nothing` below -- that exclusion is
--- what makes a pure tail-call delegation chain ineligible, see the
--- module note) nor during `Compiler.RC2.LateInline`'s own reuse
--- (earlier in the pipeline still). `branchValueNativeType` is what
--- asks this question post-rewrite, about a branch arm ending in a
--- worker call whose own result is already native.
-tailValueReps _ (RAppNameRep _ _ _ retRep _ _) =
-    [ case retRep of
-           RNative ty => Just ty
-           RInlineNative ty => Just ty
-           _ => Nothing ]
--- RAppName, RUnderApp, RApp, RCon, RExtPrim, RErased, RCrash,
--- RStructGet, RStructSet: never a native value regardless of context --
--- a call/closure/constructor result is always Boxed today (no callee is
--- known to return native yet -- see the module note's "pure tail-call
--- delegation" limitation); RStructGet/RStructSet's own packCFType
--- (doc/c-struct-support.md's Part D) always renders a Boxed
--- IDRIS2RC2_Value* too, same reasoning.
-tailValueReps _ _ = [Nothing]
+tailValueReps = tailLeaves leafRep
+  where
+    leafRep : SortedMap Int Rep -> RCExp -> Maybe PrimType
+    leafRep reps (RV _ (RCLoc i)) =
+        case lookup i reps of
+             Just (RNative ty) => Just ty
+             Just (RInlineNative ty) => Just ty
+             _ => Nothing
+    leafRep _ (RV _ (RCConst c)) = litRep c
+    leafRep _ (ROp _ _ op _ _) = opResultRep op
+    leafRep _ (RPrimVal _ c) = litRep c
+    -- Only ever reachable AFTER Stage 4's own call-site rewrite has
+    -- minted one, so never during Stage 2's own `returnEligibility`
+    -- (which runs on the original defs, where every call is still a
+    -- bare `RAppName` and is correctly `Nothing` below -- that is what
+    -- makes a pure tail-call delegation chain ineligible here; the Bool
+    -- plan, `boolReturnPlan`, handles those separately) nor during
+    -- `Compiler.RC2.LateInline`'s own reuse (earlier in the pipeline
+    -- still). `branchValueNativeType` asks this question post-rewrite,
+    -- about a branch arm ending in a worker call whose own result is
+    -- already native.
+    leafRep _ (RAppNameRep _ _ _ retRep _ _) =
+        case retRep of
+             RNative ty => Just ty
+             RInlineNative ty => Just ty
+             _ => Nothing
+    -- RAppName, RUnderApp, RApp, RCon, RExtPrim, RErased, RCrash,
+    -- RStructGet, RStructSet, any other RV: never a native value
+    -- regardless of context -- a call/closure/constructor result is
+    -- always Boxed (RStructGet/RStructSet's own packCFType, see
+    -- doc/c-struct-support.md's Part D, always renders a Boxed
+    -- IDRIS2RC2_Value* too).
+    leafRep _ _ = Nothing
 
 ||| `Just ty` iff `xs` is non-empty and every element is `Just ty` for
 ||| the *same* `ty` -- the same "consistent single type, else give up"
@@ -214,6 +225,9 @@ sameShape _ _ = False
 ||| How one tail of a function body ends, as far as returning it by
 ||| value is concerned. `TailCon`'s `Bool` is False only for `RCNull`.
 data RetTail = TailCon Bool Int ConShape | TailCall Name | TailCrash | TailOther
+             | ||| A tail that is itself a native `Bits8` Bool (`boolReturnPlan` only;
+               ||| `retTails` never builds one): a real producer, carrying no shape.
+               TailProducer
 
 ||| The widest constructor a struct return carries (`IDRIS2RC2_Ret4`).
 maxRetFields : Nat
@@ -258,6 +272,80 @@ retTails (RCrash _ _) = [TailCrash]
 -- lazy calls, closures, applies, FFI, prims, literals, a bare local.
 retTails _ = [TailOther]
 
+isOther : RetTail -> Bool
+isOther TailOther = True
+isOther _ = False
+
+isRealCon : RetTail -> Bool
+isRealCon (TailCon real _ _) = real
+isRealCon TailProducer = True
+isRealCon _ = False
+
+callees : List RetTail -> List Name
+callees = mapMaybe (\t => case t of { TailCall g => Just g; _ => Nothing })
+
+okIn : SortedSet Name -> RetTail -> Bool
+okIn el (TailCall g) = contains g el
+okIn _ _ = True
+
+tailsOf : SortedMap Name (List RetTail) -> Name -> List RetTail
+tailsOf tbl n = fromMaybe [] (lookup n tbl)
+
+||| Every name that tail-calls `g`, for each `g`: what `shrink` and
+||| `reach` revisit when `g` leaves or joins their set.
+tailCallers : SortedMap Name (List RetTail) -> SortedMap Name (List Name)
+tailCallers tbl =
+    foldl (\m, (n, ts) => foldl (\m', g => insert g (n :: fromMaybe [] (lookup g m')) m') m (callees ts))
+          empty (SortedMap.toList tbl)
+
+||| The largest subset of `el` whose every tail call stays inside it.
+||| A worklist: removing a name rechecks only its tail callers.
+shrink : SortedMap Name (List RetTail) -> SortedMap Name (List Name) -> SortedSet Name -> SortedSet Name
+shrink tbl rev el = go el (Prelude.toList el)
+  where
+    go : SortedSet Name -> List Name -> SortedSet Name
+    go s [] = s
+    go s (n :: q) =
+        if contains n s && not (all (okIn s) (tailsOf tbl n))
+           then go (delete n s) (fromMaybe [] (lookup n rev) ++ q)
+           else go s q
+
+||| `ps` plus every name in `el` that tail-calls, directly or through
+||| others in `el`, a name in `ps`: a walk up `rev` from `ps`.
+reach : SortedMap Name (List Name) -> SortedSet Name -> SortedSet Name -> SortedSet Name
+reach rev el ps = go ps (Prelude.toList ps)
+  where
+    go : SortedSet Name -> List Name -> SortedSet Name
+    go s [] = s
+    go s (g :: q) =
+        let new = filter (\n => contains n el && not (contains n s)) (fromMaybe [] (lookup g rev))
+        in go (foldl (flip insert) s new) (new ++ q)
+
+isCycle : Graph -> List Name -> Bool
+isCycle g [n] = contains n (fromMaybe empty (lookup n g))
+isCycle _ c = length c > 1
+
+edgesOf : SortedMap Name (List RetTail) -> SortedSet Name -> Name -> (Name, SortedSet Name)
+edgesOf tbl ps n = (n, fromList (filter (\g => contains g ps) (callees (tailsOf tbl n))))
+
+||| The functions every tail of which is acceptable (no `TailOther`, every
+||| tail call inside the set -- a greatest fixpoint), at least one of them
+||| a real producer (`isRealCon`) reachable through tail calls, split into
+||| (those reaching a producer, those among them in a tail-call cycle).
+eligibleParts : SortedMap Name (List RetTail) -> SortedMap Name (List Name) -> SortedSet Name -> (SortedSet Name, SortedSet Name)
+eligibleParts tbl rev excluded =
+    let entries : List (Name, List RetTail) := SortedMap.toList tbl
+        shaped : SortedSet Name := fromList (mapMaybe (\e => if contains (fst e) excluded || any isOther (snd e) then Nothing else Just (fst e)) entries)
+        closed : SortedSet Name := shrink tbl rev shaped
+        seeds : SortedSet Name := fromList (mapMaybe (\e => if contains (fst e) closed && any isRealCon (snd e) then Just (fst e) else Nothing) entries)
+        producing : SortedSet Name := reach rev closed seeds
+        graph : Graph := fromList (map (edgesOf tbl producing) (Prelude.toList producing))
+        cyclic : SortedSet Name := fromList (concat (filter (isCycle graph) (tarjanSCCs graph)))
+    in (producing, cyclic)
+
+eligible : SortedMap Name (List RetTail) -> SortedMap Name (List Name) -> SortedSet Name -> SortedSet Name
+eligible tbl rev excluded = let (producing, cyclic) = eligibleParts tbl rev excluded in difference producing cyclic
+
 ||| The functions that may return by value, each with the constructors
 ||| its wrapper rebuilds, by tag. Every tail is an eligible constructor,
 ||| a crash, or a tail call to another such function (a greatest
@@ -276,75 +364,8 @@ structReturnPlan defs =
     funTails : (Name, RCDef) -> Maybe (Name, List RetTail)
     funTails (n, MkRCFun _ _ _ body) = if isMutualLoopMerged n then Nothing else Just (n, retTails body)
     funTails _ = Nothing
-
-    isOther : RetTail -> Bool
-    isOther TailOther = True
-    isOther _ = False
-
-    isRealCon : RetTail -> Bool
-    isRealCon (TailCon real _ _) = real
-    isRealCon _ = False
-
-    callees : List RetTail -> List Name
-    callees = mapMaybe (\t => case t of { TailCall g => Just g; _ => Nothing })
-
     ownShapes : List RetTail -> List (Int, ConShape)
     ownShapes = mapMaybe (\t => case t of { TailCon _ tag s => Just (tag, s); _ => Nothing })
-
-    okIn : SortedSet Name -> RetTail -> Bool
-    okIn el (TailCall g) = contains g el
-    okIn _ _ = True
-
-    tailsOf : SortedMap Name (List RetTail) -> Name -> List RetTail
-    tailsOf tbl n = fromMaybe [] (lookup n tbl)
-
-    ||| Every name that tail-calls `g`, for each `g`: what `shrink` and
-    ||| `reach` revisit when `g` leaves or joins their set.
-    tailCallers : SortedMap Name (List RetTail) -> SortedMap Name (List Name)
-    tailCallers tbl =
-        foldl (\m, (n, ts) => foldl (\m', g => insert g (n :: fromMaybe [] (lookup g m')) m') m (callees ts))
-              empty (SortedMap.toList tbl)
-
-    ||| The largest subset of `el` whose every tail call stays inside it.
-    ||| A worklist: removing a name rechecks only its tail callers.
-    shrink : SortedMap Name (List RetTail) -> SortedMap Name (List Name) -> SortedSet Name -> SortedSet Name
-    shrink tbl rev el = go el (Prelude.toList el)
-      where
-        go : SortedSet Name -> List Name -> SortedSet Name
-        go s [] = s
-        go s (n :: q) =
-            if contains n s && not (all (okIn s) (tailsOf tbl n))
-               then go (delete n s) (fromMaybe [] (lookup n rev) ++ q)
-               else go s q
-
-    ||| `ps` plus every name in `el` that tail-calls, directly or through
-    ||| others in `el`, a name in `ps`: a walk up `rev` from `ps`.
-    reach : SortedMap Name (List Name) -> SortedSet Name -> SortedSet Name -> SortedSet Name
-    reach rev el ps = go ps (Prelude.toList ps)
-      where
-        go : SortedSet Name -> List Name -> SortedSet Name
-        go s [] = s
-        go s (g :: q) =
-            let new = filter (\n => contains n el && not (contains n s)) (fromMaybe [] (lookup g rev))
-            in go (foldl (flip insert) s new) (new ++ q)
-
-    isCycle : Graph -> List Name -> Bool
-    isCycle g [n] = contains n (fromMaybe empty (lookup n g))
-    isCycle _ c = length c > 1
-
-    edgesOf : SortedMap Name (List RetTail) -> SortedSet Name -> Name -> (Name, SortedSet Name)
-    edgesOf tbl ps n = (n, fromList (filter (\g => contains g ps) (callees (tailsOf tbl n))))
-
-    eligible : SortedMap Name (List RetTail) -> SortedMap Name (List Name) -> SortedSet Name -> SortedSet Name
-    eligible tbl rev excluded =
-        let entries : List (Name, List RetTail) := SortedMap.toList tbl
-            shaped : SortedSet Name := fromList (mapMaybe (\e => if contains (fst e) excluded || any isOther (snd e) then Nothing else Just (fst e)) entries)
-            closed : SortedSet Name := shrink tbl rev shaped
-            seeds : SortedSet Name := fromList (mapMaybe (\e => if contains (fst e) closed && any isRealCon (snd e) then Just (fst e) else Nothing) entries)
-            producing : SortedSet Name := reach rev closed seeds
-            graph : Graph := fromList (map (edgesOf tbl producing) (Prelude.toList producing))
-            cyclic : SortedSet Name := fromList (concat (filter (isCycle graph) (tarjanSCCs graph)))
-        in difference producing cyclic
 
     ||| Adds `(tag, s)`; `Nothing` when `tag` already has another shape.
     addShape : SortedMap Int ConShape -> (Int, ConShape) -> Maybe (SortedMap Int ConShape)
@@ -394,6 +415,74 @@ structReturnPlan defs =
         let el = eligible tbl rev excluded
             (bad, shapes) = shapeFix tbl rev el
         in if null (Prelude.toList bad) then shapes else settle tbl rev (union bad excluded)
+
+------------------------------------------------------------------------
+-- Bool return (doc/dual-abi.md, "Bool return").
+
+||| How one tail of `body` bears on returning a native `Bits8` Bool:
+||| `TailProducer` for a tail that is one by its own constant kind (a
+||| `B8` literal, a native `Bits8` local, a `Bits8` op; a comparison is
+||| never a bare tail, the front end wraps it in a `case` yielding the
+||| `B8` literals, doc/dual-abi.md); `TailCall g` for a saturated, non-lazy call to a function
+||| of `arities`; `TailOther` for everything else, including an `Int`
+||| literal, a crash, a Boxed local, and any call this table cannot
+||| see saturated. Nothing is ever inferred from a consumer.
+boolTail : SortedMap Name Nat -> SortedMap Int Rep -> RCExp -> RetTail
+boolTail _ reps (RV _ (RCLoc i)) = case lookup i reps of
+    Just (RNative Bits8Type) => TailProducer
+    Just (RInlineNative Bits8Type) => TailProducer
+    _ => TailOther
+boolTail _ _ (RV _ (RCConst c)) = producerIf (litRep c)
+  where
+    producerIf : Maybe PrimType -> RetTail
+    producerIf (Just Bits8Type) = TailProducer
+    producerIf _ = TailOther
+boolTail _ _ (RPrimVal _ c) = case litRep c of
+    Just Bits8Type => TailProducer
+    _ => TailOther
+boolTail _ _ (ROp _ _ op _ _) = case opResultRep op of
+    Just Bits8Type => TailProducer
+    _ => TailOther
+boolTail arities _ (RAppName _ Nothing g args) = case lookup g arities of
+    Just k => if k == length args then TailCall g else TailOther
+    Nothing => TailOther
+boolTail _ _ _ = TailOther
+
+||| The functions whose worker returns a native `Bits8` through the
+||| Bool return: every tail is a `boolTail` producer or a saturated tail
+||| call to another such function (a greatest fixpoint, `shrink`); at
+||| least one producer is reachable through the tail calls (`reach`, so
+||| a pure delegation chain `f x = g x` qualifies and a cycle of
+||| delegations proves nothing); and no function is in a cycle of tail
+||| calls among them, the bound that lets those tail calls become
+||| direct C calls (as struct return, doc/struct-return.md's "Tail
+||| calls"). Removing a cyclic function can strand its tail callers,
+||| so the whole is redone with it excluded until none is cyclic.
+||| `MutualLoop`'s merged functions are excluded, as they are from every
+||| other DualABI worker.
+export
+boolReturnPlan : List (Name, RCDef) -> SortedSet Name
+boolReturnPlan defs =
+    let arities : SortedMap Name Nat := SortedMap.fromList (mapMaybe arityOf defs)
+        tbl : SortedMap Name (List RetTail) := SortedMap.fromList (mapMaybe (funTails arities) defs)
+    in settle tbl (tailCallers tbl) empty
+  where
+    arityOf : (Name, RCDef) -> Maybe (Name, Nat)
+    arityOf (n, MkRCFun args _ _ _) = if isMutualLoopMerged n then Nothing else Just (n, length args)
+    arityOf _ = Nothing
+
+    funTails : SortedMap Name Nat -> (Name, RCDef) -> Maybe (Name, List RetTail)
+    funTails arities (n, MkRCFun args _ _ body) =
+        if isMutualLoopMerged n then Nothing
+        else let params = paramEligibility (map fst args) body
+                 seeded : SortedMap Int Rep := fromList (mapMaybe (\(p, mty) => map (\ty => (p, RNative ty)) mty) params)
+             in Just (n, tailLeaves (boolTail arities) seeded body)
+    funTails _ _ = Nothing
+
+    settle : SortedMap Name (List RetTail) -> SortedMap Name (List Name) -> SortedSet Name -> SortedSet Name
+    settle tbl rev excluded =
+        let (producing, cyclic) = eligibleParts tbl rev excluded
+        in if null (Prelude.toList cyclic) then producing else settle tbl rev (union cyclic excluded)
 
 ||| The native types a struct's field can carry in an
 ||| `IDRIS2RC2_RetField`: every fixed-width integer, `Char` and `Double`.
@@ -591,32 +680,33 @@ synthesizeWorker existingNames original eligible retEligible args wrapperRetRep 
 ||| exemption was carried (closure-dispatch typedefs to arity 20, the
 ||| FFI worker path too).
 export
-applyDualABI : List (Name, RCDef) -> Core (List (Name, RCDef))
-applyDualABI defs = do
+applyDualABI : (boolReturn : Bool) -> List (Name, RCDef) -> Core (List (Name, RCDef))
+applyDualABI boolReturn defs = do
     _ <- newRef FreshId 0
+    let boolPlan : SortedSet Name := if boolReturn then boolReturnPlan defs else empty
     let existingNames = SortedSet.fromList (map fst defs)
     -- `foldr (++) []`, not `concat`: `Foldable List` overrides
     -- `foldMap` with `foldl (\acc, x => acc <+> f x) neutral`, so
     -- `concat` (and `concatMap`) left-nest `++` and copy the whole
     -- accumulated result once per element -- quadratic across a
     -- whole-program def list. See `code-style-Idris2.md`.
-    foldr (++) [] <$> traverse (synthesizeIfEligible existingNames) defs
+    foldr (++) [] <$> traverse (synthesizeIfEligible boolPlan existingNames) defs
   where
-    synthesizeIfEligible : {auto r : Ref FreshId Int} -> SortedSet Name -> (Name, RCDef) -> Core (List (Name, RCDef))
-    synthesizeIfEligible existingNames (n, d@(MkRCFun args retRep _ body)) =
+    synthesizeIfEligible : {auto r : Ref FreshId Int} -> SortedSet Name -> SortedSet Name -> (Name, RCDef) -> Core (List (Name, RCDef))
+    synthesizeIfEligible boolPlan existingNames (n, d@(MkRCFun args retRep _ body)) =
         if isMutualLoopMerged n
            then pure [(n, d)]
            else do
              let argIds = map fst args
                  params = paramEligibility argIds body
                  eligible = mapMaybe (\(p, mty) => map (\ty => (p, ty)) mty) params
-                 retEligible = returnEligibility params body
+                 retEligible = if contains n boolPlan then Just Bits8Type else returnEligibility params body
              if null eligible && isNothing retEligible
                 then pure [(n, d)]
                 else do
                   (workerName, wrapperDef, workerDef) <- synthesizeWorker existingNames n eligible retEligible args retRep body
                   pure [(n, wrapperDef), (workerName, workerDef)]
-    synthesizeIfEligible _ (n, d) = pure [(n, d)]
+    synthesizeIfEligible _ _ (n, d) = pure [(n, d)]
 
 ------------------------------------------------------------------------
 -- Stage 3c: FFI worker synthesis. Unlike Stage 3a, there is no
@@ -1476,3 +1566,31 @@ applyStructReturn defs = do
                  pure [ (n, MkRCFun args retRep False wrapper)
                       , (w, MkRCFun args rep True struct) ]
     rewrite' _ _ _ (nd, _) = pure [nd]
+
+------------------------------------------------------------------------
+-- Bool return: tail calls (doc/dual-abi.md, "Bool return").
+
+||| In every worker returning a native `Bits8` (`boolReturnPlan`), each
+||| tail call to a function whose own worker returns one too becomes a
+||| direct call to that worker: the worker's C return type is a scalar,
+||| so a deferred call (a closure for the trampoline) cannot stand in
+||| its place. The plan excluded tail-call cycles, so the chain of
+||| nested direct calls is bounded by the longest path in an acyclic
+||| graph. Runs after `applyCallSiteRewrite`, so the `reps` it
+||| threads (for each argument's `postDrop`) include the lets that
+||| rewrite promoted. `packTails` is reused with only the call clause
+||| reachable: a Bool worker has no constructor tail.
+export
+applyBoolReturnTails : List (Name, RCDef) -> List (Name, RCDef)
+applyBoolReturnTails defs =
+    let ws : SortedMap Name StructWorker :=
+            fromList (mapMaybe (\(n, (w, argReps, r, _)) => case r of
+                                                              RNative Bits8Type => Just (n, (w, argReps, r))
+                                                              _ => Nothing)
+                               (SortedMap.toList (workerTable defs)))
+    in if null (SortedMap.toList ws) then defs else map (retarget ws) defs
+  where
+    retarget : SortedMap Name StructWorker -> (Name, RCDef) -> (Name, RCDef)
+    retarget ws (n, MkRCFun args (RNative Bits8Type) True body) =
+        (n, MkRCFun args (RNative Bits8Type) True (packTails ws empty (fromList args) body))
+    retarget _ nd = nd

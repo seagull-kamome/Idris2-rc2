@@ -282,7 +282,7 @@ inlineNamed disabled keep main defs =
 ||| apart.
 disableableStageNames : List String
 disableableStageNames =
-    ["noinline", "nodeadargs", "noarityraise", "noapplyfold", "notrmc", "noctx", "noconstfold", "noknowncon", "nopushcon", "nospecclosure", "nospecconstcon", "noconaltnative", "nomutualloop", "noloop", "noearlyinline", "nolateinline", "nosink", "nodualabi", "nostructreturn", "nodeadcode", "nodupmerge", "nodeadvars"]
+    ["noinline", "nodeadargs", "noarityraise", "noapplyfold", "notrmc", "noctx", "noconstfold", "noknowncon", "nopushcon", "nospecclosure", "nospecconstcon", "noconaltnative", "nomutualloop", "noloop", "noearlyinline", "nolateinline", "nosink", "nodualabi", "noboolret", "nostructreturn", "nodeadcode", "nodupmerge", "nodeadvars"]
 
 ||| Stages that are off unless asked for with `--directive <name>`. They
 ||| travel to `toRCDefs` in the same list as the disables above.
@@ -447,13 +447,17 @@ toRCDefs disabled incremental roots thunks preFolded = do
     dualABId <- if "nodualabi" `elem` disabled
        then pure sunk
        else logTime 2 "rc2: DualABI" $ do
-           withNative <- logTime 3 "rc2: DualABI (workers)" $ applyDualABI sunk
+           withNative <- logTime 3 "rc2: DualABI (workers)" $ applyDualABI (not ("noboolret" `elem` disabled)) sunk
            -- doc/struct-return.md
            withWorkers <- if "nostructreturn" `elem` disabled
                              then pure withNative
                              else logTime 3 "rc2: DualABI (struct return)" $ applyStructReturn withNative
            (ffiWorkers, ffiInlineMap) <- logTime 3 "rc2: DualABI (FFI worker table)" $ ffiWorkerTable sunk
-           rewritten <- logTime 3 "rc2: DualABI (call-site rewrite)" $ pure $ applyCallSiteRewrite ffiWorkers withWorkers
+           rewritten0 <- logTime 3 "rc2: DualABI (call-site rewrite)" $ pure $ applyCallSiteRewrite ffiWorkers withWorkers
+           -- doc/dual-abi.md, "Bool return"
+           rewritten <- if "noboolret" `elem` disabled
+                           then pure rewritten0
+                           else logTime 3 "rc2: DualABI (Bool return tail calls)" $ pure $ applyBoolReturnTails rewritten0
            logTime 3 "rc2: DualABI (FFI inline)" $ pure $ inlineFFIWorkers ffiInlineMap rewritten
     pruned <- if "nodeadcode" `elem` disabled
                  then pure dualABId

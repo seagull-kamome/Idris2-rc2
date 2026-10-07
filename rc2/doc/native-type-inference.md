@@ -247,6 +247,20 @@ dup'd or dropped. On idris2-lsp's final IR (`--directive dumprcexpr`):
 The remaining 3,380 are Bools that come from calls, aliases or branches;
 covering them needs the type of the producer, not just its op.
 
+### Stage 2: Bool-returning functions
+
+Calls were the largest source of the remaining arm-start drops (call
+results, 1,319 of the 4,008 originally). A function whose tails are `B8`
+literals, native `Bits8` values or calls to such functions now has a
+`ret= Native Bits8` worker (`boolReturnPlan`, `rc2/doc/dual-abi.md`'s "Bool
+return"; `--directive noboolret` turns it off), so its callers bind the
+result as a native `Bits8` and the `case` on it needs no `drop`. On
+idris2-lsp the arm-start drops of `0`/`1` scrutinees went from 3,381 to
+2,633 and the native `Bits8` workers from 362 to 594. Evidence is still
+only from the producer: an `Int` `0` literal is not a `Bool`. A comparison
+primitive never needs a rule of its own as a tail, since the front end
+turns it into a `case` over the `B8` literals.
+
 ## Comparisons are a separate, narrower mechanism (`RCmpCase`)
 
 Comparisons (`LT`/`GT`/`EQ`/`LTE`/`GTE`) are conspicuously **absent**

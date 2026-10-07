@@ -940,9 +940,15 @@ IR上では`B8 1`/`B8 0`。native(`Native Bits8`)になれる範囲はかなり�
 - 段階1(低リスク): 比較プリミティブの結果の`let`束縛を`alwaysUnboxed`と同等に
   扱い、`dup`/`drop`を省く。生成物は必ず`mkBool`の即値。対象628件。
   `alwaysUnboxedBoxedLocalsR`(`RC.idr:494-`)に判定を足す。
-- 段階2: 返り値の推論に、比較プリミティブの結果を`Bits8`とみなす規則
-  (`Integer`/`String`の比較にC側で`int`を返す版が要る)と、関数呼び出しの末尾を
-  関数をまたぐ不動点で扱う規則を足す。1,319件と`==Eq`系が対象。最大の作業。
+- 段階2(完了): 返り値の推論に、末尾が`B8`リテラル/native `Bits8`/他の同種関数への
+  呼び出しである関数を`ret= Native Bits8`にする規則を足した(`boolReturnPlan`、
+  関数をまたぐ最大不動点、末尾呼び出しの環は除外、`--directive noboolret`で切れる。
+  `rc2/doc/dual-abi.md`の"Bool return")。比較プリミティブは前段で`case`の0/1リテラルに
+  なっているので、単独の規則も`Integer`/`String`用のC側`int`版も要らなかった。
+  idris2-lsp(同一コンパイラで`noboolret`と比較): `ret= Native Bits8` 362 -> 594、
+  `ret= Boxed` 13,976 -> 13,831、枝の先頭のdrop 3,381 -> 2,633、`drop`行 81,195 ->
+  80,495、DualABI 1.96s -> 2.19s、全体の差は誤差、rcexpr-lintは異常0件。未着手:
+  `MutualLoop`が畳まなかった末尾呼び出しの環(Boxedのまま)。
 - 段階3: パラメータとフィールド。消費側の`case`の0/1だけでは`Bool`と決められない
   (0のリテラルは`Int`かもしれない)ので、生産側の証拠がすべての流入元で示される
   ときだけnativeにする。855件のうちどれだけ取れるかは未見積もり。
