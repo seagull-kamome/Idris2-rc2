@@ -448,17 +448,25 @@ repG = boxedG <|> retG <|> nativeG
         pure (NativeRep (n ++ " " ++ ty))
 
 ||| `Core.CompileExpr`'s own `Show ConInfo` -- always a literal
-||| `[keyword]`, or `[enum N]` for the one two-word case. Neither
-||| `RConstruct` nor `RConAlt` (`Language.RCExpr.AST`) carries a field
-||| for this -- `Language.RCExpr.Lint`'s ownership checks never need
-||| to know a constructor's *kind*, only its `RCLocal` shape -- so
-||| this only consumes the tokens, it doesn't return anything.
-conInfoG : Grammar () RcToken True ()
-conInfoG = do
+||| `[keyword]`, or `[enum N]` for the one two-word case. Only
+||| `RConAlt` (`Language.RCExpr.AST`) keeps it (`conInfo`, the words
+||| joined by one space, e.g. `nil`): `rcexpr-lint`'s leak check needs
+||| to know an erased alt (`nil`/`nothing`/`zero`/`unit`) consumes its
+||| scrutinee. Everywhere else it is only consumed (`conInfoG`).
+conInfoTextG : Grammar () RcToken True String
+conInfoTextG = do
     match (RcPunct '[')
-    _ <- some anyName
+    ws <- some anyName
     match (RcPunct ']')
-    pure ()
+    pure (joinWords (forget ws))
+  where
+    joinWords : List String -> String
+    joinWords [] = ""
+    joinWords [w] = w
+    joinWords (w :: rest) = w ++ " " ++ joinWords rest
+
+conInfoG : Grammar () RcToken True ()
+conInfoG = conInfoTextG *> pure ()
 
 ||| A `RConAlt`/`RCon` tag: `Nothing`, or `Just` followed by a second
 ||| token for the number (`Prelude`'s derived `Show (Maybe Int)`,
@@ -1035,10 +1043,10 @@ mutual
           let rest = either (const []) id restE
           Right ((Right (alt :: rest), mDef), st3)
 
-  conAltHeaderG : Grammar () RcToken True (String, String, List Int)
+  conAltHeaderG : Grammar () RcToken True (String, String, String, List Int)
   conAltHeaderG = do
       name <- greedyWordsG
-      conInfoG
+      info <- conInfoTextG
       nameEq "tag="
       tag <- tagTextG
       nameEq "args="
@@ -1054,14 +1062,14 @@ mutual
                                         RVar i => pure i
                                         RUnderscore => pure 0
                                         _ => fail "alt arg must be a plain variable or _") args
-      pure (name, tag, argVars)
+      pure (name, info, tag, argVars)
 
   parseConAltLine : Nat -> Nat -> String -> LParser RConAlt
   parseConAltLine depth ln line st1 = do
-      (name, tag, args) <- runG ln conAltHeaderG line
+      (name, info, tag, args) <- runG ln conAltHeaderG line
       (_, st2) <- advanceLine st1
       (body, st3) <- parseBlock (S (S depth)) st2
-      Right (MkRConAlt name tag args body, st3)
+      Right (MkRConAlt name info tag args body, st3)
 
   ||| A `RConstAlt`'s own scrutinee: `Show Constant`'s value -- either
   ||| a bare token (a number, or a `Char` literal like `'x'`, both

@@ -2,9 +2,9 @@
 # One-shot correctness verification for tools/rcexpr-lint: builds
 # the CLI against rc2base+contrib (plain Chez backend -- this tool
 # never needs to run *through* rc2 itself, it only reads text files),
-# then runs it over five hand-written `.rcexpr` fixtures and checks
+# then runs it over the hand-written `.rcexpr` fixtures and checks
 # both the exit code and the exact report (anomalies and metrics)
-# against what's expected. `clean.rcexpr`/`anomalies.rcexpr` cover the
+# against the fixture's own `.expected` file. `clean.rcexpr`/`anomalies.rcexpr` cover the
 # ownership check itself (Lint.idr's own module note has the full rule list);
 # `dupcount.rcexpr` is a narrow regression test for a real bug this
 # tool's own parser had (`dup vN xM`'s count glued onto `x` as one
@@ -12,6 +12,11 @@
 # `Language.RCExpr.Parser.dupG`'s own doc comment.
 # `metrics.rcexpr` holds every node kind `Metrics.idr` counts, so each
 # figure is checked against a hand count at least once.
+# `leakclean.rcexpr` holds the balanced shapes the leak check has to
+# accept (erased alts, always-unboxed locals, immortal lets, padded loop
+# params, struct fields, reuse, FFI/callRep consumption); `leak.rcexpr`
+# one definition per leak-check finding. `borrow.rcexpr` is run with
+# `--borrow-stats`; every figure in its `.expected` was counted by hand.
 # `fieldborrow.rcexpr` covers a case-alt field borrowing its
 # scrutinee's reference, including the exact shape of a real
 # use-after-free (a field read after its scrutinee was dropped).
@@ -41,9 +46,10 @@ RCEXPR_LINT="$TOOL_DIR/build/exec/rcexpr-lint"
 [[ -x "$RCEXPR_LINT" ]] || fail "build did not produce $RCEXPR_LINT"
 
 check() {
-    local name="$1" file="$2" want_exit="$3" want_out="$4"
-    local got_out got_exit
-    got_out="$("$RCEXPR_LINT" "$file" 2>&1)" && got_exit=0 || got_exit=$?
+    local name="$1" file="$2" want_exit="$3" flag="${4:-}"
+    local want_out got_out got_exit
+    want_out="$(cat "${file%.rcexpr}.expected")"
+    got_out="$("$RCEXPR_LINT" ${flag:+"$flag"} "$file" 2>&1)" && got_exit=0 || got_exit=$?
     # Strip the fixture's own absolute path so expected output doesn't
     # have to hardcode this checkout's own location.
     got_out="${got_out//$file/$(basename "$file")}"
@@ -61,141 +67,14 @@ check() {
     echo "PASS  $name"
 }
 
-check "clean.rcexpr (no anomalies)" "$TESTS_DIR/clean.rcexpr" 0 \
-"rcexpr-lint: clean.rcexpr: 4 defs, no anomalies found
-metrics (places in the IR, not executions):
-  definitions        4  (functions 4, workers 0, constructors 0, foreign 0, error 0)
-  con                0  (fresh 0, reusing a cell 0)
-  retpack            0  (constructors returned by value, no cell)
-  partial            0  (closures built)
-  apply              0  (closure calls)
-  call               0  (plain 0, callRep 0, FFI inline 0)
-  op                 2  (op 2, extprim 0)
-  let                1  (Boxed 1, native 0)
-  case               1  (constructor 0, constant 0, cmp 1)
-  dup                1  (increments, in 1 dup nodes)
-  drop               4  (decrements, in 4 drop nodes)
-  postDrop           3  (decrements attached to another node: postDrop, dropOnUnique, prologueDrop)
-  free               0
-  reuseOffer         0  (releaseReuse 0)
-  loop               0  (continue 0)
-  memoize            0
-  crash              0"
-
-check "anomalies.rcexpr (every check fires)" "$TESTS_DIR/anomalies.rcexpr" 1 \
-"anomalies.rcexpr: TestUseAfterFree: v1 use-after-free (RV)
-anomalies.rcexpr: TestDoubleDrop: v1 double-drop (drop)
-anomalies.rcexpr: TestDoubleDrop: v1 use-after-free (RV)
-anomalies.rcexpr: TestBranchUseAfterFree: v1 use-after-free (RV)
-anomalies.rcexpr: TestPostDropUseAfterFree: v1 use-after-free (op args)
-rcexpr-lint: 5 anomalies found
-metrics (places in the IR, not executions):
-  definitions        4  (functions 4, workers 0, constructors 0, foreign 0, error 0)
-  con                0  (fresh 0, reusing a cell 0)
-  retpack            0  (constructors returned by value, no cell)
-  partial            0  (closures built)
-  apply              0  (closure calls)
-  call               0  (plain 0, callRep 0, FFI inline 0)
-  op                 2  (op 2, extprim 0)
-  let                1  (Boxed 1, native 0)
-  case               1  (constructor 0, constant 0, cmp 1)
-  dup                0  (increments, in 0 dup nodes)
-  drop               4  (decrements, in 4 drop nodes)
-  postDrop           2  (decrements attached to another node: postDrop, dropOnUnique, prologueDrop)
-  free               0
-  reuseOffer         0  (releaseReuse 0)
-  loop               0  (continue 0)
-  memoize            0
-  crash              0"
-
-check "dupcount.rcexpr (dup vN xM count regression)" "$TESTS_DIR/dupcount.rcexpr" 1 \
-"dupcount.rcexpr: TestDupCountRegression: v1 use-after-free (RV)
-rcexpr-lint: 1 anomalies found
-metrics (places in the IR, not executions):
-  definitions        1  (functions 1, workers 0, constructors 0, foreign 0, error 0)
-  con                0  (fresh 0, reusing a cell 0)
-  retpack            0  (constructors returned by value, no cell)
-  partial            0  (closures built)
-  apply              0  (closure calls)
-  call               0  (plain 0, callRep 0, FFI inline 0)
-  op                 0  (op 0, extprim 0)
-  let                0  (Boxed 0, native 0)
-  case               0  (constructor 0, constant 0, cmp 0)
-  dup                2  (increments, in 1 dup nodes)
-  drop               3  (decrements, in 3 drop nodes)
-  postDrop           0  (decrements attached to another node: postDrop, dropOnUnique, prologueDrop)
-  free               0
-  reuseOffer         0  (releaseReuse 0)
-  loop               0  (continue 0)
-  memoize            0
-  crash              0"
-
-check "metrics.rcexpr (every counted node kind)" "$TESTS_DIR/metrics.rcexpr" 0 \
-"rcexpr-lint: metrics.rcexpr: 7 defs, no anomalies found
-metrics (places in the IR, not executions):
-  definitions        7  (functions 3, workers 2, constructors 1, foreign 1, error 0)
-  con                2  (fresh 1, reusing a cell 1)
-  retpack            2  (constructors returned by value, no cell)
-  partial            1  (closures built)
-  apply              1  (closure calls)
-  call               6  (plain 3, callRep 2, FFI inline 1)
-  op                 2  (op 1, extprim 1)
-  let               10  (Boxed 7, native 3)
-  case               3  (constructor 2, constant 1, cmp 0)
-  dup                2  (increments, in 1 dup nodes)
-  drop               2  (decrements, in 2 drop nodes)
-  postDrop           2  (decrements attached to another node: postDrop, dropOnUnique, prologueDrop)
-  free               1
-  reuseOffer         1  (releaseReuse 1)
-  loop               1  (continue 1)
-  memoize            1
-  crash              1"
-
-check "fieldborrow.rcexpr (fields borrow from their scrutinee)" "$TESTS_DIR/fieldborrow.rcexpr" 1 \
-"fieldborrow.rcexpr: TestFieldReadAfterScrutineeDrop: v2 use-after-free (dup)
-fieldborrow.rcexpr: TestFieldReadAfterScrutineeDrop: v3 use-after-free (con args)
-fieldborrow.rcexpr: TestFieldReadAfterScrutineeDrop: v4 use-after-free (con args)
-fieldborrow.rcexpr: TestNestedFieldAfterOuterDrop: v3 use-after-free (RV)
-fieldborrow.rcexpr: TestDropOfBorrowedField: v2 double-drop (drop)
-rcexpr-lint: 5 anomalies found
-metrics (places in the IR, not executions):
-  definitions        5  (functions 5, workers 0, constructors 0, foreign 0, error 0)
-  con                1  (fresh 1, reusing a cell 0)
-  retpack            0  (constructors returned by value, no cell)
-  partial            0  (closures built)
-  apply              0  (closure calls)
-  call               0  (plain 0, callRep 0, FFI inline 0)
-  op                 0  (op 0, extprim 0)
-  let                1  (Boxed 1, native 0)
-  case               6  (constructor 6, constant 0, cmp 0)
-  dup                3  (increments, in 3 dup nodes)
-  drop               4  (decrements, in 4 drop nodes)
-  postDrop           1  (decrements attached to another node: postDrop, dropOnUnique, prologueDrop)
-  free               0
-  reuseOffer         1  (releaseReuse 1)
-  loop               0  (continue 0)
-  memoize            0
-  crash              0"
-
-check "foreigntypes.rcexpr (struct and function types in %foreign signatures)" "$TESTS_DIR/foreigntypes.rcexpr" 0 \
-"rcexpr-lint: foreigntypes.rcexpr: 2 defs, no anomalies found
-metrics (places in the IR, not executions):
-  definitions        2  (functions 2, workers 0, constructors 0, foreign 0, error 0)
-  con                0  (fresh 0, reusing a cell 0)
-  retpack            0  (constructors returned by value, no cell)
-  partial            0  (closures built)
-  apply              0  (closure calls)
-  call               2  (plain 0, callRep 0, FFI inline 2)
-  op                 0  (op 0, extprim 0)
-  let                2  (Boxed 2, native 0)
-  case               0  (constructor 0, constant 0, cmp 0)
-  dup                0  (increments, in 0 dup nodes)
-  drop               2  (decrements, in 2 drop nodes)
-  postDrop           0  (decrements attached to another node: postDrop, dropOnUnique, prologueDrop)
-  free               0
-  reuseOffer         0  (releaseReuse 0)
-  loop               0  (continue 0)
-  memoize            0
-  crash              0"
+check "clean.rcexpr (no anomalies)" "$TESTS_DIR/clean.rcexpr" 0
+check "anomalies.rcexpr (every use-after-free/double-drop check fires)" "$TESTS_DIR/anomalies.rcexpr" 1
+check "dupcount.rcexpr (dup vN xM count regression)" "$TESTS_DIR/dupcount.rcexpr" 1
+check "metrics.rcexpr (every counted node kind)" "$TESTS_DIR/metrics.rcexpr" 0
+check "fieldborrow.rcexpr (fields borrow from their scrutinee)" "$TESTS_DIR/fieldborrow.rcexpr" 1
+check "foreigntypes.rcexpr (struct and function types in %foreign signatures)" "$TESTS_DIR/foreigntypes.rcexpr" 0
+check "leakclean.rcexpr (balanced shapes the leak check must accept)" "$TESTS_DIR/leakclean.rcexpr" 0
+check "leak.rcexpr (every leak-check finding fires)" "$TESTS_DIR/leak.rcexpr" 1
+check "borrow.rcexpr (borrow statistics, hand-counted)" "$TESTS_DIR/borrow.rcexpr" 0 --borrow-stats
 
 echo "=== All rcexpr-lint checks passed ==="

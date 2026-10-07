@@ -149,6 +149,11 @@ mutual
   record RConAlt where
     constructor MkRConAlt
     conName : String
+    ||| `Show ConInfo`'s bracketed keyword, e.g. `cons`, `nil`, `record`,
+    ||| `enum 3` (the words joined by one space). `nil`/`nothing`/`zero`/
+    ||| `unit` alts are the erased ones: matching them consumes the
+    ||| scrutinee (a NULL check, no heap object left to own).
+    conInfo : String
     tag     : String
     args    : List Int
     altBody : RCExp

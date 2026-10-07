@@ -14,7 +14,9 @@ module Lint
 -- itself as reusable library modules) -- lives alongside
 -- `RcexprLint.idr`, not installed as a library.
 --
--- Scope: one check only, a bounded, well-defined dataflow problem --
+-- Scope: this module is the use-after-free/double-drop check only (the
+-- leak check is `Leak`, the borrow statistics `Borrow`) -- a bounded,
+-- well-defined dataflow problem --
 -- walks each `def`'s body maintaining a live-reference count per
 -- `Boxed` local, starting from the def's own `args=[...]` (non-
 -- `Boxed`/non-`RVar` locals are never tracked, they have no refcount
@@ -47,13 +49,42 @@ import Data.SortedMap
 
 %default covering
 
+||| What consumed an owned reference, as `Leak`'s walk sees it; the
+||| borrow statistics (`Borrow`) are built from these.
+public export
+data Consumer
+  = ByDrop
+  | ByCall String Nat Bool
+  | ByStore String
+  | ByReturn
+  | ByReuse
+  | ByApply String
+  | ByLoop Bool
+  | ByAlias Int
+
 public export
 data AnomalyKind = UseAfterFree | DoubleDrop
+                 | Leak | TokenLeak | OverConsume | LoopImbalance | BranchImbalance
+                 | Unknown String
+                 -- `Leak`'s walk reports what it saw as well as what it found, for
+                 -- `Borrow`: a reference spent (and how many the local still owns
+                 -- afterwards, whether it is a `case` field, whether the walk is
+                 -- inside a loop), or `dup`s taken. Never printed as a finding.
+                 | Spent Consumer Int Bool Bool
+                 | Duped Int Bool
 
 public export
 Show AnomalyKind where
   show UseAfterFree = "use-after-free"
   show DoubleDrop = "double-drop"
+  show Leak = "leak"
+  show TokenLeak = "reuse-token-leak"
+  show OverConsume = "over-consume"
+  show LoopImbalance = "loop-imbalance"
+  show BranchImbalance = "branch-imbalance"
+  show (Unknown what) = "unknown " ++ what
+  show (Spent _ _ _ _) = "spent"
+  show (Duped _ _) = "duped"
 
 public export
 record Anomaly where

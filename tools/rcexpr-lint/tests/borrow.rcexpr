@@ -1,0 +1,82 @@
+def Main.useRead  (fun args= ["v1:Boxed"] ret= Boxed)
+  op strLength [v1] postDrop= [v1]
+
+def Main.passOn  (fun args= ["v1:Boxed"] ret= Boxed)
+  let v2 : Boxed =
+    dup v1
+    call Main.useRead [v1]
+  drop [v1]
+  v2
+
+def Main.lastUse  (fun args= [] ret= Boxed)
+  let v1 : Boxed =
+    call Main.mk []
+  call Main.useRead [v1]
+
+def Main.keepUsing  (fun args= [] ret= Boxed)
+  let v1 : Boxed =
+    call Main.mk []
+  let v2 : Boxed =
+    dup v1
+    call Main.useRead [v1]
+  drop [v1]
+  v2
+
+def Main.mk  (fun args= [] ret= Boxed)
+  #"x"
+
+def Main.storeIt  (fun args= ["v1:Boxed"] ret= Boxed)
+  con _builtin.JUST [just] tag= Just 1 [v1]
+
+def Main.returnIt  (fun args= ["v1:Boxed"] ret= Boxed)
+  v1
+
+def Main.tailCall  (fun args= ["v1:Boxed"] ret= Boxed)
+  call Main.useRead [v1]
+
+def Main.fieldPass  (fun args= ["v1:Boxed"] ret= Boxed)
+  case v1 of
+    _builtin.CONS [cons] tag= Just 1 args= [v2, v3] ->
+      let v4 : Boxed =
+        dup v2
+        call Main.useRead [v2]
+      drop [v1]
+      v4
+    _builtin.NIL [nil] tag= Just 0 args= [] ->
+      [__]
+
+def Main.viaClosure  (fun args= [] ret= Boxed)
+  partial Main.useRead missing= 1 []
+
+def Main.loopCarried  (fun args= ["v1:Boxed"] ret= Boxed)
+  loop ["v2:Boxed"] initial= [v1]
+  case v2 of
+    _builtin.CONS [cons] tag= Just 1 args= [v3, v4] ->
+      dup v4
+      drop [v2]
+      continue loop [v4]
+    _builtin.NIL [nil] tag= Just 0 args= [] ->
+      [__]
+
+def Main.applyIt  (fun args= ["v1:Boxed", "v2:Boxed"] ret= Boxed)
+  apply v1 [v2]
+
+def Main.loopOuter  (fun args= ["v1:Boxed", "v2:Boxed"] ret= Boxed)
+  loop ["v3:Boxed"] initial= [v2]
+  case v3 of
+    _builtin.CONS [cons] tag= Just 1 args= [v4, v5] ->
+      dup v5
+      drop [v3]
+      continue loop [v5]
+    _builtin.NIL [nil] tag= Just 0 args= [] ->
+      drop [v1]
+      [__]
+
+def Main.loopInvariant  (fun args= ["v1:Boxed"] ret= Boxed)
+  loop ["v2:Boxed"] initial= [v1]
+  case v2 of
+    _builtin.CONS [cons] tag= Just 1 args= [v3, v4] ->
+      continue loop [v2]
+    _ ->
+      drop [v2]
+      [__]

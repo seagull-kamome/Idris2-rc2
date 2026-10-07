@@ -4,24 +4,30 @@ module Main
 -- This module was licensed by BSD3.
 
 -- CLI over `Language.RCExpr.Parser` (rc2base) and this tool's own
--- `Lint`: reads a `--directive dumprcexpr`-produced `.rcexpr` file,
--- parses it, runs the ownership-anomaly check over every `def`, and
--- prints one line per anomaly found. See `Lint`'s own module note for
--- what it does and doesn't catch.
+-- `Lint`/`Leak`: reads a `--directive dumprcexpr`-produced `.rcexpr` file,
+-- parses it, runs the ownership-anomaly and leak checks over every `def`,
+-- and prints one line per anomaly found; with `--borrow-stats`, prints
+-- `Borrow`'s statistics instead. See the README for what they do and
+-- don't catch.
 
 import Language.RCExpr.AST
 import Language.RCExpr.Parser
+import Borrow
+import Leak
 import Lint
 import Metrics
 
+import Data.List
+import Data.SortedMap
+import Data.String
 import System
 import System.File
 
 usage : String
-usage = "usage: rcexpr-lint <file.rcexpr>"
+usage = "usage: rcexpr-lint [--borrow-stats] <file.rcexpr>"
 
-runOn : String -> IO ()
-runOn path = do
+runOn : Bool -> String -> IO ()
+runOn stats path = do
     result <- readFile path
     case result of
          Left err => do
@@ -31,20 +37,31 @@ runOn path = do
              Left err => do
                  putStrLn ("rcexpr-lint: " ++ path ++ ": " ++ show err)
                  exitFailure
-             Right prog => reportAnomalies path prog
+             Right prog => if stats then traverse_ putStrLn (borrowStats prog) else reportAnomalies path prog
   where
+    isUnknown : Anomaly -> Bool
+    isUnknown a = case a.kind of
+                       Unknown _ => True
+                       _ => False
+
+    -- Cases the leak check could not decide are counted, never failed on.
+    unknownSummary : List Anomaly -> String
+    unknownSummary us =
+        let counts = foldl (\m, a => insertWith (+) (show a.kind) (the Nat 1) m) (the (SortedMap String Nat) empty) us
+        in joinBy ", " (map (\(k, n) => k ++ " x" ++ show n) (SortedMap.toList counts))
+
     reportAnomalies : String -> RCProgram -> IO ()
-    reportAnomalies path prog =
-        let anomalies = lintProgram prog in
+    reportAnomalies path prog = do
+        let (unknowns, anomalies) = partition isUnknown (lintProgram prog ++ leakProgram prog)
         case anomalies of
-             [] => do
-                 putStrLn ("rcexpr-lint: " ++ path ++ ": " ++ show (length prog) ++ " defs, no anomalies found")
-                 reportMetrics
+             [] => putStrLn ("rcexpr-lint: " ++ path ++ ": " ++ show (length prog) ++ " defs, no anomalies found")
              _ => do
                  traverse_ (\a => putStrLn (path ++ ": " ++ show a)) anomalies
                  putStrLn ("rcexpr-lint: " ++ show (length anomalies) ++ " anomalies found")
-                 reportMetrics
-                 exitFailure
+        unless (null unknowns) $
+            putStrLn ("leak check: " ++ show (length unknowns) ++ " cases not decided (" ++ unknownSummary unknowns ++ ")")
+        reportMetrics
+        unless (null anomalies) exitFailure
       where
         reportMetrics : IO ()
         reportMetrics = do
@@ -55,7 +72,8 @@ main : IO ()
 main = do
     args <- getArgs
     case args of
-         [_, path] => runOn path
+         [_, path] => runOn False path
+         [_, "--borrow-stats", path] => runOn True path
          _ => do
              putStrLn usage
              exitFailure
