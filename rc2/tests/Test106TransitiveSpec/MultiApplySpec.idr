@@ -1,4 +1,4 @@
-module Main
+module Test106TransitiveSpec.MultiApplySpec
 
 -- Closure specialisation of callees that apply their closure
 -- parameter more than once (`Compiler.RC2.SpecClosure.paramUses`,
@@ -54,8 +54,9 @@ big f k xs = case xs of
         e = (d * d + c * 47 - b * b * 53 + d `mod` 59) * 61 + (c * c - d) `div` 9
     in (a + b + c + d + e) :: big f (k + 1) ys
 
-main : IO ()
-main = do
+export
+run : IO ()
+run = do
   n <- (cast . length) <$> getArgs
   let xs : List Int = [1, 2, 3, 4] ++ replicate (cast n) 9
   printLn (twice incr 10 xs)

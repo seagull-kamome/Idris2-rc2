@@ -1,5 +1,7 @@
 module Main
 
+import Test87SpecConstCon.ConstConForwarding
+
 -- Constant-constructor argument specialization
 -- (`Compiler.RC2.SpecClosure.applySpecConstCon`, see
 -- `doc/constant-constructor-specialization.md`): a callee whose
@@ -90,3 +92,4 @@ main = do
     putStrLn (classify flipped 3 2)
     printLn (countMatches plain 2 [1, 2, 2, 3, 4])
     printLn (countMatches flipped 2 [1, 2, 2, 3, 4])
+    ConstConForwarding.run

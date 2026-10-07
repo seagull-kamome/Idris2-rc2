@@ -91,6 +91,7 @@ program's generated C.
 | `Test13NativeArgChain` | a parameter reached through a chain of native lets still gets a native worker | refc valgrind check.sh |
 | `Test117ConAltNative/ConAltNative` | native shadows of destructured fields (`doc/con-alt-native.md`) | refc valgrind |
 | `Test117ConAltNative/ConAltNativeLeadingDup` | a shadowed field whose first read had a `dup` right after the reuse offer | refc valgrind |
+| `Test117ConAltNative/ConAltNativeConstCase` | a field read natively and also the scrutinee of a constant `case` keeps its boxed reference owned by every alt (heap-sized `Int`s, leak under valgrind) | refc valgrind |
 | `Test90StructReturn` | small constructors returned by value (`doc/struct-return.md`) | refc valgrind check.sh |
 
 ## Loops and deep recursion
@@ -125,12 +126,16 @@ program's generated C.
 | `Test114Inline/SmallFunctionInline` | a small call-free helper spliced into its callers (`doc/inlining.md`) | refc valgrind |
 | `Test114Inline/CompareFusionThroughCall` | a comparison behind a call fuses into `RCmpCase` | refc valgrind |
 | `Test114Inline/DeadCodeInline` | a definition left with no caller is removed (`doc/dead-code-elim.md`) | refc valgrind |
+| `Test114Inline/InlineCalleeFirst` | Criterion A judged on the callee's rewritten body, callees first: a call chain and compare-based `<=` vanish, recursion and an over-threshold sum of small pieces stay calls (`doc/inlining.md`) | refc valgrind check.sh |
 | `Test17ConstFold` | constant folding of ops, cases, comparisons and casts | saved valgrind |
 | `Test115ConstFoldClosure/ConstFoldClosure` | folding of closures, CAFs and case scrutinees | refc valgrind |
 | `Test115ConstFoldClosure/ConstFoldClosureCallthrough` | dispatch through a folded interface dictionary | refc valgrind |
 | `Test88KnownConFold` | a constructor built and only matched in one function is never built | refc valgrind check.sh |
 | `Test87SpecConstCon` | specialization on a constant dictionary argument | refc valgrind check.sh |
-| `Test106TransitiveSpec` | closure specialization along a chain of forwarding calls | refc valgrind |
+| `Test87SpecConstCon/ConstConForwarding` | the same specialization carried through pure forwarders (also a recursive one); a dictionary that is also stored stays generic | refc valgrind check.sh |
+| `Test106TransitiveSpec` | closure specialization along a chain of forwarding calls | refc valgrind check.sh |
+| `Test106TransitiveSpec/SpecIterate` | the specialization passes iterate: a closure key that only exists inside a constant-dictionary clone is specialised in a second round | refc valgrind check.sh |
+| `Test106TransitiveSpec/MultiApplySpec` | closure specialization of callees applying the closure 2-3 times; over the size threshold or with a capturing closure stays generic | refc valgrind check.sh |
 | `Test99DeadArgs` | unused `where` arguments removed (`doc/dead-args.md`) | refc valgrind |
 | `Test22BranchSinking` | a let moved into the one branch that reads it (`doc/branch-sinking.md`) | refc valgrind C |
 | `Test79DupMerge` | adjacent `dup`s merged, `dup`/`drop` pairs cancelled | refc valgrind check.sh |

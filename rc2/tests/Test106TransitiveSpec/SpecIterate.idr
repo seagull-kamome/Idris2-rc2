@@ -1,4 +1,4 @@
-module Main
+module Test106TransitiveSpec.SpecIterate
 
 -- Iterating the specialization passes to a fixpoint
 -- (`Compiler.RC2.SpecClosure.applySpecRounds`, see
@@ -50,8 +50,9 @@ plain k xs = applyAll (\x => x * k + 1) k (xs ++ [k, k + 1, k * 2, k - 3])
 ops : Ops
 ops = MkOps incr "incr"
 
-main : IO ()
-main = do
+export
+runIt : IO ()
+runIt = do
   putStrLn (run ops [5, 3, 9, 1, 7, 2, 8])
   putStrLn (run ops [4, 4, 1])
   printLn (plain 2 [1, 2, 3])

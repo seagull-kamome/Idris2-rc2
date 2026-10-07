@@ -1,4 +1,4 @@
-module Main
+module Test117ConAltNative.ConAltNativeConstCase
 
 -- Copyright 2026, Hattori,Hiroki. All rights reserved.
 -- This module was licensed by BSD3.
@@ -29,8 +29,9 @@ kindArith (JNum d) = case d of
                           _ => Just (d * 2.0 + d)
 kindArith _ = Nothing
 
-main : IO ()
-main = do
+export
+run : IO ()
+run = do
   n <- pure 5
   let xs = map (\k => 4611686018427387904 + cast k) [1 .. n]
   printLn (map (safeDiv 100) (0 :: xs))
