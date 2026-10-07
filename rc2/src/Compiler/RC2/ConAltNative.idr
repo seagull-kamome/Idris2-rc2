@@ -243,15 +243,23 @@ reannotateFieldOwnership fid owned (RCmpCase fc op args postDrop t f) =
     -- here (fid genuinely shouldn't still appear in it).
     (False, RCmpCase fc op args postDrop (finalizeBranch fid owned t) (finalizeBranch fid owned f))
 reannotateFieldOwnership fid owned (RConCase fc sc alts mDef) =
-    let (nDups, owned') = countDupsNeeded fid owned [sc]
-        alts' = map (\(MkRConAlt n ci tag as body) => MkRConAlt n ci tag as (finalizeBranch fid owned' body)) alts
-        mDef' = map (finalizeBranch fid owned') mDef
-    in (False, wrapNDups fc fid nDups (RConCase fc sc alts' mDef'))
+    -- The scrutinee is only borrowed, never consumed, except by an
+    -- alt matching a NIL/NOTHING/ZERO/UNIT-style constructor (RC.idr's
+    -- own `annotateConAlt`): every other alt, and the default, still
+    -- owns `fid` and must drop it itself. See `doc/con-alt-native.md`'s
+    -- "Bugs found and fixed" #4.
+    let alts' = map (\(MkRConAlt n ci tag as body) =>
+                        let erased = ci == NIL || ci == NOTHING || ci == ZERO || ci == UNIT
+                            ownedHere = if erased && sc == RCLoc fid then False else owned
+                        in MkRConAlt n ci tag as (finalizeBranch fid ownedHere body)) alts
+        mDef' = map (finalizeBranch fid owned) mDef
+    in (False, RConCase fc sc alts' mDef')
 reannotateFieldOwnership fid owned (RConstCase fc sc alts mDef) =
-    let (nDups, owned') = countDupsNeeded fid owned [sc]
-        alts' = map (\(MkRConstAlt c body) => MkRConstAlt c (finalizeBranch fid owned' body)) alts
-        mDef' = map (finalizeBranch fid owned') mDef
-    in (False, wrapNDups fc fid nDups (RConstCase fc sc alts' mDef'))
+    -- A constant case only reads `sc` (Emit's `emitConstCaseInto`):
+    -- it consumes no reference, so `fid` stays owned in every alt.
+    let alts' = map (\(MkRConstAlt c body) => MkRConstAlt c (finalizeBranch fid owned body)) alts
+        mDef' = map (finalizeBranch fid owned) mDef
+    in (False, RConstCase fc sc alts' mDef')
 reannotateFieldOwnership fid owned (RDup fc v extra cont) =
     let (o, cont') = reannotateFieldOwnership fid owned cont in (o, RDup fc v extra cont')
 reannotateFieldOwnership fid owned (RDrop fc vs cont) =
