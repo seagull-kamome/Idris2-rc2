@@ -40,3 +40,30 @@ elif [ "$boxed" != "0" ]; then
 else
     fail "DualABI left $bodyboxed boxing site(s) inside Main_describeBoth in $TMP/${name}_rc2.c"
 fi
+
+# A `Boxed` local bound directly to a comparison op (`<`, `<=`, `==`,
+# `>=`, `>`) holds an `Int8` immediate, so `Compiler.RC2.RC` gives it no
+# `dup`/`drop` at all (doc/native-type-inference.md, "Bool-producing
+# comparison results"). Invisible to an output diff -- a refcount
+# operation on an immediate is a runtime no-op. Scans the whole IR dump
+# per definition: every `let vN : Boxed` whose value is such an op must
+# never appear in a `dup vN` or a `drop [..]` list. The `boolcmp*`
+# definitions in the test's own source supply the cases (some get
+# inlined into `boolcmps`, hence the whole-dump scan); `cmps` guards
+# against the scan matching nothing.
+read -r cmps leftover < <(awk '
+    /^def / { delete cmpvar; cur="" }
+    /^ *let v[0-9]+ : Boxed =$/ { cur=$2; next }
+    /^ *dup v[0-9]+$/ { if (substr($2,1) in cmpvar) bad++; next }
+    /^ *op (<|>|==)/ { if (cur != "") { cmpvar[cur]=1; n++ }; cur=""; next }
+    /^ *drop \[/ {
+        line=$0; gsub(/[^v0-9,]/, "", line); m=split(line, ids, ",")
+        for (i=1; i<=m; i++) if (ids[i] in cmpvar) bad++
+        next }
+    { cur="" }
+    END { print n+0, bad+0 }' "$TMP/${name}_rc2.rcexpr")
+if [ "$cmps" -gt 0 ] && [ "$leftover" = "0" ]; then
+    pass "Bool comparison results -- $cmps comparison-bound local(s), none dup'd or dropped"
+else
+    fail "Bool comparison results: $cmps comparison-bound local(s), $leftover dup/drop of them in $TMP/${name}_rc2.rcexpr"
+fi

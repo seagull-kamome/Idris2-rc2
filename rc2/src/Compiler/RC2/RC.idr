@@ -492,8 +492,17 @@ alwaysUnboxedArgs (Just ty) args =
     isRealLoc _ = False
 
 alwaysUnboxedBoxedLocalsR : RCExp -> SortedSet RCLocal
-alwaysUnboxedBoxedLocalsR (RLet _ _ _ value body) =
-    union (alwaysUnboxedBoxedLocalsR value) (alwaysUnboxedBoxedLocalsR body)
+alwaysUnboxedBoxedLocalsR (RLet _ var rep value body) =
+    let vs = union (alwaysUnboxedBoxedLocalsR value) (alwaysUnboxedBoxedLocalsR body) in
+    if boolProducer rep value then insert (RCLoc var) vs else vs
+  where
+    ||| A Boxed `let` bound directly to a comparison primitive: its value is
+    ||| `idris2rc2_mkBool(..)`, an immediate (`Types.boolResultOp`). Producer-side
+    ||| evidence only; a local bound any other way (a call, a case, an alias)
+    ||| stays tracked even if it happens to hold a Bool.
+    boolProducer : Rep -> RCExp -> Bool
+    boolProducer RBoxed (ROp _ Nothing op _ _) = boolResultOp op
+    boolProducer _ _ = False
 alwaysUnboxedBoxedLocalsR (ROp _ _ op args _) =
     alwaysUnboxedArgs (map (\ty => opArgTyFor ty op) (opResultRep op)) args
 alwaysUnboxedBoxedLocalsR (RConCase _ _ alts mDef) = foldConAltsR alwaysUnboxedBoxedLocalsR alts mDef

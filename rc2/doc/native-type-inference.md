@@ -210,6 +210,43 @@ to update instead of two).
   literal operand is the single most common member of this category
   and is handled as a degenerate case of the same table.
 
+## Bool-producing comparison results are `alwaysUnboxed`-equivalent
+
+A comparison that is *not* fused into an `RCmpCase` (operands of type
+`Integer`/`String`, or an unfusable shape) still produces a `Boxed`
+`Bool`: `idris2rc2_{lt,gt,eq,lte,gte}_<T>` in
+`support/rc2/idris2rc2_numeric.h` all end in `idris2rc2_mkBool(..)`, an
+`Int8`-tagged immediate (`mkBool = mkInt8`). `dup`/`drop`/`free` on it are
+no-ops, yet every `case` over the result used to start with a `drop`.
+
+`alwaysUnboxedBoxedLocalsR` therefore also puts into `natives` the local of
+a `Boxed` `RLet` whose value is, directly, a `ROp` with `lazy = Nothing`
+and one of `LT`/`LTE`/`EQ`/`GTE`/`GT` at any `PrimType`
+(`Types.boolResultOp`). The evidence is **producer-side only**: the `let`
+value. It is deliberately not inferred from a consumer (a `0 ->`/`1 ->`
+`case`), and a Bool bound any other way (a call result, a `case` value, an
+alias, a parameter) stays tracked. Every `natives` consumer treats the
+local as in the section above: no `dup`, no `drop`, no `postDrop` entry.
+Parameters (DualABI's `wrapperPostDrop`/`alwaysUnboxedDropVar`, loop
+parameters) are untouched; this covers `let`-bound locals only. There is no
+`--directive` switch for it.
+
+`rcexpr-lint`'s leak check has the same rule (`Leak.idr`,
+`boundToComparison`), since it does not share `natives`.
+
+`Test13NativeArgChain`'s `check.sh` asserts that no comparison-bound local is
+dup'd or dropped. On idris2-lsp's final IR (`--directive dumprcexpr`):
+
+| | before | after |
+|---|---|---|
+| `drop` lines | 81,879 | 81,185 (-694) |
+| `dup` lines | 81,217 | 81,217 |
+| IR lines | 689,992 | 689,298 |
+| `case` arms starting with a `drop` of a `0`/`1` scrutinee | 4,008 | 3,380 (-628) |
+
+The remaining 3,380 are Bools that come from calls, aliases or branches;
+covering them needs the type of the producer, not just its op.
+
 ## Comparisons are a separate, narrower mechanism (`RCmpCase`)
 
 Comparisons (`LT`/`GT`/`EQ`/`LTE`/`GTE`) are conspicuously **absent**

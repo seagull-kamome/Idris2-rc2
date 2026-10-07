@@ -63,6 +63,26 @@ alwaysUnboxed Bits32Type = True
 alwaysUnboxed CharType = True
 alwaysUnboxed _ = False
 
+||| The `PrimFn`s whose Boxed result is *always* `idris2rc2_mkBool(..)`,
+||| a tagged `Int8` immediate, never a heap value: the five comparisons,
+||| whatever their operand type. Every `idris2rc2_{lt,gt,eq,lte,gte}_<T>`
+||| in `support/rc2/idris2rc2_numeric.h` (the `IDRIS2RC2_CMPOP` macro for
+||| the fixed-width and `Double`/`Char` types, and the hand-written
+||| `Integer`/`string` ones) ends in `return idris2rc2_mkBool(..)`, so
+||| dup/drop/free on the result are unconditional runtime no-ops, the
+||| same fact `alwaysUnboxed` records for operand positions. Evidence
+||| for RC.idr's `alwaysUnboxedBoxedLocalsR` is the *producer* (a `let`
+||| bound to one of these), never how a local is later consumed. See
+||| `rc2/doc/native-type-inference.md`.
+export
+boolResultOp : PrimFn arity -> Bool
+boolResultOp (LT _)  = True
+boolResultOp (LTE _) = True
+boolResultOp (EQ _)  = True
+boolResultOp (GTE _) = True
+boolResultOp (GT _)  = True
+boolResultOp _       = False
+
 ||| A `%foreign` argument/return `CFType`'s own native-eligible
 ||| `PrimType`, if any -- the FFI-boundary counterpart to
 ||| `nativeEligible` above, used by `Compiler.RC2.DualABI`'s FFI worker
