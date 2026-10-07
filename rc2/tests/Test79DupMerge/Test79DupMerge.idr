@@ -14,6 +14,7 @@ module Main
 --   * RLet scope      (was Test81DupMergeLetScope)
 --   * dup/drop cancellation (`cancelDupDrop`)
 
+import Data.IORef
 import Data.List
 import System
 
@@ -148,6 +149,86 @@ tagOnce = do
   args <- getArgs
   putStrLn (mkTag (if length args > 100 then "unreachable" else "zero"))
 
+-- ============================================================
+-- Section 5: dup + postDrop cancellation, alias lets
+-- ============================================================
+-- `annotate` treats the read-only operand of an `op`/`extprim`/
+-- comparison as consumed, so a local that is used again afterwards got
+-- `dup v` ahead of the node plus a `postDrop=[v]` on the node: +1,
+-- read, -1. `cancelRun` cancels that pair (doc/reading-the-ir.md,
+-- "Dup and postDrop"). Each function below puts the shape in a
+-- different context: the operand read and used later, the same local in
+-- two operand positions (one `dup v xN` against several entries), a
+-- boxed local read inside a loop, a comparison, an `IORef` read by an
+-- `extprim`. `integerLater` is the one that must NOT change: the
+-- Integer arithmetic primitives consume their operands themselves
+-- (`isReuseConsumingOp`), so its `dup` is a real reference handed over
+-- and cancelling it would free `a` before the later use.
+--
+-- The alias lets: `readElems` is lifted with the parent's `tag` as an
+-- extra, unchanged parameter and called from one place, so LateInline
+-- splices it in and binds `tag` through `let tag' = tag`; the exit arm
+-- never reads it, leaving `let tag' = tag; drop [tag']`, which
+-- `cancelDupDrop` turns into `drop [tag]`.
+--
+-- check.sh counts the dup/postDrop pairs and the alias drops left in
+-- the dump (zero), and checks `integerLater` still keeps its `dup`.
+
+%noinline
+readThenUse : String -> String -> String
+readThenUse a b = (a ++ b) ++ a
+
+%noinline
+twoOperands : String -> String
+twoOperands a = (a ++ a) ++ a
+
+%noinline
+lenThenUse : String -> String -> Int
+lenThenUse a b = cast (length a) + cast (length b) + cast (length a)
+
+%noinline
+loopRead : Int -> String -> Int -> Int
+loopRead i s acc =
+  if i <= 0 then acc + cast (length s)
+  else loopRead (i - 1) s (acc + cast (length (s ++ s)))
+
+%noinline
+integerLater : Integer -> Integer -> Integer
+integerLater a b = (a * b) + a
+
+%noinline
+refTwice : IORef Integer -> IO Integer
+refTwice r = do
+  x <- readIORef r
+  writeIORef r (x + 1)
+  y <- readIORef r
+  pure (x + y)
+
+readAll : String -> Nat -> IO (List String)
+readAll tag len = readElems [] len
+  where
+    readElems : List String -> Nat -> IO (List String)
+    readElems xs Z = pure (reverse xs)
+    readElems xs (S k) = do
+      v <- pure (tag ++ show k)
+      readElems (v :: xs) k
+
+shapes : IO ()
+shapes = do
+  args <- getArgs
+  let n = if length args > 100 then "unreachable" else "ab"
+  let big = if length args > 100 then 1 else 10000000000000000000000
+  putStrLn (readThenUse n "-")
+  putStrLn (twoOperands n)
+  printLn (lenThenUse n "xyz")
+  printLn (loopRead 3 n 0)
+  printLn (integerLater big 3)
+  r <- newIORef (cast (length args))
+  v <- refTwice r
+  printLn v
+  xs <- readAll n 3
+  printLn xs
+
 main : IO ()
 main = do
   useThrice "dup-merge"
@@ -155,3 +236,4 @@ main = do
   maybeThrice False "left"
   letThrice
   tagOnce
+  shapes

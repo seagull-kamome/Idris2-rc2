@@ -192,7 +192,24 @@ always their own preceding line (`dup`/`drop`/`free`) or, for an op's
 own operands specifically, the `postDrop=[...]` field (there's no
 separate statement position to hang a wrapping `drop` around an op's
 read, since it reads its operands and produces a result in the same
-breath). To audit whether some local `vN` is handled correctly:
+breath).
+
+A `dup vN` right before an `op`/`extprim`/`cmp`/call that lists `vN` in
+its own `postDrop` is `+1`, read, `-1` on a node that only reads. The
+final IR no longer contains such pairs: `Compiler.RC2.DupMerge`
+(`cancelRun`) cancels them, judging the whole leading run of dups
+against the node's original `postDrop`, with `min (extra + 1, entries)`
+cancelled per local. Two kinds of node keep their `dup`: an Integer/
+Int64/Double arithmetic `op` (`Emit.Util.isReuseConsumingOp`), whose
+runtime primitive consumes its operands itself and ignores the
+`postDrop` field, so the `dup` is a real reference handed over; and a
+call or `extprim` that consumes some other operand (an operand not in
+its `postDrop`), where the callee may free a parent of the operand. The
+same pass renames an alias `let x = w; drop [x]` (an inlined
+`where`-bound function's unchanged parameter that one arm never reads)
+to `drop [w]` when `w` is a boxed local.
+
+To audit whether some local `vN` is handled correctly:
 
 1. Find where it's bound (its `let vN : ...` line, or its appearance in
    a `fun args=[...]`/`RConAlt args=[...]`/`loop [...]` list).

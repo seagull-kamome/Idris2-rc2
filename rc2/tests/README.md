@@ -138,7 +138,7 @@ program's generated C.
 | `Test106TransitiveSpec/MultiApplySpec` | closure specialization of callees applying the closure 2-3 times; over the size threshold or with a capturing closure stays generic | refc valgrind check.sh |
 | `Test99DeadArgs` | unused `where` arguments removed (`doc/dead-args.md`) | refc valgrind |
 | `Test22BranchSinking` | a let moved into the one branch that reads it (`doc/branch-sinking.md`) | refc valgrind C |
-| `Test79DupMerge` | adjacent `dup`s merged, `dup`/`drop` pairs cancelled | refc valgrind check.sh |
+| `Test79DupMerge` | adjacent `dup`s merged, `dup`/`drop` and `dup`/`postDrop` pairs cancelled (not against a consuming Integer op), alias `let x = w; drop [x]` renamed | refc valgrind check.sh |
 | `Test36ReuseOfferUniqueLeak` | reuse offer dropping an unreferenced field on the unique path | refc valgrind |
 | `Test44IORefExtPrimLeak` | `RExtPrim` arguments annotated (IORef leak) | refc valgrind |
 | `Test86CafMemoization` | a top-level `unsafePerformIO` CAF evaluated once (`doc/caf-memoization.md`) | saved valgrind |
