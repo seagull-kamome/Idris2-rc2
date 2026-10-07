@@ -606,10 +606,16 @@ mutual
     emitCmpCaseInto : EmitDeps (Sink -> TailPositionStatus -> FC -> CmpOp -> Vect 2 RCLocal
                     -> List RCLocal -> RCExp -> RCExp -> Core ())
     emitCmpCaseInto sink tailPosition fc op args postDrop whenTrue whenFalse = do
-        argsWithPending <- rc2traverseVect (rcVarToNativeC (cmpOpTy op)) args
+        let boxedCmp = boxedCmpEligible (cmpOpTy op)
+        -- Boxed operands (Integer/String): read in place, dropped via
+        -- `postDrop` below like an `ROp`'s; see doc/native-type-inference.md.
+        argsWithPending : Vect 2 (String, List String) <- if boxedCmp
+                              then rc2traverseVect (boxOpArg fc) args
+                              else rc2traverseVect (rcVarToNativeC (cmpOpTy op)) args
         let argStrs = map fst argsWithPending
         let condVar = "cmp_" ++ !(getNextCounter)
-        emit fc $ "int " ++ condVar ++ " = " ++ nativeCmpExpr op.fst argStrs ++ ";"
+        emit fc $ "int " ++ condVar ++ " = "
+                  ++ (if boxedCmp then boxedCmpExpr op.fst argStrs else nativeCmpExpr op.fst argStrs) ++ ";"
         removeVars $ concatMap snd (toList argsWithPending)
         removeVars $ map varName postDrop
         resolvedSink <- resolveSink fc sink

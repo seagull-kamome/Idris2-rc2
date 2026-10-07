@@ -483,6 +483,20 @@ nativeCmpExpr (GTE ty) [x, y] = "(" ++ x ++ " >= " ++ y ++ ")"
 nativeCmpExpr fn _ = "0 /* [rc2] unreachable native comparison " ++ show fn ++ " */"
 
 
+||| The raw C `int` condition for a fused comparison over Boxed operands
+||| (`Integer`/`String`, `Types.boxedCmpEligible`): the same
+||| `idris2rc2_<op>_<ty>` helper `cOp` names, minus the `mkBool` wrapper
+||| (`idris2rc2_<op>_<ty>_raw`, support/rc2/idris2rc2_numeric.h). `x`/`y`
+||| are Boxed operand expressions (`boxOpArg`).
+export
+boxedCmpExpr : PrimFn 2 -> Vect 2 String -> String
+boxedCmpExpr (LT ty)  [x, y] = "idris2rc2_lt_"  ++ cPrimType ty ++ "_raw(" ++ x ++ ", " ++ y ++ ")"
+boxedCmpExpr (GT ty)  [x, y] = "idris2rc2_gt_"  ++ cPrimType ty ++ "_raw(" ++ x ++ ", " ++ y ++ ")"
+boxedCmpExpr (EQ ty)  [x, y] = "idris2rc2_eq_"  ++ cPrimType ty ++ "_raw(" ++ x ++ ", " ++ y ++ ")"
+boxedCmpExpr (LTE ty) [x, y] = "idris2rc2_lte_" ++ cPrimType ty ++ "_raw(" ++ x ++ ", " ++ y ++ ")"
+boxedCmpExpr (GTE ty) [x, y] = "idris2rc2_gte_" ++ cPrimType ty ++ "_raw(" ++ x ++ ", " ++ y ++ ")"
+boxedCmpExpr fn _ = "0 /* [rc2] unreachable boxed comparison " ++ show fn ++ " */"
+
 export
 nativeLitExpr : Constant -> String
 nativeLitExpr (I x) = showIntMin x

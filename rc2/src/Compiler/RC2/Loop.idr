@@ -393,7 +393,7 @@ nativeArgTypes p (RLet _ _ rep value body) =
              _ => empty
     in fromOp `union` (nativeArgTypes p value `union` nativeArgTypes p body)
 nativeArgTypes p (RCmpCase _ op args _ t f) =
-    let fromArgs = fromList $ mapMaybe (\a => if a == RCLoc p then Just (cmpOpTy op) else Nothing) (toList args)
+    let fromArgs = fromList $ mapMaybe (\a => if a == RCLoc p && nativeEligible (cmpOpTy op) then Just (cmpOpTy op) else Nothing) (toList args)
     in fromArgs `union` (nativeArgTypes p t `union` nativeArgTypes p f)
 nativeArgTypes p (RDup _ _ _ cont) = nativeArgTypes p cont
 nativeArgTypes p (RDrop _ _ cont) = nativeArgTypes p cont
@@ -461,7 +461,9 @@ nativeArgTypesFor tracked (RLet _ _ rep value body) =
              _ => empty
     in fromOp `unionMaps` (nativeArgTypesFor tracked value `unionMaps` nativeArgTypesFor tracked body)
 nativeArgTypesFor tracked (RCmpCase _ op args _ t f) =
-    let fromArgs = foldr (\a, acc => addTracked tracked a (cmpOpTy op) acc) empty (toList args)
+    let fromArgs = if nativeEligible (cmpOpTy op)
+                      then foldr (\a, acc => addTracked tracked a (cmpOpTy op) acc) empty (toList args)
+                      else empty
     in fromArgs `unionMaps` (nativeArgTypesFor tracked t `unionMaps` nativeArgTypesFor tracked f)
 nativeArgTypesFor tracked (RDup _ _ _ cont) = nativeArgTypesFor tracked cont
 nativeArgTypesFor tracked (RDrop _ _ cont) = nativeArgTypesFor tracked cont

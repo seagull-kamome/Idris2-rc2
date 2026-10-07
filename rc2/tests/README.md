@@ -78,6 +78,7 @@ program's generated C.
 | `Test112Numeric/ImmediateInts` | `Int`/`Int64`/`Bits64` immediates at their 63-bit boundaries (`doc/immediate-ints.md`) | refc valgrind |
 | `Test112Numeric/ShiftWidth` | shifts by the full width or more give 0 or -1, as on Chez | refc valgrind |
 | `Test112Numeric/ImmediateInteger` | `Integer` moving between immediates and GMP around the immediate range | refc valgrind |
+| `Test112Numeric/BoxedCompare` | `case` on an `Integer`/`String`/`Nat` comparison fused into one `cmp` branch over Boxed operands (`doc/native-type-inference.md`); `check.sh` asserts the `cmp` nodes and `_raw` C conditions | refc valgrind |
 | `Test7CastMatrix` | the `Cast` matrix for `Double` and `Char` that refc-suite's `integers` leaves out | saved |
 | `Test49IntegerOpReuse` | boxed `Integer` ops reusing a unique operand's `mpz_t` (`doc/rop-reuse.md`) | saved valgrind |
 | `Test83DoubleString` | locale-independent `Double` <-> `String` | saved |
@@ -185,4 +186,4 @@ program's generated C.
 ## Benchmarks
 
 `Bench*.idr` are not tests: `bench.sh` times them against real RefC
-(see `rc2/BENCHMARKS.md`).
+(see `rc2/BENCHMARKS.md`). `BenchBoxedCompare.idr` is the one with `Integer` (immediate and heap) and `String` comparisons as conditions.

@@ -39,6 +39,16 @@ afterFirst str = withString str $ \it => case uncons str it of
   EOF => ""
   Character _ it' => withIteratorString str it' id
 
+-- A fused `cmp` over Boxed Strings (doc/native-type-inference.md) must
+-- order by bytes and length, never stop at a NUL.
+cmp5 : String -> String -> String
+cmp5 x y = (if x < y then "<" else "") ++ (if x == y then "=" else "")
+        ++ (if x > y then ">" else "") ++ (if x <= y then "L" else "")
+        ++ (if x >= y then "G" else "") ++ (if x /= y then "N" else "")
+
+cmpStrings : List String
+cmpStrings = ["", "a", "a\NUL", "a\NUL1", "a\NUL2", "ab", "\955", "\955\946", "\946", "\128512"]
+
 s : String
 s = "ab\NUL1cd"
 
@@ -74,6 +84,7 @@ main = do
     case t of
          "ab\NUL1cd" => putStrLn "case: WRONG (cross match)"
          _           => putStrLn "case: correctly distinct past the NUL"
+    for_ cmpStrings $ \x => putStrLn (unwords (map (cmp5 x) cmpStrings))
     putStr s
     putStrLn ""
     putStrLn "done"

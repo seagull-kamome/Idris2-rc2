@@ -62,10 +62,15 @@ read -r cmps leftover < <(awk '
         next }
     { cur="" }
     END { print n+0, bad+0 }' "$TMP/${name}_rc2.rcexpr")
-if [ "$cmps" -gt 0 ] && [ "$leftover" = "0" ]; then
-    pass "Bool comparison results -- $cmps comparison-bound local(s), none dup'd or dropped"
+# Since `Integer`/`String` comparisons fuse into a `cmp` over Boxed
+# operands (doc/native-type-inference.md, "Comparisons over Boxed
+# operands"), every `case` on one of these is a `cmp` node and no Bool
+# local is bound at all; the guard is then the `cmp` nodes themselves.
+fused="$(grep -cE '^ *cmp (<|>|==|<=|>=)(Integer|String) ' "$TMP/${name}_rc2.rcexpr" || true)"
+if [ "$leftover" = "0" ] && { [ "$cmps" -gt 0 ] || [ "$fused" -ge 6 ]; }; then
+    pass "Bool comparison results -- $cmps comparison-bound local(s) (none dup'd or dropped), $fused fused Integer/String cmp node(s)"
 else
-    fail "Bool comparison results: $cmps comparison-bound local(s), $leftover dup/drop of them in $TMP/${name}_rc2.rcexpr"
+    fail "Bool comparison results: $cmps comparison-bound local(s), $leftover dup/drop of them, $fused fused cmp node(s) in $TMP/${name}_rc2.rcexpr"
 fi
 
 # Bool return (doc/dual-abi.md, "Bool return"): every `br*`/`eqBTree`

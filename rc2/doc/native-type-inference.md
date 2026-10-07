@@ -278,6 +278,33 @@ from) this module, not an extension of the `RLet.Rep` mechanism -- see
 the full design and its own bug (a double-free in `annotate`'s
 `RCmpCase` case, unrelated to anything in this document).
 
+### Comparisons over Boxed operands (`Integer`, `String`)
+
+`Integer` and `String` are not `nativeEligible`, but `tryFuseCompareOp`
+also fuses them (`Types.boxedCmpEligible`): the same `RCmpCase`, whose
+operands are plain Boxed locals. The differences from the native case:
+
+- **Condition.** `Emit.emitCmpCaseInto` reads the operands with
+  `boxOpArg` (as an `ROp` does) and `Emit.Util.boxedCmpExpr` renders
+  `idris2rc2_<op>_<ty>_raw(a, b)`, a `static inline int` helper in
+  `idris2rc2_numeric.h` (`idris2rc2_integerCmp` for `Integer`, so the
+  immediate fast path stays inline and the GMP path stays a call;
+  `idris2rc2_strcmp3`/length-and-`memcmp` for `String`, so a NUL byte
+  does not end a comparison). The `mkBool` forms `idris2rc2_<op>_<ty>`
+  are now wrappers over the `_raw` ones.
+- **Ownership.** Unchanged from the native case: `annotate`'s
+  `RCmpCase` case gives each Boxed operand one `postDrop` entry (after a
+  `dup` if the operand is still used), and `emitCmpCaseInto` drops them
+  right after evaluating the condition, before either branch. No Bool
+  local, hence no `dup`/`drop` and no `to_i64` of the result.
+- **No shadowing.** The operand type is not native, so `Loop`'s
+  `nativeArgTypes`/`nativeArgTypesFor` ignore such an `RCmpCase`:
+  a loop parameter read only by `Integer` comparisons stays Boxed.
+
+The shape condition is still the one above (the comparison itself is the
+scrutinee of the two-way match); a `case` on a variable that was
+`let`-bound to the comparison earlier is not fused.
+
 ## Bugs found and fixed (chronological, see `git log`/`BENCHMARKS.md` for commit-level detail)
 
 1. **`Cast Integer Int` memory corruption.** `opResultRep (Cast i o)`

@@ -34,6 +34,15 @@ nativeEligible DoubleType = True
 nativeEligible CharType = True
 nativeEligible _ = False
 
+||| Comparison operand types a fused `RCmpCase` may take as plain Boxed
+||| values (never native): the comparison is a C `int` over the operands
+||| themselves (`idris2rc2_<op>_<ty>_raw`), see doc/native-type-inference.md.
+export
+boxedCmpEligible : PrimType -> Bool
+boxedCmpEligible IntegerType = True
+boxedCmpEligible StringType = True
+boxedCmpEligible _ = False
+
 ifNative : PrimType -> Maybe PrimType
 ifNative ty = if nativeEligible ty then Just ty else Nothing
 
