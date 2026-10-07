@@ -49,7 +49,7 @@ export RC2_DIR="$(pwd)/rc2"; source rc2/tests/build-lock.sh; acquire_build_lock
 cd rc2 && idris2 --build rc2.ipkg && idris2 --install rc2.ipkg
 ```
 2行目のロックは、別セッションや別エージェントのビルドと同時に`rc2/build/`・`install/`へ書き込んで`idris2-rc2.so`を壊す事故を防ぐためのもの（`verify.sh`・`bench.sh`は自分でロックを取るので、そちら経由でビルドするなら不要）。`RC2_DIR`を設定しないと`build-lock.sh`はロックファイルを作れずに失敗する。
-（`gcc`・`gmp`・`pkg-config`はPATH上にある前提で、`nix-shell`は使わない。`idris2`は`source env.sh`後にPATH上にある自前ビルド版を使うのが前提。自前ビルドが無い場合のみ、ブートストラップ用にnixpkgs版`idris2`を使う。`IDRIS2_PREFIX`の`export`は不要——自前ビルド版`idris2`はビルド時に焼き込まれた自分自身のprefix（このリポジトリの`install/`）を`idris2 --prefix`で確認できる通り最初から知っている。nixpkgs版`idris2`にブートストラップ用フォールバックする場合のみ、`export IDRIS2_PREFIX="$(pwd)/install"`を先に実行すること。）
+（スキルやスクリプトに`nix-shell`を使う記述が残っていても、そのまま実行せず、PATH上のツールで実行すること（ブートストラップ手順のnixpkgs版`idris2`と、`chez`が要る上流テストだけは例外）。`gcc`・`gmp`・`pkg-config`はPATH上にある前提で、`nix-shell`は使わない。`idris2`は`source env.sh`後にPATH上にある自前ビルド版を使うのが前提。自前ビルドが無い場合のみ、ブートストラップ用にnixpkgs版`idris2`を使う。`IDRIS2_PREFIX`の`export`は不要——自前ビルド版`idris2`はビルド時に焼き込まれた自分自身のprefix（このリポジトリの`install/`）を`idris2 --prefix`で確認できる通り最初から知っている。nixpkgs版`idris2`にブートストラップ用フォールバックする場合のみ、`export IDRIS2_PREFIX="$(pwd)/install"`を先に実行すること。）
 
 フルテスト（valgrind込み、既存の全回帰確認）:
 ```bash
