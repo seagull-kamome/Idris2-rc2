@@ -9,6 +9,8 @@ module Main
 
 import Data.List
 import Data.IORef
+import Test106TransitiveSpec.SpecIterate
+import Test106TransitiveSpec.MultiApplySpec
 
 -- Applies the closure; the other two only forward it.
 applyAll : (Int -> Int) -> List Int -> List Int
@@ -68,3 +70,5 @@ main = do
   ys <- stash ref (+ 10) [1, 2]
   fs <- readIORef ref
   printLn (ys, map (\f => f 1) fs)
+  SpecIterate.runIt
+  MultiApplySpec.run

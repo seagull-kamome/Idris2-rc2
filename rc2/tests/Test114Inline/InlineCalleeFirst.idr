@@ -1,4 +1,4 @@
-module Main
+module Test114Inline.InlineCalleeFirst
 
 -- Copyright 2026, Hattori,Hiroki. All rights reserved.
 -- This module was licensed by BSD3.
@@ -62,8 +62,9 @@ cmpLoop Z acc = acc
 cmpLoop (S k) acc =
     cmpLoop k (acc + (if leqInt (cast k) 50 then 1 else 0) + (if leqNat k 50 then 10 else 0))
 
-main : IO ()
-main = do
+export
+run : IO ()
+run = do
     printLn (chainLoop 1000 7)
     printLn (chainLoop 500 9)
     printLn (cycleLoop 100 0)

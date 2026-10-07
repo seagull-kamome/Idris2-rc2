@@ -10,9 +10,11 @@ module Main
 import Test114Inline.SmallFunctionInline
 import Test114Inline.CompareFusionThroughCall
 import Test114Inline.DeadCodeInline
+import Test114Inline.InlineCalleeFirst
 
 main : IO ()
 main = do
     SmallFunctionInline.run
     CompareFusionThroughCall.run
     DeadCodeInline.run
+    InlineCalleeFirst.run

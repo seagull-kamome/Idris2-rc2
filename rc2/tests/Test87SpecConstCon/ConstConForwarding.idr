@@ -1,4 +1,4 @@
-module Main
+module Test87SpecConstCon.ConstConForwarding
 
 import System
 
@@ -78,8 +78,9 @@ countAll c x (y :: ys) = countOne c x y + countAll c x ys
 stash : Cmp Int -> Int -> Int -> (Cmp Int, String)
 stash c x y = (c, if c.eq x y then "E" else "N")
 
-main : IO ()
-main = do
+export
+run : IO ()
+run = do
     putStrLn (chain2 plain 1 2)
     putStrLn (chain2 plain 2 2)
     putStrLn (chain2 plain 3 2)

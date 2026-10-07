@@ -9,8 +9,10 @@ module Main
 
 import Test117ConAltNative.ConAltNative
 import Test117ConAltNative.ConAltNativeLeadingDup
+import Test117ConAltNative.ConAltNativeConstCase
 
 main : IO ()
 main = do
     ConAltNative.run
     ConAltNativeLeadingDup.run
+    ConAltNativeConstCase.run
