@@ -69,7 +69,7 @@ fine-grained per-function/per-node control.
 | `noctx` | `Compiler.RC2.ClosureCtx`: a parameter extended with `c . (y ::)` on every self call and applied once becomes a chain of cells with an open hole (`doc/closure-accumulator.md`). |
 | `nostructreturn` | `Compiler.RC2.DualABI`'s struct return (`applyStructReturn`): a function whose every tail is a constructor of at most four fields, and which some caller gains from, gets a worker returning an `IDRIS2RC2_Ret1`..`IDRIS2RC2_Ret4` struct; a call that switches on the result at once reaches that worker (`doc/struct-return.md`). Implied by `nodualabi`. |
 | `nodeadcode` | `Compiler.RC2.DeadCode`'s pruning of definitions left with zero remaining callers (`doc/dead-code-elim.md`). |
-| `nodupmerge` | `Compiler.RC2.DupMerge`'s batching of several individual `RDup` nodes into one higher-`extra` `RDup`, *and* its `cancelDupDrop` peephole (an `RDup` whose local an `RDrop` in the same refcount-only run releases again). |
+| `nodupmerge` | `Compiler.RC2.DupMerge`'s batching of several individual `RDup` nodes into one higher-`extra` `RDup`, *and* its `cancelDupDrop` peephole (an `RDup` whose local an `RDrop` in the same refcount-only run, or the `postDrop` of the read-only node right after the dups, releases again; an alias `let x = w; drop [x]` becomes `drop [w]`). |
 
 Directives that look like they belong on this list but don't:
 
