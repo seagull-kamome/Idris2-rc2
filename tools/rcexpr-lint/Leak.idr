@@ -298,6 +298,13 @@ boundToComparison _ = False
 hasUnboxedType : String -> Bool
 hasUnboxedType t = any (\n => isInfixOf n t) unboxedTypeNames
 
+||| Every alt constant of a `case` carries the dump's `u:` mark (an
+||| always-unboxed constant type, `Compiler.RC2.Pretty.immediateMark`): the
+||| scrutinee holds a tagged immediate (`Compiler.RC2.RC.typedConstScrutinees`).
+typedImmediateAlts : List RConstAlt -> Bool
+typedImmediateAlts [] = False
+typedImmediateAlts alts = all (\a => isPrefixOf "u:" a.constVal) alts
+
 scanExp : SortedSet Int -> RCExp -> SortedSet Int
 scanExp sc (RV _) = sc
 scanExp sc (RCall _ _ _) = sc
@@ -326,8 +333,11 @@ scanExp sc (RCmp op args pd t f) = scanExp (scanExp (noteUndischarged (hasUnboxe
 scanExp sc (RConCaseNode _ alts mDef) =
     let sc' = foldl (\s, a => scanExp s a.altBody) sc alts
     in maybe sc' (scanExp sc') mDef
-scanExp sc (RConstCaseNode _ alts mDef) =
-    let sc' = foldl (\s, a => scanExp s a.altBody) sc alts
+scanExp sc (RConstCaseNode scrut alts mDef) =
+    let sc0 = case scrut of
+                   RVar v => if typedImmediateAlts alts then insert v sc else sc
+                   _ => sc
+        sc' = foldl (\s, a => scanExp s a.altBody) sc0 alts
     in maybe sc' (scanExp sc') mDef
 scanExp sc (RPrim _) = sc
 scanExp sc RErasedNode = sc

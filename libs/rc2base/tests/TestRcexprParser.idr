@@ -74,17 +74,33 @@ def Main.nestedOp  (fun args= ["v1:Boxed"] ret= Boxed)
 
 def Main.midParen  (fun args= ["v1:Boxed"] ret= Boxed)
   call Idris.Pretty.prettyPrec_Pretty_IdrisSyntax_(PBinder' KindedName) [v1]
+
+def Main.immCase  (fun args= ["v1:Boxed"] ret= Boxed)
+  case v1 of
+    u: 1 ->
+      #1
+    u: ' ' ->
+      #2
+    7 ->
+      #3
+    _ ->
+      #4
 """
 
 main : IO ()
 main = case parseProgram sample of
     Left err => putStrLn ("PARSE ERROR: " ++ show err)
     Right prog => do
-        printLn (length prog == 5)
+        printLn (length prog == 6)
         traverse_ (\d => case lookup d prog of
                               Just (RCFun _ _ _ (RCall _ n _)) => putStrLn n
                               _ => putStrLn (d ++ " not found or not a single call"))
                   ["Main.nestedOp", "Main.midParen"]
+        -- `u:` marks an alt constant of an always-unboxed type
+        -- (`Compiler.RC2.Pretty.immediateMark`); it stays in the text.
+        case lookup "Main.immCase" prog of
+             Just (RCFun _ _ _ (RConstCaseNode _ alts _)) => printLn (map constVal alts)
+             _ => putStrLn "Main.immCase not found or not a constant case"
         case lookup "Main.example" prog of
              Just (RCFun _ _ _ body) => case body of
                  RLetIn 10 Boxed _ (RDupNode (RVar 10) 3 rest) => printLn (checkRest rest)

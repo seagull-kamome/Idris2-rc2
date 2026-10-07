@@ -7,6 +7,7 @@ module Compiler.RC2.Pretty
 -- for debugging purposes when the `dumprcexpr` directive is active.
 
 import Compiler.RC2.RCExp
+import Compiler.RC2.Types
 
 import Core.CompileExpr
 import Core.TT
@@ -122,9 +123,15 @@ mutual
         ++ " args= " ++ show (map RCLoc args) ++ " ->\n"
       ++ prettyExp (d + 1) body
 
+  ||| `u:` before the constant of an always-unboxed type (`B8`, `Char`...):
+  ||| the typed-constant evidence `RC.typedConstScrutinees` acts on, which
+  ||| rcexpr-lint needs to re-derive the same refcount-free locals.
+  immediateMark : Constant -> String
+  immediateMark c = if maybe False alwaysUnboxed (litRep c) then "u: " else ""
+
   prettyConstAlt : Nat -> RConstAlt -> String
   prettyConstAlt d (MkRConstAlt c body) =
-      indent d ++ show c ++ " ->\n" ++ prettyExp (d + 1) body
+      indent d ++ immediateMark c ++ show c ++ " ->\n" ++ prettyExp (d + 1) body
 
 ||| `lazyCAFs`: names of top-level definitions whose *upstream* CExp
 ||| body was exactly `Delay e` (`Compiler.RC2.RC2.compileExpr`'s own

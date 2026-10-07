@@ -1071,13 +1071,18 @@ mutual
       (body, st3) <- parseBlock (S (S depth)) st2
       Right (MkRConAlt name info tag args body, st3)
 
-  ||| A `RConstAlt`'s own scrutinee: `Show Constant`'s value -- either
+  ||| A `RConstAlt`'s own scrutinee: `Show Constant`'s value, after the
+  ||| dump's optional `u:` mark word (always-unboxed type, kept in the text as
+  ||| a `u:` prefix) -- either
   ||| a bare token (a number, or a `Char` literal like `'x'`, both
   ||| already one `RcName` token whole) or a quoted string (its own
   ||| `RcQuotedString` token, requoted the same way `quotedConstG`
   ||| does for a `RConst` local).
   constTextG : Grammar () RcToken True String
-  constTextG = quotedG <|> plainG
+  constTextG = do
+      mark <- option "" (nameEq "u:" *> pure "u:")
+      text <- quotedG <|> plainG
+      pure (mark ++ text)
     where
       quotedG : Grammar () RcToken True String
       quotedG = map show (match RcQuotedString)

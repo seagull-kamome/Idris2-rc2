@@ -261,6 +261,69 @@ only from the producer: an `Int` `0` literal is not a `Bool`. A comparison
 primitive never needs a rule of its own as a tail, since the front end
 turns it into a `case` over the `B8` literals.
 
+### Typed-constant case scrutinees
+
+A `case` whose alts are all constants of an `alwaysUnboxed` type (`B8`,
+`Char`, `Int8`, ...; `Types.litRep`) has a scrutinee that holds a tagged
+immediate, by Idris2's typing (a local has one type): a `Bool`, an
+all-nullary enum or a `Bits8`. `dup`/`drop`/`free` on it are no-ops, so
+`Types.typedConstScrutinees` collects each such genuine `RCLoc` and
+`RC.definitionNatives` unions it into `natives`, exactly as for an
+operand of an `alwaysUnboxed` op (`alwaysUnboxedBoxedLocalsR`). Switch:
+`--directive noboolcase`.
+
+This is **not Bool-ness**. The evidence decides unboxing only, and it
+is typed: the constant kind (`B8 0`), never a bare `0`/`1` (an `Int`
+or `Nat` match has `I`/`BI` alts and does not qualify). A `Bits8` or an
+enum scrutinee may hold 2..255, and a `1 -> A; _ -> B` case keeps its
+exact semantics (nothing here, in `Emit` or in any pass, rewrites it into
+a truthiness test or an "other of 0/1" branch); `boolBranches` (the only
+0/1-shaped two-way rewrite) fires only on a fused comparison result. None
+of `boolProducer`, `boolReturnPlan` or the `B8 0`/`B8 1` literal checks
+reads this set.
+
+Because a call that reads such a local natively used to add it to the
+`postDrop` of its `RAppNameRep`, `applyCallSiteRewrite` removes these
+locals from every `postDrop` of the def (`stripImmediatePostDrop`), or
+`annotate` would have no dup to pair with that drop.
+
+The dump prints an alt constant of an always-unboxed type as `u: <c> ->`
+(`Pretty.immediateMark`), so `rcexpr-lint`, which cannot see constant
+types, re-derives the same set (`Leak.typedImmediateAlts`; fixture
+`tools/rcexpr-lint/tests/typedcase.rcexpr`). A `u:` local is therefore
+exempt from the leak check even in a `--directive noboolcase` dump, so the
+check is weaker there. `DualABI` recomputes the set on its own input, which can
+differ from `annotate`'s if a later pass adds or removes such a `case`; that is
+harmless at run time (immediates) and idris2-lsp's IR is lint-clean.
+
+Measured on idris2-lsp (same compiler, `--directive noboolcase` against the
+default):
+
+| | `noboolcase` | default |
+|---|---|---|
+| `drop` lines | 80,467 | 78,871 (-1,596) |
+| `dup` lines | 79,112 | 79,113 |
+| IR lines | 680,384 | 678,789 |
+| `case` arms starting with a `drop` of a always-unboxed-constant scrutinee | 1,463 | 526 |
+
+By origin the 1,453 (the `B8`-only count from the kind-tagged dump used for the
+measurement; the 1,463 above also counts `Char` and the other always-unboxed alt
+kinds) were: constructor fields 508, `case`-value `let`s 253,
+`dup` aliases 231, call results 204, other 181, parameters 6, loop
+parameters 1 (a parameter scrutinised by `B8` alts is already a native
+`Bits8` through `paramEligibility`, which is why a whole-program producer
+fixpoint over parameters would add under 1%). The remaining ~504 are
+constructor fields: `annotate` `dup`s a field where its alt binds it, and
+`ConAltNative` (which shadows a field read natively) re-derives the field's
+ownership afterwards, neither consulting `natives`, so the field keeps a
+`dup` and an arm-start `drop` although the `case` on it is typed. Not
+done here (a follow-up): either give the constructor alt's fields the
+type evidence earlier (the constructor name or the field's type), or make
+`ConAltNative` honour `natives`. A throwaway variant that stripped every
+refcount operation on these locals after `ConAltNative` took `drop` lines
+to about 71,000 (-9,400) but left `rcexpr-lint` anomalies (not analysed),
+so it was not adopted (see TODO.md).
+
 ## Comparisons are a separate, narrower mechanism (`RCmpCase`)
 
 Comparisons (`LT`/`GT`/`EQ`/`LTE`/`GTE`) are conspicuously **absent**

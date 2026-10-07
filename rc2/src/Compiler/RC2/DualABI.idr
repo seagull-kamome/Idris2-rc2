@@ -1128,28 +1128,16 @@ applyCallSiteRewriteBody workers reps _ True value@(RAppName fc _ n args) =
 -- pass to inspect.
 applyCallSiteRewriteBody _ _ _ _ e = e
 
-||| Whole-program pass: Stage 4 itself. Every direct, saturated,
-||| non-tail-position call targeting a worker (Stage 3a/3c) gets
-||| redirected straight to it; a tail-position call only when the
-||| target is an FFI worker (`ffiWorkers`'s entries tagged `True`,
-||| `workerTable`'s tagged `False`) -- see `applyCallSiteRewriteBody`'s
-||| own doc comment for the design, `doc/dual-abi.md`'s "Stage 4"/
-||| "Stage 4b" for why the tag distinction is safe. Runs after
-||| `applyDualABI`; every definition passes through the same rewrite
-||| uniformly, starting `inTail = True` at its own top-level body.
-||| `ffiWorkers` and the `MkRCFun`-derived `workerTable` always have
-||| disjoint keys (a name is never both `MkRCFun` and `MkRCForeign`),
-||| so `mergeWith`'s own conflict-resolution function is never actually
-||| exercised.
 export
-applyCallSiteRewrite : SortedMap Name (Name, List Rep, Rep, Bool) -> List (Name, RCDef) -> List (Name, RCDef)
-applyCallSiteRewrite ffiWorkers defs =
+applyCallSiteRewrite : (typedCase : Bool) -> SortedMap Name (Name, List Rep, Rep, Bool) -> List (Name, RCDef) -> List (Name, RCDef)
+applyCallSiteRewrite typedCase ffiWorkers defs =
     let workers = mergeWith const (workerTable defs) ffiWorkers
     in map (rewriteDef workers) defs
   where
     rewriteDef : SortedMap Name (Name, List Rep, Rep, Bool) -> (Name, RCDef) -> (Name, RCDef)
     rewriteDef workers (n, MkRCFun args retRep isWorker body) =
-        (n, MkRCFun args retRep isWorker (applyCallSiteRewriteBody workers (fromList args) Nothing True body))
+        let body1 = applyCallSiteRewriteBody workers (fromList args) Nothing True body
+        in (n, MkRCFun args retRep isWorker (if typedCase then stripImmediatePostDrop (typedConstScrutinees body) body1 else body1))
     rewriteDef _ (n, d) = (n, d)
 
 ------------------------------------------------------------------------

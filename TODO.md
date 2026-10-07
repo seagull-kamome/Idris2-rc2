@@ -952,7 +952,31 @@ IR上では`B8 1`/`B8 0`。native(`Native Bits8`)になれる範囲はかなり�
   `ret= Boxed` 13,976 -> 13,831、枝の先頭のdrop 3,381 -> 2,633、`drop`行 81,195 ->
   80,495、DualABI 1.96s -> 2.19s、全体の差は誤差、rcexpr-lintは異常0件。未着手:
   `MutualLoop`が畳まなかった末尾呼び出しの環(Boxedのまま)。
-- 段階3: パラメータとフィールド。消費側の`case`の0/1だけでは`Bool`と決められない
-  (0のリテラルは`Int`かもしれない)ので、生産側の証拠がすべての流入元で示される
-  ときだけnativeにする。855件のうちどれだけ取れるかは未見積もり。
+- 段階3(完了、`--directive noboolcase`で切れる): 計測の結果、当初想定の「パラメータ
+  /フィールドの生産側証拠の不動点」は不要だった。`B8`定数の`case`で直接分岐される
+  `Bool`パラメータは、`paramEligibility`(`constAltsNativeType`)がすでに`Native Bits8`に
+  しており、`B8`の`case`の枝先頭dropのうちパラメータは6件、ループ引数は1件(1,453件中)。
+  なお旧い「855件」の代理指標は`0`/`1`の枝を種別なしで数えていたため、Nat/Int/3値以上の
+  enumが混ざっていた(ダンプの定数に種別を付けて再分類した)。代わりに、型付きの定数を
+  消費側の証拠として使う: `RConstCase`のaltが全て`alwaysUnboxed`型(`B8`/`Char`/`Int8`..)
+  の定数なら、そのscrutineeは即値で`dup`/`drop`は不要(`Types.typedConstScrutinees`、
+  `RC.definitionNatives`が`natives`に加える)。**`Bool`かどうかではなくunbox判断だけ**に
+  使う(`Bits8`/enumは2..255もありうる; `case`・default枝は一切書き換えない)。`0`/`1`の
+  リテラルではなく定数の型が証拠なので、`Int`/`Nat`の`case`(`I`/`BI`のalt)には効かない。
+  DualABIの呼び出し側書き換えは、そのローカルを`postDrop`から外す
+  (`stripImmediatePostDrop`)。ダンプは該当altを`u: 1 ->`と印字し(`Pretty.immediateMark`、
+  rc2baseのパーサは`u:`を許す)、rcexpr-lintは同じ集合を再導出する(`Leak.idr`の
+  `typedImmediateAlts`、フィクスチャ`typedcase.rcexpr`)。
+  idris2-lsp(同一コンパイラ、`noboolcase`と比較): `drop`行 80,467 -> 78,871(-1,596)、
+  `dup`行 79,112 -> 79,113、IR行 680,384 -> 678,789、枝先頭のdrop(定数altが全て
+  always-unboxed型のscrutinee) 1,463 -> 526、RC annotate 2.66s -> 2.76s、DualABI
+  2.20s -> 2.26s、全体は誤差(約55秒)、rcexpr-lintは異常0件。出どころ別の内訳(1,453件):
+  フィールド508、`case`値の`let`253、`dup`エイリアス231、呼び出し結果204、その他181。
+  **残り(約500件)はコンストラクタのフィールド**: `annotate`のフィールド`dup`と、
+  `ConAltNative`がシャドウを作るときに再導出する所有権(`reannotateFieldOwnership`)が
+  `natives`を見ないため、フィールドの`dup`/`drop`が残る。後続タスク: (a) alt境界で
+  `RConCase`のフィールドにも型証拠(コンストラクタ名、またはフィールドの型)を与える、
+  または(b) `ConAltNative`を`natives`対応にする。試作(全`dup`/`drop`/`postDrop`/
+  `reuseOffer`リストから該当ローカルを後段で除去)では`drop`行が約71,000(-9,400)まで
+  減ったが、rcexpr-lintに異常が出たので採用していない(試作は未採用)。
 - やらない: 消費側の0/1だけを根拠にパラメータを`Bool`と推論すること。
