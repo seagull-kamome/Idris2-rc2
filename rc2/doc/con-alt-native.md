@@ -195,6 +195,22 @@ work, not investigated further here.
    that freed the element early and crashed a `sumList` loop.
    `Test117ConAltNative/ConAltNativeLeadingDup.idr` covers both cases under valgrind.
 
+4. **A constant-`case` scrutinee leaked the boxed field (found with
+   `tools/rcexpr-lint`'s leak check and valgrind).** When a promoted
+   field was also the scrutinee of an `RConstCase`, `reannotateFieldOwnership`
+   treated the case as consuming the scrutinee (`countDupsNeeded fid
+   owned [sc]` returned "spent"), so `finalizeBranch` never dropped the
+   field in any alt that did not itself read it. But an `RConstCase`
+   only reads `sc` (`Emit.emitConstCaseInto`) and `RC.annotate` leaves it
+   owned in every alt, so the field's reference was lost: a heap-allocated
+   `Int` beyond 2^62 or a `Double` leaked once per match (5 blocks in the
+   reproducer; 0 with `--directive noconaltnative`). The fix: an
+   `RConstCase` consumes nothing, and an `RConCase` consumes its
+   scrutinee only in an alt matching NIL/NOTHING/ZERO/UNIT (mirroring
+   `RC.annotateConAlt`); every other alt and the default start with the
+   field still owned and drop it as usual. The shadow is kept.
+   `Test132ConAltNativeConstCase` is the regression (valgrind-checked).
+
 ## Reusing the original Boxed field for surviving Boxed-context reads
 
 Point 4 above used to mean an unconditional re-box: `rcVarToBoxedC`
