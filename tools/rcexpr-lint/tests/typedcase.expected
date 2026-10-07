@@ -1,6 +1,6 @@
-rcexpr-lint: typedcase.rcexpr: 2 defs, no anomalies found
+rcexpr-lint: typedcase.rcexpr: 3 defs, no anomalies found
 metrics (places in the IR, not executions):
-  definitions        2  (functions 2, workers 0, constructors 0, foreign 0, error 0)
+  definitions        3  (functions 3, workers 0, constructors 0, foreign 0, error 0)
   con                0  (fresh 0, reusing a cell 0)
   retpack            0  (constructors returned by value, no cell)
   partial            0  (closures built)
@@ -8,9 +8,9 @@ metrics (places in the IR, not executions):
   call               0  (plain 0, callRep 0, FFI inline 0)
   op                 0  (op 0, extprim 0)
   let                0  (Boxed 0, native 0)
-  case               2  (constructor 0, constant 2, cmp 0)
+  case               4  (constructor 1, constant 3, cmp 0)
   dup                0  (increments, in 0 dup nodes)
-  drop               3  (decrements, in 3 drop nodes)
+  drop               4  (decrements, in 4 drop nodes)
   postDrop           0  (decrements attached to another node: postDrop, dropOnUnique, prologueDrop)
   free               0
   reuseOffer         0  (releaseReuse 0)

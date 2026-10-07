@@ -16,3 +16,13 @@ def TestTypedCaseChar  (fun args= ["v1:Boxed", "v2:Boxed"] ret= Boxed)
       v2
     _ ->
       v2
+
+def TestTypedFieldAfterParentDrop  (fun args= ["v1:Boxed"] ret= Boxed)
+  case v1 of
+    _builtin.CONS [cons] tag= Just 1 args= [v2, v3] ->
+      drop [v1]
+      case v2 of
+        u: 1 ->
+          1
+        _ ->
+          2

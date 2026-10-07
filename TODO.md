@@ -979,4 +979,23 @@ IR上では`B8 1`/`B8 0`。native(`Native Bits8`)になれる範囲はかなり�
   または(b) `ConAltNative`を`natives`対応にする。試作(全`dup`/`drop`/`postDrop`/
   `reuseOffer`リストから該当ローカルを後段で除去)では`drop`行が約71,000(-9,400)まで
   減ったが、rcexpr-lintに異常が出たので採用していない(試作は未採用)。
+- 段階3b: コンストラクタフィールド(完了、`--directive noboolfield`で切れる。
+  `noboolcase`でも切れる): `Reuse.resolveReuse`が分解したフィールドを親のdrop前に
+  `dup`し`dupOnShared`/`dropOnUnique`に全て載せること、`ConAltNative.shadowOneField`が
+  所有権をゼロから再導出して`drop`を足すことが、段階3の`natives`を見ていなかった。
+  両者に`typedConstScrutinees`の集合(`RC2.immOf`)を渡し、型付き定数で分岐される
+  フィールドを外した。`case`/default枝は触らない。`Emit`は各フィールドをalt入口で
+  Cローカルへ取り出すので、親をdropした後も即値は有効。広い版(後段で該当ローカルの
+  refcount操作を全て除去)でrcexpr-lintが出した異常の原因は、lintが「caseのフィールド
+  は親の参照を借りている」とみなし、`drop [親]`後の読みをuse-after-freeとする点
+  (ヒープのフィールドなら正しいが即値には誤り)。`Lint.idr`が`u:`のcaseのscrutinee
+  を実質無限の参照数で種まきし、借りフィールドとして再束縛しないようにした
+  (`typedcase.rcexpr`に親drop後の読みを追加、`u:`を外すと従来どおり検出)。
+  idris2-lsp(同一コンパイラ、`noboolfield`と比較): `dup`行 79,113 -> 78,483、`drop`行
+  78,871 -> 71,191(-7,680)、IR行 678,789 -> 670,479、枝先頭のdrop 526 -> 120
+  (残りはフィールド13、パラメータ14、他は`let`束縛のBoxedな呼び出し結果など)、
+  rcexpr-lint異常0件。**未解明**: 狭い版の最初の2回のidris2-lsp実行で、1か所の
+  `reuseOffer ... dupOnShared`のidが`v261316`でなく`v271316`と出力され(lintが
+  over-consumeを報告)、その後の同一条件の6回では再現しなかった。コンパイラの
+  非決定性(原因不明)の可能性があり、要追跡。
 - やらない: 消費側の0/1だけを根拠にパラメータを`Bool`と推論すること。

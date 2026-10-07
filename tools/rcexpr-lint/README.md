@@ -414,7 +414,7 @@ checking both the exit code and the exact report text (the fixture's
 | `fieldborrow.rcexpr` | field borrowing: a field read after its scrutinee is dropped (the exact shape of a real use-after-free in `refc-suite/clock`, 2026-09-25), a field of a field, and the correct forms -- dup before the drop, `reuseOffer` |
 | `metrics.rcexpr` | every node kind the metrics count, so each figure is checked against a hand count at least once |
 | `leakclean.rcexpr` | the balanced shapes the leak check has to accept: erased alts, always-unboxed locals, immortal lets, value-position joins, loops (invariant and padded), struct fields, reuse, FFI and `callRep` consumption |
-| `typedcase.rcexpr` | a local scrutinised by a `case` whose alts carry the dump's `u:` mark (always-unboxed constant type) is refcount-free: no leak, and the same shape without the mark is a leak |
+| `typedcase.rcexpr` | a local scrutinised by a `case` whose alts carry the dump's `u:` mark (always-unboxed constant type) is refcount-free: no leak, and a case field of it may be read after its parent is dropped; the same shapes without the mark are flagged |
 | `leak.rcexpr` | one definition per leak-check finding |
 | `borrow.rcexpr` | the borrow statistics, with hand-counted figures (run with `--borrow-stats`) |
 | `pushdown.rcexpr` | the push-down statistics: one definition per pattern with its negative neighbours (a dup needed by every arm, a use before the case, a consumed operand, a sub-field read after the drop), hand-counted (run with `--pushdown-stats`) |

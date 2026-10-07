@@ -311,6 +311,14 @@ tcFields (MkTcBox x n s :: rest) acc =
                          1 => s ++ show n
                          _ => "f" ++ s ++ show (n + 1)) :: acc)
 
+-- Constructor reuse with an always-unboxed field: the `Bits8` field is
+-- scrutinised, so it takes no part in the reuse offer's dup/drop lists
+-- (the other fields do). Shared (`bs` used twice) and unique inputs.
+tcBump : TcBox -> TcBox
+tcBump (MkTcBox x n s) = case x of
+                              1 => MkTcBox 7 (n + 1) s
+                              _ => MkTcBox (x + 1) n s
+
 -- The scrutinee is a Boxed call result (a `Bits8` read out of a list).
 tcHead : List Bits8 -> Bits8
 tcHead (x :: _) = x
@@ -384,6 +392,9 @@ tcs z =
     , show (map (\x => tcFieldZ (MkTcBox x 7 "t")) [z, z + 1, z + 2, z + 255])
     , show (tcFields (map (\x => MkTcBox x 5 "s") [z, z + 1, z + 2, z + 255]) [])
     , show (tcFields (map (\x => MkTcBox x 9 "u") [z + 1, z + 200]) [])
+    , let bs = [MkTcBox z 5 "a", MkTcBox (z + 1) 5 "b", MkTcBox (z + 255) 5 "c"]
+      in show (map (tcField . tcBump) bs, map tcField bs)
+    , show (map (tcField . tcBump) (map (\x => MkTcBox x 9 "u") [z, z + 1, z + 255]))
     , show (map tcUse [[z + 1, z], [z + 2], [z + 255, z, z], []])
     , show (map tcUseZ [[z + 1, z], [z + 2], [z + 255, z, z], [z]])
     , show [tcLoop (z + 1) 3 0, tcLoop (z + 2) 3 0, tcLoop (z + 255) 4 0]

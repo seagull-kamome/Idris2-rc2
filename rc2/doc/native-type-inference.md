@@ -312,17 +312,68 @@ kinds) were: constructor fields 508, `case`-value `let`s 253,
 `dup` aliases 231, call results 204, other 181, parameters 6, loop
 parameters 1 (a parameter scrutinised by `B8` alts is already a native
 `Bits8` through `paramEligibility`, which is why a whole-program producer
-fixpoint over parameters would add under 1%). The remaining ~504 are
-constructor fields: `annotate` `dup`s a field where its alt binds it, and
-`ConAltNative` (which shadows a field read natively) re-derives the field's
-ownership afterwards, neither consulting `natives`, so the field keeps a
-`dup` and an arm-start `drop` although the `case` on it is typed. Not
-done here (a follow-up): either give the constructor alt's fields the
-type evidence earlier (the constructor name or the field's type), or make
-`ConAltNative` honour `natives`. A throwaway variant that stripped every
-refcount operation on these locals after `ConAltNative` took `drop` lines
-to about 71,000 (-9,400) but left `rcexpr-lint` anomalies (not analysed),
-so it was not adopted (see TODO.md).
+fixpoint over parameters would add under 1%). The remaining ~504 were
+constructor fields, handled by the next section.
+
+### Always-unboxed constructor fields (`--directive noboolfield`)
+
+A constructor field that a typed-constant `case` scrutinises is an immediate
+too, but two passes after `annotate` still gave it refcount operations
+without looking at `natives`:
+
+* `Reuse.resolveReuse` `dup`s every destructured field that the alt does not
+  `drop` before the scrutinee is dropped, and lists every field in the
+  `reuseOffer`'s `dupOnShared`/`dropOnUnique`.
+* `ConAltNative.shadowOneField` re-derives a promoted field's ownership from
+  scratch (`reannotateFieldOwnership`, a trailing `drop`).
+
+Both now take the set `typedConstScrutinees` finds in the definition (`RC2.immOf`)
+and leave those fields out: no pre-drop `dup`, no `dupOnShared`/`dropOnUnique`
+entry, no re-derived `drop`. `--directive noboolfield` turns this off (it is also
+off under `noboolcase`, whose evidence it uses). Only the refcount bookkeeping
+changes. Why that is safe:
+
+* The evidence is the same typed constant as above, never a bare `0`/`1`; the
+  `case` and its default branch are not touched (a `Bits8` field may hold 2..255).
+* `Emit.emitConAltBody` copies each field out of the cell into a C local at alt
+  entry, before any `drop` of the parent runs, so the immediate stays valid after
+  the parent is freed. An immediate needs no reference of its own.
+* On a unique parent whose cell is reused, the field slot is overwritten and the
+  old immediate needs no `drop`; on a shared parent the cell's own drop releases
+  nothing for it.
+* A field stored on into another constructor or passed Boxed to a call is still
+  passed as the same tagged word; `natives`-listed locals are never counted.
+
+`rcexpr-lint` needed a matching change, which is also the explanation for the
+anomalies a first, broader attempt (stripping every refcount operation on these
+locals after `ConAltNative`) reported: its use-after-free check treats a case
+field as *borrowing* its scrutinee, so a field read after `drop [parent]` without
+a `dup` is flagged, which is correct for a heap field and wrong for an immediate.
+`Lint.idr` now seeds every `u:`-case local with an effectively unlimited count
+(`seedImmediates`) and does not rebind it as a borrowed field, so such a read is
+fine and a leftover `dup`/`drop` (the `noboolfield` form) cannot underflow.
+`typedcase.rcexpr` has the field-after-parent-drop shape; the same file with the
+`u:` marks removed is still flagged. One run of the narrow version also reported a
+`con`-argument over-consume that was not a lint issue: a single `reuseOffer`'s
+`dupOnShared` printed a wrong local id (`v271316` for `v261316`) in two
+consecutive idris2-lsp compiles and in none of the six identical runs since
+(unexplained; see TODO.md).
+
+idris2-lsp, same compiler, `--directive noboolfield` against the default:
+
+| | `noboolfield` | default |
+|---|---|---|
+| `dup` lines | 79,113 | 78,483 (-630) |
+| `drop` lines | 78,871 | 71,191 (-7,680) |
+| IR lines | 678,789 | 670,479 |
+| arm-start drops of an always-unboxed-constant scrutinee | 526 | 120 |
+
+(Of the 120 left, 13 are fields and 14 parameters; the rest are `let`-bound
+Boxed call results and similar.) `Test13NativeArgChain`
+covers fields of 2 and 255 through `1 -> ..; _ -> ..`, a field read after its
+parent is dropped, and `tcBump`, which rebuilds a constructor (reuse) with such
+a field on a shared and on a unique value; `check.sh` asserts fewer arm-start
+drops and fewer `dupOnShared` entries than under the switch.
 
 ## Comparisons are a separate, narrower mechanism (`RCmpCase`)
 

@@ -87,11 +87,17 @@ import Libraries.Utils.Path
 ||| annotate are both fully done (it relies on `annotate`'s own RDrop
 ||| lists -- see its own module note), on each definition's body
 ||| independently -- reuse offers never cross a function boundary.
-applyReuse : RCDef -> RCDef
-applyReuse (MkRCFun args retRep isWorker body) = MkRCFun args retRep isWorker (resolveReuse body)
-applyReuse (MkRCError body) = MkRCError (resolveReuse body)
-applyReuse d@(MkRCCon _ _ _) = d
-applyReuse d@(MkRCForeign _ _ _) = d
+||| The locals `Types.typedConstScrutinees` finds, when the field rule
+||| (`--directive noboolfield`) is on: `Reuse` and `ConAltNative` then leave a
+||| constructor field in that set out of their own dup/drop/offer lists.
+immOf : Bool -> RCExp -> SortedSet RCLocal
+immOf on body = if on then typedConstScrutinees body else empty
+
+applyReuse : (fieldCase : Bool) -> RCDef -> RCDef
+applyReuse fc (MkRCFun args retRep isWorker body) = MkRCFun args retRep isWorker (resolveReuse (immOf fc body) body)
+applyReuse fc (MkRCError body) = MkRCError (resolveReuse (immOf fc body) body)
+applyReuse _ d@(MkRCCon _ _ _) = d
+applyReuse _ d@(MkRCForeign _ _ _) = d
 
 ||| Iteration cap for `foldConstProgram`'s own whole-program fixpoint
 ||| loop: monotonicity (a CAF only ever transitions from "not yet known
@@ -282,7 +288,7 @@ inlineNamed disabled keep main defs =
 ||| apart.
 disableableStageNames : List String
 disableableStageNames =
-    ["noinline", "nodeadargs", "noarityraise", "noapplyfold", "notrmc", "noctx", "noconstfold", "noknowncon", "nopushcon", "nospecclosure", "nospecconstcon", "noconaltnative", "nomutualloop", "noloop", "noearlyinline", "nolateinline", "nosink", "nodualabi", "noboolret", "noboolcase", "nostructreturn", "nodeadcode", "nodupmerge", "nodeadvars"]
+    ["noinline", "nodeadargs", "noarityraise", "noapplyfold", "notrmc", "noctx", "noconstfold", "noknowncon", "nopushcon", "nospecclosure", "nospecconstcon", "noconaltnative", "nomutualloop", "noloop", "noearlyinline", "nolateinline", "nosink", "nodualabi", "noboolret", "noboolcase", "noboolfield", "nostructreturn", "nodeadcode", "nodupmerge", "nodeadvars"]
 
 ||| Stages that are off unless asked for with `--directive <name>`. They
 ||| travel to `toRCDefs` in the same list as the disables above.
@@ -389,8 +395,9 @@ toRCDefs disabled incremental roots thunks preFolded = do
     reused <- logTime 2 "rc2: RC annotate + Reuse + ConAltNative" $
                 traverse (\(n, d) => do
                   d1 <- toRCDefPostFold (not ("noboolcase" `elem` disabled)) d
-                  let d2 = applyReuse d1
-                  d3 <- if "noconaltnative" `elem` disabled then pure d2 else applyConAltNative d2
+                  let fieldCase = not ("noboolcase" `elem` disabled) && not ("noboolfield" `elem` disabled)
+                  let d2 = applyReuse fieldCase d1
+                  d3 <- if "noconaltnative" `elem` disabled then pure d2 else applyConAltNative fieldCase d2
                   pure (n, d3)) memoized
     (merged, noPromotes) <- if "nomutualloop" `elem` disabled then pure (reused, SortedMap.empty) else logTime 2 "rc2: Mutual loop" $ applyMutualLoop reused
     looped <- if "noloop" `elem` disabled
