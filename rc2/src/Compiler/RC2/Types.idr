@@ -17,6 +17,9 @@ import Compiler.RC2.RCExp
 import Core.CompileExpr
 import Core.TT
 
+import Data.List
+import Data.SortedSet
+
 %default total
 
 export
@@ -213,3 +216,50 @@ repOf (RLet _ _ _ _ body) = repOf body
 repOf (ROp _ _ op _ _) = opResultRep op
 repOf (RPrimVal _ c) = litRep c
 repOf _ = Nothing
+
+||| Every genuine `RCLoc` scrutinised by an `RConstCase` whose alts are all
+||| constants of an `alwaysUnboxed` type (`B8`, `Char`, `Int8`...): by
+||| Idris2's typing such a local holds a tagged immediate (a `Bool`, an
+||| all-nullary enum or a `Bits8`), whatever its declared `Rep`, so
+||| dup/drop/free on it are no-ops, as for `alwaysUnboxedBoxedLocalsR`'s
+||| operands. Evidence is the alts' own constant kind (`litRep`), never a
+||| bare `0`/`1`: an `Int` or `Nat` match has `I`/`BI` alts and does not
+||| qualify. Only the unboxing decision uses this; the case itself, its
+||| default branch included, is untouched. Switch: `--directive noboolcase`.
+||| See `doc/native-type-inference.md`, "Typed-constant case scrutinees".
+||| Shared by `RC.definitionNatives` and `DualABI`'s call-site rewrite, which
+||| must not give such a local a `postDrop` `annotate` never paired with a dup.
+export covering
+typedConstScrutinees : RCExp -> SortedSet RCLocal
+typedConstScrutinees e = go empty e
+  where
+    immediateAlts : List RConstAlt -> Bool
+    immediateAlts [] = False
+    immediateAlts alts = all (\(MkRConstAlt c _) => maybe False alwaysUnboxed (litRep c)) alts
+
+    covering
+    go : SortedSet RCLocal -> RCExp -> SortedSet RCLocal
+    go acc (RConstCase fc sc alts mDef) =
+        let acc' = case sc of
+                        RCLoc _ => if immediateAlts alts then insert sc acc else acc
+                        _ => acc
+        in foldl go acc' (children (RConstCase fc sc alts mDef))
+    go acc x = foldl go acc (children x)
+
+||| Removes `imm`'s locals from every `RAppNameRep` `postDrop`. A local
+||| `typedConstScrutinees` found is refcount-free for `annotate`, so no dup
+||| pairs with the drop `DualABI`'s call-site rewrite adds for a Boxed
+||| argument its worker reads natively. A no-op at run time (an immediate);
+||| it keeps the IR consistent with `natives` for `rcexpr-lint`. Only
+||| `postDrop`: the field `dup`/`drop`s that `ConAltNative` re-derives are
+||| the follow-up in TODO.md.
+export covering
+stripImmediatePostDrop : SortedSet RCLocal -> RCExp -> RCExp
+stripImmediatePostDrop imm e =
+    if null (Prelude.toList imm) then e else go e
+  where
+    covering
+    go : RCExp -> RCExp
+    go (RAppNameRep fc n argReps retRep pd args) =
+        RAppNameRep fc n argReps retRep (filter (\l => not (contains l imm)) pd) args
+    go x = mapChildren go x

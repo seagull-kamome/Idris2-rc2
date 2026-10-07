@@ -878,12 +878,14 @@ mutual
 ||| RLet's owned'/dropDeadLet, annotateConAlt) treats both exactly the
 ||| same: no dup/drop/free, ever, regardless of how or how many times
 ||| the local is used.
-definitionNatives : RCExp -> SortedSet RCLocal
-definitionNatives body = union (nativeLocalsR body) (alwaysUnboxedBoxedLocalsR body)
+definitionNatives : (typedCase : Bool) -> RCExp -> SortedSet RCLocal
+definitionNatives typedCase body =
+    let base = union (nativeLocalsR body) (alwaysUnboxedBoxedLocalsR body)
+    in if typedCase then union base (typedConstScrutinees body) else base
 
-annotateDef : RCDef -> Core RCDef
-annotateDef (MkRCFun args retRep isWorker body) = do
-    let natives = definitionNatives body
+annotateDef : (typedCase : Bool) -> RCDef -> Core RCDef
+annotateDef typedCase (MkRCFun args retRep isWorker body) = do
+    let natives = definitionNatives typedCase body
     -- `natives`-listed args (see definitionNatives) don't belong in
     -- `owned` either -- same reasoning as RLet's owned' above -- so
     -- they're excluded before `branchBody`'s own dropUnusedOwnedVars
@@ -895,9 +897,9 @@ annotateDef (MkRCFun args retRep isWorker body) = do
     -- drop-unused-then-annotate-then-wrap sequence this needs.
     let argsVars = fromList (RCLoc <$> map fst args) `difference` natives
     MkRCFun args retRep isWorker <$> branchBody natives argsVars body
-annotateDef d@(MkRCCon _ _ _) = pure d
-annotateDef d@(MkRCForeign _ _ _) = pure d
-annotateDef (MkRCError body) = MkRCError <$> annotate (definitionNatives body) empty body
+annotateDef _ d@(MkRCCon _ _ _) = pure d
+annotateDef _ d@(MkRCForeign _ _ _) = pure d
+annotateDef typedCase (MkRCError body) = MkRCError <$> annotate (definitionNatives typedCase body) empty body
 
 ||| A `%foreign` declaration's own return type, peeled through
 ||| `CFIORes` (`Compiler.RC2.DualABI.peelIORes`), must not itself be a
@@ -972,5 +974,5 @@ dumpLifts m = fastConcat (map line (SortedMap.toList m))
 ||| converged (or hit its iteration cap) on that definition's final
 ||| folded body.
 export
-toRCDefPostFold : RCDef -> Core RCDef
+toRCDefPostFold : (typedCase : Bool) -> RCDef -> Core RCDef
 toRCDefPostFold = annotateDef

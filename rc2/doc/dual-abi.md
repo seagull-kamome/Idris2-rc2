@@ -1619,6 +1619,10 @@ against the default (see TODO.md's Bool section for the table).
 `rcexpr-lint` reports no anomalies on the new dump. Nothing was needed
 in Leak/Borrow for the native-returning tail `callRep`.
 
+Typed-constant case scrutinees (`--directive noboolcase`) also reach
+this stage: `applyCallSiteRewrite` drops those locals from `postDrop`
+(`doc/native-type-inference.md`, "Typed-constant case scrutinees").
+
 Not covered: a mutual recursion `MutualLoop` did not merge (a tail-call
 cycle) keeps a Boxed return; a function with a crash tail, a Boxed local
 as tail or a closure call as tail is not in the plan; parameters and

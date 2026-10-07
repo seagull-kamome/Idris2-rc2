@@ -76,6 +76,7 @@ check "metrics.rcexpr (every counted node kind)" "$TESTS_DIR/metrics.rcexpr" 0
 check "fieldborrow.rcexpr (fields borrow from their scrutinee)" "$TESTS_DIR/fieldborrow.rcexpr" 1
 check "foreigntypes.rcexpr (struct and function types in %foreign signatures)" "$TESTS_DIR/foreigntypes.rcexpr" 0
 check "leakclean.rcexpr (balanced shapes the leak check must accept)" "$TESTS_DIR/leakclean.rcexpr" 0
+check "typedcase.rcexpr (typed-constant case scrutinees are refcount-free)" "$TESTS_DIR/typedcase.rcexpr" 0
 check "leak.rcexpr (every leak-check finding fires)" "$TESTS_DIR/leak.rcexpr" 1
 check "borrow.rcexpr (borrow statistics, hand-counted)" "$TESTS_DIR/borrow.rcexpr" 0 --borrow-stats
 check "pushdown.rcexpr (push-down statistics, hand-counted)" "$TESTS_DIR/pushdown.rcexpr" 0 --pushdown-stats

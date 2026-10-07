@@ -1,0 +1,18 @@
+def TestTypedCaseNoDrop  (fun args= ["v1:Boxed", "v2:Boxed"] ret= Boxed)
+  case v1 of
+    u: 1 ->
+      drop [v2]
+      1
+    u: 0 ->
+      drop [v2]
+      0
+    _ ->
+      drop [v2]
+      2
+
+def TestTypedCaseChar  (fun args= ["v1:Boxed", "v2:Boxed"] ret= Boxed)
+  case v1 of
+    u: ' ' ->
+      v2
+    _ ->
+      v2

@@ -1,5 +1,7 @@
 module Main
 
+import System
+
 import Data.Bits
 
 -- Regression test for a gap in Compiler.RC2.Loop's `nativeArgTypes`
@@ -266,6 +268,131 @@ brs =
     , show (brDeepNot 50000, brDeepNot 50001)
     ]
 
+-- Typed-constant case scrutinees (doc/native-type-inference.md): a `case`
+-- on `Bits8`/enum constants with a default branch. The scrutinee is a
+-- tagged immediate (no refcount) but NOT a 0/1 Bool: 2 and 255 must take
+-- the default branch, never an "other of 0/1" one.
+tcOne : Bits8 -> String
+tcOne x = case x of
+               1 => "one"
+               _ => "other"
+
+tcZero : Bits8 -> String
+tcZero x = case x of
+                0 => "zero"
+                _ => "nonzero"
+
+tcThree : Bits8 -> String
+tcThree x = case x of
+                 0 => "z"
+                 1 => "o"
+                 _ => "many"
+
+data TcBox = MkTcBox Bits8 Int String
+
+-- The scrutinee is a constructor field (Boxed, read from a heap cell).
+tcField : TcBox -> String
+tcField (MkTcBox x n s) = case x of
+                               1 => s ++ show n
+                               _ => "f" ++ s ++ show (n + 1)
+
+tcFieldZ : TcBox -> String
+tcFieldZ (MkTcBox x n s) = case x of
+                                0 => "z" ++ s
+                                _ => "nz" ++ show n
+
+-- The same scrutinee read from a list of boxes by a self-recursive
+-- function with two callers (so it is neither inlined nor folded): the
+-- `Bits8` field is a Boxed local read from a heap cell.
+tcFields : List TcBox -> List String -> List String
+tcFields [] acc = reverse acc
+tcFields (MkTcBox x n s :: rest) acc =
+    tcFields rest ((case x of
+                         1 => s ++ show n
+                         _ => "f" ++ s ++ show (n + 1)) :: acc)
+
+-- The scrutinee is a Boxed call result (a `Bits8` read out of a list).
+tcHead : List Bits8 -> Bits8
+tcHead (x :: _) = x
+tcHead [] = 0
+
+tcUse : List Bits8 -> String
+tcUse xs = case tcHead xs of
+                1 => "H1"
+                _ => "Hn" ++ show (length xs)
+
+tcUseZ : List Bits8 -> String
+tcUseZ xs = case tcHead xs of
+                 0 => "HZ"
+                 _ => "HN" ++ show (length xs)
+
+data TcColor = TcRed | TcGreen | TcBlue | TcBlack
+
+-- A `Bits8` parameter scrutinised with a default branch in a self-recursive
+-- function with two callers (so it keeps its own worker/loop): 2 and 255
+-- must take the default branch.
+tcP1 : Bits8 -> Nat -> String
+tcP1 x Z = case x of
+                1 => "p1"
+                _ => "po"
+tcP1 x (S k) = tcP1 x k
+
+tcP0 : Bits8 -> Nat -> String
+tcP0 x Z = case x of
+                0 => "q0"
+                _ => "qn"
+tcP0 x (S k) = tcP0 x k
+
+-- An enum with more than two constructors, chosen at run time.
+tcPick : Bits8 -> TcColor
+tcPick 0 = TcRed
+tcPick 1 = TcGreen
+tcPick 2 = TcBlue
+tcPick _ = TcBlack
+
+-- A loop-carried `Bits8` (wraps past 255) tested with a default branch.
+tcLoop : Bits8 -> Int -> Int -> Int
+tcLoop x 0 acc = acc
+tcLoop x k acc = case x of
+                      1 => tcLoop (x + 100) (k - 1) (acc + 1000)
+                      _ => tcLoop (x + 100) (k - 1) (acc + cast x)
+
+-- Matched with a default branch.
+tcColor : TcColor -> String
+tcColor c = case c of
+                 TcGreen => "g"
+                 TcBlack => "k"
+                 _ => "other"
+
+tcColorNext : TcColor -> TcColor
+tcColorNext TcRed = TcGreen
+tcColorNext TcGreen = TcBlue
+tcColorNext TcBlue = TcBlack
+tcColorNext TcBlack = TcRed
+
+-- `z` is 0, but only known at run time (no argument besides the program
+-- name), so none of this is constant-folded away.
+tcs : Bits8 -> List String
+tcs z =
+    [ show [ case z + 2 of { 1 => "i1"; _ => "io" }, case z + 255 of { 1 => "i1"; _ => "io" }
+           , case z + 2 of { 0 => "j0"; _ => "jn" }, case z + 255 of { 0 => "j0"; _ => "jn" }
+           , case z of { 1 => "i1"; _ => "io" }, case z of { 0 => "j0"; _ => "jn" } ]
+    , show (map tcOne [z, z + 1, z + 2, z + 255])
+    , show (map tcZero [z, z + 1, z + 2, z + 255])
+    , show (map tcThree [z, z + 1, z + 2, z + 255])
+    , show (map (\x => tcField (MkTcBox x 5 "s")) [z, z + 1, z + 2, z + 255])
+    , show (map (\x => tcFieldZ (MkTcBox x 7 "t")) [z, z + 1, z + 2, z + 255])
+    , show (tcFields (map (\x => MkTcBox x 5 "s") [z, z + 1, z + 2, z + 255]) [])
+    , show (tcFields (map (\x => MkTcBox x 9 "u") [z + 1, z + 200]) [])
+    , show (map tcUse [[z + 1, z], [z + 2], [z + 255, z, z], []])
+    , show (map tcUseZ [[z + 1, z], [z + 2], [z + 255, z, z], [z]])
+    , show [tcLoop (z + 1) 3 0, tcLoop (z + 2) 3 0, tcLoop (z + 255) 4 0]
+    , show (map (tcColor . tcColorNext) [TcRed, TcGreen, TcBlue, TcBlack])
+    , show (map (tcColor . tcPick) [z, z + 1, z + 2, z + 3, z + 9])
+    , show [tcP1 (z + 1) 2, tcP1 (z + 2) 1, tcP1 (z + 255) 0, tcP1 z 3, tcP1 (z + 1) 0]
+    , show [tcP0 z 2, tcP0 (z + 2) 1, tcP0 (z + 255) 0, tcP0 (z + 1) 3, tcP0 z 0]
+    ]
+
 main : IO ()
 main = do
     printLn (loop 0xcbf29ce484222325 [1,2,3,4,5,6,7,8,9,10])
@@ -282,3 +409,5 @@ main = do
     putStrLn (describeBoth 2000 1)
     traverse_ putStrLn boolcmps
     traverse_ putStrLn brs
+    args <- getArgs
+    traverse_ putStrLn (tcs (cast (length args) - 1))

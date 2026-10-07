@@ -110,3 +110,41 @@ if [ -f "$TMP/${name}_noboolret.rcexpr" ] && [ -z "$still" ]; then
 else
     fail "Bool return: --directive noboolret still has a native Bits8 worker for:$still (see $TMP/${name}_noboolret.rcexpr)"
 fi
+
+# Typed-constant case scrutinees (doc/native-type-inference.md): a local
+# scrutinised by a `case` over `B8` constants (a Bool, an enum, a Bits8:
+# the dump marks such alts `u:`) is a tagged immediate, so no arm starts
+# with a `drop` of it -- here `tcUse`/`tcUseZ`'s Boxed call-result
+# scrutinee. The output diff (including 2 and 255 through `1 -> ..; _ ->`
+# and `0 -> ..; _ ->`) shows the default branch keeps its meaning; this
+# shows the unboxing happened. `--directive noboolcase` is the same-compiler
+# comparison.
+armdrops() {
+    awk '/case v[0-9]+ of/ { match($0, /v[0-9]+/); sv = substr($0, RSTART, RLENGTH); first = 1; next }
+         /^ *u: -?[0-9]+ ->/ { if (first) { first = 0; want = 1 } next }
+         want == 1 { want = 0; if ($0 ~ /^ *drop \[/ && index($0, sv)) n++ }
+         END { print n + 0 }' "$1"
+}
+(cd "$rc2dir/tests" && "$rc2dir/build/exec/idris2-rc2" --cg rc2 --directive dumprcexpr --directive noboolcase \
+    "$name/$name.idr" -o "$TMP/${name}_noboolcase" > "$TMP/${name}_noboolcase.log" 2>&1)
+on="$(armdrops "$rcexpr")"
+off="$(armdrops "$TMP/${name}_noboolcase.rcexpr")"
+if [ -f "$TMP/${name}_noboolcase.rcexpr" ] && [ "$on" -lt "$off" ]; then
+    pass "typed-constant case scrutinee -- arm-start drops of such locals: $off -> $on (--directive noboolcase)"
+else
+    fail "typed-constant case scrutinee: arm-start drops with noboolcase=$off, default=$on (see $TMP/${name}_noboolcase.rcexpr)"
+fi
+
+# The `1 -> ..; _ -> ..` / `0 -> ..; _ -> ..` cases of a native `Bits8`
+# parameter (`tcP1`/`tcP0`, called with 2 and 255 as well) compile to an
+# explicit equality test with the default as its `else`: never a
+# truthiness test or `!x`, which would send 2 and 255 down the wrong arm.
+cfile="$TMP/${name}_rc2.c"
+worker_c() { awk -v pat="^IDRIS2RC2_Value [*]idris2rc2_worker_Main_$1_[0-9]+\$" '$0 ~ pat { buf = ""; on = 1 } on { buf = buf $0 "\n" } on && /^}/ { save = buf; on = 0 } END { printf "%s", save }' "$cfile"; }
+p1="$(worker_c tcP1)"; p0="$(worker_c tcP0)"
+if echo "$p1" | grep -q '== UINT8_C(1)) {' && echo "$p0" | grep -q '== UINT8_C(0)) {' \
+   && ! echo "$p1$p0" | grep -qE 'if \(!|if \(\(?(var|tmp)_[0-9]+\)? *\)'; then
+    pass "Bits8 default branch -- 1/0 cases compile to == tests with the default as else"
+else
+    fail "Bits8 default branch: tcP1/tcP0 do not compile to an explicit == 1 / == 0 test (see $cfile)"
+fi
