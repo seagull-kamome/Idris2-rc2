@@ -67,3 +67,41 @@ if [ "$cmps" -gt 0 ] && [ "$leftover" = "0" ]; then
 else
     fail "Bool comparison results: $cmps comparison-bound local(s), $leftover dup/drop of them in $TMP/${name}_rc2.rcexpr"
 fi
+
+# Bool return (doc/dual-abi.md, "Bool return"): every `br*`/`eqBTree`
+# function of the test is Bool-valued with Bool-or-call tails, so each
+# must have a worker returning a native `Bits8` -- including
+# `brDelegA`, whose only tail is a call. Invisible to an output diff.
+rcexpr="$TMP/${name}_rc2.rcexpr"
+nbits8() { grep -cE "^def \{idris2rc2_worker_Main_$1:[0-9]+\} .*ret= Native Bits8" "$2"; }
+missing=""
+for fn in eqBTree brCountLt brDelegA brSel2 brMixed brChain brDeepNot; do
+    [ "$(nbits8 "$fn" "$rcexpr")" = "1" ] || missing="$missing $fn"
+done
+# The delegation tail and the self-recursive `&&` condition are direct
+# calls to the callee's worker, not deferred calls.
+deleg="$(awk '/^def \{idris2rc2_worker_Main_brDelegA:/ { on=1; next } /^def / { on=0 } on && /callRep \{idris2rc2_worker_Main_brCountLt:.*-> Native Bits8/ { c++ } END { print c+0 }' "$rcexpr")"
+rec="$(awk '/^def \{idris2rc2_worker_Main_eqBTree:/ { on=1; next } /^def / { on=0 } on && /callRep \{idris2rc2_worker_Main_eqBTree:.*-> Native Bits8/ { c++ } END { print c+0 }' "$rcexpr")"
+unreach="$(grep -c 'unreachable native' "$TMP/${name}_rc2.c" || true)"
+if [ -z "$missing" ] && [ "$deleg" -ge 1 ] && [ "$rec" -ge 1 ] && [ "$unreach" = "0" ]; then
+    pass "Bool return -- workers return native Bits8; delegation and recursion call them directly"
+else
+    fail "Bool return: no native Bits8 worker for:$missing; brDelegA tail callRep=$deleg, eqBTree callRep=$rec, unreachable=$unreach in $rcexpr"
+fi
+
+# Negative: with `--directive noboolret` the functions whose tails are
+# calls (the rest already had literal tails, so were native before this
+# rule) keep a Boxed return (the switch is the same-compiler
+# before/after comparison).
+rc2dir="$(cd "$(dirname "$0")/../.." && pwd)"
+(cd "$rc2dir/tests" && "$rc2dir/build/exec/idris2-rc2" --cg rc2 --directive dumprcexpr --directive noboolret \
+    "$name/$name.idr" -o "$TMP/${name}_noboolret" > "$TMP/${name}_noboolret.log" 2>&1)
+still=""
+for fn in brDelegA brSel2; do
+    [ "$(nbits8 "$fn" "$TMP/${name}_noboolret.rcexpr")" = "0" ] || still="$still $fn"
+done
+if [ -f "$TMP/${name}_noboolret.rcexpr" ] && [ -z "$still" ]; then
+    pass "Bool return -- --directive noboolret leaves no Bits8 worker for them"
+else
+    fail "Bool return: --directive noboolret still has a native Bits8 worker for:$still (see $TMP/${name}_noboolret.rcexpr)"
+fi

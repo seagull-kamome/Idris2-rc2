@@ -1528,6 +1528,112 @@ the closest analogue to bug #2 above) passed without any fix needed.
     Re-verified: `Test24CStructSupport.idr` compiles and runs correctly
     again; full `verify.sh`/`refc-suite` unaffected.
 
+## Bool return (stage 2 of the Bool plan)
+
+`returnEligibility` asks that every tail be a native value of one type.
+A function returning a `Bool` mostly fails that for one reason: a tail
+that is a call (`f x y = g x y`, `a && g y`'s second arm) is always
+Boxed, so `Core.Name.(==_Eq_Name)`, which ends in `0` literals, a self
+call and a call to `==_Eq_Namespace`, stayed `ret= Boxed` and every
+caller boxed, unboxed and dropped the result. `boolReturnPlan`
+(`DualABI.idr`) now lets such a function return a native `Bits8`.
+
+Switch: `--directive noboolret` (also off under `nodualabi`).
+
+### The rule
+
+A function is in the plan when all of the following hold:
+
+1. Every genuine tail (`tailLeaves`, so `RLoopContinue` is not one) is a
+   *producer* or a saturated, non-lazy `RAppName` to another `MkRCFun`
+   def. A producer is what `tailValueReps` already accepted for
+   `Bits8`: a `B8` literal, a native `Bits8` local or parameter, a
+   `Bits8` op. A comparison primitive is not a tail on its own: the
+   front end writes `a < b` as `case prim__lt a b of 0 => False; _ =>
+   True`, so after normalization the tails are `B8` literals (an
+   `RCmpCase` for native operands, a Boxed comparison `let` then `case`
+   for `Integer`/`String`) and need no new rule.
+2. The set is a greatest fixpoint: assume every function whose tails fit
+   (1) is in, remove any with a call to a function outside, repeat
+   (`shrink`, shared with `structReturnPlan`).
+3. At least one producer is reachable through the tail calls (`reach`):
+   a delegation chain ending in a producer qualifies, a cycle of calls
+   with no producer proves nothing and stays Boxed.
+4. No member is in a cycle of tail calls among the members (Tarjan,
+   self edge included). Removing a cyclic member can strand its tail
+   callers, so the computation is redone with the cyclic ones excluded
+   until none is cyclic. A self tail call normally became a loop
+   (`RLoopContinue`) already, so this only drops real recursion through
+   calls (mutual recursion that `MutualLoop` did not merge).
+5. `MutualLoop`-merged functions are excluded, as from all workers.
+
+The plan feeds `applyDualABI`: a member's worker gets `ret= Native
+Bits8` whatever its parameters; the wrapper stays Boxed and boxes with
+`mkBits8`, bit-identical to `mkBool` (`mkInt8`) for 0 and 1.
+
+### Tail calls become direct calls
+
+A worker returning a C scalar cannot return the closure that a deferred
+tail call is (`doc/struct-return.md`, "Tail calls"). `applyBoolReturnTails`
+runs after the call-site rewrite and, in each worker whose `retRep` is
+`RNative Bits8Type`, turns each tail `RAppName g` into a `callRep` of
+`g`'s worker (reusing `packTails`, so `postDrop` of a Boxed argument
+read natively is handled as in Stage 4). Rule 4 is what bounds the C
+stack: the chain of nested direct tail calls from any entry is at most
+the longest path of an acyclic graph. Non-tail calls of a member from
+anywhere already went to the worker through Stage 4, and the result
+local is promoted to a native `Bits8` by the existing promotion.
+
+### Soundness
+
+* A `B8 0` literal is a producer, an `Int` `0` literal is not: producers
+  are typed by their constant kind or their native `Rep`, never from a
+  consumer's `case` on 0/1. A function whose tails are `Int` literals or
+  Boxed locals is not in the plan, so no `Int` becomes a `Bool`.
+* The native `Bits8` and the Boxed Bool are the same bits (tag + 0/1),
+  so a caller that still takes the wrapper is unaffected.
+* Only a tail `RAppName` whose callee is in the plan is rewritten, and
+  only inside a worker already returning `Bits8`; the fixpoint
+  guarantees the callee's worker returns `Bits8` too. Saturation is
+  checked against the callee's parameter count; a lazy call is not a
+  tail call here.
+
+### Numbers
+
+Measured on idris2-lsp, same compiler build, `--directive noboolret`
+against the default (see TODO.md's Bool section for the table).
+
+| idris2-lsp, final `dumprcexpr` | `noboolret` | default |
+|---|---|---|
+| IR lines | 689,313 | 688,874 |
+| definitions | 17,447 | 17,534 |
+| `ret= Native Bits8` defs | 362 | 594 |
+| `ret= Boxed` defs | 13,976 | 13,831 |
+| `callRep` call sites | 13,798 | 14,827 |
+| `drop` lines | 81,195 | 80,495 |
+| `dup` lines | 81,222 | 81,222 |
+| `case` arms starting with a `drop` of a `0`/`1` scrutinee | 3,381 | 2,633 |
+| DualABI stage time | 1.96 s | 2.19 s |
+| whole compile (to the FFI error) | 56.6 s | 57.0 s |
+
+`rcexpr-lint` reports no anomalies on the new dump. Nothing was needed
+in Leak/Borrow for the native-returning tail `callRep`.
+
+Not covered: a mutual recursion `MutualLoop` did not merge (a tail-call
+cycle) keeps a Boxed return; a function with a crash tail, a Boxed local
+as tail or a closure call as tail is not in the plan; parameters and
+constructor fields are stage 3. A micro-benchmark with a Bool-valued
+delegation chain showed no measurable run-time difference (the Bool is an
+immediate either way); the gain is the removed unbox, `drop` and the
+arm-start `drop` of the scrutinee.
+
+Tests: `Test13NativeArgChain` (`eqBTree`, `brCountLt`, `brDelegA`,
+`brSel`/`brSel2`, `brMixed`, `brChain`, `brDeepNot`, a closure via
+`filter`/`map`); `check.sh` asserts the `ret= Native Bits8` workers, the
+direct `callRep` of a delegation tail and of the recursive `&&` condition,
+and, recompiling with `--directive noboolret`, that the call-tail
+functions lose their Bits8 worker.
+
 ## Status
 
 **Fully implemented and verified** (Stages 1, 2, 3a, 3b, 3c, 4, 5).

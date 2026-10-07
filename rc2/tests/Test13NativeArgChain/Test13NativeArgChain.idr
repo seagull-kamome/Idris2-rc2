@@ -181,6 +181,83 @@ boolcmps =
     , show (boolcmpAcc 18446744073709551616 [18446744073709551615] True)
     ]
 
+-- Bool return (doc/dual-abi.md, "Bool return"): a function whose every
+-- tail is a `Bool` producer (a literal, a comparison, or a saturated
+-- call to another such function) gets a worker returning a native
+-- `Bits8`, so callers branching on the result skip the box/unbox and the
+-- arm-start drop of the 0/1 scrutinee. check.sh asserts the `ret=
+-- Native Bits8` workers and that `--directive noboolret` has none of
+-- them. The shapes: a self-recursive `==` on a tree (an `Integer`
+-- comparison tail, a non-tail call as the `&&` condition, a tail
+-- call into a loop), a delegation chain `f x y = g x y` through two
+-- functions that also have their own producer tails, a tail mixing
+-- literals, native and `String` comparisons and calls, a `Bool` out
+-- of `case`, a deep non-tail recursion, and a `Bool` function used
+-- through a closure (`filter`, so the Boxed wrapper path).
+data BTree = BLeaf Integer | BNode BTree BTree
+
+eqBTree : BTree -> BTree -> Bool
+eqBTree (BLeaf a) (BLeaf b) = a == b
+eqBTree (BNode l1 r1) (BNode l2 r2) = eqBTree l1 l2 && eqBTree r1 r2
+eqBTree _ _ = False
+
+-- Self tail call (a loop) with a native-comparison exit.
+brCountLt : Int -> Int -> Bool
+brCountLt a b = if a <= 0 then b > 0 else brCountLt (a - 1) (b - 1)
+
+-- Delegation chain: `brDelegA` is only a call; `brDelegB` has its own
+-- literal tail and a call; both end in the loop above.
+brDelegB : Int -> Int -> Bool
+brDelegB x y = if x == 77 then True else brCountLt x y
+
+brDelegA : Int -> Int -> Bool
+brDelegA x y = brDelegB y x
+
+-- Two more call-tail functions (no producer of their own beyond the
+-- callees'): a branch of calls, and a pure delegation of it.
+brSel : Int -> BTree -> BTree -> Bool
+brSel k t u = if k > 3 then eqBTree t u else brCountLt 1 k
+
+brSel2 : Int -> BTree -> BTree -> Bool
+brSel2 k t u = brSel (k + 1) u t
+
+-- Literals, an `Integer` comparison, a `String` comparison and calls in
+-- one tail set, through a `case`.
+brMixed : Integer -> String -> Integer -> Bool
+brMixed 0 _ _ = False
+brMixed n s m = case compare n m of
+                     LT => s == "lt"
+                     EQ => True
+                     GT => brMixed (n - 1) s m && s >= "b"
+
+-- `&&`/`||` chains over calls and comparisons.
+brChain : Integer -> BTree -> BTree -> Bool
+brChain k t u = (eqBTree t u || k < 0) && not (k == 99) && (brDelegA 1 2 || k >= 5)
+
+-- A deep non-tail recursion (the depth is the C stack's).
+brDeepNot : Int -> Bool
+brDeepNot 0 = False
+brDeepNot n = not (brDeepNot (n - 1))
+
+brSample : List BTree
+brSample = [BLeaf 1, BNode (BLeaf 1) (BLeaf 2), BNode (BLeaf 1) (BLeaf 3), BLeaf 100000000000000000000]
+
+brs : List String
+brs =
+    [ show (eqBTree (BNode (BLeaf 1) (BLeaf 2)) (BNode (BLeaf 1) (BLeaf 2)))
+    , show (eqBTree (BNode (BLeaf 1) (BLeaf 2)) (BNode (BLeaf 1) (BLeaf 3)))
+    , show (eqBTree (BLeaf 100000000000000000000) (BLeaf 100000000000000000000))
+    , show (eqBTree (BLeaf 1) (BNode (BLeaf 1) (BLeaf 1)))
+    , show (map (\t => eqBTree t (BNode (BLeaf 1) (BLeaf 2))) brSample)
+    , show (length (filter (eqBTree (BLeaf 1)) brSample))
+    , show [brCountLt 5 7, brCountLt 5 3, brCountLt 0 1, brCountLt 0 0]
+    , show (brDelegA 3 77, brDelegA 3 4, brDelegA 4 3)
+    , show [brMixed 0 "a" 1, brMixed 1 "lt" 2, brMixed 2 "x" 2, brMixed 3 "b" 1, brMixed 3 "a" 1]
+    , show [brChain 1 (BLeaf 1) (BLeaf 1), brChain 99 (BLeaf 1) (BLeaf 1), brChain (-1) (BLeaf 1) (BLeaf 2), brChain 1 (BLeaf 1) (BLeaf 2)]
+    , show [brSel2 1 (BLeaf 1) (BLeaf 1), brSel2 5 (BLeaf 1) (BLeaf 1), brSel2 5 (BLeaf 1) (BLeaf 2), brSel2 (-3) (BLeaf 1) (BLeaf 2)]
+    , show (brDeepNot 50000, brDeepNot 50001)
+    ]
+
 main : IO ()
 main = do
     printLn (loop 0xcbf29ce484222325 [1,2,3,4,5,6,7,8,9,10])
@@ -196,3 +273,4 @@ main = do
     putStrLn (describeBoth 2000 3000)
     putStrLn (describeBoth 2000 1)
     traverse_ putStrLn boolcmps
+    traverse_ putStrLn brs
