@@ -1,0 +1,185 @@
+def Main.hoistSome  (fun args= ["v1:Boxed", "v2:Boxed"] ret= Boxed)
+  dup v1
+  case v2 of
+    _builtin.CONS [cons] tag= Just 1 args= [v3, v4] ->
+      drop [v2, v3, v4]
+      call Main.use [v1]
+    _builtin.NIL [nil] tag= Just 0 args= [] ->
+      drop [v1, v1]
+      [__]
+
+def Main.hoistNone  (fun args= ["v1:Boxed", "v2:Boxed"] ret= Boxed)
+  dup v1 x2
+  case v2 of
+    0 ->
+      drop [v1, v1]
+      #0
+    _ ->
+      drop [v1, v1, v1]
+      #1
+
+def Main.noHoist  (fun args= ["v1:Boxed", "v2:Boxed"] ret= Boxed)
+  dup v1
+  case v2 of
+    _builtin.CONS [cons] tag= Just 1 args= [v3, v4] ->
+      drop [v2, v3, v4]
+      call Main.use [v1]
+    _builtin.NIL [nil] tag= Just 0 args= [] ->
+      call Main.use [v1]
+
+def Main.useBefore  (fun args= ["v1:Boxed", "v2:Boxed"] ret= Boxed)
+  dup v1
+  let v5 : Boxed =
+    call Main.use [v1]
+  case v2 of
+    _builtin.CONS [cons] tag= Just 1 args= [v3, v4] ->
+      drop [v1, v2, v3, v4, v5]
+      #0
+    _builtin.NIL [nil] tag= Just 0 args= [] ->
+      drop [v1, v5]
+      #1
+
+def Main.fieldHoist  (fun args= ["v1:Boxed"] ret= Boxed)
+  case v1 of
+    _builtin.CONS [cons] tag= Just 1 args= [v2, v3] ->
+      dup v2
+      dup v3
+      drop [v1]
+      case v3 of
+        _builtin.CONS [cons] tag= Just 1 args= [v4, v5] ->
+          drop [v3]
+          call Main.use [v2]
+        _builtin.NIL [nil] tag= Just 0 args= [] ->
+          drop [v2, v3]
+          [__]
+    _builtin.NIL [nil] tag= Just 0 args= [] ->
+      [__]
+
+def Main.pairs  (fun args= ["v1:Boxed", "v2:Boxed"] ret= Boxed)
+  dup v1
+  let v3 : Boxed =
+    op strLength [v1] postDrop= [v1]
+  dup v2 x2
+  let v4 : Boxed =
+    extprim Data.IORef.prim__readIORef [[__], v2] postDrop= [v2]
+  dup v1
+  drop [v1]
+  dup v1
+  let v5 : Boxed =
+    call Main.use [v1]
+  drop [v1]
+  v5
+
+def Main.deadLet  (fun args= ["v1:Boxed", "v2:Boxed", "v6:Boxed"] ret= Boxed)
+  let v3 : Boxed =
+    dup v1
+    dup v2
+    con _builtin.CONS [cons] tag= Just 1 [v1, v2]
+  case v6 of
+    0 ->
+      drop [v3]
+      #0
+    _ ->
+      drop [v3]
+      #1
+
+def Main.sinkMissCall  (fun args= ["v1:Boxed", "v2:Boxed"] ret= Boxed)
+  let v3 : Boxed =
+    dup v1
+    call Main.mk [v1]
+  case v2 of
+    0 ->
+      call Main.use [v3]
+    _ ->
+      drop [v3]
+      #1
+
+def Main.sinkBails  (fun args= ["v2:Boxed"] ret= Boxed)
+  let v3 : Boxed =
+    op strLength [v2] postDrop= [v2]
+  case v2 of
+    0 ->
+      call Main.use [v3]
+    _ ->
+      drop [v3]
+      #1
+
+def Main.sinkBlockedByLet  (fun args= ["v1:Boxed", "v2:Boxed"] ret= Boxed)
+  let v3 : Boxed =
+    con _builtin.JUST [just] tag= Just 1 [v1]
+  let v4 : Boxed =
+    v2
+  case v4 of
+    0 ->
+      call Main.use [v3]
+    _ ->
+      drop [v3]
+      #1
+
+def Main.neverTakes  (fun args= ["v1:Boxed", "v2:Boxed"] ret= Boxed)
+  let v3 : Boxed =
+    partial Main.use missing= 1 [v1]
+  case v2 of
+    0 ->
+      apply v3 [v2]
+    _ ->
+      drop [v3]
+      #1
+
+def Main.bothArms  (fun args= ["v1:Boxed", "v2:Boxed"] ret= Boxed)
+  let v3 : Boxed =
+    call Main.mk [v1]
+  case v2 of
+    0 ->
+      call Main.use [v3]
+    _ ->
+      call Main.use [v3]
+
+def Main.reuseArm  (fun args= ["v1:Boxed"] ret= Boxed)
+  case v1 of
+    _builtin.CONS [cons] tag= Just 1 args= [v2, v3] ->
+      reuseOffer v1 dupOnShared= [v2, v3] dropOnUnique= []
+      con _builtin.CONS [cons] tag= Just 1 [v3, v2] reuse= v1
+    _builtin.NIL [nil] tag= Just 0 args= [] ->
+      [__]
+
+def Main.freshArm  (fun args= ["v1:Boxed"] ret= Boxed)
+  case v1 of
+    _builtin.CONS [cons] tag= Just 1 args= [v2, v3] ->
+      dup v2
+      drop [v1, v3]
+      con _builtin.JUST [just] tag= Just 1 [v2]
+    _builtin.NIL [nil] tag= Just 0 args= [] ->
+      [__]
+
+def Main.loopA  (fun args= ["v1:Boxed", "v2:Boxed"] ret= Boxed)
+  loop ["v3:Boxed"] initial= [v2] prologueDrop= []
+  dup v1
+  case v3 of
+    _builtin.CONS [cons] tag= Just 1 args= [v4, v5] ->
+      drop [v3, v4]
+      continue loop [v5] postDrop= [v1]
+    _builtin.NIL [nil] tag= Just 0 args= [] ->
+      drop [v1, v1]
+      [__]
+
+def Main.deadAlias  (fun args= ["v1:Boxed"] ret= Boxed)
+  let v2 : Boxed =
+    v1
+  drop [v2]
+  #0
+
+def Main.fieldUnsafe  (fun args= ["v1:Boxed"] ret= Boxed)
+  case v1 of
+    _builtin.CONS [cons] tag= Just 1 args= [v2, v3] ->
+      dup v2
+      drop [v1]
+      case v2 of
+        _builtin.CONS [cons] tag= Just 1 args= [v4, v5] ->
+          drop [v2]
+          call Main.use [v4]
+        _builtin.NIL [nil] tag= Just 0 args= [] ->
+          drop [v2]
+          [__]
+    _builtin.NIL [nil] tag= Just 0 args= [] ->
+      [__]

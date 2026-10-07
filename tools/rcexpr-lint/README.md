@@ -250,6 +250,7 @@ The dump lands next to the produced executable, as
 format by hand, and `rc2/doc/directives.md` for `dumprcexpr` itself.
 
 `rcexpr-lint --borrow-stats <file.rcexpr>` prints the borrow statistics
+and `rcexpr-lint --pushdown-stats <file.rcexpr>` the push-down statistics
 instead of the anomaly report.
 
 A whole external package works the same way and is the more valuable
@@ -315,6 +316,81 @@ Not verified: `%export` (not in the dump), calls through a closure whose
 callee is only known at run time, and whether keeping a scrutinee alive
 would defeat constructor reuse.
 
+## Push-down statistics
+
+`rcexpr-lint --pushdown-stats <file.rcexpr>` measures, on the **final IR**,
+how many `dup`/`drop` operations are still not where a `case` arm that needs
+them would put them. It is read-only and purely syntactic: every figure is
+a count of **places in the IR**, not of executions, and "in loops" is the
+same proxy `--borrow-stats` uses (the place sits inside an `RLoop` body).
+"All dup/drop operations" is the `--borrow-stats` denominator: `dup xN`
+counts N, plus every entry of `drop [..]`, `postDrop=`, `prologueDrop` and
+`dropOnUnique` (not `free`, not `releaseReuse`). Every pattern is looked for
+along the straight-line chain below its start node (through `dup`, `drop`,
+`free`, `reuseOffer`, and past a `let` whose value does not mention the
+local); a `case`, `cmp` or `loop` ends the chain.
+
+An arm is classified per local over **every path** through it: the local is
+*consumed* (passed to a `call`/`con`/`apply`/`partial`/..., returned, `let w
+= v`, `continue` argument), only *read* (`op`/`cmp`/`structGet`/`force`
+operands, a nested `dup`), and *dropped* a least-over-paths number of times
+(`drop`, `postDrop=` entries). An arm that ends in `crash` is neutral.
+
+| kind | what is counted | `ops` column | `extra` column |
+|---|---|---|---|
+| **A** | `dup v xN` whose chain reaches a `case`/`cmp` without mentioning `v` (the case's own scrutinee may be `v`), where **some arm neither consumes `v` nor, for a case field, reads it, and drops it** (min over paths) -- the dup is cancelled there. Sub-keys: `needed by no arm` (every live arm cancels: the dup is dead) or `some arm`; and `field: a drop sits between` when `v` is a `case` field (it borrows its parent) and a `drop` sits between the dup and the case: moving the dup into the arms then means moving that parent drop too, so it is not a local rewrite. The keys without it still include `case` fields whose parent is not dropped on the way; the parent's later liveness is not checked. When the case is on `v` itself, an arm that drops `v` and then reads an alt field that was not `dup`'d first is not counted as cancelling (the extra reference keeps that field alive) | static net: `N - N*(arms that need it) + sum(min(N, drops) over cancelling arms)`; negative when many arms need it, because the dup is then repeated | cancelling arms |
+| **B** | `dup v xN` followed, on the straight line, by drops of `v` with no consumption of `v` in between (reads are passed; for a case field a read after another drop is not). `closed by a drop node` is what `DupMerge.cancelDupDrop` should already have removed; `closed by a postDrop on op/extprim/callRep` is `dup v; op f [v] postDrop=[v]` (the node kind is part of the key), which that pass does not look at | 2 x pairs | pairs |
+| **C0** | `let v : Boxed` whose first mention on the straight-line chain is a `drop` naming it: dead, only its drop remains. `constant` values (immortal) and `fill` results (the TRMC hole protocol) are left out as by design. Not counted when the chain reaches a `case` first (that is C1/C2) | the drop (plus a pure value's leading `dup`s) | 1 |
+| **C1** | `let v : Boxed` whose chain reaches a `case`/`cmp` (not on `v`), where `v` is mentioned only by drops, on **every** non-crash arm. Keyed by the value's kind | the arms' drops (plus the value's leading `dup`s when the value is a pure allocation, which could then vanish) | arms |
+| **C2** | the same, but exactly one arm reads `v` and every other arm only drops it: a `Sink` candidate. Keyed by whether `Sink.sinkEligible` could take it (a fresh `con`, a non-lazy `op`, a `call`/`callRep`), whether the `let` is immediately followed by the branch (Sink does not look further), and whether a consumed, not-`dup`'d operand of the value is also mentioned by the branch (`Sink.addOperandDrops` gives up then) | the drops in the other arms | arms that drop |
+| **D** | in an arm of a `case` on `p`, `dup f` of the alt's fields (all of them, `xN` counted) followed by a `drop` of the parent `p` with no other mention of `p` before it. Split by whether the arm builds a fresh `con` somewhere (a reuse that was not taken). Whether `p` is unique at run time is not in the IR | field dups (the ones a unique-parent shortcut or a borrow would remove; the parent drop does not go away, it turns into freeing the shell) | parent drops |
+| **D0** | context for D: arms whose chain reaches `reuseOffer p ...`. They already have the unique-parent form (`dupOnShared`) | `dupOnShared` fields | arms |
+| **E** | census: the entries of the `drop` nodes that open an arm of a `case`/`cmp`. This is the push-down that already works; the other kinds are leftovers. Reported both as a share of all dup/drop operations and, on its own line, of the drop-type entries alone | entries | -- |
+
+The percentages are `ops` over all dup/drop operations, and `ops loop` over
+the same total restricted to places in loops. **The kinds overlap and must
+not be added**: A with `field: a drop sits between` and D describe the same
+dups from two sides (field dups made right before the parent is dropped),
+and a C2 `let` can carry dups that B or A also see.
+
+What the figures do **not** show. They are static places. They do not
+follow a local across a `let` value that is a `case` (an arm in value
+position is analysed on its own, with the drops that follow the `let`
+outside it), and a `postDrop=` on a call node that drops a *parent* is only
+recognised by D when it sits on a leaf node. `A`'s cancelling arm may also
+simply be one where the dup is needed later in the continuation; removing
+the dup and the compensating drop is still count-neutral there, so the
+static net is right, but the extra liveness is not checked. Whether
+removing a given dup is *worth* it (a dup is an increment, an arm-local dup
+costs the same) is not modelled. The `Sink` classification is a reading of
+`rc2/doc/branch-sinking.md`, not a re-run of the pass.
+
+Measured on idris2-lsp (`master` at `8558fb7`, 25.5k definitions, about 22 s
+against 19 s for the plain lint, almost all of it parsing):
+
+```
+                                                    places  in loop     ops  %all
+  all dup/drop operations                                            290924
+  A  dup above a case, cancelled in some arm         12271    6496   19274  6.6%
+       needed by no arm                                877     492    2582  0.8%
+       needed by no arm, field + drop between         2944    1119    8400  2.8%
+       needed by some arm                             1947     996    1876  0.6%
+       needed by some arm, field + drop between       6503    3889    6416  2.2%
+  B  dup ... postDrop of the same local               3361    1059    6722  2.3%
+       on extprim 2416, on op 805, on callRep 140; none closed by a drop node
+  C0 let dead on a straight line                      3166    2457    3190  1.0%   (alias 2567)
+  C1 let dropped on every arm                            0       0       0
+  C2 let read by one arm, dropped on the rest         1234     379    1313  0.4%   (3 with no visible obstacle)
+  D  field dups, then the parent drop                19616    9056   30004 10.3%
+  D0 same arm shape, parent reuseOffer'd             14259    5867   32831
+  E  drops at the start of an arm                    46566   19147  150409 51.7%  (73.4% of all drop entries)
+```
+
+D counts every field dup made before the parent is dropped (30004); the
+`4342` that `--borrow-stats` reports as "dups of a case field passed
+borrowed" on the same dump are only those whose field is then passed to a
+call, so the two are not comparable.
+
 ## Building and testing
 
 ```sh
@@ -336,6 +412,7 @@ checking both the exit code and the exact report text (the fixture's
 | `leakclean.rcexpr` | the balanced shapes the leak check has to accept: erased alts, always-unboxed locals, immortal lets, value-position joins, loops (invariant and padded), struct fields, reuse, FFI and `callRep` consumption |
 | `leak.rcexpr` | one definition per leak-check finding |
 | `borrow.rcexpr` | the borrow statistics, with hand-counted figures (run with `--borrow-stats`) |
+| `pushdown.rcexpr` | the push-down statistics: one definition per pattern with its negative neighbours (a dup needed by every arm, a use before the case, a consumed operand, a sub-field read after the drop), hand-counted (run with `--pushdown-stats`) |
 
 It builds with the plain Chez backend (`idris2 -p rc2base -p contrib`):
 this tool only reads text files and never needs to run *through* rc2
@@ -350,6 +427,7 @@ itself. It needs `rc2base` already built and installed -- see
 | `Lint.idr` | the use-after-free/double-drop check; its module note carries the rule list this README summarises |
 | `Leak.idr` | the leak check, and the spend/`dup` events the borrow statistics are built from |
 | `Borrow.idr` | the borrow statistics |
+| `Pushdown.idr` | the push-down statistics |
 | `Metrics.idr` | the static counts printed after the report |
 | `tests/` | fixtures and `verify.sh` |
 
