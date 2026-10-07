@@ -46,6 +46,8 @@ import Language.RCExpr.AST
 import Data.List
 import Data.Maybe
 import Data.SortedMap
+import Data.SortedSet
+import Data.String
 
 %default covering
 
@@ -161,6 +163,48 @@ doDup defName st v@(RVar i) n = case lookup i st of
     Just e => ( insert i ({ owned $= (+ integerToNat (cast n)) } e) st
               , checkRead defName "dup" st v )
 doDup _ st _ _ = (st, [])
+
+||| Every alt constant of a `case` carries the dump's `u:` mark (an
+||| always-unboxed constant type, `Compiler.RC2.Pretty.immediateMark`): the
+||| scrutinee holds a tagged immediate (`Compiler.RC2.Types.typedConstScrutinees`).
+export
+typedImmediateAlts : List RConstAlt -> Bool
+typedImmediateAlts [] = False
+typedImmediateAlts alts = all (\a => isPrefixOf "u:" a.constVal) alts
+
+||| The locals a `u:` case scrutinises (`typedImmediateAlts`), anywhere in
+||| `e`.
+export
+uCaseLocals : SortedSet Int -> RCExp -> SortedSet Int
+uCaseLocals acc (RLetIn _ _ value body) = uCaseLocals (uCaseLocals acc value) body
+uCaseLocals acc (RCmp _ _ _ t f) = uCaseLocals (uCaseLocals acc t) f
+uCaseLocals acc (RConCaseNode _ alts mDef) =
+    let acc' = foldl (\s, a => uCaseLocals s a.altBody) acc alts
+    in maybe acc' (uCaseLocals acc') mDef
+uCaseLocals acc (RConstCaseNode sc alts mDef) =
+    let acc0 = case sc of
+                    RVar v => if typedImmediateAlts alts then insert v acc else acc
+                    _ => acc
+        acc' = foldl (\s, a => uCaseLocals s a.altBody) acc0 alts
+    in maybe acc' (uCaseLocals acc') mDef
+uCaseLocals acc (RDupNode _ _ b) = uCaseLocals acc b
+uCaseLocals acc (RDropNode _ b) = uCaseLocals acc b
+uCaseLocals acc (RFreeNode _ b) = uCaseLocals acc b
+uCaseLocals acc (RReleaseReuseNode _ b) = uCaseLocals acc b
+uCaseLocals acc (RReuseOfferNode _ _ _ b) = uCaseLocals acc b
+uCaseLocals acc (RLoopNode _ _ _ b) = uCaseLocals acc b
+uCaseLocals acc (RMemoizeNode _ _ b) = uCaseLocals acc b
+uCaseLocals acc _ = acc
+
+||| Reference count seeded on a `u:`-case local: effectively unlimited, so
+||| it is never dead (a field read after its scrutinee is dropped, an
+||| immediate copied out of the cell at alt entry) and a drop or dup of it
+||| in the dump (the `noboolfield` form keeps them) never underflows.
+immediateRefs : Nat
+immediateRefs = 1000000000
+
+isImmediateEntry : Entry -> Bool
+isImmediateEntry e = e.owned >= immediateRefs
 
 mutual
   walk : String -> OwnState -> RCExp -> (OwnState, List Anomaly)
@@ -281,8 +325,16 @@ mutual
       let fieldEntry = case sc of
                             RVar s => if isJust (lookup s st) then MkEntry 0 (Just s) else owning 1
                             _ => owning 1
-          stWithArgs = foldl (\s, i => insert i fieldEntry s) st alt.args
+          -- A field of a `u:` case (seeded by `lintDef`) is a copied-out immediate.
+          bind = \s, i => case lookup i s of
+                               Just e => if isImmediateEntry e then s else insert i fieldEntry s
+                               Nothing => insert i fieldEntry s
+          stWithArgs = foldl bind st alt.args
       in snd (walk dn stWithArgs alt.altBody)
+
+seedImmediates : RCExp -> OwnState -> OwnState
+seedImmediates body st =
+    foldl (\s, i => insert i (owning immediateRefs) s) st (SortedSet.toList (uCaseLocals empty body))
 
 ||| One `def`'s own anomalies, starting from its own `args=[...]`
 ||| (`Boxed` args get an initial live count of 1; a `RCErrorDef`/
@@ -293,8 +345,8 @@ export
 lintDef : String -> RCDef -> List Anomaly
 lintDef name (RCFun args _ _ body) =
     let initial = foldl (\s, (i, r) => if isBoxedRep r then insert i (owning 1) s else s) (the OwnState empty) args
-    in snd (walk name initial body)
-lintDef name (RCErrorDef body) = snd (walk name (the OwnState empty) body)
+    in snd (walk name (seedImmediates body initial) body)
+lintDef name (RCErrorDef body) = snd (walk name (seedImmediates body (the OwnState empty)) body)
 lintDef _ (RCCon _ _ _) = []
 lintDef _ (RCForeign _) = []
 

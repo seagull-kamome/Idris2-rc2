@@ -148,3 +148,20 @@ if echo "$p1" | grep -q '== UINT8_C(1)) {' && echo "$p0" | grep -q '== UINT8_C(0
 else
     fail "Bits8 default branch: tcP1/tcP0 do not compile to an explicit == 1 / == 0 test (see $cfile)"
 fi
+
+# Always-unboxed constructor fields (`--directive noboolfield`): the
+# `Bits8` field of `TcBox`, scrutinised by a typed-constant `case`, takes
+# no dup before its parent is dropped, no arm-start drop, and no entry in
+# a `reuseOffer`'s `dupOnShared` (`tcBump` rebuilds a `TcBox`). Compared
+# with the same compiler under the switch.
+(cd "$rc2dir/tests" && "$rc2dir/build/exec/idris2-rc2" --cg rc2 --directive dumprcexpr --directive noboolfield \
+    "$name/$name.idr" -o "$TMP/${name}_noboolfield" > "$TMP/${name}_noboolfield.log" 2>&1)
+nf="$TMP/${name}_noboolfield.rcexpr"
+fon="$(armdrops "$rcexpr")"; foff="$(armdrops "$nf")"
+offers() { grep -E '^ *reuseOffer .* dupOnShared= ' "$1" | sed -E 's/.*dupOnShared= \[([^]]*)\].*/\1/' | tr ',' '\n' | grep -c 'v' || true; }
+oon="$(offers "$rcexpr")"; ooff="$(offers "$nf")"
+if [ -f "$nf" ] && [ "$fon" -lt "$foff" ] && [ "$oon" -lt "$ooff" ]; then
+    pass "unboxed constructor fields -- arm-start drops $foff -> $fon, reuseOffer dupOnShared entries $ooff -> $oon (--directive noboolfield)"
+else
+    fail "unboxed constructor fields: arm-start drops noboolfield=$foff default=$fon, dupOnShared entries noboolfield=$ooff default=$oon (see $nf)"
+fi

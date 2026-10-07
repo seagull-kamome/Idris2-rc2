@@ -98,19 +98,19 @@ tryConsume target sc e =
 ||| treatment, with no scrutinee of their own to offer). See
 ||| `doc/reuse-analysis.md`'s "Algorithm" for the full protocol.
 export
-resolveReuse : RCExp -> RCExp
-resolveReuse (RLet fc var rep value body) =
-    RLet fc var rep (resolveReuse value) (resolveReuse body)
-resolveReuse (RDup fc v extra body) = RDup fc v extra (resolveReuse body)
-resolveReuse (RDrop fc vs body) = RDrop fc vs (resolveReuse body)
-resolveReuse (RFree fc v body) = RFree fc v (resolveReuse body)
-resolveReuse (RReleaseReuse fc v body) = RReleaseReuse fc v (resolveReuse body)
+resolveReuse : (imm : SortedSet RCLocal) -> RCExp -> RCExp
+resolveReuse imm (RLet fc var rep value body) =
+    RLet fc var rep (resolveReuse imm value) (resolveReuse imm body)
+resolveReuse imm (RDup fc v extra body) = RDup fc v extra (resolveReuse imm body)
+resolveReuse imm (RDrop fc vs body) = RDrop fc vs (resolveReuse imm body)
+resolveReuse imm (RFree fc v body) = RFree fc v (resolveReuse imm body)
+resolveReuse imm (RReleaseReuse fc v body) = RReleaseReuse fc v (resolveReuse imm body)
 -- Without this, a memoized CAF body keeps `annotate`'s drops with none
 -- of the field dups this pass owes them (doc/caf-memoization.md,
 -- "Limitations").
-resolveReuse (RMemoize fc n rep body) = RMemoize fc n rep (resolveReuse body)
-resolveReuse (RConCase fc sc alts mDef) =
-    RConCase fc sc (map (resolveAlt sc) alts) (map resolveReuse mDef)
+resolveReuse imm (RMemoize fc n rep body) = RMemoize fc n rep (resolveReuse imm body)
+resolveReuse imm (RConCase fc sc alts mDef) =
+    RConCase fc sc (map (resolveAlt sc) alts) (map (resolveReuse imm) mDef)
   where
     ||| Eligible when `sc` dies in its own peeled drop list, its shape
     ||| isn't erased (NIL/NOTHING/ZERO/UNIT), and the body goes on to
@@ -119,7 +119,7 @@ resolveReuse (RConCase fc sc alts mDef) =
     ||| dropOnUnique".
     resolveAlt : RCLocal -> RConAlt -> RConAlt
     resolveAlt sc (MkRConAlt name ci tag args body) =
-        let body1 = resolveReuse body
+        let body1 = resolveReuse imm body
             -- A field-less alternative has no cell worth reusing, and its
             -- scrutinee may not be a cell at all: a folded constant
             -- holds such a constructor as a tagged pointer (RCEmptyCon).
@@ -141,13 +141,15 @@ resolveReuse (RConCase fc sc alts mDef) =
                                      (True, consumed) => consumed
                                      (False, _) => RReleaseReuse emptyFC sc inner
                        dropped' = dropped \\ [sc]
-                       conArgsRC = map RCLoc args
+                       -- An always-unboxed field (`typedConstScrutinees`) needs no
+                       -- dup/drop on either path: left out of the three lists below.
+                       conArgsRC = filter (\l => not (contains l imm)) (map RCLoc args)
                        -- Surviving destructured fields need their own
                        -- dup on the "turned out shared" path; fields
                        -- already in `dropped'` ride `sc`'s own
                        -- recursive drop for free instead.
                        dupOnShared = conArgsRC \\ dropped'
-                       outerDrop = dropped' \\ conArgsRC
+                       outerDrop = dropped' \\ map RCLoc args
                        -- Never-referenced destructured fields: free on
                        -- the not-unique path (sc's own recursive
                        -- drop), but need an explicit drop on the
@@ -156,19 +158,19 @@ resolveReuse (RConCase fc sc alts mDef) =
                        dropOnUnique = conArgsRC \\ dupOnShared
                    in MkRConAlt name ci tag args
                         (rewrapDrop outerDrop (RReuseOffer emptyFC sc dupOnShared dropOnUnique inner'))
-              else let conArgsRC = map RCLoc args
+              else let conArgsRC = filter (\l => not (contains l imm)) (map RCLoc args)
                        -- Same "destructured via aliasing" rule as
                        -- `dupOnShared` above, just with no reuse offer
                        -- to carry it.
                        dupOnSurvive = conArgsRC \\ dropped
-                       outerDrop = dropped \\ conArgsRC
+                       outerDrop = dropped \\ map RCLoc args
                    in MkRConAlt name ci tag args
                         (foldr (\v, acc => RDup emptyFC v 0 acc) (rewrapDrop outerDrop inner) dupOnSurvive)
-resolveReuse (RConstCase fc sc alts mDef) =
-    RConstCase fc sc (map resolveConstAlt alts) (map resolveReuse mDef)
+resolveReuse imm (RConstCase fc sc alts mDef) =
+    RConstCase fc sc (map resolveConstAlt alts) (map (resolveReuse imm) mDef)
   where
     resolveConstAlt : RConstAlt -> RConstAlt
-    resolveConstAlt (MkRConstAlt c body) = MkRConstAlt c (resolveReuse body)
-resolveReuse (RCmpCase fc op args pd t f) =
-    RCmpCase fc op args pd (resolveReuse t) (resolveReuse f)
-resolveReuse e = e
+    resolveConstAlt (MkRConstAlt c body) = MkRConstAlt c (resolveReuse imm body)
+resolveReuse imm (RCmpCase fc op args pd t f) =
+    RCmpCase fc op args pd (resolveReuse imm t) (resolveReuse imm f)
+resolveReuse _ e = e

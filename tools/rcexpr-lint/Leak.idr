@@ -298,13 +298,6 @@ boundToComparison _ = False
 hasUnboxedType : String -> Bool
 hasUnboxedType t = any (\n => isInfixOf n t) unboxedTypeNames
 
-||| Every alt constant of a `case` carries the dump's `u:` mark (an
-||| always-unboxed constant type, `Compiler.RC2.Pretty.immediateMark`): the
-||| scrutinee holds a tagged immediate (`Compiler.RC2.RC.typedConstScrutinees`).
-typedImmediateAlts : List RConstAlt -> Bool
-typedImmediateAlts [] = False
-typedImmediateAlts alts = all (\a => isPrefixOf "u:" a.constVal) alts
-
 scanExp : SortedSet Int -> RCExp -> SortedSet Int
 scanExp sc (RV _) = sc
 scanExp sc (RCall _ _ _) = sc
