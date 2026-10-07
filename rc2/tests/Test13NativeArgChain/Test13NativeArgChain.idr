@@ -140,8 +140,9 @@ describeNeg x = if isBig (0 - x) then "n-big" else "n-small"
 describeBoth : Int -> Int -> String
 describeBoth x y = if isBig x && isBig y then "both" else "not-both"
 
--- Bool-producing comparison results (`Integer`/`String`, so not fused
--- into a native `cmp`): `let v : Boxed = op <Integer ..` binds an
+-- Bool-producing comparison results (`Integer`/`String`): a `case` on
+-- one is now a fused `cmp` over Boxed operands, so no Bool local exists
+-- there at all; where one is still let-bound, `let v : Boxed = op <Integer ..` binds an
 -- `Int8` immediate (`mkBool`), so `Compiler.RC2.RC`'s
 -- `alwaysUnboxedBoxedLocalsR` treats the local like an `alwaysUnboxed`
 -- operand: no `dup`, no `drop`, however it is used (doc/native-type-
@@ -169,6 +170,11 @@ boolcmpAcc k (x :: xs) acc = boolcmpAcc k xs (acc && x < k)
 boolcmpMap : Integer -> List Integer -> List Bool
 boolcmpMap k xs = map (\x => x >= k) xs
 
+-- A value the compiler cannot fold away, so the calls below keep their
+-- comparisons.
+opaqueK : Integer
+opaqueK = natToInteger (length (unpack (show (the Integer 1234))))
+
 boolcmps : List String
 boolcmps =
     [ boolcmpIf 1 2, boolcmpIf 2 1, boolcmpIf 3 3
@@ -179,6 +185,8 @@ boolcmps =
     , show (boolcmpAcc 100 [1, 2, 3] True), show (boolcmpAcc 100 [1, 200, 3] True)
     , show (boolcmpMap 2 [1, 2, 3])
     , show (boolcmpAcc 18446744073709551616 [18446744073709551615] True)
+    , show (boolcmpTwice opaqueK 3), show (boolcmpTwice 5 opaqueK)
+    , show (boolcmpStr (pack (unpack "ab")) "ab"), show (boolcmpMap opaqueK [3, 4, 5])
     ]
 
 -- Bool return (doc/dual-abi.md, "Bool return"): a function whose every

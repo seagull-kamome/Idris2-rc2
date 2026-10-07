@@ -381,7 +381,7 @@ mutual
     tryFuseCompareOp : Norm (Frame -> FC -> CmpOp -> Vect 2 NamedCExp ->
                              List NamedConstAlt -> Maybe NamedCExp -> Core (Maybe RCExp))
     tryFuseCompareOp fr fc op args alts mDef =
-        if not (nativeEligible (cmpOpTy op))
+        if not (nativeEligible (cmpOpTy op) || boxedCmpEligible (cmpOpTy op))
            then pure Nothing
            else case boolBranches alts mDef of
                      Nothing => pure Nothing

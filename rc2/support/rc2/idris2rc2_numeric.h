@@ -361,14 +361,19 @@ static inline int idris2rc2_strcmp3(IDRIS2RC2_Value *a, IDRIS2RC2_Value *b) {
   if (c != 0) return c;
   return (sa->len > sb->len) - (sa->len < sb->len);
 }
-static inline IDRIS2RC2_Value *idris2rc2_lt_string(IDRIS2RC2_Value *a, IDRIS2RC2_Value *b) { return idris2rc2_mkBool(idris2rc2_strcmp3(a, b) < 0); }
-static inline IDRIS2RC2_Value *idris2rc2_gt_string(IDRIS2RC2_Value *a, IDRIS2RC2_Value *b) { return idris2rc2_mkBool(idris2rc2_strcmp3(a, b) > 0); }
-static inline IDRIS2RC2_Value *idris2rc2_eq_string(IDRIS2RC2_Value *a, IDRIS2RC2_Value *b) {
+static inline int idris2rc2_lt_string_raw(IDRIS2RC2_Value *a, IDRIS2RC2_Value *b) { return idris2rc2_strcmp3(a, b) < 0; }
+static inline int idris2rc2_gt_string_raw(IDRIS2RC2_Value *a, IDRIS2RC2_Value *b) { return idris2rc2_strcmp3(a, b) > 0; }
+static inline int idris2rc2_eq_string_raw(IDRIS2RC2_Value *a, IDRIS2RC2_Value *b) {
   IDRIS2RC2_String *sa = (IDRIS2RC2_String *)a, *sb = (IDRIS2RC2_String *)b;
-  return idris2rc2_mkBool(sa->len == sb->len && (sa->len == 0 || memcmp(sa->str, sb->str, sa->len) == 0));
+  return sa->len == sb->len && (sa->len == 0 || memcmp(sa->str, sb->str, sa->len) == 0);
 }
-static inline IDRIS2RC2_Value *idris2rc2_lte_string(IDRIS2RC2_Value *a, IDRIS2RC2_Value *b) { return idris2rc2_mkBool(idris2rc2_strcmp3(a, b) <= 0); }
-static inline IDRIS2RC2_Value *idris2rc2_gte_string(IDRIS2RC2_Value *a, IDRIS2RC2_Value *b) { return idris2rc2_mkBool(idris2rc2_strcmp3(a, b) >= 0); }
+static inline int idris2rc2_lte_string_raw(IDRIS2RC2_Value *a, IDRIS2RC2_Value *b) { return idris2rc2_strcmp3(a, b) <= 0; }
+static inline int idris2rc2_gte_string_raw(IDRIS2RC2_Value *a, IDRIS2RC2_Value *b) { return idris2rc2_strcmp3(a, b) >= 0; }
+static inline IDRIS2RC2_Value *idris2rc2_lt_string(IDRIS2RC2_Value *a, IDRIS2RC2_Value *b) { return idris2rc2_mkBool(idris2rc2_lt_string_raw(a, b)); }
+static inline IDRIS2RC2_Value *idris2rc2_gt_string(IDRIS2RC2_Value *a, IDRIS2RC2_Value *b) { return idris2rc2_mkBool(idris2rc2_gt_string_raw(a, b)); }
+static inline IDRIS2RC2_Value *idris2rc2_eq_string(IDRIS2RC2_Value *a, IDRIS2RC2_Value *b) { return idris2rc2_mkBool(idris2rc2_eq_string_raw(a, b)); }
+static inline IDRIS2RC2_Value *idris2rc2_lte_string(IDRIS2RC2_Value *a, IDRIS2RC2_Value *b) { return idris2rc2_mkBool(idris2rc2_lte_string_raw(a, b)); }
+static inline IDRIS2RC2_Value *idris2rc2_gte_string(IDRIS2RC2_Value *a, IDRIS2RC2_Value *b) { return idris2rc2_mkBool(idris2rc2_gte_string_raw(a, b)); }
 
 // ---- Integer (arbitrary precision, via GMP) ----
 // Both operands immediate: plain int64_t arithmetic. Otherwise GMP, with
@@ -460,16 +465,23 @@ static inline int idris2rc2_integerCmp(IDRIS2RC2_Value *x, IDRIS2RC2_Value *y) {
     return ((intptr_t)x > (intptr_t)y) - ((intptr_t)x < (intptr_t)y);
   return idris2rc2_integerCmpSlow(x, y);
 }
-static inline IDRIS2RC2_Value *idris2rc2_lt_Integer(IDRIS2RC2_Value *x, IDRIS2RC2_Value *y) { return idris2rc2_mkBool(idris2rc2_integerCmp(x, y) < 0); }
-static inline IDRIS2RC2_Value *idris2rc2_gt_Integer(IDRIS2RC2_Value *x, IDRIS2RC2_Value *y) { return idris2rc2_mkBool(idris2rc2_integerCmp(x, y) > 0); }
-static inline IDRIS2RC2_Value *idris2rc2_lte_Integer(IDRIS2RC2_Value *x, IDRIS2RC2_Value *y) { return idris2rc2_mkBool(idris2rc2_integerCmp(x, y) <= 0); }
-static inline IDRIS2RC2_Value *idris2rc2_gte_Integer(IDRIS2RC2_Value *x, IDRIS2RC2_Value *y) { return idris2rc2_mkBool(idris2rc2_integerCmp(x, y) >= 0); }
+// `_raw`: the C int a fused comparison branches on (RCmpCase over Boxed
+// operands), no mkBool; the plain names box it for the unfused form.
+static inline int idris2rc2_lt_Integer_raw(IDRIS2RC2_Value *x, IDRIS2RC2_Value *y) { return idris2rc2_integerCmp(x, y) < 0; }
+static inline int idris2rc2_gt_Integer_raw(IDRIS2RC2_Value *x, IDRIS2RC2_Value *y) { return idris2rc2_integerCmp(x, y) > 0; }
+static inline int idris2rc2_lte_Integer_raw(IDRIS2RC2_Value *x, IDRIS2RC2_Value *y) { return idris2rc2_integerCmp(x, y) <= 0; }
+static inline int idris2rc2_gte_Integer_raw(IDRIS2RC2_Value *x, IDRIS2RC2_Value *y) { return idris2rc2_integerCmp(x, y) >= 0; }
 // An immediate never equals a boxed Integer.
-static inline IDRIS2RC2_Value *idris2rc2_eq_Integer(IDRIS2RC2_Value *x, IDRIS2RC2_Value *y) {
+static inline int idris2rc2_eq_Integer_raw(IDRIS2RC2_Value *x, IDRIS2RC2_Value *y) {
   if (idris2rc2_is_unboxed(x) || idris2rc2_is_unboxed(y))
-    return idris2rc2_mkBool(x == y);
-  return idris2rc2_mkBool(idris2rc2_integerCmpSlow(x, y) == 0);
+    return x == y;
+  return idris2rc2_integerCmpSlow(x, y) == 0;
 }
+static inline IDRIS2RC2_Value *idris2rc2_lt_Integer(IDRIS2RC2_Value *x, IDRIS2RC2_Value *y) { return idris2rc2_mkBool(idris2rc2_lt_Integer_raw(x, y)); }
+static inline IDRIS2RC2_Value *idris2rc2_gt_Integer(IDRIS2RC2_Value *x, IDRIS2RC2_Value *y) { return idris2rc2_mkBool(idris2rc2_gt_Integer_raw(x, y)); }
+static inline IDRIS2RC2_Value *idris2rc2_lte_Integer(IDRIS2RC2_Value *x, IDRIS2RC2_Value *y) { return idris2rc2_mkBool(idris2rc2_lte_Integer_raw(x, y)); }
+static inline IDRIS2RC2_Value *idris2rc2_gte_Integer(IDRIS2RC2_Value *x, IDRIS2RC2_Value *y) { return idris2rc2_mkBool(idris2rc2_gte_Integer_raw(x, y)); }
+static inline IDRIS2RC2_Value *idris2rc2_eq_Integer(IDRIS2RC2_Value *x, IDRIS2RC2_Value *y) { return idris2rc2_mkBool(idris2rc2_eq_Integer_raw(x, y)); }
 
 IDRIS2RC2_Value *idris2rc2_div_Integer(IDRIS2RC2_Value *, IDRIS2RC2_Value *);
 

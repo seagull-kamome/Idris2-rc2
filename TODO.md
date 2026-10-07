@@ -836,34 +836,27 @@ cmp <Int [x, y]  then A  else  cmp ==Int [x, y]  then A  else B
   足す。条件は、外側と内側が同じ2引数・同じ型の比較であること、演算子の組が
   `{<, ==}`か`{>, ==}`であること、外側と内側のthen枝が構造的に等しいこと。
   dump上の`postDrop`はdup/drop挿入後の表現なので、そこでは扱いにくい。
-- `Nat`版(`compare x y /= GT`)が`cmp`に融合されないのは別の問題で、原因は
-  インライン展開ではなく`Integer`の比較が融合の対象外であること(調査
-  2026-10-06)。
-  - `Ord Nat`は`compare = compareNat`(`Prelude/Types.idr:93-94`)で、
-    コンパイラのnat hack(`Opts/Constructor.idr:92-93`)が`compareInteger`の
-    呼び出しに置き換える。実体は`compare_Ord_Integer`で、本体は
-    `op <Integer`を`case`し、`0`なら`op ==Integer`を`case`して`2`か`1`か`0`を
-    返す。`Ord Int`/`Ord Integer`は`compare`を持たず、クラスのデフォルト
-    (`EqOrd.idr:168-181`)を使う。
-  - 融合の入口`tryFuseCompareOp`は`nativeEligible (cmpOpTy op)`が偽なら
-    何もしない(`RC.idr:383-385`)。`nativeEligible`が真なのは`Int`系・`Bits`系・
-    `Double`・`Char`で、`Integer`は偽(`Types.idr:23-35`)。したがって
-    `compare_Ord_Integer`を展開しても`op <Integer`と`case`のままで、`cmp`には
-    ならない。
-  - 規模: idris2-lspで`compare_Ord_Integer`のworker呼び出しは18か所(直後が
-    `case`なのは17か所)。idris2-lspは`Nat`をあまり使わないコードなので、
-    `Vect`の添字や長さ、ループの添字で`Nat`を多用する利用者のプログラムでは
-    もっと出る可能性がある。この数字は一般化できない。
-  - 対処の案。(1)何もしない: 数字が小さいので閉じる。(2)`Integer`の比較も
-    融合の対象にする。`Integer`は即値(62ビット以内)とGMPの2通りなので、
-    `cmp`の生成と`nativeEligible`の意味を広げる必要があり、リスクが高い。
-    (3)`compare`の結果で分岐する形を2段の`op`の分岐へ展開する。`Integer`では
-    融合が効かないので効果はほぼ無い。今は(1)。
-  - 宿題: `Nat`を多用する実際のプログラムで、`compare_Ord_Integer`の出現数と
-    実行時の寄与を測る。大きければ(2)を再検討する。
-  - 未確認: `compare_Ord_Integer`がそもそも展開されない理由。`InlineCExp`
-    時点の本体の大きさが`delegatingThreshold`(20)を超えている可能性がある
-    が、測っていない。
+- `Integer`/`String`の比較(`Nat`を含む)は`cmp`に融合するようにした(2026-10-07)。
+  `tryFuseCompareOp`が`Types.boxedCmpEligible`(`Integer`と`String`)も通し、
+  Boxedのオペランドのまま`int cmp_N = idris2rc2_lt_Integer_raw(a, b)`のような
+  `_raw`ヘルパー(`idris2rc2_numeric.h`)で分岐する。オペランドは`ROp`と同じく
+  `postDrop`で解放する。設計は`rc2/doc/native-type-inference.md`の
+  "Comparisons over Boxed operands"。
+  - idris2-lspのdump: `cmp`が551から1175へ(うち`Integer`/`String`が624)、
+    `op <Integer`/`==String`等の`let`+`case`の組が632から8へ。`dup`は79113から
+    79112、`drop`は80495から80467で、ほぼ変わらない(Boolの`let`はstage 1で既に
+    `dup`/`drop`が付かなかった)。リンタの漏れ検査は異常0で、検査対象の定義数も
+    同じ(17534)。
+  - 実行時間は変わらなかった(`BenchBoxedCompare`、`Integer`の即値・ヒープと
+    `String`の比較の分岐: 0.174秒が前後で同じ。gccが元の`mkBool`の往復を
+    既に消していた)。効果はIRとCの見通しと、`mkBool`/`to_i64`の削減にとどまる。
+  - 残る未融合: `case`の対象が比較の直接の結果ではなく、`let`で束縛された
+    変数になっている形(`Eq Nat`の`==`をインライン展開した後など。lspで8組)。
+    なぜその形になるのかは調べていない。
+  - `compare x y /= GT`の形は、`compare_Ord_Integer`のworker内で`cmp <Integer`と
+    `cmp ==Integer`の入れ子になる(`Ord Int`と同じ形)。lspでの呼び出しは24か所の
+    ままで、展開されない理由(`delegatingThreshold`の20を超えるか)は測っていない。
+    `<`と`==`の対を`<=`にまとめる変換(上)は`Integer`にも使える。
 - 同じ結果を返す複数の`case`の枝(`0 -> 10; 1 -> 10; _ -> 10`)を1つにまとめる
   処理は、`ConstFold`/`Sink`/`DeadVars`/`DupMerge`/`Emit`/`RC`/`Reuse`の
   grepの範囲では見つからなかった(`DupMerge`はdup/dropの統合で別物)。

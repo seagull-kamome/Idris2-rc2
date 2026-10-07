@@ -355,6 +355,8 @@ data RCExp : Type where
      ||| materialised. Only produced by Phase 1's `tryFuseCompare` --
      ||| see `doc/native-type-inference.md`'s "Comparisons are a
      ||| separate, narrower mechanism". `postDrop` mirrors `ROp`'s own field.
+     ||| The operands are native, except for an `Integer`/`String` comparison
+     ||| (`Types.boxedCmpEligible`), where they are Boxed and `postDrop` drops them.
      RCmpCase   : FC -> CmpOp -> Vect 2 RCLocal -> (postDrop : List RCLocal) -> (whenTrue : RCExp) -> (whenFalse : RCExp) -> RCExp
      RConCase   : FC -> RCLocal -> List RConAlt -> Maybe RCExp -> RCExp
      RConstCase : FC -> RCLocal -> List RConstAlt -> Maybe RCExp -> RCExp

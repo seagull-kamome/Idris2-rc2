@@ -20,5 +20,15 @@ True
 "0"
 case: matched own literal
 case: correctly distinct past the NUL
+=LG <LN <LN <LN <LN <LN <LN <LN <LN <LN
+>GN =LG <LN <LN <LN <LN <LN <LN <LN <LN
+>GN >GN =LG <LN <LN <LN <LN <LN <LN <LN
+>GN >GN >GN =LG <LN <LN <LN <LN <LN <LN
+>GN >GN >GN >GN =LG <LN <LN <LN <LN <LN
+>GN >GN >GN >GN >GN =LG <LN <LN <LN <LN
+>GN >GN >GN >GN >GN >GN =LG <LN >GN <LN
+>GN >GN >GN >GN >GN >GN >GN =LG >GN <LN
+>GN >GN >GN >GN >GN >GN <LN <LN =LG <LN
+>GN >GN >GN >GN >GN >GN >GN >GN >GN =LG
 ab
 done

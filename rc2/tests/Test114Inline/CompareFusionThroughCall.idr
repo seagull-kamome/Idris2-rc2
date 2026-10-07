@@ -41,6 +41,20 @@ loop : Nat -> Int -> Int
 loop Z acc = acc
 loop (S k) acc = if acc == (-999999) then acc else loop k (step acc)
 
+-- The same through `Ord Integer` and `Eq Integer`: the fused `cmp` here
+-- is over Boxed Integer operands (doc/native-type-inference.md,
+-- "Comparisons over Boxed operands"). The accumulator starts past the
+-- 62-bit immediate range, so every comparison takes the heap path.
+stepI : Integer -> Integer
+stepI acc = if acc <= 0 then 1 else acc + 1
+
+loopI : Nat -> Integer -> Integer
+loopI Z acc = acc
+loopI (S k) acc = if acc == (-999999999999999999999) then acc else loopI k (stepI acc)
+
 export
 run : IO ()
-run = printLn (loop 2000000 1)
+run = do
+    printLn (loop 2000000 1)
+    printLn (loopI 200000 4611686018427387000)
+    printLn (loopI 20 (-4611686018427388000))

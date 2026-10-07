@@ -27,3 +27,17 @@ if [ "$selfCalls" -ge 1 ] && [ "$bigCalls" -ge 2 ]; then
 else
     fail "selfRec calls $selfCalls (want >=1), big calls $bigCalls (want >=2) in $dump"
 fi
+
+# CompareFusionThroughCall: the Integer variant (`stepI`/`loopI`) fuses
+# too, as a `cmp` over Boxed operands -- no `op <=Integer`/`op ==Integer`
+# let left, and no call to the `Ord Integer`/`Eq Integer` methods.
+dump="$TMP/${name}_rc2.rcexpr"
+m="Test114Inline[._]CompareFusionThroughCall"
+body="$(awk -v m="$m" '/^def / { on = ($0 ~ m "[._](stepI|loopI)") } on' "$dump")"
+cmpsI="$(printf '%s\n' "$body" | grep -cE '^ *cmp (<=|==)Integer ' || true)"
+opsI="$(printf '%s\n' "$body" | grep -cE '^ *op (<=|==)Integer ' || true)"
+if [ "$cmpsI" -ge 2 ] && [ "$opsI" = "0" ]; then
+    pass "Integer compare through a call -- $cmpsI cmp node(s) over Boxed operands, no unfused op"
+else
+    fail "stepI/loopI: $cmpsI cmp node(s) (want >=2), $opsI unfused op(s) in $dump"
+fi
