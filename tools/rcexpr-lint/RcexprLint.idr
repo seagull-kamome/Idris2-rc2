@@ -16,6 +16,7 @@ import Borrow
 import Leak
 import Lint
 import Metrics
+import Pushdown
 
 import Data.List
 import Data.SortedMap
@@ -24,9 +25,9 @@ import System
 import System.File
 
 usage : String
-usage = "usage: rcexpr-lint [--borrow-stats] <file.rcexpr>"
+usage = "usage: rcexpr-lint [--borrow-stats | --pushdown-stats] <file.rcexpr>"
 
-runOn : Bool -> String -> IO ()
+runOn : Maybe (RCProgram -> List String) -> String -> IO ()
 runOn stats path = do
     result <- readFile path
     case result of
@@ -37,7 +38,9 @@ runOn stats path = do
              Left err => do
                  putStrLn ("rcexpr-lint: " ++ path ++ ": " ++ show err)
                  exitFailure
-             Right prog => if stats then traverse_ putStrLn (borrowStats prog) else reportAnomalies path prog
+             Right prog => case stats of
+                 Just f => traverse_ putStrLn (f prog)
+                 Nothing => reportAnomalies path prog
   where
     isUnknown : Anomaly -> Bool
     isUnknown a = case a.kind of
@@ -72,8 +75,9 @@ main : IO ()
 main = do
     args <- getArgs
     case args of
-         [_, path] => runOn False path
-         [_, "--borrow-stats", path] => runOn True path
+         [_, path] => runOn Nothing path
+         [_, "--borrow-stats", path] => runOn (Just borrowStats) path
+         [_, "--pushdown-stats", path] => runOn (Just pushdownStats) path
          _ => do
              putStrLn usage
              exitFailure

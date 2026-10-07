@@ -17,6 +17,9 @@
 # params, struct fields, reuse, FFI/callRep consumption); `leak.rcexpr`
 # one definition per leak-check finding. `borrow.rcexpr` is run with
 # `--borrow-stats`; every figure in its `.expected` was counted by hand.
+# `pushdown.rcexpr` is run with `--pushdown-stats`; each definition is one
+# pattern (or a negative case next to it) and every figure was counted by
+# hand: the A/B/C1/C2/D/D0 events, the E census and the dup/drop totals.
 # `fieldborrow.rcexpr` covers a case-alt field borrowing its
 # scrutinee's reference, including the exact shape of a real
 # use-after-free (a field read after its scrutinee was dropped).
@@ -76,5 +79,6 @@ check "foreigntypes.rcexpr (struct and function types in %foreign signatures)" "
 check "leakclean.rcexpr (balanced shapes the leak check must accept)" "$TESTS_DIR/leakclean.rcexpr" 0
 check "leak.rcexpr (every leak-check finding fires)" "$TESTS_DIR/leak.rcexpr" 1
 check "borrow.rcexpr (borrow statistics, hand-counted)" "$TESTS_DIR/borrow.rcexpr" 0 --borrow-stats
+check "pushdown.rcexpr (push-down statistics, hand-counted)" "$TESTS_DIR/pushdown.rcexpr" 0 --pushdown-stats
 
 echo "=== All rcexpr-lint checks passed ==="

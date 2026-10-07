@@ -1,0 +1,158 @@
+pushdown statistics (static places in the final IR, not executions; see README "Push-down statistics"):
+  all dup/drop operations 64 (dup 18, drop-type 46); inside loops 6 (9.3%)
+  kind                                                        places in loop      ops    %all ops loop   %loop    extra
+  (A) dup above a case, cancelled by a drop in some arm            6       1       15   23.4%        3   50.0%        9
+      needed by no arm                                                 2       1        9   14.0%        3   50.0%        4
+      needed by no arm, field: a drop sits between                     1       0        3    4.6%        0    0.0%        2
+      needed by some arm                                               1       0        1    1.5%        0    0.0%        1
+      needed by some arm, field: a drop sits between                   2       0        2    3.1%        0    0.0%        2
+  (B) dup ... drop of the same local, straight line                3       0        6    9.3%        0    0.0%        3
+      closed by a drop node                                            1       0        2    3.1%        0    0.0%        1
+      closed by a postDrop on extprim                                  1       0        2    3.1%        0    0.0%        1
+      closed by a postDrop on op                                       1       0        2    3.1%        0    0.0%        1
+  (C0) let dead on a straight line: its first mention is its drop       1       0        1    1.5%        0    0.0%        1
+      alias                                                            1       0        1    1.5%        0    0.0%        1
+  (C1) let dropped on every arm of the case after it               2       0        6    9.3%        0    0.0%        4
+      call                                                             1       0        2    3.1%        0    0.0%        2
+      con                                                              1       0        4    6.2%        0    0.0%        2
+  (C2) let read by exactly one arm, dropped on the rest            4       0        4    6.2%        0    0.0%        4
+      eligible kind, a let that is not sunk sits in between, con       1       0        1    1.5%        0    0.0%        1
+      eligible, adjacent, an operand is also used by the branch (Sink bails), op       1       0        1    1.5%        0    0.0%        1
+      eligible, adjacent, no visible obstacle, call                    1       0        1    1.5%        0    0.0%        1
+      kind Sink never takes, partial                                   1       0        1    1.5%        0    0.0%        1
+  (D) field dup(s), then the parent dropped                        3       0        4    6.2%        0    0.0%        3
+      arm builds a fresh con                                           1       0        1    1.5%        0    0.0%        1
+      arm builds no con                                                2       0        3    4.6%        0    0.0%        2
+  (D0) context: parent reuseOffer'd instead                        1       0        2    3.1%        0    0.0%        1
+      parent reuseOffer'd (already unique-aware)                       1       0        2    3.1%        0    0.0%        1
+  (E) census: drops at the start of an arm                        19       2       35   54.6%        4   66.6%        0
+  (E) is 76.0% of all 46 drop-type entries (80.0% of those inside loops)
+  columns per kind (ops / extra): A: net static ops; cancelling arms; B: ops = 2 x pairs; pairs; C0: ops removable; 1; C1: ops removable; arms; C2: drops removable; unused arms; D: field dups; parent drops; D0: dupOnShared fields; arms; E: entries
+  top 8 definitions, A (ops):
+         6  Main.hoistNone
+         4  Main.fieldHoist
+         3  Main.loopA
+         1  Main.fieldUnsafe
+         1  Main.hoistSome
+  top 15 definitions, B (ops):
+         6  Main.pairs
+  top 8 definitions, C0 (ops):
+         1  Main.deadAlias
+  top 8 definitions, C1 (ops):
+         4  Main.deadLet
+         2  Main.useBefore
+  top 8 definitions, C2 (ops):
+         1  Main.neverTakes
+         1  Main.sinkBails
+         1  Main.sinkBlockedByLet
+         1  Main.sinkMissCall
+  top 8 definitions, D (ops):
+         2  Main.fieldHoist
+         1  Main.fieldUnsafe
+         1  Main.freshArm
+  3 sample places, A/needed by no arm:
+    Main.hoistNone  [A/needed by no arm]
+      dup v1 x2
+      case v2 (const) ...
+    Main.loopA  [A/needed by no arm]
+      dup v1
+      case v3 ...
+  3 sample places, A/needed by some arm:
+    Main.hoistSome  [A/needed by some arm]
+      dup v1
+      case v2 ...
+  2 sample places, B/closed by a postDrop on op:
+    Main.pairs  [B/closed by a postDrop on op]
+      dup v1
+      let v3 =
+        op strLength [v1] postDrop=[v1]
+      dup v2 x2
+      let v4 =
+        extprim Data.IORef.prim__readIORef [[__], v2] postDrop=[v2]
+      dup v1
+      drop [v1]
+      dup v1
+      ...
+  1 sample places, B/closed by a postDrop on extprim:
+    Main.pairs  [B/closed by a postDrop on extprim]
+      dup v2 x2
+      let v4 =
+        extprim Data.IORef.prim__readIORef [[__], v2] postDrop=[v2]
+      dup v1
+      drop [v1]
+      dup v1
+      let v5 =
+        call Main.use [v1]
+      drop [v1]
+      ...
+  1 sample places, B/closed by a drop node:
+    Main.pairs  [B/closed by a drop node]
+      dup v1
+      drop [v1]
+      dup v1
+      let v5 =
+        call Main.use [v1]
+      drop [v1]
+      v5
+  3 sample places, C0/alias:
+    Main.deadAlias  [C0/alias]
+      let v2 =
+        v1
+      drop [v2]
+      prim #0
+  3 sample places, C1:
+    Main.useBefore  [C1/call]
+      let v5 =
+        call Main.use [v1]
+      case v2 ...
+    Main.deadLet  [C1/con]
+      let v3 =
+        dup v1
+        dup v2
+        con _builtin.CONS [v1, v2]
+      case v6 (const) ...
+  4 sample places, C2/eligible, adjacent, no visible:
+    Main.sinkMissCall  [C2/eligible, adjacent, no visible obstacle, call]
+      let v3 =
+        dup v1
+        call Main.mk [v1]
+      case v2 (const) ...
+  2 sample places, C2/eligible, adjacent, an operand:
+    Main.sinkBails  [C2/eligible, adjacent, an operand is also used by the branch (Sink bails), op]
+      let v3 =
+        op strLength [v2] postDrop=[v2]
+      case v2 (const) ...
+  2 sample places, C2/eligible kind:
+    Main.sinkBlockedByLet  [C2/eligible kind, a let that is not sunk sits in between, con]
+      let v3 =
+        con _builtin.JUST [v1]
+      let v4 =
+        v2
+      case v4 (const) ...
+  2 sample places, C2/kind Sink never takes:
+    Main.neverTakes  [C2/kind Sink never takes, partial]
+      let v3 =
+        partial Main.use [v1]
+      case v2 (const) ...
+  3 sample places, D/:
+    Main.fieldHoist  [D/arm builds no con]
+      case v1 of _builtin.CONS [2, 3] ->
+        dup v2
+        dup v3
+        drop [v1]
+        case v3 ...
+    Main.freshArm  [D/arm builds a fresh con]
+      case v1 of _builtin.CONS [2, 3] ->
+        dup v2
+        drop [v1, v3]
+        con _builtin.JUST [v2]
+    Main.fieldUnsafe  [D/arm builds no con]
+      case v1 of _builtin.CONS [2, 3] ->
+        dup v2
+        drop [v1]
+        case v2 ...
+  1 sample places, D0:
+    Main.reuseArm  [D0/parent reuseOffer'd (already unique-aware)]
+      case v1 of _builtin.CONS [2, 3] ->
+        reuseOffer v1 dupOnShared=[v2, v3] dropOnUnique=[]
+        con _builtin.CONS [v3, v2] reuse=v1
