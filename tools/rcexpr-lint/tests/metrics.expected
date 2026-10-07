@@ -1,0 +1,22 @@
+rcexpr-lint: metrics.rcexpr: 7 defs, no anomalies found
+leak check: 1 cases not decided (unknown releaseReuse without offer x1)
+metrics (places in the IR, not executions):
+  definitions        7  (functions 3, workers 2, constructors 1, foreign 1, error 0)
+  con                2  (fresh 1, reusing a cell 1)
+  retpack            2  (constructors returned by value, no cell)
+  partial            1  (closures built)
+  apply              1  (closure calls)
+  call               6  (plain 3, callRep 2, FFI inline 1)
+  op                 2  (op 1, extprim 1)
+  let               10  (Boxed 7, native 3)
+  case               3  (constructor 2, constant 1, cmp 0)
+  dup                2  (increments, in 1 dup nodes)
+  drop               2  (decrements, in 2 drop nodes)
+  postDrop           2  (decrements attached to another node: postDrop, dropOnUnique, prologueDrop)
+  free               1
+  reuseOffer         1  (releaseReuse 1)
+  loop               1  (continue 1)
+  memoize            1
+  delay              0  (lazy cells built)
+  force              0
+  crash              1

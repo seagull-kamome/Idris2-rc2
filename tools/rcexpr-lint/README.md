@@ -40,8 +40,9 @@ suite ever will.
 
 ## What it checks
 
-Two anomalies, both about a `Boxed` local whose owned reference count
-has already reached zero:
+Two anomalies about a `Boxed` local whose owned reference count has
+already reached zero, plus the leak check described in "The leak check"
+below:
 
 | anomaly | meaning |
 |---|---|
@@ -130,16 +131,81 @@ valgrind.
 | `loop`, `continue` | converted loops and their back edges |
 | `memoize`, `crash` | memoized CAF bodies, `crash` nodes |
 
+## The leak check
+
+A second, independent walk (`Leak.idr`) keeps its own count of the
+references each tracked local owns and checks, per path, that every
+owned reference is **consumed exactly once** before the path ends.
+
+| finding | meaning |
+|---|---|
+| `leak` | a path ended (return, tail call, ...) while a local still owned a reference; also a loop parameter not consumed before the next iteration |
+| `reuse-token-leak` | a `reuseOffer` reservation that no `con ... reuse=` or `releaseReuse` consumed on some path |
+| `branch-imbalance` | the arms of a `case`/`cmp` in value position (the value of a `let`) leave a local owning different numbers of references |
+| `loop-imbalance` | a `continue` hands back a different number of references than the loop had at its top (a local from outside the loop consumed, or leaked, per iteration) |
+| `over-consume` | a `case` field that owns nothing (borrowed from its scrutinee) is passed on or dropped without a `dup` |
+
+A report line is `<def>: v<N> <finding> (<where>)`. Cases the walk
+cannot decide are not findings but are counted in one extra line,
+`leak check: N cases not decided (...)`: a `releaseReuse` without an
+offer, a `con ... reuse=` without one, a `continue` outside a loop.
+
+### What consumes a reference
+
+Derived from `RC.annotate`, `Reuse.resolveAlt`, `DualABI.postDropFor` and
+`Loop.applyLoop`; each row names what spends one reference of each
+`Boxed` operand.
+
+| node | consumes |
+|---|---|
+| function parameter, `let v : Boxed`, loop parameter | creates one reference |
+| `dup v xN` | creates N |
+| `drop [..]`, `free`, every `postDrop=` list, `prologueDrop`, `dropOnUnique` | one per listed occurrence |
+| `call`, `partial`, `delay`, `apply` (callee too), `con`, `retpack`, `fill`'s value | every `Boxed` operand |
+| `callRep` | operands at a `Boxed` parameter of its signature; the rest are read natively and dropped through `postDrop=` |
+| `callFFIInline` | operands whose type `Compiler.RC2.Types.cfTypeNative` does not read natively (`%World`, `Ptr`, ...); the rest through `postDrop=` |
+| `op`, `extprim`, `cmp`, `force`, `structGet`/`structSet`, `case` scrutinee | nothing (reads); `postDrop=` only |
+| `let v = x` | `x`'s reference moves to `v` (a read when `v` is native) |
+| bare value, as the function's result or as a `let` value | the returned local, when the destination is `Boxed` |
+| `reuseOffer sc ...` | `sc`'s reference, becoming a reuse token; each `dupOnShared` field gains one |
+| `con ... reuse=sc`, `releaseReuse sc` | the token |
+| `loop initial=` / `continue` | arguments at `Boxed` parameters; the parameters then own one reference again |
+| matching an erased alt (`nil`, `nothing`, `zero`, `unit`) | `sc` becomes NULL: whatever the IR still counts for it is dropped from the books |
+| `crash` | a path that owes nothing |
+
+`case` fields start owning nothing (as in the use-after-free check) and
+become owned by a `dup`; the fields of a `RetN` struct scrutinee own
+their `Boxed` fields outright.
+
+### What the walk does not track
+
+- **Native locals, immortal constants.** A local bound to a constant or
+  to `[__]` is never tracked. A `Boxed` local that is shown to hold an
+  always-unboxed value (`Char`, `Int8`..`Bits32`: an op/cmp operand at
+  such a type or a `callRep` argument at such a `Native` parameter with
+  no `postDrop=` entry, or a read into a `Native` local of such a type)
+  is never tracked either: rc2 neither pairs nor omits `dup`/`drop` on it
+  consistently, and at run time they are no-ops. A `case` on a `Char`
+  literal is not used as evidence: the dump prints it like a one-character
+  string.
+- **State-padded loop parameters.** `MutualLoop` pads the parameters of
+  the member that is not running with constants, so whether such a
+  parameter owns a reference depends on the state tag, which the walk
+  does not follow. A loop parameter that is passed a constant on entry or
+  on some `continue` is not tracked.
+- **Value-position joins.** The arms of a `case` in value position are
+  compared by their total (the walk goes on once, not once per arm). Arms
+  that only differ by a matched erased alt's scrutinee agree, because
+  whether that scrutinee is dead afterwards is not visible from the arm.
+- **Anything outside one definition.** A callee's own `postDrop=`
+  annotation is trusted as written.
+
 ## What it deliberately does not check
 
-- **Leaks.** A count left above zero at the end of a definition is not
-  reported. Doing that properly needs full path enumeration and merging
-  across branches, which this tool does not attempt.
-- **Cross-branch consistency.** `cmp`/`case` fork the count map into
-  each arm independently and the arms are never merged afterwards.
-  That is correct for what this *does* check -- an anomaly inside one
-  arm does not depend on what the other arm did -- but it means "these
-  two arms leave `v` in different states" goes unreported.
+- **Cross-branch consistency** in the use-after-free/double-drop walk:
+  `cmp`/`case` fork the count map into each arm independently there and
+  the arms are never merged afterwards (the leak check above does merge
+  value-position arms).
 - **Anything outside one definition.** There is no interprocedural
   reasoning; a callee's own `postDrop=` annotation is trusted as
   written.
@@ -183,6 +249,9 @@ The dump lands next to the produced executable, as
 `<output>.rcexpr`. See `rc2/doc/reading-the-ir.md` for how to read the
 format by hand, and `rc2/doc/directives.md` for `dumprcexpr` itself.
 
+`rcexpr-lint --borrow-stats <file.rcexpr>` prints the borrow statistics
+instead of the anomaly report.
+
 A whole external package works the same way and is the more valuable
 run -- it covers shapes no hand-written test does:
 
@@ -196,6 +265,56 @@ cd install/idris2-lsp
 `dup`/`drop`** -- `RC`'s own annotation, `Reuse`, `Sink`, `DupMerge`,
 `DeadVars`, `LateInline`, `DualABI`.
 
+## Borrow statistics
+
+`rcexpr-lint --borrow-stats` evaluates **borrow inference on the final IR**
+(after `Reuse`, `Loop`, `Sink`, `DualABI`), where `dup`/`drop`, reuse and
+loops are explicit. A `Boxed` parameter that carries a refcount (not native, not
+shown to be an always-unboxed value) is *borrowable* when every
+reference to it that the leak walk sees being spent (including the ones
+`dup` created) is one of:
+
+- a `drop`, a `postDrop=` entry (the callee would no longer own it), or
+- an argument at a parameter position of a direct call (`call`, `callRep`)
+  to a definition whose parameter is itself borrowable, **not** in tail
+  position, or a `continue` that hands a loop parameter back unchanged
+  (loop-invariant).
+
+The fixpoint is the greatest one over the call graph, so a cycle of calls
+that only pass the parameter along stays borrowable. A parameter is
+rejected, with the first matching reason of: stored into a
+constructor/closure/lazy cell; returned; reused (reuse token); passed to
+an owned position (a callee parameter that is not borrowable);
+passed to `apply`, an FFI call or a call to something that is not a
+definition of the program; loop-carried (changes across iterations);
+argument of a non-loop tail call. `more than one reason` counts the
+rejected parameters with at least two of them.
+
+Definitions referenced indirectly (`partial`, a lazy thunk, a
+`#Name/n~closure` constant) are **not** excluded; the ones with a
+borrowable parameter are counted as needing an owned-convention wrapper.
+
+The effect is counted over places in the IR, for every borrowable parameter at once:
+
+| figure | counts |
+|---|---|
+| callee drops removed | every `drop`/`postDrop=` entry on the parameter (and on locals that alias it) |
+| callee dups removed | every `dup` of it (`dup v xN` is N) |
+| caller dups removed | a call that passes a reference of a local that still owns more afterwards: the `dup` made for the call goes away |
+| caller drops added | a call that passes the last reference of a local: it has to be dropped after the call (counted separately when the call was in tail position, which then stops being one) |
+| net | the first three minus the last, as a share of all `dup`s (xN) plus all `drop`/`postDrop`/`prologueDrop`/`dropOnUnique` entries in the dump (`free` and `releaseReuse` excluded) |
+| in loops | the same operations when they sit inside an `RLoop` body: a proxy for how often they run |
+
+Arguments that come from a borrowable parameter of the caller itself cost
+nothing either way (their `dup`s and `drop`s are already in the callee
+column). A `dup` of a `case` field made to pass it on is reported
+separately and **not** in the net: borrowing it needs the scrutinee kept
+alive until the call, which `annotate` has usually dropped before.
+
+Not verified: `%export` (not in the dump), calls through a closure whose
+callee is only known at run time, and whether keeping a scrutinee alive
+would defeat constructor reuse.
+
 ## Building and testing
 
 ```sh
@@ -203,9 +322,9 @@ cd tools/rcexpr-lint/tests
 ./verify.sh
 ```
 
-`verify.sh` builds the CLI and runs it over five hand-written fixtures,
-checking both the exit code and the exact report text, metrics
-included:
+`verify.sh` builds the CLI and runs it over the hand-written fixtures,
+checking both the exit code and the exact report text (the fixture's
+`.expected` file), metrics included:
 
 | fixture | covers |
 |---|---|
@@ -214,6 +333,9 @@ included:
 | `dupcount.rcexpr` | regression for a real parser bug -- `dup vN xM`'s repeat count was glued onto `x` as one token and silently undercounted if read as two |
 | `fieldborrow.rcexpr` | field borrowing: a field read after its scrutinee is dropped (the exact shape of a real use-after-free in `refc-suite/clock`, 2026-09-25), a field of a field, and the correct forms -- dup before the drop, `reuseOffer` |
 | `metrics.rcexpr` | every node kind the metrics count, so each figure is checked against a hand count at least once |
+| `leakclean.rcexpr` | the balanced shapes the leak check has to accept: erased alts, always-unboxed locals, immortal lets, value-position joins, loops (invariant and padded), struct fields, reuse, FFI and `callRep` consumption |
+| `leak.rcexpr` | one definition per leak-check finding |
+| `borrow.rcexpr` | the borrow statistics, with hand-counted figures (run with `--borrow-stats`) |
 
 It builds with the plain Chez backend (`idris2 -p rc2base -p contrib`):
 this tool only reads text files and never needs to run *through* rc2
@@ -225,7 +347,9 @@ itself. It needs `rc2base` already built and installed -- see
 | file | |
 |---|---|
 | `RcexprLint.idr` | CLI: read, parse, report, set the exit code |
-| `Lint.idr` | the check itself; its module note carries the rule list this README summarises |
+| `Lint.idr` | the use-after-free/double-drop check; its module note carries the rule list this README summarises |
+| `Leak.idr` | the leak check, and the spend/`dup` events the borrow statistics are built from |
+| `Borrow.idr` | the borrow statistics |
 | `Metrics.idr` | the static counts printed after the report |
 | `tests/` | fixtures and `verify.sh` |
 

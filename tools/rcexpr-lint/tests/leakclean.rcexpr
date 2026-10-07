@@ -1,0 +1,79 @@
+def TestCleanErasedAlt  (fun args= ["v1:Boxed"] ret= Boxed)
+  case v1 of
+    _builtin.NIL [nil] tag= Just 0 args= [] ->
+      [__]
+    _builtin.CONS [cons] tag= Just 1 args= [v2, v3] ->
+      dup v2
+      drop [v1]
+      v2
+
+def TestCleanExemptChar  (fun args= ["v1:Boxed", "v2:Boxed"] ret= Boxed)
+  cmp ==Char [v1, #'a']
+  then
+    drop [v2]
+    #1
+  else
+    v2
+
+def TestCleanImmortalLet  (fun args= [] ret= Boxed)
+  let v1 : Boxed =
+    #"hello"
+  #0
+
+def TestCleanValueCase  (fun args= ["v1:Boxed", "v2:Boxed"] ret= Boxed)
+  let v3 : Boxed =
+    case v1 of
+      _builtin.NIL [nil] tag= Just 0 args= [] ->
+        v2
+      _builtin.CONS [cons] tag= Just 1 args= [v4, v5] ->
+        drop [v1]
+        v2
+  v3
+
+def TestCleanLoop  (fun args= ["v1:Boxed", "v2:Boxed"] ret= Boxed)
+  loop ["v1:Boxed"] initial= [v1]
+  case v1 of
+    _builtin.CONS [cons] tag= Just 1 args= [v3, v4] ->
+      dup v4
+      drop [v1]
+      continue loop [v4]
+    _builtin.NIL [nil] tag= Just 0 args= [] ->
+      drop [v2]
+      [__]
+
+def TestCleanPaddedLoop  (fun args= ["v1:Boxed"] ret= Boxed)
+  loop ["v2:Boxed", "v3:Boxed"] initial= [v1, [__]]
+  case v2 of
+    _builtin.CONS [cons] tag= Just 1 args= [v4, v5] ->
+      dup v5
+      drop [v2]
+      continue loop [[__], v5]
+    _builtin.NIL [nil] tag= Just 0 args= [] ->
+      [__]
+
+def TestCleanStructFields  (fun args= ["v1:Boxed"] ret= Boxed)
+  let v2 : Ret2 =
+    callRep {idris2rc2_worker_Main_k:0} ["Boxed"] -> Ret2 postDrop= [] [v1]
+  case v2 of
+    _builtin.CONS [cons] tag= Just 1 args= [v3, v4] ->
+      con _builtin.CONS [cons] tag= Just 1 [v3, v4]
+    _builtin.NIL [nil] tag= Just 0 args= [] ->
+      [__]
+
+def TestCleanReuse  (fun args= ["v1:Boxed"] ret= Boxed)
+  case v1 of
+    _builtin.CONS [cons] tag= Just 1 args= [v2, v3] ->
+      reuseOffer v1 dupOnShared= [v2] dropOnUnique= [v3]
+      con _builtin.CONS [cons] tag= Just 1 [v2, [__]] reuse= v1
+    _builtin.NIL [nil] tag= Just 0 args= [] ->
+      v1
+
+def TestCleanFFI  (fun args= ["v1:Boxed", "v2:Boxed"] ret= Boxed)
+  let v3 : Boxed =
+    dup v1
+    callFFIInline ["C:f,libc,f.h"] [Int, %World] -> IORes Int postDrop= [v2] [v2, v1]
+  drop [v3]
+  v1
+
+def TestCleanCallRep  (fun args= ["v1:Boxed", "v2:Boxed"] ret= Boxed)
+  callRep {idris2rc2_worker_Main_g:0} ["Native Int", "Boxed"] -> Boxed postDrop= [v1] [v1, v2]

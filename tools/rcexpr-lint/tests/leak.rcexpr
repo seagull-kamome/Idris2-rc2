@@ -1,0 +1,70 @@
+def TestLeakParam  (fun args= ["v1:Boxed", "v2:Boxed"] ret= Boxed)
+  drop [v1]
+  #0
+
+def TestLeakOneArm  (fun args= ["v1:Boxed", "v2:Boxed"] ret= Boxed)
+  cmp ==Int [v1, v2]
+  then
+    drop [v1, v2]
+    #0
+  else
+    drop [v1]
+    #0
+
+def TestLeakExtraDup  (fun args= ["v1:Boxed"] ret= Boxed)
+  dup v1
+  v1
+
+def TestLeakShortPostDrop  (fun args= ["v1:Boxed", "v2:Boxed"] ret= Boxed)
+  op ++ [v1, v2] postDrop= [v1]
+
+def TestLeakDeadLet  (fun args= ["v1:Boxed"] ret= Boxed)
+  let v2 : Boxed =
+    call Main.mk [v1]
+  #0
+
+def TestLeakToken  (fun args= ["v1:Boxed"] ret= Boxed)
+  case v1 of
+    _builtin.CONS [cons] tag= Just 1 args= [v2, v3] ->
+      reuseOffer v1 dupOnShared= [v2, v3]
+      con _builtin.CONS [cons] tag= Just 1 [v2, v3]
+    _builtin.NIL [nil] tag= Just 0 args= [] ->
+      [__]
+
+def TestLeakLoopParam  (fun args= ["v1:Boxed"] ret= Boxed)
+  loop ["v2:Boxed"] initial= [v1]
+  cmp ==Int [v2, #0]
+  then
+    v2
+  else
+    let v3 : Boxed =
+      op +Integer [v2, #1]
+    continue loop [v3]
+
+def TestLoopOuterDropped  (fun args= ["v1:Boxed", "v2:Boxed"] ret= Boxed)
+  loop ["v3:Boxed"] initial= [v2]
+  case v3 of
+    _builtin.CONS [cons] tag= Just 1 args= [v4, v5] ->
+      dup v5
+      drop [v3, v1]
+      continue loop [v5]
+    _builtin.NIL [nil] tag= Just 0 args= [] ->
+      v1
+
+def TestBranchOuterDropped  (fun args= ["v1:Boxed", "v2:Boxed"] ret= Boxed)
+  let v3 : Boxed =
+    case v2 of
+      0 ->
+        drop [v1]
+        #0
+      _ ->
+        #1
+  drop [v1, v2]
+  v3
+
+def TestOverConsumeField  (fun args= ["v1:Boxed"] ret= Boxed)
+  case v1 of
+    _builtin.CONS [cons] tag= Just 1 args= [v2, v3] ->
+      call Main.f [v2, v1]
+    _builtin.NIL [nil] tag= Just 0 args= [] ->
+      [__]
