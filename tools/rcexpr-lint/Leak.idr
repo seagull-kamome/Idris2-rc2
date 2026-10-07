@@ -261,7 +261,8 @@ erasedInfo i = i == "nil" || i == "nothing" || i == "zero" || i == "unit"
 ||| Locals shown by their use to hold an always-unboxed value (`Char`,
 ||| `Int8`...: tagged, the refcount operations on them are no-ops, and
 ||| rc2 neither pairs nor omits them consistently). The evidence is any
-||| of: an op/cmp operand with no `postDrop` entry at such a type, a
+||| of: a `let` bound directly to a comparison op (producer-side), an
+||| op/cmp operand with no `postDrop` entry at such a type, a
 ||| `callRep` argument at a `Native` parameter of such a type with no
 ||| `postDrop` entry, a read into a `Native` local of such a type.
 unboxedTypeNames : List String
@@ -278,6 +279,22 @@ noteUndischarged typed args pd set =
                               RVar v => if occurrences v args > occurrences v pd then insert v s else s
                               _ => s) set args
 
+||| The comparison primitives (`<T`, `<=T`, `==T`, `>=T`, `>T`, as `Show
+||| (PrimFn _)` prints them): their Boxed result is an `Int8` immediate, so
+||| a local bound directly to one has no refcount operations either (the
+||| producer-side rule of `Compiler.RC2.RC.alwaysUnboxedBoxedLocalsR`).
+||| No other op's name starts with `<`, `>` or `==`.
+isComparisonOp : String -> Bool
+isComparisonOp op = isPrefixOf "<" op || isPrefixOf ">" op || isPrefixOf "==" op
+
+||| `value` is a comparison op, possibly under the `dup`/`drop` of its
+||| own operands that `annotate` wraps around it.
+boundToComparison : RCExp -> Bool
+boundToComparison (ROpNode False op _ _) = isComparisonOp op
+boundToComparison (RDupNode _ _ body) = boundToComparison body
+boundToComparison (RDropNode _ body) = boundToComparison body
+boundToComparison _ = False
+
 hasUnboxedType : String -> Bool
 hasUnboxedType t = any (\n => isInfixOf n t) unboxedTypeNames
 
@@ -291,9 +308,10 @@ scanExp sc (RCallFFI _ _ _) = sc
 scanExp sc (RPartial _ _ _) = sc
 scanExp sc (RDelayNode _ _ _) = sc
 scanExp sc (RApply _ _ _) = sc
-scanExp sc (RLetIn _ rep value body) =
+scanExp sc (RLetIn var rep value body) =
     let sc' = case (rep, value) of
                    (NativeRep t, RV (RVar x)) => if hasUnboxedType t then insert x sc else sc
+                   (Boxed, _) => if boundToComparison value then insert var sc else sc
                    _ => sc
     in scanExp (scanExp sc' value) body
 scanExp sc (RConstruct _ _ _ _) = sc

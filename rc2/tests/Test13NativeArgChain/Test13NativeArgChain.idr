@@ -140,6 +140,47 @@ describeNeg x = if isBig (0 - x) then "n-big" else "n-small"
 describeBoth : Int -> Int -> String
 describeBoth x y = if isBig x && isBig y then "both" else "not-both"
 
+-- Bool-producing comparison results (`Integer`/`String`, so not fused
+-- into a native `cmp`): `let v : Boxed = op <Integer ..` binds an
+-- `Int8` immediate (`mkBool`), so `Compiler.RC2.RC`'s
+-- `alwaysUnboxedBoxedLocalsR` treats the local like an `alwaysUnboxed`
+-- operand: no `dup`, no `drop`, however it is used (doc/native-type-
+-- inference.md, "Bool-producing comparison results"). check.sh asserts
+-- none is left in the `boolcmp*` definitions; the outputs below check
+-- the uses that make the elision matter: `if`, `&&`/`||`/`not`, stored
+-- in a constructor, returned to unknown code, a Boolean loop
+-- accumulator, and a closure result.
+boolcmpIf : Integer -> Integer -> String
+boolcmpIf a b = if a < b then "lt" else "ge"
+
+boolcmpTwice : Integer -> Integer -> (Bool, Bool)
+boolcmpTwice a b = let c = a <= b in (c, not c)
+
+boolcmpStr : String -> String -> Bool
+boolcmpStr a b = a == b
+
+boolcmpMix : Integer -> Integer -> String -> String -> Bool
+boolcmpMix a b s t = (a < b && s == t) || a > 10 || not (s >= t)
+
+boolcmpAcc : Integer -> List Integer -> Bool -> Bool
+boolcmpAcc k [] acc = acc
+boolcmpAcc k (x :: xs) acc = boolcmpAcc k xs (acc && x < k)
+
+boolcmpMap : Integer -> List Integer -> List Bool
+boolcmpMap k xs = map (\x => x >= k) xs
+
+boolcmps : List String
+boolcmps =
+    [ boolcmpIf 1 2, boolcmpIf 2 1, boolcmpIf 3 3
+    , show (boolcmpTwice 1 2), show (boolcmpTwice 2 1)
+    , show (boolcmpStr "ab" "ab"), show (boolcmpStr "ab" "ba")
+    , show (boolcmpMix 1 2 "x" "x"), show (boolcmpMix 20 2 "x" "y")
+    , show (boolcmpMix 1 2 "x" "y"), show (boolcmpMix 1 2 "y" "x")
+    , show (boolcmpAcc 100 [1, 2, 3] True), show (boolcmpAcc 100 [1, 200, 3] True)
+    , show (boolcmpMap 2 [1, 2, 3])
+    , show (boolcmpAcc 18446744073709551616 [18446744073709551615] True)
+    ]
+
 main : IO ()
 main = do
     printLn (loop 0xcbf29ce484222325 [1,2,3,4,5,6,7,8,9,10])
@@ -154,3 +195,4 @@ main = do
     putStrLn (describeNeg (-5000))
     putStrLn (describeBoth 2000 3000)
     putStrLn (describeBoth 2000 1)
+    traverse_ putStrLn boolcmps
