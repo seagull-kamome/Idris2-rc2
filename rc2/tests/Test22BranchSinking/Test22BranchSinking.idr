@@ -158,6 +158,42 @@ multiArmSink t a =
           TriB k => bonus + k
           TriC k => bonus - k
 
+-- `sinkCallH`'s `r = sinkCallG xs ys` lowers to `dup xs; dup ys; call
+-- sinkCallG [xs, ys]` and sinks into the one arm that reads it. The
+-- call spends only the dups, so the other arm must not get a
+-- compensating `drop [xs, ys]`; both lists are read again after the
+-- branch, so a spurious drop is a double drop (rc2/doc/branch-sinking.md,
+-- "Sinking a call whose operands were dup'd first"). `sinkCallTwiceH`
+-- passes `xs` twice (`dup xs x2`). The values sit beyond the
+-- immediate-Int range so the lists hold real heap cells.
+sinkCallG : List Int -> List Int -> Int
+sinkCallG [] ys = cast (length ys)
+sinkCallG (_ :: t) ys = 1 + sinkCallG t ys
+
+sinkCallH : Int -> List Int -> List Int -> Int
+sinkCallH k xs ys =
+  let r = sinkCallG xs ys
+  in case k of
+          0 => 0
+          _ => r + 1
+
+sinkCallF : Int -> List Int -> List Int -> Int
+sinkCallF k xs ys = sinkCallH k xs ys + cast (length xs) + cast (length ys)
+
+sinkCallTwiceG : List Int -> List Int -> List Int -> Int
+sinkCallTwiceG [] ys zs = cast (length ys + length zs)
+sinkCallTwiceG (_ :: t) ys zs = 1 + sinkCallTwiceG t ys zs
+
+sinkCallTwiceH : Int -> List Int -> List Int -> Int
+sinkCallTwiceH k xs ys =
+  let r = sinkCallTwiceG xs xs ys
+  in case k of
+          0 => 0
+          _ => r + 1
+
+sinkCallTwiceF : Int -> List Int -> List Int -> Int
+sinkCallTwiceF k xs ys = sinkCallTwiceH k xs ys + cast (length xs) + cast (length ys)
+
 main : IO ()
 main = do
   printLn (sinkable True 3 4)
@@ -187,3 +223,10 @@ main = do
   printLn (multiArmSink TriA 5)
   printLn (multiArmSink (TriB 3) 5)
   printLn (multiArmSink (TriC 3) 5)
+  let xs = [10000000000000000000, 2, 3]
+      ys = [4000000000000000000, 5]
+  printLn (sinkCallF 0 xs ys)
+  printLn (sinkCallF 1 xs ys)
+  printLn (sinkCallTwiceF 0 xs ys)
+  printLn (sinkCallTwiceF 1 xs ys)
+  printLn (sinkCallTwiceF 1 ys xs)
