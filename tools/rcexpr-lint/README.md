@@ -251,7 +251,8 @@ format by hand, and `rc2/doc/directives.md` for `dumprcexpr` itself.
 
 `rcexpr-lint --borrow-stats <file.rcexpr>` prints the borrow statistics
 and `rcexpr-lint --pushdown-stats <file.rcexpr>` the push-down statistics
-instead of the anomaly report.
+instead of the anomaly report (`--borrow-tail-stats` is described under
+"Borrow statistics").
 
 A whole external package works the same way and is the more valuable
 run -- it covers shapes no hand-written test does:
@@ -315,6 +316,37 @@ alive until the call, which `annotate` has usually dropped before.
 Not verified: `%export` (not in the dump), calls through a closure whose
 callee is only known at run time, and whether keeping a scrutinee alive
 would defeat constructor reuse.
+
+### Tail-blocked parameters (`--borrow-tail-stats`)
+
+`--borrow-stats` rejects a parameter that is passed on as an argument of a
+non-loop tail call before its balance is ever computed. `--borrow-tail-stats`
+measures that excluded pool. The *candidates* are the parameters whose only
+reason (as in the `--borrow-stats` histogram, so their count equals its
+"argument of a non-loop tail call" row) is that one; parameters with it plus
+another reason stay excluded and are only counted. Lifting a candidate means
+treating its outgoing tail call like a non-tail one: the target parameter must
+be borrowable (now, or lifted too, so chains are iterated to a fixpoint); a
+candidate that tail-calls an owned position is not liftable.
+
+The balance of one candidate, over all call sites, with every other parameter
+as `--borrow-stats` has it:
+
+| component | counts |
+|---|---|
+| callee drops/dups removed | the candidate's own `drop`s and `dup`s (usually none: its only use is the tail pass-on) |
+| caller dups removed | incoming sites where the caller keeps references afterwards |
+| caller drops added | incoming non-tail sites that pass the last reference |
+| incoming tail sites | model A: +1 drop each, executed by a `postDrop`-capable closure so the call stays a tail call; model B: 0, the site calls an owned-convention entry (the functions needing one are counted, and how many are already in the wrapper set) |
+| credit | an outgoing site to a parameter borrowable now: `--borrow-stats` books a drop added there (the candidate was owned) and it disappears once the candidate is borrowed (a spare site loses its dup removal instead) |
+
+Sites whose argument is a borrowed caller parameter (borrowable now, or lifted)
+cost nothing. The report gives the independent balance of every liftable
+candidate, then a joint result: candidates with a balance of 0 or less are
+dropped and the rest re-checked until stable (a removal can break the
+candidates that feed it), and the net is added to the current one. Not
+modelled: parameters blocked only through a candidate (owned position) and the
+code size of an owned entry.
 
 ## Push-down statistics
 
@@ -420,6 +452,7 @@ checking both the exit code and the exact report text (the fixture's
 | `typedcase.rcexpr` | a local scrutinised by a `case` whose alts carry the dump's `u:` mark (always-unboxed constant type) is refcount-free: no leak, and a case field of it may be read after its parent is dropped; the same shapes without the mark are flagged |
 | `leak.rcexpr` | one definition per leak-check finding |
 | `borrow.rcexpr` | the borrow statistics, with hand-counted figures (run with `--borrow-stats`) |
+| `borrowtail.rcexpr` | the tail-blocked parameters: one that nets positive over its tail and non-tail call sites, one that nets negative, one blocked by a tail call and a second reason; hand-counted (run with `--borrow-tail-stats`) |
 | `pushdown.rcexpr` | the push-down statistics: one definition per pattern with its negative neighbours (a dup needed by every arm, a use before the case, a consumed operand, a sub-field read after the drop), hand-counted (run with `--pushdown-stats`) |
 
 It builds with the plain Chez backend (`idris2 -p rc2base -p contrib`):

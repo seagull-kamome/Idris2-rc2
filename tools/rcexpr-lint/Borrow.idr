@@ -454,3 +454,285 @@ borrowStats prog =
         top20 perDef =
             let ranked = take 20 (sortBy (\a, b => compare (net (snd b)) (net (snd a))) (filter (\nt => net (snd nt) /= 0) perDef))
             in map (\nt => "    " ++ padLeft 6 ' ' (show (net (snd nt))) ++ "  " ++ fst nt) ranked
+
+-------------------------------------------------------------------------------
+-- Tail-blocked parameters: balance over all call sites
+
+||| A call site with the caller's parameter and the callee's parameter it
+||| connects (both as keys; the target only when it is a counted parameter).
+record SiteRec where
+  constructor MkSiteRec
+  callerKey : Maybe Key
+  target : Maybe Key
+  site : Site
+
+||| A parameter whose only blocker is being an argument of a non-loop tail call.
+record Cand where
+  constructor MkCand
+  key : Key
+  name : String
+  pos : Nat
+  info : PInfo
+
+||| The components of one balance; the `L` fields are the in-loop shares.
+record Parts where
+  constructor MkParts
+  cd, cu, kd, cr, ad, tl : Int
+  cdL, cuL, kdL, crL, adL, tlL : Int
+
+zeroP : Parts
+zeroP = MkParts 0 0 0 0 0 0 0 0 0 0 0 0
+
+addP : Parts -> Parts -> Parts
+addP a b = MkParts (a.cd + b.cd) (a.cu + b.cu) (a.kd + b.kd) (a.cr + b.cr) (a.ad + b.ad) (a.tl + b.tl)
+                   (a.cdL + b.cdL) (a.cuL + b.cuL) (a.kdL + b.kdL) (a.crL + b.crL) (a.adL + b.adL) (a.tlL + b.tlL)
+
+-- model A: a tail site costs one added drop; model B: it costs nothing (owned entry)
+netA, netB, netAL, netBL : Parts -> Int
+netA p = p.cd + p.cu + p.kd + p.cr - p.ad - p.tl
+netB p = p.cd + p.cu + p.kd + p.cr - p.ad
+netAL p = p.cdL + p.cuL + p.kdL + p.crL - p.adL - p.tlL
+netBL p = p.cdL + p.cuL + p.kdL + p.crL - p.adL
+
+b2i : Bool -> Int
+b2i b = if b then 1 else 0
+
+||| The balance of lifting one candidate, given which parameters are
+||| borrowed in the hypothetical world (`cur`) and which targets are
+||| borrowable in the real one (`now`).
+partsOf : (Key -> Bool) -> (Key -> Bool) -> SortedMap Key (List SiteRec) -> SortedMap Key (List SiteRec) -> Cand -> Parts
+partsOf cur now inc out c =
+    let own = { cd := cast c.info.drops, cdL := cast c.info.dropsLoop
+              , cu := cast c.info.dups, cuL := cast c.info.dupsLoop } zeroP
+        withIn = foldl incoming own (fromMaybe [] (lookup c.key inc))
+    in foldl outgoing withIn (fromMaybe [] (lookup c.key out))
+  where
+    incoming : Parts -> SiteRec -> Parts
+    incoming t r =
+        let l = b2i r.site.loop
+        in if maybe False cur r.callerKey then t
+           else if r.site.field then t
+           else if r.site.spare then { kd $= (+ 1), kdL $= (+ l) } t
+           else if r.site.tail then { tl $= (+ 1), tlL $= (+ l) } t
+           else { ad $= (+ 1), adL $= (+ l) } t
+
+    -- what the real world books for this site today, which stops once the
+    -- candidate is borrowed: a drop added (credit), or a dup removed (loss)
+    outgoing : Parts -> SiteRec -> Parts
+    outgoing t r = case r.target of
+        Just k =>
+            let l = b2i r.site.loop
+            in if not (now k) || r.site.field then t
+               else if r.site.spare then { cr $= (subtract 1), crL $= (subtract l) } t
+               else { cr $= (+ 1), crL $= (+ l) } t
+        Nothing => t
+
+||| Every outgoing tail target is borrowable now or lifted too.
+tailOk : (Key -> Bool) -> (Key -> Bool) -> SortedMap Key (List SiteRec) -> Cand -> Bool
+tailOk cur now out c = all ok (fromMaybe [] (lookup c.key out))
+  where
+    ok : SiteRec -> Bool
+    ok r = case r.target of
+        Just k => not r.site.tail || now k || cur k
+        Nothing => True
+
+keepWhile : Nat -> (SortedSet Key -> Key -> Bool) -> List Cand -> SortedSet Key -> SortedSet Key
+keepWhile Z _ _ s = s
+keepWhile (S fuel) keep cands s =
+    -- removals take effect immediately, so chains settle in few passes
+    let s1 = foldl (\a, c => if contains c.key a && not (keep a c.key) then delete c.key a else a) s cands
+    in if length (SortedSet.toList s1) == length (SortedSet.toList s) then s else keepWhile fuel keep cands s1
+
+bucketOf : Int -> String
+bucketOf n =
+    if n <= -3 then "<= -3" else if n < 0 then show n else if n == 0 then "0"
+    else if n <= 2 then show n else if n <= 5 then "3..5" else if n <= 10 then "6..10" else ">= 11"
+
+bucketOrder : List String
+bucketOrder = ["<= -3", "-2", "-1", "0", "1", "2", "3..5", "6..10", ">= 11"]
+
+-- The helpers below take every large collection as an argument: a
+-- `let`-bound collection used once inside a lambda would be rebuilt on
+-- every call of that lambda.
+
+indexBy : (SiteRec -> Maybe Key) -> SortedSet Key -> List SiteRec -> SortedMap Key (List SiteRec)
+indexBy keyOfRec wanted = foldl add empty
+  where
+    add : SortedMap Key (List SiteRec) -> SiteRec -> SortedMap Key (List SiteRec)
+    add m r = case keyOfRec r of
+        Just k => if contains k wanted then insertWith (++) k [r] m else m
+        Nothing => m
+
+structKeep : (Key -> Bool) -> SortedMap Key (List SiteRec) -> SortedMap Key Cand -> SortedSet Key -> Key -> Bool
+structKeep now out candMap s k = case lookup k candMap of
+    Just c => tailOk (\x => contains x s) now out c
+    Nothing => False
+
+modelKeep : (Parts -> Int) -> (Key -> Bool) -> SortedMap Key (List SiteRec) -> SortedMap Key (List SiteRec)
+         -> SortedMap Key Cand -> SortedSet Key -> Key -> Bool
+modelKeep f now inc out candMap s k = case lookup k candMap of
+    Just c => tailOk (\x => contains x s) now out c
+              && f (partsOf (\x => now x || contains x s) now inc out c) > 0
+    Nothing => False
+
+finalPartsOf : (Key -> Bool) -> SortedMap Key (List SiteRec) -> SortedMap Key (List SiteRec) -> List Cand -> SortedSet Key -> List (Cand, Parts)
+finalPartsOf now inc out cands s =
+    map (\c => (c, partsOf (\x => now x || contains x s) now inc out c)) (filter (\c => contains c.key s) cands)
+
+namesOf : List (Cand, Parts) -> SortedSet String
+namesOf = foldl (\a, cp => insert (fst cp).name a) empty
+
+overlapCount : SortedSet String -> SortedSet String -> Nat
+overlapCount names existing = length (filter (\n => contains n existing) (SortedSet.toList names))
+
+newWrapperCount : SortedSet String -> SortedSet String -> SortedSet String -> Nat
+newWrapperCount names indirectNames existing =
+    length (filter (\n => contains n indirectNames && not (contains n existing)) (SortedSet.toList names))
+
+tailSitesOf : SortedMap Key (List SiteRec) -> List Cand -> List SiteRec
+tailSitesOf out cands = filter (\r => r.site.tail) (concatMap (\c => fromMaybe [] (lookup c.key out)) cands)
+
+classCountOf : (Key -> Bool) -> SortedSet Key -> List SiteRec -> Nat -> Nat
+classCountOf now s sites i = length (filter (\r => classOf r == i) sites)
+  where
+    classOf : SiteRec -> Nat
+    classOf r = case r.target of
+        Nothing => 0
+        Just k => if now k then 1 else if contains k s then 2 else 3
+
+||| Definitions with a currently borrowable parameter that are also referenced indirectly.
+wrapperSet : SortedSet String -> (Key -> Bool) -> List DInfo -> SortedSet String
+wrapperSet indirectNames now = foldl add empty
+  where
+    add : SortedSet String -> DInfo -> SortedSet String
+    add a d = if contains d.name indirectNames && any (\kv => now (keyOf d.ident (fst kv))) d.paramVars then insert d.name a else a
+
+sumP : List (Cand, Parts) -> Parts
+sumP = foldl (\a, cp => addP a (snd cp)) zeroP
+
+hist : (Parts -> Int) -> List (Cand, Parts) -> List String
+hist f cps =
+    let hm = foldl (\mm, cp => insertWith (+) (bucketOf (f (snd cp))) (the Nat 1) mm) (the (SortedMap String Nat) empty) cps
+    in map (\b => row ("    net " ++ b) (fromMaybe 0 (lookup b hm)) "") bucketOrder
+
+top : (Parts -> Int) -> List (Cand, Parts) -> List String
+top f cps =
+    let ranked = take 15 (sortBy (\a, b => compare (f (snd b)) (f (snd a))) cps)
+    in map (\cp => "    " ++ padLeft 6 ' ' (show (f (snd cp))) ++ "  " ++ (fst cp).name ++ " (parameter " ++ show (fst cp).pos ++ ")") ranked
+
+positives : (Parts -> Int) -> List (Cand, Parts) -> Nat
+positives f cps = length (filter (\cp => f (snd cp) > 0) cps)
+
+sumNet : (Parts -> Int) -> List (Cand, Parts) -> Int
+sumNet f cps = sum (map (f . snd) cps)
+
+partsLines : String -> Parts -> List String
+partsLines label p =
+    [ "  " ++ label ++ " (components, ops / in loops):"
+    , rowI "    callee drops removed" p.cd ("in loops " ++ show p.cdL)
+    , rowI "    callee dups removed" p.cu ("in loops " ++ show p.cuL)
+    , rowI "    caller dups removed (incoming sites)" p.kd ("in loops " ++ show p.kdL)
+    , rowI "    credit: drops no longer added downstream" p.cr ("in loops " ++ show p.crL)
+    , rowI "    caller drops added (non-tail incoming sites)" p.ad ("in loops " ++ show p.adL)
+    , rowI "    incoming tail sites (A: +1 drop each; B: 0)" p.tl ("in loops " ++ show p.tlL)
+    ]
+
+mkRec : SortedMap String Int -> SortedSet Key -> DInfo -> Site -> SiteRec
+mkRec ids elig d s =
+    let ck = s.argRoot >>= \v => map (\kv => keyOf d.ident (fst kv)) (find (\kv => snd kv == v) d.paramVars)
+        tk = lookup s.callee ids >>= \i => if contains (keyOf i s.pos) elig then Just (keyOf i s.pos) else Nothing
+    in MkSiteRec ck tk s
+
+||| (net, in-loop net) of `--borrow-stats` itself.
+baseTotals : SortedMap String Int -> List DInfo -> (Key -> Bool) -> (Int, Int)
+baseTotals ids infos borrowable =
+    let t = foldl (\a, d => addT a (snd (effects ids borrowable d))) zeroTotals infos
+        removed = t.calleeDrops + t.calleeDups + t.callerDups
+        removedLoop = t.calleeDropsLoop + t.calleeDupsLoop + t.callerDupsLoop
+    in (cast removed - cast t.addedDrops, cast removedLoop - cast t.addedDropsLoop)
+
+||| `rcexpr-lint --borrow-tail-stats`: the parameters blocked only by being
+||| an argument of a non-loop tail call, with their balance over all call sites.
+export
+borrowTailStats : RCProgram -> List String
+borrowTailStats prog =
+    let ids = definitionIds prog
+        infos = mapMaybe (\nd => map (\d => { ident := fromMaybe (-1) (lookup d.name ids) } d) (summarize nd)) prog
+        indirectNames = foldl indirectDef (the (SortedSet String) empty) prog
+        elig = eligibleKeys infos
+        rdefs = map (resolveDef ids elig) infos
+        initialBad = localBad rdefs
+        bad = spread (reverseDeps rdefs) initialBad (SortedSet.toList initialBad)
+    in render ids infos indirectNames elig bad rdefs
+  where
+    render : SortedMap String Int -> List DInfo -> SortedSet String -> SortedSet Key -> SortedSet Key -> List RDef -> List String
+    render ids infos indirectNames elig bad rdefs =
+        let now = the (Key -> Bool) (\k => contains k elig && not (contains k bad))
+            -- the reasons as `--borrow-stats` reports them
+            reasonsOf = the (RDef -> RParam -> Int) (\rd, rp => if any (\dep => contains dep bad) rp.deps then rp.reasons .|. bitOwned else rp.reasons)
+            blocked = foldr (\rd, acc => mapMaybe (\rp => if contains (keyOf rd.info.ident rp.pos) bad then Just (rd, rp) else Nothing) rd.rparams ++ acc) [] rdefs
+            onlyTail = filter (\(rd, rp) => reasonsOf rd rp == bitTail) blocked
+            mixedTail = filter (\(rd, rp) => let r = reasonsOf rd rp in (r .&. bitTail) /= 0 && r /= bitTail) blocked
+            mkCand = the ((RDef, RParam) -> Maybe Cand) (\(rd, rp) => do
+                (_, v) <- find (\kv => fst kv == rp.pos) rd.info.paramVars
+                p <- lookup v rd.info.params
+                pure (MkCand (keyOf rd.info.ident rp.pos) rd.info.name rp.pos p))
+            cands = mapMaybe mkCand onlyTail
+            s0 = foldl (\a, c => insert c.key a) (the (SortedSet Key) empty) cands
+            siteRecs = concatMap (\d => map (mkRec ids elig d) d.sites) infos
+            inc = indexBy (\r => r.target) s0 siteRecs
+            out = indexBy (\r => r.callerKey) s0 siteRecs
+            -- classes of the outgoing tail sites of the candidates
+            tailSites = tailSitesOf out cands
+            candMap = foldl (\mm, c => insert c.key c mm) (the (SortedMap Key Cand) empty) cands
+            sStruct = keepWhile 200 (structKeep now out candMap) cands s0
+            sA = keepWhile 200 (modelKeep netA now inc out candMap) cands sStruct
+            sB = keepWhile 200 (modelKeep netB now inc out candMap) cands sStruct
+            indep = finalPartsOf now inc out cands sStruct
+            fa = finalPartsOf now inc out cands sA
+            fb = finalPartsOf now inc out cands sB
+            base = baseTotals ids infos now
+            baseNet = fst base
+            baseLoop = snd base
+            m = metricsOf prog
+            totalOps = m.dupCount + m.dropCount + m.postDrops
+            existing = wrapperSet indirectNames now infos
+            tailFnsB = namesOf (filter (\cp => (snd cp).tl > 0) fb)
+            namesA = namesOf fa
+            namesB = namesOf fb
+            pa = sumP fa
+            pb = sumP fb
+        in [ "borrow tail statistics (places in the IR, not executions; evaluated on the final IR):"
+           , row "blocked Boxed parameters" (length blocked) ""
+           , row "  blocked ONLY by a non-loop tail-call argument" (length onlyTail) "(the histogram row of --borrow-stats)"
+           , row "  blocked by it and by other reasons (stay excluded)" (length mixedTail) ""
+           , "  outgoing tail sites of the only-tail set, by what they pass to:"
+           , row "    a parameter that is borrowable now" (classCountOf now s0 tailSites 1) ""
+           , row "    another only-tail parameter (chain)" (classCountOf now s0 tailSites 2) ""
+           , row "    a parameter blocked by something else (owned)" (classCountOf now s0 tailSites 3) ""
+           , row "    not a counted parameter" (classCountOf now s0 tailSites 0) ""
+           , row "  only-tail parameters whose targets are all liftable" (length (SortedSet.toList sStruct)) "(structurally eligible; chains iterated)"
+           , "  independent balance of the eligible ones (model A: tail site = +1 drop; model B: tail site free):"
+           , row "    net-positive under A" (positives netA indep) ("sum of nets " ++ show (sumNet netA indep))
+           , row "    net-positive under B" (positives netB indep) ("sum of nets " ++ show (sumNet netB indep))
+           , "  joint result, keeping only net-positive ones until stable (chains re-checked):"
+           , row "    model A: parameters lifted" (length fa) ""
+           , rowI "    model A: net operations" (netA pa) ("in loops " ++ show (netAL pa))
+           , row "    model B: parameters lifted" (length fb) ""
+           , rowI "    model B: net operations" (netB pb) ("in loops " ++ show (netBL pb))
+           , rowI "  current net (--borrow-stats)" baseNet (pctI baseNet totalOps ++ " of " ++ show totalOps ++ "; in loops " ++ show baseLoop)
+           , rowI "  total with model A lifted" (baseNet + netA pa)
+                 (pctI (baseNet + netA pa) totalOps ++ "; in loops " ++ show (baseLoop + netAL pa))
+           , rowI "  total with model B lifted" (baseNet + netB pb)
+                 (pctI (baseNet + netB pb) totalOps ++ "; in loops " ++ show (baseLoop + netBL pb))
+           , "  model B owned entries:"
+           , row "    functions with a tail site served by an owned entry" (length (SortedSet.toList tailFnsB)) ""
+           , row "      of those already in the current wrapper set" (overlapCount tailFnsB existing)
+                 ("current wrapper set " ++ show (length (SortedSet.toList existing)))
+           , row "    lifted functions referenced indirectly, not yet wrapped" (newWrapperCount namesB indirectNames existing)
+                 ("(A: " ++ show (newWrapperCount namesA indirectNames existing) ++ ")")
+           ] ++ partsLines "model A" pa ++ partsLines "model B" pb ++
+           [ "  histogram of the independent net per eligible parameter, model A:" ] ++ hist netA indep ++
+           [ "  histogram, model B:" ] ++ hist netB indep ++
+           [ "  top 15 lifted parameters, model A:" ] ++ top netA fa ++
+           [ "  top 15 lifted parameters, model B:" ] ++ top netB fb
