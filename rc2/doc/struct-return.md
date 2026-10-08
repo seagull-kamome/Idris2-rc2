@@ -223,11 +223,25 @@ Struct return is another worker/wrapper split, so it belongs in
     tag 0, but an erased value is `RCNull` too, so such a tail is
     accepted without counting as a constructor.
 
-  The function must also reach at least one real constructor tail. `MutualLoop`'s
-  merged functions and CAFs (bodies under `RMemoize`) are excluded, and
-  so is any member of a tail-call cycle among eligible functions. That
-  set is empty on idris2-lsp today, but the check keeps the "Tail calls"
-  argument true by construction.
+  The function must also reach at least one real constructor tail. CAFs
+  (bodies under `RMemoize`) are excluded, and so is any member of a
+  tail-call cycle among eligible functions. That set is empty on
+  idris2-lsp today, but the check keeps the "Tail calls" argument true
+  by construction.
+
+  `MutualLoop`'s merged functions (`{rc2_mutualLoop:N}`) are judged like
+  any other function, because by now `Loop` has turned the calls among the
+  group into `goto`s: what is left are the group's exits (constructors,
+  or calls to other functions) and the members' thin entry functions, each
+  a tail call into the merged function with a selector argument. A real
+  tail-call cycle that survived (a self call `Loop` could not convert)
+  still excludes its members. The merged function keeps its Boxed
+  signature (DualABI never gives it native parameters, see
+  `doc/dual-abi.md`) and gets a worker like any other; the worker is
+  `static`, as the merged function is (`isMutualLoopWorker`). On
+  idris2-lsp 13 merged functions gain a worker, and the dump has 551
+  fewer `con` nodes. `--directive nomutualstruct` restores the old
+  exclusion.
 - **Worker synthesis**: an eligible function gets a worker with
   `retRep = RRet`. Its parameters keep whatever DualABI's parameter
   analysis decided, so native parameters and struct return combine in

@@ -289,7 +289,7 @@ inlineNamed disabled keep main defs =
 ||| apart.
 disableableStageNames : List String
 disableableStageNames =
-    ["noinline", "nodeadargs", "noarityraise", "noapplyfold", "notrmc", "noctx", "noconstfold", "noknowncon", "nopushcon", "nospecclosure", "nospecconstcon", "noconaltnative", "nomutualloop", "noloop", "noearlyinline", "nolateinline", "nosink", "nodualabi", "noboolret", "noboolcase", "noboolfield", "nostructreturn", "nodeadcode", "nopushdown", "nodupmerge", "nodeadvars"]
+    ["noinline", "nodeadargs", "noarityraise", "noapplyfold", "notrmc", "noctx", "noconstfold", "noknowncon", "nopushcon", "nospecclosure", "nospecconstcon", "noconaltnative", "nomutualloop", "noloop", "noearlyinline", "nolateinline", "nosink", "nodualabi", "noboolret", "noboolcase", "noboolfield", "nostructreturn", "nomutualstruct", "nodeadcode", "nopushdown", "nodupmerge", "nodeadvars"]
 
 ||| Stages that are off unless asked for with `--directive <name>`. They
 ||| travel to `toRCDefs` in the same list as the disables above.
@@ -459,7 +459,7 @@ toRCDefs disabled incremental roots thunks preFolded = do
            -- doc/struct-return.md
            withWorkers <- if "nostructreturn" `elem` disabled
                              then pure withNative
-                             else logTime 3 "rc2: DualABI (struct return)" $ applyStructReturn withNative
+                             else logTime 3 "rc2: DualABI (struct return)" $ applyStructReturn (not ("nomutualstruct" `elem` disabled)) withNative
            (ffiWorkers, ffiInlineMap) <- logTime 3 "rc2: DualABI (FFI worker table)" $ ffiWorkerTable sunk
            rewritten0 <- logTime 3 "rc2: DualABI (call-site rewrite)" $ pure $ applyCallSiteRewrite (not ("noboolcase" `elem` disabled)) ffiWorkers withWorkers
            -- doc/dual-abi.md, "Bool return"

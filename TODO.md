@@ -411,6 +411,11 @@ cannot reach C generation, and that is not being worked on). Native
 fields (2026-09-26, `Ret1:1=Int`) and constructors of up to four fields
 (2026-09-26, idris2-missing-containers 15% faster) are done.
 
+`MutualLoop`がまとめた関数(`{rc2_mutualLoop:N}`)も構造体返しの対象にした
+(`--directive nomutualstruct`で切れる)。Loop後は群内の呼び出しが`goto`なので、残る
+末尾呼び出しの環だけが除外される。idris2-lspでは13関数にworkerが付き、`con`ノードが
+551減る。ループ主体の手製ベンチで約6%速い。
+
 ## Performance: closure-returning functions with mixed tails
 
 World arity raising (`rc2/doc/world-arity-raising.md`) raises only a

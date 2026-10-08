@@ -1379,7 +1379,7 @@ fnSignature n args retRep isWorker = do
     -- place, whole-program or incremental) sidesteps the whole
     -- question: distinct per-TU internal linkage never collides no
     -- matter how the two counters happen to line up.
-    let storageClass = if isMutualLoopMerged n then "static " else ""
+    let storageClass = if isMutualLoopMerged n || isMutualLoopWorker n then "static " else ""
     pure $ "\{storageClass}\{retTypeStr}\{cName !(getFullName n)}"
             ++ (if nargs == 0 then "(void)"
                else if useVarArglist then "(IDRIS2RC2_Value *var_arglist[\{show nargs}])"

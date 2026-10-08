@@ -353,16 +353,18 @@ eligible tbl rev excluded = let (producing, cyclic) = eligibleParts tbl rev excl
 ||| is in no cycle of tail calls among them -- the bound that lets their
 ||| tail calls become direct C calls (doc/struct-return.md's "Tail
 ||| calls"); and every constructor reachable for one tag has one shape.
-||| `MutualLoop`'s merged functions are excluded, as they are from every
-||| other DualABI worker.
+||| `MutualLoop`'s merged functions take part only when `mergedToo` (they
+||| are excluded from every other DualABI worker): after `Loop` their
+||| calls among the group are `goto`s, so what remains is judged like any
+||| other function's tail calls (doc/struct-return.md's "Eligibility").
 export
-structReturnPlan : List (Name, RCDef) -> SortedMap Name (SortedMap Int ConShape)
-structReturnPlan defs =
+structReturnPlan : (mergedToo : Bool) -> List (Name, RCDef) -> SortedMap Name (SortedMap Int ConShape)
+structReturnPlan mergedToo defs =
     let tbl : SortedMap Name (List RetTail) := SortedMap.fromList (mapMaybe funTails defs)
     in settle tbl (tailCallers tbl) empty
   where
     funTails : (Name, RCDef) -> Maybe (Name, List RetTail)
-    funTails (n, MkRCFun _ _ _ body) = if isMutualLoopMerged n then Nothing else Just (n, retTails body)
+    funTails (n, MkRCFun _ _ _ body) = if isMutualLoopMerged n && not mergedToo then Nothing else Just (n, retTails body)
     funTails _ = Nothing
     ownShapes : List RetTail -> List (Int, ConShape)
     ownShapes = mapMaybe (\t => case t of { TailCon _ tag s => Just (tag, s); _ => Nothing })
@@ -597,7 +599,7 @@ retLayouts defs planned =
 export
 dumpDualABI : List (Name, RCDef) -> String
 dumpDualABI defs =
-    let ret1 = structReturnPlan defs
+    let ret1 = structReturnPlan True defs
         mark : (Name, RCDef) -> Maybe String
         mark (n, d) = map (\l => if isJust (lookup n ret1) then l ++ " ret1" else l) (describeEligibility n d)
     in fastConcat $ map (++ "\n") $
@@ -1490,10 +1492,10 @@ structSites _ _ _ e = pure e
 ||| other gets a new one. Callers are not rewritten here: every call
 ||| still reaches the wrapper, except tail calls between struct workers.
 export
-applyStructReturn : {auto c : Ref Ctxt Defs} -> {auto v : Ref VarId Int} -> List (Name, RCDef) -> Core (List (Name, RCDef))
-applyStructReturn defs = do
+applyStructReturn : {auto c : Ref Ctxt Defs} -> {auto v : Ref VarId Int} -> (mergedToo : Bool) -> List (Name, RCDef) -> Core (List (Name, RCDef))
+applyStructReturn mergedToo defs = do
     _ <- newRef FreshId 0
-    plan0 <- logTime 3 "rc2: struct return (plan)" $ pure $ structReturnPlan defs
+    plan0 <- logTime 3 "rc2: struct return (plan)" $ pure $ structReturnPlan mergedToo defs
     plan <- logTime 3 "rc2: struct return (prune plan)" $ pure $ prunePlan defs plan0
     let existing = SortedSet.fromList (map fst defs)
     planned <- logTime 3 "rc2: struct return (worker names)" $ traverse (workerFor existing plan) defs

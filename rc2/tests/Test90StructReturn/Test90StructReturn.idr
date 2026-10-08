@@ -80,6 +80,63 @@ measureTwice n = case shapeOf n of
                    Tri a _ c => c - a
                    _ => measure (n + 1)
 
+-- Mutually tail-recursive: `MutualLoop` merges the pair and `Loop` turns
+-- the calls between them into `goto`s, yet the exits are still
+-- constructors, so the merged function returns a struct like any other
+-- (`--directive nomutualstruct` keeps it a cell). Two callers, so
+-- neither the pair nor its users are inlined.
+mutual
+  seekEven : Int -> List Int -> Maybe Int
+  seekEven _ [] = Nothing
+  seekEven n (x :: xs) = if mod x 2 == 0 then Just (x + n) else seekOdd (n + 1) xs
+
+  seekOdd : Int -> List Int -> Maybe Int
+  seekOdd _ [] = Nothing
+  seekOdd n (x :: xs) = if mod x 2 /= 0 then seekEven (n + 1) xs else Just (x * 100 + n)
+
+firstEven : List Int -> String
+firstEven xs = case seekEven 0 xs of
+                 Nothing => "none"
+                 Just v => "found " ++ show v
+
+hasEven : List Int -> Bool
+hasEven xs = case seekOdd 0 xs of
+               Nothing => False
+               Just _ => True
+
+-- Mutual recursion that is no tail loop (the calls are not in tail
+-- position, so `MutualLoop` leaves the pair alone): each level cases on
+-- the other function's pair.
+mutual
+  splitA : List Int -> (List Int, List Int)
+  splitA [] = ([], [])
+  splitA (x :: xs) = case splitB xs of (l, r) => (x :: l, r)
+
+  splitB : List Int -> (List Int, List Int)
+  splitB [] = ([], [])
+  splitB (x :: xs) = case splitA xs of (l, r) => (l, x :: r)
+
+-- A three-way mutual loop with a small record at its exits.
+data Acc = MkAcc Int Int
+
+mutual
+  runA : Int -> Int -> Int -> Acc
+  runA 0 s c = MkAcc s c
+  runA n s c = runB (n - 1) (s + n) (c + 1)
+
+  runB : Int -> Int -> Int -> Acc
+  runB 0 s c = MkAcc c s
+  runB n s c = runC (n - 1) (mod (s * 2) 1000003) c
+
+  runC : Int -> Int -> Int -> Acc
+  runC n s c = runA n (s + 1) c
+
+sumAcc : Int -> Int
+sumAcc n = case runA n 0 0 of MkAcc a b => a * 3 + b
+
+diffAcc : Int -> Int
+diffAcc n = case runB n 1 1 of MkAcc a b => a - b
+
 main : IO ()
 main = do
   printLn (step 3 10)
@@ -95,3 +152,7 @@ main = do
   printLn (map measure [-3, 4, 25, 250])
   printLn (map segLength [-1, 7, 33])
   printLn (measureTwice 5, measureTwice 500)
+  printLn (firstEven [1, 3, 5, 8, 9], firstEven [1, 3], firstEven [])
+  printLn (hasEven [1, 3, 4], hasEven [2], hasEven [1, 3])
+  printLn (splitA [1, 2, 3, 4, 5, 6, 7], splitB [1, 2, 3])
+  printLn (map sumAcc [0, 1, 7, 100], map diffAcc [0, 1, 6, 100000])
