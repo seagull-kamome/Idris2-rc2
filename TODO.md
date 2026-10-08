@@ -821,51 +821,51 @@ idris2rc2\_rt\_retainと idris2rc2\_rt\_releaseはdup/dropまとめる。必要�
   テスト単位にまとめる
 
 
-## 比較の入れ子の合成: `<`と`==`の対を`<=`へ(調査 2026-10-06)
+## 比較の入れ子の合成: 残り(実装済み 2026-10-08)
 
-`x <= y`を`compare x y /= GT`で書いた形は、Criterion Aのcallee-first展開
-(`rc2/doc/inlining.md`)でcompareが展開されると、次の入れ子の比較になる。
+`cmp <T [x, y] then A else cmp ==T [x, y] then A' else B`(A'はAと等しい)を
+`cmp <=T [x, y] then A else B`にまとめる`Compiler.RC2.CmpMerge`を入れた
+(`{>, ==}`は`>=`、外側と内側の順、オペランドの順は問わない。さらに、then/else
+が等しい比較は枝1つにする)。dup/drop注釈の前、early inlineの後に回り、
+`--directive nocmpmerge`で止められる。設計は`rc2/doc/native-type-inference.md`
+の"Merging nested comparisons"。テストは`Test112Numeric/CmpMerge.idr`
+(Int/Integer/String/Char/Double(NaN込み)/Nat、RefCと出力一致、`check.sh`が
+`nocmpmerge`との差を数える)。
 
-```
-cmp <Int [x, y]  then A  else  cmp ==Int [x, y]  then A  else B
-```
-
-これは`cmp <=Int [x, y] then A else B`と同じ意味。`>`と`==`の対なら`>=`。
-比較演算子の`LTE`/`GTE`は`RCExp.idr`の`IsCmp`に既にあるが、入れ子を
-まとめる処理は無い。
-
-- idris2-lspのdump(2026-10-06)で、`else`の直後に`cmp ==`が来る組は42か所
-  (比較の分岐は全体で551)。全体では小さい。利用者のプログラムで`compare`
-  経由の`<=`/`>=`が多ければもっと出る。
-- 実装するなら、dup/dropが入る前のRCExp(`ConstFold`の近く)に小さな変形を
-  足す。条件は、外側と内側が同じ2引数・同じ型の比較であること、演算子の組が
-  `{<, ==}`か`{>, ==}`であること、外側と内側のthen枝が構造的に等しいこと。
-  dump上の`postDrop`はdup/drop挿入後の表現なので、そこでは扱いにくい。
-- `Integer`/`String`の比較(`Nat`を含む)は`cmp`に融合するようにした(2026-10-07)。
-  `tryFuseCompareOp`が`Types.boxedCmpEligible`(`Integer`と`String`)も通し、
-  Boxedのオペランドのまま`int cmp_N = idris2rc2_lt_Integer_raw(a, b)`のような
-  `_raw`ヘルパー(`idris2rc2_numeric.h`)で分岐する。オペランドは`ROp`と同じく
-  `postDrop`で解放する。設計は`rc2/doc/native-type-inference.md`の
+- **効果は小さい。** idris2-lsp(2026-10-08)で`<=`/`>=`にまとまった組は0、
+  then/elseが等しい比較の除去が2か所(`cmp`は1175から1173、`dup`は74638のまま、
+  `drop`は64800から64804、リンタの異常は0、コンパイル時間は2m36sで同じ)。
+  比較の入れ子は`Ord`の`compare`実装自体(then枝が`0`と`1`で異なる)に残るだけで、
+  その`if x < y then A else if x == y then A else B`の形が出るのは利用者の
+  コードか、単一の呼び出し元が`compare`を展開した場合に限る。
+  `Ord Int`/`Integer`は`<=`を原始演算で持つので、`compare`経由にならない。
+  実行時間は、String(`compare x y /= GT`、3000件の挿入ソート)で0.139s→0.134s
+  (約3%)。手書きの`if x < y then A else if x == y then A else B`をIntとDoubleで
+  各2億回回すループは10.48s→9.86s(約6%)。出力は`nocmpmerge`と一致。
+- **(参考) `Integer`/`String`の比較融合の計測(2026-10-07)。** `cmp`が551から1175へ
+  (うち`Integer`/`String`が624)、`op <Integer`/`==String`等の`let`+`case`の組が632から8へ。
+  `dup`は79113から79112、`drop`は80495から80467で、ほぼ変わらない。リンタの
+  漏れ検査は異常0で、検査対象の定義数も同じ(17534)。実行時間は変わらなかった
+  (`BenchBoxedCompare`、`Integer`の即値・ヒープと`String`の比較の分岐: 0.174秒が前後で
+  同じ。gccが元の`mkBool`の往復を既に消していた)。効果はIRとCの見通しと、
+  `mkBool`/`to_i64`の削減にとどまる。設計は`rc2/doc/native-type-inference.md`の
   "Comparisons over Boxed operands"。
-  - idris2-lspのdump: `cmp`が551から1175へ(うち`Integer`/`String`が624)、
-    `op <Integer`/`==String`等の`let`+`case`の組が632から8へ。`dup`は79113から
-    79112、`drop`は80495から80467で、ほぼ変わらない(Boolの`let`はstage 1で既に
-    `dup`/`drop`が付かなかった)。リンタの漏れ検査は異常0で、検査対象の定義数も
-    同じ(17534)。
-  - 実行時間は変わらなかった(`BenchBoxedCompare`、`Integer`の即値・ヒープと
-    `String`の比較の分岐: 0.174秒が前後で同じ。gccが元の`mkBool`の往復を
-    既に消していた)。効果はIRとCの見通しと、`mkBool`/`to_i64`の削減にとどまる。
-  - 残る未融合: `case`の対象が比較の直接の結果ではなく、`let`で束縛された
-    変数になっている形(`Eq Nat`の`==`をインライン展開した後など。lspで8組)。
-    なぜその形になるのかは調べていない。
-  - `compare x y /= GT`の形は、`compare_Ord_Integer`のworker内で`cmp <Integer`と
-    `cmp ==Integer`の入れ子になる(`Ord Int`と同じ形)。lspでの呼び出しは24か所の
-    ままで、展開されない理由(`delegatingThreshold`の20を超えるか)は測っていない。
-    `<`と`==`の対を`<=`にまとめる変換(上)は`Integer`にも使える。
-- 同じ結果を返す複数の`case`の枝(`0 -> 10; 1 -> 10; _ -> 10`)を1つにまとめる
-  処理は、`ConstFold`/`Sink`/`DeadVars`/`DupMerge`/`Emit`/`RC`/`Reuse`の
-  grepの範囲では見つからなかった(`DupMerge`はdup/dropの統合で別物)。
-  入れるなら`ConstFold`の`case`の簡約の近くが候補だが、未調査。
+- **`compare_Ord_Int`/`compare_Ord_Integer`が展開されない理由は`delegatingThreshold`。**
+  `delegatingThreshold`を24にしても呼び出しは残り、40にすると全部展開されて
+  `x <= y`相当が`cmp <=Int`になる(確認用プローブ)。書き換え後のサイズは25から40の
+  間。idris2-lsp全体では24で3.3%増えた(`rc2/doc/inlining.md`)ので、しきい値を上げる
+  のではなく、`compare_Ord_*`だけを許す個別の扱いを検討する。lspでの
+  `compare_Ord_Integer`の呼び出しは24か所のまま。
+- **`let`+`case`の未融合は8組のまま。** 形は`let v = (let x = case ... in op ==Integer [x, #0]) in case v of`
+  で、`case`の対象が入れ子の`let`の末尾の比較になっている(`List.filter`の
+  述語をインライン展開した後など)。`Phase 1`が`case`の対象を変数として見るので
+  融合しない。`PushCon`の「ブロックの末尾への`case`の押し込み」を比較にも広げるのが
+  候補だが、8組では見合わない。
+- **まだ入れていない。** 同じ結果を返す複数の`case`の枝(`0 -> 10; 1 -> 10; _ -> 10`)を
+  1つにまとめる処理(`>=`を`compare`で書いた`case v of 0->0; 1->1; 2->1; _->1`など、
+  `compare`が展開されない場合の形)。`ConstFold`の`case`の簡約の近くが候補。
+  否定を伴う変形(`cmp < then A else B`を`cmp >= then B else A`にする)は、Doubleの
+  NaNで成り立たないので意図的に入れていない。
 
 ## 借用推論(borrow inference): 計測して保留(2026-10-07)
 

@@ -419,6 +419,54 @@ The shape condition is still the one above (the comparison itself is the
 scrutinee of the two-way match); a `case` on a variable that was
 `let`-bound to the comparison earlier is not fused.
 
+### Merging nested comparisons (`Compiler.RC2.CmpMerge`)
+
+`compare x y /= GT` is `x <= y`, but once the callee-first inliner
+(`doc/inlining.md`) has expanded `compare`, the result is two nested
+comparisons with the same branch twice:
+
+```
+cmp <T  [x, y] then A  else  cmp ==T [x, y] then A' else B     -- A' equals A
+==>
+cmp <=T [x, y] then A  else  B
+```
+
+`Compiler.RC2.CmpMerge` rewrites this, on the `RCExp` before the dup/drop
+annotation (after the early-inline refold, so it sees the splices as
+well; the `postDrop` fields are still `[]`). `--directive nocmpmerge`
+turns it off.
+
+- **Pairs.** `{<, ==}` becomes `<=` and `{>, ==}` becomes `>=`, with the
+  strict comparison outside or inside, and the operands in either order
+  (`a > b` is read as `b < a`; `==` is symmetric). Both comparisons must
+  have the same operand type, one that fuses at all (`nativeEligible` or
+  `Types.boxedCmpEligible`: Int and the other fixed widths, Char, Double,
+  Integer, String). The merged node keeps the strict comparison's
+  operands.
+- **Equal branches.** The two `then` branches must be equal up to source
+  locations and up to the names of locals bound inside them (`RLet`
+  variables and constructor-alt fields are matched in order). A
+  constructor the equality does not handle compares unequal, which only
+  costs a merge. `Db` constants are compared by their printed form, so
+  `0.0` and `-0.0` stay apart although `==` calls them equal.
+- **A comparison with equal branches** (`compare x y /= LT` leaves
+  `cmp ==T [x, y] then T else T`) is dropped for its branch.
+- **NaN.** Every merge keeps all results for a Double NaN: `<`, `==` and
+  `<=` are all false for it, so both forms take the else branch.
+  Negation or branch swapping is deliberately not done, because it would
+  not hold: `cmp < then A else B` is not `cmp >= then B else A` for NaN.
+
+Where it fires. On `idris2-lsp` almost nowhere (see TODO.md): the
+`Ord Int`/`Integer` `compare` stays a call (its rewritten body is over
+`delegatingThreshold`), and elsewhere `<=` is the primitive already. It
+needs the `compare` expansion to be inlined, which happens for a
+single-caller `compare` (early inline) of String, Char and Double, or
+for a hand-written `if x < y then A else if x == y then A else B`.
+Measured: 200 million iterations of a hand-written merged shape on Int
+and on Double take 9.86s instead of 10.48s (about 6%); a String insertion
+sort through `compare x y /= GT` takes 0.134s instead of 0.139s, one
+`strcmp` fewer per comparison.
+
 ## Bugs found and fixed (chronological, see `git log`/`BENCHMARKS.md` for commit-level detail)
 
 1. **`Cast Integer Int` memory corruption.** `opResultRep (Cast i o)`

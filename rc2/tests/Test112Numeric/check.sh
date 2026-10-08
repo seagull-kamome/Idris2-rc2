@@ -36,3 +36,36 @@ if [ "$raw" -ge "$cmps" ]; then
 else
     fail "only $raw *_raw conditions in $TMP/${name}_rc2.c for $cmps cmp node(s)"
 fi
+
+# CmpMerge: nested `<`/`==` (and `>`/`==`) comparisons of the same
+# operands with equal branches become one `<=` (`>=`) node
+# (doc/native-type-inference.md, "Merging nested comparisons"). Invisible
+# to an output diff. Counted against the same compiler under
+# `--directive nocmpmerge`: each type's shape functions in CmpMerge.idr
+# (called once each, so one site each) give 3 `<=` and 3 `>=` nodes, plus
+# one more `<=` on Int for the alpha-equivalent let branches; the shapes
+# with differing branches or operands must add none, hence exact counts.
+# The `compare`-based `<=`/`>=` are inlined or not by size, so they are
+# not counted here (their output is diffed against RefC).
+rc2dir="$(cd "$(dirname "$0")/../.." && pwd)"
+(cd "$rc2dir/tests" && "$rc2dir/build/exec/idris2-rc2" --cg rc2 --directive dumprcexpr --directive nocmpmerge \
+    "$name/$name.idr" -o "$TMP/${name}_nocmpmerge" > "$TMP/${name}_nocmpmerge.log" 2>&1)
+off="$TMP/${name}_nocmpmerge.rcexpr"
+if [ ! -f "$off" ]; then
+    fail "CmpMerge: --directive nocmpmerge build produced no IR dump (see $TMP/${name}_nocmpmerge.log)"
+else
+    cnt() { grep -cE "^ *cmp $1$2 " "$3" || true; }
+    bad=""
+    for ty in Int Integer String Char Double; do
+        wantLE=3; [ "$ty" = "Int" ] && wantLE=4
+        dLE=$(( $(cnt '<=' "$ty" "$dump") - $(cnt '<=' "$ty" "$off") ))
+        dGE=$(( $(cnt '>=' "$ty" "$dump") - $(cnt '>=' "$ty" "$off") ))
+        dEQ=$(( $(cnt '==' "$ty" "$off") - $(cnt '==' "$ty" "$dump") ))
+        { [ "$dLE" = "$wantLE" ] && [ "$dGE" = "3" ] && [ "$dEQ" -ge 6 ]; } || bad="$bad $ty(<=:+$dLE >=:+$dGE ==:-$dEQ)"
+    done
+    if [ -z "$bad" ]; then
+        pass "nested comparison merge -- Int/Integer/String/Char/Double each gain the merged <=/>= nodes (--directive nocmpmerge is the comparison)"
+    else
+        fail "nested comparison merge, unexpected node-count change vs nocmpmerge:$bad (want <=:+3 (Int +4), >=:+3, ==:-6 or more)"
+    fi
+fi
