@@ -1,0 +1,48 @@
+def Main.useRead  (fun args= ["v1:Boxed"] ret= Boxed)
+  op strLength [v1] postDrop= [v1]
+
+def Main.mk  (fun args= [] ret= Boxed)
+  #"x"
+
+def Main.relay  (fun args= ["v1:Boxed"] ret= Boxed)
+  call Main.useRead [v1]
+
+def Main.relayNeg  (fun args= ["v1:Boxed"] ret= Boxed)
+  call Main.useRead [v1]
+
+def Main.tailStore  (fun args= ["v1:Boxed"] ret= Boxed)
+  let v2 : Boxed =
+    dup v1
+    con _builtin.JUST [just] tag= Just 1 [v1]
+  call Main.useRead [v1]
+
+def Main.keepRelay  (fun args= [] ret= Boxed)
+  let v1 : Boxed =
+    call Main.mk []
+  let v2 : Boxed =
+    dup v1
+    call Main.relay [v1]
+  drop [v1]
+  v2
+
+def Main.lastRelay  (fun args= [] ret= Boxed)
+  let v1 : Boxed =
+    call Main.mk []
+  call Main.relay [v1]
+
+def Main.midOne  (fun args= [] ret= Boxed)
+  let v1 : Boxed =
+    call Main.mk []
+  let v2 : Boxed =
+    call Main.relayNeg [v1]
+  v2
+
+def Main.midTwo  (fun args= [] ret= Boxed)
+  let v1 : Boxed =
+    call Main.mk []
+  let v2 : Boxed =
+    call Main.relayNeg [v1]
+  v2
+
+def Main.viaClosure  (fun args= [] ret= Boxed)
+  partial Main.relay missing= 1 []

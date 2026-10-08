@@ -25,7 +25,7 @@ import System
 import System.File
 
 usage : String
-usage = "usage: rcexpr-lint [--borrow-stats | --pushdown-stats] <file.rcexpr>"
+usage = "usage: rcexpr-lint [--borrow-stats | --borrow-tail-stats | --pushdown-stats] <file.rcexpr>"
 
 runOn : Maybe (RCProgram -> List String) -> String -> IO ()
 runOn stats path = do
@@ -77,6 +77,7 @@ main = do
     case args of
          [_, path] => runOn Nothing path
          [_, "--borrow-stats", path] => runOn (Just borrowStats) path
+         [_, "--borrow-tail-stats", path] => runOn (Just borrowTailStats) path
          [_, "--pushdown-stats", path] => runOn (Just pushdownStats) path
          _ => do
              putStrLn usage

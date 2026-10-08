@@ -17,6 +17,9 @@
 # params, struct fields, reuse, FFI/callRep consumption); `leak.rcexpr`
 # one definition per leak-check finding. `borrow.rcexpr` is run with
 # `--borrow-stats`; every figure in its `.expected` was counted by hand.
+# `borrowtail.rcexpr` is run with `--borrow-tail-stats`: one parameter that
+# nets positive over tail and non-tail call sites, one that nets negative,
+# one blocked by a tail call and another reason; hand-counted too.
 # `pushdown.rcexpr` is run with `--pushdown-stats`; each definition is one
 # pattern (or a negative case next to it) and every figure was counted by
 # hand: the A/B/C1/C2/D/D0 events, the E census and the dup/drop totals.
@@ -79,6 +82,7 @@ check "leakclean.rcexpr (balanced shapes the leak check must accept)" "$TESTS_DI
 check "typedcase.rcexpr (typed-constant case scrutinees are refcount-free)" "$TESTS_DIR/typedcase.rcexpr" 0
 check "leak.rcexpr (every leak-check finding fires)" "$TESTS_DIR/leak.rcexpr" 1
 check "borrow.rcexpr (borrow statistics, hand-counted)" "$TESTS_DIR/borrow.rcexpr" 0 --borrow-stats
+check "borrowtail.rcexpr (tail-blocked parameters, hand-counted)" "$TESTS_DIR/borrowtail.rcexpr" 0 --borrow-tail-stats
 check "pushdown.rcexpr (push-down statistics, hand-counted)" "$TESTS_DIR/pushdown.rcexpr" 0 --pushdown-stats
 
 echo "=== All rcexpr-lint checks passed ==="

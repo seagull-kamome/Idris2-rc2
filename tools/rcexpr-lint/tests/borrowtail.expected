@@ -1,0 +1,63 @@
+borrow tail statistics (places in the IR, not executions; evaluated on the final IR):
+  blocked Boxed parameters                            3
+    blocked ONLY by a non-loop tail-call argument        2  (the histogram row of --borrow-stats)
+    blocked by it and by other reasons (stay excluded)        1
+  outgoing tail sites of the only-tail set, by what they pass to:
+      a parameter that is borrowable now              2
+      another only-tail parameter (chain)             0
+      a parameter blocked by something else (owned)        0
+      not a counted parameter                         0
+    only-tail parameters whose targets are all liftable        2  (structurally eligible; chains iterated)
+  independent balance of the eligible ones (model A: tail site = +1 drop; model B: tail site free):
+      net-positive under A                            1  sum of nets 0
+      net-positive under B                            1  sum of nets 1
+  joint result, keeping only net-positive ones until stable (chains re-checked):
+      model A: parameters lifted                      1
+      model A: net operations                         1  in loops 0
+      model B: parameters lifted                      1
+      model B: net operations                         2  in loops 0
+    current net (--borrow-stats)                     -2  -50.0% of 4; in loops 0
+    total with model A lifted                        -1  -25.0%; in loops 0
+    total with model B lifted                         0  0.0%; in loops 0
+  model B owned entries:
+      functions with a tail site served by an owned entry        1
+        of those already in the current wrapper set        0  current wrapper set 0
+      lifted functions referenced indirectly, not yet wrapped        1  (A: 1)
+  model A (components, ops / in loops):
+      callee drops removed                            0  in loops 0
+      callee dups removed                             0  in loops 0
+      caller dups removed (incoming sites)            1  in loops 0
+      credit: drops no longer added downstream        1  in loops 0
+      caller drops added (non-tail incoming sites)        0  in loops 0
+      incoming tail sites (A: +1 drop each; B: 0)        1  in loops 0
+  model B (components, ops / in loops):
+      callee drops removed                            0  in loops 0
+      callee dups removed                             0  in loops 0
+      caller dups removed (incoming sites)            1  in loops 0
+      credit: drops no longer added downstream        1  in loops 0
+      caller drops added (non-tail incoming sites)        0  in loops 0
+      incoming tail sites (A: +1 drop each; B: 0)        1  in loops 0
+  histogram of the independent net per eligible parameter, model A:
+      net <= -3                                       0
+      net -2                                          0
+      net -1                                          1
+      net 0                                           0
+      net 1                                           1
+      net 2                                           0
+      net 3..5                                        0
+      net 6..10                                       0
+      net >= 11                                       0
+  histogram, model B:
+      net <= -3                                       0
+      net -2                                          0
+      net -1                                          1
+      net 0                                           0
+      net 1                                           0
+      net 2                                           1
+      net 3..5                                        0
+      net 6..10                                       0
+      net >= 11                                       0
+  top 15 lifted parameters, model A:
+         1  Main.relay (parameter 0)
+  top 15 lifted parameters, model B:
+         2  Main.relay (parameter 0)
