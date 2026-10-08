@@ -37,9 +37,9 @@ TSAN_CFLAGS="-O1 -g -fsanitize=thread"
 PROGRAMS=(
     "Test102MultiThreadSwitch|$SCRIPT_DIR/Test102MultiThreadSwitch/Test102MultiThreadSwitch.idr"
     "Test104ThreadStress|$SCRIPT_DIR/Test104ThreadStress/Test104ThreadStress.idr"
-    "TestConcurrency|$REPO_DIR/libs/rc2base/tests/TestConcurrency.idr"
-    "TestMVar|$REPO_DIR/libs/rc2base/tests/TestMVar.idr"
-    "TestMultiThreadRC2|$REPO_DIR/libs/rc2base/tests/TestMultiThreadRC2.idr"
+    "TestConcurrency|$REPO_DIR/libs/rc2base/tests/TestConcurrency/TestConcurrency.idr"
+    "TestMVar|$REPO_DIR/libs/rc2base/tests/TestMVar/TestMVar.idr"
+    "TestMultiThreadRC2|$REPO_DIR/libs/rc2base/tests/TestMultiThreadRC2/TestMultiThreadRC2.idr"
 )
 
 fails=0

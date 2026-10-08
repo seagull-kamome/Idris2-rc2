@@ -78,7 +78,7 @@ inside one segment indistinguishable from a real separator. Use
 
 ## Verified
 
-`tests/TestURL.idr` (in `tests/verify.sh`), under `--cg rc2`: the
+`tests/TestURL/TestURL.idr` (in `tests/verify.sh`), under `--cg rc2`: the
 percent codec (space, `/`, a trailing `%`, a 2-byte and a 3-byte UTF-8
 sequence, a malformed byte -> U+FFFD, encode/decode round-trip),
 `parseQuery`/`buildQuery` and their round-trip, `parse` on a full URL /

@@ -8,9 +8,12 @@
 # two, and its own package resolution could end up picking either one
 # depending on search-path order; installing to the one shared
 # location rc2's own env.sh already defaults to removes that
-# ambiguity entirely), builds tests/TestText.idr against
-# idris2-rc-cg's own rc2 backend, runs it, and diffs its stdout
-# against tests/TestText.expected. Small-scale sibling of
+# ambiguity entirely), then builds every test under tests/<TestName>/
+# (one directory per test, holding <TestName>.idr and
+# <TestName>.expected) against idris2-rc-cg's own rc2 backend, runs it
+# and diffs its stdout against <TestName>.expected. The TESTS list
+# below is explicit; the script fails if it and the tests/*/
+# directories disagree. Small-scale sibling of
 # rc2/tests/verify.sh -- see that script's own header for the fuller
 # rationale this one deliberately doesn't repeat.
 #
@@ -45,6 +48,49 @@ fi
 
 source "$REPO_ROOT/env.sh"
 
+# name|extra -p packages (rc2base is always passed)|what the test covers
+TESTS=(
+    "TestText||Data.String.RC2/Text basics"
+    "TestTextTree|contrib|Data.Text, the finger-tree rope"
+    "TestConcurrency||fork + System.Concurrency.RC2's Mutex/Condition"
+    "TestXoroshiro128PlusPlus||System.Random.Xoroshiro128PlusPlus"
+    "TestBufferRC2||Data.Buffer.RC2's %foreign_impl patches"
+    "TestDoubleRC2||Data.Double.RC2's %foreign_impl patches"
+    "TestXoroshiro64StarStar||System.Random.Xoroshiro64StarStar"
+    "TestStringFFI||Data.String.FFI's ptrToString"
+    "TestPtrRC2||System.FFI.C.Ptr's raw fetch/store"
+    "TestSizeofRC2||System.FFI.C.Sizeof's Sizeof instances"
+    "TestArrayRC2||System.FFI.C.Array's CArray"
+    "TestIntegerGMP||Data.Integer.GMP's direct GMP bindings"
+    "TestHTTPServer|network contrib|Network.HTTP.Server: cross-thread respond + stop"
+    "TestRegexPOSIX||Text.Regex.POSIX: libc <regex.h> bindings"
+    "TestURL||Network.URL: parse/build + percent codec"
+    "TestStringRC2||Data.String.RC2: unsafeStringByteSlice / byteLength"
+    "TestMVar||Control.Concurrent.MVar: Mutex/Condition-backed MVar"
+    "TestDoubleConvert||Data.Double.Convert: Eisel-Lemire/Grisu2 fast path"
+    "TestRcexprParser|contrib|Language.RCExpr.{AST,Lexer,Parser}: dumprcexpr grammar edge cases"
+    "TestIORefRC2||Data.IORef.RC2: casIORef success/failure/retry loop"
+    "TestMultiThreadRC2||System.GC.RC2: the switch to atomic reference counting"
+)
+
+echo "=== Check TESTS against the tests/*/ directories ==="
+# Every tests/<T>/ must be listed and have <T>.idr + <T>.expected, and
+# every listed test must have its directory.
+listed=()
+for entry in "${TESTS[@]}"; do listed+=("${entry%%|*}"); done
+for d in "$TESTS_DIR"/*/; do
+    t="$(basename "$d")"
+    [[ "$t" == build ]] && continue
+    found=0
+    for l in "${listed[@]}"; do [[ "$l" == "$t" ]] && found=1; done
+    [[ $found -eq 1 ]] || fail "tests/$t/ is not in the TESTS list"
+done
+for t in "${listed[@]}"; do
+    [[ -d "$TESTS_DIR/$t" ]] || fail "TESTS lists $t but tests/$t/ does not exist"
+    [[ -f "$TESTS_DIR/$t/$t.idr" ]] || fail "tests/$t/$t.idr missing"
+    [[ -f "$TESTS_DIR/$t/$t.expected" ]] || fail "tests/$t/$t.expected missing"
+done
+
 echo "=== Clean rebuild of support/c ==="
 ( make -C "$PKG_DIR/support/c" clean && make -C "$PKG_DIR/support/c" )
 
@@ -62,7 +108,6 @@ echo "=== Check postinstall copied the native library into lib/ ==="
 [[ -f "$INSTALLED_LIB/idris2rc2_rc2base_concurrency_util.h" ]] || fail "postinstall didn't install idris2rc2_rc2base_concurrency_util.h to $INSTALLED_LIB"
 [[ -f "$INSTALLED_LIB/idris2rc2_rc2base_ptr_util.h" ]] || fail "postinstall didn't install idris2rc2_rc2base_ptr_util.h to $INSTALLED_LIB"
 
-echo "=== rc2 backend: build TestText (against the INSTALLED lib/, not support/c) ==="
 # No IDRIS2_PACKAGE_PATH export needed: idris2 already searches its
 # own installation prefix (install/, the same one just installed into
 # above) by default. No IDRIS2_CFLAGS/IDRIS2_LDFLAGS needed either:
@@ -70,259 +115,30 @@ echo "=== rc2 backend: build TestText (against the INSTALLED lib/, not support/c
 # -L<...>/lib for every -p'd package's own installed lib/ (here,
 # $INSTALLED_LIB) automatically -- see libs/rc2base/README.md's
 # "Native library install location". idris2-rc2 always writes its -o
-# output under <cwd>/build/exec/, so cd into tests/ first to get a
-# predictable, self-contained output path.
-( cd "$TESTS_DIR" && "$IDRIS2RC2" --cg rc2 -p rc2base -o TestText_idris2Text_verify TestText.idr )
+# output under <cwd>/build/exec/, so each test is built from inside its
+# own directory (tests/<T>/build/ is git-ignored). No extra
+# LD_LIBRARY_PATH is needed to run: libidris2_support.so already came
+# from env.sh's own LD_LIBRARY_PATH, sourced above.
+for entry in "${TESTS[@]}"; do
+    IFS='|' read -r t extra desc <<< "$entry"
+    pflags=(-p rc2base)
+    for p in $extra; do pflags+=(-p "$p"); done
 
-echo "=== Run and diff against TestText.expected ==="
-# No extra LD_LIBRARY_PATH needed either: support/rc2 has no .so of its
-# own, and libidris2_support.so (the one shared runtime .so a compiled
-# rc2 program needs) already came from env.sh's own LD_LIBRARY_PATH,
-# sourced above.
-"$TESTS_DIR/build/exec/TestText_idris2Text_verify" > "$TMP/actual.out" 2>&1
+    echo "=== rc2 backend: build $t ($desc) ==="
+    ( cd "$TESTS_DIR/$t" && ulimit -v 12000000 && timeout 600 \
+        "$IDRIS2RC2" --cg rc2 "${pflags[@]}" -o "${t}_verify" "$t.idr" )
 
-if diff -u "$TESTS_DIR/TestText.expected" "$TMP/actual.out"; then
-    echo "PASS  TestText"
-else
-    fail "TestText -- output mismatch (see diff above)"
-fi
+    echo "=== Run and diff against $t.expected ==="
+    rc=0
+    ( ulimit -v 4000000; timeout 20 "$TESTS_DIR/$t/build/exec/${t}_verify" ) > "$TMP/actual.out" 2>&1 || rc=$?
+    if [[ $rc -ne 0 ]]; then
+        cat "$TMP/actual.out"
+        fail "$t -- exited with status $rc (124 = 20s timeout)"
+    fi
 
-echo "=== rc2 backend: build TestTextTree (Data.Text, the finger-tree rope) ==="
-( cd "$TESTS_DIR" && "$IDRIS2RC2" --cg rc2 -p rc2base -p contrib -o TestTextTree_verify TestTextTree.idr )
-
-echo "=== Run and diff against TestTextTree.expected ==="
-"$TESTS_DIR/build/exec/TestTextTree_verify" > "$TMP/actual2.out" 2>&1
-
-if diff -u "$TESTS_DIR/TestTextTree.expected" "$TMP/actual2.out"; then
-    echo "PASS  TestTextTree"
-else
-    fail "TestTextTree -- output mismatch (see diff above)"
-fi
-
-echo "=== rc2 backend: build TestConcurrency (fork + System.Concurrency.RC2's Mutex/Condition) ==="
-( cd "$TESTS_DIR" && "$IDRIS2RC2" --cg rc2 -p rc2base -o TestConcurrency_verify TestConcurrency.idr )
-
-echo "=== Run and diff against TestConcurrency.expected ==="
-"$TESTS_DIR/build/exec/TestConcurrency_verify" > "$TMP/actual3.out" 2>&1
-
-if diff -u "$TESTS_DIR/TestConcurrency.expected" "$TMP/actual3.out"; then
-    echo "PASS  TestConcurrency"
-else
-    fail "TestConcurrency -- output mismatch (see diff above)"
-fi
-
-echo "=== rc2 backend: build TestXoroshiro128PlusPlus (System.Random.Xoroshiro128PlusPlus) ==="
-( cd "$TESTS_DIR" && "$IDRIS2RC2" --cg rc2 -p rc2base -o TestXoroshiro128PlusPlus_verify TestXoroshiro128PlusPlus.idr )
-
-echo "=== Run and diff against TestXoroshiro128PlusPlus.expected ==="
-"$TESTS_DIR/build/exec/TestXoroshiro128PlusPlus_verify" > "$TMP/actual4.out" 2>&1
-
-if diff -u "$TESTS_DIR/TestXoroshiro128PlusPlus.expected" "$TMP/actual4.out"; then
-    echo "PASS  TestXoroshiro128PlusPlus"
-else
-    fail "TestXoroshiro128PlusPlus -- output mismatch (see diff above)"
-fi
-
-echo "=== rc2 backend: build TestBufferRC2 (Data.Buffer.RC2's %foreign_impl patches) ==="
-( cd "$TESTS_DIR" && "$IDRIS2RC2" --cg rc2 -p rc2base -o TestBufferRC2_verify TestBufferRC2.idr )
-
-echo "=== Run and diff against TestBufferRC2.expected ==="
-"$TESTS_DIR/build/exec/TestBufferRC2_verify" > "$TMP/actual5.out" 2>&1
-
-if diff -u "$TESTS_DIR/TestBufferRC2.expected" "$TMP/actual5.out"; then
-    echo "PASS  TestBufferRC2"
-else
-    fail "TestBufferRC2 -- output mismatch (see diff above)"
-fi
-
-echo "=== rc2 backend: build TestDoubleRC2 (Data.Double.RC2's %foreign_impl patches) ==="
-( cd "$TESTS_DIR" && "$IDRIS2RC2" --cg rc2 -p rc2base -o TestDoubleRC2_verify TestDoubleRC2.idr )
-
-echo "=== Run and diff against TestDoubleRC2.expected ==="
-"$TESTS_DIR/build/exec/TestDoubleRC2_verify" > "$TMP/actual6.out" 2>&1
-
-if diff -u "$TESTS_DIR/TestDoubleRC2.expected" "$TMP/actual6.out"; then
-    echo "PASS  TestDoubleRC2"
-else
-    fail "TestDoubleRC2 -- output mismatch (see diff above)"
-fi
-
-echo "=== rc2 backend: build TestXoroshiro64StarStar (System.Random.Xoroshiro64StarStar) ==="
-( cd "$TESTS_DIR" && "$IDRIS2RC2" --cg rc2 -p rc2base -o TestXoroshiro64StarStar_verify TestXoroshiro64StarStar.idr )
-
-echo "=== Run and diff against TestXoroshiro64StarStar.expected ==="
-"$TESTS_DIR/build/exec/TestXoroshiro64StarStar_verify" > "$TMP/actual7.out" 2>&1
-
-if diff -u "$TESTS_DIR/TestXoroshiro64StarStar.expected" "$TMP/actual7.out"; then
-    echo "PASS  TestXoroshiro64StarStar"
-else
-    fail "TestXoroshiro64StarStar -- output mismatch (see diff above)"
-fi
-
-echo "=== rc2 backend: build TestStringFFI (Data.String.FFI's ptrToString) ==="
-( cd "$TESTS_DIR" && "$IDRIS2RC2" --cg rc2 -p rc2base -o TestStringFFI_verify TestStringFFI.idr )
-
-echo "=== Run and diff against TestStringFFI.expected ==="
-"$TESTS_DIR/build/exec/TestStringFFI_verify" > "$TMP/actual8.out" 2>&1
-
-if diff -u "$TESTS_DIR/TestStringFFI.expected" "$TMP/actual8.out"; then
-    echo "PASS  TestStringFFI"
-else
-    fail "TestStringFFI -- output mismatch (see diff above)"
-fi
-
-echo "=== rc2 backend: build TestPtrRC2 (System.FFI.C.Ptr's raw fetch/store) ==="
-( cd "$TESTS_DIR" && "$IDRIS2RC2" --cg rc2 -p rc2base -o TestPtrRC2_verify TestPtrRC2.idr )
-
-echo "=== Run and diff against TestPtrRC2.expected ==="
-"$TESTS_DIR/build/exec/TestPtrRC2_verify" > "$TMP/actual9.out" 2>&1
-
-if diff -u "$TESTS_DIR/TestPtrRC2.expected" "$TMP/actual9.out"; then
-    echo "PASS  TestPtrRC2"
-else
-    fail "TestPtrRC2 -- output mismatch (see diff above)"
-fi
-
-echo "=== rc2 backend: build TestSizeofRC2 (System.FFI.C.Sizeof's Sizeof instances) ==="
-( cd "$TESTS_DIR" && "$IDRIS2RC2" --cg rc2 -p rc2base -o TestSizeofRC2_verify TestSizeofRC2.idr )
-
-echo "=== Run and diff against TestSizeofRC2.expected ==="
-"$TESTS_DIR/build/exec/TestSizeofRC2_verify" > "$TMP/actual10.out" 2>&1
-
-if diff -u "$TESTS_DIR/TestSizeofRC2.expected" "$TMP/actual10.out"; then
-    echo "PASS  TestSizeofRC2"
-else
-    fail "TestSizeofRC2 -- output mismatch (see diff above)"
-fi
-
-echo "=== rc2 backend: build TestArrayRC2 (System.FFI.C.Array's CArray) ==="
-( cd "$TESTS_DIR" && "$IDRIS2RC2" --cg rc2 -p rc2base -o TestArrayRC2_verify TestArrayRC2.idr )
-
-echo "=== Run and diff against TestArrayRC2.expected ==="
-"$TESTS_DIR/build/exec/TestArrayRC2_verify" > "$TMP/actual11.out" 2>&1
-
-if diff -u "$TESTS_DIR/TestArrayRC2.expected" "$TMP/actual11.out"; then
-    echo "PASS  TestArrayRC2"
-else
-    fail "TestArrayRC2 -- output mismatch (see diff above)"
-fi
-
-echo "=== rc2 backend: build TestIntegerGMP (Data.Integer.GMP's direct GMP bindings) ==="
-( cd "$TESTS_DIR" && "$IDRIS2RC2" --cg rc2 -p rc2base -o TestIntegerGMP_verify TestIntegerGMP.idr )
-
-echo "=== Run and diff against TestIntegerGMP.expected ==="
-"$TESTS_DIR/build/exec/TestIntegerGMP_verify" > "$TMP/actual12.out" 2>&1
-
-if diff -u "$TESTS_DIR/TestIntegerGMP.expected" "$TMP/actual12.out"; then
-    echo "PASS  TestIntegerGMP"
-else
-    fail "TestIntegerGMP -- output mismatch (see diff above)"
-fi
-
-echo "=== rc2 backend: build TestHTTPServer (Network.HTTP.Server: cross-thread respond + stop) ==="
-( cd "$TESTS_DIR" && "$IDRIS2RC2" --cg rc2 -p rc2base -p network -p contrib -o TestHTTPServer_verify TestHTTPServer.idr )
-
-echo "=== Run and diff against TestHTTPServer.expected ==="
-"$TESTS_DIR/build/exec/TestHTTPServer_verify" > "$TMP/actual13.out" 2>&1
-
-if diff -u "$TESTS_DIR/TestHTTPServer.expected" "$TMP/actual13.out"; then
-    echo "PASS  TestHTTPServer"
-else
-    fail "TestHTTPServer -- output mismatch (see diff above)"
-fi
-
-echo "=== rc2 backend: build TestRegexPOSIX (Text.Regex.POSIX: libc <regex.h> bindings) ==="
-( cd "$TESTS_DIR" && "$IDRIS2RC2" --cg rc2 -p rc2base -o TestRegexPOSIX_verify TestRegexPOSIX.idr )
-
-echo "=== Run and diff against TestRegexPOSIX.expected ==="
-"$TESTS_DIR/build/exec/TestRegexPOSIX_verify" > "$TMP/actual14.out" 2>&1
-
-if diff -u "$TESTS_DIR/TestRegexPOSIX.expected" "$TMP/actual14.out"; then
-    echo "PASS  TestRegexPOSIX"
-else
-    fail "TestRegexPOSIX -- output mismatch (see diff above)"
-fi
-
-echo "=== rc2 backend: build TestURL (Network.URL: parse/build + percent codec) ==="
-( cd "$TESTS_DIR" && "$IDRIS2RC2" --cg rc2 -p rc2base -o TestURL_verify TestURL.idr )
-
-echo "=== Run and diff against TestURL.expected ==="
-"$TESTS_DIR/build/exec/TestURL_verify" > "$TMP/actual15.out" 2>&1
-
-if diff -u "$TESTS_DIR/TestURL.expected" "$TMP/actual15.out"; then
-    echo "PASS  TestURL"
-else
-    fail "TestURL -- output mismatch (see diff above)"
-fi
-
-echo "=== rc2 backend: build TestStringRC2 (Data.String.RC2: unsafeStringByteSlice / byteLength) ==="
-( cd "$TESTS_DIR" && "$IDRIS2RC2" --cg rc2 -p rc2base -o TestStringRC2_verify TestStringRC2.idr )
-
-echo "=== Run and diff against TestStringRC2.expected ==="
-"$TESTS_DIR/build/exec/TestStringRC2_verify" > "$TMP/actual16.out" 2>&1
-
-if diff -u "$TESTS_DIR/TestStringRC2.expected" "$TMP/actual16.out"; then
-    echo "PASS  TestStringRC2"
-else
-    fail "TestStringRC2 -- output mismatch (see diff above)"
-fi
-
-echo "=== rc2 backend: build TestMVar (Control.Concurrent.MVar: Mutex/Condition-backed MVar) ==="
-( cd "$TESTS_DIR" && "$IDRIS2RC2" --cg rc2 -p rc2base -o TestMVar_verify TestMVar.idr )
-
-echo "=== Run and diff against TestMVar.expected ==="
-"$TESTS_DIR/build/exec/TestMVar_verify" > "$TMP/actual17.out" 2>&1
-
-if diff -u "$TESTS_DIR/TestMVar.expected" "$TMP/actual17.out"; then
-    echo "PASS  TestMVar"
-else
-    fail "TestMVar -- output mismatch (see diff above)"
-fi
-
-echo "=== rc2 backend: build TestDoubleConvert (Data.Double.Convert: Eisel-Lemire/Grisu2 fast path) ==="
-( cd "$TESTS_DIR" && "$IDRIS2RC2" --cg rc2 -p rc2base -o TestDoubleConvert_verify TestDoubleConvert.idr )
-
-echo "=== Run and diff against TestDoubleConvert.expected ==="
-"$TESTS_DIR/build/exec/TestDoubleConvert_verify" > "$TMP/actual18.out" 2>&1
-
-if diff -u "$TESTS_DIR/TestDoubleConvert.expected" "$TMP/actual18.out"; then
-    echo "PASS  TestDoubleConvert"
-else
-    fail "TestDoubleConvert -- output mismatch (see diff above)"
-fi
-
-echo "=== rc2 backend: build TestRcexprParser (Language.RCExpr.{AST,Lexer,Parser}: dumprcexpr grammar edge cases) ==="
-( cd "$TESTS_DIR" && "$IDRIS2RC2" --cg rc2 -p rc2base -p contrib -o TestRcexprParser_verify TestRcexprParser.idr )
-
-echo "=== Run and diff against TestRcexprParser.expected ==="
-"$TESTS_DIR/build/exec/TestRcexprParser_verify" > "$TMP/actual19.out" 2>&1
-
-if diff -u "$TESTS_DIR/TestRcexprParser.expected" "$TMP/actual19.out"; then
-    echo "PASS  TestRcexprParser"
-else
-    fail "TestRcexprParser -- output mismatch (see diff above)"
-fi
-
-echo "=== rc2 backend: build TestIORefRC2 (Data.IORef.RC2: casIORef success/failure/retry loop) ==="
-( cd "$TESTS_DIR" && "$IDRIS2RC2" --cg rc2 -p rc2base -o TestIORefRC2_verify TestIORefRC2.idr )
-
-echo "=== Run and diff against TestIORefRC2.expected ==="
-"$TESTS_DIR/build/exec/TestIORefRC2_verify" > "$TMP/actual20.out" 2>&1
-
-if diff -u "$TESTS_DIR/TestIORefRC2.expected" "$TMP/actual20.out"; then
-    echo "PASS  TestIORefRC2"
-else
-    fail "TestIORefRC2 -- output mismatch (see diff above)"
-fi
-
-echo "=== rc2 backend: build TestMultiThreadRC2 (System.GC.RC2: the switch to atomic reference counting) ==="
-( cd "$TESTS_DIR" && "$IDRIS2RC2" --cg rc2 -p rc2base -o TestMultiThreadRC2_verify TestMultiThreadRC2.idr )
-
-echo "=== Run and diff against TestMultiThreadRC2.expected ==="
-"$TESTS_DIR/build/exec/TestMultiThreadRC2_verify" > "$TMP/actual21.out" 2>&1
-
-if diff -u "$TESTS_DIR/TestMultiThreadRC2.expected" "$TMP/actual21.out"; then
-    echo "PASS  TestMultiThreadRC2"
-else
-    fail "TestMultiThreadRC2 -- output mismatch (see diff above)"
-fi
+    if diff -u "$TESTS_DIR/$t/$t.expected" "$TMP/actual.out"; then
+        echo "PASS  $t"
+    else
+        fail "$t -- output mismatch (see diff above)"
+    fi
+done
