@@ -330,6 +330,97 @@ Measured over a whole idris2-lsp build: `releaseReuse` nodes
 reuse opportunity is given up, only the bookkeeping for offers that
 never had one.
 
+## Nested let values (`tryConsume` descends into an `RLet` value)
+
+Motivation. An audit of the final idris2-lsp IR found 5,921 of 13,031
+reuse offers dead (no path claims the shell; the offer is followed by
+`releaseReuse`). 4,384 of them had a same-name constructor that exists
+only inside the *value* of a `let` -- typically
+`let r = case x of ... Cons a b => ...  in <use r>` after destructuring
+a `Cons`/`Right`/`Left` -- which `tryClaim` (one position, no descent)
+could never reach. The body search ran past the `let` and found nothing.
+
+Rule. In `tryConsume`'s `RLet` case the order is:
+
+1. `tryClaim` on the value (unchanged);
+2. `tryConsume` on the body (unchanged); if it claims anywhere, that is
+   the result, exactly as before;
+3. only if the body claims nowhere (and `noreusenested` is not given):
+   run the *full* `tryConsume` on the value. If that claims on some
+   path, the result is `RLet var rep value' body` with the original,
+   untouched body. The all-release rewrite of the body found in step 2
+   is discarded.
+
+Because step 3 runs only when steps 1-2 found nothing, no claim that
+exists today moves: the real-reuse count can only go up, and with the
+switch the output is byte-identical to the previous behaviour (checked
+on the idris2-lsp dump: identical apart from the directive header).
+
+Safety argument (the four questions settled before the change):
+
+1. *Exactly once on every path.* `tryConsume` is total: every leaf of
+   the value tree (through nested `case`, `let`, `dup`/`drop`/`free`) is
+   either `con ... reuse= sc` or wrapped in `releaseReuse sc`, and a
+   leaf ends a path, so at most one claim per path. `reuse_<sc>` is NOT
+   cleared by a claim (`emitRC (RCon ..)` only reads it), so a release
+   after a claim on the same path would free a live cell; this is why
+   step 3 leaves the body alone: once the value has been resolved, no
+   node after it may mention `sc`. Two branches that both contain a
+   `con` each claim in their own branch only (a path takes one branch).
+   The leak lint's reuse-token join check ("reuse token live on one side
+   only") and "reuse without offer" / "releaseReuse without offer"
+   checks verify this on the whole idris2-lsp IR (0 anomalies).
+2. *Retention.* The shell is held while the value is evaluated, with its
+   fields already moved out; a release happens at the first
+   non-claiming leaf, i.e. *earlier* than the old end-of-body release.
+   The cost is at most one pointer-sized C local per active frame plus
+   the (not yet freed) cell, which the program would otherwise have freed
+   and re-allocated; the cell count never exceeds the number of cells the
+   unoptimised program had live. A frame that holds a shell across a
+   non-tail call is already the status quo for `let x = call in Con ..`
+   in the body, so no call-free / size bound is imposed. Measured on
+   a 1,000,000-deep recursion inside a let value: peak RSS 112 MB -> 128
+   MB (+14%, one saved pointer per frame), no failure.
+3. *Interaction with other passes and constructs.* `RDelay` carries only
+   a thunk name and captures (the thunk body is a separate lifted
+   definition) and `RMemoize` only wraps a CAF's whole body, so neither
+   can occur inside a descended value; any other node falls into the
+   terminal case and gets a release. A let value is never in tail
+   position, so `Loop`/`MutualLoop` (which run later) never see a
+   continue inside one, and the shell never survives an iteration
+   (every leaf resolves). `Sink` only moves a bare `op`/`con`/call let,
+   never a case-valued one. `DualABI`'s tail-`con ... reuse=` to retpack
+   rewrite is untouched: a claim in a let value is not a tail. The later
+   passes already handle `reuse=` and `releaseReuse` inside case
+   branches within let values (inner offers produce that today).
+4. *Threads.* Unchanged: the shell is solely owned after `isUnique`.
+
+Switch: `--directive noreusenested` (see `directives.md`).
+
+Measured on idris2-lsp (17,549 definitions), with vs. without the switch:
+
+| | `noreusenested` | default |
+| --- | ---: | ---: |
+| `reuseOffer` | 13,031 | 13,030 |
+| `con ... reuse=` | 7,811 | 12,189 |
+| `releaseReuse` | 9,250 | 10,103 |
+| dead offers (offer directly followed by its release) | 5,474 | 1,757 |
+| dupOnShared / dropOnUnique entries | 31,387 / 1,517 | 31,385 / 1,517 |
+| `dup` / `drop` lines | 74,638 / 64,804 | 74,639 / 64,803 |
+| IR lines | 658,449 | 659,301 |
+| rcexpr-lint anomalies | 0 | 0 |
+
+Compile time is within noise (227 s vs. 222 s, two builds in parallel).
+Runtime on a micro-benchmark whose hot loop builds the result inside a
+let-bound three-way `case` (list of 100, 200,000 rounds): 1.20 s -> 0.48
+s (-60%), single-threaded, 5 alternating runs.
+
+Not covered: a `con` that only exists after the claim position of a
+*partly* claiming body (step 2 wins over step 3, even if the value would
+claim on more paths); the 274 offers whose same-name constructors were all
+claimed by inner offers (bottom-up order); tail `con ... reuse=` that
+`DualABI` turns into a retpack after releasing the shell (class A).
+
 ## Files
 
 - `rc2/src/Compiler/RC2/Reuse.idr` -- the pass itself (new module).

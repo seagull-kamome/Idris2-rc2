@@ -76,6 +76,7 @@ fine-grained per-function/per-node control.
 | `nodeadcode` | `Compiler.RC2.DeadCode`'s pruning of definitions left with zero remaining callers (`doc/dead-code-elim.md`). |
 | `nopushdown` | `Compiler.RC2.PushDown`: a run of `dup`/`drop` nodes right in front of a `case` moves into the arms, where a `dup` meets the arm's own `drop` of the same local (`doc/pushdown.md`). |
 | `nodupmerge` | `Compiler.RC2.DupMerge`'s batching of several individual `RDup` nodes into one higher-`extra` `RDup`, *and* its `cancelDupDrop` peephole (an `RDup` whose local an `RDrop` in the same refcount-only run, or the `postDrop` of the read-only node right after the dups, releases again; an alias `let x = w; drop [x]` becomes `drop [w]`). |
+| `noreusenested` | `Compiler.RC2.Reuse`'s search for a same-name constructor inside the *value* of a `let` (a `case`/`let` tree) when the body claims nothing; with it the reuse pass behaves as before (`doc/reuse-analysis.md`, "Nested let values"). |
 
 Directives that look like they belong on this list but don't:
 

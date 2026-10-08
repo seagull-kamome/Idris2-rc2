@@ -45,50 +45,65 @@ tryClaim target sc _ = Nothing
 ||| optimistic and `tryClaim` reached none of them, so the offer is
 ||| statically dead and `resolveAlt` releases it up front instead.
 ||| See `doc/reuse-analysis.md`'s "tryConsume / tryClaim" and
-||| "Ordering: bottom-up, not top-down".
-tryConsume : Name -> RCLocal -> RCExp -> (Bool, RCExp)
-tryConsume target sc (RLet fc var rep value body) =
+||| "Ordering: bottom-up, not top-down". With `nested`, an `RLet` whose
+||| body claims nothing is searched through its *value* tree instead
+||| (`doc/reuse-analysis.md`, "Nested let values"); every leaf of that
+||| tree then claims or releases, so the body is left alone.
+tryConsume : (nested : Bool) -> Name -> RCLocal -> RCExp -> (Bool, RCExp)
+tryConsume nested target sc (RLet fc var rep value body) =
     case tryClaim target sc value of
          Just value' => (True, RLet fc var rep value' body)
-         Nothing     => let (claimed, body') = tryConsume target sc body
-                        in (claimed, RLet fc var rep value body')
-tryConsume target sc (RDup fc v extra body) =
-    let (claimed, body') = tryConsume target sc body in (claimed, RDup fc v extra body')
-tryConsume target sc (RDrop fc vs body) =
-    let (claimed, body') = tryConsume target sc body in (claimed, RDrop fc vs body')
-tryConsume target sc (RFree fc v body) =
-    let (claimed, body') = tryConsume target sc body in (claimed, RFree fc v body')
+         Nothing     =>
+             let (claimed, body') = tryConsume nested target sc body
+             in if claimed || not nested
+                   then (claimed, RLet fc var rep value body')
+                   -- Nothing in the body claims. Look inside the value
+                   -- (a `case`/`let` tree): `tryConsume value` resolves
+                   -- every leaf of it (claim or release), so the shell
+                   -- is dead by the time the value is built and `body`
+                   -- stays as it was. The body's own all-release
+                   -- rewrite `body'` is dropped. See
+                   -- `doc/reuse-analysis.md`'s "Nested let values".
+                   else case tryConsume nested target sc value of
+                             (True, value') => (True, RLet fc var rep value' body)
+                             (False, _)     => (False, RLet fc var rep value body')
+tryConsume nested target sc (RDup fc v extra body) =
+    let (claimed, body') = tryConsume nested target sc body in (claimed, RDup fc v extra body')
+tryConsume nested target sc (RDrop fc vs body) =
+    let (claimed, body') = tryConsume nested target sc body in (claimed, RDrop fc vs body')
+tryConsume nested target sc (RFree fc v body) =
+    let (claimed, body') = tryConsume nested target sc body in (claimed, RFree fc v body')
 -- Not actually produced yet at the point this pass runs -- kept total
 -- rather than assumed unreachable.
-tryConsume target sc (RReleaseReuse fc v body) =
-    let (claimed, body') = tryConsume target sc body in (claimed, RReleaseReuse fc v body')
-tryConsume target sc (RReuseOffer fc sc2 dupOnShared dropOnUnique body) =
-    let (claimed, body') = tryConsume target sc body
+tryConsume nested target sc (RReleaseReuse fc v body) =
+    let (claimed, body') = tryConsume nested target sc body in (claimed, RReleaseReuse fc v body')
+tryConsume nested target sc (RReuseOffer fc sc2 dupOnShared dropOnUnique body) =
+    let (claimed, body') = tryConsume nested target sc body
     in (claimed, RReuseOffer fc sc2 dupOnShared dropOnUnique body')
-tryConsume target sc (RConCase fc sc2 alts mDef) =
-    let altResults = map (tryConsumeAlt target sc) alts
-        defResult = map (tryConsume target sc) mDef
+tryConsume nested target sc (RConCase fc sc2 alts mDef) =
+    let altResults = map (tryConsumeAlt nested target sc) alts
+        defResult = map (tryConsume nested target sc) mDef
     in (any fst altResults || maybe False fst defResult,
         RConCase fc sc2 (map snd altResults) (map snd defResult))
   where
-    tryConsumeAlt : Name -> RCLocal -> RConAlt -> (Bool, RConAlt)
-    tryConsumeAlt target sc (MkRConAlt name ci tag args body) =
-        let (claimed, body') = tryConsume target sc body
+    tryConsumeAlt : Bool -> Name -> RCLocal -> RConAlt -> (Bool, RConAlt)
+    tryConsumeAlt nested target sc (MkRConAlt name ci tag args body) =
+        let (claimed, body') = tryConsume nested target sc body
         in (claimed, MkRConAlt name ci tag args body')
-tryConsume target sc (RConstCase fc sc2 alts mDef) =
-    let altResults = map (tryConsumeConstAlt target sc) alts
-        defResult = map (tryConsume target sc) mDef
+tryConsume nested target sc (RConstCase fc sc2 alts mDef) =
+    let altResults = map (tryConsumeConstAlt nested target sc) alts
+        defResult = map (tryConsume nested target sc) mDef
     in (any fst altResults || maybe False fst defResult,
         RConstCase fc sc2 (map snd altResults) (map snd defResult))
   where
-    tryConsumeConstAlt : Name -> RCLocal -> RConstAlt -> (Bool, RConstAlt)
-    tryConsumeConstAlt target sc (MkRConstAlt c body) =
-        let (claimed, body') = tryConsume target sc body in (claimed, MkRConstAlt c body')
-tryConsume target sc (RCmpCase fc op args pd t f) =
-    let (claimedT, t') = tryConsume target sc t
-        (claimedF, f') = tryConsume target sc f
+    tryConsumeConstAlt : Bool -> Name -> RCLocal -> RConstAlt -> (Bool, RConstAlt)
+    tryConsumeConstAlt nested target sc (MkRConstAlt c body) =
+        let (claimed, body') = tryConsume nested target sc body in (claimed, MkRConstAlt c body')
+tryConsume nested target sc (RCmpCase fc op args pd t f) =
+    let (claimedT, t') = tryConsume nested target sc t
+        (claimedF, f') = tryConsume nested target sc f
     in (claimedT || claimedF, RCmpCase fc op args pd t' f')
-tryConsume target sc e =
+tryConsume nested target sc e =
     case tryClaim target sc e of
          Just e' => (True, e')
          Nothing => (False, RReleaseReuse emptyFC sc e)
@@ -98,19 +113,19 @@ tryConsume target sc e =
 ||| treatment, with no scrutinee of their own to offer). See
 ||| `doc/reuse-analysis.md`'s "Algorithm" for the full protocol.
 export
-resolveReuse : (imm : SortedSet RCLocal) -> RCExp -> RCExp
-resolveReuse imm (RLet fc var rep value body) =
-    RLet fc var rep (resolveReuse imm value) (resolveReuse imm body)
-resolveReuse imm (RDup fc v extra body) = RDup fc v extra (resolveReuse imm body)
-resolveReuse imm (RDrop fc vs body) = RDrop fc vs (resolveReuse imm body)
-resolveReuse imm (RFree fc v body) = RFree fc v (resolveReuse imm body)
-resolveReuse imm (RReleaseReuse fc v body) = RReleaseReuse fc v (resolveReuse imm body)
+resolveReuse : (nested : Bool) -> (imm : SortedSet RCLocal) -> RCExp -> RCExp
+resolveReuse nested imm (RLet fc var rep value body) =
+    RLet fc var rep (resolveReuse nested imm value) (resolveReuse nested imm body)
+resolveReuse nested imm (RDup fc v extra body) = RDup fc v extra (resolveReuse nested imm body)
+resolveReuse nested imm (RDrop fc vs body) = RDrop fc vs (resolveReuse nested imm body)
+resolveReuse nested imm (RFree fc v body) = RFree fc v (resolveReuse nested imm body)
+resolveReuse nested imm (RReleaseReuse fc v body) = RReleaseReuse fc v (resolveReuse nested imm body)
 -- Without this, a memoized CAF body keeps `annotate`'s drops with none
 -- of the field dups this pass owes them (doc/caf-memoization.md,
 -- "Limitations").
-resolveReuse imm (RMemoize fc n rep body) = RMemoize fc n rep (resolveReuse imm body)
-resolveReuse imm (RConCase fc sc alts mDef) =
-    RConCase fc sc (map (resolveAlt sc) alts) (map (resolveReuse imm) mDef)
+resolveReuse nested imm (RMemoize fc n rep body) = RMemoize fc n rep (resolveReuse nested imm body)
+resolveReuse nested imm (RConCase fc sc alts mDef) =
+    RConCase fc sc (map (resolveAlt sc) alts) (map (resolveReuse nested imm) mDef)
   where
     ||| Eligible when `sc` dies in its own peeled drop list, its shape
     ||| isn't erased (NIL/NOTHING/ZERO/UNIT), and the body goes on to
@@ -119,7 +134,7 @@ resolveReuse imm (RConCase fc sc alts mDef) =
     ||| dropOnUnique".
     resolveAlt : RCLocal -> RConAlt -> RConAlt
     resolveAlt sc (MkRConAlt name ci tag args body) =
-        let body1 = resolveReuse imm body
+        let body1 = resolveReuse nested imm body
             -- A field-less alternative has no cell worth reusing, and its
             -- scrutinee may not be a cell at all: a folded constant
             -- holds such a constructor as a tagged pointer (RCEmptyCon).
@@ -137,7 +152,7 @@ resolveReuse imm (RConCase fc sc alts mDef) =
                        -- the allocator at once rather than at whichever
                        -- leaf runs, and `reuseVarName sc`'s own C local
                        -- stops spanning the whole body.
-                       inner' = case tryConsume name sc inner of
+                       inner' = case tryConsume nested name sc inner of
                                      (True, consumed) => consumed
                                      (False, _) => RReleaseReuse emptyFC sc inner
                        dropped' = dropped \\ [sc]
@@ -166,11 +181,11 @@ resolveReuse imm (RConCase fc sc alts mDef) =
                        outerDrop = dropped \\ map RCLoc args
                    in MkRConAlt name ci tag args
                         (foldr (\v, acc => RDup emptyFC v 0 acc) (rewrapDrop outerDrop inner) dupOnSurvive)
-resolveReuse imm (RConstCase fc sc alts mDef) =
-    RConstCase fc sc (map resolveConstAlt alts) (map (resolveReuse imm) mDef)
+resolveReuse nested imm (RConstCase fc sc alts mDef) =
+    RConstCase fc sc (map resolveConstAlt alts) (map (resolveReuse nested imm) mDef)
   where
     resolveConstAlt : RConstAlt -> RConstAlt
-    resolveConstAlt (MkRConstAlt c body) = MkRConstAlt c (resolveReuse imm body)
-resolveReuse imm (RCmpCase fc op args pd t f) =
-    RCmpCase fc op args pd (resolveReuse imm t) (resolveReuse imm f)
-resolveReuse _ e = e
+    resolveConstAlt (MkRConstAlt c body) = MkRConstAlt c (resolveReuse nested imm body)
+resolveReuse nested imm (RCmpCase fc op args pd t f) =
+    RCmpCase fc op args pd (resolveReuse nested imm t) (resolveReuse nested imm f)
+resolveReuse _ _ e = e
