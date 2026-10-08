@@ -34,6 +34,19 @@ maybeToList : Maybe a -> List a
 maybeToList Nothing = []
 maybeToList (Just x) = [x]
 
+||| Does the arithmetic `op` named by the dump string consume its boxed operands
+||| (`Emit.Util.isReuseConsumingOp`)? Its `postDrop` is then ignored by `Emit`:
+||| a `dup` in front of it is a real reference handed over, not a read.
+||| `Div` is consuming for `Int`/`Int64`/`Bits64` but not for `Integer`.
+consumingOp : String -> Bool
+consumingOp name = any test [("Integer", False), ("Int64", True), ("Int", True), ("Bits64", True)]
+  where
+    test : (String, Bool) -> Bool
+    test (ty, divToo) =
+        isSuffixOf ty name
+          && (let hd = strSubstr 0 (cast (length name) - cast (length ty)) name
+              in elem hd ["+", "-", "*", "%", "and ", "or ", "xor ", "shl ", "shr ", "neg "] || (divToo && hd == "/"))
+
 ||| The locals one node names directly, by role. Sub-expressions are not
 ||| included. An operand that also appears in the node's own `postDrop`
 ||| list (`op`, `callRep`, FFI) is a read, not a consumption: the
@@ -58,7 +71,7 @@ own (RApply _ f as) = { consumes := f :: as } noOwn
 own (RLetIn _ _ _ _) = noOwn
 own (RConstruct _ _ as r) = { consumes := as ++ maybeToList r } noOwn
 own (RRetPackNode _ _ as) = { consumes := as } noOwn
-own (ROpNode _ _ as pd) = MkOwn [] as pd []
+own (ROpNode _ o as pd) = if consumingOp o then { consumes := as } noOwn else MkOwn [] as pd []
 own (RExtPrimNode _ _ as pd) = MkOwn [] as pd []
 own (RStructGetNode s _ pd) = MkOwn [] [s] pd []
 own (RStructSetNode s _ v pd) = MkOwn [] [s, v] pd []
@@ -281,6 +294,21 @@ fieldsSafe l args e = go [] e
                      Just b => if elem l (own x).drops then not (unprotected prot b) else go prot b
                      Nothing => True
 
+||| The first nodes of each arm of the case a pattern-A dup reaches, for the
+||| sample listing (so a reader sees which arms keep and which cancel).
+armSnips : List (RCExp, List Int) -> List String
+armSnips arms = concat (zipWith (\i, (b, as) => ("  arm " ++ show i ++ " fields=" ++ show as) :: map ("    " ++) (heads 4 b)) (the (List Nat) [0 .. 99]) arms)
+
+||| Is the rest of the chain only `dup`/`drop` nodes up to a `case`? Then the
+||| whole run can move into the arms with nothing in between that could
+||| observe or consume (a `let` value, a `cmp` with a `postDrop`).
+adjacentRun : RCExp -> Bool
+adjacentRun (RDupNode _ _ b) = adjacentRun b
+adjacentRun (RDropNode _ b) = adjacentRun b
+adjacentRun (RConCaseNode _ _ _) = True
+adjacentRun (RConstCaseNode _ _ _) = True
+adjacentRun _ = False
+
 ruleA : Ctx -> RCExp -> List Ev -> List Ev
 ruleA c e@(RDupNode (RVar v) n body) acc =
     let l = RVar v
@@ -307,9 +335,10 @@ ruleA c e@(RDupNode (RVar v) n body) acc =
                   net = cast nN - cast nN * cast needs + sumC
               in if null cancels then acc
                  else MkEv ((if needs == 0 then "A/needed by no arm" else "A/needed by some arm")
-                              ++ (if fld && dropped then ", field: a drop sits between" else ""))
+                              ++ (if fld && dropped then ", field: a drop sits between" else "")
+                              ++ (if adjacentRun body then ", adjacent run" else ", past a let or cmp"))
                            c.defName c.inLoop net
-                           (cast (length cancels)) (heads 6 e) :: acc
+                           (cast (length cancels)) (heads 6 e ++ armSnips (armsWithArgs cs)) :: acc
 ruleA _ _ acc = acc
 
 -------------------------------------------------------------------------------
@@ -696,7 +725,9 @@ pushdownStats prog =
                          ("  " ++ show n ++ " sample places, " ++ k ++ ":")
                            :: concatMap (\ev => ("    " ++ ev.defn ++ "  [" ++ ev.key ++ "]")
                                                   :: map ("      " ++) (force ev.snippet)) (evenly n es))
-                    [ ("A/needed by no arm", 3), ("A/needed by some arm", 3), ("A/needed by no arm, field", 2), ("A/needed by some arm, field", 2)
+                    [ ("A/needed by no arm, adjacent run", 3), ("A/needed by some arm, adjacent run", 3), ("A/needed by no arm, past a let or cmp", 2), ("A/needed by some arm, past a let or cmp", 2)
+                    , ("A/needed by no arm, field: a drop sits between, adjacent run", 6), ("A/needed by some arm, field: a drop sits between, adjacent run", 8)
+                    , ("A/needed by some arm, field: a drop sits between, past a let or cmp", 3)
                     , ("B/closed by a postDrop on op", 2), ("B/closed by a postDrop on extprim", 1), ("B/closed by a postDrop on callRep", 2), ("B/closed by a drop node", 1)
                     , ("C0/alias", 3), ("C0/nested", 2), ("C0/other", 2), ("C1", 3), ("C2/eligible, adjacent, no visible", 4), ("C2/eligible, adjacent, an operand", 2), ("C2/eligible kind", 2), ("C2/kind Sink never takes", 2)
                     , ("D/", 3), ("D0", 1) ]

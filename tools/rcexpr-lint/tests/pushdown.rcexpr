@@ -183,3 +183,29 @@ def Main.fieldUnsafe  (fun args= ["v1:Boxed"] ret= Boxed)
           [__]
     _builtin.NIL [nil] tag= Just 0 args= [] ->
       [__]
+
+def Main.opConsumes  (fun args= ["v1:Boxed", "v2:Boxed"] ret= Boxed)
+  dup v1
+  case v2 of
+    0 ->
+      let v3 : Boxed =
+        op +Integer [v1, #1] postDrop= [v1]
+      drop [v1]
+      v3
+    _ ->
+      let v4 : Boxed =
+        op *Integer [v1, #2] postDrop= [v1]
+      drop [v1]
+      v4
+
+def Main.pastLet  (fun args= ["v1:Boxed", "v2:Boxed"] ret= Boxed)
+  dup v1
+  let v5 : Boxed =
+    call Main.other [v2]
+  case v5 of
+    0 ->
+      drop [v1, v1]
+      #0
+    _ ->
+      drop [v1, v1]
+      #1

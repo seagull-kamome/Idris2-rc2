@@ -103,3 +103,47 @@ if [ "$aliases" = "0" ]; then
 else
     fail "DupMerge left $aliases alias let(s) dropped right away in $TMP/${name}_rc2.rcexpr"
 fi
+
+# Section 6 (Compiler.RC2.PushDown): a refcount-only run `dup v; ...;
+# drop [parent]` right above `case v of` is moved into the arms, so no
+# dup of the scrutinee is left in front of a case that has an arm opening
+# with a drop of it (a dup no arm drops, e.g. a NIL arm that consumes it, is
+# legitimate). `headHead`/`second` have that shape on every arm; compiled with
+# `--directive nopushdown` the dump has it and this count is not zero.
+hoisted="$(awk '
+    function indent_of(s) { match(s, /^ */); return RLENGTH }
+    function has_token(line, tok,    s, k, vs, j) {
+        s = line; sub(/^ *drop \[/, "", s); sub(/\]$/, "", s)
+        k = split(s, vs, /, */)
+        for (j = 1; j <= k; j++) if (vs[j] == tok) return 1
+        return 0
+    }
+    watch != "" && indent_of($0) <= cind { watch = ""; arm = 0 }
+    watch != "" {
+        i = indent_of($0)
+        if (i == cind + 2 && $0 ~ /->$/) { arm = 1; next }
+        if (arm && i == cind + 4 && $0 ~ /^ *drop \[/) { if (has_token($0, watch)) bad++; next }
+        if (arm && i == cind + 4 && $0 ~ /^ *dup /) next
+        arm = 0
+    }
+    /^ *dup v[0-9]+( x[0-9]+)?$/ {
+        i = indent_of($0)
+        if (i != ind) { delete pend; ind = i }
+        pend[$2] = 1
+        next
+    }
+    /^ *drop \[/ {
+        if (indent_of($0) == ind) next
+    }
+    /^ *case v[0-9]+ of$/ {
+        if (indent_of($0) == ind && ($2 in pend)) { watch = $2; cind = ind; arm = 0 }
+    }
+    { delete pend; ind = -1 }
+    END { print bad + 0 }
+' "$TMP/${name}_rc2.rcexpr")"
+
+if [ "$hoisted" = "0" ]; then
+    pass "PushDown -- no dup of a scrutinee left above the case whose arms drop it"
+else
+    fail "PushDown left $hoisted dup(s) of a scrutinee above its case in $TMP/${name}_rc2.rcexpr"
+fi
