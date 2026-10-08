@@ -1,6 +1,9 @@
 #pragma once
 
+#include <stdlib.h>
+
 #include "idris2rc2_datatypes.h"
+#include "idris2rc2_util.h"
 
 void idris2rc2_missingForeign(void);
 
@@ -30,7 +33,23 @@ void idris2rc2_rtFinish(void);
    (idris2rc2_threaded                                                         \
         ? atomic_load_explicit(&(x)->header.refCount, memory_order_acquire)  \
         : (x)->header.rc) == 1)
-void idris2rc2_dropReuseConstructor(IDRIS2RC2_Constructor *c);
+// Frees a reuse shell nobody claimed (NULL: nothing was reserved). The
+// shell is only ever `sc` itself after a successful idris2rc2_isUnique
+// (refcount exactly 1, acquire-observed, never an immortal), so this
+// thread is its sole owner and the refcount is not touched: no
+// (atomic) decrement, no recursive teardown -- its fields were already
+// moved out or dropped by the offer. See rc2/doc/reuse-analysis.md.
+static inline void idris2rc2_releaseReuse(IDRIS2RC2_Constructor *c) {
+#ifdef IDRIS2RC2_DEBUG
+  if (c)
+    IDRIS2RC2_VERIFY(c->header.rc == 1, "reuse shell refCount %d",
+                     (int)c->header.rc);
+#endif
+  // free(NULL) is a defined no-op, so no NULL branch on the shared path.
+  // idris2rc2_alloc is plain malloc today; a future small-object
+  // allocator must give this site its matching release (accepting NULL).
+  free(c);
+}
 
 IDRIS2RC2_Value *idris2rc2_applyClosure(IDRIS2RC2_Value *closure, IDRIS2RC2_Value *arg);
 IDRIS2RC2_Value *idris2rc2_tailcallApplyClosure(IDRIS2RC2_Value *closure, IDRIS2RC2_Value *arg);

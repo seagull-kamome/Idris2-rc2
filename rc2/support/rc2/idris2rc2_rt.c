@@ -479,19 +479,6 @@ IDRIS2RC2_Value *idris2rc2_applyClosureN(IDRIS2RC2_Value *_c, IDRIS2RC2_Value **
   return it;
 }
 
-void idris2rc2_dropReuseConstructor(IDRIS2RC2_Constructor *c) {
-  if (!c)
-    return;
-  IDRIS2RC2_VERIFY(c->header.rc > 0, "refCount %d", (int)c->header.rc);
-  // Only ever called on a value whose uniqueness idris2rc2_isUnique has
-  // already established statically (see Reuse.idr/reuse-analysis.md), so
-  // no other thread can concurrently touch this refCount; it still goes
-  // through idris2rc2_rc_release like every other decrement.
-  if (idris2rc2_rc_release(&c->header)) {
-    free(c);
-  }
-}
-
 int64_t idris2rc2_extractInt(IDRIS2RC2_Value *v) {
   if (idris2rc2_is_unboxed(v))
     return idris2rc2_imm_signed(v);
