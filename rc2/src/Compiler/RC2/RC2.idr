@@ -39,6 +39,7 @@ import Compiler.RC2.DeadCode
 import Compiler.RC2.DualABI
 import Compiler.RC2.DeadVars
 import Compiler.RC2.DupMerge
+import Compiler.RC2.PushDown
 import Compiler.RC2.Emit
 import Compiler.RC2.Emit.Util
 import Compiler.RC2.InlineCExp
@@ -288,7 +289,7 @@ inlineNamed disabled keep main defs =
 ||| apart.
 disableableStageNames : List String
 disableableStageNames =
-    ["noinline", "nodeadargs", "noarityraise", "noapplyfold", "notrmc", "noctx", "noconstfold", "noknowncon", "nopushcon", "nospecclosure", "nospecconstcon", "noconaltnative", "nomutualloop", "noloop", "noearlyinline", "nolateinline", "nosink", "nodualabi", "noboolret", "noboolcase", "noboolfield", "nostructreturn", "nodeadcode", "nodupmerge", "nodeadvars"]
+    ["noinline", "nodeadargs", "noarityraise", "noapplyfold", "notrmc", "noctx", "noconstfold", "noknowncon", "nopushcon", "nospecclosure", "nospecconstcon", "noconaltnative", "nomutualloop", "noloop", "noearlyinline", "nolateinline", "nosink", "nodualabi", "noboolret", "noboolcase", "noboolfield", "nostructreturn", "nodeadcode", "nopushdown", "nodupmerge", "nodeadvars"]
 
 ||| Stages that are off unless asked for with `--directive <name>`. They
 ||| travel to `toRCDefs` in the same list as the disables above.
@@ -469,9 +470,13 @@ toRCDefs disabled incremental roots thunks preFolded = do
     pruned <- if "nodeadcode" `elem` disabled
                  then pure dualABId
                  else logTime 2 "rc2: Dead code elimination" $ pure (pruneDeadDefs roots dualABId)
+    -- rc2/doc/pushdown.md: a dup/drop run in front of a case moves into the arms.
+    pushedDown <- if "nopushdown" `elem` disabled
+                     then pure pruned
+                     else logTime 2 "rc2: Dup/drop push-down" $ pure (map (\(n, d) => (n, applyPushDown d)) pruned)
     dupMerged <- if "nodupmerge" `elem` disabled
-                    then pure pruned
-                    else logTime 2 "rc2: Dup merge" $ pure (map (\(n, d) => (n, applyDupMerge d)) pruned)
+                    then pure pushedDown
+                    else logTime 2 "rc2: Dup merge" $ pure (map (\(n, d) => (n, applyDupMerge d)) pushedDown)
     erased <- if "nodeadvars" `elem` disabled
                  then pure dupMerged
                  else logTime 2 "rc2: Dead variable erasure" $ pure (map (\(n, d) => (n, applyDeadVars d)) dupMerged)

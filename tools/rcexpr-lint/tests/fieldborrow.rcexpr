@@ -41,3 +41,31 @@ def TestDropOfBorrowedField  (fun args= ["v1:Boxed"] ret= Boxed)
     _builtin.JUST [just] tag= Just 1 args= [v2] ->
       drop [v2]
       v1
+
+def TestOkNestedPushedDown  (fun args= ["v1:Boxed"] ret= Boxed)
+  case v1 of
+    _builtin.JUST [just] tag= Just 1 args= [v2] ->
+      case v2 of
+        _builtin.CONS [cons] tag= Just 1 args= [v3, v4] ->
+          dup v3
+          drop [v1]
+          v3
+        _builtin.NIL [nil] tag= Just 0 args= [] ->
+          drop [v1]
+          [__]
+    _builtin.NOTHING [nothing] tag= Just 0 args= [] ->
+      v1
+
+def TestNestedDropBeforeDup  (fun args= ["v1:Boxed"] ret= Boxed)
+  case v1 of
+    _builtin.JUST [just] tag= Just 1 args= [v2] ->
+      case v2 of
+        _builtin.CONS [cons] tag= Just 1 args= [v3, v4] ->
+          drop [v1]
+          dup v3
+          v3
+        _builtin.NIL [nil] tag= Just 0 args= [] ->
+          drop [v1]
+          [__]
+    _builtin.NOTHING [nothing] tag= Just 0 args= [] ->
+      v1

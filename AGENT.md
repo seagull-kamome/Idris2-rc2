@@ -53,7 +53,8 @@ history, not there.
   `RCmpCase` through a call boundary, `branch-sinking.md` for the
   loop-independent pass that moves a `let`-bound value into the one
   branch arm that actually reads it, dropping it everywhere else
-  instead of computing it unconditionally, `cast-fold-scope.md` for an
+  instead of computing it unconditionally, `pushdown.md` for the final-IR pass that moves the dup/drop run sitting right
+  before a `case` into every branch head and cancels them there, `cast-fold-scope.md` for an
   investigated-but-not-pursued gap: why `Compiler.RC2.ConstFold`'s
   constant folding excludes `Char`-/`Double`-to-`String` casts and any
   `String`-sourced `Cast`, `const-con-fold.md` for folding a

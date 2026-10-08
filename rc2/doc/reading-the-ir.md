@@ -209,6 +209,11 @@ same pass renames an alias `let x = w; drop [x]` (an inlined
 `where`-bound function's unchanged parameter that one arm never reads)
 to `drop [w]` when `w` is a boxed local.
 
+A run of `dup`/`drop` right in front of a `case` is moved into the arms by
+`Compiler.RC2.PushDown` when an arm opens with the `drop` of a local the run
+`dup`s (`doc/pushdown.md`), so a nested pattern reads `case f of ... -> dup g;
+drop [parent]` rather than `dup f; drop [parent]; case f of ... -> dup g; drop [f]`.
+
 To audit whether some local `vN` is handled correctly:
 
 1. Find where it's bound (its `let vN : ...` line, or its appearance in

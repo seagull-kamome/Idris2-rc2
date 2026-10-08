@@ -229,6 +229,39 @@ shapes = do
   xs <- readAll n 3
   printLn xs
 
+-- ============================================================
+-- Section 6: dup/drop push-down (Compiler.RC2.PushDown)
+-- ============================================================
+-- A nested pattern keeps the outer match's field `f` alive across the
+-- parent's drop (`dup f; drop [parent]`), and the inner `case f` then
+-- drops `f` again on every arm. PushDown moves the run into the arms,
+-- where each `dup f` meets the arm's own `drop [f]`: the dump has the
+-- parent's drop at the head of each arm and no `dup` of `f` at all
+-- (doc/pushdown.md). `headHead` is the shape, `second` the same with
+-- two scrutinees; check.sh asserts the hoisted shape is gone.
+--
+-- The lists are built from `getArgs` under a runtime-only condition (as
+-- in Sections 3 and 4) so nothing folds. A normal invocation prints
+-- "ab" and 5.
+
+%noinline
+headHead : List (List String) -> String
+headHead ((x :: _) :: _) = x
+headHead _ = "none"
+
+%noinline
+second : List String -> List String -> Nat
+second (a :: _) (b :: bs) = length a + length b + length bs
+second _ _ = 0
+
+pushDown : IO ()
+pushDown = do
+  args <- getArgs
+  let n = if length args > 100 then "unreachable" else "ab"
+  let xs = if length args > 100 then [] else [n, "cd"]
+  putStrLn (headHead (map (\a => [a, "y"]) xs))
+  printLn (second xs (reverse xs))
+
 main : IO ()
 main = do
   useThrice "dup-merge"
@@ -237,3 +270,4 @@ main = do
   letThrice
   tagOnce
   shapes
+  pushDown
