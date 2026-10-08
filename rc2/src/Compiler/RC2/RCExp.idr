@@ -377,7 +377,7 @@ data RCExp : Type where
      ||| RC.idr can prove it's a brand-new, never-shared allocation.
      RFree      : FC -> RCLocal -> RCExp -> RCExp
      ||| Releases an `RReuseOffer` not consumed by any `RCon` on this
-     ||| path. Lowers to `idris2rc2_dropReuseConstructor`. See `doc/reuse-analysis.md`.
+     ||| path. Lowers to `idris2rc2_releaseReuse`. See `doc/reuse-analysis.md`.
      RReleaseReuse : FC -> RCLocal -> RCExp -> RCExp
      ||| Explicit tail-recursive loop. `loopParams`: this loop's carried
      ||| locals; `initial`: their starting values; `body` runs

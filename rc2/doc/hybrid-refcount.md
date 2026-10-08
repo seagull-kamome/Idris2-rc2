@@ -90,8 +90,7 @@ either plainly or atomically:
 Every refcount update in the runtime goes through them, including
 `rt.c`'s:
 - `dup`, `drop`, `releaseLast`;
-- the closure `trampoline`, `tailcallApplyClosure`,
-  `dropReuseConstructor`.
+- the closure `trampoline` and `tailcallApplyClosure`.
 
 A first version had four helpers: load, add, subtract, acquire. `dup`
 and `drop` then tested the flag twice, once for the `REFCOUNT_MAX` check

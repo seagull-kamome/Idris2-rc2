@@ -749,7 +749,7 @@ removeReuseConstructors : {auto oft : Ref OutfileText Output}
                         -> {auto il : Ref IndentLevel Nat}
                         -> List String
                         -> Core ()
-removeReuseConstructors = applyFunctionToVars "idris2rc2_dropReuseConstructor"
+removeReuseConstructors = applyFunctionToVars "idris2rc2_releaseReuse"
 
 export
 repOfLocal : {auto r : Ref RepMap (SortedMap Int Rep)} -> RCLocal -> Core Rep

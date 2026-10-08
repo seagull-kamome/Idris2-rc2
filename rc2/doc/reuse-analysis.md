@@ -77,7 +77,7 @@ was considered and rejected as more complex for no benefit.
   ever inserted by this pass. Releases a reuse offer that turned out
   *not* to be consumed on a given execution path (a sibling branch
   claimed it, or no matching RCon was reachable on this path at all).
-  Lowers to `idris2rc2_dropReuseConstructor(loc)`, which is a no-op if
+  Lowers to `idris2rc2_releaseReuse(loc)` (formerly `idris2rc2_dropReuseConstructor`), which is a no-op if
   `loc` is NULL (already resolved elsewhere) and a real release
   otherwise. Exactly one `RCon` reachable from an `RReuseOffer`'s own
   `body` ends up claiming it; every other path gets an
@@ -195,7 +195,7 @@ coordination beyond "process children first."
 - `RCon`'s `reuseFrom = Just sc` lowers to referencing `reuse_<sc>`
   directly (guarded by `if (!reuse_<sc>) { reuse_<sc> = newConstructor(...); }`
   so a failed reservation still allocates normally).
-- `RReleaseReuse` lowers to `idris2rc2_dropReuseConstructor(reuse_<sc>)`.
+- `RReleaseReuse` lowers to `idris2rc2_releaseReuse(reuse_<sc>)` (originally `idris2rc2_dropReuseConstructor`; see the addendum at the end).
 
 ### The double-free bug found while wiring this up
 
@@ -361,3 +361,38 @@ never had one.
    `.expected` file for `Test7CastMatrix`, whose RefC comparison is
    blocked by unrelated nixpkgs RefC-runtime bugs -- see its own module
    comment).
+
+## Addendum: `releaseReuse` frees the shell directly
+
+`RReleaseReuse` used to lower to `idris2rc2_dropReuseConstructor`, which
+went through `idris2rc2_rc_release` (an atomic `fetch_sub` once the
+program is multi-threaded) before the `free`. It now lowers to the
+`static inline idris2rc2_releaseReuse` in `idris2rc2_rt.h`, which is just
+`free(c)` (`free(NULL)` is a defined no-op, so the common shared path
+pays no call and no branch). The old out-of-line
+`idris2rc2_dropReuseConstructor` symbol was removed (the compiler is under
+development; generated C is not kept binary-compatible).
+
+Why this is sound:
+
+- A non-NULL `reuse_<sc>` is only ever assigned on the success branch
+  of `emitReuseOffer`, i.e. `idris2rc2_isUnique(sc)` held: refcount
+  exactly 1. An immortal/static value (`IDRIS2RC2_REFCOUNT_MAX`) and an
+  unboxed value are never unique, so they can never become a shell.
+- In threaded mode `isUnique` reads the count with an acquire load,
+  pairing with every other thread's release-decrement. Seeing 1 means
+  every other owner has dropped its reference and nothing can dup the
+  value again, so this thread owns it exclusively; no other thread
+  can reach the cell, and no RMW is needed to publish its death.
+- The shell's fields are deliberately not touched: the offer already
+  moved them out (`dupOnShared`/`dropOnUnique` handle the survivors),
+  so no recursive teardown is wanted -- the old path also never
+  recursed.
+- `idris2rc2_alloc` is plain `malloc` today, matching `free`. A future
+  small-object allocator needs to give this site its matching release.
+- With `-DIDRIS2RC2_DEBUG` the helper additionally VERIFYs `rc == 1`.
+
+Measured (200000 x 100-element list loop whose cons alt fires
+offer+releaseReuse on every element, 5 alternating runs): single-threaded
+~802 ms -> ~778 ms (-3%); with `idris2rc2_enableMultiThreading` called
+first ~905 ms -> ~774 ms (-14%).
