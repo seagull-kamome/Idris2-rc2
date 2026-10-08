@@ -291,7 +291,7 @@ inlineNamed disabled keep main defs =
 ||| apart.
 disableableStageNames : List String
 disableableStageNames =
-    ["noinline", "nodeadargs", "noarityraise", "noapplyfold", "notrmc", "noctx", "noconstfold", "noknowncon", "nopushcon", "nospecclosure", "nospecconstcon", "noconaltnative", "nomutualloop", "noloop", "noearlyinline", "nolateinline", "nosink", "nocmpmerge", "nodualabi", "noboolret", "noboolcase", "noboolfield", "nostructreturn", "nomutualstruct", "nodeadcode", "nopushdown", "nodupmerge", "nodeadvars", "noreusenested"]
+    ["noinline", "nodeadargs", "noarityraise", "noapplyfold", "notrmc", "noctx", "noconstfold", "noknowncon", "nopushcon", "nospecclosure", "nospecconstcon", "noconaltnative", "nomutualloop", "noloop", "noearlyinline", "nolateinline", "nosink", "nocmpmerge", "nodualabi", "noboolret", "noboolcase", "noboolfield", "nostructreturn", "nomutualstruct", "nodeadcode", "nopushdown", "nodupmerge", "nodeadvars", "noreusenested", "noreuserecheck"]
 
 ||| Stages that are off unless asked for with `--directive <name>`. They
 ||| travel to `toRCDefs` in the same list as the disables above.
@@ -472,9 +472,15 @@ toRCDefs disabled incremental roots thunks preFolded = do
                            then pure rewritten0
                            else logTime 3 "rc2: DualABI (Bool return tail calls)" $ pure $ applyBoolReturnTails rewritten0
            logTime 3 "rc2: DualABI (FFI inline)" $ pure $ inlineFFIWorkers ffiInlineMap rewritten
+    -- doc/reuse-analysis.md, "Re-checking dead offers after DualABI": before
+    -- Dead code, PushDown, DupMerge and DeadVars, which then still see the result.
+    rechecked <- if "noreuserecheck" `elem` disabled
+                    then pure dualABId
+                    else logTime 2 "rc2: Reuse re-check" $
+                           pure (map (\(n, d) => (n, recheckReuseDef (not ("noreusenested" `elem` disabled)) d)) dualABId)
     pruned <- if "nodeadcode" `elem` disabled
-                 then pure dualABId
-                 else logTime 2 "rc2: Dead code elimination" $ pure (pruneDeadDefs roots dualABId)
+                 then pure rechecked
+                 else logTime 2 "rc2: Dead code elimination" $ pure (pruneDeadDefs roots rechecked)
     -- rc2/doc/pushdown.md: a dup/drop run in front of a case moves into the arms.
     pushedDown <- if "nopushdown" `elem` disabled
                      then pure pruned

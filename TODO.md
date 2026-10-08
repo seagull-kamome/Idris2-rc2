@@ -1121,3 +1121,15 @@ IR上では`B8 1`/`B8 0`。native(`Native Bits8`)になれる範囲はかなり�
 - 末尾`con ... reuse=`をDualABIがretpackに変えるクラスA(値を返す関数側)は別問題で未着手。
 - 残ったdead offer 1,757件の内訳(値が呼び出しやクロージャで同名conが見えない等)は
   未分類。
+
+## reuse: DualABI後の再確認(`noreuserecheck`)の残り (2026-10-08)
+
+`Reuse.recheckReuse`(`rc2/doc/reuse-analysis.md` "Re-checking dead offers after
+DualABI")で、idris2-lspの「同名の未claim `con`が隣にあるdead offer」は359 → 73、
+`con ... reuse=`は+324。残り:
+
+- `LateInline`が`Reuse`の後で差し込んだループ内のcon(約27箇所): `RLoop`は葉として扱うので
+  claimできない。ループ内で別のofferを立て直すか、ループ化の前にReuseを走らせ直す必要がある。
+- 「`Reuse`が走った時点ではconがまだ無かった」箇所(最大69箇所)は未対応。
+- 監査の訂正: クラスAの真の数は1,056(1,542ではない)。旧クラスEはスクリプトの
+  アーティファクトで実在しない。クラスDは359(うち332が本件の履歴)。
