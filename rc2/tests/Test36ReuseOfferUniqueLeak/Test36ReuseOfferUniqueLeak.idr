@@ -2,6 +2,8 @@ module Main
 
 import Data.IORef
 import System
+import Data.List
+import Data.String
 import System.Concurrency
 import System.Concurrency.RC2
 
@@ -137,6 +139,41 @@ shared k =
       b = bumpB t
   in sumT a * 1000 + sumT b + sumT t
 
+-- Re-check after DualABI (doc/reuse-analysis.md, "Re-checking dead
+-- offers after DualABI"). `stepE` returns its Either as a struct, so the
+-- inner `case stepE a of` offers a `Ret` struct that DualABI turns back
+-- into a plain `drop`; the inner offer had claimed the `Right`, so
+-- Reuse resolved `chainE`'s own offer on its parameter with an up-front
+-- release. The rebuilt `Right` is only claimed by the re-check.
+-- `stepE` is called from two places and is not small, so it stays a call.
+stepE : Int -> Either String Int
+stepE x =
+  if x < 0
+     then Left ("bad" ++ show x ++ replicate (cast (x `mod` 5)) '!')
+     else Right (x * 3 + 1)
+
+chainE : Either String Int -> Either String Int
+chainE (Left e) = Left e
+chainE (Right a) =
+  case stepE a of
+    Left e => Left e
+    Right b => Right (a + b `mod` 7)
+
+runE : Int -> Either String Int -> Either String Int
+runE 0 acc = acc
+runE n acc = runE (n - 1) (chainE (chainE acc))
+
+showE : Either String Int -> String
+showE (Left e) = "L " ++ e
+showE (Right v) = "R " ++ show v
+
+-- The shell is shared at run time (`r` is used again): the offer fails,
+-- the dupOnShared path runs, and the claimed `Right` allocates fresh.
+sharedE : Int -> String
+sharedE k =
+  let r = Right (k + 7)
+  in showE (chainE r) ++ " " ++ showE r ++ " " ++ showE (chainE (chainE r))
+
 -- `k` is only known at run time so nothing folds away.
 workload : Int -> IO ()
 workload k = do
@@ -147,6 +184,9 @@ workload k = do
   putStrLn (show (sumT (revBump Leaf t)) ++ " " ++ show (sumT (bumpLazy t)))
   putStrLn (show (shared (30 + k)))
   putStrLn (show (sumT (bumpA (bumpC (bumpD (build (20 + k))))) + sumT (bumpB (build (20 + k)))))
+  putStrLn (showE (runE (1000 + k) (Right k)))
+  putStrLn (sharedE k ++ " " ++ showE (stepE (k - 1)))
+  putStrLn (showE (chainE (Right (k - 3))) ++ " " ++ showE (chainE (Left "x")))
 
 main : IO ()
 main = do

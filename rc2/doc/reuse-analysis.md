@@ -421,6 +421,107 @@ claim on more paths); the 274 offers whose same-name constructors were all
 claimed by inner offers (bottom-up order); tail `con ... reuse=` that
 `DualABI` turns into a retpack after releasing the shell (class A).
 
+## Re-checking dead offers after DualABI
+
+Motivation. An audit of the final idris2-lsp IR (13,030 offers, 2,298
+dead) found 359 dead offers that sit next to a plain, unclaimed `con` of
+the same name -- 332 of them with one history:
+
+1. At `Reuse` time an inner alt's offer (its scrutinee is the result of a
+   call, `let v = call ...; case v of Right ...`) claimed the same-name
+   `con` bottom-up. The outer offer, on the parameter's `Right` cell,
+   then found nothing to claim and was resolved with an up-front
+   `releaseReuse` (`resolveAlt`'s dead-offer branch).
+2. `DualABI`'s struct return (`structRC`, `doc/struct-return.md`) later
+   turned that call into `callRep ... -> Ret1` and the inner offer, whose
+   scrutinee is now a `Ret` struct with no cell, into a plain `drop` of
+   its `dropOnUnique` list; it also cleared the `con`'s `reuse=` and
+   deleted the inner `releaseReuse`. The `con` became a plain
+   allocation while the outer shell had already been released.
+
+27 more dead offers had the same effect under loops that `LateInline`
+splices in (after `Reuse`), plus up to 69 sites where `Reuse` ran before
+the constructor existed; those are not covered (see below).
+
+Rule. `Reuse.recheckReuse`, run right after `DualABI` (and before `Dead
+code`, `PushDown`, `DupMerge`, `DeadVars`), walks every body bottom-up
+with an environment mapping each enclosing `case` scrutinee to its alt's
+constructor name. At an offer in exactly the shape `resolveAlt` makes of a
+dead one -- `reuseOffer sc ...; releaseReuse sc; inner`, `sc` the scrutinee
+of the enclosing alt -- it runs the ordinary `tryConsume` (same `nested`
+flag) on `inner`. If some path claims, the result replaces the up-front
+release; otherwise the offer is left alone. Offers whose release is not
+the first node of the offer's body, or whose scrutinee is a struct (those
+offers are gone after `structRC`), are not touched.
+
+Why a re-run rather than letting `structRC` hand the claim to the outer
+offer. `structRC` sees one alt at a time and cannot know whether an outer
+offer exists, what its shell is, or whether another offer wants the same
+`con`; it would also have to un-release a node outside its alt. The
+re-run reuses `tryConsume` unchanged, so the "exactly once per path"
+discipline is the already-proven one, and it also covers any other later
+pass that strips a claim (`LateInline` before `DualABI` leaves its loops
+as `RLoop`, which `tryConsume` treats as a leaf and releases before).
+
+Safety argument.
+
+1. *Only ordinary heap `con`s, fields unchanged.* `tryClaim` only matches
+   an `RCon` of the offer's constructor name with `reuse=` unset. After
+   `DualABI` a tail `con` of a struct-return function is already an
+   `RRetPack` (not an `RCon`), `callRep`/native-shadow nodes are leaves
+   that get a release, and a same-name `RCon` has the same arity and
+   layout as the shell. The offer's `dupOnShared`/`dropOnUnique` were
+   computed from the alt's destructured fields and its peeled drops; the
+   claim does not change which fields survive or die -- a claimed and a
+   released shell consume the very same fields on both the unique and the
+   shared path (`emitReuseOffer` is independent of what follows). The
+   rewrite did not touch those lists, and neither does this pass; the
+   `dupOnShared`/`dropOnUnique` entry counts on idris2-lsp are identical
+   (31,385 / 1,517), and no `dup`/`drop` line differs.
+2. *Retention.* The shell is now held across the inner `callRep` instead
+   of being released first -- the situation "Nested let values",
+   "Retention (2)" already accepts (one C local plus an unfreed cell per
+   active frame; the cell would otherwise be freed and reallocated).
+3. *Exactly once.* `tryConsume` is total (every leaf claims or releases,
+   a claim ends a path, nothing after a claim names the shell), and the
+   old up-front release is dropped when it claims. The input has no other
+   mention of `sc` (it was released at once). Offers nested in `inner`
+   were processed first, so a still-claiming inner offer keeps its `con`.
+4. *Later passes.* The stage sits before `Dead code`, `PushDown`,
+   `DupMerge`, `DeadVars`, which already handle `reuse=`/`releaseReuse`
+   (their cases are the same as for claims made by `Reuse`). `Sink` and
+   `Loop`/`MutualLoop`/`ConAltNative` run before it; the pass never
+   enters an `RLoop` (a leaf), so no claim crosses an iteration.
+5. *Lint.* `rcexpr-lint` (including the reuse-token join checks) reports
+   0 anomalies on the idris2-lsp IR.
+
+Switch: `--directive noreuserecheck` (see `directives.md`); with it the
+output is identical to the previous behaviour (idris2-lsp dump: identical
+apart from the directive header). With the pass on, the only lines that
+change in that dump are `con ... reuse=` tokens and `releaseReuse` nodes.
+
+Measured on idris2-lsp (17,549 definitions), with vs. without the switch:
+
+| | `noreuserecheck` | default |
+| --- | ---: | ---: |
+| `reuseOffer` | 13,030 | 13,030 |
+| `con ... reuse=` | 12,189 | 12,513 |
+| `releaseReuse` (static; one per non-claiming leaf) | 10,103 | 10,739 |
+| dead offers (no path claims) | 2,298 | 2,073 |
+| dead offers next to an unclaimed same-name `con` | 359 | 73 |
+| plain `con` lines | 41,843 | 41,519 |
+| dupOnShared / dropOnUnique entries | 31,385 / 1,517 | 31,385 / 1,517 |
+| `dup` / `drop` lines | 74,639 / 64,803 | 74,639 / 64,803 |
+| IR lines | 659,301 | 659,937 |
+| rcexpr-lint anomalies | 0 | 0 |
+
+Compile time is within noise (76 s vs. 75 s for the whole build, two in
+parallel). The 73 left are all under `RLoop`s (not entered). Runtime, on a
+micro-benchmark that rebuilds an `Either` from an inner struct-return call
+inside a case on the same-name parent (`chain (chain acc)`, 30,000,000
+rounds, single-threaded, 5 alternating runs): 2.03 s -> 1.58 s (-22%),
+same output.
+
 ## Files
 
 - `rc2/src/Compiler/RC2/Reuse.idr` -- the pass itself (new module).

@@ -58,3 +58,25 @@ if "$rc2" --cg rc2 -p rc2base --directive dumprcexpr --directive noreusenested "
 else
     fail "noreusenested compile failed, see $off.log"
 fi
+
+# Compiler.RC2.Reuse's re-check after DualABI (doc/reuse-analysis.md,
+# "Re-checking dead offers after DualABI"): Main.chainE's offer on its
+# parameter is claimed by the `Right` rebuilt after the inner struct-return
+# call, as well as by the `Left` alt's own tail -- two claims. Without the
+# pass (`--directive noreuserecheck`) only the `Left` claim is left.
+if want "$dump" Main.chainE 2 1; then
+    pass "reuse re-check -- Main.chainE claims its shell in both alts"
+else
+    fail "reuse re-check missing: Main.chainE has fewer than 2 claims in $dump"
+fi
+off2="$TMP/${name}_norecheck"
+if "$rc2" --cg rc2 -p rc2base --directive dumprcexpr --directive noreuserecheck "$src" -o "$off2" \
+        > "$off2.log" 2>&1 && [ -f "$off2.rcexpr" ]; then
+    if counts "$off2.rcexpr" | awk '$1 == "Main.chainE" && $2 == 1 { ok = 1 } END { exit !ok }'; then
+        pass "noreuserecheck -- Main.chainE keeps only the Left claim"
+    else
+        fail "noreuserecheck did not leave exactly one claim in Main.chainE"
+    fi
+else
+    fail "noreuserecheck compile failed, see $off2.log"
+fi

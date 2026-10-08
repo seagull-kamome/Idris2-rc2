@@ -189,3 +189,42 @@ resolveReuse nested imm (RConstCase fc sc alts mDef) =
 resolveReuse nested imm (RCmpCase fc op args pd t f) =
     RCmpCase fc op args pd (resolveReuse nested imm t) (resolveReuse nested imm f)
 resolveReuse _ _ e = e
+
+||| Re-resolve offers that `resolveReuse` released up front because an
+||| inner offer had already claimed the only same-name constructor, and
+||| whose inner claim a later pass then removed (`DualABI`'s struct
+||| return turns an offer on a `Ret` struct into a plain `drop`, see
+||| `doc/reuse-analysis.md`, "Re-checking dead offers after DualABI").
+||| Walks bottom-up (so an inner offer that still claims keeps its
+||| constructor); at an offer in the exact shape `resolveAlt` makes of a
+||| dead one -- `reuseOffer sc; releaseReuse sc; inner` -- runs
+||| `tryConsume` on `inner`, and when some path now claims, keeps its
+||| result in place of the up-front release. `env` maps each enclosing
+||| case scrutinee to the constructor name of the alt we are in.
+export
+recheckReuse : (nested : Bool) -> RCExp -> RCExp
+recheckReuse nested = go []
+  where
+    go : List (RCLocal, Name) -> RCExp -> RCExp
+    go env (RConCase fc sc alts mDef) =
+        RConCase fc sc
+          (map (\(MkRConAlt n ci tag as b) => MkRConAlt n ci tag as (go ((sc, n) :: env) b)) alts)
+          (map (go env) mDef)
+    go env (RReuseOffer fc sc ds us k) =
+        case go env k of
+             k'@(RReleaseReuse _ sc' inner) =>
+                 case (sc' == sc, lookup sc env) of
+                      (True, Just name) =>
+                          case tryConsume nested name sc inner of
+                               (True, consumed) => RReuseOffer fc sc ds us consumed
+                               (False, _) => RReuseOffer fc sc ds us k'
+                      _ => RReuseOffer fc sc ds us k'
+             k' => RReuseOffer fc sc ds us k'
+    go env e = mapChildren (go env) e
+
+||| `recheckReuse` over one definition's body.
+export
+recheckReuseDef : (nested : Bool) -> RCDef -> RCDef
+recheckReuseDef nested (MkRCFun args retRep isWorker body) = MkRCFun args retRep isWorker (recheckReuse nested body)
+recheckReuseDef nested (MkRCError body) = MkRCError (recheckReuse nested body)
+recheckReuseDef _ d = d
