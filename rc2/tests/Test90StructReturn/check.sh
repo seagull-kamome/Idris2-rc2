@@ -29,3 +29,18 @@ if [ "$step$lookupAge$halves$qr$segOf$shapeOf$halfOf" = "1111110" ]; then
 else
     fail "struct workers step=$step lookupAge=$lookupAge halves=$halves qr=$qr segOf=$segOf shapeOf=$shapeOf halfOf=$halfOf in $dump"
 fi
+
+# The mutual-recursion additions (doc/struct-return.md, "Eligibility"):
+# the two `MutualLoop`-merged groups (`seekEven`/`seekOdd` returning a
+# `Maybe Int`, `runA`/`runB`/`runC` returning a two-field record) each get
+# a struct-return worker, and the non-tail pair `splitA`/`splitB` (no
+# merge) does too. `--directive nomutualstruct` leaves the merged
+# functions with cell returns, so this fails there.
+merged="$(grep -c "^def {idris2rc2_worker_rc2_mutualLoop_[0-9]*:[0-9]*} .* ret= Ret" "$dump" || true)"
+splitA="$(retOf splitA Ret2)"
+splitB="$(retOf splitB Ret2)"
+if [ "$merged$splitA$splitB" = "211" ]; then
+    pass "struct return -- both MutualLoop-merged groups and splitA/splitB return structs"
+else
+    fail "merged workers=$merged splitA=$splitA splitB=$splitB in $dump"
+fi

@@ -21,6 +21,7 @@ import Core.TT
 
 import Data.List
 import Data.SortedMap
+import Data.String
 import Data.Vect
 
 %default total
@@ -88,6 +89,16 @@ export
 isMutualLoopMerged : Name -> Bool
 isMutualLoopMerged (MN "rc2_mutualLoop" _) = True
 isMutualLoopMerged _ = False
+
+||| A struct-return worker synthesised for a `MutualLoop`-merged function
+||| (`Compiler.RC2.DualABI.applyStructReturn`, `freshName`'s
+||| `idris2rc2_worker_` + the merged function's C name). It is as
+||| file-local as the merged function it stands for, so it shares its
+||| `static` storage class.
+export
+isMutualLoopWorker : Name -> Bool
+isMutualLoopWorker (MN s _) = isPrefixOf "idris2rc2_worker_rc2_mutualLoop_" s
+isMutualLoopWorker _ = False
 
 ||| A per-pass monotonic counter, `Ref`-keyed by the empty phantom
 ||| `FreshId`. `Compiler.RC2.DualABI` and `Compiler.RC2.MutualLoop` each

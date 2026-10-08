@@ -230,6 +230,10 @@ merged function needed an **explicit** exclusion:
 `MN "rc2_mutualLoop" _` name pattern `MutualLoop.idr`'s own
 `freshName` mints) skips worker synthesis for it entirely.
 
+The exclusion covers parameter workers and the Bool return only. Struct
+return (`doc/struct-return.md`) puts no native type on a parameter, so it
+takes merged functions too (`--directive nomutualstruct` turns that off).
+
 ## Stage 3a: worker synthesis (parameters only) + wrapper rewrite
 
 `synthesizeWorker`, called from the whole-program `applyDualABI` for
