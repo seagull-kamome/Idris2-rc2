@@ -13,7 +13,8 @@ module Compiler.RC2.RC2
 -- 3. Constant folding (`ConstFold`), case into tails (`PushCon`),
 --    closure/constant-constructor specialization (`SpecClosure`),
 --    early inline (`LateInline`)
--- 4. Single-force lazy values (`LazyFold`), world arity raising again
+-- 4. Nested comparison merge (`CmpMerge`), single-force lazy values
+--    (`LazyFold`), world arity raising again
 --    (`ArityRaise`), TRMC (`Trmc`), difference lists (`ClosureCtx`),
 --    CAF memoization (`insertMemoize`)
 -- 5. RC annotation, constructor reuse, native shadow caching (`RC`,
@@ -33,6 +34,7 @@ import Compiler.RC2.ClosureCtx
 import Compiler.RC2.DeadArgs
 import Compiler.RC2.Trmc
 import Compiler.RC2.CC
+import Compiler.RC2.CmpMerge
 import Compiler.RC2.ConAltNative
 import Compiler.RC2.ConstFold
 import Compiler.RC2.DeadCode
@@ -289,7 +291,7 @@ inlineNamed disabled keep main defs =
 ||| apart.
 disableableStageNames : List String
 disableableStageNames =
-    ["noinline", "nodeadargs", "noarityraise", "noapplyfold", "notrmc", "noctx", "noconstfold", "noknowncon", "nopushcon", "nospecclosure", "nospecconstcon", "noconaltnative", "nomutualloop", "noloop", "noearlyinline", "nolateinline", "nosink", "nodualabi", "noboolret", "noboolcase", "noboolfield", "nostructreturn", "nomutualstruct", "nodeadcode", "nopushdown", "nodupmerge", "nodeadvars"]
+    ["noinline", "nodeadargs", "noarityraise", "noapplyfold", "notrmc", "noctx", "noconstfold", "noknowncon", "nopushcon", "nospecclosure", "nospecconstcon", "noconaltnative", "nomutualloop", "noloop", "noearlyinline", "nolateinline", "nosink", "nocmpmerge", "nodualabi", "noboolret", "noboolcase", "noboolfield", "nostructreturn", "nomutualstruct", "nodeadcode", "nopushdown", "nodupmerge", "nodeadvars"]
 
 ||| Stages that are off unless asked for with `--directive <name>`. They
 ||| travel to `toRCDefs` in the same list as the disables above.
@@ -382,7 +384,10 @@ toRCDefs disabled incremental roots thunks preFolded = do
     -- bare wrapper now, whose sites call its raised version directly.
     -- A local lazy value forced once becomes a call, now that inlining has
     -- brought delays and forces together (doc/lazy-memoization.md).
-    lazyFolded <- logTime 2 "rc2: Lazy fold" $ pure $ map (\(n, d) => (n, foldSingleForceDef d)) earlyInlined
+    cmpMerged <- if "nocmpmerge" `elem` disabled
+                    then pure earlyInlined
+                    else logTime 2 "rc2: Merge nested comparisons" $ pure $ map (\(n, d) => (n, mergeCmpDef d)) earlyInlined
+    lazyFolded <- logTime 2 "rc2: Lazy fold" $ pure $ map (\(n, d) => (n, foldSingleForceDef d)) cmpMerged
     reraised <- if "noarityraise" `elem` disabled
                    then pure lazyFolded
                    else logTime 2 "rc2: Arity raise (after early inline)" $ applyArityRaise lazyFolded
