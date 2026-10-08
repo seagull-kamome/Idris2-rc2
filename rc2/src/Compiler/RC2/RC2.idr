@@ -96,11 +96,11 @@ import Libraries.Utils.Path
 immOf : Bool -> RCExp -> SortedSet RCLocal
 immOf on body = if on then typedConstScrutinees body else empty
 
-applyReuse : (fieldCase : Bool) -> RCDef -> RCDef
-applyReuse fc (MkRCFun args retRep isWorker body) = MkRCFun args retRep isWorker (resolveReuse (immOf fc body) body)
-applyReuse fc (MkRCError body) = MkRCError (resolveReuse (immOf fc body) body)
-applyReuse _ d@(MkRCCon _ _ _) = d
-applyReuse _ d@(MkRCForeign _ _ _) = d
+applyReuse : (nested : Bool) -> (fieldCase : Bool) -> RCDef -> RCDef
+applyReuse nested fc (MkRCFun args retRep isWorker body) = MkRCFun args retRep isWorker (resolveReuse nested (immOf fc body) body)
+applyReuse nested fc (MkRCError body) = MkRCError (resolveReuse nested (immOf fc body) body)
+applyReuse _ _ d@(MkRCCon _ _ _) = d
+applyReuse _ _ d@(MkRCForeign _ _ _) = d
 
 ||| Iteration cap for `foldConstProgram`'s own whole-program fixpoint
 ||| loop: monotonicity (a CAF only ever transitions from "not yet known
@@ -291,7 +291,7 @@ inlineNamed disabled keep main defs =
 ||| apart.
 disableableStageNames : List String
 disableableStageNames =
-    ["noinline", "nodeadargs", "noarityraise", "noapplyfold", "notrmc", "noctx", "noconstfold", "noknowncon", "nopushcon", "nospecclosure", "nospecconstcon", "noconaltnative", "nomutualloop", "noloop", "noearlyinline", "nolateinline", "nosink", "nocmpmerge", "nodualabi", "noboolret", "noboolcase", "noboolfield", "nostructreturn", "nomutualstruct", "nodeadcode", "nopushdown", "nodupmerge", "nodeadvars"]
+    ["noinline", "nodeadargs", "noarityraise", "noapplyfold", "notrmc", "noctx", "noconstfold", "noknowncon", "nopushcon", "nospecclosure", "nospecconstcon", "noconaltnative", "nomutualloop", "noloop", "noearlyinline", "nolateinline", "nosink", "nocmpmerge", "nodualabi", "noboolret", "noboolcase", "noboolfield", "nostructreturn", "nomutualstruct", "nodeadcode", "nopushdown", "nodupmerge", "nodeadvars", "noreusenested"]
 
 ||| Stages that are off unless asked for with `--directive <name>`. They
 ||| travel to `toRCDefs` in the same list as the disables above.
@@ -402,7 +402,7 @@ toRCDefs disabled incremental roots thunks preFolded = do
                 traverse (\(n, d) => do
                   d1 <- toRCDefPostFold (not ("noboolcase" `elem` disabled)) d
                   let fieldCase = not ("noboolcase" `elem` disabled) && not ("noboolfield" `elem` disabled)
-                  let d2 = applyReuse fieldCase d1
+                  let d2 = applyReuse (not ("noreusenested" `elem` disabled)) fieldCase d1
                   d3 <- if "noconaltnative" `elem` disabled then pure d2 else applyConAltNative fieldCase d2
                   pure (n, d3)) memoized
     (merged, noPromotes) <- if "nomutualloop" `elem` disabled then pure (reused, SortedMap.empty) else logTime 2 "rc2: Mutual loop" $ applyMutualLoop reused

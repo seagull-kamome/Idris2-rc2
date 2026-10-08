@@ -1107,3 +1107,17 @@ IR上では`B8 1`/`B8 0`。native(`Native Bits8`)になれる範囲はかなり�
 (file-local)として持たせ、`Emit`がその属性で`static`を決める。(1)の方が単純。
 どの`MN`/`UN`をDualABI・Loop・Specializationなどが作るかの総点検も要る
 (同じ連番方式のものが他にもあるはず)。
+
+## reuse: `let`値内のネスト claim の残り (2026-10-08)
+
+`noreusenested`で切り替えられる`let`値内claim(`rc2/doc/reuse-analysis.md`
+"Nested let values")を入れた結果、idris2-lspのdead offerは5,474 → 1,757、
+実reuse(`con ... reuse=`)は7,811 → 12,189。残り:
+
+- 本体側が一部のパスでしかclaimしない場合、本体側が優先されるので、値側でより多くの
+  パスがclaimできてもそちらは見ない(本体がゼロclaimのときだけ値を探索する)。
+- 内側のofferが同名conをすべて先にclaimしてしまうケース(約274箇所、bottom-up順の
+  帰結)は未対応。
+- 末尾`con ... reuse=`をDualABIがretpackに変えるクラスA(値を返す関数側)は別問題で未着手。
+- 残ったdead offer 1,757件の内訳(値が呼び出しやクロージャで同名conが見えない等)は
+  未分類。
