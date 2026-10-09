@@ -37,3 +37,6 @@ void idris2rc2_test128_gmppow(mpz_t r, mpz_t a, int64_t n);
 void idris2rc2_test128_gmp42(mpz_t r);
 void idris2rc2_test128_gmp3x1(mpz_t r, mpz_t a);
 int64_t idris2rc2_test128_gmpsgn(mpz_t a);
+
+int32_t idris2rc2_test128_creatmode(void);
+int64_t idris2rc2_test128_stmtexpr(int64_t a);

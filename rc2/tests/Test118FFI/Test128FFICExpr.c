@@ -45,3 +45,10 @@ void idris2rc2_test128_gmp3x1(mpz_t r, mpz_t a)
     mpz_add_ui(r, r, 1);
 }
 int64_t idris2rc2_test128_gmpsgn(mpz_t a) { return mpz_sgn(a); }
+
+// Multi-header section (declared in Test128Multi.h).
+#include "Test128Multi.h"
+#include <sys/stat.h>
+int32_t idris2rc2_test128_creatmode(void) { return O_CREAT | S_IRUSR; }
+int64_t idris2rc2_test128_stmtexpr(int64_t a) { return a * 2; }
+int64_t idris2rc2_test128m_trip(int64_t a) { return a * 3; }

@@ -1509,8 +1509,8 @@ collectDeclarations n def@(MkRCForeign ccs fargs ret) = do
              Just spec <- validateForeign n ccs fargs ret
                  | Nothing => throw $ InternalError "[rc2] FFI not found for \{cName n}"
              case spec.libOpts of
-                  [lib, header] => do update HeaderFiles $ insert header
-                                      maybe (pure ()) (\l => update ForeignLibs $ insert l) (linkLibName lib)
+                  [lib, hdr] => do update HeaderFiles (\s => foldl (flip insert) (the (SortedSet String) s) (headerList spec))
+                                   maybe (pure ()) (\l => update ForeignLibs $ insert l) (linkLibName lib)
                   [lib] => maybe (pure ()) (\l => update ForeignLibs $ insert l) (linkLibName lib)
                   _ => pure ()
 collectDeclarations n def = do

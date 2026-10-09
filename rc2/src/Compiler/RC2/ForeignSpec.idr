@@ -14,6 +14,7 @@ import Core.Context
 import Core.Core
 
 import Data.List
+import Data.List1
 import Data.String
 
 %default total
@@ -37,6 +38,15 @@ record ForeignSpec where
   tag : String
   target : ForeignTarget
   libOpts : List String
+
+||| The header names of a spec: the second option split at `;`, each
+||| trimmed, empty pieces and repeats (exact, case-sensitive match) dropped (`"a.h; b.h;"` is `["a.h", "b.h"]`).
+||| Only this field treats `;` specially. See `rc2/doc/ffi-cexpr.md`.
+export
+headerList : ForeignSpec -> List String
+headerList spec = case spec.libOpts of
+                       [_, hs] => nub $ filter (/= "") (map (trim . pack) (Data.List1.forget (Data.List.split (== ';') (unpack hs))))
+                       _ => []
 
 ||| Accepted tags, in priority order. "RefC" is accepted (and treated
 ||| as directly callable, not stubbed) because prelude/base/contrib
@@ -179,6 +189,9 @@ validateForeign n ccs fargs ret =
          Left err => bad err
          Right Nothing => pure Nothing
          Right (Just spec) => do
+             case find badHeader (headerList spec) of
+                  Just h => bad "invalid header name \"\{h}\" (a header name must not contain whitespace, '<', '>' or '\"')"
+                  Nothing => pure ()
              case spec.target of
                   FSymbol _ => pure ()
                   FExpr parts => do
@@ -198,6 +211,9 @@ validateForeign n ccs fargs ret =
   where
     bad : String -> Core a
     bad msg = throw $ UserError "[rc2] invalid %foreign declaration \{show n}: \{msg}"
+
+    badHeader : String -> Bool
+    badHeader h = any (\c => isSpace c || c == '<' || c == '>' || c == '"') (unpack h)
 
     placeholders : List TemplatePart -> List Nat
     placeholders [] = []
