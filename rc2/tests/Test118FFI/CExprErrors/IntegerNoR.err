@@ -1,0 +1,1 @@
+Error: [rc2] invalid %foreign declaration Main.prim__bad: an Integer result needs the out-parameter placeholder '$r' (e.g. "CExpr:mpz_add($r, $1, $2)"); a function returning a value, such as mpz_get_si, must be declared with an Int-typed result and wrapped in Idris

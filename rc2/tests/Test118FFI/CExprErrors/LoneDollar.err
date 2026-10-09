@@ -1,1 +1,1 @@
-Error: [rc2] invalid %foreign declaration Main.prim__bad: '$' must be followed by a digit or '$' in "CExpr:$x"
+Error: [rc2] invalid %foreign declaration Main.prim__bad: '$' must be followed by a digit, 'r' or '$' in "CExpr:$x"

@@ -1,1 +1,0 @@
-Error: [rc2] invalid %foreign declaration Main.prim__bad: Integer arguments and results are not supported by CExpr (the GMP out-parameter convention needs a callee)

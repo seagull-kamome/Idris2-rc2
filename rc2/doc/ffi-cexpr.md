@@ -16,6 +16,9 @@ prim__max : Int -> Int -> Int
 
 %foreign "CExpr:srand($1),libc,stdlib.h"
 prim__srand : Bits32 -> PrimIO ()
+
+%foreign "CExpr:mpz_add($r, $1, $2),libgmp,gmp.h"
+prim__integerAdd : Integer -> Integer -> Integer
 ```
 
 Implementation: `Compiler.RC2.ForeignSpec` (parsing and checking),
@@ -45,14 +48,16 @@ declaration is examined. A `:` after the first one (as in
 | text | meaning |
 |---|---|
 | `$1`, `$2`, ... `$10` | the declaration's arguments, 1-based, any number of digits |
+| `$r` | the `Integer` result's out-parameter (an `mpz_t`), see "Integer results and arguments" |
 | `$$` | a literal `$` |
 
 A trailing `%World` of an `IO`/`PrimIO` type is not an argument and does
 not count. An unused argument is allowed, and the same `$N` may appear
 several times (the argument's marshalled expression is simply repeated;
 it is a read, or a pure computation, so it is not evaluated for effect).
-`$0`, `$N` beyond the argument count and a `$` followed by neither a
-digit nor `$` are compile errors naming the declaration.
+`$0`, `$N` beyond the argument count and a `$` followed by none of a
+digit, `r` or `$` are compile errors naming the declaration. (`$r` is
+taken greedily: `$result` is `$r` followed by `esult`.)
 
 Placeholders are replaced textually, also inside string literals in the
 template.
@@ -80,12 +85,54 @@ The expression must produce a value of the C type the Idris type maps to
 No prototype is emitted for a `CExpr:` declaration; the header option is
 the only way to make macros and functions visible.
 
+## Integer results and arguments
+
+An `Integer` result is a GMP out-parameter, not a C return value. Where
+`"C:"` prepends the out-parameter to the argument list of a function,
+`CExpr:` has no call to prepend it to, so the template places it with
+`$r`, valid only when the result type is `Integer` or `PrimIO Integer`:
+
+```idris
+%foreign "CExpr:mpz_add($r, $1, $2),libgmp,gmp.h"
+prim__add : Integer -> Integer -> Integer
+
+%foreign "CExpr:mpz_set_si($r, (long)($1)),libgmp,gmp.h"
+prim__fromInt : Int -> Integer
+
+%foreign "CExpr:mpz_pow_ui($r, $1, (unsigned long)($2)),libgmp,gmp.h"
+prim__pow : Integer -> Int -> Integer
+```
+
+rc2 allocates a fresh `IDRIS2RC2_Integer` first, replaces each `$r` by
+its `mpz_t` member (`retVar->v`), emits the expression as a bare
+statement (its value, if any, is discarded) and returns the allocated
+Integer, normalised to an immediate when it fits, exactly as for `"C:"`.
+`$r` may appear any number of times and anywhere in the template (for
+example `(mpz_set_si($r, 3), mpz_mul($r, $1, $r))`). It is *not*
+wrapped in parentheses like `$N`: `retVar->v` is a postfix expression, so
+its context cannot change its meaning, and it stays an array for
+`sizeof` and for the decay to `mpz_ptr` at a call. There is only this one
+out-parameter; a function with two (`mpz_tdiv_qr`) needs a shim.
+
+An `Integer` argument `$N` is the argument's `mpz_t` (an
+`mpz_ptr`, immediates included) exactly as for `"C:"`, parenthesised like
+every placeholder. The callee must only read it.
+
+An `Integer` result without `$r`, and `$r` in a declaration whose result is
+not an `Integer`, are compile errors. A GMP function that returns a value
+(`mpz_get_si`, `mpz_sgn`, `mpz_cmp`) is declared with the matching result
+type and takes `Integer` arguments; wrap it in Idris to build an
+`Integer`:
+
+```idris
+%foreign "CExpr:mpz_sgn($1),libgmp,gmp.h"
+prim__sgn : Integer -> Int
+```
+
+rc2 never converts such a value into an `Integer` for you.
+
 ## Limits
 
-- `Integer` arguments and results are rejected at compile time. rc2
-  passes an `Integer` result as a leading GMP out-parameter of a callee,
-  and an expression has no callee. Use `"C:"` with a function for
-  those.
 - Other backends ignore `CExpr:`. A declaration that must also build
   with another backend carries that backend's own tag as well:
 

@@ -1,0 +1,1 @@
+Error: [rc2] invalid %foreign declaration Main.prim__bad: '$r' is only valid in a declaration whose result type is Integer or PrimIO Integer

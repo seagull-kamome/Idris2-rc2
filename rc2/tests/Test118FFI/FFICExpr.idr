@@ -107,9 +107,56 @@ prim__sum10 : Int -> Int -> Int -> Int -> Int -> Int -> Int -> Int -> Int -> Int
          "C:idris2rc2_test128_twicelen,libc,Test128FFICExpr.h"
 prim__twiceLen : String -> Int
 
+-- Integer results (`$r`, the mpz_t out-parameter of the result) and
+-- arguments, bound straight to GMP functions. The `C:` twins take the
+-- out-parameter as a leading argument, as every `C:` Integer result does.
+%foreign "CExpr:mpz_add($r, $1, $2),libgmp,gmp.h"
+         "C:idris2rc2_test128_gmpadd,libc,Test128FFICExpr.h"
+prim__gmpAdd : Integer -> Integer -> Integer
+
+%foreign "CExpr:mpz_mul($r, $1, $2),libgmp,gmp.h"
+         "C:idris2rc2_test128_gmpmul,libc,Test128FFICExpr.h"
+prim__gmpMul : Integer -> Integer -> Integer
+
+%foreign "CExpr:mpz_sub($r, $1, $2),libgmp,gmp.h"
+         "C:idris2rc2_test128_gmpsub,libc,Test128FFICExpr.h"
+prim__gmpSub : Integer -> Integer -> Integer
+
+%foreign "CExpr:mpz_set_si($r, (long)($1)),libgmp,gmp.h"
+         "C:idris2rc2_test128_gmpfromint,libc,Test128FFICExpr.h"
+prim__gmpFromInt : Int -> Integer
+
+%foreign "CExpr:mpz_pow_ui($r, $1, (unsigned long)($2)),libgmp,gmp.h"
+         "C:idris2rc2_test128_gmppow,libc,Test128FFICExpr.h"
+prim__gmpPow : Integer -> Int -> Integer
+
+%foreign "CExpr:mpz_set_ui($r, 42),libgmp,gmp.h"
+         "C:idris2rc2_test128_gmp42,libc,Test128FFICExpr.h"
+prim__gmp42 : PrimIO Integer
+
+%foreign "CExpr:mpz_add($r, $1, $2),libgmp,gmp.h"
+         "C:idris2rc2_test128_gmpadd,libc,Test128FFICExpr.h"
+prim__gmpAddIO : Integer -> Integer -> PrimIO Integer
+
+-- A repeated $r, one of them not the first argument.
+%foreign "CExpr:(mpz_set_si($r, 3), mpz_mul($r, $1, $r), mpz_add_ui($r, $r, 1)),libgmp,gmp.h"
+         "C:idris2rc2_test128_gmp3x1,libc,Test128FFICExpr.h"
+prim__gmp3x1 : Integer -> Integer
+
+-- A value-returning GMP function: Int result, Integer argument.
+%foreign "CExpr:mpz_sgn($1),libgmp,gmp.h"
+         "C:idris2rc2_test128_gmpsgn,libc,Test128FFICExpr.h"
+prim__gmpSgn : Integer -> Int
+
 -- Passing declarations as values goes through the generic wrapper.
 apply2 : (Int -> Int -> Int) -> Int
 apply2 f = f 6 7
+
+apply2g : (Integer -> Integer -> Integer) -> Integer -> Integer
+apply2g f x = f x 7
+
+bigValue : Integer
+bigValue = 123456789012345678901234567890
 
 export
 run : IO ()
@@ -154,3 +201,34 @@ run = do
   printLn (prim__twiceLen ("ab" ++ show n))
 
   printLn (prim__sum10 1 2 3 4 5 6 7 8 9 10)
+
+  -- Integer results through `$r`: immediates, heap Integers, negatives,
+  -- and results that fall back into the immediate range.
+  let big = bigValue
+  let edge = 4611686018427387904 -- 2^62, the first heap Integer
+  printLn (prim__gmpAdd 20 22, prim__gmpAdd (-5) 3)
+  printLn (prim__gmpMul 6 7, prim__gmpSub 3 10)
+  printLn (prim__gmpAdd big big == big * 2, prim__gmpAdd big big)
+  printLn (prim__gmpMul big (negate big) == negate (big * big))
+  printLn (prim__gmpSub big big == 0, prim__gmpSub big (big + 1))
+  printLn (prim__gmpAdd edge edge, prim__gmpSub (prim__gmpAdd edge edge) edge == edge)
+  printLn (prim__gmpAdd (negate edge) (negate edge) - 1)
+  printLn (prim__gmpFromInt 5, prim__gmpFromInt (-9223372036854775807))
+  printLn (prim__gmpPow 2 100, prim__gmpPow big 0, prim__gmpPow (-3) 3)
+  printLn (prim__gmpPow big 3 == big * big * big)
+  s <- primIO prim__gmp42
+  printLn s
+  t <- primIO (prim__gmpAddIO big s)
+  printLn (t == big + 42)
+  printLn (prim__gmp3x1 big == 3 * big + 1, prim__gmp3x1 (-4))
+  printLn (prim__gmpSgn big, prim__gmpSgn (negate big), prim__gmpSgn 0, prim__gmpSgn (-7))
+
+  -- Integer declarations used as values (generic wrapper), also run
+  -- on heap Integers.
+  printLn (apply2g prim__gmpAdd big == big + 7)
+  printLn (map (\f => apply2g f 10) [prim__gmpAdd, prim__gmpMul, prim__gmpSub])
+  printLn (map (\f => apply2g f big == apply2g f big) [prim__gmpMul])
+  let go : Integer -> Nat -> Integer
+      go acc Z = acc
+      go acc (S k) = go (prim__gmpMul (prim__gmpAdd acc 1) 3) k
+  printLn (go 0 40)

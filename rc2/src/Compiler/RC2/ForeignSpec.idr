@@ -18,10 +18,11 @@ import Data.String
 
 %default total
 
-||| One piece of a `CExpr:` template: literal C text, or a 1-based
-||| reference to a declaration argument (`$N`).
+||| One piece of a `CExpr:` template: literal C text, a 1-based
+||| reference to a declaration argument (`$N`), or the `Integer`
+||| out-parameter of the result (`$r`).
 public export
-data TemplatePart = TLit String | TArg Nat
+data TemplatePart = TLit String | TArg Nat | TResult
 
 ||| What a convention string names: a C function symbol (`C:`,
 ||| `RefC:`, `RC2:`) or a C expression template (`CExpr:`).
@@ -113,7 +114,7 @@ splitOptions = go Plain [] [] []
                                  else go Plain stack acc (c :: cur) cs
 
 ||| Tokenize a `CExpr:` template: `$$` is a literal '$', `$N` (any
-||| number of digits) is a placeholder, a lone '$' is an error.
+||| number of digits) and `$r` are placeholders, any other '$' is an error.
 parseTemplate : List Char -> Either String (List TemplatePart)
 parseTemplate = go [] []
   where
@@ -124,12 +125,13 @@ parseTemplate = go [] []
     go : List Char -> List TemplatePart -> List Char -> Either String (List TemplatePart)
     go lit acc [] = Right (reverse (flush lit acc))
     go lit acc ('$' :: '$' :: cs) = go ('$' :: lit) acc cs
+    go lit acc ('$' :: 'r' :: cs) = go [] (TResult :: flush lit acc) cs
     go lit acc ('$' :: d :: cs) =
         if isDigit d
            then let (ds, rest) = span isDigit (d :: cs)
                 in assert_total (go [] (TArg (stringToNatOrZ (pack ds)) :: flush lit acc) rest)
-           else Left "'$' must be followed by a digit or '$'"
-    go lit acc ['$'] = Left "'$' must be followed by a digit or '$'"
+           else Left "'$' must be followed by a digit, 'r' or '$'"
+    go lit acc ['$'] = Left "'$' must be followed by a digit, 'r' or '$'"
     go lit acc (c :: cs) = go (c :: lit) acc cs
 
 ||| Parse the convention string selected from `ccs`: `Right Nothing`
@@ -167,8 +169,9 @@ foreignUsable ccs = case parseForeign ccs of
 ||| Parse and check the convention of declaration `n` (arguments
 ||| `fargs`, result `ret`): a malformed string, a `$N` outside the
 ||| declaration's own arguments (the trailing `%World` of an IO type
-||| not counted) and an `Integer` in a `CExpr:` declaration are
-||| compile-time errors naming the declaration.
+||| not counted), `$r` outside an `Integer`-result declaration and an
+||| `Integer`-result declaration without `$r` are compile-time errors
+||| naming the declaration.
 export
 validateForeign : Name -> List String -> List CFType -> CFType -> Core (Maybe ForeignSpec)
 validateForeign n ccs fargs ret =
@@ -185,8 +188,12 @@ validateForeign n ccs fargs ret =
                       case find (\k => k == 0 || k > nargs) (placeholders parts) of
                            Just k => bad "placeholder $\{show k} is out of range (the declaration has \{show nargs} argument(s))"
                            Nothing => pure ()
-                      when (any isInteger fargs || isInteger (peel ret)) $
-                          bad "Integer arguments and results are not supported by CExpr (the GMP out-parameter convention needs a callee)"
+                      let hasResult = any isResult parts
+                      if isInteger (peel ret)
+                         then unless hasResult $
+                                  bad "an Integer result needs the out-parameter placeholder '$r' (e.g. \"CExpr:mpz_add($r, $1, $2)\"); a function returning a value, such as mpz_get_si, must be declared with an Int-typed result and wrapped in Idris"
+                         else when hasResult $
+                                  bad "'$r' is only valid in a declaration whose result type is Integer or PrimIO Integer"
              pure (Just spec)
   where
     bad : String -> Core a
@@ -196,6 +203,11 @@ validateForeign n ccs fargs ret =
     placeholders [] = []
     placeholders (TLit _ :: ps) = placeholders ps
     placeholders (TArg k :: ps) = k :: placeholders ps
+    placeholders (TResult :: ps) = placeholders ps
+
+    isResult : TemplatePart -> Bool
+    isResult TResult = True
+    isResult _ = False
 
     isInteger : CFType -> Bool
     isInteger CFInteger = True
@@ -207,9 +219,13 @@ validateForeign n ccs fargs ret =
 
 ||| Substitute the already-marshalled argument expressions `args`
 ||| (1-based `$N`) into a template, each wrapped in parentheses.
+||| `$r` becomes `<resultVar>->v` (the `mpz_t` of the allocated
+||| `IDRIS2RC2_Integer`), deliberately unparenthesised: a postfix
+||| expression cannot be affected by its context, and the array stays
+||| an array for `sizeof` and decay.
 export
-renderTemplate : List TemplatePart -> List String -> String
-renderTemplate parts args = concatMap render parts
+renderTemplate : List TemplatePart -> Maybe String -> List String -> String
+renderTemplate parts resultVar args = concatMap render parts
   where
     nth : Nat -> List String -> String
     nth _ [] = ""
@@ -219,3 +235,4 @@ renderTemplate parts args = concatMap render parts
     render : TemplatePart -> String
     render (TLit s) = s
     render (TArg k) = "(" ++ nth (k `minus` 1) args ++ ")"
+    render TResult = maybe "" (++ "->v") resultVar

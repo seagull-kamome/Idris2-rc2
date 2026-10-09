@@ -320,7 +320,7 @@ In upstream RefC, zero-argument top-level definitions (CAFs) were re-evaluated o
 Similarly, upstream RefC lowered `Delay`/`Force` into standard closures, re-running delayed computations on every force. rc2 preserves dedicated `RDelay` and `RForce` nodes, caching the first evaluation result via `idris2rc2_force`.
 
 ### 7. C Expressions as `%foreign` Targets (`CExpr:`)
-`%foreign "CExpr:abs($1),libc,stdlib.h"` binds a declaration to a C expression or constant (a macro, `O_CREAT`) instead of a function name, so no C shim is needed; `$1`, `$2`, ... are the arguments and are substituted in parentheses. It has top priority among rc2's tags and other backends ignore it. See [`rc2/doc/ffi-cexpr.md`](rc2/doc/ffi-cexpr.md).
+`%foreign "CExpr:abs($1),libc,stdlib.h"` binds a declaration to a C expression or constant (a macro, `O_CREAT`) instead of a function name, so no C shim is needed; `$1`, `$2`, ... are the arguments and are substituted in parentheses. In a declaration with an `Integer` result, `$r` is the GMP out-parameter (`"CExpr:mpz_add($r, $1, $2),libgmp,gmp.h"`), so GMP functions bind without a shim. It has top priority among rc2's tags and other backends ignore it. See [`rc2/doc/ffi-cexpr.md`](rc2/doc/ffi-cexpr.md).
 
 ---
 

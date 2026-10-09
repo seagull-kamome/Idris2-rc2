@@ -146,7 +146,7 @@ ffiRawCall cLang target fargs ret args = do
     let callWith : List String -> String
         callWith es = case target of
                            CallSym fctName => "\{cName fctName}(\{showSep ", " es})"
-                           CallExpr parts => "(" ++ renderTemplate parts es ++ ")"
+                           CallExpr parts => "(" ++ renderTemplate parts Nothing es ++ ")"
     -- `Compiler.RC2.Emit.Util`'s own `packCFType` CFInteger case doc
     -- comment has the full rationale: allocate a fresh
     -- `IDRIS2RC2_Integer` *before* the call, pass its own `->v` as an
@@ -163,14 +163,19 @@ ffiRawCall cLang target fargs ret args = do
         ffiIntegerOutParam es = do
             retVar <- getNewVarThatWillNotBeFreedAtEndOfBlock
             emit emptyFC "IDRIS2RC2_Integer *\{retVar} = idris2rc2_mkInteger();"
-            emit emptyFC "\{callWith ("\{retVar}->v" :: es)};"
+            -- `C:` prepends the out-parameter as a leading argument; a
+            -- `CExpr:` template places it itself with `$r` (validated
+            -- present), as a bare statement.
+            emit emptyFC $ case target of
+                                 CallExpr parts => renderTemplate parts (Just retVar) es ++ ";"
+                                 CallSym _ => "\{callWith ("\{retVar}->v" :: es)};"
             pure retVar
     rawExpr <- case ret of
          CFIORes CFUnit    => do
              -- A `CExpr:` statement is emitted bare, without the
              -- value-position parentheses.
              let stmt : String := case target of
-                                       CallExpr parts => renderTemplate parts (discardLastArgument argExprs)
+                                       CallExpr parts => renderTemplate parts Nothing (discardLastArgument argExprs)
                                        CallSym _ => callWith (discardLastArgument argExprs)
              emit emptyFC (stmt ++ ";")
              pure ""
@@ -402,7 +407,7 @@ emitForeignDef n ccs fargs ret =
               let mkCall : List String -> String
                   mkCall es = case target of
                                    CallSym fctName => cName fctName ++ "(" ++ showSep ", " es ++ ")"
-                                   CallExpr parts => "(" ++ renderTemplate parts es ++ ")"
+                                   CallExpr parts => "(" ++ renderTemplate parts Nothing es ++ ")"
               -- A bare (non-`CFIORes`) `CFUnit` return deliberately still
               -- falls through to the generic `payloadTy` arm -- matching
               -- this backend's existing behaviour, unusual as that C is.
@@ -410,7 +415,7 @@ emitForeignDef n ccs fargs ret =
                 CFIORes CFUnit => do
                     -- A `CExpr:` statement is emitted bare.
                     emit EmptyFC $ (case target of
-                                         CallExpr parts => renderTemplate parts callArgs
+                                         CallExpr parts => renderTemplate parts Nothing callArgs
                                          CallSym _ => mkCall callArgs) ++ ";"
                     removeVarsArgList
                     emit EmptyFC "return NULL;"
@@ -430,7 +435,11 @@ emitForeignDef n ccs fargs ret =
                   -- return value.
                   CFInteger => do
                       emit EmptyFC "IDRIS2RC2_Integer *retVal = idris2rc2_mkInteger();"
-                      emit EmptyFC $ mkCall ("retVal->v" :: callArgs) ++ ";"
+                      -- As in `ffiRawCall`: a `CExpr:` places the
+                      -- out-parameter with `$r` instead of a leading argument.
+                      emit EmptyFC $ case target of
+                                           CallExpr parts => renderTemplate parts (Just "retVal") callArgs ++ ";"
+                                           CallSym _ => mkCall ("retVal->v" :: callArgs) ++ ";"
                       emit EmptyFC $ "IDRIS2RC2_Value *packedRet = (IDRIS2RC2_Value*)" ++ packCFType CFInteger "retVal" ++ ";"
                       removeVarsArgList
                       emit EmptyFC "return packedRet;"
