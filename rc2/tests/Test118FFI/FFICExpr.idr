@@ -158,9 +158,29 @@ apply2g f x = f x 7
 bigValue : Integer
 bigValue = 123456789012345678901234567890
 
+-- Several headers in the header option, separated by `;` (rc2/doc/ffi-cexpr.md):
+-- spaces around `;`, a trailing `;`, a repeat within one field, a header
+-- also named alone by other declarations, and `;` inside the expression.
+%foreign "CExpr:(O_CREAT | S_IRUSR),libc, fcntl.h ; sys/stat.h ;"
+         "C:idris2rc2_test128_creatmode,libc,Test128FFICExpr.h"
+prim__creatMode : Int32
+
+%foreign "CExpr:({ int t = $1; t * 2; }),libc,limits.h;fcntl.h;limits.h"
+         "C:idris2rc2_test128_stmtexpr,libc,Test128FFICExpr.h"
+prim__stmtExpr : Int -> Int
+
+-- RC2: outranks C: and RefC reads a header field as one name, so the
+-- multi-header form carries a single-header C: twin.
+%foreign "RC2:idris2rc2_test128m_trip,libc,stdlib.h;Test128Multi.h"
+         "C:idris2rc2_test128m_trip,libc,Test128Multi.h"
+prim__trip : Int -> Int
+
 export
 run : IO ()
 run = do
+  printLn (cast {to = Int} prim__creatMode == 320)
+  printLn (prim__stmtExpr 21)
+  printLn (prim__trip 14)
   printLn (cast {to = Int} prim__ocreat > 0)
   einval <- primIO prim__einval
   printLn (einval > 0)

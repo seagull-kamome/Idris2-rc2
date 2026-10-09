@@ -33,6 +33,27 @@ is the expression template. The second is the library and the third the
 header file, exactly as for `"C:"`: the header is `#include`d and the
 library linked (`libfoo` becomes `-lfoo`). Both are optional.
 
+The header field may name several headers separated by `;`, e.g.
+`"CExpr:O_CREAT|S_IRUSR,libc,fcntl.h;sys/stat.h"`. Each name is trimmed,
+empty pieces (a trailing `;`) are ignored, and every distinct name becomes
+one `#include <...>` line. Names are compared exactly (case-sensitive, no
+path normalisation: `a.h` and `./a.h` are different), so a header repeated
+within a field, or named by several declarations (alone or in lists, under
+any tag), is included once. A name containing whitespace, `<`, `>` or `"` is
+a compile error. The `;` is special only in this field: in the expression
+it is ordinary C text (`({ a; b; })`) and in the library field it is
+unchanged; only top-level commas separate options.
+
+Compatibility: upstream and RefC read the header field as ONE name, so a
+declaration that must also compile on RefC keeps a single header in its
+`"C:"` alternative and uses `CExpr:`/`RC2:` (which RefC ignores) for the
+multi-header form.
+
+Include order: the includes are emitted in alphabetical order of the
+header names (not first-occurrence order), after `idris2rc2_runtime.h`.
+Headers should therefore be self-contained; a header that needs another to
+be included before it must include that one itself.
+
 Splitting respects nesting of `()`, `[]` and `{}` and C string and
 character literals (with backslash escapes), so commas inside a macro
 call, a string literal or a character literal do not split. Options are

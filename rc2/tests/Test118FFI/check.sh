@@ -26,13 +26,29 @@ fi
 
 # The header named by a `CExpr:` option is still #included.
 missing=""
-for h in fcntl.h errno.h limits.h stdlib.h string.h unistd.h Test128FFICExpr.h; do
+for h in fcntl.h errno.h limits.h stdlib.h string.h unistd.h Test128FFICExpr.h sys/stat.h Test128Multi.h; do
     grep -qF "#include <$h>" "$c" || missing="$missing $h"
 done
 if [ -z "$missing" ]; then
     pass "CExpr header options are #included"
 else
     fail "missing #include for:$missing"
+fi
+
+# Several headers in one option (`a.h; b.h ;`): each distinct name becomes
+# exactly one #include line, however often it is named (repeated within a
+# field, alone in other declarations, in lists of other declarations,
+# under CExpr: and RC2: alike); no `;` or blank name leaks into an include.
+badinc=""
+for h in fcntl.h sys/stat.h limits.h stdlib.h string.h Test128Multi.h Test128FFICExpr.h; do
+    n="$(grep -cxF "#include <$h>" "$c" || true)"
+    [ "$n" = "1" ] || badinc="$badinc $h($n)"
+done
+stray="$(grep -cE '^#include <[^>]*[; ][^>]*>|^#include <>' "$c" || true)"
+if [ -z "$badinc" ] && [ "$stray" = "0" ]; then
+    pass "multi-header options: each distinct header #included exactly once"
+else
+    fail "include counts:$badinc, malformed includes: $stray in $c"
 fi
 
 # Each marshalled argument sits inside its own parentheses, and the
