@@ -102,7 +102,7 @@ Inherent to POSIX `regexec`, not this binding:
 
 ## Verified
 
-`tests/TestRegexPOSIX.idr` (in `tests/verify.sh`, run under
+`tests/TestRegexPOSIX/TestRegexPOSIX.idr` (in `tests/verify.sh`, run under
 `LC_ALL=C.UTF-8`), under `--cg rc2`: ERE and BRE compile,
 `matches`/`match` with groups (participating, absent via `(a)|(b)`,
 empty via `x(a*)y`), `ignoreCase`, `matchAll`,

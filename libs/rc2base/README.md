@@ -51,7 +51,7 @@ Default Chez backend, plain type-check:
 idris2 --build rc2base.ipkg
 ```
 
-To build `tests/TestText.idr` against the library (rather than just
+To build `tests/TestText/TestText.idr` against the library (rather than just
 type-checking `rc2base.ipkg` itself), install the library into a
 local prefix first -- the default Idris2 package location lives in a
 read-only nix store here, same reasoning as `idris2-curl/AGENT.md`'s
@@ -76,7 +76,7 @@ cd idris2-rc-cg   # repo root
 source ./env.sh
 (cd libs/rc2base && idris2 --install rc2base.ipkg)
 
-./rc2/build/exec/idris2-rc2 --cg rc2 -p rc2base -o TestText libs/rc2base/tests/TestText.idr
+./rc2/build/exec/idris2-rc2 --cg rc2 -p rc2base -o TestText libs/rc2base/tests/TestText/TestText.idr
 ./build/exec/TestText
 ```
 No `IDRIS2_CFLAGS`/`IDRIS2_LDFLAGS`/`LD_LIBRARY_PATH` exports needed
@@ -92,6 +92,22 @@ one shared runtime `.so` a compiled rc2 program needs at startup
 `install/idris2-0.8.0/lib`, which `env.sh` already puts on
 `LD_LIBRARY_PATH` -- `support/rc2` itself has no `.so` of its own to
 add there.
+
+## Tests layout
+
+Each test lives in its own directory, `tests/<TestName>/`, holding
+`<TestName>.idr` (a single `module Main`) and `<TestName>.expected` (the
+exact stdout the compiled program must print). `tests/verify.sh` is the
+single driver: it rebuilds and installs the package, then builds every
+test with `idris2-rc2 --cg rc2 -p rc2base [-p <extra>...]` from inside
+the test's own directory (output under the git-ignored
+`tests/<TestName>/build/`), runs it under `ulimit -v 4000000; timeout 20`
+with `LC_ALL=C.UTF-8` and diffs it against `<TestName>.expected`. Tests
+are listed explicitly in the `TESTS` array in `verify.sh` (name, extra
+`-p` packages, description); the script fails if a `tests/*/` directory
+is not listed, or a listed test lacks its directory, `.idr` or
+`.expected`. To add a test: create the directory with those two files
+and add one line to `TESTS`.
 
 ## Native library install location
 
@@ -370,7 +386,7 @@ declares that local at the FFI declaration's own target width --
 so the same unsigned-built macro result narrows/sign-extends correctly
 under either return type). Renaming it would have silently broken the
 other, already-shipped `prim__getByte` patch instead of adding
-anything. This module's own test (`tests/TestBufferRC2.idr`)
+anything. This module's own test (`tests/TestBufferRC2/TestBufferRC2.idr`)
 round-trips negative and boundary values through all five to confirm
 the sign handling is actually correct, not just assumed from reading
 the macro.
@@ -429,7 +445,7 @@ Values matched against upstream's own Chez definition
 boundary, which provably converges to exactly `DBL_EPSILON / 2` for
 IEEE 754 binary64 -- and `epsilon` is exactly double that
 (`DBL_EPSILON` itself, the smallest value that does *not* leave `1.0`
-unchanged when added). This module's own test (`tests/
+unchanged when added). This module's own test (`tests/TestDoubleRC2/
 TestDoubleRC2.idr`) checks those defining properties directly
 (`1.0 + unitRoundoff == 1.0`, `1.0 + epsilon != 1.0`,
 `epsilon == unitRoundoff * 2`, plus `nan != nan` and
@@ -570,7 +586,7 @@ following an established convention:
   `Show`/numeric-literal parsing, which already goes through this same
   `mpz_t`.
 
-`tests/TestIntegerGMP.idr` exercises every binding at least once,
+`tests/TestIntegerGMP/TestIntegerGMP.idr` exercises every binding at least once,
 cross-checked either against Idris's own native `Integer` arithmetic
 (the same `mpz_t` state, computed through a completely different code
 path) or known textbook constants (`gcd 1071 462 == 21`, the classic
@@ -613,7 +629,7 @@ reusable by any other tool that wants to read this format.
   -- `greedyWordsG` reads name-shaped tokens until the next one looks
   like a structural boundary, the general escape hatch for these.
 
-`tests/TestRcexprParser.idr` is a regression test built from a
+`tests/TestRcexprParser/TestRcexprParser.idr` is a regression test built from a
 hand-written `.rcexpr` sample covering every one of the awkward shapes
 actually hit while building this against real dumps from rc2's own
 `refc-suite` -- see the test's own module note for the list, including
@@ -728,7 +744,7 @@ and drops `userinfo`. `%XX` escapes are decoded as a UTF-8 stream
 hold a run of raw UTF-8 *bytes* -- off a socket, a `%XX` sequence, a
 `Buffer` -- and need the codepoint list `pack` wants, or the reverse.
 Strict: an overlong form, a surrogate, a truncated sequence each decode
-to one U+FFFD. Used by `Network.URL`; exercised through `tests/TestURL`.
+to one U+FFFD. Used by `Network.URL`; exercised through `tests/TestURL/`.
 
 ## `Data.String.RC2`: byte-level `String` access
 
@@ -750,7 +766,7 @@ as U+FFFD. Both keep an embedded NUL byte intact -- `byteLength` reads
 function, and `byteLength` itself is `%inline`, so it compiles to a
 field read, not a `strlen` call) and `unsafeStringByteSlice` slices by
 that same `len`, not to the first NUL. Used by `Text.Regex.POSIX`; see
-`tests/TestStringRC2`.
+`tests/TestStringRC2/`.
 
 ## `Text.Regex.POSIX`: bindings to libc `<regex.h>`
 

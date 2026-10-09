@@ -288,7 +288,7 @@ To bind somewhere other than `localhost`, pass `bindAddr` explicitly:
 `serve {bindAddr = IPv4Addr 0 0 0 0} 8080 handler` listens on every
 interface.
 
-Verified end-to-end under `--cg rc2` (`tests/TestHTTPServer.idr`, in
+Verified end-to-end under `--cg rc2` (`tests/TestHTTPServer/TestHTTPServer.idr`, in
 `tests/verify.sh`): a synchronous handler, an async one that answers
 from a `forkJoin`ed thread, `stop` called synchronously from a handler,
 `stop` called from a forked thread (with the response still flushed
