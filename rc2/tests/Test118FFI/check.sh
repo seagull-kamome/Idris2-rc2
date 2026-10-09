@@ -48,6 +48,21 @@ else
     fail "parenthesised forms: inline abs $inl, Bits8 wrapper $wrap, srand statement $stmt in $c"
 fi
 
+# Integer results: `$r` expands to the allocated out-parameter inside the
+# expression (`mpz_add(retVar->v, ...)`), emitted as a bare statement, and
+# no implicit leading out-parameter is added on top (the `C:` convention).
+# An Integer argument is marshalled as for `C:` (`idris2rc2_integerView`).
+add="$(grep -cE '^ *mpz_add\(retVal->v, \(\(\(mpz_ptr\)idris2rc2_integerView\(var_1, [^;]*\(\(\(mpz_ptr\)idris2rc2_integerView\(var_2, [^;]*\);$' "$c" || true)"
+inl="$(grep -cE '^ *mpz_pow_ui\(tmp_[0-9]+->v, \(\(\(mpz_ptr\)idris2rc2_integerView\(' "$c" || true)"
+bad="$(grep -cE 'mpz_(add|mul|sub|pow_ui|set_si|set_ui)\(([a-zA-Z_0-9]+)->v, \2->v' "$c" || true)"
+set1="$(grep -cE '^ *mpz_set_si\(retVal->v, \(long\)\(' "$c" || true)"
+rep="$(grep -cE '^ *\(mpz_set_si\(retVal->v, 3\), mpz_mul\(retVal->v, .*, retVal->v\), mpz_add_ui\(retVal->v, retVal->v, 1\)\);$' "$c" || true)"
+if [ "$add" -ge 1 ] && [ "$inl" -ge 1 ] && [ "$set1" -ge 1 ] && [ "$rep" -ge 1 ] && [ "$bad" = "0" ]; then
+    pass "Integer result: \$r is the out-parameter, bare statement, no leading out-parameter"
+else
+    fail "Integer result forms: mpz_add $add, mpz_pow_ui inline $inl, mpz_set_si $set1, repeated \$r $rep, doubled out-parameter $bad in $c"
+fi
+
 # Compile-time errors: each program in CExprErrors/ must fail with the
 # message in its .err file, produce no executable and not crash the
 # compiler.

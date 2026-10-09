@@ -31,3 +31,17 @@ int64_t idris2rc2_test128_sum10(int64_t a1, int64_t a2, int64_t a3, int64_t a4, 
 {
     return a1 + a2 + a3 + a4 + a5 + a6 + a7 + a8 + a9 + a10 * a10;
 }
+
+void idris2rc2_test128_gmpadd(mpz_t r, mpz_t a, mpz_t b) { mpz_add(r, a, b); }
+void idris2rc2_test128_gmpmul(mpz_t r, mpz_t a, mpz_t b) { mpz_mul(r, a, b); }
+void idris2rc2_test128_gmpsub(mpz_t r, mpz_t a, mpz_t b) { mpz_sub(r, a, b); }
+void idris2rc2_test128_gmpfromint(mpz_t r, int64_t a) { mpz_set_si(r, (long)a); }
+void idris2rc2_test128_gmppow(mpz_t r, mpz_t a, int64_t n) { mpz_pow_ui(r, a, (unsigned long)n); }
+void idris2rc2_test128_gmp42(mpz_t r) { mpz_set_ui(r, 42); }
+void idris2rc2_test128_gmp3x1(mpz_t r, mpz_t a)
+{
+    mpz_set_si(r, 3);
+    mpz_mul(r, a, r);
+    mpz_add_ui(r, r, 1);
+}
+int64_t idris2rc2_test128_gmpsgn(mpz_t a) { return mpz_sgn(a); }

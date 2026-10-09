@@ -246,8 +246,16 @@ rc2が`NamedCExp`を受け取るより前に`&&`/`||`の呼び出しを展開し
 ## 既存のシムをCExprで置き換えられるか
 `%foreign "CExpr:..."`(`rc2/doc/ffi-cexpr.md`)が入ったので、`libs/notcurses`・`libs/iouring`・
 `libs/rc2base`・`libs/text-re2`にある定数返却や一行のCシムは、CExprで置き換えて
-Cファイルを減らせる可能性がある。未調査。Integerを使うもの、複数文のもの、
+Cファイルを減らせる可能性がある。未調査。複数文のもの、
 他のバックエンド向けに`C:`の宣言が要るものは対象外。
+`$r`(Integerの戻り値の出力引数)が入ったので、Integerを返すもの(GMPの`mpz_*`)も
+CExprで書けるようになった。置き換えられるのは`libs/rc2base/src/Data/Integer/GMP.idr`の
+`C:mpz_*`宣言のうちIntegerを返す全て(`mpz_add`/`sub`/`mul`/`neg`/`abs`/`*_ui`/`mul_si`/`gcd`/`lcm`/
+`tdiv_*`/`fdiv_*`/`cdiv_*`/`mod`/`divexact`/`pow_ui`/`powm*`/`sqrt`/`*_2exp`/`and`/`ior`/`xor`/`com`/
+`nextprime`、`"CExpr:mpz_add($r, $1, $2),libgmp,gmp.h"`の形)と、Intを返すもの(`mpz_cmp`/`cmpabs`/
+`probab_prime_p`/`perfect_*_p`、`$r`なし)。`libs/rc2base/support/c`にGMPのシムは無い
+(`gen_double_tables.c`のみで対象外)。二つ出力する`mpz_tdiv_qr`系は出力引数が一つしか
+表せないので対象外。置き換え自体は未実施。
 
 ## idris2-curlの取り込み
 インストール時にlibcurlへの依存が無ければrc2baseへ取り込んでも問題ないはず。
