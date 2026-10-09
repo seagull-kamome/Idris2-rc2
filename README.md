@@ -248,6 +248,7 @@ rc2/
 │   ├── Emit.idr         Mechanical translation from RCExp to C
 │   ├── Emit/Util.idr        Name mangling, literal/value emission, closures, FFI type mapping
 │   ├── Emit/Foreign.idr     %foreign / %export C wrapper generation and FFI marshalling
+│   ├── ForeignSpec.idr      %foreign convention strings (C:/RefC:/RC2:/CExpr:) parser
 │   ├── Emit/ExternRefs.idr  Forward declaration walkers for incremental compilation
 │   ├── Pretty.idr       Human-readable RCExp dumper (--directive dumprcexpr)
 │   ├── CC.idr           C compiler driver and linker orchestration
@@ -317,6 +318,9 @@ Number conversions (`Double <-> String`) employ a custom decimal converter that 
 In upstream RefC, zero-argument top-level definitions (CAFs) were re-evaluated on every reference. For example, `counter = unsafePerformIO (newIORef 0)` generated separate IORef instances upon each access. rc2 inserts `RMemoize` IR nodes after constant folding to atomically evaluate, cache, and share results across all references (producing the expected `0 1 2` output matching Chez Scheme).
 
 Similarly, upstream RefC lowered `Delay`/`Force` into standard closures, re-running delayed computations on every force. rc2 preserves dedicated `RDelay` and `RForce` nodes, caching the first evaluation result via `idris2rc2_force`.
+
+### 7. C Expressions as `%foreign` Targets (`CExpr:`)
+`%foreign "CExpr:abs($1),libc,stdlib.h"` binds a declaration to a C expression or constant (a macro, `O_CREAT`) instead of a function name, so no C shim is needed; `$1`, `$2`, ... are the arguments and are substituted in parentheses. It has top priority among rc2's tags and other backends ignore it. See [`rc2/doc/ffi-cexpr.md`](rc2/doc/ffi-cexpr.md).
 
 ---
 

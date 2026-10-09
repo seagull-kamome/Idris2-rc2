@@ -1588,16 +1588,6 @@ emitAltChain sink condExpr renderBody renderDefault alts = do
 public export
 data CLang = CLangC | CLangRefC
 
--- Accepted FFI tags, in priority order. "RefC" is accepted (and treated as
--- directly callable, not stubbed) because prelude/base/contrib bake a
--- handful of load-bearing low-level primitives (fastPack, fastConcat,
--- fastUnpack, string iterators) into %foreign/%transform pairs hardcoded
--- to the "RefC" tag; our own runtime provides matching C symbols for
--- those so we can reuse the declarations as-is instead of forking prelude.
-export
-ffiTags : List String
-ffiTags = ["RC2", "RefC", "C"]
-
 ||| The C type a `%foreign` argument/return, or a struct field, of this
 ||| `CFType` is rendered as. Lifted out of `createCFunctions`'s own
 ||| `where` (originally scoped to its `MkRCForeign` case alone) so

@@ -1,0 +1,1 @@
+Error: [rc2] invalid %foreign declaration Main.prim__bad: unterminated string literal in "CExpr:strlen("abc),libc,string.h"

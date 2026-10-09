@@ -4,3 +4,4 @@
 // Companion C for Test119FFINoRefc: each section's own companion file, unchanged.
 #include "Test26GCPtrAliasString.c"
 #include "Test47ConstCFStringReturn.c"
+#include "Test129CExprPriority.c"
