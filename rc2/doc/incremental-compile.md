@@ -342,7 +342,7 @@ program-fixpoint-style passes.)
    `%foreign "scheme:blodwen-thread-wait"` only -- no `"C:..."`/
    `"RefC:..."`/`"RC2:..."` convention exists for it at all, since only
    Chez ever needed one. `collectDeclarations`'s own `MkRCForeign` case
-   throws a hard `InternalError` when `parseCC` matches nothing -- in
+   throws a hard `InternalError` when `parseForeign` (`Compiler.RC2.ForeignSpec`) matches nothing -- in
    whole-program mode this is unreachable in practice (nothing in any
    existing rc2 program calls `threadWait`, so `DeadCode.pruneDeadDefs`
    always removes the declaration before `collectDeclarations` ever

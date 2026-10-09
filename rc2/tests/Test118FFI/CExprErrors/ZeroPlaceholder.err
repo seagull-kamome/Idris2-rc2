@@ -1,0 +1,1 @@
+Error: [rc2] invalid %foreign declaration Main.prim__bad: placeholder $0 is out of range (the declaration has 1 argument(s))

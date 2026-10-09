@@ -17,6 +17,7 @@ module Compiler.RC2.Emit.Foreign
 import Compiler.RC2.RCExp
 import Compiler.RC2.Types
 import Compiler.RC2.Emit.Util
+import Compiler.RC2.ForeignSpec
 import Compiler.RC2.Util
 
 import Compiler.CompileExpr
@@ -75,24 +76,32 @@ peelIORes : CFType -> CFType
 peelIORes (CFIORes t) = t
 peelIORes t = t
 
-||| `(cLang, fctName)` for a `%foreign` declaration's own `ccs` tag
+||| What a `%foreign` call site calls: a C function by name, or a
+||| `CExpr:` template (`Compiler.RC2.ForeignSpec`).
+public export
+data ForeignCall = CallSym Name | CallExpr (List TemplatePart)
+
+||| `(cLang, call target)` for a `%foreign` declaration's own `ccs` tag
 ||| list. Shared by `emitGenericForeignWrapper` (which additionally
-||| consults the same `parseCC` result for the library/header options
+||| consults the same parse for the library/header options
 ||| `extLibOpts` carries, and the always-Boxed wrapper's own emission)
 ||| and the new `emitAppFFIInlineInto`/`emitNativeValue`'s own
 ||| `RAppFFIInline` case below, which need only the resolved call
 ||| target itself -- no header/library registration of their own,
 ||| since the wrapper for the same declaration already did that once,
 ||| regardless of how many inline call sites end up calling this same
-||| target.
+||| target. `CExpr:` is treated like `C:` for `CFBuffer` unwrapping
+||| (a flat data pointer, as libc functions expect).
 export
-resolveForeignTarget : List String -> Core (CLang, Name)
+resolveForeignTarget : List String -> Core (CLang, ForeignCall)
 resolveForeignTarget ccs =
-    case parseCC ffiTags ccs of
-         Just (lang, fctForeignName :: _) =>
-             pure ( if lang == "RefC" || lang == "RC2" then CLangRefC else CLangC
-                  , UN $ Basic $ fctForeignName)
-         _ => throw $ InternalError "[rc2] FFI not found for foreign declaration"
+    case parseForeign ccs of
+         Right (Just (MkForeignSpec tag (FSymbol sym) _)) =>
+             pure ( if tag == "RefC" || tag == "RC2" then CLangRefC else CLangC
+                  , CallSym (UN $ Basic sym))
+         Right (Just (MkForeignSpec _ (FExpr parts) _)) => pure (CLangC, CallExpr parts)
+         Right Nothing => throw $ InternalError "[rc2] FFI not found for foreign declaration"
+         Left err => throw $ UserError "[rc2] invalid %foreign declaration: \{err}"
 
 ||| Marshal every one of `fargs`'s own positions, call `fctName`, and
 ||| produce the raw (un-packed, un-widened) C return-value expression
@@ -128,14 +137,16 @@ ffiRawCall : {auto a : Ref ArgCounter Nat}
           -> {auto cc : Ref ConstConDef (SortedMap RCLocal String, List String)}
           -> {auto r : Ref RepMap (SortedMap Int Rep)}
           -> {auto lm : Ref InlineMap (SortedMap Int (String, List String))}
-          -> CLang -> Name -> List CFType -> CFType -> List RCLocal -> Core (String, List String)
-ffiRawCall cLang fctName fargs ret args = do
+          -> CLang -> ForeignCall -> List CFType -> CFType -> List RCLocal -> Core (String, List String)
+ffiRawCall cLang target fargs ret args = do
     let paramsInfo = zip fargs args
     marshalled <- traverse (uncurry marshalArg) paramsInfo
     let argExprs = map fst marshalled
         boxedArgDrop = concatMap snd marshalled
     let callWith : List String -> String
-        callWith es = "\{cName fctName}(\{showSep ", " es})"
+        callWith es = case target of
+                           CallSym fctName => "\{cName fctName}(\{showSep ", " es})"
+                           CallExpr parts => "(" ++ renderTemplate parts es ++ ")"
     -- `Compiler.RC2.Emit.Util`'s own `packCFType` CFInteger case doc
     -- comment has the full rationale: allocate a fresh
     -- `IDRIS2RC2_Integer` *before* the call, pass its own `->v` as an
@@ -156,7 +167,12 @@ ffiRawCall cLang fctName fargs ret args = do
             pure retVar
     rawExpr <- case ret of
          CFIORes CFUnit    => do
-             emit emptyFC "\{callWith (discardLastArgument argExprs)};"
+             -- A `CExpr:` statement is emitted bare, without the
+             -- value-position parentheses.
+             let stmt : String := case target of
+                                       CallExpr parts => renderTemplate parts (discardLastArgument argExprs)
+                                       CallSym _ => callWith (discardLastArgument argExprs)
+             emit emptyFC (stmt ++ ";")
              pure ""
          CFIORes CFInteger => ffiIntegerOutParam (discardLastArgument argExprs)
          CFInteger         => ffiIntegerOutParam argExprs
@@ -236,7 +252,7 @@ linkLibName lib =
 ||| signature shape (`CFString`-returning, single `CFUser` argument) as
 ||| a second layer of defensive scoping. Shared by `createCFunctions`
 ||| (dispatch to `emitFastPackFixedWrapper`) and `collectDeclarations`
-||| (must skip this def's own parseCC/HeaderFiles/ForeignLibs
+||| (must skip this def's own parseForeign/HeaderFiles/ForeignLibs
 ||| registration exactly when `createCFunctions` will too).
 export
 fastPackFixedReplacement : Name -> Maybe String
@@ -321,24 +337,6 @@ emitForeignDef n ccs fargs ret =
              Just ty => if alwaysUnboxed ty then Nothing else Just varName
              Nothing => Just varName
 
-    additionalFFIStub : Name -> List CFType -> CFType -> String
-    additionalFFIStub name argTypes (CFIORes retType) = additionalFFIStub name (discardLastArgument argTypes) retType
-    -- A real C function returning `Integer` is actually declared `void`,
-    -- taking an extra trailing `mpz_t` out-parameter instead (see
-    -- `Compiler.RC2.Emit.Util`'s own `packCFType` CFInteger case) --
-    -- `cTypeOfCFType CFInteger` ("mpz_t") is only ever valid in
-    -- parameter position, never as a function(-pointer)'s own return
-    -- type (illegal C: a function cannot return an array type), so this
-    -- stub's declared shape has to match the real one, not the generic
-    -- fallback below.
-    additionalFFIStub name argTypes CFInteger =
-        "void (*" ++ cName name ++ ")(" ++
-        (concat $ intersperse ", " $ "mpz_t" :: map cTypeOfCFType argTypes) ++ ") = (void*)idris2rc2_missingForeign;\n"
-    additionalFFIStub name argTypes retType =
-        cTypeOfCFType retType ++
-        " (*" ++ cName name ++ ")(" ++
-        (concat $ intersperse ", " $ map cTypeOfCFType argTypes) ++ ") = (void*)idris2rc2_missingForeign;\n"
-
     ||| Same external name/declared signature `emitGenericForeignWrapper`
     ||| would have produced (so every existing call site anywhere --
     ||| including ones already baked into precompiled `network`/`base`
@@ -371,9 +369,8 @@ emitForeignDef n ccs fargs ret =
 
     emitGenericForeignWrapper : Core ()
     emitGenericForeignWrapper = do
-      case parseCC ffiTags ccs of
-          Just (lang, _ :: _) => do
-              let isStandardFFI = elem lang ffiTags
+      case parseForeign ccs of
+          Right (Just _) => do
               -- "RC2" (rc2-specific %foreign_impl patches, e.g.
               -- System.Concurrency.RC2/Data.Buffer.RC2) targets our own
               -- runtime exactly like "RefC" does -- both need
@@ -384,14 +381,15 @@ emitForeignDef n ccs fargs ret =
               -- and got the wrong (CLangC) unwrap for any CFBuffer
               -- argument -- never caught earlier because
               -- System.Concurrency.RC2's own patches never took one.
-              (cLang, fctName) <- resolveForeignTarget ccs
-              when (not isStandardFFI) $ emit EmptyFC $ additionalFFIStub fctName fargs ret
+              (cLang, target) <- resolveForeignTarget ccs
               typeVarNameArgList <- createFFIArgList fargs
 
               emitFDef n typeVarNameArgList
               emit EmptyFC "{"
               increaseIndentation
-              emit EmptyFC $ " // ffi call to " ++ cName fctName
+              emit EmptyFC $ case target of
+                                  CallSym fctName => " // ffi call to " ++ cName fctName
+                                  CallExpr _ => " // ffi call to a CExpr expression"
               let removeVarsArgList = removeVars (mapMaybe alwaysUnboxedDropVar typeVarNameArgList)
               -- The raw C function's own parameter list omits a
               -- `CFIORes` declaration's trailing `%World` slot (real at
@@ -402,13 +400,18 @@ emitForeignDef n ccs fargs ret =
               let renderedArgs = map (\(_, vn, vt) => extractValue cLang vt vn) typeVarNameArgList
               let callArgs = if dropWorld then discardLastArgument renderedArgs else renderedArgs
               let mkCall : List String -> String
-                  mkCall es = cName fctName ++ "(" ++ showSep ", " es ++ ")"
+                  mkCall es = case target of
+                                   CallSym fctName => cName fctName ++ "(" ++ showSep ", " es ++ ")"
+                                   CallExpr parts => "(" ++ renderTemplate parts es ++ ")"
               -- A bare (non-`CFIORes`) `CFUnit` return deliberately still
               -- falls through to the generic `payloadTy` arm -- matching
               -- this backend's existing behaviour, unusual as that C is.
               case ret of
                 CFIORes CFUnit => do
-                    emit EmptyFC $ mkCall callArgs ++ ";"
+                    -- A `CExpr:` statement is emitted bare.
+                    emit EmptyFC $ (case target of
+                                         CallExpr parts => renderTemplate parts callArgs
+                                         CallSym _ => mkCall callArgs) ++ ";"
                     removeVarsArgList
                     emit EmptyFC "return NULL;"
                 _ => case peelIORes ret of
@@ -444,7 +447,8 @@ emitForeignDef n ccs fargs ret =
 
               decreaseIndentation
               emit EmptyFC "}"
-          _ => throw $ InternalError "[rc2] FFI not found for \{cName n}"
+          Right Nothing => throw $ InternalError "[rc2] FFI not found for \{cName n}"
+          Left err => throw $ UserError "[rc2] invalid %foreign declaration \{show n}: \{err}"
 
 ||| The C wrapper synthesised for one validated `%export` declaration
 ||| (`Compiler.RC2.RC2.validateExport`'s own result): under the
@@ -566,8 +570,8 @@ emitExportWrapper n exportedCName fargs ret = do
 ||| diverted to rc2's own native `fastPack`/`fastConcat` replacement
 ||| (`fastPackFixedReplacement`, regardless of what its own `ccs` says
 ||| -- rc2 supplies a native body either way) or carrying a calling
-||| convention `parseCC` actually recognizes (`"C:..."`/`"RefC:..."`/
-||| `"RC2:..."`). A declaration with neither -- e.g.
+||| convention `parseForeign` actually recognizes (`"CExpr:..."`/`"C:..."`/
+||| `"RefC:..."`/`"RC2:..."`). A declaration with neither -- e.g.
 ||| `Prelude.IO.prim__threadWait`'s `%foreign "scheme:blodwen-thread-wait"`
 ||| only, no C-family convention at all since only Chez ever needed one
 ||| -- is a hard whole-program compile error today
@@ -603,5 +607,5 @@ hasUsableForeignImpl : (Name, RCDef) -> Bool
 hasUsableForeignImpl (n, MkRCForeign ccs fargs ret) =
     case (fastPackFixedReplacement n, fastPackFixedShape ret fargs) of
          (Just _, True) => True
-         _ => isJust (parseCC ffiTags ccs)
+         _ => foreignUsable ccs
 hasUsableForeignImpl _ = True

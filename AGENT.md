@@ -54,7 +54,9 @@ history, not there.
   loop-independent pass that moves a `let`-bound value into the one
   branch arm that actually reads it, dropping it everywhere else
   instead of computing it unconditionally, `pushdown.md` for the final-IR pass that moves the dup/drop run sitting right
-  before a `case` into every branch head and cancels them there, `cast-fold-scope.md` for an
+  before a `case` into every branch head and cancels them there, `ffi-cexpr.md` for the `"CExpr:(expression),lib,header"` `%foreign` tag (a C
+  expression or constant with `$1`/`$2` argument placeholders instead of a
+  shim function) and its bracket-aware option parser, `cast-fold-scope.md` for an
   investigated-but-not-pursued gap: why `Compiler.RC2.ConstFold`'s
   constant folding excludes `Char`-/`Double`-to-`String` casts and any
   `String`-sourced `Cast`, `const-con-fold.md` for folding a

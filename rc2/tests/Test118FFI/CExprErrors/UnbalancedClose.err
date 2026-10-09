@@ -1,0 +1,1 @@
+Error: [rc2] invalid %foreign declaration Main.prim__bad: unbalanced ')': expected ']' in "CExpr:abs[$1),libc,stdlib.h"

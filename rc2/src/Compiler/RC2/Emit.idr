@@ -82,6 +82,7 @@ import System.File
 
 import Compiler.RC2.Emit.ExternRefs
 import Compiler.RC2.Emit.Foreign
+import Compiler.RC2.ForeignSpec
 import Compiler.RC2.Emit.Util
 import Compiler.RC2.Util
 
@@ -1492,7 +1493,7 @@ declarationsOf _ (MkRCError _) = pure []
 ||| direct-from-`createCFunctions` population left it in -- `header`
 ||| prints the list as-is, so the prototype section stays byte-identical
 ||| to before this pass was split out. Also the sole place `MkRCForeign`'s
-||| own `parseCC` failure and `MkRCError` are detected -- both now surface
+||| own `validateForeign` failure and `MkRCError` are detected -- both now surface
 ||| before `outn` is ever opened, same "no half-written .c on failure"
 ||| property the old single-pass design had.
 collectDeclarations : {auto c : Ref Ctxt Defs} -> {auto f : Ref FunctionDefinitions (List String)}
@@ -1504,15 +1505,14 @@ collectDeclarations n def@(MkRCForeign ccs fargs ret) = do
     update FunctionDefinitions $ \otherDefs => decls ++ otherDefs
     case (fastPackFixedReplacement n, fastPackFixedShape ret fargs) of
          (Just _, True) => pure ()
-         _ => case parseCC ffiTags ccs of
-                   Just (lang, _ :: extLibOpts) =>
-                       when (elem lang ffiTags) $
-                           case extLibOpts of
-                                [lib, header] => do update HeaderFiles $ insert header
-                                                    maybe (pure ()) (\l => update ForeignLibs $ insert l) (linkLibName lib)
-                                [lib] => maybe (pure ()) (\l => update ForeignLibs $ insert l) (linkLibName lib)
-                                _ => pure ()
-                   _ => throw $ InternalError "[rc2] FFI not found for \{cName n}"
+         _ => do
+             Just spec <- validateForeign n ccs fargs ret
+                 | Nothing => throw $ InternalError "[rc2] FFI not found for \{cName n}"
+             case spec.libOpts of
+                  [lib, header] => do update HeaderFiles $ insert header
+                                      maybe (pure ()) (\l => update ForeignLibs $ insert l) (linkLibName lib)
+                  [lib] => maybe (pure ()) (\l => update ForeignLibs $ insert l) (linkLibName lib)
+                  _ => pure ()
 collectDeclarations n def = do
     decls <- declarationsOf n def
     update FunctionDefinitions $ \otherDefs => decls ++ otherDefs
@@ -1694,7 +1694,7 @@ generateCSourceFile defs0 exports noMain directEntryPoint dropUnimplementableFor
      _ <- newRef StructDefs structDefs
      -- Pass 1: every declaration with a whole-program forward-reference
      -- requirement (function prototypes, plus the header/lib metadata
-     -- and early parseCC/MkRCError error detection that ride along --
+     -- and early validateForeign/MkRCError error detection that ride along --
      -- see `collectDeclarations`'s own doc comment), derived from each
      -- def's own signature alone, no body traversal.
      traverse_ (uncurry collectDeclarations) defs

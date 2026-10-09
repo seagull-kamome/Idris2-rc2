@@ -28,6 +28,7 @@ import Compiler.RC2.Types
 import Compiler.RC2.Loop
 import Compiler.RC2.MutualLoop
 import Compiler.RC2.Emit.Util
+import Compiler.RC2.ForeignSpec
 import Compiler.RC2.Util
 
 import Core.CompileExpr
@@ -742,8 +743,8 @@ anyNative _ = True
 ||| have at least one `cfTypeNative`-eligible position -- eligibility is
 ||| decided by the type alone, no function body to analyse (see
 ||| `doc/dual-abi.md`'s "Stage 3c": "Eligibility needs no analysis") --
-||| *and* `ccs` actually carries a convention rc2 can use (`parseCC
-||| ffiTags ccs`). The second condition doesn't come up in whole-
+||| *and* `ccs` actually carries a convention rc2 can use (`foreignUsable
+||| ccs`). The second condition doesn't come up in whole-
 ||| program compilation today (nothing calling such a declaration would
 ||| still be present in `defs` at all by this point -- `defs` here is
 ||| already upstream's own reachable-from-`main` set), but incremental
@@ -794,7 +795,7 @@ ffiWorkerTable defs = do
     ffiEntry existingNames (n, MkRCForeign ccs fargs ret) =
         let argReps = map repOf fargs
             retRep = repOf (peelIORes ret)
-        in if (not (any anyNative argReps) && not (anyNative retRep)) || not (isJust (parseCC ffiTags ccs))
+        in if (not (any anyNative argReps) && not (anyNative retRep)) || not (foreignUsable ccs)
               then pure ([], [])
               else do
                 workerName <- freshName "idris2rc2_ffiworker_" existingNames n

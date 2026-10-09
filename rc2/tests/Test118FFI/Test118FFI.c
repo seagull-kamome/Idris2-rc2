@@ -5,3 +5,4 @@
 #include "Test33WideDualABIWorker.c"
 #include "Test41FFIMalloc.c"
 #include "Test54FFIInteger.c"
+#include "Test128FFICExpr.c"
