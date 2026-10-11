@@ -27,8 +27,16 @@ prim__writev : Bits32 -> IOVec -> Bits32 -> PrimIO Int64
 prim__preadv : Bits32 -> IOVec -> Bits32 -> Bits64 -> PrimIO Int64
 %inline %foreign "CExpr:(pwritev($1, (const struct iovec*)$2, $3, $4)),libc,sys/uio.h"
 prim__pwritev : Bits32 -> IOVec -> Bits32 -> Bits64 -> PrimIO Int64
+||| `preadv2`.
+|||
+||| Needs `_GNU_SOURCE`: build the program with `IDRIS2_CFLAGS=-D_GNU_SOURCE` (or `CFLAGS=-D_GNU_SOURCE`)
+||| in the environment of the Idris compiler, otherwise the generated C does not compile.
 %inline %foreign "CExpr:(preadv2($1, (const struct iovec*)$2, $3, $4, $5)),libc,sys/uio.h"
 prim__preadv2 : Bits32 -> IOVec -> Bits32 -> Bits64 -> Bits32 -> PrimIO Int64
+||| `pwritev2`.
+|||
+||| Needs `_GNU_SOURCE`: build the program with `IDRIS2_CFLAGS=-D_GNU_SOURCE` (or `CFLAGS=-D_GNU_SOURCE`)
+||| in the environment of the Idris compiler, otherwise the generated C does not compile.
 %inline %foreign "CExpr:(pwritev2($1, (const struct iovec*)$2, $3, $4, $5)),libc,sys/uio.h"
 prim__pwritev2 : Bits32 -> IOVec -> Bits32 -> Bits64 -> Bits32 -> PrimIO Int64
 

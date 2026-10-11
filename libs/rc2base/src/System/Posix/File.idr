@@ -22,6 +22,9 @@ export O_CLOEXEC : Bits32
 %inline %foreign "CExpr:(O_CREAT),libc,fcntl.h;sys/stat.h;sys/types.h"
 export O_CREAT : Bits32
 ||| File open flag: avoid cached data on the file.
+|||
+||| Needs `_GNU_SOURCE`: build the program with `IDRIS2_CFLAGS=-D_GNU_SOURCE` (or `CFLAGS=-D_GNU_SOURCE`)
+||| in the environment of the Idris compiler, otherwise the generated C does not compile.
 %inline %foreign "CExpr:(O_DIRECT),libc,fcntl.h;sys/stat.h;sys/types.h"
 export O_DIRECT : Bits32
 ||| File open flag: require the path to be a directory.
@@ -34,9 +37,15 @@ export O_DSYNC : Bits32
 %inline %foreign "CExpr:(O_EXCL),libc,fcntl.h;sys/stat.h;sys/types.h"
 export O_EXCL : Bits32
 ||| File open flag: allow large files.
+|||
+||| Needs `_GNU_SOURCE`: build the program with `IDRIS2_CFLAGS=-D_GNU_SOURCE` (or `CFLAGS=-D_GNU_SOURCE`)
+||| in the environment of the Idris compiler, otherwise the generated C does not compile.
 %inline %foreign "CExpr:(O_LARGEFILE),libc,fcntl.h;sys/stat.h;sys/types.h"
 export O_LARGEFILE : Bits32
 ||| File open flag: do not update access time.
+|||
+||| Needs `_GNU_SOURCE`: build the program with `IDRIS2_CFLAGS=-D_GNU_SOURCE` (or `CFLAGS=-D_GNU_SOURCE`)
+||| in the environment of the Idris compiler, otherwise the generated C does not compile.
 %inline %foreign "CExpr:(O_NOATIME),libc,fcntl.h;sys/stat.h;sys/types.h"
 export O_NOATIME : Bits32
 ||| File open flag: do not assign controlling terminal.
@@ -49,12 +58,18 @@ export O_NOFOLLOW : Bits32
 %inline %foreign "CExpr:(O_NONBLOCK),libc,fcntl.h;sys/stat.h;sys/types.h"
 export O_NONBLOCK : Bits32
 ||| File open flag: open the path as a file descriptor to the object itself.
+|||
+||| Needs `_GNU_SOURCE`: build the program with `IDRIS2_CFLAGS=-D_GNU_SOURCE` (or `CFLAGS=-D_GNU_SOURCE`)
+||| in the environment of the Idris compiler, otherwise the generated C does not compile.
 %inline %foreign "CExpr:(O_PATH),libc,fcntl.h;sys/stat.h;sys/types.h"
 export O_PATH : Bits32
 ||| File open flag: synchronous file content writes.
 %inline %foreign "CExpr:(O_SYNC),libc,fcntl.h;sys/stat.h;sys/types.h"
 export O_SYNC : Bits32
 ||| File open flag: create a temporary unnamed file.
+|||
+||| Needs `_GNU_SOURCE`: build the program with `IDRIS2_CFLAGS=-D_GNU_SOURCE` (or `CFLAGS=-D_GNU_SOURCE`)
+||| in the environment of the Idris compiler, otherwise the generated C does not compile.
 %inline %foreign "CExpr:(O_TMPFILE),libc,fcntl.h;sys/stat.h;sys/types.h"
 export O_TMPFILE : Bits32
 ||| File open flag: truncate the file on open.
@@ -65,6 +80,9 @@ export O_TRUNC : Bits32
 %inline %foreign "CExpr:(AT_SYMLINK_NOFOLLOW),libc,fcntl.h;sys/stat.h"
 export AT_SYMLINK_NOFOLLOW : Bits32
 ||| Directory entry flag: open the empty path to the directory itself.
+|||
+||| Needs `_GNU_SOURCE`: build the program with `IDRIS2_CFLAGS=-D_GNU_SOURCE` (or `CFLAGS=-D_GNU_SOURCE`)
+||| in the environment of the Idris compiler, otherwise the generated C does not compile.
 %inline %foreign "CExpr:(AT_EMPTY_PATH),libc,fcntl.h;sys/stat.h"
 export AT_EMPTY_PATH : Bits32
 
@@ -214,11 +232,17 @@ SEEK_END : SeekWhence
 SEEK_END = MkSeekWhence prim__SEEK_END
 
 ||| Seek to the next data location after the current offset.
+|||
+||| Needs `_GNU_SOURCE`: build the program with `IDRIS2_CFLAGS=-D_GNU_SOURCE` (or `CFLAGS=-D_GNU_SOURCE`)
+||| in the environment of the Idris compiler, otherwise the generated C does not compile.
 public export
 SEEK_DATA : SeekWhence
 SEEK_DATA = MkSeekWhence prim__SEEK_DATA
 
 ||| Seek to the next hole after the current offset.
+|||
+||| Needs `_GNU_SOURCE`: build the program with `IDRIS2_CFLAGS=-D_GNU_SOURCE` (or `CFLAGS=-D_GNU_SOURCE`)
+||| in the environment of the Idris compiler, otherwise the generated C does not compile.
 public export
 SEEK_HOLE : SeekWhence
 SEEK_HOLE = MkSeekWhence prim__SEEK_HOLE
@@ -399,6 +423,10 @@ dup2 : FileDesc -> FileDesc -> IO (Maybe FileDesc)
 dup2 oldfd newfd = primIO (prim__dup2 oldfd.rawfd newfd.rawfd) >>= primFdToFileDesc
 
 
+||| `dup3`.
+|||
+||| Needs `_GNU_SOURCE`: build the program with `IDRIS2_CFLAGS=-D_GNU_SOURCE` (or `CFLAGS=-D_GNU_SOURCE`)
+||| in the environment of the Idris compiler, otherwise the generated C does not compile.
 %inline public export
 dup3 : FileDesc -> FileDesc -> Bits32 -> IO (Maybe FileDesc)
 dup3 oldfd newfd flags =

@@ -38,8 +38,11 @@ seeds), allocation and cleanup (`regex_compile`/`regex_free`, the
 
 Declarations needing `_GNU_SOURCE` (`O_DIRECT`, `O_LARGEFILE`, `O_NOATIME`,
 `O_PATH`, `O_TMPFILE`, `AT_EMPTY_PATH`, `SEEK_DATA`, `SEEK_HOLE`, `dup3`,
-`preadv2`/`pwritev2`) do not compile when used, because generated code does
-not define it (a CExpr feature request, see `TODO.md`).
+`preadv2`/`pwritev2`) need `_GNU_SOURCE`, which generated code does not define
+itself: build the program with `IDRIS2_CFLAGS=-D_GNU_SOURCE` (or
+`CFLAGS=-D_GNU_SOURCE`) in the environment of the Idris compiler. Each of these
+declarations says so in its doc comment; without the flag the generated C does
+not compile when the declaration is used.
 
 ## Modules
 

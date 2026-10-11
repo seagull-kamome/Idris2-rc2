@@ -257,9 +257,10 @@ rc2が`NamedCExp`を受け取るより前に`&&`/`||`の呼び出しを展開し
 eventfd_signal/drain・close_fd(EINTRのループ)、set_reuseaddr、regexのcompile/exec/free/group_*
 (TLS状態・確保)、TextBufferの確保系、memstream、string_byte_slice、double_convert、
 xoroshiroの`*_sys`、concurrency_util。
-CExpr機能の要望: 生成コードに`_GNU_SOURCE`を定義する手段(`O_DIRECT`/`O_LARGEFILE`/`O_NOATIME`/
-`O_PATH`/`O_TMPFILE`/`AT_EMPTY_PATH`/`SEEK_DATA`/`SEEK_HOLE`/`dup3`/`preadv2`/`pwritev2`が
-未宣言でコンパイルできない)。`libs/notcurses`・`libs/iouring`・`libs/text-re2`は未着手。
+`_GNU_SOURCE`が要る宣言(`O_DIRECT`/`O_LARGEFILE`/`O_NOATIME`/`O_PATH`/`O_TMPFILE`/`AT_EMPTY_PATH`/
+`SEEK_DATA`/`SEEK_HOLE`/`dup3`/`preadv2`/`pwritev2`)は、環境変数`IDRIS2_CFLAGS=-D_GNU_SOURCE`
+(または`CFLAGS`)でコンパイルする、と各宣言のdoc commentに書いて対応した(実機で、指定なしはCの
+コンパイルエラー、指定ありは動くことを確認)。生成コード側で定義する機能は作らない。`libs/notcurses`・`libs/iouring`・`libs/text-re2`は未着手。
 
 ## idris2-curlの取り込み
 インストール時にlibcurlへの依存が無ければrc2baseへ取り込んでも問題ないはず。
