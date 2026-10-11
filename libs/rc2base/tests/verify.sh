@@ -71,6 +71,14 @@ TESTS=(
     "TestRcexprParser|contrib|Language.RCExpr.{AST,Lexer,Parser}: dumprcexpr grammar edge cases"
     "TestIORefRC2||Data.IORef.RC2: casIORef success/failure/retry loop"
     "TestMultiThreadRC2||System.GC.RC2: the switch to atomic reference counting"
+    "TestGCTouch||System.GC.RC2: touch keeps a value alive and accepts scalars"
+    "TestPosixErrno||System.Posix.Errno: errno constants vs <errno.h>, strerror"
+    "TestPosixFile||System.Posix.File/FileDesc: open flags, read/write/lseek/dup/lock/chmod round trip"
+    "TestPosixSignal||System.Posix.Signal: signal constants vs <signal.h>"
+    "TestPosixProcess||System.Posix.Process: getpid, kill, fork, wait"
+    "TestPosixDirectory||System.Posix.Directory: opendir, chdir, getcwd, DT_* constants"
+    "TestPosixMmap||System.Posix.Mmap: PROT_/MAP_ constants, anonymous and file mappings"
+    "TestPosixUio||System.Posix.Uio: writev/readv, pread/pwrite"
 )
 
 echo "=== Check TESTS against the tests/*/ directories ==="
@@ -106,7 +114,6 @@ echo "=== Check postinstall copied the native library into lib/ ==="
 [[ -f "$INSTALLED_LIB/libidris2rc2base.a" ]] || fail "postinstall didn't install libidris2rc2base.a to $INSTALLED_LIB"
 [[ -f "$INSTALLED_LIB/idris2rc2_rc2base_text_util.h" ]] || fail "postinstall didn't install idris2rc2_rc2base_text_util.h to $INSTALLED_LIB"
 [[ -f "$INSTALLED_LIB/idris2rc2_rc2base_concurrency_util.h" ]] || fail "postinstall didn't install idris2rc2_rc2base_concurrency_util.h to $INSTALLED_LIB"
-[[ -f "$INSTALLED_LIB/idris2rc2_rc2base_ptr_util.h" ]] || fail "postinstall didn't install idris2rc2_rc2base_ptr_util.h to $INSTALLED_LIB"
 
 # No IDRIS2_PACKAGE_PATH export needed: idris2 already searches its
 # own installation prefix (install/, the same one just installed into

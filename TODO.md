@@ -244,18 +244,23 @@ rc2が`NamedCExp`を受け取るより前に`&&`/`||`の呼び出しを展開し
   非atomic(5.95s)との差の2割しか埋まらない。打ち切り。
 
 ## 既存のシムをCExprで置き換えられるか
-`%foreign "CExpr:..."`(`rc2/doc/ffi-cexpr.md`)が入ったので、`libs/notcurses`・`libs/iouring`・
-`libs/rc2base`・`libs/text-re2`にある定数返却や一行のCシムは、CExprで置き換えて
-Cファイルを減らせる可能性がある。未調査。複数文のもの、
-他のバックエンド向けに`C:`の宣言が要るものは対象外。
-`$r`(Integerの戻り値の出力引数)が入ったので、Integerを返すもの(GMPの`mpz_*`)も
-CExprで書けるようになった。置き換えられるのは`libs/rc2base/src/Data/Integer/GMP.idr`の
-`C:mpz_*`宣言のうちIntegerを返す全て(`mpz_add`/`sub`/`mul`/`neg`/`abs`/`*_ui`/`mul_si`/`gcd`/`lcm`/
-`tdiv_*`/`fdiv_*`/`cdiv_*`/`mod`/`divexact`/`pow_ui`/`powm*`/`sqrt`/`*_2exp`/`and`/`ior`/`xor`/`com`/
-`nextprime`、`"CExpr:mpz_add($r, $1, $2),libgmp,gmp.h"`の形)と、Intを返すもの(`mpz_cmp`/`cmpabs`/
-`probab_prime_p`/`perfect_*_p`、`$r`なし)。`libs/rc2base/support/c`にGMPのシムは無い
-(`gen_double_tables.c`のみで対象外)。二つ出力する`mpz_tdiv_qr`系は出力引数が一つしか
-表せないので対象外。置き換え自体は未実施。
+`libs/rc2base`は実施済み(ブランチ`rc2base-cexpr-shims`): GMPの`mpz_*` 49宣言(`$r`)、`System.FFI.C.Ptr`
+の44宣言(`ptr_util.h`を削除)、`Network.RC2`のsend/recv(`net_util.*`を削除)、Epollの定数・
+`epoll_create1`・`epoll_ctl(DEL)`・`eventfd`、Regexの`REG_*`と`re_nsub`、TextBufferの
+アクセサと`free`、`Data.String.RC2`の2つ、`Atomic`をCExprにした。`support/c`のC/Hは
+2112行から1930行、`%foreign`から名前で参照されるシム関数は115から76に減った。
+`System.Posix.*`は元からCExprだったが未検証で、括弧・ヘッダ・綴りの誤りが多かったので直し、
+7つのテスト(`TestPosix*`)を足した。
+`System.Posix.Directory`の`DirEnt`は不透明型+PrimIOのCExprアクセサ(`d_name`/`d_type`/`d_ino`)にし、`readdir`は`DirEntry`へ即コピーして返す。`struct dirent`はtypedef名ではないので`Struct`では扱えない(`Struct "struct dirent"`は`externalStruct`が空白入りの名前を受けないため未実装)。
+なお、`Struct`の名前の先頭の "struct " や "union " を「外部定義」の目印にすると、名前の綴りに意味を持たせることになり、rc2がtypedefでない自前の`struct foo { ... };`を定義することが二度とできなくなる。やるなら、Idris側の名前は識別子のままにし、`%cg rc2 cStruct dirent = "struct dirent"`のような明示的な対応付けディレクティブで外部か自前かを示すべき。これらは何も実装しておらず、方針1(不透明な`DirEnt`+CExprアクセサ)はこの問題を避けている。
+残したシム: epoll_wait/event_fd/flags(静的配列)、epoll_add/mod(構造体)、set_nonblocking・
+eventfd_signal/drain・close_fd(EINTRのループ)、set_reuseaddr、regexのcompile/exec/free/group_*
+(TLS状態・確保)、TextBufferの確保系、memstream、string_byte_slice、double_convert、
+xoroshiroの`*_sys`、concurrency_util。
+`_GNU_SOURCE`が要る宣言(`O_DIRECT`/`O_LARGEFILE`/`O_NOATIME`/`O_PATH`/`O_TMPFILE`/`AT_EMPTY_PATH`/
+`SEEK_DATA`/`SEEK_HOLE`/`dup3`/`preadv2`/`pwritev2`)は、環境変数`IDRIS2_CFLAGS=-D_GNU_SOURCE`
+(または`CFLAGS`)でコンパイルする、と各宣言のdoc commentに書いて対応した(実機で、指定なしはCの
+コンパイルエラー、指定ありは動くことを確認)。生成コード側で定義する機能は作らない。`libs/notcurses`・`libs/iouring`・`libs/text-re2`は未着手。
 
 ## idris2-curlの取り込み
 インストール時にlibcurlへの依存が無ければrc2baseへ取り込んでも問題ないはず。

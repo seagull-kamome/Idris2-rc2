@@ -54,10 +54,10 @@ Three modules, layered:
   (`send`/`recv` -- truncates at the first NUL) or a `List Bits8`
   (`sendBytes`/`recvBytes` -- one cons cell per byte); neither is
   usable for a server shuffling binary payloads through a reused
-  accumulator. Its C side (`support/c/net_util.c`) is a two-function
-  shim over plain `send`/`recv` that does `data + off`; `errno` on a
-  failed call is read with `Network.Socket.Data.getErrno` (what
-  `network`'s own `send`/`recv` use), not a shim of its own.
+  accumulator. Its two `%foreign` bindings are `"CExpr:"` templates over plain
+  `send`/`recv` that add `data + off` (no C shim); `errno` on a failed
+  call is read with `Network.Socket.Data.getErrno` (what `network`'s
+  own `send`/`recv` use).
 - `Network.HTTP.Server` -- the HTTP logic itself: request/response
   types, a byte-scanning HTTP/1.1 parser, per-connection read/write
   buffering, and the event loop that ties it all to `System.IO.Epoll`

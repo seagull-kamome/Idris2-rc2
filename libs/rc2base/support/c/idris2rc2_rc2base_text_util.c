@@ -63,7 +63,3 @@ IDRIS2RC2_Value* idris2rc2_TextBuffer_to_string(const idris2rc2_TextBuffer* buf)
     return (IDRIS2RC2_Value*)r;
 }
 
-
-void idris2rc2_TextBuffer_free(void* p) {
-    free(p);
-}

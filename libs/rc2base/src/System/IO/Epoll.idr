@@ -22,7 +22,7 @@ import System.FFI
 -- Raw FFI
 -------------------------------------------------------------------------------
 
-%foreign "C:idris2rc2_epoll_create, libidris2rc2base, idris2rc2_rc2base_event_util.h"
+%foreign "CExpr:(epoll_create1(0)),libc,sys/epoll.h"
 prim__epollCreate : PrimIO Int
 
 %foreign "C:idris2rc2_epoll_add, libidris2rc2base, idris2rc2_rc2base_event_util.h"
@@ -31,7 +31,7 @@ prim__epollAdd : Int -> Int -> Int -> PrimIO Int
 %foreign "C:idris2rc2_epoll_mod, libidris2rc2base, idris2rc2_rc2base_event_util.h"
 prim__epollMod : Int -> Int -> Int -> PrimIO Int
 
-%foreign "C:idris2rc2_epoll_del, libidris2rc2base, idris2rc2_rc2base_event_util.h"
+%foreign "CExpr:(epoll_ctl($1, EPOLL_CTL_DEL, $2, NULL)),libc,sys/epoll.h"
 prim__epollDel : Int -> Int -> PrimIO Int
 
 %foreign "C:idris2rc2_epoll_wait, libidris2rc2base, idris2rc2_rc2base_event_util.h"
@@ -43,17 +43,17 @@ prim__epollEventFd : Int -> PrimIO Int
 %foreign "C:idris2rc2_epoll_event_flags, libidris2rc2base, idris2rc2_rc2base_event_util.h"
 prim__epollEventFlags : Int -> PrimIO Int
 
-%foreign "C:idris2rc2_epollin, libidris2rc2base, idris2rc2_rc2base_event_util.h"
-prim__epollin : PrimIO Int
+%foreign "CExpr:(EPOLLIN),libc,sys/epoll.h"
+prim__epollin : Int
 
-%foreign "C:idris2rc2_epollout, libidris2rc2base, idris2rc2_rc2base_event_util.h"
-prim__epollout : PrimIO Int
+%foreign "CExpr:(EPOLLOUT),libc,sys/epoll.h"
+prim__epollout : Int
 
-%foreign "C:idris2rc2_epollerr, libidris2rc2base, idris2rc2_rc2base_event_util.h"
-prim__epollerr : PrimIO Int
+%foreign "CExpr:(EPOLLERR),libc,sys/epoll.h"
+prim__epollerr : Int
 
-%foreign "C:idris2rc2_epollhup, libidris2rc2base, idris2rc2_rc2base_event_util.h"
-prim__epollhup : PrimIO Int
+%foreign "CExpr:(EPOLLHUP),libc,sys/epoll.h"
+prim__epollhup : Int
 
 %foreign "C:idris2rc2_set_nonblocking, libidris2rc2base, idris2rc2_rc2base_event_util.h"
 prim__setNonBlocking : Int -> PrimIO Int
@@ -61,7 +61,7 @@ prim__setNonBlocking : Int -> PrimIO Int
 %foreign "C:idris2rc2_set_reuseaddr, libidris2rc2base, idris2rc2_rc2base_event_util.h"
 prim__setReuseAddr : Int -> PrimIO Int
 
-%foreign "C:idris2rc2_eventfd_create, libidris2rc2base, idris2rc2_rc2base_event_util.h"
+%foreign "CExpr:(eventfd(0, EFD_NONBLOCK | EFD_CLOEXEC)),libc,sys/eventfd.h"
 prim__eventFdCreate : PrimIO Int
 
 %foreign "C:idris2rc2_eventfd_signal, libidris2rc2base, idris2rc2_rc2base_event_util.h"
@@ -97,24 +97,22 @@ export
 hasEvent : (want : EventFlags) -> (have : EventFlags) -> Bool
 hasEvent (MkEventFlags want) (MkEventFlags have) = (want .&. have) == want
 
--- Cached via unsafePerformIO, same pattern as Network.Socket.Data's own
--- AF_*/SocketFamily constants -- these are OS-fixed values, not
--- something that varies per call.
+-- OS-fixed macro constants: pure `CExpr:` declarations, folded by the C compiler.
 export
 epollIn : EventFlags
-epollIn = MkEventFlags $ unsafePerformIO $ primIO prim__epollin
+epollIn = MkEventFlags $ prim__epollin
 
 export
 epollOut : EventFlags
-epollOut = MkEventFlags $ unsafePerformIO $ primIO prim__epollout
+epollOut = MkEventFlags $ prim__epollout
 
 export
 epollErr : EventFlags
-epollErr = MkEventFlags $ unsafePerformIO $ primIO prim__epollerr
+epollErr = MkEventFlags $ prim__epollerr
 
 export
 epollHup : EventFlags
-epollHup = MkEventFlags $ unsafePerformIO $ primIO prim__epollhup
+epollHup = MkEventFlags $ prim__epollhup
 
 -------------------------------------------------------------------------------
 -- Socket setup helpers

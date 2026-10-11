@@ -26,10 +26,6 @@ const char *idris2rc2_regex_compile_errmsg(void) {
   return tl_errbuf;
 }
 
-int idris2rc2_regex_nsub(void *preg) {
-  return (int)((const regex_t *)preg)->re_nsub;
-}
-
 void idris2rc2_regex_free(void *preg) {
   if (!preg) return;
   regfree((regex_t *)preg);
@@ -84,7 +80,3 @@ int idris2rc2_regex_group_eo(int i) {
   regoff_t eo = tl_pm[i].rm_eo;
   return eo < 0 ? -1 : (int)(eo + tl_start);
 }
-
-int idris2rc2_regex_extended(void) { return REG_EXTENDED; }
-int idris2rc2_regex_icase(void)    { return REG_ICASE; }
-int idris2rc2_regex_newline(void)  { return REG_NEWLINE; }

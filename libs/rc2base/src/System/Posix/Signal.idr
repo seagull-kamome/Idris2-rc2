@@ -3,8 +3,11 @@ module System.Posix.Signal
 
 
 public export data Signal = MkSignal Int32
+export
 Cast Int32 Signal where cast x = MkSignal x
+export
 Cast Signal Int32 where cast (MkSignal x) = x
+export
 Show Signal where
   show (MkSignal x) = "Signal " ++ show x
 

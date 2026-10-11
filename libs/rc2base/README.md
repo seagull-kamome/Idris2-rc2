@@ -6,12 +6,43 @@ rc2's own native-C-ABI needs. Started as just a `Data.Text` type
 wrapping a UTF-8-derived codepoint buffer; has since grown a small
 event-driven HTTP/1.1 server and router, URL parsing, POSIX regex
 bindings, GMP `Integer` bindings, two from-scratch PRNGs, raw
-pointer/array/buffer FFI helpers, and more. Everything backed by a
-small set of C shims under `support/c/`, all linked into one combined
+pointer/array/buffer FFI helpers, and more. Whatever is not a one-expression binding is backed by a
+small set of C shims under `support/c/` (see "FFI: CExpr and the remaining
+shims" below), all linked into one combined
 `support/c/libidris2rc2base.a` via the package's own `prebuild` hook.
 `idris2 --install` doesn't know about that `.a`/its headers on its own
 -- see the "Native library install location" section below for how
 (and where) they end up in an installed copy of this package.
+
+## FFI: CExpr and the remaining shims
+
+A binding whose body would be a single libc/GMP call, a constant, a macro
+or a small pure expression is a `"CExpr:"` `%foreign` template
+(`rc2/doc/ffi-cexpr.md`) and has no C shim: all `Data.Integer.GMP`
+`mpz_*` bindings (`$r` is the `Integer` out-parameter), the
+`System.FFI.C.Ptr` fetch/store pairs (`((ty *)p)[i]`), the `System.Posix.*`
+modules, (`Directory.readdir` copies the opaque `DirEnt`, read through PrimIO CExpr accessors, into a `DirEntry`; `struct dirent` is not a typedef name so `Struct` cannot name it), `Network.RC2`'s `send`/`recv`, the `EPOLL*` constants,
+`epoll_create1`, `epoll_ctl(DEL)` and `eventfd` in `System.IO.Epoll`, the
+`REG_*` constants and `re_nsub` in `Text.Regex.POSIX`, `Data.TextBuffer`'s
+accessors and `free`, the `Data.String.RC2` byte-length/from-bytes helpers,
+`Control.Concurrent.Atomic`, and `System.GC.RC2.touch`. The header field
+names the real system headers.
+
+A shim stays when it needs more than one expression: control flow or loops
+(`epoll_wait`, `eventfd_signal`, `eventfd_drain`, `close_fd` retry on
+`EINTR`; `set_nonblocking`), static or thread-local state (the epoll event
+cache, the regex match cache and error buffer, the `xoroshiro` system
+seeds), allocation and cleanup (`regex_compile`/`regex_free`, the
+`TextBuffer` builders, `memstream`, `string_byte_slice` with its clamping,
+`double_convert`), or the runtime closure/value API (`concurrency_util`).
+
+Declarations needing `_GNU_SOURCE` (`O_DIRECT`, `O_LARGEFILE`, `O_NOATIME`,
+`O_PATH`, `O_TMPFILE`, `AT_EMPTY_PATH`, `SEEK_DATA`, `SEEK_HOLE`, `dup3`,
+`preadv2`/`pwritev2`) need `_GNU_SOURCE`, which generated code does not define
+itself: build the program with `IDRIS2_CFLAGS=-D_GNU_SOURCE` (or
+`CFLAGS=-D_GNU_SOURCE`) in the environment of the Idris compiler. Each of these
+declarations says so in its doc comment; without the flag the generated C does
+not compile when the declaration is used.
 
 ## Modules
 
@@ -35,6 +66,7 @@ small set of C shims under `support/c/`, all linked into one combined
 | `System.FFI.C.Ptr` | raw, unchecked element-indexed fetch/store into a `Ptr`/`GCPtr` region |
 | `System.FFI.C.Sizeof` | the C `sizeof` of a scalar type, for hand-rolled buffer strides/offsets |
 | `System.GC.RC2` | raw access to rc2's own `idris2rc2_dup`/`dup_n`/`drop`, for a value smuggled out through an opaque FFI pointer |
+| `System.GC.RC2.touch` | `touch x`: keep `x` alive until that action (GHC `touchForeignPtr`); safe for any value, unlike `unsafeGCDup`/`unsafeGCDrop` |
 | `System.IO.Epoll` | thin `epoll` FFI wrapper backing `Network.HTTP.Server`'s event loop |
 | `System.IO.MemStream` | an in-memory `FILE *` capture stream (POSIX `open_memstream`), for redirecting a C API's "write to this FILE*" option into memory |
 | `System.Random.Xoroshiro128PlusPlus`/`Xoroshiro64StarStar` | two from-scratch PRNG ports -- see below |

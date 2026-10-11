@@ -69,7 +69,7 @@ prim__compileErrmsg : PrimIO String
 %foreign "C:idris2rc2_regex_free, libidris2rc2base, idris2rc2_rc2base_posix_regex.h"
 prim__free : Ptr RawRegex -> PrimIO ()
 
-%foreign "C:idris2rc2_regex_nsub, libidris2rc2base, idris2rc2_rc2base_posix_regex.h"
+%foreign "CExpr:((int)((const regex_t *)$1)->re_nsub),libc,regex.h"
 prim__nsub : GCPtr RawRegex -> PrimIO Int
 
 %foreign "C:idris2rc2_regex_exec, libidris2rc2base, idris2rc2_rc2base_posix_regex.h"
@@ -81,21 +81,20 @@ prim__groupSo : Int -> PrimIO Int
 %foreign "C:idris2rc2_regex_group_eo, libidris2rc2base, idris2rc2_rc2base_posix_regex.h"
 prim__groupEo : Int -> PrimIO Int
 
-%foreign "C:idris2rc2_regex_extended, libidris2rc2base, idris2rc2_rc2base_posix_regex.h"
-prim__cExtended : PrimIO Int
+%foreign "CExpr:(REG_EXTENDED),libc,regex.h"
+prim__cExtended : Int
 
-%foreign "C:idris2rc2_regex_icase, libidris2rc2base, idris2rc2_rc2base_posix_regex.h"
-prim__cIcase : PrimIO Int
+%foreign "CExpr:(REG_ICASE),libc,regex.h"
+prim__cIcase : Int
 
-%foreign "C:idris2rc2_regex_newline, libidris2rc2base, idris2rc2_rc2base_posix_regex.h"
-prim__cNewline : PrimIO Int
+%foreign "CExpr:(REG_NEWLINE),libc,regex.h"
+prim__cNewline : Int
 
--- Platform REG_* values. Cached via unsafePerformIO, same pattern as
--- System.IO.Epoll's own flag constants -- OS-fixed, not per-call.
+-- Platform REG_* values: pure `CExpr:` macro constants, OS-fixed.
 cExtended, cIcase, cNewline : Int
-cExtended = unsafePerformIO (primIO prim__cExtended)
-cIcase    = unsafePerformIO (primIO prim__cIcase)
-cNewline  = unsafePerformIO (primIO prim__cNewline)
+cExtended = prim__cExtended
+cIcase    = prim__cIcase
+cNewline  = prim__cNewline
 
 cflagsOf : Flags -> Int
 cflagsOf f = bit f.extended cExtended .|. bit f.ignoreCase cIcase .|. bit f.newline cNewline

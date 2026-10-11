@@ -29,15 +29,4 @@ idris2rc2_TextBuffer* idris2rc2_TextBuffer_append(const idris2rc2_TextBuffer* a,
 // through untouched instead of wrapping it a second time.
 IDRIS2RC2_Value* idris2rc2_TextBuffer_to_string(const idris2rc2_TextBuffer* buf);
 
-void idris2rc2_TextBuffer_free(void* p);
-
-// Low-level escape hatch for a future mutable-builder style API (e.g.
-// packing several chars into a freshly mkEmpty'd buffer before it's
-// ever exposed as a Text) -- unused by the current pure API surface.
-static inline void idris2rc2_TextBuffer_unsafe_write_char(idris2rc2_TextBuffer* buf, int index, uint32_t ch) {
-	buf->buf[index] = ch;
-}
-static inline int idris2rc2_text_length(const idris2rc2_TextBuffer* buf) { return buf->len; }
-static inline uint32_t idris2rc2_text_index(const idris2rc2_TextBuffer* buf, int index) { return buf->buf[index]; }
-
 #endif

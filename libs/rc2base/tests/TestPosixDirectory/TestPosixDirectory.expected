@@ -1,0 +1,25 @@
+DT_BLK=6
+DT_CHR=2
+DT_DIR=4
+DT_FIFO=1
+DT_LINK=10
+DT_REG=8
+DT_SOCK=12
+DT_UNKNOWN=0
+PATH_MAX=4096
+entry . 4 True
+entry .. 4 True
+entry a 8 True
+entry b 8 True
+entry link 10 True
+entry sub 4 True
+dirfd ok: True
+closedir: 0
+closedir fdopendir: 0
+chdir: 0
+getcwd in scratch: True
+fchdir: 0
+back to start: True
+chroot missing: -1
+chdir missing: -1
+done
