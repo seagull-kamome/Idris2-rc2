@@ -51,3 +51,6 @@ Sizeof Double where sizeof_ = 8
 -- assumption.
 public export %inline
 Sizeof AnyPtr where sizeof_ = 8
+
+public export %inline
+Sizeof (Ptr ty) where sizeof_ = 8

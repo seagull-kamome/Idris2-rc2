@@ -33,6 +33,7 @@ module System.FFI.C.Array
 -- store). Passing `xs.ptr` straight through keeps the `GCPtr` alive for
 -- the whole call.
 
+import Data.List
 import System.FFI
 import public System.FFI.C.Ptr
 import public System.FFI.C.Sizeof
@@ -66,6 +67,7 @@ lengthCorrect xs = believe_me (Refl {x = length xs})
 
 
 -------------------------------------------------------------------------------
+--
 
 export %inline
 fetch : PtrCFFI ty => CArray n ty -> Fin n -> IO ty
@@ -75,5 +77,17 @@ export %inline
 store : PtrCFFI ty => CArray n ty -> Fin n -> ty -> IO ()
 store xs m x = unsafeGCPtrStore xs.ptr (cast (finToNat m)) x
 
+
+-------------------------------------------------------------------------------
+--
+
+export
+fromListBy : PtrCFFI ty => Sizeof ty => (a -> ty) -> (xs : List a) -> IO (CArray (length xs) ty)
+fromListBy f xs = do
+    arr <- newCArray n
+    for_ (zip (allFins n) xs) $ \(i,x) => store arr i (f x)
+    pure arr
+  where
+    n = length xs
 
 

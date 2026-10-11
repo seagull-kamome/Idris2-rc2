@@ -1,0 +1,19 @@
+# [custom.all.idris2-rc2]
+# type = "local"
+# path = "./rc2"
+# ipkg = "rc2.ipkg"
+#  test = "test/test.ipkg"
+
+#[ custom.all.aa-test]
+# type = "local"
+# path = "test"
+# ipkg = "test.ipkg"
+
+[custom.all.rc2base]
+type = "local"
+path = "./libs/rc2base"
+ipkg = "rc2base.ipkg"
+
+
+
+
