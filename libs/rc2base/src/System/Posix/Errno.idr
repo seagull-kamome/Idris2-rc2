@@ -41,7 +41,7 @@ errno = MkErrno <$> primIO prim__errno
 -------------------------------------------------------------------------------
 --
 
-%inline %foreign "CExpr:(strerror),libc,string.h"
+%inline %foreign "CExpr:(strerror_r($1, $2, $3)),libc,string.h"
 prim__strerror : Int32 -> AnyPtr -> Bits64 -> PrimIO Int32
 ||| Return a human-readable description of the given errno code.
 public export strerror : Int32 -> IO String
@@ -58,7 +58,7 @@ strerror code = do
       pure $ "Unknown error " ++ show code
 
 
-%inline %foreign "CExpr:(perror($1)),libc,stdio;errno.h"
+%inline %foreign "CExpr:(perror($1)),libc,stdio.h"
 prim__perror : String -> PrimIO ()
 ||| Print a message and the current system error string to standard error.
 %inline public export perror : String -> IO ()
@@ -78,11 +78,6 @@ prim__E2BIG : Int32
 E2BIG : Errno
 E2BIG = MkErrno prim__E2BIG
 
-||| The `E2BIT` errno value.
-public export
-E2BIT : Errno
-E2BIT = E2BIG
-
 %inline %foreign "CExpr:(EACCES),libc,errno.h"
 prim__EACCES : Int32
 ||| The `EACCES` errno value.
@@ -90,22 +85,12 @@ prim__EACCES : Int32
 EACCES : Errno
 EACCES = MkErrno prim__EACCES
 
-||| The `EACCESS` errno value.
-public export
-EACCESS : Errno
-EACCESS = EACCES
-
 %inline %foreign "CExpr:(EADDRINUSE),libc,errno.h"
 prim__EADDRINUSE : Int32
 ||| The `EADDRINUSE` errno value.
 %inline public export
 EADDRINUSE : Errno
 EADDRINUSE = MkErrno prim__EADDRINUSE
-
-||| The `EADDEINUSE` errno value.
-public export
-EADDEINUSE : Errno
-EADDEINUSE = EADDRINUSE
 
 %inline %foreign "CExpr:(EADDRNOTAVAIL),libc,errno.h"
 prim__EADDRNOTAVAIL : Int32
@@ -456,13 +441,6 @@ prim__ELIBEXEC : Int32
 %inline public export
 ELIBEXEC : Errno
 ELIBEXEC = MkErrno prim__ELIBEXEC
-
-%inline %foreign "CExpr:(ELNRANGE),libc,errno.h"
-prim__ELNRANGE : Int32
-||| The `ELNRANGE` errno value.
-%inline public export
-ELNRANGE : Errno
-ELNRANGE = MkErrno prim__ELNRANGE
 
 %inline %foreign "CExpr:(ELOOP),libc,errno.h"
 prim__ELOOP : Int32

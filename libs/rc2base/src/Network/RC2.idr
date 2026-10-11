@@ -8,8 +8,8 @@
 ||| payloads through a reused accumulator buffer. `sendBuf`/`recvBuf`
 ||| here take a `Buffer` plus a byte offset and length, so the loop can
 ||| recv directly at its write cursor and send directly from its send
-||| cursor with no intermediate copy -- backed by a tiny C shim
-||| (`support/c/net_util.c`) over plain `send`/`recv`. `errno` on
+||| cursor with no intermediate copy -- backed by `"CExpr:"`
+||| templates over plain `send`/`recv` (no C shim). `errno` on
 ||| failure is read with `Network.Socket.Data.getErrno`, the same
 ||| accessor `Network.Socket`'s own `send`/`recv` use.
 |||
@@ -26,15 +26,15 @@ import Network.Socket
 import Network.Socket.Data
 
 -------------------------------------------------------------------------------
--- Raw FFI (support/c/net_util.c)
+-- Raw FFI
 -------------------------------------------------------------------------------
 
 -- `Buffer` is passed under rc2's generic "C:" ABI, i.e. as the raw byte
--- pointer past the size header -- `net_util.c` then does `data + off`.
-%foreign "C:idris2rc2_buf_send, libidris2rc2base, idris2rc2_rc2base_net_util.h"
+-- pointer past the size header -- the templates below then add `off`.
+%foreign "CExpr:(int)send($1, (char *)($2) + ($3), (size_t)($4), 0),libc,sys/socket.h"
 prim__bufSend : Int -> Buffer -> Int -> Int -> PrimIO Int
 
-%foreign "C:idris2rc2_buf_recv, libidris2rc2base, idris2rc2_rc2base_net_util.h"
+%foreign "CExpr:(int)recv($1, (char *)($2) + ($3), (size_t)($4), 0),libc,sys/socket.h"
 prim__bufRecv : Int -> Buffer -> Int -> Int -> PrimIO Int
 
 -------------------------------------------------------------------------------

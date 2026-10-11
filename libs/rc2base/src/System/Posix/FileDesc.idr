@@ -21,7 +21,7 @@ primFdToFileDesc fd = if fd < 0
     else pure $ Just $ MkFileDesc $ cast fd
 
 
-%inline %foreign "CExpr:(close($1),libc,unistd.h"
+%inline %foreign "CExpr:close($1),libc,unistd.h"
 prim__close : Bits32 -> PrimIO Int32
 
 ||| Close a file descriptor.

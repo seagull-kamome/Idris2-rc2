@@ -43,9 +43,11 @@ closedir dirp = primIO $ prim__closedir dirp
 
 -------------------------------------------------------------------------------
 -- 
-%cg rc2 externalStruct=dirent
-DirEnt : Type
-DirEnt = Struct "idris2_dirent" [("d_name", AnyPtr), ("d_type", Bits8)]
+||| Opaque `struct dirent`. Only valid until the next `readdir` on the same
+||| stream, so it is read through `PrimIO` accessors; `readdir` copies it
+||| into a `DirEntry` at once.
+export
+data DirEnt : Type where [external]
 
 
 ||| Directory entry type: block device.
@@ -54,11 +56,14 @@ DT_BLK : Bits8
 ||| Directory entry type: character device.
 %inline public export %foreign "CExpr:(DT_CHR),libc,sys/types.h;dirent.h"
 DT_CHR : Bits8
+||| Directory entry type: directory.
+%inline public export %foreign "CExpr:(DT_DIR),libc,sys/types.h;dirent.h"
+DT_DIR : Bits8
 ||| Directory entry type: FIFO.
 %inline public export %foreign "CExpr:(DT_FIFO),libc,sys/types.h;dirent.h"
 DT_FIFO : Bits8
 ||| Directory entry type: symbolic link.
-%inline public export %foreign "CExpr:(DT_LINK),libc,sys/types.h;dirent.h"
+%inline public export %foreign "CExpr:(DT_LNK),libc,sys/types.h;dirent.h"
 DT_LINK : Bits8
 ||| Directory entry type: regular file.
 %inline public export %foreign "CExpr:(DT_REG),libc,sys/types.h;dirent.h"
@@ -71,12 +76,48 @@ DT_SOCK : Bits8
 DT_UNKNOWN : Bits8
 
 
-%inline %foreign "CExpr:(readdir($1)),libc,sys/types.h;dirent.h"
-prim__readdir : DIRPtr -> PrimIO DirEnt
+%foreign "CExpr:(readdir($1)),libc,sys/types.h;dirent.h"
+prim__readdir : DIRPtr -> PrimIO (Ptr DirEnt)
 
-||| Read the next directory entry from a directory stream.
-%inline public export readdir : DIRPtr -> IO DirEnt
-readdir dirp = primIO $ prim__readdir dirp
+%foreign "CExpr:(((struct dirent *)($1))->d_name),libc,sys/types.h;dirent.h"
+prim__d_name : Ptr DirEnt -> PrimIO String
+
+%foreign "CExpr:(((struct dirent *)($1))->d_type),libc,sys/types.h;dirent.h"
+prim__d_type : Ptr DirEnt -> PrimIO Bits8
+
+%foreign "CExpr:(((struct dirent *)($1))->d_ino),libc,sys/types.h;dirent.h"
+prim__d_ino : Ptr DirEnt -> PrimIO Bits64
+
+||| A directory entry copied out of the stream.
+public export
+record DirEntry where
+  constructor MkDirEntry
+  name : String
+  type : Bits8
+  ino : Bits64
+
+||| Read the next directory entry from a directory stream; `Nothing` at the
+||| end of the stream (or on error, see `errno`).
+export readdir : DIRPtr -> IO (Maybe DirEntry)
+readdir dirp = do
+  p <- primIO $ prim__readdir dirp
+  if prim__nullAnyPtr (prim__forgetPtr p) /= 0
+    then pure Nothing
+    else do
+      n <- primIO $ prim__d_name p
+      t <- primIO $ prim__d_type p
+      i <- primIO $ prim__d_ino p
+      pure $ Just (MkDirEntry n t i)
+
+||| All remaining entries of the stream, in stream order (including "." and "..").
+covering export readDirEntries : DIRPtr -> IO (List DirEntry)
+readDirEntries dirp = go []
+  where
+    covering go : List DirEntry -> IO (List DirEntry)
+    go acc = do
+      Just e <- readdir dirp
+        | Nothing => pure (reverse acc)
+      go (e :: acc)
 
 
 -------------------------------------------------------------------------------
@@ -97,7 +138,7 @@ prim__seekdir : DIRPtr -> Int64 -> PrimIO ()
 seekdir dirp loc = primIO $ prim__seekdir dirp loc
 
 
-%inline %foreign "CExpr:(telldir($1, $2)),libc,dirent.h"
+%inline %foreign "CExpr:(telldir($1)),libc,sys/types.h;dirent.h"
 prim__telldir : DIRPtr -> PrimIO Int64
 
 ||| Return the current position of a directory stream.
@@ -127,11 +168,11 @@ fchdir fd = primIO $ prim__fchdir fd.rawdirfd
 
 -------------------------------------------------------------------------------
 -- 
-%inline %foreign "CExpr:(PATH_MAX),libc,unistd.h"
-PATH_MAX : Bits32
+%inline %foreign "CExpr:(PATH_MAX),libc,limits.h"
+export PATH_MAX : Bits32
 
 
-%inline %foreign "CExpr:(getcwd($1, NULL, PATH_MAX)),libc,unistd.h"
+%inline %foreign "CExpr:(getcwd(NULL, 0)),libc,unistd.h"
 prim__getcwd : PrimIO AnyPtr
 
 ||| Get the current working directory as a string.
@@ -143,7 +184,7 @@ getcwd = primIO prim__getcwd >>= ptrToStringFree
 -------------------------------------------------------------------------------
 -- 
 
-%inline %foreign "CExpr:(chdoot($1)),libc,unistd.h"
+%inline %foreign "CExpr:(chroot($1)),libc,unistd.h"
 prim__chroot : String -> PrimIO Int32
 
 ||| Change the process root directory.

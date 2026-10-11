@@ -12,23 +12,32 @@ import System.FFI.C.Array
 
 ||| A Unix process identifier.
 public export data ProcessID = MkProcessID Int32
+export
 Cast Int32 ProcessID where cast x = MkProcessID x
+export
 Cast ProcessID Int32 where cast (MkProcessID x) = x
+export
 Show ProcessID where
   show (MkProcessID x) = "ProcessID " ++ show x
 
 ||| A Unix process group identifier.
 public export data ProcessGroupID = MkProcessGroupID Int32
+export
 Cast Int32 ProcessGroupID where cast x = MkProcessGroupID x
+export
 Cast ProcessGroupID Int32 where cast (MkProcessGroupID x) = x
+export
 Show ProcessGroupID where
   show (MkProcessGroupID x) = "ProcessGroupID " ++ show x
 
 
 ||| The status returned by a process-related operation.
 public export data ProcessStatus = MkProcessStatus Int32
+export
 Cast Int32 ProcessStatus where cast x = MkProcessStatus x
+export
 Cast ProcessStatus Int32 where cast (MkProcessStatus x) = x
+export
 Show ProcessStatus where
   show (MkProcessStatus x) = "ProcessStatus " ++ show x
 
@@ -36,7 +45,7 @@ Show ProcessStatus where
 -------------------------------------------------------------------------------
 -- Process Control
 
-%foreign "CExpr:(getpid),libc,unistd.h"
+%foreign "CExpr:(getpid()),libc,unistd.h"
 prim__getpid : PrimIO Int32
 ||| Return the identifier of the current process.
 %inline public export getpid : IO ProcessID
@@ -59,7 +68,7 @@ prim__exit : Int32 -> PrimIO ()
 %inline public export exit : Int32 -> IO ()
 exit code = primIO $ prim__exit code    
 
-%foreign "CExpr:(fork),libc,sys/types.h;unistd.h"
+%foreign "CExpr:(fork()),libc,sys/types.h;unistd.h"
 prim__fork : PrimIO Int32
 ||| Create a child process and return its process ID.
 %inline public export fork : IO ProcessID
@@ -79,7 +88,7 @@ fork = do
 -------------------------------------------------------------------------------
 -- Wait - Process Control
 
-%foreign "CExpr:(waitpid($1, $2, $3)),libc,sys/types.h;sys/wait.h;unistd.h"
+%foreign "CExpr:(waitpid($1, (int *)$2, $3)),libc,sys/types.h;sys/wait.h;unistd.h"
 prim__waitpid : Int32 -> Buffer -> Int32 -> PrimIO Int32
 
 public export
@@ -87,15 +96,15 @@ WaitOptions : Type
 WaitOptions = Int32
 
 %inline %foreign "CExpr:(WEXITED),libc,sys/types.h;sys/wait.h;unistd.h"
-WEXITED : Int32
+export WEXITED : Int32
 %inline %foreign "CExpr:(WSTOPPED),libc,sys/types.h;sys/wait.h;unistd.h"
-WSTOPPED : Int32
+export WSTOPPED : Int32
 %inline %foreign "CExpr:(WNOHANG),libc,sys/types.h;sys/wait.h;unistd.h"
-WNOHANG : Int32
+export WNOHANG : Int32
 %inline %foreign "CExpr:(WUNTRACED),libc,sys/types.h;sys/wait.h;unistd.h"
-WUNTRACED : Int32
-%inline %foreign "CExpr:(WCONTINUED),libc,sys/types.h;sys/types.h;sys/wait.h;unistd.h"
-WCONTINUED : Int32
+export WUNTRACED : Int32
+%inline %foreign "CExpr:(WCONTINUED),libc,sys/types.h;sys/wait.h;unistd.h"
+export WCONTINUED : Int32
 
 
 wait_ : Int32 -> Int32 -> IO (Maybe (ProcessID, ProcessStatus))

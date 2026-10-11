@@ -1,0 +1,47 @@
+O_APPEND=1024
+O_ASYNC=8192
+O_CLOEXEC=524288
+O_CREAT=64
+O_DIRECTORY=65536
+O_DSYNC=4096
+O_EXCL=128
+O_NOCTTY=256
+O_NOFOLLOW=131072
+O_NONBLOCK=2048
+O_SYNC=1052672
+O_TRUNC=512
+AT_SYMLINK_NOFOLLOW=256
+write: 12
+fsync: 0
+fdatasync: 0
+SEEK_CUR: 12
+SEEK_SET: 3
+SEEK_END: 10
+close: 0
+Buffer.read: 12 "hello world\n"
+AnyPtr.read: 5
+dup: ok
+dup2: 99
+Buffer.write: 3
+flockShared: 0
+flockExclude: 0
+funlock: 0
+lockf: 0
+lockfTest: 0
+lockfUnlock: 0
+lockfTestAndLock: 0
+lockfUnlock: 0
+fchmod: 0
+fchown: 0
+fallocate: 0
+close: 0
+chmod: 0
+chown: 0
+lchown: 0
+fchmodat: 0
+fchownat: 0
+openat+close: 0
+close dir: 0
+errno: True
+done
+perror-test: No such file or directory

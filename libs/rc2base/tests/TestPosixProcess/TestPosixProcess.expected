@@ -1,0 +1,13 @@
+WEXITED=4
+WSTOPPED=2
+WNOHANG=1
+WUNTRACED=2
+WCONTINUED=8
+getpid positive: True
+kill self 0: 0
+child 1 pid matches: True
+child 1 exit status: 7
+kill child: 0
+child 2 pid matches: True
+child 2 terminating signal: 9
+no children: -1

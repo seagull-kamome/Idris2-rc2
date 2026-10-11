@@ -1,10 +1,8 @@
 #ifndef IDRIS2RC2_RC2BASE_EVENT_UTIL_H
 #define IDRIS2RC2_RC2BASE_EVENT_UTIL_H
 
-int idris2rc2_epoll_create(void);
 int idris2rc2_epoll_add(int epfd, int fd, int events);
 int idris2rc2_epoll_mod(int epfd, int fd, int events);
-int idris2rc2_epoll_del(int epfd, int fd);
 
 // Waits up to timeout_ms (negative = block indefinitely) for events on
 // epfd, caching the ready ones internally (capped at
@@ -18,19 +16,8 @@ int idris2rc2_epoll_wait(int epfd, int timeout_ms);
 int idris2rc2_epoll_event_fd(int index);
 int idris2rc2_epoll_event_flags(int index);
 
-int idris2rc2_epollin(void);
-int idris2rc2_epollout(void);
-int idris2rc2_epollerr(void);
-int idris2rc2_epollhup(void);
-
 int idris2rc2_set_nonblocking(int fd);
 int idris2rc2_set_reuseaddr(int fd);
-
-// A non-blocking eventfd, used by Network.HTTP.Server as a cross-thread
-// wakeup: the single-threaded event loop parks in epoll_wait, and any
-// other thread makes that call return by writing to this fd. Created
-// with EFD_NONBLOCK|EFD_CLOEXEC. Returns the fd, or -1 on failure.
-int idris2rc2_eventfd_create(void);
 
 // Wakes the event loop: adds 1 to the eventfd counter. Safe to call
 // from any thread. A full counter (EAGAIN) is ignored -- the loop is

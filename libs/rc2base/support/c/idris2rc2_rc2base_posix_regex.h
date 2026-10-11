@@ -17,9 +17,6 @@ void *idris2rc2_regex_compile(const char *pattern, int cflags);
 // this thread. Valid until the next compile call on this thread.
 const char *idris2rc2_regex_compile_errmsg(void);
 
-// ((regex_t*)preg)->re_nsub -- capturing groups, not counting group 0.
-int idris2rc2_regex_nsub(void *preg);
-
 // regfree + free.
 void idris2rc2_regex_free(void *preg);
 
@@ -38,10 +35,5 @@ int idris2rc2_regex_exec(void *preg, const char *s, int64_t total, int start_byt
 // back). -1 for a group that did not participate, or `i` out of range.
 int idris2rc2_regex_group_so(int i);
 int idris2rc2_regex_group_eo(int i);
-
-// Platform REG_* constants.
-int idris2rc2_regex_extended(void);
-int idris2rc2_regex_icase(void);
-int idris2rc2_regex_newline(void);
 
 #endif

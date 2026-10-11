@@ -5,7 +5,7 @@ import System.FFI
 data AtomicCounter = MkAtomicCounter GCAnyPtr
 
 
-%inline %foreign "RC2:idris2rc2_concurrent_atomic_counter_next"
+%inline %foreign "CExpr:atomic_fetch_add((int64_t _Atomic *)$1, 1),libc,stdatomic.h"
 prim__atomicCounterNext : GCAnyPtr -> PrimIO Int64
 
 

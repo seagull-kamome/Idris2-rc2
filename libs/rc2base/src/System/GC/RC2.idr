@@ -52,6 +52,9 @@ prim__unsafeGCDupN : Boxed -> Int -> PrimIO Boxed
 %inline %foreign "RC2:idris2rc2_drop"
 prim__unsafeGCDrop : Boxed -> PrimIO ()
 
+%foreign "CExpr:((void)($1)),libc,stdlib.h"
+prim__touch : Boxed -> PrimIO ()
+
 %foreign "RC2:idris2rc2_enableMultiThreading"
 prim__enableMultiThreading : PrimIO ()
 
@@ -109,3 +112,22 @@ enableMultiThreading = primIO prim__enableMultiThreading
 export
 isMultiThreaded : IO Bool
 isMultiThreaded = (/= 0) <$> primIO prim__isMultiThreaded
+
+||| Keeps `x` alive (its reference held) until this action runs, like
+||| GHC's `touch`/`touchForeignPtr`. rc2 drops a value right after its
+||| last *visible* use, so after an action that only uses a raw pointer
+||| derived from `x`, using `x` here extends its lifetime to this point.
+||| The IO sequencing orders the touch after the earlier actions, and a
+||| foreign `PrimIO` call is never removed as dead code. Unlike
+||| `unsafeGCDup`/`unsafeGCDrop` this never changes a refcount: the
+||| template only evaluates (and discards) the argument, so it is safe
+||| for any value. A natively represented scalar (Int, Double, Char,
+||| Bits8/64, Bool, ...) is boxed first, exactly as for any polymorphic
+||| call, so the foreign side always sees a valid boxed value that it
+||| ignores; no lifetime issue arises for scalars, and the only cost is
+||| that boxing (free for immediates, one allocation for an Int64, Bits64
+||| or Double outside the immediate range). `%inline` removes the call
+||| layer but not the boxing.
+export %inline
+touch : a -> IO ()
+touch x = primIO (prim__touch (believe_me x))
