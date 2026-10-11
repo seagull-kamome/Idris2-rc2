@@ -16,10 +16,10 @@ import System.FFI.C.Ptr
 import System.Posix.File
 import System.Posix.Mmap
 
-%foreign "CExpr:NULL,libc,stddef.h"
+%foreign "CExpr:(NULL),libc,stddef.h"
 nullPtr : AnyPtr
 
-%foreign "CExpr:munmap($1, $2),libc,sys/mman.h"
+%foreign "CExpr:(munmap($1, $2)),libc,sys/mman.h"
 prim__munmap : AnyPtr -> Int64 -> PrimIO Int32
 
 c : String -> Int32 -> IO ()

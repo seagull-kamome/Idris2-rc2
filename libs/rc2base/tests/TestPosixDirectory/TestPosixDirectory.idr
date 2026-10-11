@@ -16,7 +16,7 @@ import System.File
 import System.Posix.Directory
 import System.Posix.File
 
-%foreign "CExpr:symlink($1, $2),libc,unistd.h"
+%foreign "CExpr:(symlink($1, $2)),libc,unistd.h"
 prim__symlink : String -> String -> PrimIO Int32
 
 dir : String

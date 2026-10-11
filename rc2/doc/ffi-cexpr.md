@@ -92,6 +92,11 @@ precedence of the expression it is substituted into. The whole
 expression is emitted in parentheses when it is used as a value, and as
 a bare statement (`expr;`) for a `PrimIO ()` declaration.
 
+It is recommended to wrap the whole expression of a declaration in one
+outer pair of parentheses (`CExpr:((int)send(...))`, `CExpr:(EPOLLIN)`),
+so that a malformed neighbouring option cannot turn into a confusing C
+syntax error.
+
 ## Results and types
 
 Arguments are marshalled by their Idris types and the result is packed

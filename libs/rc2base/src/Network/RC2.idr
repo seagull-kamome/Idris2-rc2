@@ -31,10 +31,10 @@ import Network.Socket.Data
 
 -- `Buffer` is passed under rc2's generic "C:" ABI, i.e. as the raw byte
 -- pointer past the size header -- the templates below then add `off`.
-%foreign "CExpr:(int)send($1, (char *)($2) + ($3), (size_t)($4), 0),libc,sys/socket.h"
+%foreign "CExpr:((int)send($1, (char *)($2) + ($3), (size_t)($4), 0)),libc,sys/socket.h"
 prim__bufSend : Int -> Buffer -> Int -> Int -> PrimIO Int
 
-%foreign "CExpr:(int)recv($1, (char *)($2) + ($3), (size_t)($4), 0),libc,sys/socket.h"
+%foreign "CExpr:((int)recv($1, (char *)($2) + ($3), (size_t)($4), 0)),libc,sys/socket.h"
 prim__bufRecv : Int -> Buffer -> Int -> Int -> PrimIO Int
 
 -------------------------------------------------------------------------------

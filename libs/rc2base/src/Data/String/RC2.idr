@@ -25,7 +25,7 @@ module Data.String.RC2
 ||| argument reaches C as `->str` only, and the length is in the value.
 data RawStr : Type
 
-%foreign "CExpr:(int64_t)((IDRIS2RC2_String *)$1)->len,libidris2rc2base,idris2rc2_datatypes.h"
+%foreign "CExpr:((int64_t)((IDRIS2RC2_String *)$1)->len),libidris2rc2base,idris2rc2_datatypes.h"
 prim__stringByteLength : RawStr -> PrimIO Int
 
 ||| The on-the-wire byte length of `s`, as opposed to
@@ -58,7 +58,7 @@ unsafeStringByteSlice : (s : String) -> (off, len : Int) -> String
 unsafeStringByteSlice s off len =
   believe_me (unsafePerformIO (primIO (prim__stringByteSlice s (byteLength s) off len)))
 
-%foreign "CExpr:(IDRIS2RC2_Value *)idris2rc2_mkStringLen((char const *)$1, ($2) < 0 ? 0u : (size_t)($2)),libidris2rc2base,idris2rc2_memory.h"
+%foreign "CExpr:((IDRIS2RC2_Value *)idris2rc2_mkStringLen((char const *)$1, ($2) < 0 ? 0u : (size_t)($2))),libidris2rc2base,idris2rc2_memory.h"
 prim__stringFromBytes : AnyPtr -> Int -> PrimIO RawStr
 
 ||| A fresh `String` holding the `len` bytes at `p`, NUL bytes included --
