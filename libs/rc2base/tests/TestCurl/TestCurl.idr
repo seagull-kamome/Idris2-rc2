@@ -262,3 +262,6 @@ main = do
     fetchText (base ++ "/stop") >>= printLn
     join srv
     curlGlobalCleanup
+    Right () <- removeFile path
+        | Left _ => pure ()
+    pure ()

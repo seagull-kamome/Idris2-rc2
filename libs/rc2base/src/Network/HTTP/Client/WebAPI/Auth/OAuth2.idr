@@ -34,6 +34,8 @@ record Client where
   clientSecret    : Maybe String
   scopes          : List String
   extraAuthParams : List (String, String)
+  ||| Optional callback invoked with (authUrl, redirectUri) when login generates them.
+  onAuthUrl       : Maybe (String -> String -> IO ())
 
 ||| A Google "Desktop app" client. `access_type=offline` asks for a
 ||| refresh token; `prompt=consent` asks for it again on a repeat login.
@@ -43,6 +45,7 @@ google i s sc = MkClient "https://accounts.google.com/o/oauth2/v2/auth"
                          "https://oauth2.googleapis.com/token"
                          i (Just s) sc
                          [("access_type", "offline"), ("prompt", "consent")]
+                         Nothing
 
 public export
 record Token where
@@ -349,14 +352,16 @@ login c = liftIO $ do
         port     = 49152 + cast (foldl (\acc, b => acc * 256 + cast b) (the Int 0) (drop 48 rnd)) `mod` 16384
     listener <- listenLoopback port
     let redirect = "http://127.0.0.1:" ++ show (maybe port snd listener)
+    let authUrl = authorizationUrl c redirect state (challengeS256 verifier)
     putStrLn "Open this URL in a browser and allow access:"
     putStrLn ""
-    putStrLn (authorizationUrl c redirect state (challengeS256 verifier))
+    putStrLn authUrl
     putStrLn ""
     putStrLn $ case listener of
         Just _  => "Waiting for the browser. If it ends on an error page instead, paste that page's full address here:"
         Nothing => "After allowing access the browser shows an error page; paste that page's full address here:"
     fflush stdout
+    traverse_ (\cb => cb authUrl redirect) c.onAuthUrl
     result <- waitRedirect listener
     traverse_ (close . fst) listener
     case result of

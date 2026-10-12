@@ -87,8 +87,23 @@ client id and secret come from `GOOGLE_CLIENT_ID` and
 
 ## Tests
 
-`tests/TestCurl` covers the `Curl` family without outbound network:
-local transfers use a `file://` URL on a file the test writes, HTTP
-transfers go to a `Network.HTTP.Server` forked inside the test. It
-needs libcurl's headers; `tests/verify.sh` prints `SKIP` when `gcc`
-cannot find `curl/curl.h`. The `WebAPI` family has no test here.
+All three run without outbound network and are listed in
+`tests/verify.sh`. `verify.sh` gives every test an open, silent stdin
+(a FIFO), because `login` polls stdin, and masks the random
+authorization URL that `login` prints.
+
+- `TestCurl`: the `Curl` family. Local transfers use a `file://` URL on
+  a file the test writes; HTTP transfers go to a `Network.HTTP.Server`
+  forked inside the test. It needs libcurl's headers; `verify.sh`
+  prints `SKIP` when `gcc` cannot find `curl/curl.h`.
+- `TestWebAPIPure`: SHA-256 / base64url / PKCE known answers, JSON
+  rendering, chat and token JSON, URL and form encoding.
+- `TestWebAPI`: `chat` and `login` against a mock API and token
+  endpoint (again a forked `Network.HTTP.Server`). The mock checks the
+  PKCE code verifier against the challenge it saw on `/auth`. The
+  "browser" is a thread started from `Client.onAuthUrl`, a hook called
+  with the authorization URL and the redirect URI once `login` has
+  printed them. Covered: a reply, a rejected key, no key, an
+  unreachable server; login by loopback redirect, the token file
+  (valid, expired, revoked refresh token), a refused login and a wrong
+  code. Not covered: the paste-the-address path, which reads stdin.
