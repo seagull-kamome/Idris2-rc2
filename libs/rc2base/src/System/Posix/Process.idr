@@ -91,22 +91,29 @@ fork = do
 %foreign "CExpr:(waitpid($1, (int *)$2, $3)),libc,sys/types.h;sys/wait.h;unistd.h"
 prim__waitpid : Int32 -> Buffer -> Int32 -> PrimIO Int32
 
+||| Option bits for `waitpid`.
 public export
 WaitOptions : Type
 WaitOptions = Int32
 
+||| Wait for children that have terminated. A `waitid(2)` option: `waitpid` rejects it with `EINVAL`.
 %inline %foreign "CExpr:(WEXITED),libc,sys/types.h;sys/wait.h;unistd.h"
 export WEXITED : Int32
+||| Wait for children stopped by a signal. A `waitid(2)` option: `waitpid` rejects it with `EINVAL`.
 %inline %foreign "CExpr:(WSTOPPED),libc,sys/types.h;sys/wait.h;unistd.h"
 export WSTOPPED : Int32
+||| Return at once if no child has changed state.
 %inline %foreign "CExpr:(WNOHANG),libc,sys/types.h;sys/wait.h;unistd.h"
 export WNOHANG : Int32
+||| Also report children that are stopped.
 %inline %foreign "CExpr:(WUNTRACED),libc,sys/types.h;sys/wait.h;unistd.h"
 export WUNTRACED : Int32
+||| Also report stopped children that were continued by `SIGCONT`.
 %inline %foreign "CExpr:(WCONTINUED),libc,sys/types.h;sys/wait.h;unistd.h"
 export WCONTINUED : Int32
 
 
+||| Shared body of `wait` and `waitpid`: `waitpid(2)` on the given pid and options.
 wait_ : Int32 -> Int32 -> IO (Maybe (ProcessID, ProcessStatus))
 wait_ pid options = do
   Just buf <- newBuffer 4

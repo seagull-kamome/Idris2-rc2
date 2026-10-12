@@ -168,6 +168,8 @@ fchdir fd = primIO $ prim__fchdir fd.rawdirfd
 
 -------------------------------------------------------------------------------
 -- 
+||| Maximum length of a path name including the terminating NUL.
+||| POSIX allows a system to leave it undefined; see `pathconf(3)`.
 %inline %foreign "CExpr:(PATH_MAX),libc,limits.h"
 export PATH_MAX : Bits32
 
