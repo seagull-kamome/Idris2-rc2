@@ -1,0 +1,34 @@
+== browser
+Open this URL in a browser and allow access:
+
+<authorization url>
+
+Waiting for the browser. If it ends on an error page instead, paste that page's full address here:
+("at-1", Just "rt-1")
+Right "at-1"
+Right "at-2"
+Right ("at-2", Just "rt-1")
+Left "bad refresh token"
+-- browser got:
+Authorization received. You can close this tab.
+== paste
+Open this URL in a browser and allow access:
+
+<authorization url>
+
+Waiting for the browser. If it ends on an error page instead, paste that page's full address here:
+That URL has no code= in it; paste the whole address:
+("at-1", Just "rt-1")
+Right "at-1"
+Right "at-2"
+Right ("at-2", Just "rt-1")
+Left "bad refresh token"
+== refused
+Open this URL in a browser and allow access:
+
+<authorization url>
+
+Waiting for the browser. If it ends on an error page instead, paste that page's full address here:
+login: authorization refused: access_denied
+-- browser got:
+Authorization received. You can close this tab.

@@ -1,0 +1,10 @@
+hello curl
+CURLcode 0
+Right 0
+Right True
+Right 11
+Right True
+Right (-1)
+[]
+Left CURLcode 48
+["one", "two"]

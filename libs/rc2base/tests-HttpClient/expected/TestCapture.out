@@ -1,0 +1,4 @@
+Just (CURLcode 0, "hello curl\n")
+CURLcode 0
+[104, 101, 108, 108, 111, 32, 99, 117, 114, 108, 10]
+Just (CURLcode 37, "")

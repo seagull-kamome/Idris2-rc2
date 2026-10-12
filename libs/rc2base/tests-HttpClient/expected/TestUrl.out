@@ -1,0 +1,16 @@
+Just "a%20b%2Fc%3Fd"
+Just "a b/c?d"
+True
+Just "https"
+Just "user"
+Nothing
+Just "example.com"
+Just "8080"
+Just "/p/q"
+Just "x=1"
+Just "frag"
+Just "https://user@example.com:8080/p/q?x=1#frag"
+Bad IPv6 address
+Could not resolve hostname
+Invalid multi handle
+Unknown share option

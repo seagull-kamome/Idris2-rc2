@@ -4,6 +4,7 @@ import Data.Buffer
 import Data.Buffer.RC2
 import Data.String
 import Data.String.RC2
+import System.Posix.Errno
 import public System.Posix.FileDesc
 import System.FFI
 
@@ -96,7 +97,7 @@ prim__open : String -> Bits32 -> Bits32 -> PrimIO Int32
 
 ||| Open a file at `pathname` using the given flags and mode.
 public export
-openFile : String -> Bits32 -> Bits32 -> IO (Maybe FileDesc)
+openFile : String -> Bits32 -> Bits32 -> IO (Either Errno FileDesc)
 openFile pathname flags mode =
   primIO (prim__open pathname flags mode) >>= primFdToFileDesc
 
@@ -107,7 +108,7 @@ prim__creat : String -> Bits32 -> PrimIO Int32
 
 ||| Create and open a new file with the requested permissions.
 public export
-creat : String -> Bits32 -> IO (Maybe FileDesc)
+creat : String -> Bits32 -> IO (Either Errno FileDesc)
 creat pathname mode =
   primIO (prim__creat pathname mode) >>= primFdToFileDesc
 
@@ -117,7 +118,7 @@ prim__openat : Bits32 -> String -> Bits32 -> Bits32 -> PrimIO Int32
 
 ||| Open a file relative to a directory descriptor.
 public export
-openat : DirDesc -> String -> Bits32 -> Bits32 -> IO (Maybe FileDesc)
+openat : DirDesc -> String -> Bits32 -> Bits32 -> IO (Either Errno FileDesc)
 openat dirfd  pathname flags mode =
   primIO (prim__openat dirfd.rawdirfd pathname flags mode)
     >>= primFdToFileDesc
@@ -415,11 +416,11 @@ prim__dup2 : Bits32 -> Bits32 -> PrimIO Int32
 prim__dup3 : Bits32 -> Bits32 -> Bits32 -> PrimIO Int32
 
 %inline public export
-dup : FileDesc -> IO (Maybe FileDesc)
+dup : FileDesc -> IO (Either Errno FileDesc)
 dup fd = primIO (prim__dup fd.rawfd) >>= primFdToFileDesc
 
 %inline public export
-dup2 : FileDesc -> FileDesc -> IO (Maybe FileDesc)
+dup2 : FileDesc -> FileDesc -> IO (Either Errno FileDesc)
 dup2 oldfd newfd = primIO (prim__dup2 oldfd.rawfd newfd.rawfd) >>= primFdToFileDesc
 
 
@@ -428,7 +429,7 @@ dup2 oldfd newfd = primIO (prim__dup2 oldfd.rawfd newfd.rawfd) >>= primFdToFileD
 ||| Needs `_GNU_SOURCE`: build the program with `IDRIS2_CFLAGS=-D_GNU_SOURCE` (or `CFLAGS=-D_GNU_SOURCE`)
 ||| in the environment of the Idris compiler, otherwise the generated C does not compile.
 %inline public export
-dup3 : FileDesc -> FileDesc -> Bits32 -> IO (Maybe FileDesc)
+dup3 : FileDesc -> FileDesc -> Bits32 -> IO (Either Errno FileDesc)
 dup3 oldfd newfd flags =
   primIO (prim__dup3 oldfd.rawfd newfd.rawfd flags) >>= primFdToFileDesc
 

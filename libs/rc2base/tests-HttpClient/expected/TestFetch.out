@@ -1,0 +1,4 @@
+(200, (["Server", "Date", "Content-type", "Content-Length", "Last-Modified"], "hello curl\n"))
+[104, 101, 108, 108, 111, 32, 99, 117, 114, 108, 10]
+Right "hello curl\n"
+Left HttpError 404

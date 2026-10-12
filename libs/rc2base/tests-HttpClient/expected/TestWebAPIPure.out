@@ -1,0 +1,30 @@
+e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad
+9ad289b5b8ca3b67b3e1238ea026560d218cac02ee49b871795a3311874d107e
+41edece42d63e8d9bf515a9ba6932e1c20cbc9f5a5d134645adb5db1b9737ea3
+A
+aA
+aGk
+aGk_
+aGk_Pg
+DS1cRNJwQV88tguEdedYu9p9zfqyy0SarFNimeoD0Mc
+{"n":1024,"x":0.5,"neg":-3,"s":"q\"b\\n\n\t\u0001é","a":[null,true]}
+{"model":"claude-sonnet-5","messages":[{"role":"system","content":"Be brief."},{"role":"user","content":"Hi"}],"max_tokens":256,"temperature":0.25}
+{"model":"m","messages":[]}
+("gemini-3-flash", [("assistant", ("Hello!", Just "stop")), ("assistant", ("", Nothing))])
+Just "Hello!"
+Left "unexpected response: {\"error\":\"x\"}"
+invalid x-api-key
+API key not valid.
+Bad Gateway
+a%20b%2Fc%3Fd%3D%C3%A9~_.-
+grant_type=authorization_code&code=4%2F0Ab%2Bx
+[("state", "s1"), ("code", "4/0Ab+x"), ("scope", "a b")]
+[("error", "access_denied"), ("state", "s1")]
+[]
+https://accounts.google.com/o/oauth2/v2/auth?response_type=code&client_id=id.apps.googleusercontent.com&redirect_uri=http%3A%2F%2F127.0.0.1%3A50000&scope=https%3A%2F%2Fwww.googleapis.com%2Fauth%2Fcloud-platform%20openid&state=st&code_challenge=ch&code_challenge_method=S256&access_type=offline&prompt=consent
+Right ("ya29.a", (Just "1//r", 4599))
+Right ("ya29.b", (Just "1//r", 8599))
+Left "no access_token in {\"error\":\"invalid_grant\"}"
+{"access_token":"ya29.b","refresh_token":"1//r","expires_at":8599}
+Just ("ya29.b", (Just "1//r", 8599))

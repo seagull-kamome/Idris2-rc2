@@ -1,24 +1,29 @@
 module System.Posix.FileDesc
 
-import System.Errno
+import Control.Linear.LIO
+import System.Posix.Errno
+
 
 %default total
 
 
 -------------------------------------------------------------------------------
 --
+
+
 ||| A wrapped POSIX file descriptor.
 public export
 record FileDesc where
   constructor MkFileDesc
   rawfd : Bits32
 
+
 ||| Convert a raw file descriptor to a `FileDesc`, returning `Nothing` on error.
 public export
-primFdToFileDesc : Int32 -> IO (Maybe FileDesc)
+primFdToFileDesc : Int32 -> IO (Either Errno FileDesc)
 primFdToFileDesc fd = if fd < 0
-    then pure Nothing
-    else pure $ Just $ MkFileDesc $ cast fd
+    then pure $ Left !(errno)
+    else pure $ Right $ MkFileDesc (cast fd)
 
 
 %inline %foreign "CExpr:close($1),libc,unistd.h"

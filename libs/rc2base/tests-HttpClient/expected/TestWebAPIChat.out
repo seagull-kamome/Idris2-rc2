@@ -1,0 +1,4 @@
+Just "echo: ping (model llama-3, max_tokens 64)"
+Left HttpStatus 401 invalid api key
+Left HttpStatus 401 invalid api key
+TransportError

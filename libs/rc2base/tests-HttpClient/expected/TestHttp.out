@@ -1,0 +1,5 @@
+CURLcode 0
+Right 200
+Just ("Content-Length", "11")
+Nothing
+["Server", "Date", "Content-type", "Content-Length", "Last-Modified"]
