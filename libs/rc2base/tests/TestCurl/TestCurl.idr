@@ -27,10 +27,28 @@ import Network.HTTP.Client.Curl.Types
 import Network.HTTP.Server
 import Network.Socket.Data
 
+import System.Concurrency
 import System.Concurrency.RC2
 
 testPort : Port
 testPort = 18724
+
+napMs : Int -> IO ()
+napMs ms = do
+    m <- makeMutex
+    c <- makeCondition
+    mutexAcquire m
+    conditionWaitTimeout c m (ms * 1000)
+    mutexRelease m
+
+-- The server runs in a forked thread: wait until it accepts connections.
+partial
+waitServer : String -> Nat -> IO ()
+waitServer base Z = putStrLn "server did not start"
+waitServer base (S k) = do
+    Right _ <- fetch (get (base ++ "/hello.txt"))
+        | Left _ => napMs 20 >> waitServer base k
+    pure ()
 
 section : String -> IO ()
 section s = putStrLn ("--- " ++ s ++ " ---")
@@ -237,6 +255,7 @@ main = do
     testCaptureText path
     srv <- forkJoin {a = ()} $ serve {bindAddr = IPv4Addr 127 0 0 1} testPort handler
     let base = "http://127.0.0.1:" ++ show testPort
+    waitServer base 100
     testHttp base
     testFetch base
     section "stop"
