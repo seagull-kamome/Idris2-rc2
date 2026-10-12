@@ -1,12 +1,12 @@
-module Network.WebAPI.Auth.OAuth2
+module Network.HTTP.Client.WebAPI.Auth.OAuth2
 
 -- Copyright 2026, Hattori,Hiroki. All rights reserved.
 -- This module was licensed by BSD3.
 
 -- OAuth 2.0 for a command-line program: authorization code with PKCE
 -- (RFC 7636) and a loopback redirect (RFC 8252), token refresh, and a
--- token file. See doc/webapi-getting-started.md for setting up a
--- Google client, and doc/webapi.md for why this flow.
+-- token file. See doc/http-client.md for setting up a
+-- Google client, and doc/http-client.md for why this flow.
 
 import Data.Buffer
 import Data.List
@@ -19,9 +19,9 @@ import System.File.Buffer
 import System.FFI
 
 import Network.Socket
-import Network.Curl.Fetch
-import Network.WebAPI.JSON
-import Network.WebAPI.Auth.PKCE
+import Network.HTTP.Client.Curl.Fetch
+import Network.HTTP.Client.WebAPI.JSON
+import Network.HTTP.Client.WebAPI.Auth.PKCE
 
 %default total
 
@@ -211,7 +211,7 @@ accessToken c path = do
 ------------------------------------------------------------------------
 
 -- `struct pollfd[2]`. A `Struct` from `malloc`, not a `Buffer`: see
--- doc/ffi-without-shims.md, section 2.
+-- doc/http-client.md.
 PollFds : Type
 PollFds = Struct "idris2webapi_pollfd2"
     [ ("fd0", Int32), ("events0", Bits16), ("revents0", Bits16)

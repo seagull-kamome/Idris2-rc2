@@ -1,6 +1,5 @@
 module System.Posix.FileDesc
 
-import Control.Linear.LIO
 import System.Posix.Errno
 
 

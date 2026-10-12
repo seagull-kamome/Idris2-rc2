@@ -14,6 +14,7 @@ import System.Directory
 import System.File
 import System.FFI
 import System.FFI.C.Ptr
+import System.Posix.Errno
 import System.Posix.File
 import System.Posix.Uio
 
@@ -29,8 +30,8 @@ dump p n = traverse (unsafePtrFetch p) [0 .. n - 1]
 main : IO ()
 main = do
   _ <- removeFile path
-  Just fd <- openFile path (2 .|. O_CREAT .|. O_TRUNC) 420
-    | Nothing => putStrLn "open failed"
+  Right fd <- openFile path (2 .|. O_CREAT .|. O_TRUNC) 420
+    | Left e => putStrLn ("open failed: " ++ show e)
   a <- malloc 4
   b <- malloc 3
   let pa : Ptr Bits8 = prim__castPtr a

@@ -1,4 +1,4 @@
-module Network.WebAPI.JSON
+module Network.HTTP.Client.WebAPI.JSON
 
 -- Copyright 2026, Hattori,Hiroki. All rights reserved.
 -- This module was licensed by BSD3.

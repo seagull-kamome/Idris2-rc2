@@ -1,0 +1,60 @@
+--- url ---
+Just "a%20b%2Fc%3Fd"
+Just "a b/c?d"
+True
+Just "https"
+Just "user"
+Nothing
+Just "example.com"
+Just "8080"
+Just "/p/q"
+Just "x=1"
+Just "frag"
+Just "https://user@example.com:8080/p/q?x=1#frag"
+Bad IPv6 address
+Could not resolve hostname
+Invalid multi handle
+Unknown share option
+--- version ---
+True
+True
+True
+True
+Just True
+--- getinfo ---
+hello curl
+CURLcode 0
+Right 0
+Right True
+Right 11
+Right True
+Right (-1)
+[]
+Left CURLcode 48
+["one", "two"]
+--- multi ---
+CURLMcode 0
+CURLMcode 0
+(2, (True, True))
+CURLMcode 0
+--- capture ---
+Just (CURLcode 0, "hello curl\n")
+CURLcode 0
+[104, 101, 108, 108, 111, 32, 99, 117, 114, 108, 10]
+Just (CURLcode 37, "")
+--- capture text ---
+CURLcode 0
+"hello curl\n"
+--- http ---
+CURLcode 0
+Right 200
+Just ("Content-Length", "11")
+Nothing
+(True, True)
+--- fetch ---
+(200, "hello curl\n")
+[104, 101, 108, 108, 111, 32, 99, 117, 114, 108, 10]
+Right "hello curl\n"
+Left HttpError 404
+--- stop ---
+Right "bye"

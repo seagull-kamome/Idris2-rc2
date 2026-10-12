@@ -13,6 +13,7 @@ import Data.List
 import Data.String
 import System.Directory
 import System.File
+import System.Posix.Errno
 import System.Posix.Directory
 import System.Posix.File
 
@@ -40,13 +41,13 @@ main = do
   _ <- removeDir dir
   Right () <- createDir dir
     | Left _ => putStrLn "createDir failed"
-  Just fd <- creat (dir ++ "/a") 420
-    | Nothing => putStrLn "creat failed"
+  Right fd <- creat (dir ++ "/a") 420
+    | Left e => putStrLn ("creat failed: " ++ show e)
   _ <- close fd
   Right () <- createDir (dir ++ "/sub")
     | Left _ => putStrLn "createDir sub failed"
-  Just f2 <- creat (dir ++ "/b") 420
-    | Nothing => putStrLn "creat b failed"
+  Right f2 <- creat (dir ++ "/b") 420
+    | Left e => putStrLn ("creat b failed: " ++ show e)
   _ <- close f2
   _ <- primIO (prim__symlink "a" (dir ++ "/link"))
   rd <- opendir dir
@@ -62,8 +63,8 @@ main = do
   seekdir d pos
   rewinddir d
   closedir d >>= \r => putStrLn ("closedir: " ++ show r)
-  Just dfd <- openFile dir 0 0
-    | Nothing => putStrLn "open dir failed"
+  Right dfd <- openFile dir 0 0
+    | Left e => putStrLn ("open dir failed: " ++ show e)
   d2 <- fdopendir dfd
   closedir d2 >>= \r => putStrLn ("closedir fdopendir: " ++ show r)
   -- chdir into the scratch directory and back with fchdir
@@ -73,8 +74,8 @@ main = do
   Just cwd1 <- getcwd
     | Nothing => putStrLn "getcwd failed"
   putStrLn ("getcwd in scratch: " ++ show (isSuffixOf dir cwd1))
-  Just back <- openFile cwd0 0 0
-    | Nothing => putStrLn "open cwd failed"
+  Right back <- openFile cwd0 0 0
+    | Left e => putStrLn ("open cwd failed: " ++ show e)
   fchdir (MkDirDesc back.rawfd) >>= \r => putStrLn ("fchdir: " ++ show r)
   Just cwd2 <- getcwd
     | Nothing => putStrLn "getcwd failed"

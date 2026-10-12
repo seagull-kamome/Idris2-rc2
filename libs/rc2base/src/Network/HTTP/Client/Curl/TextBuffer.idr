@@ -1,17 +1,16 @@
-module Network.Curl.TextBuffer
+module Network.HTTP.Client.Curl.TextBuffer
 
 -- Copyright 2026, Hattori,Hiroki. All rights reserved.
 -- This module was licensed by BSD3.
 
--- Body capture into rc2base's `Data.TextBuffer`, an rc2 runtime type,
--- so this lives in the separate `curl-rc2` package rather than in
--- `curl` (doc/memstream-capture.md).
+-- Body capture into rc2base's `Data.TextBuffer`, an rc2 runtime type, so
+-- this module is rc2-only (doc/http-client.md).
 
 import Data.So
 import Data.TextBuffer
 
-import Network.Curl.Raw
-import Network.Curl.Types
+import Network.HTTP.Client.Curl.Raw
+import Network.HTTP.Client.Curl.Types
 
 ||| Same as `curlEasyPerformToBuffer`, decoding the body straight from
 ||| the captured bytes into a `TextBuffer` (one copy).

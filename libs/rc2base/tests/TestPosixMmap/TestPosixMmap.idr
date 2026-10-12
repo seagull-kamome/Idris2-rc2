@@ -13,6 +13,7 @@ import System.Directory
 import System.File
 import System.FFI
 import System.FFI.C.Ptr
+import System.Posix.Errno
 import System.Posix.File
 import System.Posix.Mmap
 
@@ -58,8 +59,8 @@ main = do
   _ <- removeFile path
   Right () <- writeFile path "mapped file"
     | Left _ => putStrLn "writeFile failed"
-  Just fd <- openFile path 0 0
-    | Nothing => putStrLn "open failed"
+  Right fd <- openFile path 0 0
+    | Left e => putStrLn ("open failed: " ++ show e)
   Just q <- mmap nullPtr 11 PROT_READ MAP_PRIVATE fd 0
     | Nothing => putStrLn "file mmap failed"
   let fb : Ptr Bits8 = prim__castPtr q

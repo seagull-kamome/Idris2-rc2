@@ -79,7 +79,13 @@ TESTS=(
     "TestPosixDirectory||System.Posix.Directory: opendir, chdir, getcwd, DT_* constants"
     "TestPosixMmap||System.Posix.Mmap: PROT_/MAP_ constants, anonymous and file mappings"
     "TestPosixUio||System.Posix.Uio: writev/readv, pread/pwrite"
+    "TestCurl|network contrib|Network.HTTP.Client.Curl: libcurl bindings, local file:// and HTTP transfers"
 )
+
+# Tests that need libcurl's headers (curl/curl.h); skipped, loudly, when
+# the C compiler cannot find them.
+NEEDS_CURL=" TestCurl "
+have_curl_h() { echo '#include <curl/curl.h>' | gcc -E -x c - > /dev/null 2>&1; }
 
 echo "=== Check TESTS against the tests/*/ directories ==="
 # Every tests/<T>/ must be listed and have <T>.idr + <T>.expected, and
@@ -128,6 +134,10 @@ echo "=== Check postinstall copied the native library into lib/ ==="
 # from env.sh's own LD_LIBRARY_PATH, sourced above.
 for entry in "${TESTS[@]}"; do
     IFS='|' read -r t extra desc <<< "$entry"
+    if [[ "$NEEDS_CURL" == *" $t "* ]] && ! have_curl_h; then
+        echo "SKIP  $t -- curl/curl.h not found by gcc (install libcurl's development files)"
+        continue
+    fi
     pflags=(-p rc2base)
     for p in $extra; do pflags+=(-p "$p"); done
 

@@ -1,4 +1,4 @@
-module Network.WebAPI.Auth.PKCE
+module Network.HTTP.Client.WebAPI.Auth.PKCE
 
 -- Copyright 2026, Hattori,Hiroki. All rights reserved.
 -- This module was licensed by BSD3.
