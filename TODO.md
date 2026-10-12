@@ -1136,3 +1136,32 @@ DualABI")で、idris2-lspの「同名の未claim `con`が隣にあるdead offer�
 - 「`Reuse`が走った時点ではconがまだ無かった」箇所(最大69箇所)は未対応。
 - 監査の訂正: クラスAの真の数は1,056(1,542ではない)。旧クラスEはスクリプトの
   アーティファクトで実在しない。クラスDは359(うち332が本件の履歴)。
+
+## ユーザ向けマニュアルの整備
+```
+doc/manual/
+  00.getting-started.md
+    - changes to upstream.
+    - limitations.
+  01.how-to-use-compiler.md
+  02.directives.md
+  03.C-struct.md
+  04.two-different-type-of-FFI.md
+```
+
+
+
+## idirs2-curlを取り込んだので後処理
+### テストが通るか確認
+### サンプルが動くか確認
+### ドキュメントを更新
+### Fetchインターフェースは Network.HTTP.Clientに定義
+### TagSoupの実装
+　もっとモダンなスクレイピングツールがあればいいのだが。HTML相手に正規表現では大げさ過ぎる。
+
+## AI Agent作成用のライブラリを整備
+
+## INK風のReact的に使えるTUIライブラリを追加
+
+
+
