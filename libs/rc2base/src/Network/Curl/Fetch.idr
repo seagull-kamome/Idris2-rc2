@@ -20,6 +20,16 @@ import Network.Curl.Types
 public export
 data Method = GET | POST | PUT | PATCH | DELETE | HEAD | OTHER String
 
+public export methodName : Method -> String
+methodName GET       = "GET"
+methodName POST      = "POST"
+methodName PUT       = "PUT"
+methodName PATCH     = "PATCH"
+methodName DELETE    = "DELETE"
+methodName HEAD      = "HEAD"
+methodName (OTHER m) = m
+
+
 ||| Build with `get`/`post`/`request`, then adjust fields with record
 ||| update, e.g. `{ headers := [("Accept", "application/json")] } (get url)`.
 public export
@@ -78,15 +88,6 @@ post url body = request POST url {headers} {body=Just body}
 ------------------------------------------------------------------------
 -- Internal helpers
 ------------------------------------------------------------------------
-
-methodName : Method -> String
-methodName GET       = "GET"
-methodName POST      = "POST"
-methodName PUT       = "PUT"
-methodName PATCH     = "PATCH"
-methodName DELETE    = "DELETE"
-methodName HEAD      = "HEAD"
-methodName (OTHER m) = m
 
 buildHeaderList : HasIO io => List (String, String) -> io AnyPtr
 buildHeaderList []              = pure curlSlistEmpty
