@@ -1,0 +1,2 @@
+Error: [rc2] %export declaration bad_export_list (Main.sumAll)'s own argument(s) [0] own type isn't a type %export supports -- %export supports scalar (Int/Int8/Int16/Int32/Int64/Bits8/Bits16/Bits32/Bits64/Double/Char), Ptr, GCPtr, Integer, String, or struct (Struct) arguments
+

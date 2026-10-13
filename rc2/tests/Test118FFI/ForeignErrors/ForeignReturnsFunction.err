@@ -1,0 +1,2 @@
+Error: [rc2] %foreign declaration Main.prim__makeAdder's own return type is a function (CFFun) -- returning a closure from a %foreign declaration isn't supported
+

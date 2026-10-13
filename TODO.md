@@ -729,7 +729,7 @@ catch-all」(扱える型への事前変換と、非対応の`%foreign`を呼ば
 ## コンパイル時間: リファクタリング案(調査 2026-09-29)
 
 idris2-lsp を`--timing 3`で`--cg rc2`ビルドしたログ(C生成は既知の
-`FFI not found for ...unsafeVectorToList`で止まるので、その手前まで)
+`%foreign declaration ...unsafeVectorToList has no implementation rc2 can call`で止まるので、その手前まで)
 から。時間の大きい順に Early inline 6.66s、Late inline 4.71s、
 RC annotate+Reuse+ConAltNative 3.03s、DualABI 3.02s、Inline 1.54s、
 ConstFold 1.32s。

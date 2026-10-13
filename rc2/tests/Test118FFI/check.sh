@@ -79,24 +79,27 @@ else
     fail "Integer result forms: mpz_add $add, mpz_pow_ui inline $inl, mpz_set_si $set1, repeated \$r $rep, doubled out-parameter $bad in $c"
 fi
 
-# Compile-time errors: each program in CExprErrors/ must fail with the
-# message in its .err file, produce no executable and not crash the
-# compiler.
+# Compile-time errors: each program in CExprErrors/ (the `CExpr:` option
+# parser) and ForeignErrors/ (other user-facing rc2 errors: a %foreign
+# with no implementation or returning a function, a getField on an unknown
+# struct, unsupported %export types) must fail with the message in its .err
+# file, produce no executable and not crash the compiler.
 rc2c="$here/../../build/exec/idris2-rc2"
-scratch="$TMP/${name}_cexprerrors"
-for src in "$here"/CExprErrors/*.idr; do
+scratch="$TMP/${name}_errors"
+for src in "$here"/CExprErrors/*.idr "$here"/ForeignErrors/*.idr; do
     case="$(basename "$src" .idr)"
+    rel="$(basename "$(dirname "$src")")/$case"
     rm -rf "$scratch/$case"
     actual="$(cd "$here/.." && "$rc2c" --cg rc2 --build-dir "$scratch/$case/b" \
                   --output-dir "$scratch/$case/o" "$src" -o cexpr_err_bin 2>&1)"
     bin="$(find "$scratch/$case" -name cexpr_err_bin -type f 2>/dev/null | head -1)"
     if [ -n "$bin" ]; then
-        fail "CExprErrors/$case: compiled although it must be rejected"
+        fail "$rel: compiled although it must be rejected"
     elif printf '%s\n' "$actual" | grep -q 'INTERNAL\|InternalError\|Uncaught'; then
-        fail "CExprErrors/$case: internal compiler error: $actual"
+        fail "$rel: internal compiler error: $actual"
     elif [ "$actual" = "$(cat "${src%.idr}.err")" ]; then
-        pass "CExprErrors/$case: rejected with the expected message"
+        pass "$rel: rejected with the expected message"
     else
-        fail "CExprErrors/$case: message differs from ${case}.err: $actual"
+        fail "$rel: message differs from ${case}.err: $actual"
     fi
 done

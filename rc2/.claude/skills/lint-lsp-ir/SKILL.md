@@ -34,9 +34,10 @@ cd "$W/lsp"
 ```
 
 - **`exit 1` is expected.** The build stops after the dump with
-  `INTERNAL ERROR: [rc2] FFI not found for
-  Libraries_Utils_Scheme_unsafeVectorToList` (a known upstream gap, not
-  a regression). What matters is that `build/exec/idris2-lsp.rcexpr`
+  `Error: [rc2] %foreign declaration
+  Libraries.Utils.Scheme.unsafeVectorToList has no implementation rc2
+  can call` (a known upstream gap, not a regression; before 2026-10-14
+  it read `INTERNAL ERROR: [rc2] FFI not found for ...`). What matters is that `build/exec/idris2-lsp.rcexpr`
   (about 44 MB, about 660,000 lines) exists. Any *other* error in
   `dump.log` is a real failure.
 - Start it with `run_in_background` and wait on the completion notice or

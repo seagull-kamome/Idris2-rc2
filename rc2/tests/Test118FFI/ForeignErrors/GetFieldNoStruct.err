@@ -1,0 +1,2 @@
+Error: [rc2] struct ghost is used by getField/setField but appears in no %foreign signature
+
