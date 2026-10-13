@@ -27,11 +27,30 @@ fill p v n = for_ [0 .. n - 1] $ \i => unsafePtrStore p i (v + cast i)
 dump : Ptr Bits8 -> Int32 -> IO (List Bits8)
 dump p n = traverse (unsafePtrFetch p) [0 .. n - 1]
 
-main : IO ()
-main = do
+-----------------------------------------------------------------------------
+-- Setup and teardown (System.File, not under test)
+-----------------------------------------------------------------------------
+
+||| Remove a leftover scratch file.
+setup : IO ()
+setup = do
   _ <- removeFile path
-  Right fd <- openFile path (2 .|. O_CREAT .|. O_TRUNC) 420
-    | Left e => putStrLn ("open failed: " ++ show e)
+  pure ()
+
+||| Close the scratch file and remove it.
+teardown : FileDesc -> IO ()
+teardown fd = do
+  _ <- close fd
+  _ <- removeFile path
+  pure ()
+
+-----------------------------------------------------------------------------
+-- Test (System.Posix.Uio under test)
+-----------------------------------------------------------------------------
+
+||| writev, pread/pwrite (AnyPtr and Buffer), readv, on the scratch file `fd`.
+testVectorIO : FileDesc -> IO ()
+testVectorIO fd = do
   a <- malloc 4
   b <- malloc 3
   let pa : Ptr Bits8 = prim__castPtr a
@@ -62,9 +81,19 @@ main = do
   dump (prim__castPtr e) 3 >>= \l => putStrLn ("  " ++ show l)
   putStrLn ("sizeof iovec: " ++ show SizeOfIOVec)
   for_ [a, b, c, d, e] free
-  _ <- close fd
-  _ <- removeFile path
-  putStrLn "done"
  where
   seekStart : FileDesc -> IO Int64
   seekStart fd = lseek fd (cast (the Int64 0)) SEEK_SET
+
+-----------------------------------------------------------------------------
+-- main
+-----------------------------------------------------------------------------
+
+main : IO ()
+main = do
+  setup
+  Right fd <- openFile path (2 .|. O_CREAT .|. O_TRUNC) 420
+    | Left e => putStrLn ("open failed: " ++ show e)
+  testVectorIO fd
+  teardown fd
+  putStrLn "done"

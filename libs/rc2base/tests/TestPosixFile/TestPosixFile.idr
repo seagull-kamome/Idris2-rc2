@@ -21,7 +21,6 @@ import System.File
 import System.FFI
 import System.Posix.Errno
 import System.Posix.File
-
 dir : String
 dir = "TestPosixFile.scratch"
 
@@ -34,8 +33,33 @@ flag n v = putStrLn (n ++ "=" ++ show v)
 check : String -> Bool -> IO ()
 check n ok = putStrLn (n ++ ": " ++ (if ok then "ok" else "FAILED"))
 
-main : IO ()
-main = do
+-----------------------------------------------------------------------------
+-- Setup and teardown (System.Directory/System.File, not under test)
+-----------------------------------------------------------------------------
+
+||| Start from an empty scratch directory.
+setup : IO ()
+setup = do
+  _ <- removeFile path
+  _ <- removeDir dir
+  Right () <- createDir dir
+    | Left _ => putStrLn "createDir failed"
+  pure ()
+
+||| Remove the scratch directory.
+teardown : IO ()
+teardown = do
+  _ <- removeFile path
+  _ <- removeDir dir
+  pure ()
+
+-----------------------------------------------------------------------------
+-- Tests (System.Posix.File under test)
+-----------------------------------------------------------------------------
+
+||| The O_* / AT_* constants.
+testFlags : IO ()
+testFlags = do
   flag "O_APPEND" O_APPEND
   flag "O_ASYNC" O_ASYNC
   flag "O_CLOEXEC" O_CLOEXEC
@@ -49,12 +73,10 @@ main = do
   flag "O_SYNC" O_SYNC
   flag "O_TRUNC" O_TRUNC
   flag "AT_SYMLINK_NOFOLLOW" AT_SYMLINK_NOFOLLOW
-  -- scratch directory
-  _ <- removeFile path
-  _ <- removeDir dir
-  Right () <- createDir dir
-    | Left _ => putStrLn "createDir failed"
-  -- creat / String.write / fsync / fdatasync / lseek / close
+
+||| creat / String.write / fsync / fdatasync / sync / lseek / close.
+testCreateAndSeek : IO ()
+testCreateAndSeek = do
   Right fd <- creat path 420
     | Left e => putStrLn ("creat failed: " ++ show e)
   n <- String.write fd "hello world\n"
@@ -66,7 +88,10 @@ main = do
   lseek fd (cast 3) SEEK_SET >>= \r => putStrLn ("SEEK_SET: " ++ show r)
   lseek fd (cast (-2)) SEEK_END >>= \r => putStrLn ("SEEK_END: " ++ show r)
   close fd >>= \r => putStrLn ("close: " ++ show r)
-  -- open / AnyPtr.read / Buffer.read
+
+||| openFile / Buffer.read / AnyPtr.read / dup / dup2.
+testReadAndDup : IO ()
+testReadAndDup = do
   Right rfd <- openFile path 0 0
     | Left e => putStrLn ("open failed: " ++ show e)
   Just buf <- newBuffer 12
@@ -87,7 +112,10 @@ main = do
     | Left e => putStrLn ("dup2 failed: " ++ show e)
   putStrLn ("dup2: " ++ show d2.rawfd)
   for_ [d1, d2, rfd] $ \f => close f
-  -- read/write open: Buffer.write, AnyPtr.write, pread/pwrite, locks, mode
+
+||| Read/write open: Buffer.write, flock, lockf, fchmod, fchown, fallocate.
+testWriteAndLocks : IO ()
+testWriteAndLocks = do
   Right wfd <- openFile path (2 .|. O_APPEND) 0
     | Left e => putStrLn ("open rw failed: " ++ show e)
   Just wbuf <- newBuffer 3
@@ -108,7 +136,10 @@ main = do
   fchown wfd 4294967295 4294967295 >>= \r => putStrLn ("fchown: " ++ show r)
   fallocate wfd (cast 0) (cast 4096) >>= \r => putStrLn ("fallocate: " ++ show r)
   close wfd >>= \r => putStrLn ("close: " ++ show r)
-  -- path based chmod/chown, *at variants relative to a directory descriptor
+
+||| Path based chmod/chown/lchown and the *at variants relative to a directory descriptor.
+testPathBased : IO ()
+testPathBased = do
   chmod path 420 >>= \r => putStrLn ("chmod: " ++ show r)
   chown path 4294967295 4294967295 >>= \r => putStrLn ("chown: " ++ show r)
   lchown path 4294967295 4294967295 >>= \r => putStrLn ("lchown: " ++ show r)
@@ -121,13 +152,28 @@ main = do
     | Left e => putStrLn ("openat failed: " ++ show e)
   close afd >>= \r => putStrLn ("openat+close: " ++ show r)
   close dfd >>= \r => putStrLn ("close dir: " ++ show r)
-  -- a failing open: Left errno, errno == ENOENT
+
+||| A failing open: Left errno, errno == ENOENT.
+testMissingFile : IO ()
+testMissingFile = do
   Left e <- openFile (dir ++ "/missing/file") 0 0
     | Right _ => putStrLn "open of a missing file succeeded"
   putStrLn ("errno: " ++ show (e == ENOENT))
-  -- clean up
-  _ <- removeFile path
-  _ <- removeDir dir
+
+-----------------------------------------------------------------------------
+-- main
+-----------------------------------------------------------------------------
+
+main : IO ()
+main = do
+  testFlags
+  setup
+  testCreateAndSeek
+  testReadAndDup
+  testWriteAndLocks
+  testPathBased
+  testMissingFile
+  teardown
   putStrLn "done"
   ignore $ fflush stdout
   perror "perror-test"

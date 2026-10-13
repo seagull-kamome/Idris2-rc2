@@ -23,17 +23,13 @@ prim__symlink : String -> String -> PrimIO Int32
 dir : String
 dir = "TestPosixDirectory.scratch"
 
-main : IO ()
-main = do
-  putStrLn ("DT_BLK=" ++ show DT_BLK)
-  putStrLn ("DT_CHR=" ++ show DT_CHR)
-  putStrLn ("DT_DIR=" ++ show DT_DIR)
-  putStrLn ("DT_FIFO=" ++ show DT_FIFO)
-  putStrLn ("DT_LINK=" ++ show DT_LINK)
-  putStrLn ("DT_REG=" ++ show DT_REG)
-  putStrLn ("DT_SOCK=" ++ show DT_SOCK)
-  putStrLn ("DT_UNKNOWN=" ++ show DT_UNKNOWN)
-  putStrLn ("PATH_MAX=" ++ show PATH_MAX)
+-----------------------------------------------------------------------------
+-- Setup and teardown (System.Directory/System.File and creat, not under test)
+-----------------------------------------------------------------------------
+
+||| Start from an empty scratch directory holding files a, b, a directory sub and a symlink link.
+setup : IO ()
+setup = do
   _ <- removeFile (dir ++ "/a")
   _ <- removeFile (dir ++ "/b")
   _ <- removeFile (dir ++ "/link")
@@ -50,11 +46,47 @@ main = do
     | Left e => putStrLn ("creat b failed: " ++ show e)
   _ <- close f2
   _ <- primIO (prim__symlink "a" (dir ++ "/link"))
+  pure ()
+
+||| Remove everything setup made.
+teardown : IO ()
+teardown = do
+  _ <- removeFile (dir ++ "/a")
+  _ <- removeFile (dir ++ "/b")
+  _ <- removeFile (dir ++ "/link")
+  _ <- removeDir (dir ++ "/sub")
+  _ <- removeDir dir
+  pure ()
+
+-----------------------------------------------------------------------------
+-- Tests (System.Posix.Directory under test)
+-----------------------------------------------------------------------------
+
+||| The DT_* constants and PATH_MAX.
+testConstants : IO ()
+testConstants = do
+  putStrLn ("DT_BLK=" ++ show DT_BLK)
+  putStrLn ("DT_CHR=" ++ show DT_CHR)
+  putStrLn ("DT_DIR=" ++ show DT_DIR)
+  putStrLn ("DT_FIFO=" ++ show DT_FIFO)
+  putStrLn ("DT_LINK=" ++ show DT_LINK)
+  putStrLn ("DT_REG=" ++ show DT_REG)
+  putStrLn ("DT_SOCK=" ++ show DT_SOCK)
+  putStrLn ("DT_UNKNOWN=" ++ show DT_UNKNOWN)
+  putStrLn ("PATH_MAX=" ++ show PATH_MAX)
+
+||| opendir / readDirEntries / closedir.
+testListing : IO ()
+testListing = do
   rd <- opendir dir
   es <- readDirEntries rd
   _ <- closedir rd
   for_ (sortBy (\x, y => compare x.name y.name) es) $ \e =>
     putStrLn ("entry " ++ e.name ++ " " ++ show e.type ++ " " ++ show (e.ino > 0))
+
+||| dirfd / telldir / seekdir / rewinddir / closedir / fdopendir.
+testDirfd : IO ()
+testDirfd = do
   d <- opendir dir
   Just dd <- dirfd d
     | Nothing => putStrLn "dirfd failed"
@@ -67,7 +99,10 @@ main = do
     | Left e => putStrLn ("open dir failed: " ++ show e)
   d2 <- fdopendir dfd
   closedir d2 >>= \r => putStrLn ("closedir fdopendir: " ++ show r)
-  -- chdir into the scratch directory and back with fchdir
+
+||| chdir into the scratch directory and back with fchdir; chroot and chdir on a missing path.
+testChdir : IO ()
+testChdir = do
   Just cwd0 <- getcwd
     | Nothing => putStrLn "getcwd failed"
   chdir dir >>= \r => putStrLn ("chdir: " ++ show r)
@@ -83,9 +118,17 @@ main = do
   _ <- close back
   chroot (dir ++ "/missing") >>= \r => putStrLn ("chroot missing: " ++ show r)
   chdir (dir ++ "/missing") >>= \r => putStrLn ("chdir missing: " ++ show r)
-  _ <- removeFile (dir ++ "/a")
-  _ <- removeFile (dir ++ "/b")
-  _ <- removeFile (dir ++ "/link")
-  _ <- removeDir (dir ++ "/sub")
-  _ <- removeDir dir
+
+-----------------------------------------------------------------------------
+-- main
+-----------------------------------------------------------------------------
+
+main : IO ()
+main = do
+  testConstants
+  setup
+  testListing
+  testDirfd
+  testChdir
+  teardown
   putStrLn "done"
