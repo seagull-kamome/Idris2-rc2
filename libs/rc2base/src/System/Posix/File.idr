@@ -1,3 +1,19 @@
+||| POSIX file operations: `open`/`creat`/`openat`, `dup*`, `lseek`, reads,
+||| writes, locks and the `O_*` flags.
+|||
+||| Build flags: a few declarations here (and `preadv2`/`pwritev2` in
+||| `System.Posix.Uio`) are Linux extensions that glibc only declares under
+||| `_GNU_SOURCE`: `O_DIRECT`, `O_LARGEFILE`, `O_NOATIME`, `O_PATH`,
+||| `O_TMPFILE`, `AT_EMPTY_PATH`, `SEEK_DATA`, `SEEK_HOLE` and `dup3`.
+||| A program that uses one must be built with
+||| `IDRIS2_CFLAGS=-D_GNU_SOURCE` (or `CFLAGS=-D_GNU_SOURCE`) in the
+||| environment of the Idris compiler; otherwise the generated C does not
+||| compile. Each such declaration carries a one-line note pointing here.
+|||
+||| Portability: declarations that POSIX does not define say so in their
+||| doc comment, with the systems that have them ("Linux only", "Linux and
+||| BSD"). They are not guarded; using one on a system without it fails when
+||| the generated C is compiled.
 module System.Posix.File
 
 import Data.Buffer
@@ -14,6 +30,8 @@ import System.FFI
 %inline %foreign "CExpr:(O_APPEND),libc,fcntl.h;sys/stat.h;sys/types.h"
 export O_APPEND : Bits32
 ||| File open flag: send signal when file is ready for I/O.
+|||
+||| Linux and BSD, not in POSIX.
 %inline %foreign "CExpr:(O_ASYNC),libc,fcntl.h;sys/stat.h;sys/types.h"
 export O_ASYNC : Bits32
 ||| File open flag: close descriptor on exec.
@@ -24,8 +42,9 @@ export O_CLOEXEC : Bits32
 export O_CREAT : Bits32
 ||| File open flag: avoid cached data on the file.
 |||
-||| Needs `_GNU_SOURCE`: build the program with `IDRIS2_CFLAGS=-D_GNU_SOURCE` (or `CFLAGS=-D_GNU_SOURCE`)
-||| in the environment of the Idris compiler, otherwise the generated C does not compile.
+||| Needs `_GNU_SOURCE`; see "Build flags" in the `System.Posix.File` header.
+|||
+||| Linux and BSD, not in POSIX.
 %inline %foreign "CExpr:(O_DIRECT),libc,fcntl.h;sys/stat.h;sys/types.h"
 export O_DIRECT : Bits32
 ||| File open flag: require the path to be a directory.
@@ -39,14 +58,16 @@ export O_DSYNC : Bits32
 export O_EXCL : Bits32
 ||| File open flag: allow large files.
 |||
-||| Needs `_GNU_SOURCE`: build the program with `IDRIS2_CFLAGS=-D_GNU_SOURCE` (or `CFLAGS=-D_GNU_SOURCE`)
-||| in the environment of the Idris compiler, otherwise the generated C does not compile.
+||| Needs `_GNU_SOURCE`; see "Build flags" in the `System.Posix.File` header.
+|||
+||| Linux only. Has no effect on 64-bit builds.
 %inline %foreign "CExpr:(O_LARGEFILE),libc,fcntl.h;sys/stat.h;sys/types.h"
 export O_LARGEFILE : Bits32
 ||| File open flag: do not update access time.
 |||
-||| Needs `_GNU_SOURCE`: build the program with `IDRIS2_CFLAGS=-D_GNU_SOURCE` (or `CFLAGS=-D_GNU_SOURCE`)
-||| in the environment of the Idris compiler, otherwise the generated C does not compile.
+||| Needs `_GNU_SOURCE`; see "Build flags" in the `System.Posix.File` header.
+|||
+||| Linux only.
 %inline %foreign "CExpr:(O_NOATIME),libc,fcntl.h;sys/stat.h;sys/types.h"
 export O_NOATIME : Bits32
 ||| File open flag: do not assign controlling terminal.
@@ -60,8 +81,9 @@ export O_NOFOLLOW : Bits32
 export O_NONBLOCK : Bits32
 ||| File open flag: open the path as a file descriptor to the object itself.
 |||
-||| Needs `_GNU_SOURCE`: build the program with `IDRIS2_CFLAGS=-D_GNU_SOURCE` (or `CFLAGS=-D_GNU_SOURCE`)
-||| in the environment of the Idris compiler, otherwise the generated C does not compile.
+||| Needs `_GNU_SOURCE`; see "Build flags" in the `System.Posix.File` header.
+|||
+||| Linux only.
 %inline %foreign "CExpr:(O_PATH),libc,fcntl.h;sys/stat.h;sys/types.h"
 export O_PATH : Bits32
 ||| File open flag: synchronous file content writes.
@@ -69,8 +91,9 @@ export O_PATH : Bits32
 export O_SYNC : Bits32
 ||| File open flag: create a temporary unnamed file.
 |||
-||| Needs `_GNU_SOURCE`: build the program with `IDRIS2_CFLAGS=-D_GNU_SOURCE` (or `CFLAGS=-D_GNU_SOURCE`)
-||| in the environment of the Idris compiler, otherwise the generated C does not compile.
+||| Needs `_GNU_SOURCE`; see "Build flags" in the `System.Posix.File` header.
+|||
+||| Linux only.
 %inline %foreign "CExpr:(O_TMPFILE),libc,fcntl.h;sys/stat.h;sys/types.h"
 export O_TMPFILE : Bits32
 ||| File open flag: truncate the file on open.
@@ -82,8 +105,9 @@ export O_TRUNC : Bits32
 export AT_SYMLINK_NOFOLLOW : Bits32
 ||| Directory entry flag: open the empty path to the directory itself.
 |||
-||| Needs `_GNU_SOURCE`: build the program with `IDRIS2_CFLAGS=-D_GNU_SOURCE` (or `CFLAGS=-D_GNU_SOURCE`)
-||| in the environment of the Idris compiler, otherwise the generated C does not compile.
+||| Needs `_GNU_SOURCE`; see "Build flags" in the `System.Posix.File` header.
+|||
+||| Linux only.
 %inline %foreign "CExpr:(AT_EMPTY_PATH),libc,fcntl.h;sys/stat.h"
 export AT_EMPTY_PATH : Bits32
 
@@ -234,16 +258,18 @@ SEEK_END = MkSeekWhence prim__SEEK_END
 
 ||| Seek to the next data location after the current offset.
 |||
-||| Needs `_GNU_SOURCE`: build the program with `IDRIS2_CFLAGS=-D_GNU_SOURCE` (or `CFLAGS=-D_GNU_SOURCE`)
-||| in the environment of the Idris compiler, otherwise the generated C does not compile.
+||| Needs `_GNU_SOURCE`; see "Build flags" in the `System.Posix.File` header.
+|||
+||| Linux and BSD (from Solaris); added to POSIX only in POSIX.1-2024.
 public export
 SEEK_DATA : SeekWhence
 SEEK_DATA = MkSeekWhence prim__SEEK_DATA
 
 ||| Seek to the next hole after the current offset.
 |||
-||| Needs `_GNU_SOURCE`: build the program with `IDRIS2_CFLAGS=-D_GNU_SOURCE` (or `CFLAGS=-D_GNU_SOURCE`)
-||| in the environment of the Idris compiler, otherwise the generated C does not compile.
+||| Needs `_GNU_SOURCE`; see "Build flags" in the `System.Posix.File` header.
+|||
+||| Linux and BSD (from Solaris); added to POSIX only in POSIX.1-2024.
 public export
 SEEK_HOLE : SeekWhence
 SEEK_HOLE = MkSeekWhence prim__SEEK_HOLE
@@ -356,16 +382,22 @@ prim__flockExclude : Bits32 -> PrimIO Int32
 prim__funlock : Bits32 -> PrimIO Int32
 
 ||| Acquire a shared lock on a file descriptor.
+|||
+||| BSD-derived `flock(2)`, not in POSIX (`lockf` is the POSIX lock); available on Linux and BSD.
 %inline public export
 flockShared : FileDesc -> IO Int32
 flockShared fd = primIO $ prim__flockShared fd.rawfd
 
 ||| Acquire an exclusive lock on a file descriptor.
+|||
+||| BSD-derived `flock(2)`, not in POSIX (`lockf` is the POSIX lock); available on Linux and BSD.
 %inline public export
 flockExclude : FileDesc -> IO Int32
 flockExclude fd = primIO $ prim__flockExclude fd.rawfd
 
 ||| Release a file lock held by the current process.
+|||
+||| BSD-derived `flock(2)`, not in POSIX (`lockf` is the POSIX lock); available on Linux and BSD.
 %inline public export
 funlock : FileDesc -> IO Int32
 funlock fd = primIO $ prim__funlock fd.rawfd
@@ -415,10 +447,16 @@ prim__dup2 : Bits32 -> Bits32 -> PrimIO Int32
 %inline %foreign "CExpr:(dup3($1, $2, $3)),libc,fcntl.h;unistd.h"
 prim__dup3 : Bits32 -> Bits32 -> Bits32 -> PrimIO Int32
 
+||| Duplicate a file descriptor onto the lowest free number.
+|||
+||| See also: `dup(2)`.
 %inline public export
 dup : FileDesc -> IO (Either Errno FileDesc)
 dup fd = primIO (prim__dup fd.rawfd) >>= primFdToFileDesc
 
+||| Duplicate a file descriptor onto the given number, closing it first if open.
+|||
+||| See also: `dup(2)`; `dup3` for the Linux variant taking flags.
 %inline public export
 dup2 : FileDesc -> FileDesc -> IO (Either Errno FileDesc)
 dup2 oldfd newfd = primIO (prim__dup2 oldfd.rawfd newfd.rawfd) >>= primFdToFileDesc
@@ -426,8 +464,9 @@ dup2 oldfd newfd = primIO (prim__dup2 oldfd.rawfd newfd.rawfd) >>= primFdToFileD
 
 ||| `dup3`.
 |||
-||| Needs `_GNU_SOURCE`: build the program with `IDRIS2_CFLAGS=-D_GNU_SOURCE` (or `CFLAGS=-D_GNU_SOURCE`)
-||| in the environment of the Idris compiler, otherwise the generated C does not compile.
+||| Needs `_GNU_SOURCE`; see "Build flags" in the `System.Posix.File` header.
+|||
+||| Linux and BSD; added to POSIX only in POSIX.1-2024.
 %inline public export
 dup3 : FileDesc -> FileDesc -> Bits32 -> IO (Either Errno FileDesc)
 dup3 oldfd newfd flags =

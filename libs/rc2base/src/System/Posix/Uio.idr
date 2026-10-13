@@ -16,6 +16,7 @@ public export
 IOVec : Type
 IOVec = Struct "unistd_iovec" [("iov_base", AnyPtr), ("iov_len", Bits64)]
 
+||| `sizeof(struct iovec)`: the size of one `IOVec` entry.
 %inline %foreign "CExpr:(sizeof(struct iovec)),libc,sys/uio.h"
 export SizeOfIOVec : Bits64
 
@@ -23,20 +24,24 @@ export SizeOfIOVec : Bits64
 prim__readv : Bits32 -> IOVec -> Bits32 -> PrimIO Int64
 %inline %foreign "CExpr:(writev($1, (const struct iovec*)$2, $3)),libc,sys/uio.h"
 prim__writev : Bits32 -> IOVec -> Bits32 -> PrimIO Int64
+||| Linux and BSD, not in POSIX.
 %inline %foreign "CExpr:(preadv($1, (const struct iovec*)$2, $3, $4)),libc,sys/uio.h"
 prim__preadv : Bits32 -> IOVec -> Bits32 -> Bits64 -> PrimIO Int64
+||| Linux and BSD, not in POSIX.
 %inline %foreign "CExpr:(pwritev($1, (const struct iovec*)$2, $3, $4)),libc,sys/uio.h"
 prim__pwritev : Bits32 -> IOVec -> Bits32 -> Bits64 -> PrimIO Int64
 ||| `preadv2`.
 |||
-||| Needs `_GNU_SOURCE`: build the program with `IDRIS2_CFLAGS=-D_GNU_SOURCE` (or `CFLAGS=-D_GNU_SOURCE`)
-||| in the environment of the Idris compiler, otherwise the generated C does not compile.
+||| Needs `_GNU_SOURCE`; see "Build flags" in the `System.Posix.File` header.
+|||
+||| Linux only (kernel 4.6 and later).
 %inline %foreign "CExpr:(preadv2($1, (const struct iovec*)$2, $3, $4, $5)),libc,sys/uio.h"
 prim__preadv2 : Bits32 -> IOVec -> Bits32 -> Bits64 -> Bits32 -> PrimIO Int64
 ||| `pwritev2`.
 |||
-||| Needs `_GNU_SOURCE`: build the program with `IDRIS2_CFLAGS=-D_GNU_SOURCE` (or `CFLAGS=-D_GNU_SOURCE`)
-||| in the environment of the Idris compiler, otherwise the generated C does not compile.
+||| Needs `_GNU_SOURCE`; see "Build flags" in the `System.Posix.File` header.
+|||
+||| Linux only (kernel 4.6 and later).
 %inline %foreign "CExpr:(pwritev2($1, (const struct iovec*)$2, $3, $4, $5)),libc,sys/uio.h"
 prim__pwritev2 : Bits32 -> IOVec -> Bits32 -> Bits64 -> Bits32 -> PrimIO Int64
 

@@ -51,27 +51,43 @@ data DirEnt : Type where [external]
 
 
 ||| Directory entry type: block device.
+|||
+||| Linux and BSD, not in POSIX. Needs a filesystem that fills `d_type`; otherwise `DT_UNKNOWN`.
 %inline public export %foreign "CExpr:(DT_BLK),libc,sys/types.h;dirent.h"
 DT_BLK : Bits8
 ||| Directory entry type: character device.
+|||
+||| Linux and BSD, not in POSIX. Needs a filesystem that fills `d_type`; otherwise `DT_UNKNOWN`.
 %inline public export %foreign "CExpr:(DT_CHR),libc,sys/types.h;dirent.h"
 DT_CHR : Bits8
 ||| Directory entry type: directory.
+|||
+||| Linux and BSD, not in POSIX. Needs a filesystem that fills `d_type`; otherwise `DT_UNKNOWN`.
 %inline public export %foreign "CExpr:(DT_DIR),libc,sys/types.h;dirent.h"
 DT_DIR : Bits8
 ||| Directory entry type: FIFO.
+|||
+||| Linux and BSD, not in POSIX. Needs a filesystem that fills `d_type`; otherwise `DT_UNKNOWN`.
 %inline public export %foreign "CExpr:(DT_FIFO),libc,sys/types.h;dirent.h"
 DT_FIFO : Bits8
 ||| Directory entry type: symbolic link.
+|||
+||| Linux and BSD, not in POSIX. Needs a filesystem that fills `d_type`; otherwise `DT_UNKNOWN`.
 %inline public export %foreign "CExpr:(DT_LNK),libc,sys/types.h;dirent.h"
 DT_LINK : Bits8
 ||| Directory entry type: regular file.
+|||
+||| Linux and BSD, not in POSIX. Needs a filesystem that fills `d_type`; otherwise `DT_UNKNOWN`.
 %inline public export %foreign "CExpr:(DT_REG),libc,sys/types.h;dirent.h"
 DT_REG : Bits8
 ||| Directory entry type: socket.
+|||
+||| Linux and BSD, not in POSIX. Needs a filesystem that fills `d_type`; otherwise `DT_UNKNOWN`.
 %inline public export %foreign "CExpr:(DT_SOCK),libc,sys/types.h;dirent.h"
 DT_SOCK : Bits8
 ||| Directory entry type: unknown.
+|||
+||| Linux and BSD, not in POSIX. Needs a filesystem that fills `d_type`; otherwise `DT_UNKNOWN`.
 %inline public export %foreign "CExpr:(DT_UNKNOWN),libc,sys/types.h;dirent.h"
 DT_UNKNOWN : Bits8
 
@@ -168,6 +184,8 @@ fchdir fd = primIO $ prim__fchdir fd.rawdirfd
 
 -------------------------------------------------------------------------------
 -- 
+||| Maximum length of a path name including the terminating NUL.
+||| POSIX allows a system to leave it undefined; see `pathconf(3)`.
 %inline %foreign "CExpr:(PATH_MAX),libc,limits.h"
 export PATH_MAX : Bits32
 
@@ -188,6 +206,8 @@ getcwd = primIO prim__getcwd >>= ptrToStringFree
 prim__chroot : String -> PrimIO Int32
 
 ||| Change the process root directory.
+|||
+||| Not in POSIX (removed from the Single UNIX Specification); Linux and BSD. Needs root.
 public export chroot : String -> IO Int32
 chroot path = primIO $ prim__chroot path
 

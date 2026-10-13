@@ -60,7 +60,10 @@ not compile when the declaration is used.
 | `Network.RC2` | binary-safe offset+length socket IO into/out of a `Data.Buffer` |
 | `Network.URL` | URL parse/build and percent-encoding -- see below |
 | `Network.HTTP.Route`/`Router` | type-safe route table on top of `Network.HTTP.Server` -- see below |
+| `Network.HTTP.Client.Curl.*` | libcurl bindings (`Raw`, `Types`), a `fetch()`-shaped `Fetch` layer, `TextBuffer` capture -- see `doc/http-client.md` |
+| `Network.HTTP.Client.WebAPI.*` | OpenAI-compatible chat client, OAuth 2.0 (PKCE) login -- see `doc/http-client.md` |
 | `Network.HTTP.Server` | minimal single-threaded, `epoll`-driven HTTP/1.1 server -- see below |
+| `System.Posix.*` | POSIX bindings: `Errno`, `File`/`FileDesc`, `Directory`, `Mmap`, `Process`, `Signal`, `Uio`, and C stdio `Stdio` (`File = Ptr RawFile`, errno in `Left`). Declarations outside POSIX say so ("Linux only", "Linux and BSD") in their doc comment |
 | `System.Concurrency.RC2` | real pthread-backed `Mutex`/`Condition`/`Semaphore`/`Barrier`/`Channel`/joinable `forkJoin` -- see the top-level `README.md`'s own "Concurrency" section for the full design |
 | `System.FFI.C.Array` | a `malloc`'d, GC-freed, `Fin`-bounds-checked fixed-length array |
 | `System.FFI.C.Ptr` | raw, unchecked element-indexed fetch/store into a `Ptr`/`GCPtr` region |
@@ -139,7 +142,8 @@ are listed explicitly in the `TESTS` array in `verify.sh` (name, extra
 `-p` packages, description); the script fails if a `tests/*/` directory
 is not listed, or a listed test lacks its directory, `.idr` or
 `.expected`. To add a test: create the directory with those two files
-and add one line to `TESTS`.
+and add one line to `TESTS`. `TestCurl` needs libcurl's headers and is
+skipped (with a `SKIP` line) when `gcc` cannot find `curl/curl.h`.
 
 ## Native library install location
 

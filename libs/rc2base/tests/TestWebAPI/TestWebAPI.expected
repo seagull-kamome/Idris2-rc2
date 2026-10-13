@@ -1,0 +1,30 @@
+--- chat ---
+Just "echo: ping (model llama-3, max_tokens 64)"
+Left HttpStatus 401 invalid api key
+Left HttpStatus 401 invalid api key
+TransportError
+--- login (browser redirect) ---
+Open this URL in a browser and allow access:
+
+<authorization url>
+
+Waiting for the browser. If it ends on an error page instead, paste that page's full address here:
+("at-1", Just "rt-1")
+Right "at-1"
+Right "at-2"
+Right ("at-2", Just "rt-1")
+Left "bad refresh token"
+--- login (refused) ---
+Open this URL in a browser and allow access:
+
+<authorization url>
+
+Waiting for the browser. If it ends on an error page instead, paste that page's full address here:
+login: authorization refused: access_denied
+--- login (wrong code) ---
+Open this URL in a browser and allow access:
+
+<authorization url>
+
+Waiting for the browser. If it ends on an error page instead, paste that page's full address here:
+login: bad code or verifier
