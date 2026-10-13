@@ -154,6 +154,7 @@ program's generated C.
 | `Test118FFI/FFIMalloc` | `System.FFI` `malloc`/`free` | refc valgrind C |
 | `Test118FFI/FFIInteger` | `Integer` arguments and results of `%foreign` | refc valgrind C |
 | `Test118FFI/FFICExpr` | `%foreign "CExpr:..."` (`doc/ffi-cexpr.md`): constants, placeholders, `Integer` results via `$r` (GMP functions, heap Integers, closures), `$$`, nested commas and quotes, pointers, the generic wrapper. Each declaration has a `C:` twin shim; `check.sh` asserts the shim is never used, the argument parenthesisation, and (`CExprErrors/`) the compile-time error messages. The one `check.sh` in a merged test, since it names nothing section-specific but the generated C as a whole | saved valgrind check.sh C |
+| `Test118FFI/ForeignErrors` | programs that must fail to compile with the message in their `.err` file, never imported by the test: a `%foreign` with no implementation (`CExpr`/`RC2`/`RefC`/`C`), one returning a function, `getField` on a struct no `%foreign` signature names, `%export` of a `List` argument and of a `GCPtr` result. `check.sh` runs them with `CExprErrors/` and also fails on an `INTERNAL ERROR` or a compiled executable | check.sh |
 | `Test119FFINoRefc/GCPtrAliasString` | a `String` aliasing its `GCAnyPtr` argument is packed before the drop | saved valgrind C |
 | `Test119FFINoRefc/ConstCFStringReturn` | a `const char *` return compiles under `-Werror` | saved valgrind C |
 | `Test119FFINoRefc/CExprPriority` | `CExpr:` outranks `C:`/`RefC:` whatever the string order | saved valgrind C |
