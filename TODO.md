@@ -391,6 +391,15 @@ survive in the test suite's own generated C (down from 210). They are
 mixed cases -- a `case` one of whose arms is Boxed, a literal minted by
 a pass other than `LateInline`, an `opBox` feeding `sqrt`. Low value.
 
+再計測(2026-10-13、idris2-lsp、17,549定義): 戻り値がBoxedの非wrapper関数13,127件のうち、
+末尾が`con`のみ4,024、Boxedな関数への`call`のみ3,667(nativeな戻り値のworkerを呼ぶものは0件)、
+`partial`835、`memoize`267、`apply`203など、本来Boxedなものが大半。末尾が数値の`op`の
+ものは約20件(`++`の478件はString)、Boxedに`let`束縛された数値の`op`(`cast-*`/`shl`/`shr`)は
+60件。取りこぼしの候補だった「`LateInline`が差し込んだ`case`の分解フィールド」は、
+`LateInline`の後に`ConAltNative`をもう一度走らせる実験(任意参加の指令、破棄済み)で、
+新たにシャドウが付いたのは2件だけで、既存のシャドウへの冗長な二重化が830件増えた
+(冪等でない)。**手軽に取れるネイティブ昇格は残っていない。**
+
 ## Performance: constructor return values are always heap cells -- return small constructors by value (struct return)
 
 Important. A function returning a constructor always heap-allocates it,
@@ -1113,6 +1122,11 @@ IR上では`B8 1`/`B8 0`。native(`Native Bits8`)になれる範囲はかなり�
 
 ## reuse: `let`値内のネスト claim の残り (2026-10-08)
 
+**状態: 調査済み・低優先(着手しない)。** 残りは数十〜数百箇所ずつで、どれも設計変更を
+伴うのに対し、dead offerの多くは「ユニーク親の高速パス」(フィールドをdupせず移し、
+殻だけをfreeする)で、殻の解放は既に行われている。見直すのは、reuseの不足がベンチマークや
+メモリ使用量で実測できたとき。
+
 `noreusenested`で切り替えられる`let`値内claim(`rc2/doc/reuse-analysis.md`
 "Nested let values")を入れた結果、idris2-lspのdead offerは5,474 → 1,757、
 実reuse(`con ... reuse=`)は7,811 → 12,189。残り:
@@ -1126,6 +1140,9 @@ IR上では`B8 1`/`B8 0`。native(`Native Bits8`)になれる範囲はかなり�
   未分類。
 
 ## reuse: DualABI後の再確認(`noreuserecheck`)の残り (2026-10-08)
+
+**状態: 調査済み・低優先(着手しない)。** 残りは合わせて100箇所未満(27 + 最大69)で、
+効果が小さい。見直すのは、上の節と同じく実測で不足が見えたとき。
 
 `Reuse.recheckReuse`(`rc2/doc/reuse-analysis.md` "Re-checking dead offers after
 DualABI")で、idris2-lspの「同名の未claim `con`が隣にあるdead offer」は359 → 73、
