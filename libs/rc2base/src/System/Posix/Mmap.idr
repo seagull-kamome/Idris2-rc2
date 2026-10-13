@@ -25,12 +25,12 @@ export MAP_PRIVATE : Int32
 export MAP_SHARED : Int32
 ||| Mapping: place it in the low 2 GiB of the address space (x86-64).
 |||
-||| Linux extension, not in POSIX; see `mmap(2)`.
+||| Linux (x86-64) and FreeBSD, not in POSIX. See `mmap(2)`.
 %inline %foreign "CExpr:(MAP_32BIT),libc,sys/mman.h"
 export MAP_32BIT : Int32
 ||| Mapping: not backed by a file; the contents are zero and the fd is ignored.
 |||
-||| Linux extension, not in POSIX; see `mmap(2)`.
+||| Linux and BSD, not in POSIX (older BSDs spell it `MAP_ANON`). See `mmap(2)`.
 %inline %foreign "CExpr:(MAP_ANONYMOUS),libc,sys/mman.h"
 export MAP_ANONYMOUS : Int32
 ||| Mapping: use exactly the given address, replacing any mapping there.
@@ -38,37 +38,37 @@ export MAP_ANONYMOUS : Int32
 export MAP_FIXED : Int32
 ||| Mapping: stack-like, grows downwards.
 |||
-||| Linux extension, not in POSIX; see `mmap(2)`.
+||| Linux only. See `mmap(2)`.
 %inline %foreign "CExpr:(MAP_GROWSDOWN),libc,sys/mman.h"
 export MAP_GROWSDOWN : Int32
 ||| Mapping: use huge pages.
 |||
-||| Linux extension, not in POSIX; see `mmap(2)`.
+||| Linux only. See `mmap(2)`.
 %inline %foreign "CExpr:(MAP_HUGETLB),libc,sys/mman.h"
 export MAP_HUGETLB : Int32
 ||| Mapping: lock the pages in memory.
 |||
-||| Linux extension, not in POSIX; see `mmap(2)`.
+||| Linux only. See `mmap(2)`.
 %inline %foreign "CExpr:(MAP_LOCKED),libc,sys/mman.h"
 export MAP_LOCKED : Int32
 ||| Mapping: with `MAP_POPULATE`, do not read ahead (block).
 |||
-||| Linux extension, not in POSIX; see `mmap(2)`.
+||| Linux only. See `mmap(2)`.
 %inline %foreign "CExpr:(MAP_NONBLOCK),libc,sys/mman.h"
 export MAP_NONBLOCK : Int32
 ||| Mapping: do not reserve swap space.
 |||
-||| Linux extension, not in POSIX; see `mmap(2)`.
+||| Linux only. See `mmap(2)`.
 %inline %foreign "CExpr:(MAP_NORESERVE),libc,sys/mman.h"
 export MAP_NORESERVE : Int32
 ||| Mapping: pre-fault the page tables (read ahead for a file).
 |||
-||| Linux extension, not in POSIX; see `mmap(2)`.
+||| Linux only. See `mmap(2)`.
 %inline %foreign "CExpr:(MAP_POPULATE),libc,sys/mman.h"
 export MAP_POPULATE : Int32
 ||| Mapping: allocate at an address suitable for a thread stack.
 |||
-||| Linux extension, not in POSIX; see `mmap(2)`.
+||| Linux and BSD, not in POSIX. See `mmap(2)`.
 %inline %foreign "CExpr:(MAP_STACK),libc,sys/mman.h"
 export MAP_STACK : Int32
 
