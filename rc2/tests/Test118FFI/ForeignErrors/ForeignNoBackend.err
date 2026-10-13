@@ -1,0 +1,1 @@
+Error: [rc2] %foreign declaration Main.prim__thing has no implementation rc2 can call: it needs a "CExpr:", "RC2:", "RefC:" or "C:" alternative

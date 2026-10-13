@@ -13,6 +13,7 @@ module Main
 --   * branch boundary (was Test80DupMergeBranchBoundary)
 --   * RLet scope      (was Test81DupMergeLetScope)
 --   * dup/drop cancellation (`cancelDupDrop`)
+--   * unused constructor fields (`DeadVars`, Section 7)
 
 import Data.IORef
 import Data.List
@@ -262,6 +263,35 @@ pushDown = do
   putStrLn (headHead (map (\a => [a, "y"]) xs))
   printLn (second xs (reverse xs))
 
+-- ============================================================
+-- Section 7: unused constructor fields (Compiler.RC2.DeadVars)
+-- ============================================================
+-- A match that keeps only some of a record's fields: DeadVars blanks the
+-- binder of every field nothing in the arm refers to (not even a drop),
+-- which the dump prints as `_` (doc/dead-vars.md). `middle` keeps field 1
+-- (`[_, vN, _]`), `firstOf` keeps field 0 (`[vN, _, _]`); check.sh
+-- asserts those two shapes among the `MkTriple` alts. The records come
+-- out of a list built under a runtime-only condition (as in Sections 3
+-- to 6), so the matches are not folded away. Prints 42 and "dead".
+
+data Triple = MkTriple String Int String
+
+%noinline
+middle : Triple -> Int
+middle (MkTriple _ b _) = b
+
+%noinline
+firstOf : Triple -> String
+firstOf (MkTriple a _ _) = a
+
+deadVars : IO ()
+deadVars = do
+  args <- getArgs
+  let n = if length args > 100 then "unreachable" else "dead"
+  let ts = if length args > 100 then [] else [MkTriple n 42 n]
+  traverse_ (printLn . middle) ts
+  traverse_ (putStrLn . firstOf) ts
+
 main : IO ()
 main = do
   useThrice "dup-merge"
@@ -271,3 +301,4 @@ main = do
   tagOnce
   shapes
   pushDown
+  deadVars

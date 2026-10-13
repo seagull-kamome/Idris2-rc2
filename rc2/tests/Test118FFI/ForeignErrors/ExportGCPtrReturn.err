@@ -1,0 +1,2 @@
+Error: [rc2] %export declaration bad_export_gcptr (Main.wrap)'s own return type is a GC-managed pointer (GCPtr/GCAnyPtr) -- returning one via %export isn't supported: the wrapper's own drop-after-return step could invoke the pointer's finalizer (if one is attached) before the C caller ever sees the value
+

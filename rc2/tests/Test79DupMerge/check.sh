@@ -147,3 +147,14 @@ if [ "$hoisted" = "0" ]; then
 else
     fail "PushDown left $hoisted dup(s) of a scrutinee above its case in $TMP/${name}_rc2.rcexpr"
 fi
+
+# Section 7: Compiler.RC2.DeadVars blanks the binder of a constructor
+# field nothing in the arm refers to (printed `_`). An output diff can't
+# see it; with the pass off the same alts read `[vA, vB, vC]`.
+first="$(grep -c 'Main.MkTriple .* args= \[v[0-9]*, _, _\] ->' "$TMP/${name}_rc2.rcexpr" || true)"
+middle="$(grep -c 'Main.MkTriple .* args= \[_, v[0-9]*, _\] ->' "$TMP/${name}_rc2.rcexpr" || true)"
+if [ "$first" -ge 1 ] && [ "$middle" -ge 1 ]; then
+    pass "DeadVars -- unused MkTriple fields are blanked ([vN, _, _] x$first, [_, vN, _] x$middle)"
+else
+    fail "DeadVars did not blank the unused MkTriple fields in $TMP/${name}_rc2.rcexpr ([vN, _, _] x$first, [_, vN, _] x$middle)"
+fi

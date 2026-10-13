@@ -729,7 +729,7 @@ catch-all」(扱える型への事前変換と、非対応の`%foreign`を呼ば
 ## コンパイル時間: リファクタリング案(調査 2026-09-29)
 
 idris2-lsp を`--timing 3`で`--cg rc2`ビルドしたログ(C生成は既知の
-`FFI not found for ...unsafeVectorToList`で止まるので、その手前まで)
+`%foreign declaration ...unsafeVectorToList has no implementation rc2 can call`で止まるので、その手前まで)
 から。時間の大きい順に Early inline 6.66s、Late inline 4.71s、
 RC annotate+Reuse+ConAltNative 3.03s、DualABI 3.02s、Inline 1.54s、
 ConstFold 1.32s。
@@ -809,21 +809,19 @@ RC.annotate・DeadVars で実際に数秒を失った。1の計測で重いと�
 テストを72本から51本にまとめ(`rc2/tests/README.md`)、コンパイラの
 パスと実行時の機能をテストの一覧と突き合わせた結果。大きいものから。
 
-- **失敗すべきプログラムのテストが無い。** verify はコンパイルが通る
-  プログラムしか試さない。rc2 が利用者向けのエラーにする経路
-  (`%foreign`の戻り値が関数、`getField`の構造体やフィールドが見つからない、
-  名前がリテラルでない`getField`など)が、エラーを出すことも、内部エラーに
-  ならないことも確かめられていない。期待するエラー文をファイルに置き、
-  コンパイラの出力と diff する形にする。
+- **失敗すべきプログラムのテストは一部だけ。** `Test118FFI/ForeignErrors`と
+  `CExprErrors`(`check.sh`が期待するエラー文と diff する)が、`%foreign`の
+  実装なし・戻り値が関数、`getField`の未知の構造体、`%export`の未対応の型、
+  `CExpr:`の構文エラーを覆う。残り: `RC2.idr`の`validateExport`の他の経路
+  (引数が21個以上、アリティの不一致、関数でない定義)、`getField`のフィールド違いと
+  名前がリテラルでない場合(Idrisのフロントエンドが先に型エラーにするので、
+  rc2に届く形があるかも未確認)。
 - **インクリメンタルコンパイル(`--inc rc2`)のテストが無い。** verify は
   全体コンパイルしか試さない。
-- **大きな外部プログラムが verify に無い。** idris2-lsp は C の出力で既知の
-  エラーで止まり、idris2-missing-containers は bench.sh でしか動かさない。
-  少なくとも idris2-lsp の IR を lint にかける手順があると、スモーク
-  テストに無い形を広く試せる。
-- **専用のテストが無いパス。** `DeadVars`(死んだ let の消去)は他の
-  テストで間接的に通るだけ。`MutualLoop`は Test110Loop の SelfTailLoop の
-  中の間接的な循環1つだけ。
+- **大きな外部プログラムが verify に無い。** idris2-missing-containers は
+  bench.sh でしか動かさない。idris2-lsp のIRを lint にかける手順は
+  スキル`rc2/.claude/skills/lint-lsp-ir`にある(任意実行、約4分)が、verify には
+  入れていない。
 - **まとめたテストの注意。** Test113DeepRecursion は、まとめたことで
   `mod`がワーカー呼び出しになる、`mergeBy`の特殊化の展開が変わるなど、
   元のテストと IR が違う。100万段で C スタックが溢れないことは実行で

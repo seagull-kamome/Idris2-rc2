@@ -100,7 +100,7 @@ resolveForeignTarget ccs =
              pure ( if tag == "RefC" || tag == "RC2" then CLangRefC else CLangC
                   , CallSym (UN $ Basic sym))
          Right (Just (MkForeignSpec _ (FExpr parts) _)) => pure (CLangC, CallExpr parts)
-         Right Nothing => throw $ InternalError "[rc2] FFI not found for foreign declaration"
+         Right Nothing => throw $ UserError "[rc2] a %foreign declaration has no implementation rc2 can call: it needs a \"CExpr:\", \"RC2:\", \"RefC:\" or \"C:\" alternative"
          Left err => throw $ UserError "[rc2] invalid %foreign declaration: \{err}"
 
 ||| Marshal every one of `fargs`'s own positions, call `fctName`, and
@@ -456,7 +456,7 @@ emitForeignDef n ccs fargs ret =
 
               decreaseIndentation
               emit EmptyFC "}"
-          Right Nothing => throw $ InternalError "[rc2] FFI not found for \{cName n}"
+          Right Nothing => throw $ UserError "[rc2] %foreign declaration \{show n} has no implementation rc2 can call: it needs a \"CExpr:\", \"RC2:\", \"RefC:\" or \"C:\" alternative"
           Left err => throw $ UserError "[rc2] invalid %foreign declaration \{show n}: \{err}"
 
 ||| The C wrapper synthesised for one validated `%export` declaration
