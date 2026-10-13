@@ -131,7 +131,7 @@ EBADF = MkErrno prim__EBADF
 prim__EBADFD : Int32
 ||| The `EBADFD` errno value.
 |||
-||| Linux extension, not in POSIX; see `errno(3)`.
+||| Linux only, not in POSIX; see `errno(3)`.
 %inline public export
 EBADFD : Errno
 EBADFD = MkErrno prim__EBADFD
@@ -147,7 +147,7 @@ EBADMSG = MkErrno prim__EBADMSG
 prim__EBADR : Int32
 ||| The `EBADR` errno value.
 |||
-||| Linux extension, not in POSIX; see `errno(3)`.
+||| Linux only, not in POSIX; see `errno(3)`.
 %inline public export
 EBADR : Errno
 EBADR = MkErrno prim__EBADR
@@ -156,7 +156,7 @@ EBADR = MkErrno prim__EBADR
 prim__EBADRQC : Int32
 ||| The `EBADRQC` errno value.
 |||
-||| Linux extension, not in POSIX; see `errno(3)`.
+||| Linux only, not in POSIX; see `errno(3)`.
 %inline public export
 EBADRQC : Errno
 EBADRQC = MkErrno prim__EBADRQC
@@ -165,7 +165,7 @@ EBADRQC = MkErrno prim__EBADRQC
 prim__EBADSLT : Int32
 ||| The `EBADSLT` errno value.
 |||
-||| Linux extension, not in POSIX; see `errno(3)`.
+||| Linux only, not in POSIX; see `errno(3)`.
 %inline public export
 EBADSLT : Errno
 EBADSLT = MkErrno prim__EBADSLT
@@ -195,7 +195,7 @@ ECHILD = MkErrno prim__ECHILD
 prim__ECHRNG : Int32
 ||| The `ECHRNG` errno value.
 |||
-||| Linux extension, not in POSIX; see `errno(3)`.
+||| Linux only, not in POSIX; see `errno(3)`.
 %inline public export
 ECHRNG : Errno
 ECHRNG = MkErrno prim__ECHRNG
@@ -204,7 +204,7 @@ ECHRNG = MkErrno prim__ECHRNG
 prim__ECOMM : Int32
 ||| The `ECOMM` errno value.
 |||
-||| Linux extension, not in POSIX; see `errno(3)`.
+||| Linux only, not in POSIX; see `errno(3)`.
 %inline public export
 ECOMM : Errno
 ECOMM = MkErrno prim__ECOMM
@@ -241,7 +241,7 @@ EDEADLK = MkErrno prim__EDEADLK
 prim__EDEADLOCK : Int32
 ||| The `EDEADLOCK` errno value.
 |||
-||| Linux extension, not in POSIX; see `errno(3)`.
+||| Linux only, not in POSIX; see `errno(3)`.
 %inline public export
 EDEADLOCK : Errno
 EDEADLOCK = EDEADLK
@@ -292,7 +292,7 @@ EFBIG = MkErrno prim__EFBIG
 prim__EHOSTDOWN : Int32
 ||| The `EHOSTDOWN` errno value.
 |||
-||| Linux extension, not in POSIX; see `errno(3)`.
+||| Linux and BSD, not in POSIX; see `errno(3)`.
 %inline public export
 EHOSTDOWN : Errno
 EHOSTDOWN = MkErrno prim__EHOSTDOWN
@@ -308,7 +308,7 @@ EHOSTUNREACH = MkErrno prim__EHOSTUNREACH
 prim__EHWPOISON : Int32
 ||| The `EHWPOISON` errno value.
 |||
-||| Linux extension, not in POSIX; see `errno(3)`.
+||| Linux only, not in POSIX; see `errno(3)`.
 %inline public export
 EHWPOISON : Errno
 EHWPOISON = MkErrno prim__EHWPOISON
@@ -373,7 +373,7 @@ EISDIR = MkErrno prim__EISDIR
 prim__EISNAM : Int32
 ||| The `EISNAM` errno value.
 |||
-||| Linux extension, not in POSIX; see `errno(3)`.
+||| Linux only, not in POSIX; see `errno(3)`.
 %inline public export
 EISNAM : Errno
 EISNAM = MkErrno prim__EISNAM
@@ -382,7 +382,7 @@ EISNAM = MkErrno prim__EISNAM
 prim__EKEYEXPIRED : Int32
 ||| The `EKEYEXPIRED` errno value.
 |||
-||| Linux extension, not in POSIX; see `errno(3)`.
+||| Linux only, not in POSIX; see `errno(3)`.
 %inline public export
 EKEYEXPIRED : Errno
 EKEYEXPIRED = MkErrno prim__EKEYEXPIRED
@@ -391,7 +391,7 @@ EKEYEXPIRED = MkErrno prim__EKEYEXPIRED
 prim__EKEYREJECTED : Int32
 ||| The `EKEYREJECTED` errno value.
 |||
-||| Linux extension, not in POSIX; see `errno(3)`.
+||| Linux only, not in POSIX; see `errno(3)`.
 %inline public export
 EKEYREJECTED : Errno
 EKEYREJECTED = MkErrno prim__EKEYREJECTED
@@ -400,7 +400,7 @@ EKEYREJECTED = MkErrno prim__EKEYREJECTED
 prim__EKEYREVOKED : Int32
 ||| The `EKEYREVOKED` errno value.
 |||
-||| Linux extension, not in POSIX; see `errno(3)`.
+||| Linux only, not in POSIX; see `errno(3)`.
 %inline public export
 EKEYREVOKED : Errno
 EKEYREVOKED = MkErrno prim__EKEYREVOKED
@@ -409,7 +409,7 @@ EKEYREVOKED = MkErrno prim__EKEYREVOKED
 prim__EL2HLT : Int32
 ||| The `EL2HLT` errno value.
 |||
-||| Linux extension, not in POSIX; see `errno(3)`.
+||| Linux only, not in POSIX; see `errno(3)`.
 %inline public export
 EL2HLT : Errno
 EL2HLT = MkErrno prim__EL2HLT
@@ -418,7 +418,7 @@ EL2HLT = MkErrno prim__EL2HLT
 prim__EL2NSYNC : Int32
 ||| The `EL2NSYNC` errno value.
 |||
-||| Linux extension, not in POSIX; see `errno(3)`.
+||| Linux only, not in POSIX; see `errno(3)`.
 %inline public export
 EL2NSYNC : Errno
 EL2NSYNC = MkErrno prim__EL2NSYNC
@@ -427,7 +427,7 @@ EL2NSYNC = MkErrno prim__EL2NSYNC
 prim__EL3HLT : Int32
 ||| The `EL3HLT` errno value.
 |||
-||| Linux extension, not in POSIX; see `errno(3)`.
+||| Linux only, not in POSIX; see `errno(3)`.
 %inline public export
 EL3HLT : Errno
 EL3HLT = MkErrno prim__EL3HLT
@@ -436,7 +436,7 @@ EL3HLT = MkErrno prim__EL3HLT
 prim__EL3RST : Int32
 ||| The `EL3RST` errno value.
 |||
-||| Linux extension, not in POSIX; see `errno(3)`.
+||| Linux only, not in POSIX; see `errno(3)`.
 %inline public export
 EL3RST : Errno
 EL3RST = MkErrno prim__EL3RST
@@ -445,7 +445,7 @@ EL3RST = MkErrno prim__EL3RST
 prim__ELIBACC : Int32
 ||| The `ELIBACC` errno value.
 |||
-||| Linux extension, not in POSIX; see `errno(3)`.
+||| Linux only, not in POSIX; see `errno(3)`.
 %inline public export
 ELIBACC : Errno
 ELIBACC = MkErrno prim__ELIBACC
@@ -454,7 +454,7 @@ ELIBACC = MkErrno prim__ELIBACC
 prim__ELIBBAD : Int32
 ||| The `ELIBBAD` errno value.
 |||
-||| Linux extension, not in POSIX; see `errno(3)`.
+||| Linux only, not in POSIX; see `errno(3)`.
 %inline public export
 ELIBBAD : Errno
 ELIBBAD = MkErrno prim__ELIBBAD
@@ -463,7 +463,7 @@ ELIBBAD = MkErrno prim__ELIBBAD
 prim__ELIBMAX : Int32
 ||| The `ELIBMAX` errno value.
 |||
-||| Linux extension, not in POSIX; see `errno(3)`.
+||| Linux only, not in POSIX; see `errno(3)`.
 %inline public export
 ELIBMAX : Errno
 ELIBMAX = MkErrno prim__ELIBMAX
@@ -472,7 +472,7 @@ ELIBMAX = MkErrno prim__ELIBMAX
 prim__ELIBSCN : Int32
 ||| The `ELIBSCN` errno value.
 |||
-||| Linux extension, not in POSIX; see `errno(3)`.
+||| Linux only, not in POSIX; see `errno(3)`.
 %inline public export
 ELIBSCN : Errno
 ELIBSCN = MkErrno prim__ELIBSCN
@@ -481,7 +481,7 @@ ELIBSCN = MkErrno prim__ELIBSCN
 prim__ELIBEXEC : Int32
 ||| The `ELIBEXEC` errno value.
 |||
-||| Linux extension, not in POSIX; see `errno(3)`.
+||| Linux only, not in POSIX; see `errno(3)`.
 %inline public export
 ELIBEXEC : Errno
 ELIBEXEC = MkErrno prim__ELIBEXEC
@@ -497,7 +497,7 @@ ELOOP = MkErrno prim__ELOOP
 prim__EMEDIUMTYPE : Int32
 ||| The `EMEDIUMTYPE` errno value.
 |||
-||| Linux extension, not in POSIX; see `errno(3)`.
+||| Linux only, not in POSIX; see `errno(3)`.
 %inline public export
 EMEDIUMTYPE : Errno
 EMEDIUMTYPE = MkErrno prim__EMEDIUMTYPE
@@ -569,7 +569,7 @@ ENFILE = MkErrno prim__ENFILE
 prim__ENOANO : Int32
 ||| The `ENOANO` errno value.
 |||
-||| Linux extension, not in POSIX; see `errno(3)`.
+||| Linux only, not in POSIX; see `errno(3)`.
 %inline public export
 ENOANO : Errno
 ENOANO = MkErrno prim__ENOANO
@@ -613,7 +613,7 @@ ENOEXEC = MkErrno prim__ENOEXEC
 prim__ENOKEY : Int32
 ||| The `ENOKEY` errno value.
 |||
-||| Linux extension, not in POSIX; see `errno(3)`.
+||| Linux only, not in POSIX; see `errno(3)`.
 %inline public export
 ENOKEY : Errno
 ENOKEY = MkErrno prim__ENOKEY
@@ -636,7 +636,7 @@ ENOLINK = MkErrno prim__ENOLINK
 prim__ENOMEDIUM : Int32
 ||| The `ENOMEDIUM` errno value.
 |||
-||| Linux extension, not in POSIX; see `errno(3)`.
+||| Linux only, not in POSIX; see `errno(3)`.
 %inline public export
 ENOMEDIUM : Errno
 ENOMEDIUM = MkErrno prim__ENOMEDIUM
@@ -659,7 +659,7 @@ ENOMSG = MkErrno prim__ENOMSG
 prim__ENONET : Int32
 ||| The `ENONET` errno value.
 |||
-||| Linux extension, not in POSIX; see `errno(3)`.
+||| Linux only, not in POSIX; see `errno(3)`.
 %inline public export
 ENONET : Errno
 ENONET = MkErrno prim__ENONET
@@ -668,7 +668,7 @@ ENONET = MkErrno prim__ENONET
 prim__ENOPKG : Int32
 ||| The `ENOPKG` errno value.
 |||
-||| Linux extension, not in POSIX; see `errno(3)`.
+||| Linux only, not in POSIX; see `errno(3)`.
 %inline public export
 ENOPKG : Errno
 ENOPKG = MkErrno prim__ENOPKG
@@ -712,7 +712,7 @@ ENOSYS = MkErrno prim__ENOSYS
 prim__ENOTBLK : Int32
 ||| The `ENOTBLK` errno value.
 |||
-||| Linux extension, not in POSIX; see `errno(3)`.
+||| Linux and BSD, not in POSIX; see `errno(3)`.
 %inline public export
 ENOTBLK : Errno
 ENOTBLK = MkErrno prim__ENOTBLK
@@ -770,7 +770,7 @@ ENOTTY = MkErrno prim__ENOTTY
 prim__ENOTUNIQ : Int32
 ||| The `ENOTUNIQ` errno value.
 |||
-||| Linux extension, not in POSIX; see `errno(3)`.
+||| Linux only, not in POSIX; see `errno(3)`.
 %inline public export
 ENOTUNIQ : Errno
 ENOTUNIQ = MkErrno prim__ENOTUNIQ
@@ -814,7 +814,7 @@ EPERM = MkErrno prim__EPERM
 prim__EPFNOSUPPORT : Int32
 ||| The `EPFNOSUPPORT` errno value.
 |||
-||| Linux extension, not in POSIX; see `errno(3)`.
+||| Linux and BSD, not in POSIX; see `errno(3)`.
 %inline public export
 EPFNOSUPPORT : Errno
 EPFNOSUPPORT = MkErrno prim__EPFNOSUPPORT
@@ -858,7 +858,7 @@ ERANGE = MkErrno prim__ERANGE
 prim__EREMCHG : Int32
 ||| The `EREMCHG` errno value.
 |||
-||| Linux extension, not in POSIX; see `errno(3)`.
+||| Linux only, not in POSIX; see `errno(3)`.
 %inline public export
 EREMCHG : Errno
 EREMCHG = MkErrno prim__EREMCHG
@@ -867,7 +867,7 @@ EREMCHG = MkErrno prim__EREMCHG
 prim__EREMOTE : Int32
 ||| The `EREMOTE` errno value.
 |||
-||| Linux extension, not in POSIX; see `errno(3)`.
+||| Linux and BSD, not in POSIX; see `errno(3)`.
 %inline public export
 EREMOTE : Errno
 EREMOTE = MkErrno prim__EREMOTE
@@ -876,7 +876,7 @@ EREMOTE = MkErrno prim__EREMOTE
 prim__EREMOTEIO : Int32
 ||| The `EREMOTEIO` errno value.
 |||
-||| Linux extension, not in POSIX; see `errno(3)`.
+||| Linux only, not in POSIX; see `errno(3)`.
 %inline public export
 EREMOTEIO : Errno
 EREMOTEIO = MkErrno prim__EREMOTEIO
@@ -885,7 +885,7 @@ EREMOTEIO = MkErrno prim__EREMOTEIO
 prim__ERESTART : Int32
 ||| The `ERESTART` errno value.
 |||
-||| Linux extension, not in POSIX; see `errno(3)`.
+||| Linux only, not in POSIX; see `errno(3)`.
 %inline public export
 ERESTART : Errno
 ERESTART = MkErrno prim__ERESTART
@@ -894,7 +894,7 @@ ERESTART = MkErrno prim__ERESTART
 prim__ERFKILL : Int32
 ||| The `ERFKILL` errno value.
 |||
-||| Linux extension, not in POSIX; see `errno(3)`.
+||| Linux only, not in POSIX; see `errno(3)`.
 %inline public export
 ERFKILL : Errno
 ERFKILL = MkErrno prim__ERFKILL
@@ -910,7 +910,7 @@ EROFS = MkErrno prim__EROFS
 prim__ESHUTDOWN : Int32
 ||| The `ESHUTDOWN` errno value.
 |||
-||| Linux extension, not in POSIX; see `errno(3)`.
+||| Linux and BSD, not in POSIX; see `errno(3)`.
 %inline public export
 ESHUTDOWN : Errno
 ESHUTDOWN = MkErrno prim__ESHUTDOWN
@@ -926,7 +926,7 @@ ESPIPE = MkErrno prim__ESPIPE
 prim__ESOCKTNOSUPPORT : Int32
 ||| The `ESOCKTNOSUPPORT` errno value.
 |||
-||| Linux extension, not in POSIX; see `errno(3)`.
+||| Linux and BSD, not in POSIX; see `errno(3)`.
 %inline public export
 ESOCKTNOSUPPORT : Errno
 ESOCKTNOSUPPORT = MkErrno prim__ESOCKTNOSUPPORT
@@ -949,7 +949,7 @@ ESTALE = MkErrno prim__ESTALE
 prim__ESTRPIPE : Int32
 ||| The `ESTRPIPE` errno value.
 |||
-||| Linux extension, not in POSIX; see `errno(3)`.
+||| Linux only, not in POSIX; see `errno(3)`.
 %inline public export
 ESTRPIPE : Errno
 ESTRPIPE = MkErrno prim__ESTRPIPE
@@ -972,7 +972,7 @@ ETIMEDOUT = MkErrno prim__ETIMEDOUT
 prim__ETOOMANYREFS : Int32
 ||| The `ETOOMANYREFS` errno value.
 |||
-||| Linux extension, not in POSIX; see `errno(3)`.
+||| Linux and BSD, not in POSIX; see `errno(3)`.
 %inline public export
 ETOOMANYREFS : Errno
 ETOOMANYREFS = MkErrno prim__ETOOMANYREFS
@@ -988,7 +988,7 @@ ETXTBSY = MkErrno prim__ETXTBSY
 prim__EUCLEAN : Int32
 ||| The `EUCLEAN` errno value.
 |||
-||| Linux extension, not in POSIX; see `errno(3)`.
+||| Linux only, not in POSIX; see `errno(3)`.
 %inline public export
 EUCLEAN : Errno
 EUCLEAN = MkErrno prim__EUCLEAN
@@ -997,7 +997,7 @@ EUCLEAN = MkErrno prim__EUCLEAN
 prim__EUNATCH : Int32
 ||| The `EUNATCH` errno value.
 |||
-||| Linux extension, not in POSIX; see `errno(3)`.
+||| Linux only, not in POSIX; see `errno(3)`.
 %inline public export
 EUNATCH : Errno
 EUNATCH = MkErrno prim__EUNATCH
@@ -1006,7 +1006,7 @@ EUNATCH = MkErrno prim__EUNATCH
 prim__EUSERS : Int32
 ||| The `EUSERS` errno value.
 |||
-||| Linux extension, not in POSIX; see `errno(3)`.
+||| Linux and BSD, not in POSIX; see `errno(3)`.
 %inline public export
 EUSERS : Errno
 EUSERS = MkErrno prim__EUSERS
@@ -1029,7 +1029,7 @@ EXDEV = MkErrno prim__EXDEV
 prim__EXFULL : Int32
 ||| The `EXFULL` errno value.
 |||
-||| Linux extension, not in POSIX; see `errno(3)`.
+||| Linux only, not in POSIX; see `errno(3)`.
 %inline public export
 EXFULL : Errno
 EXFULL = MkErrno prim__EXFULL

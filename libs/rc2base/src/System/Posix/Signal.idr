@@ -106,7 +106,7 @@ SIGTERM = MkSignal prim__SIGTERM
 
 %inline %foreign "CExpr:(SIGSTKFLT),libc,signal.h"
 prim__SIGSTKFLT : Int32
-||| Stack fault on a coprocessor. Linux-specific, not in POSIX; see `signal(7)`.
+||| Stack fault on a coprocessor. Linux only (not on BSD); not in POSIX. See `signal(7)`.
 public export SIGSTKFLT : Signal
 SIGSTKFLT = MkSignal prim__SIGSTKFLT
 
