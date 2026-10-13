@@ -99,7 +99,7 @@ program's generated C.
 
 | test | what it covers | checked |
 |---|---|---|
-| `Test110Loop/SelfTailLoop` | self-tail calls to `goto`: parameter swaps, several recursive branches, passthrough arguments | refc valgrind |
+| `Test110Loop/SelfTailLoop` | self-tail calls to `goto`: parameter swaps, several recursive branches, passthrough arguments; the three mutually tail-recursive groups (`isEvenM`/`isOddM`, `stepA`/`stepB`, `cycleA`..`cycleC`); `check.sh` asserts each group became one `{rc2_mutualLoop:N}` loop function with its members reduced to stubs | refc valgrind check.sh |
 | `Test110Loop/LoopContinuePostDrop` | a boxed continue argument read natively is dropped (`RLoopContinue.postDrop`) | refc valgrind |
 | `Test110Loop/LoopInvariantParam` | invariant loop parameters elided | refc valgrind |
 | `Test110Loop/LoopCallArgNativeShadow` | a parameter used only as a call argument gets a native shadow | refc valgrind |
@@ -139,7 +139,7 @@ program's generated C.
 | `Test106TransitiveSpec/MultiApplySpec` | closure specialization of callees applying the closure 2-3 times; over the size threshold or with a capturing closure stays generic | refc valgrind check.sh |
 | `Test99DeadArgs` | unused `where` arguments removed (`doc/dead-args.md`) | refc valgrind |
 | `Test22BranchSinking` | a let moved into the one branch that reads it (`doc/branch-sinking.md`) | refc valgrind C |
-| `Test79DupMerge` | adjacent `dup`s merged, `dup`/`drop` and `dup`/`postDrop` pairs cancelled (not against a consuming Integer op), alias `let x = w; drop [x]` renamed | refc valgrind check.sh |
+| `Test79DupMerge` | adjacent `dup`s merged, `dup`/`drop` and `dup`/`postDrop` pairs cancelled (not against a consuming Integer op), alias `let x = w; drop [x]` renamed, unused constructor fields blanked by `DeadVars` (Section 7) | refc valgrind check.sh |
 | `Test36ReuseOfferUniqueLeak` | reuse offer dropping an unreferenced field on the unique path | refc valgrind |
 | `Test44IORefExtPrimLeak` | `RExtPrim` arguments annotated (IORef leak) | refc valgrind |
 | `Test86CafMemoization` | a top-level `unsafePerformIO` CAF evaluated once (`doc/caf-memoization.md`) | saved valgrind |
