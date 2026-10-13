@@ -7,25 +7,30 @@ module Main
 -- c_cflag/c_lflag/c_cc constants (Linux values), reading and changing the
 -- attributes of a pty slave with tcgetattr/tcsetattr, cfmakeraw and the
 -- speed accessors, the tc* control calls, and ENOTTY on a regular file.
--- The pty is opened through /dev/ptmx and the TIOC* ioctls, because
--- posix_openpt and friends need _XOPEN_SOURCE.
+-- The pty comes from posix_openpt/grantpt/unlockpt/ptsname, which glibc
+-- declares only under _GNU_SOURCE: verify.sh builds this test with
+-- IDRIS2_CFLAGS=-D_GNU_SOURCE.
 
 import Data.Bits
+import Data.List
+import Data.String
 import System.Directory
 import System.File
 import System.Posix.Errno
 import System.Posix.File
 import System.Posix.FileDesc
+import System.Posix.Process
 import System.Posix.Termios
-
-%foreign "CExpr:(ioctl($1, TIOCSPTLCK, &(int){0})),libc,sys/ioctl.h"
-prim__unlockpt : Bits32 -> PrimIO Int32
-
-%foreign "CExpr:(({ unsigned n = 0; ioctl($1, TIOCGPTN, &n); n; })),libc,sys/ioctl.h"
-prim__ptsNumber : Bits32 -> PrimIO Bits32
 
 c : String -> Bits32 -> IO ()
 c n v = putStrLn (n ++ "=" ++ show v)
+
+ci : String -> Int32 -> IO ()
+ci n v = putStrLn (n ++ "=" ++ show v)
+
+ok : String -> Either Errno () -> IO ()
+ok n (Right ()) = putStrLn (n ++ ": ok")
+ok n (Left e)   = putStrLn (n ++ ": error " ++ show e)
 
 yes : String -> Bool -> IO ()
 yes n b = putStrLn (n ++ ": " ++ show b)
@@ -43,11 +48,14 @@ scratch = "TestPosixTermios.scratch"
 ||| Open a pty: the master and the slave side.
 setup : IO (Maybe (FileDesc, FileDesc))
 setup = do
-  Right master <- openFile "/dev/ptmx" (2 .|. O_NOCTTY) 0
-    | Left e => putStrLn ("open ptmx: " ++ show e) >> pure Nothing
-  _ <- primIO (prim__unlockpt master.rawfd)
-  n <- primIO (prim__ptsNumber master.rawfd)
-  Right slave <- openFile ("/dev/pts/" ++ show n) (2 .|. O_NOCTTY) 0
+  Right master <- posixOpenpt (2 .|. O_NOCTTY)
+    | Left e => putStrLn ("posixOpenpt: " ++ show e) >> pure Nothing
+  ok "grantpt" =<< grantpt master
+  ok "unlockpt" =<< unlockpt master
+  Right name <- ptsname master
+    | Left e => putStrLn ("ptsname: " ++ show e) >> pure Nothing
+  yes "ptsname under /dev/pts" (isPrefixOf "/dev/pts/" name)
+  Right slave <- openFile name (2 .|. O_NOCTTY) 0
     | Left e => putStrLn ("open slave: " ++ show e) >> pure Nothing
   pure (Just (master, slave))
 
@@ -144,6 +152,22 @@ testConstants = do
   c "VTIME" VTIME
   c "VWERASE" VWERASE
 
+||| Baud rates (their values differ between glibc versions, so only their
+||| properties are checked) and the tcflush/tcflow selectors.
+testBaudConstants : IO ()
+testBaudConstants = do
+  let rates : List Bits32 = [B0, B50, B75, B110, B134, B150, B200, B300, B600, B1200, B1800, B2400, B4800, B9600, B19200, B38400, B57600, B115200, B230400, B460800, B500000, B576000, B921600, B1000000, B1152000, B1500000, B2000000, B2500000, B3000000, B3500000, B4000000]
+  yes "baud rates are distinct" (length (nub rates) == length rates)
+  yes "B0 is zero" (B0 == 0)
+  ci "TCIFLUSH" TCIFLUSH
+  ci "TCOFLUSH" TCOFLUSH
+  ci "TCIOFLUSH" TCIOFLUSH
+  ci "TCOOFF" TCOOFF
+  ci "TCOON" TCOON
+  ci "TCIOFF" TCIOFF
+  ci "TCION" TCION
+
+
 ||| Default attributes of a fresh pty slave (cooked mode).
 testDefaults : FileDesc -> IO ()
 testDefaults slave = do
@@ -170,7 +194,7 @@ testSetAttr slave = do
   setLFlag ios (l .&. complement (ICANON .|. ECHO))
   setCc ios VMIN 5
   setCc ios VTIME 2
-  tcsetattr slave TCSANOW ios >>= \r => putStrLn ("tcsetattr: " ++ show r)
+  ok "tcsetattr" =<< tcsetattr slave TCSANOW ios
   Right back <- tcgetattr slave
     | Left e => putStrLn ("tcgetattr again: " ++ show e)
   l' <- getLFlag back
@@ -194,19 +218,51 @@ testRawAndSpeed slave = do
   yes "raw ISIG" (set l ISIG)
   yes "raw OPOST" (set o OPOST)
   yes "raw CS8" ((cf .&. CSIZE) == CS8)
-  cfsetispeed ios 13 >>= \r => putStrLn ("cfsetispeed 9600: " ++ show r)
-  tcsetattr slave TCSAFLUSH ios >>= \r => putStrLn ("tcsetattr TCSAFLUSH: " ++ show r)
+  ok "cfsetispeed B9600" =<< cfsetispeed ios B9600
+  ok "tcsetattr TCSAFLUSH" =<< tcsetattr slave TCSAFLUSH ios
   Right back <- tcgetattr slave
     | Left e => putStrLn ("tcgetattr again: " ++ show e)
-  cfgetispeed back >>= \r => putStrLn ("cfgetispeed: " ++ show r)
+  cfgetispeed back >>= \r => yes "cfgetispeed == B9600" (r == B9600)
 
 ||| tcdrain / tcflush / tcflow / tcsendbreak on the slave.
 testControl : FileDesc -> IO ()
 testControl slave = do
-  tcdrain slave >>= \r => putStrLn ("tcdrain: " ++ show r)
-  tcflush slave 0 >>= \r => putStrLn ("tcflush TCIFLUSH: " ++ show r)
-  tcflow slave 1 >>= \r => putStrLn ("tcflow TCOON: " ++ show r)
-  tcsendbreak slave 0 >>= \r => putStrLn ("tcsendbreak: " ++ show r)
+  ok "tcdrain" =<< tcdrain slave
+  ok "tcflush TCIFLUSH" =<< tcflush slave TCIFLUSH
+  ok "tcflush TCIOFLUSH" =<< tcflush slave TCIOFLUSH
+  ok "tcflow TCOON" =<< tcflow slave TCOON
+  ok "tcsendbreak" =<< tcsendbreak slave 0
+  Left e <- tcflush slave 99
+    | Right _ => putStrLn "tcflush with a bad selector succeeded"
+  yes "tcflush 99 gives EINVAL" (e == EINVAL)
+
+||| The input and output baud rates, together and apart.
+testSpeeds : FileDesc -> IO ()
+testSpeeds slave = do
+  Right ios <- tcgetattr slave
+    | Left e => putStrLn ("tcgetattr: " ++ show e)
+  ok "cfsetospeed B19200" =<< cfsetospeed ios B19200
+  ok "cfsetispeed B4800" =<< cfsetispeed ios B4800
+  cfgetospeed ios >>= \r => yes "cfgetospeed == B19200" (r == B19200)
+  cfgetispeed ios >>= \r => yes "cfgetispeed == B4800" (r == B4800)
+  ok "cfsetspeed B115200" =<< cfsetspeed ios B115200
+  cfgetospeed ios >>= \r => yes "cfsetspeed sets the output rate" (r == B115200)
+  cfgetispeed ios >>= \r => yes "cfsetspeed sets the input rate" (r == B115200)
+
+||| isatty / ttyname / the foreground process group of a terminal that is not ours.
+testIdentity : FileDesc -> IO ()
+testIdentity slave = do
+  isatty slave >>= yes "isatty slave"
+  Right name <- ttyname slave
+    | Left e => putStrLn ("ttyname: " ++ show e)
+  yes "ttyname under /dev/pts" (isPrefixOf "/dev/pts/" name)
+  -- opened with O_NOCTTY, so it is not this process's controlling terminal
+  Left e1 <- tcgetpgrp slave
+    | Right _ => putStrLn "tcgetpgrp succeeded"
+  yes "tcgetpgrp: ENOTTY" (e1 == ENOTTY)
+  Left e2 <- tcgetsid slave
+    | Right _ => putStrLn "tcgetsid succeeded"
+  yes "tcgetsid: ENOTTY" (e2 == ENOTTY)
 
 ||| A regular file is not a terminal: ENOTTY.
 testNotATty : IO ()
@@ -220,6 +276,10 @@ testNotATty = do
   case r of
     Left e => putStrLn ("tcgetattr on a file: " ++ show (e == ENOTTY))
     Right _ => putStrLn "tcgetattr on a file succeeded"
+  isatty fd >>= yes "isatty file"
+  Left e <- ttyname fd
+    | Right _ => putStrLn "ttyname of a file succeeded"
+  yes "ttyname of a file: ENOTTY" (e == ENOTTY)
   _ <- close fd
   pure ()
 
@@ -230,12 +290,15 @@ testNotATty = do
 main : IO ()
 main = do
   testConstants
+  testBaudConstants
   Just (master, slave) <- setup
     | Nothing => putStrLn "no pty"
   testDefaults slave
   testSetAttr slave
   testRawAndSpeed slave
   testControl slave
+  testSpeeds slave
+  testIdentity slave
   testNotATty
   teardown (master, slave)
   putStrLn "done"

@@ -94,6 +94,8 @@ TESTS=(
 # Tests that need libcurl's headers (curl/curl.h); skipped, loudly, when
 # the C compiler cannot find them.
 NEEDS_CURL=" TestCurl "
+# Tests built with IDRIS2_CFLAGS=-D_GNU_SOURCE (declarations glibc hides otherwise).
+NEEDS_GNU_SOURCE=" TestPosixTermios "
 have_curl_h() { echo '#include <curl/curl.h>' | gcc -E -x c - > /dev/null 2>&1; }
 
 echo "=== Check TESTS against the tests/*/ directories ==="
@@ -151,7 +153,9 @@ for entry in "${TESTS[@]}"; do
     for p in $extra; do pflags+=(-p "$p"); done
 
     echo "=== rc2 backend: build $t ($desc) ==="
-    ( cd "$TESTS_DIR/$t" && ulimit -v 12000000 && timeout 600 \
+    gnu_flags=""
+    [[ "$NEEDS_GNU_SOURCE" == *" $t "* ]] && gnu_flags="-D_GNU_SOURCE"
+    ( cd "$TESTS_DIR/$t" && ulimit -v 12000000 && IDRIS2_CFLAGS="${IDRIS2_CFLAGS:-} $gnu_flags" timeout 600 \
         "$IDRIS2RC2" --cg rc2 "${pflags[@]}" -o "${t}_verify" "$t.idr" )
 
     echo "=== Run and diff against $t.expected ==="

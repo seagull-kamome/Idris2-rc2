@@ -75,6 +75,18 @@ VSTOP=9
 VSUSP=10
 VTIME=5
 VWERASE=14
+baud rates are distinct: True
+B0 is zero: True
+TCIFLUSH=0
+TCOFLUSH=1
+TCIOFLUSH=2
+TCOOFF=0
+TCOON=1
+TCIOFF=2
+TCION=3
+grantpt: ok
+unlockpt: ok
+ptsname under /dev/pts: True
 ICANON: True
 ECHO: True
 ISIG: True
@@ -89,7 +101,7 @@ VEOF char: 4
 VSTART char: 17
 VSTOP char: 19
 VSUSP char: 26
-tcsetattr: 0
+tcsetattr: ok
 ICANON after: False
 ECHO after: False
 ISIG after: True
@@ -100,12 +112,27 @@ raw ECHO: False
 raw ISIG: False
 raw OPOST: False
 raw CS8: True
-cfsetispeed 9600: 0
-tcsetattr TCSAFLUSH: 0
-cfgetispeed: 13
-tcdrain: 0
-tcflush TCIFLUSH: 0
-tcflow TCOON: 0
-tcsendbreak: 0
+cfsetispeed B9600: ok
+tcsetattr TCSAFLUSH: ok
+cfgetispeed == B9600: True
+tcdrain: ok
+tcflush TCIFLUSH: ok
+tcflush TCIOFLUSH: ok
+tcflow TCOON: ok
+tcsendbreak: ok
+tcflush 99 gives EINVAL: True
+cfsetospeed B19200: ok
+cfsetispeed B4800: ok
+cfgetospeed == B19200: True
+cfgetispeed == B4800: True
+cfsetspeed B115200: ok
+cfsetspeed sets the output rate: True
+cfsetspeed sets the input rate: True
+isatty slave: True
+ttyname under /dev/pts: True
+tcgetpgrp: ENOTTY: True
+tcgetsid: ENOTTY: True
 tcgetattr on a file: True
+isatty file: False
+ttyname of a file: ENOTTY: True
 done
