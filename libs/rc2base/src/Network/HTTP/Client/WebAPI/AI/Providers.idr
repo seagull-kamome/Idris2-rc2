@@ -1,15 +1,15 @@
-module Network.WebAPI.AI.Providers
+module Network.HTTP.Client.WebAPI.AI.Providers
 
 -- Copyright 2026, Hattori,Hiroki. All rights reserved.
 -- This module was licensed by BSD3.
 
 -- An OpenAI-compatible `Endpoint` for each service. Getting a key or an
--- OAuth client: doc/webapi-getting-started.md.
+-- OAuth client: doc/http-client.md.
 
 import System
 
-import Network.WebAPI.AI.OpenAI
-import Network.WebAPI.Auth.OAuth2
+import Network.HTTP.Client.WebAPI.AI.OpenAI
+import Network.HTTP.Client.WebAPI.Auth.OAuth2
 
 %default total
 

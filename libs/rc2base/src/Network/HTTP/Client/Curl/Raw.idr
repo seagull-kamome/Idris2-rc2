@@ -1,19 +1,19 @@
-module Network.Curl.Raw
+module Network.HTTP.Client.Curl.Raw
 
 -- Copyright 2026, Hattori,Hiroki. All rights reserved.
 -- This module was licensed by BSD3.
 
 -- Direct libcurl FFI bindings: one `%foreign` per libcurl function,
 -- plus thin `HasIO` wrappers that turn NULL into `Maybe` and raw ints
--- into the `Network.Curl.Types` wrappers. No C shim of its own: output
+-- into the `Network.HTTP.Client.Curl.Types` wrappers. No C shim of its own: output
 -- pointers and C structs go through `System.FFI.Struct`, see
--- doc/ffi-without-shims.md.
+-- doc/http-client.md.
 
 import Data.Buffer
 import Data.Maybe
 import System.FFI
 
-import Network.Curl.Types
+import Network.HTTP.Client.Curl.Types
 
 ------------------------------------------------------------------------
 -- Out-parameter cells and struct views
@@ -262,7 +262,7 @@ prim__curlMimeFilename : AnyPtr -> String -> PrimIO Int
 prim__curlMimeType : AnyPtr -> String -> PrimIO Int
 
 -- Not `CURL_ZERO_TERMINATED`: `-1 : Int` is a 32-bit `int` on Chez and
--- doesn't widen to `(size_t)-1`, see doc/int-width-pitfall.md.
+-- doesn't widen to `(size_t)-1`, see doc/http-client.md.
 %foreign "C:curl_mime_data,libcurl,curl/curl.h"
 prim__curlMimeData : AnyPtr -> String -> Int -> PrimIO Int
 
@@ -285,7 +285,7 @@ prim__curlEasyHeader : AnyPtr -> String -> Bits64 -> Bits32 -> Int -> CellPtr ->
 prim__curlEasyNextheader : AnyPtr -> Bits32 -> Int -> AnyPtr -> PrimIO AnyPtr
 
 -- libc, not rc2base's `System.IO.MemStream`: a Chez build has no rc2
--- toolchain to provide rc2base's C library (doc/memstream-capture.md).
+-- toolchain to provide rc2base's C library (doc/http-client.md).
 %foreign "C:open_memstream,libc,stdio.h"
 prim__openMemstream : CellPtr -> CellI64 -> PrimIO AnyPtr
 
@@ -712,7 +712,7 @@ curlEasyNextheader h origin request prev = do
 ||| Performs the transfer with `CURLOPT_WRITEDATA` pointed at an
 ||| `open_memstream(3)` stream, then hands `read` the captured body's
 ||| NUL-terminated bytes and length, both valid only until `read`
-||| returns (doc/memstream-capture.md). The building block for
+||| returns (doc/http-client.md). The building block for
 ||| `curlEasyPerformToBuffer`/`ToString` and for other targets such as
 ||| `curl-rc2`'s `TextBuffer`.
 export

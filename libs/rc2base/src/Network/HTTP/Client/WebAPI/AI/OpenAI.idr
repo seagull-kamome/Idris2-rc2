@@ -1,17 +1,17 @@
-module Network.WebAPI.AI.OpenAI
+module Network.HTTP.Client.WebAPI.AI.OpenAI
 
 -- Copyright 2026, Hattori,Hiroki. All rights reserved.
 -- This module was licensed by BSD3.
 
 -- Client for OpenAI's chat completions API, which Claude, Gemini and
--- llama.cpp's llama-server also serve. Network.WebAPI.AI.Providers
+-- llama.cpp's llama-server also serve. Network.HTTP.Client.WebAPI.AI.Providers
 -- has an `Endpoint` for each.
 
 import Data.List
 import Data.Maybe
 
-import Network.Curl.Fetch
-import Network.WebAPI.JSON
+import Network.HTTP.Client.Curl.Fetch
+import Network.HTTP.Client.WebAPI.JSON
 
 %default total
 

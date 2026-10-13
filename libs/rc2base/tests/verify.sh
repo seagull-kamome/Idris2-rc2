@@ -38,9 +38,14 @@ PKG_DIR="$(dirname "$TESTS_DIR")"
 REPO_ROOT="$(dirname "$(dirname "$PKG_DIR")")"
 IDRIS2RC2="$REPO_ROOT/rc2/build/exec/idris2-rc2"
 TMP="$(mktemp -d)"
-trap 'rm -rf "$TMP"' EXIT
+trap 'exec 3>&- 2>/dev/null; rm -rf "$TMP"' EXIT
 
 fail() { echo "FAIL  $1"; exit 1; }
+
+# Create a FIFO for stdin that stays open but is empty (prevents tests from
+# hanging on stdin reads). Tests that need stdin can write to /dev/fd/3.
+mkfifo "$TMP/stdin"
+exec 3<>"$TMP/stdin"
 
 if [[ ! -x "$IDRIS2RC2" ]]; then
     fail "rc2/build/exec/idris2-rc2 not found -- build it first (see rc2/tests/verify.sh)"
@@ -79,7 +84,15 @@ TESTS=(
     "TestPosixDirectory||System.Posix.Directory: opendir, chdir, getcwd, DT_* constants"
     "TestPosixMmap||System.Posix.Mmap: PROT_/MAP_ constants, anonymous and file mappings"
     "TestPosixUio||System.Posix.Uio: writev/readv, pread/pwrite"
+    "TestWebAPIPure|network contrib|Network.HTTP.Client.WebAPI: SHA-256/base64url/PKCE, JSON, URL/form encoding, token JSON"
+    "TestWebAPI|network contrib|Network.HTTP.Client.WebAPI.{JSON,OAuth2}: endpoint setup, token persistence, response decoding"
+    "TestCurl|network contrib|Network.HTTP.Client.Curl: libcurl bindings, local file:// and HTTP transfers"
 )
+
+# Tests that need libcurl's headers (curl/curl.h); skipped, loudly, when
+# the C compiler cannot find them.
+NEEDS_CURL=" TestCurl "
+have_curl_h() { echo '#include <curl/curl.h>' | gcc -E -x c - > /dev/null 2>&1; }
 
 echo "=== Check TESTS against the tests/*/ directories ==="
 # Every tests/<T>/ must be listed and have <T>.idr + <T>.expected, and
@@ -128,6 +141,10 @@ echo "=== Check postinstall copied the native library into lib/ ==="
 # from env.sh's own LD_LIBRARY_PATH, sourced above.
 for entry in "${TESTS[@]}"; do
     IFS='|' read -r t extra desc <<< "$entry"
+    if [[ "$NEEDS_CURL" == *" $t "* ]] && ! have_curl_h; then
+        echo "SKIP  $t -- curl/curl.h not found by gcc (install libcurl's development files)"
+        continue
+    fi
     pflags=(-p rc2base)
     for p in $extra; do pflags+=(-p "$p"); done
 
@@ -137,12 +154,15 @@ for entry in "${TESTS[@]}"; do
 
     echo "=== Run and diff against $t.expected ==="
     rc=0
-    ( ulimit -v 4000000; timeout 20 "$TESTS_DIR/$t/build/exec/${t}_verify" ) > "$TMP/actual.out" 2>&1 || rc=$?
+    ( ulimit -v 4000000; timeout 20 "$TESTS_DIR/$t/build/exec/${t}_verify" <&3 ) > "$TMP/actual.out" 2>&1 || rc=$?
     if [[ $rc -ne 0 ]]; then
         cat "$TMP/actual.out"
         fail "$t -- exited with status $rc (124 = 20s timeout)"
     fi
 
+    # Mask the random authorization URL (state, PKCE challenge, loopback
+    # port) that Network.HTTP.Client.WebAPI.Auth.OAuth2.login prints.
+    sed -i 's|^http://127\.0\.0\.1:[0-9]*/auth?.*|<authorization url>|' "$TMP/actual.out"
     if diff -u "$TESTS_DIR/$t/$t.expected" "$TMP/actual.out"; then
         echo "PASS  $t"
     else

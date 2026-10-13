@@ -1,12 +1,12 @@
-module Network.WebAPI.Auth.OAuth2
+module Network.HTTP.Client.WebAPI.Auth.OAuth2
 
 -- Copyright 2026, Hattori,Hiroki. All rights reserved.
 -- This module was licensed by BSD3.
 
 -- OAuth 2.0 for a command-line program: authorization code with PKCE
 -- (RFC 7636) and a loopback redirect (RFC 8252), token refresh, and a
--- token file. See doc/webapi-getting-started.md for setting up a
--- Google client, and doc/webapi.md for why this flow.
+-- token file. See doc/http-client.md for setting up a
+-- Google client, and doc/http-client.md for why this flow.
 
 import Data.Buffer
 import Data.List
@@ -19,9 +19,9 @@ import System.File.Buffer
 import System.FFI
 
 import Network.Socket
-import Network.Curl.Fetch
-import Network.WebAPI.JSON
-import Network.WebAPI.Auth.PKCE
+import Network.HTTP.Client.Curl.Fetch
+import Network.HTTP.Client.WebAPI.JSON
+import Network.HTTP.Client.WebAPI.Auth.PKCE
 
 %default total
 
@@ -34,6 +34,8 @@ record Client where
   clientSecret    : Maybe String
   scopes          : List String
   extraAuthParams : List (String, String)
+  ||| Optional callback invoked with (authUrl, redirectUri) when login generates them.
+  onAuthUrl       : Maybe (String -> String -> IO ())
 
 ||| A Google "Desktop app" client. `access_type=offline` asks for a
 ||| refresh token; `prompt=consent` asks for it again on a repeat login.
@@ -43,6 +45,7 @@ google i s sc = MkClient "https://accounts.google.com/o/oauth2/v2/auth"
                          "https://oauth2.googleapis.com/token"
                          i (Just s) sc
                          [("access_type", "offline"), ("prompt", "consent")]
+                         Nothing
 
 public export
 record Token where
@@ -211,7 +214,7 @@ accessToken c path = do
 ------------------------------------------------------------------------
 
 -- `struct pollfd[2]`. A `Struct` from `malloc`, not a `Buffer`: see
--- doc/ffi-without-shims.md, section 2.
+-- doc/http-client.md.
 PollFds : Type
 PollFds = Struct "idris2webapi_pollfd2"
     [ ("fd0", Int32), ("events0", Bits16), ("revents0", Bits16)
@@ -349,14 +352,16 @@ login c = liftIO $ do
         port     = 49152 + cast (foldl (\acc, b => acc * 256 + cast b) (the Int 0) (drop 48 rnd)) `mod` 16384
     listener <- listenLoopback port
     let redirect = "http://127.0.0.1:" ++ show (maybe port snd listener)
+    let authUrl = authorizationUrl c redirect state (challengeS256 verifier)
     putStrLn "Open this URL in a browser and allow access:"
     putStrLn ""
-    putStrLn (authorizationUrl c redirect state (challengeS256 verifier))
+    putStrLn authUrl
     putStrLn ""
     putStrLn $ case listener of
         Just _  => "Waiting for the browser. If it ends on an error page instead, paste that page's full address here:"
         Nothing => "After allowing access the browser shows an error page; paste that page's full address here:"
     fflush stdout
+    traverse_ (\cb => cb authUrl redirect) c.onAuthUrl
     result <- waitRedirect listener
     traverse_ (close . fst) listener
     case result of

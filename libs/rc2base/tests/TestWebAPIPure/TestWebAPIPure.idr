@@ -4,15 +4,15 @@ module Main
 -- This module was licensed by BSD3.
 
 -- The network-free half of webapi: SHA-256/base64url/PKCE against
--- coreutils' sha256sum, JSON rendering, chat request/response JSON,
+-- known vectors, JSON rendering, chat request/response JSON,
 -- API error bodies, URL/form encoding and token JSON.
 
 import Data.List
 
-import Network.WebAPI.JSON
-import Network.WebAPI.AI.OpenAI
-import Network.WebAPI.Auth.OAuth2
-import Network.WebAPI.Auth.PKCE
+import Network.HTTP.Client.WebAPI.JSON
+import Network.HTTP.Client.WebAPI.AI.OpenAI
+import Network.HTTP.Client.WebAPI.Auth.OAuth2
+import Network.HTTP.Client.WebAPI.Auth.PKCE
 
 hex : List Bits8 -> String
 hex = concatMap (\b => pack [digit (cast b `div` 16), digit (cast b `mod` 16)])

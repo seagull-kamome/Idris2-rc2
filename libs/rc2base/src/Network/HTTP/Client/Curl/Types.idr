@@ -1,4 +1,4 @@
-module Network.Curl.Types
+module Network.HTTP.Client.Curl.Types
 
 -- Copyright 2026, Hattori,Hiroki. All rights reserved.
 -- This module was licensed by BSD3.
@@ -58,7 +58,7 @@ curlopt_HTTPHEADER = MkCURLoption 10023 -- CURLOPTTYPE_OBJECTPOINT + 23
 ||| `CURLOPT_WRITEFUNCTION` is left unset -- `fwrite(ptr, size, nmemb,
 ||| (FILE *) this)`, i.e. `CURLOPTTYPE_CBPOINT` (`CURLOPTTYPE_OBJECTPOINT`
 ||| itself, curl/curl.h's own `#define`), not a callback in its own
-||| right. See `Network.Curl.Raw`'s own `curlMemstreamOpen`/`Filep` for
+||| right. See `Network.HTTP.Client.Curl.Raw`'s own `curlMemstreamOpen`/`Filep` for
 ||| why this is enough to capture a response body into Idris without
 ||| ever binding `CURLOPT_WRITEFUNCTION` itself.
 public export
@@ -68,7 +68,7 @@ curlopt_WRITEDATA = MkCURLoption 10001 -- CURLOPTTYPE_CBPOINT + 1
 ||| `1` selects a plain `GET` -- only useful to force it back after a
 ||| handle was previously configured for `POST`/`CUSTOMREQUEST`/etc.
 ||| (`curl_easy_setopt(3)`'s own note); a fresh handle already
-||| defaults to `GET`. See `Network.Curl.Fetch`'s own `applyMethod`.
+||| defaults to `GET`. See `Network.HTTP.Client.Curl.Fetch`'s own `applyMethod`.
 public export
 curlopt_HTTPGET : CURLoption
 curlopt_HTTPGET = MkCURLoption 80 -- CURLOPTTYPE_LONG + 80
@@ -132,7 +132,7 @@ curlopt_SHARE = MkCURLoption 10100 -- CURLOPTTYPE_OBJECTPOINT + 100
 ||| `CURLINFO_OFF_T`/`CURLINFO_SOCKET` type tag (per curl/curl.h) plus
 ||| the info's own small ordinal, same construction as `CURLoption`
 ||| above. All six tags now have a matching `curlEasyGetinfo*` function
-||| (`Network.Curl.Raw`); only a hand-picked handful of the several
+||| (`Network.HTTP.Client.Curl.Raw`); only a hand-picked handful of the several
 ||| hundred `CURLINFO_*` values libcurl defines are represented here --
 ||| add more as a concrete need comes up.
 public export
@@ -177,7 +177,7 @@ curlinfo_REDIRECT_COUNT : CURLINFO
 curlinfo_REDIRECT_COUNT = MkCURLINFO 2097172 -- CURLINFO_LONG + 20
 
 ||| First `CURLINFO_OFF_T`-tagged constant bound -- see
-||| `Network.Curl.Raw`'s own `curlEasyGetinfoOfft` for why `off_t`
+||| `Network.HTTP.Client.Curl.Raw`'s own `curlEasyGetinfoOfft` for why `off_t`
 ||| itself is represented as `Int64` here (`curl_off_t` is always a
 ||| real 64-bit signed integer in libcurl, regardless of the host
 ||| platform's own `long` width).
@@ -186,7 +186,7 @@ curlinfo_SIZE_DOWNLOAD_T : CURLINFO
 curlinfo_SIZE_DOWNLOAD_T = MkCURLINFO 6291464 -- CURLINFO_OFF_T + 8
 
 ||| First `CURLINFO_SLIST`-tagged constant bound -- see
-||| `Network.Curl.Raw`'s own `curlEasyGetinfoSlist`/`curlSlistToList`.
+||| `Network.HTTP.Client.Curl.Raw`'s own `curlEasyGetinfoSlist`/`curlSlistToList`.
 ||| Per `curl_easy_getinfo(3)`, the caller owns the returned list and
 ||| must release it with `curlSlistFreeAll` once done.
 public export
@@ -194,7 +194,7 @@ curlinfo_COOKIELIST : CURLINFO
 curlinfo_COOKIELIST = MkCURLINFO 4194332 -- CURLINFO_SLIST + 28
 
 ||| First `CURLINFO_SOCKET`-tagged constant bound -- see
-||| `Network.Curl.Raw`'s own `curlEasyGetinfoSocket`. `curl_socket_t`
+||| `Network.HTTP.Client.Curl.Raw`'s own `curlEasyGetinfoSocket`. `curl_socket_t`
 ||| is a plain C `int` on every non-Windows platform (curl/curl.h),
 ||| so `Int` is an exact fit, not an approximation.
 public export

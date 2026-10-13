@@ -1,16 +1,16 @@
-module Network.Curl.Fetch
+module Network.HTTP.Client.Curl.Fetch
 
 -- Copyright 2026, Hattori,Hiroki. All rights reserved.
 -- This module was licensed by BSD3.
 
--- A JS `fetch()`-shaped convenience layer over Network.Curl.Raw: one
+-- A JS `fetch()`-shaped convenience layer over Network.HTTP.Client.Curl.Raw: one
 -- synchronous transfer per call, with curl_global_init/easy handle/
 -- slist bookkeeping hidden behind plain records.
 
 import Data.Buffer
 
-import Network.Curl.Raw
-import Network.Curl.Types
+import Network.HTTP.Client.Curl.Raw
+import Network.HTTP.Client.Curl.Types
 
 ------------------------------------------------------------------------
 -- Request/response types
