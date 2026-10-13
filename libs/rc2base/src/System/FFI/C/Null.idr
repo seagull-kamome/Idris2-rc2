@@ -12,11 +12,18 @@ export NullAnyPtr : AnyPtr
 %inline %foreign "CExpr:(NULL)"
 export NullPtr : {0 a : Type} -> Ptr a
 
+-- A `Bool` result is not a C type (it would be read as `void *`), so the
+-- comparison is done on the Prelude's own `prim__nullAnyPtr`.
 
-%inline %foreign "CExpr:($1 != NULL ? 1 : 0)"
-export isNullAnyPtr : AnyPtr -> Bool
-%inline %foreign "CExpr:($2 != NULL ? 1 : 0)"
-export isNullPtr : {a : Type} -> Ptr a -> Bool
+||| True when the pointer is NULL.
+export
+isNullAnyPtr : AnyPtr -> Bool
+isNullAnyPtr p = prim__nullAnyPtr p /= 0
+
+||| True when the pointer is NULL.
+export
+isNullPtr : {0 a : Type} -> Ptr a -> Bool
+isNullPtr p = prim__nullAnyPtr (prim__forgetPtr p) /= 0
 
 
 

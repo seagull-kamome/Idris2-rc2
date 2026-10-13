@@ -1,0 +1,138 @@
+NCCS=32
+IGNBRK=1
+BRKINT=2
+IGNPAR=4
+PARMRK=8
+INPCK=16
+ISTRIP=32
+INLCR=64
+IGNCR=128
+ICRNL=256
+IUCLC=512
+IXON=1024
+IXANY=2048
+IXOFF=4096
+IMAXBEL=8192
+IUTF8=16384
+OPOST=1
+OLCUC=2
+ONLCR=4
+OCRNL=8
+ONOCR=16
+ONLRET=32
+OFILL=64
+OFDEL=128
+NLDLY=256
+CRDLY=1536
+TABDLY=6144
+BSDLY=8192
+VTDLY=16384
+FFDLY=32768
+CBAUD=4111
+CBAUDEX=4096
+CSIZE=48
+CS5=0
+CS6=16
+CS7=32
+CS8=48
+CSTOPB=64
+CREAD=128
+PARENB=256
+PARODD=512
+HUPCL=1024
+CLOCAL=2048
+CIBAUD=269418496
+CMSPAR=1073741824
+CRTSCTS=2147483648
+ISIG=1
+ICANON=2
+XCASE=4
+ECHO=8
+ECHOE=16
+ECHOK=32
+ECHONL=64
+ECHOCTL=512
+ECHOPRT=1024
+ECHOKE=2048
+FLUSHO=4096
+NOFLSH=128
+TOSTOP=256
+PENDIN=16384
+IEXTEN=32768
+VDISCARD=13
+VEOF=4
+VEOL=11
+VEOL2=16
+VERASE=2
+VINTR=0
+VKILL=3
+VLNEXT=15
+VMIN=6
+VQUIT=1
+VREPRINT=12
+VSTART=8
+VSTOP=9
+VSUSP=10
+VTIME=5
+VWERASE=14
+baud rates are distinct: True
+B0 is zero: True
+TCIFLUSH=0
+TCOFLUSH=1
+TCIOFLUSH=2
+TCOOFF=0
+TCOON=1
+TCIOFF=2
+TCION=3
+grantpt: ok
+unlockpt: ok
+ptsname under /dev/pts: True
+ICANON: True
+ECHO: True
+ISIG: True
+OPOST: True
+ONLCR: True
+ICRNL: True
+VINTR char: 3
+VQUIT char: 28
+VERASE char: 127
+VKILL char: 21
+VEOF char: 4
+VSTART char: 17
+VSTOP char: 19
+VSUSP char: 26
+tcsetattr: ok
+ICANON after: False
+ECHO after: False
+ISIG after: True
+VMIN: 5
+VTIME: 2
+raw ICANON: False
+raw ECHO: False
+raw ISIG: False
+raw OPOST: False
+raw CS8: True
+cfsetispeed B9600: ok
+tcsetattr TCSAFLUSH: ok
+cfgetispeed == B9600: True
+tcdrain: ok
+tcflush TCIFLUSH: ok
+tcflush TCIOFLUSH: ok
+tcflow TCOON: ok
+tcsendbreak: ok
+tcflush 99 gives EINVAL: True
+cfsetospeed B19200: ok
+cfsetispeed B4800: ok
+cfgetospeed == B19200: True
+cfgetispeed == B4800: True
+cfsetspeed B115200: ok
+cfsetspeed sets the output rate: True
+cfsetspeed sets the input rate: True
+isatty slave: True
+ttyname under /dev/pts: True
+tcgetpgrp: ENOTTY: True
+tcgetsid: ENOTTY: True
+tcgetattr on a file: True
+isatty file: False
+ttyname of a file: ENOTTY: True
+done
