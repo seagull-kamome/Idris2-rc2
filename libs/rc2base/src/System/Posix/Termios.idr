@@ -11,7 +11,7 @@ import System.Posix.Errno
 -------------------------------------------------------------------------------
 -- 
 %inline %foreign "CExpr:(NCCS),libc,termios.h;unistd.h"
-NCCS : Bits32
+export NCCS : Bits32
 
 data RawTermios : Type where [external]
 export Termios : Type
@@ -20,48 +20,53 @@ Termios = GCPtr RawTermios
 %inline %foreign "CExpr:(sizeof(struct termios)),libc,termios.h;unistd.h"
 sizeofTermios : Int
 
+export
 newTermios : IO Termios
 newTermios = do
   p <- malloc sizeofTermios >>= pure . prim__castPtr
   onCollect p (\x => free (prim__forgetPtr x))
 
 
-%inline %foreign "CExpr:($1->c_iflag),libc,termios.h;unistd.h"
+%inline %foreign "CExpr:(((struct termios *)($1))->c_iflag),libc,termios.h;unistd.h"
 prim__get_c_iflag : GCPtr RawTermios -> PrimIO Bits32
-%inline %foreign "CExpr:($1->c_oflag),libc,termios.h;unistd.h"
+%inline %foreign "CExpr:(((struct termios *)($1))->c_oflag),libc,termios.h;unistd.h"
 prim__get_c_oflag : GCPtr RawTermios -> PrimIO Bits32
-%inline %foreign "CExpr:($1->c_cflag),libc,termios.h;unistd.h"
+%inline %foreign "CExpr:(((struct termios *)($1))->c_cflag),libc,termios.h;unistd.h"
 prim__get_c_cflag : GCPtr RawTermios -> PrimIO Bits32
-%inline %foreign "CExpr:($1->c_lflag),libc,termios.h;unistd.h"
+%inline %foreign "CExpr:(((struct termios *)($1))->c_lflag),libc,termios.h;unistd.h"
 prim__get_c_lflag : GCPtr RawTermios -> PrimIO Bits32
-%inline %foreign "CExpr:($1->c_cc[$2]),libc,termios.h;unistd.h"
+%inline %foreign "CExpr:(((struct termios *)($1))->c_cc[$2]),libc,termios.h;unistd.h"
 prim__get_c_cc : GCPtr RawTermios -> (i : Bits32) -> PrimIO Bits8
 
+export
 getIFlag, getOFlag, getCFlag, getLFlag : Termios -> IO Bits32
 getIFlag x = primIO $ prim__get_c_iflag x
 getOFlag x = primIO $ prim__get_c_oflag x
 getCFlag x = primIO $ prim__get_c_cflag x
 getLFlag x = primIO $ prim__get_c_lflag x
+export
 getCc : Termios -> Bits32 -> IO Bits8
 getCc x i = primIO $ prim__get_c_cc x i
 
 
-%inline %foreign "CExpr:($1->c_iflag = $2),libc,termios.h;unistd.h"
+%inline %foreign "CExpr:(((struct termios *)($1))->c_iflag = $2),libc,termios.h;unistd.h"
 prim__set_c_iflag : GCPtr RawTermios -> Bits32 -> PrimIO ()
-%inline %foreign "CExpr:($1->c_oflag = $2),libc,termios.h;unistd.h"
+%inline %foreign "CExpr:(((struct termios *)($1))->c_oflag = $2),libc,termios.h;unistd.h"
 prim__set_c_oflag : GCPtr RawTermios -> Bits32 -> PrimIO ()
-%inline %foreign "CExpr:($1->c_cflag = $2),libc,termios.h;unistd.h"
+%inline %foreign "CExpr:(((struct termios *)($1))->c_cflag = $2),libc,termios.h;unistd.h"
 prim__set_c_cflag : GCPtr RawTermios -> Bits32 -> PrimIO ()
-%inline %foreign "CExpr:($1->c_lflag = $2),libc,termios.h;unistd.h"
+%inline %foreign "CExpr:(((struct termios *)($1))->c_lflag = $2),libc,termios.h;unistd.h"
 prim__set_c_lflag : GCPtr RawTermios -> Bits32 -> PrimIO ()
-%inline %foreign "CExpr:($1->c_cc[$2] = $3),libc,termios.h;unistd.h"
+%inline %foreign "CExpr:(((struct termios *)($1))->c_cc[$2] = $3),libc,termios.h;unistd.h"
 prim__set_c_cc : GCPtr RawTermios -> (i : Bits32) -> Bits8 -> PrimIO ()
 
+export
 setIFlag, setOFlag, setCFlag, setLFlag : Termios -> Bits32 -> IO ()
 setIFlag x y = primIO $ prim__set_c_iflag x y
 setOFlag x y = primIO $ prim__set_c_oflag x y
 setCFlag x y = primIO $ prim__set_c_cflag x y
 setLFlag x y = primIO $ prim__set_c_lflag x y
+export
 setCc : Termios -> Bits32 -> Bits8 -> IO ()
 setCc x i y = primIO $ prim__set_c_cc x i y
 
@@ -70,206 +75,201 @@ setCc x i y = primIO $ prim__set_c_cc x i y
 
 -- c_iflag
 %inline %foreign "CExpr:(IGNBRK),libc,termios.h;unistd.h"
-IGNBRK : Bits32
+export IGNBRK : Bits32
 %inline %foreign "CExpr:(BRKINT),libc,termios.h;unistd.h"
-BRKINT : Bits32
+export BRKINT : Bits32
 %inline %foreign "CExpr:(IGNPAR),libc,termios.h;unistd.h"
-IGNPAR : Bits32
+export IGNPAR : Bits32
 %inline %foreign "CExpr:(PARMRK),libc,termios.h;unistd.h"
-PARMRK : Bits32
+export PARMRK : Bits32
 %inline %foreign "CExpr:(INPCK),libc,termios.h;unistd.h"
-INPCK : Bits32
+export INPCK : Bits32
 %inline %foreign "CExpr:(ISTRIP),libc,termios.h;unistd.h"
-ISTRIP : Bits32
+export ISTRIP : Bits32
 %inline %foreign "CExpr:(INLCR),libc,termios.h;unistd.h"
-INLCR : Bits32
+export INLCR : Bits32
 %inline %foreign "CExpr:(IGNCR),libc,termios.h;unistd.h"
-IGNCR : Bits32
+export IGNCR : Bits32
 %inline %foreign "CExpr:(ICRNL),libc,termios.h;unistd.h"
-ICRNL : Bits32
-||| Not posix
+export ICRNL : Bits32
+||| Linux only (System V); not in POSIX.
 %inline %foreign "CExpr:(IUCLC),libc,termios.h;unistd.h"
-IUCLC : Bits32
+export IUCLC : Bits32
 %inline %foreign "CExpr:(IXON),libc,termios.h;unistd.h"
-IXON : Bits32
+export IXON : Bits32
 %inline %foreign "CExpr:(IXANY),libc,termios.h;unistd.h"
-IXANY : Bits32
+export IXANY : Bits32
 %inline %foreign "CExpr:(IXOFF),libc,termios.h;unistd.h"
-IXOFF : Bits32
-||| Not posix
+export IXOFF : Bits32
+||| Linux and BSD, not in POSIX.
 %inline %foreign "CExpr:(IMAXBEL),libc,termios.h;unistd.h"
-IMAXBEL : Bits32
-||| Not posix
+export IMAXBEL : Bits32
+||| Linux only, not in POSIX.
 %inline %foreign "CExpr:(IUTF8),libc,termios.h;unistd.h"
-IUTF8 : Bits32
-
-
-
+export IUTF8 : Bits32
 -- c_oflag
 %inline %foreign "CExpr:(OPOST),libc,termios.h;unistd.h"
-OPOST : Bits32
-||| Not Posix
+export OPOST : Bits32
+||| Linux only (System V); not in POSIX.
 %inline %foreign "CExpr:(OLCUC),libc,termios.h;unistd.h"
-OLCUC : Bits32
+export OLCUC : Bits32
 %inline %foreign "CExpr:(ONLCR),libc,termios.h;unistd.h"
-ONLCR : Bits32
+export ONLCR : Bits32
 %inline %foreign "CExpr:(OCRNL),libc,termios.h;unistd.h"
-OCRNL : Bits32
+export OCRNL : Bits32
 %inline %foreign "CExpr:(ONOCR),libc,termios.h;unistd.h"
-ONOCR : Bits32
+export ONOCR : Bits32
 %inline %foreign "CExpr:(ONLRET),libc,termios.h;unistd.h"
-ONLRET : Bits32
+export ONLRET : Bits32
 %inline %foreign "CExpr:(OFILL),libc,termios.h;unistd.h"
-OFILL : Bits32
+export OFILL : Bits32
 %inline %foreign "CExpr:(OFDEL),libc,termios.h;unistd.h"
-OFDEL : Bits32
+export OFDEL : Bits32
 %inline %foreign "CExpr:(NLDLY),libc,termios.h;unistd.h"
-NLDLY : Bits32
+export NLDLY : Bits32
 %inline %foreign "CExpr:(CRDLY),libc,termios.h;unistd.h"
-CRDLY : Bits32
+export CRDLY : Bits32
 %inline %foreign "CExpr:(TABDLY),libc,termios.h;unistd.h"
-TABDLY : Bits32
+export TABDLY : Bits32
 %inline %foreign "CExpr:(BSDLY),libc,termios.h;unistd.h"
-BSDLY : Bits32
+export BSDLY : Bits32
 %inline %foreign "CExpr:(VTDLY),libc,termios.h;unistd.h"
-VTDLY : Bits32
+export VTDLY : Bits32
 %inline %foreign "CExpr:(FFDLY),libc,termios.h;unistd.h"
-FFDLY : Bits32
-
-
-
+export FFDLY : Bits32
 -- c_cflag
-||| Not Posix
+||| Linux only, not in POSIX.
 %inline %foreign "CExpr:(CBAUD),libc,termios.h;unistd.h"
-CBAUD : Bits32 
-||| Not Posix
+export CBAUD : Bits32
+||| Linux only, not in POSIX.
 %inline %foreign "CExpr:(CBAUDEX),libc,termios.h;unistd.h"
-CBAUDEX : Bits32
+export CBAUDEX : Bits32
 %inline %foreign "CExpr:(CSIZE),libc,termios.h;unistd.h"
-CSIZE : Bits32
+export CSIZE : Bits32
 %inline %foreign "CExpr:(CS5),libc,termios.h;unistd.h"
-CS5 : Bits32
+export CS5 : Bits32
 %inline %foreign "CExpr:(CS6),libc,termios.h;unistd.h"
-CS6 : Bits32
+export CS6 : Bits32
 %inline %foreign "CExpr:(CS7),libc,termios.h;unistd.h"
-CS7 : Bits32
+export CS7 : Bits32
 %inline %foreign "CExpr:(CS8),libc,termios.h;unistd.h"
-CS8 : Bits32
+export CS8 : Bits32
 %inline %foreign "CExpr:(CSTOPB),libc,termios.h;unistd.h"
-CSTOPB : Bits32
+export CSTOPB : Bits32
 %inline %foreign "CExpr:(CREAD),libc,termios.h;unistd.h"
-CREAD : Bits32
+export CREAD : Bits32
 %inline %foreign "CExpr:(PARENB),libc,termios.h;unistd.h"
-PARENB : Bits32
+export PARENB : Bits32
 %inline %foreign "CExpr:(PARODD),libc,termios.h;unistd.h"
-PARODD : Bits32
+export PARODD : Bits32
 %inline %foreign "CExpr:(HUPCL),libc,termios.h;unistd.h"
-HUPCL : Bits32
+export HUPCL : Bits32
 %inline %foreign "CExpr:(CLOCAL),libc,termios.h;unistd.h"
-CLOCAL : Bits32
-||| Not Posix
-%inline %foreign "CExpr:(LOBLK),libc,termios.h;unistd.h"
-LOBLK : Bits32
-||| Not Posix
+export CLOCAL : Bits32
+-- Not defined on Linux: kept for the BSD/System V module this moves to.
+-- ||| Not defined by glibc (System V); do not use on Linux.
+-- %inline %foreign "CExpr:(LOBLK),libc,termios.h;unistd.h"
+-- export LOBLK : Bits32
+||| Linux only, not in POSIX.
 %inline %foreign "CExpr:(CIBAUD),libc,termios.h;unistd.h"
-CIBAUD : Bits32
-||| Not Posix
+export CIBAUD : Bits32
+||| Linux only, not in POSIX.
 %inline %foreign "CExpr:(CMSPAR),libc,termios.h;unistd.h"
-CMSPAR : Bits32
-||| Not Posix
+export CMSPAR : Bits32
+||| Linux and BSD, not in POSIX.
 %inline %foreign "CExpr:(CRTSCTS),libc,termios.h;unistd.h"
-CRTSCTS : Bits32
-
-
+export CRTSCTS : Bits32
 -- c_lflag
 
 %inline %foreign "CExpr:(ISIG),libc,termios.h;unistd.h"
-ISIG : Bits32
+export ISIG : Bits32
 %inline %foreign "CExpr:(ICANON),libc,termios.h;unistd.h"
-ICANON : Bits32
-||| Not Posix
+export ICANON : Bits32
+||| Linux only (System V); not in POSIX.
 %inline %foreign "CExpr:(XCASE),libc,termios.h;unistd.h"
-XCASE : Bits32
+export XCASE : Bits32
 %inline %foreign "CExpr:(ECHO),libc,termios.h;unistd.h"
-ECHO : Bits32
+export ECHO : Bits32
 %inline %foreign "CExpr:(ECHOE),libc,termios.h;unistd.h"
-ECHOE : Bits32
+export ECHOE : Bits32
 %inline %foreign "CExpr:(ECHOK),libc,termios.h;unistd.h"
-ECHOK : Bits32
+export ECHOK : Bits32
 %inline %foreign "CExpr:(ECHONL),libc,termios.h;unistd.h"
-ECHONL : Bits32
-||| Not Posix
+export ECHONL : Bits32
+||| Linux and BSD, not in POSIX.
 %inline %foreign "CExpr:(ECHOCTL),libc,termios.h;unistd.h"
-ECHOCTL : Bits32
-||| Not Posix
+export ECHOCTL : Bits32
+||| Linux and BSD, not in POSIX.
 %inline %foreign "CExpr:(ECHOPRT),libc,termios.h;unistd.h"
-ECHOPRT : Bits32
-||| Not Posix
+export ECHOPRT : Bits32
+||| Linux and BSD, not in POSIX.
 %inline %foreign "CExpr:(ECHOKE),libc,termios.h;unistd.h"
-ECHOKE : Bits32
-||| Not Posix
-%inline %foreign "CExpr:(DEFECHO),libc,termios.h;unistd.h"
-DEFECHO : Bits32
-||| Not Posix
+export ECHOKE : Bits32
+-- Not defined on Linux: kept for the BSD/System V module this moves to.
+-- ||| Not defined by glibc (Solaris); do not use on Linux.
+-- %inline %foreign "CExpr:(DEFECHO),libc,termios.h;unistd.h"
+-- export DEFECHO : Bits32
+||| Linux and BSD, not in POSIX.
 %inline %foreign "CExpr:(FLUSHO),libc,termios.h;unistd.h"
-FLUSHO : Bits32
+export FLUSHO : Bits32
 %inline %foreign "CExpr:(NOFLSH),libc,termios.h;unistd.h"
-NOFLSH : Bits32
+export NOFLSH : Bits32
 %inline %foreign "CExpr:(TOSTOP),libc,termios.h;unistd.h"
-TOSTOP : Bits32
-||| Not Posix
+export TOSTOP : Bits32
+||| Linux and BSD, not in POSIX.
 %inline %foreign "CExpr:(PENDIN),libc,termios.h;unistd.h"
-PENDIN : Bits32
+export PENDIN : Bits32
 %inline %foreign "CExpr:(IEXTEN),libc,termios.h;unistd.h"
-IEXTEN : Bits32
-||| Not Posix
+export IEXTEN : Bits32
+||| Linux and BSD, not in POSIX.
 %inline %foreign "CExpr:(VDISCARD),libc,termios.h;unistd.h"
-VDISCARD : Bits32
-||| Not Posix
-%inline %foreign "CExpr:(VDSUSP),libc,termios.h;unistd.h"
-VDSUSP : Bits32
+export VDISCARD : Bits32
+-- Not defined on Linux: kept for the BSD/System V module this moves to.
+-- ||| BSD only (not defined by glibc); do not use on Linux.
+-- %inline %foreign "CExpr:(VDSUSP),libc,termios.h;unistd.h"
+-- export VDSUSP : Bits32
 %inline %foreign "CExpr:(VEOF),libc,termios.h;unistd.h"
-VEOF : Bits32
+export VEOF : Bits32
 %inline %foreign "CExpr:(VEOL),libc,termios.h;unistd.h"
-VEOL : Bits32
-||| Not Posix
+export VEOL : Bits32
+||| Linux and BSD, not in POSIX.
 %inline %foreign "CExpr:(VEOL2),libc,termios.h;unistd.h"
-VEOL2 : Bits32
+export VEOL2 : Bits32
 %inline %foreign "CExpr:(VERASE),libc,termios.h;unistd.h"
-VERASE : Bits32
+export VERASE : Bits32
 %inline %foreign "CExpr:(VINTR),libc,termios.h;unistd.h"
-VINTR : Bits32
+export VINTR : Bits32
 %inline %foreign "CExpr:(VKILL),libc,termios.h;unistd.h"
-VKILL : Bits32
-||| Not Posix
+export VKILL : Bits32
+||| Linux and BSD, not in POSIX.
 %inline %foreign "CExpr:(VLNEXT),libc,termios.h;unistd.h"
-VLNEXT : Bits32
+export VLNEXT : Bits32
 %inline %foreign "CExpr:(VMIN),libc,termios.h;unistd.h"
-VMIN : Bits32
+export VMIN : Bits32
 %inline %foreign "CExpr:(VQUIT),libc,termios.h;unistd.h"
-VQUIT : Bits32
-||| Not Posix
+export VQUIT : Bits32
+||| Linux and BSD, not in POSIX.
 %inline %foreign "CExpr:(VREPRINT),libc,termios.h;unistd.h"
-VREPRINT : Bits32
+export VREPRINT : Bits32
 %inline %foreign "CExpr:(VSTART),libc,termios.h;unistd.h"
-VSTART : Bits32
-||| Not Posix
-%inline %foreign "CExpr:(VSTATUS),libc,termios.h;unistd.h"
-VSTATUS : Bits32
+export VSTART : Bits32
+-- Not defined on Linux: kept for the BSD/System V module this moves to.
+-- ||| BSD only (not defined by glibc); do not use on Linux.
+-- %inline %foreign "CExpr:(VSTATUS),libc,termios.h;unistd.h"
+-- export VSTATUS : Bits32
 %inline %foreign "CExpr:(VSTOP),libc,termios.h;unistd.h"
-VSTOP : Bits32
+export VSTOP : Bits32
 %inline %foreign "CExpr:(VSUSP),libc,termios.h;unistd.h"
-VSUSP : Bits32
-||| Not Posix
-%inline %foreign "CExpr:(VSWTCH),libc,termios.h;unistd.h"
-VSWTCH : Bits32
+export VSUSP : Bits32
+-- Not defined on Linux: kept for the BSD/System V module this moves to.
+-- ||| System V only (glibc spells it VSWTC); do not use on Linux.
+-- %inline %foreign "CExpr:(VSWTCH),libc,termios.h;unistd.h"
+-- export VSWTCH : Bits32
 %inline %foreign "CExpr:(VTIME),libc,termios.h;unistd.h"
-VTIME : Bits32
-||| Not Posix
+export VTIME : Bits32
+||| Linux and BSD, not in POSIX.
 %inline %foreign "CExpr:(VWERASE),libc,termios.h;unistd.h"
-VWERASE : Bits32
-
-
+export VWERASE : Bits32
 -------------------------------------------------------------------------------
 -- 
 
@@ -342,6 +342,7 @@ public export
 tcflush : FileDesc -> Int32 -> IO Int32
 tcflush fd queueSelector = primIO $ prim__tcflush fd.rawfd queueSelector
 
+public export
 tcflow : FileDesc -> Int32 -> IO Int32
 tcflow fd action = primIO $ prim__tcflow fd.rawfd action
 
@@ -350,7 +351,7 @@ tcflow fd action = primIO $ prim__tcflow fd.rawfd action
 -------------------------------------------------------------------------------
 -- 
 
-%inline %foreign "CExpr:(fmakeraw($1)),libc,termios.h;unistd.h"
+%inline %foreign "CExpr:(cfmakeraw($1)),libc,termios.h;unistd.h"
 prim__cfmakeraw : GCPtr RawTermios -> PrimIO ()
 %inline %foreign "CExpr:(cfgetispeed($1)),libc,termios.h;unistd.h"
 prim__cfgetispeed : GCPtr RawTermios -> PrimIO Int32
