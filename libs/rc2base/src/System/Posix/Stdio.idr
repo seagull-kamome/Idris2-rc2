@@ -195,7 +195,7 @@ prim__fputs : String -> Ptr RawFile -> PrimIO Int32
 %inline %foreign "CExpr:(fgets($1, $2, $3)),libc,stdio.h"
 prim__fgets : AnyPtr -> Int32 -> Ptr RawFile -> PrimIO AnyPtr
 %inline %foreign "CExpr:(ferror($1)),libc,stdio.h"
-prim__ferror : File -> PrimIO Int32
+prim__ferror : Ptr RawFile -> PrimIO Int32
 
 ||| The next byte; `Nothing` at the end of the file or on error.
 export
@@ -234,7 +234,7 @@ fgets file size = do
   buf <- malloc (cast {to = Int} size)
   p <- primIO (prim__fgets buf size file.ptr)
   r <- if prim__nullAnyPtr p /= 0
-         then do e <- primIO (prim__ferror file)
+         then do e <- primIO (prim__ferror file.ptr)
                  if e /= 0 then Left <$> errno else pure (Right Nothing)
          else pure (Right (ptrToString buf))
   free buf
@@ -275,7 +275,7 @@ getline file = do
   n <- primIO (prim__getline line size file.ptr)
   let raw = the AnyPtr (getField line "v")
   r <- if n < 0
-         then do e <- primIO (prim__ferror file)
+         then do e <- primIO (prim__ferror file.ptr)
                  if e /= 0 then Left <$> errno else pure (Right Nothing)
          else pure (Right (map dropNewline (ptrToString raw)))
   primIO (prim__freeLine raw)
@@ -366,7 +366,7 @@ feof file = (/= 0) <$> primIO (prim__feof file.ptr)
 ||| True once an error happened on the stream.
 export
 ferror : File -> IO Bool
-ferror file = (/= 0) <$> primIO (prim__ferror file)
+ferror file = (/= 0) <$> primIO (prim__ferror file.ptr)
 
 ||| Clear the end-of-file and error indicators.
 export
