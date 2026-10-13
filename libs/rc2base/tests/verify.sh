@@ -84,6 +84,7 @@ TESTS=(
     "TestPosixDirectory||System.Posix.Directory: opendir, chdir, getcwd, DT_* constants"
     "TestPosixMmap||System.Posix.Mmap: PROT_/MAP_ constants, anonymous and file mappings"
     "TestPosixUio||System.Posix.Uio: writev/readv, pread/pwrite"
+    "TestPosixStdio||System.Posix.Stdio: FILE* streams, fgetc/fgets/getline/fread, writes, position, tmpfile, fmemopen"
     "TestWebAPIPure|network contrib|Network.HTTP.Client.WebAPI: SHA-256/base64url/PKCE, JSON, URL/form encoding, token JSON"
     "TestWebAPI|network contrib|Network.HTTP.Client.WebAPI.{JSON,OAuth2}: endpoint setup, token persistence, response decoding"
     "TestCurl|network contrib|Network.HTTP.Client.Curl: libcurl bindings, local file:// and HTTP transfers"

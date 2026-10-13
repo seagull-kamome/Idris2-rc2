@@ -1,0 +1,50 @@
+EOF=-1
+BUFSIZ>0: True
+FILENAME_MAX>0: True
+standard fds: (0, (1, 2))
+fopen missing: True
+Just 108
+ungetc: ()
+Just 108
+Right (Just "ine one\n")
+Right (Just "line two")
+Buffer.fread: 4 "last"
+AnyPtr.fread: 5
+feof: True
+ferror: False
+Right Nothing
+feof after clearerr: False
+fclose: ()
+fputs: ()
+fputc: ()
+String.fwrite: 2
+Buffer.fwrite: 2
+AnyPtr.fwrite: 1
+fflush: ()
+fclose: ()
+content: "abcdefghx"
+ftell: 0
+fseek: ()
+ftell: 5
+fseeko: ()
+ftello: 23
+Just 108
+ftell after rewind: 0
+negative fseek: True
+fileno > 2: True
+setvbuf: ()
+ftrylockfile (own thread): True
+Right (Just "line one\n")
+fclose: ()
+fputs: ()
+Right (Just "scratch text\n")
+fputs: ()
+fflush: ()
+Right (Just "in memory")
+fputs: ()
+after freopen: "reopened"
+rename: ()
+old name gone: True
+remove: ()
+second remove: True
+done
