@@ -5,7 +5,6 @@
 #include "idris2rc2_datatypes.h"
 #include "idris2rc2_util.h"
 
-void idris2rc2_missingForeign(void);
 
 // Process lifecycle hooks. The generated `main()` (Compiler.RC2.Emit's
 // footer) calls idris2rc2_rtInit() as its first statement and

@@ -260,7 +260,7 @@ typedef struct idris2rc2_memo_boxed {
 
 bool idris2rc2_memo_boxed_claim(idris2rc2_memo_boxed *memo);      // true: you must compute + store
 void idris2rc2_memo_boxed_store(idris2rc2_memo_boxed *memo, IDRIS2RC2_Value *value);
-IDRIS2RC2_Value *idris2rc2_memo_boxed_wait(idris2rc2_memo_boxed *memo); // spins, then dups
+IDRIS2RC2_Value *idris2rc2_memo_boxed_wait(idris2rc2_memo_boxed *memo, const char *name); // spins, then dups
 void idris2rc2_memo_boxed_dropAll(void);                          // idris2rc2_rtFinish only
 ```
 
@@ -274,7 +274,7 @@ if (idris2rc2_memo_boxed_claim(&idris2rc2_memo_<cName n>)) {
     idris2rc2_memo_boxed_store(&idris2rc2_memo_<cName n>, bodyVar);
     result = bodyVar;
 } else {
-    result = idris2rc2_memo_boxed_wait(&idris2rc2_memo_<cName n>);
+    result = idris2rc2_memo_boxed_wait(&idris2rc2_memo_<cName n>, "<Idris name>");
 }
 <result finalized into whatever this RMemoize's own real sink/tailPosition wants>
 ```
@@ -316,7 +316,7 @@ of a thread-local). A wait that finds its own thread there is a CAF whose
 evaluation needs its own value -- `x = x + 1`, or a top-level `Delay`
 that forces itself once `LazyCaf` has made it a CAF
 (`lazy-memoization.md`) -- and would otherwise wait for itself forever.
-It stops with "idris2rc2: a top-level value depends on itself" on stderr
+It stops with "idris2rc2: the top-level value <name> depends on itself" on stderr, naming the value
 and exit status 1 (`idris2rc2_memo_cycle`). A wait on a memo another
 thread is evaluating still waits. `rc2/tests/Test126LazySelfForce`
 covers it.
@@ -338,7 +338,7 @@ constraint `ConstFold` itself already accepts.
 
 A CAF whose own computation reaches back into itself before finishing
 on the same thread (direct or mutual recursion through other CAFs) is
-caught by `idris2rc2_memo_cycle` ("A CAF that depends on itself"). One
+caught by `idris2rc2_memo_cycle` (see "A CAF that depends on itself"). One
 whose cycle runs through another thread would still deadlock (the
 spin-wait never sees "done"), because the check only compares the
 waiter with the thread that claimed the memo. Not a new failure mode

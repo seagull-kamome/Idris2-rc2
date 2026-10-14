@@ -191,7 +191,27 @@ selfName : Name
 selfName = UN (Basic "@self")
 
 ShallowKey : Type
-ShallowKey = (Nat, Nat, String, List Name)
+ShallowKey = (Nat, Nat, Int, String, List Name)
+
+||| A hash of the constants and constructors in `e`, in walk order (equal
+||| bodies walk alike), so that functions differing only in a constant
+||| land in different buckets.
+leafHash : RCExp -> Int
+leafHash e = go 7 [e]
+  where
+    mix : Int -> String -> Int
+    mix h s = foldl (\a, ch => (a * 31 + ord ch) `mod` 1000000007) h (unpack s)
+
+    leaf : Int -> RCExp -> Int
+    leaf a (RPrimVal _ c) = mix a (show c)
+    leaf a (RCon _ n _ t _ _) = mix (mix a (show n)) (show t)
+    leaf a (RConstCase _ _ alts _) = foldl (\b, (MkRConstAlt c _) => mix b (show c)) a alts
+    leaf a _ = a
+
+    -- A work list instead of recursion: the walk is over the whole body.
+    go : Int -> List RCExp -> Int
+    go h [] = h
+    go h (x :: xs) = go (leaf h x) (children x ++ xs)
 
 ||| The first-level key: what is cheap to compute and does not depend on
 ||| the numbering of locals. Equal keys are only a candidate for equal
@@ -199,11 +219,11 @@ ShallowKey = (Nat, Nat, String, List Name)
 shallowKey : Cand -> ShallowKey
 shallowKey c =
     case c.def of
-         MkRCFun args r w _ =>
+         MkRCFun args r w body =>
              let refs = map (\m => if m == c.name then selfName else m) (Prelude.toList c.refs)
                  sig = joinBy "," (map (\(_, rp) => prettyRep rp) args) ++ " -> " ++ prettyRep r ++ (if w then " worker" else "")
-             in (length args, c.size, sig, Prelude.toList (SortedSet.fromList refs))
-         _ => (0, c.size, "", [])
+             in (length args, c.size, leafHash body, sig, Prelude.toList (SortedSet.fromList refs))
+         _ => (0, c.size, 0, "", [])
 
 ------------------------------------------------------------------------
 -- Equality up to the numbering of locals

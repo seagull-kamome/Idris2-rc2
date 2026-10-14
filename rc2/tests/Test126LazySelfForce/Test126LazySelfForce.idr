@@ -4,7 +4,7 @@ module Main
 -- running forever (rc2/doc/lazy-memoization.md). `loopy` is a top-level
 -- `Delay`, so `Compiler.RC2.LazyCaf` makes it a memoized CAF that calls
 -- itself; CAF memoization finds this thread already evaluating it and
--- stops with "a top-level value depends on itself". Nothing else is
+-- stops with "the top-level value Main.loopy depends on itself". Nothing else is
 -- printed: buffered stdout would land after the message.
 
 loopy : Lazy Int

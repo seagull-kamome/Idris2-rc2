@@ -8,11 +8,6 @@
 #include <stdlib.h>
 #include <string.h>
 
-void idris2rc2_missingForeign(void) {
-  fprintf(stderr, "idris2rc2: foreign function declared but not defined\n");
-  exit(1);
-}
-
 // Process lifecycle hooks -- see runtime.h for the contract and why the
 // generated main() (Compiler.RC2.Emit's footer) is what calls them.
 void idris2rc2_rtInit(void) {

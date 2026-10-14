@@ -768,7 +768,7 @@ mutual
         decreaseIndentation
         emit fc "} else {"
         increaseIndentation
-        emit fc "\{resultVar} = idris2rc2_memo_boxed_wait(&\{memoVar});"
+        emit fc "\{resultVar} = idris2rc2_memo_boxed_wait(&\{memoVar}, \{cStringQuoted (show n)});"
         decreaseIndentation
         emit fc "}"
         finalizeSink fc sink resultVar
