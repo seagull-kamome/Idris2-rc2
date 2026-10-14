@@ -250,10 +250,6 @@ xoroshiroの`*_sys`、concurrency_util。
 (または`CFLAGS`)でコンパイルする、と各宣言のdoc commentに書いて対応した(実機で、指定なしはCの
 コンパイルエラー、指定ありは動くことを確認)。生成コード側で定義する機能は作らない。
 
-`libs/notcurses`・`libs/iouring`のCExpr化(`NCKEY_*`、cqeのフィールド等)は、実機にliburing・
-notcursesが無い環境で行ったため、`libs/*/tests/verify.sh`が本物のライブラリでは未実行。
-次に両ライブラリのある環境で流す。
-
 ## idris2-curlの取り込み
 インストール時にlibcurlへの依存が無ければrc2baseへ取り込んでも問題ないはず。
 よく使う機能はバンドルとしておきたい。あるいはpure idris2のhttp clientを実装すべき？
