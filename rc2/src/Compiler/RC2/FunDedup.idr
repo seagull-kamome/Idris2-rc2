@@ -164,6 +164,10 @@ refNames =
 nodeSize : RCExp -> Nat
 nodeSize e = S (sum (map nodeSize (children e)))
 
+isCandidate : RCDef -> Bool
+isCandidate (MkRCFun (_ :: _) _ _ body) = not (hasFatConst body)
+isCandidate _ = False
+
 ||| A function with its parameters and its references, kept across rounds so
 ||| that a round never walks a body it has no reason to touch.
 record Cand where
@@ -172,10 +176,14 @@ record Cand where
   def : RCDef
   refs : SortedSet Name
   size : Nat
+  ||| `isCandidate`, decided once: renaming names changes neither it nor the constants.
+  candidate : Bool
 
 mkCand : Name -> RCDef -> Cand
-mkCand n d@(MkRCFun _ _ _ body) = MkCand n d (refNames d) (nodeSize body)
-mkCand n d = MkCand n d empty 0
+mkCand n d@(MkRCFun _ _ _ body) = MkCand n d (refNames d) (nodeSize body) (isCandidate d)
+-- Not a function (a constructor, a foreign declaration, an error body): never a candidate, but
+-- an error body may call a merged function, so its references still count.
+mkCand n d = MkCand n d (refNames d) 0 False
 
 ||| The name a function's own references to itself are renamed to before
 ||| keying, so that two self-recursive twins agree.
@@ -196,10 +204,6 @@ shallowKey c =
                  sig = joinBy "," (map (\(_, rp) => prettyRep rp) args) ++ " -> " ++ prettyRep r ++ (if w then " worker" else "")
              in (length args, c.size, sig, Prelude.toList (SortedSet.fromList refs))
          _ => (0, c.size, "", [])
-
-isCandidate : RCDef -> Bool
-isCandidate (MkRCFun (_ :: _) _ _ body) = not (hasFatConst body)
-isCandidate _ = False
 
 ------------------------------------------------------------------------
 -- Equality up to the numbering of locals
@@ -360,16 +364,16 @@ sameFun a b =
 ||| earlier one in its bucket (roots take their places first).
 redirections : SortedSet Name -> List Cand -> SortedMap Name Name
 redirections roots cands =
-    let buckets = foldl (\m, c => insertWith (flip (++)) (shallowKey c) [c] m)
+    let buckets = foldl (\m, c => insertWith (++) (shallowKey c) [c] m)
                         (the (SortedMap ShallowKey (List Cand)) empty) cands
-    in foldl (\acc, (_, group) => merge acc group) empty (SortedMap.toList buckets)
+    in foldl (\acc, (_, group) => merge acc (reverse group)) empty (SortedMap.toList buckets)
   where
-    -- `reps`: the distinct functions seen so far in this bucket, in order.
+    -- `reps`: the distinct functions seen so far in this bucket (newest first).
     step : (List Cand, SortedMap Name Name) -> Cand -> (List Cand, SortedMap Name Name)
     step (reps, red) c =
         case find (\r => sameFun r c) reps of
-             Nothing => (reps ++ [c], red)
-             Just r => if contains c.name roots then (reps ++ [c], red) else (reps, insert c.name r.name red)
+             Nothing => (c :: reps, red)
+             Just r => if contains c.name roots then (c :: reps, red) else (reps, insert c.name r.name red)
 
     -- `group` in program order. Roots first, then the rest.
     merge : SortedMap Name Name -> List Cand -> SortedMap Name Name
@@ -386,15 +390,14 @@ redirections roots cands =
 ||| renamed (see `renameNamesR`), so something may still refer to it.
 export
 dedupFuns : (roots : List Name) -> List (Name, RCDef) -> List (Name, RCDef)
-dedupFuns roots defs = pruneDeadDefs roots (map (\c => (c.name, c.def)) (go 4 empty (map (uncurry mkCand) defs)))
+dedupFuns roots defs =
+    let rootSet = SortedSet.fromList roots
+    in pruneDeadDefs roots (map (\c => (c.name, c.def)) (go rootSet 4 empty (map (uncurry mkCand) defs)))
   where
-    rootSet : SortedSet Name
-    rootSet = SortedSet.fromList roots
-
-    go : Nat -> SortedSet Name -> List Cand -> List Cand
-    go Z _ cs = cs
-    go (S k) merged cs =
-        let red = redirections rootSet (filter (\c => isCandidate c.def && not (contains c.name merged)) cs)
+    go : SortedSet Name -> Nat -> SortedSet Name -> List Cand -> List Cand
+    go _ Z _ cs = cs
+    go rootSet (S k) merged cs =
+        let red = redirections rootSet (filter (\c => c.candidate && not (contains c.name merged)) cs)
         in if null (SortedMap.toList red)
               then cs
               else let f = \m => fromMaybe m (lookup m red)
@@ -402,4 +405,4 @@ dedupFuns roots defs = pruneDeadDefs roots (map (\c => (c.name, c.def)) (go 4 em
                        renamed = map (\c => if touches c
                                                 then mkCand c.name (renameNamesD f c.def)
                                                 else c) cs
-                   in go k (foldl (\acc, (n, _) => insert n acc) merged (SortedMap.toList red)) renamed
+                   in go rootSet k (foldl (\acc, (n, _) => insert n acc) merged (SortedMap.toList red)) renamed
