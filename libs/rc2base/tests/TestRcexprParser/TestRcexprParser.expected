@@ -2,4 +2,6 @@ True
 Prelude.Show.(show_Show_(List $a))
 Idris.Pretty.prettyPrec_Pretty_IdrisSyntax_(PBinder' KindedName)
 ["u:1", "u:\" \"", "7"]
+tm_year
+tm_mday 1
 True

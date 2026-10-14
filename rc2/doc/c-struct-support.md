@@ -479,6 +479,28 @@ filtered out of the emission only, because an included header already
 `typedef`s them. `StructDefs` itself is not filtered, and field access to
 such a struct resolves as usual.
 
+### Tips: declaring a struct that C knows only as `struct foo`
+
+If the C struct has no `typedef` (the usual case for `struct tm`, `struct
+dirent`, `struct stat`, `struct timeval`...), declare it with the full C
+spelling as the `Struct` name and mark it external with the same string:
+
+```idris2
+%cg rc2 externStruct=struct tm
+Tm : Type
+Tm = Struct "struct tm" [("tm_year", Int32), ("tm_mday", Int32)]
+```
+
+The name is used as written, so the field access becomes
+`((struct tm*)ptr)->tm_year`; `externStruct` keeps Part C from emitting
+`typedef struct { ... } struct tm;` (a syntax error, not just a clash). The
+header that declares the struct must be among the `%foreign` headers or
+otherwise included (`<time.h>` here), and, as for every external struct, the
+field names and types in the Idris declaration have to match the real ones
+(`rc2/doc/directives.md`, section 5). Do not give the Idris name a
+different spelling from the C one: nothing maps one to the other.
+`rc2/tests/Test120CStruct/CgSpacedStructName.idr` is a working example.
+
 ### Part D: lowering `RStructGet`/`RStructSet` in `emitRC`
 
 `emitRC` (`Emit.idr`) has one case per node, and no table lookup is

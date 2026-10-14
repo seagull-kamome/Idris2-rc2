@@ -30,6 +30,8 @@ module Main
 --     suffix a display name with source-location text.
 --   - `callFFIInline`'s own `ret= IORes String` -- `CFType`'s own
 --     `Show` is not always a single bare word.
+--   - `structGet v . f ( struct tm )` -- a struct known by its tag
+--     (`externStruct=struct tm`) has a space in its name.
 --   - `neg Double`/`op_strcons`/`==Int` -- a `PrimFn`'s own `Show` is
 --     sometimes two words, sometimes glued to its type, never
 --     predictable from the keyword alone.
@@ -75,6 +77,16 @@ def Main.nestedOp  (fun args= ["v1:Boxed"] ret= Boxed)
 def Main.midParen  (fun args= ["v1:Boxed"] ret= Boxed)
   call Idris.Pretty.prettyPrec_Pretty_IdrisSyntax_(PBinder' KindedName) [v1]
 
+def Main.spacedStruct  (fun args= ["v1:Boxed"] ret= Boxed)
+  let v2 : Boxed =
+    structGet v1 . tm_year ( struct tm )
+  v2
+
+def Main.spacedStructSet  (fun args= ["v1:Boxed", "v2:Boxed"] ret= Boxed)
+  let v3 : Boxed =
+    structSet v1 . tm_mday ( struct tm ) = v2 postDrop= [v2]
+  v3
+
 def Main.immCase  (fun args= ["v1:Boxed"] ret= Boxed)
   case v1 of
     u: 1 ->
@@ -91,7 +103,7 @@ main : IO ()
 main = case parseProgram sample of
     Left err => putStrLn ("PARSE ERROR: " ++ show err)
     Right prog => do
-        printLn (length prog == 6)
+        printLn (length prog == 8)
         traverse_ (\d => case lookup d prog of
                               Just (RCFun _ _ _ (RCall _ n _)) => putStrLn n
                               _ => putStrLn (d ++ " not found or not a single call"))
@@ -101,6 +113,14 @@ main = case parseProgram sample of
         case lookup "Main.immCase" prog of
              Just (RCFun _ _ _ (RConstCaseNode _ alts _)) => printLn (map constVal alts)
              _ => putStrLn "Main.immCase not found or not a constant case"
+        -- `structGet v . f ( struct tm )`: a struct known by its tag has a
+        -- space in its name, which is read as words between the parens.
+        case lookup "Main.spacedStruct" prog of
+             Just (RCFun _ _ _ (RLetIn _ _ (RStructGetNode _ f _) _)) => putStrLn f
+             _ => putStrLn "Main.spacedStruct not found or not a structGet"
+        case lookup "Main.spacedStructSet" prog of
+             Just (RCFun _ _ _ (RLetIn _ _ (RStructSetNode _ f _ pd) _)) => putStrLn (f ++ " " ++ show (length pd))
+             _ => putStrLn "Main.spacedStructSet not found or not a structSet"
         case lookup "Main.example" prog of
              Just (RCFun _ _ _ body) => case body of
                  RLetIn 10 Boxed _ (RDupNode (RVar 10) 3 rest) => printLn (checkRest rest)
