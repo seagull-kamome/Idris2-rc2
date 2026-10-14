@@ -235,8 +235,7 @@ case needs one specifically.
 2112行から1930行、`%foreign`から名前で参照されるシム関数は115から76に減った。
 `System.Posix.*`は元からCExprだったが未検証で、括弧・ヘッダ・綴りの誤りが多かったので直し、
 7つのテスト(`TestPosix*`)を足した。
-`System.Posix.Directory`の`DirEnt`は不透明型+PrimIOのCExprアクセサ(`d_name`/`d_type`/`d_ino`)にし、`readdir`は`DirEntry`へ即コピーして返す。`struct dirent`はtypedef名ではないので`Struct`では扱えない(`Struct "struct dirent"`は`externalStruct`が空白入りの名前を受けないため未実装)。
-なお、`Struct`の名前の先頭の "struct " や "union " を「外部定義」の目印にすると、名前の綴りに意味を持たせることになり、rc2がtypedefでない自前の`struct foo { ... };`を定義することが二度とできなくなる。やるなら、Idris側の名前は識別子のままにし、`%cg rc2 cStruct dirent = "struct dirent"`のような明示的な対応付けディレクティブで外部か自前かを示すべき。これらは何も実装しておらず、方針1(不透明な`DirEnt`+CExprアクセサ)はこの問題を避けている。
+`System.Posix.Directory`の`DirEnt`は不透明型+PrimIOのCExprアクセサ(`d_name`/`d_type`/`d_ino`)にし、`readdir`は`DirEntry`へ即コピーして返す。`struct dirent`のようにtypedefが無い構造体は、`Struct "struct dirent" [...]`と`%cg rc2 externStruct=struct dirent`のように、Cの綴り(空白入り)をそのままIdris側の名前と指令に使えば`Struct`で扱える(確認済み、`Test120CStruct/CgSpacedStructName`、`rc2/doc/c-struct-support.md`の Tips)。`DirEnt`をこの方式に切り替えるかは別の判断。
 残したシム: epoll_wait/event_fd/flags(静的配列)、epoll_add/mod(構造体)、set_nonblocking・
 eventfd_signal/drain・close_fd(EINTRのループ)、set_reuseaddr、regexのcompile/exec/free/group_*
 (TLS状態・確保)、TextBufferの確保系、memstream、string_byte_slice、double_convert、

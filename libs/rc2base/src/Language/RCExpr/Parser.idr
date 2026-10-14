@@ -625,11 +625,6 @@ conG = do
     reuseFrom <- option Nothing (nameEq "reuse=" *> map Just rcLocalG)
     pure (name, tag, args, reuseFrom)
 
--- `structGet`/`structSet` render `sn` inside plain parens, e.g.
--- `( String )`; `(`/`)` aren't hard lexer delimiters (see
--- Language.RCExpr.Lexer's own note), so they're matched here as
--- ordinary `RcName` tokens (`Compiler.RC2.Pretty`'s own dump puts a
--- space either side, so they're never glued onto a neighbour).
 delayG : Grammar () RcToken True (String, String, List RCLocal)
 delayG = do
     nameEq "delay"
@@ -646,13 +641,19 @@ forceG = do
     postDrop <- optionalField "postDrop"
     pure (reason, v, postDrop)
 
+-- `structGet`/`structSet` render `sn` inside plain parens, e.g.
+-- `( String )`, or `( struct tm )` for a struct known by its tag (the
+-- name has a space, so it is read as words and then dropped: the AST
+-- keeps no struct name). `(`/`)` are `RcPunct` tokens (see
+-- Language.RCExpr.Lexer); `Compiler.RC2.Pretty`'s own dump puts a space
+-- either side, so they're never glued onto a neighbour.
 structGetG : Grammar () RcToken True (RCLocal, String, List RCLocal)
 structGetG = do
     nameEq "structGet"
     sv <- rcLocalG
     nameEq "."
     field <- anyName
-    match (RcPunct '(') *> anyName *> match (RcPunct ')')
+    match (RcPunct '(') *> greedyWordsG *> match (RcPunct ')')
     postDrop <- optionalField "postDrop"
     pure (sv, field, postDrop)
 
@@ -662,7 +663,7 @@ structSetG = do
     sv <- rcLocalG
     nameEq "."
     field <- anyName
-    match (RcPunct '(') *> anyName *> match (RcPunct ')')
+    match (RcPunct '(') *> greedyWordsG *> match (RcPunct ')')
     nameEq "="
     value <- rcLocalG
     postDrop <- optionalField "postDrop"

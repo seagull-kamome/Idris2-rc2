@@ -10,6 +10,7 @@
 // its own header comment and rc2/doc/directives.md).
 
 #include <stdint.h>
+#include <time.h>
 
 typedef struct { int64_t x; double y; } test_point;
 typedef struct { int64_t w; int64_t h; } test_size;
@@ -19,3 +20,5 @@ void *idris2rc2_test84_make_point(int64_t x, double y);
 void *idris2rc2_test84_make_size(int64_t w, int64_t h);
 void *idris2rc2_test84_make_pair(double a, double b);
 void idris2rc2_test84_free_point(void *p);
+// `struct tm`, a tag only (no typedef): CgSpacedStructName.idr
+struct tm *idris2rc2_test84_make_tm(int sec, int min, int hour);

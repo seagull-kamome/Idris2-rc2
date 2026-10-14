@@ -165,6 +165,7 @@ program's generated C.
 | `Test24CStructSupport` | `getField`/`setField` on a struct rc2 declares (`doc/c-struct-support.md`) | saved valgrind C |
 | `Test120CStruct/CgExternStruct` | structs declared by a header, `%cg rc2 externStruct=`, several names and modules | saved valgrind C |
 | `Test120CStruct/CgExternStructPtrField` | `String`/`Ptr` fields of an extern struct | saved valgrind C |
+| `Test120CStruct/CgSpacedStructName` | a struct known only by its tag, `Struct "struct tm"` with `externStruct=struct tm` (a space in the name) | saved valgrind C |
 | `Test59Export` | `%export` wrappers, one section per `CFType` shape (`doc/export-support.md`) | saved valgrind C |
 | `Test28Utf8Strings` | `String` primitives by codepoint, not byte | saved valgrind C |
 

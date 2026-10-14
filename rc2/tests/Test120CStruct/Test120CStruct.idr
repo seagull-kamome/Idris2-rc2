@@ -9,8 +9,10 @@ module Main
 
 import Test120CStruct.CgExternStruct
 import Test120CStruct.CgExternStructPtrField
+import Test120CStruct.CgSpacedStructName
 
 main : IO ()
 main = do
     CgExternStruct.run
     CgExternStructPtrField.run
+    CgSpacedStructName.run

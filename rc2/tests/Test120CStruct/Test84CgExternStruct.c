@@ -34,3 +34,14 @@ void *idris2rc2_test84_make_pair(double a, double b) {
 void idris2rc2_test84_free_point(void *p) {
     free(p);
 }
+
+struct tm *idris2rc2_test84_make_tm(int sec, int min, int hour) {
+    struct tm *t = calloc(1, sizeof(struct tm));
+    t->tm_sec = sec;
+    t->tm_min = min;
+    t->tm_hour = hour;
+    t->tm_mday = 2;
+    t->tm_mon = 1;
+    t->tm_year = 100;
+    return t;
+}

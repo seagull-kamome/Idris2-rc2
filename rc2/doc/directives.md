@@ -243,6 +243,22 @@ never needs to list every field of the real struct -- only whichever
 subset `getField`/`setField` call sites actually touch, in whatever
 order is convenient.
 
+**A struct known only by its tag** (`struct tm`, `struct dirent`: no
+`typedef`, so C code must write the `struct` keyword) works the same way.
+Use the full C spelling, space included, in both places:
+
+```idris2
+%cg rc2 externStruct=struct dirent
+Dirent : Type
+Dirent = Struct "struct dirent" [("d_ino", Bits64), ("d_name", String)]
+```
+
+The name is used verbatim in the generated cast (`((struct dirent*)ptr)->d_name`),
+and the directive's value is everything after the `=`, so the space needs no
+quoting. Without the directive rc2 would emit `typedef struct { ... } struct
+dirent;`, which is a syntax error. `Test120CStruct/CgSpacedStructName.idr` is
+the test.
+
 **A wrong field type is not caught.** `RStructGet` casts the raw field
 read to `cTypeOfCFType ty` before boxing it, so that a real header's
 extra qualifiers (`const char *ssl_version` declared `AnyPtr` on the
