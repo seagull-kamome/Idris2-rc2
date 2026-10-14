@@ -74,8 +74,8 @@ needed only for what's below.
    already-inline bodies.
 3. **`io_uring_prep_accept`'s `addr`/`addrlen` out-parameters** (the
    peer's address) have the same shape of problem;
-   `idris2rc2_iouring_prep_accept_simple` always passes `NULL`/`NULL` --
-   this package doesn't expose the peer address at all (a caller who
+   `prim__prepAcceptSimple` (a CExpr that calls `io_uring_prep_accept`)
+   always passes `NULL`/`NULL` -- this package doesn't expose the peer address at all (a caller who
    needs it can `getpeername` the resulting fd afterward).
 4. **`io_uring_prep_connect`'s `addr` parameter** needs a real
    `struct sockaddr` built from a host/port pair -- genuine work
@@ -84,15 +84,15 @@ needed only for what's below.
    `idris2rc2_iouring_make_sockaddr` is a real compiled function too
    (`iouring_util.c`, alongside `queue_init`/`_exit` above -- the only
    two genuinely non-inline pieces of this whole shim);
-   `idris2rc2_iouring_sockaddr_family`/`_len` (both
-   `static inline`, reading `sockaddr`'s own `sa_family` field) let the
+   `prim__sockAddrLen` (a CExpr reading `sockaddr`'s own `sa_family`
+   field) lets the
    Idris side compute the `addrlen` `io_uring_prep_connect` needs
    without a second out-parameter.
 5. **`io_uring_cqe`'s own `res`/`user_data`/`flags` fields** have no
    dedicated accessor of their own in liburing.h (only
    `io_uring_cqe_get_data64`, for `user_data` specifically, already
-   used directly) -- `idris2rc2_iouring_cqe_res`/`_flags` are one-line
-   `static inline` field reads, same shape as `res`.
+   used directly) -- `prim__cqeRes`/`prim__cqeUserData`/`prim__cqeFlags`
+   are CExpr field reads (`((struct io_uring_cqe *)($1))->res`).
 
 None of the above needed to be resolved through a genuine
 out-of-line-call shim (`libs/notcurses`'s own `idris2rc2_nc_get_blocking`/

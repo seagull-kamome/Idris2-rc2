@@ -3,9 +3,8 @@
 
 /* Every %foreign declaration touching notcurses in src/System/
  * Notcurses.idr names *this* header. It never #includes
- * <notcurses/notcurses.h> itself -- only <notcurses/nckeys.h> (just
- * NCKEY_* macros + stdint/stdbool, confirmed to need no glibc feature-
- * test macros of its own).
+ * <notcurses/notcurses.h> itself (the NCKEY_* constants are CExpr
+ * declarations on <notcurses/nckeys.h>, not shim functions).
  *
  * Reasoning, verified by actually building both ways: notcurses.h
  * defines ~200 `static inline` functions (channel/cell manipulation,
@@ -48,7 +47,6 @@
  *     isn't guaranteed to be packaged everywhere the plain library
  *     is).
  */
-#include <notcurses/nckeys.h>
 #include <stdint.h>
 
 struct notcurses;
@@ -85,43 +83,6 @@ int idris2rc2_nc_last_input_evtype(void);
  * directly. Never NULL (empty string when the event has no UTF-8
  * representation, e.g. a bare special key). */
 const char *idris2rc2_nc_last_input_utf8(void);
-
-/* NCKEY_* special-key codes are `preterunicode(w)`-derived (a private
- * macro adding a version-specific base offset), not plain integer
- * literals -- unlike NCKEY_MOD and NCSTYLE (plain small ints, safe to
- * copy straight into Idris), these have to come from the real macro
- * expansion to stay correct across a notcurses version bump. Covers
- * the keys this package's examples use; add more here (not by
- * guessing the offset on the Idris side) if a future wrapper needs
- * one that isn't here yet.
- *
- * `static inline`, not declared here + defined in idris2rc2_notcurses_nc_util.c: each is a
- * pure one-line return of a compile-time constant, no shared state
- * unlike the input-cache getters above, so there's no correctness
- * reason to force an out-of-line call through libidris2rc2notcurses.a
- * -- defining them here lets a call site that includes this header
- * (which %foreign's own header field arranges) fold each straight down
- * to its constant, the same way notcurses.h's own `static inline`
- * helpers already do. nckeys.h alone (included above) is enough for
- * these -- no strdup/wcwidth/wcswidth in sight. */
-static inline uint32_t idris2rc2_nckey_invalid(void) { return NCKEY_INVALID; }
-static inline uint32_t idris2rc2_nckey_resize(void) { return NCKEY_RESIZE; }
-static inline uint32_t idris2rc2_nckey_up(void) { return NCKEY_UP; }
-static inline uint32_t idris2rc2_nckey_down(void) { return NCKEY_DOWN; }
-static inline uint32_t idris2rc2_nckey_left(void) { return NCKEY_LEFT; }
-static inline uint32_t idris2rc2_nckey_right(void) { return NCKEY_RIGHT; }
-static inline uint32_t idris2rc2_nckey_ins(void) { return NCKEY_INS; }
-static inline uint32_t idris2rc2_nckey_del(void) { return NCKEY_DEL; }
-static inline uint32_t idris2rc2_nckey_backspace(void) { return NCKEY_BACKSPACE; }
-static inline uint32_t idris2rc2_nckey_pgup(void) { return NCKEY_PGUP; }
-static inline uint32_t idris2rc2_nckey_pgdown(void) { return NCKEY_PGDOWN; }
-static inline uint32_t idris2rc2_nckey_home(void) { return NCKEY_HOME; }
-static inline uint32_t idris2rc2_nckey_end(void) { return NCKEY_END; }
-static inline uint32_t idris2rc2_nckey_enter(void) { return NCKEY_ENTER; }
-static inline uint32_t idris2rc2_nckey_f01(void) { return NCKEY_F01; }
-static inline uint32_t idris2rc2_nckey_f02(void) { return NCKEY_F02; }
-static inline uint32_t idris2rc2_nckey_f03(void) { return NCKEY_F03; }
-static inline uint32_t idris2rc2_nckey_f04(void) { return NCKEY_F04; }
 
 /* -- Always-real (`API`-attributed, never inline) notcurses-core
  * symbols -- hand-declared verbatim from notcurses.h's own

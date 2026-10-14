@@ -56,14 +56,6 @@ boxing/reboxing gap above, just removes one small cost that used to sit
 on top of it.
 
 
-## `believe_me`された`Lazy`/`Inf`値を`force`する安全性が未確認
-
-`idris2rc2_force`は、渡された値がセル(`IDRIS2RC2_TAG_LAZY`)でなければそのまま
-返す(`rc2/doc/lazy-memoization.md`「`Force`」節)。`Delay`を経由せずに
-`believe_me`で作られた`Lazy`/`Inf`値や、`Lazy`/`Inf`に触れる
-`%foreign`宣言がこの経路を通るはずだが、upstreamの`base`/`contrib`に
-実在するそうした値のすべてがこの扱いで安全かどうかは未調査のまま。
-
 ## `Lazy`/`Inf` のメモ化後: force した値への無駄な reuse 解析を省く
 
 `rc2/doc/lazy-memoization.md`で実装した`Lazy`/`Inf`のメモ化により、force
@@ -185,13 +177,9 @@ case needs one specifically.
   - 無駄でしか無いので消せるものなら消したい
   - 最適化効果は薄い。気分の問題でしかない。
 
-## 他の`Lazy`引数関数にもupstreamのインライン展開が及ぶかは未調査
-`&&`/`||`は`Lazy Bool`の短絡評価のために`Delay`に依存しているが、upstream
-自身の`%inline`プラグマとモジュールコンパイル時の`compileAndInlineAll`が、
-rc2が`NamedCExp`を受け取るより前に`&&`/`||`の呼び出しを展開してしまうため、
-`Delay`/`Force`のノード自体がrc2側に渡ってこないと判明した(rc2側の対応は
-不要)。他の`Lazy`引数を取る関数についても同様のupstream最適化が及ぶかは
-未調査のまま。
+## `maybe`/`either`のLazy引数をインライン展開で消せるか
+idris2-lspの最終IRで`Prelude.Types.maybe`は呼び出し234、`either`は5が残り、upstreamが展開しない。
+rc2側で展開すれば呼び出しごとの`Delay`/`force`が消せる可能性がある。効果は未見積もり。
 
 ## ファントム型やファントム関数の明示
 トップレベル定義に 0 をつける。
@@ -260,7 +248,7 @@ xoroshiroの`*_sys`、concurrency_util。
 `_GNU_SOURCE`が要る宣言(`O_DIRECT`/`O_LARGEFILE`/`O_NOATIME`/`O_PATH`/`O_TMPFILE`/`AT_EMPTY_PATH`/
 `SEEK_DATA`/`SEEK_HOLE`/`dup3`/`preadv2`/`pwritev2`)は、環境変数`IDRIS2_CFLAGS=-D_GNU_SOURCE`
 (または`CFLAGS`)でコンパイルする、と各宣言のdoc commentに書いて対応した(実機で、指定なしはCの
-コンパイルエラー、指定ありは動くことを確認)。生成コード側で定義する機能は作らない。`libs/notcurses`・`libs/iouring`・`libs/text-re2`は未着手。
+コンパイルエラー、指定ありは動くことを確認)。生成コード側で定義する機能は作らない。
 
 ## idris2-curlの取り込み
 インストール時にlibcurlへの依存が無ければrc2baseへ取り込んでも問題ないはず。

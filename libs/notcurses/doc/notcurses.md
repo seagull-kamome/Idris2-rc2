@@ -44,9 +44,9 @@ through `support/c/nc_util.c`:
    (plain small ints, hardcoded straight into
    `System.Notcurses.NCKeyMod`/`NCStyle`), these need the real macro
    expansion to stay correct across a notcurses version bump.
-   `idris2rc2_nckey_*()` in `nc_util.h` are the accessors -- see the
-   next section for why they're `static inline` there rather than
-   declared-in-header-defined-in-`.c` like the rest of the shim.
+   Each is a `"CExpr:(NCKEY_UP),libc,notcurses/nckeys.h"` declaration
+   in `System.Notcurses.NCKey`, so the macro expands in the generated C
+   and no shim function is involved.
 4. **Everything that only exists as a `static inline` body in
    notcurses.h** (`notcurses_render`, `ncplane_putstr`,
    `ncplane_perimeter_rounded`, ~200 of them in total -- channel/cell
@@ -65,24 +65,15 @@ through `support/c/nc_util.c`:
    the plain header's own inline definition (which the compiler
    inlines right there, in `nc_util.c`'s own object code).
 
-## Why the `NCKEY_*` getters are `static inline` in the header
+## Why the input getters live in `nc_util.c`
 
 `idris2rc2_nc_last_input_y`/`_x`/`_modifiers`/`_evtype`/`_utf8` and
 `idris2rc2_nc_get_blocking`/`_get_nonblock` are declared in
 `nc_util.h` and *defined* in `nc_util.c`, forcing a real out-of-line
-call through `libidris2rc2notcurses.a` -- necessary there, since they
-share one file-scope `static ncinput last_input` cache and a header-
-`static inline` copy would duplicate that cache once per translation
-unit a consuming program's generated C happens to split into,
-silently breaking the "read every field before the next call"
-contract.
-
-The `NCKEY_*` getters have no such hazard -- each is a pure one-line
-return of a compile-time constant, so they're defined directly in
-`nc_util.h` as `static inline`, letting a call site (which %foreign's
-own header field already arranges to `#include` this file) fold the
-call down to the constant outright, exactly like notcurses.h's own
-internal `static inline` helpers already do for each other.
+call through `libidris2rc2notcurses.a`: they share one file-scope
+`static ncinput last_input` cache, and a header-`static inline` copy
+would duplicate that cache once per translation unit, silently
+breaking the "read every field before the next call" contract.
 
 ## Why `nc_util.h` never includes the real header
 
@@ -116,9 +107,7 @@ whole translation unit before any package header is ever reached -- a
 already decided.
 
 **The actual fix: stop giving consumers the real header at all.**
-`nc_util.h` now only `#include`s `<notcurses/nckeys.h>` (just
-`NCKEY_*` macros + `stdint`/`stdbool`, confirmed to need nothing
-glibc-feature-gated) plus hand-declared `extern` prototypes for the
+`nc_util.h` now `#include`s no notcurses header and has hand-declared `extern` prototypes for the
 `API`-marked functions this package binds directly. `nc_util.c` is the
 *only* translation unit that still `#include`s the real
 `<notcurses/notcurses.h>` -- confining the strdup/wcwidth/wcswidth
