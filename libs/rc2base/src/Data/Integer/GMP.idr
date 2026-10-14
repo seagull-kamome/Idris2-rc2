@@ -29,8 +29,9 @@ module Data.Integer.GMP
 --
 -- ## Scope
 --
--- Two groups only, both a mechanical, otherwise-unmodified translation
--- of a real `mpz_*` name (`mpz_` dropped, snake_case -> camelCase):
+-- Two groups, plus three in-place mutators (`setbit`/`clrbit`/`combit`,
+-- below), all a mechanical translation of a real `mpz_*` name (`mpz_`
+-- dropped, snake_case -> camelCase):
 --
 -- - **Arithmetic/bitwise** (this module's own `Integer`-return
 --   convention): every `mpz_*` function whose real C signature is
@@ -293,17 +294,20 @@ namespace GMP
   export
   hamdist : Integer -> Integer -> Bits64
 
-  ||| `x` with bit `n` set (two's-complement semantics); `x` is unchanged.
+  ||| `x` with bit index `n` (0-based, from the least-significant bit) set,
+  ||| two's-complement semantics; `x` is unchanged.
   %foreign "CExpr:(mpz_set($r, $1), mpz_setbit($r, $2)),libgmp,gmp.h"
   export
   setbit : Integer -> Bits64 -> Integer
 
-  ||| `x` with bit `n` cleared; `x` is unchanged.
+  ||| `x` with bit index `n` (0-based) cleared, two's-complement semantics;
+  ||| `x` is unchanged.
   %foreign "CExpr:(mpz_set($r, $1), mpz_clrbit($r, $2)),libgmp,gmp.h"
   export
   clrbit : Integer -> Bits64 -> Integer
 
-  ||| `x` with bit `n` flipped; `x` is unchanged.
+  ||| `x` with bit index `n` (0-based) flipped, two's-complement semantics;
+  ||| `x` is unchanged.
   %foreign "CExpr:(mpz_set($r, $1), mpz_combit($r, $2)),libgmp,gmp.h"
   export
   combit : Integer -> Bits64 -> Integer

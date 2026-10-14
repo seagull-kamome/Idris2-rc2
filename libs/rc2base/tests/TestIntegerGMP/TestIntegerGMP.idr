@@ -96,6 +96,12 @@ main = do
     printLn (GMP.combit 5 0, GMP.combit 5 3)
     printLn (GMP.setbit big1 200 == big1 + 1606938044258990275541962092341162602522202993782792835301376)
     printLn (let x = the Integer 5 in (GMP.setbit x 3, x))
+    -- negative operands: two's complement, sign-extended without end
+    printLn (GMP.setbit (-6) 0 == -5)
+    printLn (GMP.clrbit (-1) 0 == -2)
+    printLn (GMP.combit (-1) 3 == -9)
+    printLn (GMP.clrbit (-1) 200 == -1606938044258990275541962092341162602522202993782792835301376 - 1)
+    printLn (GMP.setbit (-8) 100 == -8)
     printLn (GMP.sizeinbase 200 16 == 2)
     printLn (GMP.sizeinbase 4095 16 == 3)
     printLn (GMP.fitsSlongP 100 /= 0)

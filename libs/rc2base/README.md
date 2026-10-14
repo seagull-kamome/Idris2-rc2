@@ -582,13 +582,13 @@ exactly matching GMP's own `rop`-always-first convention -- `mpz_add
 (rop, op1, op2)`, etc.) the real GMP symbol directly, no wrapper of its
 own needed anywhere in this module.
 
-Two groups only, `mpz_` dropped and snake_case turned into camelCase
-mechanically, nothing renamed for style: **arithmetic/bitwise**
+Two groups plus three in-place mutators, `mpz_` dropped and snake_case turned
+into camelCase mechanically, nothing renamed for style: **arithmetic/bitwise**
 (`add`/`sub`/`mul`/`neg`/`abs`/`addUi`/`subUi`/`uiSub`/`mulSi`/`mulUi`/
 `gcd`/`lcm`/`tdivQ`/`tdivR`/`fdivQ`/`fdivR`/`cdivQ`/`cdivR`/`mod`/
 `divexact`/`powUi`/`uiPowUi`/`powm`/`powmUi`/`sqrt`/`mul2exp`/
 `tdivQ2exp`/`tdivR2exp`/`fdivQ2exp`/`fdivR2exp`/`and`/`ior`/`xor`/`com`/
-`nextprime`) and **predicates/queries** (`cmp`/`cmpabs`/
+`setbit`/`clrbit`/`combit`/`nextprime`) and **predicates/queries** (`cmp`/`cmpabs`/
 `probabPrimeP`/`perfectSquareP`/`perfectPowerP`/`popcount`/`hamdist`/
 `tstbit`/`sizeinbase`/`fitsSlongP`/`fitsUlongP`/`getD`/`scan0`/
 `scan1`). All live in `namespace GMP` (so e.g. `GMP.add`), not exported

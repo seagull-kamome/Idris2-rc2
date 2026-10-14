@@ -211,7 +211,7 @@ case needs one specifically.
   非atomic(5.95s)との差の2割しか埋まらない。打ち切り。
 
 ## 既存のシムをCExprで置き換えられるか
-`libs/rc2base`は実施済み(ブランチ`rc2base-cexpr-shims`): GMPの`mpz_*` 49宣言(`$r`)、`System.FFI.C.Ptr`
+`libs/rc2base`は実施済み(ブランチ`rc2base-cexpr-shims`): GMPの`mpz_*` 49宣言(その後`setbit`/`clrbit`/`combit`を足して52)(`$r`)、`System.FFI.C.Ptr`
 の44宣言(`ptr_util.h`を削除)、`Network.RC2`のsend/recv(`net_util.*`を削除)、Epollの定数・
 `epoll_create1`・`epoll_ctl(DEL)`・`eventfd`、Regexの`REG_*`と`re_nsub`、TextBufferの
 アクセサと`free`、`Data.String.RC2`の2つ、`Atomic`をCExprにした。`support/c`のC/Hは
