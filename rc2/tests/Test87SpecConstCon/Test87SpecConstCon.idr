@@ -2,6 +2,10 @@ module Main
 
 import Test87SpecConstCon.ConstConForwarding
 
+-- check.sh counts the clone definitions of ConstConForwarding, so equal
+-- clones must not be merged into one (doc/fun-dedup.md).
+%cg rc2 nofundedup
+
 -- Constant-constructor argument specialization
 -- (`Compiler.RC2.SpecClosure.applySpecConstCon`, see
 -- `doc/constant-constructor-specialization.md`): a callee whose

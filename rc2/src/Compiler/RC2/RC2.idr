@@ -41,6 +41,7 @@ import Compiler.RC2.DeadCode
 import Compiler.RC2.DualABI
 import Compiler.RC2.DeadVars
 import Compiler.RC2.DupMerge
+import Compiler.RC2.FunDedup
 import Compiler.RC2.PushDown
 import Compiler.RC2.Emit
 import Compiler.RC2.Emit.Util
@@ -291,7 +292,7 @@ inlineNamed disabled keep main defs =
 ||| apart.
 disableableStageNames : List String
 disableableStageNames =
-    ["noinline", "nodeadargs", "noarityraise", "noapplyfold", "notrmc", "noctx", "noconstfold", "noknowncon", "nopushcon", "nospecclosure", "nospecconstcon", "noconaltnative", "nomutualloop", "noloop", "noearlyinline", "nolateinline", "nosink", "nocmpmerge", "nodualabi", "noboolret", "noboolcase", "noboolfield", "nostructreturn", "nomutualstruct", "nodeadcode", "nopushdown", "nodupmerge", "nodeadvars", "noreusenested", "noreuserecheck"]
+    ["noinline", "nodeadargs", "noarityraise", "noapplyfold", "notrmc", "noctx", "noconstfold", "noknowncon", "nopushcon", "nospecclosure", "nospecconstcon", "noconaltnative", "nomutualloop", "noloop", "noearlyinline", "nolateinline", "nosink", "nocmpmerge", "nodualabi", "noboolret", "noboolcase", "noboolfield", "nostructreturn", "nomutualstruct", "nodeadcode", "nopushdown", "nodupmerge", "nodeadvars", "nofundedup", "noreusenested", "noreuserecheck"]
 
 ||| Stages that are off unless asked for with `--directive <name>`. They
 ||| travel to `toRCDefs` in the same list as the disables above.
@@ -495,10 +496,15 @@ toRCDefs disabled incremental roots thunks preFolded = do
     -- local adjacent that weren't when Dup merge ran, so its own
     -- cancellation peephole gets one more sweep here -- no re-merge,
     -- and gated by the same directive.
-    if "nodupmerge" `elem` disabled
-       then pure erased
-       else logTime 2 "rc2: Dup/drop cancel (post dead-vars)" $
-              pure (map (\(n, d) => (n, applyCancelDupDrop d)) erased)
+    cancelled <- if "nodupmerge" `elem` disabled
+                    then pure erased
+                    else logTime 2 "rc2: Dup/drop cancel (post dead-vars)" $
+                           pure (map (\(n, d) => (n, applyCancelDupDrop d)) erased)
+    -- rc2/doc/fun-dedup.md: functions with equal bodies become one. Not in
+    -- incremental mode, where a module only sees its own definitions.
+    if ("nofundedup" `elem` disabled) || incremental
+       then pure cancelled
+       else logTime 2 "rc2: Function dedup" $ pure (dedupFuns roots cancelled)
 
 ||| `%cg rc2 inlineRuntime=<code>` companion to upstream's own
 ||| file-path-based `Compiler.Common.getExtraRuntime` -- splices the

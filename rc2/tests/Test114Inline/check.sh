@@ -41,3 +41,17 @@ if [ "$cmpsI" -ge 2 ] && [ "$opsI" = "0" ]; then
 else
     fail "stepI/loopI: $cmpsI cmp node(s) (want >=2), $opsI unfused op(s) in $dump"
 fi
+
+# FunDedup (rc2/doc/fun-dedup.md): sumA/sumB are the same loop under two
+# names, wrapA/wrapB the same wrapper once the loops are merged (a second
+# round); exactly one of the loops survives, and lastOne (another
+# constant, inlined into its caller) keeps its own `* 4`. `--directive nofundedup` makes this FAIL by design.
+fd="Test114Inline[._]FunDedup[._]"
+sums="$(grep -cE "^def .*${fd}sum[AB][ :]" "$dump" || true)"
+wraps="$(grep -cE "^def .*${fd}wrap[AB][ :]" "$dump" || true)"
+lasts="$(grep -cE "^ *op \*Int \[.*#4\]" "$dump" || true)"
+if [ "$sums" = "1" ] && [ "$wraps" -le 1 ] && [ "$lasts" -ge 1 ]; then
+    pass "FunDedup: one of sumA/sumB ($sums), at most one of wrapA/wrapB ($wraps), lastOne's own loop kept"
+else
+    fail "FunDedup: sumA/sumB defs $sums (want 1), wrapA/wrapB defs $wraps (want <=1), lastOne's *4 ops $lasts (want >=1) in $dump"
+fi
