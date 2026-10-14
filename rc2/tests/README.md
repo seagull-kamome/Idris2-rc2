@@ -128,6 +128,7 @@ program's generated C.
 | `Test114Inline/CompareFusionThroughCall` | a comparison behind a call fuses into `RCmpCase` | refc valgrind |
 | `Test114Inline/DeadCodeInline` | a definition left with no caller is removed (`doc/dead-code-elim.md`) | refc valgrind |
 | `Test114Inline/InlineCalleeFirst` | Criterion A judged on the callee's rewritten body, callees first: a call chain and compare-based `<=` vanish, recursion and an over-threshold sum of small pieces stay calls (`doc/inlining.md`) | refc valgrind check.sh |
+| `Test114Inline/FunDedup` | functions with equal bodies become one (`doc/fun-dedup.md`): two equal loops, a second round; a loop with another constant stays | refc valgrind check.sh |
 | `Test17ConstFold` | constant folding of ops, cases, comparisons and casts | saved valgrind |
 | `Test115ConstFoldClosure/ConstFoldClosure` | folding of closures, CAFs and case scrutinees | refc valgrind |
 | `Test115ConstFoldClosure/ConstFoldClosureCallthrough` | dispatch through a folded interface dictionary | refc valgrind |

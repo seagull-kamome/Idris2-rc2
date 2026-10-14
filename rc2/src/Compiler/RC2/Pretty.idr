@@ -24,6 +24,7 @@ import Data.Vect
 indent : Nat -> String
 indent n = pack (replicate (2 * n) ' ')
 
+export
 prettyRep : Rep -> String
 prettyRep RBoxed = "Boxed"
 prettyRep (RNative ty) = "Native " ++ show ty

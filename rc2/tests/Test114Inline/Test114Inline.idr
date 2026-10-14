@@ -11,6 +11,7 @@ import Test114Inline.SmallFunctionInline
 import Test114Inline.CompareFusionThroughCall
 import Test114Inline.DeadCodeInline
 import Test114Inline.InlineCalleeFirst
+import Test114Inline.FunDedup
 
 main : IO ()
 main = do
@@ -18,3 +19,4 @@ main = do
     CompareFusionThroughCall.run
     DeadCodeInline.run
     InlineCalleeFirst.run
+    FunDedup.run

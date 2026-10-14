@@ -74,7 +74,8 @@ history, not there.
   `Compiler.RC2.PushCon`; the post-`LateInline` part is still design), `dead-code-elim.md` for the
   whole-program mark-and-sweep pass that drops definitions rc2's own
   optimizations (Inline, DualABI's Stage 3a wrapper split) leave with
-  zero remaining callers, run as `toRCDefs`'s own final stage,
+  zero remaining callers, run as `toRCDefs`'s own final stage, `fun-dedup.md` for
+  merging functions whose bodies are equal up to the numbering of their locals,
   `concurrency.md` for the runtime's
   multi-step move to thread-safety -- atomic reference count, then real
   OS thread spawning (`refc_fork`) and Mutex/Condition, then the
