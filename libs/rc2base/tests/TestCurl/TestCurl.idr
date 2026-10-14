@@ -20,7 +20,7 @@ import System
 import System.Directory
 import System.File
 
-import Network.HTTP.Client.Curl.Fetch
+import Network.HTTP.Client.Curl
 import Network.HTTP.Client.Curl.Raw
 import Network.HTTP.Client.Curl.TextBuffer
 import Network.HTTP.Client.Curl.Types
@@ -46,7 +46,7 @@ partial
 waitServer : String -> Nat -> IO ()
 waitServer base Z = putStrLn "server did not start"
 waitServer base (S k) = do
-    Right _ <- fetch (get (base ++ "/hello.txt"))
+    Right _ <- fetch curlClient (get (base ++ "/hello.txt"))
         | Left _ => napMs 20 >> waitServer base k
     pure ()
 
@@ -228,14 +228,14 @@ testHttp base = do
 testFetch : String -> IO ()
 testFetch base = do
     section "fetch"
-    Right r <- fetch (get (base ++ "/hello.txt"))
+    Right r <- fetch curlClient (get (base ++ "/hello.txt"))
         | Left e => printLn e
     printLn (r.status, r.body)
-    Right b <- fetchBytes (get (base ++ "/hello.txt"))
+    Right b <- fetchBytes curlClient (get (base ++ "/hello.txt"))
         | Left e => printLn e
     bufferData b.body >>= printLn
-    fetchText (base ++ "/hello.txt") >>= printLn
-    fetchText (base ++ "/missing.txt") >>= printLn
+    fetchText curlClient (base ++ "/hello.txt") >>= printLn
+    fetchText curlClient (base ++ "/missing.txt") >>= printLn
 
 partial
 main : IO ()
@@ -259,7 +259,7 @@ main = do
     testHttp base
     testFetch base
     section "stop"
-    fetchText (base ++ "/stop") >>= printLn
+    fetchText curlClient (base ++ "/stop") >>= printLn
     join srv
     curlGlobalCleanup
     Right () <- removeFile path

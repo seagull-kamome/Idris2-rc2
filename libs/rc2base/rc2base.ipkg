@@ -14,7 +14,7 @@ modules    = Control.Concurrent.MVar,
              Data.String.FFI, Data.String.RC2,
              Language.RCExpr.AST, Language.RCExpr.Lexer, Language.RCExpr.Parser,
              --
-             Network.HTTP.Client.Curl.Fetch, Network.HTTP.Client.Curl.Raw, Network.HTTP.Client.Curl.TextBuffer,
+             Network.HTTP.Client, Network.HTTP.Client.Curl, Network.HTTP.Client.Curl.Raw, Network.HTTP.Client.Curl.TextBuffer,
              Network.HTTP.Client.Curl.Types,
              Network.HTTP.Client.WebAPI.AI.OpenAI, Network.HTTP.Client.WebAPI.AI.Providers,
              Network.HTTP.Client.WebAPI.Auth.OAuth2, Network.HTTP.Client.WebAPI.Auth.PKCE,

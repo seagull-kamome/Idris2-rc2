@@ -228,10 +228,6 @@ xoroshiroの`*_sys`、concurrency_util。
 (または`CFLAGS`)でコンパイルする、と各宣言のdoc commentに書いて対応した(実機で、指定なしはCの
 コンパイルエラー、指定ありは動くことを確認)。生成コード側で定義する機能は作らない。
 
-## idris2-curlの取り込み
-インストール時にlibcurlへの依存が無ければrc2baseへ取り込んでも問題ないはず。
-よく使う機能はバンドルとしておきたい。あるいはpure idris2のhttp clientを実装すべき？
-
 ## promiseの実装
 
 ## FFI関数からの構造体返し
@@ -1098,13 +1094,23 @@ doc/manual/
 
 
 
-## idirs2-curlを取り込んだので後処理
-### テストが通るか確認
-### サンプルが動くか確認
-### ドキュメントを更新
-### Fetchインターフェースは Network.HTTP.Clientに定義
-### TagSoupの実装
-　もっとモダンなスクレイピングツールがあればいいのだが。HTML相手に正規表現では大げさ過ぎる。
+## TagSoupの実装
+もっとモダンなスクレイピングツールがあればいいのだが。HTML相手に正規表現では大げさ過ぎる。
+
+## TTCの`foreignImpl`の指数的な肥大(upstream Idris2の不具合)
+rc2baseは`%foreign_impl`を33件使っている(`System/Concurrency/RC2`、`Data/Buffer/RC2`、`Data/Double/RC2`)。
+upstreamの`Core/Binary.idr`は、TTCを書くときその時点までに溜まった`foreignImpl`の全体を書き込み、読む側
+(`updateForeignImpl`)は重複を除かずに先頭へ足す。そのためimportの段数に対して指数的に増え、
+`Curl/Types.ttc`が137MB、`Curl/TextBuffer.ttc`が315MBになっている(`strings`で`prim__makeMutex`などが
+各51,300回)。rc2base全体のコンパイルで`Fix foreign bindings`が58〜70秒、`TestWebAPI`のコンパイルは
+ピーク約9GBになり、`libs/rc2base/tests/verify.sh`の`ulimit -v 12000000`の下でOOMになることがある。
+最小の再現(`%foreign_impl`を持つ`M0`と、直前2つをimportする`M1`〜`M12`)では`M12.ttc`が6.2MBになる。
+
+`updateForeignImpl`が既にある組を足さないようにする1箇所の修正で、再現は3.7KBのまま増えず、rc2baseを
+作り直した`TestWebAPI`のコンパイルはピーク0.84GB、`Fix foreign bindings`は0.003秒になった(確認済み、
+upstreamの`make test`は未実行)。パッチは`seagull-kamome/Idris2`の`fix_foreign_impl_oom`ブランチ向け。
+upstreamに取り込まれたら`idris2-src`を更新して自作idris2を作り直し、rc2baseを再インストールする。
+`namedirectives`/`cgdirectives`の読み書きにも同じ構造がありそうだが未調査。
 
 ## AI Agent作成用のライブラリを整備
 
