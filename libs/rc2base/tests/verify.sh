@@ -59,7 +59,7 @@ TESTS=(
     "TestTextTree|contrib|Data.Text, the finger-tree rope"
     "TestConcurrency||fork + System.Concurrency.RC2's Mutex/Condition"
     "TestXoroshiro128PlusPlus||System.Random.Xoroshiro128PlusPlus"
-    "TestBufferRC2||Data.Buffer.RC2's %foreign_impl patches"
+    "TestBufferRC2||Data.Buffer's Int8/Int16/Int64 primitives (upstream RefC tags)"
     "TestDoubleRC2||Data.Double.RC2's %foreign_impl patches"
     "TestXoroshiro64StarStar||System.Random.Xoroshiro64StarStar"
     "TestStringFFI||Data.String.FFI's ptrToString"

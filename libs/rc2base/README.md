@@ -52,7 +52,6 @@ not compile when the declaration is used.
 | `Data.Text`/`Data.TextBuffer` | UTF-8-derived codepoint buffer -- see "API" below |
 | `Data.String.FFI` | patches upstream `Data.String` `%foreign` gaps -- see `TODO.md` |
 | `Data.String.RC2` | byte-offset `String` slicing, for when a span isn't codepoint-aligned -- see below |
-| `Data.Buffer.RC2` | patches the five upstream `Data.Buffer` primitives with no C backend -- see below |
 | `Data.Double.RC2` | patches upstream `Data.Double`'s `unitRoundoff`/`epsilon`/`nan`/`inf` -- see below |
 | `Data.Double.Convert` | opt-in Eisel-Lemire/Grisu2-style fast path for `Double`<->`String`, next to (not replacing) `cast` -- see below |
 | `Data.Integer.GMP` | direct `%foreign` bindings onto real GMP `mpz_*` functions -- see below |
@@ -385,84 +384,13 @@ replaced outright by the real xoroshiro128++ ported above -- a
 different algorithm despite the shared "128"/"++" naming, not merely a
 rename.
 
-### `Data.Buffer.RC2`
-
-Patches the five upstream `Data.Buffer` primitives that carry only a
-`"scheme:..."` `%foreign` tag and are therefore unusable on refc/rc2
-(or any C backend) at all -- see `TODO.md`'s "Upstream stdlib
-`%foreign` declarations with no C/RefC backend at all" entry. Unlike
-the `System.Random` modules above (independent replacements built from
-scratch -- upstream's own primitives there have no C-reachable
-implementation whatsoever to patch onto at all), `rc2/support/rc2/
-buffer.h` already had every one of these under a different name:
-`setInt16`/`getInt32`/`setInt32`
-(upstream's own already-working `"RefC:..."` tags matching that
-runtime's symbol names verbatim) show the same runtime was always
-meant to cover the rest of `Data.Buffer` too. This module just wires
-the remaining five up via `%foreign_impl` (the same mechanism
-`System.Concurrency.RC2` uses):
-
-```
-prim__setInt8  -> setBufferUInt8
-prim__getInt8  -> getBufferByte
-prim__getInt16 -> getBufferInt16LE
-prim__setInt64 -> setBufferInt64LE
-prim__getInt64 -> getBufferInt64LE
-```
-
-`getBufferByte` is worth calling out: that's also the C symbol
-upstream's own already-working `"RefC:getBufferByte"` tag targets from
-`prim__getByte` -- a *different* primitive, with a plain `Int` return
-rather than `Int8`. Reused here as-is rather than given a fresh name:
-the same C macro produces the correct result either way, since
-sign-reinterpretation happens at the *caller's* return-holding local,
-not inside the macro (`Compiler.RC2.EmitUtil`'s `cTypeOfCFType`
-declares that local at the FFI declaration's own target width --
-`int8_t` for `prim__getInt8`, plain `int64_t` for `prim__getByte` --
-so the same unsigned-built macro result narrows/sign-extends correctly
-under either return type). Renaming it would have silently broken the
-other, already-shipped `prim__getByte` patch instead of adding
-anything. This module's own test (`tests/TestBufferRC2/TestBufferRC2.idr`)
-round-trips negative and boundary values through all five to confirm
-the sign handling is actually correct, not just assumed from reading
-the macro.
-
-Tagged `"RC2:"`, not `"RefC:"`, unlike upstream's own three
-already-working entries above: those are upstream's pre-existing
-declarations that happen to name real rc2 runtime symbols, not
-something this module adds. Adding a *new* `"RefC:"`-tagged entry
-ourselves would make a real `idris2 --cg refc` build believe upstream
-itself supports these -- it doesn't, there's no such symbol in its own
-runtime -- failing confusingly at final link instead of not compiling
-at all. `"RC2:"` is rc2-exclusive (`EmitUtil.idr`'s own `ffiTags`) and
-silently ignored by any other backend, same as `System.Concurrency.RC2`'s
-own patches.
-
-Surfaced a real rc2 compiler bug the first time this module was
-written: `Compiler.RC2.Emit`'s `emitGenericForeignWrapper` treated
-every non-`"RefC"` foreign tag (including the newly-introduced
-`"RC2"`) as generic C for the purpose of unwrapping a `CFBuffer`
-argument -- but `EmitUtil.idr`'s `extractValue`'s two `CFBuffer` cases
-are not interchangeable: `CLangRefC` passes the whole
-size-header-carrying `IDRIS2RC2_Buffer` allocation `buffer.h`'s own
-macros expect, while `CLangC` skips past that header for generic
-byte-buffer functions with no notion of it. This had been silently
-correct for `System.Concurrency.RC2`'s own earlier patches purely
-because none of them happen to take a `CFBuffer`-typed argument, and
-only became visible once a patch that does (this one) was written.
-Fixed by a one-line change treating `"RC2"` the same as `"RefC"` for
-this one purpose; verified against rc2's full regression suite
-(`rc2/tests/verify.sh`, refc-suite 19/19, smoke+valgrind 82/82) with
-no other change.
-
 ### `Data.Double.RC2`
 
 Patches upstream `Data.Double`'s `unitRoundoff`/`epsilon`/`nan`/`inf`,
 each of which carries only a `"scheme:..."`/`"node:..."` `%foreign`
 tag and is therefore unusable on refc/rc2 (or any C backend) at all --
 see `TODO.md`'s same "Upstream stdlib `%foreign` declarations..."
-entry. Unlike `Data.Buffer.RC2` above (rc2's own runtime already had
-every needed primitive under a different name), `rc2/support/rc2/
+entry. `rc2/support/rc2/
 numeric.h` needed four small new `static inline` functions --
 `idris2rc2_unitRoundoff`/`idris2rc2_epsilon`/`idris2rc2_nan`/
 `idris2rc2_inf` -- since there was nothing to reuse:
@@ -504,8 +432,7 @@ specifically because all four are pure, side-effect-free constants --
 re-evaluating `idris2rc2_inf()` a second
 time returns the same `INFINITY` either way.
 
-Tagged `"RC2:"`, not `"RefC:"`, for the same reason as
-`Data.Buffer.RC2` above: these symbol names are new, rc2-only
+Tagged `"RC2:"`, not `"RefC:"`, because these symbol names are new, rc2-only
 additions to rc2's own runtime, not something a real `idris2 --cg refc`
 build's own runtime also happens to provide.
 

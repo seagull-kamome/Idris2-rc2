@@ -88,14 +88,14 @@ C-tagged alternative is a function the *pinned reference*
 gap. Four such spots found, all upstream:
 
 - **`Data.Buffer`**: `setInt8`/`getInt8`/`getInt16`/`setInt64`/
-  `getInt64` -- patched, see `libs/rc2base/README.md`'s
-  "`Data.Buffer.RC2`" section.
+  `getInt64` -- fixed upstream (#3873 adds `"RefC:..."` tags that name
+  rc2's own runtime symbols); the `Data.Buffer.RC2` patch module is gone.
 - **`Data.Double`**: `unitRoundoff`/`epsilon`/`nan`/`inf` -- patched,
   see `libs/rc2base/README.md`'s "`Data.Double.RC2`" section.
 - **`System.Random`** (contrib): `prim__randomBits32`/
   `prim__randomDouble`/`prim__srand` (backing the whole module) remain
   entirely unimplemented on any C backend. Not a `%foreign_impl` patch
-  onto them (unlike `Data.Buffer`/`Data.Double` above) -- see
+  onto them (unlike `Data.Double` above) -- see
   `libs/rc2base/README.md`'s "`System.Random.Xoroshiro128PlusPlus` /
   `System.Random.Xoroshiro64StarStar`" section for two independent,
   from-scratch replacement modules with their own API instead.

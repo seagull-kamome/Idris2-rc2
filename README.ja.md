@@ -122,7 +122,7 @@ rc2リポジトリには、実用的なアプリケーション開発とコン�
 ```
 libs/rc2base/
 ├── rc2base.ipkg   Idris2パッケージ: Control.Concurrent.{MVar,Atomic},
-│                  Data.Text/Data.TextBuffer, Data.String.{FFI,RC2}, Data.Buffer.RC2,
+│                  Data.Text/Data.TextBuffer, Data.String.{FFI,RC2},
 │                  Data.Double.{RC2,Convert}, Data.IORef.RC2, Data.Integer.GMP, Data.Queue,
 │                  Language.RCExpr.{AST,Lexer,Parser},
 │                  Network.{RC2,URL}, Network.HTTP.{Route,Router,Server},

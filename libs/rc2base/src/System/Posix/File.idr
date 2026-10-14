@@ -17,7 +17,6 @@
 module System.Posix.File
 
 import Data.Buffer
-import Data.Buffer.RC2
 import Data.String
 import Data.String.RC2
 import System.Posix.Errno

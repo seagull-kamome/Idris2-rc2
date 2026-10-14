@@ -377,7 +377,7 @@ emitForeignDef n ccs fargs ret =
       case parseForeign ccs of
           Right (Just _) => do
               -- "RC2" (rc2-specific %foreign_impl patches, e.g.
-              -- System.Concurrency.RC2/Data.Buffer.RC2) targets our own
+              -- System.Concurrency.RC2) targets our own
               -- runtime exactly like "RefC" does -- both need
               -- CFBuffer's header-aware unwrap (EmitUtil.idr's
               -- `extractValue CLangRefC CFBuffer`), not the generic
