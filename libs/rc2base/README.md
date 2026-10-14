@@ -608,19 +608,16 @@ following an established convention:
   meaningful `int` return (invertibility/exactness) at once.
 - `mpz_tdiv_qr`/`mpz_fdiv_qr`/`mpz_cdiv_qr`/`mpz_gcdext`: more than one
   output parameter.
-- `mpz_setbit`/`mpz_clrbit`/`mpz_combit`: mutate their *single* `mpz_t`
-  argument in place (`void mpz_setbit(mpz_ptr, mp_bitcnt_t)` -- no
-  separate `rop`/`op` at all). Confirmed as a real compile error
-  (three arguments generated for a two-parameter function), not just a
-  theoretical mismatch -- a real binding needs a wrapper that copies
-  first (`mpz_init_set` into a fresh destination, then mutate that
-  copy).
 - `mpz_urandomb`/`mpz_urandomm` and the rest of GMP's random-number
   API: needs an opaque `gmp_randstate_t` with its own init/clear
   lifecycle, a separate piece of design work.
 - `mpz_get_str`/`mpz_set_str`: redundant with Idris's own `Integer`
   `Show`/numeric-literal parsing, which already goes through this same
   `mpz_t`.
+
+`setbit`/`clrbit`/`combit` mutate their single `mpz_t` in place, so they are bound
+as a comma expression that copies into the output parameter first
+(`(mpz_set($r, $1), mpz_setbit($r, $2))`); the argument is left alone.
 
 `tests/TestIntegerGMP/TestIntegerGMP.idr` exercises every binding at least once,
 cross-checked either against Idris's own native `Integer` arithmetic

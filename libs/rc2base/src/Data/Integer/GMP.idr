@@ -50,23 +50,17 @@ module Data.Integer.GMP
 --   module's own convention only ever looks at one or the other.
 -- - `mpz_tdiv_qr`/`mpz_fdiv_qr`/`mpz_cdiv_qr`/`mpz_gcdext`: more than
 --   one output parameter.
--- - `mpz_setbit`/`mpz_clrbit`/`mpz_combit`: mutate their *single*
---   `mpz_t` argument in place (`void mpz_setbit(mpz_ptr, mp_bitcnt_t)`
---   -- no separate `rop`/`op` at all, unlike every function above).
---   Binding one directly the same way as the rest would try to pass
---   three arguments (this module's own fresh out-param, the source
---   `Integer`, the bit position) to a function that only takes two --
---   confirmed as a real compile error, not just a theoretical
---   mismatch. A real binding needs a wrapper that copies first
---   (`mpz_init_set` into a fresh destination, then mutate that copy),
---   which is exactly the "no wrapper of its own needed" property this
---   module otherwise has throughout.
 -- - `mpz_urandomb`/`mpz_urandomm` and the rest of GMP's random-number
 --   API: needs an opaque `gmp_randstate_t` with its own init/clear
 --   lifecycle, a separate piece of design work.
 -- - `mpz_get_str`/`mpz_set_str`: redundant with Idris's own `Integer`
 --   `Show`/numeric-literal parsing, which already goes through this
 --   same `mpz_t`.
+--
+-- (`mpz_setbit`/`mpz_clrbit`/`mpz_combit` mutate their single `mpz_t` in
+-- place; they are bound as a comma expression that copies into `$r`
+-- first, `(mpz_set($r, $1), mpz_setbit($r, $2))`, so the argument is
+-- left alone.)
 --
 -- See `TODO.md`'s own entry for this module for the full list with
 -- reasons, kept in sync if this scope ever grows.
@@ -298,6 +292,21 @@ namespace GMP
   %foreign "CExpr:(mpz_hamdist($1, $2)),libgmp,gmp.h"
   export
   hamdist : Integer -> Integer -> Bits64
+
+  ||| `x` with bit `n` set (two's-complement semantics); `x` is unchanged.
+  %foreign "CExpr:(mpz_set($r, $1), mpz_setbit($r, $2)),libgmp,gmp.h"
+  export
+  setbit : Integer -> Bits64 -> Integer
+
+  ||| `x` with bit `n` cleared; `x` is unchanged.
+  %foreign "CExpr:(mpz_set($r, $1), mpz_clrbit($r, $2)),libgmp,gmp.h"
+  export
+  clrbit : Integer -> Bits64 -> Integer
+
+  ||| `x` with bit `n` flipped; `x` is unchanged.
+  %foreign "CExpr:(mpz_set($r, $1), mpz_combit($r, $2)),libgmp,gmp.h"
+  export
+  combit : Integer -> Bits64 -> Integer
 
   ||| `1` if bit `n` is set, `0` otherwise.
   %foreign "CExpr:(mpz_tstbit($1, $2)),libgmp,gmp.h"
