@@ -10,6 +10,7 @@ module Main
 import Data.List
 import Data.IORef
 import Test106TransitiveSpec.SpecIterate
+import Test106TransitiveSpec.LazyFuncSpec
 import Test106TransitiveSpec.MultiApplySpec
 
 -- Applies the closure; the other two only forward it.
@@ -72,3 +73,4 @@ main = do
   printLn (ys, map (\f => f 1) fs)
   SpecIterate.runIt
   MultiApplySpec.run
+  LazyFuncSpec.run

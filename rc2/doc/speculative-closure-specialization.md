@@ -758,3 +758,28 @@ Not tried: expanding a bare wrapper at its call sites so the raised
 body is specialised directly; joint clones for the 1,027 "second known
 position" keys, which the final-body trial above suggests are not
 joint-profitable.
+
+## Forcing a closure parameter (2026-10-14)
+
+`Prelude.Types.maybe` and `either` take their function arguments as
+`Lazy (a -> b)`, so their bodies reach the argument through `let t =
+force p in apply t [x]` and the apply chain is rooted at `t`, not at the
+parameter `p`. `paramUses` counted the `force` as a use that is none of
+chain, passthrough or forwarding, so no clone was ever built: in
+idris2-lsp's final IR 234 calls to `maybe` and 5 to `either` stayed
+generic, 155 of the `maybe` ones with a known closure (103 constants,
+52 partial applications).
+
+`unforceParam` (in `tryOneKey`, before `paramUses` and `buildClone`)
+rewrites `let t = force p in rest` to `rest` with `t` renamed to `p`.
+That is only valid in the clone, which is entered with a known closure
+in `p`; a closure is not a lazy cell, so `idris2rc2_force` returns it
+unchanged. The generic function keeps its `force`. Any other use of the
+forced value (stored, passed on) makes `paramUses` reject the key as
+before. The pass runs before the reference counts are inserted, so
+there is no `postDrop` to carry over.
+
+The delay cell of a `Lazy` argument that is a real `delay` (about 12%
+of the calls) is not touched: it is not a known closure. Test:
+`Test106TransitiveSpec/LazyFuncSpec` (`check.sh`: no call to
+`maybe`/`either` left; `--directive nospecclosure` fails it).

@@ -50,3 +50,15 @@ if [ "$bigClones" = "0" ]; then
 else
     fail "big, medium: $bigClones closure clone(s), expected 0 in $dump"
 fi
+
+# LazyFuncSpec: `Prelude.Types.maybe`/`either` take their function
+# arguments as `Lazy`, so the body reaches them through a `force`
+# (doc/speculative-closure-specialization.md, "Forcing a closure
+# parameter"). With the clones (and the inlining they enable) no call to
+# either remains; `--directive nospecclosure` makes this FAIL by design.
+lazyCalls="$(grep -cE "call Prelude\.Types\.(maybe|either) " "$dump" || true)"
+if [ "$lazyCalls" = "0" ]; then
+    pass "LazyFuncSpec: no call to maybe/either left"
+else
+    fail "LazyFuncSpec: $lazyCalls call(s) to maybe/either left in $dump"
+fi
