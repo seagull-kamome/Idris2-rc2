@@ -21,6 +21,7 @@ module Compiler.RC2.SpecClosure
 
 import Compiler.RC2.ConstFold
 import Compiler.RC2.Emit.Util
+import Compiler.RC2.Loop
 import Compiler.RC2.RCExp
 import Compiler.RC2.Types
 import Compiler.RC2.Util
@@ -115,6 +116,17 @@ collectOpportunities bound e = foldSubExprs (++) [] (collectOpportunities bound)
 -- Step 1 (continued): is the parameter actually used only via `apply`
 -- (possibly chained, possibly also passed through to self-recursion)?
 ------------------------------------------------------------------------
+
+||| `let t = force p in rest` becomes `rest` with `t` renamed to `p`, for a
+||| lazy parameter `p`. Only a clone entered with a known closure in `p`
+||| uses the result, and a closure is not a lazy cell, so there `force`
+||| is the identity (`Prelude.Types.maybe`/`either`, whose function
+||| arguments are `Lazy`). See the doc's "Forcing a closure parameter".
+unforceParam : Int -> RCExp -> RCExp
+unforceParam p e@(RLet _ t _ (RForce _ _ (RCLoc q) _) rest) =
+    if q == p then unforceParam p (renameRCExp (insert t p empty) rest)
+              else mapSubExprs (unforceParam p) e
+unforceParam p e = mapSubExprs (unforceParam p) e
 
 ||| See the doc's "Internal structure" -> "Chain detection" paragraph,
 ||| and `doc/rapp-nary-closure-apply.md`'s own "A free simplification
@@ -464,9 +476,10 @@ applySpecClosure prevTable done defs = do
     tryOneKey : SortedMap Name RCDef -> CafTable -> SpecKey -> Nat -> Core (Maybe Built)
     tryOneKey defOf caf k@(callee, argPos, target, missing) capturedCount =
         case lookup callee defOf of
-             Just (MkRCFun args retRep _ body) =>
+             Just (MkRCFun args retRep _ body0) =>
                  case getAt argPos args of
                       Just (paramVar, _) =>
+                          let body = unforceParam paramVar body0 in
                           case paramUses capturedCount (RCLoc paramVar) missing callee argPos body of
                                Nothing => pure Nothing
                                Just fwds => do
