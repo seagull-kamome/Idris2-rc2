@@ -56,16 +56,6 @@ boxing/reboxing gap above, just removes one small cost that used to sit
 on top of it.
 
 
-## `Lazy`/`Inf` のメモ化後: force した値への無駄な reuse 解析を省く
-
-`rc2/doc/lazy-memoization.md`で実装した`Lazy`/`Inf`のメモ化により、force
-した値はセルが生きている間ずっとセルと共有され、一意にならないので、その場
-での再利用(reuse)は実行時に外れる。force がセルの最後の使用で、直後に
-セルが解放される場合だけは一意に戻り、再利用できる。それ以外(force の後も
-セルが生きている)の値に対する reuse 解析(`reuseOffer`/`releaseReuse` の挿入)
-はコンパイル時間と生成コードの無駄なので、そうした値には reuse を試みない
-ようにしたい。残る `reuseOffer` の数を数えて効果を確かめる。
-
 ## Compatibility: `show` of a `Double` picks exponent notation differently from Chez (found 2026-09-27)
 
 Both print the same value, in different notation:
@@ -144,13 +134,6 @@ with a `void` return, or a plain native return with no output
 parameter at all. Several real GMP functions don't fit either shape
 and are excluded rather than force-fit:
 
-- `mpz_setbit`/`mpz_clrbit`/`mpz_combit`: mutate their *single* `mpz_t`
-  argument in place, no separate `rop`/`op` at all -- confirmed as a
-  real compile error when tried the same way as everything else
-  (generates one argument too many). A real binding needs a wrapper
-  that copies first (`mpz_init_set` into a fresh destination, then
-  mutate that copy) -- the one case in this module that would need one
-  at all.
 - `mpz_invert`/`mpz_root`: a leading `mpz_t` out-param *and* a
   meaningful `int` return (invertibility/exactness) at once.
 - `mpz_tdiv_qr`/`mpz_fdiv_qr`/`mpz_cdiv_qr`/`mpz_gcdext`: more than one
@@ -228,7 +211,7 @@ case needs one specifically.
   非atomic(5.95s)との差の2割しか埋まらない。打ち切り。
 
 ## 既存のシムをCExprで置き換えられるか
-`libs/rc2base`は実施済み(ブランチ`rc2base-cexpr-shims`): GMPの`mpz_*` 49宣言(`$r`)、`System.FFI.C.Ptr`
+`libs/rc2base`は実施済み(ブランチ`rc2base-cexpr-shims`): GMPの`mpz_*` 49宣言(その後`setbit`/`clrbit`/`combit`を足して52)(`$r`)、`System.FFI.C.Ptr`
 の44宣言(`ptr_util.h`を削除)、`Network.RC2`のsend/recv(`net_util.*`を削除)、Epollの定数・
 `epoll_create1`・`epoll_ctl(DEL)`・`eventfd`、Regexの`REG_*`と`re_nsub`、TextBufferの
 アクセサと`free`、`Data.String.RC2`の2つ、`Atomic`をCExprにした。`support/c`のC/Hは
@@ -861,7 +844,7 @@ RC.annotate・DeadVars で実際に数秒を失った。1の計測で重いと�
   否定を伴う変形(`cmp < then A else B`を`cmp >= then B else A`にする)は、Doubleの
   NaNで成り立たないので意図的に入れていない。
 
-## 借用推論(borrow inference): 計測して保留(2026-10-07)
+## 借用推論(borrow inference): 計測して保留(2026-10-07、数字は2026-10-14)
 
 `dup`/`drop`を減らすため、読むだけの引数を借用にする推論を検討した。
 
@@ -871,63 +854,29 @@ RC.annotate・DeadVars で実際に数秒を失った。1の計測で重いと�
   推測するしかなく、idris2-lspで借用にできた引数は5.9%、呼び出し側の`dup`の
   削減は0.6%だった。末尾呼び出しがループに変換されるかの予測は危険なので
   やらない。診断のコードは`tmp/BorrowMeasure_preannotate.idr`に退避。
-- annotate後(最終IR)で数えると(`tools/rcexpr-lint --borrow-stats`)、
-  idris2-lspで借用にできるBoxed引数は14.0%(6,802/48,336)。阻害要因は、格納
-  13,836、ループでない末尾呼び出しの引数13,752、所有の位置への受け渡し8,930、
-  返却1,517、再利用1,510、`apply`/FFI 1,356、ループで変わる引数633、複数の理由
-  5,821。
-- 効果は、呼び出し先の`drop`除去12,510と呼び出し側の`dup`除去3,521などに対し、
-  呼び出し側の`drop`追加7,549(うち3,164は末尾呼び出しが末尾でなくなる分)で、
-  静的な純減は3.2%(全`dup`/`drop` 284,067のうち9,321)。ループの中の重みでは
-  追加の方が177多く、逆効果。所有の規約のwrapperが要る定義は2,111。
-- 判断: 今の形では導入しない。再検討するなら、`callRep`だけのwrapper定義
-  (690個、Boxed引数2,124)が「ループでない末尾呼び出し」で除外されている点
-  (実行時にはtrampolineされないので規則が厳しすぎる可能性)と、`case`の
-  フィールドの`dup`(4,342、うちループ内2,005)を借用で扱えるか(再利用と衝突
-  しうる)から。
-- 再計測(2026-10-08、master d25d1d2、PushDown・型付き定数Boolのunbox・MutualLoopの
-  構造体返し・CmpMerge等の後、同じ`--borrow-stats`、idris2-lsp。旧数値と同じ出力形式で
-  再現できた)。借用にできるBoxed引数は14.0%(6,838/48,618)でほぼ不変。阻害要因は格納
-  13,834、ループでない末尾呼び出しの引数13,905、所有の位置への受け渡し9,030、返却1,513、
-  再利用1,510、`apply`/FFI 1,355、ループで変わる引数633、複数の理由5,816。効果は呼び出し先の
-  `drop`除去12,670(ループ内540)、呼び出し先の`dup`除去520(旧記録には無い項目)、呼び出し側の
-  `dup`除去3,525(ループ内1,039)、呼び出し側の`drop`追加7,684(ループ内1,880、うち末尾
-  呼び出しが末尾でなくなる分3,278)。静的な純減は9,031で、全`dup`/`drop` 256,350の3.5%
-  (旧3.2%)。ループの中の重みは-214(追加の方が214多い、旧-177)。所有の規約のwrapperが要る
-  定義は2,083(旧2,111)。`case`のフィールドの`dup`(借用では純減に数えない)は4,143
-  (ループ内1,877、旧4,342/2,005)。`dup`行74,638、`drop`行64,804。
-  - 判断(変わらない): 全体の操作数が約284kから約256kに減った分、純減の割合は3.2%から3.5%に
-    見えるが、絶対数の純減はほぼ同じ(9,321 -> 9,031)で、借用にできる引数の割合も阻害要因の
-    内訳も動いていない。動いたのは分母(PushDownやunboxで`dup`/`drop`自体が減った)だけで、
-    借用推論の効き目は増えていない。ループの重みの純減は依然マイナス(-214)で、実行時には
-    逆効果になりうる。したがって「今の形では導入しない」を維持する。再検討の入口(`callRep`だけの
-    wrapper定義の末尾呼び出し規則、`case`のフィールドの`dup`)も変わらない。
-- 再計測(2026-10-08、同じidris2-lspのダンプ、`tools/rcexpr-lint --borrow-tail-stats`を追加):
-  「ループでない末尾呼び出しの引数」だけが理由で除外された引数13,905(`--borrow-stats`の
-  内訳の行と一致)について、残りの呼び出し箇所すべてを通した収支を出した。他の理由も持つ
-  2,189個は除外のまま。これらの引数の使い道は末尾呼び出しの引数に渡すことだけなので、借用に
-  するには渡し先の引数も借用でなければならない。渡し先は、今借用にできる引数2,097箇所、同じ
-  候補どうしの連鎖4,697、他の理由で除外された(所有の位置)10,093、対象外555。所有の位置へ
-  末尾で渡す候補は除外のままなので、借用にできる形なのは2,726個(19.6%、連鎖は不動点で確認)。
-  収支は、呼び出し先の`drop`/`dup`除去 + 呼び出し側の`dup`除去 + 「渡し先に今数えている
-  `drop`追加が、この引数が借用になると消える分(クレジット)」 - 呼び出し側の`drop`追加で数える。
-  この引数宛ての末尾呼び出しは、(A)末尾呼び出しのまま`postDrop`を持てるclosure/trampolineが
-  1個`drop`する(+1)、(B)所有規約の入口を使う(0、その入口が要る関数を数える)の2通り。
-  - 単独の収支で正になるのは、Aが1,314個・Bが1,331個。0が1,309個、負は約100個。正の
-    ものだけを残して連鎖を再確認した結果は、A: 1,025個で純減+1,896(ループ内+176)、
-    B: 1,180個で+2,621(ループ内+180)。現在の9,031に足すと、A 10,927(4.2%)、B 11,652
-    (4.5%)で、ループの重みは-214から-38(A)、-34(B)になり、まだマイナス。
-  - 中身は、A基準でクレジット1,762、呼び出し先の除去462(`drop`426 + `dup`36)、呼び出し側の
-    `dup`除去320に対し、末尾呼び出し側の追加561、その他の`drop`追加87。つまり利得の約7割は
-    「今すでに数えている末尾由来の`drop`追加が消える分」で、ループ内に効くのはクレジット27
-    だけ。Bで末尾の入口を使う関数は126個(うち既存のwrapper 2,083個に含まれるのは1個)で、
-    間接参照されていてwrapperが新たに要る関数が282個(A: 280)。Bの上位3個(Racket/Chez/
-    Gambitの`*Prim`、コンパイル時のコードでホットではない)が合計577で、Bの増分の2割強を占める。
-  - 判断: 末尾で除外されていた引数に正の収支のものは確かにあるが、現在の純減に足せるのは
-    +1,900〜+2,600(全体の0.7〜1.0%)で、3.5%が4.2〜4.5%になる程度。ループの重みは
-    マイナスのまま。「今の形では導入しない」は変えない。ただし、これは除外の解除だけを見た
-    数字で、除外のうち13,905の大半(渡し先が所有の位置、10,093箇所)は借用推論を他の引数にも
-    広げる(所有の位置を減らす)ことでしか動かない。
+- annotate後(最終IR)で数える(`tools/rcexpr-lint --borrow-stats`、末尾呼び出しの引数は
+  借用にせず所有を渡す扱い)。2026-10-14、master e4517c8、idris2-lspの12,705定義:
+  借用にできるBoxed引数は16.2%(5,490/33,692)。阻害要因は、格納9,677、所有の位置への
+  受け渡し8,450、ループでない末尾呼び出しの引数6,638、再利用1,252、`apply`/FFI 994、
+  ループで変わる引数613、返却578、複数の理由5,433。
+- 効果は、呼び出し先の`drop`除去11,261(ループ内530)、呼び出し先の`dup`除去510(81)、
+  呼び出し側の`dup`除去3,457(1,042)に対し、呼び出し側の`drop`追加7,081(1,806、うち末尾
+  呼び出しが末尾でなくなる分2,906)。静的な純減は8,147で、全`dup`/`drop` 251,732の3.2%。
+  ループの中の重みは-153(追加の方が多く、実行時には逆効果になりうる)。所有の規約の
+  wrapperが要る定義(間接参照されるもの)は1,430。`case`のフィールドの`dup`(借用では純減に
+  数えない)は4,089(ループ内1,859)。
+- 推移: 10-07は純減9,321(3.2%、全284,067)、10-08は9,031(3.5%、全256,350)、10-14は
+  8,147(3.2%、全251,732)。借用の効き目は増えておらず、割合の変化は分母(PushDown・
+  unbox・FunDedupで定義と`dup`/`drop`自体が減った)の動きによる。
+- 判断: 今の形では導入しない。再検討するなら、`callRep`だけのwrapper定義が「ループでない
+  末尾呼び出し」で除外されている点(実行時にはtrampolineされないので規則が厳しすぎる
+  可能性)と、`case`のフィールドの`dup`を借用で扱えるか(再利用と衝突しうる)から。
+- 末尾呼び出しで除外された引数の除外を解いた場合(`--borrow-tail-stats`、2026-10-08の
+  idris2-lsp、数字はその時点のまま): 渡し先が借用にできる形の候補だけを残すと、純減に
+  足せるのは+1,900〜+2,600(全体の0.7〜1.0%)で、ループの重みは-214から-34〜-38になるが
+  まだマイナス。利得の約7割は今すでに数えている末尾由来の`drop`追加が消える分で、ループ内に
+  効くのはクレジット27だけ。除外された13,905個の大半(渡し先が所有の位置、10,093箇所)は、
+  借用推論を他の引数にも広げる(所有の位置を減らす)ことでしか動かない。
 
 ## dup/dropの押し込みの取りこぼし: 計測(2026-10-07)
 
