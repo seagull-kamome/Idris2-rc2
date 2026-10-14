@@ -172,60 +172,53 @@ ncEventTypeFromCode _ = UnknownEvent
 namespace NCKey
   ||| `NCKEY_TAB`/`NCKEY_ESC`: plain ASCII control codes in notcurses.h
   ||| (`0x09`/`0x1b`), not `preterunicode`-derived -- safe to hardcode,
-  ||| unlike the rest of this namespace (backed by shim getters; see
-  ||| idris2rc2_notcurses_nc_util.h's own comment on why).
+  ||| unlike the rest of this namespace (CExpr macros below, because
+  ||| they are `preterunicode`-derived).
   public export
   tab, esc : Bits32
   tab = 0x09
   esc = 0x1b
 
-  -- Each is the raw %foreign declaration itself, `export`ed directly --
-  -- not a separate `xxx = prim__nckeyXxx` wrapper. That extra
-  -- indirection is what triggers rc2's CAF memoization (a top-level
-  -- 0-arg definition whose body just calls something else): confirmed
-  -- via `--directive dumprcexpr` to compile down to a heap-allocated,
-  -- reference-counted, atomically-guarded `memoize ... : Boxed` around
-  -- the foreign call. Exporting the %foreign declaration itself has no
-  -- such wrapper -- just the bare foreign call at each use site, which
-  -- idris2rc2_notcurses_nc_util.h's own `static inline` getter (see its own comment) then
-  -- folds straight down to the constant. See TODO.md's note on
-  -- unrestricted CAF memoization for the general hazard this is an
-  -- instance of.
-  %foreign "C:idris2rc2_nckey_invalid, libidris2rc2notcurses, idris2rc2_notcurses_nc_util.h"
+  -- CExpr constants: the macro expands in the generated C (nckeys.h
+  -- alone, no feature-test macros needed). `%inline` and the exported
+  -- %foreign declaration itself (no `xxx = prim__xxx` wrapper) keep them
+  -- out of rc2's CAF memoization; see TODO.md's note on unrestricted CAF
+  -- memoization.
+  %inline %foreign "CExpr:(NCKEY_INVALID),libc,notcurses/nckeys.h"
   export invalid : Bits32
-  %foreign "C:idris2rc2_nckey_resize, libidris2rc2notcurses, idris2rc2_notcurses_nc_util.h"
+  %inline %foreign "CExpr:(NCKEY_RESIZE),libc,notcurses/nckeys.h"
   export resize : Bits32
-  %foreign "C:idris2rc2_nckey_up, libidris2rc2notcurses, idris2rc2_notcurses_nc_util.h"
+  %inline %foreign "CExpr:(NCKEY_UP),libc,notcurses/nckeys.h"
   export up : Bits32
-  %foreign "C:idris2rc2_nckey_down, libidris2rc2notcurses, idris2rc2_notcurses_nc_util.h"
+  %inline %foreign "CExpr:(NCKEY_DOWN),libc,notcurses/nckeys.h"
   export down : Bits32
-  %foreign "C:idris2rc2_nckey_left, libidris2rc2notcurses, idris2rc2_notcurses_nc_util.h"
+  %inline %foreign "CExpr:(NCKEY_LEFT),libc,notcurses/nckeys.h"
   export left : Bits32
-  %foreign "C:idris2rc2_nckey_right, libidris2rc2notcurses, idris2rc2_notcurses_nc_util.h"
+  %inline %foreign "CExpr:(NCKEY_RIGHT),libc,notcurses/nckeys.h"
   export right : Bits32
-  %foreign "C:idris2rc2_nckey_ins, libidris2rc2notcurses, idris2rc2_notcurses_nc_util.h"
+  %inline %foreign "CExpr:(NCKEY_INS),libc,notcurses/nckeys.h"
   export ins : Bits32
-  %foreign "C:idris2rc2_nckey_del, libidris2rc2notcurses, idris2rc2_notcurses_nc_util.h"
+  %inline %foreign "CExpr:(NCKEY_DEL),libc,notcurses/nckeys.h"
   export del : Bits32
-  %foreign "C:idris2rc2_nckey_backspace, libidris2rc2notcurses, idris2rc2_notcurses_nc_util.h"
+  %inline %foreign "CExpr:(NCKEY_BACKSPACE),libc,notcurses/nckeys.h"
   export backspace : Bits32
-  %foreign "C:idris2rc2_nckey_pgup, libidris2rc2notcurses, idris2rc2_notcurses_nc_util.h"
+  %inline %foreign "CExpr:(NCKEY_PGUP),libc,notcurses/nckeys.h"
   export pgup : Bits32
-  %foreign "C:idris2rc2_nckey_pgdown, libidris2rc2notcurses, idris2rc2_notcurses_nc_util.h"
+  %inline %foreign "CExpr:(NCKEY_PGDOWN),libc,notcurses/nckeys.h"
   export pgdown : Bits32
-  %foreign "C:idris2rc2_nckey_home, libidris2rc2notcurses, idris2rc2_notcurses_nc_util.h"
+  %inline %foreign "CExpr:(NCKEY_HOME),libc,notcurses/nckeys.h"
   export home : Bits32
-  %foreign "C:idris2rc2_nckey_end, libidris2rc2notcurses, idris2rc2_notcurses_nc_util.h"
+  %inline %foreign "CExpr:(NCKEY_END),libc,notcurses/nckeys.h"
   export end : Bits32
-  %foreign "C:idris2rc2_nckey_enter, libidris2rc2notcurses, idris2rc2_notcurses_nc_util.h"
+  %inline %foreign "CExpr:(NCKEY_ENTER),libc,notcurses/nckeys.h"
   export enter : Bits32
-  %foreign "C:idris2rc2_nckey_f01, libidris2rc2notcurses, idris2rc2_notcurses_nc_util.h"
+  %inline %foreign "CExpr:(NCKEY_F01),libc,notcurses/nckeys.h"
   export f01 : Bits32
-  %foreign "C:idris2rc2_nckey_f02, libidris2rc2notcurses, idris2rc2_notcurses_nc_util.h"
+  %inline %foreign "CExpr:(NCKEY_F02),libc,notcurses/nckeys.h"
   export f02 : Bits32
-  %foreign "C:idris2rc2_nckey_f03, libidris2rc2notcurses, idris2rc2_notcurses_nc_util.h"
+  %inline %foreign "CExpr:(NCKEY_F03),libc,notcurses/nckeys.h"
   export f03 : Bits32
-  %foreign "C:idris2rc2_nckey_f04, libidris2rc2notcurses, idris2rc2_notcurses_nc_util.h"
+  %inline %foreign "CExpr:(NCKEY_F04),libc,notcurses/nckeys.h"
   export f04 : Bits32
 
 -------------------------------------------------------------------------------

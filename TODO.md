@@ -56,18 +56,6 @@ boxing/reboxing gap above, just removes one small cost that used to sit
 on top of it.
 
 
-## `believe_me`された`Lazy`/`Inf`値を`force`する安全性 — 調査済み(2026-10-14)
-
-`idris2rc2_force`は、渡された値がセル(`IDRIS2RC2_TAG_LAZY`)でなければ`dup`して
-そのまま返す(`rc2/doc/lazy-memoization.md`「`Force`」節)。upstreamの
-`base`/`contrib`/`prelude`/`network`/`linear`にある`believe_me`/`unsafeCoerce`
-31箇所をgrepし、`Lazy`/`Inf`/`Delay`/`Force`/`Stream`/`Colist`に触れるファイルの
-該当箇所を読んだ。`Lazy`/`Inf`の値に`believe_me`をかけているものは無かった
-(`Data.String.strM`はビューの構築子、`Data.Int.Order`は証明、`System.Directory.Tree`は
-型だけの変換、`Prelude.Types`は`Integer`から`Nat`)。`Lazy`/`Inf`に触れる`%foreign`も無い。
-結論: 現在のupstreamには問題になる箇所が無い。利用者コードが`Lazy`の値を`believe_me`で
-別の型に見せかけると、セルがその型の値として扱われるが、これは`force`ではなく
-`believe_me`側の責任で、rc2として対処しない。
 ## `Lazy`/`Inf` のメモ化後: force した値への無駄な reuse 解析を省く
 
 `rc2/doc/lazy-memoization.md`で実装した`Lazy`/`Inf`のメモ化により、force
@@ -189,21 +177,10 @@ case needs one specifically.
   - 無駄でしか無いので消せるものなら消したい
   - 最適化効果は薄い。気分の問題でしかない。
 
-## 他の`Lazy`引数関数へのupstreamのインライン展開 — 調査済み(2026-10-14)
-`&&`/`||`は`Lazy Bool`の短絡評価のために`Delay`に依存しているが、upstream
-自身の`%inline`プラグマとモジュールコンパイル時の`compileAndInlineAll`が、
-rc2が`NamedCExp`を受け取るより前に`&&`/`||`の呼び出しを展開してしまうため、
-`Delay`/`Force`のノード自体がrc2側に渡ってこない(rc2側の対応は不要)。
-idris2-lspの最終IR(17,549定義)で他の`Lazy`引数関数を数えた: `delay` 1,701個
-(`Lazy` 1,332、`Inf` 369)、`force` 230個。`Prelude.Basics.&&`・`||`・`ifThenElse`、
-`Prelude.Interfaces.when`・`unless`・`>>`・`<|>`は、呼び出しも定義も残っていない
-(upstreamかrc2が展開済み)。一方`Prelude.Types.maybe`は定義1つに呼び出し234、`either`は
-呼び出し5が残っており、upstreamは展開していない。`maybe`の本体は`force`を2つ持ち、呼び出し側は
-自明な値(`#1`など)は`Delay`せずそのまま渡している。`delay`の大半は`Idris.Parser`(432)
-などのパーサの`Inf`/`Lazy`引数で、`Prelude`の関数ではない。
-つまり、短絡評価の`&&`/`||`/`ifThenElse`/`when`/`unless`以外で`Delay`/`Force`がrc2に
-渡ってくる主な標準ライブラリ関数は`maybe`と`either`で、これをrc2側でインライン展開すれば、
-その呼び出しの`force`と`Delay`が消せる可能性がある(未実装。効果の見積もりは未)。
+## `maybe`/`either`のLazy引数をインライン展開で消せるか
+idris2-lspの最終IRで`Prelude.Types.maybe`は呼び出し234、`either`は5が残り、upstreamが展開しない。
+rc2側で展開すれば呼び出しごとの`Delay`/`force`が消せる可能性がある。効果は未見積もり。
+
 ## ファントム型やファントム関数の明示
 トップレベル定義に 0 をつける。
 実行時に存在しないからいいや、ではなく存在しない事を保証する
@@ -273,39 +250,9 @@ xoroshiroの`*_sys`、concurrency_util。
 (または`CFLAGS`)でコンパイルする、と各宣言のdoc commentに書いて対応した(実機で、指定なしはCの
 コンパイルエラー、指定ありは動くことを確認)。生成コード側で定義する機能は作らない。
 
-### `libs/notcurses`・`libs/iouring`・`libs/text-re2`の調査結果(2026-10-14、読み取りのみ。未実装・未検証)
-- `libs/notcurses`(`%foreign`から参照されるシム関数37。ほかにシムを経ない`API`関数13を、手書きの宣言で直接束縛している):
-  - CExprにできる: `idris2rc2_nckey_*` 18個(`static inline`の定数返却)。
-    `NCKEY_UP`などを返す式を`<notcurses/nckeys.h>`付きのCExprにする。`nckeys.h`だけなら
-    feature-test macroは要らないとヘッダのコメントにある。メモ化の実例(下記「無制限のCAFメモ化」)
-    もこれで消える。
-  - シムが要る(構造体を組む): `nc_init`、`ncplane_create`(オプション構造体を局所変数で組む)。
-    複合リテラルで書けるが、型のために`notcurses.h`全体が要る。
-  - シムが要る(static状態): `nc_get_blocking`/`nc_get_nonblock`と`nc_last_input_*` 5個
-    (`ncinput`の静的キャッシュ)。`ncinput`をIdris側の確保した領域にする設計変更なら
-    フィールド読みはCExprにできるが、`sizeof(ncinput)`に`notcurses.h`が要る。
-  - シムが要る(ヘッダの制約): `nc_render`、`ncplane_putstr(_yx)`、`resize_simple`、
-    `dim_y/x`、`cursor_y/x`、`perimeter_rounded/double`の10個。`notcurses.h`のstatic inline
-    なので、CExprで呼ぶには`notcurses.h`を取り込む必要があり、`strdup`/`wcwidth`のために利用側が
-    `IDRIS2_CFLAGS=-D_XOPEN_SOURCE=700 -D_DEFAULT_SOURCE`を要るようになる。これを避けるための
-    シムなので、置き換えない。
-  - 結論: 18個だけ置き換え可(37→19)。
-- `libs/iouring`(シム関数12):
-  - CExprにできる: `cqe_res`/`cqe_user_data`/`cqe_flags`(構造体フィールド)、
-    `sockaddr_len`(`sa_family`の比較。`sockaddr_family`は`%foreign`から参照されていない)、
-    `prep_accept_simple`/`prep_multishot_accept_simple`(`NULL, NULL`を渡すだけ)の6個。
-  - 要確認: `wait_cqe`/`peek_cqe`は出力引数の局所変数が要る。GNUの文式`({ ...; })`が
-    CExprで通るなら置き換え可(通るかは未検証)。
-  - シムが要る: `queue_init`(確保+失敗時の解放)、`queue_exit`(解放)、`make_sockaddr`
-    (`getaddrinfo`+確保+コピー)の3個。
-  - 結論: 6〜8個置き換え可(12→4〜6)。`static inline`のヘッダ部分が消え、`.c`は3関数だけ残る。
-- `libs/text-re2`(13関数): RE2がC++で、すべて`extern "C"`のシムが要る
-  (`RE2`オブジェクトの生成・破棄、`std::string`のキャッシュ、スレッドローカルの結果)。
-  CExprで書けるものは無い。置き換えなし。
-- 判断材料: 置き換えて減るのは約24個(notcurses 18+iouring 6〜8)で、効果は`nckey`の
-  メモ化回避と、iouringのヘッダの縮小。notcurses・iouringとも実機の環境(ライブラリとヘッダ)で
-  テストを走らせる必要がある。
-
+`libs/notcurses`・`libs/iouring`のCExpr化(`NCKEY_*`、cqeのフィールド等)は、実機にliburing・
+notcursesが無い環境で行ったため、`libs/*/tests/verify.sh`が本物のライブラリでは未実行。
+次に両ライブラリのある環境で流す。
 
 ## idris2-curlの取り込み
 インストール時にlibcurlへの依存が無ければrc2baseへ取り込んでも問題ないはず。

@@ -42,8 +42,9 @@ data RawSQE : Type where [external]
 data RawCQE : Type where [external]
 data RawSockAddr : Type where [external]
 
--- idris2rc2iouring (this package's own shim; ring lifetime, cqe/sockaddr
--- out-param collapsing -- see idris2rc2_iouring_iouring_util.h)
+-- idris2rc2iouring (this package's own shim: ring lifetime, cqe out-param
+-- collapsing, sockaddr construction -- see idris2rc2_iouring_iouring_util.h)
+-- plus CExpr bindings for the cqe fields, accept preps and sockaddr length
 
 %foreign "C:idris2rc2_iouring_queue_init, libidris2rc2iouring, idris2rc2_iouring_iouring_util.h"
 prim__queueInit : Bits32 -> Bits32 -> PrimIO AnyPtr
@@ -54,21 +55,21 @@ prim__queueExit : Ptr RawURing -> PrimIO ()
 prim__waitCqe : Ptr RawURing -> PrimIO AnyPtr
 %foreign "C:idris2rc2_iouring_peek_cqe, libidris2rc2iouring, idris2rc2_iouring_iouring_util.h"
 prim__peekCqe : Ptr RawURing -> PrimIO AnyPtr
-%foreign "C:idris2rc2_iouring_cqe_res, libidris2rc2iouring, idris2rc2_iouring_iouring_util.h"
+%inline %foreign "CExpr:(((struct io_uring_cqe *)($1))->res),liburing,liburing.h;sys/socket.h;netinet/in.h"
 prim__cqeRes : Ptr RawCQE -> PrimIO Int
-%foreign "C:idris2rc2_iouring_cqe_user_data, libidris2rc2iouring, idris2rc2_iouring_iouring_util.h"
+%inline %foreign "CExpr:(((struct io_uring_cqe *)($1))->user_data),liburing,liburing.h;sys/socket.h;netinet/in.h"
 prim__cqeUserData : Ptr RawCQE -> PrimIO Bits64
-%foreign "C:idris2rc2_iouring_cqe_flags, libidris2rc2iouring, idris2rc2_iouring_iouring_util.h"
+%inline %foreign "CExpr:(((struct io_uring_cqe *)($1))->flags),liburing,liburing.h;sys/socket.h;netinet/in.h"
 prim__cqeFlags : Ptr RawCQE -> PrimIO Bits32
 
-%foreign "C:idris2rc2_iouring_prep_accept_simple, libidris2rc2iouring, idris2rc2_iouring_iouring_util.h"
+%inline %foreign "CExpr:(io_uring_prep_accept((struct io_uring_sqe *)($1), (int)($2), NULL, NULL, (int)($3))),liburing,liburing.h;sys/socket.h;netinet/in.h"
 prim__prepAcceptSimple : Ptr RawSQE -> Int -> Int -> PrimIO ()
-%foreign "C:idris2rc2_iouring_prep_multishot_accept_simple, libidris2rc2iouring, idris2rc2_iouring_iouring_util.h"
+%inline %foreign "CExpr:(io_uring_prep_multishot_accept((struct io_uring_sqe *)($1), (int)($2), NULL, NULL, (int)($3))),liburing,liburing.h;sys/socket.h;netinet/in.h"
 prim__prepMultishotAcceptSimple : Ptr RawSQE -> Int -> Int -> PrimIO ()
 
 %foreign "C:idris2rc2_iouring_make_sockaddr, libidris2rc2iouring, idris2rc2_iouring_iouring_util.h"
 prim__makeSockAddr : String -> Bits16 -> PrimIO AnyPtr
-%foreign "C:idris2rc2_iouring_sockaddr_len, libidris2rc2iouring, idris2rc2_iouring_iouring_util.h"
+%inline %foreign "CExpr:((((struct sockaddr *)($1))->sa_family == AF_INET6 ? (unsigned)sizeof(struct sockaddr_in6) : (unsigned)sizeof(struct sockaddr_in))),liburing,liburing.h;sys/socket.h;netinet/in.h"
 prim__sockAddrLen : Ptr RawSockAddr -> PrimIO Bits32
 
 -- liburing (always-real symbols: io_uring_queue_init/_exit proper, not
