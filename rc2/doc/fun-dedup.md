@@ -21,7 +21,9 @@ sees only its own definitions.
 2. **Shallow key**: the parameter count, the number of nodes, the
    parameter and return representations with the worker flag, and the set
    of functions the body refers to, with the function's own name replaced
-   by a placeholder so that self-recursive twins agree. Only functions
+   by a placeholder so that self-recursive twins agree, and a hash of the
+   constants and constructors in walk order (`leafHash`), so that stubs
+   differing only in a constant do not share a bucket. Only functions
    sharing it are compared further. A pre-order prefix hash of the first
    ten nodes was tried as well and gave the same result on idris2-lsp for
    a little more time, so it is not there.

@@ -15,7 +15,7 @@
 // thread): a wait that finds its own mark is a CAF depending on itself,
 // which would otherwise wait for itself forever.
 extern _Thread_local char idris2rc2_memo_self;
-_Noreturn void idris2rc2_memo_cycle(void);
+_Noreturn void idris2rc2_memo_cycle(const char *name);
 
 // `claimed`/`done` are two separate fields on purpose: an earlier design
 // shared one field as both "already computed" flag and "next node in a
@@ -61,7 +61,7 @@ void idris2rc2_memo_boxed_store(idris2rc2_memo_boxed *memo, IDRIS2RC2_Value *val
 // (same "spin, no portable pause instruction" tradeoff as
 // idris2rc2_spin_lock, idris2rc2_util.h), then returns a fresh dup of the
 // now-ready value.
-IDRIS2RC2_Value *idris2rc2_memo_boxed_wait(idris2rc2_memo_boxed *memo);
+IDRIS2RC2_Value *idris2rc2_memo_boxed_wait(idris2rc2_memo_boxed *memo, const char *name);
 
 // Drops every boxed CAF's own permanent reference, across the whole
 // process -- called once, from idris2rc2_rtFinish. Not thread-safe with
@@ -96,9 +96,9 @@ static inline void idris2rc2_memo_native_publish(idris2rc2_memo_native *memo) {
   atomic_store_explicit(&memo->done, true, memory_order_release);
 }
 
-static inline void idris2rc2_memo_native_wait(idris2rc2_memo_native *memo) {
+static inline void idris2rc2_memo_native_wait(idris2rc2_memo_native *memo, const char *name) {
   while (!atomic_load_explicit(&memo->done, memory_order_acquire)) {
     if (atomic_load_explicit(&memo->owner, memory_order_relaxed) == &idris2rc2_memo_self)
-      idris2rc2_memo_cycle();
+      idris2rc2_memo_cycle(name);
   }
 }

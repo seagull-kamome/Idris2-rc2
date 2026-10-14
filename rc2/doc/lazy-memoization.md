@@ -273,7 +273,7 @@ count of how many times the thunk ran -- the test never reads how many
 times its own side effect fired). `rc2/tests/Test126LazySelfForce`
 checks that a value whose evaluation needs itself stops: its top-level
 `Delay` becomes a CAF (`LazyCaf`), so it is CAF memoization that finds
-the cycle and stops with "a top-level value depends on itself"
+the cycle and stops with "the top-level value <name> depends on itself"
 (caf-memoization.md). A cell forcing itself stops with "a lazy value
 forces itself" (see "`Force`" above); with LazyCaf a self-reference can
 only come through top-level definitions, so no test program reaches it.

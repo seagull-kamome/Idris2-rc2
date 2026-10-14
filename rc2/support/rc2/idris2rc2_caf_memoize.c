@@ -5,9 +5,9 @@
 
 _Thread_local char idris2rc2_memo_self;
 
-_Noreturn void idris2rc2_memo_cycle(void) {
+_Noreturn void idris2rc2_memo_cycle(const char *name) {
   // Its own message, without a source line, so a test can expect it.
-  fprintf(stderr, "idris2rc2: a top-level value depends on itself\n");
+  fprintf(stderr, "idris2rc2: the top-level value %s depends on itself\n", name);
   exit(1);
 }
 
@@ -29,10 +29,10 @@ void idris2rc2_memo_boxed_store(idris2rc2_memo_boxed *memo, IDRIS2RC2_Value *val
   atomic_store_explicit(&memo->done, true, memory_order_release);
 }
 
-IDRIS2RC2_Value *idris2rc2_memo_boxed_wait(idris2rc2_memo_boxed *memo) {
+IDRIS2RC2_Value *idris2rc2_memo_boxed_wait(idris2rc2_memo_boxed *memo, const char *name) {
   while (!atomic_load_explicit(&memo->done, memory_order_acquire)) {
     if (atomic_load_explicit(&memo->owner, memory_order_relaxed) == &idris2rc2_memo_self)
-      idris2rc2_memo_cycle();
+      idris2rc2_memo_cycle(name);
     // busy-wait
   }
   return idris2rc2_dup(memo->value);
