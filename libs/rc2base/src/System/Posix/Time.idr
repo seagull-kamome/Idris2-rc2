@@ -5,7 +5,7 @@
 ||| `struct timespec` and `struct tm` are copied into the Idris records
 ||| `TimeSpec` and `Tm` at once, so no C struct is visible to the caller.
 ||| Clocks that only Linux has (`CLOCK_MONOTONIC_RAW`, `CLOCK_BOOTTIME`, ...)
-||| are not bound yet.
+||| are in `System.Linux.Clock`.
 |||
 ||| A `Tm` has no `tm_gmtoff`/`tm_zone`: `strftime`'s `%Z` and `%z` do not
 ||| show the zone of a `Tm` made by `localtime`.
