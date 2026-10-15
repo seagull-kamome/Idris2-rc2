@@ -68,14 +68,14 @@ curlopt_WRITEDATA = MkCURLoption 10001 -- CURLOPTTYPE_CBPOINT + 1
 ||| `1` selects a plain `GET` -- only useful to force it back after a
 ||| handle was previously configured for `POST`/`CUSTOMREQUEST`/etc.
 ||| (`curl_easy_setopt(3)`'s own note); a fresh handle already
-||| defaults to `GET`. See `Network.HTTP.Client.Curl.Fetch`'s own `applyMethod`.
+||| defaults to `GET`. See `Network.HTTP.Client.Curl`'s own `applyMethod`.
 public export
 curlopt_HTTPGET : CURLoption
 curlopt_HTTPGET = MkCURLoption 80 -- CURLOPTTYPE_LONG + 80
 
 ||| `1` skips the response body entirely (`HEAD`-shaped request) --
-||| still sends whatever HTTP method is otherwise configured, so pair
-||| with `curlopt_HTTPGET` for a real `HEAD`.
+||| turns a `GET` request into a `HEAD`; any other method configured on
+||| the handle is kept (`Network.HTTP.Client.Curl`'s `applyMethod` sets it alone for `HEAD`).
 public export
 curlopt_NOBODY : CURLoption
 curlopt_NOBODY = MkCURLoption 44 -- CURLOPTTYPE_LONG + 44

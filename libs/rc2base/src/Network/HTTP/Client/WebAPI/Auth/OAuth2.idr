@@ -19,7 +19,7 @@ import System.File.Buffer
 import System.FFI
 
 import Network.Socket
-import Network.HTTP.Client.Curl.Fetch
+import Network.HTTP.Client
 import Network.HTTP.Client.WebAPI.JSON
 import Network.HTTP.Client.WebAPI.Auth.PKCE
 
@@ -153,10 +153,10 @@ decodeToken j = MkToken <$> (at ["access_token"] j >>= str)
                         <*> map cast (at ["expires_at"] j >>= num)
 
 partial
-tokenRequest : Client -> List (String, String) -> Maybe Token -> IO (Either String Token)
-tokenRequest c params old = do
+tokenRequest : HTTPClient h => h -> Client -> List (String, String) -> Maybe Token -> IO (Either String Token)
+tokenRequest http c params old = do
     let creds = ("client_id", c.clientId) :: maybe [] (\s => [("client_secret", s)]) c.clientSecret
-    Right resp <- fetch (post c.tokenUrl
+    Right resp <- fetch http (post c.tokenUrl
                               {headers = [ ("Content-Type", "application/x-www-form-urlencoded")
                                          , ("Accept", "application/json") ]}
                               (formEncode (params ++ creds)))
@@ -170,10 +170,10 @@ tokenRequest c params old = do
                      (at ["error_description"] j >>= str) <|> (at ["error"] j >>= str)
 
 export partial
-refresh : HasIO io => Client -> Token -> io (Either String Token)
-refresh c t = liftIO $ case t.refreshToken of
+refresh : (HTTPClient h, HasIO io) => h -> Client -> Token -> io (Either String Token)
+refresh http c t = liftIO $ case t.refreshToken of
     Nothing => pure (Left "no refresh token; log in again")
-    Just r  => tokenRequest c [("grant_type", "refresh_token"), ("refresh_token", r)] (Just t)
+    Just r  => tokenRequest http c [("grant_type", "refresh_token"), ("refresh_token", r)] (Just t)
 
 ||| Readable by the owner only: the file holds a refresh token.
 export
@@ -195,15 +195,15 @@ loadToken path = do
 ||| The access token saved at `path`, refreshed (and saved again) when
 ||| it expires within a minute.
 export partial
-accessToken : HasIO io => Client -> (path : String) -> io (Either String String)
-accessToken c path = do
+accessToken : (HTTPClient h, HasIO io) => h -> Client -> (path : String) -> io (Either String String)
+accessToken http c path = do
     Right t <- loadToken path
         | Left e => pure (Left e)
     now <- time
     if t.expiresAt - 60 > now
         then pure (Right t.accessToken)
         else do
-            Right t' <- refresh c t
+            Right t' <- refresh http c t
                 | Left e => pure (Left e)
             Right () <- saveToken path t'
                 | Left e => pure (Left e)
@@ -343,8 +343,8 @@ waitRedirect (Just (s, _)) = do
 ||| redirect back either on a loopback port or, when the browser can't
 ||| reach this machine, as the redirected address pasted into stdin.
 export partial
-login : HasIO io => Client -> io (Either String Token)
-login c = liftIO $ do
+login : (HTTPClient h, HasIO io) => h -> Client -> io (Either String Token)
+login http c = liftIO $ do
     Right rnd <- randomBytes 50
         | Left e => pure (Left e)
     let verifier = base64url (take 32 rnd)
@@ -370,7 +370,7 @@ login c = liftIO $ do
             if lookup "state" ps /= Just state
                 then pure (Left "state mismatch; start the login again")
                 else case (lookup "code" ps, lookup "error" ps) of
-                    (Just code, _) => tokenRequest c
+                    (Just code, _) => tokenRequest http c
                         [ ("grant_type", "authorization_code")
                         , ("code", code)
                         , ("redirect_uri", redirect)

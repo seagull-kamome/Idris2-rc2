@@ -26,7 +26,7 @@ import Language.JSON
 import System.Directory
 import System.File
 
-import Network.HTTP.Client.Curl.Fetch
+import Network.HTTP.Client.Curl
 import Network.HTTP.Client.WebAPI.Auth.PKCE
 import Network.HTTP.Client.WebAPI.AI.OpenAI
 import Network.HTTP.Client.WebAPI.AI.Providers
@@ -121,7 +121,7 @@ partial
 waitServer : String -> Nat -> IO ()
 waitServer base Z = putStrLn "server did not start"
 waitServer base (S k) = do
-    Right _ <- fetch (get (base ++ "/ping"))
+    Right _ <- fetch curlClient (get (base ++ "/ping"))
         | Left _ => napMs 20 >> waitServer base k
     pure ()
 
@@ -130,9 +130,9 @@ waitServer base (S k) = do
 partial
 browser : (extra : String -> String) -> String -> String -> IO ()
 browser extra authUrl redirect = do
-    _ <- fetch (get authUrl)
+    _ <- fetch curlClient (get authUrl)
     let state = fromMaybe "" (lookup "state" (parseQuery (snd (break (== '?') authUrl))))
-    _ <- fetch (get (redirect ++ "/?state=" ++ state ++ extra state))
+    _ <- fetch curlClient (get (redirect ++ "/?state=" ++ state ++ extra state))
     pure ()
 
 -- `login` blocks waiting for the redirect, so the browser runs in its own thread.
@@ -150,12 +150,12 @@ main = do
 
     putStrLn "--- chat ---"
     let req = { maxTokens := Just 64 } (chatRequest "llama-3" [MkMessage User "ping"])
-    Right r <- chat (llama (base ++ "/v1") (Just "test-key")) req
+    Right r <- chat curlClient (llama (base ++ "/v1") (Just "test-key")) req
         | Left e => printLn e
     printLn (reply r)
-    chat (llama (base ++ "/v1") (Just "wrong")) req >>= printLn . map reply
-    chat (llama (base ++ "/v1") Nothing) req >>= printLn . map reply
-    chat (llama "http://127.0.0.1:1/v1" Nothing) req >>= \case
+    chat curlClient (llama (base ++ "/v1") (Just "wrong")) req >>= printLn . map reply
+    chat curlClient (llama (base ++ "/v1") Nothing) req >>= printLn . map reply
+    chat curlClient (llama "http://127.0.0.1:1/v1" Nothing) req >>= \case
         Left (TransportError _) => putStrLn "TransportError"
         other => printLn (map reply other)
 
@@ -163,32 +163,32 @@ main = do
     let c = MkClient (base ++ "/auth") (base ++ "/token") "cid" (Just "sec") ["s1", "s2"] []
                      (Just (browserThread (\_ => "&code=good-code")))
     let file = "oauth-token.json"
-    Right t <- login c
+    Right t <- login curlClient c
         | Left e => putStrLn ("login: " ++ e)
     printLn (t.accessToken, t.refreshToken)
     Right () <- saveToken file t
         | Left e => putStrLn e
-    accessToken c file >>= printLn
+    accessToken curlClient c file >>= printLn
     Right () <- saveToken file ({ expiresAt := 0 } t)
         | Left e => putStrLn e
-    accessToken c file >>= printLn
+    accessToken curlClient c file >>= printLn
     map (\t' => (t'.accessToken, t'.refreshToken)) <$> loadToken file >>= printLn
     Right () <- saveToken file ({ expiresAt := 0, refreshToken := Just "revoked" } t)
         | Left e => putStrLn e
-    accessToken c file >>= printLn
+    accessToken curlClient c file >>= printLn
     _ <- removeFile file
 
     putStrLn "--- login (refused) ---"
     let c2 = { onAuthUrl := Just (browserThread (\_ => "&error=access_denied")) } c
-    login c2 >>= \case
+    login curlClient c2 >>= \case
         Left e => putStrLn ("login: " ++ e)
         Right t' => putStrLn ("unexpected token " ++ t'.accessToken)
 
     putStrLn "--- login (wrong code) ---"
     let c3 = { onAuthUrl := Just (browserThread (\_ => "&code=bad-code")) } c
-    login c3 >>= \case
+    login curlClient c3 >>= \case
         Left e => putStrLn ("login: " ++ e)
         Right t' => putStrLn ("unexpected token " ++ t'.accessToken)
 
-    _ <- fetch (post (base ++ "/stop") "")
+    _ <- fetch curlClient (post (base ++ "/stop") "")
     join srv

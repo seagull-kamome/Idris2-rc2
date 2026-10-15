@@ -9,9 +9,10 @@ are the server side.
 
 | Module | Role |
 |---|---|
+| `Network.HTTP.Client` | the client interface: `HTTPClient` (`fetch`, `fetchBytes`), `fetchText`, the request/response records, `FetchError`, and the `get`/`post`/`request` builders |
+| `Network.HTTP.Client.Curl` | the libcurl implementation: `CurlClient` and `curlClient`. Importing it also brings `Network.HTTP.Client` |
 | `Network.HTTP.Client.Curl.Types` | wrappers for libcurl's integer codes (`CURLcode`, `CURLINFO`, ...) and constants |
 | `Network.HTTP.Client.Curl.Raw` | one `%foreign` per libcurl function plus thin `HasIO` wrappers (NULL becomes `Maybe`, codes become the `Types` wrappers) |
-| `Network.HTTP.Client.Curl.Fetch` | a JS `fetch()`-shaped layer: `fetch`, `fetchBytes`, `fetchText`, `get`/`post`/`request`, `FetchError` (`CurlError`, `SetupError`, `HttpError`) |
 | `Network.HTTP.Client.Curl.TextBuffer` | `curlEasyPerformToTextBuffer`, capturing a body into a `Data.TextBuffer` |
 | `Network.HTTP.Client.WebAPI.JSON` | JSON encoding (`render`) for the clients below |
 | `Network.HTTP.Client.WebAPI.AI.OpenAI` / `.Providers` | one OpenAI-compatible chat client; each service (Claude, Gemini, llama.cpp) is only an `Endpoint` |
@@ -46,12 +47,25 @@ same handle without capture. Streaming `WRITEFUNCTION`,
 `Int` argument; pass the real value instead. `curlMimeData` passes the
 string's UTF-8 byte length rather than `CURL_ZERO_TERMINATED`.
 
-**WebAPI uses only `Fetch`.** Every HTTP call goes through
-`Network.HTTP.Client.Curl.Fetch`, never `Raw`, so the HTTP layer can be
-swapped by changing only those calls. The public types do not mention
-curl: a transfer failure reaches the caller as `TransportError String`.
-`fetch` is `partial`, hence `chat`, `refresh`, `accessToken` and `login`
-are too.
+**One client interface.** `Network.HTTP.Client` defines
+`HTTPClient h` (`fetch`, `fetchBytes`) over a client *value* `h`, and
+`Network.HTTP.Client.Curl` provides the libcurl one (`curlClient`, a
+stateless `CurlClient`; each request initialises libcurl and its own
+easy handle). A transfer failure is `TransportError String`, which
+carries the implementation's own message (for libcurl, the `CURLcode`
+and its text); a caller that needs the `CURLcode` itself uses
+`Curl.Raw`. A test can pass its own `HTTPClient` instead.
+
+**WebAPI uses only `HTTPClient`.** Every HTTP call goes through
+`fetch`, never `Raw`, and `chat`, `refresh`, `accessToken`, `login` and
+`geminiOAuth` take the client as their first argument
+(`chat curlClient ep req`). The public types do not mention curl: a
+transfer failure reaches the caller as `TransportError String`. The
+token functions (`refresh`, `accessToken`, `login`, `geminiOAuth`) are
+`partial` because their internals are only `covering`, and so is `chat`.
+`HttpError` comes from `fetchText` only. `curl_global_init` is not
+thread-safe and each request calls it: do not run requests from several
+threads at once.
 
 **One OpenAI-compatible client.** Claude, Gemini and llama.cpp all
 serve `POST /chat/completions` with `Authorization: Bearer`. An
@@ -79,6 +93,26 @@ flow for native apps (RFC 8252) with PKCE (RFC 7636):
   then written); a refresh response usually carries no refresh token,
   so the old one is kept.
 
+## Examples and getting started
+
+`doc/webapi-getting-started.md` covers building, API keys and the
+Google OAuth setup. `examples/` holds small programs (build each with
+`-p rc2base -p contrib -p network`):
+
+- `Get`, `GetCapture`, `GetCaptureText`, `GetInfo`, `GetInfoOfft`,
+  `GetWithHeaders`, `Header`, `Multi`, `PauseUpkeep`, `ShareAndMime`,
+  `UrlGet`, `UrlAndEscape`, `VersionInfo`: the `Curl.Raw` layer. Most
+  fetch `example.com` and need network access.
+- `Fetch`: the `HTTPClient` layer end to end (`example.com` and
+  `httpbin.org`).
+- `WebAPIChat`, `WebAPILogin`: the chat client and the Google login.
+  They need credentials.
+
+Checked on 2026-10-14: all but the last two were built with rc2 and run
+(exit status 0, the output as expected). The last two were type-checked
+only: compiling them aborted with "out of memory" under
+`ulimit -v 12000000`.
+
 ## Credentials
 
 `Providers` reads keys from the environment (`fromEnv`); the OAuth
@@ -95,7 +129,7 @@ authorization URL that `login` prints.
 - `TestCurl`: the `Curl` family. Local transfers use a `file://` URL on
   a file the test writes; HTTP transfers go to a `Network.HTTP.Server`
   forked inside the test. It needs libcurl's headers; `verify.sh`
-  prints `SKIP` when `gcc` cannot find `curl/curl.h`.
+  prints `SKIP` when `gcc` cannot find `curl/curl.h` (`TestWebAPI` too).
 - `TestWebAPIPure`: SHA-256 / base64url / PKCE known answers, JSON
   rendering, chat and token JSON, URL and form encoding.
 - `TestWebAPI`: `chat` and `login` against a mock API and token

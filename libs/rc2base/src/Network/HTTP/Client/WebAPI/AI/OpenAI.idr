@@ -10,7 +10,7 @@ module Network.HTTP.Client.WebAPI.AI.OpenAI
 import Data.List
 import Data.Maybe
 
-import Network.HTTP.Client.Curl.Fetch
+import Network.HTTP.Client
 import Network.HTTP.Client.WebAPI.JSON
 
 %default total
@@ -123,11 +123,11 @@ errorMessage body = fromMaybe body $ do
     at ["error", "message"] j' >>= str
 
 export partial
-chat : HasIO io => Endpoint -> ChatRequest -> io (Either ApiError ChatResponse)
-chat ep req = liftIO $ do
+chat : (HTTPClient h, HasIO io) => h -> Endpoint -> ChatRequest -> io (Either ApiError ChatResponse)
+chat http ep req = liftIO $ do
     Right auth <- ep.authHeaders
         | Left e => pure (Left (AuthError e))
-    Right resp <- fetch (post (ep.baseUrl ++ "/chat/completions")
+    Right resp <- fetch http (post (ep.baseUrl ++ "/chat/completions")
                               {headers = ("Content-Type", "application/json") :: auth}
                               (render (encodeChatRequest req)))
         | Left e => pure (Left (TransportError (show e)))

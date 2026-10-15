@@ -4,10 +4,11 @@ module Network.HTTP.Client.WebAPI.AI.Providers
 -- This module was licensed by BSD3.
 
 -- An OpenAI-compatible `Endpoint` for each service. Getting a key or an
--- OAuth client: doc/http-client.md.
+-- OAuth client: doc/webapi-getting-started.md.
 
 import System
 
+import Network.HTTP.Client
 import Network.HTTP.Client.WebAPI.AI.OpenAI
 import Network.HTTP.Client.WebAPI.Auth.OAuth2
 
@@ -50,10 +51,10 @@ geminiScopes = [ "https://www.googleapis.com/auth/cloud-platform"
 ||| as needed. `project` is the Google Cloud project billed for the
 ||| calls (sent as `x-goog-user-project`).
 export partial
-geminiOAuth : Client -> (tokenFile : String) -> (project : String) -> Endpoint
-geminiOAuth c path project = MkEndpoint
+geminiOAuth : HTTPClient h => h -> Client -> (tokenFile : String) -> (project : String) -> Endpoint
+geminiOAuth http c path project = MkEndpoint
     "https://generativelanguage.googleapis.com/v1beta/openai"
-    (map (map (\t => ("x-goog-user-project", project) :: bearer t)) (accessToken c path))
+    (map (map (\t => ("x-goog-user-project", project) :: bearer t)) (accessToken http c path))
 
 ||| llama.cpp's `llama-server` (or any OpenAI-compatible server) at
 ||| `baseUrl`, e.g. `http://localhost:8080/v1`. The key is needed only

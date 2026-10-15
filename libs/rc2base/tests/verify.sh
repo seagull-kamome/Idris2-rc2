@@ -87,13 +87,13 @@ TESTS=(
     "TestPosixStdio||System.Posix.Stdio: FILE* streams, fgetc/fgets/getline/fread, writes, position, tmpfile, fmemopen"
     "TestPosixTermios||System.Posix.Termios: termios constants, tcgetattr/tcsetattr on a pty, cfmakeraw, tc* calls"
     "TestWebAPIPure|network contrib|Network.HTTP.Client.WebAPI: SHA-256/base64url/PKCE, JSON, URL/form encoding, token JSON"
-    "TestWebAPI|network contrib|Network.HTTP.Client.WebAPI.{JSON,OAuth2}: endpoint setup, token persistence, response decoding"
+    "TestWebAPI|network contrib|Network.HTTP.Client.WebAPI.{AI,Auth}: endpoint setup, token persistence, response decoding"
     "TestCurl|network contrib|Network.HTTP.Client.Curl: libcurl bindings, local file:// and HTTP transfers"
 )
 
 # Tests that need libcurl's headers (curl/curl.h); skipped, loudly, when
 # the C compiler cannot find them.
-NEEDS_CURL=" TestCurl "
+NEEDS_CURL=" TestCurl TestWebAPI "
 # Tests built with IDRIS2_CFLAGS=-D_GNU_SOURCE (declarations glibc hides otherwise).
 NEEDS_GNU_SOURCE=" TestPosixTermios "
 have_curl_h() { echo '#include <curl/curl.h>' | gcc -E -x c - > /dev/null 2>&1; }
