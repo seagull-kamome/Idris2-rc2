@@ -23,6 +23,7 @@ import System.File
 import System.FFI
 import System.Posix.Errno
 import System.Posix.File
+import System.Posix.Glob
 import System.Posix.Path
 import System.Posix.Stat
 import System.Posix.Time
@@ -292,6 +293,24 @@ testAttrs = do
     | Left _ => putStrLn "stat failed"
   putStrLn ("atime kept: " ++ show (t4.stAtime == t3.stAtime) ++ ", mtime now: " ++ show (t4.stMtime.tvSec > 1500000000))
 
+testGlob : IO ()
+testGlob = do
+  putStrLn "-- fnmatch, glob"
+  let m = \pat, s, fl => fnmatch pat s fl >>= \b => putStrLn ("fnmatch " ++ pat ++ " " ++ s ++ " flags " ++ show fl ++ ": " ++ show b)
+  m "*.txt" "file.txt" 0
+  m "*.txt" "file.bin" 0
+  m "f?le.t[a-z]t" "file.txt" 0
+  m "*" ".hidden" 0
+  m "*" ".hidden" FNM_PERIOD
+  m "a*" "a/b" 0
+  m "a*" "a/b" FNM_PATHNAME
+  m "\\*" "*" 0
+  m "\\*" "\\*" FNM_NOESCAPE
+  glob (dir ++ "/*.txt") 0 >>= \r => putStrLn ("glob *.txt: " ++ show r)
+  glob (dir ++ "/nothing*") 0 >>= \r => putStrLn ("glob no match: " ++ show r)
+  glob (dir ++ "/nothing*") GLOB_NOCHECK >>= \r => putStrLn ("glob no match, NOCHECK: " ++ show r)
+  glob dir GLOB_MARK >>= \r => putStrLn ("glob directory, MARK: " ++ show r)
+
 main : IO ()
 main = do
   testFlags
@@ -304,6 +323,7 @@ main = do
   testStat
   testPath
   testAttrs
+  testGlob
   teardown
   putStrLn "done"
   ignore $ fflush stdout

@@ -113,6 +113,16 @@ testSignalfd = do
   left <- alarm 0
   putStrLn ("nothing left to cancel: " ++ show (left == 0))
   _ <- sigprocmask SIG_UNBLOCK aset
+  -- sigtimedwait and sigqueue
+  Right tset <- sigSetOf [SIGUSR1]
+    | Left _ => putStrLn "sigSetOf failed"
+  _ <- sigprocmask SIG_BLOCK tset
+  sigtimedwait tset (MkTimeSpec 0 10000000) >>= \r => putStrLn ("sigtimedwait, nothing pending: " ++ errOf r)
+  _ <- raise SIGUSR1
+  sigtimedwait tset (MkTimeSpec 1 0) >>= \r => putStrLn ("sigtimedwait takes it: " ++ show (map (\(MkSignal n) => let MkSignal u = SIGUSR1 in n == u) r))
+  sigqueue me SIGUSR1 42 >>= \r => putStrLn ("sigqueue to self: " ++ errOf r)
+  sigtimedwait tset (MkTimeSpec 1 0) >>= \r => putStrLn ("sigtimedwait takes the queued one: " ++ show (map (\(MkSignal n) => let MkSignal u = SIGUSR1 in n == u) r))
+  _ <- sigprocmask SIG_UNBLOCK tset
   pure ()
 
 testInotify : IO ()

@@ -86,5 +86,19 @@ utimensat: ok
 atime=TimeSpec 1000000000 500 mtime=TimeSpec 1500000000 0
 utimensat omit: ok
 atime kept: True, mtime now: True
+-- fnmatch, glob
+fnmatch *.txt file.txt flags 0: True
+fnmatch *.txt file.bin flags 0: False
+fnmatch f?le.t[a-z]t file.txt flags 0: True
+fnmatch * .hidden flags 0: True
+fnmatch * .hidden flags 4: False
+fnmatch a* a/b flags 0: True
+fnmatch a* a/b flags 1: False
+fnmatch \* * flags 0: True
+fnmatch \* \* flags 2: True
+glob *.txt: Right ["TestPosixFile.scratch/file.txt"]
+glob no match: Right []
+glob no match, NOCHECK: Right ["TestPosixFile.scratch/nothing*"]
+glob directory, MARK: Right ["TestPosixFile.scratch/"]
 done
 perror-test: No such file or directory

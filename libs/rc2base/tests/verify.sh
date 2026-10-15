@@ -154,6 +154,9 @@ for entry in "${TESTS[@]}"; do
     for p in $extra; do pflags+=(-p "$p"); done
 
     echo "=== rc2 backend: build $t ($desc) ==="
+    # idris2-rc2 exits 0 when only the generated C fails to compile; drop
+    # the previous binary so that a failed build cannot pass on its output.
+    rm -f "$TESTS_DIR/$t/build/exec/${t}_verify"
     gnu_flags=""
     [[ "$NEEDS_GNU_SOURCE" == *" $t "* ]] && gnu_flags="-D_GNU_SOURCE"
     ( cd "$TESTS_DIR/$t" && ulimit -v 12000000 && IDRIS2_CFLAGS="${IDRIS2_CFLAGS:-} $gnu_flags" timeout 600 \

@@ -9,6 +9,7 @@ module System.Posix.Signal
 
 import System.FFI
 import System.Posix.Errno
+import System.Posix.Time
 
 %default total
 
@@ -298,6 +299,29 @@ sigwait s = do
             else pure (Left (MkErrno r))
   free buf
   pure res
+
+%inline %foreign "CExpr:(sigtimedwait((sigset_t *)($1), NULL, (struct timespec *)($2))),libc,signal.h;time.h"
+prim__sigtimedwait : GCPtr RawSigSet -> AnyPtr -> PrimIO Int32
+%inline %foreign "CExpr:(sigsuspend((sigset_t *)($1))),libc,signal.h"
+prim__sigsuspend : GCPtr RawSigSet -> PrimIO Int32
+
+||| `sigwait` that gives up after the time: `Left EAGAIN` on timeout,
+||| `Left EINTR` when an unblocked signal was handled first.
+export
+sigtimedwait : SigSet -> TimeSpec -> IO (Either Errno Signal)
+sigtimedwait s t = withTimeSpec $ \p => do
+  writeTimeSpec p t
+  r <- primIO (prim__sigtimedwait s p)
+  if r >= 0 then pure (Right (MkSignal r)) else Left <$> errno
+
+||| Replace the signal mask by the set and sleep until a signal that is
+||| handled or terminates the process arrives; the old mask comes back
+||| afterwards. Returns `EINTR`.
+export
+sigsuspend : SigSet -> IO Errno
+sigsuspend s = do
+  _ <- primIO (prim__sigsuspend s)
+  errno
 
 %inline %foreign "CExpr:(raise($1)),libc,signal.h"
 prim__raise : Int32 -> PrimIO Int32
