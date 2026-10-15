@@ -43,4 +43,38 @@ cos(0) through dlsym: 1.0
 dlopen missing library: error
 dlclose: ok
 dlclose self: ok
+-- eventfd
+empty counter: errno 11
+sum: Right 8
+cleared by the read: errno 11
+semaphore 1: Right 1
+semaphore 2: Right 1
+semaphore 3: errno 11
+-- memfd, sendfile, splice, copy_file_range
+contents: "hello world"
+seals at first: Right 0
+addSeals: ok
+write and grow sealed: Right True
+write after the seal: -1, errno 1
+addSeals without MFD_ALLOW_SEALING: errno 1
+sendfile: Right 5
+sendfile copied: "world"
+splice: Right 5
+pipe has: "hello"
+splice between files: errno 22
+copy_file_range: Right 5
+after copy_file_range: "worldhello"
+-- prctl
+setThreadName: ok
+getThreadName: Right "rc2base-test"
+setParentDeathSignal: ok
+getParentDeathSignal: Right (Just 10)
+clear: ok
+cleared: Right Nothing
+setChildSubreaper: ok
+getChildSubreaper: Right True
+setDumpable: ok
+getDumpable: Right True
+setNoNewPrivs: ok
+no_new_privs after: Right True
 done
