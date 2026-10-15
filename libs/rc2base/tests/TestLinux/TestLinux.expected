@@ -2,4 +2,41 @@ cloexec on the read end: Right 1
 cloexec on the write end: Right 1
 nonblock on the read end: True
 no flags: Right 0
+-- clock
+raw, boottime and coarse clocks read: True
+-- timerfd
+nothing expired yet: errno 11
+previous setting was disarmed: True
+armed, not yet due: True
+poll sees the expiry: Right [True]
+one expiration: Right 1
+periodic timer ticked at least 5 times: True
+disarmed: errno 11
+-- signals
+USR1 in set: True
+INT in set: False
+USR2 after sigdelset: False
+USR1 pending after raise: True
+USR2 pending: False
+sigwait takes it: Right True
+nothing pending: errno 11
+signalfd read: True, sent by this process: True
+no alarm was set before: True
+SIGALRM taken by sigwait: Right True
+nothing left to cancel: True
+-- inotify
+no events yet: errno 11
+events: [(True, (True, False)), (True, (False, True))]
+names match: True
+watch on a missing path: errno 2
+rm_watch: ok
+IN_IGNORED after rm_watch: True
+-- dl
+dlsym getpid: found
+dlsym missing symbol: error
+dladdr names getpid: Just True
+cos(0) through dlsym: 1.0
+dlopen missing library: error
+dlclose: ok
+dlclose self: ok
 done

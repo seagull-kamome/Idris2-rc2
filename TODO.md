@@ -1113,12 +1113,16 @@ upstreamに取り込まれたら`idris2-src`を更新して自作idris2を作り
 `namedirectives`/`cgdirectives`の読み書きにも同じ構造がありそうだが未調査。
 
 ## System.Posix / System.Linux の残り
-`Time`・`Stat`・`Path`・`Fcntl`・`Poll`・`Process`の拡張・`System.Linux.Pipe`は入った。残り:
-- シグナル: `sigprocmask`/`sigset`の操作、`raise`、`alarm`、`pause`、`sigwait`。`sigaction`のハンドラは
-  Idrisの関数を渡せないので、`signalfd`か自己パイプで代替する。
-- `System.Linux.*`: `timerfd`、`inotify`、`signalfd`、`statx`、`CLOCK_MONOTONIC_RAW`/`CLOCK_BOOTTIME`。
-- `getpwnam`/`getgrnam`、`glob`/`fnmatch`、`dlopen`/`dlsym`、`syslog`、`getopt`、`select`。
+`Time`・`Stat`・`Path`・`Fcntl`・`Poll`・`Process`の拡張・`Signal`の集合とマスク・`Dl`・
+`System.Linux.{Pipe,Timerfd,Signalfd,Inotify,Clock,Dl}`は入った。残り:
+- シグナル: `sigaction`のハンドラはIdrisの関数を渡せないので束縛しない(`signalfd`/`sigwait`で代替)。
+  `sigtimedwait`、`sigsuspend`、`kill`の`siginfo`版(`sigqueue`)。
+- `System.Linux.*`: `statx`、`eventfd`のIdris側ラッパ(今は`System.Linux.Epoll`のC補助の中)、`epoll`以外の
+  `splice`/`sendfile`/`memfd_create`/`prctl`。
+- `getpwnam`/`getgrnam`、`glob`/`fnmatch`、`syslog`、`getopt`、`select`。
 - `Tm`に`tm_gmtoff`/`tm_zone`が無いので、`strftime`の`%Z`/`%z`はゾーンを出さない。
+- `dlsym`で得たアドレスの呼び出しは、`CExpr`で関数ポインタ型にキャストして書く(`System.Posix.Dl`の冒頭と
+  `TestLinux`の例)。型付きの呼び出しヘルパを用意するかは別の判断。
 
 ## AI Agent作成用のライブラリを整備
 
