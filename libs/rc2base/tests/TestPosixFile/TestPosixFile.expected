@@ -43,5 +43,48 @@ fchownat: 0
 openat+close: 0
 close dir: 0
 errno: True
+-- stat
+size=5 nlink=1
+regular=True dir=False link=False fifo=False
+mode bits type=True
+fstat same inode: True
+dir is directory: True
+stat missing: errno 2
+mtime is positive: True
+-- path
+mkdir: ok
+mkdir again: errno 17
+sub is directory: True
+rmdir: ok
+symlink: ok
+readlink: Right "file.txt"
+lstat is symlink: True
+stat follows the link: True
+link: ok
+nlink after link: 2
+unlink hard: ok
+unlink lnk: ok
+mkfifo: ok
+fifo: True
+unlink fifo: ok
+realpath ends with: True
+realpath missing: errno 2
+mkstemp name: True
+unlink temp: ok
+mkdtemp is directory: True
+rmdir temp: ok
+-- access/truncate/umask/utimensat
+access F_OK: ok
+access R_OK: ok
+access missing: errno 2
+truncate: ok
+size after truncate: 2
+ftruncate: ok
+size after ftruncate: 9
+umask restored: True
+utimensat: ok
+atime=TimeSpec 1000000000 500 mtime=TimeSpec 1500000000 0
+utimensat omit: ok
+atime kept: True, mtime now: True
 done
 perror-test: No such file or directory

@@ -22,7 +22,7 @@ or a small pure expression is a `"CExpr:"` `%foreign` template
 `mpz_*` bindings (`$r` is the `Integer` out-parameter), the
 `System.FFI.C.Ptr` fetch/store pairs (`((ty *)p)[i]`), the `System.Posix.*`
 modules, (`Directory.readdir` copies the opaque `DirEnt`, read through PrimIO CExpr accessors, into a `DirEntry`; `struct dirent` is not a typedef name so `Struct` cannot name it), `Network.RC2`'s `send`/`recv`, the `EPOLL*` constants,
-`epoll_create1`, `epoll_ctl(DEL)` and `eventfd` in `System.IO.Epoll`, the
+`epoll_create1`, `epoll_ctl(DEL)` and `eventfd` in `System.Linux.Epoll`, the
 `REG_*` constants and `re_nsub` in `Text.Regex.POSIX`, `Data.TextBuffer`'s
 accessors and `free`, the `Data.String.RC2` byte-length/from-bytes helpers,
 `Control.Concurrent.Atomic`, and `System.GC.RC2.touch`. The header field
@@ -63,14 +63,14 @@ not compile when the declaration is used.
 | `Network.HTTP.Client.Curl.*` | the libcurl client (`Curl`: `curlClient`), bindings (`Raw`, `Types`), `TextBuffer` capture -- see `doc/http-client.md` |
 | `Network.HTTP.Client.WebAPI.*` | OpenAI-compatible chat client, OAuth 2.0 (PKCE) login -- see `doc/http-client.md` |
 | `Network.HTTP.Server` | minimal single-threaded, `epoll`-driven HTTP/1.1 server -- see below |
-| `System.Posix.*` | POSIX bindings: `Errno`, `File`/`FileDesc`, `Directory`, `Mmap`, `Process`, `Signal`, `Uio`, and C stdio `Stdio` (`File = Ptr RawFile`, errno in `Left`). Declarations outside POSIX say so ("Linux only", "Linux and BSD") in their doc comment |
+| `System.Posix.*` | POSIX bindings: `Errno`, `File`/`FileDesc`, `Directory`, `Path` (`mkdir`, `unlink`, `symlink`, `readlink`, `realpath`, `mkfifo`, `mkstemp`, ...), `Stat` (`stat`/`lstat`/`fstat` into a `Stat` record, `access`, `truncate`, `utimensat`), `Time` (`clock_gettime`, `nanosleep`, `gmtime`/`localtime`/`mktime`/`strftime`), `Fcntl` (`pipe`, `fcntl` flags, `dupfd`), `Poll` (`poll`), `Mmap`, `Process` (ids, process groups, `exec*`, wait-status tests, `getrlimit`, `uname`, `sysconf`), `Signal`, `Uio`, and C stdio `Stdio` (`File = Ptr RawFile`, errno in `Left`). Declarations outside POSIX say so ("Linux only", "Linux and BSD") in their doc comment |
 | `System.Concurrency.RC2` | real pthread-backed `Mutex`/`Condition`/`Semaphore`/`Barrier`/`Channel`/joinable `forkJoin` -- see the top-level `README.md`'s own "Concurrency" section for the full design |
 | `System.FFI.C.Array` | a `malloc`'d, GC-freed, `Fin`-bounds-checked fixed-length array |
 | `System.FFI.C.Ptr` | raw, unchecked element-indexed fetch/store into a `Ptr`/`GCPtr` region |
 | `System.FFI.C.Sizeof` | the C `sizeof` of a scalar type, for hand-rolled buffer strides/offsets |
 | `System.GC.RC2` | raw access to rc2's own `idris2rc2_dup`/`dup_n`/`drop`, for a value smuggled out through an opaque FFI pointer |
 | `System.GC.RC2.touch` | `touch x`: keep `x` alive until that action (GHC `touchForeignPtr`); safe for any value, unlike `unsafeGCDup`/`unsafeGCDrop` |
-| `System.IO.Epoll` | thin `epoll` FFI wrapper backing `Network.HTTP.Server`'s event loop |
+| `System.Linux.*` | Linux-only bindings; `Epoll` (a thin `epoll` FFI wrapper backing `Network.HTTP.Server`'s event loop) and `Pipe` (`pipe2`) |
 | `System.IO.MemStream` | an in-memory `FILE *` capture stream (POSIX `open_memstream`), for redirecting a C API's "write to this FILE*" option into memory |
 | `System.Random.Xoroshiro128PlusPlus`/`Xoroshiro64StarStar` | two from-scratch PRNG ports -- see below |
 | `Text.Encoding.UTF8` | UTF-8 bytes <-> codepoints, pure `List` transforms -- see below |
@@ -600,7 +600,7 @@ by producing false positives on otherwise-correct programs.
 
 ## `Network.HTTP.Server`: a minimal event-driven HTTP server
 
-A single-threaded, `epoll`-driven HTTP/1.1 server (`System.IO.Epoll`
+A single-threaded, `epoll`-driven HTTP/1.1 server (`System.Linux.Epoll`
 for the raw event loop, `Network.RC2` for binary-safe buffer socket IO,
 `Network.HTTP.Server` for the HTTP logic on top). One call starts it;
 each request answers through a continuation rather than a return value,

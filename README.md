@@ -127,7 +127,7 @@ libs/rc2base/
 │                  Language.RCExpr.{AST,Lexer,Parser},
 │                  Network.{RC2,URL}, Network.HTTP.{Route,Router,Server},
 │                  System.Concurrency.RC2, System.FFI.C.{Array,Ptr,Sizeof},
-│                  System.GC.RC2, System.IO.Epoll, System.IO.MemStream,
+│                  System.GC.RC2, System.Linux.Epoll, System.IO.MemStream,
 │                  System.Random.Xoroshiro{128PlusPlus,64StarStar},
 │                  Text.Encoding.UTF8, Text.Regex.POSIX
 ├── src/           Idris2 source for the modules above
@@ -138,7 +138,7 @@ libs/rc2base/
 
 A foundational companion package designed to supply capabilities missing from or incomplete in upstream `base` and `contrib`:
 
-- **High-Performance Web & Networking**: An event-driven HTTP/1.1 server on `System.IO.Epoll` (`Network.HTTP.Server`), a type-safe Express-style router (`Network.HTTP.Route` / `Router`), and URL parsing (`Network.URL`).
+- **High-Performance Web & Networking**: An event-driven HTTP/1.1 server on `System.Linux.Epoll` (`Network.HTTP.Server`), a type-safe Express-style router (`Network.HTTP.Route` / `Router`), and URL parsing (`Network.URL`).
 - **Concurrency & Synchronization**: Haskell-style `MVar` and atomic counters (`Control.Concurrent.*`), native OS threads, and mutexes (`System.Concurrency.RC2`).
 - **Low-Level C Interop & Memory**: POSIX regex (`Text.Regex.POSIX`), GMP integer arithmetic (`Data.Integer.GMP`), memory buffers, raw UTF-8 byte conversions (`Text.Encoding.UTF8`), and explicit reference counting manipulation for opaque FFI values (`System.GC.RC2`).
 - **Compiler Tooling**: Parsers for rc2's dumped IR (`Language.RCExpr.*`).

@@ -15,12 +15,17 @@ module Main
 -- so the access modes (0/1/2) and permission bits are literals here.
 
 import Data.Bits
+import Data.List
+import Data.String
 import Data.Buffer
 import System.Directory
 import System.File
 import System.FFI
 import System.Posix.Errno
 import System.Posix.File
+import System.Posix.Path
+import System.Posix.Stat
+import System.Posix.Time
 dir : String
 dir = "TestPosixFile.scratch"
 
@@ -164,6 +169,129 @@ testMissingFile = do
 -- main
 -----------------------------------------------------------------------------
 
+-----------------------------------------------------------------------------
+-- System.Posix.Stat, System.Posix.Path and utimensat/ftruncate
+-----------------------------------------------------------------------------
+
+errMsg : Errno -> String
+errMsg (MkErrno e) = "errno " ++ show e
+
+errOf : Either Errno a -> String
+errOf (Left e) = errMsg e
+errOf (Right _) = "ok"
+
+unit : String -> Either Errno () -> IO ()
+unit n r = putStrLn (n ++ ": " ++ errOf r)
+
+testStat : IO ()
+testStat = do
+  putStrLn "-- stat"
+  -- path holds "hello" (5 bytes) at this point; make sure of it
+  Right fd <- creat path 0o640
+    | Left _ => putStrLn "creat failed"
+  _ <- write fd "hello"
+  _ <- close fd
+  Right st <- stat path
+    | Left e => putStrLn ("stat failed: " ++ errMsg e)
+  putStrLn ("size=" ++ show st.stSize ++ " nlink=" ++ show st.stNlink)
+  putStrLn ("regular=" ++ show (isRegular st) ++ " dir=" ++ show (isDirectory st)
+            ++ " link=" ++ show (isSymlink st) ++ " fifo=" ++ show (isFifo st))
+  putStrLn ("mode bits type=" ++ show (fileType st == S_IFREG))
+  Right fd2 <- openFile path 0 0
+    | Left _ => putStrLn "open failed"
+  Right fst' <- fstat fd2
+    | Left _ => putStrLn "fstat failed"
+  putStrLn ("fstat same inode: " ++ show (fst'.stIno == st.stIno && fst'.stDev == st.stDev))
+  _ <- close fd2
+  Right dst <- stat dir
+    | Left _ => putStrLn "stat dir failed"
+  putStrLn ("dir is directory: " ++ show (isDirectory dst))
+  Left e <- stat (dir ++ "/missing")
+    | Right _ => putStrLn "stat missing: unexpectedly ok"
+  putStrLn ("stat missing: " ++ errMsg e)
+  putStrLn ("mtime is positive: " ++ show (st.stMtime.tvSec > 0))
+
+testPath : IO ()
+testPath = do
+  putStrLn "-- path"
+  let sub = dir ++ "/sub"
+  let lnk = dir ++ "/lnk"
+  let hard = dir ++ "/hard"
+  let fifo = dir ++ "/fifo"
+  unit "mkdir" !(mkdir sub 0o755)
+  unit "mkdir again" !(mkdir sub 0o755)
+  Right sst <- stat sub
+    | Left _ => putStrLn "stat sub failed"
+  putStrLn ("sub is directory: " ++ show (isDirectory sst))
+  unit "rmdir" !(rmdir sub)
+  unit "symlink" !(symlink "file.txt" lnk)
+  readlink lnk >>= \r => putStrLn ("readlink: " ++ show r)
+  Right lst <- lstat lnk
+    | Left _ => putStrLn "lstat failed"
+  putStrLn ("lstat is symlink: " ++ show (isSymlink lst))
+  Right tst <- stat lnk
+    | Left _ => putStrLn "stat through link failed"
+  putStrLn ("stat follows the link: " ++ show (isRegular tst))
+  unit "link" !(link path hard)
+  Right hst <- stat path
+    | Left _ => putStrLn "stat failed"
+  putStrLn ("nlink after link: " ++ show hst.stNlink)
+  unit "unlink hard" !(unlink hard)
+  unit "unlink lnk" !(unlink lnk)
+  unit "mkfifo" !(mkfifo fifo 0o600)
+  Right fst' <- stat fifo
+    | Left _ => putStrLn "stat fifo failed"
+  putStrLn ("fifo: " ++ show (isFifo fst'))
+  unit "unlink fifo" !(unlink fifo)
+  Right rp <- realpath (dir ++ "/./file.txt")
+    | Left _ => putStrLn "realpath failed"
+  putStrLn ("realpath ends with: " ++ show (isSuffixOf ("/" ++ dir ++ "/file.txt") rp))
+  Left e <- realpath (dir ++ "/missing")
+    | Right _ => putStrLn "realpath missing: unexpectedly ok"
+  putStrLn ("realpath missing: " ++ errMsg e)
+  Right (tfd, tname) <- mkstemp (dir ++ "/tmpXXXXXX")
+    | Left _ => putStrLn "mkstemp failed"
+  putStrLn ("mkstemp name: " ++ show (isPrefixOf (dir ++ "/tmp") tname && length tname == length (dir ++ "/tmpXXXXXX")))
+  _ <- close tfd
+  unit "unlink temp" !(unlink tname)
+  Right dname <- mkdtemp (dir ++ "/dXXXXXX")
+    | Left _ => putStrLn "mkdtemp failed"
+  Right dtst <- stat dname
+    | Left _ => putStrLn "stat temp dir failed"
+  putStrLn ("mkdtemp is directory: " ++ show (isDirectory dtst))
+  unit "rmdir temp" !(rmdir dname)
+
+testAttrs : IO ()
+testAttrs = do
+  putStrLn "-- access/truncate/umask/utimensat"
+  unit "access F_OK" !(access path F_OK)
+  unit "access R_OK" !(access path R_OK)
+  Left e <- access (dir ++ "/missing") F_OK
+    | Right _ => putStrLn "access missing: unexpectedly ok"
+  putStrLn ("access missing: " ++ errMsg e)
+  unit "truncate" !(truncate path 2)
+  Right t1 <- stat path
+    | Left _ => putStrLn "stat failed"
+  putStrLn ("size after truncate: " ++ show t1.stSize)
+  Right fd <- openFile path 1 0
+    | Left _ => putStrLn "open failed"
+  unit "ftruncate" !(ftruncate fd 9)
+  _ <- close fd
+  Right t2 <- stat path
+    | Left _ => putStrLn "stat failed"
+  putStrLn ("size after ftruncate: " ++ show t2.stSize)
+  old <- umask 0o077
+  back <- umask old
+  putStrLn ("umask restored: " ++ show (back == 0o077))
+  unit "utimensat" !(utimensat Nothing path (SetTo (MkTimeSpec 1000000000 500)) (SetTo (MkTimeSpec 1500000000 0)) 0)
+  Right t3 <- stat path
+    | Left _ => putStrLn "stat failed"
+  putStrLn ("atime=" ++ show t3.stAtime ++ " mtime=" ++ show t3.stMtime)
+  unit "utimensat omit" !(utimensat Nothing path Omit SetNow 0)
+  Right t4 <- stat path
+    | Left _ => putStrLn "stat failed"
+  putStrLn ("atime kept: " ++ show (t4.stAtime == t3.stAtime) ++ ", mtime now: " ++ show (t4.stMtime.tvSec > 1500000000))
+
 main : IO ()
 main = do
   testFlags
@@ -173,6 +301,9 @@ main = do
   testWriteAndLocks
   testPathBased
   testMissingFile
+  testStat
+  testPath
+  testAttrs
   teardown
   putStrLn "done"
   ignore $ fflush stdout

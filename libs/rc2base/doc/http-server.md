@@ -35,7 +35,7 @@ Request and response bodies are raw bytes (`Data.Buffer`), not
 
 Three modules, layered:
 
-- `System.IO.Epoll` -- a thin FFI wrapper around Linux `epoll` plus
+- `System.Linux.Epoll` -- a thin FFI wrapper around Linux `epoll` plus
   the socket options an event-driven server needs that the standard
   `network` package doesn't expose: non-blocking mode
   (`setNonBlocking`, via `fcntl`/`O_NONBLOCK`) and `SO_REUSEADDR`
@@ -60,7 +60,7 @@ Three modules, layered:
   own `send`/`recv` use).
 - `Network.HTTP.Server` -- the HTTP logic itself: request/response
   types, a byte-scanning HTTP/1.1 parser, per-connection read/write
-  buffering, and the event loop that ties it all to `System.IO.Epoll`
+  buffering, and the event loop that ties it all to `System.Linux.Epoll`
   and `Network.RC2`. All state lives in records threaded through plain
   function arguments (`ServerState` for the epoll handle, connection
   table, a `ServerCtx`, and `maxReq`; `ServerCtx` for the cross-thread

@@ -39,7 +39,7 @@ import System.Concurrency
 -- argument for the termination checker to see -- genuinely open-ended
 -- blocking is the point, not an oversight -- so this relaxes
 -- rc2base.ipkg's package-wide `--total` to `covering`, the same way
--- System.IO.Epoll's own `readyEvents` already does.
+-- System.Linux.Epoll's own `readyEvents` already does.
 %default covering
 
 ||| `contents = Nothing` is "empty", `Just x` is "full". `notFull`/

@@ -1112,6 +1112,14 @@ upstreamの`make test`は未実行)。パッチは`seagull-kamome/Idris2`の`fix
 upstreamに取り込まれたら`idris2-src`を更新して自作idris2を作り直し、rc2baseを再インストールする。
 `namedirectives`/`cgdirectives`の読み書きにも同じ構造がありそうだが未調査。
 
+## System.Posix / System.Linux の残り
+`Time`・`Stat`・`Path`・`Fcntl`・`Poll`・`Process`の拡張・`System.Linux.Pipe`は入った。残り:
+- シグナル: `sigprocmask`/`sigset`の操作、`raise`、`alarm`、`pause`、`sigwait`。`sigaction`のハンドラは
+  Idrisの関数を渡せないので、`signalfd`か自己パイプで代替する。
+- `System.Linux.*`: `timerfd`、`inotify`、`signalfd`、`statx`、`CLOCK_MONOTONIC_RAW`/`CLOCK_BOOTTIME`。
+- `getpwnam`/`getgrnam`、`glob`/`fnmatch`、`dlopen`/`dlsym`、`syslog`、`getopt`、`select`。
+- `Tm`に`tm_gmtoff`/`tm_zone`が無いので、`strftime`の`%Z`/`%z`はゾーンを出さない。
+
 ## AI Agent作成用のライブラリを整備
 
 ## INK風のReact的に使えるTUIライブラリを追加
