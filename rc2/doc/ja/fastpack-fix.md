@@ -2,7 +2,14 @@
 
 (原文: `doc/fastpack-fix.md`。内容が乖離した場合は原文を正とする。)
 
-`fastPack`/`fastConcat`が抱えていたリークの修正記録である。最初の修正案(`Prelude.Fix.RC2`と`%transform`)が不十分だった理由、それに代わったEmit時のリダイレクトの実際、そして、この修正をプロジェクト全体で無条件に有効にする過程で見つかった別のバグ(空文字列でのSIGSEGV)を記す。のちに、同じEmit時の仕組みを`fastUnpack`と、`Data.String.Iterator`の`uncons`/`withIteratorString`にも広げた。こちらはリークではないが、根本原因は同じである。上流のFFIシグネチャが`char *`型であるため、`String`が埋め込みNULバイトを持てるようになると、情報が失われる。詳細は後述の「`fastUnpack`と`Data.String.Iterator`への拡張」を参照する。この記録に未実施のコードはない。ここに書いた内容はすべて実装して検証済みである(`rc2/tests/verify.sh`全体で82件成功・既知の失敗0件・失敗0件、`libs/rc2base/tests/verify.sh`はすべてPASS)。
+`fastPack`/`fastConcat`が抱えていたリークの修正記録である。次の3点を記す。
+- 最初の修正案(`Prelude.Fix.RC2`と`%transform`)が不十分だった理由。
+- それに代わったEmit時のリダイレクトの実際。
+- この修正をプロジェクト全体で無条件に有効にする過程で見つかった、別のバグ(空文字列でのSIGSEGV)。
+
+のちに、同じEmit時の仕組みを`fastUnpack`と、`Data.String.Iterator`の`uncons`/`withIteratorString`にも広げた。こちらはリークではないが、根本原因は同じである。上流のFFIシグネチャが`char *`型であるため、`String`が埋め込みNULバイトを持てるようになると、情報が失われる。詳細は後述の「`fastUnpack`と`Data.String.Iterator`への拡張」を参照する。
+
+この記録に未実施のコードはない。ここに書いた内容はすべて実装して検証済みである(`rc2/tests/verify.sh`全体で82件成功・既知の失敗0件・失敗0件、`libs/rc2base/tests/verify.sh`はすべてPASS)。
 
 ## 元のリーク
 

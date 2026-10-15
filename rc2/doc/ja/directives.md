@@ -6,7 +6,9 @@ rc2が認識するすべてのディレクティブのリファレンスであ�
 
 ## 1. 仕組み
 
-Idris2には、バックエンドに依存しない汎用のソースプラグマ`%cg <codegen> <directive>`がある。このプラグマは、パースされ、推移的なimportをまたいで集約され、TTCに永続化される。同じく汎用の、繰り返し指定できるCLIフラグ`--directive VALUE`もある。どちらも上流の汎用の仕組み(`Core.Context.addDirective`/`cgdirectives`と`Idris.Session`のCLIパース)であり、本書で扱うどのディレクティブ(rc2専用のものを含む)も、idris2-srcに変更を加えずに実現できた。`Compiler.RC2.RC2.compileExpr`は、rc2自身が登録したコードジェネレータ名`Other "rc2"`を使って、`getDirectives (Other "rc2")`で両方の入力元の和集合を冒頭で一度だけ読み込む。結果は1つの`directiveList : List String`に入り、以下のディレクティブはすべて、この`directiveList`に対して検査される。
+Idris2には、バックエンドに依存しない汎用のソースプラグマ`%cg <codegen> <directive>`がある。このプラグマは、パースされ、推移的なimportをまたいで集約され、TTCに永続化される。同じく汎用で、繰り返し指定できるCLIフラグ`--directive VALUE`もある。どちらも上流の汎用の仕組みであり(`Core.Context.addDirective`/`cgdirectives`と`Idris.Session`のCLIパース)、本書で扱うどのディレクティブも、rc2専用のものを含めて、idris2-srcに変更を加えずに実現できた。
+
+`Compiler.RC2.RC2.compileExpr`は、rc2自身が登録したコードジェネレータ名`Other "rc2"`を使って、`getDirectives (Other "rc2")`で両方の入力元の和集合を冒頭で一度だけ読み込む。結果は1つの`directiveList : List String`に入り、以下のディレクティブはすべて、この`directiveList`に対して検査される。
 
 ```idris2
 %cg rc2 noloop
@@ -22,7 +24,9 @@ idris2-rc2 --cg rc2 --directive noloop --directive dumprcexpr Program.idr -o pro
 
 ## 2. パイプライン段階の無効化(`no<stagename>`)
 
-A/Bの回帰切り分けのための機能である。たとえば「この差異やリークは、特定の1つのパスに起因するか」を調べたいとき、`Compiler.RC2.RC2.toRCDefs`を編集して`idris2-rc2`を手作業で再ビルドする必要がなくなる。各段階は純粋に追加的でオプションである。段階を飛ばしても、*正しい* Cは生成されるはずである(最適化は弱くなり、本物の`idris2 --cg refc`の出力の形と、バイト単位では一致しなくなる場合もある)。下流のどの段階も、正しさのためにその段階を必要とはしておらず、必要とするのは、その段階が提供する最適化だけである。粒度は意図的に粗い。段階全体のオン/オフの切り替えであり、関数やノード単位の細かい制御ではない。
+A/Bの回帰切り分けのための機能である。たとえば「この差異やリークは、特定の1つのパスに起因するか」を調べたいとき、`Compiler.RC2.RC2.toRCDefs`を編集して`idris2-rc2`を手作業で再ビルドする必要がなくなる。
+
+各段階は純粋に追加的でオプションである。段階を飛ばしても、*正しい*Cは生成されるはずである。最適化は弱くなり、本物の`idris2 --cg refc`の出力の形と、バイト単位では一致しなくなる場合もある。下流のどの段階も、正しさのためにその段階を必要としてはいない。必要とするのは、その段階が提供する最適化だけである。粒度は意図的に粗い。段階全体のオン/オフの切り替えであり、関数やノード単位の細かい制御ではない。
 
 | ディレクティブ | 無効にするもの |
 |---|---|
@@ -31,22 +35,30 @@ A/Bの回帰切り分けのための機能である。たとえば「この差�
 | `noknowncon` | `Compiler.RC2.ConstFold`の既知コンストラクタの畳み込みだけを無効にする。これは、同じ関数内で構築された、エスケープしないコンストラクタに対する`case`を解決し、構築そのものを消すものである(`doc/constructor-escape-analysis.md`の "Rewrite A")。そのクロージャ版(エスケープしない部分適用に対する、飽和した`apply`を、直接呼び出しに変える)も無効になる。`ConstFold`のそれ以外の部分は、引き続き走る。`noconstfold`が暗黙に含む。`Compiler.RC2.SpecClosure`が自分で畳み込むクローンは、この畳み込みを保つ。 |
 | `nopushcon` | `Compiler.RC2.PushCon`。これは、`case`を、スクルティニーとなる値の各末尾へ押し込み、コンストラクタを構築する各末尾がそれ自身のaltだけに出会って畳み込まれるようにする(`doc/constructor-escape-analysis.md`の "Rewrite B")。押し込みはConstFoldが仕上げることを前提にしているので、`noconstfold`が暗黙に含む。 |
 | `nospecclosure` | `Compiler.RC2.SpecClosure`の、投機的な、採算が見込める場合に限って行うクロージャ引数の特殊化。呼び出し箇所で観測した、クロージャのターゲットごとに関数を複製し、`apply`を直接の`call`に解決する(`doc/speculative-closure-specialization.md`)。 |
-| `nospecconstcon` | `Compiler.RC2.SpecClosure`の、定数コンストラクタ引数の特殊化。呼び出し箇所で観測した、定数ディクショナリごとに呼び出し先を複製し、分解する`case`を畳み込んで消し、各メソッドの`apply`を直接の`call`に解決する(`doc/constant-constructor-specialization.md`)。同じモジュールにあるが、`nospecclosure`とは別のスイッチである。特殊化の対象とする引数の形が異なるからである。 |
+| `nospecconstcon` | `Compiler.RC2.SpecClosure`の、定数コンストラクタ引数の特殊化。呼び出し箇所で観測した、定数辞書ごとに呼び出し先を複製し、分解する`case`を畳み込んで消し、各メソッドの`apply`を直接の`call`に解決する(`doc/constant-constructor-specialization.md`)。同じモジュールにあるが、`nospecclosure`とは別のスイッチである。特殊化の対象とする引数の形が異なるからである。 |
 | `noconaltnative` | `Compiler.RC2.ConAltNative`のネイティブシャドウによるフィールドキャッシュ(`doc/con-alt-native.md`)。 |
 | `nomutualloop` | `Compiler.RC2.MutualLoop`の相互末尾再帰のマージ。 |
 | `noloop` | `Compiler.RC2.Loop`の、自己末尾呼び出しから`goto`への変換と、ネイティブシャドウ/ループ不変式の昇格(`doc/loop-conversion.md`)。 |
 | `noearlyinline` | `Compiler.RC2.LateInline`の、呼び出し元が1つだけの関数のスプライシングのうち、早期に走る実行。SpecConstConの直後、RCアノテーションの前に走り、その後、結果に対してConstFold/PushConで畳み込み直す(`doc/constructor-escape-analysis.md`の "The shapes `LateInline` creates")。CAFは決してスプライスしない。`nolateinline`と`noconstfold`が暗黙に含む。 |
 | `nolateinline` | `Compiler.RC2.LateInline`の、プログラム全体で呼び出し元が1つだけの関数のインライン化。Loop/MutualLoopの変換の後に走る(`doc/inlining.md`の "Criterion B, revisited")。 |
 | `nosink` | `Compiler.RC2.Sink`の枝ローカルなsinking(`doc/branch-sinking.md`)。 |
+| `nocmpmerge` | `Compiler.RC2.CmpMerge`。同じオペランドに対する2つの入れ子の比較(`<`/`==`、`>`/`==`)で`then`分岐が等しいものを、1つの`<=`/`>=`ノードにまとめる。分岐が等しい比較は取り除く(`doc/native-type-inference.md`の "Merging nested comparisons")。 |
 | `nodualabi` | `Compiler.RC2.DualABI`のワーカー/ラッパの合成と、呼び出し箇所の書き換えの*両方*をまとめて無効にする。書き換えは、合成の段階が作るワーカーの表を必要とするので、両者を分けても意味がない(`doc/dual-abi.md`)。 |
+| `noboolret` | `Compiler.RC2.DualABI`のBool返却(`boolReturnPlan`、`applyBoolReturnTails`)。すべての末尾が`B8`リテラル、ネイティブの`Bits8`の値、またはそのような関数の呼び出しである関数は、ネイティブの`Bits8`を返す(`doc/dual-abi.md`の "Bool return")。 |
+| `noboolcase` | 型付き定数のcaseスクルティニーの規則(`Types.typedConstScrutinees`)。altがすべて`B8`/`Char`/`Int8`...の定数である`RConstCase`が調べるローカルには、`dup`/`drop`を付けない(`doc/native-type-inference.md`の "Typed-constant case scrutinees")。また、DualABIの呼び出し箇所の書き換えは、そのようなローカルを`postDrop`から取り除かなくなる。 |
+| `noboolfield` | 型付き定数の規則のフィールド側。`Reuse.resolveReuse`と`ConAltNative.shadowOneField`は、型付き定数の`case`が調べるコンストラクタのフィールドに、参照カウント操作(drop前の`dup`、`dupOnShared`/`dropOnUnique`のエントリ、導出し直した`drop`)を残さなくなる(`doc/native-type-inference.md`の "Always-unboxed constructor fields")。`noboolcase`でも無効になる。 |
 | `noapplyfold` | `LateInline`の直後に走る`Compiler.RC2.ArityRaise.applyFoldApplied`。構築と同時に適用されるクロージャ(それ以外ではdropされるだけのもの)を、呼び出しに変える(`doc/world-arity-raising.md`の "Post-RC fold")。 |
 | `nodeadargs` | `Compiler.RC2.DeadArgs`。唯一の使用が別の死んだパラメータへ渡すことだけであるパラメータと、すべての呼び出しでのその引数を取り除く(`doc/dead-args.md`)。インクリメンタルコンパイルでは常に無効である。 |
 | `noarityraise` | `Compiler.RC2.ArityRaise`。もう1つの引数(world)を待つクロージャを返す関数に、その引数を取るバージョンを作り、クロージャをすぐに適用する呼び出しが、そのバージョンを呼ぶようにする(`doc/world-arity-raising.md`)。 |
 | `notrmc` | `Compiler.RC2.Trmc`。再帰呼び出しがコンストラクタの下にある関数(`x :: f xs`)に、前のセルの穴を埋めてループする、アキュムレータ付きの双子の関数を作る(`doc/trmc.md`)。 |
 | `noctx` | `Compiler.RC2.ClosureCtx`。自己呼び出しのたびに`c . (y ::)`で拡張され、最後に一度だけ適用されるパラメータを、開いた穴を持つセルの連鎖に変える(`doc/closure-accumulator.md`)。 |
 | `nostructreturn` | `Compiler.RC2.DualABI`の構造体返却(`applyStructReturn`)。すべての末尾が最大4フィールドのコンストラクタで、呼び出し元のどれかが恩恵を受ける関数に、`IDRIS2RC2_Ret1`〜`IDRIS2RC2_Ret4`の構造体を返すワーカーを作る。結果をすぐにswitchする呼び出しは、そのワーカーに到達する(`doc/struct-return.md`)。`nodualabi`が暗黙に含む。 |
+| `nomutualstruct` | `MutualLoop`でマージされた関数に対する、`Compiler.RC2.DualABI`の構造体返却。無効にすると、従来どおり`structReturnPlan`から除外される(`doc/struct-return.md`の "Eligibility")。`nostructreturn`と`nodualabi`が暗黙に含む。 |
 | `nodeadcode` | `Compiler.RC2.DeadCode`による、呼び出し元が1つも残っていない定義の削除(`doc/dead-code-elim.md`)。 |
-| `nodupmerge` | `Compiler.RC2.DupMerge`による、複数の個別の`RDup`ノードを、`extra`の大きい1つの`RDup`にまとめる処理と、`cancelDupDrop`のピープホール最適化(ある`RDup`のローカル変数を、参照カウントだけの同じ連なりの中の`RDrop`が再び解放する場合に、両者を打ち消す)。 |
+| `nopushdown` | `Compiler.RC2.PushDown`。`case`の直前に並ぶ`dup`/`drop`ノードの連なりを各分岐へ移し、`dup`が、その分岐自身の同じローカルの`drop`と出会うようにする(`doc/pushdown.md`)。 |
+| `nodupmerge` | `Compiler.RC2.DupMerge`による、複数の個別の`RDup`ノードを、`extra`の大きい1つの`RDup`にまとめる処理と、`cancelDupDrop`のピープホール最適化。後者は、ある`RDup`のローカル変数を、参照カウントだけの同じ連なりの中の`RDrop`、またはその`dup`の直後にある読み取り専用ノードの`postDrop`が再び解放する場合に、両者を打ち消す。エイリアスの`let x = w; drop [x]`は`drop [w]`になる。 |
+| `noreusenested` | `Compiler.RC2.Reuse`による、`let`の*値*(`case`/`let`の木)の中での同名コンストラクタの探索。本体が何も確保を主張していない場合に働く。無効にすると、再利用のパスは従来どおりに動く(`doc/reuse-analysis.md`の "Nested let values")。 |
+| `noreuserecheck` | `Compiler.RC2.Reuse.recheckReuse`。`DualABI`の後に走るパスで、死んだオファー(内側のオファーがそのコンストラクタを確保したため、先頭で解放されたもの)に、`DualABI`の構造体返却が内側の確保を取り除いた場合、確保の権利を与え直す。無効にすると、再利用の結果は`Reuse`が残したままになる(`doc/reuse-analysis.md`の "Re-checking dead offers after DualABI")。 |
 
 この一覧に入りそうで、入らないディレクティブがある。
 
@@ -99,6 +111,16 @@ A/Bの回帰切り分けのための機能である。たとえば「この差�
 繰り返し指定でき、1回の指定につき1つの名前を渡す。名前を指定した構造体は、`header`のtypedef出力の段階でだけ、スキップされる。`StructDefs`(`RStructGet`/`RStructSet`がフィールドを解決する、フィールド名/型の表)は、まったくフィルタされない。したがって、その名前の`Struct`に対する`getField`/`setField`は、まったく通常どおりに動き、ほかの構造体と同じ`((name*)ptr)->field`というC式にコンパイルされる。
 
 **この集合に含まれる名前については、Idris側のフィールドのリストは、純粋に名目上のものになる。** 通常(`externStruct`なし)は、このフィールドのリストが正式なものであり、rc2が生成する構造体の本当のフィールド順とレイアウトを、バイト単位で決める。名前を`externStruct`に指定すると、rc2はその名前のtypedefをまったく出力しなくなる。したがって`((name*)ptr)->field`は、インクルードされたヘッダが実際に提供する定義に対してコンパイルされる。Cコンパイラは、フィールドのオフセットを、*その*定義から解決する。Idrisの宣言の順序からは決して解決しない。そのため、`Struct`宣言のフィールド名と型は、結果のキャストが正しくなるように、本物の外部構造体のフィールドと合っている必要がある(名前が同じで、型が`cTypeOfCFType`の意味でCの型として互換であること)。しかし、宣言のフィールドの*順序*は、正しさには無関係である。本物の構造体のすべてのフィールドを列挙する必要もない。`getField`/`setField`の呼び出し箇所が実際に触る部分集合だけを、都合のよい順に並べればよい。
+
+**タグだけで知られる構造体**(`struct tm`、`struct dirent`。`typedef`がないので、Cのコードでは`struct`キーワードを書く必要がある)も、同じように扱える。両方の場所で、空白を含むCの完全な綴りを使う。
+
+```idris2
+%cg rc2 externStruct=struct dirent
+Dirent : Type
+Dirent = Struct "struct dirent" [("d_ino", Bits64), ("d_name", String)]
+```
+
+名前は、生成されるキャスト(`((struct dirent*)ptr)->d_name`)にそのまま使われる。ディレクティブの値は`=`より後ろのすべてなので、空白を引用符で囲む必要はない。ディレクティブがなければ、rc2は`typedef struct { ... } struct dirent;`を出力してしまい、これは構文エラーになる。テストは`Test120CStruct/CgSpacedStructName.idr`である。
 
 **フィールドの型が間違っていても検出されない。** `RStructGet`は、読み取った生のフィールドを、ボックス化する前に`cTypeOfCFType ty`にキャストする。本物のヘッダの余分な修飾子(`const char *ssl_version`を、Idris側では`AnyPtr`と宣言した場合など)で、ビルドが失敗しないようにするためである。同じキャストは、本物の不一致(幅の違い、符号の違い、形そのものの違い)も黙らせる。その結果、バインディングは、実行時に警告なしでゴミを読む。宣言した各型をヘッダと一致させるのは、バインディングを書く人の責任であり、`externStruct`を使うすべてのバインディングについて、レビュー時に確認すること。`Test120CStruct/CgExternStructPtrField.idr`は`const`のケースを検査する。
 

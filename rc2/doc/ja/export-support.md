@@ -155,7 +155,7 @@ GCPtr, Integer, String, or struct (Struct) arguments
 
 `Struct "name" [...]`型のエクスポートも、別の仕組みではなく同じ仕組みで扱う。`Emit.Util`の`cTypeOfCFType`/`extractValue`/`packCFType`は、いずれも`CFStruct`のケースを`CFPtr`のケースとそのまま同じにしてある。
 
-`%foreign`の構造体サポートから引き継ぐ注意点が1つある。構造体のCのtypedefは、同じ構造体名を使う`%foreign`宣言がプログラム中に実際に残っているときにだけ出力される (`Compiler.RC2.Emit`の`StructDefs`)。`%export`から構造体を参照するだけでは、typedefは残らない。`Test59Export.idr`がこの対処の実例である。`getXExport`/`scalePoint`の2つのエクスポートだけが、構造体として`"test_point"`構造体を必要とする。それでもこのファイルは、同じ構造体について宣言した`%foreign`の`prim__makePoint`/`prim__freePoint`の組を残し、`main`から参照している。これは`Compiler.RC2.DeadCode.pruneDeadDefs`がこの組を削除して、構造体のtypedefまでエクスポートの足元から消してしまうのを防ぐためだけである。
+`%foreign`の構造体サポートから引き継ぐ注意点が1つある。構造体のCのtypedefは、同じ構造体名を使う`%foreign`宣言がプログラム中に実際に残っているときにだけ出力される (`Compiler.RC2.Emit`の`StructDefs`)。`%export`から構造体を参照するだけでは、typedefは残らない。`Test59Export.idr`がこの対処の実例である。`getXExport`/`scalePoint`の2つのエクスポートだけが、`"test_point"`構造体を型の上で必要とする。それでもこのファイルは、同じ構造体について宣言した`%foreign`の`prim__makePoint`/`prim__freePoint`の組を残し、`main`から参照している。これは`Compiler.RC2.DeadCode.pruneDeadDefs`がこの組を削除して、構造体のtypedefまでエクスポートの足元から消してしまうのを防ぐためだけである。
 
 ### GCPtr/GCAnyPtr: 引数の位置のみ
 
@@ -321,7 +321,7 @@ dropは無条件に行う。`CFChar`/`CFInt8`/.../`CFUnsigned32`の値は実際�
 
 この機能を実際に配線したときに、実バグが1件見つかったので修正した。`Compiler.Common.getExports`は、各エクスポート名を`toFullNames`ではなく`resolved`で解決する。そのため`exported cdata`の`Name`は`Resolved` (コンテキストのインデックス) 形式になる。一方、`pruneDeadDefs`が走査する`RCDef`パイプラインのエントリは、すべて完全名をキーとしている。`Name`の等価性は構造的に比較されるので、`Resolved`形式のルートは、どのエントリとも決して一致しない。現在の`roots`は、自前で名前を導出し直して誤った結果を得る代わりに、`validateExport`が`getFullName`で解決した名前を再利用している。
 
-3つ目のエクスポート (`Test59Export.idr`の`unused`) で確認した。`main`はこれを一度も呼ばないが、そのラッパーと元の常にBoxedなエントリポイント (`idris2rc2_test_unused`/`Main_unused`) の両方が、生成したCにちゃんと現れる。
+3つ目のエクスポート (`Test59Export.idr`の`unused`) で確認した。`main`はこれを一度も呼ばないが、そのラッパーと元の常にBoxedなエントリポイント (`idris2rc2_test_unused`/`Main_unused`) の両方が、生成したCにやはり現れる。
 
 ## 参照テスト
 

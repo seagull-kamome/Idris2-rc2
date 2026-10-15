@@ -103,7 +103,7 @@ idris2-lspを段階2でコンパイルすると、定義18,048個、`delay`が1,
 ## IR
 
 - `RDelay fc lr thunk captures`は`captures`を消費して、セルを構築する。`RForce fc lr v`は`v`を借用する。どちらもダンプに出力され(`delay`、`force`)、`Language.RCExpr.Parser`(`libs/rc2base`)が読み戻す。
-- リフト: 本体がまだ値でない`Delay`は、自身の束縛パラメータなしで、`RC.idr`の`lift`を直接呼ぶ(origin は`FromDelay lr`)。したがって生成されるサンクが取るのは捕捉だけであり、中にあるラムダとは決して統合されない。本体がラムダである`Delay`は、上の「すでに値である場合」の1つにあたる。これは、そのラムダを単独でリフトしたときとまったく同じ方法でリフトされる。`lambda`を通り、`lambda`がラムダ自身のパラメータを蓄積してから`lift`を呼ぶ(origin は`FromLambda`)。それがかつて`Delay`であったことを示すものは、`LiftInfo`には何も残らない。
+- リフト: 本体がまだ値でない`Delay`は、自身の束縛パラメータなしで、`RC.idr`の`lift`を直接呼ぶ(originは`FromDelay lr`)。したがって生成されるサンクが取るのは捕捉だけであり、中にあるラムダとは決して統合されない。本体がラムダである`Delay`は、上の「すでに値である場合」の1つにあたる。これは、そのラムダを単独でリフトしたときとまったく同じ方法でリフトされる。`lambda`を通り、`lambda`がラムダ自身のパラメータを蓄積してから`lift`を呼ぶ(originは`FromLambda`)。それがかつて`Delay`であったことを示すものは、`LiftInfo`には何も残らない。
 - `children`/`mapChildren`/`traverseChildren`(`RCExp.idr`)から見ると、`RDelay`/`RForce`は葉であり、再帰して降りていく`RCExp`の子がない。したがって、木をこの3つだけでたどるパスには、専用の節は要らない。
 
   ただし、`captures`と`v`はローカル変数であり、ローカル変数の読み取り、名前の付け替え、置換を行う処理には、葉であっても明示的な節が要る。`RCExp.idr`の`freeLocalsR`、`countUsesR`、`mentionedLocalsAcc`、`directReads`と、`ConstFold`自身の`foldConst`の置換が、それぞれ節を持っている。包括的な節を持つパスでこれらのどれかを書き忘れると、`RDelay`/`RForce`が気づかれないまま飛ばされる。これは、`caf-memoization.md`の「制限」の節が`RMemoize`について記載している、気づかないうちに取りこぼす形と同じである。
@@ -134,7 +134,7 @@ Idris2のコンパイラ自身が、rc2のパイプラインに入る前に、�
 - 強制評価済みの長いストリーム(`iterate`/`index`)は、要素ごとに再帰することなく解体される。
 - 複数のスレッド(`forkJoin`)が同じセルを同時に強制評価しても、すべてが同じ値を読み戻す(競合の下での一貫性を検査するものであり、サンクが何回走ったかを数えるものではない。テストは自身の副作用が何回発火したかを読まない)。
 
-`rc2/tests/Test126LazySelfForce`は、評価に自分自身を必要とする値が停止することを確認する。この値のトップレベルの`Delay`はCAFになる(`LazyCaf`)ので、循環を見つけて「a top-level value depends on itself」で停止させるのは、CAFメモ化である(caf-memoization.md)。セルが自分自身を強制評価した場合は「a lazy value forces itself」で停止する(上の「`Force`」を参照)。ただしLazyCafがあると、自己参照が生じうるのはトップレベルの定義を通した場合だけなので、これに到達するテストプログラムはない。
+`rc2/tests/Test126LazySelfForce`は、評価に自分自身を必要とする値が停止することを確認する。この値のトップレベルの`Delay`はCAFになる(`LazyCaf`)ので、循環を見つけて「the top-level value <name> depends on itself」で停止させるのは、CAFメモ化である(caf-memoization.md)。セルが自分自身を強制評価した場合は「a lazy value forces itself」で停止する(上の「`Force`」を参照)。ただしLazyCafがあると、自己参照が生じうるのはトップレベルの定義を通した場合だけなので、これに到達するテストプログラムはない。
 
 `rc2/tests/Test122LiftOrigin`の`check.sh`は、リフトを確認する。値でない`Delay`のサンクは自身の捕捉だけを取る(`.lifts`のダンプで`delay Lazy`/`delay Inf`、`params 0`)。ラムダの`Delay`は、そのラムダとしてリフトされ、サンクもセルも作られない(同じダンプで、`delay`ではなく`lambda`)。
 

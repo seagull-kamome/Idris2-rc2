@@ -144,7 +144,7 @@ Main.{setY:0} = [{arg:2}, {arg:3}][{eta:0}]:
 1. `getField`/`setField`の呼び出し箇所にある構造体名とフィールド名の引数は、正規化後のコードでは`RCConst (Str ...)`のローカルになっている (上の「`--dumplifted`による具体例」を参照)。そのためコンパイル時に直接パターンマッチでき、実行時の検索は要らない。
 2. 構造体アクセサには、オペランドを消費するほかのノードとは別の所有権の規則が要る。`ROp` (および`RExtPrim`) の`annotate`のケースは、`wrapDups fc (splitBorrows natives owned args) ...`というパターンを通る。まだ生きているオペランドは`dup`され、消費側が自分の参照をあとで`drop`する。ところが`getField`/`setField`は、`((sn*)p)->f`や`((sn*)p)->f = v`に下げられる。ポインタを通した読み書きは、`IDRIS2RC2_Pointer`の箱を消費もコピーもしないので、`dup`は無駄でしかない。この設計を作った当時、`RExtPrim`の`annotate`は`owned`を一度も参照しない素通しだった。その欠落はその後、別に直された (IORefのセルや配列プリミティブの引数がリークしていた。`tests/Test44IORefExtPrimLeak`)。現在の`RExtPrim`は、`ROp`と同じく`splitBorrows`/`wrapDups`/`boxedOperands`を使う。だからといって、`ROp`の形が構造体アクセサに合うようになったわけではない。ノードが独自の規則を持つのはそのためである。
 
-**規則の中身と、却下した2つの設計。** 最初の案は、`ROp`の`splitBorrows`/`wrapDups`のパターンをそのまま再利用するものだった。しかし、オペランドを消費するものとしてモデル化すべき呼び出しが、もう残っていない。2つ目の案は、ポインタの読み出しは何も消費しないという理由で、所有権の扱いをすべて省くものだった。これでは、最後の使用がそのアクセスである変数 (`f s = getField s "x"`) がリークする。ほかのどこもそれをdropしないためである。`branchBody`と`dropDeadLet` (`RC.idr`) は、ローカルをdropするかどうかを、本体の残りにまだ自由変数として現れるかで決める。`RStructGet`は`structVar`を自身の自由ローカルとして正しく報告するので、アクセスそのものが、変数を生かし続ける使用に見えてしまう。したがってアクセサは、その使用がオペランドの最後の使用であるときは自分でdropし、`dup`は決してしなければならない。これが`dropIfLastUse` (`RC.idr`) であり、下の「Phase 2」で述べる。
+**規則の中身と、却下した2つの設計。** 最初の案は、`ROp`の`splitBorrows`/`wrapDups`のパターンをそのまま再利用するものだった。しかし、オペランドを消費するものとしてモデル化すべき呼び出しが、もう残っていない。2つ目の案は、ポインタの読み出しは何も消費しないという理由で、所有権の扱いをすべて省くものだった。これでは、最後の使用がそのアクセスである変数 (`f s = getField s "x"`) がリークする。ほかのどこもそれをdropしないためである。`branchBody`と`dropDeadLet` (`RC.idr`) は、ローカルをdropするかどうかを、本体の残りにまだ自由変数として現れるかで決める。`RStructGet`は`structVar`を自身の自由ローカルとして正しく報告するので、アクセスそのものが、変数を生かし続ける使用に見えてしまう。したがってアクセサは、その使用がオペランドの最後の使用であるときは自分でdropし、`dup`は決してしない。これが`dropIfLastUse` (`RC.idr`) であり、下の「Phase 2」で述べる。
 
 ### 新しいノード
 
@@ -208,6 +208,18 @@ packCFType (CFStruct x xs)     varName = "idris2rc2_mkPointer(" ++ varName ++ ")
 ### Part C: Cの構造体定義の出力
 
 `header` (`Emit.idr`) は、`StructDefs`のエントリごとに`typedef struct { <ctype> <field>; ... } name;`を1つ、すべての関数定義より前の「struct definitions」のブロックに出力する。各フィールドのC型は`cTypeOfCFType`で決める (ネストした構造体のフィールドは`void *`になる)。`%cg rc2 externStruct=<name>`で指定された名前 (`doc/directives.md`の5節) は、出力の対象からだけ外す。インクルードされたヘッダがすでに`typedef`しているためである。`StructDefs`自体は絞り込まず、そのような構造体のフィールドアクセスも通常どおり解決される。
+
+### Tips: Cでは`struct foo`としてしか知られていない構造体を宣言する
+
+Cの構造体に`typedef`がない場合(`struct tm`、`struct dirent`、`struct stat`、`struct timeval`などは通常これにあたる)は、Cでの完全な綴りを`Struct`の名前にして宣言し、同じ文字列で外部のものだと指定する。
+
+```idris2
+%cg rc2 externStruct=struct tm
+Tm : Type
+Tm = Struct "struct tm" [("tm_year", Int32), ("tm_mday", Int32)]
+```
+
+名前は書いたとおりに使われるので、フィールドアクセスは`((struct tm*)ptr)->tm_year`になる。`externStruct`を指定すると、Part Cは`typedef struct { ... } struct tm;`を出力しない(これは名前の衝突にとどまらず、構文エラーになる)。構造体を宣言するヘッダは、`%foreign`のヘッダに含まれているか、ほかの方法でインクルードされている必要がある(ここでは`<time.h>`)。また、外部の構造体すべてに言えることとして、Idris側の宣言のフィールド名と型は、実際のものと一致させなければならない(`rc2/doc/directives.md`の5節)。Idris側の名前を、Cの綴りと違う綴りにしてはならない。一方を他方へ対応づける仕組みはないためである。動作する例は`rc2/tests/Test120CStruct/CgSpacedStructName.idr`である。
 
 ### Part D: `emitRC`での`RStructGet`/`RStructSet`の下げ
 
@@ -280,7 +292,7 @@ rc2は完全に独立したパッケージであり、`idris2-src`を編集す�
 
 `verify.sh`自体にも、このテストに必要だった一般的な仕組みが加わった。`TestN.idr`と並べて置いた`TestN.c`を一度コンパイルし、`IDRIS2_CFLAGS`/`IDRIS2_LDFLAGS`経由で自動的にリンクする。ほかの既存のテストには影響せず、将来のスモークテストでも使える。`%foreign`宣言に、rc2/RefCが提供するプリミティブではなく、本物のCの実装が必要なテストである。
 
-このテストは`NO_REFC_DIFF_TESTS`に加わった。本物のRefCには、比較対象になる`getField`/`setField`がないためである。`.expected`は手で検証したものを使う。また`LEAK_SENSITIVE_TESTS`にも加わった。このテストの眼目が、所有権の正しさだからである。`verify.sh`全体の実行結果は、39件が成功、既知の既存の1件 (`Test111Basics/Basics.idr`に記録済みのリーク。無関係) 、失敗0件だった。このテスト自身の`valgrind`の実行も、definitely lostが0バイトである。
+このテストは`NO_REFC_DIFF_TESTS`に加わった。本物のRefCには、比較対象になる`getField`/`setField`がないためである。`.expected`は手で検証したものを使う。また`LEAK_SENSITIVE_TESTS`にも加わった。このテストの眼目が、所有権の正しさだからである。`verify.sh`全体の実行結果は、39件が成功、既知の既存の1件 (`Test111Basics/Basics.idr`に記録済みのリーク。無関係)、失敗0件だった。このテスト自身の`valgrind`の実行も、definitely lostが0バイトである。
 
 補助ファイルを書いているときに、Cレベルのtypedefの衝突が起きた。これについて、記録する価値がある点がある。rc2が生成するCは、`StructDefs`のすべての構造体について、すでに`typedef struct { ... } name;`を出力している (上のPart C)。そのため、補助のヘッダが*同じ*構造体の形をもう一度宣言すると、たとえバイト単位で完全に一致していても、両方が同じ翻訳単位に`#include`された時点でtypedefの重複エラーになる。`Test24CStructSupport.h`は、自身の2つの関数を`test_point*`型ではなく`void*`型で宣言し、本物の`test_point`のtypedefを`.c`ファイルの内部に留めることで、これを避けている。これはrc2のバグではない。この方法で構造体名を確立する補助のCファイルなら、どれでも同じ衝突に遭う。ただし、同様のテストをもう一つ書く前に、知っておく価値がある。
 

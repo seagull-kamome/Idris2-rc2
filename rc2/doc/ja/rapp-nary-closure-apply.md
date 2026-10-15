@@ -4,7 +4,7 @@
 
 ## 動機
 
-`rc2/doc/speculative-closure-specialization.md`の動機の節と、`TODO.md`の「Performance: interface-dictionary method dispatch stays boxed even when the concrete instance is known」の項は、どちらも同じ実コストを同じ原因に帰している。*boxedなクロージャ値*(interface辞書のメソッド、あるいは普通の高階関数の引数)に対するカリー化された多引数の適用は、1引数の`RApp`ノードの連鎖にコンパイルされ、各ノードが個別に`idris2rc2_applyClosure`を通る、という原因である。
+`rc2/doc/speculative-closure-specialization.md`の動機の節と、`TODO.md`の「Performance: interface-dictionary method dispatch stays boxed even when the concrete instance is known」の項は、どちらも同じ実コストを同じ原因に帰している。原因は次のとおりである。*boxedなクロージャ値*(interface辞書のメソッド、あるいは普通の高階関数の引数)に対するカリー化された多引数の適用は、1引数の`RApp`ノードの連鎖にコンパイルされる。各ノードは個別に`idris2rc2_applyClosure`を通る。
 
 `HashAlgorithm`の`feed8`(アリティ2、`acc -> byte -> acc'`)では、これが1バイトあたり2回のboxedディスパッチになる。生成されたCを見ると、1回目の(まだ部分適用の)適用のために、ヒープ上の`IDRIS2RC2_Closure`が実際に中間値として確保されている。呼び出し全体は必ずすぐに全引数が揃うにもかかわらず、である。
 
@@ -143,7 +143,7 @@ IDRIS2RC2_Value *idris2rc2_applyClosureN(IDRIS2RC2_Value *_c, IDRIS2RC2_Value **
 }
 ```
 
-アリティごとの新しいswitchも、`n`ごとのコード生成も要らない。`n`に上限を設ける必要もなく、フォールバックのループがどんな`n`でも無条件に処理する。効いてくる上限は、`dispatchFn`にもともとあるアリティ20の制限だけである。これは2つの呼び出し箇所で共有されるので、引き上げるときも1箇所を変えれば済む。
+アリティごとの新しいswitchも、`n`ごとのコード生成も要らない。`n`に上限を設ける必要もなく、フォールバックのループがどんな`n`でも無条件に処理する。上限として残るのは、`dispatchFn`にもともとあるアリティ20の制限だけである。これは2つの呼び出し箇所で共有されるので、引き上げるときも1箇所を変えれば済む。
 
 ## Emit側の変更
 

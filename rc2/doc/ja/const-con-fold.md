@@ -35,7 +35,7 @@ RCConstCon : Name -> ConInfo -> (tag : Maybe Int) -> List RCLocal -> RCLocal
 
 既存の`ConstDef`の仕組み(`boxedConstExpr`、`Emit/Util.idr:796`)をほぼそのまま写している。新しい`ConstConDef`の状態は、名前による重複排除のための`SortedMap RCLocal String`と、ステージング順に並べた完成した定義テキストのリストの組である。この状態を、新しい`boxedConstConExpr`が参照する。`RCConstCon`をステージングするときは、ネストした`RCConstCon`のフィールドを、先に再帰的にステージングする。そのため、子は必ず親より前に定義リストへ入る。これは、Cのstaticの初期化子が、*すでに宣言された* staticのアドレスしか取れないために必要である(ファイルスコープでは前方参照ができない)。
 
-ステージングされるCの形は、`IDRIS2RC2_Constructor`自身のレイアウト(`constructor-layout.md`)をフィールド単位でそのまま写している。違いは、可変長配列メンバではなく固定サイズの配列にしている点である(素のCには、可変長配列メンバに対するstaticの初期化子がない)。タグなしのコンストラクタには、名前を入れるためのスロットがもう1つ付く。
+ステージングされるCの形は、`IDRIS2RC2_Constructor`自身のレイアウト(`constructor-layout.md`)をフィールド単位でそのまま写している。違いは、柔軟配列メンバではなく固定サイズの配列にしている点である(素のCには、柔軟配列メンバに対するstaticの初期化子がない)。タグなしのコンストラクタには、名前を入れるためのスロットがもう1つ付く。
 
 ```c
 static IDRIS2RC2_ConstConstructor2 const constcon_7 = {
@@ -45,7 +45,7 @@ static IDRIS2RC2_ConstConstructor2 const constcon_7 = {
 };
 ```
 
-`IDRIS2RC2_STOCKVAL`は、小さな整数のキャッシュや`ConstDef`の値がすでに使っている、不死の参照カウントのマーカー(`IDRIS2RC2_REFCOUNT_MAX`)と同じものである。**このおかげで、コンパイラのそれ以外の所有権解析(`Compiler.RC2.RC`の`annotate`)には、変更がまったく要らない。** `idris2rc2_dup`/`idris2rc2_drop`には`REFCOUNT_MAX`のガードがすでにあり、ステージングされた値に対するdup/dropは、実行時には何もしない。したがってannotateは、通常のBoxedな値に対して生成するのと同じdup/dropの呼び出しを、そのまま生成し続けてよい。
+`IDRIS2RC2_STOCKVAL`は、小さな整数のキャッシュや`ConstDef`の値がすでに使っている、不死の参照カウントのマーカー(`IDRIS2RC2_REFCOUNT_MAX`)と同じものである。**このおかげで、コンパイラのそれ以外の所有権解析(`Compiler.RC2.RC`の`annotate`)には、変更がまったく要らない**。`idris2rc2_dup`/`idris2rc2_drop`には`REFCOUNT_MAX`のガードがすでにあり、ステージングされた値に対するdup/dropは、実行時には何もしない。したがってannotateは、通常のBoxedな値に対して生成するのと同じdup/dropの呼び出しを、そのまま生成し続けてよい。
 
 ただし、`annotate`が内部で使う補助関数のうち3つ(`RC.idr`の`splitBorrows`、`dropIfLastUse`、`boxedOperands`)は、dup/dropの呼び出しを出力する以外の目的でも、オペランドがboxedかどうかを*分類*している。たとえば、ある使用にdupが要るかどうかの判断や、`ROp`などの`postDrop`リストの決定である。これらには、既存の`RCConst`/`RCNull`/`RCEmptyCon`のケースと並べて、`RCConstCon`の明示的なケースが必要だった。理由は同じで、不死の値は、所有している変数や借用している変数のように追跡する必要がないからである。`Compiler.RC2.Sink`/`Compiler.RC2.DualABI`の、並行して存在する`localRepIn`補助関数にも、同じ1行の追加が必要だった(`RCEmptyCon`と同じく、常に`RBoxed`とする)。
 
@@ -55,8 +55,12 @@ static IDRIS2RC2_ConstConstructor2 const constcon_7 = {
 
 最初に動いた版は、`RLet fc var rep (RCon ...) body`という形にしか一致しなかった。つまり、`RLet`の値が*直接* `RCon`である場合だけである。これでは、2つの形を取りこぼす。この2つは例外ではなく、むしろ普通の形だった。
 
-- **ANFの`RLet`の連鎖は、フラットにならず、ネストする。** `[1,2,3,4,5]`は、`RLet v0 (Cons 5 Nil) (RLet v1 (Cons 4 v0) (... RLet v4 (Cons 1 v3) (RV v4)))`に正規化される。外側から読むと、`v0`の値は素の`RCon`だが、`v0`自身の*本体*は`RCon`ではなく、別の`RLet`である。直接一致する版は、いちばん内側のセルしか畳み込まず、`value`が`RCon`ではなく`RLet`だとわかった時点で諦めた。**修正**: 先に`value`を(再帰的に)畳み込み、そのあとで*元の* `value`の形に一致させるのではなく、*畳み込みの結果*を分類する。`RPrimVal`と、`RV`の`RCConstCon`は、どちらも「今は既知の定数である」ことを意味する。
-- **畳み込まれた変数の、木のほかの場所での使用が、書き換えられていなかった。** 既存の算術の畳み込みの`env`は、`ROp`/`RCmpCase`/`RConstCase`からしか参照されず、畳み込み結果を*計算する*ためだけに使われていた。ノード自身の`args`を、その場で書き換えることはなかった。算術では、それで問題がなかった。畳み込みに失敗した`ROp`は、同じ`args`をそのまま出力し直すだけで、失われる情報がなかったからである。しかし`RLet`の、「`body`がもうその変数を参照しないなら、この束縛を捨てる」という検査(`contains (RCLoc var) (freeLocalsR body')`)は、それらの`args`が実際に書き換えられることを前提にしている。たとえば`RAppName`の引数リストの中に未解決の`RCLoc`が残っていると、その変数は「まだ使われている」ように見え続ける。すると、`RLet`(とそれが守る割り当て)が、永久に畳み込まれなくなる。**修正**: `RCLocal`のオペランドを持つすべてのノード(`RAppName`、`RApp`、`RUnderApp`、`RExtPrim`、`RStructGet`/`RStructSet`、および`ROp`/`RCmpCase`自身の`args`)も、`env`に対してオペランドを解決するようにした。目的は、`freeLocalsR`が置き換えを見られるようにすることだけである。この処理で、これらのノードが自分自身の値に畳み込まれることはない。
+- **ANFの`RLet`の連鎖は、フラットにならず、ネストする。** `[1,2,3,4,5]`は、`RLet v0 (Cons 5 Nil) (RLet v1 (Cons 4 v0) (... RLet v4 (Cons 1 v3) (RV v4)))`に正規化される。外側から読むと、`v0`の値は素の`RCon`だが、`v0`自身の*本体*は`RCon`ではなく、別の`RLet`である。直接一致する版は、いちばん内側のセルしか畳み込まず、`value`が`RCon`ではなく`RLet`だとわかった時点で諦めた。
+
+  **修正**: 先に`value`を(再帰的に)畳み込み、そのあとで*元の*`value`の形に一致させるのではなく、*畳み込みの結果*を分類する。`RPrimVal`と、`RV`の`RCConstCon`は、どちらも「今は既知の定数である」ことを意味する。
+- **畳み込まれた変数の、木のほかの場所での使用が、書き換えられていなかった。** 既存の算術の畳み込みの`env`は、`ROp`/`RCmpCase`/`RConstCase`からしか参照されず、畳み込み結果を*計算する*ためだけに使われていた。ノード自身の`args`を、その場で書き換えることはなかった。算術では、それで問題がなかった。畳み込みに失敗した`ROp`は、同じ`args`をそのまま出力し直すだけで、失われる情報がなかったからである。しかし`RLet`の、「`body`がもうその変数を参照しないなら、この束縛を捨てる」という検査(`contains (RCLoc var) (freeLocalsR body')`)は、それらの`args`が実際に書き換えられることを前提にしている。たとえば`RAppName`の引数リストの中に未解決の`RCLoc`が残っていると、その変数は「まだ使われている」ように見え続ける。すると、`RLet`(とそれが守る割り当て)が、永久に畳み込まれなくなる。
+
+  **修正**: `RCLocal`のオペランドを持つすべてのノード(`RAppName`、`RApp`、`RUnderApp`、`RExtPrim`、`RStructGet`/`RStructSet`、および`ROp`/`RCmpCase`自身の`args`)も、`env`に対してオペランドを解決するようにした。目的は、`freeLocalsR`が置き換えを見られるようにすることだけである。この処理で、これらのノードが自分自身の値に畳み込まれることはない。
 
 発見は、修正の前後の`--directive dumprcexpr`の出力を比べて行った。`Main.constMaybe`(本体全体が1つの`RCon`で、`RLet`のラッパが一切ないCAF)は、最初から正しく畳み込まれた。`Main.constList`(上記の`RLet`の連鎖の形)と、`Main.main`の中のすべての使用(`printLn constList`など。必ず`RLet`の連鎖を通って到達する)は、2つの修正が両方入るまで、まったく畳み込まれなかった。
 
