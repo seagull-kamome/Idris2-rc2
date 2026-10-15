@@ -18,7 +18,9 @@
 
 ### 何段でも深く沈める
 
-sinkに成功したら、その結果をそのまま返さず、もう一度`applySinkExp`に通す。これが効くのは、`var`が沈んだ先の枝自身が、さらに別の分岐で始まっていて、`var`がその片側でしか読まれない場合である。最初のsinkのあと、`var`の`RLet`はその枝の先頭に来て、分岐ノードを包む形になる。これはまさに、`applySinkExp`の`RLet`ケースが探す形である。したがって、これを再び走査すれば、`trySinkInto`が2回目も働き、`var`はさらに一段深く沈む。これは、使用が1つの枝に限られる分岐がいくらネストしていても、同じ1回の走査で連鎖する。別途、不動点のドライバを用意する必要はない。成功するたびに、`var`の束縛が、有限の木のより小さい部分木へ厳密に移るので、再帰は必ず止まる。この性質の専用テストは、`tests/Test22BranchSinking.idr`の`deepSinkable`である。`ctx`は、*2つ*のネストしたフラグがどちらも`True`のときにだけ読まれ、1回の`Compiler.RC2.Sink`の実行で両方の分岐を通って沈む。
+sinkに成功したら、その結果をそのまま返さず、もう一度`applySinkExp`に通す。再走査が意味を持つのは、`var`が沈んだ先の枝自身が、さらに別の分岐で始まっていて、`var`がその片側でしか読まれない場合である。最初のsinkのあと、`var`の`RLet`はその枝の先頭に来て、分岐ノードを包む形になる。これはまさに、`applySinkExp`の`RLet`ケースが探す形である。したがって、これを再び走査すれば、`trySinkInto`が2回目も働き、`var`はさらに一段深く沈む。
+
+使用が1つの枝に限られる分岐は、いくらネストしていても、同じ1回の走査で連鎖して処理できる。別途、不動点のドライバを用意する必要はない。成功するたびに、`var`の束縛が、有限の木のより小さい部分木へ厳密に移るので、再帰は必ず止まる。この性質の専用テストは、`tests/Test22BranchSinking.idr`の`deepSinkable`である。`ctx`は、*2つ*のネストしたフラグがどちらも`True`のときにだけ読まれ、1回の`Compiler.RC2.Sink`の実行で両方の分岐を通って沈む。
 
 ### `value`が候補になるかの判定(`sinkEligible`)
 
@@ -71,6 +73,12 @@ sinkingが働くのは、**Usedの枝がちょうど1つ**で、ほかのすべ�
 
 同じラッパの節は、ラッパが`value`自身の読むローカル変数(`readBy`)を解放する場合にも、`Nothing`で抜ける。解放とは、そのローカル変数に対する`drop`、`free`、`releaseReuse`、`reuseOffer`である。これは、worldアリティの引き上げ(2026-09-26)で形が変わったあとのidris2-lspに対して`rcexpr-lint`が見つけた。`searchType`に、`case`の前に置かれた`let v1 = (dup n; op -Integer [n, #1] postDrop= [n])`があり、枝の1つは、先へ呼び出す前に`n`を早めにdropしていた(`drop [n, t]`)。`v1`をその枝の`Right`の分岐へ沈めると、`dup n`が`drop [n, ...]`の後ろへ動き、解放後の使用になる。前節のように`var`だけを調べても、これは見えない。`var`は新しい束縛であり、それが読むオペランドは別のローカル変数だからである。
 
+### 先に`dup`されたオペランドを持つ呼び出しをsinkする
+
+idris2-lspに対して`rcexpr-lint`が見つけた(`{rc2_mutualLoop:18}`、`Binder`フィールドの`branch-imbalance`)。`let r = (dup a; dup b; call g [a, b])`を`case`の1つの枝へsinkしたところ、`consumedOperands`が、ほかのすべての枝に`drop [a, b]`を付けた。呼び出しが*元の*参照を消費したものとして扱ったのである。
+
+先頭の`dup`は呼び出しと一緒にsinkされる。したがって呼び出しが消費するのは、その`dup`が追加した参照だけであり、ほかの枝は何も負っていない。`a`と`b`が分岐の後で再び読まれる場合、これは本物の二重dropだった(`malloc`のもとでヒープ破壊を起こす。`tests/Test22BranchSinking`の`sinkCallTwiceH`で再現した)。`RCon`/`ROp`のケースは、`dup`されたオペランドをすでに除外していたが、`RAppName`は除外していなかった。修正として、`consumedOperands`は、呼び出しのオペランドが出現するたびに、`dup`された参照を1つずつ打ち消すようになった。
+
 ## パイプライン上の位置
 
 このパスは、`Compiler.RC2.Loop`(自己末尾呼び出しの変換)の後、`Compiler.RC2.DualABI`の前に走る(`RC2.idr`の`toRCDefs`を参照)。`RLoop`/`RLoopContinue`ノードがすでに最終的な形になっている程度には遅い。そのおかげで、この1つのパスが、ループ本体の内側にも、ループを含まない通常の関数にも、同じように届く。一方、`DualABI`が木の形について考える必要が生じる前でもある。`genuinelyUsedR`/`removeVarDrop`が、どちらも`RLoop`/`RLoopContinue`のケースを持つのは、このためである。このコードベースのほかの木の走査はすべて、パイプライン上で`Compiler.RC2.Loop`より前にあるので、これらのケースが要らなかった。`--directive nosink`を指定すると、この段階だけが無効になる。ほかの任意の段階と同じ規約である(`RC2.idr`の`toRCDefs`のdocコメントを参照)。
@@ -92,4 +100,4 @@ sinkingが働くのは、**Usedの枝がちょうど1つ**で、ほかのすべ�
   - `callSinkable`: 素の`RAppName`呼び出しを沈める(前述の「`value`が候補になるかの判定」を参照)。
   - `skipUnrelatedLet`: 無関係な`let`を越えて沈める(前述の「無関係な`let`を越えるsinking」を参照)。
   - かつて別ファイルだった`Test23SinkPastSelfDrop.idr`の専用の回帰テストも吸収している。これは、このパスが生んだ最も深刻なバグ(リークではなく本物のミスコンパイル。前述の「`var`自身の死を越えて剥がさない」を参照)のものである。`refc-suite/buffer`の`TestBuffer.idr`の形(結果をすぐ捨てる`IO ()`呼び出しの連鎖と、その後の、無関係な値を読む分岐)を、`Data.Buffer`に依存せず直接再現する。
-- `tests/Test111Basics/Recursion.idr`/`tests/Test110Loop/SelfTailLoop.idr`/`refc-suite/buffer/TestBuffer.idr`: 既存のテストである(最初の2つは、推移的に取り込むPreludeの関数を通じて)。上記の4つの本物のバグのうち3つを捕まえた。最初の2つについては、専用の新しい回帰テストは要らない。既存のスイート全体の実行が、すでに両方の形を検査しているからである。3つ目、つまり`TestBuffer.idr`の形には、かつての`Test23SinkPastSelfDrop.idr`のケースを吸収した`Test22BranchSinking.idr`を専用の回帰テストとして用意した。ここで見つかった最も深刻なバグを、`refc-suite`が捕まえ続けることだけに頼るのは、間接的すぎると感じたからである。
+- `tests/Test111Basics/Recursion.idr`/`tests/Test110Loop/SelfTailLoop.idr`/`refc-suite/buffer/TestBuffer.idr`: 既存のテストである(最初の2つは、推移的に取り込むPreludeの関数を通じて)。上記の本物のバグのうち3つを捕まえた。最初の2つについては、専用の新しい回帰テストは要らない。既存のスイート全体の実行が、すでに両方の形を検査しているからである。3つ目、つまり`TestBuffer.idr`の形には、かつての`Test23SinkPastSelfDrop.idr`のケースを吸収した`Test22BranchSinking.idr`を専用の回帰テストとして用意した。ここで見つかった最も深刻なバグを、`refc-suite`が捕まえ続けることだけに頼るのは、間接的すぎると感じたからである。

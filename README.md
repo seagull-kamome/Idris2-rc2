@@ -63,7 +63,7 @@ After cloning the repository, generate the environment configuration file and so
 source env.sh
 ```
 
-- `gen-env.sh` generates `env.sh`, setting `PATH` to point to the self-built compiler in `install/bin` and configuring support library paths (Chez Scheme must be available on `PATH` as `scheme`).
+- `gen-env.sh` generates `env.sh`, setting `PATH` to point to the self-built compiler in `install/bin` and configuring support library paths. The Chez Scheme backend step of `idris2 --build` needs Chez Scheme: Idris 2 takes the executable from the `CHEZ` environment variable, and otherwise looks for `chez`, `chezscheme`, `chez-scheme`, `chezscheme9.5` or `scheme` on `PATH` (`gen-env.sh` itself only checks for `scheme`).
 - `idris2-src/` is a clone of `https://github.com/idris-lang/Idris2.git` used solely as reference material and as the bootstrap source for the self-built Idris 2 compiler (never edited).
 - `install/` is the local installation prefix for build artifacts (gitignored).
 
@@ -143,7 +143,7 @@ A foundational companion package designed to supply capabilities missing from or
 - **Low-Level C Interop & Memory**: POSIX regex (`Text.Regex.POSIX`), GMP integer arithmetic (`Data.Integer.GMP`), memory buffers, raw UTF-8 byte conversions (`Text.Encoding.UTF8`), and explicit reference counting manipulation for opaque FFI values (`System.GC.RC2`).
 - **Compiler Tooling**: Parsers for rc2's dumped IR (`Language.RCExpr.*`).
 
-See [`libs/rc2base/README.md`](libs/rc2base/README.md) for module-by-module design notes. Note that the `postinstall` hook copies libraries to `lib/`, which is essential because rc2 does not auto-discover dependency `lib/` directories.
+See [`libs/rc2base/README.md`](libs/rc2base/README.md) for module-by-module design notes.
 
 ### `libs/text-re2/`: Google RE2 Regex Bindings
 
@@ -201,7 +201,7 @@ Compares two `.rcexpr` IR dumps definition by definition. By normalizing variabl
 ```
 .
 ├── env.sh          Generated environment variables (source before build/run; gitignored)
-├── gen-env.sh       Regenerates env.sh (requires Chez Scheme on PATH as scheme)
+├── gen-env.sh       Regenerates env.sh (checks that Chez Scheme is on PATH as scheme)
 ├── idris2-src/      Clone of github.com/idris-lang/Idris2 (reference & bootstrap source; gitignored)
 ├── install/         Local install prefix for self-built toolchain and rc2 (gitignored)
 ├── libs/rc2base/    Companion native C ABI support library

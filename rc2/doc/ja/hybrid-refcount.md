@@ -64,7 +64,7 @@ typedef struct {
 ランタイムの参照カウントの更新は、`rt.c`のものも含めて、すべてこの2つを通る。
 
 - `dup`、`drop`、`releaseLast`
-- クロージャの`trampoline`、`tailcallApplyClosure`、`dropReuseConstructor`
+- クロージャの`trampoline`と`tailcallApplyClosure`
 
 最初の版はヘルパを4つ(load、add、subtract、acquire)持っていた。そのため`dup`と`drop`はフラグを2回検査しており、1回は`REFCOUNT_MAX`の検査、もう1回は更新のためだった。このせいで`missing-containers`の改善が1.5ポイント失われた(-16.4%ではなく-14.9%)。
 

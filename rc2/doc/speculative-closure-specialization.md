@@ -562,8 +562,7 @@ nolateinline` shows `call Data.List.sortBy [#{{csegen:25}:2}/2~closure,
 
 So the transitive extension alone covers both `sort` and a direct
 `sortBy compare`. The rounds under "Iteration" cover a dictionary that
-SpecConstCon alone makes constant. It stays
-by the iteration described under "Iteration" above.
+SpecConstCon alone makes constant.
 
 ### Bounds
 

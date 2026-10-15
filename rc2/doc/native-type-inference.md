@@ -312,8 +312,9 @@ kinds) were: constructor fields 508, `case`-value `let`s 253,
 `dup` aliases 231, call results 204, other 181, parameters 6, loop
 parameters 1 (a parameter scrutinised by `B8` alts is already a native
 `Bits8` through `paramEligibility`, which is why a whole-program producer
-fixpoint over parameters would add under 1%). The remaining ~504 were
-constructor fields, handled by the next section.
+fixpoint over parameters would add under 1%). The constructor fields (about
+500 of them) are handled by the next section. The origins listed add up to
+1,384, not 1,453, so about 70 are not itemised.
 
 ### Always-unboxed constructor fields (`--directive noboolfield`)
 
