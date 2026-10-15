@@ -77,7 +77,7 @@ sinkingが働くのは、**Usedの枝がちょうど1つ**で、ほかのすべ�
 
 idris2-lspに対して`rcexpr-lint`が見つけた(`{rc2_mutualLoop:18}`、`Binder`フィールドの`branch-imbalance`)。`let r = (dup a; dup b; call g [a, b])`を`case`の1つの枝へsinkしたところ、`consumedOperands`が、ほかのすべての枝に`drop [a, b]`を付けた。呼び出しが*元の*参照を消費したものとして扱ったのである。
 
-先頭の`dup`は呼び出しと一緒にsinkされる。したがって呼び出しが消費するのは、その`dup`が追加した参照だけであり、ほかの枝は何も負っていない。`a`と`b`が分岐の後で再び読まれる場合、これは本物の二重dropだった(`malloc`のもとでヒープ破壊を起こす。`tests/Test133SinkCallDupOperand`で再現した)。`RCon`/`ROp`のケースは、`dup`されたオペランドをすでに除外していたが、`RAppName`は除外していなかった。修正として、`consumedOperands`は、呼び出しのオペランドが出現するたびに、`dup`された参照を1つずつ打ち消すようになった。
+先頭の`dup`は呼び出しと一緒にsinkされる。したがって呼び出しが消費するのは、その`dup`が追加した参照だけであり、ほかの枝は何も負っていない。`a`と`b`が分岐の後で再び読まれる場合、これは本物の二重dropだった(`malloc`のもとでヒープ破壊を起こす。`tests/Test22BranchSinking`の`sinkCallTwiceH`で再現した)。`RCon`/`ROp`のケースは、`dup`されたオペランドをすでに除外していたが、`RAppName`は除外していなかった。修正として、`consumedOperands`は、呼び出しのオペランドが出現するたびに、`dup`された参照を1つずつ打ち消すようになった。
 
 ## パイプライン上の位置
 
@@ -100,4 +100,4 @@ idris2-lspに対して`rcexpr-lint`が見つけた(`{rc2_mutualLoop:18}`、`Bind
   - `callSinkable`: 素の`RAppName`呼び出しを沈める(前述の「`value`が候補になるかの判定」を参照)。
   - `skipUnrelatedLet`: 無関係な`let`を越えて沈める(前述の「無関係な`let`を越えるsinking」を参照)。
   - かつて別ファイルだった`Test23SinkPastSelfDrop.idr`の専用の回帰テストも吸収している。これは、このパスが生んだ最も深刻なバグ(リークではなく本物のミスコンパイル。前述の「`var`自身の死を越えて剥がさない」を参照)のものである。`refc-suite/buffer`の`TestBuffer.idr`の形(結果をすぐ捨てる`IO ()`呼び出しの連鎖と、その後の、無関係な値を読む分岐)を、`Data.Buffer`に依存せず直接再現する。
-- `tests/Test111Basics/Recursion.idr`/`tests/Test110Loop/SelfTailLoop.idr`/`refc-suite/buffer/TestBuffer.idr`: 既存のテストである(最初の2つは、推移的に取り込むPreludeの関数を通じて)。上記の4つの本物のバグのうち3つを捕まえた。最初の2つについては、専用の新しい回帰テストは要らない。既存のスイート全体の実行が、すでに両方の形を検査しているからである。3つ目、つまり`TestBuffer.idr`の形には、かつての`Test23SinkPastSelfDrop.idr`のケースを吸収した`Test22BranchSinking.idr`を専用の回帰テストとして用意した。ここで見つかった最も深刻なバグを、`refc-suite`が捕まえ続けることだけに頼るのは、間接的すぎると感じたからである。
+- `tests/Test111Basics/Recursion.idr`/`tests/Test110Loop/SelfTailLoop.idr`/`refc-suite/buffer/TestBuffer.idr`: 既存のテストである(最初の2つは、推移的に取り込むPreludeの関数を通じて)。上記の本物のバグのうち3つを捕まえた。最初の2つについては、専用の新しい回帰テストは要らない。既存のスイート全体の実行が、すでに両方の形を検査しているからである。3つ目、つまり`TestBuffer.idr`の形には、かつての`Test23SinkPastSelfDrop.idr`のケースを吸収した`Test22BranchSinking.idr`を専用の回帰テストとして用意した。ここで見つかった最も深刻なバグを、`refc-suite`が捕まえ続けることだけに頼るのは、間接的すぎると感じたからである。

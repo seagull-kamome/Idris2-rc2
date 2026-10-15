@@ -317,7 +317,7 @@ difference between `--directive noinline` and default (0.20s vs.
 0.24s) on the same program, meaning the cost sat *inside* `rc2:
 Inline` itself, not downstream of it (unlike the synthetic N-chain
 case earlier, where the size blowup was real but Inline's own
-`collapseCaseOfCase` finished fast and `rc2: RC normalize` absorbed
+`collapse` finished fast and `rc2: RC normalize` absorbed
 the visible wall-clock cost of processing the now-larger tree). A
 large real program has many scattered case-of-case candidate sites
 (not just one pathological chain), each re-walking its own,

@@ -275,7 +275,7 @@ references. The leading `dup`s are sunk together with the call, so the
 call spends only the references they added; the other arm owes
 nothing. When `a` and `b` were read again after the branch this was a
 real double drop (heap corruption under `malloc`, reproduced by
-`tests/Test133SinkCallDupOperand`). The `RCon`/`ROp` cases already
+`tests/Test22BranchSinking`'s `sinkCallTwiceH`). The `RCon`/`ROp` cases already
 excluded `dup`'d operands; `RAppName` did not. Fix: `consumedOperands`
 now cancels one `dup`'d reference per call operand occurrence.
 
@@ -327,7 +327,7 @@ this stage alone, same convention as every other optional stage (see
 - `tests/Test111Basics/Recursion.idr`/`tests/Test110Loop/SelfTailLoop.idr`/
   `refc-suite/buffer/TestBuffer.idr` -- existing tests (the first two
   via Prelude functions they transitively pull in) that caught three
-  of the four real bugs documented above; no dedicated new regression
+  of the real bugs documented above; no dedicated new regression
   test needed for the first two since the existing full-suite run
   already exercises both shapes (the third, `TestBuffer.idr`'s own
   shape, got `Test22BranchSinking.idr`'s own absorbed former

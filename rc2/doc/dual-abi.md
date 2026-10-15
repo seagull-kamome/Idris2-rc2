@@ -301,6 +301,9 @@ all (confirmed the hard way -- see "Bugs found" below):
   worker needing more than `MaxExtractFunArgs` parameters, with at
   least one native, is an explicit `InternalError` for now (matches
   `RAppNameRep`'s own emission-side limit below -- see "Status").
+  That was the state at Stage 3a: "Bugs found and fixed" #6 to #8 record
+  how it ended (the blanket exclusion of #6 was replaced by a proper fix
+  in #7, and #8 raised the limit from 8 to 20).
 - **`emitRC`'s new `RAppNameRep` case**: renders each argument per its
   own `Rep` (mirroring `tryEmitLoopContinue`'s own established
   per-position pattern), calls the worker directly, and handles the
