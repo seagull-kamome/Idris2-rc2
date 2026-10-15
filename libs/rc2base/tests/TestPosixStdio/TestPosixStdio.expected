@@ -47,4 +47,19 @@ rename: ()
 old name gone: True
 remove: ()
 second remove: True
+-- open_memstream
+fputs: ()
+fwrite: 6
+close: ()
+size: 13
+string: Just "hello, stream"
+buffer: "hello, stream"
+fwrite with a NUL: 3
+close: ()
+size: 3
+string: Just "A"
+buffer bytes: (65, (0, 66))
+close: ()
+empty size: 0
+empty string: Just ""
 done

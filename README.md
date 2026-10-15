@@ -127,7 +127,7 @@ libs/rc2base/
 │                  Language.RCExpr.{AST,Lexer,Parser},
 │                  Network.{RC2,URL}, Network.HTTP.{Route,Router,Server},
 │                  System.Concurrency.RC2, System.FFI.C.{Array,Ptr,Sizeof},
-│                  System.GC.RC2, System.Linux.Epoll, System.IO.MemStream,
+│                  System.GC.RC2, System.Linux.Epoll,
 │                  System.Random.Xoroshiro{128PlusPlus,64StarStar},
 │                  Text.Encoding.UTF8, Text.Regex.POSIX
 ├── src/           Idris2 source for the modules above

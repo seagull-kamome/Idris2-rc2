@@ -221,7 +221,7 @@ case needs one specifically.
 `System.Posix.Directory`の`DirEnt`は不透明型+PrimIOのCExprアクセサ(`d_name`/`d_type`/`d_ino`)にし、`readdir`は`DirEntry`へ即コピーして返す。`struct dirent`のようにtypedefが無い構造体は、`Struct "struct dirent" [...]`と`%cg rc2 externStruct=struct dirent`のように、Cの綴り(空白入り)をそのままIdris側の名前と指令に使えば`Struct`で扱える(確認済み、`Test120CStruct/CgSpacedStructName`、`rc2/doc/c-struct-support.md`の Tips)。`DirEnt`をこの方式に切り替えるかは別の判断。
 残したシム: epoll_wait/event_fd/flags(静的配列)、epoll_add/mod(構造体)、set_nonblocking・
 eventfd_signal/drain・close_fd(EINTRのループ)、set_reuseaddr、regexのcompile/exec/free/group_*
-(TLS状態・確保)、TextBufferの確保系、memstream、string_byte_slice、double_convert、
+(TLS状態・確保)、TextBufferの確保系、string_byte_slice、double_convert、
 xoroshiroの`*_sys`、concurrency_util。
 `_GNU_SOURCE`が要る宣言(`O_DIRECT`/`O_LARGEFILE`/`O_NOATIME`/`O_PATH`/`O_TMPFILE`/`AT_EMPTY_PATH`/
 `SEEK_DATA`/`SEEK_HOLE`/`dup3`/`preadv2`/`pwritev2`)は、環境変数`IDRIS2_CFLAGS=-D_GNU_SOURCE`

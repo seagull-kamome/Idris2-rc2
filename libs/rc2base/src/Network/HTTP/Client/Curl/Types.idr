@@ -58,7 +58,7 @@ curlopt_HTTPHEADER = MkCURLoption 10023 -- CURLOPTTYPE_OBJECTPOINT + 23
 ||| `CURLOPT_WRITEFUNCTION` is left unset -- `fwrite(ptr, size, nmemb,
 ||| (FILE *) this)`, i.e. `CURLOPTTYPE_CBPOINT` (`CURLOPTTYPE_OBJECTPOINT`
 ||| itself, curl/curl.h's own `#define`), not a callback in its own
-||| right. See `Network.HTTP.Client.Curl.Raw`'s own `curlMemstreamOpen`/`Filep` for
+||| right. See `System.Posix.Stdio.openMemstream` and `memstreamFilePtr` for
 ||| why this is enough to capture a response body into Idris without
 ||| ever binding `CURLOPT_WRITEFUNCTION` itself.
 public export
