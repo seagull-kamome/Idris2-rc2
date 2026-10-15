@@ -88,8 +88,8 @@ testListing = do
 testDirfd : IO ()
 testDirfd = do
   d <- opendir dir
-  Just dd <- dirfd d
-    | Nothing => putStrLn "dirfd failed"
+  Right dd <- dirfd d
+    | Left _ => putStrLn "dirfd failed"
   putStrLn ("dirfd ok: " ++ show (dd.rawdirfd >= 0))
   pos <- telldir d
   seekdir d pos

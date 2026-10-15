@@ -27,6 +27,8 @@ withFdPair call = do
   res <- if rc == 0
             then do r <- primIO (prim__intAt p 0)
                     w <- primIO (prim__intAt p 1)
+                    -- `pipe` and `pipe2` give two non-negative numbers when they succeed;
+                    -- `EBADF` (and an open descriptor left behind) is unreachable.
                     pure (maybe (Left EBADF) Right (MkPair <$> mkFileDesc r <*> mkFileDesc w))
             else Left <$> errno
   free p

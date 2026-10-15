@@ -3,6 +3,7 @@ module System.Posix.Directory
 import Data.Buffer
 import Data.String.FFI
 import System.FFI
+import System.Posix.Errno
 import System.Posix.FileDesc
 
 
@@ -219,12 +220,10 @@ chroot path = primIO $ prim__chroot path
 %inline %foreign "CExpr:(dirfd($1)),libc,sys/types.h;dirent.h"
 prim__dirfd : DIRPtr -> PrimIO Int32
 
-||| Convert a directory stream pointer to a directory descriptor.
+||| The directory descriptor of a directory stream, or the `errno`.
 %inline public export
-dirfd : DIRPtr -> IO (Maybe DirDesc)
-dirfd dir = do
-  dirfd <- primIO $ prim__dirfd dir
-  pure (mkDirDesc dirfd)
+dirfd : DIRPtr -> IO (Either Errno DirDesc)
+dirfd dir = primIO (prim__dirfd dir) >>= primFdToDirDesc
 
 
 

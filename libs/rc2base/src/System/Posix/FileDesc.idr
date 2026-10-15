@@ -61,6 +61,13 @@ mkDirDesc fd = case choose (fd >= 0) of
   Left ok => Just (MkDirDesc fd)
   Right _ => Nothing
 
+||| Like `primFdToFileDesc`, for a directory descriptor.
+public export
+primFdToDirDesc : Int32 -> IO (Either Errno DirDesc)
+primFdToDirDesc fd = case mkDirDesc fd of
+  Just d => pure (Right d)
+  Nothing => Left <$> errno
+
 ||| A file descriptor of a directory (opened with `O_DIRECTORY`) as a directory
 ||| descriptor, and the other way round.
 public export
