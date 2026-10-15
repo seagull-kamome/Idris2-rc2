@@ -26,7 +26,7 @@ public export opendir : String -> IO DIRPtr
 opendir filename = primIO $ prim__opendir filename
 
 %inline %foreign "CExpr:(fdopendir($1)),libc,sys/types.h;dirent.h"
-prim__fdopendir : Bits32 -> PrimIO DIRPtr
+prim__fdopendir : Int32 -> PrimIO DIRPtr
 
 ||| Create a directory stream from an open directory file descriptor.
 public export fdopendir : FileDesc -> IO DIRPtr
@@ -175,7 +175,7 @@ chdir path = primIO $ prim__chdir path
 
 
 %inline %foreign "CExpr:(fchdir($1)),libc,unistd.h"
-prim__fchdir : Bits32 -> PrimIO Int32
+prim__fchdir : Int32 -> PrimIO Int32
 
 ||| Change the process working directory using a directory descriptor.
 public export fchdir : DirDesc -> IO Int32
@@ -224,9 +224,7 @@ prim__dirfd : DIRPtr -> PrimIO Int32
 dirfd : DIRPtr -> IO (Maybe DirDesc)
 dirfd dir = do
   dirfd <- primIO $ prim__dirfd dir
-  if dirfd < 0
-     then pure Nothing
-     else pure $ Just $ MkDirDesc $ cast{to=Bits32} dirfd
+  pure (mkDirDesc dirfd)
 
 
 

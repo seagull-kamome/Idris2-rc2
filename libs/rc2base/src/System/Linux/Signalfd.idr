@@ -40,7 +40,7 @@ prim__signalfd : Int32 -> GCPtr RawSigSet -> Bits32 -> PrimIO Int32
 %inline %foreign "CExpr:(sizeof(struct signalfd_siginfo)),libc,sys/signalfd.h"
 prim__sizeofInfo : Int
 %inline %foreign "CExpr:(read($1, $2, sizeof(struct signalfd_siginfo))),libc,sys/signalfd.h;unistd.h"
-prim__readInfo : Bits32 -> AnyPtr -> PrimIO Int64
+prim__readInfo : Int32 -> AnyPtr -> PrimIO Int64
 %inline %foreign "CExpr:(((struct signalfd_siginfo *)($1))->ssi_signo),libc,sys/signalfd.h"
 prim__ssi_signo : AnyPtr -> PrimIO Int32
 %inline %foreign "CExpr:(((struct signalfd_siginfo *)($1))->ssi_errno),libc,sys/signalfd.h"
@@ -71,7 +71,7 @@ signalfd s flags = do
 export
 signalfdSet : FileDesc -> SigSet -> (flags : Bits32) -> IO (Either Errno ())
 signalfdSet fd s flags = do
-  r <- primIO (prim__signalfd (cast fd.rawfd) s flags)
+  r <- primIO (prim__signalfd fd.rawfd s flags)
   map (map (const ())) (checkNonNeg r)
 
 ||| Take the next pending signal. Blocks until there is one, or `Left EAGAIN`

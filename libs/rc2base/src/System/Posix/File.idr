@@ -137,7 +137,7 @@ creat pathname mode =
 
 
 %inline %foreign "CExpr:(openat($1, $2, $3, $4)),libc,fcntl.h;sys/stat.h;sys/types.h"
-prim__openat : Bits32 -> String -> Bits32 -> Bits32 -> PrimIO Int32
+prim__openat : Int32 -> String -> Bits32 -> Bits32 -> PrimIO Int32
 
 ||| Open a file relative to a directory descriptor.
 public export
@@ -152,7 +152,7 @@ openat dirfd  pathname flags mode =
 -- prim_newOpenHow : PrimIO OpenHow
 --
 -- %inline %foreign "CExpr:(openat2($1, $2, $3, $4)),libc,fcntl.h;sys/stat.h;sys/types.h"
--- prim_openat2 : Bits32 -> String -> OpenHow -> Int64 -> PrimIO Int32
+-- prim_openat2 : Int32 -> String -> OpenHow -> Int64 -> PrimIO Int32
 
 
 
@@ -161,9 +161,9 @@ openat dirfd  pathname flags mode =
 
 namespace String
   -- %inline %foreign "CExpr:(read($1, $2, $3)),libc,unistd.h"
-  -- prim__read : Bits32 -> String -> Bits64 -> PrimIO Int64
+  -- prim__read : Int32 -> String -> Bits64 -> PrimIO Int64
   %inline %foreign "CExpr:(write($1, $2, $3)),libc,unistd.h"
-  prim__write : Bits32 -> String -> Bits64 -> PrimIO Int64
+  prim__write : Int32 -> String -> Bits64 -> PrimIO Int64
 
   -- %inline public export
   -- read : FileDesc -> Bits32 -> IO (Maybe String)
@@ -179,9 +179,9 @@ namespace String
 
 namespace AnyPtr
   %inline %foreign "CExpr:(read($1, $2, $3)),libc,unistd.h"
-  prim__read : Bits32 -> AnyPtr -> Bits64 -> PrimIO Int64
+  prim__read : Int32 -> AnyPtr -> Bits64 -> PrimIO Int64
   %inline %foreign "CExpr:(write($1, $2, $3)),libc,unistd.h"
-  prim__write : Bits32 -> AnyPtr -> Bits64 -> PrimIO Int64
+  prim__write : Int32 -> AnyPtr -> Bits64 -> PrimIO Int64
 
   ||| Read up to `count` bytes from a file descriptor into memory.
   %inline public export
@@ -197,9 +197,9 @@ namespace AnyPtr
 
 namespace Buffer
   %inline %foreign "CExpr:(read($1, $2, $3)),libc,unistd.h"
-  prim__read : Bits32 -> Buffer -> Bits64 -> PrimIO Int64
+  prim__read : Int32 -> Buffer -> Bits64 -> PrimIO Int64
   %inline %foreign "CExpr:(write($1, $2, $3)),libc,unistd.h"
-  prim__write : Bits32 -> Buffer -> Bits64 -> PrimIO Int64
+  prim__write : Int32 -> Buffer -> Bits64 -> PrimIO Int64
 
   ||| Read the entire buffer from a file descriptor.
   %inline public export
@@ -275,7 +275,7 @@ SEEK_HOLE = MkSeekWhence prim__SEEK_HOLE
 
 -- TODO: off_tが32bitだった場合の対応
 %inline %foreign "CExpr:(lseek($1, $2, $3)),libc,sys/types.h;unistd.h"
-prim__lseekSet : Bits32 -> Int64 -> Bits32 -> PrimIO Int64
+prim__lseekSet : Int32 -> Int64 -> Bits32 -> PrimIO Int64
 
 ||| Move the file offset of a file descriptor relative to a seek origin.
 %inline public export
@@ -288,7 +288,7 @@ lseek fd (MkFileOffset offset) (MkSeekWhence whence) =
 -- fallocate
 
 %inline %foreign "CExpr:(posix_fallocate($1, $2, $3)),libc,fcntl.h"
-prim__fallocate : Bits32 -> Int64 -> Int64 -> PrimIO Int32
+prim__fallocate : Int32 -> Int64 -> Int64 -> PrimIO Int32
 
 ||| Reserve space for a file region without modifying the file contents.
 %inline public export
@@ -311,7 +311,7 @@ chmod filename mode = primIO $ prim__chmod filename mode
 
 
 %inline %foreign "CExpr:(fchmod($1, $2)),libc,sys/stat.h"
-prim__fchmod : Bits32  -> Bits32 -> PrimIO Int32
+prim__fchmod : Int32 -> Bits32 -> PrimIO Int32
 
 ||| Change the permissions of an open file descriptor.
 %inline public export
@@ -321,7 +321,7 @@ fchmod fd mode = primIO $ prim__fchmod fd.rawfd mode
 
 
 %inline %foreign "CExpr:(fchmodat($1, $2, $3, $4)),libc,fcntl.h;sys/stat.h"
-prim__fchmodat : Bits32  -> String -> Bits32 -> Bits32 -> PrimIO Int32
+prim__fchmodat : Int32 -> String -> Bits32 -> Bits32 -> PrimIO Int32
 
 ||| Change the permissions of a path relative to a directory descriptor.
 %inline public export
@@ -343,7 +343,7 @@ chown : String -> Bits32 -> Bits32 -> IO Int32
 chown filename owner group = primIO $ prim__chown filename owner group
 
 %inline %foreign "CExpr:(fchown($1, $2, $3)),libc,unistd.h"
-prim__fchown : Bits32 -> Bits32 -> Bits32 -> PrimIO Int32
+prim__fchown : Int32 -> Bits32 -> Bits32 -> PrimIO Int32
 
 ||| Change the owner of an open file descriptor.
 %inline public export
@@ -360,7 +360,7 @@ lchown filename owner group = primIO $ prim__lchown filename owner group
 
 
 %inline %foreign "CExpr:(fchownat($1, $2, $3, $4, $5)),libc,fcntl.h;unistd.h"
-prim__fchownat : Bits32  -> String -> Bits32 -> Bits32 -> Bits32 -> PrimIO Int32
+prim__fchownat : Int32 -> String -> Bits32 -> Bits32 -> Bits32 -> PrimIO Int32
 
 ||| Change the owner of a path relative to a directory descriptor.
 %inline public export
@@ -374,11 +374,11 @@ fchownat dirfd pathname owner group flags =
 -- flock / funlock
 
 %inline %foreign "CExpr:(flock($1, LOCK_SH)),libc,sys/file.h"
-prim__flockShared : Bits32 -> PrimIO Int32
+prim__flockShared : Int32 -> PrimIO Int32
 %inline %foreign "CExpr:(flock($1, LOCK_EX)),libc,sys/file.h"
-prim__flockExclude : Bits32 -> PrimIO Int32
+prim__flockExclude : Int32 -> PrimIO Int32
 %inline %foreign "CExpr:(flock($1, LOCK_UN)),libc,sys/file.h"
-prim__funlock : Bits32 -> PrimIO Int32
+prim__funlock : Int32 -> PrimIO Int32
 
 ||| Acquire a shared lock on a file descriptor.
 |||
@@ -406,13 +406,13 @@ funlock fd = primIO $ prim__funlock fd.rawfd
 -- locf
 
 %inline %foreign "CExpr:(lockf($1, F_LOCK, $2)),libc,unistd.h"
-prim__lockf : Bits32 -> Int64 -> PrimIO Int32
+prim__lockf : Int32 -> Int64 -> PrimIO Int32
 %inline %foreign "CExpr:(lockf($1, F_TLOCK, $2)),libc,unistd.h"
-prim__lockfTestAndLock : Bits32 -> Int64 -> PrimIO Int32
+prim__lockfTestAndLock : Int32 -> Int64 -> PrimIO Int32
 %inline %foreign "CExpr:(lockf($1, F_ULOCK, $2)),libc,unistd.h"
-prim__lockfUnlock : Bits32 -> Int64 -> PrimIO Int32
+prim__lockfUnlock : Int32 -> Int64 -> PrimIO Int32
 %inline %foreign "CExpr:(lockf($1, F_TEST, $2)),libc,unistd.h"
-prim__lockfTest : Bits32 -> Int64 -> PrimIO Int32
+prim__lockfTest : Int32 -> Int64 -> PrimIO Int32
 
 ||| Lock a file region.
 %inline public export
@@ -440,11 +440,11 @@ lockfTest fd len = primIO (prim__lockfTest fd.rawfd len)
 
 
 %inline %foreign "CExpr:(dup($1)),libc,unistd.h"
-prim__dup : Bits32 -> PrimIO Int32
+prim__dup : Int32 -> PrimIO Int32
 %inline %foreign "CExpr:(dup2($1, $2)),libc,unistd.h"
-prim__dup2 : Bits32 -> Bits32 -> PrimIO Int32
+prim__dup2 : Int32 -> Int32 -> PrimIO Int32
 %inline %foreign "CExpr:(dup3($1, $2, $3)),libc,fcntl.h;unistd.h"
-prim__dup3 : Bits32 -> Bits32 -> Bits32 -> PrimIO Int32
+prim__dup3 : Int32 -> Int32 -> Bits32 -> PrimIO Int32
 
 ||| Duplicate a file descriptor onto the lowest free number.
 |||
@@ -490,7 +490,7 @@ sync : IO ()
 sync = primIO prim__sync
 
 %inline %foreign "CExpr:(fsync($1)),libc,unistd.h"
-prim__fsync : Bits32 -> PrimIO Int32
+prim__fsync : Int32 -> PrimIO Int32
 ||| Synchronize a file's in-core state with storage device.
 %inline public export
 fsync : FileDesc -> IO Int32
@@ -498,7 +498,7 @@ fsync fd = primIO $ prim__fsync fd.rawfd
 
 
 %inline %foreign "CExpr:(fdatasync($1)),libc,unistd.h"
-prim__fdatasync : Bits32 -> PrimIO Int32
+prim__fdatasync : Int32 -> PrimIO Int32
 ||| Synchronize a file's in-core data with storage device.
 %inline public export
 fdatasync : FileDesc -> IO Int32

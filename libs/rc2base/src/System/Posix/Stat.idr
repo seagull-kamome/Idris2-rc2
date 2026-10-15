@@ -211,7 +211,7 @@ prim__stat : String -> AnyPtr -> PrimIO Int32
 %inline %foreign "CExpr:(lstat($1, (struct stat *)($2))),libc,sys/stat.h"
 prim__lstat : String -> AnyPtr -> PrimIO Int32
 %inline %foreign "CExpr:(fstat($1, (struct stat *)($2))),libc,sys/stat.h"
-prim__fstat : Bits32 -> AnyPtr -> PrimIO Int32
+prim__fstat : Int32 -> AnyPtr -> PrimIO Int32
 %inline %foreign "CExpr:(fstatat($1, $2, (struct stat *)($3), $4)),libc,fcntl.h;sys/stat.h"
 prim__fstatat : Int32 -> String -> AnyPtr -> Bits32 -> PrimIO Int32
 
@@ -238,7 +238,7 @@ prim__AT_FDCWD : Int32
 export
 fstatat : Maybe DirDesc -> String -> (flags : Bits32) -> IO (Either Errno Stat)
 fstatat dir path flags =
-  let d = maybe prim__AT_FDCWD (\x => cast x.rawdirfd) dir
+  let d = maybe prim__AT_FDCWD (\x => x.rawdirfd) dir
   in statWith (\p => prim__fstatat d path p flags)
 
 -------------------------------------------------------------------------------
@@ -272,7 +272,7 @@ access path mode = primIO (prim__access path mode) >>= checkUnit
 %inline %foreign "CExpr:(truncate($1, $2)),libc,unistd.h;sys/types.h"
 prim__truncate : String -> Int64 -> PrimIO Int32
 %inline %foreign "CExpr:(ftruncate($1, $2)),libc,unistd.h;sys/types.h"
-prim__ftruncate : Bits32 -> Int64 -> PrimIO Int32
+prim__ftruncate : Int32 -> Int64 -> PrimIO Int32
 
 ||| Set the size of a file given by path.
 export
@@ -325,7 +325,7 @@ utimensat dir path at mt flags = do
   writeTimeSpec p (setTimeSpec at)
   q <- primIO (prim__nextTimeSpec p)
   writeTimeSpec q (setTimeSpec mt)
-  let d = maybe prim__AT_FDCWD (\x => cast x.rawdirfd) dir
+  let d = maybe prim__AT_FDCWD (\x => x.rawdirfd) dir
   r <- primIO (prim__utimensat d path p flags)
   res <- checkUnit r
   free p

@@ -62,7 +62,7 @@ poll fds timeout = do
     fill : AnyPtr -> Int -> List (FileDesc, PollEvents) -> IO ()
     fill p i [] = pure ()
     fill p i ((fd, ev) :: rest) = do
-      _ <- primIO (prim__set_fd p i (cast fd.rawfd))
+      _ <- primIO (prim__set_fd p i fd.rawfd)
       _ <- primIO (prim__set_events p i ev)
       fill p (i + 1) rest
     collect : AnyPtr -> Int -> Nat -> IO (List PollEvents)

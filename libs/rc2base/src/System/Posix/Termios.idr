@@ -278,7 +278,7 @@ export VWERASE : Bits32
 
 
 %inline %foreign "CExpr:(tcgetattr($1, $2)),libc,termios.h;unistd.h"
-prim__tcgetattr : Bits32 -> GCPtr RawTermios -> PrimIO Int32
+prim__tcgetattr : Int32 -> GCPtr RawTermios -> PrimIO Int32
 
 public export
 tcgetattr : FileDesc -> IO (Either Errno Termios)
@@ -428,7 +428,7 @@ export TCION : Int32
 -- Attributes
 
 %inline %foreign "CExpr:(tcsetattr($1, $2, $3)),libc,termios.h;unistd.h"
-prim__tcsetattr : Bits32 -> Int32 -> GCPtr RawTermios -> PrimIO Int32
+prim__tcsetattr : Int32 -> Int32 -> GCPtr RawTermios -> PrimIO Int32
 
 ||| When `tcsetattr` takes effect.
 public export
@@ -468,13 +468,13 @@ tcsetattr fd (MkTCSAOption opts) ios =
 -- Line control
 
 %inline %foreign "CExpr:(tcsendbreak($1, $2)),libc,termios.h;unistd.h"
-prim__tcsendbreak : Bits32 -> Int32 -> PrimIO Int32
+prim__tcsendbreak : Int32 -> Int32 -> PrimIO Int32
 %inline %foreign "CExpr:(tcdrain($1)),libc,termios.h;unistd.h"
-prim__tcdrain : Bits32 -> PrimIO Int32
+prim__tcdrain : Int32 -> PrimIO Int32
 %inline %foreign "CExpr:(tcflush($1, $2)),libc,termios.h;unistd.h"
-prim__tcflush : Bits32 -> Int32 -> PrimIO Int32
+prim__tcflush : Int32 -> Int32 -> PrimIO Int32
 %inline %foreign "CExpr:(tcflow($1, $2)),libc,termios.h;unistd.h"
-prim__tcflow : Bits32 -> Int32 -> PrimIO Int32
+prim__tcflow : Int32 -> Int32 -> PrimIO Int32
 
 ||| Send a break (zero bits for `duration`; 0 means the usual 0.25 to 0.5 s).
 public export
@@ -547,15 +547,15 @@ cfsetspeed ios speed = primIO (prim__cfsetspeed ios speed) >>= status
 -- Terminal identity and process groups
 
 %inline %foreign "CExpr:(isatty($1)),libc,unistd.h"
-prim__isatty : Bits32 -> PrimIO Int32
+prim__isatty : Int32 -> PrimIO Int32
 %inline %foreign "CExpr:(ttyname_r($1, $2, $3)),libc,unistd.h"
-prim__ttyname_r : Bits32 -> AnyPtr -> Bits64 -> PrimIO Int32
+prim__ttyname_r : Int32 -> AnyPtr -> Bits64 -> PrimIO Int32
 %inline %foreign "CExpr:(tcgetpgrp($1)),libc,unistd.h"
-prim__tcgetpgrp : Bits32 -> PrimIO Int32
+prim__tcgetpgrp : Int32 -> PrimIO Int32
 %inline %foreign "CExpr:(tcsetpgrp($1, $2)),libc,unistd.h"
-prim__tcsetpgrp : Bits32 -> Int32 -> PrimIO Int32
+prim__tcsetpgrp : Int32 -> Int32 -> PrimIO Int32
 %inline %foreign "CExpr:(tcgetsid($1)),libc,termios.h;unistd.h"
-prim__tcgetsid : Bits32 -> PrimIO Int32
+prim__tcgetsid : Int32 -> PrimIO Int32
 
 ||| True when the descriptor refers to a terminal.
 public export
@@ -604,11 +604,11 @@ tcgetsid fd = do
 %inline %foreign "CExpr:(posix_openpt($1)),libc,stdlib.h;fcntl.h"
 prim__posix_openpt : Bits32 -> PrimIO Int32
 %inline %foreign "CExpr:(grantpt($1)),libc,stdlib.h"
-prim__grantpt : Bits32 -> PrimIO Int32
+prim__grantpt : Int32 -> PrimIO Int32
 %inline %foreign "CExpr:(unlockpt($1)),libc,stdlib.h"
-prim__unlockpt : Bits32 -> PrimIO Int32
+prim__unlockpt : Int32 -> PrimIO Int32
 %inline %foreign "CExpr:(ptsname($1)),libc,stdlib.h"
-prim__ptsname : Bits32 -> PrimIO AnyPtr
+prim__ptsname : Int32 -> PrimIO AnyPtr
 
 ||| Open the master side of a new pseudo-terminal. `flags` is `O_RDWR` (2)
 ||| with optionally `O_NOCTTY`.

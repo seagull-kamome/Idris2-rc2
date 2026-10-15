@@ -73,7 +73,7 @@ testConstants = do
 ||| Anonymous read/write mapping.
 testAnonymous : IO ()
 testAnonymous = do
-  Just p <- mmap nullPtr 4096 (PROT_READ + PROT_WRITE) (MAP_PRIVATE + MAP_ANONYMOUS) (MkFileDesc 4294967295) 0
+  Just p <- mmap nullPtr 4096 (PROT_READ + PROT_WRITE) (MAP_PRIVATE + MAP_ANONYMOUS) Nothing 0
     | Nothing => putStrLn "anonymous mmap failed"
   let bytes : Ptr Bits8 = prim__castPtr p
   unsafePtrStore bytes 0 42
@@ -89,7 +89,7 @@ testFileBacked : IO ()
 testFileBacked = do
   Right fd <- openFile path 0 0
     | Left e => putStrLn ("open failed: " ++ show e)
-  Just q <- mmap nullPtr 11 PROT_READ MAP_PRIVATE fd 0
+  Just q <- mmap nullPtr 11 PROT_READ MAP_PRIVATE (Just fd) 0
     | Nothing => putStrLn "file mmap failed"
   let fb : Ptr Bits8 = prim__castPtr q
   f0 <- unsafePtrFetch fb 0
@@ -102,7 +102,7 @@ testFileBacked = do
 ||| A failing mmap: zero length is EINVAL.
 testZeroLength : IO ()
 testZeroLength = do
-  r <- mmap nullPtr 0 PROT_READ (MAP_PRIVATE + MAP_ANONYMOUS) (MkFileDesc 4294967295) 0
+  r <- mmap nullPtr 0 PROT_READ (MAP_PRIVATE + MAP_ANONYMOUS) Nothing 0
   putStrLn ("zero length: " ++ maybe "Nothing" (const "Just") r)
 
 
