@@ -62,6 +62,16 @@ prim__kill : Int32 -> Int32 -> PrimIO Int32
 %inline public export kill : ProcessID -> Signal -> IO (Either Errno ())
 kill (MkProcessID pid) (MkSignal sig) = primIO (prim__kill pid sig) >>= checkUnit
 
+%inline %foreign "CExpr:(sigqueue($1, $2, (union sigval){ .sival_int = ($3) })),libc,signal.h"
+prim__sigqueue : Int32 -> Int32 -> Int32 -> PrimIO Int32
+
+||| Send a signal with an integer value, which the receiver reads from
+||| `siginfo` (`signalfd`). The queue is bounded: `Left EAGAIN`
+||| when it is full.
+export
+sigqueue : ProcessID -> Signal -> (value : Int32) -> IO (Either Errno ())
+sigqueue (MkProcessID pid) (MkSignal sig) v = primIO (prim__sigqueue pid sig v) >>= checkUnit
+
 
 -- exit should'nt be implemented in Idris2, but we need it for the FFI.  It should be used with care.
 %foreign "CExpr:(exit($1)),libc,stdlib.h"

@@ -24,6 +24,10 @@ signalfd read: True, sent by this process: True
 no alarm was set before: True
 SIGALRM taken by sigwait: Right True
 nothing left to cancel: True
+sigtimedwait, nothing pending: errno 11
+sigtimedwait takes it: Right True
+sigqueue to self: ok
+sigtimedwait takes the queued one: Right True
 -- inotify
 no events yet: errno 11
 events: [(True, (True, False)), (True, (False, True))]

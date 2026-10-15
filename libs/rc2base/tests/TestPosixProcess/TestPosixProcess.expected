@@ -40,6 +40,18 @@ nonblock set: True
 dupfd at least 10: True
 hangup with data pending: Right [True]
 closed descriptor: Right [True]
+-- select
+empty pipe (readable, writable): Right (0, 1)
+after write: readable Right 1
+descriptor past FD_SETSIZE: errno 22
+-- pwd, grp, syslog
+uid 0: Right (Just ("root", (0, 0)))
+root by name: Right (Just 0)
+missing user: Right Nothing
+gid 0: Right (Just ("root", 0))
+missing group: Right Nothing
+own entry has a shell and a home: Right (Just True)
+syslog: no crash
 -- exec
 execv missing: errno 2
 exec sh -c 'exit 3': exited Just 3, signal Nothing

@@ -18,6 +18,9 @@ import System.Posix.Fcntl
 import System.Posix.File
 import System.Posix.FileDesc
 import System.Posix.Poll
+import System.Posix.Pwd
+import System.Posix.Select
+import System.Posix.Syslog
 import System.Posix.Process
 import System.Posix.Signal
 import System.Posix.Time
@@ -160,6 +163,35 @@ testExec = do
     | Left _ => putStrLn "waitpid failed"
   putStrLn ("execve with env: exited " ++ show (exitedWith st2))
 
+testSelect : IO ()
+testSelect = do
+  putStrLn "-- select"
+  Right (rd, wr) <- pipe
+    | Left _ => putStrLn "pipe failed"
+  select [rd] [wr] [] (Just 0) >>= \r =>
+    putStrLn ("empty pipe (readable, writable): " ++ show (map (\x => (length x.readable, length x.writable)) r))
+  _ <- write wr "ping"
+  select [rd] [] [] (Just 1000) >>= \r =>
+    putStrLn ("after write: readable " ++ show (map (\x => length x.readable) r))
+  _ <- close wr
+  _ <- close rd
+  select [MkFileDesc 5000] [] [] (Just 0) >>= \r => putStrLn ("descriptor past FD_SETSIZE: " ++ errOf r)
+
+testPwd : IO ()
+testPwd = do
+  putStrLn "-- pwd, grp, syslog"
+  getpwuid 0 >>= \r => putStrLn ("uid 0: " ++ show (map (map (\p => (p.name, p.uid, p.gid))) r))
+  getpwnam "root" >>= \r => putStrLn ("root by name: " ++ show (map (map (\p => p.uid)) r))
+  getpwnam "no-such-user-rc2base" >>= \r => putStrLn ("missing user: " ++ show (map (map (\p => p.name)) r))
+  getgrgid 0 >>= \r => putStrLn ("gid 0: " ++ show (map (map (\g => (g.name, g.gid))) r))
+  getgrnam "no-such-group-rc2base" >>= \r => putStrLn ("missing group: " ++ show (map (map (\g => g.name)) r))
+  me <- getuid
+  getpwuid me >>= \r => putStrLn ("own entry has a shell and a home: " ++ show (map (map (\p => p.dir /= "" && p.shell /= "")) r))
+  openlog "rc2base-test" (LOG_PID .|. LOG_NDELAY) LOG_USER
+  syslog LOG_DEBUG "rc2base test message"
+  closelog
+  putStrLn "syslog: no crash"
+
 main : IO ()
 main = do
   opt "WEXITED" WEXITED
@@ -171,6 +203,8 @@ main = do
   testTime
   testInfo
   testPipe
+  testSelect
+  testPwd
   testExec
   putStrLn ("getpid positive: " ++ show (cast {to=Int32} me > 0))
   kill me (cast {to=Signal} (the Int32 0)) >>= \r => putStrLn ("kill self 0: " ++ errOf r)
