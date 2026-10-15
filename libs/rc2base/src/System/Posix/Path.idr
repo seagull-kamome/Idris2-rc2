@@ -125,7 +125,7 @@ mkstemp template = do
              pure (Left e)
      else case ptrToString buf of
                Nothing => free buf >> pure (Left (MkErrno 84))
-               Just name => free buf >> pure (Right (MkFileDesc (cast r), name))
+               Just name => free buf >> pure (maybe (Left EBADF) (\d => Right (d, name)) (mkFileDesc r))
 
 ||| Create a unique temporary directory from a template ending in `XXXXXX`;
 ||| returns the directory's name.

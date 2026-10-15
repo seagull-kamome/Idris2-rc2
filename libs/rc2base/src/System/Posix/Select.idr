@@ -60,7 +60,7 @@ select rs ws es timeout =
                     _ <- primIO (prim__set_tv_sec tp (ms `div` 1000))
                     _ <- primIO (prim__set_tv_usec tp ((ms `mod` 1000) * 1000))
                     pure tp
-       let nfds = foldl (\m, fd => max m (cast fd.rawfd + 1)) 0 (rs ++ ws ++ es)
+       let nfds = foldl (\m, fd => max m (fd.rawfd + 1)) 0 (rs ++ ws ++ es)
        rc <- primIO (prim__select nfds rp wp ep tv)
        res <- if rc < 0
                  then Left <$> errno
@@ -78,11 +78,11 @@ select rs ws es timeout =
     newSet fds = do
       p <- malloc prim__sizeofFdSet
       _ <- primIO (prim__fdZero p)
-      traverse_ (\fd => primIO (prim__fdSet (cast fd.rawfd) p)) fds
+      traverse_ (\fd => primIO (prim__fdSet fd.rawfd p)) fds
       pure p
     pick : AnyPtr -> List FileDesc -> IO (List FileDesc)
     pick p [] = pure []
     pick p (fd :: rest) = do
-      set <- primIO (prim__fdIsSet (cast fd.rawfd) p)
+      set <- primIO (prim__fdIsSet fd.rawfd p)
       more <- pick p rest
       pure (if set /= 0 then fd :: more else more)

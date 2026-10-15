@@ -3,6 +3,7 @@ module System.Posix.Directory
 import Data.Buffer
 import Data.String.FFI
 import System.FFI
+import System.Posix.Errno
 import System.Posix.FileDesc
 
 
@@ -26,7 +27,7 @@ public export opendir : String -> IO DIRPtr
 opendir filename = primIO $ prim__opendir filename
 
 %inline %foreign "CExpr:(fdopendir($1)),libc,sys/types.h;dirent.h"
-prim__fdopendir : Bits32 -> PrimIO DIRPtr
+prim__fdopendir : Int32 -> PrimIO DIRPtr
 
 ||| Create a directory stream from an open directory file descriptor.
 public export fdopendir : FileDesc -> IO DIRPtr
@@ -175,7 +176,7 @@ chdir path = primIO $ prim__chdir path
 
 
 %inline %foreign "CExpr:(fchdir($1)),libc,unistd.h"
-prim__fchdir : Bits32 -> PrimIO Int32
+prim__fchdir : Int32 -> PrimIO Int32
 
 ||| Change the process working directory using a directory descriptor.
 public export fchdir : DirDesc -> IO Int32
@@ -219,14 +220,10 @@ chroot path = primIO $ prim__chroot path
 %inline %foreign "CExpr:(dirfd($1)),libc,sys/types.h;dirent.h"
 prim__dirfd : DIRPtr -> PrimIO Int32
 
-||| Convert a directory stream pointer to a directory descriptor.
+||| The directory descriptor of a directory stream, or the `errno`.
 %inline public export
-dirfd : DIRPtr -> IO (Maybe DirDesc)
-dirfd dir = do
-  dirfd <- primIO $ prim__dirfd dir
-  if dirfd < 0
-     then pure Nothing
-     else pure $ Just $ MkDirDesc $ cast{to=Bits32} dirfd
+dirfd : DIRPtr -> IO (Either Errno DirDesc)
+dirfd dir = primIO (prim__dirfd dir) >>= primFdToDirDesc
 
 
 

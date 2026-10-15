@@ -77,16 +77,16 @@ prim__mmap_failed : AnyPtr -> Int32
 
 
 %inline %foreign "CExpr:(mmap($1, $2, $3, $4, $5, $6)),libc,sys/mman.h"
-prim__mmap : AnyPtr -> Int64 -> Int32 -> Int32 -> Bits32 -> Int64 -> PrimIO AnyPtr   
+prim__mmap : AnyPtr -> Int64 -> Int32 -> Int32 -> Int32 -> Int64 -> PrimIO AnyPtr   
 
 ||| Map a file or anonymous memory into the address space; `Nothing` when `mmap` returns `MAP_FAILED`
-||| (the cause is in `errno`).
+||| (the cause is in `errno`). The descriptor is `Nothing` for `MAP_ANONYMOUS` (as `mmap` is given -1).
 |||
 ||| See also: `mmap(2)`.
 %inline public export
-mmap : AnyPtr -> Int64 -> MmapFlags -> MmapFlags -> FileDesc -> Int64 -> IO (Maybe AnyPtr)
+mmap : AnyPtr -> Int64 -> MmapFlags -> MmapFlags -> Maybe FileDesc -> Int64 -> IO (Maybe AnyPtr)
 mmap addr len prot flags fd offset = do
-  ptr <- primIO $ prim__mmap addr len prot flags fd.rawfd offset
+  ptr <- primIO $ prim__mmap addr len prot flags (maybe (-1) rawfd fd) offset
   if prim__mmap_failed ptr /= 0 then pure Nothing else pure (Just ptr)
 
 

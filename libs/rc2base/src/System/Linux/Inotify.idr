@@ -127,11 +127,11 @@ Show InotifyEvent where
 %inline %foreign "CExpr:(inotify_init1($1)),libc,sys/inotify.h"
 prim__inotify_init1 : Bits32 -> PrimIO Int32
 %inline %foreign "CExpr:(inotify_add_watch($1, $2, $3)),libc,sys/inotify.h"
-prim__inotify_add_watch : Bits32 -> String -> Bits32 -> PrimIO Int32
+prim__inotify_add_watch : Int32 -> String -> Bits32 -> PrimIO Int32
 %inline %foreign "CExpr:(inotify_rm_watch($1, $2)),libc,sys/inotify.h"
-prim__inotify_rm_watch : Bits32 -> Int32 -> PrimIO Int32
+prim__inotify_rm_watch : Int32 -> Int32 -> PrimIO Int32
 %inline %foreign "CExpr:(read($1, $2, $3)),libc,unistd.h"
-prim__read : Bits32 -> AnyPtr -> Bits64 -> PrimIO Int64
+prim__read : Int32 -> AnyPtr -> Bits64 -> PrimIO Int64
 %inline %foreign "CExpr:(((struct inotify_event *)((char *)($1) + ($2)))->wd),libc,sys/inotify.h"
 prim__ev_wd : AnyPtr -> Int -> PrimIO Int32
 %inline %foreign "CExpr:(((struct inotify_event *)((char *)($1) + ($2)))->mask),libc,sys/inotify.h"

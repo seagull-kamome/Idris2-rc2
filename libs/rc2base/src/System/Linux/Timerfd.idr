@@ -44,11 +44,11 @@ prim__it_value : AnyPtr -> PrimIO AnyPtr
 %inline %foreign "CExpr:(timerfd_create($1, $2)),libc,sys/timerfd.h"
 prim__timerfd_create : Int32 -> Bits32 -> PrimIO Int32
 %inline %foreign "CExpr:(timerfd_settime($1, $2, (struct itimerspec *)($3), (struct itimerspec *)($4))),libc,sys/timerfd.h"
-prim__timerfd_settime : Bits32 -> Bits32 -> AnyPtr -> AnyPtr -> PrimIO Int32
+prim__timerfd_settime : Int32 -> Bits32 -> AnyPtr -> AnyPtr -> PrimIO Int32
 %inline %foreign "CExpr:(timerfd_gettime($1, (struct itimerspec *)($2))),libc,sys/timerfd.h"
-prim__timerfd_gettime : Bits32 -> AnyPtr -> PrimIO Int32
+prim__timerfd_gettime : Int32 -> AnyPtr -> PrimIO Int32
 %inline %foreign "CExpr:(read($1, $2, 8)),libc,unistd.h"
-prim__read8 : Bits32 -> AnyPtr -> PrimIO Int64
+prim__read8 : Int32 -> AnyPtr -> PrimIO Int64
 %inline %foreign "CExpr:(*(uint64_t *)($1)),libc,stdint.h"
 prim__u64At : AnyPtr -> PrimIO Bits64
 

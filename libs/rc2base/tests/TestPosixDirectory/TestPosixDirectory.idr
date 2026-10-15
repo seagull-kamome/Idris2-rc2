@@ -88,8 +88,8 @@ testListing = do
 testDirfd : IO ()
 testDirfd = do
   d <- opendir dir
-  Just dd <- dirfd d
-    | Nothing => putStrLn "dirfd failed"
+  Right dd <- dirfd d
+    | Left _ => putStrLn "dirfd failed"
   putStrLn ("dirfd ok: " ++ show (dd.rawdirfd >= 0))
   pos <- telldir d
   seekdir d pos
@@ -111,7 +111,7 @@ testChdir = do
   putStrLn ("getcwd in scratch: " ++ show (isSuffixOf dir cwd1))
   Right back <- openFile cwd0 0 0
     | Left e => putStrLn ("open cwd failed: " ++ show e)
-  fchdir (MkDirDesc back.rawfd) >>= \r => putStrLn ("fchdir: " ++ show r)
+  fchdir (asDirDesc back) >>= \r => putStrLn ("fchdir: " ++ show r)
   Just cwd2 <- getcwd
     | Nothing => putStrLn "getcwd failed"
   putStrLn ("back to start: " ++ show (cwd2 == cwd0))

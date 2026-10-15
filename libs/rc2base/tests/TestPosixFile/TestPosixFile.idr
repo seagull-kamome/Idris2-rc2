@@ -151,7 +151,7 @@ testPathBased = do
   lchown path 4294967295 4294967295 >>= \r => putStrLn ("lchown: " ++ show r)
   Right dfd <- openFile dir O_DIRECTORY 0
     | Left e => putStrLn ("open dir failed: " ++ show e)
-  let dd = MkDirDesc dfd.rawfd
+  let dd = asDirDesc dfd
   fchmodat dd "file.txt" 384 0 >>= \r => putStrLn ("fchmodat: " ++ show r)
   fchownat dd "file.txt" 4294967295 4294967295 0 >>= \r => putStrLn ("fchownat: " ++ show r)
   Right afd <- openat dd "file.txt" 0 0

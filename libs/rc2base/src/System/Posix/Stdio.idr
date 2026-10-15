@@ -97,7 +97,7 @@ stream x with (decEq (isNullPtr x) False)
 %inline %foreign "CExpr:(fopen($1, $2)),libc,stdio.h"
 prim__fopen : String -> String -> PrimIO (Ptr RawFile)
 %inline %foreign "CExpr:(fdopen($1, $2)),libc,stdio.h"
-prim__fdopen : Bits32 -> String -> PrimIO (Ptr RawFile)
+prim__fdopen : Int32 -> String -> PrimIO (Ptr RawFile)
 %inline %foreign "CExpr:(freopen($1, $2, $3)),libc,stdio.h"
 prim__freopen : String -> String -> Ptr RawFile -> PrimIO (Ptr RawFile)
 %inline %foreign "CExpr:(tmpfile()),libc,stdio.h"

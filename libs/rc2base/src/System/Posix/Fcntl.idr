@@ -27,7 +27,9 @@ withFdPair call = do
   res <- if rc == 0
             then do r <- primIO (prim__intAt p 0)
                     w <- primIO (prim__intAt p 1)
-                    pure (Right (MkFileDesc (cast r), MkFileDesc (cast w)))
+                    -- `pipe` and `pipe2` give two non-negative numbers when they succeed;
+                    -- `EBADF` (and an open descriptor left behind) is unreachable.
+                    pure (maybe (Left EBADF) Right (MkPair <$> mkFileDesc r <*> mkFileDesc w))
             else Left <$> errno
   free p
   pure res
@@ -55,7 +57,7 @@ prim__F_DUPFD_CLOEXEC : Int32
 export FD_CLOEXEC : Bits32
 
 %inline %foreign "CExpr:(fcntl($1, $2, $3)),libc,fcntl.h"
-prim__fcntl : Bits32 -> Int32 -> Int64 -> PrimIO Int32
+prim__fcntl : Int32 -> Int32 -> Int64 -> PrimIO Int32
 
 ||| The descriptor flags (`FD_CLOEXEC`).
 export
