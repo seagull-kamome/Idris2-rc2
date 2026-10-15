@@ -1,15 +1,9 @@
-||| Whole-program `RCExp`-to-`RCExp` inlining, run late in the pipeline
-||| (after `Compiler.RC2.Loop`/`MutualLoop`) -- currently splices a
-||| callee's body directly into its own call site whenever that's the
-||| *only* place, anywhere in the program, it's ever called; a future
-||| session may extend eligibility beyond single-caller, which is why
-||| this module/pass isn't named after that one criterion specifically.
-||| See `rc2/doc/inlining.md`'s "Criterion B, revisited" section for
-||| the full design (why this needed to wait until after Loop
-||| conversion, why every one of the callee's own ids -- top-level
-||| params and internal alike -- needs renaming on the way in despite
-||| `VarId` already being globally unique, and the cycle-exclusion
-||| argument). Disable with `--directive nolateinline`.
+||| Whole-program `RCExp` inlining, run after `Loop`/`MutualLoop`: splices
+||| a callee's body into its call site when that is the only place in the
+||| program that calls it. Named for the pass, not the criterion, so the
+||| criterion can widen. Design, the cycle-exclusion argument and why
+||| every callee id is renamed: `rc2/doc/inlining.md`, "Criterion B,
+||| revisited". Disable with `--directive nolateinline`.
 module Compiler.RC2.LateInline
 
 -- Copyright 2026, Hattori,Hiroki. All rights reserved.
@@ -43,8 +37,9 @@ import Data.SortedSet
 ------------------------------------------------------------------------
 
 ||| Every name `d`'s own body directly, saturated-ly calls (`RAppName`
-||| only) -- see the doc's "Eligibility" section for why `RUnderApp`/
-||| `RCConstClosure`/`RCon`/`RAppNameRep` references don't matter here.
+||| only) -- see the doc's "Eligibility -- and why it doubles as the
+||| profitability gate" for why `RUnderApp`/`RCConstClosure`/`RCon`/
+||| `RAppNameRep` references don't matter here.
 calleesOf : RCDef -> SortedSet Name
 calleesOf = foldRCNamesD ({ onAppName := \n, _ => singleton n } noRCNames)
 
@@ -55,11 +50,8 @@ callCountsOf : RCDef -> SortedMap Name Nat
 callCountsOf d = foldl (\m, n => insert n (S (fromMaybe 0 (lookup n m))) m) empty
                        (foldRCNamesD ({ onAppName := \n, _ => [n] } noRCNames) d)
 
-||| One name's own `callCountsOf`, cached across `applyLateInline`'s own
-||| rounds -- see `analyse`'s own doc comment for why a name absent from
-||| one round's own `dirty` set is always safe to reuse here verbatim,
-||| no matter how many further rounds pass, right up until it's
-||| actually reprocessed.
+||| One name's `callCountsOf`, cached across rounds; exact until the name
+||| is in `dirty` (see `analyse`).
 CalleeInfo : Type
 CalleeInfo = SortedMap Name (SortedMap Name Nat)
 
@@ -77,19 +69,13 @@ cyclicNames info =
 
 record Analysis where
   constructor MkAnalysis
-  ||| Every eligible callee: exactly one call site anywhere, and a
-  ||| genuine `MkRCFun` (not `RCCon`/`RCForeign`/`RCError`). Being part
-  ||| of a whole-program cycle (a size>=2 SCC, or a direct self-edge)
-  ||| does *not* disqualify a callee on its own anymore --
-  ||| `callsBack`, consulted by `inlineInto` fresh at each individual
-  ||| splice decision, is what replaces that. See `rc2/doc/inlining.md`'s
-  ||| "Safe despite being part of a larger cycle" for the full argument.
+  ||| Callees with exactly one call site that are genuine `MkRCFun`s. A
+  ||| cycle does not disqualify one; `callsBack` checks at each splice
+  ||| (`rc2/doc/inlining.md`, "Safe despite being part of a larger cycle").
   eligible : SortedSet Name
-  ||| Every name, callees before callers where the call graph orders
-  ||| them at all (`tarjanSCCs`'s own bottom-up ordering, reused
-  ||| verbatim from `Compiler.RC2.MutualLoop` -- see the doc for why
-  ||| this lets a whole *chain* of single-caller callees collapse in
-  ||| one pass instead of needing to be re-run per link).
+  ||| Callees before callers where the call graph orders them
+  ||| (`tarjanSCCs`), so a chain of single-caller callees collapses in one
+  ||| round.
   processOrder : List Name
 
 ||| Everything `analyse` carries from one `applyLateInline` round into
@@ -99,62 +85,33 @@ record Carried where
   constructor MkCarried
   ||| Per-name callee info (see `CalleeInfo`).
   info : CalleeInfo
-  ||| Whole-program `RAppName` occurrence count per name -- maintained
-  ||| by delta from round to round rather than re-summed from every
-  ||| definition's own occurrence list, which was this pass's single
-  ||| largest cost at whole-compiler scale (~5.7s per round on
-  ||| `idris2-lsp`: ~118k increments into a `Name`-keyed map, whose
-  ||| comparisons are structural over namespace lists and strings).
-  ||| Only two things can shift a count: a definition whose own body
-  ||| changed (`dirty`, its old occurrence list subtracted and its new
-  ||| one added) and a definition pruned away entirely (its old
-  ||| occurrence list subtracted). Both are read straight off `info`,
-  ||| which still holds the pre-change entry at that point.
+  ||| Whole-program `RAppName` count per name, updated by delta each round:
+  ||| only a `dirty` definition (old occurrences subtracted, new added) or
+  ||| a pruned one (old subtracted) can shift it. Re-summing was the pass's
+  ||| largest cost (~5.7s per round on idris2-lsp). The old occurrences come
+  ||| from `info`, which still holds the pre-change entry.
   counts : SortedMap Name Nat
-  ||| `tarjanSCCs`-derived callee-before-caller processing order,
-  ||| computed once on the first round and reused verbatim afterwards.
-  ||| Safe because this order is only ever a *heuristic* -- it decides
-  ||| whether a chain of single-caller callees collapses in one round
-  ||| or needs a further one, never what the result is -- and because
-  ||| `defs` only shrinks, so a later round's own names are always a
-  ||| subset of what this order already covers; `goOrder` skips a name
-  ||| it no longer finds in `defOf`.
+  ||| `tarjanSCCs` order, computed on the first round and reused. It only
+  ||| decides how many rounds a chain needs, never the result, and `defs`
+  ||| only shrinks (`goOrder` skips names no longer in `defOf`).
   order : List Name
   ||| The previous round's own definition names -- what "pruned away
   ||| since last round" is spotted against, for the count delta above.
   names : List Name
-  ||| `Compiler.RC2.DeadCode`'s own per-name reference sets, carried for
-  ||| the same reason as `info`: each round re-prunes from `roots`, and
-  ||| without this every reachable definition's whole body is re-walked
-  ||| to re-derive an identical reference set every single round.
+  ||| `DeadCode`'s per-name reference sets, so a round does not re-walk
+  ||| every body to prune.
   refs : RefCache
 
-||| `cache`: every name's own `CalleeInfo` as of the last round it was
-||| actually reprocessed (`empty` on the very first round). `dirty`:
-||| the *previous* round's own processed set (`empty` on the first
-||| round too) -- a name absent from it has a body byte-for-byte
-||| identical to last round's (the only way a name's body ever changes
-||| during `applyLateInline` is `goOrder` actually splicing something
-||| into it -- `pruneDeadDefs` only ever *removes* names, never rewrites
-||| a survivor), so its own `calleesOf`/`callOccurrencesOf` contribution
-||| is still exactly correct and safe to reuse straight from `cache`
-||| rather than re-walking its own (possibly large) body. Every name in
-||| `defs` gets a `cache` entry either way (freshly computed the first
-||| time it's ever seen, or whenever `dirty` says it changed) -- `defs`
-||| only ever shrinks round-to-round (`pruneDeadDefs`), so a name
-||| in `defs` on round N+1 was necessarily in `defs`, and thus already
-||| cached, on round N. Returns the updated cache alongside the
-||| `Analysis` as before, for `applyLateInlineOnce` to thread into the
-||| next round.
+||| `prev`: what the last round carried. `dirty`: the names the last round
+||| spliced into. Every other body is unchanged (`pruneDeadDefs` only
+||| removes names), so its cached `info` entry is exact and only a
+||| `dirty` or unseen name is walked again. `defs` only shrinks, so a name
+||| present now was cached in the previous round.
 analyse : (early : Maybe (SortedSet Name)) -> (seed : CalleeInfo) -> (prev : Maybe Carried) -> (dirty : SortedSet Name) -> (refs : RefCache)
        -> (defOf : SortedMap Name RCDef) -> List (Name, RCDef) -> (Analysis, Carried)
 analyse early seed prev dirty refs defOf defs =
     let oldInfo : CalleeInfo = maybe seed (.info) prev
-        -- Third component: whether this entry was recomputed this round
-        -- (`dirty`, or never seen before). Only those need writing back
-        -- into the cache -- re-inserting all ~35k entries every round
-        -- when a handful changed is the same "redo work nothing asked
-        -- for" shape the cache exists to avoid in the first place.
+        -- Third component: recomputed this round; only those are written back.
         classified : List (Name, SortedMap Name Nat, Bool) =
                    map (\(n, d) =>
                           case lookup n oldInfo of
@@ -163,19 +120,12 @@ analyse early seed prev dirty refs defOf defs =
         perDef : List (Name, SortedMap Name Nat) = map (\(n, i, _) => (n, i)) classified
         info' : CalleeInfo =
                    foldl (\acc, (n, i, fresh) => if fresh then insert n i acc else acc) oldInfo classified
-        -- Folds each definition's own occurrence list straight into the
-        -- map. Flattening them into one list first (`concatMap`, the
-        -- obvious spelling) is quadratic: `concat` left-nests `++`, so
-        -- every definition's list gets copied past the whole prefix
-        -- built so far. Measured on `idris2-lsp` (35.5k definitions,
-        -- 118k occurrences): 9.8s to flatten, against 0.23s to compute
-        -- the very same per-definition lists.
+        -- Fold each definition's list straight into the map: flattening with
+        -- `concatMap` is quadratic (9.8s against 0.23s on idris2-lsp).
         counts' : SortedMap Name Nat = case prev of
                  Nothing => foldl (\acc, (_, cs) => addAll acc cs) (the (SortedMap Name Nat) empty) perDef
                  Just p => deltaCounts p defOf info'
-        -- Same trap, same fix: this is `reverse (concat sccs)` without
-        -- ever building `concat sccs` -- prepending each component's
-        -- own names in order yields exactly the reversed concatenation.
+        -- `reverse (concat sccs)` without building `concat sccs`, same reason.
         order' : List Name = case prev of
                  Nothing => foldl (\acc, scc => foldl (flip (::)) acc scc)
                               [] (tarjanSCCs (callGraph perDef))
@@ -207,12 +157,8 @@ analyse early seed prev dirty refs defOf defs =
     addAll : SortedMap Name Nat -> SortedMap Name Nat -> SortedMap Name Nat
     addAll m cs = foldl add m (SortedMap.toList cs)
 
-    ||| `prev.counts` adjusted for exactly the two things that can have
-    ||| shifted a count since it was built: a name pruned away (its own
-    ||| calls are gone with it) and a name `dirty` says was spliced into
-    ||| last round (its old call list replaced by its new one). Both
-    ||| read their *old* list from `prev.info`, which still holds the
-    ||| pre-change entry -- `newInfo` is where the fresh one lives.
+    ||| `prev.counts` adjusted for pruned names and `dirty` ones; the old
+    ||| lists come from `prev.info`, the new ones from `newInfo`.
     deltaCounts : Carried -> SortedMap Name RCDef -> CalleeInfo -> SortedMap Name Nat
     deltaCounts p defOf newInfo =
         let gone : List Name = filter (\n => isNothing (lookup n defOf)) p.names
@@ -222,15 +168,10 @@ analyse early seed prev dirty refs defOf defs =
         in foldl (\acc, n => foldl add (foldl sub acc (callsIn p.info n)) (callsIn newInfo n))
              afterGone changed
 
-||| Whether `callee`'s own body (looked up in `defOf`) directly calls
-||| `caller` -- checked fresh at each individual splice decision
-||| (`inlineInto`'s own `RAppName` cases), rather than once, whole-
-||| program, via `analyse`'s own (removed) cyclic-SCC exclusion. See
-||| `rc2/doc/inlining.md`'s "Safe despite being part of a larger cycle"
-||| for the full argument: why this one-hop check is sufficient (no
-||| deeper, transitive check ever needed), and why it isn't even
-||| load-bearing for runtime correctness -- only for keeping
-||| `applyLateInline`'s own fixpoint-loop bookkeeping simple.
+||| Whether `callee`'s body directly calls `caller`, checked at each splice
+||| decision. One hop is enough, and it only keeps the fixpoint
+||| bookkeeping simple, not correctness (`rc2/doc/inlining.md`, "Safe
+||| despite being part of a larger cycle").
 callsBack : SortedMap Name RCDef -> (caller : Name) -> (callee : Name) -> Bool
 callsBack defOf caller callee =
     case lookup callee defOf of
@@ -267,16 +208,12 @@ mutual
   collectBoundIdsConstAlt : RConstAlt -> List Int
   collectBoundIdsConstAlt (MkRConstAlt _ body) = collectBoundIds body
 
-||| `True` iff `target` has an occurrence in `e` not accounted for by
-||| a native-operand read at type `ty`, nor by ownership bookkeeping
-||| `Compiler.RC2.Loop`'s own `stripOwnership` would strip anyway
-||| (`RDup`/`RDrop`/`RFree`, any node's own `postDrop`). `loopSlots`:
-||| the nearest enclosing `RLoop`'s own `loopParams` -- an
-||| `RLoopContinue` entry at a position whose slot is already declared
-||| `RNative ty` is safe too, since `Emit.idr`'s `tryEmitLoopContinue`
-||| always renders a continue's new value keyed on *that slot's* `Rep`,
-||| never the supplied value's. See `rc2/doc/inlining.md`'s "Criterion
-||| B, revisited" for the full design and the bugs this prevents.
+||| `True` iff `target` occurs in `e` other than as a native-operand read
+||| at `ty` or ownership bookkeeping that `Loop.stripOwnership` strips
+||| (`RDup`/`RDrop`/`RFree`, a node's `postDrop`). `loopSlots`: the
+||| nearest enclosing `RLoop`'s params; an `RLoopContinue` entry into a
+||| slot already `RNative ty` is safe too, since `Emit` renders it by the
+||| slot's `Rep`. See `rc2/doc/inlining.md`, "Criterion B, revisited".
 hasNonNativeUse : (ty : PrimType) -> (loopSlots : List (Int, Rep)) -> Int -> RCExp -> Bool
 hasNonNativeUse ty loopSlots target (RV _ v) = v == RCLoc target
 hasNonNativeUse ty loopSlots target (RAppName _ _ _ args) = elem (RCLoc target) args
@@ -297,12 +234,9 @@ hasNonNativeUse ty loopSlots target (RCmpCase _ _ _ _ t f) = hasNonNativeUse ty 
 hasNonNativeUse ty loopSlots target (RConCase _ sc alts mDef) =
     sc == RCLoc target || any (\(MkRConAlt _ _ _ _ body) => hasNonNativeUse ty loopSlots target body) alts
       || maybe False (hasNonNativeUse ty loopSlots target) mDef
--- The scrutinee is a native read when the alts match against `ty` --
--- `Emit.idr`'s own `emitConstCaseInto` dispatches on it per its own
--- `Rep`, the same reasoning `Compiler.RC2.Loop`'s own `nativeArgTypes`
--- uses to count it in the first place (`constAltsNativeType` is shared
--- with it, so the two can't disagree). `RConCase`'s own scrutinee just
--- below is a constructor and stays a disqualifying use.
+-- A native read when the alts match against `ty` (`constAltsNativeType`
+-- is shared with `Loop.nativeArgTypes`, so they agree). `RConCase`'s
+-- scrutinee above is a constructor and stays a disqualifying use.
 hasNonNativeUse ty loopSlots target (RConstCase _ sc alts mDef) =
     (sc == RCLoc target && constAltsNativeType alts /= Just ty)
       || any (\(MkRConstAlt _ body) => hasNonNativeUse ty loopSlots target body) alts
@@ -311,25 +245,20 @@ hasNonNativeUse ty loopSlots target (RDup _ v _ body) = hasNonNativeUse ty loopS
 hasNonNativeUse ty loopSlots target (RDrop _ vars body) = hasNonNativeUse ty loopSlots target body
 hasNonNativeUse ty loopSlots target (RFree _ v body) = hasNonNativeUse ty loopSlots target body
 hasNonNativeUse ty loopSlots target (RReleaseReuse _ v body) = v == RCLoc target || hasNonNativeUse ty loopSlots target body
--- RReleaseReuse's own v / RReuseOffer's own sc/dupOnShared/dropOnUnique are genuine uses --
--- stripOwnership deliberately never touches an already-decided reuse.
+-- RReuseOffer's sc/dupOnShared/dropOnUnique are genuine uses, as is RReleaseReuse's v
+-- above: stripOwnership deliberately never touches an already-decided reuse.
 hasNonNativeUse ty loopSlots target (RReuseOffer _ sc dupOnShared dropOnUnique body) =
     sc == RCLoc target || elem (RCLoc target) dupOnShared || elem (RCLoc target) dropOnUnique
       || hasNonNativeUse ty loopSlots target body
--- body is checked against THIS loop's own slots, not the enclosing loopSlots.
--- `initial` gets exactly the treatment `RLoopContinue` below already gets, and
--- for the same reason: `Emit.idr`'s own `declareLoopParam` renders each entry
--- through `rcVarToNativeC` keyed on *that slot's* `Rep`, never the supplied
--- value's, so supplying an already-`RNative ty` slot is a native read, not a
--- disqualifying one. Anything else (a Boxed slot, or a length mismatch that
--- `zip` would silently truncate) still disqualifies.
+-- The body is checked against THIS loop's slots. `initial` is treated like
+-- `RLoopContinue` below: `Emit` renders each entry by the slot's `Rep`, so
+-- an `RNative ty` slot is a native read. A Boxed slot, or a length mismatch
+-- (`zip` would drop the tail), disqualifies.
 hasNonNativeUse ty loopSlots target (RLoop _ loopParams initial _ body) =
     initialNonNative || hasNonNativeUse ty loopParams target body
   where
-    -- `nativeSlotTy` is `Compiler.RC2.Loop`'s own, shared with the
-    -- `RLoop` case of `nativeArgTypes` that decides `ty` in the first
-    -- place -- the two must agree on what counts as a native slot, or
-    -- a value one of them called native the other would disqualify.
+    -- `nativeSlotTy` is shared with `Loop.nativeArgTypes`, which decides `ty`;
+    -- the two must agree on what a native slot is.
     initialNonNative : Bool
     initialNonNative =
         any (\((_, slotRep), a) => a == RCLoc target && nativeSlotTy slotRep /= Just ty)
@@ -347,26 +276,18 @@ hasNonNativeUse ty loopSlots target (RLoopContinue _ args _) =
 hasNonNativeUse ty loopSlots target (RMemoize _ _ _ body) = hasNonNativeUse ty loopSlots target body
 hasNonNativeUse _ _ _ _ = False -- RPrimVal/RErased/RCrash: no locals. RAppNameRep/RAppFFIInline can't exist yet.
 
-||| `Just ty` iff `paramId`'s own occurrences in `calleeBody` are
-||| *entirely* accounted for by consistently-`ty`-typed native-operand
-||| reads -- see `hasNonNativeUse`'s own doc comment for the two-part
-||| check this combines. `ty` itself has to come from `nativeArgType`
-||| first (`hasNonNativeUse` needs it already settled, see its own doc
-||| comment), so unlike that simpler boolean check alone, this one
-||| can't run in the other order.
+||| `Just ty` iff `paramId`'s occurrences in `calleeBody` are all
+||| `ty`-typed native-operand reads (`hasNonNativeUse`); `ty` comes from
+||| `nativeArgType` first.
 nativeEligible : (paramId : Int) -> (calleeBody : RCExp) -> Maybe PrimType
 nativeEligible paramId calleeBody =
     case nativeArgType paramId calleeBody of
          Nothing => Nothing
          Just ty => if hasNonNativeUse ty [] paramId calleeBody then Nothing else Just ty
 
-||| Whether `target` is reused anywhere in `e` as one of an `RLoop`'s
-||| own loop-carried slot ids (`loopParams`' own `Int`) -- i.e. whether
-||| aliasing the caller's own local for `target` straight into the
-||| splice risks that local being reassigned in place by the loop,
-||| rather than only read. Mirrors `collectBoundIds`'s own traversal
-||| shape. See `buildSplice`'s own doc comment for why only this one
-||| case still needs a fresh id and a wrapping `RLet`.
+||| Whether `target` is one of an `RLoop`'s loop-carried slot ids in `e`,
+||| i.e. aliasing the caller's local onto it would let the loop reassign
+||| that local. See `buildSplice`.
 isLoopCarried : Int -> RCExp -> Bool
 isLoopCarried target (RLoop _ loopParams _ _ body) = elem target (map fst loopParams) || isLoopCarried target body
 isLoopCarried target (RLet _ _ _ value body) = isLoopCarried target value || isLoopCarried target body
@@ -390,25 +311,14 @@ isLoopCarried _ _ = False
 ConstClosureArgs : Type
 ConstClosureArgs = SortedMap Int (Name, Nat)
 
-||| Rewrite a saturated application of one of `ccs`'s own ids into a
-||| direct call. `Compiler.RC2.ConstFold` already does exactly this for
-||| an `RApp` it can resolve itself (see `doc/const-closure-fold.md`'s
-||| "Saturated application of a folded closure is now a direct call"),
-||| but it runs long before this pass -- and `buildSplice` mints
-||| precisely this shape *afterwards*: a fresh `RLet` binding the
-||| caller's own constant-closure argument, with the spliced-in callee
-||| body going on to apply it. Nothing re-folds those, so they stayed
-||| `idris2rc2_applyClosure` dispatches against a callee known at
-||| compile time.
+||| Rewrite a saturated application of one of `ccs`'s ids into a direct
+||| call. `ConstFold` does this too, but runs before `buildSplice` mints
+||| the `RLet` binding a constant-closure argument, and nothing re-folds it.
 |||
-||| Safe to run this late, after `Compiler.RC2.RC`'s own `annotate`,
-||| *because the target is a constant closure*: an `RApp` consumes its
-||| closure reference and an `RAppName` never mentions one, but a
-||| `constclosure_N` static is immortal (`IDRIS2RC2_REFCOUNT_MAX`) and
-||| both `idris2rc2_dup` and `idris2rc2_drop` return early on it, so
-||| neither the now-unconsumed reference nor any leftover `drop` of it
-||| is observable. The `RLet` itself stays -- another use of the id may
-||| still need it, and `Compiler.RC2.DeadVars` removes it when none is.
+||| Safe after `RC.annotate` because the target is a constant closure: its
+||| `constclosure_N` static is immortal, so `dup`/`drop` on it are no-ops
+||| and an unconsumed reference is unobservable. The `RLet` stays;
+||| `DeadVars` removes it when unused.
 resolveConstClosureApps : ConstClosureArgs -> RCExp -> RCExp
 resolveConstClosureApps ccs e@(RApp fc lazy (RCLoc v) args) =
     case lookup v ccs of
@@ -447,33 +357,18 @@ resolveConstClosureApps ccs (RMemoize fc n rep body) = RMemoize fc n rep (resolv
 -- Every other shape holds no further `RCExp` to rewrite.
 resolveConstClosureApps _ e = e
 
-||| Builds the renaming from `calleeArgs`'s own top-level param ids
-||| onto the actual call arguments, plus a wrapping function binding
-||| each argument that still needs its own declaration via `RLet`
-||| ahead of the callee's own renamed body, plus every fresh id bound
-||| purely `RNative` this way (for `spliceCall`'s own final
-||| `stripOwnership` pass).
+||| Builds the renaming of the callee's parameter ids onto the call
+||| arguments, a wrapper binding each argument that needs its own `RLet`
+||| ahead of the renamed body, and the fresh ids bound purely `RNative`
+||| (for `stripOwnership` in `spliceCall`).
 |||
-||| An argument already `RBoxed` in the caller (`reps`) whose param id
-||| is never reused as one of `calleeBody`'s own loop-carried slots
-||| (`isLoopCarried`) is aliased directly onto the caller's own local
-||| instead -- no fresh id, no wrapping `RLet` -- since both sides
-||| already share the exact same representation and nothing in the
-||| callee can reassign it out from under the caller. Every other
-||| argument still gets its own *fresh* id, even one that's already a
-||| bare `RCLoc`: either it's boxed but loop-carried (aliasing would
-||| let the splice reassign the caller's own variable in place, unlike
-||| an ordinary call -- see `rc2/doc/inlining.md`'s "Criterion B,
-||| revisited" for the bug this prevents), or it's currently native in
-||| the caller, where the fresh `RLet`'s own `Rep` -- `RNative ty`
-||| unless the actual argument is currently native in the caller
-||| (`reps`) *and* `nativeEligible` confirms the callee's own body
-||| never needs it any other way, at the same type -- is the
-||| boxing/promotion decision itself, not a redundant copy of already-
-||| identical representations. See `rc2/doc/inlining.md`'s "Criterion
-||| B, revisited" for both bugs found getting the native side of this
-||| wrong (an aliasing correctness bug, and a ~50x boxing performance
-||| regression).
+||| An `RBoxed` caller argument whose param is not loop-carried
+||| (`isLoopCarried`) is aliased onto the caller's local. Any other gets a
+||| fresh id: aliasing a loop-carried one would let the splice reassign the
+||| caller's variable, and a native one needs the `RLet`'s `Rep` as the
+||| boxing decision (`RNative ty` only if `nativeEligible` agrees at the
+||| same type). See `rc2/doc/inlining.md`, "Criterion B, revisited", for
+||| the aliasing bug and a ~50x boxing regression.
 buildSplice : {auto v : Ref VarId Int} -> FC -> SortedMap Int Rep -> RCExp -> List (Int, RCLocal) -> Core (Renaming, RCExp -> RCExp, SortedSet Int, ConstClosureArgs)
 buildSplice fc reps calleeBody [] = pure (empty, id, empty, empty)
 buildSplice fc reps calleeBody ((paramId, actual@(RCLoc actualId)) :: rest) = do
@@ -499,18 +394,11 @@ buildSplice fc reps calleeBody ((paramId, actual@(RCLoc actualId)) :: rest) = do
                                  Just r => r
                                  Nothing => RBoxed
     argRep _ _ = RBoxed
--- `actual` isn't a bare `RCLoc` (a constant/`RCEmptyCon`/`RCConstCon`/
--- `RCConstClosure` folded by `Compiler.RC2.ConstFold`) -- no existing
--- caller local to alias onto, so this always needs its own fresh
--- declaration. Its `Rep` still gets the same promotion question the
--- `RCLoc` clause above asks, though: a native-eligible *literal*
--- (`Types.litRep`) whose callee-side reads are all native at that same
--- type is bound `RNative` and renders as a bare C literal, where
--- `RBoxed` would box it only for the very next statement to unbox it
--- again (an `RLoop`'s own native `initial=` slot is the common
--- consumer). A non-literal constant -- `RCEmptyCon`/`RCConstCon`/
--- `RCConstClosure` -- has no native representation at all and stays
--- `RBoxed`, which `litRep` already answers `Nothing` for.
+-- `actual` is a constant (`RCEmptyCon`/`RCConstCon`/`RCConstClosure` or a
+-- literal folded by `ConstFold`): no caller local to alias, so it always
+-- gets a fresh declaration. A native-eligible literal (`litRep`) whose
+-- reads are all native at that type is bound `RNative`; the rest stay
+-- `RBoxed`.
 buildSplice fc reps calleeBody ((paramId, actual) :: rest) = do
     (ren, wrap, promoted, ccs) <- buildSplice fc reps calleeBody rest
     f <- freshVarId
@@ -534,17 +422,10 @@ buildSplice fc reps calleeBody ((paramId, actual) :: rest) = do
     constLitRep (RCConst c) = litRep c
     constLitRep _ = Nothing
 
-||| Every id `collectBoundIds` finds, freshened -- so it can never
-||| collide with anything, anywhere else in the program.
-|||
-||| Needed even though `VarId` already makes every id globally unique
-||| from the moment it's first assigned: `Compiler.RC2.SpecClosure`
-||| builds several clones from one shared original body, copying its
-||| internal ids verbatim into every clone -- two clones legitimately
-||| share ids as long as each stays its own C function, but splicing
-||| two of them into the *same* caller breaks that separation. See
-||| `rc2/doc/inlining.md`'s "Criterion B, revisited" for the bug this
-||| was found via (`var_301` redefined in one C function).
+||| Every id from `collectBoundIds`, freshened. Needed although `VarId`s
+||| are globally unique: `SpecClosure` clones share internal ids, and
+||| splicing two clones into one caller would redefine them
+||| (`rc2/doc/inlining.md`, "Criterion B, revisited", `var_301`).
 export
 freshenBoundIds : {auto v : Ref VarId Int} -> List Int -> Core Renaming
 freshenBoundIds [] = pure empty
@@ -553,21 +434,11 @@ freshenBoundIds (i :: is) = do
     f <- freshVarId
     pure (insert i f ren)
 
-||| Whether `Emit.idr`'s own `emitNativeValue` (the single inline-C-
-||| expression renderer `declareNative`/`inlineNative` use for a native
-||| local's own value) can actually render `e` -- mirrors its supported
-||| shapes constructor-for-constructor: `RAppFFIInline`/`ROp`/`RPrimVal`
-||| at the tail, unwinding `RLet`/`RDup`/`RFree`/`RDrop`/`RReleaseReuse`
-||| wrappers on the way, nothing else (in particular, no branch --
-||| `RConCase`/`RConstCase`/`RCmpCase` -- and no nested `RLoop`, neither
-||| of which can be one C expression). `RAppFFIInline` can't actually
-||| occur in a tree this pass ever sees (`Compiler.RC2.DualABI` runs
-||| strictly after this pass) but is included anyway to keep this an
-||| honest mirror rather than a guess. `uniformTailType` below alone
-||| isn't sufficient for a promotion decision -- it happily says "yes"
-||| through a branch this function can't render -- see
-||| `rc2/doc/inlining.md`'s "Criterion B, revisited" for the crash this
-||| was found via.
+||| Whether `Emit.emitNativeValue` can render `e` as one C expression:
+||| `RAppFFIInline`/`ROp`/`RPrimVal` at the tail under
+||| `RLet`/`RDup`/`RFree`/`RDrop`/`RReleaseReuse`, no branch and no
+||| `RLoop`. `uniformTailType` alone says yes through a branch, which
+||| crashed (`rc2/doc/inlining.md`, "Criterion B, revisited").
 emitNativeValueCompatible : RCExp -> Bool
 emitNativeValueCompatible (RAppFFIInline {}) = True
 emitNativeValueCompatible (ROp {}) = True
@@ -579,33 +450,19 @@ emitNativeValueCompatible (RDrop _ _ cont) = emitNativeValueCompatible cont
 emitNativeValueCompatible (RReleaseReuse _ _ cont) = emitNativeValueCompatible cont
 emitNativeValueCompatible _ = False
 
-||| `Just ty` iff every tail-position exit of `e` agrees on the same
-||| native type `ty` (`Compiler.RC2.DualABI`'s own `tailValueReps`,
-||| reused as-is -- already correctly seeded purely from `e`'s own
-||| `RLet`/`RLoop` bindings as it walks them, `empty` needs nothing
-||| pre-populated). Consulted by `inlineInto`'s own `RLet`-with-
-||| directly-called-value case to decide whether *that* `RLet`'s own
-||| declaration can also become native -- see `spliceCall`'s own doc
-||| comment for why this is a separate, later-added concern from
-||| `buildSplice`'s own argument-side one.
+||| `Just ty` iff every tail exit of `e` has the same native type
+||| (`DualABI.tailValueReps`). `promotableNativeLetRep` uses it to decide whether the
+||| `RLet` of a spliced call can become native.
 uniformTailType : RCExp -> Maybe PrimType
 uniformTailType e = case tailValueReps empty e of
                           (Just ty :: rest) => if all (== Just ty) rest then Just ty else Nothing
                           _ => Nothing
 
-||| `Just ty` iff an `RBoxed`-declared `RLet var value body` can be
-||| promoted to native `Rep` `ty`: `value`'s own tail is uniformly
-||| native (`uniformTailType`), `Emit.idr` can actually render it as
-||| one C expression (`emitNativeValueCompatible`), and `body` itself
-||| never needs `var` any other way (`hasNonNativeUse`). `loopSlots`:
-||| the nearest enclosing `RLoop`'s own `loopParams`, threaded through
-||| to `hasNonNativeUse`.
-|||
-||| Generic over how `value` came to exist -- not specific to splicing
-||| -- so any pass assembling a fresh `RBoxed`-declared local (e.g. a
-||| clone `Compiler.RC2.SpecClosure` builds) can reuse this to redo
-||| native-Rep promotion over the result. See `rc2/doc/inlining.md`'s
-||| "Criterion B, revisited" (Layer 2/3) for why this check exists.
+||| `Just ty` iff an `RBoxed` `RLet var value body` can become native
+||| `ty`: `value`'s tail is uniformly native, `Emit` can render it as one
+||| expression, and `body` uses `var` only natively. `loopSlots` goes to
+||| `hasNonNativeUse`. Not specific to splicing: `SpecClosure` reuses it
+||| (`rc2/doc/inlining.md`, "Criterion B, revisited", Layers 2/3).
 export
 promotableNativeLetRep : (loopSlots : List (Int, Rep)) -> (var : Int) -> (value : RCExp) -> (body : RCExp) -> Maybe PrimType
 promotableNativeLetRep loopSlots var value body =
@@ -624,11 +481,8 @@ spliceCall fc reps (MkRCFun calleeArgs _ _ calleeBody) actualArgs = do
     let paramIds = SortedSet.fromList (map fst calleeArgs)
     internalRen <- freshenBoundIds (filter (\i => not (contains i paramIds)) (collectBoundIds calleeBody))
     let ren = foldl (\acc, (k, val) => insert k val acc) paramRen (SortedMap.toList internalRen)
-    -- `promoted` names post-rename ids declared purely `RNative` above
-    -- (a value type is never refcounted, so nothing left to
-    -- reannotate) -- unlike `Compiler.RC2.ConAltNative`'s own fuller
-    -- native-shadow promotion, where a field can still have a
-    -- *surviving* Boxed-context use.
+    -- `promoted` ids are purely `RNative` (a value type is not refcounted, so
+    -- nothing to reannotate), unlike `ConAltNative`'s shadows.
     pure $ wrap (resolveConstClosureApps ccs (stripOwnership promoted (renameRCExp ren calleeBody)))
   where
     zipArgs : List Int -> List RCLocal -> List (Int, RCLocal)
@@ -642,43 +496,21 @@ spliceCall _ _ d _ = pure $ RCrash EmptyFC "[rc2] internal: LateInline target wa
 -- Whole-tree rewrite: replace every eligible call site
 ------------------------------------------------------------------------
 
-||| Every wrapper/branch node `Compiler.RC2.RC`'s `annotate` and
-||| `Compiler.RC2.Loop`'s own passes can already have produced by this
-||| point in the pipeline (ownership nodes, `RLoop`, `RMemoize`
-||| included -- this pass runs after all of them, see the doc's
-||| "Pipeline position"). A call site can sit under any of these, so
-||| every one is walked; everything else is a leaf as far as this
-||| rewrite is concerned (no `RAppName` can hide inside a bare
-||| `RCLocal`).
-|||
-||| Threads `reps` (every `RCLoc`'s own currently-declared `Rep`,
-||| extended at each `RLet`/`RLoop` binding walked through) down to
-||| `spliceCall`'s own `buildSplice` -- see that function's own doc
-||| comment for why this, not the callee's own declared param `Rep`,
-||| decides how a spliced-in argument gets bound.
-|||
-||| `self`: the name of the one definition whose body this call is
-||| walking (`goOrder`'s own `n`) -- consulted, via `callsBack`, at
-||| every `RAppName` this walk finds, to refuse splicing a callee that
-||| directly calls `self` back. See `callsBack`'s own doc comment.
+||| Rewrites every call to an `eligible` callee in the body of `self` into
+||| its spliced body, walking every wrapper node `annotate` and `Loop` can
+||| have produced. `reps` (each local's declared `Rep`, extended at
+||| `RLet`/`RLoop`) is what `buildSplice` binds arguments by, not the
+||| callee's declared param `Rep`. A callee that calls `self` back is
+||| refused (`callsBack`).
 inlineInto : {auto v : Ref VarId Int} -> SortedMap Name RCDef -> SortedSet Name -> (self : Name) -> RCExp -> Core RCExp
 inlineInto defOf eligible self = go empty []
   where
    mutual
-    -- `where` clauses aren't implicitly `mutual` in this Idris2 version
-    -- -- `go`'s own RConCase/RConstCase cases below need `goMaybe`
-    -- (defined after `go` here for readability), so this block needs
-    -- to be explicit about it (confirmed empirically: dropping this
-    -- reproduces "Undefined name ... goMaybe" even with `goMaybe`
-    -- placed textually after every use).
+    -- `where` blocks are not implicitly `mutual` in this Idris2 version.
     --
-    -- `loopSlots` mirrors `reps` but tracks only the *nearest
-    -- enclosing* `RLoop`'s own `loopParams` (`[]` outside any loop),
-    -- set at `go`'s own RLoop case below -- threaded separately from
-    -- `reps` because it must reflect a loop `go`'s own outer recursion
-    -- already walked through, not just one reachable from the current
-    -- subtree. See `rc2/doc/inlining.md`'s "Criterion B, revisited"
-    -- (Layer 3) for the regression a hardcoded `[]` here reproduces.
+    -- `loopSlots`: the nearest enclosing `RLoop`'s params (`[]` outside a
+    -- loop), kept apart from `reps` because it must reflect the loop already
+    -- walked through ("Criterion B, revisited", Layer 3).
     go : SortedMap Int Rep -> List (Int, Rep) -> RCExp -> Core RCExp
     go reps loopSlots (RAppName fc lazy n args) =
         if contains n eligible && not (callsBack defOf self n)
@@ -686,13 +518,9 @@ inlineInto defOf eligible self = go empty []
                      Just d => spliceCall fc reps d args
                      Nothing => pure (RAppName fc lazy n args)
            else pure (RAppName fc lazy n args)
-    -- The call sits directly as an `RLet`'s own still-`RBoxed` value
-    -- (the shape an ordinary, not-yet-`Compiler.RC2.DualABI`-touched
-    -- call site always has) -- `promotableNativeLetRep` decides
-    -- whether `var`'s own declaration can be promoted to native
-    -- (return-side twin of `buildSplice`'s own argument-side
-    -- promotion above; see `rc2/doc/inlining.md`, Layer 2/3, for the
-    -- measured cost of not doing this).
+    -- The call is an `RLet`'s still-`RBoxed` value: `promotableNativeLetRep`
+    -- decides whether `var` can become native (the return-side twin of
+    -- `buildSplice`'s argument promotion).
     go reps loopSlots (RLet fc var RBoxed value@(RAppName vfc lazy n args) body) =
         if contains n eligible && not (callsBack defOf self n)
            then case lookup n defOf of
@@ -729,10 +557,6 @@ inlineInto defOf eligible self = go empty []
     -- Compiler.RC2.DualABI runs strictly after this pass.
     go _ _ e = pure e
 
-    -- Manual case split, not `traverse` -- `Core` has no `Applicative`
-    -- instance (`Core.Core`'s own `<$>`/`<*>` above are ad-hoc
-    -- functions, not a real instance `Prelude.traverse` could resolve
-    -- against), so `traverse`'s generic `Maybe` case doesn't apply.
     goMaybe : SortedMap Int Rep -> List (Int, Rep) -> Maybe RCExp -> Core (Maybe RCExp)
     goMaybe _ _ Nothing = pure Nothing
     goMaybe reps loopSlots (Just e) = Just <$> go reps loopSlots e
@@ -741,147 +565,50 @@ inlineInto defOf eligible self = go empty []
 -- Whole-program entry point
 ------------------------------------------------------------------------
 
-||| One pass over the whole program: first drops anything already
-||| unreachable from `roots` (`Compiler.RC2.DeadCode.pruneDeadDefs`,
-||| reused as-is -- see this doc comment's own last paragraph for why
-||| this, rather than leaving cleanup entirely to the later, separate
-||| `Compiler.RC2.DeadCode` pipeline stage), then splices every
-||| remaining single-caller callee (`analyse`'s own `eligible`, now
-||| computed from only the still-reachable definitions) into its one
-||| call site. `False` (alongside `defs` unchanged) only when pruning
-||| removed nothing *and* `eligible` came back empty.
+||| One round: drop what is unreachable from `roots`
+||| (`pruneDeadDefsCached`), then splice every single-caller callee
+||| (`analyse`'s `eligible`, computed on the pruned program) into its one
+||| call site, callees before callers (`processOrder`; see the doc's
+||| "Eligibility -- and why it doubles as the profitability gate"). The
+||| `Bool` is `False` when `toProcess` (below) is empty; pruning
+||| alone does not count, because `analyse` already ran on the pruned
+||| program, so the next round would see the same program.
 |||
-||| See the doc's "Eligibility" section for why `processOrder` (not
-||| `defs`'s own order) is used -- a *chain* of single-caller callees
-||| already collapses fully within this one call, without needing a
-||| second round, whenever the whole chain is visible to `analyse` from
-||| the start.
+||| Pruning first lets a callee whose other call site sat in dead code
+||| count as single-caller (`rc2/doc/inlining.md`, "Iterated to a
+||| fixpoint"). It does not replace the `pruneDeadDefs` after `DualABI`,
+||| which removes what that pass leaves unused.
 |||
-||| Pruning first, every round, is what lets `applyLateInline`'s own
-||| fixpoint loop below reach a case that a bare re-run of the splice
-||| step alone never would: a callee with two call sites when this
-||| round's own `analyse` would otherwise run, one of them inside a
-||| definition this same round is about to render (or already has
-||| rendered) unreachable. Without re-pruning first, that stale call
-||| site -- still physically present in `defs`, `analyse`'s own
-||| `callCounts` blind to whether anything still reachable actually
-||| runs it -- would keep the callee looking "more than one caller"
-||| forever, no matter how many further rounds ran; `roots`-driven
-||| dead-code removal is the only thing that can tell "still called"
-||| apart from "called only from code nothing reaches anymore."
+||| `prev`/`dirty`: see `analyse`. Only `toProcess`, the names with a
+||| callee that will actually be spliced, are walked: `carried.info`
+||| answers that with a lookup per callee, far cheaper than rebuilding
+||| every body.
 |||
-||| Deliberately not a replacement for the later, separate
-||| `Compiler.RC2.DeadCode.pruneDeadDefs roots` call after `DualABI` --
-||| that one has its own job (`DualABI` runs after this pass entirely
-||| and can introduce fresh dead weight of its own, e.g. an unused
-||| worker/wrapper split, that this pass can never see) and stays
-||| exactly where it is.
-|||
-||| `prev`/`dirty`: threaded straight through to `analyse` (see its
-||| own doc comment) -- `applyLateInline`'s own fixpoint loop carries
-||| the returned `Carried` and this round's own `toProcess` (the *only*
-||| names `goOrder` below is ever handed) into the next round's call.
-|||
-||| **The `logTime`s here wrap `pure $ <pure computation>` rather than
-||| binding the same computation with a `let` above, and that
-||| distinction is the whole reason they report anything at all**: a
-||| `do`-block `let` is an ordinary `let` in the action *value*, so a
-||| strict language runs it while building the action that `logTime`
-||| then wraps -- before the clock ever starts. `x <- pure expr` puts
-||| `expr` inside the `IO` closure `pure` builds, so it runs when the
-||| action does, inside the timed region. This is not hypothetical:
-||| `analyse`'s own ~10s-per-round cost hid behind a `let` here for an
-||| entire investigation, reported as a ~0.1s round while
-||| `"rc2: Late inline"` sat at ~45s. No forcing of the result is
-||| needed on top -- evaluation is strict, so the computation is
-||| finished by the time `pure` has its value.
-|||
-||| **Only walking `toProcess`, not every name in `processOrder`**: the
-||| overwhelming majority of a real whole-program def list never calls
-||| anything `eligible` at all, in any given round, yet the pre-cache
-||| version of this pass ran `inlineInto`'s own full structural
-||| walk-and-rebuild over *every one* of them anyway, every round, only
-||| to reconstruct an identical tree. `Carried.info` already has each
-||| name's own callee set -- checking it against `eligible` costs one
-||| membership test per callee, nowhere near the cost of walking that
-||| name's own (possibly huge) body. Found against a real build
-||| (`idris2-lsp`, `--timing 2`), whose
-||| whole-program def list is large enough (compiler-plus-LSP-server
-||| scale) to make the pre-caching version's blanket walk dominate
-||| `"rc2: Late inline"`'s own wall-clock cost outright.
+||| The `logTime`s wrap `pure $ <computation>`, not a `let`: a `let` runs
+||| before the timer starts and reports nothing.
 applyLateInlineOnce : {auto v : Ref VarId Int} -> {auto c : Ref Ctxt Defs} -> (early : Maybe (SortedSet Name)) -> (seed : CalleeInfo) -> (roots : List Name) -> Maybe Carried -> SortedSet Name -> List (Name, RCDef) -> Core (Bool, List (Name, RCDef), Carried, SortedSet Name)
 applyLateInlineOnce early seed roots prev dirty defs0 = do
     (defs, refs') <- logTime 3 "rc2: LI prune" $
               pure $ pruneDeadDefsCached (maybe empty (.refs) prev) dirty roots defs0
-    -- Built once and shared with `goOrder` below: `analyse` and the
-    -- splice walk both want the same `Name`-keyed view of this round's
-    -- own definitions, and building it is ~35k `Name` comparisons'
-    -- worth of work to redo for nothing.
+    -- Shared with `goOrder`: `analyse` and the splice walk both need it.
     defOf <- logTime 3 "rc2: LI defOf" $ pure $ SortedMap.fromList defs
     (an, carried) <- logTime 3 "rc2: LI analyse" $ pure $ analyse early seed prev dirty refs' defOf defs
     case leftMost an.eligible of
-         Nothing => pure (length defs /= length defs0, defs, carried, empty)
+         Nothing => pure (False, defs, carried, empty)
          Just _ => do
-             -- Walks the *small* side (this one name's own, typically
-             -- tiny, callee set) doing an `eligible` membership check
-             -- per callee, rather than `intersection cs an.eligible`
-             -- (whose own cost -- depending on `Data.SortedSet`'s
-             -- implementation -- may scale with *both* sides, `eligible`
-             -- included; `eligible` can itself be large on an early
-             -- round of a big program, and this check runs once per
-             -- name in `processOrder`, so paying per-`eligible`-size
-             -- cost here, not just per-`cs`-size, would undo the whole
-             -- point of filtering to `toProcess` in the first place).
-             --
-             -- The membership test is the *same* condition
-             -- `inlineInto`'s own two `RAppName` cases splice on
-             -- (`contains n eligible && not (callsBack defOf self n)`),
-             -- not just its first half. Both halves matter, for two
-             -- separate reasons:
-             --
-             --   * Cost: a name whose every eligible callee calls it
-             --     back is walked and rebuilt into an identical tree
-             --     for nothing -- exactly the waste `toProcess` exists
-             --     to cut.
-             --   * Termination: `eligible` holds a callee that
-             --     `callsBack` permanently refuses until *something
-             --     else* changes, so "`eligible` is non-empty" is not
-             --     the same question as "this round will change
-             --     something" -- and the loop below reports `changed`
-             --     off `toProcess`, so getting this wrong left it
-             --     spinning to `maxLateInlineIterations` on every
-             --     non-trivial program.
-             --
-             -- `callsBack` itself is *not* reused here: it re-derives
-             -- the callee's own `calleesOf` with a full body walk,
-             -- which is precisely what `carried.info` already holds
-             -- (see `analyse`'s own doc comment for why a non-`dirty`
-             -- entry stays exactly correct).
+             -- Only names with a callee `inlineInto` would actually splice (`eligible`
+             -- and not calling back, nearly the test of its `RAppName` cases) are walked.
+             -- `carried.info` already holds each callee set, so this is a lookup per
+             -- callee; `callsBack` would re-walk the callee's body. The weaker "has an
+             -- eligible callee" test keeps reporting a change and the loop never stops.
              let callsBackCached : Name -> Name -> Bool
                  callsBackCached caller callee =
                      case lookup callee carried.info of
                           Just cs => isJust (lookup caller cs)
                           Nothing => False
-             --
-             -- The `defOf` membership test is load-bearing, not a
-             -- cheap guard duplicating `goOrder`'s own: neither of the
-             -- two maps consulted below is pruned when a definition
-             -- is. `analyse`'s own `info'` only ever *inserts* into the
-             -- previous round's map (deliberately -- rewriting all
-             -- ~35k entries per round is the cost its cache exists to
-             -- avoid), and `processOrder` is round 1's order reused
-             -- verbatim, so both keep naming definitions
-             -- `pruneDeadDefsCached` has long since removed. Such a
-             -- name still answers this filter from its stale entry,
-             -- and `goOrder` then skips it on `lookup n defOf` without
-             -- a word -- which is why this went unnoticed while the
-             -- round only ever *wasted* work on it. Once `toProcess`
-             -- also decides `changed`, the same staleness stops the
-             -- loop converging at all: measured on `idris2-lsp`, 366
-             -- already-pruned names re-qualified every single round,
-             -- forever, and the pass ran to its cap producing a final
-             -- program byte-for-byte identical to the one it already
-             -- had four rounds earlier.
+             -- The `defOf` test is needed: `carried.info` and `processOrder` still name
+             -- definitions already pruned, and such a name would re-qualify every
+             -- round, so the loop would never converge.
              let splicesInto : Name -> Bool
                  splicesInto n =
                      isJust (lookup n defOf) &&
@@ -891,7 +618,7 @@ applyLateInlineOnce early seed roots prev dirty defs0 = do
                            Nothing => False)
              let toProcess = filter splicesInto an.processOrder
              final <- goOrder an.eligible toProcess defOf
-             pure (not (isNil toProcess) || length defs /= length defs0,
+             pure (not (isNil toProcess),
                    map (\(n, d) => (n, fromMaybe d (lookup n final))) defs, carried, SortedSet.fromList toProcess)
   where
     goOrder : SortedSet Name -> List Name -> SortedMap Name RCDef -> Core (SortedMap Name RCDef)
@@ -907,89 +634,28 @@ applyLateInlineOnce early seed roots prev dirty defs0 = do
                        _ => pure defOf
         goOrder eligible rest defOf'
 
-||| Iteration cap for `applyLateInline`'s own whole-program fixpoint
-||| loop -- same rationale as `RC2.idr`'s own `maxConstFoldIterations`
-||| for `foldConstProgram`, and kept at the same value as it. Each
-||| round's own `eligible` set can only ever shrink -- a callee spliced
-||| away this round drops to call count 0 and can never regain
-||| eligibility -- so the loop already halts on its own the moment
-||| nothing is left to splice; this cap only guards a pathological
-||| input from iterating unboundedly.
-|||
-||| Was 4, raised to 8 as headroom once the loop was made to converge
-||| on its own (see `applyLateInlineOnce`'s own `splicesInto`). It is
-||| headroom and nothing more: a whole `idris2-lsp` build settles in 5
-||| rounds, its per-round splice count falling 9967 -> 409 -> 14 -> 0,
-||| so the cap is not what stops it and raising it further changes the
-||| emitted program not at all (verified: cap 8 and cap 16 produce
-||| byte-identical output). Under the old cap of 4 the same build was
-||| genuinely cut off mid-descent, at 14 splices still to go.
+||| Iteration cap for `applyLateInline`. Only a guard: the loop stops by
+||| itself once a round splices nothing (idris2-lsp settles in about 5
+||| rounds).
 maxLateInlineIterations : Nat
 maxLateInlineIterations = 8
 
-||| Runs `applyLateInlineOnce` repeatedly (`roots`: same whole-program
-||| entry points `Compiler.RC2.DeadCode.pruneDeadDefs` itself is always
-||| called with -- see that function's own doc comment for why each
-||| round re-prunes with it first) -- see `applyLateInlineOnce`'s own
-||| doc comment for when a further round actually finds something new
-||| to do -- until a round finds nothing left to prune or splice, or
-||| `maxLateInlineIterations` is reached, whichever comes first.
-|||
-||| Each round is individually `logTime`d at the finer `--timing 3`
-||| level, on top of the aggregate `"rc2: Late inline"` timer `RC2.idr`'s
-||| own pipeline already wraps the whole call in (same
-||| coarser/finer-level split `RC2.idr`'s own "Loop conversion"/"Loop
-||| conversion (apply)" pair already uses) -- a round-by-round
-||| breakdown is what distinguishes "cost scales with fixed round
-||| count" from "cost grows round-over-round as earlier rounds' own
-||| splices inflate what later rounds have to re-`analyse`/re-walk",
-||| which the aggregate number alone can't tell apart, and is also
-||| exactly what surfaced `analyse`/`applyLateInlineOnce`'s own
-||| `CalleeInfo` cache and `toProcess` filter as worth adding in the
-||| first place (found against a real build, `idris2-lsp` -- see
-||| `applyLateInlineOnce`'s own doc comment).
-|||
-||| `cache`/`dirty` start `empty` on round 1 (nothing cached, nothing to
-||| treat as unchanged-since-last-round yet) and thread the previous
-||| round's own returned cache/`toProcess` into the next.
-|||
-||| **Open gap, not yet explained**: the `CalleeInfo` cache and
-||| `toProcess` filter above cut each individual round's own measured
-||| cost to a small fraction of a second against a real build
-||| (`idris2-lsp`) -- round 2 through 4 each ~0.1s, down from the
-||| whole pass's own former ~46s aggregate. Yet that *aggregate*
-||| `"rc2: Late inline"` number barely moved. Explicitly forcing every
-||| value this loop threads between rounds (`defs'`, `cache'`, and the
-||| `looped` argument this function is first called with) came back
-||| cheap too, each under a tenth of a second -- ruling out a deferred/
-||| thunked computation (expected: Idris2/Chez evaluation is strict
-||| here, `Core`'s own `<-` genuinely runs its action once). Raw
-||| `System.Clock` timestamps taken immediately around this whole
-||| function's own call confirmed the ~45s is real wall/process time,
-||| not a `logTime` measurement artifact. Suspected but not confirmed:
-||| GC pressure from the repeated whole-program `SortedMap`/`SortedSet`
-||| reconstruction, landing its cost somewhere `logTime`'s own
-||| before/after clock reads don't happen to bracket -- not yet
-||| confirmed (no GC-specific counter checked against this directly).
-||| Update (2026-09-30): a GC counter *was* checked, though against a
-||| different symptom (round 1's `"LI prune"` looking id-order-
-||| sensitive, `rc2/doc/lambda-lifting.md`) rather than this one. Chez's
-||| own `sstats-gc-real` around that prune showed 654ms of its 1.163s
-||| spent in GC (100 collections), against only 11-66ms of GC in every
-||| other round's prune -- support for the GC-pressure suspicion above,
-||| even though that specific case turned out to be a GC left over from
-||| an earlier stage landing in the prune, not a leak from this loop.
+||| Runs `applyLateInlineOnce` until a round splices nothing or
+||| `maxLateInlineIterations` is reached, threading `Carried` and the
+||| previous round's `toProcess` (as `dirty`) from round to round. `roots`
+||| are the entry points `pruneDeadDefs` is called with. Each round is
+||| `logTime`d at `--timing 3`, labelled with how many definitions the
+||| previous round spliced into, which tells a converging tail from real
+||| work.
 export
 applyLateInline : {auto v : Ref VarId Int} -> {auto c : Ref Ctxt Defs} -> (label : String) -> (early : Bool)
                -> (roots : List Name) -> List (Name, RCDef) -> Core (List (Name, RCDef))
 applyLateInline label early roots defs0 =
-    -- The early run (before RC annotation, so before `Loop`) skips every
-    -- callee in a call cycle: splicing one would turn the cycle into a
-    -- direct call back to the caller, which the later run then refuses
-    -- to splice, where after `Loop` it could have
-    -- (constructor-escape-analysis.md, "Early inline"). Bound here, not
-    -- in `where`, so it is computed once (constant-constructor-
-    -- specialization.md, "The `where`-clause trap").
+    -- The early run skips every callee in a call cycle: splicing one would
+    -- turn the cycle into a direct call back to the caller, which the later
+    -- run then refuses (constructor-escape-analysis.md, "Early inline").
+    -- Bound here, not in `where`, so it is computed once
+    -- (constant-constructor-specialization.md, "The `where`-clause trap").
     do seed <- logTime 3 "rc2: \{label} (call counts)" $ pure $ SortedMap.fromList (map (\(n, d) => (n, callCountsOf d)) defs0)
        excluded <- if early then logTime 3 "rc2: \{label} (call cycles)" $ pure $ Just (cyclicNames seed) else pure Nothing
        go seed excluded 1 maxLateInlineIterations Nothing empty defs0
@@ -997,14 +663,6 @@ applyLateInline label early roots defs0 =
     go : CalleeInfo -> Maybe (SortedSet Name) -> Nat -> Nat -> Maybe Carried -> SortedSet Name -> List (Name, RCDef) -> Core (List (Name, RCDef))
     go _ _ round Z prev dirty defs = pure defs
     go seed excluded round (S fuel) prev dirty defs = do
-        -- `dirty` is the *previous* round's own `toProcess` -- the
-        -- definitions it actually spliced into -- so it is already
-        -- known when this round's label is built, the same way
-        -- `RC2.foldConstProgram` carries its CAF count forward. Printed
-        -- because the round number alone says only *that* the loop kept
-        -- going, never whether it is converging: a tail of one or two
-        -- spliced definitions a round looks identical to real work
-        -- until this number is next to it.
         let carriedNote = if round == 1
                              then "first pass"
                              else "\{show (length (Prelude.toList dirty))} spliced last round"
