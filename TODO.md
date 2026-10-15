@@ -1124,8 +1124,9 @@ upstreamに取り込まれたら`idris2-src`を更新して自作idris2を作り
 - シグナル: `sigaction`のハンドラはIdrisの関数を渡せないので束縛しない(`signalfd`/`sigwait`で代替)。
   `sigsuspend`を起こすにはハンドラ付きのシグナルが要り、Idrisでは書けないので、実行テストは無い
   (コンパイルまでの確認)。
-- `System.Linux.*`: `statx`、`eventfd`のIdris側ラッパ(今は`System.Linux.Epoll`のC補助の中)、`epoll`以外の
-  `splice`/`sendfile`/`memfd_create`/`prctl`。
+- `System.Linux.*`: `statx`。`System.Linux.Epoll`は`Int`のfd・C補助・`HasIO`の古い書き方のままで、
+  その中の`EventFd`は`System.Linux.Eventfd`と重複している。`FileDesc`と`Either Errno`で作り直し、
+  `Network.HTTP.Server`と`TestHTTPServer`を合わせて直す。
 - `Pwd`: スレッド安全な`getpwnam_r`系は束縛していない(静的領域をすぐレコードにコピーする)。
   `Glob`: `GLOB_BRACE`/`GLOB_TILDE`(GNU拡張)と`glob_t`のオフセット系は無い。
 - `Tm`に`tm_gmtoff`/`tm_zone`が無いので、`strftime`の`%Z`/`%z`はゾーンを出さない。

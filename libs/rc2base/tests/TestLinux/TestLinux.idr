@@ -8,6 +8,7 @@ module Main
 -- this test with IDRIS2_CFLAGS=-D_GNU_SOURCE.
 
 import Data.Bits
+import Data.Buffer
 import Data.List
 import Data.String
 import System.FFI
@@ -16,9 +17,13 @@ import System.Posix.Fcntl
 import System.Posix.File
 import System.Posix.FileDesc
 import System.Linux.Clock
+import System.Linux.Copy
+import System.Linux.Eventfd
 import System.Linux.Dl
 import System.Linux.Inotify
+import System.Linux.Memfd
 import System.Linux.Pipe
+import System.Linux.Prctl
 import System.Linux.Signalfd
 import System.Linux.Timerfd
 import System.Directory
@@ -181,6 +186,84 @@ testDl = do
   dlclose lm >>= \r => putStrLn ("dlclose: " ++ either id (const "ok") r)
   dlclose self >>= \r => putStrLn ("dlclose self: " ++ either id (const "ok") r)
 
+slurp : FileDesc -> IO String
+slurp fd = do
+  _ <- lseek fd (cast 0) SEEK_SET
+  Just buf <- newBuffer 64
+    | Nothing => pure "newBuffer failed"
+  n <- Buffer.read fd buf
+  getString buf 0 (cast n)
+
+testEventfd : IO ()
+testEventfd = do
+  putStrLn "-- eventfd"
+  Right efd <- eventfd 0 EFD_NONBLOCK
+    | Left e => putStrLn ("eventfd failed: " ++ show e)
+  eventfdRead efd >>= \r => putStrLn ("empty counter: " ++ errOf r)
+  _ <- eventfdWrite efd 5
+  _ <- eventfdWrite efd 3
+  eventfdRead efd >>= \r => putStrLn ("sum: " ++ show r)
+  eventfdRead efd >>= \r => putStrLn ("cleared by the read: " ++ errOf r)
+  _ <- close efd
+  Right sem <- eventfd 2 (EFD_NONBLOCK .|. EFD_SEMAPHORE)
+    | Left e => putStrLn ("eventfd failed: " ++ show e)
+  eventfdRead sem >>= \r => putStrLn ("semaphore 1: " ++ show r)
+  eventfdRead sem >>= \r => putStrLn ("semaphore 2: " ++ show r)
+  eventfdRead sem >>= \r => putStrLn ("semaphore 3: " ++ errOf r)
+  _ <- close sem
+  pure ()
+
+testMemfd : IO ()
+testMemfd = do
+  putStrLn "-- memfd, sendfile, splice, copy_file_range"
+  Right m <- memfd_create "rc2base-test" (MFD_CLOEXEC .|. MFD_ALLOW_SEALING)
+    | Left e => putStrLn ("memfd_create failed: " ++ show e)
+  _ <- String.write m "hello world"
+  slurp m >>= \s => putStrLn ("contents: " ++ show s)
+  getSeals m >>= \r => putStrLn ("seals at first: " ++ show r)
+  addSeals m (F_SEAL_WRITE .|. F_SEAL_GROW) >>= \r => putStrLn ("addSeals: " ++ errOf r)
+  getSeals m >>= \r => putStrLn ("write and grow sealed: " ++ show (map (\x => (x .&. F_SEAL_WRITE) /= 0 && (x .&. F_SEAL_GROW) /= 0 && (x .&. F_SEAL_SHRINK) == 0) r))
+  n <- String.write m "x"
+  e <- errno
+  putStrLn ("write after the seal: " ++ show n ++ ", errno " ++ show (errnum e))
+  Right plain <- memfd_create "plain" 0
+    | Left e => putStrLn ("memfd_create failed: " ++ show e)
+  addSeals plain F_SEAL_GROW >>= \r => putStrLn ("addSeals without MFD_ALLOW_SEALING: " ++ errOf r)
+  -- sendfile (an offset) into a second file, then splice into a pipe
+  Right dst <- memfd_create "dst" 0
+    | Left e => putStrLn ("memfd_create failed: " ++ show e)
+  sendfile dst m (Just 6) 5 >>= \r => putStrLn ("sendfile: " ++ show r)
+  slurp dst >>= \s => putStrLn ("sendfile copied: " ++ show s)
+  Right (rd, wr) <- pipe
+    | Left _ => putStrLn "pipe failed"
+  splice m (Just 0) wr Nothing 5 0 >>= \r => putStrLn ("splice: " ++ show r)
+  Just buf <- newBuffer 16
+    | Nothing => putStrLn "newBuffer failed"
+  k <- Buffer.read rd buf
+  getString buf 0 (cast k) >>= \s => putStrLn ("pipe has: " ++ show s)
+  splice m Nothing dst Nothing 1 0 >>= \r => putStrLn ("splice between files: " ++ either (\x => "errno " ++ show (errnum x)) show r)
+  _ <- close rd
+  _ <- close wr
+  copy_file_range m (Just 0) dst (Just 5) 5 >>= \r => putStrLn ("copy_file_range: " ++ show r)
+  slurp dst >>= \s => putStrLn ("after copy_file_range: " ++ show s)
+  for_ [m, plain, dst] $ \f => close f
+
+testPrctl : IO ()
+testPrctl = do
+  putStrLn "-- prctl"
+  setThreadName "rc2base-test" >>= \r => putStrLn ("setThreadName: " ++ errOf r)
+  getThreadName >>= \r => putStrLn ("getThreadName: " ++ show r)
+  setParentDeathSignal (Just SIGUSR1) >>= \r => putStrLn ("setParentDeathSignal: " ++ errOf r)
+  getParentDeathSignal >>= \r => putStrLn ("getParentDeathSignal: " ++ show (map (map (cast {to=Int32})) r))
+  setParentDeathSignal Nothing >>= \r => putStrLn ("clear: " ++ errOf r)
+  getParentDeathSignal >>= \r => putStrLn ("cleared: " ++ show (map (map (cast {to=Int32})) r))
+  setChildSubreaper True >>= \r => putStrLn ("setChildSubreaper: " ++ errOf r)
+  getChildSubreaper >>= \r => putStrLn ("getChildSubreaper: " ++ show r)
+  setDumpable True >>= \r => putStrLn ("setDumpable: " ++ errOf r)
+  getDumpable >>= \r => putStrLn ("getDumpable: " ++ show r)
+  setNoNewPrivs >>= \r => putStrLn ("setNoNewPrivs: " ++ errOf r)
+  getNoNewPrivs >>= \r => putStrLn ("no_new_privs after: " ++ show r)
+
 main : IO ()
 main = do
   Right (rd, wr) <- pipe2 (O_CLOEXEC .|. O_NONBLOCK)
@@ -203,4 +286,7 @@ main = do
   testSignalfd
   testInotify
   testDl
+  testEventfd
+  testMemfd
+  testPrctl
   putStrLn "done"
