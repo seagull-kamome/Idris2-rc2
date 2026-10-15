@@ -59,8 +59,8 @@ uint64_t getBufferUIntLE(void *buffer, int loc, size_t len);
 #define getBufferUInt64LE(b, l) ((uint64_t)getBufferUIntLE(b, l, 8))
 // Named for Data.Buffer.prim__getByte's own upstream "RefC:getBufferByte"
 // tag (its return type is plain Int, not Int8) -- do not rename: also
-// reused as-is (via a separate "RC2:" %foreign_impl, libs/rc2base's
-// Data.Buffer.RC2) for prim__getInt8, whose Int8 return type just needs
+// reused as-is (upstream's "RefC:getBufferByte" tag, since #3873, also
+// names it for prim__getInt8), whose Int8 return type just needs
 // a narrower C local to receive this same int64_t, not a different
 // function.
 #define getBufferByte(b, l) ((int64_t)getBufferUIntLE(b, l, 1))

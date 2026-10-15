@@ -7,9 +7,7 @@ module Data.Double.RC2
 -- each of which carries only a `"scheme:..."`/`"node:..."` %foreign tag
 -- and is therefore unusable on refc/rc2 (or any C backend) at all -- see
 -- TODO.md's "Upstream stdlib `%foreign` declarations with no C/RefC
--- backend at all" entry. Unlike `Data.Buffer.RC2` (rc2's own runtime
--- already had every needed primitive under a different name),
--- rc2/support/rc2/numeric.h needed four small new `static inline`
+-- backend at all" entry. rc2/support/rc2/numeric.h needed four small new `static inline`
 -- functions -- `idris2rc2_unitRoundoff`/`idris2rc2_epsilon`/
 -- `idris2rc2_nan`/`idris2rc2_inf` -- since there was nothing to reuse.
 -- Their values are matched against idris2-src's own Chez definitions
@@ -31,8 +29,7 @@ module Data.Double.RC2
 -- generator) via a standalone scratch program before writing this
 -- module for real, not assumed from reading the compiler alone.
 --
--- Tagged `"RC2:"`, not `"RefC:"`, for the same reason as
--- `Data.Buffer.RC2`: these symbol names are new, rc2-only additions to
+-- Tagged `"RC2:"`, not `"RefC:"`, because these symbol names are new, rc2-only additions to
 -- rc2's own runtime, not something a real `idris2 --cg refc` build's own
 -- runtime also happens to provide -- an `"RC2:"`-tagged ccs entry is
 -- silently ignored by any backend other than rc2 (`EmitUtil.idr`'s own
