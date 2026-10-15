@@ -19,6 +19,7 @@ import System.Posix.File
 import System.Posix.FileDesc
 import System.Linux.Clock
 import System.Linux.Copy
+import System.Linux.Epoll
 import System.Linux.Eventfd
 import System.Linux.Dl
 import System.Linux.Inotify
@@ -330,6 +331,41 @@ testProcess = do
   sched_getcpu >>= \r => putStrLn ("current CPU is allowed: " ++ show (map (\n => elem (cast n) cpus) r))
   setAffinity Nothing cpus >>= \r => putStrLn ("setAffinity to the same set: " ++ errOf r)
 
+eventsOf : FileDesc -> Either Errno (List ReadyEvent) -> String
+eventsOf efd (Right [ev]) = "one event for the eventfd: " ++ show (ev.fd == efd.rawfd) ++ ", readable: " ++ show (hasEvent EPOLLIN ev.events)
+eventsOf efd (Right evs) = show (length evs) ++ " events"
+eventsOf efd (Left e) = "errno " ++ show (errnum e)
+
+testEpoll : IO ()
+testEpoll = do
+  putStrLn "-- epoll"
+  Right ep <- epollCreate 4
+    | Left e => putStrLn ("epollCreate failed: " ++ show e)
+  Right ep2 <- epollCreate 4
+    | Left e => putStrLn ("epollCreate failed: " ++ show e)
+  Right efd <- eventfd 0 (EFD_NONBLOCK .|. EFD_CLOEXEC)
+    | Left e => putStrLn ("eventfd failed: " ++ show e)
+  epollWait ep 0 >>= \r => putStrLn ("nothing watched: " ++ show (map length r))
+  epollAdd ep efd EPOLLIN >>= \r => putStrLn ("add: " ++ errOf r)
+  epollAdd ep efd EPOLLIN >>= \r => putStrLn ("add twice: errno " ++ either (show . errnum) (const "ok") r)
+  epollAdd ep2 efd EPOLLIN >>= \r => putStrLn ("add to the second epoll: " ++ errOf r)
+  epollWait ep 0 >>= \r => putStrLn ("not ready: " ++ show (map length r))
+  _ <- eventfdWrite efd 1
+  epollWait ep 1000 >>= \r => putStrLn (eventsOf efd r)
+  epollWait ep2 1000 >>= \r => putStrLn ("the other epoll: " ++ eventsOf efd r)
+  -- level-triggered: still ready until the counter is read
+  epollWait ep 0 >>= \r => putStrLn ("still ready: " ++ show (map length r))
+  _ <- eventfdRead efd
+  epollWait ep 0 >>= \r => putStrLn ("after the read: " ++ show (map length r))
+  epollMod ep efd (EPOLLIN .|. EPOLLOUT) >>= \r => putStrLn ("mod: " ++ errOf r)
+  epollWait ep 0 >>= \r => putStrLn ("writable now: " ++ show (map (map (\ev => hasEvent EPOLLOUT ev.events)) r))
+  epollDel ep efd >>= \r => putStrLn ("del: " ++ errOf r)
+  epollDel ep efd >>= \r => putStrLn ("del twice: errno " ++ either (show . errnum) (const "ok") r)
+  epollWait ep 0 >>= \r => putStrLn ("after del: " ++ show (map length r))
+  _ <- close efd
+  epollClose ep >>= \r => putStrLn ("close: " ++ errOf r)
+  epollClose ep2 >>= \r => putStrLn ("close the second: " ++ errOf r)
+
 main : IO ()
 main = do
   Right (rd, wr) <- pipe2 (O_CLOEXEC .|. O_NONBLOCK)
@@ -353,6 +389,7 @@ main = do
   testInotify
   testDl
   testEventfd
+  testEpoll
   testMemfd
   testPrctl
   testStatx

@@ -1,264 +1,158 @@
-||| Thin FFI wrapper around Linux `epoll`.
-||| The standard `network` package's `Socket` gives no way to put a
-||| descriptor in non-blocking mode or wait on several of them at
-||| once -- both required for a single-threaded, event-driven server --
-||| so this module adds exactly that (plus `SO_REUSEADDR`, needed to
-||| rebind a just-restarted server's listening port). See
-||| `libs/rc2base/doc/http-server.md` for the design this exists to
-||| support.
+||| `epoll`: wait for readiness on many descriptors at once.
+|||
+||| `Network.HTTP.Server` is built on it: a single-threaded, event-driven
+||| server needs non-blocking descriptors and one wait over all of them (see
+||| `libs/rc2base/doc/http-server.md`).
+|||
+||| An `EPoll` owns the buffer `epollWait` fills, so any number of them can be in
+||| use at once; none of them is safe to use from two threads at the same time.
+|||
+||| Linux only.
 module System.Linux.Epoll
-
--- Copyright 2026, Hattori,Hiroki. All rights reserved.
--- This module was licensed by BSD3.
 
 import Data.Bits
 import System.FFI
+import System.Posix.Errno
+import System.Posix.FileDesc
 
--- readyEvents' Int-indexed loop isn't structurally recursive, so it
--- doesn't satisfy rc2base.ipkg's package-wide `--total` on its own.
-%default covering
-
--------------------------------------------------------------------------------
--- Raw FFI
--------------------------------------------------------------------------------
-
-%foreign "CExpr:(epoll_create1(0)),libc,sys/epoll.h"
-prim__epollCreate : PrimIO Int
-
-%foreign "C:idris2rc2_epoll_add, libidris2rc2base, idris2rc2_rc2base_event_util.h"
-prim__epollAdd : Int -> Int -> Int -> PrimIO Int
-
-%foreign "C:idris2rc2_epoll_mod, libidris2rc2base, idris2rc2_rc2base_event_util.h"
-prim__epollMod : Int -> Int -> Int -> PrimIO Int
-
-%foreign "CExpr:(epoll_ctl($1, EPOLL_CTL_DEL, $2, NULL)),libc,sys/epoll.h"
-prim__epollDel : Int -> Int -> PrimIO Int
-
-%foreign "C:idris2rc2_epoll_wait, libidris2rc2base, idris2rc2_rc2base_event_util.h"
-prim__epollWait : Int -> Int -> PrimIO Int
-
-%foreign "C:idris2rc2_epoll_event_fd, libidris2rc2base, idris2rc2_rc2base_event_util.h"
-prim__epollEventFd : Int -> PrimIO Int
-
-%foreign "C:idris2rc2_epoll_event_flags, libidris2rc2base, idris2rc2_rc2base_event_util.h"
-prim__epollEventFlags : Int -> PrimIO Int
-
-%foreign "CExpr:(EPOLLIN),libc,sys/epoll.h"
-prim__epollin : Int
-
-%foreign "CExpr:(EPOLLOUT),libc,sys/epoll.h"
-prim__epollout : Int
-
-%foreign "CExpr:(EPOLLERR),libc,sys/epoll.h"
-prim__epollerr : Int
-
-%foreign "CExpr:(EPOLLHUP),libc,sys/epoll.h"
-prim__epollhup : Int
-
-%foreign "C:idris2rc2_set_nonblocking, libidris2rc2base, idris2rc2_rc2base_event_util.h"
-prim__setNonBlocking : Int -> PrimIO Int
-
-%foreign "C:idris2rc2_set_reuseaddr, libidris2rc2base, idris2rc2_rc2base_event_util.h"
-prim__setReuseAddr : Int -> PrimIO Int
-
-%foreign "CExpr:(eventfd(0, EFD_NONBLOCK | EFD_CLOEXEC)),libc,sys/eventfd.h"
-prim__eventFdCreate : PrimIO Int
-
-%foreign "C:idris2rc2_eventfd_signal, libidris2rc2base, idris2rc2_rc2base_event_util.h"
-prim__eventFdSignal : Int -> PrimIO Int
-
-%foreign "C:idris2rc2_eventfd_drain, libidris2rc2base, idris2rc2_rc2base_event_util.h"
-prim__eventFdDrain : Int -> PrimIO Int
-
-%foreign "C:idris2rc2_close_fd, libidris2rc2base, idris2rc2_rc2base_event_util.h"
-prim__closeFd : Int -> PrimIO Int
+%default total
 
 -------------------------------------------------------------------------------
 -- Event flags
--------------------------------------------------------------------------------
 
-||| A bitmask of epoll event flags (`EPOLLIN`/`EPOLLOUT`/...). `<+>`
-||| combines flags requested together (e.g. wanting both read and
-||| write readiness); `hasEvent` tests a `wait` result against one.
+||| An `or` of `EPOLL*` event bits.
 public export
-record EventFlags where
-  constructor MkEventFlags
-  raw : Int
+EpollEvents : Type
+EpollEvents = Bits32
 
-export
-Semigroup EventFlags where
-  MkEventFlags a <+> MkEventFlags b = MkEventFlags (a .|. b)
+||| There is data to read.
+%inline %foreign "CExpr:(EPOLLIN),libc,sys/epoll.h"
+export EPOLLIN : EpollEvents
+||| There is urgent data to read.
+%inline %foreign "CExpr:(EPOLLPRI),libc,sys/epoll.h"
+export EPOLLPRI : EpollEvents
+||| Writing will not block.
+%inline %foreign "CExpr:(EPOLLOUT),libc,sys/epoll.h"
+export EPOLLOUT : EpollEvents
+||| An error happened (always reported).
+%inline %foreign "CExpr:(EPOLLERR),libc,sys/epoll.h"
+export EPOLLERR : EpollEvents
+||| The other end hung up (always reported).
+%inline %foreign "CExpr:(EPOLLHUP),libc,sys/epoll.h"
+export EPOLLHUP : EpollEvents
+||| The peer of a stream socket closed its writing end.
+%inline %foreign "CExpr:(EPOLLRDHUP),libc,sys/epoll.h"
+export EPOLLRDHUP : EpollEvents
+||| Report a change of readiness once (edge-triggered), not for as long as it lasts.
+%inline %foreign "CExpr:(EPOLLET),libc,sys/epoll.h"
+export EPOLLET : EpollEvents
+||| Report one event, then stop watching the descriptor until `epollMod` re-arms it.
+%inline %foreign "CExpr:(EPOLLONESHOT),libc,sys/epoll.h"
+export EPOLLONESHOT : EpollEvents
 
+||| Whether all the bits of `want` are set in `have`.
 export
-Monoid EventFlags where
-  neutral = MkEventFlags 0
-
-export
-hasEvent : (want : EventFlags) -> (have : EventFlags) -> Bool
-hasEvent (MkEventFlags want) (MkEventFlags have) = (want .&. have) == want
-
--- OS-fixed macro constants: pure `CExpr:` declarations, folded by the C compiler.
-export
-epollIn : EventFlags
-epollIn = MkEventFlags $ prim__epollin
-
-export
-epollOut : EventFlags
-epollOut = MkEventFlags $ prim__epollout
-
-export
-epollErr : EventFlags
-epollErr = MkEventFlags $ prim__epollerr
-
-export
-epollHup : EventFlags
-epollHup = MkEventFlags $ prim__epollhup
+hasEvent : (want : EpollEvents) -> (have : EpollEvents) -> Bool
+hasEvent want have = (want .&. have) == want
 
 -------------------------------------------------------------------------------
--- Socket setup helpers
--------------------------------------------------------------------------------
+-- Raw FFI
 
-||| Puts a file descriptor in non-blocking mode. Must be called on
-||| every socket (listening and accepted) that will be registered with
-||| an `EPoll` -- a blocking `accept`/`recv`/`send` call on a wrongly-
-||| configured descriptor would stall the whole single-threaded loop.
-export
-setNonBlocking : HasIO io => (fd : Int) -> io Bool
-setNonBlocking fd = (== 0) <$> primIO (prim__setNonBlocking fd)
-
-||| Sets `SO_REUSEADDR` on a socket, so a restarted server can rebind
-||| its port immediately instead of hitting `TIME_WAIT`.
-export
-setReuseAddr : HasIO io => (fd : Int) -> io Bool
-setReuseAddr fd = (== 0) <$> primIO (prim__setReuseAddr fd)
-
-||| `close(2)` on a raw descriptor that isn't a `Network.Socket.Socket`
-||| -- an `EPoll`'s own fd (see `close` below) or an `EventFd`. `EINTR`
-||| is retried internally.
-export
-closeFd : HasIO io => (fd : Int) -> io Bool
-closeFd fd = (== 0) <$> primIO (prim__closeFd fd)
-
--------------------------------------------------------------------------------
--- Cross-thread wakeup (eventfd)
--------------------------------------------------------------------------------
-
-||| A non-blocking `eventfd`. Register it with an `EPoll` for `epollIn`
-||| and a single-threaded `wait` loop can be woken from another thread:
-||| the other thread calls `signal`, the loop's `wait` returns with this
-||| fd ready, and the loop calls `drain` to clear it. This is the only
-||| thread-safe way to poke an otherwise single-threaded epoll loop --
-||| everything else in this module and `Network.HTTP.Server` assumes one
-||| thread.
-public export
-record EventFd where
-  constructor MkEventFd
-  fd : Int
-
-||| Creates a non-blocking `eventfd` (counter starts at 0). `Nothing` on
-||| failure (resource exhaustion -- nothing a caller can recover from).
-export
-createEventFd : HasIO io => io (Maybe EventFd)
-createEventFd = do
-  fd <- primIO prim__eventFdCreate
-  pure $ if fd == -1 then Nothing else Just (MkEventFd fd)
-
-||| Wakes a loop waiting on this `eventfd` (adds 1 to its counter).
-||| Safe to call from any thread. A saturated counter is treated as
-||| success -- the loop is already about to wake.
-export
-signalEventFd : HasIO io => EventFd -> io Bool
-signalEventFd efd = (== 0) <$> primIO (prim__eventFdSignal efd.fd)
-
-||| Clears this `eventfd`'s counter (reads until `EAGAIN`). Call once
-||| per observed wakeup, before acting on whatever the signal announced,
-||| so a signal that races in afterwards re-arms the fd instead of being
-||| lost.
-export
-drainEventFd : HasIO io => EventFd -> io Bool
-drainEventFd efd = (== 0) <$> primIO (prim__eventFdDrain efd.fd)
-
-||| `close(2)` on the underlying descriptor.
-export
-closeEventFd : HasIO io => EventFd -> io Bool
-closeEventFd efd = closeFd efd.fd
+%inline %foreign "CExpr:(epoll_create1(EPOLL_CLOEXEC)),libc,sys/epoll.h"
+prim__epoll_create : PrimIO Int32
+%inline %foreign "CExpr:(EPOLL_CTL_ADD),libc,sys/epoll.h"
+prim__EPOLL_CTL_ADD : Int32
+%inline %foreign "CExpr:(EPOLL_CTL_MOD),libc,sys/epoll.h"
+prim__EPOLL_CTL_MOD : Int32
+%inline %foreign "CExpr:(EPOLL_CTL_DEL),libc,sys/epoll.h"
+prim__EPOLL_CTL_DEL : Int32
+%inline %foreign "CExpr:(({ struct epoll_event e; memset(&e, 0, sizeof(e)); e.events = $4; e.data.fd = $3; epoll_ctl($1, $2, $3, &e); })),libc,sys/epoll.h;string.h"
+prim__epoll_ctl : Int32 -> Int32 -> Int32 -> EpollEvents -> PrimIO Int32
+%inline %foreign "CExpr:(sizeof(struct epoll_event)),libc,sys/epoll.h"
+prim__sizeofEvent : Int
+%inline %foreign "CExpr:(epoll_wait($1, (struct epoll_event *)($2), $3, $4)),libc,sys/epoll.h"
+prim__epoll_wait : Int32 -> AnyPtr -> Int32 -> Int32 -> PrimIO Int32
+%inline %foreign "CExpr:(((struct epoll_event *)($1))[$2].data.fd),libc,sys/epoll.h"
+prim__event_fd : AnyPtr -> Int -> PrimIO Int32
+%inline %foreign "CExpr:(((struct epoll_event *)($1))[$2].events),libc,sys/epoll.h"
+prim__event_events : AnyPtr -> Int -> PrimIO EpollEvents
 
 -------------------------------------------------------------------------------
 -- EPoll
--------------------------------------------------------------------------------
 
-||| A handle to one `epoll` instance. One process is expected to run
-||| exactly one `EPoll` at a time -- `wait`'s underlying C call caches
-||| its result in a single static buffer (see `event_util.c`), so
-||| interleaving `wait` calls from two different `EPoll`s is unsafe.
-public export
+||| One `epoll` instance, with the buffer for the events one `epollWait` returns.
+export
 record EPoll where
   constructor MkEPoll
-  fd : Int
+  efd : FileDesc
+  buffer : AnyPtr
+  capacity : Nat
 
-||| Creates a new `epoll` instance. `Nothing` on failure (`epoll_create1`
-||| errno, not surfaced further -- this only fails on resource
-||| exhaustion, nothing a caller can meaningfully recover from).
-export
-create : HasIO io => io (Maybe EPoll)
-create = do
-  fd <- primIO prim__epollCreate
-  pure $ if fd == -1 then Nothing else Just (MkEPoll fd)
-
-||| Starts watching `fd` for the given events.
-export
-add : HasIO io => EPoll -> (fd : Int) -> EventFlags -> io Bool
-add ep fd flags = (== 0) <$> primIO (prim__epollAdd ep.fd fd flags.raw)
-
-||| Changes the set of events watched for an already-added `fd`.
-export
-modify : HasIO io => EPoll -> (fd : Int) -> EventFlags -> io Bool
-modify ep fd flags = (== 0) <$> primIO (prim__epollMod ep.fd fd flags.raw)
-
-||| Stops watching `fd`. Callers must do this before closing `fd` --
-||| `epoll` drops a closed descriptor's registration on its own, but
-||| relying on that leaves a window where a reused fd number could be
-||| misattributed to the old registration.
-export
-remove : HasIO io => EPoll -> (fd : Int) -> io Bool
-remove ep fd = (== 0) <$> primIO (prim__epollDel ep.fd fd)
-
-||| Closes the `epoll` instance's own descriptor. Registrations for any
-||| fds still watched are dropped by the kernel; those fds themselves
-||| are not closed. Call once, when the loop is done for good. (Named
-||| `closeEpoll`, not `close`, to stay unambiguous alongside
-||| `Network.Socket.close`.)
-export
-closeEpoll : HasIO io => EPoll -> io Bool
-closeEpoll ep = closeFd ep.fd
-
-||| One ready descriptor from a `wait` call.
+||| One ready descriptor from `epollWait`.
 public export
 record ReadyEvent where
   constructor MkReadyEvent
-  fd    : Int
-  flags : EventFlags
+  fd : Int32
+  events : EpollEvents
 
-readyEvents : HasIO io => Int -> io (List ReadyEvent)
-readyEvents n = go 0
-  where
-    go : Int -> io (List ReadyEvent)
-    go i = if i >= n
-             then pure []
-             else do
-               fd    <- primIO (prim__epollEventFd i)
-               flags <- primIO (prim__epollEventFlags i)
-               rest  <- go (i + 1)
-               pure (MkReadyEvent fd (MkEventFlags flags) :: rest)
-
-||| Blocks (for at most `timeoutMs`, or indefinitely if negative) until
-||| at least one watched descriptor is ready, then returns all of them.
-||| An empty result means the timeout elapsed with nothing ready; `wait`
-||| itself never reports `epoll_wait`'s own error case (a single
-||| `EPOLLERR`/`EPOLLHUP` on the offending descriptor is how a lost
-||| connection actually surfaces instead).
+||| Create an `epoll` instance (close-on-exec) whose `epollWait` returns at most
+||| `maxEvents` (at least 1) descriptors at a time. A descriptor that is ready but
+||| does not fit is reported by the next `epollWait`.
 export
-wait : HasIO io => EPoll -> (timeoutMs : Int) -> io (List ReadyEvent)
-wait ep timeoutMs = do
-  n <- primIO (prim__epollWait ep.fd timeoutMs)
-  if n <= 0 then pure [] else readyEvents n
+epollCreate : (maxEvents : Nat) -> IO (Either Errno EPoll)
+epollCreate maxEvents = do
+  let cap = max 1 maxEvents
+  r <- primIO prim__epoll_create >>= primFdToFileDesc
+  case r of
+    Left e => pure (Left e)
+    Right fd => do
+      buf <- malloc (prim__sizeofEvent * cast cap)
+      pure (Right (MkEPoll fd buf cap))
+
+ctl : Int32 -> EPoll -> FileDesc -> EpollEvents -> IO (Either Errno ())
+ctl op ep fd events = primIO (prim__epoll_ctl ep.efd.rawfd op fd.rawfd events) >>= checkUnit
+
+||| Start watching a descriptor for the given events.
+export
+epollAdd : EPoll -> FileDesc -> EpollEvents -> IO (Either Errno ())
+epollAdd = ctl prim__EPOLL_CTL_ADD
+
+||| Change the events watched for a descriptor that was added.
+export
+epollMod : EPoll -> FileDesc -> EpollEvents -> IO (Either Errno ())
+epollMod = ctl prim__EPOLL_CTL_MOD
+
+||| Stop watching a descriptor. Do it before closing the descriptor: a
+||| registration belongs to the open file description, so closing one number
+||| does not drop it while a `dup` or a forked copy of the descriptor is open.
+export
+epollDel : EPoll -> FileDesc -> IO (Either Errno ())
+epollDel ep fd = ctl prim__EPOLL_CTL_DEL ep fd 0
+
+||| Wait for at least one watched descriptor to be ready, at most `timeoutMs`
+||| milliseconds (negative: no limit, 0: do not wait). An empty list means the
+||| time ran out. `Left EINTR` when a signal interrupted the wait.
+export
+epollWait : EPoll -> (timeoutMs : Int32) -> IO (Either Errno (List ReadyEvent))
+epollWait ep timeoutMs = do
+  n <- primIO (prim__epoll_wait ep.efd.rawfd ep.buffer (cast ep.capacity) timeoutMs)
+  if n < 0 then Left <$> errno else Right <$> collect (cast n) []
+  where
+    -- From the last event down, so that prepending leaves them in order.
+    collect : Nat -> List ReadyEvent -> IO (List ReadyEvent)
+    collect Z acc = pure acc
+    collect (S k) acc = do
+      fd <- primIO (prim__event_fd ep.buffer (cast k))
+      events <- primIO (prim__event_events ep.buffer (cast k))
+      collect k (MkReadyEvent fd events :: acc)
+
+||| Close the `epoll` instance and free its buffer. The descriptors it watched are
+||| not closed. Call once, and do not use the `EPoll` (`epollWait`, `epollAdd`, ...)
+||| afterwards: the buffer is gone.
+export
+epollClose : EPoll -> IO (Either Errno ())
+epollClose ep = do
+  r <- close ep.efd
+  res <- checkUnit r
+  free ep.buffer
+  pure res

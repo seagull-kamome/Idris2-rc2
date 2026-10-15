@@ -35,19 +35,16 @@ Request and response bodies are raw bytes (`Data.Buffer`), not
 
 Three modules, layered:
 
-- `System.Linux.Epoll` -- a thin FFI wrapper around Linux `epoll` plus
-  the socket options an event-driven server needs that the standard
-  `network` package doesn't expose: non-blocking mode
-  (`setNonBlocking`, via `fcntl`/`O_NONBLOCK`) and `SO_REUSEADDR`
-  (`setReuseAddr`, so a restarted server can rebind immediately). It
-  also wraps `eventfd` (`createEventFd`/`signalEventFd`/`drainEventFd`)
-  -- a descriptor the loop registers alongside its sockets so any
-  thread can break it out of `wait` -- and `closeEpoll`/`closeFd` for
-  tearing the loop's own descriptors down. Its C side
-  (`support/c/event_util.c`) caches one `epoll_wait` call's results in
-  a single static buffer -- fine for this library's
-  one-`EPoll`-per-process design, but means two `EPoll`s must never
-  have `wait` calls in flight at the same time.
+- `System.Linux.Epoll` -- a thin FFI wrapper around Linux `epoll`
+  (`epollCreate`, `epollAdd`/`epollMod`/`epollDel`, `epollWait`,
+  `epollClose`), taking `FileDesc` and returning `Either Errno`. An
+  `EPoll` owns the buffer `epollWait` fills, so several can be in use at
+  once. The server does the rest itself: the socket options the
+  standard `network` package doesn't expose (non-blocking mode through
+  `System.Posix.Fcntl`, and `SO_REUSEADDR` so a restarted server can
+  rebind immediately), and a `System.Linux.Eventfd` that the loop
+  registers alongside its sockets so any thread can break it out of
+  `epollWait`.
 - `Network.RC2` -- offset+length socket IO straight into and out of a
   `Data.Buffer` (`sendBuf`/`recvBuf`), plus `isWouldBlock`. The
   standard `network` package only moves bytes through a `String`
@@ -198,8 +195,9 @@ rather than deferred:
   so responses already queued (including cross-thread `respond`s that
   have been enqueued) are flushed -- but a `respond` that only reaches
   the queue *after* `shutdown` has run is silently dropped: its
-  `signalEventFd` write hits a closed fd (harmless `EBADF`), and its
-  closure is never run. Call `stop` when the async work you care about
+  `eventfdWrite` hits a closed fd (`EBADF`, or a write of 1 to an
+  unrelated descriptor if another thread has opened that number since), and
+  its closure is never run. Call `stop` when the async work you care about
   has already handed its response back, or not at all.
 
 ## Platform: Linux only

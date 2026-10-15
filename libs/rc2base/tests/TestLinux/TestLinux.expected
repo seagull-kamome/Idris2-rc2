@@ -50,6 +50,23 @@ cleared by the read: errno 11
 semaphore 1: Right 1
 semaphore 2: Right 1
 semaphore 3: errno 11
+-- epoll
+nothing watched: Right 0
+add: ok
+add twice: errno 17
+add to the second epoll: ok
+not ready: Right 0
+one event for the eventfd: True, readable: True
+the other epoll: one event for the eventfd: True, readable: True
+still ready: Right 1
+after the read: Right 0
+mod: ok
+writable now: Right [True]
+del: ok
+del twice: errno 2
+after del: Right 0
+close: ok
+close the second: ok
 -- memfd, sendfile, splice, copy_file_range
 contents: "hello world"
 seals at first: Right 0

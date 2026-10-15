@@ -20,8 +20,10 @@ module Network.HTTP.Server
 -- Copyright 2026, Hattori,Hiroki. All rights reserved.
 -- This module was licensed by BSD3.
 
+import Data.Bits
 import Data.Buffer
 import Data.IORef
+import Data.List
 import Data.Maybe
 import Data.SortedMap
 import Data.String
@@ -35,6 +37,11 @@ import Network.Socket.Data
 import System.Concurrency
 import System.Concurrency.RC2
 import System.Linux.Epoll
+import System.Linux.Eventfd
+import System.Posix.Errno
+import System.Posix.Fcntl
+import System.Posix.File
+import System.Posix.FileDesc
 
 -- The event loop itself never terminates by construction (`loop`,
 -- `acceptLoop`), and the byte-scanning parser helpers loop on an `Int`
@@ -221,15 +228,18 @@ record ServerCtx where
   stopReq : IORef Bool
   ||| epoll-registered eventfd: any thread writes it to break the loop
   ||| out of `wait`.
-  wake    : EventFd
+  wake    : FileDesc
+  ||| Whether `wake` is still open; guarded by `lock`. `shutdown` closes it, and
+  ||| a late `enqueue` / `stop` must not write to a number that may be reused.
+  wakeOpen : IORef Bool
   ||| `getThreadId` of the loop thread. `respond` compares against it to
   ||| decide between running inline and handing work to `tasks`.
   loopTid : Int
 
 ||| Run `act` with `m` held. `act` must not itself try to acquire `m`
 ||| (the underlying pthread mutex is not recursive under `--cg rc2`),
-||| so anything that re-enters -- running a queued task, signalling the
-||| eventfd -- happens after the lock is dropped.
+||| so anything that re-enters -- running a queued task -- happens after the
+||| lock is dropped.
 withMutex : Mutex -> IO a -> IO a
 withMutex m act = do
   mutexAcquire m
@@ -237,18 +247,28 @@ withMutex m act = do
   mutexRelease m
   pure r
 
+||| Write the eventfd so `epollWait` returns, unless `shutdown` closed it. The
+||| caller holds `lock`: the write does not wait, and `shutdown` closes the
+||| eventfd under the same lock, so no write reaches a reused number.
+wakeLoop : ServerCtx -> IO ()
+wakeLoop ctx = do
+  isOpen <- readIORef ctx.wakeOpen
+  when isOpen $ ignore $ eventfdWrite ctx.wake 1
+
 ||| Queue `act` to run on the loop thread and wake the loop so it does.
 ||| The only safe way for a non-loop thread to touch a connection.
 enqueue : ServerCtx -> IO () -> IO ()
-enqueue ctx act = do
-  withMutex ctx.lock $ modifyIORef ctx.tasks (act ::)
-  ignore $ signalEventFd ctx.wake
+enqueue ctx act =
+  withMutex ctx.lock $ do
+    modifyIORef ctx.tasks (act ::)
+    wakeLoop ctx
 
 ||| Set the stop flag and wake the loop. Idempotent; safe from any thread.
 requestStop : ServerCtx -> IO ()
-requestStop ctx = do
-  withMutex ctx.lock $ writeIORef ctx.stopReq True
-  ignore $ signalEventFd ctx.wake
+requestStop ctx =
+  withMutex ctx.lock $ do
+    writeIORef ctx.stopReq True
+    wakeLoop ctx
 
 ||| Ask the event loop to stop. Safe synchronously from a `Handler`, or
 ||| from any other thread (one the handler forked, say). The loop
@@ -443,6 +463,7 @@ parseHead b headEnd = do
 record Conn where
   constructor MkConn
   sock        : Socket
+  fd          : FileDesc
   ||| Read accumulator: live bytes are `readBuf[0 .. readLen)`.
   readBuf     : IORef Buffer
   readLen     : IORef Int
@@ -458,6 +479,10 @@ record ServerState where
   ctx        : ServerCtx
   epoll      : EPoll
   listenSock : Socket
+  listenFd   : FileDesc
+  ||| The listener is not watched while `accept` fails for lack of descriptors;
+  ||| the next closed connection watches it again.
+  listenPaused : IORef Bool
   conns      : IORef (SortedMap Int Conn)
   ||| Ceiling on one connection's read accumulator (header + body). A
   ||| request that would push past it has its connection dropped.
@@ -476,18 +501,45 @@ ioChunk = 65536
 -- The event loop
 -------------------------------------------------------------------------------
 
+%inline %foreign "CExpr:(({ int one = 1; setsockopt($1, SOL_SOCKET, SO_REUSEADDR, &one, sizeof(one)); })),libc,sys/socket.h"
+prim__setReuseAddr : Int32 -> PrimIO Int32
+
+-- So a restarted server can rebind its port at once instead of waiting out `TIME_WAIT`.
+setReuseAddr : FileDesc -> IO Bool
+setReuseAddr fd = (== 0) <$> primIO (prim__setReuseAddr fd.rawfd)
+
+-- Every socket registered with the `EPoll` must be non-blocking: a blocking
+-- `accept` / `recv` / `send` would stall the whole single-threaded loop.
+setNonBlocking : FileDesc -> IO Bool
+setNonBlocking fd = do
+  Right fl <- getStatusFlags fd
+    | Left _ => pure False
+  Right () <- setStatusFlags fd (fl .|. O_NONBLOCK)
+    | Left _ => pure False
+  pure True
+
+-- `accept` ran out of descriptors (the process or the system).
+isFdExhausted : SocketError -> Bool
+isFdExhausted e = let MkErrno m = EMFILE
+                      MkErrno n = ENFILE
+                  in e == cast m || e == cast n
+
 closeConn : ServerState -> Conn -> IO ()
 closeConn st conn = do
-  ignore $ remove st.epoll conn.sock.descriptor
+  ignore $ epollDel st.epoll conn.fd
   close conn.sock
   modifyIORef st.conns (delete conn.sock.descriptor)
+  paused <- readIORef st.listenPaused
+  when paused $ do
+    writeIORef st.listenPaused False
+    ignore $ epollMod st.epoll st.listenFd EPOLLIN
 
 finishWrite : ServerState -> Conn -> IO ()
 finishWrite st conn = do
   wantsClose <- readIORef conn.shouldClose
   if wantsClose
     then closeConn st conn
-    else ignore $ modify st.epoll conn.sock.descriptor epollIn
+    else ignore $ epollMod st.epoll conn.fd EPOLLIN
 
 -- Send as much of `writeBuf[writeSent .. writeLen)` as the socket
 -- takes; on a short write, advance `writeSent` and keep `EPOLLOUT`
@@ -510,10 +562,10 @@ flushWrite st conn = do
                     writeIORef conn.writeSent 0
                     finishWrite st conn
             else do writeIORef conn.writeSent (wsent + n)
-                    ignore $ modify st.epoll conn.sock.descriptor (epollIn <+> epollOut)
+                    ignore $ epollMod st.epoll conn.fd (EPOLLIN .|. EPOLLOUT)
         Left e =>
           if isWouldBlock e
-            then ignore $ modify st.epoll conn.sock.descriptor (epollIn <+> epollOut)
+            then ignore $ epollMod st.epoll conn.fd (EPOLLIN .|. EPOLLOUT)
             else closeConn st conn
 
 -- Append a serialized response to `writeBuf`. `False` if it wouldn't
@@ -615,15 +667,15 @@ handleReadable st handler conn = do
 handleClientEvent : ServerState -> BoundHandler -> ReadyEvent -> IO ()
 handleClientEvent st handler ev = do
   conns <- readIORef st.conns
-  case lookup ev.fd conns of
+  case lookup (cast ev.fd) conns of
     Nothing => pure ()
     Just conn =>
-      if hasEvent epollErr ev.flags || hasEvent epollHup ev.flags
+      if hasEvent EPOLLERR ev.events || hasEvent EPOLLHUP ev.events
         then closeConn st conn
         else do
-          when (hasEvent epollIn ev.flags) $ handleReadable st handler conn
-          stillOpen <- isJust . lookup ev.fd <$> readIORef st.conns
-          when (stillOpen && hasEvent epollOut ev.flags) $ flushWrite st conn
+          when (hasEvent EPOLLIN ev.events) $ handleReadable st handler conn
+          stillOpen <- isJust . lookup (cast ev.fd) <$> readIORef st.conns
+          when (stillOpen && hasEvent EPOLLOUT ev.events) $ flushWrite st conn
 
 -- Level-triggered, so one epoll-reported "listener readable" can hide
 -- several pending connections (a burst of clients arriving between
@@ -631,18 +683,31 @@ handleClientEvent st handler ev = do
 acceptLoop : ServerState -> IO ()
 acceptLoop st =
   case !(accept st.listenSock) of
-    Left _ => pure ()
-    Right (csock, _) => do
-      ignore $ setNonBlocking csock.descriptor
-      rbuf <- newBuf initCap
-      wbuf <- newBuf initCap
-      conn <- MkConn csock
-                <$> newIORef rbuf <*> newIORef 0
-                <*> newIORef wbuf <*> newIORef 0 <*> newIORef 0
-                <*> newIORef False
-      modifyIORef st.conns (insert csock.descriptor conn)
-      ignore $ add st.epoll csock.descriptor epollIn
-      acceptLoop st
+    Left e =>
+      -- Out of descriptors: the pending connection keeps the level-triggered
+      -- listener ready, so it would spin. Stop watching it until a
+      -- connection closes (`closeConn`).
+      when (isFdExhausted e) $ do
+        writeIORef st.listenPaused True
+        ignore $ epollMod st.epoll st.listenFd 0
+    Right (csock, _) =>
+      case mkFileDesc (cast csock.descriptor) of
+        Nothing => close csock >> acceptLoop st
+        Just cfd => do
+          -- A blocking socket would stall the loop, one the epoll cannot
+          -- watch would never be served: drop either.
+          True <- setNonBlocking cfd
+            | False => close csock >> acceptLoop st
+          rbuf <- newBuf initCap
+          wbuf <- newBuf initCap
+          conn <- MkConn csock cfd
+                    <$> newIORef rbuf <*> newIORef 0
+                    <*> newIORef wbuf <*> newIORef 0 <*> newIORef 0
+                    <*> newIORef False
+          modifyIORef st.conns (insert csock.descriptor conn)
+          Right () <- epollAdd st.epoll cfd EPOLLIN
+            | Left _ => closeConn st conn >> acceptLoop st
+          acceptLoop st
 
 -- Run everything other threads have queued for us, oldest first
 -- (`enqueue` pushes newest-first). The list is swapped out under the
@@ -663,23 +728,31 @@ shutdown : ServerState -> IO ()
 shutdown st = do
   conns <- readIORef st.conns
   for_ (values conns) $ \conn => do
-    ignore $ remove st.epoll conn.sock.descriptor
+    ignore $ epollDel st.epoll conn.fd
     close conn.sock
   writeIORef st.conns empty
-  ignore $ remove st.epoll st.listenSock.descriptor
+  ignore $ epollDel st.epoll st.listenFd
   close st.listenSock
-  ignore $ closeEventFd st.ctx.wake
-  ignore $ closeEpoll st.epoll
+  withMutex st.ctx.lock $ do
+    writeIORef st.ctx.wakeOpen False
+    ignore $ close st.ctx.wake
+  ignore $ epollClose st.epoll
 
 loop : ServerState -> BoundHandler -> IO ()
 loop st handler = do
-  events <- wait st.epoll (-1)
-  for_ events $ \ev =>
-    if ev.fd == st.listenSock.descriptor
-      then acceptLoop st
-      else if ev.fd == st.ctx.wake.fd
-        then ignore $ drainEventFd st.ctx.wake
-        else handleClientEvent st handler ev
+  Right events <- epollWait st.epoll (-1)
+    | Left e => if e == EINTR
+                   then loop st handler
+                   else putStrLn "Network.HTTP.Server: epoll_wait failed, errno \{show e}" >> shutdown st
+  -- The listener goes last: `accept` can hand out the number of a connection
+  -- closed a moment ago, and an event of the old one still in this batch
+  -- would then hit the new one.
+  let (listenEvs, others) = partition (\ev => ev.fd == st.listenFd.rawfd) events
+  for_ others $ \ev =>
+    if ev.fd == st.ctx.wake.rawfd
+      then ignore $ eventfdRead st.ctx.wake
+      else handleClientEvent st handler ev
+  for_ listenEvs $ \_ => acceptLoop st
   drainTasks st
   stopping <- withMutex st.ctx.lock (readIORef st.ctx.stopReq)
   if stopping
@@ -705,28 +778,37 @@ serve : {default (IPv4Addr 127 0 0 1) bindAddr : SocketAddress}
      -> {default 8388608 maxRequestBytes : Int}
      -> Port -> Handler -> IO ()
 serve {bindAddr} {maxRequestBytes} port handler = do
-  Just ep <- create
-    | Nothing => putStrLn "Network.HTTP.Server.serve: epoll_create failed"
+  Right ep <- epollCreate 64
+    | Left e => giveUp [] "epoll_create failed, errno \{show e}"
   Right lsock <- socket AF_INET Stream 0
-    | Left err => putStrLn "Network.HTTP.Server.serve: socket() failed, errno \{show err}"
-  True <- setReuseAddr lsock.descriptor
-    | False => putStrLn "Network.HTTP.Server.serve: SO_REUSEADDR failed"
+    | Left err => giveUp [ignore (epollClose ep)] "socket() failed, errno \{show err}"
+  let undoSock = [ignore (epollClose ep), close lsock]
+  Just lfd <- pure (mkFileDesc (cast lsock.descriptor))
+    | Nothing => giveUp undoSock "socket() gave a bad descriptor"
+  True <- setReuseAddr lfd
+    | False => giveUp undoSock "SO_REUSEADDR failed"
   0 <- bind lsock (Just bindAddr) port
-    | err => putStrLn "Network.HTTP.Server.serve: bind() failed, errno \{show err}"
+    | err => giveUp undoSock "bind() failed, errno \{show err}"
   0 <- listen lsock
-    | err => putStrLn "Network.HTTP.Server.serve: listen() failed, errno \{show err}"
-  True <- setNonBlocking lsock.descriptor
-    | False => putStrLn "Network.HTTP.Server.serve: fcntl(O_NONBLOCK) failed"
-  True <- add ep lsock.descriptor epollIn
-    | False => putStrLn "Network.HTTP.Server.serve: epoll_ctl(listen) failed"
-  Just wake <- createEventFd
-    | Nothing => putStrLn "Network.HTTP.Server.serve: eventfd() failed"
-  True <- add ep wake.fd epollIn
-    | False => putStrLn "Network.HTTP.Server.serve: epoll_ctl(eventfd) failed"
+    | err => giveUp undoSock "listen() failed, errno \{show err}"
+  True <- setNonBlocking lfd
+    | False => giveUp undoSock "fcntl(O_NONBLOCK) failed"
+  Right () <- epollAdd ep lfd EPOLLIN
+    | Left e => giveUp undoSock "epoll_ctl(listen) failed, errno \{show e}"
+  Right wake <- eventfd 0 (EFD_NONBLOCK .|. EFD_CLOEXEC)
+    | Left e => giveUp undoSock "eventfd() failed, errno \{show e}"
+  Right () <- epollAdd ep wake EPOLLIN
+    | Left e => giveUp (undoSock ++ [ignore (close wake)]) "epoll_ctl(eventfd) failed, errno \{show e}"
   lock     <- makeMutex
   tasksRef <- newIORef (the (List (IO ())) [])
   stopRef  <- newIORef False
   loopTid  <- getThreadId
   connsRef <- newIORef (the (SortedMap Int Conn) empty)
-  let ctx = MkServerCtx lock tasksRef stopRef wake loopTid
-  loop (MkServerState ctx ep lsock connsRef maxRequestBytes) (handler @{ctx})
+  wakeOpen <- newIORef True
+  let ctx = MkServerCtx lock tasksRef stopRef wake wakeOpen loopTid
+  pausedRef <- newIORef False
+  loop (MkServerState ctx ep lsock lfd pausedRef connsRef maxRequestBytes) (handler @{ctx})
+  where
+    -- Release what was set up so far, then say why `serve` returns.
+    giveUp : List (IO ()) -> String -> IO ()
+    giveUp undo msg = sequence_ undo >> putStrLn ("Network.HTTP.Server.serve: " ++ msg)
