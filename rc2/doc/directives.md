@@ -162,6 +162,18 @@ function bodies below it:
 - **`inlineRuntime=<code>`** is rc2's own text-instead-of-a-file
   companion (no upstream equivalent).
 
+### The order of injected code is not guaranteed
+
+When several `inlineRuntime` snippets (or several `extraRuntime` files) are
+given, the order in which they appear in the generated file is not
+guaranteed. It is the order in which the compiler hands the directives
+back, and that may change between compiler versions (a compiler that keeps
+its directives in a set, for example, returns them sorted by text, not in
+the order they were written). So one snippet must not rely on another: a
+`static` helper, a `typedef` or a macro defined in one snippet may come
+after the snippet that uses it. Code that depends on other code goes into
+the same `inlineRuntime=` snippet or the same `extraRuntime=` file.
+
 ### The two `inlineRuntime` landmines
 
 Both are inherent to Idris2's own generic `%cg` lexer/parser, not
