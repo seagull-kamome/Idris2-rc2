@@ -1,0 +1,5 @@
+cloexec on the read end: Right 1
+cloexec on the write end: Right 1
+nonblock on the read end: True
+no flags: Right 0
+done

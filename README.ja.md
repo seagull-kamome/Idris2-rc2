@@ -127,7 +127,7 @@ libs/rc2base/
 │                  Language.RCExpr.{AST,Lexer,Parser},
 │                  Network.{RC2,URL}, Network.HTTP.{Route,Router,Server},
 │                  System.Concurrency.RC2, System.FFI.C.{Array,Ptr,Sizeof},
-│                  System.GC.RC2, System.IO.Epoll, System.IO.MemStream,
+│                  System.GC.RC2, System.Linux.Epoll, System.IO.MemStream,
 │                  System.Random.Xoroshiro{128PlusPlus,64StarStar},
 │                  Text.Encoding.UTF8, Text.Regex.POSIX
 ├── src/           上記モジュールのIdris2ソース
@@ -138,7 +138,7 @@ libs/rc2base/
 
 上流の`base`や`contrib`に欠落しているか、不十分な機能を補うrc2専用の基盤パッケージです。
 
-- **高速Web・ネットワーク**：`System.IO.Epoll`を基盤とするイベント駆動型HTTP/1.1サーバ（`Network.HTTP.Server`）、型安全なExpress風ルータ（`Network.HTTP.Route` / `Router`）、URLパーサ（`Network.URL`）。
+- **高速Web・ネットワーク**：`System.Linux.Epoll`を基盤とするイベント駆動型HTTP/1.1サーバ（`Network.HTTP.Server`）、型安全なExpress風ルータ（`Network.HTTP.Route` / `Router`）、URLパーサ（`Network.URL`）。
 - **並行処理・同期プリミティブ**：Haskell風の`MVar`、アトミックカウンタ（`Control.Concurrent.*`）、OSスレッド・Mutex（`System.Concurrency.RC2`）。
 - **低レベルC連携とメモリ**：POSIX正規表現（`Text.Regex.POSIX`）、GMP整数演算（`Data.Integer.GMP`）、メモリバッファ、生UTF-8バイト列変換（`Text.Encoding.UTF8`）、参照カウントの直接操作（`System.GC.RC2`）。
 - **コンパイラ解析基盤**：rc2のIRダンプをパースする構文解析器（`Language.RCExpr.*`）。

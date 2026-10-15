@@ -3,11 +3,55 @@ WSTOPPED=2
 WNOHANG=1
 WUNTRACED=2
 WCONTINUED=8
+-- time
+realtime close to time(): True
+nsec in range: True
+resolution is positive: True
+monotonic advanced by >= 20ms: True
+Tm 40 46 1 9 8 101 0 251 0
+Just "2001-09-09 01:46:40"
+Just "Sun Sep  9"
+Tm 0 0 0 1 0 70 4 0 0
+localtime year: 101
+Just 1000000000
+mktime epoch is a Just: True
+-- ids
+getppid positive: True
+uid==euid, gid==egid: True
+getpgid(0) == getpgrp: True
+getsid positive: True
+setpgid missing process: errno 3
+nice 0 in range: True
+-- limits and system
+nofile soft <= hard: True
+setrlimit same value: ok
+uname sysname is not empty: True
+gethostname is not empty: True
+page size is a power of two: True
+cpus >= 1: True
+clock ticks > 0: True
+-- pipe, fcntl, poll
+empty pipe, POLLIN: Right [0]
+pipe write end, POLLOUT: Right [True]
+after write: Right [True, True]
+cloexec off by default: Right 0
+cloexec on: Right 1
+nonblock set: True
+dupfd at least 10: True
+hangup with data pending: Right [True]
+closed descriptor: Right [True]
+-- exec
+execv missing: errno 2
+exec sh -c 'exit 3': exited Just 3, signal Nothing
+execve with env: exited Just 0
 getpid positive: True
-kill self 0: 0
+kill self 0: ok
 child 1 pid matches: True
 child 1 exit status: 7
-kill child: 0
+kill child: ok
 child 2 pid matches: True
 child 2 terminating signal: 9
-no children: -1
+wait without children: errno 10
+waitpid WNOHANG without children: errno 10
+kill missing process: errno 3
+WNOHANG on a running child: pid 0

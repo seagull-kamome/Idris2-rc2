@@ -38,6 +38,17 @@ errno = MkErrno <$> primIO prim__errno
 
 
 
+||| `Right ()` for the return value 0 of a call that reports failure by a
+||| nonzero (usually -1) value, otherwise `Left errno`.
+public export
+checkUnit : Int32 -> IO (Either Errno ())
+checkUnit r = if r == 0 then pure (Right ()) else map Left errno
+
+||| `Right r` for a non-negative return value, otherwise `Left errno`.
+public export
+checkNonNeg : Int32 -> IO (Either Errno Int32)
+checkNonNeg r = if r >= 0 then pure (Right r) else map Left errno
+
 -------------------------------------------------------------------------------
 --
 
