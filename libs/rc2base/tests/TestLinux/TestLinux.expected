@@ -77,4 +77,22 @@ setDumpable: ok
 getDumpable: Right True
 setNoNewPrivs: ok
 no_new_privs after: Right True
+-- statx
+statx agrees with stat: True
+basic stats are valid: True
+a directory: True
+missing path: errno 2
+fstatx size: Right 11
+-- getrandom
+filled: Right 16
+two draws differ: True
+two numbers differ: True
+-- gettid, pidfd, affinity
+tid is pid in the main thread: True
+child running: Right [0]
+pidfd_send_signal: ok
+child gone: Right [True]
+allowed CPUs, not empty: True
+current CPU is allowed: Right True
+setAffinity to the same set: ok
 done
