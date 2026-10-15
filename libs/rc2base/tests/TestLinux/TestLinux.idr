@@ -11,6 +11,7 @@ import Data.Bits
 import Data.Buffer
 import Data.List
 import Data.String
+import System
 import System.FFI
 import System.Posix.Errno
 import System.Posix.Fcntl
@@ -24,6 +25,9 @@ import System.Linux.Inotify
 import System.Linux.Memfd
 import System.Linux.Pipe
 import System.Linux.Prctl
+import System.Linux.Process
+import System.Linux.Random
+import System.Linux.Statx
 import System.Linux.Signalfd
 import System.Linux.Timerfd
 import System.Directory
@@ -32,6 +36,7 @@ import System.Posix.Path
 import System.Posix.Poll
 import System.Posix.Process
 import System.Posix.Signal
+import System.Posix.Stat
 import System.Posix.Time
 
 errnum : Errno -> Int32
@@ -264,6 +269,67 @@ testPrctl = do
   setNoNewPrivs >>= \r => putStrLn ("setNoNewPrivs: " ++ errOf r)
   getNoNewPrivs >>= \r => putStrLn ("no_new_privs after: " ++ show r)
 
+testStatx : IO ()
+testStatx = do
+  putStrLn "-- statx"
+  Right sx <- statx Nothing "/" 0 STATX_BASIC_STATS
+    | Left e => putStrLn ("statx failed: " ++ show e)
+  Right st <- stat "/"
+    | Left e => putStrLn ("stat failed: " ++ show e)
+  putStrLn ("statx agrees with stat: " ++ show (sx.stxIno == st.stIno && sx.stxSize == cast st.stSize && sx.stxNlink == cast st.stNlink
+                                                && sx.stxMtime == st.stMtime && cast sx.stxMode == st.stMode))
+  putStrLn ("basic stats are valid: " ++ show (hasMask STATX_BASIC_STATS sx.stxMask))
+  putStrLn ("a directory: " ++ show ((cast {to=Bits32} sx.stxMode .&. S_IFMT) == S_IFDIR))
+  statx Nothing "/no/such/path" 0 STATX_BASIC_STATS >>= \r => putStrLn ("missing path: " ++ errOf r)
+  Right m <- memfd_create "statx" 0
+    | Left e => putStrLn ("memfd_create failed: " ++ show e)
+  _ <- String.write m "hello world"
+  fstatx m STATX_SIZE >>= \r => putStrLn ("fstatx size: " ++ show (map (\x => x.stxSize) r))
+  _ <- close m
+  pure ()
+
+testRandom : IO ()
+testRandom = do
+  putStrLn "-- getrandom"
+  Just b1 <- newBuffer 16
+    | Nothing => putStrLn "newBuffer failed"
+  Just b2 <- newBuffer 16
+    | Nothing => putStrLn "newBuffer failed"
+  getrandom b1 0 >>= \r => putStrLn ("filled: " ++ show r)
+  _ <- getrandom b2 0
+  x <- bufferData b1
+  y <- bufferData b2
+  putStrLn ("two draws differ: " ++ show (x /= y))
+  Right a <- getrandomBits64 0
+    | Left e => putStrLn ("getrandomBits64 failed: " ++ show e)
+  Right b <- getrandomBits64 0
+    | Left e => putStrLn ("getrandomBits64 failed: " ++ show e)
+  putStrLn ("two numbers differ: " ++ show (a /= b))
+
+testProcess : IO ()
+testProcess = do
+  putStrLn "-- gettid, pidfd, affinity"
+  tid <- gettid
+  pid <- getpid
+  putStrLn ("tid is pid in the main thread: " ++ show (cast {to=Int32} tid == cast {to=Int32} pid))
+  ignore $ fflush stdout
+  c <- fork
+  if cast {to=Int32} c == 0
+    then sleep 30 >> exitNow 0
+    else pure ()
+  Right pfd <- pidfd_open c 0
+    | Left e => putStrLn ("pidfd_open: errno " ++ show (errnum e))
+  poll [(pfd, POLLIN)] 0 >>= \r => putStrLn ("child running: " ++ show r)
+  pidfd_send_signal pfd SIGKILL >>= \r => putStrLn ("pidfd_send_signal: " ++ errOf r)
+  poll [(pfd, POLLIN)] 5000 >>= \r => putStrLn ("child gone: " ++ show (map (map (\e => (e .&. POLLIN) /= 0)) r))
+  _ <- waitpid c 0
+  _ <- close pfd
+  Right cpus <- getAffinity Nothing
+    | Left e => putStrLn ("getAffinity: errno " ++ show (errnum e))
+  putStrLn ("allowed CPUs, not empty: " ++ show (not (null cpus)))
+  sched_getcpu >>= \r => putStrLn ("current CPU is allowed: " ++ show (map (\n => elem (cast n) cpus) r))
+  setAffinity Nothing cpus >>= \r => putStrLn ("setAffinity to the same set: " ++ errOf r)
+
 main : IO ()
 main = do
   Right (rd, wr) <- pipe2 (O_CLOEXEC .|. O_NONBLOCK)
@@ -289,4 +355,7 @@ main = do
   testEventfd
   testMemfd
   testPrctl
+  testStatx
+  testRandom
+  testProcess
   putStrLn "done"
