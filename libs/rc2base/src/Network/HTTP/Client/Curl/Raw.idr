@@ -12,6 +12,8 @@ module Network.HTTP.Client.Curl.Raw
 import Data.Buffer
 import Data.Maybe
 import System.FFI
+import System.Posix.Errno
+import System.Posix.Stdio
 
 import Network.HTTP.Client.Curl.Types
 
@@ -283,17 +285,6 @@ prim__curlEasyHeader : AnyPtr -> String -> Bits64 -> Bits32 -> Int -> CellPtr ->
 
 %foreign "C:curl_easy_nextheader,libcurl,curl/curl.h"
 prim__curlEasyNextheader : AnyPtr -> Bits32 -> Int -> AnyPtr -> PrimIO AnyPtr
-
--- libc, not rc2base's `System.IO.MemStream`: a Chez build has no rc2
--- toolchain to provide rc2base's C library (doc/http-client.md).
-%foreign "C:open_memstream,libc,stdio.h"
-prim__openMemstream : CellPtr -> CellI64 -> PrimIO AnyPtr
-
-%foreign "C:fclose,libc,stdio.h"
-prim__fclose : AnyPtr -> PrimIO Int
-
-%foreign "C:free,libc,stdlib.h"
-prim__freeRaw : AnyPtr -> PrimIO ()
 
 %foreign "C:memcpy,libc,string.h"
 prim__memcpyToBuffer : Buffer -> AnyPtr -> Int -> PrimIO AnyPtr
@@ -717,28 +708,28 @@ curlEasyNextheader h origin request prev = do
 ||| `curl-rc2`'s `TextBuffer`.
 export
 curlEasyPerformCapture : HasIO io => (AnyPtr -> Int -> IO (Maybe a)) -> AnyPtr -> io (Maybe (CURLcode, a))
-curlEasyPerformCapture read h =
-    withCell (prim__newCellPtr 8) prim__freeCellPtr $ \bufCell =>
-    withCell (prim__newCellI64 8) prim__freeCellI64 $ \sizeCell => do
-        Just fp <- nonNull <$> primIO (prim__openMemstream bufCell sizeCell)
-            | Nothing => pure Nothing
-        MkCURLcode 0 <- curlEasySetoptPointer h curlopt_WRITEDATA fp
-            | _ => do _ <- primIO (prim__fclose fp)
-                      primIO (prim__freeRaw (getField bufCell "v"))
-                      pure Nothing
-        result <- curlEasyPerform h
-        _ <- primIO (prim__fclose fp)
-        raw <- pure (the AnyPtr (getField bufCell "v"))
-        size <- pure (cast {to = Int} (the Int64 (getField sizeCell "v")))
-        body <- liftIO (read raw size)
-        primIO (prim__freeRaw raw)
-        pure (map (result,) body)
+curlEasyPerformCapture read h = do
+    Right ms <- liftIO openMemstream
+        | Left _ => pure Nothing
+    MkCURLcode 0 <- curlEasySetoptPointer h curlopt_WRITEDATA (memstreamFilePtr ms)
+        | _ => do _ <- liftIO (closeMemstream ms)
+                  liftIO (freeMemstream ms)
+                  pure Nothing
+    result <- curlEasyPerform h
+    -- Back to libcurl's default (`stdout`), as the stream is about to be closed.
+    _ <- curlEasySetoptPointer h curlopt_WRITEDATA (filePtr stdout)
+    Right () <- liftIO (closeMemstream ms)
+        | Left _ => liftIO (freeMemstream ms) >> pure Nothing
+    raw <- liftIO (memstreamData ms)
+    size <- liftIO (memstreamSize ms)
+    body <- liftIO (read raw (cast size))
+    liftIO (freeMemstream ms)
+    pure (map (result,) body)
 
 ||| Performs the transfer, capturing the body. `Nothing` only when the
 ||| capture itself fails; a transfer failure comes back as the
 ||| `CURLcode` alongside whatever body was received. `h`'s
-||| `CURLOPT_WRITEDATA` is left pointing at the closed stream: set it
-||| again before performing on `h` without capture.
+||| `CURLOPT_WRITEDATA` is put back to `stdout` afterwards.
 export
 curlEasyPerformToBuffer : HasIO io => AnyPtr -> io (Maybe (CURLcode, Buffer))
 curlEasyPerformToBuffer = curlEasyPerformCapture $ \raw, size => do

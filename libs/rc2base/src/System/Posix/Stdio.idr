@@ -10,9 +10,8 @@
 ||| names, when both are in scope.
 |||
 ||| Not bound: the `printf`/`scanf` families (variadic), `fgetpos`/`fsetpos`
-||| (opaque `fpos_t`; use `ftell`/`fseek`), `setbuf`, `tmpnam`/`tempnam`
-||| (race-prone) and `open_memstream` (see `Network.HTTP.Client.Curl.Raw`,
-||| which uses it directly).
+||| (opaque `fpos_t`; use `ftell`/`fseek`), `setbuf` and `tmpnam`/`tempnam`
+||| (race-prone).
 module System.Posix.Stdio
 
 import Decidable.Equality
@@ -137,6 +136,109 @@ fmemopen size mode = primIO (prim__fmemopen size mode) >>= stream
 export
 fclose : File -> IO (Either Errno ())
 fclose file = primIO (prim__fclose file.ptr) >>= status
+
+-------------------------------------------------------------------------------
+-- Memory output stream
+
+||| A stream that collects what is written to it in memory (`open_memstream`).
+||| Write to `memstreamFile` (or hand `memstreamFilePtr` to a C function that wants
+||| a `FILE *`, such as libcurl's `CURLOPT_WRITEDATA`), then `closeMemstream`, then
+||| read the bytes; `freeMemstream` releases them.
+export
+record MemStream where
+  constructor MkMemStream
+  mfile : File
+  bufCell : AnyPtr
+  sizeCell : AnyPtr
+
+%inline %foreign "CExpr:(open_memstream((char **)($1), (size_t *)($2))),libc,stdio.h"
+prim__open_memstream : AnyPtr -> AnyPtr -> PrimIO (Ptr RawFile)
+%inline %foreign "CExpr:(*(void **)($1)),libc,stdlib.h"
+prim__ptrAt : AnyPtr -> PrimIO AnyPtr
+%inline %foreign "CExpr:(*(size_t *)($1)),libc,stdlib.h"
+prim__sizeAt : AnyPtr -> PrimIO Bits64
+%inline %foreign "CExpr:(({ *(void **)($1) = NULL; 0; })),libc,stdlib.h"
+prim__clearPtr : AnyPtr -> PrimIO Int32
+%inline %foreign "CExpr:(({ *(size_t *)($1) = 0; 0; })),libc,stdlib.h"
+prim__clearSize : AnyPtr -> PrimIO Int32
+%inline %foreign "CExpr:(({ free(*(void **)($1)); 0; })),libc,stdlib.h"
+prim__freeAt : AnyPtr -> PrimIO Int32
+%inline %foreign "CExpr:(memcpy($1, $2, $3)),libc,string.h"
+prim__memcpyToBuffer : Buffer -> AnyPtr -> Bits64 -> PrimIO AnyPtr
+
+||| Open a memory output stream.
+export
+openMemstream : IO (Either Errno MemStream)
+openMemstream = do
+  buf <- malloc 8
+  size <- malloc 8
+  _ <- primIO (prim__clearPtr buf)
+  _ <- primIO (prim__clearSize size)
+  r <- primIO (prim__open_memstream buf size) >>= stream
+  case r of
+    Right file => pure (Right (MkMemStream file buf size))
+    Left e => free buf >> free size >> pure (Left e)
+
+||| The stream to write to with the functions of this module.
+export
+memstreamFile : MemStream -> File
+memstreamFile ms = ms.mfile
+
+||| The `FILE *` of a stream, for a C function that takes one.
+export
+filePtr : File -> AnyPtr
+filePtr file = prim__forgetPtr file.ptr
+
+||| The `FILE *` of the memory stream, for a C function that takes one.
+export
+memstreamFilePtr : MemStream -> AnyPtr
+memstreamFilePtr ms = filePtr ms.mfile
+
+||| Flush and close the stream: only now do `memstreamData` and `memstreamSize`
+||| give the whole of what was written. The stream is gone afterwards, so do not
+||| use `memstreamFile` or `memstreamFilePtr` again. When this fails the data and
+||| size may be stale, but `freeMemstream` is still safe.
+export
+closeMemstream : MemStream -> IO (Either Errno ())
+closeMemstream ms = fclose ms.mfile
+
+||| The bytes written, followed by a NUL that is not counted in the size. Valid
+||| until `freeMemstream`, and only after `closeMemstream`.
+export
+memstreamData : MemStream -> IO AnyPtr
+memstreamData ms = primIO (prim__ptrAt ms.bufCell)
+
+||| The number of bytes written. Only after `closeMemstream`.
+export
+memstreamSize : MemStream -> IO Bits64
+memstreamSize ms = primIO (prim__sizeAt ms.sizeCell)
+
+||| The bytes written, copied into a new `Buffer` (embedded NULs stay). Only after
+||| `closeMemstream`.
+export
+memstreamBuffer : MemStream -> IO (Maybe Buffer)
+memstreamBuffer ms = do
+  size <- memstreamSize ms
+  Just buf <- newBuffer (cast size)
+    | Nothing => pure Nothing
+  p <- memstreamData ms
+  _ <- primIO (prim__memcpyToBuffer buf p size)
+  pure (Just buf)
+
+||| The bytes written, copied into a `String`; an embedded NUL cuts it short.
+||| Only after `closeMemstream`.
+export
+memstreamString : MemStream -> IO (Maybe String)
+memstreamString ms = ptrToString <$> memstreamData ms
+
+||| Release the bytes and the stream's bookkeeping. Call `closeMemstream` first
+||| (without it the stream itself leaks), and read what is wanted before.
+export
+freeMemstream : MemStream -> IO ()
+freeMemstream ms = do
+  _ <- primIO (prim__freeAt ms.bufCell)
+  free ms.bufCell
+  free ms.sizeCell
 
 -------------------------------------------------------------------------------
 -- Reading and writing

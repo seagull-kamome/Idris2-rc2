@@ -4,7 +4,7 @@ module Main
 -- This module was licensed by BSD3.
 
 -- Captures a response body into a Buffer and a String without
--- CURLOPT_WRITEFUNCTION (doc/memstream-capture.md).
+-- CURLOPT_WRITEFUNCTION (doc/http-client.md, "Body capture").
 
 import Data.Buffer
 

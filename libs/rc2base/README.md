@@ -33,7 +33,7 @@ A shim stays when it needs more than one expression: control flow or loops
 `EINTR`; `set_nonblocking`), static or thread-local state (the epoll event
 cache, the regex match cache and error buffer, the `xoroshiro` system
 seeds), allocation and cleanup (`regex_compile`/`regex_free`, the
-`TextBuffer` builders, `memstream`, `string_byte_slice` with its clamping,
+`TextBuffer` builders, `string_byte_slice` with its clamping,
 `double_convert`), or the runtime closure/value API (`concurrency_util`).
 
 Declarations needing `_GNU_SOURCE` (`O_DIRECT`, `O_LARGEFILE`, `O_NOATIME`,
@@ -64,7 +64,7 @@ not compile when the declaration is used.
 | `Network.HTTP.Client.Curl.*` | the libcurl client (`Curl`: `curlClient`), bindings (`Raw`, `Types`), `TextBuffer` capture -- see `doc/http-client.md` |
 | `Network.HTTP.Client.WebAPI.*` | OpenAI-compatible chat client, OAuth 2.0 (PKCE) login -- see `doc/http-client.md` |
 | `Network.HTTP.Server` | minimal single-threaded, `epoll`-driven HTTP/1.1 server -- see below |
-| `System.Posix.*` | POSIX bindings: `Errno`, `File`/`FileDesc` (`FileDesc`/`DirDesc` hold an `Int32` and an erased proof that it is not negative), `Directory`, `Dl` (`dlopen`/`dlsym`/`dlclose`), `Path` (`mkdir`, `unlink`, `symlink`, `readlink`, `realpath`, `mkfifo`, `mkstemp`, ...), `Stat` (`stat`/`lstat`/`fstat` into a `Stat` record, `access`, `truncate`, `utimensat`), `Time` (`clock_gettime`, `nanosleep`, `gmtime`/`localtime`/`mktime`/`strftime`), `Fcntl` (`pipe`, `fcntl` flags, `dupfd`), `Poll` (`poll`), `Select` (`select`), `Pwd` (`getpwnam`/`getpwuid`/`getgrnam`/`getgrgid` into `Passwd`/`Group` records), `Glob` (`fnmatch`, `glob`), `Syslog` (`openlog`/`syslog`/`closelog`), `Mmap`, `Process` (ids, process groups, `exec*`, wait-status tests, `getrlimit`, `uname`, `sysconf`, `sigqueue`), `Signal` (numbers, signal sets, `sigprocmask`, `sigwait`, `sigtimedwait`, `sigsuspend`, `raise`, `alarm`), `Uio`, and C stdio `Stdio` (`File = Ptr RawFile`, errno in `Left`). Declarations outside POSIX say so ("Linux only", "Linux and BSD") in their doc comment |
+| `System.Posix.*` | POSIX bindings: `Errno`, `File`/`FileDesc` (`FileDesc`/`DirDesc` hold an `Int32` and an erased proof that it is not negative), `Directory`, `Dl` (`dlopen`/`dlsym`/`dlclose`), `Path` (`mkdir`, `unlink`, `symlink`, `readlink`, `realpath`, `mkfifo`, `mkstemp`, ...), `Stat` (`stat`/`lstat`/`fstat` into a `Stat` record, `access`, `truncate`, `utimensat`), `Time` (`clock_gettime`, `nanosleep`, `gmtime`/`localtime`/`mktime`/`strftime`), `Fcntl` (`pipe`, `fcntl` flags, `dupfd`), `Poll` (`poll`), `Select` (`select`), `Pwd` (`getpwnam`/`getpwuid`/`getgrnam`/`getgrgid` into `Passwd`/`Group` records), `Glob` (`fnmatch`, `glob`), `Syslog` (`openlog`/`syslog`/`closelog`), `Mmap`, `Process` (ids, process groups, `exec*`, wait-status tests, `getrlimit`, `uname`, `sysconf`, `sigqueue`), `Signal` (numbers, signal sets, `sigprocmask`, `sigwait`, `sigtimedwait`, `sigsuspend`, `raise`, `alarm`), `Uio`, and C stdio `Stdio` (`File = Ptr RawFile`, errno in `Left`; `open_memstream` as `MemStream`). Declarations outside POSIX say so ("Linux only", "Linux and BSD") in their doc comment |
 | `System.Concurrency.RC2` | real pthread-backed `Mutex`/`Condition`/`Semaphore`/`Barrier`/`Channel`/joinable `forkJoin` -- see the top-level `README.md`'s own "Concurrency" section for the full design |
 | `System.FFI.C.Array` | a `malloc`'d, GC-freed, `Fin`-bounds-checked fixed-length array |
 | `System.FFI.C.Ptr` | raw, unchecked element-indexed fetch/store into a `Ptr`/`GCPtr` region |
@@ -72,7 +72,6 @@ not compile when the declaration is used.
 | `System.GC.RC2` | raw access to rc2's own `idris2rc2_dup`/`dup_n`/`drop`, for a value smuggled out through an opaque FFI pointer |
 | `System.GC.RC2.touch` | `touch x`: keep `x` alive until that action (GHC `touchForeignPtr`); safe for any value, unlike `unsafeGCDup`/`unsafeGCDrop` |
 | `System.Linux.*` | Linux-only bindings; `Epoll` (a thin `epoll` FFI wrapper backing `Network.HTTP.Server`'s event loop), `Pipe` (`pipe2`), `Eventfd`, `Memfd` (`memfd_create` and file seals), `Copy` (`sendfile`, `splice`, `copy_file_range`), `Prctl`, `Statx` (`statx` with the birth time and mount ID), `Random` (`getrandom`), `Process` (`gettid`, `pidfd_open`, CPU affinity), `Timerfd`, `Signalfd`, `Inotify`, `Clock` (`CLOCK_BOOTTIME`, ...) and `Dl` (`dladdr`, more `dlopen` flags) |
-| `System.IO.MemStream` | an in-memory `FILE *` capture stream (POSIX `open_memstream`), for redirecting a C API's "write to this FILE*" option into memory |
 | `System.Random.Xoroshiro128PlusPlus`/`Xoroshiro64StarStar` | two from-scratch PRNG ports -- see below |
 | `Text.Encoding.UTF8` | UTF-8 bytes <-> codepoints, pure `List` transforms -- see below |
 | `Text.Regex.POSIX` | bindings to libc `<regex.h>` -- see below |

@@ -202,6 +202,50 @@ testFiles = do
     | Right _ => putStrLn "second remove succeeded"
   putStrLn ("second remove: " ++ show (e2 == ENOENT))
 
+||| open_memstream: write, close, read the bytes back three ways, free.
+testMemstream : IO ()
+testMemstream = do
+  putStrLn "-- open_memstream"
+  Right ms <- openMemstream
+    | Left e => putStrLn ("openMemstream: " ++ show e)
+  report "fputs" =<< fputs (memstreamFile ms) "hello, "
+  n <- String.fwrite (memstreamFile ms) "stream"
+  putStrLn ("fwrite: " ++ show n)
+  report "close" =<< closeMemstream ms
+  memstreamSize ms >>= \sz => putStrLn ("size: " ++ show sz)
+  memstreamString ms >>= \str => putStrLn ("string: " ++ show str)
+  Just buf <- memstreamBuffer ms
+    | Nothing => putStrLn "memstreamBuffer failed"
+  getString buf 0 13 >>= \str => putStrLn ("buffer: " ++ show str)
+  freeMemstream ms
+  -- a NUL in the middle: the buffer keeps all of it, the string stops
+  Right ms2 <- openMemstream
+    | Left e => putStrLn ("openMemstream: " ++ show e)
+  Just raw <- newBuffer 3
+    | Nothing => putStrLn "newBuffer failed"
+  setByte raw 0 65
+  setByte raw 1 0
+  setByte raw 2 66
+  m <- Buffer.fwrite (memstreamFile ms2) raw
+  putStrLn ("fwrite with a NUL: " ++ show m)
+  report "close" =<< closeMemstream ms2
+  memstreamSize ms2 >>= \sz => putStrLn ("size: " ++ show sz)
+  memstreamString ms2 >>= \str => putStrLn ("string: " ++ show str)
+  Just buf2 <- memstreamBuffer ms2
+    | Nothing => putStrLn "memstreamBuffer failed"
+  b0 <- getByte buf2 0
+  b1 <- getByte buf2 1
+  b2 <- getByte buf2 2
+  putStrLn ("buffer bytes: " ++ show (b0, b1, b2))
+  freeMemstream ms2
+  -- nothing written
+  Right ms3 <- openMemstream
+    | Left e => putStrLn ("openMemstream: " ++ show e)
+  report "close" =<< closeMemstream ms3
+  memstreamSize ms3 >>= \sz => putStrLn ("empty size: " ++ show sz)
+  memstreamString ms3 >>= \str => putStrLn ("empty string: " ++ show str)
+  freeMemstream ms3
+
 -----------------------------------------------------------------------------
 -- main
 -----------------------------------------------------------------------------
@@ -217,5 +261,6 @@ main = do
   testStreamState
   testAnonymous
   testFiles
+  testMemstream
   teardown
   putStrLn "done"

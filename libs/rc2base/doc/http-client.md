@@ -24,7 +24,8 @@ libcurl's development files and library on the compiler's search path.
 ## Design notes
 
 **No C shim.** Output pointers and C structs go through
-`System.FFI.Struct`: out-parameters are one-field `Struct` cells
+`System.FFI.Struct` (body capture uses `System.Posix.Stdio`'s memory
+stream instead): out-parameters are one-field `Struct` cells
 (`CellI64`, `CellPtr`, ...), and libcurl's bare-tag structs
 (`curl_header`, `curl_slist`) get private struct names that spell out
 the real layout, so the `externStruct` directive is not needed. A
@@ -37,10 +38,9 @@ cannot be passed to C as a function pointer. Instead,
 which redirects libcurl's default writer into a growable heap buffer.
 After the transfer: `fclose`, then `memcpy` into a `Buffer`, a `String`
 (one copy; an embedded NUL cuts it short) or, via
-`Data.TextBuffer.fromRawUtf8`, a `TextBuffer`. Limitation:
-`CURLOPT_WRITEDATA` is left pointing at the closed stream, so set it
-again (or reset the handle) before a later `curlEasyPerform` on the
-same handle without capture. Streaming `WRITEFUNCTION`,
+`Data.TextBuffer.fromRawUtf8`, a `TextBuffer`. The stream is
+`System.Posix.Stdio.openMemstream`; afterwards `CURLOPT_WRITEDATA` is
+put back to `stdout`, libcurl's default. Streaming `WRITEFUNCTION`,
 `HEADERFUNCTION` and `READFUNCTION` are not bound.
 
 **Sentinel values.** Do not pass a negative or all-ones sentinel as an
