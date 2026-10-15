@@ -16,9 +16,8 @@ extra dependency isn't worth it.
   platform-sized `regex_t` or a `regmatch_t[]` array directly, so the
   shim `malloc`s the `regex_t`, runs `regcomp`/`regexec`, and stashes
   the match offsets in a **thread-local** growable buffer (grown to
-  `re_nsub + 1` slots per exec). Thread-local, not one static buffer
-  like `event_util.c`'s epoll cache, so `match` can stay pure *and*
-  safe to call from more than one thread. Compile errors are captured
+  `re_nsub + 1` slots per exec). Thread-local, not one static buffer,
+  so `match` can stay pure *and* safe to call from more than one thread. Compile errors are captured
   into a thread-local string (`regerror` needs the `regex_t`, so the
   message is taken before `regfree`).
 - `Text.Regex.POSIX` -- `Flags`/`ere`/`bre`, an opaque `Regex`

@@ -22,17 +22,15 @@ or a small pure expression is a `"CExpr:"` `%foreign` template
 `mpz_*` bindings (`$r` is the `Integer` out-parameter), the
 `System.FFI.C.Ptr` fetch/store pairs (`((ty *)p)[i]`), the `System.Posix.*`
 modules, (`Directory.readdir` copies the opaque `DirEnt`, read through PrimIO CExpr accessors, into a `DirEntry`; `struct dirent` is not a typedef name so `Struct` cannot name it), `Network.RC2`'s `send`/`recv`, the `EPOLL*` constants,
-`epoll_create1`, `epoll_ctl(DEL)` and `eventfd` in `System.Linux.Epoll`, the
+`System.Linux.Epoll` (`struct epoll_event` read through accessors), `System.Linux.Eventfd`, the
 `REG_*` constants and `re_nsub` in `Text.Regex.POSIX`, `Data.TextBuffer`'s
 accessors and `free`, the `Data.String.RC2` byte-length/from-bytes helpers,
 `Control.Concurrent.Atomic`, and `System.GC.RC2.touch`. The header field
 names the real system headers.
 
 A shim stays when it needs more than one expression: control flow or loops
-(`epoll_wait`, `eventfd_signal`, `eventfd_drain`, `close_fd` retry on
-`EINTR`; `set_nonblocking`), static or thread-local state (the epoll event
-cache, the regex match cache and error buffer, the `xoroshiro` system
-seeds), allocation and cleanup (`regex_compile`/`regex_free`, the
+(none left in the epoll code), static or thread-local state (the regex match
+cache and error buffer, the `xoroshiro` system seeds), allocation and cleanup (`regex_compile`/`regex_free`, the
 `TextBuffer` builders, `string_byte_slice` with its clamping,
 `double_convert`), or the runtime closure/value API (`concurrency_util`).
 
