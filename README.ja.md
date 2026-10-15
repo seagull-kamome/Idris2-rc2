@@ -27,7 +27,7 @@ rc2は、上流のIdris 2本体を変更せずに開発されています。手�
 ## 主な特徴とハイライト
 
 ### 独立したIRパスによる高精度な参照カウント（Perceus / Koka方式）
-RefCは、Cコードを出力する途中で参照カウントの判断をその場しのぎで差し込みます。rc2はこれと違い、ANF正規化した中間表現`RCExp`の上で、所有権解析を独立したパスとして実行します。明示的な`RDup`、`RDrop`、`RFree`ノードは一度だけ挿入されます。そのため後続の最適化は厳密に健全なまま保たれ、C出力は機械的な変換だけになります。
+RefCは、Cコードを出力する途中で、参照カウントの判断をアドホックに差し込みます。rc2はこれと違い、ANF正規化した中間表現`RCExp`の上で、所有権解析を独立したパスとして実行します。明示的な`RDup`、`RDrop`、`RFree`ノードは一度だけ挿入されます。そのため後続の最適化は厳密に健全なまま保たれ、C出力は機械的な変換だけになります。
 
 ### コンストラクタのその場再利用（In-place Reuse）
 パターンマッチで分解した値が実行時に一意に所有されている（参照カウントが1）場合、rc2は同じ形状のセルを解放して確保し直さず、既存のヒープセルをその場で更新します。
@@ -63,7 +63,7 @@ rc2は、広範なネイティブツールキットを同梱しています。Ep
 source env.sh
 ```
 
-- `gen-env.sh`は`env.sh`を生成します。`env.sh`は、自前ビルドのコンパイラがある`install/bin`を`PATH`に加え、サポートライブラリのパスも設定します（`PATH`上にChez Schemeが`scheme`という名前で必要です）。
+- `gen-env.sh`は`env.sh`を生成します。`env.sh`は、自前ビルドのコンパイラがある`install/bin`を`PATH`に加え、サポートライブラリのパスも設定します。`idris2 --build`のChez Schemeバックエンドの段階にはChez Schemeが必要で、Idris 2は環境変数`CHEZ`から実行ファイルを取得し、なければ`PATH`上の`chez`、`chezscheme`、`chez-scheme`、`chezscheme9.5`、`scheme`のいずれかを探します（`gen-env.sh`自身が確認するのは`scheme`だけです）。
 - `idris2-src/`は`https://github.com/idris-lang/Idris2.git`のクローンです。参照資料として、また自前ビルドのIdris 2コンパイラのブートストラップ元としてのみ使います（編集しません）。
 - `install/`はビルド成果物のローカルインストール先です（gitignore対象）。
 
@@ -143,7 +143,7 @@ libs/rc2base/
 - **低レベルC連携とメモリ**：POSIX正規表現（`Text.Regex.POSIX`）、GMP整数演算（`Data.Integer.GMP`）、メモリバッファ、生UTF-8バイト列の変換（`Text.Encoding.UTF8`）、不透明なFFI値に対する参照カウントの明示的な操作（`System.GC.RC2`）。
 - **コンパイラ解析基盤**：rc2が出力するIRダンプのパーサ（`Language.RCExpr.*`）。
 
-モジュールごとの設計ノートは[`libs/rc2base/README.md`](libs/rc2base/README.md)を参照してください。なお、rc2は依存パッケージの`lib/`ディレクトリを自動では探しません。そのため、`postinstall`フックがライブラリを`lib/`にコピーすることが不可欠です。
+モジュールごとの設計ノートは[`libs/rc2base/README.md`](libs/rc2base/README.md)を参照してください。
 
 ### `libs/text-re2/`：Google RE2正規表現バインディング
 
@@ -203,7 +203,7 @@ tools/rcexpr-lint/build/exec/rcexpr-lint build/exec/prog.rcexpr
 ```
 .
 ├── env.sh          生成された環境設定（ビルド・実行前にsourceする。gitignore対象）
-├── gen-env.sh       env.shを再生成するスクリプト（Chez Schemeがscheme名で必要）
+├── gen-env.sh       env.shを再生成するスクリプト（Chez Schemeがscheme名で見つかることを確認する）
 ├── idris2-src/      github.com/idris-lang/Idris2のクローン（参照用・ブートストラップ用、gitignore対象）
 ├── install/         自前ビルドツールチェーンおよびrc2のローカルインストール先（gitignore対象）
 ├── libs/rc2base/    付属のネイティブC ABIサポートライブラリ
