@@ -124,8 +124,8 @@ walkBack rm k ln r before =
          [] => (0, 0)
          (p :: ps) => walkBack rm ((k `minus` r) `minus` 1) (ln `minus` 1) (length (wrapRows rm p) `minus` 1) ps
 
-scrolledWrap : Model -> Model
-scrolledWrap m =
+followCursor : Model -> Model
+followCursor m =
   let rm = wrapRoom m
       cur = reverse m.before ++ m.after
       (r, _) = locateRow (wrapRows rm cur) (length m.before)
@@ -143,6 +143,25 @@ scrolledWrap m =
     scrollTo rm r =
       let (t, trow) = walkBack rm (m.rows `minus` 1) m.line r m.above
       in { top := t, topRow := trow, left := 0 } m
+
+-- Pull the viewport back when the text ends above the bottom of it (after
+-- erasing, or in a taller editor), so that it is filled with rows again.
+fillBack : Model -> Model
+fillBack m =
+  if m.rows == 0 || (m.count `minus` m.top) >= m.rows then m
+  else
+    let rm = wrapRoom m
+        fromEnd = reverse m.below ++ [reverse m.before ++ m.after] ++ m.above
+        used = sum (map (length . wrapRows rm) (take (m.count `minus` m.top) fromEnd)) `minus` m.topRow
+    in if used >= m.rows then m
+       else case fromEnd of
+              [] => m
+              (l :: ls) =>
+                let (t, trow) = walkBack rm (m.rows `minus` 1) (m.count `minus` 1) (length (wrapRows rm l) `minus` 1) ls
+                in if t < m.top || (t == m.top && trow < m.topRow) then { top := t, topRow := trow } m else m
+
+scrolledWrap : Model -> Model
+scrolledWrap m = fillBack (followCursor m)
 
 -- Scroll as little as needed to keep the cursor in the viewport; the last
 -- column is the scroll bar.
@@ -695,7 +714,7 @@ lineView focused m selected idx len base isLast chars =
                              Just (lo, hi, _) => if k >= lo && k < hi then selectionStyle else plain
                              Nothing => plain
       onCursor = \k => focused && cursorAt == Just k
-      shown = map (\(k, ch) => (if onCursor k && charWidth ch == 0 then ' ' else ch, styleOf k, onCursor k))
+      shown = map (\(k, ch) => (if onCursor k && charWidth ch == 0 then ' ' else if charWidth ch > (m.cells `minus` 1) then '?' else ch, styleOf k, onCursor k))
                   (indexed base (cutTo m.cells chars))
       end = if focused && isLast && cursorAt == Just len
                then [(' ', cursorStyle, True)]

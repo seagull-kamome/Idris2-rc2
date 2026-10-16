@@ -534,6 +534,28 @@ third line is also long
 |
 | ^
 |
+-- wrapped: erasing at the end pulls the viewport back
+top=2
+top=0/0
+|a
+|b
+|c
+|
+|^
+top=0/3
+top=0/0
+|one two
+|three four
+|          ^
+|
+-- a wide character in an editor too narrow for it
+|?
+|?
+|
+|
+|^
+|
+|
 -- wrapped: a large text
 49995/0 line 49999
 49984/1 line 49984
