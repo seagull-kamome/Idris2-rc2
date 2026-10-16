@@ -162,6 +162,7 @@ Bindings to Google's [RE2](https://github.com/re2) regex engine, offering linear
 
 - **`libs/iouring/`**: Bindings to Linux's high-performance asynchronous I/O framework io_uring (`System.IO.Uring`). See [`libs/iouring/README.md`](libs/iouring/README.md).
 - **`libs/notcurses/`**: rc2-specific bindings for building rich terminal UIs with notcurses (`System.Notcurses`). See [`libs/notcurses/README.md`](libs/notcurses/README.md).
+- **`libs/termui/`**: Ink-style terminal UI library: layout EDSL, flexbox-like layout engine and differential screen updates over plain ANSI (`TermUI.*`, work in progress). See [`libs/termui/README.md`](libs/termui/README.md).
 
 ### `tools/rcexpr-lint/`: IR Static Checker
 
@@ -208,6 +209,7 @@ Compares two `.rcexpr` IR dumps definition by definition. By normalizing variabl
 ├── libs/text-re2/   Google RE2 regex bindings
 ├── libs/iouring/    io_uring bindings (System.IO.Uring)
 ├── libs/notcurses/  notcurses bindings (System.Notcurses)
+├── libs/termui/     terminal UI library (TermUI.*)
 ├── tools/           IR verification and diff tools (rcexpr-lint, rcexpr-diff)
 └── rc2/             Core compiler backend
 ```

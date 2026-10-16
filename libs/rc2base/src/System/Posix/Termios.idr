@@ -594,6 +594,30 @@ tcgetsid fd = do
   if r < 0 then Left <$> errno else pure (Right (MkProcessID r))
 
 -------------------------------------------------------------------------------
+-- Window size
+
+%inline %foreign "CExpr:(({ struct winsize w; memset(&w, 0, sizeof(w)); ioctl($1, TIOCGWINSZ, &w) < 0 ? -1 : (int)(w.ws_col | ((unsigned)w.ws_row << 16)); })),libc,sys/ioctl.h;string.h"
+prim__tiocgwinsz : Int32 -> PrimIO Int32
+%inline %foreign "CExpr:(({ struct winsize w; memset(&w, 0, sizeof(w)); w.ws_col = $2; w.ws_row = $3; ioctl($1, TIOCSWINSZ, &w); })),libc,sys/ioctl.h;string.h"
+prim__tiocswinsz : Int32 -> Bits32 -> Bits32 -> PrimIO Int32
+
+||| The size of the terminal in character cells: (columns, rows).
+||| Both are at most 32767; a terminal that does not report its size gives (0, 0).
+public export
+getWinSize : FileDesc -> IO (Either Errno (Nat, Nat))
+getWinSize fd = do
+  r <- primIO (prim__tiocgwinsz fd.rawfd)
+  if r < 0
+     then Left <$> errno
+     else let v = cast {to = Nat} r in pure (Right (mod v 65536, div v 65536))
+
+||| Set the size of the terminal (columns, rows); a program on the other side
+||| of a pseudo-terminal receives SIGWINCH.
+public export
+setWinSize : FileDesc -> (cols : Bits32) -> (rows : Bits32) -> IO (Either Errno ())
+setWinSize fd cols rows = primIO (prim__tiocswinsz fd.rawfd cols rows) >>= status
+
+-------------------------------------------------------------------------------
 -- Pseudo-terminals
 --
 -- These four are declared by glibc only under `_XOPEN_SOURCE`: build the

@@ -1,0 +1,2 @@
+count=102 ticks=1 keys=["x"]
+<ESC>[?1049h<ESC>[?25l<ESC>[?2004h<ESC>[2J<ESC>[0m<ESC>[2J<ESC>[1;1H<ESC>[0mcount<ESC>[1;7H0<ESC>[1;9Hticks<ESC>[1;15H0<ESC>[2;1H╭───╮<ESC>[2;7H┌───┐<ESC>[2;13H┌─┐<ESC>[3;1H│<ESC>[3;3H<ESC>[0;1m-<ESC>[3;5H<ESC>[0m│<ESC>[3;7H│<ESC>[3;9H+<ESC>[3;11H│<ESC>[3;13H│n│<ESC>[4;1H╰───╯<ESC>[4;7H└───┘<ESC>[4;13H└─┘<ESC>[0m<ESC>[1;7H<ESC>[0m2<ESC>[2;1H┌<ESC>[2;5H┐<ESC>[2;13H╭<ESC>[2;15H╮<ESC>[3;3H-<ESC>[4;1H└<ESC>[4;5H┘<ESC>[4;13H╰<ESC>[4;15H╯<ESC>[5;1Hx<ESC>[0m<ESC>[1;7H<ESC>[0m102 ticks<ESC>[1;17H1<ESC>[0m<ESC>[0m<ESC>[?2004l<ESC>[?25h<ESC>[?1049l

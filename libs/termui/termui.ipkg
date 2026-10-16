@@ -1,0 +1,19 @@
+package termui
+
+version    = 0.1.0
+opts       = "--total"
+sourcedir  = "src"
+depends    = contrib, rc2base
+modules    = TermUI.Style,
+             TermUI.Node,
+             TermUI.Layout,
+             TermUI.Frame,
+             TermUI.Output,
+             TermUI.Input,
+             TermUI.Terminal,
+             TermUI.Loop,
+             TermUI.Program,
+             TermUI.Widget.Display,
+             TermUI.Widget.Select,
+             TermUI.Widget.TextInput,
+             TermUI.Width

@@ -132,6 +132,8 @@ isatty slave: True
 ttyname under /dev/pts: True
 tcgetpgrp: ENOTTY: True
 tcgetsid: ENOTTY: True
+setWinSize: ok
+getWinSize: (100, 31)
 tcgetattr on a file: True
 isatty file: False
 ttyname of a file: ENOTTY: True

@@ -287,6 +287,13 @@ testNotATty = do
 -- main
 -----------------------------------------------------------------------------
 
+||| The window size set through the master is read back from the slave.
+testWinSize : FileDesc -> FileDesc -> IO ()
+testWinSize master slave = do
+  ok "setWinSize" =<< setWinSize master 100 31
+  r <- getWinSize slave
+  putStrLn ("getWinSize: " ++ either (\e => "error " ++ show e) show r)
+
 main : IO ()
 main = do
   testConstants
@@ -299,6 +306,7 @@ main = do
   testControl slave
   testSpeeds slave
   testIdentity slave
+  testWinSize master slave
   testNotATty
   teardown (master, slave)
   putStrLn "done"

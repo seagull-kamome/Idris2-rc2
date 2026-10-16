@@ -1130,7 +1130,20 @@ upstreamに取り込まれたら`idris2-src`を更新して自作idris2を作り
 
 ## AI Agent作成用のライブラリを整備
 
-## INK風のReact的に使えるTUIライブラリを追加
+## termui(INK風のTUIライブラリ)の残り
+
+実装済みの範囲と制限は`libs/termui/doc/design.md`。未着手:
+
+- マウス(SGRの報告の解析と、クリック/ホイールのメッセージ)。
+- 非同期の`Cmd`(ワーカースレッドが結果を投稿する)。今の`Perform`はループを止める。
+- `Emit`/`Batch`をキュー(FIFO)にする。今は深さ優先。
+- `Every`のキーの名前空間化(入れ子のコンポーネントで衝突する)。フォーカスをキー付きにする案も。
+- SIGCONT後の再描画、SIGTSTPの扱い。
+- 汎用のスクロールビュー、複数行エディタ、`TextInput`の全角幅対応。
+- レイアウト: 子の折り返し(wrap)、絶対配置、min/max、書記素クラスタ(結合文字・絵文字のZWJ列)、
+  自然サイズのキャッシュ。
+- `Style`の合成で子が親の属性を打ち消せない(tri-state化)。
+- コード規約: 1か所でしか使わないトップレベル関数を`where`へ(Input/Loop/Program/Layout/Frame)。
 
 
 
