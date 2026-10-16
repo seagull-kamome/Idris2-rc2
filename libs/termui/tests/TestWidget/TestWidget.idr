@@ -363,3 +363,24 @@ main = do
   let joined = areaKeys [key KBackspace] (typedArea "ab\ncd" (A.empty 20 4) `areaKeysAt` [key KHome])
   putStrLn (areaText joined ++ " | " ++ areaText (areaKeys [undo] joined) ++ " " ++ show (lineCount (areaKeys [undo] joined)))
   putStrLn (show (map (isJust . A.keyMsg) [shiftKey KLeft, undo, redo, Press (KChar 'w') (MkMods False True False), Press (KChar 'y') (MkMods False True False), Press (KChar 'w') (MkMods False False True), Press (KChar 'a') (MkMods False False True), shiftKey KTab]))
+  putStrLn "-- text area: combining marks, empty edits, kill with a selection, undo groups"
+  let combining = typedArea "e\x301x" (A.empty 12 3)
+  drawMarked (A.view True combining) 12 3
+  putStrLn (areaText (areaKeys [click LeftButton 1 0] combining) ++ " | " ++ areaText (areaKeys [click LeftButton 2 0] combining))
+  let accents = typedArea (pack (replicate 10 'a') ++ "\x301\x301") (A.empty 12 3)
+  drawMarked (A.view True accents) 12 3
+  let one = typedArea "a" (A.empty 20 4)
+  putStrLn (areaText (areaKeys [Press KHome (MkMods False False False), key KBackspace, undo] one))
+  putStrLn (areaText (areaKeys [undo, Press (KChar 'y') (MkMods False True False), redo] one))
+  putStrLn (areaText (areaKeys [Press (KChar 'k') (MkMods False True False), Press (KChar 'k') (MkMods False True False), undo] one))
+  let he = areaKeys [key KHome, shiftKey KRight, shiftKey KRight] hw
+  putStrLn (areaText (areaKeys [Press (KChar 'k') (MkMods False True False)] he) ++ " | " ++ areaText (areaKeys [Press (KChar 'u') (MkMods False True False)] he))
+  let nl = areaKeys [key KUp, key KEnd, shiftKey KDown] (typedArea "abc\nd" (A.empty 20 4))
+  drawMarked (A.view False nl) 20 4
+  drawMarked (A.view True nl) 20 4
+  let abc = areaKeys [shiftKey KLeft, shiftKey KLeft, shiftKey KLeft, press 'X', press 'Y'] (typedArea "abc" (A.empty 20 4))
+  putStrLn (areaText abc ++ " | " ++ areaText (areaKeys [undo] abc) ++ " | " ++ areaText (areaKeys [undo, undo] abc))
+  let six = areaKeys (replicate 3 (key KLeft)) (typedArea "abcdef" (A.empty 20 4))
+  let dels = areaKeys [key KBackspace, key KBackspace, key KDelete, key KDelete] six
+  putStrLn (areaText dels ++ " | " ++ areaText (areaKeys [undo] dels) ++ " | " ++ areaText (areaKeys [undo, undo] dels) ++ " | " ++ areaText (areaKeys [undo, undo, undo] dels))
+  putStrLn (areaText (areaKeys [shiftKey KEnter] one) ++ " | " ++ areaText (areaKeys [shiftKey KBackspace] one) ++ " | " ++ areaText (areaKeys [key KHome, shiftKey KDelete] one))

@@ -23,7 +23,7 @@ import TermUI.Widget.ScrollBar
 
 ||| What the last edit was, to put the typing of a word in one undo step.
 public export
-data Edit = NoEdit | Typing | Erasing | Other
+data Edit = NoEdit | Typing | Backspacing | Deleting | Other
 
 ||| A text and a cursor position to go back to.
 public export
@@ -301,17 +301,29 @@ restore s m =
 
 grouped : Edit -> Edit -> Bool
 grouped Typing Typing = True
-grouped Erasing Erasing = True
+grouped Backspacing Backspacing = True
+grouped Deleting Deleting = True
 grouped _ _ = False
 
 -- Make `f` an edit: a selection is replaced, the state before it is kept for
--- undo (once for a run of typed characters or of erasures).
+-- undo (once for a run of typed characters or of erasures). An edit that
+-- changes nothing leaves the history alone.
 edit : Edit -> (Model -> Model) -> Model -> Model
 edit kind f m =
-  let kept = if grouped kind m.lastEdit && isNothing (selection m)
+  let replacing = isJust (selection m)
+      kept = if grouped kind m.lastEdit && not replacing
                 then m
                 else { history := take 100 (snapOf m :: m.history), future := [] } m
-  in { lastEdit := kind, mark := Nothing } (f (deleteSelection kept))
+      done = f (deleteSelection kept)
+      unchanged = not replacing && done.line == m.line && done.count == m.count
+                  && done.before == m.before && done.after == m.after
+  in if unchanged then { mark := Nothing } m
+     else { lastEdit := if replacing then Other else kind, mark := Nothing } done
+
+-- An edit that only removes the selection when there is one, and otherwise
+-- does `f`.
+erasing : Edit -> (Model -> Model) -> Model -> Model
+erasing kind f m = if isJust (selection m) then edit Other id m else edit kind f m
 
 -- A move or a click: the selection goes and the next typing is a new step.
 moved : (Model -> Model) -> Model -> Model
@@ -329,9 +341,7 @@ step (Insert c) m = edit Typing (\x => { before := reverse (clean c) ++ x.before
 step (InsertText s) m = edit Other (insertText s) m
 step Newline m =
   edit Other (\x => { above := reverse x.before :: x.above, before := [], line $= S, count $= S, want := Nothing } x) m
-step Backspace m =
-  if isJust (selection m) then edit Other id m
-  else edit Erasing erase m
+step Backspace m = erasing Backspacing erase m
   where
     erase : Model -> Model
     erase x =
@@ -341,9 +351,7 @@ step Backspace m =
                 (l :: ls) => { above := ls, before := reverse l, line $= (`minus` 1)
                              , count $= (`minus` 1), want := Nothing } x
                 [] => x
-step DeleteForward m =
-  if isJust (selection m) then edit Other id m
-  else edit Erasing erase m
+step DeleteForward m = erasing Deleting erase m
   where
     erase : Model -> Model
     erase x =
@@ -352,8 +360,8 @@ step DeleteForward m =
         [] => case x.below of
                 (l :: ls) => { after := l, below := ls, count $= (`minus` 1), want := Nothing } x
                 [] => x
-step KillToEnd m = edit Other (\x => { after := [], want := Nothing } x) m
-step KillToStart m = edit Other (\x => { before := [], want := Nothing } x) m
+step KillToEnd m = erasing Other (\x => { after := [], want := Nothing } x) m
+step KillToStart m = erasing Other (\x => { before := [], want := Nothing } x) m
 -- the last column is the scroll bar: a click there does nothing, a drag over it stops at the text
 step (ClickAt col row) m = if col + 1 >= m.cells then m else moved (clickAt col row) m
 step (DragTo col row) m = stretched (clickAt (min col (m.cells `minus` 2)) row) m
@@ -431,21 +439,23 @@ keyMsg (Press key mods) =
             KEnd => Just (if mods.shift then Extend DocEnd else DocEnd)
             _ => Nothing
   else if mods.shift
-     then map Extend (extendedKey key)
-  else case key of
-            KChar c => Just (Insert c)
-            KEnter => Just Newline
-            KBackspace => Just Backspace
-            KDelete => Just DeleteForward
-            KLeft => Just MoveLeft
-            KRight => Just MoveRight
-            KUp => Just MoveUp
-            KDown => Just MoveDown
-            KHome => Just LineStart
-            KEnd => Just LineEnd
-            KPageUp => Just PageUp
-            KPageDown => Just PageDown
-            _ => Nothing
+     then maybe (plain key) (Just . Extend) (extendedKey key)
+  else plain key
+  where
+    plain : Key -> Maybe Msg
+    plain (KChar c) = Just (Insert c)
+    plain KEnter = Just Newline
+    plain KBackspace = Just Backspace
+    plain KDelete = Just DeleteForward
+    plain KLeft = Just MoveLeft
+    plain KRight = Just MoveRight
+    plain KUp = Just MoveUp
+    plain KDown = Just MoveDown
+    plain KHome = Just LineStart
+    plain KEnd = Just LineEnd
+    plain KPageUp = Just PageUp
+    plain KPageDown = Just PageDown
+    plain _ = Nothing
 keyMsg (Mouse e) =
   case (e.button, e.action) of
     (LeftButton, ButtonDown) => Just (ClickAt e.column e.row)
@@ -462,9 +472,9 @@ selectionStyle = bgColor (Indexed 4) (fgColor white plain)
 
 -- The part of line `idx` (`len` characters long) that is selected, as a range
 -- of character indexes, and whether its line break is.
-selectedPart : Model -> (idx : Nat) -> (len : Nat) -> Maybe (Nat, Nat, Bool)
-selectedPart m idx len =
-  case selection m of
+selectedPart : Maybe ((Nat, Nat), (Nat, Nat)) -> (idx : Nat) -> (len : Nat) -> Maybe (Nat, Nat, Bool)
+selectedPart selected idx len =
+  case selected of
     Nothing => Nothing
     Just ((l1, c1), (l2, c2)) =>
       if idx < l1 || idx > l2 then Nothing
@@ -490,29 +500,32 @@ spans ((ch, st, cur) :: rest) =
                                     else (st, cur, [ch]) :: (st', cur', cs) :: more
     [] => [(st, cur, [ch])]
 
-lineView : (focused : Bool) -> Model -> (idx : Nat) -> List Char -> Node msg
-lineView focused m idx chars =
+lineView : (focused : Bool) -> Model -> Maybe ((Nat, Nat), (Nat, Nat)) -> (idx : Nat) -> List Char -> Node msg
+lineView focused m selected idx chars =
   let len = length chars
-      sel = selectedPart m idx len
+      sel = selectedPart selected idx len
       cursorAt = if idx == m.line then Just (length m.before) else Nothing
       cursorStyle = if focused then withAttr Inverse plain else plain
       styleOf = \k => if focused && cursorAt == Just k then cursorStyle
                       else case sel of
                              Just (lo, hi, _) => if k >= lo && k < hi then selectionStyle else plain
                              Nothing => plain
-      shown = map (\(k, ch) => (if charWidth ch == 0 then ' ' else ch, styleOf k, focused && cursorAt == Just k))
-                  (drop m.left (indexed 0 chars))
-      end = if cursorAt == Just len
-               then [(' ', cursorStyle, focused)]
+      onCursor = \k => focused && cursorAt == Just k
+      shown = map (\(k, ch) => (if onCursor k && charWidth ch == 0 then ' ' else ch, styleOf k, onCursor k))
+                  (indexed m.left (cutTo m.cells (drop m.left chars)))
+      end = if focused && cursorAt == Just len
+               then [(' ', cursorStyle, True)]
                else case sel of
                       Just (_, _, True) => [(' ', selectionStyle, False)]
                       _ => []
-      cellsOfLine = fitting (m.cells `minus` 1) (shown ++ end)
-  in box [direction Row] (map node (spans cellsOfLine))
+  in box [direction Row] (map node (spans (fitting (m.cells `minus` 1) (shown ++ end))))
   where
     indexed : Nat -> List a -> List (Nat, a)
-    indexed _ [] = []
-    indexed i (x :: xs) = (i, x) :: indexed (S i) xs
+    indexed i xs = reverse (go i xs [])
+      where
+        go : Nat -> List a -> List (Nat, a) -> List (Nat, a)
+        go _ [] acc = acc
+        go j (y :: ys) acc = go (S j) ys ((j, y) :: acc)
 
     node : (Style, Bool, List Char) -> Node msg
     node (st, cur, cs) =
@@ -526,7 +539,8 @@ view : (focused : Bool) -> Model -> Node msg
 view focused m =
   let aboveShown = reverse (take (m.line `minus` m.top) m.above)
       numbered = zip' m.top (aboveShown ++ [reverse m.before ++ m.after] ++ take m.rows m.below)
-      visible = take m.rows (map (\(i, l) => lineView focused m i l) numbered)
+      selected = selection m
+      visible = take m.rows (map (\(i, l) => lineView focused m selected i l) numbered)
   in box [direction Row, width (Cells m.cells), height (Cells m.rows)]
        [ box [grow 1] visible
        , scrollBar m.rows m.count m.top

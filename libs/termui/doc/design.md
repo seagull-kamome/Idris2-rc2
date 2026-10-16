@@ -277,20 +277,26 @@ while the field has the focus.
   one), the mouse. Lines are not wrapped; the view scrolls horizontally and
   vertically as little as needed (a line that fits is shown from its start) and
   has a scroll bar, whose column ignores clicks. The model keeps the number of
-  lines and the cursor line, so a keystroke costs the length of the cursor line,
-  not of the text (`value` and `selectedText` do cost the size of the text).
-  `resize` changes the viewport.
+  lines and the cursor line, so typing, Enter, the arrows, Backspace and Delete
+  cost the length of the cursor line, not of the text. Replacing a selection,
+  cutting, pasting, select-all, Ctrl-Home/End, paging and clicking far from the
+  cursor line cost the size of the text (or the distance and the line length);
+  `value` and `selectedText` too. `resize` changes the viewport. A combining mark
+  is kept in the text and takes no cell; it is not drawn (the terminal cannot be
+  asked to compose it, see the layout notes).
   - *Selection.* Shift with a move key (arrows, Home/End, PageUp/PageDown,
     Ctrl-Shift-Home/End) stretches it; so does dragging with the left button.
-    Alt-A selects all. Typing, Enter, Backspace, Delete or a paste replaces it;
-    a move without Shift drops it. Selected cells are drawn on a blue
+    Alt-A selects all. Typing, Enter or a paste replaces it, Backspace, Delete,
+    Ctrl-K and Ctrl-U only remove it; a move without Shift drops it. Selected cells are drawn on a blue
     background, the cursor is inverse.
   - *Clipboard.* Alt-W copies, Ctrl-W cuts, Ctrl-Y pastes the editor's own
     clipboard (`clipboard` reads it, for a program that wants to hand it to
     the terminal); what the terminal pastes arrives as a bracketed paste.
-  - *Undo.* Ctrl-_ undoes and Ctrl-^ redoes. A run of typed characters or of
-    erasures is one step, any move starts a new one, a replaced selection is
-    one step; a new edit forgets what could be redone; 100 steps are kept.
+  - *Undo.* Ctrl-_ undoes and Ctrl-^ redoes. A run of typed characters, of
+    Backspaces or of Deletes is one step, any move starts a new one, a replaced
+    selection is a step of its own (what is typed after it is another); an edit
+    that changes nothing (Backspace at the start, an empty paste) leaves the
+    history alone; a new edit forgets what could be redone; 100 steps are kept.
     Ctrl-Z is left to the application (the editor example suspends on it).
   - Columns for vertical moves are counted in cells, a click and a drag put the
     cursor under the cell.

@@ -355,3 +355,33 @@ hello X| | hello |world | |
 ab|cd | ab
 |cd 2
 [True, True, True, True, True, True, True, False]
+-- text area: combining marks, empty edits, kill with a selection, undo groups
+|ex
+|  ^
+|
+|
+é|x | éx|
+|aaaaaaaaaa
+|          ^
+|
+|
+|
+a|
+|
+|llo world | |llo world
+|abc
+|   s
+|d
+|s
+|
+|
+|abc
+|   s
+|d
+|s^
+|
+|
+XY| | X| | |abc
+a|f | a|def | abc|def | |
+a
+| | | | |
