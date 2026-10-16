@@ -52,3 +52,10 @@
 "\ESC[?1;2cq" -> [KChar 'q']
 -- split across reads
 [KChar 'x']  rest=[27, 91, 49, 59] | [Ctrl+Up, KChar 'y']
+-- counting clicks
+[1, 2, 3, 1]
+[1, 1]
+1 1
+1 1
+1
+2

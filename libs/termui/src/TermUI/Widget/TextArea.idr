@@ -409,6 +409,8 @@ data Msg
   | KillToStart
   | ClickAt Nat Nat      -- column and row of the viewport
   | DragTo Nat Nat       -- the same, with the button held: stretches the selection
+  | WordAt Nat Nat       -- the same for a double click: the word there is selected
+  | LineAt Nat Nat       -- and for a triple click: the line
   | Extend Msg           -- a move that stretches the selection
   | SelectAll
   | Copy
@@ -518,6 +520,13 @@ stretched f m =
       m1 = f m
   in { mark := if start == position m1 then Nothing else Just start, lastEdit := NoEdit } m1
 
+-- The range of the cursor line that `range` gives, with the cursor at its end.
+picked : (List Char -> Nat -> (Nat, Nat)) -> Model -> Model
+picked range m =
+  let text = reverse m.before ++ m.after
+      (lo, hi) = range text (length m.before)
+  in { mark := if lo == hi then Nothing else Just (m.line, lo), lastEdit := NoEdit } (inLine hi Nothing m)
+
 step : Msg -> Model -> Model
 step (Insert c) m = edit Typing (\x => { before := reverse (clean c) ++ x.before, want := Nothing } x) m
 step (InsertText s) m = edit Other (insertText s) m
@@ -548,6 +557,8 @@ step KillToStart m = erasing Other (\x => { before := [], want := Nothing } x) m
 step (ClickAt col row) m = if col + 1 >= m.cells then m else moved (clickAt col row) m
 step (DragTo col row) m = stretched (clickAt (min col (m.cells `minus` 2)) row) m
 step (Extend x) m = stretched (move x) m
+step (WordAt col row) m = if col + 1 >= m.cells then m else picked wordRange (moved (clickAt col row) m)
+step (LineAt col row) m = if col + 1 >= m.cells then m else picked (\cs, _ => (0, length cs)) (moved (clickAt col row) m)
 step SelectAll m = stretched (move DocEnd) (moved (move DocStart) m)
 step Copy m = if isJust (selection m) then { clip := selectedText m } m else m
 step Cut m = if isJust (selection m) then edit Other id ({ clip := selectedText m } m) else m
@@ -640,7 +651,10 @@ keyMsg (Press key mods) =
     plain _ = Nothing
 keyMsg (Mouse e) =
   case (e.button, e.action) of
-    (LeftButton, ButtonDown) => Just (ClickAt e.column e.row)
+    (LeftButton, ButtonDown) => Just (case e.clicks of
+                                         1 => ClickAt e.column e.row
+                                         2 => WordAt e.column e.row
+                                         _ => LineAt e.column e.row)
     (LeftButton, Drag) => Just (DragTo e.column e.row)
     (WheelUp, _) => Just MoveUp
     (WheelDown, _) => Just MoveDown

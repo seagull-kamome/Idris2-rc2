@@ -241,6 +241,12 @@ that node, so a widget can tell what was clicked: `Select` selects the clicked
 line and takes the wheel as Up and Down, `TextInput` and `TextArea` put the cursor
 under the pointer.
 
+A press of the left button also carries `clicks`: the runtime counts the presses
+at one cell that follow each other within 400 ms (`countClick`, pure and tested
+with given times) and numbers them 1, 2, 3 and then 1 again; other events have 1.
+`TextInput` and `TextArea` select the word under a double click, and the line
+(for `TextInput`, the whole text) under a triple click.
+
 The positions in a `MouseEvent` are absolute for `OnMouse` and relative to the
 node's top left for a handler. The place of a focusable is cut to what is visible
 (what its ancestors clip), and is renewed at every draw, so a click that arrives in
