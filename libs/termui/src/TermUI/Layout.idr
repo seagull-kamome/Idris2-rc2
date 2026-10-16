@@ -95,16 +95,18 @@ wordChunks w (S fuel) cs =
     hard [] (c :: rest) = [c] :: wordChunks w fuel rest
     hard a b = a :: wordChunks w fuel b
 
-||| The lines of a text laid out in `maxW` cells. A trailing newline does
-||| not start a further line.
+-- The lines of a text; a trailing newline does not start a further line.
+textLines : String -> List String
+textLines s =
+  let ls = forget (split (== '\n') s) in
+  if length ls > 1 && last' ls == Just "" then reverse (drop 1 (reverse ls)) else ls
+
+||| The lines of a text laid out in `maxW` cells.
 export
 wrapText : Wrap -> Nat -> String -> List String
 wrapText wrap maxW s =
-  if maxW == 0 then [] else concat (map fit (sourceLines (forget (split (== '\n') s))))
+  if maxW == 0 then [] else concat (map fit (textLines s))
   where
-    sourceLines : List String -> List String
-    sourceLines ls = if length ls > 1 && last' ls == Just "" then reverse (drop 1 (reverse ls)) else ls
-
     fit : String -> List String
     fit line =
       let cs = unpack line in
@@ -182,51 +184,116 @@ mainPositions p room sizes =
 -------------------------------------------------------------------------------
 -- Children
 
+-- `n` held between the bounds; the maximum is applied first, so the minimum wins.
+clampBy : Maybe Nat -> Maybe Nat -> Nat -> Nat
+clampBy lo hi n = maybe id max lo (maybe id min hi n)
+
 record Kid msg where
   constructor MkKid
   node : Node msg
   margin : Edges
   kw, kh : Dim
   kgrow, kshrink : Nat
+  clampW, clampH : Nat -> Nat
 
 kidOf : Node msg -> Kid msg
-kidOf k@(Text _ _ _) = MkKid k noEdges Auto Auto 0 1
-kidOf k@(Box p _) = MkKid k p.pMargin p.pWidth p.pHeight p.pGrow p.pShrink
+kidOf k@(Text _ _ _) = MkKid k noEdges Auto Auto 0 1 id id
+kidOf k@(Box p _) =
+  MkKid k p.pMargin p.pWidth p.pHeight p.pGrow p.pShrink
+        (clampBy p.pMinWidth p.pMaxWidth) (clampBy p.pMinHeight p.pMaxHeight)
 kidOf (Focusable body _) = kidOf (body False)
+
+-- Out of the flow of its parent?
+isAbsolute : Node msg -> Bool
+isAbsolute (Box p _) = p.pAbsolute
+isAbsolute (Focusable body _) = isAbsolute (body False)
+isAbsolute _ = False
+
+-- The width a node wants when nothing limits it, text not wrapped: the
+-- width of the border box. Linear in the size of the subtree, and what the
+-- layout uses to decide widths, so that `natural` calls each child once.
+maxContent : Node msg -> Nat
+maxContent (Focusable body _) = maxContent (body False)
+maxContent (Text _ _ s) = foldl max 0 (map stringWidth (textLines s))
+maxContent (Box p kids) =
+  let bx = 2 * borderWidth p.pBorder + hEdges p.pPadding
+      ks = map kidOf (filter (not . isAbsolute) kids)
+      wants = map (\k => maxContent k.node + hEdges k.margin) ks
+      gaps = p.pGap * (length ks `minus` 1)
+      content = case p.pDirection of
+                  Row => sum wants + gaps
+                  Column => foldl max 0 wants
+      w = case p.pWidth of
+            Cells n => n
+            _ => content + bx
+  in clampBy p.pMinWidth p.pMaxWidth w
 
 dimSize : Nat -> Dim -> Maybe Nat
 dimSize _ Auto = Nothing
 dimSize _ (Cells n) = Just n
 dimSize room (Percent q) = Just (ndiv (room * q) 100)
 
--- Outer widths (margin included) of the children of a row in `iw` cells;
--- `nat` measures a node for a given available width.
-rowSizes : (Node msg -> Nat -> (Nat, Nat)) -> Props -> Nat -> List (Kid msg) -> List Nat
-rowSizes nat p iw ks =
-  let bases = map (\k => hEdges k.margin + fromMaybe (fst (nat k.node (iw `minus` hEdges k.margin)))
-                                                     (dimSize iw k.kw)) ks
-      room = iw `minus` (p.pGap * (length ks `minus` 1))
-  in flex room (zip3 bases (map kgrow ks) (map kshrink ks))
+-- The items cut into lines of at most `room` cells, `gap` cells apart.
+breakLines : Nat -> Nat -> List (a, Nat) -> List (List (a, Nat))
+breakLines gap room items = go items [] 0
+  where
+    go : List (a, Nat) -> List (a, Nat) -> Nat -> List (List (a, Nat))
+    go [] cur _ = if null cur then [] else [reverse cur]
+    go (x :: rest) [] _ = go rest [x] (snd x)
+    go (x :: rest) cur used =
+      if used + gap + snd x > room
+         then reverse cur :: go (x :: rest) [] 0
+         else go rest (x :: cur) (used + gap + snd x)
+
+-- The children of a row cut into lines (one line, unless it wraps), each
+-- with its outer width after the distribution of the room of its line.
+rowLines : Props -> Nat -> List (Kid msg) -> List (List (Kid msg, Nat))
+rowLines p iw ks =
+  let based = map (\k => (k, hEdges k.margin
+                              + k.clampW (fromMaybe (min (iw `minus` hEdges k.margin) (maxContent k.node))
+                                                    (dimSize iw k.kw)))) ks
+      lines = if p.pWrap then breakLines p.pGap iw based else [based]
+  in map distribute' lines
+  where
+    distribute' : List (Kid msg, Nat) -> List (Kid msg, Nat)
+    distribute' ln =
+      let room = iw `minus` (p.pGap * (length ln `minus` 1))
+          sizes = flex room (map (\(k, b) => (b, k.kgrow, k.kshrink)) ln)
+      in zipWith (\(k, _), sz => (k, hEdges k.margin + k.clampW (sz `minus` hEdges k.margin))) ln sizes
+
+-- The height of a child of a row that gets `mw` cells of width (margin excluded).
+rowChildHeight : (Node msg -> Nat -> (Nat, Nat)) -> Kid msg -> Nat -> Nat
+rowChildHeight nat k mw = k.clampH (fromMaybe (snd (nat k.node mw)) (dimSize 0 k.kh `orElse` natural' k))
+  where
+    -- a percentage has no meaning before the height of the row is known
+    natural' : Kid msg -> Maybe Nat
+    natural' kid = case kid.kh of
+                     Cells n => Just n
+                     _ => Nothing
+    orElse : Maybe a -> Maybe a -> Maybe a
+    orElse (Just x) _ = Just x
+    orElse Nothing y = y
 
 -- Widths (margin excluded) of the children of a column in `iw` cells.
-columnWidths : (Node msg -> Nat -> (Nat, Nat)) -> Props -> Nat -> List (Kid msg) -> List Nat
-columnWidths nat p iw = map width
+columnWidths : Props -> Nat -> List (Kid msg) -> List Nat
+columnWidths p iw = map width
   where
     width : Kid msg -> Nat
     width k =
       let mh = hEdges k.margin in
-      case dimSize iw k.kw of
+      k.clampW $ case dimSize iw k.kw of
         Just n => n
         Nothing => case p.pAlign of
                      Stretch => iw `minus` mh
-                     _ => fst (nat k.node (iw `minus` mh))
+                     _ => min (iw `minus` mh) (maxContent k.node)
 
 -------------------------------------------------------------------------------
 -- Natural size
 
 -- Size of the border box when at most `maxW` cells of width are available.
 -- A `Focusable` is laid out as its unfocused body; the runtime resolves
--- focusables (`TermUI.Program`) before the layout sees them.
+-- focusables (`TermUI.Program`) before the layout sees them. Children out of
+-- the flow take no room.
 natural : Node msg -> Nat -> (Nat, Nat)
 natural (Focusable body _) maxW = natural (body False) maxW
 natural (Text _ wrap s) maxW =
@@ -240,28 +307,30 @@ natural (Box p kids) maxW =
                 Cells n => min n maxW
                 _ => maxW
       iw = avail `minus` bx
-      ks = map kidOf kids
-      gaps = p.pGap * (length ks `minus` 1)
+      ks = map kidOf (filter (not . isAbsolute) kids)
       (cw, ch) = case p.pDirection of
         Row =>
-          let sizes = rowSizes natural p iw ks in
-          ( sum sizes + gaps
-          , foldl max 0 (zipWith (\k, sz =>
-              snd (natural k.node (sz `minus` hEdges k.margin)) + vEdges k.margin) ks sizes) )
+          let lines = rowLines p iw ks
+              lineWidth = \ln => sum (map snd ln) + p.pGap * (length ln `minus` 1)
+              lineHeight = \ln => foldl max 0 (map (\(k, sz) =>
+                              rowChildHeight natural k (sz `minus` hEdges k.margin) + vEdges k.margin) ln)
+          in ( foldl max 0 (map lineWidth lines)
+             , sum (map lineHeight lines) + p.pGap * (length lines `minus` 1) )
         Column =>
           -- The width of a column is that of its widest child; the height of
           -- a child is measured at the width it will receive.
-          let widths = columnWidths natural p iw ks
-              wanted = map (\k => fst (natural k.node (iw `minus` hEdges k.margin)) + hEdges k.margin) ks
+          let widths = columnWidths p iw ks
+              wanted = map (\k => maxContent k.node + hEdges k.margin) ks
           in ( foldl max 0 wanted
-             , sum (zipWith (\k, cwid => snd (natural k.node cwid) + vEdges k.margin) ks widths) + gaps )
+             , sum (zipWith (\k, cwid => k.clampH (snd (natural k.node cwid)) + vEdges k.margin) ks widths)
+               + p.pGap * (length ks `minus` 1) )
       w = case p.pWidth of
             Cells k => k
             _ => min maxW (cw + bx)
       h = case p.pHeight of
             Cells k => k
             _ => ch + by
-  in (w, h)
+  in (clampBy p.pMinWidth p.pMaxWidth w, clampBy p.pMinHeight p.pMaxHeight h)
 
 -------------------------------------------------------------------------------
 -- Placement
@@ -271,47 +340,91 @@ crossOffset Center free = ndiv free 2
 crossOffset End free = free
 crossOffset _ _ = 0
 
-||| Place a node in the border box `r`.
-export
-place : Node msg -> Rect -> Laid
-place (Text s wrap str) r = LText r s (wrapText wrap r.w str)
-place (Focusable body _) r = place (body False) r
-place (Box p kids) r =
-  let i = innerRect p r
-      ks = map kidOf kids
-  in LBox r p $ case p.pDirection of
-       Row => placeRow p i ks
-       Column => placeColumn p i ks
-  where
-    placeRow : Props -> Rect -> List (Kid msg) -> List Laid
-    placeRow p i ks =
-      let sizes = rowSizes natural p i.w ks
-          xs = mainPositions p i.w sizes
-      in zipWith3 (\k, sz, px =>
-           let mw = sz `minus` hEdges k.margin
-               mv = vEdges k.margin
-               ch = case dimSize i.h k.kh of
-                      Just n => n
-                      Nothing => case p.pAlign of
-                                   Stretch => i.h `minus` mv
-                                   _ => snd (natural k.node mw)
-               off = crossOffset p.pAlign (i.h `minus` (ch + mv))
-           in place k.node (MkRect (i.x + px + k.margin.left) (i.y + off + k.margin.top) mw ch))
-         ks sizes xs
+-- The top of each line of a wrapping row, `gap` apart.
+lineTops : (gap : Nat) -> (y : Nat) -> List Nat -> List Nat
+lineTops _ _ [] = []
+lineTops gap y (lh :: rest) = y :: lineTops gap (y + lh + gap) rest
 
-    placeColumn : Props -> Rect -> List (Kid msg) -> List Laid
-    placeColumn p i ks =
-      let widths = columnWidths natural p i.w ks
-          bases = zipWith (\k, cw => vEdges k.margin + fromMaybe (snd (natural k.node cw))
-                                                                 (dimSize i.h k.kh)) ks widths
-          room = i.h `minus` (p.pGap * (length ks `minus` 1))
-          sizes = flex room (zip3 bases (map kgrow ks) (map kshrink ks))
-          ys = mainPositions p i.h sizes
-      in zipWith3 (\(k, cw), sz, py =>
-           let mh = sz `minus` vEdges k.margin
-               off = crossOffset p.pAlign (i.w `minus` (cw + hEdges k.margin))
-           in place k.node (MkRect (i.x + off + k.margin.left) (i.y + py + k.margin.top) cw mh))
-         (zip ks widths) sizes ys
+mutual
+  -- Where a box out of the flow goes in the content box `i` of its parent.
+  placeAbsolute : Rect -> Node msg -> Laid
+  placeAbsolute i (Focusable body _) = placeAbsolute i (body False)
+  placeAbsolute i node@(Box p _) =
+    let k = kidOf node
+        side = \a, b => fromMaybe 0 a + fromMaybe 0 b
+        freeW = i.w `minus` side p.pLeft p.pRight
+        freeH = i.h `minus` side p.pTop p.pBottom
+        stretchedW = isJust p.pLeft && isJust p.pRight
+        stretchedH = isJust p.pTop && isJust p.pBottom
+        w = k.clampW $ case dimSize i.w p.pWidth of
+              Just n => n
+              Nothing => if stretchedW then freeW else min freeW (fst (natural node freeW))
+        h = k.clampH $ case dimSize i.h p.pHeight of
+              Just n => n
+              Nothing => if stretchedH then freeH else min freeH (snd (natural node w))
+        x = case (p.pLeft, p.pRight) of
+              (Just l, _) => l
+              (Nothing, Just r) => i.w `minus` (w + r)
+              _ => 0
+        y = case (p.pTop, p.pBottom) of
+              (Just t, _) => t
+              (Nothing, Just b) => i.h `minus` (h + b)
+              _ => 0
+    in place node (MkRect (i.x + x) (i.y + y) w h)
+  placeAbsolute i node = place node i
+
+  ||| Place a node in the border box `r`.
+  export
+  place : Node msg -> Rect -> Laid
+  place (Text s wrap str) r = LText r s (wrapText wrap r.w str)
+  place (Focusable body _) r = place (body False) r
+  place (Box p kids) r =
+    let i = innerRect p r
+        ks = map kidOf (filter (not . isAbsolute) kids)
+        flowing = case p.pDirection of
+                    Row => placeRow p i ks
+                    Column => placeColumn p i ks
+    in LBox r p (flowing ++ map (placeAbsolute i) (filter isAbsolute kids))
+
+  placeRow : Props -> Rect -> List (Kid msg) -> List Laid
+  placeRow p i ks =
+    let lines = rowLines p i.w ks
+        heightOf = \ln => if p.pWrap
+                             then foldl max 0 (map (\(k, sz) =>
+                                    rowChildHeight natural k (sz `minus` hEdges k.margin) + vEdges k.margin) ln)
+                             else i.h
+        heights = map heightOf lines
+    in concat (zipWith3 (placeLine p i) lines heights (lineTops p.pGap 0 heights))
+
+  placeLine : Props -> Rect -> List (Kid msg, Nat) -> Nat -> Nat -> List Laid
+  placeLine p i ln lh y0 =
+    let sizes = map snd ln
+        xs = mainPositions p i.w sizes
+    in zipWith (\(k, sz), px =>
+         let mw = sz `minus` hEdges k.margin
+             mv = vEdges k.margin
+             ch = k.clampH $ case dimSize lh k.kh of
+                    Just n => n
+                    Nothing => case p.pAlign of
+                                 Stretch => lh `minus` mv
+                                 _ => snd (natural k.node mw)
+             off = crossOffset p.pAlign (lh `minus` (ch + mv))
+         in place k.node (MkRect (i.x + px + k.margin.left) (i.y + y0 + off + k.margin.top) mw ch))
+       ln xs
+
+  placeColumn : Props -> Rect -> List (Kid msg) -> List Laid
+  placeColumn p i ks =
+    let widths = columnWidths p i.w ks
+        bases = zipWith (\k, cw => vEdges k.margin
+                                     + k.clampH (fromMaybe (snd (natural k.node cw)) (dimSize i.h k.kh))) ks widths
+        room = i.h `minus` (p.pGap * (length ks `minus` 1))
+        sizes = flex room (zip3 bases (map kgrow ks) (map kshrink ks))
+        ys = mainPositions p i.h sizes
+    in zipWith3 (\(k, cw), sz, py =>
+         let mh = k.clampH (sz `minus` vEdges k.margin)
+             off = crossOffset p.pAlign (i.w `minus` (cw + hEdges k.margin))
+         in place k.node (MkRect (i.x + off + k.margin.left) (i.y + py + k.margin.top) cw mh))
+       (zip ks widths) sizes ys
 
 ||| Lay out a view in a screen of `w` x `h` cells.
 export

@@ -29,12 +29,26 @@ record AppModel where
   items : S.Model
   notes : A.Model
   tick : Nat
+  help : Bool
 
-data AppMsg = Edit T.Msg | Pick S.Msg | Note A.Msg | Add | Spin | Quit'
+data AppMsg = Edit T.Msg | Pick S.Msg | Note A.Msg | Add | Spin | Help | Quit'
+
+-- A dialog over the whole screen: a box out of the flow that covers its
+-- parent and centres its child.
+helpDialog : Node AppMsg
+helpDialog =
+  box [absolute, top 0, left 0, right 0, bottom 0, align Center, justify JCenter]
+    [ box [border DoubleLine, padding 1, style (bgColor (Indexed 0) plain)]
+        [ styled (withAttr Bold plain) "termui demo"
+        , text "Tab / click       move between the parts"
+        , text "Enter             add the item / a new line"
+        , text "wheel, arrows     scroll the list"
+        , text "F1                close this box"
+        ] ]
 
 appView : AppModel -> Node AppMsg
 appView m =
-  box [border Rounded, padding 1, gap 1]
+  box [border Rounded, padding 1, gap 1] (
     [ row [justify JBetween]
         [ styled (withAttr Bold plain) "termui demo"
         , spinner m.tick
@@ -45,8 +59,8 @@ appView m =
         , box [border Single] [A.area Note m.notes]
         ]
     , row [gap 1] [ progressBar 20 (length m.items.items * 10), text (show (length m.items.items) ++ " items") ]
-    , styled (withAttr Dim plain) "Tab or click: switch   Enter: add / new line   Esc: quit"
-    ]
+    , styled (withAttr Dim plain) "Tab or click: switch   Enter: add / new line   F1: help   Esc: quit"
+    ] ++ (if m.help then [helpDialog] else []))
 
 appUpdate : AppMsg -> AppModel -> (AppModel, Cmd AppMsg)
 appUpdate (Edit e) m = ({ input $= T.update e } m, NoCmd)
@@ -57,6 +71,7 @@ appUpdate Add m =
   if entered == "" then (m, NoCmd)
   else ({ input := T.empty 30, items $= S.setItems (m.items.items ++ [entered]) } m, NoCmd)
 appUpdate Spin m = ({ tick $= S } m, NoCmd)
+appUpdate Help m = ({ help $= not } m, NoCmd)
 appUpdate Quit' m = (m, Quit)
 
 appSubs : AppModel -> List (Sub AppMsg)
@@ -64,6 +79,7 @@ appSubs _ =
   [ Every "spin" 100 Spin
   , MouseFocus
   , OnInput (\i => case i of
+                     Press (KF 1) _ => Just Help
                      Press KEscape _ => Just Quit'
                      Press (KChar 'c') mods => if mods.ctrl then Just Quit' else Nothing
                      _ => Nothing)
@@ -71,7 +87,7 @@ appSubs _ =
 
 main : IO ()
 main = do
-  r <- runProgram (MkProgram (MkModel (T.empty 30) (S.fromList 5 []) (A.empty 36 5) 0, NoCmd) appUpdate appView appSubs)
+  r <- runProgram (MkProgram (MkModel (T.empty 30) (S.fromList 5 []) (A.empty 36 5) 0 False, NoCmd) appUpdate appView appSubs)
   case r of
     Left e => putStrLn ("termui demo needs a terminal: " ++ show e)
     Right m => putStrLn ("bye, " ++ show (length m.items.items) ++ " items")

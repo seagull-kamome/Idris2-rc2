@@ -92,11 +92,120 @@
 |e plea
 |se
 -- zero-size screen
+-- min width of a box
+|┌──────┐┌─┐
+|│a     ││b│
+|└──────┘└─┘
+-- max width of a growing box (the rest is not handed on)
+|+----++--------+
+||    ||        |
+|+----++--------+
+-- max width over a fixed width, min over a max
+|+---++--+
+||   ||  |
+|+---++--+
+-- min and max height of a column's children
+|┌──────────┐
+|│x         │
+|└──────────┘
+|┌──────────┐
+|└──────────┘
+|end
+|
+|
+-- a row that wraps
+|┌──┐ ┌──┐ ┌──┐
+|│ab│ │cd│ │ef│
+|└──┘ └──┘ └──┘
+|
+|┌──┐ ┌──┐
+|│gh│ │ij│
+|└──┘ └──┘
+|
+-- a wrapping row has the height of its lines
+|┌──┐┌──┐┌──┐
+|│ab││cd││ef│
+|└──┘└──┘└──┘
+|┌──┐
+|│gh│
+|└──┘
+|end
+|
+-- wrapping lines: gap, justify and align
+| ┌─┐ ┌──┐ ┌──┐
+| │a│ │bb│ │cc│
+| └─┘ └──┘ └──┘
+|
+|          ┌──┐
+|          │dd│
+|          └──┘
+|
+-- a child too wide for its line has a line of its own
+|ab
+|long
+|cd
+|
+-- absolute: top-left offsets over the flow
+|the flow goes on
+|unde┌───┐ box
+|    │pop│
+|    └───┘
+|
+|
+-- absolute: right and bottom
+|x
+|
+|      ┌───┐
+|      │end│
+|      └───┘
+-- absolute: all four sides stretch it
+|background
+|te╭────────╮
+|  │box     │
+|  │        │
+|  ╰────────╯
+|
+-- absolute: a covering box centres its child
+|behind
+|
+|   ┌──────┐
+|   │dialog│
+|   └──────┘
+|
+|
+-- absolute boxes do not take room
+|one
+|
+|two
+|
+|
+|away
+-- absolute: percent size, minimum
+|
+| ┌────────┐
+| │half    │
+| └────────┘
+|
+|
+-- a combining mark stays with its character
+|éab
+-- a mark after a wide character
+|あ́い
+-- a mark at the start is dropped
+|ab
+-- a mark that starts another text has nothing to join there and is dropped
+|ex
+-- zero-width joiner and variation selector are dropped
+|abc
+-- marks stack
+|á̂b
 -- diff: first frame
 <ESC>[0m<ESC>[2J<ESC>[1;1H<ESC>[0;31mhi<ESC>[2;1H<ESC>[0myo<ESC>[0m
 -- diff: unchanged
 []
 -- diff: one cell changed
 <ESC>[2;2H<ESC>[0mO<ESC>[0m
+-- diff: combining marks
+<ESC>[0m<ESC>[2J<ESC>[1;1H<ESC>[0méx<ESC>[0m
 -- diff: bg + attrs + rgb
 <ESC>[0m<ESC>[2J<ESC>[1;1H<ESC>[0;1;38;5;200;48;2;1;2;3mx<ESC>[0;1;48;2;1;2;3m <ESC>[0m
