@@ -13,6 +13,7 @@ import Data.IORef
 import Data.List
 import Data.Maybe
 import System.Posix.Errno
+import System.Posix.Signal
 import System.Posix.FileDesc
 import System.Posix.Termios
 import TermUI.Frame
@@ -37,6 +38,7 @@ data Cmd msg
   | Emit msg                     -- deliver a message at once
   | After Nat msg                -- deliver a message after some milliseconds
   | Perform (IO msg)             -- run an action now and deliver its result
+  | Suspend                      -- stop the program, as Ctrl-Z does in a shell
 
 ||| What a model listens to; `subs` is re-evaluated after every update.
 public export
@@ -45,7 +47,7 @@ data Sub msg
   | OnMouse (MouseEvent -> Maybe msg)  -- also turns mouse reporting on
   | MouseFocus                         -- clicks move the focus, the wheel goes to the node under the pointer; turns reporting on
   | OnResize (Nat -> Nat -> msg)
-  | Every Nat Nat msg                  -- a key naming the timer, the period in ms, the message
+  | Every String Nat msg               -- a key naming the timer, the period in ms, the message
   | OnTerminate msg                    -- SIGINT, SIGTERM or SIGHUP; without it they quit
 
 export covering
@@ -56,6 +58,7 @@ mapCmd _ Quit = Quit
 mapCmd f (Emit m) = Emit (f m)
 mapCmd f (After ms m) = After ms (f m)
 mapCmd f (Perform io) = Perform (map f io)
+mapCmd _ Suspend = Suspend
 
 export
 mapSub : (a -> b) -> Sub a -> Sub b
@@ -65,6 +68,14 @@ mapSub _ MouseFocus = MouseFocus
 mapSub f (OnResize g) = OnResize (\c, r => f (g c r))
 mapSub f (Every k ms m) = Every k ms (f m)
 mapSub f (OnTerminate m) = OnTerminate (f m)
+
+||| Put the timers of a component's subscriptions under a name of their own:
+||| two components may then use the same `Every` key. Apply it to the whole
+||| list the component returns, after `mapSub`.
+export
+scopeSub : (scope : String) -> Sub msg -> Sub msg
+scopeSub scope (Every k ms m) = Every (scope ++ "/" ++ k) ms m
+scopeSub _ s = s
 
 -------------------------------------------------------------------------------
 -- Program
@@ -117,6 +128,7 @@ record Env model msg where
   constructor MkEnv
   prog : Program model msg
   loop : Loop
+  term : Terminal
   output : FileDesc
   modelRef : IORef model
   focus : IORef Nat
@@ -126,21 +138,66 @@ record Env model msg where
   quit : IORef Bool
   oneShots : IORef (List (Nat, msg))
   nextShot : IORef Nat
-  everys : IORef (List (Nat, Nat))        -- (key, period) of the running timers
+  everys : IORef (List (String, Nat))     -- (key, period) of the running timers
+  keyIds : IORef (List (String, Nat))     -- the timer id of every key seen
+  queue : IORef (List msg)                -- messages waiting for `update`, first first
+  draining : IORef Bool
   mouseOn : IORef Bool
+  skipResume : IORef Bool                 -- the SIGCONT that ends our own Suspend was handled already
   rects : IORef (List (Nat, Rect))
   shownCursor : IORef (Maybe (Bool, Nat, Nat))
 
-everyId : Nat -> Nat
-everyId k = 2 * k
+-- The timer id of an `Every` key, the same for as long as the program runs;
+-- even, while the ids of `After` are odd.
+everyId : Env model msg -> String -> IO Nat
+everyId env key = do
+  ids <- readIORef env.keyIds
+  case lookup key ids of
+    Just i => pure i
+    Nothing => do
+      let i = 2 * length ids
+      writeIORef env.keyIds (ids ++ [(key, i)])
+      pure i
+
+-- After a stop the terminal is as the shell left it: raw mode, the alternate
+-- screen, the mouse and the whole picture are done again.
+resumeEnv : Env model msg -> IO ()
+resumeEnv env = do
+  resumeTerminal env.term
+  writeIORef env.mouseOn False
+  writeIORef env.prev Nothing
+  writeIORef env.shownCursor Nothing
 
 mutual
+  -- Messages are handled in the order they were sent, one `update` at a time:
+  -- what `Emit` and `Perform` produce while one is handled waits its turn.
   dispatch : Env model msg -> msg -> IO ()
   dispatch env m = do
-    model <- readIORef env.modelRef
-    let (model', cmd) = env.prog.update m model
-    writeIORef env.modelRef model'
-    runCmd env cmd
+    modifyIORef env.queue (++ [m])
+    busy <- readIORef env.draining
+    if busy
+       then pure ()
+       else do
+         writeIORef env.draining True
+         drain env
+         writeIORef env.draining False
+
+  drain : Env model msg -> IO ()
+  drain env = do
+    q <- readIORef env.queue
+    case q of
+      [] => pure ()
+      (m :: rest) => do
+        writeIORef env.queue rest
+        stopped <- readIORef env.quit
+        if stopped
+           then writeIORef env.queue []
+           else do
+             model <- readIORef env.modelRef
+             let (model', cmd) = env.prog.update m model
+             writeIORef env.modelRef model'
+             runCmd env cmd
+             drain env
 
   runCmd : Env model msg -> Cmd msg -> IO ()
   runCmd _ NoCmd = pure ()
@@ -159,6 +216,11 @@ mutual
     modifyIORef env.oneShots ((2 * n + 1, m) ::)
     ignore (addOneShot env.loop (2 * n + 1) ms)
   runCmd env (Perform io) = io >>= dispatch env
+  runCmd env Suspend = do
+    closeTerminal env.term
+    writeIORef env.skipResume True
+    _ <- raise SIGSTOP
+    resumeEnv env
 
 -- Start, stop and retime the timers the current subscriptions ask for.
 syncTimers : Env model msg -> IO ()
@@ -166,8 +228,9 @@ syncTimers env = do
   model <- readIORef env.modelRef
   let wanted = nub (mapMaybe period (env.prog.subs model))
   active <- readIORef env.everys
-  traverse_ (\(k, _) => cancelTimer env.loop (everyId k)) (filter (\a => not (elem a wanted)) active)
-  traverse_ (\(k, ms) => ignore (addTimer env.loop (everyId k) ms)) (filter (\w => not (elem w active)) wanted)
+  traverse_ (\(k, _) => everyId env k >>= cancelTimer env.loop) (filter (\a => not (elem a wanted)) active)
+  traverse_ (\(k, ms) => do i <- everyId env k
+                            ignore (addTimer env.loop i ms)) (filter (\w => not (elem w active)) wanted)
   writeIORef env.everys wanted
   let wantMouse = any isMouse (env.prog.subs model)
   was <- readIORef env.mouseOn
@@ -180,7 +243,7 @@ syncTimers env = do
     isMouse MouseFocus = True
     isMouse _ = False
 
-    period : Sub msg -> Maybe (Nat, Nat)
+    period : Sub msg -> Maybe (String, Nat)
     period (Every k ms _) = Just (k, ms)
     period _ = Nothing
 
@@ -336,8 +399,9 @@ onEvent env (ETimer ident) =
   if mod (cast {to = Integer} ident) 2 == 0
      then do
        model <- readIORef env.modelRef
+       ids <- readIORef env.keyIds
        traverse_ (\s => case s of
-                          Every k _ m => if everyId k == ident then dispatch env m else pure ()
+                          Every k _ m => if lookup k ids == Just ident then dispatch env m else pure ()
                           _ => pure ()) (env.prog.subs model)
      else do
        shots <- readIORef env.oneShots
@@ -347,6 +411,10 @@ onEvent env (ETimer ident) =
          Just m => do
            writeIORef env.oneShots (filter (\(i, _) => i /= ident) shots)
            dispatch env m
+onEvent env EResume = do
+  skip <- readIORef env.skipResume
+  writeIORef env.skipResume False
+  if skip then pure () else resumeEnv env
 onEvent env ETerminate = do
   model <- readIORef env.modelRef
   case mapMaybe terminating (env.prog.subs model) of
@@ -392,9 +460,10 @@ runProgramOn input output prog = do
     | Left e => closeLoop loop >> pure (Left e)
   let (model0, cmd0) = prog.init
   size <- terminalSize term
-  env <- MkEnv prog loop output <$> newIORef model0 <*> newIORef 0 <*> newIORef []
+  env <- MkEnv prog loop term output <$> newIORef model0 <*> newIORef 0 <*> newIORef []
            <*> newIORef Nothing <*> newIORef size <*> newIORef False
-           <*> newIORef [] <*> newIORef 0 <*> newIORef [] <*> newIORef False <*> newIORef [] <*> newIORef Nothing
+           <*> newIORef [] <*> newIORef 0 <*> newIORef [] <*> newIORef [] <*> newIORef [] <*> newIORef False
+           <*> newIORef False <*> newIORef False <*> newIORef [] <*> newIORef Nothing
   runCmd env cmd0
   -- the size is told to the program once at the start, as at every resize
   current <- readIORef env.modelRef

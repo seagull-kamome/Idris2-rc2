@@ -1,0 +1,6 @@
+child stopped by SIGSTOP: True
+output until the stop: <ESC>[?1049h<ESC>[?25l<ESC>[?2004h<ESC>[2J<ESC>[0m<ESC>[2J<ESC>[1;1H<ESC>[0mstart<ESC>[0m<ESC>[3;1H<ESC>[?25l<ESC>[0m<ESC>[?1002l<ESC>[?1006l<ESC>[?2004l<ESC>[?25h<ESC>[?1049l
+terminal while stopped: cooked
+output after the continue: <ESC>[?1049h<ESC>[?25l<ESC>[?2004h<ESC>[2J<ESC>[0m<ESC>[2J<ESC>[1;1H<ESC>[0mresumed<ESC>[0m<ESC>[3;1H<ESC>[?25l
+terminal after the continue: raw
+child exited with: Just 0

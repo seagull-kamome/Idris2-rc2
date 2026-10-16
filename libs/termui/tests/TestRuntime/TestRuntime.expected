@@ -27,6 +27,8 @@ Escape arrived
 -- timer
 [ETimer 7]
 []
+-- continue after a stop
+[EResume]
 -- terminate
 [ETerminate]
 -- a frame

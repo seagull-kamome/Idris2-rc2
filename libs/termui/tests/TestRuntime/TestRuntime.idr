@@ -152,6 +152,10 @@ main = do
   cancelTimer loop 7
   events loop 80
 
+  putStrLn "-- continue after a stop"
+  _ <- raise SIGCONT
+  events loop 1000
+
   putStrLn "-- terminate"
   _ <- raise SIGINT
   events loop 1000

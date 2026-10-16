@@ -31,8 +31,10 @@ record Model where
   ticks : Nat
   keys : List String
   mouse : List String
+  trace : List String
+  tocks : List String
 
-data Msg = Inc | Dec | Tick | Typed String | Bump Integer | SetCount Integer | Stop | Noop | Mouse' String
+data Msg = Inc | Dec | Tick | Typed String | Bump Integer | SetCount Integer | Stop | Noop | Mouse' String | Order String | Tock String
 
 visible : List Bits8 -> String
 visible bs = concatMap esc (decode bs)
@@ -96,7 +98,7 @@ script = "\r\t\r\rx\ESC[Z \t\t\r++\ESC[<0;5;3M\ESC[<0;5;3m\ESC[<65;1;1M"
 
 program : (master : FileDesc) -> Program Model Msg
 program master = MkProgram
-  (MkModel 0 0 [] [], Perform (ignore (writeString master script) >> pure Noop))
+  (MkModel 0 0 [] [] [] [], Perform (ignore (writeString master script) >> pure Noop))
   update
   view
   subs
@@ -109,14 +111,23 @@ program master = MkProgram
     update (Typed k) m = ({ keys $= (k ::) } m, NoCmd)
     update (Mouse' k) m = ({ mouse $= (k ::) } m, NoCmd)
     update Stop m = (m, Quit)
-    update Noop m = (m, if m.ticks == 0 then After 100 Tick else NoCmd)
+    update Noop m = (m, if m.ticks == 0 then Batch [After 300 Tick, Emit (Order "A")] else NoCmd)
+    update (Order o) m =
+      ({ trace $= (o ::) } m,
+       case o of
+         "A" => Batch [Emit (Order "B"), Emit (Order "C")]
+         "B" => Emit (Order "D")
+         _ => NoCmd)
+    update (Tock k) m = ({ tocks $= (k ::) } m, NoCmd)
     update Tick m =
       ({ ticks $= S } m,
        Batch [ Perform (pure (Bump 100))
              , Perform (ignore (writeString master "qy") >> pure Noop) ])
 
     subs : Model -> List (Sub Msg)
-    subs _ = [ OnMouse (\e => Just (Mouse' (show e)))
+    subs m = (if elem "a" m.tocks then [] else [scopeSub "a" (Every "t" 10 (Tock "a"))])
+             ++ (if elem "b" m.tocks then [] else [scopeSub "b" (Every "t" 60 (Tock "b"))])
+             ++ [ OnMouse (\e => Just (Mouse' (show e)))
              , OnInput (\i => case i of
                                  Press (KChar 'q') _ => Just Stop
                                  Press (KChar c) m => if m.ctrl then Nothing else Just (Typed (singleton c))
@@ -139,5 +150,6 @@ main = do
   putStrLn ("count=" ++ show model.count ++ " ticks=" ++ show model.ticks
             ++ " keys=" ++ show (reverse model.keys)
             ++ " mouse=" ++ show (reverse model.mouse))
+  putStrLn ("trace=" ++ show (reverse model.trace) ++ " tocks=" ++ show (reverse model.tocks))
   out <- readUntil master "\ESC[?1049l"
   putStrLn (visible out)

@@ -31,6 +31,7 @@ data Event
   | EResize Nat Nat          -- columns, rows
   | ETimer Nat               -- the id given to `addTimer`
   | ETerminate               -- SIGINT, SIGTERM or SIGHUP
+  | EResume                  -- SIGCONT: the program was stopped and continued
   | EEndOfInput              -- the terminal input was closed or failed
 
 export
@@ -39,6 +40,7 @@ Show Event where
   show (EResize c r) = "EResize " ++ show c ++ " " ++ show r
   show (ETimer n) = "ETimer " ++ show n
   show ETerminate = "ETerminate"
+  show EResume = "EResume"
   show EEndOfInput = "EEndOfInput"
 
 -------------------------------------------------------------------------------
@@ -72,7 +74,7 @@ sameSignal (MkSignal a) (MkSignal b) = a == b
 export
 newLoop : (input : FileDesc) -> (output : FileDesc) -> IO (Either Errno Loop)
 newLoop input output = do
-  Right set <- sigSetOf [SIGWINCH, SIGINT, SIGTERM, SIGHUP, SIGPIPE]
+  Right set <- sigSetOf [SIGWINCH, SIGINT, SIGTERM, SIGHUP, SIGPIPE, SIGCONT]
     | Left e => pure (Left e)
   Right old <- sigprocmask SIG_BLOCK set
     | Left e => pure (Left e)
@@ -154,21 +156,22 @@ closeLoop l = do
 -- Waiting
 
 drainSignals : Loop -> IO (List Event)
-drainSignals l = go False Nothing
+drainSignals l = go False Nothing False
   where
-    go : (term : Bool) -> (resize : Maybe ()) -> IO (List Event)
-    go term resize = do
+    go : (term : Bool) -> (resize : Maybe ()) -> (resume : Bool) -> IO (List Event)
+    go term resize resume = do
       r <- readSignal l.sigfd
       case r of
         Left _ => do
           size <- case resize of
                     Just () => (\(c, r') => [EResize c r']) <$> outputSize l.output
                     Nothing => pure []
-          pure (size ++ (if term then [ETerminate] else []))
+          pure ((if resume then [EResume] else []) ++ size ++ (if term then [ETerminate] else []))
         Right info =>
-          if sameSignal info.signo SIGWINCH then go term (Just ())
-          else if sameSignal info.signo SIGPIPE then go term resize
-          else go True resize
+          if sameSignal info.signo SIGWINCH then go term (Just ()) resume
+          else if sameSignal info.signo SIGPIPE then go term resize resume
+          else if sameSignal info.signo SIGCONT then go term resize True
+          else go True resize resume
 
 -- The closing sequence of a paste has come, or more of its body.
 feedPaste : Loop -> (List (List Bits8), List Bits8) -> List Bits8 -> IO (List Event)
