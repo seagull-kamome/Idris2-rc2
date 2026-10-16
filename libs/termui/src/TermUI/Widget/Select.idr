@@ -50,8 +50,9 @@ windowTop rows sel top =
   else if sel >= top + rows then (sel + 1) `minus` rows
   else top
 
+||| `ClickRow r`: the line `r` of the window was clicked.
 public export
-data Msg = Up | Down | PageUp | PageDown | First | Last
+data Msg = Up | Down | PageUp | PageDown | First | Last | ClickRow Nat
 
 ||| Move the selection; `rows` is the height of the window, which scrolls to
 ||| keep the selection in view.
@@ -68,6 +69,7 @@ update rows msg m =
                  PageDown => min lastIx (cur + rows)
                  First => 0
                  Last => lastIx
+                 ClickRow r => if windowTop rows cur m.top + r > lastIx then cur else windowTop rows cur m.top + r
   in if n == 0 then MkModel m.items 0 0
      else MkModel m.items target (windowTop rows target m.top)
 
@@ -84,9 +86,10 @@ keyMsg (Press key mods) =
          KEnd => Just Last
          _ => Nothing
 keyMsg (Mouse e) =
-  case e.button of
-    WheelUp => Just Up
-    WheelDown => Just Down
+  case (e.button, e.action) of
+    (WheelUp, _) => Just Up
+    (WheelDown, _) => Just Down
+    (LeftButton, ButtonDown) => Just (ClickRow e.row)
     _ => Nothing
 keyMsg _ = Nothing
 

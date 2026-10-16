@@ -17,7 +17,6 @@ ignored: [False, False, False, False, True, False, False]
 |helXlo
 |    ^
 |helXlo
-|
 |helXlo
 |^
 -- text input: scrolling (8 cells)
@@ -88,3 +87,150 @@ keys: [True, True, True, True, True, True, False, False, False, False, False]
 |
 |a
 |
+-- clicks
+he|llo
+hello|
+hello|
+あ|いう
+あ|いう
+Just "three"
+Just "one"
+Just "three" top=2
+[True, False, True]
+-- scroll view
+|line 1     █
+|line 2     │
+|line 3     │
+|line 4     │
+top=4
+|line 5     │
+|line 6     │
+|line 7     █
+|line 8     │
+top=6 6 0
+|line 7     │
+|line 8     │
+|line 9     │
+|line 10    █
+|a
+|b
+|
+|
+[True, True, True, False, False]
+-- text area: editing
+hello
+world
+!|
+hello
+w|orld
+!
+|hello
+world
+!
+hello
+world
+|
+hello
+world|
+hello|world
+!
+hello
+w|orld
+!
+hello
+worl|d
+!
+hello
+world
+!|
+|hello
+world
+!
+hello
+world
+!|
+hello
+w|
+!
+a
+b
+c d|
+aX
+Y|b
+"hello\nworld\n!" 3
+"one\ntwo\nthree"
+-- text area: columns are kept on vertical moves
+abcdef
+xy|
+123456
+abcdef|
+xy
+123456
+abcdef
+xy
+123456|
+abcdef
+|xy
+123456
+-- text area: scrolling and drawing
+top=3
+|l4         │
+|l5         │
+|l6         █
+|  ^
+|l4         │
+|l5         │
+|l6         █
+top=0
+|l1         █
+|l2         │
+|l3         │
+top=0 "l1\nl2\nl3|\nl4\nl5\nl6"
+left=14
+|efghij
+|      ^
+|
+left=0
+|0123456
+|
+-- text area: clicks
+he|llo
+world
+foo
+hello
+wor|ld
+foo
+hello
+world
+foo|
+hello
+world
+f|oo
+[False, True, False, False, False]
+-- review: document start, left, top, bar column, pages
+|hello
+abcdef
+|xy
+left=0 after moving to the short line left=0
+|aaaaaaaaaaa
+|abc
+|   ^
+|
+|
+top=1
+lines=5 top=0
+hello
+world
+foo|
+hello|
+world
+foo
+top=6
+top=3 "l1\nl2\nl3\nl4\nl5\nl6|\nl7\nl8\nl9"
+top=6 "l1\nl2\nl3\nl4\nl5\nl6\nl7\nl8\nl9|"
+top=3 "l1\nl2\nl3\n|l4\nl5\nl6\nl7\nl8\nl9"
+"a\n" ""
+[Just "a", Just "b", Just "a"]
+-- review: a very long line
+99922 0 99922
+99921

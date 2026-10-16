@@ -1127,6 +1127,15 @@ upstreamに取り込まれたら`idris2-src`を更新して自作idris2を作り
 - `Tm`に`tm_gmtoff`/`tm_zone`が無いので、`strftime`の`%Z`/`%z`はゾーンを出さない。
 - `dlsym`で得たアドレスの呼び出しは、`CExpr`で関数ポインタ型にキャストして書く(`System.Posix.Dl`の冒頭と
   `TestLinux`の例)。型付きの呼び出しヘルパを用意するかは別の判断。
+- `CExpr`の文式`({ ...; })`はGNU拡張で、`rc2base`の8ファイル13か所で使っている(`Termios`の`getWinSize`/`setWinSize`、
+  `Epoll`、`Select`の`FD_ZERO`/`FD_SET`、`Glob`の`globfree`、`Stdio`、`Syslog`、`Linux.Process`、`HTTP.Server`)。
+  gccは問題ない。clangも文式に対応しており、`TestPosixTermios`の生成Cをclang 21で`-Werror`つきでコンパイルできることは確認した
+  (rc2の既定の警告では出ない)。問題が残る場面:
+  - `-pedantic`では`-Wgnu-statement-expression`の警告が出る(生成Cに他の`-pedantic`の警告も多く、今は使っていない)。
+  - ファイルスコープの初期化子には書けない(`%inline`の`CExpr`をCAFの静的初期化子に展開するとCのエラーになる)。
+  - MSVCなど文式のない処理系では通らない(今のrc2はそもそもPOSIX前提)。
+  対策の案: 文式が必要な箇所は、`rc2base`の`support/c`に`static inline`の小さなヘルパ関数として置き、`CExpr`からは
+  その関数を呼ぶだけにする(文式を使わず、型も引数に出る)。ほかの処理系に対応する必要が出た時に着手する。
 
 ## AI Agent作成用のライブラリを整備
 
@@ -1134,12 +1143,14 @@ upstreamに取り込まれたら`idris2-src`を更新して自作idris2を作り
 
 実装済みの範囲と制限は`libs/termui/doc/design.md`。未着手:
 
-- ウィジェットのクリック対応(リストの行を選ぶ、入力欄のカーソルを置く。ノード内の相対位置が要る)。
 - 非同期の`Cmd`(ワーカースレッドが結果を投稿する)。今の`Perform`はループを止める。
 - `Emit`/`Batch`をキュー(FIFO)にする。今は深さ優先。
 - `Every`のキーの名前空間化(入れ子のコンポーネントで衝突する)。フォーカスをキー付きにする案も。
 - SIGCONT後の再描画、SIGTSTPの扱い。
-- 汎用のスクロールビュー、複数行エディタ、`TextInput`の全角幅対応。
+- `TextArea`の折り返し表示(今は横スクロール)、選択範囲、Undo、縦移動の列をセル幅で数えること(今は文字数)、
+  行数とカーソル行をモデルに持って1キーあたりのO(行数)をなくすこと。
+- ウィジェットの`rows`を`update`と`view`の両方に渡す設計の見直し(`TextArea`はモデルが持つ)。
+- `Select`へのスクロールバーの追加、表(`table`)のスクロール。
 - レイアウト: 子の折り返し(wrap)、絶対配置、min/max、書記素クラスタ(結合文字・絵文字のZWJ列)、
   自然サイズのキャッシュ。
 - `Style`の合成で子が親の属性を打ち消せない(tri-state化)。
