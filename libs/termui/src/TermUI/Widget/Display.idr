@@ -40,17 +40,21 @@ progressBar cells percent =
 -------------------------------------------------------------------------------
 -- Table
 
-||| A table: `columns` gives each header and width in cells, `rows` the
-||| cells of each row. Cells are cut at the width of their column; a row with
-||| fewer cells than there are columns gets empty ones, extra cells are
+||| One row of a table: the cells cut at the width of their column, a row with
+||| fewer cells than there are columns padded with empty ones, extra cells
 ||| dropped. Columns are separated by one space.
+export
+tableRow : Style -> (columns : List (String, Nat)) -> List String -> Node msg
+tableRow st columns cells =
+  row [gap 1] (zipWith cell columns (cells ++ replicate (length columns `minus` length cells) ""))
+  where
+    cell : (String, Nat) -> String -> Node msg
+    cell (_, w) str = box [width (Cells w), height (Cells 1)] [Text st Truncate str]
+
+||| A table: `columns` gives each header and width in cells, `rows` the
+||| cells of each row (see `tableRow`). For a table that scrolls see
+||| `TermUI.Widget.Table`.
 export
 table : (columns : List (String, Nat)) -> (rows : List (List String)) -> Node msg
 table columns rows =
-  column [] (line (withAttr Bold plain) (map fst columns) :: map (line plain) rows)
-  where
-    cell : Style -> (String, Nat) -> String -> Node msg
-    cell st (_, w) str = box [width (Cells w), height (Cells 1)] [Text st Truncate str]
-
-    line : Style -> List String -> Node msg
-    line st cells = row [gap 1] (zipWith (cell st) columns (cells ++ replicate (length columns `minus` length cells) ""))
+  column [] (tableRow (withAttr Bold plain) columns (map fst columns) :: map (tableRow plain columns) rows)

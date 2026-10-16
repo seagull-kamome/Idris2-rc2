@@ -15,6 +15,7 @@ import TermUI.Node
 import TermUI.Program
 import TermUI.Style
 import TermUI.Widget.Scroll as Sc
+import TermUI.Widget.Scrolling as Sc
 import TermUI.Widget.TextArea as A
 
 %default covering
@@ -42,14 +43,14 @@ helpLines =
 appView : AppModel -> Node AppMsg
 appView m =
   column []
-    [ box [grow 1] [ if m.showHelp then Sc.viewer 8 Scroll m.help else A.area Edit m.text ]
+    [ box [grow 1] [ if m.showHelp then Sc.viewer Scroll m.help else A.area Edit m.text ]
     , styled (withAttr Inverse plain)
         (" " ++ show (A.lineCount m.text) ++ " lines, " ++ show (strLength (A.value m.text)) ++ " characters  (F1: help)")
     ]
 
 appUpdate : AppMsg -> AppModel -> (AppModel, Cmd AppMsg)
 appUpdate (Edit e) m = ({ text $= A.update e } m, NoCmd)
-appUpdate (Scroll s) m = ({ help $= Sc.update 8 s } m, NoCmd)
+appUpdate (Scroll s) m = ({ help $= Sc.update s } m, NoCmd)
 appUpdate (Resized cols rows) m = ({ text $= A.resize cols (rows `minus` 1) } m, NoCmd)
 appUpdate ToggleHelp m = ({ showHelp $= not } m, NoCmd)
 appUpdate Pause m = (m, Suspend)
@@ -67,7 +68,7 @@ appSubs _ =
 
 main : IO ()
 main = do
-  r <- runProgram (MkProgram (MkModel (A.empty 78 20) (Sc.fromLines helpLines) False, NoCmd) appUpdate appView appSubs)
+  r <- runProgram (MkProgram (MkModel (A.empty 78 20) (Sc.fromLines 8 helpLines) False, NoCmd) appUpdate appView appSubs)
   case r of
     Left e => putStrLn ("termui editor needs a terminal: " ++ show e)
     Right m => putStrLn (A.value m.text)

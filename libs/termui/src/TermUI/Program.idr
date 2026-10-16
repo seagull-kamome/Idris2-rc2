@@ -13,6 +13,7 @@ import Data.IORef
 import Data.List
 import Data.Maybe
 import System.Posix.Errno
+import System.Posix.Process
 import System.Posix.Signal
 import System.Posix.FileDesc
 import System.Posix.Termios
@@ -217,7 +218,9 @@ mutual
   runCmd env (Perform io) = io >>= dispatch env
   runCmd env Suspend = do
     closeTerminal env.term
-    stopped <- raise SIGSTOP
+    -- the whole process group, as the terminal's Ctrl-Z would: a program started by
+    -- another one (`--exec`, a shell script) stops with it, and the shell sees the job stop
+    stopped <- kill (MkProcessID 0) SIGSTOP
     -- the SIGCONT that ended the stop is waiting in the signalfd
     writeIORef env.skipResume (either (const 0) (const 2) stopped)
     resumeEnv env
