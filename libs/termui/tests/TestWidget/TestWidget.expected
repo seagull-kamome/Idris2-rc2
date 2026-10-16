@@ -12,7 +12,7 @@ a bc|
 value=helXlo
 -- text input: edges
 |
-ignored: [False, False, False, False, True, False, False]
+ignored: [False, False, False, False, True, False, True]
 -- text input: drawing
 |helXlo
 |    ^
@@ -43,6 +43,40 @@ ignored: [False, False, False, False, True, False, False]
 |^
 |
 |^
+-- text input: selection
+|hello world
+|sss^
+|hello world
+|sss
+X|lo world
+|lo world
+he|llo world
+hello world| 
+|hello world
+|sssssssssss^
+clipboard=hello value=hello world
+hello worldhello|
+llo worldhe| clipboard=he
+ab|ello world
+XYZ|llo world
+-- text input: undo
+|
+|
+abc def|
+abc def|
+abc de|f
+ab|c def
+|
+-- text input: the mouse
+|hello world
+|  sssss^
+hello w|orld
+hello wor|ld
+-- text input: selection in a scrolled field
+|hello wo
+|ss^
+| world!
+|sssssss^
 -- select
 Just "one"
 Just "five" top=2

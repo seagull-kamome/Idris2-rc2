@@ -291,7 +291,11 @@ message if it has one; a field's Enter is therefore not seen by `OnInput`
 while the field has the focus.
 
 - `TextInput`: insert, Backspace, Delete, arrows, Home/End, Ctrl-A/E/B/F/K/U/D,
-  paste. Line breaks and tabs become spaces and other control characters are
+  paste. Shift with Left/Right/Home/End or a mouse drag selects (typing,
+  Backspace, Delete or a paste replace the selection); Alt-A selects all, Alt-W
+  copies, Ctrl-W cuts and Ctrl-Y pastes from a clipboard the model keeps, and
+  Ctrl-_ / Ctrl-^ undo and redo (a run of typing is one step), as in `TextArea`.
+  Line breaks and tabs become spaces and other control characters are
   dropped (also by `fromString`). The model knows the width of the field and
   how far it is scrolled, so the text scrolls only when the cursor would leave
   the field, and widths are counted in cells (a wide character takes two,
