@@ -5,6 +5,7 @@
 module TermUI.Widget.Display
 
 import Data.List
+import Data.Maybe
 import TermUI.Node
 import TermUI.Style
 
@@ -22,10 +23,6 @@ spinner : (tick : Nat) -> Node msg
 spinner tick =
   let i = cast {to = Nat} (mod (cast {to = Integer} tick) (cast (length spinnerFrames))) in
   text (fromMaybe " " (head' (drop i spinnerFrames)))
-  where
-    fromMaybe : String -> Maybe String -> String
-    fromMaybe d Nothing = d
-    fromMaybe _ (Just x) = x
 
 -------------------------------------------------------------------------------
 -- Progress bar
@@ -36,16 +33,17 @@ progressBar : (cells : Nat) -> (percent : Nat) -> Node msg
 progressBar cells percent =
   let filled = cast {to = Nat} (div (cast {to = Integer} cells * cast (min 100 percent)) 100) in
   row []
-    [ styled (fgColor green plain) (concat (replicate filled "█"))
-    , styled (fgColor (Indexed 8) plain) (concat (replicate (cells `minus` filled) "░"))
+    [ truncated (fgColor green plain) (concat (replicate filled "█"))
+    , truncated (fgColor (Indexed 8) plain) (concat (replicate (cells `minus` filled) "░"))
     ]
 
 -------------------------------------------------------------------------------
 -- Table
 
 ||| A table: `columns` gives each header and width in cells, `rows` the
-||| cells of each row. Cells are cut at the width of their column; columns
-||| are separated by one space.
+||| cells of each row. Cells are cut at the width of their column; a row with
+||| fewer cells than there are columns gets empty ones, extra cells are
+||| dropped. Columns are separated by one space.
 export
 table : (columns : List (String, Nat)) -> (rows : List (List String)) -> Node msg
 table columns rows =
@@ -55,4 +53,4 @@ table columns rows =
     cell st (_, w) str = box [width (Cells w), height (Cells 1)] [Text st Truncate str]
 
     line : Style -> List String -> Node msg
-    line st cells = row [gap 1] (zipWith (cell st) columns cells)
+    line st cells = row [gap 1] (zipWith (cell st) columns (cells ++ replicate (length columns `minus` length cells) ""))

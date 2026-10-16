@@ -1,1 +1,2 @@
-items=["ab", "cd", "x y z"] selected=Just "cd" field=""
+not a terminal: Errno:25
+items=["ab", "cd", "x y z", "e1", "e2"] selected=Just "e1" top=2 field="zz!"

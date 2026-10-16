@@ -8,34 +8,83 @@ hel|lo
 |
 |Xlo
 a b c|
+a bc|
 value=helXlo
-Enter/Tab/Alt+x ignored: [False, False, False]
+-- text input: edges
+|
+ignored: [False, False, False, False, True, False, False]
 -- text input: drawing
 |helXlo
+|    ^
 |helXlo
-|ello
-|hello
+|
+|helXlo
+|^
+-- text input: scrolling (8 cells)
+| world!
+|       ^
+| world!
+|    ^
+| world!
+| ^
+|hello wo
+|^
+-- text input: wide and zero-width characters
+|かきく
+|      ^
+|かきく
+|^^
+|あいうえ
+|^^
+1 before, cursor on U+[769]
+|e x
+| ^
+-- text input: very narrow
+|
+|^
+|
+|^
 -- select
 Just "one"
 Just "five" top=2
 Just "five" top=2
-Just "five"
 Just "four" top=2
 Just "one" top=0
 Just "four"
+Just "one"
 Nothing
+-- select: items replaced
+Just "b" top=1
+Just "a" top=0
+Just "five"
+-- select: window
+Just "two" top=0
 |  three
 |  four
-| five
+|  five
+|  three
+|  four
+|  five
 |  three
 |  four
 |> five
+|
+keys: [True, True, True, True, True, True, False, False, False, False, False]
 -- display
 |⠋
 |⠸
 |░░░░░░░░░░
 |████░░░░░░
 |██████████
+|██████░░░░░░
+|
+|
 |name   size
 |alpha  12
 |bravo- 7
+|a   b
+|1   2
+|4
+|
+|a
+|

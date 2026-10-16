@@ -10,7 +10,6 @@
 module Main
 
 import Data.List
-import Data.String
 import System.Posix.Errno
 import TermUI.Input
 import TermUI.Node
@@ -37,7 +36,7 @@ appView m =
         [ styled (withAttr Bold plain) "termui demo"
         , spinner m.tick
         ]
-    , row [gap 1] [ text "add:", box [border Single] [T.field 30 Edit m.input] ]
+    , row [gap 1] [ text "add:", box [border Single] [T.field Edit (Just Add) m.input] ]
     , box [border Single, height (Cells 7)] [S.list 5 Pick m.items]
     , row [gap 1] [ progressBar 20 (length m.items.items * 10), text (show (length m.items.items) ++ " items") ]
     , styled (withAttr Dim plain) "Tab: switch   Enter: add   Esc: quit"
@@ -47,9 +46,9 @@ appUpdate : AppMsg -> AppModel -> (AppModel, Cmd AppMsg)
 appUpdate (Edit e) m = ({ input $= T.update e } m, NoCmd)
 appUpdate (Pick p) m = ({ items $= S.update 5 p } m, NoCmd)
 appUpdate Add m =
-  let text = T.value m.input in
-  if text == "" then (m, NoCmd)
-  else ({ input := T.empty, items := S.fromList (m.items.items ++ [text]) } m, NoCmd)
+  let entered = T.value m.input in
+  if entered == "" then (m, NoCmd)
+  else ({ input := T.empty 30, items $= S.setItems (m.items.items ++ [entered]) } m, NoCmd)
 appUpdate Spin m = ({ tick $= S } m, NoCmd)
 appUpdate Quit' m = (m, Quit)
 
@@ -57,7 +56,6 @@ appSubs : AppModel -> List (Sub AppMsg)
 appSubs _ =
   [ Every 1 100 Spin
   , OnInput (\i => case i of
-                     Press KEnter _ => Just Add
                      Press KEscape _ => Just Quit'
                      Press (KChar 'c') mods => if mods.ctrl then Just Quit' else Nothing
                      _ => Nothing)
@@ -65,7 +63,7 @@ appSubs _ =
 
 main : IO ()
 main = do
-  r <- runProgram (MkProgram (MkModel T.empty (S.fromList []) 0, NoCmd) appUpdate appView appSubs)
+  r <- runProgram (MkProgram (MkModel (T.empty 30) (S.fromList []) 0, NoCmd) appUpdate appView appSubs)
   case r of
     Left e => putStrLn ("termui demo needs a terminal: " ++ show e)
     Right m => putStrLn ("bye, " ++ show (length m.items.items) ++ " items")

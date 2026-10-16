@@ -191,23 +191,33 @@ views. The stateful ones (`TextInput`, `Select`) also have `keyMsg : Input ->
 Maybe Msg` and a view that wraps itself in `focusable`, so a parent writes
 
 ```idris
-T.field 30 Edit model.input        -- Edit : T.Msg -> AppMsg
+T.field Edit (Just Add) model.input   -- Edit : T.Msg -> AppMsg, Add on Enter
 ```
 
 and gets the focus handling, the key handling and the cursor drawing. Keys the
-widget has no meaning for (Enter, Tab, Alt-keys) are left to the focus ring and
-to the `OnInput` subscriptions, so an application decides what Enter does.
+widget has no meaning for (Tab, Alt-keys, Ctrl-C, Esc) are left to the focus
+ring and to the `OnInput` subscriptions. Enter goes to the widget's `submit`
+message if it has one; a field's Enter is therefore not seen by `OnInput`
+while the field has the focus.
 
-- `TextInput`: insert, Backspace, Delete, arrows, Home/End, Ctrl-A/E/B/F/K/U/D/H,
-  paste (line breaks and tabs become spaces). The cursor is an inverse cell and
-  the text scrolls to keep it visible. Characters count as one cell each, so
-  wide characters are clipped at the edge of the field.
+- `TextInput`: insert, Backspace, Delete, arrows, Home/End, Ctrl-A/E/B/F/K/U/D,
+  paste. Line breaks and tabs become spaces and other control characters are
+  dropped (also by `fromString`). The model knows the width of the field and
+  how far it is scrolled, so the text scrolls only when the cursor would leave
+  the field, and widths are counted in cells (a wide character takes two,
+  a combining one none). The cursor is an inverse cell; over a character with no
+  width it is a blank inverse cell. Grapheme clusters are not composed, so
+  the cursor moves over each combining mark separately.
 - `Select`: Up/Down, PageUp/PageDown, Home/End on a window of `rows` lines that
   follows the selection; the selected line is inverse when focused, marked with
-  `>` otherwise.
+  `>` otherwise. Pass the same `rows` to `update` and `view`; `view` also
+  repairs a `top` that no longer shows the selection, and `update` clamps a
+  selection left out of range by changing the items directly (`setItems` keeps
+  the selection where it still makes sense). Keys with Ctrl, Alt or Shift are
+  not taken.
 - `Display`: `spinner tick` (advance `tick` from an `Every` subscription),
-  `progressBar cells percent`, and `table columns rows` (cells cut at the
-  column width).
+  `progressBar cells percent` (never wraps), and `table columns rows` (cells cut
+  at the column width, missing cells empty, extra cells dropped).
 
 `examples/Demo.idr` puts them together.
 
