@@ -488,6 +488,20 @@ main = do
   putStrLn "-- wrapped: a full row followed by one space keeps the cursor visible"
   let fullSp = A.setWrap True (typedArea "aaaaaaaaaa " (A.empty 12 3))
   drawMarked (A.view True fullSp) 12 3
+  putStrLn "-- wrapped: erasing at the end pulls the viewport back"
+  let tall = A.setWrap True (typedArea "a\nb\nc\nd\ne\nf" (A.empty 12 4))
+  putStrLn ("top=" ++ show tall.top)
+  let shrunk = areaKeys (replicate 5 (key KBackspace)) tall
+  putStrLn ("top=" ++ show shrunk.top ++ "/" ++ show shrunk.topRow)
+  drawMarked (A.view True shrunk) 12 4
+  let longEnd = A.setWrap True (typedArea "one two three four five six seven eight nine ten" (A.empty 12 3))
+  putStrLn ("top=" ++ show longEnd.top ++ "/" ++ show longEnd.topRow)
+  let shortEnd = areaKeys (replicate 30 (key KBackspace)) longEnd
+  putStrLn ("top=" ++ show shortEnd.top ++ "/" ++ show shortEnd.topRow)
+  drawMarked (A.view True shortEnd) 12 3
+  putStrLn "-- a wide character in an editor too narrow for it"
+  drawMarked (A.view True (A.setWrap True (typedArea "あい" (A.empty 2 3)))) 2 3
+  drawMarked (A.view True (typedArea "あい" (A.empty 2 3))) 2 3
   putStrLn "-- wrapped: a large text"
   let bigWrapped = A.setWrap True (A.fromString 40 10 (fastConcat (intersperse "\n" (map (\i => "line number " ++ show i ++ " with some more words to wrap around") (the (List Nat) [1 .. 50000])))))
   putStrLn (show bigWrapped.top ++ "/" ++ show bigWrapped.topRow ++ " line " ++ show bigWrapped.line)
