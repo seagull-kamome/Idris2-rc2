@@ -98,14 +98,6 @@ hasBorder : Border -> Bool
 hasBorder NoBorder = False
 hasBorder _ = True
 
--- (top-left, top-right, bottom-left, bottom-right, horizontal, vertical)
-borderChars : Border -> (Char, Char, Char, Char, Char, Char)
-borderChars Rounded = ('╭', '╮', '╰', '╯', '─', '│')
-borderChars DoubleLine = ('╔', '╗', '╚', '╝', '═', '║')
-borderChars Heavy = ('┏', '┓', '┗', '┛', '━', '┃')
-borderChars Ascii = ('+', '+', '+', '+', '-', '|')
-borderChars _ = ('┌', '┐', '└', '┘', '─', '│')
-
 -- Only the part of `r` inside the clip is visited.
 fillRect : Frame -> Clip -> Rect -> Style -> IO ()
 fillRect f c r s =
@@ -128,17 +120,15 @@ paintBorder f c r b s =
     put f c right r.y tr s
     put f c r.x bottom bl s
     put f c right bottom br s
+  where
+    -- (top-left, top-right, bottom-left, bottom-right, horizontal, vertical)
+    borderChars : Border -> (Char, Char, Char, Char, Char, Char)
+    borderChars Rounded = ('╭', '╮', '╰', '╯', '─', '│')
+    borderChars DoubleLine = ('╔', '╗', '╚', '╝', '═', '║')
+    borderChars Heavy = ('┏', '┓', '┗', '┛', '━', '┃')
+    borderChars Ascii = ('+', '+', '+', '+', '-', '|')
+    borderChars _ = ('┌', '┐', '└', '┘', '─', '│')
 
--- A combining mark goes with the cell before `x` (the first one of a wide
--- character), if that is in the window.
-attach : Frame -> Clip -> Nat -> Nat -> Char -> IO ()
-attach f c x y mark =
-  when (x > 0) $ do
-    prev <- getCell f (x `minus` 1) y
-    let at = if prev.glyph == continuation && x > 1 then x `minus` 2 else x `minus` 1
-    cell <- getCell f at y
-    when (inside c at y && length cell.combining < 8) $
-      ignore (writeArray f.cells (cast (y * f.frameWidth + at)) ({ combining $= (++ [mark]) } cell))
 
 paintLine : Frame -> Clip -> Nat -> Nat -> Style -> List Char -> IO ()
 paintLine _ _ _ _ _ [] = pure ()
@@ -151,6 +141,18 @@ paintLine f c x y s (ch :: rest) =
          else put f c x y ' ' s
       paintLine f c (x + 2) y s rest
     _ => put f c x y ch s >> paintLine f c (x + 1) y s rest
+  where
+    -- A combining mark goes with the cell before `x` (the first one of a wide
+    -- character), if that is in the window.
+    attach : Frame -> Clip -> Nat -> Nat -> Char -> IO ()
+    attach f c x y mark =
+      when (x > 0) $ do
+        prev <- getCell f (x `minus` 1) y
+        let at = if prev.glyph == continuation && x > 1 then x `minus` 2 else x `minus` 1
+        cell <- getCell f at y
+        when (inside c at y && length cell.combining < 8) $
+          ignore (writeArray f.cells (cast (y * f.frameWidth + at)) ({ combining $= (++ [mark]) } cell))
+
 
 -- Children are clipped to the content box of their parent.
 paintLaid : Frame -> Clip -> Style -> Laid -> IO ()
