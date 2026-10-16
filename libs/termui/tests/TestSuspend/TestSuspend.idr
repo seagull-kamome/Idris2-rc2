@@ -104,6 +104,8 @@ main = do
   pid <- fork
   case pid of
     MkProcessID 0 => do
+      -- a group of its own, as a job has: Suspend stops the group
+      _ <- setsid
       r <- runProgramOn slave slave (program master)
       exitNow (either (const 1) (const 0) r)
     _ => do
