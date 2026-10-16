@@ -84,6 +84,7 @@ data Msg
   | MoveEnd
   | KillToEnd
   | KillToStart
+  | ClickAt Nat      -- the cell of the field that was clicked
 
 step : Msg -> Model -> Model
 step (Insert c) m = { before := reverse (clean c) ++ m.before } m
@@ -98,6 +99,15 @@ step MoveHome m = { before := [], after := reverse m.before ++ m.after } m
 step MoveEnd m = { before := reverse m.after ++ m.before, after := [] } m
 step KillToEnd m = { after := [] } m
 step KillToStart m = { before := [] } m
+step (ClickAt col) m =
+  let text = reverse m.before ++ m.after
+      idx = reach col (drop m.offset text) m.offset
+  in { before := reverse (take idx text), after := drop idx text } m
+  where
+    -- the index of the character under cell `col`, counting from `from`
+    reach : Nat -> List Char -> Nat -> Nat
+    reach _ [] i = i
+    reach c (x :: xs) i = if charWidth x > c then i else reach (c `minus` charWidth x) xs (S i)
 
 export
 update : Msg -> Model -> Model
@@ -129,6 +139,10 @@ keyMsg (Press key mods) =
             KHome => Just MoveHome
             KEnd => Just MoveEnd
             _ => Nothing
+keyMsg (Mouse e) =
+  case (e.button, e.action) of
+    (LeftButton, ButtonDown) => Just (ClickAt e.column)
+    _ => Nothing
 keyMsg _ = Nothing
 
 -------------------------------------------------------------------------------

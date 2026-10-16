@@ -66,6 +66,11 @@ rm -f "$PKG_DIR/examples/build/exec/demo"
 ( cd "$PKG_DIR/examples" && ulimit -v 12000000 && timeout 600 \
     "$IDRIS2RC2" --cg rc2 -p termui -p rc2base -p contrib -o demo Demo.idr )
 [[ -x "$PKG_DIR/examples/build/exec/demo" ]] || fail "examples/Demo.idr did not build"
+echo "=== rc2 backend: build examples/Editor.idr (build only) ==="
+rm -f "$PKG_DIR/examples/build/exec/editor"
+( cd "$PKG_DIR/examples" && ulimit -v 12000000 && timeout 600 \
+    "$IDRIS2RC2" --cg rc2 -p termui -p rc2base -p contrib -o editor Editor.idr )
+[[ -x "$PKG_DIR/examples/build/exec/editor" ]] || fail "examples/Editor.idr did not build"
 
 for entry in "${TESTS[@]}"; do
     IFS='|' read -r t extra desc <<< "$entry"

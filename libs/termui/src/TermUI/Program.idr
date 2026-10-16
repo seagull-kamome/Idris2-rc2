@@ -261,10 +261,12 @@ onInput env (Mouse e) = do
     rects <- readIORef env.rects
     case lastMatch (\(_, r) => inside r e.column e.row) rects of
       Nothing => pure ()
-      Just (i, _) => do
+      Just (i, r) => do
         when (isLeftDown e) $ writeIORef env.focus i
         hs <- readIORef env.handlers
-        traverse_ (dispatch env) (getAt i hs >>= \h => h (Mouse e))
+        -- the handler sees the position relative to the top left of its node
+        let rel = { column := e.column `minus` r.x, row := e.row `minus` r.y } e
+        traverse_ (dispatch env) (getAt i hs >>= \h => h (Mouse rel))
   traverse_ (dispatch env) (mapMaybe fromSub subs)
   where
     fromSub : Sub msg -> Maybe msg

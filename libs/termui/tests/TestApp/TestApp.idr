@@ -70,9 +70,9 @@ appSubs _ =
 -- typed again. "zz" stays in the field: the Enter that follows Tab goes to the
 -- list, which ignores it. Down four times and Up once scroll the window
 -- (3 lines) over the 5 items; Shift+Tab returns to the field, where "!" is
--- appended. Then the mouse: a click in the list focuses it, the wheel moves
--- the selection (down once, up twice), a click in the field focuses it and "!"
--- is appended again; Ctrl-C quits.
+-- appended. Then the mouse: a click in the list focuses it and selects the first
+-- visible line, the wheel moves the selection (down once, up twice), a click in
+-- the field puts the cursor between the two z, where "!" is inserted; Ctrl-C quits.
 
 
 -- The tty layer hands output written to the slave to the master

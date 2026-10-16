@@ -40,6 +40,9 @@ dumped as text (`frameLines`), which is how the tests look at results.
 | `TermUI.Loop` | epoll loop over input, signals and timers, producing `Event`s |
 | `TermUI.Program` | Elm-style `Program`, `Cmd`, `Sub`, focus, `runProgram` |
 | `TermUI.Widget.TextInput` | single-line text field |
+| `TermUI.Widget.TextArea` | multi-line text editor |
+| `TermUI.Widget.Scroll` | read-only scrolling view of lines, with a scroll bar |
+| `TermUI.Widget.ScrollBar` | the scroll bar |
 | `TermUI.Widget.Select` | scrolling list with a selection |
 | `TermUI.Widget.Display` | spinner, progress bar, table |
 
@@ -184,8 +187,10 @@ use the mouse for the focus. The layout is kept after every draw, and the box
 of every focusable is marked, so the runtime knows where each one is. A left
 click moves the focus to the focusable under the pointer (the innermost, or the
 later one where they overlap), and every mouse event over a focusable is also
-offered to its handler: `Select` takes the wheel as Up and Down. Clicking inside
-a list does not select the row yet.
+offered to its handler, with the position made relative to the top left of
+that node, so a widget can tell what was clicked: `Select` selects the clicked
+line and takes the wheel as Up and Down, `TextInput` and `TextArea` put the cursor
+under the pointer.
 
 ### The terminal cursor
 
@@ -238,6 +243,15 @@ while the field has the focus.
   a combining one none). The cursor is an inverse cell; over a character with no
   width it is a blank inverse cell. Grapheme clusters are not composed, so
   the cursor moves over each combining mark separately.
+- `TextArea`: the keys of `TextInput` for the current line (Ctrl-A/E/K/U move to
+  or delete up to the ends of the line), Enter for a line break, Up/Down with the
+  column kept across short lines, PageUp/PageDown, Ctrl-Home/Ctrl-End, Backspace and
+  Delete that join lines, paste with line breaks (CR LF and a lone CR count as one),
+  the mouse. Lines are not wrapped; the view scrolls horizontally and vertically
+  as little as needed and has a scroll bar. Columns are counted in characters.
+- `Scroll`: a read-only list of lines in a window, scrolled by the arrows,
+  PageUp/PageDown, Home/End and the wheel (three lines a notch); the bar on its
+  right shows the position. `ScrollBar.scrollBar` is the bar alone.
 - `Select`: Up/Down, PageUp/PageDown, Home/End on a window of `rows` lines that
   follows the selection; the selected line is inverse when focused, marked with
   `>` otherwise. Pass the same `rows` to `update` and `view`; `view` also
@@ -249,7 +263,8 @@ while the field has the focus.
   `progressBar cells percent` (never wraps), and `table columns rows` (cells cut
   at the column width, missing cells empty, extra cells dropped).
 
-`examples/Demo.idr` puts them together.
+`examples/Demo.idr` puts the field, list and display widgets together;
+`examples/Editor.idr` is a small editor with a help viewer.
 
 ## Roadmap
 
@@ -258,6 +273,6 @@ while the field has the focus.
    timers), alternate screen, restore on exit. Done except for the mouse.
 3. Elm-style programs: `Program`, `Cmd`, `Sub`, composition by mapping
    messages, focus managed by the runtime. Done.
-4. Widgets: input field, list, table, spinner, progress bar. Done; a general
-   scroll view, a multi-line editor, mouse support and an asynchronous `Cmd`
-   (a worker thread posting its result) are not.
+4. Widgets: input field, multi-line editor, list, scroll view, table, spinner,
+   progress bar. Done; an asynchronous `Cmd` (a worker thread posting its
+   result) is not.

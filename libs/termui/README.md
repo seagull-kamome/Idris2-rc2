@@ -20,9 +20,10 @@ main = do
 
 Status: the pure part (style, width, layout, painting, frame diff), the
 terminal runtime (raw mode, key and mouse input, resize, timers, signals) and the
-Elm-style program model with runtime-managed focus are implemented, with a
-few widgets (text field, list, spinner, progress bar, table). A demo is in
-[`examples/Demo.idr`](examples/Demo.idr).
+Elm-style program model with runtime-managed focus are implemented, with
+widgets (text field, multi-line editor, list, scroll view, spinner, progress bar,
+table). Demos: [`examples/Demo.idr`](examples/Demo.idr),
+[`examples/Editor.idr`](examples/Editor.idr).
 See [`doc/design.md`](doc/design.md).
 
 ## Build & test
