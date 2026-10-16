@@ -1149,8 +1149,8 @@ upstreamに取り込まれたら`idris2-src`を更新して自作idris2を作り
 - `TextArea`の折り返し表示(今は横スクロール)。選択範囲をOSのクリップボードへ渡すこと(OSC 52)。
 - レイアウト: 列の折り返し、マージンの割合、絶対配置のマージン、min/maxで空いた幅を他の子に配り直すこと、
   絵文字のZWJ列と異体字セレクタ(端末が幅を変えるので合成できない)。
-- `Style`の合成で子が親の属性を打ち消せない(tri-state化)。
-- コード規約: 1か所でしか使わないトップレベル関数を`where`へ(Input/Loop/Program/Layout/Frame)。
+- コード規約: Loop(`consume`/`feedPaste`/`readInput`など)、Program(`onInput`の`moveFocus`、`syncTimers`など)、
+  Frame(`fillRect`/`paintBorder`/`paintLine`)に、1か所でしか使わないがまとまった大きさのトップレベル関数が残っている。
 
 
 

@@ -20,6 +20,7 @@ import TermUI.Width
 -- SGR
 
 colorCode : (base : Nat) -> (bright : Nat) -> (ext : Nat) -> Color -> String
+colorCode _ _ _ Inherit = ""
 colorCode _ _ _ Default = ""
 colorCode base br ext (Indexed n) =
   let i = cast {to = Nat} n in

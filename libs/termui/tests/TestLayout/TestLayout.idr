@@ -131,6 +131,17 @@ main = do
   fm <- draw (text "e\x301x") 3 1
   dm <- diffFrames Nothing fm
   putStrLn (show' dm)
+  putStrLn "-- style: a child switches off what its parent has on, and returns to the terminal's colour"
+  fs <- draw (box [style (fgColor red (withAttr Bold plain))]
+                [ text "a", styled (withoutAttr Bold plain) "b", styled (fgColor Default plain) "c"
+                , styled (fgColor green plain) "d", styled (withAttr Italic plain) "e" ]) 2 5
+  ds <- diffFrames Nothing fs
+  putStrLn (show' ds)
+  putStrLn "-- style: switched off in the middle of a chain, then on again below"
+  fo <- draw (box [style (withAttr Underline plain)]
+                [ box [style (withoutAttr Underline plain)] [ text "x", box [style (withAttr Underline plain)] [text "y"] ] ]) 2 2
+  dof <- diffFrames Nothing fo
+  putStrLn (show' dof)
   putStrLn "-- diff: bg + attrs + rgb"
   f3 <- draw (box [style (bgColor (RGB 1 2 3) (withAttr Bold plain))] [styled (fgColor (Indexed 200) plain) "x"]) 2 1
   d4 <- diffFrames Nothing f3

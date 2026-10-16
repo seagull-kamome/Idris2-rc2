@@ -59,42 +59,6 @@ innerRect p r =
 -------------------------------------------------------------------------------
 -- Text
 
-takeCells : Nat -> List Char -> (List Char, List Char)
-takeCells _ [] = ([], [])
-takeCells w (c :: cs) =
-  let cw = charWidth c in
-  if cw <= w
-     then let (a, b) = takeCells (w `minus` cw) cs in (c :: a, b)
-     else ([], c :: cs)
-
-charChunks : Nat -> Nat -> List Char -> List (List Char)
-charChunks _ Z cs = [cs]
-charChunks w (S fuel) cs =
-  case takeCells w cs of
-    (a, []) => [a]
-    ([], c :: rest) => [c] :: charChunks w fuel rest
-    (a, b) => a :: charChunks w fuel b
-
-wordChunks : Nat -> Nat -> List Char -> List (List Char)
-wordChunks _ Z cs = [cs]
-wordChunks w (S fuel) cs =
-  case takeCells w cs of
-    (a, []) => [a]
-    (a, b@(n :: _)) =>
-      if n == ' '
-         then a :: wordChunks w fuel (dropWhile (== ' ') b)
-         else case break (== ' ') (reverse a) of
-                (after, _ :: before) =>
-                  if all (== ' ') before
-                     then hard a b
-                     else reverse (dropWhile (== ' ') before)
-                            :: wordChunks w fuel (reverse after ++ b)
-                _ => hard a b
-  where
-    hard : List Char -> List Char -> List (List Char)
-    hard [] (c :: rest) = [c] :: wordChunks w fuel rest
-    hard a b = a :: wordChunks w fuel b
-
 -- The lines of a text; a trailing newline does not start a further line.
 textLines : String -> List String
 textLines s =
@@ -107,6 +71,42 @@ wrapText : Wrap -> Nat -> String -> List String
 wrapText wrap maxW s =
   if maxW == 0 then [] else concat (map fit (textLines s))
   where
+    takeCells : Nat -> List Char -> (List Char, List Char)
+    takeCells _ [] = ([], [])
+    takeCells w (c :: cs) =
+      let cw = charWidth c in
+      if cw <= w
+         then let (a, b) = takeCells (w `minus` cw) cs in (c :: a, b)
+         else ([], c :: cs)
+
+    charChunks : Nat -> Nat -> List Char -> List (List Char)
+    charChunks _ Z cs = [cs]
+    charChunks w (S fuel) cs =
+      case takeCells w cs of
+        (a, []) => [a]
+        ([], c :: rest) => [c] :: charChunks w fuel rest
+        (a, b) => a :: charChunks w fuel b
+
+    wordChunks : Nat -> Nat -> List Char -> List (List Char)
+    wordChunks _ Z cs = [cs]
+    wordChunks w (S fuel) cs =
+      case takeCells w cs of
+        (a, []) => [a]
+        (a, b@(n :: _)) =>
+          if n == ' '
+             then a :: wordChunks w fuel (dropWhile (== ' ') b)
+             else case break (== ' ') (reverse a) of
+                    (after, _ :: before) =>
+                      if all (== ' ') before
+                         then hard a b
+                         else reverse (dropWhile (== ' ') before)
+                                :: wordChunks w fuel (reverse after ++ b)
+                    _ => hard a b
+      where
+        hard : List Char -> List Char -> List (List Char)
+        hard [] (c :: rest) = [c] :: wordChunks w fuel rest
+        hard a b = a :: wordChunks w fuel b
+
     fit : String -> List String
     fit line =
       let cs = unpack line in
@@ -134,19 +134,6 @@ distribute amt ws =
     spread (S r) ((w, b) :: xs) =
       if w > 0 then (b + 1) :: spread r xs else b :: spread (S r) xs
 
--- Items that would shrink below zero are fixed at zero and their share of
--- the deficit is redistributed among the others.
-shrinkAll : Nat -> Nat -> List (Nat, Nat) -> List Nat
-shrinkAll Z _ ks = map fst ks
-shrinkAll (S fuel) deficit ks =
-  let cuts = distribute deficit (map (\(b, s) => b * s) ks)
-      sat = zipWith (\(b, _), c => c > b) ks cuts
-  in if not (any id sat)
-        then zipWith (\(b, _), c => b `minus` c) ks cuts
-        else shrinkAll fuel
-               (deficit `minus` sum (map (\((b, _), _) => b) (filter snd (zip ks sat))))
-               (zipWith (\k, s => if s then (0, 0) else k) ks sat)
-
 ||| Main-axis sizes of the items given `(base, grow, shrink)` and the room.
 flex : Nat -> List (Nat, Nat, Nat) -> List Nat
 flex room ks =
@@ -156,18 +143,20 @@ flex room ks =
         then zipWith (+) bases (distribute (room `minus` tot) (map (\(_, g, _) => g) ks))
         else shrinkAll (length ks + 1) (tot `minus` room)
                        (map (\(b, _, s) => (b, s)) ks)
+  where
+    -- Items that would shrink below zero are fixed at zero and their share of
+    -- the deficit is redistributed among the others.
+    shrinkAll : Nat -> Nat -> List (Nat, Nat) -> List Nat
+    shrinkAll Z _ ks = map fst ks
+    shrinkAll (S fuel) deficit ks =
+      let cuts = distribute deficit (map (\(b, s) => b * s) ks)
+          sat = zipWith (\(b, _), c => c > b) ks cuts
+      in if not (any id sat)
+            then zipWith (\(b, _), c => b `minus` c) ks cuts
+            else shrinkAll fuel
+                   (deficit `minus` sum (map (\((b, _), _) => b) (filter snd (zip ks sat))))
+                   (zipWith (\k, s => if s then (0, 0) else k) ks sat)
 
-||| Offset of the first item and the extra space before each following one.
-justifyOffsets : Justify -> Nat -> Nat -> (Nat, List Nat)
-justifyOffsets j free n =
-  let none : List Nat
-      none = replicate (n `minus` 1) 0
-  in case j of
-       JStart => (0, none)
-       JCenter => (ndiv free 2, none)
-       JEnd => (free, none)
-       JBetween => if n < 2 then (0, none) else (0, distribute free (replicate (n `minus` 1) 1))
-       JAround => let per = ndiv free n in (ndiv per 2, replicate (n `minus` 1) per)
 
 -- Positions along the main axis given the sizes (margin included).
 mainPositions : Props -> Nat -> List Nat -> List Nat
@@ -177,6 +166,18 @@ mainPositions p room sizes =
       (start, extras) = justifyOffsets p.pJustify free n
   in go start sizes (map (+ p.pGap) extras)
   where
+    -- Offset of the first item and the extra space before each following one.
+    justifyOffsets : Justify -> Nat -> Nat -> (Nat, List Nat)
+    justifyOffsets j free n =
+      let none : List Nat
+          none = replicate (n `minus` 1) 0
+      in case j of
+           JStart => (0, none)
+           JCenter => (ndiv free 2, none)
+           JEnd => (free, none)
+           JBetween => if n < 2 then (0, none) else (0, distribute free (replicate (n `minus` 1) 1))
+           JAround => let per = ndiv free n in (ndiv per 2, replicate (n `minus` 1) per)
+
     go : Nat -> List Nat -> List Nat -> List Nat
     go _ [] _ = []
     go at (s :: ss) steps = at :: go (at + s + fromMaybe 0 (head' steps)) ss (drop 1 steps)
@@ -232,18 +233,6 @@ dimSize _ Auto = Nothing
 dimSize _ (Cells n) = Just n
 dimSize room (Percent q) = Just (ndiv (room * q) 100)
 
--- The items cut into lines of at most `room` cells, `gap` cells apart.
-breakLines : Nat -> Nat -> List (a, Nat) -> List (List (a, Nat))
-breakLines gap room items = go items [] 0
-  where
-    go : List (a, Nat) -> List (a, Nat) -> Nat -> List (List (a, Nat))
-    go [] cur _ = if null cur then [] else [reverse cur]
-    go (x :: rest) [] _ = go rest [x] (snd x)
-    go (x :: rest) cur used =
-      if used + gap + snd x > room
-         then reverse cur :: go (x :: rest) [] 0
-         else go rest (x :: cur) (used + gap + snd x)
-
 -- The children of a row cut into lines (one line, unless it wraps), each
 -- with its outer width after the distribution of the room of its line.
 rowLines : Props -> Nat -> List (Kid msg) -> List (List (Kid msg, Nat))
@@ -254,6 +243,18 @@ rowLines p iw ks =
       lines = if p.pWrap then breakLines p.pGap iw based else [based]
   in map distribute' lines
   where
+    -- The items cut into lines of at most `room` cells, `gap` cells apart.
+    breakLines : Nat -> Nat -> List (a, Nat) -> List (List (a, Nat))
+    breakLines gap room items = go items [] 0
+      where
+        go : List (a, Nat) -> List (a, Nat) -> Nat -> List (List (a, Nat))
+        go [] cur _ = if null cur then [] else [reverse cur]
+        go (x :: rest) [] _ = go rest [x] (snd x)
+        go (x :: rest) cur used =
+          if used + gap + snd x > room
+             then reverse cur :: go (x :: rest) [] 0
+             else go rest (x :: cur) (used + gap + snd x)
+
     distribute' : List (Kid msg, Nat) -> List (Kid msg, Nat)
     distribute' ln =
       let room = iw `minus` (p.pGap * (length ln `minus` 1))
@@ -337,11 +338,6 @@ crossOffset Center free = ndiv free 2
 crossOffset End free = free
 crossOffset _ _ = 0
 
--- The top of each line of a wrapping row, `gap` apart.
-lineTops : (gap : Nat) -> (y : Nat) -> List Nat -> List Nat
-lineTops _ _ [] = []
-lineTops gap y (lh :: rest) = y :: lineTops gap (y + lh + gap) rest
-
 mutual
   -- Where a box out of the flow goes in the content box `i` of its parent.
   placeAbsolute : Rect -> Node msg -> Laid
@@ -389,6 +385,12 @@ mutual
         heightOf = \ln => if p.pWrap then rowLineHeight ln else i.h
         heights = map heightOf lines
     in concat (zipWith3 (placeLine p i) lines heights (lineTops p.pGap 0 heights))
+    where
+      -- The top of each line of a wrapping row, `gap` apart.
+      lineTops : (gap : Nat) -> (y : Nat) -> List Nat -> List Nat
+      lineTops _ _ [] = []
+      lineTops gap y (lh :: rest) = y :: lineTops gap (y + lh + gap) rest
+
 
   placeLine : Props -> Rect -> List (Kid msg, Nat) -> Nat -> Nat -> List Laid
   placeLine p i ln lh y0 =

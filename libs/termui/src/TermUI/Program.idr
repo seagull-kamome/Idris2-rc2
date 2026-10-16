@@ -93,36 +93,6 @@ record Program model msg where
 -------------------------------------------------------------------------------
 -- Focus
 
--- Replace every `Focusable` by its body, built for the focused one of them;
--- returns the handlers in tree order.
-resolve : (focus : Nat) -> Node msg -> (Node msg, List (Input -> Maybe msg))
-resolve focus root = let (n, hs, _) = go 0 root in (n, hs)
-  where
-    -- The box of a focusable is marked, so that its place can be found after
-    -- the layout; a node that is not a box (or is marked already) gets one.
-    tag : Nat -> Node msg -> Node msg
-    tag i (Box p ks) =
-      case p.pTag of
-        Nothing => Box ({ pTag := Just i } p) ks
-        Just _ => Box ({ pTag := Just i } defaultProps) [Box p ks]
-    tag i n = Box ({ pTag := Just i } defaultProps) [n]
-
-    mutual
-      go : Nat -> Node msg -> (Node msg, List (Input -> Maybe msg), Nat)
-      go i n@(Text _ _ _) = (n, [], i)
-      go i (Focusable body h) =
-        let (inner, hs, next) = go (i + 1) (body (i == focus)) in
-        (tag i inner, h :: hs, next)
-      go i (Box p kids) =
-        let (kids', hs, next) = goList i kids in (Box p kids', hs, next)
-
-      goList : Nat -> List (Node msg) -> (List (Node msg), List (Input -> Maybe msg), Nat)
-      goList i [] = ([], [], i)
-      goList i (k :: ks) =
-        let (k', hs, i') = go i k
-            (ks', hs', i'') = goList i' ks
-        in (k' :: ks', hs ++ hs', i'')
-
 -------------------------------------------------------------------------------
 -- Runtime
 
@@ -301,32 +271,37 @@ currentView env = do
      else do
        writeIORef env.handlers hs
        pure node
-
--- The part of `a` inside `b`.
-within : Rect -> Rect -> Rect
-within a b =
-  let x0 = max a.x b.x
-      y0 = max a.y b.y
-      x1 = min (a.x + a.w) (b.x + b.w)
-      y1 = min (a.y + a.h) (b.y + b.h)
-  in MkRect x0 y0 (x1 `minus` x0) (y1 `minus` y0)
-
--- Where the focusables are (in tree order), cut to what is visible, and where
--- the terminal cursor goes.
-scan : Rect -> Laid -> (List (Nat, Rect), Maybe (Nat, Nat))
-scan _ (LText _ _ _) = ([], Nothing)
-scan clip (LBox r p kids) =
-  let own = maybe [] (\i => [(i, within r clip)]) p.pTag
-      cursor = if p.pCursor then Just (r.x, r.y) else Nothing
-      (rs, c) = scanAll (within (innerRect p r) clip) kids
-  in (own ++ rs, maybe c Just cursor)
   where
-    scanAll : Rect -> List Laid -> (List (Nat, Rect), Maybe (Nat, Nat))
-    scanAll _ [] = ([], Nothing)
-    scanAll inner (k :: ks) =
-      let (r1, c1) = scan inner k
-          (r2, c2) = scanAll inner ks
-      in (r1 ++ r2, maybe c1 Just c2)
+    -- Replace every `Focusable` by its body, built for the focused one of them;
+    -- returns the handlers in tree order.
+    resolve : (focus : Nat) -> Node msg -> (Node msg, List (Input -> Maybe msg))
+    resolve focus root = let (n, hs, _) = go 0 root in (n, hs)
+      where
+        -- The box of a focusable is marked, so that its place can be found after
+        -- the layout; a node that is not a box (or is marked already) gets one.
+        tag : Nat -> Node msg -> Node msg
+        tag i (Box p ks) =
+          case p.pTag of
+            Nothing => Box ({ pTag := Just i } p) ks
+            Just _ => Box ({ pTag := Just i } defaultProps) [Box p ks]
+        tag i n = Box ({ pTag := Just i } defaultProps) [n]
+
+        mutual
+          go : Nat -> Node msg -> (Node msg, List (Input -> Maybe msg), Nat)
+          go i n@(Text _ _ _) = (n, [], i)
+          go i (Focusable body h) =
+            let (inner, hs, next) = go (i + 1) (body (i == focus)) in
+            (tag i inner, h :: hs, next)
+          go i (Box p kids) =
+            let (kids', hs, next) = goList i kids in (Box p kids', hs, next)
+
+          goList : Nat -> List (Node msg) -> (List (Node msg), List (Input -> Maybe msg), Nat)
+          goList i [] = ([], [], i)
+          goList i (k :: ks) =
+            let (k', hs, i') = go i k
+                (ks', hs', i'') = goList i' ks
+            in (k' :: ks', hs ++ hs', i'')
+
 
 draw : Env model msg -> IO ()
 draw env = do
@@ -349,6 +324,32 @@ draw env = do
        writeIORef env.prev (either (const Nothing) (const (Just frame)) r)
        writeIORef env.shownCursor (either (const Nothing) (const (Just target)) r)
   where
+    -- Where the focusables are (in tree order), cut to what is visible, and where
+    -- the terminal cursor goes.
+    scan : Rect -> Laid -> (List (Nat, Rect), Maybe (Nat, Nat))
+    scan _ (LText _ _ _) = ([], Nothing)
+    scan clip (LBox r p kids) =
+      let own = maybe [] (\i => [(i, within r clip)]) p.pTag
+          cursor = if p.pCursor then Just (r.x, r.y) else Nothing
+          (rs, c) = scanAll (within (innerRect p r) clip) kids
+      in (own ++ rs, maybe c Just cursor)
+      where
+        -- The part of `a` inside `b`.
+        within : Rect -> Rect -> Rect
+        within a b =
+          let x0 = max a.x b.x
+              y0 = max a.y b.y
+              x1 = min (a.x + a.w) (b.x + b.w)
+              y1 = min (a.y + a.h) (b.y + b.h)
+          in MkRect x0 y0 (x1 `minus` x0) (y1 `minus` y0)
+
+        scanAll : Rect -> List Laid -> (List (Nat, Rect), Maybe (Nat, Nat))
+        scanAll _ [] = ([], Nothing)
+        scanAll inner (k :: ks) =
+          let (r1, c1) = scan inner k
+              (r2, c2) = scanAll inner ks
+          in (r1 ++ r2, maybe c1 Just c2)
+
     cursorSequence : (Bool, Nat, Nat) -> String
     cursorSequence (visible, x, y) =
       "\ESC[" ++ show (y + 1) ++ ";" ++ show (x + 1) ++ "H" ++ (if visible then "\ESC[?25h" else "\ESC[?25l")

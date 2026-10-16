@@ -66,9 +66,6 @@ escapeTimerId = 1099511627776
 holdBack : Nat
 holdBack = 5
 
-sameSignal : Signal -> Signal -> Bool
-sameSignal (MkSignal a) (MkSignal b) = a == b
-
 ||| Create a loop for a terminal. Call it before `openTerminal`, so that no
 ||| signal can end the process while the terminal is in raw mode.
 export
@@ -158,6 +155,9 @@ closeLoop l = do
 drainSignals : Loop -> IO (List Event)
 drainSignals l = go False Nothing False
   where
+    sameSignal : Signal -> Signal -> Bool
+    sameSignal (MkSignal a) (MkSignal b) = a == b
+
     go : (term : Bool) -> (resize : Maybe ()) -> (resume : Bool) -> IO (List Event)
     go term resize resume = do
       r <- readSignal l.sigfd
