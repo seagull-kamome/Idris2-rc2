@@ -281,3 +281,107 @@ resize 5: top=2
 |row 1  10  █
 |row 2  20  │
 |row 3  30  │
+-- text area: columns in cells, a large text
+あいう|
+abcdefg
+あいう
+abcd|efg
+あい|う
+abcd
+100000 lines, top=99990
+100001 lines, line=99998 top=99990
+100000 0
+-- text area: selection
+hello |world | selected: "world"
+|hello world
+|      ^ssss
+|
+|
+|
+hello X|
+hello |
+hello |
+hello| world
+hello w|orld
+hello world| | "hello world"
+selected: "e\ntwo\nth"
+|one
+|  ss
+|two
+|ssss
+|three
+|ss^
+|
+on|ree
+onZ|ree
+"one\ntwo\nthree"
+
+|
+-- text area: clipboard
+"world" hello |world
+hello worldworld|
+"world" hello |
+world|hello 
+hello world|
+one
+two
+threethree| | "three"
+-- text area: drag
+one
+two
+t|hree | "e\ntwo\nt"
+|one
+|  ss
+|two
+|ssss
+|three
+|s^
+|
+"" "ne"
+-- text area: undo and redo
+| | |
+abc def|
+ac
+d|b
+ac
+|b / ac|b / a|b / |
+ac
+|b
+ac
+q|b | redo after an edit: ac
+q|b
+abc | | abc def|
+hello X| | hello |world | |
+ab|cd | ab
+|cd 2
+[True, True, True, True, True, True, True, False]
+-- text area: combining marks, empty edits, kill with a selection, undo groups
+|éx
+|  ^
+|
+|
+é|x | éx|
+|aaaaaaaaaá́
+|          ^
+|
+|
+|
+a|
+|
+|llo world | |llo world
+|abc
+|   s
+|d
+|s
+|
+|
+|abc
+|   s
+|d
+|s^
+|
+|
+XY| | X| | |abc
+a|f | a|def | abc|def | |
+a
+| | | | |
