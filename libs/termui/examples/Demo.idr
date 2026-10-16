@@ -61,7 +61,7 @@ appUpdate Quit' m = (m, Quit)
 
 appSubs : AppModel -> List (Sub AppMsg)
 appSubs _ =
-  [ Every 1 100 Spin
+  [ Every "spin" 100 Spin
   , MouseFocus
   , OnInput (\i => case i of
                      Press KEscape _ => Just Quit'

@@ -34,11 +34,12 @@ TESTS=(
     "TestRuntime|rc2base contrib|terminal runtime on a pty"
     "TestWidget|rc2base contrib|widgets: text input, select, spinner, progress bar, table"
     "TestApp|rc2base contrib|text field and list together in a program on a pty"
+    "TestSuspend|rc2base contrib|Suspend and the continue, with the program as a child on a pty"
     "TestProgram|rc2base contrib|Elm-style program, focus, commands and subscriptions"
 )
 
 # Tests built with IDRIS2_CFLAGS=-D_GNU_SOURCE (posix_openpt is hidden otherwise).
-NEEDS_GNU_SOURCE=" TestRuntime TestProgram TestApp "
+NEEDS_GNU_SOURCE=" TestRuntime TestProgram TestApp TestSuspend "
 
 echo "=== Check TESTS against the tests/*/ directories ==="
 listed=()

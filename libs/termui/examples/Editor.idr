@@ -1,5 +1,5 @@
 ||| A tiny editor: a multi-line text area filling the screen, a status line
-||| and a help viewer toggled with F1. Ctrl-C quits.
+||| and a help viewer toggled with F1. Ctrl-Z suspends it, Ctrl-C quits.
 |||
 ||| Build: idris2-rc2 --cg rc2 -p termui -p rc2base -p contrib -o editor Editor.idr
 |||
@@ -25,7 +25,7 @@ record AppModel where
   help : Sc.Model
   showHelp : Bool
 
-data AppMsg = Edit A.Msg | Scroll Sc.Msg | Resized Nat Nat | ToggleHelp | Quit'
+data AppMsg = Edit A.Msg | Scroll Sc.Msg | Resized Nat Nat | ToggleHelp | Pause | Quit'
 
 helpLines : List String
 helpLines =
@@ -36,6 +36,7 @@ helpLines =
   , "Enter                                new line"
   , "mouse                                click to place the cursor, wheel to move"
   , "F1                                   show / hide this help"
+  , "Ctrl-Z                               suspend (continue with fg)"
   , "Ctrl-C                               quit" ]
 
 appView : AppModel -> Node AppMsg
@@ -51,6 +52,7 @@ appUpdate (Edit e) m = ({ text $= A.update e } m, NoCmd)
 appUpdate (Scroll s) m = ({ help $= Sc.update 8 s } m, NoCmd)
 appUpdate (Resized cols rows) m = ({ text $= A.resize cols (rows `minus` 1) } m, NoCmd)
 appUpdate ToggleHelp m = ({ showHelp $= not } m, NoCmd)
+appUpdate Pause m = (m, Suspend)
 appUpdate Quit' m = (m, Quit)
 
 appSubs : AppModel -> List (Sub AppMsg)
@@ -59,6 +61,7 @@ appSubs _ =
   , OnResize Resized
   , OnInput (\i => case i of
                      Press (KF 1) _ => Just ToggleHelp
+                     Press (KChar 'z') mods => if mods.ctrl then Just Pause else Nothing
                      Press (KChar 'c') mods => if mods.ctrl then Just Quit' else Nothing
                      _ => Nothing) ]
 

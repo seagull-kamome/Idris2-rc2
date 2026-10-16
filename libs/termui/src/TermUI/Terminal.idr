@@ -24,7 +24,8 @@ public export
 record Terminal where
   constructor MkTerminal
   input, output : FileDesc
-  saved : Termios
+  saved : Termios       -- the attributes found, restored at the end
+  raw : Termios         -- the attributes the program runs with, set again after a stop
 
 -- Alternate screen, hidden cursor, bracketed paste.
 enterSequence, leaveSequence : String
@@ -81,7 +82,7 @@ openTerminal input output = do
     | Left e => pure (Left e)
   Right () <- writeString output enterSequence
     | Left e => ignore (tcsetattr input TCSANOW saved) >> pure (Left e)
-  pure (Right (MkTerminal input output saved))
+  pure (Right (MkTerminal input output saved raw))
 
 ||| Leave the alternate screen and restore the terminal attributes.
 export
@@ -89,6 +90,15 @@ closeTerminal : Terminal -> IO ()
 closeTerminal t = do
   _ <- writeString t.output leaveSequence
   _ <- tcsetattr t.input TCSADRAIN t.saved
+  pure ()
+
+||| Put the terminal back in raw mode on the alternate screen after
+||| `closeTerminal`, for instance when the program is continued after a stop.
+export
+resumeTerminal : Terminal -> IO ()
+resumeTerminal t = do
+  _ <- tcsetattr t.input TCSADRAIN t.raw
+  _ <- writeString t.output enterSequence
   pure ()
 
 ||| The size in cells (columns, rows) of the terminal on `output`; 80 x 24
