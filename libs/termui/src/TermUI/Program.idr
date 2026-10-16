@@ -17,6 +17,7 @@ import System.Posix.Process
 import System.Posix.Signal
 import System.Posix.FileDesc
 import System.Posix.Termios
+import System.Posix.Time
 import TermUI.Frame
 import TermUI.Input
 import TermUI.Layout
@@ -118,6 +119,7 @@ record Env model msg where
   skipResume : IORef Nat                  -- batches left in which an EResume is the SIGCONT that ended our own Suspend
   rects : IORef (List (Nat, Rect))
   shownCursor : IORef (Maybe (Bool, Nat, Nat))
+  lastClick : IORef (Maybe LastClick)
 
 -- The timer id of an `Every` key, the same for as long as the program runs;
 -- even, while the ids of `After` are odd.
@@ -363,7 +365,8 @@ moveFocus env forward = do
     writeIORef env.focus (if forward then (if f + 1 >= n then 0 else f + 1) else (if f == 0 then n `minus` 1 else f `minus` 1))
 
 onInput : Env model msg -> Input -> IO ()
-onInput env (Mouse e) = do
+onInput env (Mouse raw) = do
+  e <- counted
   model <- readIORef env.modelRef
   let subs = env.prog.subs model
   when (any isMouseFocus subs) $ do
@@ -376,11 +379,22 @@ onInput env (Mouse e) = do
         -- the handler sees the position relative to the top left of its node
         let rel = { column := e.column `minus` r.x, row := e.row `minus` r.y } e
         traverse_ (dispatch env) (getAt i hs >>= \h => h (Mouse rel))
-  traverse_ (dispatch env) (mapMaybe fromSub subs)
+  traverse_ (dispatch env) (mapMaybe (fromSub e) subs)
   where
-    fromSub : Sub msg -> Maybe msg
-    fromSub (OnMouse g) = g e
-    fromSub _ = Nothing
+    -- the press of the left button knows which click of a run it is
+    counted : IO MouseEvent
+    counted = do
+      Right t <- clock_gettime CLOCK_MONOTONIC
+        | Left _ => pure raw
+      let now = cast (t.tvSec * 1000 + t.tvNsec `div` 1000000)
+      last <- readIORef env.lastClick
+      let (e, next) = countClick last now raw
+      writeIORef env.lastClick next
+      pure e
+
+    fromSub : MouseEvent -> Sub msg -> Maybe msg
+    fromSub e (OnMouse g) = g e
+    fromSub _ _ = Nothing
 
     isMouseFocus : Sub msg -> Bool
     isMouseFocus MouseFocus = True
@@ -494,7 +508,7 @@ runProgramOn input output prog = do
   env <- MkEnv prog loop term output <$> newIORef model0 <*> newIORef 0 <*> newIORef []
            <*> newIORef Nothing <*> newIORef size <*> newIORef False
            <*> newIORef [] <*> newIORef 0 <*> newIORef [] <*> newIORef [] <*> newIORef [] <*> newIORef False
-           <*> newIORef False <*> newIORef 0 <*> newIORef [] <*> newIORef Nothing
+           <*> newIORef False <*> newIORef 0 <*> newIORef [] <*> newIORef Nothing <*> newIORef Nothing
   batching env $ do
     runCmd env cmd0
     -- the size is told to the program once at the start, as at every resize

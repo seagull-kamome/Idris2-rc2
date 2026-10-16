@@ -87,3 +87,17 @@ main = do
   let (e1, r1) = parseInput False (bytesOf "x\ESC[1;")
   let (e2, r2) = parseInput False (r1 ++ bytesOf "5Ay")
   putStrLn (show e1 ++ showRest r1 ++ " | " ++ show e2 ++ showRest r2)
+  putStrLn "-- counting clicks"
+  let ev = \a, c, r => MkMouseEvent LeftButton a c r noMods 1
+      (c1, l1) = countClick Nothing 1000 (ev ButtonDown 3 4)
+      (c2, l2) = countClick l1 1200 (ev ButtonDown 3 4)
+      (c3, l3) = countClick l2 1300 (ev ButtonDown 3 4)
+      (c4, l4) = countClick l3 1400 (ev ButtonDown 3 4)
+  putStrLn (show (map (\e => e.clicks) [c1, c2, c3, c4]))
+  putStrLn (show (map (\e => e.clicks) [fst (countClick l1 1500 (ev ButtonDown 3 4)), fst (countClick l1 1401 (ev ButtonDown 3 4))]))
+  putStrLn (show (fst (countClick l1 1100 (ev ButtonDown 4 4))).clicks ++ " " ++ show (fst (countClick l1 1100 (ev ButtonDown 3 5))).clicks)
+  putStrLn (show (fst (countClick l1 1100 (ev Drag 3 4))).clicks ++ " " ++ show (fst (countClick l1 1100 (ev ButtonUp 3 4))).clicks)
+  putStrLn (show (fst (countClick l1 1100 (MkMouseEvent RightButton ButtonDown 3 4 noMods 1))).clicks)
+  let (_, l5) = countClick l1 1100 (ev Drag 3 4)
+  putStrLn (show (fst (countClick l5 1200 (ev ButtonDown 3 4))).clicks)
+
