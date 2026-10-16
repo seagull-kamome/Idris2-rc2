@@ -40,6 +40,20 @@ wideRanges =
   , (0x1F300, 0x1F64F), (0x1F680, 0x1F6FF), (0x1F900, 0x1F9FF)
   , (0x1FA70, 0x1FAFF), (0x16FE0, 0x18AFF), (0x1B000, 0x1B2FF), (0x20000, 0x3FFFD) ]
 
+-- The combining marks among the zero-width characters: the ones a terminal
+-- draws on the cell of the character before them without changing its width.
+-- (Format characters such as the zero-width joiner and the variation
+-- selectors are left out: a terminal may compose or widen the characters
+-- around them, which the cell grid cannot follow.)
+markRanges : List (Int, Int)
+markRanges =
+  [ (0x0300, 0x036F), (0x0483, 0x0489), (0x0591, 0x05BD), (0x05BF, 0x05BF)
+  , (0x05C1, 0x05C2), (0x0610, 0x061A), (0x0670, 0x0670), (0x06D6, 0x06DC)
+  , (0x064B, 0x065F), (0x0900, 0x0902), (0x093A, 0x093A), (0x093C, 0x093C)
+  , (0x0941, 0x0948), (0x094D, 0x094D), (0x0E31, 0x0E31), (0x0E34, 0x0E3A)
+  , (0x0E47, 0x0E4E), (0x1AB0, 0x1AFF), (0x1DC0, 0x1DFF), (0x20D0, 0x20FF)
+  , (0x3099, 0x309A), (0xFE20, 0xFE2F) ]
+
 inRanges : Int -> List (Int, Int) -> Bool
 inRanges c = any (\(lo, hi) => c >= lo && c <= hi)
 
@@ -59,3 +73,8 @@ charWidth ch =
 export
 stringWidth : String -> Nat
 stringWidth = sum . map charWidth . unpack
+
+||| A combining mark: it has no width and is drawn on the character before it.
+export
+isMark : Char -> Bool
+isMark ch = let c = ord ch in c >= 0x300 && inRanges c markRanges

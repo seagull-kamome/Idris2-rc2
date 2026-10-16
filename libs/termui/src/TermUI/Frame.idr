@@ -1,7 +1,7 @@
 ||| The cell grid a view is painted into, and the painter.
 ||| A wide character occupies its own cell followed by a continuation cell
 ||| (glyph '\0') carrying the same style, so equal frames are equal cell by
-||| cell.
+||| cell. Combining marks are kept with the cell of the character they follow.
 |||
 ||| Copyright 2026, Hattori,Hiroki. All rights reserved.
 ||| This module was licensed by BSD3. see LICENSE file for detail.
@@ -25,14 +25,15 @@ record Cell where
   constructor MkCell
   glyph : Char
   style : Style
+  combining : List Char
 
 export
 Eq Cell where
-  MkCell g s == MkCell g' s' = g == g' && s == s'
+  MkCell g s m == MkCell g' s' m' = g == g' && s == s' && m == m'
 
 public export
 blank : Cell
-blank = MkCell ' ' plain
+blank = MkCell ' ' plain []
 
 public export
 continuation : Char
@@ -68,9 +69,9 @@ setCell f x y c =
     old <- getCell f x y
     let at = cast (y * f.frameWidth + x)
     when (old.glyph == continuation && x > 0) $
-      ignore (writeArray f.cells (at - 1) (MkCell ' ' old.style))
+      ignore (writeArray f.cells (at - 1) (MkCell ' ' old.style []))
     when (charWidth old.glyph == 2 && x + 1 < f.frameWidth) $
-      ignore (writeArray f.cells (at + 1) (MkCell ' ' old.style))
+      ignore (writeArray f.cells (at + 1) (MkCell ' ' old.style []))
     ignore (writeArray f.cells at c)
 
 -------------------------------------------------------------------------------
@@ -91,7 +92,7 @@ inside : Clip -> Nat -> Nat -> Bool
 inside c x y = x >= c.x0 && x < c.x1 && y >= c.y0 && y < c.y1
 
 put : Frame -> Clip -> Nat -> Nat -> Char -> Style -> IO ()
-put f c x y g s = when (inside c x y) $ setCell f x y (MkCell g s)
+put f c x y g s = when (inside c x y) $ setCell f x y (MkCell g s [])
 
 hasBorder : Border -> Bool
 hasBorder NoBorder = False
@@ -128,11 +129,22 @@ paintBorder f c r b s =
     put f c r.x bottom bl s
     put f c right bottom br s
 
+-- A combining mark goes with the cell before `x` (the first one of a wide
+-- character), if that is in the window.
+attach : Frame -> Clip -> Nat -> Nat -> Char -> IO ()
+attach f c x y mark =
+  when (x > 0) $ do
+    prev <- getCell f (x `minus` 1) y
+    let at = if prev.glyph == continuation && x > 1 then x `minus` 2 else x `minus` 1
+    cell <- getCell f at y
+    when (inside c at y && length cell.combining < 8) $
+      ignore (writeArray f.cells (cast (y * f.frameWidth + at)) ({ combining $= (++ [mark]) } cell))
+
 paintLine : Frame -> Clip -> Nat -> Nat -> Style -> List Char -> IO ()
 paintLine _ _ _ _ _ [] = pure ()
 paintLine f c x y s (ch :: rest) =
   case charWidth ch of
-    0 => paintLine f c x y s rest
+    0 => when (isMark ch) (attach f c x y ch) >> paintLine f c x y s rest
     2 => do
       if inside c x y && inside c (x + 1) y
          then put f c x y ch s >> put f c (x + 1) y continuation s
@@ -178,7 +190,10 @@ frameLines f = traverse row (span 0 f.frameHeight)
     trimEnd : String -> String
     trimEnd s = pack (reverse (dropWhile (== ' ') (reverse (unpack s))))
 
+    shown : Cell -> List Char
+    shown cell = if cell.glyph == continuation then [] else cell.glyph :: cell.combining
+
     row : Nat -> IO String
     row y = do
       cs <- traverse (\x => getCell f x y) (span 0 f.frameWidth)
-      pure (trimEnd (pack (filter (/= continuation) (map glyph cs))))
+      pure (trimEnd (pack (concatMap shown cs)))

@@ -64,7 +64,7 @@ emitCell fw x y c st =
   let moved = if st.cursor == Just (x, y) then [] else [cursorMove (y + 1) (x + 1)]
       styled = if st.current == Just c.style then [] else [sgr c.style]
       next = x + glyphWidth c.glyph
-  in MkSt (pack [c.glyph] :: styled ++ moved ++ st.out)
+  in MkSt (pack (c.glyph :: c.combining) :: styled ++ moved ++ st.out)
           (if next >= fw then Nothing else Just (next, y))
           (Just c.style)
 

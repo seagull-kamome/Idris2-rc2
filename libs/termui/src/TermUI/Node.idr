@@ -62,10 +62,15 @@ record Props where
   pJustify : Justify
   pCursor : Bool          -- the real terminal cursor goes to this box
   pTag : Maybe Nat        -- set by the runtime on focusable nodes
+  pMinWidth, pMaxWidth, pMinHeight, pMaxHeight : Maybe Nat
+  pWrap : Bool            -- a row goes on in a new line when its children do not fit
+  pAbsolute : Bool        -- out of the flow of its parent, placed by the offsets below
+  pTop, pRight, pBottom, pLeft : Maybe Nat
 
 public export
 defaultProps : Props
 defaultProps = MkProps Column Auto Auto 0 1 noEdges noEdges 0 NoBorder plain plain Stretch JStart False Nothing
+                       Nothing Nothing Nothing Nothing False False Nothing Nothing Nothing Nothing
 
 -------------------------------------------------------------------------------
 -- Tree
@@ -200,3 +205,32 @@ mapNode f (Focusable body h) = Focusable (\b => mapNode f (body b)) (\i => map f
 public export
 cursorHere : Prop
 cursorHere p = { pCursor := True } p
+
+||| The border box is at least / at most this many cells wide / high.
+public export
+minWidth, maxWidth, minHeight, maxHeight : Nat -> Prop
+minWidth n p = { pMinWidth := Just n } p
+maxWidth n p = { pMaxWidth := Just n } p
+minHeight n p = { pMinHeight := Just n } p
+maxHeight n p = { pMaxHeight := Just n } p
+
+||| A row whose children do not fit in its width goes on in a new line (lines
+||| are `gap` apart). It has no effect on a column.
+public export
+wrapChildren : Prop
+wrapChildren p = { pWrap := True } p
+
+||| Take the box out of the flow of its parent: it does not take part in the
+||| layout of its siblings and is placed in the content box of its parent by
+||| `top`, `right`, `bottom` and `left` (a side not given is free). Boxes drawn
+||| later are drawn over it, and over the siblings it overlaps.
+public export
+absolute : Prop
+absolute p = { pAbsolute := True } p
+
+public export
+top, right, bottom, left : Nat -> Prop
+top n p = { pTop := Just n } p
+right n p = { pRight := Just n } p
+bottom n p = { pBottom := Just n } p
+left n p = { pLeft := Just n } p

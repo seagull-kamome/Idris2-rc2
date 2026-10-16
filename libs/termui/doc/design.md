@@ -71,31 +71,55 @@ A subset of CSS flexbox. Sizes are in cells.
   box, and children are clipped to the content box of their parent (inside
   border and padding).
 - The natural size of a node is computed for a given available width, so
-  wrapped text takes the height it needs once its width is known. A row
-  first distributes its width among the children and then measures their
-  heights at the widths they got.
+  wrapped text takes the height it needs once its width is known. The widths
+  of the children are decided first from what each wants when nothing limits
+  it (`maxContent`: text not wrapped, linear in the size of the subtree), and
+  distributed (a row by `grow`/`shrink`, a column by the alignment); then each
+  child is measured once, at the width it got. Text that wraps therefore takes
+  the width it is offered (as `fit-content` does in CSS), not the width of its
+  longest line, so an `align Center` or `JEnd` does not shrink it into a narrower
+  block; give the box a width to get that. The cost grows with the size of the
+  tree times the square of its depth at worst (a 640-deep chain takes under a
+  second); it used to double with every level.
+- `minWidth`/`maxWidth`/`minHeight`/`maxHeight` bound the border box (the
+  minimum wins over the maximum). They are applied to the base size of a child
+  and again to the size it ends up with; the room a bound frees is not handed
+  on to the other children.
+- `wrapChildren` on a row: the children go on in a new line when the next one
+  does not fit in the width (as `flex-wrap`); the lines are `gap` apart, each
+  line is distributed and justified by itself and the cross axis (`align`) is
+  that of the line. A child wider than the row has a line of its own. A column
+  does not wrap.
+- `absolute` takes a box out of the flow: it takes no room and does not move
+  its siblings, and `top`/`right`/`bottom`/`left` place it in the content box of
+  its parent (two opposite sides stretch an `Auto` size; a side not given is
+  free; none given means the start). It is drawn after the flow, so it covers
+  what it overlaps. Margins are not used. An overlay that centres its child is
+  `box [absolute, top 0, left 0, right 0, bottom 0, align Center, justify JCenter] [child]`.
 - A shrinking item never goes below zero; the deficit it cannot absorb is
   redistributed among the others. `JAround` drops the remainder of the
   division, `JBetween` gives it to the first gaps.
 
-Not implemented: wrapping of children onto several lines, absolute
-positioning, min/max sizes, percentage margins.
+Not implemented: wrapping of a column, percentage margins, `Percent` for
+the height of a row's children before the row's height is known.
 
 A `Style` applied over another one only adds: attributes are OR-ed, and a
 colour left at `Default` is inherited, so a child cannot switch off a
-parent's attribute or return to the terminal default colour. The natural size
-is recomputed at each level (cost: depth times nodes); cache it if views get
-large.
+parent's attribute or return to the terminal default colour.
 
 ## Characters
 
 Widths follow `wcwidth(3)`: control and combining characters take 0 cells,
 East Asian wide/fullwidth characters and emoji take 2, the rest 1. A wide
 character occupies a cell plus a continuation cell (`'\0'`) with the same
-style. Zero-width characters are dropped when painting: grapheme clusters
-(combining marks, emoji ZWJ sequences, variation selectors) are not
-composed. A wide character that does not fit at the right edge of its box is
-replaced by a space.
+style. A combining mark (accents and the like, `isMark`) is kept with the cell
+of the character before it, so that the terminal draws it there; it needs that
+character in the same `Text` (one that starts a text has nothing to join and is
+dropped). Other zero-width characters are dropped when painting: emoji ZWJ
+sequences and variation selectors are not composed, because a terminal may
+compose or widen what is around them and the cell grid could not follow. A
+wide character that does not fit at the right edge of its box is replaced by a
+space.
 
 ## Diff output
 

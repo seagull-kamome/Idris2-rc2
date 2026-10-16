@@ -356,12 +356,12 @@ ab|cd | ab
 |cd 2
 [True, True, True, True, True, True, True, False]
 -- text area: combining marks, empty edits, kill with a selection, undo groups
-|ex
+|éx
 |  ^
 |
 |
 é|x | éx|
-|aaaaaaaaaa
+|aaaaaaaaaá́
 |          ^
 |
 |
