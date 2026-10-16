@@ -38,8 +38,8 @@ drawMarked v w h = do
   traverse_ (\(y, l) => do
                putStrLn ("|" ++ l)
                cells <- traverse (\x => getCell f x y) (take w [0 ..])
-               let marks = pack (map (\c => if hasAttr Inverse c.style then '^' else ' ') cells)
-               when (any (== '^') (unpack marks)) $
+               let marks = pack (map (\c => if hasAttr Inverse c.style then '^' else if c.style.bg == Indexed 4 then 's' else ' ') cells)
+               when (any (\c => c == '^' || c == 's') (unpack marks)) $
                  putStrLn ("|" ++ pack (reverse (dropWhile (== ' ') (reverse (unpack marks))))))
             (zip [0 .. length ls] ls)
 
@@ -73,6 +73,9 @@ areaText m = joinBy "\n" (map pack (reverse m.above ++ [reverse m.before ++ ['|'
 areaKeys : List Input -> A.Model -> A.Model
 areaKeys [] m = m
 areaKeys (i :: is) m = areaKeys is (maybe m (\msg => A.update msg m) (A.keyMsg i))
+
+areaKeysAt : A.Model -> List Input -> A.Model
+areaKeysAt m ks = areaKeys ks m
 
 typedArea : String -> A.Model -> A.Model
 typedArea s = areaKeys (map (\c => if c == '\n' then key KEnter else press c) (unpack s))
@@ -294,3 +297,90 @@ main = do
   draw (Tb.view tb4) 12 6
   draw (Tb.view (Tb.fromRows [("a", 3)] 3 [["1"]])) 6 4
   draw (Tb.table (const ()) tb) 12 4
+  putStrLn "-- text area: columns in cells, a large text"
+  let wideLines = typedArea "あいう\nabcdefg" (A.empty 20 4)
+  putStrLn (areaText (areaKeys [key KUp] wideLines))
+  putStrLn (areaText (areaKeys [key KUp, key KDown] (areaKeys [key KLeft, key KLeft, key KLeft] wideLines)))
+  let narrowUp = areaKeys [key KUp] (typedArea "あいう\nabcd" (A.empty 20 4))
+  putStrLn (areaText narrowUp)
+  let big = A.fromString 40 10 (joinBy "\n" (map show (the (List Nat) [1 .. 100000])))
+  putStrLn (show (lineCount big) ++ " lines, top=" ++ show big.top)
+  let big2 = areaKeys [key KUp, key KUp, Press (KChar 'a') (MkMods False True False), key KEnter, press 'x'] big
+  putStrLn (show (lineCount big2) ++ " lines, line=" ++ show big2.line ++ " top=" ++ show big2.top)
+  putStrLn (show (lineCount (areaKeys [Press KHome (MkMods False True False)] big)) ++ " " ++ show (areaKeys [Press KHome (MkMods False True False)] big).line)
+  putStrLn "-- text area: selection"
+  let shiftKey = \k => Press k (MkMods True False False)
+  let hw = typedArea "hello world" (A.empty 20 4)
+  let sel1 = areaKeys (replicate 5 (shiftKey KLeft)) hw
+  putStrLn (areaText sel1 ++ " | selected: " ++ show (selectedText sel1))
+  drawMarked (A.view True sel1) 20 4
+  putStrLn (areaText (areaKeys [press 'X'] sel1))
+  putStrLn (areaText (areaKeys [key KBackspace] sel1))
+  putStrLn (areaText (areaKeys [key KDelete] sel1))
+  putStrLn (areaText (areaKeys [key KLeft] sel1))
+  putStrLn (areaText (areaKeys [shiftKey KRight] sel1))
+  putStrLn (areaText (areaKeys [shiftKey KHome, shiftKey KEnd] hw) ++ " | " ++ show (selectedText (areaKeys [shiftKey KHome] hw)))
+  let three = typedArea "one\ntwo\nthree" (A.empty 20 4)
+  let sel3 = areaKeys [Press KHome (MkMods False True False), key KRight, key KRight, shiftKey KDown, shiftKey KDown] three
+  putStrLn ("selected: " ++ show (selectedText sel3))
+  drawMarked (A.view True sel3) 20 4
+  putStrLn (areaText (areaKeys [key KBackspace] sel3))
+  putStrLn (areaText (areaKeys [press 'Z'] sel3))
+  let all = areaKeys [Press (KChar 'a') (MkMods False False True)] three
+  putStrLn (show (selectedText all))
+  putStrLn (areaText (areaKeys [key KEnter] all))
+  putStrLn "-- text area: clipboard"
+  let copied = areaKeys [Press (KChar 'w') (MkMods False False True)] sel1
+  putStrLn (show (clipboard copied) ++ " " ++ areaText copied)
+  putStrLn (areaText (areaKeys [key KEnd, Press (KChar 'y') (MkMods False True False)] copied))
+  let cut = areaKeys [Press (KChar 'w') (MkMods False True False)] sel1
+  putStrLn (show (clipboard cut) ++ " " ++ areaText cut)
+  putStrLn (areaText (areaKeys [key KHome, Press (KChar 'y') (MkMods False True False)] cut))
+  putStrLn (areaText (areaKeys [Press (KChar 'y') (MkMods False True False)] hw))
+  let multi = areaKeys [Press KHome (MkMods True True False), shiftKey KDown, shiftKey KDown, Press (KChar 'w') (MkMods False False True), Press KEnd (MkMods False True False), Press (KChar 'y') (MkMods False True False)] three
+  putStrLn (areaText multi ++ " | " ++ show (clipboard multi))
+  putStrLn "-- text area: drag"
+  let drag = \c, r => Mouse (MkMouseEvent LeftButton Drag c r noMods)
+  let dragged = areaKeys [click LeftButton 2 0, drag 4 1, drag 1 2] three
+  putStrLn (areaText dragged ++ " | " ++ show (selectedText dragged))
+  drawMarked (A.view True dragged) 20 4
+  putStrLn (show (selectedText (areaKeys [click LeftButton 1 0, drag 1 0] three)) ++ " " ++ show (selectedText (areaKeys [click LeftButton 1 0, drag 19 0] three)))
+  putStrLn "-- text area: undo and redo"
+  let undo = Press (KChar '_') (MkMods False True False)
+  let redo = Press (KChar '^') (MkMods False True False)
+  let typed2 = typedArea "abc def" (A.empty 20 4)
+  putStrLn (areaText (areaKeys [undo] typed2) ++ " | " ++ areaText (areaKeys [undo, undo] typed2))
+  putStrLn (areaText (areaKeys [undo, redo] typed2))
+  let steps = areaKeys [press 'a', press 'b', key KLeft, press 'c', key KEnter, press 'd'] (A.empty 20 4)
+  putStrLn (areaText steps)
+  putStrLn (areaText (areaKeys [undo] steps) ++ " / " ++ areaText (areaKeys [undo, undo] steps) ++ " / " ++ areaText (areaKeys [undo, undo, undo] steps) ++ " / " ++ areaText (areaKeys [undo, undo, undo, undo] steps))
+  putStrLn (areaText (areaKeys [undo, undo, undo, redo, redo] steps))
+  putStrLn (areaText (areaKeys [undo, press 'q'] steps) ++ " | redo after an edit: " ++ areaText (areaKeys [undo, press 'q', redo] steps))
+  let erased = areaKeys [key KBackspace, key KBackspace, key KBackspace] typed2
+  putStrLn (areaText erased ++ " | " ++ areaText (areaKeys [undo] erased))
+  let afterSel = areaKeys [press 'X'] sel1
+  putStrLn (areaText afterSel ++ " | " ++ areaText (areaKeys [undo] afterSel) ++ " | " ++ areaText (areaKeys [undo, undo] afterSel))
+  let joined = areaKeys [key KBackspace] (typedArea "ab\ncd" (A.empty 20 4) `areaKeysAt` [key KHome])
+  putStrLn (areaText joined ++ " | " ++ areaText (areaKeys [undo] joined) ++ " " ++ show (lineCount (areaKeys [undo] joined)))
+  putStrLn (show (map (isJust . A.keyMsg) [shiftKey KLeft, undo, redo, Press (KChar 'w') (MkMods False True False), Press (KChar 'y') (MkMods False True False), Press (KChar 'w') (MkMods False False True), Press (KChar 'a') (MkMods False False True), shiftKey KTab]))
+  putStrLn "-- text area: combining marks, empty edits, kill with a selection, undo groups"
+  let combining = typedArea "e\x301x" (A.empty 12 3)
+  drawMarked (A.view True combining) 12 3
+  putStrLn (areaText (areaKeys [click LeftButton 1 0] combining) ++ " | " ++ areaText (areaKeys [click LeftButton 2 0] combining))
+  let accents = typedArea (pack (replicate 10 'a') ++ "\x301\x301") (A.empty 12 3)
+  drawMarked (A.view True accents) 12 3
+  let one = typedArea "a" (A.empty 20 4)
+  putStrLn (areaText (areaKeys [Press KHome (MkMods False False False), key KBackspace, undo] one))
+  putStrLn (areaText (areaKeys [undo, Press (KChar 'y') (MkMods False True False), redo] one))
+  putStrLn (areaText (areaKeys [Press (KChar 'k') (MkMods False True False), Press (KChar 'k') (MkMods False True False), undo] one))
+  let he = areaKeys [key KHome, shiftKey KRight, shiftKey KRight] hw
+  putStrLn (areaText (areaKeys [Press (KChar 'k') (MkMods False True False)] he) ++ " | " ++ areaText (areaKeys [Press (KChar 'u') (MkMods False True False)] he))
+  let nl = areaKeys [key KUp, key KEnd, shiftKey KDown] (typedArea "abc\nd" (A.empty 20 4))
+  drawMarked (A.view False nl) 20 4
+  drawMarked (A.view True nl) 20 4
+  let abc = areaKeys [shiftKey KLeft, shiftKey KLeft, shiftKey KLeft, press 'X', press 'Y'] (typedArea "abc" (A.empty 20 4))
+  putStrLn (areaText abc ++ " | " ++ areaText (areaKeys [undo] abc) ++ " | " ++ areaText (areaKeys [undo, undo] abc))
+  let six = areaKeys (replicate 3 (key KLeft)) (typedArea "abcdef" (A.empty 20 4))
+  let dels = areaKeys [key KBackspace, key KBackspace, key KDelete, key KDelete] six
+  putStrLn (areaText dels ++ " | " ++ areaText (areaKeys [undo] dels) ++ " | " ++ areaText (areaKeys [undo, undo] dels) ++ " | " ++ areaText (areaKeys [undo, undo, undo] dels))
+  putStrLn (areaText (areaKeys [shiftKey KEnter] one) ++ " | " ++ areaText (areaKeys [shiftKey KBackspace] one) ++ " | " ++ areaText (areaKeys [key KHome, shiftKey KDelete] one))

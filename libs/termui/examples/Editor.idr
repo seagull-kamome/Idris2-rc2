@@ -36,6 +36,9 @@ helpLines =
   , "Ctrl-K / Ctrl-U                      delete to the end / start of the line"
   , "Enter                                new line"
   , "mouse                                click to place the cursor, wheel to move"
+  , "Shift+arrows, drag with the mouse       select"
+  , "Alt-A / Alt-W / Ctrl-W / Ctrl-Y         select all / copy / cut / paste"
+  , "Ctrl-_ / Ctrl-^                         undo / redo"
   , "F1                                   show / hide this help"
   , "Ctrl-Z                               suspend (continue with fg)"
   , "Ctrl-C                               quit" ]
@@ -68,7 +71,7 @@ appSubs _ =
 
 main : IO ()
 main = do
-  r <- runProgram (MkProgram (MkModel (A.empty 78 20) (Sc.fromLines 8 helpLines) False, NoCmd) appUpdate appView appSubs)
+  r <- runProgram (MkProgram (MkModel (A.empty 78 20) (Sc.fromLines 12 helpLines) False, NoCmd) appUpdate appView appSubs)
   case r of
     Left e => putStrLn ("termui editor needs a terminal: " ++ show e)
     Right m => putStrLn (A.value m.text)
