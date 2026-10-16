@@ -66,11 +66,12 @@ record Props where
   pWrap : Bool            -- a row goes on in a new line when its children do not fit
   pAbsolute : Bool        -- out of the flow of its parent, placed by the offsets below
   pTop, pRight, pBottom, pLeft : Maybe Nat
+  pMarginPct : Edges      -- margins in percent of the width of the parent, added to `pMargin`
 
 public export
 defaultProps : Props
 defaultProps = MkProps Column Auto Auto 0 1 noEdges noEdges 0 NoBorder plain plain Stretch JStart False Nothing
-                       Nothing Nothing Nothing Nothing False False Nothing Nothing Nothing Nothing
+                       Nothing Nothing Nothing Nothing False False Nothing Nothing Nothing Nothing noEdges
 
 -------------------------------------------------------------------------------
 -- Tree
@@ -155,6 +156,17 @@ public export
 marginXY : (x : Nat) -> (y : Nat) -> Prop
 marginXY x y p = { pMargin := MkEdges y x y x } p
 
+||| Margins in percent of the content width of the parent (on all four sides,
+||| as in CSS), added to the margins in cells. A parent that is sized by its
+||| children does not count them.
+public export
+marginPercent : Nat -> Prop
+marginPercent n p = { pMarginPct := MkEdges n n n n } p
+
+public export
+marginPercentXY : (x : Nat) -> (y : Nat) -> Prop
+marginPercentXY x y p = { pMarginPct := MkEdges y x y x } p
+
 public export
 border : Border -> Prop
 border b p = { pBorder := b } p
@@ -215,7 +227,9 @@ minHeight n p = { pMinHeight := Just n } p
 maxHeight n p = { pMaxHeight := Just n } p
 
 ||| A row whose children do not fit in its width goes on in a new line (lines
-||| are `gap` apart). It has no effect on a column.
+||| are `gap` apart); a column whose children do not fit in its height goes on
+||| in a new column. A wrapping column needs a height (and a width, if it is to
+||| be placed by its parent's other children) of its own.
 public export
 wrapChildren : Prop
 wrapChildren p = { pWrap := True } p
