@@ -122,6 +122,18 @@ main = do
       out2 <- readUntil master "\ESC[5;1H\ESC[?25l"
       putStrLn ("output after the continue: " ++ visible out2)
       canonical slave >>= \c => putStrLn ("terminal after the continue: " ++ c)
+      -- a SIGTSTP from outside stops it the same way, with the terminal given back
+      _ <- kill pid SIGTSTP
+      Right (_, st3) <- waitpid pid WUNTRACED
+        | Left e => giveUp pid ("waitpid: " ++ show e)
+      putStrLn ("child stopped by SIGTSTP from outside: " ++ show (maybe False isStop (stoppedBy st3)))
+      out3 <- readUntil master "\ESC[?1049l"
+      putStrLn ("output until the second stop: " ++ visible out3)
+      canonical slave >>= \c => putStrLn ("terminal while stopped: " ++ c)
+      _ <- kill pid SIGCONT
+      out4 <- readUntil master "\ESC[5;1H\ESC[?25l"
+      putStrLn ("output after the second continue: " ++ visible out4)
+      canonical slave >>= \c => putStrLn ("terminal after the continue: " ++ c)
       _ <- writeString master "q"
       Right (_, st2) <- waitpid pid 0
         | Left e => giveUp pid ("waitpid: " ++ show e)

@@ -444,6 +444,7 @@ onEvent env EResume = do
   skip <- readIORef env.skipResume
   writeIORef env.skipResume 0
   when (skip == 0) $ resumeEnv env *> refreshSize env
+onEvent env ESuspend = runCmd env Suspend
 onEvent env ETerminate = do
   model <- readIORef env.modelRef
   case mapMaybe terminating (env.prog.subs model) of

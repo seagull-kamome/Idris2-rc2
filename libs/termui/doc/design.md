@@ -174,9 +174,12 @@ pending before it unblocks them. Signals blocked in the creating thread do not
 reach it, but threads started before the loop was created still get the default
 action, so create the loop in the main thread before starting others. A
 program killed by SIGKILL, SIGQUIT, or one that crashes, cannot restore the
-terminal. A SIGTSTP sent from outside stops the program as usual and leaves the terminal in
-raw mode until it is continued (the shell cannot be used meanwhile); use `Suspend` for a
-stop that restores the terminal.
+terminal.
+
+A SIGTSTP sent from outside (`kill -TSTP`; raw mode turns the key Ctrl-Z into a
+plain key, so the terminal never sends it) is blocked with the other signals and
+read as the event `ESuspend`, which the runtime answers as it does a `Suspend`:
+the terminal is restored before the program stops, so the shell can be used.
 
 ## Programs
 
@@ -211,7 +214,7 @@ the terminal restored.
   job stop) and, when continued, goes
   back to raw mode and draws the whole picture again. Raw mode turns Ctrl-Z
   into a key, so a program decides for itself to answer it with `Suspend`. A
-  SIGCONT that arrives some other way (the program was stopped from outside)
+  SIGCONT that arrives some other way (the program was stopped from outside by SIGSTOP)
   is the event `EResume` and does the same. If the terminal was resized while
   the program was stopped (nobody tells a stopped job), the new size is found
   out on the continue and `OnResize` is told.
