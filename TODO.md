@@ -1127,6 +1127,15 @@ upstreamに取り込まれたら`idris2-src`を更新して自作idris2を作り
 - `Tm`に`tm_gmtoff`/`tm_zone`が無いので、`strftime`の`%Z`/`%z`はゾーンを出さない。
 - `dlsym`で得たアドレスの呼び出しは、`CExpr`で関数ポインタ型にキャストして書く(`System.Posix.Dl`の冒頭と
   `TestLinux`の例)。型付きの呼び出しヘルパを用意するかは別の判断。
+- `CExpr`の文式`({ ...; })`はGNU拡張で、`rc2base`の8ファイル13か所で使っている(`Termios`の`getWinSize`/`setWinSize`、
+  `Epoll`、`Select`の`FD_ZERO`/`FD_SET`、`Glob`の`globfree`、`Stdio`、`Syslog`、`Linux.Process`、`HTTP.Server`)。
+  gccは問題ない。clangも文式に対応しており、`TestPosixTermios`の生成Cをclang 21で`-Werror`つきでコンパイルできることは確認した
+  (rc2の既定の警告では出ない)。問題が残る場面:
+  - `-pedantic`では`-Wgnu-statement-expression`の警告が出る(生成Cに他の`-pedantic`の警告も多く、今は使っていない)。
+  - ファイルスコープの初期化子には書けない(`%inline`の`CExpr`をCAFの静的初期化子に展開するとCのエラーになる)。
+  - MSVCなど文式のない処理系では通らない(今のrc2はそもそもPOSIX前提)。
+  対策の案: 文式が必要な箇所は、`rc2base`の`support/c`に`static inline`の小さなヘルパ関数として置き、`CExpr`からは
+  その関数を呼ぶだけにする(文式を使わず、型も引数に出る)。ほかの処理系に対応する必要が出た時に着手する。
 
 ## AI Agent作成用のライブラリを整備
 
