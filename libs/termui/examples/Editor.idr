@@ -26,7 +26,7 @@ record AppModel where
   help : Sc.Model
   showHelp : Bool
 
-data AppMsg = Edit A.Msg | Scroll Sc.Msg | Resized Nat Nat | ToggleHelp | Pause | Quit'
+data AppMsg = Edit A.Msg | Scroll Sc.Msg | Resized Nat Nat | ToggleHelp | ToggleWrap | Pause | Quit'
 
 helpLines : List String
 helpLines =
@@ -39,6 +39,7 @@ helpLines =
   , "Shift+arrows, drag with the mouse       select"
   , "Alt-A / Alt-W / Ctrl-W / Ctrl-Y         select all / copy / cut / paste"
   , "Ctrl-_ / Ctrl-^                         undo / redo"
+  , "F2                                   wrap / do not wrap long lines"
   , "F1                                   show / hide this help"
   , "Ctrl-Z                               suspend (continue with fg)"
   , "Ctrl-C                               quit" ]
@@ -48,7 +49,7 @@ appView m =
   column []
     [ box [grow 1] [ if m.showHelp then Sc.viewer Scroll m.help else A.area Edit m.text ]
     , styled (withAttr Inverse plain)
-        (" " ++ show (A.lineCount m.text) ++ " lines, " ++ show (strLength (A.value m.text)) ++ " characters  (F1: help)")
+        (" " ++ show (A.lineCount m.text) ++ " lines, " ++ show (strLength (A.value m.text)) ++ " characters  (F1: help, F2: wrap)")
     ]
 
 appUpdate : AppMsg -> AppModel -> (AppModel, Cmd AppMsg)
@@ -56,6 +57,7 @@ appUpdate (Edit e) m = ({ text $= A.update e } m, NoCmd)
 appUpdate (Scroll s) m = ({ help $= Sc.update s } m, NoCmd)
 appUpdate (Resized cols rows) m = ({ text $= A.resize cols (rows `minus` 1) } m, NoCmd)
 appUpdate ToggleHelp m = ({ showHelp $= not } m, NoCmd)
+appUpdate ToggleWrap m = ({ text $= \t => A.setWrap (not t.wrapOn) t } m, NoCmd)
 appUpdate Pause m = (m, Suspend)
 appUpdate Quit' m = (m, Quit)
 
@@ -65,6 +67,7 @@ appSubs _ =
   , OnResize Resized
   , OnInput (\i => case i of
                      Press (KF 1) _ => Just ToggleHelp
+                     Press (KF 2) _ => Just ToggleWrap
                      Press (KChar 'z') mods => if mods.ctrl then Just Pause else Nothing
                      Press (KChar 'c') mods => if mods.ctrl then Just Quit' else Nothing
                      _ => Nothing) ]

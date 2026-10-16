@@ -303,9 +303,17 @@ while the field has the focus.
   column kept (in cells) across short lines, PageUp/PageDown (which move the
   viewport by a page together with the cursor), Ctrl-Home/Ctrl-End, Backspace and
   Delete that join lines, paste with line breaks (CR LF and a lone CR count as
-  one), the mouse. Lines are not wrapped; the view scrolls horizontally and
+  one), the mouse. By default lines are not wrapped; the view scrolls horizontally and
   vertically as little as needed (a line that fits is shown from its start) and
-  has a scroll bar, whose column ignores clicks. The model keeps the number of
+  has a scroll bar, whose column ignores clicks. `setWrap True` breaks long
+  lines into rows instead (at the last space that fits, else where the width
+  runs out; a space right after the full row hangs at its end). The row width is
+  two cells less than the editor's, for the scroll bar and for the cursor at the
+  end of a row. Up/Down and PageUp/PageDown then go by a row and keep the
+  column, and clicks and drags land on rows; Home/End, Ctrl-A/E and
+  Ctrl-Home/End stay on the logical line and the text. The viewport is
+  `top` (a line) and `topRow` (a row of it), and the scroll bar counts
+  logical lines. The model keeps the number of
   lines and the cursor line, so typing, Enter, the arrows, Backspace and Delete
   cost the length of the cursor line, not of the text. Replacing a selection,
   cutting, pasting, select-all, Ctrl-Home/End, paging and clicking far from the

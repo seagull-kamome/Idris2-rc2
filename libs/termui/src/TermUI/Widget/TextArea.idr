@@ -38,7 +38,8 @@ record Snap where
 ||| other lines, the nearest first. `line` is the number of the cursor line and
 ||| `count` the number of lines. `want` is the column in cells that vertical
 ||| moves aim at. `mark` is the other end of the selection (line and column in
-||| characters), the cursor being the first.
+||| characters), the cursor being the first. With `wrapOn` the lines are broken into
+||| rows and the first row shown is row `topRow` of line `top`.
 public export
 record Model where
   constructor MkModel
@@ -53,16 +54,100 @@ record Model where
   history, future : List Snap
   lastEdit : Edit
   clip : String
+  wrapOn : Bool
+  topRow : Nat
 
 ||| The number of lines.
 export
 lineCount : Model -> Nat
 lineCount m = m.count
 
+-- The width the text of a wrapped row gets: not the scroll bar, and a cell for
+-- the cursor at the end of a line.
+wrapRoom : Model -> Nat
+wrapRoom m = max 1 (m.cells `minus` 2)
+
+-- The lengths in characters of the rows a line is broken into when it is
+-- `room` cells wide: a space that follows the characters that fit hangs at the
+-- end of the row, else after the last space that fits, else where the width
+-- runs out. A row has a character at least, and an empty line has one empty row.
+wrapRows : (room : Nat) -> List Char -> List Nat
+wrapRows room cs = if null cs then [0] else go (S (length cs)) cs
+  where
+    lastSpace : List Char -> Maybe Nat
+    lastSpace chars = go' 0 Nothing chars
+      where
+        go' : Nat -> Maybe Nat -> List Char -> Maybe Nat
+        go' _ found [] = found
+        go' i found (c :: rest) = go' (S i) (if c == ' ' then Just i else found) rest
+
+    go : Nat -> List Char -> List Nat
+    go Z _ = []
+    go _ [] = []
+    go (S fuel) rest =
+      let fitted = cutTo (max 1 room) rest
+          n = max 1 (length fitted)
+      in if null (drop n rest)
+            then [n]
+            else if take 1 (drop n rest) == [' '] && not (null (drop (n + 1) rest))
+            then (n + 1) :: go fuel (drop (n + 1) rest)
+            else case lastSpace fitted of
+                   Just k => if k > 0 then (k + 1) :: go fuel (drop (k + 1) rest) else n :: go fuel (drop n rest)
+                   Nothing => n :: go fuel (drop n rest)
+
+-- The row (and its start) of the character `idx` of a line broken into rows
+-- of these lengths.
+locateRow : List Nat -> Nat -> (Nat, Nat)
+locateRow lens idx = go lens 0 0
+  where
+    go : List Nat -> Nat -> Nat -> (Nat, Nat)
+    go [] r st = (r, st)
+    go [_] r st = (r, st)
+    go (l :: rest) r st = if idx < st + l then (r, st) else go rest (S r) (st + l)
+
+-- Start, length and last-ness of row `r`.
+rowSpan : List Nat -> Nat -> (Nat, Nat, Bool)
+rowSpan lens r = go lens r 0
+  where
+    go : List Nat -> Nat -> Nat -> (Nat, Nat, Bool)
+    go [] _ st = (st, 0, True)
+    go [l] _ st = (st, l, True)
+    go (l :: rest) Z st = (st, l, False)
+    go (l :: rest) (S k) st = go rest k (st + l)
+
+-- The cursor row and where the viewport starts with `rows` rows shown: row
+-- `r` of line `ln`, `k` rows back; `before` are the lines above, nearest first.
+walkBack : (rm : Nat) -> (k : Nat) -> (ln : Nat) -> (r : Nat) -> (before : List (List Char)) -> (Nat, Nat)
+walkBack rm k ln r before =
+  if k <= r then (ln, r `minus` k)
+  else case before of
+         [] => (0, 0)
+         (p :: ps) => walkBack rm ((k `minus` r) `minus` 1) (ln `minus` 1) (length (wrapRows rm p) `minus` 1) ps
+
+scrolledWrap : Model -> Model
+scrolledWrap m =
+  let rm = wrapRoom m
+      cur = reverse m.before ++ m.after
+      (r, _) = locateRow (wrapRows rm cur) (length m.before)
+      topLine = if m.top >= m.line then cur else fromMaybe [] (getAt ((m.line `minus` m.top) `minus` 1) m.above)
+      tr = min m.topRow (length (wrapRows rm topLine) `minus` 1)
+  in if m.line < m.top || (m.line == m.top && r < m.topRow)
+        then { top := m.line, topRow := r, left := 0 } m
+        else if (m.line `minus` m.top) <= m.rows
+        then let between = sum (map (length . wrapRows rm) (reverse (take (m.line `minus` m.top) m.above)))
+                 offset = (between + r) `minus` tr
+             in if offset < m.rows then { left := 0, topRow := tr } m else scrollTo rm r
+        else scrollTo rm r
+  where
+    scrollTo : Nat -> Nat -> Model
+    scrollTo rm r =
+      let (t, trow) = walkBack rm (m.rows `minus` 1) m.line r m.above
+      in { top := t, topRow := trow, left := 0 } m
+
 -- Scroll as little as needed to keep the cursor in the viewport; the last
 -- column is the scroll bar.
-scrolled : Model -> Model
-scrolled m =
+scrolledPlain : Model -> Model
+scrolledPlain m =
   let first = min m.top (m.count `minus` m.rows)
       top = if m.line < first then m.line
             else if m.rows > 0 && m.line >= first + m.rows then (m.line + 1) `minus` m.rows
@@ -70,17 +155,27 @@ scrolled m =
       room = m.cells `minus` 1
       lineWidth = sum (map charWidth m.before) + sum (map charWidth m.after) + 1
       left = if lineWidth <= room then 0 else leftFor room (cursorWidth m.after) m.left m.before
-  in { top := top, left := left } m
+  in { top := top, left := left, topRow := 0 } m
+
+
+scrolled : Model -> Model
+scrolled m = if m.wrapOn then scrolledWrap m else scrolledPlain m
 
 ||| An empty editor `cells` wide and `rows` high.
 export
 empty : (cells : Nat) -> (rows : Nat) -> Model
-empty cells rows = MkModel cells rows 0 0 [] [] [] [] 0 1 Nothing Nothing [] [] NoEdit ""
+empty cells rows = MkModel cells rows 0 0 [] [] [] [] 0 1 Nothing Nothing [] [] NoEdit "" False 0
 
 ||| The same editor in a viewport of another size.
 export
 resize : (cells : Nat) -> (rows : Nat) -> Model -> Model
 resize cells rows m = scrolled ({ cells := cells, rows := rows } m)
+
+||| Show the lines broken into rows as wide as the editor (`True`), or cut and
+||| scrolled sideways (`False`, the default).
+export
+setWrap : Bool -> Model -> Model
+setWrap on m = scrolled ({ wrapOn := on, left := 0, topRow := 0 } m)
 
 -- All the lines.
 flatten : Model -> List (List Char)
@@ -215,6 +310,81 @@ moveDown m =
       { above := (reverse m.before ++ m.after) :: m.above, before := reverse (take idx l)
       , after := drop idx l, below := ls, line $= S, want := Just (aim m) } m
 
+-- Where a vertical move aiming at the column `col` (in cells) lands in the row
+-- of `l` that starts at `st` and is `n` characters long: not past the row, and
+-- on its last character unless it is the last row.
+landing : List Char -> (st : Nat) -> (n : Nat) -> (isLast : Bool) -> (col : Nat) -> Nat
+landing l st n isLast col = st + min (reach col (take n (drop st l)) 0) (if isLast then n else n `minus` 1)
+
+-- Put the cursor on the character `idx` of its line.
+inLine : Nat -> Maybe Nat -> Model -> Model
+inLine idx want m =
+  let cur = reverse m.before ++ m.after in
+  { before := reverse (take idx cur), after := drop idx cur, want := want } m
+
+-- The rows shown, from row `topRow` of line `top`: the line, the text of the
+-- line, where the row starts, how long it is and whether it is the last of its line.
+shownRows : Model -> List (Nat, List Char, Nat, Nat, Bool)
+shownRows m =
+  let rm = wrapRoom m
+      lines = numbered m.top (reverse (take (m.line `minus` m.top) m.above) ++ [reverse m.before ++ m.after]
+                              ++ take m.rows m.below)
+      allRows : List (Nat, List Char, Nat, Nat, Bool)
+      allRows = case lines of
+                  [] => []
+                  (first :: rest) => drop m.topRow (rowsOf rm first) ++ concat (map (rowsOf rm) rest)
+  in take m.rows allRows
+  where
+    numbered : Nat -> List a -> List (Nat, a)
+    numbered _ [] = []
+    numbered i (x :: xs) = (i, x) :: numbered (S i) xs
+
+    spans' : Nat -> List Char -> Nat -> List Nat -> List (Nat, List Char, Nat, Nat, Bool)
+    spans' i l st [] = []
+    spans' i l st [n] = [(i, l, st, n, True)]
+    spans' i l st (n :: ns) = (i, l, st, n, False) :: spans' i l (st + n) ns
+
+    rowsOf : Nat -> (Nat, List Char) -> List (Nat, List Char, Nat, Nat, Bool)
+    rowsOf rm (i, l) = spans' i l 0 (wrapRows rm l)
+
+-- Up or down by a row of the wrapped view.
+wrapUp, wrapDown : Model -> Model
+wrapUp m =
+  let cur = reverse m.before ++ m.after
+      lens = wrapRows (wrapRoom m) cur
+      (r, st) = locateRow lens (length m.before)
+      want = fromMaybe (sum (map charWidth (take (length m.before `minus` st) m.before))) m.want
+  in if r > 0
+        then let (st', n, isLast) = rowSpan lens (r `minus` 1) in inLine (landing cur st' n isLast want) (Just want) m
+        else case m.above of
+               [] => m
+               (l :: ls) =>
+                 let lensP = wrapRows (wrapRoom m) l
+                     (st', n, isLast) = rowSpan lensP (length lensP `minus` 1)
+                     idx = landing l st' n isLast want
+                 in { above := ls, before := reverse (take idx l), after := drop idx l
+                    , below := cur :: m.below, line $= (`minus` 1), want := Just want } m
+wrapDown m =
+  let cur = reverse m.before ++ m.after
+      lens = wrapRows (wrapRoom m) cur
+      (r, st) = locateRow lens (length m.before)
+      want = fromMaybe (sum (map charWidth (take (length m.before `minus` st) m.before))) m.want
+  in if S r < length lens
+        then let (st', n, isLast) = rowSpan lens (S r) in inLine (landing cur st' n isLast want) (Just want) m
+        else case m.below of
+               [] => m
+               (l :: ls) =>
+                 let lensN = wrapRows (wrapRoom m) l
+                     (st', n, isLast) = rowSpan lensN 0
+                     idx = landing l st' n isLast want
+                 in { above := cur :: m.above, before := reverse (take idx l), after := drop idx l
+                    , below := ls, line $= S, want := Just want } m
+
+-- A vertical move: by a row when the lines are wrapped, else by a line.
+up, down : Model -> Model
+up m = if m.wrapOn then wrapUp m else moveUp m
+down m = if m.wrapOn then wrapDown m else moveDown m
+
 -------------------------------------------------------------------------------
 -- Messages
 
@@ -251,12 +421,12 @@ data Msg
 move : Msg -> Model -> Model
 move MoveLeft m = moveLeft m
 move MoveRight m = moveRight m
-move MoveUp m = moveUp m
-move MoveDown m = moveDown m
+move MoveUp m = up m
+move MoveDown m = down m
 move LineStart m = toLineStart m
 move LineEnd m = toLineEnd m
-move PageUp m = repeatN (max 1 m.rows) moveUp m
-move PageDown m = repeatN (max 1 m.rows) moveDown m
+move PageUp m = repeatN (max 1 m.rows) up m
+move PageDown m = repeatN (max 1 m.rows) down m
 move DocStart m = toLineStart (repeatN m.line moveUp ({ want := Just 0 } m))
 move DocEnd m = toLineEnd (repeatN (m.count `minus` (m.line + 1)) moveDown ({ want := Just 0 } m))
 move _ m = m
@@ -271,12 +441,24 @@ page _ = Nothing
 -- Put the cursor under the cell of the viewport.
 clickAt : Nat -> Nat -> Model -> Model
 clickAt col row m =
-  let target = min (m.count `minus` 1) (m.top + row)
-      m1 = if target < m.line then repeatN (m.line `minus` target) moveUp m
-           else repeatN (target `minus` m.line) moveDown m
-      text = reverse m1.before ++ m1.after
-      idx = reach col (drop m1.left text) m1.left
-  in { before := reverse (take idx text), after := drop idx text, want := Nothing } m1
+  if m.wrapOn then clickWrapped
+  else
+    let target = min (m.count `minus` 1) (m.top + row)
+        m1 = if target < m.line then repeatN (m.line `minus` target) moveUp m
+             else repeatN (target `minus` m.line) moveDown m
+        text = reverse m1.before ++ m1.after
+        idx = reach col (drop m1.left text) m1.left
+    in { before := reverse (take idx text), after := drop idx text, want := Nothing } m1
+  where
+    clickWrapped : Model
+    clickWrapped =
+      let shown = shownRows m in
+      case maybe (last' shown) Just (getAt row shown) of
+        Nothing => m
+        Just (i, l, st, n, isLast) =>
+          let m1 = if i < m.line then repeatN (m.line `minus` i) moveUp m
+                   else repeatN (i `minus` m.line) moveDown m
+          in inLine (landing l st n isLast col) Nothing m1
 
 -- Text with line breaks inserted at the cursor.
 insertText : String -> Model -> Model
@@ -387,10 +569,10 @@ update : Msg -> Model -> Model
 update msg m =
   let m1 = step msg m
       maxTop = m1.count `minus` m1.rows
-  in scrolled $ case page msg of
-       Just True => { top := min maxTop (m.top + m.rows) } m1
-       Just False => { top := m.top `minus` m.rows } m1
-       Nothing => m1
+  in scrolled $ case (m1.wrapOn, page msg) of
+       (False, Just True) => { top := min maxTop (m.top + m.rows) } m1
+       (False, Just False) => { top := m.top `minus` m.rows } m1
+       _ => m1
 
 ||| The text the editor keeps for pasting with `Paste`, filled by `Copy` and `Cut`.
 export
@@ -500,10 +682,12 @@ spans ((ch, st, cur) :: rest) =
                                     else (st, cur, [ch]) :: (st', cur', cs) :: more
     [] => [(st, cur, [ch])]
 
-lineView : (focused : Bool) -> Model -> Maybe ((Nat, Nat), (Nat, Nat)) -> (idx : Nat) -> List Char -> Node msg
-lineView focused m selected idx chars =
-  let len = length chars
-      sel = selectedPart selected idx len
+-- One row of the view: row `chars` of line `idx` (`len` characters long),
+-- which starts at the character `base` of its line and is the last of it or not.
+lineView : (focused : Bool) -> Model -> Maybe ((Nat, Nat), (Nat, Nat)) -> (idx : Nat) -> (len : Nat)
+        -> (base : Nat) -> (isLast : Bool) -> List Char -> Node msg
+lineView focused m selected idx len base isLast chars =
+  let sel = selectedPart selected idx len
       cursorAt = if idx == m.line then Just (length m.before) else Nothing
       cursorStyle = if focused then withAttr Inverse plain else plain
       styleOf = \k => if focused && cursorAt == Just k then cursorStyle
@@ -512,11 +696,11 @@ lineView focused m selected idx chars =
                              Nothing => plain
       onCursor = \k => focused && cursorAt == Just k
       shown = map (\(k, ch) => (if onCursor k && charWidth ch == 0 then ' ' else ch, styleOf k, onCursor k))
-                  (indexed m.left (cutTo m.cells (drop m.left chars)))
-      end = if focused && cursorAt == Just len
+                  (indexed base (cutTo m.cells chars))
+      end = if focused && isLast && cursorAt == Just len
                then [(' ', cursorStyle, True)]
                else case sel of
-                      Just (_, _, True) => [(' ', selectionStyle, False)]
+                      Just (_, _, True) => if isLast then [(' ', selectionStyle, False)] else []
                       _ => []
   in box [direction Row] (map node (spans (fitting (m.cells `minus` 1) (shown ++ end))))
   where
@@ -537,18 +721,22 @@ lineView focused m selected idx chars =
 export
 view : (focused : Bool) -> Model -> Node msg
 view focused m =
-  let aboveShown = reverse (take (m.line `minus` m.top) m.above)
-      numbered = zip' m.top (aboveShown ++ [reverse m.before ++ m.after] ++ take m.rows m.below)
-      selected = selection m
-      visible = take m.rows (map (\(i, l) => lineView focused m selected i l) numbered)
+  let selected = selection m
+      visible = if m.wrapOn
+                   then map (\(i, l, st, n, isLast) => lineView focused m selected i (length l) st isLast (take n (drop st l)))
+                            (shownRows m)
+                   else take m.rows (map (\(i, l) => lineView focused m selected i (length l) m.left True (drop m.left l)) numbered)
   in box [direction Row, width (Cells m.cells), height (Cells m.rows)]
        [ box [grow 1] visible
        , scrollBar m.rows m.count m.top
        ]
   where
-    zip' : Nat -> List a -> List (Nat, a)
-    zip' _ [] = []
-    zip' i (x :: xs) = (i, x) :: zip' (S i) xs
+    numbered : List (Nat, List Char)
+    numbered = zip' m.top (reverse (take (m.line `minus` m.top) m.above) ++ [reverse m.before ++ m.after] ++ take m.rows m.below)
+      where
+        zip' : Nat -> List a -> List (Nat, a)
+        zip' _ [] = []
+        zip' i (x :: xs) = (i, x) :: zip' (S i) xs
 
 ||| The editor as a focusable node. `wrap` turns its messages into the program's.
 export
