@@ -32,11 +32,13 @@ TESTS=(
     "TestLayout|contrib rc2base|layout, painting and frame diffing"
     "TestInput|rc2base|input decoding"
     "TestRuntime|rc2base contrib|terminal runtime on a pty"
+    "TestWidget|rc2base contrib|widgets: text input, select, spinner, progress bar, table"
+    "TestApp|rc2base contrib|text field and list together in a program on a pty"
     "TestProgram|rc2base contrib|Elm-style program, focus, commands and subscriptions"
 )
 
 # Tests built with IDRIS2_CFLAGS=-D_GNU_SOURCE (posix_openpt is hidden otherwise).
-NEEDS_GNU_SOURCE=" TestRuntime TestProgram "
+NEEDS_GNU_SOURCE=" TestRuntime TestProgram TestApp "
 
 echo "=== Check TESTS against the tests/*/ directories ==="
 listed=()
@@ -58,6 +60,12 @@ echo "=== Chez backend: type-check ==="
 
 echo "=== Install into the shared install/ prefix ==="
 (cd "$PKG_DIR" && idris2 --install termui.ipkg)
+
+echo "=== rc2 backend: build examples/Demo.idr (build only: it needs a terminal) ==="
+rm -f "$PKG_DIR/examples/build/exec/demo"
+( cd "$PKG_DIR/examples" && ulimit -v 12000000 && timeout 600 \
+    "$IDRIS2RC2" --cg rc2 -p termui -p rc2base -p contrib -o demo Demo.idr )
+[[ -x "$PKG_DIR/examples/build/exec/demo" ]] || fail "examples/Demo.idr did not build"
 
 for entry in "${TESTS[@]}"; do
     IFS='|' read -r t extra desc <<< "$entry"

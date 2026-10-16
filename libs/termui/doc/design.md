@@ -39,6 +39,9 @@ dumped as text (`frameLines`), which is how the tests look at results.
 | `TermUI.Terminal` | raw mode, alternate screen, window size, byte I/O |
 | `TermUI.Loop` | epoll loop over input, signals and timers, producing `Event`s |
 | `TermUI.Program` | Elm-style `Program`, `Cmd`, `Sub`, focus, `runProgram` |
+| `TermUI.Widget.TextInput` | single-line text field |
+| `TermUI.Widget.Select` | scrolling list with a selection |
+| `TermUI.Widget.Display` | spinner, progress bar, table |
 
 ## Layout semantics
 
@@ -181,6 +184,33 @@ whichever widget now has that index (it is clamped when there are fewer).
 The screen is redrawn after every batch of events; the differ keeps the cost
 proportional to what changed. A failed write makes the next draw a full one.
 
+## Widgets
+
+A widget is a component in the Elm sense: a `Model`, a `Msg`, an `update` and
+views. The stateful ones (`TextInput`, `Select`) also have `keyMsg : Input ->
+Maybe Msg` and a view that wraps itself in `focusable`, so a parent writes
+
+```idris
+T.field 30 Edit model.input        -- Edit : T.Msg -> AppMsg
+```
+
+and gets the focus handling, the key handling and the cursor drawing. Keys the
+widget has no meaning for (Enter, Tab, Alt-keys) are left to the focus ring and
+to the `OnInput` subscriptions, so an application decides what Enter does.
+
+- `TextInput`: insert, Backspace, Delete, arrows, Home/End, Ctrl-A/E/B/F/K/U/D/H,
+  paste (line breaks and tabs become spaces). The cursor is an inverse cell and
+  the text scrolls to keep it visible. Characters count as one cell each, so
+  wide characters are clipped at the edge of the field.
+- `Select`: Up/Down, PageUp/PageDown, Home/End on a window of `rows` lines that
+  follows the selection; the selected line is inverse when focused, marked with
+  `>` otherwise.
+- `Display`: `spinner tick` (advance `tick` from an `Every` subscription),
+  `progressBar cells percent`, and `table columns rows` (cells cut at the
+  column width).
+
+`examples/Demo.idr` puts them together.
+
 ## Roadmap
 
 1. Pure part: style, width, layout, painting, diff. Done.
@@ -188,4 +218,6 @@ proportional to what changed. A failed write makes the next draw a full one.
    timers), alternate screen, restore on exit. Done except for the mouse.
 3. Elm-style programs: `Program`, `Cmd`, `Sub`, composition by mapping
    messages, focus managed by the runtime. Done.
-4. Widgets: input field, list, scroll view, table, spinner, progress bar.
+4. Widgets: input field, list, table, spinner, progress bar. Done; a general
+   scroll view, a multi-line editor, mouse support and an asynchronous `Cmd`
+   (a worker thread posting its result) are not.

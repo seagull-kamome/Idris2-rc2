@@ -13,4 +13,7 @@ modules    = TermUI.Style,
              TermUI.Terminal,
              TermUI.Loop,
              TermUI.Program,
+             TermUI.Widget.Display,
+             TermUI.Widget.Select,
+             TermUI.Widget.TextInput,
              TermUI.Width

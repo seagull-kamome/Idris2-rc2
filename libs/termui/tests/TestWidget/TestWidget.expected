@@ -1,0 +1,41 @@
+-- text input: editing
+hello|
+helX|lo
+|helXlo
+helXlo|
+hel|lo
+|elXlo
+|
+|Xlo
+a b c|
+value=helXlo
+Enter/Tab/Alt+x ignored: [False, False, False]
+-- text input: drawing
+|helXlo
+|helXlo
+|ello
+|hello
+-- select
+Just "one"
+Just "five" top=2
+Just "five" top=2
+Just "five"
+Just "four" top=2
+Just "one" top=0
+Just "four"
+Nothing
+|  three
+|  four
+| five
+|  three
+|  four
+|> five
+-- display
+|⠋
+|⠸
+|░░░░░░░░░░
+|████░░░░░░
+|██████████
+|name   size
+|alpha  12
+|bravo- 7

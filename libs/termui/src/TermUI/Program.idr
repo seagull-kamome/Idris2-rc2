@@ -291,6 +291,10 @@ loopUntilQuit env = do
 export
 runProgramOn : (input : FileDesc) -> (output : FileDesc) -> Program model msg -> IO (Either Errno model)
 runProgramOn input output prog = do
+  True <- isatty input
+    | False => pure (Left ENOTTY)
+  True <- isatty output
+    | False => pure (Left ENOTTY)
   Right loop <- newLoop input output
     | Left e => pure (Left e)
   Right term <- openTerminal input output
