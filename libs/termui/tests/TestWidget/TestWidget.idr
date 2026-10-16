@@ -122,6 +122,46 @@ main = do
   putStrLn "-- text input: very narrow"
   drawMarked (T.view True (T.fromString 1 "abc")) 3 1
   drawMarked (T.view True (T.fromString 0 "abc")) 3 1
+  putStrLn "-- text input: selection"
+  let shiftKey' = \k => Press k (MkMods True False False)
+      alt' = \c => Press (KChar c) (MkMods False False True)
+      sel0 = keys [key KHome] (T.fromString 20 "hello world")
+      sel1 = keys [shiftKey' KRight, shiftKey' KRight, shiftKey' KRight] sel0
+  drawMarked (T.view True sel1) 14 1
+  drawMarked (T.view False sel1) 14 1
+  putStrLn (shown (keys [press 'X'] sel1))
+  putStrLn (shown (keys [key KBackspace] sel1))
+  putStrLn (shown (keys [key KLeft] sel1))
+  putStrLn (shown (keys [shiftKey' KEnd] sel0) ++ " " ++ T.value (keys [shiftKey' KEnd, key KDelete] sel0))
+  let sel2 = keys [alt' 'a'] sel0
+  drawMarked (T.view True sel2) 14 1
+  let copied = keys [shiftKey' KRight, shiftKey' KRight, shiftKey' KRight, shiftKey' KRight, shiftKey' KRight, alt' 'w'] sel0
+  putStrLn ("clipboard=" ++ T.clipboard copied ++ " value=" ++ T.value copied)
+  putStrLn (shown (keys [key KEnd, ctrl 'y'] copied))
+  let cut = keys [shiftKey' KRight, shiftKey' KRight, ctrl 'w', key KEnd, ctrl 'y'] sel0
+  putStrLn (shown cut ++ " clipboard=" ++ T.clipboard cut)
+  putStrLn (shown (keys [shiftKey' KRight, press 'a', press 'b'] sel0))
+  putStrLn (shown (keys [shiftKey' KRight, shiftKey' KRight, Paste "XYZ"] sel0))
+  putStrLn "-- text input: undo"
+  let u0 = typed "abc def" (T.empty 20)
+      u1 = keys [ctrl '_'] u0
+  putStrLn (shown u1)
+  putStrLn (shown (keys [ctrl '_'] u1))
+  putStrLn (shown (keys [ctrl '^'] (keys [ctrl '_', ctrl '_'] u1)))
+  putStrLn (shown (keys [ctrl '_'] (keys [key KBackspace, key KBackspace] u0)))
+  putStrLn (shown (keys [ctrl '_'] (keys [key KLeft, press 'X'] u0)))
+  putStrLn (shown (keys [ctrl '_'] (keys [key KHome, shiftKey' KRight, shiftKey' KRight, ctrl 'w'] u0)))
+  putStrLn (shown (keys [ctrl '_'] (keys [key KEnd] (T.empty 20))))
+  putStrLn "-- text input: the mouse"
+  let mouse = \a, c => Mouse (MkMouseEvent LeftButton a c 0 noMods)
+      m3 = keys [mouse ButtonDown 2, mouse Drag 7] (T.fromString 20 "hello world")
+  drawMarked (T.view True m3) 14 1
+  putStrLn (shown m3)
+  putStrLn (shown (keys [mouse ButtonDown 2, mouse Drag 7, mouse ButtonDown 9] (T.fromString 20 "hello world")))
+  putStrLn "-- text input: selection in a scrolled field"
+  let sc = keys [ctrl 'a', shiftKey' KRight, shiftKey' KRight] (T.fromString 8 "hello world!")
+  drawMarked (T.view True sc) 10 1
+  drawMarked (T.view True (keys [alt' 'a'] (T.fromString 8 "hello world!"))) 10 1
   putStrLn "-- select"
   let items = S.fromList 3 ["one", "two", "three", "four", "five"]
   putStrLn (show (current items))
