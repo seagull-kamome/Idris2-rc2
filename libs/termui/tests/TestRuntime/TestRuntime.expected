@@ -31,6 +31,6 @@ Escape arrived
 [ETerminate]
 -- a frame
 terminal output: <ESC>[0m<ESC>[2J<ESC>[1;1H<ESC>[0mhi<ESC>[0m
-terminal output: <ESC>[0m<ESC>[?2004l<ESC>[?25h<ESC>[?1049l
+terminal output: <ESC>[0m<ESC>[?1002l<ESC>[?1006l<ESC>[?2004l<ESC>[?25h<ESC>[?1049l
 restored: canonical=True echo=True isig=True
 done

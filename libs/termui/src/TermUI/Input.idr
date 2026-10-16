@@ -35,9 +35,25 @@ noMods : Mods
 noMods = MkMods False False False
 
 public export
+data MouseButton = LeftButton | MiddleButton | RightButton | WheelUp | WheelDown | NoButton
+
+public export
+data MouseAction = ButtonDown | ButtonUp | Drag | Move
+
+||| A mouse report; the position is in cells, from 0 at the top left.
+public export
+record MouseEvent where
+  constructor MkMouseEvent
+  button : MouseButton
+  action : MouseAction
+  column, row : Nat
+  mouseMods : Mods
+
+public export
 data Input
   = Press Key Mods
   | Paste String
+  | Mouse MouseEvent
 
 export
 Eq Key where
@@ -69,9 +85,29 @@ Eq Mods where
   MkMods a b c == MkMods a' b' c' = a == a' && b == b' && c == c'
 
 export
+Eq MouseEvent where
+  MkMouseEvent b a c r m == MkMouseEvent b' a' c' r' m' =
+    tagB b == tagB b' && tagA a == tagA a' && c == c' && r == r' && m == m'
+    where
+      tagB : MouseButton -> Nat
+      tagB LeftButton = 0
+      tagB MiddleButton = 1
+      tagB RightButton = 2
+      tagB WheelUp = 3
+      tagB WheelDown = 4
+      tagB NoButton = 5
+
+      tagA : MouseAction -> Nat
+      tagA ButtonDown = 0
+      tagA ButtonUp = 1
+      tagA Drag = 2
+      tagA Move = 3
+
+export
 Eq Input where
   Press k m == Press k' m' = k == k' && m == m'
   Paste a == Paste b = a == b
+  Mouse a == Mouse b = a == b
   _ == _ = False
 
 export
@@ -100,9 +136,28 @@ Show Mods where
     (if c then "Ctrl+" else "") ++ (if a then "Alt+" else "") ++ (if s then "Shift+" else "")
 
 export
+Show MouseEvent where
+  show (MkMouseEvent b a c r m) = show m ++ btn b ++ " " ++ act a ++ " at " ++ show c ++ "," ++ show r
+    where
+      btn : MouseButton -> String
+      btn LeftButton = "Left"
+      btn MiddleButton = "Middle"
+      btn RightButton = "Right"
+      btn WheelUp = "WheelUp"
+      btn WheelDown = "WheelDown"
+      btn NoButton = "NoButton"
+
+      act : MouseAction -> String
+      act ButtonDown = "down"
+      act ButtonUp = "up"
+      act Drag = "drag"
+      act Move = "move"
+
+export
 Show Input where
   show (Press k m) = show m ++ show k
   show (Paste s) = "Paste " ++ show s
+  show (Mouse e) = "Mouse " ++ show e
 
 -------------------------------------------------------------------------------
 -- Parser
@@ -213,6 +268,26 @@ splitPaste xs =
   map (\(a, b) => (map cast a, map cast b))
       (splitAtMarker pasteEnd (map cast xs))
 
+-- ESC [ < code ; column ; row M (press, motion) or m (release).
+sgrMouse : (released : Bool) -> List Nat -> Maybe Input
+sgrMouse released [code, col, r] =
+  let c = cast {to = Integer} code
+      bits = mod c 4
+      wheel = mod (div c 64) 2 == 1
+      motion = mod (div c 32) 2 == 1
+      mods = MkMods (mod (div c 4) 2 == 1) (mod (div c 16) 2 == 1) (mod (div c 8) 2 == 1)
+      button = if wheel then (if bits == 0 then WheelUp else if bits == 1 then WheelDown else NoButton)
+               else if bits == 0 then LeftButton
+               else if bits == 1 then MiddleButton
+               else if bits == 2 then RightButton
+               else NoButton
+      action = if released then ButtonUp
+               else if motion then (if bits == 3 then Move else Drag)
+               else ButtonDown
+  in if wheel && bits > 1 then Nothing
+     else Just (Mouse (MkMouseEvent button action (col `minus` 1) (r `minus` 1) mods))
+sgrMouse _ _ = Nothing
+
 -- `bs` follows ESC [.
 csiStep : Bool -> List Int -> Step
 csiStep final bs =
@@ -221,6 +296,8 @@ csiStep final bs =
     [] => if final then Got Nothing [] else Need
     (f :: after) =>
       if f < 0x40 || f > 0x7E then Got Nothing rest
+      else if (f == 77 || f == 109) && head' pb == Just 60
+        then Got (sgrMouse (f == 109) (numbers pb)) after
       else if f == 126 && pb == [50, 48, 48]
         then case splitPaste after of
                Just (text, post) => Got (Just (Paste (pack (decodeBytes text)))) post

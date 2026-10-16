@@ -30,8 +30,9 @@ record Model where
   count : Integer
   ticks : Nat
   keys : List String
+  mouse : List String
 
-data Msg = Inc | Dec | Tick | Typed String | Bump Integer | SetCount Integer | Stop | Noop
+data Msg = Inc | Dec | Tick | Typed String | Bump Integer | SetCount Integer | Stop | Noop | Mouse' String
 
 visible : List Bits8 -> String
 visible bs = concatMap esc (decode bs)
@@ -89,13 +90,13 @@ view m =
 
 -- Enter on the first button, Tab, Enter on the second twice, a typed key,
 -- Shift+Tab, Space on the first, Tab twice to the third (an Enter it ignores)
--- and two "+" in one read.
+-- two "+" in one read and a click with the wheel turned.
 script : String
-script = "\r\t\r\rx\ESC[Z \t\t\r++"
+script = "\r\t\r\rx\ESC[Z \t\t\r++\ESC[<0;5;3M\ESC[<0;5;3m\ESC[<65;1;1M"
 
 program : (master : FileDesc) -> Program Model Msg
 program master = MkProgram
-  (MkModel 0 0 [], Perform (ignore (writeString master script) >> pure Noop))
+  (MkModel 0 0 [] [], Perform (ignore (writeString master script) >> pure Noop))
   update
   view
   subs
@@ -106,6 +107,7 @@ program master = MkProgram
     update (Bump n) m = ({ count $= (+ n) } m, NoCmd)
     update (SetCount n) m = ({ count := n } m, NoCmd)
     update (Typed k) m = ({ keys $= (k ::) } m, NoCmd)
+    update (Mouse' k) m = ({ mouse $= (k ::) } m, NoCmd)
     update Stop m = (m, Quit)
     update Noop m = (m, if m.ticks == 0 then After 100 Tick else NoCmd)
     update Tick m =
@@ -114,7 +116,8 @@ program master = MkProgram
              , Perform (ignore (writeString master "qy") >> pure Noop) ])
 
     subs : Model -> List (Sub Msg)
-    subs _ = [ OnInput (\i => case i of
+    subs _ = [ OnMouse (\e => Just (Mouse' (show e)))
+             , OnInput (\i => case i of
                                  Press (KChar 'q') _ => Just Stop
                                  Press (KChar c) m => if m.ctrl then Nothing else Just (Typed (singleton c))
                                  _ => Nothing) ]
@@ -134,6 +137,7 @@ main = do
   Right model <- runProgramOn slave slave (program master)
     | Left e => putStrLn ("runProgram: " ++ show e)
   putStrLn ("count=" ++ show model.count ++ " ticks=" ++ show model.ticks
-            ++ " keys=" ++ show (reverse model.keys))
+            ++ " keys=" ++ show (reverse model.keys)
+            ++ " mouse=" ++ show (reverse model.mouse))
   out <- readUntil master "\ESC[?1049l"
   putStrLn (visible out)

@@ -129,6 +129,7 @@ keyMsg (Press key mods) =
             KHome => Just MoveHome
             KEnd => Just MoveEnd
             _ => Nothing
+keyMsg _ = Nothing
 
 -------------------------------------------------------------------------------
 -- View

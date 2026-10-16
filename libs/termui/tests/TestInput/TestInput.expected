@@ -38,8 +38,16 @@
 "\ESC[200~partial" -> []  rest=[27, 91, 50, 48, 48, 126, 112, 97, 114, 116, 105, 97, 108]
 "\ESC[200~partial" (final) -> [Paste "partial"]
 "\ESC[200~\ESC[201~" -> [Paste ""]
+-- mouse
+"\ESC[<0;10;5M\ESC[<0;10;5m" -> [Mouse Left down at 9,4, Mouse Left up at 9,4]
+"\ESC[<1;1;1M\ESC[<2;3;4M" -> [Mouse Middle down at 0,0, Mouse Right down at 2,3]
+"\ESC[<32;7;8M\ESC[<35;7;9M" -> [Mouse Left drag at 6,7, Mouse NoButton move at 6,8]
+"\ESC[<64;1;1M\ESC[<65;2;2M\ESC[<66;2;2M" -> [Mouse WheelUp down at 0,0, Mouse WheelDown down at 1,1]
+"\ESC[<4;1;1M\ESC[<8;1;1M\ESC[<16;1;1M\ESC[<28;1;1M" -> [Mouse Shift+Left down at 0,0, Mouse Alt+Left down at 0,0, Mouse Ctrl+Left down at 0,0, Mouse Ctrl+Alt+Shift+Left down at 0,0]
+"\ESC[<0;10;5" -> []  rest=[27, 91, 60, 48, 59, 49, 48, 59, 53]
+"\ESC[<0;10M" -> []
+"x\ESC[<0;120;45My" -> [KChar 'x', Mouse Left down at 119,44, KChar 'y']
 -- ignored
-"\ESC[<0;10;5Mq" -> [KChar 'q']
 "\ESC[99~q" -> [KChar 'q']
 "\ESC[?1;2cq" -> [KChar 'q']
 -- split across reads

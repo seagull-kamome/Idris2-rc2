@@ -41,6 +41,7 @@ data Cmd msg
 public export
 data Sub msg
   = OnInput (Input -> Maybe msg)       -- keys the focused node did not take, and pastes
+  | OnMouse (MouseEvent -> Maybe msg)  -- also turns mouse reporting on
   | OnResize (Nat -> Nat -> msg)
   | Every Nat Nat msg                  -- a key naming the timer, the period in ms, the message
   | OnTerminate msg                    -- SIGINT, SIGTERM or SIGHUP; without it they quit
@@ -57,6 +58,7 @@ mapCmd f (Perform io) = Perform (map f io)
 export
 mapSub : (a -> b) -> Sub a -> Sub b
 mapSub f (OnInput g) = OnInput (map f . g)
+mapSub f (OnMouse g) = OnMouse (map f . g)
 mapSub f (OnResize g) = OnResize (\c, r => f (g c r))
 mapSub f (Every k ms m) = Every k ms (f m)
 mapSub f (OnTerminate m) = OnTerminate (f m)
@@ -113,6 +115,7 @@ record Env model msg where
   oneShots : IORef (List (Nat, msg))
   nextShot : IORef Nat
   everys : IORef (List (Nat, Nat))        -- (key, period) of the running timers
+  mouseOn : IORef Bool
 
 everyId : Nat -> Nat
 everyId k = 2 * k
@@ -152,7 +155,16 @@ syncTimers env = do
   traverse_ (\(k, _) => cancelTimer env.loop (everyId k)) (filter (\a => not (elem a wanted)) active)
   traverse_ (\(k, ms) => ignore (addTimer env.loop (everyId k) ms)) (filter (\w => not (elem w active)) wanted)
   writeIORef env.everys wanted
+  let wantMouse = any isMouse (env.prog.subs model)
+  was <- readIORef env.mouseOn
+  when (wantMouse /= was) $ do
+    setMouseReporting env.output wantMouse
+    writeIORef env.mouseOn wantMouse
   where
+    isMouse : Sub msg -> Bool
+    isMouse (OnMouse _) = True
+    isMouse _ = False
+
     period : Sub msg -> Maybe (Nat, Nat)
     period (Every k ms _) = Just (k, ms)
     period _ = Nothing
@@ -200,6 +212,13 @@ moveFocus env forward = do
     writeIORef env.focus (if forward then (if f + 1 >= n then 0 else f + 1) else (if f == 0 then n `minus` 1 else f `minus` 1))
 
 onInput : Env model msg -> Input -> IO ()
+onInput env (Mouse e) = do
+  model <- readIORef env.modelRef
+  traverse_ (dispatch env) (mapMaybe fromSub (env.prog.subs model))
+  where
+    fromSub : Sub msg -> Maybe msg
+    fromSub (OnMouse g) = g e
+    fromSub _ = Nothing
 onInput env inp = do
   hs <- readIORef env.handlers
   f <- readIORef env.focus
@@ -303,7 +322,7 @@ runProgramOn input output prog = do
   size <- terminalSize term
   env <- MkEnv prog loop output <$> newIORef model0 <*> newIORef 0 <*> newIORef []
            <*> newIORef Nothing <*> newIORef size <*> newIORef False
-           <*> newIORef [] <*> newIORef 0 <*> newIORef []
+           <*> newIORef [] <*> newIORef 0 <*> newIORef [] <*> newIORef False
   runCmd env cmd0
   q <- readIORef env.quit
   when (not q) $ loopUntilQuit env
