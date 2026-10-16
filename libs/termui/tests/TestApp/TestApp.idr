@@ -47,13 +47,13 @@ appView : AppModel -> Node AppMsg
 appView m =
   column [gap 1]
     [ box [border Single] [T.field Edit (Just Add) m.input]
-    , box [border Single, height (Cells 5)] [S.list 3 Pick m.items]
+    , box [border Single, height (Cells 5)] [S.list Pick m.items]
     , box [border Single] [A.area Note m.notes]
     ]
 
 appUpdate : (master : FileDesc) -> AppMsg -> AppModel -> (AppModel, Cmd AppMsg)
 appUpdate _ (Edit e) m = ({ input $= T.update e } m, NoCmd)
-appUpdate _ (Pick p) m = ({ items $= S.update 3 p } m, NoCmd)
+appUpdate _ (Pick p) m = ({ items $= S.update p } m, NoCmd)
 appUpdate _ (Note n) m = ({ notes $= A.update n } m, NoCmd)
 appUpdate _ Add m =
   let v = T.value m.input in
@@ -119,7 +119,7 @@ main : IO ()
 main = do
   Right devnull <- openFile "/dev/null" (2 .|. O_NOCTTY) 0
     | Left e => putStrLn ("open /dev/null: " ++ show e)
-  r0 <- runProgramOn devnull devnull (MkProgram (MkModel (T.empty 12) (S.fromList []) (A.empty 20 3), NoCmd) (appUpdate devnull) appView appSubs)
+  r0 <- runProgramOn devnull devnull (MkProgram (MkModel (T.empty 12) (S.fromList 3 []) (A.empty 20 3), NoCmd) (appUpdate devnull) appView appSubs)
   putStrLn ("not a terminal: " ++ either show (const "ran") r0)
   Right master <- posixOpenpt (2 .|. O_NOCTTY)
     | Left e => putStrLn ("posixOpenpt: " ++ show e)
@@ -131,7 +131,7 @@ main = do
     | Left e => putStrLn ("open slave: " ++ show e)
   _ <- setWinSize master 30 20
   let prog = MkProgram
-               (MkModel (T.empty 12) (S.fromList []) (A.empty 20 3), Perform (pure (Phase 0)))
+               (MkModel (T.empty 12) (S.fromList 3 []) (A.empty 20 3), Perform (pure (Phase 0)))
                (appUpdate master)
                appView
                appSubs

@@ -15,7 +15,9 @@ import TermUI.Node
 import TermUI.Style
 import TermUI.Widget.Display
 import TermUI.Widget.Scroll as Sc
+import TermUI.Widget.Scrolling as Sc
 import TermUI.Widget.Select as S
+import TermUI.Widget.Table as Tb
 import TermUI.Widget.TextArea as A
 import TermUI.Widget.TextInput as T
 
@@ -118,33 +120,33 @@ main = do
   drawMarked (T.view True (T.fromString 1 "abc")) 3 1
   drawMarked (T.view True (T.fromString 0 "abc")) 3 1
   putStrLn "-- select"
-  let items = S.fromList ["one", "two", "three", "four", "five"]
+  let items = S.fromList 3 ["one", "two", "three", "four", "five"]
   putStrLn (show (current items))
-  let down = S.update 3 Down
+  let down = S.update Down
   let s3 = down (down (down (down items)))
   putStrLn (show (current s3) ++ " top=" ++ show s3.top)
-  let s5 = S.update 3 Down s3
+  let s5 = S.update Down s3
   putStrLn (show (current s5) ++ " top=" ++ show s5.top)
-  let up = S.update 3 Up s5
+  let up = S.update Up s5
   putStrLn (show (current up) ++ " top=" ++ show up.top)
-  putStrLn (show (current (S.update 3 First s5)) ++ " top=" ++ show (S.update 3 First s5).top)
-  putStrLn (show (current (S.update 3 PageDown items)))
-  putStrLn (show (current (S.update 3 PageUp items)))
-  putStrLn (show (current (S.update 3 Down (S.fromList []))))
+  putStrLn (show (current (S.update First s5)) ++ " top=" ++ show (S.update First s5).top)
+  putStrLn (show (current (S.update PageDown items)))
+  putStrLn (show (current (S.update PageUp items)))
+  putStrLn (show (current (S.update Down (S.fromList 3 []))))
   putStrLn "-- select: items replaced"
   let shrunk = S.setItems ["a", "b"] s5
   putStrLn (show (current shrunk) ++ " top=" ++ show shrunk.top)
   let stale = { items := ["a", "b"] } s5
-  let fixed = S.update 3 Up stale
+  let fixed = S.update Up stale
   putStrLn (show (current fixed) ++ " top=" ++ show fixed.top)
   putStrLn (show (current (S.setItems ["one", "two", "three", "four", "five", "six"] s3)))
   putStrLn "-- select: window"
-  let zero = S.update 0 Down items
+  let zero = S.update Down (S.resize 0 items)
   putStrLn (show (current zero) ++ " top=" ++ show zero.top)
-  draw (S.view 3 True ({ selected := 4, top := 0 } items)) 10 3
-  draw (S.view 3 True s3) 10 3
-  draw (S.view 3 False s3) 10 3
-  draw (S.view 0 True s3) 10 1
+  draw (S.view True ({ selected := 4, top := 0 } items)) 10 3
+  draw (S.view True s3) 10 3
+  draw (S.view False s3) 10 3
+  draw (S.view True (S.resize 0 s3)) 10 1
   putStrLn ("keys: " ++ show (map (isJust . S.keyMsg)
     [ key KUp, key KDown, key KPageUp, key KPageDown, key KHome, key KEnd, key KEnter, key KTab
     , Press KUp (MkMods False False True), Press KDown (MkMods False True False), press 'j' ]))
@@ -168,21 +170,21 @@ main = do
   let wideField = T.fromString 8 "あいう"
   putStrLn (shown (keys [click LeftButton 3 0] wideField))
   putStrLn (shown (keys [click LeftButton 2 0] wideField))
-  let list = S.fromList ["one", "two", "three", "four", "five"]
-  putStrLn (show (S.current (S.update 3 (ClickRow 2) list)))
-  putStrLn (show (S.current (S.update 3 (ClickRow 9) list)))
-  let scrolledList = S.update 3 Down (S.update 3 Down (S.update 3 Down (S.update 3 Down list)))
-  putStrLn (show (S.current (S.update 3 (ClickRow 0) scrolledList)) ++ " top=" ++ show scrolledList.top)
+  let list = S.fromList 3 ["one", "two", "three", "four", "five"]
+  putStrLn (show (S.current (S.update (ClickRow 2) list)))
+  putStrLn (show (S.current (S.update (ClickRow 9) list)))
+  let scrolledList = S.update Down (S.update Down (S.update Down (S.update Down list)))
+  putStrLn (show (S.current (S.update (ClickRow 0) scrolledList)) ++ " top=" ++ show scrolledList.top)
   putStrLn (show (map (isJust . S.keyMsg) [click LeftButton 0 1, click RightButton 0 1, Mouse (MkMouseEvent WheelDown ButtonDown 0 0 noMods)]))
   putStrLn "-- scroll view"
-  let doc = Sc.fromLines (map (\i => "line " ++ show i) (the (List Nat) [1 .. 10]))
-  draw (Sc.view 4 doc) 12 4
-  let d2 = Sc.update 4 PageDown doc
+  let doc = Sc.fromLines 4 (map (\i => "line " ++ show i) (the (List Nat) [1 .. 10]))
+  draw (Sc.view doc) 12 4
+  let d2 = Sc.update PageDown doc
   putStrLn ("top=" ++ show d2.top)
-  draw (Sc.view 4 d2) 12 4
-  putStrLn ("top=" ++ show (Sc.update 4 ToEnd doc).top ++ " " ++ show (Sc.update 4 (LineDown 99) doc).top ++ " " ++ show (Sc.update 4 (LineUp 5) d2).top)
-  draw (Sc.view 4 (Sc.update 4 ToEnd doc)) 12 4
-  draw (Sc.view 4 (Sc.fromLines ["a", "b"])) 12 4
+  draw (Sc.view d2) 12 4
+  putStrLn ("top=" ++ show (Sc.update ToEnd doc).top ++ " " ++ show (Sc.update (LineDown 99) doc).top ++ " " ++ show (Sc.update (LineUp 5) d2).top)
+  draw (Sc.view (Sc.update ToEnd doc)) 12 4
+  draw (Sc.view (Sc.fromLines 4 ["a", "b"])) 12 4
   putStrLn (show (map (isJust . Sc.keyMsg) [key KUp, key KPageDown, Mouse (MkMouseEvent WheelDown ButtonDown 0 0 noMods), press 'x', ctrl 'c']))
   putStrLn "-- text area: editing"
   let a0 = A.empty 20 4
@@ -256,9 +258,39 @@ main = do
   let pg3 = areaKeys [key KPageDown] (areaKeys [Press KHome (MkMods False True False)] nine)
   putStrLn ("top=" ++ show pg3.top ++ " " ++ show (areaText pg3))
   putStrLn (show (A.value (A.fromString 20 4 "a\n")) ++ " " ++ show (A.value (areaKeys [Paste ""] a0)))
-  putStrLn (show (map (\r => (S.current (S.update 5 (ClickRow r) (S.fromList ["a", "b"])))) [0, 1, 4]))
+  putStrLn (show (map (\r => (S.current (S.update (ClickRow r) (S.fromList 5 ["a", "b"])))) [0, 1, 4]))
   putStrLn "-- review: a very long line"
   let huge = A.fromString 80 24 (pack (replicate 100000 'x'))
   putStrLn (show huge.left ++ " " ++ show (areaKeys [Press (KChar 'a') (MkMods False True False)] huge).left ++ " " ++ show (areaKeys [Press (KChar 'e') (MkMods False True False)] (areaKeys [Press (KChar 'a') (MkMods False True False)] huge)).left)
   let hugeField = T.fromString 80 (pack (replicate 100000 'x'))
   putStrLn (show hugeField.offset)
+  putStrLn "-- select: the window is in the model"
+  let five = S.fromList 3 ["one", "two", "three", "four", "five"]
+  let atEnd = S.update Last five
+  putStrLn (show (current atEnd) ++ " rows=" ++ show atEnd.rows ++ " top=" ++ show atEnd.top)
+  let bigger = S.resize 5 atEnd
+  putStrLn ("resize 5: top=" ++ show bigger.top)
+  let smaller = S.resize 2 atEnd
+  putStrLn ("resize 2: top=" ++ show smaller.top ++ " " ++ show (current smaller))
+  draw (S.view True smaller) 10 2
+  draw (S.view True bigger) 10 5
+  let grown = S.setItems ["a", "b", "c", "d", "e", "f", "g", "h"] atEnd
+  putStrLn (show (current grown) ++ " rows=" ++ show grown.rows ++ " top=" ++ show grown.top)
+  putStrLn "-- select: the bar is not part of the list"
+  draw (S.list (const ()) five) 10 3
+  putStrLn "-- table that scrolls"
+  let rowsData = map (\i => ["row " ++ show i, show (i * 10)]) (the (List Nat) [1 .. 7])
+  let tb = Tb.fromRows [("name", 6), ("size", 4)] 3 rowsData
+  draw (Tb.view tb) 12 4
+  let tb2 = Tb.update PageDown tb
+  putStrLn ("top=" ++ show tb2.top)
+  draw (Tb.view tb2) 12 4
+  let tb3 = Tb.update ToEnd tb
+  putStrLn ("top=" ++ show tb3.top)
+  draw (Tb.view tb3) 12 4
+  putStrLn ("top=" ++ show (Tb.update (LineDown 99) tb).top ++ " " ++ show (Tb.update (LineUp 9) tb3).top)
+  let tb4 = Tb.resize 5 tb3
+  putStrLn ("resize 5: top=" ++ show tb4.top)
+  draw (Tb.view tb4) 12 6
+  draw (Tb.view (Tb.fromRows [("a", 3)] 3 [["1"]])) 6 4
+  draw (Tb.table (const ()) tb) 12 4

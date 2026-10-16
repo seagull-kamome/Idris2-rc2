@@ -43,6 +43,8 @@ dumped as text (`frameLines`), which is how the tests look at results.
 | `TermUI.Widget.TextArea` | multi-line text editor |
 | `TermUI.Widget.LineEdit` | what the text field and the editor share (characters kept, horizontal scrolling, cell to character) |
 | `TermUI.Widget.Scroll` | read-only scrolling view of lines, with a scroll bar |
+| `TermUI.Widget.Scrolling` | what the scrolling widgets share: the messages, the arithmetic, the keys |
+| `TermUI.Widget.Table` | table that scrolls under a fixed header |
 | `TermUI.Widget.ScrollBar` | the scroll bar |
 | `TermUI.Widget.Select` | scrolling list with a selection |
 | `TermUI.Widget.Display` | spinner, progress bar, table |
@@ -175,7 +177,9 @@ the terminal restored.
   (signals wait too) until it returns. After a `Quit` the rest of the batch, the
   queue and the events that arrived with it are dropped.
 - `Suspend` stops the program as a shell's Ctrl-Z would: the terminal is
-  restored, the program stops itself with SIGSTOP and, when continued, goes
+  restored, the whole process group is stopped with SIGSTOP (so a program started
+  by another one, as `idris2 --exec` does, stops with it and the shell sees the
+  job stop) and, when continued, goes
   back to raw mode and draws the whole picture again. Raw mode turns Ctrl-Z
   into a key, so a program decides for itself to answer it with `Suspend`. A
   SIGCONT that arrives some other way (the program was stopped from outside)
@@ -279,13 +283,19 @@ while the field has the focus.
 - `Scroll`: a read-only list of lines in a window, scrolled by the arrows,
   PageUp/PageDown, Home/End and the wheel (three lines a notch); the bar on its
   right shows the position. `ScrollBar.scrollBar` is the bar alone.
-- `Select`: Up/Down, PageUp/PageDown, Home/End, a click on a line (a click below the last item is ignored) on a window of `rows` lines that
-  follows the selection; the selected line is inverse when focused, marked with
-  `>` otherwise. Pass the same `rows` to `update` and `view`; `view` also
-  repairs a `top` that no longer shows the selection, and `update` clamps a
-  selection left out of range by changing the items directly (`setItems` keeps
-  the selection where it still makes sense). Keys with Ctrl, Alt or Shift are
-  not taken.
+- `Table`: a header that stays and a body that scrolls like `Scroll` (same messages
+  and keys), with the bar on the right of the body. `Display.table` is the static
+  version and `Display.tableRow` one row of either.
+
+The height of the window of `Select`, `Scroll`, `Table` and `TextArea` is part of
+their model (`fromList rows ...`, `resize rows`), so `update` and `view` cannot be
+given different ones.
+- `Select`: Up/Down, PageUp/PageDown, Home/End, a click on a line (a click below
+  the last item is ignored) and the wheel, on a window that follows the selection;
+  the selected line is inverse when focused, marked with `>` otherwise. A scroll
+  bar sits on its right, outside of what takes keys and clicks. Keys with Ctrl,
+  Alt or Shift are not taken. `setItems` keeps the selection where it still makes
+  sense and `resize` changes the height of the window.
 - `Display`: `spinner tick` (advance `tick` from an `Every` subscription),
   `progressBar cells percent` (never wraps), and `table columns rows` (cells cut
   at the column width, missing cells empty, extra cells dropped).

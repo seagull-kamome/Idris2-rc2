@@ -1,4 +1,5 @@
-||| A read-only scrolling view of lines of text with a scroll bar. See
+||| A read-only scrolling view of lines of text with a scroll bar; the messages
+||| (`Msg`, `LineDown` ...) are those of `TermUI.Widget.Scrolling`. See
 ||| libs/termui/doc/design.md ("Widgets").
 |||
 ||| Copyright 2026, Hattori,Hiroki. All rights reserved.
@@ -9,6 +10,7 @@ import Data.List
 import TermUI.Input
 import TermUI.Node
 import TermUI.Style
+import public TermUI.Widget.Scrolling
 import TermUI.Widget.ScrollBar
 
 %default total
@@ -19,63 +21,36 @@ import TermUI.Widget.ScrollBar
 public export
 record Model where
   constructor MkModel
+  rows : Nat
   lines : List String
   top : Nat
 
+||| A viewer showing `rows` lines at a time.
 export
-fromLines : List String -> Model
-fromLines ls = MkModel ls 0
+fromLines : (rows : Nat) -> List String -> Model
+fromLines rows ls = MkModel rows ls 0
 
-public export
-data Msg = LineUp Nat | LineDown Nat | PageUp | PageDown | ToStart | ToEnd
-
-||| Scroll; `rows` is the height of the window. The window never goes past the
-||| last line.
+||| Scroll.
 export
-update : (rows : Nat) -> Msg -> Model -> Model
-update rows msg (MkModel ls cur) =
-  let maxTop = length ls `minus` rows
-      target : Nat
-      target = case msg of
-                 LineUp k => cur `minus` k
-                 LineDown k => cur + k
-                 PageUp => cur `minus` rows
-                 PageDown => cur + rows
-                 ToStart => 0
-                 ToEnd => maxTop
-  in MkModel ls (min maxTop target)
+update : Msg -> Model -> Model
+update msg m = { top := scrollTop m.rows (length m.lines) m.top msg } m
 
-||| Arrows, PageUp/PageDown, Home/End and the wheel (three lines a notch).
+||| The same viewer with a window of another height.
 export
-keyMsg : Input -> Maybe Msg
-keyMsg (Press key mods) =
-  if mods.alt || mods.ctrl || mods.shift then Nothing
-  else case key of
-         KUp => Just (LineUp 1)
-         KDown => Just (LineDown 1)
-         KPageUp => Just PageUp
-         KPageDown => Just PageDown
-         KHome => Just ToStart
-         KEnd => Just ToEnd
-         _ => Nothing
-keyMsg (Mouse e) =
-  case e.button of
-    WheelUp => Just (LineUp 3)
-    WheelDown => Just (LineDown 3)
-    _ => Nothing
-keyMsg _ = Nothing
+resize : (rows : Nat) -> Model -> Model
+resize rows m = { rows := rows, top := min m.top (length m.lines `minus` rows) } m
 
-||| The window of `rows` lines with the scroll bar on its right.
+||| The window with the scroll bar on its right.
 export
-view : (rows : Nat) -> Model -> Node msg
-view rows m =
-  let first = min m.top (length m.lines `minus` rows) in
-  box [direction Row, height (Cells rows)]
-    [ box [grow 1] (map (Text plain Truncate) (take rows (drop first m.lines)))
-    , scrollBar rows (length m.lines) first
+view : Model -> Node msg
+view m =
+  let first = min m.top (length m.lines `minus` m.rows) in
+  box [direction Row, height (Cells m.rows)]
+    [ box [grow 1] (map (Text plain Truncate) (take m.rows (drop first m.lines)))
+    , scrollBar m.rows (length m.lines) first
     ]
 
 ||| The viewer as a focusable node, so that the keys and the wheel reach it.
 export
-viewer : (rows : Nat) -> (wrap : Msg -> msg) -> Model -> Node msg
-viewer rows wrap m = focusable (\_ => view rows m) (\i => map wrap (keyMsg i))
+viewer : (wrap : Msg -> msg) -> Model -> Node msg
+viewer wrap m = focusable (\_ => view m) (\i => map wrap (keyMsg i))

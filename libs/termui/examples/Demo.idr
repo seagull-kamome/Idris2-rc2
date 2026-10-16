@@ -41,7 +41,7 @@ appView m =
         ]
     , row [gap 1] [ text "add:", box [border Single] [T.field Edit (Just Add) m.input] ]
     , row [gap 1]
-        [ box [border Single, height (Cells 7)] [S.list 5 Pick m.items]
+        [ box [border Single, height (Cells 7)] [S.list Pick m.items]
         , box [border Single] [A.area Note m.notes]
         ]
     , row [gap 1] [ progressBar 20 (length m.items.items * 10), text (show (length m.items.items) ++ " items") ]
@@ -50,7 +50,7 @@ appView m =
 
 appUpdate : AppMsg -> AppModel -> (AppModel, Cmd AppMsg)
 appUpdate (Edit e) m = ({ input $= T.update e } m, NoCmd)
-appUpdate (Pick p) m = ({ items $= S.update 5 p } m, NoCmd)
+appUpdate (Pick p) m = ({ items $= S.update p } m, NoCmd)
 appUpdate (Note n) m = ({ notes $= A.update n } m, NoCmd)
 appUpdate Add m =
   let entered = T.value m.input in
@@ -71,7 +71,7 @@ appSubs _ =
 
 main : IO ()
 main = do
-  r <- runProgram (MkProgram (MkModel (T.empty 30) (S.fromList []) (A.empty 36 5) 0, NoCmd) appUpdate appView appSubs)
+  r <- runProgram (MkProgram (MkModel (T.empty 30) (S.fromList 5 []) (A.empty 36 5) 0, NoCmd) appUpdate appView appSubs)
   case r of
     Left e => putStrLn ("termui demo needs a terminal: " ++ show e)
     Right m => putStrLn ("bye, " ++ show (length m.items.items) ++ " items")
