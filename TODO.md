@@ -1130,7 +1130,15 @@ upstreamに取り込まれたら`idris2-src`を更新して自作idris2を作り
 
 ## AI Agent作成用のライブラリを整備
 
-## INK風のReact的に使えるTUIライブラリを追加
+## termui(INK風のTUIライブラリ)の続き
+
+`libs/termui`に純粋部(Style/Width/Node/Layout/Frame/Output)がある。設計は`libs/termui/doc/design.md`。
+
+- 段階2: ランタイム(`Termios`のrawモード、キー/マウスの解析、`Epoll`でstdin/SIGWINCH/タイマーのループ、
+  代替画面、終了時の復元)。
+- 段階3: `Component`(model/msg/update/view/subs)、`Cmd`、`Sub`、フォーカス管理(ランタイム側)。
+- 段階4: ウィジェット(入力欄、リスト、スクロール、テーブル、スピナー、進捗バー)。
+- 未対応: 子の折り返し(wrap)、絶対配置、min/max、書記素クラスタ(結合文字・絵文字のZWJ列)。
 
 
 

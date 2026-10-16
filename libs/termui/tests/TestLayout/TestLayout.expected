@@ -1,0 +1,102 @@
+-- border + text
+|┌───────┐
+|│hello  │
+|└───────┘
+-- rounded, padding
+|╭──────╮
+|│      │
+|│ ab   │
+|│      │
+|╰──────╯
+-- row: grow splits the rest
+|+-------++-------+
+||a      ||b      |
+|+-------++-------+
+-- row: fixed + spacer + gap
+|L        R
+-- column: gap and justify end
+|
+|
+|
+|one
+|
+|two
+-- justify between / center cross
+|
+|x   y   z
+|
+-- word wrap
+|the quick
+|brown fox
+|
+|
+-- hard break of a long word
+|abcde
+|fghij
+|kl
+-- truncate
+|truncate
+-- wide characters
+|┌────────┐
+|│日本語ab│
+|└────────┘
+-- wide char cut by the edge
+|あい
+-- shrink
+|┌───┐┌───┐
+|│   ││   │
+|└───┘└───┘
+-- percent + margin
+|┌────────┐
+|│        │ ┌──────┐
+|│        │ │      │
+|│        │ └──────┘
+|└────────┘
+-- clip to the box
+|┌────┐
+|│over│
+|└────┘
+|tail
+|
+-- row of wrapping texts keeps the height
+|aaaacccc
+|bbbbdddd
+|end
+|
+-- leading spaces
+|  abc
+|defgh
+|
+-- trailing newline
+|abc
+|
+|
+-- shrink: a rigid sibling cannot absorb
+|┌─────────
+|│
+|└─────────
+-- shrink saturates, the rest is redistributed
+|┌──────────────────┐
+|│                  │
+|└──────────────────┘
+-- justify around
+|  a    b
+-- child does not overwrite the parent border
+|┌────┐
+|│    │
+|└────┘
+|
+-- truncated and char-wrapped
+|trunca
+|wrap m
+|e plea
+|se
+-- zero-size screen
+-- diff: first frame
+<ESC>[0m<ESC>[2J<ESC>[1;1H<ESC>[0;31mhi<ESC>[2;1H<ESC>[0myo<ESC>[0m
+-- diff: unchanged
+[]
+-- diff: one cell changed
+<ESC>[2;2H<ESC>[0mO<ESC>[0m
+-- diff: bg + attrs + rgb
+<ESC>[0m<ESC>[2J<ESC>[1;1H<ESC>[0;1;38;5;200;48;2;1;2;3mx<ESC>[0;1;48;2;1;2;3m <ESC>[0m

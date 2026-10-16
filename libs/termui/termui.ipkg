@@ -1,0 +1,12 @@
+package termui
+
+version    = 0.1.0
+opts       = "--total"
+sourcedir  = "src"
+depends    = contrib
+modules    = TermUI.Style,
+             TermUI.Node,
+             TermUI.Layout,
+             TermUI.Frame,
+             TermUI.Output,
+             TermUI.Width
