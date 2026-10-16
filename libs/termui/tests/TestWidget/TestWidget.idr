@@ -384,3 +384,74 @@ main = do
   let dels = areaKeys [key KBackspace, key KBackspace, key KDelete, key KDelete] six
   putStrLn (areaText dels ++ " | " ++ areaText (areaKeys [undo] dels) ++ " | " ++ areaText (areaKeys [undo, undo] dels) ++ " | " ++ areaText (areaKeys [undo, undo, undo] dels))
   putStrLn (areaText (areaKeys [shiftKey KEnter] one) ++ " | " ++ areaText (areaKeys [shiftKey KBackspace] one) ++ " | " ++ areaText (areaKeys [key KHome, shiftKey KDelete] one))
+  putStrLn "-- text area: wrapped lines"
+  let wrapped = \t => A.setWrap True (typedArea t (A.empty 12 4))
+  let txt = "hello world foo bar baz"
+  let w1 = A.setWrap True (A.fromString 12 4 txt)
+  drawMarked (A.view True w1) 12 4
+  putStrLn (areaText w1)
+  let w1Home = areaKeys [Press KHome (MkMods False True False)] w1
+  drawMarked (A.view True w1Home) 12 4
+  putStrLn "-- wrapped: up and down go by a row, keeping the column"
+  let w2 = areaKeys [key KUp] w1
+  putStrLn (areaText w2)
+  drawMarked (A.view True w2) 12 4
+  putStrLn (areaText (areaKeys [key KUp, key KUp] w1))
+  putStrLn (areaText (areaKeys [key KUp, key KUp, key KUp] w1))
+  putStrLn (areaText (areaKeys [key KUp, key KDown] w1))
+  let two = A.setWrap True (A.fromString 12 4 "one two three four\nshort\nfive six seven eight")
+  putStrLn (areaText (areaKeys [key KUp] two))
+  putStrLn (areaText (areaKeys [key KUp, key KUp] two))
+  putStrLn (areaText (areaKeys [key KUp, key KUp, key KUp, key KUp] two))
+  putStrLn (areaText (areaKeys [key KUp, key KUp, key KUp, key KUp, key KDown, key KDown, key KDown] two))
+  putStrLn "-- wrapped: a word longer than the row is broken, wide characters"
+  let long = A.setWrap True (A.fromString 12 4 "abcdefghijklmnopqrstuvwxyz")
+  drawMarked (A.view True long) 12 4
+  let wide = A.setWrap True (A.fromString 12 4 "あいうえおかきくけこさし")
+  drawMarked (A.view True wide) 12 4
+  putStrLn (areaText (areaKeys [key KUp] wide))
+  putStrLn "-- wrapped: clicking and dragging"
+  putStrLn (areaText (areaKeys [click LeftButton 3 0] w1))
+  putStrLn (areaText (areaKeys [click LeftButton 3 1] w1))
+  putStrLn (areaText (areaKeys [click LeftButton 3 2] w1))
+  putStrLn (areaText (areaKeys [click LeftButton 3 9] w1))
+  let dragged2 = areaKeys [click LeftButton 2 0, Mouse (MkMouseEvent LeftButton Drag 4 1 noMods)] w1
+  putStrLn (show (selectedText dragged2))
+  drawMarked (A.view True dragged2) 12 4
+  putStrLn "-- wrapped: scrolling follows the cursor"
+  let many = A.setWrap True (A.fromString 12 3 "one two three four five six seven eight nine ten eleven twelve")
+  putStrLn (show many.top ++ "/" ++ show many.topRow)
+  drawMarked (A.view True many) 12 3
+  let manyUp = areaKeys (replicate 6 (key KUp)) many
+  putStrLn (show manyUp.top ++ "/" ++ show manyUp.topRow ++ " " ++ areaText manyUp)
+  drawMarked (A.view True manyUp) 12 3
+  let manyDownAgain = areaKeys (replicate 6 (key KDown)) manyUp
+  putStrLn (show manyDownAgain.top ++ "/" ++ show manyDownAgain.topRow)
+  let paged = areaKeys [key KPageUp] many
+  putStrLn (show paged.top ++ "/" ++ show paged.topRow ++ " " ++ areaText paged)
+  putStrLn "-- wrapped: editing, selection, undo"
+  let edited = areaKeys [key KHome, press 'X', press 'Y'] w1
+  drawMarked (A.view True edited) 12 4
+  let sel = areaKeys [shiftKey KUp, shiftKey KUp] w1
+  putStrLn (show (selectedText sel))
+  drawMarked (A.view True sel) 12 4
+  putStrLn (areaText (areaKeys [key KBackspace] sel))
+  putStrLn (areaText (areaKeys [key KBackspace, undo] sel))
+  putStrLn "-- wrapped: lines, resize and switching it off"
+  let lines3 = A.setWrap True (typedArea "first line is long enough\nsecond\nthird line is also long" (A.empty 12 5))
+  drawMarked (A.view True lines3) 12 5
+  let narrower = A.resize 8 5 lines3
+  drawMarked (A.view True narrower) 8 5
+  let off = A.setWrap False lines3
+  drawMarked (A.view True off) 12 5
+  putStrLn (show (lineCount lines3) ++ " lines, " ++ areaText (areaKeys [key KEnter] lines3))
+  putStrLn "-- wrapped: a full row followed by one space keeps the cursor visible"
+  let fullSp = A.setWrap True (typedArea "aaaaaaaaaa " (A.empty 12 3))
+  drawMarked (A.view True fullSp) 12 3
+  putStrLn "-- wrapped: a large text"
+  let bigWrapped = A.setWrap True (A.fromString 40 10 (fastConcat (intersperse "\n" (map (\i => "line number " ++ show i ++ " with some more words to wrap around") (the (List Nat) [1 .. 50000])))))
+  putStrLn (show bigWrapped.top ++ "/" ++ show bigWrapped.topRow ++ " line " ++ show bigWrapped.line)
+  let bigMoved = areaKeys (replicate 30 (key KUp)) bigWrapped
+  putStrLn (show bigMoved.top ++ "/" ++ show bigMoved.topRow ++ " line " ++ show bigMoved.line)
+  let bigPaged = areaKeys [key KPageUp, key KPageUp] bigWrapped
+  putStrLn (show bigPaged.top ++ "/" ++ show bigPaged.topRow ++ " line " ++ show bigPaged.line)

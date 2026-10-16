@@ -385,3 +385,122 @@ XY| | X| | |abc
 a|f | a|def | abc|def | |
 a
 | | | | |
+-- text area: wrapped lines
+|hello
+|world foo
+|bar baz
+|       ^
+|
+hello world foo bar baz|
+|hello
+|^
+|world foo
+|bar baz
+|
+-- wrapped: up and down go by a row, keeping the column
+hello world f|oo bar baz
+|hello
+|world foo
+|       ^
+|bar baz
+|
+hello| world foo bar baz
+hello| world foo bar baz
+hello world foo bar baz|
+one two three four
+short
+five six seven| eight
+one two three four
+short
+five |six seven eight
+one two three| four
+short
+five six seven eight
+one two three four
+short
+five six seven| eight
+-- wrapped: a word longer than the row is broken, wide characters
+|abcdefghij
+|klmnopqrst
+|uvwxyz
+|      ^
+|
+|あいうえお
+|かきくけこ
+|さし
+|    ^
+|
+あいうえおかき|くけこさし
+-- wrapped: clicking and dragging
+hel|lo world foo bar baz
+hello wor|ld foo bar baz
+hello world foo bar| baz
+hello world foo bar| baz
+"llo worl"
+|hello
+|  ssss
+|world foo
+|ssss^
+|bar baz
+|
+-- wrapped: scrolling follows the cursor
+0/4
+|eight nine
+|ten eleven
+|twelve
+|      ^
+0/0 one tw|o three four five six seven eight nine ten eleven twelve
+|one two
+|      ^
+|three four
+|five six
+0/4
+0/3 one two three four five six seven| eight nine ten eleven twelve
+-- wrapped: editing, selection, undo
+|XYhello
+|  ^
+|world foo
+|bar baz
+|
+" world foo bar baz"
+|hello
+|     ^
+|world foo
+|ssssssssss
+|bar baz
+|sssssss
+|
+hello|
+hello| world foo bar baz
+-- wrapped: lines, resize and switching it off
+|enough
+|second
+|third line
+|is also
+|long
+|    ^
+|third
+|line
+|is
+|also
+|long
+|    ^
+| long enoug
+| also long
+|          ^
+|
+|
+|
+3 lines, first line is long enough
+second
+third line is also long
+|
+-- wrapped: a full row followed by one space keeps the cursor visible
+|aaaaaaaaaa
+|
+| ^
+|
+-- wrapped: a large text
+49995/0 line 49999
+49984/1 line 49984
+49989/1 line 49989
