@@ -132,7 +132,7 @@ dropped at that time. An invalid UTF-8 sequence gives U+FFFD and decoding resume
 at the next byte that is not a continuation. A bracketed paste is accumulated
 by the loop itself (the body in chunks, with the last five bytes held back so
 that the closing sequence can be found across reads) and is never cut by the
-timer. Mouse reports and unknown sequences are dropped.
+timer. Unknown sequences are dropped.
 
 Teardown: `closeTerminal` first, then `closeLoop`, which takes the signals still
 pending before it unblocks them. Signals blocked in the creating thread do not
@@ -154,6 +154,7 @@ the terminal restored.
   timer), `Perform (IO msg)` (run now, deliver the result; it blocks the loop,
   so it is meant for short actions), `Batch`.
 - `Sub`: `OnInput` (keys, and pastes, that the focused node did not take),
+  `OnMouse` (see below),
   `OnResize`, `Every key ms msg` (a periodic timer; the runtime starts, stops
   and retimes timers when the list returned by `subs` changes, keyed by `key`;
   the key is global to the program, so components embedded in one another must
@@ -165,6 +166,35 @@ the terminal restored.
 - Components compose as in Elm: a parent holds the child's model and wraps
   its messages, using `mapNode`, `mapCmd` and `mapSub` to embed the child's
   view, commands and subscriptions.
+
+### Mouse
+
+`Mouse` is an `Input`: a `MouseEvent` has the button (`LeftButton`,
+`MiddleButton`, `RightButton`, `WheelUp`, `WheelDown`, `NoButton`), the action
+(`ButtonDown`, `ButtonUp`, `Drag`, `Move`), the position in cells from 0 at the
+top left, and the modifiers. It is decoded from the SGR encoding (`ESC [ <
+code ; column ; row M/m`). Reporting is switched on (`?1002h` and `?1006h`)
+only while some `OnMouse` subscription exists, because it takes the mouse away
+from the terminal's own text selection; it is switched off again when the
+subscriptions go away and when the terminal is closed. Mouse events go to the
+`OnMouse` subscriptions, never to `OnInput`.
+
+`MouseFocus` is a subscription too: it turns reporting on and lets the runtime
+use the mouse for the focus. The layout is kept after every draw, and the box
+of every focusable is marked, so the runtime knows where each one is. A left
+click moves the focus to the focusable under the pointer (the innermost, or the
+later one where they overlap), and every mouse event over a focusable is also
+offered to its handler: `Select` takes the wheel as Up and Down. Clicking inside
+a list does not select the row yet.
+
+### The terminal cursor
+
+The cursor is hidden while the screen is drawn, but an input method (IME)
+puts its candidate window at the cursor, wherever it was left, so the runtime
+places it after every draw. A box marked with `cursorHere` says where: the focused
+`TextInput` marks its cursor cell, and the cursor is shown there (an inverse cell
+is drawn as well). With no such box the cursor is hidden and parked at the
+bottom left. The position is sent only when it, or the screen, changed.
 
 ### Focus
 

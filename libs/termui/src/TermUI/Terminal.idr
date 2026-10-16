@@ -29,7 +29,7 @@ record Terminal where
 -- Alternate screen, hidden cursor, bracketed paste.
 enterSequence, leaveSequence : String
 enterSequence = "\ESC[?1049h\ESC[?25l\ESC[?2004h\ESC[2J"
-leaveSequence = "\ESC[0m\ESC[?2004l\ESC[?25h\ESC[?1049l"
+leaveSequence = "\ESC[0m\ESC[?1002l\ESC[?1006l\ESC[?2004l\ESC[?25h\ESC[?1049l"
 
 ||| Write all the bytes, retrying after a partial write.
 export
@@ -105,3 +105,11 @@ outputSize output = do
 export
 terminalSize : Terminal -> IO (Nat, Nat)
 terminalSize t = outputSize t.output
+
+||| Ask the terminal to report mouse buttons, drags and the wheel (SGR
+||| encoding), or stop doing so. Mouse reporting takes the mouse away from
+||| the terminal's own text selection, so it is on only while asked for.
+export
+setMouseReporting : (output : FileDesc) -> Bool -> IO ()
+setMouseReporting output on =
+  ignore (writeString output (if on then "\ESC[?1002h\ESC[?1006h" else "\ESC[?1002l\ESC[?1006l"))

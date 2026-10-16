@@ -1,6 +1,6 @@
 ||| A small demo of termui: a text field adds items to a list, the list can
 ||| be walked with the arrow keys, a progress bar follows the number of items
-||| and a spinner runs on a timer. Tab moves between the field and the list,
+||| and a spinner runs on a timer. Tab or a click moves between the field and the list, the wheel scrolls the list,
 ||| Enter in the field adds an item, Ctrl-C or Esc quits.
 |||
 ||| Build: idris2-rc2 --cg rc2 -p termui -p rc2base -p contrib -o demo Demo.idr
@@ -55,6 +55,7 @@ appUpdate Quit' m = (m, Quit)
 appSubs : AppModel -> List (Sub AppMsg)
 appSubs _ =
   [ Every 1 100 Spin
+  , MouseFocus
   , OnInput (\i => case i of
                      Press KEscape _ => Just Quit'
                      Press (KChar 'c') mods => if mods.ctrl then Just Quit' else Nothing

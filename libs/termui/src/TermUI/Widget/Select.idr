@@ -83,6 +83,11 @@ keyMsg (Press key mods) =
          KHome => Just First
          KEnd => Just Last
          _ => Nothing
+keyMsg (Mouse e) =
+  case e.button of
+    WheelUp => Just Up
+    WheelDown => Just Down
+    _ => Nothing
 keyMsg _ = Nothing
 
 -------------------------------------------------------------------------------

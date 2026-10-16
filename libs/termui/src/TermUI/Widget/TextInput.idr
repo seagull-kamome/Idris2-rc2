@@ -129,6 +129,7 @@ keyMsg (Press key mods) =
             KHome => Just MoveHome
             KEnd => Just MoveEnd
             _ => Nothing
+keyMsg _ = Nothing
 
 -------------------------------------------------------------------------------
 -- View
@@ -146,7 +147,7 @@ view focused m =
       cursorStyle = if focused then withAttr Inverse plain else plain
   in box [direction Row, width (Cells m.cells), height (Cells 1)]
        [ Text plain Truncate (pack shown)
-       , Text cursorStyle Truncate (pack [under])
+       , box (if focused then [cursorHere] else []) [Text cursorStyle Truncate (pack [under])]
        , Text plain Truncate (pack (cut room (drop 1 m.after)))
        ]
   where

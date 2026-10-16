@@ -17,6 +17,7 @@ import System.Posix.FileDesc
 import System.Posix.Termios
 import TermUI.Frame
 import TermUI.Input
+import TermUI.Layout
 import TermUI.Loop
 import TermUI.Node
 import TermUI.Output
@@ -41,6 +42,8 @@ data Cmd msg
 public export
 data Sub msg
   = OnInput (Input -> Maybe msg)       -- keys the focused node did not take, and pastes
+  | OnMouse (MouseEvent -> Maybe msg)  -- also turns mouse reporting on
+  | MouseFocus                         -- clicks move the focus, the wheel goes to the node under the pointer; turns reporting on
   | OnResize (Nat -> Nat -> msg)
   | Every Nat Nat msg                  -- a key naming the timer, the period in ms, the message
   | OnTerminate msg                    -- SIGINT, SIGTERM or SIGHUP; without it they quit
@@ -57,6 +60,8 @@ mapCmd f (Perform io) = Perform (map f io)
 export
 mapSub : (a -> b) -> Sub a -> Sub b
 mapSub f (OnInput g) = OnInput (map f . g)
+mapSub f (OnMouse g) = OnMouse (map f . g)
+mapSub _ MouseFocus = MouseFocus
 mapSub f (OnResize g) = OnResize (\c, r => f (g c r))
 mapSub f (Every k ms m) = Every k ms (f m)
 mapSub f (OnTerminate m) = OnTerminate (f m)
@@ -80,12 +85,21 @@ record Program model msg where
 resolve : (focus : Nat) -> Node msg -> (Node msg, List (Input -> Maybe msg))
 resolve focus root = let (n, hs, _) = go 0 root in (n, hs)
   where
+    -- The box of a focusable is marked, so that its place can be found after
+    -- the layout; a node that is not a box (or is marked already) gets one.
+    tag : Nat -> Node msg -> Node msg
+    tag i (Box p ks) =
+      case p.pTag of
+        Nothing => Box ({ pTag := Just i } p) ks
+        Just _ => Box ({ pTag := Just i } defaultProps) [Box p ks]
+    tag i n = Box ({ pTag := Just i } defaultProps) [n]
+
     mutual
       go : Nat -> Node msg -> (Node msg, List (Input -> Maybe msg), Nat)
       go i n@(Text _ _ _) = (n, [], i)
       go i (Focusable body h) =
         let (inner, hs, next) = go (i + 1) (body (i == focus)) in
-        (inner, h :: hs, next)
+        (tag i inner, h :: hs, next)
       go i (Box p kids) =
         let (kids', hs, next) = goList i kids in (Box p kids', hs, next)
 
@@ -113,6 +127,9 @@ record Env model msg where
   oneShots : IORef (List (Nat, msg))
   nextShot : IORef Nat
   everys : IORef (List (Nat, Nat))        -- (key, period) of the running timers
+  mouseOn : IORef Bool
+  rects : IORef (List (Nat, Rect))
+  shownCursor : IORef (Maybe (Bool, Nat, Nat))
 
 everyId : Nat -> Nat
 everyId k = 2 * k
@@ -152,7 +169,17 @@ syncTimers env = do
   traverse_ (\(k, _) => cancelTimer env.loop (everyId k)) (filter (\a => not (elem a wanted)) active)
   traverse_ (\(k, ms) => ignore (addTimer env.loop (everyId k) ms)) (filter (\w => not (elem w active)) wanted)
   writeIORef env.everys wanted
+  let wantMouse = any isMouse (env.prog.subs model)
+  was <- readIORef env.mouseOn
+  when (wantMouse /= was) $ do
+    setMouseReporting env.output wantMouse
+    writeIORef env.mouseOn wantMouse
   where
+    isMouse : Sub msg -> Bool
+    isMouse (OnMouse _) = True
+    isMouse MouseFocus = True
+    isMouse _ = False
+
     period : Sub msg -> Maybe (Nat, Nat)
     period (Every k ms _) = Just (k, ms)
     period _ = Nothing
@@ -177,19 +204,46 @@ currentView env = do
        writeIORef env.handlers hs
        pure node
 
+-- Where the focusables are (in tree order) and where the terminal cursor goes.
+scan : Laid -> (List (Nat, Rect), Maybe (Nat, Nat))
+scan (LText _ _ _) = ([], Nothing)
+scan (LBox r p kids) =
+  let own = maybe [] (\i => [(i, r)]) p.pTag
+      cursor = if p.pCursor then Just (r.x, r.y) else Nothing
+      (rs, c) = scanAll kids
+  in (own ++ rs, maybe c Just cursor)
+  where
+    scanAll : List Laid -> (List (Nat, Rect), Maybe (Nat, Nat))
+    scanAll [] = ([], Nothing)
+    scanAll (k :: ks) =
+      let (r1, c1) = scan k
+          (r2, c2) = scanAll ks
+      in (r1 ++ r2, maybe c2 Just c1)
+
 draw : Env model msg -> IO ()
 draw env = do
   node <- currentView env
   (w, h) <- readIORef env.size
-  frame <- render node w h
+  (frame, laid) <- renderLaid node w h
+  let (rects, cursor) = scan laid
+      (x, y) = fromMaybe (0, h `minus` 1) cursor
+      target = (isJust cursor, x, y)
+  writeIORef env.rects rects
   old <- readIORef env.prev
   out <- diffFrames old frame
-  if out == ""
+  shown <- readIORef env.shownCursor
+  -- the diff leaves the cursor wherever it wrote last; an input method puts its
+  -- window at the cursor, so it is put back where the user is typing
+  if out == "" && shown == Just target
      then writeIORef env.prev (Just frame)
      else do
-       r <- writeString env.output out
-       -- after a failed write the screen is unknown: draw it all next time
+       r <- writeString env.output (out ++ cursorSequence target)
        writeIORef env.prev (either (const Nothing) (const (Just frame)) r)
+       writeIORef env.shownCursor (either (const Nothing) (const (Just target)) r)
+  where
+    cursorSequence : (Bool, Nat, Nat) -> String
+    cursorSequence (visible, x, y) =
+      "\ESC[" ++ show (y + 1) ++ ";" ++ show (x + 1) ++ "H" ++ (if visible then "\ESC[?25h" else "\ESC[?25l")
 
 moveFocus : Env model msg -> Bool -> IO ()
 moveFocus env forward = do
@@ -200,6 +254,42 @@ moveFocus env forward = do
     writeIORef env.focus (if forward then (if f + 1 >= n then 0 else f + 1) else (if f == 0 then n `minus` 1 else f `minus` 1))
 
 onInput : Env model msg -> Input -> IO ()
+onInput env (Mouse e) = do
+  model <- readIORef env.modelRef
+  let subs = env.prog.subs model
+  when (any isMouseFocus subs) $ do
+    rects <- readIORef env.rects
+    case lastMatch (\(_, r) => inside r e.column e.row) rects of
+      Nothing => pure ()
+      Just (i, _) => do
+        when (isLeftDown e) $ writeIORef env.focus i
+        hs <- readIORef env.handlers
+        traverse_ (dispatch env) (getAt i hs >>= \h => h (Mouse e))
+  traverse_ (dispatch env) (mapMaybe fromSub subs)
+  where
+    fromSub : Sub msg -> Maybe msg
+    fromSub (OnMouse g) = g e
+    fromSub _ = Nothing
+
+    isMouseFocus : Sub msg -> Bool
+    isMouseFocus MouseFocus = True
+    isMouseFocus _ = False
+
+    isLeftDown : MouseEvent -> Bool
+    isLeftDown ev = case (ev.button, ev.action) of
+                      (LeftButton, ButtonDown) => True
+                      _ => False
+
+    inside : Rect -> Nat -> Nat -> Bool
+    inside r c rw = c >= r.x && c < r.x + r.w && rw >= r.y && rw < r.y + r.h
+
+    lastMatch : (a -> Bool) -> List a -> Maybe a
+    lastMatch p xs = last' (filter p xs)
+
+    getAt : Nat -> List a -> Maybe a
+    getAt _ [] = Nothing
+    getAt Z (x :: _) = Just x
+    getAt (S k) (_ :: xs) = getAt k xs
 onInput env inp = do
   hs <- readIORef env.handlers
   f <- readIORef env.focus
@@ -237,6 +327,7 @@ onEvent env (EInput i) = onInput env i
 onEvent env (EResize c r) = do
   writeIORef env.size (c, r)
   writeIORef env.prev Nothing
+  writeIORef env.shownCursor Nothing
   model <- readIORef env.modelRef
   traverse_ (\s => case s of
                      OnResize g => dispatch env (g c r)
@@ -303,7 +394,7 @@ runProgramOn input output prog = do
   size <- terminalSize term
   env <- MkEnv prog loop output <$> newIORef model0 <*> newIORef 0 <*> newIORef []
            <*> newIORef Nothing <*> newIORef size <*> newIORef False
-           <*> newIORef [] <*> newIORef 0 <*> newIORef []
+           <*> newIORef [] <*> newIORef 0 <*> newIORef [] <*> newIORef False <*> newIORef [] <*> newIORef Nothing
   runCmd env cmd0
   q <- readIORef env.quit
   when (not q) $ loopUntilQuit env

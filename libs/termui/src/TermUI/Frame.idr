@@ -154,13 +154,20 @@ paintLaid f c inherited (LBox r p kids) = do
   let inner = intersect cl (clipRect (innerRect p r))
   traverse_ (paintLaid f inner st) kids
 
+||| Lay out `view` in `w` x `h` cells and paint it into a fresh frame; the
+||| layout is returned too, for finding where nodes ended up.
+export
+renderLaid : Node msg -> (w : Nat) -> (h : Nat) -> IO (Frame, Laid)
+renderLaid view w h = do
+  f <- newFrame w h
+  let laid = layout view w h
+  paintLaid f (MkClip 0 0 w h) plain laid
+  pure (f, laid)
+
 ||| Lay out `view` in `w` x `h` cells and paint it into a fresh frame.
 export
 render : Node msg -> (w : Nat) -> (h : Nat) -> IO Frame
-render view w h = do
-  f <- newFrame w h
-  paintLaid f (MkClip 0 0 w h) plain (layout view w h)
-  pure f
+render view w h = fst <$> renderLaid view w h
 
 ||| The text of a frame, one string per row without trailing blanks.
 ||| Styles are dropped; used by tests and for plain-text dumps.
