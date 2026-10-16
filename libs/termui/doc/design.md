@@ -75,9 +75,12 @@ A subset of CSS flexbox. Sizes are in cells.
   of the children are decided first from what each wants when nothing limits
   it (`maxContent`: text not wrapped, linear in the size of the subtree), and
   distributed (a row by `grow`/`shrink`, a column by the alignment); then each
-  child is measured once, at the width it got. The cost is the size of the tree
-  times its depth (a 640-deep nest takes under a second); it used to double with
-  every level.
+  child is measured once, at the width it got. Text that wraps therefore takes
+  the width it is offered (as `fit-content` does in CSS), not the width of its
+  longest line, so an `align Center` or `JEnd` does not shrink it into a narrower
+  block; give the box a width to get that. The cost grows with the size of the
+  tree times the square of its depth at worst (a 640-deep chain takes under a
+  second); it used to double with every level.
 - `minWidth`/`maxWidth`/`minHeight`/`maxHeight` bound the border box (the
   minimum wins over the maximum). They are applied to the base size of a child
   and again to the size it ends up with; the room a bound frees is not handed

@@ -96,6 +96,17 @@ main = do
   dump "absolute: percent size, minimum"
     (box [] [ box [absolute, left 1, top 1, width (Percent 50), minHeight 3, border Single] [text "half"] ]) 20 6
 
+  dump "a percent height in a row is the content height until the row is known"
+    (column [] [ row [wrapChildren] [box [height (Percent 100), border Single] [text "x"]], text "end" ]) 10 6
+  dump "column: a minimum height pushes the next child down"
+    (column [] [ box [minHeight 4, border Single] [], box [height (Cells 4), border Single] [] ]) 8 6
+  dump "column: a maximum height leaves the room to the next child"
+    (column [] [ box [grow 1, maxHeight 3, border Single] [], text "x" ]) 6 10
+  dump "wrapped text takes the width it is offered, so it is not centred as a narrower block"
+    (column [align Center] [ text "aaaa bbbb cccc" ]) 11 4
+  dump "an absolute box is as wide as its text wants, within its parent"
+    (box [] [ box [absolute, left 0, top 0, border Single] [text "aaaa bbbb cccc"] ]) 12 5
+
   dump "a combining mark stays with its character" (text "e\x301\&ab") 6 1
   dump "a mark after a wide character" (text "あ\x301\&い") 6 1
   dump "a mark at the start is dropped" (text "\x301\&ab") 6 1

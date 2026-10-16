@@ -187,6 +187,42 @@
 | └────────┘
 |
 |
+-- a percent height in a row is the content height until the row is known
+|┌─┐
+|│x│
+|└─┘
+|end
+|
+|
+-- column: a minimum height pushes the next child down
+|┌──────┐
+|│      │
+|│      │
+|└──────┘
+|┌──────┐
+|│      │
+-- column: a maximum height leaves the room to the next child
+|┌────┐
+|│    │
+|└────┘
+|x
+|
+|
+|
+|
+|
+|
+-- wrapped text takes the width it is offered, so it is not centred as a narrower block
+|aaaa bbbb
+|cccc
+|
+|
+-- an absolute box is as wide as its text wants, within its parent
+|┌──────────┐
+|│aaaa bbbb │
+|│cccc      │
+|└──────────┘
+|
 -- a combining mark stays with its character
 |éab
 -- a mark after a wide character

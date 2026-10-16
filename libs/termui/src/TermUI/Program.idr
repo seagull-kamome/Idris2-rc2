@@ -326,7 +326,7 @@ scan clip (LBox r p kids) =
     scanAll inner (k :: ks) =
       let (r1, c1) = scan inner k
           (r2, c2) = scanAll inner ks
-      in (r1 ++ r2, maybe c2 Just c1)
+      in (r1 ++ r2, maybe c1 Just c2)
 
 draw : Env model msg -> IO ()
 draw env = do
