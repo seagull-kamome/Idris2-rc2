@@ -103,9 +103,14 @@ A subset of CSS flexbox. Sizes are in cells.
 Not implemented: wrapping of a column, percentage margins, `Percent` for
 the height of a row's children before the row's height is known.
 
-A `Style` applied over another one only adds: attributes are OR-ed, and a
-colour left at `Default` is inherited, so a child cannot switch off a
-parent's attribute or return to the terminal default colour.
+A `Style` is a colour for the foreground and one for the background, the
+attributes switched on and the attributes switched off. Applied over its
+parent's style (`over`), a colour left at `Inherit` (the default) is the
+parent's, `Default` is the terminal's own colour, an attribute switched on or
+off by `withAttr`/`withoutAttr` wins and the others are the parent's. So a child
+can turn off a parent's bold or go back to the terminal's colour. At the root
+what is still inherited is the terminal's own (`settle`), and that is the style
+a cell stores.
 
 ## Characters
 

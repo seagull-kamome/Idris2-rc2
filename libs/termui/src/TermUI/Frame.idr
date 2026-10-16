@@ -33,7 +33,7 @@ Eq Cell where
 
 public export
 blank : Cell
-blank = MkCell ' ' plain []
+blank = MkCell ' ' (settle plain) []
 
 public export
 continuation : Char
@@ -92,7 +92,7 @@ inside : Clip -> Nat -> Nat -> Bool
 inside c x y = x >= c.x0 && x < c.x1 && y >= c.y0 && y < c.y1
 
 put : Frame -> Clip -> Nat -> Nat -> Char -> Style -> IO ()
-put f c x y g s = when (inside c x y) $ setCell f x y (MkCell g s [])
+put f c x y g s = when (inside c x y) $ setCell f x y (MkCell g (settle s) [])
 
 hasBorder : Border -> Bool
 hasBorder NoBorder = False
