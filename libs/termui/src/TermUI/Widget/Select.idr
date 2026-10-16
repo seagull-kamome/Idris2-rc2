@@ -69,7 +69,7 @@ update rows msg m =
                  PageDown => min lastIx (cur + rows)
                  First => 0
                  Last => lastIx
-                 ClickRow r => min lastIx (windowTop rows cur m.top + r)
+                 ClickRow r => if windowTop rows cur m.top + r > lastIx then cur else windowTop rows cur m.top + r
   in if n == 0 then MkModel m.items 0 0
      else MkModel m.items target (windowTop rows target m.top)
 

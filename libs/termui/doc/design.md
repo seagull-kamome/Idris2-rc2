@@ -41,6 +41,7 @@ dumped as text (`frameLines`), which is how the tests look at results.
 | `TermUI.Program` | Elm-style `Program`, `Cmd`, `Sub`, focus, `runProgram` |
 | `TermUI.Widget.TextInput` | single-line text field |
 | `TermUI.Widget.TextArea` | multi-line text editor |
+| `TermUI.Widget.LineEdit` | what the text field and the editor share (characters kept, horizontal scrolling, cell to character) |
 | `TermUI.Widget.Scroll` | read-only scrolling view of lines, with a scroll bar |
 | `TermUI.Widget.ScrollBar` | the scroll bar |
 | `TermUI.Widget.Select` | scrolling list with a selection |
@@ -158,7 +159,7 @@ the terminal restored.
   so it is meant for short actions), `Batch`.
 - `Sub`: `OnInput` (keys, and pastes, that the focused node did not take),
   `OnMouse` (see below),
-  `OnResize`, `Every key ms msg` (a periodic timer; the runtime starts, stops
+  `OnResize` (the size is delivered once at the start as well), `Every key ms msg` (a periodic timer; the runtime starts, stops
   and retimes timers when the list returned by `subs` changes, keyed by `key`;
   the key is global to the program, so components embedded in one another must
   not use the same one),
@@ -191,6 +192,12 @@ offered to its handler, with the position made relative to the top left of
 that node, so a widget can tell what was clicked: `Select` selects the clicked
 line and takes the wheel as Up and Down, `TextInput` and `TextArea` put the cursor
 under the pointer.
+
+The positions in a `MouseEvent` are absolute for `OnMouse` and relative to the
+node's top left for a handler. The place of a focusable is cut to what is visible
+(what its ancestors clip), and is renewed at every draw, so a click that arrives in
+the same batch as an event that changes the layout is matched with the layout of
+the previous draw.
 
 ### The terminal cursor
 
@@ -248,11 +255,16 @@ while the field has the focus.
   column kept across short lines, PageUp/PageDown, Ctrl-Home/Ctrl-End, Backspace and
   Delete that join lines, paste with line breaks (CR LF and a lone CR count as one),
   the mouse. Lines are not wrapped; the view scrolls horizontally and vertically
-  as little as needed and has a scroll bar. Columns are counted in characters.
+  as little as needed (a line that fits is shown from its start) and has a scroll
+  bar, whose column ignores clicks. PageUp and PageDown move the viewport by a
+  page together with the cursor. Columns for vertical moves are counted in
+  characters, not cells. The editor keeps its viewport size in the model:
+  `resize` changes it. Counting lines and building the view cost O(lines) per
+  keystroke, which is fine for texts of thousands of lines, not of millions.
 - `Scroll`: a read-only list of lines in a window, scrolled by the arrows,
   PageUp/PageDown, Home/End and the wheel (three lines a notch); the bar on its
   right shows the position. `ScrollBar.scrollBar` is the bar alone.
-- `Select`: Up/Down, PageUp/PageDown, Home/End on a window of `rows` lines that
+- `Select`: Up/Down, PageUp/PageDown, Home/End, a click on a line (a click below the last item is ignored) on a window of `rows` lines that
   follows the selection; the selected line is inverse when focused, marked with
   `>` otherwise. Pass the same `rows` to `update` and `view`; `view` also
   repairs a `top` that no longer shows the selection, and `update` clamps a

@@ -23,6 +23,7 @@ import TermUI.Program
 import TermUI.Style
 import TermUI.Terminal
 import TermUI.Widget.Select as S
+import TermUI.Widget.TextArea as A
 import TermUI.Widget.TextInput as T
 
 %default covering
@@ -31,26 +32,29 @@ record AppModel where
   constructor MkModel
   input : T.Model
   items : S.Model
-  pasted : Nat
+  notes : A.Model
 
-data AppMsg = Edit T.Msg | Pick S.Msg | Add | Phase Nat | Wait Nat | Done
+data AppMsg = Edit T.Msg | Pick S.Msg | Note A.Msg | Add | Phase Nat | Wait Nat | Done
 
 chunks : List String
 chunks =
   [ "ab\r", "cd\r", "\ESC[200~x y\nz\ESC[201~\r", "e1\re2\r", "zz"
   , "\t", "\r", "\ESC[B\ESC[B\ESC[B\ESC[B\ESC[A", "\ESC[Z!"
-  , "\ESC[<0;3;6M", "\ESC[<65;3;6M\ESC[<64;3;6M\ESC[<64;3;6M", "\ESC[<0;3;2M", "!", "\x03" ]
+  , "\ESC[<0;3;6M", "\ESC[<65;3;6M\ESC[<64;3;6M\ESC[<64;3;6M", "\ESC[<0;3;2M", "!"
+  , "\ESC[<0;4;12M", "ab\rcd", "\ESC[<0;3;12M", "X", "\x03" ]
 
 appView : AppModel -> Node AppMsg
 appView m =
   column [gap 1]
     [ box [border Single] [T.field Edit (Just Add) m.input]
     , box [border Single, height (Cells 5)] [S.list 3 Pick m.items]
+    , box [border Single] [A.area Note m.notes]
     ]
 
 appUpdate : (master : FileDesc) -> AppMsg -> AppModel -> (AppModel, Cmd AppMsg)
 appUpdate _ (Edit e) m = ({ input $= T.update e } m, NoCmd)
 appUpdate _ (Pick p) m = ({ items $= S.update 3 p } m, NoCmd)
+appUpdate _ (Note n) m = ({ notes $= A.update n } m, NoCmd)
 appUpdate _ Add m =
   let v = T.value m.input in
   if v == "" then (m, NoCmd)
@@ -72,7 +76,10 @@ appSubs _ =
 -- (3 lines) over the 5 items; Shift+Tab returns to the field, where "!" is
 -- appended. Then the mouse: a click in the list focuses it and selects the first
 -- visible line, the wheel moves the selection (down once, up twice), a click in
--- the field puts the cursor between the two z, where "!" is inserted; Ctrl-C quits.
+-- the field puts the cursor between the two z, where "!" is inserted. Last the
+-- notes (a multi-line editor lower down the screen): a click focuses it, two
+-- lines are typed, a click on the first puts the cursor after its first letter,
+-- where "X" is inserted; Ctrl-C quits.
 
 
 -- The tty layer hands output written to the slave to the master
@@ -112,7 +119,7 @@ main : IO ()
 main = do
   Right devnull <- openFile "/dev/null" (2 .|. O_NOCTTY) 0
     | Left e => putStrLn ("open /dev/null: " ++ show e)
-  r0 <- runProgramOn devnull devnull (MkProgram (MkModel (T.empty 12) (S.fromList []) 0, NoCmd) (appUpdate devnull) appView appSubs)
+  r0 <- runProgramOn devnull devnull (MkProgram (MkModel (T.empty 12) (S.fromList []) (A.empty 20 3), NoCmd) (appUpdate devnull) appView appSubs)
   putStrLn ("not a terminal: " ++ either show (const "ran") r0)
   Right master <- posixOpenpt (2 .|. O_NOCTTY)
     | Left e => putStrLn ("posixOpenpt: " ++ show e)
@@ -122,9 +129,9 @@ main = do
     | Left e => putStrLn ("ptsname: " ++ show e)
   Right slave <- openFile name (2 .|. O_NOCTTY) 0
     | Left e => putStrLn ("open slave: " ++ show e)
-  _ <- setWinSize master 30 12
+  _ <- setWinSize master 30 20
   let prog = MkProgram
-               (MkModel (T.empty 12) (S.fromList []) 0, Perform (pure (Phase 0)))
+               (MkModel (T.empty 12) (S.fromList []) (A.empty 20 3), Perform (pure (Phase 0)))
                (appUpdate master)
                appView
                appSubs
@@ -133,4 +140,4 @@ main = do
   out <- readUntil master "\ESC[?1049l"
   putStrLn ("cursor: " ++ show (cursorMoves (pack (decode out))))
   putStrLn ("items=" ++ show m.items.items ++ " selected=" ++ show (S.current m.items) ++ " top=" ++ show m.items.top
-            ++ " field=" ++ show (T.value m.input))
+            ++ " field=" ++ show (T.value m.input) ++ " notes=" ++ show (A.value m.notes))

@@ -100,7 +100,7 @@ wordChunks w (S fuel) cs =
 export
 wrapText : Wrap -> Nat -> String -> List String
 wrapText wrap maxW s =
-  if maxW == 0 then [] else concatMap fit (sourceLines (forget (split (== '\n') s)))
+  if maxW == 0 then [] else concat (map fit (sourceLines (forget (split (== '\n') s))))
   where
     sourceLines : List String -> List String
     sourceLines ls = if length ls > 1 && last' ls == Just "" then reverse (drop 1 (reverse ls)) else ls

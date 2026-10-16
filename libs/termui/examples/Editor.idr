@@ -8,6 +8,7 @@
 module Main
 
 import Data.List
+import Data.String
 import System.Posix.Errno
 import TermUI.Input
 import TermUI.Node
@@ -24,7 +25,7 @@ record AppModel where
   help : Sc.Model
   showHelp : Bool
 
-data AppMsg = Edit A.Msg | Scroll Sc.Msg | ToggleHelp | Quit'
+data AppMsg = Edit A.Msg | Scroll Sc.Msg | Resized Nat Nat | ToggleHelp | Quit'
 
 helpLines : List String
 helpLines =
@@ -42,18 +43,20 @@ appView m =
   column []
     [ box [grow 1] [ if m.showHelp then Sc.viewer 8 Scroll m.help else A.area Edit m.text ]
     , styled (withAttr Inverse plain)
-        (" " ++ show (A.lineCount m.text) ++ " lines, " ++ show (length (unpack (A.value m.text))) ++ " characters  (F1: help)")
+        (" " ++ show (A.lineCount m.text) ++ " lines, " ++ show (strLength (A.value m.text)) ++ " characters  (F1: help)")
     ]
 
 appUpdate : AppMsg -> AppModel -> (AppModel, Cmd AppMsg)
 appUpdate (Edit e) m = ({ text $= A.update e } m, NoCmd)
 appUpdate (Scroll s) m = ({ help $= Sc.update 8 s } m, NoCmd)
+appUpdate (Resized cols rows) m = ({ text $= A.resize cols (rows `minus` 1) } m, NoCmd)
 appUpdate ToggleHelp m = ({ showHelp $= not } m, NoCmd)
 appUpdate Quit' m = (m, Quit)
 
 appSubs : AppModel -> List (Sub AppMsg)
 appSubs _ =
   [ MouseFocus
+  , OnResize Resized
   , OnInput (\i => case i of
                      Press (KF 1) _ => Just ToggleHelp
                      Press (KChar 'c') mods => if mods.ctrl then Just Quit' else Nothing

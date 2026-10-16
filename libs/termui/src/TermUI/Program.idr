@@ -204,20 +204,30 @@ currentView env = do
        writeIORef env.handlers hs
        pure node
 
--- Where the focusables are (in tree order) and where the terminal cursor goes.
-scan : Laid -> (List (Nat, Rect), Maybe (Nat, Nat))
-scan (LText _ _ _) = ([], Nothing)
-scan (LBox r p kids) =
-  let own = maybe [] (\i => [(i, r)]) p.pTag
+-- The part of `a` inside `b`.
+within : Rect -> Rect -> Rect
+within a b =
+  let x0 = max a.x b.x
+      y0 = max a.y b.y
+      x1 = min (a.x + a.w) (b.x + b.w)
+      y1 = min (a.y + a.h) (b.y + b.h)
+  in MkRect x0 y0 (x1 `minus` x0) (y1 `minus` y0)
+
+-- Where the focusables are (in tree order), cut to what is visible, and where
+-- the terminal cursor goes.
+scan : Rect -> Laid -> (List (Nat, Rect), Maybe (Nat, Nat))
+scan _ (LText _ _ _) = ([], Nothing)
+scan clip (LBox r p kids) =
+  let own = maybe [] (\i => [(i, within r clip)]) p.pTag
       cursor = if p.pCursor then Just (r.x, r.y) else Nothing
-      (rs, c) = scanAll kids
+      (rs, c) = scanAll (within (innerRect p r) clip) kids
   in (own ++ rs, maybe c Just cursor)
   where
-    scanAll : List Laid -> (List (Nat, Rect), Maybe (Nat, Nat))
-    scanAll [] = ([], Nothing)
-    scanAll (k :: ks) =
-      let (r1, c1) = scan k
-          (r2, c2) = scanAll ks
+    scanAll : Rect -> List Laid -> (List (Nat, Rect), Maybe (Nat, Nat))
+    scanAll _ [] = ([], Nothing)
+    scanAll inner (k :: ks) =
+      let (r1, c1) = scan inner k
+          (r2, c2) = scanAll inner ks
       in (r1 ++ r2, maybe c2 Just c1)
 
 draw : Env model msg -> IO ()
@@ -225,7 +235,7 @@ draw env = do
   node <- currentView env
   (w, h) <- readIORef env.size
   (frame, laid) <- renderLaid node w h
-  let (rects, cursor) = scan laid
+  let (rects, cursor) = scan (MkRect 0 0 w h) laid
       (x, y) = fromMaybe (0, h `minus` 1) cursor
       target = (isJust cursor, x, y)
   writeIORef env.rects rects
@@ -259,7 +269,7 @@ onInput env (Mouse e) = do
   let subs = env.prog.subs model
   when (any isMouseFocus subs) $ do
     rects <- readIORef env.rects
-    case lastMatch (\(_, r) => inside r e.column e.row) rects of
+    case last' (filter (\(_, r) => inside r e.column e.row) rects) of
       Nothing => pure ()
       Just (i, r) => do
         when (isLeftDown e) $ writeIORef env.focus i
@@ -285,13 +295,6 @@ onInput env (Mouse e) = do
     inside : Rect -> Nat -> Nat -> Bool
     inside r c rw = c >= r.x && c < r.x + r.w && rw >= r.y && rw < r.y + r.h
 
-    lastMatch : (a -> Bool) -> List a -> Maybe a
-    lastMatch p xs = last' (filter p xs)
-
-    getAt : Nat -> List a -> Maybe a
-    getAt _ [] = Nothing
-    getAt Z (x :: _) = Just x
-    getAt (S k) (_ :: xs) = getAt k xs
 onInput env inp = do
   hs <- readIORef env.handlers
   f <- readIORef env.focus
@@ -305,11 +308,6 @@ onInput env inp = do
            model <- readIORef env.modelRef
            traverse_ (dispatch env) (mapMaybe (fromSub inp) (env.prog.subs model))
   where
-    getAt : Nat -> List a -> Maybe a
-    getAt _ [] = Nothing
-    getAt Z (x :: _) = Just x
-    getAt (S k) (_ :: xs) = getAt k xs
-
     isTab : Input -> Bool
     isTab (Press KTab _) = True
     isTab (Press KBackTab _) = True
@@ -398,6 +396,11 @@ runProgramOn input output prog = do
            <*> newIORef Nothing <*> newIORef size <*> newIORef False
            <*> newIORef [] <*> newIORef 0 <*> newIORef [] <*> newIORef False <*> newIORef [] <*> newIORef Nothing
   runCmd env cmd0
+  -- the size is told to the program once at the start, as at every resize
+  current <- readIORef env.modelRef
+  traverse_ (\sub => case sub of
+                       OnResize g => dispatch env (uncurry g size)
+                       _ => pure ()) (prog.subs current)
   q <- readIORef env.quit
   when (not q) $ loopUntilQuit env
   closeTerminal term

@@ -5,6 +5,7 @@
 module TermUI.Widget.ScrollBar
 
 import Data.List
+import Data.Nat
 import TermUI.Node
 import TermUI.Style
 
@@ -24,25 +25,15 @@ scrollBar rows count top =
        let thumb = max 1 (ndiv (rows * rows) count)
            room = rows `minus` thumb
            maxTop = count `minus` rows
-           start = ndiv (min top maxTop * room) maxTop
-       in column [width (Cells 1), height (Cells rows)] (map (cell start thumb) (range rows))
+           start = ndiv (min top maxTop * room + ndiv maxTop 2) maxTop
+       in column [width (Cells 1), height (Cells rows)] (map (cell start thumb) (take rows [0 ..]))
   where
+    ndiv : Nat -> Nat -> Nat
+    ndiv a Z = 0
+    ndiv a n@(S _) = divNatNZ a n ItIsSucc
+
     cell : Nat -> Nat -> Nat -> Node msg
     cell start thumb i =
       if i >= start && i < start + thumb
          then Text (fgColor white plain) Truncate "█"
          else Text (fgColor (Indexed 8) plain) Truncate "│"
-
-    ndiv : Nat -> Nat -> Nat
-    ndiv a b = go a a
-      where
-        go : Nat -> Nat -> Nat
-        go Z _ = 0
-        go (S f) k = if k < b then 0 else S (go f (k `minus` b))
-
-    range : Nat -> List Nat
-    range n = go n Z
-      where
-        go : Nat -> Nat -> List Nat
-        go Z _ = []
-        go (S f) i = i :: go f (S i)

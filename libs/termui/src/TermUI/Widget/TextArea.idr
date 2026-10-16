@@ -1,19 +1,20 @@
 ||| A multi-line text editor: a Model, its Msgs and `update`, and an `area`
-||| view that takes the keyboard focus. Lines are not wrapped: the view
-||| scrolls horizontally. See libs/termui/doc/design.md ("Widgets").
+||| view that takes the keyboard focus. See libs/termui/doc/design.md
+||| ("Widgets") for what it does and does not handle.
 |||
 ||| Copyright 2026, Hattori,Hiroki. All rights reserved.
 ||| This module was licensed by BSD3. see LICENSE file for detail.
 module TermUI.Widget.TextArea
 
 import Data.List
-import Data.List1
+import Data.Maybe
 import Data.String
 import TermUI.Input
 import TermUI.Node
 import TermUI.Style
-import TermUI.Widget.ScrollBar
 import TermUI.Width
+import TermUI.Widget.LineEdit
+import TermUI.Widget.ScrollBar
 
 %default total
 
@@ -21,58 +22,45 @@ import TermUI.Width
 -- Model
 
 ||| The cursor line is `reverse before ++ after`; `above` and `below` hold the
-||| other lines, the nearest first.
+||| other lines, the nearest first. `want` is the column vertical moves aim at.
 public export
 record Model where
   constructor MkModel
-  cells, rows : Nat                -- the size of the viewport
-  top : Nat                        -- the first visible line
-  left : Nat                       -- characters scrolled out on the left
+  cells, rows : Nat
+  top, left : Nat
   above : List (List Char)
   before, after : List Char
   below : List (List Char)
-  want : Maybe Nat                 -- the column vertical moves aim at
-
--- Tabs become spaces; other control characters are dropped.
-clean : Char -> List Char
-clean c =
-  if c == '\t' then [' ']
-  else if charWidth c == 0 && ord c < 0xA0 then []
-  else [c]
-
-cursorWidth : Model -> Nat
-cursorWidth m = case m.after of
-                  (c :: _) => max 1 (charWidth c)
-                  [] => 1
+  want : Maybe Nat
 
 ||| The number of lines.
 export
 lineCount : Model -> Nat
 lineCount m = length m.above + 1 + length m.below
 
--- Cells from character `from` of the cursor line to the cursor, with the cursor cell.
-used : Model -> Nat -> Nat
-used m from = sum (map charWidth (take (length m.before `minus` from) (drop from (reverse m.before)))) + cursorWidth m
-
--- Scroll as little as needed to keep the cursor in the viewport.
+-- Scroll as little as needed to keep the cursor in the viewport; the last
+-- column is the scroll bar.
 scrolled : Model -> Model
 scrolled m =
   let line = length m.above
-      top = if line < m.top then line
-            else if m.rows > 0 && line >= m.top + m.rows then (line + 1) `minus` m.rows
-            else m.top
-      pos = length m.before
-  in { top := top, left := settle pos (min m.left pos) (S pos) } m
-  where
-    settle : Nat -> Nat -> Nat -> Nat
-    settle _ from Z = from
-    settle pos from (S fuel) =
-      if used m from > (m.cells `minus` 1) && from < pos then settle pos (S from) fuel else from
+      first = min m.top (lineCount m `minus` m.rows)
+      top = if line < first then line
+            else if m.rows > 0 && line >= first + m.rows then (line + 1) `minus` m.rows
+            else first
+      room = m.cells `minus` 1
+      lineWidth = sum (map charWidth m.before) + sum (map charWidth m.after) + 1
+      left = if lineWidth <= room then 0 else leftFor room (cursorWidth m.after) m.left m.before
+  in { top := top, left := left } m
 
 ||| An empty editor `cells` wide and `rows` high.
 export
 empty : (cells : Nat) -> (rows : Nat) -> Model
 empty cells rows = MkModel cells rows 0 0 [] [] [] [] Nothing
+
+||| The same editor in a viewport of another size.
+export
+resize : (cells : Nat) -> (rows : Nat) -> Model -> Model
+resize cells rows m = scrolled ({ cells := cells, rows := rows } m)
 
 -- Text with line breaks into the lines; CR LF and a lone CR count as one break.
 splitLines : String -> List (List Char)
@@ -123,66 +111,47 @@ data Msg
   | KillToStart
   | ClickAt Nat Nat      -- column and row of the viewport
 
-splitAtCol : Nat -> List Char -> (List Char, List Char)
-splitAtCol n l = (reverse (take n l), drop n l)
-
--- Fields are listed in full where the order matters.
-left' : Model -> Model
-left' m@(MkModel c r t l ab (b :: bs) af be w) = { before := bs, after := b :: af, want := Nothing } m
-left' m =
-  case m.above of
-    (l :: ls) => { above := ls, before := reverse l, after := [], below := (reverse m.before ++ m.after) :: m.below, want := Nothing } m
-    [] => m
-
-right' : Model -> Model
-right' m =
-  case m.after of
-    (a :: as) => { before := a :: m.before, after := as, want := Nothing } m
-    [] => case m.below of
-            (l :: ls) => { above := reverse m.before :: m.above, before := [], after := l, below := ls, want := Nothing } m
-            [] => m
-
-up' : Model -> Model
-up' m =
-  case m.above of
-    [] => m
-    (l :: ls) =>
-      let col = fromMaybe' (length m.before) m.want
-          (bf, af) = splitAtCol col l
-      in { above := ls, before := bf, after := af
-         , below := (reverse m.before ++ m.after) :: m.below, want := Just col } m
-  where
-    fromMaybe' : Nat -> Maybe Nat -> Nat
-    fromMaybe' d Nothing = d
-    fromMaybe' _ (Just x) = x
-
-down' : Model -> Model
-down' m =
-  case m.below of
-    [] => m
-    (l :: ls) =>
-      let col = fromMaybe' (length m.before) m.want
-          (bf, af) = splitAtCol col l
-      in { above := (reverse m.before ++ m.after) :: m.above, before := bf, after := af
-         , below := ls, want := Just col } m
-  where
-    fromMaybe' : Nat -> Maybe Nat -> Nat
-    fromMaybe' d Nothing = d
-    fromMaybe' _ (Just x) = x
-
 repeatN : Nat -> (a -> a) -> a -> a
 repeatN Z _ x = x
 repeatN (S k) f x = repeatN k f (f x)
 
--- Move to line `target` keeping the column.
-gotoLine : Nat -> Model -> Model
-gotoLine target m =
-  let line = length m.above in
-  if target < line then repeatN (line `minus` target) up' m
-  else repeatN (target `minus` line) down' m
-
-toLineEnd : Model -> Model
+toLineStart, toLineEnd : Model -> Model
+toLineStart m = { before := [], after := reverse m.before ++ m.after, want := Nothing } m
 toLineEnd m = { before := reverse m.after ++ m.before, after := [], want := Nothing } m
+
+moveLeft, moveRight : Model -> Model
+moveLeft m =
+  case m.before of
+    (b :: bs) => { before := bs, after := b :: m.after, want := Nothing } m
+    [] => case m.above of
+            (l :: ls) => { above := ls, before := reverse l, after := []
+                         , below := m.after :: m.below, want := Nothing } m
+            [] => m
+moveRight m =
+  case m.after of
+    (a :: as) => { before := a :: m.before, after := as, want := Nothing } m
+    [] => case m.below of
+            (l :: ls) => { above := reverse m.before :: m.above, before := [], after := l
+                         , below := ls, want := Nothing } m
+            [] => m
+
+-- Onto the line above or below, aiming at the remembered column. The text
+-- after the cursor goes with the line left behind.
+moveUp, moveDown : Model -> Model
+moveUp m =
+  case m.above of
+    [] => m
+    (l :: ls) =>
+      let col = fromMaybe (length m.before) m.want in
+      { above := ls, before := reverse (take col l), after := drop col l
+      , below := (reverse m.before ++ m.after) :: m.below, want := Just col } m
+moveDown m =
+  case m.below of
+    [] => m
+    (l :: ls) =>
+      let col = fromMaybe (length m.before) m.want in
+      { above := (reverse m.before ++ m.after) :: m.above, before := reverse (take col l)
+      , after := drop col l, below := ls, want := Just col } m
 
 step : Msg -> Model -> Model
 step (Insert c) m = { before := reverse (clean c) ++ m.before, want := Nothing } m
@@ -205,31 +174,40 @@ step DeleteForward m =
     [] => case m.below of
             (l :: ls) => { after := l, below := ls, want := Nothing } m
             [] => m
-step MoveLeft m = left' m
-step MoveRight m = right' m
-step MoveUp m = up' m
-step MoveDown m = down' m
-step LineStart m = { before := [], after := reverse m.before ++ m.after, want := Nothing } m
+step MoveLeft m = moveLeft m
+step MoveRight m = moveRight m
+step MoveUp m = moveUp m
+step MoveDown m = moveDown m
+step LineStart m = toLineStart m
 step LineEnd m = toLineEnd m
-step PageUp m = repeatN (max 1 m.rows) up' m
-step PageDown m = repeatN (max 1 m.rows) down' m
-step DocStart m = repeatN (length m.above) up' ({ want := Just 0 } m)
-step DocEnd m = toLineEnd (repeatN (length m.below) down' ({ want := Just 0 } m))
+step PageUp m = repeatN (max 1 m.rows) moveUp m
+step PageDown m = repeatN (max 1 m.rows) moveDown m
+step DocStart m = toLineStart (repeatN (length m.above) moveUp ({ want := Just 0 } m))
+step DocEnd m = toLineEnd (repeatN (length m.below) moveDown ({ want := Just 0 } m))
 step KillToEnd m = { after := [], want := Nothing } m
 step KillToStart m = { before := [], want := Nothing } m
 step (ClickAt col row) m =
-  let m1 = gotoLine (min (lineCount m `minus` 1) (m.top + row)) m
-      text = reverse m1.before ++ m1.after
-      idx = reach col (drop m1.left text) m1.left
-  in { before := reverse (take idx text), after := drop idx text, want := Nothing } m1
-  where
-    reach : Nat -> List Char -> Nat -> Nat
-    reach _ [] i = i
-    reach c (x :: xs) i = if charWidth x > c then i else reach (c `minus` charWidth x) xs (S i)
+  if col + 1 >= m.cells then m      -- the scroll bar
+  else
+    let target = min (lineCount m `minus` 1) (m.top + row)
+        line = length m.above
+        m1 = if target < line then repeatN (line `minus` target) moveUp m
+             else repeatN (target `minus` line) moveDown m
+        text = reverse m1.before ++ m1.after
+        idx = reach col (drop m1.left text) m1.left
+    in { before := reverse (take idx text), after := drop idx text, want := Nothing } m1
 
+||| Apply a message. PageUp and PageDown move the viewport by a page as well
+||| as the cursor.
 export
 update : Msg -> Model -> Model
-update msg m = scrolled (step msg m)
+update msg m =
+  let m1 = step msg m
+      maxTop = lineCount m1 `minus` m1.rows
+  in scrolled $ case msg of
+       PageUp => { top := m.top `minus` m.rows } m1
+       PageDown => { top := min maxTop (m.top + m.rows) } m1
+       _ => m1
 
 ||| The message a key means to the editor; Tab and the keys with no meaning
 ||| here are left to others. Enter is a line break.
@@ -286,18 +264,13 @@ cursorLine focused m =
       under = case m.after of
                 (c :: _) => if charWidth c == 0 then ' ' else c
                 [] => ' '
-      textCells = m.cells `minus` 1
-      room = (textCells `minus` sum (map charWidth shown)) `minus` cursorWidth m
+      room = ((m.cells `minus` 1) `minus` sum (map charWidth shown)) `minus` cursorWidth m.after
       cursorStyle = if focused then withAttr Inverse plain else plain
   in box [direction Row]
        [ Text plain Truncate (pack shown)
        , box (if focused then [cursorHere] else []) [Text cursorStyle Truncate (pack [under])]
-       , Text plain Truncate (pack (cut room (drop 1 m.after)))
+       , Text plain Truncate (pack (cutTo room (drop 1 m.after)))
        ]
-  where
-    cut : Nat -> List Char -> List Char
-    cut _ [] = []
-    cut room (c :: cs) = if charWidth c <= room then c :: cut (room `minus` charWidth c) cs else []
 
 ||| The editor drawn `cells` x `rows`, with a scroll bar on the right; with
 ||| `focused` the cursor is shown.
@@ -305,17 +278,14 @@ export
 view : (focused : Bool) -> Model -> Node msg
 view focused m =
   let line = length m.above
-      first = m.top
-      lines = reverse m.above ++ [reverse m.before ++ m.after] ++ m.below
-      visible = take m.rows (drop first (zip' [0 ..] lines))
+      shownAbove = reverse (take (line `minus` m.top) m.above)
+      visible = take m.rows (map (plainLine m) shownAbove
+                             ++ [cursorLine focused m]
+                             ++ map (plainLine m) (take m.rows m.below))
   in box [direction Row, width (Cells m.cells), height (Cells m.rows)]
-       [ box [grow 1] (map (\(i, l) => if i == line then cursorLine focused m else plainLine m l) visible)
+       [ box [grow 1] visible
        , scrollBar m.rows (lineCount m) m.top
        ]
-  where
-    zip' : Stream Nat -> List (List Char) -> List (Nat, List Char)
-    zip' _ [] = []
-    zip' (i :: is) (x :: xs) = (i, x) :: zip' is xs
 
 ||| The editor as a focusable node. `wrap` turns its messages into the program's.
 export
