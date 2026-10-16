@@ -18,9 +18,10 @@ main = do
   frameLines frame >>= traverse_ putStrLn
 ```
 
-Status: the pure part (style, width, layout, painting, frame diff) and the
-terminal runtime (raw mode, key input, resize, timers, signals) are
-implemented; the Elm-style program model and the widgets are next.
+Status: the pure part (style, width, layout, painting, frame diff), the
+terminal runtime (raw mode, key input, resize, timers, signals) and the
+Elm-style program model with runtime-managed focus are implemented; the
+widgets (input field, list, scroll view, table, ...) are next.
 See [`doc/design.md`](doc/design.md).
 
 ## Build & test

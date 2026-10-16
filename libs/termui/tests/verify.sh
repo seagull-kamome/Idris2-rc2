@@ -29,13 +29,14 @@ source "$REPO_ROOT/env.sh"
 
 # name|extra -p packages (termui is always passed)|what the test covers
 TESTS=(
-    "TestLayout|contrib|layout, painting and frame diffing"
+    "TestLayout|contrib rc2base|layout, painting and frame diffing"
     "TestInput|rc2base|input decoding"
     "TestRuntime|rc2base contrib|terminal runtime on a pty"
+    "TestProgram|rc2base contrib|Elm-style program, focus, commands and subscriptions"
 )
 
 # Tests built with IDRIS2_CFLAGS=-D_GNU_SOURCE (posix_openpt is hidden otherwise).
-NEEDS_GNU_SOURCE=" TestRuntime "
+NEEDS_GNU_SOURCE=" TestRuntime TestProgram "
 
 echo "=== Check TESTS against the tests/*/ directories ==="
 listed=()

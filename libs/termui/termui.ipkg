@@ -12,4 +12,5 @@ modules    = TermUI.Style,
              TermUI.Input,
              TermUI.Terminal,
              TermUI.Loop,
+             TermUI.Program,
              TermUI.Width

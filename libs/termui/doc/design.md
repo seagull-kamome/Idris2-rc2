@@ -38,6 +38,7 @@ dumped as text (`frameLines`), which is how the tests look at results.
 | `TermUI.Input` | decoding of terminal input into key and paste events |
 | `TermUI.Terminal` | raw mode, alternate screen, window size, byte I/O |
 | `TermUI.Loop` | epoll loop over input, signals and timers, producing `Event`s |
+| `TermUI.Program` | Elm-style `Program`, `Cmd`, `Sub`, focus, `runProgram` |
 
 ## Layout semantics
 
@@ -125,11 +126,44 @@ Only the thread that created the loop receives the signals, so create it in
 the main thread. A program killed by SIGKILL (or one that crashes) cannot
 restore the terminal.
 
+## Programs
+
+A `Program model msg` is `init : (model, Cmd msg)`, `update : msg -> model ->
+(model, Cmd msg)`, `view : model -> Node msg` and `subs : model -> List (Sub msg)`.
+`runProgram` (or `runProgramOn` for explicit descriptors) opens the terminal,
+runs the commands of `init`, and then repeats: draw, wait for events, turn
+them into messages, `update`. It returns the final model after a `Quit`, with
+the terminal restored.
+
+- `Cmd`: `Quit`, `Emit msg` (deliver at once), `After ms msg` (one-shot
+  timer), `Perform (IO msg)` (run now, deliver the result; it blocks the loop,
+  so it is meant for short actions), `Batch`.
+- `Sub`: `OnInput` (keys the focused node did not take, and pastes),
+  `OnResize`, `Every key ms msg` (a periodic timer; the runtime starts, stops
+  and retimes timers when the list returned by `subs` changes, keyed by `key`),
+  `OnTerminate` (without it SIGINT/SIGTERM/SIGHUP and end of input quit).
+- Components compose as in Elm: a parent holds the child's model and wraps
+  its messages, using `mapNode`, `mapCmd` and `mapSub` to embed the child's
+  view, commands and subscriptions.
+
+### Focus
+
+The view marks nodes with `focusable (\focused => node) handler`. The runtime
+numbers the focusables in tree order, keeps the index of the focused one
+(clamped when the view changes) and builds the view again with `focused` set for
+exactly that one. A key goes first to the handler of the focused node; if it
+returns `Nothing` and the key is Tab or Shift+Tab, the focus moves (and wraps);
+otherwise the key goes to the `OnInput` subscriptions. A handler that wants Tab
+for itself (an editor) returns `Just` for it.
+
+The screen is redrawn after every batch of events; the differ keeps the cost
+proportional to what changed.
+
 ## Roadmap
 
 1. Pure part: style, width, layout, painting, diff. Done.
 2. Runtime: raw mode, key parser, event loop over epoll (input, SIGWINCH,
    timers), alternate screen, restore on exit. Done except for the mouse.
-3. Elm-style programs: `Component` (model, msg, update, view, subs), `Cmd`,
-   `Sub`, composition by mapping messages. Focus is managed by the runtime.
+3. Elm-style programs: `Program`, `Cmd`, `Sub`, composition by mapping
+   messages, focus managed by the runtime. Done.
 4. Widgets: input field, list, scroll view, table, spinner, progress bar.

@@ -9,9 +9,9 @@
 |│      │
 |╰──────╯
 -- row: grow splits the rest
-|+-------++-------+
-||a      ||b      |
-|+-------++-------+
+|+-----++---------+
+||a    ||b        |
+|+-----++---------+
 -- row: fixed + spacer + gap
 |L        R
 -- column: gap and justify end

@@ -192,6 +192,7 @@ record Kid msg where
 kidOf : Node msg -> Kid msg
 kidOf k@(Text _ _ _) = MkKid k noEdges Auto Auto 0 1
 kidOf k@(Box p _) = MkKid k p.pMargin p.pWidth p.pHeight p.pGrow p.pShrink
+kidOf (Focusable body _) = kidOf (body False)
 
 dimSize : Nat -> Dim -> Maybe Nat
 dimSize _ Auto = Nothing
@@ -224,7 +225,10 @@ columnWidths nat p iw = map width
 -- Natural size
 
 -- Size of the border box when at most `maxW` cells of width are available.
+-- A `Focusable` is laid out as its unfocused body; the runtime resolves
+-- focusables (`TermUI.Program`) before the layout sees them.
 natural : Node msg -> Nat -> (Nat, Nat)
+natural (Focusable body _) maxW = natural (body False) maxW
 natural (Text _ wrap s) maxW =
   let ls = wrapText wrap maxW s in
   (foldl max 0 (map stringWidth ls), length ls)
@@ -245,9 +249,12 @@ natural (Box p kids) maxW =
           , foldl max 0 (zipWith (\k, sz =>
               snd (natural k.node (sz `minus` hEdges k.margin)) + vEdges k.margin) ks sizes) )
         Column =>
-          let widths = columnWidths natural p iw ks in
-          ( foldl max 0 (zipWith (\k, cwid => cwid + hEdges k.margin) ks widths)
-          , sum (zipWith (\k, cwid => snd (natural k.node cwid) + vEdges k.margin) ks widths) + gaps )
+          -- The width of a column is that of its widest child; the height of
+          -- a child is measured at the width it will receive.
+          let widths = columnWidths natural p iw ks
+              wanted = map (\k => fst (natural k.node (iw `minus` hEdges k.margin)) + hEdges k.margin) ks
+          in ( foldl max 0 wanted
+             , sum (zipWith (\k, cwid => snd (natural k.node cwid) + vEdges k.margin) ks widths) + gaps )
       w = case p.pWidth of
             Cells k => k
             _ => min maxW (cw + bx)
@@ -268,6 +275,7 @@ crossOffset _ _ = 0
 export
 place : Node msg -> Rect -> Laid
 place (Text s wrap str) r = LText r s (wrapText wrap r.w str)
+place (Focusable body _) r = place (body False) r
 place (Box p kids) r =
   let i = innerRect p r
       ks = map kidOf kids

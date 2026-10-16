@@ -104,21 +104,31 @@ cancelTimer l ident = do
   traverse_ (\(_, _, fd) => ignore (epollDel l.epoll fd) >> ignore (close fd)) gone
   writeIORef l.timers kept
 
-||| Start a timer that fires `ETimer id` every `intervalMs` milliseconds
-||| (the first time after the same delay). Replaces a timer with the same id.
-export
-addTimer : Loop -> (id : Nat) -> (intervalMs : Nat) -> IO (Either Errno ())
-addTimer l ident ms = do
+armTimer : Loop -> (id : Nat) -> (ms : Nat) -> (repeat : Bool) -> IO (Either Errno ())
+armTimer l ident ms repeat = do
   cancelTimer l ident
   Right fd <- timerfd_create CLOCK_MONOTONIC (TFD_NONBLOCK .|. TFD_CLOEXEC)
     | Left e => pure (Left e)
   let span = MkTimeSpec (cast (div ms 1000)) (cast (mod ms 1000 * 1000000))
-  Right _ <- timerfd_settime fd 0 (MkITimerSpec span span)
+      none = MkTimeSpec 0 0
+  Right _ <- timerfd_settime fd 0 (MkITimerSpec (if repeat then span else none) span)
     | Left e => ignore (close fd) >> pure (Left e)
   Right () <- epollAdd l.epoll fd EPOLLIN
     | Left e => ignore (close fd) >> pure (Left e)
   modifyIORef l.timers ((fd.rawfd, ident, fd) ::)
   pure (Right ())
+
+||| Start a timer that fires `ETimer id` every `ms` milliseconds (the first
+||| time after the same delay). Replaces a timer with the same id.
+export
+addTimer : Loop -> (id : Nat) -> (ms : Nat) -> IO (Either Errno ())
+addTimer l ident ms = armTimer l ident ms True
+
+||| Start a timer that fires `ETimer id` once, after `ms` milliseconds. The
+||| expired timer stays registered until `cancelTimer`.
+export
+addOneShot : Loop -> (id : Nat) -> (ms : Nat) -> IO (Either Errno ())
+addOneShot l ident ms = armTimer l ident ms False
 
 -------------------------------------------------------------------------------
 -- Waiting

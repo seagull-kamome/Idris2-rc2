@@ -74,7 +74,7 @@ openTerminal input output = do
   cfmakeraw raw
   setCc raw VMIN 1
   setCc raw VTIME 0
-  Right () <- tcsetattr input TCSAFLUSH raw
+  Right () <- tcsetattr input TCSADRAIN raw
     | Left e => pure (Left e)
   Right () <- writeString output enterSequence
     | Left e => ignore (tcsetattr input TCSANOW saved) >> pure (Left e)
@@ -85,7 +85,7 @@ export
 closeTerminal : Terminal -> IO ()
 closeTerminal t = do
   _ <- writeString t.output leaveSequence
-  _ <- tcsetattr t.input TCSAFLUSH t.saved
+  _ <- tcsetattr t.input TCSADRAIN t.saved
   pure ()
 
 ||| The size in cells (columns, rows); 80 x 24 when the terminal does not say.

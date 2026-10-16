@@ -34,10 +34,27 @@ visible bs = concatMap esc (map (cast {to = Int}) bs)
     esc 13 = "<CR>"
     esc b = if b >= 32 && b < 127 then singleton (chr b) else "<" ++ show b ++ ">"
 
-fromMaster : FileDesc -> IO ()
-fromMaster master = do
-  r <- readBytes master
-  putStrLn ("terminal output: " ++ either show visible r)
+-- The tty layer hands output written to the slave to the master
+-- asynchronously: read until the marker has arrived.
+readUntil : FileDesc -> String -> IO (List Bits8)
+readUntil master marker = go []
+  where
+    want : List Bits8
+    want = encode (unpack marker)
+
+    go : List Bits8 -> IO (List Bits8)
+    go acc =
+      if isSuffixOf want acc
+         then pure acc
+         else do
+           Right more <- readBytes master
+             | Left _ => pure acc
+           if null more then pure acc else go (acc ++ more)
+
+fromMaster : FileDesc -> String -> IO ()
+fromMaster master marker = do
+  r <- readUntil master marker
+  putStrLn ("terminal output: " ++ visible r)
 
 send : FileDesc -> String -> IO ()
 send master s = ignore (writeString master s)
@@ -69,7 +86,7 @@ main = do
   Right term <- openTerminal slave slave
     | Left e => putStrLn ("openTerminal: " ++ show e)
   flags "raw" slave
-  fromMaster master
+  fromMaster master "\ESC[2J"
   terminalSize term >>= \s => putStrLn ("size: " ++ show s)
 
   Right loop <- newLoop term
@@ -111,10 +128,10 @@ main = do
   f1 <- render (the (Node ()) (text "hi")) 4 1
   out <- diffFrames Nothing f1
   _ <- writeString slave out
-  fromMaster master
+  fromMaster master "hi\ESC[0m"
 
   closeLoop loop
   closeTerminal term
-  fromMaster master
+  fromMaster master "\ESC[?1049l"
   flags "restored" slave
   putStrLn "done"

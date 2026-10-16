@@ -9,6 +9,7 @@
 ||| This module was licensed by BSD3. see LICENSE file for detail.
 module TermUI.Node
 
+import TermUI.Input
 import TermUI.Style
 
 %default total
@@ -71,6 +72,11 @@ public export
 data Node : Type -> Type where
   Text : Style -> Wrap -> String -> Node msg
   Box : Props -> List (Node msg) -> Node msg
+  ||| A node the runtime can give the keyboard focus to. The body is built
+  ||| knowing whether it has the focus, and the handler sees the keys that
+  ||| arrive while it has. Focusables are visited in tree order by Tab and
+  ||| Shift+Tab.
+  Focusable : (focused : Bool -> Node msg) -> (Input -> Maybe msg) -> Node msg
 
 -------------------------------------------------------------------------------
 -- Builders
@@ -173,3 +179,15 @@ truncated s = Text s Truncate
 public export
 charWrapped : Style -> String -> Node msg
 charWrapped s = Text s WrapChars
+
+||| A node that takes the keyboard focus; see `Focusable`.
+public export
+focusable : (focused : Bool -> Node msg) -> (Input -> Maybe msg) -> Node msg
+focusable = Focusable
+
+||| Change the messages of a view; a parent uses it to embed a child's view.
+export covering
+mapNode : (a -> b) -> Node a -> Node b
+mapNode _ (Text s w str) = Text s w str
+mapNode f (Box p kids) = Box p (map (mapNode f) kids)
+mapNode f (Focusable body h) = Focusable (\b => mapNode f (body b)) (\i => map f (h i))
