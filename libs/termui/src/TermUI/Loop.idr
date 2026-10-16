@@ -74,7 +74,7 @@ sameSignal (MkSignal a) (MkSignal b) = a == b
 export
 newLoop : (input : FileDesc) -> (output : FileDesc) -> IO (Either Errno Loop)
 newLoop input output = do
-  Right set <- sigSetOf [SIGWINCH, SIGINT, SIGTERM, SIGHUP, SIGPIPE, SIGCONT]
+  Right set <- sigSetOf [SIGWINCH, SIGINT, SIGTERM, SIGHUP, SIGPIPE, SIGCONT, SIGTTOU, SIGTTIN]
     | Left e => pure (Left e)
   Right old <- sigprocmask SIG_BLOCK set
     | Left e => pure (Left e)
@@ -169,7 +169,8 @@ drainSignals l = go False Nothing False
           pure ((if resume then [EResume] else []) ++ size ++ (if term then [ETerminate] else []))
         Right info =>
           if sameSignal info.signo SIGWINCH then go term (Just ()) resume
-          else if sameSignal info.signo SIGPIPE then go term resize resume
+          else if sameSignal info.signo SIGPIPE || sameSignal info.signo SIGTTOU || sameSignal info.signo SIGTTIN
+                  then go term resize resume
           else if sameSignal info.signo SIGCONT then go term resize True
           else go True resize resume
 

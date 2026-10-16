@@ -35,7 +35,7 @@ data Cmd msg
   = NoCmd
   | Batch (List (Cmd msg))
   | Quit
-  | Emit msg                     -- deliver a message at once
+  | Emit msg                     -- queue a message
   | After Nat msg                -- deliver a message after some milliseconds
   | Perform (IO msg)             -- run an action now and deliver its result
   | Suspend                      -- stop the program, as Ctrl-Z does in a shell
@@ -71,10 +71,11 @@ mapSub f (OnTerminate m) = OnTerminate (f m)
 
 ||| Put the timers of a component's subscriptions under a name of their own:
 ||| two components may then use the same `Every` key. Apply it to the whole
-||| list the component returns, after `mapSub`.
+||| list the component returns, after `mapSub`. Within one scope a key names
+||| one timer; the set of keys should stay bounded, for the runtime remembers each.
 export
 scopeSub : (scope : String) -> Sub msg -> Sub msg
-scopeSub scope (Every k ms m) = Every (scope ++ "/" ++ k) ms m
+scopeSub scope (Every k ms m) = Every (scope ++ "\x1f" ++ k) ms m
 scopeSub _ s = s
 
 -------------------------------------------------------------------------------
@@ -143,7 +144,7 @@ record Env model msg where
   queue : IORef (List msg)                -- messages waiting for `update`, first first
   draining : IORef Bool
   mouseOn : IORef Bool
-  skipResume : IORef Bool                 -- the SIGCONT that ends our own Suspend was handled already
+  skipResume : IORef Nat                  -- batches left in which an EResume is the SIGCONT that ended our own Suspend
   rects : IORef (List (Nat, Rect))
   shownCursor : IORef (Maybe (Bool, Nat, Nat))
 
@@ -175,12 +176,10 @@ mutual
   dispatch env m = do
     modifyIORef env.queue (++ [m])
     busy <- readIORef env.draining
-    if busy
-       then pure ()
-       else do
-         writeIORef env.draining True
-         drain env
-         writeIORef env.draining False
+    unless busy $ do
+      writeIORef env.draining True
+      drain env
+      writeIORef env.draining False
 
   drain : Env model msg -> IO ()
   drain env = do
@@ -218,15 +217,48 @@ mutual
   runCmd env (Perform io) = io >>= dispatch env
   runCmd env Suspend = do
     closeTerminal env.term
-    writeIORef env.skipResume True
-    _ <- raise SIGSTOP
+    stopped <- raise SIGSTOP
+    -- the SIGCONT that ended the stop is waiting in the signalfd
+    writeIORef env.skipResume (either (const 0) (const 2) stopped)
     resumeEnv env
+    refreshSize env
+
+  -- The terminal may have been resized while the program was stopped, when
+  -- nobody told it.
+  refreshSize : Env model msg -> IO ()
+  refreshSize env = do
+    (c, r) <- terminalSize env.term
+    old <- readIORef env.size
+    unless ((c, r) == old) $ applyResize env c r
+
+  applyResize : Env model msg -> Nat -> Nat -> IO ()
+  applyResize env c r = do
+    writeIORef env.size (c, r)
+    writeIORef env.prev Nothing
+    writeIORef env.shownCursor Nothing
+    model <- readIORef env.modelRef
+    traverse_ (\s => case s of
+                       OnResize g => dispatch env (g c r)
+                       _ => pure ()) (env.prog.subs model)
+
+-- Run `act` and then handle the queued messages: what several `dispatch`es
+-- inside `act` send is handled in the order sent, and what that produces after it.
+batching : Env model msg -> IO () -> IO ()
+batching env act = do
+  busy <- readIORef env.draining
+  if busy
+     then act
+     else do
+       writeIORef env.draining True
+       act
+       drain env
+       writeIORef env.draining False
 
 -- Start, stop and retime the timers the current subscriptions ask for.
 syncTimers : Env model msg -> IO ()
 syncTimers env = do
   model <- readIORef env.modelRef
-  let wanted = nub (mapMaybe period (env.prog.subs model))
+  let wanted = nubBy (\a, b => fst a == fst b) (mapMaybe period (env.prog.subs model))
   active <- readIORef env.everys
   traverse_ (\(k, _) => everyId env k >>= cancelTimer env.loop) (filter (\a => not (elem a wanted)) active)
   traverse_ (\(k, ms) => do i <- everyId env k
@@ -387,14 +419,7 @@ onInput env inp = do
 
 onEvent : Env model msg -> Event -> IO ()
 onEvent env (EInput i) = onInput env i
-onEvent env (EResize c r) = do
-  writeIORef env.size (c, r)
-  writeIORef env.prev Nothing
-  writeIORef env.shownCursor Nothing
-  model <- readIORef env.modelRef
-  traverse_ (\s => case s of
-                     OnResize g => dispatch env (g c r)
-                     _ => pure ()) (env.prog.subs model)
+onEvent env (EResize c r) = applyResize env c r
 onEvent env (ETimer ident) =
   if mod (cast {to = Integer} ident) 2 == 0
      then do
@@ -413,8 +438,8 @@ onEvent env (ETimer ident) =
            dispatch env m
 onEvent env EResume = do
   skip <- readIORef env.skipResume
-  writeIORef env.skipResume False
-  if skip then pure () else resumeEnv env
+  writeIORef env.skipResume 0
+  when (skip == 0) $ resumeEnv env *> refreshSize env
 onEvent env ETerminate = do
   model <- readIORef env.modelRef
   case mapMaybe terminating (env.prog.subs model) of
@@ -432,6 +457,8 @@ loopUntilQuit env = do
   draw env
   evs <- waitEvents env.loop (-1)
   handleAll evs
+  -- the SIGCONT of our own Suspend comes in the next batch, or never
+  modifyIORef env.skipResume (`minus` 1)
   q <- readIORef env.quit
   if q then pure () else loopUntilQuit env
   where
@@ -440,7 +467,7 @@ loopUntilQuit env = do
     handleAll : List Event -> IO ()
     handleAll [] = pure ()
     handleAll (e :: es) = do
-      onEvent env e
+      batching env (onEvent env e)
       q <- readIORef env.quit
       if q then pure () else currentView env *> handleAll es
 
@@ -463,13 +490,13 @@ runProgramOn input output prog = do
   env <- MkEnv prog loop term output <$> newIORef model0 <*> newIORef 0 <*> newIORef []
            <*> newIORef Nothing <*> newIORef size <*> newIORef False
            <*> newIORef [] <*> newIORef 0 <*> newIORef [] <*> newIORef [] <*> newIORef [] <*> newIORef False
-           <*> newIORef False <*> newIORef False <*> newIORef [] <*> newIORef Nothing
-  runCmd env cmd0
-  -- the size is told to the program once at the start, as at every resize
-  current <- readIORef env.modelRef
-  traverse_ (\sub => case sub of
-                       OnResize g => dispatch env (uncurry g size)
-                       _ => pure ()) (prog.subs current)
+           <*> newIORef False <*> newIORef 0 <*> newIORef [] <*> newIORef Nothing
+  batching env $ do
+    runCmd env cmd0
+    -- the size is told to the program once at the start, as at every resize
+    traverse_ (\sub => case sub of
+                         OnResize g => dispatch env (uncurry g size)
+                         _ => pure ()) (prog.subs model0)
   q <- readIORef env.quit
   when (not q) $ loopUntilQuit env
   closeTerminal term

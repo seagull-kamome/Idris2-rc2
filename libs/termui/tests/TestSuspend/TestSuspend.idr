@@ -24,11 +24,12 @@ import Text.Encoding.UTF8
 
 %default covering
 
-data Msg = Go | Stopped | Back | Done | Typed
+data Msg = Go | Stopped | Back | Done | Typed | Resized Nat Nat
 
 record Model where
   constructor MkModel
   resumed : Bool
+  size : (Nat, Nat)
 
 visible : List Bits8 -> String
 visible bs = concatMap esc (decode bs)
@@ -56,10 +57,10 @@ readUntil master marker = go []
 
 program : (master : FileDesc) -> Program Model Msg
 program master = MkProgram
-  (MkModel False, Perform (ignore (writeString master "\x1a") >> pure Go))
+  (MkModel False (0, 0), Perform (ignore (writeString master "\x1a") >> pure Go))
   update
-  (\m => text (if m.resumed then "resumed" else "start"))
-  (\_ => [ OnInput key, Every "safety" 5000 Done ])
+  (\m => text (if m.resumed then "resumed " ++ show (fst m.size) ++ "x" ++ show (snd m.size) else "start"))
+  (\_ => [ OnInput key, OnResize Resized, Every "safety" 5000 Done ])
   where
     update : Msg -> Model -> (Model, Cmd Msg)
     update Go m = (m, NoCmd)
@@ -67,14 +68,12 @@ program master = MkProgram
     update Stopped m = (m, Batch [Suspend, Emit Back])
     update Back m = ({ resumed := True } m, NoCmd)
     update Done m = (m, Quit)
+    update (Resized c r) m = ({ size := (c, r) } m, NoCmd)
 
     key : Input -> Maybe Msg
     key (Press (KChar 'z') mods) = if mods.ctrl then Just Stopped else Nothing
     key (Press (KChar 'q') _) = Just Done
     key _ = Nothing
-
-isStop : Signal -> Bool
-isStop (MkSignal a) = case SIGSTOP of MkSignal b => a == b
 
 canonical : FileDesc -> IO String
 canonical fd = do
@@ -82,6 +81,14 @@ canonical fd = do
     | Left e => pure ("tcgetattr: " ++ show e)
   lf <- getLFlag ios
   pure (if (lf .&. ICANON) /= 0 then "cooked" else "raw")
+
+-- The child must not be left behind, stopped or not, when the test fails.
+giveUp : ProcessID -> String -> IO ()
+giveUp pid why = do
+  putStrLn why
+  _ <- kill pid SIGKILL
+  _ <- waitpid pid 0
+  pure ()
 
 main : IO ()
 main = do
@@ -97,21 +104,26 @@ main = do
   pid <- fork
   case pid of
     MkProcessID 0 => do
-      _ <- runProgramOn slave slave (program master)
-      exitNow 0
+      r <- runProgramOn slave slave (program master)
+      exitNow (either (const 1) (const 0) r)
     _ => do
       Right (_, st1) <- waitpid pid WUNTRACED
-        | Left e => putStrLn ("waitpid: " ++ show e)
+        | Left e => giveUp pid ("waitpid: " ++ show e)
       putStrLn ("child stopped by SIGSTOP: " ++ show (maybe False isStop (stoppedBy st1)))
       out1 <- readUntil master "\ESC[?1049l"
       putStrLn ("output until the stop: " ++ visible out1)
       canonical slave >>= \c => putStrLn ("terminal while stopped: " ++ c)
+      -- the window is resized while the child is stopped, which nobody tells it
+      _ <- setWinSize master 30 5
       _ <- kill pid SIGCONT
-      -- the child redraws everything; "q" then ends it
-      out2 <- readUntil master "\ESC[3;1H\ESC[?25l"
+      -- the child draws everything again, at the new size; "q" then ends it
+      out2 <- readUntil master "\ESC[5;1H\ESC[?25l"
       putStrLn ("output after the continue: " ++ visible out2)
       canonical slave >>= \c => putStrLn ("terminal after the continue: " ++ c)
       _ <- writeString master "q"
       Right (_, st2) <- waitpid pid 0
-        | Left e => putStrLn ("waitpid: " ++ show e)
+        | Left e => giveUp pid ("waitpid: " ++ show e)
       putStrLn ("child exited with: " ++ show (exitedWith st2))
+  where
+    isStop : Signal -> Bool
+    isStop (MkSignal a) = case SIGSTOP of MkSignal b => a == b

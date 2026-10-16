@@ -98,7 +98,7 @@ script = "\r\t\r\rx\ESC[Z \t\t\r++\ESC[<0;5;3M\ESC[<0;5;3m\ESC[<65;1;1M"
 
 program : (master : FileDesc) -> Program Model Msg
 program master = MkProgram
-  (MkModel 0 0 [] [] [] [], Perform (ignore (writeString master script) >> pure Noop))
+  (MkModel 0 0 [] [] [] [], Batch [Perform (ignore (writeString master script) >> pure Noop), Emit (Order "A")])
   update
   view
   subs
@@ -111,7 +111,7 @@ program master = MkProgram
     update (Typed k) m = ({ keys $= (k ::) } m, NoCmd)
     update (Mouse' k) m = ({ mouse $= (k ::) } m, NoCmd)
     update Stop m = (m, Quit)
-    update Noop m = (m, if m.ticks == 0 then Batch [After 300 Tick, Emit (Order "A")] else NoCmd)
+    update Noop m = (m, if m.ticks == 0 then After 300 Tick else NoCmd)
     update (Order o) m =
       ({ trace $= (o ::) } m,
        case o of

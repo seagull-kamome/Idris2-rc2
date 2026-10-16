@@ -119,7 +119,7 @@ off, so Ctrl-C arrives as a key (`Ctrl+KChar 'c'`) and the program decides what
 to do with it.
 
 `newLoop` is called before `openTerminal`. It blocks SIGWINCH, SIGINT, SIGTERM,
-SIGHUP, SIGPIPE and SIGCONT in the calling thread and reads them through a signalfd;
+SIGHUP, SIGPIPE, SIGCONT, SIGTTOU and SIGTTIN in the calling thread and reads them through a signalfd;
 together with the terminal input and the timerfds of `addTimer`/`addOneShot`
 they are waited on with one epoll. `waitEvents` returns the events as values:
 `EInput`, `EResize`, `ETimer`, `ETerminate` (at most one per wake-up),
@@ -164,12 +164,14 @@ the terminal restored.
   `OnResize` (the size is delivered once at the start as well), `Every key ms msg` (a periodic timer; the runtime starts, stops
   and retimes timers when the list returned by `subs` changes, keyed by the
   string `key`; a component wraps its subscriptions in `scopeSub name` so that
-  its keys cannot meet those of another component),
+  its keys cannot meet those of another component; within a scope a key names one
+  timer, and the runtime keeps every key it has seen, so the keys should come from a
+  bounded set),
   `OnTerminate` (without it SIGINT/SIGTERM/SIGHUP and end of input quit).
-- Messages are handled in the order they were sent, one `update` at a time:
-  the messages that `Emit` and `Perform` produce while one is being handled wait
-  their turn behind those already queued (so `Batch [Emit B, Emit C]` and a
-  `B` that emits `D` give B, C, D). `Perform` runs at once and blocks the loop
+- Messages are handled in the order they were sent, one `update` at a time. The
+  messages an event or the `init` command send (`Batch [Emit B, Emit C]`, or
+  several subscriptions answering one key) are queued first, and what handling
+  them produces comes behind them: B, C, then the `D` that B emitted. `Perform` runs at once and blocks the loop
   (signals wait too) until it returns. After a `Quit` the rest of the batch, the
   queue and the events that arrived with it are dropped.
 - `Suspend` stops the program as a shell's Ctrl-Z would: the terminal is
@@ -177,7 +179,9 @@ the terminal restored.
   back to raw mode and draws the whole picture again. Raw mode turns Ctrl-Z
   into a key, so a program decides for itself to answer it with `Suspend`. A
   SIGCONT that arrives some other way (the program was stopped from outside)
-  is the event `EResume` and does the same.
+  is the event `EResume` and does the same. If the terminal was resized while
+  the program was stopped (nobody tells a stopped job), the new size is found
+  out on the continue and `OnResize` is told.
 - Components compose as in Elm: a parent holds the child's model and wraps
   its messages, using `mapNode`, `mapCmd` and `mapSub` to embed the child's
   view, commands and subscriptions.

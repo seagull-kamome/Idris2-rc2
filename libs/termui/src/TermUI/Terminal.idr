@@ -24,7 +24,8 @@ public export
 record Terminal where
   constructor MkTerminal
   input, output : FileDesc
-  saved, raw : Termios
+  saved : Termios       -- the attributes found, restored at the end
+  raw : Termios         -- the attributes the program runs with, set again after a stop
 
 -- Alternate screen, hidden cursor, bracketed paste.
 enterSequence, leaveSequence : String
