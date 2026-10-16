@@ -82,26 +82,35 @@ A subset of CSS flexbox. Sizes are in cells.
   tree times the square of its depth at worst (a 640-deep chain takes under a
   second); it used to double with every level.
 - `minWidth`/`maxWidth`/`minHeight`/`maxHeight` bound the border box (the
-  minimum wins over the maximum). They are applied to the base size of a child
-  and again to the size it ends up with; the room a bound frees is not handed
-  on to the other children.
+  minimum wins over the maximum). They are applied to the base size of a child.
+  A child that the bounds change after the distribution is fixed at the size
+  they give and the room it frees or takes is shared among the others (the
+  distribution is repeated until no bound is violated).
 - `wrapChildren` on a row: the children go on in a new line when the next one
   does not fit in the width (as `flex-wrap`); the lines are `gap` apart, each
   line is distributed and justified by itself and the cross axis (`align`) is
   that of the line. A child wider than the row has a line of its own. A column
-  does not wrap.
+  wraps the same way, in the height it is placed in: its children go on in a new
+  column to the right, `gap` apart, each column as wide as its widest child
+  (`align` places the children across it). It needs a height of its own for its
+  natural size; `maxContent` (the width a parent decides from) counts only its
+  widest child, so give a wrapping column a width when it is among others.
 - `absolute` takes a box out of the flow: it takes no room and does not move
   its siblings, and `top`/`right`/`bottom`/`left` place it in the content box of
   its parent (two opposite sides stretch an `Auto` size; a side not given is
-  free; none given means the start). It is drawn after the flow, so it covers
-  what it overlaps. Margins are not used. An overlay that centres its child is
+  free; none given means the start). Its margins move it away from the sides
+  it is placed by. It is drawn after the flow, so it covers what it overlaps. An overlay that centres its child is
   `box [absolute, top 0, left 0, right 0, bottom 0, align Center, justify JCenter] [child]`.
 - A shrinking item never goes below zero; the deficit it cannot absorb is
   redistributed among the others. `JAround` drops the remainder of the
   division, `JBetween` gives it to the first gaps.
 
-Not implemented: wrapping of a column, percentage margins, `Percent` for
-the height of a row's children before the row's height is known.
+- `marginPercent`/`marginPercentXY` give margins in percent of the content width of
+  the parent (on all sides, as in CSS), added to those in cells. The width a
+  parent is sized by (`maxContent`) does not count them.
+
+Not implemented: `Percent` for the height of a row's children before the
+row's height is known.
 
 A `Style` is a colour for the foreground and one for the background, the
 attributes switched on and the attributes switched off. Applied over its
