@@ -1,0 +1,43 @@
+-- plain keys
+"ab" -> [KChar 'a', KChar 'b']
+"A!" -> [KChar 'A', KChar '!']
+"\r\n\t" -> [Enter, Enter, Tab]
+"\DEL\b" -> [Backspace, Backspace]
+"\SOH\ETX\SUB" -> [Ctrl+KChar 'a', Ctrl+KChar 'c', Ctrl+KChar 'z']
+"\NUL" -> [Ctrl+KChar ' ']
+"\FS\US" -> [Ctrl+KChar '\\', Ctrl+KChar '_']
+-- UTF-8
+"\12354\128512\233" -> [KChar '\12354', KChar '\128512', KChar '\233']
+-- cursor and editing keys
+"\ESC[A\ESC[B\ESC[C\ESC[D" -> [Up, Down, Right, Left]
+"\ESC[H\ESC[F\ESC[2~\ESC[3~\ESC[5~\ESC[6~\ESC[1~\ESC[4~" -> [Home, End, Insert, Delete, PageUp, PageDown, Home, End]
+"\ESC[Z" -> [Shift+BackTab]
+"\ESC[15~\ESC[17~\ESC[24~" -> [F5, F6, F12]
+"\ESCOP\ESCOS\ESCOA" -> [F1, F4, Up]
+-- modifiers
+"\ESC[1;5C\ESC[1;2A\ESC[1;3D\ESC[3;5~\ESC[1;8H" -> [Ctrl+Right, Shift+Up, Alt+Left, Ctrl+Delete, Ctrl+Alt+Shift+Home]
+"\ESCx\ESC\ESC\ESC\12354" -> [Alt+KChar 'x', Alt+Escape, Alt+KChar '\12354']
+-- escape and incomplete input
+"\ESC" -> []  rest=[27]
+"\ESC" (final) -> [Escape]
+"a\ESC[" -> [KChar 'a']  rest=[27, 91]
+"a\ESC[" (final) -> [KChar 'a']
+"\ESC[1;" -> []  rest=[27, 91, 49, 59]
+"\ESCO" -> []  rest=[27, 79]
+"\ESCO" (final) -> []
+[227, 129] -> []  rest=[227, 129]
+[227, 129] (final) -> [KChar '\65533']
+[227, 129, 130, 97] -> [KChar '\12354', KChar 'a']
+[255, 97] -> [KChar '\65533', KChar 'a']
+-- bracketed paste
+"\ESC[200~hello\nworld\ESC[201~x" -> [Paste "hello\nworld", KChar 'x']
+"\ESC[200~\12354\12356\ESC[201~" -> [Paste "\12354\12356"]
+"\ESC[200~partial" -> []  rest=[27, 91, 50, 48, 48, 126, 112, 97, 114, 116, 105, 97, 108]
+"\ESC[200~partial" (final) -> [Paste "partial"]
+"\ESC[200~\ESC[201~" -> [Paste ""]
+-- ignored
+"\ESC[<0;10;5Mq" -> [KChar 'q']
+"\ESC[99~q" -> [KChar 'q']
+"\ESC[?1;2cq" -> [KChar 'q']
+-- split across reads
+[KChar 'x']  rest=[27, 91, 49, 59] | [Ctrl+Up, KChar 'y']

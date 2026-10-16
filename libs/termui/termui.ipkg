@@ -3,10 +3,13 @@ package termui
 version    = 0.1.0
 opts       = "--total"
 sourcedir  = "src"
-depends    = contrib
+depends    = contrib, rc2base
 modules    = TermUI.Style,
              TermUI.Node,
              TermUI.Layout,
              TermUI.Frame,
              TermUI.Output,
+             TermUI.Input,
+             TermUI.Terminal,
+             TermUI.Loop,
              TermUI.Width

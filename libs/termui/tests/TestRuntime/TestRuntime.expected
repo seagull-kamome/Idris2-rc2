@@ -1,0 +1,27 @@
+before: canonical=True echo=True isig=True
+raw: canonical=False echo=False isig=False
+terminal output: <ESC>[?1049h<ESC>[?25l<ESC>[?2004h<ESC>[2J
+size: (40, 10)
+-- keys
+[EInput KChar 'a', EInput Up]
+[EInput Ctrl+Right]
+-- a split sequence
+[]
+[EInput Down]
+-- a lone Escape
+[]
+[EInput Escape]
+-- nothing happens
+[]
+-- resize
+[EResize 50 12]
+-- timer
+[ETimer 7]
+[]
+-- terminate
+[ETerminate]
+-- a frame
+terminal output: <ESC>[0m<ESC>[2J<ESC>[1;1H<ESC>[0mhi<ESC>[0m
+terminal output: <ESC>[0m<ESC>[?2004l<ESC>[?25h<ESC>[?1049l
+restored: canonical=True echo=True isig=True
+done

@@ -30,7 +30,12 @@ source "$REPO_ROOT/env.sh"
 # name|extra -p packages (termui is always passed)|what the test covers
 TESTS=(
     "TestLayout|contrib|layout, painting and frame diffing"
+    "TestInput|rc2base|input decoding"
+    "TestRuntime|rc2base contrib|terminal runtime on a pty"
 )
+
+# Tests built with IDRIS2_CFLAGS=-D_GNU_SOURCE (posix_openpt is hidden otherwise).
+NEEDS_GNU_SOURCE=" TestRuntime "
 
 echo "=== Check TESTS against the tests/*/ directories ==="
 listed=()
@@ -61,7 +66,9 @@ for entry in "${TESTS[@]}"; do
     echo "=== rc2 backend: build $t ($desc) ==="
     # idris2-rc2 exits 0 when only the generated C fails to compile.
     rm -f "$TESTS_DIR/$t/build/exec/${t}_verify"
-    ( cd "$TESTS_DIR/$t" && ulimit -v 12000000 && timeout 600 \
+    gnu_flags=""
+    [[ "$NEEDS_GNU_SOURCE" == *" $t "* ]] && gnu_flags="-D_GNU_SOURCE"
+    ( cd "$TESTS_DIR/$t" && ulimit -v 12000000 && IDRIS2_CFLAGS="${IDRIS2_CFLAGS:-} $gnu_flags" timeout 600 \
         "$IDRIS2RC2" --cg rc2 "${pflags[@]}" -o "${t}_verify" "$t.idr" )
 
     echo "=== Run and diff against $t.expected ==="

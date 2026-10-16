@@ -35,6 +35,9 @@ dumped as text (`frameLines`), which is how the tests look at results.
 | `TermUI.Layout` | flexbox-like placement, text wrapping |
 | `TermUI.Frame` | cell grid, painter, `render` |
 | `TermUI.Output` | frame diff to ANSI, SGR generation |
+| `TermUI.Input` | decoding of terminal input into key and paste events |
+| `TermUI.Terminal` | raw mode, alternate screen, window size, byte I/O |
+| `TermUI.Loop` | epoll loop over input, signals and timers, producing `Event`s |
 
 ## Layout semantics
 
@@ -98,11 +101,35 @@ it cell by cell with the previous one.
 - After writing the last column the cursor position is considered unknown
   (pending wrap), so the next write always repositions.
 
+## Runtime
+
+`openTerminal` puts the input in raw mode (`cfmakeraw`, `VMIN=1`) and writes
+the sequences that switch to the alternate screen, hide the cursor and turn
+on bracketed paste; `closeTerminal` undoes all of it. Raw mode turns `ISIG`
+off, so Ctrl-C arrives as a key (`Ctrl+KChar 'c'`) and the program decides what
+to do with it.
+
+`newLoop` blocks SIGWINCH, SIGINT, SIGTERM and SIGHUP in the calling thread
+and reads them through a signalfd; together with the terminal input and the
+timerfds of `addTimer` they are waited on with one epoll. `waitEvents`
+returns the events as values: `EInput`, `EResize`, `ETimer`, `ETerminate`,
+`EEndOfInput`.
+
+Input is decoded by `parseInput`, a pure incremental parser. A byte sequence
+that may continue (a lone ESC, a half CSI, a half UTF-8 character, an open
+bracketed paste) is kept until the next read; a lone ESC that nothing follows
+within 30 ms is the Escape key. Mouse reports and unknown sequences are
+dropped.
+
+Only the thread that created the loop receives the signals, so create it in
+the main thread. A program killed by SIGKILL (or one that crashes) cannot
+restore the terminal.
+
 ## Roadmap
 
-1. Pure part (this stage): style, width, layout, painting, diff.
-2. Runtime: raw mode (`System.Posix.Termios`), key/mouse parser, an event loop
-   over epoll (stdin, SIGWINCH, timers), alternate screen, restore on exit.
+1. Pure part: style, width, layout, painting, diff. Done.
+2. Runtime: raw mode, key parser, event loop over epoll (input, SIGWINCH,
+   timers), alternate screen, restore on exit. Done except for the mouse.
 3. Elm-style programs: `Component` (model, msg, update, view, subs), `Cmd`,
    `Sub`, composition by mapping messages. Focus is managed by the runtime.
 4. Widgets: input field, list, scroll view, table, spinner, progress bar.
