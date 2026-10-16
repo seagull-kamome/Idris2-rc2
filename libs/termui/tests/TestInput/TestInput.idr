@@ -62,6 +62,9 @@ main = do
   tryBytes True [0xE3, 0x81]
   tryBytes False [0xE3, 0x81, 0x82, 0x61]
   tryBytes False [0xFF, 0x61]
+  tryBytes False [0xE3, 0x61, 0x62]
+  tryBytes False [0xC3, 0x1B, 0x5B, 0x41]
+  tryBytes True [0xE3, 0x81, 0x61]
   putStrLn "-- bracketed paste"
   try False "\ESC[200~hello\nworld\ESC[201~x"
   try False "\ESC[200~あい\ESC[201~"

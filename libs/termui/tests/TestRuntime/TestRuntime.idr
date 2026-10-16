@@ -17,6 +17,7 @@ import System.Posix.FileDesc
 import System.Posix.Signal
 import System.Posix.Termios
 import TermUI.Frame
+import TermUI.Input
 import TermUI.Loop
 import TermUI.Node
 import TermUI.Output
@@ -62,6 +63,17 @@ send master s = ignore (writeString master s)
 events : Loop -> Int32 -> IO ()
 events l ms = waitEvents l ms >>= putStrLn . show
 
+-- Wait until the Escape key shows up, ignoring the timer events on the way.
+untilEscape : Loop -> Nat -> IO ()
+untilEscape _ Z = putStrLn "no Escape"
+untilEscape l (S n) = do
+  evs <- waitEvents l 100
+  if any isEscape evs then putStrLn "Escape arrived" else untilEscape l n
+  where
+    isEscape : Event -> Bool
+    isEscape (EInput i) = i == Press KEscape noMods
+    isEscape _ = False
+
 flags : String -> FileDesc -> IO ()
 flags title fd = do
   Right ios <- tcgetattr fd
@@ -83,14 +95,14 @@ main = do
   _ <- setWinSize master 40 10
 
   flags "before" slave
+  Right loop <- newLoop slave slave
+    | Left e => putStrLn ("newLoop: " ++ show e)
   Right term <- openTerminal slave slave
     | Left e => putStrLn ("openTerminal: " ++ show e)
   flags "raw" slave
   fromMaster master "\ESC[2J"
   terminalSize term >>= \s => putStrLn ("size: " ++ show s)
 
-  Right loop <- newLoop term
-    | Left e => putStrLn ("newLoop: " ++ show e)
 
   putStrLn "-- keys"
   send master "a\ESC[A"
@@ -108,6 +120,26 @@ main = do
   events loop 1000
   putStrLn "-- nothing happens"
   events loop 20
+
+  putStrLn "-- a lone Escape while a timer keeps the loop busy"
+  _ <- addTimer loop 3 5
+  send master "\ESC"
+  untilEscape loop 100
+  cancelTimer loop 3
+
+  putStrLn "-- a paste split across reads, with pauses"
+  send master "\ESC[200~hel"
+  events loop 200
+  events loop 100
+  send master "lo\ESC[20"
+  events loop 200
+  send master "1~x"
+  events loop 1000
+
+  putStrLn "-- a one-shot timer of 0 ms"
+  _ <- addOneShot loop 9 0
+  events loop 1000
+  cancelTimer loop 9
 
   putStrLn "-- resize"
   _ <- setWinSize master 50 12

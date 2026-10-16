@@ -42,7 +42,8 @@ writeBytes fd bytes = do
   traverse_ (\(i, b) => setBits8 buf (cast i) b) (zip (the (List Nat) [0 .. n `minus` 1]) bytes)
   written <- write fd buf
   if written < 0
-     then Left <$> errno
+     then do e <- errno
+             if e == EINTR then writeBytes fd bytes else pure (Left e)
      else writeBytes fd (drop (cast written) bytes)
 
 ||| Write a string as UTF-8.
@@ -67,6 +68,8 @@ readBytes fd = do
 export
 openTerminal : (input : FileDesc) -> (output : FileDesc) -> IO (Either Errno Terminal)
 openTerminal input output = do
+  True <- isatty output
+    | False => pure (Left ENOTTY)
   Right saved <- tcgetattr input
     | Left e => pure (Left e)
   Right raw <- tcgetattr input
@@ -88,11 +91,17 @@ closeTerminal t = do
   _ <- tcsetattr t.input TCSADRAIN t.saved
   pure ()
 
-||| The size in cells (columns, rows); 80 x 24 when the terminal does not say.
+||| The size in cells (columns, rows) of the terminal on `output`; 80 x 24
+||| when it does not say.
 export
-terminalSize : Terminal -> IO (Nat, Nat)
-terminalSize t = do
-  r <- getWinSize t.output
+outputSize : (output : FileDesc) -> IO (Nat, Nat)
+outputSize output = do
+  r <- getWinSize output
   pure $ case r of
     Right (c, r') => if c == 0 || r' == 0 then (80, 24) else (c, r')
     Left _ => (80, 24)
+
+||| The size in cells (columns, rows); 80 x 24 when the terminal does not say.
+export
+terminalSize : Terminal -> IO (Nat, Nat)
+terminalSize t = outputSize t.output

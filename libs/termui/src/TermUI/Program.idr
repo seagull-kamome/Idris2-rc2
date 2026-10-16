@@ -103,7 +103,7 @@ record Env model msg where
   constructor MkEnv
   prog : Program model msg
   loop : Loop
-  term : Terminal
+  output : FileDesc
   modelRef : IORef model
   focus : IORef Nat
   handlers : IORef (List (Input -> Maybe msg))
@@ -127,7 +127,13 @@ mutual
 
   runCmd : Env model msg -> Cmd msg -> IO ()
   runCmd _ NoCmd = pure ()
-  runCmd env (Batch cs) = traverse_ (runCmd env) cs
+  runCmd env (Batch cs) = go cs
+    where
+      go : List (Cmd msg) -> IO ()
+      go [] = pure ()
+      go (c :: rest) = do
+        q <- readIORef env.quit
+        if q then pure () else runCmd env c *> go rest
   runCmd env Quit = writeIORef env.quit True
   runCmd env (Emit m) = dispatch env m
   runCmd env (After ms m) = do
@@ -151,22 +157,39 @@ syncTimers env = do
     period (Every k ms _) = Just (k, ms)
     period _ = Nothing
 
-draw : Env model msg -> IO ()
-draw env = do
+-- Build the view for the current model and focus; the handlers are the ones
+-- of this very view, so they are refreshed after every event.
+currentView : Env model msg -> IO (Node msg)
+currentView env = do
   model <- readIORef env.modelRef
   focus <- readIORef env.focus
+  let view = env.prog.view model
+      (node, hs) = resolve focus view
+      count = length hs
+  if focus >= count && focus > 0
+     then do
+       let focus' = count `minus` 1
+           (node', hs') = resolve focus' view
+       writeIORef env.focus focus'
+       writeIORef env.handlers hs'
+       pure node'
+     else do
+       writeIORef env.handlers hs
+       pure node
+
+draw : Env model msg -> IO ()
+draw env = do
+  node <- currentView env
   (w, h) <- readIORef env.size
-  let (_, hs0) = resolve 0 (env.prog.view model)
-      count = length hs0
-      focus' = if count == 0 then 0 else min focus (count `minus` 1)
-      (node, hs) = resolve focus' (env.prog.view model)
-  writeIORef env.focus focus'
-  writeIORef env.handlers hs
   frame <- render node w h
   old <- readIORef env.prev
   out <- diffFrames old frame
-  when (out /= "") $ ignore (writeString env.term.output out)
-  writeIORef env.prev (Just frame)
+  if out == ""
+     then writeIORef env.prev (Just frame)
+     else do
+       r <- writeString env.output out
+       -- after a failed write the screen is unknown: draw it all next time
+       writeIORef env.prev (either (const Nothing) (const (Just frame)) r)
 
 moveFocus : Env model msg -> Bool -> IO ()
 moveFocus env forward = do
@@ -249,9 +272,18 @@ loopUntilQuit env = do
   syncTimers env
   draw env
   evs <- waitEvents env.loop (-1)
-  traverse_ (onEvent env) evs
+  handleAll evs
   q <- readIORef env.quit
   if q then pure () else loopUntilQuit env
+  where
+    -- The handlers of a later event see the model the earlier ones made, and
+    -- nothing is handled after a Quit.
+    handleAll : List Event -> IO ()
+    handleAll [] = pure ()
+    handleAll (e :: es) = do
+      onEvent env e
+      q <- readIORef env.quit
+      if q then pure () else currentView env *> handleAll es
 
 ||| Run a program on a terminal (the descriptors must be a terminal in the
 ||| calling thread's session) until it asks to `Quit`, and return the final
@@ -259,20 +291,20 @@ loopUntilQuit env = do
 export
 runProgramOn : (input : FileDesc) -> (output : FileDesc) -> Program model msg -> IO (Either Errno model)
 runProgramOn input output prog = do
-  Right term <- openTerminal input output
+  Right loop <- newLoop input output
     | Left e => pure (Left e)
-  Right loop <- newLoop term
-    | Left e => closeTerminal term >> pure (Left e)
+  Right term <- openTerminal input output
+    | Left e => closeLoop loop >> pure (Left e)
   let (model0, cmd0) = prog.init
   size <- terminalSize term
-  env <- MkEnv prog loop term <$> newIORef model0 <*> newIORef 0 <*> newIORef []
+  env <- MkEnv prog loop output <$> newIORef model0 <*> newIORef 0 <*> newIORef []
            <*> newIORef Nothing <*> newIORef size <*> newIORef False
            <*> newIORef [] <*> newIORef 0 <*> newIORef []
   runCmd env cmd0
   q <- readIORef env.quit
   when (not q) $ loopUntilQuit env
-  closeLoop loop
   closeTerminal term
+  closeLoop loop
   Right <$> readIORef env.modelRef
 
 ||| `runProgramOn` the process's standard input and output

@@ -186,13 +186,32 @@ data Step
   = Need                                -- more bytes are needed
   | Got (Maybe Input) (List Int)        -- an event (or none for ignored bytes) and the rest
 
--- The part before the first ESC [ 2 0 1 ~ and the part after it.
+||| The bytes that open a bracketed paste: ESC [ 2 0 0 ~.
+export
+pasteStart : List Bits8
+pasteStart = [27, 91, 50, 48, 48, 126]
+
+||| The part before the first occurrence of `marker` and the part after it.
+export
+splitAtMarker : (marker : List Bits8) -> List Bits8 -> Maybe (List Bits8, List Bits8)
+splitAtMarker marker = go []
+  where
+    go : List Bits8 -> List Bits8 -> Maybe (List Bits8, List Bits8)
+    go acc [] = Nothing
+    go acc xs@(x :: rest) =
+      if isPrefixOf marker xs
+         then Just (reverse acc, drop (length marker) xs)
+         else go (x :: acc) rest
+
+||| The bytes that close a bracketed paste: ESC [ 2 0 1 ~.
+export
+pasteEnd : List Bits8
+pasteEnd = [27, 91, 50, 48, 49, 126]
+
 splitPaste : List Int -> Maybe (List Int, List Int)
-splitPaste [] = Nothing
-splitPaste xs@(x :: rest) =
-  case isPrefixOf [27, 91, 50, 48, 49, 126] xs of
-    True => Just ([], drop 6 xs)
-    False => map (\(a, b) => (x :: a, b)) (splitPaste rest)
+splitPaste xs =
+  map (\(a, b) => (map cast a, map cast b))
+      (splitAtMarker pasteEnd (map cast xs))
 
 -- `bs` follows ESC [.
 csiStep : Bool -> List Int -> Step
@@ -223,12 +242,20 @@ step final (27 :: rest) =
 step final (b :: rest) =
   if b < 0x80 then Got (Just (asciiKey b)) rest
   else
-    let n = utf8Length b in
-    if length rest + 1 < n
-       then if final then Got (Just (Press (KChar '\xFFFD') noMods)) [] else Need
-       else case decodeBytes (b :: take (n `minus` 1) rest) of
-              (c :: _) => Got (Just (Press (KChar c) noMods)) (drop (n `minus` 1) rest)
-              [] => Got Nothing rest
+    let n = utf8Length b
+        conts = takeWhile isCont (take (n `minus` 1) rest)
+    in if length conts + 1 < n
+          then -- a continuation byte is missing: wait for it only if the
+               -- bytes so far could still be completed
+               if length conts == length (take (n `minus` 1) rest) && not final && length rest + 1 < n
+                  then Need
+                  else Got (Just (Press (KChar '\xFFFD') noMods)) (drop (length conts) rest)
+          else case decodeBytes (b :: conts) of
+                 (c :: _) => Got (Just (Press (KChar c) noMods)) (drop (n `minus` 1) rest)
+                 [] => Got Nothing rest
+  where
+    isCont : Int -> Bool
+    isCont x = x >= 0x80 && x < 0xC0
 
 ||| Decode as many events as `bytes` holds. `final` says no more bytes are
 ||| coming right now, so a lone ESC is the Escape key; otherwise it may start

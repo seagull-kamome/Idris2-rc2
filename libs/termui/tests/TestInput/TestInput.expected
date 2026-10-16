@@ -29,6 +29,9 @@
 [227, 129] (final) -> [KChar '\65533']
 [227, 129, 130, 97] -> [KChar '\12354', KChar 'a']
 [255, 97] -> [KChar '\65533', KChar 'a']
+[227, 97, 98] -> [KChar '\65533', KChar 'a', KChar 'b']
+[195, 27, 91, 65] -> [KChar '\65533', Up]
+[227, 129, 97] (final) -> [KChar '\65533', KChar 'a']
 -- bracketed paste
 "\ESC[200~hello\nworld\ESC[201~x" -> [Paste "hello\nworld", KChar 'x']
 "\ESC[200~\12354\12356\ESC[201~" -> [Paste "\12354\12356"]

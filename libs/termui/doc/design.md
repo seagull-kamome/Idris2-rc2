@@ -9,7 +9,7 @@ using `Control.ANSI.CSI` from contrib for cursor movement and erasing.
 ## Pipeline
 
 ```
-Msg ──► update : Model -> Msg -> (Model, Cmd Msg)        (stage 3)
+Msg ──► update : Msg -> Model -> (Model, Cmd Msg)        TermUI.Program
                          │
                   view : Model -> Node Msg                TermUI.Node
                          │
@@ -69,13 +69,14 @@ A subset of CSS flexbox. Sizes are in cells.
   redistributed among the others. `JAround` drops the remainder of the
   division, `JBetween` gives it to the first gaps.
 
-Not implemented (stage 1): `wrap` of children onto several lines, absolute
+Not implemented: wrapping of children onto several lines, absolute
+positioning, min/max sizes, percentage margins.
 
 A `Style` applied over another one only adds: attributes are OR-ed, and a
 colour left at `Default` is inherited, so a child cannot switch off a
 parent's attribute or return to the terminal default colour. The natural size
 is recomputed at each level (cost: depth times nodes); cache it if views get
-large.positioning, min/max sizes, percentage margins.
+large.
 
 ## Characters
 
@@ -110,21 +111,32 @@ on bracketed paste; `closeTerminal` undoes all of it. Raw mode turns `ISIG`
 off, so Ctrl-C arrives as a key (`Ctrl+KChar 'c'`) and the program decides what
 to do with it.
 
-`newLoop` blocks SIGWINCH, SIGINT, SIGTERM and SIGHUP in the calling thread
-and reads them through a signalfd; together with the terminal input and the
-timerfds of `addTimer` they are waited on with one epoll. `waitEvents`
-returns the events as values: `EInput`, `EResize`, `ETimer`, `ETerminate`,
-`EEndOfInput`.
+`newLoop` is called before `openTerminal`. It blocks SIGWINCH, SIGINT, SIGTERM,
+SIGHUP and SIGPIPE in the calling thread and reads them through a signalfd;
+together with the terminal input and the timerfds of `addTimer`/`addOneShot`
+they are waited on with one epoll. `waitEvents` returns the events as values:
+`EInput`, `EResize`, `ETimer`, `ETerminate` (at most one per wake-up),
+`EEndOfInput` (the input was closed or failed; SIGPIPE is dropped, so a
+closed output shows up as a failed write instead of killing the process).
+A timer of 0 ms fires after 1 ms (an all-zero timerfd value would disarm it).
 
 Input is decoded by `parseInput`, a pure incremental parser. A byte sequence
-that may continue (a lone ESC, a half CSI, a half UTF-8 character, an open
-bracketed paste) is kept until the next read; a lone ESC that nothing follows
-within 30 ms is the Escape key. Mouse reports and unknown sequences are
-dropped.
+that may continue (a lone ESC, a half CSI, a half UTF-8 character) is kept until
+the next read. The loop arms an internal 30 ms one-shot timer whenever such a
+tail exists, so a lone ESC becomes the Escape key after 30 ms of silence on
+the input even if timers or signals keep the loop busy; an incomplete CSI is
+dropped at that time. An invalid UTF-8 sequence gives U+FFFD and decoding resumes
+at the next byte that is not a continuation. A bracketed paste is accumulated
+by the loop itself (the body in chunks, with the last five bytes held back so
+that the closing sequence can be found across reads) and is never cut by the
+timer. Mouse reports and unknown sequences are dropped.
 
-Only the thread that created the loop receives the signals, so create it in
-the main thread. A program killed by SIGKILL (or one that crashes) cannot
-restore the terminal.
+Teardown: `closeTerminal` first, then `closeLoop`, which takes the signals still
+pending before it unblocks them. Signals blocked in the creating thread do not
+reach it, but threads started before the loop was created still get the default
+action, so create the loop in the main thread before starting others. A
+program killed by SIGKILL, SIGQUIT, or one that crashes, cannot restore the
+terminal; SIGTSTP/SIGCONT are not handled (the screen is not redrawn).
 
 ## Programs
 
@@ -138,10 +150,15 @@ the terminal restored.
 - `Cmd`: `Quit`, `Emit msg` (deliver at once), `After ms msg` (one-shot
   timer), `Perform (IO msg)` (run now, deliver the result; it blocks the loop,
   so it is meant for short actions), `Batch`.
-- `Sub`: `OnInput` (keys the focused node did not take, and pastes),
+- `Sub`: `OnInput` (keys, and pastes, that the focused node did not take),
   `OnResize`, `Every key ms msg` (a periodic timer; the runtime starts, stops
-  and retimes timers when the list returned by `subs` changes, keyed by `key`),
+  and retimes timers when the list returned by `subs` changes, keyed by `key`;
+  the key is global to the program, so components embedded in one another must
+  not use the same one),
   `OnTerminate` (without it SIGINT/SIGTERM/SIGHUP and end of input quit).
+- `Emit` and `Batch` run depth first, not through a queue, and `Perform`
+  blocks the loop (signals wait too) until it returns. After a `Quit` the rest
+  of the batch and of the events that arrived with it are dropped.
 - Components compose as in Elm: a parent holds the child's model and wraps
   its messages, using `mapNode`, `mapCmd` and `mapSub` to embed the child's
   view, commands and subscriptions.
@@ -156,8 +173,13 @@ returns `Nothing` and the key is Tab or Shift+Tab, the focus moves (and wraps);
 otherwise the key goes to the `OnInput` subscriptions. A handler that wants Tab
 for itself (an editor) returns `Just` for it.
 
+The handlers are rebuilt from the view after every event, so a handler
+always sees the model the previous event produced. The focus is an index: if
+focusables appear or disappear before the focused one, the focus moves to
+whichever widget now has that index (it is clamped when there are fewer).
+
 The screen is redrawn after every batch of events; the differ keeps the cost
-proportional to what changed.
+proportional to what changed. A failed write makes the next draw a full one.
 
 ## Roadmap
 

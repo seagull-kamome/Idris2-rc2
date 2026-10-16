@@ -31,7 +31,7 @@ record Model where
   ticks : Nat
   keys : List String
 
-data Msg = Inc | Dec | Tick | Typed String | Bump Integer | Stop | Noop
+data Msg = Inc | Dec | Tick | Typed String | Bump Integer | SetCount Integer | Stop | Noop
 
 visible : List Bits8 -> String
 visible bs = concatMap esc (decode bs)
@@ -69,18 +69,29 @@ button label msg =
              Press (KChar ' ') _ => Just msg
              _ => Nothing)
 
+-- Its handler is built from the model it was drawn with: two "+" in one read
+-- count twice only if the handlers are refreshed after the first.
+adder : Integer -> Node Msg
+adder n =
+  focusable
+    (\focused => box [border (if focused then Rounded else Single)] [text "n"])
+    (\i => case i of
+             Press (KChar '+') _ => Just (SetCount (n + 1))
+             _ => Nothing)
+
 view : Model -> Node Msg
 view m =
   column []
     [ text ("count " ++ show m.count ++ " ticks " ++ show m.ticks)
-    , row [gap 1] [ button "-" Dec, button "+" Inc ]
+    , row [gap 1] [ button "-" Dec, button "+" Inc, adder m.count ]
     , text (unwords (reverse m.keys))
     ]
 
 -- Enter on the first button, Tab, Enter on the second twice, a typed key,
--- Shift+Tab, Space on the first, Tab twice around the ring and Enter.
+-- Shift+Tab, Space on the first, Tab twice to the third (an Enter it ignores)
+-- and two "+" in one read.
 script : String
-script = "\r\t\r\rx\ESC[Z \t\t\r"
+script = "\r\t\r\rx\ESC[Z \t\t\r++"
 
 program : (master : FileDesc) -> Program Model Msg
 program master = MkProgram
@@ -93,13 +104,14 @@ program master = MkProgram
     update Inc m = ({ count $= (+ 1) } m, NoCmd)
     update Dec m = ({ count $= (\c => c - 1) } m, NoCmd)
     update (Bump n) m = ({ count $= (+ n) } m, NoCmd)
+    update (SetCount n) m = ({ count := n } m, NoCmd)
     update (Typed k) m = ({ keys $= (k ::) } m, NoCmd)
     update Stop m = (m, Quit)
     update Noop m = (m, if m.ticks == 0 then After 100 Tick else NoCmd)
     update Tick m =
       ({ ticks $= S } m,
        Batch [ Perform (pure (Bump 100))
-             , Perform (ignore (writeString master "q") >> pure Noop) ])
+             , Perform (ignore (writeString master "qy") >> pure Noop) ])
 
     subs : Model -> List (Sub Msg)
     subs _ = [ OnInput (\i => case i of

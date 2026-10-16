@@ -13,6 +13,15 @@ size: (40, 10)
 [EInput Escape]
 -- nothing happens
 []
+-- a lone Escape while a timer keeps the loop busy
+Escape arrived
+-- a paste split across reads, with pauses
+[]
+[]
+[]
+[EInput Paste "hello", EInput KChar 'x']
+-- a one-shot timer of 0 ms
+[ETimer 9]
 -- resize
 [EResize 50 12]
 -- timer
