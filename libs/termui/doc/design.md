@@ -177,8 +177,24 @@ code ; column ; row M/m`). Reporting is switched on (`?1002h` and `?1006h`)
 only while some `OnMouse` subscription exists, because it takes the mouse away
 from the terminal's own text selection; it is switched off again when the
 subscriptions go away and when the terminal is closed. Mouse events go to the
-`OnMouse` subscriptions only, never to the focus ring or to `OnInput`. A click
-does not move the focus yet: that needs the positions of the focusables.
+`OnMouse` subscriptions, never to `OnInput`.
+
+`MouseFocus` is a subscription too: it turns reporting on and lets the runtime
+use the mouse for the focus. The layout is kept after every draw, and the box
+of every focusable is marked, so the runtime knows where each one is. A left
+click moves the focus to the focusable under the pointer (the innermost, or the
+later one where they overlap), and every mouse event over a focusable is also
+offered to its handler: `Select` takes the wheel as Up and Down. Clicking inside
+a list does not select the row yet.
+
+### The terminal cursor
+
+The cursor is hidden while the screen is drawn, but an input method (IME)
+puts its candidate window at the cursor, wherever it was left, so the runtime
+places it after every draw. A box marked with `cursorHere` says where: the focused
+`TextInput` marks its cursor cell, and the cursor is shown there (an inverse cell
+is drawn as well). With no such box the cursor is hidden and parked at the
+bottom left. The position is sent only when it, or the screen, changed.
 
 ### Focus
 

@@ -60,10 +60,12 @@ record Props where
   pStyle : Style
   pAlign : Align
   pJustify : Justify
+  pCursor : Bool          -- the real terminal cursor goes to this box
+  pTag : Maybe Nat        -- set by the runtime on focusable nodes
 
 public export
 defaultProps : Props
-defaultProps = MkProps Column Auto Auto 0 1 noEdges noEdges 0 NoBorder plain plain Stretch JStart
+defaultProps = MkProps Column Auto Auto 0 1 noEdges noEdges 0 NoBorder plain plain Stretch JStart False Nothing
 
 -------------------------------------------------------------------------------
 -- Tree
@@ -191,3 +193,10 @@ mapNode : (a -> b) -> Node a -> Node b
 mapNode _ (Text s w str) = Text s w str
 mapNode f (Box p kids) = Box p (map (mapNode f) kids)
 mapNode f (Focusable body h) = Focusable (\b => mapNode f (body b)) (\i => map f (h i))
+
+||| Mark the box as the place of the terminal's own cursor: the runtime puts
+||| the cursor at its top left corner, which is where an input method shows its
+||| candidate window.
+public export
+cursorHere : Prop
+cursorHere p = { pCursor := True } p

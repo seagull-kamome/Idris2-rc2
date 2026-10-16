@@ -9,6 +9,10 @@ module Main
 
 import Data.Bits
 import Data.List
+import Data.Maybe
+import Data.List1
+import Data.String
+import Text.Encoding.UTF8
 import System.Posix.Errno
 import System.Posix.File
 import System.Posix.FileDesc
@@ -29,7 +33,13 @@ record AppModel where
   items : S.Model
   pasted : Nat
 
-data AppMsg = Edit T.Msg | Pick S.Msg | Add | Go | Done
+data AppMsg = Edit T.Msg | Pick S.Msg | Add | Phase Nat | Wait Nat | Done
+
+chunks : List String
+chunks =
+  [ "ab\r", "cd\r", "\ESC[200~x y\nz\ESC[201~\r", "e1\re2\r", "zz"
+  , "\t", "\r", "\ESC[B\ESC[B\ESC[B\ESC[B\ESC[A", "\ESC[Z!"
+  , "\ESC[<0;3;6M", "\ESC[<65;3;6M\ESC[<64;3;6M\ESC[<64;3;6M", "\ESC[<0;3;2M", "!", "\x03" ]
 
 appView : AppModel -> Node AppMsg
 appView m =
@@ -38,19 +48,21 @@ appView m =
     , box [border Single, height (Cells 5)] [S.list 3 Pick m.items]
     ]
 
-appUpdate : AppMsg -> AppModel -> (AppModel, Cmd AppMsg)
-appUpdate (Edit e) m = ({ input $= T.update e } m, NoCmd)
-appUpdate (Pick p) m = ({ items $= S.update 3 p } m, NoCmd)
-appUpdate Add m =
+appUpdate : (master : FileDesc) -> AppMsg -> AppModel -> (AppModel, Cmd AppMsg)
+appUpdate _ (Edit e) m = ({ input $= T.update e } m, NoCmd)
+appUpdate _ (Pick p) m = ({ items $= S.update 3 p } m, NoCmd)
+appUpdate _ Add m =
   let v = T.value m.input in
   if v == "" then (m, NoCmd)
   else ({ input := T.empty 12, items $= S.setItems (m.items.items ++ [v]) } m, NoCmd)
-appUpdate Go m = (m, NoCmd)
-appUpdate Done m = (m, Quit)
+appUpdate master (Phase n) m = (m, Perform (ignore (writeString master (fromMaybe "" (getAt n chunks))) >> pure (Wait n)))
+appUpdate master (Wait n) m = (m, After 80 (Phase (S n)))
+appUpdate _ Done m = (m, Quit)
 
 appSubs : AppModel -> List (Sub AppMsg)
 appSubs _ =
-  [ OnInput (\i => case i of
+  [ MouseFocus
+  , OnInput (\i => case i of
                      Press (KChar 'c') mods => if mods.ctrl then Just Done else Nothing
                      _ => Nothing) ]
 
@@ -58,15 +70,49 @@ appSubs _ =
 -- typed again. "zz" stays in the field: the Enter that follows Tab goes to the
 -- list, which ignores it. Down four times and Up once scroll the window
 -- (3 lines) over the 5 items; Shift+Tab returns to the field, where "!" is
--- appended; Ctrl-C quits.
-script : String
-script = "ab\rcd\r\ESC[200~x y\nz\ESC[201~\re1\re2\rzz\t\r\ESC[B\ESC[B\ESC[B\ESC[B\ESC[A\ESC[Z!\x03"
+-- appended. Then the mouse: a click in the list focuses it, the wheel moves
+-- the selection (down once, up twice), a click in the field focuses it and "!"
+-- is appended again; Ctrl-C quits.
+
+
+-- The tty layer hands output written to the slave to the master
+-- asynchronously: read until the marker has arrived.
+readUntil : FileDesc -> String -> IO (List Bits8)
+readUntil master marker = go []
+  where
+    want : List Bits8
+    want = encode (unpack marker)
+
+    go : List Bits8 -> IO (List Bits8)
+    go acc =
+      if isSuffixOf want acc
+         then pure acc
+         else do
+           Right more <- readBytes master
+             | Left _ => pure acc
+           if null more then pure acc else go (acc ++ more)
+
+-- The terminal cursor positions the program asked for, in order, with the
+-- cursor visibility that followed: ESC [ row ; col H ESC [ ? 2 5 h/l.
+cursorMoves : String -> List String
+cursorMoves out = dedup (pairs (forget (split (== '\ESC') out)))
+  where
+    pairs : List String -> List String
+    pairs (a :: b :: rest) =
+      if isSuffixOf ['H'] (unpack a) && isPrefixOf (unpack "[?25") (unpack b) && isPrefixOf ['['] (unpack a)
+         then (pack (drop 1 (unpack a)) ++ " " ++ pack (take 1 (drop 4 (unpack b)))) :: pairs (b :: rest)
+         else pairs (b :: rest)
+    pairs _ = []
+
+    dedup : List String -> List String
+    dedup (a :: b :: rest) = if a == b then dedup (b :: rest) else a :: dedup (b :: rest)
+    dedup xs = xs
 
 main : IO ()
 main = do
   Right devnull <- openFile "/dev/null" (2 .|. O_NOCTTY) 0
     | Left e => putStrLn ("open /dev/null: " ++ show e)
-  r0 <- runProgramOn devnull devnull (MkProgram (MkModel (T.empty 12) (S.fromList []) 0, NoCmd) appUpdate appView appSubs)
+  r0 <- runProgramOn devnull devnull (MkProgram (MkModel (T.empty 12) (S.fromList []) 0, NoCmd) (appUpdate devnull) appView appSubs)
   putStrLn ("not a terminal: " ++ either show (const "ran") r0)
   Right master <- posixOpenpt (2 .|. O_NOCTTY)
     | Left e => putStrLn ("posixOpenpt: " ++ show e)
@@ -78,11 +124,13 @@ main = do
     | Left e => putStrLn ("open slave: " ++ show e)
   _ <- setWinSize master 30 12
   let prog = MkProgram
-               (MkModel (T.empty 12) (S.fromList []) 0, Perform (ignore (writeString master script) >> pure Go))
-               appUpdate
+               (MkModel (T.empty 12) (S.fromList []) 0, Perform (pure (Phase 0)))
+               (appUpdate master)
                appView
                appSubs
   Right m <- runProgramOn slave slave prog
     | Left e => putStrLn ("runProgram: " ++ show e)
+  out <- readUntil master "\ESC[?1049l"
+  putStrLn ("cursor: " ++ show (cursorMoves (pack (decode out))))
   putStrLn ("items=" ++ show m.items.items ++ " selected=" ++ show (S.current m.items) ++ " top=" ++ show m.items.top
             ++ " field=" ++ show (T.value m.input))
