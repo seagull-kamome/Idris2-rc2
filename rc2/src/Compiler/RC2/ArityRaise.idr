@@ -26,6 +26,40 @@ import Data.SortedSet
 ||| How one tail of a body ends, as far as raising goes.
 data ClosureTail = TPartial Name (List RCLocal) | TCall Name | TCrash | TOther
 
+||| The local `w` (the last parameter of a function) is handed to an
+||| application, a named call or an external primitive somewhere in `e`:
+||| as far as raising goes, that is an effect of the function's own body
+||| done with its world. Raising such a function would move the effect
+||| into the closure it returns (see `rc2/doc/world-arity-raising.md`,
+||| "Soundness").
+worldInEffect : Int -> RCExp -> Bool
+worldInEffect w e = direct e || any (worldInEffect w) (children e)
+  where
+    direct : RCExp -> Bool
+    direct (RApp _ _ f args) = f == RCLoc w || elem (RCLoc w) (forget args)
+    direct (RAppName _ _ _ args) = elem (RCLoc w) args
+    direct (RExtPrim _ _ _ args _) = elem (RCLoc w) args
+    direct _ = False
+
+||| Every tail of a pre-RC body, through `let` bodies and every branch,
+||| and whether the world parameter (given as the last arg) is used
+||| in any effectful operation in the let values on the path to that tail.
+closureTailsWithPrefixCheck : Int -> RCExp -> List (ClosureTail, Bool)
+closureTailsWithPrefixCheck w (RLet _ _ _ value body) =
+    let worldInValue = worldInEffect w value
+        tails = closureTailsWithPrefixCheck w body
+    in map (\(t, inPrefix) => (t, inPrefix || worldInValue)) tails
+closureTailsWithPrefixCheck w (RCmpCase _ _ _ _ t f) = closureTailsWithPrefixCheck w t ++ closureTailsWithPrefixCheck w f
+closureTailsWithPrefixCheck w (RConCase _ _ alts mDef) =
+    foldr (\(MkRConAlt _ _ _ _ b), acc => closureTailsWithPrefixCheck w b ++ acc) (maybe [] (closureTailsWithPrefixCheck w) mDef) alts
+closureTailsWithPrefixCheck w (RConstCase _ _ alts mDef) =
+    foldr (\(MkRConstAlt _ b), acc => closureTailsWithPrefixCheck w b ++ acc) (maybe [] (closureTailsWithPrefixCheck w) mDef) alts
+closureTailsWithPrefixCheck _ (RUnderApp _ g 1 xs) = [(TPartial g xs, False)]
+closureTailsWithPrefixCheck _ (RV _ (RCConstClosure g 1)) = [(TPartial g [], False)]
+closureTailsWithPrefixCheck _ (RAppName _ Nothing h _) = [(TCall h, False)]
+closureTailsWithPrefixCheck _ (RCrash _ _) = [(TCrash, False)]
+closureTailsWithPrefixCheck _ _ = [(TOther, False)]
+
 ||| Every tail of a pre-RC body, through `let` bodies and every branch.
 closureTails : RCExp -> List ClosureTail
 closureTails (RLet _ _ _ _ body) = closureTails body
@@ -57,10 +91,15 @@ raisePlan defs =
 
     ||| `Nothing` for a CAF or for a function with a tail that can never
     ||| be raised; a closure of a function of another arity counts as one.
+    ||| Also `Nothing` if the last parameter (the world) is mentioned in
+    ||| any let value on the path to a tail: raising would move effects
+    ||| from the prefix into the closure body.
     tailsOf : SortedMap Name Nat -> (Name, RCDef) -> Maybe (Name, List ClosureTail)
     tailsOf ar (n, MkRCFun args@(_ :: _) _ False body) =
-        let ts = closureTails body
-        in if all (ok ar) ts then Just (n, ts) else Nothing
+        let w = fst (last args)
+            tails = closureTailsWithPrefixCheck w body
+        in if all (\(t, worldInPrefix) => not worldInPrefix && ok ar t) tails
+           then Just (n, map fst tails) else Nothing
       where
         ok : SortedMap Name Nat -> ClosureTail -> Bool
         ok ar (TPartial g xs) = lookup g ar == Just (S (length xs))

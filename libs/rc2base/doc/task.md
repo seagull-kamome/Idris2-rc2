@@ -45,15 +45,14 @@ data Task : Type -> Type where
   Empty  : Task a                                -- never finishes
 
 Completion a = a -> IO ()      -- tell the scheduler the operation is done
-data Cancel = MkCancel (IO ()) | NoCancel   -- give the operation up (see below why not `IO ()`)
+data Cancel = MkCancel (IO ())   -- give the operation up (a type of its own, not `IO ()`)
 ```
 
 `Env` is what the scheduler offers: `now`, `addTimer`, `watchFd` and `post` (run an
 action on the scheduler's thread; the one function any thread may call). `Cancel`
-has two constructors on purpose: with a bare `IO ()` (or a one-field `data`,
-which Idris2 compiles to its field) `IO Cancel` is an action that returns an
-action, and rc2's world arity raising runs the start of the operation late
-(`KNOWN-BUGS.md`).
+is a type of its own, so that `IO Cancel` is an action that returns a value; see
+`rc2/doc/world-arity-raising.md`, "Soundness", for what went wrong when it was a
+bare `IO ()`.
 
 `Async` is the one primitive for *waiting*. The function starts an operation
 (registers a descriptor, queues a request, sets a timer) and returns at once;
