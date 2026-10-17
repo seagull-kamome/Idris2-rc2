@@ -255,31 +255,6 @@ batching env act = do
        drain env
        writeIORef env.draining False
 
--- Start, stop and retime the timers the current subscriptions ask for.
-syncTimers : Env model msg -> IO ()
-syncTimers env = do
-  model <- readIORef env.modelRef
-  let wanted = nubBy (\a, b => fst a == fst b) (mapMaybe period (env.prog.subs model))
-  active <- readIORef env.everys
-  traverse_ (\(k, _) => everyId env k >>= cancelTimer env.loop) (filter (\a => not (elem a wanted)) active)
-  traverse_ (\(k, ms) => do i <- everyId env k
-                            ignore (addTimer env.loop i ms)) (filter (\w => not (elem w active)) wanted)
-  writeIORef env.everys wanted
-  let wantMouse = any isMouse (env.prog.subs model)
-  was <- readIORef env.mouseOn
-  when (wantMouse /= was) $ do
-    setMouseReporting env.output wantMouse
-    writeIORef env.mouseOn wantMouse
-  where
-    isMouse : Sub msg -> Bool
-    isMouse (OnMouse _) = True
-    isMouse MouseFocus = True
-    isMouse _ = False
-
-    period : Sub msg -> Maybe (String, Nat)
-    period (Every k ms _) = Just (k, ms)
-    period _ = Nothing
-
 -- Build the view for the current model and focus; the handlers are the ones
 -- of this very view, so they are refreshed after every event. A focus that has a
 -- key stays with the widget of that key; otherwise it is an index.
@@ -393,14 +368,6 @@ draw env = do
     cursorSequence (visible, x, y) =
       "\ESC[" ++ show (y + 1) ++ ";" ++ show (x + 1) ++ "H" ++ cursorVisible visible
 
-moveFocus : Env model msg -> Bool -> IO ()
-moveFocus env forward = do
-  hs <- readIORef env.handlers
-  f <- readIORef env.focus
-  let n = length hs
-  when (n > 0) $
-    setFocus env (if forward then (if f + 1 >= n then 0 else f + 1) else (if f == 0 then n `minus` 1 else f `minus` 1))
-
 onInput : Env model msg -> Input -> IO ()
 onInput env (Mouse raw) = do
   e <- counted
@@ -453,7 +420,7 @@ onInput env inp = do
     Just m => dispatch env m
     Nothing =>
       if isTab inp && not (null hs)
-         then moveFocus env (not (isBackTab inp))
+         then moveFocus (not (isBackTab inp))
          else do
            model <- readIORef env.modelRef
            traverse_ (dispatch env) (mapMaybe (fromSub inp) (env.prog.subs model))
@@ -471,6 +438,14 @@ onInput env inp = do
     fromSub : Input -> Sub msg -> Maybe msg
     fromSub i (OnInput g) = g i
     fromSub _ _ = Nothing
+
+    moveFocus : Bool -> IO ()
+    moveFocus forward = do
+      hs <- readIORef env.handlers
+      f <- readIORef env.focus
+      let n = length hs
+      when (n > 0) $
+        setFocus env (if forward then (if f + 1 >= n then 0 else f + 1) else (if f == 0 then n `minus` 1 else f `minus` 1))
 
 onEvent : Env model msg -> Event -> IO ()
 onEvent env (EInput i) = onInput env i
@@ -510,7 +485,7 @@ onEvent env EEndOfInput = writeIORef env.quit True
 
 loopUntilQuit : Env model msg -> IO ()
 loopUntilQuit env = do
-  syncTimers env
+  syncTimers
   draw env
   evs <- waitEvents env.loop (-1)
   handleAll evs
@@ -527,6 +502,32 @@ loopUntilQuit env = do
       batching env (onEvent env e)
       q <- readIORef env.quit
       if q then pure () else currentView env *> handleAll es
+
+    -- Start, stop and retime the timers the current subscriptions ask for.
+    syncTimers : IO ()
+    syncTimers = do
+      model <- readIORef env.modelRef
+      let wanted = nubBy (\a, b => fst a == fst b) (mapMaybe period (env.prog.subs model))
+      active <- readIORef env.everys
+      traverse_ (\(k, _) => everyId env k >>= cancelTimer env.loop) (filter (\a => not (elem a wanted)) active)
+      traverse_ (\(k, ms) => do i <- everyId env k
+                                ignore (addTimer env.loop i ms)) (filter (\w => not (elem w active)) wanted)
+      writeIORef env.everys wanted
+      let wantMouse = any isMouse (env.prog.subs model)
+      was <- readIORef env.mouseOn
+      when (wantMouse /= was) $ do
+        setMouseReporting env.output wantMouse
+        writeIORef env.mouseOn wantMouse
+      where
+        isMouse : Sub msg -> Bool
+        isMouse (OnMouse _) = True
+        isMouse MouseFocus = True
+        isMouse _ = False
+
+        period : Sub msg -> Maybe (String, Nat)
+        period (Every k ms _) = Just (k, ms)
+        period _ = Nothing
+
 
 ||| Run a program on a terminal (the descriptors must be a terminal in the
 ||| calling thread's session) until it asks to `Quit`, and return the final

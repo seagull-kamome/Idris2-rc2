@@ -168,99 +168,6 @@ closeLoop l = do
 -------------------------------------------------------------------------------
 -- Waiting
 
-drainSignals : Loop -> IO (List Event)
-drainSignals l = go False Nothing False False
-  where
-    sameSignal : Signal -> Signal -> Bool
-    sameSignal (MkSignal a) (MkSignal b) = a == b
-
-    go : (term : Bool) -> (resize : Maybe ()) -> (resume : Bool) -> (stop : Bool) -> IO (List Event)
-    go term resize resume stop = do
-      r <- readSignal l.sigfd
-      case r of
-        Left _ => do
-          size <- case resize of
-                    Just () => (\(c, r') => [EResize c r']) <$> outputSize l.output
-                    Nothing => pure []
-          pure ((if resume then [EResume] else []) ++ size ++ (if stop then [ESuspend] else [])
-                ++ (if term then [ETerminate] else []))
-        Right info =>
-          if sameSignal info.signo SIGWINCH then go term (Just ()) resume stop
-          else if sameSignal info.signo SIGPIPE || sameSignal info.signo SIGTTOU || sameSignal info.signo SIGTTIN
-                  then go term resize resume stop
-          else if sameSignal info.signo SIGCONT then go term resize True stop
-          else if sameSignal info.signo SIGTSTP then go term resize resume True
-          else go True resize resume stop
-
--- The closing sequence of a paste has come, or more of its body.
-feedPaste : Loop -> (List (List Bits8), List Bits8) -> List Bits8 -> IO (List Event)
-
-consume : Loop -> List Bits8 -> IO (List Event)
-consume l new = do
-  state <- readIORef l.paste
-  case state of
-    Just st => feedPaste l st new
-    Nothing => do
-      old <- readIORef l.pending
-      let (inputs, rest) = parseInput False (old ++ new)
-      if isPrefixOf pasteStart rest
-         then do
-           writeIORef l.pending []
-           cancelTimer l escapeTimerId
-           writeIORef l.paste (Just ([], []))
-           more <- feedPaste l ([], []) (drop (length pasteStart) rest)
-           pure (map EInput inputs ++ more)
-         else do
-           writeIORef l.pending rest
-           if null rest
-              then cancelTimer l escapeTimerId
-              else ignore (addOneShot l escapeTimerId 30)
-           pure (map EInput inputs)
-
-feedPaste l (chunks, hold) new = do
-  let dat = hold ++ new
-  case splitAtMarker pasteEnd dat of
-    Just (before, after) => do
-      writeIORef l.paste Nothing
-      let body = concat (reverse (before :: chunks))
-      rest <- consume l after
-      pure (EInput (Paste (pack (decode body))) :: rest)
-    Nothing => do
-      let cut = length dat `minus` holdBack
-      writeIORef l.paste (Just (take cut dat :: chunks, drop cut dat))
-      pure []
-
-readInput : Loop -> IO (List Event)
-readInput l = do
-  r <- readBytes l.input
-  case r of
-    Left e => pure (if e == EINTR || e == EAGAIN then [] else [EEndOfInput])
-    Right [] => pure [EEndOfInput]
-    Right bytes => consume l bytes
-
--- Nothing followed an ESC (or the beginning of a sequence) for long enough:
--- decode what is there as it stands. A paste in progress is not cut.
-flushPending : Loop -> IO (List Event)
-flushPending l = do
-  state <- readIORef l.paste
-  case state of
-    Just _ => pure []
-    Nothing => do
-      held <- readIORef l.pending
-      writeIORef l.pending []
-      pure (map EInput (fst (parseInput True held)))
-
-fireTimer : Loop -> Int32 -> IO (List Event)
-fireTimer l raw = do
-  ts <- readIORef l.timers
-  case find (\(fd, _, _) => fd == raw) ts of
-    Nothing => pure []
-    Just (_, ident, fd) => do
-      _ <- timerfd_read fd
-      if ident == escapeTimerId
-         then cancelTimer l ident >> flushPending l
-         else pure [ETimer ident]
-
 ||| Wait for up to `timeoutMs` milliseconds (-1: for ever) and return what
 ||| happened; the list is empty when the time ran out.
 export
@@ -271,10 +178,103 @@ waitEvents l timeoutMs = do
     Left e => pure (if e == EINTR then [] else [EEndOfInput])
     Right ready => concat <$> traverse handle ready
   where
+    sameSignal : Signal -> Signal -> Bool
+    sameSignal (MkSignal a) (MkSignal b) = a == b
+
+    drainSignals : IO (List Event)
+    drainSignals = go False Nothing False False
+      where
+        go : (term : Bool) -> (resize : Maybe ()) -> (resume : Bool) -> (stop : Bool) -> IO (List Event)
+        go term resize resume stop = do
+          r <- readSignal l.sigfd
+          case r of
+            Left _ => do
+              size <- case resize of
+                        Just () => (\(c, r') => [EResize c r']) <$> outputSize l.output
+                        Nothing => pure []
+              pure ((if resume then [EResume] else []) ++ size ++ (if stop then [ESuspend] else [])
+                    ++ (if term then [ETerminate] else []))
+            Right info =>
+              if sameSignal info.signo SIGWINCH then go term (Just ()) resume stop
+              else if sameSignal info.signo SIGPIPE || sameSignal info.signo SIGTTOU || sameSignal info.signo SIGTTIN
+                      then go term resize resume stop
+              else if sameSignal info.signo SIGCONT then go term resize True stop
+              else if sameSignal info.signo SIGTSTP then go term resize resume True
+              else go True resize resume stop
+
+    -- The bytes of a paste in progress: the closing sequence has come, or more of the body.
+    -- (`consume` and `feedPaste` call each other.)
+    consume : List Bits8 -> IO (List Event)
+    consume new = do
+      state <- readIORef l.paste
+      case state of
+        Just st => feedPaste st new
+        Nothing => do
+          old <- readIORef l.pending
+          let (inputs, rest) = parseInput False (old ++ new)
+          if isPrefixOf pasteStart rest
+             then do
+               writeIORef l.pending []
+               cancelTimer l escapeTimerId
+               writeIORef l.paste (Just ([], []))
+               more <- feedPaste ([], []) (drop (length pasteStart) rest)
+               pure (map EInput inputs ++ more)
+             else do
+               writeIORef l.pending rest
+               if null rest
+                  then cancelTimer l escapeTimerId
+                  else ignore (addOneShot l escapeTimerId 30)
+               pure (map EInput inputs)
+      where
+        feedPaste : (List (List Bits8), List Bits8) -> List Bits8 -> IO (List Event)
+        feedPaste (chunks, hold) new = do
+          let dat = hold ++ new
+          case splitAtMarker pasteEnd dat of
+            Just (before, after) => do
+              writeIORef l.paste Nothing
+              let body = concat (reverse (before :: chunks))
+              rest <- consume after
+              pure (EInput (Paste (pack (decode body))) :: rest)
+            Nothing => do
+              let cut = length dat `minus` holdBack
+              writeIORef l.paste (Just (take cut dat :: chunks, drop cut dat))
+              pure []
+
+    readInput : IO (List Event)
+    readInput = do
+      r <- readBytes l.input
+      case r of
+        Left e => pure (if e == EINTR || e == EAGAIN then [] else [EEndOfInput])
+        Right [] => pure [EEndOfInput]
+        Right bytes => consume bytes
+
+    -- Nothing followed an ESC (or the beginning of a sequence) for long enough:
+    -- decode what is there as it stands. A paste in progress is not cut.
+    flushPending : IO (List Event)
+    flushPending = do
+      state <- readIORef l.paste
+      case state of
+        Just _ => pure []
+        Nothing => do
+          held <- readIORef l.pending
+          writeIORef l.pending []
+          pure (map EInput (fst (parseInput True held)))
+
+    fireTimer : Int32 -> IO (List Event)
+    fireTimer raw = do
+      ts <- readIORef l.timers
+      case find (\(fd, _, _) => fd == raw) ts of
+        Nothing => pure []
+        Just (_, ident, fd) => do
+          _ <- timerfd_read fd
+          if ident == escapeTimerId
+             then cancelTimer l ident >> flushPending
+             else pure [ETimer ident]
+
     handle : ReadyEvent -> IO (List Event)
     handle e =
-      if e.fd == l.input.rawfd then readInput l
-      else if e.fd == l.sigfd.rawfd then drainSignals l
+      if e.fd == l.input.rawfd then readInput
+      else if e.fd == l.sigfd.rawfd then drainSignals
       else do
         ws <- readIORef l.watched
-        if elem e.fd ws then pure [EReady e.fd] else fireTimer l e.fd
+        if elem e.fd ws then pure [EReady e.fd] else fireTimer e.fd
