@@ -33,6 +33,7 @@ data Event
   | ETerminate               -- SIGINT, SIGTERM or SIGHUP
   | EResume                  -- SIGCONT: the program was stopped and continued
   | ESuspend                 -- SIGTSTP sent from outside: stop as `Suspend` does
+  | EReady Int32             -- a descriptor given to `watchFd` is readable
   | EEndOfInput              -- the terminal input was closed or failed
 
 export
@@ -43,6 +44,7 @@ Show Event where
   show ETerminate = "ETerminate"
   show EResume = "EResume"
   show ESuspend = "ESuspend"
+  show (EReady fd) = "EReady " ++ show fd
   show EEndOfInput = "EEndOfInput"
 
 -------------------------------------------------------------------------------
@@ -56,6 +58,7 @@ record Loop where
   sigfd : FileDesc
   oldMask : SigSet
   timers : IORef (List (Int32, Nat, FileDesc))   -- (rawfd, id, descriptor)
+  watched : IORef (List Int32)                    -- descriptors of `watchFd`
   pending : IORef (List Bits8)
   paste : IORef (Maybe (List (List Bits8), List Bits8))
 
@@ -91,7 +94,18 @@ newLoop input output = do
   timers <- newIORef []
   pending <- newIORef []
   paste <- newIORef Nothing
-  pure (Right (MkLoop input output ep sfd old timers pending paste))
+  watched <- newIORef []
+  pure (Right (MkLoop input output ep sfd old timers watched pending paste))
+
+||| Wait for a descriptor too: `EReady fd` comes when it is readable (the
+||| caller reads it, or does what makes it quiet, as it is level-triggered).
+export
+watchFd : Loop -> FileDesc -> IO (Either Errno ())
+watchFd l fd = do
+  Right () <- epollAdd l.epoll fd EPOLLIN
+    | Left e => pure (Left e)
+  modifyIORef l.watched (fd.rawfd ::)
+  pure (Right ())
 
 ||| Stop and forget a timer.
 export
@@ -261,4 +275,6 @@ waitEvents l timeoutMs = do
     handle e =
       if e.fd == l.input.rawfd then readInput l
       else if e.fd == l.sigfd.rawfd then drainSignals l
-      else fireTimer l e.fd
+      else do
+        ws <- readIORef l.watched
+        if elem e.fd ws then pure [EReady e.fd] else fireTimer l e.fd

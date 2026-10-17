@@ -1143,7 +1143,6 @@ upstreamに取り込まれたら`idris2-src`を更新して自作idris2を作り
 
 実装済みの範囲と制限は`libs/termui/doc/design.md`。未着手:
 
-- 非同期の`Cmd`(ワーカースレッドが結果を投稿する)。今の`Perform`はループを止める。
 - OSのクリップボードを読むこと(OSC 52の`?`問い合わせ。端末が応答する。多くの端末は既定で禁止)。
 - レイアウト: 絵文字のZWJ列と異体字セレクタ(端末が幅を変えるので合成できない)。
 - コード規約: Loop(`consume`/`feedPaste`/`readInput`など)、Program(`onInput`の`moveFocus`、`syncTimers`など)、
