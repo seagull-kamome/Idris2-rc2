@@ -1,0 +1,20 @@
+--- Control.Task ---
+pure/bind: Just 42
+a loop of 200000 steps: Just 200000
+Empty: Nothing
+map: Just 2
+three sleepers: ["start", "20", "40", "60"]
+both: Just (1, "r")
+both order: ["right", "left"]
+race: Just (Right "fast"), no wait for the loser: True
+race with a spawn: Just (Left ()), quick: True
+race with a spawn: ["left wins"]
+race with Empty: Just 1
+<|>: Just 7
+yield: ["a1", "b1", "a2", "b2", "a3", "b3"]
+hand-made Async: Just (Right "timer"), cancelled 1 time(s), quick: True
+from another thread: Just 42
+pipe: ["writable: True", "writing", "reader B woke: True", "reader A: True Right \"hi\""]
+a cancelled fd wait: Just "timer", quick: True
+hang-up: Just True
+a file is ready: Just True

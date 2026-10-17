@@ -95,6 +95,11 @@ record ReadyEvent where
   fd : Int32
   events : EpollEvents
 
+||| The descriptor of the `epoll` instance, to be waited for by another `epoll`.
+export
+epollDescriptor : EPoll -> FileDesc
+epollDescriptor ep = ep.efd
+
 ||| Create an `epoll` instance (close-on-exec) whose `epollWait` returns at most
 ||| `maxEvents` (at least 1) descriptors at a time. A descriptor that is ready but
 ||| does not fit is reported by the next `epollWait`.
