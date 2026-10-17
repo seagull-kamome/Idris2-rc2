@@ -38,6 +38,7 @@ helpLines =
   , "mouse                                click to place the cursor, wheel to move"
   , "Shift+arrows, drag with the mouse       select"
   , "Alt-A / Alt-W / Ctrl-W / Ctrl-Y         select all / copy / cut / paste"
+  , "                                        (copy and cut also go to the desktop clipboard if the terminal allows)"
   , "Ctrl-_ / Ctrl-^                         undo / redo"
   , "F2                                   wrap / do not wrap long lines"
   , "F1                                   show / hide this help"
@@ -53,7 +54,7 @@ appView m =
     ]
 
 appUpdate : AppMsg -> AppModel -> (AppModel, Cmd AppMsg)
-appUpdate (Edit e) m = ({ text $= A.update e } m, NoCmd)
+appUpdate (Edit e) m = ({ text $= A.update e } m, maybe NoCmd SetClipboard (A.copyText e m.text))
 appUpdate (Scroll s) m = ({ help $= Sc.update s } m, NoCmd)
 appUpdate (Resized cols rows) m = ({ text $= A.resize cols (rows `minus` 1) } m, NoCmd)
 appUpdate ToggleHelp m = ({ showHelp $= not } m, NoCmd)

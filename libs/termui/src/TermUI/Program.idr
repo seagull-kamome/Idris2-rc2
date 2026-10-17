@@ -12,6 +12,7 @@ module TermUI.Program
 import Data.IORef
 import Data.List
 import Data.Maybe
+import System.Console.Xterm
 import System.Posix.Errno
 import System.Posix.Process
 import System.Posix.Signal
@@ -41,6 +42,7 @@ data Cmd msg
   | After Nat msg                -- deliver a message after some milliseconds
   | Perform (IO msg)             -- run an action now and deliver its result
   | Suspend                      -- stop the program, as Ctrl-Z does in a shell
+  | SetClipboard String          -- put a text in the clipboard of the desktop (OSC 52; terminals may ignore it)
 
 ||| What a model listens to; `subs` is re-evaluated after every update.
 public export
@@ -61,6 +63,7 @@ mapCmd f (Emit m) = Emit (f m)
 mapCmd f (After ms m) = After ms (f m)
 mapCmd f (Perform io) = Perform (map f io)
 mapCmd _ Suspend = Suspend
+mapCmd _ (SetClipboard t) = SetClipboard t
 
 export
 mapSub : (a -> b) -> Sub a -> Sub b
@@ -183,6 +186,7 @@ mutual
         q <- readIORef env.quit
         if q then pure () else runCmd env c *> go rest
   runCmd env Quit = writeIORef env.quit True
+  runCmd env (SetClipboard text) = ignore (writeString env.output (setClipboard Clipboard text))
   runCmd env (Emit m) = dispatch env m
   runCmd env (After ms m) = do
     n <- readIORef env.nextShot
@@ -367,7 +371,7 @@ draw env = do
 
     cursorSequence : (Bool, Nat, Nat) -> String
     cursorSequence (visible, x, y) =
-      "\ESC[" ++ show (y + 1) ++ ";" ++ show (x + 1) ++ "H" ++ (if visible then "\ESC[?25h" else "\ESC[?25l")
+      "\ESC[" ++ show (y + 1) ++ ";" ++ show (x + 1) ++ "H" ++ cursorVisible visible
 
 moveFocus : Env model msg -> Bool -> IO ()
 moveFocus env forward = do
