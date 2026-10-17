@@ -94,33 +94,54 @@ inside c x y = x >= c.x0 && x < c.x1 && y >= c.y0 && y < c.y1
 put : Frame -> Clip -> Nat -> Nat -> Char -> Style -> IO ()
 put f c x y g s = when (inside c x y) $ setCell f x y (MkCell g (settle s) [])
 
-hasBorder : Border -> Bool
-hasBorder NoBorder = False
-hasBorder _ = True
-
--- Only the part of `r` inside the clip is visited.
-fillRect : Frame -> Clip -> Rect -> Style -> IO ()
-fillRect f c r s =
-  traverse_ (\yy => traverse_ (\xx => put f c xx yy ' ' s)
-                              (span (max r.x c.x0) (min (r.x + r.w) c.x1)))
-            (span (max r.y c.y0) (min (r.y + r.h) c.y1))
-
-paintBorder : Frame -> Clip -> Rect -> Border -> Style -> IO ()
-paintBorder _ _ _ NoBorder _ = pure ()
-paintBorder f c r b s =
-  when (r.w >= 2 && r.h >= 2) $ do
-    let (tl, tr, bl, br, hz, vt) = borderChars b
-        right = r.x + r.w `minus` 1
-        bottom = r.y + r.h `minus` 1
-    traverse_ (\xx => put f c xx r.y hz s >> put f c xx bottom hz s)
-              (span (max (r.x + 1) c.x0) (min right c.x1))
-    traverse_ (\yy => put f c r.x yy vt s >> put f c right yy vt s)
-              (span (max (r.y + 1) c.y0) (min bottom c.y1))
-    put f c r.x r.y tl s
-    put f c right r.y tr s
-    put f c r.x bottom bl s
-    put f c right bottom br s
+-- Children are clipped to the content box of their parent.
+paintLaid : Frame -> Clip -> Style -> Laid -> IO ()
+paintLaid f c inherited (LText r s ls) = do
+  let st = s `over` inherited
+      cl = intersect c (clipRect r)
+  traverse_ (\(i, l) => paintLine cl r.x (r.y + i) st (unpack l)) (zip [0 .. length ls] ls)
   where
+    -- A combining mark goes with the cell before `x` (the first one of a wide
+    -- character), if that is in the window.
+    attach : Clip -> Nat -> Nat -> Char -> IO ()
+    attach c x y mark =
+      when (x > 0) $ do
+        prev <- getCell f (x `minus` 1) y
+        let at = if prev.glyph == continuation && x > 1 then x `minus` 2 else x `minus` 1
+        cell <- getCell f at y
+        when (inside c at y && length cell.combining < 8) $
+          ignore (writeArray f.cells (cast (y * f.frameWidth + at)) ({ combining $= (++ [mark]) } cell))
+
+    paintLine : Clip -> Nat -> Nat -> Style -> List Char -> IO ()
+    paintLine _ _ _ _ [] = pure ()
+    paintLine c x y s (ch :: rest) =
+      case charWidth ch of
+        0 => when (isMark ch) (attach c x y ch) >> paintLine c x y s rest
+        2 => do
+          if inside c x y && inside c (x + 1) y
+             then put f c x y ch s >> put f c (x + 1) y continuation s
+             else put f c x y ' ' s
+          paintLine c (x + 2) y s rest
+        _ => put f c x y ch s >> paintLine c (x + 1) y s rest
+paintLaid f c inherited (LBox r p kids) = do
+  let st = p.pStyle `over` inherited
+      cl = intersect c (clipRect r)
+  when (st /= inherited || hasBorder p.pBorder) $ fillRect cl r st
+  paintBorder cl r p.pBorder (p.pBorderStyle `over` st)
+  let inner = intersect cl (clipRect (innerRect p r))
+  traverse_ (paintLaid f inner st) kids
+  where
+    hasBorder : Border -> Bool
+    hasBorder NoBorder = False
+    hasBorder _ = True
+
+    -- Only the part of `r` inside the clip is visited.
+    fillRect : Clip -> Rect -> Style -> IO ()
+    fillRect c r s =
+      traverse_ (\yy => traverse_ (\xx => put f c xx yy ' ' s)
+                                  (span (max r.x c.x0) (min (r.x + r.w) c.x1)))
+                (span (max r.y c.y0) (min (r.y + r.h) c.y1))
+
     -- (top-left, top-right, bottom-left, bottom-right, horizontal, vertical)
     borderChars : Border -> (Char, Char, Char, Char, Char, Char)
     borderChars Rounded = ('╭', '╮', '╰', '╯', '─', '│')
@@ -129,44 +150,21 @@ paintBorder f c r b s =
     borderChars Ascii = ('+', '+', '+', '+', '-', '|')
     borderChars _ = ('┌', '┐', '└', '┘', '─', '│')
 
-
-paintLine : Frame -> Clip -> Nat -> Nat -> Style -> List Char -> IO ()
-paintLine _ _ _ _ _ [] = pure ()
-paintLine f c x y s (ch :: rest) =
-  case charWidth ch of
-    0 => when (isMark ch) (attach f c x y ch) >> paintLine f c x y s rest
-    2 => do
-      if inside c x y && inside c (x + 1) y
-         then put f c x y ch s >> put f c (x + 1) y continuation s
-         else put f c x y ' ' s
-      paintLine f c (x + 2) y s rest
-    _ => put f c x y ch s >> paintLine f c (x + 1) y s rest
-  where
-    -- A combining mark goes with the cell before `x` (the first one of a wide
-    -- character), if that is in the window.
-    attach : Frame -> Clip -> Nat -> Nat -> Char -> IO ()
-    attach f c x y mark =
-      when (x > 0) $ do
-        prev <- getCell f (x `minus` 1) y
-        let at = if prev.glyph == continuation && x > 1 then x `minus` 2 else x `minus` 1
-        cell <- getCell f at y
-        when (inside c at y && length cell.combining < 8) $
-          ignore (writeArray f.cells (cast (y * f.frameWidth + at)) ({ combining $= (++ [mark]) } cell))
-
-
--- Children are clipped to the content box of their parent.
-paintLaid : Frame -> Clip -> Style -> Laid -> IO ()
-paintLaid f c inherited (LText r s ls) = do
-  let st = s `over` inherited
-      cl = intersect c (clipRect r)
-  traverse_ (\(i, l) => paintLine f cl r.x (r.y + i) st (unpack l)) (zip [0 .. length ls] ls)
-paintLaid f c inherited (LBox r p kids) = do
-  let st = p.pStyle `over` inherited
-      cl = intersect c (clipRect r)
-  when (st /= inherited || hasBorder p.pBorder) $ fillRect f cl r st
-  paintBorder f cl r p.pBorder (p.pBorderStyle `over` st)
-  let inner = intersect cl (clipRect (innerRect p r))
-  traverse_ (paintLaid f inner st) kids
+    paintBorder : Clip -> Rect -> Border -> Style -> IO ()
+    paintBorder _ _ NoBorder _ = pure ()
+    paintBorder c r b s =
+      when (r.w >= 2 && r.h >= 2) $ do
+        let (tl, tr, bl, br, hz, vt) = borderChars b
+            right = r.x + r.w `minus` 1
+            bottom = r.y + r.h `minus` 1
+        traverse_ (\xx => put f c xx r.y hz s >> put f c xx bottom hz s)
+                  (span (max (r.x + 1) c.x0) (min right c.x1))
+        traverse_ (\yy => put f c r.x yy vt s >> put f c right yy vt s)
+                  (span (max (r.y + 1) c.y0) (min bottom c.y1))
+        put f c r.x r.y tl s
+        put f c right r.y tr s
+        put f c r.x bottom bl s
+        put f c right bottom br s
 
 ||| Lay out `view` in `w` x `h` cells and paint it into a fresh frame; the
 ||| layout is returned too, for finding where nodes ended up.
