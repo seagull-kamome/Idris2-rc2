@@ -29,18 +29,16 @@ isNullPtr p = prim__nullAnyPtr (prim__forgetPtr p) /= 0
 
 public export
 record NonNullAnyPtr where
-  constructor MkNonnullAnyPtr
+  constructor MkNonNullAnyPtr
   ptr : AnyPtr
   {auto 0 prf : isNullAnyPtr ptr = False}
 
 
-
 public export
 record NonNullPtr (a : Type) where
-  constructor MkNonnullPtr
+  constructor MkNonNullPtr
   ptr : Ptr a
   {auto 0 prf : isNullPtr ptr = False}
-
 
 
 

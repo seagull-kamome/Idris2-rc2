@@ -69,15 +69,15 @@ prim__stderr : Ptr RawFile
 
 ||| The standard input stream.
 export stdin : File
-stdin = MkNonnullPtr {prf=believe_me $ Refl{x=False}} prim__stdin
+stdin = MkNonNullPtr {prf=believe_me $ Refl{x=False}} prim__stdin
 
 ||| The standard output stream.
 export stdout : File
-stdout = MkNonnullPtr {prf=believe_me $ Refl{x=False}} prim__stdout 
+stdout = MkNonNullPtr {prf=believe_me $ Refl{x=False}} prim__stdout 
 
 ||| The standard error stream.
 export stderr : File
-stderr = MkNonnullPtr {prf=believe_me $ Refl{x=False}} prim__stderr
+stderr = MkNonNullPtr {prf=believe_me $ Refl{x=False}} prim__stderr
 
 ||| Turn a C status (0 on success, nonzero such as `EOF` on failure) into a result.
 status : Int32 -> IO (Either Errno ())
@@ -87,7 +87,7 @@ status _ = Left <$> errno
 ||| Turn a `FILE *` (NULL on failure) into a result.
 stream : Ptr RawFile -> IO (Either Errno File)
 stream x with (decEq (isNullPtr x) False)
-  _ | Yes _ = pure $ Right $ MkNonnullPtr x
+  _ | Yes _ = pure $ Right $ MkNonNullPtr x
   _ | No _  = pure $ Left !(errno)
 
 -------------------------------------------------------------------------------
