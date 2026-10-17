@@ -327,23 +327,37 @@ stays on the thread of the loop: a worker's result comes back as a message.
 
 ## Tests
 
-Pure scheduling order needs no real I/O: a pipe (`System.Linux.Pipe`) or a
-socketpair gives a descriptor that is ready when the test says, and the
-timers use short real delays (tens of milliseconds) whose order, not length,
-is checked. Planned cases:
+`TestTask` does not depend on how fast the machine is.
 
-- `Seq`, deep left-nested binds and a loop of a million steps (no stack growth);
-- `Both`: results in order, the continuation runs once, when both are done;
-- `Race`: the loser is cancelled, its cleanups ran (the descriptor is removed from
-  the epoll set: check with `epollDel` failing with `ENOENT`), a cancelled
-  `sleepFor` does not delay the end;
-- `Spawn`: runs after the continuation finished, and is cancelled with its race;
-- `Async` and the epoll source: readable and writable on a pipe, two tasks
-  waiting for the same descriptor, hang-up wakes the waiter; a hand-made
-  `Source` (a pipe written by the test) and a completion called from another
-  thread through the inbox;
-- timers: three sleepers wake in the order of their deadlines;
-- `runTask` returns `Nothing` for `Empty`.
+- Whatever waits only for timers (and for descriptors that nobody has to answer
+  in real time: a pipe the test itself writes to) runs on a **virtual clock**,
+  `runTaskVirtual`. The clock starts at 0 and moves only when no step is ready,
+  no source has anything and a timer is waiting: to that timer. `sleepFor 800`
+  takes no time, the order of events is exact, and the time of the end can be
+  checked (a `race` won by a 10 ms timer ends at 10, whatever the loser waits
+  for). The scheduler can do this because every timer is its own: the real
+  clock only matters through `timerfd` and `epoll_wait`, which a virtual
+  clock does not use.
+- What needs real threads (workers, `blocking`, a completion from another
+  thread, parallel mode) is checked with **flags the jobs wait for**, never by
+  elapsed time: two jobs `meet` (each sets its flag and waits up to 400 ms for
+  the other's) and both get `True` only if they ran at the same time, as with two
+  workers or parallel mode; with one worker, or with cooperative `Point`s, the
+  first gives up and gets `False`. That the reactor goes on while a worker is
+  busy is a job that waits for a tick that a real timer makes. That a queued job
+  that is given up never runs: the worker is held by a job that waits for a flag
+  set after the race.
+- Checked: 40 runs in a row and 16 at once on 4 cores with four busy loops, all
+  the same output; the ThreadSanitizer pass over `TestTask`.
+
+Cases: `Seq`, deep left-nested binds and a loop of 200000 steps (no stack growth);
+`Both`: results in order, the continuation runs once, when both are done;
+`Race`: the loser is cancelled, its cleanups ran, a cancelled `sleepFor` or fd
+wait does not delay the end; `Spawn`: runs after the continuation finished, and
+is cancelled with its race; the epoll source on a pipe (readable and writable,
+two waiters for one descriptor, hang-up, a regular file); timers in the order of
+their deadlines; promises; `blocking`; `runTaskFirst`; parallel mode;
+`runTask` returns `Nothing` for `Empty`.
 
 ## Milestones
 
@@ -365,6 +379,7 @@ is checked. Planned cases:
 - `Time` is `Nat` milliseconds on the monotonic clock. A `TimeSpec` would
   promise a resolution the scheduler (a `timerfd` armed in whole milliseconds)
   does not have.
+- A virtual clock (`runTaskVirtual`) for tests: see "Tests".
 - Steps: a turn runs up to 1024 ready steps before it looks at the sources again
   (`stepBudget`), and re-arms the timer descriptor only when the earliest
   deadline changed. A step costs 0.74 microseconds (a loop of a million `liftIO`s
