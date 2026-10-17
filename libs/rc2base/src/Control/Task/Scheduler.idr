@@ -18,6 +18,7 @@ import Data.SortedMap
 import System.Concurrency
 import System.Linux.Epoll
 import System.Linux.Eventfd
+import System.Linux.Timerfd
 import System.Posix.Errno
 import System.Posix.FileDesc
 import System.Posix.Time
@@ -67,6 +68,7 @@ record Scheduler where
   lock : Mutex
   inbox : IORef (List (IO ()))
   inboxFd : FileDesc
+  timerFd : FileDesc                           -- armed for the earliest timer
 
 fresh : Scheduler -> IO Nat
 fresh s = do
@@ -84,6 +86,24 @@ nowMs = do
     | Left _ => pure 0
   pure (cast (t.tvSec * 1000 + t.tvNsec `div` 1000000))
 
+-- Point the timer descriptor at the earliest timer (or disarm it): the master
+-- `epoll` is then readable when a timer is due, whoever waits for it.
+armTimerFd : Scheduler -> IO ()
+armTimerFd s = do
+  tm <- readIORef s.timers
+  case leftMost tm of
+    Nothing => ignore (timerfd_settime s.timerFd 0 (MkITimerSpec (MkTimeSpec 0 0) (MkTimeSpec 0 0)))
+    Just ((t, _), _) => do
+      now <- nowMs
+      -- an all-zero value would disarm the timer
+      let ms = max 1 (t `minus` now)
+      ignore (timerfd_settime s.timerFd 0
+                (MkITimerSpec (MkTimeSpec 0 0) (MkTimeSpec (cast (ms `div` 1000)) (cast ((ms `mod` 1000) * 1000000)))))
+
+-- Make the master `epoll` readable, so that whoever waits for it calls `turn`.
+wake : Scheduler -> IO ()
+wake s = ignore (eventfdWrite s.inboxFd 1)
+
 -- Run an action on the thread of the scheduler, from any thread.
 postTo : Scheduler -> IO () -> IO ()
 postTo s act = do
@@ -99,7 +119,8 @@ envOf s = MkEnv nowMs addTimer (\fd, ev, done => watch s.watcher fd ev done) (po
     addTimer t act = do
       ident <- fresh s
       modifyIORef s.timers (insert (t, ident) act)
-      pure (MkCancel (modifyIORef s.timers (delete (t, ident))))
+      armTimerFd s
+      pure (MkCancel (modifyIORef s.timers (delete (t, ident)) *> armTimerFd s))
 
 -------------------------------------------------------------------------------
 -- The interpreter
@@ -189,31 +210,24 @@ runBatch s (S n) = do
       unless gone act
       runBatch s n
 
--- Run the timers that are due.
+-- Run the timers that are due, then point the descriptor at the next.
 fireTimers : Scheduler -> IO ()
 fireTimers s = do
-  now <- nowMs
-  tm <- readIORef s.timers
-  case leftMost tm of
-    Just ((t, ident), act) =>
-      if t <= now
-         then do modifyIORef s.timers (delete (t, ident))
-                 act
-                 fireTimers s
-         else pure ()
-    Nothing => pure ()
-
--- How long the wait may last, in milliseconds; -1 for no limit.
-waitTime : Scheduler -> IO Int32
-waitTime s = do
-  q <- readIORef s.runQ
-  if Queue.length q > 0 then pure 0 else do
-    tm <- readIORef s.timers
-    case leftMost tm of
-      Nothing => pure (-1)
-      Just ((t, _), _) => do
-        now <- nowMs
-        pure (cast (t `minus` now))
+  go
+  armTimerFd s
+  where
+    go : IO ()
+    go = do
+      now <- nowMs
+      tm <- readIORef s.timers
+      case leftMost tm of
+        Just ((t, ident), act) =>
+          if t <= now
+             then do modifyIORef s.timers (delete (t, ident))
+                     act
+                     go
+             else pure ()
+        Nothing => pure ()
 
 addSourceRaw : Scheduler -> Source -> IO (Either Errno ())
 addSourceRaw s src = do
@@ -237,13 +251,17 @@ newScheduler = do
     | Left e => ignore (epollClose master) *> pure (Left e)
   Right inboxFd <- eventfd 0 (EFD_NONBLOCK .|. EFD_CLOEXEC)
     | Left e => ignore (epollClose master) *> closeFdWatcher watcher *> pure (Left e)
+  Right timerFd <- timerfd_create CLOCK_MONOTONIC (TFD_NONBLOCK .|. TFD_CLOEXEC)
+    | Left e => ignore (epollClose master) *> closeFdWatcher watcher *> ignore (close inboxFd) *> pure (Left e)
   lock <- makeMutex
   root <- newRootScope
   s <- [| MkScheduler (newIORef Queue.empty) (newIORef 0) (newIORef 0) (newIORef empty) (pure master)
-                      (newIORef empty) (pure root) (pure watcher) (pure lock) (newIORef []) (pure inboxFd) |]
+                      (newIORef empty) (pure root) (pure watcher) (pure lock) (newIORef []) (pure inboxFd) (pure timerFd) |]
   Right () <- addSourceRaw s (watcherSource watcher)
     | Left e => pure (Left e)
   Right () <- addSourceRaw s (MkSource inboxFd (drainInbox s))
+    | Left e => pure (Left e)
+  Right () <- addSourceRaw s (MkSource timerFd (ignore (timerfd_read timerFd)))
     | Left e => pure (Left e)
   pure (Right s)
   where
@@ -264,19 +282,47 @@ closeScheduler s = do
   ignore (epollClose s.master)
   closeFdWatcher s.watcher
   ignore (close s.inboxFd)
+  ignore (close s.timerFd)
 
 ||| Add a source of completions: its `pollFd` is waited for with the others.
 export
 addSource : Scheduler -> Source -> IO (Either Errno ())
 addSource = addSourceRaw
 
-||| Start a task.
+||| Start a task. A loop that waits for `pollFd` is told to call `turn`.
 export
 submit : Scheduler -> Task () -> IO ()
-submit s t = run s s.root t (\_ => pure ())
+submit s t = run s s.root t (\_ => pure ()) *> wake s
 
-||| The descriptor that is readable when a turn has something to do, to be
-||| waited for by another `epoll`.
+||| A task that was started with `submitHandle`, to be given up.
+export
+record TaskHandle where
+  constructor MkTaskHandle
+  scope : Scope
+  detach : IO ()
+
+||| Start a task that `cancelTask` can give up: everything it runs or spawns
+||| is cancelled with it.
+export
+submitHandle : Scheduler -> Task () -> IO TaskHandle
+submitHandle s t = do
+  child <- newRootScope
+  ident <- fresh s
+  let detach = modifyIORef s.root.children (delete ident)
+  modifyIORef s.root.children (insert ident child)
+  run s child t (\_ => detach)
+  wake s
+  pure (MkTaskHandle child detach)
+
+||| Give up a task: its operations are cancelled (their `Cancel`s run), and the
+||| steps it has ready are dropped. A step that has started is not interrupted.
+export
+cancelTask : TaskHandle -> IO ()
+cancelTask h = cancelScope h.scope *> h.detach
+
+||| The descriptor that is readable when a turn has something to do (a task
+||| started, a completion or a timer waiting), to be waited for by another
+||| `epoll`; then call `turn s 0`.
 export
 pollFd : Scheduler -> FileDesc
 pollFd s = epollDescriptor s.master
@@ -284,7 +330,8 @@ pollFd s = epollDescriptor s.master
 ||| Run the ready tasks, wait once at most `timeoutMs` milliseconds (negative:
 ||| until something happens) for the sources and the timers, and run what they
 ||| woke. `False` when nothing is left: no ready step, no timer, no operation
-||| pending.
+||| pending. When steps are still ready at the end (a task that keeps
+||| yielding) `pollFd` is made readable again.
 export
 turn : Scheduler -> (timeoutMs : Int32) -> IO Bool
 turn s timeoutMs = do
@@ -296,15 +343,16 @@ turn s timeoutMs = do
   if Queue.length q' == 0 && pend == 0
      then pure False
      else do
-       limit <- waitTime s
-       let wait = if timeoutMs < 0 then limit
-                  else if limit < 0 then timeoutMs
-                  else min timeoutMs limit
+       let wait = if Queue.length q' > 0 then 0 else timeoutMs
        Right evs <- epollWait s.master wait
          | Left _ => pure True
        srcs <- readIORef s.sources
        traverse_ (\ev => maybe (pure ()) (.drain) (lookup ev.fd srcs)) evs
        fireTimers s
+       q'' <- readIORef s.runQ
+       runBatch s (Queue.length q'')
+       q3 <- readIORef s.runQ
+       when (Queue.length q3 > 0) (wake s)
        pure True
 
 ||| Run a task and everything it starts until nothing is left; its result,

@@ -217,6 +217,17 @@ the terminal restored.
   them produces comes behind them: B, C, then the `D` that B emitted. `Perform` runs at once and blocks the loop
   (signals wait too) until it returns. After a `Quit` the rest of the batch, the
   queue and the events that arrived with it are dropped.
+- `RunTask t` runs a `Control.Task` task beside the program (the scheduler is
+  `rc2base`'s `Control.Task.Scheduler`, one per program): the message it ends
+  with is delivered like that of `Emit`, and the loop does not stop while the
+  task waits for a descriptor, a timer or other tasks, as it does for `Perform`.
+  The scheduler's `pollFd` is one more descriptor of the loop (`watchFd`,
+  event `EReady`), readable when a task was started, a completion or a timer
+  is waiting; the loop then calls `turn sched 0`. Tasks run on the thread of
+  the loop, so they may not block (`Perform` is for that). `RunTaskAs key t`
+  gives up the running task of that name first, and `CancelTask key` gives it up
+  (what it waits for is cancelled; a step that has started is not interrupted).
+  Tasks still running at the end of the program are forgotten.
 - `SetClipboard text` puts the text in the clipboard of the desktop with OSC 52
   (`System.Console.Xterm`). Nothing tells whether the terminal did it: tmux needs
   `set-clipboard on` and many terminals ask for an option. `A.copyText msg model`

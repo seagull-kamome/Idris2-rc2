@@ -234,21 +234,26 @@ Two rules for the author. `done` is called on the scheduler's thread (from
 cancel is ignored, but the buffers the operation uses must live until the
 kernel or the library has really finished with them, not until the cancel.
 
-## Using it from termui (milestone 2)
+## Using it from termui (milestone 2, implemented)
 
 The master `epoll` is a descriptor that another `epoll` can wait for. termui's
-`Loop` adds `pollFd sched` to its own set; when it is readable it calls
-`turn sched 0`. A new command
+`Loop` adds `pollFd sched` to its own set (`watchFd`, event `EReady`); when it
+is readable the program calls `turn sched 0`. For that to be true whenever a
+turn has work, the scheduler keeps a `timerfd` (a source) armed for its earliest
+timer, and writes its inbox `eventfd` when a task was started or steps are
+still ready at the end of a turn. The commands:
 
 ```idris
-Spawn : Task msg -> Cmd msg        -- run alongside the program; its result is delivered as a message
+RunTask   : Task msg -> Cmd msg             -- run beside the program; the message it ends with is delivered
+RunTaskAs : String -> Task msg -> Cmd msg   -- the same; a running task of that name is given up first
+CancelTask : String -> Cmd msg
 ```
 
-submits `t >>= \m => Point (post m)`, where `post` is the `dispatch` of the
-program (the task runs on the thread of the loop, so it can call it). Unlike
-`Perform`, the loop does not stop while the task waits, and the task can wait
-for a socket, a timer or another task. Cancelling a running task from the
-program (by a handle that holds its scope) is part of that milestone.
+A task is `t >>= \m => Point (dispatch m)` (it runs on the thread of the loop,
+so it can call the dispatch of the program). `RunTaskAs` and `CancelTask` use
+`submitHandle` and `cancelTask` of the scheduler: the handle holds the scope the
+task and everything it spawns run in. Unlike `Perform`, the loop does not stop
+while a task waits, and a task can wait for a socket, a timer or another task.
 
 ## N:M (milestone 3)
 

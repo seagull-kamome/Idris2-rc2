@@ -16,6 +16,7 @@ import System.Posix.Errno
 import System.Posix.File
 import System.Posix.FileDesc
 import System.Posix.Termios
+import Control.Task
 import TermUI.Input
 import TermUI.Node
 import TermUI.Program
@@ -98,7 +99,14 @@ script = "\r\t\r\rx\ESC[Z \t\t\r++\ESC[<0;5;3M\ESC[<0;5;3m\ESC[<0;5;3M\ESC[<65;1
 
 program : (master : FileDesc) -> Program Model Msg
 program master = MkProgram
-  (MkModel 0 0 [] [] [] [], Batch [Perform (ignore (writeString master script) >> pure Noop), SetClipboard "clip\nあ", Emit (Order "A")])
+  (MkModel 0 0 [] [] [] [], Batch [Perform (ignore (writeString master script) >> pure Noop), SetClipboard "clip\nあ", Emit (Order "A")
+                                -- tasks beside the program: one that ends, a named one that is
+                                -- started again (the first never delivers), one that is given up
+                              , RunTask (sleepFor 40 *> pure (Order "T1"))
+                              , RunTaskAs "slow" (sleepFor 150 *> pure (Order "slow1"))
+                              , RunTaskAs "slow" (sleepFor 70 *> pure (Order "slow2"))
+                              , RunTaskAs "gone" (sleepFor 90 *> pure (Order "gone"))
+                              , CancelTask "gone" ])
   update
   view
   subs

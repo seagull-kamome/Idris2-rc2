@@ -12,6 +12,8 @@ module TermUI.Program
 import Data.IORef
 import Data.List
 import Data.Maybe
+import Control.Task
+import Control.Task.Scheduler
 import System.Console.Xterm
 import System.Posix.Errno
 import System.Posix.Process
@@ -43,6 +45,9 @@ data Cmd msg
   | Perform (IO msg)             -- run an action now and deliver its result
   | Suspend                      -- stop the program, as Ctrl-Z does in a shell
   | SetClipboard String          -- put a text in the clipboard of the desktop (OSC 52; terminals may ignore it)
+  | RunTask (Task msg)           -- run a task beside the program; the message it ends with is delivered
+  | RunTaskAs String (Task msg)  -- the same, with a name: a running task of that name is given up first
+  | CancelTask String            -- give up the task of that name
 
 ||| What a model listens to; `subs` is re-evaluated after every update.
 public export
@@ -64,6 +69,9 @@ mapCmd f (After ms m) = After ms (f m)
 mapCmd f (Perform io) = Perform (map f io)
 mapCmd _ Suspend = Suspend
 mapCmd _ (SetClipboard t) = SetClipboard t
+mapCmd f (RunTask t) = RunTask (map f t)
+mapCmd f (RunTaskAs k t) = RunTaskAs k (map f t)
+mapCmd _ (CancelTask k) = CancelTask k
 
 export
 mapSub : (a -> b) -> Sub a -> Sub b
@@ -125,6 +133,8 @@ record Env model msg where
   focusKey : IORef (Maybe String)         -- the key of the focused node, found again when the view changes
   focusKeys : IORef (List (Maybe String)) -- the keys of the focusables of the view, in tree order
   lastClick : IORef (Maybe LastClick)
+  sched : Scheduler                       -- runs the tasks of `RunTask`
+  tasks : IORef (List (String, TaskHandle)) -- the named tasks
 
 -- The timer id of an `Every` key, the same for as long as the program runs;
 -- even, while the ids of `After` are odd.
@@ -186,6 +196,16 @@ mutual
         q <- readIORef env.quit
         if q then pure () else runCmd env c *> go rest
   runCmd env Quit = writeIORef env.quit True
+  runCmd env (RunTask t) = submit env.sched (Seq t (\m => Point (dispatch env m)))
+  runCmd env (RunTaskAs key t) = do
+    runCmd env (CancelTask key)
+    h <- submitHandle env.sched (Seq t (\m => Point (dispatch env m)))
+    modifyIORef env.tasks ((key, h) ::)
+  runCmd env (CancelTask key) = do
+    ts <- readIORef env.tasks
+    let (gone, kept) = partition (\(k, _) => k == key) ts
+    writeIORef env.tasks kept
+    traverse_ (cancelTask . snd) gone
   runCmd env (SetClipboard text) = ignore (writeString env.output (setClipboard Clipboard text))
   runCmd env (Emit m) = dispatch env m
   runCmd env (After ms m) = do
@@ -476,6 +496,7 @@ onEvent env EResume = do
   writeIORef env.skipResume 0
   when (skip == 0) $ resumeEnv env *> refreshSize env
 onEvent env ESuspend = runCmd env Suspend
+onEvent env (EReady _) = ignore (turn env.sched 0)
 onEvent env ETerminate = do
   model <- readIORef env.modelRef
   case mapMaybe terminating (env.prog.subs model) of
@@ -519,14 +540,18 @@ runProgramOn input output prog = do
     | False => pure (Left ENOTTY)
   Right loop <- newLoop input output
     | Left e => pure (Left e)
-  Right term <- openTerminal input output
+  Right sched <- newScheduler
     | Left e => closeLoop loop >> pure (Left e)
+  Right () <- watchFd loop (pollFd sched)
+    | Left e => closeScheduler sched >> closeLoop loop >> pure (Left e)
+  Right term <- openTerminal input output
+    | Left e => closeScheduler sched >> closeLoop loop >> pure (Left e)
   let (model0, cmd0) = prog.init
   size <- terminalSize term
   env <- MkEnv prog loop term output <$> newIORef model0 <*> newIORef 0 <*> newIORef []
            <*> newIORef Nothing <*> newIORef size <*> newIORef False
            <*> newIORef [] <*> newIORef 0 <*> newIORef [] <*> newIORef [] <*> newIORef [] <*> newIORef False
-           <*> newIORef False <*> newIORef 0 <*> newIORef [] <*> newIORef Nothing <*> newIORef Nothing <*> newIORef [] <*> newIORef Nothing
+           <*> newIORef False <*> newIORef 0 <*> newIORef [] <*> newIORef Nothing <*> newIORef Nothing <*> newIORef [] <*> newIORef Nothing <*> pure sched <*> newIORef []
   batching env $ do
     runCmd env cmd0
     -- the size is told to the program once at the start, as at every resize
@@ -536,6 +561,7 @@ runProgramOn input output prog = do
   q <- readIORef env.quit
   when (not q) $ loopUntilQuit env
   closeTerminal term
+  closeScheduler sched
   closeLoop loop
   Right <$> readIORef env.modelRef
 
