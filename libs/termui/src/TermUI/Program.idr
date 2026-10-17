@@ -118,6 +118,8 @@ record Env model msg where
   skipResume : IORef Nat                  -- batches left in which an EResume is the SIGCONT that ended our own Suspend
   rects : IORef (List (Nat, Rect))
   shownCursor : IORef (Maybe (Bool, Nat, Nat))
+  focusKey : IORef (Maybe String)         -- the key of the focused node, found again when the view changes
+  focusKeys : IORef (List (Maybe String)) -- the keys of the focusables of the view, in tree order
 
 -- The timer id of an `Every` key, the same for as long as the program runs;
 -- even, while the ids of `After` are odd.
@@ -253,29 +255,34 @@ syncTimers env = do
     period _ = Nothing
 
 -- Build the view for the current model and focus; the handlers are the ones
--- of this very view, so they are refreshed after every event.
+-- of this very view, so they are refreshed after every event. A focus that has a
+-- key stays with the widget of that key; otherwise it is an index.
 currentView : Env model msg -> IO (Node msg)
 currentView env = do
   model <- readIORef env.modelRef
-  focus <- readIORef env.focus
+  focus0 <- readIORef env.focus
+  fkey <- readIORef env.focusKey
   let view = env.prog.view model
-      (node, hs) = resolve focus view
-      count = length hs
-  if focus >= count && focus > 0
-     then do
-       let focus' = count `minus` 1
-           (node', hs') = resolve focus' view
-       writeIORef env.focus focus'
-       writeIORef env.handlers hs'
-       pure node'
-     else do
-       writeIORef env.handlers hs
-       pure node
+      first@(_, _, keys0) = resolve focus0 view
+      count = length keys0
+      byKey = fkey >>= \k => indexOf (Just k) keys0 0
+      focus1 = fromMaybe focus0 byKey
+      focus2 = if focus1 >= count && focus1 > 0 then count `minus` 1 else focus1
+      (node, hs, keys) = if focus2 == focus0 then first else resolve focus2 view
+  writeIORef env.focus focus2
+  writeIORef env.handlers hs
+  writeIORef env.focusKeys keys
+  writeIORef env.focusKey (join (getAt focus2 keys))
+  pure node
   where
+    indexOf : Maybe String -> List (Maybe String) -> Nat -> Maybe Nat
+    indexOf _ [] _ = Nothing
+    indexOf k (x :: xs) i = if x == k then Just i else indexOf k xs (S i)
+
     -- Replace every `Focusable` by its body, built for the focused one of them;
-    -- returns the handlers in tree order.
-    resolve : (focus : Nat) -> Node msg -> (Node msg, List (Input -> Maybe msg))
-    resolve focus root = let (n, hs, _) = go 0 root in (n, hs)
+    -- returns the handlers and the keys in tree order.
+    resolve : (focus : Nat) -> Node msg -> (Node msg, List (Input -> Maybe msg), List (Maybe String))
+    resolve focus root = let (n, hs, ks, _) = go 0 root in (n, hs, ks)
       where
         -- The box of a focusable is marked, so that its place can be found after
         -- the layout; a node that is not a box (or is marked already) gets one.
@@ -287,21 +294,27 @@ currentView env = do
         tag i n = Box ({ pTag := Just i } defaultProps) [n]
 
         mutual
-          go : Nat -> Node msg -> (Node msg, List (Input -> Maybe msg), Nat)
-          go i n@(Text _ _ _) = (n, [], i)
-          go i (Focusable body h) =
-            let (inner, hs, next) = go (i + 1) (body (i == focus)) in
-            (tag i inner, h :: hs, next)
+          go : Nat -> Node msg -> (Node msg, List (Input -> Maybe msg), List (Maybe String), Nat)
+          go i n@(Text _ _ _) = (n, [], [], i)
+          go i (Focusable key body h) =
+            let (inner, hs, ks, next) = go (i + 1) (body (i == focus)) in
+            (tag i inner, h :: hs, key :: ks, next)
           go i (Box p kids) =
-            let (kids', hs, next) = goList i kids in (Box p kids', hs, next)
+            let (kids', hs, ks, next) = goList i kids in (Box p kids', hs, ks, next)
 
-          goList : Nat -> List (Node msg) -> (List (Node msg), List (Input -> Maybe msg), Nat)
-          goList i [] = ([], [], i)
+          goList : Nat -> List (Node msg) -> (List (Node msg), List (Input -> Maybe msg), List (Maybe String), Nat)
+          goList i [] = ([], [], [], i)
           goList i (k :: ks) =
-            let (k', hs, i') = go i k
-                (ks', hs', i'') = goList i' ks
-            in (k' :: ks', hs ++ hs', i'')
+            let (k', hs, kk, i') = go i k
+                (ks', hs', kk', i'') = goList i' ks
+            in (k' :: ks', hs ++ hs', kk ++ kk', i'')
 
+-- Move the focus to the focusable `i` of the view, and remember its key.
+setFocus : Env model msg -> Nat -> IO ()
+setFocus env i = do
+  writeIORef env.focus i
+  keys <- readIORef env.focusKeys
+  writeIORef env.focusKey (join (getAt i keys))
 
 draw : Env model msg -> IO ()
 draw env = do
@@ -360,7 +373,7 @@ moveFocus env forward = do
   f <- readIORef env.focus
   let n = length hs
   when (n > 0) $
-    writeIORef env.focus (if forward then (if f + 1 >= n then 0 else f + 1) else (if f == 0 then n `minus` 1 else f `minus` 1))
+    setFocus env (if forward then (if f + 1 >= n then 0 else f + 1) else (if f == 0 then n `minus` 1 else f `minus` 1))
 
 onInput : Env model msg -> Input -> IO ()
 onInput env (Mouse e) = do
@@ -371,7 +384,7 @@ onInput env (Mouse e) = do
     case last' (filter (\(_, r) => inside r e.column e.row) rects) of
       Nothing => pure ()
       Just (i, r) => do
-        when (isLeftDown e) $ writeIORef env.focus i
+        when (isLeftDown e) $ setFocus env i
         hs <- readIORef env.handlers
         -- the handler sees the position relative to the top left of its node
         let rel = { column := e.column `minus` r.x, row := e.row `minus` r.y } e
@@ -494,7 +507,7 @@ runProgramOn input output prog = do
   env <- MkEnv prog loop term output <$> newIORef model0 <*> newIORef 0 <*> newIORef []
            <*> newIORef Nothing <*> newIORef size <*> newIORef False
            <*> newIORef [] <*> newIORef 0 <*> newIORef [] <*> newIORef [] <*> newIORef [] <*> newIORef False
-           <*> newIORef False <*> newIORef 0 <*> newIORef [] <*> newIORef Nothing
+           <*> newIORef False <*> newIORef 0 <*> newIORef [] <*> newIORef Nothing <*> newIORef Nothing <*> newIORef []
   batching env $ do
     runCmd env cmd0
     -- the size is told to the program once at the start, as at every resize

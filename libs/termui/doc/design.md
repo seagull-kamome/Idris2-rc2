@@ -270,6 +270,10 @@ The handlers are rebuilt from the view after every event, so a handler
 always sees the model the previous event produced. The focus is an index: if
 focusables appear or disappear before the focused one, the focus moves to
 whichever widget now has that index (it is clamped when there are fewer).
+`keyed "name" widget` gives the focusable at the top of a node a key, and the
+runtime remembers the key of the focused one: when the view changes, the focus
+goes to the widget with that key wherever it is now (if it is gone, back to the
+index). Keys are looked up in tree order; give each a different one.
 
 The screen is redrawn after every batch of events; the differ keeps the cost
 proportional to what changed. A failed write makes the next draw a full one.
