@@ -174,6 +174,59 @@ runTask      : Task a -> IO (Maybe a)                 -- new scheduler, submit, 
 waits for something that cannot happen: nothing is left to run). It returns when
 no task remains, spawned ones included, as coop does.
 
+## Writing an operation of your own
+
+All of them are `Async` underneath; which way to write one depends on what is
+behind it.
+
+1. **A descriptor `epoll` can wait for** (socket, pipe, pty; a database client
+   with a non-blocking API and a descriptor, as `libpq` has in `PQsocket`).
+   Make it non-blocking and write the usual loop in `Task`: try, and on `EAGAIN`
+   `awaitReadable`/`awaitWritable`, then try again. No `Async` is written by hand:
+
+   ```idris
+   readSome : FileDesc -> Nat -> Task (Either Errno (List Bits8))
+   readSome fd n = do
+     r <- liftIO (readBytes fd n)
+     case r of
+       Left EAGAIN => awaitReadable fd *> readSome fd n
+       other       => pure other
+   ```
+
+2. **A call that blocks and has no descriptor** (a regular file, which `epoll`
+   always reports ready; SQLite; `fsync`). A `Point` would stop every task, so
+   the call is run on another thread:
+
+   ```idris
+   blocking : IO a -> Task a      -- planned, with milestone 3
+   ```
+
+   The worker runs the action and calls the `Completion` through the inbox. A
+   request that has not started can be cancelled; one that has started runs to
+   its end and its result is dropped. It needs the thread pool of milestone 3,
+   so it is not in milestone 1; until then `liftIO` blocks the scheduler, which
+   is fine for short calls.
+
+3. **A library with callbacks** (libcurl's multi interface, `c-ares`): implement
+   a `Source`. Register the descriptors the library asks for (and its timer, as a
+   scheduler timer), and in `drain` call the library so that it runs its
+   callbacks; they call the `Completion`s.
+
+4. **Anything else**: `Async` itself. Three things to write: start the operation,
+   call `done` when it is over, and return the action that gives it up.
+
+   ```idris
+   myOp : Handle -> Task Reply
+   myOp h = Async $ \sched, done => do
+     tag <- startRequest h (\reply => done reply)
+     pure (cancelRequest h tag)
+   ```
+
+Two rules for the author. `done` is called on the scheduler's thread (from
+`drain`), or from any thread when it goes through the inbox; a `done` after a
+cancel is ignored, but the buffers the operation uses must live until the
+kernel or the library has really finished with them, not until the cancel.
+
 ## Using it from termui (milestone 2)
 
 The master `epoll` is a descriptor that another `epoll` can wait for. termui's
