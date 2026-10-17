@@ -8,6 +8,7 @@ module TermUI.Terminal
 import Data.Bits
 import Data.Buffer
 import Data.List
+import System.Console.Xterm
 import System.Posix.Errno
 import System.Posix.File
 import System.Posix.FileDesc
@@ -29,8 +30,9 @@ record Terminal where
 
 -- Alternate screen, hidden cursor, bracketed paste.
 enterSequence, leaveSequence : String
-enterSequence = "\ESC[?1049h\ESC[?25l\ESC[?2004h\ESC[2J"
-leaveSequence = "\ESC[0m\ESC[?1002l\ESC[?1006l\ESC[?2004l\ESC[?25h\ESC[?1049l"
+enterSequence = alternateScreen True ++ cursorVisible False ++ bracketedPaste True ++ "\ESC[2J"
+leaveSequence = "\ESC[0m" ++ mouseButtonTracking False ++ mouseSgr False ++ bracketedPaste False
+                ++ cursorVisible True ++ alternateScreen False
 
 ||| Write all the bytes, retrying after a partial write.
 export
@@ -122,4 +124,4 @@ terminalSize t = outputSize t.output
 export
 setMouseReporting : (output : FileDesc) -> Bool -> IO ()
 setMouseReporting output on =
-  ignore (writeString output (if on then "\ESC[?1002h\ESC[?1006h" else "\ESC[?1002l\ESC[?1006l"))
+  ignore (writeString output (mouseButtonTracking on ++ mouseSgr on))

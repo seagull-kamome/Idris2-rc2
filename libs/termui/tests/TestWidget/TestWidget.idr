@@ -142,6 +142,11 @@ main = do
   putStrLn (shown cut ++ " clipboard=" ++ T.clipboard cut)
   putStrLn (shown (keys [shiftKey' KRight, press 'a', press 'b'] sel0))
   putStrLn (shown (keys [shiftKey' KRight, shiftKey' KRight, Paste "XYZ"] sel0))
+  putStrLn "-- the text a copy hands to the desktop"
+  let pickedA = areaKeys [Press KHome noMods, shiftKey' KRight, shiftKey' KRight] (A.fromString 20 3 "hello")
+  putStrLn (show [A.copyText A.Copy pickedA, A.copyText A.Cut pickedA, A.copyText A.Paste pickedA, A.copyText A.Copy (A.empty 20 3)])
+  let pickedT = keys [shiftKey' KRight, shiftKey' KRight] sel0
+  putStrLn (show [T.copyText T.Copy pickedT, T.copyText T.Cut pickedT, T.copyText T.Undo pickedT, T.copyText T.Copy sel0])
   putStrLn "-- text input: undo"
   let u0 = typed "abc def" (T.empty 20)
       u1 = keys [ctrl '_'] u0

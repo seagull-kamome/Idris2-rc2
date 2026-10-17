@@ -228,6 +228,15 @@ export
 update : Msg -> Model -> Model
 update msg m = scrolled (step msg m)
 
+||| The text a message copies, to hand to the clipboard of the desktop
+||| (`SetClipboard`): the selection that `Copy` or `Cut` takes from the model
+||| the message is about to be applied to.
+export
+copyText : Msg -> Model -> Maybe String
+copyText Copy m = if isJust (selection m) then Just (selectedText m) else Nothing
+copyText Cut m = if isJust (selection m) then Just (selectedText m) else Nothing
+copyText _ _ = Nothing
+
 ||| The message a key means to a text field; Enter, Tab and the keys with
 ||| no meaning here are left to others. Shift stretches a move into a selection.
 export
