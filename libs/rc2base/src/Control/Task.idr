@@ -21,24 +21,22 @@ public export
 Time : Type
 Time = Nat
 
-||| What gives an operation up. It has two constructors on purpose: a bare
-||| `IO ()`, or a type with one constructor and one field (which Idris2 compiles
-||| to its field), makes `IO Cancel` an action that returns an action, and
-||| rc2's world arity raising then runs the effects of the operation's start too
-||| late (KNOWN-BUGS.md).
+||| What gives an operation up. (A type of its own and not a bare `IO ()`:
+||| an `IO Cancel` is then an action that returns a value, and `TestTask`, whose
+||| operations hand it back after calling their completion, guards rc2's world
+||| arity raising against treating it as a second world lambda.)
 public export
-data Cancel = MkCancel (IO ()) | NoCancel
+data Cancel = MkCancel (IO ())
 
 ||| Nothing to give up.
 public export
 noCancel : Cancel
-noCancel = NoCancel
+noCancel = MkCancel (pure ())
 
 ||| Give the operation up.
 export
 runCancel : Cancel -> IO ()
 runCancel (MkCancel act) = act
-runCancel NoCancel = pure ()
 
 ||| Tell the scheduler that an operation is done.
 public export

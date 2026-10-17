@@ -78,6 +78,29 @@ whose captured variables come first and the world last (`args` then
 the saturated call. A caller's `f(...) @ (w)` becomes the
 `let c = call f ...; apply c [w]` pair in the `RCExp`.
 
+## Soundness: the prefix of a raised function must not act on the world
+
+Raising `f` makes `f` a wrapper that returns a closure of `f#`, so everything
+in `f`'s body before its closure tail (the *prefix*) now runs when the closure
+is applied and not when `f` is called. That is invisible when the prefix only
+matches on arguments and builds values. It is wrong when the prefix performs
+effects, which happens for `f : ... -> IO (IO a)` once the world has been
+folded into `f`'s own parameters (a lambda `\env, done => do done 1; pure
+cancel` is lifted to `(env, done, w)`): its closure tail is the *result*
+`pure cancel`, not a world lambda, and the call `done 1` with `w` would run
+only when somebody applies that result, if ever. The IR does not tell the two
+closures apart, so the RCExp run (`ArityRaise.raisePlan`) refuses a function
+whose **last parameter** (where the world sits) is handed to an application, a
+named call or an external primitive anywhere in the prefix (`worldInEffect`).
+The case-tree run is not affected: there the tail is a lambda of the source.
+
+Measured on `TestWidget` (termui), `TestWebAPIPure`, `Test92ArityRaise`: the
+same raised functions and sites as before; `TestTask` (the `Async`
+operations that call their completion) goes from 6 to 4 raised functions.
+`libs/rc2base/tests/TestTask` is the regression test: with the previous
+compiler it hangs (the completion is never called). A single-file
+reproduction was not found.
+
 ## Measurements (idris2-lsp, 2026-09-26)
 
 A throwaway tool in the session scratchpad parsed the final `dumprcexpr`
