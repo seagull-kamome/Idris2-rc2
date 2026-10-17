@@ -137,9 +137,16 @@ main = do
   readIORef cancels >>= \n => putStrLn ("hand-made Async: " ++ show r10 ++ ", cancelled " ++ show n ++ " time(s), quick: " ++ show (ms10 < 500))
 
   -- a completion from another thread
-  r11 <- runTask (Async (\env, done => do
-                   _ <- forkJoin (env.post (done (the Nat 42)))
-                   pure noCancel))
+  -- (the thread is joined before the scheduler is closed: its write to the inbox
+  -- must be ordered before the close of the descriptor)
+  thread <- newIORef Nothing
+  r11 <- runTask (do
+    x <- Async (\env, done => do
+           h <- forkJoin (env.post (done (the Nat 42)))
+           writeIORef thread (Just h)
+           pure noCancel)
+    onReactor (readIORef thread >>= maybe (pure ()) join)
+    pure x)
   putStrLn ("from another thread: " ++ show r11)
 
 
@@ -212,6 +219,32 @@ main = do
     xs <- traverse wait ps
     pure (sum xs))
   putStrLn ("200 jobs on 4 workers: " ++ show r23)
+
+
+  -- runTaskFirst: the end of the first task gives up what is left
+  l11 <- newIORef []
+  (r24, ms24) <- elapsedMs monoMs (runTaskFirst 0 (do
+    spawn (sleepFor 800 *> logTo l11 "late")
+    sleepFor 20
+    pure (the Nat 3)))
+  putStrLn ("runTaskFirst: " ++ show r24 ++ ", did not wait: " ++ show (ms24 < 500))
+  readIORef l11 >>= \xs => putStrLn ("what was left did not run: " ++ show (null xs))
+
+  -- parallel mode: the Points of different tasks run at the same time
+  (r25, ms25) <- elapsedMs monoMs (runTaskWith 2 (both (liftIO (nap 150) *> pure (the Nat 1)) (liftIO (nap 150) *> pure (the Nat 2))))
+  putStrLn ("cooperative Points: " ++ show r25 ++ ", one after the other: " ++ show (ms25 >= 280))
+  (r26, ms26) <- elapsedMs monoMs (runTaskParallel 2 (both (liftIO (nap 150) *> pure (the Nat 1)) (liftIO (nap 150) *> pure (the Nat 2))))
+  putStrLn ("parallel Points: " ++ show r26 ++ ", at the same time: " ++ show (ms26 < 280))
+  l12 <- newIORef []
+  r27 <- runTaskParallel 3 (do
+    ps <- traverse (\i => fork (liftIO (pure (i * i)))) (the (List Nat) [1 .. 50])
+    xs <- traverse wait ps
+    onReactor (modifyIORef l12 ("summed" ::))
+    pure (sum xs))
+  putStrLn ("promises in parallel mode: " ++ show r27)
+  readIORef l12 >>= \xs => putStrLn ("onReactor ran: " ++ show xs)
+  r28 <- runTaskParallel 0 (map (+ 1) (liftIO (pure (the Nat 4))))
+  putStrLn ("parallel mode without workers: " ++ show r28)
 
   -- the epoll source on a pipe
   Right (rd, wr) <- pipe2 (O_NONBLOCK .|. O_CLOEXEC)

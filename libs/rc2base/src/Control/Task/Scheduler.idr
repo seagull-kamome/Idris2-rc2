@@ -70,7 +70,9 @@ record Scheduler where
   inbox : IORef (List (IO ()))
   inboxFd : FileDesc
   timerFd : FileDesc                           -- armed for the earliest timer
+  armed : IORef (Maybe Time)                   -- the deadline `timerFd` is armed for
   pool : Pool                                  -- the workers of `blocking`
+  parallel : IORef Bool                        -- `Point`s run on the workers
 
 fresh : Scheduler -> IO Nat
 fresh s = do
@@ -93,14 +95,19 @@ nowMs = do
 armTimerFd : Scheduler -> IO ()
 armTimerFd s = do
   tm <- readIORef s.timers
-  case leftMost tm of
-    Nothing => ignore (timerfd_settime s.timerFd 0 (MkITimerSpec (MkTimeSpec 0 0) (MkTimeSpec 0 0)))
-    Just ((t, _), _) => do
-      now <- nowMs
-      -- an all-zero value would disarm the timer
-      let ms = max 1 (t `minus` now)
-      ignore (timerfd_settime s.timerFd 0
-                (MkITimerSpec (MkTimeSpec 0 0) (MkTimeSpec (cast (ms `div` 1000)) (cast ((ms `mod` 1000) * 1000000)))))
+  was <- readIORef s.armed
+  let next = map (fst . fst) (leftMost tm)
+  -- one system call only when the earliest deadline changed
+  when (next /= was) $ do
+    writeIORef s.armed next
+    case next of
+      Nothing => ignore (timerfd_settime s.timerFd 0 (MkITimerSpec (MkTimeSpec 0 0) (MkTimeSpec 0 0)))
+      Just t => do
+        now <- nowMs
+        -- an all-zero value would disarm the timer
+        let ms = max 1 (t `minus` now)
+        ignore (timerfd_settime s.timerFd 0
+                  (MkITimerSpec (MkTimeSpec 0 0) (MkTimeSpec (cast (ms `div` 1000)) (cast ((ms `mod` 1000) * 1000000)))))
 
 -- Make the master `epoll` readable, so that whoever waits for it calls `turn`.
 wake : Scheduler -> IO ()
@@ -129,7 +136,12 @@ envOf s = MkEnv nowMs addTimer (\fd, ev, done => watch s.watcher fd ev done) (po
 
 mutual
   run : Scheduler -> Scope -> Task a -> (a -> IO ()) -> IO ()
-  run s sc (Point io) k = enqueue s sc (io >>= k)
+  run s sc (Pinned io) k = enqueue s sc (io >>= k)
+  run s sc (Point io) k = do
+    par <- readIORef s.parallel
+    if par
+       then runAsync s sc (\env, done => env.offload (io >>= \a => env.post (done a))) k
+       else enqueue s sc (io >>= k)
   run s sc (Seq t f) k = run s sc t (\a => run s sc (f a) k)
   run s sc (Both l r) k = runBoth s sc l r k
   run s sc (Race Empty r) k = run s sc r k
@@ -199,6 +211,12 @@ mutual
 -------------------------------------------------------------------------------
 -- Turns
 
+-- The steps a turn runs before it looks at the sources again: tasks that
+-- only compute are not slowed by a system call per step, and a source waits at
+-- most this many steps.
+stepBudget : Nat
+stepBudget = 1024
+
 -- Run up to `n` of the ready steps.
 runBatch : Scheduler -> Nat -> IO ()
 runBatch _ Z = pure ()
@@ -260,7 +278,7 @@ newSchedulerWith workers = do
   lock <- makeMutex
   root <- newRootScope
   s <- [| MkScheduler (newIORef Queue.empty) (newIORef 0) (newIORef 0) (newIORef empty) (pure master)
-                      (newIORef empty) (pure root) (pure watcher) (pure lock) (newIORef []) (pure inboxFd) (pure timerFd) (pure pool) |]
+                      (newIORef empty) (pure root) (pure watcher) (pure lock) (newIORef []) (pure inboxFd) (pure timerFd) (newIORef Nothing) (pure pool) (newIORef False) |]
   Right () <- addSourceRaw s (watcherSource watcher)
     | Left e => pure (Left e)
   Right () <- addSourceRaw s (MkSource inboxFd (drainInbox s))
@@ -346,8 +364,7 @@ pollFd s = epollDescriptor s.master
 export
 turn : Scheduler -> (timeoutMs : Int32) -> IO Bool
 turn s timeoutMs = do
-  q <- readIORef s.runQ
-  runBatch s (Queue.length q)
+  runBatch s stepBudget
   fireTimers s
   q' <- readIORef s.runQ
   pend <- readIORef s.pending
@@ -360,31 +377,54 @@ turn s timeoutMs = do
        srcs <- readIORef s.sources
        traverse_ (\ev => maybe (pure ()) (.drain) (lookup ev.fd srcs)) evs
        fireTimers s
-       q'' <- readIORef s.runQ
-       runBatch s (Queue.length q'')
+       runBatch s stepBudget
        q3 <- readIORef s.runQ
        when (Queue.length q3 > 0) (wake s)
        pure True
 
-||| `runTask` with up to `workers` threads for `blocking`.
-export
-runTaskWith : (workers : Nat) -> Task a -> IO (Maybe a)
-runTaskWith workers t = do
+runWith : (parallel : Bool) -> (untilRoot : Bool) -> (workers : Nat) -> Task a -> IO (Maybe a)
+runWith par untilRoot workers t = do
   Right s <- newSchedulerWith workers
     | Left _ => pure Nothing
+  when (par && workers > 0) (writeIORef s.parallel True)
   res <- newIORef Nothing
-  submit s (Seq t (\a => Point (writeIORef res (Just a))))
-  loop s
+  submit s (Seq t (\a => Pinned (writeIORef res (Just a))))
+  loop s res
+  -- what is left is given up
+  when untilRoot (cancelScope s.root)
   closeScheduler s
   readIORef res
   where
-    loop : Scheduler -> IO ()
-    loop s = do
-      more <- turn s (-1)
-      when more (loop s)
+    loop : Scheduler -> IORef (Maybe a) -> IO ()
+    loop s res = do
+      done <- readIORef res
+      unless (untilRoot && isJust done) $ do
+        more <- turn s (-1)
+        when more (loop s res)
 
 ||| Run a task and everything it starts until nothing is left; its result,
 ||| `Nothing` if it never finished (it was `Empty`, or was cancelled).
 export
 runTask : Task a -> IO (Maybe a)
-runTask = runTaskWith 0
+runTask = runWith False False 0
+
+||| `runTask` with up to `workers` threads for `blocking`.
+export
+runTaskWith : (workers : Nat) -> Task a -> IO (Maybe a)
+runTaskWith = runWith False False
+
+||| `runTask` in parallel mode: the `Point`s (`liftIO`) of every task run on up to
+||| `workers` threads, one after the other for a task but at the same time for
+||| different tasks; the control of the tasks (`>>=`, `both`, `race`, `spawn`,
+||| promises) stays on one thread. The action of a `Point` may then run at the same
+||| time as those of other tasks: what it shares must be safe for that, and what
+||| must stay on the thread of the scheduler is written with `onReactor`.
+export
+runTaskParallel : (workers : Nat) -> Task a -> IO (Maybe a)
+runTaskParallel = runWith True False
+
+||| `runTaskWith`, but it returns when the first task ends: what is still
+||| running or waiting is given up (the operations are cancelled), not waited for.
+export
+runTaskFirst : (workers : Nat) -> Task a -> IO (Maybe a)
+runTaskFirst = runWith False True

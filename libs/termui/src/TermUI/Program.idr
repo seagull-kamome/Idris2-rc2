@@ -196,10 +196,10 @@ mutual
         q <- readIORef env.quit
         if q then pure () else runCmd env c *> go rest
   runCmd env Quit = writeIORef env.quit True
-  runCmd env (RunTask t) = submit env.sched (Seq t (\m => Point (dispatch env m)))
+  runCmd env (RunTask t) = submit env.sched (Seq t (\m => Pinned (dispatch env m)))
   runCmd env (RunTaskAs key t) = do
     runCmd env (CancelTask key)
-    h <- submitHandle env.sched (Seq t (\m => Point (dispatch env m)))
+    h <- submitHandle env.sched (Seq t (\m => Pinned (dispatch env m)))
     modifyIORef env.tasks ((key, h) ::)
   runCmd env (CancelTask key) = do
     ts <- readIORef env.tasks

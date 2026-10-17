@@ -36,7 +36,8 @@ type of the scheduler has to see.
 
 ```idris
 data Task : Type -> Type where
-  Point  : IO a -> Task a                        -- an action, run to completion
+  Point  : IO a -> Task a                        -- an action, run to completion (on a worker in parallel mode)
+  Pinned : IO a -> Task a                        -- the same, always on the thread of the scheduler
   Seq    : Task a -> (a -> Task b) -> Task b     -- >>=
   Both   : Task a -> Task b -> Task (a, b)       -- zip: run together, wait for both
   Race   : Task a -> Task a -> Task a            -- the first to finish wins, the other is cancelled
@@ -104,8 +105,8 @@ or `cancelTask`), the promise is *abandoned*: `waitMaybe` answers `Nothing` and
 done with a sentinel task in the scope of the producer: an `Async` that ends
 when the result is put in and abandons the promise in its `Cancel`.
 
-The state of a promise is plain `IORef`s: it is used from the thread of the
-scheduler. Milestone 3 has to make it safe for several threads.
+The state of a promise is plain `IORef`s, and every operation on it is pinned to
+the thread of the scheduler (`Pinned`), so it is safe in parallel mode too.
 
 ## Semantics
 
@@ -300,12 +301,20 @@ Stages:
    its task is given up is dropped; one that has started runs to its end and its
    result is thrown away. `closeScheduler` stops the workers (jobs still queued
    are forgotten) and joins them.
-2. **`Point` on the workers** (not done). A step that is only a `Point`
-   could run on a worker too, giving N:M for compute-bound tasks. The control
-   (`>>=`, `both`, `race`, `spawn`, `Async`) would still go back through the
-   reactor, so this pays only for coarse `Point`s. A per-task opt-in
-   (`parallel : IO a -> Task a`, a `blocking` that is meant to compute) is the
-   likely shape, and it is the same machinery as stage 1.
+2. **`Point` on the workers** (implemented, opt-in). `runTaskParallel n` (or the
+   scheduler's `parallel` flag) puts the scheduler in *parallel mode*: a `Point`
+   (`liftIO`) is run as `blocking` is, on a worker, and the task goes on with its
+   result. The steps of one task stay in order; the `Point`s of different tasks
+   run at the same time. The control (`>>=`, `both`, `race`, `spawn`, `Async`,
+   promises) still goes back through the reactor, so this pays only for
+   coarse `Point`s. It gives up the guarantee of the cooperative model that a
+   `Point` is not interrupted by another task: what `Point`s share (an `IORef` two
+   tasks both write) is now shared between threads, as with real threads.
+   `onReactor : IO a -> Task a` (the constructor `Pinned`) is the `Point` that always
+   runs on the thread of the scheduler, for what touches the state of the
+   scheduler or of the program (`pure`, `map`, `yield`, the promise operations
+   and termui's delivery of a message are pinned). With no workers the mode does
+   nothing.
 
 What a thread must not do: touch a scheduler structure (use `env.post`), or
 keep a `Task` that it also gives to another thread. Everything handed to a
@@ -348,13 +357,25 @@ is checked. Planned cases:
 2. `Spawn` in termui's `Cmd`, with `pollFd` in its loop, and cancellation by handle.
 3. N:M: worker threads, the atomic cells, the `eventfd` queue.
 
+## Decisions
+
+- `runTask` returns when nothing is left, as coop does; `runTaskFirst n` returns
+  when the first task ends and gives up what is left (the operations are
+  cancelled).
+- `Time` is `Nat` milliseconds on the monotonic clock. A `TimeSpec` would
+  promise a resolution the scheduler (a `timerfd` armed in whole milliseconds)
+  does not have.
+- Steps: a turn runs up to 1024 ready steps before it looks at the sources again
+  (`stepBudget`), and re-arms the timer descriptor only when the earliest
+  deadline changed. A step costs 0.74 microseconds (a loop of a million `liftIO`s
+  in 0.74 s; one step per turn cost 4.5 microseconds, all in system calls).
+  `yield` still puts the task behind the others.
+
 ## Open points
 
-- Whether `runTask` should return when the root finishes (cancelling what is
-  left) as an option; coop returns when everything is done.
-- `Time` as `Nat` milliseconds or a `TimeSpec` of `System.Posix.Time`.
-- The step budget against the round robin after each `Point`.
-- The shape of `TaskT m`, once a second substrate is wanted.
+- Generalising `Task` to any `HasIO m` (a `TaskT m`, with `Task` as `TaskT IO`):
+  the `Point`s would hold `m a`, and the scheduler would need a way to run
+  them in `IO`. Nothing in the data type stands in the way; it is not needed yet.
 - Whether a source may also give a timeout for the wait (`io_uring` has its own
   timeout operation); for now timers are the scheduler's.
 - How an `io_uring` request that needs a buffer keeps it alive until the
