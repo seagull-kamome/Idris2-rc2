@@ -94,11 +94,11 @@ view m =
 -- Shift+Tab, Space on the first, Tab twice to the third (an Enter it ignores)
 -- two "+" in one read and a click with the wheel turned.
 script : String
-script = "\r\t\r\rx\ESC[Z \t\t\r++\ESC[<0;5;3M\ESC[<0;5;3m\ESC[<65;1;1M"
+script = "\r\t\r\rx\ESC[Z \t\t\r++\ESC[<0;5;3M\ESC[<0;5;3m\ESC[<0;5;3M\ESC[<65;1;1M"
 
 program : (master : FileDesc) -> Program Model Msg
 program master = MkProgram
-  (MkModel 0 0 [] [] [] [], Batch [Perform (ignore (writeString master script) >> pure Noop), Emit (Order "A")])
+  (MkModel 0 0 [] [] [] [], Batch [Perform (ignore (writeString master script) >> pure Noop), SetClipboard "clip\nあ", Emit (Order "A")])
   update
   view
   subs

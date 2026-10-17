@@ -69,7 +69,7 @@ main = do
 
   dump "min width of a box"
     (row [] [ box [minWidth 8, border Single] [text "a"], box [border Single] [text "b"] ]) 20 3
-  dump "max width of a growing box (the rest is not handed on)"
+  dump "max width of a growing box (the room it leaves goes to the others)"
     (row [] [ box [grow 1, maxWidth 6, border Ascii] [], box [grow 1, border Ascii] [] ]) 20 3
   dump "max width over a fixed width, min over a max"
     (row [] [ box [width (Cells 12), maxWidth 5, border Ascii] [], box [width (Cells 2), minWidth 4, border Ascii] [] ]) 20 3
@@ -102,6 +102,25 @@ main = do
     (column [] [ box [minHeight 4, border Single] [], box [height (Cells 4), border Single] [] ]) 8 6
   dump "column: a maximum height leaves the room to the next child"
     (column [] [ box [grow 1, maxHeight 3, border Single] [], text "x" ]) 6 10
+  dump "min and max: a box held at its minimum takes the room from the others"
+    (row [] [ box [width (Cells 10), minWidth 9, border Ascii] [], box [width (Cells 10), border Ascii] [], box [width (Cells 10), border Ascii] [] ]) 20 3
+  dump "min and max: a box held at its maximum gives the rest to the others"
+    (row [] [ box [maxWidth 4, grow 1, border Ascii] [], box [grow 1, border Ascii] [], box [grow 1, border Ascii] [] ]) 20 3
+  dump "percent margins are of the width of the parent"
+    (box [] [ box [marginPercent 10, border Ascii] [text "x"] ]) 20 9
+  dump "percent margins added to cells"
+    (row [] [ box [marginPercentXY 25 0, margin 1, border Ascii] [text "x"], text "y" ]) 20 5
+  dump "absolute: margins move it from the sides"
+    (box [] [ text "background", box [absolute, top 0, left 0, margin 1, border Single] [text "m"] ]) 12 5
+  dump "absolute: margins on the sides it is placed by"
+    (box [] [ box [absolute, right 0, bottom 0, margin 1, border Single] [text "m"] ]) 12 6
+  dump "a column that wraps"
+    (box [direction Column, height (Cells 2), width (Cells 14), wrapChildren] (map text ["ab", "cde", "f", "ghij", "k"])) 14 3
+  dump "a column that wraps: gap, growing and alignment"
+    (box [direction Column, height (Cells 7), width (Cells 14), wrapChildren, gap 1, align Center]
+       [ box [border Single, grow 1] [text "a"], box [border Single] [text "bbb"], box [border Single] [text "cc"] ]) 14 7
+  dump "a column that wraps, in a row with a neighbour"
+    (row [] [ box [direction Column, height (Cells 2), width (Cells 8), wrapChildren] (map text ["aa", "bb", "cc", "dd", "ee"]), text "|" ]) 12 3
   dump "wrapped text takes the width it is offered, so it is not centred as a narrower block"
     (column [align Center] [ text "aaaa bbbb cccc" ]) 11 4
   dump "an absolute box is as wide as its text wants, within its parent"

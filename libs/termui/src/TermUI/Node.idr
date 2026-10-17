@@ -66,11 +66,12 @@ record Props where
   pWrap : Bool            -- a row goes on in a new line when its children do not fit
   pAbsolute : Bool        -- out of the flow of its parent, placed by the offsets below
   pTop, pRight, pBottom, pLeft : Maybe Nat
+  pMarginPct : Edges      -- margins in percent of the width of the parent, added to `pMargin`
 
 public export
 defaultProps : Props
 defaultProps = MkProps Column Auto Auto 0 1 noEdges noEdges 0 NoBorder plain plain Stretch JStart False Nothing
-                       Nothing Nothing Nothing Nothing False False Nothing Nothing Nothing Nothing
+                       Nothing Nothing Nothing Nothing False False Nothing Nothing Nothing Nothing noEdges
 
 -------------------------------------------------------------------------------
 -- Tree
@@ -83,7 +84,9 @@ data Node : Type -> Type where
   ||| knowing whether it has the focus, and the handler sees the keys that
   ||| arrive while it has. Focusables are visited in tree order by Tab and
   ||| Shift+Tab.
-  Focusable : (focused : Bool -> Node msg) -> (Input -> Maybe msg) -> Node msg
+  ||| It may have a key (`keyed`): the runtime then finds the focus again by the
+  ||| key when focusables appear or disappear before it.
+  Focusable : Maybe String -> (focused : Bool -> Node msg) -> (Input -> Maybe msg) -> Node msg
 
 -------------------------------------------------------------------------------
 -- Builders
@@ -155,6 +158,17 @@ public export
 marginXY : (x : Nat) -> (y : Nat) -> Prop
 marginXY x y p = { pMargin := MkEdges y x y x } p
 
+||| Margins in percent of the content width of the parent (on all four sides,
+||| as in CSS), added to the margins in cells. A parent that is sized by its
+||| children does not count them.
+public export
+marginPercent : Nat -> Prop
+marginPercent n p = { pMarginPct := MkEdges n n n n } p
+
+public export
+marginPercentXY : (x : Nat) -> (y : Nat) -> Prop
+marginPercentXY x y p = { pMarginPct := MkEdges y x y x } p
+
 public export
 border : Border -> Prop
 border b p = { pBorder := b } p
@@ -190,14 +204,23 @@ charWrapped s = Text s WrapChars
 ||| A node that takes the keyboard focus; see `Focusable`.
 public export
 focusable : (focused : Bool -> Node msg) -> (Input -> Maybe msg) -> Node msg
-focusable = Focusable
+focusable = Focusable Nothing
+
+||| Give the focusable at the top of a node a key. The focus stays with the
+||| widget of that key when others come or go before it in the tree (without
+||| a key the focus is the index of the widget). Keys should differ; a node that
+||| is not a focusable is returned as it is.
+public export
+keyed : String -> Node msg -> Node msg
+keyed k (Focusable _ body h) = Focusable (Just k) body h
+keyed _ n = n
 
 ||| Change the messages of a view; a parent uses it to embed a child's view.
 export covering
 mapNode : (a -> b) -> Node a -> Node b
 mapNode _ (Text s w str) = Text s w str
 mapNode f (Box p kids) = Box p (map (mapNode f) kids)
-mapNode f (Focusable body h) = Focusable (\b => mapNode f (body b)) (\i => map f (h i))
+mapNode f (Focusable k body h) = Focusable k (\b => mapNode f (body b)) (\i => map f (h i))
 
 ||| Mark the box as the place of the terminal's own cursor: the runtime puts
 ||| the cursor at its top left corner, which is where an input method shows its
@@ -215,7 +238,9 @@ minHeight n p = { pMinHeight := Just n } p
 maxHeight n p = { pMaxHeight := Just n } p
 
 ||| A row whose children do not fit in its width goes on in a new line (lines
-||| are `gap` apart). It has no effect on a column.
+||| are `gap` apart); a column whose children do not fit in its height goes on
+||| in a new column. A wrapping column needs a height (and a width, if it is to
+||| be placed by its parent's other children) of its own.
 public export
 wrapChildren : Prop
 wrapChildren p = { pWrap := True } p

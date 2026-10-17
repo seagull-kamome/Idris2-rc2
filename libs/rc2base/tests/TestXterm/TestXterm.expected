@@ -1,0 +1,19 @@
+--- System.Console.Xterm ---
+<ESC>[?1049h<ESC>[?1049l
+<ESC>[?25l<ESC>[?25h
+<ESC>[?2004h<ESC>[?2004l
+<ESC>[?1002h<ESC>[?1006h<ESC>[?1002l<ESC>[?1006l
+<ESC>[200~x<ESC>[201~
+<ESC>[?1000h
+"" -> 
+"f" -> Zg==
+"fo" -> Zm8=
+"foo" -> Zm9v
+"foob" -> Zm9vYg==
+"fooba" -> Zm9vYmE=
+"foobar" -> Zm9vYmFy
+AP/+Pj8=
+<ESC>]52;c;aGVsbG8=<BEL>
+<ESC>]52;p;44GCCmI=<BEL>
+<ESC>]52;c;!<BEL>
+<ESC>]0;my title<BEL>

@@ -119,6 +119,7 @@ data Msg
   | KillToEnd
   | KillToStart
   | ClickAt Nat      -- the cell of the field that was clicked
+  | WordAt Nat       -- the same for a double click: the word there is selected
   | DragTo Nat       -- the same, with the button held: stretches the selection
   | Extend Msg       -- a move that stretches the selection
   | SelectAll
@@ -144,6 +145,15 @@ move MoveEnd m = { before := reverse m.after ++ m.before, after := [] } m
 move (ClickAt col) m = clickAt col m
 move (DragTo col) m = clickAt col m
 move _ m = m
+
+-- The word under cell `col` selected, the cursor at its end.
+wordAt : Nat -> Model -> Model
+wordAt col m =
+  let m1 = clickAt col m
+      text = reverse m1.before ++ m1.after
+      (lo, hi) = wordRange text (length m1.before)
+  in { before := reverse (take hi text), after := drop hi text
+     , mark := if lo == hi then Nothing else Just lo, lastEdit := NoEdit } m1
 
 snapOf : Model -> Snap
 snapOf m = MkSnap m.before m.after
@@ -198,6 +208,7 @@ step DeleteForward m = erasing Deleting (\x => { after $= drop 1 } x) m
 step KillToEnd m = erasing Other (\x => { after := [] } x) m
 step KillToStart m = erasing Other (\x => { before := [] } x) m
 step (Extend x) m = stretched x m
+step (WordAt col) m = wordAt col m
 step (DragTo col) m = stretched (DragTo col) m
 step SelectAll m = stretched MoveEnd (moved MoveHome m)
 step Copy m = if isJust (selection m) then { clip := selectedText m } m else m
@@ -216,6 +227,15 @@ step msg m = moved msg m
 export
 update : Msg -> Model -> Model
 update msg m = scrolled (step msg m)
+
+||| The text a message copies, to hand to the clipboard of the desktop
+||| (`SetClipboard`): the selection that `Copy` or `Cut` takes from the model
+||| the message is about to be applied to.
+export
+copyText : Msg -> Model -> Maybe String
+copyText Copy m = if isJust (selection m) then Just (selectedText m) else Nothing
+copyText Cut m = if isJust (selection m) then Just (selectedText m) else Nothing
+copyText _ _ = Nothing
 
 ||| The message a key means to a text field; Enter, Tab and the keys with
 ||| no meaning here are left to others. Shift stretches a move into a selection.
@@ -264,7 +284,10 @@ keyMsg (Press key mods) =
     plain _ = Nothing
 keyMsg (Mouse e) =
   case (e.button, e.action) of
-    (LeftButton, ButtonDown) => Just (ClickAt e.column)
+    (LeftButton, ButtonDown) => Just (case e.clicks of
+                                         1 => ClickAt e.column
+                                         2 => WordAt e.column
+                                         _ => SelectAll)
     (LeftButton, Drag) => Just (DragTo e.column)
     _ => Nothing
 
