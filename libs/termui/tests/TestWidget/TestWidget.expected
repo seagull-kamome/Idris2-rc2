@@ -72,6 +72,20 @@ ab|c def
 |  sssss^
 hello w|orld
 hello wor|ld
+-- text input: double and triple clicks
+|hello big-world, foo
+|      sss^
+|hello big-world, foo
+|     s^
+|hello big-world, foo
+|         s^
+|hello big-world, foo
+|                 sss^
+|hello big-world, foo
+|ssssssssssssssssssss^
+hello X|-world, foo
+hello big-world, foobig|
+|
 -- text input: selection in a scrolled field
 |hello wo
 |ss^
@@ -325,6 +339,41 @@ abcd
 100000 lines, top=99990
 100001 lines, line=99998 top=99990
 100000 0
+-- text area: double and triple clicks
+|one two
+|sss^
+|three-four five
+|last
+|
+|one two
+|three-four five
+|      ssss^
+|last
+|
+|one two
+|three-four five
+|           ssss^
+|last
+|
+|one two
+|three-four five
+|sssssssssssssss^
+|last
+|
+|one two
+|three-four five
+|
+|^
+|last
+X| two
+three-four five
+
+last
+clip="three-four five"
+one two
+three-four five
+
+last|
 -- text area: selection
 hello |world | selected: "world"
 |hello world
@@ -533,6 +582,28 @@ third line is also long
 |aaaaaaaaaa
 |
 | ^
+|
+-- wrapped: erasing at the end pulls the viewport back
+top=2
+top=0/0
+|a
+|b
+|c
+|
+|^
+top=0/3
+top=0/0
+|one two
+|three four
+|          ^
+|
+-- a wide character in an editor too narrow for it
+|?
+|?
+|
+|
+|^
+|
 |
 -- wrapped: a large text
 49995/0 line 49999

@@ -52,3 +52,20 @@ export
 cutTo : (room : Nat) -> List Char -> List Char
 cutTo _ [] = []
 cutTo room (c :: cs) = if charWidth c <= room then c :: cutTo (room `minus` charWidth c) cs else []
+
+-- Spaces, the characters of words (letters, digits, `_` and everything
+-- beyond ASCII) and the rest each make a kind of run.
+kindOf : Char -> Nat
+kindOf c = if c == ' ' then 0 else if isAlphaNum c || c == '_' || ord c >= 128 then 1 else 2
+
+||| The range of character indexes `[lo, hi)` of the run of one kind (word,
+||| spaces, punctuation) that the character `idx` is in; at the end of the
+||| text, the last run.
+export
+wordRange : (chars : List Char) -> (idx : Nat) -> (Nat, Nat)
+wordRange [] _ = (0, 0)
+wordRange chars idx =
+  let i = min idx (length chars `minus` 1)
+      k = maybe 0 kindOf (head' (drop i chars))
+      same = \c => kindOf c == k
+  in (i `minus` length (takeWhile same (reverse (take i chars))), i + length (takeWhile same (drop i chars)))

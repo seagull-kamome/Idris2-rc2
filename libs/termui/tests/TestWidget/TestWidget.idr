@@ -64,7 +64,7 @@ typed : String -> T.Model -> T.Model
 typed s = keys (map press (unpack s))
 
 click : MouseButton -> Nat -> Nat -> Input
-click b c r = Mouse (MkMouseEvent b ButtonDown c r noMods)
+click b c r = Mouse (MkMouseEvent b ButtonDown c r noMods 1)
 
 -- The text of the editor with a bar at the cursor.
 areaText : A.Model -> String
@@ -153,11 +153,22 @@ main = do
   putStrLn (shown (keys [ctrl '_'] (keys [key KHome, shiftKey' KRight, shiftKey' KRight, ctrl 'w'] u0)))
   putStrLn (shown (keys [ctrl '_'] (keys [key KEnd] (T.empty 20))))
   putStrLn "-- text input: the mouse"
-  let mouse = \a, c => Mouse (MkMouseEvent LeftButton a c 0 noMods)
+  let mouse = \a, c => Mouse (MkMouseEvent LeftButton a c 0 noMods 1)
       m3 = keys [mouse ButtonDown 2, mouse Drag 7] (T.fromString 20 "hello world")
   drawMarked (T.view True m3) 14 1
   putStrLn (shown m3)
   putStrLn (shown (keys [mouse ButtonDown 2, mouse Drag 7, mouse ButtonDown 9] (T.fromString 20 "hello world")))
+  putStrLn "-- text input: double and triple clicks"
+  let nth = \n, c => Mouse (MkMouseEvent LeftButton ButtonDown c 0 noMods n)
+      fld = T.fromString 24 "hello big-world, foo"
+  drawMarked (T.view True (keys [nth 2 7] fld)) 24 1
+  drawMarked (T.view True (keys [nth 2 5] fld)) 24 1
+  drawMarked (T.view True (keys [nth 2 9] fld)) 24 1
+  drawMarked (T.view True (keys [nth 2 100] fld)) 24 1
+  drawMarked (T.view True (keys [nth 3 7] fld)) 24 1
+  putStrLn (shown (keys [nth 2 7, press 'X'] fld))
+  putStrLn (shown (keys [nth 2 7, alt' 'w', key KEnd, ctrl 'y'] fld))
+  putStrLn (shown (keys [nth 2 0] (T.empty 10)))
   putStrLn "-- text input: selection in a scrolled field"
   let sc = keys [ctrl 'a', shiftKey' KRight, shiftKey' KRight] (T.fromString 8 "hello world!")
   drawMarked (T.view True sc) 10 1
@@ -218,7 +229,7 @@ main = do
   putStrLn (show (S.current (S.update (ClickRow 9) list)))
   let scrolledList = S.update Down (S.update Down (S.update Down (S.update Down list)))
   putStrLn (show (S.current (S.update (ClickRow 0) scrolledList)) ++ " top=" ++ show scrolledList.top)
-  putStrLn (show (map (isJust . S.keyMsg) [click LeftButton 0 1, click RightButton 0 1, Mouse (MkMouseEvent WheelDown ButtonDown 0 0 noMods)]))
+  putStrLn (show (map (isJust . S.keyMsg) [click LeftButton 0 1, click RightButton 0 1, Mouse (MkMouseEvent WheelDown ButtonDown 0 0 noMods 1)]))
   putStrLn "-- scroll view"
   let doc = Sc.fromLines 4 (map (\i => "line " ++ show i) (the (List Nat) [1 .. 10]))
   draw (Sc.view doc) 12 4
@@ -228,7 +239,7 @@ main = do
   putStrLn ("top=" ++ show (Sc.update ToEnd doc).top ++ " " ++ show (Sc.update (LineDown 99) doc).top ++ " " ++ show (Sc.update (LineUp 5) d2).top)
   draw (Sc.view (Sc.update ToEnd doc)) 12 4
   draw (Sc.view (Sc.fromLines 4 ["a", "b"])) 12 4
-  putStrLn (show (map (isJust . Sc.keyMsg) [key KUp, key KPageDown, Mouse (MkMouseEvent WheelDown ButtonDown 0 0 noMods), press 'x', ctrl 'c']))
+  putStrLn (show (map (isJust . Sc.keyMsg) [key KUp, key KPageDown, Mouse (MkMouseEvent WheelDown ButtonDown 0 0 noMods 1), press 'x', ctrl 'c']))
   putStrLn "-- text area: editing"
   let a0 = A.empty 20 4
   let a1 = typedArea "hello\nworld\n!" a0
@@ -276,7 +287,7 @@ main = do
   putStrLn (areaText (areaKeys [click LeftButton 3 1] c1))
   putStrLn (areaText (areaKeys [click LeftButton 40 1] c1))
   putStrLn (areaText (areaKeys [click LeftButton 1 9] c1))
-  putStrLn (show (map (isJust . A.keyMsg) [click RightButton 1 1, Mouse (MkMouseEvent WheelUp ButtonDown 0 0 noMods), key KTab, ctrl 'c', Press (KChar 'x') (MkMods False False True)]))
+  putStrLn (show (map (isJust . A.keyMsg) [click RightButton 1 1, Mouse (MkMouseEvent WheelUp ButtonDown 0 0 noMods 1), key KTab, ctrl 'c', Press (KChar 'x') (MkMods False False True)]))
   putStrLn "-- review: document start, left, top, bar column, pages"
   putStrLn (areaText (areaKeys [Press KHome (MkMods False True False)] (typedArea "hello" a0)))
   let ds = areaKeys [Press KHome (MkMods False True False), key KDown] (areaKeys [key KUp, key KRight, key KRight, key KRight] (typedArea "abcdef\nxy" a0))
@@ -348,6 +359,17 @@ main = do
   let big2 = areaKeys [key KUp, key KUp, Press (KChar 'a') (MkMods False True False), key KEnter, press 'x'] big
   putStrLn (show (lineCount big2) ++ " lines, line=" ++ show big2.line ++ " top=" ++ show big2.top)
   putStrLn (show (lineCount (areaKeys [Press KHome (MkMods False True False)] big)) ++ " " ++ show (areaKeys [Press KHome (MkMods False True False)] big).line)
+  putStrLn "-- text area: double and triple clicks"
+  let nthA = \n, c, r => Mouse (MkMouseEvent LeftButton ButtonDown c r noMods n)
+      doc = A.fromString 20 4 "one two\nthree-four five\n\nlast"
+  drawMarked (A.view True (areaKeys [nthA 2 1 0] doc)) 20 4
+  drawMarked (A.view True (areaKeys [nthA 2 6 1] doc)) 20 4
+  drawMarked (A.view True (areaKeys [nthA 2 16 1] doc)) 20 4
+  drawMarked (A.view True (areaKeys [nthA 3 4 1] doc)) 20 4
+  drawMarked (A.view True (areaKeys [nthA 3 0 2] doc)) 20 4
+  putStrLn (areaText (areaKeys [nthA 2 1 0, press 'X'] doc))
+  putStrLn ("clip=" ++ show (A.clipboard (areaKeys [nthA 3 2 1, Press (KChar 'w') (MkMods False False True)] doc)))
+  putStrLn (areaText (areaKeys [nthA 2 19 0] doc))
   putStrLn "-- text area: selection"
   let shiftKey = \k => Press k (MkMods True False False)
   let hw = typedArea "hello world" (A.empty 20 4)
@@ -380,7 +402,7 @@ main = do
   let multi = areaKeys [Press KHome (MkMods True True False), shiftKey KDown, shiftKey KDown, Press (KChar 'w') (MkMods False False True), Press KEnd (MkMods False True False), Press (KChar 'y') (MkMods False True False)] three
   putStrLn (areaText multi ++ " | " ++ show (clipboard multi))
   putStrLn "-- text area: drag"
-  let drag = \c, r => Mouse (MkMouseEvent LeftButton Drag c r noMods)
+  let drag = \c, r => Mouse (MkMouseEvent LeftButton Drag c r noMods 1)
   let dragged = areaKeys [click LeftButton 2 0, drag 4 1, drag 1 2] three
   putStrLn (areaText dragged ++ " | " ++ show (selectedText dragged))
   drawMarked (A.view True dragged) 20 4
@@ -455,7 +477,7 @@ main = do
   putStrLn (areaText (areaKeys [click LeftButton 3 1] w1))
   putStrLn (areaText (areaKeys [click LeftButton 3 2] w1))
   putStrLn (areaText (areaKeys [click LeftButton 3 9] w1))
-  let dragged2 = areaKeys [click LeftButton 2 0, Mouse (MkMouseEvent LeftButton Drag 4 1 noMods)] w1
+  let dragged2 = areaKeys [click LeftButton 2 0, Mouse (MkMouseEvent LeftButton Drag 4 1 noMods 1)] w1
   putStrLn (show (selectedText dragged2))
   drawMarked (A.view True dragged2) 12 4
   putStrLn "-- wrapped: scrolling follows the cursor"
@@ -488,6 +510,20 @@ main = do
   putStrLn "-- wrapped: a full row followed by one space keeps the cursor visible"
   let fullSp = A.setWrap True (typedArea "aaaaaaaaaa " (A.empty 12 3))
   drawMarked (A.view True fullSp) 12 3
+  putStrLn "-- wrapped: erasing at the end pulls the viewport back"
+  let tall = A.setWrap True (typedArea "a\nb\nc\nd\ne\nf" (A.empty 12 4))
+  putStrLn ("top=" ++ show tall.top)
+  let shrunk = areaKeys (replicate 5 (key KBackspace)) tall
+  putStrLn ("top=" ++ show shrunk.top ++ "/" ++ show shrunk.topRow)
+  drawMarked (A.view True shrunk) 12 4
+  let longEnd = A.setWrap True (typedArea "one two three four five six seven eight nine ten" (A.empty 12 3))
+  putStrLn ("top=" ++ show longEnd.top ++ "/" ++ show longEnd.topRow)
+  let shortEnd = areaKeys (replicate 30 (key KBackspace)) longEnd
+  putStrLn ("top=" ++ show shortEnd.top ++ "/" ++ show shortEnd.topRow)
+  drawMarked (A.view True shortEnd) 12 3
+  putStrLn "-- a wide character in an editor too narrow for it"
+  drawMarked (A.view True (A.setWrap True (typedArea "あい" (A.empty 2 3)))) 2 3
+  drawMarked (A.view True (typedArea "あい" (A.empty 2 3))) 2 3
   putStrLn "-- wrapped: a large text"
   let bigWrapped = A.setWrap True (A.fromString 40 10 (fastConcat (intersperse "\n" (map (\i => "line number " ++ show i ++ " with some more words to wrap around") (the (List Nat) [1 .. 50000])))))
   putStrLn (show bigWrapped.top ++ "/" ++ show bigWrapped.topRow ++ " line " ++ show bigWrapped.line)

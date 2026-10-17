@@ -124,8 +124,8 @@ walkBack rm k ln r before =
          [] => (0, 0)
          (p :: ps) => walkBack rm ((k `minus` r) `minus` 1) (ln `minus` 1) (length (wrapRows rm p) `minus` 1) ps
 
-scrolledWrap : Model -> Model
-scrolledWrap m =
+followCursor : Model -> Model
+followCursor m =
   let rm = wrapRoom m
       cur = reverse m.before ++ m.after
       (r, _) = locateRow (wrapRows rm cur) (length m.before)
@@ -143,6 +143,25 @@ scrolledWrap m =
     scrollTo rm r =
       let (t, trow) = walkBack rm (m.rows `minus` 1) m.line r m.above
       in { top := t, topRow := trow, left := 0 } m
+
+-- Pull the viewport back when the text ends above the bottom of it (after
+-- erasing, or in a taller editor), so that it is filled with rows again.
+fillBack : Model -> Model
+fillBack m =
+  if m.rows == 0 || (m.count `minus` m.top) >= m.rows then m
+  else
+    let rm = wrapRoom m
+        fromEnd = reverse m.below ++ [reverse m.before ++ m.after] ++ m.above
+        used = sum (map (length . wrapRows rm) (take (m.count `minus` m.top) fromEnd)) `minus` m.topRow
+    in if used >= m.rows then m
+       else case fromEnd of
+              [] => m
+              (l :: ls) =>
+                let (t, trow) = walkBack rm (m.rows `minus` 1) (m.count `minus` 1) (length (wrapRows rm l) `minus` 1) ls
+                in if t < m.top || (t == m.top && trow < m.topRow) then { top := t, topRow := trow } m else m
+
+scrolledWrap : Model -> Model
+scrolledWrap m = fillBack (followCursor m)
 
 -- Scroll as little as needed to keep the cursor in the viewport; the last
 -- column is the scroll bar.
@@ -409,6 +428,8 @@ data Msg
   | KillToStart
   | ClickAt Nat Nat      -- column and row of the viewport
   | DragTo Nat Nat       -- the same, with the button held: stretches the selection
+  | WordAt Nat Nat       -- the same for a double click: the word there is selected
+  | LineAt Nat Nat       -- and for a triple click: the line
   | Extend Msg           -- a move that stretches the selection
   | SelectAll
   | Copy
@@ -518,6 +539,13 @@ stretched f m =
       m1 = f m
   in { mark := if start == position m1 then Nothing else Just start, lastEdit := NoEdit } m1
 
+-- The range of the cursor line that `range` gives, with the cursor at its end.
+picked : (List Char -> Nat -> (Nat, Nat)) -> Model -> Model
+picked range m =
+  let text = reverse m.before ++ m.after
+      (lo, hi) = range text (length m.before)
+  in { mark := if lo == hi then Nothing else Just (m.line, lo), lastEdit := NoEdit } (inLine hi Nothing m)
+
 step : Msg -> Model -> Model
 step (Insert c) m = edit Typing (\x => { before := reverse (clean c) ++ x.before, want := Nothing } x) m
 step (InsertText s) m = edit Other (insertText s) m
@@ -548,6 +576,8 @@ step KillToStart m = erasing Other (\x => { before := [], want := Nothing } x) m
 step (ClickAt col row) m = if col + 1 >= m.cells then m else moved (clickAt col row) m
 step (DragTo col row) m = stretched (clickAt (min col (m.cells `minus` 2)) row) m
 step (Extend x) m = stretched (move x) m
+step (WordAt col row) m = if col + 1 >= m.cells then m else picked wordRange (moved (clickAt col row) m)
+step (LineAt col row) m = if col + 1 >= m.cells then m else picked (\cs, _ => (0, length cs)) (moved (clickAt col row) m)
 step SelectAll m = stretched (move DocEnd) (moved (move DocStart) m)
 step Copy m = if isJust (selection m) then { clip := selectedText m } m else m
 step Cut m = if isJust (selection m) then edit Other id ({ clip := selectedText m } m) else m
@@ -640,7 +670,10 @@ keyMsg (Press key mods) =
     plain _ = Nothing
 keyMsg (Mouse e) =
   case (e.button, e.action) of
-    (LeftButton, ButtonDown) => Just (ClickAt e.column e.row)
+    (LeftButton, ButtonDown) => Just (case e.clicks of
+                                         1 => ClickAt e.column e.row
+                                         2 => WordAt e.column e.row
+                                         _ => LineAt e.column e.row)
     (LeftButton, Drag) => Just (DragTo e.column e.row)
     (WheelUp, _) => Just MoveUp
     (WheelDown, _) => Just MoveDown
@@ -695,7 +728,7 @@ lineView focused m selected idx len base isLast chars =
                              Just (lo, hi, _) => if k >= lo && k < hi then selectionStyle else plain
                              Nothing => plain
       onCursor = \k => focused && cursorAt == Just k
-      shown = map (\(k, ch) => (if onCursor k && charWidth ch == 0 then ' ' else ch, styleOf k, onCursor k))
+      shown = map (\(k, ch) => (if onCursor k && charWidth ch == 0 then ' ' else if charWidth ch > (m.cells `minus` 1) then '?' else ch, styleOf k, onCursor k))
                   (indexed base (cutTo m.cells chars))
       end = if focused && isLast && cursorAt == Just len
                then [(' ', cursorStyle, True)]
