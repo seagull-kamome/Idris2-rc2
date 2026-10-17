@@ -26,27 +26,34 @@ import Data.SortedSet
 ||| How one tail of a body ends, as far as raising goes.
 data ClosureTail = TPartial Name (List RCLocal) | TCall Name | TCrash | TOther
 
-||| The local `w` (the last parameter of a function) is handed to an
-||| application, a named call or an external primitive somewhere in `e`:
-||| as far as raising goes, that is an effect of the function's own body
-||| done with its world. Raising such a function would move the effect
-||| into the closure it returns (see `rc2/doc/world-arity-raising.md`,
-||| "Soundness").
-worldInEffect : Int -> RCExp -> Bool
-worldInEffect w e = direct e || any (worldInEffect w) (children e)
+||| The local `w` (the last parameter of a function) is used by `value`, the
+||| value of a `let` in front of a tail, in a way that can act on the world:
+||| handed to an application, a named call or an external primitive, or copied
+||| to another local. A function whose prefix does that has already taken the
+||| world as a parameter and acts on it, so the closure it ends in is its
+||| *result*, not the world lambda split off; raising it would move that action
+||| into the closure (`rc2/doc/world-arity-raising.md`, "Soundness"). The IR has
+||| no types to say so: a function that returns an action waiting for the
+||| world does not act on its last parameter in the prefix. Left alone,
+||| because functions that are rightly raised do it all the time: a `case` on
+||| it, a constructor, an arithmetic operation, a partial application that takes
+||| it (so a world held in a closure that the prefix then applies is not seen).
+worldInPrefix : Int -> RCExp -> Bool
+worldInPrefix w e = direct e || any (worldInPrefix w) (children e)
   where
     direct : RCExp -> Bool
     direct (RApp _ _ f args) = f == RCLoc w || elem (RCLoc w) (forget args)
     direct (RAppName _ _ _ args) = elem (RCLoc w) args
     direct (RExtPrim _ _ _ args _) = elem (RCLoc w) args
+    direct (RV _ v) = v == RCLoc w
     direct _ = False
 
 ||| Every tail of a pre-RC body, through `let` bodies and every branch,
-||| and whether the world parameter (given as the last arg) is used
-||| in any effectful operation in the let values on the path to that tail.
+||| and whether the last parameter (`w`) is used by a `let` value on the path
+||| to that tail (`worldInPrefix`).
 closureTailsWithPrefixCheck : Int -> RCExp -> List (ClosureTail, Bool)
 closureTailsWithPrefixCheck w (RLet _ _ _ value body) =
-    let worldInValue = worldInEffect w value
+    let worldInValue = worldInPrefix w value
         tails = closureTailsWithPrefixCheck w body
     in map (\(t, inPrefix) => (t, inPrefix || worldInValue)) tails
 closureTailsWithPrefixCheck w (RCmpCase _ _ _ _ t f) = closureTailsWithPrefixCheck w t ++ closureTailsWithPrefixCheck w f
@@ -98,7 +105,7 @@ raisePlan defs =
     tailsOf ar (n, MkRCFun args@(_ :: _) _ False body) =
         let w = fst (last args)
             tails = closureTailsWithPrefixCheck w body
-        in if all (\(t, worldInPrefix) => not worldInPrefix && ok ar t) tails
+        in if all (\(t, used) => not used && ok ar t) tails
            then Just (n, map fst tails) else Nothing
       where
         ok : SortedMap Name Nat -> ClosureTail -> Bool

@@ -86,20 +86,36 @@ is applied and not when `f` is called. That is invisible when the prefix only
 matches on arguments and builds values. It is wrong when the prefix performs
 effects, which happens for `f : ... -> IO (IO a)` once the world has been
 folded into `f`'s own parameters (a lambda `\env, done => do done 1; pure
-cancel` is lifted to `(env, done, w)`): its closure tail is the *result*
-`pure cancel`, not a world lambda, and the call `done 1` with `w` would run
-only when somebody applies that result, if ever. The IR does not tell the two
-closures apart, so the RCExp run (`ArityRaise.raisePlan`) refuses a function
-whose **last parameter** (where the world sits) is handed to an application, a
-named call or an external primitive anywhere in the prefix (`worldInEffect`).
+cancel` is lifted to `(env, done, w)`; the case tree shows it as
+`\env => \done => \{world:0} => let _ = done 1 {world:0} in \{eta:0} => ...`):
+its closure tail is the *result* `pure cancel`, not a world lambda, and the call
+`done 1` with `w` would run only when somebody applies that result, if ever.
+
+The IR has no types, and no name tells the two closures apart (`{eta:N}`
+names the world lambda of `sumPos` above as well as a result), so the RCExp run
+(`ArityRaise.raisePlan`) refuses a function whose **last parameter** (where the
+world sits) is, in the prefix (the values of the `let`s in front of a tail),
+handed to an application, a named call or an external primitive, or copied to
+another local (`worldInPrefix`). A function that returns an action waiting for
+the world leaves its last parameter alone there. Not looked at, because
+functions that are rightly raised do it all the time: a `case` on it, a
+constructor or an operation that takes it, and a partial application that
+captures it. The last is a known gap: a world captured in a closure that the
+prefix then applies is not seen. A guard that also refused partial applications
+cost up to half of the raised sites (`TestWidget` 12 to 6, `TestWebAPIPure` 10 to 3).
 The case-tree run is not affected: there the tail is a lambda of the source.
 
-Measured on `TestWidget` (termui), `TestWebAPIPure`, `Test92ArityRaise`: the
-same raised functions and sites as before; `TestTask` (the `Async`
-operations that call their completion) goes from 6 to 4 raised functions.
-`libs/rc2base/tests/TestTask` is the regression test: with the previous
-compiler it hangs (the completion is never called). A single-file
-reproduction was not found.
+`rc2/tests/Test128ArityRaiseWorldParam` is the regression test (a cut-down
+`Control.Task`): the callback called in the lambda, through a named function,
+and through a local action. Without the guard all three leave the result
+at 0. `libs/rc2base/tests/TestTask` hits the same thing through the library.
+
+Raised functions / raised call sites, before the guard and with it (`TestWidget`
+and `TestProgram` of termui, `TestWebAPIPure`, `Test92ArityRaise`,
+`Test93ApplyFold`, `TestTask`): 8/12 and 8/12, 21/38 and 16/29, 2/10 and 2/10,
+3/8 and 3/8, 3/5 and 3/5, 11/16 and 6/15. The functions lost are the `Async`
+starters of `Control.Task` and the callbacks of the termui program, which do
+act on their world.
 
 ## Measurements (idris2-lsp, 2026-09-26)
 
