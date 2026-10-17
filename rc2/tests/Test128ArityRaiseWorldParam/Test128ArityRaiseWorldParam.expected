@@ -1,0 +1,4 @@
+direct: result 1, pending 0 ok
+named call: result 2, pending 0 ok
+local action: result 3, pending 0 ok
+cancel handed back: True
