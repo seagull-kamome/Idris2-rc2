@@ -84,7 +84,9 @@ data Node : Type -> Type where
   ||| knowing whether it has the focus, and the handler sees the keys that
   ||| arrive while it has. Focusables are visited in tree order by Tab and
   ||| Shift+Tab.
-  Focusable : (focused : Bool -> Node msg) -> (Input -> Maybe msg) -> Node msg
+  ||| It may have a key (`keyed`): the runtime then finds the focus again by the
+  ||| key when focusables appear or disappear before it.
+  Focusable : Maybe String -> (focused : Bool -> Node msg) -> (Input -> Maybe msg) -> Node msg
 
 -------------------------------------------------------------------------------
 -- Builders
@@ -202,14 +204,23 @@ charWrapped s = Text s WrapChars
 ||| A node that takes the keyboard focus; see `Focusable`.
 public export
 focusable : (focused : Bool -> Node msg) -> (Input -> Maybe msg) -> Node msg
-focusable = Focusable
+focusable = Focusable Nothing
+
+||| Give the focusable at the top of a node a key. The focus stays with the
+||| widget of that key when others come or go before it in the tree (without
+||| a key the focus is the index of the widget). Keys should differ; a node that
+||| is not a focusable is returned as it is.
+public export
+keyed : String -> Node msg -> Node msg
+keyed k (Focusable _ body h) = Focusable (Just k) body h
+keyed _ n = n
 
 ||| Change the messages of a view; a parent uses it to embed a child's view.
 export covering
 mapNode : (a -> b) -> Node a -> Node b
 mapNode _ (Text s w str) = Text s w str
 mapNode f (Box p kids) = Box p (map (mapNode f) kids)
-mapNode f (Focusable body h) = Focusable (\b => mapNode f (body b)) (\i => map f (h i))
+mapNode f (Focusable k body h) = Focusable k (\b => mapNode f (body b)) (\i => map f (h i))
 
 ||| Mark the box as the place of the terminal's own cursor: the runtime puts
 ||| the cursor at its top left corner, which is where an input method shows its

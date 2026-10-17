@@ -233,18 +233,18 @@ kidOf pw k@(Box p _) =
   where
     pct : Nat -> Nat -> Nat
     pct cells percent = cells + ndiv (pw * percent) 100
-kidOf pw (Focusable body _) = kidOf pw (body False)
+kidOf pw (Focusable _ body _) = kidOf pw (body False)
 
 isAbsolute : Node msg -> Bool
 isAbsolute (Box p _) = p.pAbsolute
-isAbsolute (Focusable body _) = isAbsolute (body False)
+isAbsolute (Focusable _ body _) = isAbsolute (body False)
 isAbsolute _ = False
 
 -- The width a node wants when nothing limits it, text not wrapped: the
 -- width of the border box. Linear in the size of the subtree, and what the
 -- layout uses to decide widths, so that `natural` calls each child once.
 maxContent : Node msg -> Nat
-maxContent (Focusable body _) = maxContent (body False)
+maxContent (Focusable _ body _) = maxContent (body False)
 maxContent (Text _ _ s) = foldl max 0 (map stringWidth (textLines s))
 maxContent (Box p kids) =
   let bx = 2 * borderWidth p.pBorder + hEdges p.pPadding
@@ -347,7 +347,7 @@ mutual
   -- focusables (`TermUI.Program`) before the layout sees them. Children out of
   -- the flow take no room.
   natural : Node msg -> Nat -> (Nat, Nat)
-  natural (Focusable body _) maxW = natural (body False) maxW
+  natural (Focusable _ body _) maxW = natural (body False) maxW
   natural (Text _ wrap s) maxW =
     let ls = wrapText wrap maxW s in
     (foldl max 0 (map stringWidth ls), length ls)
@@ -409,7 +409,7 @@ crossOffset _ _ = 0
 mutual
   -- Where a box out of the flow goes in the content box `i` of its parent.
   placeAbsolute : Rect -> Node msg -> Laid
-  placeAbsolute i (Focusable body _) = placeAbsolute i (body False)
+  placeAbsolute i (Focusable _ body _) = placeAbsolute i (body False)
   placeAbsolute i node@(Box p _) =
     let k = kidOf i.w node
         side = \a, b => fromMaybe 0 a + fromMaybe 0 b
@@ -438,7 +438,7 @@ mutual
   export
   place : Node msg -> Rect -> Laid
   place (Text s wrap str) r = LText r s (wrapText wrap r.w str)
-  place (Focusable body _) r = place (body False) r
+  place (Focusable _ body _) r = place (body False) r
   place (Box p kids) r =
     let i = innerRect p r
         ks = map (kidOf i.w) (filter (not . isAbsolute) kids)
