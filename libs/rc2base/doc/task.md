@@ -85,6 +85,28 @@ Other functions: `both` (`Both`), `race : Task a -> Task b -> Task (Either a b)`
 A `Point` runs to completion on the scheduler's thread: a blocking call in it
 blocks every task. Use non-blocking descriptors and `Async` for waiting.
 
+## Waiting for a task: promises
+
+`spawn` starts a task and goes on; it gives no way to wait for it. `fork` does:
+
+```idris
+fork      : Task a -> Task (Promise a)    -- start beside the rest; the box for its result
+wait      : Promise a -> Task a           -- until the result is in (at once if it is)
+waitMaybe : Promise a -> Task (Maybe a)   -- Nothing if the task was given up
+peek      : Promise a -> Task (Maybe a)   -- the result if it is there
+```
+
+Any number of tasks may wait for one promise; each gets the result. A waiter
+that is given up (it lost a `race`) leaves the list of waiters. If the forked
+task is given up before it ends (its scope was cancelled, by a `race` it lost
+or `cancelTask`), the promise is *abandoned*: `waitMaybe` answers `Nothing` and
+`wait` never ends, as `Empty` (a `race` with a timer is the way out). This is
+done with a sentinel task in the scope of the producer: an `Async` that ends
+when the result is put in and abandons the promise in its `Cancel`.
+
+The state of a promise is plain `IORef`s: it is used from the thread of the
+scheduler. Milestone 3 has to make it safe for several threads.
+
 ## Semantics
 
 - **`Seq`** runs the left side, then the continuation. A left-nested chain is

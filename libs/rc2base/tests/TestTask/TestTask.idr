@@ -138,6 +138,50 @@ main = do
                    pure noCancel))
   putStrLn ("from another thread: " ++ show r11)
 
+
+  -- promises
+  l6 <- newIORef []
+  r15 <- runTask (do
+    p <- fork (sleepFor 30 *> logTo l6 "producer" *> pure (the Nat 7))
+    logTo l6 "forked"
+    a <- wait p
+    b <- wait p
+    pure (a + b))
+  putStrLn ("fork/wait twice: " ++ show r15)
+  report "fork order" l6
+  r16 <- runTask (do
+    p <- fork (pure (the Nat 5))
+    yield
+    yield
+    mine <- peek p
+    late <- wait p
+    pure (mine, late))
+  putStrLn ("peek after the result is in: " ++ show r16)
+  l7 <- newIORef []
+  _ <- runTask (do
+    p <- fork (sleepFor 40 *> pure (the Nat 1))
+    spawn (do x <- wait p; logTo l7 ("A " ++ show x))
+    spawn (do x <- wait p; logTo l7 ("B " ++ show x))
+    logTo l7 "waiting")
+  report "two waiters" l7
+  -- a waiter that is given up, and a promise whose producer is given up
+  r17 <- runTask (do
+    loser <- race (do p <- fork (sleepFor 500 *> pure (the Nat 1)); waitMaybe p) (sleepFor 20)
+    pure (either (const "waited") (const "timer") loser))
+  putStrLn ("a waiter given up: " ++ show r17)
+  (r18, ms18) <- elapsedMs monoMs (runTask (do
+    holder <- Point (newIORef Nothing)
+    -- the producer is started inside a race that the timer wins
+    _ <- race (do p <- fork (sleepFor 800 *> pure (the Nat 2))
+                  Point (writeIORef holder (Just p))
+                  wait p)
+              (sleepFor 10)
+    Just p <- Point (readIORef holder)
+      | Nothing => pure "no promise"
+    r <- waitMaybe p
+    pure (show r)))
+  putStrLn ("abandoned promise: " ++ show r18 ++ ", quick: " ++ show (ms18 < 500))
+
   -- the epoll source on a pipe
   Right (rd, wr) <- pipe2 (O_NONBLOCK .|. O_CLOEXEC)
     | Left e => putStrLn ("pipe2: " ++ show e)
