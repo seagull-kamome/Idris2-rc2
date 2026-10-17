@@ -213,3 +213,36 @@ enough depth:
 - continuation-passing traversals and other closure chains
   (`TODO.md`, "closure-valued loop parameters, beyond difference
   lists").
+
+## rc2: world arity raising runs the start of an `IO (IO ())` late
+
+`Compiler.RC2.ArityRaise` (`rc2/doc/world-arity-raising.md`) takes a
+function whose body ends in a closure waiting for one more argument for
+"an `IO` function with its world split off", and appends that argument to the
+function. It cannot tell that closure from a *result* that is itself an
+`IO ()` (or a one-constructor, one-field `data` holding one: Idris2 compiles
+that to its field), so a function of type `... -> IO (IO ())` that has already
+taken the world as an argument is raised wrongly: the effects before its
+`pure ...` move into the closure that stands for the result, and run when
+that is applied, if ever.
+
+Seen in `libs/rc2base` `Control.Task`: the operation given to `Async`,
+`\env, done => do done 1; pure cancel`, with `Cancel` a bare `IO ()` or
+`data Cancel = MkCancel (IO ())`. Its lifted function took `(env, done, world)`
+and its tail was the constant closure of `pure ()`; the raised version became
+`(env, done, world, world')` with `done 1` inside, so the call that started the
+operation did nothing until the unused `giveUp` was applied (`done` was never
+called, the scheduler waited for ever). With `--directive noarityraise` it
+works. A single-file reproduction was not found: small programs of the same
+shape (R2/R3 in the investigation) are not raised the same way, so it
+needs the function to reach `apply` through a data constructor in another
+module.
+
+Workaround: `Cancel` has two constructors (`MkCancel`, `NoCancel`), so it is a
+real constructor value and `IO Cancel` returns a value. Any other code that
+returns an `IO` action from an `IO` function through an unknown call can hit
+the same thing; `--directive noarityraise` isolates it.
+
+To reproduce: in `libs/rc2base/src/Control/Task.idr` make `Cancel` a bare
+`IO ()` again (`noCancel = pure ()`, `runCancel = id`) and run `TestTask`:
+the "from another thread" case (an `Async` that does not give its `Cancel` back until later) hangs.
