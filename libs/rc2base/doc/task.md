@@ -279,20 +279,42 @@ while a task waits, and a task can wait for a socket, a timer or another task.
 
 ## N:M (milestone 3)
 
-Several threads each run `turn` on a scheduler of their own, or on one with a
-shared run queue (a `Mutex` and a `Condition`; the poller is one of the
-threads). Things to settle then:
+One thread, the *reactor*, owns the scheduler: the run queue, the scopes, the
+join cells, the promises, the timers and the table of the sources. Only it
+touches them, so they stay plain `IORef`s. Any number of *workers* (threads)
+only run actions that the reactor hands them; what comes back goes through
+`env.post` (the inbox, already thread-safe), and so reaches the reactor again.
+Go's or tokio's "a run queue and a poller per worker" is not what this is: it
+would put every one of those structures under a lock.
 
-- rc2's reference count is not atomic until the program first forks
-  (`hybrid-refcount.md`): the scheduler starts its workers with `refc_fork`
-  and not before, and a `Task` handed to another thread is one that is no
-  longer used by this one;
-- the join cells and the scopes become atomic (`casIORef`, or a lock);
-- a program with a thread of its own state (termui) keeps it on its thread: the
-  task posts its message through an `eventfd` queue that the loop reads, never
-  by calling `update` from a worker;
-- `Point` blocking one worker blocks only that worker, which is the reason to
-  have more than one.
+Stages:
+
+1. **`blocking` and a pool** (implemented). `blocking : IO a -> Task a` runs the
+   action on a worker and ends with its result when the worker has put it in
+   the inbox. The scheduler takes a number of workers (`newSchedulerWith n`,
+   `runTaskWith n`); they are started *lazily*, up to `n`, when the first job
+   comes, because the first thread flips rc2's reference counts to atomic for
+   the rest of the program (`hybrid-refcount.md`), a cost a program that never
+   offloads should not pay. With `n = 0` the action runs at once on the thread
+   of the scheduler (1:M, and the same result). A job that has not started when
+   its task is given up is dropped; one that has started runs to its end and its
+   result is thrown away. `closeScheduler` stops the workers (jobs still queued
+   are forgotten) and joins them.
+2. **`Point` on the workers** (not done). A step that is only a `Point`
+   could run on a worker too, giving N:M for compute-bound tasks. The control
+   (`>>=`, `both`, `race`, `spawn`, `Async`) would still go back through the
+   reactor, so this pays only for coarse `Point`s. A per-task opt-in
+   (`parallel : IO a -> Task a`, a `blocking` that is meant to compute) is the
+   likely shape, and it is the same machinery as stage 1.
+
+What a thread must not do: touch a scheduler structure (use `env.post`), or
+keep a `Task` that it also gives to another thread. Everything handed to a
+worker is an `IO ()` closure that owns what it captured.
+
+`termui` creates its scheduler with a few workers; since they are started on
+the first `blocking`, a program that never calls it stays single-threaded and
+keeps the plain reference counts. The state of the UI (the model and `update`)
+stays on the thread of the loop: a worker's result comes back as a message.
 
 ## Tests
 
