@@ -73,6 +73,7 @@ record Scheduler where
   armed : IORef (Maybe Time)                   -- the deadline `timerFd` is armed for
   pool : Pool                                  -- the workers of `blocking`
   parallel : IORef Bool                        -- `Point`s run on the workers
+  virtual : IORef (Maybe Time)                 -- a clock that only the scheduler moves
 
 fresh : Scheduler -> IO Nat
 fresh s = do
@@ -90,24 +91,32 @@ nowMs = do
     | Left _ => pure 0
   pure (cast (t.tvSec * 1000 + t.tvNsec `div` 1000000))
 
+-- The time of the scheduler: the monotonic clock, or the virtual clock of
+-- `runTaskVirtual`.
+schedNow : Scheduler -> IO Time
+schedNow s = readIORef s.virtual >>= maybe nowMs pure
+
 -- Point the timer descriptor at the earliest timer (or disarm it): the master
 -- `epoll` is then readable when a timer is due, whoever waits for it.
 armTimerFd : Scheduler -> IO ()
 armTimerFd s = do
-  tm <- readIORef s.timers
-  was <- readIORef s.armed
-  let next = map (fst . fst) (leftMost tm)
-  -- one system call only when the earliest deadline changed
-  when (next /= was) $ do
-    writeIORef s.armed next
-    case next of
-      Nothing => ignore (timerfd_settime s.timerFd 0 (MkITimerSpec (MkTimeSpec 0 0) (MkTimeSpec 0 0)))
-      Just t => do
-        now <- nowMs
-        -- an all-zero value would disarm the timer
-        let ms = max 1 (t `minus` now)
-        ignore (timerfd_settime s.timerFd 0
-                  (MkITimerSpec (MkTimeSpec 0 0) (MkTimeSpec (cast (ms `div` 1000)) (cast ((ms `mod` 1000) * 1000000)))))
+  virt <- readIORef s.virtual
+  -- a virtual clock does not wait: `turn` moves it
+  unless (isJust virt) $ do
+    tm <- readIORef s.timers
+    was <- readIORef s.armed
+    let next = map (fst . fst) (leftMost tm)
+    -- one system call only when the earliest deadline changed
+    when (next /= was) $ do
+      writeIORef s.armed next
+      case next of
+        Nothing => ignore (timerfd_settime s.timerFd 0 (MkITimerSpec (MkTimeSpec 0 0) (MkTimeSpec 0 0)))
+        Just t => do
+          now <- nowMs
+          -- an all-zero value would disarm the timer
+          let ms = max 1 (t `minus` now)
+          ignore (timerfd_settime s.timerFd 0
+                    (MkITimerSpec (MkTimeSpec 0 0) (MkTimeSpec (cast (ms `div` 1000)) (cast ((ms `mod` 1000) * 1000000)))))
 
 -- Make the master `epoll` readable, so that whoever waits for it calls `turn`.
 wake : Scheduler -> IO ()
@@ -122,7 +131,7 @@ postTo s act = do
   ignore (eventfdWrite s.inboxFd 1)
 
 envOf : Scheduler -> Env
-envOf s = MkEnv nowMs addTimer (\fd, ev, done => watch s.watcher fd ev done) (postTo s) (offload s.pool)
+envOf s = MkEnv (schedNow s) addTimer (\fd, ev, done => watch s.watcher fd ev done) (postTo s) (offload s.pool)
   where
     addTimer : Time -> IO () -> IO Cancel
     addTimer t act = do
@@ -238,7 +247,7 @@ fireTimers s = do
   where
     go : IO ()
     go = do
-      now <- nowMs
+      now <- schedNow s
       tm <- readIORef s.timers
       case leftMost tm of
         Just ((t, ident), act) =>
@@ -278,7 +287,7 @@ newSchedulerWith workers = do
   lock <- makeMutex
   root <- newRootScope
   s <- [| MkScheduler (newIORef Queue.empty) (newIORef 0) (newIORef 0) (newIORef empty) (pure master)
-                      (newIORef empty) (pure root) (pure watcher) (pure lock) (newIORef []) (pure inboxFd) (pure timerFd) (newIORef Nothing) (pure pool) (newIORef False) |]
+                      (newIORef empty) (pure root) (pure watcher) (pure lock) (newIORef []) (pure inboxFd) (pure timerFd) (newIORef Nothing) (pure pool) (newIORef False) (newIORef Nothing) |]
   Right () <- addSourceRaw s (watcherSource watcher)
     | Left e => pure (Left e)
   Right () <- addSourceRaw s (MkSource inboxFd (drainInbox s))
@@ -371,29 +380,37 @@ turn s timeoutMs = do
   if Queue.length q' == 0 && pend == 0
      then pure False
      else do
-       let wait = if Queue.length q' > 0 then 0 else timeoutMs
+       virt <- readIORef s.virtual
+       timers <- readIORef s.timers
+       -- a virtual clock does not wait for a timer: look, and move it if nothing else happens
+       let wait = if Queue.length q' > 0 || (isJust virt && not (null timers)) then 0 else timeoutMs
        Right evs <- epollWait s.master wait
          | Left _ => pure True
        srcs <- readIORef s.sources
        traverse_ (\ev => maybe (pure ()) (.drain) (lookup ev.fd srcs)) evs
+       when (isJust virt && null evs && Queue.length q' == 0) $
+         for_ (leftMost timers) $ \((t, _), _) => writeIORef s.virtual (Just t)
        fireTimers s
        runBatch s stepBudget
        q3 <- readIORef s.runQ
        when (Queue.length q3 > 0) (wake s)
        pure True
 
-runWith : (parallel : Bool) -> (untilRoot : Bool) -> (workers : Nat) -> Task a -> IO (Maybe a)
-runWith par untilRoot workers t = do
+runWithTime : (virtual : Bool) -> (parallel : Bool) -> (untilRoot : Bool) -> (workers : Nat) -> Task a -> IO (Maybe a, Time)
+runWithTime virt par untilRoot workers t = do
   Right s <- newSchedulerWith workers
-    | Left _ => pure Nothing
+    | Left _ => pure (Nothing, 0)
+  when virt (writeIORef s.virtual (Just 0))
   when (par && workers > 0) (writeIORef s.parallel True)
   res <- newIORef Nothing
   submit s (Seq t (\a => Pinned (writeIORef res (Just a))))
   loop s res
   -- what is left is given up
   when untilRoot (cancelScope s.root)
+  end <- schedNow s
   closeScheduler s
-  readIORef res
+  r <- readIORef res
+  pure (r, end)
   where
     loop : Scheduler -> IORef (Maybe a) -> IO ()
     loop s res = do
@@ -401,6 +418,9 @@ runWith par untilRoot workers t = do
       unless (untilRoot && isJust done) $ do
         more <- turn s (-1)
         when more (loop s res)
+
+runWith : (parallel : Bool) -> (untilRoot : Bool) -> (workers : Nat) -> Task a -> IO (Maybe a)
+runWith par untilRoot workers t = map fst (runWithTime False par untilRoot workers t)
 
 ||| Run a task and everything it starts until nothing is left; its result,
 ||| `Nothing` if it never finished (it was `Empty`, or was cancelled).
@@ -428,3 +448,14 @@ runTaskParallel = runWith True False
 export
 runTaskFirst : (workers : Nat) -> Task a -> IO (Maybe a)
 runTaskFirst = runWith False True
+
+||| `runTask` on a virtual clock that starts at 0 and moves only when nothing
+||| else can happen, to the next timer: `sleepFor` takes no real time and the
+||| order of events does not depend on how fast the machine is. The result is
+||| paired with the time at the end. For tasks that only wait for timers and
+||| each other; real descriptors can be waited for, but a clock that does not
+||| wait is no help when something outside (a worker, a peer) is to answer in
+||| real time.
+export
+runTaskVirtual : Task a -> IO (Maybe a, Time)
+runTaskVirtual = runWithTime True False False 0

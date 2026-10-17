@@ -5,8 +5,11 @@ module Main
 
 -- Control.Task: the monad, both/race/spawn, cancellation, timers, the epoll
 -- source on a pipe, an Async written by hand, and a completion that comes
--- from another thread through the inbox. Times are tens of milliseconds
--- apart; the order of events is what is checked.
+-- from another thread through the inbox. Whatever waits only for timers runs
+-- on the virtual clock (`runTaskVirtual`): no real time passes, the order and
+-- the time of the events are exact. What needs real threads (workers, a
+-- completion from another thread) is made to meet by flags the jobs wait for
+-- and not by how long they take.
 
 import Control.Task
 import Control.Task.Scheduler
@@ -54,18 +57,21 @@ readStr fd = do
      else do bs <- traverse (getBits8 buf) (map cast (the (List Nat) (if n == 0 then [] else [0 .. cast n `minus` 1])))
              pure (Right (pack (map (chr . cast) bs)))
 
-elapsedMs : IO Nat -> IO a -> IO (a, Nat)
-elapsedMs clock act = do
-  t0 <- clock
-  r <- act
-  t1 <- clock
-  pure (r, t1 `minus` t0)
+-- sleep in real time
+nap : Nat -> IO ()
+nap ms = ignore (nanosleep (MkTimeSpec (cast (ms `div` 1000)) (cast ((ms `mod` 1000) * 1000000))))
 
-monoMs : IO Nat
-monoMs = do
-  Right t <- clock_gettime CLOCK_MONOTONIC
-    | Left _ => pure 0
-  pure (cast (t.tvSec * 1000 + t.tvNsec `div` 1000000))
+-- wait for a flag that another thread sets, at most `ms` milliseconds
+waitFlag : IORef Bool -> Nat -> IO Bool
+waitFlag flag Z = readIORef flag
+waitFlag flag (S k) = do
+  set <- readIORef flag
+  if set then pure True else nap 1 *> waitFlag flag k
+
+-- Two parties each say they are here and wait (a while) for the other: both
+-- get `True` only if they run at the same time.
+meet : (mine : IORef Bool) -> (theirs : IORef Bool) -> IO Bool
+meet mine theirs = writeIORef mine True *> waitFlag theirs 400
 
 sleepers : IORef (List String) -> Task ()
 sleepers l = do
@@ -100,25 +106,26 @@ main = do
 
   -- timers
   l1 <- newIORef []
-  _ <- runTask (sleepers l1)
+  (_, t1) <- runTaskVirtual (sleepers l1)
   report "three sleepers" l1
+  putStrLn ("ended at " ++ show t1)
 
   -- both
   l2 <- newIORef []
-  r5 <- runTask (both (sleepFor 40 *> logTo l2 "left" *> pure (the Nat 1)) (sleepFor 10 *> logTo l2 "right" *> pure "r"))
-  putStrLn ("both: " ++ show r5)
+  (r5, t5) <- runTaskVirtual (both (sleepFor 40 *> logTo l2 "left" *> pure (the Nat 1)) (sleepFor 10 *> logTo l2 "right" *> pure "r"))
+  putStrLn ("both: " ++ show r5 ++ ", ended at " ++ show t5)
   report "both order" l2
 
   -- race: the loser is cancelled and the end does not wait for it
-  (r6, ms6) <- elapsedMs monoMs (runTask (race (sleepFor 800 *> pure "slow") (sleepFor 10 *> pure "fast")))
-  putStrLn ("race: " ++ show r6 ++ ", no wait for the loser: " ++ show (ms6 < 500))
+  (r6, t6) <- runTaskVirtual (race (sleepFor 800 *> pure "slow") (sleepFor 10 *> pure "fast"))
+  putStrLn ("race: " ++ show r6 ++ ", ended at " ++ show t6 ++ " (the loser is not waited for)")
   l3 <- newIORef []
-  (r7, ms7) <- elapsedMs monoMs (runTask (race (do spawn (sleepFor 600 *> logTo l3 "leak"); sleepFor 10; logTo l3 "left wins")
-                                               (sleepFor 800)))
-  putStrLn ("race with a spawn: " ++ show r7 ++ ", quick: " ++ show (ms7 < 500))
+  (r7, t7) <- runTaskVirtual (race (do spawn (sleepFor 600 *> logTo l3 "leak"); sleepFor 10; logTo l3 "left wins")
+                                    (sleepFor 800))
+  putStrLn ("race with a spawn: " ++ show r7 ++ ", ended at " ++ show t7)
   report "race with a spawn" l3
-  r8 <- runTask (Race (sleepFor 30 *> pure (the Nat 1)) Empty)
-  putStrLn ("race with Empty: " ++ show r8)
+  (r8, t8) <- runTaskVirtual (Race (sleepFor 30 *> pure (the Nat 1)) Empty)
+  putStrLn ("race with Empty: " ++ show r8 ++ ", ended at " ++ show t8)
   r9 <- runTask (the (Task Nat) (Empty <|> pure 7))
   putStrLn ("<|>: " ++ show r9)
 
@@ -132,9 +139,9 @@ main = do
 
   -- a hand-made Async, cancelled by a race
   cancels <- newIORef (the Nat 0)
-  (r10, ms10) <- elapsedMs monoMs (runTask (race (the (Task ()) (Async (\env, done => pure (MkCancel (modifyIORef cancels (+ 1))))))
-                                                (sleepFor 10 *> pure "timer")))
-  readIORef cancels >>= \n => putStrLn ("hand-made Async: " ++ show r10 ++ ", cancelled " ++ show n ++ " time(s), quick: " ++ show (ms10 < 500))
+  (r10, t10) <- runTaskVirtual (race (the (Task ()) (Async (\env, done => pure (MkCancel (modifyIORef cancels (+ 1))))))
+                                     (sleepFor 10 *> pure "timer"))
+  readIORef cancels >>= \n => putStrLn ("hand-made Async: " ++ show r10 ++ ", cancelled " ++ show n ++ " time(s), ended at " ++ show t10)
 
   -- a completion from another thread
   -- (the thread is joined before the scheduler is closed: its write to the inbox
@@ -152,7 +159,7 @@ main = do
 
   -- promises
   l6 <- newIORef []
-  r15 <- runTask (do
+  (r15, _) <- runTaskVirtual (do
     p <- fork (sleepFor 30 *> logTo l6 "producer" *> pure (the Nat 7))
     logTo l6 "forked"
     a <- wait p
@@ -169,18 +176,18 @@ main = do
     pure (mine, late))
   putStrLn ("peek after the result is in: " ++ show r16)
   l7 <- newIORef []
-  _ <- runTask (do
+  _ <- runTaskVirtual (do
     p <- fork (sleepFor 40 *> pure (the Nat 1))
     spawn (do x <- wait p; logTo l7 ("A " ++ show x))
     spawn (do x <- wait p; logTo l7 ("B " ++ show x))
     logTo l7 "waiting")
   report "two waiters" l7
   -- a waiter that is given up, and a promise whose producer is given up
-  r17 <- runTask (do
+  (r17, _) <- runTaskVirtual (do
     loser <- race (do p <- fork (sleepFor 500 *> pure (the Nat 1)); waitMaybe p) (sleepFor 20)
     pure (either (const "waited") (const "timer") loser))
   putStrLn ("a waiter given up: " ++ show r17)
-  (r18, ms18) <- elapsedMs monoMs (runTask (do
+  (r18, t18) <- runTaskVirtual (do
     holder <- Point (newIORef Nothing)
     -- the producer is started inside a race that the timer wins
     _ <- race (do p <- fork (sleepFor 800 *> pure (the Nat 2))
@@ -190,27 +197,44 @@ main = do
     Just p <- Point (readIORef holder)
       | Nothing => pure "no promise"
     r <- waitMaybe p
-    pure (show r)))
-  putStrLn ("abandoned promise: " ++ show r18 ++ ", quick: " ++ show (ms18 < 500))
+    pure (show r))
+  putStrLn ("abandoned promise: " ++ show r18 ++ ", ended at " ++ show t18)
 
 
   -- blocking: the action runs on a worker
-  let nap = \ms => ignore (nanosleep (MkTimeSpec (cast (ms `div` 1000)) (cast ((ms `mod` 1000) * 1000000))))
   r19 <- runTask (blocking (pure (the Nat 9)))
   putStrLn ("blocking without workers: " ++ show r19)
+  -- the reactor goes on while a worker is busy: the job waits for a tick the
+  -- reactor makes (a timer on the real clock) and gives up after 5 s
+  ticked <- newIORef False
   l8 <- newIORef []
-  (r20, ms20) <- elapsedMs monoMs (runTaskWith 2 (do
-    spawn (sleepFor 30 *> logTo l8 "tick")
-    both (blocking (nap 150 *> pure (the Nat 1))) (blocking (nap 150 *> pure (the Nat 2)))))
-  putStrLn ("two workers: " ++ show r20 ++ ", in parallel: " ++ show (ms20 < 280))
-  report "the reactor goes on" l8
-  (r21, ms21) <- elapsedMs monoMs (runTaskWith 1 (both (blocking (nap 120 *> pure (the Nat 1))) (blocking (nap 120 *> pure (the Nat 2)))))
-  putStrLn ("one worker: " ++ show r21 ++ ", one after the other: " ++ show (ms21 >= 230))
+  r20 <- runTaskWith 1 (do
+    spawn (sleepFor 20 *> onReactor (writeIORef ticked True) *> logTo l8 "tick")
+    saw <- blocking (waitFlag ticked 5000)
+    logTo l8 ("the job saw the tick: " ++ show saw)
+    pure saw)
+  putStrLn ("the reactor goes on: " ++ show r20)
+  report "events" l8
+  -- two workers run two jobs at the same time ...
+  a2 <- newIORef False
+  b2 <- newIORef False
+  r21 <- runTaskWith 2 (both (blocking (meet a2 b2)) (blocking (meet b2 a2)))
+  putStrLn ("two workers meet: " ++ show r21)
+  -- ... one worker cannot: the first job gives up waiting before the second starts
+  a1 <- newIORef False
+  b1 <- newIORef False
+  r21b <- runTaskWith 1 (both (blocking (meet a1 b1)) (blocking (meet b1 a1)))
+  putStrLn ("one worker does not: " ++ show r21b)
+  -- a job queued behind a busy worker, whose task is given up, never runs: the
+  -- worker is held until the race is over
+  release <- newIORef False
   l9 <- newIORef []
   r22 <- runTaskWith 1 (do
-    spawn (blocking (nap 150))
+    spawn (map (const ()) (blocking (waitFlag release 5000)))
     yield
-    race (blocking (liftIO' l9)) (sleepFor 20))
+    r <- race (blocking (liftIO' l9)) (sleepFor 20)
+    onReactor (writeIORef release True)
+    pure r)
   putStrLn ("a queued job given up: " ++ show (map (either (const "ran") (const "dropped")) r22))
   l10 <- readIORef l9
   putStrLn ("it never ran: " ++ show (null l10))
@@ -223,18 +247,22 @@ main = do
 
   -- runTaskFirst: the end of the first task gives up what is left
   l11 <- newIORef []
-  (r24, ms24) <- elapsedMs monoMs (runTaskFirst 0 (do
+  r24 <- runTaskFirst 0 (do
     spawn (sleepFor 800 *> logTo l11 "late")
     sleepFor 20
-    pure (the Nat 3)))
-  putStrLn ("runTaskFirst: " ++ show r24 ++ ", did not wait: " ++ show (ms24 < 500))
+    pure (the Nat 3))
+  putStrLn ("runTaskFirst: " ++ show r24)
   readIORef l11 >>= \xs => putStrLn ("what was left did not run: " ++ show (null xs))
 
   -- parallel mode: the Points of different tasks run at the same time
-  (r25, ms25) <- elapsedMs monoMs (runTaskWith 2 (both (liftIO (nap 150) *> pure (the Nat 1)) (liftIO (nap 150) *> pure (the Nat 2))))
-  putStrLn ("cooperative Points: " ++ show r25 ++ ", one after the other: " ++ show (ms25 >= 280))
-  (r26, ms26) <- elapsedMs monoMs (runTaskParallel 2 (both (liftIO (nap 150) *> pure (the Nat 1)) (liftIO (nap 150) *> pure (the Nat 2))))
-  putStrLn ("parallel Points: " ++ show r26 ++ ", at the same time: " ++ show (ms26 < 280))
+  a3 <- newIORef False
+  b3 <- newIORef False
+  r25 <- runTaskWith 2 (both (liftIO (meet a3 b3)) (liftIO (meet b3 a3)))
+  putStrLn ("cooperative Points do not meet: " ++ show r25)
+  a4 <- newIORef False
+  b4 <- newIORef False
+  r26 <- runTaskParallel 2 (both (liftIO (meet a4 b4)) (liftIO (meet b4 a4)))
+  putStrLn ("parallel Points meet: " ++ show r26)
   l12 <- newIORef []
   r27 <- runTaskParallel 3 (do
     ps <- traverse (\i => fork (liftIO (pure (i * i)))) (the (List Nat) [1 .. 50])
@@ -250,7 +278,7 @@ main = do
   Right (rd, wr) <- pipe2 (O_NONBLOCK .|. O_CLOEXEC)
     | Left e => putStrLn ("pipe2: " ++ show e)
   l5 <- newIORef []
-  _ <- runTask (do
+  _ <- runTaskVirtual (do
     spawn (do ev <- awaitReadable rd
               s <- liftIO (readStr rd)
               logTo l5 ("reader A: " ++ show (hasEvent EPOLLIN ev) ++ " " ++ show s))
@@ -266,13 +294,13 @@ main = do
   -- a wait that is given up leaves nothing behind: the run ends
   Right (rd2, wr2) <- pipe2 (O_NONBLOCK .|. O_CLOEXEC)
     | Left e => putStrLn ("pipe2: " ++ show e)
-  (r12, ms12) <- elapsedMs monoMs (runTask (race (awaitReadable rd2) (sleepFor 10)))
-  putStrLn ("a cancelled fd wait: " ++ show (map (either (const "readable") (const "timer")) r12) ++ ", quick: " ++ show (ms12 < 500))
+  (r12, t12) <- runTaskVirtual (race (awaitReadable rd2) (sleepFor 10))
+  putStrLn ("a cancelled fd wait: " ++ show (map (either (const "readable") (const "timer")) r12) ++ ", ended at " ++ show t12)
 
   -- hang-up wakes a reader
   Right (rd3, wr3) <- pipe2 (O_NONBLOCK .|. O_CLOEXEC)
     | Left e => putStrLn ("pipe2: " ++ show e)
-  r13 <- runTask (do
+  (r13, _) <- runTaskVirtual (do
     spawn (sleepFor 20 *> liftIO (ignore (close wr3)))
     ev <- awaitReadable rd3
     pure (hasEvent EPOLLHUP ev))

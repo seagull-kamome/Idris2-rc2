@@ -4,37 +4,39 @@ a loop of 200000 steps: Just 200000
 Empty: Nothing
 map: Just 2
 three sleepers: ["start", "20", "40", "60"]
-both: Just (1, "r")
+ended at 60
+both: Just (1, "r"), ended at 40
 both order: ["right", "left"]
-race: Just (Right "fast"), no wait for the loser: True
-race with a spawn: Just (Left ()), quick: True
+race: Just (Right "fast"), ended at 10 (the loser is not waited for)
+race with a spawn: Just (Left ()), ended at 10
 race with a spawn: ["left wins"]
-race with Empty: Just 1
+race with Empty: Just 1, ended at 30
 <|>: Just 7
 yield: ["a1", "b1", "a2", "b2", "a3", "b3"]
-hand-made Async: Just (Right "timer"), cancelled 1 time(s), quick: True
+hand-made Async: Just (Right "timer"), cancelled 1 time(s), ended at 10
 from another thread: Just 42
 fork/wait twice: Just 14
 fork order: ["forked", "producer"]
 peek after the result is in: Just (Just 5, 5)
 two waiters: ["waiting", "A 1", "B 1"]
 a waiter given up: Just "timer"
-abandoned promise: Just "Nothing", quick: True
+abandoned promise: Just "Nothing", ended at 10
 blocking without workers: Just 9
-two workers: Just (1, 2), in parallel: True
-the reactor goes on: ["tick"]
-one worker: Just (1, 2), one after the other: True
+the reactor goes on: Just True
+events: ["tick", "the job saw the tick: True"]
+two workers meet: Just (True, True)
+one worker does not: Just (False, True)
 a queued job given up: Just "dropped"
 it never ran: True
 200 jobs on 4 workers: Just 40200
-runTaskFirst: Just 3, did not wait: True
+runTaskFirst: Just 3
 what was left did not run: True
-cooperative Points: Just (1, 2), one after the other: True
-parallel Points: Just (1, 2), at the same time: True
+cooperative Points do not meet: Just (False, True)
+parallel Points meet: Just (True, True)
 promises in parallel mode: Just 42925
 onReactor ran: ["summed"]
 parallel mode without workers: Just 5
 pipe: ["writable: True", "writing", "reader B woke: True", "reader A: True Right \"hi\""]
-a cancelled fd wait: Just "timer", quick: True
+a cancelled fd wait: Just "timer", ended at 10
 hang-up: Just True
 a file is ready: Just True
