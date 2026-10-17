@@ -65,8 +65,12 @@ record Env where
 
 public export
 data Task : Type -> Type where
-  ||| An action, run to completion on the thread of the scheduler.
+  ||| An action, run to completion: on the thread of the scheduler, or, when the
+  ||| scheduler is in parallel mode (`runTaskParallel`), on a worker thread.
   Point : IO a -> Task a
+  ||| An action that is always run on the thread of the scheduler, whatever
+  ||| the mode: for what touches the state of the scheduler or of the program.
+  Pinned : IO a -> Task a
   Seq : Task a -> (a -> Task b) -> Task b
   ||| Run together, wait for both.
   Both : Task a -> Task b -> Task (a, b)
@@ -85,11 +89,11 @@ data Task : Type -> Type where
 
 export
 Functor Task where
-  map f t = Seq t (\a => Point (pure (f a)))
+  map f t = Seq t (\a => Pinned (pure (f a)))
 
 export
 Applicative Task where
-  pure x = Point (pure x)
+  pure x = Pinned (pure x)
   f <*> x = Seq f (\g => map g x)
 
 export
@@ -109,7 +113,7 @@ Alternative Task where
 ||| The applicative whose `<*>` runs both sides together, as `both` does.
 export
 [Concurrent] Applicative Task where
-  pure x = Point (pure x)
+  pure x = Pinned (pure x)
   f <*> x = map (\(g, a) => g a) (Both f x)
 
 -------------------------------------------------------------------------------
@@ -133,7 +137,7 @@ spawn = Spawn
 ||| Let the other ready tasks run.
 export
 yield : Task ()
-yield = Point (pure ())
+yield = Pinned (pure ())
 
 ||| Wait until a time on the monotonic clock.
 export
@@ -171,6 +175,11 @@ awaitWritable fd = awaitEvents fd EPOLLOUT
 export
 blocking : IO a -> Task a
 blocking act = Async (\env, done => env.offload (do a <- act; env.post (done a)))
+
+||| Run an action on the thread of the scheduler even in parallel mode.
+export
+onReactor : IO a -> Task a
+onReactor = Pinned
 
 ||| Do it again and again.
 export
@@ -211,15 +220,15 @@ settle p final answer = do
 export
 fork : Task a -> Task (Promise a)
 fork t = do
-  p <- liftIO (MkPromise <$> newIORef (Pending []) <*> newIORef 0 <*> newIORef (pure ()))
+  p <- Pinned (MkPromise <$> newIORef (Pending []) <*> newIORef 0 <*> newIORef (pure ()))
   -- a sentinel in the scope of the producer: it never ends by itself, is ended
   -- when the result is in, and abandons the promise when the scope is cancelled
   spawn (Async (\_, done => do
            writeIORef p.guard (done ())
            pure (MkCancel (settle p Abandoned Nothing))))
-  spawn (Seq t (\a => Point (do settle p (Fulfilled a) (Just a)
-                                end <- readIORef p.guard
-                                end)))
+  spawn (Seq t (\a => Pinned (do settle p (Fulfilled a) (Just a)
+                                 end <- readIORef p.guard
+                                 end)))
   pure p
 
 ||| Wait for the result of a forked task: `Nothing` if it was given up.
@@ -249,7 +258,7 @@ wait p = Seq (waitMaybe p) (\r => case r of
 ||| The result if it is there, without waiting.
 export
 peek : Promise a -> Task (Maybe a)
-peek p = Point (do st <- readIORef p.state
-                   pure (case st of
-                           Fulfilled a => Just a
-                           _ => Nothing))
+peek p = Pinned (do st <- readIORef p.state
+                    pure (case st of
+                            Fulfilled a => Just a
+                            _ => Nothing))

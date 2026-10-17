@@ -27,6 +27,13 @@ one worker: Just (1, 2), one after the other: True
 a queued job given up: Just "dropped"
 it never ran: True
 200 jobs on 4 workers: Just 40200
+runTaskFirst: Just 3, did not wait: True
+what was left did not run: True
+cooperative Points: Just (1, 2), one after the other: True
+parallel Points: Just (1, 2), at the same time: True
+promises in parallel mode: Just 42925
+onReactor ran: ["summed"]
+parallel mode without workers: Just 5
 pipe: ["writable: True", "writing", "reader B woke: True", "reader A: True Right \"hi\""]
 a cancelled fd wait: Just "timer", quick: True
 hang-up: Just True
