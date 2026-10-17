@@ -87,6 +87,7 @@ TESTS=(
     "TestPosixUio||System.Posix.Uio: writev/readv, pread/pwrite"
     "TestPosixStdio||System.Posix.Stdio: FILE* streams, fgetc/fgets/getline/fread, writes, position, tmpfile, fmemopen"
     "TestLinux||System.Linux.Pipe: pipe2 with O_CLOEXEC/O_NONBLOCK"
+    "TestTask||Control.Task: monad, both/race/spawn, cancellation, timers, epoll source, inbox"
     "TestPosixTermios||System.Posix.Termios: termios constants, tcgetattr/tcsetattr on a pty, cfmakeraw, tc* calls"
     "TestWebAPIPure|network contrib|Network.HTTP.Client.WebAPI: SHA-256/base64url/PKCE, JSON, URL/form encoding, token JSON"
     "TestWebAPI|network contrib|Network.HTTP.Client.WebAPI.{AI,Auth}: endpoint setup, token persistence, response decoding"
@@ -97,7 +98,7 @@ TESTS=(
 # the C compiler cannot find them.
 NEEDS_CURL=" TestCurl TestWebAPI "
 # Tests built with IDRIS2_CFLAGS=-D_GNU_SOURCE (declarations glibc hides otherwise).
-NEEDS_GNU_SOURCE=" TestPosixTermios TestLinux "
+NEEDS_GNU_SOURCE=" TestPosixTermios TestLinux TestTask "
 have_curl_h() { echo '#include <curl/curl.h>' | gcc -E -x c - > /dev/null 2>&1; }
 
 echo "=== Check TESTS against the tests/*/ directories ==="

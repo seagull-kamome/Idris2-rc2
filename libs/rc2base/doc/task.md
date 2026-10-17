@@ -1,7 +1,8 @@
 # `Control.Task`: cooperative tasks on epoll
 
-Status: design. Nothing described here is implemented yet; the milestones
-at the end say in which order it will be.
+Status: milestone 1 is implemented (`Control.Task`, `Control.Task.Source`,
+`Control.Task.Epoll`, `Control.Task.Scheduler`; test `TestTask`); milestones 2
+and 3 are design. Where the code differs from a first sketch below it says so.
 
 ## Motivation
 
@@ -40,12 +41,19 @@ data Task : Type -> Type where
   Both   : Task a -> Task b -> Task (a, b)       -- zip: run together, wait for both
   Race   : Task a -> Task a -> Task a            -- the first to finish wins, the other is cancelled
   Spawn  : Task () -> Task ()                    -- run alongside the continuation
-  Async  : (Scheduler -> Completion a -> IO Cancel) -> Task a   -- start an operation and wait for it
+  Async  : (Env -> Completion a -> IO Cancel) -> Task a         -- start an operation and wait for it
   Empty  : Task a                                -- never finishes
 
 Completion a = a -> IO ()      -- tell the scheduler the operation is done
-Cancel = IO ()                 -- give the operation up
+data Cancel = MkCancel (IO ()) | NoCancel   -- give the operation up (see below why not `IO ()`)
 ```
+
+`Env` is what the scheduler offers: `now`, `addTimer`, `watchFd` and `post` (run an
+action on the scheduler's thread; the one function any thread may call). `Cancel`
+has two constructors on purpose: with a bare `IO ()` (or a one-field `data`,
+which Idris2 compiles to its field) `IO Cancel` is an action that returns an
+action, and rc2's world arity raising runs the start of the operation late
+(`KNOWN-BUGS.md`).
 
 `Async` is the one primitive for *waiting*. The function starts an operation
 (registers a descriptor, queues a request, sets a timer) and returns at once;
