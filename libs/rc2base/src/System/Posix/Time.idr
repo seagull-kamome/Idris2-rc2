@@ -7,8 +7,9 @@
 ||| Clocks that only Linux has (`CLOCK_MONOTONIC_RAW`, `CLOCK_BOOTTIME`, ...)
 ||| are in `System.Linux.Clock`.
 |||
-||| A `Tm` has no `tm_gmtoff`/`tm_zone`: `strftime`'s `%Z` and `%z` do not
-||| show the zone of a `Tm` made by `localtime`.
+||| A `Tm` carries `tm_gmtoff` and `tm_zone` (BSD/glibc extensions of `struct tm`,
+||| visible by default; a strict `-std=c11` build hides them), so `strftime`'s `%z` and
+||| `%Z` show the zone of a `Tm` made by `localtime`.
 module System.Posix.Time
 
 import Data.String
@@ -155,8 +156,13 @@ time = primIO prim__time
 -------------------------------------------------------------------------------
 -- Broken-down time
 
-||| A `struct tm`: the standard fields. `year` counts from 1900 and `mon`
-||| from 0, as in C.
+||| A `struct tm`: the standard fields plus `tm_gmtoff` and `tm_zone`. `year`
+||| counts from 1900 and `mon` from 0, as in C.
+|||
+||| `tmGmtoff` is the offset east of UTC in seconds and `tmZone` the zone
+||| abbreviation (`Nothing` when C leaves it NULL). `gmtime` and `localtime` fill them;
+||| `mktime` ignores them (it works from the local zone) and `strftime` uses them for
+||| `%z` and `%Z`. A `Tm` you build by hand gets `0` and `Nothing` from `mkTm`.
 public export
 record Tm where
   constructor MkTm
@@ -169,16 +175,24 @@ record Tm where
   tmWday : Int32
   tmYday : Int32
   tmIsdst : Int32
+  tmGmtoff : Int64
+  tmZone : Maybe String
+
+||| A `Tm` from the nine standard fields, with no zone information.
+export
+mkTm : (sec, min, hour, mday, mon, year, wday, yday, isdst : Int32) -> Tm
+mkTm s mi h d mo y w yd dst = MkTm s mi h d mo y w yd dst 0 Nothing
 
 export
 Show Tm where
   show t = "Tm " ++ unwords (map show [t.tmSec, t.tmMin, t.tmHour, t.tmMday, t.tmMon, t.tmYear, t.tmWday, t.tmYday, t.tmIsdst])
+        ++ " " ++ show t.tmGmtoff ++ " " ++ show t.tmZone
 
 export
 Eq Tm where
   a == b = a.tmSec == b.tmSec && a.tmMin == b.tmMin && a.tmHour == b.tmHour && a.tmMday == b.tmMday
         && a.tmMon == b.tmMon && a.tmYear == b.tmYear && a.tmWday == b.tmWday && a.tmYday == b.tmYday
-        && a.tmIsdst == b.tmIsdst
+        && a.tmIsdst == b.tmIsdst && a.tmGmtoff == b.tmGmtoff && a.tmZone == b.tmZone
 
 %inline %foreign "CExpr:(sizeof(struct tm)),libc,time.h"
 prim__sizeofTm : Int
@@ -223,6 +237,18 @@ prim__set_tm_yday : AnyPtr -> Int32 -> PrimIO Int32
 %inline %foreign "CExpr:(((struct tm *)($1))->tm_isdst = ($2)),libc,time.h"
 prim__set_tm_isdst : AnyPtr -> Int32 -> PrimIO Int32
 
+%inline %foreign "CExpr:(((struct tm *)($1))->tm_gmtoff),libc,time.h"
+prim__get_tm_gmtoff : AnyPtr -> PrimIO Int64
+%inline %foreign "CExpr:((void *)(((struct tm *)($1))->tm_zone)),libc,time.h"
+prim__get_tm_zone : AnyPtr -> PrimIO AnyPtr
+%inline %foreign "CExpr:(((struct tm *)($1))->tm_gmtoff = ($2)),libc,time.h"
+prim__set_tm_gmtoff : AnyPtr -> Int64 -> PrimIO Int64
+-- A malloc'd copy, so the cell outlives the Idris string; `clearTmZone` frees it.
+%inline %foreign "CExpr:(((struct tm *)($1))->tm_zone = strdup($2), 0),libc,time.h;string.h"
+prim__set_tm_zone : AnyPtr -> String -> PrimIO Int32
+%inline %foreign "CExpr:(free((void *)((struct tm *)($1))->tm_zone), ((struct tm *)($1))->tm_zone = NULL, 0),libc,time.h;stdlib.h"
+prim__free_tm_zone : AnyPtr -> PrimIO Int32
+
 readTm : AnyPtr -> IO Tm
 readTm p = do
   s <- primIO (prim__get_tm_sec p)
@@ -234,7 +260,9 @@ readTm p = do
   w <- primIO (prim__get_tm_wday p)
   yd <- primIO (prim__get_tm_yday p)
   dst <- primIO (prim__get_tm_isdst p)
-  pure (MkTm s mi h d mo y w yd dst)
+  off <- primIO (prim__get_tm_gmtoff p)
+  zone <- primIO (prim__get_tm_zone p)
+  pure (MkTm s mi h d mo y w yd dst off (ptrToString zone))
 
 writeTm : AnyPtr -> Tm -> IO ()
 writeTm p t = do
@@ -249,6 +277,20 @@ writeTm p t = do
   _ <- primIO (prim__set_tm_yday p t.tmYday)
   _ <- primIO (prim__set_tm_isdst p t.tmIsdst)
   pure ()
+
+-- Write the zone fields too, for `strftime`. `tm_zone` of the struct is then a
+-- malloc'd copy that the caller must release with `clearTmZone`. `mktime` does not
+-- use this: it overwrites `tm_zone` with a pointer into libc's own zone table.
+writeTmZone : AnyPtr -> Tm -> IO ()
+writeTmZone p t = do
+  writeTm p t
+  _ <- primIO (prim__set_tm_gmtoff p t.tmGmtoff)
+  case t.tmZone of
+       Nothing => pure ()
+       Just z => ignore (primIO (prim__set_tm_zone p z))
+
+clearTmZone : AnyPtr -> IO ()
+clearTmZone p = ignore (primIO (prim__free_tm_zone p))
 
 withTm : (AnyPtr -> IO a) -> IO a
 withTm act = do
@@ -312,9 +354,10 @@ prim__strftime : AnyPtr -> Bits64 -> String -> AnyPtr -> PrimIO Bits64
 export
 strftime : (format : String) -> Tm -> IO (Maybe String)
 strftime fmt t = withTm $ \p => do
-  writeTm p t
+  writeTmZone p t
   buf <- malloc 4096
   n <- primIO (prim__strftime buf 4096 fmt p)
+  clearTmZone p
   case (n == 0, ptrToString buf) of
        (True, _) => free buf >> pure (if fmt == "" then Just "" else Nothing)
        (False, r) => free buf >> pure r
