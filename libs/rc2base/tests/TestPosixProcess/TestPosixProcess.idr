@@ -55,6 +55,9 @@ testTime = do
   printLn tm
   strftime "%Y-%m-%d %H:%M:%S" tm >>= printLn
   strftime "%a %b %e" tm >>= printLn
+  -- the zone fields: gmtime gives UTC "GMT", and strftime shows a hand-set zone for %z/%Z
+  strftime "%z %Z" tm >>= printLn
+  strftime "%z %Z" ({ tmGmtoff := 3600 + 1800, tmZone := Just "XYZ" } tm) >>= printLn
   Right tm0 <- gmtime 0
     | Left _ => putStrLn "gmtime failed"
   printLn tm0
@@ -63,7 +66,7 @@ testTime = do
   putStrLn ("localtime year: " ++ show lt.tmYear)
   -- a round trip through mktime (local time) is the identity
   mktime lt >>= printLn
-  mktime (MkTm 0 0 0 1 0 70 0 0 0) >>= \r => putStrLn ("mktime epoch is a Just: " ++ show (isJust r))
+  mktime (mkTm 0 0 0 1 0 70 0 0 0) >>= \r => putStrLn ("mktime epoch is a Just: " ++ show (isJust r))
 
 errnum : Errno -> Int32
 errnum (MkErrno n) = n

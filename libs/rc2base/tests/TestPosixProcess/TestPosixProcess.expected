@@ -8,10 +8,12 @@ realtime close to time(): True
 nsec in range: True
 resolution is positive: True
 monotonic advanced by >= 20ms: True
-Tm 40 46 1 9 8 101 0 251 0
+Tm 40 46 1 9 8 101 0 251 0 0 Just "GMT"
 Just "2001-09-09 01:46:40"
 Just "Sun Sep  9"
-Tm 0 0 0 1 0 70 4 0 0
+Just "+0000 GMT"
+Just "+0130 XYZ"
+Tm 0 0 0 1 0 70 4 0 0 0 Just "GMT"
 localtime year: 101
 Just 1000000000
 mktime epoch is a Just: True
