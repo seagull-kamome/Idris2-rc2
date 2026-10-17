@@ -205,6 +205,12 @@ the terminal restored.
   them produces comes behind them: B, C, then the `D` that B emitted. `Perform` runs at once and blocks the loop
   (signals wait too) until it returns. After a `Quit` the rest of the batch, the
   queue and the events that arrived with it are dropped.
+- `SetClipboard text` puts the text in the clipboard of the desktop with OSC 52
+  (`System.Console.Xterm`). Nothing tells whether the terminal did it: tmux needs
+  `set-clipboard on` and many terminals ask for an option. `A.copyText msg model`
+  and `T.copyText msg model` give the text a `Copy` or `Cut` is about to take, so an
+  application answers with `maybe NoCmd SetClipboard (A.copyText e m.text)` next to
+  `A.update e`. Reading the clipboard (a query the terminal answers) is not done.
 - `Suspend` stops the program as a shell's Ctrl-Z would: the terminal is
   restored, the whole process group is stopped with SIGSTOP (so a program started
   by another one, as `idris2 --exec` does, stops with it and the shell sees the

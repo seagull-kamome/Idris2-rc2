@@ -59,6 +59,9 @@ hello worldhello|
 llo worldhe| clipboard=he
 ab|ello world
 XYZ|llo world
+-- the text a copy hands to the desktop
+[Just "he", Just "he", Nothing, Nothing]
+[Just "he", Just "he", Nothing, Nothing]
 -- text input: undo
 |
 |

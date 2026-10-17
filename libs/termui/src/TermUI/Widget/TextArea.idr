@@ -574,6 +574,15 @@ update msg m =
        (False, Just False) => { top := m.top `minus` m.rows } m1
        _ => m1
 
+||| The text a message copies, to hand to the clipboard of the desktop
+||| (`SetClipboard`): the selection that `Copy` or `Cut` takes from the model
+||| the message is about to be applied to.
+export
+copyText : Msg -> Model -> Maybe String
+copyText Copy m = if isJust (selection m) then Just (selectedText m) else Nothing
+copyText Cut m = if isJust (selection m) then Just (selectedText m) else Nothing
+copyText _ _ = Nothing
+
 ||| The text the editor keeps for pasting with `Paste`, filled by `Copy` and `Cut`.
 export
 clipboard : Model -> String

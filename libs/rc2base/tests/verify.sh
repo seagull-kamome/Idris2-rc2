@@ -70,6 +70,7 @@ TESTS=(
     "TestHTTPServer|network contrib|Network.HTTP.Server: cross-thread respond + stop"
     "TestRegexPOSIX||Text.Regex.POSIX: libc <regex.h> bindings"
     "TestURL||Network.URL: parse/build + percent codec"
+    "TestXterm||System.Console.Xterm: private modes, base64, OSC 52"
     "TestStringRC2||Data.String.RC2: unsafeStringByteSlice / byteLength"
     "TestMVar||Control.Concurrent.MVar: Mutex/Condition-backed MVar"
     "TestDoubleConvert||Data.Double.Convert: Eisel-Lemire/Grisu2 fast path"
