@@ -59,6 +59,9 @@ record Env where
   ||| Run the action on the thread of the scheduler. The one function of an
   ||| `Env` that any thread may call.
   post : IO () -> IO ()
+  ||| Run the action on a worker thread (at once on this one if the scheduler has
+  ||| no workers); the result takes it back if it has not started.
+  offload : IO () -> IO Cancel
 
 public export
 data Task : Type -> Type where
@@ -159,6 +162,15 @@ awaitReadable fd = awaitEvents fd EPOLLIN
 export
 awaitWritable : FileDesc -> Task EpollEvents
 awaitWritable fd = awaitEvents fd EPOLLOUT
+
+||| Run an action that may block (a regular file, SQLite, a long computation) on a
+||| worker thread, and go on with its result. The scheduler keeps going meanwhile.
+||| With no workers (the default) it runs at once, like a `Point`. If the task is
+||| given up before the action starts, it never runs; one that has started runs
+||| to its end and the result is thrown away.
+export
+blocking : IO a -> Task a
+blocking act = Async (\env, done => env.offload (do a <- act; env.post (done a)))
 
 ||| Do it again and again.
 export

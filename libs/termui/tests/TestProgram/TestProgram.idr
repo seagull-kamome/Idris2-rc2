@@ -106,7 +106,9 @@ program master = MkProgram
                               , RunTaskAs "slow" (sleepFor 150 *> pure (Order "slow1"))
                               , RunTaskAs "slow" (sleepFor 70 *> pure (Order "slow2"))
                               , RunTaskAs "gone" (sleepFor 90 *> pure (Order "gone"))
-                              , CancelTask "gone" ])
+                              , CancelTask "gone"
+                                -- an action on a worker thread; its result comes back as a message
+                              , RunTask (blocking (pure ()) *> pure (Order "blk")) ])
   update
   view
   subs
