@@ -1145,7 +1145,6 @@ upstreamに取り込まれたら`idris2-src`を更新して自作idris2を作り
 
 - 非同期の`Cmd`(ワーカースレッドが結果を投稿する)。今の`Perform`はループを止める。
 - フォーカスをキー付きにする(前にウィジェットが増減するとフォーカスがずれる)。
-- 外部から送られたSIGTSTPで止まると、再開するまで端末がrawのまま残る(SIGTSTPをブロックして`Suspend`と同じに扱う案)。
 - 選択範囲をOSのクリップボードへ渡すこと(OSC 52)。
 - レイアウト: 絵文字のZWJ列と異体字セレクタ(端末が幅を変えるので合成できない)。
 - コード規約: Loop(`consume`/`feedPaste`/`readInput`など)、Program(`onInput`の`moveFocus`、`syncTimers`など)、
