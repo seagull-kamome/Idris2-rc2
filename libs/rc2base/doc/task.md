@@ -19,7 +19,7 @@ steps. What differs:
 | | coop | `Control.Task` |
 |---|---|---|
 | substrate | any monad `m` (`Coop m a`) | `IO` (`Task a`) |
-| waiting | `sleepTill` of a model or wall clock | `epoll`: readiness of a descriptor, and timers |
+| waiting | `sleepTill` of a model or wall clock | any asynchronous operation (`Async`): `epoll` readiness and timers first, `io_uring` and others later |
 | join of `zip` | `believe_me` on a pair kept in a map | two `IORef`s, typed |
 | cancel by `race` | removes events of the race's syncs | a scope per race, with cleanups |
 | threads | none | one scheduler thread first, then N:M (milestone 3) |
@@ -40,29 +40,43 @@ data Task : Type -> Type where
   Both   : Task a -> Task b -> Task (a, b)       -- zip: run together, wait for both
   Race   : Task a -> Task a -> Task a            -- the first to finish wins, the other is cancelled
   Spawn  : Task () -> Task ()                    -- run alongside the continuation
-  Await  : Waitable -> Task Ready                -- wait for an event
+  Async  : (Scheduler -> Completion a -> IO Cancel) -> Task a   -- start an operation and wait for it
   Empty  : Task a                                -- never finishes
+
+Completion a = a -> IO ()      -- tell the scheduler the operation is done
+Cancel = IO ()                 -- give the operation up
 ```
+
+`Async` is the one primitive for *waiting*. The function starts an operation
+(registers a descriptor, queues a request, sets a timer) and returns at once;
+later, when the operation is done, something calls the `Completion` with the
+result, and the task goes on with it. The returned `Cancel` is run if the task's
+scope is cancelled before that, and must make the operation harmless (take the
+descriptor out of the set, ask the kernel to cancel the request, drop the
+timer); a `Completion` called after a cancel does nothing. Nothing in `Task`
+knows `epoll`: a readiness API and a completion API (`io_uring`, a thread pool
+that does blocking calls, a library with callbacks) all look like this.
+
+What waits are ordinary functions on top of `Async`:
 
 ```idris
-data Waitable
-  = Readable FileDesc          -- readable (or an error or hang-up: they wake the waiter too)
-  | Writable FileDesc
-  | Until Time                 -- a point on the monotonic clock
+sleepFor, sleepTill  : ... -> Task ()                 -- a timer of the scheduler
+awaitReadable, awaitWritable : FileDesc -> Task Ready  -- the readiness of the scheduler's epoll source
+-- later, in other modules, with a handle of their own:
+uringRead : Ring -> FileDesc -> ... -> Task (Either Errno Nat)
 ```
 
-`Ready` tells which of `EPOLLIN`, `EPOLLOUT`, `EPOLLERR`, `EPOLLHUP` came (for
-`Until` it is empty). `Monad`, `Applicative` (sequential, as in coop: `<*>` is
-`>>=`), `HasIO` (`liftIO = Point`) and `Alternative` (`<|>` = `Race`) are
-implemented. The parallel `Applicative` is a named implementation, `Concurrent`,
-as in coop, because `a *> b` must mean "a, then b".
+`Ready` tells which of `EPOLLIN`, `EPOLLOUT`, `EPOLLERR`, `EPOLLHUP` came (an
+error or hang-up wakes the waiter too). `Monad`, `Applicative` (sequential, as
+in coop: `<*>` is `>>=`), `HasIO` (`liftIO = Point`) and `Alternative`
+(`<|>` = `Race`) are implemented. The parallel `Applicative` is a named
+implementation, `Concurrent`, as in coop, because `a *> b` must mean "a, then b".
 
-Functions built on these: `sleepFor`, `sleepTill`, `awaitReadable`,
-`awaitWritable`, `both` (`Both`), `race : Task a -> Task b -> Task (Either a b)`,
+Other functions: `both` (`Both`), `race : Task a -> Task b -> Task (Either a b)`,
 `spawn`, `yield`, `forever`.
 
 A `Point` runs to completion on the scheduler's thread: a blocking call in it
-blocks every task. Use non-blocking descriptors and `Await` for waiting.
+blocks every task. Use non-blocking descriptors and `Async` for waiting.
 
 ## Semantics
 
@@ -81,23 +95,46 @@ blocks every task. Use non-blocking descriptors and `Await` for waiting.
   on after the continuation finished, until the scope it belongs to is
   cancelled. (The root scope is never cancelled.)
 - **Cancelling a scope** sets its flag and runs its *cleanups*. A task in the
-  run queue of a cancelled scope is dropped when it is taken. An `Await` puts
-  a cleanup in its scope that takes the waiter out of the table of the
-  scheduler (and `epoll_ctl DEL`s the descriptor when it was the last), so a
-  cancelled wait costs nothing afterwards. A `Point` that has started is never
-  interrupted.
+  run queue of a cancelled scope is dropped when it is taken. An `Async`
+  puts its `Cancel` in its scope, so the operation is given up (for the epoll
+  source: the waiter leaves the table and the descriptor is `epoll_ctl DEL`ed
+  when it was the last) and a cancelled wait costs nothing afterwards. A `Point`
+  that has started is never interrupted.
 - **Fairness.** A task is put at the back of the run queue after each `Point`,
   so a loop of actions cannot starve the others. (A step budget per turn is the
   first thing to try if this costs too much.)
 
-## The scheduler
+## The scheduler and its sources
+
+The scheduler is the run queue, the scopes, the timers and a set of
+*sources*. A source is whatever reports that operations are done:
+
+```idris
+record Source where
+  constructor MkSource
+  pollFd : FileDesc     -- readable when completions are waiting
+  drain  : IO ()        -- reap them without blocking, calling their Completions
+```
+
+The `epoll` of descriptor readiness is the first source and every scheduler
+has it (`awaitReadable` needs no handle). An `io_uring` ring is another: the ring
+descriptor is readable when completion entries are waiting, and `drain` reaps
+them and calls the `Completion` kept under each entry's `user_data`. Both are
+descriptors that can be waited for, so the scheduler waits for them all with
+a *master* `epoll` in which each `pollFd` is registered, and does not care what
+is behind them. A source that cannot give a descriptor (a library with its own
+thread) calls its `Completion` from that thread, which puts the continuation
+in the *inbox* of the scheduler (a queue under a lock, with an `eventfd` that is
+one more `pollFd`) instead of the run queue: that is the one rule about
+threads, and it is what milestone 3 needs anyway.
 
 ```idris
 record Scheduler where
-  runQueue : Queue (Scope, Task ())     -- ready
-  waiters  : IORef (SortedMap Int32 (List Waiter))  -- by descriptor
+  runQueue : Queue (Scope, Task ())                 -- ready
   timers   : IORef (SortedMap Time (Queue Timer))   -- by deadline
-  epoll    : EPoll
+  master   : EPoll                                  -- the pollFds of the sources
+  sources  : IORef (List Source)
+  inbox    : Inbox                                  -- completions from other threads
 ```
 
 One turn:
@@ -105,26 +142,30 @@ One turn:
 1. run the ready tasks until the run queue is empty (new ones that they
    make are run too, round robin);
 2. work out the timeout: `0` if something is ready, else the time to the
-   earliest timer, else `-1` (forever) if there are waiters, and finish if there
-   is nothing at all;
-3. `epollWait`; for each ready descriptor, wake the waiters whose events
-   match (their continuations go to the run queue), then fix the mask of the
-   descriptor, `epollMod` to what the remaining waiters want or `epollDel` if
-   there are none; the registration is level-triggered and the waiters are
-   one-shot, so no `EPOLLONESHOT` is needed;
+   earliest timer, else `-1` (forever) if some operation is pending, and finish
+   if there is nothing at all;
+3. wait in the master `epoll`; `drain` the sources whose `pollFd` is ready and
+   the inbox (their completions put continuations in the run queue);
 4. move the timers whose deadline has passed to the run queue.
 
 Timers are kept in the scheduler (a map by deadline, with `CLOCK_MONOTONIC`
-time) and become the timeout of `epollWait`; no `timerfd` is created, so a
+time) and become the timeout of the wait; no `timerfd` is created, so a
 thousand sleeping tasks use no descriptors. The resolution is a millisecond;
-the timeout is rounded up so that a wait never wakes early.
+the timeout is rounded up so that a wait never wakes early. (A source with
+timeouts of its own, as `io_uring` has, is not needed for this.)
+
+The epoll source keeps a table of waiters by descriptor. The registration is
+level-triggered and the waiters are one-shot: when a descriptor is ready the
+waiters whose events match are woken and removed, and the mask is set to what
+the rest want (`epollMod`) or the descriptor is taken out (`epollDel`).
 
 The pieces are public, so that another loop can drive the scheduler:
 
 ```idris
 newScheduler : IO (Either Errno Scheduler)
+addSource    : Scheduler -> Source -> IO (Either Errno ())   -- register a source (a ring, ...)
 submit       : Scheduler -> Task () -> IO ()          -- start a task (in the root scope)
-pollFd       : Scheduler -> FileDesc                  -- the epoll descriptor, readable when a turn has work
+pollFd       : Scheduler -> FileDesc                  -- the master epoll, readable when a turn has work
 turn         : Scheduler -> (timeoutMs : Int32) -> IO Bool   -- run ready tasks, wait at most the timeout once; False when nothing is left
 runTask      : Task a -> IO (Maybe a)                 -- new scheduler, submit, turn until nothing is left
 ```
@@ -135,7 +176,7 @@ no task remains, spawned ones included, as coop does.
 
 ## Using it from termui (milestone 2)
 
-An `epoll` descriptor can itself be waited for by another `epoll`. termui's
+The master `epoll` is a descriptor that another `epoll` can wait for. termui's
 `Loop` adds `pollFd sched` to its own set; when it is readable it calls
 `turn sched 0`. A new command
 
@@ -179,17 +220,22 @@ is checked. Planned cases:
   the epoll set: check with `epollDel` failing with `ENOENT`), a cancelled
   `sleepFor` does not delay the end;
 - `Spawn`: runs after the continuation finished, and is cancelled with its race;
-- `Await`: readable and writable on a pipe, two tasks waiting for the same
-  descriptor, hang-up wakes the waiter;
+- `Async` and the epoll source: readable and writable on a pipe, two tasks
+  waiting for the same descriptor, hang-up wakes the waiter; a hand-made
+  `Source` (a pipe written by the test) and a completion called from another
+  thread through the inbox;
 - timers: three sleepers wake in the order of their deadlines;
 - `runTask` returns `Nothing` for `Empty`.
 
 ## Milestones
 
-1. `Control.Task` and the single-threaded scheduler, the tests above, this
-   document brought up to date. (Package `rc2base`; the modules are
-   `Control.Task` for the type and instances and `Control.Task.Scheduler`
-   for the scheduler.)
+1. `Control.Task` and the single-threaded scheduler with the epoll source and
+   the timers, the tests above, this document brought up to date. (Package
+   `rc2base`; the modules are `Control.Task` for the type and instances,
+   `Control.Task.Scheduler` for the scheduler and `Control.Task.Epoll` for the
+   epoll source and `awaitReadable`.) The `Source` interface is in from the
+   start, so that the epoll source is its first user and not a special case.
+   An `io_uring` source (`libs/iouring`) is a separate, later step.
 2. `Spawn` in termui's `Cmd`, with `pollFd` in its loop, and cancellation by handle.
 3. N:M: worker threads, the atomic cells, the `eventfd` queue.
 
@@ -200,3 +246,7 @@ is checked. Planned cases:
 - `Time` as `Nat` milliseconds or a `TimeSpec` of `System.Posix.Time`.
 - The step budget against the round robin after each `Point`.
 - The shape of `TaskT m`, once a second substrate is wanted.
+- Whether a source may also give a timeout for the wait (`io_uring` has its own
+  timeout operation); for now timers are the scheduler's.
+- How an `io_uring` request that needs a buffer keeps it alive until the
+  completion (the `Completion` closure holds it; to be settled with `libs/iouring`).
