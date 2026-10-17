@@ -48,6 +48,7 @@ record MouseEvent where
   action : MouseAction
   column, row : Nat
   mouseMods : Mods
+  clicks : Nat   -- 1, 2 or 3 for a press of the left button in a run of quick presses at one cell
 
 public export
 data Input
@@ -86,8 +87,8 @@ Eq Mods where
 
 export
 Eq MouseEvent where
-  MkMouseEvent b a c r m == MkMouseEvent b' a' c' r' m' =
-    tagB b == tagB b' && tagA a == tagA a' && c == c' && r == r' && m == m'
+  MkMouseEvent b a c r m n == MkMouseEvent b' a' c' r' m' n' =
+    tagB b == tagB b' && tagA a == tagA a' && c == c' && r == r' && m == m' && n == n'
     where
       tagB : MouseButton -> Nat
       tagB LeftButton = 0
@@ -137,7 +138,8 @@ Show Mods where
 
 export
 Show MouseEvent where
-  show (MkMouseEvent b a c r m) = show m ++ btn b ++ " " ++ act a ++ " at " ++ show c ++ "," ++ show r
+  show (MkMouseEvent b a c r m n) =
+    show m ++ btn b ++ " " ++ act a ++ " at " ++ show c ++ "," ++ show r ++ (if n > 1 then " x" ++ show n else "")
     where
       btn : MouseButton -> String
       btn LeftButton = "Left"
@@ -152,6 +154,38 @@ Show MouseEvent where
       act ButtonUp = "up"
       act Drag = "drag"
       act Move = "move"
+
+-------------------------------------------------------------------------------
+-- Counting clicks
+
+||| The last press of the left button: when (milliseconds), where, and how
+||| many presses it ended.
+public export
+record LastClick where
+  constructor MkLastClick
+  atMs, atColumn, atRow, count : Nat
+
+||| Presses of the left button at the same cell within this many milliseconds
+||| make a double click.
+public export
+doubleClickMs : Nat
+doubleClickMs = 400
+
+||| Give a press of the left button the number of its click: 2 and 3 for the
+||| quick presses that follow the first at the same cell, then 1 again. Other
+||| events are handed back as they are. `now` is a time in milliseconds.
+export
+countClick : Maybe LastClick -> (now : Nat) -> MouseEvent -> (MouseEvent, Maybe LastClick)
+countClick last now e =
+  case (e.button, e.action) of
+    (LeftButton, ButtonDown) =>
+      let n = case last of
+                Just l => if l.atColumn == e.column && l.atRow == e.row
+                             && (now `minus` l.atMs) <= doubleClickMs && l.count < 3
+                             then S l.count else 1
+                Nothing => 1
+      in ({ clicks := n } e, Just (MkLastClick now e.column e.row n))
+    _ => (e, last)
 
 export
 Show Input where
@@ -293,7 +327,7 @@ parseInput final bytes = loop (length bytes) (map cast bytes) []
                    else if motion then (if bits == 3 then Move else Drag)
                    else ButtonDown
       in if wheel && bits > 1 then Nothing
-         else Just (Mouse (MkMouseEvent button action (col `minus` 1) (r `minus` 1) mods))
+         else Just (Mouse (MkMouseEvent button action (col `minus` 1) (r `minus` 1) mods 1))
     sgrMouse _ _ = Nothing
 
     -- `bs` follows ESC [.

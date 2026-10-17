@@ -96,10 +96,10 @@
 |┌──────┐┌─┐
 |│a     ││b│
 |└──────┘└─┘
--- max width of a growing box (the rest is not handed on)
-|+----++--------+
-||    ||        |
-|+----++--------+
+-- max width of a growing box (the room it leaves goes to the others)
+|+----++------------+
+||    ||            |
+|+----++------------+
 -- max width over a fixed width, min over a max
 |+---++--+
 ||   ||  |
@@ -200,7 +200,7 @@
 |│      │
 |└──────┘
 |┌──────┐
-|│      │
+|└──────┘
 -- column: a maximum height leaves the room to the next child
 |┌────┐
 |│    │
@@ -211,6 +211,59 @@
 |
 |
 |
+|
+-- min and max: a box held at its minimum takes the room from the others
+|+-------++---++----+
+||       ||   ||    |
+|+-------++---++----+
+-- min and max: a box held at its maximum gives the rest to the others
+|+--++------++------+
+||  ||      ||      |
+|+--++------++------+
+-- percent margins are of the width of the parent
+|
+|
+|  +--------------+
+|  |x             |
+|  +--------------+
+|
+|
+|
+|
+-- percent margins added to cells
+|               y
+|      +-+
+|      |x|
+|      +-+
+|
+-- absolute: margins move it from the sides
+|background
+| ┌─┐
+| │m│
+| └─┘
+|
+-- absolute: margins on the sides it is placed by
+|
+|
+|        ┌─┐
+|        │m│
+|        └─┘
+|
+-- a column that wraps
+|ab ghij
+|cdek
+|f
+-- a column that wraps: gap, growing and alignment
+| ┌─┐  ┌──┐
+| │a│  │cc│
+| └─┘  └──┘
+|
+|┌───┐
+|│bbb│
+|└───┘
+-- a column that wraps, in a row with a neighbour
+|aaccee  |
+|bbdd
 |
 -- wrapped text takes the width it is offered, so it is not centred as a narrower block
 |aaaa bbbb
