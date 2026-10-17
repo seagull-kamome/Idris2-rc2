@@ -224,7 +224,10 @@ the terminal restored.
   The scheduler's `pollFd` is one more descriptor of the loop (`watchFd`,
   event `EReady`), readable when a task was started, a completion or a timer
   is waiting; the loop then calls `turn sched 0`. Tasks run on the thread of
-  the loop, so they may not block (`Perform` is for that). `RunTaskAs key t`
+  the loop; `blocking` (`Control.Task`) runs an action that may block on one of
+  up to four worker threads, started when the first one is needed (so a program
+  that never uses it stays single-threaded), and the result comes back to the
+  loop as the message of the task. `RunTaskAs key t`
   gives up the running task of that name first, and `CancelTask key` gives it up
   (what it waits for is cancelled; a step that has started is not interrupted).
   Tasks still running at the end of the program are forgotten.

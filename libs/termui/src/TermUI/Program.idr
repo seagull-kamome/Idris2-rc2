@@ -540,7 +540,7 @@ runProgramOn input output prog = do
     | False => pure (Left ENOTTY)
   Right loop <- newLoop input output
     | Left e => pure (Left e)
-  Right sched <- newScheduler
+  Right sched <- newSchedulerWith 4
     | Left e => closeLoop loop >> pure (Left e)
   Right () <- watchFd loop (pollFd sched)
     | Left e => closeScheduler sched >> closeLoop loop >> pure (Left e)

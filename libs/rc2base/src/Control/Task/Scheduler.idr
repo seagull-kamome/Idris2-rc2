@@ -8,6 +8,7 @@ module Control.Task.Scheduler
 
 import Control.Task
 import Control.Task.Epoll
+import Control.Task.Pool
 import Control.Task.Source
 import Data.Bits
 import Data.IORef
@@ -69,6 +70,7 @@ record Scheduler where
   inbox : IORef (List (IO ()))
   inboxFd : FileDesc
   timerFd : FileDesc                           -- armed for the earliest timer
+  pool : Pool                                  -- the workers of `blocking`
 
 fresh : Scheduler -> IO Nat
 fresh s = do
@@ -113,7 +115,7 @@ postTo s act = do
   ignore (eventfdWrite s.inboxFd 1)
 
 envOf : Scheduler -> Env
-envOf s = MkEnv nowMs addTimer (\fd, ev, done => watch s.watcher fd ev done) (postTo s)
+envOf s = MkEnv nowMs addTimer (\fd, ev, done => watch s.watcher fd ev done) (postTo s) (offload s.pool)
   where
     addTimer : Time -> IO () -> IO Cancel
     addTimer t act = do
@@ -241,10 +243,11 @@ addSourceRaw s src = do
 -------------------------------------------------------------------------------
 -- The public interface
 
-||| A scheduler with the sources for descriptors and for other threads.
+||| A scheduler with up to `workers` threads for `blocking`, started when the
+||| first job comes.
 export
-newScheduler : IO (Either Errno Scheduler)
-newScheduler = do
+newSchedulerWith : (workers : Nat) -> IO (Either Errno Scheduler)
+newSchedulerWith workers = do
   Right master <- epollCreate 16
     | Left e => pure (Left e)
   Right watcher <- newFdWatcher
@@ -253,10 +256,11 @@ newScheduler = do
     | Left e => ignore (epollClose master) *> closeFdWatcher watcher *> pure (Left e)
   Right timerFd <- timerfd_create CLOCK_MONOTONIC (TFD_NONBLOCK .|. TFD_CLOEXEC)
     | Left e => ignore (epollClose master) *> closeFdWatcher watcher *> ignore (close inboxFd) *> pure (Left e)
+  pool <- newPool workers
   lock <- makeMutex
   root <- newRootScope
   s <- [| MkScheduler (newIORef Queue.empty) (newIORef 0) (newIORef 0) (newIORef empty) (pure master)
-                      (newIORef empty) (pure root) (pure watcher) (pure lock) (newIORef []) (pure inboxFd) (pure timerFd) |]
+                      (newIORef empty) (pure root) (pure watcher) (pure lock) (newIORef []) (pure inboxFd) (pure timerFd) (pure pool) |]
   Right () <- addSourceRaw s (watcherSource watcher)
     | Left e => pure (Left e)
   Right () <- addSourceRaw s (MkSource inboxFd (drainInbox s))
@@ -274,11 +278,18 @@ newScheduler = do
       mutexRelease s.lock
       traverse_ id (reverse acts)
 
+||| A scheduler with the sources for descriptors and for other threads, and no
+||| workers: `blocking` runs its action on the thread of the scheduler.
+export
+newScheduler : IO (Either Errno Scheduler)
+newScheduler = newSchedulerWith 0
+
 ||| Release the descriptors of the scheduler. Operations still pending are
 ||| forgotten.
 export
 closeScheduler : Scheduler -> IO ()
 closeScheduler s = do
+  closePool s.pool
   ignore (epollClose s.master)
   closeFdWatcher s.watcher
   ignore (close s.inboxFd)
@@ -355,12 +366,11 @@ turn s timeoutMs = do
        when (Queue.length q3 > 0) (wake s)
        pure True
 
-||| Run a task and everything it starts until nothing is left; its result,
-||| `Nothing` if it never finished (it was `Empty`, or was cancelled).
+||| `runTask` with up to `workers` threads for `blocking`.
 export
-runTask : Task a -> IO (Maybe a)
-runTask t = do
-  Right s <- newScheduler
+runTaskWith : (workers : Nat) -> Task a -> IO (Maybe a)
+runTaskWith workers t = do
+  Right s <- newSchedulerWith workers
     | Left _ => pure Nothing
   res <- newIORef Nothing
   submit s (Seq t (\a => Point (writeIORef res (Just a))))
@@ -372,3 +382,9 @@ runTask t = do
     loop s = do
       more <- turn s (-1)
       when more (loop s)
+
+||| Run a task and everything it starts until nothing is left; its result,
+||| `Nothing` if it never finished (it was `Empty`, or was cancelled).
+export
+runTask : Task a -> IO (Maybe a)
+runTask = runTaskWith 0

@@ -74,6 +74,10 @@ sleepers l = do
   spawn (sleepFor 40 *> logTo l "40")
   logTo l "start"
 
+-- a job that records that it ran (from a worker thread, once)
+liftIO' : IORef (List String) -> IO ()
+liftIO' ref = modifyIORef ref ("ran" ::)
+
 countTo : Nat -> Nat -> Task Nat
 countTo Z acc = pure acc
 countTo (S k) acc = do
@@ -181,6 +185,33 @@ main = do
     r <- waitMaybe p
     pure (show r)))
   putStrLn ("abandoned promise: " ++ show r18 ++ ", quick: " ++ show (ms18 < 500))
+
+
+  -- blocking: the action runs on a worker
+  let nap = \ms => ignore (nanosleep (MkTimeSpec (cast (ms `div` 1000)) (cast ((ms `mod` 1000) * 1000000))))
+  r19 <- runTask (blocking (pure (the Nat 9)))
+  putStrLn ("blocking without workers: " ++ show r19)
+  l8 <- newIORef []
+  (r20, ms20) <- elapsedMs monoMs (runTaskWith 2 (do
+    spawn (sleepFor 30 *> logTo l8 "tick")
+    both (blocking (nap 150 *> pure (the Nat 1))) (blocking (nap 150 *> pure (the Nat 2)))))
+  putStrLn ("two workers: " ++ show r20 ++ ", in parallel: " ++ show (ms20 < 280))
+  report "the reactor goes on" l8
+  (r21, ms21) <- elapsedMs monoMs (runTaskWith 1 (both (blocking (nap 120 *> pure (the Nat 1))) (blocking (nap 120 *> pure (the Nat 2)))))
+  putStrLn ("one worker: " ++ show r21 ++ ", one after the other: " ++ show (ms21 >= 230))
+  l9 <- newIORef []
+  r22 <- runTaskWith 1 (do
+    spawn (blocking (nap 150))
+    yield
+    race (blocking (liftIO' l9)) (sleepFor 20))
+  putStrLn ("a queued job given up: " ++ show (map (either (const "ran") (const "dropped")) r22))
+  l10 <- readIORef l9
+  putStrLn ("it never ran: " ++ show (null l10))
+  r23 <- runTaskWith 4 (do
+    ps <- traverse (\i => fork (blocking (pure (i * 2)))) (the (List Nat) [1 .. 200])
+    xs <- traverse wait ps
+    pure (sum xs))
+  putStrLn ("200 jobs on 4 workers: " ++ show r23)
 
   -- the epoll source on a pipe
   Right (rd, wr) <- pipe2 (O_NONBLOCK .|. O_CLOEXEC)

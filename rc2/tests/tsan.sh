@@ -31,7 +31,7 @@ source "$REPO_DIR/env.sh"
 
 PREFIX="$(idris2 --prefix)/idris2-0.8.0"
 OUT="$SCRIPT_DIR/build/tsan"
-TSAN_CFLAGS="-O1 -g -fsanitize=thread"
+TSAN_CFLAGS="-O1 -g -fsanitize=thread -D_GNU_SOURCE"
 
 # name|source file
 PROGRAMS=(
@@ -40,6 +40,7 @@ PROGRAMS=(
     "TestConcurrency|$REPO_DIR/libs/rc2base/tests/TestConcurrency/TestConcurrency.idr"
     "TestMVar|$REPO_DIR/libs/rc2base/tests/TestMVar/TestMVar.idr"
     "TestMultiThreadRC2|$REPO_DIR/libs/rc2base/tests/TestMultiThreadRC2/TestMultiThreadRC2.idr"
+    "TestTask|$REPO_DIR/libs/rc2base/tests/TestTask/TestTask.idr"
 )
 
 fails=0
@@ -69,7 +70,7 @@ for p in "${PROGRAMS[@]}"; do
     work="$OUT/$name"
     mkdir -p "$work"
     cp "$src" "$work/"
-    if ! (cd "$work" && "$IDRIS2RC2" --cg rc2 -p rc2base "$(basename "$src")" -o "$name") > "$work/rc2.log" 2>&1; then
+    if ! (cd "$work" && "$IDRIS2RC2" --cg rc2 -p rc2base -p contrib "$(basename "$src")" -o "$name") > "$work/rc2.log" 2>&1; then
         fail "$name (tsan)" "rc2 build failed, see $work/rc2.log"
         continue
     fi
