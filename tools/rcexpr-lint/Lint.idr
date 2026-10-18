@@ -334,7 +334,7 @@ mutual
 
 seedImmediates : RCExp -> OwnState -> OwnState
 seedImmediates body st =
-    foldl (\s, i => insert i (owning immediateRefs) s) st (SortedSet.toList (uCaseLocals empty body))
+    foldl (\s, i => insert i (owning immediateRefs) s) st (Prelude.toList (uCaseLocals empty body))
 
 ||| One `def`'s own anomalies, starting from its own `args=[...]`
 ||| (`Boxed` args get an initial live count of 1; a `RCErrorDef`/
