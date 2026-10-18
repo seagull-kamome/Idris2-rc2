@@ -1171,3 +1171,28 @@ upstreamに取り込まれたら`idris2-src`を更新して自作idris2を作り
 
 
 
+
+### termui: 型で安全にできる箇所(調査 2026-10-19)
+
+ウィジェット・`Style`・`Input`・`Node`は`%default total`。全域でないのは`Layout`・`Frame`・
+`Loop`・`Program`・`Output`・`Terminal`(`covering`)。`believe_me`は無く、`assert_smaller`は
+`Input.idr`の`splitSemi`の1箇所だけ。上から順に片付ける。
+
+- タイマーIDの型化。`Loop`/`Program`のIDは「`Every`は偶数、`After`は奇数、Escape用は
+  `1099511627776`」という数の取り決めで区別している。`data TimerId = Every Nat | OneShot Nat | Escape`
+  のような型にすれば衝突を型で防げる。`Loop`の公開APIが変わる。
+- `Splitter`の`lo ≤ size ≤ hi`と`TabStrip`の`active < length titles`。今は`withLimits`と`update`の
+  `min`で守っているだけで、型には出ていない。`Fin`か`Subset`で持つ。
+- 「燃料」で止めている再帰: `TextArea.wrapRows`、`Layout`の`charChunks`・`wordChunks`・`shrinkAll`・
+  `flex`の`go`、`Input`の`loop`。どれも各回で入力が縮むので終了は正しいはずだが、燃料(`length + 1`)が
+  尽きると結果が黙って途中で切れる。「毎回1要素以上進む」ことを示して整礎再帰にすれば燃料が要らない。
+  `wrapRows`から1関数ずつ。
+- `TextArea.Model`の`line`/`count`(行数をO(1)にするための`above`/`below`の長さの複製)。
+  `line = length above`と`count = line + 1 + length below`を型に載せられるが、`setItems`のような
+  更新ごとに証明の更新が要り、費用が大きい。
+- `MenuBar`の`active`/`cursor`、`Select`の`selected < length items`・`top ≤ selected`。
+  今は飽和算(`min`/`minus`)で範囲外にならない。守る価値は将来の編集で壊さないこと。
+- `keyed`は`Focusable`でないノードに付けても何もしない。`Focusable`だけの型を別に作れば型で防げるが、
+  `keyed "name" (T.field ...)`の書き方が変わる。
+- 勧めない: `Frame`の座標を`Fin w × Fin h`にすること(描画の内側のループが重くなる)、`Layout`の
+  `Nat`計算(`minus`で0に飽和し、負の幅は存在しない)。
