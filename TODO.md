@@ -810,8 +810,13 @@ RC.annotate・DeadVars で実際に数秒を失った。1の計測で重いと�
   元のテストと IR が違う。100万段で C スタックが溢れないことは実行で
   確かめているが、元のテストと同じ形を狙いたい場合は分け直す。
 
-# gen-env.shは今度こそ要らないはずなので削除
-ドキュメントも修正
+## gen-env.shの削除とドキュメントの修正
+
+**状態: 当面放置(小さな作業)。** `gen-env.sh`は不要なので削除する。`env.sh`は残す。
+参照している記述を直す: `README.md`、`README.ja.md`(ja ミラーにも同じ参照がある)、
+`AGENT.md`(layout 節の「env.sh / gen-env.sh」)、`KNOWN-BUGS.md`。
+`rc2/tests/bench.sh`、`rc2/tests/verify.sh`、`.claude/skills/run-idris2-rc-cg/`の
+`smoke.sh`と`SKILL.md`にも`gen-env`の参照が残っているので、削除前に`grep -rn gen-env`で洗う。
 
 
 ## 比較の入れ子の合成: 残り(実装済み 2026-10-08)
@@ -1141,7 +1146,6 @@ upstreamに取り込まれたら`idris2-src`を更新して自作idris2を作り
   (コンパイルまでの確認)。
 - `Pwd`: スレッド安全な`getpwnam_r`系は束縛していない(静的領域をすぐレコードにコピーする)。
   `Glob`: `GLOB_BRACE`/`GLOB_TILDE`(GNU拡張)と`glob_t`のオフセット系は無い。
-- `Tm`に`tm_gmtoff`/`tm_zone`が無いので、`strftime`の`%Z`/`%z`はゾーンを出さない。
 - `dlsym`で得たアドレスの呼び出しは、`CExpr`で関数ポインタ型にキャストして書く(`System.Posix.Dl`の冒頭と
   `TestLinux`の例)。型付きの呼び出しヘルパを用意するかは別の判断。
 - `CExpr`の文式`({ ...; })`はGNU拡張で、`rc2base`の8ファイル13か所で使っている(`Termios`の`getWinSize`/`setWinSize`、
@@ -1162,8 +1166,8 @@ upstreamに取り込まれたら`idris2-src`を更新して自作idris2を作り
 
 - OSのクリップボードを読むこと(OSC 52の`?`問い合わせ。端末が応答する。多くの端末は既定で禁止)。
 - レイアウト: 絵文字のZWJ列と異体字セレクタ(端末が幅を変えるので合成できない)。
-- コード規約: Loop(`consume`/`feedPaste`/`readInput`など)、Program(`onInput`の`moveFocus`、`syncTimers`など)、
-  Frame(`fillRect`/`paintBorder`/`paintLine`)に、1か所でしか使わないがまとまった大きさのトップレベル関数が残っている。
+- コード規約: Loop/Frame/Programの、1か所でしか使わないトップレベル関数は`where`に入れた。
+  Programの`draw`(約50行)と`currentView`も1か所でしか使わないが、大きいので残している。
 
 
 
