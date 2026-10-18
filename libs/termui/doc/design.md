@@ -420,6 +420,29 @@ given different ones.
   else in the menu's box closes it. The menu is drawn open only while it has
   the focus. `update : Msg -> Model msg -> (Model msg, Maybe msg)` also returns
   the message of the item chosen, which the application sends on with `Emit`.
+- `KeyGuide`: a row of function-key hints, `F1 Help  F2 Save`, the keys inverse.
+  A list of `MkHint fkey label msg` draws the row (`keyGuide`) and gives the
+  messages: `keyInput hints` for an `OnInput` subscription (a key with Ctrl,
+  Alt or Shift is not taken) and `keyClick hints column` for an `OnMouse`
+  subscription that has checked the row of the guide. It is not a focusable,
+  so Tab skips it.
+- `TabStrip`: ` One │ Two │ Three `, one tab active (inverse while the strip has
+  the focus, bold and underlined otherwise). Left/Right, Home/End and a click
+  choose the tab. The strip says which tab is active and the application shows
+  its content; `tabbed wrap model contents` does that, the strip above a
+  framed pane with the content of the active tab. A strip wider than its box
+  is cut at the edge.
+- `Splitter`: two panes with a divider between them, side by side (`LeftRight`)
+  or stacked (`TopBottom`). The first pane has `size` cells (between `lo` and
+  `hi`) and the second takes the rest. The divider is a one-cell grey strip,
+  blue while it has the focus; the arrow keys along the split move it by a
+  cell, and pressing it with the mouse holds it. A focusable only gets mouse
+  events over itself, so while the divider is held a transparent cover over the
+  whole splitter takes its place (with the same key) and turns the pointer
+  position into the new size; Escape or a button let go ends the drag. A
+  button let go outside the splitter is not seen by the cover: subscribe to
+  `OnMouse (map wrap . releasing model)` while `held`. It needs mouse
+  reporting (`MouseFocus`). Give each splitter its own `name`.
 - `Display`: `spinner tick` (advance `tick` from an `Every` subscription),
   `progressBar cells percent` (never wraps), and `table columns rows` (cells cut
   at the column width, missing cells empty, extra cells dropped).
