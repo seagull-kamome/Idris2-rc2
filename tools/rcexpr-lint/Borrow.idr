@@ -398,15 +398,15 @@ borrowStats prog =
         elig = eligibleKeys infos
         rdefs = map (resolveDef ids elig) infos
         initialBad = localBad rdefs
-        bad = spread (reverseDeps rdefs) initialBad (SortedSet.toList initialBad)
+        bad = spread (reverseDeps rdefs) initialBad (Prelude.toList initialBad)
     in render ids infos indirectNames elig bad rdefs
   where
     render : SortedMap String Int -> List DInfo -> SortedSet String -> SortedSet Key -> SortedSet Key -> List RDef -> List String
     render ids infos indirectNames elig bad rdefs =
         let borrowable : Key -> Bool
             borrowable key = contains key elig && not (contains key bad)
-            totalParams = length (SortedSet.toList elig)
-            okParams = minus totalParams (length (SortedSet.toList bad))
+            totalParams = length (Prelude.toList elig)
+            okParams = minus totalParams (length (Prelude.toList bad))
             rejected = foldr (\rd, acc => mapMaybe (rejectedReason rd) rd.rparams ++ acc) [] rdefs
             multiple = length (filter (\r => popCountR r > 1) rejected)
             hasBorrowable = \d => any (\kv => borrowable (keyOf d.ident (fst kv))) d.paramVars
@@ -541,7 +541,7 @@ keepWhile Z _ _ s = s
 keepWhile (S fuel) keep cands s =
     -- removals take effect immediately, so chains settle in few passes
     let s1 = foldl (\a, c => if contains c.key a && not (keep a c.key) then delete c.key a else a) s cands
-    in if length (SortedSet.toList s1) == length (SortedSet.toList s) then s else keepWhile fuel keep cands s1
+    in if length (Prelude.toList s1) == length (Prelude.toList s) then s else keepWhile fuel keep cands s1
 
 bucketOf : Int -> String
 bucketOf n =
@@ -583,11 +583,11 @@ namesOf : List (Cand, Parts) -> SortedSet String
 namesOf = foldl (\a, cp => insert (fst cp).name a) empty
 
 overlapCount : SortedSet String -> SortedSet String -> Nat
-overlapCount names existing = length (filter (\n => contains n existing) (SortedSet.toList names))
+overlapCount names existing = length (filter (\n => contains n existing) (Prelude.toList names))
 
 newWrapperCount : SortedSet String -> SortedSet String -> SortedSet String -> Nat
 newWrapperCount names indirectNames existing =
-    length (filter (\n => contains n indirectNames && not (contains n existing)) (SortedSet.toList names))
+    length (filter (\n => contains n indirectNames && not (contains n existing)) (Prelude.toList names))
 
 tailSitesOf : SortedMap Key (List SiteRec) -> List Cand -> List SiteRec
 tailSitesOf out cands = filter (\r => r.site.tail) (concatMap (\c => fromMaybe [] (lookup c.key out)) cands)
@@ -662,7 +662,7 @@ borrowTailStats prog =
         elig = eligibleKeys infos
         rdefs = map (resolveDef ids elig) infos
         initialBad = localBad rdefs
-        bad = spread (reverseDeps rdefs) initialBad (SortedSet.toList initialBad)
+        bad = spread (reverseDeps rdefs) initialBad (Prelude.toList initialBad)
     in render ids infos indirectNames elig bad rdefs
   where
     render : SortedMap String Int -> List DInfo -> SortedSet String -> SortedSet Key -> SortedSet Key -> List RDef -> List String
@@ -711,7 +711,7 @@ borrowTailStats prog =
            , row "    another only-tail parameter (chain)" (classCountOf now s0 tailSites 2) ""
            , row "    a parameter blocked by something else (owned)" (classCountOf now s0 tailSites 3) ""
            , row "    not a counted parameter" (classCountOf now s0 tailSites 0) ""
-           , row "  only-tail parameters whose targets are all liftable" (length (SortedSet.toList sStruct)) "(structurally eligible; chains iterated)"
+           , row "  only-tail parameters whose targets are all liftable" (length (Prelude.toList sStruct)) "(structurally eligible; chains iterated)"
            , "  independent balance of the eligible ones (model A: tail site = +1 drop; model B: tail site free):"
            , row "    net-positive under A" (positives netA indep) ("sum of nets " ++ show (sumNet netA indep))
            , row "    net-positive under B" (positives netB indep) ("sum of nets " ++ show (sumNet netB indep))
@@ -726,9 +726,9 @@ borrowTailStats prog =
            , rowI "  total with model B lifted" (baseNet + netB pb)
                  (pctI (baseNet + netB pb) totalOps ++ "; in loops " ++ show (baseLoop + netBL pb))
            , "  model B owned entries:"
-           , row "    functions with a tail site served by an owned entry" (length (SortedSet.toList tailFnsB)) ""
+           , row "    functions with a tail site served by an owned entry" (length (Prelude.toList tailFnsB)) ""
            , row "      of those already in the current wrapper set" (overlapCount tailFnsB existing)
-                 ("current wrapper set " ++ show (length (SortedSet.toList existing)))
+                 ("current wrapper set " ++ show (length (Prelude.toList existing)))
            , row "    lifted functions referenced indirectly, not yet wrapped" (newWrapperCount namesB indirectNames existing)
                  ("(A: " ++ show (newWrapperCount namesA indirectNames existing) ++ ")")
            ] ++ partsLines "model A" pa ++ partsLines "model B" pb ++

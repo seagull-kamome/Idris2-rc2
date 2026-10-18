@@ -386,7 +386,7 @@ exemptLocals = scanExp empty
 leakFindings : Env -> St -> String -> List Anomaly
 leakFindings env st ctx =
     [MkAnomaly env.defName Leak v ctx | (v, n) <- SortedMap.toList st.owned, n > 0]
-    ++ [MkAnomaly env.defName TokenLeak v ctx | v <- SortedSet.toList st.tokens]
+    ++ [MkAnomaly env.defName TokenLeak v ctx | v <- Prelude.toList st.tokens]
 
 ||| End of a path: in `Tail` it must owe nothing; in `Val` the value
 ||| goes on to its `let`.
@@ -428,7 +428,7 @@ destBoxed _ (Val r) = isBoxedRep r
 ||| Where two end states of one value-position branch differ.
 differences : Env -> String -> St -> St -> List Anomaly
 differences env ctx a b =
-    let keys = SortedSet.toList (SortedSet.fromList (map fst (SortedMap.toList a.owned) ++ map fst (SortedMap.toList b.owned)))
+    let keys = Prelude.toList (SortedSet.fromList (map fst (SortedMap.toList a.owned) ++ map fst (SortedMap.toList b.owned)))
         diffs = [MkAnomaly env.defName kind v (ctx ++ ": owns " ++ show x ++ " vs " ++ show y)
                 | v <- keys
                 , let x = fromMaybe 0 (lookup v a.owned)
@@ -436,7 +436,7 @@ differences env ctx a b =
                 , x /= y
                 , let kind = if isPrefixOf "loop" ctx then LoopImbalance else BranchImbalance]
         toks = [MkAnomaly env.defName TokenLeak v (ctx ++ ": reuse token live on one side only")
-               | v <- SortedSet.toList a.tokens ++ SortedSet.toList b.tokens
+               | v <- Prelude.toList a.tokens ++ Prelude.toList b.tokens
                , contains v a.tokens /= contains v b.tokens]
     in take 3 (diffs ++ toks)
 
