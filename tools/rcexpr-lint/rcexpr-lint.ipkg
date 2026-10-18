@@ -1,0 +1,14 @@
+package rcexpr-lint
+version = 0.1.0
+authors = "rc2 project"
+
+depends = contrib, rc2base
+
+modules = Borrow,
+          Leak,
+          Lint,
+          Metrics,
+          Pushdown
+
+main = RcexprLint
+executable = rcexpr-lint

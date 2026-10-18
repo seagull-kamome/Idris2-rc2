@@ -455,7 +455,7 @@ checking both the exit code and the exact report text (the fixture's
 | `borrowtail.rcexpr` | the tail-blocked parameters: one that nets positive over its tail and non-tail call sites, one that nets negative, one blocked by a tail call and a second reason; hand-counted (run with `--borrow-tail-stats`) |
 | `pushdown.rcexpr` | the push-down statistics: one definition per pattern with its negative neighbours (a dup needed by every arm, a use before the case, a consumed operand, a sub-field read after the drop), hand-counted (run with `--pushdown-stats`) |
 
-It builds with the plain Chez backend (`idris2 -p rc2base -p contrib`):
+It builds with the plain Chez backend (`idris2 --build rcexpr-lint.ipkg`):
 this tool only reads text files and never needs to run *through* rc2
 itself. It needs `rc2base` already built and installed -- see
 `libs/rc2base/README.md`.
@@ -464,6 +464,7 @@ itself. It needs `rc2base` already built and installed -- see
 
 | file | |
 |---|---|
+| `rcexpr-lint.ipkg` | the package: `idris2 --build rcexpr-lint.ipkg` leaves `build/exec/rcexpr-lint` |
 | `RcexprLint.idr` | CLI: read, parse, report, set the exit code |
 | `Lint.idr` | the use-after-free/double-drop check; its module note carries the rule list this README summarises |
 | `Leak.idr` | the leak check, and the spend/`dup` events the borrow statistics are built from |

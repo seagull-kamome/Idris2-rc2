@@ -1,4 +1,4 @@
-module Main
+module RcexprLint
 
 -- Copyright 2026, Hattori,Hiroki. All rights reserved.
 -- This module was licensed by BSD3.

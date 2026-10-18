@@ -57,6 +57,6 @@ cd tools/rcexpr-diff/tests
 ./verify.sh
 ```
 
-`verify.sh` builds the tool with the plain Chez backend (it reads text
+`verify.sh` builds the tool with `idris2 --build rcexpr-diff.ipkg`, the plain Chez backend (it reads text
 files only, no dependency beyond `base`) and checks its report and exit
 code on `a.rcexpr`/`b.rcexpr`, which differ in each way above.
