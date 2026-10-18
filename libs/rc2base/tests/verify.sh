@@ -92,6 +92,7 @@ TESTS=(
     "TestWebAPIPure|network contrib|Network.HTTP.Client.WebAPI: SHA-256/base64url/PKCE, JSON, URL/form encoding, token JSON"
     "TestWebAPI|network contrib|Network.HTTP.Client.WebAPI.{AI,Auth}: endpoint setup, token persistence, response decoding"
     "TestCurl|network contrib|Network.HTTP.Client.Curl: libcurl bindings, local file:// and HTTP transfers"
+    "TestNumberFormat||Text.NumberFormat: the nibble-to-char `digit` and a `ToHex` instance per fixed-width integer type"
 )
 
 # Tests that need libcurl's headers (curl/curl.h); skipped, loudly, when

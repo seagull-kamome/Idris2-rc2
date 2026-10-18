@@ -73,6 +73,7 @@ not compile when the declaration is used.
 | `System.Linux.*` | Linux-only bindings; `Epoll` (a thin `epoll` FFI wrapper backing `Network.HTTP.Server`'s event loop), `Pipe` (`pipe2`), `Eventfd`, `Memfd` (`memfd_create` and file seals), `Copy` (`sendfile`, `splice`, `copy_file_range`), `Prctl`, `Statx` (`statx` with the birth time and mount ID), `Random` (`getrandom`), `Process` (`gettid`, `pidfd_open`, CPU affinity), `Timerfd`, `Signalfd`, `Inotify`, `Clock` (`CLOCK_BOOTTIME`, ...) and `Dl` (`dladdr`, more `dlopen` flags) |
 | `System.Random.Xoroshiro128PlusPlus`/`Xoroshiro64StarStar` | two from-scratch PRNG ports -- see below |
 | `Text.Encoding.UTF8` | UTF-8 bytes <-> codepoints, pure `List` transforms -- see below |
+| `Text.NumberFormat` | fixed-width, zero-padded, lowercase hex (`ToHex`) for every fixed-width integer type -- see below |
 | `Text.Regex.POSIX` | bindings to libc `<regex.h>` -- see below |
 
 (`Text.Regex.RE2` used to live here too -- see "Regular expressions
@@ -727,6 +728,25 @@ function, and `byteLength` itself is `%inline`, so it compiles to a
 field read, not a `strlen` call) and `unsafeStringByteSlice` slices by
 that same `len`, not to the first NUL. Used by `Text.Regex.POSIX`; see
 `tests/TestStringRC2/`.
+
+## `Text.NumberFormat`: fixed-width hex
+
+`toHex` renders a value as exactly as many lowercase hex digits as its
+type is wide -- two for `Bits8`/`Int8`, four for `Bits16`/`Int16`,
+eight for `Bits32`/`Int32`, sixteen for `Bits64`/`Int64`/`Int` --
+zero-padded on the left. A signed type renders its two's-complement bit
+pattern (`the Int8 (-1)` is `"ff"`); an unsigned type is just its
+magnitude. `digit : Bits8 -> Char` is the single-nibble step, for when
+you need to place digits yourself. All pure, no C shim; see
+`tests/TestNumberFormat/`.
+
+```idris2
+import Text.NumberFormat
+
+toHex (the Bits8 0x0a)      -- "0a"
+toHex (the Bits64 0xdead)   -- "000000000000dead"
+toHex (the Int8 (-2))       -- "fe"
+```
 
 ## `Text.Regex.POSIX`: bindings to libc `<regex.h>`
 

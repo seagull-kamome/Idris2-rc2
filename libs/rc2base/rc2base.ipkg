@@ -43,6 +43,7 @@ modules    = Control.Concurrent.MVar,
              System.Random.Xoroshiro128PlusPlus,
              System.Random.Xoroshiro64StarStar,
              Text.Encoding.UTF8,
+             Text.NumberFormat,
              Text.Regex.POSIX
 -- `support/c`'s Makefile builds `libidris2rc2base.a` with a plain C
 -- toolchain (`gcc`/`ar`) -- no `pkg-config`/C++/re2. The RE2 regex
