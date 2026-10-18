@@ -65,6 +65,11 @@ textLines s =
   let ls = forget (split (== '\n') s) in
   if length ls > 1 && last' ls == Just "" then reverse (drop 1 (reverse ls)) else ls
 
+-- What the row at the start of some characters is: the last one, or one that
+-- is cut off after `consumed` characters (more than the row itself keeps when
+-- the spaces at the break are dropped), at least one.
+data RowCut = Last (List Char) | Cut (List Char) Nat
+
 ||| The lines of a text laid out in `maxW` cells.
 export
 wrapText : Wrap -> Nat -> String -> List String
@@ -79,41 +84,54 @@ wrapText wrap maxW s =
          then let (a, b) = takeCells (w `minus` cw) cs in (c :: a, b)
          else ([], c :: cs)
 
-    charChunks : Nat -> Nat -> List Char -> List (List Char)
-    charChunks _ Z cs = [cs]
-    charChunks w (S fuel) cs =
-      case takeCells w cs of
-        (a, []) => [a]
-        ([], c :: rest) => [c] :: charChunks w fuel rest
-        (a, b) => a :: charChunks w fuel b
+    -- The rows of a text: `cut` says where the row at the start of the
+    -- characters ends. The characters are walked once, skipping those of the row
+    -- begun before, so that the recursion is on the tail. When no character is
+    -- left after a row there is one more, empty, row.
+    chunks : (cut : List Char -> RowCut) -> List Char -> List (List Char)
+    chunks cut cs = go cs 0
+      where
+        go : List Char -> (skip : Nat) -> List (List Char)
+        go [] Z = [[]]
+        go [] (S _) = []
+        go (_ :: xs) (S k) = go xs k
+        go rest@(_ :: xs) Z =
+          case cut rest of
+            Last a => [a]
+            Cut a n => a :: go xs (n `minus` 1)
 
-    wordChunks : Nat -> Nat -> List Char -> List (List Char)
-    wordChunks _ Z cs = [cs]
-    wordChunks w (S fuel) cs =
-      case takeCells w cs of
-        (a, []) => [a]
+    charCut : Nat -> List Char -> RowCut
+    charCut w rest =
+      case takeCells w rest of
+        (a, []) => Last a
+        ([], c :: _) => Cut [c] 1
+        (a, _) => Cut a (length a)
+
+    wordCut : Nat -> List Char -> RowCut
+    wordCut w rest =
+      case takeCells w rest of
+        (a, []) => Last a
         (a, b@(n :: _)) =>
           if n == ' '
-             then a :: wordChunks w fuel (dropWhile (== ' ') b)
+             then Cut a (length a + length (takeWhile (== ' ') b))
              else case break (== ' ') (reverse a) of
                     (after, _ :: before) =>
                       if all (== ' ') before
                          then hard a b
-                         else reverse (dropWhile (== ' ') before)
-                                :: wordChunks w fuel (reverse after ++ b)
+                         else Cut (reverse (dropWhile (== ' ') before)) (length a `minus` length after)
                     _ => hard a b
       where
-        hard : List Char -> List Char -> List (List Char)
-        hard [] (c :: rest) = [c] :: wordChunks w fuel rest
-        hard a b = a :: wordChunks w fuel b
+        hard : List Char -> List Char -> RowCut
+        hard [] (c :: _) = Cut [c] 1
+        hard a _ = Cut a (length a)
 
     fit : String -> List String
     fit line =
       let cs = unpack line in
       case wrap of
         Truncate => [pack (fst (takeCells maxW cs))]
-        WrapChars => map pack (charChunks maxW (length cs + 1) cs)
-        WrapWords => map pack (wordChunks maxW (length cs + 1) cs)
+        WrapChars => map pack (chunks (charCut maxW) cs)
+        WrapWords => map pack (chunks (wordCut maxW) cs)
 
 -------------------------------------------------------------------------------
 -- Flex distribution
