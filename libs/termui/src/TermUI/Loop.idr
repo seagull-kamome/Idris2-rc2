@@ -25,11 +25,30 @@ import Text.Encoding.UTF8
 -------------------------------------------------------------------------------
 -- Events
 
+||| What names a timer: the number a caller gave to `addTimer` or `addOneShot`,
+||| told apart by kind, so that the two cannot be taken for one another, and
+||| the loop's own timer (the Escape key), which no caller can name.
+public export
+data TimerId = Ticker Nat | Shot Nat | EscapeKey
+
+export
+Eq TimerId where
+  Ticker a == Ticker b = a == b
+  Shot a == Shot b = a == b
+  EscapeKey == EscapeKey = True
+  _ == _ = False
+
+export
+Show TimerId where
+  show (Ticker n) = show n
+  show (Shot n) = show n
+  show EscapeKey = "escape"
+
 public export
 data Event
   = EInput Input
   | EResize Nat Nat          -- columns, rows
-  | ETimer Nat               -- the id given to `addTimer`
+  | ETimer TimerId           -- the timer that fired
   | ETerminate               -- SIGINT, SIGTERM or SIGHUP
   | EResume                  -- SIGCONT: the program was stopped and continued
   | ESuspend                 -- SIGTSTP sent from outside: stop as `Suspend` does
@@ -57,14 +76,10 @@ record Loop where
   epoll : EPoll
   sigfd : FileDesc
   oldMask : SigSet
-  timers : IORef (List (Int32, Nat, FileDesc))   -- (rawfd, id, descriptor)
+  timers : IORef (List (Int32, TimerId, FileDesc))   -- (rawfd, id, descriptor)
   watched : IORef (List Int32)                    -- descriptors of `watchFd`
   pending : IORef (List Bits8)
   paste : IORef (Maybe (List (List Bits8), List Bits8))
-
--- Reserved: the timer that turns a lone ESC into the Escape key.
-escapeTimerId : Nat
-escapeTimerId = 1099511627776
 
 -- A paste is cut into chunks; this many bytes at the end are held back so
 -- that the closing sequence cannot be split between two reads unnoticed.
@@ -109,14 +124,14 @@ watchFd l fd = do
 
 ||| Stop and forget a timer.
 export
-cancelTimer : Loop -> (id : Nat) -> IO ()
+cancelTimer : Loop -> (id : TimerId) -> IO ()
 cancelTimer l ident = do
   ts <- readIORef l.timers
   let (gone, kept) = partition (\(_, n, _) => n == ident) ts
   traverse_ (\(_, _, fd) => ignore (epollDel l.epoll fd) >> ignore (close fd)) gone
   writeIORef l.timers kept
 
-armTimer : Loop -> (id : Nat) -> (ms : Nat) -> (repeat : Bool) -> IO (Either Errno ())
+armTimer : Loop -> (id : TimerId) -> (ms : Nat) -> (repeat : Bool) -> IO (Either Errno ())
 armTimer l ident ms repeat = do
   cancelTimer l ident
   Right fd <- timerfd_create CLOCK_MONOTONIC (TFD_NONBLOCK .|. TFD_CLOEXEC)
@@ -136,13 +151,13 @@ armTimer l ident ms repeat = do
 ||| time after the same delay). Replaces a timer with the same id.
 export
 addTimer : Loop -> (id : Nat) -> (ms : Nat) -> IO (Either Errno ())
-addTimer l ident ms = armTimer l ident ms True
+addTimer l ident ms = armTimer l (Ticker ident) ms True
 
 ||| Start a timer that fires `ETimer id` once, after `ms` milliseconds. The
 ||| expired timer stays registered until `cancelTimer`.
 export
 addOneShot : Loop -> (id : Nat) -> (ms : Nat) -> IO (Either Errno ())
-addOneShot l ident ms = armTimer l ident ms False
+addOneShot l ident ms = armTimer l (Shot ident) ms False
 
 ||| Close the loop's descriptors and unblock the signals; a signal that is
 ||| still pending is taken first, so that it cannot kill the process now.
@@ -215,15 +230,15 @@ waitEvents l timeoutMs = do
           if isPrefixOf pasteStart rest
              then do
                writeIORef l.pending []
-               cancelTimer l escapeTimerId
+               cancelTimer l EscapeKey
                writeIORef l.paste (Just ([], []))
                more <- feedPaste ([], []) (drop (length pasteStart) rest)
                pure (map EInput inputs ++ more)
              else do
                writeIORef l.pending rest
                if null rest
-                  then cancelTimer l escapeTimerId
-                  else ignore (addOneShot l escapeTimerId 30)
+                  then cancelTimer l EscapeKey
+                  else ignore (armTimer l EscapeKey 30 False)
                pure (map EInput inputs)
       where
         feedPaste : (List (List Bits8), List Bits8) -> List Bits8 -> IO (List Event)
@@ -267,7 +282,7 @@ waitEvents l timeoutMs = do
         Nothing => pure []
         Just (_, ident, fd) => do
           _ <- timerfd_read fd
-          if ident == escapeTimerId
+          if ident == EscapeKey
              then cancelTimer l ident >> flushPending
              else pure [ETimer ident]
 

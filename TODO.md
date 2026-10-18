@@ -1178,9 +1178,6 @@ upstreamに取り込まれたら`idris2-src`を更新して自作idris2を作り
 `Loop`・`Program`・`Output`・`Terminal`(`covering`)。`believe_me`は無く、`assert_smaller`は
 `Input.idr`の`splitSemi`の1箇所だけ。上から順に片付ける。
 
-- タイマーIDの型化。`Loop`/`Program`のIDは「`Every`は偶数、`After`は奇数、Escape用は
-  `1099511627776`」という数の取り決めで区別している。`data TimerId = Every Nat | OneShot Nat | Escape`
-  のような型にすれば衝突を型で防げる。`Loop`の公開APIが変わる。
 - `Splitter`の`lo ≤ size ≤ hi`と`TabStrip`の`active < length titles`。今は`withLimits`と`update`の
   `min`で守っているだけで、型には出ていない。`Fin`か`Subset`で持つ。
 - 「燃料」で止めている再帰: `TextArea.wrapRows`、`Layout`の`charChunks`・`wordChunks`・`shrinkAll`・
