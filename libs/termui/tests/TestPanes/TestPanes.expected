@@ -1,0 +1,124 @@
+-- function-key guide
+|F1 Help F2 Save F10 Quit
+|^^      ^^      ^^^
+Help
+Quit
+nothing
+nothing
+nothing
+0: Help
+1: Help
+4: Help
+5: Help
+6: Help
+7: nothing
+10: Save
+11: Save
+12: Save
+18: Quit
+19: Quit
+20: Quit
+-- function-key guide, clicks on the row
+Help
+nothing
+Quit
+nothing
+nothing
+nothing
+nothing
+nothing
+nothing
+-- tab strip
+| One │ Two │ Three
+|uuuuu
+| One │ Two │ Three
+|      uuuuu
+| One │ Two │ Three
+|      ^^^^^
+next next next: 2
+prev at first: 0
+last, first: 0
+click 0: 0
+click 4: 0
+click 5: 0
+click 6: 1
+click 10: 1
+click 11: 0
+click 12: 2
+click 18: 2
+click 19: 0
+click 25: 0
+click 40: 0
+| One │ Two │ Three
+|      uuuuu
+|┌────────────────────────────┐
+|│page two                    │
+|│                            │
+|└────────────────────────────┘
+1
+0
+0
+2
+nothing
+1
+nothing
+-- splitter, side by side
+|left   right pane
+|      g
+|pane
+|      g
+|
+|      g
+|left    right pane
+|       g
+|pane
+|       g
+|
+|       g
+|
+|ssssssssssssssssssssssss
+|
+|ssssssssssssssssssssssss
+|
+|ssssssssssssssssssssssss
+-- splitter, stacked
+|top
+|
+|
+|gggggggggggg
+|bottom
+|
+|
+-- splitter, sizes
+grow: 7, shrink: 5
+shrink to the limit: 3
+grow to the limit: 12
+drag before grab: 6
+grab, drag 9: 9
+grab, drag 99: 12
+grab, drag 0: 3
+grab, drag, release, drag: 9
+-- splitter, keys on the divider
+FromSplit
+FromSplit
+nothing
+nothing
+FromSplit
+nothing
+nothing
+FromSplit
+FromSplit
+nothing
+-- splitter, held
+|left   right pane
+|      s
+|pane
+|      s
+|
+|      s
+FromSplit
+FromSplit
+FromSplit
+FromSplit
+nothing
+False / nothing

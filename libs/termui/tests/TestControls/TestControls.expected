@@ -1,0 +1,107 @@
+-- check box
+|[ ] agree
+|[x] agree
+|[x] agree
+|^^^^^^^^^
+Toggle
+Toggle
+nothing
+nothing
+Toggle
+-- buttons
+|╭────╮
+|│ OK │
+|╰────╯
+|┏━━━━━━━━┓
+|┃ OK     ┃
+| ^^^^
+|┗━━━━━━━━┛
+| OK
+| OK
+|^^^^
+|docs
+|docs
+|^^^^
+Press1
+Press1
+Press1
+nothing
+-- menu bar, closed
+| File  Edit
+|
+|
+|
+|
+|
+| File  Edit
+|ssssss
+|
+|
+|
+|
+|
+-- menu bar, File open
+| File  Edit
+|ssssss
+|┌──────┐
+|│ Open │
+| ssssss
+|│ Save │
+|│──────│
+|│ Quit │
+|└──────┘
+-- menu bar, Edit open on Redo
+| File  Edit
+|      ssssss
+|      ┌──────┐
+|      │ Undo │
+|      │ Redo │
+|       ssssss
+|      └──────┘
+|
+|
+-- menu bar, open but not focused
+| File  Edit
+|
+|
+|
+|
+|
+|
+-- menu moves
+open: active=0 open=True cursor=0 chose=[]
+down, down: active=0 open=True cursor=3 chose=[]
+down past the separator: active=0 open=True cursor=0 chose=[]
+wrap down: active=0 open=True cursor=1 chose=[]
+wrap up: active=0 open=True cursor=3 chose=[]
+up when closed: active=0 open=False cursor=0 chose=[]
+down when closed opens: active=0 open=True cursor=0 chose=[]
+next, open: active=1 open=True cursor=0 chose=[]
+prev wraps: active=1 open=False cursor=0 chose=[]
+next wraps: active=0 open=False cursor=0 chose=[]
+activate chooses: active=0 open=False cursor=1 chose=["Chose save"]
+activate when closed opens: active=0 open=True cursor=0 chose=[]
+close: active=0 open=False cursor=0 chose=[]
+-- menu keys
+FromMenu
+FromMenu
+FromMenu
+FromMenu
+FromMenu
+FromMenu
+nothing
+nothing
+nothing
+FromMenu
+-- menu clicks
+title Edit: active=1 open=True cursor=0 chose=[]
+title File twice: active=0 open=False cursor=0 chose=[]
+title File then Edit: active=1 open=True cursor=0 chose=[]
+beside the titles: active=0 open=False cursor=0 chose=[]
+item Save: active=0 open=False cursor=0 chose=["Chose save"]
+item Quit: active=0 open=False cursor=0 chose=["Chose quit"]
+separator: active=0 open=True cursor=0 chose=[]
+top border: active=0 open=True cursor=0 chose=[]
+outside the menu: active=0 open=False cursor=0 chose=[]
+below the menu: active=0 open=False cursor=0 chose=[]
+item when closed: active=0 open=False cursor=0 chose=[]
