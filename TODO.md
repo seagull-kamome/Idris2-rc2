@@ -1178,10 +1178,11 @@ upstreamに取り込まれたら`idris2-src`を更新して自作idris2を作り
 `Loop`・`Program`・`Output`・`Terminal`(`covering`)。`believe_me`は無く、`assert_smaller`は
 `Input.idr`の`splitSemi`の1箇所だけ。上から順に片付ける。
 
-- 「燃料」で止めている再帰: `TextArea.wrapRows`、`Layout`の`charChunks`・`wordChunks`・`shrinkAll`・
-  `flex`の`go`、`Input`の`loop`。どれも各回で入力が縮むので終了は正しいはずだが、燃料(`length + 1`)が
-  尽きると結果が黙って途中で切れる。「毎回1要素以上進む」ことを示して整礎再帰にすれば燃料が要らない。
-  `wrapRows`から1関数ずつ。
+- 「燃料」で止めている再帰: `Layout`の`charChunks`・`wordChunks`・`shrinkAll`・`flex`の`go`、
+  `Input`の`loop`。どれも各回で入力が縮むので終了は正しいはずだが、燃料(`length + 1`)が
+  尽きると結果が黙って途中で切れる。`TextArea.wrapRows`は、行頭では先読みして長さを決め、残りは先頭
+  から1文字ずつ読み飛ばす構造再帰に書き直して燃料をなくした(同じやり方がそのまま使えるか、1関数ずつ見る。
+  使えない所は`Control.WellFounded`)。
 - `TextArea.Model`の`line`/`count`(行数をO(1)にするための`above`/`below`の長さの複製)。
   `line = length above`と`count = line + 1 + length below`を型に載せられるが、`setItems`のような
   更新ごとに証明の更新が要り、費用が大きい。

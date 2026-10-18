@@ -72,7 +72,7 @@ wrapRoom m = max 1 (m.cells `minus` 2)
 -- end of the row, else after the last space that fits, else where the width
 -- runs out. A row has a character at least, and an empty line has one empty row.
 wrapRows : (room : Nat) -> List Char -> List Nat
-wrapRows room cs = if null cs then [0] else go (S (length cs)) cs
+wrapRows room cs = if null cs then [0] else go cs 0
   where
     lastSpace : List Char -> Maybe Nat
     lastSpace chars = go' 0 Nothing chars
@@ -81,19 +81,28 @@ wrapRows room cs = if null cs then [0] else go (S (length cs)) cs
         go' _ found [] = found
         go' i found (c :: rest) = go' (S i) (if c == ' ' then Just i else found) rest
 
-    go : Nat -> List Char -> List Nat
-    go Z _ = []
-    go _ [] = []
-    go (S fuel) rest =
+    -- The length of the row that starts `rest`, and whether it is the last one.
+    row : List Char -> (Nat, Bool)
+    row rest =
       let fitted = cutTo (max 1 room) rest
           n = max 1 (length fitted)
       in if null (drop n rest)
-            then [n]
+            then (n, True)
             else if take 1 (drop n rest) == [' '] && not (null (drop (n + 1) rest))
-            then (n + 1) :: go fuel (drop (n + 1) rest)
+            then (n + 1, False)
             else case lastSpace fitted of
-                   Just k => if k > 0 then (k + 1) :: go fuel (drop (k + 1) rest) else n :: go fuel (drop n rest)
-                   Nothing => n :: go fuel (drop n rest)
+                   Just k => if k > 0 then (k + 1, False) else (n, False)
+                   Nothing => (n, False)
+
+    -- Walks the characters once; `skip` of them still belong to the row begun
+    -- before, and a character with none left begins a row.
+    go : List Char -> (skip : Nat) -> List Nat
+    go [] _ = []
+    go (_ :: xs) (S k) = go xs k
+    go rest@(_ :: xs) Z =
+      case row rest of
+        (n, True) => [n]
+        (n, False) => n :: go xs (n `minus` 1)
 
 -- The row (and its start) of the character `idx` of a line broken into rows
 -- of these lengths.
