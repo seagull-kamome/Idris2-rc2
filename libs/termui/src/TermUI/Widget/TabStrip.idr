@@ -7,6 +7,7 @@
 ||| This module was licensed by BSD3. see LICENSE file for detail.
 module TermUI.Widget.TabStrip
 
+import Data.Fin
 import Data.List
 import Data.Maybe
 import TermUI.Input
@@ -19,16 +20,28 @@ import TermUI.Width
 -------------------------------------------------------------------------------
 -- Model
 
+||| `active` is an index into `titles`, which cannot go past the last tab; a
+||| strip has at least one tab.
 public export
 record Model where
   constructor MkModel
   titles : List String
-  active : Nat
+  active : Fin (length titles)
 
 ||| A strip with the first tab active.
 export
-fromTitles : List String -> Model
-fromTitles ts = MkModel ts 0
+fromTitles : (ts : List String) -> {auto 0 ne : NonEmpty ts} -> Model
+fromTitles (t :: ts) = MkModel (t :: ts) FZ
+
+||| The active tab, counted from 0.
+export
+activeIndex : Model -> Nat
+activeIndex m = finToNat m.active
+
+||| Make the tab `i` active; a number past the last tab is the last tab.
+export
+select : Nat -> Model -> Model
+select i m = maybe m (MkModel m.titles) (natToFin (min i (length m.titles `minus` 1)) (length m.titles))
 
 -- A title is drawn with a space on each side, tabs are one cell apart.
 tabWidth : String -> Nat
@@ -56,14 +69,11 @@ export
 update : Msg -> Model -> Model
 update msg m =
   case msg of
-    Prev => { active := m.active `minus` 1 } m
-    Next => { active := min (S m.active) lastTab } m
-    First => { active := 0 } m
-    Last => { active := lastTab } m
-    Click c => maybe m (\i => MkModel m.titles i) (find (\i => c >= tabLeft i m.titles && c < tabLeft i m.titles + maybe 0 tabWidth (getAt i m.titles)) (upto (length m.titles)))
-  where
-    lastTab : Nat
-    lastTab = length m.titles `minus` 1
+    Prev => select (activeIndex m `minus` 1) m
+    Next => select (S (activeIndex m)) m
+    First => select 0 m
+    Last => select (length m.titles) m
+    Click c => maybe m (\i => select i m) (find (\i => c >= tabLeft i m.titles && c < tabLeft i m.titles + maybe 0 tabWidth (getAt i m.titles)) (upto (length m.titles)))
 
 ||| The key or click a strip with the focus takes.
 export
@@ -93,7 +103,7 @@ tabStrip wrap m = focusable body (\i => map wrap (keyMsg i))
   where
     tab : (focused : Bool) -> Nat -> String -> Node msg
     tab focused i t =
-      Text (if i == m.active then (if focused then withAttr Inverse plain else withAttr Underline (withAttr Bold plain)) else plain)
+      Text (if i == activeIndex m then (if focused then withAttr Inverse plain else withAttr Underline (withAttr Bold plain)) else plain)
         Truncate (" " ++ t ++ " ")
 
     body : Bool -> Node msg
@@ -107,4 +117,4 @@ tabbed : (wrap : Msg -> msg) -> Model -> (contents : List (Node msg)) -> Node ms
 tabbed wrap m contents =
   column [grow 1]
     [ tabStrip wrap m
-    , box [border Single, grow 1] (maybe [] (\c => [c]) (getAt m.active contents)) ]
+    , box [border Single, grow 1] (maybe [] (\c => [c]) (getAt (activeIndex m) contents)) ]

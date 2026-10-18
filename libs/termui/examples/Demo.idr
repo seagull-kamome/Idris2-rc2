@@ -112,8 +112,8 @@ panesPage m =
     [ splitter "split" FromSplit m.split
         (box [border Single] [ text "A splitter's first pane.", text "Focus the divider (Tab) and press the arrow keys, or drag it." ])
         (splitter "split2" FromSplit2 m.split2
-           (box [border Single] [ text ("The first pane is " ++ show m.split.size ++ " cells wide.") ])
-           (box [border Single] [ text ("This one is " ++ show m.split2.size ++ " rows high above.") ]))
+           (box [border Single] [ text ("The first pane is " ++ show (P.size m.split) ++ " cells wide.") ])
+           (box [border Single] [ text ("This one is " ++ show (P.size m.split2) ++ " rows high above.") ]))
     ]
 
 appView : AppModel -> Node AppMsg
@@ -145,7 +145,7 @@ appUpdate (FromMenu e) m =
 appUpdate (FromTab e) m = ({ tabs $= Tab.update e } m, NoCmd)
 appUpdate (FromSplit e) m = ({ split $= P.update e } m, NoCmd)
 appUpdate (FromSplit2 e) m = ({ split2 $= P.update e } m, NoCmd)
-appUpdate (GoTab n) m = ({ tabs := Tab.MkModel m.tabs.titles n } m, NoCmd)
+appUpdate (GoTab n) m = ({ tabs $= Tab.select n } m, NoCmd)
 appUpdate ShowSpinner m = ({ spinner' $= not } m, NoCmd)
 appUpdate ShowBar m = ({ bar $= not } m, NoCmd)
 appUpdate (Clicked what) m = ({ status := what } m, NoCmd)

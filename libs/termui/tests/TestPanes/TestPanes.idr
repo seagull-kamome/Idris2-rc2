@@ -96,14 +96,15 @@ main = do
   draw (tabStrip FromTab tabs) 30 1
   draw (tabStrip FromTab (T.update Next tabs)) 30 1
   showFocused (tabStrip FromTab (T.update Next tabs)) 30 1
-  let act = \msgs => (foldl (flip T.update) tabs msgs).active
+  let act = \msgs => T.activeIndex (foldl (flip T.update) tabs msgs)
   putStrLn ("next next next: " ++ show (act [Next, Next, Next]))
   putStrLn ("prev at first: " ++ show (act [Prev]))
   putStrLn ("last, first: " ++ show (act [Last, First]))
+  putStrLn ("select 1, select 99: " ++ show (T.activeIndex (T.select 1 tabs)) ++ ", " ++ show (T.activeIndex (T.select 99 tabs)))
   for_ [0, 4, 5, 6, 10, 11, 12, 18, 19, 25, 40] (\c => putStrLn ("click " ++ show c ++ ": " ++ show (act [Click c])))
   draw (tabbed FromTab (T.update Next tabs) [text "page one", text "page two", text "page three"]) 30 5
   for_ [key KRight, key KLeft, key KHome, key KEnd, key KTab, mouse LeftButton ButtonDown 7 0, mouse LeftButton ButtonUp 7 0] (\i =>
-    putStrLn (shown (map (\m => (T.update m tabs).active) (T.keyMsg i))))
+    putStrLn (shown (map (\m => T.activeIndex (T.update m tabs)) (T.keyMsg i))))
 
   putStrLn "-- splitter, side by side"
   let side = P.withLimits 3 12 (P.fromSize LeftRight 6)
@@ -114,7 +115,7 @@ main = do
   let stack = P.fromSize TopBottom 2
   draw (splitter "s" FromSplit stack (text "top") (text "bottom")) 12 6
   putStrLn "-- splitter, sizes"
-  let sz = \msgs => (foldl (flip P.update) side msgs).size
+  let sz = \msgs => P.size (foldl (flip P.update) side msgs)
   putStrLn ("grow: " ++ show (sz [Grow]) ++ ", shrink: " ++ show (sz [Shrink]))
   putStrLn ("shrink to the limit: " ++ show (sz (replicate 20 Shrink)))
   putStrLn ("grow to the limit: " ++ show (sz (replicate 20 Grow)))
@@ -122,6 +123,9 @@ main = do
   putStrLn ("grab, drag 9: " ++ show (sz [Grab, Drag 9]))
   putStrLn ("grab, drag 99: " ++ show (sz [Grab, Drag 99]))
   putStrLn ("grab, drag 0: " ++ show (sz [Grab, Drag 0]))
+  putStrLn ("limits 5..9 on 6, on 20, on 1: " ++ show (P.size (P.withLimits 5 9 (P.fromSize LeftRight 6))) ++ ", " ++ show (P.size (P.withLimits 5 9 (P.fromSize LeftRight 20))) ++ ", " ++ show (P.size (P.withLimits 5 9 (P.fromSize LeftRight 1))))
+  putStrLn ("limits 9..5 (hi below lo): " ++ show (P.size (P.withLimits 9 5 (P.fromSize LeftRight 7))) ++ ", hi " ++ show (P.hi (P.withLimits 9 5 (P.fromSize LeftRight 7))))
+  putStrLn ("size past the default limit: " ++ show (P.size (P.fromSize LeftRight 5000)))
   putStrLn ("grab, drag, release, drag: " ++ show (sz [Grab, Drag 9, Release, Drag 4]))
   putStrLn "-- splitter, keys on the divider"
   let div = splitter "s" FromSplit side (text "l") (text "r")

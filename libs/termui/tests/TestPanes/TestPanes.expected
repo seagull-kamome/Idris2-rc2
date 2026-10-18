@@ -38,6 +38,7 @@ nothing
 next next next: 2
 prev at first: 0
 last, first: 0
+select 1, select 99: 1, 2
 click 0: 0
 click 4: 0
 click 5: 0
@@ -97,6 +98,9 @@ drag before grab: 6
 grab, drag 9: 9
 grab, drag 99: 12
 grab, drag 0: 3
+limits 5..9 on 6, on 20, on 1: 6, 9, 5
+limits 9..5 (hi below lo): 9, hi 9
+size past the default limit: 1000
 grab, drag, release, drag: 9
 -- splitter, keys on the divider
 FromSplit

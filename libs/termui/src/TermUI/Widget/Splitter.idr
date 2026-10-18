@@ -10,6 +10,8 @@
 ||| This module was licensed by BSD3. see LICENSE file for detail.
 module TermUI.Widget.Splitter
 
+import Data.Fin
+import Data.Maybe
 import TermUI.Input
 import TermUI.Node
 import TermUI.Style
@@ -23,25 +25,41 @@ import TermUI.Style
 public export
 data Split = LeftRight | TopBottom
 
-||| `size` is the size of the first pane along the split, kept between `lo`
-||| and `hi`; `held` is true while the divider is being dragged.
+||| The size of the first pane along the split is `lo` plus `offset`, which is
+||| at most `span`: it stays between `lo` and `hi`, whatever is done to the
+||| model. `held` is true while the divider is being dragged.
 public export
 record Model where
   constructor MkModel
   split : Split
-  size : Nat
-  lo, hi : Nat
+  lo : Nat
+  span : Nat
+  offset : Fin (S span)
   held : Bool
+
+||| The size of the first pane in cells.
+export
+size : Model -> Nat
+size m = m.lo + finToNat m.offset
+
+||| The largest size the first pane can have.
+export
+hi : Model -> Nat
+hi m = m.lo + m.span
+
+-- The offset of a size from `lo`; a size outside [lo, lo + span] is the nearest end.
+offsetOf : (lo : Nat) -> (span : Nat) -> (size : Nat) -> Fin (S span)
+offsetOf lo span size = fromMaybe last (natToFin (size `minus` lo) (S span))
 
 ||| A splitter whose first pane has the given size; it can be between 1 and 1000 cells.
 export
 fromSize : Split -> (size : Nat) -> Model
-fromSize s n = MkModel s n 1 1000 False
+fromSize s n = MkModel s 1 999 (offsetOf 1 999 n) False
 
-||| The same with limits on the size of the first pane.
+||| The same with limits on the size of the first pane. A `hi` below `lo` is `lo`.
 export
 withLimits : (lo : Nat) -> (hi : Nat) -> Model -> Model
-withLimits lo hi m = { lo := lo, hi := max lo hi, size := max lo (min hi m.size) } m
+withLimits lo hi m = MkModel m.split lo (hi `minus` lo) (offsetOf lo (hi `minus` lo) (size m)) m.held
 
 -------------------------------------------------------------------------------
 -- Update
@@ -54,14 +72,14 @@ export
 update : Msg -> Model -> Model
 update msg m =
   case msg of
-    Shrink => resized (m.size `minus` 1)
-    Grow => resized (S m.size)
+    Shrink => resized (size m `minus` 1)
+    Grow => resized (S (size m))
     Grab => { held := True } m
     Drag p => if m.held then resized p else m
     Release => { held := False } m
   where
     resized : Nat -> Model
-    resized n = { size := max m.lo (min m.hi n) } m
+    resized n = MkModel m.split m.lo m.span (offsetOf m.lo m.span n) m.held
 
 -- A key on the divider, and the press that picks it up.
 dividerMsg : Split -> Input -> Maybe Msg
@@ -113,7 +131,7 @@ export
 splitter : (name : String) -> (wrap : Msg -> msg) -> Model -> (first : Node msg) -> (second : Node msg) -> Node msg
 splitter name wrap m first second =
   Box ({ pDirection := dir, pGrow := 1 } defaultProps)
-    ([ box [extent (Cells m.size)] [first]
+    ([ box [extent (Cells (size m))] [first]
      , if m.held then look True else keyed name (focusable look (\i => map wrap (dividerMsg m.split i)))
      , box [grow 1] [second] ] ++ cover)
   where
