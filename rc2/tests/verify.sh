@@ -285,7 +285,7 @@ else
     report_pass "build (libidris2rc2.a)"
 
     # Checks every smoke test's IR dump below (tools/rcexpr-lint/README.md).
-    (cd "$REPO_DIR/tools/rcexpr-lint" && idris2 -p rc2base -p contrib -o rcexpr-lint RcexprLint.idr) \
+    (cd "$REPO_DIR/tools/rcexpr-lint" && idris2 --build rcexpr-lint.ipkg) \
         > "$TMP/lint-build.log" 2>&1
     if [ $? -ne 0 ]; then
         echo "FAIL  build (rcexpr-lint, see rc2/tests/build/lint-build.log)"

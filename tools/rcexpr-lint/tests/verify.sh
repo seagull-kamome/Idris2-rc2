@@ -45,7 +45,7 @@ fail() { echo "FAIL  $1"; exit 1; }
 source "$REPO_ROOT/env.sh"
 
 echo "=== Build rcexpr-lint ==="
-(cd "$TOOL_DIR" && idris2 -p rc2base -p contrib -o rcexpr-lint RcexprLint.idr)
+(cd "$TOOL_DIR" && idris2 --build rcexpr-lint.ipkg)
 
 RCEXPR_LINT="$TOOL_DIR/build/exec/rcexpr-lint"
 [[ -x "$RCEXPR_LINT" ]] || fail "build did not produce $RCEXPR_LINT"

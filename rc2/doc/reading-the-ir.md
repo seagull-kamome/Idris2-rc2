@@ -565,7 +565,7 @@ flagging a read or drop of one already at zero.
 ```sh
 cd tools/rcexpr-lint && source ../../env.sh
 nix-shell -p gcc gmp pkg-config --run \
-  'idris2 -p rc2base -p contrib -o rcexpr-lint RcexprLint.idr'
+  'idris2 --build rcexpr-lint.ipkg'
 ./build/exec/rcexpr-lint path/to/out.rcexpr
 ```
 

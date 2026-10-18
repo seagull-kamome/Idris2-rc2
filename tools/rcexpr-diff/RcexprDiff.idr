@@ -5,7 +5,7 @@
 |||
 ||| Copyright 2026, Hattori,Hiroki. All rights reserved.
 ||| This module was licensed by BSD3. see LICENSE file for detail.
-module Main
+module RcexprDiff
 
 import Data.List
 import Data.Maybe
