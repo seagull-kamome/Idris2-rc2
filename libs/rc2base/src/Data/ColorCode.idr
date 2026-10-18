@@ -1,62 +1,68 @@
 ||| Packed and normalized colour representations, and the conversions
 ||| between them.
 |||
-||| Two packed 8-bit forms -- `ARGB8` and `CMYK8`, four channels in a
+||| Two packed 8-bit forms -- `RGBA8` and `CMYK8`, four channels in a
 ||| `Bits32`, most-significant channel first -- and two floating-point
-||| forms, `AHSV` and `CMYK`. In the floating-point forms each colour
-||| component is in `[0, 1]`; `AHSV`'s `hue` is the exception, in
+||| forms, `HSVA` and `CMYK`. In the floating-point forms each colour
+||| component is in `[0, 1]`; `HSVA`'s `hue` is the exception, in
 ||| degrees `[0, 360)`. Alpha is carried through every conversion that
 ||| has somewhere to put it; `CMYK` has no alpha channel, so
-||| `ARGB8 -> CMYK` drops it.
+||| `RGBA8 -> CMYK` drops it.
 module Data.ColorCode
 
 -- Copyright 2026, Hattori,Hiroki. All rights reserved.
 -- This module was licensed by BSD3.
 
+import Deriving.Common
+import Deriving.Show
 import Data.Bits
+import Text.NumberFormat
 
+%language ElabReflection
 
 -------------------------------------------------------------------------------
--- Packed 8-bit ARGB
+-- Packed 8-bit RGBA
 
-namespace ARGB
-  ||| Four 8-bit channels packed most-significant-first: alpha in bits
-  ||| 24-31, red in 16-23, green in 8-15, blue in 0-7.
-  public export data ARGB8 = MkARGB8 Bits32
+namespace RGBA
+  ||| Four 8-bit channels packed most-significant-first: red in bits
+  ||| 24-31, green in 16-23, blue in 8-15, alpha in 0-7.
+  public export data RGBA8 = MkRGBA8 Bits32
   ||| Extract a channel as its raw 8-bit value (never normalized).
   public export
-  (.alpha), (.red), (.green), (.blue) : ARGB8 -> Bits8
-  (.alpha) (MkARGB8 x) = cast $ (x `shiftR` 24)
-  (.red)   (MkARGB8 x) = cast $ (x `shiftR` 16)
-  (.green) (MkARGB8 x) = cast $ (x `shiftR` 8)
-  (.blue)  (MkARGB8 x) = cast $ x .&. 0xff
+  (.alpha), (.red), (.green), (.blue) : RGBA8 -> Bits8
+  (.red)   (MkRGBA8 x) = cast $ (x `shiftR` 24)
+  (.green) (MkRGBA8 x) = cast $ (x `shiftR` 16)
+  (.blue)  (MkRGBA8 x) = cast $ (x `shiftR` 8)
+  (.alpha) (MkRGBA8 x) = cast $ x .&. 0xff
 
-  ||| Pack four channels (`a r g b` order) into one `ARGB8`.
+  ||| Pack four channels (`r g b a` order) into one `RGBA8`.
   public export
-  toARGB8 : (a : Bits8) -> (r : Bits8) -> (g : Bits8) -> (b : Bits8) -> ARGB8
-  toARGB8 a r g b = MkARGB8 $ ((cast a) `shiftL` 24) .|. ((cast r) `shiftL` 16)
-                         .|. ((cast g) `shiftL` 8) .|. (cast b)
+  toRGBA8 : (r : Bits8) -> (g : Bits8) -> (b : Bits8) -> (a : Bits8) -> RGBA8
+  toRGBA8 r g b a = MkRGBA8 $ ((cast r) `shiftL` 24) .|. ((cast g) `shiftL` 16)
+                          .|. ((cast b) `shiftL` 8) .|. (cast a)
 
+  public export
+  Show RGBA8 where show (MkRGBA8 x) = "#\{toHex x}"
 
 -------------------------------------------------------------------------------
--- Normalized floating-point AHSV
+-- Normalized floating-point HSVA
 
-namespace AHSV
-  ||| Hue in degrees in `[0, 360)`; `alpha`, `saturation` and `value` in
+namespace HSVA
+  ||| Hue in degrees in `[0, 360)`; `saturation`, `value` and `alpha` in
   ||| `[0, 1]`.
   public export
-  record AHSV where
-    constructor MkAHSV
-    alpha, hue, saturation, value : Double
+  record HSVA where
+    constructor MkHSVA
+    hue, saturation, value, alpha : Double
 
-
-
+  %hint public export hsvaShow : Show HSVA
+  hsvaShow = %runElab derive
 
 -------------------------------------------------------------------------------
 -- CMYK (floating-point and packed 8-bit)
 
 namespace CMYK
-  ||| Each component in `[0, 1]`. No alpha channel -- an ARGB concept
+  ||| Each component in `[0, 1]`. No alpha channel -- an RGBA concept
   ||| this one does not carry.
   public export
   record CMYK where
@@ -81,6 +87,10 @@ namespace CMYK
   toCMYK8 c m y k = MkCMYK8 $ ((cast c) `shiftL` 24) .|. ((cast m) `shiftL` 16)
                         .|. ((cast y) `shiftL` 8) .|. (cast k)
 
+
+  %hint public export cmykShow : Show CMYK
+  cmykShow = %runElab derive
+
 -------------------------------------------------------------------------------
 -- Cast
 
@@ -100,7 +110,7 @@ denormalizeTo8Bit val =
 ||| `saturation` is `delta / value` (0 when `value == 0`). Achromatic
 ||| input (`delta == 0`) reports hue 0.
 public export
-Cast ARGB8 AHSV where
+Cast RGBA8 HSVA where
   cast rgb =
     let r = normalize8Bit rgb.red
         g = normalize8Bit rgb.green
@@ -120,16 +130,16 @@ Cast ARGB8 AHSV where
                                 then 60.0 * (((b - r) / delta) + 2.0)
                                 else 60.0 * (((r - g) / delta) + 4.0)
         h = if h' < 0.0 then h' + 360.0 else h'
-    in MkAHSV (normalize8Bit rgb.alpha) h s cmax
+    in MkHSVA h s cmax (normalize8Bit rgb.alpha)
 
 
 
 ||| RGB -> CMYK by the naive formula, with no black generation:
 ||| `k = 1 - value`, `c = (value - r) / value`. Fully black input maps
-||| to `k = 1`. `CMYK` has no alpha channel, so `ARGB8`'s alpha is
-||| dropped here, unlike in the `AHSV` conversion.
+||| to `k = 1`. `CMYK` has no alpha channel, so `RGBA8`'s alpha is
+||| dropped here, unlike in the `HSVA` conversion.
 public export
-Cast ARGB8 CMYK where
+Cast RGBA8 CMYK where
   cast rgb =
     let r = normalize8Bit rgb.red
         g = normalize8Bit rgb.green
@@ -149,7 +159,7 @@ Cast ARGB8 CMYK where
 ||| out of range. Achromatic input (`s == 0`) yields the grey
 ||| `(v, v, v)`.
 public export
-Cast AHSV ARGB8 where
+Cast HSVA RGBA8 where
   cast hsv =
     let h = hsv.hue
         v = hsv.value
@@ -176,10 +186,10 @@ Cast AHSV ARGB8 where
                                  3 => (p, q, v)
                                  4 => (t, p, v)
                                  _ => (v, p, q)
-    in toARGB8 (denormalizeTo8Bit hsv.alpha) 
-               (denormalizeTo8Bit r) 
+    in toRGBA8 (denormalizeTo8Bit r) 
                (denormalizeTo8Bit g) 
-               (denormalizeTo8Bit b)
+               (denormalizeTo8Bit b) 
+               (denormalizeTo8Bit hsv.alpha)
 
 
 ||| Packed 8-bit CMYK -> normalized CMYK.
