@@ -199,7 +199,7 @@ Show Input where
 ||| What one step of the parser found.
 data Step
   = Need                                -- more bytes are needed
-  | Got (Maybe Input) (List Int)        -- an event (or none for ignored bytes) and the rest
+  | Got (Maybe Input) Nat               -- an event (or none for ignored bytes) and how many bytes it took
 
 ||| The bytes that open a bracketed paste: ESC [ 2 0 0 ~.
 export
@@ -229,7 +229,7 @@ pasteEnd = [27, 91, 50, 48, 49, 126]
 ||| next read.
 export
 parseInput : (final : Bool) -> List Bits8 -> (List Input, List Bits8)
-parseInput final bytes = loop (length bytes) (map cast bytes) []
+parseInput final bytes = loop (map cast bytes) 0 []
   where
     utf8Length : Int -> Nat
     utf8Length b =
@@ -247,16 +247,14 @@ parseInput final bytes = loop (length bytes) (map cast bytes) []
       let m = cast {to = Integer} (n `minus` 1) in
       MkMods (mod m 2 == 1) (mod (div m 4) 2 == 1) (mod (div m 2) 2 == 1)
 
+    -- The numbers of a `;`-separated list of digits, a part with none being 0.
     numbers : List Int -> List Nat
-    numbers bs = map toNat (splitSemi bs)
+    numbers bs = go bs 0 []
       where
-        toNat : List Int -> Nat
-        toNat = foldl (\acc, d => if d >= 48 && d <= 57 then acc * 10 + cast (d - 48) else acc) 0
-
-        splitSemi : List Int -> List (List Int)
-        splitSemi xs = case break (== 59) xs of
-                         (a, []) => [a]
-                         (a, _ :: rest) => assert_smaller xs a :: splitSemi (assert_smaller xs rest)
+        go : List Int -> (current : Nat) -> (done : List Nat) -> List Nat
+        go [] cur done = reverse (cur :: done)
+        go (59 :: rest) cur done = go rest 0 (cur :: done)
+        go (d :: rest) cur done = go rest (if d >= 48 && d <= 57 then cur * 10 + cast (d - 48) else cur) done
 
     -- A CSI (or SS3) sequence ending in `final` with numeric parameters.
     csiKey : Int -> List Nat -> Maybe Input
@@ -330,36 +328,41 @@ parseInput final bytes = loop (length bytes) (map cast bytes) []
          else Just (Mouse (MkMouseEvent button action (col `minus` 1) (r `minus` 1) mods 1))
     sgrMouse _ _ = Nothing
 
-    -- `bs` follows ESC [.
+    -- `bs` follows ESC [; the bytes it takes are counted from there.
     csiStep : Bool -> List Int -> Step
     csiStep final bs =
-      let (pb, rest) = span (\b => b >= 0x20 && b <= 0x3F) bs in
-      case rest of
-        [] => if final then Got Nothing [] else Need
+      let (pb, rest) = span (\b => b >= 0x20 && b <= 0x3F) bs
+          upto = length pb
+      in case rest of
+        [] => if final then Got Nothing upto else Need
         (f :: after) =>
-          if f < 0x40 || f > 0x7E then Got Nothing rest
+          if f < 0x40 || f > 0x7E then Got Nothing upto
           else if (f == 77 || f == 109) && head' pb == Just 60
-            then Got (sgrMouse (f == 109) (numbers pb)) after
+            then Got (sgrMouse (f == 109) (numbers pb)) (S upto)
           else if f == 126 && pb == [50, 48, 48]
             then case splitPaste after of
-                   Just (text, post) => Got (Just (Paste (pack (decodeBytes text)))) post
-                   Nothing => if final then Got (Just (Paste (pack (decodeBytes after)))) [] else Need
-            else Got (csiKey f (numbers pb)) after
+                   Just (text, post) => Got (Just (Paste (pack (decodeBytes text)))) (length bs `minus` length post)
+                   Nothing => if final then Got (Just (Paste (pack (decodeBytes after)))) (length bs) else Need
+            else Got (csiKey f (numbers pb)) (S upto)
 
     step : Bool -> List Int -> Step
-    step _ [] = Got Nothing []
+    step _ [] = Got Nothing 0
     step final (27 :: rest) =
       case rest of
-        [] => if final then Got (Just (Press KEscape noMods)) [] else Need
-        (91 :: more) => csiStep final more
-        [79] => if final then Got Nothing [] else Need
-        (79 :: c :: more) => Got (csiKey c []) more
-        (27 :: more) => Got (Just (Press KEscape (MkMods False False True))) more
+        [] => if final then Got (Just (Press KEscape noMods)) 1 else Need
+        (91 :: more) =>
+          case csiStep final more of
+            Got ev taken => Got ev (taken + 2)
+            Need => Need
+        [79] => if final then Got Nothing 2 else Need
+        (79 :: c :: _) => Got (csiKey c []) 3
+        (27 :: _) => Got (Just (Press KEscape (MkMods False False True))) 2
         _ => case step final rest of
-               Got (Just (Press k m)) r => Got (Just (Press k ({ alt := True } m))) r
-               other => other
+               Got (Just (Press k m)) taken => Got (Just (Press k ({ alt := True } m))) (S taken)
+               Got ev taken => Got ev (S taken)
+               Need => Need
     step final (b :: rest) =
-      if b < 0x80 then Got (Just (asciiKey b)) rest
+      if b < 0x80 then Got (Just (asciiKey b)) 1
       else
         let n = utf8Length b
             conts = takeWhile isCont (take (n `minus` 1) rest)
@@ -368,21 +371,21 @@ parseInput final bytes = loop (length bytes) (map cast bytes) []
                    -- bytes so far could still be completed
                    if length conts == length (take (n `minus` 1) rest) && not final && length rest + 1 < n
                       then Need
-                      else Got (Just (Press (KChar '\xFFFD') noMods)) (drop (length conts) rest)
+                      else Got (Just (Press (KChar '\xFFFD') noMods)) (S (length conts))
               else case decodeBytes (b :: conts) of
-                     (c :: _) => Got (Just (Press (KChar c) noMods)) (drop (n `minus` 1) rest)
-                     [] => Got Nothing rest
+                     (c :: _) => Got (Just (Press (KChar c) noMods)) n
+                     [] => Got Nothing 1
       where
         isCont : Int -> Bool
         isCont x = x >= 0x80 && x < 0xC0
 
 
-    loop : Nat -> List Int -> List Input -> (List Input, List Bits8)
-    loop Z bs acc = (reverse acc, map cast bs)
-    loop (S fuel) bs acc =
-      case bs of
-        [] => (reverse acc, [])
-        _ => case step final bs of
-               Need => (reverse acc, map cast bs)
-               Got ev rest =>
-                 loop fuel rest (maybe acc (:: acc) ev)
+    -- Walks the bytes once; `skip` of them still belong to the event begun
+    -- before, and a byte with none left begins the next.
+    loop : List Int -> (skip : Nat) -> List Input -> (List Input, List Bits8)
+    loop [] _ acc = (reverse acc, [])
+    loop (_ :: xs) (S k) acc = loop xs k acc
+    loop bs@(_ :: xs) Z acc =
+      case step final bs of
+        Need => (reverse acc, map cast bs)
+        Got ev taken => loop xs (taken `minus` 1) (maybe acc (:: acc) ev)

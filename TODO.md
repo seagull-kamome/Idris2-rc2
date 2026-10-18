@@ -1176,11 +1176,13 @@ upstreamに取り込まれたら`idris2-src`を更新して自作idris2を作り
 
 ウィジェット・`Style`・`Input`・`Node`は`%default total`。全域でないのは`Layout`・`Frame`・
 `Loop`・`Program`・`Output`・`Terminal`(`covering`)。`believe_me`は無く、`assert_smaller`は
-`Input.idr`の`splitSemi`の1箇所だけ。上から順に片付ける。
+`Input.idr`の`splitSemi`の1箇所だけだった(なくした)。上から順に片付ける。
 
-- 「燃料」で止めている再帰: `Layout`の`shrinkAll`・`flex`の`go`、`Input`の`loop`。
-  `TextArea.wrapRows`と`Layout`の`charChunks`・`wordChunks`は、行頭で先読みして長さを決め、残りは
+- 「燃料」で止めている再帰: `Layout`の`shrinkAll`・`flex`の`go`。
+  `TextArea.wrapRows`、`Layout`の`charChunks`・`wordChunks`、`Input`の`loop`は、行頭で先読みして長さを決め、残りは
   先頭から1文字ずつ読み飛ばす構造再帰に書き直して燃料をなくした(旧版と結果が同じことを乱数で確かめた)。
+  `Input`の`loop`は、`Step`が残りのリストでなく食ったバイト数を返すようにして同じ形にし、`splitSemi`の
+  `assert_smaller`もなくした。これで`TermUI`の中に`assert_smaller`は無い。
   `shrinkAll`と`flex`の`go`は、リストを歩くのではなく不動点まで繰り返す。各ラウンドで少なくとも1項目が
   固定されるので`length + 1`回で足りるが、それを型で示すには「重みが0の項目に`distribute`は0を配る」
   という性質の証明が要り、費用に見合わない。燃料のまま残す。
