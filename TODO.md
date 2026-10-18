@@ -1178,8 +1178,6 @@ upstreamに取り込まれたら`idris2-src`を更新して自作idris2を作り
 `Loop`・`Program`・`Output`・`Terminal`(`covering`)。`believe_me`は無く、`assert_smaller`は
 `Input.idr`の`splitSemi`の1箇所だけ。上から順に片付ける。
 
-- `Splitter`の`lo ≤ size ≤ hi`と`TabStrip`の`active < length titles`。今は`withLimits`と`update`の
-  `min`で守っているだけで、型には出ていない。`Fin`か`Subset`で持つ。
 - 「燃料」で止めている再帰: `TextArea.wrapRows`、`Layout`の`charChunks`・`wordChunks`・`shrinkAll`・
   `flex`の`go`、`Input`の`loop`。どれも各回で入力が縮むので終了は正しいはずだが、燃料(`length + 1`)が
   尽きると結果が黙って途中で切れる。「毎回1要素以上進む」ことを示して整礎再帰にすれば燃料が要らない。

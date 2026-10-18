@@ -434,7 +434,9 @@ given different ones.
   choose the tab. The strip says which tab is active and the application shows
   its content; `tabbed wrap model contents` does that, the strip above a
   framed pane with the content of the active tab. A strip wider than its box
-  is cut at the edge.
+  is cut at the edge. The active tab is a `Fin (length titles)`, so it cannot
+  go past the last tab (`activeIndex` reads it, `select` sets it, clamping to the
+  last tab); a strip has at least one tab.
 - `Splitter`: two panes with a divider between them, side by side (`LeftRight`)
   or stacked (`TopBottom`). The first pane has `size` cells (between `lo` and
   `hi`) and the second takes the rest. The divider is a one-cell grey strip,
@@ -445,7 +447,8 @@ given different ones.
   position into the new size; Escape or a button let go ends the drag. A
   button let go outside the splitter is not seen by the cover: subscribe to
   `OnMouse (map wrap . releasing model)` while `held`. It needs mouse
-  reporting (`MouseFocus`). Give each splitter its own `name`.
+  reporting (`MouseFocus`). Give each splitter its own `name`. The size is `lo` plus a `Fin (S span)`, so it stays
+  between `lo` and `hi` whatever is done to the model (`size` and `hi` read them).
 - `Display`: `spinner tick` (advance `tick` from an `Every` subscription),
   `progressBar cells percent` (never wraps), and `table columns rows` (cells cut
   at the column width, missing cells empty, extra cells dropped).
