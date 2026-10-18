@@ -125,7 +125,7 @@ main = do
   _ <- addTimer loop 3 5
   send master "\ESC"
   untilEscape loop 100
-  cancelTimer loop 3
+  cancelTimer loop (Ticker 3)
 
   putStrLn "-- a paste split across reads, with pauses"
   send master "\ESC[200~hel"
@@ -139,7 +139,7 @@ main = do
   putStrLn "-- a one-shot timer of 0 ms"
   _ <- addOneShot loop 9 0
   events loop 1000
-  cancelTimer loop 9
+  cancelTimer loop (Shot 9)
 
   putStrLn "-- resize"
   _ <- setWinSize master 50 12
@@ -149,7 +149,7 @@ main = do
   putStrLn "-- timer"
   _ <- addTimer loop 7 20
   events loop 1000
-  cancelTimer loop 7
+  cancelTimer loop (Ticker 7)
   events loop 80
 
   putStrLn "-- continue after a stop"

@@ -136,15 +136,14 @@ record Env model msg where
   sched : Scheduler                       -- runs the tasks of `RunTask`
   tasks : IORef (List (String, TaskHandle)) -- the named tasks
 
--- The timer id of an `Every` key, the same for as long as the program runs;
--- even, while the ids of `After` are odd.
+-- The timer id of an `Every` key, the same for as long as the program runs.
 everyId : Env model msg -> String -> IO Nat
 everyId env key = do
   ids <- readIORef env.keyIds
   case lookup key ids of
     Just i => pure i
     Nothing => do
-      let i = 2 * length ids
+      let i = length ids
       writeIORef env.keyIds (ids ++ [(key, i)])
       pure i
 
@@ -211,8 +210,8 @@ mutual
   runCmd env (After ms m) = do
     n <- readIORef env.nextShot
     writeIORef env.nextShot (n + 1)
-    modifyIORef env.oneShots ((2 * n + 1, m) ::)
-    ignore (addOneShot env.loop (2 * n + 1) ms)
+    modifyIORef env.oneShots ((n, m) ::)
+    ignore (addOneShot env.loop n ms)
   runCmd env (Perform io) = io >>= dispatch env
   runCmd env Suspend = do
     closeTerminal env.term
@@ -450,22 +449,21 @@ onInput env inp = do
 onEvent : Env model msg -> Event -> IO ()
 onEvent env (EInput i) = onInput env i
 onEvent env (EResize c r) = applyResize env c r
-onEvent env (ETimer ident) =
-  if mod (cast {to = Integer} ident) 2 == 0
-     then do
-       model <- readIORef env.modelRef
-       ids <- readIORef env.keyIds
-       traverse_ (\s => case s of
-                          Every k _ m => if lookup k ids == Just ident then dispatch env m else pure ()
-                          _ => pure ()) (env.prog.subs model)
-     else do
-       shots <- readIORef env.oneShots
-       cancelTimer env.loop ident
-       case lookup ident shots of
-         Nothing => pure ()
-         Just m => do
-           writeIORef env.oneShots (filter (\(i, _) => i /= ident) shots)
-           dispatch env m
+onEvent env (ETimer (Ticker ident)) = do
+  model <- readIORef env.modelRef
+  ids <- readIORef env.keyIds
+  traverse_ (\s => case s of
+                     Every k _ m => if lookup k ids == Just ident then dispatch env m else pure ()
+                     _ => pure ()) (env.prog.subs model)
+onEvent env (ETimer (Shot ident)) = do
+  shots <- readIORef env.oneShots
+  cancelTimer env.loop (Shot ident)
+  case lookup ident shots of
+    Nothing => pure ()
+    Just m => do
+      writeIORef env.oneShots (filter (\(i, _) => i /= ident) shots)
+      dispatch env m
+onEvent _ (ETimer EscapeKey) = pure ()
 onEvent env EResume = do
   skip <- readIORef env.skipResume
   writeIORef env.skipResume 0
@@ -509,7 +507,7 @@ loopUntilQuit env = do
       model <- readIORef env.modelRef
       let wanted = nubBy (\a, b => fst a == fst b) (mapMaybe period (env.prog.subs model))
       active <- readIORef env.everys
-      traverse_ (\(k, _) => everyId env k >>= cancelTimer env.loop) (filter (\a => not (elem a wanted)) active)
+      traverse_ (\(k, _) => everyId env k >>= \i => cancelTimer env.loop (Ticker i)) (filter (\a => not (elem a wanted)) active)
       traverse_ (\(k, ms) => do i <- everyId env k
                                 ignore (addTimer env.loop i ms)) (filter (\w => not (elem w active)) wanted)
       writeIORef env.everys wanted
