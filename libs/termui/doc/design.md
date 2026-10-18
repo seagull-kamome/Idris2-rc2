@@ -399,6 +399,27 @@ given different ones.
   bar sits on its right, outside of what takes keys and clicks. Keys with Ctrl,
   Alt or Shift are not taken. `setItems` keeps the selection where it still makes
   sense and `resize` changes the height of the window.
+- `Checkbox`: `checkbox label checked toggle` draws `[x] label` or `[ ] label`
+  and sends `toggle` for Enter, Space or a click; the parent keeps the Bool. The
+  focused box is inverse. `Button`: `button look label press`, with `look` one
+  of `Framed` (a rounded frame, heavy while focused), `Flat` (a grey
+  background) and `Link` (underlined, bright blue, as a hyperlink); a focused
+  button has an inverse label and sends `press` for Enter, Space or a click. Both
+  are as wide as their text (they sit in a row), and a key with Ctrl or Alt is
+  left to the application (`Activate.activates`).
+- `MenuBar`: `menuBar wrap model` is a bar of titles with drop-down menus.
+  A `Menu` has a title and `Entry`s: `Item label msg` or `Separator`. The bar
+  is a focusable `absolute` box at the top left of its parent, in flow with
+  the open menu, so the menu drops over what is below. A box clips its
+  children, so the parent must be tall enough: the root of the view, or a
+  box as tall as the screen; the application leaves the first row of it free.
+  Left/Right move between titles, Down opens (Up and Down then move over the
+  items and skip separators, wrapping), Enter or Space opens or chooses,
+  Escape closes (when nothing is open it is left to the application), and a
+  click on a title opens or closes its menu, on an item chooses it, anywhere
+  else in the menu's box closes it. The menu is drawn open only while it has
+  the focus. `update : Msg -> Model msg -> (Model msg, Maybe msg)` also returns
+  the message of the item chosen, which the application sends on with `Emit`.
 - `Display`: `spinner tick` (advance `tick` from an `Every` subscription),
   `progressBar cells percent` (never wraps), and `table columns rows` (cells cut
   at the column width, missing cells empty, extra cells dropped).

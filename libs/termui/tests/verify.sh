@@ -37,6 +37,7 @@ TESTS=(
     "TestFocusKey|rc2base contrib|a focus with a key stays with its widget when others come and go"
     "TestSuspend|rc2base contrib|Suspend and the continue, with the program as a child on a pty"
     "TestProgram|rc2base contrib|Elm-style program, focus, commands and subscriptions"
+    "TestControls|rc2base contrib|check box, buttons and menu bar"
 )
 
 # Tests built with IDRIS2_CFLAGS=-D_GNU_SOURCE (posix_openpt is hidden otherwise).
