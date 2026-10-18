@@ -422,10 +422,13 @@ given different ones.
   the message of the item chosen, which the application sends on with `Emit`.
 - `KeyGuide`: a row of function-key hints, `F1 Help  F2 Save`, the keys inverse.
   A list of `MkHint fkey label msg` draws the row (`keyGuide`) and gives the
-  messages: `keyInput hints` for an `OnInput` subscription (a key with Ctrl,
-  Alt or Shift is not taken) and `keyClick hints column` for an `OnMouse`
-  subscription that has checked the row of the guide. It is not a focusable,
-  so Tab skips it.
+  messages. The row takes the left mouse button itself: a click on a hint sends
+  its message, a click between hints does nothing. It takes no key, so Tab moves
+  on from it, but being a focusable it is one stop of the focus ring. The keys
+  are the application's: `keyInput hints` for an `OnInput` subscription turns an
+  F-key into the message of its hint (a key with Ctrl, Alt or Shift is not
+  taken). `keyClick hints column` is the lookup behind the click, for an
+  `OnMouse` subscription of one's own.
 - `TabStrip`: ` One │ Two │ Three `, one tab active (inverse while the strip has
   the focus, bold and underlined otherwise). Left/Right, Home/End and a click
   choose the tab. The strip says which tab is active and the application shows

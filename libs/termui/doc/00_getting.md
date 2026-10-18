@@ -435,7 +435,7 @@ What to take from it:
 | `TermUI.Widget.Checkbox` | `checkbox` | `[x] label`; the parent keeps the Bool and flips it on the message |
 | `TermUI.Widget.Button` | `button` | `Framed`, `Flat` or `Link` (underlined, like a hyperlink) |
 | `TermUI.Widget.MenuBar` | `menuBar` | a bar of titles with drop-down menus; put it last in the root box and leave its first row free |
-| `TermUI.Widget.KeyGuide` | `keyGuide` | a row such as `F1 Help  F2 Save`; the same list turns F-keys and clicks into messages |
+| `TermUI.Widget.KeyGuide` | `keyGuide` | a row such as `F1 Help  F2 Save`; clicking a hint sends its message, and `keyInput` turns the F-keys into the same messages |
 | `TermUI.Widget.TabStrip` | `tabStrip`, `tabbed` | tabs with one active; `tabbed` adds the framed pane of its content |
 | `TermUI.Widget.Splitter` | `splitter` | two panes with a divider you move with the arrow keys or drag with the mouse |
 | `TermUI.Widget.Display` | `spinner`, `progressBar`, `table` | static pieces without focus; `spinner` advances with a tick you count |

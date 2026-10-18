@@ -85,6 +85,11 @@ main = do
   draw (keyGuide hints) 30 1
   for_ [key (KF 1), key (KF 10), key (KF 3), Press (KF 2) (MkMods False True False), press 'a'] (putStrLn . shown . keyInput hints)
   for_ [0, 1, 4, 5, 6, 7, 10, 11, 12, 18, 19, 20] (\c => putStrLn (show c ++ ": " ++ shown (keyClick hints c)))
+  putStrLn "-- function-key guide, clicks on the row"
+  for_ [mouse LeftButton ButtonDown 2 0, mouse LeftButton ButtonDown 7 0, mouse LeftButton ButtonDown 17 0, mouse LeftButton ButtonUp 2 0, mouse RightButton ButtonDown 2 0, mouse WheelUp ButtonDown 2 0, key (KF 1), key KTab, mouse LeftButton ButtonDown 40 0] (\i =>
+    putStrLn (case focusOf (keyGuide hints) of
+                Just (_, h) => shown (h i)
+                Nothing => "no focusable"))
 
   putStrLn "-- tab strip"
   let tabs = T.fromTitles ["One", "Two", "Three"]

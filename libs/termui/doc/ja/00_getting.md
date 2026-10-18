@@ -362,7 +362,7 @@ main = do
 | `TermUI.Widget.Checkbox` | `checkbox` | `[x] label`。真偽値は親が持ち、メッセージを受けて反転する |
 | `TermUI.Widget.Button` | `button` | `Framed`(枠あり)、`Flat`(枠なし)、`Link`(下線付きのハイパーリンク風) |
 | `TermUI.Widget.MenuBar` | `menuBar` | タイトルの並ぶバーとドロップダウンメニュー。ルートの箱の最後に置き、最初の1行は空けておく |
-| `TermUI.Widget.KeyGuide` | `keyGuide` | `F1 Help  F2 Save`のような1行。同じリストでFキーとクリックをメッセージに変える |
+| `TermUI.Widget.KeyGuide` | `keyGuide` | `F1 Help  F2 Save`のような1行。ヒントをクリックするとそのメッセージを送る。Fキーは`keyInput`で同じメッセージに変える |
 | `TermUI.Widget.TabStrip` | `tabStrip`、`tabbed` | 1つが選ばれたタブ。`tabbed`は選ばれたタブの内容を入れる枠付きのペインも足す |
 | `TermUI.Widget.Splitter` | `splitter` | 矢印キーやマウスのドラッグで境界を動かせる、2つのペイン |
 | `TermUI.Widget.Display` | `spinner`、`progressBar`、`table` | フォーカスのない表示部品。`spinner`は自分で数えるtickで進む |
