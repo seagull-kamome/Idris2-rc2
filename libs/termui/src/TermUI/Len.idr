@@ -12,7 +12,9 @@ public export
 Len : Type
 Len = Int32
 
-||| `a - b`, or 0 if that is negative.
+||| `a - b`, or 0 if that is negative: the truncated subtraction that `Nat`'s
+||| `minus` is. "Monus" is its name in mathematics (a pun on "minus" and
+||| "monoid").
 public export
 monus : Len -> Len -> Len
 monus a b = if a > b then a - b else 0
