@@ -5,7 +5,7 @@
 module TermUI.Widget.ScrollBar
 
 import Data.List
-import Data.Nat
+import TermUI.Len
 import TermUI.Node
 import TermUI.Style
 
@@ -17,22 +17,21 @@ import TermUI.Style
 ||| A bar `rows` high for `count` lines of which the window starting at `top`
 ||| is visible. It is blank when everything fits.
 export
-scrollBar : (rows : Nat) -> (count : Nat) -> (top : Nat) -> Node msg
+scrollBar : (rows : Len) -> (count : Len) -> (top : Len) -> Node msg
 scrollBar rows count top =
-  if count <= rows || rows == 0
+  if count <= rows || rows <= 0
      then box [width (Cells 1), height (Cells rows)] []
      else
        let thumb = max 1 (ndiv (rows * rows) count)
-           room = rows `minus` thumb
-           maxTop = count `minus` rows
+           room = rows `monus` thumb
+           maxTop = count `monus` rows
            start = ndiv (min top maxTop * room + ndiv maxTop 2) maxTop
-       in column [width (Cells 1), height (Cells rows)] (map (cell start thumb) (take rows [0 ..]))
+       in column [width (Cells 1), height (Cells rows)] (map (cell start thumb) [0 .. rows - 1])
   where
-    ndiv : Nat -> Nat -> Nat
-    ndiv a Z = 0
-    ndiv a n@(S _) = divNatNZ a n ItIsSucc
+    ndiv : Len -> Len -> Len
+    ndiv a n = if n <= 0 then 0 else a `div` n
 
-    cell : Nat -> Nat -> Nat -> Node msg
+    cell : Len -> Len -> Len -> Node msg
     cell start thumb i =
       if i >= start && i < start + thumb
          then Text (fgColor white plain) Truncate "█"

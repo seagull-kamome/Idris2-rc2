@@ -4,7 +4,8 @@ version    = 0.1.0
 opts       = "--total"
 sourcedir  = "src"
 depends    = contrib, rc2base
-modules    = TermUI.Style,
+modules    = TermUI.Len,
+             TermUI.Style,
              TermUI.Node,
              TermUI.Layout,
              TermUI.Frame,

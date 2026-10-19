@@ -26,7 +26,7 @@ record AppModel where
   help : Sc.Model
   showHelp : Bool
 
-data AppMsg = Edit A.Msg | Scroll Sc.Msg | Resized Nat Nat | ToggleHelp | ToggleWrap | Pause | Quit'
+data AppMsg = Edit A.Msg | Scroll Sc.Msg | Resized Len Len | ToggleHelp | ToggleWrap | Pause | Quit'
 
 helpLines : List String
 helpLines =
@@ -56,7 +56,7 @@ appView m =
 appUpdate : AppMsg -> AppModel -> (AppModel, Cmd AppMsg)
 appUpdate (Edit e) m = ({ text $= A.update e } m, maybe NoCmd SetClipboard (A.copyText e m.text))
 appUpdate (Scroll s) m = ({ help $= Sc.update s } m, NoCmd)
-appUpdate (Resized cols rows) m = ({ text $= A.resize cols (rows `minus` 1) } m, NoCmd)
+appUpdate (Resized cols rows) m = ({ text $= A.resize cols (rows `monus` 1) } m, NoCmd)
 appUpdate ToggleHelp m = ({ showHelp $= not } m, NoCmd)
 appUpdate ToggleWrap m = ({ text $= \t => A.setWrap (not t.wrapOn) t } m, NoCmd)
 appUpdate Pause m = (m, Suspend)

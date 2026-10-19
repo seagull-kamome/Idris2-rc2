@@ -11,6 +11,7 @@ import Data.IOArray
 import Data.List
 import Data.Maybe
 import TermUI.Layout
+import TermUI.Len
 import TermUI.Node
 import TermUI.Style
 import TermUI.Width
@@ -43,29 +44,32 @@ continuation = '\0'
 public export
 record Frame where
   constructor MkFrame
-  frameWidth, frameHeight : Nat
+  frameWidth, frameHeight : Len
   cells : IOArray Cell
 
 export
-newFrame : Nat -> Nat -> IO Frame
-newFrame w h = MkFrame w h <$> newArray (cast (w * h))
+newFrame : Len -> Len -> IO Frame
+newFrame w h =
+  let w' = nonneg w
+      h' = nonneg h
+  in MkFrame w' h' <$> newArray (cast (w' * h'))
 
 ||| The numbers lo, lo+1, .., hi-1.
 export
-span : Nat -> Nat -> List Nat
-span lo hi = if hi <= lo then [] else [lo .. hi `minus` 1]
+span : Len -> Len -> List Len
+span lo hi = if hi <= lo then [] else [lo .. hi `monus` 1]
 
 export
-getCell : Frame -> Nat -> Nat -> IO Cell
+getCell : Frame -> Len -> Len -> IO Cell
 getCell f x y =
-  if x < f.frameWidth && y < f.frameHeight
+  if x >= 0 && y >= 0 && x < f.frameWidth && y < f.frameHeight
      then fromMaybe blank <$> readArray f.cells (cast (y * f.frameWidth + x))
      else pure blank
 
 -- Overwriting half of a wide character blanks the other half.
-setCell : Frame -> Nat -> Nat -> Cell -> IO ()
+setCell : Frame -> Len -> Len -> Cell -> IO ()
 setCell f x y c =
-  when (x < f.frameWidth && y < f.frameHeight) $ do
+  when (x >= 0 && y >= 0 && x < f.frameWidth && y < f.frameHeight) $ do
     old <- getCell f x y
     let at = cast (y * f.frameWidth + x)
     when (old.glyph == continuation && x > 0) $
@@ -80,7 +84,7 @@ setCell f x y c =
 -- A drawing window [x0, x1) x [y0, y1): cells outside it are ignored.
 record Clip where
   constructor MkClip
-  x0, y0, x1, y1 : Nat
+  x0, y0, x1, y1 : Len
 
 clipRect : Rect -> Clip
 clipRect r = MkClip r.x r.y (r.x + r.w) (r.y + r.h)
@@ -88,10 +92,10 @@ clipRect r = MkClip r.x r.y (r.x + r.w) (r.y + r.h)
 intersect : Clip -> Clip -> Clip
 intersect a b = MkClip (max a.x0 b.x0) (max a.y0 b.y0) (min a.x1 b.x1) (min a.y1 b.y1)
 
-inside : Clip -> Nat -> Nat -> Bool
+inside : Clip -> Len -> Len -> Bool
 inside c x y = x >= c.x0 && x < c.x1 && y >= c.y0 && y < c.y1
 
-put : Frame -> Clip -> Nat -> Nat -> Char -> Style -> IO ()
+put : Frame -> Clip -> Len -> Len -> Char -> Style -> IO ()
 put f c x y g s = when (inside c x y) $ setCell f x y (MkCell g (settle s) [])
 
 -- Children are clipped to the content box of their parent.
@@ -99,20 +103,20 @@ paintLaid : Frame -> Clip -> Style -> Laid -> IO ()
 paintLaid f c inherited (LText r s ls) = do
   let st = s `over` inherited
       cl = intersect c (clipRect r)
-  traverse_ (\(i, l) => paintLine cl r.x (r.y + i) st (unpack l)) (zip [0 .. length ls] ls)
+  traverse_ (\(i, l) => paintLine cl r.x (r.y + i) st (unpack l)) (zip [0 .. count ls] ls)
   where
     -- A combining mark goes with the cell before `x` (the first one of a wide
     -- character), if that is in the window.
-    attach : Clip -> Nat -> Nat -> Char -> IO ()
+    attach : Clip -> Len -> Len -> Char -> IO ()
     attach c x y mark =
       when (x > 0) $ do
-        prev <- getCell f (x `minus` 1) y
-        let at = if prev.glyph == continuation && x > 1 then x `minus` 2 else x `minus` 1
+        prev <- getCell f (x `monus` 1) y
+        let at = if prev.glyph == continuation && x > 1 then x `monus` 2 else x `monus` 1
         cell <- getCell f at y
         when (inside c at y && length cell.combining < 8) $
           ignore (writeArray f.cells (cast (y * f.frameWidth + at)) ({ combining $= (++ [mark]) } cell))
 
-    paintLine : Clip -> Nat -> Nat -> Style -> List Char -> IO ()
+    paintLine : Clip -> Len -> Len -> Style -> List Char -> IO ()
     paintLine _ _ _ _ [] = pure ()
     paintLine c x y s (ch :: rest) =
       case charWidth ch of
@@ -155,8 +159,8 @@ paintLaid f c inherited (LBox r p kids) = do
     paintBorder c r b s =
       when (r.w >= 2 && r.h >= 2) $ do
         let (tl, tr, bl, br, hz, vt) = borderChars b
-            right = r.x + r.w `minus` 1
-            bottom = r.y + r.h `minus` 1
+            right = r.x + r.w `monus` 1
+            bottom = r.y + r.h `monus` 1
         traverse_ (\xx => put f c xx r.y hz s >> put f c xx bottom hz s)
                   (span (max (r.x + 1) c.x0) (min right c.x1))
         traverse_ (\yy => put f c r.x yy vt s >> put f c right yy vt s)
@@ -169,7 +173,7 @@ paintLaid f c inherited (LBox r p kids) = do
 ||| Lay out `view` in `w` x `h` cells and paint it into a fresh frame; the
 ||| layout is returned too, for finding where nodes ended up.
 export
-renderLaid : Node msg -> (w : Nat) -> (h : Nat) -> IO (Frame, Laid)
+renderLaid : Node msg -> (w : Len) -> (h : Len) -> IO (Frame, Laid)
 renderLaid view w h = do
   f <- newFrame w h
   let laid = layout view w h
@@ -178,7 +182,7 @@ renderLaid view w h = do
 
 ||| Lay out `view` in `w` x `h` cells and paint it into a fresh frame.
 export
-render : Node msg -> (w : Nat) -> (h : Nat) -> IO Frame
+render : Node msg -> (w : Len) -> (h : Len) -> IO Frame
 render view w h = fst <$> renderLaid view w h
 
 ||| The text of a frame, one string per row without trailing blanks.
@@ -193,7 +197,7 @@ frameLines f = traverse row (span 0 f.frameHeight)
     shown : Cell -> List Char
     shown cell = if cell.glyph == continuation then [] else cell.glyph :: cell.combining
 
-    row : Nat -> IO String
+    row : Len -> IO String
     row y = do
       cs <- traverse (\x => getCell f x y) (span 0 f.frameWidth)
       pure (trimEnd (pack (concatMap shown cs)))

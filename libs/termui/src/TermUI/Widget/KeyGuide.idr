@@ -12,6 +12,7 @@ import Data.List
 import TermUI.Input
 import TermUI.Node
 import TermUI.Style
+import TermUI.Len
 import TermUI.Width
 
 %default total
@@ -28,17 +29,17 @@ record Hint msg where
 keyText : Hint msg -> String
 keyText h = "F" ++ show h.fkey
 
-hintWidth : Hint msg -> Nat
+hintWidth : Hint msg -> Len
 hintWidth h = stringWidth (keyText h) + 1 + stringWidth h.label
 
 ||| The message of the hint at a column of the row, counted from its left edge.
 export
-keyClick : List (Hint msg) -> (column : Nat) -> Maybe msg
+keyClick : List (Hint msg) -> (column : Len) -> Maybe msg
 keyClick [] _ = Nothing
 keyClick (h :: rest) c =
   if c < hintWidth h then Just h.action
   else if c == hintWidth h then Nothing
-  else keyClick rest (c `minus` (hintWidth h + 1))
+  else keyClick rest (c `monus` (hintWidth h + 1))
 
 ||| The row of hints, the keys inverse. It takes the left mouse button: a click
 ||| on a hint sends its message. It takes no key, so Tab moves on from it.

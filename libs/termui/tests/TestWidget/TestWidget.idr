@@ -23,7 +23,7 @@ import TermUI.Widget.TextInput as T
 
 %default covering
 
-draw : Node () -> Nat -> Nat -> IO ()
+draw : Node () -> Len -> Len -> IO ()
 draw v w h = do
   f <- render v w h
   ls <- frameLines f
@@ -31,17 +31,17 @@ draw v w h = do
 
 -- The rows of a view and, below each row that has inverse cells, a `^` under
 -- every one of them.
-drawMarked : Node () -> Nat -> Nat -> IO ()
+drawMarked : Node () -> Len -> Len -> IO ()
 drawMarked v w h = do
   f <- render v w h
   ls <- frameLines f
   traverse_ (\(y, l) => do
                putStrLn ("|" ++ l)
-               cells <- traverse (\x => getCell f x y) (take w [0 ..])
+               cells <- traverse (\x => getCell f x y) (if w <= 0 then [] else [0 .. w - 1])
                let marks = pack (map (\c => if hasAttr Inverse c.style then '^' else if c.style.bg == Indexed 4 then 's' else ' ') cells)
                when (any (\c => c == '^' || c == 's') (unpack marks)) $
                  putStrLn ("|" ++ pack (reverse (dropWhile (== ' ') (reverse (unpack marks))))))
-            (zip [0 .. length ls] ls)
+            (zip [0 .. count ls] ls)
 
 -- The cursor is shown as a bar.
 shown : T.Model -> String
@@ -63,7 +63,7 @@ ctrl c = Press (KChar c) (MkMods False True False)
 typed : String -> T.Model -> T.Model
 typed s = keys (map press (unpack s))
 
-click : MouseButton -> Nat -> Nat -> Input
+click : MouseButton -> Len -> Len -> Input
 click b c r = Mouse (MkMouseEvent b ButtonDown c r noMods 1)
 
 -- The text of the editor with a bar at the cursor.

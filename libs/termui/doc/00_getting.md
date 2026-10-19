@@ -526,6 +526,9 @@ Mouse events never reach `OnInput`.
 - **Give a box a height if it must keep one.** An `Auto` height shrinks to the
   content. Lists and viewers take their height from the model, but the box
   around one needs a `height` or a `grow`.
+- **Sizes are `Len`, not `Nat`.** Widths, heights, columns and rows are `Int32`
+  (the alias `Len`, which `TermUI.Node` exports). A literal such as `Cells 7`
+  needs no change; a `length` of a list does: use `count xs`, or `cast`.
 - **Keep `Every` keys to a small set.** The runtime remembers every key it has
   seen, so a key built from an ever-growing counter is a leak.
 - **Compile with `rc2` and run under a UTF-8 locale.** rc2 programs need one

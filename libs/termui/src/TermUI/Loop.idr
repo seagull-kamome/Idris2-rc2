@@ -6,6 +6,7 @@
 ||| This module was licensed by BSD3. see LICENSE file for detail.
 module TermUI.Loop
 
+import TermUI.Len
 import Data.Bits
 import Data.IORef
 import Data.List
@@ -47,7 +48,7 @@ Show TimerId where
 public export
 data Event
   = EInput Input
-  | EResize Nat Nat          -- columns, rows
+  | EResize Len Len          -- columns, rows
   | ETimer TimerId           -- the timer that fired
   | ETerminate               -- SIGINT, SIGTERM or SIGHUP
   | EResume                  -- SIGCONT: the program was stopped and continued

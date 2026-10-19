@@ -10,6 +10,7 @@ import Data.List
 import Data.Maybe
 import Data.String
 import TermUI.Input
+import TermUI.Len
 import TermUI.Node
 import TermUI.Style
 import TermUI.Width
@@ -57,6 +58,10 @@ record Model where
   wrapOn : Bool
   topRow : Nat
 
+-- The width of a character in cells, as a count.
+cw : Char -> Nat
+cw c = cast (charWidth c)
+
 ||| The number of lines.
 export
 lineCount : Model -> Nat
@@ -84,7 +89,7 @@ wrapRows room cs = if null cs then [0] else go cs 0
     -- The length of the row that starts `rest`, and whether it is the last one.
     row : List Char -> (Nat, Bool)
     row rest =
-      let fitted = cutTo (max 1 room) rest
+      let fitted = cutTo (cast (max 1 room)) rest
           n = max 1 (length fitted)
       in if null (drop n rest)
             then (n, True)
@@ -181,8 +186,8 @@ scrolledPlain m =
             else if m.rows > 0 && m.line >= first + m.rows then (m.line + 1) `minus` m.rows
             else first
       room = m.cells `minus` 1
-      lineWidth = sum (map charWidth m.before) + sum (map charWidth m.after) + 1
-      left = if lineWidth <= room then 0 else leftFor room (cursorWidth m.after) m.left m.before
+      lineWidth = sum (map cw m.before) + sum (map cw m.after) + 1
+      left = if lineWidth <= room then 0 else leftFor (cast room) (cursorWidth m.after) m.left m.before
   in { top := top, left := left, topRow := 0 } m
 
 
@@ -191,13 +196,13 @@ scrolled m = if m.wrapOn then scrolledWrap m else scrolledPlain m
 
 ||| An empty editor `cells` wide and `rows` high.
 export
-empty : (cells : Nat) -> (rows : Nat) -> Model
-empty cells rows = MkModel cells rows 0 0 [] [] [] [] 0 1 Nothing Nothing [] [] NoEdit "" False 0
+empty : (cells : Len) -> (rows : Len) -> Model
+empty cells rows = MkModel (cast cells) (cast rows) 0 0 [] [] [] [] 0 1 Nothing Nothing [] [] NoEdit "" False 0
 
 ||| The same editor in a viewport of another size.
 export
-resize : (cells : Nat) -> (rows : Nat) -> Model -> Model
-resize cells rows m = scrolled ({ cells := cells, rows := rows } m)
+resize : (cells : Len) -> (rows : Len) -> Model -> Model
+resize cells rows m = scrolled ({ cells := cast cells, rows := cast rows } m)
 
 ||| Show the lines broken into rows as wide as the editor (`True`), or cut and
 ||| scrolled sideways (`False`, the default).
@@ -229,7 +234,7 @@ splitLines s = go (unpack s) [] []
 
 ||| An editor holding the text, with the cursor at its end.
 export
-fromString : (cells : Nat) -> (rows : Nat) -> String -> Model
+fromString : (cells : Len) -> (rows : Len) -> String -> Model
 fromString cells rows s =
   let ls = splitLines s
       ln = length ls `minus` 1
@@ -318,7 +323,7 @@ moveRight m =
 
 -- The column in cells that a vertical move aims at.
 aim : Model -> Nat
-aim m = fromMaybe (sum (map charWidth m.before)) m.want
+aim m = fromMaybe (sum (map cw m.before)) m.want
 
 -- Onto the line above or below, at the same column in cells. The text after
 -- the cursor goes with the line left behind.
@@ -327,14 +332,14 @@ moveUp m =
   case m.above of
     [] => m
     (l :: ls) =>
-      let idx = reach (aim m) l 0 in
+      let idx = reach (cast (aim m)) l 0 in
       { above := ls, before := reverse (take idx l), after := drop idx l
       , below := (reverse m.before ++ m.after) :: m.below, line $= (`minus` 1), want := Just (aim m) } m
 moveDown m =
   case m.below of
     [] => m
     (l :: ls) =>
-      let idx = reach (aim m) l 0 in
+      let idx = reach (cast (aim m)) l 0 in
       { above := (reverse m.before ++ m.after) :: m.above, before := reverse (take idx l)
       , after := drop idx l, below := ls, line $= S, want := Just (aim m) } m
 
@@ -342,7 +347,7 @@ moveDown m =
 -- of `l` that starts at `st` and is `n` characters long: not past the row, and
 -- on its last character unless it is the last row.
 landing : List Char -> (st : Nat) -> (n : Nat) -> (isLast : Bool) -> (col : Nat) -> Nat
-landing l st n isLast col = st + min (reach col (take n (drop st l)) 0) (if isLast then n else n `minus` 1)
+landing l st n isLast col = st + min (reach (cast col) (take n (drop st l)) 0) (if isLast then n else n `minus` 1)
 
 -- Put the cursor on the character `idx` of its line.
 inLine : Nat -> Maybe Nat -> Model -> Model
@@ -381,7 +386,7 @@ wrapUp m =
   let cur = reverse m.before ++ m.after
       lens = wrapRows (wrapRoom m) cur
       (r, st) = locateRow lens (length m.before)
-      want = fromMaybe (sum (map charWidth (take (length m.before `minus` st) m.before))) m.want
+      want = fromMaybe (sum (map cw (take (length m.before `minus` st) m.before))) m.want
   in if r > 0
         then let (st', n, isLast) = rowSpan lens (r `minus` 1) in inLine (landing cur st' n isLast want) (Just want) m
         else case m.above of
@@ -396,7 +401,7 @@ wrapDown m =
   let cur = reverse m.before ++ m.after
       lens = wrapRows (wrapRoom m) cur
       (r, st) = locateRow lens (length m.before)
-      want = fromMaybe (sum (map charWidth (take (length m.before `minus` st) m.before))) m.want
+      want = fromMaybe (sum (map cw (take (length m.before `minus` st) m.before))) m.want
   in if S r < length lens
         then let (st', n, isLast) = rowSpan lens (S r) in inLine (landing cur st' n isLast want) (Just want) m
         else case m.below of
@@ -477,7 +482,7 @@ clickAt col row m =
         m1 = if target < m.line then repeatN (m.line `minus` target) moveUp m
              else repeatN (target `minus` m.line) moveDown m
         text = reverse m1.before ++ m1.after
-        idx = reach col (drop m1.left text) m1.left
+        idx = reach (cast col) (drop m1.left text) m1.left
     in { before := reverse (take idx text), after := drop idx text, want := Nothing } m1
   where
     clickWrapped : Model
@@ -689,10 +694,10 @@ keyMsg (Press key mods) =
 keyMsg (Mouse e) =
   case (e.button, e.action) of
     (LeftButton, ButtonDown) => Just (case e.clicks of
-                                         1 => ClickAt e.column e.row
-                                         2 => WordAt e.column e.row
-                                         _ => LineAt e.column e.row)
-    (LeftButton, Drag) => Just (DragTo e.column e.row)
+                                         1 => ClickAt (cast e.column) (cast e.row)
+                                         2 => WordAt (cast e.column) (cast e.row)
+                                         _ => LineAt (cast e.column) (cast e.row))
+    (LeftButton, Drag) => Just (DragTo (cast e.column) (cast e.row))
     (WheelUp, _) => Just MoveUp
     (WheelDown, _) => Just MoveDown
     _ => Nothing
@@ -721,7 +726,7 @@ Cell = (Char, Style, Bool)
 fitting : Nat -> List Cell -> List Cell
 fitting _ [] = []
 fitting room (c@(ch, _, _) :: cs) =
-  if charWidth ch <= room then c :: fitting (room `minus` charWidth ch) cs else []
+  if cw ch <= room then c :: fitting (room `minus` cw ch) cs else []
 
 -- Runs of equal style and kind.
 spans : List Cell -> List (Style, Bool, List Char)
@@ -746,8 +751,8 @@ lineView focused m selected idx len base isLast chars =
                              Just (lo, hi, _) => if k >= lo && k < hi then selectionStyle else plain
                              Nothing => plain
       onCursor = \k => focused && cursorAt == Just k
-      shown = map (\(k, ch) => (if onCursor k && charWidth ch == 0 then ' ' else if charWidth ch > (m.cells `minus` 1) then '?' else ch, styleOf k, onCursor k))
-                  (indexed base (cutTo m.cells chars))
+      shown = map (\(k, ch) => (if onCursor k && cw ch == 0 then ' ' else if cw ch > (m.cells `minus` 1) then '?' else ch, styleOf k, onCursor k))
+                  (indexed base (cutTo (cast m.cells) chars))
       end = if focused && isLast && cursorAt == Just len
                then [(' ', cursorStyle, True)]
                else case sel of
@@ -777,9 +782,9 @@ view focused m =
                    then map (\(i, l, st, n, isLast) => lineView focused m selected i (length l) st isLast (take n (drop st l)))
                             (shownRows m)
                    else take m.rows (map (\(i, l) => lineView focused m selected i (length l) m.left True (drop m.left l)) numbered)
-  in box [direction Row, width (Cells m.cells), height (Cells m.rows)]
+  in box [direction Row, width (Cells (cast m.cells)), height (Cells (cast m.rows))]
        [ box [grow 1] visible
-       , scrollBar m.rows m.count m.top
+       , scrollBar (cast m.rows) (cast m.count) (cast m.top)
        ]
   where
     numbered : List (Nat, List Char)

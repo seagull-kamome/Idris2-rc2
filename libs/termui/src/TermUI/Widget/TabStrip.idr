@@ -11,6 +11,7 @@ import Data.Fin
 import Data.List
 import Data.Maybe
 import TermUI.Input
+import TermUI.Len
 import TermUI.Node
 import TermUI.Style
 import TermUI.Width
@@ -44,10 +45,10 @@ select : Nat -> Model -> Model
 select i m = maybe m (MkModel m.titles) (natToFin (min i (length m.titles `minus` 1)) (length m.titles))
 
 -- A title is drawn with a space on each side, tabs are one cell apart.
-tabWidth : String -> Nat
+tabWidth : String -> Len
 tabWidth t = stringWidth t + 2
 
-tabLeft : Nat -> List String -> Nat
+tabLeft : Nat -> List String -> Len
 tabLeft i ts = sum (map (\t => tabWidth t + 1) (take i ts))
 
 -- 0, 1 .. n-1
@@ -63,7 +64,7 @@ upto n = go n []
 
 ||| `Click c`: the column `c` of the strip was clicked.
 public export
-data Msg = Prev | Next | First | Last | Click Nat
+data Msg = Prev | Next | First | Last | Click Len
 
 export
 update : Msg -> Model -> Model

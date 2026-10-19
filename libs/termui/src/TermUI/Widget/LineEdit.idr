@@ -7,6 +7,7 @@
 module TermUI.Widget.LineEdit
 
 import Data.List
+import TermUI.Len
 import TermUI.Width
 
 %default total
@@ -21,7 +22,7 @@ clean c =
 
 ||| The cursor cell is as wide as the character under it, and at least one.
 export
-cursorWidth : (after : List Char) -> Nat
+cursorWidth : (after : List Char) -> Len
 cursorWidth (c :: _) = max 1 (charWidth c)
 cursorWidth [] = 1
 
@@ -29,29 +30,29 @@ cursorWidth [] = 1
 ||| fits in `room` cells: the current `left` if it already does, otherwise as
 ||| little more as needed. `before` is the text before the cursor, reversed.
 export
-leftFor : (room : Nat) -> (cursorW : Nat) -> (left : Nat) -> (before : List Char) -> Nat
+leftFor : (room : Len) -> (cursorW : Len) -> (left : Nat) -> (before : List Char) -> Nat
 leftFor room cursorW left before =
   let pos = length before
-  in max (min left pos) (pos `minus` fitting before (room `minus` cursorW) 0)
+  in max (min left pos) (pos `minus` fitting before (room `monus` cursorW) 0)
   where
     -- how many characters, from the cursor back, fit in the budget
-    fitting : List Char -> Nat -> Nat -> Nat
+    fitting : List Char -> Len -> Nat -> Nat
     fitting [] _ acc = acc
     fitting (c :: cs) budget acc =
-      if charWidth c <= budget then fitting cs (budget `minus` charWidth c) (S acc) else acc
+      if charWidth c <= budget then fitting cs (budget `monus` charWidth c) (S acc) else acc
 
 ||| The index of the character under cell `col`, counting from index `from`
 ||| over the characters `chars` (which start there).
 export
-reach : (col : Nat) -> (chars : List Char) -> (from : Nat) -> Nat
+reach : (col : Len) -> (chars : List Char) -> (from : Nat) -> Nat
 reach _ [] i = i
-reach col (x :: xs) i = if charWidth x > col then i else reach (col `minus` charWidth x) xs (S i)
+reach col (x :: xs) i = if charWidth x > col then i else reach (col `monus` charWidth x) xs (S i)
 
 ||| The characters that fit in `room` cells.
 export
-cutTo : (room : Nat) -> List Char -> List Char
+cutTo : (room : Len) -> List Char -> List Char
 cutTo _ [] = []
-cutTo room (c :: cs) = if charWidth c <= room then c :: cutTo (room `minus` charWidth c) cs else []
+cutTo room (c :: cs) = if charWidth c <= room then c :: cutTo (room `monus` charWidth c) cs else []
 
 -- Spaces, the characters of words (letters, digits, `_` and everything
 -- beyond ASCII) and the rest each make a kind of run.

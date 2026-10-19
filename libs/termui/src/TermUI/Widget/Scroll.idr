@@ -8,6 +8,7 @@ module TermUI.Widget.Scroll
 
 import Data.List
 import TermUI.Input
+import TermUI.Len
 import TermUI.Node
 import TermUI.Style
 import public TermUI.Widget.Scrolling
@@ -21,33 +22,33 @@ import TermUI.Widget.ScrollBar
 public export
 record Model where
   constructor MkModel
-  rows : Nat
+  rows : Len
   lines : List String
-  top : Nat
+  top : Len
 
 ||| A viewer showing `rows` lines at a time.
 export
-fromLines : (rows : Nat) -> List String -> Model
+fromLines : (rows : Len) -> List String -> Model
 fromLines rows ls = MkModel rows ls 0
 
 ||| Scroll.
 export
 update : Msg -> Model -> Model
-update msg m = { top := scrollTop m.rows (length m.lines) m.top msg } m
+update msg m = { top := scrollTop m.rows (count m.lines) m.top msg } m
 
 ||| The same viewer with a window of another height.
 export
-resize : (rows : Nat) -> Model -> Model
-resize rows m = { rows := rows, top := min m.top (length m.lines `minus` rows) } m
+resize : (rows : Len) -> Model -> Model
+resize rows m = { rows := rows, top := min m.top (count m.lines `monus` rows) } m
 
 ||| The window with the scroll bar on its right.
 export
 view : Model -> Node msg
 view m =
-  let first = min m.top (length m.lines `minus` m.rows) in
+  let first = min m.top (count m.lines `monus` m.rows) in
   box [direction Row, height (Cells m.rows)]
-    [ box [grow 1] (map (Text plain Truncate) (take m.rows (drop first m.lines)))
-    , scrollBar m.rows (length m.lines) first
+    [ box [grow 1] (map (Text plain Truncate) (take (cast m.rows) (drop (cast first) m.lines)))
+    , scrollBar m.rows (count m.lines) first
     ]
 
 ||| The viewer as a focusable node, so that the keys and the wheel reach it.

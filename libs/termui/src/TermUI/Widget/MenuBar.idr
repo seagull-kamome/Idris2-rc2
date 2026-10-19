@@ -13,6 +13,7 @@ import Data.Fin
 import Data.List
 import Data.Maybe
 import TermUI.Input
+import TermUI.Len
 import TermUI.Node
 import TermUI.Style
 import TermUI.Width
@@ -62,14 +63,14 @@ entriesOf : Model msg -> List (Entry msg)
 entriesOf m = maybe [] entries (getAt m.active m.menus)
 
 -- A title is drawn with a space on each side.
-titleLeft : Nat -> List (Menu msg) -> Nat
+titleLeft : Nat -> List (Menu msg) -> Len
 titleLeft i ms = sum (map (\mn => stringWidth mn.title + 2) (take i ms))
 
 -- The width of the entries of a menu, without its frame.
-bodyWidth : List (Entry msg) -> Nat
+bodyWidth : List (Entry msg) -> Len
 bodyWidth es = foldl max 0 (map w es) + 2
   where
-    w : Entry msg -> Nat
+    w : Entry msg -> Len
     w (Item s _) = stringWidth s
     w Separator = 0
 
@@ -77,7 +78,7 @@ bodyWidth es = foldl max 0 (map w es) + 2
 -- Update
 
 public export
-data Msg = Prev | Next | Up | Down | Open | Close | Activate | Click Nat Nat
+data Msg = Prev | Next | Up | Down | Open | Close | Activate | Click Len Len
 
 ||| The new state and, when an item was chosen, its message.
 export
@@ -98,8 +99,8 @@ update ev m =
                 Just i => if m.isOpen && i == m.active
                              then (closed m, Nothing)
                              else ({ isOpen := True } (switchTo i m), Nothing)
-         else if m.isOpen && c >= left && c < left + bodyWidth es + 2 && r <= length es + 2
-                 then (if r < 2 || r == length es + 2 then (m, Nothing) else pick (r `minus` 2))
+         else if m.isOpen && c >= left && c < left + bodyWidth es + 2 && r <= cast (length es) + 2
+                 then (if r < 2 || r == cast (length es) + 2 then (m, Nothing) else pick (cast (r - 2)))
                  else (closed m, Nothing)
   where
     count : Nat
@@ -108,7 +109,7 @@ update ev m =
     es : List (Entry msg)
     es = entriesOf m
 
-    left : Nat
+    left : Len
     left = titleLeft m.active m.menus
 
     closed : Model msg -> Model msg
@@ -140,7 +141,7 @@ update ev m =
         Just (Item _ x) => (closed m, Just x)
         _ => (m, Nothing)
 
-    titleAt : Nat -> Maybe Nat
+    titleAt : Len -> Maybe Nat
     titleAt c = find (\i => c >= titleLeft i m.menus && c < titleLeft (S i) m.menus) (upto count)
 
 -------------------------------------------------------------------------------
@@ -188,7 +189,7 @@ menuBar wrap m = focusable body (\i => map wrap (keyMsg m i))
 
     line : Nat -> Entry msg -> Node msg
     line j (Item s _) = box [style (if j == m.cursor then highlight else plain)] [Text plain Truncate (" " ++ s ++ " ")]
-    line _ Separator = Text plain Truncate (concat (replicate (bodyWidth es) "─"))
+    line _ Separator = Text plain Truncate (concat (replicate (cast (bodyWidth es)) "─"))
 
     dropdown : Node msg
     dropdown =

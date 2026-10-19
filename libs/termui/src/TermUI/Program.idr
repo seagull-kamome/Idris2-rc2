@@ -10,6 +10,7 @@
 module TermUI.Program
 
 import Data.IORef
+import TermUI.Len
 import Data.List
 import Data.Maybe
 import Control.Task
@@ -55,7 +56,7 @@ data Sub msg
   = OnInput (Input -> Maybe msg)       -- keys the focused node did not take, and pastes
   | OnMouse (MouseEvent -> Maybe msg)  -- also turns mouse reporting on
   | MouseFocus                         -- clicks move the focus, the wheel goes to the node under the pointer; turns reporting on
-  | OnResize (Nat -> Nat -> msg)
+  | OnResize (Len -> Len -> msg)
   | Every String Nat msg               -- a key naming the timer, the period in ms, the message
   | OnTerminate msg                    -- SIGINT, SIGTERM or SIGHUP; without it they quit
 
@@ -118,7 +119,7 @@ record Env model msg where
   focus : IORef Nat
   handlers : IORef (List (Input -> Maybe msg))
   prev : IORef (Maybe Frame)
-  size : IORef (Nat, Nat)
+  size : IORef (Len, Len)
   quit : IORef Bool
   oneShots : IORef (List (Nat, msg))
   nextShot : IORef Nat
@@ -129,7 +130,7 @@ record Env model msg where
   mouseOn : IORef Bool
   skipResume : IORef Nat                  -- batches left in which an EResume is the SIGCONT that ended our own Suspend
   rects : IORef (List (Nat, Rect))
-  shownCursor : IORef (Maybe (Bool, Nat, Nat))
+  shownCursor : IORef (Maybe (Bool, Len, Len))
   focusKey : IORef (Maybe String)         -- the key of the focused node, found again when the view changes
   focusKeys : IORef (List (Maybe String)) -- the keys of the focusables of the view, in tree order
   lastClick : IORef (Maybe LastClick)
@@ -231,7 +232,7 @@ mutual
     old <- readIORef env.size
     unless ((c, r) == old) $ applyResize env c r
 
-  applyResize : Env model msg -> Nat -> Nat -> IO ()
+  applyResize : Env model msg -> Len -> Len -> IO ()
   applyResize env c r = do
     writeIORef env.size (c, r)
     writeIORef env.prev Nothing
@@ -322,7 +323,7 @@ draw env = do
   (w, h) <- readIORef env.size
   (frame, laid) <- renderLaid node w h
   let (rects, cursor) = scan (MkRect 0 0 w h) laid
-      (x, y) = fromMaybe (0, h `minus` 1) cursor
+      (x, y) = fromMaybe (0, h `monus` 1) cursor
       target = (isJust cursor, x, y)
   writeIORef env.rects rects
   old <- readIORef env.prev
@@ -339,7 +340,7 @@ draw env = do
   where
     -- Where the focusables are (in tree order), cut to what is visible, and where
     -- the terminal cursor goes.
-    scan : Rect -> Laid -> (List (Nat, Rect), Maybe (Nat, Nat))
+    scan : Rect -> Laid -> (List (Nat, Rect), Maybe (Len, Len))
     scan _ (LText _ _ _) = ([], Nothing)
     scan clip (LBox r p kids) =
       let own = maybe [] (\i => [(i, within r clip)]) p.pTag
@@ -354,16 +355,16 @@ draw env = do
               y0 = max a.y b.y
               x1 = min (a.x + a.w) (b.x + b.w)
               y1 = min (a.y + a.h) (b.y + b.h)
-          in MkRect x0 y0 (x1 `minus` x0) (y1 `minus` y0)
+          in MkRect x0 y0 (x1 `monus` x0) (y1 `monus` y0)
 
-        scanAll : Rect -> List Laid -> (List (Nat, Rect), Maybe (Nat, Nat))
+        scanAll : Rect -> List Laid -> (List (Nat, Rect), Maybe (Len, Len))
         scanAll _ [] = ([], Nothing)
         scanAll inner (k :: ks) =
           let (r1, c1) = scan inner k
               (r2, c2) = scanAll inner ks
           in (r1 ++ r2, maybe c1 Just c2)
 
-    cursorSequence : (Bool, Nat, Nat) -> String
+    cursorSequence : (Bool, Len, Len) -> String
     cursorSequence (visible, x, y) =
       "\ESC[" ++ show (y + 1) ++ ";" ++ show (x + 1) ++ "H" ++ cursorVisible visible
 
@@ -380,7 +381,7 @@ onInput env (Mouse raw) = do
         when (isLeftDown e) $ setFocus env i
         hs <- readIORef env.handlers
         -- the handler sees the position relative to the top left of its node
-        let rel = { column := e.column `minus` r.x, row := e.row `minus` r.y } e
+        let rel = { column := e.column `monus` r.x, row := e.row `monus` r.y } e
         traverse_ (dispatch env) (getAt i hs >>= \h => h (Mouse rel))
   traverse_ (dispatch env) (mapMaybe (fromSub e) subs)
   where
@@ -408,7 +409,7 @@ onInput env (Mouse raw) = do
                       (LeftButton, ButtonDown) => True
                       _ => False
 
-    inside : Rect -> Nat -> Nat -> Bool
+    inside : Rect -> Len -> Len -> Bool
     inside r c rw = c >= r.x && c < r.x + r.w && rw >= r.y && rw < r.y + r.h
 
 onInput env inp = do

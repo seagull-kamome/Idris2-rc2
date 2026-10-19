@@ -8,6 +8,7 @@ module TermUI.Widget.Select
 
 import Data.List
 import TermUI.Input
+import TermUI.Len
 import TermUI.Node
 import TermUI.Style
 import TermUI.Widget.ScrollBar
@@ -20,62 +21,62 @@ import TermUI.Widget.ScrollBar
 public export
 record Model where
   constructor MkModel
-  rows : Nat
+  rows : Len
   items : List String
-  selected : Nat
-  top : Nat
+  selected : Len
+  top : Len
 
 ||| A list showing `rows` lines at a time.
 export
-fromList : (rows : Nat) -> List String -> Model
+fromList : (rows : Len) -> List String -> Model
 fromList rows items = MkModel rows items 0 0
 
 -- The first visible item that keeps `sel` in a window of `rows` lines.
-windowTop : (rows : Nat) -> (sel : Nat) -> (top : Nat) -> Nat
+windowTop : (rows : Len) -> (sel : Len) -> (top : Len) -> Len
 windowTop rows sel top =
   if rows == 0 then top
   else if sel < top then sel
-  else if sel >= top + rows then (sel + 1) `minus` rows
+  else if sel >= top + rows then (sel + 1) `monus` rows
   else top
 
 ||| The same list in a window of another height.
 export
-resize : (rows : Nat) -> Model -> Model
+resize : (rows : Len) -> Model -> Model
 resize rows m =
   { rows := rows
-  , top := min (windowTop rows m.selected m.top) (length m.items `minus` rows) } m
+  , top := min (windowTop rows m.selected m.top) (count m.items `monus` rows) } m
 
 ||| Replace the items, keeping the selection where it still makes sense.
 export
 setItems : List String -> Model -> Model
 setItems items m =
-  let sel = min (length items `minus` 1) m.selected in
-  MkModel m.rows items sel (min (windowTop m.rows sel (min sel m.top)) (length items `minus` m.rows))
+  let sel = min (count items `monus` 1) m.selected in
+  MkModel m.rows items sel (min (windowTop m.rows sel (min sel m.top)) (count items `monus` m.rows))
 
 ||| The selected item, if the list is not empty.
 export
 current : Model -> Maybe String
-current m = head' (drop m.selected m.items)
+current m = head' (drop (cast m.selected) m.items)
 
 -------------------------------------------------------------------------------
 -- Update
 
 ||| `ClickRow r`: the line `r` of the window was clicked.
 public export
-data Msg = Up | Down | PageUp | PageDown | First | Last | ClickRow Nat
+data Msg = Up | Down | PageUp | PageDown | First | Last | ClickRow Len
 
 ||| Move the selection; the window scrolls to keep it in view.
 export
 update : Msg -> Model -> Model
 update msg m =
-  let n = length m.items
-      lastIx = n `minus` 1
+  let n = count m.items
+      lastIx = n `monus` 1
       cur = min lastIx m.selected
       first = windowTop m.rows cur m.top
       target = case msg of
-                 Up => cur `minus` 1
+                 Up => cur `monus` 1
                  Down => min lastIx (cur + 1)
-                 PageUp => cur `minus` m.rows
+                 PageUp => cur `monus` m.rows
                  PageDown => min lastIx (cur + m.rows)
                  First => 0
                  Last => lastIx
@@ -110,16 +111,16 @@ keyMsg _ = Nothing
 -- marked with `>` otherwise.
 body : (focused : Bool) -> Model -> Node msg
 body focused m =
-  let sel = min (length m.items `minus` 1) m.selected
+  let sel = min (count m.items `monus` 1) m.selected
       first = windowTop m.rows sel m.top
   in column [grow 1, height (Cells m.rows)]
-       (map (uncurry (line sel)) (indexed first (take m.rows (drop first m.items))))
+       (map (uncurry (line sel)) (indexed first (take (cast m.rows) (drop (cast first) m.items))))
   where
-    indexed : Nat -> List a -> List (Nat, a)
+    indexed : Len -> List a -> List (Len, a)
     indexed _ [] = []
-    indexed i (x :: xs) = (i, x) :: indexed (S i) xs
+    indexed i (x :: xs) = (i, x) :: indexed (i + 1) xs
 
-    line : Nat -> Nat -> String -> Node msg
+    line : Len -> Len -> String -> Node msg
     line sel i item =
       if i == sel
          then if focused
@@ -128,7 +129,7 @@ body focused m =
          else Text plain Truncate ("  " ++ item)
 
 bar : Model -> Node msg
-bar m = scrollBar m.rows (length m.items) (windowTop m.rows (min (length m.items `minus` 1) m.selected) m.top)
+bar m = scrollBar m.rows (count m.items) (windowTop m.rows (min (count m.items `monus` 1) m.selected) m.top)
 
 ||| The window of the list with a scroll bar on its right.
 export
