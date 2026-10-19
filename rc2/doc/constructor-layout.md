@@ -56,7 +56,7 @@ than truncating. No real data type comes close.
 
 ## Results (2026-09-26)
 
-`Data.List.sort` of 1M `Int`s (`TODO.md`, "`sort` against Chez"):
+`Data.List.sort` of 1M `Int`s (`sort-vs-chez.md`):
 
 | | Before | After |
 |---|---|---|

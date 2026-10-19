@@ -30,7 +30,7 @@ On a 1M-element `sort` that was the largest single cost:
 - 2.36x the allocations (1,415,221 instead of 600,197 at 100k).
 
 Adding one such argument to an otherwise identical copy of the code
-reproduced both numbers exactly (`TODO.md`, "`sort` against Chez").
+reproduced both numbers exactly (`sort-vs-chez.md`).
 
 `KNOWN-BUGS.md` records the frontend behaviour itself.
 

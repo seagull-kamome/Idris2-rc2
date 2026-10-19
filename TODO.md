@@ -156,10 +156,6 @@ case needs one specifically.
   - rc2baseに RC2 の名前で置いた定義も不要にしたい
     -> 上流に持っていけない定義をブラックリスト化し、不本意だがコンパイラ側で強制的に読み替えを行うようにできれば....
 
-## %world 引数, Erased の引数を削除
-  - 無駄でしか無いので消せるものなら消したい
-  - 最適化効果は薄い。気分の問題でしかない。
-
 ## IRの変数に`World`/`Erased`の型印を持たせる(2026-10-18)
 今のIRの変数と引数が持つ`Rep`は表現(`RBoxed`/`RNative`...)だけで、「これは`%World`だ」「これは消去された値だ」という情報はない。
 そのため`ArityRaise`は、「世界を引数に取り込み済みの関数が`IO`の結果としてクロージャを返す」場合を構造から見分けられず、
@@ -175,75 +171,26 @@ case needs one specifically.
     未知の呼び出し(クロージャ、辞書のフィールド)が渡す値は分からないので、保守的に印を付けない。
     印は`Rep`の変種か、`MkRCFun`とは別の表(138か所の`MkRCFun`を触らない)で持つ。
   - 使い道: `ArityRaise`のガードを「最後の引数が`World`印の関数は引き上げない」に置き換え、見落としと件数の減りを両方なくす。
-    上の「%world 引数, Erased の引数を削除」の前提にもなる。DualABIの`Native`化や`DeadArgs`も、印があれば確実に判定できる。
+    「%world 引数・Erased の引数の削除」(無駄でしかないので消せるなら消したい。最適化効果は薄く、気分の問題)の前提にもなる。DualABIの`Native`化や`DeadArgs`も、印があれば確実に判定できる。
 
 ## ファントム型やファントム関数の明示
 トップレベル定義に 0 をつける。
 実行時に存在しないからいいや、ではなく存在しない事を保証する
 
-## thread-local-awareなdup/dop
-マルチスレッド対応でdup/dropをアトミック操作にした結果、バスへの負荷増加やキャッシュ
-破棄等と思われるペナルティによる性能劣化が観測された。
-一つの案として、directiveによってシングルスレッド向け/マルチスレッド向けにコード生成
-モードやランタイムを切り替える案が浮上した。それは後々対応するとして、そもそも
-マルチスレッドであったとしても、あるオブジェクトが常に共有されている訳では無い事に着目
-した最適化を行いたい。
+## thread-local-awareなdup/drop
+実装済み: プロセス全体のフラグでatomic/非atomicを切り替える方式(`rc2/doc/hybrid-refcount.md`、計測の表も同ドキュメント)。
+missing-containersで-16%、sortで-23%。残りの案は、逃げないと判っている変数を非atomic版に固定するエスケープ解析で、
+上限はmissing-containersで8ポイント。関数内で閉じた解析は、idris2-lspの297,911箇所中57箇所しか固定できず無意味。
+関数の引数を通して連鎖させる粗い全体解析(複製なし)も、missing-containersで-1.7%にとどまり打ち切った。
+やるなら、スレッドへ逃げうる値を追う全体解析と、引数がスレッドに閉じている呼び出し元向けの関数の複製が要る。
 
-具体的にはまずdup/drup_n/dropをアトミック版と非アトミック版に二重化する。
-仮にあるランタイムオブジェクトがスレッド間で共有されているとしても、必ずしもその生涯
-の全ての期間で共有されているわけではない事に着目し、「生成後、明らかに共有が発生しない」
-区間では非アトミック版を使い、それ以外ではアトミック版と使い分ける事で負荷を軽減させる
-事が可能なはずである。
-
-そういう変数はそもそも大抵ネイティブ化されているはずなのでネイティブになれない値だけしか
-恩恵を受けられない。
-
-これをやるなら、エスケープ解析をして他スレッドに逃げる可能性の無い変数を割り出すのが先
-だろう。
-
-### 計測(2026-09-27)
-同じ生成Cを複数のランタイムにリンクして比較した(3回の最小値)。
-
-| ベンチ | atomic(現行) | 全て非atomic | グローバルフラグ+union |
-|---|---|---|---|
-| idris2-missing-containers | 8.06s | 6.20s (-23%) | 6.68s (-17%) |
-| `sort` 1M要素 | 3.17s | 2.37s (-25%) | 2.44s (-23%) |
-| クロージャ1M個×20回 | 3.67s | 2.61s (-29%) | 2.72s (-26%) |
-| map/filter 300k要素×50回 | 7.31s | 6.70s (-8%) | 6.71s (-8%) |
-
-- 出力はどれも一致。refcountを多用する処理はほぼ一律25〜30%速くなる。
-- オブジェクト毎の共有フラグは実用上設定しきれないので採らず、プロセス全体で
-  一度だけ立てる「マルチスレッド」フラグで切り替える。
-- refCountを`_Atomic`のままrelaxedで読み書きした試作は効果が半分しか出なかった。
-  普通の`uint16_t`とのunionにして非atomic側は全てそちらを通すと大きく改善する。
-- 実装済み(2026-09-27): プロセス全体のフラグで切り替える方式。`rc2/doc/hybrid-refcount.md`。
-  missing-containersで-16%、sortで-23%。
-- 残り: 逃げない事が判っている変数を非atomic版で固定するエスケープ解析。上限は
-  missing-containersで8ポイント(全て非atomicとの差)。関数内で閉じた解析で固定
-  できるのはidris2-lspで297,911箇所中57箇所しかなく無意味(計測は
-  hybrid-refcount.md)。やるなら関数をまたいでスレッドへ逃げうる値を追う
-  全体解析と、引数がスレッドに閉じている呼び出し元向けの関数の複製が要る。
-- 関数の引数を通して連鎖させる粗い全体解析(複製なし)も見積もった。idris2-lspで5.3%、
-  missing-containersで該当箇所を非atomicに固定しても6.48s→6.37s(-1.7%)で、全て
-  非atomic(5.95s)との差の2割しか埋まらない。打ち切り。
-
-## 既存のシムをCExprで置き換えられるか
-`libs/rc2base`は実施済み(ブランチ`rc2base-cexpr-shims`): GMPの`mpz_*` 49宣言(その後`setbit`/`clrbit`/`combit`を足して52)(`$r`)、`System.FFI.C.Ptr`
-の44宣言(`ptr_util.h`を削除)、`Network.RC2`のsend/recv(`net_util.*`を削除)、Epoll(全体、`event_util.*`を削除)、Regexの`REG_*`と`re_nsub`、TextBufferの
-アクセサと`free`、`Data.String.RC2`の2つ、`Atomic`をCExprにした。`support/c`のC/Hは
-2112行から1930行、`%foreign`から名前で参照されるシム関数は115から76に減った。
-`System.Posix.*`は元からCExprだったが未検証で、括弧・ヘッダ・綴りの誤りが多かったので直し、
-7つのテスト(`TestPosix*`)を足した。
-`System.Posix.Directory`の`DirEnt`は不透明型+PrimIOのCExprアクセサ(`d_name`/`d_type`/`d_ino`)にし、`readdir`は`DirEntry`へ即コピーして返す。`struct dirent`のようにtypedefが無い構造体は、`Struct "struct dirent" [...]`と`%cg rc2 externStruct=struct dirent`のように、Cの綴り(空白入り)をそのままIdris側の名前と指令に使えば`Struct`で扱える(確認済み、`Test120CStruct/CgSpacedStructName`、`rc2/doc/c-struct-support.md`の Tips)。`DirEnt`をこの方式に切り替えるかは別の判断。
-残したシム: regexのcompile/exec/free/group_*
-(TLS状態・確保)、TextBufferの確保系、string_byte_slice、double_convert、
-xoroshiroの`*_sys`、concurrency_util。
-`_GNU_SOURCE`が要る宣言(`O_DIRECT`/`O_LARGEFILE`/`O_NOATIME`/`O_PATH`/`O_TMPFILE`/`AT_EMPTY_PATH`/
-`SEEK_DATA`/`SEEK_HOLE`/`dup3`/`preadv2`/`pwritev2`)は、環境変数`IDRIS2_CFLAGS=-D_GNU_SOURCE`
-(または`CFLAGS`)でコンパイルする、と各宣言のdoc commentに書いて対応した(実機で、指定なしはCの
-コンパイルエラー、指定ありは動くことを確認)。生成コード側で定義する機能は作らない。
-
-## promiseの実装
+## 既存のシムをCExprで置き換える: 残り
+`libs/rc2base`ほかは置き換え済み(`rc2/doc/ffi-cexpr.md`)。残したシム: regexのcompile/exec/free/group_*(TLS状態・確保)、
+TextBufferの確保系、string_byte_slice、double_convert、xoroshiroの`*_sys`、concurrency_util。
+`System.Posix.Directory`の`DirEnt`は不透明型+PrimIOのCExprアクセサだが、`Struct "struct dirent" [...]`と
+`%cg rc2 externStruct=struct dirent`でも扱える(確認済み、`Test120CStruct/CgSpacedStructName`、`rc2/doc/c-struct-support.md`の Tips)。
+切り替えるかは別の判断。`_GNU_SOURCE`が要る宣言は、環境変数`IDRIS2_CFLAGS=-D_GNU_SOURCE`でコンパイルする、と各宣言の
+doc commentに書いてある。生成コード側で定義する機能は作らない。
 
 ## FFI関数からの構造体返し
 `%foreign`の戻り値型が`Maybe`/`Either`/タプルの時、C関数が`{tag, f0, ...}`形式の構造体を
@@ -288,130 +235,15 @@ foreign呼び出しに戻る。ただし今後もこの間接参照パターン
 に頼らず安全側に倒す)を壊さない形にする必要があり、要調査。
 
 ## `RC.idr`のlookupEnv: `IsVar`証明による完全な全域化はIdris2の消去規則上不可能(2026-09-17)
-
-`Compiler.RC2.RC`のPhase 1(`normalizeDef`)は`Compiler.LambdaLift`の
-`Lifted vars`を歩く際、de Bruijn添字を`Env = List Int`という
-`vars`と同じ長さである"べき"平場のリストで追跡しており、`lookupEnv`は
-添字が範囲外だと`idris_crash`する安全網を持っていた。`LLocal`自体は
-`(0 p : IsVar x idx vars)`という、`idx`が`vars`の正当な添字である
-ことを示す証明を既に持っている(`Core.TT.Var`)。当初「この証明を
-`normalizeDef`に通せば`lookupEnv`をクラッシュ無しの全域関数にできる」
-という設計(「型で保証されていた不変条件を境界で捨てている」という
-パターン)を実装しようとした。
-
-**判明した事実**: `LLocal`の`p`フィールドはupstream側で`0`量(消去)
-と宣言されている。Idris2は、消去された値のコンストラクタで分岐して
-「分岐ごとに異なる実行時データ」を返す関数の定義を一貫して拒否する
-(`Can't match on First (Erased argument)`)。これは実装の順序や
-書き方の問題ではなく、`Core.TT.Var`の`nameAt`(`nameAt {vars = n ::
-_} First = n`のような、まさに欲しかった書き方)が一見コンパイル
-できることに惑わされたが、独立した最小再現で検証したところ`nameAt`
-が許されるのは、返す値`n`が`vars`という**型レベルの添字そのもの**
-から取り出せる場合に限られており、実行時に計算された値(今回なら
-`Int`)を返す一般の関数では、引数が`p`ひとつだけの最小構成でも
-同じエラーが再現した(`myCount : (0 p : MyIsVar n idx vars) -> Int`
-相当)。つまり「消去された妥当性証明を使って、実行時データへの
-安全なインデックスアクセスを型検査だけで保証する」という設計は、
-`IsVar`がupstream側で消去されている限り、rc2側の書き方をどう工夫
-しても届かない。
-
-**実施した代替案**: `Env`を`List Int`から`Data.List.Quantifiers.All`
-経由の`Env : List Name -> Type; Env vars = All (const Int) vars`へ
-変更し、`env`の"長さ"を`vars`と型レベルで一致させた。これにより
-`normalizeDef`/`LLet`/`normalizeConAlt`など、スコープを拡張する
-すべての箇所で「`env`を`vars`の拡張と食い違ったまま構築してしまう」
-というクラス全体がコンパイルエラーになる(実行時クラッシュではなく)。
-ただし`lookupEnv`自体は結局`Nat`(`idx`)による再帰と、最終的な
-"届かないはずのcatch-all"クラッシュ節を今まで通り残さざるを得ない
--- 縮小できたのは「`idx`自体が誤っている」場合だけに絞られた
-クラッシュ到達可能性であり、完全な全域化ではない。
-
-**今後の検討課題**: `Compiler.LambdaLift`自体(upstream)を変更して
-`LLocal`の`p`を非消去にできれば真の全域化が可能になるが、upstream
-コンパイラへの改変は本パッケージのスコープ外。あるいは、rc2独自の
-Phase 0として`Lifted`を一度、非消去の`Fin`ベースの添字を持つ独自IRへ
-変換し直す(証明を作り直すコスト)手もあるが、費用対効果は要検討。
-
-## Performance: Closure Inlining and Immediate Expansion -- 静的に判明する適用は解決済み
-
-  `partial`によるクロージャ生成とヒープ割り当てが高階関数・型クラス
-  辞書で頻発する問題。このうち**呼び先が静的に判明する適用**は解決した
-  (2026-09-24、`rc2/doc/const-closure-fold.md`の
-  "Saturated application of a folded closure is now a direct call")。
-
-  - `RCConstClosure`は捕獲値ゼロの真の葉なので`missing`が呼び先の全
-    残りarityであり、**飽和適用は直接呼び出し**(`RAppName`)、
-    **部分適用は直接のクロージャ構築**(`RUnderApp`)に書き換えられる。
-    `Compiler.RC2.ConstFold`の`RApp`節と、`Compiler.RC2.LateInline`の
-    `resolveConstClosureApps`(同じ形をConstFoldの後に作り直すため)の
-    2箇所で実施。
-  - idris2-lsp全体: `apply` 16,400 → 11,295、うち静的に判明する対象は
-    4,842 → 19。実行時A/B(`tests/BenchConstClosureApply.idr`)で約21%
-    高速化、対RefC 2.71x。
-
-  **残るのは動的な対象のみ**(下記「定数引数による特殊化」を参照)。
-
-## Performance: Higher-Order Function Specialization -- 一般の高階関数
-  (`mapAppend`等)の引数クロージャの割り当てコストは`RCConstClosure`の
-  定数畳み込み(`rc2/doc/const-closure-fold.md`)で解消済み。呼び出し先
-  自体をコード複製で型特化する方向は別途調査済み(コードサイズ膨張の
-  ため見送り、詳細は同ドキュメント参照)。クロージャ引数についての
-  特殊化は`Compiler.RC2.SpecClosure`
-  (`rc2/doc/speculative-closure-specialization.md`)で実装済み。
-  インターフェース辞書経由のメソッド呼び出しに限定した特殊化は、
-  下記「定数引数による特殊化」に設計を起こした(未着手)。
+`LLocal`の`p`が上流で`0`量(消去)なので、証明で分岐して実行時の値を返せない。`Env`を`All (const Int) vars`にして
+長さの食い違いはコンパイルエラーにしたが、`lookupEnv`の範囲外クラッシュ節は残る。完全な全域化には、上流の
+`Compiler.LambdaLift`で`LLocal`の`p`を非消去にするか、`Lifted`を`Fin`添字の独自IRへ変換し直す必要があり、費用対効果は要検討。
+調査の詳細: `rc2/doc/lookupenv-totality.md`。
 
 ## Performance: box-then-unbox round trips left after native promotion
-
-17 box-then-unbox round trips
-survive in the test suite's own generated C (down from 210). They are
-mixed cases -- a `case` one of whose arms is Boxed, a literal minted by
-a pass other than `LateInline`, an `opBox` feeding `sqrt`. Low value.
-
-再計測(2026-10-13、idris2-lsp、17,549定義): 戻り値がBoxedの非wrapper関数13,127件のうち、
-末尾が`con`のみ4,024、Boxedな関数への`call`のみ3,667(nativeな戻り値のworkerを呼ぶものは0件)、
-`partial`835、`memoize`267、`apply`203など、本来Boxedなものが大半。末尾が数値の`op`の
-ものは約20件(`++`の478件はString)、Boxedに`let`束縛された数値の`op`(`cast-*`/`shl`/`shr`)は
-60件。取りこぼしの候補だった「`LateInline`が差し込んだ`case`の分解フィールド」は、
-`LateInline`の後に`ConAltNative`をもう一度走らせる実験(任意参加の指令、破棄済み)で、
-新たにシャドウが付いたのは2件だけで、既存のシャドウへの冗長な二重化が830件増えた
-(冪等でない)。**手軽に取れるネイティブ昇格は残っていない。**
-
-## Performance: constructor return values are always heap cells -- return small constructors by value (struct return)
-
-Important. A function returning a constructor always heap-allocates it,
-even when every caller immediately pattern-matches the result and drops
-it. The dominant case is upstream's own `Core a = IO (Either Error a)`:
-every `Core` action returns a fresh `Left`/`Right` cell that its caller
-destructures on the spot. Across a whole idris2-lsp build (2026-09-25,
-final `dumprcexpr`), 17,458 `let v = ... ; case v of` pairs exist; the
-bound value is a direct `call` in 7,021 of them and a DualABI `callRep`
-in 357 more -- the call-boundary share this item targets. (The 1,796
-whose value is a `con` built in the same function need no call-boundary
-change at all; they are the separate, intraprocedural
-case-of-known-constructor fold.)
-
-Design and implementation (2026-09-25): `rc2/doc/struct-return.md`, on
-by default (`--directive nostructreturn` turns it off). A
-new DualABI stage returns a constructor with at most four fields as a
-fixed `{tag, f0, ...}` struct (16 bytes, in registers, for one field); the Boxed wrapper
-materialises the cell for every other caller. On idris2-lsp that covers
-8,039 functions and 3,648 of the 4,959 call-then-`case` pairs; a
-hand-written model of an `Either` chain runs 17-38% faster. `IO` is
-already erased (`Core` returns a bare `Either`), reuse analysis already
-limits today's cost to one malloc per chain, and tail calls between
-eligible functions form no cycle, so they can become direct C calls.
-Implemented through the call-site rewrite; `tests/BenchStructReturn.idr`
-runs 30% faster and allocates half as often. Left: a run-time
-measurement on a workload full of `Core`-style chains (idris2-lsp
-cannot reach C generation, and that is not being worked on). Native
-fields (2026-09-26, `Ret1:1=Int`) and constructors of up to four fields
-(2026-09-26, idris2-missing-containers 15% faster) are done.
-
-`MutualLoop`がまとめた関数(`{rc2_mutualLoop:N}`)も構造体返しの対象にした
-(`--directive nomutualstruct`で切れる)。Loop後は群内の呼び出しが`goto`なので、残る
-末尾呼び出しの環だけが除外される。idris2-lspでは13関数にworkerが付き、`con`ノードが
-551減る。ループ主体の手製ベンチで約6%速い。
+テストスイートの生成Cに17件(元は210件)。混合の`case`、`LateInline`以外が作るリテラルなど。再計測(2026-10-13、idris2-lsp)でも、
+手軽に取れるネイティブ昇格は残っていない(`LateInline`の後に`ConAltNative`をもう一度走らせる実験は冪等でなく、
+冗長な二重化が830件増えたので破棄)。優先度は低い。
 
 ## Performance: closure-returning functions with mixed tails
 
@@ -481,59 +313,15 @@ Nine such loops remain in idris2-lsp, in three other shapes:
 overflow has not been measured.
 
 
-## Performance: `sort` against Chez -- stacked causes (measured 2026-09-26)
-
-`Data.List.sort` of 1M pseudo-random `Int`s took 4.18s on rc2 and
-1.23s on Chez. Cause 1 is fixed (`Compiler.RC2.DeadArgs`,
-`rc2/doc/dead-args.md`), which brings `sort` to 3.21s, and the smaller
-constructor cells of `rc2/doc/constructor-layout.md` to 3.12s. The rest remain.
-Each cause was isolated by an experiment on copies of `Data.List`'s own
-code:
-
-| Variant | Time |
-|---|---|
-| `Data.List.sort` (before `DeadArgs`; 3.21s with it) | 4.18s |
-| the same code copied into `Main` (B) | 3.21s |
-| B plus one unused passthrough argument on `splitRec` | 4.19s |
-| B with `order x y` replaced by `compare x y` (specialised) | 2.62s |
-| B specialised to `x < y` | 2.03s |
-| `x < y` version, non-atomic `dup`/`drop` + mimalloc | 0.99s |
-
-1. **Fixed: an unused argument kept the input list alive** (~1.0s).
-   The frontend's extra `where` arguments (`KNOWN-BUGS.md`) held the
-   list's head through `splitRec`'s loop, defeating cell reuse; see
-   `rc2/doc/dead-args.md`.
-2. **Fixed: the comparator is never specialised.** SpecClosure now
-   follows a closure forwarded from `sortBy` to `mergeBy`: `sort` 1.49s
-   to 1.11s, below Chez's 1.23s
-   (`rc2/doc/speculative-closure-specialization.md`, "Transitive
-   specialisation").
-3. **Fixed: atomic reference counts.** Plain until the program goes
-   multi-threaded: `sort` 3.17s to 2.45s (`rc2/doc/hybrid-refcount.md`).
-4. **glibc malloc** (-33% with mimalloc). See "a small-object
-   allocator in the runtime" below.
-5. **Fixed: boxed `Int`.** An `Int` within 62 bits is now immediate
-   (`rc2/doc/immediate-ints.md`).
-
-Re-measured after `DeadArgs` (3.21s):
-
-| Variant | Time |
-|---|---|
-| as is | 3.21s |
-| non-atomic `dup`/`drop` | 2.55s |
-| mimalloc | 2.45s |
-| both | 1.81s |
-
-In the 1.81s run:
-- **The TRMC'd `mergeBy` loop is 42%.** About two thirds of that is
-  memory stalls:
-  - loading the list cells' fields (37% of the loop);
-  - touching the boxed `Int`s' refcounts to `dup` them for the
-    comparator (30%).
-- **The comparator call path is about 28%:** `applyClosureN`,
-  `dispatchFn`, wrapper, worker, `trampoline`. There is no allocation;
-  it costs about 25ns per comparison.
-- **`split` is 8% and teardown 5%.**
+## Performance: `sort` against Chez -- 残る原因(測定 2026-09-26)
+`Data.List.sort`(1M要素の`Int`)は4.18s(Chez 1.23s)だったが、`DeadArgs`・比較関数の特殊化・ハイブリッドrefcount・即値`Int`で
+大きく縮んだ。経緯と実験の表は`rc2/doc/sort-vs-chez.md`。残る内訳(`DeadArgs`後3.21sの時点で、非atomicな`dup`/`drop`と
+mimallocを併せた1.81sの実行):
+- TRMC化した`mergeBy`のループが42%。うち約2/3はメモリ待ち(リストのセルのフィールドの読み込み37%、比較器へ渡す`dup`のために
+  boxedな`Int`のrefcountに触る30%)。
+- 比較関数の呼び出し経路(`applyClosureN`、`dispatchFn`、wrapper、worker、`trampoline`)が約28%(1回約25ns、確保なし)。
+- `split`が8%、後始末が5%。
+- glibcの`malloc`(mimallocで-33%)。次の「小オブジェクトのアロケータ」を参照。
 
 ## Performance: a small-object allocator in the runtime (measured 2026-09-27)
 
@@ -704,111 +492,31 @@ catch-all」(扱える型への事前変換と、非対応の`%foreign`を呼ば
 スタブにする案)で解消する。
 
 ## コンパイル時間: リファクタリング案(調査 2026-09-29)
+idris2-lspを`--timing 3`で`--cg rc2`ビルドした時点の大きい順は Early inline 6.66s、Late inline 4.71s、
+RC annotate+Reuse+ConAltNative 3.03s、DualABI 3.02s、Inline 1.54s、ConstFold 1.32s(C生成は既知の
+`%foreign declaration ...unsafeVectorToList has no implementation rc2 can call`で止まるので、その手前まで)。
+その後、構造体返しのplan(1.61s→0.69s)、呼び出しの表の共有(Early 6.66s→6.42s、Late 4.71s→4.43s)、
+展開0件のラウンドの省略を入れた。残り:
 
-idris2-lsp を`--timing 3`で`--cg rc2`ビルドしたログ(C生成は既知の
-`%foreign declaration ...unsafeVectorToList has no implementation rc2 can call`で止まるので、その手前まで)
-から。時間の大きい順に Early inline 6.66s、Late inline 4.71s、
-RC annotate+Reuse+ConAltNative 3.03s、DualABI 3.02s、Inline 1.54s、
-ConstFold 1.32s。
-
-### 1. 計測を分ける(他の案の前提)
-
-- **DualABI(3.03s)の大半は構造体返し。** 計測を分けた結果(2026-09-29):
-  workers 0.11s、**struct return(`applyStructReturn`) 2.60s**、FFI worker
-  table 0.05s、call-site rewrite 0.21s、FFI inline 0.07s。構造体返しの中は
-  plan(`structReturnPlan`) **1.60s**、prune plan 0.35s、worker names 0.02s、
-  layouts 0.14s、rewrite 0.44s。planは`settle`(合わない関数を除外して
-  収束まで)の各周で`eligible`を一から計算し直し、その中の`shrink`/`reach`も
-  周ごとに集合全体を`filter`して`length (SortedSet.toList ...)`で数え直す
-  ので、周回数×定義数に比例すると見込まれる(コードを読んだ推定。周回数は
-  未計測なので、まず数える)。変化した名前だけを次の周に回すワークリスト
-  方式にすれば、1周目以降のコストは変化分に比例する。
-  **済み(2026-09-29):** 周回数はsettle 2周、各周でshrink 7・reach 7、
-  shapeFix 2と8だった。shrink/reachをワークリストに、shapeFixを「前の周で
-  増えた名前の呼び出し元だけ再計算」にして、plan 1.61s→0.69s(出力不変)。
-  残りはprune plan 0.35s、rewrite 0.44s。
-- **「RC annotate + Reuse + ConAltNative」(3.03s)は3パスの合計。**
-  定義ごとに3つを続けて回しているので、パスごとの合計時間を別々に
-  出す(`logTime`を定義ごとに付けると件数が多すぎるので、各パスの
-  時間を足し上げて最後に1行出す形)。
-- **Early inline(6.68s)の内訳。** 計測を分けた結果(2026-09-29): ラウンド1
-  2.25s、ラウンド2〜4 計2.23s、展開後の再畳み込み(`foldConstDef`、全定義)
-  1.12s、PushCon 0.23s。
-  **試して見送り(2026-09-29): 再畳み込みを展開された定義だけに限る。**
-  1.11sが0.97sになっただけ(ラウンド1で8106件展開されるので、展開された
-  定義が全体の大半)で、しかも出力が変わった(idris2-lspのIRダンプが約49万
-  バイト増)。展開されなかった定義も、先行するPushCon・特殊化の後なので
-  再畳み込みで良くなるものがある。
-  **済み(2026-09-29): 呼び出しの表を1つにまとめて共有。** 定義ごとの呼び出し
-  先の集合と出現リストを回数の表(`callCountsOf`)1つにし、`cyclicNames`と
-  第1ラウンドの分析で共有した。出力は不変で、Early inline 6.66s→6.42s、
-  Late inline 4.71s→4.43s。`cyclicNames`の残り約0.68sはほぼTarjan。
-  **試して見送り: 第1ラウンドの処理順に、刈り込み前のTarjanの結果を流用。**
-  6.06sまで縮んだが出力が変わった。`Carried.order`のコメントは処理順を
-  「結果を変えない目安」としているが、実際には結果に効く。
-- **C生成の時間が idris2-lsp では測れない。** 既知のエラーで止まる
-  ため。C生成まで通る大きなプログラムを計測用に決めておく。
-
-### 2. Early/Late inline: 収束しかけたラウンドの固定費
-
-**済み(2026-10-15): 展開0件のラウンドを回さない。** 前のラウンドが何も
-展開しなければ、次のラウンドの定義列は前のラウンドの刈り込み後と同じで、
-`analyse`の結果も同じになる。`applyLateInlineOnce`の`changed`から「刈り込みで
-定義が減った」の項を外し、Early inlineのラウンド3とLate inlineのラウンド6
-(各約0.33s)を省いた。idris2-lspの最終IRダンプはバイト単位で一致。
-
-残る固定費(2026-10-15の計測。idris2-lsp、`--timing 3`):
-
-| ラウンド | 前ラウンドの展開数 | 時間 | うち LI prune | LI analyse |
-|---|---|---|---|---|
-| Late 3 | 196 | 0.40s | 0.21s | 0.08s |
-| Late 4 | 29 | 0.34s | 0.18s | 0.05s |
-| Late 5 | 3 | 0.33s | 0.17s | 0.05s |
-
-`pruneDeadDefsCached`が毎ラウンド到達可能な全定義(約2.5万)を辿り直す。
-時間の大半は`Name`同士の比較(`table`・`cache`・`seen`の3つの`SortedMap`/
-`SortedSet`を定義ごとに引く)。案:
-
-- **刈り込みを差分にする**: 展開で消えうる参照は、書き換えた定義が失った
-  参照だけ。逆参照の表(pred)を持ち、失った参照の先から前向きに閉包を取り、
-  外から届く先を生存とする。残りが死んだ定義。展開は参照を足さない(足す
-  参照は展開先が元から持っていた参照)ので到達集合は縮むだけ。効果は
-  ラウンド4・5で計約0.3s程度と見込まれ、複雑さに見合わないので見送り。
-- **`Name`を整数に置き換える**: `analyse`にも効くが、1000行のモジュール全体に
-  触る。
-- **上限**: 展開数が一定以下になったら打ち切る(出力が変わるので
-  ベンチマークで確かめる必要がある)。
-
-### 3. 既知の落とし穴の点検
-
-`code-style-Idris2.md`の「性能上の落とし穴」(`List`の`concat`/
-`concatMap`、`union`の引数の向き、`where`で束縛した集合の再計算、
-部分木の繰り返し走査)は、過去に LateInline・SpecClosure・DualABI・
-RC.annotate・DeadVars で実際に数秒を失った。1の計測で重いと分かった
-パスから順に、同じ形が残っていないかを点検する。
+- **計測を分ける。** 「RC annotate + Reuse + ConAltNative」は3パスの合計なので、パスごとの合計時間を足し上げて最後に1行出す。
+  DualABIの残りはprune plan 0.35s、rewrite 0.44s。C生成まで通る大きなプログラムを計測用に決める(idris2-lspは届かない)。
+- **Late inlineの固定費。** `pruneDeadDefsCached`が毎ラウンド到達可能な全定義(約2.5万)を辿り直す(ラウンド3〜5で各約0.2s)。
+  案: (a)刈り込みを差分にする(計約0.3sの見込みで、複雑さに見合わず見送り)、(b)`Name`を整数に置き換える(`analyse`にも効くが
+  1000行のモジュール全体に触る)、(c)展開数が一定以下で打ち切る(出力が変わるのでベンチマークで確かめる)。
+- **試して見送り。** 再畳み込みを展開された定義だけに限る(1.11s→0.97sで、出力が変わった)。第1ラウンドの処理順に刈り込み前の
+  Tarjanの結果を流用する(6.06sまで縮んだが出力が変わった。`Carried.order`のコメントは処理順を「結果を変えない目安」としているが、
+  実際には結果に効く)。
+- **既知の落とし穴の点検。** `code-style-Idris2.md`の「性能上の落とし穴」(`List`の`concat`/`concatMap`、`union`の引数の向き、
+  `where`で束縛した集合の再計算、部分木の繰り返し走査)が残っていないか、重いパスから順に見る。
 
 ## テストの穴(監査 2026-09-29)
-
-テストを72本から51本にまとめ(`rc2/tests/README.md`)、コンパイラの
-パスと実行時の機能をテストの一覧と突き合わせた結果。大きいものから。
-
-- **失敗すべきプログラムのテストは一部だけ。** `Test118FFI/ForeignErrors`と
-  `CExprErrors`(`check.sh`が期待するエラー文と diff する)が、`%foreign`の
-  実装なし・戻り値が関数、`getField`の未知の構造体、`%export`の未対応の型、
-  `CExpr:`の構文エラーを覆う。残り: `RC2.idr`の`validateExport`の他の経路
-  (引数が21個以上、アリティの不一致、関数でない定義)、`getField`のフィールド違いと
-  名前がリテラルでない場合(Idrisのフロントエンドが先に型エラーにするので、
-  rc2に届く形があるかも未確認)。
-- **インクリメンタルコンパイル(`--inc rc2`)のテストが無い。** verify は
-  全体コンパイルしか試さない。
-- **大きな外部プログラムが verify に無い。** idris2-missing-containers は
-  bench.sh でしか動かさない。idris2-lsp のIRを lint にかける手順は
-  スキル`rc2/.claude/skills/lint-lsp-ir`にある(任意実行、約4分)が、verify には
-  入れていない。
-- **まとめたテストの注意。** Test113DeepRecursion は、まとめたことで
-  `mod`がワーカー呼び出しになる、`mergeBy`の特殊化の展開が変わるなど、
-  元のテストと IR が違う。100万段で C スタックが溢れないことは実行で
-  確かめているが、元のテストと同じ形を狙いたい場合は分け直す。
+- 失敗すべきプログラムのテストの残り: `RC2.idr`の`validateExport`の他の経路(引数が21個以上、アリティの不一致、関数でない定義)、
+  `getField`のフィールド違いと名前がリテラルでない場合(Idrisのフロントエンドが先に型エラーにするので、rc2に届く形があるかも未確認)。
+- インクリメンタルコンパイル(`--inc rc2`)のテストが無い。verifyは全体コンパイルしか試さない。
+- 大きな外部プログラムがverifyに無い。idris2-missing-containersはbench.shでしか動かさない。idris2-lspのIRをlintにかける手順は
+  スキル`rc2/.claude/skills/lint-lsp-ir`にある(任意実行、約4分)が、verifyには入れていない。
+- Test113DeepRecursionは、まとめたことで元のテストとIRが違う(`mod`がワーカー呼び出しになる、`mergeBy`の特殊化の展開が変わる)。
+  100万段でCスタックが溢れないことは実行で確かめている。同じ形を狙うなら分け直す。
 
 ## gen-env.shの削除とドキュメントの修正
 
@@ -819,136 +527,28 @@ RC.annotate・DeadVars で実際に数秒を失った。1の計測で重いと�
 `smoke.sh`と`SKILL.md`にも`gen-env`の参照が残っているので、削除前に`grep -rn gen-env`で洗う。
 
 
-## 比較の入れ子の合成: 残り(実装済み 2026-10-08)
-
-`cmp <T [x, y] then A else cmp ==T [x, y] then A' else B`(A'はAと等しい)を
-`cmp <=T [x, y] then A else B`にまとめる`Compiler.RC2.CmpMerge`を入れた
-(`{>, ==}`は`>=`、外側と内側の順、オペランドの順は問わない。さらに、then/else
-が等しい比較は枝1つにする)。dup/drop注釈の前、early inlineの後に回り、
-`--directive nocmpmerge`で止められる。設計は`rc2/doc/native-type-inference.md`
-の"Merging nested comparisons"。テストは`Test112Numeric/CmpMerge.idr`
-(Int/Integer/String/Char/Double(NaN込み)/Nat、RefCと出力一致、`check.sh`が
-`nocmpmerge`との差を数える)。
-
-- **効果は小さい。** idris2-lsp(2026-10-08)で`<=`/`>=`にまとまった組は0、
-  then/elseが等しい比較の除去が2か所(`cmp`は1175から1173、`dup`は74638のまま、
-  `drop`は64800から64804、リンタの異常は0、コンパイル時間は2m36sで同じ)。
-  比較の入れ子は`Ord`の`compare`実装自体(then枝が`0`と`1`で異なる)に残るだけで、
-  その`if x < y then A else if x == y then A else B`の形が出るのは利用者の
-  コードか、単一の呼び出し元が`compare`を展開した場合に限る。
-  `Ord Int`/`Integer`は`<=`を原始演算で持つので、`compare`経由にならない。
-  実行時間は、String(`compare x y /= GT`、3000件の挿入ソート)で0.139s→0.134s
-  (約3%)。手書きの`if x < y then A else if x == y then A else B`をIntとDoubleで
-  各2億回回すループは10.48s→9.86s(約6%)。出力は`nocmpmerge`と一致。
-- **(参考) `Integer`/`String`の比較融合の計測(2026-10-07)。** `cmp`が551から1175へ
-  (うち`Integer`/`String`が624)、`op <Integer`/`==String`等の`let`+`case`の組が632から8へ。
-  `dup`は79113から79112、`drop`は80495から80467で、ほぼ変わらない。リンタの
-  漏れ検査は異常0で、検査対象の定義数も同じ(17534)。実行時間は変わらなかった
-  (`BenchBoxedCompare`、`Integer`の即値・ヒープと`String`の比較の分岐: 0.174秒が前後で
-  同じ。gccが元の`mkBool`の往復を既に消していた)。効果はIRとCの見通しと、
-  `mkBool`/`to_i64`の削減にとどまる。設計は`rc2/doc/native-type-inference.md`の
-  "Comparisons over Boxed operands"。
-- **`compare_Ord_Int`/`compare_Ord_Integer`が展開されない理由は`delegatingThreshold`。**
-  `delegatingThreshold`を24にしても呼び出しは残り、40にすると全部展開されて
-  `x <= y`相当が`cmp <=Int`になる(確認用プローブ)。書き換え後のサイズは25から40の
-  間。idris2-lsp全体では24で3.3%増えた(`rc2/doc/inlining.md`)ので、しきい値を上げる
-  のではなく、`compare_Ord_*`だけを許す個別の扱いを検討する。lspでの
-  `compare_Ord_Integer`の呼び出しは24か所のまま。
-- **`let`+`case`の未融合は8組のまま。** 形は`let v = (let x = case ... in op ==Integer [x, #0]) in case v of`
-  で、`case`の対象が入れ子の`let`の末尾の比較になっている(`List.filter`の
-  述語をインライン展開した後など)。`Phase 1`が`case`の対象を変数として見るので
-  融合しない。`PushCon`の「ブロックの末尾への`case`の押し込み」を比較にも広げるのが
-  候補だが、8組では見合わない。
-- **まだ入れていない。** 同じ結果を返す複数の`case`の枝(`0 -> 10; 1 -> 10; _ -> 10`)を
-  1つにまとめる処理(`>=`を`compare`で書いた`case v of 0->0; 1->1; 2->1; _->1`など、
-  `compare`が展開されない場合の形)。`ConstFold`の`case`の簡約の近くが候補。
-  否定を伴う変形(`cmp < then A else B`を`cmp >= then B else A`にする)は、Doubleの
-  NaNで成り立たないので意図的に入れていない。
+## 比較の入れ子の合成: 未実装の残り
+`Compiler.RC2.CmpMerge`は実装済み(`rc2/doc/native-type-inference.md`の"Merging nested comparisons"、計測もそこ)。残り:
+- `compare_Ord_Int`/`compare_Ord_Integer`が展開されないのは`delegatingThreshold`のため(24のままでは残り、40にすると全部展開される。
+  書き換え後のサイズは25から40の間)。idris2-lsp全体で24にすると3.3%増える(`rc2/doc/inlining.md`)ので、しきい値を上げずに
+  `compare_Ord_*`だけを許す個別の扱いを検討する。
+- `let`+`case`の未融合は8組。`case`の対象が入れ子の`let`の末尾の比較になる形で、`PushCon`の「ブロックの末尾への`case`の押し込み」を
+  比較にも広げるのが候補だが、8組では見合わない。
+- 同じ結果を返す複数の`case`の枝(`0 -> 10; 1 -> 10; _ -> 10`)を1つにまとめる処理は未実装。`ConstFold`の`case`の簡約の近くが候補。
+  否定を伴う変形(`cmp <`を`cmp >=`にして枝を入れ替える)は、DoubleのNaNで成り立たないので入れない。
 
 ## 借用推論(borrow inference): 計測して保留(2026-10-07、数字は2026-10-14)
+今の形では導入しない。annotate前の推論は、借用を決める事実(`Reuse`・`MutualLoop`/`Loop`・`DualABI`・`LateInline`)が
+annotateの後で決まるので位置が合わない(借用にできた引数は5.9%、呼び出し側の`dup`の削減は0.6%)。annotate後(最終IR)で数えても、
+idris2-lspの静的な純減は全`dup`/`drop`の3.2%で、ループの中の重みはマイナス(実行時には逆効果になりうる)。計測の詳細:
+`rc2/doc/borrow-inference.md`。再検討するなら、`callRep`だけのwrapper定義が「ループでない末尾呼び出し」で除外されている点
+(実行時にはtrampolineされないので規則が厳しすぎる可能性)と、`case`のフィールドの`dup`を借用で扱えるか(再利用と衝突しうる)から。
 
-`dup`/`drop`を減らすため、読むだけの引数を借用にする推論を検討した。
-
-- annotate前(pre-RC IR)で推論する案は、rc2では位置が合わない。借用を決める
-  事実(構築子の再利用`Reuse`、ループ変換`MutualLoop`/`Loop`、nativeになる
-  引数`DualABI`、`LateInline`)の多くがannotateの後で決まるため、保守的に
-  推測するしかなく、idris2-lspで借用にできた引数は5.9%、呼び出し側の`dup`の
-  削減は0.6%だった。末尾呼び出しがループに変換されるかの予測は危険なので
-  やらない。診断のコードは`tmp/BorrowMeasure_preannotate.idr`に退避。
-- annotate後(最終IR)で数える(`tools/rcexpr-lint --borrow-stats`、末尾呼び出しの引数は
-  借用にせず所有を渡す扱い)。2026-10-14、master e4517c8、idris2-lspの12,705定義:
-  借用にできるBoxed引数は16.2%(5,490/33,692)。阻害要因は、格納9,677、所有の位置への
-  受け渡し8,450、ループでない末尾呼び出しの引数6,638、再利用1,252、`apply`/FFI 994、
-  ループで変わる引数613、返却578、複数の理由5,433。
-- 効果は、呼び出し先の`drop`除去11,261(ループ内530)、呼び出し先の`dup`除去510(81)、
-  呼び出し側の`dup`除去3,457(1,042)に対し、呼び出し側の`drop`追加7,081(1,806、うち末尾
-  呼び出しが末尾でなくなる分2,906)。静的な純減は8,147で、全`dup`/`drop` 251,732の3.2%。
-  ループの中の重みは-153(追加の方が多く、実行時には逆効果になりうる)。所有の規約の
-  wrapperが要る定義(間接参照されるもの)は1,430。`case`のフィールドの`dup`(借用では純減に
-  数えない)は4,089(ループ内1,859)。
-- 推移: 10-07は純減9,321(3.2%、全284,067)、10-08は9,031(3.5%、全256,350)、10-14は
-  8,147(3.2%、全251,732)。借用の効き目は増えておらず、割合の変化は分母(PushDown・
-  unbox・FunDedupで定義と`dup`/`drop`自体が減った)の動きによる。
-- 判断: 今の形では導入しない。再検討するなら、`callRep`だけのwrapper定義が「ループでない
-  末尾呼び出し」で除外されている点(実行時にはtrampolineされないので規則が厳しすぎる
-  可能性)と、`case`のフィールドの`dup`を借用で扱えるか(再利用と衝突しうる)から。
-- 末尾呼び出しで除外された引数の除外を解いた場合(`--borrow-tail-stats`、2026-10-08の
-  idris2-lsp、数字はその時点のまま): 渡し先が借用にできる形の候補だけを残すと、純減に
-  足せるのは+1,900〜+2,600(全体の0.7〜1.0%)で、ループの重みは-214から-34〜-38になるが
-  まだマイナス。利得の約7割は今すでに数えている末尾由来の`drop`追加が消える分で、ループ内に
-  効くのはクレジット27だけ。除外された13,905個の大半(渡し先が所有の位置、10,093箇所)は、
-  借用推論を他の引数にも広げる(所有の位置を減らす)ことでしか動かない。
-
-## dup/dropの押し込みの取りこぼし: 計測(2026-10-07)
-
-`tools/rcexpr-lint --pushdown-stats`(最終IR、静的な箇所数)でidris2-lspを測った。
-`dup`/`drop`操作は全体で290,924(dup 86,260、drop系 204,664)、ループ内は41.8%
-(末尾再帰の関数全体がループ化されるため粗い指標)。種類どうしは重複する(Aの
-フィールド系とDは同じdupを別の側から見ている)ので合算できない。
-
-- E: 枝の先頭のdrop(すでに効いている押し込み)は46,566箇所、全dropの73.4%。
-- A(対応済み、2026-10-08): caseの上のdupが一部の枝でdropに打ち消される形は12,271箇所(除去
-  可能な操作19,274、6.6%)だった。担当は`RC.annotate`と見ていたが、`annotate`は使用箇所にしかdupを置かない。
-  `case`の直前に`dup`/`drop`だけが並ぶ形(隣接、8,535箇所)の内訳は、caseのフィールドが
-  6,161箇所(`Reuse.resolveAlt`の`dupOnSurvive`と`outerDrop`の形: 生き残るフィールドを
-  全て親のdropの前にdupする)、フィールドでないものが2,374箇所(`LateInline`・`Loop`・
-  `ConAltNative`が足すと見られるが、パスを切っての確認はしていない)。そこで最終IRに対する独立パス`Compiler.RC2.PushDown`(`DeadCode`の後、`DupMerge`
-  の前、`--directive nopushdown`で切れる、`rc2/doc/pushdown.md`)にした: `case`の直前の
-  `dup`/`drop`だけの連なりを全ての枝の先頭に移し、枝先頭のdropと正規形(dupを先、dropを後)で
-  相殺する。`dup`を早める・`drop`を遅らせるのは安全で、`let`や`postDrop`付きの`cmp`は
-  またがない。静的な操作数が増える場合は適用しない。先に見つけたリンタの数え間違いも直した:
-  整数演算(`isReuseConsumingOp`)の`postDrop`は`Emit`が無視してdupが本物の参照になるので、
-  Aでも消費扱いにした(Bは217箇所から72箇所になった。消えた145箇所は整数演算で、残りはcallRepだけ)。`idris2-lsp`(同一
-  コンパイラで`nopushdown`と比較): `dup`行 78,483 -> 74,835、`drop`行 71,191 -> 64,999、
-  IR行 670,479 -> 660,639、dup/drop操作 269,416 -> 255,574(-5.1%)、A 12,277箇所(19,255操作)
-  -> 5,065箇所(5,057操作)、D 19,410箇所(29,584操作) -> 13,421箇所(20,827操作)、
-  rcexpr-lint異常0件、PushDown段0.13秒。残りのAは`let`/`cmp`をまたぐもの(4,755箇所、多くは
-  呼び出し結果を`case`する形)と、枝先頭より深い所で打ち消すもの。
-- B(対応済み、2026-10-07): 同じ変数の`dup`と直後の`postDrop`の対は3,361箇所(6,722操作、
-  2.3%)だった。`RC.annotate`が読み取りオペランドを消費扱いにして`dup v`を入れ、ノード
-  自身の`postDrop=[v]`で戻していたため。`DupMerge.cancelRun`が、読むだけのノード(`op`・
-  `extprim`・`cmp`・オペランドを消費しない呼び出し)の`postDrop`と相殺するようにした
-  (`rc2/doc/reading-the-ir.md`の6節)。同じ`idris2-lsp`で3,361 -> 227箇所(callRep 80、
-  op 147)。残りは、主に整数演算など`isReuseConsumingOp`の`op`(`postDrop`をEmitが無視し、
-  `dup`が本物の参照渡しになる)と、別のオペランドを消費する呼び出しで、設計どおり
-  (整数演算は後にリンタが消費扱いにしたので、今のBの数え方では対象外)。
-  dup/drop操作は288,537 -> 281,497(-2.4%)、IRは688,874 -> 681,661行、`--timing 2`の
-  コンパイル時間は56.5s -> 55.8s(DupMerge段は+0.4s程度)。リーク検査は異常0件のまま。
-  `postDrop`を持たない`cmp`の対はリンタのBに数えられていない(scanBが`cmp`で止まる)が、
-  同じ相殺の対象に入れてある。
-- C0(対応済み、2026-10-07): `let v2 = v1; drop [v2]`の別名は3,166箇所(別名2,567)だった。
-  再現できた形は、1か所からしか呼ばれない`where`関数(親の引数が変わらない引数として
-  付く)を`LateInline`が取り込むときの別名`let f = actual`で、片方の枝が読まないと
-  その枝にドロップだけが残る(Test79DupMergeの`readAll`)。`DupMerge.cancelDupDrop`で
-  `drop [v1]`に置き換える(`v1`がboxedのときだけ。nativeなら別のboxになる)。
-  3,166 -> 614箇所、別名は2,567 -> 15。残りは別名15と、別名ではない種類(nested let
-  value 417、extprim 135など)。後者は今回の対象外。
-- C1(全枝でdropされるだけのlet): 0件。C2(1枝だけで使うlet): 1,234箇所だが、
-  大半は`Sink`が設計どおり動かさない種類で、怪しいのは3件。
-- D: フィールドの`dup`の後に親の`drop`が19,616箇所(30,004操作、10.3%)あった。PushDown後は
-  13,421箇所(20,827操作、8.1%、ループ内9,914操作)。うち「枝が新しいconを作る」5,027箇所
-  (9,841操作)、「作らない」8,394箇所(10,986操作)。親が一意なら両方消せるが、実行時の
-  一意性判定が要る。設計メモ(未実装):
+## dup/dropの押し込み: 残り(D)
+`PushDown`(`rc2/doc/pushdown.md`)ほかで、`case`の上の`dup`が枝の`drop`に打ち消される形(A)、`dup`と直後の`postDrop`の対(B)、
+別名`let`のdrop(C0)は対応済み。残りは**D: フィールドの`dup`の後に親の`drop`が来る形**(`tools/rcexpr-lint --pushdown-stats`、
+idris2-lsp、PushDown後で13,421箇所・20,827操作で全`dup`/`drop`の8.1%、ループ内9,914操作。うち「枝が新しいconを作る」5,027箇所、
+「作らない」8,394箇所)。親が一意なら両方消せるが、実行時の一意性判定が要る。設計メモ(未実装):
   - 案1(本命): 既存の`reuseOffer P dupOnShared=[フィールド] dropOnUnique=[]`+直後の
     `releaseReuse P`をそのまま使う。`Reuse.resolveAlt`は「枝が同名のconを作る」ときだけ
     `reuseOffer`を出しているので、その条件を外して(または別条件で)出す。一意なら殻を
@@ -969,86 +569,13 @@ RC.annotate・DeadVars で実際に数秒を失った。1の計測で重いと�
 Aの残り(`let`/`cmp`をまたぐ形)は、`let`の値が呼び出しなので、親のdropを呼び出しの後ろへ
 送ると呼び出し先で一意性が落ちうる(インプレース更新がコピーになる)ため見送った。
 
-## Bool: nativeにする段階計画(調査 2026-10-07)
-
-`Bool`はすでに`Int8`のタグ付き即値(`mkBool = mkInt8`、`idris2rc2_memory.h:164`)で、
-IR上では`B8 1`/`B8 0`。native(`Native Bits8`)になれる範囲はかなり広く、
-`allPos`/`firstLessI`/`eqList`などはすでに`ret= Native Bits8`。残るのは、比較
-プリミティブの結果、関数呼び出しの結果、`case`式の値。
-
-返り値がnativeにならない条件(`DualABI.idr:114-168`の`tailValueReps`): 末尾に
-比較プリミティブ(`opResultRep`が`Nothing`)か関数呼び出しが1つでもあると
-`allJustSame`が失敗する。`Core.Name.(==_Eq_Name)`が`ret= Boxed`なのは末尾に
-`call (==_Eq_Name)`と`call Namespace ==`があるため。
-
-枝の先頭のdropが0/1のscrutineeを落とす4,008件の出どころ(idris2-lsp、代理指標):
-関数呼び出しの結果1,319、パラメータ/フィールド/ループ引数855、比較プリミティブ628、
-その他711、case式の値405、apply等90。
-
-- 段階1(低リスク): 比較プリミティブの結果の`let`束縛を`alwaysUnboxed`と同等に
-  扱い、`dup`/`drop`を省く。生成物は必ず`mkBool`の即値。対象628件。
-  `alwaysUnboxedBoxedLocalsR`(`RC.idr:494-`)に判定を足す。
-- 段階2(完了): 返り値の推論に、末尾が`B8`リテラル/native `Bits8`/他の同種関数への
-  呼び出しである関数を`ret= Native Bits8`にする規則を足した(`boolReturnPlan`、
-  関数をまたぐ最大不動点、末尾呼び出しの環は除外、`--directive noboolret`で切れる。
-  `rc2/doc/dual-abi.md`の"Bool return")。比較プリミティブは前段で`case`の0/1リテラルに
-  なっているので、単独の規則も`Integer`/`String`用のC側`int`版も要らなかった。
-  idris2-lsp(同一コンパイラで`noboolret`と比較): `ret= Native Bits8` 362 -> 594、
-  `ret= Boxed` 13,976 -> 13,831、枝の先頭のdrop 3,381 -> 2,633、`drop`行 81,195 ->
-  80,495、DualABI 1.96s -> 2.19s、全体の差は誤差、rcexpr-lintは異常0件。未着手:
-  `MutualLoop`が畳まなかった末尾呼び出しの環(Boxedのまま)。
-- 段階3(完了、`--directive noboolcase`で切れる): 計測の結果、当初想定の「パラメータ
-  /フィールドの生産側証拠の不動点」は不要だった。`B8`定数の`case`で直接分岐される
-  `Bool`パラメータは、`paramEligibility`(`constAltsNativeType`)がすでに`Native Bits8`に
-  しており、`B8`の`case`の枝先頭dropのうちパラメータは6件、ループ引数は1件(1,453件中)。
-  なお旧い「855件」の代理指標は`0`/`1`の枝を種別なしで数えていたため、Nat/Int/3値以上の
-  enumが混ざっていた(ダンプの定数に種別を付けて再分類した)。代わりに、型付きの定数を
-  消費側の証拠として使う: `RConstCase`のaltが全て`alwaysUnboxed`型(`B8`/`Char`/`Int8`..)
-  の定数なら、そのscrutineeは即値で`dup`/`drop`は不要(`Types.typedConstScrutinees`、
-  `RC.definitionNatives`が`natives`に加える)。**`Bool`かどうかではなくunbox判断だけ**に
-  使う(`Bits8`/enumは2..255もありうる; `case`・default枝は一切書き換えない)。`0`/`1`の
-  リテラルではなく定数の型が証拠なので、`Int`/`Nat`の`case`(`I`/`BI`のalt)には効かない。
-  DualABIの呼び出し側書き換えは、そのローカルを`postDrop`から外す
-  (`stripImmediatePostDrop`)。ダンプは該当altを`u: 1 ->`と印字し(`Pretty.immediateMark`、
-  rc2baseのパーサは`u:`を許す)、rcexpr-lintは同じ集合を再導出する(`Leak.idr`の
-  `typedImmediateAlts`、フィクスチャ`typedcase.rcexpr`)。
-  idris2-lsp(同一コンパイラ、`noboolcase`と比較): `drop`行 80,467 -> 78,871(-1,596)、
-  `dup`行 79,112 -> 79,113、IR行 680,384 -> 678,789、枝先頭のdrop(定数altが全て
-  always-unboxed型のscrutinee) 1,463 -> 526、RC annotate 2.66s -> 2.76s、DualABI
-  2.20s -> 2.26s、全体は誤差(約55秒)、rcexpr-lintは異常0件。出どころ別の内訳(1,453件):
-  フィールド508、`case`値の`let`253、`dup`エイリアス231、呼び出し結果204、その他181。
-  **残り(約500件)はコンストラクタのフィールド**: `annotate`のフィールド`dup`と、
-  `ConAltNative`がシャドウを作るときに再導出する所有権(`reannotateFieldOwnership`)が
-  `natives`を見ないため、フィールドの`dup`/`drop`が残る。後続タスク: (a) alt境界で
-  `RConCase`のフィールドにも型証拠(コンストラクタ名、またはフィールドの型)を与える、
-  または(b) `ConAltNative`を`natives`対応にする。試作(全`dup`/`drop`/`postDrop`/
-  `reuseOffer`リストから該当ローカルを後段で除去)では`drop`行が約71,000(-9,400)まで
-  減ったが、rcexpr-lintに異常が出たので採用していない(試作は未採用)。
-- 段階3b: コンストラクタフィールド(完了、`--directive noboolfield`で切れる。
-  `noboolcase`でも切れる): `Reuse.resolveReuse`が分解したフィールドを親のdrop前に
-  `dup`し`dupOnShared`/`dropOnUnique`に全て載せること、`ConAltNative.shadowOneField`が
-  所有権をゼロから再導出して`drop`を足すことが、段階3の`natives`を見ていなかった。
-  両者に`typedConstScrutinees`の集合(`RC2.immOf`)を渡し、型付き定数で分岐される
-  フィールドを外した。`case`/default枝は触らない。`Emit`は各フィールドをalt入口で
-  Cローカルへ取り出すので、親をdropした後も即値は有効。広い版(後段で該当ローカルの
-  refcount操作を全て除去)でrcexpr-lintが出した異常の原因は、lintが「caseのフィールド
-  は親の参照を借りている」とみなし、`drop [親]`後の読みをuse-after-freeとする点
-  (ヒープのフィールドなら正しいが即値には誤り)。`Lint.idr`が`u:`のcaseのscrutinee
-  を実質無限の参照数で種まきし、借りフィールドとして再束縛しないようにした
-  (`typedcase.rcexpr`に親drop後の読みを追加、`u:`を外すと従来どおり検出)。
-  idris2-lsp(同一コンパイラ、`noboolfield`と比較): `dup`行 79,113 -> 78,483、`drop`行
-  78,871 -> 71,191(-7,680)、IR行 678,789 -> 670,479、枝先頭のdrop 526 -> 120
-  (残りはフィールド13、パラメータ14、他は`let`束縛のBoxedな呼び出し結果など)、
-  rcexpr-lint異常0件。調査済み(2026-10-08、再現せず): 狭い版の最初の2回のidris2-lsp実行で、1か所の
-  `reuseOffer ... dupOnShared`のidが`v261316`でなく`v271316`と出力され(lintが
-  over-consumeを報告)、その後は再現しなかった。コールド9回+ウォーム3回(この変更)と
-  master 9回で、ダンプは各ツリー内で完全に一致した(`ulimit`の有無、作業ディレクトリ、
-  2並列、環境変数のサイズを変えても)。`Reuse`・`ConAltNative`・`immOf`に順序の不定な
-  コンテナやスレッドは無い。差がちょうど+10000の1箇所だけなので、連番のずれではなく
-  実行環境側(共有の`install/idris2-lsp/build`への同時書き込み、古い・ビルド途中の
-  `idris2-rc2`、入力の違い)を疑う。再発したら、実行直後の`idris2-rc2`の更新時刻とコミット、
-  出力のmd5、同じディレクトリを使っていた他のプロセスの有無を残すこと。
+## Bool: nativeにする残り
+段階1〜3b(返り値、`case`の分岐、コンストラクタフィールド)は実装済み(`rc2/doc/dual-abi.md`の"Bool return"ほか)。残り:
+- `MutualLoop`が畳まなかった末尾呼び出しの環は、返り値がBoxedのまま。
 - やらない: 消費側の0/1だけを根拠にパラメータを`Bool`と推論すること。
+- 再現しなかった件(2026-10-08): 狭い版の最初の2回のidris2-lsp実行で、1か所の`reuseOffer ... dupOnShared`のidが`v261316`でなく
+  `v271316`と出た(差は+10000の1か所)。再発したら、実行直後の`idris2-rc2`の更新時刻とコミット、出力のmd5、同じディレクトリを
+  使っていた他のプロセスの有無を残すこと。
 
 ## MutualLoopが作る名前のマングリング: モジュールをまたいで一意でない(2026-10-08)
 

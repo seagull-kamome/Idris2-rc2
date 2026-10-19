@@ -21,7 +21,7 @@ There it cost:
 - a pointer chase per read.
 
 `sort`'s profile had the comparator touching two boxes' refcounts per
-comparison (`TODO.md`, "`sort` against Chez").
+comparison (`sort-vs-chez.md`).
 
 ## Representation
 
