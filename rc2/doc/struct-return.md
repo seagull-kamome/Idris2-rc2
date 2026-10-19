@@ -2,8 +2,8 @@
 
 Status: implemented and on by default since 2026-09-25 (`--directive
 nostructreturn` turns it off), after the measurements in "Results";
-constructors of up to four fields since 2026-09-26. Tracks
-`TODO.md`'s "constructor return values are always heap cells" item.
+constructors of up to four fields since 2026-09-26.
+(The `TODO.md` item it tracked is done and removed.)
 
 ## The problem
 

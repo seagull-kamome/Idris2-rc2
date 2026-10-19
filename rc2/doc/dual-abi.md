@@ -1608,7 +1608,7 @@ local is promoted to a native `Bits8` by the existing promotion.
 ### Numbers
 
 Measured on idris2-lsp, same compiler build, `--directive noboolret`
-against the default (see TODO.md's Bool section for the table).
+against the default (the table was in `TODO.md`'s Bool section; see the git history).
 
 | idris2-lsp, final `dumprcexpr` | `noboolret` | default |
 |---|---|---|

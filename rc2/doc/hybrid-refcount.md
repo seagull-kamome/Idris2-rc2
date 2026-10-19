@@ -257,3 +257,31 @@ Each runs `TSAN_RUNS` times (default 3), since a race may show up in
 only some interleavings. Over 10 runs each they produced no warnings;
 the pre-existing runtime had fence false positives in 6 of 45 runs (see
 "Runtime operations").
+
+## Measurements of the atomic cost (2026-09-27)
+
+Moved from `TODO.md`. (Japanese: `ja/hybrid-refcount.md`.)
+
+The same generated C was linked against several runtimes (minimum of three runs):
+
+| Benchmark | atomic (as it was) | all non-atomic | global flag + union |
+|---|---|---|---|
+| idris2-missing-containers | 8.06s | 6.20s (-23%) | 6.68s (-17%) |
+| `sort`, 1M elements | 3.17s | 2.37s (-25%) | 2.44s (-23%) |
+| 1M closures x 20 | 3.67s | 2.61s (-29%) | 2.72s (-26%) |
+| map/filter, 300k elements x 50 | 7.31s | 6.70s (-8%) | 6.71s (-8%) |
+
+- The outputs all match. Code that does a lot of reference counting gets 25-30% faster, nearly across the board.
+- A per-object shared flag cannot be set reliably in practice, so it was not taken. A process-wide
+  "multi-threaded" flag, raised once, switches instead.
+- A prototype that kept `refCount` `_Atomic` and read and wrote it relaxed gave only half the gain. Making it a
+  union with a plain `uint16_t`, and sending every non-atomic access through that, improves it a lot.
+- Implemented (2026-09-27): the process-wide flag, as described above. missing-containers -16%, `sort` -23%.
+- Left: an escape analysis that pins variables known not to escape to the non-atomic operations. The upper
+  bound is 8 points on missing-containers (the gap to all-non-atomic). An analysis closed within one function
+  pins only 57 of 297,911 sites in idris2-lsp, which is pointless (measured in the section above). A useful
+  one would need a whole-program analysis that follows values that can escape to a thread across functions,
+  and copies of functions for callers whose arguments stay on their thread.
+- A coarse whole-program analysis chained through function arguments (no copying) was also estimated: 5.3% of
+  sites in idris2-lsp, and pinning those on missing-containers goes from 6.48s to 6.37s (-1.7%), closing only a
+  fifth of the gap to all-non-atomic (5.95s). Abandoned.
