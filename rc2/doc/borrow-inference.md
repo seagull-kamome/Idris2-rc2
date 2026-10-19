@@ -1,35 +1,36 @@
 # Borrow inference: measured and shelved (2026-10-07, numbers of 2026-10-14)
 
-Moved from `TODO.md`. The text is Japanese as it was written; the conclusion is in `TODO.md`.
+Moved from `TODO.md`, which keeps the conclusion. (Japanese: `ja/borrow-inference.md`.)
 
-`dup`/`drop`を減らすため、読むだけの引数を借用にする推論を検討した。
+An inference that makes read-only arguments borrowed, to cut `dup`/`drop`, was examined.
 
-- annotate前(pre-RC IR)で推論する案は、rc2では位置が合わない。借用を決める
-  事実(構築子の再利用`Reuse`、ループ変換`MutualLoop`/`Loop`、nativeになる
-  引数`DualABI`、`LateInline`)の多くがannotateの後で決まるため、保守的に
-  推測するしかなく、idris2-lspで借用にできた引数は5.9%、呼び出し側の`dup`の
-  削減は0.6%だった。末尾呼び出しがループに変換されるかの予測は危険なので
-  やらない。診断のコードは`tmp/BorrowMeasure_preannotate.idr`に退避。
-- annotate後(最終IR)で数える(`tools/rcexpr-lint --borrow-stats`、末尾呼び出しの引数は
-  借用にせず所有を渡す扱い)。2026-10-14、master e4517c8、idris2-lspの12,705定義:
-  借用にできるBoxed引数は16.2%(5,490/33,692)。阻害要因は、格納9,677、所有の位置への
-  受け渡し8,450、ループでない末尾呼び出しの引数6,638、再利用1,252、`apply`/FFI 994、
-  ループで変わる引数613、返却578、複数の理由5,433。
-- 効果は、呼び出し先の`drop`除去11,261(ループ内530)、呼び出し先の`dup`除去510(81)、
-  呼び出し側の`dup`除去3,457(1,042)に対し、呼び出し側の`drop`追加7,081(1,806、うち末尾
-  呼び出しが末尾でなくなる分2,906)。静的な純減は8,147で、全`dup`/`drop` 251,732の3.2%。
-  ループの中の重みは-153(追加の方が多く、実行時には逆効果になりうる)。所有の規約の
-  wrapperが要る定義(間接参照されるもの)は1,430。`case`のフィールドの`dup`(借用では純減に
-  数えない)は4,089(ループ内1,859)。
-- 推移: 10-07は純減9,321(3.2%、全284,067)、10-08は9,031(3.5%、全256,350)、10-14は
-  8,147(3.2%、全251,732)。借用の効き目は増えておらず、割合の変化は分母(PushDown・
-  unbox・FunDedupで定義と`dup`/`drop`自体が減った)の動きによる。
-- 判断: 今の形では導入しない。再検討するなら、`callRep`だけのwrapper定義が「ループでない
-  末尾呼び出し」で除外されている点(実行時にはtrampolineされないので規則が厳しすぎる
-  可能性)と、`case`のフィールドの`dup`を借用で扱えるか(再利用と衝突しうる)から。
-- 末尾呼び出しで除外された引数の除外を解いた場合(`--borrow-tail-stats`、2026-10-08の
-  idris2-lsp、数字はその時点のまま): 渡し先が借用にできる形の候補だけを残すと、純減に
-  足せるのは+1,900〜+2,600(全体の0.7〜1.0%)で、ループの重みは-214から-34〜-38になるが
-  まだマイナス。利得の約7割は今すでに数えている末尾由来の`drop`追加が消える分で、ループ内に
-  効くのはクレジット27だけ。除外された13,905個の大半(渡し先が所有の位置、10,093箇所)は、
-  借用推論を他の引数にも広げる(所有の位置を減らす)ことでしか動かない。
+- **Inferring before annotation (the pre-RC IR) does not fit rc2.** Most of the facts that decide borrowing
+  (constructor reuse in `Reuse`, loop conversion in `MutualLoop`/`Loop`, the arguments `DualABI` makes native,
+  `LateInline`) are settled after annotation, so the inference could only guess conservatively. On idris2-lsp it
+  borrowed 5.9% of the arguments and cut the callers' `dup`s by 0.6%. Predicting whether a tail call becomes a
+  loop is dangerous, so that is not done. The diagnostic code was set aside as
+  `tmp/BorrowMeasure_preannotate.idr`.
+- **Counting after annotation (the final IR)** with `tools/rcexpr-lint --borrow-stats` (an argument of a tail
+  call is not borrowed; the callee gets ownership). 2026-10-14, master e4517c8, 12,705 definitions of
+  idris2-lsp: 16.2% of the Boxed arguments can be borrowed (5,490 of 33,692). What blocks the rest: stored
+  9,677, passed to an owning position 8,450, argument of a tail call that is not a loop 6,638, reused 1,252,
+  `apply`/FFI 994, argument changed by the loop 613, returned 578, several reasons 5,433.
+- **The effect.** Callee `drop`s removed 11,261 (530 in loops), callee `dup`s removed 510 (81), caller `dup`s
+  removed 3,457 (1,042); against that, caller `drop`s added 7,081 (1,806, of which 2,906 are tail calls that
+  stop being tail calls). The static net reduction is 8,147, 3.2% of all 251,732 `dup`/`drop`s. The weight
+  inside loops is -153 (more is added than removed, so it can be a loss at run time). Definitions that need a
+  wrapper with the owning convention (those referenced indirectly): 1,430. `dup`s of `case` fields (not counted
+  as a net reduction under borrowing): 4,089 (1,859 in loops).
+- **The trend.** The net reduction was 9,321 on 10-07 (3.2% of 284,067), 9,031 on 10-08 (3.5% of 256,350) and
+  8,147 on 10-14 (3.2% of 251,732). Borrowing is not getting more effective; the change in the ratio comes from
+  the denominator (PushDown, unboxing and FunDedup removed definitions and `dup`/`drop`s).
+- **Decision:** not adopted in its current form. To revisit, start with two points: definitions that are only a
+  `callRep` wrapper are excluded by "tail call that is not a loop", which may be too strict because at run time
+  they are not trampolined; and whether the `dup` of a `case` field can be handled by borrowing (it can collide
+  with reuse).
+- **If the exclusion of tail-call arguments is lifted** (`--borrow-tail-stats`, idris2-lsp of 2026-10-08, the
+  numbers as of then): keeping only candidates whose callee can borrow, the net reduction grows by +1,900 to
+  +2,600 (0.7-1.0% of all), and the weight in loops goes from -214 to between -34 and -38, still negative. About
+  70% of the gain is the tail-call `drop`s that are already counted and would disappear; only 27 credits fall
+  inside loops. Most of the 13,905 excluded arguments (10,093 sites whose callee is an owning position) move
+  only if borrow inference is widened to other arguments (fewer owning positions).

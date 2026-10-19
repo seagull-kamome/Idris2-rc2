@@ -260,29 +260,28 @@ the pre-existing runtime had fence false positives in 6 of 45 runs (see
 
 ## Measurements of the atomic cost (2026-09-27)
 
-Moved from `TODO.md`. The text is Japanese as it was written.
+Moved from `TODO.md`. (Japanese: `ja/hybrid-refcount.md`.)
 
-同じ生成Cを複数のランタイムにリンクして比較した(3回の最小値)。
+The same generated C was linked against several runtimes (minimum of three runs):
 
-| ベンチ | atomic(現行) | 全て非atomic | グローバルフラグ+union |
+| Benchmark | atomic (as it was) | all non-atomic | global flag + union |
 |---|---|---|---|
 | idris2-missing-containers | 8.06s | 6.20s (-23%) | 6.68s (-17%) |
-| `sort` 1M要素 | 3.17s | 2.37s (-25%) | 2.44s (-23%) |
-| クロージャ1M個×20回 | 3.67s | 2.61s (-29%) | 2.72s (-26%) |
-| map/filter 300k要素×50回 | 7.31s | 6.70s (-8%) | 6.71s (-8%) |
+| `sort`, 1M elements | 3.17s | 2.37s (-25%) | 2.44s (-23%) |
+| 1M closures x 20 | 3.67s | 2.61s (-29%) | 2.72s (-26%) |
+| map/filter, 300k elements x 50 | 7.31s | 6.70s (-8%) | 6.71s (-8%) |
 
-- 出力はどれも一致。refcountを多用する処理はほぼ一律25〜30%速くなる。
-- オブジェクト毎の共有フラグは実用上設定しきれないので採らず、プロセス全体で
-  一度だけ立てる「マルチスレッド」フラグで切り替える。
-- refCountを`_Atomic`のままrelaxedで読み書きした試作は効果が半分しか出なかった。
-  普通の`uint16_t`とのunionにして非atomic側は全てそちらを通すと大きく改善する。
-- 実装済み(2026-09-27): プロセス全体のフラグで切り替える方式。`rc2/doc/hybrid-refcount.md`。
-  missing-containersで-16%、sortで-23%。
-- 残り: 逃げない事が判っている変数を非atomic版で固定するエスケープ解析。上限は
-  missing-containersで8ポイント(全て非atomicとの差)。関数内で閉じた解析で固定
-  できるのはidris2-lspで297,911箇所中57箇所しかなく無意味(計測は
-  hybrid-refcount.md)。やるなら関数をまたいでスレッドへ逃げうる値を追う
-  全体解析と、引数がスレッドに閉じている呼び出し元向けの関数の複製が要る。
-- 関数の引数を通して連鎖させる粗い全体解析(複製なし)も見積もった。idris2-lspで5.3%、
-  missing-containersで該当箇所を非atomicに固定しても6.48s→6.37s(-1.7%)で、全て
-  非atomic(5.95s)との差の2割しか埋まらない。打ち切り。
+- The outputs all match. Code that does a lot of reference counting gets 25-30% faster, nearly across the board.
+- A per-object shared flag cannot be set reliably in practice, so it was not taken. A process-wide
+  "multi-threaded" flag, raised once, switches instead.
+- A prototype that kept `refCount` `_Atomic` and read and wrote it relaxed gave only half the gain. Making it a
+  union with a plain `uint16_t`, and sending every non-atomic access through that, improves it a lot.
+- Implemented (2026-09-27): the process-wide flag, as described above. missing-containers -16%, `sort` -23%.
+- Left: an escape analysis that pins variables known not to escape to the non-atomic operations. The upper
+  bound is 8 points on missing-containers (the gap to all-non-atomic). An analysis closed within one function
+  pins only 57 of 297,911 sites in idris2-lsp, which is pointless (measured in the section above). A useful
+  one would need a whole-program analysis that follows values that can escape to a thread across functions,
+  and copies of functions for callers whose arguments stay on their thread.
+- A coarse whole-program analysis chained through function arguments (no copying) was also estimated: 5.3% of
+  sites in idris2-lsp, and pinning those on missing-containers goes from 6.48s to 6.37s (-1.7%), closing only a
+  fifth of the gap to all-non-atomic (5.95s). Abandoned.

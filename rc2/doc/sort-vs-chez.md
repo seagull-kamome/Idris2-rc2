@@ -1,6 +1,6 @@
 # `sort` against Chez: stacked causes (measured 2026-09-26)
 
-Moved from `TODO.md`, which keeps the causes still open. The text is English/Japanese as written.
+Moved from `TODO.md`, which keeps the causes still open.
 
 `Data.List.sort` of 1M pseudo-random `Int`s took 4.18s on rc2 and
 1.23s on Chez. Cause 1 is fixed (`Compiler.RC2.DeadArgs`,

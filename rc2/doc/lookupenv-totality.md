@@ -1,46 +1,34 @@
 # `RC.idr`'s `lookupEnv`: a full totality proof through `IsVar` is impossible (2026-09-17)
 
-Moved from `TODO.md`. The text is Japanese as it was written; the conclusion is in `TODO.md`.
+Moved from `TODO.md`, which keeps the conclusion. (Japanese: `ja/lookupenv-totality.md`.)
 
-`Compiler.RC2.RC`のPhase 1(`normalizeDef`)は`Compiler.LambdaLift`の
-`Lifted vars`を歩く際、de Bruijn添字を`Env = List Int`という
-`vars`と同じ長さである"べき"平場のリストで追跡しており、`lookupEnv`は
-添字が範囲外だと`idris_crash`する安全網を持っていた。`LLocal`自体は
-`(0 p : IsVar x idx vars)`という、`idx`が`vars`の正当な添字である
-ことを示す証明を既に持っている(`Core.TT.Var`)。当初「この証明を
-`normalizeDef`に通せば`lookupEnv`をクラッシュ無しの全域関数にできる」
-という設計(「型で保証されていた不変条件を境界で捨てている」という
-パターン)を実装しようとした。
+Phase 1 of `Compiler.RC2.RC` (`normalizeDef`) walks `Lifted vars` from `Compiler.LambdaLift`. It tracked the de
+Bruijn indices in `Env = List Int`, a flat list that "should" have the length of `vars`, and `lookupEnv` had a
+safety net that calls `idris_crash` when an index is out of range. `LLocal` itself already carries
+`(0 p : IsVar x idx vars)`, a proof that `idx` is a valid index into `vars` (`Core.TT.Var`). The first design
+was to pass this proof through `normalizeDef`, which would make `lookupEnv` a total function with no crash (the
+pattern "an invariant the types guaranteed is thrown away at a boundary").
 
-**判明した事実**: `LLocal`の`p`フィールドはupstream側で`0`量(消去)
-と宣言されている。Idris2は、消去された値のコンストラクタで分岐して
-「分岐ごとに異なる実行時データ」を返す関数の定義を一貫して拒否する
-(`Can't match on First (Erased argument)`)。これは実装の順序や
-書き方の問題ではなく、`Core.TT.Var`の`nameAt`(`nameAt {vars = n ::
-_} First = n`のような、まさに欲しかった書き方)が一見コンパイル
-できることに惑わされたが、独立した最小再現で検証したところ`nameAt`
-が許されるのは、返す値`n`が`vars`という**型レベルの添字そのもの**
-から取り出せる場合に限られており、実行時に計算された値(今回なら
-`Int`)を返す一般の関数では、引数が`p`ひとつだけの最小構成でも
-同じエラーが再現した(`myCount : (0 p : MyIsVar n idx vars) -> Int`
-相当)。つまり「消去された妥当性証明を使って、実行時データへの
-安全なインデックスアクセスを型検査だけで保証する」という設計は、
-`IsVar`がupstream側で消去されている限り、rc2側の書き方をどう工夫
-しても届かない。
+**What turned out.** The `p` field of `LLocal` is declared `0` (erased) upstream. Idris2 consistently rejects
+a function that branches on the constructor of an erased value and returns different run-time data per branch
+(`Can't match on First (Erased argument)`). This is not a matter of the order or the way of writing. I was
+misled by `nameAt` in `Core.TT.Var` (`nameAt {vars = n :: _} First = n`, exactly the shape I wanted), which
+seems to compile; an independent minimal reproduction showed that `nameAt` is allowed only when the returned
+value `n` can be taken from the **type-level index** `vars` itself. For a general function that returns a value
+computed at run time (here an `Int`), the same error reproduced even in the smallest form, whose only argument
+is `p` (the equivalent of `myCount : (0 p : MyIsVar n idx vars) -> Int`). So a design that uses an erased
+validity proof to guarantee safe indexing into run-time data by type checking alone cannot be reached from
+rc2's side, however it is written, as long as `IsVar` is erased upstream.
 
-**実施した代替案**: `Env`を`List Int`から`Data.List.Quantifiers.All`
-経由の`Env : List Name -> Type; Env vars = All (const Int) vars`へ
-変更し、`env`の"長さ"を`vars`と型レベルで一致させた。これにより
-`normalizeDef`/`LLet`/`normalizeConAlt`など、スコープを拡張する
-すべての箇所で「`env`を`vars`の拡張と食い違ったまま構築してしまう」
-というクラス全体がコンパイルエラーになる(実行時クラッシュではなく)。
-ただし`lookupEnv`自体は結局`Nat`(`idx`)による再帰と、最終的な
-"届かないはずのcatch-all"クラッシュ節を今まで通り残さざるを得ない
--- 縮小できたのは「`idx`自体が誤っている」場合だけに絞られた
-クラッシュ到達可能性であり、完全な全域化ではない。
+**The alternative that was done.** `Env` changed from `List Int` to `Env : List Name -> Type; Env vars = All
+(const Int) vars` (through `Data.List.Quantifiers.All`), so the length of `env` matches `vars` at the type
+level. Now, at every place that extends the scope (`normalizeDef`, `LLet`, `normalizeConAlt` and others), the
+whole class "building an `env` that disagrees with the extension of `vars`" is a compile error rather than a
+crash at run time. But `lookupEnv` itself still has to keep a recursion on a `Nat` (`idx`) and the final
+"should be unreachable" catch-all that crashes. What shrank is the reachability of the crash, now only for the
+case that `idx` itself is wrong; it is not a full totality proof.
 
-**今後の検討課題**: `Compiler.LambdaLift`自体(upstream)を変更して
-`LLocal`の`p`を非消去にできれば真の全域化が可能になるが、upstream
-コンパイラへの改変は本パッケージのスコープ外。あるいは、rc2独自の
-Phase 0として`Lifted`を一度、非消去の`Fin`ベースの添字を持つ独自IRへ
-変換し直す(証明を作り直すコスト)手もあるが、費用対効果は要検討。
+**What to consider next.** If `Compiler.LambdaLift` (upstream) were changed to make the `p` of `LLocal` not
+erased, true totality would be possible, but changing the upstream compiler is out of scope for this package.
+Another way is, as a Phase 0 of rc2's own, to convert `Lifted` once into an IR of its own with non-erased
+`Fin`-based indices (the cost is rebuilding the proofs). The cost-benefit is to be examined.
