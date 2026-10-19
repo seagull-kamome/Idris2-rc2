@@ -6,24 +6,25 @@
 module TermUI.Widget.Scrolling
 
 import TermUI.Input
+import TermUI.Len
 
 %default total
 
 public export
-data Msg = LineUp Nat | LineDown Nat | PageUp | PageDown | ToStart | ToEnd
+data Msg = LineUp Len | LineDown Len | PageUp | PageDown | ToStart | ToEnd
 
 ||| The first visible line after a message, for a window of `rows` lines over
 ||| `count` lines whose first line is `top` now. The window never goes past
 ||| the last line.
 export
-scrollTop : (rows : Nat) -> (count : Nat) -> (top : Nat) -> Msg -> Nat
+scrollTop : (rows : Len) -> (count : Len) -> (top : Len) -> Msg -> Len
 scrollTop rows count top msg =
-  let maxTop = count `minus` rows
-      target : Nat
+  let maxTop = count `monus` rows
+      target : Len
       target = case msg of
-                 LineUp k => top `minus` k
+                 LineUp k => top `monus` k
                  LineDown k => top + k
-                 PageUp => top `minus` rows
+                 PageUp => top `monus` rows
                  PageDown => top + rows
                  ToStart => 0
                  ToEnd => maxTop

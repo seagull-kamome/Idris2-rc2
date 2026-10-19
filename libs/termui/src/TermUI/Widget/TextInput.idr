@@ -9,6 +9,7 @@ module TermUI.Widget.TextInput
 import Data.List
 import Data.Maybe
 import TermUI.Input
+import TermUI.Len
 import TermUI.Node
 import TermUI.Style
 import TermUI.Width
@@ -37,7 +38,7 @@ record Snap where
 public export
 record Model where
   constructor MkModel
-  cells : Nat
+  cells : Len
   offset : Nat
   before, after : List Char
   mark : Maybe Nat
@@ -60,12 +61,12 @@ scrolled m = { offset := leftFor m.cells (cursorWidth m.after) m.offset m.before
 
 ||| An empty field `cells` wide.
 export
-empty : (cells : Nat) -> Model
+empty : (cells : Len) -> Model
 empty cells = MkModel cells 0 [] [] Nothing [] [] NoEdit ""
 
 ||| A field `cells` wide holding the text, with the cursor at its end.
 export
-fromString : (cells : Nat) -> String -> Model
+fromString : (cells : Len) -> String -> Model
 fromString cells s = scrolled ({ before := cleanedRev (unpack s) [] } (empty cells))
 
 export
@@ -118,9 +119,9 @@ data Msg
   | MoveEnd
   | KillToEnd
   | KillToStart
-  | ClickAt Nat      -- the cell of the field that was clicked
-  | WordAt Nat       -- the same for a double click: the word there is selected
-  | DragTo Nat       -- the same, with the button held: stretches the selection
+  | ClickAt Len      -- the cell of the field that was clicked
+  | WordAt Len       -- the same for a double click: the word there is selected
+  | DragTo Len       -- the same, with the button held: stretches the selection
   | Extend Msg       -- a move that stretches the selection
   | SelectAll
   | Copy
@@ -130,7 +131,7 @@ data Msg
   | Redo
 
 -- The cursor on the character under cell `col`.
-clickAt : Nat -> Model -> Model
+clickAt : Len -> Model -> Model
 clickAt col m =
   let text = reverse m.before ++ m.after
       idx = reach col (drop m.offset text) m.offset
@@ -147,7 +148,7 @@ move (DragTo col) m = clickAt col m
 move _ m = m
 
 -- The word under cell `col` selected, the cursor at its end.
-wordAt : Nat -> Model -> Model
+wordAt : Len -> Model -> Model
 wordAt col m =
   let m1 = clickAt col m
       text = reverse m1.before ++ m1.after
@@ -307,7 +308,7 @@ view focused m =
       under = case m.after of
                 (c :: _) => if charWidth c == 0 then ' ' else c
                 [] => ' '
-      room = (m.cells `minus` sum (map charWidth shown)) `minus` cursorWidth m.after
+      room = (m.cells `monus` sum (map charWidth shown)) `monus` cursorWidth m.after
       chosen = selection m
       underSelected : Bool
       underSelected = maybe False (\r => fst r <= pos && pos < snd r) chosen

@@ -13,6 +13,7 @@ module TermUI.Widget.Splitter
 import Data.Fin
 import Data.Maybe
 import TermUI.Input
+import TermUI.Len
 import TermUI.Node
 import TermUI.Style
 
@@ -39,13 +40,13 @@ record Model where
 
 ||| The size of the first pane in cells.
 export
-size : Model -> Nat
-size m = m.lo + finToNat m.offset
+size : Model -> Len
+size m = cast (m.lo + finToNat m.offset)
 
 ||| The largest size the first pane can have.
 export
-hi : Model -> Nat
-hi m = m.lo + m.span
+hi : Model -> Len
+hi m = cast (m.lo + m.span)
 
 -- The offset of a size from `lo`; a size outside [lo, lo + span] is the nearest end.
 offsetOf : (lo : Nat) -> (span : Nat) -> (size : Nat) -> Fin (S span)
@@ -53,33 +54,36 @@ offsetOf lo span size = fromMaybe last (natToFin (size `minus` lo) (S span))
 
 ||| A splitter whose first pane has the given size; it can be between 1 and 1000 cells.
 export
-fromSize : Split -> (size : Nat) -> Model
-fromSize s n = MkModel s 1 999 (offsetOf 1 999 n) False
+fromSize : Split -> (size : Len) -> Model
+fromSize s n = MkModel s 1 999 (offsetOf 1 999 (cast n)) False
 
 ||| The same with limits on the size of the first pane. A `hi` below `lo` is `lo`.
 export
-withLimits : (lo : Nat) -> (hi : Nat) -> Model -> Model
-withLimits lo hi m = MkModel m.split lo (hi `minus` lo) (offsetOf lo (hi `minus` lo) (size m)) m.held
+withLimits : (lo : Len) -> (hi : Len) -> Model -> Model
+withLimits lo hi m =
+  let l = cast lo
+      span = cast hi `minus` l
+  in MkModel m.split l span (offsetOf l span (cast (size m))) m.held
 
 -------------------------------------------------------------------------------
 -- Update
 
 ||| `Drag p`: the pointer is at `p` cells from the start of the splitter.
 public export
-data Msg = Shrink | Grow | Grab | Drag Nat | Release
+data Msg = Shrink | Grow | Grab | Drag Len | Release
 
 export
 update : Msg -> Model -> Model
 update msg m =
   case msg of
-    Shrink => resized (size m `minus` 1)
-    Grow => resized (S (size m))
+    Shrink => resized (size m - 1)
+    Grow => resized (size m + 1)
     Grab => { held := True } m
     Drag p => if m.held then resized p else m
     Release => { held := False } m
   where
-    resized : Nat -> Model
-    resized n = MkModel m.split m.lo m.span (offsetOf m.lo m.span n) m.held
+    resized : Len -> Model
+    resized n = MkModel m.split m.lo m.span (offsetOf m.lo m.span (cast n)) m.held
 
 -- A key on the divider, and the press that picks it up.
 dividerMsg : Split -> Input -> Maybe Msg
@@ -106,7 +110,7 @@ coverMsg s (Mouse e) =
     (LeftButton, ButtonDown) => Just Release
     _ => Nothing
   where
-    along : Split -> MouseEvent -> Nat
+    along : Split -> MouseEvent -> Len
     along LeftRight ev = ev.column
     along TopBottom ev = ev.row
 coverMsg _ (Press KEscape _) = Just Release

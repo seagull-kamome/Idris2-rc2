@@ -11,6 +11,7 @@ import Control.ANSI.CSI
 import Data.List
 import Data.Maybe
 import TermUI.Frame
+import TermUI.Len
 import TermUI.Style
 import TermUI.Width
 
@@ -54,15 +55,15 @@ sgr s =
 record St where
   constructor MkSt
   out : List String            
-  cursor : Maybe (Nat, Nat)
+  cursor : Maybe (Len, Len)
   current : Maybe Style
 
-glyphWidth : Char -> Nat
+glyphWidth : Char -> Len
 glyphWidth c = max 1 (charWidth c)
 
-emitCell : Nat -> Nat -> Nat -> Cell -> St -> St
+emitCell : Len -> Len -> Len -> Cell -> St -> St
 emitCell fw x y c st =
-  let moved = if st.cursor == Just (x, y) then [] else [cursorMove (y + 1) (x + 1)]
+  let moved = if st.cursor == Just (x, y) then [] else [cursorMove (cast (y + 1)) (cast (x + 1))]
       styled = if st.current == Just c.style then [] else [sgr c.style]
       next = x + glyphWidth c.glyph
   in MkSt (pack (c.glyph :: c.combining) :: styled ++ moved ++ st.out)
@@ -81,11 +82,11 @@ diffFrames prev0 next = do
   st <- goRows prev (span 0 next.frameHeight) start
   pure (if null st.out then "" else concat (reverse ("\ESC[0m" :: st.out)))
   where
-    before : Maybe Frame -> Nat -> Nat -> IO Cell
+    before : Maybe Frame -> Len -> Len -> IO Cell
     before Nothing _ _ = pure blank
     before (Just p) x y = getCell p x y
 
-    goCols : Maybe Frame -> Nat -> Nat -> St -> IO St
+    goCols : Maybe Frame -> Len -> Len -> St -> IO St
     goCols prev y x st =
       if x >= next.frameWidth then pure st else do
         c <- getCell next x y
@@ -94,6 +95,6 @@ diffFrames prev0 next = do
           let st' = if o == c then st else emitCell (next.frameWidth) x y c st
           goCols prev y (x + glyphWidth c.glyph) st'
 
-    goRows : Maybe Frame -> List Nat -> St -> IO St
+    goRows : Maybe Frame -> List Len -> St -> IO St
     goRows _ [] st = pure st
     goRows prev (y :: ys) st = goCols prev y 0 st >>= goRows prev ys

@@ -53,6 +53,22 @@ dumped as text (`frameLines`), which is how the tests look at results.
 
 A subset of CSS flexbox. Sizes are in cells.
 
+Sizes, coordinates and offsets on the screen are `Len` (`TermUI.Len`, an alias
+of `Int32`), not `Nat`: a terminal is nowhere near 2^31 cells wide, and `Int32`
+is a native `int32_t` in the code rc2 generates, where a `Nat` is a boxed
+`Integer`. `Len` can be negative; `monus` is the subtraction that stops at 0,
+which the layout uses where a size must not go below zero. Counts and indexes
+of items (a tab, a line of text) stay `Nat`, except in the list widgets
+(`Select`, `Scroll`, `Table`), which keep their window and selection as `Len`.
+`TextArea` still counts in `Nat` inside and takes `Len` at its edges.
+
+Sizes, coordinates and offsets on the screen are `Len` (`TermUI.Len`, an alias
+of `Int32`), not `Nat`: a terminal is nowhere near 2^31 cells wide, and `Int32`
+is a native `int32_t` in the code rc2 generates, where a `Nat` is a boxed
+`Integer`. `Len` can be negative; `monus` is the subtraction that stops at 0,
+which is what the layout uses where a size must not go below zero. Counts and
+indexes of items (the selected entry, a tab, a line of text) stay `Nat`.
+
 - A box's `width`/`height` are those of its border box (border and padding
   included). Margins lie outside it. `Auto`, `Cells n` and `Percent p` (of the
   parent's inner size) are available.

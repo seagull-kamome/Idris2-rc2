@@ -20,17 +20,17 @@ import TermUI.Widget.MenuBar as M
 
 -- The rows of a view and, under a row that has inverse or highlighted cells,
 -- a mark under each of them.
-draw : Node msg -> Nat -> Nat -> IO ()
+draw : Node msg -> Len -> Len -> IO ()
 draw v w h = do
   f <- render v w h
   ls <- frameLines f
   traverse_ (\(y, l) => do
                putStrLn ("|" ++ l)
-               cells <- traverse (\x => getCell f x y) (take w [0 ..])
+               cells <- traverse (\x => getCell f x y) (if w <= 0 then [] else [0 .. w - 1])
                let marks = pack (map (\c => if hasAttr Inverse c.style then '^' else if c.style.bg == Indexed 4 then 's' else ' ') cells)
                when (any (\c => c == '^' || c == 's') (unpack marks)) $
                  putStrLn ("|" ++ pack (reverse (dropWhile (== ' ') (reverse (unpack marks))))))
-            (zip [0 .. length ls] ls)
+            (zip [0 .. count ls] ls)
 
 -- The focusable of a widget, for its drawing while focused and its handler.
 focusOf : Node msg -> Maybe (Bool -> Node msg, Input -> Maybe msg)
@@ -38,7 +38,7 @@ focusOf (Focusable _ body h) = Just (body, h)
 focusOf (Box _ [Focusable _ body h]) = Just (body, h)
 focusOf _ = Nothing
 
-showFocused : Node msg -> Nat -> Nat -> IO ()
+showFocused : Node msg -> Len -> Len -> IO ()
 showFocused n w h =
   case focusOf n of
     Just (body, _) => draw (body True) w h
@@ -56,7 +56,7 @@ key k = Press k noMods
 press : Char -> Input
 press c = Press (KChar c) noMods
 
-click : Nat -> Nat -> Input
+click : Len -> Len -> Input
 click c r = Mouse (MkMouseEvent LeftButton ButtonDown c r noMods 1)
 
 data Ev = Toggle | Press1 | FromMenu M.Msg | Chose String

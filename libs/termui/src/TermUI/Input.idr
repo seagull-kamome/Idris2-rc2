@@ -10,6 +10,7 @@ module TermUI.Input
 import Data.List
 import Data.Maybe
 import Data.String
+import public TermUI.Len
 import Text.Encoding.UTF8
 
 %default total
@@ -46,7 +47,7 @@ record MouseEvent where
   constructor MkMouseEvent
   button : MouseButton
   action : MouseAction
-  column, row : Nat
+  column, row : Len
   mouseMods : Mods
   clicks : Nat   -- 1, 2 or 3 for a press of the left button in a run of quick presses at one cell
 
@@ -163,7 +164,9 @@ Show MouseEvent where
 public export
 record LastClick where
   constructor MkLastClick
-  atMs, atColumn, atRow, count : Nat
+  atMs : Nat
+  atColumn, atRow : Len
+  count : Nat
 
 ||| Presses of the left button at the same cell within this many milliseconds
 ||| make a double click.
@@ -325,7 +328,7 @@ parseInput final bytes = loop (map cast bytes) 0 []
                    else if motion then (if bits == 3 then Move else Drag)
                    else ButtonDown
       in if wheel && bits > 1 then Nothing
-         else Just (Mouse (MkMouseEvent button action (col `minus` 1) (r `minus` 1) mods 1))
+         else Just (Mouse (MkMouseEvent button action (cast (col `minus` 1)) (cast (r `minus` 1)) mods 1))
     sgrMouse _ _ = Nothing
 
     -- `bs` follows ESC [; the bytes it takes are counted from there.

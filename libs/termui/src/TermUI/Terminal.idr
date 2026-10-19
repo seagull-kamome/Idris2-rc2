@@ -8,6 +8,7 @@ module TermUI.Terminal
 import Data.Bits
 import Data.Buffer
 import Data.List
+import TermUI.Len
 import System.Console.Xterm
 import System.Posix.Errno
 import System.Posix.File
@@ -106,16 +107,16 @@ resumeTerminal t = do
 ||| The size in cells (columns, rows) of the terminal on `output`; 80 x 24
 ||| when it does not say.
 export
-outputSize : (output : FileDesc) -> IO (Nat, Nat)
+outputSize : (output : FileDesc) -> IO (Len, Len)
 outputSize output = do
   r <- getWinSize output
   pure $ case r of
-    Right (c, r') => if c == 0 || r' == 0 then (80, 24) else (c, r')
+    Right (c, r') => if c == 0 || r' == 0 then (80, 24) else (cast c, cast r')
     Left _ => (80, 24)
 
 ||| The size in cells (columns, rows); 80 x 24 when the terminal does not say.
 export
-terminalSize : Terminal -> IO (Nat, Nat)
+terminalSize : Terminal -> IO (Len, Len)
 terminalSize t = outputSize t.output
 
 ||| Ask the terminal to report mouse buttons, drags and the wheel (SGR

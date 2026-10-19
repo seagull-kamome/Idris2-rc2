@@ -14,7 +14,7 @@ import TermUI.Style
 
 %default covering
 
-draw : Node () -> Nat -> Nat -> IO Frame
+draw : Node () -> Len -> Len -> IO Frame
 draw = render
 
 show' : String -> String
@@ -24,7 +24,7 @@ show' s = concatMap esc (unpack s)
     esc '\ESC' = "<ESC>"
     esc c = singleton c
 
-dump : String -> Node () -> Nat -> Nat -> IO ()
+dump : String -> Node () -> Len -> Len -> IO ()
 dump title v w h = do
   putStrLn ("-- " ++ title)
   f <- draw v w h

@@ -1193,5 +1193,12 @@ upstreamに取り込まれたら`idris2-src`を更新して自作idris2を作り
   今は飽和算(`min`/`minus`)で範囲外にならない。守る価値は将来の編集で壊さないこと。
 - `keyed`は`Focusable`でないノードに付けても何もしない。`Focusable`だけの型を別に作れば型で防げるが、
   `keyed "name" (T.field ...)`の書き方が変わる。
-- 勧めない: `Frame`の座標を`Fin w × Fin h`にすること(描画の内側のループが重くなる)、`Layout`の
-  `Nat`計算(`minus`で0に飽和し、負の幅は存在しない)。
+- 勧めない: `Frame`の座標を`Fin w × Fin h`にすること(描画の内側のループが重くなる)。
+- 座標と寸法は`Len`(`Int32`、`TermUI.Len`)にした。残り:
+  - `TextArea`は内部の`cells`・`rows`・`top`・`left`などが`Nat`のままで、公開の入口(`empty`・`resize`・
+    `fromString`・`keyMsg`・`view`)で`cast`している。行番号や文字の添字と画面の寸法が混ざっていて、
+    素直には置き換わらない。`cells`・`rows`・`top`を`Len`にし、添字は`Nat`のまま分ける。
+  - `TabStrip`(`Fin`の`active`)と`Splitter`(`Fin (S span)`の`offset`)は、`Fin`が`Nat`なので、
+    寸法の入口(`Click`・`Drag`・`size`・`withLimits`)で`cast`している。`Fin`を捨てて`Len`にするか、
+    範囲を持つ型を別に作るかは未定。
+  - `MenuBar`の列(`Click`・`titleLeft`)は`Len`だが、`active`と`cursor`は添字なので`Nat`のまま。

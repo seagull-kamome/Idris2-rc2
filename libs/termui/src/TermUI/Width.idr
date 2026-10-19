@@ -8,6 +8,8 @@
 ||| This module was licensed by BSD3. see LICENSE file for detail.
 module TermUI.Width
 
+import TermUI.Len
+
 %default total
 
 -- Inclusive code point ranges.
@@ -60,7 +62,7 @@ inRanges c = any (\(lo, hi) => c >= lo && c <= hi)
 ||| Cells occupied by a character: 0 for control and combining characters,
 ||| 2 for East Asian wide / fullwidth and emoji, 1 otherwise.
 export
-charWidth : Char -> Nat
+charWidth : Char -> Len
 charWidth ch =
   let c = ord ch in
   if c < 0x20 || (c >= 0x7F && c < 0xA0) then 0
@@ -71,7 +73,7 @@ charWidth ch =
 
 ||| Width of a string without newlines.
 export
-stringWidth : String -> Nat
+stringWidth : String -> Len
 stringWidth = sum . map charWidth . unpack
 
 ||| A combining mark: it has no width and is drawn on the character before it.

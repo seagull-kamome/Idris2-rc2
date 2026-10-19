@@ -24,12 +24,12 @@ import Text.Encoding.UTF8
 
 %default covering
 
-data Msg = Go | Stopped | Back | Done | Typed | Resized Nat Nat
+data Msg = Go | Stopped | Back | Done | Typed | Resized Len Len
 
 record Model where
   constructor MkModel
   resumed : Bool
-  size : (Nat, Nat)
+  size : (Len, Len)
 
 visible : List Bits8 -> String
 visible bs = concatMap esc (decode bs)

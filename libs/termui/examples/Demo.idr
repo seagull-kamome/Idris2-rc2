@@ -89,7 +89,7 @@ listPage m =
         , box [border Single] [A.area Note m.notes]
         ]
     , if m.bar
-         then row [gap 1] [ progressBar 20 (length m.items.items * 10), text (show (length m.items.items) ++ " items") ]
+         then row [gap 1] [ progressBar 20 (count m.items.items * 10), text (show (length m.items.items) ++ " items") ]
          else text (show (length m.items.items) ++ " items")
     ]
 

@@ -192,6 +192,17 @@ If one of these stops reproducing, or a fix lands, remove the entry.
   code and so reported an rc2 gcc failure as "no such file" at run
   time.
 
+- **A numeric literal of a type alias from a module that is not imported
+  makes type checking run forever.** With `A.idr` holding
+  `public export Len : Type; Len = Int32`, `B.idr` importing `A` and
+  exporting `mk : Len -> D`, and `C.idr` importing only `B`, the
+  expression `mk 1` in `C` never finishes (`idris2 --check C.idr`,
+  killed by a timeout after 30 s). With `import A` in `C` it checks at
+  once. Found 2026-10-19 with `TermUI.Len`. Workaround: the library
+  module that mentions the alias in its signatures imports it
+  `public` (`TermUI.Node`, `TermUI.Input`), so users get it without
+  asking.
+
 ## rc2: deep non-tail recursion overflows the C stack (Chez doesn't)
 
 rc2 runs Idris code on the C stack (8 MB by default). Chez grows its

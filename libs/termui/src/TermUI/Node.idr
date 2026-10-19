@@ -10,6 +10,7 @@
 module TermUI.Node
 
 import TermUI.Input
+import public TermUI.Len
 import TermUI.Style
 
 %default total
@@ -20,14 +21,14 @@ import TermUI.Style
 public export
 record Edges where
   constructor MkEdges
-  top, right, bottom, left : Nat
+  top, right, bottom, left : Len
 
 public export
 noEdges : Edges
 noEdges = MkEdges 0 0 0 0
 
 public export
-data Dim = Auto | Cells Nat | Percent Nat
+data Dim = Auto | Cells Len | Percent Len
 
 public export
 data Direction = Row | Column
@@ -52,9 +53,9 @@ record Props where
   constructor MkProps
   pDirection : Direction
   pWidth, pHeight : Dim
-  pGrow, pShrink : Nat
+  pGrow, pShrink : Len
   pPadding, pMargin : Edges
-  pGap : Nat
+  pGap : Len
   pBorder : Border
   pBorderStyle : Style
   pStyle : Style
@@ -62,10 +63,10 @@ record Props where
   pJustify : Justify
   pCursor : Bool          -- the real terminal cursor goes to this box
   pTag : Maybe Nat        -- set by the runtime on focusable nodes
-  pMinWidth, pMaxWidth, pMinHeight, pMaxHeight : Maybe Nat
+  pMinWidth, pMaxWidth, pMinHeight, pMaxHeight : Maybe Len
   pWrap : Bool            -- a row goes on in a new line when its children do not fit
   pAbsolute : Bool        -- out of the flow of its parent, placed by the offsets below
-  pTop, pRight, pBottom, pLeft : Maybe Nat
+  pTop, pRight, pBottom, pLeft : Maybe Len
   pMarginPct : Edges      -- margins in percent of the width of the parent, added to `pMargin`
 
 public export
@@ -132,41 +133,41 @@ width d p = { pWidth := d } p
 height d p = { pHeight := d } p
 
 public export
-grow, shrink : Nat -> Prop
+grow, shrink : Len -> Prop
 grow n p = { pGrow := n } p
 shrink n p = { pShrink := n } p
 
 public export
-gap : Nat -> Prop
+gap : Len -> Prop
 gap n p = { pGap := n } p
 
 ||| The same padding on all four sides.
 public export
-padding : Nat -> Prop
+padding : Len -> Prop
 padding n p = { pPadding := MkEdges n n n n } p
 
 ||| Vertical and horizontal padding.
 public export
-paddingXY : (x : Nat) -> (y : Nat) -> Prop
+paddingXY : (x : Len) -> (y : Len) -> Prop
 paddingXY x y p = { pPadding := MkEdges y x y x } p
 
 public export
-margin : Nat -> Prop
+margin : Len -> Prop
 margin n p = { pMargin := MkEdges n n n n } p
 
 public export
-marginXY : (x : Nat) -> (y : Nat) -> Prop
+marginXY : (x : Len) -> (y : Len) -> Prop
 marginXY x y p = { pMargin := MkEdges y x y x } p
 
 ||| Margins in percent of the content width of the parent (on all four sides,
 ||| as in CSS), added to the margins in cells. A parent that is sized by its
 ||| children does not count them.
 public export
-marginPercent : Nat -> Prop
+marginPercent : Len -> Prop
 marginPercent n p = { pMarginPct := MkEdges n n n n } p
 
 public export
-marginPercentXY : (x : Nat) -> (y : Nat) -> Prop
+marginPercentXY : (x : Len) -> (y : Len) -> Prop
 marginPercentXY x y p = { pMarginPct := MkEdges y x y x } p
 
 public export
@@ -231,7 +232,7 @@ cursorHere p = { pCursor := True } p
 
 ||| The border box is at least / at most this many cells wide / high.
 public export
-minWidth, maxWidth, minHeight, maxHeight : Nat -> Prop
+minWidth, maxWidth, minHeight, maxHeight : Len -> Prop
 minWidth n p = { pMinWidth := Just n } p
 maxWidth n p = { pMaxWidth := Just n } p
 minHeight n p = { pMinHeight := Just n } p
@@ -254,7 +255,7 @@ absolute : Prop
 absolute p = { pAbsolute := True } p
 
 public export
-top, right, bottom, left : Nat -> Prop
+top, right, bottom, left : Len -> Prop
 top n p = { pTop := Just n } p
 right n p = { pRight := Just n } p
 bottom n p = { pBottom := Just n } p
