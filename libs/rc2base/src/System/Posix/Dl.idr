@@ -70,6 +70,10 @@ dlopenSelf flags = do
 
 ||| The address of a symbol. A symbol whose value is NULL gives `Right` of a
 ||| NULL pointer only when `dlerror` agrees that nothing went wrong.
+|||
+||| `Right` therefore does not mean the address is usable: a caller that is not
+||| sure the symbol cannot be NULL must check it before calling or reading
+||| through it (`prim__nullAnyPtr`). A missing symbol is always `Left`.
 export
 dlsym : DlHandle -> String -> IO (Either String AnyPtr)
 dlsym h name = do
