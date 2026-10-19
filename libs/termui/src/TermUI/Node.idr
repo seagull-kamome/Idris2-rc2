@@ -127,48 +127,55 @@ public export
 spacer : Node msg
 spacer = Box ({ pGrow := 1 } defaultProps) []
 
+||| A negative size is none.
+public export
+nonnegDim : Dim -> Dim
+nonnegDim (Cells n) = Cells (nonneg n)
+nonnegDim (Percent n) = Percent (nonneg n)
+nonnegDim Auto = Auto
+
 public export
 width, height : Dim -> Prop
-width d p = { pWidth := d } p
-height d p = { pHeight := d } p
+width d p = { pWidth := nonnegDim d } p
+height d p = { pHeight := nonnegDim d } p
 
 public export
 grow, shrink : Len -> Prop
-grow n p = { pGrow := n } p
-shrink n p = { pShrink := n } p
+grow n p = { pGrow := nonneg n } p
+shrink n p = { pShrink := nonneg n } p
 
 public export
 gap : Len -> Prop
-gap n p = { pGap := n } p
+gap n p = { pGap := nonneg n } p
 
 ||| The same padding on all four sides.
 public export
 padding : Len -> Prop
-padding n p = { pPadding := MkEdges n n n n } p
+padding n p = { pPadding := MkEdges (nonneg n) (nonneg n) (nonneg n) (nonneg n) } p
 
 ||| Vertical and horizontal padding.
 public export
 paddingXY : (x : Len) -> (y : Len) -> Prop
-paddingXY x y p = { pPadding := MkEdges y x y x } p
+paddingXY x y p = { pPadding := MkEdges (nonneg y) (nonneg x) (nonneg y) (nonneg x) } p
 
 public export
 margin : Len -> Prop
-margin n p = { pMargin := MkEdges n n n n } p
+margin n p = { pMargin := MkEdges (nonneg n) (nonneg n) (nonneg n) (nonneg n) } p
 
 public export
 marginXY : (x : Len) -> (y : Len) -> Prop
-marginXY x y p = { pMargin := MkEdges y x y x } p
+marginXY x y p = { pMargin := MkEdges (nonneg y) (nonneg x) (nonneg y) (nonneg x) } p
 
 ||| Margins in percent of the content width of the parent (on all four sides,
 ||| as in CSS), added to the margins in cells. A parent that is sized by its
 ||| children does not count them.
 public export
 marginPercent : Len -> Prop
-marginPercent n p = { pMarginPct := MkEdges n n n n } p
+marginPercent n p = { pMarginPct := MkEdges (nonneg n) (nonneg n) (nonneg n) (nonneg n) } p
 
 public export
 marginPercentXY : (x : Len) -> (y : Len) -> Prop
-marginPercentXY x y p = { pMarginPct := MkEdges y x y x } p
+marginPercentXY x y p = { pMarginPct := MkEdges (nonneg y) (nonneg x) (nonneg y) (nonneg x) } p
 
 public export
 border : Border -> Prop
@@ -233,10 +240,10 @@ cursorHere p = { pCursor := True } p
 ||| The border box is at least / at most this many cells wide / high.
 public export
 minWidth, maxWidth, minHeight, maxHeight : Len -> Prop
-minWidth n p = { pMinWidth := Just n } p
-maxWidth n p = { pMaxWidth := Just n } p
-minHeight n p = { pMinHeight := Just n } p
-maxHeight n p = { pMaxHeight := Just n } p
+minWidth n p = { pMinWidth := Just (nonneg n) } p
+maxWidth n p = { pMaxWidth := Just (nonneg n) } p
+minHeight n p = { pMinHeight := Just (nonneg n) } p
+maxHeight n p = { pMaxHeight := Just (nonneg n) } p
 
 ||| A row whose children do not fit in its width goes on in a new line (lines
 ||| are `gap` apart); a column whose children do not fit in its height goes on
@@ -256,7 +263,7 @@ absolute p = { pAbsolute := True } p
 
 public export
 top, right, bottom, left : Len -> Prop
-top n p = { pTop := Just n } p
-right n p = { pRight := Just n } p
-bottom n p = { pBottom := Just n } p
-left n p = { pLeft := Just n } p
+top n p = { pTop := Just (nonneg n) } p
+right n p = { pRight := Just (nonneg n) } p
+bottom n p = { pBottom := Just (nonneg n) } p
+left n p = { pLeft := Just (nonneg n) } p

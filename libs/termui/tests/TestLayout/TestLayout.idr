@@ -165,3 +165,17 @@ main = do
   f3 <- draw (box [style (bgColor (RGB 1 2 3) (withAttr Bold plain))] [styled (fgColor (Indexed 200) plain) "x"]) 2 1
   d4 <- diffFrames Nothing f3
   putStrLn (show' d4)
+  putStrLn "-- negative sizes are cut to 0"
+  let neg = row [gap (-2), padding (-3), margin (-1), grow (-1), minWidth (-4), width (Percent (-5))]
+                [ box [border Single, width (Cells (-5)), height (Cells (-1))] [text "a"], text "b" ]
+      zero = row [gap 0, padding 0, margin 0, grow 0, minWidth 0, width (Percent 0)]
+                 [ box [border Single, width (Cells 0), height (Cells 0)] [text "a"], text "b" ]
+  fneg <- draw neg 8 3
+  fzero <- draw zero 8 3
+  lneg <- frameLines fneg
+  lzero <- frameLines fzero
+  putStrLn (if lneg == lzero then "same" else "differ")
+  fneg' <- newFrame (-3) (-2)
+  putStrLn (show (fneg'.frameWidth, fneg'.frameHeight))
+  c <- getCell fneg (-1) 1
+  putStrLn (show (c.glyph == ' '))

@@ -302,3 +302,7 @@
 <ESC>[0m<ESC>[2J<ESC>[1;1H<ESC>[0mx<ESC>[2;1H<ESC>[0;4my <ESC>[0m
 -- diff: bg + attrs + rgb
 <ESC>[0m<ESC>[2J<ESC>[1;1H<ESC>[0;1;38;5;200;48;2;1;2;3mx<ESC>[0;1;48;2;1;2;3m <ESC>[0m
+-- negative sizes are cut to 0
+same
+(0, 0)
+True

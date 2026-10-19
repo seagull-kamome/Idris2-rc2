@@ -49,7 +49,10 @@ record Frame where
 
 export
 newFrame : Len -> Len -> IO Frame
-newFrame w h = MkFrame w h <$> newArray (cast (w * h))
+newFrame w h =
+  let w' = nonneg w
+      h' = nonneg h
+  in MkFrame w' h' <$> newArray (cast (w' * h'))
 
 ||| The numbers lo, lo+1, .., hi-1.
 export
@@ -59,14 +62,14 @@ span lo hi = if hi <= lo then [] else [lo .. hi `monus` 1]
 export
 getCell : Frame -> Len -> Len -> IO Cell
 getCell f x y =
-  if x < f.frameWidth && y < f.frameHeight
+  if x >= 0 && y >= 0 && x < f.frameWidth && y < f.frameHeight
      then fromMaybe blank <$> readArray f.cells (cast (y * f.frameWidth + x))
      else pure blank
 
 -- Overwriting half of a wide character blanks the other half.
 setCell : Frame -> Len -> Len -> Cell -> IO ()
 setCell f x y c =
-  when (x < f.frameWidth && y < f.frameHeight) $ do
+  when (x >= 0 && y >= 0 && x < f.frameWidth && y < f.frameHeight) $ do
     old <- getCell f x y
     let at = cast (y * f.frameWidth + x)
     when (old.glyph == continuation && x > 0) $

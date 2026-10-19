@@ -23,3 +23,8 @@ monus a b = if a > b then a - b else 0
 public export
 count : List a -> Len
 count xs = cast (length xs)
+
+||| `n`, or 0 if it is negative: what the builders make of a negative size.
+public export
+nonneg : Len -> Len
+nonneg = max 0
