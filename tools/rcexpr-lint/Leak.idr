@@ -263,13 +263,13 @@ erasedInfo i = i == "nil" || i == "nothing" || i == "zero" || i == "unit"
 
 ||| Locals shown by their use to hold an always-unboxed value (`Char`,
 ||| `Int8`...: tagged, the refcount operations on them are no-ops, and
-||| rc2 neither pairs nor omits them consistently). The evidence is any
+||| rc2 neither pairs nor omits them consistently). `Erased` and `%World` are always `NULL`. The evidence is any
 ||| of: a `let` bound directly to a comparison op (producer-side), an
 ||| op/cmp operand with no `postDrop` entry at such a type, a
 ||| `callRep` argument at a `Native` parameter of such a type with no
 ||| `postDrop` entry, a read into a `Native` local of such a type.
 unboxedTypeNames : List String
-unboxedTypeNames = ["Char", "Int8", "Int16", "Int32", "Bits8", "Bits16", "Bits32"]
+unboxedTypeNames = ["Char", "Int8", "Int16", "Int32", "Bits8", "Bits16", "Bits32", "Erased", "%World"]
 
 occurrences : Int -> List RCLocal -> Nat
 occurrences v ls = length (filter (== RVar v) ls)

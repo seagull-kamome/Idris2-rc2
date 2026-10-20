@@ -292,7 +292,7 @@ inlineNamed disabled keep main defs =
 ||| apart.
 disableableStageNames : List String
 disableableStageNames =
-    ["noinline", "nodeadargs", "noarityraise", "noapplyfold", "notrmc", "noctx", "noconstfold", "noknowncon", "nopushcon", "nospecclosure", "nospecconstcon", "noconaltnative", "nomutualloop", "noloop", "noearlyinline", "nolateinline", "nosink", "nocmpmerge", "nodualabi", "noboolret", "noboolcase", "noboolfield", "nostructreturn", "nomutualstruct", "nodeadcode", "nopushdown", "nodupmerge", "nodeadvars", "nofundedup", "noreusenested", "noreuserecheck"]
+    ["noinline", "nodeadargs", "noarityraise", "noapplyfold", "notrmc", "noctx", "noconstfold", "noknowncon", "nopushcon", "nospecclosure", "nospecconstcon", "noconaltnative", "nomutualloop", "noloop", "noearlyinline", "nolateinline", "nosink", "nocmpmerge", "nodualabi", "noboolret", "noboolcase", "noboolfield", "nonullparams", "nostructreturn", "nomutualstruct", "nodeadcode", "nopushdown", "nodupmerge", "nodeadvars", "nofundedup", "noreusenested", "noreuserecheck"]
 
 ||| Stages that are off unless asked for with `--directive <name>`. They
 ||| travel to `toRCDefs` in the same list as the disables above.
@@ -461,7 +461,7 @@ toRCDefs disabled incremental roots thunks preFolded = do
     dualABId <- if "nodualabi" `elem` disabled
        then pure sunk
        else logTime 2 "rc2: DualABI" $ do
-           withNative <- logTime 3 "rc2: DualABI (workers)" $ applyDualABI (not ("noboolret" `elem` disabled)) sunk
+           withNative <- logTime 3 "rc2: DualABI (workers)" $ applyDualABI (not ("noboolret" `elem` disabled)) (not ("nonullparams" `elem` disabled)) roots sunk
            -- doc/struct-return.md
            withWorkers <- if "nostructreturn" `elem` disabled
                              then pure withNative

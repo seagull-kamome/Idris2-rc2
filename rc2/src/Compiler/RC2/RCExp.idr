@@ -213,29 +213,39 @@ Show RCLocal where
 ||| The type of a native value: one of upstream's `PrimType`s, or a raw C
 ||| pointer (`Ptr`, `AnyPtr`, a struct pointer), held as an
 ||| `IDRIS2RC2_Raw *` -- an opaque struct pointer, so the C compiler tells it
-||| apart from an `IDRIS2RC2_Value *`. See `doc/native-pointer.md`.
+||| apart from an `IDRIS2RC2_Value *`. See `doc/native-pointer.md`. `TPrim WorldType`
+||| and `TErased` carry no value: the world token and an erased argument are
+||| always C `NULL` (`doc/world-erased-marks.md`), so they take no refcount
+||| and unboxing one yields `NULL` whatever the Boxed side holds.
 public export
 data NativeTy : Type where
      TPrim : PrimType -> NativeTy
      TPtr : NativeTy
+     TErased : NativeTy
 
 public export
 Eq NativeTy where
     TPrim a == TPrim b = a == b
     TPtr == TPtr = True
+    TErased == TErased = True
     _ == _ = False
 
 public export
 Ord NativeTy where
     compare (TPrim a) (TPrim b) = compare a b
-    compare (TPrim _) TPtr = LT
-    compare TPtr (TPrim _) = GT
-    compare TPtr TPtr = EQ
+    compare TErased TErased = EQ
+    compare a b = compare (rank a) (rank b)
+      where
+        rank : NativeTy -> Nat
+        rank (TPrim _) = 0
+        rank TPtr = 1
+        rank TErased = 2
 
 public export
 Show NativeTy where
     show (TPrim t) = show t
     show TPtr = "Ptr"
+    show TErased = "Erased"
 
 ||| The representation decided for an RLet-bound local, carried
 ||| directly on the RLet node (see `doc/reading-the-ir.md`'s
@@ -785,6 +795,9 @@ record RCNameFold m where
   onAppNameRep : Name -> m
   ||| `RUnderApp` -- a partial-application closure build.
   onUnderApp : Name -> m
+  ||| `RUnderApp` again, with the arguments it supplies (not `RDelay`, which
+  ||| has no known argument list of the callee).
+  onUnderAppArgs : Name -> List RCLocal -> m
   ||| `RCon` (dynamic) and `RCConstCon` (`ConstFold`-folded literal) --
   ||| `tag` distinguishes the untagged ones that carry a runtime
   ||| name string (`doc/constructor-layout.md`).
@@ -797,7 +810,7 @@ record RCNameFold m where
 ||| update syntax: `{ onAppName := ... } noRCNames`).
 public export
 noRCNames : Monoid m => RCNameFold m
-noRCNames = MkRCNameFold (\_,_ => neutral) (\_ => neutral) (\_ => neutral)
+noRCNames = MkRCNameFold (\_,_ => neutral) (\_ => neutral) (\_ => neutral) (\_,_ => neutral)
                          (\_,_ => neutral) (\_ => neutral)
 
 export
@@ -826,7 +839,7 @@ foldRCNamesR nf = go
     go (RAppName _ _ n args) = nf.onAppName n args <+> ls args
     go (RAppNameRep _ n _ _ postDrop args) = nf.onAppNameRep n <+> ls postDrop <+> ls args
     go (RAppFFIInline _ _ _ _ postDrop args) = ls postDrop <+> ls args
-    go (RUnderApp _ n _ args) = nf.onUnderApp n <+> ls args
+    go (RUnderApp _ n _ args) = nf.onUnderApp n <+> nf.onUnderAppArgs n args <+> ls args
     go (RDelay _ _ n caps) = nf.onUnderApp n <+> ls caps
     go (RForce _ _ v postDrop) = l v <+> ls postDrop
     go (RApp _ _ c args) = l c <+> ls (forget args)

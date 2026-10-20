@@ -780,8 +780,10 @@ stripOwnership ids (RFill fc cell k value postDrop) =
 -- already lists its Boxed arguments in `postDrop`.
 stripOwnership ids (RAppNameRep fc n argReps retRep postDrop args) =
     RAppNameRep fc n argReps retRep (filter (keepUnlessOwned ids) postDrop) args
--- RV, RAppName, RUnderApp, RApp, RCon, RExtPrim, RPrimVal, RErased,
--- RCrash: no ownership-tracking positions of their own.
+stripOwnership ids (RExtPrim fc lazy p args postDrop) =
+    RExtPrim fc lazy p args (filter (keepUnlessOwned ids) postDrop)
+-- RV, RAppName, RUnderApp, RApp, RCon, RPrimVal, RErased, RCrash: no
+-- ownership-tracking positions of their own.
 stripOwnership _ e = e
 
 export

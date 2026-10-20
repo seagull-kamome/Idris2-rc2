@@ -104,7 +104,8 @@ history, not there.
   lambdas itself instead of taking upstream's `Lifted` (and what lifting
   loses), and `lazy-memoization.md` for memoizing a `Lazy`/`Inf` value
   behind a lazy cell, `world-erased-marks.md` for the `[erased]`/`[world]` constants and
-  what was tried (and dropped) to mark the world on parameters. `TODO.md` holds only open gaps, and history lives in the git
+  what was tried (and dropped) to mark the world on parameters. `null-params.md` for the parameters that can only hold the world or
+  an erased value, which get a native NULL type in the worker. `TODO.md` holds only open gaps, and history lives in the git
   log; `rc2/doc/` is where the *why* and the
   bugs-found-along-the-way for a specific subsystem live.
   `rc2/doc/ja/` holds Japanese translations of some files directly
