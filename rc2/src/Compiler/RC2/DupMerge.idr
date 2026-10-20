@@ -63,6 +63,7 @@ nativeBound args body = union (fromList (mapMaybe nativeParam args)) (go body)
     nullValued (RErased _) = True
     nullValued (RV _ RCErased) = True
     nullValued (RV _ RCWorld) = True
+    nullValued (RPrimVal _ WorldVal) = True
     nullValued _ = False
 
     nativeParam : (Int, Rep) -> Maybe Int

@@ -503,6 +503,7 @@ alwaysUnboxedBoxedLocalsR (RLet _ var rep value body) =
     nullProducer (RErased _) = True
     nullProducer (RV _ RCErased) = True
     nullProducer (RV _ RCWorld) = True
+    nullProducer (RPrimVal _ WorldVal) = True
     nullProducer _ = False
 
     ||| A Boxed `let` bound directly to a comparison primitive: its value is
