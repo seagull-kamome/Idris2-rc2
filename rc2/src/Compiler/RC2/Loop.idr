@@ -760,6 +760,10 @@ stripOwnership ids (RStructSet fc structVar sf value postDrop) =
     RStructSet fc structVar sf value (filter (keepUnlessOwned ids) postDrop)
 stripOwnership ids (RFill fc cell k value postDrop) =
     RFill fc cell k value (filter (keepUnlessOwned ids) postDrop)
+-- A worker call made before the promotion (struct return, doc/struct-return.md)
+-- already lists its Boxed arguments in `postDrop`.
+stripOwnership ids (RAppNameRep fc n argReps retRep postDrop args) =
+    RAppNameRep fc n argReps retRep (filter (keepUnlessOwned ids) postDrop) args
 -- RV, RAppName, RUnderApp, RApp, RCon, RExtPrim, RPrimVal, RErased,
 -- RCrash: no ownership-tracking positions of their own.
 stripOwnership _ e = e
