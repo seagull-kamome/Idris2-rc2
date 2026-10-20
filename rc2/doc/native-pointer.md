@@ -100,3 +100,16 @@ pointer arithmetic on an unmodified `$n` pointer argument (the one `+` chain,
   become native? `paramEligibility` decides; if it does not, the gain is
   limited to the FFI boundary.
 - `LEAK_SENSITIVE_TESTS` count allocations; their expectations may change.
+
+## Measurement (2026-10-20, step 1, static part)
+
+The termui Demo's C (41k-line IR, current master) contains four
+`idris2rc2_mkPointer` sites. Three are the generic wrapper that each
+`%foreign` declaration returning a pointer gets (`packedRet`), one is an
+`idris2_malloc` call. None is in a loop of the Demo: its pointer-returning
+FFI calls are `CExpr` constants or one-off setup. So the Demo cannot show a
+gain, and the design has no workload yet that justifies steps 2-4.
+
+Before going on, find a workload where pointers are produced per iteration
+(a `getField`/`setField` loop over a C struct array, `peek`/`plusPtr`
+walking a buffer from Idris) and time it with the hand-edited C of step 1.
