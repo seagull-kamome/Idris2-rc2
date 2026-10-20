@@ -1061,7 +1061,7 @@ emitAppFFIInlineInto sink tailPosition fc ccs fargs ret postDrop args = do
     -- two analogous `packCFType` uses just below -- `packCFType`'s
     -- own "mk" functions don't all literally return
     -- `IDRIS2RC2_Value *` (e.g. `CFStruct`/`CFPtr`'s own
-    -- `idris2rc2_mkPointer` returns `IDRIS2RC2_Pointer *`), so
+    -- `idris2rc2_mkGCPointer` returns `IDRIS2RC2_GCPointer *`), so
     -- without it this fails to compile (`-Wincompatible-pointer-
     -- types` as an error) for any such declaration.
     let valStr = "(IDRIS2RC2_Value*)" ++ packCFType (peelIORes ret) rawExpr

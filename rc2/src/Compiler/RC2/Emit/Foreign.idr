@@ -564,8 +564,8 @@ emitExportWrapper n exportedCName fargs ret = do
     -- itself, so a fresh, independently-owned `IDRIS2RC2_Integer` has
     -- to be copied in first.
     -- `(IDRIS2RC2_Value *)`-cast unconditionally: several `packCFType`
-    -- cases (CFPtr/CFGCPtr/CFStruct) return an `IDRIS2RC2_Pointer*`/
-    -- `IDRIS2RC2_GCPointer*`-typed call expression, not a bare
+    -- cases (CFGCPtr) return an `IDRIS2RC2_GCPointer*`-typed call
+    -- expression, not a bare
     -- `IDRIS2RC2_Value*` one -- every other call site in this module
     -- assigning a `packCFType` result already carries this same cast
     -- (e.g. `emitGenericForeignWrapper`'s own `packedRet` lines) for

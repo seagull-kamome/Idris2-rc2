@@ -1654,14 +1654,14 @@ extractValue _ CFChar           varName = "((char)idris2rc2_to_char(" ++ varName
 -- enclosing block -- the call it is an argument of (doc/immediate-ints.md).
 -- A callee must never write through it.
 extractValue _ CFInteger        varName = "((mpz_ptr)idris2rc2_integerView(" ++ varName ++ ", &(IDRIS2RC2_IntegerView){0}))"
-extractValue _ CFPtr            varName = "((IDRIS2RC2_Pointer*)" ++ varName ++ ")->p"
-extractValue _ CFGCPtr          varName = "((IDRIS2RC2_GCPointer*)" ++ varName ++ ")->p->p"
+extractValue _ CFPtr            varName = "idris2rc2_toPtr(" ++ varName ++ ")"
+extractValue _ CFGCPtr          varName = "idris2rc2_toPtr(((IDRIS2RC2_GCPointer*)" ++ varName ++ ")->p)"
 extractValue CLangRefC CFBuffer varName = "((IDRIS2RC2_Buffer*)" ++ varName ++ ")->buf"
 extractValue CLangC    CFBuffer varName = "((IDRIS2RC2_RawBuffer*)((IDRIS2RC2_Buffer*)" ++ varName ++ ")->buf)->data"
 extractValue _ CFWorld          _       = "(IDRIS2RC2_Value *)NULL"
 extractValue _ (CFFun x y)      varName = "(IDRIS2RC2_Closure*)" ++ varName
 extractValue c (CFIORes x)      varName = extractValue c x varName
-extractValue _ (CFStruct x xs)  varName = "((IDRIS2RC2_Pointer*)" ++ varName ++ ")->p"
+extractValue _ (CFStruct x xs)  varName = "idris2rc2_toPtr(" ++ varName ++ ")"
 extractValue _ (CFUser x xs)    varName = "(IDRIS2RC2_Value*)" ++ varName
 extractValue _ n _ = assert_total $ idris_crash ("INTERNAL ERROR: Unknown FFI type in rc2 backend: " ++ show n)
 
@@ -1696,12 +1696,12 @@ packCFType CFChar          varName = "idris2rc2_mkChar((unsigned char)" ++ varNa
 -- that `IDRIS2RC2_Integer *`; packing only normalizes it to an immediate
 -- when it fits (doc/immediate-ints.md).
 packCFType CFInteger       varName = "idris2rc2_integerNormalize(" ++ varName ++ ")"
-packCFType CFPtr           varName = "idris2rc2_mkPointer(" ++ varName ++ ")"
+packCFType CFPtr           varName = "idris2rc2_mkPtr(" ++ varName ++ ")"
 packCFType CFGCPtr         varName = "idris2rc2_mkGCPointer(" ++ varName ++ ", NULL)"
 packCFType CFBuffer        varName = "idris2rc2_mkBuffer(" ++ varName ++ ")"
 packCFType CFWorld         _       = "(IDRIS2RC2_Value *)NULL"
 packCFType (CFIORes x)     varName = packCFType x varName
-packCFType (CFStruct x xs) varName = "idris2rc2_mkPointer(" ++ varName ++ ")"
+packCFType (CFStruct x xs) varName = "idris2rc2_mkPtr(" ++ varName ++ ")"
 packCFType (CFUser x xs)   varName = varName
 -- No `CFFun` case: a `%foreign` declaration's own return type is
 -- rejected well before Emit ever runs if its peeled type is `CFFun`

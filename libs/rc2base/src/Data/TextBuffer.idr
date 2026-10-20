@@ -34,7 +34,7 @@ data TextBuffer : Type where
 ||| declaring the return type as `String` here would make rc2 wrap it
 ||| a SECOND time via idris2rc2_mkString (packCFType CFString) --
 ||| `AnyPtr` would also be wrong, since that maps to CFPtr and gets
-||| boxed via idris2rc2_mkPointer. An unrecognized type constructor
+||| boxed via idris2rc2_mkPtr. An unrecognized type constructor
 ||| like this one maps to CFUser instead, whose packCFType/extractValue
 ||| (Compiler.RC2.Emit) are both the identity -- the Boxed Value* flows
 ||| through untouched.
