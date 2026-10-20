@@ -11,6 +11,7 @@ import Test119FFINoRefc.GCPtrAliasString
 import Test119FFINoRefc.ConstCFStringReturn
 import Test119FFINoRefc.CExprPriority
 import Test119FFINoRefc.NativePtr
+import Test119FFINoRefc.ForeignScalar
 
 main : IO ()
 main = do
@@ -18,3 +19,4 @@ main = do
     ConstCFStringReturn.run
     CExprPriority.run
     NativePtr.run
+    ForeignScalar.run

@@ -539,14 +539,13 @@ primCallee (MkRCFun args _ _ body) =
     in Just (map (\(p, _) => TPrim <$> lookup p found) args)
 primCallee _ = Nothing
 
-||| The raw-pointer positions of a usable `%foreign` declaration
-||| (`doc/native-pointer.md`); its scalar positions are left out on purpose,
-||| as they always were.
-foreignPtrCallee : RCDef -> Maybe (List (Maybe NativeTy))
-foreignPtrCallee (MkRCForeign ccs fargs _) =
-    let ps = map (\t => if cfTypeNativeTy t == Just TPtr then Just TPtr else Nothing) fargs
+||| The native positions of a usable `%foreign` declaration: the scalars
+||| `cfTypeNative` reads natively, and the raw pointers (`doc/native-pointer.md`).
+foreignCallee : RCDef -> Maybe (List (Maybe NativeTy))
+foreignCallee (MkRCForeign ccs fargs _) =
+    let ps = map cfTypeNativeTy fargs
     in if foreignUsable ccs && any isJust ps then Just ps else Nothing
-foreignPtrCallee _ = Nothing
+foreignCallee _ = Nothing
 
 ||| `Just ty` per position of `table`'s callee `n`, for the walk below.
 tableLookup : CalleeTable -> Name -> Maybe (List (Maybe NativeTy))
@@ -584,13 +583,22 @@ callArgNativeReadsFor callee tracked e = go e
              Nothing => empty
     go _ = empty
 
+||| The native type of each parameter among `argIds` that `body` reads at one
+||| type only, as call arguments at the positions of `table`.
+export covering
+callNativeParams : CalleeTable -> List Int -> RCExp -> SortedMap Int NativeTy
+callNativeParams table argIds body =
+    let found = callArgNativeReadsFor (tableLookup table) (SortedSet.fromList argIds) body
+    in SortedMap.fromList (mapMaybe (\p => case map Prelude.toList (lookup p found) of
+                                                 Just [ty] => Just (p, ty)
+                                                 _ => Nothing) argIds)
+
 ||| The parameters among `argIds` that `body` reads only as a raw pointer:
 ||| every use is a call argument at a `TPtr` position of `table`.
 export covering
 ptrParams : CalleeTable -> List Int -> RCExp -> SortedSet Int
 ptrParams table argIds body =
-    let found = callArgNativeReadsFor (tableLookup table) (SortedSet.fromList argIds) body
-    in SortedSet.fromList (filter (\p => maybe False (\tys => Prelude.toList tys == [TPtr]) (lookup p found)) argIds)
+    SortedSet.fromList (map fst (filter (\(_, ty) => ty == TPtr) (SortedMap.toList (callNativeParams table argIds body))))
 
 ||| Pointer positions only: the `%foreign` declarations', plus every ordinary
 ||| function's pointer parameters, found by a fixed number of rounds so a
@@ -600,7 +608,7 @@ ptrCalleeTable : List (Name, RCDef) -> CalleeTable
 ptrCalleeTable defs = go (the Nat 4) foreignEntries
   where
     foreignEntries : CalleeTable
-    foreignEntries = fromList (mapMaybe (\(n, d) => map (n,) (foreignPtrCallee d)) defs)
+    foreignEntries = fromList (mapMaybe (\(n, d) => map (n,) (foreignCallee d)) defs)
 
     entryOf : CalleeTable -> (Name, RCDef) -> Maybe (Name, List (Maybe NativeTy))
     entryOf table (n, MkRCFun args _ False body) =

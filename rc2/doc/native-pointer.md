@@ -163,3 +163,16 @@ function ending in one (`BenchPtrFn.idr`'s `at`) returns `Native Int` or
 well as pointers; Stage 2 used to see every call as `Nothing`. An ordinary tail
 call to another function stays a boxed return (the stack-growth boundary of
 `doc/dual-abi.md`).
+
+## Scalars across `%foreign` calls
+
+The same call-argument analysis reads a `%foreign` declaration's scalar
+positions too (`Loop.foreignCallee` gives `cfTypeNativeTy` per argument, not
+only the pointers). A loop variable, mutual-loop slot or function parameter
+that is only ever such an argument is a native scalar across the call, as
+a pointer is; before, an `ROp` operand was the only thing that made one
+native. `BenchForeignScalar.idr` (two loops whose variable only feeds a
+`%foreign` call): 5.57 s to 0.85 s. `Test119FFINoRefc/ForeignScalar.idr`
+covers `Int`, `Bits8`, `Bits64` and `Char`, values beyond the immediate range
+included. `Char` crosses as before, narrowed at the call (`nativeCharArgExpr`);
+`Integer` and `String` have no native type and are left out.
