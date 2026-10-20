@@ -540,21 +540,6 @@ char const idris2rc2_constr____gt[] = "->";
 // exposes it, an undefined-reference link error otherwise.
 char const idris2rc2_constr__percentWorld[] = "%World";
 
-// Builds one fresh `%World` token, the same shape `Emit.idr`'s own
-// `createCFunctions` would emit inline for an ordinary `RCon` construction
-// of an untagged, zero-arity constructor (`idris2rc2_newConstructor(0, -1)`
-// + its name slot). Used by `Compiler.RC2.RC2.incCompile`'s own Main-module
-// entry-point footer (`Emit.idr`'s `directEntryPoint`) to call `Main.main`
-// directly with a real World argument -- the generic `PrimIO.unsafePerformIO`/
-// closure-`apply` chain whole-program mode's own `__mainExpression_0`
-// goes through isn't available there (see `directEntryPoint`'s own doc
-// comment for why), so this is the direct, no-closures equivalent.
-IDRIS2RC2_Value *idris2rc2_freshWorld(void) {
-  IDRIS2RC2_Constructor *world = idris2rc2_newConstructor(0, -1);
-  idris2rc2_setConName(world, idris2rc2_constr__percentWorld);
-  return (IDRIS2RC2_Value *)world;
-}
-
 // ---- Lazy values (rc2/doc/lazy-memoization.md) ----
 
 IDRIS2RC2_Value *idris2rc2_mkLazy(IDRIS2RC2_Value *thunk) {

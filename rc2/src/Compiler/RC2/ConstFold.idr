@@ -210,6 +210,8 @@ isConstLocalProof : (l : RCLocal) -> Maybe (IsAnyConstLocal l)
 isConstLocalProof (RCLoc _)        = Nothing
 isConstLocalProof (RCConst (BI x)) = if immInt64 x then Just ItIsConst2 else Nothing
 isConstLocalProof RCNull                 = Just ItIsNull2
+isConstLocalProof RCErased               = Just ItIsErased2
+isConstLocalProof RCWorld                = Just ItIsWorld2
 isConstLocalProof (RCConst _)            = Just ItIsConst2
 isConstLocalProof (RCEmptyCon {})        = Just ItIsEmptyCon2
 isConstLocalProof (RCConstCon {})        = Just ItIsConstCon2

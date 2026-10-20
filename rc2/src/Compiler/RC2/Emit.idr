@@ -1640,7 +1640,7 @@ flushStagedDecls outn h = do
 ||| the time whole-program `Inline`/`ConstFold` are done with it).
 ||| `Just call` (`Compiler.RC2.RC2.incCompile`'s own `Main`-module case
 ||| only) splices `call` -- a complete C call expression, already
-||| built by the caller, e.g. `"Main_main(idris2rc2_freshWorld())"` or
+||| built by the caller, e.g. `"Main_main(NULL)"` or
 ||| arity-0 `"Main_main()"` -- verbatim instead. This function itself
 ||| deliberately knows nothing about `Main.main`'s own real arity or
 ||| how to build a `%World` token; `incCompile` does, since only it can
