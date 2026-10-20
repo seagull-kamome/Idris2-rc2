@@ -171,17 +171,17 @@ buildGroup calleeTable existingNames memberDefs groupNames = do
     -- `Nothing` slot may hold values of different types, so Loop must
     -- never promote it (`noPromote`). rc2/doc/loop-conversion.md's
     -- "MutualLoop" section and its "Bugs found" 8.
-    let classesOf : List (List (Maybe PrimType)) :=
-            map (\(_, (args, body)) => map (\p => callArgOrOpNativeType calleeTable p body) args) members
-    let classes : List (Maybe PrimType) := nub (concat classesOf)
+    let classesOf : List (List (Maybe NativeTy)) :=
+            map (\(_, (args, body)) => map (\p => callArgOrOpNativeTy calleeTable p body) args) members
+    let classes : List (Maybe NativeTy) := nub (concat classesOf)
     let widths : List Nat := map (\k => foldl max Z (map (\ks => length (filter (== k) ks)) classesOf)) classes
     let classOffsets : List Nat := reverse (snd (foldl (\ao, a => (fst ao + a, fst ao :: snd ao)) (the (Nat, List Nat) (Z, [])) widths))
     let slotCount = sum widths
-    let offsetOf : Maybe PrimType -> Nat
+    let offsetOf : Maybe NativeTy -> Nat
         offsetOf k = fromMaybe Z (lookup k (zip classes classOffsets))
     -- Each parameter's slot: its class's offset plus how many earlier
     -- parameters of the same member share its class.
-    let positionsOf : List (Maybe PrimType) -> List Nat
+    let positionsOf : List (Maybe NativeTy) -> List Nat
         positionsOf ks = zipWith (\i, k => offsetOf k + length (filter (== k) (take i ks))) [0 .. length ks] ks
     let positions : List (List Nat) := map positionsOf classesOf
     let membersWithTag = zip members tagList
