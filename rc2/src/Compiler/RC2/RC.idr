@@ -495,8 +495,16 @@ alwaysUnboxedArgs (Just ty) args =
 alwaysUnboxedBoxedLocalsR : RCExp -> SortedSet RCLocal
 alwaysUnboxedBoxedLocalsR (RLet _ var rep value body) =
     let vs = union (alwaysUnboxedBoxedLocalsR value) (alwaysUnboxedBoxedLocalsR body) in
-    if boolProducer rep value then insert (RCLoc var) vs else vs
+    if boolProducer rep value || nullProducer value then insert (RCLoc var) vs else vs
   where
+    ||| A `let` bound directly to an erased value or the world token: C
+    ||| `NULL`, which `idris2rc2_dup`/`drop` skip anyway.
+    nullProducer : RCExp -> Bool
+    nullProducer (RErased _) = True
+    nullProducer (RV _ RCErased) = True
+    nullProducer (RV _ RCWorld) = True
+    nullProducer _ = False
+
     ||| A Boxed `let` bound directly to a comparison primitive: its value is
     ||| `idris2rc2_mkBool(..)`, an immediate (`Types.boolResultOp`). Producer-side
     ||| evidence only; a local bound any other way (a call, a case, an alias)
