@@ -91,7 +91,6 @@ extern char const idris2rc2_constr_Char[];
 extern char const idris2rc2_constr_String[];
 extern char const idris2rc2_constr____gt[];
 extern char const idris2rc2_constr__percentWorld[]; // see runtime.c's own comment
-IDRIS2RC2_Value *idris2rc2_freshWorld(void); // see runtime.c's own comment
 
 // idris2-src's own support/c headers are missing a handful of prototypes
 // for functions their own .c files implement just fine and libs/ own

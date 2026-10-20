@@ -59,6 +59,8 @@ eqLocal env (RCLoc i) (RCLoc j) =
          Nothing => not (any ((== j) . snd) env) && i == j
 eqLocal _ (RCLoc _) _ = False
 eqLocal _ RCNull RCNull = True
+eqLocal _ RCErased RCErased = True
+eqLocal _ RCWorld RCWorld = True
 eqLocal _ (RCConst a) (RCConst b) = eqConst a b
 eqLocal _ (RCEmptyCon n1 _ t1) (RCEmptyCon n2 _ t2) = n1 == n2 && t1 == t2
 eqLocal env (RCConstCon n1 _ t1 a1) (RCConstCon n2 _ t2 a2) =

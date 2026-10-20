@@ -319,6 +319,8 @@ export
 varName : RCLocal -> String
 varName (RCLoc i) = "var_" ++ (show i)
 varName (RCNull)  = "NULL"
+varName RCErased = "NULL"
+varName RCWorld = "NULL"
 -- Unreachable in practice: repOfLocal/inlineExprFor always intercept an
 -- RCConst before anything falls back to reading its "variable name" (it
 -- never had one -- see RCExp.idr's module note). Kept total regardless.
@@ -772,6 +774,8 @@ removeReuseConstructors = applyFunctionToVars "idris2rc2_releaseReuse"
 export
 repOfLocal : {auto r : Ref RepMap (SortedMap Int Rep)} -> RCLocal -> Core Rep
 repOfLocal RCNull = pure RBoxed
+repOfLocal RCErased = pure RBoxed
+repOfLocal RCWorld = pure RBoxed
 -- RC.idr's bindOne only ever produces RCConst for a litRep-covered
 -- (native-eligible) Constant -- see RCExp.idr's module note -- so this
 -- is always RNative in practice; the RBoxed fallback is unreachable
@@ -926,6 +930,8 @@ mutual
                      -> {auto cc : Ref ConstConDef (SortedMap RCLocal String, List String)}
                      -> (l : RCLocal) -> {0 prf : IsAnyConstLocal l} -> Core String
     constConFieldExpr RCNull               = pure "NULL"
+    constConFieldExpr RCErased             = pure "NULL"
+    constConFieldExpr RCWorld              = pure "NULL"
     constConFieldExpr (RCConst c)          = boxedConstExpr c
     constConFieldExpr (RCEmptyCon _ _ tag) = pure "idris2rc2_mkBits32(\{show tag})"
     constConFieldExpr l@(RCConstCon {})    = boxedConstConExpr l {prf=ItIsConstCon}
@@ -1004,6 +1010,8 @@ inlineExprFor : {auto a : Ref ArgCounter Nat}
              -> {auto lm : Ref InlineMap (SortedMap Int (String, List String))}
              -> RCLocal -> Core (Maybe (String, List String))
 inlineExprFor RCNull = pure Nothing
+inlineExprFor RCErased = pure Nothing
+inlineExprFor RCWorld = pure Nothing
 inlineExprFor (RCConst c) = (\e => Just (e, [])) <$> case litRep c of
     Just _  => pure $ nativeLitExpr c
     Nothing => boxedConstExpr c
@@ -1124,6 +1132,10 @@ rcVarToNativeC : {auto a : Ref ArgCounter Nat}
 -- pattern used to hit before this clause existed.
 rcVarToNativeC TPtr RCNull = pure ("((IDRIS2RC2_Raw *)NULL)", [])
 rcVarToNativeC _ RCNull = pure ("0", [])
+rcVarToNativeC TPtr RCErased = pure ("((IDRIS2RC2_Raw *)NULL)", [])
+rcVarToNativeC _ RCErased = pure ("0", [])
+rcVarToNativeC TPtr RCWorld = pure ("((IDRIS2RC2_Raw *)NULL)", [])
+rcVarToNativeC _ RCWorld = pure ("0", [])
 rcVarToNativeC ty l = do
     rep <- repOfLocal l
     inlined <- inlineExprFor l

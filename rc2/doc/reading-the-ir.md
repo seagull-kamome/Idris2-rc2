@@ -123,7 +123,9 @@ and it's worth memorizing since it's everywhere:
 | Syntax | Constructor | Meaning |
 |---|---|---|
 | `v0`, `v1`, `v42`, ... | `RCLoc n` | An ordinary local: a function parameter or something bound by a `let`/pattern match/loop param, identified by a compiler-allocated integer. **IDs are not stable across passes or across a definition's own args vs. body** -- a loop's native shadow gets a *fresh* id distinct from the original parameter's own (see section 8); don't read anything into the specific numbers beyond "same number = same value here." |
-| `[__]` | `RCNull` | A literal C `NULL`. Three distinct sources: an erased-nullary-constructor value (`Nil`/`Nothing`/`Z`/`MkUnit` -- these need no heap allocation at all, matched by NULL-vs-non-NULL); the `%World` token threaded through IO-primitive calls (`extprim ... [[__], ...]`); or `Compiler.RC2.MutualLoop`'s own arity-padding for a smaller-arity group member's unused trailing slot. |
+| `[__]` | `RCNull` | A literal C `NULL`. Two distinct sources: a nullary-constructor value (`Nil`/`Nothing`/`Z`/`MkUnit` -- these need no heap allocation at all, matched by NULL-vs-non-NULL); or `Compiler.RC2.MutualLoop`'s own arity-padding for a smaller-arity group member's unused trailing slot. |
+| `[erased]` | `RCErased` | A value the program never looks at (an erased argument or field). Emitted as C `NULL`; its own constructor so a pass can tell it from `[__]`. |
+| `[world]` | `RCWorld` | The `%World` token threaded through IO-primitive calls. Emitted as C `NULL`. |
 | `#0`, `#"hello"`, `#'x'`, ... | `RCConst c` | A native-eligible-or-cheap literal inlined directly, no `var_N`, no let-binding, no dup/drop -- see `doc/native-type-inference.md`'s "`RCLocal.RCConst`" section for exactly which constants qualify. |
 | `#Main.NoShape@1`, `#Prelude.Show.Open@0`, ... | `RCEmptyCon n ci tag` | A zero-argument *tagged* data constructor other than the four `RCNull` ones above (e.g. `f Red` for a multi-constructor enum) -- `Name@tag`, inlined as a tagged-pointer constant, no allocation. |
 
@@ -159,7 +161,7 @@ always-populated field (`RDelay`/`RForce`'s own `lr`), not this one.
 | `let v0 : Boxed =`<br>`  <value>`<br>`<body>` | `RLet` | Bind `v0` (with the shown `Rep`) to `<value>`'s result, then continue into `<body>`. The single most common wrapper -- almost every intermediate computation goes through one. |
 | `con Name ConInfo tag=Just 1 [v0, v1]` | `RCon` | Construct a value of `Name` with these fields. `ConInfo` is Idris2's own short tag for what kind of constructor this is at the source level (`[cons]`/`[nil]` for list-shaped types, `[data]` for an ordinary constructor, `[record]`, `[zero]`/`[succ]` for `Nat`-shaped types, `[enum N]`, `[unit]`, `[just]`/`[nothing]`, ...); `tag=Nothing` for an untagged/single-shape type. A trailing `reuse=v2` means this construction may repurpose `v2`'s own storage in place -- see section 9's reuse example. |
 | `op PrimFn [v0, v1] postDrop=[v0]` | `ROp` | A primitive operation (`+Int`, `-Integer`, `cast-Integer-Int`, `==Char`, ...). `postDrop=[...]`, when present, lists every *Boxed* operand this op needs dropped once it's read them -- there's no separate statement position to hang an ordinary wrapping `drop` around an op's own read, so this field carries it instead (see `doc/native-type-inference.md`). Whether this line renders as a raw C expression or a boxed runtime call at emission time depends on the *enclosing* `let`'s own `Rep`, not on anything visible in this line itself. |
-| `extprim Name [[__], v0, v1]` | `RExtPrim` | A call into rc2's own runtime-primitive glue (`IORef`, arrays, FFI helper wrappers, `%World`-threaded IO primitives -- the first argument is very often `[__]`, the `%World` token). |
+| `extprim Name [[world], v0, v1]` | `RExtPrim` | A call into rc2's own runtime-primitive glue (`IORef`, arrays, FFI helper wrappers, `%World`-threaded IO primitives -- the first argument is very often `[world]`, the `%World` token). |
 | `cmp PrimFn [v0, v1] postDrop=[...]`<br>`then`<br>`  <T>`<br>`else`<br>`  <F>` | `RCmpCase` | A native comparison (`LT`/`GT`/`EQ`/`LTE`/`GTE`) fused *directly* into a two-way branch -- the Boolean result never materializes as a value at all, not even natively. Only ever produced when a comparison is the sole, immediate scrutinee of a two-way match on Idris2's own `Bool` (`False=0`/`True=1`) encoding. See section 9's worked example. |
 | `case v0 of`<br>`  Name ConInfo tag=Just 1 args=[v1, v2] ->`<br>`    <body>`<br>`  _ ->`<br>`    <default>` | `RConCase` | Dispatch on scrutinee `v0`'s constructor tag. `args=[...]` are the fields this alt destructures *directly out of* `v0`'s own storage (pointer aliasing, not independently refcounted -- see how they get `dup`'d before `v0` potentially dies, in section 9). `_ ->` is the optional default (absent entirely if coverage is already exhaustive without one). |
 | `case v0 of`<br>`  0 ->`<br>`    <body>`<br>`  _ ->`<br>`    <default>` | `RConstCase` | Dispatch on scrutinee `v0`'s *value* against literal constants (an integer switch, or a `String`/`Double` equality chain) rather than a constructor tag. |
@@ -436,7 +438,7 @@ case v1 of
         drop [v4]
         let v5 : Boxed =
           let v6 : Boxed =
-            apply v3 [__]
+            apply v3 [world]
           call Prelude.Types.takeUntil [v0, v6]
         con _builtin.CONS [cons] tag=Just 1 [v2, v5] reuse=v1
 ```

@@ -213,7 +213,8 @@ mutual
     ||| Let-bind compound expressions to fresh locals to ensure ANF normal form.
     bindOne : Norm (Frame -> NamedCExp -> (RCLocal -> Core RCExp) -> Core RCExp)
     bindOne fr (NmLocal fc x) k = k (RCLoc !(lookupVar fr x))
-    bindOne fr (NmErased fc) k = k RCNull
+    bindOne fr (NmErased fc) k = k RCErased
+    bindOne fr (NmPrimVal fc WorldVal) k = k RCWorld
     bindOne fr e@(NmPrimVal fc c) k =
         case litRep c of
              Just _  => k (RCConst c)
@@ -526,6 +527,8 @@ alwaysUnboxedBoxedLocalsR _ = empty
 splitBorrows : (natives : SortedSet RCLocal) -> Owned -> List RCLocal -> List RCLocal
 splitBorrows _ _ [] = []
 splitBorrows natives owned (RCNull :: vars) = splitBorrows natives owned vars
+splitBorrows natives owned (RCErased :: vars) = splitBorrows natives owned vars
+splitBorrows natives owned (RCWorld :: vars) = splitBorrows natives owned vars
 splitBorrows natives owned (RCConst _ :: vars) = splitBorrows natives owned vars
 splitBorrows natives owned (RCEmptyCon {} :: vars) = splitBorrows natives owned vars
 splitBorrows natives owned (RCConstCon {} :: vars) = splitBorrows natives owned vars
@@ -557,6 +560,8 @@ splitBorrowsV natives owned = splitBorrows natives owned . toList
 dropIfLastUse : (natives : SortedSet RCLocal) -> Owned -> List RCLocal -> List RCLocal
 dropIfLastUse _ _ [] = []
 dropIfLastUse natives owned (RCNull :: vars) = dropIfLastUse natives owned vars
+dropIfLastUse natives owned (RCErased :: vars) = dropIfLastUse natives owned vars
+dropIfLastUse natives owned (RCWorld :: vars) = dropIfLastUse natives owned vars
 dropIfLastUse natives owned (RCConst _ :: vars) = dropIfLastUse natives owned vars
 dropIfLastUse natives owned (RCEmptyCon {} :: vars) = dropIfLastUse natives owned vars
 dropIfLastUse natives owned (RCConstCon {} :: vars) = dropIfLastUse natives owned vars
@@ -585,6 +590,8 @@ boxedOperands natives = filter isBoxedOperand
   where
     isBoxedOperand : RCLocal -> Bool
     isBoxedOperand RCNull = False
+    isBoxedOperand RCErased = False
+    isBoxedOperand RCWorld = False
     isBoxedOperand (RCConst _) = False
     isBoxedOperand (RCEmptyCon {}) = False
     isBoxedOperand (RCConstCon {}) = False
@@ -633,6 +640,8 @@ mutual
     annotate natives owned e@(RV _ (RCConst _)) = pure e
     annotate natives owned e@(RV _ (RCEmptyCon {})) = pure e
     annotate natives owned e@(RV _ RCNull) = pure e
+    annotate natives owned e@(RV _ RCErased) = pure e
+    annotate natives owned e@(RV _ RCWorld) = pure e
     annotate natives owned (RV fc v) =
         pure $ if contains v natives || contains v owned then RV fc v else RDup fc v 0 (RV fc v)
     annotate natives owned (RAppName fc lazy n args) =

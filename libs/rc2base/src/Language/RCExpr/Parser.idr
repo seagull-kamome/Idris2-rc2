@@ -317,7 +317,7 @@ mutual
           match (RcPunct '[')
           n <- match RcName
           match (RcPunct ']')
-          if n == "__" then pure RNull else fail "expected [__]"
+          if n == "__" || n == "erased" || n == "world" then pure RNull else fail "expected [__], [erased] or [world]"
       plainVarG : Grammar () RcToken True RCLocal
       plainVarG = do
           n <- match RcName

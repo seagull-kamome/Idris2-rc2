@@ -51,6 +51,10 @@ public export
 data RCLocal : Type where
      RCLoc      : Int -> RCLocal
      RCNull     : RCLocal
+     ||| A value the program never looks at: an erased argument or field. C `NULL`.
+     RCErased   : RCLocal
+     ||| The `%World` token the callee threads. C `NULL`.
+     RCWorld    : RCLocal
      RCConst    : Constant -> RCLocal
      RCEmptyCon : Name -> ConInfo -> Int -> RCLocal
      ||| `argsConst` is the type-level enforcement of the old
@@ -117,6 +121,8 @@ data IsConstClosureLocal : RCLocal -> Type where
 public export
 data IsAnyConstLocal : RCLocal -> Type where
      ItIsNull2        : IsAnyConstLocal RCNull
+     ItIsErased2      : IsAnyConstLocal RCErased
+     ItIsWorld2       : IsAnyConstLocal RCWorld
      ItIsConst2       : IsAnyConstLocal (RCConst c)
      ItIsEmptyCon2    : IsAnyConstLocal (RCEmptyCon n ci i)
      ItIsConstCon2    : IsAnyConstLocal (RCConstCon n ci t args)
@@ -127,6 +133,8 @@ covering
 Eq RCLocal where
   (RCLoc i1) == (RCLoc i2) = i1 == i2
   RCNull == RCNull = True
+  RCErased == RCErased = True
+  RCWorld == RCWorld = True
   (RCConst c1) == (RCConst c2) = c1 == c2
   (RCEmptyCon n1 _ t1) == (RCEmptyCon n2 _ t2) = n1 == n2 && t1 == t2
   (RCConstCon n1 _ t1 a1) == (RCConstCon n2 _ t2 a2) = n1 == n2 && t1 == t2 && a1 == a2
@@ -145,6 +153,8 @@ Ord RCLocal where
       tagOf (RCEmptyCon {})    = 3
       tagOf (RCConstCon {})    = 4
       tagOf (RCConstClosure {}) = 5
+      tagOf RCErased           = 6
+      tagOf RCWorld            = 7
 
       -- `tagOf` above already orders any differing pair of
       -- constructors; every case reachable here has l1/l2 as the same
@@ -193,6 +203,8 @@ Show RCLocal where
   show (RCLoc 0) = "_"
   show (RCLoc i) = "v" ++ show i
   show RCNull = "[__]"
+  show RCErased = "[erased]"
+  show RCWorld = "[world]"
   show (RCConst c) = "#" ++ show c
   show (RCEmptyCon n _ t) = "#" ++ dumpName n ++ "@" ++ show t
   show (RCConstCon n _ t args) = "#" ++ dumpName n ++ "@" ++ show t ++ "(" ++ show args ++ ")"
@@ -794,6 +806,8 @@ foldRCNamesL nf (RCConstClosure n _)      = nf.onConstClosure n
 foldRCNamesL nf (RCConstCon n _ tag args) = nf.onCon n tag <+> concatMap (foldRCNamesL nf) args
 foldRCNamesL _  (RCLoc _)                 = neutral
 foldRCNamesL _  RCNull                    = neutral
+foldRCNamesL _  RCErased                  = neutral
+foldRCNamesL _  RCWorld                   = neutral
 foldRCNamesL _  (RCConst _)               = neutral
 foldRCNamesL _  (RCEmptyCon {})           = neutral
 

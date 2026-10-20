@@ -68,6 +68,8 @@ assignShadowIds nextId ((p, ty) :: rest) = (p, nextId, ty) :: assignShadowIds (n
 export
 localRepIn : SortedMap Int Rep -> RCLocal -> Rep
 localRepIn _ RCNull = RBoxed
+localRepIn _ RCErased = RBoxed
+localRepIn _ RCWorld = RBoxed
 localRepIn reps (RCLoc i) = fromMaybe RBoxed (lookup i reps)
 localRepIn _ (RCConst c) = fromMaybe RBoxed (RNative . TPrim <$> litRep c)
 localRepIn _ (RCEmptyCon {}) = RBoxed

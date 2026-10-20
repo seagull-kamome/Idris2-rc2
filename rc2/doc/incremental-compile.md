@@ -626,7 +626,7 @@ the next. `rc2/tests/verify.sh` stayed at 111/0/0 after every one.
    today's whole-program footer verbatim; `Just call` (`incCompile`'s
    own `Main`-module case only) splices a complete call expression
    instead, built by `incCompile` itself from whatever it finds.
-4. **`Main.main`'s own real arity isn't reliably 1.** First attempt at
+4. **`Main.main`'s own real arity isn't reliably 1.** (Since then `idris2rc2_freshWorld()` is gone: the `%World` token is C `NULL`, `RCWorld` in the IR, and the calls below pass `NULL`.) First attempt at
    (3) hardcoded `"\{cname}(idris2rc2_freshWorld())"` (build one fresh
    `%World` token -- a small new `idris2rc2_freshWorld()` runtime
    helper, same construction `createCFunctions` would emit inline for

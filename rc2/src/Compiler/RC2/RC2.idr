@@ -1033,8 +1033,8 @@ incCompile c s sourceFile = do
              if noMain
                 then pure Nothing
                 else case lookup mainMainName defs of
-                          Just (MkRCFun [] _ _ _) => pure (Just "idris2rc2_applyClosure(\{cName mainMainName}(), idris2rc2_freshWorld())")
-                          Just (MkRCFun _ _ _ _) => pure (Just "\{cName mainMainName}(idris2rc2_freshWorld())")
+                          Just (MkRCFun [] _ _ _) => pure (Just "idris2rc2_applyClosure(\{cName mainMainName}(), NULL)")
+                          Just (MkRCFun _ _ _ _) => pure (Just "\{cName mainMainName}(NULL)")
                           _ => throw $ InternalError "[rc2] incremental compile: Main module has no Main.main function"
          when ("dumprcexpr" `elem` directiveList) $ do
              rcexprFile <- getTTCFileName sourceFile "rcexpr"
