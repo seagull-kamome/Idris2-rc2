@@ -748,6 +748,8 @@ only option.
 
 ## Investigated: native (unboxed) `Ptr`/`CFPtr` representation -- not pursued
 
+Superseded by the design in `native-pointer.md`; kept as the original investigation.
+
 Prompted by a direct question after the implementation landed: neither
 `getField`'s own result nor `setField`'s own `value` operand is ever
 promoted to `Rep`'s `RNative` (`Compiler.RC2.Types`'s own `repOf` only
