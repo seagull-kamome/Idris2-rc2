@@ -1,7 +1,7 @@
 # Native `Ptr` / `AnyPtr` (design)
 
 Status: steps 1 and 3 implemented (immediate pointers); steps 2 and 4
-(native `NPtr`) deferred, see "Result" (2026-10-20). Supersedes the "Investigated:
+(native `TPtr`) deferred, see "Result" (2026-10-20). Supersedes the "Investigated:
 native (unboxed) `Ptr`/`CFPtr`" section of `c-struct-support.md`, whose
 objections are answered below.
 
@@ -51,12 +51,12 @@ Conversion to and from the boxed word (`mkPtr` / `toPtr`, going through
 has no pointer case. They become typed over an rc2 type:
 
 ```idris
-data NatTy = NPrim PrimType | NPtr
+data NativeTy = TPrim PrimType | TPtr
 ```
 
-`nativeCType NPtr` is `IDRIS2RC2_Raw *`. `NPtr` has no arithmetic, only
+`nativeCType TPtr` is `IDRIS2RC2_Raw *`. `TPtr` has no arithmetic, only
 equality and a null test, and counts as `alwaysUnboxed` (no dup/drop).
-`cfTypeNative` maps `CFPtr` and `CFStruct` to `NPtr`.
+`cfTypeNative` maps `CFPtr` and `CFStruct` to `TPtr`.
 
 ### 4. Excluded: `GCPtr` / `GCAnyPtr` (`CFGCPtr`)
 
@@ -68,7 +68,7 @@ word as in (1), and `extractValue` reads it through `toPtr`.
 
 | Objection | Answer |
 |---|---|
-| `Rep` has no pointer case; every `Rep` match changes | `NatTy`, introduced first as a behaviour-preserving refactoring |
+| `Rep` has no pointer case; every `Rep` match changes | `NativeTy`, introduced first as a behaviour-preserving refactoring |
 | `CFGCPtr` needs the refcount | excluded (4) |
 | lost reachability tracking | there was none to lose: the payload is never freed; only IR visibility is lost |
 
@@ -86,10 +86,10 @@ pointer arithmetic on an unmodified `$n` pointer argument (the one `+` chain,
 1. Measure: `mkPointer` allocations and time on the termui Demo and the
    rc2base tests; compare hand-edited C using `uint64_t` against
    `IDRIS2RC2_Raw *`. If the gain is small, stop.
-2. Refactoring: introduce `NatTy` with only `NPrim`; no output change.
+2. Refactoring: introduce `NativeTy` with only `TPrim`; no output change.
 3. Representation: immediate pointers in the runtime, `packCFType` /
    `extractValue`, `onCollect`, `%export` wrappers. Still boxed in the IR.
-4. Enable `NPtr`: `cfTypeNative`, FFI workers, `RStructGet`/`RStructSet`,
+4. Enable `TPtr`: `cfTypeNative`, FFI workers, `RStructGet`/`RStructSet`,
    `-Werror=incompatible-pointer-types`.
 5. Tests: odd address, address with the top bit set, NULL, `GCPtr`
    `onCollect` exactly once, plus `Test24CStructSupport`, the Posix tests,
@@ -123,7 +123,7 @@ the FFI calls boxed):
 The termui Demo has four `mkPointer` sites, none in a loop, so it gains
 nothing; the gain is for code that makes pointers per iteration.
 
-Deferred: decisions 2-3 (`IDRIS2RC2_Raw *` natives, `Rep` over `NatTy`). What
+Deferred: decisions 2-3 (`IDRIS2RC2_Raw *` natives, `Rep` over `NativeTy`). What
 a native pointer would still save over the boxed word is a tag test, a shift
 and a range check per crossing. The same loop written by hand in C with an
 `IDRIS2RC2_Raw *` takes 0.084 s (0.26 s now), so about 0.9 ns per iteration

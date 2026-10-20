@@ -271,8 +271,8 @@ mutual
             t <- getNewVarThatWillNotBeFreedAtEndOfBlock
             (cty, valStr, pending) <- the (Core (String, String, List String)) $ case rep of
                  RBoxed => (\(s, p) => ("IDRIS2RC2_Value *", s, p)) <$> rcVarToBoxedC v
-                 RNative ty => (\(s, p) => (nativeCType ty ++ " ", s, p)) <$> rcVarToNativeC ty v
-                 RInlineNative ty => (\(s, p) => (nativeCType ty ++ " ", s, p)) <$> rcVarToNativeC ty v
+                 RNative ty => (\(s, p) => (tyCType ty ++ " ", s, p)) <$> rcVarToNativeC ty v
+                 RInlineNative ty => (\(s, p) => (tyCType ty ++ " ", s, p)) <$> rcVarToNativeC ty v
                  RRet _ _ => retUnsupported "RLoopContinue"
             emit fc "\{cty}\{t} = \{valStr};"
             removeVars pending
@@ -334,10 +334,10 @@ mutual
     ||| `emitRC`'s and `emitNativeValue`'s own RLet cases for a plain
     ||| (non-inlined) `RNative` local -- identical in both except for
     ||| what continues afterward, which each caller keeps to itself.
-    declareNative : EmitDeps (FC -> PrimType -> Int -> RCExp -> Core ())
+    declareNative : EmitDeps (FC -> NativeTy -> Int -> RCExp -> Core ())
     declareNative fc ty var value = do
         (valStr, pending) <- emitNativeValue ty value
-        emit fc $ "\{nativeCType ty} var_\{show var} = \{valStr};"
+        emit fc $ "\{tyCType ty} var_\{show var} = \{valStr};"
         removeVars pending
 
     ||| As `declareNative`, but for an `RInlineNative` local: no C
@@ -356,7 +356,7 @@ mutual
     ||| about. `rcVarToBoxedC`/`rcVarToNativeC` (the only readers of an
     ||| InlineMap entry) hand `pending` back to their own caller instead,
     ||| which is what finally discharges it.
-    inlineNative : EmitDeps (PrimType -> Int -> RCExp -> Core ())
+    inlineNative : EmitDeps (NativeTy -> Int -> RCExp -> Core ())
     inlineNative ty var value = do
         (valStr, pending) <- emitNativeValue ty value
         update InlineMap (insert var (valStr, pending))
@@ -373,14 +373,14 @@ mutual
     ||| naming `makeClosure`'s own
     ||| `getNewVarThatWillNotBeFreedAtEndOfBlock` already uses) first,
     ||| drop, then return the scratch variable.
-    emitNativeReturn : EmitDeps (FC -> PrimType -> RCExp -> Core ())
+    emitNativeReturn : EmitDeps (FC -> NativeTy -> RCExp -> Core ())
     emitNativeReturn fc ty value = do
         (valStr, pending) <- emitNativeValue ty value
         case pending of
              [] => emit fc "return \{valStr};"
              _  => do
                  tmp <- getNewVarThatWillNotBeFreedAtEndOfBlock
-                 emit fc "\{nativeCType ty} \{tmp} = \{valStr};"
+                 emit fc "\{tyCType ty} \{tmp} = \{valStr};"
                  removeVars pending
                  emit fc "return \{tmp};"
 
@@ -396,7 +396,7 @@ mutual
     ||| assignment, so a pending Boxed-operand drop just lands there --
     ||| the same reasoning `finalizeSinkWithDrop`'s own non-`SinkReturn`
     ||| branch already relies on, and why no scratch temporary is needed.
-    emitNativeSinkVar : EmitDeps (FC -> Sink -> PrimType -> RCExp -> Core ())
+    emitNativeSinkVar : EmitDeps (FC -> Sink -> NativeTy -> RCExp -> Core ())
     emitNativeSinkVar fc sink ty value = do
         (valStr, pending) <- emitNativeValue ty value
         finalizeSink fc sink valStr
@@ -508,7 +508,7 @@ mutual
     emitRetInto sink _ (RRetPack fc _ tag fields) = do
         (width, fieldType) <- structOf sink
         packed <- traverse (\(k, x) => case fieldType tag k of
-                                Just ty => (\(s, p) => (".\{retMember ty} = (\{retMemberCType ty})(\{s})", p)) <$> rcVarToNativeC ty x
+                                Just ty => (\(s, p) => (".\{retMember ty} = (\{retMemberCType ty})(\{s})", p)) <$> rcVarToNativeC (TPrim ty) x
                                 Nothing => (\(s, p) => (".p = \{s}", p)) <$> rcVarToBoxedC x)
                            (zip [0 .. length fields] fields)
         let inits = concatMap (\(s, _) => ", { \{s} }") packed
@@ -584,7 +584,7 @@ mutual
         _ <- foldlC (\k, arg => do
             when (arg /= 0) $ case (isStruct, native k) of
                  (True, Just ty) => do
-                     update RepMap (insert arg (RNative ty))
+                     update RepMap (insert arg (RNative (TPrim ty)))
                      emit emptyFC "\{nativeCType ty} var_\{show arg} = (\{nativeCType ty})\{sc'}.f\{show k}.\{retMember ty};"
                  (True, Nothing) => emit emptyFC "IDRIS2RC2_Value *var_\{show arg} = \{sc'}.f\{show k}.p;"
                  _ => emit emptyFC "IDRIS2RC2_Value *var_\{show arg} = ((IDRIS2RC2_Constructor*)\{sc'})->args[\{show k}];"
@@ -612,7 +612,7 @@ mutual
         -- `postDrop` below like an `ROp`'s; see doc/native-type-inference.md.
         argsWithPending : Vect 2 (String, List String) <- if boxedCmp
                               then rc2traverseVect (boxOpArg fc) args
-                              else rc2traverseVect (rcVarToNativeC (cmpOpTy op)) args
+                              else rc2traverseVect (rcVarToNativeC (TPrim (cmpOpTy op))) args
         let argStrs = map fst argsWithPending
         let condVar = "cmp_" ++ !(getNextCounter)
         emit fc $ "int " ++ condVar ++ " = "
@@ -714,8 +714,8 @@ mutual
                                    pure ("(((IDRIS2RC2_String *)\{sc'})->len == sizeof(\{lit}) - 1 && ! memcmp(\{lit}, ((IDRIS2RC2_String *)\{sc'})->str, sizeof(\{lit}) - 1))", [])
                         BI x => pure (integerAltCond sc' x, [])
                         Db  x => case scRep of
-                                      RNative DoubleType => (\(e, p) => ("\{e} == \{show x}", p)) <$> rcVarToNativeC DoubleType sc
-                                      RInlineNative DoubleType => (\(e, p) => ("\{e} == \{show x}", p)) <$> rcVarToNativeC DoubleType sc
+                                      RNative (TPrim DoubleType) => (\(e, p) => ("\{e} == \{show x}", p)) <$> rcVarToNativeC (TPrim DoubleType) sc
+                                      RInlineNative (TPrim DoubleType) => (\(e, p) => ("\{e} == \{show x}", p)) <$> rcVarToNativeC (TPrim DoubleType) sc
                                       _ => pure ("((IDRIS2RC2_Double *)\{sc'})->v == \{show x}", [])
                         x => throw $ InternalError "[rc2] RConstCase : unsupported type. \{show fc} \{show x}")
                     (\(MkRConstAlt _ body) => branchBody resolvedSink body tailPosition)
@@ -850,8 +850,8 @@ mutual
         if inPrologueDrop
            then do
                let initValName = varName initVal
-               emit fc "\{nativeCType ty} var_\{show paramId} = (\{initValName} == NULL) ? 0 : (\{valStr});"
-           else emit fc "\{nativeCType ty} var_\{show paramId} = \{valStr};"
+               emit fc "\{tyCType ty} var_\{show paramId} = (\{initValName} == NULL) ? 0 : (\{valStr});"
+           else emit fc "\{tyCType ty} var_\{show paramId} = \{valStr};"
         removeVars pending
     -- A loop param is read again every iteration, so it never has the
     -- single-use shape `RInlineNative` requires -- Compiler.RC2.Loop
@@ -914,7 +914,7 @@ mutual
     -- that statement, so it -- not this function -- is what must emit the
     -- drop, and only *after* doing so: dropped here, the operand would be
     -- freed before the statement that reads it.
-    emitNativeValue : EmitDeps (PrimType -> RCExp -> Core (String, List String))
+    emitNativeValue : EmitDeps (NativeTy -> RCExp -> Core (String, List String))
     -- A bare local read -- unreachable before Stage 3b (declareNative/
     -- inlineNative's own RLet callers only ever see an ROp/RPrimVal
     -- tail here, since Phase 1's own ANF normalisation binds every
@@ -987,8 +987,8 @@ mutual
                                     CFChar => nativeCharRetExpr rawExpr
                                     _      => rawExpr
                  in pure (retExpr, map varName postDrop ++ boxedArgDrop)
-    emitNativeValue ty (ROp fc _ op args postDrop) = do
-        argsWithPending <- rc2traverseVect (\v => rcVarToNativeC (opArgTyFor ty op) v) args
+    emitNativeValue (TPrim ty) (ROp fc _ op args postDrop) = do
+        argsWithPending <- rc2traverseVect (\v => rcVarToNativeC (TPrim (opArgTyFor ty op)) v) args
         -- `postDrop` (same meaning as emitRC's boxed-ROp case, see its
         -- own doc comment) -- a native-result op still owes these
         -- operands the same cleanup, but can't drop them *here*: unlike
@@ -1049,8 +1049,8 @@ emitAppNameRepInto sink tailPosition fc n argReps retRep postDrop args = do
                    RBoxed => pure $ case tailPosition of
                                   InTailPosition => call
                                   NotInTailPosition => "idris2rc2_trampoline(\{call})"
-                   RNative ty => pure (nativeMk ty call)
-                   RInlineNative ty => pure (nativeMk ty call)
+                   RNative ty => pure (tyMk ty call)
+                   RInlineNative ty => pure (tyMk ty call)
                    RRet _ _ => pure call
     finalizeSinkWithDrop fc sink valStr (map varName postDrop ++ argPending)
 
@@ -1293,8 +1293,8 @@ emitRC sink (RStructSet fc structVar (MkStructField sn _ fn ty _) value postDrop
     -- A native field reads the value natively, so a constant is written
     -- as a literal instead of being boxed and never freed.
     (valC, p2) <- case cfTypeNative ty of
-        Just CharType => mapFst ("(char)" ++) <$> rcVarToNativeC CharType value
-        Just pt => rcVarToNativeC pt value
+        Just CharType => mapFst ("(char)" ++) <$> rcVarToNativeC (TPrim CharType) value
+        Just pt => rcVarToNativeC (TPrim pt) value
         Nothing => mapFst (extractValue CLangC ty) <$> rcVarToBoxedC value
     emit fc $ "((\{sn}*)\{ptrC})->\{fn} = \{valC};"
     removeVars $ map varName postDrop
@@ -1350,13 +1350,13 @@ fnSignature n args retRep isWorker = do
     let nargs = length args
     let declareParam : (Int, Rep) -> String
         declareParam (i, RBoxed) = "  IDRIS2RC2_Value * var_" ++ show i
-        declareParam (i, RNative ty) = "  " ++ nativeCType ty ++ " var_" ++ show i
-        declareParam (i, RInlineNative ty) = "  " ++ nativeCType ty ++ " var_" ++ show i
+        declareParam (i, RNative ty) = "  " ++ tyCType ty ++ " var_" ++ show i
+        declareParam (i, RInlineNative ty) = "  " ++ tyCType ty ++ " var_" ++ show i
         declareParam (i, RRet n _) = "  " ++ retCType n ++ " var_" ++ show i
     let retTypeStr : String = case retRep of
                                     RBoxed => "IDRIS2RC2_Value *"
-                                    RNative ty => nativeCType ty ++ " "
-                                    RInlineNative ty => nativeCType ty ++ " "
+                                    RNative ty => tyCType ty ++ " "
+                                    RInlineNative ty => tyCType ty ++ " "
                                     RRet n _ => retCType n ++ " "
     -- `MaxExtractFunArgs`'s own `var_arglist[]` fallback only exists to
     -- match `support/rc2/runtime.c`'s closure-dispatch function-pointer

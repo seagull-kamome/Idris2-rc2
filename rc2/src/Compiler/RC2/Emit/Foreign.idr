@@ -205,10 +205,10 @@ ffiRawCall cLang target fargs ret args = do
     ||| drop correctly.
     marshalArg : CFType -> RCLocal -> Core (String, List String)
     marshalArg CFChar v = do
-        (e, pending) <- rcVarToNativeC CharType v
+        (e, pending) <- rcVarToNativeC (TPrim CharType) v
         pure (nativeCharArgExpr e, pending)
     marshalArg farg v = case cfTypeNative farg of
-        Just ty => rcVarToNativeC ty v
+        Just ty => rcVarToNativeC (TPrim ty) v
         Nothing => do
             (boxedExpr, pending) <- rcVarToBoxedC v
             pure (extractValue cLang farg boxedExpr, if owned v then boxedExpr :: pending else pending)

@@ -69,7 +69,7 @@ export
 localRepIn : SortedMap Int Rep -> RCLocal -> Rep
 localRepIn _ RCNull = RBoxed
 localRepIn reps (RCLoc i) = fromMaybe RBoxed (lookup i reps)
-localRepIn _ (RCConst c) = fromMaybe RBoxed (RNative <$> litRep c)
+localRepIn _ (RCConst c) = fromMaybe RBoxed (RNative . TPrim <$> litRep c)
 localRepIn _ (RCEmptyCon {}) = RBoxed
 localRepIn _ (RCConstCon {}) = RBoxed
 localRepIn _ (RCConstClosure {}) = RBoxed

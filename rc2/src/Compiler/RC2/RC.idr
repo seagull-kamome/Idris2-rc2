@@ -235,7 +235,7 @@ mutual
     bindCompound fr e k
         = do i <- freshVarId
              eRC <- normalize fr e
-             let rep = maybe RBoxed RNative (repOf eRC)
+             let rep = maybe RBoxed (RNative . TPrim) (repOf eRC)
              rest <- k (RCLoc i)
              pure $ RLet (nmFC e) i rep eRC rest
 
@@ -284,7 +284,7 @@ mutual
     normalize fr (NmLet fc x val body) = do
         i <- freshVarId
         valRC <- normalize fr val
-        let rep = maybe RBoxed RNative (repOf valRC)
+        let rep = maybe RBoxed (RNative . TPrim) (repOf valRC)
         bodyRC <- normalize (bindName x i fr) body
         pure $ RLet fc i rep valRC bodyRC
     normalize fr (NmCon fc n ci tag args) =
