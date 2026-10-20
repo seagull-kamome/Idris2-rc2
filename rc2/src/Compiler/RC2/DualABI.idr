@@ -759,10 +759,10 @@ applyDualABI boolReturn defs = do
            else do
              let argIds = map fst args
                  params = paramEligibility argIds body
-                 ptrs = ptrParams ptrTable argIds body
+                 byCalls = callNativeParams ptrTable argIds body
                  eligible = mapMaybe (\(p, mty) => case mty of
                                                          Just ty => Just (p, TPrim ty)
-                                                         Nothing => if contains p ptrs then Just (p, TPtr) else Nothing) params
+                                                         Nothing => map (p,) (lookup p byCalls)) params
                  retEligible = if contains n boolPlan then Just (TPrim Bits8Type) else returnEligibility ffiRets params body
              if null eligible && isNothing retEligible
                 then pure [(n, d)]
