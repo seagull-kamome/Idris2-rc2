@@ -1,6 +1,7 @@
 # Native `Ptr` / `AnyPtr` (design)
 
-Status: design, not implemented (2026-10-20). Supersedes the "Investigated:
+Status: steps 1 and 3 implemented (immediate pointers); steps 2 and 4
+(native `NPtr`) deferred, see "Result" (2026-10-20). Supersedes the "Investigated:
 native (unboxed) `Ptr`/`CFPtr`" section of `c-struct-support.md`, whose
 objections are answered below.
 
@@ -101,15 +102,32 @@ pointer arithmetic on an unmodified `$n` pointer argument (the one `+` chain,
   limited to the FFI boundary.
 - `LEAK_SENSITIVE_TESTS` count allocations; their expectations may change.
 
-## Measurement (2026-10-20, step 1, static part)
+## Result (2026-10-20)
 
-The termui Demo's C (41k-line IR, current master) contains four
-`idris2rc2_mkPointer` sites. Three are the generic wrapper that each
-`%foreign` declaration returning a pointer gets (`packedRet`), one is an
-`idris2_malloc` call. None is in a loop of the Demo: its pointer-returning
-FFI calls are `CExpr` constants or one-off setup. So the Demo cannot show a
-gain, and the design has no workload yet that justifies steps 2-4.
+Implemented: pointers are immediate boxed words (decision 1). `mkPointer`,
+`IDRIS2RC2_Pointer` and `IDRIS2RC2_TAG_POINTER` are gone; `idris2rc2_mkPtr`
+is an inline function whose fast path is the immediate, `idris2rc2_toPtr`
+reads it back. `Test119FFINoRefc/NativePtr.idr` covers 0, odd addresses, the
+top bit, NULL and `onCollectAny`.
 
-Before going on, find a workload where pointers are produced per iteration
-(a `getField`/`setField` loop over a C struct array, `peek`/`plusPtr`
-walking a buffer from Idris) and time it with the hand-edited C of step 1.
+`BenchPtr.idr` (200M iterations, each producing a pointer with `+ offset`
+and reading through it; the loop variables are native, the pointer crosses
+the FFI calls boxed):
+
+| | time |
+|---|---|
+| before (`mkPointer`, one allocation and refcount per pointer) | 3.55 s |
+| immediate, `mkPtr` out of line (`mkBits64`) | 0.46 s |
+| immediate, `mkPtr` inline | 0.26 s |
+
+The termui Demo has four `mkPointer` sites, none in a loop, so it gains
+nothing; the gain is for code that makes pointers per iteration.
+
+Deferred: decisions 2-3 (`IDRIS2RC2_Raw *` natives, `Rep` over `NatTy`). What
+a native pointer would still save over the boxed word is a tag test, a shift
+and a range check per crossing. The same loop written by hand in C with an
+`IDRIS2RC2_Raw *` takes 0.084 s (0.26 s now), so about 0.9 ns per iteration
+is the ceiling on this micro-benchmark, in exchange for touching about 150
+`Rep` sites. Revisit if a profile shows pointer
+crossings, or if provenance loss is seen to hurt (a boxed word is an integer
+at run time, as an `uintptr_t` round trip would have been).

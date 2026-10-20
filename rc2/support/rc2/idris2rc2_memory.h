@@ -190,7 +190,8 @@ IDRIS2RC2_String *idris2rc2_mkStringLen(char const *s, size_t len);
 // A raw C pointer as a boxed word: an immediate unless its top bit is set
 // (doc/native-pointer.md).
 static inline IDRIS2RC2_Value *idris2rc2_mkPtr(void *raw) {
-  return idris2rc2_mkBits64((uint64_t)(uintptr_t)raw);
+  uint64_t u = (uint64_t)(uintptr_t)raw;
+  return u < IDRIS2RC2_IMM_U64_LIMIT ? IDRIS2RC2_IMM_BITS64(u) : idris2rc2_mkBits64(u);
 }
 static inline void *idris2rc2_toPtr(IDRIS2RC2_Value *v) {
   return (void *)(uintptr_t)idris2rc2_to_u64(v);

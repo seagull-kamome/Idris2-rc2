@@ -5,12 +5,13 @@ scattered code comments. Nothing below is a known correctness bug in
 what's implemented -- see `rc2/tests/refc-suite/README.md` for bugs that
 were found and already fixed.
 
-## Performance: native (unboxed) `Ptr`/`AnyPtr` -- designed, not implemented
+## Performance: native (unboxed) `Ptr`/`AnyPtr` -- boxed part done, native part deferred
 
-Design in `rc2/doc/native-pointer.md`: pointers become immediates inside a
-boxed word and `IDRIS2RC2_Raw *` (an opaque struct pointer) natively, with
-`Rep` typed over an rc2-owned `NatTy`. Next step: measure the gain (step 1
-there) before the `NatTy` refactoring.
+Pointers are immediate boxed words (`rc2/doc/native-pointer.md`; 3.55 s to
+0.26 s on `BenchPtr.idr`). A native `IDRIS2RC2_Raw *` representation with
+`Rep` over an rc2-owned `NatTy` is designed there but not done: it would save
+at most about 0.9 ns per iteration of `BenchPtr.idr` (0.26 s to 0.084 s, hand-written
+C) for roughly 150 `Rep` sites.
 
 ## Performance: tail-position delegating calls stay boxed
 
