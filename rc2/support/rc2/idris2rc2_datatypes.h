@@ -73,6 +73,10 @@ typedef struct {
 // - Int, Int64 and Bits64 are shifted left by one, 63 bits wide.
 #define idris2rc2_is_unboxed(p) ((uintptr_t)(p)&1)
 #define idris2rc2_unbox_shift 32
+// A raw C pointer held natively. Never defined: an incomplete type, so the C
+// compiler tells it from an IDRIS2RC2_Value * (doc/native-pointer.md).
+typedef struct IDRIS2RC2_Raw IDRIS2RC2_Raw;
+
 #define IDRIS2RC2_IMM(bits) ((IDRIS2RC2_Value *)(((uintptr_t)(bits) << 1) | 1))
 #define idris2rc2_imm_signed(p) ((int64_t)((intptr_t)(p) >> 1))
 #define idris2rc2_imm_unsigned(p) ((uint64_t)((uintptr_t)(p) >> 1))

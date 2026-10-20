@@ -5,13 +5,13 @@ scattered code comments. Nothing below is a known correctness bug in
 what's implemented -- see `rc2/tests/refc-suite/README.md` for bugs that
 were found and already fixed.
 
-## Performance: native (unboxed) `Ptr`/`AnyPtr` -- boxed part done, native part deferred
+## Performance: native `Ptr`/`AnyPtr` across function boundaries
 
-Pointers are immediate boxed words (`rc2/doc/native-pointer.md`; 3.55 s to
-0.26 s on `BenchPtr.idr`). A native `IDRIS2RC2_Raw *` representation with
-`Rep` over an rc2-owned `NativeTy` is designed there but not done: it would save
-at most about 0.9 ns per iteration of `BenchPtr.idr` (0.26 s to 0.084 s, hand-written
-C) for roughly 150 `Rep` sites.
+Pointers are immediate boxed words and native (`Native Ptr`, `IDRIS2RC2_Raw *`)
+between `%foreign` calls (`rc2/doc/native-pointer.md`; `BenchPtr.idr` 3.55 s to
+0.084 s). Left: a pointer parameter, loop variable or return value is still
+boxed, because `paramEligibility` and `Compiler.RC2.Loop` only look for
+`PrimType` uses. Extend them to `NativeTy` if a profile shows the crossings.
 
 ## Performance: tail-position delegating calls stay boxed
 

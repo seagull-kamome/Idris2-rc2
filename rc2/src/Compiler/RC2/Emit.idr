@@ -980,11 +980,12 @@ mutual
     emitNativeValue ty (RAppFFIInline fc ccs fargs ret postDrop args) = do
         (cLang, fctName) <- resolveForeignTarget ccs
         (rawExpr, boxedArgDrop) <- ffiRawCall cLang fctName fargs ret args
-        case cfTypeNative (peelIORes ret) of
+        case cfTypeNativeTy (peelIORes ret) of
              Nothing => throw $ InternalError "[rc2] emitNativeValue: RAppFFIInline with Boxed ret reached a native context"
-             Just _  =>
-                 let retExpr = case peelIORes ret of
-                                    CFChar => nativeCharRetExpr rawExpr
+             Just nty =>
+                 let retExpr = case (nty, peelIORes ret) of
+                                    (TPtr, _) => "((IDRIS2RC2_Raw *)" ++ rawExpr ++ ")"
+                                    (_, CFChar) => nativeCharRetExpr rawExpr
                                     _      => rawExpr
                  in pure (retExpr, map varName postDrop ++ boxedArgDrop)
     emitNativeValue (TPrim ty) (ROp fc _ op args postDrop) = do

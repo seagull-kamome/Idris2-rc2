@@ -1,7 +1,6 @@
 # Native `Ptr` / `AnyPtr` (design)
 
-Status: steps 1 and 3 implemented (immediate pointers); steps 2 and 4
-(native `TPtr`) deferred, see "Result" (2026-10-20). Supersedes the "Investigated:
+Status: implemented (2026-10-20), see "Result". Supersedes the "Investigated:
 native (unboxed) `Ptr`/`CFPtr`" section of `c-struct-support.md`, whose
 objections are answered below.
 
@@ -119,15 +118,21 @@ the FFI calls boxed):
 | before (`mkPointer`, one allocation and refcount per pointer) | 3.55 s |
 | immediate, `mkPtr` out of line (`mkBits64`) | 0.46 s |
 | immediate, `mkPtr` inline | 0.26 s |
+| native `TPtr` between the two FFI calls | **0.084 s** (equal to the hand-written C) |
 
 The termui Demo has four `mkPointer` sites, none in a loop, so it gains
 nothing; the gain is for code that makes pointers per iteration.
 
-Deferred: decisions 2-3 (`IDRIS2RC2_Raw *` natives, `Rep` over `NativeTy`). What
-a native pointer would still save over the boxed word is a tag test, a shift
-and a range check per crossing. The same loop written by hand in C with an
-`IDRIS2RC2_Raw *` takes 0.084 s (0.26 s now), so about 0.9 ns per iteration
-is the ceiling on this micro-benchmark, in exchange for touching about 150
-`Rep` sites. Revisit if a profile shows pointer
-crossings, or if provenance loss is seen to hurt (a boxed word is an integer
-at run time, as an `uintptr_t` round trip would have been).
+Native: `Rep`'s `RNative`/`RInlineNative` carry a `NativeTy` (`TPrim PrimType | TPtr`). `cfTypeNativeTy`
+maps `CFPtr` and `CFStruct` to `TPtr`, so a `%foreign` call's pointer argument
+and return are native (`ffiWorkerTable`), and `nativePromotionFor` makes a
+let-bound FFI result `Native Ptr` when the body reads it at a native
+position (`callArgNativeReads`). The IR shows it as `Native Ptr`; C declares
+`IDRIS2RC2_Raw *`, converted to and from the boxed word by `mkPtr`/`toPtr`
+and to `void *` at the call. `CFGCPtr` stays boxed.
+
+Not native yet: a pointer function parameter, a loop variable or a return
+value. `paramEligibility` and the loop analysis in `Compiler.RC2.Loop` look
+for `PrimType` uses only, so a pointer that is merely passed on to an FFI
+call stays boxed across a function boundary (the immediate word makes that
+cheap). Extending them to `NativeTy` is the remaining work.

@@ -214,6 +214,13 @@ Eq NativeTy where
     _ == _ = False
 
 public export
+Ord NativeTy where
+    compare (TPrim a) (TPrim b) = compare a b
+    compare (TPrim _) TPtr = LT
+    compare TPtr (TPrim _) = GT
+    compare TPtr TPtr = EQ
+
+public export
 Show NativeTy where
     show (TPrim t) = show t
     show TPtr = "Ptr"

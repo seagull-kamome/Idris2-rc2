@@ -733,7 +733,7 @@ peelIORes t = t
 ||| `returnEligibility` above), which genuinely depends on how a whole
 ||| function body uses it.
 repOf : CFType -> Rep
-repOf ty = maybe RBoxed (RNative . TPrim) (cfTypeNative ty)
+repOf ty = maybe RBoxed RNative (cfTypeNativeTy ty)
 
 anyNative : Rep -> Bool
 anyNative RBoxed = False
@@ -896,7 +896,7 @@ bareTailNativeReads var e =
 ||| gets reboxed on the way in, same "reboxed on demand" reasoning
 ||| `nativePromotionFor` relies on. See `doc/dual-abi.md`'s "Extending
 ||| the promotion to call-argument chains".
-callArgNativeReads : SortedMap Name (Name, List Rep, Rep, Bool) -> Int -> RCExp -> SortedSet PrimType
+callArgNativeReads : SortedMap Name (Name, List Rep, Rep, Bool) -> Int -> RCExp -> SortedSet NativeTy
 callArgNativeReads workers var (RLet _ _ _ value body) =
     callArgNativeReads workers var value `union` callArgNativeReads workers var body
 callArgNativeReads workers var (RCmpCase _ _ _ _ t f) =
@@ -921,8 +921,8 @@ callArgNativeReads workers var (RAppName _ _ n args) =
                 then empty
                 else fromList $ mapMaybe (\(a, r) => if a == RCLoc var
                                                           then case r of
-                                                                    RNative (TPrim ty) => Just ty
-                                                                    RInlineNative (TPrim ty) => Just ty
+                                                                    RNative ty => Just ty
+                                                                    RInlineNative ty => Just ty
                                                                     _ => Nothing
                                                           else Nothing)
                                           (zip args argReps)
@@ -1005,12 +1005,12 @@ branchValueNativeType _ _ = Nothing
 ||| keeps working via `rcVarToBoxedC`'s own on-demand reboxing (a scalar
 ||| has no observable identity, see `stripOwnership`'s own doc comment).
 ||| See `doc/dual-abi.md`'s "The promotion: `nativePromotionFor`".
-nativePromotionFor : SortedMap Name (Name, List Rep, Rep, Bool) -> Maybe (List (Int, Rep)) -> Int -> PrimType -> RCExp -> Maybe PrimType
+nativePromotionFor : SortedMap Name (Name, List Rep, Rep, Bool) -> Maybe (List (Int, Rep)) -> Int -> NativeTy -> RCExp -> Maybe NativeTy
 nativePromotionFor workers mLoopParams var ty body =
     let fromLoop = maybe empty (\loopParams => loopContinueNativeReads loopParams var body) mLoopParams
-        found = ((nativeArgTypes var body `union` bareTailNativeReads var body)
-                  `union` callArgNativeReads workers var body)
-                  `union` fromLoop
+        primReads = (nativeArgTypes var body `union` bareTailNativeReads var body) `union` fromLoop
+        found = SortedSet.fromList (map TPrim (Prelude.toList primReads))
+                  `union` callArgNativeReads workers var body
     in case Prelude.toList found of
             [ty'] => if ty' == ty then Just ty else Nothing
             _ => Nothing
@@ -1044,13 +1044,13 @@ applyCallSiteRewriteBody workers reps mLoopParams inTail (RLet fc var rep value 
         -- produces the same native type (`branchValueNativeType`) --
         -- see `nativePromotionFor`'s own doc comment for the actual
         -- eligibility question then asked about `body`.
-        promotedTy : Maybe PrimType
+        promotedTy : Maybe NativeTy
         promotedTy = case rep of
                           RBoxed => case ultimateTail value1 of
-                                         RAppNameRep _ _ _ (RNative (TPrim ty)) _ _ => nativePromotionFor workers mLoopParams var ty body
-                                         RAppNameRep _ _ _ (RInlineNative (TPrim ty)) _ _ => nativePromotionFor workers mLoopParams var ty body
+                                         RAppNameRep _ _ _ (RNative ty) _ _ => nativePromotionFor workers mLoopParams var ty body
+                                         RAppNameRep _ _ _ (RInlineNative ty) _ _ => nativePromotionFor workers mLoopParams var ty body
                                          branch => case branchValueNativeType reps branch of
-                                                        Just ty => nativePromotionFor workers mLoopParams var ty body
+                                                        Just ty => nativePromotionFor workers mLoopParams var (TPrim ty) body
                                                         Nothing => Nothing
                           _ => Nothing
     in case promotedTy of
@@ -1060,7 +1060,7 @@ applyCallSiteRewriteBody workers reps mLoopParams inTail (RLet fc var rep value 
                 -- `var` is a fresh RLet binding, not retrofitting a
                 -- representation onto an already-declared C variable.
                 let body' = stripOwnership (SortedSet.fromList [var]) body
-                in RLet fc var (RNative (TPrim ty)) value1 (applyCallSiteRewriteBody workers (insert var (RNative (TPrim ty)) reps) mLoopParams inTail body')
+                in RLet fc var (RNative ty) value1 (applyCallSiteRewriteBody workers (insert var (RNative ty) reps) mLoopParams inTail body')
             Nothing =>
                 RLet fc var rep value1 (applyCallSiteRewriteBody workers (insert var rep reps) mLoopParams inTail body)
 applyCallSiteRewriteBody workers reps mLoopParams inTail (RCmpCase fc op args postDrop t f) =

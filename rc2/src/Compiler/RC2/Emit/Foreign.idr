@@ -207,8 +207,9 @@ ffiRawCall cLang target fargs ret args = do
     marshalArg CFChar v = do
         (e, pending) <- rcVarToNativeC (TPrim CharType) v
         pure (nativeCharArgExpr e, pending)
-    marshalArg farg v = case cfTypeNative farg of
-        Just ty => rcVarToNativeC (TPrim ty) v
+    marshalArg farg v = case cfTypeNativeTy farg of
+        Just TPtr => mapFst (\e => "((void *)" ++ e ++ ")") <$> rcVarToNativeC TPtr v
+        Just ty => rcVarToNativeC ty v
         Nothing => do
             (boxedExpr, pending) <- rcVarToBoxedC v
             pure (extractValue cLang farg boxedExpr, if owned v then boxedExpr :: pending else pending)

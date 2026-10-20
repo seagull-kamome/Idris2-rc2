@@ -30,6 +30,7 @@ run : IO ()
 run = do
   let ps = map prim__ptrOf addrs
   printLn (map prim__addrOf ps)
+  printLn (map (\a => prim__addrOf (prim__ptrOf a)) addrs)
   let f = \p => prim__addrOf p + 1
   printLn (map f ps)
   printLn (prim__nullAnyPtr (prim__ptrOf 0) /= 0, prim__nullAnyPtr (prim__ptrOf 8) /= 0)
