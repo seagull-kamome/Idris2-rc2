@@ -130,46 +130,53 @@ tailLeaves leaf reps e = [leaf reps e]
 ||| question, asked there about a spliced-in callee's own tail value
 ||| instead of a whole function's own return) -- one definition of
 ||| this analysis, not two kept in sync by hand.
+||| `tailValueReps` over `NativeTy`, and, given `ffiRets` (each usable
+||| `%foreign` declaration with a native return: that type and its argument
+||| count), also counting a still-bare tail call to one as native: Stage 4
+||| rewrites exactly such a saturated call into a worker call with a native
+||| return (`applyCallSiteRewriteBody`'s tail-position clause), so a function
+||| ending in one can return natively (`doc/native-pointer.md`).
 export
-tailValueReps : SortedMap Int Rep -> RCExp -> List (Maybe PrimType)
-tailValueReps = tailLeaves leafRep
+tailValueRepsWith : SortedMap Name (NativeTy, Nat) -> SortedMap Int Rep -> RCExp -> List (Maybe NativeTy)
+tailValueRepsWith ffiRets = tailLeaves leafRep
   where
-    leafRep : SortedMap Int Rep -> RCExp -> Maybe PrimType
+    leafRep : SortedMap Int Rep -> RCExp -> Maybe NativeTy
     leafRep reps (RV _ (RCLoc i)) =
         case lookup i reps of
-             Just (RNative (TPrim ty)) => Just ty
-             Just (RInlineNative (TPrim ty)) => Just ty
+             Just (RNative ty) => Just ty
+             Just (RInlineNative ty) => Just ty
              _ => Nothing
-    leafRep _ (RV _ (RCConst c)) = litRep c
-    leafRep _ (ROp _ _ op _ _) = opResultRep op
-    leafRep _ (RPrimVal _ c) = litRep c
-    -- Only ever reachable AFTER Stage 4's own call-site rewrite has
-    -- minted one, so never during Stage 2's own `returnEligibility`
-    -- (which runs on the original defs, where every call is still a
-    -- bare `RAppName` and is correctly `Nothing` below -- that is what
-    -- makes a pure tail-call delegation chain ineligible here; the Bool
-    -- plan, `boolReturnPlan`, handles those separately) nor during
-    -- `Compiler.RC2.LateInline`'s own reuse (earlier in the pipeline
-    -- still). `branchValueNativeType` asks this question post-rewrite,
-    -- about a branch arm ending in a worker call whose own result is
-    -- already native.
+    leafRep _ (RV _ (RCConst c)) = TPrim <$> litRep c
+    leafRep _ (ROp _ _ op _ _) = TPrim <$> opResultRep op
+    leafRep _ (RPrimVal _ c) = TPrim <$> litRep c
+    -- Reachable after Stage 4's call-site rewrite has minted one:
+    -- `branchValueNativeType` asks this question post-rewrite, about a branch
+    -- arm ending in a worker call whose own result is already native.
     leafRep _ (RAppNameRep _ _ _ retRep _ _) =
         case retRep of
-             RNative (TPrim ty) => Just ty
-             RInlineNative (TPrim ty) => Just ty
+             RNative ty => Just ty
+             RInlineNative ty => Just ty
              _ => Nothing
-    -- RAppName, RUnderApp, RApp, RCon, RExtPrim, RErased, RCrash,
-    -- RStructGet, RStructSet, any other RV: never a native value
-    -- regardless of context -- a call/closure/constructor result is
-    -- always Boxed (RStructGet/RStructSet's own packCFType, see
-    -- doc/c-struct-support.md's Part D, always renders a Boxed
-    -- IDRIS2RC2_Value* too).
+    leafRep _ (RAppName _ _ n args) =
+        case lookup n ffiRets of
+             Just (ty, k) => if length args == k then Just ty else Nothing
+             Nothing => Nothing
+    -- RUnderApp, RApp, RCon, RExtPrim, RErased, RCrash, RStructGet,
+    -- RStructSet, any other RV: never a native value regardless of context.
     leafRep _ _ = Nothing
+
+export
+tailValueReps : SortedMap Int Rep -> RCExp -> List (Maybe PrimType)
+tailValueReps reps e = map (>>= primOf) (tailValueRepsWith empty reps e)
+  where
+    primOf : NativeTy -> Maybe PrimType
+    primOf (TPrim ty) = Just ty
+    primOf TPtr = Nothing
 
 ||| `Just ty` iff `xs` is non-empty and every element is `Just ty` for
 ||| the *same* `ty` -- the same "consistent single type, else give up"
 ||| shape `Compiler.RC2.Loop`'s own `nativeArgType` uses.
-allJustSame : List (Maybe PrimType) -> Maybe PrimType
+allJustSame : Eq ty => List (Maybe ty) -> Maybe ty
 allJustSame [] = Nothing
 allJustSame (Just ty :: rest) = if all (== Just ty) rest then Just ty else Nothing
 allJustSame (Nothing :: _) = Nothing
@@ -179,10 +186,10 @@ allJustSame (Nothing :: _) = Nothing
 ||| already-decided `params` (so a bare tail return of an eligible
 ||| parameter counts as native too, not just a locally-computed one).
 export
-returnEligibility : List (Int, Maybe PrimType) -> RCExp -> Maybe PrimType
-returnEligibility params body =
+returnEligibility : SortedMap Name (NativeTy, Nat) -> List (Int, Maybe PrimType) -> RCExp -> Maybe NativeTy
+returnEligibility ffiRets params body =
     let seeded = fromList $ mapMaybe (\(p, mty) => map (\ty => (p, RNative (TPrim ty))) mty) params
-    in allJustSame (tailValueReps seeded body)
+    in allJustSame (tailValueRepsWith ffiRets seeded body)
 
 ||| One line per `MkRCFun` def: `paramEligibility`/`returnEligibility`'s
 ||| own results, written to `<outfile>.dualabi` by `--directive
@@ -194,7 +201,7 @@ describeEligibility : Name -> RCDef -> Maybe String
 describeEligibility n (MkRCFun args _ _ body) =
     let argIds = map fst args
         params = paramEligibility argIds body
-        ret = returnEligibility params body
+        ret = returnEligibility empty params body
     in Just $ show n ++ ": params=" ++
          show (map (\(p, mty) => "\{show p}:\{maybe "Boxed" show mty}") params) ++
          " ret=" ++ maybe "Boxed" show ret
@@ -640,7 +647,7 @@ freshName pfx existing original = do
 ||| `doc/dual-abi.md`'s "Stage 3a" for the full six-step design this
 ||| implements.
 synthesizeWorker : {auto r : Ref FreshId Int}
-                 -> SortedSet Name -> Name -> List (Int, NativeTy) -> Maybe PrimType -> List (Int, Rep) -> Rep -> RCExp
+                 -> SortedSet Name -> Name -> List (Int, NativeTy) -> Maybe NativeTy -> List (Int, Rep) -> Rep -> RCExp
                  -> Core (Name, RCDef, RCDef)
 synthesizeWorker existingNames original eligible retEligible args wrapperRetRep body = do
     workerName <- freshName "idris2rc2_worker_" existingNames original
@@ -655,7 +662,7 @@ synthesizeWorker existingNames original eligible retEligible args wrapperRetRep 
         workerBody : RCExp
         workerBody = stripOwnership promotedIds body
         workerRetRep : Rep
-        workerRetRep = maybe wrapperRetRep (RNative . TPrim) retEligible
+        workerRetRep = maybe wrapperRetRep RNative retEligible
         workerDef : RCDef
         workerDef = MkRCFun workerArgs workerRetRep True workerBody
         wrapperArgIds : List Int
@@ -702,6 +709,20 @@ callArgNativeReads workers var e =
     workerPositions : Name -> Maybe (List (Maybe NativeTy))
     workerPositions n = map (\(_, argReps, _, _) => map repTy argReps) (lookup n workers)
 
+||| Each usable `%foreign` declaration with a native return: that type and its
+||| argument count (`tailValueRepsWith`).
+ffiReturns : List (Name, RCDef) -> SortedMap Name (NativeTy, Nat)
+ffiReturns defs = fromList (mapMaybe entry defs)
+  where
+    peel : CFType -> CFType
+    peel (CFIORes t) = t
+    peel t = t
+
+    entry : (Name, RCDef) -> Maybe (Name, (NativeTy, Nat))
+    entry (n, MkRCForeign ccs fargs ret) =
+        if foreignUsable ccs then map (\ty => (n, (ty, length fargs))) (cfTypeNativeTy (peel ret)) else Nothing
+    entry _ = Nothing
+
 ||| Whole-program pass: synthesises a worker + thin wrapper for every
 ||| eligible `MkRCFun` (`Compiler.RC2.MutualLoop`-merged functions
 ||| excluded, see `isMutualLoopMerged`); everything else passes through
@@ -723,15 +744,16 @@ applyDualABI boolReturn defs = do
     let boolPlan : SortedSet Name := if boolReturn then boolReturnPlan defs else empty
     let existingNames = SortedSet.fromList (map fst defs)
     let ptrTable = ptrCalleeTable defs
+    let ffiRets = ffiReturns defs
     -- `foldr (++) []`, not `concat`: `Foldable List` overrides
     -- `foldMap` with `foldl (\acc, x => acc <+> f x) neutral`, so
     -- `concat` (and `concatMap`) left-nest `++` and copy the whole
     -- accumulated result once per element -- quadratic across a
     -- whole-program def list. See `code-style-Idris2.md`.
-    foldr (++) [] <$> traverse (synthesizeIfEligible ptrTable boolPlan existingNames) defs
+    foldr (++) [] <$> traverse (synthesizeIfEligible ffiRets ptrTable boolPlan existingNames) defs
   where
-    synthesizeIfEligible : {auto r : Ref FreshId Int} -> CalleeTable -> SortedSet Name -> SortedSet Name -> (Name, RCDef) -> Core (List (Name, RCDef))
-    synthesizeIfEligible ptrTable boolPlan existingNames (n, d@(MkRCFun args retRep _ body)) =
+    synthesizeIfEligible : {auto r : Ref FreshId Int} -> SortedMap Name (NativeTy, Nat) -> CalleeTable -> SortedSet Name -> SortedSet Name -> (Name, RCDef) -> Core (List (Name, RCDef))
+    synthesizeIfEligible ffiRets ptrTable boolPlan existingNames (n, d@(MkRCFun args retRep _ body)) =
         if isMutualLoopMerged n
            then pure [(n, d)]
            else do
@@ -741,13 +763,13 @@ applyDualABI boolReturn defs = do
                  eligible = mapMaybe (\(p, mty) => case mty of
                                                          Just ty => Just (p, TPrim ty)
                                                          Nothing => if contains p ptrs then Just (p, TPtr) else Nothing) params
-                 retEligible = if contains n boolPlan then Just Bits8Type else returnEligibility params body
+                 retEligible = if contains n boolPlan then Just (TPrim Bits8Type) else returnEligibility ffiRets params body
              if null eligible && isNothing retEligible
                 then pure [(n, d)]
                 else do
                   (workerName, wrapperDef, workerDef) <- synthesizeWorker existingNames n eligible retEligible args retRep body
                   pure [(n, wrapperDef), (workerName, workerDef)]
-    synthesizeIfEligible _ _ _ (n, d) = pure [(n, d)]
+    synthesizeIfEligible _ _ _ _ (n, d) = pure [(n, d)]
 
 ------------------------------------------------------------------------
 -- Stage 3c: FFI worker synthesis. Unlike Stage 3a, there is no
@@ -964,10 +986,10 @@ loopContinueNativeReads _ _ _ = empty
 ||| Stage 4 has rewritten this value's own calls, so an arm ending in a
 ||| worker call reads as native via `tailValueReps`'s own
 ||| `RAppNameRep` case.
-branchValueNativeType : SortedMap Int Rep -> RCExp -> Maybe PrimType
-branchValueNativeType reps e@(RCmpCase {}) = allJustSame (tailValueReps reps e)
-branchValueNativeType reps e@(RConCase {}) = allJustSame (tailValueReps reps e)
-branchValueNativeType reps e@(RConstCase {}) = allJustSame (tailValueReps reps e)
+branchValueNativeType : SortedMap Int Rep -> RCExp -> Maybe NativeTy
+branchValueNativeType reps e@(RCmpCase {}) = allJustSame (tailValueRepsWith empty reps e)
+branchValueNativeType reps e@(RConCase {}) = allJustSame (tailValueRepsWith empty reps e)
+branchValueNativeType reps e@(RConstCase {}) = allJustSame (tailValueRepsWith empty reps e)
 -- Every other shape is a single value `nativePromotionFor`'s own
 -- `RAppNameRep` clause already covers (or genuinely isn't native).
 branchValueNativeType _ _ = Nothing
@@ -1030,7 +1052,7 @@ applyCallSiteRewriteBody workers reps mLoopParams inTail (RLet fc var rep value 
                                          RAppNameRep _ _ _ (RNative ty) _ _ => nativePromotionFor workers mLoopParams var ty body
                                          RAppNameRep _ _ _ (RInlineNative ty) _ _ => nativePromotionFor workers mLoopParams var ty body
                                          branch => case branchValueNativeType reps branch of
-                                                        Just ty => nativePromotionFor workers mLoopParams var (TPrim ty) body
+                                                        Just ty => nativePromotionFor workers mLoopParams var ty body
                                                         Nothing => Nothing
                           _ => Nothing
     in case promotedTy of

@@ -154,6 +154,12 @@ tail-call each other carries a pointer in a `Native Ptr` slot (`BenchPtrMutual.i
 pointer: `rcVarToNativeC` renders `RCNull` as `0` for a scalar, which an
 `IDRIS2RC2_Raw *` rejects.
 
-Not native yet: a pointer return value. `returnEligibility` finds no native
-tail for a function that ends in a `%foreign` call (an integer return has the
-same limit), and the tail leaves of `tailValueReps` are `PrimType` only.
+A return value is native when every tail leaf of the function is: a native
+local or operand, or a bare saturated tail call to a `%foreign` declaration
+with a native return (`DualABI.tailValueRepsWith`, `returnEligibility`). Stage 4
+rewrites exactly such a tail call into a worker call with a native return, so a
+function ending in one (`BenchPtrFn.idr`'s `at`) returns `Native Int` or
+`Native Ptr` instead of boxing (3.25 s to 0.99 s). This holds for scalars as
+well as pointers; Stage 2 used to see every call as `Nothing`. An ordinary tail
+call to another function stays a boxed return (the stack-growth boundary of
+`doc/dual-abi.md`).
