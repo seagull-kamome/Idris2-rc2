@@ -5,14 +5,13 @@ scattered code comments. Nothing below is a known correctness bug in
 what's implemented -- see `rc2/tests/refc-suite/README.md` for bugs that
 were found and already fixed.
 
-## Performance: native `Ptr`/`AnyPtr` loop variables and return values
+## Performance: native `Ptr`/`AnyPtr` return values
 
 Pointers are immediate boxed words and native (`Native Ptr`, `IDRIS2RC2_Raw *`)
-between `%foreign` calls and in function parameters (`rc2/doc/native-pointer.md`).
-Left: a pointer loop variable (`BenchPtrWalk.idr` 0.41 s, hand-written C about
-0.1 s; `Compiler.RC2.Loop`'s native shadows are `PrimType` only) and a pointer
-return value (`returnEligibility` finds no native tail for a function ending
-in a `%foreign` call).
+between `%foreign` calls, in function parameters and in loop variables
+(`rc2/doc/native-pointer.md`). Left: a pointer return value
+(`returnEligibility` finds no native tail for a function ending in a
+`%foreign` call; `tailValueReps` is `PrimType` only).
 
 ## Performance: tail-position delegating calls stay boxed
 

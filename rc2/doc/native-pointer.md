@@ -140,9 +140,13 @@ clears a promoted local from a worker call's `postDrop`, which struct return
 (`doc/struct-return.md`) fills in before the promotion happens: the opaque
 `IDRIS2RC2_Raw *` made the C compiler reject the stale `idris2rc2_drop`.
 
-Not native yet: a pointer loop variable and a return value.
-`Compiler.RC2.Loop`'s native-shadow analysis looks for `PrimType` uses only
-(`BenchPtrWalk.idr`, a pointer advanced on every iteration: 0.41 s, against
-about 0.1 s for hand-written C), and `returnEligibility` finds no native tail
-for a function that ends in a `%foreign` call. Extending them to `NativeTy` is
-the remaining work.
+A loop variable is native as well. `Compiler.RC2.Loop` shadows a loop
+parameter read only as a raw pointer (`PtrParams.ptrParams`) as `Native Ptr`,
+as it does a `PrimType` one, and `nativePromotionFor` counts a continue
+argument into such a slot as a native read. `PtrParams` holds the analysis
+shared by `Loop` and `DualABI`. `BenchPtrWalk.idr` (a pointer advanced on
+every iteration): 0.41 s to 0.116 s.
+
+Not native yet: a pointer return value. `returnEligibility` finds no native
+tail for a function that ends in a `%foreign` call (an integer return has the
+same limit), and the tail leaves of `tailValueReps` are `PrimType` only.
