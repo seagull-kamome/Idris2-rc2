@@ -57,26 +57,70 @@ factsOf = foldRCNamesR $ { onAppName       := \n, args => [FCall n args]
                          , onConstClosure  := \n => [FEscape n]
                          } noRCNames
 
-||| One function: its parameter ids and what its body says.
+||| Each name of the program numbered once.
+numberNames : List Name -> SortedMap Name Int
+numberNames = snd . foldl (\(k, m), n => (k + 1, insert n k m)) (the Int 0, empty)
+
+||| One function: its identity (the names of the program, numbered once, as
+||| comparing `Name`s is what a fixpoint over every call would spend its time
+||| on), its parameter ids and what its body says.
 record Fn where
   constructor MkFn
+  ident : Int
   name : Name
   params : List Int
   facts : List Fact
 
-||| The names some reference to which is not a call or a partial application
-||| built from a known argument list: such a function can be entered with
-||| arguments this pass never sees.
-escaping : List Name -> List Fn -> SortedSet Name
-escaping roots fns =
-    let (balance, escapes) = foldl step (empty, SortedSet.fromList roots) (concatMap (.facts) fns)
+||| The functions some reference to which is not a call or a partial
+||| application built from a known argument list: such a function can be
+||| entered with arguments this pass never sees.
+escaping : SortedMap Name Int -> List Name -> List Fn -> SortedSet Int
+escaping ids roots fns =
+    let (balance, escapes) = foldl step (empty, SortedSet.fromList (mapMaybe (\r => lookup r ids) roots)) (foldr (\g, acc => g.facts ++ acc) [] fns)
     in foldl (\acc, (n, k) => if k > 0 then insert n acc else acc) escapes (SortedMap.toList balance)
   where
-    step : (SortedMap Name Int, SortedSet Name) -> Fact -> (SortedMap Name Int, SortedSet Name)
-    step (b, es) (FMention n) = (insert n (fromMaybe 0 (lookup n b) + 1) b, es)
-    step (b, es) (FUnder n _) = (insert n (fromMaybe 0 (lookup n b) - 1) b, es)
-    step (b, es) (FEscape n) = (b, insert n es)
+    count : Int -> Name -> SortedMap Int Int -> SortedMap Int Int
+    count d n b = case lookup n ids of
+                       Nothing => b
+                       Just i => insert i (fromMaybe 0 (lookup i b) + d) b
+
+    step : (SortedMap Int Int, SortedSet Int) -> Fact -> (SortedMap Int Int, SortedSet Int)
+    step (b, es) (FMention n) = (count 1 n b, es)
+    step (b, es) (FUnder n _) = (count (-1) n b, es)
+    step (b, es) (FEscape n) = (b, maybe es (\i => insert i es) (lookup n ids))
     step acc (FCall _ _) = acc
+
+||| What one argument of a call is, as far as this pass cares.
+data Arg = AWorld | AErased | AParam Nat | AOther
+
+||| A call or partial application inside `caller`, its arguments classified
+||| once (the fixpoints below visit every site many times).
+record Site where
+  constructor MkSite
+  caller : Int
+  callee : Int
+  under : Bool
+  args : List Arg
+
+sitesOf : SortedMap Name Int -> Fn -> List Site
+sitesOf ids g = mapMaybe site g.facts
+  where
+    paramIx : SortedMap Int Nat
+    paramIx = fromList (map (\(k, p) => (p, k)) (withIndex g.params))
+
+    arg : RCLocal -> Arg
+    arg RCWorld = AWorld
+    arg RCErased = AErased
+    arg (RCLoc v) = maybe AOther AParam (lookup v paramIx)
+    arg _ = AOther
+
+    make : Bool -> Name -> List RCLocal -> Maybe Site
+    make under n args = map (\c => MkSite g.ident c under (map arg args)) (lookup n ids)
+
+    site : Fact -> Maybe Site
+    site (FCall n args) = make False n args
+    site (FUnder n args) = make True n args
+    site _ = Nothing
 
 ||| The state of one parameter in the forward analysis: nothing known yet
 ||| (the optimistic start), always the given `NativeTy`, or not provable.
@@ -100,51 +144,48 @@ meet (Is a) (Is b) = if a == b then Is a else Is TErased
 ||| one) that are the world by type, so also in a function that escapes. A
 ||| variable has one type, so a parameter passed at such a position is the
 ||| world whatever else reads it.
-worldPositions : List (Name, RCDef) -> List Fn -> SortedMap Name (SortedSet Nat)
-worldPositions defs fns = grow (foldl seed empty defs)
+worldPositions : SortedMap Name Int -> List (Name, RCDef) -> List Site -> SortedMap Int (SortedSet Nat)
+worldPositions ids defs sites = grow (foldl seed empty defs)
   where
-    seed : SortedMap Name (SortedSet Nat) -> (Name, RCDef) -> SortedMap Name (SortedSet Nat)
+    seed : SortedMap Int (SortedSet Nat) -> (Name, RCDef) -> SortedMap Int (SortedSet Nat)
     seed acc (n, MkRCForeign _ fargs _) =
         let ks = mapMaybe (\(k, t) => case t of
                                            CFWorld => Just k
                                            _ => Nothing) (withIndex fargs)
-        in if null ks then acc else insert n (SortedSet.fromList ks) acc
+        in case lookup n ids of
+                Just i => if null ks then acc else insert i (SortedSet.fromList ks) acc
+                Nothing => acc
     seed acc _ = acc
 
-    reached : SortedMap Name (SortedSet Nat) -> Fn -> SortedSet Nat
-    reached typed g = SortedSet.fromList (concatMap viaFact g.facts)
+    ||| (caller, callee, [(argument position, caller's parameter position)]), for
+    ||| the sites that pass a parameter on.
+    links : List (Int, Int, List (Nat, Nat))
+    links = mapMaybe link sites
       where
-        viaArgs : Name -> List RCLocal -> List Nat
-        viaArgs n args = case lookup n typed of
-                              Nothing => []
-                              Just ks => mapMaybe (\k => case getAt k args of
-                                                              Just (RCLoc v) => indexOf v g.params
-                                                              _ => Nothing) (Prelude.toList ks)
+        link : Site -> Maybe (Int, Int, List (Nat, Nat))
+        link s = case mapMaybe (\(k, a) => case a of
+                                                AParam j => Just (k, j)
+                                                _ => Nothing) (withIndex s.args) of
+                      [] => Nothing
+                      kjs => Just (s.caller, s.callee, kjs)
 
-        viaFact : Fact -> List Nat
-        viaFact (FCall n args) = viaArgs n args
-        viaFact (FUnder n args) = viaArgs n args
-        viaFact _ = []
-
-    size : SortedMap Name (SortedSet Nat) -> Nat
+    size : SortedMap Int (SortedSet Nat) -> Nat
     size = foldl (\acc, s => acc + length (Prelude.toList s)) 0 . SortedMap.values
 
-    step : SortedMap Name (SortedSet Nat) -> SortedMap Name (SortedSet Nat)
-    step typed = foldl (\acc, g => let found = reached typed g
-                                   in if null (Prelude.toList found)
-                                         then acc
-                                         else insert g.name (union found (fromMaybe empty (lookup g.name acc))) acc) typed fns
+    step : SortedMap Int (SortedSet Nat) -> SortedMap Int (SortedSet Nat)
+    step typed = foldl add typed links
+      where
+        add : SortedMap Int (SortedSet Nat) -> (Int, Int, List (Nat, Nat)) -> SortedMap Int (SortedSet Nat)
+        add acc (g, n, kjs) =
+            case lookup n typed of
+                 Nothing => acc
+                 Just ks => case filter (\(k, _) => contains k ks) kjs of
+                                 [] => acc
+                                 found => insert g (foldl (flip insert) (fromMaybe empty (lookup g acc)) (map snd found)) acc
 
-    grow : SortedMap Name (SortedSet Nat) -> SortedMap Name (SortedSet Nat)
+    grow : SortedMap Int (SortedSet Nat) -> SortedMap Int (SortedSet Nat)
     grow typed = let next = step typed
                  in if size next == size typed then typed else grow next
-
-||| One call or partial application of a function, as its callee sees it.
-record Site where
-  constructor MkSite
-  caller : Name
-  under : Bool
-  args : List RCLocal
 
 ||| For a function never entered with arguments this pass does not see: the
 ||| type of each parameter that every call and partial application passes
@@ -152,79 +193,93 @@ record Site where
 ||| Starts from "everything is" and removes what a site contradicts, so a
 ||| parameter handed round a recursion and never anything else stays unknown
 ||| (`Top`) and is not reported.
-forwardStates : SortedMap Name (List Int) -> SortedMap Name (SortedSet Nat) -> SortedMap Name (List Site) -> SortedMap Name (List St)
-forwardStates paramsOf typed sites = grow initial
+forwardStates : SortedMap Int Nat -> SortedMap Int (SortedSet Nat) -> SortedMap Int (List Site) -> SortedMap Int (List St)
+forwardStates arityOf typed sites = grow initial
   where
-    arityOf : Name -> Nat
-    arityOf n = maybe 0 length (lookup n paramsOf)
+    initial : SortedMap Int (List St)
+    initial = fromList (map (\(n, _) => (n, replicate (fromMaybe 0 (lookup n arityOf)) Top)) (SortedMap.toList sites))
 
-    initial : SortedMap Name (List St)
-    initial = fromList (map (\(n, _) => (n, replicate (arityOf n) Top)) (SortedMap.toList sites))
-
-    worldTyped : Name -> Nat -> Bool
+    worldTyped : Int -> Nat -> Bool
     worldTyped g j = maybe False (contains j) (lookup g typed)
 
-    resolve : SortedMap Name (List St) -> Name -> RCLocal -> St
-    resolve _ _ RCWorld = Is (TPrim WorldType)
-    resolve _ _ RCErased = Is TErased
-    resolve states g (RCLoc v) =
-        case lookup g paramsOf >>= indexOf v of
-             Nothing => Bot
-             Just j => if worldTyped g j
-                          then Is (TPrim WorldType)
-                          else fromMaybe Bot (lookup g states >>= getAt j)
-    resolve _ _ _ = Bot
+    resolve : SortedMap Int (List St) -> Int -> Arg -> St
+    resolve _ _ AWorld = Is (TPrim WorldType)
+    resolve _ _ AErased = Is TErased
+    resolve states g (AParam j) =
+        if worldTyped g j
+           then Is (TPrim WorldType)
+           else fromMaybe Bot (lookup g states >>= getAt j)
+    resolve _ _ AOther = Bot
 
-    atSite : SortedMap Name (List St) -> Nat -> Site -> St
+    atSite : SortedMap Int (List St) -> Nat -> Site -> St
     atSite states i s =
         if s.under && i >= length s.args
            then Bot
            else maybe Bot (resolve states s.caller) (getAt i s.args)
 
-    recompute : SortedMap Name (List St) -> Name -> List Site -> List St
+    recompute : SortedMap Int (List St) -> Int -> List Site -> List St
     recompute states n ss =
-        map (\i => foldl (\acc, s => meet acc (atSite states i s)) Top ss) (indicesTo (arityOf n))
+        map (\i => foldl (\acc, s => meet acc (atSite states i s)) Top ss) (indicesTo (fromMaybe 0 (lookup n arityOf)))
 
-    grow : SortedMap Name (List St) -> SortedMap Name (List St)
+    grow : SortedMap Int (List St) -> SortedMap Int (List St)
     grow states =
         let next = fromList (map (\(n, ss) => (n, recompute states n ss)) (SortedMap.toList sites))
         in if next == states then states else grow next
+
+||| The sites that call one of the `closed` functions, by callee.
+closedSitesOf : SortedSet Int -> List Site -> SortedMap Int (List Site)
+closedSitesOf closed = foldl add empty
+  where
+    add : SortedMap Int (List Site) -> Site -> SortedMap Int (List Site)
+    add acc s =
+        if contains s.callee closed
+           then insert s.callee (s :: fromMaybe [] (lookup s.callee acc)) acc
+           else acc
+
+||| The answer, from the two analyses' results. Its inputs are parameters, not
+||| local `let`s: a `let` used once is inlined into the closure `mapMaybe`
+||| calls per function, and the fixpoint behind it would run once per function.
+collect : SortedMap Int (SortedSet Nat) -> SortedMap Int (List St) -> List Fn -> SortedMap Name (SortedMap Int NativeTy)
+collect typed states fns = fromList (mapMaybe entry fns)
+  where
+    entry : Fn -> Maybe (Name, SortedMap Int NativeTy)
+    entry g =
+        let found = mapMaybe (\(j, p) => map (p,) (tyAt g j)) (withIndex g.params)
+        in if null found then Nothing else Just (g.name, fromList found)
+      where
+        tyAt : Fn -> Nat -> Maybe NativeTy
+        tyAt f j = if maybe False (contains j) (lookup f.ident typed)
+                      then Just (TPrim WorldType)
+                      else case lookup f.ident states >>= getAt j of
+                                Just (Is ty) => Just ty
+                                _ => Nothing
+
+||| The analyses over the functions `fns`, whose `sites` are known.
+analyse : SortedMap Name Int -> List Name -> List (Name, RCDef) -> List Fn -> List Site -> SortedMap Name (SortedMap Int NativeTy)
+analyse ids roots defs fns sites =
+    let typed = worldPositions ids defs sites
+        closed = SortedSet.fromList (map (.ident) fns) `difference` escaping ids roots fns
+    in collect typed (forwardStates (arities fns) typed (closedSitesOf closed sites)) fns
+  where
+    arities : List Fn -> SortedMap Int Nat
+    arities = fromList . map (\g => (g.ident, length g.params))
 
 ||| The parameters of each function that hold NULL, by parameter id: the
 ||| world (by type, or because every caller passes it) or an erased value
 ||| (every caller passes it). `roots` are the names called from outside.
 export
 nullParamTable : (roots : List Name) -> List (Name, RCDef) -> SortedMap Name (SortedMap Int NativeTy)
-nullParamTable roots defs =
-    let fns = mapMaybe toFn defs
-        paramsOf = fromList (map (\g => (g.name, g.params)) fns)
-        typed = worldPositions defs fns
-        closed = SortedSet.fromList (map (.name) fns) `difference` escaping roots fns
-        sites = foldl (addSites closed) empty fns
-        states = forwardStates paramsOf typed sites
-    in fromList (mapMaybe (entry typed states) fns)
+nullParamTable roots defs = withIds (numberNames (map fst defs))
   where
-    toFn : (Name, RCDef) -> Maybe Fn
-    toFn (n, MkRCFun args _ _ body) =
-        if isMutualLoopMerged n then Nothing else Just (MkFn n (map fst args) (factsOf body))
-    toFn _ = Nothing
+    toFn : SortedMap Name Int -> (Name, RCDef) -> Maybe Fn
+    toFn ids (n, MkRCFun args _ _ body) =
+        if isMutualLoopMerged n
+           then Nothing
+           else map (\i => MkFn i n (map fst args) (factsOf body)) (lookup n ids)
+    toFn _ _ = Nothing
 
-    addSites : SortedSet Name -> SortedMap Name (List Site) -> Fn -> SortedMap Name (List Site)
-    addSites closed acc g = foldl add acc g.facts
-      where
-        add : SortedMap Name (List Site) -> Fact -> SortedMap Name (List Site)
-        add m (FCall n args) = if contains n closed then insert n (MkSite g.name False args :: fromMaybe [] (lookup n m)) m else m
-        add m (FUnder n args) = if contains n closed then insert n (MkSite g.name True args :: fromMaybe [] (lookup n m)) m else m
-        add m _ = m
+    withFns : SortedMap Name Int -> List Fn -> SortedMap Name (SortedMap Int NativeTy)
+    withFns ids fns = analyse ids roots defs fns (foldr (\g, acc => sitesOf ids g ++ acc) [] fns)
 
-    entry : SortedMap Name (SortedSet Nat) -> SortedMap Name (List St) -> Fn -> Maybe (Name, SortedMap Int NativeTy)
-    entry typed states g =
-        let found = mapMaybe (\(j, p) => map (p,) (tyAt j)) (withIndex g.params)
-        in if null found then Nothing else Just (g.name, fromList found)
-      where
-        tyAt : Nat -> Maybe NativeTy
-        tyAt j = if maybe False (contains j) (lookup g.name typed)
-                    then Just (TPrim WorldType)
-                    else case lookup g.name states >>= getAt j of
-                              Just (Is ty) => Just ty
-                              _ => Nothing
+    withIds : SortedMap Name Int -> SortedMap Name (SortedMap Int NativeTy)
+    withIds ids = withFns ids (mapMaybe (toFn ids) defs)

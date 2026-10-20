@@ -715,6 +715,17 @@ nativeAliasLets m e@(RLet fc var RBoxed value@(RV _ (RCLoc _)) body) =
          Nothing => mapChildren (nativeAliasLets m) e
 nativeAliasLets m e = mapChildren (nativeAliasLets m) e
 
+||| Reads of the `NULL`-typed locals in `m` as the constants they are.
+nullReads : SortedMap Int NativeTy -> RCExp -> RCExp
+nullReads m = mapLocalsRCExp read id
+  where
+    read : RCLocal -> RCLocal
+    read (RCLoc i) = case lookup i m of
+                          Just TErased => RCErased
+                          Just _ => RCWorld
+                          Nothing => RCLoc i
+    read l = l
+
 ||| Synthesise `original`'s own worker (each parameter promoted to
 ||| `RNative` at its eligible position, `RBoxed` elsewhere; `retRep`
 ||| promoted when `retEligible` found one; body is the original's own
@@ -732,22 +743,18 @@ synthesizeWorker : {auto r : Ref FreshId Int}
                  -> Core (Name, RCDef, RCDef)
 synthesizeWorker existingNames original eligible0 retEligible args wrapperRetRep body = do
     workerName <- freshName "idris2rc2_worker_" existingNames original
-    let nullSeeds : SortedMap Int NativeTy
-        nullSeeds = fromList (filter (\(_, ty) => nullTy ty) eligible0)
-        aliasTypes : SortedMap Int NativeTy
-        aliasTypes = if null (SortedMap.toList nullSeeds) then empty else safeNullTypes nullSeeds body
-        eligible : List (Int, NativeTy)
-        eligible = filter (\(p, ty) => not (nullTy ty) || isJust (lookup p aliasTypes)) eligible0
+    let nullSeeds : SortedMap Int NativeTy := fromList (filter (\(_, ty) => nullTy ty) eligible0)
+        aliasTypes : SortedMap Int NativeTy := if null (SortedMap.toList nullSeeds) then empty else safeNullTypes nullSeeds body
+        eligible : List (Int, NativeTy) := filter (\(p, ty) => not (nullTy ty) || isJust (lookup p aliasTypes)) eligible0
         eligibleOf : Int -> Maybe NativeTy
         eligibleOf p = Data.SortedMap.lookup p (Data.SortedMap.fromList eligible)
         workerArgs : List (Int, Rep)
         workerArgs = map (\(p, _) => case eligibleOf p of
                                            Just ty => (p, RNative ty)
                                            Nothing => (p, RBoxed)) args
-        promotedIds : SortedSet Int
-        promotedIds = fromList (map fst eligible ++ map fst (SortedMap.toList aliasTypes))
+        promotedIds : SortedSet Int := fromList (map fst eligible ++ map fst (SortedMap.toList aliasTypes))
         workerBody : RCExp
-        workerBody = nativeAliasLets aliasTypes (retypeNullLoopParams aliasTypes (stripOwnership promotedIds body))
+        workerBody = nullReads aliasTypes (nativeAliasLets aliasTypes (retypeNullLoopParams aliasTypes (stripOwnership promotedIds body)))
         workerRetRep : Rep
         workerRetRep = maybe wrapperRetRep RNative retEligible
         workerDef : RCDef
@@ -825,14 +832,13 @@ ffiReturns defs = fromList (mapMaybe entry defs)
 ||| exemption was carried (closure-dispatch typedefs to arity 20, the
 ||| FFI worker path too).
 export
-applyDualABI : (boolReturn : Bool) -> (nullParams : Bool) -> (roots : List Name) -> List (Name, RCDef) -> Core (List (Name, RCDef))
-applyDualABI boolReturn nullParams roots defs = do
+applyDualABI : (boolReturn : Bool) -> (nullTable : SortedMap Name (SortedMap Int NativeTy)) -> List (Name, RCDef) -> Core (List (Name, RCDef))
+applyDualABI boolReturn nullTable defs = do
     _ <- newRef FreshId 0
     let boolPlan : SortedSet Name := if boolReturn then boolReturnPlan defs else empty
     let existingNames = SortedSet.fromList (map fst defs)
     let ptrTable = ptrCalleeTable defs
     let ffiRets = ffiReturns defs
-    let nullTable = if nullParams then nullParamTable roots defs else empty
     -- `foldr (++) []`, not `concat`: `Foldable List` overrides
     -- `foldMap` with `foldl (\acc, x => acc <+> f x) neutral`, so
     -- `concat` (and `concatMap`) left-nest `++` and copy the whole

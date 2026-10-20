@@ -847,8 +847,12 @@ mutual
     -- The enclosing worker's own `NULL`-typed parameter
     -- (`Compiler.RC2.NullParams`) is already declared under this name, as
     -- the same type: nothing to declare.
-    declareLoopParam inPrologueDrop fc paramId rep@(RNative ty) initVal =
-        if initVal == RCLoc paramId && nullTy ty
+    declareLoopParam inPrologueDrop fc paramId rep@(RNative ty) initVal = do
+      declared <- repOfLocal (RCLoc paramId)
+      let alreadyThere = nullTy ty && (case declared of
+                                            RNative t => t == ty
+                                            _ => False)
+      if alreadyThere
            then update RepMap (insert paramId rep)
            else do
                update RepMap (insert paramId rep)

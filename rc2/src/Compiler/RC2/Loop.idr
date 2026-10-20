@@ -151,83 +151,90 @@ renameLocalsV ren = map (renameLocal ren)
 renameMaybeLocal : Renaming -> Maybe RCLocal -> Maybe RCLocal
 renameMaybeLocal ren = map (renameLocal ren)
 
+
+-- Applies `f` to every local read and `g` to every id a node binds, nothing else.
 mutual
   export
-  renameRCExp : Renaming -> RCExp -> RCExp
-  renameRCExp ren (RV fc v) = RV fc (renameLocal ren v)
-  renameRCExp ren (RAppName fc lazy n args) = RAppName fc lazy n (renameLocals ren args)
-  renameRCExp ren (RUnderApp fc n missing args) = RUnderApp fc n missing (renameLocals ren args)
-  renameRCExp ren (RDelay fc lr n caps) = RDelay fc lr n (renameLocals ren caps)
-  renameRCExp ren (RApp fc lazy c args) = RApp fc lazy (renameLocal ren c) (map (renameLocal ren) args)
-  renameRCExp ren (RLet fc var rep value body) =
-      RLet fc (renameId ren var) rep (renameRCExp ren value) (renameRCExp ren body)
-  renameRCExp ren (RCon fc n ci tag args reuseFrom) =
-      RCon fc n ci tag (renameLocals ren args) (renameMaybeLocal ren reuseFrom)
-  renameRCExp ren (RRetPack fc n tag fields) = RRetPack fc n tag (renameLocals ren fields)
-  renameRCExp ren (ROp fc lazy op args postDrop) =
-      ROp fc lazy op (renameLocalsV ren args) (renameLocals ren postDrop)
-  renameRCExp ren (RExtPrim fc lazy p args postDrop) =
-      RExtPrim fc lazy p (renameLocals ren args) (renameLocals ren postDrop)
-  renameRCExp ren (RStructGet fc structVar sf postDrop) =
-      RStructGet fc (renameLocal ren structVar) sf (renameLocals ren postDrop)
-  renameRCExp ren (RForce fc lr v postDrop) =
-      RForce fc lr (renameLocal ren v) (renameLocals ren postDrop)
-  renameRCExp ren (RStructSet fc structVar sf value postDrop) =
-      RStructSet fc (renameLocal ren structVar) sf (renameLocal ren value) (renameLocals ren postDrop)
-  renameRCExp ren (RFill fc cell k value postDrop) =
-      RFill fc (renameLocal ren cell) k (renameLocal ren value) (renameLocals ren postDrop)
-  renameRCExp ren (RCmpCase fc op args postDrop t f) =
-      RCmpCase fc op (renameLocalsV ren args) (renameLocals ren postDrop) (renameRCExp ren t) (renameRCExp ren f)
-  renameRCExp ren (RConCase fc sc alts mDef) =
-      RConCase fc (renameLocal ren sc) (map (renameConAlt ren) alts) (map (renameRCExp ren) mDef)
-  renameRCExp ren (RConstCase fc sc alts mDef) =
-      RConstCase fc (renameLocal ren sc) (map (renameConstAlt ren) alts) (map (renameRCExp ren) mDef)
-  renameRCExp _ (RPrimVal fc c) = RPrimVal fc c
-  renameRCExp _ (RErased fc) = RErased fc
-  renameRCExp _ (RCrash fc msg) = RCrash fc msg
-  renameRCExp ren (RDup fc v extra body) = RDup fc (renameLocal ren v) extra (renameRCExp ren body)
-  renameRCExp ren (RDrop fc vars body) = RDrop fc (renameLocals ren vars) (renameRCExp ren body)
-  renameRCExp ren (RFree fc v body) = RFree fc (renameLocal ren v) (renameRCExp ren body)
-  renameRCExp ren (RReleaseReuse fc v body) = RReleaseReuse fc (renameLocal ren v) (renameRCExp ren body)
-  renameRCExp ren (RReuseOffer fc sc dupOnShared dropOnUnique body) =
-      RReuseOffer fc (renameLocal ren sc) (renameLocals ren dupOnShared) (renameLocals ren dropOnUnique) (renameRCExp ren body)
+  mapLocalsRCExp : (RCLocal -> RCLocal) -> (Int -> Int) -> RCExp -> RCExp
+  mapLocalsRCExp f g (RV fc v) = RV fc (f v)
+  mapLocalsRCExp f g (RAppName fc lazy n args) = RAppName fc lazy n (map f args)
+  mapLocalsRCExp f g (RUnderApp fc n missing args) = RUnderApp fc n missing (map f args)
+  mapLocalsRCExp f g (RDelay fc lr n caps) = RDelay fc lr n (map f caps)
+  mapLocalsRCExp f g (RApp fc lazy c args) = RApp fc lazy (f c) (map (f) args)
+  mapLocalsRCExp f g (RLet fc var rep value body) =
+      RLet fc (g var) rep (mapLocalsRCExp f g value) (mapLocalsRCExp f g body)
+  mapLocalsRCExp f g (RCon fc n ci tag args reuseFrom) =
+      RCon fc n ci tag (map f args) (map f reuseFrom)
+  mapLocalsRCExp f g (RRetPack fc n tag fields) = RRetPack fc n tag (map f fields)
+  mapLocalsRCExp f g (ROp fc lazy op args postDrop) =
+      ROp fc lazy op (map f args) (map f postDrop)
+  mapLocalsRCExp f g (RExtPrim fc lazy p args postDrop) =
+      RExtPrim fc lazy p (map f args) (map f postDrop)
+  mapLocalsRCExp f g (RStructGet fc structVar sf postDrop) =
+      RStructGet fc (f structVar) sf (map f postDrop)
+  mapLocalsRCExp f g (RForce fc lr v postDrop) =
+      RForce fc lr (f v) (map f postDrop)
+  mapLocalsRCExp f g (RStructSet fc structVar sf value postDrop) =
+      RStructSet fc (f structVar) sf (f value) (map f postDrop)
+  mapLocalsRCExp f g (RFill fc cell k value postDrop) =
+      RFill fc (f cell) k (f value) (map f postDrop)
+  mapLocalsRCExp f g (RCmpCase fc op args postDrop whenTrue whenFalse) =
+      RCmpCase fc op (map f args) (map f postDrop) (mapLocalsRCExp f g whenTrue) (mapLocalsRCExp f g whenFalse)
+  mapLocalsRCExp f g (RConCase fc sc alts mDef) =
+      RConCase fc (f sc) (map (mapLocalsConAlt f g) alts) (map (mapLocalsRCExp f g) mDef)
+  mapLocalsRCExp f g (RConstCase fc sc alts mDef) =
+      RConstCase fc (f sc) (map (mapLocalsConstAlt f g) alts) (map (mapLocalsRCExp f g) mDef)
+  mapLocalsRCExp _ _ (RPrimVal fc c) = RPrimVal fc c
+  mapLocalsRCExp _ _ (RErased fc) = RErased fc
+  mapLocalsRCExp _ _ (RCrash fc msg) = RCrash fc msg
+  mapLocalsRCExp f g (RDup fc v extra body) = RDup fc (f v) extra (mapLocalsRCExp f g body)
+  mapLocalsRCExp f g (RDrop fc vars body) = RDrop fc (map f vars) (mapLocalsRCExp f g body)
+  mapLocalsRCExp f g (RFree fc v body) = RFree fc (f v) (mapLocalsRCExp f g body)
+  mapLocalsRCExp f g (RReleaseReuse fc v body) = RReleaseReuse fc (f v) (mapLocalsRCExp f g body)
+  mapLocalsRCExp f g (RReuseOffer fc sc dupOnShared dropOnUnique body) =
+      RReuseOffer fc (f sc) (map f dupOnShared) (map f dropOnUnique) (mapLocalsRCExp f g body)
   -- Never actually reached in practice -- nothing calling this ever
   -- operates on a tree that already contains an `RLoop` (this module's
   -- own `applyLoop` is its sole producer, and only ever calls
   -- `renameRCExp` on a not-yet-wrapped body). Kept total (as a plain
   -- pass-through) rather than assumed unreachable, same reasoning as
   -- RC.idr's own `annotate`.
-  renameRCExp ren (RLoop fc loopParams initial prologueDrop body) =
-      RLoop fc (map (\(i, r) => (renameId ren i, r)) loopParams) (renameLocals ren initial) (renameLocals ren prologueDrop) (renameRCExp ren body)
-  renameRCExp ren (RLoopContinue fc args postDrop) = RLoopContinue fc (renameLocals ren args) (renameLocals ren postDrop)
+  mapLocalsRCExp f g (RLoop fc loopParams initial prologueDrop body) =
+      RLoop fc (map (\(i, r) => (g i, r)) loopParams) (map f initial) (map f prologueDrop) (mapLocalsRCExp f g body)
+  mapLocalsRCExp f g (RLoopContinue fc args postDrop) = RLoopContinue fc (map f args) (map f postDrop)
   -- Never actually reached in practice -- Compiler.RC2.DualABI, the
   -- sole producer of RAppNameRep, runs strictly after both this
   -- module and Compiler.RC2.MutualLoop (the only two callers of
   -- renameRCExp) have already finished. Kept total (as a plain
   -- pass-through) rather than assumed unreachable, same reasoning as
   -- this function's own RLoop case just above.
-  renameRCExp ren (RAppNameRep fc n argReps retRep postDrop args) =
-      RAppNameRep fc n argReps retRep (renameLocals ren postDrop) (renameLocals ren args)
+  mapLocalsRCExp f g (RAppNameRep fc n argReps retRep postDrop args) =
+      RAppNameRep fc n argReps retRep (map f postDrop) (map f args)
   -- Never actually reached in practice, same reasoning as RAppNameRep
   -- just above -- Compiler.RC2.DualABI's own FFI-inline pass runs even
   -- later than RAppNameRep's own producer (Stage 4), strictly after
   -- both this module and Compiler.RC2.MutualLoop have already
   -- finished.
-  renameRCExp ren (RAppFFIInline fc ccs fargs ret postDrop args) =
-      RAppFFIInline fc ccs fargs ret (renameLocals ren postDrop) (renameLocals ren args)
+  mapLocalsRCExp f g (RAppFFIInline fc ccs fargs ret postDrop args) =
+      RAppFFIInline fc ccs fargs ret (map f postDrop) (map f args)
   -- Never actually reached in practice -- RMemoize only ever wraps a
   -- 0-argument CAF's own whole body (doc/caf-memoization.md), and this
   -- module's own applyLoop only ever runs on a definition with real
   -- loop-carried parameters. Kept total (as a plain pass-through), same
   -- reasoning as RAppNameRep/RAppFFIInline just above.
-  renameRCExp ren (RMemoize fc n rep body) = RMemoize fc n rep (renameRCExp ren body)
+  mapLocalsRCExp f g (RMemoize fc n rep body) = RMemoize fc n rep (mapLocalsRCExp f g body)
 
-  renameConAlt : Renaming -> RConAlt -> RConAlt
-  renameConAlt ren (MkRConAlt name ci tag args body) =
-      MkRConAlt name ci tag (map (renameId ren) args) (renameRCExp ren body)
+  mapLocalsConAlt : (RCLocal -> RCLocal) -> (Int -> Int) -> RConAlt -> RConAlt
+  mapLocalsConAlt f g (MkRConAlt name ci tag args body) =
+      MkRConAlt name ci tag (map (g) args) (mapLocalsRCExp f g body)
 
-  renameConstAlt : Renaming -> RConstAlt -> RConstAlt
-  renameConstAlt ren (MkRConstAlt c body) = MkRConstAlt c (renameRCExp ren body)
+  mapLocalsConstAlt : (RCLocal -> RCLocal) -> (Int -> Int) -> RConstAlt -> RConstAlt
+  mapLocalsConstAlt f g (MkRConstAlt c body) = MkRConstAlt c (mapLocalsRCExp f g body)
+
+||| `mapLocalsRCExp` for a renaming.
+export
+renameRCExp : Renaming -> RCExp -> RCExp
+renameRCExp ren = mapLocalsRCExp (renameLocal ren) (renameId ren)
 
 ------------------------------------------------------------------------
 -- Deciding which top-level parameters are worth a native shadow (see

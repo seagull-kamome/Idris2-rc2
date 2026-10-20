@@ -51,13 +51,17 @@ list, so it gets a worker (native parameters) and a thin wrapper that keeps the
 Boxed signature, like any other native parameter.
 
 - The worker's `dup`/`drop`/`free`/`postDrop` on the parameter are removed
-  (`stripOwnership`); `RExtPrim`'s `postDrop` is stripped too.
+  (`stripOwnership`); `RExtPrim`'s `postDrop` is stripped too. Every read of
+  the parameter (and of its aliases) becomes the constant `[world]` or
+  `[erased]` (`nullReads`), so a later pass sees a constant.
 - A `let` that only renames a NULL-typed local is NULL as well, so it becomes
   a native local of the same type and loses its ownership operations
   (`nullAliasTypes`, `nativeAliasLets`).
 - An `RLoop` whose parameter has the same id as the function's parameter takes
-  the same native type (`retypeNullLoopParams`; `Emit.declareLoopParam`
-  declares nothing for it, the C parameter is already there).
+  the same native type (`retypeNullLoopParams`). `Emit.declareLoopParam`
+  declares nothing for it when the C variable of that id already has that
+  type (the parameter, or the alias `let`), as the loop start now reads a
+  constant rather than the variable itself.
 - The wrapper does not drop such an argument: it is NULL.
 - Callers are rewritten to call the worker by the ordinary call-site rewrite.
 
@@ -68,7 +72,7 @@ world" does not prove "is not the world" (`doc/world-erased-marks.md`).
 
 ## Measured
 
-Over the 56 smoke-test IR dumps: 190 parameters marked (169 world, 21
+Before the constant rewrite, over the 56 smoke-test IR dumps: 190 parameters marked (169 world, 21
 erased); `dup` 2111 -> 2058, `drop` 3795 -> 3782.
 
 On idris2-lsp (`9a2f0ad`, 13.2k definitions), against the build before this
@@ -99,12 +103,23 @@ parameter stay `Boxed`. Without this check 6 loops on idris2-lsp passed an
 object in a slot typed as the world.
 
 
+## Compile time
+
+On idris2-lsp the whole build goes from 56 s to 58-59 s (two runs each,
+`--directive nonullparams` against the default); `DualABI` from 2.6 s to 4.3 s.
+The analysis keys its fixpoints by a number given to each name once (comparing
+`Name`s was most of the first version's cost). Two traps cost minutes before
+they were found:
+
+- `let x : T` with a separate `x = e` makes `x` a *function*: every use
+  evaluates `e` again. A value is bound as `let x : T := e`. The first version
+  ran the whole forward fixpoint once per function.
+- `concatMap` over a list of lists nests `++` to the left and copies the
+  accumulated list per element (`foldr (\g, acc => ... ++ acc) []` does not).
+
 ## Not done
 
-- The parameter's reads in the worker are not rewritten to the `[world]` /
-  `[erased]` constants. They read the native local, which is the same NULL;
-  the constants would only help passes that run before `DualABI`.
 - `Loop` does not see these types: a loop parameter that is not the function's
-  own parameter, and is initialised from one, stays Boxed.
+  own parameter (or an alias of it), and is initialised from one, stays Boxed.
 - A parameter only passed on (never to a `%foreign` world slot, nor by every
   caller as a constant) stays Boxed.

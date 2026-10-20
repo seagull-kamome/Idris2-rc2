@@ -56,6 +56,7 @@ import Compiler.RC2.LateInline
 import Compiler.RC2.LazyCaf
 import Compiler.RC2.LazyFold
 import Compiler.RC2.MutualLoop
+import Compiler.RC2.NullParams
 import Compiler.RC2.Loop
 import Compiler.RC2.Sink
 import Compiler.RC2.Types
@@ -461,7 +462,10 @@ toRCDefs disabled incremental roots thunks preFolded = do
     dualABId <- if "nodualabi" `elem` disabled
        then pure sunk
        else logTime 2 "rc2: DualABI" $ do
-           withNative <- logTime 3 "rc2: DualABI (workers)" $ applyDualABI (not ("noboolret" `elem` disabled)) (not ("nonullparams" `elem` disabled)) roots sunk
+           nullParams <- logTime 3 "rc2: DualABI (null params)" $
+               let table = if "nonullparams" `elem` disabled then SortedMap.empty else nullParamTable roots sunk
+               in if length (SortedMap.toList table) < 100000000 then pure table else pure SortedMap.empty
+           withNative <- logTime 3 "rc2: DualABI (workers)" $ applyDualABI (not ("noboolret" `elem` disabled)) nullParams sunk
            -- doc/struct-return.md
            withWorkers <- if "nostructreturn" `elem` disabled
                              then pure withNative
