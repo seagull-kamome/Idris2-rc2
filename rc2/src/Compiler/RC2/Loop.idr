@@ -11,7 +11,7 @@ module Compiler.RC2.Loop
 
 import Compiler.RC2.RCExp
 import Compiler.RC2.Types
-import Compiler.RC2.PtrParams
+import Compiler.RC2.ForeignSpec
 import Compiler.RC2.Util
 
 import Core.CompileExpr
@@ -238,16 +238,16 @@ mutual
 ||| `SortedMap.mergeWith union` -- named once for readability at every
 ||| multi-id merge point below (see "Batched, multi-id native-type
 ||| analysis" further down for why these exist).
-unionMaps : SortedMap Int (SortedSet PrimType) -> SortedMap Int (SortedSet PrimType) -> SortedMap Int (SortedSet PrimType)
+unionMaps : Ord ty => SortedMap Int (SortedSet ty) -> SortedMap Int (SortedSet ty) -> SortedMap Int (SortedSet ty)
 unionMaps = SortedMap.mergeWith union
 
-concatMaps : List (SortedMap Int (SortedSet PrimType)) -> SortedMap Int (SortedSet PrimType)
+concatMaps : Ord ty => List (SortedMap Int (SortedSet ty)) -> SortedMap Int (SortedSet ty)
 concatMaps = foldl unionMaps empty
 
 ||| If `a` is one of `tracked`'s own ids, record that it was read at
 ||| native type `ty` here (unioned with whatever's already on file for
 ||| it); otherwise leave `acc` unchanged.
-addTracked : SortedSet Int -> RCLocal -> PrimType -> SortedMap Int (SortedSet PrimType) -> SortedMap Int (SortedSet PrimType)
+addTracked : Ord ty => SortedSet Int -> RCLocal -> ty -> SortedMap Int (SortedSet ty) -> SortedMap Int (SortedSet ty)
 addTracked tracked (RCLoc i) ty acc = if contains i tracked then SortedMap.insertWith union i (SortedSet.singleton ty) acc else acc
 addTracked _ _ _ acc = acc
 
@@ -526,119 +526,124 @@ nativeArgTypeBatch ps body =
     let found = nativeArgTypesFor (SortedSet.fromList ps) body
     in SortedMap.fromList $ mapMaybe (\p => map (p,) (singleTypeFrom found p)) ps
 
-||| Every declared parameter's own eligibility, exactly as `nativeArgType`
-||| already decides it, positionally aligned with `d`'s own `args` list.
-||| `Nothing` for anything with no ordinary RCExp body to ask this about
-||| (MkRCForeign -- its ABI is fixed by its own CFType's, handled
-||| separately by Compiler.RC2.DualABI's ffiWorkerTable, deliberately
-||| out of this function's scope).
-export
-calleeNativeParams : RCDef -> Maybe (List (Maybe PrimType))
-calleeNativeParams (MkRCFun args _ _ body) =
+||| What each position of a callee reads natively, by callee name.
+public export
+CalleeTable : Type
+CalleeTable = SortedMap Name (List (Maybe NativeTy))
+
+||| Every `MkRCFun` parameter's `PrimType` eligibility, exactly as
+||| `nativeArgType` decides it, positionally aligned with `args`.
+primCallee : RCDef -> Maybe (List (Maybe NativeTy))
+primCallee (MkRCFun args _ _ body) =
     let found = nativeArgTypeBatch (map fst args) body
-    in Just (map (\(p, _) => lookup p found) args)
-calleeNativeParams _ = Nothing
+    in Just (map (\(p, _) => TPrim <$> lookup p found) args)
+primCallee _ = Nothing
 
-||| Whole-program table built once from the post-MutualLoop/pre-Loop
-||| def list, threaded into every applyLoop call. Each entry comes
-||| purely from that one definition's own body (via calleeNativeParams,
-||| which itself just calls the unmodified nativeArgType) -- never by
-||| consulting any other entry -- so this is a single, non-recursive
-||| pass, safe even in the presence of an ordinary (non-tail) mutual
-||| recursion pair MutualLoop never touches (it only merges tail-call
-||| cycles): there is simply no edge in this table's own construction
-||| for such a pair to cycle along, regardless of the real call graph.
-||| MutualLoop-merged dispatcher functions are excluded via
-||| isMutualLoopMerged (never a valid call target); their own
-||| per-member wrapper functions need no separate exclusion -- their
-||| trivial single-call body already yields no eligible positions via
-||| calleeNativeParams/nativeArgType's own catch-all.
-export
-buildCalleeTable : List (Name, RCDef) -> SortedMap Name (List (Maybe PrimType))
-buildCalleeTable defs = fromList $ mapMaybe
-    (\(n, d) => if isMutualLoopMerged n then Nothing else map (\ps => (n, ps)) (calleeNativeParams d))
-    defs
+||| The raw-pointer positions of a usable `%foreign` declaration
+||| (`doc/native-pointer.md`); its scalar positions are left out on purpose,
+||| as they always were.
+foreignPtrCallee : RCDef -> Maybe (List (Maybe NativeTy))
+foreignPtrCallee (MkRCForeign ccs fargs _) =
+    let ps = map (\t => if cfTypeNativeTy t == Just TPtr then Just TPtr else Nothing) fargs
+    in if foreignUsable ccs && any isJust ps then Just ps else Nothing
+foreignPtrCallee _ = Nothing
 
-||| Every native PrimType at which top-level parameter `p` is fed as a
-||| direct, saturated call argument to a plain (MkRCFun) callee
-||| `calleeTable` says is independently native-eligible at that exact
-||| argument position. Mirrors Compiler.RC2.DualABI's own
-||| callArgNativeReads (same walk, same "does args !! i == RCLoc p line
-||| up with a native position" check) but deliberately kept separate:
-||| that one's own table is the richer, post-DualABI worker shape not
-||| available this early in the pipeline, and serves a different
-||| rewrite (call-site rewriting, not loop-param promotion).
-||| Deliberately NOT folded into nativeArgTypes itself -- ConAltNative/
-||| DualABI's existing reuse of nativeArgType/nativeArgTypes must not
-||| gain this behaviour implicitly.
-export
-callArgNativeTypes : SortedMap Name (List (Maybe PrimType)) -> Int -> RCExp -> SortedSet PrimType
-callArgNativeTypes calleeTable p (RLet _ _ _ value body) =
-    callArgNativeTypes calleeTable p value `union` callArgNativeTypes calleeTable p body
-callArgNativeTypes calleeTable p (RCmpCase _ _ _ _ t f) =
-    callArgNativeTypes calleeTable p t `union` callArgNativeTypes calleeTable p f
-callArgNativeTypes calleeTable p (RConCase _ _ alts mDef) =
-    concat (map (\(MkRConAlt _ _ _ _ body) => callArgNativeTypes calleeTable p body) alts)
-      `union` maybe empty (callArgNativeTypes calleeTable p) mDef
-callArgNativeTypes calleeTable p (RConstCase _ _ alts mDef) =
-    concat (map (\(MkRConstAlt _ body) => callArgNativeTypes calleeTable p body) alts)
-      `union` maybe empty (callArgNativeTypes calleeTable p) mDef
-callArgNativeTypes calleeTable p (RDup _ _ _ cont) = callArgNativeTypes calleeTable p cont
-callArgNativeTypes calleeTable p (RDrop _ _ cont) = callArgNativeTypes calleeTable p cont
-callArgNativeTypes calleeTable p (RFree _ _ cont) = callArgNativeTypes calleeTable p cont
-callArgNativeTypes calleeTable p (RReleaseReuse _ _ cont) = callArgNativeTypes calleeTable p cont
-callArgNativeTypes calleeTable p (RReuseOffer _ _ _ _ cont) = callArgNativeTypes calleeTable p cont
-callArgNativeTypes calleeTable p (RAppName _ _ n args) =
-    case lookup n calleeTable of
-         Nothing => empty
-         Just paramTypes =>
-             if length args /= length paramTypes
-                then empty
-                else fromList $ mapMaybe (\(a, mty) => if a == RCLoc p then mty else Nothing)
-                                          (zip args paramTypes)
-callArgNativeTypes _ _ _ = empty
+||| `Just ty` per position of `table`'s callee `n`, for the walk below.
+tableLookup : CalleeTable -> Name -> Maybe (List (Maybe NativeTy))
+tableLookup table n = lookup n table
 
-||| Multi-id version of `callArgNativeTypes`.
-callArgNativeTypesFor : SortedMap Name (List (Maybe PrimType)) -> SortedSet Int -> RCExp -> SortedMap Int (SortedSet PrimType)
-callArgNativeTypesFor calleeTable tracked (RLet _ _ _ value body) =
-    callArgNativeTypesFor calleeTable tracked value `unionMaps` callArgNativeTypesFor calleeTable tracked body
-callArgNativeTypesFor calleeTable tracked (RCmpCase _ _ _ _ t f) =
-    callArgNativeTypesFor calleeTable tracked t `unionMaps` callArgNativeTypesFor calleeTable tracked f
-callArgNativeTypesFor calleeTable tracked (RConCase _ _ alts mDef) =
-    concatMaps (map (\(MkRConAlt _ _ _ _ body) => callArgNativeTypesFor calleeTable tracked body) alts)
-      `unionMaps` maybe empty (callArgNativeTypesFor calleeTable tracked) mDef
-callArgNativeTypesFor calleeTable tracked (RConstCase _ _ alts mDef) =
-    concatMaps (map (\(MkRConstAlt _ body) => callArgNativeTypesFor calleeTable tracked body) alts)
-      `unionMaps` maybe empty (callArgNativeTypesFor calleeTable tracked) mDef
-callArgNativeTypesFor calleeTable tracked (RDup _ _ _ cont) = callArgNativeTypesFor calleeTable tracked cont
-callArgNativeTypesFor calleeTable tracked (RDrop _ _ cont) = callArgNativeTypesFor calleeTable tracked cont
-callArgNativeTypesFor calleeTable tracked (RFree _ _ cont) = callArgNativeTypesFor calleeTable tracked cont
-callArgNativeTypesFor calleeTable tracked (RReleaseReuse _ _ cont) = callArgNativeTypesFor calleeTable tracked cont
-callArgNativeTypesFor calleeTable tracked (RReuseOffer _ _ _ _ cont) = callArgNativeTypesFor calleeTable tracked cont
-callArgNativeTypesFor calleeTable tracked (RAppName _ _ n args) =
-    case lookup n calleeTable of
-         Nothing => empty
-         Just paramTypes =>
-             if length args /= length paramTypes
-                then empty
-                else foldr (\(a, mty), acc => maybe acc (\ty => addTracked tracked a ty acc) mty) empty (zip args paramTypes)
-callArgNativeTypesFor _ _ _ = empty
+||| Every native type at which each of `tracked`'s ids is fed as a direct,
+||| saturated call argument to a callee `callee` says reads that position
+||| natively (a call argument, unlike an `ROp` operand, is not tied to the
+||| enclosing `RLet`'s type). One walk for the whole set, so a definition
+||| with many parameters costs one pass. Not folded into `nativeArgTypesFor`:
+||| `ConAltNative` and `DualABI` reuse that and must not gain this implicitly.
+||| `Compiler.RC2.DualABI` asks the same question of its worker table.
+export covering
+callArgNativeReadsFor : (Name -> Maybe (List (Maybe NativeTy))) -> SortedSet Int -> RCExp -> SortedMap Int (SortedSet NativeTy)
+callArgNativeReadsFor callee tracked e = go e
+  where
+    go : RCExp -> SortedMap Int (SortedSet NativeTy)
+    go (RLet _ _ _ value body) = go value `unionMaps` go body
+    go (RCmpCase _ _ _ _ t f) = go t `unionMaps` go f
+    go (RConCase _ _ alts mDef) =
+        concatMaps (map (\(MkRConAlt _ _ _ _ body) => go body) alts) `unionMaps` maybe empty go mDef
+    go (RConstCase _ _ alts mDef) =
+        concatMaps (map (\(MkRConstAlt _ body) => go body) alts) `unionMaps` maybe empty go mDef
+    go (RLoop _ _ _ _ body) = go body
+    go (RDup _ _ _ cont) = go cont
+    go (RDrop _ _ cont) = go cont
+    go (RFree _ _ cont) = go cont
+    go (RReleaseReuse _ _ cont) = go cont
+    go (RReuseOffer _ _ _ _ cont) = go cont
+    go (RAppName _ _ n args) =
+        case callee n of
+             Just tys => if length args == length tys
+                            then foldr (\(a, mty), acc => maybe acc (\ty => addTracked tracked a ty acc) mty) empty (zip args tys)
+                            else empty
+             Nothing => empty
+    go _ = empty
 
-||| Unions nativeArgTypes' own answer with callArgNativeTypes', giving
-||| a single consistent-type-or-Nothing verdict the same shape
-||| nativeArgType itself already returns.
-export
-callArgOrOpNativeType : SortedMap Name (List (Maybe PrimType)) -> Int -> RCExp -> Maybe PrimType
-callArgOrOpNativeType calleeTable p body =
-    case Prelude.toList (nativeArgTypes p body `union` callArgNativeTypes calleeTable p body) of
-         [ty] => Just ty
-         _ => Nothing
+||| The parameters among `argIds` that `body` reads only as a raw pointer:
+||| every use is a call argument at a `TPtr` position of `table`.
+export covering
+ptrParams : CalleeTable -> List Int -> RCExp -> SortedSet Int
+ptrParams table argIds body =
+    let found = callArgNativeReadsFor (tableLookup table) (SortedSet.fromList argIds) body
+    in SortedSet.fromList (filter (\p => maybe False (\tys => Prelude.toList tys == [TPtr]) (lookup p found)) argIds)
+
+||| Pointer positions only: the `%foreign` declarations', plus every ordinary
+||| function's pointer parameters, found by a fixed number of rounds so a
+||| pointer passed on through a chain of functions is found at each link.
+export covering
+ptrCalleeTable : List (Name, RCDef) -> CalleeTable
+ptrCalleeTable defs = go (the Nat 4) foreignEntries
+  where
+    foreignEntries : CalleeTable
+    foreignEntries = fromList (mapMaybe (\(n, d) => map (n,) (foreignPtrCallee d)) defs)
+
+    entryOf : CalleeTable -> (Name, RCDef) -> Maybe (Name, List (Maybe NativeTy))
+    entryOf table (n, MkRCFun args _ False body) =
+        let ps = ptrParams table (map fst args) body
+        in if null (Prelude.toList ps)
+              then Nothing
+              else Just (n, map (\(p, _) => if contains p ps then Just TPtr else Nothing) args)
+    entryOf _ _ = Nothing
+
+    go : Nat -> CalleeTable -> CalleeTable
+    go Z table = table
+    go (S k) table = go k (mergeWith const (fromList (mapMaybe (entryOf table) defs)) foreignEntries)
+
+||| Whole-program table built once from the post-MutualLoop/pre-Loop def
+||| list, threaded into every applyLoop call. A position is `TPrim` where the
+||| callee's own body reads that parameter as an `ROp`/`RCmpCase` operand
+||| (from that one body alone, never another entry), `TPtr` where it is a
+||| raw pointer (`ptrCalleeTable`). MutualLoop-merged dispatchers are
+||| excluded via isMutualLoopMerged (never a valid call target).
+export covering
+buildCalleeTable : List (Name, RCDef) -> CalleeTable
+buildCalleeTable defs =
+    mergeWith (zipWith (\a, b => a <|> b))
+      (fromList $ mapMaybe (\(n, d) => if isMutualLoopMerged n then Nothing else map (n,) (primCallee d)) defs)
+      (ptrCalleeTable defs)
+
+||| The single native `PrimType` at which parameter `p` is read as an operand
+||| or fed to a callee `table` says reads it as a scalar -- `Nothing` for no
+||| reads, or conflicting ones.
+export covering
+callArgOrOpNativeType : CalleeTable -> Int -> RCExp -> Maybe PrimType
+callArgOrOpNativeType table p body =
+    let reads = maybe empty id (lookup p (callArgNativeReadsFor (tableLookup table) (SortedSet.singleton p) body))
+        calls = mapMaybe (\ty => case ty of { TPrim t => Just t; TPtr => Nothing }) (Prelude.toList reads)
+    in case Prelude.toList (nativeArgTypes p body `union` SortedSet.fromList calls) of
+            [ty] => Just ty
+            _ => Nothing
 
 ||| ## Batched, multi-id native-type analysis
 |||
 ||| `nativeArgType`/`callArgOrOpNativeType` above each ask this
 ||| question about *one* id, walking `body` in full to answer it.
-||| `applyLoop` (and, via `calleeNativeParams`, `buildCalleeTable`)
+||| `applyLoop` (and, via `primCallee`, `buildCalleeTable`)
 ||| originally called them once per top-level parameter -- for a
 ||| definition with many parameters (routine after lambda-lifting) and
 ||| a large body, that made this whole pass cost O(parameter count x
@@ -646,7 +651,7 @@ callArgOrOpNativeType calleeTable p body =
 ||| own wall-clock time outright on a large real program (measured
 ||| ~41s, unchanged by the `Compiler.RC2.Inline` case-of-case fix --
 ||| see `rc2/doc/inlining.md` -- since this is a wholly separate
-||| bottleneck). `nativeArgTypesFor`/`callArgNativeTypesFor` above
+||| bottleneck). `nativeArgTypesFor`/`callArgNativeReadsFor` above
 ||| answer the same question for a *whole set* of ids in one shared
 ||| walk instead; `applyLoop` below computes its own `opTypes`/
 ||| `callTypes` once (for every one of its own `argIds` together) and
@@ -1407,8 +1412,8 @@ dupInvariantBoxed _ e = e
 ||| value comes back alongside the rewritten def, both threaded by
 ||| the exported `applyLoop` wrapper below against the shared `VarId`
 ||| counter.
-applyLoopFromId : (nextId0 : Int) -> SortedMap Name (List (Maybe PrimType)) -> SortedMap Name (Name, List Rep, Rep, Bool) -> (noPromote : SortedSet Int) -> Name -> RCDef -> (Int, RCDef)
-applyLoopFromId nextId0 calleeTable ptrTable noPromote self (MkRCFun args retRep isWorker body) =
+applyLoopFromId : (nextId0 : Int) -> CalleeTable -> (noPromote : SortedSet Int) -> Name -> RCDef -> (Int, RCDef)
+applyLoopFromId nextId0 calleeTable noPromote self (MkRCFun args retRep isWorker body) =
     let argIds = map fst args
         (_, found, body') = mapTailAppNames (\fc, n, args' => if n == self then Just (RLoopContinue fc args' []) else Nothing) body
     in if not found
@@ -1438,10 +1443,10 @@ applyLoopFromId nextId0 calleeTable ptrTable noPromote self (MkRCFun args retRep
                   -- same `mapMaybe` pass rather than a separate `filter`
                   -- afterwards, since nothing else ever reads the
                   -- unfiltered eligibility list.
-                  -- A parameter read only as a raw pointer (`PtrParams`)
+                  -- A parameter read only as a raw pointer (`ptrParams`)
                   -- is shadowed as a `TPtr`, when no `PrimType` read
                   -- claims it.
-                  ptrIds : SortedSet Int := ptrParams ptrTable argIds body'
+                  ptrIds : SortedSet Int := ptrParams calleeTable argIds body'
                   nativeTyOf : Maybe PrimType -> Int -> Maybe NativeTy
                   nativeTyOf (Just ty) _ = Just (TPrim ty)
                   nativeTyOf Nothing p = if contains p ptrIds then Just TPtr else Nothing
@@ -1598,7 +1603,7 @@ applyLoopFromId nextId0 calleeTable ptrTable noPromote self (MkRCFun args retRep
                                               (RLet emptyFC resultVar retRep dupped
                                                 (RDrop emptyFC [RCLoc p] (RV emptyFC (RCLoc resultVar)))))
               in (fst wrapInvariantShadows, MkRCFun args retRep isWorker (snd wrapInvariantShadows))
-applyLoopFromId nextId0 _ _ _ _ d = (nextId0, d)
+applyLoopFromId nextId0 _ _ _ d = (nextId0, d)
 
 ||| Reads/writes the shared, whole-compile `VarId` counter
 ||| (`Compiler.RC2.Util`) once around `applyLoopFromId`'s own pure
@@ -1606,9 +1611,9 @@ applyLoopFromId nextId0 _ _ _ _ d = (nextId0, d)
 ||| module's header note on `nextId0`, for why a scan is no longer
 ||| needed to find a safe starting value.
 export
-applyLoop : {auto v : Ref VarId Int} -> SortedMap Name (List (Maybe PrimType)) -> SortedMap Name (Name, List Rep, Rep, Bool) -> SortedSet Int -> Name -> RCDef -> Core RCDef
-applyLoop calleeTable ptrTable noPromote self d = do
+applyLoop : {auto v : Ref VarId Int} -> CalleeTable -> SortedSet Int -> Name -> RCDef -> Core RCDef
+applyLoop calleeTable noPromote self d = do
     nextId0 <- get VarId
-    let (nextId', d') = applyLoopFromId nextId0 calleeTable ptrTable noPromote self d
+    let (nextId', d') = applyLoopFromId nextId0 calleeTable noPromote self d
     put VarId nextId'
     pure d'

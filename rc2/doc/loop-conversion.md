@@ -1385,18 +1385,20 @@ worker now correctly declares that parameter `Native`, not `Boxed`.
 **Now closed** for the common case: a loop-carried parameter threaded
 only through a call to a helper like `step` above now gets the same
 native-shadow promotion a direct `ROp`/`RCmpCase` operand read already
-got. `Compiler.RC2.Loop`'s `calleeNativeParams`/`buildCalleeTable`
+got. `Compiler.RC2.Loop`'s `primCallee`/`buildCalleeTable`
 build a whole-program table, once, from the post-`MutualLoop`/pre-`Loop`
 def list -- each entry purely that one definition's own (unchanged)
 `nativeArgType` verdict per parameter, never consulting another entry,
 so no fixed point or cycle handling is needed (`MutualLoop`-merged
 dispatchers excluded via `isMutualLoopMerged`, now shared from
 `Compiler.RC2.Util` rather than living only in `Compiler.RC2.DualABI`).
-`callArgNativeTypes`/`callArgOrOpNativeType` then ask, for a top-level
+`callArgNativeReadsFor`/`callArgOrOpNativeType` then ask, for a top-level
 parameter `p`, whether it's fed as a direct, saturated argument to a
 callee the table says is independently native-eligible at that exact
 position; `applyLoop` unions this into `eligibleVariant` (a new
 `calleeTable` argument threaded through from `RC2.idr`'s `toRCDefs`).
+The table also holds raw-pointer positions (`ptrCalleeTable`, `TPtr`), which
+`ptrParams` reads the same way (`doc/native-pointer.md`).
 
 Two scope limits remain deliberate, not oversights:
 

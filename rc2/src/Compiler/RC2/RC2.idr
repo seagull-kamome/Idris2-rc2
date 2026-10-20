@@ -57,7 +57,6 @@ import Compiler.RC2.LazyCaf
 import Compiler.RC2.LazyFold
 import Compiler.RC2.MutualLoop
 import Compiler.RC2.Loop
-import Compiler.RC2.PtrParams
 import Compiler.RC2.Sink
 import Compiler.RC2.Types
 import Compiler.RC2.Util
@@ -412,7 +411,6 @@ toRCDefs disabled incremental roots thunks preFolded = do
                  then pure merged
                  else logTime 2 "rc2: Loop conversion" $ do
                         calleeTable <- logTime 3 "rc2: Loop conversion (build callee table)" $ pure (buildCalleeTable merged)
-                        let ptrTable = ptrParamTable merged
                         -- `logTimeOver` (unconditional, not gated behind
                         -- `--timing`) rather than one `logTime` call per
                         -- definition -- this stage's own cost turned out
@@ -430,7 +428,7 @@ toRCDefs disabled incremental roots thunks preFolded = do
                                                        _ => ""
                                       in logTimeOver slowApplyLoopThresholdNs
                                            (pure ("rc2: Loop conversion (apply) slow definition: " ++ show n ++ stats))
-                                           (do d' <- applyLoop calleeTable ptrTable (fromMaybe SortedSet.empty (lookup n noPromotes)) n d; pure (n, d'))) merged
+                                           (do d' <- applyLoop calleeTable (fromMaybe SortedSet.empty (lookup n noPromotes)) n d; pure (n, d'))) merged
     -- rc2/doc/inlining.md's "Criterion B, revisited": strictly after
     -- Loop/MutualLoop conversion, so a self- or mutually-tail-recursive
     -- candidate's own recursion has already collapsed into RLoop/

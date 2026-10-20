@@ -26,7 +26,6 @@ import Compiler.Common
 import Compiler.RC2.RCExp
 import Compiler.RC2.Types
 import Compiler.RC2.Loop
-import Compiler.RC2.PtrParams
 import Compiler.RC2.MutualLoop
 import Compiler.RC2.Emit.Util
 import Compiler.RC2.ForeignSpec
@@ -681,54 +680,27 @@ anyNative : Rep -> Bool
 anyNative RBoxed = False
 anyNative _ = True
 
-||| Every native `PrimType` at which `var` is read as a direct,
-||| saturated call argument somewhere in `e`, at a position `workers`
-||| says its callee reads natively -- extends the same "skip the
-||| box-then-unbox round trip" idea to a *call* consuming the value, not
-||| just an `ROp`/bare tail (`ffiCall2 (ffiCall1 x) y`-shaped chains).
-||| Walks the whole tree like `nativeArgTypes`; looks only at bare
-||| `RAppName` (`e` is always pre-Stage-4-rewrite here). Whether the
-||| callee's own tag is FFI or ordinary doesn't matter -- an occurrence
-||| in a still-deferred tail-position call to an ordinary worker just
-||| gets reboxed on the way in, same "reboxed on demand" reasoning
-||| `nativePromotionFor` relies on. See `doc/dual-abi.md`'s "Extending
-||| the promotion to call-argument chains".
+||| Every native type at which `var` is read as a direct, saturated call
+||| argument somewhere in `e`, at a position `workers` says its callee reads
+||| natively -- extends the same "skip the box-then-unbox round trip" idea to a
+||| *call* consuming the value, not just an `ROp`/bare tail
+||| (`ffiCall2 (ffiCall1 x) y`-shaped chains). Whether the callee's own tag is
+||| FFI or ordinary doesn't matter -- an occurrence in a still-deferred
+||| tail-position call to an ordinary worker just gets reboxed on the way in,
+||| same "reboxed on demand" reasoning `nativePromotionFor` relies on. See
+||| `doc/dual-abi.md`'s "Extending the promotion to call-argument chains".
+covering
 callArgNativeReads : SortedMap Name (Name, List Rep, Rep, Bool) -> Int -> RCExp -> SortedSet NativeTy
-callArgNativeReads workers var (RLet _ _ _ value body) =
-    callArgNativeReads workers var value `union` callArgNativeReads workers var body
-callArgNativeReads workers var (RCmpCase _ _ _ _ t f) =
-    callArgNativeReads workers var t `union` callArgNativeReads workers var f
-callArgNativeReads workers var (RConCase _ _ alts mDef) =
-    concat (map (\(MkRConAlt _ _ _ _ body) => callArgNativeReads workers var body) alts)
-      `union` maybe empty (callArgNativeReads workers var) mDef
-callArgNativeReads workers var (RConstCase _ _ alts mDef) =
-    concat (map (\(MkRConstAlt _ body) => callArgNativeReads workers var body) alts)
-      `union` maybe empty (callArgNativeReads workers var) mDef
-callArgNativeReads workers var (RLoop _ _ _ _ body) = callArgNativeReads workers var body
-callArgNativeReads workers var (RDup _ _ _ cont) = callArgNativeReads workers var cont
-callArgNativeReads workers var (RDrop _ _ cont) = callArgNativeReads workers var cont
-callArgNativeReads workers var (RFree _ _ cont) = callArgNativeReads workers var cont
-callArgNativeReads workers var (RReleaseReuse _ _ cont) = callArgNativeReads workers var cont
-callArgNativeReads workers var (RReuseOffer _ _ _ _ cont) = callArgNativeReads workers var cont
-callArgNativeReads workers var (RAppName _ _ n args) =
-    case lookup n workers of
-         Nothing => empty
-         Just (_, argReps, _, _) =>
-             if length args /= length argReps
-                then empty
-                else fromList $ mapMaybe (\(a, r) => if a == RCLoc var
-                                                          then case r of
-                                                                    RNative ty => Just ty
-                                                                    RInlineNative ty => Just ty
-                                                                    _ => Nothing
-                                                          else Nothing)
-                                          (zip args argReps)
--- Every other shape (RV, RAppNameRep, RUnderApp, RApp, RCon, a bare
--- ROp/RExtPrim, RPrimVal, RErased, RCrash, RLoopContinue, RStructGet,
--- RStructSet): no call-argument position of its own to inspect, and
--- none hold a further RCExp to recurse into beyond what
--- RLet/RCmpCase/RConCase/RConstCase/RLoop above already visit.
-callArgNativeReads _ _ _ = empty
+callArgNativeReads workers var e =
+    fromMaybe empty (lookup var (callArgNativeReadsFor workerPositions (SortedSet.singleton var) e))
+  where
+    repTy : Rep -> Maybe NativeTy
+    repTy (RNative ty) = Just ty
+    repTy (RInlineNative ty) = Just ty
+    repTy _ = Nothing
+
+    workerPositions : Name -> Maybe (List (Maybe NativeTy))
+    workerPositions n = map (\(_, argReps, _, _) => map repTy argReps) (lookup n workers)
 
 ||| Whole-program pass: synthesises a worker + thin wrapper for every
 ||| eligible `MkRCFun` (`Compiler.RC2.MutualLoop`-merged functions
@@ -750,7 +722,7 @@ applyDualABI boolReturn defs = do
     _ <- newRef FreshId 0
     let boolPlan : SortedSet Name := if boolReturn then boolReturnPlan defs else empty
     let existingNames = SortedSet.fromList (map fst defs)
-    let ptrTable = ptrParamTable defs
+    let ptrTable = ptrCalleeTable defs
     -- `foldr (++) []`, not `concat`: `Foldable List` overrides
     -- `foldMap` with `foldl (\acc, x => acc <+> f x) neutral`, so
     -- `concat` (and `concatMap`) left-nest `++` and copy the whole
@@ -758,7 +730,7 @@ applyDualABI boolReturn defs = do
     -- whole-program def list. See `code-style-Idris2.md`.
     foldr (++) [] <$> traverse (synthesizeIfEligible ptrTable boolPlan existingNames) defs
   where
-    synthesizeIfEligible : {auto r : Ref FreshId Int} -> SortedMap Name (Name, List Rep, Rep, Bool) -> SortedSet Name -> SortedSet Name -> (Name, RCDef) -> Core (List (Name, RCDef))
+    synthesizeIfEligible : {auto r : Ref FreshId Int} -> CalleeTable -> SortedSet Name -> SortedSet Name -> (Name, RCDef) -> Core (List (Name, RCDef))
     synthesizeIfEligible ptrTable boolPlan existingNames (n, d@(MkRCFun args retRep _ body)) =
         if isMutualLoopMerged n
            then pure [(n, d)]

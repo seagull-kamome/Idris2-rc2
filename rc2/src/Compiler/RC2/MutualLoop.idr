@@ -141,7 +141,7 @@ tarjanSCCs graph =
 -- Synthesising one merged group.
 
 buildGroup : {auto r : Ref FreshId Int} -> {auto v : Ref VarId Int}
-          -> SortedMap Name (List (Maybe PrimType))
+          -> CalleeTable
           -> SortedSet Name
           -> SortedMap Name (List Int, RCExp)
           -> List Name
