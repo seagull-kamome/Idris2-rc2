@@ -53,9 +53,15 @@ takeDropInRun v (RDrop fc vs body) =
        else RDrop fc vs <$> takeDropInRun v body
 takeDropInRun _ _ = Nothing
 
+||| Where `nativeBound` lists a `let` bound to a `NULL` value.
+nullBoundKey : Int -> Int
+nullBoundKey i = negate i - 1
+
 ||| The locals bound with a native `Rep` (a parameter, a `let`, a loop
-||| parameter), and the `let`s bound to an erased value or the world token
-||| (C `NULL`): no reference count, never named by a `postDrop`.
+||| parameter): no reference count, never named by a `postDrop`. A `let`
+||| bound to an erased value or the world token (C `NULL`) is the same for
+||| `readsOnly`, but it is still a boxed local, so it is listed apart, as
+||| `nullBoundKey`: `renameAliasDrop` must tell the two apart.
 nativeBound : List (Int, Rep) -> RCExp -> SortedSet Int
 nativeBound args body = union (fromList (mapMaybe nativeParam args)) (go body)
   where
@@ -72,7 +78,7 @@ nativeBound args body = union (fromList (mapMaybe nativeParam args)) (go body)
 
     go : RCExp -> SortedSet Int
     go e = let here = case e of
-                           RLet _ x rep v _ => if nullValued v then singleton x else maybe empty singleton (nativeParam (x, rep))
+                           RLet _ x rep v _ => if nullValued v then singleton (nullBoundKey x) else maybe empty singleton (nativeParam (x, rep))
                            RLoop _ ps _ _ _ => fromList (mapMaybe nativeParam ps)
                            _ => empty
            in foldl (\acc, c => union acc (go c)) here (children e)
@@ -90,7 +96,7 @@ readsOnly ns args pd = all ok args
     occurrences x xs = length (filter (== x) xs)
 
     ok : RCLocal -> Bool
-    ok x@(RCLoc i) = contains i ns || occurrences x args <= occurrences x pd
+    ok x@(RCLoc i) = contains i ns || contains (nullBoundKey i) ns || occurrences x args <= occurrences x pd
     ok _ = True
 
 ||| The `postDrop` list of the first node after a run of `RDup`s, with

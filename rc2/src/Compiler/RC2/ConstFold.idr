@@ -314,7 +314,7 @@ foldConst caf env (RLet fc var rep value body) =
                              in if contains (RCLoc var) (freeLocalsR body')
                                    then RLet fc var rep value' body'
                                    else body'
-                         _ => RLet fc var rep value' (foldConst caf env body)
+                         _ => if c == WorldVal then foldNull var (Element RCWorld ItIsWorld2) else RLet fc var rep value' (foldConst caf env body)
             RV _ cval@(RCConstCon {}) =>
                 let body' = foldConst caf (insertConst var (Element cval ItIsConstCon2) env) body
                 in if contains (RCLoc var) (freeLocalsR body')
@@ -332,6 +332,10 @@ foldConst caf env (RLet fc var rep value body) =
                 in if contains (RCLoc var) (freeLocalsR body')
                       then RLet fc var rep value' body'
                       else body'
+            RErased _ => foldNull var (Element RCErased ItIsErased2)
+            RV _ RCErased => foldNull var (Element RCErased ItIsErased2)
+            RV _ RCWorld => foldNull var (Element RCWorld ItIsWorld2)
+            RV _ RCNull => foldNull var (Element RCNull ItIsNull2)
             -- A non-escaping constructor with a non-constant field,
             -- possibly at the end of a let chain: the chain's bindings
             -- are floated out so the fields stay in scope for `body`.
@@ -360,6 +364,16 @@ foldConst caf env (RLet fc var rep value body) =
                                                else body'
                       _ => RLet fc var rep value' (foldConst caf env body)
   where
+    -- A value held as C `NULL` (an erased value, the world token, a
+    -- nullary constructor): every reader takes the constant instead, and
+    -- the `let` goes once none is left.
+    foldNull : Int -> Subset RCLocal IsAnyConstLocal -> RCExp
+    foldNull var c =
+        let body' = foldConst caf (insertConst var c env) body
+        in if contains (RCLoc var) (freeLocalsR body')
+              then RLet fc var rep (foldConst caf env value) body'
+              else body'
+
     splitLetChain : RCExp -> (RCExp -> RCExp, RCExp)
     splitLetChain (RLet fc' v r e b) = let (wrap, t) = splitLetChain b in (RLet fc' v r e . wrap, t)
     splitLetChain e = (id, e)
