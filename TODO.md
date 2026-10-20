@@ -5,14 +5,6 @@ scattered code comments. Nothing below is a known correctness bug in
 what's implemented -- see `rc2/tests/refc-suite/README.md` for bugs that
 were found and already fixed.
 
-## Performance: native `Ptr`/`AnyPtr` return values
-
-Pointers are immediate boxed words and native (`Native Ptr`, `IDRIS2RC2_Raw *`)
-between `%foreign` calls, in function parameters and in loop variables
-(`rc2/doc/native-pointer.md`). Left: a pointer return value
-(`returnEligibility` finds no native tail for a function ending in a
-`%foreign` call; `tailValueReps` is `PrimType` only).
-
 ## Performance: tail-position delegating calls stay boxed
 
 Native type inference (`Compiler.RC2.Types`) only applies to values

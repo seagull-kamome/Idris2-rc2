@@ -49,6 +49,6 @@ grep -E '\babs\(' "$c" | strip_loc
 echo "--- Compiler.RC2.Loop goto conversion for sumLoop's own worker body ---"
 awk '/^int64_t idris2rc2_worker_Main_sumLoop_[0-9]+$/{n++; if (n==2) p=1} p{print} p&&/^}/{exit}' "$c" | strip_loc
 
-echo "--- Tail-position FFI call for tailAbs (want: inlined call + immediate return, no closure defer, rc2/doc/dual-abi.md Stage 4b) ---"
-awk '/^IDRIS2RC2_Value \*Main_tailAbs$/{n++; if (n==2) p=1} p{print} p&&/^}/{exit}' "$c" | strip_loc
+echo "--- Tail-position FFI call for tailAbs (want: inlined call + immediate return, no closure defer, rc2/doc/dual-abi.md Stage 4b; its worker returns natively) ---"
+awk '/^int64_t idris2rc2_worker_Main_tailAbs_[0-9]+$/{n++; if (n==2) p=1} p{print} p&&/^}/{exit}' "$c" | strip_loc
 } | renumber

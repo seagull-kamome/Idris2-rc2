@@ -50,6 +50,16 @@ padA p q n = padB (prim__next p) (n - 1)
 padB p 0 = prim__addrOf p
 padB p n = padA p (prim__next p) (n - 1)
 
+-- A function ending in a %foreign call returns natively (a pointer, or a
+-- scalar from two branches).
+advance : AnyPtr -> Int -> AnyPtr
+advance p 0 = prim__next p
+advance p n = prim__next (advance p (n - 1))
+
+addrOrNext : AnyPtr -> Int -> Bits64
+addrOrNext p 0 = prim__addrOf p
+addrOrNext p n = prim__addrOf (prim__next p)
+
 collected : IORef Nat -> IO ()
 collected c = do
   let p = prim__ptrOf 4096
@@ -67,6 +77,8 @@ run = do
   printLn (map (\p => outer 3 p) ps)
   printLn (map (\a => padA (prim__ptrOf a) (prim__ptrOf 1) 5) (filter (/= 0xffffffffffffffff) addrs))
   printLn (map (\a => prim__addrOf (walk (prim__ptrOf a) 5)) (filter (/= 0xffffffffffffffff) addrs))
+  printLn (map (\a => prim__addrOf (advance (prim__ptrOf a) 3)) (filter (/= 0xffffffffffffffff) addrs))
+  printLn (map (\a => addrOrNext (prim__ptrOf a) 0 + addrOrNext (prim__ptrOf a) 1) (filter (/= 0xffffffffffffffff) addrs))
   printLn (prim__nullAnyPtr (prim__ptrOf 0) /= 0, prim__nullAnyPtr (prim__ptrOf 8) /= 0)
   c <- newIORef 0
   collected c
