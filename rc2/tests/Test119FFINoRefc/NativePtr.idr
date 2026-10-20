@@ -19,6 +19,16 @@ prim__addrOf : AnyPtr -> Bits64
 addrs : List Bits64
 addrs = [0, 1, 7, 4096, 0x7fffffffffffffff, 0x8000000000000000, 0xffffffffffffffff, 0xdeadbeefcafe0001]
 
+-- A pointer parameter handed on to a %foreign call, through two functions
+-- that call each other so neither is inlined.
+mutual
+  outer : Nat -> AnyPtr -> Bits64
+  outer Z p = prim__addrOf p
+  outer (S k) p = inner k p + 0
+
+  inner : Nat -> AnyPtr -> Bits64
+  inner k p = outer k p + 1
+
 collected : IORef Nat -> IO ()
 collected c = do
   let p = prim__ptrOf 4096
@@ -33,6 +43,7 @@ run = do
   printLn (map (\a => prim__addrOf (prim__ptrOf a)) addrs)
   let f = \p => prim__addrOf p + 1
   printLn (map f ps)
+  printLn (map (\p => outer 3 p) ps)
   printLn (prim__nullAnyPtr (prim__ptrOf 0) /= 0, prim__nullAnyPtr (prim__ptrOf 8) /= 0)
   c <- newIORef 0
   collected c

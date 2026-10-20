@@ -75,6 +75,13 @@ alwaysUnboxed Bits32Type = True
 alwaysUnboxed CharType = True
 alwaysUnboxed _ = False
 
+||| `alwaysUnboxed` over `NativeTy`. A pointer is not: one with its top bit
+||| set is a heap box (`doc/native-pointer.md`).
+export
+tyAlwaysUnboxed : NativeTy -> Bool
+tyAlwaysUnboxed (TPrim ty) = alwaysUnboxed ty
+tyAlwaysUnboxed TPtr = False
+
 ||| The `PrimFn`s whose Boxed result is *always* `idris2rc2_mkBool(..)`,
 ||| a tagged `Int8` immediate, never a heap value: the five comparisons,
 ||| whatever their operand type. Every `idris2rc2_{lt,gt,eq,lte,gte}_<T>`
