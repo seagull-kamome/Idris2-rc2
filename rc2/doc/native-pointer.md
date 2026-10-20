@@ -131,8 +131,8 @@ position (`callArgNativeReads`). The IR shows it as `Native Ptr`; C declares
 `IDRIS2RC2_Raw *`, converted to and from the boxed word by `mkPtr`/`toPtr`
 and to `void *` at the call. `CFGCPtr` stays boxed.
 
-A function parameter is native too (`ptrParamTable`, `ptrParams` in
-`Compiler.RC2.DualABI`): a parameter whose every use is a call argument at a
+A function parameter is native too (`ptrCalleeTable`, `ptrParams` in
+`Compiler.RC2.Loop`): a parameter whose every use is a call argument at a
 `TPtr` position of a `%foreign` declaration, or of another function's pointer
 parameter (found by a fixed number of rounds), becomes `Native Ptr` in the
 function's worker; the boxed wrapper converts. `Loop.stripOwnership` now also
@@ -141,10 +141,10 @@ clears a promoted local from a worker call's `postDrop`, which struct return
 `IDRIS2RC2_Raw *` made the C compiler reject the stale `idris2rc2_drop`.
 
 A loop variable is native as well. `Compiler.RC2.Loop` shadows a loop
-parameter read only as a raw pointer (`PtrParams.ptrParams`) as `Native Ptr`,
+parameter read only as a raw pointer (`Loop.ptrParams`) as `Native Ptr`,
 as it does a `PrimType` one, and `nativePromotionFor` counts a continue
-argument into such a slot as a native read. `PtrParams` holds the analysis
-shared by `Loop` and `DualABI`. `BenchPtrWalk.idr` (a pointer advanced on
+argument into such a slot as a native read. The analysis is `Loop.callArgNativeReadsFor`, shared by `Loop` and
+`DualABI`, over a `CalleeTable` of `NativeTy` positions. `BenchPtrWalk.idr` (a pointer advanced on
 every iteration): 0.41 s to 0.116 s.
 
 Not native yet: a pointer return value. `returnEligibility` finds no native
