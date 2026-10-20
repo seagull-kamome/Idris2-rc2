@@ -1122,6 +1122,7 @@ rcVarToNativeC : {auto a : Ref ArgCounter Nat}
 -- otherwise unbox a literal C `NULL`, straight into a null-pointer
 -- dereference in the runtime accessor -- a real crash this exact
 -- pattern used to hit before this clause existed.
+rcVarToNativeC TPtr RCNull = pure ("((IDRIS2RC2_Raw *)NULL)", [])
 rcVarToNativeC _ RCNull = pure ("0", [])
 rcVarToNativeC ty l = do
     rep <- repOfLocal l

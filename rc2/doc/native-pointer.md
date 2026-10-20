@@ -147,6 +147,13 @@ argument into such a slot as a native read. The analysis is `Loop.callArgNativeR
 `DualABI`, over a `CalleeTable` of `NativeTy` positions. `BenchPtrWalk.idr` (a pointer advanced on
 every iteration): 0.41 s to 0.116 s.
 
+`Compiler.RC2.MutualLoop` shares slots by the native type `callArgOrOpNativeTy`
+gives each parameter, now a `NativeTy`, so a merged group of functions that
+tail-call each other carries a pointer in a `Native Ptr` slot (`BenchPtrMutual.idr`,
+0.125 s for 200M steps). A slot a member leaves unused is filled with a null
+pointer: `rcVarToNativeC` renders `RCNull` as `0` for a scalar, which an
+`IDRIS2RC2_Raw *` rejects.
+
 Not native yet: a pointer return value. `returnEligibility` finds no native
 tail for a function that ends in a `%foreign` call (an integer return has the
 same limit), and the tail leaves of `tailValueReps` are `PrimType` only.

@@ -627,15 +627,17 @@ buildCalleeTable defs =
       (fromList $ mapMaybe (\(n, d) => if isMutualLoopMerged n then Nothing else map (n,) (primCallee d)) defs)
       (ptrCalleeTable defs)
 
-||| The single native `PrimType` at which parameter `p` is read as an operand
-||| or fed to a callee `table` says reads it as a scalar -- `Nothing` for no
-||| reads, or conflicting ones.
+||| The single native type at which parameter `p` is read: as an operand, or
+||| fed to a callee `table` says reads that position natively (a scalar or a
+||| raw pointer) -- `Nothing` for no reads, or conflicting ones. The class
+||| `MutualLoop` shares slots by, so it must be the very question `applyLoop`
+||| asks of each member.
 export covering
-callArgOrOpNativeType : CalleeTable -> Int -> RCExp -> Maybe PrimType
-callArgOrOpNativeType table p body =
-    let reads = maybe empty id (lookup p (callArgNativeReadsFor (tableLookup table) (SortedSet.singleton p) body))
-        calls = mapMaybe (\ty => case ty of { TPrim t => Just t; TPtr => Nothing }) (Prelude.toList reads)
-    in case Prelude.toList (nativeArgTypes p body `union` SortedSet.fromList calls) of
+callArgOrOpNativeTy : CalleeTable -> Int -> RCExp -> Maybe NativeTy
+callArgOrOpNativeTy table p body =
+    let calls = maybe empty id (lookup p (callArgNativeReadsFor (tableLookup table) (SortedSet.singleton p) body))
+        ops = SortedSet.fromList (map TPrim (Prelude.toList (nativeArgTypes p body)))
+    in case Prelude.toList (ops `union` calls) of
             [ty] => Just ty
             _ => Nothing
 
@@ -1452,7 +1454,7 @@ applyLoopFromId nextId0 calleeTable noPromote self (MkRCFun args retRep isWorker
                   nativeTyOf Nothing p = if contains p ptrIds then Just TPtr else Nothing
                   eligibleVariant : List (Int, NativeTy) := mapMaybe (\p => if contains p invariantIdsPre || contains p noPromote
                                                                                 then Nothing
-                                                                                else map (\ty => (p, ty)) (nativeTyOf (callArgOrOpNativeType calleeTable p body') p))
+                                                                                else map (\ty => (p, ty)) (callArgOrOpNativeTy calleeTable p body'))
                                                                       argIds
                   eligibleInvariant : List (Int, NativeTy) := mapMaybe (\p => if contains p invariantIdsPre && not (contains p noPromote)
                                                                                   then map (\ty => (p, ty)) (nativeTyOf (nativeArgType p body') p)
