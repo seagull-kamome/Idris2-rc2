@@ -166,17 +166,10 @@ IDRIS2RC2_String *idris2rc2_mkStringLen(char const *s, size_t len) {
   return v;
 }
 
-IDRIS2RC2_Pointer *idris2rc2_mkPointer(void *raw) {
-  IDRIS2RC2_Pointer *p = IDRIS2RC2_NEW(IDRIS2RC2_Pointer);
-  p->header.tag = IDRIS2RC2_TAG_POINTER;
-  p->p = raw;
-  return p;
-}
-
 IDRIS2RC2_GCPointer *idris2rc2_mkGCPointer(void *raw, IDRIS2RC2_Closure *onCollect) {
   IDRIS2RC2_GCPointer *p = IDRIS2RC2_NEW(IDRIS2RC2_GCPointer);
   p->header.tag = IDRIS2RC2_TAG_GCPOINTER;
-  p->p = idris2rc2_mkPointer(raw);
+  p->p = idris2rc2_mkPtr(raw);
   p->onCollect = onCollect;
   return p;
 }
@@ -248,7 +241,6 @@ again:
   case IDRIS2RC2_TAG_INT32:
   case IDRIS2RC2_TAG_INT64:
   case IDRIS2RC2_TAG_DOUBLE:
-  case IDRIS2RC2_TAG_POINTER:
     break;
   case IDRIS2RC2_TAG_INTEGER:
     mpz_clear(((IDRIS2RC2_Integer *)v)->v);

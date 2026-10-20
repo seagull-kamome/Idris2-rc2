@@ -127,6 +127,16 @@ cfTypeNative CFDouble     = Just DoubleType
 cfTypeNative CFChar       = Just CharType
 cfTypeNative _            = Nothing
 
+||| `cfTypeNative`, plus the pointer types: a `%foreign` argument or return
+||| that is a raw C pointer (`Ptr`, `AnyPtr`, a struct pointer) is a native
+||| `TPtr` (`doc/native-pointer.md`). `CFGCPtr` stays Boxed: its finalizer
+||| depends on the refcount.
+export
+cfTypeNativeTy : CFType -> Maybe NativeTy
+cfTypeNativeTy CFPtr = Just TPtr
+cfTypeNativeTy (CFStruct _ _) = Just TPtr
+cfTypeNativeTy ty = TPrim <$> cfTypeNative ty
+
 ||| The PrimType a specific operand of `op` needs, given the op's own
 ||| result type `ty`: every operand shares `ty` except Cast's single
 ||| argument, whose *source* type is the op's own `i`, not `ty`. Shared

@@ -87,8 +87,8 @@ paramEligibility argIds body =
          Just (letReps, loopParams) =>
              let m = foldl (\mp, (i, r) => insert i r mp) letReps loopParams
              in map (\p => (p, case lookup p m of
-                                     Just (RNative ty) => Just ty
-                                     Just (RInlineNative ty) => Just ty
+                                     Just (RNative (TPrim ty)) => Just ty
+                                     Just (RInlineNative (TPrim ty)) => Just ty
                                      _ => Nothing)) argIds
          Nothing => let found = nativeArgTypeBatch argIds body
                     in map (\p => (p, lookup p found)) argIds
@@ -137,8 +137,8 @@ tailValueReps = tailLeaves leafRep
     leafRep : SortedMap Int Rep -> RCExp -> Maybe PrimType
     leafRep reps (RV _ (RCLoc i)) =
         case lookup i reps of
-             Just (RNative ty) => Just ty
-             Just (RInlineNative ty) => Just ty
+             Just (RNative (TPrim ty)) => Just ty
+             Just (RInlineNative (TPrim ty)) => Just ty
              _ => Nothing
     leafRep _ (RV _ (RCConst c)) = litRep c
     leafRep _ (ROp _ _ op _ _) = opResultRep op
@@ -155,8 +155,8 @@ tailValueReps = tailLeaves leafRep
     -- already native.
     leafRep _ (RAppNameRep _ _ _ retRep _ _) =
         case retRep of
-             RNative ty => Just ty
-             RInlineNative ty => Just ty
+             RNative (TPrim ty) => Just ty
+             RInlineNative (TPrim ty) => Just ty
              _ => Nothing
     -- RAppName, RUnderApp, RApp, RCon, RExtPrim, RErased, RCrash,
     -- RStructGet, RStructSet, any other RV: never a native value
@@ -181,7 +181,7 @@ allJustSame (Nothing :: _) = Nothing
 export
 returnEligibility : List (Int, Maybe PrimType) -> RCExp -> Maybe PrimType
 returnEligibility params body =
-    let seeded = fromList $ mapMaybe (\(p, mty) => map (\ty => (p, RNative ty)) mty) params
+    let seeded = fromList $ mapMaybe (\(p, mty) => map (\ty => (p, RNative (TPrim ty))) mty) params
     in allJustSame (tailValueReps seeded body)
 
 ||| One line per `MkRCFun` def: `paramEligibility`/`returnEligibility`'s
@@ -432,8 +432,8 @@ structReturnPlan mergedToo defs =
 ||| see saturated. Nothing is ever inferred from a consumer.
 boolTail : SortedMap Name Nat -> SortedMap Int Rep -> RCExp -> RetTail
 boolTail _ reps (RV _ (RCLoc i)) = case lookup i reps of
-    Just (RNative Bits8Type) => TailProducer
-    Just (RInlineNative Bits8Type) => TailProducer
+    Just (RNative (TPrim Bits8Type)) => TailProducer
+    Just (RInlineNative (TPrim Bits8Type)) => TailProducer
     _ => TailOther
 boolTail _ _ (RV _ (RCConst c)) = producerIf (litRep c)
   where
@@ -478,7 +478,7 @@ boolReturnPlan defs =
     funTails arities (n, MkRCFun args _ _ body) =
         if isMutualLoopMerged n then Nothing
         else let params = paramEligibility (map fst args) body
-                 seeded : SortedMap Int Rep := fromList (mapMaybe (\(p, mty) => map (\ty => (p, RNative ty)) mty) params)
+                 seeded : SortedMap Int Rep := fromList (mapMaybe (\(p, mty) => map (\ty => (p, RNative (TPrim ty))) mty) params)
              in Just (n, tailLeaves (boolTail arities) seeded body)
     funTails _ _ = Nothing
 
@@ -516,8 +516,8 @@ tailFields reps (RCon _ _ _ (Just t) args@(_ :: _) _) = [(t, map (fieldKind reps
   where
     fieldKind : SortedMap Int Rep -> RCLocal -> Maybe PrimType
     fieldKind reps (RCLoc i) = case lookup i reps of
-        Just (RNative ty) => if retCarries ty then Just ty else Nothing
-        Just (RInlineNative ty) => if retCarries ty then Just ty else Nothing
+        Just (RNative (TPrim ty)) => if retCarries ty then Just ty else Nothing
+        Just (RInlineNative (TPrim ty)) => if retCarries ty then Just ty else Nothing
         _ => Nothing
     fieldKind _ (RCConst c) = litRep c >>= \ty => if retCarries ty then Just ty else Nothing
     fieldKind _ _ = Nothing
@@ -648,14 +648,14 @@ synthesizeWorker existingNames original eligible retEligible args wrapperRetRep 
         eligibleOf p = Data.SortedMap.lookup p (Data.SortedMap.fromList eligible)
         workerArgs : List (Int, Rep)
         workerArgs = map (\(p, _) => case eligibleOf p of
-                                           Just ty => (p, RNative ty)
+                                           Just ty => (p, RNative (TPrim ty))
                                            Nothing => (p, RBoxed)) args
         promotedIds : SortedSet Int
         promotedIds = fromList (map fst eligible)
         workerBody : RCExp
         workerBody = stripOwnership promotedIds body
         workerRetRep : Rep
-        workerRetRep = maybe wrapperRetRep RNative retEligible
+        workerRetRep = maybe wrapperRetRep (RNative . TPrim) retEligible
         workerDef : RCDef
         workerDef = MkRCFun workerArgs workerRetRep True workerBody
         wrapperArgIds : List Int
@@ -733,7 +733,7 @@ peelIORes t = t
 ||| `returnEligibility` above), which genuinely depends on how a whole
 ||| function body uses it.
 repOf : CFType -> Rep
-repOf ty = maybe RBoxed RNative (cfTypeNative ty)
+repOf ty = maybe RBoxed RNative (cfTypeNativeTy ty)
 
 anyNative : Rep -> Bool
 anyNative RBoxed = False
@@ -896,7 +896,7 @@ bareTailNativeReads var e =
 ||| gets reboxed on the way in, same "reboxed on demand" reasoning
 ||| `nativePromotionFor` relies on. See `doc/dual-abi.md`'s "Extending
 ||| the promotion to call-argument chains".
-callArgNativeReads : SortedMap Name (Name, List Rep, Rep, Bool) -> Int -> RCExp -> SortedSet PrimType
+callArgNativeReads : SortedMap Name (Name, List Rep, Rep, Bool) -> Int -> RCExp -> SortedSet NativeTy
 callArgNativeReads workers var (RLet _ _ _ value body) =
     callArgNativeReads workers var value `union` callArgNativeReads workers var body
 callArgNativeReads workers var (RCmpCase _ _ _ _ t f) =
@@ -965,8 +965,8 @@ loopContinueNativeReads loopParams var (RLoopContinue _ args _) =
     fromList $ mapMaybe (\((_, paramRep), arg) =>
                               if arg == RCLoc var
                                  then case paramRep of
-                                           RNative ty => Just ty
-                                           RInlineNative ty => Just ty
+                                           RNative (TPrim ty) => Just ty
+                                           RInlineNative (TPrim ty) => Just ty
                                            _ => Nothing
                                  else Nothing)
                          (zip loopParams args)
@@ -1005,12 +1005,12 @@ branchValueNativeType _ _ = Nothing
 ||| keeps working via `rcVarToBoxedC`'s own on-demand reboxing (a scalar
 ||| has no observable identity, see `stripOwnership`'s own doc comment).
 ||| See `doc/dual-abi.md`'s "The promotion: `nativePromotionFor`".
-nativePromotionFor : SortedMap Name (Name, List Rep, Rep, Bool) -> Maybe (List (Int, Rep)) -> Int -> PrimType -> RCExp -> Maybe PrimType
+nativePromotionFor : SortedMap Name (Name, List Rep, Rep, Bool) -> Maybe (List (Int, Rep)) -> Int -> NativeTy -> RCExp -> Maybe NativeTy
 nativePromotionFor workers mLoopParams var ty body =
     let fromLoop = maybe empty (\loopParams => loopContinueNativeReads loopParams var body) mLoopParams
-        found = ((nativeArgTypes var body `union` bareTailNativeReads var body)
-                  `union` callArgNativeReads workers var body)
-                  `union` fromLoop
+        primReads = (nativeArgTypes var body `union` bareTailNativeReads var body) `union` fromLoop
+        found = SortedSet.fromList (map TPrim (Prelude.toList primReads))
+                  `union` callArgNativeReads workers var body
     in case Prelude.toList found of
             [ty'] => if ty' == ty then Just ty else Nothing
             _ => Nothing
@@ -1044,13 +1044,13 @@ applyCallSiteRewriteBody workers reps mLoopParams inTail (RLet fc var rep value 
         -- produces the same native type (`branchValueNativeType`) --
         -- see `nativePromotionFor`'s own doc comment for the actual
         -- eligibility question then asked about `body`.
-        promotedTy : Maybe PrimType
+        promotedTy : Maybe NativeTy
         promotedTy = case rep of
                           RBoxed => case ultimateTail value1 of
                                          RAppNameRep _ _ _ (RNative ty) _ _ => nativePromotionFor workers mLoopParams var ty body
                                          RAppNameRep _ _ _ (RInlineNative ty) _ _ => nativePromotionFor workers mLoopParams var ty body
                                          branch => case branchValueNativeType reps branch of
-                                                        Just ty => nativePromotionFor workers mLoopParams var ty body
+                                                        Just ty => nativePromotionFor workers mLoopParams var (TPrim ty) body
                                                         Nothing => Nothing
                           _ => Nothing
     in case promotedTy of
@@ -1075,7 +1075,7 @@ applyCallSiteRewriteBody workers reps mLoopParams inTail (RConCase fc sc alts mD
     fieldReps : Maybe Int -> List Int -> SortedMap Int Rep
     fieldReps tag args = case (localRepIn reps sc, tag) of
         (RRet _ l, Just t) =>
-            foldl (\m, (k, a) => maybe m (\ty => insert a (RNative ty) m) (retFieldType l t k))
+            foldl (\m, (k, a) => maybe m (\ty => insert a (RNative (TPrim ty)) m) (retFieldType l t k))
                   reps (zip [0 .. length args] args)
         _ => reps
 
@@ -1576,12 +1576,12 @@ applyBoolReturnTails : List (Name, RCDef) -> List (Name, RCDef)
 applyBoolReturnTails defs =
     let ws : SortedMap Name StructWorker :=
             fromList (mapMaybe (\(n, (w, argReps, r, _)) => case r of
-                                                              RNative Bits8Type => Just (n, (w, argReps, r))
+                                                              RNative (TPrim Bits8Type) => Just (n, (w, argReps, r))
                                                               _ => Nothing)
                                (SortedMap.toList (workerTable defs)))
     in if null (SortedMap.toList ws) then defs else map (retarget ws) defs
   where
     retarget : SortedMap Name StructWorker -> (Name, RCDef) -> (Name, RCDef)
-    retarget ws (n, MkRCFun args (RNative Bits8Type) True body) =
-        (n, MkRCFun args (RNative Bits8Type) True (packTails ws empty (fromList args) body))
+    retarget ws (n, MkRCFun args (RNative (TPrim Bits8Type)) True body) =
+        (n, MkRCFun args (RNative (TPrim Bits8Type)) True (packTails ws empty (fromList args) body))
     retarget _ nd = nd

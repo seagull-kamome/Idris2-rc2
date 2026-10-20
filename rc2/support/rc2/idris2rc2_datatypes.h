@@ -34,7 +34,6 @@
 #define IDRIS2RC2_TAG_CONSTRUCTOR 17
 #define IDRIS2RC2_TAG_IOREF 20
 #define IDRIS2RC2_TAG_ARRAY 21
-#define IDRIS2RC2_TAG_POINTER 22
 #define IDRIS2RC2_TAG_GCPOINTER 23
 #define IDRIS2RC2_TAG_BUFFER 24
 #define IDRIS2RC2_TAG_MUTEX 25
@@ -74,6 +73,10 @@ typedef struct {
 // - Int, Int64 and Bits64 are shifted left by one, 63 bits wide.
 #define idris2rc2_is_unboxed(p) ((uintptr_t)(p)&1)
 #define idris2rc2_unbox_shift 32
+// A raw C pointer held natively. Never defined: an incomplete type, so the C
+// compiler tells it from an IDRIS2RC2_Value * (doc/native-pointer.md).
+typedef struct IDRIS2RC2_Raw IDRIS2RC2_Raw;
+
 #define IDRIS2RC2_IMM(bits) ((IDRIS2RC2_Value *)(((uintptr_t)(bits) << 1) | 1))
 #define idris2rc2_imm_signed(p) ((int64_t)((intptr_t)(p) >> 1))
 #define idris2rc2_imm_unsigned(p) ((uint64_t)((uintptr_t)(p) >> 1))
@@ -299,25 +302,16 @@ _Static_assert(ATOMIC_POINTER_LOCK_FREE == 2,
 
 typedef struct {
   IDRIS2RC2_Header header;
-  void *p;
-} IDRIS2RC2_Pointer;
-
-typedef struct {
-  IDRIS2RC2_Header header;
-  IDRIS2RC2_Pointer *p;
+  IDRIS2RC2_Value *p;
   IDRIS2RC2_Closure *onCollect;
 } IDRIS2RC2_GCPointer;
 
 // Backs Prelude.IO's `fork`'s own `ThreadID` return value. `ThreadID` is
 // `[external]` upstream (CFUser: identity pass-through, see
 // Compiler.RC2.EmitUtil's packCFType/extractValue for CFUser), so any
-// valid IDRIS2RC2_Value* would type-check -- this exists (rather than
-// reusing IDRIS2RC2_TAG_POINTER, a generic externally-owned-pointer
-// wrapper idris2rc2_teardown deliberately never frees the payload of)
-// purely so the pthread_t idris2rc2_fork needs to hand back has
+// valid IDRIS2RC2_Value* would type-check -- this exists purely so the pthread_t idris2rc2_fork needs to hand back has
 // somewhere to live that a normal drop actually reclaims, with no
-// separate malloc/free of its own the way a bare IDRIS2RC2_Pointer
-// wrapping a heap-allocated pthread_t* would need. No teardown action
+// separate malloc/free of its own. No teardown action
 // beyond freeing this struct itself: idris2rc2_fork already
 // pthread_detach()s before returning, unlike IDRIS2RC2_JoinHandle
 // (concurrency_util.c), which conditionally detaches based on its own
@@ -350,8 +344,7 @@ typedef struct {
 // rc2 marshals as CFUser (an unconstrained IDRIS2RC2_Value* passthrough,
 // see Compiler.RC2.EmitUtil's packCFType/extractValue for CFUser), so any
 // value shaped like this is a valid one. The pthread object is embedded
-// directly (one allocation, no extra indirection through
-// IDRIS2RC2_Pointer) and destroyed by idris2rc2_teardown once refcount
+// directly (one allocation, no extra indirection) and destroyed by idris2rc2_teardown once refcount
 // reaches zero, same as IDRIS2RC2_TAG_BUFFER's free(buf).
 typedef struct {
   IDRIS2RC2_Header header;

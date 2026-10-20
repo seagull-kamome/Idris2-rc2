@@ -349,7 +349,7 @@ shadowAltFields imm nextId argIds body =
             -- reference to own: nothing to re-derive, nothing to drop.
             (needsDrop, reAnnotated) = if contains (RCLoc p) imm then (False, marked)
                                        else reannotateFieldOwnership p True marked
-        in RLet emptyFC sid (RNative ty) (RV emptyFC (RCLoc p))
+        in RLet emptyFC sid (RNative (TPrim ty)) (RV emptyFC (RCLoc p))
              (if needsDrop then RDrop emptyFC [RCLoc p] reAnnotated else reAnnotated)
 
 ||| Walks the whole tree (an `RConCase` can appear anywhere, not just

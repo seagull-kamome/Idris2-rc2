@@ -10,9 +10,11 @@ module Main
 import Test119FFINoRefc.GCPtrAliasString
 import Test119FFINoRefc.ConstCFStringReturn
 import Test119FFINoRefc.CExprPriority
+import Test119FFINoRefc.NativePtr
 
 main : IO ()
 main = do
     GCPtrAliasString.run
     ConstCFStringReturn.run
     CExprPriority.run
+    NativePtr.run

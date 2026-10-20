@@ -209,17 +209,20 @@ sigBoxed sig = map (== "Boxed") (sigReps sig)
 
 ||| Per argument of an inlined FFI call (`[ccs...] [Int, %World] -> ret`):
 ||| does the call itself consume it? Every type but the ones
-||| `Compiler.RC2.Types.cfTypeNative` reads natively (those are
-||| discharged through `postDrop`).
+||| `Compiler.RC2.Types.cfTypeNativeTy` reads natively (those are
+||| discharged through `postDrop`): the scalars, `Ptr` and struct pointers.
 ffiBoxed : String -> List Bool
 ffiBoxed desc = case skipGroup (unpack desc) of
     Nothing => []
     Just (_, rest) => case skipGroup (dropWhile (== ' ') rest) of
         Nothing => []
-        Just (inner, _) => map (\t => not (elem (trim (pack t)) nativeCFTypes)) (splitTop inner)
+        Just (inner, _) => map (\t => not (isNativeCF (trim (pack t)))) (splitTop inner)
   where
     nativeCFTypes : List String
-    nativeCFTypes = ["Int", "Int_8", "Int_16", "Int_32", "Int_64", "Bits_8", "Bits_16", "Bits_32", "Bits_64", "Double", "Char"]
+    nativeCFTypes = ["Int", "Int_8", "Int_16", "Int_32", "Int_64", "Bits_8", "Bits_16", "Bits_32", "Bits_64", "Double", "Char", "Ptr"]
+
+    isNativeCF : String -> Bool
+    isNativeCF t = elem t nativeCFTypes || isPrefixOf "struct " t
 
     splitTop : List Char -> List (List Char)
     splitTop cs = go (the Nat 0) [] [] cs

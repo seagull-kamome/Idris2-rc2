@@ -5,28 +5,13 @@ scattered code comments. Nothing below is a known correctness bug in
 what's implemented -- see `rc2/tests/refc-suite/README.md` for bugs that
 were found and already fixed.
 
-## Performance: native (unboxed) `Ptr`/`CFPtr` representation -- investigated, not pursued
+## Performance: native `Ptr`/`AnyPtr` across function boundaries
 
-Neither `getField`'s own result nor `setField`'s own `value`, nor a
-struct pointer (`structVar`) itself, is ever native -- each pays for a
-Boxed `IDRIS2RC2_Pointer` heap allocation just to carry one raw
-pointer around. Investigated whether `Ptr`/`CFPtr` could join rc2's
-existing native-representation machinery. Structurally blocked before
-the semantics even come up: `Rep`'s `RNative`/`RInlineNative` are typed
-over upstream's own `PrimType`, which has no pointer case at all, so
-representing one at all needs a new `Rep` variant of rc2's own,
-touching every module that pattern-matches on `Rep`. Semantically
-murkier too: `CFGCPtr`'s own `onCollect` callback genuinely depends on
-refcounting to fire, so it would need permanent exclusion (`CFPtr`
-only); and even `CFPtr` alone would lose the weak reachability
-tracking its current Boxed wrapper provides, with no borrow/lifetime
-checker to make up for it once a future nested-struct-field-pointer
-feature makes that tracking matter more. See
-`rc2/doc/c-struct-support.md`'s own "Investigated: native (unboxed)
-`Ptr`/`CFPtr` representation" section for the full writeup. Not
-currently planned -- revisit only if profiling shows the allocation
-cost actually matters, with a concrete plan for the `CFGCPtr` split
-and the lifetime question.
+Pointers are immediate boxed words and native (`Native Ptr`, `IDRIS2RC2_Raw *`)
+between `%foreign` calls (`rc2/doc/native-pointer.md`; `BenchPtr.idr` 3.55 s to
+0.084 s). Left: a pointer parameter, loop variable or return value is still
+boxed, because `paramEligibility` and `Compiler.RC2.Loop` only look for
+`PrimType` uses. Extend them to `NativeTy` if a profile shows the crossings.
 
 ## Performance: tail-position delegating calls stay boxed
 

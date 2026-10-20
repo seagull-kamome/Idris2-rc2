@@ -146,7 +146,7 @@ IDRIS2RC2_Value *idris2rc2_Prelude_IO_prim__onCollect(IDRIS2RC2_Value *erased,
 						      IDRIS2RC2_Value *world) {
   IDRIS2RC2_GCPointer *r = IDRIS2RC2_NEW(IDRIS2RC2_GCPointer);
   r->header.tag = IDRIS2RC2_TAG_GCPOINTER;
-  r->p = (IDRIS2RC2_Pointer *)idris2rc2_dup(anyPtr);
+  r->p = idris2rc2_dup(anyPtr);
   r->onCollect = (IDRIS2RC2_Closure *)idris2rc2_dup(onFree);
   return (IDRIS2RC2_Value *)r;
 }
@@ -155,7 +155,7 @@ IDRIS2RC2_Value *idris2rc2_Prelude_IO_prim__onCollectAny(
     IDRIS2RC2_Value *anyPtr, IDRIS2RC2_Value *onFree, IDRIS2RC2_Value *world) {
   IDRIS2RC2_GCPointer *r = IDRIS2RC2_NEW(IDRIS2RC2_GCPointer);
   r->header.tag = IDRIS2RC2_TAG_GCPOINTER;
-  r->p = (IDRIS2RC2_Pointer *)idris2rc2_dup(anyPtr);
+  r->p = idris2rc2_dup(anyPtr);
   r->onCollect = (IDRIS2RC2_Closure *)idris2rc2_dup(onFree);
   return (IDRIS2RC2_Value *)r;
 }
@@ -199,10 +199,8 @@ void *idris2rc2_fork(IDRIS2RC2_Closure *fct) {
   // valid IDRIS2RC2_Value* works, and threadWait can never read it (see
   // above) -- but it still needs to actually be freed once dropped.
   // IDRIS2RC2_TAG_THREADID (datatypes.h) embeds tid directly rather than
-  // wrapping a separately malloc'd pthread_t* in a generic
-  // IDRIS2RC2_Pointer, whose own teardown deliberately never frees its
-  // payload (that's correct for an externally-owned pointer, but this
-  // one is ours) -- using it here leaked 8 bytes on every single fork.
+  // wrapping a separately malloc'd pthread_t*, which would leak 8 bytes on
+  // every single fork.
   return (IDRIS2RC2_Value *)idris2rc2_mkThreadID(tid);
 }
 

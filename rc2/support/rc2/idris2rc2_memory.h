@@ -187,7 +187,15 @@ IDRIS2RC2_String *idris2rc2_mkString(char const *s);
 // appends a NUL terminator.
 IDRIS2RC2_String *idris2rc2_mkStringLen(char const *s, size_t len);
 
-IDRIS2RC2_Pointer *idris2rc2_mkPointer(void *raw);
+// A raw C pointer as a boxed word: an immediate unless its top bit is set
+// (doc/native-pointer.md).
+static inline IDRIS2RC2_Value *idris2rc2_mkPtr(void *raw) {
+  uint64_t u = (uint64_t)(uintptr_t)raw;
+  return u < IDRIS2RC2_IMM_U64_LIMIT ? IDRIS2RC2_IMM_BITS64(u) : idris2rc2_mkBits64(u);
+}
+static inline void *idris2rc2_toPtr(IDRIS2RC2_Value *v) {
+  return (void *)(uintptr_t)idris2rc2_to_u64(v);
+}
 IDRIS2RC2_GCPointer *idris2rc2_mkGCPointer(void *raw,
 					   IDRIS2RC2_Closure *onCollect);
 IDRIS2RC2_ThreadID *idris2rc2_mkThreadID(pthread_t tid);

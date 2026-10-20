@@ -255,8 +255,8 @@ addTracked _ _ _ acc = acc
 ||| `RLoop`'s own `loopParams`.
 export
 nativeSlotTy : Rep -> Maybe PrimType
-nativeSlotTy (RNative ty) = Just ty
-nativeSlotTy (RInlineNative ty) = Just ty
+nativeSlotTy (RNative (TPrim ty)) = Just ty
+nativeSlotTy (RInlineNative (TPrim ty)) = Just ty
 nativeSlotTy _ = Nothing
 
 ||| The single native `PrimType` every alt of a constant-`case` matches
@@ -388,8 +388,8 @@ export
 nativeArgTypes : (p : Int) -> RCExp -> SortedSet PrimType
 nativeArgTypes p (RLet _ _ rep value body) =
     let fromOp = case rep of
-             RNative ty => opNativeUsesThrough p ty value
-             RInlineNative ty => opNativeUsesThrough p ty value
+             RNative (TPrim ty) => opNativeUsesThrough p ty value
+             RInlineNative (TPrim ty) => opNativeUsesThrough p ty value
              _ => empty
     in fromOp `union` (nativeArgTypes p value `union` nativeArgTypes p body)
 nativeArgTypes p (RCmpCase _ op args _ t f) =
@@ -456,8 +456,8 @@ export
 nativeArgTypesFor : SortedSet Int -> RCExp -> SortedMap Int (SortedSet PrimType)
 nativeArgTypesFor tracked (RLet _ _ rep value body) =
     let fromOp = case rep of
-             RNative ty => opNativeUsesThroughAll tracked ty value
-             RInlineNative ty => opNativeUsesThroughAll tracked ty value
+             RNative (TPrim ty) => opNativeUsesThroughAll tracked ty value
+             RInlineNative (TPrim ty) => opNativeUsesThroughAll tracked ty value
              _ => empty
     in fromOp `unionMaps` (nativeArgTypesFor tracked value `unionMaps` nativeArgTypesFor tracked body)
 nativeArgTypesFor tracked (RCmpCase _ op args _ t f) =
@@ -1495,7 +1495,7 @@ applyLoopFromId nextId0 calleeTable noPromote self (MkRCFun args retRep isWorker
                   shadowedById = SortedMap.fromList $ map (\(p, sid, ty) => (p, (sid, ty))) (shadowedVariant ++ shadowedInvariant)
                   fullLoopParams : List (Int, Rep)
                   fullLoopParams = map (\p => case lookup p shadowedById of
-                                               Just (sid, ty) => (sid, RNative ty)
+                                               Just (sid, ty) => (sid, RNative (TPrim ty))
                                                Nothing => (p, RBoxed)) argIds
                   withPostDrop : RCExp
                   withPostDrop = fillLoopContinuePostDrop fullLoopParams (fromList fullLoopParams) rewritten
@@ -1578,11 +1578,11 @@ applyLoopFromId nextId0 calleeTable noPromote self (MkRCFun args retRep isWorker
                       wrapOneInvariant : (Int, Int, PrimType) -> (Int, RCExp) -> (Int, RCExp)
                       wrapOneInvariant (p, sid, ty) (nid, acc) =
                           if not (usesInvariant p acc)
-                             then (nid, RLet emptyFC sid (RNative ty) (RV emptyFC (RCLoc p)) (RDrop emptyFC [RCLoc p] acc))
+                             then (nid, RLet emptyFC sid (RNative (TPrim ty)) (RV emptyFC (RCLoc p)) (RDrop emptyFC [RCLoc p] acc))
                              else
                                let resultVar = nid
                                    dupped = dupInvariantBoxed p acc
-                               in (nid + 1, RLet emptyFC sid (RNative ty) (RV emptyFC (RCLoc p))
+                               in (nid + 1, RLet emptyFC sid (RNative (TPrim ty)) (RV emptyFC (RCLoc p))
                                               (RLet emptyFC resultVar retRep dupped
                                                 (RDrop emptyFC [RCLoc p] (RV emptyFC (RCLoc resultVar)))))
               in (fst wrapInvariantShadows, MkRCFun args retRep isWorker (snd wrapInvariantShadows))

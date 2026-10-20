@@ -406,6 +406,24 @@ nativeUnbox DoubleType x = "idris2rc2_to_double(" ++ x ++ ")"
 nativeUnbox CharType x = "idris2rc2_to_char(" ++ x ++ ")"
 nativeUnbox _ x = x -- unreachable
 
+||| `nativeCType` over `NativeTy`: a pointer is an `IDRIS2RC2_Raw *`.
+export
+tyCType : NativeTy -> String
+tyCType (TPrim ty) = nativeCType ty
+tyCType TPtr = "IDRIS2RC2_Raw *"
+
+||| `nativeMk` over `NativeTy`.
+export
+tyMk : NativeTy -> String -> String
+tyMk (TPrim ty) x = nativeMk ty x
+tyMk TPtr x = "idris2rc2_mkPtr(" ++ x ++ ")"
+
+||| `nativeUnbox` over `NativeTy`.
+export
+tyUnbox : NativeTy -> String -> String
+tyUnbox (TPrim ty) x = nativeUnbox ty x
+tyUnbox TPtr x = "idris2rc2_toPtr(" ++ x ++ ")"
+
 export
 isSigned : PrimType -> Bool
 isSigned IntType = True
@@ -758,7 +776,7 @@ repOfLocal RCNull = pure RBoxed
 -- (native-eligible) Constant -- see RCExp.idr's module note -- so this
 -- is always RNative in practice; the RBoxed fallback is unreachable
 -- defensive totality, not a real code path.
-repOfLocal (RCConst c) = pure $ maybe RBoxed RNative (litRep c)
+repOfLocal (RCConst c) = pure $ maybe RBoxed (RNative . TPrim) (litRep c)
 -- Always Boxed, same as RCNull -- its value is already a valid Value*
 -- (a tagged pointer, per varName above), never a native scalar.
 repOfLocal (RCEmptyCon {}) = pure RBoxed
@@ -1026,11 +1044,11 @@ rcVarToBoxedC l = do
     case rep of
          RRet _ _ => throw $ InternalError "[rc2] rcVarToBoxedC: a struct-return local (RetN) reached a Boxed context, see doc/struct-return.md"
          _ => pure $ case rep of
-                RNative ty => (nativeMk ty exprOrVar, pending)
+                RNative ty => (tyMk ty exprOrVar, pending)
                 -- Always InlineMap'd by construction (Rep.RInlineNative's
                 -- own doc comment) -- the `Nothing` fallback above is
                 -- defensive totality, not a real fallback path.
-                RInlineNative ty => (nativeMk ty exprOrVar, pending)
+                RInlineNative ty => (tyMk ty exprOrVar, pending)
                 -- Was unconditionally `varName l` before a non-native-
                 -- eligible RCConst (String/small Integer) could ever be
                 -- RBoxed -- every existing RBoxed local is a genuine
@@ -1090,7 +1108,7 @@ rcVarToNativeC : {auto a : Ref ArgCounter Nat}
               -> {auto cc : Ref ConstConDef (SortedMap RCLocal String, List String)}
               -> {auto r : Ref RepMap (SortedMap Int Rep)}
               -> {auto lm : Ref InlineMap (SortedMap Int (String, List String))}
-              -> PrimType -> RCLocal -> Core (String, List String)
+              -> NativeTy -> RCLocal -> Core (String, List String)
 -- `RCNull` here is never a real value to unbox -- it only ever reaches
 -- this function as one of Compiler.RC2.MutualLoop's own `RCNull`
 -- padding slots (a smaller-arity member's unused trailing loop param,
@@ -1116,7 +1134,7 @@ rcVarToNativeC ty l = do
                 -- native-eligible types to begin with) -- guarded anyway
                 -- for the same reason `nativeCType`/`nativeMk`/
                 -- `nativeUnbox`'s own catch-all cases are.
-                RBoxed => (nativeUnbox ty exprOrVar, pending)
+                RBoxed => (tyUnbox ty exprOrVar, pending)
                 _ => (exprOrVar, pending)
 
 ||| The reuse-reservation C variable's name for scrutinee `sc` -- a pure,
@@ -1211,8 +1229,8 @@ data Sink = SinkVar Bool String Rep | SinkReturn Rep
 ||| `Sink`'s own variable is declared with.
 sinkCType : Rep -> String
 sinkCType RBoxed = "IDRIS2RC2_Value * "
-sinkCType (RNative ty) = nativeCType ty ++ " "
-sinkCType (RInlineNative ty) = nativeCType ty ++ " "
+sinkCType (RNative ty) = tyCType ty ++ " "
+sinkCType (RInlineNative ty) = tyCType ty ++ " "
 sinkCType (RRet n _) = retCType n ++ " "
 
 ||| The pre-branch placeholder value a `Sink`'s own variable is
@@ -1654,14 +1672,14 @@ extractValue _ CFChar           varName = "((char)idris2rc2_to_char(" ++ varName
 -- enclosing block -- the call it is an argument of (doc/immediate-ints.md).
 -- A callee must never write through it.
 extractValue _ CFInteger        varName = "((mpz_ptr)idris2rc2_integerView(" ++ varName ++ ", &(IDRIS2RC2_IntegerView){0}))"
-extractValue _ CFPtr            varName = "((IDRIS2RC2_Pointer*)" ++ varName ++ ")->p"
-extractValue _ CFGCPtr          varName = "((IDRIS2RC2_GCPointer*)" ++ varName ++ ")->p->p"
+extractValue _ CFPtr            varName = "idris2rc2_toPtr(" ++ varName ++ ")"
+extractValue _ CFGCPtr          varName = "idris2rc2_toPtr(((IDRIS2RC2_GCPointer*)" ++ varName ++ ")->p)"
 extractValue CLangRefC CFBuffer varName = "((IDRIS2RC2_Buffer*)" ++ varName ++ ")->buf"
 extractValue CLangC    CFBuffer varName = "((IDRIS2RC2_RawBuffer*)((IDRIS2RC2_Buffer*)" ++ varName ++ ")->buf)->data"
 extractValue _ CFWorld          _       = "(IDRIS2RC2_Value *)NULL"
 extractValue _ (CFFun x y)      varName = "(IDRIS2RC2_Closure*)" ++ varName
 extractValue c (CFIORes x)      varName = extractValue c x varName
-extractValue _ (CFStruct x xs)  varName = "((IDRIS2RC2_Pointer*)" ++ varName ++ ")->p"
+extractValue _ (CFStruct x xs)  varName = "idris2rc2_toPtr(" ++ varName ++ ")"
 extractValue _ (CFUser x xs)    varName = "(IDRIS2RC2_Value*)" ++ varName
 extractValue _ n _ = assert_total $ idris_crash ("INTERNAL ERROR: Unknown FFI type in rc2 backend: " ++ show n)
 
@@ -1696,12 +1714,12 @@ packCFType CFChar          varName = "idris2rc2_mkChar((unsigned char)" ++ varNa
 -- that `IDRIS2RC2_Integer *`; packing only normalizes it to an immediate
 -- when it fits (doc/immediate-ints.md).
 packCFType CFInteger       varName = "idris2rc2_integerNormalize(" ++ varName ++ ")"
-packCFType CFPtr           varName = "idris2rc2_mkPointer(" ++ varName ++ ")"
+packCFType CFPtr           varName = "idris2rc2_mkPtr(" ++ varName ++ ")"
 packCFType CFGCPtr         varName = "idris2rc2_mkGCPointer(" ++ varName ++ ", NULL)"
 packCFType CFBuffer        varName = "idris2rc2_mkBuffer(" ++ varName ++ ")"
 packCFType CFWorld         _       = "(IDRIS2RC2_Value *)NULL"
 packCFType (CFIORes x)     varName = packCFType x varName
-packCFType (CFStruct x xs) varName = "idris2rc2_mkPointer(" ++ varName ++ ")"
+packCFType (CFStruct x xs) varName = "idris2rc2_mkPtr(" ++ varName ++ ")"
 packCFType (CFUser x xs)   varName = varName
 -- No `CFFun` case: a `%foreign` declaration's own return type is
 -- rejected well before Emit ever runs if its peeled type is `CFFun`

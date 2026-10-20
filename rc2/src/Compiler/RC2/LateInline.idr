@@ -271,7 +271,7 @@ hasNonNativeUse ty loopSlots target (RLoopContinue _ args _) =
         -- than risk `zip` silently dropping a real occurrence in the tail.
   where
     matchesTy : Rep -> Bool
-    matchesTy (RNative ty') = ty' == ty
+    matchesTy (RNative (TPrim ty')) = ty' == ty
     matchesTy _ = False
 hasNonNativeUse ty loopSlots target (RMemoize _ _ _ body) = hasNonNativeUse ty loopSlots target body
 hasNonNativeUse _ _ _ _ = False -- RPrimVal/RErased/RCrash: no locals. RAppNameRep/RAppFFIInline can't exist yet.
@@ -374,10 +374,10 @@ buildSplice fc reps calleeBody [] = pure (empty, id, empty, empty)
 buildSplice fc reps calleeBody ((paramId, actual@(RCLoc actualId)) :: rest) = do
     (ren, wrap, promoted, ccs) <- buildSplice fc reps calleeBody rest
     case argRep reps actual of
-         RNative ty => do
+         RNative (TPrim ty) => do
              f <- freshVarId
              let (rep, promoted') = case nativeEligible paramId calleeBody of
-                                          Just ty' => if ty' == ty then (RNative ty, SortedSet.insert f promoted) else (RBoxed, promoted)
+                                          Just ty' => if ty' == ty then (RNative (TPrim ty), SortedSet.insert f promoted) else (RBoxed, promoted)
                                           Nothing => (RBoxed, promoted)
              pure (insert paramId f ren, wrap . RLet fc f rep (RV fc actual), promoted', ccs)
          -- Two params aliased onto one caller local would also share its
@@ -390,7 +390,7 @@ buildSplice fc reps calleeBody ((paramId, actual@(RCLoc actualId)) :: rest) = do
   where
     argRep : SortedMap Int Rep -> RCLocal -> Rep
     argRep reps (RCLoc j) = case lookup j reps of
-                                 Just (RInlineNative ty) => RNative ty
+                                 Just (RInlineNative (TPrim ty)) => RNative (TPrim ty)
                                  Just r => r
                                  Nothing => RBoxed
     argRep _ _ = RBoxed
@@ -406,7 +406,7 @@ buildSplice fc reps calleeBody ((paramId, actual) :: rest) = do
                                 Nothing => (RBoxed, promoted)
                                 Just ty => case nativeEligible paramId calleeBody of
                                                 Just ty' => if ty' == ty
-                                                               then (RNative ty, SortedSet.insert f promoted)
+                                                               then (RNative (TPrim ty), SortedSet.insert f promoted)
                                                                else (RBoxed, promoted)
                                                 Nothing => (RBoxed, promoted)
     -- A constant *closure* argument is recorded for
@@ -528,8 +528,8 @@ inlineInto defOf eligible self = go empty []
                          splicedValue <- spliceCall vfc reps d args
                          case promotableNativeLetRep loopSlots var splicedValue body of
                               Just ty => do
-                                  body' <- go (insert var (RNative ty) reps) loopSlots body
-                                  pure $ RLet fc var (RNative ty) splicedValue (stripOwnership (SortedSet.singleton var) body')
+                                  body' <- go (insert var (RNative (TPrim ty)) reps) loopSlots body
+                                  pure $ RLet fc var (RNative (TPrim ty)) splicedValue (stripOwnership (SortedSet.singleton var) body')
                               Nothing => RLet fc var RBoxed splicedValue <$> go reps loopSlots body
                      Nothing => RLet fc var RBoxed value <$> go reps loopSlots body
            else RLet fc var RBoxed value <$> go reps loopSlots body

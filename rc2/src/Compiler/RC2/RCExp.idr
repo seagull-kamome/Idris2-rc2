@@ -198,6 +198,33 @@ Show RCLocal where
   show (RCConstCon n _ t args) = "#" ++ dumpName n ++ "@" ++ show t ++ "(" ++ show args ++ ")"
   show (RCConstClosure n m) = "#" ++ dumpName n ++ "/" ++ show m ++ "~closure"
 
+||| The type of a native value: one of upstream's `PrimType`s, or a raw C
+||| pointer (`Ptr`, `AnyPtr`, a struct pointer), held as an
+||| `IDRIS2RC2_Raw *` -- an opaque struct pointer, so the C compiler tells it
+||| apart from an `IDRIS2RC2_Value *`. See `doc/native-pointer.md`.
+public export
+data NativeTy : Type where
+     TPrim : PrimType -> NativeTy
+     TPtr : NativeTy
+
+public export
+Eq NativeTy where
+    TPrim a == TPrim b = a == b
+    TPtr == TPtr = True
+    _ == _ = False
+
+public export
+Ord NativeTy where
+    compare (TPrim a) (TPrim b) = compare a b
+    compare (TPrim _) TPtr = LT
+    compare TPtr (TPrim _) = GT
+    compare TPtr TPtr = EQ
+
+public export
+Show NativeTy where
+    show (TPrim t) = show t
+    show TPtr = "Ptr"
+
 ||| The representation decided for an RLet-bound local, carried
 ||| directly on the RLet node (see `doc/reading-the-ir.md`'s
 ||| "## 4. Representation" and `doc/native-type-inference.md`).
@@ -220,8 +247,8 @@ Show RCLocal where
 public export
 data Rep : Type where
      RBoxed : Rep
-     RNative : PrimType -> Rep
-     RInlineNative : PrimType -> Rep
+     RNative : NativeTy -> Rep
+     RInlineNative : NativeTy -> Rep
      RRet : (n : Nat) -> {auto 0 nz : IsSucc n} -> {auto 0 lt : LT n 5} -> List (Int, Vect n (Maybe PrimType)) -> Rep
 
 ||| The native type `RRet`'s layout carries field `k` of `tag` as, if any.
