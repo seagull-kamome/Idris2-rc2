@@ -52,7 +52,7 @@ peelDrop e = ([], e)
 ||| `(p, ty)` pair -- pairing each original id with its own shadow id
 ||| and the native type it was found eligible at.
 export
-assignShadowIds : (nextId : Int) -> List (Int, PrimType) -> List (Int, Int, PrimType)
+assignShadowIds : (nextId : Int) -> List (Int, ty) -> List (Int, Int, ty)
 assignShadowIds _ [] = []
 assignShadowIds nextId ((p, ty) :: rest) = (p, nextId, ty) :: assignShadowIds (nextId + 1) rest
 

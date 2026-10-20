@@ -29,6 +29,15 @@ mutual
   inner : Nat -> AnyPtr -> Bits64
   inner k p = outer k p + 1
 
+-- A pointer that is the loop variable itself; 0x7fff...ffff crosses into the
+-- heap-box range on the way.
+%foreign "CExpr:((char*)$1 + 1)"
+prim__next : AnyPtr -> AnyPtr
+
+walk : AnyPtr -> Int -> AnyPtr
+walk p 0 = p
+walk p n = walk (prim__next p) (n - 1)
+
 collected : IORef Nat -> IO ()
 collected c = do
   let p = prim__ptrOf 4096
@@ -44,6 +53,7 @@ run = do
   let f = \p => prim__addrOf p + 1
   printLn (map f ps)
   printLn (map (\p => outer 3 p) ps)
+  printLn (map (\a => prim__addrOf (walk (prim__ptrOf a) 5)) (filter (/= 0xffffffffffffffff) addrs))
   printLn (prim__nullAnyPtr (prim__ptrOf 0) /= 0, prim__nullAnyPtr (prim__ptrOf 8) /= 0)
   c <- newIORef 0
   collected c
