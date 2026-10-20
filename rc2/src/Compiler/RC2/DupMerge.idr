@@ -54,17 +54,25 @@ takeDropInRun v (RDrop fc vs body) =
 takeDropInRun _ _ = Nothing
 
 ||| The locals bound with a native `Rep` (a parameter, a `let`, a loop
-||| parameter): no reference count, never named by a `postDrop`.
+||| parameter), and the `let`s bound to an erased value or the world token
+||| (C `NULL`): no reference count, never named by a `postDrop`.
 nativeBound : List (Int, Rep) -> RCExp -> SortedSet Int
 nativeBound args body = union (fromList (mapMaybe nativeParam args)) (go body)
   where
+    nullValued : RCExp -> Bool
+    nullValued (RErased _) = True
+    nullValued (RV _ RCErased) = True
+    nullValued (RV _ RCWorld) = True
+    nullValued (RPrimVal _ WorldVal) = True
+    nullValued _ = False
+
     nativeParam : (Int, Rep) -> Maybe Int
     nativeParam (_, RBoxed) = Nothing
     nativeParam (i, _) = Just i
 
     go : RCExp -> SortedSet Int
     go e = let here = case e of
-                           RLet _ x rep _ _ => maybe empty singleton (nativeParam (x, rep))
+                           RLet _ x rep v _ => if nullValued v then singleton x else maybe empty singleton (nativeParam (x, rep))
                            RLoop _ ps _ _ _ => fromList (mapMaybe nativeParam ps)
                            _ => empty
            in foldl (\acc, c => union acc (go c)) here (children e)
