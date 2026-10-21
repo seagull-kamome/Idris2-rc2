@@ -1,28 +1,12 @@
 ||| Bindings to Linux's `io_uring` async I/O interface, via
-||| [liburing](https://github.com/axboe/liburing) rather than the raw
-||| `io_uring_setup`/`io_uring_enter` syscalls directly. Most of
-||| liburing's own API (every `io_uring_prep_*`, `io_uring_get_sqe`,
-||| `io_uring_sqe_set_data64`, `io_uring_submit(_and_wait)`,
-||| `io_uring_{wait,peek}_cqe`, `io_uring_cqe_get_data64`) is `static
-||| inline` in `<liburing.h>` with no linkable symbol of its own --
-||| rc2's own code generator already `#include`s every `%foreign`
-||| header directly into the *consumer's* own generated `.c` file
-||| (never a separate translation unit), so these bind straight onto
-||| `liburing.h` with no shim needed at all. This package's own shim
-||| (`support/c/iouring_util.c`/`.h`) exists only for what genuinely
-||| can't be a bare `%foreign` declaration: `io_uring_queue_init`/
-||| `_exit` need a caller-allocated `struct io_uring` (Idris has
-||| nowhere to put one), `io_uring_{wait,peek}_cqe` write their result
-||| through a `struct io_uring_cqe **` out-parameter (same "nowhere to
-||| put the address of a local pointer" problem), and connecting needs
-||| a `struct sockaddr` built from a host/port pair (`getaddrinfo`, a
-||| real function, not a bare inline wrapper). See `doc/iouring.md` for
-||| the full design, scope, and what this package deliberately doesn't
-||| cover yet (fixed buffers/files, multishot recv/poll, linked SQEs --
-||| `prepMultishotAccept` is this package's only multishot operation so
-||| far). Linux only, `--cg rc2` (every `%foreign` binding here is
-||| C-only).
-module System.IO.Uring
+||| [liburing](https://github.com/axboe/liburing). Every `io_uring_*`
+||| function is bound straight onto `<liburing.h>` (most are `static inline`
+||| there), and the few things `%foreign` has no direct form for are
+||| `CExpr:` statement expressions. See `doc/uring.md` for the design, the
+||| scope, and what is not covered yet (fixed files/buffers, multishot recv/
+||| poll, linked SQEs, `SQPOLL`). Needs the liburing headers and library when
+||| a program using this module is compiled. Linux only, `--cg rc2`.
+module System.Linux.Uring
 
 -- Copyright 2026, Hattori,Hiroki. All rights reserved.
 -- This module was licensed by BSD3.
@@ -41,39 +25,41 @@ data RawURing : Type where [external]
 data RawSQE : Type where [external]
 data RawCQE : Type where [external]
 data RawSockAddr : Type where [external]
+data RawAddrInfo : Type where [external]
 
--- idris2rc2iouring (this package's own shim: ring lifetime, cqe out-param
--- collapsing, sockaddr construction -- see idris2rc2_iouring_iouring_util.h)
--- plus CExpr bindings for the cqe fields, accept preps and sockaddr length
-
-%foreign "C:idris2rc2_iouring_queue_init, libidris2rc2iouring, idris2rc2_iouring_iouring_util.h"
+-- liburing needs the caller to own the `struct io_uring`: allocate it here
+%inline %foreign "CExpr:({ struct io_uring *r = malloc(sizeof *r); if (r != NULL && io_uring_queue_init($1, r, $2) < 0) { free(r); r = NULL; } r; }),liburing,liburing.h;stdlib.h"
 prim__queueInit : Bits32 -> Bits32 -> PrimIO AnyPtr
-%foreign "C:idris2rc2_iouring_queue_exit, libidris2rc2iouring, idris2rc2_iouring_iouring_util.h"
+%inline %foreign "CExpr:({ struct io_uring *r = $1; if (r != NULL) { io_uring_queue_exit(r); free(r); } }),liburing,liburing.h;stdlib.h"
 prim__queueExit : Ptr RawURing -> PrimIO ()
 
-%foreign "C:idris2rc2_iouring_wait_cqe, libidris2rc2iouring, idris2rc2_iouring_iouring_util.h"
+-- `io_uring_{wait,peek}_cqe` return the completion through an out-parameter:
+-- `NULL` stands for failure (or, when peeking, no completion yet)
+%inline %foreign "CExpr:({ struct io_uring_cqe *c = NULL; io_uring_wait_cqe($1, &c) < 0 ? NULL : c; }),liburing,liburing.h"
 prim__waitCqe : Ptr RawURing -> PrimIO AnyPtr
-%foreign "C:idris2rc2_iouring_peek_cqe, libidris2rc2iouring, idris2rc2_iouring_iouring_util.h"
+%inline %foreign "CExpr:({ struct io_uring_cqe *c = NULL; io_uring_peek_cqe($1, &c) < 0 ? NULL : c; }),liburing,liburing.h"
 prim__peekCqe : Ptr RawURing -> PrimIO AnyPtr
-%inline %foreign "CExpr:(((struct io_uring_cqe *)($1))->res),liburing,liburing.h;sys/socket.h;netinet/in.h"
+%inline %foreign "CExpr:(((struct io_uring_cqe *)($1))->res),liburing,liburing.h"
 prim__cqeRes : Ptr RawCQE -> PrimIO Int
-%inline %foreign "CExpr:(((struct io_uring_cqe *)($1))->user_data),liburing,liburing.h;sys/socket.h;netinet/in.h"
+%inline %foreign "CExpr:(((struct io_uring_cqe *)($1))->user_data),liburing,liburing.h"
 prim__cqeUserData : Ptr RawCQE -> PrimIO Bits64
-%inline %foreign "CExpr:(((struct io_uring_cqe *)($1))->flags),liburing,liburing.h;sys/socket.h;netinet/in.h"
+%inline %foreign "CExpr:(((struct io_uring_cqe *)($1))->flags),liburing,liburing.h"
 prim__cqeFlags : Ptr RawCQE -> PrimIO Bits32
 
-%inline %foreign "CExpr:(io_uring_prep_accept((struct io_uring_sqe *)($1), (int)($2), NULL, NULL, (int)($3))),liburing,liburing.h;sys/socket.h;netinet/in.h"
+%inline %foreign "CExpr:(io_uring_prep_accept((struct io_uring_sqe *)($1), (int)($2), NULL, NULL, (int)($3))),liburing,liburing.h"
 prim__prepAcceptSimple : Ptr RawSQE -> Int -> Int -> PrimIO ()
-%inline %foreign "CExpr:(io_uring_prep_multishot_accept((struct io_uring_sqe *)($1), (int)($2), NULL, NULL, (int)($3))),liburing,liburing.h;sys/socket.h;netinet/in.h"
+%inline %foreign "CExpr:(io_uring_prep_multishot_accept((struct io_uring_sqe *)($1), (int)($2), NULL, NULL, (int)($3))),liburing,liburing.h"
 prim__prepMultishotAcceptSimple : Ptr RawSQE -> Int -> Int -> PrimIO ()
 
-%foreign "C:idris2rc2_iouring_make_sockaddr, libidris2rc2iouring, idris2rc2_iouring_iouring_util.h"
-prim__makeSockAddr : String -> Bits16 -> PrimIO AnyPtr
-%inline %foreign "CExpr:((((struct sockaddr *)($1))->sa_family == AF_INET6 ? (unsigned)sizeof(struct sockaddr_in6) : (unsigned)sizeof(struct sockaddr_in))),liburing,liburing.h;sys/socket.h;netinet/in.h"
-prim__sockAddrLen : Ptr RawSockAddr -> PrimIO Bits32
-
--- liburing (always-real symbols: io_uring_queue_init/_exit proper, not
--- called directly here -- see the shim wrappers above)
+-- `getaddrinfo` for a stream socket of any family, `NULL` on failure
+%inline %foreign "CExpr:({ struct addrinfo h = {0}, *res = NULL; h.ai_socktype = SOCK_STREAM; h.ai_flags = AI_NUMERICSERV; getaddrinfo($1, $2, &h, &res) == 0 ? res : NULL; }),libc,netdb.h;sys/socket.h"
+prim__resolve : String -> String -> PrimIO AnyPtr
+%inline %foreign "CExpr:(((struct addrinfo *)($1))->ai_addr),libc,netdb.h"
+prim__aiAddr : Ptr RawAddrInfo -> PrimIO (Ptr RawSockAddr)
+%inline %foreign "CExpr:(((struct addrinfo *)($1))->ai_addrlen),libc,netdb.h"
+prim__aiAddrLen : Ptr RawAddrInfo -> PrimIO Bits32
+%inline %foreign "CExpr:freeaddrinfo($1),libc,netdb.h"
+prim__freeAddrInfo : Ptr RawAddrInfo -> PrimIO ()
 
 %foreign "C:io_uring_get_sqe, liburing, liburing.h"
 prim__getSqe : Ptr RawURing -> PrimIO AnyPtr
@@ -133,7 +119,7 @@ prim__prepRecv : Ptr RawSQE -> Int -> Buffer -> Bits64 -> Int -> PrimIO ()
 ||| argument looks fully consumed to rc2's own ownership analysis the
 ||| moment the (`void`-returning, entirely opaque to rc2) `prep*` FFI
 ||| call returns, and gets dropped immediately; `prepConnect`'s own
-||| `sockaddr` is plain `malloc`'d memory this package owns outright,
+||| `sockaddr` lives in the `getaddrinfo` result this package owns outright,
 ||| with no refcounting at all to protect it if freed too early.
 |||
 ||| Keyed by the exact `userData` each of those five functions' own
@@ -160,7 +146,7 @@ record URing where
   constructor MkURing
   ptr : Ptr RawURing
   pending : IORef (SortedMap Bits64 Buffer)
-  pendingAddrs : IORef (SortedMap Bits64 AnyPtr)
+  pendingAddrs : IORef (SortedMap Bits64 (Ptr RawAddrInfo))
 
 ||| Sets up a new ring with room for at least `queueDepth` in-flight
 ||| submissions (liburing itself rounds this up to the next power of
@@ -193,14 +179,14 @@ init queueDepth = do
 ||| (submitted but never waited on, cancelled mid-flight, ...): each
 ||| `Buffer` individually frees at this point only if nothing else in
 ||| the caller's own program still references it, and every `sockaddr`
-||| is actually `free`d outright.
+||| is actually freed outright (`freeaddrinfo`).
 export
 exit : URing -> IO ()
 exit r = do
   primIO (prim__queueExit r.ptr)
   writeIORef r.pending empty
   addrs <- readIORef r.pendingAddrs
-  traverse_ free (values addrs)
+  traverse_ (primIO . prim__freeAddrInfo) (values addrs)
   writeIORef r.pendingAddrs empty
 
 -------------------------------------------------------------------------------
@@ -410,16 +396,17 @@ prepCancel64 sqe targetUserData flags = primIO (prim__prepCancel64 sqe.ptr targe
 export
 prepConnect : URing -> SQE -> (fd : Int) -> (host : String) -> (port : Bits16) -> (userData : Bits64) -> IO Bool
 prepConnect ring sqe fd host port userData = do
-  raw <- primIO (prim__makeSockAddr host port)
+  raw <- primIO (prim__resolve host (show port))
   let isN = prim__nullAnyPtr raw
   if isN /= 0
      then pure False
      else do
-       let addr = the (Ptr RawSockAddr) (prim__castPtr raw)
-       len <- primIO (prim__sockAddrLen addr)
+       let info = the (Ptr RawAddrInfo) (prim__castPtr raw)
+       addr <- primIO (prim__aiAddr info)
+       len <- primIO (prim__aiAddrLen info)
        primIO (prim__prepConnect sqe.ptr fd addr len)
        primIO (prim__sqeSetData64 sqe.ptr userData)
-       modifyIORef ring.pendingAddrs (insert userData raw)
+       modifyIORef ring.pendingAddrs (insert userData info)
        pure True
 
 ||| Sends `len` bytes from `buf`'s own start on the connected/accepted
@@ -490,7 +477,7 @@ readCompletion cqe = do
 ||| Drops this `URing`'s own protective reference to whatever
 ||| `prepRead`/`prepWrite`/`prepSend`/`prepRecv`/`prepConnect` call
 ||| registered `tag` (see `URing.pending`'s own doc comment) -- a
-||| `sockaddr` is `free`d outright here, a `Buffer` just loses this
+||| `sockaddr` is freed outright here, a `Buffer` just loses this
 ||| map's own reference to it (freed once nothing else in the caller's
 ||| own program references it, same as any other `Buffer`). A no-op if
 ||| `tag` names nothing currently held -- every other `prep*` call's
@@ -501,8 +488,8 @@ releasePending r tag = do
   addrs <- readIORef r.pendingAddrs
   case lookup tag addrs of
        Nothing => pure ()
-       Just raw => do
-         free raw
+       Just info => do
+         primIO (prim__freeAddrInfo info)
          writeIORef r.pendingAddrs (delete tag addrs)
 
 ||| `IORING_CQE_F_MORE`: whether the request that generated `c` will

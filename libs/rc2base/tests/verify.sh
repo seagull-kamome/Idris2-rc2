@@ -87,6 +87,9 @@ TESTS=(
     "TestPosixUio||System.Posix.Uio: writev/readv, pread/pwrite"
     "TestPosixStdio||System.Posix.Stdio: FILE* streams, fgetc/fgets/getline/fread, writes, position, tmpfile, fmemopen"
     "TestLinux||System.Linux.Pipe: pipe2 with O_CLOEXEC/O_NONBLOCK"
+    "TestUringNop||System.Linux.Uring: a tagged nop through submit and wait"
+    "TestUringFile||System.Linux.Uring: openat, write, fsync, read and close on a temp file"
+    "TestUringSocket|network|System.Linux.Uring: accept, multishot accept, connect, send and recv on loopback"
     "TestTask||Control.Task: monad, both/race/spawn, cancellation, timers, epoll source, inbox"
     "TestPosixTermios||System.Posix.Termios: termios constants, tcgetattr/tcsetattr on a pty, cfmakeraw, tc* calls"
     "TestWebAPIPure|network contrib|Network.HTTP.Client.WebAPI: SHA-256/base64url/PKCE, JSON, URL/form encoding, token JSON"
@@ -98,9 +101,12 @@ TESTS=(
 # Tests that need libcurl's headers (curl/curl.h); skipped, loudly, when
 # the C compiler cannot find them.
 NEEDS_CURL=" TestCurl TestWebAPI "
+# Tests that need liburing's headers (liburing.h); skipped the same way.
+NEEDS_URING=" TestUringNop TestUringFile TestUringSocket "
 # Tests built with IDRIS2_CFLAGS=-D_GNU_SOURCE (declarations glibc hides otherwise).
 NEEDS_GNU_SOURCE=" TestPosixTermios TestLinux TestTask "
 have_curl_h() { echo '#include <curl/curl.h>' | gcc -E -x c - > /dev/null 2>&1; }
+have_uring_h() { echo '#include <liburing.h>' | gcc -E -x c - > /dev/null 2>&1; }
 
 echo "=== Check TESTS against the tests/*/ directories ==="
 # Every tests/<T>/ must be listed and have <T>.idr + <T>.expected, and
@@ -151,6 +157,10 @@ for entry in "${TESTS[@]}"; do
     IFS='|' read -r t extra desc <<< "$entry"
     if [[ "$NEEDS_CURL" == *" $t "* ]] && ! have_curl_h; then
         echo "SKIP  $t -- curl/curl.h not found by gcc (install libcurl's development files)"
+        continue
+    fi
+    if [[ "$NEEDS_URING" == *" $t "* ]] && ! have_uring_h; then
+        echo "SKIP  $t -- liburing.h not found by gcc (install liburing's development files)"
         continue
     fi
     pflags=(-p rc2base)

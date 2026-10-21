@@ -4,7 +4,7 @@
 ||| machinery without touching the filesystem or network at all.
 module Main
 
-import System.IO.Uring
+import System.Linux.Uring
 
 main : IO ()
 main = do
