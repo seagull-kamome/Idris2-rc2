@@ -197,8 +197,8 @@ init queueDepth = do
 ||| The descriptor of the ring: readable (`poll`, `epoll`) while completions are
 ||| waiting to be reaped with `pollCompletion`.
 export
-ringFd : URing -> IO (Maybe FileDesc)
-ringFd r = mkFileDesc <$> primIO (prim__ringFd r.ptr)
+ringFd : URing -> IO (Either Errno FileDesc)
+ringFd r = primIO (prim__ringFd r.ptr) >>= primFdToFileDesc
 
 ||| Tears the ring down. Every `SQE` obtained from it, and every
 ||| `Completion` not yet consumed, is invalid afterward. Also releases

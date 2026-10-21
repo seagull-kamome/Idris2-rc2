@@ -48,9 +48,9 @@ ringOf : Env -> IO (Either Errno Ring)
 ringOf env = env.slot "Control.Task.Uring" $ do
   Right uring <- init ringDepth
     | Left e => pure (Left e)
-  Just fd <- ringFd uring
-    | Nothing => exit uring *> pure (Left EBADF)
-  ring <- [| MkRing (pure uring) (newIORef 1) (newIORef empty) |]
+  Right fd <- ringFd uring
+    | Left e => exit uring *> pure (Left e)
+  ring <- MkRing uring <$> newIORef 1 <*> newIORef empty
   Right cancel <- env.addSource (MkSource fd (drain ring))
     | Left e => exit uring *> pure (Left e)
   pure (Right (ring, runCancel cancel *> exit uring))
@@ -92,29 +92,30 @@ Prep = URing -> SQE -> Bits64 -> IO Bool
 -- completion has the tag 0, which no request has, and is dropped).
 request : Prep -> Task (Either Errno Completion)
 request prep = Async $ \env, done => do
+  let failWith = \e => done (Left e) *> pure noCancel
   Right ring <- ringOf env
-    | Left e => done (Left e) *> pure noCancel
+    | Left e => failWith e
   Just sqe <- freeSqe ring
-    | Nothing => done (Left EBUSY) *> pure noCancel
+    | Nothing => failWith EBUSY
   tag <- fresh ring
   True <- prep ring.uring sqe tag
-    | False => done (Left EINVAL) *> pure noCancel
+    | False => failWith EINVAL
   modifyIORef ring.waiting (insert tag (done . Right))
   Right _ <- submit ring.uring
-    | Left e => modifyIORef ring.waiting (delete tag) *> done (Left e) *> pure noCancel
+    | Left e => modifyIORef ring.waiting (delete tag) *> failWith e
   pure (MkCancel (cancelRequest ring tag))
+
+-- A request whose result is a count.
+byteCount : Prep -> Task (Either Errno Nat)
+byteCount prep = map (>>= result) (request prep)
 
 -- A request that has no result but success.
 unit : Prep -> Task (Either Errno ())
-unit prep = map (\r => r >>= map (const ()) . result) (request prep)
-
--- A request whose result is a count.
-count : Prep -> Task (Either Errno Nat)
-count prep = map (\r => r >>= result) (request prep)
+unit prep = map (map (const ())) (byteCount prep)
 
 -- A request whose result is a descriptor.
 descriptor : Prep -> Task (Either Errno FileDesc)
-descriptor prep = map (\r => r >>= fdResult) (request prep)
+descriptor prep = map (>>= fdResult) (request prep)
 
 -- A request made of one call that takes the tag itself.
 tagged : (URing -> SQE -> Bits64 -> IO ()) -> Prep
@@ -136,24 +137,24 @@ uringNop = unit (untagged prepNop)
 ||| the number of bytes read, `0` at the end of the file.
 export
 uringRead : FileDesc -> Buffer -> (nbytes : Bits32) -> (offset : Bits64) -> Task (Either Errno Nat)
-uringRead fd buf nbytes offset = count (tagged (\ring, sqe => prepRead ring sqe fd buf nbytes offset))
+uringRead fd buf nbytes offset = byteCount (tagged (\ring, sqe => prepRead ring sqe fd buf nbytes offset))
 
 ||| Write `nbytes` from the start of the buffer, at `offset` of the file; the
 ||| number of bytes written.
 export
 uringWrite : FileDesc -> Buffer -> (nbytes : Bits32) -> (offset : Bits64) -> Task (Either Errno Nat)
-uringWrite fd buf nbytes offset = count (tagged (\ring, sqe => prepWrite ring sqe fd buf nbytes offset))
+uringWrite fd buf nbytes offset = byteCount (tagged (\ring, sqe => prepWrite ring sqe fd buf nbytes offset))
 
 ||| Send `len` bytes from the start of the buffer on a connected socket.
 export
 uringSend : FileDesc -> Buffer -> (len : Bits64) -> (flags : Int32) -> Task (Either Errno Nat)
-uringSend fd buf len flags = count (tagged (\ring, sqe => prepSend ring sqe fd buf len flags))
+uringSend fd buf len flags = byteCount (tagged (\ring, sqe => prepSend ring sqe fd buf len flags))
 
 ||| Receive up to `len` bytes into the start of the buffer; `0` when the peer
 ||| closed its end.
 export
 uringRecv : FileDesc -> Buffer -> (len : Bits64) -> (flags : Int32) -> Task (Either Errno Nat)
-uringRecv fd buf len flags = count (tagged (\ring, sqe => prepRecv ring sqe fd buf len flags))
+uringRecv fd buf len flags = byteCount (tagged (\ring, sqe => prepRecv ring sqe fd buf len flags))
 
 ||| Accept one connection on a listening socket; the new socket. The address
 ||| of the peer is not given (`getpeername` on the socket gives it).
