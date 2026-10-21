@@ -86,12 +86,12 @@ cancelRequest ring tag = do
 Prep : Type
 Prep = URing -> SQE -> Bits64 -> IO Bool
 
--- Start a request. The result is the completion of the request; `EINVAL` when
--- `prep` says it cannot be made (an entry that was taken stays in the queue,
+-- Start a request. The result is what `decode` makes of its completion;
+-- `EINVAL` when `prep` says it cannot be made (an entry that was taken stays in the queue,
 -- unfilled, which the kernel takes for a request that does nothing; its
 -- completion has the tag 0, which no request has, and is dropped).
-request : Prep -> Task (Either Errno Completion)
-request prep = Async $ \env, done => do
+request : (decode : Completion -> Either Errno a) -> Prep -> Task (Either Errno a)
+request decode prep = Async $ \env, done => do
   let failWith = \e => done (Left e) *> pure noCancel
   Right ring <- ringOf env
     | Left e => failWith e
@@ -100,22 +100,14 @@ request prep = Async $ \env, done => do
   tag <- fresh ring
   True <- prep ring.uring sqe tag
     | False => failWith EINVAL
-  modifyIORef ring.waiting (insert tag (done . Right))
+  modifyIORef ring.waiting (insert tag (done . decode))
   Right _ <- submit ring.uring
     | Left e => modifyIORef ring.waiting (delete tag) *> failWith e
   pure (MkCancel (cancelRequest ring tag))
 
--- A request whose result is a count.
-byteCount : Prep -> Task (Either Errno Nat)
-byteCount prep = map (>>= result) (request prep)
-
 -- A request that has no result but success.
 unit : Prep -> Task (Either Errno ())
-unit prep = map (map (const ())) (byteCount prep)
-
--- A request whose result is a descriptor.
-descriptor : Prep -> Task (Either Errno FileDesc)
-descriptor prep = map (>>= fdResult) (request prep)
+unit = request (map (const ()) . result)
 
 -- A request made of one call that takes the tag itself.
 tagged : (URing -> SQE -> Bits64 -> IO ()) -> Prep
@@ -137,30 +129,30 @@ uringNop = unit (untagged prepNop)
 ||| the number of bytes read, `0` at the end of the file.
 export
 uringRead : FileDesc -> Buffer -> (nbytes : Bits32) -> (offset : Bits64) -> Task (Either Errno Nat)
-uringRead fd buf nbytes offset = byteCount (tagged (\ring, sqe => prepRead ring sqe fd buf nbytes offset))
+uringRead fd buf nbytes offset = request result (tagged (\ring, sqe => prepRead ring sqe fd buf nbytes offset))
 
 ||| Write `nbytes` from the start of the buffer, at `offset` of the file; the
 ||| number of bytes written.
 export
 uringWrite : FileDesc -> Buffer -> (nbytes : Bits32) -> (offset : Bits64) -> Task (Either Errno Nat)
-uringWrite fd buf nbytes offset = byteCount (tagged (\ring, sqe => prepWrite ring sqe fd buf nbytes offset))
+uringWrite fd buf nbytes offset = request result (tagged (\ring, sqe => prepWrite ring sqe fd buf nbytes offset))
 
 ||| Send `len` bytes from the start of the buffer on a connected socket.
 export
 uringSend : FileDesc -> Buffer -> (len : Bits64) -> (flags : Int32) -> Task (Either Errno Nat)
-uringSend fd buf len flags = byteCount (tagged (\ring, sqe => prepSend ring sqe fd buf len flags))
+uringSend fd buf len flags = request result (tagged (\ring, sqe => prepSend ring sqe fd buf len flags))
 
 ||| Receive up to `len` bytes into the start of the buffer; `0` when the peer
 ||| closed its end.
 export
 uringRecv : FileDesc -> Buffer -> (len : Bits64) -> (flags : Int32) -> Task (Either Errno Nat)
-uringRecv fd buf len flags = byteCount (tagged (\ring, sqe => prepRecv ring sqe fd buf len flags))
+uringRecv fd buf len flags = request result (tagged (\ring, sqe => prepRecv ring sqe fd buf len flags))
 
 ||| Accept one connection on a listening socket; the new socket. The address
 ||| of the peer is not given (`getpeername` on the socket gives it).
 export
 uringAccept : FileDesc -> (flags : Int32) -> Task (Either Errno FileDesc)
-uringAccept fd flags = descriptor (untagged (\sqe => prepAccept sqe fd flags))
+uringAccept fd flags = request fdResult (untagged (\sqe => prepAccept sqe fd flags))
 
 ||| Connect a socket to a host (a name or a numeric address) and port. The name
 ||| is resolved at once, on the thread of the scheduler; `EINVAL` when it does
@@ -173,7 +165,7 @@ uringConnect fd host port = unit (\ring, sqe, tag => prepConnect ring sqe fd hos
 ||| descriptor. `flags` and `mode` are those of `System.Posix.File.openat`.
 export
 uringOpenat : Maybe DirDesc -> String -> (flags : Bits32) -> (mode : Bits32) -> Task (Either Errno FileDesc)
-uringOpenat dir path flags mode = descriptor (untagged (\sqe => prepOpenat sqe dir path flags mode))
+uringOpenat dir path flags mode = request fdResult (untagged (\sqe => prepOpenat sqe dir path flags mode))
 
 ||| Close a descriptor.
 export

@@ -35,7 +35,7 @@ openFd : URing -> (what : String) -> (SQE -> IO ()) -> IO (Either String FileDes
 openFd ring what prep = do
   Right completion <- runOne ring what prep
     | Left e => pure (Left e)
-  pure (either (\e => Left (what ++ " " ++ show e)) Right (fdResult completion))
+  pure (mapFst (\e => what ++ " " ++ show e) (fdResult completion))
 
 roundTrip : URing -> Buffer -> Buffer -> IO (Either String String)
 roundTrip ring buf readBuf = do
