@@ -16,6 +16,8 @@ import Data.Buffer
 import Data.IORef
 import Data.SortedMap
 import System.FFI
+import System.Posix.Errno
+import System.Posix.FileDesc
 
 -------------------------------------------------------------------------------
 -- Raw FFI
@@ -28,16 +30,16 @@ data RawSockAddr : Type where [external]
 data RawAddrInfo : Type where [external]
 
 -- liburing needs the caller to own the `struct io_uring`: allocate it here
-%inline %foreign "CExpr:({ struct io_uring *r = malloc(sizeof *r); if (r != NULL && io_uring_queue_init($1, r, $2) < 0) { free(r); r = NULL; } r; }),liburing,liburing.h;stdlib.h"
+%inline %foreign "CExpr:({ struct io_uring *r = malloc(sizeof *r); if (r != NULL) { int rc = io_uring_queue_init($1, r, $2); if (rc < 0) { free(r); errno = -rc; r = NULL; } } r; }),liburing,liburing.h;stdlib.h;errno.h"
 prim__queueInit : Bits32 -> Bits32 -> PrimIO AnyPtr
 %inline %foreign "CExpr:({ struct io_uring *r = $1; if (r != NULL) { io_uring_queue_exit(r); free(r); } }),liburing,liburing.h;stdlib.h"
 prim__queueExit : Ptr RawURing -> PrimIO ()
 
 -- `io_uring_{wait,peek}_cqe` return the completion through an out-parameter:
--- `NULL` stands for failure (or, when peeking, no completion yet)
-%inline %foreign "CExpr:({ struct io_uring_cqe *c = NULL; io_uring_wait_cqe($1, &c) < 0 ? NULL : c; }),liburing,liburing.h"
+-- `NULL` stands for failure, with `errno` set (`EAGAIN` when peeking finds none)
+%inline %foreign "CExpr:({ struct io_uring_cqe *c = NULL; int rc = io_uring_wait_cqe($1, &c); if (rc < 0) { errno = -rc; c = NULL; } c; }),liburing,liburing.h;errno.h"
 prim__waitCqe : Ptr RawURing -> PrimIO AnyPtr
-%inline %foreign "CExpr:({ struct io_uring_cqe *c = NULL; io_uring_peek_cqe($1, &c) < 0 ? NULL : c; }),liburing,liburing.h"
+%inline %foreign "CExpr:({ struct io_uring_cqe *c = NULL; int rc = io_uring_peek_cqe($1, &c); if (rc < 0) { errno = -rc; c = NULL; } c; }),liburing,liburing.h;errno.h"
 prim__peekCqe : Ptr RawURing -> PrimIO AnyPtr
 %inline %foreign "CExpr:(((struct io_uring_cqe *)($1))->res),liburing,liburing.h"
 prim__cqeRes : Ptr RawCQE -> PrimIO Int
@@ -47,9 +49,9 @@ prim__cqeUserData : Ptr RawCQE -> PrimIO Bits64
 prim__cqeFlags : Ptr RawCQE -> PrimIO Bits32
 
 %inline %foreign "CExpr:(io_uring_prep_accept((struct io_uring_sqe *)($1), (int)($2), NULL, NULL, (int)($3))),liburing,liburing.h"
-prim__prepAcceptSimple : Ptr RawSQE -> Int -> Int -> PrimIO ()
+prim__prepAcceptSimple : Ptr RawSQE -> Int32 -> Int32 -> PrimIO ()
 %inline %foreign "CExpr:(io_uring_prep_multishot_accept((struct io_uring_sqe *)($1), (int)($2), NULL, NULL, (int)($3))),liburing,liburing.h"
-prim__prepMultishotAcceptSimple : Ptr RawSQE -> Int -> Int -> PrimIO ()
+prim__prepMultishotAcceptSimple : Ptr RawSQE -> Int32 -> Int32 -> PrimIO ()
 
 -- `getaddrinfo` for a stream socket of any family, `NULL` on failure
 %inline %foreign "CExpr:({ struct addrinfo h = {0}, *res = NULL; h.ai_socktype = SOCK_STREAM; h.ai_flags = AI_NUMERICSERV; getaddrinfo($1, $2, &h, &res) == 0 ? res : NULL; }),libc,netdb.h;sys/socket.h"
@@ -58,6 +60,8 @@ prim__resolve : String -> String -> PrimIO AnyPtr
 prim__aiAddr : Ptr RawAddrInfo -> PrimIO (Ptr RawSockAddr)
 %inline %foreign "CExpr:(((struct addrinfo *)($1))->ai_addrlen),libc,netdb.h"
 prim__aiAddrLen : Ptr RawAddrInfo -> PrimIO Bits32
+%inline %foreign "CExpr:(AT_FDCWD),libc,fcntl.h"
+prim__AT_FDCWD : Int32
 %inline %foreign "CExpr:freeaddrinfo($1),libc,netdb.h"
 prim__freeAddrInfo : Ptr RawAddrInfo -> PrimIO ()
 
@@ -72,7 +76,7 @@ prim__submitAndWait : Ptr RawURing -> Bits32 -> PrimIO Int
 %foreign "C:io_uring_cqe_seen, liburing, liburing.h"
 prim__cqeSeen : Ptr RawURing -> Ptr RawCQE -> PrimIO ()
 %foreign "C:io_uring_prep_cancel64, liburing, liburing.h"
-prim__prepCancel64 : Ptr RawSQE -> Bits64 -> Int -> PrimIO ()
+prim__prepCancel64 : Ptr RawSQE -> Bits64 -> Int32 -> PrimIO ()
 
 -- `io_uring_prep_*` (all `static inline` in liburing.h -- see this
 -- module's own doc comment)
@@ -80,21 +84,21 @@ prim__prepCancel64 : Ptr RawSQE -> Bits64 -> Int -> PrimIO ()
 %foreign "C:io_uring_prep_nop, liburing, liburing.h"
 prim__prepNop : Ptr RawSQE -> PrimIO ()
 %foreign "C:io_uring_prep_read, liburing, liburing.h"
-prim__prepRead : Ptr RawSQE -> Int -> Buffer -> Bits32 -> Bits64 -> PrimIO ()
+prim__prepRead : Ptr RawSQE -> Int32 -> Buffer -> Bits32 -> Bits64 -> PrimIO ()
 %foreign "C:io_uring_prep_write, liburing, liburing.h"
-prim__prepWrite : Ptr RawSQE -> Int -> Buffer -> Bits32 -> Bits64 -> PrimIO ()
+prim__prepWrite : Ptr RawSQE -> Int32 -> Buffer -> Bits32 -> Bits64 -> PrimIO ()
 %foreign "C:io_uring_prep_openat, liburing, liburing.h"
-prim__prepOpenat : Ptr RawSQE -> Int -> String -> Int -> Int -> PrimIO ()
+prim__prepOpenat : Ptr RawSQE -> Int32 -> String -> Bits32 -> Bits32 -> PrimIO ()
 %foreign "C:io_uring_prep_close, liburing, liburing.h"
-prim__prepClose : Ptr RawSQE -> Int -> PrimIO ()
+prim__prepClose : Ptr RawSQE -> Int32 -> PrimIO ()
 %foreign "C:io_uring_prep_fsync, liburing, liburing.h"
-prim__prepFsync : Ptr RawSQE -> Int -> Bits32 -> PrimIO ()
+prim__prepFsync : Ptr RawSQE -> Int32 -> Bits32 -> PrimIO ()
 %foreign "C:io_uring_prep_connect, liburing, liburing.h"
-prim__prepConnect : Ptr RawSQE -> Int -> Ptr RawSockAddr -> Bits32 -> PrimIO ()
+prim__prepConnect : Ptr RawSQE -> Int32 -> Ptr RawSockAddr -> Bits32 -> PrimIO ()
 %foreign "C:io_uring_prep_send, liburing, liburing.h"
-prim__prepSend : Ptr RawSQE -> Int -> Buffer -> Bits64 -> Int -> PrimIO ()
+prim__prepSend : Ptr RawSQE -> Int32 -> Buffer -> Bits64 -> Int32 -> PrimIO ()
 %foreign "C:io_uring_prep_recv, liburing, liburing.h"
-prim__prepRecv : Ptr RawSQE -> Int -> Buffer -> Bits64 -> Int -> PrimIO ()
+prim__prepRecv : Ptr RawSQE -> Int32 -> Buffer -> Bits64 -> Int32 -> PrimIO ()
 
 -------------------------------------------------------------------------------
 -- Lifecycle
@@ -150,7 +154,7 @@ record URing where
 
 ||| Sets up a new ring with room for at least `queueDepth` in-flight
 ||| submissions (liburing itself rounds this up to the next power of
-||| two). `Nothing` on failure -- e.g. `queueDepth` exceeds
+||| two). `Left errno` on failure -- e.g. `queueDepth` exceeds
 ||| `/proc/sys/kernel/io_uring_disabled`'s own limit, or the process is
 ||| out of locked-memory headroom (`RLIMIT_MEMLOCK`); see `man
 ||| io_uring_setup` for the full list. No `flags` parameter -- every
@@ -158,16 +162,16 @@ record URing where
 ||| ...) is out of scope for this package's first cut, see
 ||| `doc/iouring.md`'s own "Scope" section.
 export
-init : (queueDepth : Nat) -> IO (Maybe URing)
+init : (queueDepth : Nat) -> IO (Either Errno URing)
 init queueDepth = do
   raw <- primIO (prim__queueInit (cast queueDepth) 0)
   let isN = prim__nullAnyPtr raw
   if isN /= 0
-     then pure Nothing
+     then Left <$> errno
      else do
        pendingRef <- newIORef empty
        pendingAddrsRef <- newIORef empty
-       pure (Just (MkURing (prim__castPtr raw) pendingRef pendingAddrsRef))
+       pure (Right (MkURing (prim__castPtr raw) pendingRef pendingAddrsRef))
 
 ||| Tears the ring down. Every `SQE` obtained from it, and every
 ||| `Completion` not yet consumed, is invalid afterward. Also releases
@@ -251,9 +255,9 @@ prepNop sqe = primIO (prim__prepNop sqe.ptr)
 ||| `prepRead`/`prepWrite`/`prepSend`/`prepRecv`/`prepConnect` call
 ||| still in flight on `ring`.
 export
-prepRead : URing -> SQE -> (fd : Int) -> (buf : Buffer) -> (nbytes : Bits32) -> (fileOffset : Bits64) -> (userData : Bits64) -> IO ()
+prepRead : URing -> SQE -> (fd : FileDesc) -> (buf : Buffer) -> (nbytes : Bits32) -> (fileOffset : Bits64) -> (userData : Bits64) -> IO ()
 prepRead ring sqe fd buf nbytes fileOffset userData = do
-  primIO (prim__prepRead sqe.ptr fd buf nbytes fileOffset)
+  primIO (prim__prepRead sqe.ptr fd.rawfd buf nbytes fileOffset)
   primIO (prim__sqeSetData64 sqe.ptr userData)
   modifyIORef ring.pending (insert userData buf)
 
@@ -262,31 +266,31 @@ prepRead ring sqe fd buf nbytes fileOffset userData = do
 ||| written, or a negative `-errno`. Takes `ring` and mandates
 ||| `userData` for the same reason `prepRead` does.
 export
-prepWrite : URing -> SQE -> (fd : Int) -> (buf : Buffer) -> (nbytes : Bits32) -> (fileOffset : Bits64) -> (userData : Bits64) -> IO ()
+prepWrite : URing -> SQE -> (fd : FileDesc) -> (buf : Buffer) -> (nbytes : Bits32) -> (fileOffset : Bits64) -> (userData : Bits64) -> IO ()
 prepWrite ring sqe fd buf nbytes fileOffset userData = do
-  primIO (prim__prepWrite sqe.ptr fd buf nbytes fileOffset)
+  primIO (prim__prepWrite sqe.ptr fd.rawfd buf nbytes fileOffset)
   primIO (prim__sqeSetData64 sqe.ptr userData)
   modifyIORef ring.pending (insert userData buf)
 
-||| `openat`-equivalent, `dirfd = Uring.atFdcwd` for a plain
-||| CWD-relative `path` (matches the C `AT_FDCWD` convention -- see
-||| that constant's own doc comment). The completion's `res` is the new
-||| file descriptor, or a negative `-errno`.
+||| `openat`-equivalent, `Nothing` for a plain CWD-relative `path`
+||| (`AT_FDCWD`). `flags` and `mode` are the `O_*` and permission bits of
+||| `System.Posix.File`. Read the new descriptor with `fdResult`.
 export
-prepOpenat : SQE -> (dirfd : Int) -> (path : String) -> (flags : Int) -> (mode : Int) -> IO ()
-prepOpenat sqe dirfd path flags mode = primIO (prim__prepOpenat sqe.ptr dirfd path flags mode)
+prepOpenat : SQE -> (dirfd : Maybe DirDesc) -> (path : String) -> (flags : Bits32) -> (mode : Bits32) -> IO ()
+prepOpenat sqe dirfd path flags mode =
+  primIO (prim__prepOpenat sqe.ptr (maybe prim__AT_FDCWD (.rawdirfd) dirfd) path flags mode)
 
 ||| Closes `fd`. The completion's `res` is `0` on success, a negative
 ||| `-errno` otherwise.
 export
-prepClose : SQE -> (fd : Int) -> IO ()
-prepClose sqe fd = primIO (prim__prepClose sqe.ptr fd)
+prepClose : SQE -> (fd : FileDesc) -> IO ()
+prepClose sqe fd = primIO (prim__prepClose sqe.ptr fd.rawfd)
 
 ||| `fsync`-equivalent (pass `Uring.fsyncDatasync` for `fdatasync`
 ||| semantics instead, `0` for a full `fsync`).
 export
-prepFsync : SQE -> (fd : Int) -> (fsyncFlags : Bits32) -> IO ()
-prepFsync sqe fd fsyncFlags = primIO (prim__prepFsync sqe.ptr fd fsyncFlags)
+prepFsync : SQE -> (fd : FileDesc) -> (fsyncFlags : Bits32) -> IO ()
+prepFsync sqe fd fsyncFlags = primIO (prim__prepFsync sqe.ptr fd.rawfd fsyncFlags)
 
 ||| Accepts one pending connection on the listening socket `fd` (already
 ||| `bind`/`listen`ed synchronously, e.g. via upstream `Network.Socket`
@@ -297,8 +301,8 @@ prepFsync sqe fd fsyncFlags = primIO (prim__prepFsync sqe.ptr fd fsyncFlags)
 ||| `idris2rc2_iouring_prep_accept_simple`. The completion's `res` is
 ||| the new connected socket's file descriptor, or a negative `-errno`.
 export
-prepAccept : SQE -> (fd : Int) -> (flags : Int) -> IO ()
-prepAccept sqe fd flags = primIO (prim__prepAcceptSimple sqe.ptr fd flags)
+prepAccept : SQE -> (fd : FileDesc) -> (flags : Int32) -> IO ()
+prepAccept sqe fd flags = primIO (prim__prepAcceptSimple sqe.ptr fd.rawfd flags)
 
 ||| Witnesses one still-armed multishot-accept registration (see
 ||| `prepMultishotAccept`). Opaque and carries no `Ptr` of its own --
@@ -357,9 +361,9 @@ data MultishotAccept : Type where
 ||| feed it and the returned `MultishotAccept` token to
 ||| `readMultishotAccept` to find out whether more are still coming.
 export
-prepMultishotAccept : SQE -> (fd : Int) -> (flags : Int) -> (userData : Bits64) -> IO MultishotAccept
+prepMultishotAccept : SQE -> (fd : FileDesc) -> (flags : Int32) -> (userData : Bits64) -> IO MultishotAccept
 prepMultishotAccept sqe fd flags userData = do
-  primIO (prim__prepMultishotAcceptSimple sqe.ptr fd flags)
+  primIO (prim__prepMultishotAcceptSimple sqe.ptr fd.rawfd flags)
   primIO (prim__sqeSetData64 sqe.ptr userData)
   pure (MkMultishotAccept userData)
 
@@ -375,7 +379,7 @@ prepMultishotAccept sqe fd flags userData = do
 ||| separately afterward with `hasMore = False`, same as any other way
 ||| that registration could end.
 export
-prepCancel64 : SQE -> (targetUserData : Bits64) -> (flags : Int) -> IO ()
+prepCancel64 : SQE -> (targetUserData : Bits64) -> (flags : Int32) -> IO ()
 prepCancel64 sqe targetUserData flags = primIO (prim__prepCancel64 sqe.ptr targetUserData flags)
 
 ||| Connects the socket `fd` (already created, e.g. via upstream
@@ -394,7 +398,7 @@ prepCancel64 sqe targetUserData flags = primIO (prim__prepCancel64 sqe.ptr targe
 ||| `exit`. `userData` is mandatory for the same reason `prepRead`'s
 ||| is, not set separately via `setUserData`.
 export
-prepConnect : URing -> SQE -> (fd : Int) -> (host : String) -> (port : Bits16) -> (userData : Bits64) -> IO Bool
+prepConnect : URing -> SQE -> (fd : FileDesc) -> (host : String) -> (port : Bits16) -> (userData : Bits64) -> IO Bool
 prepConnect ring sqe fd host port userData = do
   raw <- primIO (prim__resolve host (show port))
   let isN = prim__nullAnyPtr raw
@@ -404,7 +408,7 @@ prepConnect ring sqe fd host port userData = do
        let info = the (Ptr RawAddrInfo) (prim__castPtr raw)
        addr <- primIO (prim__aiAddr info)
        len <- primIO (prim__aiAddrLen info)
-       primIO (prim__prepConnect sqe.ptr fd addr len)
+       primIO (prim__prepConnect sqe.ptr fd.rawfd addr len)
        primIO (prim__sqeSetData64 sqe.ptr userData)
        modifyIORef ring.pendingAddrs (insert userData info)
        pure True
@@ -414,9 +418,9 @@ prepConnect ring sqe fd host port userData = do
 ||| sent, or a negative `-errno`. Takes `ring` and mandates `userData`
 ||| for the same buffer-lifetime reason `prepRead` does.
 export
-prepSend : URing -> SQE -> (fd : Int) -> (buf : Buffer) -> (len : Bits64) -> (flags : Int) -> (userData : Bits64) -> IO ()
+prepSend : URing -> SQE -> (fd : FileDesc) -> (buf : Buffer) -> (len : Bits64) -> (flags : Int32) -> (userData : Bits64) -> IO ()
 prepSend ring sqe fd buf len flags userData = do
-  primIO (prim__prepSend sqe.ptr fd buf len flags)
+  primIO (prim__prepSend sqe.ptr fd.rawfd buf len flags)
   primIO (prim__sqeSetData64 sqe.ptr userData)
   modifyIORef ring.pending (insert userData buf)
 
@@ -426,9 +430,9 @@ prepSend ring sqe fd buf len flags userData = do
 ||| `ring` and mandates `userData` for the same buffer-lifetime reason
 ||| `prepRead` does.
 export
-prepRecv : URing -> SQE -> (fd : Int) -> (buf : Buffer) -> (len : Bits64) -> (flags : Int) -> (userData : Bits64) -> IO ()
+prepRecv : URing -> SQE -> (fd : FileDesc) -> (buf : Buffer) -> (len : Bits64) -> (flags : Int32) -> (userData : Bits64) -> IO ()
 prepRecv ring sqe fd buf len flags userData = do
-  primIO (prim__prepRecv sqe.ptr fd buf len flags)
+  primIO (prim__prepRecv sqe.ptr fd.rawfd buf len flags)
   primIO (prim__sqeSetData64 sqe.ptr userData)
   modifyIORef ring.pending (insert userData buf)
 
@@ -436,21 +440,26 @@ prepRecv ring sqe fd buf len flags userData = do
 -- Submission / completion
 -------------------------------------------------------------------------------
 
-||| Hands every `SQE` prepared since the last `submit`/`submitAndWait`
-||| to the kernel. Returns the number actually submitted, or a negative
-||| `-errno` (liburing itself already retries the underlying
-||| `io_uring_enter` once on `-EINTR`, so a negative result here is a
-||| genuine failure, not a spurious signal interruption).
+||| A request's `res` (or what `submit` returned): the count when it is not
+||| negative, else the `errno` it failed with.
 export
-submit : URing -> IO Int
-submit r = primIO (prim__submit r.ptr)
+resultOf : Int -> Either Errno Nat
+resultOf r = if r < 0 then Left (MkErrno (cast (negate r))) else Right (cast r)
+
+||| Hands every `SQE` prepared since the last `submit`/`submitAndWait`
+||| to the kernel. Returns the number actually submitted, or the `errno`
+||| (liburing itself already retries the underlying `io_uring_enter` once on
+||| `EINTR`, so a failure here is genuine, not a spurious signal interruption).
+export
+submit : URing -> IO (Either Errno Nat)
+submit r = resultOf <$> primIO (prim__submit r.ptr)
 
 ||| Like `submit`, but additionally blocks until at least `waitNr`
 ||| completions are ready (`0` behaves exactly like plain `submit`) --
 ||| one syscall instead of a separate `submit` + `waitCompletion` pair.
 export
-submitAndWait : URing -> (waitNr : Nat) -> IO Int
-submitAndWait r waitNr = primIO (prim__submitAndWait r.ptr (cast waitNr))
+submitAndWait : URing -> (waitNr : Nat) -> IO (Either Errno Nat)
+submitAndWait r waitNr = resultOf <$> primIO (prim__submitAndWait r.ptr (cast waitNr))
 
 ||| One finished request: `userData` is whatever `setUserData` tagged
 ||| its `SQE` with (`0` if untagged), `res` is that operation's own
@@ -466,6 +475,19 @@ record Completion where
   userData : Bits64
   res : Int
   flags : Bits32
+
+||| The `res` of a completion as a count, or the `errno` the request failed with.
+export
+result : Completion -> Either Errno Nat
+result c = resultOf c.res
+
+||| The `res` of a completion of `prepAccept` or `prepOpenat`: the new
+||| descriptor, or the `errno` the request failed with.
+export
+fdResult : Completion -> Either Errno FileDesc
+fdResult c = case mkFileDesc (cast c.res) of
+  Just fd => Right fd
+  Nothing => Left (MkErrno (cast (negate c.res)))
 
 readCompletion : Ptr RawCQE -> IO Completion
 readCompletion cqe = do
@@ -508,51 +530,53 @@ hasMore c = (c.flags .&. 0x2) /= 0
 ||| matching `io_uring_cqe_seen` (skipping it is a real bug: the
 ||| completion-queue slot never gets reclaimed, and the ring
 ||| eventually wedges once it fills up), so a caller can never forget
-||| the second half. `Nothing` on failure (see `man io_uring_enter`'s
+||| the second half. `Left errno` on failure (see `man io_uring_enter`'s
 ||| own `io_uring_wait_cqe` documentation for the ways this can fail --
 ||| interruption by a signal with no handler installed is the common
 ||| one). Also releases this `URing`'s own protective reference (if
 ||| any) on whatever `Buffer`/`sockaddr` the returned `Completion`'s
 ||| own `userData` names -- see `URing.pending`'s own doc comment.
 export
-waitCompletion : URing -> IO (Maybe Completion)
+waitCompletion : URing -> IO (Either Errno Completion)
 waitCompletion r = do
   raw <- primIO (prim__waitCqe r.ptr)
   let isN = prim__nullAnyPtr raw
   if isN /= 0
-     then pure Nothing
+     then Left <$> errno
      else do
        let cqe = the (Ptr RawCQE) (prim__castPtr raw)
        c <- readCompletion cqe
        primIO (prim__cqeSeen r.ptr cqe)
        releasePending r c.userData
-       pure (Just c)
+       pure (Right c)
 
-||| Like `waitCompletion`, but returns immediately with `Nothing` if no
+||| Like `waitCompletion`, but returns immediately with `Right Nothing` if no
 ||| completion is ready yet, instead of blocking -- the usual way to
 ||| drain whatever's already finished inside a larger event loop
 ||| without stalling it. Releases pending resources the same way
 ||| `waitCompletion` does.
 export
-pollCompletion : URing -> IO (Maybe Completion)
+pollCompletion : URing -> IO (Either Errno (Maybe Completion))
 pollCompletion r = do
   raw <- primIO (prim__peekCqe r.ptr)
   let isN = prim__nullAnyPtr raw
   if isN /= 0
-     then pure Nothing
+     then do
+       e <- errno
+       pure (if e == EAGAIN then Right Nothing else Left e)
      else do
        let cqe = the (Ptr RawCQE) (prim__castPtr raw)
        c <- readCompletion cqe
        primIO (prim__cqeSeen r.ptr cqe)
        releasePending r c.userData
-       pure (Just c)
+       pure (Right (Just c))
 
 ||| Decodes one `Completion` known to belong to `reg` (same `userData`
 ||| -- there is no way to check this statically, since `reg` only
 ||| witnesses that *some* multishot accept registration is still armed,
 ||| not which one a given `Completion` came from; compare `userData`
 ||| yourself first whenever more than one registration may be live).
-||| Returns the accepted descriptor (or a negative `-errno`), and a
+||| Returns the accepted descriptor (or the `errno`), and a
 ||| *fresh* `MultishotAccept` alongside it only when `hasMore c` -- i.e.
 ||| only when the kernel says this registration will keep generating
 ||| completions. `Nothing` means it has stopped (an error, or a matching
@@ -561,34 +585,13 @@ pollCompletion r = do
 ||| documented discipline, not something the compiler checks) -- arming
 ||| `fd` for further connections needs a new `prepMultishotAccept` call.
 export
-readMultishotAccept : MultishotAccept -> (c : Completion) -> (Int, Maybe MultishotAccept)
+readMultishotAccept : MultishotAccept -> (c : Completion) -> (Either Errno FileDesc, Maybe MultishotAccept)
 readMultishotAccept (MkMultishotAccept userData) c =
-  (c.res, if hasMore c then Just (MkMultishotAccept userData) else Nothing)
+  (fdResult c, if hasMore c then Just (MkMultishotAccept userData) else Nothing)
 
 -------------------------------------------------------------------------------
 -- Constants
 -------------------------------------------------------------------------------
-
-||| `AT_FDCWD` -- pass as `prepOpenat`'s own `dirfd` for a plain
-||| CWD-relative path. A fixed glibc/Linux ABI constant (`-100`),
-||| stable to hardcode the same way `libs/notcurses`'s own `NCKEY_MOD_*`
-||| bits are.
-export
-atFdcwd : Int
-atFdcwd = -100
-
-||| `O_RDONLY`/`O_WRONLY`/`O_RDWR`/`O_CREAT`/`O_TRUNC`/`O_APPEND`, for
-||| `prepOpenat`'s own `flags` -- combine with `.|.`
-||| (`Data.Bits`). Fixed Linux ABI constants, stable to hardcode.
-namespace OpenFlags
-  public export
-  rdonly, wronly, rdwr, creat, trunc, append : Int
-  rdonly = 0x0000
-  wronly = 0x0001
-  rdwr   = 0x0002
-  creat  = 0x0040
-  trunc  = 0x0200
-  append = 0x0400
 
 ||| `fdatasync` instead of a full `fsync`, for `prepFsync`'s own
 ||| `fsyncFlags` (`IORING_FSYNC_DATASYNC` -- an `io_uring`-specific
@@ -603,5 +606,5 @@ fsyncDatasync = 1
 ||| with the same value; a single `MultishotAccept` registration only
 ||| ever has the one `SQE` behind it either way).
 export
-cancelAll : Int
+cancelAll : Int32
 cancelAll = 1

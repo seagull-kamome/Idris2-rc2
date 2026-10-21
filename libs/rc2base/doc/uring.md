@@ -133,9 +133,17 @@ needs liburing's headers and library only where a program uses
 - **Socket creation/bind/listen stay synchronous**, via upstream
   `Network.Socket` (not reimplemented here) -- `prepAccept`/`prepConnect`/
   `prepSend`/`prepRecv` only cover the steady-state, per-connection
-  operations io_uring actually speeds up. A `Socket`'s own
-  `.descriptor : Int` is what every `prep*` function here expects for
-  `fd`.
+  operations io_uring actually speeds up. Every `prep*` function takes a
+  `System.Posix.FileDesc`; a `Socket`'s own `.descriptor : Int` becomes one
+  with `mkFileDesc (cast sock.descriptor)`.
+- **Errors are `Either Errno`, as in the rest of `rc2base`.** `init`,
+  `submit`, `submitAndWait` and `waitCompletion` return `Left errno` on
+  failure; `pollCompletion` returns `Right Nothing` when nothing is ready.
+  A request's own `res` is read with `result` (a count) or `fdResult` (the
+  descriptor `prepAccept` and `prepOpenat` produce), which turn a negative
+  `-errno` into `Left`. `getSqe` stays `Maybe`: a full queue is not an
+  `errno`. `prepOpenat` takes `Maybe DirDesc` (`Nothing` is `AT_FDCWD`) and
+  the `O_*` flags of `System.Posix.File`.
 - **`MultishotAccept` is a documented discipline, not a compiler-enforced
   linear resource** -- a real attempt was made at the latter (marking
   `readMultishotAccept`'s own argument multiplicity 1, so reusing an

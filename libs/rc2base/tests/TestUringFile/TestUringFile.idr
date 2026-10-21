@@ -7,6 +7,9 @@ import Data.Bits
 import Data.Buffer
 import System.File
 import System.Linux.Uring
+import System.Posix.Errno
+import System.Posix.File
+import System.Posix.FileDesc
 
 path : String
 path = "iouring_test_file.tmp"
@@ -14,79 +17,61 @@ path = "iouring_test_file.tmp"
 message : String
 message = "hello from io_uring"
 
-||| Submits `sqe`'s own already-prepared op and waits for its one
-||| completion -- every step in this test is a single in-flight
-||| request at a time, so this is enough (no need for a general
-||| multi-request submit/drain loop).
-runOne : URing -> SQE -> IO (Maybe Int)
-runOne ring sqe = do
-  n <- submit ring
-  if n /= 1
-     then pure Nothing
+||| Submits the `SQE` `prep` fills in and waits for its one completion --
+||| every step in this test is a single request in flight at a time.
+runOne : URing -> (what : String) -> (SQE -> IO ()) -> IO (Either String Completion)
+runOne ring what prep = do
+  Just sqe <- getSqe ring
+    | Nothing => pure (Left ("getSqe (" ++ what ++ ") failed"))
+  prep sqe
+  Right 1 <- submit ring
+    | other => pure (Left ("submit (" ++ what ++ ") returned " ++ show other))
+  Right completion <- waitCompletion ring
+    | Left e => pure (Left ("waitCompletion (" ++ what ++ ") " ++ show e))
+  pure (Right completion)
+
+roundTrip : URing -> Buffer -> Buffer -> IO (Either String String)
+roundTrip ring buf readBuf = do
+  let size = cast {to = Bits32} (length message)
+  Right open1 <- runOne ring "open for write" (\sqe => prepOpenat sqe Nothing path (O_CREAT .|. O_WRONLY .|. O_TRUNC) 0o644)
+    | Left e => pure (Left e)
+  Right fd <- pure (fdResult open1)
+    | Left e => pure (Left ("openat (write) " ++ show e))
+  Right written <- runOne ring "write" (\sqe => prepWrite ring sqe fd buf size 0 0)
+    | Left e => pure (Left e)
+  if result written /= Right (length message)
+     then pure (Left ("write " ++ show written.res))
      else do
-       Just completion <- waitCompletion ring
-         | Nothing => pure Nothing
-       pure (Just completion.res)
+       Right _ <- runOne ring "fsync" (\sqe => prepFsync sqe fd 0)
+         | Left e => pure (Left e)
+       Right _ <- runOne ring "close (write)" (\sqe => prepClose sqe fd)
+         | Left e => pure (Left e)
+       Right open2 <- runOne ring "open for read" (\sqe => prepOpenat sqe Nothing path O_RDONLY 0)
+         | Left e => pure (Left e)
+       Right readFd <- pure (fdResult open2)
+         | Left e => pure (Left ("openat (read) " ++ show e))
+       Right readC <- runOne ring "read" (\sqe => prepRead ring sqe readFd readBuf size 0 0)
+         | Left e => pure (Left e)
+       Right _ <- runOne ring "close (read)" (\sqe => prepClose sqe readFd)
+         | Left e => pure (Left e)
+       if result readC /= Right (length message)
+          then pure (Left ("read " ++ show readC.res))
+          else Right <$> getString readBuf 0 (cast (length message))
 
 main : IO ()
 main = do
-  Just ring <- init 8
-    | Nothing => putStrLn "FAIL: init failed"
-
+  Right ring <- init 8
+    | Left e => putStrLn ("FAIL: init " ++ show e)
   Just buf <- newBuffer (cast (length message))
     | Nothing => putStrLn "FAIL: newBuffer failed"
   setString buf 0 message
+  Just readBuf <- newBuffer (cast (length message))
+    | Nothing => putStrLn "FAIL: newBuffer (read) failed"
 
-  Just openSqe <- getSqe ring
-    | Nothing => putStrLn "FAIL: getSqe (open for write) failed"
-  prepOpenat openSqe atFdcwd path (OpenFlags.creat .|. OpenFlags.wronly .|. OpenFlags.trunc) 0o644
-  Just fd <- runOne ring openSqe
-    | Nothing => putStrLn "FAIL: submit/wait (open for write) failed"
-  if fd < 0
-     then putStrLn $ "FAIL: openat (write) res=" ++ show fd
-     else do
-       Just writeSqe <- getSqe ring
-         | Nothing => putStrLn "FAIL: getSqe (write) failed"
-       prepWrite ring writeSqe fd buf (cast (length message)) 0 0
-       Just written <- runOne ring writeSqe
-         | Nothing => putStrLn "FAIL: submit/wait (write) failed"
-       if written /= cast (length message)
-          then putStrLn $ "FAIL: write res=" ++ show written ++ ", expected " ++ show (length message)
-          else do
-            Just fsyncSqe <- getSqe ring
-              | Nothing => putStrLn "FAIL: getSqe (fsync) failed"
-            prepFsync fsyncSqe fd 0
-            Just fsyncRes <- runOne ring fsyncSqe
-              | Nothing => putStrLn "FAIL: submit/wait (fsync) failed"
-            Just closeSqe <- getSqe ring
-              | Nothing => putStrLn "FAIL: getSqe (close write fd) failed"
-            prepClose closeSqe fd
-            _ <- runOne ring closeSqe
-
-            Just readOpenSqe <- getSqe ring
-              | Nothing => putStrLn "FAIL: getSqe (open for read) failed"
-            prepOpenat readOpenSqe atFdcwd path OpenFlags.rdonly 0
-            Just readFd <- runOne ring readOpenSqe
-              | Nothing => putStrLn "FAIL: submit/wait (open for read) failed"
-            if readFd < 0
-               then putStrLn $ "FAIL: openat (read) res=" ++ show readFd
-               else do
-                 Just readBuf <- newBuffer (cast (length message))
-                   | Nothing => putStrLn "FAIL: newBuffer (read) failed"
-                 Just readSqe <- getSqe ring
-                   | Nothing => putStrLn "FAIL: getSqe (read) failed"
-                 prepRead ring readSqe readFd readBuf (cast (length message)) 0 0
-                 Just readRes <- runOne ring readSqe
-                   | Nothing => putStrLn "FAIL: submit/wait (read) failed"
-                 Just closeReadSqe <- getSqe ring
-                   | Nothing => putStrLn "FAIL: getSqe (close read fd) failed"
-                 prepClose closeReadSqe readFd
-                 _ <- runOne ring closeReadSqe
-
-                 exit ring
-                 _ <- removeFile path
-
-                 readBack <- getString readBuf 0 (cast (length message))
-                 if readRes == cast (length message) && readBack == message
-                    then putStrLn "PASS: file round-trip"
-                    else putStrLn $ "FAIL: read res=" ++ show readRes ++ " content=" ++ show readBack
+  outcome <- roundTrip ring buf readBuf
+  exit ring
+  _ <- removeFile path
+  case outcome of
+       Left e => putStrLn ("FAIL: " ++ e)
+       Right readBack =>
+         putStrLn (if readBack == message then "PASS: file round-trip" else "FAIL: content " ++ show readBack)
