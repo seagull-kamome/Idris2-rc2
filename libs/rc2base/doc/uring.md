@@ -26,26 +26,32 @@ the *consumer's* generated `.c` file, so the `static inline` functions of
 `<liburing.h>` (`io_uring_get_sqe`, every `io_uring_prep_*`,
 `io_uring_sqe_set_data64`, `io_uring_submit(_and_wait)`,
 `io_uring_cqe_seen`) bind directly with `"C:fn, liburing, liburing.h"`.
-The bindings that need more than a function name are `CExpr:` (see
-`rc2/doc/ffi-cexpr.md`), so `rc2base` builds with `gcc` and `ar` only and
+What needs more than a function name is a one-expression `CExpr:` (see
+`rc2/doc/ffi-cexpr.md`) plus Idris code around it, with the memory from
+`System.FFI.malloc`/`free`. `rc2base` builds with `gcc` and `ar` only and
 needs liburing's headers and library only where a program uses
 `System.Linux.Uring`:
 
 1. **`io_uring_queue_init`/`_exit`** want the caller to own the `struct
-   io_uring`. `prim__queueInit` is a statement expression that `malloc`s one,
-   initialises it, and yields `NULL` after freeing it on failure;
-   `prim__queueExit` unregisters the ring and frees it.
-2. **`io_uring_wait_cqe`/`io_uring_peek_cqe`** return the completion through
-   a `struct io_uring_cqe **`. `prim__waitCqe`/`prim__peekCqe` collapse
-   `(return code, out-parameter)` into one pointer, `NULL` meaning failed or
-   not ready yet. A successful call never yields a `NULL` completion.
+   io_uring`. `init` `malloc`s `sizeof(struct io_uring)` (a `CExpr:`
+   constant), calls `io_uring_queue_init` and, when it returns `-errno`,
+   frees the block and returns `Left errno`. `exit` calls
+   `io_uring_queue_exit` and frees it.
+2. **`io_uring_wait_cqe`/`io_uring_peek_cqe`** return the completion
+   through a `struct io_uring_cqe **`. Each `URing` owns a pointer-sized
+   slot (`cqeSlot`, allocated by `init`, freed by `exit`) that is passed as
+   that argument; after a successful call the completion is read from the
+   slot. The return value is `-errno`, and `peek` returning `-EAGAIN` is
+   "nothing ready".
 3. **`io_uring_prep_accept`'s `addr`/`addrlen`** are passed as `NULL`: the
    peer's address is not exposed (`getpeername` on the resulting descriptor
    gives it).
-4. **`io_uring_prep_connect`'s `addr`** is built by `getaddrinfo`
-   (`prim__resolve`, with `AI_NUMERICSERV`, so the port is a decimal string)
-   and read through `ai_addr`/`ai_addrlen`. The `addrinfo` list itself is the
-   thing kept alive in `URing.pendingAddrs` and released with `freeaddrinfo`.
+4. **`io_uring_prep_connect`'s `addr`** comes from `getaddrinfo`. `prepConnect`
+   allocates a zeroed `struct addrinfo` for the hints and a result slot,
+   sets `ai_socktype` and `AI_NUMERICSERV` (so the port is a decimal
+   string), calls `getaddrinfo`, and reads `ai_addr`/`ai_addrlen` from the
+   result. The `addrinfo` list itself is kept alive in `URing.pendingAddrs`
+   and released with `freeaddrinfo`.
 5. **The `io_uring_cqe` fields** `res`, `user_data` and `flags` have no
    accessor in liburing.h (`io_uring_cqe_get_data64` covers `user_data`
    only); they are `CExpr:` field reads.

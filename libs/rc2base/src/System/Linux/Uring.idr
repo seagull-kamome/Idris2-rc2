@@ -29,18 +29,24 @@ data RawCQE : Type where [external]
 data RawSockAddr : Type where [external]
 data RawAddrInfo : Type where [external]
 
--- liburing needs the caller to own the `struct io_uring`: allocate it here
-%inline %foreign "CExpr:({ struct io_uring *r = malloc(sizeof *r); if (r != NULL) { int rc = io_uring_queue_init($1, r, $2); if (rc < 0) { free(r); errno = -rc; r = NULL; } } r; }),liburing,liburing.h;stdlib.h;errno.h"
-prim__queueInit : Bits32 -> Bits32 -> PrimIO AnyPtr
-%inline %foreign "CExpr:({ struct io_uring *r = $1; if (r != NULL) { io_uring_queue_exit(r); free(r); } }),liburing,liburing.h;stdlib.h"
+-- liburing needs the caller to own the `struct io_uring`: `init` allocates it
+%inline %foreign "CExpr:(sizeof(struct io_uring)),liburing,liburing.h"
+prim__sizeofRing : Int
+%inline %foreign "CExpr:(sizeof(void *)),libc"
+prim__sizeofPtr : Int
+%inline %foreign "CExpr:(io_uring_queue_init($1, (struct io_uring *)($2), $3)),liburing,liburing.h"
+prim__queueInit : Bits32 -> AnyPtr -> Bits32 -> PrimIO Int32
+%inline %foreign "CExpr:io_uring_queue_exit((struct io_uring *)($1)),liburing,liburing.h"
 prim__queueExit : Ptr RawURing -> PrimIO ()
 
--- `io_uring_{wait,peek}_cqe` return the completion through an out-parameter:
--- `NULL` stands for failure, with `errno` set (`EAGAIN` when peeking finds none)
-%inline %foreign "CExpr:({ struct io_uring_cqe *c = NULL; int rc = io_uring_wait_cqe($1, &c); if (rc < 0) { errno = -rc; c = NULL; } c; }),liburing,liburing.h;errno.h"
-prim__waitCqe : Ptr RawURing -> PrimIO AnyPtr
-%inline %foreign "CExpr:({ struct io_uring_cqe *c = NULL; int rc = io_uring_peek_cqe($1, &c); if (rc < 0) { errno = -rc; c = NULL; } c; }),liburing,liburing.h;errno.h"
-prim__peekCqe : Ptr RawURing -> PrimIO AnyPtr
+-- `io_uring_{wait,peek}_cqe` return the completion through a
+-- `struct io_uring_cqe **`: a pointer-sized slot the caller allocates
+%inline %foreign "CExpr:(io_uring_wait_cqe((struct io_uring *)($1), (struct io_uring_cqe **)($2))),liburing,liburing.h"
+prim__waitCqe : Ptr RawURing -> AnyPtr -> PrimIO Int32
+%inline %foreign "CExpr:(io_uring_peek_cqe((struct io_uring *)($1), (struct io_uring_cqe **)($2))),liburing,liburing.h"
+prim__peekCqe : Ptr RawURing -> AnyPtr -> PrimIO Int32
+%inline %foreign "CExpr:(*(void **)($1)),libc"
+prim__readPtr : AnyPtr -> PrimIO AnyPtr
 %inline %foreign "CExpr:(((struct io_uring_cqe *)($1))->res),liburing,liburing.h"
 prim__cqeRes : Ptr RawCQE -> PrimIO Int
 %inline %foreign "CExpr:(((struct io_uring_cqe *)($1))->user_data),liburing,liburing.h"
@@ -53,9 +59,17 @@ prim__prepAcceptSimple : Ptr RawSQE -> Int32 -> Int32 -> PrimIO ()
 %inline %foreign "CExpr:(io_uring_prep_multishot_accept((struct io_uring_sqe *)($1), (int)($2), NULL, NULL, (int)($3))),liburing,liburing.h"
 prim__prepMultishotAcceptSimple : Ptr RawSQE -> Int32 -> Int32 -> PrimIO ()
 
--- `getaddrinfo` for a stream socket of any family, `NULL` on failure
-%inline %foreign "CExpr:({ struct addrinfo h = {0}, *res = NULL; h.ai_socktype = SOCK_STREAM; h.ai_flags = AI_NUMERICSERV; getaddrinfo($1, $2, &h, &res) == 0 ? res : NULL; }),libc,netdb.h;sys/socket.h"
-prim__resolve : String -> String -> PrimIO AnyPtr
+-- `getaddrinfo` for a stream socket of any family and a numeric port; the
+-- `struct addrinfo` hints and the `struct addrinfo **` result are allocated
+-- by the caller
+%inline %foreign "CExpr:(sizeof(struct addrinfo)),libc,netdb.h"
+prim__sizeofAddrInfo : Int
+%inline %foreign "CExpr:memset($1, 0, $2),libc,string.h"
+prim__memset : AnyPtr -> Int -> PrimIO ()
+%inline %foreign "CExpr:(((struct addrinfo *)($1))->ai_socktype = SOCK_STREAM, ((struct addrinfo *)($1))->ai_flags = AI_NUMERICSERV),libc,netdb.h;sys/socket.h"
+prim__setStreamHints : AnyPtr -> PrimIO ()
+%inline %foreign "CExpr:(getaddrinfo($1, $2, (const struct addrinfo *)($3), (struct addrinfo **)($4))),libc,netdb.h;sys/socket.h"
+prim__getaddrinfo : String -> String -> AnyPtr -> AnyPtr -> PrimIO Int32
 %inline %foreign "CExpr:(((struct addrinfo *)($1))->ai_addr),libc,netdb.h"
 prim__aiAddr : Ptr RawAddrInfo -> PrimIO (Ptr RawSockAddr)
 %inline %foreign "CExpr:(((struct addrinfo *)($1))->ai_addrlen),libc,netdb.h"
@@ -149,6 +163,7 @@ export
 record URing where
   constructor MkURing
   ptr : Ptr RawURing
+  cqeSlot : AnyPtr
   pending : IORef (SortedMap Bits64 Buffer)
   pendingAddrs : IORef (SortedMap Bits64 (Ptr RawAddrInfo))
 
@@ -164,14 +179,18 @@ record URing where
 export
 init : (queueDepth : Nat) -> IO (Either Errno URing)
 init queueDepth = do
-  raw <- primIO (prim__queueInit (cast queueDepth) 0)
-  let isN = prim__nullAnyPtr raw
-  if isN /= 0
-     then Left <$> errno
+  ring <- malloc prim__sizeofRing
+  slot <- malloc prim__sizeofPtr
+  if prim__nullAnyPtr ring /= 0 || prim__nullAnyPtr slot /= 0
+     then free ring *> free slot *> pure (Left ENOMEM)
      else do
-       pendingRef <- newIORef empty
-       pendingAddrsRef <- newIORef empty
-       pure (Right (MkURing (prim__castPtr raw) pendingRef pendingAddrsRef))
+       rc <- primIO (prim__queueInit (cast queueDepth) ring 0)
+       if rc < 0
+          then free ring *> free slot *> pure (Left (MkErrno (negate rc)))
+          else do
+            pendingRef <- newIORef empty
+            pendingAddrsRef <- newIORef empty
+            pure (Right (MkURing (prim__castPtr ring) slot pendingRef pendingAddrsRef))
 
 ||| Tears the ring down. Every `SQE` obtained from it, and every
 ||| `Completion` not yet consumed, is invalid afterward. Also releases
@@ -188,6 +207,8 @@ export
 exit : URing -> IO ()
 exit r = do
   primIO (prim__queueExit r.ptr)
+  free (prim__forgetPtr r.ptr)
+  free r.cqeSlot
   writeIORef r.pending empty
   addrs <- readIORef r.pendingAddrs
   traverse_ (primIO . prim__freeAddrInfo) (values addrs)
@@ -400,18 +421,29 @@ prepCancel64 sqe targetUserData flags = primIO (prim__prepCancel64 sqe.ptr targe
 export
 prepConnect : URing -> SQE -> (fd : FileDesc) -> (host : String) -> (port : Bits16) -> (userData : Bits64) -> IO Bool
 prepConnect ring sqe fd host port userData = do
-  raw <- primIO (prim__resolve host (show port))
-  let isN = prim__nullAnyPtr raw
-  if isN /= 0
-     then pure False
-     else do
-       let info = the (Ptr RawAddrInfo) (prim__castPtr raw)
-       addr <- primIO (prim__aiAddr info)
-       len <- primIO (prim__aiAddrLen info)
-       primIO (prim__prepConnect sqe.ptr fd.rawfd addr len)
-       primIO (prim__sqeSetData64 sqe.ptr userData)
-       modifyIORef ring.pendingAddrs (insert userData info)
-       pure True
+  Just info <- resolve
+    | Nothing => pure False
+  addr <- primIO (prim__aiAddr info)
+  len <- primIO (prim__aiAddrLen info)
+  primIO (prim__prepConnect sqe.ptr fd.rawfd addr len)
+  primIO (prim__sqeSetData64 sqe.ptr userData)
+  modifyIORef ring.pendingAddrs (insert userData info)
+  pure True
+  where
+    resolve : IO (Maybe (Ptr RawAddrInfo))
+    resolve = do
+      hints <- malloc prim__sizeofAddrInfo
+      slot <- malloc prim__sizeofPtr
+      if prim__nullAnyPtr hints /= 0 || prim__nullAnyPtr slot /= 0
+         then free hints *> free slot *> pure Nothing
+         else do
+           primIO (prim__memset hints prim__sizeofAddrInfo)
+           primIO (prim__setStreamHints hints)
+           rc <- primIO (prim__getaddrinfo host (show port) hints slot)
+           found <- primIO (prim__readPtr slot)
+           free hints
+           free slot
+           pure (if rc == 0 && prim__nullAnyPtr found == 0 then Just (prim__castPtr found) else Nothing)
 
 ||| Sends `len` bytes from `buf`'s own start on the connected/accepted
 ||| socket `fd`. The completion's `res` is the byte count actually
@@ -525,6 +557,17 @@ export
 hasMore : Completion -> Bool
 hasMore c = (c.flags .&. 0x2) /= 0
 
+-- Reads the completion `cqeSlot` points to, marks it seen (a completion not
+-- marked seen is never reclaimed and wedges the ring) and releases what it held.
+reap : URing -> IO Completion
+reap r = do
+  raw <- primIO (prim__readPtr r.cqeSlot)
+  let cqe = the (Ptr RawCQE) (prim__castPtr raw)
+  c <- readCompletion cqe
+  primIO (prim__cqeSeen r.ptr cqe)
+  releasePending r c.userData
+  pure c
+
 ||| Blocks until at least one completion is ready, consumes exactly
 ||| one, and returns it -- combines `io_uring_wait_cqe` with the
 ||| matching `io_uring_cqe_seen` (skipping it is a real bug: the
@@ -539,16 +582,8 @@ hasMore c = (c.flags .&. 0x2) /= 0
 export
 waitCompletion : URing -> IO (Either Errno Completion)
 waitCompletion r = do
-  raw <- primIO (prim__waitCqe r.ptr)
-  let isN = prim__nullAnyPtr raw
-  if isN /= 0
-     then Left <$> errno
-     else do
-       let cqe = the (Ptr RawCQE) (prim__castPtr raw)
-       c <- readCompletion cqe
-       primIO (prim__cqeSeen r.ptr cqe)
-       releasePending r c.userData
-       pure (Right c)
+  rc <- primIO (prim__waitCqe r.ptr r.cqeSlot)
+  if rc < 0 then pure (Left (MkErrno (negate rc))) else Right <$> reap r
 
 ||| Like `waitCompletion`, but returns immediately with `Right Nothing` if no
 ||| completion is ready yet, instead of blocking -- the usual way to
@@ -558,18 +593,10 @@ waitCompletion r = do
 export
 pollCompletion : URing -> IO (Either Errno (Maybe Completion))
 pollCompletion r = do
-  raw <- primIO (prim__peekCqe r.ptr)
-  let isN = prim__nullAnyPtr raw
-  if isN /= 0
-     then do
-       e <- errno
-       pure (if e == EAGAIN then Right Nothing else Left e)
-     else do
-       let cqe = the (Ptr RawCQE) (prim__castPtr raw)
-       c <- readCompletion cqe
-       primIO (prim__cqeSeen r.ptr cqe)
-       releasePending r c.userData
-       pure (Right (Just c))
+  rc <- primIO (prim__peekCqe r.ptr r.cqeSlot)
+  let err = MkErrno (negate rc)
+  if rc >= 0 then Right . Just <$> reap r
+     else pure (if err == EAGAIN then Right Nothing else Left err)
 
 ||| Decodes one `Completion` known to belong to `reg` (same `userData`
 ||| -- there is no way to check this statically, since `reg` only
