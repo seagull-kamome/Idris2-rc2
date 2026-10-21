@@ -99,6 +99,16 @@ export O_TMPFILE : Bits32
 %inline %foreign "CExpr:(O_TRUNC),libc,fcntl.h;sys/stat.h;sys/types.h"
 export O_TRUNC : Bits32
 
+||| File access mode: open for reading only.
+%inline %foreign "CExpr:(O_RDONLY),libc,fcntl.h;sys/stat.h;sys/types.h"
+export O_RDONLY : Bits32
+||| File access mode: open for writing only.
+%inline %foreign "CExpr:(O_WRONLY),libc,fcntl.h;sys/stat.h;sys/types.h"
+export O_WRONLY : Bits32
+||| File access mode: open for reading and writing.
+%inline %foreign "CExpr:(O_RDWR),libc,fcntl.h;sys/stat.h;sys/types.h"
+export O_RDWR : Bits32
+
 ||| Directory entry flag: do not follow a symbolic link.
 %inline %foreign "CExpr:(AT_SYMLINK_NOFOLLOW),libc,fcntl.h;sys/stat.h"
 export AT_SYMLINK_NOFOLLOW : Bits32

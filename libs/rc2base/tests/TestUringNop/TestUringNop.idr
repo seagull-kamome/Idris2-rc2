@@ -5,21 +5,22 @@
 module Main
 
 import System.Linux.Uring
+import System.Posix.Errno
 
 main : IO ()
 main = do
-  Just ring <- init 8
-    | Nothing => putStrLn "FAIL: init failed"
+  Right ring <- init 8
+    | Left e => putStrLn ("FAIL: init " ++ show e)
   Just sqe <- getSqe ring
     | Nothing => putStrLn "FAIL: getSqe failed"
   prepNop sqe
   setUserData sqe 0xdeadbeef
   n <- submit ring
-  if n /= 1
+  if n /= Right 1
      then putStrLn $ "FAIL: submit returned " ++ show n ++ ", expected 1"
      else do
-       Just completion <- waitCompletion ring
-         | Nothing => putStrLn "FAIL: waitCompletion failed"
+       Right completion <- waitCompletion ring
+         | Left e => putStrLn ("FAIL: waitCompletion " ++ show e)
        exit ring
        if completion.userData == 0xdeadbeef && completion.res == 0
           then putStrLn "PASS: nop round-trip"

@@ -78,6 +78,9 @@ testFlags = do
   flag "O_NONBLOCK" O_NONBLOCK
   flag "O_SYNC" O_SYNC
   flag "O_TRUNC" O_TRUNC
+  flag "O_RDONLY" O_RDONLY
+  flag "O_WRONLY" O_WRONLY
+  flag "O_RDWR" O_RDWR
   flag "AT_SYMLINK_NOFOLLOW" AT_SYMLINK_NOFOLLOW
 
 ||| creat / String.write / fsync / fdatasync / sync / lseek / close.
