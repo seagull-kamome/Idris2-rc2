@@ -58,11 +58,7 @@ ringOf env = env.slot "Control.Task.Uring" $ do
 -- A free entry of the submission queue; when it is full, what is prepared is
 -- submitted to make room.
 freeSqe : Ring -> IO (Maybe SQE)
-freeSqe ring = do
-  Nothing <- getSqe ring.uring
-    | found => pure found
-  ignore (submit ring.uring)
-  getSqe ring.uring
+freeSqe ring = getSqe ring.uring >>= maybe (submit ring.uring *> getSqe ring.uring) (pure . Just)
 
 fresh : Ring -> IO Bits64
 fresh ring = do

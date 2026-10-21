@@ -11,6 +11,8 @@
 module Main
 
 import Data.Buffer
+import Data.Maybe
+import Data.So
 import Network.Socket
 import Network.Socket.Data
 import System.FFI
@@ -46,9 +48,10 @@ setReuseAddr sock = do
   _ <- primIO (prim__setsockopt sock.descriptor 1 2 optBuf 4)
   pure ()
 
-||| The `FileDesc` of an upstream `Socket` (its `descriptor` is an `Int`).
-socketFd : Socket -> Maybe FileDesc
-socketFd sock = mkFileDesc (cast sock.descriptor)
+||| The `FileDesc` of an upstream `Socket` (its `descriptor` is an `Int`, never
+||| negative for a socket that `socket` made).
+socketFd : Socket -> FileDesc
+socketFd sock = fromMaybe (MkFileDesc 0) (mkFileDesc (cast sock.descriptor))
 
 runOne : URing -> SQE -> IO (Maybe Int)
 runOne ring sqe = do
@@ -105,10 +108,8 @@ singleShotTest = do
           else do
             Right clientSock <- socket AF_INET Stream 0
               | Left err => pure (Left ("client socket() errno=" ++ show err))
-            Just serverFd <- pure (socketFd serverSock)
-              | Nothing => pure (Left "server descriptor")
-            Just clientFd <- pure (socketFd clientSock)
-              | Nothing => pure (Left "client descriptor")
+            let serverFd = socketFd serverSock
+            let clientFd = socketFd clientSock
 
             Just acceptSqe <- getSqe ring
               | Nothing => pure (Left "getSqe (accept) failed")
@@ -158,8 +159,7 @@ connectClient : URing -> (tag : Bits64) -> IO (Either String (Socket, FileDesc))
 connectClient ring tag = do
   Right clientSock <- socket AF_INET Stream 0
     | Left err => pure (Left ("client socket() errno=" ++ show err))
-  Just clientFd <- pure (socketFd clientSock)
-    | Nothing => pure (Left "client descriptor")
+  let clientFd = socketFd clientSock
   Just connectSqe <- getSqe ring
     | Nothing => pure (Left "getSqe (connect) failed")
   resolved <- prepConnect ring connectSqe clientFd "127.0.0.1" (cast multishotPort) tag
@@ -237,8 +237,7 @@ multishotTest = do
           else do
             Just acceptSqe <- getSqe ring
               | Nothing => pure (Left "getSqe (multishot accept) failed")
-            Just serverFd <- pure (socketFd serverSock)
-              | Nothing => pure (Left "server descriptor")
+            let serverFd = socketFd serverSock
             reg0 <- prepMultishotAccept acceptSqe serverFd 0 acceptRegUserData
             n0 <- submit ring
             if n0 /= Right 1

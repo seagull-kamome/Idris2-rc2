@@ -30,13 +30,18 @@ runOne ring what prep = do
     | Left e => pure (Left ("waitCompletion (" ++ what ++ ") " ++ show e))
   pure (Right completion)
 
+||| `runOne` for a request whose result is a new descriptor.
+openFd : URing -> (what : String) -> (SQE -> IO ()) -> IO (Either String FileDesc)
+openFd ring what prep = do
+  Right completion <- runOne ring what prep
+    | Left e => pure (Left e)
+  pure (either (\e => Left (what ++ " " ++ show e)) Right (fdResult completion))
+
 roundTrip : URing -> Buffer -> Buffer -> IO (Either String String)
 roundTrip ring buf readBuf = do
   let size = cast {to = Bits32} (length message)
-  Right open1 <- runOne ring "open for write" (\sqe => prepOpenat sqe Nothing path (O_CREAT .|. O_WRONLY .|. O_TRUNC) 0o644)
+  Right fd <- openFd ring "open for write" (\sqe => prepOpenat sqe Nothing path (O_CREAT .|. O_WRONLY .|. O_TRUNC) 0o644)
     | Left e => pure (Left e)
-  Right fd <- pure (fdResult open1)
-    | Left e => pure (Left ("openat (write) " ++ show e))
   Right written <- runOne ring "write" (\sqe => prepWrite ring sqe fd buf size 0 0)
     | Left e => pure (Left e)
   if result written /= Right (length message)
@@ -46,10 +51,8 @@ roundTrip ring buf readBuf = do
          | Left e => pure (Left e)
        Right _ <- runOne ring "close (write)" (\sqe => prepClose sqe fd)
          | Left e => pure (Left e)
-       Right open2 <- runOne ring "open for read" (\sqe => prepOpenat sqe Nothing path O_RDONLY 0)
+       Right readFd <- openFd ring "open for read" (\sqe => prepOpenat sqe Nothing path O_RDONLY 0)
          | Left e => pure (Left e)
-       Right readFd <- pure (fdResult open2)
-         | Left e => pure (Left ("openat (read) " ++ show e))
        Right readC <- runOne ring "read" (\sqe => prepRead ring sqe readFd readBuf size 0 0)
          | Left e => pure (Left e)
        Right _ <- runOne ring "close (read)" (\sqe => prepClose sqe readFd)
