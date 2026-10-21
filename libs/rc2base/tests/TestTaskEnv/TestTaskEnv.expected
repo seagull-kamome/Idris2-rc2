@@ -1,0 +1,7 @@
+values: Just ["7", "7", "1"]
+made: 2
+released at close: ["x", "y"]
+source: Just "woken by the source"
+drains: 1
+race: Just (Right ())
+drains after the cancel: 1
