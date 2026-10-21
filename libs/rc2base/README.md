@@ -145,7 +145,7 @@ are listed explicitly in the `TESTS` array in `verify.sh` (name, extra
 is not listed, or a listed test lacks its directory, `.idr` or
 `.expected`. To add a test: create the directory with those two files
 and add one line to `TESTS`. `TestCurl` needs libcurl's headers and is
-skipped (with a `SKIP` line) when `gcc` cannot find `curl/curl.h`.
+skipped (with a `SKIP` line) when `gcc` cannot find `curl/curl.h`. `TestUring*` are skipped the same way when `liburing.h` is missing.
 
 ## Native library install location
 
