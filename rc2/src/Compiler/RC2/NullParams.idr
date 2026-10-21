@@ -30,6 +30,10 @@ withIndex = go 0
     go _ [] = []
     go k (x :: xs) = (k, x) :: go (S k) xs
 
+||| `[0 .. n-1]`.
+indicesTo : Nat -> List Nat
+indicesTo n = map fst (withIndex (replicate n ()))
+
 ||| What one `RCExp` says about a function name.
 data Fact : Type where
      ||| `RAppName n args`.
@@ -191,8 +195,7 @@ forwardStates arityOf typed sites =
 
     grow : SortedMap Int (List St) -> SortedMap Int (List St)
     grow states =
-        let next := fromList [ (n, [ foldl (\acc, s => meet acc (atSite states i s)) Top ss
-                                   | (i, _) <- withIndex (replicate (arity n) ()) ])
+        let next := fromList [ (n, [ foldl (\acc, s => meet acc (atSite states i s)) Top ss | i <- indicesTo (arity n) ])
                              | (n, ss) <- SortedMap.toList sites ]
         in if next == states then states else grow next
 

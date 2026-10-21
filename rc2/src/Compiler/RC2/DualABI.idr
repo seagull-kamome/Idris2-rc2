@@ -664,11 +664,14 @@ loopContinues e = concatMap loopContinues (children e)
 ||| one slot for different values in different states): such a slot cannot be
 ||| `NULL`-typed.
 mixedSlots : SortedMap Int NativeTy -> RCExp -> SortedSet Int
-mixedSlots m e@(RLoop _ loopParams initial _ body) =
-    let feeds := initial :: loopContinues body
-        stuck := mapMaybe (\(k, (i, _)) => if isJust (lookup i m) && not (all (nullAt k) feeds) then Just i else Nothing)
-                          (withIndex loopParams)
-    in foldl (\acc, c => union acc (mixedSlots m c)) (SortedSet.fromList stuck) (children e)
+mixedSlots m e =
+    let own : SortedSet Int := case e of
+            RLoop _ loopParams initial _ body =>
+                let feeds := initial :: loopContinues body
+                in SortedSet.fromList (mapMaybe (\(k, (i, _)) => if isJust (lookup i m) && not (all (nullAt k) feeds) then Just i else Nothing)
+                                                (withIndex loopParams))
+            _ => empty
+    in foldl (\acc, c => union acc (mixedSlots m c)) own (children e)
   where
     nullAt : Nat -> List RCLocal -> Bool
     nullAt k args = case getAt k args of
@@ -677,7 +680,6 @@ mixedSlots m e@(RLoop _ loopParams initial _ body) =
                          Just RCErased => True
                          Just RCWorld => True
                          _ => False
-mixedSlots m e = foldl (\acc, c => union acc (mixedSlots m c)) empty (children e)
 
 ||| The `NULL`-typed locals of a worker body: its `seeds` (the parameters) and
 ||| their aliases, less every slot of a loop that is not `NULL` throughout.
@@ -688,7 +690,7 @@ safeNullTypes seeds body = go empty
     go banned =
         let m = nullAliasTypes banned (fromList (filter (\(i, _) => not (contains i banned)) (SortedMap.toList seeds))) body
             bad = mixedSlots m body
-        in if null (Prelude.toList bad) then m else go (union banned bad)
+        in if null bad then m else go (union banned bad)
 
 ||| Each of those aliases becomes a native local of its own type, read from
 ||| the native parameter, instead of a `Boxed` one that would be dup'd and
@@ -709,6 +711,11 @@ nullReads m = flip mapLocalsRCExp id $ \case
                     Nothing => RCLoc i
     l => l
 
+||| A worker body with its `NULL`-typed locals (`m`: the parameters and their
+||| aliases) made native and read as constants.
+nullLocals : SortedMap Int NativeTy -> RCExp -> RCExp
+nullLocals m e = if null m then e else nullReads m (nativeAliasLets m (retypeNullLoopParams m e))
+
 ||| Synthesise `original`'s own worker (each parameter promoted to
 ||| `RNative` at its eligible position, `RBoxed` elsewhere; `retRep`
 ||| promoted when `retEligible` found one; body is the original's own
@@ -727,7 +734,7 @@ synthesizeWorker : {auto r : Ref FreshId Int}
 synthesizeWorker existingNames original eligible0 retEligible args wrapperRetRep body = do
     workerName <- freshName "idris2rc2_worker_" existingNames original
     let nullSeeds : SortedMap Int NativeTy := fromList (filter (\(_, ty) => nullTy ty) eligible0)
-        aliasTypes : SortedMap Int NativeTy := if null (SortedMap.toList nullSeeds) then empty else safeNullTypes nullSeeds body
+        aliasTypes : SortedMap Int NativeTy := if null nullSeeds then empty else safeNullTypes nullSeeds body
         eligible : List (Int, NativeTy) := filter (\(p, ty) => not (nullTy ty) || isJust (lookup p aliasTypes)) eligible0
         eligibleOf : Int -> Maybe NativeTy
         eligibleOf p = Data.SortedMap.lookup p (Data.SortedMap.fromList eligible)
@@ -737,7 +744,7 @@ synthesizeWorker existingNames original eligible0 retEligible args wrapperRetRep
                                            Nothing => (p, RBoxed)) args
         promotedIds : SortedSet Int := fromList (map fst eligible ++ map fst (SortedMap.toList aliasTypes))
         workerBody : RCExp
-        workerBody = nullReads aliasTypes (nativeAliasLets aliasTypes (retypeNullLoopParams aliasTypes (stripOwnership promotedIds body)))
+        workerBody = nullLocals aliasTypes (stripOwnership promotedIds body)
         workerRetRep : Rep
         workerRetRep = maybe wrapperRetRep RNative retEligible
         workerDef : RCDef
