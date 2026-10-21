@@ -1,5 +1,7 @@
 # rc2base
 
+*[日本語](README.ja.md)*
+
 rc2's general-purpose support-library package: whatever upstream's own
 `base`/`contrib` either lack entirely or only partially serve for
 rc2's own native-C-ABI needs. Started as just a `Data.Text` type

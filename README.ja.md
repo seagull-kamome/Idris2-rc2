@@ -119,31 +119,7 @@ rc2コード生成バックエンドで、Idris 2のプログラムをコンパ�
 
 ### `libs/rc2base/`：ネイティブC ABIツールキット
 
-```
-libs/rc2base/
-├── rc2base.ipkg   Idris2パッケージ: Control.Concurrent.{MVar,Atomic},
-│                  Data.Text/Data.TextBuffer, Data.String.{FFI,RC2},
-│                  Data.Double.{RC2,Convert}, Data.IORef.RC2, Data.Integer.GMP, Data.Queue,
-│                  Language.RCExpr.{AST,Lexer,Parser},
-│                  Network.{RC2,URL}, Network.HTTP.{Route,Router,Server},
-│                  System.Concurrency.RC2, System.FFI.C.{Array,Ptr,Sizeof},
-│                  System.GC.RC2, System.Linux.Epoll,
-│                  System.Random.Xoroshiro{128PlusPlus,64StarStar},
-│                  Text.Encoding.UTF8, Text.Regex.POSIX
-├── src/           上記モジュールのIdris2ソース
-├── support/c/     Cシム（libidris2rc2base.a）。prebuild / postinstallフックでビルド
-├── doc/           主要コンポーネントの設計ノート（http-router.md、http-server.md、regex-posix.md、url.md）
-└── tests/         各モジュールの単体テスト（verify.sh）
-```
-
-上流の`base`や`contrib`に欠けている、または不十分な機能を補う基盤パッケージです。
-
-- **高速Web・ネットワーク**：`System.Linux.Epoll`を基盤とするイベント駆動型HTTP/1.1サーバ（`Network.HTTP.Server`）、型安全なExpress風ルータ（`Network.HTTP.Route` / `Router`）、URLパーサ（`Network.URL`）。
-- **並行処理・同期プリミティブ**：Haskell風の`MVar`、アトミックカウンタ（`Control.Concurrent.*`）、OSネイティブのスレッドとMutex（`System.Concurrency.RC2`）。
-- **低レベルC連携とメモリ**：POSIX正規表現（`Text.Regex.POSIX`）、GMP整数演算（`Data.Integer.GMP`）、メモリバッファ、生UTF-8バイト列の変換（`Text.Encoding.UTF8`）、不透明なFFI値に対する参照カウントの明示的な操作（`System.GC.RC2`）。
-- **コンパイラ解析基盤**：rc2が出力するIRダンプのパーサ（`Language.RCExpr.*`）。
-
-モジュールごとの設計ノートは[`libs/rc2base/README.md`](libs/rc2base/README.md)を参照してください。
+上流の`base`や`contrib`に欠けている、または不十分な機能を補う基盤パッケージです。イベント駆動型HTTP/1.1サーバとルータ、`MVar`と`Control.Task`、`System.Posix.*`と`System.Linux.*`（`io_uring`を含む）、POSIX正規表現、GMP整数演算、IRダンプのパーサなどを含みます。構成とモジュールの一覧は[`libs/rc2base/README.ja.md`](libs/rc2base/README.ja.md)を参照してください。
 
 ### `libs/text-re2/`：Google RE2正規表現バインディング
 
