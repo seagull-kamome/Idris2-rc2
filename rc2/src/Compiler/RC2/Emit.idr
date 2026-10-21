@@ -844,15 +844,23 @@ mutual
         if initVal == RCLoc paramId
            then update RepMap (insert paramId RBoxed)
            else declareLet fc paramId RBoxed (RV fc initVal)
+    -- The enclosing worker's own `NULL`-typed parameter
+    -- (`Compiler.RC2.NullParams`) is already declared under this name, as
+    -- the same type: nothing to declare.
     declareLoopParam inPrologueDrop fc paramId rep@(RNative ty) initVal = do
+        declared <- repOfLocal (RCLoc paramId)
         update RepMap (insert paramId rep)
-        (valStr, pending) <- rcVarToNativeC ty initVal
-        if inPrologueDrop
-           then do
-               let initValName = varName initVal
-               emit fc "\{tyCType ty} var_\{show paramId} = (\{initValName} == NULL) ? 0 : (\{valStr});"
-           else emit fc "\{tyCType ty} var_\{show paramId} = \{valStr};"
-        removeVars pending
+        let alreadyDeclared = case declared of
+                                   RNative t => nullTy ty && t == ty
+                                   _ => False
+        unless alreadyDeclared $ do
+            (valStr, pending) <- rcVarToNativeC ty initVal
+            if inPrologueDrop
+               then do
+                   let initValName = varName initVal
+                   emit fc "\{tyCType ty} var_\{show paramId} = (\{initValName} == NULL) ? 0 : (\{valStr});"
+               else emit fc "\{tyCType ty} var_\{show paramId} = \{valStr};"
+            removeVars pending
     -- A loop param is read again every iteration, so it never has the
     -- single-use shape `RInlineNative` requires -- Compiler.RC2.Loop
     -- never actually constructs this case -- kept total (falling back

@@ -411,20 +411,36 @@ nativeUnbox _ x = x -- unreachable
 ||| `nativeCType` over `NativeTy`: a pointer is an `IDRIS2RC2_Raw *`.
 export
 tyCType : NativeTy -> String
+tyCType (TPrim WorldType) = "IDRIS2RC2_World *"
 tyCType (TPrim ty) = nativeCType ty
 tyCType TPtr = "IDRIS2RC2_Raw *"
+tyCType TErased = "IDRIS2RC2_Erased *"
 
 ||| `nativeMk` over `NativeTy`.
 export
 tyMk : NativeTy -> String -> String
+tyMk (TPrim WorldType) _ = "((IDRIS2RC2_Value *)NULL)"
 tyMk (TPrim ty) x = nativeMk ty x
 tyMk TPtr x = "idris2rc2_mkPtr(" ++ x ++ ")"
+tyMk TErased _ = "((IDRIS2RC2_Value *)NULL)"
+
+||| The C `NULL` of a native type: a typed null pointer for the pointer-like
+||| types, `0` for a scalar. What a constant `[__]`, `[erased]` or `[world]`
+||| reads as where a native `ty` is wanted.
+export
+nullOfTy : NativeTy -> String
+nullOfTy TPtr = "((IDRIS2RC2_Raw *)NULL)"
+nullOfTy TErased = "((IDRIS2RC2_Erased *)NULL)"
+nullOfTy (TPrim WorldType) = "((IDRIS2RC2_World *)NULL)"
+nullOfTy _ = "0"
 
 ||| `nativeUnbox` over `NativeTy`.
 export
 tyUnbox : NativeTy -> String -> String
+tyUnbox (TPrim WorldType) _ = "((IDRIS2RC2_World *)NULL)"
 tyUnbox (TPrim ty) x = nativeUnbox ty x
 tyUnbox TPtr x = "idris2rc2_toPtr(" ++ x ++ ")"
+tyUnbox TErased _ = "((IDRIS2RC2_Erased *)NULL)"
 
 export
 isSigned : PrimType -> Bool
@@ -1130,12 +1146,9 @@ rcVarToNativeC : {auto a : Ref ArgCounter Nat}
 -- otherwise unbox a literal C `NULL`, straight into a null-pointer
 -- dereference in the runtime accessor -- a real crash this exact
 -- pattern used to hit before this clause existed.
-rcVarToNativeC TPtr RCNull = pure ("((IDRIS2RC2_Raw *)NULL)", [])
-rcVarToNativeC _ RCNull = pure ("0", [])
-rcVarToNativeC TPtr RCErased = pure ("((IDRIS2RC2_Raw *)NULL)", [])
-rcVarToNativeC _ RCErased = pure ("0", [])
-rcVarToNativeC TPtr RCWorld = pure ("((IDRIS2RC2_Raw *)NULL)", [])
-rcVarToNativeC _ RCWorld = pure ("0", [])
+rcVarToNativeC ty RCNull = pure (nullOfTy ty, [])
+rcVarToNativeC ty RCErased = pure (nullOfTy ty, [])
+rcVarToNativeC ty RCWorld = pure (nullOfTy ty, [])
 rcVarToNativeC ty l = do
     rep <- repOfLocal l
     inlined <- inlineExprFor l

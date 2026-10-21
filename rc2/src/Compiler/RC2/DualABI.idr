@@ -26,6 +26,7 @@ import Compiler.Common
 import Compiler.RC2.RCExp
 import Compiler.RC2.Types
 import Compiler.RC2.Loop
+import Compiler.RC2.NullParams
 import Compiler.RC2.MutualLoop
 import Compiler.RC2.Emit.Util
 import Compiler.RC2.ForeignSpec
@@ -167,11 +168,9 @@ tailValueRepsWith ffiRets = tailLeaves leafRep
 
 export
 tailValueReps : SortedMap Int Rep -> RCExp -> List (Maybe PrimType)
-tailValueReps reps e = map (>>= primOf) (tailValueRepsWith empty reps e)
-  where
-    primOf : NativeTy -> Maybe PrimType
-    primOf (TPrim ty) = Just ty
-    primOf TPtr = Nothing
+tailValueReps reps e = map (\case
+                                 Just (TPrim ty) => Just ty
+                                 _ => Nothing) (tailValueRepsWith empty reps e)
 
 ||| `Just ty` iff `xs` is non-empty and every element is `Just ty` for
 ||| the *same* `ty` -- the same "consistent single type, else give up"
@@ -636,6 +635,87 @@ freshName pfx existing original = do
 -- own doc comment there) -- reused as-is here via the existing `Util`
 -- import above.
 
+||| A parameter made `NULL`-typed (`Compiler.RC2.NullParams`) that an `RLoop`
+||| carries under the same id: the loop parameter takes the same native
+||| type, or one C variable would hold both a `Boxed` and a native value.
+retypeNullLoopParams : SortedMap Int NativeTy -> RCExp -> RCExp
+retypeNullLoopParams m (RLoop fc loopParams initial prologueDrop body) =
+    RLoop fc (map (\case (i, RBoxed) => (i, maybe RBoxed RNative (lookup i m))
+                         p => p) loopParams)
+          initial prologueDrop (retypeNullLoopParams m body)
+retypeNullLoopParams m e = mapChildren (retypeNullLoopParams m) e
+
+||| `known` and every `let` below that only renames one of its locals (the
+||| alias is `NULL` too), leaving out the `banned` ids.
+nullAliasTypes : SortedSet Int -> SortedMap Int NativeTy -> RCExp -> SortedMap Int NativeTy
+nullAliasTypes banned known (RLet _ var _ (RV _ (RCLoc p)) body) =
+    nullAliasTypes banned (if contains var banned then known else maybe known (\ty => insert var ty known) (lookup p known)) body
+nullAliasTypes banned known e = foldl (nullAliasTypes banned) known (children e)
+
+||| The `continue`s that belong to the loop whose body is `e` (a nested loop
+||| owns its own).
+loopContinues : RCExp -> List (List RCLocal)
+loopContinues (RLoopContinue _ args _) = [args]
+loopContinues (RLoop {}) = []
+loopContinues e = concatMap loopContinues (children e)
+
+||| The ids of `m` that some loop of `e` carries in a slot it also feeds with
+||| something else (a loop `MutualLoop` merged and `LateInline` inlined reuses
+||| one slot for different values in different states): such a slot cannot be
+||| `NULL`-typed.
+mixedSlots : SortedMap Int NativeTy -> RCExp -> SortedSet Int
+mixedSlots m e =
+    let own : SortedSet Int := case e of
+            RLoop _ loopParams initial _ body =>
+                let feeds := initial :: loopContinues body
+                in SortedSet.fromList (mapMaybe (\(k, (i, _)) => if isJust (lookup i m) && not (all (nullAt k) feeds) then Just i else Nothing)
+                                                (withIndex loopParams))
+            _ => empty
+    in foldl (\acc, c => union acc (mixedSlots m c)) own (children e)
+  where
+    nullAt : Nat -> List RCLocal -> Bool
+    nullAt k args = case getAt k args of
+                         Just (RCLoc j) => isJust (lookup j m)
+                         Just RCNull => True
+                         Just RCErased => True
+                         Just RCWorld => True
+                         _ => False
+
+||| The `NULL`-typed locals of a worker body: its `seeds` (the parameters) and
+||| their aliases, less every slot of a loop that is not `NULL` throughout.
+safeNullTypes : SortedMap Int NativeTy -> RCExp -> SortedMap Int NativeTy
+safeNullTypes seeds body = go empty
+  where
+    go : SortedSet Int -> SortedMap Int NativeTy
+    go banned =
+        let m = nullAliasTypes banned (fromList (filter (\(i, _) => not (contains i banned)) (SortedMap.toList seeds))) body
+            bad = mixedSlots m body
+        in if null bad then m else go (union banned bad)
+
+||| Each of those aliases becomes a native local of its own type, read from
+||| the native parameter, instead of a `Boxed` one that would be dup'd and
+||| dropped.
+nativeAliasLets : SortedMap Int NativeTy -> RCExp -> RCExp
+nativeAliasLets m e@(RLet fc var RBoxed value@(RV _ (RCLoc _)) body) =
+    case lookup var m of
+         Just ty => RLet fc var (RNative ty) value (nativeAliasLets m body)
+         Nothing => mapChildren (nativeAliasLets m) e
+nativeAliasLets m e = mapChildren (nativeAliasLets m) e
+
+||| Reads of the `NULL`-typed locals in `m` as the constants they are.
+nullReads : SortedMap Int NativeTy -> RCExp -> RCExp
+nullReads m = flip mapLocalsRCExp id $ \case
+    RCLoc i => case lookup i m of
+                    Just TErased => RCErased
+                    Just _ => RCWorld
+                    Nothing => RCLoc i
+    l => l
+
+||| A worker body with its `NULL`-typed locals (`m`: the parameters and their
+||| aliases) made native and read as constants.
+nullLocals : SortedMap Int NativeTy -> RCExp -> RCExp
+nullLocals m e = if null m then e else nullReads m (nativeAliasLets m (retypeNullLoopParams m e))
+
 ||| Synthesise `original`'s own worker (each parameter promoted to
 ||| `RNative` at its eligible position, `RBoxed` elsewhere; `retRep`
 ||| promoted when `retEligible` found one; body is the original's own
@@ -651,18 +731,20 @@ freshName pfx existing original = do
 synthesizeWorker : {auto r : Ref FreshId Int}
                  -> SortedSet Name -> Name -> List (Int, NativeTy) -> Maybe NativeTy -> List (Int, Rep) -> Rep -> RCExp
                  -> Core (Name, RCDef, RCDef)
-synthesizeWorker existingNames original eligible retEligible args wrapperRetRep body = do
+synthesizeWorker existingNames original eligible0 retEligible args wrapperRetRep body = do
     workerName <- freshName "idris2rc2_worker_" existingNames original
-    let eligibleOf : Int -> Maybe NativeTy
+    let nullSeeds : SortedMap Int NativeTy := fromList (filter (\(_, ty) => nullTy ty) eligible0)
+        aliasTypes : SortedMap Int NativeTy := if null nullSeeds then empty else safeNullTypes nullSeeds body
+        eligible : List (Int, NativeTy) := filter (\(p, ty) => not (nullTy ty) || isJust (lookup p aliasTypes)) eligible0
+        eligibleOf : Int -> Maybe NativeTy
         eligibleOf p = Data.SortedMap.lookup p (Data.SortedMap.fromList eligible)
         workerArgs : List (Int, Rep)
         workerArgs = map (\(p, _) => case eligibleOf p of
                                            Just ty => (p, RNative ty)
                                            Nothing => (p, RBoxed)) args
-        promotedIds : SortedSet Int
-        promotedIds = fromList (map fst eligible)
+        promotedIds : SortedSet Int := fromList (map fst eligible ++ map fst (SortedMap.toList aliasTypes))
         workerBody : RCExp
-        workerBody = stripOwnership promotedIds body
+        workerBody = nullLocals aliasTypes (stripOwnership promotedIds body)
         workerRetRep : Rep
         workerRetRep = maybe wrapperRetRep RNative retEligible
         workerDef : RCDef
@@ -740,8 +822,8 @@ ffiReturns defs = fromList (mapMaybe entry defs)
 ||| exemption was carried (closure-dispatch typedefs to arity 20, the
 ||| FFI worker path too).
 export
-applyDualABI : (boolReturn : Bool) -> List (Name, RCDef) -> Core (List (Name, RCDef))
-applyDualABI boolReturn defs = do
+applyDualABI : (boolReturn : Bool) -> (nullTable : SortedMap Name (SortedMap Int NativeTy)) -> List (Name, RCDef) -> Core (List (Name, RCDef))
+applyDualABI boolReturn nullTable defs = do
     _ <- newRef FreshId 0
     let boolPlan : SortedSet Name := if boolReturn then boolReturnPlan defs else empty
     let existingNames = SortedSet.fromList (map fst defs)
@@ -752,26 +834,27 @@ applyDualABI boolReturn defs = do
     -- `concat` (and `concatMap`) left-nest `++` and copy the whole
     -- accumulated result once per element -- quadratic across a
     -- whole-program def list. See `code-style-Idris2.md`.
-    foldr (++) [] <$> traverse (synthesizeIfEligible ffiRets ptrTable boolPlan existingNames) defs
+    foldr (++) [] <$> traverse (synthesizeIfEligible ffiRets ptrTable nullTable boolPlan existingNames) defs
   where
-    synthesizeIfEligible : {auto r : Ref FreshId Int} -> SortedMap Name (NativeTy, Nat) -> CalleeTable -> SortedSet Name -> SortedSet Name -> (Name, RCDef) -> Core (List (Name, RCDef))
-    synthesizeIfEligible ffiRets ptrTable boolPlan existingNames (n, d@(MkRCFun args retRep _ body)) =
+    synthesizeIfEligible : {auto r : Ref FreshId Int} -> SortedMap Name (NativeTy, Nat) -> CalleeTable -> SortedMap Name (SortedMap Int NativeTy) -> SortedSet Name -> SortedSet Name -> (Name, RCDef) -> Core (List (Name, RCDef))
+    synthesizeIfEligible ffiRets ptrTable nullTable boolPlan existingNames (n, d@(MkRCFun args retRep _ body)) =
         if isMutualLoopMerged n
            then pure [(n, d)]
            else do
              let argIds = map fst args
                  params = paramEligibility argIds body
                  byCalls = callNativeParams ptrTable argIds body
+                 byNull = fromMaybe empty (lookup n nullTable)
                  eligible = mapMaybe (\(p, mty) => case mty of
                                                          Just ty => Just (p, TPrim ty)
-                                                         Nothing => map (p,) (lookup p byCalls)) params
+                                                         Nothing => map (p,) (lookup p byCalls <|> lookup p byNull)) params
                  retEligible = if contains n boolPlan then Just (TPrim Bits8Type) else returnEligibility ffiRets params body
              if null eligible && isNothing retEligible
                 then pure [(n, d)]
                 else do
                   (workerName, wrapperDef, workerDef) <- synthesizeWorker existingNames n eligible retEligible args retRep body
                   pure [(n, wrapperDef), (workerName, workerDef)]
-    synthesizeIfEligible _ _ _ _ (n, d) = pure [(n, d)]
+    synthesizeIfEligible _ _ _ _ _ (n, d) = pure [(n, d)]
 
 ------------------------------------------------------------------------
 -- Stage 3c: FFI worker synthesis. Unlike Stage 3a, there is no

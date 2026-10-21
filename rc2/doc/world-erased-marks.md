@@ -36,7 +36,9 @@ instead of the guess.
 
 ## What was measured and dropped
 
-Marking function **parameters** was tried and not kept.
+Marking function **parameters** was first tried as a way to replace
+`worldInPrefix` and not kept for that. The marks that can be proved are used
+for something else now: `doc/null-params.md`.
 
 - **Backward from `%foreign`.** A parameter that reaches a `CFWorld` slot of
   a `%foreign` declaration (propagated through named calls, four rounds) is

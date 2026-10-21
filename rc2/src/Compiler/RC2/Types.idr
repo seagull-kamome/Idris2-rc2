@@ -79,8 +79,22 @@ alwaysUnboxed _ = False
 ||| set is a heap box (`doc/native-pointer.md`).
 export
 tyAlwaysUnboxed : NativeTy -> Bool
+tyAlwaysUnboxed (TPrim WorldType) = True
 tyAlwaysUnboxed (TPrim ty) = alwaysUnboxed ty
 tyAlwaysUnboxed TPtr = False
+tyAlwaysUnboxed TErased = True
+
+||| The world token's native type.
+export
+worldTy : NativeTy
+worldTy = TPrim WorldType
+
+||| The native types that carry no value: the world token and an erased value
+||| are always `NULL`.
+export
+nullTy : NativeTy -> Bool
+nullTy TErased = True
+nullTy ty = ty == worldTy
 
 ||| The `PrimFn`s whose Boxed result is *always* `idris2rc2_mkBool(..)`,
 ||| a tagged `Int8` immediate, never a heap value: the five comparisons,

@@ -76,6 +76,11 @@ typedef struct {
 // A raw C pointer held natively. Never defined: an incomplete type, so the C
 // compiler tells it from an IDRIS2RC2_Value * (doc/native-pointer.md).
 typedef struct IDRIS2RC2_Raw IDRIS2RC2_Raw;
+// The native types of the world token and of an erased value: both are always
+// NULL, opaque pointers so the C compiler tells them from each other and from
+// an IDRIS2RC2_Value * (rc2/doc/world-erased-marks.md).
+typedef struct IDRIS2RC2_World IDRIS2RC2_World;
+typedef struct IDRIS2RC2_Erased IDRIS2RC2_Erased;
 
 #define IDRIS2RC2_IMM(bits) ((IDRIS2RC2_Value *)(((uintptr_t)(bits) << 1) | 1))
 #define idris2rc2_imm_signed(p) ((int64_t)((intptr_t)(p) >> 1))
