@@ -168,9 +168,9 @@ tailValueRepsWith ffiRets = tailLeaves leafRep
 
 export
 tailValueReps : SortedMap Int Rep -> RCExp -> List (Maybe PrimType)
-tailValueReps reps e = map (>>= \case
-                                  TPrim ty => Just ty
-                                  _ => Nothing) (tailValueRepsWith empty reps e)
+tailValueReps reps e = map (\case
+                                 Just (TPrim ty) => Just ty
+                                 _ => Nothing) (tailValueRepsWith empty reps e)
 
 ||| `Just ty` iff `xs` is non-empty and every element is `Just ty` for
 ||| the *same* `ty` -- the same "consistent single type, else give up"
