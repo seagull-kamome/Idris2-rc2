@@ -55,6 +55,10 @@ cancelScope sc = do
 -------------------------------------------------------------------------------
 -- The scheduler
 
+-- A value of any type, kept by `Env.slot` under a key that fixes its type.
+data Held : Type where
+  Hold : a -> Held
+
 export
 record Scheduler where
   constructor MkScheduler
@@ -74,6 +78,8 @@ record Scheduler where
   pool : Pool                                  -- the workers of `blocking`
   parallel : IORef Bool                        -- `Point`s run on the workers
   virtual : IORef (Maybe Time)                 -- a clock that only the scheduler moves
+  slots : IORef (SortedMap String Held)        -- `Env.slot`
+  releases : IORef (List (IO ()))              -- what releases the slots, last made first
 
 fresh : Scheduler -> IO Nat
 fresh s = do
@@ -130,9 +136,36 @@ postTo s act = do
   mutexRelease s.lock
   ignore (eventfdWrite s.inboxFd 1)
 
+removeSource : Scheduler -> Source -> IO ()
+removeSource s src = do
+  ignore (epollDel s.master src.pollFd)
+  modifyIORef s.sources (delete src.pollFd.rawfd)
+
+addSourceRaw : Scheduler -> Source -> IO (Either Errno ())
+addSourceRaw s src = do
+  r <- epollAdd s.master src.pollFd EPOLLIN
+  case r of
+    Left e => pure (Left e)
+    Right () => do
+      modifyIORef s.sources (insert src.pollFd.rawfd src)
+      pure (Right ())
+
 envOf : Scheduler -> Env
 envOf s = MkEnv (schedNow s) addTimer (\fd, ev, done => watch s.watcher fd ev done) (postTo s) (offload s.pool)
+                (\src => map (const (MkCancel (removeSource s src))) <$> addSourceRaw s src) slotOf
   where
+    slotOf : {0 a : Type} -> String -> IO (Either Errno (a, IO ())) -> IO (Either Errno a)
+    slotOf key make = do
+      held <- lookup key <$> readIORef s.slots
+      case held of
+        Just (Hold v) => pure (Right (believe_me v))
+        Nothing => do
+          Right (v, release) <- make
+            | Left e => pure (Left e)
+          modifyIORef s.slots (insert key (Hold v))
+          modifyIORef s.releases (release ::)
+          pure (Right v)
+
     addTimer : Time -> IO () -> IO Cancel
     addTimer t act = do
       ident <- fresh s
@@ -258,15 +291,6 @@ fireTimers s = do
              else pure ()
         Nothing => pure ()
 
-addSourceRaw : Scheduler -> Source -> IO (Either Errno ())
-addSourceRaw s src = do
-  r <- epollAdd s.master src.pollFd EPOLLIN
-  case r of
-    Left e => pure (Left e)
-    Right () => do
-      modifyIORef s.sources (insert src.pollFd.rawfd src)
-      pure (Right ())
-
 -------------------------------------------------------------------------------
 -- The public interface
 
@@ -287,7 +311,7 @@ newSchedulerWith workers = do
   lock <- makeMutex
   root <- newRootScope
   s <- [| MkScheduler (newIORef Queue.empty) (newIORef 0) (newIORef 0) (newIORef empty) (pure master)
-                      (newIORef empty) (pure root) (pure watcher) (pure lock) (newIORef []) (pure inboxFd) (pure timerFd) (newIORef Nothing) (pure pool) (newIORef False) (newIORef Nothing) |]
+                      (newIORef empty) (pure root) (pure watcher) (pure lock) (newIORef []) (pure inboxFd) (pure timerFd) (newIORef Nothing) (pure pool) (newIORef False) (newIORef Nothing) (newIORef empty) (newIORef []) |]
   Right () <- addSourceRaw s (watcherSource watcher)
     | Left e => pure (Left e)
   Right () <- addSourceRaw s (MkSource inboxFd (drainInbox s))
@@ -316,6 +340,7 @@ newScheduler = newSchedulerWith 0
 export
 closeScheduler : Scheduler -> IO ()
 closeScheduler s = do
+  traverse_ id =<< readIORef s.releases
   closePool s.pool
   ignore (epollClose s.master)
   closeFdWatcher s.watcher

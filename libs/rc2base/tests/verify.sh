@@ -87,6 +87,7 @@ TESTS=(
     "TestPosixUio||System.Posix.Uio: writev/readv, pread/pwrite"
     "TestPosixStdio||System.Posix.Stdio: FILE* streams, fgetc/fgets/getline/fread, writes, position, tmpfile, fmemopen"
     "TestLinux||System.Linux.Pipe: pipe2 with O_CLOEXEC/O_NONBLOCK"
+    "TestTaskEnv||Control.Task: Env.slot (one value per scheduler, released at close) and Env.addSource (taken out when given up)"
     "TestUringNop||System.Linux.Uring: a tagged nop through submit and wait"
     "TestUringFile||System.Linux.Uring: openat, write, fsync, read and close on a temp file"
     "TestUringSocket|network|System.Linux.Uring: accept, multishot accept, connect, send and recv on loopback"

@@ -8,9 +8,11 @@
 ||| This module was licensed by BSD3. see LICENSE file for detail.
 module Control.Task
 
+import Control.Task.Source
 import Data.IORef
 import Data.List
 import System.Linux.Epoll
+import System.Posix.Errno
 import System.Posix.FileDesc
 
 %default covering
@@ -62,6 +64,15 @@ record Env where
   ||| Run the action on a worker thread (at once on this one if the scheduler has
   ||| no workers); the result takes it back if it has not started.
   offload : IO () -> IO Cancel
+  ||| Add a source of completions, to be waited for with the others; the result
+  ||| takes it out again. Not for other threads than the scheduler's.
+  addSource : Source -> IO (Either Errno Cancel)
+  ||| The one value this scheduler keeps under `key`, made by the action on the
+  ||| first call (with the action that releases it, run when the scheduler is
+  ||| closed, last made first). For an operation that needs a resource of its
+  ||| own (a ring) without the scheduler knowing it. The type under a key must
+  ||| always be the same. Not for other threads than the scheduler's.
+  slot : {0 a : Type} -> (key : String) -> IO (Either Errno (a, IO ())) -> IO (Either Errno a)
 
 public export
 data Task : Type -> Type where

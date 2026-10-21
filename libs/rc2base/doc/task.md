@@ -189,6 +189,23 @@ level-triggered and the waiters are one-shot: when a descriptor is ready the
 waiters whose events match are woken and removed, and the mask is set to what
 the rest want (`epollMod`) or the descriptor is taken out (`epollDel`).
 
+An operation that needs a resource of its own and a source for it (an `io_uring`
+ring) does not have to be told to the scheduler beforehand. Two functions of the
+`Env` an `Async` is given do that, and neither knows what the resource is:
+
+```idris
+env.slot      : (key : String) -> IO (Either Errno (a, IO ())) -> IO (Either Errno a)
+env.addSource : Source -> IO (Either Errno Cancel)
+```
+
+`slot` is the one value this scheduler keeps under `key`. The first call makes it
+with the action (which also gives the action that releases it); later calls
+get the same value. The releases run when the scheduler is closed, the last made
+first. `addSource` adds a source and the `Cancel` it returns takes it out again.
+Both are for the thread of the scheduler, which is where an `Async` starts. The
+first operation on a ring makes the ring with `slot`, registers its source with
+`addSource`, and an unused ring is never made.
+
 The pieces are public, so that another loop can drive the scheduler:
 
 ```idris
