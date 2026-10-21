@@ -1,7 +1,7 @@
 ||| Automated smoke test: a real loopback TCP connection, `accept`/
 ||| `connect`/`send`/`recv` all driven through io_uring (socket
 ||| creation/`bind`/`listen` stay synchronous, via upstream
-||| `Network.Socket` -- see doc/iouring.md's own "Design choices").
+||| `Network.Socket` -- see doc/uring.md's own "Design choices").
 ||| Two scenarios: `singleShotTest` submits the accept and connect
 ||| requests together in one `submit` call, since either genuinely can
 ||| complete before the other; `multishotTest` exercises
@@ -14,7 +14,7 @@ import Data.Buffer
 import Network.Socket
 import Network.Socket.Data
 import System.FFI
-import System.IO.Uring
+import System.Linux.Uring
 
 port : Port
 port = 18734

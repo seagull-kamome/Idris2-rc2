@@ -14,7 +14,7 @@ rc2は、上流のIdris 2本体を変更せずに開発されています。手�
 
 - [主な特徴とハイライト](#主な特徴とハイライト)
 - [クイックスタート](#クイックスタート)（[環境準備](#1-環境変数の準備) / [ビルド](#2-rc2本体のビルドとインストール) / [ライブラリ導入](#3-サポートライブラリrc2baseのインストール) / [コンパイル実行](#4-プログラムのコンパイルと実行) / [性能計測](#ビルド時の性能計測--timing)）
-- [付属エコシステムと開発ツール](#付属エコシステムと開発ツール)（[rc2base](#libsrc2baseネイティブc-abiツールキット) / [text-re2](#libstext-re2google-re2正規表現バインディング) / [io_uring・notcurses](#その他のバインディングio_uring-notcurses) / [rcexpr-lint](#toolsrcexpr-lintir静的解析バグ検出ツール) / [rcexpr-diff](#toolsrcexpr-diffir差分比較ツール)）
+- [付属エコシステムと開発ツール](#付属エコシステムと開発ツール)（[rc2base](#libsrc2baseネイティブc-abiツールキット) / [text-re2](#libstext-re2google-re2正規表現バインディング) / [notcurses・termui](#その他のバインディングnotcurses-termui) / [rcexpr-lint](#toolsrcexpr-lintir静的解析バグ検出ツール) / [rcexpr-diff](#toolsrcexpr-diffir差分比較ツール)）
 - [アーキテクチャと最適化パイプライン](#アーキテクチャと最適化パイプライン)（[リポジトリ構成](#リポジトリ全体の構成) / [コンパイラ内部構成](#コンパイラ本体rc2の内部構成) / [最適化パス](#主要な最適化パス10の技術的柱)）
 - [上流RefCとの意図的な違い・改善点](#上流refcとの意図的な違い改善点)（[Char](#1-完全なunicodeスカラー値に対応したchar) / [String](#2-コードポイント準拠とnul終端安全なstring) / [pthread](#3-本物のマルチスレッド並行処理pthread) / [%export](#4-ネイティブc-abiとの直接連携export) / [ライフサイクル](#5-プロセスのライフサイクルとロケール非依存な数値書式化) / [CAF・Lazyメモ化](#6-正しい意味論を保証するcafとlazy--infのメモ化)）
 - [%cg rc2ディレクティブによるチューニング](#cg-rc2ディレクティブによるチューニング)
@@ -160,9 +160,8 @@ libs/text-re2/
 
 `rc2base`から分離してあるのは、`rc2base`が依存するものを標準的なCツールチェーン（`gcc` / `ar`）だけに保つためです。RE2にはC++コンパイラ（`g++`）が必要で、Abseilの多数のフラグ（`pkg-config --libs re2`）も、専用の共有ライブラリ（`libidris2rc2re2.so`）にリンクする必要があります。通常の用途なら、`rc2base`の`Text.Regex.POSIX`が、外部依存のない正規表現マッチングを提供します。詳細は[`libs/text-re2/README.md`](libs/text-re2/README.md)を参照してください。
 
-### その他のバインディング（io_uring, notcurses）
+### その他のバインディング（notcurses, termui）
 
-- **`libs/iouring/`**：Linuxの高性能な非同期I/Oフレームワークio_uringのバインディング（`System.IO.Uring`）。詳細は[`libs/iouring/README.md`](libs/iouring/README.md)を参照。
 - **`libs/notcurses/`**：notcursesで高機能な端末UIを構築するための、rc2専用バインディング（`System.Notcurses`）。詳細は[`libs/notcurses/README.md`](libs/notcurses/README.md)を参照。
 
 ### `tools/rcexpr-lint/`：IR静的解析・バグ検出ツール
@@ -208,7 +207,6 @@ tools/rcexpr-lint/build/exec/rcexpr-lint build/exec/prog.rcexpr
 ├── install/         自前ビルドツールチェーンおよびrc2のローカルインストール先（gitignore対象）
 ├── libs/rc2base/    付属のネイティブC ABIサポートライブラリ
 ├── libs/text-re2/   Google RE2正規表現バインディング
-├── libs/iouring/    io_uringバインディング（System.IO.Uring）
 ├── libs/notcurses/  notcursesバインディング（System.Notcurses）
 ├── tools/           IR検証・差分解析ツール（rcexpr-lint, rcexpr-diff）
 └── rc2/             コアコンパイラ本体

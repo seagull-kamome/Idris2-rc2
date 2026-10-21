@@ -14,7 +14,7 @@ rc2 is developed without modifying the upstream Idris 2 codebase. It lives in it
 
 - [Key Highlights](#key-highlights)
 - [Quick Start](#quick-start) ([Environment](#1-environment-setup) / [Build & Install](#2-building-and-installing-rc2) / [Companion Library](#3-installing-the-support-library-rc2base) / [Compiling Programs](#4-compiling-and-running-programs) / [Profiling](#profiling-build-performance---timing))
-- [Ecosystem and Developer Tools](#ecosystem-and-developer-tools) ([rc2base](#libsrc2base-native-c-abi-toolkit) / [text-re2](#libstext-re2-google-re2-regex-bindings) / [io_uring & notcurses](#other-bindings-io_uring-notcurses) / [rcexpr-lint](#toolsrcexpr-lint-ir-static-checker) / [rcexpr-diff](#toolsrcexpr-diff-ir-diff-tool))
+- [Ecosystem and Developer Tools](#ecosystem-and-developer-tools) ([rc2base](#libsrc2base-native-c-abi-toolkit) / [text-re2](#libstext-re2-google-re2-regex-bindings) / [notcurses & termui](#other-bindings-notcurses-termui) / [rcexpr-lint](#toolsrcexpr-lint-ir-static-checker) / [rcexpr-diff](#toolsrcexpr-diff-ir-diff-tool))
 - [Architecture and Optimization Pipeline](#architecture-and-optimization-pipeline) ([Repository Layout](#repository-layout) / [Compiler Structure](#compiler-structure-rc2) / [Optimization Passes](#ten-key-optimizations))
 - [Deliberate Differences from Upstream RefC](#deliberate-differences-from-upstream-refc) ([Char](#1-full-unicode-scalar-values-for-char) / [String](#2-codepoint-semantics-and-nul-safe-string) / [pthread](#3-real-multithreaded-concurrency-pthread) / [%export](#4-native-c-abi-export-export) / [Lifecycle](#5-process-lifecycle-and-locale-independent-formatting) / [CAF & Lazy Memoization](#6-caf-and-lazy--inf-memoization))
 - [%cg rc2 Directives](#cg-rc2-directives)
@@ -158,9 +158,8 @@ libs/text-re2/
 
 Bindings to Google's [RE2](https://github.com/re2) regex engine, offering linear-time matching guarantees. Separated from `rc2base` to keep `rc2base` strictly dependent on standard C toolchains (`gcc` / `ar`); RE2 requires a C++ compiler (`g++`) and dozens of Abseil flags (`pkg-config --libs re2`) linked into a dedicated shared library (`libidris2rc2re2.so`). For typical use cases, `Text.Regex.POSIX` in `rc2base` provides zero-dependency regex matching. See [`libs/text-re2/README.md`](libs/text-re2/README.md) for details.
 
-### Other Bindings (io_uring, notcurses)
+### Other Bindings (notcurses, termui)
 
-- **`libs/iouring/`**: Bindings to Linux's high-performance asynchronous I/O framework io_uring (`System.IO.Uring`). See [`libs/iouring/README.md`](libs/iouring/README.md).
 - **`libs/notcurses/`**: rc2-specific bindings for building rich terminal UIs with notcurses (`System.Notcurses`). See [`libs/notcurses/README.md`](libs/notcurses/README.md).
 - **`libs/termui/`**: Ink-style terminal UI library: layout EDSL, flexbox-like layout engine and differential screen updates over plain ANSI (`TermUI.*`, work in progress). See [`libs/termui/README.md`](libs/termui/README.md).
 
@@ -207,7 +206,6 @@ Compares two `.rcexpr` IR dumps definition by definition. By normalizing variabl
 ├── install/         Local install prefix for self-built toolchain and rc2 (gitignored)
 ├── libs/rc2base/    Companion native C ABI support library
 ├── libs/text-re2/   Google RE2 regex bindings
-├── libs/iouring/    io_uring bindings (System.IO.Uring)
 ├── libs/notcurses/  notcurses bindings (System.Notcurses)
 ├── libs/termui/     terminal UI library (TermUI.*)
 ├── tools/           IR verification and diff tools (rcexpr-lint, rcexpr-diff)

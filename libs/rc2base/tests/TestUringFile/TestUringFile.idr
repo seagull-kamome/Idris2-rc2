@@ -6,7 +6,7 @@ module Main
 import Data.Bits
 import Data.Buffer
 import System.File
-import System.IO.Uring
+import System.Linux.Uring
 
 path : String
 path = "iouring_test_file.tmp"

@@ -367,7 +367,7 @@ their deadlines; promises; `blocking`; `runTaskFirst`; parallel mode;
    `Control.Task.Scheduler` for the scheduler and `Control.Task.Epoll` for the
    epoll source and `awaitReadable`.) The `Source` interface is in from the
    start, so that the epoll source is its first user and not a special case.
-   An `io_uring` source (`libs/iouring`) is a separate, later step.
+   An `io_uring` source (on `System.Linux.Uring`) is a separate, later step.
 2. `Spawn` in termui's `Cmd`, with `pollFd` in its loop, and cancellation by handle.
 3. N:M: worker threads, the atomic cells, the `eventfd` queue.
 
@@ -394,4 +394,4 @@ their deadlines; promises; `blocking`; `runTaskFirst`; parallel mode;
 - Whether a source may also give a timeout for the wait (`io_uring` has its own
   timeout operation); for now timers are the scheduler's.
 - How an `io_uring` request that needs a buffer keeps it alive until the
-  completion (the `Completion` closure holds it; to be settled with `libs/iouring`).
+  completion (the `Completion` closure holds it; to be settled with `System.Linux.Uring`).
