@@ -118,35 +118,34 @@ singleShotTest = do
 
             Just connectSqe <- getSqe ring
               | Nothing => pure (Left "getSqe (connect) failed")
-            resolved <- prepConnect ring connectSqe clientFd "127.0.0.1" (cast port) 2
-            if not resolved
-               then pure (Left "prepConnect address resolution failed")
+            Just addr <- resolve "127.0.0.1" (cast port)
+              | Nothing => pure (Left "address resolution failed")
+            prepConnect ring connectSqe clientFd addr 2
+            n <- submit ring
+            if n /= Right 2
+               then pure (Left ("submit returned " ++ show n ++ ", expected 2"))
                else do
-                 n <- submit ring
-                 if n /= Right 2
-                    then pure (Left ("submit returned " ++ show n ++ ", expected 2"))
-                    else do
-                      Right c1 <- waitCompletion ring
-                        | Left e => pure (Left ("waitCompletion (1st) " ++ show e))
-                      Right c2 <- waitCompletion ring
-                        | Left e => pure (Left ("waitCompletion (2nd) " ++ show e))
-                      -- Completion order between accept/connect isn't
-                      -- guaranteed -- sort by the userData tags above.
-                      let (acceptC, connectC) = if c1.userData == 1 then (c1, c2) else (c2, c1)
-                      case (fdResult acceptC, result connectC) of
-                        (Right acceptedFd, Right 0) => do
-                           outcome <- roundTrip ring clientFd acceptedFd message
+                 Right c1 <- waitCompletion ring
+                   | Left e => pure (Left ("waitCompletion (1st) " ++ show e))
+                 Right c2 <- waitCompletion ring
+                   | Left e => pure (Left ("waitCompletion (2nd) " ++ show e))
+                 -- Completion order between accept/connect isn't
+                 -- guaranteed -- sort by the userData tags above.
+                 let (acceptC, connectC) = if c1.userData == 1 then (c1, c2) else (c2, c1)
+                 case (fdResult acceptC, result connectC) of
+                   (Right acceptedFd, Right 0) => do
+                      outcome <- roundTrip ring clientFd acceptedFd message
 
-                           Just closeAcceptedSqe <- getSqe ring
-                             | Nothing => pure (Left "getSqe (close accepted) failed")
-                           prepClose closeAcceptedSqe acceptedFd
-                           _ <- runOne ring closeAcceptedSqe
+                      Just closeAcceptedSqe <- getSqe ring
+                        | Nothing => pure (Left "getSqe (close accepted) failed")
+                      prepClose closeAcceptedSqe acceptedFd
+                      _ <- runOne ring closeAcceptedSqe
 
-                           close clientSock
-                           close serverSock
-                           exit ring
-                           pure outcome
-                        (a, b) => pure (Left ("accept " ++ show (map (.rawfd) a) ++ " connect " ++ show b))
+                      close clientSock
+                      close serverSock
+                      exit ring
+                      pure outcome
+                   (a, b) => pure (Left ("accept " ++ show (map (.rawfd) a) ++ " connect " ++ show b))
 
 acceptRegUserData : Bits64
 acceptRegUserData = 42
@@ -162,14 +161,13 @@ connectClient ring tag = do
   let clientFd = socketFd clientSock
   Just connectSqe <- getSqe ring
     | Nothing => pure (Left "getSqe (connect) failed")
-  resolved <- prepConnect ring connectSqe clientFd "127.0.0.1" (cast multishotPort) tag
-  if not resolved
-     then pure (Left "prepConnect address resolution failed")
-     else do
-       n <- submit ring
-       if n /= Right 1
-          then pure (Left ("submit (connect) returned " ++ show n))
-          else pure (Right (clientSock, clientFd))
+  Just addr <- resolve "127.0.0.1" (cast multishotPort)
+    | Nothing => pure (Left "address resolution failed")
+  prepConnect ring connectSqe clientFd addr tag
+  n <- submit ring
+  if n /= Right 1
+     then pure (Left ("submit (connect) returned " ++ show n))
+     else pure (Right (clientSock, clientFd))
 
 ||| Waits for exactly one accept-registration completion (tagged
 ||| `acceptRegUserData`) and one connect completion (tagged `tag`),

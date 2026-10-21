@@ -405,8 +405,9 @@ to cancel it (`IORING_OP_ASYNC_CANCEL`). Its completion still comes and is
 dropped, and the buffer or address it holds is kept alive by `System.Linux.Uring`
 until then, by tag, as the rule for an `Async` asks. When the queue is full the
 prepared entries are submitted to make room, and a request that still finds no
-entry is answered with `EBUSY`. A name that does not resolve in `uringConnect`
-is answered with `EINVAL`.
+entry is answered with `EBUSY`. `uringConnect` resolves the name first, on a
+worker thread (`blocking`), as `getaddrinfo` may ask a name server, and answers
+`EINVAL` when it does not resolve.
 
 Everything is done on the thread of the scheduler, which is where an `Async`
 starts and `drain` runs: there is no request that a `Point` can make by mistake.
