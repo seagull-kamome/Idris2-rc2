@@ -73,9 +73,9 @@ prim__setStreamHints : AnyPtr -> PrimIO ()
 %inline %foreign "CExpr:(getaddrinfo($1, $2, (const struct addrinfo *)($3), (struct addrinfo **)($4))),libc,netdb.h;sys/socket.h"
 prim__getaddrinfo : String -> String -> AnyPtr -> AnyPtr -> PrimIO Int32
 %inline %foreign "CExpr:(((struct addrinfo *)($1))->ai_addr),libc,netdb.h"
-prim__aiAddr : Ptr RawAddrInfo -> PrimIO (Ptr RawSockAddr)
+prim__aiAddr : GCPtr RawAddrInfo -> PrimIO (Ptr RawSockAddr)
 %inline %foreign "CExpr:(((struct addrinfo *)($1))->ai_addrlen),libc,netdb.h"
-prim__aiAddrLen : Ptr RawAddrInfo -> PrimIO Bits32
+prim__aiAddrLen : GCPtr RawAddrInfo -> PrimIO Bits32
 %inline %foreign "CExpr:(AT_FDCWD),libc,fcntl.h"
 prim__AT_FDCWD : Int32
 %inline %foreign "CExpr:freeaddrinfo($1),libc,netdb.h"
@@ -119,6 +119,11 @@ prim__prepRecv : Ptr RawSQE -> Int32 -> Buffer -> Bits64 -> Int32 -> PrimIO ()
 -------------------------------------------------------------------------------
 -- Lifecycle
 -------------------------------------------------------------------------------
+
+||| A resolved address for `prepConnect`, freed (`freeaddrinfo`) when nothing
+||| refers to it any more: `URing` refers to it until the request is over.
+export
+data AddrInfo = MkAddrInfo (GCPtr RawAddrInfo)
 
 ||| A live `io_uring` instance. Exactly one submission/completion queue
 ||| pair, sized by `init`'s own `queueDepth`. Not GC-managed (unlike
@@ -167,7 +172,7 @@ record URing where
   ptr : Ptr RawURing
   cqeSlot : AnyPtr
   pending : IORef (SortedMap Bits64 Buffer)
-  pendingAddrs : IORef (SortedMap Bits64 (Ptr RawAddrInfo))
+  pendingAddrs : IORef (SortedMap Bits64 AddrInfo)
 
 ||| Sets up a new ring with room for at least `queueDepth` in-flight
 ||| submissions (liburing itself rounds this up to the next power of
@@ -218,8 +223,6 @@ exit r = do
   free (prim__forgetPtr r.ptr)
   free r.cqeSlot
   writeIORef r.pending empty
-  addrs <- readIORef r.pendingAddrs
-  traverse_ (primIO . prim__freeAddrInfo) (values addrs)
   writeIORef r.pendingAddrs empty
 
 -------------------------------------------------------------------------------
@@ -411,47 +414,46 @@ export
 prepCancel64 : SQE -> (targetUserData : Bits64) -> (flags : Int32) -> IO ()
 prepCancel64 sqe targetUserData flags = primIO (prim__prepCancel64 sqe.ptr targetUserData flags)
 
-||| Connects the socket `fd` (already created, e.g. via upstream
-||| `Network.Socket.socket`) to `host:port` -- `host` may be a hostname
-||| or a numeric IPv4/IPv6 address (resolved via `getaddrinfo`,
-||| synchronously, *before* the SQE is even prepared -- name resolution
-||| itself doesn't go through the ring). `False` if resolution failed
-||| (nothing was prepared -- `sqe` is still free to reuse); the
-||| completion's `res` is otherwise `0` on success, a negative `-errno`.
-||| Takes `ring`: the built `sockaddr` is only actually read by the
-||| kernel once `submit` runs, same timing trap as `prepRead`'s own
-||| `buf` (confirmed by a real `-EAFNOSUPPORT` failure from freeing it
-||| immediately here instead -- see `URing.pending`'s own doc comment)
-||| -- kept alive in `ring.pendingAddrs`, released as soon as this
-||| call's own `Completion` is read back, rather than held until
-||| `exit`. `userData` is mandatory for the same reason `prepRead`'s
-||| is, not set separately via `setUserData`.
+||| Resolves a hostname or a numeric IPv4/IPv6 address and a port (with
+||| `getaddrinfo`, for a stream socket). `Nothing` when it does not resolve.
+||| It may ask a name server, so it blocks: it is not a ring operation and does
+||| not need the ring.
 export
-prepConnect : URing -> SQE -> (fd : FileDesc) -> (host : String) -> (port : Bits16) -> (userData : Bits64) -> IO Bool
-prepConnect ring sqe fd host port userData = do
-  Just info <- resolve
-    | Nothing => pure False
-  addr <- primIO (prim__aiAddr info)
+resolve : (host : String) -> (port : Bits16) -> IO (Maybe AddrInfo)
+resolve host port = do
+  hints <- malloc prim__sizeofAddrInfo
+  slot <- malloc prim__sizeofPtr
+  if prim__nullAnyPtr hints /= 0 || prim__nullAnyPtr slot /= 0
+     then free hints *> free slot *> pure Nothing
+     else do
+       primIO (prim__memset hints prim__sizeofAddrInfo)
+       primIO (prim__setStreamHints hints)
+       rc <- primIO (prim__getaddrinfo host (show port) hints slot)
+       found <- primIO (prim__readPtr slot)
+       free hints
+       free slot
+       if rc == 0 && prim__nullAnyPtr found == 0
+          then Just . MkAddrInfo <$> onCollect (prim__castPtr found) (primIO . prim__freeAddrInfo)
+          else pure Nothing
+
+||| Connects the socket `fd` (already created, e.g. via upstream
+||| `Network.Socket.socket`) to a resolved address. The completion's `res` is
+||| `0` on success, a negative `-errno`. Takes `ring`: the `sockaddr` is only
+||| actually read by the kernel once `submit` runs, same timing trap as
+||| `prepRead`'s own `buf` (confirmed by a real `-EAFNOSUPPORT` failure from
+||| freeing it immediately -- see `URing.pending`'s own doc comment) -- kept
+||| alive in `ring.pendingAddrs`, released as soon as this call's own
+||| `Completion` is read back, rather than held until `exit`. `userData` is
+||| mandatory for the same reason `prepRead`'s is, not set separately via
+||| `setUserData`.
+export
+prepConnect : URing -> SQE -> (fd : FileDesc) -> AddrInfo -> (userData : Bits64) -> IO ()
+prepConnect ring sqe fd addr@(MkAddrInfo info) userData = do
+  sockaddr <- primIO (prim__aiAddr info)
   len <- primIO (prim__aiAddrLen info)
-  primIO (prim__prepConnect sqe.ptr fd.rawfd addr len)
+  primIO (prim__prepConnect sqe.ptr fd.rawfd sockaddr len)
   primIO (prim__sqeSetData64 sqe.ptr userData)
-  modifyIORef ring.pendingAddrs (insert userData info)
-  pure True
-  where
-    resolve : IO (Maybe (Ptr RawAddrInfo))
-    resolve = do
-      hints <- malloc prim__sizeofAddrInfo
-      slot <- malloc prim__sizeofPtr
-      if prim__nullAnyPtr hints /= 0 || prim__nullAnyPtr slot /= 0
-         then free hints *> free slot *> pure Nothing
-         else do
-           primIO (prim__memset hints prim__sizeofAddrInfo)
-           primIO (prim__setStreamHints hints)
-           rc <- primIO (prim__getaddrinfo host (show port) hints slot)
-           found <- primIO (prim__readPtr slot)
-           free hints
-           free slot
-           pure (if rc == 0 && prim__nullAnyPtr found == 0 then Just (prim__castPtr found) else Nothing)
+  modifyIORef ring.pendingAddrs (insert userData addr)
 
 ||| Sends `len` bytes from `buf`'s own start on the connected/accepted
 ||| socket `fd`. The completion's `res` is the byte count actually
@@ -547,12 +549,7 @@ readCompletion cqe = do
 releasePending : URing -> Bits64 -> IO ()
 releasePending r tag = do
   modifyIORef r.pending (delete tag)
-  addrs <- readIORef r.pendingAddrs
-  case lookup tag addrs of
-       Nothing => pure ()
-       Just info => do
-         primIO (prim__freeAddrInfo info)
-         writeIORef r.pendingAddrs (delete tag addrs)
+  modifyIORef r.pendingAddrs (delete tag)
 
 ||| `IORING_CQE_F_MORE`: whether the request that generated `c` will
 ||| still generate further completions after this one -- meaningful

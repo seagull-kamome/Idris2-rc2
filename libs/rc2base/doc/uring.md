@@ -46,12 +46,15 @@ needs liburing's headers and library only where a program uses
 3. **`io_uring_prep_accept`'s `addr`/`addrlen`** are passed as `NULL`: the
    peer's address is not exposed (`getpeername` on the resulting descriptor
    gives it).
-4. **`io_uring_prep_connect`'s `addr`** comes from `getaddrinfo`. `prepConnect`
-   allocates a zeroed `struct addrinfo` for the hints and a result slot,
-   sets `ai_socktype` and `AI_NUMERICSERV` (so the port is a decimal
-   string), calls `getaddrinfo`, and reads `ai_addr`/`ai_addrlen` from the
-   result. The `addrinfo` list itself is kept alive in `URing.pendingAddrs`
-   and released with `freeaddrinfo`.
+4. **`io_uring_prep_connect`'s `addr`** comes from `getaddrinfo`, in two steps.
+   `resolve host port` allocates a zeroed `struct addrinfo` for the hints and
+   a result slot, sets `ai_socktype` and `AI_NUMERICSERV` (so the port is a
+   decimal string), calls `getaddrinfo` and returns the result as an
+   `AddrInfo`, a `GCPtr` that `freeaddrinfo`s itself when nothing refers to it.
+   It may ask a name server, so it is not a ring operation and can run
+   anywhere (`Control.Task.Uring` runs it with `blocking`). `prepConnect ring
+   sqe fd addr userData` then reads `ai_addr`/`ai_addrlen` and keeps the
+   `AddrInfo` in `URing.pendingAddrs` until the completion is reaped.
 5. **The `io_uring_cqe` fields** `res`, `user_data` and `flags` have no
    accessor in liburing.h (`io_uring_cqe_get_data64` covers `user_data`
    only); they are `CExpr:` field reads.
