@@ -340,7 +340,8 @@ newScheduler = newSchedulerWith 0
 export
 closeScheduler : Scheduler -> IO ()
 closeScheduler s = do
-  traverse_ id =<< readIORef s.releases
+  releases <- readIORef s.releases
+  sequence_ releases
   closePool s.pool
   ignore (epollClose s.master)
   closeFdWatcher s.watcher

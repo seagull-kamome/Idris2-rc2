@@ -88,6 +88,8 @@ TESTS=(
     "TestPosixStdio||System.Posix.Stdio: FILE* streams, fgetc/fgets/getline/fread, writes, position, tmpfile, fmemopen"
     "TestLinux||System.Linux.Pipe: pipe2 with O_CLOEXEC/O_NONBLOCK"
     "TestTaskEnv||Control.Task: Env.slot (one value per scheduler, released at close) and Env.addSource (taken out when given up)"
+    "TestTaskUring||Control.Task.Uring: nop, file round trip, two requests at once, a read woken by a write, a request given up by a race"
+    "TestTaskNoUring||Control.Task.Uring imported and not used: builds without liburing, no liburing in the generated C"
     "TestUringNop||System.Linux.Uring: a tagged nop through submit and wait"
     "TestUringFile||System.Linux.Uring: openat, write, fsync, read and close on a temp file"
     "TestUringSocket|network|System.Linux.Uring: accept, multishot accept, connect, send and recv on loopback"
@@ -103,10 +105,12 @@ TESTS=(
 # the C compiler cannot find them.
 NEEDS_CURL=" TestCurl TestWebAPI "
 # Tests that need liburing's headers (liburing.h); skipped the same way.
-NEEDS_URING=" TestUringNop TestUringFile TestUringSocket "
+NEEDS_URING=" TestUringNop TestUringFile TestUringSocket TestTaskUring "
 # Tests built with IDRIS2_CFLAGS=-D_GNU_SOURCE (declarations glibc hides otherwise).
-NEEDS_GNU_SOURCE=" TestPosixTermios TestLinux TestTask "
+NEEDS_GNU_SOURCE=" TestPosixTermios TestLinux TestTask TestTaskUring "
 have_curl_h() { echo '#include <curl/curl.h>' | gcc -E -x c - > /dev/null 2>&1; }
+# Tests whose generated C must not mention liburing at all.
+NO_LIBURING_C=" TestTaskNoUring "
 have_uring_h() { echo '#include <liburing.h>' | gcc -E -x c - > /dev/null 2>&1; }
 
 echo "=== Check TESTS against the tests/*/ directories ==="
@@ -126,6 +130,13 @@ for t in "${listed[@]}"; do
     [[ -f "$TESTS_DIR/$t/$t.idr" ]] || fail "tests/$t/$t.idr missing"
     [[ -f "$TESTS_DIR/$t/$t.expected" ]] || fail "tests/$t/$t.expected missing"
 done
+
+echo "=== Check that only Control.Task.Uring imports System.Linux.Uring ==="
+# A module of Control.Task that reached liburing would make every program
+# that uses tasks need it. (rc2 drops the %foreign declarations that nothing
+# reaches, so importing it is harmless; referring to it is not.)
+importers="$(grep -rl --include=*.idr -E '^import +(public +)?System\.Linux\.Uring' "$PKG_DIR/src" | sed "s|$PKG_DIR/src/||" | sort | tr '\n' ' ')"
+[[ "$importers" == "Control/Task/Uring.idr " ]] || fail "System.Linux.Uring is imported by: $importers (expected only Control/Task/Uring.idr)"
 
 echo "=== Clean rebuild of support/c ==="
 ( make -C "$PKG_DIR/support/c" clean && make -C "$PKG_DIR/support/c" )
@@ -175,6 +186,10 @@ for entry in "${TESTS[@]}"; do
     [[ "$NEEDS_GNU_SOURCE" == *" $t "* ]] && gnu_flags="-D_GNU_SOURCE"
     ( cd "$TESTS_DIR/$t" && ulimit -v 12000000 && IDRIS2_CFLAGS="${IDRIS2_CFLAGS:-} $gnu_flags" timeout 600 \
         "$IDRIS2RC2" --cg rc2 "${pflags[@]}" -o "${t}_verify" "$t.idr" )
+
+    if [[ "$NO_LIBURING_C" == *" $t "* ]] && grep -q liburing "$TESTS_DIR/$t/build/exec/${t}_verify.c"; then
+        fail "$t -- liburing appears in the generated C"
+    fi
 
     echo "=== Run and diff against $t.expected ==="
     rc=0

@@ -37,8 +37,10 @@ slotTest = do
                    c <- slotValue made released "y" 1
                    pure (map showEither [a, b, c]))
   putStrLn ("values: " ++ show r)
-  readIORef made >>= \n => putStrLn ("made: " ++ show n)
-  readIORef released >>= \l => putStrLn ("released at close: " ++ show l)
+  n <- readIORef made
+  putStrLn ("made: " ++ show n)
+  l <- readIORef released
+  putStrLn ("released at close: " ++ show l)
 
 -- Registers a source on `efd` that counts its drains, and (with `fires`)
 -- completes the operation from `drain`.
@@ -59,7 +61,8 @@ sourceTest = do
   drains <- newIORef 0
   r <- runTask (sourceOp efd drains True)
   putStrLn ("source: " ++ show r)
-  readIORef drains >>= \n => putStrLn ("drains: " ++ show n)
+  n <- readIORef drains
+  putStrLn ("drains: " ++ show n)
 
   -- a given-up operation takes its source out: writing to the descriptor
   -- afterwards drains nothing
@@ -69,7 +72,8 @@ sourceTest = do
     sleepFor 10
     pure won)
   putStrLn ("race: " ++ show r2)
-  readIORef drains >>= \n => putStrLn ("drains after the cancel: " ++ show n)
+  n2 <- readIORef drains
+  putStrLn ("drains after the cancel: " ++ show n2)
   ignore (close efd)
 
 main : IO ()

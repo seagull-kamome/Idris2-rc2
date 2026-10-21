@@ -70,8 +70,8 @@ What waits are ordinary functions on top of `Async`:
 ```idris
 sleepFor, sleepTill  : ... -> Task ()                 -- a timer of the scheduler
 awaitReadable, awaitWritable : FileDesc -> Task Ready  -- the readiness of the scheduler's epoll source
--- later, in other modules, with a handle of their own:
-uringRead : Ring -> FileDesc -> ... -> Task (Either Errno Nat)
+-- in other modules (Control.Task.Uring):
+uringRead : FileDesc -> Buffer -> Bits32 -> Bits64 -> Task (Either Errno Nat)
 ```
 
 `Ready` tells which of `EPOLLIN`, `EPOLLOUT`, `EPOLLERR`, `EPOLLHUP` came (an
@@ -376,6 +376,63 @@ two waiters for one descriptor, hang-up, a regular file); timers in the order of
 their deadlines; promises; `blocking`; `runTaskFirst`; parallel mode;
 `runTask` returns `Nothing` for `Empty`.
 
+## io_uring
+
+`Control.Task.Uring` makes `io_uring` requests as `Task`s on `System.Linux.Uring`:
+
+```idris
+uringNop : Task (Either Errno ())
+uringRead, uringWrite : FileDesc -> Buffer -> (nbytes : Bits32) -> (offset : Bits64) -> Task (Either Errno Nat)
+uringSend, uringRecv : FileDesc -> Buffer -> (len : Bits64) -> (flags : Int32) -> Task (Either Errno Nat)
+uringAccept : FileDesc -> (flags : Int32) -> Task (Either Errno FileDesc)
+uringConnect : FileDesc -> (host : String) -> (port : Bits16) -> Task (Either Errno ())
+uringOpenat : Maybe DirDesc -> String -> (flags : Bits32) -> (mode : Bits32) -> Task (Either Errno FileDesc)
+uringClose : FileDesc -> Task (Either Errno ())
+uringFsync : FileDesc -> (flags : Bits32) -> Task (Either Errno ())
+```
+
+No ring is passed around. Each scheduler has one ring (256 entries), which the
+first request makes with `Env.slot` and adds to the scheduler as a source with
+`Env.addSource`: the descriptor of the ring is readable while completions wait,
+the master `epoll` reports it like any other source, and `drain` reaps them
+(`pollCompletion` until nothing is left) and calls the `Completion` kept under
+the tag of each request (the `user_data`, a counter of the ring). The ring is
+released when the scheduler is closed; requests still in the kernel are
+forgotten with it. A request is submitted at once (one system call each).
+
+A request given up (it lost a `race`, its scope was cancelled) asks the kernel
+to cancel it (`IORING_OP_ASYNC_CANCEL`). Its completion still comes and is
+dropped, and the buffer or address it holds is kept alive by `System.Linux.Uring`
+until then, by tag, as the rule for an `Async` asks. When the queue is full the
+prepared entries are submitted to make room, and a request that still finds no
+entry is answered with `EBUSY`. A name that does not resolve in `uringConnect`
+is answered with `EINVAL`.
+
+Everything is done on the thread of the scheduler, which is where an `Async`
+starts and `drain` runs: there is no request that a `Point` can make by mistake.
+
+### Not needing liburing
+
+A program needs liburing (its header when the C is compiled, `-luring` when it
+is linked) only if a request is reachable from its `main`. Three things make it so:
+
+- No module of `Control.Task` (the type, the scheduler, the sources, termui)
+  imports `System.Linux.Uring` or `Control.Task.Uring`. `tests/verify.sh`
+  checks that `Control/Task/Uring.idr` is the only importer.
+- rc2 takes the headers and libraries only from the `%foreign` declarations
+  that are left after dead code elimination. A program that imports
+  `Control.Task.Uring` but refers to no request has none of them in its C
+  (`TestTaskNoUring` builds without liburing and `verify.sh` looks for
+  "liburing" in its generated C).
+- The ring is made by the first request that runs, not by a module or by the
+  scheduler: a program that refers to a request and does not reach it still needs
+  the header to build, but makes no ring. Where `io_uring` is not available (an
+  old kernel, a policy that forbids it) the first request answers `Left errno`.
+
+`TestTaskUring` (skipped when gcc cannot find `liburing.h`) covers a nop, a
+file written and read back, two requests at once, a read that waits for a
+write of another task, a request given up by a race, and an error.
+
 ## Milestones
 
 1. `Control.Task` and the single-threaded scheduler with the epoll source and
@@ -384,7 +441,7 @@ their deadlines; promises; `blocking`; `runTaskFirst`; parallel mode;
    `Control.Task.Scheduler` for the scheduler and `Control.Task.Epoll` for the
    epoll source and `awaitReadable`.) The `Source` interface is in from the
    start, so that the epoll source is its first user and not a special case.
-   An `io_uring` source (on `System.Linux.Uring`) is a separate, later step.
+   The `io_uring` source is `Control.Task.Uring` (see "io_uring").
 2. `Spawn` in termui's `Cmd`, with `pollFd` in its loop, and cancellation by handle.
 3. N:M: worker threads, the atomic cells, the `eventfd` queue.
 
@@ -410,5 +467,5 @@ their deadlines; promises; `blocking`; `runTaskFirst`; parallel mode;
   them in `IO`. Nothing in the data type stands in the way; it is not needed yet.
 - Whether a source may also give a timeout for the wait (`io_uring` has its own
   timeout operation); for now timers are the scheduler's.
-- How an `io_uring` request that needs a buffer keeps it alive until the
-  completion (the `Completion` closure holds it; to be settled with `System.Linux.Uring`).
+- Several rings, a ring of another depth than 256, and the requests that do not
+  fit an `Async` (a multishot accept gives many completions) are not done.
