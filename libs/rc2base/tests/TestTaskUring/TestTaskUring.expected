@@ -1,0 +1,6 @@
+nop: Just (Right ())
+file: Just (Right "5 bytes written, 5 read: hello")
+both: Just (Right (), Right ())
+pipe: (Just "5", Just "5") "hello"
+race: Just "timer"
+closed twice: Just (Left Errno:9)

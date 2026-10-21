@@ -47,6 +47,8 @@ prim__waitCqe : Ptr RawURing -> AnyPtr -> PrimIO Int32
 prim__peekCqe : Ptr RawURing -> AnyPtr -> PrimIO Int32
 %inline %foreign "CExpr:(*(void **)($1)),libc"
 prim__readPtr : AnyPtr -> PrimIO AnyPtr
+%inline %foreign "CExpr:(((struct io_uring *)($1))->ring_fd),liburing,liburing.h"
+prim__ringFd : Ptr RawURing -> PrimIO Int32
 %inline %foreign "CExpr:(((struct io_uring_cqe *)($1))->res),liburing,liburing.h"
 prim__cqeRes : Ptr RawCQE -> PrimIO Int
 %inline %foreign "CExpr:(((struct io_uring_cqe *)($1))->user_data),liburing,liburing.h"
@@ -191,6 +193,12 @@ init queueDepth = do
             pendingRef <- newIORef empty
             pendingAddrsRef <- newIORef empty
             pure (Right (MkURing (prim__castPtr ring) slot pendingRef pendingAddrsRef))
+
+||| The descriptor of the ring: readable (`poll`, `epoll`) while completions are
+||| waiting to be reaped with `pollCompletion`.
+export
+ringFd : URing -> IO (Maybe FileDesc)
+ringFd r = mkFileDesc <$> primIO (prim__ringFd r.ptr)
 
 ||| Tears the ring down. Every `SQE` obtained from it, and every
 ||| `Completion` not yet consumed, is invalid afterward. Also releases
