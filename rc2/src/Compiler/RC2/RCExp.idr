@@ -213,10 +213,11 @@ Show RCLocal where
 ||| The type of a native value: one of upstream's `PrimType`s, or a raw C
 ||| pointer (`Ptr`, `AnyPtr`, a struct pointer), held as an
 ||| `IDRIS2RC2_Raw *` -- an opaque struct pointer, so the C compiler tells it
-||| apart from an `IDRIS2RC2_Value *`. See `doc/native-pointer.md`. `TPrim WorldType`
-||| and `TErased` carry no value: the world token and an erased argument are
-||| always C `NULL` (`doc/world-erased-marks.md`), so they take no refcount
-||| and unboxing one yields `NULL` whatever the Boxed side holds.
+||| apart from an `IDRIS2RC2_Value *`. See `doc/native-pointer.md`.
+|||
+||| `TPrim WorldType` and `TErased` carry no value: the world token and an
+||| erased argument are always C `NULL` (`doc/null-params.md`), so they take no
+||| refcount and unboxing one yields `NULL` whatever the Boxed side holds.
 public export
 data NativeTy : Type where
      TPrim : PrimType -> NativeTy

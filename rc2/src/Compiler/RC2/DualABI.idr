@@ -642,24 +642,16 @@ freshName pfx existing original = do
 ||| type, or one C variable would hold both a `Boxed` and a native value.
 retypeNullLoopParams : SortedMap Int NativeTy -> RCExp -> RCExp
 retypeNullLoopParams m (RLoop fc loopParams initial prologueDrop body) =
-    RLoop fc (map retype loopParams) initial prologueDrop (retypeNullLoopParams m body)
-  where
-    retype : (Int, Rep) -> (Int, Rep)
-    retype (i, RBoxed) = maybe (i, RBoxed) (\ty => (i, RNative ty)) (lookup i m)
-    retype p = p
+    RLoop fc (map (\case (i, RBoxed) => (i, maybe RBoxed RNative (lookup i m))
+                         p => p) loopParams)
+          initial prologueDrop (retypeNullLoopParams m body)
 retypeNullLoopParams m e = mapChildren (retypeNullLoopParams m) e
 
 ||| `known` and every `let` below that only renames one of its locals (the
 ||| alias is `NULL` too), leaving out the `banned` ids.
 nullAliasTypes : SortedSet Int -> SortedMap Int NativeTy -> RCExp -> SortedMap Int NativeTy
-nullAliasTypes banned known (RLet _ var _ value body) =
-    let inValue = nullAliasTypes banned known value
-        withVar = case value of
-                       RV _ (RCLoc p) => if contains var banned
-                                            then inValue
-                                            else maybe inValue (\ty => insert var ty inValue) (lookup p inValue)
-                       _ => inValue
-    in nullAliasTypes banned withVar body
+nullAliasTypes banned known (RLet _ var _ (RV _ (RCLoc p)) body) =
+    nullAliasTypes banned (if contains var banned then known else maybe known (\ty => insert var ty known) (lookup p known)) body
 nullAliasTypes banned known e = foldl (nullAliasTypes banned) known (children e)
 
 ||| The `continue`s that belong to the loop whose body is `e` (a nested loop
@@ -675,23 +667,18 @@ loopContinues e = concatMap loopContinues (children e)
 ||| `NULL`-typed.
 mixedSlots : SortedMap Int NativeTy -> RCExp -> SortedSet Int
 mixedSlots m e@(RLoop _ loopParams initial _ body) =
-    let conts = loopContinues body
-        slots = withIndex loopParams
-        bad = mapMaybe (\(k, (i, _)) => if contains' i && any (\args => not (nullAt k args)) (initial :: conts) then Just i else Nothing) slots
-    in foldl (\acc, c => union acc (mixedSlots m c)) (SortedSet.fromList bad) (children e)
+    let feeds := initial :: loopContinues body
+        stuck := mapMaybe (\(k, (i, _)) => if isJust (lookup i m) && not (all (nullAt k) feeds) then Just i else Nothing)
+                          (withIndex loopParams)
+    in foldl (\acc, c => union acc (mixedSlots m c)) (SortedSet.fromList stuck) (children e)
   where
-    contains' : Int -> Bool
-    contains' i = isJust (lookup i m)
-
-    nullArg : Maybe RCLocal -> Bool
-    nullArg (Just (RCLoc j)) = isJust (lookup j m)
-    nullArg (Just RCNull) = True
-    nullArg (Just RCErased) = True
-    nullArg (Just RCWorld) = True
-    nullArg _ = False
-
     nullAt : Nat -> List RCLocal -> Bool
-    nullAt k args = nullArg (getAt k args)
+    nullAt k args = case getAt k args of
+                         Just (RCLoc j) => isJust (lookup j m)
+                         Just RCNull => True
+                         Just RCErased => True
+                         Just RCWorld => True
+                         _ => False
 mixedSlots m e = foldl (\acc, c => union acc (mixedSlots m c)) empty (children e)
 
 ||| The `NULL`-typed locals of a worker body: its `seeds` (the parameters) and
@@ -717,14 +704,12 @@ nativeAliasLets m e = mapChildren (nativeAliasLets m) e
 
 ||| Reads of the `NULL`-typed locals in `m` as the constants they are.
 nullReads : SortedMap Int NativeTy -> RCExp -> RCExp
-nullReads m = mapLocalsRCExp read id
-  where
-    read : RCLocal -> RCLocal
-    read (RCLoc i) = case lookup i m of
-                          Just TErased => RCErased
-                          Just _ => RCWorld
-                          Nothing => RCLoc i
-    read l = l
+nullReads m = flip mapLocalsRCExp id $ \case
+    RCLoc i => case lookup i m of
+                    Just TErased => RCErased
+                    Just _ => RCWorld
+                    Nothing => RCLoc i
+    l => l
 
 ||| Synthesise `original`'s own worker (each parameter promoted to
 ||| `RNative` at its eligible position, `RBoxed` elsewhere; `retRep`

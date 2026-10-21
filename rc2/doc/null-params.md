@@ -105,13 +105,14 @@ object in a slot typed as the world.
 
 ## Compile time
 
-On idris2-lsp the whole build goes from 56 s to 58-59 s (two runs each,
-`--directive nonullparams` against the default); `DualABI` from 2.6 s to 4.3 s.
+On idris2-lsp the whole build goes from 56 s to 58 s (two runs each,
+`--directive nonullparams` against the default); `DualABI` from 2.6 s to 2.8 s.
 The analysis keys its fixpoints by a number given to each name once (comparing
 `Name`s was most of the first version's cost). Two traps cost minutes before
 they were found:
 
-- `let x : T` with a separate `x = e` makes `x` a *function*: every use
+- `let x : T` with a separate `x = e` (and a zero-argument `where` definition)
+  makes `x` a *function*: every use
   evaluates `e` again. A value is bound as `let x : T := e`. The first version
   ran the whole forward fixpoint once per function.
 - `concatMap` over a list of lists nests `++` to the left and copies the

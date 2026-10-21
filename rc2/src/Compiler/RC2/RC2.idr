@@ -462,9 +462,7 @@ toRCDefs disabled incremental roots thunks preFolded = do
     dualABId <- if "nodualabi" `elem` disabled
        then pure sunk
        else logTime 2 "rc2: DualABI" $ do
-           nullParams <- logTime 3 "rc2: DualABI (null params)" $
-               let table = if "nonullparams" `elem` disabled then SortedMap.empty else nullParamTable roots sunk
-               in if length (SortedMap.toList table) < 100000000 then pure table else pure SortedMap.empty
+           let nullParams := if "nonullparams" `elem` disabled then SortedMap.empty else nullParamTable roots sunk
            withNative <- logTime 3 "rc2: DualABI (workers)" $ applyDualABI (not ("noboolret" `elem` disabled)) nullParams sunk
            -- doc/struct-return.md
            withWorkers <- if "nostructreturn" `elem` disabled
