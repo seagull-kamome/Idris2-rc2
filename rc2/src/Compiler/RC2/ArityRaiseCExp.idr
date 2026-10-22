@@ -30,16 +30,55 @@ import Data.Vect
 
 data Tail = TLam | TCrash | TCall Name Nat | TOther
 
-tails : NamedCExp -> List Tail
-tails (NmLam _ _ _) = [TLam]
-tails (NmLet _ _ _ b) = tails b
-tails (NmConCase _ _ alts def) =
-    foldr (\(MkNConAlt _ _ _ _ b), acc => tails b ++ acc) (maybe [] tails def) alts
-tails (NmConstCase _ _ alts def) =
-    foldr (\(MkNConstAlt _ b), acc => tails b ++ acc) (maybe [] tails def) alts
-tails (NmCrash _ _) = [TCrash]
-tails (NmApp _ (NmRef _ g) args) = [TCall g (length args)]
-tails _ = [TOther]
+isLocal : Name -> NamedCExp -> Bool
+isLocal w (NmLocal _ x) = x == w
+isLocal _ _ = False
+
+||| `w` (the last parameter of a function) is used inside `e`, a `let` value or
+||| a scrutinee in front of a tail, in a way that can act on the world: handed
+||| to an application or an external primitive, applied, or copied by a `let`.
+||| A function whose prefix does that has already taken the world, so the
+||| lambda it ends in is its *result*, not the world lambda split off
+||| (`rc2/doc/world-arity-raising.md`, "Soundness"; the same check as
+||| `ArityRaise.worldInPrefix`). A `case` on it, a constructor or an operation
+||| that takes it do not count.
+actsIn : Name -> NamedCExp -> Bool
+actsIn w e = direct e || any (actsIn w) (subs e)
+  where
+    direct : NamedCExp -> Bool
+    direct (NmLet _ _ v _) = isLocal w v
+    direct (NmApp _ f args) = isLocal w f || any (isLocal w) args
+    direct (NmExtPrim _ _ args) = any (isLocal w) args
+    direct _ = False
+
+    subs : NamedCExp -> List NamedCExp
+    subs (NmLet _ _ v b) = [v, b]
+    subs (NmApp _ f args) = f :: args
+    subs (NmCon _ _ _ _ args) = args
+    subs (NmOp _ _ args) = toList args
+    subs (NmExtPrim _ _ args) = args
+    subs (NmForce _ _ t) = [t]
+    subs (NmDelay _ _ t) = [t]
+    subs (NmConCase _ sc alts def) =
+        sc :: (map (\(MkNConAlt _ _ _ _ b) => b) alts ++ toList def)
+    subs (NmConstCase _ sc alts def) =
+        sc :: (map (\(MkNConstAlt _ b) => b) alts ++ toList def)
+    subs _ = []
+
+||| Every tail of a body, and whether `w` acts in a `let` value or a scrutinee
+||| on the path to it.
+tails : Name -> NamedCExp -> List (Tail, Bool)
+tails _ (NmLam _ _ _) = [(TLam, False)]
+tails w (NmLet _ _ v b) = map (\(t, used) => (t, used || isLocal w v || actsIn w v)) (tails w b)
+tails w (NmConCase _ sc alts def) =
+    map (\(t, used) => (t, used || actsIn w sc))
+        (foldr (\(MkNConAlt _ _ _ _ b), acc => tails w b ++ acc) (maybe [] (tails w) def) alts)
+tails w (NmConstCase _ sc alts def) =
+    map (\(t, used) => (t, used || actsIn w sc))
+        (foldr (\(MkNConstAlt _ b), acc => tails w b ++ acc) (maybe [] (tails w) def) alts)
+tails _ (NmCrash _ _) = [(TCrash, False)]
+tails _ (NmApp _ (NmRef _ g) args) = [(TCall g (length args), False)]
+tails _ _ = [(TOther, False)]
 
 ||| The functions to raise: every tail a lambda, a crash, or a
 ||| saturated tail call to another such function (a greatest fixpoint),
@@ -63,7 +102,9 @@ raisePlan defs =
     ok _ TOther = False
 
     tailsOf : SortedMap Name Nat -> (Name, NamedDef) -> Maybe (Name, List Tail)
-    tailsOf arity (n, MkNmFun (_ :: _) b) = let ts = tails b in if all (ok arity) ts then Just (n, ts) else Nothing
+    tailsOf arity (n, MkNmFun args@(_ :: _) b) =
+        let ts = tails (last args) b
+        in if all (\(t, used) => not used && ok arity t) ts then Just (n, map fst ts) else Nothing
     tailsOf _ _ = Nothing
 
     isLam : Tail -> Bool
