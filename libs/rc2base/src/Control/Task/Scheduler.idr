@@ -59,10 +59,19 @@ cancelScope sc = do
 data Held : Type where
   Hold : a -> Held
 
+-- A ready step of a scope, and what to do instead if the step is dropped (its
+-- scope was cancelled before it ran, or the scheduler was closed): the steps
+-- that carry a resource or a value hand it back there.
+record Step where
+  constructor MkStep
+  scope : Scope
+  act : IO ()
+  drop : IO ()
+
 export
 record Scheduler where
   constructor MkScheduler
-  runQ : IORef (Queue (Scope, IO ()))
+  runQ : IORef (Queue Step)
   pending : IORef Nat                          -- operations started and not over
   counter : IORef Nat
   timers : IORef (SortedMap (Time, Nat) (IO ()))
@@ -81,14 +90,19 @@ record Scheduler where
   slots : IORef (SortedMap String Held)        -- `Env.slot`
   releases : IORef (List (IO ()))              -- what releases the slots, last made first
 
+-- A step that must not just vanish: `drop` runs if it does.
+enqueueOwning : Scheduler -> Scope -> (act, drop : IO ()) -> IO ()
+enqueueOwning s sc act drop = modifyIORef s.runQ (Queue.enqueue (MkStep sc act drop))
+
 fresh : Scheduler -> IO Nat
 fresh s = do
   n <- readIORef s.counter
   writeIORef s.counter (S n)
   pure n
 
+-- A step that, if it is dropped, is simply gone.
 enqueue : Scheduler -> Scope -> IO () -> IO ()
-enqueue s sc act = modifyIORef s.runQ (Queue.enqueue (sc, act))
+enqueue s sc act = enqueueOwning s sc act (pure ())
 
 ||| The monotonic clock in milliseconds.
 nowMs : IO Time
@@ -266,10 +280,10 @@ runBatch s (S n) = do
   q <- readIORef s.runQ
   case dequeue q of
     Nothing => pure ()
-    Just ((sc, act), rest) => do
+    Just (step, rest) => do
       writeIORef s.runQ rest
-      gone <- readIORef sc.cancelled
-      unless gone act
+      gone <- readIORef step.scope.cancelled
+      if gone then step.drop else step.act
       runBatch s n
 
 -- Run the timers that are due, then point the descriptor at the next.
@@ -340,6 +354,9 @@ newScheduler = newSchedulerWith 0
 export
 closeScheduler : Scheduler -> IO ()
 closeScheduler s = do
+  left <- readIORef s.runQ
+  writeIORef s.runQ Queue.empty
+  traverse_ (.drop) (Queue.toList left)
   releases <- readIORef s.releases
   sequence_ releases
   closePool s.pool
