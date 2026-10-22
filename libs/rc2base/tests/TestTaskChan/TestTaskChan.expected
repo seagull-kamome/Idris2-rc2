@@ -1,0 +1,4 @@
+pipeline (sum, seen, received): (1275, (50, 50))
+edges: (True, (False, (Just 1, (Just 3, (False, Just Nothing)))))
+given-up recv: Just 9
+close wakes: Nothing

@@ -50,7 +50,9 @@ export
 (.descriptor) = fd
 
 ||| Close the socket. Closing again does nothing, so it is safe to call from a
-||| cleanup as well as from the code that used the socket.
+||| cleanup as well as from the code that used the socket. It is not safe to call
+||| from two threads at once: inside a task use `onReactor (close s)` (as
+||| `withSock` does) when the scheduler runs actions on several threads.
 export
 close : Sock -> IO ()
 close s = do
@@ -65,10 +67,10 @@ close s = do
 export
 withSock : Sock -> Task a -> Task a
 withSock s body = do
-  guard <- liftIO (newIORef (pure ()))
+  guard <- onReactor (newIORef (pure ()))
   spawn (Async (\_, done => writeIORef guard (done ()) *> pure (MkCancel (close s))))
   r <- body
-  liftIO (close s *> join (readIORef guard))
+  onReactor (close s *> join (readIORef guard))
   pure r
 
 setNonBlocking : FileDesc -> IO (Either Errno ())

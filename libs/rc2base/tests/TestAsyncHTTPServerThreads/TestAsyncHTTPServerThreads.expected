@@ -1,0 +1,2 @@
+one thread: answers ["ok", "ok", "ok", "ok"], handlers overlapped: False
+eight threads: answers ["ok", "ok", "ok", "ok"], handlers overlapped: True

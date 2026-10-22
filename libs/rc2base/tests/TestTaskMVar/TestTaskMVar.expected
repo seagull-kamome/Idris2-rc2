@@ -1,0 +1,6 @@
+lock: 800
+wait: 42
+line: [(0, 10), (1, 11), (2, 12)]
+full: (1, 2)
+given-up take: Just 5
+given-up modify: Just 7

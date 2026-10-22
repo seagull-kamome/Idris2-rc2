@@ -108,6 +108,33 @@ when the result is put in and abandons the promise in its `Cancel`.
 The state of a promise is plain `IORef`s, and every operation on it is pinned to
 the thread of the scheduler (`Pinned`), so it is safe in parallel mode too.
 
+## Sharing between tasks: `Ref`, `MVar`, `Chan`
+
+In parallel mode the actions of different tasks run at the same time, so an
+`IORef` that two tasks use can lose an update. Three modules give tasks what to
+share and wait on. All of their state is touched on the thread of the scheduler
+only (in an `Async`, which starts there, or with `onReactor`), the same way a
+promise is, so they are safe in parallel mode and cost no thread while a task
+waits.
+
+- `Control.Task.Ref`: a cell. `readRef`, `writeRef`, `modifyRef`, and
+  `atomicModifyRef` (a change that also gives a result, as one step).
+- `Control.Task.MVar`: a cell that holds a value or is empty. `takeMVar` waits
+  while it is empty, `putMVar` while it is full; `tryTakeMVar` and `tryPutMVar`
+  do not wait. `modifyMVar`, `modifyMVar_` and `withMVar` take the value for
+  the time of the body, which makes them a lock. If the task is given up before
+  the body ends, the *old* value goes back, so a cancelled task never leaves the
+  cell empty. This is done with a sentinel task, as in `fork`; it ends in the
+  same step that puts the new value in.
+- `Control.Task.Chan`: a channel that holds up to a given number of values.
+  `send` waits while it is full, `recv` while it is empty; `trySend`/`tryRecv`
+  do not wait; `close` lets what is in it be received and then `recv` gives
+  `Nothing`, and a `send` into a closed channel gives `False`.
+
+Waiting tasks are served in the order they came (`Control.Task.Waiters`). A wait
+that is given up leaves the line and takes nothing: a value is never handed to a
+task that is no longer there.
+
 ## Semantics
 
 - **`Seq`** runs the left side, then the continuation. A left-nested chain is

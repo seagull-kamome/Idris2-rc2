@@ -13,6 +13,7 @@ module Network.Async.HTTP.Server
 import public Network.HTTP.Message
 
 import Control.Task
+import Control.Task.Scheduler
 import Data.Buffer
 import Data.IORef
 import Network.Async
@@ -121,3 +122,14 @@ serve {bindAddr} {maxRequestBytes} port handler = do
   Right listener <- liftIO (listen {bindAddr} port)
     | Left e => pure (Left e)
   withSock listener (serveOn {maxRequestBytes} listener handler)
+
+||| Run a server task, and whatever else is in the same task. With `threads = 0`
+||| everything runs on one thread. With `threads = n` the actions of the tasks
+||| (parsing, the handlers, the system calls) run on `n` threads at the same time,
+||| and a task waiting for the network gives its thread to the others; the
+||| handlers then run in parallel, so what they share must be safe for that
+||| (`Control.Task.Ref`, `MVar`, `Chan`). The server itself is the same in both.
+export
+runServer : (threads : Nat) -> Task a -> IO (Maybe a)
+runServer Z = runTask
+runServer n = runTaskParallel n
