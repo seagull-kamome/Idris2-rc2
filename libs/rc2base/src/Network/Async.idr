@@ -63,15 +63,11 @@ close s = do
 
 ||| Run the task and close the socket when it ends or is given up (its scope
 ||| is cancelled, a `race` lost). The close on cancellation is what stops a
-||| server from leaking the connections it was serving.
+||| server from leaking the connections it was serving. Closing is done as the
+||| task starts being given up or ends, on the thread of the scheduler.
 export
 withSock : Sock -> Task a -> Task a
-withSock s body = do
-  guard <- onReactor (newIORef (pure ()))
-  spawn (Async (\_, done => writeIORef guard (done ()) *> pure (MkCancel (close s))))
-  r <- body
-  onReactor (close s *> join (readIORef guard))
-  pure r
+withSock s = finally (\_ => close s)
 
 setNonBlocking : FileDesc -> IO (Either Errno ())
 setNonBlocking fd = do
@@ -125,13 +121,30 @@ retrying wait call = do
               else pure r
     Right _ => pure r
 
-||| The next connection. Waits until one arrives.
+||| The next connection. Waits until one arrives. The socket is handed over with
+||| `handoff`: if the task is given up in the step between the connection being
+||| accepted and the task going on, the socket is closed, not leaked.
 export
 accept : Sock -> Task (Either Errno Sock)
-accept l = do
-  Right n <- retrying (awaitReadable l.fd) (prim__accept l.fd.rawfd)
-    | Left e => pure (Left e)
-  liftIO (adopt (cast n))
+accept l = handoff start (either (\_ => pure ()) close)
+  where
+    -- `accept` on a non-blocking descriptor does not wait, so it is called on
+    -- the thread of the scheduler; when there is nothing to accept, the
+    -- descriptor is watched and the call tried again.
+    try : Env -> IORef Cancel -> Completion (Either Errno Sock) -> IO ()
+    try env watching done = do
+      r <- attempt (prim__accept l.fd.rawfd)
+      case r of
+        Right n => adopt (cast n) >>= done
+        Left e => if e == EAGAIN
+                    then env.watchFd l.fd EPOLLIN (\_ => try env watching done) >>= writeIORef watching
+                    else if e == EINTR then try env watching done else done (Left e)
+
+    start : Env -> Completion (Either Errno Sock) -> IO Cancel
+    start env done = do
+      watching <- newIORef noCancel
+      try env watching done
+      pure (MkCancel (join (map runCancel (readIORef watching))))
 
 ||| Read up to `len` bytes into `buf[off ..]`. Waits until there is something to
 ||| read. `Right 0` means the peer closed the connection.

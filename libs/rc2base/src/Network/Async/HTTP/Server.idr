@@ -111,7 +111,7 @@ serveOn : {default 8388608 maxRequestBytes : Int} -> Sock -> Handler -> Task (Ei
 serveOn {maxRequestBytes} listener handler = do
   r <- accept listener
   case r of
-    Right conn => spawn (withSock conn (connection maxRequestBytes handler conn))
+    Right conn => spawnOwning (close conn) (withSock conn (connection maxRequestBytes handler conn))
                     *> serveOn {maxRequestBytes} listener handler
     Left e => if exhausted e then sleepFor 10 *> serveOn {maxRequestBytes} listener handler
               else if e == ECONNABORTED then serveOn {maxRequestBytes} listener handler
@@ -125,7 +125,8 @@ serve : {default (IPv4Addr 127 0 0 1) bindAddr : SocketAddress}
      -> {default 8388608 maxRequestBytes : Int}
      -> Port -> Handler -> Task (Either Errno ())
 serve {bindAddr} {maxRequestBytes} port handler = do
-  Right listener <- liftIO (listen {bindAddr} port)
+  Right listener <- handoff (\_, done => (listen {bindAddr} port >>= done) *> pure noCancel)
+                            (either (\_ => pure ()) close)
     | Left e => pure (Left e)
   withSock listener (serveOn {maxRequestBytes} listener handler)
 

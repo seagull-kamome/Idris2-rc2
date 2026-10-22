@@ -1,2 +1,3 @@
 echo: Just ("served hello", "echo:hello")
 after give-up: Just "connect refused 111"
+dropped accept: Just "closed by the server"
