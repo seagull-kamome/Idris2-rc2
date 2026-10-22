@@ -204,9 +204,22 @@ reasonPhrase 501 = "Not Implemented"
 reasonPhrase 503 = "Service Unavailable"
 reasonPhrase _   = "Unknown"
 
+||| The length of a request's body, `Just 0` without a `Content-Length`. `Nothing`
+||| when the headers do not frame the body reliably: a `Content-Length` that is
+||| not plain digits or does not fit (more than 18 of them), two that differ, or
+||| a `Transfer-Encoding` (chunked bodies are not supported). Taking such a
+||| request for one without a body would leave its body to be read as the next
+||| request.
 export
-contentLength : List (String, String) -> Int
-contentLength hdrs = fromMaybe 0 (lookup "content-length" hdrs >>= parsePositive {a = Int})
+bodyLength : List (String, String) -> Maybe Int
+bodyLength hdrs =
+  if isJust (lookup "transfer-encoding" hdrs) then Nothing
+  else case map snd (filter ((== "content-length") . fst) hdrs) of
+    [] => Just 0
+    v :: vs => if all (== v) vs then digits v else Nothing
+  where
+    digits : String -> Maybe Int
+    digits v = if v /= "" && length v <= 18 && all isDigit (unpack v) then parsePositive v else Nothing
 
 -- HTTP/1.1 defaults to keep-alive; only an explicit "Connection: close"
 -- ends it. HTTP/1.0 (which defaults the other way) isn't supported --

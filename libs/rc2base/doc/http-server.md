@@ -164,6 +164,11 @@ A deliberately small HTTP/1.1 subset:
   (each on its own `getString` of its byte range), never one big head
   string. Header key match is case-insensitive; the value is SP/HTAB-
   trimmed. The body is handed over as raw `Buffer` bytes.
+- Framing is checked (`Network.HTTP.Message.bodyLength`): a `Content-Length`
+  that is not plain digits, has more than 18 of them, or appears twice with
+  different values, and any `Transfer-Encoding`, make the request unreliable to
+  frame, so it is refused rather than guessed. `Network.HTTP.Server` closes the
+  connection; `Network.Async.HTTP.Server` answers `400` and closes.
 - Keep-alive by default (HTTP/1.1's own default); an explicit
   `Connection: close` request header closes the connection after that
   response.

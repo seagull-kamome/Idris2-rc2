@@ -76,20 +76,26 @@ connection maxReq handler conn = liftIO (newBuf initCap) >>= \buf => loop buf 0
         | Left _ => pure ()
       when (n > 0) $ loop buf' (len + n)
 
-    dispatch buf len headEnd (method, path, hdrs) = do
-      let bodyStart = headEnd + 4
-      let reqEnd = bodyStart + contentLength hdrs
-      if reqEnd > maxReq then pure ()
-        else if len < reqEnd then more buf len
-        else do
-          body <- liftIO (slice buf bodyStart (reqEnd - bodyStart))
-          resp <- handler (MkRequest method path hdrs body)
+    dispatch buf len headEnd (method, path, hdrs) =
+      case bodyLength hdrs of
+        Nothing => do
+          resp <- liftIO (badRequest {headers = [("Connection", "close")]} "bad request\n")
           out <- liftIO (encode resp)
-          Right () <- sendAll conn out 0 (byteLength out)
-            | Left _ => pure ()
-          if connectionClose hdrs then pure () else do
-            rest <- liftIO (if len == reqEnd then pure buf else slice buf reqEnd (len - reqEnd))
-            loop rest (len - reqEnd)
+          ignore (sendAll conn out 0 (byteLength out))
+        Just size => do
+          let bodyStart = headEnd + 4
+          if size > maxReq - bodyStart then pure ()
+            else if len < bodyStart + size then more buf len
+            else do
+              let reqEnd = bodyStart + size
+              body <- liftIO (slice buf bodyStart size)
+              resp <- handler (MkRequest method path hdrs body)
+              out <- liftIO (encode resp)
+              Right () <- sendAll conn out 0 (byteLength out)
+                | Left _ => pure ()
+              if connectionClose hdrs then pure () else do
+                rest <- liftIO (if len == reqEnd then pure buf else slice buf reqEnd (len - reqEnd))
+                loop rest (len - reqEnd)
 
 -- `accept` ran out of descriptors or memory: the pending connection stays, so
 -- retrying at once would spin.
