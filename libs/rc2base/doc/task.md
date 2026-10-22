@@ -43,6 +43,10 @@ data Task : Type -> Type where
   Race   : Task a -> Task a -> Task a            -- the first to finish wins, the other is cancelled
   Spawn  : Task () -> Task ()                    -- run alongside the continuation
   Async  : (Env -> Completion a -> IO Cancel) -> Task a         -- start an operation and wait for it
+  Handoff : (Env -> Completion a -> IO Cancel) -> (a -> IO ()) -> Task a  -- Async whose value is given back if its task is dropped
+  Finally : (Maybe b -> IO ()) -> Task b -> Task b  -- an action when the task ends (Just) or is given up (Nothing)
+  SpawnOwning : IO () -> Task () -> Task ()         -- Spawn, with an action if the task never starts
+  Map    : (a -> b) -> Task a -> Task b             -- fmap, in the step that ends the task
   Empty  : Task a                                -- never finishes
 
 Completion a = a -> IO ()      -- tell the scheduler the operation is done
@@ -124,16 +128,53 @@ waits.
   do not wait. `modifyMVar`, `modifyMVar_` and `withMVar` take the value for
   the time of the body, which makes them a lock. If the task is given up before
   the body ends, the *old* value goes back, so a cancelled task never leaves the
-  cell empty. This is done with a sentinel task, as in `fork`; it ends in the
-  same step that puts the new value in.
+  cell empty (`finally`, below).
 - `Control.Task.Chan`: a channel that holds up to a given number of values.
   `send` waits while it is full, `recv` while it is empty; `trySend`/`tryRecv`
   do not wait; `close` lets what is in it be received and then `recv` gives
   `Nothing`, and a `send` into a closed channel gives `False`.
 
 Waiting tasks are served in the order they came (`Control.Task.Waiters`). A wait
-that is given up leaves the line and takes nothing: a value is never handed to a
-task that is no longer there.
+that is given up leaves the line and takes nothing. A value that was already
+handed to a task whose scope is cancelled before it went on with it goes back
+(`handoff`, below).
+
+## Not losing what is handed over
+
+A completion only *queues* the continuation of its task. If the scope of the task
+is cancelled before that step runs (a `race` the task lost in the same turn), the
+step is dropped, and so is the value or the resource that was handed over: a
+message taken from a channel, a lock, a new descriptor. Giving up the operation
+cannot help, since it has already finished. So a ready step carries an action to
+run when it is dropped (`Step.drop`; also run, for the steps left in the queue,
+when the scheduler is closed), and three constructors use it:
+
+- **`handoff start undo`** is `Async` whose value is handed back: `complete x`
+  queues the continuation with `undo x` as its drop action, so exactly one of
+  the two happens: the task goes on with `x`, or `undo x` runs. A `complete`
+  that comes after the operation was given up, or a second one, also runs
+  `undo`. `takeMVar` (undo: put the value back, to the next taker if there is one),
+  `recv` (to the front of the channel) and `Network.Async.accept` (close the
+  socket) are made with it.
+- **`finally f t`** runs `t` and calls `f (Just result)` when it ends, or
+  `f Nothing` when its scope is cancelled before. The action is registered as a
+  cleanup of the scope in the step that starts `t`, and taken out in the step
+  that ends it. `Seq (handoff ...) (\x => finally (release x) body)` is therefore
+  one step from having `x` to being responsible for it: the continuation of a
+  `Seq` runs in the step that finished the task before it. `withSock` and
+  `modifyMVar` are written like that.
+- **`spawnOwning release t`** is `spawn` whose step has `release` as its drop
+  action, for a task that owns what it was given (a connection).
+
+`map` is a constructor (`Map`) of its own, not `Seq` and `pure`: those make a ready
+step between the end of a task and the function applied to its result, and `race`
+wraps both sides in `map`, so a value could be dropped in that step with nothing
+to give it back. `Map` changes the result in the step that ends the task.
+
+What stays as it was: once a task has started with a value, cancelling its later
+steps can still drop what it holds (a message taken by `recv ch >>= f` is lost if
+`f`'s steps are dropped), as with an exception after `takeMVar` in Haskell
+without `mask`. Hold such a value with `finally`.
 
 ## Semantics
 

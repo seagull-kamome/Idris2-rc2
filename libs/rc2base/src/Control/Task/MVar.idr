@@ -2,8 +2,9 @@
 ||| or putting into a full one, makes the task wait -- without holding a thread
 ||| -- until another task makes it possible. Waiting tasks are served in the
 ||| order they came. A wait that is given up (a lost `race`, a cancelled scope)
-||| leaves the line, and takes nothing. (`Control.Concurrent.MVar` is the one
-||| for threads, which blocks the thread.)
+||| leaves the line and takes nothing; a value that was handed to a take whose
+||| task is given up before it goes on goes back into the cell.
+||| (`Control.Concurrent.MVar` is the one for threads, which blocks the thread.)
 module Control.Task.MVar
 
 -- Copyright 2026, Hattori,Hiroki. All rights reserved.

@@ -26,8 +26,11 @@ waits for the descriptor on the scheduler's epoll (`awaitReadable`,
 `send` uses `MSG_NOSIGNAL`: a peer that went away is `EPIPE`, not SIGPIPE.
 
 `withSock` is how a cancelled scope (a `race` that was lost, say) closes the
-descriptors of the tasks in it: it spawns a sentinel in the scope whose
-cancellation closes the socket, and ends the sentinel when the task is done.
+descriptors of the tasks in it: it is `finally (\_ => close s)`. `accept` hands the
+new socket over with `handoff`, and the server starts each connection with
+`spawnOwning (close conn)`, so a connection is closed also when the scope is
+cancelled between its being accepted and its task starting (see `task.md`, "Not
+losing what is handed over").
 
 No liburing is involved. `Network.Async` does not import `Control.Task.Uring`,
 and io_uring operations can still be used in the same program.

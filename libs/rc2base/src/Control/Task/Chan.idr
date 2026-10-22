@@ -1,9 +1,10 @@
 ||| A queue of bounded length that tasks send values into and receive values
 ||| from. A task that receives from an empty channel, or sends into a full one,
-||| waits -- without holding a thread -- and waiting tasks are served in the order
-||| they came. A wait that is given up leaves the line and takes or loses nothing.
-||| A channel can be closed: what is in it can still be received, and then
-||| `recv` gives `Nothing`.
+||| waits -- without holding a thread -- and waiting tasks are served in the
+||| order they came. A wait that is given up leaves the line; a value that was
+||| handed to a receive whose task is given up before it goes on goes back into
+||| the channel. A channel can be closed: what is in it can still be received,
+||| and then `recv` gives `Nothing`.
 module Control.Task.Chan
 
 -- Copyright 2026, Hattori,Hiroki. All rights reserved.
