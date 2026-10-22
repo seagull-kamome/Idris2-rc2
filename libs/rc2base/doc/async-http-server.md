@@ -63,6 +63,30 @@ main = ignore (runTaskWith 4 (serve 8080 handler))
 
 Tested by `tests/TestNetworkAsync` and `tests/TestAsyncHTTPServer`.
 
+## One thread or several
+
+The server is the same either way; what changes is how the tasks are run.
+
+```idris2
+main = ignore (runServer 8 (serve 8080 handler))   -- 0: one thread
+```
+
+`runServer n` is `runTaskParallel n` (`runServer 0` is `runTask`): the actions
+of the tasks -- reading and parsing a request, the handler's own `liftIO`s,
+the system calls -- run on `n` threads at the same time, and a task that waits
+for the network (`accept`, `recv`, `send` when they would block) gives its thread
+to other requests. The control of the tasks (`>>=`, `race`, `spawn`, the waits)
+stays on one thread, the *reactor*, which also watches the descriptors.
+
+What that asks of a handler: whatever it shares with other requests must be safe
+to share. Use `Control.Task.Ref`, `MVar` and `Chan` (see `task.md`), not an
+`IORef`. `Sock.close` is one more thing the reactor must do: inside a task use
+`onReactor (close s)`; `withSock` already does.
+
+`tests/TestAsyncHTTPServerThreads` runs the same handler, which keeps its thread
+busy for 60 ms, for four clients: with one thread the handlers never overlap, with
+eight they do.
+
 ## `Network.Async.HTTP.Router`
 
 `Network.HTTP.Router`'s table, with handlers that give a `Task Response`. The

@@ -90,6 +90,7 @@ TESTS=(
     "TestTaskEnv||Control.Task: Env.slot (one value per scheduler, released at close) and Env.addSource (taken out when given up)"
     "TestNetworkAsync|network contrib|Network.Async: serve a connection with accept/recv/sendAll; a lost race closes the listener"
     "TestAsyncHTTPServer|network contrib|Network.Async.HTTP.Server: answers, overlapping slow handlers, bodies, keep-alive, close, stopped by a race"
+    "TestAsyncHTTPServerThreads|network contrib|Network.Async.HTTP.Server: the same server on one thread and on eight (runServer); handlers overlap only with several"
     "TestTaskUring||Control.Task.Uring: nop, file round trip, two requests at once, a read woken by a write, a request given up by a race"
     "TestTaskNoUring||Control.Task.Uring imported and not used: builds without liburing, no liburing in the generated C"
     "TestUringNop||System.Linux.Uring: a tagged nop through submit and wait"
