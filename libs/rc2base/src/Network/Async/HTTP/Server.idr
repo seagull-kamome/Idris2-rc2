@@ -128,11 +128,16 @@ connection limits handler conn = do
                 ms => (\t => timeoutAt t (sendAll conn out 0 (byteLength out))) =<< map (+ ms) now
       pure (maybe False isRight sent)
 
-    -- Answer what cannot be served and let the connection end.
+    -- Answer what cannot be served and let the connection end, lingering
+    -- (`doc/async-http-server.md`).
     refuse : Int -> String -> Task ()
     refuse status message = do
       resp <- liftIO (text {headers = [("Connection", "close")]} status message)
-      ignore (reply False resp)
+      sent <- reply False resp
+      when sent $ do
+        onReactor (liftIO (shutdownWrite conn))
+        deadline <- after 1000
+        ignore (within deadline (discard conn 262144))
 
     -- Read at most `want` more bytes after the `len` that `buf` holds, before the deadline.
     more : Maybe Time -> Buffer -> (len, want : Int) -> Task Read

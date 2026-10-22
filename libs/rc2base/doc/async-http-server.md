@@ -20,6 +20,7 @@ waits for the descriptor on the scheduler's epoll (`awaitReadable`,
 | `accept : Sock -> Task (Either Errno Sock)` | the next connection, non-blocking |
 | `recv : Sock -> Buffer -> (off, len : Int) -> Task (Either Errno Int)` | into `buf[off ..]`; `Right 0` is end of input |
 | `send`, `sendAll` | `send` writes some bytes, `sendAll` all of them |
+| `shutdownWrite`, `discard` | `shutdown(SHUT_WR)`, and reading and throwing away what the peer sends (until it closes, an error or a byte limit; the time limit is the caller's, with `timeoutAt`): with `close`, a lingering close |
 
 `recv` and `send` refuse (`EINVAL`) a range that is empty or reaches outside the
 buffer, before any system call.
@@ -71,10 +72,12 @@ main = ignore (runTaskWith 4 (serve 8080 handler))
   (`bodyLength`, `parseHead`), `413` for a request over `limits.maxRequestBytes`
   (default 8 MiB), `431` for a head over `limits.maxHeadBytes` (default 64 KiB; a
   head cannot be longer than the request limit either, so the smaller of the two
-  applies). Pass `serve {limits = MkLimits head request}` to change them. The
-  answer is sent, but there is no *lingering close*: if the client has more bytes on
-  the way when the connection is closed (a body that was refused before it was
-  read), the system may reset the connection and the client may lose the answer.
+  applies). Pass `serve {limits = MkLimits head request}` to change them. After
+  the answer the server does a *lingering close*: it shuts down its side, reads and
+  discards what the client still sends for up to one second and 256 KiB (a `408`
+  does the same), then closes (a refused connection is held that much longer), so that a body that was refused unread does not make the system reset the
+  connection and take the answer with it. A client that sends more than that, or
+  more slowly, can still lose the answer.
 - A request with `Connection: close` (also as one token among others), or a
   handler that answers with `Connection: close`, ends the connection after the
   response, and the response then has a single `Connection: close` header: any
