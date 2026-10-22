@@ -16,7 +16,6 @@ import Control.Task
 import Control.Task.Scheduler
 import Data.Buffer
 import Data.Either
-import Data.List
 import Network.Async
 import Network.Socket.Data
 import System.Posix.Errno
@@ -52,7 +51,7 @@ chunk = 65536
 encode : (headOnly : Bool) -> Response -> IO Buffer
 encode headOnly resp = do
   let bodyLen = byteLength resp.body
-  let head = responseHead resp bodyLen
+  let head = responseHead resp
   let headLen = stringByteLength head
   let sent = if hasBody resp.status && not headOnly then bodyLen else 0
   out <- newBuf (headLen + sent)
@@ -73,7 +72,9 @@ record Head where
 -- served is answered and the connection closed: 400 for a head or framing that
 -- cannot be read, 413 for a request over the limit, 431 for a head over it.
 connection : Limits -> Handler -> Sock -> Task ()
-connection limits handler conn = liftIO (newBuf initCap) >>= \buf => readHead buf 0 0
+connection limits handler conn = do
+  buf <- liftIO (newBuf initCap)
+  readHead buf 0 0
   where
     -- The head has to fit in what a request may take up, as well as in its own limit.
     headLimit : Int

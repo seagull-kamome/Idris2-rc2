@@ -61,7 +61,7 @@ main = do
     ]
   putStrLn "--- responseHead ---"
   body <- fromString "hello"
-  traverse_ (\status => putStrLn (show status ++ ": " ++ show (responseHead (MkResponse status [("X", "1")] body) 5)))
+  traverse_ (\status => putStrLn (show status ++ ": " ++ show (responseHead (MkResponse status [("X", "1")] body))))
     [200, 100, 204, 304, 404]
   putStrLn "--- findHeadEndFrom ---"
   let req = "GET / HTTP/1.1\r\nHost: x\r\n\r\nBODY"

@@ -131,13 +131,8 @@ HandlerFor tys = HandlerOf ((Response -> IO ()) -> IO ()) tys
 ||| or literal-segment mismatch, or a `FromSegment` parse failure.
 export
 matchRoute : Route tys -> List String -> HandlerOf r tys -> Maybe r
-matchRoute End         []           h = Just h
-matchRoute End         (_ :: _)     h = Nothing
+matchRoute End         []            h = Just h
 matchRoute (Fixed s r) (seg :: segs) h = if s == seg then matchRoute r segs h else Nothing
-matchRoute (Fixed _ _) []           h = Nothing
-matchRoute (Capture _ ty r) (seg :: segs) h =
-  case fromSegment {ty} seg of
-    Nothing => Nothing
-    Just v  => matchRoute r segs (h v)
-matchRoute (Capture _ _ _) [] h = Nothing
+matchRoute (Capture _ ty r) (seg :: segs) h = fromSegment {ty} seg >>= \v => matchRoute r segs (h v)
 matchRoute Splat segs h = Just (h (joinBy "/" segs))
+matchRoute _ _ _ = Nothing
