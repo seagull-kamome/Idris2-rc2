@@ -34,6 +34,9 @@ prim__accept : Int32 -> PrimIO Int
 %foreign "CExpr:((int)setsockopt($1, SOL_SOCKET, SO_REUSEADDR, (int[]){1}, sizeof(int))),libc,sys/socket.h"
 prim__reuseAddr : Int32 -> PrimIO Int32
 
+%foreign "CExpr:(shutdown($1, SHUT_WR)),libc,sys/socket.h"
+prim__shutdownWrite : Int32 -> PrimIO Int32
+
 %foreign "CExpr:(close($1)),libc,unistd.h"
 prim__close : Int32 -> PrimIO Int32
 
@@ -60,6 +63,12 @@ close s = do
   when isOpen $ do
     writeIORef s.open_ False
     ignore (primIO (prim__close s.fd.rawfd))
+
+||| Tell the peer that nothing more will be sent (`shutdown(SHUT_WR)`), while
+||| what it sends can still be read.
+export
+shutdownWrite : Sock -> IO ()
+shutdownWrite s = ignore (primIO (prim__shutdownWrite s.fd.rawfd))
 
 ||| Run the task and close the socket when it ends or is given up (its scope
 ||| is cancelled, a `race` lost). The close on cancellation is what stops a
@@ -176,3 +185,21 @@ sendAll s buf off len =
     case r of
       Left e => pure (Left e)
       Right n => sendAll s buf (off + n) (len - n)
+
+||| Read and throw away what the peer sends, until it closes, an error, or
+||| `limit` bytes. It has no time limit of its own: wrap it in `timeoutAt`. Closing a socket with unread bytes makes the system reset the
+||| connection, and the peer may lose what was sent before; `shutdownWrite`, then
+||| `discard` (against a deadline), then `close` is a lingering close.
+export
+discard : Sock -> (limit : Int) -> Task ()
+discard s limit = do
+  Just buf <- liftIO (newBuffer 4096)
+    | Nothing => pure ()
+  go buf limit
+  where
+    go : Buffer -> Int -> Task ()
+    go buf left = when (left > 0) $ do
+      r <- recv s buf 0 (min 4096 left)
+      case r of
+        Right n => when (n > 0) (go buf (left - n))
+        Left _ => pure ()

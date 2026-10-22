@@ -10,7 +10,7 @@ module Main
 --     head that ends in a later segment, a head of exactly the limit, two
 --     requests in one segment, HEAD and 204, what a request and a handler say
 --     about `Connection`, and the requests that are refused: a head over the limit
---     (431), a body over the limit (413), heads and framing headers that cannot be
+--     (431), a body over the limit (413, also when the client goes on sending the body after the answer), heads and framing headers that cannot be
 --     trusted (400);
 --   * limits 65536 / 2048 (the head limit above the request limit): still answered;
 --   * default limits: a body of 70000 bytes, more than one read.
@@ -160,6 +160,8 @@ smallLimits port = do
   handlerStays <- ask [getReq "/stay" True]
   -- refused
   refusedLimits <- traverse (\r => ask [r]) [unfinishedHead 1024, bigAnnounced, "GARBAGE\r\n\r\n"]
+  -- the refused body goes on being sent after the answer: the sends still succeed
+  refusedWithBody <- pieces port [bigAnnounced, pack (replicate 2000 'x'), pack (replicate 2000 'x')]
   refusedHeads <- traverse (\h => ask ["GET /hello HTTP/1.1\r\nHost: t\r\n" ++ h ++ "\r\n\r\n"])
                     [ "Content-Length : 0"   -- space before the colon
                     , " folded: line"        -- an obsolete line fold
@@ -170,7 +172,7 @@ smallLimits port = do
                       , "Content-Length: 5\r\nContent-Length: 6", "Transfer-Encoding: chunked" ]
   (slowA, slowB) <- both (ask [getReq "/slow" True]) (ask [getReq "/slow" True])
   pure (map show ([one, body, alive, user, headed, noContent, piped, [split], exact, tokens, handlerCloses, handlerStays]
-                  ++ refusedLimits ++ refusedHeads ++ refusedFraming ++ [slowA, slowB]))
+                  ++ refusedLimits ++ [[refusedWithBody]] ++ refusedHeads ++ refusedFraming ++ [slowA, slowB]))
 
 -- The second server: the head limit (65536) is above the request limit (2048).
 headAboveRequest : Port -> Task (List String)
