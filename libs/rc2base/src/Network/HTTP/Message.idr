@@ -10,6 +10,7 @@ module Network.HTTP.Message
 import Data.Buffer
 import Data.IORef
 import Data.List
+import Data.List1
 import Data.Maybe
 import Data.String
 
@@ -187,6 +188,8 @@ namespace Response
 
 export
 reasonPhrase : Int -> String
+reasonPhrase 100 = "Continue"
+reasonPhrase 101 = "Switching Protocols"
 reasonPhrase 200 = "OK"
 reasonPhrase 201 = "Created"
 reasonPhrase 204 = "No Content"
@@ -199,6 +202,7 @@ reasonPhrase 403 = "Forbidden"
 reasonPhrase 404 = "Not Found"
 reasonPhrase 405 = "Method Not Allowed"
 reasonPhrase 413 = "Payload Too Large"
+reasonPhrase 431 = "Request Header Fields Too Large"
 reasonPhrase 500 = "Internal Server Error"
 reasonPhrase 501 = "Not Implemented"
 reasonPhrase 503 = "Service Unavailable"
@@ -221,12 +225,19 @@ bodyLength hdrs =
     digits : String -> Maybe Int
     digits v = if v /= "" && length v <= 18 && all isDigit (unpack v) then parsePositive v else Nothing
 
--- HTTP/1.1 defaults to keep-alive; only an explicit "Connection: close"
--- ends it. HTTP/1.0 (which defaults the other way) isn't supported --
--- see the doc's "Scope" section.
+-- HTTP/1.1 defaults to keep-alive; only a "close" among the tokens of
+-- "Connection" ends it ("keep-alive, close" does too). HTTP/1.0 (which defaults
+-- the other way) isn't supported -- see the doc's "Scope" section.
 export
 connectionClose : List (String, String) -> Bool
-connectionClose hdrs = maybe False ((== "close") . toLower . trim) (lookup "connection" hdrs)
+connectionClose hdrs =
+  any (\(k, v) => k == "connection" && elem "close" (map (toLower . trim) (forget (split (== ',') v)))) hdrs
+
+||| Whether a response with this status has a body and a `Content-Length`: not
+||| 1xx, 204 and 304.
+export
+hasBody : (status : Int) -> Bool
+hasBody status = status >= 200 && status /= 204 && status /= 304
 
 -- The status line + header lines + Content-Length + terminating CRLF,
 -- as one ASCII string. Header keys/values are assumed ASCII (RFC 7230);
@@ -236,7 +247,8 @@ responseHead : Response -> (bodyLen : Int) -> String
 responseHead resp bodyLen =
     "HTTP/1.1 " ++ show resp.status ++ " " ++ reasonPhrase resp.status ++ "\r\n"
     ++ concatMap headerLine resp.headers
-    ++ "Content-Length: " ++ show bodyLen ++ "\r\n\r\n"
+    ++ (if hasBody resp.status then "Content-Length: " ++ show bodyLen ++ "\r\n" else "")
+    ++ "\r\n"
   where
     headerLine : (String, String) -> String
     headerLine (k, v) = k ++ ": " ++ v ++ "\r\n"
@@ -251,10 +263,12 @@ export
 byteAt : Buffer -> Int -> IO Int
 byteAt b i = cast <$> getBits8 b i
 
--- Index of the CR of the first "\r\n\r\n" in `b[0 .. n)`, else Nothing.
+-- Index of the CR of the first "\r\n\r\n" in `b[from .. n)`, else Nothing. Where
+-- the bytes read before were already searched, `from` is three bytes before where
+-- they ended.
 export
-findHeadEnd : Buffer -> (n : Int) -> IO (Maybe Int)
-findHeadEnd b n = go 0
+findHeadEndFrom : Buffer -> (from, n : Int) -> IO (Maybe Int)
+findHeadEndFrom b from n = go from
   where
     go : Int -> IO (Maybe Int)
     go i =
@@ -268,6 +282,11 @@ findHeadEnd b n = go 0
               d <- byteAt b (i + 2)
               e <- byteAt b (i + 3)
               if c == 10 && d == 13 && e == 10 then pure (Just i) else go (i + 1)
+
+-- Index of the CR of the first "\r\n\r\n" in `b[0 .. n)`, else Nothing.
+export
+findHeadEnd : Buffer -> (n : Int) -> IO (Maybe Int)
+findHeadEnd b = findHeadEndFrom b 0
 
 -- Index of the CR of the next CRLF at/after `i`, capped at `limit`
 -- (returned as-is when there is no CRLF before it).
