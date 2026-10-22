@@ -10,6 +10,7 @@ module Network.HTTP.Message
 import Data.Buffer
 import Data.IORef
 import Data.List
+import Data.List1
 import Data.Maybe
 import Data.String
 
@@ -43,7 +44,7 @@ export
 newBuf : HasIO io => Int -> io Buffer
 newBuf n = do
   Just b <- newBuffer (max 0 n)
-    | Nothing => assert_total $ idris_crash "Network.HTTP.Server.newBuf: newBuffer failed on a non-negative size"
+    | Nothing => assert_total $ idris_crash "Network.HTTP.Message.newBuf: newBuffer failed on a non-negative size"
   pure b
 
 ||| UTF-8-encode `s` into a fresh, exactly-sized `Buffer`. A stopgap for
@@ -76,23 +77,28 @@ export
 initCap : Int
 initCap = 4096
 
--- Ensure `!ref`'s backing buffer holds at least `need` bytes,
--- reallocating (roughly doubling, clamped to `cap`) if not. `False`
--- means `need` exceeds `cap` and `!ref` is left untouched.
+-- `buf` itself if it holds at least `need` bytes, else a bigger copy (roughly
+-- twice the size, clamped to `cap`) holding what it did; `Nothing` if `need`
+-- exceeds `cap`.
+export
+growBuffer : Buffer -> (need, cap : Int) -> IO (Maybe Buffer)
+growBuffer cur need cap =
+  let have = byteLength cur in
+  if need <= have then pure (Just cur)
+  else if need > cap then pure Nothing
+  else do
+    bigger <- newBuf (min cap (max need (have * 2)))
+    when (have > 0) $ copyData cur 0 have bigger 0
+    pure (Just bigger)
+
+-- Ensure `!ref`'s backing buffer holds at least `need` bytes (`growBuffer`).
+-- `False` means `need` exceeds `cap` and `!ref` is left untouched.
 export
 grow : (ref : IORef Buffer) -> (need, cap : Int) -> IO Bool
 grow ref need cap = do
-  cur <- readIORef ref
-  let have = byteLength cur
-  if need <= have
-    then pure True
-    else if need > cap
-      then pure False
-      else do
-        bigger <- newBuf (min cap (max need (have * 2)))
-        when (have > 0) $ copyData cur 0 have bigger 0
-        writeIORef ref bigger
-        pure True
+  grown <- readIORef ref >>= \cur => growBuffer cur need cap
+  traverse_ (writeIORef ref) grown
+  pure (isJust grown)
 
 -------------------------------------------------------------------------------
 -- Requests and responses
@@ -187,6 +193,8 @@ namespace Response
 
 export
 reasonPhrase : Int -> String
+reasonPhrase 100 = "Continue"
+reasonPhrase 101 = "Switching Protocols"
 reasonPhrase 200 = "OK"
 reasonPhrase 201 = "Created"
 reasonPhrase 204 = "No Content"
@@ -199,6 +207,7 @@ reasonPhrase 403 = "Forbidden"
 reasonPhrase 404 = "Not Found"
 reasonPhrase 405 = "Method Not Allowed"
 reasonPhrase 413 = "Payload Too Large"
+reasonPhrase 431 = "Request Header Fields Too Large"
 reasonPhrase 500 = "Internal Server Error"
 reasonPhrase 501 = "Not Implemented"
 reasonPhrase 503 = "Service Unavailable"
@@ -221,12 +230,32 @@ bodyLength hdrs =
     digits : String -> Maybe Int
     digits v = if v /= "" && length v <= 18 && all isDigit (unpack v) then parsePositive v else Nothing
 
--- HTTP/1.1 defaults to keep-alive; only an explicit "Connection: close"
--- ends it. HTTP/1.0 (which defaults the other way) isn't supported --
--- see the doc's "Scope" section.
+-- HTTP/1.1 defaults to keep-alive; only a "close" among the tokens of
+-- "Connection" ends it ("keep-alive, close" does too). HTTP/1.0 (which defaults
+-- the other way) isn't supported (`doc/http-server.md`, "Wire format").
 export
 connectionClose : List (String, String) -> Bool
-connectionClose hdrs = maybe False ((== "close") . toLower . trim) (lookup "connection" hdrs)
+connectionClose hdrs =
+  any (\(k, v) => k == "connection" && elem "close" (map (toLower . trim) (forget (split (== ',') v)))) hdrs
+
+||| Whether the response asks for the connection to end: `Connection: close`, also
+||| as one token among others.
+export
+closes : Response -> Bool
+closes resp = connectionClose (map (\(k, v) => (toLower k, v)) resp.headers)
+
+||| The response with `Connection: close`, in place of any `Connection` header
+||| it had.
+export
+closeAfter : Response -> Response
+closeAfter resp =
+  { headers := ("Connection", "close") :: filter ((/= "connection") . toLower . fst) resp.headers } resp
+
+||| Whether a response with this status has a body and a `Content-Length`: not
+||| 1xx, 204 and 304.
+export
+hasBody : (status : Int) -> Bool
+hasBody status = status >= 200 && status /= 204 && status /= 304
 
 -- The status line + header lines + Content-Length + terminating CRLF,
 -- as one ASCII string. Header keys/values are assumed ASCII (RFC 7230);
@@ -236,7 +265,8 @@ responseHead : Response -> (bodyLen : Int) -> String
 responseHead resp bodyLen =
     "HTTP/1.1 " ++ show resp.status ++ " " ++ reasonPhrase resp.status ++ "\r\n"
     ++ concatMap headerLine resp.headers
-    ++ "Content-Length: " ++ show bodyLen ++ "\r\n\r\n"
+    ++ (if hasBody resp.status then "Content-Length: " ++ show bodyLen ++ "\r\n" else "")
+    ++ "\r\n"
   where
     headerLine : (String, String) -> String
     headerLine (k, v) = k ++ ": " ++ v ++ "\r\n"
@@ -251,10 +281,12 @@ export
 byteAt : Buffer -> Int -> IO Int
 byteAt b i = cast <$> getBits8 b i
 
--- Index of the CR of the first "\r\n\r\n" in `b[0 .. n)`, else Nothing.
+-- Index of the CR of the first "\r\n\r\n" in `b[from .. n)`, else Nothing. Where
+-- the bytes read before were already searched, `from` is three bytes before where
+-- they ended.
 export
-findHeadEnd : Buffer -> (n : Int) -> IO (Maybe Int)
-findHeadEnd b n = go 0
+findHeadEndFrom : Buffer -> (from, n : Int) -> IO (Maybe Int)
+findHeadEndFrom b from n = go from
   where
     go : Int -> IO (Maybe Int)
     go i =
@@ -268,6 +300,11 @@ findHeadEnd b n = go 0
               d <- byteAt b (i + 2)
               e <- byteAt b (i + 3)
               if c == 10 && d == 13 && e == 10 then pure (Just i) else go (i + 1)
+
+-- Index of the CR of the first "\r\n\r\n" in `b[0 .. n)`, else Nothing.
+export
+findHeadEnd : Buffer -> (n : Int) -> IO (Maybe Int)
+findHeadEnd b = findHeadEndFrom b 0
 
 -- Index of the CR of the next CRLF at/after `i`, capped at `limit`
 -- (returned as-is when there is no CRLF before it).
@@ -321,22 +358,31 @@ trimRange b lo hi = do
               else do a <- byteAt b (i - 1)
                       if a == 32 || a == 9 then bwd (i - 1) else pure i
 
--- One header line `b[ls, le)` -> (lowercased key, trimmed value).
--- `Nothing` for a line with no ':' (skipped, not fatal).
+-- One header line `b[ls, le)` -> (lowercased key, trimmed value). `Nothing` for
+-- a line that is not a header: no ':', no name, or white space before the name
+-- (an obsolete line fold) or between the name and the ':' -- a proxy that
+-- ignores that space reads the request differently (RFC 9112, 5.1 and 5.2).
 parseHeaderLine : Buffer -> (ls, le : Int) -> IO (Maybe (String, String))
 parseHeaderLine b ls le = do
   c <- colonAt b ls le
-  if c >= le
+  if c >= le || c == ls
     then pure Nothing
     else do
-      (ks, ke) <- trimRange b ls c
-      (vs, ve) <- trimRange b (c + 1) le
-      key <- getString b ks (ke - ks)
-      val <- getString b vs (ve - vs)
-      pure (Just (toLower key, val))
+      first <- byteAt b ls
+      before <- byteAt b (c - 1)
+      if isBlank first || isBlank before
+        then pure Nothing
+        else do
+          (vs, ve) <- trimRange b (c + 1) le
+          key <- getString b ls (c - ls)
+          val <- getString b vs (ve - vs)
+          pure (Just (toLower key, val))
+  where
+    isBlank : Int -> Bool
+    isBlank x = x == 32 || x == 9
 
 -- Request line + all header lines from `b[0, headEnd)`.
--- `Nothing` = malformed request line (caller closes the connection).
+-- `Nothing` = malformed request line or header line (caller refuses the request).
 export
 parseHead : Buffer -> (headEnd : Int) -> IO (Maybe (String, String, List (String, String)))
 parseHead b headEnd = do
@@ -351,12 +397,14 @@ parseHead b headEnd = do
       method <- getString b m0 (m1 - m0)
       path   <- getString b p0 (p1 - p0)
       hdrs   <- collect (rlEnd + 2) []
-      pure (Just (method, path, reverse hdrs))
+      pure (map (\h => (method, path, reverse h)) hdrs)
   where
-    collect : Int -> List (String, String) -> IO (List (String, String))
+    collect : Int -> List (String, String) -> IO (Maybe (List (String, String)))
     collect i acc =
-      if i >= headEnd then pure acc
+      if i >= headEnd then pure (Just acc)
         else do
           le  <- lineEnd b i headEnd
           mkv <- parseHeaderLine b i le
-          collect (le + 2) (maybe acc (:: acc) mkv)
+          case mkv of
+            Nothing => pure Nothing
+            Just kv => collect (le + 2) (kv :: acc)

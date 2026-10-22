@@ -256,13 +256,15 @@ appendResponse conn resp = do
   let bodyLen = byteLength resp.body
       head    = responseHead resp bodyLen
       headLen = stringByteLength head
+      -- 1xx, 204 and 304 have no body, whatever the handler gave
+      sentLen = if hasBody resp.status then bodyLen else 0
   wlen <- readIORef conn.writeLen
-  True <- grow conn.writeBuf (wlen + headLen + bodyLen) writeCap
+  True <- grow conn.writeBuf (wlen + headLen + sentLen) writeCap
     | False => pure False
   wbuf <- readIORef conn.writeBuf
   setString wbuf wlen head
-  when (bodyLen > 0) $ copyData resp.body 0 bodyLen wbuf (wlen + headLen)
-  writeIORef conn.writeLen (wlen + headLen + bodyLen)
+  when (sentLen > 0) $ copyData resp.body 0 sentLen wbuf (wlen + headLen)
+  writeIORef conn.writeLen (wlen + headLen + sentLen)
   pure True
 
 -- The actual write, always run on the loop thread. `st.conns` is

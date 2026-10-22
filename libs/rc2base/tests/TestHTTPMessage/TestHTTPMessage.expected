@@ -22,3 +22,38 @@ chunked and length: Nothing
 9223372036854775808: Nothing
 18446744073709551617: Nothing
 x: Nothing
+--- connectionClose ---
+none: False
+close: True
+Close, spaces: True
+keep-alive: False
+keep-alive, close: True
+upgrade: False
+--- responseHead ---
+200: "HTTP/1.1 200 OK\r\nX: 1\r\nContent-Length: 5\r\n\r\n"
+100: "HTTP/1.1 100 Continue\r\nX: 1\r\n\r\n"
+204: "HTTP/1.1 204 No Content\r\nX: 1\r\n\r\n"
+304: "HTTP/1.1 304 Not Modified\r\nX: 1\r\n\r\n"
+404: "HTTP/1.1 404 Not Found\r\nX: 1\r\nContent-Length: 5\r\n\r\n"
+--- findHeadEndFrom ---
+from 0: Just 23
+from 3 bytes before the CR: Just 23
+from the CR: Just 23
+after the CR: Nothing
+incomplete: Nothing
+--- parseHead ---
+plain: Just ("GET", ("/a", [("host", "x"), ("content-length", "5")]))
+spaces around the value: Just ("GET", ("/a", [("host", "x")]))
+space before the colon: Nothing
+tab before the colon: Nothing
+obsolete line fold: Nothing
+no colon: Nothing
+empty name: Nothing
+no path: Nothing
+--- growBuffer ---
+big enough: Just 4
+to what is needed: Just 10
+doubled: Just 8
+doubled, clamped to the cap: Just 6
+over the cap: Nothing
+old bytes kept: Just "abcd"

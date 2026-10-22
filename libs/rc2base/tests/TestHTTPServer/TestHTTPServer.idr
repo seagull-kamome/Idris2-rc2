@@ -79,6 +79,7 @@ handler req respond =
       s <- sumBytes req.body
       respond !(text 200 "len=\{show (byteLength req.body)} sum=\{show s}")
     "/blob"       => respond (bytes 200 "application/octet-stream" !blob)
+    "/nocontent"  => respond (MkResponse 204 [] !blob)   -- a 204 has no body, whatever the handler gives
     "/json"       => respond !(json 200 (JObject [("ok", JBoolean True), ("n", JNumber 42)]))
     "/stop"       => do
       stop
@@ -188,6 +189,7 @@ round label stopPath binary = do
   putStrLn (label ++ " sync: " ++ !(get "/sync"))
   putStrLn (label ++ " async: " ++ !(get "/async"))
   putStrLn (label ++ " json: " ++ !(get "/json"))
+  putStrLn (label ++ " nocontent: " ++ !(get "/nocontent"))
   when binary $ do
     -- 259-byte body: 0..255 then three NULs. sum of 0..255 = 32640.
     putStrLn (label ++ " echo: " ++ !(post "/echo" 259 (\i => if i < 256 then i else 0)))

@@ -20,7 +20,13 @@ waits for the descriptor on the scheduler's epoll (`awaitReadable`,
 | `accept : Sock -> Task (Either Errno Sock)` | the next connection, non-blocking |
 | `recv : Sock -> Buffer -> (off, len : Int) -> Task (Either Errno Int)` | into `buf[off ..]`; `Right 0` is end of input |
 | `send`, `sendAll` | `send` writes some bytes, `sendAll` all of them |
-| `close : Sock -> IO ()` | idempotent |
+
+`recv` and `send` refuse (`EINVAL`) a range that is empty or reaches outside the
+buffer, before any system call.
+
+| | |
+| --- | --- |
+| `close : Sock -> IO ()` | idempotent; not for two threads at once, see below |
 | `withSock : Sock -> Task a -> Task a` | closes the socket when the task ends *or is given up* |
 
 `send` uses `MSG_NOSIGNAL`: a peer that went away is `EPIPE`, not SIGPIPE.
@@ -59,10 +65,38 @@ main = ignore (runTaskWith 4 (serve 8080 handler))
 - `Request` and `Response`, the `Response.*` constructors and the parser are those
   of `Network.HTTP.Message`, which this module re-exports.
 - The wire-format subset is that of `http-server.md`: `Content-Length` bodies,
-  keep-alive by default, `Connection: close`, no chunked encoding, no TLS. A
-  request larger than `maxRequestBytes` (default 8 MiB) or with a malformed head
-  has its connection closed with no response.
-- When `accept` runs out of descriptors the server waits 10 ms and tries again.
+  keep-alive by default, no chunked encoding, no TLS. What cannot be served is
+  answered, with `Connection: close`, and the connection ends:
+  `400` for a head that cannot be parsed or framing headers that cannot be trusted
+  (`bodyLength`, `parseHead`), `413` for a request over `limits.maxRequestBytes`
+  (default 8 MiB), `431` for a head over `limits.maxHeadBytes` (default 64 KiB; a
+  head cannot be longer than the request limit either, so the smaller of the two
+  applies). Pass `serve {limits = MkLimits head request}` to change them. The
+  answer is sent, but there is no *lingering close*: if the client has more bytes on
+  the way when the connection is closed (a body that was refused before it was
+  read), the system may reset the connection and the client may lose the answer.
+- A request with `Connection: close` (also as one token among others), or a
+  handler that answers with `Connection: close`, ends the connection after the
+  response, and the response then has a single `Connection: close` header: any
+  other `Connection` header of the handler is replaced. The response to `HEAD`
+  has the head of the response to `GET` and no body, as have 1xx, 204 and 304, which
+  have no `Content-Length` either. (A route table does not send `HEAD` to the `GET`
+  route: `Method` has `HEAD`, but a route for it has to be written.)
+- The end of the head is looked for from where the previous bytes ended, not from
+  the start each time, and the head is parsed once, not at every read of the body.
+- `accept` that ran out of descriptors or memory is tried again after 10 ms; one
+  that failed with an error of the moment (`ECONNABORTED`, `EPROTO`, the network
+  errors `accept(2)` lists) at once. Any other error ends the server.
+- There is no timeout on reading or writing yet: a client that sends one byte at a
+  time holds its connection (and the memory of its head, up to the limit).
+- Requests that arrive together are served one after the other, and what is left
+  after each is copied to the front of a new buffer; for thousands of tiny pipelined
+  requests in one read that is quadratic (not measured).
+
+`Sock.close` is not safe to call from two threads at once. `withSock` and the server
+call it on the thread of the scheduler. A `recv` or `send` that is already running on
+a worker (parallel mode) when the connection is closed is not stopped, so a
+descriptor number that is reused in that moment could be read or written by it.
 
 Tested by `tests/TestNetworkAsync` and `tests/TestAsyncHTTPServer`.
 

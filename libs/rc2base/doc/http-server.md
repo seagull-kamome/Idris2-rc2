@@ -167,11 +167,17 @@ A deliberately small HTTP/1.1 subset:
 - Framing is checked (`Network.HTTP.Message.bodyLength`): a `Content-Length`
   that is not plain digits, has more than 18 of them, or appears twice with
   different values, and any `Transfer-Encoding`, make the request unreliable to
-  frame, so it is refused rather than guessed. `Network.HTTP.Server` closes the
-  connection; `Network.Async.HTTP.Server` answers `400` and closes.
-- Keep-alive by default (HTTP/1.1's own default); an explicit
-  `Connection: close` request header closes the connection after that
-  response.
+  frame, so it is refused rather than guessed. So is a header line that is not
+  `name: value` (`parseHead`): no colon, no name, white space before the name (an
+  obsolete line fold) or between the name and the colon -- a proxy that ignores that
+  space reads the request differently. `Network.HTTP.Server` closes the
+  connection; `Network.Async.HTTP.Server` answers `400` and closes (it also answers
+  `413` and `431`, which this server does not).
+- Keep-alive by default (HTTP/1.1's own default); a `Connection` request header
+  with `close` among its tokens (`keep-alive, close` too) closes the connection after
+  that response.
+- A response with status 1xx, 204 or 304 has no `Content-Length`, and no body
+  even if the handler gave one (`hasBody`).
 - One request dispatched per parser pass, but the parser reruns
   against whatever's left in the read buffer after each dispatch
   (`tryDispatch`'s own tail call) -- so if a `recv` happens to land two
