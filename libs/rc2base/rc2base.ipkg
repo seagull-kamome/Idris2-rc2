@@ -6,7 +6,7 @@ sourcedir  = "src"
 depends    = contrib, network
 modules    = Control.Concurrent.MVar,
              Control.Concurrent.Atomic,
-             Control.Task, Control.Task.Epoll, Control.Task.Pool, Control.Task.Ref, Control.Task.Scheduler, Control.Task.Source, Control.Task.Uring,
+             Control.Task, Control.Task.Epoll, Control.Task.MVar, Control.Task.Pool, Control.Task.Ref, Control.Task.Scheduler, Control.Task.Source, Control.Task.Uring, Control.Task.Waiters,
              Data.ColorCode, Data.ColorCode.PredefinedRGBA,
              Data.TextBuffer, Data.Text, Data.Double.RC2,
              Data.Double.Convert,
