@@ -63,6 +63,30 @@ main = ignore (runTaskWith 4 (serve 8080 handler))
 
 Tested by `tests/TestNetworkAsync` and `tests/TestAsyncHTTPServer`.
 
+## `Network.Async.HTTP.Router`
+
+`Network.HTTP.Router`'s table, with handlers that give a `Task Response`. The
+routes are built with the same `get`, `post`, ... and `Network.HTTP.Route`
+patterns; `Network.Async.HTTP.Router.router notFound routes` is a `Handler`.
+
+```idris2
+routes : List Network.Async.HTTP.Router.RouteEntry
+routes =
+  [ get ("hello" // end) (liftIO (ok "hello\n"))
+  , get ("users" // capture "id" Int end) (\n => liftIO (ok ("user " ++ show n ++ "\n")))
+  ]
+
+handler : Handler
+handler = Network.Async.HTTP.Router.router notFound routes
+```
+
+To make this possible `Network.HTTP.Route` and `Network.HTTP.Router` are generic in
+what a handler gives: `HandlerOf r tys` and `RouteEntryOf r`, with `lookupRoute`
+doing the matching. `HandlerFor` and `RouteEntry` are the old shapes
+(`r = (Response -> IO ()) -> IO ()`), so existing routes compile unchanged. As
+before, a route's handler does not see the `Request` (its captures are all it
+gets); a `Handler` that needs the body is used as the `notFound` of the router.
+
 ## Open points
 
 - An asynchronous `connect` (for clients).

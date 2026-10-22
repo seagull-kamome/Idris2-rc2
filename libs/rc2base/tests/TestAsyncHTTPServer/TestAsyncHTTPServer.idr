@@ -13,7 +13,10 @@ import Control.Task.Scheduler
 import Data.IORef
 import Data.List
 import Data.String
+import Network.Async.HTTP.Router
 import Network.Async.HTTP.Server
+import Network.HTTP.Route
+import Network.HTTP.Router
 import Network.Socket
 import Network.Socket.Data
 import System.Posix.Errno
@@ -23,14 +26,23 @@ import System.Posix.Errno
 port : Port
 port = 18741
 
-handler : Handler
-handler req = case req.path of
-  "/hello" => liftIO (ok "hello\n")
-  "/slow" => sleepFor 100 *> liftIO (ok "slow\n")
+-- What the routes do not take: the body is not part of a route's handler.
+plain : Handler
+plain req = case req.path of
   "/echo" => do
     body <- liftIO (toString req.body)
     liftIO (ok (req.method ++ " " ++ body ++ "\n"))
   _ => liftIO (notFound "no\n")
+
+routes : List Network.Async.HTTP.Router.RouteEntry
+routes =
+  [ get ("hello" // end) (liftIO (ok "hello\n"))
+  , get ("slow" // end) (sleepFor 100 *> liftIO (ok "slow\n"))
+  , get ("users" // capture "id" Int end) (\n => liftIO (ok ("user " ++ show n ++ "\n")))
+  ]
+
+handler : Handler
+handler = Network.Async.HTTP.Router.router plain routes
 
 -- Connect, send each request in turn and read an answer after each; the last
 -- one is read to the end of the connection.
@@ -59,23 +71,24 @@ session reqs = do
                 else either (const "recv failed") fst <$> Network.Socket.recv sock 4096
       (answer ::) <$> go sock rest
 
-get : String -> (closing : Bool) -> String
-get path closing =
+getReq : String -> (closing : Bool) -> String
+getReq path closing =
   "GET " ++ path ++ " HTTP/1.1\r\nHost: t\r\n" ++ (if closing then "Connection: close\r\n" else "") ++ "\r\n"
 
-post : String -> String -> String
-post path body =
+postReq : String -> String -> String
+postReq path body =
   "POST " ++ path ++ " HTTP/1.1\r\nHost: t\r\nConnection: close\r\nContent-Length: "
     ++ show (length body) ++ "\r\n\r\n" ++ body
 
 -- The sessions, run together where it matters.
 clients : Task (List (List String))
 clients = do
-  one <- blocking (session [get "/hello" True])
-  body <- blocking (session [post "/echo" "payload"])
-  alive <- blocking (session [get "/hello" False, get "/nowhere" True])
-  (slowA, slowB) <- both (blocking (session [get "/slow" True])) (blocking (session [get "/slow" True]))
-  pure [one, body, alive, slowA, slowB]
+  one <- blocking (session [getReq "/hello" True])
+  body <- blocking (session [postReq "/echo" "payload"])
+  alive <- blocking (session [getReq "/hello" False, getReq "/nowhere" True])
+  user <- blocking (session [getReq "/users/7" True])
+  (slowA, slowB) <- both (blocking (session [getReq "/slow" True])) (blocking (session [getReq "/slow" True]))
+  pure [one, body, alive, user, slowA, slowB]
 
 main : IO ()
 main = do

@@ -1,0 +1,25 @@
+||| `Network.HTTP.Router`'s route table for `Network.Async.HTTP.Server`: the
+||| handlers of the routes give a `Task Response`, and `router` makes a `Handler`
+||| of them. The routes are built with the same `get`, `post`, ... and
+||| `Network.HTTP.Route` patterns.
+module Network.Async.HTTP.Router
+
+-- Copyright 2026, Hattori,Hiroki. All rights reserved.
+-- This module was licensed by BSD3.
+
+import Control.Task
+import Network.Async.HTTP.Server
+import Network.HTTP.Router
+
+||| A route whose handler gives a `Task Response`.
+public export
+RouteEntry : Type
+RouteEntry = RouteEntryOf (Task Response)
+
+||| Tries each route in order and runs the handler of the first whose method and
+||| path both match; `notFound` answers the others, and also a request whose
+||| method string `Method` does not recognize.
+export
+router : (notFound : Handler) -> List Network.Async.HTTP.Router.RouteEntry -> Handler
+router notFound entries req =
+  maybe (notFound req) id (lookupRoute entries req.method req.path)
