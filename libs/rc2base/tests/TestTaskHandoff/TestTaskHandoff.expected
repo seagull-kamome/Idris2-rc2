@@ -1,0 +1,5 @@
+handed over: ["given back 2"]
+late completion: ["late 3"]
+delivered: (4, [])
+finally: ["release Just 1", "release Nothing"]
+owned: ["ran (root)", "released (cancelled)"]

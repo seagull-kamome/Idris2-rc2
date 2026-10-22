@@ -83,6 +83,9 @@ data Task : Type -> Type where
   ||| the mode: for what touches the state of the scheduler or of the program.
   Pinned : IO a -> Task a
   Seq : Task a -> (a -> Task b) -> Task b
+  ||| Change the result in the step that ends the task, without a step of its own
+  ||| (which `Seq` and `pure` would make, and a cancellation could fall between).
+  Map : (a -> b) -> Task a -> Task b
   ||| Run together, wait for both.
   Both : Task a -> Task b -> Task (a, b)
   ||| The first to finish wins and the other is cancelled.
@@ -92,6 +95,18 @@ data Task : Type -> Type where
   ||| Start an operation and wait for it: it calls the completion when it is
   ||| done, and returns the action that gives it up.
   Async : (Env -> Completion a -> IO Cancel) -> Task a
+  ||| `Async` for an operation that hands over a value that must not be lost
+  ||| (a message, a lock, a new descriptor): once the completion has been called
+  ||| with it, either the continuation starts with it or `undo` is called with it
+  ||| -- when the scope is cancelled in between, or if it comes after the operation
+  ||| was given up. See `handoff`.
+  Handoff : (Env -> Completion a -> IO Cancel) -> (undo : a -> IO ()) -> Task a
+  ||| Run the task with an action that follows it: `Just result` when it ends,
+  ||| `Nothing` when it is given up. See `finally`.
+  Finally : (Maybe b -> IO ()) -> Task b -> Task b
+  ||| `Spawn` for a task that owns something: if the scope is cancelled before
+  ||| the task starts, the action runs instead. See `spawnOwning`.
+  SpawnOwning : (IO ()) -> Task () -> Task ()
   ||| Never finishes.
   Empty : Task a
 
@@ -100,7 +115,7 @@ data Task : Type -> Type where
 
 export
 Functor Task where
-  map f t = Seq t (\a => Pinned (pure (f a)))
+  map = Map
 
 export
 Applicative Task where
@@ -144,6 +159,33 @@ race l r = Race (map Left l) (map Right r)
 export
 spawn : Task () -> Task ()
 spawn = Spawn
+
+||| `spawn` for a task that owns something (a descriptor, say) and releases it
+||| when it ends: if the scope is cancelled before the task has started, `release`
+||| runs instead, so the thing is not left with nobody.
+export
+spawnOwning : (release : IO ()) -> Task () -> Task ()
+spawnOwning = SpawnOwning
+
+||| An `Async` whose value is never lost. When the operation calls its completion
+||| the value is handed to the task; if the scope is cancelled before the task
+||| goes on with it, or the completion is called after the operation was given
+||| up, `undo` is called with the value instead, so that its owner can take it
+||| back (put a message in the channel again, close the descriptor). Exactly one
+||| of the two happens. After the task has started with the value, giving up
+||| later steps is the task's concern: hold it with `finally`.
+export
+handoff : (Env -> Completion a -> IO Cancel) -> (undo : a -> IO ()) -> Task a
+handoff = Handoff
+
+||| Run the task and then the action: with `Just result` when it ends, with
+||| `Nothing` when it is given up (its scope is cancelled before it ends), and
+||| in both cases once. The action is put in place as the task starts, in the same
+||| step: `Seq (handoff ...) (\x => finally (release x) body)` leaves no
+||| moment between taking `x` and being responsible for it.
+export
+finally : (Maybe b -> IO ()) -> Task b -> Task b
+finally = Finally
 
 ||| Let the other ready tasks run.
 export

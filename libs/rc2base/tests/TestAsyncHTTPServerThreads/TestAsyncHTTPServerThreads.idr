@@ -8,12 +8,12 @@ module Main
 -- thread the handlers never overlap; with several they do, and every client
 -- still gets its answer.
 
+import Control.Concurrent.MVar
 import Control.Task
-import Control.Task.Ref
-import Network.Async.HTTP.Server
-import Network.Socket
 import Control.Task.Scheduler
 import Data.String
+import Network.Async.HTTP.Server
+import Network.Socket
 import Network.Socket.Data
 import System
 import System.Posix.Errno
@@ -40,13 +40,14 @@ ask port = do
         Right (s, n) => if n > 0 then drain sock (acc ++ s) else pure acc
         Left _ => pure acc
 
--- Counts the handlers that are running at once, and the most it saw.
-handler : Ref Nat -> Ref Nat -> Handler
-handler active peak _ = do
-  n <- atomicModifyRef active (\n => (S n, S n))
-  modifyRef peak (max n)
-  liftIO (usleep 60000)
-  modifyRef active (\n => minus n 1)
+-- Counts the handlers that are busy at the same moment, and the most it saw.
+-- The count is changed inside the one action that also keeps the thread busy,
+-- so only actions that run on several threads can overlap.
+handler : MVar (Nat, Nat) -> Handler
+handler busy _ = do
+  liftIO (do modifyMVar_ busy (\(n, peak) => pure (S n, max peak (S n)))
+             usleep 60000
+             modifyMVar_ busy (\(n, peak) => pure (minus n 1, peak)))
   liftIO (ok "done\n")
 
 together : List (Task a) -> Task (List a)
@@ -60,12 +61,11 @@ Runner = {a : Type} -> Task a -> IO (Maybe a)
 run : (name : String) -> Runner -> Port -> IO ()
 run name runner port = do
   r <- runner (do
-         active <- newRef (the Nat 0)
-         peak <- newRef (the Nat 0)
+         busy <- liftIO (newMVar (the Nat 0, the Nat 0))
          -- threads for the blocking clients as well as for the server's actions
-         answers <- race (serve port (handler active peak))
+         answers <- race (serve port (handler busy))
                          (together (replicate 4 (blocking (ask port))))
-         seen <- readRef peak
+         seen <- liftIO (map snd (readMVar busy))
          pure (answers, seen))
   case r of
     Just (Right answers, seen) =>

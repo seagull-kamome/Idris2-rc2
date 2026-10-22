@@ -1,9 +1,10 @@
 ||| A queue of bounded length that tasks send values into and receive values
 ||| from. A task that receives from an empty channel, or sends into a full one,
-||| waits -- without holding a thread -- and waiting tasks are served in the order
-||| they came. A wait that is given up leaves the line and takes or loses nothing.
-||| A channel can be closed: what is in it can still be received, and then
-||| `recv` gives `Nothing`.
+||| waits -- without holding a thread -- and waiting tasks are served in the
+||| order they came. A wait that is given up leaves the line; a value that was
+||| handed to a receive whose task is given up before it goes on goes back into
+||| the channel. A channel can be closed: what is in it can still be received,
+||| and then `recv` gives `Nothing`.
 module Control.Task.Chan
 
 -- Copyright 2026, Hattori,Hiroki. All rights reserved.
@@ -74,11 +75,25 @@ trySendNow ch v = do
                   pure (Just True)
           else pure Nothing
 
+-- Take back a value that was handed to a receiver that never went on with it:
+-- to the first task waiting to receive, else to the front of the channel (which
+-- can then hold one more than its capacity until a value is received).
+giveBack : Chan a -> a -> IO ()
+giveBack ch v = do
+  st <- readIORef ch.state
+  case front st.takers of
+    Just (taker, takers') => do
+      writeIORef ch.state ({ takers := takers' } st)
+      taker (Just v)
+    Nothing =>
+      writeIORef ch.state ({ items := fromList (v :: toList st.items), count := S st.count } st)
+
 ||| The next value, waiting while there is none. `Nothing`: the channel is
-||| closed and empty.
+||| closed and empty. A value handed to a task that is given up before it goes on
+||| with it goes back into the channel.
 export
 recv : Chan a -> Task (Maybe a)
-recv ch = Async $ \_, done => do
+recv ch = handoff (\_, done => do
   r <- tryRecvNow ch
   case r of
     Just x => done (Just x) *> pure noCancel
@@ -87,7 +102,7 @@ recv ch = Async $ \_, done => do
       if st.closed then done Nothing *> pure noCancel else do
         let (k, takers') = enter done st.takers
         writeIORef ch.state ({ takers := takers' } st)
-        pure (MkCancel (modifyIORef ch.state (\s => { takers $= leave k } s)))
+        pure (MkCancel (modifyIORef ch.state (\s => { takers $= leave k } s)))) (traverse_ (giveBack ch))
 
 ||| Send a value, waiting while the channel is full. `False`: the channel is
 ||| closed, and the value went nowhere.

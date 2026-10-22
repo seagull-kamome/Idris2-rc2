@@ -2,8 +2,9 @@
 ||| or putting into a full one, makes the task wait -- without holding a thread
 ||| -- until another task makes it possible. Waiting tasks are served in the
 ||| order they came. A wait that is given up (a lost `race`, a cancelled scope)
-||| leaves the line, and takes nothing. (`Control.Concurrent.MVar` is the one
-||| for threads, which blocks the thread.)
+||| leaves the line and takes nothing; a value that was handed to a take whose
+||| task is given up before it goes on goes back into the cell.
+||| (`Control.Concurrent.MVar` is the one for threads, which blocks the thread.)
 module Control.Task.MVar
 
 -- Copyright 2026, Hattori,Hiroki. All rights reserved.
@@ -78,10 +79,11 @@ putAnyhow m v = do
       | Vacant _ => pure ()
     writeIORef m.state (Holding x (snd (enter (v, \_ => pure ()) putters)))
 
-||| Take the value, waiting while the cell is empty.
+||| Take the value, waiting while the cell is empty. A value handed to a task
+||| that is given up before it goes on with it goes back into the cell.
 export
 takeMVar : MVar a -> Task a
-takeMVar m = Async $ \_, done => do
+takeMVar m = handoff (\_, done => do
   r <- tryTakeNow m
   case r of
     Just v => done v *> pure noCancel
@@ -92,7 +94,7 @@ takeMVar m = Async $ \_, done => do
       writeIORef m.state (Vacant takers')
       pure (MkCancel (modifyIORef m.state (\st => case st of
                                                     Vacant ts => Vacant (leave k ts)
-                                                    other => other)))
+                                                    other => other)))) (putAnyhow m)
 
 ||| Put a value, waiting while the cell is full.
 export
@@ -123,16 +125,9 @@ tryPutMVar m v = onReactor (tryPutNow m v)
 ||| up before it ends, the old value goes back: the cell is never left empty.
 export
 modifyMVar : MVar a -> (a -> Task (a, b)) -> Task b
-modifyMVar m body = do
-  old <- takeMVar m
-  guard <- onReactor (newIORef (pure ()))
-  spawn (Async (\_, done =>
-    writeIORef guard (done ()) *> pure (MkCancel (putAnyhow m old))))
-  (new, result) <- body old
-  -- the sentinel ends and the new value goes in as one step, so a cancellation
-  -- cannot restore the old value over it
-  onReactor (join (readIORef guard) *> putAnyhow m new)
-  pure result
+modifyMVar m body =
+  map snd $ takeMVar m >>= \old =>
+    finally (\r => putAnyhow m (maybe old fst r)) (body old)
 
 export
 modifyMVar_ : MVar a -> (a -> Task a) -> Task ()
