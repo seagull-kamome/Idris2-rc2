@@ -4,13 +4,19 @@ module Main
 -- This module was licensed by BSD3.
 
 -- Network.Async.HTTP.Server: a plain blocking client on the pool talks to the
--- server running as tasks. Covers a quick answer, a handler that waits on a
--- timer (two such requests overlap), a request body, two requests on one
--- keep-alive connection, `Connection: close`, and ending the server by a race.
+-- server running as tasks. Three servers, one after the other:
+--   * limits 1024 / 4096: a quick answer, a request body, a route with a
+--     capture, keep-alive, two handlers that wait on a timer (they overlap), a
+--     head that ends in a later segment, a head of exactly the limit, two
+--     requests in one segment, HEAD and 204, what a request and a handler say
+--     about `Connection`, and the requests that are refused: a head over the limit
+--     (431), a body over the limit (413), heads and framing headers that cannot be
+--     trusted (400);
+--   * limits 65536 / 2048 (the head limit above the request limit): still answered;
+--   * default limits: a body of 70000 bytes, more than one read.
 
 import Control.Task
 import Control.Task.Scheduler
-import Data.IORef
 import Data.List
 import Data.String
 import Network.Async.HTTP.Router
@@ -19,12 +25,10 @@ import Network.HTTP.Route
 import Network.HTTP.Router
 import Network.Socket
 import Network.Socket.Data
+import System
 import System.Posix.Errno
 
 %default covering
-
-port : Port
-port = 18741
 
 -- What the routes do not take: the body is not part of a route's handler.
 plain : Handler
@@ -40,20 +44,23 @@ routes =
   , get ("slow" // end) (sleepFor 100 *> liftIO (ok "slow\n"))
   , get ("users" // capture "id" Int end) (\n => liftIO (ok ("user " ++ show n ++ "\n")))
   , get ("none" // end) (liftIO (noBody 204))
+  , get ("bye" // end) (liftIO (ok {headers = [("Connection", "close")]} "bye\n"))
+  , get ("stay" // end) (liftIO (ok {headers = [("Connection", "keep-alive")]} "stay\n"))
   ]
 
 handler : Handler
 handler = Network.Async.HTTP.Router.router plain routes
 
--- Connect, send each request in turn and read an answer after each; the last
--- one is read to the end of the connection.
-session : List String -> IO (List String)
-session reqs = do
+-- Connect to the server, send the pieces one after the other (with a pause
+-- between them, so that the server reads them separately) and read an answer
+-- after each but the last; the last is read to the end of the connection.
+session : Port -> (pause : Bool) -> List String -> IO (List String)
+session port pause pieces = do
   Right sock <- socket AF_INET Stream 0
     | Left e => pure ["socket " ++ show e]
   0 <- connect sock (IPv4Addr 127 0 0 1) port
     | e => close sock *> pure ["connect " ++ show e]
-  answers <- go sock reqs
+  answers <- go sock pieces
   close sock
   pure answers
   where
@@ -63,14 +70,26 @@ session reqs = do
       case r of
         Right (s, n) => if n > 0 then drain sock (acc ++ s) else pure acc
         Left _ => pure acc
+
     go : Socket -> List String -> IO (List String)
     go sock [] = pure []
-    go sock (req :: rest) = do
-      Right _ <- Network.Socket.send sock req
+    go sock (piece :: rest) = do
+      Right _ <- Network.Socket.send sock piece
         | Left e => pure ["send " ++ show e]
+      when pause (usleep 100000)
       answer <- if null rest then drain sock ""
+                else if pause then pure ""
                 else either (const "recv failed") fst <$> Network.Socket.recv sock 4096
       (answer ::) <$> go sock rest
+
+-- One session on `port`: each piece is answered before the next is sent.
+exchange : Port -> List String -> Task (List String)
+exchange port = blocking . session port False
+
+-- One session on `port`: the pieces are sent with a pause between them and the
+-- answer is read at the end.
+pieces : Port -> List String -> Task String
+pieces port = map concat . blocking . session port True
 
 getReq : String -> (closing : Bool) -> String
 getReq path closing =
@@ -81,42 +100,94 @@ postReq path body =
   "POST " ++ path ++ " HTTP/1.1\r\nHost: t\r\nConnection: close\r\nContent-Length: "
     ++ show (length body) ++ "\r\n\r\n" ++ body
 
+headReq : String -> String
+headReq path = "HEAD " ++ path ++ " HTTP/1.1\r\nHost: t\r\n\r\n"
+
 -- A request whose headers do not frame the body: the server refuses it and
 -- closes, instead of taking its body for the next request.
 badFraming : String -> String
 badFraming header =
   "POST /echo HTTP/1.1\r\nHost: t\r\n" ++ header ++ "\r\n\r\nGET /hello HTTP/1.1\r\n\r\n"
 
--- A request line and headers that fill the head limit (1024 bytes) without
--- ending, and a body announced over the request limit (4096).
-longHead : String
-longHead = pack (take 1024 (unpack "GET / HTTP/1.1\r\nX: " ++ replicate 1100 'a'))
+-- `n` bytes that make a request line and headers without ending them.
+unfinishedHead : (n : Nat) -> String
+unfinishedHead n = pack (take n (unpack "GET / HTTP/1.1\r\nX: " ++ replicate (n + 100) 'a'))
 
-bigBody : String
-bigBody = "POST /echo HTTP/1.1\r\nHost: t\r\nContent-Length: 5000\r\n\r\n"
+-- A head of exactly `n` bytes, the terminator included.
+headOfSize : (n : Nat) -> String
+headOfSize n =
+  let start = "GET /hello HTTP/1.1\r\nConnection: close\r\nX: "
+  in start ++ pack (replicate (minus n (length start + 4)) 'a') ++ "\r\n\r\n"
 
-headReq : String -> String
-headReq path = "HEAD " ++ path ++ " HTTP/1.1\r\nHost: t\r\n\r\n"
+-- The body of an answer.
+bodyOf : String -> String
+bodyOf = pack . go . unpack
+  where
+    go : List Char -> List Char
+    go ('\r' :: '\n' :: '\r' :: '\n' :: rest) = rest
+    go (_ :: rest) = go rest
+    go [] = []
 
--- The sessions, run together where it matters.
-clients : Task (List (List String))
-clients = do
-  one <- blocking (session [getReq "/hello" True])
-  body <- blocking (session [postReq "/echo" "payload"])
-  alive <- blocking (session [getReq "/hello" False, getReq "/nowhere" True])
-  user <- blocking (session [getReq "/users/7" True])
-  headed <- blocking (session [headReq "/echo", getReq "/hello" True])
-  noContent <- blocking (session [getReq "/none" True])
-  limits <- traverse (\r => blocking (session [r])) [longHead, bigBody, "GARBAGE\r\n\r\n"]
-  refused <- traverse (\h => blocking (session [badFraming h]))
-               ["Content-Length: 18446744073709551619", "Content-Length: abc", "Content-Length: 5\r\nContent-Length: 6", "Transfer-Encoding: chunked"]
-  (slowA, slowB) <- both (blocking (session [getReq "/slow" True])) (blocking (session [getReq "/slow" True]))
-  pure ([one, body, alive, user, headed, noContent] ++ limits ++ refused ++ [slowA, slowB])
+-- Run the server, and the clients until they are done; the server is given up.
+scenario : Port -> Limits -> Task (List String) -> IO ()
+scenario port limits clients = do
+  r <- runTaskWith 3 (race (serve {limits} port handler) clients)
+  case r of
+    Just (Right lines) => traverse_ putStrLn lines
+    Just (Left stopped) => putStrLn ("server ended: " ++ show stopped)
+    Nothing => putStrLn "no result"
+
+-- The body announced over the request limit (4096) is not read: only the head is sent.
+bigAnnounced : String
+bigAnnounced = "POST /echo HTTP/1.1\r\nHost: t\r\nContent-Length: 5000\r\n\r\n"
+
+-- The first server: limits 1024 / 4096.
+smallLimits : Port -> Task (List String)
+smallLimits port = do
+  let ask = exchange port
+  one <- ask [getReq "/hello" True]
+  body <- ask [postReq "/echo" "payload"]
+  alive <- ask [getReq "/hello" False, getReq "/nowhere" True]
+  user <- ask [getReq "/users/7" True]
+  headed <- ask [headReq "/echo", getReq "/hello" True]
+  noContent <- ask [getReq "/none" True]
+  piped <- ask [getReq "/hello" False ++ getReq "/users/3" True]
+  split <- pieces port ["GET /hello HTTP/1.1\r\nHost: t\r\nConnection: close\r\n\r", "\n"]
+  exact <- ask [headOfSize 1024]
+  -- what the request and the handler say about `Connection`
+  tokens <- ask ["GET /hello HTTP/1.1\r\nHost: t\r\nConnection: keep-alive, close\r\n\r\n"]
+  handlerCloses <- ask [getReq "/bye" False]
+  handlerStays <- ask [getReq "/stay" True]
+  -- refused
+  refusedLimits <- traverse (\r => ask [r]) [unfinishedHead 1024, bigAnnounced, "GARBAGE\r\n\r\n"]
+  refusedHeads <- traverse (\h => ask ["GET /hello HTTP/1.1\r\nHost: t\r\n" ++ h ++ "\r\n\r\n"])
+                    [ "Content-Length : 0"   -- space before the colon
+                    , " folded: line"        -- an obsolete line fold
+                    , "NoColon"
+                    ]
+  refusedFraming <- traverse (\h => ask [badFraming h])
+                      [ "Content-Length: 18446744073709551619", "Content-Length: abc"
+                      , "Content-Length: 5\r\nContent-Length: 6", "Transfer-Encoding: chunked" ]
+  (slowA, slowB) <- both (ask [getReq "/slow" True]) (ask [getReq "/slow" True])
+  pure (map show ([one, body, alive, user, headed, noContent, piped, [split], exact, tokens, handlerCloses, handlerStays]
+                  ++ refusedLimits ++ refusedHeads ++ refusedFraming ++ [slowA, slowB]))
+
+-- The second server: the head limit (65536) is above the request limit (2048).
+headAboveRequest : Port -> Task (List String)
+headAboveRequest port = do
+  fine <- exchange port [getReq "/hello" True]
+  big <- exchange port [unfinishedHead 2048]
+  pure (map show [fine, big])
+
+-- The third server: a body of 70000 bytes.
+bigBody : Port -> Task (List String)
+bigBody port = do
+  let sent = pack (replicate 70000 'x')
+  answers <- exchange port [postReq "/echo" sent]
+  pure [show (map (\a => bodyOf a == "POST " ++ sent ++ "\n") answers)]
 
 main : IO ()
 main = do
-  r <- runTaskWith 3 (race (serve {limits = MkLimits 1024 4096} port handler) clients)
-  case r of
-    Just (Right sessions) => traverse_ (putStrLn . show) sessions
-    Just (Left stopped) => putStrLn ("server ended: " ++ show stopped)
-    Nothing => putStrLn "no result"
+  scenario 18741 (MkLimits 1024 4096) (smallLimits 18741)
+  scenario 18742 (MkLimits 65536 2048) (headAboveRequest 18742)
+  scenario 18743 defaultLimits (bigBody 18743)

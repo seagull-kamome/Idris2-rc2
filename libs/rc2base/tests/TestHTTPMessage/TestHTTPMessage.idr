@@ -65,7 +65,35 @@ main = do
     [200, 100, 204, 304, 404]
   putStrLn "--- findHeadEndFrom ---"
   let req = "GET / HTTP/1.1\r\nHost: x\r\n\r\nBODY"
-  traverse_ (\(name, from) => headEnd req from >>= \r => putStrLn (name ++ ": " ++ show r))
-    [("from 0", 0), ("from 3 bytes before the CR", 20), ("from the CR", 23), ("after the CR", 24)]
+  for_ [("from 0", 0), ("from 3 bytes before the CR", 20), ("from the CR", 23), ("after the CR", 24)] $ \(name, from) => do
+    r <- headEnd req from
+    putStrLn (name ++ ": " ++ show r)
   r <- headEnd "GET / HTTP/1.1\r\nHost: x\r\n\r" 0
   putStrLn ("incomplete: " ++ show r)
+  putStrLn "--- parseHead ---"
+  for_ [ ("plain", "GET /a HTTP/1.1\r\nHost: x\r\nContent-Length: 5")
+       , ("spaces around the value", "GET /a HTTP/1.1\r\nHost:   x  ")
+       , ("space before the colon", "GET /a HTTP/1.1\r\nContent-Length : 5")
+       , ("tab before the colon", "GET /a HTTP/1.1\r\nHost\t: x")
+       , ("obsolete line fold", "GET /a HTTP/1.1\r\nHost: x\r\n folded")
+       , ("no colon", "GET /a HTTP/1.1\r\nNoColon")
+       , ("empty name", "GET /a HTTP/1.1\r\n: x")
+       , ("no path", "GET\r\nHost: x")
+       ] $ \(name, head) => do
+    buf <- fromString (head ++ "\r\n\r\n")
+    r <- parseHead buf (byteLength buf - 4)
+    putStrLn (name ++ ": " ++ show r)
+  putStrLn "--- growBuffer ---"
+  small <- fromString "abcd"
+  same <- growBuffer small 3 100
+  putStrLn ("big enough: " ++ show (map byteLength same))
+  bigger <- growBuffer small 10 100
+  putStrLn ("to what is needed: " ++ show (map byteLength bigger))
+  doubled <- growBuffer small 5 100
+  putStrLn ("doubled: " ++ show (map byteLength doubled))
+  capped <- growBuffer small 5 6
+  putStrLn ("doubled, clamped to the cap: " ++ show (map byteLength capped))
+  over <- growBuffer small 10 9
+  putStrLn ("over the cap: " ++ show (map byteLength over))
+  kept <- traverse (\b => toString b) bigger
+  putStrLn ("old bytes kept: " ++ show (map (substr 0 4) kept))

@@ -68,14 +68,20 @@ main = ignore (runTaskWith 4 (serve 8080 handler))
   keep-alive by default, no chunked encoding, no TLS. What cannot be served is
   answered, with `Connection: close`, and the connection ends:
   `400` for a head that cannot be parsed or framing headers that cannot be trusted
-  (`bodyLength`), `413` for a request over `limits.maxRequestBytes` (default 8 MiB),
-  `431` for a head over `limits.maxHeadBytes` (default 64 KiB). Pass
-  `serve {limits = MkLimits head request}` to change them.
-- A request with `Connection: close` (also as one token among others) is answered
-  with `Connection: close` and the connection ends. The response to `HEAD` has the
-  head of the response to `GET` and no body, as have 1xx, 204 and 304, which have no
-  `Content-Length` either. (A route table does not send `HEAD` to the `GET` route:
-  `Method` has `HEAD`, but a route for it has to be written.)
+  (`bodyLength`, `parseHead`), `413` for a request over `limits.maxRequestBytes`
+  (default 8 MiB), `431` for a head over `limits.maxHeadBytes` (default 64 KiB; a
+  head cannot be longer than the request limit either, so the smaller of the two
+  applies). Pass `serve {limits = MkLimits head request}` to change them. The
+  answer is sent, but there is no *lingering close*: if the client has more bytes on
+  the way when the connection is closed (a body that was refused before it was
+  read), the system may reset the connection and the client may lose the answer.
+- A request with `Connection: close` (also as one token among others), or a
+  handler that answers with `Connection: close`, ends the connection after the
+  response, and the response then has a single `Connection: close` header: any
+  other `Connection` header of the handler is replaced. The response to `HEAD`
+  has the head of the response to `GET` and no body, as have 1xx, 204 and 304, which
+  have no `Content-Length` either. (A route table does not send `HEAD` to the `GET`
+  route: `Method` has `HEAD`, but a route for it has to be written.)
 - The end of the head is looked for from where the previous bytes ended, not from
   the start each time, and the head is parsed once, not at every read of the body.
 - `accept` that ran out of descriptors or memory is tried again after 10 ms; one
@@ -83,6 +89,9 @@ main = ignore (runTaskWith 4 (serve 8080 handler))
   errors `accept(2)` lists) at once. Any other error ends the server.
 - There is no timeout on reading or writing yet: a client that sends one byte at a
   time holds its connection (and the memory of its head, up to the limit).
+- Requests that arrive together are served one after the other, and what is left
+  after each is copied to the front of a new buffer; for thousands of tiny pipelined
+  requests in one read that is quadratic (not measured).
 
 `Sock.close` is not safe to call from two threads at once. `withSock` and the server
 call it on the thread of the scheduler. A `recv` or `send` that is already running on

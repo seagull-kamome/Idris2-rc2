@@ -41,3 +41,19 @@ from 3 bytes before the CR: Just 23
 from the CR: Just 23
 after the CR: Nothing
 incomplete: Nothing
+--- parseHead ---
+plain: Just ("GET", ("/a", [("host", "x"), ("content-length", "5")]))
+spaces around the value: Just ("GET", ("/a", [("host", "x")]))
+space before the colon: Nothing
+tab before the colon: Nothing
+obsolete line fold: Nothing
+no colon: Nothing
+empty name: Nothing
+no path: Nothing
+--- growBuffer ---
+big enough: Just 4
+to what is needed: Just 10
+doubled: Just 8
+doubled, clamped to the cap: Just 6
+over the cap: Nothing
+old bytes kept: Just "abcd"

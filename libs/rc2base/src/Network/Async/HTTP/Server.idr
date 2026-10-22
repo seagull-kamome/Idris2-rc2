@@ -15,7 +15,6 @@ import public Network.HTTP.Message
 import Control.Task
 import Control.Task.Scheduler
 import Data.Buffer
-import Data.IORef
 import Data.Either
 import Data.List
 import Network.Async
@@ -48,25 +47,27 @@ defaultLimits = MkLimits 65536 8388608
 chunk : Int
 chunk = 65536
 
--- The status line, the headers and the body, in one buffer. A response to HEAD
+-- The status line, the headers and the body, in one buffer. The response to HEAD
 -- has the head of the response to GET and no body, as have 1xx, 204 and 304.
-encode : (method : String) -> Response -> IO Buffer
-encode method resp = do
+encode : (headOnly : Bool) -> Response -> IO Buffer
+encode headOnly resp = do
   let bodyLen = byteLength resp.body
   let head = responseHead resp bodyLen
   let headLen = stringByteLength head
-  let sent = if hasBody resp.status && method /= "HEAD" then bodyLen else 0
+  let sent = if hasBody resp.status && not headOnly then bodyLen else 0
   out <- newBuf (headLen + sent)
   setString out 0 head
   when (sent > 0) $ copyData resp.body 0 sent out headLen
   pure out
 
--- `buf` made to hold at least `need` bytes, `Nothing` beyond `cap`.
-reserve : (cap : Int) -> Buffer -> (need : Int) -> IO (Maybe Buffer)
-reserve cap buf need = do
-  ref <- newIORef buf
-  ok <- grow ref need cap
-  if ok then Just <$> readIORef ref else pure Nothing
+-- The request line and the headers of a request, and how long its body is.
+record Head where
+  constructor MkHead
+  method : String
+  path : String
+  headers : List (String, String)
+  bodyStart : Int
+  size : Int
 
 -- Serve one connection until the client leaves or asks to close. What cannot be
 -- served is answered and the connection closed: 400 for a head or framing that
@@ -74,28 +75,32 @@ reserve cap buf need = do
 connection : Limits -> Handler -> Sock -> Task ()
 connection limits handler conn = liftIO (newBuf initCap) >>= \buf => readHead buf 0 0
   where
+    -- The head has to fit in what a request may take up, as well as in its own limit.
+    headLimit : Int
+    headLimit = min limits.maxHeadBytes limits.maxRequestBytes
+
     readHead : Buffer -> (len, scanned : Int) -> Task ()
     gotHead : Buffer -> (len, headEnd : Int) -> Task ()
-    readBody : Buffer -> (len, headEnd, size : Int) -> (String, String, List (String, String)) -> Task ()
-    serveRequest : Buffer -> (len, headEnd, size : Int) -> (String, String, List (String, String)) -> Task ()
+    readBody : Buffer -> (len : Int) -> Head -> Task ()
+    serveRequest : Buffer -> (len : Int) -> Head -> Task ()
 
     -- Send the response; whether it went out.
-    reply : (method : String) -> Response -> Task Bool
-    reply method resp = do
-      out <- liftIO (encode method resp)
+    reply : (headOnly : Bool) -> Response -> Task Bool
+    reply headOnly resp = do
+      out <- liftIO (encode headOnly resp)
       map isRight (sendAll conn out 0 (byteLength out))
 
     -- Answer what cannot be served and let the connection end.
     refuse : Int -> String -> Task ()
     refuse status message = do
       resp <- liftIO (text {headers = [("Connection", "close")]} status message)
-      ignore (reply "GET" resp)
+      ignore (reply False resp)
 
     -- Read at most `want` more bytes after the `len` that `buf` holds; `Nothing`:
     -- the peer is gone, or failed.
     more : Buffer -> (len, want : Int) -> Task (Maybe (Buffer, Int))
     more buf len want = do
-      Just buf' <- liftIO (reserve limits.maxRequestBytes buf (len + want))
+      Just buf' <- liftIO (growBuffer buf (len + want) limits.maxRequestBytes)
         | Nothing => pure Nothing
       Right n <- recv conn buf' len want
         | Left _ => pure Nothing
@@ -106,35 +111,38 @@ connection limits handler conn = liftIO (newBuf initCap) >>= \buf => readHead bu
     readHead buf len scanned = do
       found <- liftIO (findHeadEndFrom buf scanned len)
       case found of
-        Just headEnd => if headEnd + 4 > limits.maxHeadBytes
+        Just headEnd => if headEnd + 4 > headLimit
                           then refuse 431 "request header fields too large\n"
                           else gotHead buf len headEnd
-        Nothing => if len >= limits.maxHeadBytes
+        Nothing => if len >= headLimit
                      then refuse 431 "request header fields too large\n"
                      else do
-                       r <- more buf len (min chunk (limits.maxHeadBytes - len))
-                       for_ r $ \(buf', len') => readHead buf' len' (max 0 (len - 3))
+                       Just (buf', len') <- more buf len (min chunk (headLimit - len))
+                         | Nothing => pure ()
+                       readHead buf' len' (max 0 (len - 3))
 
     gotHead buf len headEnd = do
       parsed <- liftIO (parseHead buf headEnd)
-      case map (\p@(_, _, hdrs) => (p, bodyLength hdrs)) parsed of
-        Just (p, Just size) => if size > limits.maxRequestBytes - (headEnd + 4)
-                                 then refuse 413 "payload too large\n"
-                                 else readBody buf len headEnd size p
-        _ => refuse 400 "bad request\n"
+      case parsed of
+        Nothing => refuse 400 "bad request\n"
+        Just (method, path, hdrs) => case bodyLength hdrs of
+          Nothing => refuse 400 "bad request\n"
+          Just size => if size > limits.maxRequestBytes - (headEnd + 4)
+                         then refuse 413 "payload too large\n"
+                         else readBody buf len (MkHead method path hdrs (headEnd + 4) size)
 
-    readBody buf len headEnd size p =
-      if len >= headEnd + 4 + size then serveRequest buf len headEnd size p else do
-        r <- more buf len (min chunk (headEnd + 4 + size - len))
-        for_ r $ \(buf', len') => readBody buf' len' headEnd size p
+    readBody buf len head =
+      if len >= head.bodyStart + head.size then serveRequest buf len head else do
+        Just (buf', len') <- more buf len (min chunk (head.bodyStart + head.size - len))
+          | Nothing => pure ()
+        readBody buf' len' head
 
-    serveRequest buf len headEnd size (method, path, hdrs) = do
-      let bodyStart = headEnd + 4
-      let reqEnd = bodyStart + size
-      let closing = connectionClose hdrs
-      body <- liftIO (slice buf bodyStart size)
-      resp <- handler (MkRequest method path hdrs body)
-      sent <- reply method (if closing then { headers $= (("Connection", "close") ::) } resp else resp)
+    serveRequest buf len head = do
+      let reqEnd = head.bodyStart + head.size
+      body <- liftIO (slice buf head.bodyStart head.size)
+      resp <- handler (MkRequest head.method head.path head.headers body)
+      let closing = connectionClose head.headers || closes resp
+      sent <- reply (head.method == "HEAD") (if closing then closeAfter resp else resp)
       when (sent && not closing) $ do
         rest <- liftIO (if len == reqEnd then pure buf else slice buf reqEnd (len - reqEnd))
         readHead rest (len - reqEnd) 0
@@ -142,7 +150,7 @@ connection limits handler conn = liftIO (newBuf initCap) >>= \buf => readHead bu
 -- `accept` ran out of descriptors or memory: the pending connection stays, so
 -- retrying at once would spin.
 exhausted : Errno -> Bool
-exhausted e = e == EMFILE || e == ENFILE || e == ENOBUFS || e == ENOMEM
+exhausted e = elem e [EMFILE, ENFILE, ENOBUFS, ENOMEM]
 
 -- `accept` reports a failure of the connection it was about to return (or of
 -- the network); the next call is not affected (accept(2), "Error handling").

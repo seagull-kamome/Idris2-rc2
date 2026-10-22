@@ -20,6 +20,15 @@ import System.Posix.Errno
 port : Port
 port = 18731
 
+-- A plain blocking client socket connected to the server.
+connectClient : IO (Maybe Socket)
+connectClient = do
+  Right sock <- socket AF_INET Stream 0
+    | Left _ => pure Nothing
+  0 <- connect sock (IPv4Addr 127 0 0 1) port
+    | _ => Network.Socket.close sock *> pure Nothing
+  pure (Just sock)
+
 -- The client side: connect, send `msg`, read the answer.
 talk : String -> IO String
 talk msg = do
@@ -75,6 +84,18 @@ giveUpTest = do
          blocking (talk "late"))
   putStrLn ("after give-up: " ++ show r)
 
+-- Whether the server has closed the connection `sock` (`Network.Socket.recv`
+-- reports the end of the stream as `Left 0`, no error code).
+peerClosed : Maybe Socket -> IO String
+peerClosed Nothing = pure "no client"
+peerClosed (Just sock) = do
+  r <- Network.Socket.recv sock 16
+  Network.Socket.close sock
+  pure (case r of
+          Left 0 => "closed by the server"
+          Left e => "recv " ++ show e
+          Right _ => "data")
+
 -- A connection is accepted in the step that makes the accept lose the race: the
 -- socket is closed (the client sees the end of the stream), not leaked.
 droppedAcceptTest : IO ()
@@ -90,25 +111,6 @@ droppedAcceptTest = do
          liftIO (close listener)
          pure ended)
   putStrLn ("dropped accept: " ++ show (map (either id (const "still open")) r))
-  where
-    connectClient : IO (Maybe Socket)
-    connectClient = do
-      Right sock <- socket AF_INET Stream 0
-        | Left _ => pure Nothing
-      0 <- connect sock (IPv4Addr 127 0 0 1) port
-        | _ => close sock *> pure Nothing
-      pure (Just sock)
-
-    peerClosed : Maybe Socket -> IO String
-    peerClosed Nothing = pure "no client"
-    peerClosed (Just sock) = do
-      r <- Network.Socket.recv sock 16
-      Network.Socket.close sock
-      pure (case r of
-              Right (_, 0) => "closed by the server (0 bytes)"
-              Right _ => "data"
-              Left 0 => "closed by the server"
-              Left e => "recv " ++ show e)
 
 -- Ranges that would reach outside the buffer, or no bytes at all, are refused
 -- before any system call.
@@ -122,28 +124,14 @@ boundsTest = do
          client <- liftIO connectClient
          Right conn <- accept listener
            | Left e => pure ["accept " ++ show e]
-         rs <- traverse (readRange conn buf)
+         rs <- traverse (\(off, len) => Network.Async.recv conn buf off len)
                  [(0, 9), (4, 5), (-1, 4), (0, 0), (0, -3), (9223372036854775800, 16)]
-         ss <- traverse (writeRange conn buf) [(0, 9), (0, 0), (-1, 1)]
+         ss <- traverse (\(off, len) => Network.Async.send conn buf off len) [(0, 9), (0, 0), (-1, 1)]
          liftIO (close conn)
          liftIO (close listener)
          liftIO (traverse_ Network.Socket.close client)
          pure (map show rs ++ map show ss))
   putStrLn ("bounds: " ++ show r)
-  where
-    readRange : Sock -> Buffer -> (Int, Int) -> Task (Either Errno Int)
-    readRange conn buf (off, len) = Network.Async.recv conn buf off len
-
-    writeRange : Sock -> Buffer -> (Int, Int) -> Task (Either Errno Int)
-    writeRange conn buf (off, len) = Network.Async.send conn buf off len
-
-    connectClient : IO (Maybe Socket)
-    connectClient = do
-      Right sock <- socket AF_INET Stream 0
-        | Left _ => pure Nothing
-      0 <- connect sock (IPv4Addr 127 0 0 1) port
-        | _ => Network.Socket.close sock *> pure Nothing
-      pure (Just sock)
 
 main : IO ()
 main = echoTest *> giveUpTest *> droppedAcceptTest *> boundsTest
