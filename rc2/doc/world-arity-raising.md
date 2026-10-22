@@ -103,7 +103,19 @@ constructor or an operation that takes it, and a partial application that
 captures it. The last is a known gap: a world captured in a closure that the
 prefix then applies is not seen. A guard that also refused partial applications
 cost up to half of the raised sites (`TestWidget` 12 to 6, `TestWebAPIPure` 10 to 3).
-The case-tree run is not affected: there the tail is a lambda of the source.
+The case-tree run (`ArityRaiseCExp`, before lifting) needs the same guard. A
+lambda in tail position is not always the world's: in `\env, done, w1 => ...;
+\w2 => cancel` the first lambda takes the world and the second is the result
+(`MkCancel (writeIORef r Nothing)` is such a lambda), and raising the function
+again ran the cancel action at once. `ArityRaiseCExp.actsIn` is an equivalent
+check on the named case trees (it also looks at scrutinees), and it applies to
+the last parameter of the case tree's function, which is only sometimes the
+world; where it is not, a prefix that hands that parameter to a call or copies
+it keeps the function from being raised, which costs an optimization but not
+correctness (`TestTask`: 22 raised functions before, 21 after; `Test92`,
+`Test93`: unchanged). Not looked at, as above: a world captured by a lambda in
+the prefix, and the arguments of a tail call. `Test130ArityRaiseCancelWorld`
+is the regression test.
 
 `rc2/tests/Test128ArityRaiseWorldParam` is the regression test (a cut-down
 `Control.Task`): the callback called in the lambda, through a named function,

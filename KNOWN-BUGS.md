@@ -203,28 +203,6 @@ If one of these stops reproducing, or a fix lands, remove the entry.
   `public` (`TermUI.Node`, `TermUI.Input`), so users get it without
   asking.
 
-## rc2: arity raising runs the cancel action of an `Async` starter at once
-
-An `Async` starter `\_, done => do writeIORef r (Just done); pure (MkCancel
-(writeIORef r Nothing))` (the same with any other external primitive as the
-cancel action) is raised twice: the first time its own world is added, the
-second time the world of the action in `MkCancel`, which the compiler sees as
-the world lambda that was split off. `worldInPrefix` (`rc2/doc/world-arity-raising.md`,
-"Soundness") looks only at the *last* parameter, which is now the second world,
-so it does not see that the prefix acts on the first. The generated function
-takes `(r, done, w1, w2)`, writes `Just done` with `w1` and then runs the
-cancel action with `w2` at once. The wait is registered and withdrawn in the
-same call, and the task waits for ever. It needs the function not to be
-inlined (two or more users), so it comes and goes with unrelated edits.
-Found 2026-10-22 in a test of `handoff`; a repro is
-`tests/TestTaskHandoff` before it was changed to `modifyIORef`.
-
-Workaround: make the cancel action a call of a named function
-(`MkCancel (modifyIORef r (const Nothing))`, `MkCancel (close s)`), which
-`worldInPrefix` does not let through. `libs/rc2base` does that everywhere. The
-fix is in `ArityRaise.raisePlan`: guard every world parameter that earlier
-raising added, not only the last.
-
 ## rc2: deep non-tail recursion overflows the C stack (Chez doesn't)
 
 rc2 runs Idris code on the C stack (8 MB by default). Chez grows its
