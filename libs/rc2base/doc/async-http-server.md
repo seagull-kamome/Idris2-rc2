@@ -166,6 +166,45 @@ doing the matching. `HandlerFor` and `RouteEntry` are the old shapes
 before, a route's handler does not see the `Request` (its captures are all it
 gets); a `Handler` that needs the body is used as the `notFound` of the router.
 
+## Performance
+
+`bench/bench.sh` runs `bench/OldServer.idr` (the callback server of `http-server.md`) and
+`bench/NewServer.idr` (this server) with the same routes under `wrk` (`new-1` is one
+thread, `new-3` is `runServer 3`). Loopback, 4 cores shared with `wrk`, 8 s per
+scenario, 2026-10-23: the figures compare the servers with each other on one machine
+and mean nothing else.
+
+| scenario (`wrk`) | old req/s | new-1 req/s | new-3 req/s |
+| --- | ---: | ---: | ---: |
+| `GET /hello`, 1 connection | 22 600 | 11 600 | 2 300 |
+| `GET /hello`, 64 connections | 28 500 | 9 900 | 2 600 |
+| `GET` 64 KiB body, 16 connections | 14 200 | 7 600 | 2 600 |
+| `POST` 64 KiB body, 16 connections | 10 500 | 6 100 | 2 000 |
+| 16 pipelined `GET /hello` per write, 16 connections | 6 200 | 6 200 | 4 400 |
+| a handler that computes for about 5 ms, 64 connections | 188 | 185 | 390 |
+| a handler that sleeps 50 ms, 64 connections | -- | 1 100 | 660 |
+
+- On one thread this server does 35 to 58 per cent of the requests per second of the
+  callback server when the requests are small or carry 64 KiB, and the same when
+  requests are pipelined or the handler computes. With one connection that is about 85 µs
+  a request against 43 µs. A `perf record` of 64 connections of `GET /hello` shows no single
+  hot spot: `malloc` and `free` take a quarter of the time and the rest is the
+  interpreter of `Task` (closures built and applied). `strace -c` of one connection shows
+  `timerfd_settime` four times a request (a timer is set and withdrawn for the idle and
+  for the request deadline) and `epoll_wait` hardly at all.
+- Several threads make a request that costs next to nothing slower: every `liftIO` is
+  handed to another thread and its result back. They pay off when the handlers
+  compute: 2.1 times the requests of one thread, on 3 threads (the 4th core is
+  `wrk`'s). The callback server has one thread, so it keeps up with `new-1` there.
+- A handler that waits (`sleepFor 50`) does not hold a thread: 64 connections get 1 100
+  requests a second where waiting alone would allow 1 280. The callback server has no
+  way to wait in a handler. With 3 threads it is slower (660); the reason has not been looked into.
+- Arming the timer once divided a `Nat`, which made this server 5 to 10 times slower
+  than the callback server on small requests; see `KNOWN-BUGS.md`, "`Nat` division and
+  remainder are slow".
+
+Not measured: many idle connections, large numbers of connections, and the memory used.
+
 ## Open points
 
 - An io_uring variant of `Network.Async` with the same types.

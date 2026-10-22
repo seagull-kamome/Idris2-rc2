@@ -203,6 +203,19 @@ If one of these stops reproducing, or a fix lands, remove the entry.
   `public` (`TermUI.Node`, `TermUI.Input`), so users get it without
   asking.
 
+## `Nat` division and remainder are slow
+
+`div` and `mod` on a `Nat` (`Integral Nat` in `Data.Nat` of the base library) subtract
+the divisor step by step, testing `lte` at each step, and `lte` is itself a recursion
+on the numbers (`Data.Nat.div'`, `mod'`, `lte`; `plus`, `minus`, `mult` and the
+comparisons are replaced by `Integer` operations by the compiler, these are not). A
+division costs about the quotient times the divisor, so it is far slower than on an
+`Int`. Found 2026-10-23: dividing a number of milliseconds by 1000 each time the timer
+was armed made the `Task` HTTP server 5 to 10 times slower than the callback server on
+small requests (`Control.Task.Scheduler.armTimerFd`, now computed on an `Int`). The
+definition is upstream's, the same on every backend. Where a `Nat` is divided on a hot
+path, cast to `Int` first, and mind the range.
+
 ## rc2: deep non-tail recursion overflows the C stack (Chez doesn't)
 
 rc2 runs Idris code on the C stack (8 MB by default). Chez grows its

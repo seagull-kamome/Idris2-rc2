@@ -133,8 +133,9 @@ armTimerFd s = do
         Nothing => ignore (timerfd_settime s.timerFd 0 (MkITimerSpec (MkTimeSpec 0 0) (MkTimeSpec 0 0)))
         Just t => do
           now <- nowMs
-          -- an all-zero value would disarm the timer
-          let ms = max 1 (t `minus` now)
+          -- an all-zero value would disarm the timer; `Int`, not `Nat`, for the division
+          -- (KNOWN-BUGS.md), so the wait is capped (the timer is armed again when it goes off early)
+          let ms = the Int (cast (min 1099511627776 {- 2^40 -} (max 1 (t `minus` now))))
           ignore (timerfd_settime s.timerFd 0
                     (MkITimerSpec (MkTimeSpec 0 0) (MkTimeSpec (cast (ms `div` 1000)) (cast ((ms `mod` 1000) * 1000000)))))
 
@@ -381,7 +382,7 @@ newSchedulerWith workers = do
     | Left e => pure (Left e)
   Right () <- addSourceRaw s (MkSource inboxFd (drainInbox s))
     | Left e => pure (Left e)
-  Right () <- addSourceRaw s (MkSource timerFd (ignore (timerfd_read timerFd)))
+  Right () <- addSourceRaw s (MkSource timerFd (ignore (timerfd_read timerFd) *> writeIORef s.armed Nothing))
     | Left e => pure (Left e)
   pure (Right s)
   where

@@ -18,7 +18,7 @@ import Data.Buffer
 import Data.String
 import Data.Either
 import Network.Async
-import Network.Socket.Data
+import public Network.Socket.Data
 import System.Posix.Errno
 
 %default covering
