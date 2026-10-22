@@ -71,7 +71,7 @@ slice src off len = do
   when (len > 0) $ copyData src off len b 0
   pure b
 
--- Starting size of a connection's read/write accumulators.
+||| Starting size of a connection's read/write accumulators.
 export
 initCap : Int
 initCap = 4096
