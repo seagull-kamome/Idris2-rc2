@@ -96,6 +96,7 @@ TESTS=(
     "TestUringFile||System.Linux.Uring: openat, write, fsync, read and close on a temp file"
     "TestUringSocket|network|System.Linux.Uring: accept, multishot accept, connect, send and recv on loopback"
     "TestTask||Control.Task: monad, both/race/spawn, cancellation, timers, epoll source, inbox"
+    "TestTaskChan||Control.Task.Chan: producer and consumers on four threads, close, full/closed/drained, waits given up"
     "TestTaskMVar||Control.Task.MVar: lock between tasks on four threads, waits, the line, waits and modifications given up"
     "TestTaskRef||Control.Task.Ref: no update lost with actions on four threads, each ticket handed out once"
     "TestPosixTermios||System.Posix.Termios: termios constants, tcgetattr/tcsetattr on a pty, cfmakeraw, tc* calls"
