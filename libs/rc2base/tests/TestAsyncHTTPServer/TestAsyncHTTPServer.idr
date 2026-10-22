@@ -80,6 +80,12 @@ postReq path body =
   "POST " ++ path ++ " HTTP/1.1\r\nHost: t\r\nConnection: close\r\nContent-Length: "
     ++ show (length body) ++ "\r\n\r\n" ++ body
 
+-- A request whose headers do not frame the body: the server refuses it and
+-- closes, instead of taking its body for the next request.
+badFraming : String -> String
+badFraming header =
+  "POST /echo HTTP/1.1\r\nHost: t\r\n" ++ header ++ "\r\n\r\nGET /hello HTTP/1.1\r\n\r\n"
+
 -- The sessions, run together where it matters.
 clients : Task (List (List String))
 clients = do
@@ -87,8 +93,10 @@ clients = do
   body <- blocking (session [postReq "/echo" "payload"])
   alive <- blocking (session [getReq "/hello" False, getReq "/nowhere" True])
   user <- blocking (session [getReq "/users/7" True])
+  refused <- traverse (\h => blocking (session [badFraming h]))
+               ["Content-Length: 18446744073709551619", "Content-Length: abc", "Content-Length: 5\r\nContent-Length: 6", "Transfer-Encoding: chunked"]
   (slowA, slowB) <- both (blocking (session [getReq "/slow" True])) (blocking (session [getReq "/slow" True]))
-  pure [one, body, alive, user, slowA, slowB]
+  pure ([one, body, alive, user] ++ refused ++ [slowA, slowB])
 
 main : IO ()
 main = do

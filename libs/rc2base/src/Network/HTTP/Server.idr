@@ -316,16 +316,16 @@ tryDispatch st handler conn = do
     | Nothing => pure ()
   Just (method, path, hdrs) <- parseHead rbuf headEnd
     | Nothing => closeConn st conn
-  let need      = contentLength hdrs
-      bodyStart = headEnd + 4
-  if rlen - bodyStart < need
-    then pure ()
-    else do
-      body <- slice rbuf bodyStart need
-      writeIORef conn.shouldClose (connectionClose hdrs)
-      dropFront conn (bodyStart + need)
-      handler (MkRequest method path hdrs body) (respond st conn)
-      tryDispatch st handler conn
+  case bodyLength hdrs of
+    Nothing => closeConn st conn
+    Just need => do
+      let bodyStart = headEnd + 4
+      when (rlen - bodyStart >= need) $ do
+        body <- slice rbuf bodyStart need
+        writeIORef conn.shouldClose (connectionClose hdrs)
+        dropFront conn (bodyStart + need)
+        handler (MkRequest method path hdrs body) (respond st conn)
+        tryDispatch st handler conn
 
 handleReadable : ServerState -> BoundHandler -> Conn -> IO ()
 handleReadable st handler conn = do

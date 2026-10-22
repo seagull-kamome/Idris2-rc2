@@ -54,7 +54,10 @@ FromSegment String where
 
 export
 FromSegment Int where
-  fromSegment = parseInteger
+  fromSegment seg = do
+    n <- parseInteger {a = Integer} seg
+    let i : Int = fromInteger n
+    if cast i == n then Just i else Nothing
 
 export
 FromSegment Integer where
