@@ -9,8 +9,10 @@ module Main
 --     capture, keep-alive, two handlers that wait on a timer (they overlap), a
 --     head that ends in a later segment, a head of exactly the limit, two
 --     requests in one segment, HEAD and 204, what a request and a handler say
---     about `Connection`, and the requests that are refused: a head over the limit
---     (431), a body over the limit (413, also when the client goes on sending the body after the answer), heads and framing headers that cannot be
+--     about `Connection`, HEAD (also taken by the GET route), OPTIONS, HTTP/1.0 and
+--     versions that are refused, and the requests that are refused: a head over the
+--     limit (431), a body over the limit (413, also when the client goes on sending
+--     the body after the answer), heads and framing headers that cannot be
 --     trusted (400);
 --   * limits 65536 / 2048 (the head limit above the request limit): still answered;
 --   * default limits: a body of 70000 bytes, more than one read.
@@ -46,6 +48,9 @@ routes =
   , get ("none" // end) (liftIO (noBody 204))
   , get ("bye" // end) (liftIO (ok {headers = [("Connection", "close")]} "bye\n"))
   , get ("stay" // end) (liftIO (ok {headers = [("Connection", "keep-alive")]} "stay\n"))
+  , get ("hh" // end) (liftIO (ok "get route\n"))
+  , head ("hh" // end) (liftIO (ok "head route\n"))
+  , options ("hello" // end) (liftIO (noBody 204))
   ]
 
 handler : Handler
@@ -170,9 +175,22 @@ smallLimits port = do
   refusedFraming <- traverse (\h => ask [badFraming h])
                       [ "Content-Length: 18446744073709551619", "Content-Length: abc"
                       , "Content-Length: 5\r\nContent-Length: 6", "Transfer-Encoding: chunked" ]
+  -- HEAD: its own route first, else the GET route; OPTIONS has a route of its own
+  heads <- ask ["HEAD /hh HTTP/1.1\r\nHost: t\r\n\r\n" ++ "HEAD /hello HTTP/1.1\r\nHost: t\r\nConnection: close\r\n\r\n"]
+  optioned <- ask ["OPTIONS /hello HTTP/1.1\r\nHost: t\r\nConnection: close\r\n\r\n"]
+  -- HTTP/1.0 closes unless asked to keep the connection; other versions are refused
+  versions <- traverse (\r => ask [r])
+                [ "GET /hello HTTP/1.0\r\n\r\n"
+                , "GET /hello HTTP/1.0\r\nConnection: keep-alive\r\n\r\n" ++ "GET /hello HTTP/1.0\r\nConnection: close\r\n\r\n"
+                , "GET /hello HTTP/2.0\r\n\r\n"
+                , "GET /hello\r\n\r\n"
+                , "GET /hello FOO\r\n\r\n"
+                -- the handler's own Connection header is replaced, the answer to HEAD has no body
+                , "GET /bye HTTP/1.0\r\nConnection: keep-alive\r\n\r\n"
+                , "GET /stay HTTP/1.0\r\nConnection: keep-alive\r\n\r\n" ++ "HEAD /nowhere HTTP/1.0\r\nConnection: close\r\n\r\n" ]
   (slowA, slowB) <- both (ask [getReq "/slow" True]) (ask [getReq "/slow" True])
   pure (map show ([one, body, alive, user, headed, noContent, piped, [split], exact, tokens, handlerCloses, handlerStays]
-                  ++ refusedLimits ++ [[refusedWithBody]] ++ refusedHeads ++ refusedFraming ++ [slowA, slowB]))
+                  ++ refusedLimits ++ [[refusedWithBody]] ++ refusedHeads ++ refusedFraming ++ [heads, optioned] ++ versions ++ [slowA, slowB]))
 
 -- The second server: the head limit (65536) is above the request limit (2048).
 headAboveRequest : Port -> Task (List String)

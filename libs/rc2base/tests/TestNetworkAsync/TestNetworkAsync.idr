@@ -133,5 +133,39 @@ boundsTest = do
          pure (map show rs ++ map show ss))
   putStrLn ("bounds: " ++ show r)
 
+-- The client is a task too: `connect`, `sendAll`, `recv`. A port nobody listens
+-- on is refused, and a host name is not looked up.
+connectTest : IO ()
+connectTest = do
+  Right listener <- listen port
+    | Left e => putStrLn ("listen " ++ show e)
+  r <- runTaskWith 2 (do
+         server <- fork (serveOne listener)
+         answer <- client
+         served <- wait server
+         pure (served, answer))
+  close listener
+  putStrLn ("connect: " ++ show r)
+  refused <- runTaskWith 2 (Network.Async.connect (IPv4Addr 127 0 0 1) port)
+  putStrLn ("refused: " ++ show (map (either show (const "connected")) refused))
+  named <- runTaskWith 2 (Network.Async.connect (Hostname "localhost") port)
+  putStrLn ("host name: " ++ show (map (either show (const "connected")) named))
+  where
+    client : Task String
+    client = do
+      Right sock <- Network.Async.connect (IPv4Addr 127 0 0 1) port
+        | Left e => pure ("connect " ++ show e)
+      withSock sock $ do
+        Just out <- liftIO (newBuffer 4)
+          | Nothing => pure "newBuffer"
+        liftIO (setString out 0 "ping")
+        Right () <- sendAll sock out 0 4
+          | Left e => pure ("send " ++ show e)
+        Just buf <- liftIO (newBuffer 64)
+          | Nothing => pure "newBuffer"
+        Right n <- recv sock buf 0 64
+          | Left e => pure ("recv " ++ show e)
+        liftIO (getString buf 0 n)
+
 main : IO ()
-main = echoTest *> giveUpTest *> droppedAcceptTest *> boundsTest
+main = echoTest *> giveUpTest *> droppedAcceptTest *> boundsTest *> connectTest

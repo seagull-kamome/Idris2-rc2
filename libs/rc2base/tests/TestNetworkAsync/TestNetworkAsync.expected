@@ -2,3 +2,6 @@ echo: Just ("served hello", "echo:hello")
 after give-up: Just "connect refused 111"
 dropped accept: Just "closed by the server"
 bounds: Just ["Left Errno:22", "Left Errno:22", "Left Errno:22", "Left Errno:22", "Left Errno:22", "Left Errno:22", "Left Errno:22", "Left Errno:22", "Left Errno:22"]
+connect: Just ("served ping", "echo:ping")
+refused: Just "Errno:111"
+host name: Just "Errno:97"

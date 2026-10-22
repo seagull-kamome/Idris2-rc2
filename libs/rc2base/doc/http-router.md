@@ -106,7 +106,10 @@ first if that matters for a given route table.
 
 `RouteEntry` erases its route's own `tys` (`{0 tys : List Type}`) so
 routes of different shapes can share one plain `List RouteEntry` --
-`get`/`post`/`put`/`delete`/`patch` build one each.
+`get`/`post`/`put`/`delete`/`patch`/`head`/`options` build one each. (`head` is
+also the name of `Prelude`'s `head` on lists: the types tell them apart.) Only
+`Network.Async.HTTP.Router` sends a `HEAD` request that no `head` route takes to the
+`get` route of the same path; the callback router answers it with its not-found handler.
 
 A matched route's `HandlerFor` handler is only handed the capture
 values and the `respond` continuation -- not `Network.HTTP.Server`'s

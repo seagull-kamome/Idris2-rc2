@@ -15,6 +15,7 @@ import public Network.HTTP.Message
 import Control.Task
 import Control.Task.Scheduler
 import Data.Buffer
+import Data.String
 import Data.Either
 import Network.Async
 import Network.Socket.Data
@@ -79,6 +80,7 @@ record Head where
   method : String
   path : String
   headers : List (String, String)
+  http10 : Bool
   bodyStart : Int
   size : Int
 
@@ -176,14 +178,22 @@ connection limits handler conn = do
                            readHead buf' len' (max 0 (len - 3)) deadline'
 
     gotHead buf len headEnd deadline = do
-      parsed <- liftIO (parseHead buf headEnd)
+      parsed <- liftIO (parseRequestHead buf headEnd)
       case parsed of
         Nothing => refuse 400 "bad request\n"
-        Just (method, path, hdrs) => case bodyLength hdrs of
+        Just (method, path, version, hdrs) => case version of
+          "HTTP/1.1" => framed method path hdrs False
+          "HTTP/1.0" => framed method path hdrs True
+          _ => if isPrefixOf "HTTP/" version then refuse 505 "http version not supported\n"
+               else refuse 400 "bad request\n"
+      where
+        -- The framing headers can be trusted and the request is not too large.
+        framed : (method, path : String) -> List (String, String) -> (http10 : Bool) -> Task ()
+        framed method path hdrs http10 = case bodyLength hdrs of
           Nothing => refuse 400 "bad request\n"
-          Just size => if size > limits.maxRequestBytes - (headEnd + 4)
-                         then refuse 413 "payload too large\n"
-                         else readBody buf len (MkHead method path hdrs (headEnd + 4) size) deadline
+          Just size =>
+            if size > limits.maxRequestBytes - (headEnd + 4) then refuse 413 "payload too large\n"
+            else readBody buf len (MkHead method path hdrs http10 (headEnd + 4) size) deadline
 
     readBody buf len head deadline =
       if len >= head.bodyStart + head.size then serveRequest buf len head else do
@@ -197,8 +207,11 @@ connection limits handler conn = do
       let reqEnd = head.bodyStart + head.size
       body <- liftIO (slice buf head.bodyStart head.size)
       resp <- handler (MkRequest head.method head.path head.headers body)
+      -- HTTP/1.0 ends the connection unless the request asked to keep it
       let closing = connectionClose head.headers || closes resp
-      sent <- reply (head.method == "HEAD") (if closing then closeAfter resp else resp)
+                    || (head.http10 && not (connectionKeepAlive head.headers))
+      sent <- reply (head.method == "HEAD")
+                    (if closing then closeAfter resp else if head.http10 then keepAliveAfter resp else resp)
       when (sent && not closing) $ do
         rest <- liftIO (if len == reqEnd then pure buf else slice buf reqEnd (len - reqEnd))
         deadline <- startDeadline (len - reqEnd)
