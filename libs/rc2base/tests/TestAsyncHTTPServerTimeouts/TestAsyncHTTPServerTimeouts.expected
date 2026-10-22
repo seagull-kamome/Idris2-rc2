@@ -1,0 +1,6 @@
+idle: closed, 0 bytes
+stalled: HTTP/1.1 408 Request Timeout
+trickle: HTTP/1.1 408 Request Timeout; stopped before the end: True
+kept then idle: HTTP/1.1 200 OK then closed
+not reading: got part of it: True
+afterwards: HTTP/1.1 200 OK

@@ -28,7 +28,8 @@ public export
 Handler : Type
 Handler = Request -> Task Response
 
-||| What one connection may make the server hold.
+||| What one connection may make the server hold, and for how long. A time of 0
+||| is no limit.
 public export
 record Limits where
   constructor MkLimits
@@ -36,11 +37,24 @@ record Limits where
   maxHeadBytes : Int
   ||| The head and the body together: a larger request is answered with 413.
   maxRequestBytes : Int
+  ||| How long a connection may wait, in milliseconds, for the first byte of a
+  ||| request (the first one, or the next one on a kept-alive connection): after that
+  ||| the connection is closed.
+  idleTimeoutMs : Nat
+  ||| How long a request may take to arrive, in milliseconds, from its first byte to
+  ||| its last (all of one deadline, not a time per read, so a client that sends a
+  ||| byte at a time does not keep the connection): after that it is answered with
+  ||| 408 and the connection is closed. The handler's time is not counted.
+  requestTimeoutMs : Nat
+  ||| How long a response may take to be sent, in milliseconds: after that the
+  ||| connection is closed.
+  writeTimeoutMs : Nat
 
-||| 64 KiB for the head, 8 MiB for the request.
+||| 64 KiB for the head, 8 MiB for the request; 60 s idle, 30 s for a request to
+||| arrive and 30 s for a response to go out.
 export
 defaultLimits : Limits
-defaultLimits = MkLimits 65536 8388608
+defaultLimits = MkLimits 65536 8388608 60000 30000 30000
 
 -- Bytes asked of one `recv`.
 chunk : Int
@@ -68,28 +82,51 @@ record Head where
   bodyStart : Int
   size : Int
 
+-- What a read gave.
+data Read = Got Buffer Int | Gone | TimedOut
+
 -- Serve one connection until the client leaves or asks to close. What cannot be
 -- served is answered and the connection closed: 400 for a head or framing that
--- cannot be read, 413 for a request over the limit, 431 for a head over it.
+-- cannot be read, 408 for a request that took too long to arrive, 413 for a
+-- request over the limit, 431 for a head over it.
 connection : Limits -> Handler -> Sock -> Task ()
 connection limits handler conn = do
   buf <- liftIO (newBuf initCap)
-  readHead buf 0 0
+  deadline <- startDeadline 0
+  readHead buf 0 0 deadline
   where
     -- The head has to fit in what a request may take up, as well as in its own limit.
     headLimit : Int
     headLimit = min limits.maxHeadBytes limits.maxRequestBytes
 
-    readHead : Buffer -> (len, scanned : Int) -> Task ()
-    gotHead : Buffer -> (len, headEnd : Int) -> Task ()
-    readBody : Buffer -> (len : Int) -> Head -> Task ()
+    -- The time at which a limit of `ms` milliseconds, starting now, runs out.
+    after : Nat -> Task (Maybe Time)
+    after Z = pure Nothing
+    after ms = (\t => Just (t + ms)) <$> now
+
+    -- The deadline for what is read next: the idle time while nothing of a
+    -- request has arrived (`len`), the time of a request when some has.
+    startDeadline : (len : Int) -> Task (Maybe Time)
+    startDeadline len = after (if len > 0 then limits.requestTimeoutMs else limits.idleTimeoutMs)
+
+    -- The task, given up if there is a deadline and it passes first.
+    within : Maybe Time -> Task a -> Task (Maybe a)
+    within Nothing task = Just <$> task
+    within (Just t) task = timeoutAt t task
+
+    readHead : Buffer -> (len, scanned : Int) -> (deadline : Maybe Time) -> Task ()
+    gotHead : Buffer -> (len, headEnd : Int) -> (deadline : Maybe Time) -> Task ()
+    readBody : Buffer -> (len : Int) -> Head -> (deadline : Maybe Time) -> Task ()
     serveRequest : Buffer -> (len : Int) -> Head -> Task ()
 
-    -- Send the response; whether it went out.
+    -- Send the response; whether it went out in time.
     reply : (headOnly : Bool) -> Response -> Task Bool
     reply headOnly resp = do
       out <- liftIO (encode headOnly resp)
-      map isRight (sendAll conn out 0 (byteLength out))
+      sent <- case limits.writeTimeoutMs of
+                Z => Just <$> sendAll conn out 0 (byteLength out)
+                ms => (\t => timeoutAt t (sendAll conn out 0 (byteLength out))) =<< map (+ ms) now
+      pure (maybe False isRight sent)
 
     -- Answer what cannot be served and let the connection end.
     refuse : Int -> String -> Task ()
@@ -97,32 +134,43 @@ connection limits handler conn = do
       resp <- liftIO (text {headers = [("Connection", "close")]} status message)
       ignore (reply False resp)
 
-    -- Read at most `want` more bytes after the `len` that `buf` holds; `Nothing`:
-    -- the peer is gone, or failed.
-    more : Buffer -> (len, want : Int) -> Task (Maybe (Buffer, Int))
-    more buf len want = do
+    -- Read at most `want` more bytes after the `len` that `buf` holds, before the deadline.
+    more : Maybe Time -> Buffer -> (len, want : Int) -> Task Read
+    more deadline buf len want = do
       Just buf' <- liftIO (growBuffer buf (len + want) limits.maxRequestBytes)
-        | Nothing => pure Nothing
-      Right n <- recv conn buf' len want
-        | Left _ => pure Nothing
-      pure (if n > 0 then Just (buf', len + n) else Nothing)
+        | Nothing => pure Gone
+      r <- within deadline (recv conn buf' len want)
+      pure $ case r of
+        Nothing => TimedOut
+        Just (Right n) => if n > 0 then Got buf' (len + n) else Gone
+        Just (Left _) => Gone
+
+    -- What a request that did not arrive in time is answered with. (Nothing, if no
+    -- request had started: the connection was only idle.)
+    timedOut : (len : Int) -> Task ()
+    timedOut len = when (len > 0) (refuse 408 "request timeout\n")
 
     -- `buf[0 .. len)` is what has been read and not yet answered; the head
     -- does not end before `scanned`.
-    readHead buf len scanned = do
+    readHead buf len scanned deadline = do
       found <- liftIO (findHeadEndFrom buf scanned len)
       case found of
         Just headEnd => if headEnd + 4 > headLimit
                           then refuse 431 "request header fields too large\n"
-                          else gotHead buf len headEnd
+                          else gotHead buf len headEnd deadline
         Nothing => if len >= headLimit
                      then refuse 431 "request header fields too large\n"
                      else do
-                       Just (buf', len') <- more buf len (min chunk (headLimit - len))
-                         | Nothing => pure ()
-                       readHead buf' len' (max 0 (len - 3))
+                       r <- more deadline buf len (min chunk (headLimit - len))
+                       case r of
+                         Gone => pure ()
+                         TimedOut => timedOut len
+                         Got buf' len' => do
+                           -- the first byte of a request starts its time
+                           deadline' <- if len == 0 then startDeadline len' else pure deadline
+                           readHead buf' len' (max 0 (len - 3)) deadline'
 
-    gotHead buf len headEnd = do
+    gotHead buf len headEnd deadline = do
       parsed <- liftIO (parseHead buf headEnd)
       case parsed of
         Nothing => refuse 400 "bad request\n"
@@ -130,13 +178,15 @@ connection limits handler conn = do
           Nothing => refuse 400 "bad request\n"
           Just size => if size > limits.maxRequestBytes - (headEnd + 4)
                          then refuse 413 "payload too large\n"
-                         else readBody buf len (MkHead method path hdrs (headEnd + 4) size)
+                         else readBody buf len (MkHead method path hdrs (headEnd + 4) size) deadline
 
-    readBody buf len head =
+    readBody buf len head deadline =
       if len >= head.bodyStart + head.size then serveRequest buf len head else do
-        Just (buf', len') <- more buf len (min chunk (head.bodyStart + head.size - len))
-          | Nothing => pure ()
-        readBody buf' len' head
+        r <- more deadline buf len (min chunk (head.bodyStart + head.size - len))
+        case r of
+          Gone => pure ()
+          TimedOut => timedOut len
+          Got buf' len' => readBody buf' len' head deadline
 
     serveRequest buf len head = do
       let reqEnd = head.bodyStart + head.size
@@ -146,7 +196,8 @@ connection limits handler conn = do
       sent <- reply (head.method == "HEAD") (if closing then closeAfter resp else resp)
       when (sent && not closing) $ do
         rest <- liftIO (if len == reqEnd then pure buf else slice buf reqEnd (len - reqEnd))
-        readHead rest (len - reqEnd) 0
+        deadline <- startDeadline (len - reqEnd)
+        readHead rest (len - reqEnd) 0 deadline
 
 -- `accept` ran out of descriptors or memory: the pending connection stays, so
 -- retrying at once would spin.

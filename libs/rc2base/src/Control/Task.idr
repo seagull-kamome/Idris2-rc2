@@ -197,6 +197,17 @@ export
 sleepTill : Time -> Task ()
 sleepTill t = Async (\env, done => env.addTimer t (done ()))
 
+||| The time now on the monotonic clock (the virtual clock of `runTaskVirtual`).
+export
+now : Task Time
+now = Async (\env, done => noCancel <$ (env.now >>= done))
+
+||| The result of the task, `Nothing` if it is not there by the time (the task
+||| is then given up).
+export
+timeoutAt : Time -> Task a -> Task (Maybe a)
+timeoutAt t task = map (either Just (const Nothing)) (race task (sleepTill t))
+
 ||| Wait for a number of milliseconds.
 export
 sleepFor : Nat -> Task ()
