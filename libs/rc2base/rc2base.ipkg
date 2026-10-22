@@ -22,7 +22,7 @@ modules    = Control.Concurrent.MVar,
              Network.HTTP.Client.WebAPI.Auth.OAuth2, Network.HTTP.Client.WebAPI.Auth.PKCE,
              Network.HTTP.Client.WebAPI.JSON,
              --
-             Network.HTTP.Route, Network.HTTP.Router, Network.HTTP.Server,
+             Network.HTTP.Message, Network.HTTP.Route, Network.HTTP.Router, Network.HTTP.Server,
              Network.URL,
              --
              Network.RC2,

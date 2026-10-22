@@ -31,6 +31,10 @@ shared state.
 Request and response bodies are raw bytes (`Data.Buffer`), not
 `String` -- see "Bodies are bytes" below.
 
+The message types, the response serializer and the request parser live
+in `Network.HTTP.Message`, which this module re-exports, so that other
+transports (such as `Network.Async.HTTP.Server`) share them.
+
 ## Architecture
 
 Three modules, layered:
