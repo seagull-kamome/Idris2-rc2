@@ -110,5 +110,40 @@ droppedAcceptTest = do
               Left 0 => "closed by the server"
               Left e => "recv " ++ show e)
 
+-- Ranges that would reach outside the buffer, or no bytes at all, are refused
+-- before any system call.
+boundsTest : IO ()
+boundsTest = do
+  Right listener <- listen port
+    | Left e => putStrLn ("listen " ++ show e)
+  Just buf <- newBuffer 8
+    | Nothing => putStrLn "newBuffer"
+  r <- runTaskWith 2 (do
+         client <- liftIO connectClient
+         Right conn <- accept listener
+           | Left e => pure ["accept " ++ show e]
+         rs <- traverse (readRange conn buf)
+                 [(0, 9), (4, 5), (-1, 4), (0, 0), (0, -3), (9223372036854775800, 16)]
+         ss <- traverse (writeRange conn buf) [(0, 9), (0, 0), (-1, 1)]
+         liftIO (close conn)
+         liftIO (close listener)
+         liftIO (traverse_ Network.Socket.close client)
+         pure (map show rs ++ map show ss))
+  putStrLn ("bounds: " ++ show r)
+  where
+    readRange : Sock -> Buffer -> (Int, Int) -> Task (Either Errno Int)
+    readRange conn buf (off, len) = Network.Async.recv conn buf off len
+
+    writeRange : Sock -> Buffer -> (Int, Int) -> Task (Either Errno Int)
+    writeRange conn buf (off, len) = Network.Async.send conn buf off len
+
+    connectClient : IO (Maybe Socket)
+    connectClient = do
+      Right sock <- socket AF_INET Stream 0
+        | Left _ => pure Nothing
+      0 <- connect sock (IPv4Addr 127 0 0 1) port
+        | _ => Network.Socket.close sock *> pure Nothing
+      pure (Just sock)
+
 main : IO ()
-main = echoTest *> giveUpTest *> droppedAcceptTest
+main = echoTest *> giveUpTest *> droppedAcceptTest *> boundsTest

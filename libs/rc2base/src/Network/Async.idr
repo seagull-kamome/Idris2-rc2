@@ -146,18 +146,28 @@ accept l = handoff start (either (\_ => pure ()) close)
       try env watching done
       pure (MkCancel (join (map runCancel (readIORef watching))))
 
-||| Read up to `len` bytes into `buf[off ..]`. Waits until there is something to
+-- The call, if `buf[off .. off+len)` lies inside the buffer and is not empty;
+-- `EINVAL` otherwise. The C call would read or write outside the buffer, and a
+-- `recv` of no bytes would answer 0, which means the peer has closed.
+within : Buffer -> (off, len : Int) -> Task (Either Errno Int) -> Task (Either Errno Int)
+within buf off len call = do
+  size <- liftIO (rawSize buf)
+  if off >= 0 && len > 0 && len <= size - off then call else pure (Left EINVAL)
+
+||| Read up to `len` bytes into `buf[off ..]` (`len` must be positive and the
+||| range inside the buffer, else `EINVAL`). Waits until there is something to
 ||| read. `Right 0` means the peer closed the connection.
 export
 recv : Sock -> Buffer -> (off, len : Int) -> Task (Either Errno Int)
-recv s buf off len = retrying (awaitReadable s.fd) (prim__recv s.fd.rawfd buf off len)
+recv s buf off len = within buf off len (retrying (awaitReadable s.fd) (prim__recv s.fd.rawfd buf off len))
 
-||| Write some of `buf[off .. off+len)`; the result is how many bytes went out.
+||| Write some of `buf[off .. off+len)`; the result is how many bytes went out
+||| (`EINVAL` for an empty range or one outside the buffer).
 export
 send : Sock -> Buffer -> (off, len : Int) -> Task (Either Errno Int)
-send s buf off len = retrying (awaitWritable s.fd) (prim__send s.fd.rawfd buf off len)
+send s buf off len = within buf off len (retrying (awaitWritable s.fd) (prim__send s.fd.rawfd buf off len))
 
-||| Write all of `buf[off .. off+len)`.
+||| Write all of `buf[off .. off+len)`; nothing to do for an empty range.
 export
 sendAll : Sock -> Buffer -> (off, len : Int) -> Task (Either Errno ())
 sendAll s buf off len =
