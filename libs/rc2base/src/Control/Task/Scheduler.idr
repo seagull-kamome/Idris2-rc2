@@ -199,6 +199,7 @@ mutual
        then runAsync s sc (\env, done => env.offload (io >>= \a => env.post (done a))) k
        else enqueue s sc (io >>= k)
   run s sc (Seq t f) k = run s sc t (\a => run s sc (f a) k)
+  run s sc (Map f t) k = run s sc t (\a => k (f a))
   run s sc (Both l r) k = runBoth s sc l r k
   run s sc (Race Empty r) k = run s sc r k
   run s sc (Race l Empty) k = run s sc l k
@@ -207,6 +208,11 @@ mutual
     enqueue s sc (run s sc t (\_ => pure ()))
     k ()
   run s sc (Async f) k = runAsync s sc f k
+  run s sc (Handoff f undo) k = runHandoff s sc f undo k
+  run s sc (Finally release t) k = runFinally s sc release t k
+  run s sc (SpawnOwning release t) k = do
+    enqueueOwning s sc (run s sc t (\_ => pure ())) release
+    k ()
   run _ _ Empty _ = pure ()
 
   runBoth : Scheduler -> Scope -> Task a -> Task b -> ((a, b) -> IO ()) -> IO ()
@@ -263,6 +269,51 @@ mutual
             writeIORef fired True
             modifyIORef s.pending (`minus` 1)
             runCancel giveUp
+
+  runHandoff : Scheduler -> Scope -> (Env -> Completion a -> IO Cancel) -> (a -> IO ()) -> (a -> IO ()) -> IO ()
+  runHandoff s sc f undo k = do
+    gone <- readIORef sc.cancelled
+    unless gone $ do
+      ident <- fresh s
+      fired <- newIORef False
+      modifyIORef s.pending S
+      let complete = \x => do
+            already <- readIORef fired
+            if already then undo x else do
+              writeIORef fired True
+              modifyIORef s.pending (`minus` 1)
+              modifyIORef sc.cleanups (delete ident)
+              enqueueOwning s sc (k x) (undo x)
+      giveUp <- f (envOf s) complete
+      already <- readIORef fired
+      unless already $
+        modifyIORef sc.cleanups $ insert ident $ do
+          over <- readIORef fired
+          unless over $ do
+            writeIORef fired True
+            modifyIORef s.pending (`minus` 1)
+            runCancel giveUp
+
+  -- The action is registered as a cleanup of the scope in the step that starts
+  -- the task, and taken out in the step that ends it, with the result.
+  runFinally : Scheduler -> Scope -> (Maybe b -> IO ()) -> Task b -> (b -> IO ()) -> IO ()
+  runFinally s sc release t k = do
+    gone <- readIORef sc.cancelled
+    if gone then release Nothing else do
+      ident <- fresh s
+      over <- newIORef False
+      modifyIORef sc.cleanups $ insert ident $ do
+        already <- readIORef over
+        unless already $ do
+          writeIORef over True
+          release Nothing
+      run s sc t $ \r => do
+        already <- readIORef over
+        unless already $ do
+          writeIORef over True
+          modifyIORef sc.cleanups (delete ident)
+          release (Just r)
+          k r
 
 -------------------------------------------------------------------------------
 -- Turns

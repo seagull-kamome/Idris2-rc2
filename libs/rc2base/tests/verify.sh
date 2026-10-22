@@ -88,6 +88,7 @@ TESTS=(
     "TestPosixStdio||System.Posix.Stdio: FILE* streams, fgetc/fgets/getline/fread, writes, position, tmpfile, fmemopen"
     "TestLinux||System.Linux.Pipe: pipe2 with O_CLOEXEC/O_NONBLOCK"
     "TestTaskEnv||Control.Task: Env.slot (one value per scheduler, released at close) and Env.addSource (taken out when given up)"
+    "TestTaskHandoff||Control.Task: handoff gives back a value whose task is cancelled; finally and spawnOwning run their action once"
     "TestNetworkAsync|network contrib|Network.Async: serve a connection with accept/recv/sendAll; a lost race closes the listener"
     "TestHTTPMessage|contrib|Network.HTTP.Message.bodyLength: untrustworthy framing headers are refused; FromSegment Int does not wrap"
     "TestAsyncHTTPServer|network contrib|Network.Async.HTTP.Server: answers, overlapping slow handlers, bodies, keep-alive, close, stopped by a race"
