@@ -96,13 +96,13 @@ recv : Chan a -> Task (Maybe a)
 recv ch = handoff (\_, done => do
   r <- tryRecvNow ch
   case r of
-    Just x => done (Just x) *> pure noCancel
+    Just x => noCancel <$ done (Just x)
     Nothing => do
       st <- readIORef ch.state
-      if st.closed then done Nothing *> pure noCancel else do
+      if st.closed then noCancel <$ done Nothing else do
         let (k, takers') = enter done st.takers
         writeIORef ch.state ({ takers := takers' } st)
-        pure (MkCancel (modifyIORef ch.state (\s => { takers $= leave k } s)))) (traverse_ (giveBack ch))
+        pure (MkCancel (modifyIORef ch.state { takers $= leave k }))) (traverse_ (giveBack ch))
 
 ||| Send a value, waiting while the channel is full. `False`: the channel is
 ||| closed, and the value went nowhere.
@@ -111,12 +111,12 @@ send : Chan a -> a -> Task Bool
 send ch v = Async $ \_, done => do
   r <- trySendNow ch v
   case r of
-    Just ok => done ok *> pure noCancel
+    Just ok => noCancel <$ done ok
     Nothing => do
       st <- readIORef ch.state
       let (k, senders') = enter (v, done) st.senders
       writeIORef ch.state ({ senders := senders' } st)
-      pure (MkCancel (modifyIORef ch.state (\s => { senders $= leave k } s)))
+      pure (MkCancel (modifyIORef ch.state { senders $= leave k }))
 
 ||| The next value if there is one, without waiting.
 export
@@ -135,8 +135,8 @@ export
 close : Chan a -> Task ()
 close ch = onReactor $ do
   st <- readIORef ch.state
-  let (takers, _) = everyone st.takers
-  let (senders, _) = everyone st.senders
-  writeIORef ch.state ({ closed := True, takers := none, senders := none } st)
+  let (takers, noTakers) = everyone st.takers
+  let (senders, noSenders) = everyone st.senders
+  writeIORef ch.state ({ closed := True, takers := noTakers, senders := noSenders } st)
   traverse_ (\t => t Nothing) takers
   traverse_ (\s => snd s False) senders
