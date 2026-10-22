@@ -1,5 +1,5 @@
-||| Sockets for `Control.Task`: `accept`, `recv` and `send` that wait for the
-||| descriptor on the scheduler's epoll instead of blocking a thread. A `Sock`
+||| Sockets for `Control.Task`: `accept`, `connect`, `recv` and `send` that wait for
+||| the descriptor on the scheduler's epoll instead of blocking a thread. A `Sock`
 ||| is non-blocking; a call that would block waits for readiness and tries
 ||| again. Needs no liburing. Linux/POSIX, `--cg rc2`.
 module Network.Async
@@ -36,6 +36,9 @@ prim__reuseAddr : Int32 -> PrimIO Int32
 
 %foreign "CExpr:(shutdown($1, SHUT_WR)),libc,sys/socket.h"
 prim__shutdownWrite : Int32 -> PrimIO Int32
+
+%foreign "CExpr:((int)({ int e = 0; socklen_t l = sizeof e; getsockopt($1, SOL_SOCKET, SO_ERROR, &e, &l) == 0 ? e : errno; })),libc,sys/socket.h"
+prim__pendingError : Int32 -> PrimIO Int32
 
 %foreign "CExpr:(close($1)),libc,unistd.h"
 prim__close : Int32 -> PrimIO Int32
@@ -113,6 +116,50 @@ listen {bindAddr} port = do
         | e => pure (Left (MkErrno (cast e)))
       listened <- Network.Socket.listen sock
       pure (if listened == 0 then Right () else Left (MkErrno (cast listened)))
+
+||| Connect to an IPv4 address and wait until the connection is made. Anything
+||| else (a host name would need a blocking lookup, IPv6 is not supported) is
+||| `EAFNOSUPPORT`. Like `accept`, the socket is handed over with `handoff`; a
+||| connect that is given up while it is under way closes its socket.
+export
+connect : SocketAddress -> Port -> Task (Either Errno Sock)
+connect addr@(IPv4Addr _ _ _ _) port = handoff start (either (\_ => pure ()) close)
+  where
+    -- A connection under way is done when the descriptor is writable; how it
+    -- went is the pending error of the socket.
+    finish : Sock -> IORef Bool -> Completion (Either Errno Sock) -> IO ()
+    finish s settled done = do
+      writeIORef settled True
+      e <- primIO (prim__pendingError s.fd.rawfd)
+      if e == 0 then done (Right s) else close s *> done (Left (MkErrno e))
+
+    giveUp : Sock -> IORef Bool -> IORef Cancel -> IO ()
+    giveUp s settled watching = do
+      settledAlready <- readIORef settled
+      unless settledAlready (join (map runCancel (readIORef watching)) *> close s)
+
+    waiting : Env -> Sock -> Completion (Either Errno Sock) -> IO Cancel
+    waiting env s done = do
+      settled <- newIORef False
+      watching <- newIORef noCancel
+      env.watchFd s.fd EPOLLOUT (\_ => finish s settled done) >>= writeIORef watching
+      pure (MkCancel (giveUp s settled watching))
+
+    start : Env -> Completion (Either Errno Sock) -> IO Cancel
+    start env done = do
+      opened <- socket AF_INET Stream 0
+      case opened of
+        Left e => noCancel <$ done (Left (MkErrno (cast e)))
+        Right sock => do
+          adopted <- adopt (cast sock.descriptor)
+          case adopted of
+            Left e => noCancel <$ done (Left e)
+            Right s => do
+              started <- Network.Socket.connect sock addr port
+              if started == 0 then noCancel <$ done (Right s) else
+                if elem (MkErrno (cast started)) [EINPROGRESS, EINTR] then waiting env s done
+                else close s *> (noCancel <$ done (Left (MkErrno (cast started))))
+connect _ _ = pure (Left EAFNOSUPPORT)
 
 -- One attempt at a system call that answers -1 and sets `errno` on failure.
 attempt : PrimIO Int -> IO (Either Errno Int)

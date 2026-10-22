@@ -191,7 +191,7 @@ rather than deferred:
 - `chunked` transfer encoding (request or response) -- only
   `Content-Length` bodies.
 - HTTP/1.0 (its default is connection-per-request, the opposite of
-  HTTP/1.1's default this parser assumes).
+  HTTP/1.1's default this parser assumes). `Network.Async.HTTP.Server` serves it.
 - Response ordering guarantees under pipelining -- if two pipelined
   requests both answer asynchronously, nothing stops the second one's
   `respond` from being called (and its bytes hitting the wire) before

@@ -52,12 +52,14 @@ RouteEntry : Type
 RouteEntry = RouteEntryOf ((Response -> IO ()) -> IO ())
 
 export
-get, post, put, delete, patch : Route ts -> HandlerOf r ts -> RouteEntryOf r
-get    = MkRouteEntry GET
-post   = MkRouteEntry POST
-put    = MkRouteEntry PUT
-delete = MkRouteEntry DELETE
-patch  = MkRouteEntry PATCH
+get, post, put, delete, patch, head, options : Route ts -> HandlerOf r ts -> RouteEntryOf r
+get     = MkRouteEntry GET
+post    = MkRouteEntry POST
+put     = MkRouteEntry PUT
+delete  = MkRouteEntry DELETE
+patch   = MkRouteEntry PATCH
+head    = MkRouteEntry HEAD
+options = MkRouteEntry OPTIONS
 
 tryMatch : Method -> List String -> RouteEntryOf r -> Maybe r
 tryMatch m segs entry =

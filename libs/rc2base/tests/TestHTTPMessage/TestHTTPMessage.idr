@@ -59,10 +59,17 @@ main = do
     , ("keep-alive, close", conn "keep-alive, close")
     , ("upgrade", conn "upgrade")
     ]
+  putStrLn "--- connectionKeepAlive ---"
+  traverse_ (\(name, hdrs) => putStrLn (name ++ ": " ++ show (connectionKeepAlive hdrs)))
+    [ ("none", [])
+    , ("close", conn "close")
+    , ("Keep-Alive, spaces", conn "  Keep-Alive ")
+    , ("close, keep-alive", conn "close, keep-alive")
+    ]
   putStrLn "--- responseHead ---"
   body <- fromString "hello"
   traverse_ (\status => putStrLn (show status ++ ": " ++ show (responseHead (MkResponse status [("X", "1")] body))))
-    [200, 100, 204, 304, 404]
+    [200, 100, 204, 304, 404, 505]
   putStrLn "--- findHeadEndFrom ---"
   let req = "GET / HTTP/1.1\r\nHost: x\r\n\r\nBODY"
   for_ [("from 0", 0), ("from 3 bytes before the CR", 20), ("from the CR", 23), ("after the CR", 24)] $ \(name, from) => do

@@ -18,6 +18,7 @@ waits for the descriptor on the scheduler's epoll (`awaitReadable`,
 | --- | --- |
 | `listen : Port -> IO (Either Errno Sock)` | bind (loopback unless `bindAddr` is given) and listen, with `SO_REUSEADDR` |
 | `accept : Sock -> Task (Either Errno Sock)` | the next connection, non-blocking |
+| `connect : SocketAddress -> Port -> Task (Either Errno Sock)` | connect to an IPv4 address and wait until it is made; a host name or IPv6 is `EAFNOSUPPORT` (the lookup would block); the socket is handed over like `accept`'s, and closed if the connect is given up |
 | `recv : Sock -> Buffer -> (off, len : Int) -> Task (Either Errno Int)` | into `buf[off ..]`; `Right 0` is end of input |
 | `send`, `sendAll` | `send` writes some bytes, `sendAll` all of them |
 | `shutdownWrite`, `discard` | `shutdown(SHUT_WR)`, and reading and throwing away what the peer sends (until it closes, an error or a byte limit; the time limit is the caller's, with `timeoutAt`): with `close`, a lingering close |
@@ -66,7 +67,7 @@ main = ignore (runTaskWith 4 (serve 8080 handler))
 - `Request` and `Response`, the `Response.*` constructors and the parser are those
   of `Network.HTTP.Message`, which this module re-exports.
 - The wire-format subset is that of `http-server.md`: `Content-Length` bodies,
-  keep-alive by default, no chunked encoding, no TLS. What cannot be served is
+  keep-alive by default (for HTTP/1.1), no chunked encoding, no TLS. What cannot be served is
   answered, with `Connection: close`, and the connection ends:
   `400` for a head that cannot be parsed or framing headers that cannot be trusted
   (`bodyLength`, `parseHead`), `413` for a request over `limits.maxRequestBytes`
@@ -83,8 +84,13 @@ main = ignore (runTaskWith 4 (serve 8080 handler))
   response, and the response then has a single `Connection: close` header: any
   other `Connection` header of the handler is replaced. The response to `HEAD`
   has the head of the response to `GET` and no body, as have 1xx, 204 and 304, which
-  have no `Content-Length` either. (A route table does not send `HEAD` to the `GET`
-  route: `Method` has `HEAD`, but a route for it has to be written.)
+  have no `Content-Length` either. The route table of `Network.Async.HTTP.Router` sends
+  a `HEAD` that no `head` route takes to the `get` route of the same path.
+- HTTP/1.0 requests are served too, and the response is still `HTTP/1.1`. The
+  connection ends after the response unless the request has `Connection: keep-alive`,
+  and then the response says `Connection: keep-alive`. A request line without a
+  version, or one that does not start with `HTTP/`, is `400`; a version other than
+  `HTTP/1.0` and `HTTP/1.1` is `505`.
 - The end of the head is looked for from where the previous bytes ended, not from
   the start each time, and the head is parsed once, not at every read of the body.
 - `accept` that ran out of descriptors or memory is tried again after 10 ms; one
@@ -162,7 +168,6 @@ gets); a `Handler` that needs the body is used as the `notFound` of the router.
 
 ## Open points
 
-- An asynchronous `connect` (for clients).
 - An io_uring variant of `Network.Async` with the same types.
 - Responses are written whole with `sendAll`; a body that is large or comes
   piece by piece has no streaming interface yet.

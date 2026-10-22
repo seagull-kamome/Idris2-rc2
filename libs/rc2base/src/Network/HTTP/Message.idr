@@ -211,6 +211,7 @@ reasonPhrase 431 = "Request Header Fields Too Large"
 reasonPhrase 500 = "Internal Server Error"
 reasonPhrase 501 = "Not Implemented"
 reasonPhrase 503 = "Service Unavailable"
+reasonPhrase 505 = "HTTP Version Not Supported"
 reasonPhrase _   = "Unknown"
 
 ||| The length of a request's body, `Just 0` without a `Content-Length`. `Nothing`
@@ -230,13 +231,25 @@ bodyLength hdrs =
     digits : String -> Maybe Int
     digits v = if v /= "" && length v <= 18 && all isDigit (unpack v) then parsePositive v else Nothing
 
--- HTTP/1.1 defaults to keep-alive; only a "close" among the tokens of
--- "Connection" ends it ("keep-alive, close" does too). HTTP/1.0 (which defaults
--- the other way) isn't supported (`doc/http-server.md`, "Wire format").
+-- Whether `Connection` (the headers' names in lower case) has the token among
+-- its comma-separated ones.
+connectionHas : String -> List (String, String) -> Bool
+connectionHas token hdrs =
+  any (\(k, v) => k == "connection" && any ((== token) . toLower . trim) (forget (split (== ',') v))) hdrs
+
+||| Whether a request asks for the connection to end: `close` among the tokens of
+||| `Connection` (`keep-alive, close` does too). The header names are in lower
+||| case, as `parseHead` gives them (`doc/http-server.md`, "Wire format").
 export
 connectionClose : List (String, String) -> Bool
-connectionClose hdrs =
-  any (\(k, v) => k == "connection" && elem "close" (map (toLower . trim) (forget (split (== ',') v)))) hdrs
+connectionClose = connectionHas "close"
+
+||| Whether a request asks for the connection to be kept: `keep-alive` among the
+||| tokens of `Connection`. What an HTTP/1.0 request has to say for the server not to
+||| close after the response.
+export
+connectionKeepAlive : List (String, String) -> Bool
+connectionKeepAlive = connectionHas "keep-alive"
 
 ||| Whether the response asks for the connection to end: `Connection: close`, also
 ||| as one token among others.
@@ -244,12 +257,20 @@ export
 closes : Response -> Bool
 closes resp = connectionClose (map (\(k, v) => (toLower k, v)) resp.headers)
 
-||| The response with `Connection: close`, in place of any `Connection` header
-||| it had.
+-- The response with `Connection: value`, in place of any `Connection` header it had.
+setConnection : String -> Response -> Response
+setConnection value resp =
+  { headers := ("Connection", value) :: filter ((/= "connection") . toLower . fst) resp.headers } resp
+
+||| The response with `Connection: close`.
 export
 closeAfter : Response -> Response
-closeAfter resp =
-  { headers := ("Connection", "close") :: filter ((/= "connection") . toLower . fst) resp.headers } resp
+closeAfter = setConnection "close"
+
+||| The response with `Connection: keep-alive`.
+export
+keepAliveAfter : Response -> Response
+keepAliveAfter = setConnection "keep-alive"
 
 ||| Whether a response with this status has a body and a `Content-Length`: not
 ||| 1xx, 204 and 304.
@@ -381,23 +402,26 @@ parseHeaderLine b ls le = do
     isBlank : Int -> Bool
     isBlank x = x == 32 || x == 9
 
--- Request line + all header lines from `b[0, headEnd)`.
--- `Nothing` = malformed request line or header line (caller refuses the request).
+||| `parseHead` with the protocol version, the third token of the request line
+||| (`""` when there is none).
 export
-parseHead : Buffer -> (headEnd : Int) -> IO (Maybe (String, String, List (String, String)))
-parseHead b headEnd = do
+parseRequestHead : Buffer -> (headEnd : Int) -> IO (Maybe (String, String, String, List (String, String)))
+parseRequestHead b headEnd = do
   rlEnd <- lineEnd b 0 headEnd
   m0 <- skipSp b 0 rlEnd
   m1 <- spanTok b m0 rlEnd
   p0 <- skipSp b m1 rlEnd
   p1 <- spanTok b p0 rlEnd
+  v0 <- skipSp b p1 rlEnd
+  v1 <- spanTok b v0 rlEnd
   if m1 <= m0 || p1 <= p0
     then pure Nothing
     else do
       method <- getString b m0 (m1 - m0)
       path   <- getString b p0 (p1 - p0)
+      version <- getString b v0 (v1 - v0)
       hdrs   <- collect (rlEnd + 2) []
-      pure (map (\h => (method, path, reverse h)) hdrs)
+      pure (map (\h => (method, path, version, reverse h)) hdrs)
   where
     collect : Int -> List (String, String) -> IO (Maybe (List (String, String)))
     collect i acc =
@@ -408,3 +432,9 @@ parseHead b headEnd = do
           case mkv of
             Nothing => pure Nothing
             Just kv => collect (le + 2) (kv :: acc)
+
+-- Request line + all header lines from `b[0, headEnd)`.
+-- `Nothing` = malformed request line or header line (caller refuses the request).
+export
+parseHead : Buffer -> (headEnd : Int) -> IO (Maybe (String, String, List (String, String)))
+parseHead b headEnd = map (map (\(m, p, _, h) => (m, p, h))) (parseRequestHead b headEnd)
