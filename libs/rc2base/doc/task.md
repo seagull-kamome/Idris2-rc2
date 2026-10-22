@@ -38,6 +38,7 @@ type of the scheduler has to see.
 data Task : Type -> Type where
   Point  : IO a -> Task a                        -- an action, run to completion (on a worker in parallel mode)
   Pinned : IO a -> Task a                        -- the same, always on the thread of the scheduler
+  PointThen : IO a -> (a -> Task b) -> Task b    -- a Point and its continuation (what >>= makes of a Point)
   Seq    : Task a -> (a -> Task b) -> Task b     -- >>=
   Both   : Task a -> Task b -> Task (a, b)       -- zip: run together, wait for both
   Race   : Task a -> Task a -> Task a            -- the first to finish wins, the other is cancelled
@@ -393,20 +394,36 @@ Stages:
    scheduler's `parallel` flag) puts the scheduler in *parallel mode*: a `Point`
    (`liftIO`) is run as `blocking` is, on a worker, and the task goes on with its
    result. The steps of one task stay in order; the `Point`s of different tasks
-   run at the same time. The control (`>>=`, `both`, `race`, `spawn`, `Async`,
+   run at the same time. The control (`both`, `race`, `spawn`, `Async`,
    promises) still goes back through the reactor, so this pays only for
    coarse `Point`s. It gives up the guarantee of the cooperative model that a
    `Point` is not interrupted by another task: what `Point`s share (an `IORef` two
    tasks both write) is now shared between threads, as with real threads.
    `onReactor : IO a -> Task a` (the constructor `Pinned`) is the `Point` that always
    runs on the thread of the scheduler, for what touches the state of the
-   scheduler or of the program (`pure`, `map`, `yield`, the promise operations
+   scheduler or of the program (`pure`, `yield`, the promise operations
    and termui's delivery of a message are pinned). With no workers the mode does
    nothing.
 
+   A round trip to a worker costs more than a small action does, and
+   `liftIO a >>= \x => liftIO (b x)` would take two. So `>>=` does not build `Seq`
+   for a `Point`: it builds `PointThen io f` (and `PointThen io g >>= f` is
+   `PointThen io (\a => g a >>= f)`; `map` of a plain `Point` is a `Point`). The worker
+   that has run `io` evaluates `f a`, which must only build a task, and goes on with it while it is a
+   `Point` or a `PointThen`; anything else (`Pinned`, `Both`, `Async`, ...) goes
+   back to the scheduler. At most 64 steps in a row, and it stops when the scope has
+   been cancelled, so a loop of `liftIO`s can still be given up. Outside parallel
+   mode `PointThen io f` is `Seq (Point io) f`. `Network.Async.HTTP.Server`
+   uses `onReactor` for the small steps (the non-blocking `recv`/`send`, parsing
+   the head) so that only the handlers' own work is handed to a worker.
+
 What a thread must not do: touch a scheduler structure (use `env.post`), or
 keep a `Task` that it also gives to another thread. Everything handed to a
-worker is an `IO ()` closure that owns what it captured.
+worker is an `IO ()` closure that owns what it captured. And in parallel mode the
+continuation after a `liftIO` (the function after `>>=`, a handler that is called with
+the request) is evaluated on a worker, at the same time as the tasks of the others: it
+may only build a task, not read or write what the program shares (the effects belong in
+a `Point`, a `Pinned` or an `Async`).
 
 `termui` creates its scheduler with a few workers; since they are started on
 the first `blocking`, a program that never calls it stays single-threaded and

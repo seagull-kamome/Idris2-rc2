@@ -105,16 +105,15 @@ main = ignore (runTaskWith 4 (serve 8080 handler))
   request is answered with `408` and the connection ends. `writeTimeoutMs` (30 s) is
   how long a response may take to go out; after it the connection is closed. The time
   the handler takes is not counted: give a handler that may wait for long its own
-  `timeoutAt`. (A `recv` that is given up by a timeout while it runs on a worker, in
-  parallel mode, is not stopped; see the note on `close` below.)
+  `timeoutAt`.
 - Requests that arrive together are served one after the other, and what is left
   after each is copied to the front of a new buffer; for thousands of tiny pipelined
   requests in one read that is quadratic (not measured).
 
 `Sock.close` is not safe to call from two threads at once. `withSock` and the server
-call it on the thread of the scheduler. A `recv` or `send` that is already running on
-a worker (parallel mode) when the connection is closed is not stopped, so a
-descriptor number that is reused in that moment could be read or written by it.
+call it on the thread of the scheduler, and so are the system calls of `accept`,
+`recv`, `send` and `connect`, so no call is running on a worker when a connection
+is closed and its descriptor number cannot be reused under it.
 
 Tested by `tests/TestNetworkAsync` and `tests/TestAsyncHTTPServer`.
 
@@ -126,12 +125,14 @@ The server is the same either way; what changes is how the tasks are run.
 main = ignore (runServer 8 (serve 8080 handler))   -- 0: one thread
 ```
 
-`runServer n` is `runTaskParallel n` (`runServer 0` is `runTask`): the actions
-of the tasks -- reading and parsing a request, the handler's own `liftIO`s,
-the system calls -- run on `n` threads at the same time, and a task that waits
-for the network (`accept`, `recv`, `send` when they would block) gives its thread
-to other requests. The control of the tasks (`>>=`, `race`, `spawn`, the waits)
-stays on one thread, the *reactor*, which also watches the descriptors.
+`runServer n` is `runTaskParallel n` (`runServer 0` is `runTask`): the handler's own
+`liftIO`s, and the encoding of the response and the copy of a body, run on `n` threads
+at the same time, and a task that waits for the network or a timer gives its thread to
+other requests. The control of the tasks (`>>=`, `race`, `spawn`, the waits) stays on
+one thread, the *reactor*, which also watches the descriptors and does the small steps
+-- the non-blocking system calls, finding the end of the head and parsing it -- because
+handing such a step to a worker costs more than it does (`task.md`, "`Point` on the
+workers").
 
 What that asks of a handler: whatever it shares with other requests must be safe
 to share. Use `Control.Task.Ref`, `MVar` and `Chan` (see `task.md`), not an
@@ -176,13 +177,13 @@ and mean nothing else.
 
 | scenario (`wrk`) | old req/s | new-1 req/s | new-3 req/s |
 | --- | ---: | ---: | ---: |
-| `GET /hello`, 1 connection | 22 600 | 11 600 | 2 300 |
-| `GET /hello`, 64 connections | 28 500 | 9 900 | 2 600 |
-| `GET` 64 KiB body, 16 connections | 14 200 | 7 600 | 2 600 |
-| `POST` 64 KiB body, 16 connections | 10 500 | 6 100 | 2 000 |
-| 16 pipelined `GET /hello` per write, 16 connections | 6 200 | 6 200 | 4 400 |
-| a handler that computes for about 5 ms, 64 connections | 188 | 185 | 390 |
-| a handler that sleeps 50 ms, 64 connections | -- | 1 100 | 660 |
+| `GET /hello`, 1 connection | 22 600 | 11 600 | 5 000 |
+| `GET /hello`, 64 connections | 28 500 | 9 900 | 5 900 |
+| `GET` 64 KiB body, 16 connections | 14 200 | 7 600 | 4 700 |
+| `POST` 64 KiB body, 16 connections | 10 500 | 6 100 | 4 900 |
+| 16 pipelined `GET /hello` per write, 16 connections | 6 200 | 6 200 | 6 100 |
+| a handler that computes for about 5 ms, 64 connections | 188 | 185 | 440 |
+| a handler that sleeps 50 ms, 64 connections | -- | 1 100 | 1 000 |
 
 - On one thread this server does 35 to 58 per cent of the requests per second of the
   callback server when the requests are small or carry 64 KiB, and the same when
@@ -192,13 +193,19 @@ and mean nothing else.
   interpreter of `Task` (closures built and applied). `strace -c` of one connection shows
   `timerfd_settime` four times a request (a timer is set and withdrawn for the idle and
   for the request deadline) and `epoll_wait` hardly at all.
-- Several threads make a request that costs next to nothing slower: every `liftIO` is
-  handed to another thread and its result back. They pay off when the handlers
-  compute: 2.1 times the requests of one thread, on 3 threads (the 4th core is
-  `wrk`'s). The callback server has one thread, so it keeps up with `new-1` there.
+- Several threads cost a round trip between the thread of the scheduler and a worker
+  for every `liftIO`, and a request has a dozen of small ones. The server therefore runs
+  the small steps (the non-blocking `recv` and `send`, parsing the head) with `onReactor`,
+  and `>>=` chains the `liftIO`s that follow each other onto one worker
+  (`PointThen`, `task.md`). Without them 3 threads gave 2 300 requests a second (1 connection),
+  2 600 (64 connections) and 660 (the sleeping handler). They
+  help when the handlers compute: 2.4 times the requests of one thread (the 4th
+  core is `wrk`'s), and they are still 43 to 60 per cent of one thread on `GET /hello`
+  because the handler's own `liftIO`s, the encoding and the copy of the body are
+  handed over. The callback server has one thread, so it keeps up with `new-1` there.
 - A handler that waits (`sleepFor 50`) does not hold a thread: 64 connections get 1 100
   requests a second where waiting alone would allow 1 280. The callback server has no
-  way to wait in a handler. With 3 threads it is slower (660); the reason has not been looked into.
+  way to wait in a handler.
 - Arming the timer once divided a `Nat`, which made this server 5 to 10 times slower
   than the callback server on small requests; see `KNOWN-BUGS.md`, "`Nat` division and
   remainder are slow".

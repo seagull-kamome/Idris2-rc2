@@ -137,7 +137,7 @@ connection limits handler conn = do
       resp <- liftIO (text {headers = [("Connection", "close")]} status message)
       sent <- reply False resp
       when sent $ do
-        onReactor (liftIO (shutdownWrite conn))
+        onReactor (shutdownWrite conn)
         deadline <- after 1000
         ignore (within deadline (discard conn 262144))
 
