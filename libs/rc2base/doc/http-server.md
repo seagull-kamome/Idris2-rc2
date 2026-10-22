@@ -168,7 +168,8 @@ A deliberately small HTTP/1.1 subset:
   that is not plain digits, has more than 18 of them, or appears twice with
   different values, and any `Transfer-Encoding`, make the request unreliable to
   frame, so it is refused rather than guessed. `Network.HTTP.Server` closes the
-  connection; `Network.Async.HTTP.Server` answers `400` and closes.
+  connection; `Network.Async.HTTP.Server` answers `400` and closes (it also answers
+  `413` and `431`, which this server does not).
 - Keep-alive by default (HTTP/1.1's own default); an explicit
   `Connection: close` request header closes the connection after that
   response.

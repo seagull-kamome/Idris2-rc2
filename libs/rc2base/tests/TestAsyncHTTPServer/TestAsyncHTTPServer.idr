@@ -39,6 +39,7 @@ routes =
   [ get ("hello" // end) (liftIO (ok "hello\n"))
   , get ("slow" // end) (sleepFor 100 *> liftIO (ok "slow\n"))
   , get ("users" // capture "id" Int end) (\n => liftIO (ok ("user " ++ show n ++ "\n")))
+  , get ("none" // end) (liftIO (noBody 204))
   ]
 
 handler : Handler
@@ -86,6 +87,17 @@ badFraming : String -> String
 badFraming header =
   "POST /echo HTTP/1.1\r\nHost: t\r\n" ++ header ++ "\r\n\r\nGET /hello HTTP/1.1\r\n\r\n"
 
+-- A request line and headers that fill the head limit (1024 bytes) without
+-- ending, and a body announced over the request limit (4096).
+longHead : String
+longHead = pack (take 1024 (unpack "GET / HTTP/1.1\r\nX: " ++ replicate 1100 'a'))
+
+bigBody : String
+bigBody = "POST /echo HTTP/1.1\r\nHost: t\r\nContent-Length: 5000\r\n\r\n"
+
+headReq : String -> String
+headReq path = "HEAD " ++ path ++ " HTTP/1.1\r\nHost: t\r\n\r\n"
+
 -- The sessions, run together where it matters.
 clients : Task (List (List String))
 clients = do
@@ -93,14 +105,17 @@ clients = do
   body <- blocking (session [postReq "/echo" "payload"])
   alive <- blocking (session [getReq "/hello" False, getReq "/nowhere" True])
   user <- blocking (session [getReq "/users/7" True])
+  headed <- blocking (session [headReq "/echo", getReq "/hello" True])
+  noContent <- blocking (session [getReq "/none" True])
+  limits <- traverse (\r => blocking (session [r])) [longHead, bigBody, "GARBAGE\r\n\r\n"]
   refused <- traverse (\h => blocking (session [badFraming h]))
                ["Content-Length: 18446744073709551619", "Content-Length: abc", "Content-Length: 5\r\nContent-Length: 6", "Transfer-Encoding: chunked"]
   (slowA, slowB) <- both (blocking (session [getReq "/slow" True])) (blocking (session [getReq "/slow" True]))
-  pure ([one, body, alive, user] ++ refused ++ [slowA, slowB])
+  pure ([one, body, alive, user, headed, noContent] ++ limits ++ refused ++ [slowA, slowB])
 
 main : IO ()
 main = do
-  r <- runTaskWith 3 (race (serve port handler) clients)
+  r <- runTaskWith 3 (race (serve {limits = MkLimits 1024 4096} port handler) clients)
   case r of
     Just (Right sessions) => traverse_ (putStrLn . show) sessions
     Just (Left stopped) => putStrLn ("server ended: " ++ show stopped)
