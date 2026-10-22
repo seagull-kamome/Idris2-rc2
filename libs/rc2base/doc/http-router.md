@@ -151,3 +151,9 @@ a single `Int` capture, two captures (`Int` + `String`) via nesting, a
 trailing `splat`, method-based dispatch (a `POST`-only route 404s under
 `GET`), a capture whose `FromSegment` parse fails (404, not a crash),
 and a query string left intact on an otherwise-matching path.
+
+## Other result types
+
+`HandlerOf r tys` is `HandlerFor` with the result `r` left open, and
+`RouteEntryOf r` and `lookupRoute` follow. `Network.Async.HTTP.Router` uses them
+with `r = Task Response`; see `async-http-server.md`.

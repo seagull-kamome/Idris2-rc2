@@ -88,6 +88,8 @@ TESTS=(
     "TestPosixStdio||System.Posix.Stdio: FILE* streams, fgetc/fgets/getline/fread, writes, position, tmpfile, fmemopen"
     "TestLinux||System.Linux.Pipe: pipe2 with O_CLOEXEC/O_NONBLOCK"
     "TestTaskEnv||Control.Task: Env.slot (one value per scheduler, released at close) and Env.addSource (taken out when given up)"
+    "TestNetworkAsync|network contrib|Network.Async: serve a connection with accept/recv/sendAll; a lost race closes the listener"
+    "TestAsyncHTTPServer|network contrib|Network.Async.HTTP.Server: answers, overlapping slow handlers, bodies, keep-alive, close, stopped by a race"
     "TestTaskUring||Control.Task.Uring: nop, file round trip, two requests at once, a read woken by a write, a request given up by a race"
     "TestTaskNoUring||Control.Task.Uring imported and not used: builds without liburing, no liburing in the generated C"
     "TestUringNop||System.Linux.Uring: a tagged nop through submit and wait"

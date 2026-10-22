@@ -13,7 +13,7 @@ import Data.List
 import Data.List1
 import Data.String
 
-import Network.HTTP.Server
+import Network.HTTP.Message
 
 -------------------------------------------------------------------------------
 -- Path segment splitting
@@ -106,13 +106,18 @@ splat = Splat
 -- HandlerFor: the handler signature a Route of a given shape expects
 -------------------------------------------------------------------------------
 
-||| The type of a handler matching a route whose captures are `tys`,
-||| left to right -- one extra leading argument per captured type,
-||| ending in `Network.HTTP.Server`'s own `respond`-continuation shape.
+||| The type of a handler matching a route whose captures are `tys`, left to
+||| right -- one extra leading argument per captured type, ending in `r`, what a
+||| handler gives once it has its captures.
+public export
+HandlerOf : (r : Type) -> List Type -> Type
+HandlerOf r []          = r
+HandlerOf r (ty :: tys) = ty -> HandlerOf r tys
+
+||| `HandlerOf` for `Network.HTTP.Server`'s `respond`-continuation shape.
 public export
 HandlerFor : List Type -> Type
-HandlerFor []         = (Response -> IO ()) -> IO ()
-HandlerFor (ty :: tys) = ty -> HandlerFor tys
+HandlerFor tys = HandlerOf ((Response -> IO ()) -> IO ()) tys
 
 -------------------------------------------------------------------------------
 -- Matching
@@ -122,7 +127,7 @@ HandlerFor (ty :: tys) = ty -> HandlerFor tys
 ||| `handler` to each captured value as it goes. `Nothing` on a length
 ||| or literal-segment mismatch, or a `FromSegment` parse failure.
 export
-matchRoute : Route tys -> List String -> HandlerFor tys -> Maybe ((Response -> IO ()) -> IO ())
+matchRoute : Route tys -> List String -> HandlerOf r tys -> Maybe r
 matchRoute End         []           h = Just h
 matchRoute End         (_ :: _)     h = Nothing
 matchRoute (Fixed s r) (seg :: segs) h = if s == seg then matchRoute r segs h else Nothing
