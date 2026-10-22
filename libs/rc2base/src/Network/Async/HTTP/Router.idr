@@ -8,6 +8,7 @@ module Network.Async.HTTP.Router
 -- This module was licensed by BSD3.
 
 import Control.Task
+import Data.Maybe
 import Network.Async.HTTP.Server
 import Network.HTTP.Router
 
@@ -18,8 +19,9 @@ RouteEntry = RouteEntryOf (Task Response)
 
 ||| Tries each route in order and runs the handler of the first whose method and
 ||| path both match; `notFound` answers the others, and also a request whose
-||| method string `Method` does not recognize.
+||| method string `Method` does not recognize. (A program that uses both routers
+||| names this one in full: `Network.Async.HTTP.Router.router`.)
 export
 router : (notFound : Handler) -> List Network.Async.HTTP.Router.RouteEntry -> Handler
 router notFound entries req =
-  maybe (notFound req) id (lookupRoute entries req.method req.path)
+  fromMaybe (notFound req) (lookupRoute entries req.method req.path)

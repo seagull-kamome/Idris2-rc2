@@ -85,7 +85,10 @@ in coop: `<*>` is `>>=`), `HasIO` (`liftIO = Point`) and `Alternative`
 implementation, `Concurrent`, as in coop, because `a *> b` must mean "a, then b".
 
 Other functions: `both` (`Both`), `race : Task a -> Task b -> Task (Either a b)`,
-`spawn`, `yield`, `forever`.
+`spawn`, `yield`, `forever`, `now` (the time on the clock of the scheduler, the virtual
+one in `runTaskVirtual`), and `timeoutAt : Time -> Task a -> Task (Maybe a)`, a `race`
+against `sleepTill` whose loser is given up: a deadline fixed once can be shared by
+several waits, which is what a time per request needs and a time per read cannot give.
 
 A `Point` runs to completion on the scheduler's thread: a blocking call in it
 blocks every task. Use non-blocking descriptors and `Async` for waiting.

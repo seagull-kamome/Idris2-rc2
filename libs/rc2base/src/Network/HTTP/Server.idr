@@ -254,7 +254,7 @@ flushWrite st conn = do
 appendResponse : Conn -> Response -> IO Bool
 appendResponse conn resp = do
   let bodyLen = byteLength resp.body
-      head    = responseHead resp bodyLen
+      head    = responseHead resp
       headLen = stringByteLength head
       -- 1xx, 204 and 304 have no body, whatever the handler gave
       sentLen = if hasBody resp.status then bodyLen else 0

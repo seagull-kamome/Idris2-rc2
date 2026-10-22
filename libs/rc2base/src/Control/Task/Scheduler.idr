@@ -471,23 +471,23 @@ turn s timeoutMs = do
   fireTimers s
   q' <- readIORef s.runQ
   pend <- readIORef s.pending
-  if Queue.length q' == 0 && pend == 0
+  if Queue.isEmpty q' && pend == 0
      then pure False
      else do
        virt <- readIORef s.virtual
        timers <- readIORef s.timers
        -- a virtual clock does not wait for a timer: look, and move it if nothing else happens
-       let wait = if Queue.length q' > 0 || (isJust virt && not (null timers)) then 0 else timeoutMs
+       let wait = if not (Queue.isEmpty q') || (isJust virt && not (null timers)) then 0 else timeoutMs
        Right evs <- epollWait s.master wait
          | Left _ => pure True
        srcs <- readIORef s.sources
        traverse_ (\ev => maybe (pure ()) (.drain) (lookup ev.fd srcs)) evs
-       when (isJust virt && null evs && Queue.length q' == 0) $
+       when (isJust virt && null evs && Queue.isEmpty q') $
          for_ (leftMost timers) $ \((t, _), _) => writeIORef s.virtual (Just t)
        fireTimers s
        runBatch s stepBudget
        q3 <- readIORef s.runQ
-       when (Queue.length q3 > 0) (wake s)
+       unless (Queue.isEmpty q3) (wake s)
        pure True
 
 runWithTime : (virtual : Bool) -> (parallel : Bool) -> (untilRoot : Bool) -> (workers : Nat) -> Task a -> IO (Maybe a, Time)

@@ -92,6 +92,7 @@ TESTS=(
     "TestNetworkAsync|network contrib|Network.Async: serve a connection; a lost race closes the listener and a just-accepted connection; recv/send refuse bad ranges"
     "TestHTTPMessage|contrib|Network.HTTP.Message: bodyLength, connectionClose, responseHead, findHeadEndFrom, parseHead (strict header lines), growBuffer; FromSegment Int"
     "TestAsyncHTTPServer|network contrib|Network.Async.HTTP.Server: answers, keep-alive, pipelining, split heads, HEAD/204, Connection, 400/413/431, limits, big bodies"
+    "TestAsyncHTTPServerTimeouts|network contrib|Network.Async.HTTP.Server timeouts: idle, stalled and trickling requests (408), idle keep-alive, a client that does not read"
     "TestAsyncHTTPServerThreads|network contrib|Network.Async.HTTP.Server: the same server on one thread and on eight (runServer); handlers overlap only with several"
     "TestTaskUring||Control.Task.Uring: nop, file round trip, two requests at once, a read woken by a write, a request given up by a race"
     "TestTaskNoUring||Control.Task.Uring imported and not used: builds without liburing, no liburing in the generated C"

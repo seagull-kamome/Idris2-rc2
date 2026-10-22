@@ -188,6 +188,6 @@ bigBody port = do
 
 main : IO ()
 main = do
-  scenario 18741 (MkLimits 1024 4096) (smallLimits 18741)
-  scenario 18742 (MkLimits 65536 2048) (headAboveRequest 18742)
+  scenario 18741 ({ maxHeadBytes := 1024, maxRequestBytes := 4096 } defaultLimits) (smallLimits 18741)
+  scenario 18742 ({ maxRequestBytes := 2048 } defaultLimits) (headAboveRequest 18742)
   scenario 18743 defaultLimits (bigBody 18743)

@@ -9,7 +9,6 @@ module Network.HTTP.Message
 
 import Data.Buffer
 import Data.IORef
-import Data.List
 import Data.List1
 import Data.Maybe
 import Data.String
@@ -206,6 +205,7 @@ reasonPhrase 401 = "Unauthorized"
 reasonPhrase 403 = "Forbidden"
 reasonPhrase 404 = "Not Found"
 reasonPhrase 405 = "Method Not Allowed"
+reasonPhrase 408 = "Request Timeout"
 reasonPhrase 413 = "Payload Too Large"
 reasonPhrase 431 = "Request Header Fields Too Large"
 reasonPhrase 500 = "Internal Server Error"
@@ -261,11 +261,11 @@ hasBody status = status >= 200 && status /= 204 && status /= 304
 -- as one ASCII string. Header keys/values are assumed ASCII (RFC 7230);
 -- a non-ASCII or NUL byte in one corrupts the framing.
 export
-responseHead : Response -> (bodyLen : Int) -> String
-responseHead resp bodyLen =
+responseHead : Response -> String
+responseHead resp =
     "HTTP/1.1 " ++ show resp.status ++ " " ++ reasonPhrase resp.status ++ "\r\n"
     ++ concatMap headerLine resp.headers
-    ++ (if hasBody resp.status then "Content-Length: " ++ show bodyLen ++ "\r\n" else "")
+    ++ (if hasBody resp.status then "Content-Length: " ++ show (byteLength resp.body) ++ "\r\n" else "")
     ++ "\r\n"
   where
     headerLine : (String, String) -> String

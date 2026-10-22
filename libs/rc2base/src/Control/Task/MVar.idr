@@ -42,73 +42,76 @@ export
 newMVar : a -> Task (MVar a)
 newMVar x = onReactor (newMVarIO x)
 
--- Take the value if there is one; the first task waiting to put goes in.
+-- The cell was full and has been emptied: the first task waiting to put goes in.
+refill : MVar a -> Waiters (a, Completion ()) -> IO ()
+refill m putters = case front putters of
+  Nothing => writeIORef m.state (Vacant none)
+  Just ((v, accepted), rest) => writeIORef m.state (Holding v rest) *> accepted ()
+
+-- A value arrives in the empty cell: the first task waiting to take gets it,
+-- else it stays.
+deliver : MVar a -> a -> Waiters (Completion a) -> IO ()
+deliver m v takers = case front takers of
+  Nothing => writeIORef m.state (Holding v none)
+  Just (taker, rest) => writeIORef m.state (Vacant rest) *> taker v
+
+-- Take the value if there is one.
 tryTakeNow : MVar a -> IO (Maybe a)
-tryTakeNow m = do
-  st <- readIORef m.state
-  case st of
-    Vacant _ => pure Nothing
-    Holding x putters => do
-      case front putters of
-        Nothing => writeIORef m.state (Vacant none)
-        Just ((v, accepted), rest) => do
-          writeIORef m.state (Holding v rest)
-          accepted ()
-      pure (Just x)
+tryTakeNow m = readIORef m.state >>= \st => case st of
+  Vacant _ => pure Nothing
+  Holding x putters => Just x <$ refill m putters
 
--- Put the value if the cell is empty; the first task waiting to take gets it.
+-- Put the value if the cell is empty.
 tryPutNow : MVar a -> a -> IO Bool
-tryPutNow m v = do
-  st <- readIORef m.state
-  case st of
-    Holding _ _ => pure False
-    Vacant takers => do
-      case front takers of
-        Nothing => writeIORef m.state (Holding v none)
-        Just (taker, rest) => do
-          writeIORef m.state (Vacant rest)
-          taker v
-      pure True
+tryPutNow m v = readIORef m.state >>= \st => case st of
+  Holding _ _ => pure False
+  Vacant takers => True <$ deliver m v takers
 
--- Put the value, and if the cell is full wait in line without a task behind.
+-- Take the value, or join the line of takers (its number is the result).
+takeOrWait : MVar a -> Completion a -> IO (Maybe Nat)
+takeOrWait m done = readIORef m.state >>= \st => case st of
+  Vacant takers => do
+    let (k, takers') = enter done takers
+    writeIORef m.state (Vacant takers')
+    pure (Just k)
+  Holding x putters => do
+    refill m putters
+    Nothing <$ done x
+
+-- Put the value, or join the line of putters.
+putOrWait : MVar a -> a -> Completion () -> IO (Maybe Nat)
+putOrWait m v done = readIORef m.state >>= \st => case st of
+  Vacant takers => do
+    deliver m v takers
+    Nothing <$ done ()
+  Holding x putters => do
+    let (k, putters') = enter (v, done) putters
+    writeIORef m.state (Holding x putters')
+    pure (Just k)
+
+-- Put the value; if the cell is full, wait in line with no task behind.
 putAnyhow : MVar a -> a -> IO ()
-putAnyhow m v = do
-  ok <- tryPutNow m v
-  unless ok $ do
-    Holding x putters <- readIORef m.state
-      | Vacant _ => pure ()
-    writeIORef m.state (Holding x (snd (enter (v, \_ => pure ()) putters)))
+putAnyhow m v = ignore (putOrWait m v (\_ => pure ()))
+
+-- Leave the line of takers, or of putters.
+leaveTakers, leavePutters : MVar a -> Nat -> Cancel
+leaveTakers m k = MkCancel $ modifyIORef m.state $ \case
+  Vacant takers => Vacant (leave k takers)
+  other => other
+leavePutters m k = MkCancel $ modifyIORef m.state $ \case
+  Holding x putters => Holding x (leave k putters)
+  other => other
 
 ||| Take the value, waiting while the cell is empty. A value handed to a task
 ||| that is given up before it goes on with it goes back into the cell.
 export
 takeMVar : MVar a -> Task a
-takeMVar m = handoff (\_, done => do
-  r <- tryTakeNow m
-  case r of
-    Just v => done v *> pure noCancel
-    Nothing => do
-      Vacant takers <- readIORef m.state
-        | Holding _ _ => pure noCancel
-      let (k, takers') = enter done takers
-      writeIORef m.state (Vacant takers')
-      pure (MkCancel (modifyIORef m.state (\st => case st of
-                                                    Vacant ts => Vacant (leave k ts)
-                                                    other => other)))) (putAnyhow m)
+takeMVar m = handoff (\_, done => maybe noCancel (leaveTakers m) <$> takeOrWait m done) (putAnyhow m)
 
 ||| Put a value, waiting while the cell is full.
 export
 putMVar : MVar a -> a -> Task ()
-putMVar m v = Async $ \_, done => do
-  ok <- tryPutNow m v
-  if ok then done () *> pure noCancel else do
-    Holding x putters <- readIORef m.state
-      | Vacant _ => pure noCancel
-    let (k, putters') = enter (v, done) putters
-    writeIORef m.state (Holding x putters')
-    pure (MkCancel (modifyIORef m.state (\st => case st of
-                                                  Holding y ps => Holding y (leave k ps)
-                                                  other => other)))
+putMVar m v = Async $ \_, done => maybe noCancel (leavePutters m) <$> putOrWait m v done
 
 ||| Take the value if there is one, without waiting.
 export

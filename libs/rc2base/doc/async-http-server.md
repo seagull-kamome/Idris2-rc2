@@ -87,8 +87,17 @@ main = ignore (runTaskWith 4 (serve 8080 handler))
 - `accept` that ran out of descriptors or memory is tried again after 10 ms; one
   that failed with an error of the moment (`ECONNABORTED`, `EPROTO`, the network
   errors `accept(2)` lists) at once. Any other error ends the server.
-- There is no timeout on reading or writing yet: a client that sends one byte at a
-  time holds its connection (and the memory of its head, up to the limit).
+- Timeouts (`Limits`, in milliseconds; 0 is none): `idleTimeoutMs` (default 60 s)
+  is how long a connection may wait for the first byte of a request, the first one or
+  the next one of a kept-alive connection; after it the connection is closed.
+  `requestTimeoutMs` (30 s) is how long a request may take from its first byte to
+  its last: one deadline for the head and the body together, not a time per read, so a
+  client that sends a byte at a time does not hold the connection; after it the
+  request is answered with `408` and the connection ends. `writeTimeoutMs` (30 s) is
+  how long a response may take to go out; after it the connection is closed. The time
+  the handler takes is not counted: give a handler that may wait for long its own
+  `timeoutAt`. (A `recv` that is given up by a timeout while it runs on a worker, in
+  parallel mode, is not stopped; see the note on `close` below.)
 - Requests that arrive together are served one after the other, and what is left
   after each is copied to the front of a new buffer; for thousands of tiny pipelined
   requests in one read that is quadratic (not measured).
