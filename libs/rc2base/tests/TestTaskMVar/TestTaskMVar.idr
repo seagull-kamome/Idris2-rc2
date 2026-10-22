@@ -72,6 +72,17 @@ givenUpModify = do
   _ <- race (modifyMVar_ m (\_ => empty)) (sleepFor 20)
   tryTakeMVar m
 
+-- The value is handed to a take in the very step that makes it lose the race:
+-- it goes back into the cell.
+handedToLoser : Task (Maybe Nat, Maybe Nat)
+handedToLoser = do
+  m <- newEmptyMVar
+  _ <- race (takeMVar m) (tryPutMVar m 5)
+  a <- tryTakeMVar m
+  _ <- race (modifyMVar_ m (\n => pure (n + 1))) (tryPutMVar m 3)
+  b <- tryTakeMVar m
+  pure (a, b)
+
 main : IO ()
 main = do
   r <- runTaskParallel 4 (do
@@ -81,10 +92,12 @@ main = do
          d <- fullTest
          e <- givenUpTake
          f <- givenUpModify
+         g <- handedToLoser
          pure [ "lock: " ++ show a
               , "wait: " ++ show b
               , "line: " ++ show c
               , "full: " ++ show d
               , "given-up take: " ++ show e
-              , "given-up modify: " ++ show f ])
+              , "given-up modify: " ++ show f
+              , "handed to the loser: " ++ show g ])
   traverse_ putStrLn (fromMaybe ["no result"] r)

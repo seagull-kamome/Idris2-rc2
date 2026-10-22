@@ -72,6 +72,14 @@ closeWakes = do
   close ch
   wait r
 
+-- The value is handed to a receive in the very step that makes it lose the race:
+-- it goes back into the channel.
+handedToLoser : Task (Maybe Nat)
+handedToLoser = do
+  ch <- newChan 1
+  _ <- race (recv ch) (trySend ch (the Nat 9))
+  tryRecv ch
+
 main : IO ()
 main = do
   r <- runTaskParallel 4 (do
@@ -79,8 +87,10 @@ main = do
          b <- edges
          c <- givenUp
          d <- closeWakes
+         e <- handedToLoser
          pure [ "pipeline (sum, seen, received): " ++ show a
               , "edges: " ++ show b
               , "given-up recv: " ++ show c
-              , "close wakes: " ++ show d ])
+              , "close wakes: " ++ show d
+              , "handed to the loser: " ++ show e ])
   traverse_ putStrLn (fromMaybe ["no result"] r)
