@@ -264,7 +264,7 @@ settle p final answer = do
   case st of
     Pending ws => do
       writeIORef p.state final
-      traverse_ (\w => (snd w) answer) ws
+      traverse_ (($ answer) . snd) ws
     _ => pure ()
 
 ||| Start a task beside the rest and get a promise of its result.

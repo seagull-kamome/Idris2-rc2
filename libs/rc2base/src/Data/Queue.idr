@@ -36,6 +36,10 @@ namespace Queue
       (x :: f) => Just (x, MkQueue f [])
     dequeue (MkQueue (x :: f) b) = Just (x, MkQueue f b)
 
+    public export isEmpty : Queue a -> Bool
+    isEmpty (MkQueue [] []) = True
+    isEmpty _ = False
+
     public export fromList : List a -> Queue a
     fromList xs = MkQueue xs []
 
