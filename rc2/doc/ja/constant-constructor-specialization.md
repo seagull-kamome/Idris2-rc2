@@ -154,6 +154,25 @@ def Prelude.Types.elemBy  (fun args= ["v10077", "v10078", "v10079"] ret= Boxed)
 
 `--directive timing`の出力には、この内訳が表示される(`N distinct keys`、続いて`N keys past the scrutinee-only gate, M clones kept`)。そのため、コンパイラを再ビルドしなくても、任意のプログラムで再現できる。
 
+## 部分適用に取り込まれる辞書
+
+`>>=`のあとでもう一度辞書を使う関数では、リフトされた継続が辞書を取り込みます。`Data.IORef.modifyIORef`、`newIORef`、`Network.Socket.close`など、ライブラリの`HasIO io =>`関数はどれもこの形です。
+
+```
+case v3980 of  CONS [_, liftIO] -> ...
+partial Data.IORef.{modifyIORef:2} missing= 1 [v3980, v3981, v3982]
+```
+
+この取り込みは「保存された使い方」と数えられ、ゲートが断っていました。そのため呼び出しのたびに、辞書の`>>=`と`liftIO`を`apply`で呼んでいました。リフトされたラムダは、取り込んだ値を先頭の引数として受け取ります。したがって`partial g ...`の位置`q`への取り込みは、呼び出しの引数と同じく、`g`の引数`q`への転送箇所です。
+
+- `underAppSites`が取り込みを列挙し、`constForwardSites`は`forwardSites`にそれを足したものです。クロージャ側は`forwardSites`のままです。そちらのリダイレクトは部分適用を書き換えないためです。
+- `collectConstOpportunities`と`constNeeds`は、`RAppName`に加えて`RUnderApp`も読みます。部分適用に取り込まれた定数が独立したキーになり、継続も複製されます。
+- `redirectConstCallSites`は、`RUnderApp g missing args`を、位置`q`の引数を除いた複製への適用に書き換えます。複製は引数が1つ少ないので、`missing`は変わりません。
+
+`TestAsyncHTTPServer`では、定数の`HasIO IO`辞書を渡す`modifyIORef`の26箇所と`newIORef`の11箇所が、すべて複製に向きます。回帰テストは`rc2/tests/Test131SpecConstConCapture/`です。
+
+`libs/rc2base/bench/bench.sh`で測ると(2026-10-23)、誤差を超える変化はありませんでした(`GET /hello`、接続1、スレッド1で、前が11 600、後が11 340)。除かれる動的ディスパッチは、Taskサーバが時間を使っている場所ではありません。
+
 ## 反復
 
 このパスは、`applySpecRounds`の各ラウンドで、クロージャ側のあとに走る。新しい複製が1つも残らないラウンドが出るまで繰り返す。残された複製の本体から、新しい定数引数が見えるようになることがあり、クロージャの複製から、新しい辞書が見えるようになることもあるからである。仕組みと、`idris2-lsp`での収束の表(ラウンドごとに残るコンストラクタ複製の数: 1429、163、13、1、0)と、ラウンド数の上限を8にした理由は、`speculative-closure-specialization.md`の「Iteration」にある。
