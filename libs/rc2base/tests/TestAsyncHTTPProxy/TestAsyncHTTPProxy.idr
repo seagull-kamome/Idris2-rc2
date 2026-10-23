@@ -18,6 +18,8 @@ import Data.List
 import Data.List1
 import Data.Maybe
 import Data.String
+import Data.Buffer
+import Network.Async
 import Network.Async.HTTP.Proxy
 import Network.Async.HTTP.Server
 import Network.Socket
@@ -51,19 +53,62 @@ upstream req = case fst (break (== '?') req.path) of
     describe = do
       body <- liftIO (toString req.body)
       liftIO (ok (joinBy " " [req.method, req.path, header "host" req, header "x-forwarded-host" req, header "x-custom" req, header "x-secret" req
+                             , header "x-forwarded-for" req, header "forwarded" req, header "x-real-ip" req, header "x-forwarded-proto" req
                              , header "connection" req, header "content-length" req, body] ++ "\n"))
 
 localhost : SocketAddress
 localhost = IPv4Addr 127 0 0 1
 
-front : Handler
-front =
+-- A server that says the same thing to everyone who connects, and closes without
+-- reading what they send (the system then resets the connection).
+record Raw where
+  constructor MkRaw
+  mount : String
+  port : Port
+  reply : String
+  options : ProxyOptions
+
+-- An answer of exactly this many bytes (head and body).
+exact : String
+exact = "HTTP/1.0 200 OK\r\n\r\nabcd"
+
+raws : List Raw
+raws =
+  [ MkRaw "/r100" 18791 "HTTP/1.1 100 Continue\r\n\r\n" defaultProxy
+  , MkRaw "/rplus" 18792 "HTTP/1.1 +200 OK\r\nContent-Length: 0\r\n\r\n" defaultProxy
+  , MkRaw "/rbadcl" 18793 "HTTP/1.1 200 OK\r\nContent-Length: abc\r\n\r\nxx" defaultProxy
+  , MkRaw "/rdupcl" 18794 "HTTP/1.1 200 OK\r\nContent-Length: 2\r\nContent-Length: 3\r\n\r\nabc" defaultProxy
+  , MkRaw "/rnocl" 18795 "HTTP/1.0 200 OK\r\nContent-Type: text/plain\r\n\r\nuntil the end" defaultProxy
+  , MkRaw "/rshort" 18796 "HTTP/1.1 200 OK\r\nContent-Length: 10\r\n\r\nabc" defaultProxy
+  , MkRaw "/rexact" 18797 exact ({ maxResponseBytes := cast (length exact) } defaultProxy)
+  , MkRaw "/rover" 18798 exact ({ maxResponseBytes := cast (length exact) - 1 } defaultProxy)
+  , MkRaw "/rhead" 18799 ("HTTP/1.1 200 OK\r\nX-Pad: " ++ pack (replicate 300 'p') ++ "\r\nContent-Length: 0\r\n\r\n")
+          ({ maxHeadBytes := 100 } defaultProxy)
+  , MkRaw "/rearly" 18800 "HTTP/1.1 413 Payload Too Large\r\nContent-Length: 0\r\n\r\n" defaultProxy
+  ]
+
+rawServer : Raw -> Task ()
+rawServer r = do
+  Right listener <- liftIO (Network.Async.listen r.port)
+    | Left _ => pure ()
+  withSock listener $ forever $ do
+    Right conn <- Network.Async.accept listener
+      | Left _ => pure ()
+    withSock conn $ do
+      bytes <- liftIO (fromString r.reply)
+      ignore (Network.Async.sendAll conn bytes 0 (byteLength bytes))
+
+mainMounts : Handler
+mainMounts =
   proxy "/api" localhost upstreamPort
     (proxy {options = { stripMount := False } defaultProxy} "/raw" localhost upstreamPort
       (proxy "/dead" localhost deadPort
         (proxy {options = { maxResponseBytes := 1000 } defaultProxy} "/small" localhost upstreamPort
           (proxy {options = { timeoutMs := 300 } defaultProxy} "/quick" localhost upstreamPort
             (\_ => liftIO (notFound "front: none\n"))))))
+
+front : Handler
+front = foldr (\r, next => proxy {options = r.options} r.mount localhost r.port next) mainMounts raws
 
 session : String -> IO String
 session request = do
@@ -112,10 +157,12 @@ sizeOf answer = show (isPrefixOf "HTTP/1.1 200 OK\r\n" answer) ++ " " ++ show (l
 
 clients : Task (List String)
 clients = do
+  -- the servers are started by tasks of the same scheduler: let them listen
+  sleepFor 200
   let ask = \r => blocking (session r)
   let plain = summary ["content-type", "x-up", "set-cookie", "location", "keep-alive", "connection"]
   hello <- ask (req "GET" "/api/hello")
-  info <- ask ("POST /api/info?a=1&b=%20 HTTP/1.1\r\nHost: front.test\r\nConnection: close\r\nX-Custom: yes\r\nX-Forwarded-Host: spoofed\r\nContent-Length: 5\r\n\r\nhello")
+  info <- ask ("POST /api/info?a=1&b=%20 HTTP/1.1\r\nHost: front.test\r\nConnection: close\r\nX-Custom: yes\r\nX-Forwarded-Host: spoofed\r\nX-Forwarded-For: 1.2.3.4\r\nForwarded: for=1.2.3.4\r\nX-Real-IP: 9.9.9.9\r\nContent-Length: 5\r\n\r\nhello")
   unlisted <- ask "GET /api/info HTTP/1.1\r\nHost: front.test\r\nConnection: close, X-Secret\r\nX-Secret: s\r\nX-Other: o\r\n\r\n"
   dotdot <- ask (req "GET" "/api/../admin")
   encoded <- ask (req "GET" "/api/%2e%2e/admin")
@@ -133,13 +180,21 @@ clients = do
   smallOk <- ask (req "GET" "/small/hello")
   slow <- ask (req "GET" "/quick/slow")
   quickOk <- ask (req "GET" "/quick/hello")
-  pure [ plain hello, plain info, plain unlisted, plain dotdot, plain encoded, plain chunked, plain slash, plain root, plain raw, plain redirect, plain headed
+  encodedSlash <- ask (req "GET" "/api/..%2f..%2fetc")
+  encodedBackslash <- ask (req "GET" "/api/..%5cetc")
+  rawAnswers <- traverse (\path => ask (req "GET" (path ++ "/x")))
+                  ["/r100", "/rplus", "/rbadcl", "/rdupcl", "/rnocl", "/rshort", "/rexact", "/rover", "/rhead"]
+  let body = pack (replicate 2000000 'x')
+  early <- ask ("POST /rearly/upload HTTP/1.1\r\nHost: front.test\r\nConnection: close\r\nContent-Length: "
+                ++ show (length body) ++ "\r\n\r\n" ++ body)
+  pure ([ plain hello, plain info, plain unlisted, plain dotdot, plain encoded, plain chunked, plain slash, plain root, plain raw, plain redirect, plain headed
        , sizeOf big, plain missing, plain outside, plain dead, plain tooBig, plain smallOk
-       , plain slow, plain quickOk ]
+       , plain slow, plain quickOk, plain encodedSlash, plain encodedBackslash ]
+       ++ map plain rawAnswers ++ [plain early])
 
 main : IO ()
 main = do
-  r <- runTaskWith 3 (race (race (serve upstreamPort upstream) (serve proxyPort front)) clients)
+  r <- runTaskWith 3 (race (race (serve upstreamPort upstream) (traverse_ (spawn . rawServer) raws *> serve proxyPort front)) clients)
   case r of
     Just (Right lines) => traverse_ putStrLn lines
     Just (Left stopped) => putStrLn ("a server ended: " ++ show (either id id stopped))

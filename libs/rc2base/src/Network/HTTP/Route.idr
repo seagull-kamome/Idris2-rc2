@@ -52,12 +52,15 @@ segmentsUnder mountAt path = below (splitPath mountAt) (splitPath (pathOnly path
     below (m :: ms) (seg :: segs) = if m == seg then below ms segs else Nothing
     below _ [] = Nothing
 
-||| Whether the path (query string dropped) has a `.` or `..` segment, also when it
-||| is percent-encoded (`%2e%2e`). What serves files, or hands a path on to
-||| something that does, refuses such a path.
+||| Whether the path (query string dropped) has a `.` or `..` segment once it is
+||| percent-decoded, with `/` and `\` both ending a segment: `%2e%2e`, `..%2f` and
+||| `..%5c` count. What serves files, or hands a path on to something that does,
+||| refuses such a path.
 export
 hasDotSegment : String -> Bool
-hasDotSegment path = any (\seg => elem (percentDecode seg) [".", ".."]) (splitPath (pathOnly path))
+hasDotSegment path =
+  any (\seg => seg == "." || seg == "..")
+      (forget (split (\c => c == '/' || c == '\\') (percentDecode (pathOnly path))))
 
 -------------------------------------------------------------------------------
 -- Capturing a segment as a value

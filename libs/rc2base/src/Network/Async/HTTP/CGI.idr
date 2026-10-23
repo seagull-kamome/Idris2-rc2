@@ -15,12 +15,14 @@ import Data.Bits
 import Data.Buffer
 import Data.IORef
 import Data.List
+import Data.Either
 import Data.Maybe
 import Data.String
 import Network.Async
 import Network.Async.HTTP.Server
 import Network.HTTP.Route
 import Network.URL
+import System.Concurrency
 import System.Linux.Epoll
 import System.Linux.Pipe
 import System.Linux.Process
@@ -154,7 +156,7 @@ cgi {options} mountAt dir next req = case segmentsUnder mountAt req.path of
         headerVars : List (String, String)
         headerVars =
           let wanted = filter (\k => not (elem k ["proxy", "content-type", "content-length"])
-                                      && not (elem '_' (unpack k))
+                                      && all (\c => isAlphaNum c || c == '-') (unpack k)
                                       && (options.passAuthorization || k /= "authorization"))
                               (nub (map fst req.headers))
           in map (\k => (variableName k, joinBy ", " [ v | (k', v) <- req.headers, k' == k ])) wanted
@@ -176,11 +178,12 @@ cgi {options} mountAt dir next req = case segmentsUnder mountAt req.path of
         inherited : List (String, String)
         inherited = filter (\(k, _) => not (elem k (map fst (cgiVars ++ headerVars)))) options.environment
 
-    nonBlocking : FileDesc -> IO ()
+    -- Whether the descriptor could be made non-blocking.
+    nonBlocking : FileDesc -> IO Bool
     nonBlocking fd = do
       Right flags <- getStatusFlags fd
-        | Left _ => pure ()
-      ignore (setStatusFlags fd (flags .|. O_NONBLOCK))
+        | Left _ => pure False
+      isRight <$> setStatusFlags fd (flags .|. O_NONBLOCK)
 
     -- Close a descriptor once.
     shut : IORef Bool -> FileDesc -> IO ()
@@ -220,19 +223,32 @@ cgi {options} mountAt dir next req = case segmentsUnder mountAt req.path of
             Right n => if len + n > options.maxOutputBytes then pure Nothing else go buf' (len + n)
             Left _ => pure (Just (buf', len))
 
-    -- Wait for the program to end. With a pidfd the program is known to have ended
-    -- and `waitpid` does not wait; the flag is set in the same step, so that the
-    -- cleanup never signals a process ID that is free again.
+    -- Wait for the program to end, without blocking the scheduler: on its pidfd, or,
+    -- where there is none, by asking now and then. Then what it started is killed,
+    -- and the flag set, in the one step that also reaps it: the group number is not
+    -- free while a member of the group lives, and the cleanup never signals a number
+    -- that is free again.
     reap : ProcessID -> IORef Bool -> Task ()
     reap pid reaped = do
       pidfd <- liftIO (pidfd_open pid 0)
       case pidfd of
         Right fd => do
           _ <- finally (\_ => ignore (close fd)) (awaitReadable fd)
-          onReactor (ignore (waitpid pid WNOHANG) *> writeIORef reaped True)
-        Left _ => do
-          _ <- blocking (waitpid pid 0)
-          liftIO (writeIORef reaped True)
+          onReactor finish
+        Left _ => poll
+      where
+        finish : IO ()
+        finish = do
+          _ <- waitpid pid WNOHANG
+          _ <- kill (negateProcess pid) SIGKILL
+          writeIORef reaped True
+
+        poll : Task ()
+        poll = do
+          r <- onReactor (waitpid pid WNOHANG)
+          case r of
+            Right (MkProcessID 0, _) => sleepFor 5 *> poll
+            _ => onReactor (kill (negateProcess pid) SIGKILL *> writeIORef reaped True)
 
     answer : Buffer -> (len : Int) -> Task Response
     answer buf len = do
@@ -280,7 +296,6 @@ cgi {options} mountAt dir next req = case segmentsUnder mountAt req.path of
       case started of
         Left _ => liftIO (ignore (close inWrite) *> ignore (close outRead)) *> failed 502 "bad gateway\n"
         Right pid => do
-          liftIO (nonBlocking inWrite *> nonBlocking outRead)
           reaped <- liftIO (newIORef False)
           writing <- liftIO (newIORef True)
           let cleanup : Maybe Response -> IO ()
@@ -292,6 +307,14 @@ cgi {options} mountAt dir next req = case segmentsUnder mountAt req.path of
                   -- the program is a process group of its own: what it started goes too
                   _ <- kill (negateProcess pid) SIGKILL
                   _ <- kill pid SIGKILL
-                  _ <- waitpid pid 0
+                  -- killed, so gone at once; a process in an uninterruptible sleep is
+                  -- reaped by a thread of its own, not waited for on the scheduler
+                  r <- waitpid pid WNOHANG
+                  case r of
+                    Right (MkProcessID 0, _) => ignore (fork (ignore (waitpid pid 0)))
+                    _ => pure ()
                   writeIORef reaped True
-          finally cleanup (exchange pid inWrite outRead reaped writing)
+          finally cleanup $ do
+            -- both ends have to be non-blocking for the reads and writes to wait
+            ready <- liftIO (all id <$> traverse nonBlocking [inWrite, outRead])
+            if ready then exchange pid inWrite outRead reaped writing else failed 502 "bad gateway\n"

@@ -14,7 +14,6 @@ import System.FFI
 import System.Posix.Errno
 import System.Posix.FileDesc
 import System.Posix.Process
-import System.Posix.Signal
 
 %default total
 
@@ -47,7 +46,7 @@ prim__addChdir : AnyPtr -> String -> PrimIO Int32
 prim__addCloseFrom : AnyPtr -> (lowfd : Int32) -> PrimIO Int32
 
 -------------------------------------------------------------------------------
--- Attributes: here only the signals that get their default action again.
+-- Attributes: the signal mask, and the signals that get their default action again.
 
 %inline %foreign "CExpr:(posix_spawnattr_init((posix_spawnattr_t *)($1))),libc,spawn.h"
 prim__attrInit : AnyPtr -> PrimIO Int32
@@ -70,8 +69,8 @@ prim__SETPGROUP : Int32
 
 %inline %foreign "CExpr:(sigemptyset((sigset_t *)($1))),libc,signal.h"
 prim__sigemptyset : AnyPtr -> PrimIO Int32
-%inline %foreign "CExpr:(sigaddset((sigset_t *)($1), $2)),libc,signal.h"
-prim__sigaddset : AnyPtr -> (signal : Int32) -> PrimIO Int32
+%inline %foreign "CExpr:(sigfillset((sigset_t *)($1))),libc,signal.h"
+prim__sigfillset : AnyPtr -> PrimIO Int32
 
 -------------------------------------------------------------------------------
 -- The call itself: the process ID is written to `$6`.
@@ -88,10 +87,6 @@ prim__ignoreSigpipe : PrimIO Int32
 attrFlags : Int32
 attrFlags = prim__SETSIGDEF + prim__SETSIGMASK + prim__SETPGROUP   -- distinct bits
 
--- The number of SIGPIPE.
-sigpipe : Int32
-sigpipe = case SIGPIPE of MkSignal n => n
-
 -- Run the calls one after the other, up to the first that fails; its error number.
 runSteps : List (PrimIO Int32) -> IO Int32
 runSteps [] = pure 0
@@ -105,8 +100,8 @@ runSteps (step :: rest) = do
 ||| standard input is `stdin` and its standard output `stdout`; the standard error
 ||| is ours, and no other descriptor is passed on. The program is a process group
 ||| of its own (its process ID is the group's: `kill (-pid)` ends it and what it
-||| started), has no blocked signal (the caller may block some, for `signalfd`), and
-||| SIGPIPE has its default action, whatever `ignoreSigpipe` did here. The
+||| started), has no blocked signal (the caller may block some, for `signalfd`), and every
+||| signal has its default action (not the `SIG_IGN` the caller set, which `exec` keeps). The
 ||| descriptors stay open in the caller. `Left` when the program cannot be started (`ENOENT`, `EACCES`, ...).
 export
 spawnStdio : (path, cwd : String) -> (argv, envp : List String) -> (stdin, stdout : FileDesc)
@@ -127,8 +122,7 @@ spawnStdio path cwd argv envp stdin stdout = do
                   , prim__addDup2 actions stdin.rawfd 0
                   , prim__addDup2 actions stdout.rawfd 1
                   , prim__addCloseFrom actions 3
-                  , prim__sigemptyset sigs
-                  , prim__sigaddset sigs sigpipe
+                  , prim__sigfillset sigs
                   , prim__sigemptyset noSigs
                   , prim__attrSetSigDefault attr sigs
                   , prim__attrSetSigMask attr noSigs

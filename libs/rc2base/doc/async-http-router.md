@@ -59,24 +59,29 @@ path is `PATH_INFO`. RFC 3875 variables: `GATEWAY_INTERFACE`, `SERVER_PROTOCOL`,
 `REQUEST_METHOD`, `SCRIPT_NAME`, `PATH_INFO`, `QUERY_STRING`, `CONTENT_LENGTH`,
 `CONTENT_TYPE` and `HTTP_*` for the other headers. Not passed: `Proxy` (httpoxy),
 `Authorization` (unless `passAuthorization`, RFC 3875, 4.1.18), and a header whose
-name has `_` in it (it would be the same variable as the one with `-`). A header
+name has anything but letters, digits and `-` in it (`X_A` would be the same variable
+as `X-A`, and `X-A=B` would make a variable `HTTP_X_A` with `B=` in its value). A header
 sent more than once is one variable with the values joined by `, `. The program gets
 no environment of ours, only `options.environment` (empty by default: no `PATH`
 either, a program that needs one is given it there, e.g.
 `environment := [("PATH", "/usr/bin:/bin")]`) and these. The request body is its standard input; its standard error is ours.
 
 - The process is started with `posix_spawn` (`System.Posix.Spawn`), which is safe
-  with several threads and passes on no descriptor but 0 and 1 (the client's
-  socket and the listener stay out of the program). `cgi` makes the process
-  ignore SIGPIPE (`ignoreSigpipe`); the program has the default action, an empty signal
-  mask (the server may block signals for `signalfd`) and is a process group of its own.
+  with several threads and passes on no descriptor but 0 (the request body), 1 (the
+  output) and 2 (our standard error): the client's socket and the listener stay out of
+  the program. `cgi` makes the process ignore SIGPIPE (`ignoreSigpipe`); in the program
+  every signal has its default action again (not the `SIG_IGN` we set, which `exec`
+  keeps), the signal mask is empty (the server may block signals for `signalfd`) and it
+  is a process group of its own.
   The program starts with `dir` as its working directory (`posix_spawn_file_actions_addchdir_np`, glibc 2.29 or later).
-- Both pipes are non-blocking and waited for on the scheduler's epoll
-  (`awaitReadable`/`awaitWritable`), the end of the program with a `pidfd`
-  (Linux 5.3), so a slow program holds up only its own connection. The body is
-  written while the output is read, so a program that answers before it has read
-  all its input does not stall; when the output is over (or too much) the writer
-  is given up.
+- Both pipes are non-blocking (if they cannot be made so, it is 502) and waited for on
+  the scheduler's epoll (`awaitReadable`/`awaitWritable`), the end of the program with
+  a `pidfd` (Linux 5.3; where there is none, by asking `waitpid` every 5 ms), so a slow
+  program holds up only its own connection and the scheduler is never blocked by
+  the wait. The body is written while the output is read, so a program that answers
+  before it has read all its input does not stall; when the output is over (or too
+  much) the writer is given up. When the program has ended, what it started is killed
+  with its group (`kill (-pid)`), in the step that also reaps it.
 - The output is a head, an empty line (CRLF or LF) and a body. `Status: 404 ...`
   sets the status; `Location` without it gives 302. A head with neither
   `Content-Type` nor `Location`, no head at all, or more than `maxOutputBytes`
@@ -87,7 +92,9 @@ either, a program that needs one is given it there, e.g.
 - After `timeoutMs` (default 30 s, from the start to the end of the program) the
   program is killed with SIGKILL, with the processes it started (`kill (-pid)`), and
   reaped, and the answer is 504. A connection that is given up while the program
-  runs kills it too (`finally`), and the `pidfd` is closed in that case as well.
+  runs kills it too (`finally`), and the `pidfd` is closed in that case as well. A
+  process that does not go at once (an uninterruptible sleep) is reaped by a thread of
+  its own, and not waited for on the scheduler.
 
 Build programs that use `cgi` with `IDRIS2_CFLAGS=-D_GNU_SOURCE` (glibc hides
 `posix_spawn_file_actions_addclosefrom_np` otherwise; glibc 2.34 or later).
@@ -107,28 +114,38 @@ would need a blocking lookup: `EAFNOSUPPORT`, so 502), and gives its answer back
   and the answer ends with its connection, so the answer needs no framing of its own.
   A new connection per request, no pooling.
 - A request is refused with 400, and not forwarded, if its target does not start with
-  `/` (an absolute URI), has a `.` or `..` segment (also percent-encoded), or if a
-  method, target, header name or value has a CR, LF or NUL in it (which would split
-  or cut the message the server reads).
+  `/` (an absolute URI), has a `.` or `..` segment once decoded (`%2e%2e`, `..%2f` and
+  `..%5c` too), or if a method, target or header name has a control character in it,
+  or a header value one other than HTAB (a CR, LF or NUL would split or cut the message
+  the server reads; the others are read differently by one reader and the next).
 - Headers: `Host` is the server's own (`hostHeader` to change it) and the original
-  one goes in `X-Forwarded-Host` (one the client sent is replaced, not passed on).
+  one goes in `X-Forwarded-Host`, and `X-Forwarded-Proto: http` is added. The headers
+  that say where a request came from (`Forwarded`, `X-Forwarded-For`, `X-Forwarded-Host`,
+  `X-Forwarded-Proto`, `X-Forwarded-Port`, `X-Real-IP`) that the client wrote are not
+  passed on: a server that trusts them could be told anything. The proxy does not write
+  `X-Forwarded-For` itself, as the handler does not know the address of the client.
+  A `hostHeader` with a control character is a configuration error (500).
   The hop-by-hop headers (`Connection`, `Keep-Alive`, `Transfer-Encoding`, `TE`,
   `Trailer`, `Upgrade`, `Proxy-*`), the ones `Connection` names, and `Expect` are not
   passed on, in either direction; `Content-Length` of the answer is set again from the body. The names of
   the headers of the answer are in lower case, as the parser gives them; repeated
   ones (`Set-Cookie`) stay repeated.
 - The exchange is tasks on the scheduler (`connect`, `sendAllUntil`, `recvUntil` of
-  `Network.Async`, which arm no timer for a call that does not block), so a slow server holds up only the connection of its request.
-  The socket is closed when the exchange ends or is given up. After `timeoutMs`
+  `Network.Async`, which arm no timer for a call that does not block), so a slow server
+  holds up only the connection of its request. The answer is read while the request is
+  sent, so a server that answers without reading all of the body (413, 401) and closes
+  still gives its answer (also when the connection is reset after it), and one that
+  fills the connection with its answer does not stall the sending, with no time limit
+  too. The socket is closed when the exchange ends or is given up. After `timeoutMs`
   (default 30 s, from the connect to the end of the answer) the answer is 504.
 - 502 when the server cannot be reached, resets the connection, answers with no
-  proper head (`HTTP/`, a status of 200 to 599: a `1xx` is not a final answer; a
-  `Content-Length` that is not plain digits, or a `Transfer-Encoding`, which the
-  HTTP/1.0 request should have made impossible), an answer shorter than its
-  `Content-Length`, or more than `maxResponseBytes` (default 16 MiB; exactly that
-  much is fine). The answer is held whole: no streaming, no
-  `Upgrade` (WebSocket), no `100-continue`, and no `X-Forwarded-For` (the handler
-  does not know the address of the client).
+  proper head (`HTTP/`, a status of three digits from 200 to 599: a `1xx` is not a
+  final answer; a `Content-Length` that is not plain digits or is given twice with
+  different values, or a `Transfer-Encoding`, which the HTTP/1.0 request should have
+  made impossible; a head over `maxHeadBytes`, 64 KiB), an answer shorter than its
+  `Content-Length` (or, with none, cut off by an error before the end of the
+  connection), or more than `maxResponseBytes` (default 16 MiB; exactly that much is fine). The answer is held whole: no streaming, no
+  `Upgrade` (WebSocket) and no `100-continue`.
 
 ## `Network.Async.HTTP.Rewrite`
 
@@ -161,9 +178,11 @@ let handler = urlRewrite [old, item, ext] next
 - What the groups caught from the request must not become something else, so the new
   path is checked, and the request answered with 400 if it fails: it starts with one
   `/` (not `//host`, which a browser takes for another host), has no `.` or `..`
-  segment (also `%2e%2e`), no control character, space or backslash. A redirect may go to
-  another host only when the template itself starts with `http://` or `https://`. A
-  request whose path has a CR, LF or NUL in it is 400 too (the regex engine reads a
-  C string).
+  segment (also `%2e%2e`, `..%2f` and `..%5c`), no control character (TAB too: a browser
+  drops it from a URL, so `/<TAB>/host` is `//host`), space or backslash. A redirect may
+  go to another host only when the template itself starts with `http://` or `https://`,
+  and `rule` refuses such a template with a group before the `/` that ends the host
+  (`https://example.org\\1` with `@evil.example/` caught is another host). A request whose
+  path has a control character in it is 400 too (the regex engine reads a C string).
 
 Tests: `tests/TestAsyncHTTPStaticCGI`, `tests/TestAsyncHTTPProxy`, `tests/TestAsyncHTTPRewrite`.

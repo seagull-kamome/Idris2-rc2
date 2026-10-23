@@ -22,6 +22,9 @@ hello file
 HTTP/1.1 500 Internal Server Error | Content-Type: text/plain; charset=utf-8
 file too large
 
+HTTP/1.1 200 OK | Content-Type: text/plain
+A=ok B=both
+
 HTTP/1.1 404 Not Found | Content-Type: text/plain; charset=utf-8
 not found
 
@@ -81,3 +84,9 @@ cgi
 HTTP/1.1 200 OK | Content-Type: text/plain | X-Script: env
 GET|/cgi-bin/env.sh|||0|||CGI/1.1|localhost:8080||/usr/bin:/bin||
 
+leader of the timed out program gone: True
+its child gone: True
+orphan: HTTP/1.1 200 OK | Content-Type: text/plain
+left a child
+
+child left by the program that ended gone: True

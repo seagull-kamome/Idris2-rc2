@@ -219,12 +219,18 @@ reasonPhrase 504 = "Gateway Timeout"
 reasonPhrase 505 = "HTTP Version Not Supported"
 reasonPhrase _   = "Unknown"
 
-||| Whether a string can go into the head of a message as it is: it has no CR, LF or
-||| NUL, which would split the message or cut it short for a reader that takes them
-||| for the end of a line or of a string.
+||| Whether a string has no control character (C0, DEL): fit for a method, a target or
+||| a header name. A CR, LF or NUL would split the message or cut it short; the others
+||| are dropped or read differently by one reader and the next (a browser removes TAB
+||| from a URL, so `/<TAB>/host` is `//host`).
 export
-headSafe : String -> Bool
-headSafe = not . any (\c => c == '\r' || c == '\n' || c == '\0') . unpack
+noControl : String -> Bool
+noControl = all (\c => ord c >= 32 && ord c /= 127) . unpack
+
+||| `noControl`, with HTAB allowed: fit for the value of a header (RFC 9110, 5.5).
+export
+fieldSafe : String -> Bool
+fieldSafe = all (\c => c == '\t' || (ord c >= 32 && ord c /= 127)) . unpack
 
 ||| The length of a request's body, `Just 0` without a `Content-Length`. `Nothing`
 ||| when the headers do not frame the body reliably: a `Content-Length` that is

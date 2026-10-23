@@ -30,6 +30,7 @@ import Network.HTTP.Router
 import Network.Socket
 import Network.Socket.Data
 import System
+import System.File
 import System.Posix.Errno
 
 %default covering
@@ -102,8 +103,39 @@ scenario port dir clients = do
     Just (Left stopped) => putStrLn ("server ended: " ++ show stopped)
     Nothing => putStrLn "no result"
 
-clients : Port -> Task (List String)
-clients port = do
+-- Whether the process whose number is in `<dir>/build/<name>` has gone (waiting a
+-- little for it); `False` if there is no such file.
+gone : (dir, name : String) -> IO Bool
+gone dir name = do
+  Right text <- readFile (dir ++ "/build/" ++ name)
+    | Left _ => pure False
+  case parsePositive {a = Int32} (trim text) of
+    Nothing => pure False
+    Just n => wait 20 n
+  where
+    -- The characters after the last ")" of "<pid> (<name>) <state> ...".
+    afterName : List Char -> List Char
+    afterName cs = case break (== ')') cs of
+      (_, _ :: rest) => if elem ')' rest then afterName rest else rest
+      _ => []
+
+    -- A process that is a zombie (killed, not yet reaped by its parent) is gone too.
+    running : Int32 -> IO Bool
+    running n = do
+      Right stat <- readFile ("/proc/" ++ show n ++ "/stat")
+        | Left _ => pure False
+      pure $ case afterName (unpack stat) of
+                  ' ' :: 'Z' :: _ => False
+                  _ => True
+
+    wait : Nat -> Int32 -> IO Bool
+    wait Z _ = pure False
+    wait (S k) n = do
+      alive <- running n
+      if alive then usleep 50000 *> wait k n else pure True
+
+clients : Port -> (dir : String) -> Task (List String)
+clients port dir = do
   let ask = \r => blocking (session port r)
   let types = ["Content-Type", "Location", "Allow", "X-Script"]
   index <- ask (req "GET" "/static/")
@@ -116,6 +148,7 @@ clients port = do
   cached <- ask ("GET /static/hello.txt HTTP/1.1\r\nHost: t\r\nConnection: close\r\nIf-None-Match: " ++ etag ++ "\r\n\r\n")
   stale <- ask ("GET /static/hello.txt HTTP/1.1\r\nHost: t\r\nConnection: close\r\nIf-None-Match: \"other\"\r\n\r\n")
   tooBig <- ask (req "GET" "/static/big.txt")
+  badName <- ask "GET /cgi-bin/badname.sh HTTP/1.1\r\nHost: t\r\nConnection: close\r\nX-A: ok\r\nX-A=B: injected\r\nX-A-B: both\r\n\r\n"
   dotfile <- ask (req "GET" "/static/.hidden")
   posted <- ask (req "POST" "/static/hello.txt")
   absent <- ask (req "GET" "/static/nothing.txt")
@@ -131,6 +164,10 @@ clients port = do
   nohead <- ask (req "GET" "/cgi-bin/nohead.sh")
   big <- ask (req "GET" "/cgi-bin/big.sh")
   slow <- ask (req "GET" "/cgi-bin/slow.sh")
+  slowGone <- blocking (gone dir "slow.pid")
+  slowChildGone <- blocking (gone dir "slow-child.pid")
+  orphan <- ask (req "GET" "/cgi-bin/orphan.sh")
+  orphanChildGone <- blocking (gone dir "orphan-child.pid")
   noexec <- ask (req "GET" "/cgi-bin/noexec.sh")
   nowhere <- ask (req "GET" "/cgi-bin/nowhere.sh")
   nameless <- ask (req "GET" "/cgi-bin/")
@@ -138,9 +175,13 @@ clients port = do
   cwd <- ask (req "GET" "/cgi-bin/pwd.sh")
   after <- ask (req "GET" "/cgi-bin/env.sh")
   pure (map (summary types)
-          [ index, noSlash, subIndex, hello, spaced, headed, cached, stale, tooBig, dotfile, posted, absent, dotdot, dotdot2
+          [ index, noSlash, subIndex, hello, spaced, headed, cached, stale, tooBig, badName, dotfile, posted, absent, dotdot, dotdot2
           , outside, route, envRun, getRun, status, redirect, nohead, big, slow, noexec, nowhere
-          , nameless, escape, cwd, after ])
+          , nameless, escape, cwd, after ]
+       ++ [ "leader of the timed out program gone: " ++ show slowGone
+          , "its child gone: " ++ show slowChildGone
+          , "orphan: " ++ summary types orphan
+          , "child left by the program that ended gone: " ++ show orphanChildGone ])
 
 -- The directory of the test, from the path of the executable
 -- (<dir>/build/exec/<name>): verify.sh runs it from another directory.
@@ -154,4 +195,6 @@ testDir = do
 main : IO ()
 main = do
   dir <- testDir
-  scenario 18751 dir (clients 18751)
+  -- the numbers of an earlier run must not be taken for this one's
+  traverse_ (\n => removeFile (dir ++ "/build/" ++ n)) ["slow.pid", "slow-child.pid", "orphan-child.pid"]
+  scenario 18751 dir (clients 18751 dir)

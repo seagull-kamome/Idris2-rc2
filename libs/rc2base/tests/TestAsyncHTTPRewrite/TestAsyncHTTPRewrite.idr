@@ -10,7 +10,10 @@ module Main
 -- URL the template names), and the results that must not come out: `//host` of a
 -- redirect and a `..` segment out of what the groups caught (400). Rules that cannot be
 -- made: a bad pattern, a group the pattern does not have, a bad redirect status, a
--- template that ends with a backslash or has a CR and LF in it.
+-- template that ends with a backslash or has a control character in it, a group before the
+-- end of the host of a URL template. A TAB in a path (a browser drops it from a URL:
+-- `/<TAB>/host` is `//host`), a template of only a query string, and `..` hidden by
+-- `%2f` or `%5c` are 400.
 
 import Control.Task
 import Control.Task.Scheduler
@@ -59,6 +62,8 @@ rules = sequence
   , mk "/first" "/two" Internal
   , mk "/loop" "/loop/again" Internal
   , mk "/slash\\\\back" "/a\\\\b" Internal
+  , mk "/q" "?only=1" Internal
+  , mk "(.*)/" "\\1" (Redirect 301)
   ]
 
 -- Connect, send the request and read the answer to the end of the connection.
@@ -114,7 +119,8 @@ clients = do
     , ("GET", "/ext/some/where"), ("HEAD", "/legacy/7")
     , ("GET", "/redir//evil.example"), ("GET", "/redir/ok/path")
     , ("GET", "/up/%2e%2e/etc"), ("GET", "/up/a/../b"), ("GET", "/up/ok")
-    , ("GET", "/slash\\back") ]
+    , ("GET", "/slash\\back"), ("GET", "/q"), ("GET", "/trail/"), ("GET", "/\t/evil.example/")
+    , ("GET", "/up/..%2fetc"), ("GET", "/up/..%5cetc") ]
   pure (map summary answers)
 
 -- Whether making a rule fails, as it should.
@@ -133,6 +139,10 @@ main = do
     , refused "/a" "/x\\" Internal
     , refused "/a" "/x\\q" Internal
     , refused "/a" "/x\r\nSet-Cookie: a=b" (Redirect 302)
+    , refused "/a" "/x\ty" Internal
+    , refused "(.*)" "https://example.org\\1" (Redirect 302)
+    , refused "(.*)" "http://example.org\\1/x" (Redirect 302)
+    , refused "(.*)" "https://example.org/\\1" (Redirect 302)
     , refused "/a" "/x" (Redirect 308)
     ]
   traverse_ putStrLn bad

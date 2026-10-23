@@ -119,8 +119,8 @@ static {options} mountAt root next req = case segmentsUnder mountAt req.path of
     readChunked path size = do
       Right fd <- opened path
         | Left _ => pure Nothing
-      buf <- liftIO (newBuf size)
-      finally (\_ => ignore (close fd)) (go fd buf 0)
+      -- `finally` first: nothing may come between the open and the close
+      finally (\_ => ignore (close fd)) (liftIO (newBuf size) >>= \buf => go fd buf 0)
       where
         step : Int
         step = min 1073741824 (max 1 options.chunkBytes)

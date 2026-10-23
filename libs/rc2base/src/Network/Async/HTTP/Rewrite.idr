@@ -58,29 +58,54 @@ parsePieces template = go [] [] (unpack template)
     go _ _ ['\\'] = Left "a template does not end with a backslash"
     go cs ps (c :: rest) = go (c :: cs) ps rest
 
+-- Whether a group comes before the `/` that ends the host of an `http(s)://` template
+-- (`scheme` is `http://` or `https://`): `https://example.org\1` with `@evil.example/`
+-- caught is `https://example.org@evil.example/`.
+groupInAuthority : (scheme : String) -> List Piece -> Bool
+groupInAuthority scheme pieces =
+  any isGroup pieces && not (elem '/' (drop (length scheme) (unpack (leading pieces))))
+  where
+    isGroup : Piece -> Bool
+    isGroup (Group _) = True
+    isGroup (Lit _) = False
+
+    -- the text before the first group
+    leading : List Piece -> String
+    leading (Lit s :: rest) = s ++ leading rest
+    leading _ = ""
+
 ||| Make a rule. A request is matched when `pattern` (a POSIX extended regular
 ||| expression) matches all of its path, the query string left out and the path as it
 ||| stands in the request, percent-encoded. `template` is the new path (and query):
 ||| text with `\1` to `\9` for what the groups matched, `\0` for all of the path and
 ||| `\\` for a backslash; a query string in the template replaces the one of the
 ||| request, else that stays. `Left` for a pattern or template that is not valid (the
-||| template must also have no CR, LF or NUL: it ends up in a `Location`), a
+||| template must also have no control character: it ends up in a `Location`; and an
+||| `http://` or `https://` template has no group before the first `/` after the
+||| host, which the request could fill with `@host`), a
 ||| group the pattern does not have, or a `Redirect` status other than 301, 302, 303,
 ||| 307 and 308.
 export
 rule : (pattern, template : String) -> Action -> IO (Either String RewriteRule)
 rule pattern template action = do
+  let scheme = if isPrefixOf "http://" template then Just "http://"
+               else if isPrefixOf "https://" template then Just "https://" else Nothing
+  let absolute = isJust scheme
   Right re <- compile pattern
     | Left e => pure (Left ("bad pattern: " ++ e))
   pure $ do
-    unless (headSafe template) (Left "a template has no CR, LF or NUL")
+    unless (noControl template) (Left "a template has no control character")
     pieces <- parsePieces template
+    case scheme of
+      Just sch => when (groupInAuthority sch pieces) $
+                    Left "a group in the host part of a URL template: the request could name another host"
+      Nothing => Right ()
     when (any (\p => case p of Group n => cast n > groupCount re; Lit _ => False) pieces) $
       Left "the template uses a group the pattern does not have"
     case action of
       Redirect status => unless (elem status [301, 302, 303, 307, 308]) (Left "bad redirect status")
       Internal => Right ()
-    Right (MkRule re pieces (isPrefixOf "http://" template || isPrefixOf "https://" template) action)
+    Right (MkRule re pieces absolute action)
 
 -- The text of a template for the groups of a match.
 expand : List Piece -> List (Maybe String) -> String
@@ -104,13 +129,13 @@ firstMatch path (r :: rs) = case match r.pattern path of
 -- `.` or `..` segment.
 validPath : String -> Bool
 validPath p =
-  isPrefixOf "/" p && headSafe p && not (any (\c => c == ' ' || c == '\\') (unpack p))
+  isPrefixOf "/" p && noControl p && not (any (\c => c == ' ' || c == '\\') (unpack p))
   && not (hasDotSegment p)
 
 -- Where a redirect may go: a path on this server (not `//host`, which a browser takes
 -- for another host), or, for a template that says so, an `http` or `https` URL.
 validLocation : (absolute : Bool) -> String -> Bool
-validLocation absolute l = headSafe l && not (any (\c => c == ' ' || c == '\\') (unpack l)) && wanted
+validLocation absolute l = noControl l && not (any (\c => c == ' ' || c == '\\') (unpack l)) && wanted
   where
     wanted : Bool
     wanted = if absolute then isPrefixOf "http://" l || isPrefixOf "https://" l
@@ -128,7 +153,7 @@ validLocation absolute l = headSafe l && not (any (\c => c == ' ' || c == '\\') 
 export
 urlRewrite : List RewriteRule -> (next : Handler) -> Handler
 urlRewrite rules next req =
-  if not (headSafe req.path) then refused else
+  if not (noControl req.path) then refused else
     let (path, query) = break (== '?') req.path
     in case firstMatch path rules of
          Nothing => next req

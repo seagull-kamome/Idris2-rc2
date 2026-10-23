@@ -2,10 +2,10 @@ HTTP/1.1 200 OK | Connection: close | content-type: text/plain; charset=utf-8 | 
 hello
 
 HTTP/1.1 200 OK | Connection: close | content-type: text/plain; charset=utf-8
-POST /info?a=1&b=%20 127.0.0.1:18771 front.test yes - close 5 hello
+POST /info?a=1&b=%20 127.0.0.1:18771 front.test yes - - - - http close 5 hello
 
 HTTP/1.1 200 OK | Connection: close | content-type: text/plain; charset=utf-8
-GET /info 127.0.0.1:18771 front.test - - close - 
+GET /info 127.0.0.1:18771 front.test - - - - - http close - 
 
 HTTP/1.1 400 Bad Request | Connection: close | Content-Type: text/plain; charset=utf-8
 bad request
@@ -17,13 +17,13 @@ HTTP/1.1 502 Bad Gateway | Connection: close | Content-Type: text/plain; charset
 bad gateway: bad head or framing in the answer
 
 HTTP/1.1 200 OK | Connection: close | content-type: text/plain; charset=utf-8
-GET /info/ 127.0.0.1:18771 front.test - - close - 
+GET /info/ 127.0.0.1:18771 front.test - - - - - http close - 
 
 HTTP/1.1 404 Not Found | Connection: close | content-type: text/plain; charset=utf-8
 upstream: none
 
 HTTP/1.1 200 OK | Connection: close | content-type: text/plain; charset=utf-8
-GET /raw/info 127.0.0.1:18771 front.test - - close - 
+GET /raw/info 127.0.0.1:18771 front.test - - - - - http close - 
 
 HTTP/1.1 302 Found | Connection: close | location: /hello
 
@@ -50,4 +50,37 @@ gateway timeout
 
 HTTP/1.1 200 OK | Connection: close | content-type: text/plain; charset=utf-8 | x-up: 1 | set-cookie: a=1 | set-cookie: b=2
 hello
+
+HTTP/1.1 400 Bad Request | Connection: close | Content-Type: text/plain; charset=utf-8
+bad request
+
+HTTP/1.1 400 Bad Request | Connection: close | Content-Type: text/plain; charset=utf-8
+bad request
+
+HTTP/1.1 502 Bad Gateway | Connection: close | Content-Type: text/plain; charset=utf-8
+bad gateway: bad status or head in the answer
+
+HTTP/1.1 502 Bad Gateway | Connection: close | Content-Type: text/plain; charset=utf-8
+bad gateway: bad head or framing in the answer
+
+HTTP/1.1 502 Bad Gateway | Connection: close | Content-Type: text/plain; charset=utf-8
+bad gateway: bad head or framing in the answer
+
+HTTP/1.1 502 Bad Gateway | Connection: close | Content-Type: text/plain; charset=utf-8
+bad gateway: bad head or framing in the answer
+
+HTTP/1.1 200 OK | Connection: close | content-type: text/plain
+until the end
+HTTP/1.1 502 Bad Gateway | Connection: close | Content-Type: text/plain; charset=utf-8
+bad gateway: the answer is shorter than it says, or was cut off
+
+HTTP/1.1 200 OK | Connection: close
+abcd
+HTTP/1.1 502 Bad Gateway | Connection: close | Content-Type: text/plain; charset=utf-8
+bad gateway: answer too large
+
+HTTP/1.1 502 Bad Gateway | Connection: close | Content-Type: text/plain; charset=utf-8
+bad gateway: head of the answer too large
+
+HTTP/1.1 413 Payload Too Large | Connection: close
 

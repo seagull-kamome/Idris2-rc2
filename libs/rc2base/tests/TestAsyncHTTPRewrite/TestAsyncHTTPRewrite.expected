@@ -4,6 +4,10 @@
 "/a" "/x\\": refused
 "/a" "/x\\q": refused
 "/a" "/x\r\nSet-Cookie: a=b": refused
+"/a" "/x\ty": refused
+"(.*)" "https://example.org\\1": refused
+"(.*)" "http://example.org\\1/x": refused
+"(.*)" "https://example.org/\\1": made
 "/a" "/x": made
 HTTP/1.1 200 OK
 path /new/a/b method GET
@@ -61,6 +65,20 @@ bad request
 
 HTTP/1.1 200 OK
 path /ok method GET
+
+HTTP/1.1 400 Bad Request
+bad request
+
+HTTP/1.1 400 Bad Request
+bad request
+
+HTTP/1.1 301 Moved Permanently | Location: /trail
+
+HTTP/1.1 400 Bad Request
+bad request
+
+HTTP/1.1 400 Bad Request
+bad request
 
 HTTP/1.1 400 Bad Request
 bad request
