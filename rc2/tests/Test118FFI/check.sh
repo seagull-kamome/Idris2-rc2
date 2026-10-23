@@ -103,3 +103,19 @@ for src in "$here"/CExprErrors/*.idr "$here"/ForeignErrors/*.idr; do
         fail "$rel: message differs from ${case}.err: $actual"
     fi
 done
+
+# Several libraries in the library option (`libc;libdl; librt;`): every distinct
+# name is linked, once, and the program runs.
+libdir="$TMP/${name}_liblist"
+rm -rf "$libdir"
+out="$(cd "$here/.." && "$rc2c" --cg rc2 --directive dumpcc --build-dir "$libdir/b" --output-dir "$libdir/o" \
+          "$here/LibList/LibList.idr" -o liblist_bin 2>&1)"
+bin="$(find "$libdir" -name liblist_bin -type f 2>/dev/null | head -1)"
+link="$(printf '%s\n' "$out" | grep -- '"-lidris2rc2"' | tail -1)"
+ndl="$(printf '%s\n' "$link" | grep -o -- '"-ldl"' | wc -l)"
+nrt="$(printf '%s\n' "$link" | grep -o -- '"-lrt"' | wc -l)"
+if [ -n "$bin" ] && [ "$ndl" = "1" ] && [ "$nrt" = "1" ] && [ "$("$bin")" = "(5, 7)" ]; then
+    pass "library lists: each distinct library is linked once and the program runs"
+else
+    fail "library lists: -ldl x$ndl, -lrt x$nrt, binary: ${bin:-none}: $out"
+fi
