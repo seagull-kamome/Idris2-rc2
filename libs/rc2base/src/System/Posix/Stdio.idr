@@ -229,7 +229,7 @@ memstreamBuffer ms = do
 ||| Only after `closeMemstream`.
 export
 memstreamString : MemStream -> IO (Maybe String)
-memstreamString ms = ptrToString <$> memstreamData ms
+memstreamString ms = memstreamData ms >>= ptrToString
 
 ||| Release the bytes and the stream's bookkeeping. Call `closeMemstream` first
 ||| (without it the stream itself leaks), and read what is wanted before.
@@ -338,7 +338,7 @@ fgets file size = do
   r <- if prim__nullAnyPtr p /= 0
          then do e <- primIO (prim__ferror file.ptr)
                  if e /= 0 then Left <$> errno else pure (Right Nothing)
-         else pure (Right (ptrToString buf))
+         else Right <$> ptrToString buf
   free buf
   pure r
 
@@ -379,7 +379,7 @@ getline file = do
   r <- if n < 0
          then do e <- primIO (prim__ferror file.ptr)
                  if e /= 0 then Left <$> errno else pure (Right Nothing)
-         else pure (Right (map dropNewline (ptrToString raw)))
+         else Right . map dropNewline <$> ptrToString raw
   primIO (prim__freeLine raw)
   primIO (prim__freeCellPtr line)
   primIO (prim__freeCellSize size)

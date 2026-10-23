@@ -49,5 +49,5 @@ run = do
   p <- primIO (prim__makePoint 42 "hello")
   printLn (getId p)
   putStrLn (getName p)
-  printLn (ptrToString (getData p))
+  printLn !(ptrToString (getData p))
   primIO (prim__freePoint p)

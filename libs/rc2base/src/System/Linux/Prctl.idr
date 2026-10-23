@@ -3,6 +3,7 @@
 ||| Linux only.
 module System.Linux.Prctl
 
+import Data.Maybe
 import Data.String.FFI
 import System.FFI
 import System.Posix.Errno
@@ -57,7 +58,7 @@ getThreadName : IO (Either Errno String)
 getThreadName = do
   buf <- malloc 16
   r <- primIO (prim__get_name buf)
-  res <- if r == 0 then pure (Right (maybe "" id (ptrToString buf))) else Left <$> errno
+  res <- if r == 0 then (Right . fromMaybe "") <$> ptrToString buf else Left <$> errno
   free buf
   pure res
 

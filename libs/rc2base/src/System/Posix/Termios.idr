@@ -570,7 +570,7 @@ ttyname fd = do
   r <- primIO (prim__ttyname_r fd.rawfd buf 4096)
   res <- if r /= 0
            then pure (Left (MkErrno r))
-           else pure (maybe (Left (MkErrno 22)) Right (ptrToString buf))
+           else maybe (Left (MkErrno 22)) Right <$> ptrToString buf
   free buf
   pure res
 
@@ -657,6 +657,7 @@ public export
 ptsname : FileDesc -> IO (Either Errno String)
 ptsname fd = do
   p <- primIO (prim__ptsname fd.rawfd)
-  case ptrToString p of
+  name <- ptrToString p
+  case name of
     Just s => pure (Right s)
     Nothing => Left <$> errno

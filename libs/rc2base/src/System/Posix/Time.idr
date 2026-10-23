@@ -262,7 +262,8 @@ readTm p = do
   dst <- primIO (prim__get_tm_isdst p)
   off <- primIO (prim__get_tm_gmtoff p)
   zone <- primIO (prim__get_tm_zone p)
-  pure (MkTm s mi h d mo y w yd dst off (ptrToString zone))
+  zoneName <- ptrToString zone
+  pure (MkTm s mi h d mo y w yd dst off zoneName)
 
 writeTm : AnyPtr -> Tm -> IO ()
 writeTm p t = do
@@ -360,7 +361,4 @@ strftime fmt t = withTm $ \p => do
   clearTmZone p
   if n == 0
      then free buf >> pure (if fmt == "" then Just "" else Nothing)
-     else case ptrToString buf of
-               -- the case makes the copy happen before the buffer is freed
-               Nothing => free buf >> pure Nothing
-               Just str => free buf >> pure (Just str)
+     else ptrToStringFree buf

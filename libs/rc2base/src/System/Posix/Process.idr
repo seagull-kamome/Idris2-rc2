@@ -545,9 +545,8 @@ gethostname = do
              pure (Left e)
      else do
        _ <- primIO (prim__terminate buf 1023)
-       case ptrToString buf of
-            Nothing => free buf >> pure (Left (MkErrno 84))
-            Just s => free buf >> pure (Right s)
+       s <- ptrToStringFree buf
+       pure (maybe (Left (MkErrno 84)) Right s)
 
 ||| A name for `sysconf` (`SC_*` stands for C's `_SC_*`).
 public export

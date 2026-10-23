@@ -55,6 +55,8 @@ dladdr addr = do
             then pure Nothing
             else do f <- primIO (prim__dli_fname p)
                     s <- primIO (prim__dli_sname p)
-                    pure (Just (MkDlInfo (fromMaybe "" (ptrToString f)) (ptrToString s)))
+                    fname <- ptrToString f
+                    sname <- ptrToString s
+                    pure (Just (MkDlInfo (fromMaybe "" fname) sname))
   free p
   pure res
