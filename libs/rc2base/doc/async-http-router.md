@@ -38,10 +38,13 @@ The prefix is matched by whole segments (`Network.HTTP.Route.segmentsUnder`):
 - `Content-Type` comes from the extension (`mimeType`), `ETag` from the size and the
   time of modification; `If-None-Match` with it is answered with 304.
   `cacheControl` adds a `Cache-Control`.
-- The file is read whole, on a worker thread (`blocking`; with no workers, on the
-  scheduler's own), and sent as the body. A file over `maxFileBytes` (default 16
-  MiB) is answered with 500. No `Range`, no `If-Modified-Since`, no streaming
-  (`TODO.md`).
+- The file is read into a buffer of its size (from `stat`), `chunkBytes` at a time
+  (default 256 KiB), each read a `blocking` step of its own with `pread`: a large
+  file does not hold a worker thread (or, with none, the scheduler) for the whole
+  read. The body is still held in memory whole, so a file over `maxFileBytes`
+  (default 16 MiB) is answered with 500. A file that has become shorter than its
+  `stat` size, or cannot be read, is 500 too. No `Range`, no `If-Modified-Since`,
+  no streaming (`TODO.md`).
 
 ## `Network.Async.HTTP.CGI`
 

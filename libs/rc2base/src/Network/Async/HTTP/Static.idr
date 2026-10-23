@@ -7,16 +7,19 @@ module Network.Async.HTTP.Static
 -- This module was licensed by BSD3.
 
 import Control.Task
+import Data.Bits
 import Data.Buffer
 import Data.List
 import Data.List1
 import Data.Maybe
 import Data.String
+import Network.Async
 import Network.Async.HTTP.Server
 import Network.HTTP.Route
 import Network.URL
-import System.File
 import System.Posix.Errno
+import System.Posix.File
+import System.Posix.FileDesc
 import System.Posix.Stat
 import System.Posix.Time
 
@@ -28,15 +31,19 @@ record StaticOptions where
   constructor MkStaticOptions
   ||| The file a directory is answered with.
   indexFile : String
-  ||| A file larger than this is not served (500): a file is read into memory whole.
+  ||| A file larger than this is not served (500): the body is held in memory whole.
   maxFileBytes : Int
+  ||| The file is read this many bytes at a time, each read a `blocking` step of its
+  ||| own, so that a large file does not hold a worker (or, with none, the scheduler)
+  ||| for the whole read. At least 1.
+  chunkBytes : Int
   ||| The value of `Cache-Control` of the answers that have a file, if any.
   cacheControl : Maybe String
 
-||| `index.html`, 16 MiB, no `Cache-Control`.
+||| `index.html`, 16 MiB in chunks of 256 KiB, no `Cache-Control`.
 public export
 defaultStatic : StaticOptions
-defaultStatic = MkStaticOptions "index.html" 16777216 Nothing
+defaultStatic = MkStaticOptions "index.html" 16777216 262144 Nothing
 
 ||| The `Content-Type` for a file name, by its extension (case does not matter);
 ||| `application/octet-stream` for an extension it does not know.
@@ -62,6 +69,10 @@ mimeType name = fromMaybe "application/octet-stream" (lookup (toLower extension)
       , ("pdf", "application/pdf"), ("wasm", "application/wasm"), ("zip", "application/zip")
       ]
 
+-- Read `len` bytes at `offset` into `buf[off ..]`.
+%foreign "CExpr:((int)pread($1, (char *)($2) + ($3), (size_t)($4), (off_t)($5))),libc,unistd.h"
+prim__preadBuf : Int32 -> Buffer -> (off, len, offset : Int) -> PrimIO Int
+
 -- Whether a decoded segment may be part of a file path below the root: not an
 -- empty one, `.` or `..`, and with no `/` or NUL in it.
 safeSegment : String -> Bool
@@ -74,7 +85,7 @@ safeSegment seg = seg /= "" && seg /= "." && seg /= ".." && not (any (\c => c ==
 ||| `Content-Type` by the extension and an `ETag` from the size and the time of
 ||| modification, which `If-None-Match` is compared with (304). Other methods are
 ||| answered with 405, a file that is not there (or a path with `..` in it) with
-||| 404. Symbolic links are followed.
+||| 404. Symbolic links are followed. The file is read in chunks of `chunkBytes`.
 export
 static : {default defaultStatic options : StaticOptions} -> (mountAt, root : String) -> (next : Handler) -> Handler
 static {options} mountAt root next req = case segmentsUnder mountAt req.path of
@@ -89,6 +100,25 @@ static {options} mountAt root next req = case segmentsUnder mountAt req.path of
     missing : Task Response
     missing = liftIO (notFound "not found\n")
 
+    -- The `size` bytes of the file, read `chunkBytes` at a time. `Nothing` if it
+    -- cannot be opened or read, or has become shorter than `size`.
+    readChunked : (path : String) -> (size : Int) -> Task (Maybe Buffer)
+    readChunked path size = do
+      Right fd <- blocking (openFile path (O_RDONLY .|. O_CLOEXEC) 0)
+        | Left _ => pure Nothing
+      buf <- liftIO (newBuf size)
+      finally (\_ => ignore (close fd)) (go fd buf 0)
+      where
+        step : Int
+        step = min 1073741824 (max 1 options.chunkBytes)
+
+        go : FileDesc -> Buffer -> (off : Int) -> Task (Maybe Buffer)
+        go fd buf off = if off >= size then pure (Just buf) else do
+          r <- blocking (attempt (prim__preadBuf fd.rawfd buf off (min step (size - off)) off))
+          case r of
+            Right n => if n > 0 then go fd buf (off + n) else pure Nothing
+            Left _ => pure Nothing
+
     -- The answer for the file at `path`.
     serveFile : (path : String) -> Stat -> Task Response
     serveFile path st =
@@ -100,8 +130,8 @@ static {options} mountAt root next req = case segmentsUnder mountAt req.path of
           if any (\(k, v) => k == "if-none-match" && any ((== etag) . trim) (forget (split (== ',') v))) req.headers
             then liftIO (noBody {headers = tags} 304)
             else do
-              Right content <- blocking (createBufferFromFile path)
-                | Left _ => liftIO (serverError "cannot read file\n")
+              Just content <- readChunked path (cast st.stSize)
+                | Nothing => liftIO (serverError "cannot read file\n")
               pure (bytes {headers = tags} 200 (mimeType path) content)
 
     directory : (path : String) -> Task Response

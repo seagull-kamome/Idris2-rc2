@@ -704,7 +704,7 @@ upstreamに取り込まれたら`idris2-src`を更新して自作idris2を作り
 
 ## `Network.Async.HTTP.Static`/`CGI`
 
-- `static`は`Range`・`If-Modified-Since`・`Last-Modified`に答えず、ファイルを丸ごとメモリに読む
-  (`maxFileBytes`で打ち切る)。`Response`の本体が`Buffer`なので、大きなファイルを流すには
+- `static`は`Range`・`If-Modified-Since`・`Last-Modified`に答えず、ファイルを
+  `chunkBytes`ずつ読むが、本体はメモリに全部置く(`maxFileBytes`で打ち切る)。`Response`の本体が`Buffer`なので、大きなファイルを流すには
   `Network.Async.HTTP.Server`側に本体を流す応答の型が要る。
 - `cgi`は出力を全部集めてから応答する(`nph-`も流し出力も無い)。

@@ -8,7 +8,8 @@ module Main
 -- an ordinary route, run from this directory. A blocking client on the pool asks
 -- the server running as tasks. Static: a file, the index file of a directory (and the
 -- redirect to the slash), a percent-encoded name, the MIME type, ETag and
--- If-None-Match (304), HEAD, 405, and the names that do not go out (404, also
+-- If-None-Match (304), HEAD, 405, a file read in chunks of 4 bytes and one over the
+-- size limit (500), and the names that do not go out (404, also
 -- `..`). CGI: the variables a program is given and its body on the standard input,
 -- Status and Location, a program with no head or too much output (502), one that
 -- takes too long (504, and the server goes on), one that is not executable (404),
@@ -37,7 +38,7 @@ routes = [ get ("hello" // end) (liftIO (ok "route\n")) ]
 
 handler : Handler
 handler =
-  static "/static" "public"
+  static {options = { chunkBytes := 4, maxFileBytes := 40 } defaultStatic} "/static" "public"
     (cgi {options = { timeoutMs := 700, maxOutputBytes := 50000, serverPort := 8080 } defaultCGI} "/cgi-bin" "cgi"
       (Network.Async.HTTP.Router.router (\_ => liftIO (notFound "none\n")) routes))
 
@@ -111,6 +112,7 @@ clients port = do
   etag <- pure (headerOf "ETag" hello)
   cached <- ask ("GET /static/hello.txt HTTP/1.1\r\nHost: t\r\nConnection: close\r\nIf-None-Match: " ++ etag ++ "\r\n\r\n")
   stale <- ask ("GET /static/hello.txt HTTP/1.1\r\nHost: t\r\nConnection: close\r\nIf-None-Match: \"other\"\r\n\r\n")
+  tooBig <- ask (req "GET" "/static/big.txt")
   posted <- ask (req "POST" "/static/hello.txt")
   absent <- ask (req "GET" "/static/nothing.txt")
   dotdot <- ask (req "GET" "/static/%2e%2e/cgi/env.sh")
@@ -132,7 +134,7 @@ clients port = do
   cwd <- ask (req "GET" "/cgi-bin/pwd.sh")
   after <- ask (req "GET" "/cgi-bin/env.sh")
   pure (map (summary types)
-          [ index, noSlash, subIndex, hello, spaced, headed, cached, stale, posted, absent, dotdot, dotdot2
+          [ index, noSlash, subIndex, hello, spaced, headed, cached, stale, tooBig, posted, absent, dotdot, dotdot2
           , outside, route, envRun, getRun, status, redirect, nohead, big, slow, noexec, nowhere
           , nameless, escape, cwd, after ])
 
