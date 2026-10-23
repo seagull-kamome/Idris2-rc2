@@ -127,7 +127,7 @@ connection limits handler conn = do
       out <- liftIO (encode headOnly resp)
       sent <- case limits.writeTimeoutMs of
                 Z => Just <$> sendAll conn out 0 (byteLength out)
-                ms => (\t => timeoutAt t (sendAll conn out 0 (byteLength out))) =<< map (+ ms) now
+                ms => (\t => sendAllUntil t conn out 0 (byteLength out)) =<< map (+ ms) now
       pure (maybe False isRight sent)
 
     -- Answer what cannot be served and let the connection end, lingering
@@ -146,7 +146,7 @@ connection limits handler conn = do
     more deadline buf len want = do
       Just buf' <- onReactor (growBuffer buf (len + want) limits.maxRequestBytes)
         | Nothing => pure Gone
-      r <- within deadline (recv conn buf' len want)
+      r <- maybe (Just <$> recv conn buf' len want) (\t => recvUntil t conn buf' len want) deadline
       pure $ case r of
         Nothing => TimedOut
         Just (Right n) => if n > 0 then Got buf' (len + n) else Gone
