@@ -17,6 +17,7 @@ import Data.IORef
 import Data.List
 import Data.Maybe
 import Data.String
+import Network.Async
 import Network.Async.HTTP.Server
 import Network.HTTP.Route
 import Network.URL
@@ -61,39 +62,21 @@ prim__readBuf : Int32 -> Buffer -> Int -> Int -> PrimIO Int
 %foreign "CExpr:((int)write($1, (char *)($2) + ($3), (size_t)($4))),libc,unistd.h"
 prim__writeBuf : Int32 -> Buffer -> Int -> Int -> PrimIO Int
 
--- One attempt at a system call that answers -1 and sets `errno` on failure.
-attempt : PrimIO Int -> IO (Either Errno Int)
-attempt call = do
-  n <- primIO call
-  if n >= 0 then pure (Right n) else Left <$> errno
-
--- Repeat the call, waiting with `wait` when it would block.
-retrying : (wait : Task a) -> PrimIO Int -> Task (Either Errno Int)
-retrying wait call = do
-  r <- onReactor (attempt call)
-  case r of
-    Left e => if e == EAGAIN then wait *> retrying wait call
-              else if e == EINTR then retrying wait call
-              else pure r
-    Right _ => pure r
-
 -- The index of the end of the head of a program's output, and where its body
 -- starts: the head ends at the first empty line, with CRLF or only LF line ends.
 headEnd : Buffer -> (len : Int) -> IO (Maybe (Int, Int))
 headEnd buf len = go 0
   where
+    -- The byte at `j`, -1 past the end.
+    at : Int -> IO Int
+    at j = if j < len then byteAt buf j else pure (-1)
+
     go : Int -> IO (Maybe (Int, Int))
     go i = if i >= len then pure Nothing else do
-      b <- byteAt buf i
-      if b /= 10 then go (i + 1) else
-        if i + 1 < len then do
-          n <- byteAt buf (i + 1)
-          if n == 10 then pure (Just (i, i + 2)) else
-            if n == 13 && i + 2 < len then do
-              m <- byteAt buf (i + 2)
-              if m == 10 then pure (Just (i, i + 3)) else go (i + 1)
-            else go (i + 1)
-        else pure Nothing
+      [a, b, c] <- traverse at [i, i + 1, i + 2]
+        | _ => pure Nothing
+      if a == 10 && b == 10 then pure (Just (i, i + 2)) else
+        if a == 10 && b == 13 && c == 10 then pure (Just (i, i + 3)) else go (i + 1)
 
 -- A header name as a CGI variable: `X-Forwarded-For` is `HTTP_X_FORWARDED_FOR`.
 variableName : String -> String
@@ -151,8 +134,8 @@ cgi {options} mountAt dir next req = case segmentsUnder mountAt req.path of
     failed : (status : Int) -> String -> Task Response
     failed status message = liftIO (text status message)
 
-    environmentOf : (name : String) -> (pathInfo : List String) -> IO (List String)
-    environmentOf name pathInfo = pure (map (\(k, v) => k ++ "=" ++ v) (inherited ++ cgiVars ++ headerVars))
+    environmentOf : (name : String) -> (pathInfo : List String) -> List String
+    environmentOf name pathInfo = map (\(k, v) => k ++ "=" ++ v) (inherited ++ cgiVars ++ headerVars)
       where
         query : String
         query = pack (drop 1 (snd (break (== '?') (unpack req.path))))
@@ -219,18 +202,19 @@ cgi {options} mountAt dir next req = case segmentsUnder mountAt req.path of
             Right n => go buf' (len + n)
             Left _ => pure (Just (buf', len))
 
-    -- Wait for the program to end.
+    -- Wait for the program to end. With a pidfd the program is known to have ended
+    -- and `waitpid` does not wait; the flag is set in the same step, so that the
+    -- cleanup never signals a process ID that is free again.
     reap : ProcessID -> IORef Bool -> Task ()
     reap pid reaped = do
       pidfd <- liftIO (pidfd_open pid 0)
       case pidfd of
         Right fd => do
           _ <- awaitReadable fd
-          _ <- liftIO (close fd)
-          pure ()
-        Left _ => pure ()
-      _ <- blocking (waitpid pid 0)
-      liftIO (writeIORef reaped True)
+          onReactor (ignore (close fd) *> ignore (waitpid pid WNOHANG) *> writeIORef reaped True)
+        Left _ => do
+          _ <- blocking (waitpid pid 0)
+          liftIO (writeIORef reaped True)
 
     answer : Buffer -> (len : Int) -> Task Response
     answer buf len = do
@@ -245,8 +229,8 @@ cgi {options} mountAt dir next req = case segmentsUnder mountAt req.path of
               body <- liftIO (slice buf start (len - start))
               pure (MkResponse status hdrs body)
 
-    exchange : ProcessID -> FileDesc -> FileDesc -> IORef Bool -> IORef Bool -> IORef Bool -> Task Response
-    exchange pid inWrite outRead reaped writing reading = do
+    exchange : ProcessID -> FileDesc -> FileDesc -> IORef Bool -> IORef Bool -> Task Response
+    exchange pid inWrite outRead reaped writing = do
       deadline <- case options.timeoutMs of
                     Z => pure Nothing
                     ms => (\t => Just (t + ms)) <$> now
@@ -262,13 +246,12 @@ cgi {options} mountAt dir next req = case segmentsUnder mountAt req.path of
 
     run : (program, name : String) -> (pathInfo : List String) -> Task Response
     run program name pathInfo = do
-      env <- liftIO (environmentOf name pathInfo)
       liftIO ignoreSigpipe
       Right (inRead, inWrite) <- liftIO (pipe2 O_CLOEXEC)
         | Left _ => failed 502 "bad gateway\n"
       Right (outRead, outWrite) <- liftIO (pipe2 O_CLOEXEC)
         | Left _ => liftIO (ignore (close inRead) *> ignore (close inWrite)) *> failed 502 "bad gateway\n"
-      started <- liftIO (spawnStdio program [program] env inRead outWrite)
+      started <- liftIO (spawnStdio program [program] (environmentOf name pathInfo) inRead outWrite)
       -- the child has its ends; ours are the other two, which must not block
       liftIO (ignore (close inRead) *> ignore (close outWrite))
       case started of
@@ -277,14 +260,13 @@ cgi {options} mountAt dir next req = case segmentsUnder mountAt req.path of
           liftIO (nonBlocking inWrite *> nonBlocking outRead)
           reaped <- liftIO (newIORef False)
           writing <- liftIO (newIORef True)
-          reading <- liftIO (newIORef True)
           let cleanup : Maybe Response -> IO ()
               cleanup _ = do
                 shut writing inWrite
-                shut reading outRead
+                ignore (close outRead)
                 done <- readIORef reaped
                 unless done $ do
                   _ <- kill pid SIGKILL
                   _ <- waitpid pid 0
                   writeIORef reaped True
-          finally cleanup (exchange pid inWrite outRead reaped writing reading)
+          finally cleanup (exchange pid inWrite outRead reaped writing)

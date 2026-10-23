@@ -108,7 +108,7 @@ static {options} mountAt root next req = case segmentsUnder mountAt req.path of
     directory path =
       let (target, query) = break (== '?') req.path
       in if not (isSuffixOf "/" target)
-           then liftIO (noBody {headers = [("Location", target ++ "/" ++ query)]} 301)
+           then liftIO (noBody {headers = [("Location", "/" ++ joinBy "/" (splitPath target) ++ "/" ++ query)]} 301)
            else do
              let index = path ++ "/" ++ options.indexFile
              Right found <- blocking (stat index)
