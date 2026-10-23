@@ -233,6 +233,37 @@ sendAll s buf off len =
       Left e => pure (Left e)
       Right n => sendAll s buf (off + n) (len - n)
 
+-- One non-blocking attempt, on the thread of the scheduler: `EAGAIN` when the
+-- call would block or was interrupted.
+once : PrimIO Int -> Task (Either Errno Int)
+once call = do
+  r <- onReactor (attempt call)
+  pure $ case r of
+    Left e => if e == EINTR then Left EAGAIN else r
+    Right _ => r
+
+||| `recv` that gives up at the time `t` (`Nothing`: the time ran out). The timer and
+||| the race it needs are made only when the call would block: data that is already
+||| there costs none of them.
+export
+recvUntil : Time -> Sock -> Buffer -> (off, len : Int) -> Task (Maybe (Either Errno Int))
+recvUntil t s buf off len = do
+  first <- within buf off len (once (prim__recv s.fd.rawfd buf off len))
+  case first of
+    Left e => if e == EAGAIN then timeoutAt t (recv s buf off len) else pure (Just first)
+    Right _ => pure (Just first)
+
+||| `sendAll` that gives up at the time `t`, with the same economy as `recvUntil`.
+export
+sendAllUntil : Time -> Sock -> Buffer -> (off, len : Int) -> Task (Maybe (Either Errno ()))
+sendAllUntil t s buf off len =
+  if len <= 0 then pure (Just (Right ())) else do
+    first <- within buf off len (once (prim__send s.fd.rawfd buf off len))
+    case first of
+      Left e => if e == EAGAIN then timeoutAt t (sendAll s buf off len) else pure (Just (Left e))
+      Right n => if n >= len then pure (Just (Right ()))
+                 else timeoutAt t (sendAll s buf (off + n) (len - n))
+
 ||| Read and throw away what the peer sends, until it closes, an error, or
 ||| `limit` bytes. It has no time limit of its own: wrap it in `timeoutAt`. Closing a socket with unread bytes makes the system reset the
 ||| connection, and the peer may lose what was sent before; `shutdownWrite`, then
