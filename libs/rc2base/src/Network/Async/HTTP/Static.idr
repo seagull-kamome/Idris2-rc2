@@ -1,6 +1,7 @@
-||| Static files for `Network.Async.HTTP.Router`: `static` is a `Handler`
-||| transformer that answers the requests under a URL prefix with the files of
-||| a directory and hands every other request on. See `doc/async-http-router.md`.
+||| Static files for `Network.Async.HTTP.Router`: `serveStatic` answers a request with
+||| the files of a directory (a route of `routerWith` can use it), and `static` is a
+||| `Handler` transformer that does so for the requests under a URL prefix and hands
+||| every other request on. See `doc/async-http-router.md`.
 module Network.Async.HTTP.Static
 
 -- Copyright 2026, Hattori,Hiroki. All rights reserved.
@@ -83,20 +84,21 @@ safeSegment dotfiles seg =
   seg /= "" && seg /= "." && seg /= ".." && not (any (\c => c == '/' || c == '\0') (unpack seg))
   && (dotfiles || not (isPrefixOf "." seg))
 
-||| Answer the `GET` and `HEAD` requests whose path is at or below `mountAt` with
-||| the file of the same path below the directory `root`, and give every other
-||| request to `next`. A directory is answered with its `indexFile` (a request for
-||| it without the trailing `/` is redirected to the one with it). The answer has
-||| `Content-Type` by the extension and an `ETag` from the size and the time of
-||| modification, which `If-None-Match` is compared with (304). Other methods are
-||| answered with 405, a file that is not there (or a path with `..` in it) with
-||| 404, also a name that starts with `.` unless `serveDotfiles`. Symbolic links are
-||| followed. The file is read in chunks of `chunkBytes`.
+||| Answer a request with the file below the directory `root` that the segments `below`
+||| name (as they stand in the request, percent-encoded): what `static` does for the
+||| requests under its prefix, and what a route of `routerWith` can do with the rest of
+||| its path (`get ("assets" // splat) (\rest, req => serveStatic "public" (splitPath rest) req)`).
+||| Only `GET` and `HEAD` (405 with `Allow` otherwise). A directory is answered with
+||| its `indexFile` (a request for it without the trailing `/` is redirected to the
+||| one with it). The answer has `Content-Type` by the extension and an `ETag` from the
+||| size and the time of modification, which `If-None-Match` is compared with (304). A
+||| file that is not there, or a path with `..` in it, is 404, also a name that starts
+||| with `.` unless `serveDotfiles`. Symbolic links are followed. The file is read in
+||| chunks of `chunkBytes`.
 export
-static : {default defaultStatic options : StaticOptions} -> (mountAt, root : String) -> (next : Handler) -> Handler
-static {options} mountAt root next req = case segmentsUnder mountAt req.path of
-  Nothing => next req
-  Just raw =>
+serveStatic : {default defaultStatic options : StaticOptions} -> (root : String)
+           -> (below : List String) -> Request -> Task Response
+serveStatic {options} root raw req =
     if req.method /= "GET" && req.method /= "HEAD"
       then liftIO (text {headers = [("Allow", "GET, HEAD")]} 405 "method not allowed\n")
       else
@@ -165,3 +167,11 @@ static {options} mountAt root next req = case segmentsUnder mountAt req.path of
         | Left _ => missing
       if isRegular st then serveFile path st else
         if isDirectory st then directory path else missing
+
+||| Give the requests whose path is at or below `mountAt` to `serveStatic` (the file of
+||| the same path below the directory `root`), and every other request to `next`.
+export
+static : {default defaultStatic options : StaticOptions} -> (mountAt, root : String) -> (next : Handler) -> Handler
+static {options} mountAt root next req = case segmentsUnder mountAt req.path of
+  Nothing => next req
+  Just below => serveStatic {options} root below req

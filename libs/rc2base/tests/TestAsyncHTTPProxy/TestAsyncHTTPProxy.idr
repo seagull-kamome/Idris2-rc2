@@ -6,6 +6,7 @@ module Main
 -- Network.Async.HTTP.Proxy: an upstream server and a proxy in front of it run as
 -- tasks of one scheduler; a blocking client on the pool asks the proxy. The path
 -- below the prefix (and the whole path with `stripMount = False`), the method and
+-- the same through routes of `routerWith` (`forwardTo` on the rest of the path),
 -- the body, the headers (Host and X-Forwarded-Host, the hop-by-hop ones and the ones
 -- `Connection` names dropped, a `..` segment (400), an answer with chunked framing (502),
 -- two Set-Cookie kept), a redirect, HEAD, a big answer, the server that is not
@@ -21,6 +22,9 @@ import Data.String
 import Data.Buffer
 import Network.Async
 import Network.Async.HTTP.Proxy
+import Network.Async.HTTP.Router
+import Network.HTTP.Route
+import Network.HTTP.Router
 import Network.Async.HTTP.Server
 import Network.Socket
 import Network.Socket.Data
@@ -98,6 +102,14 @@ rawServer r = do
       bytes <- liftIO (fromString r.reply)
       ignore (Network.Async.sendAll conn bytes 0 (byteLength bytes))
 
+-- The same as a route of `routerWith`, which is given the request: `forwardTo` on the
+-- rest of the path.
+viaRoute : List RouteEntryWith
+viaRoute =
+  [ get ("fwd" // splat) (\rest, req => forwardTo localhost upstreamPort (splitPath rest) req)
+  , post ("fwd" // splat) (\rest, req => forwardTo localhost upstreamPort (splitPath rest) req)
+  ]
+
 mainMounts : Handler
 mainMounts =
   proxy "/api" localhost upstreamPort
@@ -105,7 +117,8 @@ mainMounts =
       (proxy "/dead" localhost deadPort
         (proxy {options = { maxResponseBytes := 1000 } defaultProxy} "/small" localhost upstreamPort
           (proxy {options = { timeoutMs := 300 } defaultProxy} "/quick" localhost upstreamPort
-            (\_ => liftIO (notFound "front: none\n"))))))
+            (routerWith (\_ => liftIO (notFound "front: none\n")) viaRoute)))))
+
 
 front : Handler
 front = foldr (\r, next => proxy {options = r.options} r.mount localhost r.port next) mainMounts raws
@@ -180,6 +193,10 @@ clients = do
   smallOk <- ask (req "GET" "/small/hello")
   slow <- ask (req "GET" "/quick/slow")
   quickOk <- ask (req "GET" "/quick/hello")
+  viaRoutes <- traverse ask
+    [ req "GET" "/fwd/hello", req "HEAD" "/fwd/hello"
+    , "POST /fwd/info?q=1 HTTP/1.1\r\nHost: front.test\r\nConnection: close\r\nX-Custom: yes\r\nContent-Length: 4\r\n\r\nbody"
+    , req "GET" "/fwd/../admin" ]
   encodedSlash <- ask (req "GET" "/api/..%2f..%2fetc")
   encodedBackslash <- ask (req "GET" "/api/..%5cetc")
   rawAnswers <- traverse (\path => ask (req "GET" (path ++ "/x")))
@@ -190,7 +207,7 @@ clients = do
   pure ([ plain hello, plain info, plain unlisted, plain dotdot, plain encoded, plain chunked, plain slash, plain root, plain raw, plain redirect, plain headed
        , sizeOf big, plain missing, plain outside, plain dead, plain tooBig, plain smallOk
        , plain slow, plain quickOk, plain encodedSlash, plain encodedBackslash ]
-       ++ map plain rawAnswers ++ [plain early])
+       ++ map plain rawAnswers ++ [plain early] ++ map plain viaRoutes)
 
 main : IO ()
 main = do

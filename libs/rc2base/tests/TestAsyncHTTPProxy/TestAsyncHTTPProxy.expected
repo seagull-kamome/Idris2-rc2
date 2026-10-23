@@ -84,3 +84,14 @@ bad gateway: head of the answer too large
 
 HTTP/1.1 413 Payload Too Large | Connection: close
 
+HTTP/1.1 200 OK | Connection: close | content-type: text/plain; charset=utf-8 | x-up: 1 | set-cookie: a=1 | set-cookie: b=2
+hello
+
+HTTP/1.1 200 OK | Connection: close | content-type: text/plain; charset=utf-8 | x-up: 1 | set-cookie: a=1 | set-cookie: b=2
+
+HTTP/1.1 200 OK | Connection: close | content-type: text/plain; charset=utf-8
+POST /info?q=1 127.0.0.1:18771 front.test yes - - - - http close 4 body
+
+HTTP/1.1 400 Bad Request | Connection: close | Content-Type: text/plain; charset=utf-8
+bad request
+

@@ -84,6 +84,28 @@ cgi
 HTTP/1.1 200 OK | Content-Type: text/plain | X-Script: env
 GET|/cgi-bin/env.sh|||0|||CGI/1.1|localhost:8080||/usr/bin:/bin||
 
+HTTP/1.1 200 OK | Content-Type: text/plain; charset=utf-8
+hello file
+
+HTTP/1.1 200 OK | Content-Type: text/plain; charset=utf-8
+
+HTTP/1.1 301 Moved Permanently | Location: /files/sub/
+
+HTTP/1.1 404 Not Found | Content-Type: text/plain; charset=utf-8
+not found
+
+HTTP/1.1 404 Not Found | Content-Type: text/plain; charset=utf-8
+not found
+
+HTTP/1.1 404 Not Found | Content-Type: text/plain; charset=utf-8
+none
+
+HTTP/1.1 200 OK | Content-Type: text/plain | X-Script: env
+POST|/scripts/env.sh|/extra|z=1|4|||CGI/1.1|localhost:8080||/usr/bin:/bin||
+body
+HTTP/1.1 404 Not Found | Content-Type: text/plain; charset=utf-8
+not found
+
 leader of the timed out program gone: True
 its child gone: True
 orphan: HTTP/1.1 200 OK | Content-Type: text/plain

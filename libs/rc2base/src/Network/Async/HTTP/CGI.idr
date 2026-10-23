@@ -1,6 +1,7 @@
-||| External CGI programs for `Network.Async.HTTP.Router`: `cgi` is a `Handler`
-||| transformer that runs the executable a request names under a URL prefix, as
-||| RFC 3875 describes, and gives its output back as the response. The program
+||| External CGI programs for `Network.Async.HTTP.Router`: `runCGI` runs the executable
+||| a request names, as RFC 3875 describes, and gives its output back as the response
+||| (a route of `routerWith` can use it), and `cgi` is a `Handler` transformer that does
+||| so for the requests under a URL prefix. The program
 ||| runs as a process of its own while the task waits for it on the scheduler.
 ||| See `doc/async-http-router.md`.
 |||
@@ -109,25 +110,27 @@ parseOutput head =
     field line = case break (== ':') (trim line) of
       (k, rest) => if rest == "" then Nothing else Just (trim k, trim (pack (drop 1 (unpack rest))))
 
-||| Run the executable a request names, below the directory `dir`, for the requests
-||| whose path is at or below `mountAt`, and give every other request to `next`.
-||| The first segment after `mountAt` is the name of the program (a regular file
-||| with the execute permission, else 404); the segments after it are `PATH_INFO`.
-||| The request is passed as in RFC 3875: the `REQUEST_METHOD`, `SCRIPT_NAME`,
-||| `PATH_INFO`, `QUERY_STRING`, `CONTENT_TYPE`, `CONTENT_LENGTH` and the
-||| `HTTP_*` variables of the headers (but not `Proxy`) in the environment, the body
-||| on the standard input. The output must be a head (`Content-Type`, or `Location`
-||| for a redirect, and `Status: 404 Not Found` to change the status) and then the
-||| body; the answer is 502 when it is not, when the program cannot be run or fails
-||| before a head, or when it gives more than `maxOutputBytes`, and 504 when it
-||| takes more than `timeoutMs`. The program runs with `dir` as its working
-||| directory. Its standard error is ours.
+||| Run the executable that the segments `below` name (as they stand in the request,
+||| percent-encoded) in the directory `dir`: what `cgi` does for the requests under its
+||| prefix `mountAt`, and what a route of `routerWith` can do with the rest of its path
+||| (`post ("cgi-bin" // splat) (\rest, req => runCGI "/cgi-bin" "cgi" (splitPath rest) req)`;
+||| `mountAt` is the path of the route, for `SCRIPT_NAME`). The first segment is the name
+||| of the program (a regular file with the execute permission, else 404); the segments
+||| after it are `PATH_INFO`.
+|||
+||| The request is passed as in RFC 3875 (`doc/async-http-router.md` has the variables),
+||| the body on the standard input. The output must be a head (`Content-Type`, or
+||| `Location` for a redirect, and `Status: 404 Not Found` to change the status) and then
+||| the body; the answer is 502 when it is not, when the program cannot be run or fails
+||| before a head, or when it gives more than `maxOutputBytes`, and 504 when it takes
+||| more than `timeoutMs`. The program runs with `dir` as its working directory. Its
+||| standard error is ours.
 export
-cgi : {default defaultCGI options : CGIOptions} -> (mountAt, dir : String) -> (next : Handler) -> Handler
-cgi {options} mountAt dir next req = case segmentsUnder mountAt req.path of
-  Nothing => next req
-  Just [] => missing
-  Just (raw :: rest) =>
+runCGI : {default defaultCGI options : CGIOptions} -> (mountAt, dir : String)
+      -> (below : List String) -> Request -> Task Response
+runCGI {options} mountAt dir below req = case below of
+  [] => missing
+  raw :: rest =>
     let name = percentDecode raw
     in if name == "" || name == "." || name == ".." || any (\c => c == '/' || c == '\0') (unpack name)
          then missing else do
@@ -318,3 +321,12 @@ cgi {options} mountAt dir next req = case segmentsUnder mountAt req.path of
             -- both ends have to be non-blocking for the reads and writes to wait
             ready <- liftIO (all id <$> traverse nonBlocking [inWrite, outRead])
             if ready then exchange pid inWrite outRead reaped writing else failed 502 "bad gateway\n"
+
+||| Give the requests whose path is at or below `mountAt` to `runCGI` (the first
+||| segment after `mountAt` names the program in `dir`), and every other request to
+||| `next`.
+export
+cgi : {default defaultCGI options : CGIOptions} -> (mountAt, dir : String) -> (next : Handler) -> Handler
+cgi {options} mountAt dir next req = case segmentsUnder mountAt req.path of
+  Nothing => next req
+  Just below => runCGI {options} mountAt dir below req

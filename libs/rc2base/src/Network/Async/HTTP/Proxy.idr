@@ -1,6 +1,6 @@
-||| A reverse proxy for `Network.Async.HTTP.Router`: `proxy` is a `Handler`
-||| transformer that forwards the requests under a URL prefix to an HTTP server and
-||| gives its answer back. The connection to the server is a task on the scheduler,
+||| A reverse proxy for `Network.Async.HTTP.Router`: `forwardTo` forwards a request to
+||| an HTTP server and gives its answer back (a route of `routerWith` can use it), and
+||| `proxy` is a `Handler` transformer that does so for the requests under a URL prefix. The connection to the server is a task on the scheduler,
 ||| so a slow server holds up only the connection of its request. See
 ||| `doc/async-http-router.md`.
 module Network.Async.HTTP.Proxy
@@ -80,11 +80,14 @@ passedOn besides hdrs =
   let dropped = besides ++ hopByHop ++ connectionTokens hdrs
   in filter (\(k, _) => not (elem (toLower k) dropped)) hdrs
 
-||| Forward the requests whose path is at or below `mountAt` to the HTTP server at
-||| `upstream` (an IPv4 address: a host name would need a blocking lookup) and
-||| `port`, and give every other request to `next`. The request goes out as
-||| HTTP/1.0 with `Connection: close`, so the server answers without chunks and
-||| the answer ends with its connection; the answer is given back with its status
+||| Forward a request to the HTTP server at `upstream` (an IPv4 address: a host name
+||| would need a blocking lookup) and `port`, asking for the path `below` (the segments
+||| below the mount as they stand in the request): what `proxy` does for the requests
+||| under its prefix, and what a route of `routerWith` can do with the rest of its path
+||| (`get ("api" // splat) (\rest, req => forwardTo localhost 9000 (splitPath rest) req)`).
+|||
+||| The request goes out as HTTP/1.0 with `Connection: close`, so the server answers
+||| without chunks and the answer ends with its connection; the answer is given back with its status
 ||| and headers, except the ones about the connection (also the ones `Connection`
 ||| names) and `Content-Length`, which the server sets again. `HEAD` is asked as
 ||| `GET` so that `Content-Length` is right. The request has `Host`, `Connection`,
@@ -107,11 +110,9 @@ passedOn besides hdrs =
 ||| `maxResponseBytes`, and 504 after `timeoutMs`. No `Upgrade` (WebSocket), no
 ||| `100-continue`, no streaming: the answer is held whole.
 export
-proxy : {default defaultProxy options : ProxyOptions}
-     -> (mountAt : String) -> (upstream : SocketAddress) -> (port : Port) -> (next : Handler) -> Handler
-proxy {options} mountAt upstream port next req = case segmentsUnder mountAt req.path of
-  Nothing => next req
-  Just below =>
+forwardTo : {default defaultProxy options : ProxyOptions}
+         -> (upstream : SocketAddress) -> (port : Port) -> (below : List String) -> Request -> Task Response
+forwardTo {options} upstream port below req =
     if not acceptable then liftIO (text 400 "bad request\n")
     else if not (fieldSafe hostValue) then liftIO (text 500 "bad proxy configuration\n")
     else do
@@ -242,3 +243,13 @@ proxy {options} mountAt upstream port next req = case segmentsUnder mountAt req.
             Left (Left failed) => pure (Left failed)
             Left (Right (buf, len, closed)) => toResponse buf len closed
             Right () => pure (Left (Bad "unreachable"))
+
+||| Give the requests whose path is at or below `mountAt` to `forwardTo` (the server is
+||| asked for the path below it, or with `stripMount = False` for the whole path), and
+||| every other request to `next`.
+export
+proxy : {default defaultProxy options : ProxyOptions}
+     -> (mountAt : String) -> (upstream : SocketAddress) -> (port : Port) -> (next : Handler) -> Handler
+proxy {options} mountAt upstream port next req = case segmentsUnder mountAt req.path of
+  Nothing => next req
+  Just below => forwardTo {options} upstream port below req

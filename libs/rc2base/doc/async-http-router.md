@@ -1,33 +1,64 @@
 # Static files, CGI, a reverse proxy and a URL rewriter behind `Network.Async.HTTP.Router`
 
 `Network.Async.HTTP.Router.router` takes a route table (`get`, `post`, ...) whose
-handlers give a `Task Response` and make a `Handler` of it (see `http-router.md`
-for the patterns). A route handler is given only the captures of its path, not the
-`Request`, so it cannot serve "everything below `/static`" or hand a request body
-to a program. Four `Handler` transformers do that (`static`, `cgi`, `proxy`, `urlRewrite`), and the router's `notFound`
-argument is where they plug in:
+handlers give a `Task Response` and make a `Handler` of it; `routerWith` does the same
+for routes whose handlers are given the `Request` as well as the captures of the path
+(`RouteEntryWith`, see `async-http-server.md`; the patterns are those of `http-router.md`).
+Static files, CGI programs and a reverse proxy are done in either of two ways, with
+the same code behind both.
+
+**As `Handler` transformers** (`static`, `cgi`, `proxy`, and `urlRewrite`), which take
+every method under a URL prefix and pass the other requests on to the next `Handler`:
 
 ```idris2
 handler : Handler
 handler =
-  static "/static" "public"
-    (cgi "/cgi-bin" "cgi"
-      (proxy "/api" (IPv4Addr 127 0 0 1) 9000
-        (router notFoundHandler routes)))
+  urlRewrite rules
+    (static "/static" "public"
+      (cgi "/cgi-bin" "cgi"
+        (proxy "/api" (IPv4Addr 127 0 0 1) 9000
+          (router notFoundHandler routes))))
 ```
 
 A request below `/static` is answered with a file, one below `/cgi-bin` by a
-program, one below `/api` by another HTTP server, and anything else goes on to the next `Handler`, at last to `router`,
-which tries the routes and then `notFoundHandler`. The prefixes are tried first,
-so a route under them is never reached; to try the routes first, put the
-transformers inside the router's `notFound` argument instead:
-`router (static ... (cgi ... notFoundHandler)) routes`.
-The prefix is matched by whole segments (`Network.HTTP.Route.segmentsUnder`):
-`/static` is a prefix of `/static` and `/static/a`, not of `/staticx`.
+program, one below `/api` by another HTTP server, and anything else goes on to the next
+`Handler`, at last to `router`, which tries the routes and then `notFoundHandler`. The
+prefixes are tried first, so a route under them is never reached; to try the routes
+first, put the transformers inside the router's `notFound` argument instead:
+`router (static ... (cgi ... notFoundHandler)) routes`. The prefix is matched by whole
+segments (`Network.HTTP.Route.segmentsUnder`): `/static` is a prefix of `/static` and
+`/static/a`, not of `/staticx`.
+
+**As routes of `routerWith`**, where the router does the matching of the path and the
+method, and the handler is the function the transformer is made of (`serveStatic`,
+`runCGI`, `forwardTo`) on the rest of the path that `splat` gives (`splitPath` turns
+it back into segments, still percent-encoded):
+
+```idris2
+routes : List RouteEntryWith
+routes =
+  [ get  ("assets" // splat)  (\rest, req => serveStatic "public" (splitPath rest) req)
+  , post ("scripts" // splat) (\rest, req => runCGI "/scripts" "cgi" (splitPath rest) req)
+  , get  ("api" // splat)     (\rest, req => forwardTo (IPv4Addr 127 0 0 1) 9000 (splitPath rest) req)
+  , get  ("users" // capture "id" Int end) (\id, req => ...)    -- an ordinary route beside them
+  ]
+
+handler : Handler
+handler = routerWith notFoundHandler routes
+```
+
+Use the routes when the method matters (`serveStatic` answers only `GET`/`HEAD`; a
+`HEAD` request goes to the `get` route when there is no `head` route), when a route
+should be tried in its place among the others (first match wins), or when the
+paths come from the table. Use the transformers for "everything below this prefix, any
+method". `runCGI` takes the path of the route (`"/scripts"`) for `SCRIPT_NAME`. A route
+does no `..` check of its own on `rest`: `serveStatic`, `runCGI` and `forwardTo` refuse
+such a path themselves. The URL rewriter has no route form: it changes the request
+before the route is chosen.
 
 ## `Network.Async.HTTP.Static`
 
-`static {options} mountAt root next`:
+`static {options} mountAt root next` (or `serveStatic {options} root below req`):
 
 - Only `GET` and `HEAD` (405 with `Allow` otherwise). The segments after the prefix
   are percent-decoded and added to `root`; a segment that is empty, `.`, `..` or
@@ -52,7 +83,7 @@ The prefix is matched by whole segments (`Network.HTTP.Route.segmentsUnder`):
 
 ## `Network.Async.HTTP.CGI`
 
-`cgi {options} mountAt dir next` runs `dir/<first segment after the prefix>`, which
+`cgi {options} mountAt dir next` (or `runCGI {options} mountAt dir below req`) runs `dir/<first segment after the prefix>`, which
 has to be a regular file with the execute permission (else 404). The rest of the
 path is `PATH_INFO`. RFC 3875 variables: `GATEWAY_INTERFACE`, `SERVER_PROTOCOL`,
 `SERVER_SOFTWARE`, `SERVER_NAME`, `SERVER_PORT` (both from `options`),
@@ -102,7 +133,7 @@ Build programs that use `cgi` with `IDRIS2_CFLAGS=-D_GNU_SOURCE` (glibc hides
 
 ## `Network.Async.HTTP.Proxy`
 
-`proxy {options} mountAt upstream port next` forwards the requests at or below
+`proxy {options} mountAt upstream port next` (or `forwardTo {options} upstream port below req`) forwards the requests at or below
 `mountAt` to the HTTP server at the IPv4 address `upstream` and `port` (a host name
 would need a blocking lookup: `EAFNOSUPPORT`, so 502), and gives its answer back.
 
@@ -185,4 +216,5 @@ let handler = urlRewrite [old, item, ext] next
   (`https://example.org\\1` with `@evil.example/` caught is another host). A request whose
   path has a control character in it is 400 too (the regex engine reads a C string).
 
-Tests: `tests/TestAsyncHTTPStaticCGI`, `tests/TestAsyncHTTPProxy`, `tests/TestAsyncHTTPRewrite`.
+Tests: `tests/TestAsyncHTTPStaticCGI`, `tests/TestAsyncHTTPProxy` (both also through
+`routerWith`), `tests/TestAsyncHTTPRewrite`.

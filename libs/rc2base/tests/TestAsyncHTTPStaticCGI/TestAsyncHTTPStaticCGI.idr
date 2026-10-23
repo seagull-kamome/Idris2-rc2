@@ -13,6 +13,7 @@ module Main
 -- `..`). CGI: the variables a program is given and its body on the standard input,
 -- Status and Location, a program with no head or too much output (502), one that
 -- takes too long (504, and the server goes on), one that is not executable (404),
+-- the same through routes of `routerWith` (`serveStatic`, `runCGI` on the rest of the path),
 -- the working directory of a program (the one it is in), the headers a program gets
 -- (joined duplicates, no `_` in a name, no Authorization), a dotfile (404).
 
@@ -38,13 +39,28 @@ import System.Posix.Errno
 routes : List Network.Async.HTTP.Router.RouteEntry
 routes = [ get ("hello" // end) (liftIO (ok "route\n")) ]
 
+staticOptions : StaticOptions
+staticOptions = { chunkBytes := 4, maxFileBytes := 40 } defaultStatic
+
+cgiOptions : CGIOptions
+cgiOptions = { timeoutMs := 700, maxOutputBytes := 50000, serverPort := 8080
+             , environment := [("PATH", "/usr/bin:/bin")] } defaultCGI
+
+-- The same files and programs as routes whose handlers are given the request
+-- (`routerWith`): under /files and /scripts. `dir` is the directory of the test.
+withRequest : (dir : String) -> List RouteEntryWith
+withRequest dir =
+  [ get ("files" // splat) (\rest, req => serveStatic {options = staticOptions} (dir ++ "/public") (splitPath rest) req)
+  , get ("scripts" // splat) (\rest, req => runCGI {options = cgiOptions} "/scripts" (dir ++ "/cgi") (splitPath rest) req)
+  , post ("scripts" // splat) (\rest, req => runCGI {options = cgiOptions} "/scripts" (dir ++ "/cgi") (splitPath rest) req)
+  ]
+
 -- `dir` is the directory of the test, which holds public/ and cgi/.
 handler : (dir : String) -> Handler
 handler dir =
-  static {options = { chunkBytes := 4, maxFileBytes := 40 } defaultStatic} "/static" (dir ++ "/public")
-    (cgi {options = { timeoutMs := 700, maxOutputBytes := 50000, serverPort := 8080
-                        , environment := [("PATH", "/usr/bin:/bin")] } defaultCGI} "/cgi-bin" (dir ++ "/cgi")
-      (Network.Async.HTTP.Router.router (\_ => liftIO (notFound "none\n")) routes))
+  static {options = staticOptions} "/static" (dir ++ "/public")
+    (cgi {options = cgiOptions} "/cgi-bin" (dir ++ "/cgi")
+      (Network.Async.HTTP.Router.router (routerWith (\_ => liftIO (notFound "none\n")) (withRequest dir)) routes))
 
 -- Connect, send the request and read the answer to the end of the connection.
 session : Port -> String -> IO String
@@ -149,6 +165,11 @@ clients port dir = do
   stale <- ask ("GET /static/hello.txt HTTP/1.1\r\nHost: t\r\nConnection: close\r\nIf-None-Match: \"other\"\r\n\r\n")
   tooBig <- ask (req "GET" "/static/big.txt")
   badName <- ask "GET /cgi-bin/badname.sh HTTP/1.1\r\nHost: t\r\nConnection: close\r\nX-A: ok\r\nX-A=B: injected\r\nX-A-B: both\r\n\r\n"
+  viaRoute <- traverse ask
+    [ req "GET" "/files/hello.txt", req "HEAD" "/files/hello.txt", req "GET" "/files/sub"
+    , req "GET" "/files/.hidden", req "GET" "/files/%2e%2e/cgi/env.sh", req "POST" "/files/hello.txt"
+    , "POST /scripts/env.sh/extra?z=1 HTTP/1.1\r\nHost: t\r\nConnection: close\r\nContent-Length: 4\r\n\r\nbody"
+    , req "GET" "/scripts/nowhere.sh" ]
   dotfile <- ask (req "GET" "/static/.hidden")
   posted <- ask (req "POST" "/static/hello.txt")
   absent <- ask (req "GET" "/static/nothing.txt")
@@ -175,9 +196,9 @@ clients port dir = do
   cwd <- ask (req "GET" "/cgi-bin/pwd.sh")
   after <- ask (req "GET" "/cgi-bin/env.sh")
   pure (map (summary types)
-          [ index, noSlash, subIndex, hello, spaced, headed, cached, stale, tooBig, badName, dotfile, posted, absent, dotdot, dotdot2
+          ([ index, noSlash, subIndex, hello, spaced, headed, cached, stale, tooBig, badName, dotfile, posted, absent, dotdot, dotdot2
           , outside, route, envRun, getRun, status, redirect, nohead, big, slow, noexec, nowhere
-          , nameless, escape, cwd, after ]
+          , nameless, escape, cwd, after ] ++ viaRoute)
        ++ [ "leader of the timed out program gone: " ++ show slowGone
           , "its child gone: " ++ show slowChildGone
           , "orphan: " ++ summary types orphan
