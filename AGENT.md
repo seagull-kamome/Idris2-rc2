@@ -90,7 +90,9 @@ history, not there.
   of at most four fields as a by-value `{tag, f0, ...}` struct from a DualABI
   worker, `world-arity-raising.md` for the pass that
   passes the world to a function returning a closure waiting for it,
-  so its callers call instead of applying, `trmc.md` for tail recursion
+  so its callers call instead of applying, `leaf-tail-calls.md` for
+  calling a function whose tails are values directly from a tail position
+  instead of through a closure, `trmc.md` for tail recursion
   modulo constructor, which turns `x :: f xs`-shaped recursion into a
   loop that fills each cell's hole, `closure-accumulator.md` for
   its sibling that keeps a `c . (y ::)` difference list as such a chain

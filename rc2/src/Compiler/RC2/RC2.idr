@@ -41,6 +41,7 @@ import Compiler.RC2.DeadCode
 import Compiler.RC2.DualABI
 import Compiler.RC2.DeadVars
 import Compiler.RC2.DupMerge
+import Compiler.RC2.LeafTail
 import Compiler.RC2.FunDedup
 import Compiler.RC2.PushDown
 import Compiler.RC2.Emit
@@ -293,7 +294,7 @@ inlineNamed disabled keep main defs =
 ||| apart.
 disableableStageNames : List String
 disableableStageNames =
-    ["noinline", "nodeadargs", "noarityraise", "noapplyfold", "notrmc", "noctx", "noconstfold", "noknowncon", "nopushcon", "nospecclosure", "nospecconstcon", "noconaltnative", "nomutualloop", "noloop", "noearlyinline", "nolateinline", "nosink", "nocmpmerge", "nodualabi", "noboolret", "noboolcase", "noboolfield", "nonullparams", "nostructreturn", "nomutualstruct", "nodeadcode", "nopushdown", "nodupmerge", "nodeadvars", "nofundedup", "noreusenested", "noreuserecheck"]
+    ["noinline", "nodeadargs", "noarityraise", "noapplyfold", "notrmc", "noctx", "noconstfold", "noknowncon", "nopushcon", "nospecclosure", "nospecconstcon", "noconaltnative", "nomutualloop", "noloop", "noearlyinline", "nolateinline", "nosink", "nocmpmerge", "nodualabi", "noboolret", "noboolcase", "noboolfield", "nonullparams", "nostructreturn", "nomutualstruct", "nodeadcode", "nopushdown", "nodupmerge", "nodeadvars", "noleaftail", "nofundedup", "noreusenested", "noreuserecheck"]
 
 ||| Stages that are off unless asked for with `--directive <name>`. They
 ||| travel to `toRCDefs` in the same list as the disables above.
@@ -491,9 +492,13 @@ toRCDefs disabled incremental roots thunks preFolded = do
     dupMerged <- if "nodupmerge" `elem` disabled
                     then pure pushedDown
                     else logTime 2 "rc2: Dup merge" $ pure (map (\(n, d) => (n, applyDupMerge d)) pushedDown)
+    -- rc2/doc/leaf-tail-calls.md: before Dead variable erasure, which reserves id 0.
+    leafTailed <- if "noleaftail" `elem` disabled
+                     then pure dupMerged
+                     else logTime 2 "rc2: Leaf tail calls" $ applyLeafTail dupMerged
     erased <- if "nodeadvars" `elem` disabled
-                 then pure dupMerged
-                 else logTime 2 "rc2: Dead variable erasure" $ pure (map (\(n, d) => (n, applyDeadVars d)) dupMerged)
+                 then pure leafTailed
+                 else logTime 2 "rc2: Dead variable erasure" $ pure (map (\(n, d) => (n, applyDeadVars d)) leafTailed)
     -- Erasing a dead `RLet` can leave a `dup` and a `drop` of the same
     -- local adjacent that weren't when Dup merge ran, so its own
     -- cancellation peephole gets one more sweep here -- no re-merge,
