@@ -36,10 +36,12 @@ import System.Posix.Errno
 routes : List Network.Async.HTTP.Router.RouteEntry
 routes = [ get ("hello" // end) (liftIO (ok "route\n")) ]
 
-handler : Handler
-handler =
-  static {options = { chunkBytes := 4, maxFileBytes := 40 } defaultStatic} "/static" "public"
-    (cgi {options = { timeoutMs := 700, maxOutputBytes := 50000, serverPort := 8080 } defaultCGI} "/cgi-bin" "cgi"
+-- `dir` is the directory of the test, which holds public/ and cgi/.
+handler : (dir : String) -> Handler
+handler dir =
+  static {options = { chunkBytes := 4, maxFileBytes := 40 } defaultStatic} "/static" (dir ++ "/public")
+    (cgi {options = { timeoutMs := 700, maxOutputBytes := 50000, serverPort := 8080
+                        , environment := [("PATH", "/usr/bin:/bin")] } defaultCGI} "/cgi-bin" (dir ++ "/cgi")
       (Network.Async.HTTP.Router.router (\_ => liftIO (notFound "none\n")) routes))
 
 -- Connect, send the request and read the answer to the end of the connection.
@@ -91,9 +93,9 @@ headerOf name answer =
     Just h => pack (drop (length name + 2) (unpack h))
     Nothing => ""
 
-scenario : Port -> Task (List String) -> IO ()
-scenario port clients = do
-  r <- runTaskWith 3 (race (serve port handler) clients)
+scenario : Port -> (dir : String) -> Task (List String) -> IO ()
+scenario port dir clients = do
+  r <- runTaskWith 3 (race (serve port (handler dir)) clients)
   case r of
     Just (Right lines) => traverse_ putStrLn lines
     Just (Left stopped) => putStrLn ("server ended: " ++ show stopped)
@@ -138,5 +140,16 @@ clients port = do
           , outside, route, envRun, getRun, status, redirect, nohead, big, slow, noexec, nowhere
           , nameless, escape, cwd, after ])
 
+-- The directory of the test, from the path of the executable
+-- (<dir>/build/exec/<name>): verify.sh runs it from another directory.
+testDir : IO String
+testDir = do
+  args <- getArgs
+  pure $ case args of
+    exe :: _ => joinBy "/" (reverse (drop 3 (reverse (forget (split (== '/') exe)))))
+    [] => "."
+
 main : IO ()
-main = scenario 18751 (clients 18751)
+main = do
+  dir <- testDir
+  scenario 18751 dir (clients 18751)

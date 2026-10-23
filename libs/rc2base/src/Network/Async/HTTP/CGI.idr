@@ -51,10 +51,11 @@ record CGIOptions where
   ||| ours), set first so that a CGI variable of the same name wins.
   environment : List (String, String)
 
-||| 30 seconds, 16 MiB, `localhost:80`, and `PATH=/usr/local/bin:/usr/bin:/bin`.
+||| 30 seconds, 16 MiB, `localhost:80`, and no `environment` at all: a program has
+||| no `PATH` (nor anything else of ours) unless `environment` gives it one.
 public export
 defaultCGI : CGIOptions
-defaultCGI = MkCGIOptions 30000 16777216 "localhost" 80 [("PATH", "/usr/local/bin:/usr/bin:/bin")]
+defaultCGI = MkCGIOptions 30000 16777216 "localhost" 80 []
 
 %foreign "CExpr:((int)read($1, (char *)($2) + ($3), (size_t)($4))),libc,unistd.h"
 prim__readBuf : Int32 -> Buffer -> Int -> Int -> PrimIO Int

@@ -55,7 +55,8 @@ path is `PATH_INFO`. RFC 3875 variables: `GATEWAY_INTERFACE`, `SERVER_PROTOCOL`,
 `SERVER_SOFTWARE`, `SERVER_NAME`, `SERVER_PORT` (both from `options`),
 `REQUEST_METHOD`, `SCRIPT_NAME`, `PATH_INFO`, `QUERY_STRING`, `CONTENT_LENGTH`,
 `CONTENT_TYPE` and `HTTP_*` for the other headers except `Proxy` (httpoxy). The
-program gets no environment of ours, only `options.environment` (default: `PATH`)
+program gets no environment of ours, only `options.environment` (empty by default: no `PATH` either, a program that
+needs one is given it there, e.g. `environment := [("PATH", "/usr/bin:/bin")]`)
 and these. The request body is its standard input; its standard error is ours.
 
 - The process is started with `posix_spawn` (`System.Posix.Spawn`), which is safe
