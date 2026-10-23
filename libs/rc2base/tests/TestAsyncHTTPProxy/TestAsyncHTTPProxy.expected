@@ -1,0 +1,41 @@
+HTTP/1.1 200 OK | Connection: close | content-type: text/plain; charset=utf-8 | x-up: 1 | set-cookie: a=1 | set-cookie: b=2
+hello
+
+HTTP/1.1 200 OK | Connection: close | content-type: text/plain; charset=utf-8
+POST /info?a=1&b=%20 127.0.0.1:18761 front.test yes - 5 hello
+
+HTTP/1.1 200 OK | Connection: close | content-type: text/plain; charset=utf-8
+GET /info/ 127.0.0.1:18761 front.test - - - 
+
+HTTP/1.1 404 Not Found | Connection: close | content-type: text/plain; charset=utf-8
+upstream: none
+
+HTTP/1.1 200 OK | Connection: close | content-type: text/plain; charset=utf-8
+GET /raw/info 127.0.0.1:18761 front.test - - - 
+
+HTTP/1.1 302 Found | Connection: close | location: /hello
+
+HTTP/1.1 200 OK | Connection: close | content-type: text/plain; charset=utf-8 | x-up: 1 | set-cookie: a=1 | set-cookie: b=2
+
+True 100103
+HTTP/1.1 404 Not Found | Connection: close | content-type: text/plain; charset=utf-8
+upstream: none
+
+HTTP/1.1 404 Not Found | Connection: close | Content-Type: text/plain; charset=utf-8
+front: none
+
+HTTP/1.1 502 Bad Gateway | Connection: close | Content-Type: text/plain; charset=utf-8
+bad gateway: cannot connect
+
+HTTP/1.1 502 Bad Gateway | Connection: close | Content-Type: text/plain; charset=utf-8
+bad gateway: answer too large
+
+HTTP/1.1 200 OK | Connection: close | content-type: text/plain; charset=utf-8 | x-up: 1 | set-cookie: a=1 | set-cookie: b=2
+hello
+
+HTTP/1.1 504 Gateway Timeout | Connection: close | Content-Type: text/plain; charset=utf-8
+gateway timeout
+
+HTTP/1.1 200 OK | Connection: close | content-type: text/plain; charset=utf-8 | x-up: 1 | set-cookie: a=1 | set-cookie: b=2
+hello
+

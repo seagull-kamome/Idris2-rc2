@@ -1,10 +1,10 @@
-# Static files and CGI behind `Network.Async.HTTP.Router`
+# Static files, CGI and a reverse proxy behind `Network.Async.HTTP.Router`
 
 `Network.Async.HTTP.Router.router` takes a route table (`get`, `post`, ...) whose
 handlers give a `Task Response` and make a `Handler` of it (see `http-router.md`
 for the patterns). A route handler is given only the captures of its path, not the
 `Request`, so it cannot serve "everything below `/static`" or hand a request body
-to a program. Two `Handler` transformers do that, and the router's `notFound`
+to a program. Three `Handler` transformers do that (`static`, `cgi`, `proxy`), and the router's `notFound`
 argument is where they plug in:
 
 ```idris2
@@ -12,11 +12,12 @@ handler : Handler
 handler =
   static "/static" "public"
     (cgi "/cgi-bin" "cgi"
-      (router notFoundHandler routes))
+      (proxy "/api" (IPv4Addr 127 0 0 1) 9000
+        (router notFoundHandler routes)))
 ```
 
 A request below `/static` is answered with a file, one below `/cgi-bin` by a
-program, and anything else goes on to the next `Handler`, at last to `router`,
+program, one below `/api` by another HTTP server, and anything else goes on to the next `Handler`, at last to `router`,
 which tries the routes and then `notFoundHandler`. The prefixes are tried first,
 so a route under them is never reached; to try the routes first, put the
 transformers inside the router's `notFound` argument instead:
@@ -80,4 +81,35 @@ and these. The request body is its standard input; its standard error is ours.
 Build programs that use `cgi` with `IDRIS2_CFLAGS=-D_GNU_SOURCE` (glibc hides
 `posix_spawn_file_actions_addclosefrom_np` otherwise; glibc 2.34 or later).
 
-Test: `tests/TestAsyncHTTPStaticCGI`.
+
+## `Network.Async.HTTP.Proxy`
+
+`proxy {options} mountAt upstream port next` forwards the requests at or below
+`mountAt` to the HTTP server at the IPv4 address `upstream` and `port` (a host name
+would need a blocking lookup: `EAFNOSUPPORT`, so 502), and gives its answer back.
+
+- The path below `mountAt` is asked for (`/api/users?x=1` is `/users?x=1`); with
+  `stripMount = False` the path as it is. The method and the body go as they are
+  (`Content-Length` set again); `HEAD` is asked as `GET`, so that the
+  `Content-Length` the client sees is right (the server leaves the body out).
+- The request is HTTP/1.0 with no keep-alive: the server answers without chunks and
+  the answer ends with its connection, so the answer needs no framing of its own.
+  A new connection per request, no pooling.
+- Headers: `Host` is the server's own (`hostHeader` to change it) and the original
+  one goes in `X-Forwarded-Host` (one the client sent is replaced, not passed on).
+  The hop-by-hop headers (`Connection`, `Keep-Alive`, `Transfer-Encoding`, `TE`,
+  `Trailer`, `Upgrade`, `Proxy-*`) and `Expect` are not passed on, in either
+  direction; `Content-Length` of the answer is set again from the body. The names of
+  the headers of the answer are in lower case, as the parser gives them; repeated
+  ones (`Set-Cookie`) stay repeated.
+- The exchange is tasks on the scheduler (`connect`, `sendAll`, `recv` of
+  `Network.Async`), so a slow server holds up only the connection of its request.
+  The socket is closed when the exchange ends or is given up. After `timeoutMs`
+  (default 30 s, from the connect to the end of the answer) the answer is 504.
+- 502 when the server cannot be reached, resets the connection, answers with no
+  proper head or status, an answer shorter than its `Content-Length`, or more than
+  `maxResponseBytes` (default 16 MiB). The answer is held whole: no streaming, no
+  `Upgrade` (WebSocket), no `100-continue`, and no `X-Forwarded-For` (the handler
+  does not know the address of the client).
+
+Tests: `tests/TestAsyncHTTPStaticCGI`, `tests/TestAsyncHTTPProxy`.

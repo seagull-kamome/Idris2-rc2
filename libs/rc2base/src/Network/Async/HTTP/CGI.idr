@@ -194,7 +194,7 @@ cgi {options} mountAt dir next req = case segmentsUnder mountAt req.path of
       where
         go : Buffer -> (len : Int) -> Task (Maybe (Buffer, Int))
         go buf len = do
-          Just buf' <- liftIO (growBuffer buf (len + 4096) options.maxOutputBytes)
+          Just buf' <- liftIO (growBuffer buf (len + 1) options.maxOutputBytes)
             | Nothing => pure Nothing
           r <- retrying (awaitReadable fd) (prim__readBuf fd.rawfd buf' len (min 65536 (byteLength buf' - len)))
           case r of
