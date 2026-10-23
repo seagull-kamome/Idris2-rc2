@@ -282,6 +282,39 @@ typedef struct {
   void *fn;
 } IDRIS2RC2_ConstClosure;
 
+// A closure over constants only (rc2/doc/static-closures.md): the real
+// IDRIS2RC2_Closure layout with a fixed-size `args[n]` in place of the flexible
+// array member, which has no static initializer in C. `filled` is `n`.
+#define IDRIS2RC2_DEFINE_CONST_CLOSURE_ARGS(n) \
+  typedef struct {                             \
+    IDRIS2RC2_Header header;                   \
+    uint8_t arity;                             \
+    uint8_t filled;                            \
+    void *fn;                                  \
+    IDRIS2RC2_Value *args[n];                  \
+  } IDRIS2RC2_ConstClosureArgs##n;
+IDRIS2RC2_DEFINE_CONST_CLOSURE_ARGS(1)
+IDRIS2RC2_DEFINE_CONST_CLOSURE_ARGS(2)
+IDRIS2RC2_DEFINE_CONST_CLOSURE_ARGS(3)
+IDRIS2RC2_DEFINE_CONST_CLOSURE_ARGS(4)
+IDRIS2RC2_DEFINE_CONST_CLOSURE_ARGS(5)
+IDRIS2RC2_DEFINE_CONST_CLOSURE_ARGS(6)
+IDRIS2RC2_DEFINE_CONST_CLOSURE_ARGS(7)
+IDRIS2RC2_DEFINE_CONST_CLOSURE_ARGS(8)
+IDRIS2RC2_DEFINE_CONST_CLOSURE_ARGS(9)
+IDRIS2RC2_DEFINE_CONST_CLOSURE_ARGS(10)
+IDRIS2RC2_DEFINE_CONST_CLOSURE_ARGS(11)
+IDRIS2RC2_DEFINE_CONST_CLOSURE_ARGS(12)
+IDRIS2RC2_DEFINE_CONST_CLOSURE_ARGS(13)
+IDRIS2RC2_DEFINE_CONST_CLOSURE_ARGS(14)
+IDRIS2RC2_DEFINE_CONST_CLOSURE_ARGS(15)
+IDRIS2RC2_DEFINE_CONST_CLOSURE_ARGS(16)
+IDRIS2RC2_DEFINE_CONST_CLOSURE_ARGS(17)
+IDRIS2RC2_DEFINE_CONST_CLOSURE_ARGS(18)
+IDRIS2RC2_DEFINE_CONST_CLOSURE_ARGS(19)
+IDRIS2RC2_DEFINE_CONST_CLOSURE_ARGS(20)
+#undef IDRIS2RC2_DEFINE_CONST_CLOSURE_ARGS
+
 // `lock` guards `v` itself (the swap-and-drop-old sequence in
 // writeIORef/readIORef, ioprims.c) -- see util.h's idris2rc2_spin_lock
 // doc comment for why a bare atomic load+dup on `v` isn't enough.
