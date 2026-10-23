@@ -419,11 +419,60 @@ Stages:
 
 What a thread must not do: touch a scheduler structure (use `env.post`), or
 keep a `Task` that it also gives to another thread. Everything handed to a
-worker is an `IO ()` closure that owns what it captured. And in parallel mode the
-continuation after a `liftIO` (the function after `>>=`, a handler that is called with
-the request) is evaluated on a worker, at the same time as the tasks of the others: it
-may only build a task, not read or write what the program shares (the effects belong in
-a `Point`, a `Pinned` or an `Async`).
+worker is an `IO ()` closure that owns what it captured.
+
+### What the code between two `liftIO`s may do
+
+In parallel mode the function after a `liftIO` in `>>=` is evaluated on a worker, right
+after the action, at the same time as the tasks of the other requests (see `PointThen`
+above). So does a handler of `Network.Async.HTTP.Server` that follows one, and so does the
+body of a `map`. That code may compute anything that is *pure*: parse, format, choose
+between branches on the values it was given, call functions that build tasks. It must not
+read or write what the program shares, because nothing orders it with the other threads
+and nothing is on the thread of the scheduler there. In Idris
+that takes `unsafePerformIO`, but a counter or a flag kept in a global `IORef` is a
+common thing to want to read there.
+
+```idris
+hits : IORef Nat                       -- shared by every request
+
+-- Wrong: `n` is read while the task is being built, on a worker, with no order against
+-- the other requests (and against `modifyIORef` below, at the same time).
+handler : Request -> Task Response
+handler req =
+  let n = unsafePerformIO (readIORef hits)
+  in liftIO (text 200 (show n))
+
+-- Wrong in the same way: the choice of the branch reads a shared flag.
+handler2 : Request -> Task Response
+handler2 req =
+  if unsafePerformIO (readIORef shuttingDown)
+     then liftIO (text 503 "bye\n")
+     else liftIO (text 200 "hello\n")
+```
+
+The effect goes into a task, and what is shared into `Control.Task.Ref` (or `MVar`,
+`Chan`), which are safe in parallel mode:
+
+```idris
+hits : Ref Nat
+
+handler : Request -> Task Response
+handler req = do
+  n <- atomicModifyRef hits (\k => (S k, k))     -- the read and the update are one step
+  liftIO (text 200 (show n))
+
+handler2 : Request -> Task Response
+handler2 req = do
+  stopping <- readRef shuttingDown               -- a `Ref`: on the thread of the scheduler
+  if stopping then liftIO (text 503 "bye\n") else liftIO (text 200 "hello\n")
+```
+
+A plain `IORef` inside a `liftIO` is not wrong in itself, since the action is the
+effect, but two requests that write it at the same time lose updates (as with any
+threads): use `Ref` for what more than one request writes.
+What a continuation may read is the values it was *given* (`req`, the result `a` of
+the action before it) and the immutable data of the program (a table made at start).
 
 `termui` creates its scheduler with a few workers; since they are started on
 the first `blocking`, a program that never calls it stays single-threaded and
