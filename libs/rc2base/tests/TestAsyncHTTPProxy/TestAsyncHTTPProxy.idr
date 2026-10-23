@@ -6,7 +6,8 @@ module Main
 -- Network.Async.HTTP.Proxy: an upstream server and a proxy in front of it run as
 -- tasks of one scheduler; a blocking client on the pool asks the proxy. The path
 -- below the prefix (and the whole path with `stripMount = False`), the method and
--- the body, the headers (Host and X-Forwarded-Host, the hop-by-hop ones dropped,
+-- the body, the headers (Host and X-Forwarded-Host, the hop-by-hop ones and the ones
+-- `Connection` names dropped, a `..` segment (400), an answer with chunked framing (502),
 -- two Set-Cookie kept), a redirect, HEAD, a big answer, the server that is not
 -- there (502), an answer over the limit (502), one that takes too long (504) and
 -- a request outside the prefix.
@@ -27,9 +28,9 @@ import System.Posix.Errno
 %default covering
 
 upstreamPort, proxyPort, deadPort : Port
-upstreamPort = 18761
-proxyPort = 18762
-deadPort = 18763
+upstreamPort = 18771
+proxyPort = 18772
+deadPort = 18773
 
 header : String -> Request -> String
 header name req = fromMaybe "-" (lookup name req.headers)
@@ -40,6 +41,7 @@ upstream req = case fst (break (== '?') req.path) of
   "/info" => describe
   "/info/" => describe
   "/raw/info" => describe
+  "/chunked" => liftIO (ok {headers = [("Transfer-Encoding", "chunked")]} "4\r\nabcd\r\n0\r\n\r\n")
   "/redirect" => liftIO (noBody {headers = [("Location", "/hello")]} 302)
   "/big" => liftIO (ok (pack (replicate 100000 'y')))
   "/slow" => sleepFor 2000 *> liftIO (ok "slow\n")
@@ -48,7 +50,7 @@ upstream req = case fst (break (== '?') req.path) of
     describe : Task Response
     describe = do
       body <- liftIO (toString req.body)
-      liftIO (ok (joinBy " " [req.method, req.path, header "host" req, header "x-forwarded-host" req, header "x-custom" req
+      liftIO (ok (joinBy " " [req.method, req.path, header "host" req, header "x-forwarded-host" req, header "x-custom" req, header "x-secret" req
                              , header "connection" req, header "content-length" req, body] ++ "\n"))
 
 localhost : SocketAddress
@@ -114,6 +116,10 @@ clients = do
   let plain = summary ["content-type", "x-up", "set-cookie", "location", "keep-alive", "connection"]
   hello <- ask (req "GET" "/api/hello")
   info <- ask ("POST /api/info?a=1&b=%20 HTTP/1.1\r\nHost: front.test\r\nConnection: close\r\nX-Custom: yes\r\nX-Forwarded-Host: spoofed\r\nContent-Length: 5\r\n\r\nhello")
+  unlisted <- ask "GET /api/info HTTP/1.1\r\nHost: front.test\r\nConnection: close, X-Secret\r\nX-Secret: s\r\nX-Other: o\r\n\r\n"
+  dotdot <- ask (req "GET" "/api/../admin")
+  encoded <- ask (req "GET" "/api/%2e%2e/admin")
+  chunked <- ask (req "GET" "/api/chunked")
   slash <- ask (req "GET" "/api/info/")
   root <- ask (req "GET" "/api")
   raw <- ask (req "GET" "/raw/info")
@@ -127,7 +133,7 @@ clients = do
   smallOk <- ask (req "GET" "/small/hello")
   slow <- ask (req "GET" "/quick/slow")
   quickOk <- ask (req "GET" "/quick/hello")
-  pure [ plain hello, plain info, plain slash, plain root, plain raw, plain redirect, plain headed
+  pure [ plain hello, plain info, plain unlisted, plain dotdot, plain encoded, plain chunked, plain slash, plain root, plain raw, plain redirect, plain headed
        , sizeOf big, plain missing, plain outside, plain dead, plain tooBig, plain smallOk
        , plain slow, plain quickOk ]
 

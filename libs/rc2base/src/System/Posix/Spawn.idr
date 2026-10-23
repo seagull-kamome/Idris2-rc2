@@ -57,8 +57,16 @@ prim__attrDestroy : AnyPtr -> PrimIO Int32
 prim__attrSetSigDefault : AnyPtr -> (sigset : AnyPtr) -> PrimIO Int32
 %inline %foreign "CExpr:(posix_spawnattr_setflags((posix_spawnattr_t *)($1), (short)($2))),libc,spawn.h"
 prim__attrSetFlags : AnyPtr -> (flags : Int32) -> PrimIO Int32
+%inline %foreign "CExpr:(posix_spawnattr_setsigmask((posix_spawnattr_t *)($1), (const sigset_t *)($2))),libc,spawn.h;signal.h"
+prim__attrSetSigMask : AnyPtr -> (sigset : AnyPtr) -> PrimIO Int32
+%inline %foreign "CExpr:(posix_spawnattr_setpgroup((posix_spawnattr_t *)($1), $2)),libc,spawn.h"
+prim__attrSetPgroup : AnyPtr -> (pgid : Int32) -> PrimIO Int32
 %inline %foreign "CExpr:(POSIX_SPAWN_SETSIGDEF),libc,spawn.h"
 prim__SETSIGDEF : Int32
+%inline %foreign "CExpr:(POSIX_SPAWN_SETSIGMASK),libc,spawn.h"
+prim__SETSIGMASK : Int32
+%inline %foreign "CExpr:(POSIX_SPAWN_SETPGROUP),libc,spawn.h"
+prim__SETPGROUP : Int32
 
 %inline %foreign "CExpr:(sigemptyset((sigset_t *)($1))),libc,signal.h"
 prim__sigemptyset : AnyPtr -> PrimIO Int32
@@ -76,6 +84,10 @@ prim__readPid : AnyPtr -> PrimIO Int32
 %foreign "CExpr:(signal(SIGPIPE, SIG_IGN) == SIG_ERR ? -1 : 0),libc,signal.h"
 prim__ignoreSigpipe : PrimIO Int32
 
+-- The attributes that are set: the signals' default actions and mask, the group.
+attrFlags : Int32
+attrFlags = prim__SETSIGDEF + prim__SETSIGMASK + prim__SETPGROUP   -- distinct bits
+
 -- The number of SIGPIPE.
 sigpipe : Int32
 sigpipe = case SIGPIPE of MkSignal n => n
@@ -91,9 +103,11 @@ runSteps (step :: rest) = do
 ||| from `cwd`, which is the directory the program starts in) with `argv` (the
 ||| program name first) and exactly the environment `envp` (`NAME=value`). Its
 ||| standard input is `stdin` and its standard output `stdout`; the standard error
-||| is ours, and no other descriptor is passed on. SIGPIPE has its default action
-||| in the program, whatever `ignoreSigpipe` did here. The descriptors stay open
-||| in the caller. `Left` when the program cannot be started (`ENOENT`, `EACCES`, ...).
+||| is ours, and no other descriptor is passed on. The program is a process group
+||| of its own (its process ID is the group's: `kill (-pid)` ends it and what it
+||| started), has no blocked signal (the caller may block some, for `signalfd`), and
+||| SIGPIPE has its default action, whatever `ignoreSigpipe` did here. The
+||| descriptors stay open in the caller. `Left` when the program cannot be started (`ENOENT`, `EACCES`, ...).
 export
 spawnStdio : (path, cwd : String) -> (argv, envp : List String) -> (stdin, stdout : FileDesc)
           -> IO (Either Errno ProcessID)
@@ -101,6 +115,7 @@ spawnStdio path cwd argv envp stdin stdout = do
   actions <- malloc prim__sizeofFileActions
   attr <- malloc prim__sizeofAttr
   sigs <- malloc prim__sizeofSigset
+  noSigs <- malloc prim__sizeofSigset
   pid <- malloc prim__sizeofPid
   a <- newArgv argv
   e <- newArgv envp
@@ -114,15 +129,18 @@ spawnStdio path cwd argv envp stdin stdout = do
                   , prim__addCloseFrom actions 3
                   , prim__sigemptyset sigs
                   , prim__sigaddset sigs sigpipe
+                  , prim__sigemptyset noSigs
                   , prim__attrSetSigDefault attr sigs
-                  , prim__attrSetFlags attr prim__SETSIGDEF
+                  , prim__attrSetSigMask attr noSigs
+                  , prim__attrSetPgroup attr 0
+                  , prim__attrSetFlags attr attrFlags
                   , prim__spawn path actions attr a e pid ]
   when (attrMade == 0) $ ignore (primIO (prim__attrDestroy attr))
   when (actionsMade == 0) $ ignore (primIO (prim__fileActionsDestroy actions))
   started <- primIO (prim__readPid pid)
   freeArgv (length argv) a
   freeArgv (length envp) e
-  traverse_ free [actions, attr, sigs, pid]
+  traverse_ free [actions, attr, sigs, noSigs, pid]
   pure (if r == 0 then Right (MkProcessID started) else Left (MkErrno r))
 
 ||| Ignore SIGPIPE in this process, so that writing to a pipe whose reader has gone

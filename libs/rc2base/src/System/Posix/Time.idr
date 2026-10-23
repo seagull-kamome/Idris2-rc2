@@ -349,9 +349,10 @@ mktime t = withTm $ \p => do
 %inline %foreign "CExpr:(strftime((char *)($1), $2, $3, (struct tm *)($4))),libc,time.h"
 prim__strftime : AnyPtr -> Bits64 -> String -> AnyPtr -> PrimIO Bits64
 
-||| Format a broken-down time (`strftime`). `Nothing` when the result is longer than 4096
-||| bytes, when it is empty (`strftime` reports both by the value 0), and when it is not
-||| valid UTF-8.
+||| Format a broken-down time (`strftime`). `Nothing` when `strftime` answers 0 for a
+||| format that is not empty: the result is longer than 4096 bytes, or empty (an empty
+||| format gives `Just ""`). The bytes are taken as they are: they are not checked for
+||| UTF-8.
 export
 strftime : (format : String) -> Tm -> IO (Maybe String)
 strftime fmt t = withTm $ \p => do

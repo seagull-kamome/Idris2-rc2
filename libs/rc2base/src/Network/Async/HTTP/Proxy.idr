@@ -11,11 +11,13 @@ module Network.Async.HTTP.Proxy
 import Control.Task
 import Data.Buffer
 import Data.List
+import Data.List1
 import Data.Maybe
 import Data.String
 import Network.Async
 import Network.Async.HTTP.Server
 import Network.HTTP.Route
+import Network.URL
 import Network.Socket.Data
 import System.Posix.Errno
 
@@ -54,16 +56,43 @@ render : SocketAddress -> String
 render (IPv4Addr a b c d) = show a ++ "." ++ show b ++ "." ++ show c ++ "." ++ show d
 render _ = ""
 
+-- Why an exchange did not give an answer.
+data Failed = TimedOut | Bad String
+
+-- Whether a string may be part of the head of a message: no CR, LF or NUL, which
+-- would split the message in two or end it for a reader that takes them for a
+-- line end or the end of a string.
+clean : String -> Bool
+clean = not . any (\c => c == '\r' || c == '\n' || c == '\0') . unpack
+
+-- The tokens (lower case) of the `Connection` headers: the names of the other
+-- headers that are about this connection only (RFC 9110, 7.6.1).
+connectionTokens : List (String, String) -> List String
+connectionTokens hdrs =
+  [ toLower (trim t) | (k, v) <- hdrs, toLower k == "connection", t <- forget (split (== ',') v) ]
+
+-- The headers that go on to the other side.
+passedOn : (besides : List String) -> List (String, String) -> List (String, String)
+passedOn besides hdrs =
+  let dropped = besides ++ hopByHop ++ connectionTokens hdrs
+  in filter (\(k, _) => not (elem (toLower k) dropped)) hdrs
+
 ||| Forward the requests whose path is at or below `mountAt` to the HTTP server at
 ||| `upstream` (an IPv4 address: a host name would need a blocking lookup) and
 ||| `port`, and give every other request to `next`. The request goes out as
-||| HTTP/1.0 with `Connection` closing, so the server answers without chunks and
+||| HTTP/1.0 with `Connection: close`, so the server answers without chunks and
 ||| the answer ends with its connection; the answer is given back with its status
-||| and headers, except the ones about the connection and `Content-Length`, which
-||| the server sets again. `HEAD` is asked as `GET` so that `Content-Length` is
-||| right. The request has `Host` and `X-Forwarded-Host` (the original `Host`).
-||| An answer is 502 when the server cannot be reached or does not answer with a
-||| proper head and a body of the length it says, or gives more than
+||| and headers, except the ones about the connection (also the ones `Connection`
+||| names) and `Content-Length`, which the server sets again. `HEAD` is asked as
+||| `GET` so that `Content-Length` is right. The request has `Host` and
+||| `X-Forwarded-Host` (the original `Host`).
+|||
+||| A request is answered with 400, and not forwarded, if its target does not start
+||| with `/` (an absolute URI), has a `.` or `..` segment (also percent-encoded), or
+||| if a method, target, header name or value has a CR, LF or NUL in it. An answer is
+||| 502 when the server cannot be reached or does not answer with a proper head
+||| (`HTTP/`, a status of 200 to 599, `Content-Length` that is plain digits, no
+||| `Transfer-Encoding`) and a body of the length it says, or gives more than
 ||| `maxResponseBytes`, and 504 after `timeoutMs`. No `Upgrade` (WebSocket), no
 ||| `100-continue`, no streaming: the answer is held whole.
 export
@@ -71,17 +100,24 @@ proxy : {default defaultProxy options : ProxyOptions}
      -> (mountAt : String) -> (upstream : SocketAddress) -> (port : Port) -> (next : Handler) -> Handler
 proxy {options} mountAt upstream port next req = case segmentsUnder mountAt req.path of
   Nothing => next req
-  Just below => do
-    result <- case options.timeoutMs of
-                Z => Just <$> talk (upstreamPath below)
-                ms => do
-                  t <- now
-                  timeoutAt (t + ms) (talk (upstreamPath below))
-    case result of
-      Nothing => liftIO (text 504 "gateway timeout\n")
-      Just (Left message) => liftIO (text 502 ("bad gateway: " ++ message ++ "\n"))
-      Just (Right resp) => pure resp
+  Just below =>
+    if not (acceptable) then liftIO (text 400 "bad request\n") else do
+      deadline <- case options.timeoutMs of
+                    Z => pure Nothing
+                    ms => (\t => Just (t + ms)) <$> now
+      result <- talk deadline (upstreamPath below)
+      case result of
+        Left TimedOut => liftIO (text 504 "gateway timeout\n")
+        Left (Bad message) => liftIO (text 502 ("bad gateway: " ++ message ++ "\n"))
+        Right resp => pure resp
   where
+    -- A request that can be forwarded as it is.
+    acceptable : Bool
+    acceptable =
+      isPrefixOf "/" req.path
+      && all clean (req.method :: req.path :: concatMap (\(k, v) => [k, v]) req.headers)
+      && all (\seg => not (elem (percentDecode seg) [".", ".."])) (splitPath (pathOnly req.path))
+
     hostValue : String
     hostValue = fromMaybe (render upstream ++ ":" ++ show port) options.hostHeader
 
@@ -97,60 +133,85 @@ proxy {options} mountAt upstream port next req = case segmentsUnder mountAt req.
     requestHead path =
       let method = if req.method == "HEAD" then "GET" else req.method
           size = byteLength req.body
-          replaced = "host" :: "content-length" :: "x-forwarded-host" :: "expect" :: hopByHop
-          passed = filter (\(k, _) => not (elem k replaced)) req.headers
+          replaced = ["host", "content-length", "x-forwarded-host", "expect"]
+          passed = passedOn replaced req.headers
           forwardedHost = maybe [] (\h => [("X-Forwarded-Host", h)]) (lookup "host" req.headers)
           framing = if size > 0 || elem method ["POST", "PUT", "PATCH"] then [("Content-Length", show size)] else []
-          fields = the (List (String, String)) [("Host", hostValue)] ++ passed ++ forwardedHost ++ framing
+          fields = the (List (String, String)) [("Host", hostValue), ("Connection", "close")]
+                   ++ passed ++ forwardedHost ++ framing
       in method ++ " " ++ path ++ " HTTP/1.0\r\n" ++ concatMap (\(k, v) => k ++ ": " ++ v ++ "\r\n") fields ++ "\r\n"
 
-    -- Everything the server sends until it closes; `Left` says why not.
-    collect : Sock -> Task (Either String (Buffer, Int))
-    collect conn = do
+    -- `Nothing` when `deadline` has passed.
+    receive : Maybe Time -> Sock -> Buffer -> (off, len : Int) -> Task (Maybe (Either Errno Int))
+    receive Nothing conn buf off len = Just <$> recv conn buf off len
+    receive (Just t) conn buf off len = recvUntil t conn buf off len
+
+    transmit : Maybe Time -> Sock -> Buffer -> Task (Maybe (Either Errno ()))
+    transmit Nothing conn buf = Just <$> sendAll conn buf 0 (byteLength buf)
+    transmit (Just t) conn buf = sendAllUntil t conn buf 0 (byteLength buf)
+
+    -- Everything the server sends until it closes (at most `maxResponseBytes`).
+    collect : Maybe Time -> Sock -> Task (Either Failed (Buffer, Int))
+    collect deadline conn = do
       buf <- liftIO (newBuf 4096)
       go buf 0
       where
-        go : Buffer -> (len : Int) -> Task (Either String (Buffer, Int))
+        -- One byte more than may be taken is read: the end of an answer of exactly
+        -- the limit is not mistaken for more of it.
+        go : Buffer -> (len : Int) -> Task (Either Failed (Buffer, Int))
         go buf len = do
-          Just buf' <- liftIO (growBuffer buf (len + 1) options.maxResponseBytes)
-            | Nothing => pure (Left "answer too large")
-          r <- recv conn buf' len (min 65536 (byteLength buf' - len))
+          Just buf' <- liftIO (growBuffer buf (len + 1) (options.maxResponseBytes + 1))
+            | Nothing => pure (Left (Bad "answer too large"))
+          r <- receive deadline conn buf' len (min 65536 (byteLength buf' - len))
           case r of
-            Right 0 => pure (Right (buf', len))
-            Right n => go buf' (len + n)
-            Left _ => pure (Left "cannot read the answer")
+            Nothing => pure (Left TimedOut)
+            Just (Right 0) => pure (Right (buf', len))
+            Just (Right n) => if len + n > options.maxResponseBytes
+                                then pure (Left (Bad "answer too large"))
+                                else go buf' (len + n)
+            Just (Left _) => pure (Left (Bad "cannot read the answer"))
 
     -- The head is parsed as a request head is: `HTTP/1.1 200 OK` is a version, a
     -- status and the rest.
-    toResponse : Buffer -> (len : Int) -> Task (Either String Response)
+    toResponse : Buffer -> (len : Int) -> Task (Either Failed Response)
     toResponse buf len = do
       Just headEnd <- liftIO (findHeadEnd buf len)
-        | Nothing => pure (Left "no head in the answer")
-      Just (_, code, hdrs) <- liftIO (parseHead buf headEnd)
-        | Nothing => pure (Left "bad head in the answer")
-      case parsePositive {a = Int} code of
-        Nothing => pure (Left "bad status in the answer")
-        Just status => do
-          let start = headEnd + 4
-          let avail = len - start
-          let declared = lookup "content-length" hdrs >>= parsePositive {a = Int}
-          if hasBody status && maybe False (> avail) declared
-            then pure (Left "the answer is shorter than it says")
+        | Nothing => pure (Left (Bad "no head in the answer"))
+      Just (version, code, _, hdrs) <- liftIO (parseRequestHead buf headEnd)
+        | Nothing => pure (Left (Bad "bad head in the answer"))
+      case (isPrefixOf "HTTP/" version, parsePositive {a = Int} code, bodyLength hdrs) of
+        (True, Just status, Just _) =>
+          if status < 200 || status > 599 || not (all clean (concatMap (\(k, v) => [k, v]) hdrs))
+            then pure (Left (Bad "bad status or head in the answer"))
             else do
-              body <- liftIO (slice buf start (maybe avail (min avail) declared))
-              let kept = filter (\(k, _) => not (elem k ("content-length" :: hopByHop))) hdrs
-              pure (Right (MkResponse status kept body))
+              let start = headEnd + 4
+              let avail = len - start
+              let declared = lookup "content-length" hdrs >>= parsePositive {a = Int}
+              if hasBody status && maybe False (> avail) declared
+                then pure (Left (Bad "the answer is shorter than it says"))
+                else do
+                  body <- liftIO (slice buf start (maybe avail (min avail) declared))
+                  pure (Right (MkResponse status (passedOn ["content-length"] hdrs) body))
+        _ => pure (Left (Bad "bad head or framing in the answer"))
 
-    talk : (path : String) -> Task (Either String Response)
-    talk path = do
-      Right conn <- connect upstream port
-        | Left _ => pure (Left "cannot connect")
-      withSock conn $ do
-        head <- liftIO (fromString (requestHead path))
-        Right () <- sendAll conn head 0 (byteLength head)
-          | Left _ => pure (Left "cannot send the request")
-        Right () <- sendAll conn req.body 0 (byteLength req.body)
-          | Left _ => pure (Left "cannot send the request")
-        Right (buf, len) <- collect conn
-          | Left message => pure (Left message)
-        toResponse buf len
+    talk : Maybe Time -> (path : String) -> Task (Either Failed Response)
+    talk deadline path = do
+      connected <- the (Task (Maybe (Either Errno Sock))) $ case deadline of
+                     Nothing => Just <$> connect upstream port
+                     Just t => timeoutAt t (connect upstream port)
+      case connected of
+        Nothing => pure (Left TimedOut)
+        Just (Left _) => pure (Left (Bad "cannot connect"))
+        Just (Right conn) => withSock conn $ do
+          head <- liftIO (fromString (requestHead path))
+          sent <- transmit deadline conn head
+          sentBody <- case sent of
+                        Just (Right ()) => transmit deadline conn req.body
+                        other => pure other
+          case sentBody of
+            Nothing => pure (Left TimedOut)
+            Just (Left _) => pure (Left (Bad "cannot send the request"))
+            Just (Right ()) => do
+              Right (buf, len) <- collect deadline conn
+                | Left failed => pure (Left failed)
+              toResponse buf len

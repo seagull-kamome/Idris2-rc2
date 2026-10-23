@@ -39,11 +39,14 @@ record StaticOptions where
   chunkBytes : Int
   ||| The value of `Cache-Control` of the answers that have a file, if any.
   cacheControl : Maybe String
+  ||| Whether a file or directory whose name starts with `.` (`.git`, `.env`,
+  ||| `.htpasswd`, ...) is served; not by default (404).
+  serveDotfiles : Bool
 
 ||| `index.html`, 16 MiB in chunks of 256 KiB, no `Cache-Control`.
 public export
 defaultStatic : StaticOptions
-defaultStatic = MkStaticOptions "index.html" 16777216 262144 Nothing
+defaultStatic = MkStaticOptions "index.html" 16777216 262144 Nothing False
 
 ||| The `Content-Type` for a file name, by its extension (case does not matter);
 ||| `application/octet-stream` for an extension it does not know.
@@ -74,9 +77,11 @@ mimeType name = fromMaybe "application/octet-stream" (lookup (toLower extension)
 prim__preadBuf : Int32 -> Buffer -> (off, len, offset : Int) -> PrimIO Int
 
 -- Whether a decoded segment may be part of a file path below the root: not an
--- empty one, `.` or `..`, and with no `/` or NUL in it.
-safeSegment : String -> Bool
-safeSegment seg = seg /= "" && seg /= "." && seg /= ".." && not (any (\c => c == '/' || c == '\0') (unpack seg))
+-- empty one, `.` or `..`, with no `/` or NUL in it, and not a dotfile unless allowed.
+safeSegment : (dotfiles : Bool) -> String -> Bool
+safeSegment dotfiles seg =
+  seg /= "" && seg /= "." && seg /= ".." && not (any (\c => c == '/' || c == '\0') (unpack seg))
+  && (dotfiles || not (isPrefixOf "." seg))
 
 ||| Answer the `GET` and `HEAD` requests whose path is at or below `mountAt` with
 ||| the file of the same path below the directory `root`, and give every other
@@ -85,7 +90,8 @@ safeSegment seg = seg /= "" && seg /= "." && seg /= ".." && not (any (\c => c ==
 ||| `Content-Type` by the extension and an `ETag` from the size and the time of
 ||| modification, which `If-None-Match` is compared with (304). Other methods are
 ||| answered with 405, a file that is not there (or a path with `..` in it) with
-||| 404. Symbolic links are followed. The file is read in chunks of `chunkBytes`.
+||| 404, also a name that starts with `.` unless `serveDotfiles`. Symbolic links are
+||| followed. The file is read in chunks of `chunkBytes`.
 export
 static : {default defaultStatic options : StaticOptions} -> (mountAt, root : String) -> (next : Handler) -> Handler
 static {options} mountAt root next req = case segmentsUnder mountAt req.path of
@@ -95,16 +101,23 @@ static {options} mountAt root next req = case segmentsUnder mountAt req.path of
       then liftIO (text {headers = [("Allow", "GET, HEAD")]} 405 "method not allowed\n")
       else
         let segs = map percentDecode raw
-        in if all safeSegment segs then file segs else missing
+        in if all (safeSegment options.serveDotfiles) segs then file segs else missing
   where
     missing : Task Response
     missing = liftIO (notFound "not found\n")
+
+    -- The file opened on a worker thread. `handoff` closes the descriptor if the task
+    -- is given up after the open has finished and before this task goes on, and
+    -- `O_NONBLOCK` keeps a file that was replaced by a FIFO from blocking the open.
+    opened : (path : String) -> Task (Either Errno FileDesc)
+    opened path = handoff (\env, done => env.offload (openFile path (O_RDONLY .|. O_CLOEXEC .|. O_NONBLOCK) 0 >>= \r => env.post (done r)))
+                          (either (\_ => pure ()) (\fd => ignore (close fd)))
 
     -- The `size` bytes of the file, read `chunkBytes` at a time. `Nothing` if it
     -- cannot be opened or read, or has become shorter than `size`.
     readChunked : (path : String) -> (size : Int) -> Task (Maybe Buffer)
     readChunked path size = do
-      Right fd <- blocking (openFile path (O_RDONLY .|. O_CLOEXEC) 0)
+      Right fd <- opened path
         | Left _ => pure Nothing
       buf <- liftIO (newBuf size)
       finally (\_ => ignore (close fd)) (go fd buf 0)

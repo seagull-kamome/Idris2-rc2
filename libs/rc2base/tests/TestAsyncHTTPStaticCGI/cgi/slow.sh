@@ -1,3 +1,5 @@
 #!/bin/sh
-exec sleep 10
-printf 'Content-Type: text/plain\n\nlate\n'
+# Never ends by itself (no `sleep`: shell built-ins only); a child in the same
+# process group is left behind for the group to be killed with it.
+(while :; do :; done) &
+while :; do :; done

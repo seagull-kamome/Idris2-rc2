@@ -13,7 +13,8 @@ module Main
 -- `..`). CGI: the variables a program is given and its body on the standard input,
 -- Status and Location, a program with no head or too much output (502), one that
 -- takes too long (504, and the server goes on), one that is not executable (404),
--- the working directory of a program (the one it is in).
+-- the working directory of a program (the one it is in), the headers a program gets
+-- (joined duplicates, no `_` in a name, no Authorization), a dotfile (404).
 
 import Control.Task
 import Control.Task.Scheduler
@@ -115,6 +116,7 @@ clients port = do
   cached <- ask ("GET /static/hello.txt HTTP/1.1\r\nHost: t\r\nConnection: close\r\nIf-None-Match: " ++ etag ++ "\r\n\r\n")
   stale <- ask ("GET /static/hello.txt HTTP/1.1\r\nHost: t\r\nConnection: close\r\nIf-None-Match: \"other\"\r\n\r\n")
   tooBig <- ask (req "GET" "/static/big.txt")
+  dotfile <- ask (req "GET" "/static/.hidden")
   posted <- ask (req "POST" "/static/hello.txt")
   absent <- ask (req "GET" "/static/nothing.txt")
   dotdot <- ask (req "GET" "/static/%2e%2e/cgi/env.sh")
@@ -122,7 +124,7 @@ clients port = do
   outside <- ask (req "GET" "/staticx")
   route <- ask (req "GET" "/hello")
   -- CGI
-  envRun <- ask ("POST /cgi-bin/env.sh/extra/path?a=1&b=2 HTTP/1.1\r\nHost: t\r\nConnection: close\r\nX-Test: yes\r\nProxy: evil\r\nContent-Type: text/x-test\r\nContent-Length: 11\r\n\r\nhello world")
+  envRun <- ask ("POST /cgi-bin/env.sh/extra/path?a=1&b=2 HTTP/1.1\r\nHost: t\r\nConnection: close\r\nX-Test: yes\r\nProxy: evil\r\nAuthorization: secret\r\nX-Dup: one\r\nX-Dup: two\r\nX_Test: underscore\r\nContent-Type: text/x-test\r\nContent-Length: 11\r\n\r\nhello world")
   getRun <- ask (req "GET" "/cgi-bin/env.sh")
   status <- ask (req "GET" "/cgi-bin/status.sh")
   redirect <- ask (req "GET" "/cgi-bin/redirect.sh")
@@ -136,7 +138,7 @@ clients port = do
   cwd <- ask (req "GET" "/cgi-bin/pwd.sh")
   after <- ask (req "GET" "/cgi-bin/env.sh")
   pure (map (summary types)
-          [ index, noSlash, subIndex, hello, spaced, headed, cached, stale, tooBig, posted, absent, dotdot, dotdot2
+          [ index, noSlash, subIndex, hello, spaced, headed, cached, stale, tooBig, dotfile, posted, absent, dotdot, dotdot2
           , outside, route, envRun, getRun, status, redirect, nohead, big, slow, noexec, nowhere
           , nameless, escape, cwd, after ])
 

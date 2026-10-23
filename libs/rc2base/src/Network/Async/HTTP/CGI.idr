@@ -50,12 +50,15 @@ record CGIOptions where
   ||| The environment of the program besides the CGI variables (it does not inherit
   ||| ours), set first so that a CGI variable of the same name wins.
   environment : List (String, String)
+  ||| Whether the `Authorization` header of the request is passed on as
+  ||| `HTTP_AUTHORIZATION`; not by default (RFC 3875, 4.1.18).
+  passAuthorization : Bool
 
 ||| 30 seconds, 16 MiB, `localhost:80`, and no `environment` at all: a program has
 ||| no `PATH` (nor anything else of ours) unless `environment` gives it one.
 public export
 defaultCGI : CGIOptions
-defaultCGI = MkCGIOptions 30000 16777216 "localhost" 80 []
+defaultCGI = MkCGIOptions 30000 16777216 "localhost" 80 [] False
 
 %foreign "CExpr:((int)read($1, (char *)($2) + ($3), (size_t)($4))),libc,unistd.h"
 prim__readBuf : Int32 -> Buffer -> Int -> Int -> PrimIO Int
@@ -78,6 +81,10 @@ headEnd buf len = go 0
         | _ => pure Nothing
       if a == 10 && b == 10 then pure (Just (i, i + 2)) else
         if a == 10 && b == 13 && c == 10 then pure (Just (i, i + 3)) else go (i + 1)
+
+-- The group of a process that is a group leader, as `kill` takes it (`-pid`).
+negateProcess : ProcessID -> ProcessID
+negateProcess (MkProcessID p) = MkProcessID (negate p)
 
 -- A header name as a CGI variable: `X-Forwarded-For` is `HTTP_X_FORWARDED_FOR`.
 variableName : String -> String
@@ -141,8 +148,16 @@ cgi {options} mountAt dir next req = case segmentsUnder mountAt req.path of
         query : String
         query = pack (drop 1 (snd (break (== '?') (unpack req.path))))
 
+        -- `HTTP_*` of the headers: a name with `_` is left out (it would be the
+        -- same variable as the one with `-`), and the values of a header sent
+        -- more than once are joined with `, `.
         headerVars : List (String, String)
-        headerVars = [ (variableName k, v) | (k, v) <- req.headers, k /= "proxy", k /= "content-type", k /= "content-length" ]
+        headerVars =
+          let wanted = filter (\k => not (elem k ["proxy", "content-type", "content-length"])
+                                      && not (elem '_' (unpack k))
+                                      && (options.passAuthorization || k /= "authorization"))
+                              (nub (map fst req.headers))
+          in map (\k => (variableName k, joinBy ", " [ v | (k', v) <- req.headers, k' == k ])) wanted
 
         contentType : List (String, String)
         contentType = maybe [] (\v => [("CONTENT_TYPE", v)]) (lookup "content-type" req.headers)
@@ -195,12 +210,14 @@ cgi {options} mountAt dir next req = case segmentsUnder mountAt req.path of
       where
         go : Buffer -> (len : Int) -> Task (Maybe (Buffer, Int))
         go buf len = do
-          Just buf' <- liftIO (growBuffer buf (len + 1) options.maxOutputBytes)
+          -- One byte more than may be taken is read, so that an output of exactly
+          -- the limit is not taken for more of it.
+          Just buf' <- liftIO (growBuffer buf (len + 1) (options.maxOutputBytes + 1))
             | Nothing => pure Nothing
           r <- retrying (awaitReadable fd) (prim__readBuf fd.rawfd buf' len (min 65536 (byteLength buf' - len)))
           case r of
             Right 0 => pure (Just (buf', len))
-            Right n => go buf' (len + n)
+            Right n => if len + n > options.maxOutputBytes then pure Nothing else go buf' (len + n)
             Left _ => pure (Just (buf', len))
 
     -- Wait for the program to end. With a pidfd the program is known to have ended
@@ -211,8 +228,8 @@ cgi {options} mountAt dir next req = case segmentsUnder mountAt req.path of
       pidfd <- liftIO (pidfd_open pid 0)
       case pidfd of
         Right fd => do
-          _ <- awaitReadable fd
-          onReactor (ignore (close fd) *> ignore (waitpid pid WNOHANG) *> writeIORef reaped True)
+          _ <- finally (\_ => ignore (close fd)) (awaitReadable fd)
+          onReactor (ignore (waitpid pid WNOHANG) *> writeIORef reaped True)
         Left _ => do
           _ <- blocking (waitpid pid 0)
           liftIO (writeIORef reaped True)
@@ -235,9 +252,13 @@ cgi {options} mountAt dir next req = case segmentsUnder mountAt req.path of
       deadline <- case options.timeoutMs of
                     Z => pure Nothing
                     ms => (\t => Just (t + ms)) <$> now
+      -- The body is written while the output is read; when the output is over, or too
+      -- much, the writer is given up (it may be stuck on a program that reads no
+      -- more). Too much output is not waited for: the program is killed by the
+      -- cleanup, as it may be stuck writing what is not read.
       let work = do
-            (output, _) <- both (collect outRead) (feed inWrite writing)
-            reap pid reaped
+            output <- either id (const Nothing) <$> race (collect outRead) (feed inWrite writing *> Empty {a = ()})
+            when (isJust output) (reap pid reaped)
             pure output
       result <- maybe (Just <$> work) (\t => timeoutAt t work) deadline
       case result of
@@ -268,6 +289,8 @@ cgi {options} mountAt dir next req = case segmentsUnder mountAt req.path of
                 ignore (close outRead)
                 done <- readIORef reaped
                 unless done $ do
+                  -- the program is a process group of its own: what it started goes too
+                  _ <- kill (negateProcess pid) SIGKILL
                   _ <- kill pid SIGKILL
                   _ <- waitpid pid 0
                   writeIORef reaped True
