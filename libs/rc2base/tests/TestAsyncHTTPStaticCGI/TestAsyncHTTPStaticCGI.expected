@@ -1,0 +1,74 @@
+HTTP/1.1 200 OK | Content-Type: text/html; charset=utf-8
+<h1>index</h1>
+
+HTTP/1.1 301 Moved Permanently | Location: /static/sub/
+
+HTTP/1.1 200 OK | Content-Type: text/html; charset=utf-8
+sub index
+
+HTTP/1.1 200 OK | Content-Type: text/plain; charset=utf-8
+hello file
+
+HTTP/1.1 200 OK | Content-Type: text/plain; charset=utf-8
+spaced
+
+HTTP/1.1 200 OK | Content-Type: text/plain; charset=utf-8
+
+HTTP/1.1 304 Not Modified
+
+HTTP/1.1 200 OK | Content-Type: text/plain; charset=utf-8
+hello file
+
+HTTP/1.1 405 Method Not Allowed | Content-Type: text/plain; charset=utf-8 | Allow: GET, HEAD
+method not allowed
+
+HTTP/1.1 404 Not Found | Content-Type: text/plain; charset=utf-8
+not found
+
+HTTP/1.1 404 Not Found | Content-Type: text/plain; charset=utf-8
+not found
+
+HTTP/1.1 404 Not Found | Content-Type: text/plain; charset=utf-8
+not found
+
+HTTP/1.1 404 Not Found | Content-Type: text/plain; charset=utf-8
+none
+
+HTTP/1.1 200 OK | Content-Type: text/plain; charset=utf-8
+route
+
+HTTP/1.1 200 OK | Content-Type: text/plain | X-Script: env
+POST|/cgi-bin/env.sh|/extra/path|a=1&b=2|11|text/x-test|yes|CGI/1.1|localhost:8080|
+hello world
+HTTP/1.1 200 OK | Content-Type: text/plain | X-Script: env
+GET|/cgi-bin/env.sh|||0|||CGI/1.1|localhost:8080|
+
+HTTP/1.1 404 Not Found | Content-Type: text/plain
+nope
+
+HTTP/1.1 302 Found | Location: /static/hello.txt
+
+HTTP/1.1 502 Bad Gateway | Content-Type: text/plain; charset=utf-8
+bad gateway: no head
+
+HTTP/1.1 502 Bad Gateway | Content-Type: text/plain; charset=utf-8
+bad gateway: too much output
+
+HTTP/1.1 504 Gateway Timeout | Content-Type: text/plain; charset=utf-8
+gateway timeout
+
+HTTP/1.1 404 Not Found | Content-Type: text/plain; charset=utf-8
+not found
+
+HTTP/1.1 404 Not Found | Content-Type: text/plain; charset=utf-8
+not found
+
+HTTP/1.1 404 Not Found | Content-Type: text/plain; charset=utf-8
+not found
+
+HTTP/1.1 404 Not Found | Content-Type: text/plain; charset=utf-8
+not found
+
+HTTP/1.1 200 OK | Content-Type: text/plain | X-Script: env
+GET|/cgi-bin/env.sh|||0|||CGI/1.1|localhost:8080|
+

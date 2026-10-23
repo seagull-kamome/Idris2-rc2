@@ -37,6 +37,20 @@ export
 pathOnly : String -> String
 pathOnly = fst . break (== '?')
 
+||| The segments of `path` (query string dropped) that follow the segments of
+||| `mountAt`, `Nothing` when `path` is not at or below `mountAt`. The comparison is
+||| by whole segments: `"/static"` is a prefix of `"/static/a.txt"` and of
+||| `"/static"`, not of `"/staticx"`. The segments are as they stand in the
+||| request, not percent-decoded.
+export
+segmentsUnder : (mountAt, path : String) -> Maybe (List String)
+segmentsUnder mountAt path = below (splitPath mountAt) (splitPath (pathOnly path))
+  where
+    below : List String -> List String -> Maybe (List String)
+    below [] segs = Just segs
+    below (m :: ms) (seg :: segs) = if m == seg then below ms segs else Nothing
+    below _ [] = Nothing
+
 -------------------------------------------------------------------------------
 -- Capturing a segment as a value
 -------------------------------------------------------------------------------

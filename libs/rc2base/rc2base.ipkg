@@ -23,7 +23,7 @@ modules    = Control.Concurrent.MVar,
              Network.HTTP.Client.WebAPI.JSON,
              --
              Network.HTTP.Message, Network.HTTP.Route, Network.HTTP.Router, Network.HTTP.Server,
-             Network.Async, Network.Async.HTTP.Router, Network.Async.HTTP.Server,
+             Network.Async, Network.Async.HTTP.CGI, Network.Async.HTTP.Router, Network.Async.HTTP.Server, Network.Async.HTTP.Static,
              Network.URL,
              --
              Network.RC2,
@@ -36,7 +36,7 @@ modules    = Control.Concurrent.MVar,
              --
              System.Posix.Directory, System.Posix.Dl, System.Posix.Errno, System.Posix.Fcntl, System.Posix.FileDesc, System.Posix.Poll,
              System.Posix.File, System.Posix.Mmap,
-             System.Posix.Process, System.Posix.Signal,
+             System.Posix.Process, System.Posix.Signal, System.Posix.Spawn,
              System.Posix.Pwd, System.Posix.Glob, System.Posix.Select, System.Posix.Syslog,
              System.Posix.Path, System.Posix.Stat, System.Posix.Stdio, System.Posix.Time,
              System.Posix.Uio, System.Posix.Termios,

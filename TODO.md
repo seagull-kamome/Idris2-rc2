@@ -701,3 +701,11 @@ upstreamに取り込まれたら`idris2-src`を更新して自作idris2を作り
     寸法の入口(`Click`・`Drag`・`size`・`withLimits`)で`cast`している。`Fin`を捨てて`Len`にするか、
     範囲を持つ型を別に作るかは未定。
   - `MenuBar`の列(`Click`・`titleLeft`)は`Len`だが、`active`と`cursor`は添字なので`Nat`のまま。
+
+## `Network.Async.HTTP.Static`/`CGI`
+
+- `static`は`Range`・`If-Modified-Since`・`Last-Modified`に答えず、ファイルを丸ごとメモリに読む
+  (`maxFileBytes`で打ち切る)。`Response`の本体が`Buffer`なので、大きなファイルを流すには
+  `Network.Async.HTTP.Server`側に本体を流す応答の型が要る。
+- `cgi`は出力を全部集めてから応答する(`nph-`も流し出力も無い)。プログラムは`dir`を
+  カレントにしない(`posix_spawn_file_actions_addchdir_np`は glibc 2.29以降で、未使用)。
