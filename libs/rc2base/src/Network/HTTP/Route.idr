@@ -14,6 +14,7 @@ import Data.List1
 import Data.String
 
 import Network.HTTP.Message
+import Network.URL
 
 -------------------------------------------------------------------------------
 -- Path segment splitting
@@ -50,6 +51,13 @@ segmentsUnder mountAt path = below (splitPath mountAt) (splitPath (pathOnly path
     below [] segs = Just segs
     below (m :: ms) (seg :: segs) = if m == seg then below ms segs else Nothing
     below _ [] = Nothing
+
+||| Whether the path (query string dropped) has a `.` or `..` segment, also when it
+||| is percent-encoded (`%2e%2e`). What serves files, or hands a path on to
+||| something that does, refuses such a path.
+export
+hasDotSegment : String -> Bool
+hasDotSegment path = any (\seg => elem (percentDecode seg) [".", ".."]) (splitPath (pathOnly path))
 
 -------------------------------------------------------------------------------
 -- Capturing a segment as a value

@@ -95,6 +95,7 @@ TESTS=(
     "TestAsyncHTTPServer|network contrib|Network.Async.HTTP.Server: answers, keep-alive, pipelining, split heads, HEAD/204, Connection, 400/413/431, limits, big bodies"
     "TestAsyncHTTPStaticCGI|network contrib|Network.Async.HTTP.{Static,CGI} behind the router: files, index, ETag/304, 404 for .., CGI variables and body, Status/Location, 502, 504"
     "TestAsyncHTTPProxy|network contrib|Network.Async.HTTP.Proxy: path below the prefix, method/body/headers forwarded, hop-by-hop dropped, redirect, HEAD, 502 (unreachable, too large), 504"
+    "TestAsyncHTTPRewrite|network contrib|Network.Async.HTTP.Rewrite: internal rewrites with groups and queries, whole-path match, first rule only, redirects, no //host and no .. out of the groups, rules that cannot be made"
     "TestAsyncHTTPServerTimeouts|network contrib|Network.Async.HTTP.Server timeouts: idle, stalled and trickling requests (408), idle keep-alive, a client that does not read"
     "TestAsyncHTTPServerThreads|network contrib|Network.Async.HTTP.Server: the same server on one thread and on eight (runServer); handlers overlap only with several"
     "TestTaskUring||Control.Task.Uring: nop, file round trip, two requests at once, a read woken by a write, a request given up by a race"

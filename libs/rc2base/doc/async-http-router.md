@@ -1,10 +1,10 @@
-# Static files, CGI and a reverse proxy behind `Network.Async.HTTP.Router`
+# Static files, CGI, a reverse proxy and a URL rewriter behind `Network.Async.HTTP.Router`
 
 `Network.Async.HTTP.Router.router` takes a route table (`get`, `post`, ...) whose
 handlers give a `Task Response` and make a `Handler` of it (see `http-router.md`
 for the patterns). A route handler is given only the captures of its path, not the
 `Request`, so it cannot serve "everything below `/static`" or hand a request body
-to a program. Three `Handler` transformers do that (`static`, `cgi`, `proxy`), and the router's `notFound`
+to a program. Four `Handler` transformers do that (`static`, `cgi`, `proxy`, `urlRewrite`), and the router's `notFound`
 argument is where they plug in:
 
 ```idris2
@@ -130,4 +130,40 @@ would need a blocking lookup: `EAFNOSUPPORT`, so 502), and gives its answer back
   `Upgrade` (WebSocket), no `100-continue`, and no `X-Forwarded-For` (the handler
   does not know the address of the client).
 
-Tests: `tests/TestAsyncHTTPStaticCGI`, `tests/TestAsyncHTTPProxy`.
+## `Network.Async.HTTP.Rewrite`
+
+`urlRewrite rules next` changes the path of a request, or answers it with a redirect,
+before `next` (a `static`, `cgi`, `proxy` or `router`, or a chain of them) sees it.
+Put it first: `urlRewrite rules (static ... (cgi ... (router ...)))`. (It is not called
+`rewrite`: that is a keyword.)
+
+```idris2
+Right old  <- rule "/old/(.*)"      "/new/\1"           Internal
+Right item <- rule "/legacy/([0-9]+)" "/items/\1"      (Redirect 301)
+Right ext  <- rule "/docs/(.*)"     "https://example.org/\1" (Redirect 307)
+let handler = urlRewrite [old, item, ext] next
+```
+
+- `rule pattern template action` compiles a POSIX extended regular expression
+  (`Text.Regex.POSIX`, libc) once and checks the template: `Left` for a pattern or
+  template that is not valid, a group the pattern does not have, a `Redirect` status
+  other than 301, 302, 303, 307 and 308. The template is text with `\1` to `\9` for what
+  the groups matched (`\0` all of the path; a group that did not take part is empty)
+  and `\\` for a backslash.
+- A rule matches when the pattern matches **all** of the path of the request, the query
+  string left out and the path as it stands in the request (percent-encoded, so `%2f`
+  is not a `/`). `/plain` does not match `/plain/more`; write `/plain(/.*)?` for both.
+- The **first** rule that matches is applied, and its result is not matched again, so no
+  set of rules loops. A request that no rule matches goes to `next` as it is.
+- `Internal` gives `next` a request with the new path: the client does not see it.
+  `Redirect status` answers with that status and the new path as `Location`. A query
+  string in the template replaces the one of the request, else that stays.
+- What the groups caught from the request must not become something else, so the new
+  path is checked, and the request answered with 400 if it fails: it starts with one
+  `/` (not `//host`, which a browser takes for another host), has no `.` or `..`
+  segment (also `%2e%2e`), no control character, space or backslash. A redirect may go to
+  another host only when the template itself starts with `http://` or `https://`. A
+  request whose path has a CR, LF or NUL in it is 400 too (the regex engine reads a
+  C string).
+
+Tests: `tests/TestAsyncHTTPStaticCGI`, `tests/TestAsyncHTTPProxy`, `tests/TestAsyncHTTPRewrite`.

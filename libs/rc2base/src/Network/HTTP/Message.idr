@@ -199,7 +199,10 @@ reasonPhrase 201 = "Created"
 reasonPhrase 204 = "No Content"
 reasonPhrase 301 = "Moved Permanently"
 reasonPhrase 302 = "Found"
+reasonPhrase 303 = "See Other"
 reasonPhrase 304 = "Not Modified"
+reasonPhrase 307 = "Temporary Redirect"
+reasonPhrase 308 = "Permanent Redirect"
 reasonPhrase 400 = "Bad Request"
 reasonPhrase 401 = "Unauthorized"
 reasonPhrase 403 = "Forbidden"
@@ -215,6 +218,13 @@ reasonPhrase 503 = "Service Unavailable"
 reasonPhrase 504 = "Gateway Timeout"
 reasonPhrase 505 = "HTTP Version Not Supported"
 reasonPhrase _   = "Unknown"
+
+||| Whether a string can go into the head of a message as it is: it has no CR, LF or
+||| NUL, which would split the message or cut it short for a reader that takes them
+||| for the end of a line or of a string.
+export
+headSafe : String -> Bool
+headSafe = not . any (\c => c == '\r' || c == '\n' || c == '\0') . unpack
 
 ||| The length of a request's body, `Just 0` without a `Content-Length`. `Nothing`
 ||| when the headers do not frame the body reliably: a `Content-Length` that is

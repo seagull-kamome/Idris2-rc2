@@ -1,0 +1,67 @@
+"(" "/x": refused
+"/a(b)" "/\\2": refused
+"/a" "/x": refused
+"/a" "/x\\": refused
+"/a" "/x\\q": refused
+"/a" "/x\r\nSet-Cookie: a=b": refused
+"/a" "/x": made
+HTTP/1.1 200 OK
+path /new/a/b method GET
+
+HTTP/1.1 200 OK
+path /new/x?k=v method POST
+
+HTTP/1.1 200 OK
+path /found method GET
+
+HTTP/1.1 200 OK
+path /plain/more method GET
+
+HTTP/1.1 200 OK
+path /one method GET
+
+HTTP/1.1 200 OK
+path /loop/again method GET
+
+HTTP/1.1 200 OK
+path /-a method GET
+
+HTTP/1.1 200 OK
+path /b-a method GET
+
+HTTP/1.1 200 OK
+path /x/whole method GET
+
+HTTP/1.1 200 OK
+path /untouched?q=1 method GET
+
+HTTP/1.1 301 Moved Permanently | Location: /items/42
+
+HTTP/1.1 301 Moved Permanently | Location: /items/42?x=1
+
+HTTP/1.1 200 OK
+path /legacy/x method GET
+
+HTTP/1.1 302 Found | Location: /target?from=moved
+
+HTTP/1.1 307 Temporary Redirect | Location: https://example.org/some/where
+
+HTTP/1.1 301 Moved Permanently | Location: /items/7
+
+HTTP/1.1 400 Bad Request
+bad request
+
+HTTP/1.1 302 Found | Location: /ok/path
+
+HTTP/1.1 400 Bad Request
+bad request
+
+HTTP/1.1 400 Bad Request
+bad request
+
+HTTP/1.1 200 OK
+path /ok method GET
+
+HTTP/1.1 400 Bad Request
+bad request
+

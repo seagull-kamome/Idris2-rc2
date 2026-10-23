@@ -17,7 +17,6 @@ import Data.String
 import Network.Async
 import Network.Async.HTTP.Server
 import Network.HTTP.Route
-import Network.URL
 import Network.Socket.Data
 import System.Posix.Errno
 
@@ -58,12 +57,6 @@ render _ = ""
 
 -- Why an exchange did not give an answer.
 data Failed = TimedOut | Bad String
-
--- Whether a string may be part of the head of a message: no CR, LF or NUL, which
--- would split the message in two or end it for a reader that takes them for a
--- line end or the end of a string.
-clean : String -> Bool
-clean = not . any (\c => c == '\r' || c == '\n' || c == '\0') . unpack
 
 -- The tokens (lower case) of the `Connection` headers: the names of the other
 -- headers that are about this connection only (RFC 9110, 7.6.1).
@@ -115,8 +108,8 @@ proxy {options} mountAt upstream port next req = case segmentsUnder mountAt req.
     acceptable : Bool
     acceptable =
       isPrefixOf "/" req.path
-      && all clean (req.method :: req.path :: concatMap (\(k, v) => [k, v]) req.headers)
-      && all (\seg => not (elem (percentDecode seg) [".", ".."])) (splitPath (pathOnly req.path))
+      && all headSafe (req.method :: req.path :: concatMap (\(k, v) => [k, v]) req.headers)
+      && not (hasDotSegment req.path)
 
     hostValue : String
     hostValue = fromMaybe (render upstream ++ ":" ++ show port) options.hostHeader
@@ -181,7 +174,7 @@ proxy {options} mountAt upstream port next req = case segmentsUnder mountAt req.
         | Nothing => pure (Left (Bad "bad head in the answer"))
       case (isPrefixOf "HTTP/" version, parsePositive {a = Int} code, bodyLength hdrs) of
         (True, Just status, Just _) =>
-          if status < 200 || status > 599 || not (all clean (concatMap (\(k, v) => [k, v]) hdrs))
+          if status < 200 || status > 599 || not (all headSafe (concatMap (\(k, v) => [k, v]) hdrs))
             then pure (Left (Bad "bad status or head in the answer"))
             else do
               let start = headEnd + 4
