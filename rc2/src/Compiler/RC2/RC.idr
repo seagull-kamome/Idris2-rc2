@@ -740,7 +740,14 @@ mutual
             freeableShape : RCExp -> Bool
             freeableShape (RLet _ _ _ _ body) = freeableShape body
             freeableShape (RCon _ _ ci _ _ _) = ci /= NIL && ci /= NOTHING && ci /= ZERO && ci /= UNIT
-            freeableShape (RUnderApp _ _ _ _) = True
+            -- A partial application is a fresh heap closure, except that `Emit` makes one
+            -- over constants only a static (`rc2/doc/static-closures.md`); a variable
+            -- among the captured values keeps it a fresh allocation.
+            freeableShape (RUnderApp _ _ _ args) = any isVar args
+              where
+                isVar : RCLocal -> Bool
+                isVar (RCLoc _) = True
+                isVar _ = False
             freeableShape _ = False
         -- RNative/RInlineNative never need cleanup: neither is refcounted
         -- (RInlineNative never actually reaches here at all -- see

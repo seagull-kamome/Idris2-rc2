@@ -330,14 +330,10 @@ IDRIS2RC2_Value *idris2rc2_trampoline(IDRIS2RC2_Value *it) {
     // race-free once another thread can hold its own counted reference
     // to the same closure (see runtime.h's idris2rc2_isUnique comment).
     //
-    // The REFCOUNT_MAX guard (mirroring idris2rc2_drop's own) is purely
-    // defensive: every call site into this function has been traced and
-    // confirmed to only ever pass a fresh function-call result, a
-    // freshly-mkClosure'd object (refCount 1), or an object that already
-    // passed idris2rc2_isUnique (refCount==1 by construction) -- an
-    // immortal (REFCOUNT_MAX) closure can never reach this decrement as
-    // the code is written today. Added anyway for symmetry/future-
-    // proofing against a caller that someday hands this an immortal one.
+    // An immortal (REFCOUNT_MAX) closure does reach this release: a closure over
+    // constants only is a static (rc2/doc/static-closures.md) and the trampoline runs
+    // it each time it is returned. idris2rc2_rc_release leaves it alone (false), so
+    // it is never freed.
     if (idris2rc2_rc_release(&c->header)) {
       free(c);
     }

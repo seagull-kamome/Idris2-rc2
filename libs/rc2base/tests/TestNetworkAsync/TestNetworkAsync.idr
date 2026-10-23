@@ -167,5 +167,40 @@ connectTest = do
           | Left e => pure ("recv " ++ show e)
         liftIO (getString buf 0 n)
 
+-- `recvUntil` and `sendAllUntil` give the answer at once when the call does not
+-- block, and `Nothing` when nothing arrives before the time.
+deadlineTest : IO ()
+deadlineTest = do
+  Right listener <- listen port
+    | Left e => putStrLn ("listen " ++ show e)
+  r <- runTaskWith 2 (do
+         server <- fork (accept listener)
+         Right c <- Network.Async.connect (IPv4Addr 127 0 0 1) port
+           | Left e => pure ["connect " ++ show e]
+         Right s <- wait server
+           | Left e => pure ["accept " ++ show e]
+         Just out <- liftIO (newBuffer 2)
+           | Nothing => pure ["newBuffer"]
+         liftIO (setString out 0 "hi")
+         t0 <- now
+         sent <- sendAllUntil (t0 + 5000) c out 0 2
+         Just buf <- liftIO (newBuffer 16)
+           | Nothing => pure ["newBuffer"]
+         got <- recvUntil (t0 + 5000) s buf 0 16
+         t1 <- now
+         none <- recvUntil (t1 + 100) s buf 0 16
+         -- the call blocks, the data arrives in time and the timeout is withdrawn
+         _ <- fork (sleepFor 20 *> sendAll c out 0 2)
+         t2 <- now
+         late <- recvUntil (t2 + 5000) s buf 0 16
+         -- a later timer must still fire on time after the withdrawn one
+         t3 <- now
+         sleepFor 30
+         t4 <- now
+         liftIO (close c *> close s)
+         pure [show sent, show got, show none, show late, show (the Bool (minus t4 t3 < 2000))])
+  close listener
+  putStrLn ("deadline: " ++ show r)
+
 main : IO ()
-main = echoTest *> giveUpTest *> droppedAcceptTest *> boundsTest *> connectTest
+main = echoTest *> giveUpTest *> droppedAcceptTest *> boundsTest *> connectTest *> deadlineTest

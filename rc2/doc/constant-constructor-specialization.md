@@ -280,6 +280,39 @@ The `--directive timing` output prints this breakdown (`N distinct
 keys`, then `N keys past the scrutinee-only gate, M clones kept`), so
 it can be re-derived on any program without rebuilding the compiler.
 
+## Captured in a partial application
+
+A dictionary that is used again after a `>>=` is captured by the lifted
+continuation: `Data.IORef.modifyIORef`, `newIORef`, `Network.Socket.close`
+and every other `HasIO io =>` function of the libraries have the shape
+
+```
+case v3980 of  CONS [_, liftIO] -> ...
+partial Data.IORef.{modifyIORef:2} missing= 1 [v3980, v3981, v3982]
+```
+
+The capture used to count as a stored use, so the gate refused them all and
+each call went through the dictionary's `>>=` and `liftIO` with `apply`.
+A lifted lambda takes its captured values as its first parameters, so a
+capture at position `q` of `partial g ...` is a *forwarding site* to `g`'s
+parameter `q`, like an argument of a call:
+
+- `underAppSites` lists the captures; `constForwardSites` is
+  `forwardSites` plus them. The closure half keeps `forwardSites`: its
+  redirect does not rewrite partial applications.
+- `collectConstOpportunities` and `constNeeds` read `RUnderApp` as well
+  as `RAppName`, so a constant captured by a partial application is a key
+  of its own and the continuation is cloned.
+- `redirectConstCallSites` rewrites `RUnderApp g missing args` to the clone
+  with the argument at `q` dropped; `missing` stays, since the clone has
+  one parameter fewer and so does the application.
+
+On `TestAsyncHTTPServer` the 26 calls of `modifyIORef` and the 11 of
+`newIORef` with the constant `HasIO IO` dictionary all go to clones.
+`rc2/tests/Test131SpecConstConCapture/` is the regression test.
+
+Measured on `libs/rc2base/bench/bench.sh` (2026-10-23): no change outside noise (`GET /hello`, one connection, one thread: 11 600 before, 11 340 after). The dispatch it removes is not where the Task server spends its time.
+
 ## Iteration
 
 This half runs after the closure half in every round of
@@ -297,7 +330,7 @@ behind the cap of 8 rounds are in `speculative-closure-specialization.md`,
   two or more known dictionaries, but a joint clone over the final
   bodies succeeds for none of them, so it is not worth implementing
   (details at the end of `speculative-closure-specialization.md`).
-- **Dictionaries that are stored or escape** -- 320 stored-only, 79
+- **Dictionaries that are stored or escape** -- (before captures in partial applications were forwarding sites, `Captured in a partial application` above) 320 stored-only, 79
   other escape and 122 forward-mixed-with-store keys on `idris2-lsp`
   still stay generic. Resolving them needs a different analysis, not a
   relaxation of the gate.
@@ -312,6 +345,8 @@ behind the cap of 8 rounds are in `speculative-closure-specialization.md`,
   in `disableableStageNames`.
 - `rc2/tests/Test87SpecConstCon/` -- correctness, plus `verify.sh`'s own
   assertion that clones are kept and no boxed dispatch survives.
+- `rc2/tests/Test131SpecConstConCapture/` -- a dictionary captured by a
+  continuation.
 - `rc2/tests/BenchSpecConstCon.idr`,
   `rc2/tests/BenchSpecConstConRec.idr` -- the two runtime A/Bs above,
   one per half of the gate.

@@ -172,27 +172,36 @@ gets); a `Handler` that needs the body is used as the `notFound` of the router.
 `bench/bench.sh` runs `bench/OldServer.idr` (the callback server of `http-server.md`) and
 `bench/NewServer.idr` (this server) with the same routes under `wrk` (`new-1` is one
 thread, `new-3` is `runServer 3`). Loopback, 4 cores shared with `wrk`, 8 s per
-scenario, 2026-10-23: the figures compare the servers with each other on one machine
+scenario, 2026-10-24: the figures compare the servers with each other on one machine
 and mean nothing else.
 
 | scenario (`wrk`) | old req/s | new-1 req/s | new-3 req/s |
 | --- | ---: | ---: | ---: |
-| `GET /hello`, 1 connection | 22 600 | 11 600 | 5 000 |
-| `GET /hello`, 64 connections | 28 500 | 9 900 | 5 900 |
-| `GET` 64 KiB body, 16 connections | 14 200 | 7 600 | 4 700 |
-| `POST` 64 KiB body, 16 connections | 10 500 | 6 100 | 4 900 |
-| 16 pipelined `GET /hello` per write, 16 connections | 6 200 | 6 200 | 6 100 |
-| a handler that computes for about 5 ms, 64 connections | 188 | 185 | 440 |
-| a handler that sleeps 50 ms, 64 connections | -- | 1 100 | 1 000 |
+| `GET /hello`, 1 connection | 22 100 | 16 100 | 6 700 |
+| `GET /hello`, 64 connections | 27 900 | 14 000 | 7 900 |
+| `GET` 64 KiB body, 16 connections | 13 700 | 10 300 | 5 600 |
+| `POST` 64 KiB body, 16 connections | 10 400 | 7 700 | 6 500 |
+| 16 pipelined `GET /hello` per write, 16 connections | 6 200 | 6 200 | 6 200 |
+| a handler that computes for about 5 ms, 64 connections | 188 | 186 | 426 |
+| a handler that sleeps 50 ms, 64 connections | -- | 1 140 | 1 080 |
 
-- On one thread this server does 35 to 58 per cent of the requests per second of the
+- On one thread this server does 50 to 75 per cent of the requests per second of the
   callback server when the requests are small or carry 64 KiB, and the same when
-  requests are pipelined or the handler computes. With one connection that is about 85 µs
-  a request against 43 µs. A `perf record` of 64 connections of `GET /hello` shows no single
+  requests are pipelined or the handler computes. With one connection that is about 62 µs
+  a request against 45 µs. A `perf record` of 64 connections of `GET /hello` shows no single
   hot spot: `malloc` and `free` take a quarter of the time and the rest is the
-  interpreter of `Task` (closures built and applied). `strace -c` of one connection shows
-  `timerfd_settime` four times a request (a timer is set and withdrawn for the idle and
-  for the request deadline) and `epoll_wait` hardly at all.
+  interpreter of `Task` (closures built and applied).
+- Timeouts were the largest single cost. Every `recv` and `sendAll` ran inside a
+  `timeoutAt`: a `race` with its own scope, a timer in the scheduler's map and
+  `timerfd_settime` calls, three times a request. `recvUntil` and `sendAllUntil` try
+  the non-blocking call first and make the timeout only if it would block, so a
+  request whose data is already there makes none. That is nearly all of the gain:
+  user instructions per `GET /hello`, one connection, one thread, 390 000 before and
+  262 000 after; requests per second 11 300 before, 16 100 after. In addition a timer
+  that is added no longer arms the descriptor when it is not earlier than what the
+  descriptor is armed for, and a withdrawn timer leaves it armed (the wake-up finds
+  nothing due and `fireTimers` arms the next); how much that saves was not measured
+  separately.
 - Several threads cost a round trip between the thread of the scheduler and a worker
   for every `liftIO`, and a request has a dozen of small ones. The server therefore runs
   the small steps (the non-blocking `recv` and `send`, parsing the head) with `onReactor`,

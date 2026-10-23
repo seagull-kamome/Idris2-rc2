@@ -139,6 +139,15 @@ armTimerFd s = do
           ignore (timerfd_settime s.timerFd 0
                     (MkITimerSpec (MkTimeSpec 0 0) (MkTimeSpec (cast (ms `div` 1000)) (cast ((ms `mod` 1000) * 1000000)))))
 
+-- A timer was added for `t`: the descriptor is armed again only if `t` is earlier
+-- than what it is armed for. A timer that was withdrawn leaves the descriptor armed
+-- for its time; the wake-up that follows finds nothing due and `fireTimers` arms the
+-- next one, which costs less than two system calls for every timeout that never fires.
+armForNew : Scheduler -> Time -> IO ()
+armForNew s t = do
+  was <- readIORef s.armed
+  when (maybe True (t <) was) (armTimerFd s)
+
 -- Make the master `epoll` readable, so that whoever waits for it calls `turn`.
 wake : Scheduler -> IO ()
 wake s = ignore (eventfdWrite s.inboxFd 1)
@@ -185,8 +194,8 @@ envOf s = MkEnv (schedNow s) addTimer (\fd, ev, done => watch s.watcher fd ev do
     addTimer t act = do
       ident <- fresh s
       modifyIORef s.timers (insert (t, ident) act)
-      armTimerFd s
-      pure (MkCancel (modifyIORef s.timers (delete (t, ident)) *> armTimerFd s))
+      armForNew s t
+      pure (MkCancel (modifyIORef s.timers (delete (t, ident))))
 
 -------------------------------------------------------------------------------
 -- The interpreter

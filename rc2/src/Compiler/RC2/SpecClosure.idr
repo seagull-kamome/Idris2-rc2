@@ -564,6 +564,11 @@ collectConstOpportunities (RAppName _ _ callee args) =
                               RCConstCon {} => Just (MkConstOpportunity callee i a)
                               _ => Nothing)
              (zip [0 .. length args] args)
+collectConstOpportunities (RUnderApp _ callee _ args) =
+    mapMaybe (\(i, a) => case a of
+                              RCConstCon {} => Just (MkConstOpportunity callee i a)
+                              _ => Nothing)
+             (zip [0 .. length args] args)
 collectConstOpportunities e = foldSubExprs (++) [] collectConstOpportunities e
 
 ||| Occurrences of `p` sitting in an `RConCase`'s own scrutinee
@@ -573,13 +578,26 @@ scrutineeUses p e@(RConCase _ sc _ _) =
     (if sc == p then 1 else 0) + foldSubExprs (+) 0 (scrutineeUses p) e
 scrutineeUses p e = foldSubExprs (+) 0 (scrutineeUses p) e
 
+||| The positions at which `e` captures `v` in a partial application
+||| (`RUnderApp`). A lifted lambda takes its captured values as its first
+||| parameters, so a capture at position `q` of `g` is a forward to `g`'s
+||| parameter `q`, and the clone of `g` can take its place.
+underAppSites : RCLocal -> RCExp -> List (Name, Nat)
+underAppSites v (RUnderApp _ n _ args) =
+    mapMaybe (\(q, a) => if a == v then Just (n, q) else Nothing) (zip [0 .. length args] args)
+underAppSites v e = foldSubExprs (++) [] (underAppSites v) e
+
+||| `forwardSites`, and the captures of `underAppSites`.
+constForwardSites : RCLocal -> (callee : Name) -> (argPos : Nat) -> RCExp -> List (Name, Nat)
+constForwardSites v callee argPos e = forwardSites v callee argPos e ++ underAppSites v e
+
 ||| `Just` the forwarding sites of `p` iff every occurrence of it in `e`
 ||| is an `RConCase` scrutinee, a passthrough of `p` at the *same*
 ||| argument position of a self-recursive call to `callee`, or a
 ||| *forwarding site* (`forwardSites`: handed to a parameter of some
 ||| other call), and there is at least one scrutinee or forwarding
-||| site. Anything else -- stored into a constructor or closure capture,
-||| returned, used by an `RUnderApp` -- means substituting the constant
+||| site (`constForwardSites` also counts a capture in an `RUnderApp`).
+||| Anything else -- stored into a constructor, returned -- means substituting the constant
 ||| would duplicate it into positions the fold can't collapse, so the
 ||| clone would be a second copy of the same work rather than a
 ||| specialization; that stays excluded. The "at least one" half is the
@@ -609,7 +627,7 @@ constParamUses p callee argPos e =
     let uses = countUsesR p e
         scrut = scrutineeUses p e
         passthrough = selfPassthroughOccurrences p callee argPos e
-        fwds = forwardSites p callee argPos e
+        fwds = constForwardSites p callee argPos e
     in if uses == scrut + passthrough + length fwds && (scrut > 0 || not (null fwds))
           then Just fwds
           else Nothing
@@ -631,7 +649,7 @@ gateFailBucket p callee argPos e =
     let uses = countUsesR p e
         scrut = scrutineeUses p e
         pass = selfPassthroughOccurrences p callee argPos e
-        fwd = length (forwardSites p callee argPos e)
+        fwd = length (constForwardSites p callee argPos e)
         stored = storedUses p e
         rest = minus uses (scrut + pass + fwd)
     in if fwd > 0 then (if rest == 0 then (if scrut > 0 then 0 else 1) else 2)
@@ -681,6 +699,9 @@ constNeeds value callee argPos body =
     go : RCExp -> List ConstKey
     go (RAppName _ _ n args) =
         mapMaybe (\(q, a) => if a == value && not (n == callee && q == argPos) then Just (n, q, value) else Nothing)
+                 (zip [0 .. length args] args)
+    go (RUnderApp _ n _ args) =
+        mapMaybe (\(q, a) => if a == value then Just (n, q, value) else Nothing)
                  (zip [0 .. length args] args)
     go e = foldSubExprs (++) [] go e
 
@@ -814,11 +835,27 @@ redirectConstCallSites table = go
                     else tryEntries fc lazy n args rest
              _ => tryEntries fc lazy n args rest
 
+    -- A capture in a partial application is redirected the same way; the
+    -- clone has one parameter fewer and so does the application's `args`.
+    tryUnder : FC -> Name -> Nat -> List RCLocal -> List ConstRedirectEntry -> RCExp
+    tryUnder fc n missing args [] = RUnderApp fc n missing args
+    tryUnder fc n missing args ((argPos, value, cloneName) :: rest) =
+        case splitAt argPos args of
+             (before, a :: after) =>
+                 if a == value
+                    then RUnderApp fc cloneName missing (before ++ after)
+                    else tryUnder fc n missing args rest
+             _ => tryUnder fc n missing args rest
+
     go : RCExp -> RCExp
     go (RAppName fc lazy n args) =
         case lookup n table of
              Nothing => RAppName fc lazy n args
              Just entries => tryEntries fc lazy n args entries
+    go (RUnderApp fc n missing args) =
+        case lookup n table of
+             Nothing => RUnderApp fc n missing args
+             Just entries => tryUnder fc n missing args entries
     go e = mapSubExprs go e
 
 ||| One round of constant-constructor argument specialization, run
