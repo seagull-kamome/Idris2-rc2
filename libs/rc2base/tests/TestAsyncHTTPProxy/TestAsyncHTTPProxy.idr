@@ -6,7 +6,7 @@ module Main
 -- Network.Async.HTTP.Proxy: an upstream server and a proxy in front of it run as
 -- tasks of one scheduler; a blocking client on the pool asks the proxy. The path
 -- below the prefix (and the whole path with `stripMount = False`), the method and
--- the same through routes of `routerWith` (`forwardTo` on the rest of the path),
+-- the same through routes of `routerWith` (`forwardTo`: the rest of the path is its argument),
 -- the body, the headers (Host and X-Forwarded-Host, the hop-by-hop ones and the ones
 -- `Connection` names dropped, a `..` segment (400), an answer with chunked framing (502),
 -- two Set-Cookie kept), a redirect, HEAD, a big answer, the server that is not
@@ -106,8 +106,8 @@ rawServer r = do
 -- rest of the path.
 viaRoute : List RouteEntryWith
 viaRoute =
-  [ get ("fwd" // splat) (\rest, req => forwardTo localhost upstreamPort (splitPath rest) req)
-  , post ("fwd" // splat) (\rest, req => forwardTo localhost upstreamPort (splitPath rest) req)
+  [ get ("fwd" // splat) (forwardTo localhost upstreamPort)
+  , post ("fwd" // splat) (forwardTo localhost upstreamPort)
   ]
 
 mainMounts : Handler

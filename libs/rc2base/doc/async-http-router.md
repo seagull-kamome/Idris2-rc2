@@ -31,15 +31,15 @@ segments (`Network.HTTP.Route.segmentsUnder`): `/static` is a prefix of `/static
 
 **As routes of `routerWith`**, where the router does the matching of the path and the
 method, and the handler is the function the transformer is made of (`serveStatic`,
-`runCGI`, `forwardTo`) on the rest of the path that `splat` gives (`splitPath` turns
-it back into segments, still percent-encoded):
+`runCGI`, `forwardTo`), which takes the rest of the path that `splat` gives (segments
+joined with `/`, still percent-encoded) and the request, so the route needs no lambda:
 
 ```idris2
 routes : List RouteEntryWith
 routes =
-  [ get  ("assets" // splat)  (\rest, req => serveStatic "public" (splitPath rest) req)
-  , post ("scripts" // splat) (\rest, req => runCGI "/scripts" "cgi" (splitPath rest) req)
-  , get  ("api" // splat)     (\rest, req => forwardTo (IPv4Addr 127 0 0 1) 9000 (splitPath rest) req)
+  [ get  ("assets" // splat)  (serveStatic "public")
+  , post ("scripts" // splat) (runCGI "/scripts" "cgi")
+  , get  ("api" // splat)     (forwardTo (IPv4Addr 127 0 0 1) 9000)
   , get  ("users" // capture "id" Int end) (\id, req => ...)    -- an ordinary route beside them
   ]
 
@@ -58,7 +58,7 @@ before the route is chosen.
 
 ## `Network.Async.HTTP.Static`
 
-`static {options} mountAt root next` (or `serveStatic {options} root below req`):
+`static {options} mountAt root next` (or `serveStatic {options} root rest req`):
 
 - Only `GET` and `HEAD` (405 with `Allow` otherwise). The segments after the prefix
   are percent-decoded and added to `root`; a segment that is empty, `.`, `..` or
@@ -83,7 +83,7 @@ before the route is chosen.
 
 ## `Network.Async.HTTP.CGI`
 
-`cgi {options} mountAt dir next` (or `runCGI {options} mountAt dir below req`) runs `dir/<first segment after the prefix>`, which
+`cgi {options} mountAt dir next` (or `runCGI {options} mountAt dir rest req`) runs `dir/<first segment after the prefix>`, which
 has to be a regular file with the execute permission (else 404). The rest of the
 path is `PATH_INFO`. RFC 3875 variables: `GATEWAY_INTERFACE`, `SERVER_PROTOCOL`,
 `SERVER_SOFTWARE`, `SERVER_NAME`, `SERVER_PORT` (both from `options`),
@@ -133,7 +133,7 @@ Build programs that use `cgi` with `IDRIS2_CFLAGS=-D_GNU_SOURCE` (glibc hides
 
 ## `Network.Async.HTTP.Proxy`
 
-`proxy {options} mountAt upstream port next` (or `forwardTo {options} upstream port below req`) forwards the requests at or below
+`proxy {options} mountAt upstream port next` (or `forwardTo {options} upstream port rest req`) forwards the requests at or below
 `mountAt` to the HTTP server at the IPv4 address `upstream` and `port` (a host name
 would need a blocking lookup: `EAFNOSUPPORT`, so 502), and gives its answer back.
 

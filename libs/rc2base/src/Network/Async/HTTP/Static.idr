@@ -84,10 +84,11 @@ safeSegment dotfiles seg =
   seg /= "" && seg /= "." && seg /= ".." && not (any (\c => c == '/' || c == '\0') (unpack seg))
   && (dotfiles || not (isPrefixOf "." seg))
 
-||| Answer a request with the file below the directory `root` that the segments `below`
-||| name (as they stand in the request, percent-encoded): what `static` does for the
+||| Answer a request with the file below the directory `root` that the path `rest`
+||| names (the rest of the path below the mount, as `splat` gives it: segments joined with
+||| `/`, as they stand in the request, percent-encoded): what `static` does for the
 ||| requests under its prefix, and what a route of `routerWith` can do with the rest of
-||| its path (`get ("assets" // splat) (\rest, req => serveStatic "public" (splitPath rest) req)`).
+||| its path (`get ("assets" // splat) (serveStatic "public")`).
 ||| Only `GET` and `HEAD` (405 with `Allow` otherwise). A directory is answered with
 ||| its `indexFile` (a request for it without the trailing `/` is redirected to the
 ||| one with it). The answer has `Content-Type` by the extension and an `ETag` from the
@@ -97,12 +98,12 @@ safeSegment dotfiles seg =
 ||| chunks of `chunkBytes`.
 export
 serveStatic : {default defaultStatic options : StaticOptions} -> (root : String)
-           -> (below : List String) -> Request -> Task Response
-serveStatic {options} root raw req =
+           -> (rest : String) -> Request -> Task Response
+serveStatic {options} root rest req =
     if req.method /= "GET" && req.method /= "HEAD"
       then liftIO (text {headers = [("Allow", "GET, HEAD")]} 405 "method not allowed\n")
       else
-        let segs = map percentDecode raw
+        let segs = map percentDecode (splitPath rest)
         in if all (safeSegment options.serveDotfiles) segs then file segs else missing
   where
     missing : Task Response
@@ -174,4 +175,4 @@ export
 static : {default defaultStatic options : StaticOptions} -> (mountAt, root : String) -> (next : Handler) -> Handler
 static {options} mountAt root next req = case segmentsUnder mountAt req.path of
   Nothing => next req
-  Just below => serveStatic {options} root below req
+  Just below => serveStatic {options} root (joinBy "/" below) req

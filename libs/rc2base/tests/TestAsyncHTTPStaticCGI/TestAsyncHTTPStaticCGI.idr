@@ -13,7 +13,7 @@ module Main
 -- `..`). CGI: the variables a program is given and its body on the standard input,
 -- Status and Location, a program with no head or too much output (502), one that
 -- takes too long (504, and the server goes on), one that is not executable (404),
--- the same through routes of `routerWith` (`serveStatic`, `runCGI` on the rest of the path),
+-- the same through routes of `routerWith` (`serveStatic`, `runCGI`: the rest of the path is their argument),
 -- the working directory of a program (the one it is in), the headers a program gets
 -- (joined duplicates, no `_` in a name, no Authorization), a dotfile (404).
 
@@ -50,9 +50,9 @@ cgiOptions = { timeoutMs := 700, maxOutputBytes := 50000, serverPort := 8080
 -- (`routerWith`): under /files and /scripts. `dir` is the directory of the test.
 withRequest : (dir : String) -> List RouteEntryWith
 withRequest dir =
-  [ get ("files" // splat) (\rest, req => serveStatic {options = staticOptions} (dir ++ "/public") (splitPath rest) req)
-  , get ("scripts" // splat) (\rest, req => runCGI {options = cgiOptions} "/scripts" (dir ++ "/cgi") (splitPath rest) req)
-  , post ("scripts" // splat) (\rest, req => runCGI {options = cgiOptions} "/scripts" (dir ++ "/cgi") (splitPath rest) req)
+  [ get ("files" // splat) (serveStatic {options = staticOptions} (dir ++ "/public"))
+  , get ("scripts" // splat) (runCGI {options = cgiOptions} "/scripts" (dir ++ "/cgi"))
+  , post ("scripts" // splat) (runCGI {options = cgiOptions} "/scripts" (dir ++ "/cgi"))
   ]
 
 -- `dir` is the directory of the test, which holds public/ and cgi/.

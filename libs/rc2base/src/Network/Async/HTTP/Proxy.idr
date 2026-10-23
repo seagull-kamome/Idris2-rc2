@@ -81,10 +81,11 @@ passedOn besides hdrs =
   in filter (\(k, _) => not (elem (toLower k) dropped)) hdrs
 
 ||| Forward a request to the HTTP server at `upstream` (an IPv4 address: a host name
-||| would need a blocking lookup) and `port`, asking for the path `below` (the segments
-||| below the mount as they stand in the request): what `proxy` does for the requests
+||| would need a blocking lookup) and `port`, asking for the path `rest` (the rest of the
+||| path below the mount, as `splat` gives it: segments joined with `/`, as they stand in
+||| the request): what `proxy` does for the requests
 ||| under its prefix, and what a route of `routerWith` can do with the rest of its path
-||| (`get ("api" // splat) (\rest, req => forwardTo localhost 9000 (splitPath rest) req)`).
+||| (`get ("api" // splat) (forwardTo localhost 9000)`).
 |||
 ||| The request goes out as HTTP/1.0 with `Connection: close`, so the server answers
 ||| without chunks and the answer ends with its connection; the answer is given back with its status
@@ -111,15 +112,15 @@ passedOn besides hdrs =
 ||| `100-continue`, no streaming: the answer is held whole.
 export
 forwardTo : {default defaultProxy options : ProxyOptions}
-         -> (upstream : SocketAddress) -> (port : Port) -> (below : List String) -> Request -> Task Response
-forwardTo {options} upstream port below req =
+         -> (upstream : SocketAddress) -> (port : Port) -> (rest : String) -> Request -> Task Response
+forwardTo {options} upstream port rest req =
     if not acceptable then liftIO (text 400 "bad request\n")
     else if not (fieldSafe hostValue) then liftIO (text 500 "bad proxy configuration\n")
     else do
       deadline <- case options.timeoutMs of
                     Z => pure Nothing
                     ms => (\t => Just (t + ms)) <$> now
-      result <- talk deadline (upstreamPath below)
+      result <- talk deadline (upstreamPath (splitPath rest))
       case result of
         Left TimedOut => liftIO (text 504 "gateway timeout\n")
         Left (Bad message) => liftIO (text 502 ("bad gateway: " ++ message ++ "\n"))
@@ -252,4 +253,4 @@ proxy : {default defaultProxy options : ProxyOptions}
      -> (mountAt : String) -> (upstream : SocketAddress) -> (port : Port) -> (next : Handler) -> Handler
 proxy {options} mountAt upstream port next req = case segmentsUnder mountAt req.path of
   Nothing => next req
-  Just below => forwardTo {options} upstream port below req
+  Just below => forwardTo {options} upstream port (joinBy "/" below) req

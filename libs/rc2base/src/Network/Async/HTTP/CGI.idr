@@ -110,10 +110,11 @@ parseOutput head =
     field line = case break (== ':') (trim line) of
       (k, rest) => if rest == "" then Nothing else Just (trim k, trim (pack (drop 1 (unpack rest))))
 
-||| Run the executable that the segments `below` name (as they stand in the request,
+||| Run the executable that the path `rest` names (the rest of the path below the mount, as
+||| `splat` gives it: segments joined with `/`, as they stand in the request,
 ||| percent-encoded) in the directory `dir`: what `cgi` does for the requests under its
 ||| prefix `mountAt`, and what a route of `routerWith` can do with the rest of its path
-||| (`post ("cgi-bin" // splat) (\rest, req => runCGI "/cgi-bin" "cgi" (splitPath rest) req)`;
+||| (`post ("cgi-bin" // splat) (runCGI "/cgi-bin" "cgi")`;
 ||| `mountAt` is the path of the route, for `SCRIPT_NAME`). The first segment is the name
 ||| of the program (a regular file with the execute permission, else 404); the segments
 ||| after it are `PATH_INFO`.
@@ -127,10 +128,10 @@ parseOutput head =
 ||| standard error is ours.
 export
 runCGI : {default defaultCGI options : CGIOptions} -> (mountAt, dir : String)
-      -> (below : List String) -> Request -> Task Response
-runCGI {options} mountAt dir below req = case below of
+      -> (rest : String) -> Request -> Task Response
+runCGI {options} mountAt dir rest req = case splitPath rest of
   [] => missing
-  raw :: rest =>
+  raw :: more =>
     let name = percentDecode raw
     in if name == "" || name == "." || name == ".." || any (\c => c == '/' || c == '\0') (unpack name)
          then missing else do
@@ -139,7 +140,7 @@ runCGI {options} mountAt dir below req = case below of
              | Left _ => missing
            Right () <- blocking (access program X_OK)
              | Left _ => missing
-           if isRegular st then run name raw (map percentDecode rest) else missing
+           if isRegular st then run name raw (map percentDecode more) else missing
   where
     missing : Task Response
     missing = liftIO (notFound "not found\n")
@@ -329,4 +330,4 @@ export
 cgi : {default defaultCGI options : CGIOptions} -> (mountAt, dir : String) -> (next : Handler) -> Handler
 cgi {options} mountAt dir next req = case segmentsUnder mountAt req.path of
   Nothing => next req
-  Just below => runCGI {options} mountAt dir below req
+  Just below => runCGI {options} mountAt dir (joinBy "/" below) req
