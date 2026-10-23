@@ -16,6 +16,7 @@ module Compiler.RC2.Emit.Util
 -- the dependency is one-directional, which is exactly what made this
 -- split possible without a mutual-module cycle.
 
+import Compiler.RC2.ConstFold
 import Compiler.RC2.RCExp
 import Compiler.RC2.Types
 import Compiler.RC2.Util
@@ -1422,21 +1423,23 @@ staticClosure : {auto a : Ref ArgCounter Nat}
              -> {auto lm : Ref InlineMap (SortedMap Int (String, List String))}
              -> Name -> List RCLocal -> Nat -> Core (Maybe String)
 staticClosure n args missing =
-    if nargs == 0 || nargs > 20 || any isVar args then pure Nothing else do
+    let nargs : Nat := length args in
+    -- `allConstLocal` is the check that no captured value is a variable
+    if nargs == 0 || nargs > 20 || isNothing (allConstLocal args) then pure Nothing else do
         strs <- traverse constExpr args
         if not (all constantExpr strs) then pure Nothing else do
             nm <- ("constclosure_" ++) <$> getNextCounter
             let fields = concat (intersperse ", " strs)
-            update ConstConDef $ \(names, pending) => (names, pending ++
-                ["static IDRIS2RC2_ConstClosureArgs\{show nargs} const \{nm} = { .header = IDRIS2RC2_STOCKVAL(IDRIS2RC2_TAG_CLOSURE), .arity = \{show (nargs + missing)}, .filled = \{show nargs}, .fn = (void *)\{cName n}, .args = { \{fields} } };"])
+            update ConstConDef $ \(names, pending) => (names, pending ++ [def nm nargs fields])
             pure (Just "((IDRIS2RC2_Value*)&\{nm})")
   where
-    nargs : Nat
-    nargs = length args
-
-    isVar : RCLocal -> Bool
-    isVar (RCLoc _) = True
-    isVar _ = False
+    def : (nm : String) -> (nargs : Nat) -> (fields : String) -> String
+    def nm nargs fields = """
+      static IDRIS2RC2_ConstClosureArgs\{show nargs} const \{nm} = {
+        .header = IDRIS2RC2_STOCKVAL(IDRIS2RC2_TAG_CLOSURE),
+        .arity = \{show (nargs + missing)}, .filled = \{show nargs},
+        .fn = (void *)\{cName n}, .args = { \{fields} } };
+      """
 
     -- A literal is rendered as a boxed constant (an immediate or a static), not as the
     -- `mk...` call of a native one.

@@ -222,6 +222,7 @@ isConstLocalProof (RCConstClosure {})    = Just ItIsConstClosure2
 ||| own `argsConst` field requires -- `args` itself stays a plain
 ||| `List RCLocal` (see RCExp.idr's own doc comment for why
 ||| `RCConstCon` doesn't need every field re-typed to carry the proof).
+export
 allConstLocal : (args : List RCLocal) -> Maybe (All IsAnyConstLocal args)
 allConstLocal [] = Just []
 allConstLocal (x :: xs) = case isConstLocalProof x of
