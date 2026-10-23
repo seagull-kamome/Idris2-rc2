@@ -221,7 +221,9 @@ ffiRawCall cLang target fargs ret args = do
 ||| hint (a Chez-only dynamic-load version pin, meaningless to a
 ||| static linker). `Nothing` for a lib field that doesn't start
 ||| with "lib" at all -- not expected in practice, left unlinked
-||| rather than guessed at.
+||| rather than guessed at. A name that is only "lib" gives `Just ""`: it is for
+||| names that `ForeignSpec.badLibName` has accepted, which takes them apart the
+||| same way.
 export
 linkLibName : String -> Maybe String
 linkLibName lib =

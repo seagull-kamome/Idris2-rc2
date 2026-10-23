@@ -39,14 +39,48 @@ record ForeignSpec where
   target : ForeignTarget
   libOpts : List String
 
-||| The header names of a spec: the second option split at `;`, each
-||| trimmed, empty pieces and repeats (exact, case-sensitive match) dropped (`"a.h; b.h;"` is `["a.h", "b.h"]`).
-||| Only this field treats `;` specially. See `rc2/doc/ffi-cexpr.md`.
+-- The pieces of an option split at `;`: each trimmed, empty pieces and repeats
+-- (exact, case-sensitive match) dropped (`"a; b;"` is `["a", "b"]`).
+splitNames : String -> List String
+splitNames str = nub $ filter (/= "") $ map trim $ forget $ Data.String.split (== ';') str
+
+||| The header names of a spec: the second option split at `;`
+||| (`"a.h; b.h;"` is `["a.h", "b.h"]`), as `splitNames` does.
+||| See `rc2/doc/ffi-cexpr.md`.
 export
 headerList : ForeignSpec -> List String
 headerList spec = case spec.libOpts of
-                       [_, hs] => nub $ filter (/= "") (map (trim . pack) (Data.List1.forget (Data.List.split (== ';') (unpack hs))))
+                       [_, hs] => splitNames hs
                        _ => []
+
+||| The library names of a spec: the first option split at `;` like the
+||| headers (`"libfoo; libbar"`), when the spec has a library option and at
+||| most a header option after it. See `rc2/doc/ffi-cexpr.md`.
+export
+libList : ForeignSpec -> List String
+libList spec = case spec.libOpts of
+                    [ls] => splitNames ls
+                    [ls, _] => splitNames ls
+                    _ => []
+
+||| Whether a library name is refused. The name is taken apart as `linkLibName`
+||| does (the text before the first white space, then a version hint): one that is
+||| linked, because it starts with "lib", must be made of letters, digits and
+||| `_ . + -` after the "lib", and the hint of the same characters and white space.
+||| The name becomes the argument `-l<name>` of the C compiler's command line, so
+||| nothing else is let through. A name that does not start with "lib" is not
+||| linked and not looked at.
+export
+badLibName : String -> Bool
+badLibName lib =
+    let (base, hint) = Data.String.break isSpace lib
+    in isPrefixOf "lib" base && (length base <= 3 || not (all okChar (unpack base) && all okHint (unpack hint)))
+  where
+    okChar : Char -> Bool
+    okChar c = isAlphaNum c || c == '_' || c == '.' || c == '+' || c == '-'
+
+    okHint : Char -> Bool
+    okHint c = okChar c || isSpace c
 
 ||| Accepted tags, in priority order. "RefC" is accepted (and treated
 ||| as directly callable, not stubbed) because prelude/base/contrib
@@ -189,6 +223,9 @@ validateForeign n ccs fargs ret =
          Left err => bad err
          Right Nothing => pure Nothing
          Right (Just spec) => do
+             case find badLibName (libList spec) of
+                  Just l => bad "invalid library name \"\{l}\" (a library name is \"lib\" and letters, digits and '_', '.', '+' or '-', optionally followed by white space and a version)"
+                  Nothing => pure ()
              case find badHeader (headerList spec) of
                   Just h => bad "invalid header name \"\{h}\" (a header name must not contain whitespace, '<', '>' or '\"')"
                   Nothing => pure ()

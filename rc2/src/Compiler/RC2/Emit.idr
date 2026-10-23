@@ -1517,11 +1517,9 @@ collectDeclarations n def@(MkRCForeign ccs fargs ret) = do
          _ => do
              Just spec <- validateForeign n ccs fargs ret
                  | Nothing => throw $ UserError "[rc2] %foreign declaration \{show n} has no implementation rc2 can call: it needs a \"CExpr:\", \"RC2:\", \"RefC:\" or \"C:\" alternative"
-             case spec.libOpts of
-                  [lib, hdr] => do update HeaderFiles (\s => foldl (flip insert) (the (SortedSet String) s) (headerList spec))
-                                   maybe (pure ()) (\l => update ForeignLibs $ insert l) (linkLibName lib)
-                  [lib] => maybe (pure ()) (\l => update ForeignLibs $ insert l) (linkLibName lib)
-                  _ => pure ()
+             let addAll = \xs, s => foldl (flip insert) (the (SortedSet String) s) xs
+             update HeaderFiles (addAll (headerList spec))
+             update ForeignLibs (addAll (mapMaybe linkLibName (libList spec)))
 collectDeclarations n def = do
     decls <- declarationsOf n def
     update FunctionDefinitions $ \otherDefs => decls ++ otherDefs

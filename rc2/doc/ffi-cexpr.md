@@ -41,13 +41,28 @@ path normalisation: `a.h` and `./a.h` are different), so a header repeated
 within a field, or named by several declarations (alone or in lists, under
 any tag), is included once. A name containing whitespace, `<`, `>` or `"` is
 a compile error. The `;` is special only in this field: in the expression
-it is ordinary C text (`({ a; b; })`) and in the library field it is
-unchanged; only top-level commas separate options.
+it is ordinary C text (`({ a; b; })`); only top-level commas separate options.
 
-Compatibility: upstream and RefC read the header field as ONE name, so a
-declaration that must also compile on RefC keeps a single header in its
-`"C:"` alternative and uses `CExpr:`/`RC2:` (which RefC ignores) for the
-multi-header form.
+The library field may name several libraries the same way, e.g.
+`"CExpr:uring_helper($1),libidris2rc2_foo;liburing,foo.h"`: a shim library
+and the library it needs. The pieces are trimmed, empty ones and repeats are
+dropped, and every distinct name that starts with `lib` becomes one `-l` flag
+of the link command (`libfoo` is `-lfoo`; a version hint after a space, as in
+`"libc 6"`, is ignored; a name that does not start with `lib` is not linked).
+A program that uses a declaration therefore links what it needs without
+`IDRIS2_LDFLAGS`/`IDRIS2_LDLIBS`. A name that is linked may contain only
+letters, digits and `_ . + -` after `lib` (and the same, with white space, in a version
+hint): the name goes to the C compiler as the argument `-l<name>` of a shell
+command, and anything else (a quote, a backtick, `$`, `/`, white space inside
+the name, a non-ASCII letter, a bare `lib`) is a compile error. A name that
+does not start with `lib` is neither linked nor checked, so a misspelt `Libfoo`
+is ignored. With three options or more, the library and the header option are both
+ignored; with one, there is a library and no header.
+
+Compatibility: upstream and RefC read the header field and the library field as
+ONE name each, so a declaration that must also compile on RefC keeps a single
+header and a single library in its `"C:"` alternative and uses `CExpr:`/`RC2:`
+(which RefC ignores) for the multi-header and multi-library form.
 
 Include order: the includes are emitted in alphabetical order of the
 header names (not first-occurrence order), after `idris2rc2_runtime.h`.
