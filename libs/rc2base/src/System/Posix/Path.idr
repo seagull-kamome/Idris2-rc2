@@ -77,9 +77,8 @@ readlink path = do
              free buf
              pure (Left e)
      else do _ <- primIO (prim__terminate buf n)
-             case ptrToString buf of
-                  Nothing => free buf >> pure (Left (MkErrno 84))
-                  Just s => free buf >> pure (Right s)
+             s <- ptrToStringFree buf
+             pure (maybe (Left (MkErrno 84)) Right s)
 
 ||| The canonical absolute path: symbolic links, `.` and `..` resolved. The
 ||| path must exist.
@@ -123,9 +122,10 @@ mkstemp template = do
      then do e <- errno
              free buf
              pure (Left e)
-     else case ptrToString buf of
-               Nothing => free buf >> pure (Left (MkErrno 84))
-               Just name => free buf >> pure (maybe (Left EBADF) (\d => Right (d, name)) (mkFileDesc r))
+     else do name <- ptrToStringFree buf
+             pure $ case name of
+                         Nothing => Left (MkErrno 84)
+                         Just n => maybe (Left EBADF) (\d => Right (d, n)) (mkFileDesc r)
 
 ||| Create a unique temporary directory from a template ending in `XXXXXX`;
 ||| returns the directory's name.
@@ -138,6 +138,5 @@ mkdtemp template = do
      then do e <- errno
              free buf
              pure (Left e)
-     else case ptrToString buf of
-               Nothing => free buf >> pure (Left (MkErrno 84))
-               Just name => free buf >> pure (Right name)
+     else do name <- ptrToStringFree buf
+             pure (maybe (Left (MkErrno 84)) Right name)

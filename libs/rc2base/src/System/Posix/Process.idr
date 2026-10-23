@@ -105,7 +105,9 @@ prim__nullArgv : AnyPtr -> Int -> PrimIO AnyPtr
 %inline %foreign "CExpr:(free(((char **)($1))[$2])),libc,stdlib.h"
 prim__freeArgv : AnyPtr -> Int -> PrimIO ()
 
-||| A NULL-terminated `char *` array copied from the strings.
+||| A NULL-terminated `char *` array copied from the strings; `freeArgv` with
+||| the number of strings frees it.
+export
 newArgv : List String -> IO AnyPtr
 newArgv xs = do
   p <- malloc ((cast (length xs) + 1) * prim__sizeofPtr)
@@ -122,6 +124,7 @@ newArgv xs = do
       _ <- primIO (prim__setArgvPtr p i copy)
       go p (i + 1) rest
 
+export
 freeArgv : Nat -> AnyPtr -> IO ()
 freeArgv n p = do
   go n
@@ -542,9 +545,8 @@ gethostname = do
              pure (Left e)
      else do
        _ <- primIO (prim__terminate buf 1023)
-       case ptrToString buf of
-            Nothing => free buf >> pure (Left (MkErrno 84))
-            Just s => free buf >> pure (Right s)
+       s <- ptrToStringFree buf
+       pure (maybe (Left (MkErrno 84)) Right s)
 
 ||| A name for `sysconf` (`SC_*` stands for C's `_SC_*`).
 public export

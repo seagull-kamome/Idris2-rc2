@@ -262,7 +262,8 @@ readTm p = do
   dst <- primIO (prim__get_tm_isdst p)
   off <- primIO (prim__get_tm_gmtoff p)
   zone <- primIO (prim__get_tm_zone p)
-  pure (MkTm s mi h d mo y w yd dst off (ptrToString zone))
+  zoneName <- ptrToString zone
+  pure (MkTm s mi h d mo y w yd dst off zoneName)
 
 writeTm : AnyPtr -> Tm -> IO ()
 writeTm p t = do
@@ -348,9 +349,10 @@ mktime t = withTm $ \p => do
 %inline %foreign "CExpr:(strftime((char *)($1), $2, $3, (struct tm *)($4))),libc,time.h"
 prim__strftime : AnyPtr -> Bits64 -> String -> AnyPtr -> PrimIO Bits64
 
-||| Format a broken-down time (`strftime`). `Nothing` when the result is longer than 4096
-||| bytes, when it is empty (`strftime` reports both by the value 0), and when it is not
-||| valid UTF-8.
+||| Format a broken-down time (`strftime`). `Nothing` when `strftime` answers 0 for a
+||| format that is not empty: the result is longer than 4096 bytes, or empty (an empty
+||| format gives `Just ""`). The bytes are taken as they are: they are not checked for
+||| UTF-8.
 export
 strftime : (format : String) -> Tm -> IO (Maybe String)
 strftime fmt t = withTm $ \p => do
@@ -358,6 +360,6 @@ strftime fmt t = withTm $ \p => do
   buf <- malloc 4096
   n <- primIO (prim__strftime buf 4096 fmt p)
   clearTmZone p
-  case (n == 0, ptrToString buf) of
-       (True, _) => free buf >> pure (if fmt == "" then Just "" else Nothing)
-       (False, r) => free buf >> pure r
+  if n == 0
+     then free buf >> pure (if fmt == "" then Just "" else Nothing)
+     else ptrToStringFree buf

@@ -11,6 +11,7 @@ module Network.HTTP.Client.Curl.Raw
 
 import Data.Buffer
 import Data.Maybe
+import Data.String.FFI
 import System.FFI
 import System.Posix.Errno
 import System.Posix.Stdio
@@ -107,11 +108,6 @@ withCell new del body = do
 nonNull : AnyPtr -> Maybe AnyPtr
 nonNull p = if prim__nullAnyPtr p /= 0 then Nothing else Just p
 
--- A copy of the NUL-terminated string at `p`, read through upstream's
--- own `idris2_getString`.
-ptrToString : AnyPtr -> Maybe String
-ptrToString p = map (\q => prim__getString (prim__castPtr q)) (nonNull p)
-
 ------------------------------------------------------------------------
 -- Foreign declarations
 ------------------------------------------------------------------------
@@ -177,11 +173,6 @@ prim__curlEasyUnescapeRaw : AnyPtr -> String -> Int -> AnyPtr -> PrimIO AnyPtr
 
 %foreign "C:curl_free,libcurl,curl/curl.h"
 prim__curlFree : AnyPtr -> PrimIO ()
-
--- `idris2_getString` retyped to read through a `GCAnyPtr`, so the
--- string is copied out before `curl_free` can run.
-%foreign "C:idris2_getString,libidris2_support,idris_support.h"
-prim__curlGetStringGC : GCAnyPtr -> PrimIO String
 
 %foreign "C:curl_version,libcurl,curl/curl.h"
 prim__curlVersion : PrimIO String
@@ -355,34 +346,34 @@ curlEasyReset h = primIO (prim__curlEasyReset h)
 
 getinfo : HasIO io
        => PrimIO c -> (c -> PrimIO ()) -> (AnyPtr -> Int -> c -> PrimIO Int)
-       -> (c -> a) -> AnyPtr -> CURLINFO -> io (Either CURLcode a)
+       -> (c -> IO a) -> AnyPtr -> CURLINFO -> io (Either CURLcode a)
 getinfo new del call read h (MkCURLINFO i) = withCell new del $ \c => do
     rc <- primIO (call h i c)
-    pure $ if rc == 0 then Right (read c) else Left (MkCURLcode rc)
+    if rc == 0 then Right <$> liftIO (read c) else pure (Left (MkCURLcode rc))
 
 ||| For `CURLINFO_LONG` infos.
 export
 curlEasyGetinfoLong : HasIO io => AnyPtr -> CURLINFO -> io (Either CURLcode Int)
 curlEasyGetinfoLong = getinfo (prim__newCellI64 8) prim__freeCellI64 prim__curlEasyGetinfoI64
-                              (\c => cast {to = Int} (the Int64 (getField c "v")))
+                              (\c => pure (cast {to = Int} (the Int64 (getField c "v"))))
 
 ||| For `CURLINFO_STRING` infos; a NULL result reads as `""`.
 export
 curlEasyGetinfoString : HasIO io => AnyPtr -> CURLINFO -> io (Either CURLcode String)
 curlEasyGetinfoString = getinfo (prim__newCellPtr 8) prim__freeCellPtr prim__curlEasyGetinfoPtr
-                                (\c => fromMaybe "" (ptrToString (getField c "v")))
+                                (\c => fromMaybe "" <$> ptrToString (getField c "v"))
 
 ||| For `CURLINFO_DOUBLE` infos.
 export
 curlEasyGetinfoDouble : HasIO io => AnyPtr -> CURLINFO -> io (Either CURLcode Double)
 curlEasyGetinfoDouble = getinfo (prim__newCellDbl 8) prim__freeCellDbl prim__curlEasyGetinfoDbl
-                                (\c => getField c "v")
+                                (\c => pure (getField c "v"))
 
 ||| For `CURLINFO_OFF_T` infos (`curl_off_t` is always 64-bit).
 export
 curlEasyGetinfoOfft : HasIO io => AnyPtr -> CURLINFO -> io (Either CURLcode Int64)
 curlEasyGetinfoOfft = getinfo (prim__newCellI64 8) prim__freeCellI64 prim__curlEasyGetinfoI64
-                              (\c => getField c "v")
+                              (\c => pure (getField c "v"))
 
 ||| For `CURLINFO_SLIST` infos. Unlike every other info, the list is
 ||| caller-owned: read it with `curlSlistToList`, then release it with
@@ -390,13 +381,13 @@ curlEasyGetinfoOfft = getinfo (prim__newCellI64 8) prim__freeCellI64 prim__curlE
 export
 curlEasyGetinfoSlist : HasIO io => AnyPtr -> CURLINFO -> io (Either CURLcode AnyPtr)
 curlEasyGetinfoSlist = getinfo (prim__newCellPtr 8) prim__freeCellPtr prim__curlEasyGetinfoPtr
-                               (\c => getField c "v")
+                               (\c => pure (getField c "v"))
 
 ||| For `CURLINFO_SOCKET` infos; `-1` is `CURL_SOCKET_BAD`.
 export
 curlEasyGetinfoSocket : HasIO io => AnyPtr -> CURLINFO -> io (Either CURLcode Int)
 curlEasyGetinfoSocket = getinfo (prim__newCellI32 8) prim__freeCellI32 prim__curlEasyGetinfoI32
-                                (\c => cast {to = Int} (the Int32 (getField c "v")))
+                                (\c => pure (cast {to = Int} (the Int32 (getField c "v"))))
 
 ------------------------------------------------------------------------
 -- curl_slist
@@ -424,8 +415,9 @@ curlSlistToList list = case nonNull list of
     Nothing => pure []
     Just p => do
         node <- primIO (prim__viewSlist p 0 0)
+        item <- liftIO (ptrToString (getField node "data"))
         rest <- curlSlistToList (getField node "next")
-        pure $ maybe rest (:: rest) (ptrToString (getField node "data"))
+        pure $ maybe rest (:: rest) item
 
 ------------------------------------------------------------------------
 -- Escape/unescape
@@ -436,8 +428,9 @@ curlSlistToList list = case nonNull list of
 export
 curlReadAndFree : HasIO io => AnyPtr -> io String
 curlReadAndFree raw = do
-    gcptr <- onCollectAny raw (\p => primIO (prim__curlFree p))
-    primIO (prim__curlGetStringGC gcptr)
+    s <- liftIO (ptrToString raw)
+    primIO (prim__curlFree raw)
+    pure (fromMaybe "" s)
 
 readAndFreeNonNull : HasIO io => AnyPtr -> io (Maybe String)
 readAndFreeNonNull raw = traverse curlReadAndFree (nonNull raw)
@@ -479,13 +472,15 @@ export
 curlVersionInfo : HasIO io => io VersionInfo
 curlVersionInfo = do
     v <- primIO (prim__curlVersionInfo curlversionNow)
-    let str = \f => fromMaybe "" (ptrToString f)
+    version <- liftIO (ptrToString (getField v "version"))
+    host <- liftIO (ptrToString (getField v "host"))
+    sslVersion <- liftIO (ptrToString (getField v "ssl_version"))
     pure $ MkVersionInfo
-        (str (getField v "version"))
+        (fromMaybe "" version)
         (cast (the Bits32 (getField v "version_num")))
-        (str (getField v "host"))
+        (fromMaybe "" host)
         (cast (the Int32 (getField v "features")))
-        (ptrToString (getField v "ssl_version"))
+        sslVersion
 
 ------------------------------------------------------------------------
 -- URL API
@@ -671,8 +666,9 @@ curlEasyUpkeep h = MkCURLcode <$> primIO (prim__curlEasyUpkeep h)
 readHeader : HasIO io => AnyPtr -> io (String, String)
 readHeader p = do
     hdr <- primIO (prim__viewHeader p 0 0)
-    let str = \f => fromMaybe "" (ptrToString f)
-    pure (str (getField hdr "name"), str (getField hdr "value"))
+    name <- liftIO (ptrToString (getField hdr "name"))
+    value <- liftIO (ptrToString (getField hdr "value"))
+    pure (fromMaybe "" name, fromMaybe "" value)
 
 ||| The first header called `name`. `Nothing` for any non-OK
 ||| `CURLHcode`, all of which mean the header isn't available.
@@ -741,5 +737,5 @@ curlEasyPerformToBuffer = curlEasyPerformCapture $ \raw, size => do
 ||| Same as `curlEasyPerformToBuffer`; the body is cut at its first NUL.
 export
 curlEasyPerformToString : HasIO io => AnyPtr -> io (Maybe (CURLcode, String))
-curlEasyPerformToString = curlEasyPerformCapture $ \raw, _ => pure (ptrToString raw)
+curlEasyPerformToString = curlEasyPerformCapture $ \raw, _ => ptrToString raw
 

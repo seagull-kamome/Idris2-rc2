@@ -6,6 +6,8 @@
 module System.Posix.Pwd
 
 import Data.List
+import Data.Maybe
+import Data.String.FFI
 import System.FFI
 import System.Posix.Errno
 
@@ -67,8 +69,6 @@ prim__gr_name : AnyPtr -> PrimIO String
 prim__gr_gid : AnyPtr -> PrimIO Bits32
 %inline %foreign "CExpr:(((struct group *)($1))->gr_mem[$2]),libc,grp.h"
 prim__gr_mem : AnyPtr -> Int -> PrimIO AnyPtr
-%inline %foreign "CExpr:((char *)($1)),libc,stdlib.h"
-prim__asString : AnyPtr -> PrimIO String
 
 -- `getpwnam` and friends return NULL both for "no such entry" and for an
 -- error. For the former errno stays 0 or, through NSS, becomes one of the
@@ -110,8 +110,8 @@ readGroup p = do
       m <- primIO (prim__gr_mem p i)
       if prim__nullAnyPtr m /= 0
          then pure []
-         else do s <- primIO (prim__asString m)
-                 (s ::) <$> members (i + 1)
+         else do s <- ptrToString m
+                 (fromMaybe "" s ::) <$> members (i + 1)
 
 ||| The entry of a user by name; `Right Nothing` when there is none.
 export

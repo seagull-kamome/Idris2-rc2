@@ -722,3 +722,19 @@ upstreamに取り込まれたら`idris2-src`を更新して自作idris2を作り
     寸法の入口(`Click`・`Drag`・`size`・`withLimits`)で`cast`している。`Fin`を捨てて`Len`にするか、
     範囲を持つ型を別に作るかは未定。
   - `MenuBar`の列(`Click`・`titleLeft`)は`Len`だが、`active`と`cursor`は添字なので`Nat`のまま。
+
+## `Network.Async.HTTP.Static`/`CGI`/`Proxy`
+
+- `static`は`Range`・`If-Modified-Since`・`Last-Modified`に答えず、ファイルを
+  `chunkBytes`ずつ読むが、本体はメモリに全部置く(`maxFileBytes`で打ち切る)。`Response`の本体が`Buffer`なので、大きなファイルを流すには
+  `Network.Async.HTTP.Server`側に本体を流す応答の型が要る。
+- `cgi`は出力を全部集めてから応答する(`nph-`も流し出力も無い)。
+- `proxy`は上流ごとに接続を張り直し(プール無し)、応答を全部集めてから返す。WebSocketの
+  `Upgrade`、`100-continue`、`X-Forwarded-For`(クライアントのアドレスを`Request`が持たない)、
+  ホスト名の上流(`Network.Async.connect`がIPv4のみ)は未対応。
+- `static`は`stat`と`open`の間の差し替えとシンボリックリンクの先を防がない(`O_NOFOLLOW`と
+  `openat2(RESOLVE_BENEATH)`なら防げるが、`System.Posix`にまだ無い)。
+- `proxy`は要求を転送する前に`Expect: 100-continue`へ答えない(捨てる)。クライアントのアドレスを
+  `Request`が持てば`X-Forwarded-For`を付けられる。
+- `cgi`は`SIGKILL`を受けても止まらない子(D状態)を専用のスレッドで回収する。回収を待つ接続が
+  あるわけではないが、そのスレッドは子が戻るまで残る。

@@ -51,7 +51,8 @@ prim__dlerror : PrimIO AnyPtr
 dlerrorText : IO String
 dlerrorText = do
   p <- primIO prim__dlerror
-  pure (fromMaybe "unknown dlfcn error" (ptrToString p))
+  msg <- ptrToString p
+  pure (fromMaybe "unknown dlfcn error" msg)
 
 ||| Load a library by file name or path (as `dlopen`). `flags` is `RTLD_LAZY`
 ||| or `RTLD_NOW`, with `RTLD_GLOBAL` or `RTLD_LOCAL`.
@@ -81,9 +82,8 @@ dlsym h name = do
   p <- primIO (prim__dlsym h name)
   if prim__nullAnyPtr p /= 0
      then do e <- primIO prim__dlerror
-             case ptrToString e of
-                  Nothing => pure (Right p)
-                  Just msg => pure (Left msg)
+             msg <- ptrToString e
+             pure (maybe (Right p) Left msg)
      else pure (Right p)
 
 ||| Release a handle; the library is unloaded when its count reaches zero.

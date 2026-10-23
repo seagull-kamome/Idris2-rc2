@@ -161,14 +161,16 @@ connect addr@(IPv4Addr _ _ _ _) port = handoff start (either (\_ => pure ()) clo
                 else close s *> (noCancel <$ done (Left (MkErrno (cast started))))
 connect _ _ = pure (Left EAFNOSUPPORT)
 
--- One attempt at a system call that answers -1 and sets `errno` on failure.
+||| One attempt at a system call that answers -1 and sets `errno` on failure.
+export
 attempt : PrimIO Int -> IO (Either Errno Int)
 attempt call = do
   n <- primIO call
   if n >= 0 then pure (Right n) else Left <$> errno
 
--- Repeat the call, waiting with `wait` when it would block.
-retrying : (wait : Task EpollEvents) -> PrimIO Int -> Task (Either Errno Int)
+||| Repeat the call, waiting with `wait` when it would block (`EAGAIN`).
+export
+retrying : (wait : Task a) -> PrimIO Int -> Task (Either Errno Int)
 retrying wait call = do
   r <- onReactor (attempt call)
   case r of

@@ -14,6 +14,7 @@ import Data.List1
 import Data.String
 
 import Network.HTTP.Message
+import Network.URL
 
 -------------------------------------------------------------------------------
 -- Path segment splitting
@@ -36,6 +37,30 @@ splitPath path = filter (/= "") (forget (split (== '/') path))
 export
 pathOnly : String -> String
 pathOnly = fst . break (== '?')
+
+||| The segments of `path` (query string dropped) that follow the segments of
+||| `mountAt`, `Nothing` when `path` is not at or below `mountAt`. The comparison is
+||| by whole segments: `"/static"` is a prefix of `"/static/a.txt"` and of
+||| `"/static"`, not of `"/staticx"`. The segments are as they stand in the
+||| request, not percent-decoded.
+export
+segmentsUnder : (mountAt, path : String) -> Maybe (List String)
+segmentsUnder mountAt path = below (splitPath mountAt) (splitPath (pathOnly path))
+  where
+    below : List String -> List String -> Maybe (List String)
+    below [] segs = Just segs
+    below (m :: ms) (seg :: segs) = if m == seg then below ms segs else Nothing
+    below _ [] = Nothing
+
+||| Whether the path (query string dropped) has a `.` or `..` segment once it is
+||| percent-decoded, with `/` and `\` both ending a segment: `%2e%2e`, `..%2f` and
+||| `..%5c` count. What serves files, or hands a path on to something that does,
+||| refuses such a path.
+export
+hasDotSegment : String -> Bool
+hasDotSegment path =
+  any (\seg => seg == "." || seg == "..")
+      (forget (split (\c => c == '/' || c == '\\') (percentDecode (pathOnly path))))
 
 -------------------------------------------------------------------------------
 -- Capturing a segment as a value
