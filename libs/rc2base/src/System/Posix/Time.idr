@@ -358,6 +358,9 @@ strftime fmt t = withTm $ \p => do
   buf <- malloc 4096
   n <- primIO (prim__strftime buf 4096 fmt p)
   clearTmZone p
-  case (n == 0, ptrToString buf) of
-       (True, _) => free buf >> pure (if fmt == "" then Just "" else Nothing)
-       (False, r) => free buf >> pure r
+  if n == 0
+     then free buf >> pure (if fmt == "" then Just "" else Nothing)
+     else case ptrToString buf of
+               -- the case makes the copy happen before the buffer is freed
+               Nothing => free buf >> pure Nothing
+               Just str => free buf >> pure (Just str)
