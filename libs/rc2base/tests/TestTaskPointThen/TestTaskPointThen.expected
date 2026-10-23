@@ -1,0 +1,23 @@
+one thread: Just (1, (2, 20))
+one thread effects: ["a", "b", "c", "d"]
+three threads: Just (1, (2, 20))
+three threads effects: ["a", "b", "c", "d"]
+virtual clock: Just (1, (2, 20))
+virtual clock effects: ["a", "b", "c", "d"]
+a chain of 1000: Just (), counted 1000
+mixed: Just 104
+mixed effects: ["p1", "r", "p2", "p3"]
+branching, three threads: Just (16, 2)
+branching, one thread: Just (16, 2)
+map of a chain: Just 1002
+chain of 63: 63
+chain of 64: 64
+chain of 65: 65
+chain of 128: 128
+chain of 129: 129
+two loops of 100000: 200000
+bind on the left: Just 25
+finally in a chain: Just 3
+finally effects: ["before", "released Just 2", "after"]
+loop given up: True, ran True, stopped True
+given up effects: ["released False"]

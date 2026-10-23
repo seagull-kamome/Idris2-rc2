@@ -18,7 +18,7 @@ import Data.Buffer
 import Data.String
 import Data.Either
 import Network.Async
-import Network.Socket.Data
+import public Network.Socket.Data
 import System.Posix.Errno
 
 %default covering
@@ -137,14 +137,14 @@ connection limits handler conn = do
       resp <- liftIO (text {headers = [("Connection", "close")]} status message)
       sent <- reply False resp
       when sent $ do
-        onReactor (liftIO (shutdownWrite conn))
+        onReactor (shutdownWrite conn)
         deadline <- after 1000
         ignore (within deadline (discard conn 262144))
 
     -- Read at most `want` more bytes after the `len` that `buf` holds, before the deadline.
     more : Maybe Time -> Buffer -> (len, want : Int) -> Task Read
     more deadline buf len want = do
-      Just buf' <- liftIO (growBuffer buf (len + want) limits.maxRequestBytes)
+      Just buf' <- onReactor (growBuffer buf (len + want) limits.maxRequestBytes)
         | Nothing => pure Gone
       r <- within deadline (recv conn buf' len want)
       pure $ case r of
@@ -160,7 +160,7 @@ connection limits handler conn = do
     -- `buf[0 .. len)` is what has been read and not yet answered; the head
     -- does not end before `scanned`.
     readHead buf len scanned deadline = do
-      found <- liftIO (findHeadEndFrom buf scanned len)
+      found <- onReactor (findHeadEndFrom buf scanned len)
       case found of
         Just headEnd => if headEnd + 4 > headLimit
                           then refuse 431 "request header fields too large\n"
@@ -178,7 +178,7 @@ connection limits handler conn = do
                            readHead buf' len' (max 0 (len - 3)) deadline'
 
     gotHead buf len headEnd deadline = do
-      parsed <- liftIO (parseRequestHead buf headEnd)
+      parsed <- onReactor (parseRequestHead buf headEnd)
       case parsed of
         Nothing => refuse 400 "bad request\n"
         Just (method, path, version, hdrs) => case version of
