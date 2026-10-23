@@ -38,6 +38,7 @@ type of the scheduler has to see.
 data Task : Type -> Type where
   Point  : IO a -> Task a                        -- an action, run to completion (on a worker in parallel mode)
   Pinned : IO a -> Task a                        -- the same, always on the thread of the scheduler
+  PointThen : IO a -> (a -> Task b) -> Task b    -- a Point and its continuation (what >>= makes of a Point)
   Seq    : Task a -> (a -> Task b) -> Task b     -- >>=
   Both   : Task a -> Task b -> Task (a, b)       -- zip: run together, wait for both
   Race   : Task a -> Task a -> Task a            -- the first to finish wins, the other is cancelled
@@ -393,20 +394,85 @@ Stages:
    scheduler's `parallel` flag) puts the scheduler in *parallel mode*: a `Point`
    (`liftIO`) is run as `blocking` is, on a worker, and the task goes on with its
    result. The steps of one task stay in order; the `Point`s of different tasks
-   run at the same time. The control (`>>=`, `both`, `race`, `spawn`, `Async`,
+   run at the same time. The control (`both`, `race`, `spawn`, `Async`,
    promises) still goes back through the reactor, so this pays only for
    coarse `Point`s. It gives up the guarantee of the cooperative model that a
    `Point` is not interrupted by another task: what `Point`s share (an `IORef` two
    tasks both write) is now shared between threads, as with real threads.
    `onReactor : IO a -> Task a` (the constructor `Pinned`) is the `Point` that always
    runs on the thread of the scheduler, for what touches the state of the
-   scheduler or of the program (`pure`, `map`, `yield`, the promise operations
+   scheduler or of the program (`pure`, `yield`, the promise operations
    and termui's delivery of a message are pinned). With no workers the mode does
    nothing.
+
+   A round trip to a worker costs more than a small action does, and
+   `liftIO a >>= \x => liftIO (b x)` would take two. So `>>=` does not build `Seq`
+   for a `Point`: it builds `PointThen io f` (and `PointThen io g >>= f` is
+   `PointThen io (\a => g a >>= f)`; `map` of a plain `Point` is a `Point`). The worker
+   that has run `io` evaluates `f a`, which must only build a task, and goes on with it while it is a
+   `Point` or a `PointThen`; anything else (`Pinned`, `Both`, `Async`, ...) goes
+   back to the scheduler. At most 64 steps in a row, and it stops when the scope has
+   been cancelled, so a loop of `liftIO`s can still be given up. Outside parallel
+   mode `PointThen io f` is `Seq (Point io) f`. `Network.Async.HTTP.Server`
+   uses `onReactor` for the small steps (the non-blocking `recv`/`send`, parsing
+   the head) so that only the handlers' own work is handed to a worker.
 
 What a thread must not do: touch a scheduler structure (use `env.post`), or
 keep a `Task` that it also gives to another thread. Everything handed to a
 worker is an `IO ()` closure that owns what it captured.
+
+### What the code between two `liftIO`s may do
+
+In parallel mode the function after a `liftIO` in `>>=` is evaluated on a worker, right
+after the action, at the same time as the tasks of the other requests (see `PointThen`
+above). So does a handler of `Network.Async.HTTP.Server` that follows one, and so does the
+body of a `map`. That code may compute anything that is *pure*: parse, format, choose
+between branches on the values it was given, call functions that build tasks. It must not
+read or write what the program shares, because nothing orders it with the other threads
+and nothing is on the thread of the scheduler there. In Idris
+that takes `unsafePerformIO`, but a counter or a flag kept in a global `IORef` is a
+common thing to want to read there.
+
+```idris
+hits : IORef Nat                       -- shared by every request
+
+-- Wrong: `n` is read while the task is being built, on a worker, with no order against
+-- the other requests (and against `modifyIORef` below, at the same time).
+handler : Request -> Task Response
+handler req =
+  let n = unsafePerformIO (readIORef hits)
+  in liftIO (text 200 (show n))
+
+-- Wrong in the same way: the choice of the branch reads a shared flag.
+handler2 : Request -> Task Response
+handler2 req =
+  if unsafePerformIO (readIORef shuttingDown)
+     then liftIO (text 503 "bye\n")
+     else liftIO (text 200 "hello\n")
+```
+
+The effect goes into a task, and what is shared into `Control.Task.Ref` (or `MVar`,
+`Chan`), which are safe in parallel mode:
+
+```idris
+hits : Ref Nat
+
+handler : Request -> Task Response
+handler req = do
+  n <- atomicModifyRef hits (\k => (S k, k))     -- the read and the update are one step
+  liftIO (text 200 (show n))
+
+handler2 : Request -> Task Response
+handler2 req = do
+  stopping <- readRef shuttingDown               -- a `Ref`: on the thread of the scheduler
+  if stopping then liftIO (text 503 "bye\n") else liftIO (text 200 "hello\n")
+```
+
+A plain `IORef` inside a `liftIO` is not wrong in itself, since the action is the
+effect, but two requests that write it at the same time lose updates (as with any
+threads): use `Ref` for what more than one request writes.
+What a continuation may read is the values it was *given* (`req`, the result `a` of
+the action before it) and the immutable data of the program (a table made at start).
 
 `termui` creates its scheduler with a few workers; since they are started on
 the first `blocking`, a program that never calls it stays single-threaded and

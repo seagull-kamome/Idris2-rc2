@@ -82,6 +82,11 @@ data Task : Type -> Type where
   ||| An action that is always run on the thread of the scheduler, whatever
   ||| the mode: for what touches the state of the scheduler or of the program.
   Pinned : IO a -> Task a
+  ||| A `Point` followed by a continuation: what `>>=` builds from a `Point` or a
+  ||| `PointThen`. In parallel mode the worker that ran the action evaluates the
+  ||| continuation and goes on while the result is a `Point` or a `PointThen`;
+  ||| otherwise it is `Seq (Point io) f`.
+  PointThen : IO a -> (a -> Task b) -> Task b
   Seq : Task a -> (a -> Task b) -> Task b
   ||| Change the result in the step that ends the task, without a step of its own
   ||| (which `Seq` and `pure` would make, and a cancellation could fall between).
@@ -113,18 +118,27 @@ data Task : Type -> Type where
 -------------------------------------------------------------------------------
 -- Instances
 
+bind : Task a -> (a -> Task b) -> Task b
+bind (Point io) f = PointThen io f
+bind (PointThen io g) f = PointThen io (\a => bind (g a) f)
+bind t f = Seq t f
+
+mapTask : (a -> b) -> Task a -> Task b
+mapTask f (Point io) = Point (map f io)
+mapTask f t = Map f t
+
 export
 Functor Task where
-  map = Map
+  map = mapTask
 
 export
 Applicative Task where
   pure x = Pinned (pure x)
-  f <*> x = Seq f (\g => map g x)
+  f <*> x = bind f (\g => map g x)
 
 export
 Monad Task where
-  (>>=) = Seq
+  (>>=) = bind
 
 export
 HasIO Task where

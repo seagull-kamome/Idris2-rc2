@@ -191,6 +191,24 @@ envOf s = MkEnv (schedNow s) addTimer (\fd, ev, done => watch s.watcher fd ev do
 -------------------------------------------------------------------------------
 -- The interpreter
 
+-- How many steps a worker runs one after the other before the task goes back to the
+-- scheduler, so that a loop of `Point`s cannot keep it away for ever.
+chainLength : Nat
+chainLength = 64
+
+-- The `Point`s and `PointThen`s at the start of the task, run one after the other
+-- (until the scope is cancelled or `fuel` is out); `Left` is the task that is left.
+chain : IO Bool -> (fuel : Nat) -> Task a -> IO (Either (Task a) a)
+chain gone Z t = pure (Left t)
+chain gone (S n) (Point io) = Right <$> io
+chain gone (S n) (PointThen io f) = do
+  a <- io
+  stop <- gone
+  -- (given up: nothing will be done with what is left)
+  if stop then pure (Left Empty) else chain gone n (f a)
+chain gone (S n) (Map f t) = either (Left . Map f) (Right . f) <$> chain gone n t
+chain gone _ t = pure (Left t)
+
 mutual
   run : Scheduler -> Scope -> Task a -> (a -> IO ()) -> IO ()
   run s sc (Pinned io) k = enqueue s sc (io >>= k)
@@ -199,6 +217,13 @@ mutual
     if par
        then runAsync s sc (\env, done => env.offload (io >>= \a => env.post (done a))) k
        else enqueue s sc (io >>= k)
+  run s sc (PointThen io f) k = do
+    par <- readIORef s.parallel
+    if par
+       then runAsync s sc (\env, done => env.offload (chain (readIORef sc.cancelled) chainLength (PointThen io f)
+                                                       >>= env.post . done))
+                      (\r => either (\t => run s sc t k) k r)
+       else run s sc (Point io) (\a => run s sc (f a) k)
   run s sc (Seq t f) k = run s sc t (\a => run s sc (f a) k)
   run s sc (Map f t) k = run s sc t (\a => k (f a))
   run s sc (Both l r) k = runBoth s sc l r k
@@ -530,10 +555,12 @@ runTaskWith = runWith False False
 
 ||| `runTask` in parallel mode: the `Point`s (`liftIO`) of every task run on up to
 ||| `workers` threads, one after the other for a task but at the same time for
-||| different tasks; the control of the tasks (`>>=`, `both`, `race`, `spawn`,
-||| promises) stays on one thread. The action of a `Point` may then run at the same
-||| time as those of other tasks: what it shares must be safe for that, and what
-||| must stay on the thread of the scheduler is written with `onReactor`.
+||| different tasks; the control of the tasks (`both`, `race`, `spawn`, promises, the
+||| waits) stays on one thread. The continuation of a `Point` (the function after `>>=`)
+||| is evaluated on the worker too, and the `Point`s that follow are run there without a
+||| return to the scheduler. The action of a `Point` may then run at the same time as
+||| those of other tasks: what it shares must be safe for that, and what must stay on
+||| the thread of the scheduler is written with `onReactor`.
 export
 runTaskParallel : (workers : Nat) -> Task a -> IO (Maybe a)
 runTaskParallel = runWith True False

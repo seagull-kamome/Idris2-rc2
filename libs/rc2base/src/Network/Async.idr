@@ -170,7 +170,7 @@ attempt call = do
 -- Repeat the call, waiting with `wait` when it would block.
 retrying : (wait : Task EpollEvents) -> PrimIO Int -> Task (Either Errno Int)
 retrying wait call = do
-  r <- liftIO (attempt call)
+  r <- onReactor (attempt call)
   case r of
     Left e => if e == EAGAIN then wait *> retrying wait call
               else if e == EINTR then retrying wait call
@@ -207,7 +207,7 @@ accept l = handoff start (either (\_ => pure ()) close)
 -- `recv` of no bytes would answer 0, which means the peer has closed.
 within : Buffer -> (off, len : Int) -> Task (Either Errno Int) -> Task (Either Errno Int)
 within buf off len call = do
-  size <- liftIO (rawSize buf)
+  size <- onReactor (rawSize buf)
   if off >= 0 && len > 0 && len <= size - off then call else pure (Left EINVAL)
 
 ||| Read up to `len` bytes into `buf[off ..]` (`len` must be positive and the
