@@ -120,6 +120,11 @@ either, a program that needs one is given it there, e.g.
   once (it may be stuck writing what nobody reads). `Content-Length`, `Connection` and `Transfer-Encoding`
   of the program are dropped; the server frames the answer. The whole output is
   collected before the answer starts (no streaming, no `nph-` scripts).
+- The output is read to its end, so a program that ends but leaves a child holding its
+  standard output is waited for until `timeoutMs` (504), and the child is killed with
+  the process group then. With `timeoutMs = 0` it is waited for without end, and a child
+  that goes on writing is cut off at `maxOutputBytes` (502).
+- A `Status` that is not a number from 200 to 599 (`99999`, `abc`) is a bad head: 502.
 - After `timeoutMs` (default 30 s, from the start to the end of the program) the
   program is killed with SIGKILL, with the processes it started (`kill (-pid)`), and
   reaped, and the answer is 504. A connection that is given up while the program
@@ -213,7 +218,7 @@ let handler = urlRewrite [old, item, ext] next
   drops it from a URL, so `/<TAB>/host` is `//host`), space or backslash. A redirect may
   go to another host only when the template itself starts with `http://` or `https://`,
   and `rule` refuses such a template with a group before the `/` that ends the host
-  (`https://example.org\\1` with `@evil.example/` caught is another host). A request whose
+  (`https://example.org\1` with `@evil.example/` caught is another host). A request whose
   path has a control character in it is 400 too (the regex engine reads a C string).
 
 Tests: `tests/TestAsyncHTTPStaticCGI`, `tests/TestAsyncHTTPProxy` (both also through

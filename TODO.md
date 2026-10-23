@@ -730,11 +730,16 @@ upstreamに取り込まれたら`idris2-src`を更新して自作idris2を作り
   `Network.Async.HTTP.Server`側に本体を流す応答の型が要る。
 - `cgi`は出力を全部集めてから応答する(`nph-`も流し出力も無い)。
 - `proxy`は上流ごとに接続を張り直し(プール無し)、応答を全部集めてから返す。WebSocketの
-  `Upgrade`、`100-continue`、`X-Forwarded-For`(クライアントのアドレスを`Request`が持たない)、
+  `Upgrade`、`Expect: 100-continue`(捨てる)、`X-Forwarded-For`(クライアントのアドレスを`Request`が持たず、
+  持てば付けられる)、
   ホスト名の上流(`Network.Async.connect`がIPv4のみ)は未対応。
 - `static`は`stat`と`open`の間の差し替えとシンボリックリンクの先を防がない(`O_NOFOLLOW`と
   `openat2(RESOLVE_BENEATH)`なら防げるが、`System.Posix`にまだ無い)。
-- `proxy`は要求を転送する前に`Expect: 100-continue`へ答えない(捨てる)。クライアントのアドレスを
-  `Request`が持てば`X-Forwarded-For`を付けられる。
+- `cgi`は標準出力がEOFになるまで読むので、リーダーが終わっても孫が標準出力を握っていれば
+  `timeoutMs`まで待って504になる(`timeoutMs = 0`なら待ち続け、出力が続けば`maxOutputBytes`で502)。その後でグループごと止める。
+  リーダーが終わった時点でグループを止める手もあるが、子が出力を続けるCGIを切ることになる。
+- `cgi`のpidfdが使えない環境(Linux 5.3未満)の待ち方は、先に`waitpid`で回収してから`kill(-pid)`する。
+  グループが空でpid番号が再利用されていれば誤って別のグループへ送る窓が、理屈の上ではある
+  (`waitid(WNOWAIT)`が`System.Posix`にあれば塞げる)。pidfdの経路は`kill`を先にしている。
 - `cgi`は`SIGKILL`を受けても止まらない子(D状態)を専用のスレッドで回収する。回収を待つ接続が
   あるわけではないが、そのスレッドは子が戻るまで残る。
