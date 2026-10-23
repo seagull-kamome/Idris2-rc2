@@ -174,11 +174,6 @@ prim__curlEasyUnescapeRaw : AnyPtr -> String -> Int -> AnyPtr -> PrimIO AnyPtr
 %foreign "C:curl_free,libcurl,curl/curl.h"
 prim__curlFree : AnyPtr -> PrimIO ()
 
--- `idris2_getString` retyped to read through a `GCAnyPtr`, so the
--- string is copied out before `curl_free` can run.
-%foreign "C:idris2_getString,libidris2_support,idris_support.h"
-prim__curlGetStringGC : GCAnyPtr -> PrimIO String
-
 %foreign "C:curl_version,libcurl,curl/curl.h"
 prim__curlVersion : PrimIO String
 
@@ -433,8 +428,9 @@ curlSlistToList list = case nonNull list of
 export
 curlReadAndFree : HasIO io => AnyPtr -> io String
 curlReadAndFree raw = do
-    gcptr <- onCollectAny raw (\p => primIO (prim__curlFree p))
-    primIO (prim__curlGetStringGC gcptr)
+    s <- liftIO (ptrToString raw)
+    primIO (prim__curlFree raw)
+    pure (fromMaybe "" s)
 
 readAndFreeNonNull : HasIO io => AnyPtr -> io (Maybe String)
 readAndFreeNonNull raw = traverse curlReadAndFree (nonNull raw)
