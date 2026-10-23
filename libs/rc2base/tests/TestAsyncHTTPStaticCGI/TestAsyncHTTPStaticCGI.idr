@@ -11,7 +11,8 @@ module Main
 -- If-None-Match (304), HEAD, 405, and the names that do not go out (404, also
 -- `..`). CGI: the variables a program is given and its body on the standard input,
 -- Status and Location, a program with no head or too much output (502), one that
--- takes too long (504, and the server goes on), one that is not executable (404).
+-- takes too long (504, and the server goes on), one that is not executable (404),
+-- the working directory of a program (the one it is in).
 
 import Control.Task
 import Control.Task.Scheduler
@@ -128,11 +129,12 @@ clients port = do
   nowhere <- ask (req "GET" "/cgi-bin/nowhere.sh")
   nameless <- ask (req "GET" "/cgi-bin/")
   escape <- ask (req "GET" "/cgi-bin/..%2fpublic%2fhello.txt")
+  cwd <- ask (req "GET" "/cgi-bin/pwd.sh")
   after <- ask (req "GET" "/cgi-bin/env.sh")
   pure (map (summary types)
           [ index, noSlash, subIndex, hello, spaced, headed, cached, stale, posted, absent, dotdot, dotdot2
           , outside, route, envRun, getRun, status, redirect, nohead, big, slow, noexec, nowhere
-          , nameless, escape, after ])
+          , nameless, escape, cwd, after ])
 
 main : IO ()
 main = scenario 18751 (clients 18751)

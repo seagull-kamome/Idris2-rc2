@@ -58,7 +58,7 @@ and these. The request body is its standard input; its standard error is ours.
   with several threads and passes on no descriptor but 0 and 1 (the client's
   socket and the listener stay out of the program). `cgi` makes the process
   ignore SIGPIPE (`ignoreSigpipe`), the program has the default action.
-  The program is not started in `dir`: it uses absolute paths.
+  The program starts with `dir` as its working directory (`posix_spawn_file_actions_addchdir_np`, glibc 2.29 or later).
 - Both pipes are non-blocking and waited for on the scheduler's epoll
   (`awaitReadable`/`awaitWritable`), the end of the program with a `pidfd`
   (Linux 5.3), so a slow program holds up only its own connection. The body is

@@ -69,6 +69,9 @@ not found
 HTTP/1.1 404 Not Found | Content-Type: text/plain; charset=utf-8
 not found
 
+HTTP/1.1 200 OK | Content-Type: text/plain
+cgi
+
 HTTP/1.1 200 OK | Content-Type: text/plain | X-Script: env
 GET|/cgi-bin/env.sh|||0|||CGI/1.1|localhost:8080|
 

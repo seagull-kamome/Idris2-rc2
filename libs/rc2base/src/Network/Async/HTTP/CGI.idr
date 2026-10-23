@@ -110,8 +110,8 @@ parseOutput head =
 ||| for a redirect, and `Status: 404 Not Found` to change the status) and then the
 ||| body; the answer is 502 when it is not, when the program cannot be run or fails
 ||| before a head, or when it gives more than `maxOutputBytes`, and 504 when it
-||| takes more than `timeoutMs`. The program does not run in `dir` itself:
-||| it has to find what it needs by absolute paths. Its standard error is ours.
+||| takes more than `timeoutMs`. The program runs with `dir` as its working
+||| directory. Its standard error is ours.
 export
 cgi : {default defaultCGI options : CGIOptions} -> (mountAt, dir : String) -> (next : Handler) -> Handler
 cgi {options} mountAt dir next req = case segmentsUnder mountAt req.path of
@@ -126,7 +126,7 @@ cgi {options} mountAt dir next req = case segmentsUnder mountAt req.path of
              | Left _ => missing
            Right () <- blocking (access program X_OK)
              | Left _ => missing
-           if isRegular st then run program raw (map percentDecode rest) else missing
+           if isRegular st then run name raw (map percentDecode rest) else missing
   where
     missing : Task Response
     missing = liftIO (notFound "not found\n")
@@ -244,14 +244,15 @@ cgi {options} mountAt dir next req = case segmentsUnder mountAt req.path of
         Just Nothing => failed 502 "bad gateway: too much output\n"
         Just (Just (buf, len)) => answer buf len
 
-    run : (program, name : String) -> (pathInfo : List String) -> Task Response
-    run program name pathInfo = do
+    -- `file` is the name of the program in `dir`, `name` as it stands in the request.
+    run : (file, name : String) -> (pathInfo : List String) -> Task Response
+    run file name pathInfo = do
       liftIO ignoreSigpipe
       Right (inRead, inWrite) <- liftIO (pipe2 O_CLOEXEC)
         | Left _ => failed 502 "bad gateway\n"
       Right (outRead, outWrite) <- liftIO (pipe2 O_CLOEXEC)
         | Left _ => liftIO (ignore (close inRead) *> ignore (close inWrite)) *> failed 502 "bad gateway\n"
-      started <- liftIO (spawnStdio program [program] (environmentOf name pathInfo) inRead outWrite)
+      started <- liftIO (spawnStdio ("./" ++ file) dir ["./" ++ file] (environmentOf name pathInfo) inRead outWrite)
       -- the child has its ends; ours are the other two, which must not block
       liftIO (ignore (close inRead) *> ignore (close outWrite))
       case started of
