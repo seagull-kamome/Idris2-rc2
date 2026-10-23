@@ -20,6 +20,7 @@ module Main
 import Control.Task
 import Control.Task.Scheduler
 import Data.List
+import Data.Maybe
 import Data.String
 import Network.Async.HTTP.Router
 import Network.Async.HTTP.Server
@@ -53,8 +54,19 @@ routes =
   , options ("hello" // end) (liftIO (noBody 204))
   ]
 
+-- Routes whose handlers are given the request as well as the captures. The router of
+-- the routes above does not know them, so it falls back to this one (`router` ->
+-- `routerWith` -> `plain`), and a request neither takes ends in `plain`.
+withRequest : List RouteEntryWith
+withRequest =
+  [ get ("agent" // end) (\req => liftIO (ok (fromMaybe "none" (lookup "user-agent" req.headers) ++ "\n")))
+  , post ("count" // capture "times" Int end) (\n, req => do
+      body <- liftIO (toString req.body)
+      liftIO (ok (show n ++ " x " ++ body ++ " " ++ show (length req.headers) ++ " headers\n")))
+  ]
+
 handler : Handler
-handler = Network.Async.HTTP.Router.router plain routes
+handler = Network.Async.HTTP.Router.router (routerWith plain withRequest) routes
 
 -- Connect to the server, send the pieces one after the other (with a pause
 -- between them, so that the server reads them separately) and read an answer
@@ -188,9 +200,17 @@ smallLimits port = do
                 -- the handler's own Connection header is replaced, the answer to HEAD has no body
                 , "GET /bye HTTP/1.0\r\nConnection: keep-alive\r\n\r\n"
                 , "GET /stay HTTP/1.0\r\nConnection: keep-alive\r\n\r\n" ++ "HEAD /nowhere HTTP/1.0\r\nConnection: close\r\n\r\n" ]
+  -- routes that are given the request
+  withReq <- traverse (\r => ask [r])
+               [ "GET /agent HTTP/1.1\r\nHost: t\r\nUser-Agent: probe/1\r\nConnection: close\r\n\r\n"
+               , "GET /agent HTTP/1.1\r\nHost: t\r\nConnection: close\r\n\r\n"
+               , "POST /count/3 HTTP/1.1\r\nHost: t\r\nConnection: close\r\nContent-Length: 2\r\n\r\nhi"
+               , "HEAD /agent HTTP/1.1\r\nHost: t\r\nUser-Agent: probe/1\r\nConnection: close\r\n\r\n"
+               , postReq "/agent" "x"
+               , "POST /count/abc HTTP/1.1\r\nHost: t\r\nConnection: close\r\nContent-Length: 0\r\n\r\n" ]
   (slowA, slowB) <- both (ask [getReq "/slow" True]) (ask [getReq "/slow" True])
   pure (map show ([one, body, alive, user, headed, noContent, piped, [split], exact, tokens, handlerCloses, handlerStays]
-                  ++ refusedLimits ++ [[refusedWithBody]] ++ refusedHeads ++ refusedFraming ++ [heads, optioned] ++ versions ++ [slowA, slowB]))
+                  ++ refusedLimits ++ [[refusedWithBody]] ++ refusedHeads ++ refusedFraming ++ [heads, optioned] ++ versions ++ withReq ++ [slowA, slowB]))
 
 -- The second server: the head limit (65536) is above the request limit (2048).
 headAboveRequest : Port -> Task (List String)
