@@ -31,8 +31,11 @@ The prefix is matched by whole segments (`Network.HTTP.Route.segmentsUnder`):
 
 - Only `GET` and `HEAD` (405 with `Allow` otherwise). The segments after the prefix
   are percent-decoded and added to `root`; a segment that is empty, `.`, `..` or
-  holds a `/` or NUL (`%2e%2e`, `%2f` too) makes the answer 404. Symbolic links are
-  followed, so what a link in `root` points to can be reached.
+  holds a `/` or NUL (`%2e%2e`, `%2f` too) makes the answer 404, and so does one that
+  starts with `.` (`.git`, `.env`, `.htpasswd`) unless `serveDotfiles` is set. Symbolic
+  links are followed, so what a link in `root` points to can be reached, and a file
+  replaced between the `stat` and the open is not noticed (the open is
+  `O_NONBLOCK`, so a FIFO put in its place does not block it).
 - A directory is answered with its `indexFile` (default `index.html`); without the
   trailing `/` in the request it is redirected (301) to the one with it, so that
   relative links in the page work.
@@ -54,30 +57,37 @@ has to be a regular file with the execute permission (else 404). The rest of the
 path is `PATH_INFO`. RFC 3875 variables: `GATEWAY_INTERFACE`, `SERVER_PROTOCOL`,
 `SERVER_SOFTWARE`, `SERVER_NAME`, `SERVER_PORT` (both from `options`),
 `REQUEST_METHOD`, `SCRIPT_NAME`, `PATH_INFO`, `QUERY_STRING`, `CONTENT_LENGTH`,
-`CONTENT_TYPE` and `HTTP_*` for the other headers except `Proxy` (httpoxy). The
-program gets no environment of ours, only `options.environment` (empty by default: no `PATH` either, a program that
-needs one is given it there, e.g. `environment := [("PATH", "/usr/bin:/bin")]`)
-and these. The request body is its standard input; its standard error is ours.
+`CONTENT_TYPE` and `HTTP_*` for the other headers. Not passed: `Proxy` (httpoxy),
+`Authorization` (unless `passAuthorization`, RFC 3875, 4.1.18), and a header whose
+name has `_` in it (it would be the same variable as the one with `-`). A header
+sent more than once is one variable with the values joined by `, `. The program gets
+no environment of ours, only `options.environment` (empty by default: no `PATH`
+either, a program that needs one is given it there, e.g.
+`environment := [("PATH", "/usr/bin:/bin")]`) and these. The request body is its standard input; its standard error is ours.
 
 - The process is started with `posix_spawn` (`System.Posix.Spawn`), which is safe
   with several threads and passes on no descriptor but 0 and 1 (the client's
   socket and the listener stay out of the program). `cgi` makes the process
-  ignore SIGPIPE (`ignoreSigpipe`), the program has the default action.
+  ignore SIGPIPE (`ignoreSigpipe`); the program has the default action, an empty signal
+  mask (the server may block signals for `signalfd`) and is a process group of its own.
   The program starts with `dir` as its working directory (`posix_spawn_file_actions_addchdir_np`, glibc 2.29 or later).
 - Both pipes are non-blocking and waited for on the scheduler's epoll
   (`awaitReadable`/`awaitWritable`), the end of the program with a `pidfd`
   (Linux 5.3), so a slow program holds up only its own connection. The body is
   written while the output is read, so a program that answers before it has read
-  all its input does not stall.
+  all its input does not stall; when the output is over (or too much) the writer
+  is given up.
 - The output is a head, an empty line (CRLF or LF) and a body. `Status: 404 ...`
   sets the status; `Location` without it gives 302. A head with neither
   `Content-Type` nor `Location`, no head at all, or more than `maxOutputBytes`
-  (default 16 MiB) is 502. `Content-Length`, `Connection` and `Transfer-Encoding`
+  (default 16 MiB; exactly that much is fine) is 502, and the program is killed at
+  once (it may be stuck writing what nobody reads). `Content-Length`, `Connection` and `Transfer-Encoding`
   of the program are dropped; the server frames the answer. The whole output is
   collected before the answer starts (no streaming, no `nph-` scripts).
 - After `timeoutMs` (default 30 s, from the start to the end of the program) the
-  program is killed with SIGKILL and reaped, and the answer is 504. A connection
-  that is given up while the program runs kills it too (`finally`).
+  program is killed with SIGKILL, with the processes it started (`kill (-pid)`), and
+  reaped, and the answer is 504. A connection that is given up while the program
+  runs kills it too (`finally`), and the `pidfd` is closed in that case as well.
 
 Build programs that use `cgi` with `IDRIS2_CFLAGS=-D_GNU_SOURCE` (glibc hides
 `posix_spawn_file_actions_addclosefrom_np` otherwise; glibc 2.34 or later).
@@ -93,23 +103,30 @@ would need a blocking lookup: `EAFNOSUPPORT`, so 502), and gives its answer back
   `stripMount = False` the path as it is. The method and the body go as they are
   (`Content-Length` set again); `HEAD` is asked as `GET`, so that the
   `Content-Length` the client sees is right (the server leaves the body out).
-- The request is HTTP/1.0 with no keep-alive: the server answers without chunks and
-  the answer ends with its connection, so the answer needs no framing of its own.
+- The request is HTTP/1.0 with `Connection: close`: the server answers without chunks
+  and the answer ends with its connection, so the answer needs no framing of its own.
   A new connection per request, no pooling.
+- A request is refused with 400, and not forwarded, if its target does not start with
+  `/` (an absolute URI), has a `.` or `..` segment (also percent-encoded), or if a
+  method, target, header name or value has a CR, LF or NUL in it (which would split
+  or cut the message the server reads).
 - Headers: `Host` is the server's own (`hostHeader` to change it) and the original
   one goes in `X-Forwarded-Host` (one the client sent is replaced, not passed on).
   The hop-by-hop headers (`Connection`, `Keep-Alive`, `Transfer-Encoding`, `TE`,
-  `Trailer`, `Upgrade`, `Proxy-*`) and `Expect` are not passed on, in either
-  direction; `Content-Length` of the answer is set again from the body. The names of
+  `Trailer`, `Upgrade`, `Proxy-*`), the ones `Connection` names, and `Expect` are not
+  passed on, in either direction; `Content-Length` of the answer is set again from the body. The names of
   the headers of the answer are in lower case, as the parser gives them; repeated
   ones (`Set-Cookie`) stay repeated.
-- The exchange is tasks on the scheduler (`connect`, `sendAll`, `recv` of
-  `Network.Async`), so a slow server holds up only the connection of its request.
+- The exchange is tasks on the scheduler (`connect`, `sendAllUntil`, `recvUntil` of
+  `Network.Async`, which arm no timer for a call that does not block), so a slow server holds up only the connection of its request.
   The socket is closed when the exchange ends or is given up. After `timeoutMs`
   (default 30 s, from the connect to the end of the answer) the answer is 504.
 - 502 when the server cannot be reached, resets the connection, answers with no
-  proper head or status, an answer shorter than its `Content-Length`, or more than
-  `maxResponseBytes` (default 16 MiB). The answer is held whole: no streaming, no
+  proper head (`HTTP/`, a status of 200 to 599: a `1xx` is not a final answer; a
+  `Content-Length` that is not plain digits, or a `Transfer-Encoding`, which the
+  HTTP/1.0 request should have made impossible), an answer shorter than its
+  `Content-Length`, or more than `maxResponseBytes` (default 16 MiB; exactly that
+  much is fine). The answer is held whole: no streaming, no
   `Upgrade` (WebSocket), no `100-continue`, and no `X-Forwarded-For` (the handler
   does not know the address of the client).
 
