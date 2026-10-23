@@ -1409,6 +1409,44 @@ const2Integer c i =
         (B64 x) => "UINT64_C(\{show x})"
         _ => show i
 
+||| The closures a program builds over constants only (`pure ()` is a call of `pure`
+||| with the unit) are file-scope statics, immortal like `RCConstCon`, not a heap
+||| allocation each time (`rc2/doc/static-closures.md`). `Nothing` if one of the
+||| captured values is a variable, or its C expression is not a constant.
+staticClosure : {auto a : Ref ArgCounter Nat}
+             -> {auto oft : Ref OutfileText Output}
+             -> {auto il : Ref IndentLevel Nat}
+             -> {auto _ : Ref ConstDef (SortedMap Constant ConstDef)}
+             -> {auto cc : Ref ConstConDef (SortedMap RCLocal String, List String)}
+             -> {auto r : Ref RepMap (SortedMap Int Rep)}
+             -> {auto lm : Ref InlineMap (SortedMap Int (String, List String))}
+             -> Name -> List RCLocal -> Nat -> Core (Maybe String)
+staticClosure n args missing =
+    if nargs == 0 || nargs > 20 || any isVar args then pure Nothing else do
+        strs <- traverse constExpr args
+        if not (all constantExpr strs) then pure Nothing else do
+            nm <- ("constclosure_" ++) <$> getNextCounter
+            let fields = concat (intersperse ", " strs)
+            update ConstConDef $ \(names, pending) => (names, pending ++
+                ["static IDRIS2RC2_ConstClosureArgs\{show nargs} const \{nm} = { .header = IDRIS2RC2_STOCKVAL(IDRIS2RC2_TAG_CLOSURE), .arity = \{show (nargs + missing)}, .filled = \{show nargs}, .fn = (void *)\{cName n}, .args = { \{fields} } };"])
+            pure (Just "((IDRIS2RC2_Value*)&\{nm})")
+  where
+    nargs : Nat
+    nargs = length args
+
+    isVar : RCLocal -> Bool
+    isVar (RCLoc _) = True
+    isVar _ = False
+
+    -- A literal is rendered as a boxed constant (an immediate or a static), not as the
+    -- `mk...` call of a native one.
+    constExpr : RCLocal -> Core String
+    constExpr (RCConst c) = boxedConstExpr c
+    constExpr l = fst <$> rcVarToBoxedC l
+
+    constantExpr : String -> Bool
+    constantExpr s = any (\p => isPrefixOf p s) (the (List String) ["((IDRIS2RC2_Value*)&", "IDRIS2RC2_IMM_", "NULL", "(NULL"])
+
 ||| Populate `target` with a newly-built closure over `n`, `missing`
 ||| args still unset for further partial application -- either
 ||| declaring it fresh (`declare = True`, `target` not yet in scope: an
@@ -1436,8 +1474,10 @@ makeClosureInto : {auto a : Ref ArgCounter Nat}
                 -> Nat
                 -> Core ()
 makeClosureInto fc declare target n args missing = do
-    let nargs = length args
     let decl : String = if declare then "IDRIS2RC2_Value *" else ""
+    Nothing <- staticClosure n args missing
+      | Just ref => emit fc "\{decl}\{target} = \{ref};"
+    let nargs = length args
     emit fc "\{decl}\{target} = (IDRIS2RC2_Value *)idris2rc2_mkClosure((IDRIS2RC2_Value *(*)())\{cName n}, \{show $ nargs + missing}, \{show nargs});"
     let arglist = "((IDRIS2RC2_Closure*)\{target})->args"
     _ <- foldlC (\k, v => do

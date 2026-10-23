@@ -5,6 +5,27 @@ scattered code comments. Nothing below is a known correctness bug in
 what's implemented -- see `rc2/tests/refc-suite/README.md` for bugs that
 were found and already fixed.
 
+## Performance: closures over constants are made in Emit, not folded
+
+`rc2/doc/static-closures.md`. A closure whose captured values are all constants
+becomes a file-scope static in `Compiler.RC2.Emit.Util.staticClosure`, at the
+moment `Emit` builds it. The IR does not know about it: `RCConstClosure` holds a
+name and a missing count but no captured values, and a tail call becomes a closure
+only in `Emit`, so `ConstFold` and the passes after it (`SpecClosure`'s known
+closures, `LateInline`, `ArityRaise`) see a call or a `RUnderApp` there.
+
+Plan: let `RCConstClosure` carry constant captured values (`RCConstClosure : Name ->
+(missing : Nat) -> (args : List RCLocal) -> {0 argsConst : All IsAnyConstLocal args}
+-> RCLocal`, like `RCConstCon`), fold a `RUnderApp` whose captures are all constant
+into it in `ConstFold`, and drop `staticClosure` from `Emit`, which then only
+renders what the IR says. About 55 places match on `RCLocal`'s constants; the ones
+that matter are `Eq`/`Ord`/`Show`, `FunDedup.eqL` and `renameLocalN`, `CmpMerge.eqLocal`,
+`SpecClosure.lookupKnown` (a known closure with captures), `LateInline`, `ArityRaise`
+(the `RCConstClosure g 1` tails), `RC.idr` (`isBoxedOperand`, `splitBorrows`) and
+`Emit.Util` (`boxedConstClosureExpr` with the `IDRIS2RC2_ConstClosureArgsN` types).
+A saturated closure (a deferred tail call with constant arguments) is not a
+`RUnderApp`; it needs its own treatment or stays in `Emit`.
+
 ## Performance: tail-position delegating calls stay boxed
 
 Native type inference (`Compiler.RC2.Types`) only applies to values
