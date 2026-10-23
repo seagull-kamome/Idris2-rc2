@@ -164,8 +164,33 @@ To make this possible `Network.HTTP.Route` and `Network.HTTP.Router` are generic
 what a handler gives: `HandlerOf r tys` and `RouteEntryOf r`, with `lookupRoute`
 doing the matching. `HandlerFor` and `RouteEntry` are the old shapes
 (`r = (Response -> IO ()) -> IO ()`), so existing routes compile unchanged. As
-before, a route's handler does not see the `Request` (its captures are all it
-gets); a `Handler` that needs the body is used as the `notFound` of the router.
+before, a route's handler of `router` does not see the `Request` (its captures are all
+it gets).
+
+A route whose handler needs the headers or the body is a `RouteEntryWith`
+(`RouteEntryOf (Request -> Task Response)`), and `routerWith notFound routes` is the
+router for a list of them. The handler is given the captures first, the request last:
+
+```idris2
+-- needs Data.List (lookup) and Data.Maybe (fromMaybe)
+withRequest : List RouteEntryWith
+withRequest =
+  [ get ("agent" // end) (\req => liftIO (ok (fromMaybe "none" (lookup "user-agent" req.headers) ++ "\n")))
+  , post ("count" // capture "times" Int end) (\n, req => ...)
+  ]
+
+missing : Handler
+missing _ = liftIO (notFound "no\n")
+
+handler : Handler
+handler = Network.Async.HTTP.Router.router (routerWith missing withRequest) routes
+```
+
+Both routers match the same way (the first route whose method and path match; `HEAD`
+goes to the `get` route of the same path when there is no `head` route). They do not
+share one table, since a route entry has one handler type: put one router as the
+`notFound` of the other, or use one of them. (The header names of a
+`Request` are in lower case.)
 
 ## Performance
 
