@@ -66,6 +66,12 @@ bad gateway: too much output
 HTTP/1.1 504 Gateway Timeout | Content-Type: text/plain; charset=utf-8
 gateway timeout
 
+HTTP/1.1 502 Bad Gateway | Content-Type: text/plain; charset=utf-8
+bad gateway: bad head
+
+HTTP/1.1 502 Bad Gateway | Content-Type: text/plain; charset=utf-8
+bad gateway: bad head
+
 HTTP/1.1 404 Not Found | Content-Type: text/plain; charset=utf-8
 not found
 
@@ -112,3 +118,7 @@ orphan: HTTP/1.1 200 OK | Content-Type: text/plain
 left a child
 
 child left by the program that ended gone: True
+holding the output: HTTP/1.1 504 Gateway Timeout | Content-Type: text/plain; charset=utf-8
+gateway timeout
+
+child that held the output gone: True

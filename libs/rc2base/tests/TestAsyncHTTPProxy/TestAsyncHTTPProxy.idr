@@ -199,6 +199,7 @@ clients = do
     , req "GET" "/fwd/../admin" ]
   encodedSlash <- ask (req "GET" "/api/..%2f..%2fetc")
   encodedBackslash <- ask (req "GET" "/api/..%5cetc")
+  tabbed <- ask "GET /api/a\tb HTTP/1.1\r\nHost: front.test\r\nConnection: close\r\n\r\n"
   rawAnswers <- traverse (\path => ask (req "GET" (path ++ "/x")))
                   ["/r100", "/rplus", "/rbadcl", "/rdupcl", "/rnocl", "/rshort", "/rexact", "/rover", "/rhead"]
   let body = pack (replicate 2000000 'x')
@@ -206,7 +207,7 @@ clients = do
                 ++ show (length body) ++ "\r\n\r\n" ++ body)
   pure ([ plain hello, plain info, plain unlisted, plain dotdot, plain encoded, plain chunked, plain slash, plain root, plain raw, plain redirect, plain headed
        , sizeOf big, plain missing, plain outside, plain dead, plain tooBig, plain smallOk
-       , plain slow, plain quickOk, plain encodedSlash, plain encodedBackslash ]
+       , plain slow, plain quickOk, plain encodedSlash, plain encodedBackslash, plain tabbed ]
        ++ map plain rawAnswers ++ [plain early] ++ map plain viaRoutes)
 
 main : IO ()

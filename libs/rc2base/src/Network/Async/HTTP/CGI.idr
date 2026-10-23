@@ -95,16 +95,24 @@ variableName name = "HTTP_" ++ pack (map (\c => if c == '-' then '_' else toUppe
 
 -- What a program's head says: its `Status` (200, or 302 for a `Location` alone),
 -- and the other headers, not the ones the server frames the answer with. `Nothing`
--- when there is neither a `Content-Type` nor a `Location`.
+-- when there is neither a `Content-Type` nor a `Location`, or the `Status` is not a number
+-- from 200 to 599.
 parseOutput : (head : String) -> Maybe (Int, List (String, String))
 parseOutput head =
   let fields = mapMaybe field (lines head)
       named : String -> Maybe String
       named n = lookup n (map (\(k, v) => (toLower k, v)) fields)
-      status = fromMaybe (if isJust (named "location") then 302 else 200)
-                 (named "status" >>= \s => parsePositive {a = Int} (fst (break (== ' ') s)))
+      standard : Int
+      standard = if isJust (named "location") then 302 else 200
+      status : Maybe Int
+      status = case named "status" of
+                 Nothing => Just standard
+                 Just s => parsePositive {a = Int} (fst (break (== ' ') s))
       kept = filter (\(k, _) => not (elem (toLower k) ["status", "content-length", "connection", "transfer-encoding"])) fields
-  in if isJust (named "content-type") || isJust (named "location") then Just (status, kept) else Nothing
+  in case status of
+       Just st => if (isJust (named "content-type") || isJust (named "location")) && st >= 200 && st <= 599
+                     then Just (st, kept) else Nothing
+       Nothing => Nothing
   where
     field : String -> Maybe (String, String)
     field line = case break (== ':') (trim line) of
@@ -123,7 +131,8 @@ parseOutput head =
 ||| the body on the standard input. The output must be a head (`Content-Type`, or
 ||| `Location` for a redirect, and `Status: 404 Not Found` to change the status) and then
 ||| the body; the answer is 502 when it is not, when the program cannot be run or fails
-||| before a head, or when it gives more than `maxOutputBytes`, and 504 when it takes
+||| before a head, when its `Status` is not a number from 200 to 599, or when it gives
+||| more than `maxOutputBytes`, and 504 when it takes
 ||| more than `timeoutMs`. The program runs with `dir` as its working directory. Its
 ||| standard error is ours.
 export
@@ -232,6 +241,8 @@ runCGI {options} mountAt dir rest req = case splitPath rest of
     -- and the flag set, in the one step that also reaps it: the group number is not
     -- free while a member of the group lives, and the cleanup never signals a number
     -- that is free again.
+    -- (With a pidfd the group is signalled first and the leader reaped after; without one
+    -- the leader has to be reaped to be seen to have ended, and the group is signalled after.)
     reap : ProcessID -> IORef Bool -> Task ()
     reap pid reaped = do
       pidfd <- liftIO (pidfd_open pid 0)
@@ -243,8 +254,9 @@ runCGI {options} mountAt dir rest req = case splitPath rest of
       where
         finish : IO ()
         finish = do
-          _ <- waitpid pid WNOHANG
+          -- the leader is a zombie still, so the group number cannot have been given out again
           _ <- kill (negateProcess pid) SIGKILL
+          _ <- waitpid pid WNOHANG
           writeIORef reaped True
 
         poll : Task ()

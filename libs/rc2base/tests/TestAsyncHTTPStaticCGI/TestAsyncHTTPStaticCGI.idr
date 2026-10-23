@@ -14,6 +14,8 @@ module Main
 -- Status and Location, a program with no head or too much output (502), one that
 -- takes too long (504, and the server goes on), one that is not executable (404),
 -- the same through routes of `routerWith` (`serveStatic`, `runCGI`: the rest of the path is their argument),
+-- a program that ends and leaves a child holding the output (504; the child is killed),
+-- a status that is not a number from 200 to 599 (502),
 -- the working directory of a program (the one it is in), the headers a program gets
 -- (joined duplicates, no `_` in a name, no Authorization), a dotfile (404).
 
@@ -189,6 +191,10 @@ clients port dir = do
   slowChildGone <- blocking (gone dir "slow-child.pid")
   orphan <- ask (req "GET" "/cgi-bin/orphan.sh")
   orphanChildGone <- blocking (gone dir "orphan-child.pid")
+  badStatus <- ask (req "GET" "/cgi-bin/badstatus.sh")
+  textStatus <- ask (req "GET" "/cgi-bin/textstatus.sh")
+  keepout <- ask (req "GET" "/cgi-bin/keepout.sh")
+  keepoutChildGone <- blocking (gone dir "keepout-child.pid")
   noexec <- ask (req "GET" "/cgi-bin/noexec.sh")
   nowhere <- ask (req "GET" "/cgi-bin/nowhere.sh")
   nameless <- ask (req "GET" "/cgi-bin/")
@@ -197,12 +203,14 @@ clients port dir = do
   after <- ask (req "GET" "/cgi-bin/env.sh")
   pure (map (summary types)
           ([ index, noSlash, subIndex, hello, spaced, headed, cached, stale, tooBig, badName, dotfile, posted, absent, dotdot, dotdot2
-          , outside, route, envRun, getRun, status, redirect, nohead, big, slow, noexec, nowhere
+          , outside, route, envRun, getRun, status, redirect, nohead, big, slow, badStatus, textStatus, noexec, nowhere
           , nameless, escape, cwd, after ] ++ viaRoute)
        ++ [ "leader of the timed out program gone: " ++ show slowGone
           , "its child gone: " ++ show slowChildGone
           , "orphan: " ++ summary types orphan
-          , "child left by the program that ended gone: " ++ show orphanChildGone ])
+          , "child left by the program that ended gone: " ++ show orphanChildGone
+          , "holding the output: " ++ summary types keepout
+          , "child that held the output gone: " ++ show keepoutChildGone ])
 
 -- The directory of the test, from the path of the executable
 -- (<dir>/build/exec/<name>): verify.sh runs it from another directory.
@@ -217,5 +225,5 @@ main : IO ()
 main = do
   dir <- testDir
   -- the numbers of an earlier run must not be taken for this one's
-  traverse_ (\n => removeFile (dir ++ "/build/" ++ n)) ["slow.pid", "slow-child.pid", "orphan-child.pid"]
+  traverse_ (\n => removeFile (dir ++ "/build/" ++ n)) ["slow.pid", "slow-child.pid", "orphan-child.pid", "keepout-child.pid"]
   scenario 18751 dir (clients 18751 dir)
