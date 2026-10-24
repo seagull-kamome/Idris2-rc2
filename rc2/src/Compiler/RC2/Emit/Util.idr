@@ -1086,6 +1086,30 @@ rcVarToBoxedC l = do
                 -- fix for the new RCConst case.
                 _ => (exprOrVar, pending)
 
+||| `boxOpArg`, with the fresh box (`Nothing` for an `RBoxed` operand) kept
+||| apart from the pending drops of `l`'s own inlined expression. A
+||| reuse-consuming primitive (`isReuseConsumingOp`) disposes of the box it
+||| is handed, but not of what the inlined expression read: those drops are
+||| still owed.
+export
+boxOpArgParts : {auto a : Ref ArgCounter Nat}
+             -> {auto _ : Ref ConstDef (SortedMap Constant ConstDef)}
+             -> {auto cc : Ref ConstConDef (SortedMap RCLocal String, List String)}
+             -> {auto r : Ref RepMap (SortedMap Int Rep)}
+             -> {auto lm : Ref InlineMap (SortedMap Int (String, List String))}
+             -> {auto oft : Ref OutfileText Output}
+             -> {auto il : Ref IndentLevel Nat}
+             -> FC -> RCLocal -> Core (String, Maybe String, List String)
+boxOpArgParts fc l = do
+    rep <- repOfLocal l
+    (expr, pending) <- rcVarToBoxedC l
+    case rep of
+         RBoxed => pure (expr, Nothing, pending)
+         _ => do
+             let tmp = "opBox_" ++ !(getNextCounter)
+             emit fc $ "IDRIS2RC2_Value *" ++ tmp ++ " = " ++ expr ++ ";"
+             pure (tmp, Just tmp, pending)
+
 ||| An operand for a Boxed-result `ROp` (see its own `emitRC` case
 ||| below): an already-`RBoxed` local renders via `rcVarToBoxedC` as-is,
 ||| ownership already accounted for elsewhere -- nothing extra to free.
@@ -1114,14 +1138,8 @@ boxOpArg : {auto a : Ref ArgCounter Nat}
         -> {auto il : Ref IndentLevel Nat}
         -> FC -> RCLocal -> Core (String, List String)
 boxOpArg fc l = do
-    rep <- repOfLocal l
-    (expr, pending) <- rcVarToBoxedC l
-    case rep of
-         RBoxed => pure (expr, pending)
-         _ => do
-             let tmp = "opBox_" ++ !(getNextCounter)
-             emit fc $ "IDRIS2RC2_Value *" ++ tmp ++ " = " ++ expr ++ ";"
-             pure (tmp, tmp :: pending)
+    (expr, fresh, pending) <- boxOpArgParts fc l
+    pure (expr, maybe pending (:: pending) fresh)
 
 ||| The C expression to use for `l` as an operand of a native op expecting
 ||| type `ty`: the raw variable if it's already native, or an inline

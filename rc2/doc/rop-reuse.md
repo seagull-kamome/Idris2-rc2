@@ -294,16 +294,17 @@ usual post-call cleanup: normally it makes two `removeVars` calls after
 emitting the primitive call -- one for `postDrop`'s persistent Boxed
 locals, one for any ephemeral native-to-Boxed temporary `boxOpArg` had
 to fabricate for a Native operand. If `isReuseConsumingOp op` is
-`True`, both `removeVars` calls are skipped entirely: the runtime
-primitive now owns disposal of every operand handed to it, persistent
-local or ephemeral temporary alike. (In practice `boxOpArg` never
-actually produces an ephemeral temporary for one of these ten ops,
-since `Integer` is never native-eligible -- see
-`doc/native-type-inference.md`'s `nativeEligible` -- so there's no
-Native-`Integer` operand for `boxOpArg` to box in the first place. The
-skip is unconditional across both calls anyway, for uniformity, rather
-than adding a second, narrower condition that would never actually
-differ in observed behavior.) If `isReuseConsumingOp op` is `False`,
+`True`, the `postDrop` and fresh-temporary drops are skipped: the
+runtime primitive now owns disposal of every operand handed to it,
+persistent local or ephemeral temporary alike. (`Int`, `Int64` and
+`Bits64` operands can be native, so `boxOpArg` does fabricate a
+temporary for them.) What is *not* skipped is the drop an operand's
+inlined expression owes: for `(x + 1) `div` y` with `x` a boxed
+`Int64`, the native `x + 1` is inlined into the box handed to `div`, and
+the reference it read from `x` is not an operand of the primitive.
+Skipping it leaked one reference per evaluation (`boxOpArgParts` keeps
+the fresh box apart from those drops; `tests/Test147ReuseOpInlineOperand`).
+If `isReuseConsumingOp op` is `False`,
 behavior is completely unchanged: the old explicit drop emission still
 runs, exactly as before this change.
 
@@ -375,12 +376,10 @@ concurrency-related code (see `doc/concurrency.md`).
   "Pinned reference `idris2 --cg refc` 0.8.0 misspells `negate` for
   fixed-width/`Double` types" entry for the full writeup.
 - **`boxOpArg`'s ephemeral-temporary reuse is already included, not
-  excluded.** As noted above, `Emit.idr`'s skip covers both `postDrop`
-  and `boxOpArg`'s temporaries uniformly; there was no need to carve
-  out a narrower condition, since `Integer` never produces a Native
-  operand for `boxOpArg` to box in the first place. Called out here
-  explicitly so a future reader doesn't mistake the uniform skip for an
-  oversight.
+  excluded.** `Emit.idr`'s skip covers `postDrop` and `boxOpArg`'s
+  temporaries uniformly; there was no need to carve out a narrower
+  condition. The drops an inlined operand expression owes are the
+  exception, see above.
 
 ## Verification performed
 
