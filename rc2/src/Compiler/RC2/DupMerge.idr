@@ -220,28 +220,12 @@ cancelDupDrop ns e@(RLet fc var rep value body) =
   where
     plain : RCExp
     plain = RLet fc var rep (cancelDupDrop ns value) (cancelDupDrop ns body)
-cancelDupDrop ns (RDrop fc vs body) = RDrop fc vs (cancelDupDrop ns body)
-cancelDupDrop ns (RFree fc v body) = RFree fc v (cancelDupDrop ns body)
-cancelDupDrop ns (RReleaseReuse fc v body) = RReleaseReuse fc v (cancelDupDrop ns body)
-cancelDupDrop ns (RReuseOffer fc sc dupOnShared dropOnUnique body) =
-    RReuseOffer fc sc dupOnShared dropOnUnique (cancelDupDrop ns body)
 -- Branch/loop children are separate regions with their own
 -- `mergeDupsExp` below, which cancels them again on its own way
 -- through -- harmless (this is idempotent), and it makes this function
 -- usable standalone over a whole definition, which
 -- `applyCancelDupDrop` needs.
-cancelDupDrop ns (RCmpCase fc op args postDrop t f) =
-    RCmpCase fc op args postDrop (cancelDupDrop ns t) (cancelDupDrop ns f)
-cancelDupDrop ns (RConCase fc sc alts mDef) =
-    RConCase fc sc (map (\(MkRConAlt n ci tag as body) => MkRConAlt n ci tag as (cancelDupDrop ns body)) alts)
-      (map (cancelDupDrop ns) mDef)
-cancelDupDrop ns (RConstCase fc sc alts mDef) =
-    RConstCase fc sc (map (\(MkRConstAlt c body) => MkRConstAlt c (cancelDupDrop ns body)) alts)
-      (map (cancelDupDrop ns) mDef)
-cancelDupDrop ns (RLoop fc loopParams initial prologueDrop body) =
-    RLoop fc loopParams initial prologueDrop (cancelDupDrop ns body)
-cancelDupDrop ns (RMemoize fc n rep body) = RMemoize fc n rep (cancelDupDrop ns body)
-cancelDupDrop _ e = e
+cancelDupDrop ns e = mapChildren (cancelDupDrop ns) e
 
 ||| Collects, for every RCLocal targeted by at least one RDup anywhere
 ||| within `e`'s own straight-line region (never descending into a

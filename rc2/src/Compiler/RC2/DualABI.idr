@@ -1462,7 +1462,7 @@ casedCallees acc e@(RLet _ x RBoxed value body) =
     let here = do
           g <- finalCallee value
           (_, _, alts, mDef) <- caseOn x body
-          the (Maybe ()) (if maybe False (\d => contains (RCLoc x) (mentionedLocals d)) mDef then Nothing else Just ())
+          guard (not (maybe False (\d => contains (RCLoc x) (mentionedLocals d)) mDef))
           _ <- traverse (structAlt (\_, _ => Nothing) x) alts
           pure g
     in foldl casedCallees (maybe acc (:: acc) here) (children e)
@@ -1521,7 +1521,7 @@ structSites ws plan reps (RLet fc x RBoxed value body) = do
          Just (g, rep, call) =>
              let cased = do
                    (wrap, cfc, alts, mDef) <- caseOn x body'
-                   the (Maybe ()) (if maybe False (\d => contains (RCLoc x) (mentionedLocals d)) mDef then Nothing else Just ())
+                   guard (not (maybe False (\d => contains (RCLoc x) (mentionedLocals d)) mDef))
                    alts' <- traverse (structAlt (retFieldOf rep) x) alts
                    pure (wrap (RConCase cfc (RCLoc x) alts' mDef))
              in case cased of

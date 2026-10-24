@@ -330,10 +330,9 @@ foldAppliedExp ws nat e = here (mapChildren (foldAppliedExp ws nat) e)
         (lead, g, m, xs) <- closureValue ws value
         let owned = filter (isLoc (\i => not (contains i (fst nat)))) xs
             n = mentions (RCLoc c) body
-        the (Maybe ()) (if any (isLoc (\i => contains i (snd nat))) xs || n /= S (dropMentions (RCLoc c) body)
-                           then Nothing else Just ())
+        guard (not (any (isLoc (\i => contains i (snd nat))) xs || n /= S (dropMentions (RCLoc c) body)))
         body' <- replaceApply c owned (target g m xs) body
-        the (Maybe ()) (if mentions (RCLoc c) body' == 0 then Just () else Nothing)
+        guard (mentions (RCLoc c) body' == 0)
         pure (lead body')
     here e = e
 
