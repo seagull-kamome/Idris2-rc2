@@ -8,7 +8,6 @@ module Compiler.RC2.RC
 -- 2. `annotate`: Injects reference-counting primitives based on ownership.
 
 import Compiler.RC2.DualABI
-import Compiler.RC2.ForeignSpec
 import Compiler.RC2.RCExp
 import Compiler.RC2.Types
 import Compiler.RC2.Util
@@ -902,7 +901,7 @@ annotateDef _ d@(MkRCForeign _ _ _) = pure d
 annotateDef typedCase (MkRCError body) = MkRCError <$> annotate (definitionNatives typedCase body) empty body
 
 ||| A `%foreign` declaration's own return type, peeled through
-||| `CFIORes` (`Compiler.RC2.ForeignSpec.peelIORes`), must not itself be a
+||| `CFIORes` (`Compiler.RC2.Util.peelIORes`), must not itself be a
 ||| `CFFun`: there is no working C shape for a `%foreign` call to hand
 ||| back a closure (upstream RefC's `makeFunction(...)` names a function
 ||| that exists nowhere). Unchecked, it surfaces only as an undefined

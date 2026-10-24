@@ -9,6 +9,7 @@ module Compiler.RC2.ForeignSpec
 -- This module was licensed by BSD3.
 
 import Compiler.CompileExpr
+import Compiler.RC2.Util
 
 import Core.Context
 import Core.Core
@@ -18,13 +19,6 @@ import Data.List1
 import Data.String
 
 %default total
-
-||| `ret`'s own peeled type -- `CFIORes t`'s payload `t`, or `ret`
-||| itself for a non-IO (pure) `%foreign` declaration.
-export
-peelIORes : CFType -> CFType
-peelIORes (CFIORes t) = t
-peelIORes t = t
 
 ||| One piece of a `CExpr:` template: literal C text, a 1-based
 ||| reference to a declaration argument (`$N`), or the `Integer`

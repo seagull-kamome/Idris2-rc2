@@ -31,7 +31,6 @@ module Compiler.RC2.RC2
 import Compiler.RC2.ArityRaise
 import Compiler.RC2.ArityRaiseCExp
 import Compiler.RC2.ClosureCtx
-import Compiler.RC2.ForeignSpec
 import Compiler.RC2.DeadArgs
 import Compiler.RC2.Trmc
 import Compiler.RC2.CC
@@ -570,7 +569,7 @@ collectLazyCAFs = SortedSet.fromList . mapMaybe isLazyCAF
 ||| String, and any Struct (by pointer, same marshalling as Ptr --
 ||| EmitUtil's own cTypeOfCFType/extractValue/packCFType CFStruct cases
 ||| already alias CFPtr's verbatim) -- plus the PrimIO IO/IORes wrapper
-||| (peeled to CFIORes so Compiler.RC2.ForeignSpec's own peelIORes applies
+||| (peeled to CFIORes so Compiler.RC2.Util's own peelIORes applies
 ||| uniformly afterward). Still nothing for Buffer/ForeignObj/CFUser/
 ||| CFFun -- deliberately out of %export's own scope (Buffer is a
 ||| known, separately-tracked gap; ForeignObj/CFUser/CFFun have no
