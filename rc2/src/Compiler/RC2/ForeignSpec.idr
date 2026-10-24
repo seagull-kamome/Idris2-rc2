@@ -280,12 +280,7 @@ export
 renderTemplate : List TemplatePart -> Maybe String -> List String -> String
 renderTemplate parts resultVar args = concatMap render parts
   where
-    nth : Nat -> List String -> String
-    nth _ [] = ""
-    nth Z (x :: _) = x
-    nth (S k) (_ :: xs) = nth k xs
-
     render : TemplatePart -> String
     render (TLit s) = s
-    render (TArg k) = "(" ++ nth (k `minus` 1) args ++ ")"
+    render (TArg k) = "(" ++ fromMaybe "" (getAt (k `minus` 1) args) ++ ")"
     render TResult = maybe "" (++ "->v") resultVar

@@ -67,20 +67,6 @@ closureTailsWithPrefixCheck _ (RAppName _ Nothing h _) = [(TCall h, False)]
 closureTailsWithPrefixCheck _ (RCrash _ _) = [(TCrash, False)]
 closureTailsWithPrefixCheck _ _ = [(TOther, False)]
 
-||| Every tail of a pre-RC body, through `let` bodies and every branch.
-closureTails : RCExp -> List ClosureTail
-closureTails (RLet _ _ _ _ body) = closureTails body
-closureTails (RCmpCase _ _ _ _ t f) = closureTails t ++ closureTails f
-closureTails (RConCase _ _ alts mDef) =
-    foldr (\(MkRConAlt _ _ _ _ b), acc => closureTails b ++ acc) (maybe [] closureTails mDef) alts
-closureTails (RConstCase _ _ alts mDef) =
-    foldr (\(MkRConstAlt _ b), acc => closureTails b ++ acc) (maybe [] closureTails mDef) alts
-closureTails (RUnderApp _ g 1 xs) = [TPartial g xs]
-closureTails (RV _ (RCConstClosure g 1)) = [TPartial g []]
-closureTails (RAppName _ Nothing h _) = [TCall h]
-closureTails (RCrash _ _) = [TCrash]
-closureTails _ = [TOther]
-
 ||| The functions to raise: every tail a closure missing exactly one
 ||| argument of a function taking exactly that many, a crash, or a tail
 ||| call to another such function (a greatest fixpoint), reaching at

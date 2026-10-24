@@ -611,8 +611,8 @@ mutual
         -- Boxed operands (Integer/String): read in place, dropped via
         -- `postDrop` below like an `ROp`'s; see doc/native-type-inference.md.
         argsWithPending : Vect 2 (String, List String) <- if boxedCmp
-                              then rc2traverseVect (boxOpArg fc) args
-                              else rc2traverseVect (rcVarToNativeC (TPrim (cmpOpTy op))) args
+                              then traverseVect (boxOpArg fc) args
+                              else traverseVect (rcVarToNativeC (TPrim (cmpOpTy op))) args
         let argStrs = map fst argsWithPending
         let condVar = "cmp_" ++ !(getNextCounter)
         emit fc $ "int " ++ condVar ++ " = "
@@ -997,7 +997,7 @@ mutual
                                     _      => rawExpr
                  in pure (retExpr, map varName postDrop ++ boxedArgDrop)
     emitNativeValue (TPrim ty) (ROp fc _ op args postDrop) = do
-        argsWithPending <- rc2traverseVect (\v => rcVarToNativeC (TPrim (opArgTyFor ty op)) v) args
+        argsWithPending <- traverseVect (\v => rcVarToNativeC (TPrim (opArgTyFor ty op)) v) args
         -- `postDrop` (same meaning as emitRC's boxed-ROp case, see its
         -- own doc comment) -- a native-result op still owes these
         -- operands the same cleanup, but can't drop them *here*: unlike
@@ -1215,7 +1215,7 @@ emitRC sink (ROp fc _ op args postDrop) _ = do
     -- earlier native arithmetic chain), hence the Rep-aware boxing
     -- (boxOpArg, which also names and tracks any fresh box it has to
     -- fabricate for a Native operand, so it can be freed below).
-    argsWithFresh <- rc2traverseVect (boxOpArg fc) args
+    argsWithFresh <- traverseVect (boxOpArg fc) args
     let argStrs = map fst argsWithFresh
     -- `postDrop`: see emitRC's own doc comment. Separately, any
     -- ephemeral box `boxOpArg` had to fabricate for a Native operand

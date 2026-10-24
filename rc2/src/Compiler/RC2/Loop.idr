@@ -142,12 +142,6 @@ renameLocal : Renaming -> RCLocal -> RCLocal
 renameLocal ren (RCLoc i) = RCLoc (renameId ren i)
 renameLocal _ l = l
 
-renameLocals : Renaming -> List RCLocal -> List RCLocal
-renameLocals ren = map (renameLocal ren)
-
-renameLocalsV : Renaming -> Vect n RCLocal -> Vect n RCLocal
-renameLocalsV ren = map (renameLocal ren)
-
 renameMaybeLocal : Renaming -> Maybe RCLocal -> Maybe RCLocal
 renameMaybeLocal ren = map (renameLocal ren)
 

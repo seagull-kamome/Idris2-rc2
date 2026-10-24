@@ -264,19 +264,20 @@ linkLibName lib =
 ||| registration exactly when `createCFunctions` will too).
 export
 fastPackFixedReplacement : Name -> Maybe String
-fastPackFixedReplacement (NS ns (UN (Basic "fastPack"))) =
-    if ns == mkNamespace "Prelude.Types" then Just "idris2rc2_fastPackFixed" else Nothing
-fastPackFixedReplacement (NS ns (UN (Basic "fastConcat"))) =
-    if ns == mkNamespace "Prelude.Types" then Just "idris2rc2_fastConcatFixed" else Nothing
--- Not leaks: `fastUnpack` and the two `Data.String.Iterator` calls that
--- read the string take a `char *`, which loses a String's length at its
--- first NUL, so they are sent to replacements taking the String itself.
-fastPackFixedReplacement (NS ns (UN (Basic "fastUnpack"))) =
-    if ns == mkNamespace "Prelude.Types" then Just "idris2rc2_fastUnpackFixed" else Nothing
-fastPackFixedReplacement (NS ns (UN (Basic "uncons"))) =
-    if ns == mkNamespace "Data.String.Iterator" then Just "idris2rc2_stringIteratorNextFixed" else Nothing
-fastPackFixedReplacement (NS ns (UN (Basic "withIteratorString"))) =
-    if ns == mkNamespace "Data.String.Iterator" then Just "idris2rc2_stringIteratorToStringFixed" else Nothing
+fastPackFixedReplacement (NS ns (UN (Basic f))) =
+    map (\(_, _, c) => c) (find (\(m, g, _) => g == f && ns == mkNamespace m) table)
+  where
+    -- Not leaks: `fastUnpack` and the two `Data.String.Iterator` calls that
+    -- read the string take a `char *`, which loses a String's length at its
+    -- first NUL, so they are sent to replacements taking the String itself.
+    table : List (String, String, String)
+    table =
+      [ ("Prelude.Types", "fastPack", "idris2rc2_fastPackFixed")
+      , ("Prelude.Types", "fastConcat", "idris2rc2_fastConcatFixed")
+      , ("Prelude.Types", "fastUnpack", "idris2rc2_fastUnpackFixed")
+      , ("Data.String.Iterator", "uncons", "idris2rc2_stringIteratorNextFixed")
+      , ("Data.String.Iterator", "withIteratorString", "idris2rc2_stringIteratorToStringFixed")
+      ]
 fastPackFixedReplacement _ = Nothing
 
 ||| Whether a `fastPackFixedReplacement` target has a signature its
