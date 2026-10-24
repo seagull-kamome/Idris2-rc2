@@ -426,7 +426,7 @@ echo "=== Smoke tests ==="
 # "%f" six-digit form -- see the top-level README's "Deliberate
 # differences from upstream RefC". No shared baseline, so these check
 # against the saved .expected only.
-NO_REFC_DIFF_TESTS="Test3Data Test7CastMatrix Test8EmptyCon Test17ConstFold Test27FFIDualABI Test28Utf8Strings Test35NetworkLoopback Test42SupportMisc Test49IntegerOpReuse Test59Export Test66ClosureFastPath Test82RuntimeLocale Test83DoubleString Test86CafMemoization Test119FFINoRefc Test121CgRuntime Test24CStructSupport Test120CStruct Test124StringNul Test125LazyMemo Test126LazySelfForce Test135EuclidModNegative Test136NetBufLength"
+NO_REFC_DIFF_TESTS="Test3Data Test7CastMatrix Test8EmptyCon Test17ConstFold Test27FFIDualABI Test28Utf8Strings Test35NetworkLoopback Test42SupportMisc Test49IntegerOpReuse Test59Export Test66ClosureFastPath Test82RuntimeLocale Test83DoubleString Test86CafMemoization Test119FFINoRefc Test121CgRuntime Test24CStructSupport Test120CStruct Test124StringNul Test125LazyMemo Test126LazySelfForce Test135EuclidModNegative Test136NetBufLength Test138ExportWideIO"
 
 # Leak-sensitive by design (reference-counting/reuse/native-shadow
 # regression tests) -- checked with valgrind by default even without
@@ -443,7 +443,7 @@ NO_REFC_DIFF_TESTS="Test3Data Test7CastMatrix Test8EmptyCon Test17ConstFold Test
 # packCFType allocation (idris2rc2_mkPointer/idris2rc2_mkGCPointer) is
 # new to %export's own argument marshalling and worth the same
 # scrutiny.
-LEAK_SENSITIVE_TESTS="Test11DualABILeak Test13NativeArgChain Test17ConstFold Test22BranchSinking Test27FFIDualABI Test28Utf8Strings Test35NetworkLoopback Test36ReuseOfferUniqueLeak Test37SystemMisc Test42SupportMisc Test44IORefExtPrimLeak Test46FastPackUnconditional Test49IntegerOpReuse Test59Export Test66ClosureFastPath Test79DupMerge Test86CafMemoization Test87SpecConstCon Test88KnownConFold Test89CafDualABI Test90StructReturn Test91IntConstFold Test92ArityRaise Test93ApplyFold Test99DeadArgs Test102MultiThreadSwitch Test104ThreadStress Test106TransitiveSpec Test110Loop Test111Basics Test112Numeric Test113DeepRecursion Test114Inline Test115ConstFoldClosure Test18ClosureInPlaceGrow Test117ConAltNative Test118FFI Test119FFINoRefc Test24CStructSupport Test120CStruct Test122LiftOrigin Test124StringNul Test125LazyMemo Test136NetBufLength Test137SinkDupTwice"
+LEAK_SENSITIVE_TESTS="Test11DualABILeak Test13NativeArgChain Test17ConstFold Test22BranchSinking Test27FFIDualABI Test28Utf8Strings Test35NetworkLoopback Test36ReuseOfferUniqueLeak Test37SystemMisc Test42SupportMisc Test44IORefExtPrimLeak Test46FastPackUnconditional Test49IntegerOpReuse Test59Export Test66ClosureFastPath Test79DupMerge Test86CafMemoization Test87SpecConstCon Test88KnownConFold Test89CafDualABI Test90StructReturn Test91IntConstFold Test92ArityRaise Test93ApplyFold Test99DeadArgs Test102MultiThreadSwitch Test104ThreadStress Test106TransitiveSpec Test110Loop Test111Basics Test112Numeric Test113DeepRecursion Test114Inline Test115ConstFoldClosure Test18ClosureInPlaceGrow Test117ConAltNative Test118FFI Test119FFINoRefc Test24CStructSupport Test120CStruct Test122LiftOrigin Test124StringNul Test125LazyMemo Test136NetBufLength Test137SinkDupTwice Test138ExportWideIO"
 
 # Pre-existing leaks still tolerated, as "definitely lost" bytes per
 # test; anything else non-zero is a new failure. Empty: every leak once
