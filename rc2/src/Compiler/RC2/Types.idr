@@ -17,7 +17,6 @@ import Compiler.RC2.RCExp
 import Core.CompileExpr
 import Core.TT
 
-import Data.List
 import Data.SortedSet
 
 %default total

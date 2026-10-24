@@ -27,16 +27,10 @@ import Compiler.RC2.RCExp
 import Compiler.RC2.Loop
 import Compiler.RC2.Util
 
-import Core.CompileExpr
 import Core.Context
-import Core.Core
-import Core.FC
-import Core.TT
 
-import Data.List
 import Data.SortedMap
 import Data.SortedSet
-import Data.Vect
 
 %default covering
 

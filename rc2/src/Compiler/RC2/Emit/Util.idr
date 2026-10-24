@@ -22,27 +22,17 @@ import Compiler.RC2.Types
 import Compiler.RC2.Util
 
 import Compiler.CompileExpr
-import Compiler.Common
-import Compiler.Generated
 
-import Core.Directory
-import Core.Context
 
 import Idris.Syntax
 
 import Libraries.Data.DList
-import Data.List
-import Data.List.Quantifiers
-import Data.SortedSet
 import Data.SortedMap
 import Data.String
 import Data.Vect
 
 import Protocol.Hex
-import Libraries.Utils.Path
 
-import System
-import System.File
 
 
 %default total

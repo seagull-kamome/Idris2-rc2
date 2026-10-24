@@ -22,7 +22,6 @@ module Compiler.RC2.DualABI
 -- `Compiler.RC2.MutualLoop`-merged-function exclusion Stage 3 needs
 -- (that doc's "A finding that changed Stage 3's own plan").
 
-import Compiler.Common
 import Compiler.RC2.RCExp
 import Compiler.RC2.Types
 import Compiler.RC2.Loop
@@ -33,14 +32,8 @@ import Compiler.RC2.ForeignSpec
 import Compiler.RC2.Util
 
 import Core.CompileExpr
-import Core.Context
 import Core.Context.Log
-import Core.Core
-import Core.FC
-import Core.TT
 
-import Data.List
-import Data.Nat
 import Data.SortedMap
 import Data.SortedSet
 import Data.Vect

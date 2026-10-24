@@ -17,10 +17,7 @@ import Compiler.RC2.RCExp
 import Compiler.RC2.Util
 
 import Core.Context
-import Core.Core
-import Core.Name
 
-import Data.List
 import Data.SortedSet
 
 %default covering

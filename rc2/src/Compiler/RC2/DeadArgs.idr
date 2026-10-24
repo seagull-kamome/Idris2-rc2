@@ -13,14 +13,8 @@
 module Compiler.RC2.DeadArgs
 
 import Core.CompileExpr
-import Core.Context
 import Core.Context.Log
-import Core.Core
-import Core.FC
-import Core.Name
 
-import Data.List
-import Data.Maybe
 import Data.SortedMap
 import Data.SortedSet
 import Data.Vect

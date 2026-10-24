@@ -22,7 +22,6 @@ import Core.Name
 
 import Data.SortedMap
 import Data.SortedSet
-import Data.Vect
 
 %default covering
 

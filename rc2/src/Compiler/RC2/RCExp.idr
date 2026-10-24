@@ -14,14 +14,12 @@ module Compiler.RC2.RCExp
 -- `Compiler.RC2.Emit` mechanically lowers this IR to C.
 
 import Core.CompileExpr
-import Core.FC
 import Core.TT
 
 import Data.DPair
 import public Data.List.Elem
 import Data.List.Quantifiers
 import Data.List1
-import Data.Nat
 import Data.SortedSet
 import Data.Vect
 import Decidable.Equality

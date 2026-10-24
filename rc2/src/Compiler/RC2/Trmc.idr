@@ -14,14 +14,8 @@ import Compiler.RC2.MutualLoop
 import Compiler.RC2.RCExp
 import Compiler.RC2.Util
 
-import Core.CompileExpr
-import Core.Core
-import Core.FC
-import Core.Context
 import Core.Context.Log
 
-import Data.List
-import Data.Maybe
 import Data.SortedMap
 import Data.SortedSet
 

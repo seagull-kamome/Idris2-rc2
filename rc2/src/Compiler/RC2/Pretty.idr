@@ -13,7 +13,6 @@ import Core.CompileExpr
 import Core.TT
 
 import Data.DPair
-import Data.List
 import Data.List1
 import Data.SortedSet
 import Data.String

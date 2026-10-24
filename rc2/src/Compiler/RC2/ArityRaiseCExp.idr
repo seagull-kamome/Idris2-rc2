@@ -12,13 +12,10 @@ module Compiler.RC2.ArityRaiseCExp
 import Compiler.RC2.Emit.Util
 
 import Core.CompileExpr
-import Core.Context
 import Core.Core
 import Core.FC
 import Core.Name
 
-import Data.List
-import Data.Maybe
 import Data.SortedMap
 import Data.SortedSet
 import Data.Vect

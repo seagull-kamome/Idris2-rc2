@@ -12,9 +12,7 @@ import Compiler.CompileExpr
 import Compiler.RC2.Util
 
 import Core.Context
-import Core.Core
 
-import Data.List
 import Data.List1
 import Data.String
 

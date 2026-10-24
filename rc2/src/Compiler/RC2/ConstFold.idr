@@ -16,8 +16,6 @@ import Compiler.RC2.RCExp
 import Compiler.RC2.Types
 import Compiler.RC2.Util
 
-import Core.CompileExpr
-import Core.FC
 import Core.Primitives
 import Core.TT
 import Core.Value
@@ -26,7 +24,6 @@ import Data.DPair
 import Data.List
 import Data.List.Quantifiers
 import Data.List1
-import Data.Maybe
 import Data.SortedMap
 import Data.SortedSet
 import Data.Vect

@@ -17,16 +17,10 @@ import Compiler.RC2.RCExp
 import Compiler.RC2.Types
 import Compiler.RC2.Util
 
-import Core.Context
 import Core.Context.Log
-import Core.Core
 
-import Core.FC
-import Core.TT
 
-import Data.List
 import Data.List1
-import Data.Maybe
 import Data.SortedMap
 import Data.SortedSet
 

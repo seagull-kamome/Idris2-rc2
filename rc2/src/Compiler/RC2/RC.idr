@@ -7,20 +7,14 @@ module Compiler.RC2.RC
 -- 1. `normalize`: lambda lifting and ANF-style conversion, with native type inference.
 -- 2. `annotate`: Injects reference-counting primitives based on ownership.
 
-import Compiler.RC2.DualABI
 import Compiler.RC2.RCExp
 import Compiler.RC2.Types
 import Compiler.RC2.Util
 import Core.CompileExpr
 import Core.Context
-import Core.Core
-import Core.FC
-import Core.TT
 
 import Data.DPair
-import Data.List
 import Data.String
-import Data.List.Quantifiers
 import Data.List1
 import Data.SortedMap
 import Data.SortedSet

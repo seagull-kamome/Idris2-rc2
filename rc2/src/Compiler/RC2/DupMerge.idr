@@ -30,11 +30,9 @@ module Compiler.RC2.DupMerge
 import Compiler.RC2.Emit.Util
 import Compiler.RC2.RCExp
 
-import Core.FC
 import Core.TT
 
 import Data.List
-import Data.Nat
 import Data.SortedMap
 import Data.SortedSet
 import Data.Vect

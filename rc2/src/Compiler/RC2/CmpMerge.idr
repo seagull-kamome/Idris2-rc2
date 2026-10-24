@@ -22,7 +22,6 @@ import Compiler.RC2.RCExp
 import Compiler.RC2.Types
 
 import Core.CompileExpr
-import Core.FC
 import Core.TT
 
 import Data.DPair

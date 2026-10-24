@@ -11,11 +11,8 @@ module Compiler.RC2.Sink
 -- design rationale, algorithm, and bug history.
 
 import Compiler.RC2.RCExp
-import Compiler.RC2.Types
 import Compiler.RC2.Util
 
-import Core.CompileExpr
-import Core.FC
 import Core.TT
 
 import Data.List

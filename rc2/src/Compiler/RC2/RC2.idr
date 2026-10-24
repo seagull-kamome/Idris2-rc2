@@ -65,15 +65,10 @@ import Compiler.RC2.Types
 import Compiler.RC2.Util
 
 import Compiler.Common
-import Compiler.LambdaLift
 
 import Core.CompileExpr
-import Core.Context
 import Core.Directory
 import Core.Env
-import Core.Name.Namespace
-import Core.Normalise
-import Core.Options
 import Core.Value
 
 import Data.DPair
