@@ -118,3 +118,5 @@ possibly reference it, that's exactly what earned it the `0` in the
 first place -- while still incrementing its own running field-index
 counter for it, since it's still real storage at that offset in the
 matched constructor, just not one this alt itself ever needs to name.
+
+- Measured on idris2-lsp: asking per alt (`freeLocalsR` of the alt's own body) cost 2.74s of the pass's 2.82s; the single whole-definition `mentionedLocals` set replaces it.

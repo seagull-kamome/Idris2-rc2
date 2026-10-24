@@ -782,3 +782,5 @@ The delay cell of a `Lazy` argument that is a real `delay` (about 12%
 of the calls) is not touched: it is not a known closure. Test:
 `Test106TransitiveSpec/LazyFuncSpec` (`check.sh`: no call to
 `maybe`/`either` left; `--directive nospecclosure` fails it).
+
+- Measured on idris2-lsp (32.4k definitions, 12.2k opportunities): flattening per-definition opportunity lists with `concatMap` (left-nested `++`) cost ~0.9s of the pass's own time; grouping into the map as collected avoids it. A per-key CAF-table rebuild and call-site redirect (O(distinct keys x program size)) was impractically slow and is done once per round instead.

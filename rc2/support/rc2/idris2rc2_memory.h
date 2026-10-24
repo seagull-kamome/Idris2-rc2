@@ -127,9 +127,7 @@ IDRIS2RC2_Constructor *idris2rc2_newConstructor(int arity, int tag);
 IDRIS2RC2_Closure *idris2rc2_mkClosure(IDRIS2RC2_Value *(*fn)(), uint8_t arity,
 				       uint8_t filled);
 
-// Prelude.Maybe's Just is always tag=1, arity=1 -- confirmed empirically
-// (not by reading the compiler's own source) by building a small
-// Maybe-returning program and reading the generated C: an ordinary
+// Prelude.Maybe's Just is always tag=1, arity=1: an ordinary
 // `Just x` lowers to `idris2rc2_newConstructor(1, 1)`, and ConstFold's
 // Prelude.Maybe is one fixed, versioned library type shared by every
 // rc2 program, not a per-program user-defined ADT whose tag assignment

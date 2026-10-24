@@ -1,17 +1,16 @@
+||| Explicit reference-counted IR for `rc2`.
+||| Reference counting is handled via three explicit nodes:
+|||   * `RDup`: Increment refcount.
+|||   * `RDrop`: Decrement refcount, recursively free if zero.
+|||   * `RFree`: Unconditionally free, used for provably unshared fresh values.
+|||
+||| Optimization note: Constructor reuse is decided by `Compiler.RC2.Reuse`
+||| and encoded directly on this IR.
+||| `Compiler.RC2.Emit` mechanically lowers this IR to C.
+|||
+||| Copyright 2026, Hattori,Hiroki. All rights reserved.
+||| This module was licensed by BSD3. see LICENSE file for detail.
 module Compiler.RC2.RCExp
-
--- Copyright 2026, Hattori,Hiroki. All rights reserved.
--- This module was licensed by BSD3.
-
--- Explicit reference-counted IR for `rc2`.
--- Reference counting is handled via three explicit nodes:
---   * `RDup`: Increment refcount.
---   * `RDrop`: Decrement refcount, recursively free if zero.
---   * `RFree`: Unconditionally free, used for provably unshared fresh values.
---
--- Optimization note: Constructor reuse is decided by `Compiler.RC2.Reuse`
--- and encoded directly on this IR.
--- `Compiler.RC2.Emit` mechanically lowers this IR to C.
 
 import Core.CompileExpr
 import Core.TT
@@ -340,7 +339,7 @@ data RCExp : Type where
      ||| Direct call to `name`'s dual-ABI worker variant, never valid in
      ||| a closure-building position. Only produced by
      ||| `Compiler.RC2.DualABI`. `postDrop`: see `ROp`'s own doc below.
-     ||| See `doc/dual-abi.md`'s Bugs found #3 for the leak this fixed.
+     ||| See `doc/dual-abi.md`'s Bugs found #3.
      RAppNameRep : FC -> Name -> (argReps : List Rep) -> (retRep : Rep) -> (postDrop : List RCLocal) -> List RCLocal -> RCExp
      ||| Inlined `%foreign` call, splicing `Emit.emitFFIWorker`'s own
      ||| marshalling logic directly at the call site instead of a
@@ -691,8 +690,7 @@ ownedUsedGo targets wanted st@(_, found) e =
 ||| `freeLocalsR body` at every `RLet` and every branch arm builds a set
 ||| of *every* local below that point, so a nested case tree or a long
 ||| ANF let chain re-derives (and re-allocates) an ever-larger set per
-||| level: measured on `idris2-lsp`, 2.7s of `"rc2: RC annotate + Reuse
-||| + ConAltNative"`'s own 3.25s.
+||| level, which dominates the pass's own time on large programs.
 |||
 ||| Binder subtraction is deliberately skipped: a target is by
 ||| construction a local already bound *above* the point being asked

@@ -169,8 +169,7 @@ IDRIS2RC2_Value *idris2rc2_Prelude_IO_prim__onCollect(IDRIS2RC2_Value *erased,
 // provide), so it reaches us regardless of the "RC2"/"RefC"/"C" FFI-tag
 // mechanism rc2/Emit.idr otherwise uses to reuse RefC-tagged primitives.
 // RefC's own implementation (support/refc/threads.c) is itself just a
-// stub that prints a message and exits -- true thread support was never
-// implemented there either. rc2's refcount is now atomic (see
+// stub that prints a message and exits. rc2's refcount is atomic (see
 // rc2/doc/concurrency.md), so this is real: pthread_create, detached --
 // `threadWait` (the only thing that could join it) is scheme-only in
 // upstream System.Concurrency.idr, unreachable from any C backend, so a

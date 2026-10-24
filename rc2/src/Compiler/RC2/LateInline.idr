@@ -81,8 +81,8 @@ record Carried where
   info : CalleeInfo
   ||| Whole-program `RAppName` count per name, updated by delta each round:
   ||| only a `dirty` definition (old occurrences subtracted, new added) or
-  ||| a pruned one (old subtracted) can shift it. Re-summing was the pass's
-  ||| largest cost (~5.7s per round on idris2-lsp). The old occurrences come
+  ||| a pruned one (old subtracted) can shift it; re-summing every round
+  ||| would be the pass's largest cost. The old occurrences come
   ||| from `info`, which still holds the pre-change entry.
   counts : SortedMap Name Nat
   ||| `tarjanSCCs` order, computed on the first round and reused. It only
@@ -115,7 +115,7 @@ analyse early seed prev dirty refs defOf defs =
         info' : CalleeInfo =
                    foldl (\acc, (n, i, fresh) => if fresh then insert n i acc else acc) oldInfo classified
         -- Fold each definition's list straight into the map: flattening with
-        -- `concatMap` is quadratic (9.8s against 0.23s on idris2-lsp).
+        -- `concatMap` is quadratic.
         counts' : SortedMap Name Nat = case prev of
                  Nothing => foldl (\acc, (_, cs) => addAll acc cs) (the (SortedMap Name Nat) empty) perDef
                  Just p => deltaCounts p defOf info'
@@ -317,7 +317,7 @@ resolveConstClosureApps ccs e = mapChildren (resolveConstClosureApps ccs) e
 ||| caller's variable, and a native one needs the `RLet`'s `Rep` as the
 ||| boxing decision (`RNative ty` only if `loopParamNativeType` agrees at the
 ||| same type). See `rc2/doc/inlining.md`, "Criterion B, revisited", for
-||| the aliasing bug and a ~50x boxing regression.
+||| why.
 buildSplice : {auto v : Ref VarId Int} -> FC -> SortedMap Int Rep -> RCExp -> List (Int, RCLocal) -> Core (Renaming, RCExp -> RCExp, SortedSet Int, ConstClosureArgs)
 buildSplice fc reps calleeBody [] = pure (empty, id, empty, empty)
 buildSplice fc reps calleeBody ((paramId, actual@(RCLoc actualId)) :: rest) = do
@@ -422,8 +422,7 @@ promotableNativeLetRep loopSlots var value body =
 ||| Replace one fully-saturated call to an eligible callee with its own
 ||| (renamed) body. `reps`: the caller's own current `Rep` environment
 ||| at this exact call site (`inlineInto`'s own walk), consulted by
-||| `buildSplice` above -- never the callee's own originally-declared
-||| param `Rep`.
+||| `buildSplice` above -- never the callee's own declared param `Rep`.
 spliceCall : {auto v : Ref VarId Int} -> FC -> SortedMap Int Rep -> RCDef -> List RCLocal -> Core RCExp
 spliceCall fc reps (MkRCFun calleeArgs _ _ calleeBody) actualArgs = do
     (paramRen, wrap, promoted, ccs) <- buildSplice fc reps calleeBody (zip (map fst calleeArgs) actualArgs)
@@ -554,8 +553,7 @@ applyLateInlineOnce early seed roots prev dirty defs0 = do
         goOrder eligible rest defOf'
 
 ||| Iteration cap for `applyLateInline`. Only a guard: the loop stops by
-||| itself once a round splices nothing (idris2-lsp settles in about 5
-||| rounds).
+||| itself once a round splices nothing.
 maxLateInlineIterations : Nat
 maxLateInlineIterations = 8
 

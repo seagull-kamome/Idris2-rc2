@@ -1,13 +1,12 @@
+||| Merges functions whose bodies are the same up to the numbering of
+||| their local variables (a structural comparison, never printed text), the last whole-program step of `toRCDefs`
+||| (rc2/doc/fun-dedup.md). Cloning and lifting leave many such
+||| functions: closures lifted from identical lambdas, specialisation
+||| clones that ended up the same, DualABI workers of equal wrappers.
+|||
+||| Copyright 2026, Hattori,Hiroki. All rights reserved.
+||| This module was licensed by BSD3. see LICENSE file for detail.
 module Compiler.RC2.FunDedup
-
--- Copyright 2026, Hattori,Hiroki. All rights reserved.
--- This module was licensed by BSD3.
-
--- Merges functions whose bodies are the same up to the numbering of
--- their local variables (a structural comparison, never printed text), the last whole-program step of `toRCDefs`
--- (rc2/doc/fun-dedup.md). Cloning and lifting leave many such
--- functions: closures lifted from identical lambdas, specialisation
--- clones that ended up the same, DualABI workers of equal wrappers.
 
 import Compiler.RC2.DeadCode
 import Compiler.RC2.Pretty

@@ -97,9 +97,7 @@ extern char const idris2rc2_constr__percentWorld[]; // see idris2rc2_rt.c's own 
 // idris2-src's own support/c headers are missing a handful of prototypes
 // for functions their own .c files implement just fine and libs/ own
 // %foreign declarations name directly (one-line upstream header omissions,
-// not missing symbols -- confirmed by grepping every support/c/*.c
-// definition against its own .h; a handful more turned up the same way but
-// aren't actually %foreign-referenced from anywhere in libs/, so aren't
+// not missing symbols; only those %foreign-referenced from libs/ are
 // declared here). Each compiles to an implicit-declaration error under
 // -Werror wherever nothing else already declared it first. Whole-program
 // compilation never notices (DeadCode/upstream's own reachability fetch

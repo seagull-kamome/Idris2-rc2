@@ -1,31 +1,30 @@
+||| Merges several individual `RDup` nodes targeting the same variable
+||| within one straight-line region (no intervening branch/loop --
+||| `annotate` computes each branch's own dup/drop bookkeeping
+||| independently, so merging across a branch boundary would
+||| over-increment a refcount on whichever branch is actually NOT taken
+||| at runtime, a permanent leak -- see RC.idr's own RConCase/RConstCase
+||| annotate cases, which pass the identical `owned` set to every alt
+||| independently rather than accumulating across them) into one RDup
+||| with a higher `extra`, trading N atomic increments (each paying its
+||| own conditional-branch-plus-atomic-add cost) for a single batched one
+||| via idris2rc2_dup_n. Runs after DeadCode and PushDown, and before
+||| LeafTail and Compiler.RC2.DeadVars, since later passes
+||| (Compiler.RC2.Loop's wrapInvariantDups/dupInvariantBoxed,
+||| Compiler.RC2.ConAltNative's wrapNDups) are themselves what NEWLY
+||| introduces most of the individual-adjacent-RDup shapes this pass
+||| targets -- running earlier would miss everything those later passes
+||| go on to construct.
+|||
+||| Running after those also makes this the right place for the
+||| complementary peephole, `cancelDupDrop`: an `RDup` whose own local is
+||| released again by an `RDrop` in the same refcount-only run, with
+||| nothing in between that could observe the count. (`toRCDefs` sweeps it
+||| once more after DeadVars, which can make such a pair adjacent.)
+|||
+||| Copyright 2026, Hattori,Hiroki. All rights reserved.
+||| This module was licensed by BSD3. see LICENSE file for detail.
 module Compiler.RC2.DupMerge
-
--- Copyright 2026, Hattori,Hiroki. All rights reserved.
--- This module was licensed by BSD3.
-
--- Merges several individual `RDup` nodes targeting the same variable
--- within one straight-line region (no intervening branch/loop --
--- `annotate` computes each branch's own dup/drop bookkeeping
--- independently, so merging across a branch boundary would
--- over-increment a refcount on whichever branch is actually NOT taken
--- at runtime, a permanent leak -- see RC.idr's own RConCase/RConstCase
--- annotate cases, which pass the identical `owned` set to every alt
--- independently rather than accumulating across them) into one RDup
--- with a higher `extra`, trading N atomic increments (each paying its
--- own conditional-branch-plus-atomic-add cost) for a single batched one
--- via idris2rc2_dup_n. Runs after DeadCode and PushDown, and before
--- LeafTail and Compiler.RC2.DeadVars, since later passes
--- (Compiler.RC2.Loop's wrapInvariantDups/dupInvariantBoxed,
--- Compiler.RC2.ConAltNative's wrapNDups) are themselves what NEWLY
--- introduces most of the individual-adjacent-RDup shapes this pass
--- targets -- running earlier would miss everything those later passes
--- go on to construct.
---
--- Running after those also makes this the right place for the
--- complementary peephole, `cancelDupDrop`: an `RDup` whose own local is
--- released again by an `RDrop` in the same refcount-only run, with
--- nothing in between that could observe the count. (`toRCDefs` sweeps it
--- once more after DeadVars, which can make such a pair adjacent.)
 
 import Compiler.RC2.Emit.Util
 import Compiler.RC2.RCExp
@@ -319,10 +318,8 @@ mutual
 ||| Run once more after `Compiler.RC2.DeadVars`: erasing a dead `RLet`
 ||| can leave a `dup` and a `drop` of the same local adjacent that
 ||| weren't when this module's own pass ran, and nothing afterwards
-||| would notice. Measured over a whole idris2-lsp build, that is a
-||| couple of dozen pairs -- small, but there is no reason to ship
-||| them, and `rc2/tests/Test79DupMerge`'s own verify.sh check would
-||| otherwise have to tolerate a moving target.
+||| would notice. `rc2/tests/Test79DupMerge`'s own verify.sh check
+||| relies on no such pair surviving.
 export
 applyCancelDupDrop : RCDef -> RCDef
 applyCancelDupDrop (MkRCFun args retRep isWorker body) = MkRCFun args retRep isWorker (cancelDupDrop (nativeBound args body) body)

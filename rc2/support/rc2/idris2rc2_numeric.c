@@ -7,9 +7,9 @@
 #include <stdlib.h>
 #include <string.h>
 
-// Everything that was a one-line wrapper (unbox, apply a C operator or a
-// single library call, box the result) now lives as `static inline` in
-// numeric.h instead, so the C compiler can inline it at each call site
+// Every one-line wrapper (unbox, apply a C operator or a
+// single library call, box the result) lives as `static inline` in
+// numeric.h, so the C compiler can inline it at each call site
 // rather than always paying for a real function call. Only the genuinely
 // multi-statement functions below -- a real algorithm (Euclidean division
 // for Integer), a shared non-trivial helper (`idris2rc2_integerLsb`) plus its
@@ -111,8 +111,8 @@ IDRIS2RC2_CAST_TO_STRING_SIGNED(Bits64, uint64_t, idris2rc2_to_u64, "%" PRIu64)
 
 // ---- Double <-> String: locale-independent, matches the frontend ----
 //
-// Replaces the old snprintf("%f") / atof pair, which followed the
-// process LC_NUMERIC (a "de_DE" locale would print/parse "3,14").
+// Not snprintf("%f") / atof, which follow the process LC_NUMERIC
+// (a "de_DE" locale would print/parse "3,14").
 // `cast` is a language-level conversion bound to Idris's numeric-literal
 // syntax, which is always '.'-based, so the runtime carries its own
 // decimal<->binary code rather than forcing a "C" locale around libc on

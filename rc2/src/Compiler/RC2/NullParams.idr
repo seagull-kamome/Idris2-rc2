@@ -1,10 +1,9 @@
+||| Which parameters hold the world token or an erased value, and so are
+||| always C NULL. See `rc2/doc/null-params.md`.
+|||
+||| Copyright 2026, Hattori,Hiroki. All rights reserved.
+||| This module was licensed by BSD3. see LICENSE file for detail.
 module Compiler.RC2.NullParams
-
--- Copyright 2026, Hattori,Hiroki. All rights reserved.
--- This module was licensed by BSD3.
-
--- Which parameters hold the world token or an erased value, and so are
--- always C NULL. See `rc2/doc/null-params.md`.
 
 import Compiler.RC2.RCExp
 import Compiler.RC2.Types

@@ -133,9 +133,7 @@ IDRIS2RC2_Value *idris2rc2_fastPackFixed(IDRIS2RC2_Value *charList) {
   // required for the byteLen == 0 case specifically -- mkEmptyString(1)
   // hands back the shared immortal idris2rc2_emptyStringValue (a
   // `const` static, `str = ""`), and a `r->str[0] = '\0'` write here
-  // would be a write into read-only memory (confirmed by an actual
-  // SIGSEGV once this function started being reached unconditionally
-  // for every fastPack call, including `pack []`, project-wide -- see
+  // would be a write into read-only memory (see
   // rc2/doc/fastpack-fix.md).
   IDRIS2RC2_String *r = idris2rc2_mkEmptyString(idris2rc2_checkedStrLen(byteLen) + 1);
   size_t pos = 0;
@@ -269,11 +267,9 @@ IDRIS2RC2_Value *stringIteratorNext(char *s, IDRIS2RC2_Value *it_p) {
   uint32_t cp = idris2rc2_utf8DecodeAtNul(s, (size_t)pos, &consumed);
   IDRIS2RC2_Constructor *r = idris2rc2_newConstructor(2, 1);
   r->args[0] = idris2rc2_mkChar(cp);
-  // A fresh tagged integer, not idris2rc2_dup(it_p): the old value was a
-  // GC-pointer needing a refcount bump to keep both the old and new
-  // iterator handles valid; this one is unboxed, so there's no shared
-  // allocation to protect at all -- a plain new tag word is both correct
-  // and cheaper.
+  // A fresh tagged integer, not idris2rc2_dup(it_p): the iterator is
+  // unboxed, so there's no shared allocation to protect -- a plain new
+  // tag word is both correct and cheaper.
   r->args[1] = idris2rc2_mkBits32(pos + (uint32_t)consumed);
   return (IDRIS2RC2_Value *)r;
 }

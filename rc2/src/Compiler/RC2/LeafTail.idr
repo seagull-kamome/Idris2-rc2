@@ -1,17 +1,16 @@
+||| A tail call to a *leaf* function is made directly instead of through a
+||| closure that the caller returns for the nearest trampoline to run.
+||| A leaf function is one with no tail call that can leave work behind:
+||| every tail of its body builds a value, or tail-calls another leaf.
+||| Its call returns after a bounded amount of work of its own, so calling
+||| it from a tail position cannot grow the C stack without bound, which is
+||| all the closure was for. `Control.Task`'s `>>=`, a forwarder of `bind`,
+||| is such a function. See `rc2/doc/leaf-tail-calls.md`. Disable with
+||| `--directive noleaftail`.
+|||
+||| Copyright 2026, Hattori,Hiroki. All rights reserved.
+||| This module was licensed by BSD3. see LICENSE file for detail.
 module Compiler.RC2.LeafTail
-
--- Copyright 2026, Hattori,Hiroki. All rights reserved.
--- This module was licensed by BSD3.
-
--- A tail call to a *leaf* function is made directly instead of through a
--- closure that the caller returns for the nearest trampoline to run.
--- A leaf function is one with no tail call that can leave work behind:
--- every tail of its body builds a value, or tail-calls another leaf.
--- Its call returns after a bounded amount of work of its own, so calling
--- it from a tail position cannot grow the C stack without bound, which is
--- all the closure was for. `Control.Task`'s `>>=`, a forwarder of `bind`,
--- is such a function. See `rc2/doc/leaf-tail-calls.md`. Disable with
--- `--directive noleaftail`.
 
 import Compiler.RC2.RCExp
 import Compiler.RC2.Util

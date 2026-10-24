@@ -36,10 +36,9 @@ import Data.SortedSet
 ||| module compiles against a strict subset of the program
 ||| (`Compiler.RC2.RC2`'s own `incCompile`, see
 ||| rc2/doc/incremental-compile.md), where the referenced constructor
-||| may be owned by a module not present in `defs` at all. Found via a
-||| real `--inc rc2` prelude rebuild: `Prelude.Basics` references
-||| `Builtin.Void` this way with no declaration anywhere in its own
-||| translation unit, a plain "undeclared identifier" C compile error.
+||| may be owned by a module not present in `defs` at all (e.g.
+||| `Prelude.Basics` references `Builtin.Void` this way with no
+||| declaration anywhere in its own translation unit).
 export
 untaggedConstructorRefsD : RCDef -> SortedSet Name
 untaggedConstructorRefsD =
@@ -52,12 +51,9 @@ untaggedConstructorRefsD =
 ||| `untaggedConstructorRefsD` above: a no-op set in whole-program mode
 ||| (`collectDeclarations` already forward-declares every one of these
 ||| from that very same `defs` list), only populated once `defs` is a
-||| single module's own subset. Confirmed for real via the same
-||| `--inc rc2` prelude rebuild that found `untaggedConstructorRefsD`'s
-||| own gap: e.g. `Prelude.Num` calls `Prelude.EqOrd`'s own comparison
-||| functions directly by name, with nothing declaring them in
-||| `Prelude.Num`'s own translation unit ("implicit declaration of
-||| function" C errors).
+||| single module's own subset: e.g. `Prelude.Num` calls `Prelude.EqOrd`'s
+||| own comparison functions directly by name, with nothing declaring
+||| them in `Prelude.Num`'s own translation unit.
 |||
 ||| An `RAppName` reference carries the exact arity its saturated call
 ||| site uses (the callee's true arity), so the wrapper is declared

@@ -5,6 +5,9 @@
 ||| calls that version instead. Design, measurements and the reasoning
 ||| behind each restriction: `rc2/doc/world-arity-raising.md`. Disable
 ||| with `--directive noarityraise`.
+|||
+||| Copyright 2026, Hattori,Hiroki. All rights reserved.
+||| This module was licensed by BSD3. see LICENSE file for detail.
 module Compiler.RC2.ArityRaise
 
 import Compiler.RC2.Emit.Util

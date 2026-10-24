@@ -1,21 +1,20 @@
+||| Caches a constructor-destructured field, read as a native operand
+||| more than once, into a fresh native shadow instead of re-unboxing it
+||| at every read. Never touches the field's own Boxed declaration or
+||| its ownership decisions from `Compiler.RC2.RC`'s `annotate`/
+||| `Compiler.RC2.Reuse`'s `resolveAlt` -- runs strictly after both (see
+||| `RC2.idr`'s own `toRCDefs`) and only ever *adds* a wrapping
+||| `RLet`+`RDrop` around the alt's own "core" (past any leading
+||| ownership/reuse wrapper -- see `peelWrappers`). A field also read in
+||| a genuinely separate Boxed context keeps that reference on the
+||| original field id, sharing its identity via an ordinary dup/move
+||| rather than reboxing the shadow fresh each time. See
+||| `doc/con-alt-native.md` for the full design, algorithm, and
+||| pitfalls.
+|||
+||| Copyright 2026, Hattori,Hiroki. All rights reserved.
+||| This module was licensed by BSD3. see LICENSE file for detail.
 module Compiler.RC2.ConAltNative
-
--- Copyright 2026, Hattori,Hiroki. All rights reserved.
--- This module was licensed by BSD3.
-
--- Caches a constructor-destructured field, read as a native operand
--- more than once, into a fresh native shadow instead of re-unboxing it
--- at every read. Never touches the field's own Boxed declaration or
--- its ownership decisions from `Compiler.RC2.RC`'s `annotate`/
--- `Compiler.RC2.Reuse`'s `resolveAlt` -- runs strictly after both (see
--- `RC2.idr`'s own `toRCDefs`) and only ever *adds* a wrapping
--- `RLet`+`RDrop` around the alt's own "core" (past any leading
--- ownership/reuse wrapper -- see `peelWrappers`). A field also read in
--- a genuinely separate Boxed context keeps that reference on the
--- original field id, sharing its identity via an ordinary dup/move
--- rather than reboxing the shadow fresh each time. See
--- `doc/con-alt-native.md` for the full design, algorithm, and bug
--- history.
 
 import Compiler.RC2.RCExp
 import Compiler.RC2.Types
@@ -126,7 +125,7 @@ wrapNDups fc fid (S k) e = RDup fc (RCLoc fid) 0 (wrapNDups fc fid k e)
 ||| `reannotateFieldOwnership`, then drop `fid` if it comes back still
 ||| un-consumed (mirrors `RC.idr`'s own `branchBody`). Checks
 ||| `reannotateFieldOwnership`'s own result *after the fact*, not a
-||| `freeLocalsR` lookahead -- that can no longer see a native-context
+||| `freeLocalsR` lookahead -- that cannot see a native-context
 ||| occurrence already redirected away, and would wrongly conclude a
 ||| still-live shadowed field needs dropping. See
 ||| `doc/con-alt-native.md`'s "Reusing the original Boxed field..."
@@ -162,9 +161,8 @@ reannotateFieldOwnership fid owned (RLet fc var rep value body) =
     -- Mirrors RC.idr's own `annotate`/`borrowVal`: whether `fid` is
     -- still needed in `body` is decided *before* `value` is processed,
     -- so a protecting `dup` always runs ahead of any use that could
-    -- free the object -- getting this backwards caused a real
-    -- leak/use-after-free, see `doc/con-alt-native.md`'s "Reusing the
-    -- original Boxed field..." section, bug #1. `usedInBody` is
+    -- free the object (see `doc/con-alt-native.md`'s "Reusing the
+    -- original Boxed field..." section, bug #1). `usedInBody` is
     -- checked against `body` *after* `markNativeOccurrences` already
     -- redirected native occurrences away, so it only ever means
     -- "genuinely still read Boxed".
@@ -222,9 +220,9 @@ reannotateFieldOwnership fid owned (RStructSet fc structVar sf value postDrop) =
 -- Every branch case below returns `False` unconditionally --
 -- `finalizeBranch` leaves `fid` fully consumed on every arm it
 -- processes, so it's provably spent regardless of which arm runs.
--- Returning the pre-branch `owned` here instead was a real bug
--- (double-drop + use-after-free) -- see `doc/con-alt-native.md`'s
--- "Reusing the original Boxed field..." section, bug #2.
+-- Returning the pre-branch `owned` here would double-drop -- see
+-- `doc/con-alt-native.md`'s "Reusing the original Boxed field..."
+-- section, bug #2.
 -- `value` is consumed like an `RCon` field; `cell` is only borrowed,
 -- like `RStructSet`'s `structVar`.
 reannotateFieldOwnership fid owned (RFill fc cell k value postDrop) =
@@ -305,7 +303,7 @@ shadowAltFields imm nextId argIds body =
                   wrappedCore : RCExp
                   wrappedCore = foldr (shadowOneField imm) core shadowed
                   -- A leading wrapper can hold a stale `dup` of a shadowed
-                  -- field too: annotate's, for a first read now redirected
+                  -- field too: annotate's, for a first read redirected
                   -- to the shadow. `shadowOneField` rebuilds that field's
                   -- ownership from fully owned, so it must go as well.
                   rebuild' : RCExp -> RCExp

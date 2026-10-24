@@ -21,7 +21,7 @@ void idris2rc2_rtInit(void) {
   // is still correct).
   //
   // LC_NUMERIC is deliberately left to follow the environment too:
-  // numeric.c's Double<->String casts no longer use libc's
+  // numeric.c's Double<->String casts do not use libc's
   // locale-sensitive "%f"/atof, so `cast` stays '.'-based regardless,
   // while a program that calls into libc's own printf/strfmon via FFI
   // gets whatever the environment asked for.
@@ -399,9 +399,8 @@ IDRIS2RC2_Value *idris2rc2_applyClosure(IDRIS2RC2_Value *_c, IDRIS2RC2_Value *ar
 //     closure instead of one field: unique means `c->args[0..filled-1]`
 //     transfer ownership straight into the call (no dup, only the
 //     closure *shell* is torn down after -- re-dup'ing them here and
-//     then idris2rc2_drop-ing `c` would double-count every filled arg,
-//     an actual bug an early version of this function had, confirmed by
-//     Test111Basics/Basics.idr' own "free(): invalid size" crash); non-unique dups
+//     then idris2rc2_drop-ing `c` would double-count every filled arg);
+//     non-unique dups
 //     each into the scratch buffer (the closure itself keeps its own
 //     copy for whoever else still references it) and then drops `c`
 //     normally.

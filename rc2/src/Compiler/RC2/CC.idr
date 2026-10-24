@@ -1,10 +1,9 @@
+||| Invokes the system C compiler to build an executable from generated C code,
+||| linking against the `rc2` runtime and upstream Idris2 support library.
+|||
+||| Copyright 2026, Hattori,Hiroki. All rights reserved.
+||| This module was licensed by BSD3. see LICENSE file for detail.
 module Compiler.RC2.CC
-
--- Copyright 2026, Hattori,Hiroki. All rights reserved.
--- This module was licensed by BSD3.
-
--- Invokes the system C compiler to build an executable from generated C code,
--- linking against the `rc2` runtime and upstream Idris2 support library.
 
 import Core.Context.Log
 import Core.Options
@@ -94,7 +93,7 @@ compileCObjectFile sourceFile objectFile verbose
          -- `Prelude.Types.fastPack`/`fastConcat` call site to the
          -- leak-free `idris2rc2_fastPackFixed`/`idris2rc2_fastConcatFixed` instead, so this
          -- declaration itself is never actually reached by generated
-         -- code today. Kept `-Wno-error` anyway so a future regression in
+         -- code. Kept `-Wno-error` anyway so a future regression in
          -- that redirect degrades to a visible warning, not a hard
          -- `-Werror` build failure for every program in existence.
          -- `-ffunction-sections -fdata-sections`: pairs with
@@ -220,7 +219,7 @@ compileCFile objectFiles outFile foreignLibs verbose
          -- `-lidris2rc2` must resolve before `supportFile` (the shared
          -- `libidris2_support.a`): C static linking resolves an
          -- unresolved symbol from the first library on the command
-         -- line that provides it, and rc2's own runtime now provides
+         -- line that provides it, and rc2's own runtime provides
          -- native implementations (e.g. `idrnet_*`) for symbols the
          -- shared library also happens to define -- rc2's own must
          -- shadow the shared one, not the other way around. Anything

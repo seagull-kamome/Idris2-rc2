@@ -1050,3 +1050,8 @@ Regression test: `Test110Loop/LoopConstClosureParam.idr`.
    optimization was narrowing the cost of, so no longer needing that
    narrower optimization for these specific functions is expected,
    not a regression.
+
+- `LateInline` bookkeeping measurements (moved from code comments, idris2-lsp): re-summing the
+  whole-program `RAppName` counts every round cost ~5.7s per round, hence the per-round delta
+  update; flattening per-definition count lists with `concatMap` took 9.8s against 0.23s for
+  folding them straight into the map; the pass settles in about 5 rounds.

@@ -1,22 +1,21 @@
+||| Merges two nested comparisons of the same operands into one:
+|||
+|||   cmp <T [x, y] then A else (cmp ==T [x, y] then A' else B)
+|||     ==>  cmp <=T [x, y] then A else B          (A' equal to A)
+|||
+||| likewise {>, ==} -> >=, with the pair in either nesting order and
+||| either operand order. This is what `compare x y /= GT` becomes once
+||| the callee-first inliner has expanded `compare`. A comparison whose
+||| two branches are equal is dropped as well (`compare x y /= LT` leaves
+||| `cmp ==T [x, y] then T else T` behind). Runs before the dup/drop
+||| annotation, so no `postDrop` or reference-count node exists yet. No
+||| negation or branch swap is done: `cmp < then A else B` is not
+||| `cmp >= then B else A` for a Double NaN. See rc2/doc/native-type-inference.md,
+||| "Merging nested comparisons". Disable with `--directive nocmpmerge`.
+|||
+||| Copyright 2026, Hattori,Hiroki. All rights reserved.
+||| This module was licensed by BSD3. see LICENSE file for detail.
 module Compiler.RC2.CmpMerge
-
--- Copyright 2026, Hattori,Hiroki. All rights reserved.
--- This module was licensed by BSD3.
-
--- Merges two nested comparisons of the same operands into one:
---
---   cmp <T [x, y] then A else (cmp ==T [x, y] then A' else B)
---     ==>  cmp <=T [x, y] then A else B          (A' equal to A)
---
--- likewise {>, ==} -> >=, with the pair in either nesting order and
--- either operand order. This is what `compare x y /= GT` becomes once
--- the callee-first inliner has expanded `compare`. A comparison whose
--- two branches are equal is dropped as well (`compare x y /= LT` leaves
--- `cmp ==T [x, y] then T else T` behind). Runs before the dup/drop
--- annotation, so no `postDrop` or reference-count node exists yet. No
--- negation or branch swap is done: `cmp < then A else B` is not
--- `cmp >= then B else A` for a Double NaN. See rc2/doc/native-type-inference.md,
--- "Merging nested comparisons". Disable with `--directive nocmpmerge`.
 
 import Compiler.RC2.RCExp
 import Compiler.RC2.Types

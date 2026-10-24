@@ -588,3 +588,5 @@ Measured (200000 x 100-element list loop whose cons alt fires
 offer+releaseReuse on every element, 5 alternating runs): single-threaded
 ~802 ms -> ~778 ms (-3%); with `idris2rc2_enableMultiThreading` called
 first ~905 ms -> ~774 ms (-14%).
+
+- Measured on idris2-lsp: `freeLocalsR body` at every `RLet`/branch arm cost 2.7s of the 3.25s "RC annotate + Reuse + ConAltNative" stage, which is why ownership decisions ask `RCExp.mentionedLocals` for the handful of owned targets instead.

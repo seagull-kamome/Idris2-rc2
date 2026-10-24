@@ -231,7 +231,7 @@ typedef struct {
 // codebase (see idris2rc2_dispatchClosure's switch in idris2rc2_rt.c, whose
 // cases run 0 through 20 with no case above 20). Compiler.RC2.EmitUtil's
 // boxedConstConExpr selects the matching IDRIS2RC2_ConstConstructorN by
-// field count, falling back to the old per-call-site anonymous-struct
+// field count, falling back to a per-call-site anonymous-struct
 // declaration for the (in practice unreachable) N > 20 case. Like
 // IDRIS2RC2_ConstClosure, these are never heap-allocated, sizeof()'d,
 // or handed to anything assuming the real IDRIS2RC2_Constructor layout.

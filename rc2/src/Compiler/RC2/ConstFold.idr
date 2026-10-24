@@ -1,16 +1,14 @@
+||| Constant folding: constant `ExtPrim` calls (`prim__codegen`),
+||| arithmetic/comparisons (RPrimVal/RCmpCase), constructors/closures
+||| (RCConstCon/RCConstClosure), whole-program CAF-boundary crossing,
+||| and RConCase scrutinee resolution. Runs between Compiler.RC2.Inline
+||| and Phase 2 annotation. Four distinct designs live in one module --
+||| see rc2/doc/const-con-fold.md, const-closure-fold.md,
+||| const-caf-fold.md, and cast-fold-scope.md.
+|||
+||| Copyright 2026, Hattori,Hiroki. All rights reserved.
+||| This module was licensed by BSD3. see LICENSE file for detail.
 module Compiler.RC2.ConstFold
-
--- Copyright 2026, Hattori,Hiroki. All rights reserved.
--- This module was licensed by BSD3.
-
--- Constant folding: constant `ExtPrim` calls (`prim__codegen` --
--- formerly a separate Compiler.RC2.ConstExtPrim pass),
--- arithmetic/comparisons (RPrimVal/RCmpCase), constructors/closures
--- (RCConstCon/RCConstClosure), whole-program CAF-boundary crossing,
--- and RConCase scrutinee resolution. Runs between Compiler.RC2.Inline
--- and Phase 2 annotation. Four distinct designs live in one module --
--- see rc2/doc/const-con-fold.md, const-closure-fold.md,
--- const-caf-fold.md, and cast-fold-scope.md.
 
 import Compiler.RC2.RCExp
 import Compiler.RC2.Types
@@ -285,9 +283,9 @@ foldConst : CafTable -> Env -> RCExp -> RCExp
 -- `[1,2,3,4,5]`'s own ANF folds inside-out), then the *fold result*
 -- (not the original shape) is classified -- see
 -- rc2/doc/const-con-fold.md's Bug #1 for why that distinction matters.
--- A `RPrimVal`/`RCConstCon`/`RCConstClosure` result means "now a known
+-- A `RPrimVal`/`RCConstCon`/`RCConstClosure` result means "a known
 -- constant": insert into `env`, drop the `RLet` if `body` (post-fold)
--- no longer references the variable.
+-- does not reference the variable.
 foldConst caf env (RLet fc var rep value body) =
     let value' = foldConst caf env value
     in case value' of

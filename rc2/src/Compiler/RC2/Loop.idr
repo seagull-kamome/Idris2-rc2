@@ -1,13 +1,12 @@
+||| Self-tail-call loop conversion: wraps self-recursive calls in `RLoop`/`RLoopContinue`
+||| to avoid trampoline dispatch, and promotes boxed parameters to native shadows
+||| where usage is consistently native.
+||| Scope: Self-tail-calls only (mutual recursion handled by MutualLoop).
+||| See `rc2/doc/loop-conversion.md` for the full design and rationale.
+|||
+||| Copyright 2026, Hattori,Hiroki. All rights reserved.
+||| This module was licensed by BSD3. see LICENSE file for detail.
 module Compiler.RC2.Loop
-
--- Copyright 2026, Hattori,Hiroki. All rights reserved.
--- This module was licensed by BSD3.
-
--- Self-tail-call loop conversion: wraps self-recursive calls in `RLoop`/`RLoopContinue`
--- to avoid trampoline dispatch, and promotes boxed parameters to native shadows
--- where usage is consistently native.
--- Scope: Self-tail-calls only (mutual recursion handled by MutualLoop).
--- See `rc2/doc/loop-conversion.md` for the full design and rationale.
 
 import Compiler.RC2.RCExp
 import Compiler.RC2.Types
@@ -514,9 +513,9 @@ nativeArgType p body =
 ||| -- see "Batched, multi-id native-type analysis" below. A definition
 ||| with many top-level parameters (routine after lambda-lifting, which
 ||| turns a closure's captured environment into extra arguments) and a
-||| large body used to make calling `nativeArgType` once per parameter
-||| cost O(parameter count x body size); this is the same answer in a
-||| single O(body size) pass.
+||| large body would cost O(parameter count x body size) if
+||| `nativeArgType` were called once per parameter; this is the same answer
+||| in a single O(body size) pass.
 export
 nativeArgTypeBatch : List Int -> RCExp -> SortedMap Int PrimType
 nativeArgTypeBatch ps body =
@@ -650,26 +649,18 @@ callArgOrOpNativeTy table p body =
 |||
 ||| `nativeArgType`/`callArgOrOpNativeTy` above each ask this
 ||| question about *one* id, walking `body` in full to answer it.
-||| `applyLoop` (and, via `primCallee`, `buildCalleeTable`)
-||| originally called them once per top-level parameter -- for a
-||| definition with many parameters (routine after lambda-lifting) and
-||| a large body, that made this whole pass cost O(parameter count x
-||| body size) per definition, which dominated `rc2: Loop conversion`'s
-||| own wall-clock time outright on a large real program (measured
-||| ~41s, unchanged by the `Compiler.RC2.Inline` case-of-case fix --
-||| see `rc2/doc/inlining.md` -- since this is a wholly separate
-||| bottleneck). `nativeArgTypesFor`/`callArgNativeReadsFor` above
+||| Calling them once per top-level parameter (as `applyLoop` and, via
+||| `primCallee`, `buildCalleeTable` would) costs O(parameter count x
+||| body size) per definition -- see `rc2/doc/loop-conversion.md`.
+||| `nativeArgTypesFor`/`callArgNativeReadsFor` above
 ||| answer the same question for a *whole set* of ids in one shared
 ||| walk instead; `applyLoop` below computes its own `opTypes`/
 ||| `callTypes` once (for every one of its own `argIds` together) and
 ||| reuses them for both `eligible` and `eligibleWithCallArgs`, rather
 ||| than re-deriving them per parameter via `nativeArgType`/
-||| `callArgOrOpNativeTy`. The single-id functions above are kept
-||| unchanged (now implemented as thin wrappers where that was cheap to
-||| do, e.g. `nativeArgType`) for `Compiler.RC2.DualABI`'s own
-||| single-call use (`nativeArgTypes var body`, `paramEligibility`'s own
-||| `Nothing` branch, since updated to use `nativeArgTypeBatch` too) and
-||| `Compiler.RC2.ConAltNative`'s per-alt use (also updated).
+||| `callArgOrOpNativeTy`. The single-id functions above remain for
+||| `Compiler.RC2.DualABI`'s own single-call use (`nativeArgTypes var
+||| body`).
 
 ||| Whether `v` survives `stripOwnership`'s own filtering -- kept
 ||| (`True`) unless it names one of `ids`; a non-`RCLoc` local (a
@@ -682,9 +673,8 @@ keepUnlessOwned _ _ = True
 ||| Remove every `RDup`/`RDrop`/`RFree` target, and every `ROp`/
 ||| `RCmpCase` `postDrop` entry, naming one of `ids`. A native value
 ||| never needs reference-count bookkeeping at all, so whatever
-||| `annotate` (Phase 2) originally decided about one of `ids`'s own
-||| dup/drop lifetime -- back when it was Boxed and read from multiple
-||| Boxed-context sites -- no longer applies and must be removed
+||| `annotate` (Phase 2) decided about one of `ids`'s own
+||| dup/drop lifetime while it was Boxed does not apply and must be removed
 ||| outright, not merely left in place: a native C scalar has no
 ||| refcount header to pass to
 ||| `idris2rc2_dup`/`idris2rc2_drop`/`idris2rc2_free` in the first
@@ -1017,7 +1007,7 @@ isInvariantExpr _ _ = False
 ||| cycles, never correctness (a trapping `Div`/`Mod` is kept out by
 ||| `hoistableOp`). Entering branch arms doesn't relax the
 ||| `Boxed` restriction at all -- if anything it's the reason that
-||| restriction matters more now, not less (see below).
+||| restriction matters more, not less (see below).
 |||
 ||| **Why no extra ownership bookkeeping is needed for the operands
 ||| being *read***: a hoisted binding's own `postDrop`/leading `RDup`
@@ -1046,24 +1036,21 @@ isInvariantExpr _ _ = False
 ||| that doesn't use it -- the "at most one `RDrop` per branch entry"
 ||| pattern this whole ownership system is built on). Hoisting `var`'s
 ||| construction out from under that arm, to run unconditionally before
-||| the loop, leaves that drop stale: what used to release a fresh,
-||| per-iteration allocation now double-frees the *one*, shared, hoisted
+||| the loop, leaves that drop stale: what releases a fresh,
+||| per-iteration allocation would double-free the *one*, shared, hoisted
 ||| value on every iteration that takes the non-using arm -- fixing this
 ||| up would need this pass to also patch that other arm's own drop, the
 ||| same compensating-drop bookkeeping `Compiler.RC2.Sink` already does
 ||| for the opposite move (sinking *into* one arm instead of hoisting
-||| out of one). Reproduced directly before this restriction existed:
-||| hoisting a `Boxed`-`Rep` invariant `RCon` used only in one arm
-||| crashed with `malloc(): unaligned tcache chunk detected`, a
-||| `valgrind`-confirmed genuine double-free. A native result sidesteps
+||| out of one). A native result sidesteps
 ||| the whole issue structurally -- native values are never dup'd/
 ||| dropped anywhere in this runtime, so no branch can ever hold a stale
 ||| drop for one -- which is why `hoistInvariantPrefix` below still
-||| gates on `isNativeRep rep`, not just `isInvariantExpr`, now that the
+||| gates on `isNativeRep rep`, not just `isInvariantExpr`, since the
 ||| scan itself reaches inside every arm.
 |||
 ||| `var` itself is deliberately *not* added to `variant` when hoisted
-||| -- it's now a loop-external value too, so a later binding that only
+||| -- it's a loop-external value too, so a later binding that only
 ||| reads *it*, anywhere, including a sibling arm, remains eligible for
 ||| hoisting in the same pass, no fixed-point iteration required. Each
 ||| `RConAlt`'s own pattern-bound `args`, by contrast, only exist for the
@@ -1210,7 +1197,7 @@ markInvariantNative _ _ e = e
 ||| and `any`'s own short-circuiting search covers the list-argument
 ||| cases the same way), unlike summing a `Nat` count via `+`/`sum`
 ||| (always strict in both operands) then comparing `> 0` at the very
-||| end, which is what this used to do.
+||| end.
 usesInvariant : Int -> RCExp -> Bool
 usesInvariant p e = existsInvariantUse e
   where
@@ -1303,10 +1290,8 @@ dupInvariantBoxed p (ROp fc lazy op args postDrop) =
         occ = countInvariantDups p argsList
     in wrapInvariantDups fc p occ (ROp fc lazy op args (postDrop ++ List.replicate occ (RCLoc p)))
 -- Mirrors the ROp case immediately above exactly, primitive-agnostic
--- (RC.idr's own annotate RExtPrim case now follows the same contract
--- as ROp's own -- see doc/c-struct-support.md's "Why a dedicated node"
--- section for the fixed-as-of gap this used to be a deliberate no-op
--- for).
+-- (RC.idr's own annotate RExtPrim case follows the same contract
+-- as ROp's own -- see doc/c-struct-support.md's "Why a dedicated node").
 dupInvariantBoxed p (RExtPrim fc lazy nm args postDrop) =
     let occ = countInvariantDups p args
     in wrapInvariantDups fc p occ (RExtPrim fc lazy nm args (postDrop ++ List.replicate occ (RCLoc p)))
@@ -1442,15 +1427,14 @@ applyLoopFromId nextId0 calleeTable noPromote self (MkRCFun args retRep isWorker
                   -- supplies a parameter's own id unchanged is a purely
                   -- structural question, independent of whether that id
                   -- has since been renamed to a shadow -- so this scan
-                  -- reaches exactly the same answer run here, on the
-                  -- original ids, as `invariantLoopParamIds` used to
-                  -- reach running after renaming.
+                  -- reaches the same answer on the original ids as after
+                  -- renaming.
                   invariantIdsPre : SortedSet Int := invariantLoopParamIds (map (\p => (p, RBoxed)) argIds) (collectContinueArgs body')
                   -- One `nativeArgType`/`callArgOrOpNativeTy` call per
                   -- parameter (not batched across `argIds` -- see this
                   -- module's own "Batched, multi-id native-type
-                  -- analysis" section for why a batched version was
-                  -- tried here and reverted). Variant parameters get the
+                  -- analysis" section and `rc2/doc/loop-conversion.md`
+                  -- for why). Variant parameters get the
                   -- richer, call-argument-aware eligibility
                   -- (`callArgOrOpNativeTy`); invariant ones
                   -- deliberately don't (see this function's own doc
@@ -1480,8 +1464,8 @@ applyLoopFromId nextId0 calleeTable noPromote self (MkRCFun args retRep isWorker
                   nextId2 : Int := nextId1 + cast (length eligibleInvariant)
                   renamingVariant : Renaming := fromList $ map (\(p, sid, _) => (p, sid)) shadowedVariant
                   shadowIdsVariant : SortedSet Int := fromList $ map (\(_, sid, _) => sid) shadowedVariant
-                  -- Every eligible *variant* parameter still gets the
-                  -- original blanket treatment (every occurrence,
+                  -- Every eligible *variant* parameter gets the
+                  -- blanket treatment (every occurrence,
                   -- native and Boxed alike, redirected to the shadow) --
                   -- unchanged, deliberately out of scope (see this
                   -- module's own header note above for why a
@@ -1502,15 +1486,14 @@ applyLoopFromId nextId0 calleeTable noPromote self (MkRCFun args retRep isWorker
                   -- `Compiler.RC2.ConAltNative`'s own `shadowOneField`
                   -- takes for a destructured field. Run *once*, over
                   -- every invariant parameter's own id together (rather
-                  -- than once per parameter inside the `foldr` below,
-                  -- the original shape here) -- `stripOwnership`'s own
+                  -- than once per parameter inside the `foldr` below)
+                  -- -- `stripOwnership`'s own
                   -- filtering is a pure per-node set-membership check
                   -- with no interaction between different ids, so
                   -- stripping the whole set in one pass is exactly
                   -- equivalent to stripping each singleton in sequence,
                   -- just without body-sized-walk being repeated once
-                  -- per invariant parameter (found while profiling a
-                  -- real program -- see `rc2/doc/loop-conversion.md`'s
+                  -- per invariant parameter (see `rc2/doc/loop-conversion.md`'s
                   -- "Bugs found and fixed" #7's own follow-up).
                   invariantIdsAll = SortedSet.fromList $ map (\(p, _, _) => p) shadowedInvariant
                   rewritten : RCExp
@@ -1518,12 +1501,7 @@ applyLoopFromId nextId0 calleeTable noPromote self (MkRCFun args retRep isWorker
                                 (stripOwnership invariantIdsAll variantRewritten) shadowedInvariant
                   -- O(P log P) map lookup instead of a `find` (O(P)
                   -- linear scan) called once per `p` in `argIds` (O(P)
-                  -- of them) -- the original was O(P^2), found via
-                  -- profiling a real program where several top-level
-                  -- definitions with a large captured-closure parameter
-                  -- count P but a *small* body (so none of this
-                  -- module's other, body-size-driven costs explained
-                  -- their own slowness) still took up to ~2s each.
+                  -- of them) -- see `rc2/doc/loop-conversion.md`.
                   shadowedById : SortedMap Int (Int, NativeTy)
                   shadowedById = SortedMap.fromList $ map (\(p, sid, ty) => (p, (sid, ty))) (shadowedVariant ++ shadowedInvariant)
                   fullLoopParams : List (Int, Rep)
@@ -1590,7 +1568,7 @@ applyLoopFromId nextId0 calleeTable noPromote self (MkRCFun args retRep isWorker
                   -- with its own one-time `RLet`: if no Boxed-context
                   -- occurrence of `p` survived `markInvariantNative`
                   -- above (`countUsesR` finds none), this is the
-                  -- original, simpler shape -- an unconditional `RDrop`
+                  -- simple shape -- an unconditional `RDrop`
                   -- right after the shadow read. Otherwise (see this
                   -- module's own header note above for the full
                   -- reasoning), every surviving occurrence is `dup`'d

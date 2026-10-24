@@ -1,27 +1,26 @@
+||| Mutual tail recursion loop conversion pass: synthesizes a merged
+||| function for each group of mutually tail-recursive functions,
+||| rewriting cross-member tail calls into self-tail calls so
+||| `Compiler.RC2.Loop` can subsequently convert them into `goto`-based
+||| loops. See `rc2/doc/loop-conversion.md`'s "Compiler.RC2.MutualLoop:
+||| mutual tail recursion" section for the full design, the renaming
+||| and arity-padding invariants this pass must get right on its own
+||| (it never goes through `annotate`, so ownership is preserved only
+||| by pure renaming, not re-decided), and its documented interaction
+||| with native-shadow promotion in `Compiler.RC2.Loop`.
+|||
+||| Scope: this pass only merges genuine cycles of size >= 2 in the
+||| *tail-call* graph (via strongly-connected-components, so indirect
+||| cycles through several functions are found too, not just direct
+||| pairs). A group of size 1 is ordinary (possibly self-recursive)
+||| output Compiler.RC2.Loop already handles on its own; this pass
+||| leaves it alone entirely. A call wrapped in a `LazyReason` is not
+||| considered a tail-call edge at all (matches Compiler.RC2.Loop's own
+||| restriction).
+|||
+||| Copyright 2026, Hattori,Hiroki. All rights reserved.
+||| This module was licensed by BSD3. see LICENSE file for detail.
 module Compiler.RC2.MutualLoop
-
--- Copyright 2026, Hattori,Hiroki. All rights reserved.
--- This module was licensed by BSD3.
-
--- Mutual tail recursion loop conversion pass: synthesizes a merged
--- function for each group of mutually tail-recursive functions,
--- rewriting cross-member tail calls into self-tail calls so
--- `Compiler.RC2.Loop` can subsequently convert them into `goto`-based
--- loops. See `rc2/doc/loop-conversion.md`'s "Compiler.RC2.MutualLoop:
--- mutual tail recursion" section for the full design, the renaming
--- and arity-padding invariants this pass must get right on its own
--- (it never goes through `annotate`, so ownership is preserved only
--- by pure renaming, not re-decided), and its documented interaction
--- with native-shadow promotion in `Compiler.RC2.Loop`.
---
--- Scope: this pass only merges genuine cycles of size >= 2 in the
--- *tail-call* graph (via strongly-connected-components, so indirect
--- cycles through several functions are found too, not just direct
--- pairs). A group of size 1 is ordinary (possibly self-recursive)
--- output Compiler.RC2.Loop already handles on its own; this pass
--- leaves it alone entirely. A call wrapped in a `LazyReason` is not
--- considered a tail-call edge at all (matches Compiler.RC2.Loop's own
--- restriction).
 
 import Compiler.RC2.RCExp
 import Compiler.RC2.Loop
@@ -38,8 +37,8 @@ import Data.SortedSet
 -- lives in Compiler.RC2.Loop -- shared with its own native-shadow-
 -- promotion rewrite. `buildGroup` only ever renames each member's own
 -- *top-level argument* ids onto the merged function's shared slot ids
--- (arity unification, genuinely needed regardless); it no longer also
--- renames every *internally*-bound id to dodge cross-member
+-- (arity unification, genuinely needed regardless); it does not
+-- rename every *internally*-bound id to dodge cross-member
 -- collisions, since every id in the whole program is already unique
 -- from the moment `Compiler.RC2.RC.normalizeDef` first assigns it --
 -- see `Compiler.RC2.Util`'s own `VarId` doc comment.

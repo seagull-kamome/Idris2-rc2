@@ -1,14 +1,13 @@
+||| Branch-local sinking: moves a `let`-bound value into every branch
+||| arm that actually reads it (duplicating it there if more than one
+||| does), dropping it everywhere else instead of computing it
+||| unconditionally. Deliberately its own pass, not folded into
+||| `Compiler.RC2.Loop` -- see `rc2/doc/branch-sinking.md` for the full
+||| design rationale, algorithm, and pitfalls.
+|||
+||| Copyright 2026, Hattori,Hiroki. All rights reserved.
+||| This module was licensed by BSD3. see LICENSE file for detail.
 module Compiler.RC2.Sink
-
--- Copyright 2026, Hattori,Hiroki. All rights reserved.
--- This module was licensed by BSD3.
-
--- Branch-local sinking: moves a `let`-bound value into every branch
--- arm that actually reads it (duplicating it there if more than one
--- does), dropping it everywhere else instead of computing it
--- unconditionally. Deliberately its own pass, not folded into
--- `Compiler.RC2.Loop` -- see `rc2/doc/branch-sinking.md` for the full
--- design rationale, algorithm, and bug history.
 
 import Compiler.RC2.RCExp
 import Compiler.RC2.Util
@@ -109,10 +108,9 @@ stripIfUnused var branch =
 ||| its args), or (tracked via `dupped`) any `RCon` field *not* `dup`'d
 ||| first. These
 ||| need an explicit `drop` in every arm `value` doesn't sink into,
-||| replacing the release `value`'s own `postDrop`/field-move used to
-||| unconditionally provide -- see doc/branch-sinking.md's "The rewrite
-||| itself, and the second real bug it took to get right" (the
-||| `getAt` leak this fixes).
+||| replacing the release `value`'s own `postDrop`/field-move that
+||| would otherwise unconditionally provide it -- see
+||| doc/branch-sinking.md's "The rewrite itself".
 |||
 ||| Restricted to `RCLoc` operands even where `localRepIn` alone would
 ||| call a constant `RBoxed` too (`RCEmptyCon`/`RCConstCon`/
@@ -120,10 +118,8 @@ stripIfUnused var branch =
 ||| natively) -- none of `RCLocal`'s constant-shaped constructors is
 ||| ever a real refcounted value with a matching `drop` to balance;
 ||| `Compiler.RC2.Emit.Util`'s own `varName` has no rendering for one at
-||| all (an "unreachable" placeholder), which is exactly what a
-||| constant field of a sunk `RCon` used to reach here once
-||| `Compiler.RC2.LateInline`'s own splice stopped wrapping *every*
-||| argument in its own fresh `RLet` first.
+||| all (an "unreachable" placeholder), which is what a constant field
+||| of a sunk `RCon` would reach here.
 consumedOperands : SortedMap Int Rep -> RCExp -> List RCLocal
 consumedOperands reps = go []
   where
@@ -285,7 +281,7 @@ stripForSink var fc consumed branch = stripIfUnused var branch >>= addOperandDro
 ||| and only bloats code size; leaving the original, single, pre-branch
 ||| computation in place is strictly better). See
 ||| doc/branch-sinking.md's "The rewrite itself" for the fuller
-||| rationale (formerly "exactly one arm", generalised here).
+||| rationale.
 sinkIntoBodies : FC -> Int -> Rep -> RCExp -> List RCLocal -> List RCExp -> Maybe RCExp -> Maybe (List RCExp, Maybe RCExp)
 sinkIntoBodies fc var rep value consumed altBodies mDefBody =
     let altStripped : List (RCExp, Maybe RCExp)
