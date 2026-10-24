@@ -146,17 +146,6 @@ IDRIS2RC2_String const idris2rc2_osString = {
 IDRIS2RC2_String const idris2rc2_codegenString = {
     IDRIS2RC2_STOCKVAL(IDRIS2RC2_TAG_STRING), sizeof("rc2") - 1, "rc2"};
 
-IDRIS2RC2_Value *idris2rc2_Prelude_IO_prim__onCollect(IDRIS2RC2_Value *erased,
-						      IDRIS2RC2_Value *anyPtr,
-						      IDRIS2RC2_Value *onFree,
-						      IDRIS2RC2_Value *world) {
-  IDRIS2RC2_GCPointer *r = IDRIS2RC2_NEW(IDRIS2RC2_GCPointer);
-  r->header.tag = IDRIS2RC2_TAG_GCPOINTER;
-  r->p = idris2rc2_dup(anyPtr);
-  r->onCollect = (IDRIS2RC2_Closure *)idris2rc2_dup(onFree);
-  return (IDRIS2RC2_Value *)r;
-}
-
 IDRIS2RC2_Value *idris2rc2_Prelude_IO_prim__onCollectAny(
     IDRIS2RC2_Value *anyPtr, IDRIS2RC2_Value *onFree, IDRIS2RC2_Value *world) {
   IDRIS2RC2_GCPointer *r = IDRIS2RC2_NEW(IDRIS2RC2_GCPointer);
@@ -164,6 +153,14 @@ IDRIS2RC2_Value *idris2rc2_Prelude_IO_prim__onCollectAny(
   r->p = idris2rc2_dup(anyPtr);
   r->onCollect = (IDRIS2RC2_Closure *)idris2rc2_dup(onFree);
   return (IDRIS2RC2_Value *)r;
+}
+
+// The typed form only has the erased pointee type in front.
+IDRIS2RC2_Value *idris2rc2_Prelude_IO_prim__onCollect(IDRIS2RC2_Value *erased,
+						      IDRIS2RC2_Value *anyPtr,
+						      IDRIS2RC2_Value *onFree,
+						      IDRIS2RC2_Value *world) {
+  return idris2rc2_Prelude_IO_prim__onCollectAny(anyPtr, onFree, world);
 }
 
 // prelude/Prelude/IO.idr's `prim__fork` is declared with a generic
