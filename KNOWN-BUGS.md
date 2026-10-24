@@ -228,6 +228,15 @@ If one of these stops reproducing, or a fix lands, remove the entry.
   gives U+FFFD for each. rc2 matches Chez. `Test143Utf8Invalid` is in
   `NO_REFC_DIFF_TESTS` for this reason.
 
+- **Upstream `network`'s UDP buffer calls (#174).** `sendToBuf` swaps
+  the bytes of the caller's own buffer in place (`[1..8]` is
+  `[4,3,2,1,8,7,6,5]` after a send), `recvFromBuf` gets no sender
+  address (`Invalid:0`: `idrnet_recvfrom_buf` passes `fromlen = 0` to
+  `recvfrom`), and it reports one byte too many (`result + 1` in
+  `Network/Socket/Raw.idr`). The Chez backend behaves the same, and rc2
+  copies the upstream C. Left as is; nothing in rc2 or `libs/` calls
+  them (`rc2base` uses plain `send`/`recv`).
+
 ## `Nat` division and remainder are slow
 
 `div` and `mod` on a `Nat` (`Integral Nat` in `Data.Nat` of the base library) subtract
