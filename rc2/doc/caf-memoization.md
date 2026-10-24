@@ -78,7 +78,7 @@ criteria ever change.
 
 ```
 Inline (Lifted level)
-  -> toRCDefPreFold (Lifted -> RCExp, "Phase 1", per definition)
+  -> normalizeProgram (Lifted -> RCExp, "Phase 1", per definition)
   -> foldConstProgram (ConstFold, whole-program CafTable fixpoint)
   -> [insertMemoize goes here]
   -> toRCDefPostFold (Phase 2 ownership annotation) + Reuse + ConAltNative

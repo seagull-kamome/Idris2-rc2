@@ -416,9 +416,9 @@ data RCExp : Type where
      ||| Increment `loc`'s refcount by `S extra` (`extra=0`: one
      ||| increment), then continue -- what a borrowed use lowers to.
      ||| `S extra`, not a plain `Nat`, makes a no-op `RDup`
-     ||| unrepresentable at the type level. Every construction site as
-     ||| of this commit passes `extra = 0`; a future pass batches
-     ||| several increments into one `extra > 0` call.
+     ||| unrepresentable at the type level. `RC` and the passes after it
+     ||| make single increments (`extra = 0`); `Compiler.RC2.DupMerge`
+     ||| batches several into one `extra > 0` call (`idris2rc2_dup_n`).
      RDup       : FC -> RCLocal -> (extra : Nat) -> RCExp -> RCExp
      ||| Cleanup of owned variables dead at this point. Lowers to
      ||| `idris2rc2_drop` calls, except any folded into a reuse slot instead.
@@ -538,22 +538,6 @@ freeLocalsR (RDelay _ _ _ caps) = fromList caps
 freeLocalsR (RForce _ _ v _) = fromList [v]
 freeLocalsR _ = empty
 
-||| Every `RCLocal` named in a *use* position anywhere in `e` --
-||| `freeLocalsR` without the binder subtraction, and without its
-||| pre-`Compiler.RC2.Loop` scope: every post-`Loop`/`DualABI`
-||| constructor (`RLoop`, `RLoopContinue`, `RAppNameRep`,
-||| `RAppFFIInline`) is covered here too, since this one's only caller
-||| (`Compiler.RC2.DeadVars`) runs at the very end of the pipeline,
-||| where all four genuinely occur. `freeLocalsR` falls through to
-||| `empty` for them -- harmless for its own callers, which all run
-||| before those constructors exist.
-|||
-||| Deliberately *not* subtracting binders is what lets a caller ask
-||| the question once for a whole definition instead of once per
-||| binding scope: every local id within one definition is unique
-||| (`Compiler.RC2.Util`'s own `VarId`), so "named anywhere in this
-||| definition" and "named within its own binder's scope" answer the
-||| same for any id that definition binds.
 ||| `insert` every element of `xs`, one at a time, into `acc` -- never
 ||| `union (fromList xs) acc`, see `mentionedLocalsAcc`'s own note on
 ||| which way round `Data.SortedSet.union` actually copies.
@@ -610,6 +594,22 @@ mentionedLocalsAcc acc (RForce _ _ v postDrop) = insertAll (v :: postDrop) acc
 -- RPrimVal/RErased/RCrash: no locals at all.
 mentionedLocalsAcc acc _ = acc
 
+||| Every `RCLocal` named in a *use* position anywhere in `e` --
+||| `freeLocalsR` without the binder subtraction, and without its
+||| pre-`Compiler.RC2.Loop` scope: every post-`Loop`/`DualABI`
+||| constructor (`RLoop`, `RLoopContinue`, `RAppNameRep`,
+||| `RAppFFIInline`) is covered here too, since this one's only caller
+||| (`Compiler.RC2.DeadVars`) runs at the very end of the pipeline,
+||| where all four genuinely occur. `freeLocalsR` falls through to
+||| `empty` for them -- harmless for its own callers, which all run
+||| before those constructors exist.
+|||
+||| Deliberately *not* subtracting binders is what lets a caller ask
+||| the question once for a whole definition instead of once per
+||| binding scope: every local id within one definition is unique
+||| (`Compiler.RC2.Util`'s own `VarId`), so "named anywhere in this
+||| definition" and "named within its own binder's scope" answer the
+||| same for any id that definition binds.
 export
 mentionedLocals : RCExp -> SortedSet RCLocal
 mentionedLocals = mentionedLocalsAcc empty

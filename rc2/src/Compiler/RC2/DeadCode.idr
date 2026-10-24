@@ -3,9 +3,9 @@ module Compiler.RC2.DeadCode
 -- Copyright 2026, Hattori,Hiroki. All rights reserved.
 -- This module was licensed by BSD3.
 
--- Whole-program mark-and-sweep dead-code elimination, run as
--- `toRCDefs`'s own final stage, right before `Emit.generateCSourceFile`
--- consumes the same list. See `rc2/doc/dead-code-elim.md`'s
+-- Whole-program mark-and-sweep dead-code elimination, run after `DualABI`
+-- and the reuse re-check and before `PushDown`, `DupMerge`, `LeafTail`,
+-- `DeadVars` and `FunDedup` (`toRCDefs`). See `rc2/doc/dead-code-elim.md`'s
 -- "Motivation" for why upstream's own reachability analysis (fixed
 -- before any rc2 pass runs) can leave a definition genuinely dead only
 -- after `Inline`/`DualABI` rewrite it (confirmed via

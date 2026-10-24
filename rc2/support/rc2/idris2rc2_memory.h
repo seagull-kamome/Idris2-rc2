@@ -7,7 +7,9 @@ IDRIS2RC2_Value *idris2rc2_alloc(size_t size);
 #define IDRIS2RC2_NEW(t) ((t *)idris2rc2_alloc(sizeof(t)))
 
 // EXPERIMENTAL: idris2rc2_dup/idris2rc2_dup_n/idris2rc2_drop's own hot
-// path (the atomic refcount check/adjust itself) is defined here as
+// path (the refcount check/adjust itself, atomic or plain depending on
+// whether the program has gone multi-threaded: rc2/doc/hybrid-refcount.md)
+// is defined here as
 // `static inline`, not as an ordinary out-of-line function in memory.c,
 // so that a program's own generated .c file -- which #includes this
 // header -- sees the plain atomic instructions directly rather than an

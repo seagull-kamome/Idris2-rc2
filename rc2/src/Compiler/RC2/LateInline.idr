@@ -416,8 +416,8 @@ uniformTailType e = case tailValueReps empty e of
 ||| `Just ty` iff an `RBoxed` `RLet var value body` can become native
 ||| `ty`: `value`'s tail is uniformly native, `Emit` can render it as one
 ||| expression, and `body` uses `var` only natively. `loopSlots` goes to
-||| `hasNonNativeUse`. Not specific to splicing: `SpecClosure` reuses it
-||| (`rc2/doc/inlining.md`, "Criterion B, revisited", Layers 2/3).
+||| `hasNonNativeUse`. See `rc2/doc/inlining.md`, "Criterion B, revisited",
+||| Layers 2/3.
 export
 promotableNativeLetRep : (loopSlots : List (Int, Rep)) -> (var : Int) -> (value : RCExp) -> (body : RCExp) -> Maybe PrimType
 promotableNativeLetRep loopSlots var value body =

@@ -8,7 +8,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-// Process lifecycle hooks -- see runtime.h for the contract and why the
+// Process lifecycle hooks -- see idris2rc2_rt.h for the contract and why the
 // generated main() (Compiler.RC2.Emit's footer) is what calls them.
 void idris2rc2_rtInit(void) {
   // Adopt the environment's locale (LC_ALL / LC_CTYPE / LANG). Without
@@ -328,7 +328,7 @@ IDRIS2RC2_Value *idris2rc2_trampoline(IDRIS2RC2_Value *it) {
     // args). Unconditional atomic decrement (rather than an isUnique
     // check followed by a separate bare decrement) is what makes this
     // race-free once another thread can hold its own counted reference
-    // to the same closure (see runtime.h's idris2rc2_isUnique comment).
+    // to the same closure (see idris2rc2_isUnique's comment in idris2rc2_rt.h).
     //
     // An immortal (REFCOUNT_MAX) closure does reach this release: a closure over
     // constants only is a static (rc2/doc/static-closures.md) and the trampoline runs

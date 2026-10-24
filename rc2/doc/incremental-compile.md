@@ -237,7 +237,9 @@ Only `DeadCode.pruneDeadDefs` and the top-level driver
    for A/B isolation -- the new `incCompile` (below) reuses it verbatim
    by unconditionally including `"nodeadcode"` in the `disabled` list
    it passes to `toRCDefs`, on top of whatever `--directive noXXX`
-   flags the user also supplied. No new parameter on `toRCDefs` itself.
+   flags the user also supplied. (`toRCDefs` later gained an
+   `incremental : Bool` for the stages that need the whole program, which
+   `incCompile` does not have: function dedup is skipped.)
 
 2. **New `incCompile` function** (`Compiler.RC2.RC2`, mirrors Chez's
    `incCompile`):
@@ -250,7 +252,7 @@ Only `DeadCode.pruneDeadDefs` and the top-level driver
      check to pass).
    - Otherwise: decide `noMain` from the module's declared namespace
      (see above); output paths come from `sourcefile`
-     (`getObjFileName`/`getTTCFileName`); run `toRCDefs (nub ("nodeadcode" :: disabledStages)) [] (lambdaLifted cdata)`;
+     (`getObjFileName`/`getTTCFileName`); run `lowerProgram (nub ("nodeadcode" :: disabledStages)) True [] Nothing` over the module's definitions;
      `generateCSourceFile` into the ttc build directory's own
      `<modpath>.c` (`getTTCFileName sourcefile "c"`); `compileCObjectFile`
      it into `<modpath>.o` (skip `compileCFile` -- no link at this
@@ -421,9 +423,9 @@ supply.
 user's own call, once the tradeoff above was laid out): `RC.idr`'s
 `normalize` tags both throw sites with a dedicated, greppable marker
 (`notInlinedStructFieldMarker`) instead of a free-text message;
-`RC2.idr`'s `toRCDefs` gained an `incremental : Bool` parameter, and
+`RC.idr`'s `normalizeProgram` takes an `incremental : Bool` parameter, and
 in incremental mode only, catches exactly that marker around each
-individual `toRCDefPreFold` call and drops that one definition from
+individual definition's `normalizeTop` and drops that one definition from
 the result (whole-program mode's own `incremental = False` path is
 completely unchanged -- still an uncaught `InternalError`, since this
 case is unreachable there in practice, per the paragraph above). A

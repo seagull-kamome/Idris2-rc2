@@ -53,8 +53,8 @@ ifNative ty = if nativeEligible ty then Just ty else Nothing
 ||| pointer (payload packed into the pointer word itself, see
 ||| support/rc2/idris2rc2_datatypes.h's module note), never a real heap
 ||| allocation -- unlike IntType/Int64Type/Bits64Type (which allocate
-||| for values outside the small-int cache) or DoubleType (which always
-||| allocates). idris2rc2_dup/idris2rc2_drop/idris2rc2_free on such a
+||| for values outside the immediate range, doc/immediate-ints.md) or
+||| DoubleType (which always allocates). idris2rc2_dup/idris2rc2_drop/idris2rc2_free on such a
 ||| value are unconditional runtime no-ops: the `idris2rc2_is_unboxed`
 ||| bit-check short-circuits before ever touching a refcount. Exported
 ||| so RC.idr's `alwaysUnboxedBoxedLocalsR` can identify *Boxed*

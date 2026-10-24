@@ -88,12 +88,12 @@ static inline int64_t idris2rc2_emod_i64(int64_t n, int64_t d) {
 
 // Subset of IDRIS2RC2_INTTYPES that's always a tagged pointer
 // (Types.alwaysUnboxed) at the C level, never a real heap allocation --
-// idris2rc2_isUnique (a raw ->header.refCount read) would be undefined
-// behaviour on one of these, so the reuse-in-place arithmetic below
-// (IDRIS2RC2_INTTYPES_REUSABLE) must never be applied to them. Also
-// covered by the alwaysUnboxed dup/drop elision already (Compiler.RC2.RC's
-// alwaysUnboxedBoxedLocalsR), so there's no drop call left to reuse
-// anyway for these.
+// there is no cell to reuse in place, so the reuse-in-place arithmetic below
+// (IDRIS2RC2_INTTYPES_REUSABLE) is never applied to them (idris2rc2_isUnique
+// answers false for an immediate, but the reuse code would be dead weight).
+// Also covered by the alwaysUnboxed dup/drop elision already
+// (Compiler.RC2.RC's alwaysUnboxedBoxedLocalsR), so there's no drop call
+// left to reuse anyway for these.
 #define IDRIS2RC2_INTTYPES_TAGGED(F)                                              \
   F(Int8, int8_t, idris2rc2_to_i8, idris2rc2_mkInt8)                                     \
   F(Int16, int16_t, idris2rc2_to_i16, idris2rc2_mkInt16)                                 \
@@ -102,8 +102,8 @@ static inline int64_t idris2rc2_emod_i64(int64_t n, int64_t d) {
   F(Bits16, uint16_t, idris2rc2_to_u16, idris2rc2_mkBits16)                              \
   F(Bits32, uint32_t, idris2rc2_to_u32, idris2rc2_mkBits32)
 
-// The other subset: genuinely heap-allocated (outside the small-int
-// cache) when Boxed, so a dying/unique operand's own storage is worth
+// The other subset: heap-allocated when Boxed and the value does not fit
+// the immediate range (rc2/doc/immediate-ints.md), so a dying/unique operand's own storage is worth
 // reusing in place -- see rc2/doc/rop-reuse.md.
 #define IDRIS2RC2_INTTYPES_REUSABLE(F)                                            \
   F(Int64, int64_t, idris2rc2_to_i64, idris2rc2_mkInt64)                                 \
@@ -328,7 +328,7 @@ static inline IDRIS2RC2_Value *idris2rc2_negate_Double(IDRIS2RC2_Value *x) {
 }
 
 // ---- Double ----
-// Double: reuse-consuming -- never small-int-cached (idris2rc2_mkDouble
+// Double: reuse-consuming -- never an immediate (idris2rc2_mkDouble
 // always allocates), so every Boxed Double is a genuine heap struct
 // worth reusing when unique -- see rc2/doc/rop-reuse.md.
 #define IDRIS2RC2_DOUBLE_BINOP(OPNAME, OP)                                         \

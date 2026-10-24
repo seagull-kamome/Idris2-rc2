@@ -19,10 +19,12 @@
 void idris2rc2_rtInit(void);
 void idris2rc2_rtFinish(void);
 
-// Acquire ordering pairs with idris2rc2_drop's release-decrement: once this
-// observes 1, the calling thread is provably the sole owner (the release
-// fence of whichever thread dropped the second-to-last reference is now
-// visible), so in-place mutation of `x` needs no further synchronization.
+// In multi-threaded mode (idris2rc2_threaded, rc2/doc/hybrid-refcount.md) the
+// load has acquire ordering, pairing with idris2rc2_drop's release-decrement:
+// once it observes 1, the calling thread is provably the sole owner (the
+// release fence of whichever thread dropped the second-to-last reference is
+// now visible), so in-place mutation of `x` needs no further synchronization.
+// Before the program goes multi-threaded the count is a plain field.
 // Kept as a macro (not a typed inline function) so it stays generic over any
 // struct starting with an IDRIS2RC2_Header `header` field, matching every
 // call site's own concrete pointer type (e.g. IDRIS2RC2_Closure *).
@@ -52,7 +54,7 @@ static inline void idris2rc2_releaseReuse(IDRIS2RC2_Constructor *c) {
 
 IDRIS2RC2_Value *idris2rc2_applyClosure(IDRIS2RC2_Value *closure, IDRIS2RC2_Value *arg);
 IDRIS2RC2_Value *idris2rc2_tailcallApplyClosure(IDRIS2RC2_Value *closure, IDRIS2RC2_Value *arg);
-// See runtime.c's own doc comment: applies `n` new arguments to
+// See idris2rc2_rt.c's own doc comment: applies `n` new arguments to
 // `closure` in one call (`newArgs[0..n-1]`, ownership transferred to
 // this call), used for a source-level curried application
 // `Compiler.RC2.RC`'s `collectAppChain` merged into one `RApp` node.
@@ -74,7 +76,7 @@ int64_t idris2rc2_extractInt(IDRIS2RC2_Value *v);
 IDRIS2RC2_Value *idris2rc2_crash(IDRIS2RC2_Value *msg);
 
 // Predeclared name strings for Idris2's "typecase" feature -- see the
-// definition site in runtime.c for why these need to exist independent of
+// definition site in idris2rc2_rt.c for why these need to exist independent of
 // any particular program's own constructor-name declarations.
 extern char const idris2rc2_constr_Int[];
 extern char const idris2rc2_constr_Int8[];
@@ -90,7 +92,7 @@ extern char const idris2rc2_constr_Integer[];
 extern char const idris2rc2_constr_Char[];
 extern char const idris2rc2_constr_String[];
 extern char const idris2rc2_constr____gt[];
-extern char const idris2rc2_constr__percentWorld[]; // see runtime.c's own comment
+extern char const idris2rc2_constr__percentWorld[]; // see idris2rc2_rt.c's own comment
 
 // idris2-src's own support/c headers are missing a handful of prototypes
 // for functions their own .c files implement just fine and libs/ own

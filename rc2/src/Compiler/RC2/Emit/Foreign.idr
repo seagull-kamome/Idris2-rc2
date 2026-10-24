@@ -9,7 +9,7 @@
 ||| lowering (`emitAppFFIInlineInto`, `emitNativeValue`'s `RAppFFIInline`
 ||| case) also reaches for. Split out of `Emit.idr` to keep that module
 ||| on RCExp-to-C lowering; the dependency runs one way only,
-||| `Emit -> EmitForeign -> EmitUtil`.
+||| `Emit -> Emit.Foreign -> Emit.Util`.
 module Compiler.RC2.Emit.Foreign
 -- Copyright 2026, Hattori,Hiroki. All rights reserved.
 -- This module was licensed by BSD3.
@@ -343,7 +343,7 @@ emitForeignDef n ccs fargs ret =
     ||| `fastPack`/`fastConcat`, and returns its result directly --
     ||| skipping `packCFType`/`idris2rc2_mkString` entirely, the same
     ||| way a bare `CFUser` return is already passed straight through
-    ||| with no copy (see `EmitUtil.idr`'s own `packCFType` `CFUser`
+    ||| with no copy (see `Emit/Util.idr`'s own `packCFType` `CFUser`
     ||| case) -- since `idris2rc2_fastPackFixed`/`idris2rc2_fastConcatFixed` already return
     ||| a fully-formed, correctly-owned `IDRIS2RC2_Value*` themselves.
     emitFastPackFixedWrapper : String -> Core ()
@@ -371,7 +371,7 @@ emitForeignDef n ccs fargs ret =
               -- "RC2" (rc2-specific %foreign_impl patches, e.g.
               -- System.Concurrency.RC2) targets our own
               -- runtime exactly like "RefC" does -- both need
-              -- CFBuffer's header-aware unwrap (EmitUtil.idr's
+              -- CFBuffer's header-aware unwrap (Emit/Util.idr's
               -- `extractValue CLangRefC CFBuffer`), not the generic
               -- flat-data-pointer one "C" gets. Before this, every
               -- "RC2:"-tagged call fell into the `else` branch below
@@ -605,7 +605,7 @@ emitExportWrapper n exportedCName fargs ret = do
 ||| see rc2/doc/incremental-compile.md's "Bugs found while implementing"
 ||| #3 for the full reasoning and the deliberate whole-program/
 ||| incremental split. Any real caller (if one exists) still gets a
-||| plain `extern` prototype via `externalFunctionRefsD` below, since a
+||| plain `extern` prototype via `Compiler.RC2.Emit.ExternRefs.externalFunctionRefsD`, since a
 ||| dropped name is indistinguishable from an ordinary externally-
 ||| defined one at that point -- the failure becomes a link-time
 ||| "undefined reference" there instead of either a compile-time stop

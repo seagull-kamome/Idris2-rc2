@@ -283,7 +283,7 @@ constAltsNativeType (MkRConstAlt c _ :: rest) =
     allMatch _ [] = True
     allMatch ty (MkRConstAlt c' _ :: xs) = litRep c' == Just ty && allMatch ty xs
 
-||| The single-type verdict `nativeArgType`/`callArgOrOpNativeType`
+||| The single-type verdict `nativeArgType`/`callArgOrOpNativeTy`
 ||| themselves return: `Just ty` only if `m`'s own entry for `p` is a
 ||| *consistent* singleton (every native-context read of `p` agreed on
 ||| the same type); `Nothing` for no reads at all, or for conflicting
@@ -652,7 +652,7 @@ callArgOrOpNativeTy table p body =
 
 ||| ## Batched, multi-id native-type analysis
 |||
-||| `nativeArgType`/`callArgOrOpNativeType` above each ask this
+||| `nativeArgType`/`callArgOrOpNativeTy` above each ask this
 ||| question about *one* id, walking `body` in full to answer it.
 ||| `applyLoop` (and, via `primCallee`, `buildCalleeTable`)
 ||| originally called them once per top-level parameter -- for a
@@ -668,12 +668,20 @@ callArgOrOpNativeTy table p body =
 ||| `callTypes` once (for every one of its own `argIds` together) and
 ||| reuses them for both `eligible` and `eligibleWithCallArgs`, rather
 ||| than re-deriving them per parameter via `nativeArgType`/
-||| `callArgOrOpNativeType`. The single-id functions above are kept
+||| `callArgOrOpNativeTy`. The single-id functions above are kept
 ||| unchanged (now implemented as thin wrappers where that was cheap to
 ||| do, e.g. `nativeArgType`) for `Compiler.RC2.DualABI`'s own
 ||| single-call use (`nativeArgTypes var body`, `paramEligibility`'s own
 ||| `Nothing` branch, since updated to use `nativeArgTypeBatch` too) and
 ||| `Compiler.RC2.ConAltNative`'s per-alt use (also updated).
+
+||| Whether `v` survives `stripOwnership`'s own filtering -- kept
+||| (`True`) unless it names one of `ids`; a non-`RCLoc` local (a
+||| constant/`NULL`/tagged-empty-con) is never one of `ids` to begin
+||| with and always survives.
+keepUnlessOwned : SortedSet Int -> RCLocal -> Bool
+keepUnlessOwned ids (RCLoc i) = not (contains i ids)
+keepUnlessOwned _ _ = True
 
 ||| Remove every `RDup`/`RDrop`/`RFree` target, and every `ROp`/
 ||| `RCmpCase` `postDrop` entry, naming one of `ids`. A native value
@@ -717,14 +725,6 @@ callArgOrOpNativeTy table p body =
 ||| `RDup`/`RDrop`/`RFree`/`RReleaseReuse`/`RReuseOffer` wrapper, never
 ||| the wrappers themselves, precisely so a reuse decision already made
 ||| there stays completely undisturbed.)
-||| Whether `v` survives `stripOwnership`'s own filtering -- kept
-||| (`True`) unless it names one of `ids`; a non-`RCLoc` local (a
-||| constant/`NULL`/tagged-empty-con) is never one of `ids` to begin
-||| with and always survives.
-keepUnlessOwned : SortedSet Int -> RCLocal -> Bool
-keepUnlessOwned ids (RCLoc i) = not (contains i ids)
-keepUnlessOwned _ _ = True
-
 export
 stripOwnership : SortedSet Int -> RCExp -> RCExp
 stripOwnership ids (RDup fc v extra body) =
@@ -1139,8 +1139,8 @@ hoistInvariantPrefix _ e = ([], e)
 
 ||| Mirrors `Compiler.RC2.ConAltNative`'s own `renameOpArgsThrough`
 ||| exactly (itself mirroring this module's own `opNativeUsesThrough`)
-||| -- re-declared here rather than exported across the module boundary,
-||| same reasoning as `assignShadowIds` above: once inside the `ROp`
+||| -- re-declared here rather than exported across the module boundary:
+||| once inside the `ROp`
 ||| that a native-`Rep` `RLet`'s own `value` peels down to (through
 ||| `RDup`/`RDrop`/`RFree`/`RReleaseReuse`/nested-`RLet`-`body`
 ||| wrapping), redirect `p`'s own occurrences in that `ROp`'s own
@@ -1366,6 +1366,13 @@ dupInvariantBoxed p (RLoopContinue fc args postDrop) =
 -- Compiler.RC2.DualABI ever produces one.
 dupInvariantBoxed _ e = e
 
+||| The actual pass, as a plain pure function of one definition at a
+||| time -- `nextId0` (the fresh-shadow-id counter's own starting
+||| value) is a parameter rather than computed here, and its final
+||| value comes back alongside the rewritten def, both threaded by
+||| the exported `applyLoop` wrapper below against the shared `VarId`
+||| counter.
+|||
 ||| Apply self-tail-call loop conversion to one top-level definition,
 ||| given its own `Name` -- Compiler.RC2.RC doesn't thread a
 ||| definition's own name through Phase 1/2 at all (nothing there needs
@@ -1382,16 +1389,6 @@ dupInvariantBoxed _ e = e
 ||| value, since that's genuinely where every loop param's value starts
 ||| from; Compiler.RC2.Emit's `declareLoopParam` does the (skipped, for
 ||| an unchanged `RBoxed` param -- the common case) unboxing conversion.
-|||
-||| Fresh shadow ids are pulled from the shared, whole-compile `VarId`
-||| counter (`Compiler.RC2.Util`) -- its current value is already past
-||| every id used anywhere in the program (this definition's own
-||| included), so no scan for the current highest one in use is
-||| needed. `applyLoopFromId` below does the actual work as a plain
-||| pure function threading that starting id through its own return
-||| value, same as before -- only where the starting value comes from,
-||| and where the final one goes (`applyLoop`'s own thin `Core`
-||| wrapper, reading/writing the shared counter once each), changed.
 |||
 ||| A param that turns out loop-*invariant* (`invariantLoopParamIds`:
 ||| every `RLoopContinue` supplies it completely unchanged) is excluded
@@ -1416,9 +1413,10 @@ dupInvariantBoxed _ e = e
 ||| parameter `RLet`s above, since a hoisted expression may itself read
 ||| one of those (e.g. a native-shadowed invariant parameter's own
 ||| shadow id).
-||| `calleeTable` (`Compiler.RC2.Util.buildCalleeTable`, built once from
+|||
+||| `calleeTable` (`buildCalleeTable` above, built once from
 ||| the whole post-MutualLoop/pre-Loop def list) feeds `eligibleVariant`
-||| below via `callArgOrOpNativeType`, extending native-shadow
+||| below via `callArgOrOpNativeTy`, extending native-shadow
 ||| eligibility to a loop parameter read only as a call argument to an
 ||| independently-eligible plain callee (`rc2/doc/loop-conversion.md`'s
 ||| "Known limitation" -- the `loop acc n = loop (step acc n) ...`
@@ -1434,12 +1432,6 @@ dupInvariantBoxed _ e = e
 ||| ordinary dup/deferred-drop -- just pointless to allocate the shadow
 ||| for). Left as a followup rather than also teaching
 ||| `markInvariantNative` an `RAppName` case in this change.
-||| The actual pass, as a plain pure function of one definition at a
-||| time -- `nextId0` (the fresh-shadow-id counter's own starting
-||| value) is a parameter rather than computed here, and its final
-||| value comes back alongside the rewritten def, both threaded by
-||| the exported `applyLoop` wrapper below against the shared `VarId`
-||| counter.
 applyLoopFromId : (nextId0 : Int) -> CalleeTable -> (noPromote : SortedSet Int) -> Name -> RCDef -> (Int, RCDef)
 applyLoopFromId nextId0 calleeTable noPromote self (MkRCFun args retRep isWorker body) =
     let argIds = map fst args
@@ -1458,13 +1450,13 @@ applyLoopFromId nextId0 calleeTable noPromote self (MkRCFun args retRep isWorker
                   -- original ids, as `invariantLoopParamIds` used to
                   -- reach running after renaming.
                   invariantIdsPre : SortedSet Int := invariantLoopParamIds (map (\p => (p, RBoxed)) argIds) (collectContinueArgs body')
-                  -- One `nativeArgType`/`callArgOrOpNativeType` call per
+                  -- One `nativeArgType`/`callArgOrOpNativeTy` call per
                   -- parameter (not batched across `argIds` -- see this
                   -- module's own "Batched, multi-id native-type
                   -- analysis" section for why a batched version was
                   -- tried here and reverted). Variant parameters get the
                   -- richer, call-argument-aware eligibility
-                  -- (`callArgOrOpNativeType`); invariant ones
+                  -- (`callArgOrOpNativeTy`); invariant ones
                   -- deliberately don't (see this function's own doc
                   -- comment above for why) -- each list folds its own
                   -- `invariantIdsPre` membership check directly into the
@@ -1633,11 +1625,17 @@ applyLoopFromId nextId0 calleeTable noPromote self (MkRCFun args retRep isWorker
               in (fst wrapInvariantShadows, MkRCFun args retRep isWorker (snd wrapInvariantShadows))
 applyLoopFromId nextId0 _ _ _ d = (nextId0, d)
 
-||| Reads/writes the shared, whole-compile `VarId` counter
-||| (`Compiler.RC2.Util`) once around `applyLoopFromId`'s own pure
-||| computation -- see that function's own doc comment, and this
-||| module's header note on `nextId0`, for why a scan is no longer
-||| needed to find a safe starting value.
+||| Self-tail-call loop conversion of one top-level definition, given its
+||| own `Name` (see `applyLoopFromId`): the `Core` wrapper that supplies the
+||| fresh-id counter.
+|||
+||| Fresh shadow ids are pulled from the shared, whole-compile `VarId`
+||| counter (`Compiler.RC2.Util`) -- its current value is already past
+||| every id used anywhere in the program (this definition's own
+||| included), so no scan for the current highest one in use is
+||| needed. `applyLoopFromId` does the actual work as a plain pure
+||| function threading that starting id through its own return value; this
+||| thin `Core` wrapper reads and writes the shared counter once each.
 export
 applyLoop : {auto v : Ref VarId Int} -> CalleeTable -> SortedSet Int -> Name -> RCDef -> Core RCDef
 applyLoop calleeTable noPromote self d = do

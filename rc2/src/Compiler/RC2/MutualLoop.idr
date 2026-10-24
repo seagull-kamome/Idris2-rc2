@@ -166,7 +166,7 @@ buildGroup calleeTable existingNames memberDefs groupNames = do
     let tagList : List Int = map (\i => the Int (cast i)) [0 .. length members `minus` 1]
     -- Slots are shared by position only within one class of parameter:
     -- the native type `Compiler.RC2.Loop` would promote it to on its own
-    -- member (`callArgOrOpNativeType`), or `Nothing`. A native class's
+    -- member (`callArgOrOpNativeTy`), or `Nothing`. A native class's
     -- values all have that type, so promoting its slot is sound; a
     -- `Nothing` slot may hold values of different types, so Loop must
     -- never promote it (`noPromote`). rc2/doc/loop-conversion.md's

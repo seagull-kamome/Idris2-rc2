@@ -228,7 +228,7 @@ typedef struct {
 // constants -- take the separate RCNull route instead, never reaching
 // RCConstCon), so the family starts at 1; it goes up to 20 to match
 // IDRIS2RC2_Closure's own established 0-20 real-arity range in this
-// codebase (see idris2rc2_dispatchClosure's switch in runtime.c, whose
+// codebase (see idris2rc2_dispatchClosure's switch in idris2rc2_rt.c, whose
 // cases run 0 through 20 with no case above 20). Compiler.RC2.EmitUtil's
 // boxedConstConExpr selects the matching IDRIS2RC2_ConstConstructorN by
 // field count, falling back to the old per-call-site anonymous-struct
