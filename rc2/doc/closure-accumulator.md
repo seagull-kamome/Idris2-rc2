@@ -94,6 +94,13 @@ these:
 | self call with `c` unchanged | unchanged | `call f# [args', c, res, last]` |
 | `apply c [v]` | unchanged | `fill last.k := v; apply c [res]` |
 
+The `fill` for an extension sits at the self call that passes the cell,
+not at the `let` that builds it. An arm that does not pass the cell
+(it passes `c` unchanged, applies `c` or ends the list) must not have
+filled the hole: `RFill` is a plain store, so the next fill of the same
+hole would overwrite the cell without dropping it
+(`tests/Test139ClosureCtxSkip`).
+
 The entry never has a chain yet, so its `apply c [v]` stays as is: a
 call that never extends costs nothing extra. In `f#`, `c` is passed
 unchanged on every path, so it is the invariant `k`.
