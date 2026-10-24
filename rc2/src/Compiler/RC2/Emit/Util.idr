@@ -471,34 +471,41 @@ intBits : PrimType -> String
 intBits IntType = "64"; intBits Int8Type = "8"; intBits Int16Type = "16"
 intBits Int32Type = "32"; intBits Int64Type = "64"; intBits _ = "64"
 
--- C promotes an operand narrower than `int` before it computes, so the result
--- of `+ - * neg` on these types has to be narrowed again to wrap at the type's
--- width before a comparison or a further operation reads it.
-narrowed : PrimType -> String -> String
-narrowed ty e = if narrowerThanInt ty then "((" ++ nativeCType ty ++ ")" ++ e ++ ")" else e
-  where
-    narrowerThanInt : PrimType -> Bool
-    narrowerThanInt Int8Type = True
-    narrowerThanInt Int16Type = True
-    narrowerThanInt Bits8Type = True
-    narrowerThanInt Bits16Type = True
-    narrowerThanInt _ = False
+-- `+ - *` and unary minus on the fixed-width integer types are computed in
+-- `uint64_t`, where overflow wraps, and truncated back to the type's C type.
+-- Signed overflow in C is undefined, and an operand narrower than `int` is
+-- promoted first, so the plain operator neither wraps at the type's width nor
+-- is defined for every input.
+fixedWidthInt : PrimType -> Bool
+fixedWidthInt IntType = True
+fixedWidthInt Int8Type = True
+fixedWidthInt Int16Type = True
+fixedWidthInt Int32Type = True
+fixedWidthInt Int64Type = True
+fixedWidthInt Bits8Type = True
+fixedWidthInt Bits16Type = True
+fixedWidthInt Bits32Type = True
+fixedWidthInt Bits64Type = True
+fixedWidthInt _ = False
+
+wrappingOp : PrimType -> String -> String -> String -> String
+wrappingOp ty op x y =
+    if fixedWidthInt ty
+       then "((" ++ nativeCType ty ++ ")((uint64_t)(" ++ x ++ ") " ++ op ++ " (uint64_t)(" ++ y ++ ")))"
+       else "(" ++ x ++ " " ++ op ++ " " ++ y ++ ")"
 
 export
 nativeOpExpr : {0 arity : Nat} -> PrimFn arity -> Vect arity String -> String
-nativeOpExpr (Add ty)    [x, y] = narrowed ty ("(" ++ x ++ " + " ++ y ++ ")")
-nativeOpExpr (Sub ty)    [x, y] = narrowed ty ("(" ++ x ++ " - " ++ y ++ ")")
--- Bits16 operands promote to a signed `int`, whose product can overflow
--- (undefined); the unsigned multiply cannot.
-nativeOpExpr (Mul Bits16Type) [x, y] = "((uint16_t)((unsigned)" ++ x ++ " * " ++ y ++ "))"
-nativeOpExpr (Mul ty)    [x, y] = narrowed ty ("(" ++ x ++ " * " ++ y ++ ")")
+nativeOpExpr (Add ty)    [x, y] = wrappingOp ty "+" x y
+nativeOpExpr (Sub ty)    [x, y] = wrappingOp ty "-" x y
+nativeOpExpr (Mul ty)    [x, y] = wrappingOp ty "*" x y
 nativeOpExpr (Div ty)    [x, y] =
     if isSigned ty then "idris2rc2_ediv_i" ++ intBits ty ++ "(" ++ x ++ ", " ++ y ++ ")"
                    else "(" ++ x ++ " / " ++ y ++ ")"
 nativeOpExpr (Mod ty)    [x, y] =
     if isSigned ty then "idris2rc2_emod_i" ++ intBits ty ++ "(" ++ x ++ ", " ++ y ++ ")"
                    else "(" ++ x ++ " % " ++ y ++ ")"
-nativeOpExpr (Neg ty)    [x]    = narrowed ty ("(-(" ++ x ++ "))")
+nativeOpExpr (Neg ty)    [x]    = wrappingOp ty "-" "0" x
 -- Not C's `<<`/`>>`: a count of the width or more is undefined there
 -- (idris2rc2_numeric.h's shift helpers).
 nativeOpExpr (ShiftL ty) [x, y] = "idris2rc2_shl_" ++ cPrimType ty ++ "(" ++ x ++ ", " ++ y ++ ")"
