@@ -5,6 +5,21 @@ scattered code comments. Nothing below is a known correctness bug in
 what's implemented -- see `rc2/tests/refc-suite/README.md` for bugs that
 were found and already fixed.
 
+## IR: `dup`・`drop`・`postDrop`の対象を変数IDだけにする(アイデア)
+
+`RDup`・`RDrop`・`postDrop`・`prologueDrop`・`RReuseOffer`の`dupOnShared`/`dropOnUnique`などは、
+今は`RCLocal`のリストで、定数(`RCNull`・`RCErased`・`RCWorld`・畳み込み済みの定数)も型の上では入れられる。
+しかし数えるのは変数だけで、定数への`dup`/`drop`は何もしない。実際に入り込んだ例が
+`DualABI.postDropFor`(定数の引数、`NULL`型のものを含めて`postDrop`に入れていた。直した)で、Emitが
+`idris2rc2_drop(NULL)`を出し、IRのダンプにも`postDrop= [[erased]]`と残っていた。
+
+案: これらのフィールドの型を`List Int`(変数ID)か、`RCLoc`だけを表す型にして、定数を入れられなく
+する。パスが定数を入れる間違いが型エラーになり、Emitの`varName`の定数の分岐(`RCConst`・`RCConstCon`・`RCConstClosure`は
+`/* [rc2] unreachable ... */`を返す)と、各パスの`RCLoc`の場合分けも要らなくなる。`RCExp`の
+構成子の型が変わるので、`postDrop`などを読み書きする全パス(`RC`・`DualABI`・`Loop`・`MutualLoop`・
+`DupMerge`・`PushDown`・`Reuse`・`DeadVars`・`FunDedup`・`Emit`)に影響する。`RCConstCon`の
+`argsConst`と同じ要領(消去される証明)でも書けるが、`List Int`のほうが単純。
+
 ## Performance: closures over constants are made in Emit, not folded
 
 `rc2/doc/static-closures.md`. A closure whose captured values are all constants

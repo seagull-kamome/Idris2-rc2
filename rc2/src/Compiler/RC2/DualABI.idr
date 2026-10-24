@@ -966,14 +966,18 @@ workerTable defs = fromList (mapMaybe workerEntry defs)
 ||| needed: `Compiler.RC2.RC`'s own `annotate` already decided the
 ||| original (still-`RAppName`) call consumes exactly one reference per
 ||| Boxed argument -- reading it natively and dropping it here instead
-||| pays the exact same net cost.
+||| pays the exact same net cost. Only a variable (`RCLoc`) is counted: a constant
+||| has nothing to drop.
 postDropFor : SortedMap Int Rep -> List Rep -> List RCLocal -> List RCLocal
 postDropFor reps argReps args =
-    mapMaybe (\(r, a) => case r of
-                              RBoxed => Nothing
-                              _ => case localRepIn reps a of
-                                        RBoxed => Just a
-                                        _ => Nothing) (zip argReps args)
+    mapMaybe (\(r, a) => case (r, a) of
+                              (RBoxed, _) => Nothing
+                              -- a constant (`NULL` for a `NULL`-typed parameter, a folded
+                              -- constructor) is not counted: nothing to drop
+                              (_, RCLoc _) => case localRepIn reps a of
+                                                   RBoxed => Just a
+                                                   _ => Nothing
+                              _ => Nothing) (zip argReps args)
 
 ||| `e`'s own ultimate tail expression, peeling through every `RLet`'s
 ||| own `body` and every wrapper node's own `cont` -- the same peeling
