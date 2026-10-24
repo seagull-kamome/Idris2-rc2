@@ -244,17 +244,6 @@ fieldsTail n ci t k = if k <= maxRetFields then TailCon True t (ShapeFields n ci
 ||| `bindOne`): acceptable in a tail, but never evidence on its own that
 ||| the function returns a constructor.
 retTails : RCExp -> List RetTail
-retTails (RLet _ _ _ _ body) = retTails body
-retTails (RDup _ _ _ cont) = retTails cont
-retTails (RDrop _ _ cont) = retTails cont
-retTails (RFree _ _ cont) = retTails cont
-retTails (RReleaseReuse _ _ cont) = retTails cont
-retTails (RReuseOffer _ _ _ _ cont) = retTails cont
-retTails (RCmpCase _ _ _ _ t f) = retTails t ++ retTails f
-retTails (RConCase _ _ alts mDef) =
-    foldr (\(MkRConAlt _ _ _ _ body), acc => retTails body ++ acc) (maybe [] retTails mDef) alts
-retTails (RConstCase _ _ alts mDef) =
-    foldr (\(MkRConstAlt _ body), acc => retTails body ++ acc) (maybe [] retTails mDef) alts
 retTails (RLoop _ _ _ _ body) = retTails body
 retTails (RLoopContinue _ _ _) = []
 retTails (RCon fc n ci (Just t) args _) = case args of
@@ -270,9 +259,11 @@ retTails e@(RV _ RCWorld) = [TailCon False 0 (ShapeNullary nullConName DATACON e
 retTails (RAppName _ Nothing n _) = [TailCall n]
 retTails (RAppNameRep _ n _ _ _ _) = [TailCall n]
 retTails (RCrash _ _) = [TailCrash]
--- RMemoize (a CAF: moved, never copied, see doc/caf-memoization.md),
--- lazy calls, closures, applies, FFI, prims, literals, a bare local.
-retTails _ = [TailOther]
+-- Past that, a node that passes its value on (`tailChildren`) contributes its
+-- arms. Anything else is RMemoize (a CAF: moved, never copied, see
+-- doc/caf-memoization.md), a lazy call, closure, apply, FFI, prim, literal
+-- or a bare local.
+retTails e = maybe [TailOther] (concatMap retTails) (tailChildren e)
 
 isOther : RetTail -> Bool
 isOther TailOther = True
