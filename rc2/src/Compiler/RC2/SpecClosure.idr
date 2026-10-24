@@ -358,26 +358,11 @@ record Built where
 ||| kept in earlier rounds: their keys are not rebuilt, and the table is
 ||| applied again so a call site a new clone exposes is redirected too.
 |||
-||| Both the CAF table and call-site redirection are computed *once*
-||| over the whole program -- `rebuildCafTable defs` up front, and a
-||| `RedirectTable` accumulated across every key and applied in a
-||| single final `redirectCallSitesTable` pass -- rather than once per
-||| distinct specialization key, which would cost
-||| `O(distinct keys x program size)`. The pass is `O(program size)`
-||| overall (plus a small `O(distinct keys)` for table
-||| bookkeeping). Reusing `defs`'s own CAF
-||| facts (rather than each clone's) is correctness-equivalent: a
-||| fresh clone's body only ever calls `target` (already known),
-||| itself (already resolved via `rewriteSelfCall`), or whatever `g`'s
-||| original body already called -- never another just-built clone
-||| from an earlier key in the same pass.
-|||
-||| Diagnostic instrumentation below is just the four whole-pass-level
-||| lines -- collect+group, the opportunity/key/def counts, the single
-||| `rebuildCafTable`, and the single final redirect pass -- each
-||| `O(program size)` at most once per round, gated behind
-||| `maybeLogTimeOver`'s own `--directive timing` check above, same as
-||| every other pass' own `logTime` calls.
+||| The CAF table and call-site redirection are computed once per round over
+||| the whole program, not per key (that was `O(distinct keys x program
+||| size)` and impractically slow on idris2-lsp; see
+||| rc2/doc/speculative-closure-specialization.md). Timing lines are gated
+||| by `maybeLogTimeOver`'s `--directive timing` check.
 applySpecClosure : {auto c : Ref Ctxt Defs} -> {auto v : Ref VarId Int} -> {auto fr : Ref FreshId Int}
                  -> RedirectTable -> SortedSet SpecKey -> List (Name, RCDef)
                  -> Core (List (Name, RCDef), RedirectTable, SortedSet SpecKey, Nat)
@@ -498,26 +483,10 @@ applySpecClosure prevTable done defs = do
 ------------------------------------------------------------------------
 -- Constant-constructor argument specialization
 --
--- The sibling of everything above, aimed at the one remaining
--- structurally-resolvable source of boxed `idris2rc2_applyClosure`
--- dispatch: an interface dictionary. There the specialized parameter
--- isn't a closure that gets *applied*, it's a record that gets
--- *destructured*, so none of the machinery above recognises it:
---
---   def Prelude.Types.elemBy (args= [v10077, v10078, v10079])
---     case v10077 of                                    -- destructure
---       MkFoldable [record] args= [_, _, _, _, _, v10085] ->
---         apply v10085 [..., v10087]                    -- boxed dispatch
---
--- Nothing new is needed downstream -- only getting the constant to the
--- callee's own body. `Compiler.RC2.ConstFold` then folds the `case`
--- away against it, binds each alt field to the corresponding constant,
--- and (since each method field is an `RCConstClosure`) rewrites every
--- `apply` of one into a direct `RAppName` call. That is why this needs
--- no `rewriteApply` analogue at all: seeding the fold IS the rewrite.
---
--- Steps 1-3 deliberately mirror the closure case above, so its own
--- profitability discipline carries over unchanged. See
+-- The sibling of the closure half: the specialized parameter is an
+-- interface dictionary that gets destructured rather than applied;
+-- seeding `ConstFold` with the constant IS the rewrite, so no
+-- `rewriteApply` analogue is needed. See
 -- `rc2/doc/constant-constructor-specialization.md` for the design, the
 -- measured opportunity, and the `where`-clause cost trap.
 ------------------------------------------------------------------------
@@ -569,36 +538,13 @@ constForwardSites : RCLocal -> (callee : Name) -> (argPos : Nat) -> RCExp -> Lis
 constForwardSites v callee argPos e = forwardSites v callee argPos e ++ underAppSites v e
 
 ||| `Just` the forwarding sites of `p` iff every occurrence of it in `e`
-||| is an `RConCase` scrutinee, a passthrough of `p` at the *same*
-||| argument position of a self-recursive call to `callee`, or a
-||| *forwarding site* (`forwardSites`: handed to a parameter of some
-||| other call), and there is at least one scrutinee or forwarding
-||| site (`constForwardSites` also counts a capture in an `RUnderApp`).
-||| Anything else -- stored into a constructor, returned -- means substituting the constant
-||| would duplicate it into positions the fold can't collapse, so the
-||| clone would be a second copy of the same work rather than a
-||| specialization; that stays excluded. The "at least one" half is the
-||| same economy: a parameter only carried along its own recursion has
-||| nothing to resolve.
-|||
-||| Discounting the self-passthrough is what reaches the common
-||| dictionary shape -- a recursive `go` carrying its dictionary along
-||| on every step. Nothing extra is needed to keep such a clone
-||| consistent: the seeded fold substitutes the constant into the
-||| self-call too, leaving it calling the *generic* callee with the
-||| constant spelled out, and the whole-program `redirectConstCallSites`
-||| sweep at the end runs over the clones as well as the originals, so
-||| that call matches this very key's own redirect entry and becomes a
-||| call to the clone itself.
-|||
-||| The forwarding sites are what make the specialization transitive:
-||| after the seeded fold each is a call spelling the same constant at
-||| another function's parameter, i.e. exactly another key, which
-||| `applySpecConstCon` then builds in turn. See the doc's "Transitive
-||| specialisation". The closure half's `paramUses` is the model.
-|||
-||| Note this pass runs *before* `Compiler.RC2.RC`'s own `annotate`, so
-||| there are no `RDup`/`RDrop` occurrences to discount yet.
+||| is an `RConCase` scrutinee, a self-recursive passthrough at the same
+||| argument position, or a forwarding site (`constForwardSites`), with at
+||| least one scrutinee or forwarding site. Anything else (stored,
+||| returned) would duplicate the constant where the fold can't collapse
+||| it, so it stays excluded. See rc2/doc/constant-constructor-specialization.md,
+||| "Transitive specialisation". Runs before `annotate`, so there are no
+||| `RDup`/`RDrop` occurrences to discount.
 constParamUses : RCLocal -> (callee : Name) -> (argPos : Nat) -> RCExp -> Maybe (List (Name, Nat))
 constParamUses p callee argPos e =
     let uses = countUsesR p e

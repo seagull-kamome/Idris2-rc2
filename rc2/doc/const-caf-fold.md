@@ -102,10 +102,13 @@ reach (`isCallFree`'s own `LCon`/`LUnderApp` cases, see
 `const-con-fold.md`/`const-closure-fold.md`) still need this route.
 
 The loop terminates either once `CafTable`'s own key count stops
-growing between rounds, or after `maxConstFoldIterations = 4`
-(`RC2.idr:127-128`) -- chosen to match GHC's own
-`-fmax-simplifier-iterations` default, on the same reasoning: two
-safety properties make an outer cap safe rather than merely
+growing between rounds, or after `maxConstFoldIterations = 8`
+(started at 4, GHC's own `-fmax-simplifier-iterations` default; raised to 8
+because the per-round `round n/m` log showed a real build (`idris2-lsp`)
+stopped by the cap with the table still growing -- at 8 it converges on round 5,
+table 0 -> 925 -> 1006 -> 1012 -> 1014, folding two more CAFs (the `Integral`/
+`Ord` dictionaries behind `Core.TTC.fromBuf`/`toBuf` and `Prelude.Types.rangeFrom`/
+`rangeFromTo`) for about 0.1s). Two safety properties make an outer cap safe rather than merely
 convenient. A definition can only ever transition from *not yet known
 constant* to *known constant*, never back, so the process is
 monotonic; and a group of mutually-referencing CAFs that can never
@@ -367,8 +370,8 @@ that folding never happens):
 
 ## Scope / limitations
 
-- **Still bounded by the 4-round cap.** A CAF chain deep enough to
-  need a 5th round (or deeper) stays partially unfolded -- a missed
+- **Still bounded by the round cap (`maxConstFoldIterations`).** A CAF chain deep enough to
+  need more rounds than the cap stays partially unfolded -- a missed
   optimisation, never a correctness issue, per the monotonicity
   argument above. `Test115ConstFoldClosure/ConstFoldClosure.idr` §8 confirms the cap is at
   least high enough for a realistic short chain; it does not exercise

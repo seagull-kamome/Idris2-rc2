@@ -230,39 +230,12 @@ cOp BelieveMe     [_, _, x] = "idris2rc2_dup(" ++ x ++ ")"
 cOp Crash         [_, msg]  = "idris2rc2_crash(" ++ msg ++ ");"
 cOp fn args = show fn ++ "(" ++ (showSep ", " $ toList args) ++ ")"
 
-||| `True` for the Boxed `PrimFn`s whose own runtime primitive
-||| (`rc2/support/rc2/idris2rc2_numeric.h`) consumes every operand it's handed
-||| -- reusing a uniquely-referenced one's own heap storage in place
-||| instead of allocating fresh, and dropping whichever operand it didn't
-||| reuse itself -- rather than only reading its operands and leaving
-||| ownership to the caller. `Compiler.RC2.Emit`'s `ROp` case uses this to
-||| skip emitting its usual post-call drops for such an op's own operands
-||| (the runtime primitive already disposed of them); see
-||| rc2/doc/rop-reuse.md.
-|||
-||| `IntegerType` (GMP `mpz_t`-backed) covers every arithmetic/bitwise op
-||| except `Div` -- `idris2rc2_div_Integer` is a real multi-statement
-||| Euclidean-division algorithm in `numeric.c`, not yet given this
-||| treatment. `Int64Type`/`Bits64Type` (heap-allocated once past the
-||| immediate range, doc/immediate-ints.md) and `DoubleType` (never immediate, always a
-||| real heap struct when Boxed) cover every op their own `PrimType` has
-||| in the first place -- `Int8Type`/`Int16Type`/`Int32Type`/
-||| `Bits8Type`/`Bits16Type`/`Bits32Type` are deliberately excluded
-||| entirely: `Types.alwaysUnboxed` already means these are *always* a
-||| tagged pointer at the C level, never a real heap allocation, so
-||| there is no cell to reuse, and the existing `alwaysUnboxed` dup/drop
-||| elision (`Compiler.RC2.RC`'s `alwaysUnboxedBoxedLocalsR`) already
-||| means there's no post-call drop left to skip for them anyway.
-|||
-||| `IntType` (Idris2's plain, machine-width `Int`) is included alongside
-||| every `Int64Type` case, not because it's itself reuse-eligible by
-||| some separate reasoning, but because `cPrimType` maps BOTH
-||| to the identical C name (`"Int64"`) -- `Add IntType` and `Add
-||| Int64Type` both lower to a call to the exact same
-||| `idris2rc2_add_Int64`. Missing either one here would make `Emit.idr`
-||| emit an explicit post-call drop for that op's operands on top of the
-||| consuming primitive's own internal drop: a double-drop/use-after-free,
-||| not merely a missed optimisation.
+||| `True` for the Boxed `PrimFn`s whose runtime primitive
+||| (`idris2rc2_numeric.h`) consumes all its operands (reuses a unique one's
+||| storage, drops the rest); `Emit`'s `ROp` case then skips its own post-call
+||| drops. See `rc2/doc/rop-reuse.md` "Which ops count as consuming".
+||| `IntType` must be listed wherever `Int64Type` is (same C primitive):
+||| missing either one double-drops.
 export
 isReuseConsumingOp : PrimFn arity -> Bool
 isReuseConsumingOp (Add IntegerType)  = True
@@ -599,31 +572,10 @@ export
 data LoopParams : Type where
 export
 data RepMap : Type where
--- Native-rep locals whose defining expression is safe and worthwhile to
--- splice directly into their (sole) use site instead of ever being
--- declared as a C variable at all -- holds the already-rendered C
--- expression text, keyed by local id. Two cases populate this:
---   1. A bare literal (Compiler.RC2.RC's Phase 1 binds *every*
---      non-trivial operand -- including literal constants -- to a fresh
---      let, purely for ANF shape; there's no sharing/evaluation-order
---      reason to actually declare a C variable for a literal).
---   2. A native op Compiler.RC2.RC's `annotate` decided is `RInlineNative`
---      (see Rep's own doc comment): used exactly once, which is what
---      keeps this free -- inlining a multi-use value would duplicate its
---      computation. Unlike case 1 (a Phase 1 decision), this one is
---      decided by Phase 2 -- postDrop/use-counts aren't known yet during
---      Phase 1's own conversion. Any Boxed operand the op itself still
---      reads (`ROp.postDrop`) is stashed as this entry's own pending
---      drop list alongside its expression text -- rather than requiring
---      zero Boxed operands to defer safely, `rcVarToBoxedC`/
---      `rcVarToNativeC` (the only readers of an entry, see their own
---      doc comments) hand that pending list back to *their* own caller,
---      which is what finally discharges it once the deferred read
---      actually happens -- see `Compiler.RC2.RC`'s `inlineableRep` doc
---      comment for the full reasoning.
--- Consulted by rcVarToNativeC/rcVarToBoxedC so *uses* of such a local
--- inline its expression text directly instead of reading back a
--- pointless `var_N`.
+-- Native-rep locals spliced into their sole use site instead of being
+-- declared as C variables: local id -> rendered C expression plus pending
+-- drop list, read by rcVarToNativeC/rcVarToBoxedC. See
+-- rc2/doc/native-type-inference.md "InlineMap".
 export
 data InlineMap : Type where
 -- Struct name -> field name/type list, collected once (Part B,
@@ -1220,37 +1172,16 @@ emitReuseOffer sc dupOnShared dropOnUnique = do
 public export
 data TailPositionStatus = InTailPosition | NotInTailPosition
 
-||| Where a fully-evaluated RCExp's value ultimately goes: either into a
-||| named C variable -- freshly declared right here (`SinkVar True _`,
-||| e.g. an `RLet`'s own binding) or already declared by whoever set up
-||| this `Sink` in the first place (`SinkVar False _`, e.g. a case's own
-||| pre-declared result slot, see `resolveSink`) -- or straight out via a
-||| C `return` statement (`SinkReturn`, only ever handed down while
-||| `tailPosition` is `InTailPosition`, since nothing after a `return`
-||| would ever run). Lets `RConCase`/`RConstCase`/
-||| `RCmpCase`'s own branches write straight into the caller's real
-||| destination -- a variable *or* a `return` -- instead of a throwaway
-||| `switchReturnVar` that then has to be copied into it: the same "build
-||| directly into the real destination" idea as `tryBuildClosureInto`'s
-||| own doc comment, generalised to branching constructs, and to `return`
-||| as a destination in its own right.
-|||
-||| `SinkReturn` carries the enclosing function's own `retRep` (`MkRCFun`'s
-||| own field, see `createCFunctions`) -- `RBoxed` renders exactly as
-||| before; `RNative`/`RInlineNative` means the enclosing C function's
-||| own declared return type is a native scalar, not
-||| `IDRIS2RC2_Value *`, so every reachable tail leaf must render its own
-||| value natively too (`emitInto`'s own fallback dispatches on this;
-||| every other construct in this module just threads `sink` straight
-||| through, so nothing else needs to know) -- see
-||| `Compiler.RC2.DualABI`'s own Stage 3b for what promotes a worker's
-||| own `retRep` in the first place.
-||| `SinkVar`'s own `Rep` is the exact counterpart of `SinkReturn`'s:
-||| `RBoxed` declares an `IDRIS2RC2_Value *` slot, `RNative`/
-||| `RInlineNative` a raw C scalar every branch assigns without boxing.
-||| C has no expression form for a `case`, so a Boxed slot means one
-||| box *per arm* (plus the consumer's own unbox), not one around the
-||| branch -- see `doc/dual-abi.md`'s "What stays Boxed after this".
+||| Where a fully-evaluated RCExp's value goes: a named C variable
+||| (`SinkVar True _` freshly declared here, `SinkVar False _` already
+||| declared, e.g. a case result slot, see `resolveSink`) or a C `return`
+||| (`SinkReturn`, only in tail position). Branches write straight into it
+||| instead of a throwaway `switchReturnVar`.
+||| The `Rep` is the slot's: `RBoxed` is `IDRIS2RC2_Value *`, `RNative`/
+||| `RInlineNative` a raw C scalar that every leaf must render natively
+||| (`SinkReturn` carries the function's `retRep`). A Boxed slot costs one
+||| box per arm. See `rc2/doc/dual-abi.md` "Stage 3b" and "What stays Boxed
+||| after this".
 public export
 data Sink = SinkVar Bool String Rep | SinkReturn Rep
 
@@ -1602,38 +1533,15 @@ conAltCondExpr sc' (MkRConAlt name coninfo tag args body) = do
                 -- (support/rc2/idris2rc2_datatypes.h) checks which.
                 Just tag' => "idris2rc2_conTag(\{sc'}) == \{show tag'} /* \{show name} */"
 
-||| Render a case's own `if`-chain against `alts`, given a `Core String`
-||| condition expression and a `Core ()` body renderer per alt (each
-||| assuming indentation is the caller's -- `emitAltChain`'s own -- to
-||| manage), plus an optional default/fallback (`renderDefault`) for
-||| anything `alts` alone doesn't cover. Shared control-flow shape
-||| between `emitConCaseInto` and `emitConstCaseInto` -- the only two
-||| case constructs that dispatch over a genuine *list* of alts
-||| (`RCmpCase` always has exactly two, rendered directly by
-||| `emitCmpCaseInto` instead).
-|||
-||| Whenever there's no explicit default (`renderDefault = Nothing`),
-||| the very last alt in `alts` skips its own condition entirely --
-||| coverage already guarantees it matches once every earlier condition
-||| has failed, `else`-chained or not (see `chainsWithElse`). When
-||| `sink` also turns out to be `SinkReturn`, every *other* alt drops
-||| its `else`-chaining too (`chainsWithElse` again), and the trailing
-||| piece (that skipped-condition last alt, or an explicit default)
-||| drops even its own `{ }` wrapper and any extra indentation -- under
-||| `SinkReturn`, this case's own rendering is always the last thing in
-||| whatever C block contains it (a function body, or an enclosing
-||| case's own already-diverging branch -- see `chainsWithElse`'s own
-||| doc comment), so there's nothing for a tighter scope to protect
-||| against here. Together, a 2-alt case with no default in tail
-||| position (e.g. a `Bool`-shaped match) collapses to the simplest
-||| possible `if (...) { ...; return ...; } ...; return ...;` shape,
-||| and a single-alt case with no default (only one constructor is even
-||| possible) collapses further still, to no `if` at all.
-||| `condExpr`'s own second component is any pending drop its own
-||| condition string owes (InlineMap-sourced, see `rcVarToNativeC`'s own
-||| doc comment) -- discharged right after the condition is actually
-||| embedded in the `if (...)` below, the canonical read-before-drop
-||| timing (see `Compiler.RC2.Emit`'s `emitRC` doc comment).
+||| Render a case's `if`-chain over `alts`, given a condition renderer and a
+||| body renderer per alt, plus an optional `renderDefault`. Shared by
+||| `emitConCaseInto` and `emitConstCaseInto` (`RCmpCase` has exactly two
+||| alts, rendered directly). With no default the last alt skips its
+||| condition; under `SinkReturn` the else-chaining and braces go too
+||| (`chainsWithElse`). See `rc2/doc/case-hoisting-scope.md`.
+||| `condExpr`'s second component is a pending drop owed by the condition
+||| string (InlineMap-sourced); discharge it right after the condition is
+||| embedded (read-before-drop, see `Compiler.RC2.Emit`'s `emitRC`).
 export
 emitAltChain : {auto oft : Ref OutfileText Output}
             -> {auto il : Ref IndentLevel Nat}

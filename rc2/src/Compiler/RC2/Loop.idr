@@ -24,35 +24,11 @@ import Data.Vect
 %default covering
 
 mutual
-  ||| Rewrite every tail-position, non-lazy `RAppName fc Nothing n args`
-  ||| leaf of `e` for which `f fc n args` returns `Just e'`, substituting
-  ||| `e'` in its place; every other leaf (including a lazy `RAppName`,
-  ||| or one `f` declines by returning `Nothing`) is left untouched.
-  ||| "Tail position" here is the exact same structural set
-  ||| Compiler.RC2.Emit's own `TailPositionStatus` (`Compiler.RC2.Emit.Util`)
-  ||| threading already visits when lowering to C -- RLet's body; RDup/RDrop/RFree/
-  ||| RReleaseReuse/RReuseOffer's continuation; RCmpCase's two branches;
-  ||| RConCase/RConstCase's alts and default. Operand positions (RCon's
-  ||| args, ROp's operands, RApp's own callee/arg, an RAppName's *own*
-  ||| arguments, ...) are never visited: a call sitting there isn't in
-  ||| tail position and must keep going through the ordinary calling
-  ||| convention regardless of what `f` would have said about it.
-  |||
-  ||| Defined once and shared by Compiler.RC2.Loop (`f` matches only the
-  ||| enclosing function's own name) and Compiler.RC2.MutualLoop (`f`
-  ||| matches any member of a whole mutually-recursive group) so the
-  ||| two passes can't disagree about what "tail position" means --
-  ||| that would be a real correctness risk (either pass converting or
-  ||| skipping a call the other pass's own TailPositionStatus-driven
-  ||| emission logic wouldn't agree is a tail position). Returns the
-  ||| set of every tail-position `RAppName` target's own `Name` visited
-  ||| (whether or not `f` chose to rewrite it -- this is what lets
-  ||| Compiler.RC2.MutualLoop's `tailCallTargets` be defined as a call
-  ||| to this same walk with an always-`Nothing` `f`, instead of
-  ||| maintaining its own case-for-case duplicate of this tree walk),
-  ||| whether any replacement was made, and the (possibly rewritten)
-  ||| tree. Compiler.RC2.Loop's own call site ignores the name set;
-  ||| Compiler.RC2.MutualLoop's `tailCallTargets` ignores the other two.
+  ||| Rewrite every tail-position, non-lazy `RAppName fc Nothing n args` leaf for
+  ||| which `f fc n args` returns `Just e'`, substituting `e'`. Returns the set of
+  ||| visited tail-call target names, whether any rewrite happened, and the tree.
+  ||| Shared by `Loop` and `MutualLoop` so both agree on what a tail position is.
+  ||| See `rc2/doc/loop-conversion.md`'s "`mapTailAppNames`".
   export
   mapTailAppNames : (FC -> Name -> List RCLocal -> Maybe RCExp) -> RCExp -> (SortedSet Name, Bool, RCExp)
   mapTailAppNames f (RAppName fc Nothing n args) =
@@ -305,38 +281,12 @@ opNativeUses p ty op args =
 opNativeUsesAll : SortedSet Int -> PrimType -> PrimFn arity -> Vect arity RCLocal -> SortedMap Int (SortedSet PrimType)
 opNativeUsesAll tracked ty op args = foldr (\a, acc => addTracked tracked a (opArgTyFor ty op) acc) empty (toList args)
 
-||| `p`'s native-operand contribution (at native type `ty`, an `RLet`'s
-||| own decided `Rep`) if `value` is the `ROp` that let is bound to --
-||| seeing through any leading `RDup`/`RDrop`/`RFree`/`RReleaseReuse`
-||| wrapping it first, the same shapes `Compiler.RC2.Emit`'s own
-||| `emitNativeValue` already has to peel before it reaches the actual
-||| operation (`annotate` (Phase 2) routinely wraps a multiply-used
-||| operand's `RLet` value in a leading `RDup` this way, e.g. `n` here,
-||| shared between this op and a later one), *and* through a nested
-||| `RLet`'s own `body` (its own `value` is a genuinely separate
-||| sub-computation with its own, independently-gated `Rep` -- already
-||| covered by `nativeArgTypes`'s own unconditional recursion into it,
-||| see below -- but its `body` *is*, transitively, still the same
-||| value this outer `ty` governs, e.g. an ANF chain's own last
-||| operation sitting in an inner let's `body` rather than being the
-||| direct `value` of the outer one: `let v2 : Native Bits64 = let v3 =
-||| cast b in xor p v3`, where `xor`'s own read of `p` only becomes
-||| visible by walking *into* `v3`'s `body`, still under `v2`'s own
-||| already-decided `ty`). Deliberately does **not** invent a `ty` of
-||| its own from an unguarded/bare `ROp` with no enclosing `RNative`/
-||| `RInlineNative` `RLet` anywhere above it -- `opResultRep`, which
-||| `Compiler.RC2.DualABI`'s own `tailValueReps` uses for exactly that
-||| shape, would agree with an op's own natural type regardless of
-||| whether the *enclosing* context actually renders it natively; a
-||| bare tail with no enclosing native `let` genuinely can still render
-||| Boxed (`Compiler.RC2.Emit`'s own fallback), and unlike
-||| `tailValueReps`'s own use (paired, in lockstep, with
-||| `Compiler.RC2.DualABI`'s own return-eligibility decision for the
-||| very same op), this function's result is read independently by
-||| `Compiler.RC2.Loop`'s own loop-param promotion -- which has no such
-||| pairing and runs before any return-eligibility decision exists at
-||| all. See rc2/doc/loop-conversion.md's "Known limitation" section for
-||| the leak guessing here caused (Test110Loop/SelfTailLoop.idr).
+||| `p`'s native-operand contribution at native type `ty` (an `RLet`'s decided
+||| `Rep`) if `value` is the `ROp` bound by that let, seeing through leading
+||| `RDup`/`RDrop`/`RFree`/`RReleaseReuse` and nested `RLet` bodies. A bare `ROp`
+||| with no enclosing native `RLet` is deliberately not counted: it may still
+||| render Boxed (leak in Test110Loop/SelfTailLoop.idr).
+||| See `rc2/doc/loop-conversion.md`'s "Known limitation".
 opNativeUsesThrough : (p : Int) -> PrimType -> RCExp -> SortedSet PrimType
 opNativeUsesThrough p ty (ROp _ _ op args _) = opNativeUses p ty op args
 opNativeUsesThrough p ty (RDup _ _ _ cont) = opNativeUsesThrough p ty cont
@@ -356,31 +306,10 @@ opNativeUsesThroughAll tracked ty (RReleaseReuse _ _ cont) = opNativeUsesThrough
 opNativeUsesThroughAll tracked ty (RLet _ _ _ _ body) = opNativeUsesThroughAll tracked ty body
 opNativeUsesThroughAll _ _ _ = empty
 
-||| Every native `PrimType` at which top-level parameter `p` is read as
-||| an operand of a native-result `ROp`, or of a fused `RCmpCase` -- the
-||| two, and only two, places Compiler.RC2.Emit ever reads an operand
-||| via `Compiler.RC2.Emit.Util`'s `rcVarToNativeC` rather than
-||| `rcVarToBoxedC` (a Boxed-*result*
-||| `ROp`'s own operands are read Boxed too, via `emitRC`'s own ROp
-||| case -- only an `RLet`-bound `ROp` whose *own* `Rep` is
-||| `RNative`/`RInlineNative` counts here, now including one reached
-||| through a chain of nested `RLet`s under that same outer `Rep` --
-||| see `opNativeUsesThrough`'s own doc comment). Walks the *whole*
-||| tree, not just tail positions -- an operand can appear anywhere. A
-||| bare (not-`RLet`-bound) `ROp` -- the tail value of some branch, or a
-||| whole one-line function body -- is deliberately *not* treated as a
-||| native-context use here, even though its own `opResultRep` could
-||| answer the question in isolation: unlike
-||| `Compiler.RC2.DualABI`'s own `tailValueReps` (which asks the exact
-||| same question about a *return* value, always computed in lockstep
-||| with that same op's own eligibility, so the two can never disagree),
-||| this function's result is consumed by `Compiler.RC2.Loop`'s own
-||| loop-param promotion too, which runs before any function's return
-||| eligibility has been decided at all -- a bare tail can, and often
-||| does, still render Boxed at that point, and treating it as native
-||| anyway strips ownership bookkeeping a since-still-Boxed rendering
-||| genuinely needs. See rc2/doc/loop-conversion.md's "Known limitation"
-||| section for the Test110Loop/SelfTailLoop.idr valgrind leak this caused.
+||| Every native `PrimType` at which top-level parameter `p` is read as an operand
+||| of a native-result `ROp` or a fused `RCmpCase`; the only reads Emit does
+||| natively. Walks the whole tree. A bare `ROp` is not counted (see
+||| `opNativeUsesThrough`). See `rc2/doc/loop-conversion.md`'s "Native-shadow promotion".
 export
 nativeArgTypes : (p : Int) -> RCExp -> SortedSet PrimType
 nativeArgTypes p (RLet _ _ rep value body) =
@@ -670,47 +599,11 @@ keepUnlessOwned : SortedSet Int -> RCLocal -> Bool
 keepUnlessOwned ids (RCLoc i) = not (contains i ids)
 keepUnlessOwned _ _ = True
 
-||| Remove every `RDup`/`RDrop`/`RFree` target, and every `ROp`/
-||| `RCmpCase` `postDrop` entry, naming one of `ids`. A native value
-||| never needs reference-count bookkeeping at all, so whatever
-||| `annotate` (Phase 2) decided about one of `ids`'s own
-||| dup/drop lifetime while it was Boxed does not apply and must be removed
-||| outright, not merely left in place: a native C scalar has no
-||| refcount header to pass to
-||| `idris2rc2_dup`/`idris2rc2_drop`/`idris2rc2_free` in the first
-||| place.
-|||
-||| Safe precisely when every *value-reading* occurrence of each id in
-||| `ids` is already consistently native by the time this runs -- two
-||| distinct ways that holds, both used in this codebase: this
-||| module's own native-shadow promotion (`applyLoop` below) redirects
-||| every ordinary read to a *fresh* shadow id first (`renameRCExp`),
-||| then calls this with exactly that fresh id set; `Compiler.RC2.DualABI`'s
-||| own worker synthesis instead declares an *original* parameter id
-||| directly as a native C function parameter in a brand-new function
-||| (no id conflict to dodge, since nothing else in that function
-||| already used the name) and calls this with that same, unrenamed id.
-||| Either way, nothing here is deleting a drop some surviving Boxed
-||| read still needs.
-|||
-||| `RCon`'s own field arguments, an `RConCase`/`RConstCase` scrutinee,
-||| and `RReuseOffer`'s own `sc`/`dupOnShared` are deliberately *not*
-||| touched here (a renaming caller's own `renameRCExp` still
-||| substitutes the id in them, same as everywhere else -- only their
-||| *ownership* bookkeeping is a distinct concern from this function's
-||| job): an id eligible for a native representation (an `ROp`/
-||| `RCmpCase` operand) and one pattern-matched or reuse-checked as a
-||| constructor are mutually exclusive at the Idris type level, so a
-||| promoted id is never one of those to begin with; and a promoted id
-||| stored into a constructor field just gets boxed fresh on the spot
-||| by `rcVarToBoxedC`, correctly, with no bookkeeping node of its own
-||| to strip. (`Compiler.RC2.ConAltNative`'s own reuse of this function
-||| for a destructured field, not just a top-level parameter, never
-||| renames *into* an `RReuseOffer`'s own `dupOnShared` either -- it
-||| only ever transforms the "core" past every leading
-||| `RDup`/`RDrop`/`RFree`/`RReleaseReuse`/`RReuseOffer` wrapper, never
-||| the wrappers themselves, precisely so a reuse decision already made
-||| there stays completely undisturbed.)
+||| Remove every `RDup`/`RDrop`/`RFree` target, and every `ROp`/`RCmpCase`
+||| `postDrop` entry, naming one of `ids`. Precondition: every value-reading
+||| occurrence of each id is already native. `RCon` fields, case scrutinees and
+||| `RReuseOffer` operands are deliberately left alone.
+||| See `rc2/doc/loop-conversion.md`'s "`stripOwnership`".
 export
 stripOwnership : SortedSet Int -> RCExp -> RCExp
 stripOwnership ids (RDup fc v extra body) =
@@ -774,37 +667,10 @@ stripOwnership ids (RExtPrim fc lazy p args postDrop) =
 stripOwnership _ e = e
 
 export
-||| Fills in every `RLoopContinue`'s own `postDrop` -- see `RLoopContinue`'s
-||| own doc comment (RCExp.idr) for what this is and why it's needed:
-||| every argument that's still `Boxed` at the point it feeds a
-||| `Native`/`RInlineNative`-shadowed loop param slot needs an explicit
-||| drop once `Compiler.RC2.Emit` reads it natively to build that
-||| slot's own next value, the same "no separate statement position to
-||| hang an ordinary wrapping drop around a native-context read"
-||| reasoning `ROp`/`RCmpCase`/`RAppNameRep`'s own `postDrop` fields
-||| already carry.
-|||
-||| `reps` is threaded through the *same* tail-position shape
-||| `Compiler.RC2.Emit`'s own `TailPositionStatus` (`Compiler.RC2.Emit.Util`)
-||| threading already visits (an `RLet`'s own body, `RCmpCase`'s two branches,
-||| `RConCase`/`RConstCase`'s alts and default, every
-||| `RDup`/`RDrop`/`RFree`/`RReleaseReuse`/`RReuseOffer`'s own
-||| continuation) -- the same shape `Compiler.RC2.DualABI`'s own
-||| `applyCallSiteRewriteBody` already threads an analogous `reps` map
-||| through, for a closely related reason (deciding whether a call's
-||| own argument needs reading natively) -- written fresh here rather
-||| than reused, since `Loop.idr` can't import `DualABI.idr` (which
-||| itself imports `Loop.idr`, to reuse *this* module's own
-||| `nativeArgTypes` -- reusing the other way round would be circular).
-||| Seeded from `loopParams` itself (exactly what's in scope at the top
-||| of the loop body, positionally paired with the same list this
-||| function's own caller already has in hand), extended at every
-||| `RLet` (its own declared `Rep`) and every `RConCase`/`RConstCase`
-||| alt's own destructured fields (always `RBoxed`, matching every other
-||| pass's own treatment of a constructor field's own storage). This
-||| pass's own sole caller (`applyLoop` below) never produces a nested
-||| `RLoop` within `rewritten` (one function, one `RLoop`, by
-||| construction), so there's no case for one here.
+||| Fills in every `RLoopContinue`'s `postDrop` (the drop of a still-`Boxed`
+||| argument feeding a native-shadowed loop param). `reps` is seeded from
+||| `loopParams` and extended at each `RLet` and case-alt field.
+||| Written here rather than reusing `DualABI`'s walk, which would be an import cycle.
 fillLoopContinuePostDrop : List (Int, Rep) -> SortedMap Int Rep -> RCExp -> RCExp
 fillLoopContinuePostDrop loopParams reps (RLet fc var rep value body) =
     RLet fc var rep value (fillLoopContinuePostDrop loopParams (insert var rep reps) body)
@@ -946,38 +812,11 @@ hoistableOp (Div _) _ = False
 hoistableOp Crash _ = False
 hoistableOp _ _ = True
 
-||| Whether `e` -- an `RLet`'s own `value`, after peeling the same
-||| leading `RDup`/`RDrop`/`RFree`/`RReleaseReuse` wrapper shapes
-||| `opNativeUsesThrough` already peels -- is an `ROp`/`RCon` reading
-||| only loop-invariant operands (every `RCLocal` argument not a member
-||| of `variant`, see `noneVariant`). Both are the *only* two `RCExp`
-||| shapes this pass ever hoists (see `hoistInvariantPrefix`'s own doc
-||| comment for why nothing else qualifies), and even then only under
-||| five further, deliberately conservative exclusions:
-|||
-||| - an `ROp` with a non-empty `postDrop` stays put -- the drop would
-|||   run ahead of the arms that still read the operand;
-||| - a `Div`/`Mod` needs a literal divisor other than 0 and -1 (see
-|||   `hoistableOp`), or the hoisted operation can trap before the
-|||   guard that protects it;
-||| - `ROp`'s own `lazy` field must be `Nothing` -- a `Just` marks an
-|||   operation Idris2 itself decided to keep deferred (`Lazy`/`Inf`);
-|||   hoisting would force it unconditionally, ahead of schedule,
-|||   changing *when* (or whether) it ever runs -- squarely outside the
-|||   "strict evaluation means position doesn't matter" reasoning this
-|||   whole pass otherwise relies on.
-||| - `RCon`'s own `reuseFrom` must be `Nothing` -- a `Just` ties this
-|||   construction to a specific `RReuseOffer`'s own runtime uniqueness
-|||   check (`Compiler.RC2.Reuse`), a per-iteration protocol this pass
-|||   has no business relocating.
-||| - The binding's own declared `Rep` must be `RNative`/`RInlineNative`
-|||   -- **not checked by this function itself** (it only looks at
-|||   `value`), but by `hoistInvariantPrefix`'s own caller-side guard;
-|||   documented here since it's just as essential to this function's
-|||   own soundness claim. See rc2/doc/loop-conversion.md's "Loop-
-|||   invariant expression hoisting" section, "The native-result
-|||   exclusion, found the hard way" for why a `RBoxed` result is unsound to hoist (a
-|||   valgrind-confirmed double-free).
+||| Whether `e` (an `RLet` value, seen through leading `RDup`/`RDrop`/`RFree`/
+||| `RReleaseReuse`) is an `ROp`/`RCon` reading only operands outside `variant`,
+||| and passes the conservative exclusions (`postDrop`, `Div`/`Mod` divisor, `lazy`,
+||| `reuseFrom`). The native-`Rep` requirement is checked by the caller,
+||| `hoistInvariantPrefix`. See `rc2/doc/loop-conversion.md`'s "Loop-invariant expression hoisting".
 isInvariantExpr : SortedSet Int -> RCExp -> Bool
 isInvariantExpr variant (ROp _ Nothing fn args []) = hoistableOp fn (toList args) && all (noneVariant variant) (toList args)
 isInvariantExpr variant (RCon _ _ _ _ args Nothing) = all (noneVariant variant) args
@@ -987,77 +826,12 @@ isInvariantExpr variant (RFree _ _ cont) = isInvariantExpr variant cont
 isInvariantExpr variant (RReleaseReuse _ _ cont) = isInvariantExpr variant cont
 isInvariantExpr _ _ = False
 
-||| Pulls every loop-invariant `RLet` binding out of `e` -- the
-||| straight-line chain of `RLet`s (optionally interleaved with
-||| non-branching ownership wrappers), recursing into *every* arm of an
-||| `RCmpCase`/`RConCase`/`RConstCase` reached along the way rather than
-||| stopping at the first one. Returns the hoisted bindings (in their
-||| own original relative order) alongside the rewritten remainder with
-||| them removed.
-|||
-||| **Why entering branch arms doesn't need the "runs at least once
-||| already" argument a prefix-only scan could rely on**: an expression
-||| sitting inside one arm of a branch might not run at all on a given
-||| iteration, so hoisting it to run *unconditionally*, once, ahead of
-||| the whole loop, is a real change in how many times it executes, not
-||| just a reduction. This is harmless only because of the *next*
-||| restriction below (`isNativeRep rep`): a native computation is pure
-||| arithmetic/construction with no allocation or refcount bookkeeping
-||| attached, so running it on iterations that never needed it costs
-||| cycles, never correctness (a trapping `Div`/`Mod` is kept out by
-||| `hoistableOp`). Entering branch arms doesn't relax the
-||| `Boxed` restriction at all -- if anything it's the reason that
-||| restriction matters more, not less (see below).
-|||
-||| **Why no extra ownership bookkeeping is needed for the operands
-||| being *read***: a hoisted binding's own `postDrop`/leading `RDup`
-||| etc. moves with it unchanged. Every one of its operands is, by
-||| `isInvariantExpr`'s own definition, either a loop-external value
-||| already computed exactly once (a top-level argument, or something
-||| this same pass -- or the parameter-elision pass before it --
-||| already hoisted) or a constant; reading the *same* such value
-||| repeatedly, once per iteration, is only possible in the first place
-||| because `Compiler.RC2.RC`'s own `annotate` already arranged a
-||| net-zero `dup`-then-drop around each repeated read (an outright
-||| *consuming* read could never coexist with the value surviving to
-||| the next iteration). Collapsing N such net-zero cycles into one
-||| doesn't change the net effect on that operand's own refcount at
-||| all.
-|||
-||| **Why only a `Native`/`RInlineNative` *result* is safe to hoist --
-||| this part is essential, confirmed the hard way**: the reasoning
-||| above is only about the operands being *read*; it says nothing
-||| about the hoisted binding's own *result*, `var` itself. A `RBoxed`
-||| result has its own, separate liveness story *inside the loop body*:
-||| if `var` is a fresh Boxed construction only actually *used* on one
-||| arm of a branch (e.g. only in the loop's own exit value, never on
-||| the `continue`-taking arm), `Compiler.RC2.RC`'s own `annotate`
-||| already placed a `drop [var]` at the top of the *other* arm (the one
-||| that doesn't use it -- the "at most one `RDrop` per branch entry"
-||| pattern this whole ownership system is built on). Hoisting `var`'s
-||| construction out from under that arm, to run unconditionally before
-||| the loop, leaves that drop stale: what releases a fresh,
-||| per-iteration allocation would double-free the *one*, shared, hoisted
-||| value on every iteration that takes the non-using arm -- fixing this
-||| up would need this pass to also patch that other arm's own drop, the
-||| same compensating-drop bookkeeping `Compiler.RC2.Sink` already does
-||| for the opposite move (sinking *into* one arm instead of hoisting
-||| out of one). A native result sidesteps
-||| the whole issue structurally -- native values are never dup'd/
-||| dropped anywhere in this runtime, so no branch can ever hold a stale
-||| drop for one -- which is why `hoistInvariantPrefix` below still
-||| gates on `isNativeRep rep`, not just `isInvariantExpr`, since the
-||| scan itself reaches inside every arm.
-|||
-||| `var` itself is deliberately *not* added to `variant` when hoisted
-||| -- it's a loop-external value too, so a later binding that only
-||| reads *it*, anywhere, including a sibling arm, remains eligible for
-||| hoisting in the same pass, no fixed-point iteration required. Each
-||| `RConAlt`'s own pattern-bound `args`, by contrast, only exist for the
-||| duration of that one arm: recursing into it extends `variant` with
-||| them first, so an expression reading a just-destructured field is
-||| correctly excluded rather than hoisted somewhere it's no longer even
-||| in scope.
+||| Pulls every loop-invariant `RLet` binding out of `e`'s straight-line `RLet`
+||| chain, recursing into every arm of each branch reached. Returns the hoisted
+||| bindings (original relative order) and the remainder with them removed.
+||| Only a `Native`/`RInlineNative` result may be hoisted: a hoisted `Boxed` value
+||| leaves a stale `drop` in the arm that does not use it (double free).
+||| See `rc2/doc/loop-conversion.md`'s "Loop-invariant expression hoisting".
 hoistInvariantPrefix : SortedSet Int -> RCExp -> (List (Int, Rep, RCExp), RCExp)
 hoistInvariantPrefix variant (RLet fc var rep value body) =
     if isNativeRep rep && isInvariantExpr variant value
@@ -1096,29 +870,11 @@ hoistInvariantPrefix variant (RConstCase fc sc alts mDef) =
 hoistInvariantPrefix _ e = ([], e)
 
 ------------------------------------------------------------------------
--- Reusing a loop-*invariant* parameter's own original Boxed value for
--- a surviving Boxed-context read, instead of always reboxing fresh
--- from its native shadow (see TODO.md's own "Performance: Loop.idr's
--- own loop-carried native shadow still reboxes fresh on a Boxed-context
--- read" entry, and `rc2/doc/con-alt-native.md`'s own "Reusing the
--- original Boxed field for surviving Boxed-context reads" section for
--- the sibling fix this one is modelled on for
--- `Compiler.RC2.ConAltNative`'s own destructured-field caching).
---
--- Deliberately *not* the same ownership rule as ConAltNative's own
--- `reannotateFieldOwnership` ("first occurrence moves, later ones
--- dup"): an invariant parameter's own Boxed-context read can sit on
--- the loop's own *continue* path, re-executed once per iteration, not
--- just once total the way a destructured field's own alt body is. If
--- the first (textually) iteration's own use *moved* the parameter's
--- only reference, a later iteration's own `dup` of the very same
--- now-freed local would be a use-after-free. Every surviving
--- Boxed-context occurrence is instead unconditionally `dup`'d
--- (`dupInvariantBoxed`), and the parameter's own single release is
--- hoisted to run *once*, after the whole loop has finished evaluating
--- (`applyLoop`'s own `wrapInvariantShadows`, below) -- one dup per
--- occurrence per iteration it's actually reached, one drop total,
--- regardless of iteration count.
+-- Reuses a loop-invariant parameter's original Boxed value for a surviving
+-- Boxed-context read instead of reboxing from the shadow. Every such read is
+-- `dup`'d (`dupInvariantBoxed`) with one release after the loop: a move would
+-- be a use-after-free on the next iteration.
+-- See `rc2/doc/loop-conversion.md`'s "Reusing the original Boxed value for a surviving Boxed-context read".
 
 ||| Mirrors `Compiler.RC2.ConAltNative`'s own `renameOpArgsThrough`
 ||| exactly (itself mirroring this module's own `opNativeUsesThrough`)
@@ -1347,72 +1103,13 @@ dupInvariantBoxed p (RLoopContinue fc args postDrop) =
 -- Compiler.RC2.DualABI ever produces one.
 dupInvariantBoxed _ e = e
 
-||| The actual pass, as a plain pure function of one definition at a
-||| time -- `nextId0` (the fresh-shadow-id counter's own starting
-||| value) is a parameter rather than computed here, and its final
-||| value comes back alongside the rewritten def, both threaded by
-||| the exported `applyLoop` wrapper below against the shared `VarId`
-||| counter.
-|||
-||| Apply self-tail-call loop conversion to one top-level definition,
-||| given its own `Name` -- Compiler.RC2.RC doesn't thread a
-||| definition's own name through Phase 1/2 at all (nothing there needs
-||| it), so this takes it as an explicit argument the same way
-||| RC2.idr's `toRCDefs` already has it in hand (paired with the
-||| `RCDef` it came from) for every definition. If any self-tail-call is
-||| found, wraps the whole (rewritten) body in one `RLoop`: each
-||| top-level parameter becomes a loop param reusing its own id,
-||| `RBoxed`, unless `nativeArgType` finds it worth promoting to a fresh
-||| native shadow (see this module's own header note, and
-||| `nativeArgType`/`stripOwnership`'s own doc comments for the
-||| eligibility criterion and why the rewrite is safe) -- either way,
-||| `initial` always reads the original (always-Boxed) parameter's own
-||| value, since that's genuinely where every loop param's value starts
-||| from; Compiler.RC2.Emit's `declareLoopParam` does the (skipped, for
-||| an unchanged `RBoxed` param -- the common case) unboxing conversion.
-|||
-||| A param that turns out loop-*invariant* (`invariantLoopParamIds`:
-||| every `RLoopContinue` supplies it completely unchanged) is excluded
-||| from `loopParams`/`initial`/every continue's own `args` entirely --
-||| it was never going to be reassigned, so it has no business being
-||| loop-carried in the IR at all. A Boxed one needs nothing further:
-||| its own original id is already, and remains, the enclosing
-||| function's own top-level argument (`Compiler.RC2.Emit`'s
-||| `declareLoopParam` already special-cases this exact "no
-||| declaration needed" shape). A native-shadow-eligible one instead
-||| gets hoisted into a one-time `RLet`+`RDrop` pair wrapping the whole
-||| loop -- the exact same idiom `Compiler.RC2.ConAltNative`'s own
-||| `shadowAltFields` already established for caching a native read of
-||| a destructured field, reused here verbatim (see its own doc
-||| comment) rather than reinvented.
-|||
-||| Once `loopParams` is settled, `hoistInvariantPrefix` makes one more
-||| pass over the loop's own body, pulling any `ROp`/`RCon` in its
-||| unconditional prefix that reads only loop-external operands out to
-||| a one-time `RLet` too (see that function's own doc comment for the
-||| scope and safety argument) -- nested *inside* the invariant-
-||| parameter `RLet`s above, since a hoisted expression may itself read
-||| one of those (e.g. a native-shadowed invariant parameter's own
-||| shadow id).
-|||
-||| `calleeTable` (`buildCalleeTable` above, built once from
-||| the whole post-MutualLoop/pre-Loop def list) feeds `eligibleVariant`
-||| below via `callArgOrOpNativeTy`, extending native-shadow
-||| eligibility to a loop parameter read only as a call argument to an
-||| independently-eligible plain callee (`rc2/doc/loop-conversion.md`'s
-||| "Known limitation" -- the `loop acc n = loop (step acc n) ...`
-||| shape). Deliberately variant-only: `eligibleInvariant` keeps using
-||| the OLD, call-argument-blind `eligible` list unchanged, because
-||| `markInvariantNative` (the only place an invariant parameter's own
-||| native occurrences get redirected to its shadow) has no `RAppName`
-||| case at all -- an invariant parameter promoted solely via a call
-||| argument would get a shadow variable nothing ever actually reads
-||| from, dead weight rather than a real box-elimination (still safe:
-||| `dupInvariantBoxed`'s own generic `RAppName` case handles the
-||| un-redirected call-argument occurrence correctly either way, via
-||| ordinary dup/deferred-drop -- just pointless to allocate the shadow
-||| for). Left as a followup rather than also teaching
-||| `markInvariantNative` an `RAppName` case in this change.
+||| Self-tail-call loop conversion of one definition, given its own `Name`;
+||| wraps the rewritten body in one `RLoop` when a self-tail-call exists.
+||| `nextId0` is the fresh-id counter start, returned advanced alongside the def.
+||| `calleeTable` extends native-shadow eligibility of a loop-variant parameter
+||| to a call argument; invariant parameters stay excluded because
+||| `markInvariantNative` has no `RAppName` case.
+||| See `rc2/doc/loop-conversion.md`'s "`applyLoop` -- the wrapping decision" and "Known limitation".
 applyLoopFromId : (nextId0 : Int) -> CalleeTable -> (noPromote : SortedSet Int) -> Name -> RCDef -> (Int, RCDef)
 applyLoopFromId nextId0 calleeTable noPromote self (MkRCFun args retRep isWorker body) =
     let argIds = map fst args
@@ -1473,28 +1170,9 @@ applyLoopFromId nextId0 calleeTable noPromote self (MkRCFun args retRep isWorker
                   -- addressed here).
                   variantRewritten : RCExp
                   variantRewritten = if null shadowedVariant then body' else stripOwnership shadowIdsVariant (renameRCExp renamingVariant body')
-                  -- Every eligible *invariant* parameter instead only
-                  -- has its own native-context occurrences redirected
-                  -- (`markInvariantNative`) here -- any surviving
-                  -- Boxed-context occurrence is dealt with later, in
-                  -- `wrapInvariantShadows` below, once the whole rest of
-                  -- this rewrite has settled. `stripOwnership` first
-                  -- clears whatever stale ownership bookkeeping
-                  -- `annotate` had attached to each invariant parameter
-                  -- as an ordinary (possibly multiply-used) top-level
-                  -- argument -- the same first step
-                  -- `Compiler.RC2.ConAltNative`'s own `shadowOneField`
-                  -- takes for a destructured field. Run *once*, over
-                  -- every invariant parameter's own id together (rather
-                  -- than once per parameter inside the `foldr` below)
-                  -- -- `stripOwnership`'s own
-                  -- filtering is a pure per-node set-membership check
-                  -- with no interaction between different ids, so
-                  -- stripping the whole set in one pass is exactly
-                  -- equivalent to stripping each singleton in sequence,
-                  -- just without body-sized-walk being repeated once
-                  -- per invariant parameter (see `rc2/doc/loop-conversion.md`'s
-                  -- "Bugs found and fixed" #7's own follow-up).
+                  -- Invariant parameters only get native-context reads redirected
+                  -- (`markInvariantNative`); `stripOwnership` runs once over the whole id set
+                  -- (see `rc2/doc/loop-conversion.md`'s "Bugs found and fixed" #7).
                   invariantIdsAll = SortedSet.fromList $ map (\(p, _, _) => p) shadowedInvariant
                   rewritten : RCExp
                   rewritten = foldr (\(p, sid, _), acc => markInvariantNative p sid acc)

@@ -21,28 +21,11 @@ import Data.Vect
 
 %default covering
 
-||| Exact, greppable marker `normalize`'s own `prim__getField`/
-||| `prim__setField` cases (below) tag their `InternalError` with when
-||| the struct/field name isn't a literal -- i.e. a definition (like
-||| `System.FFI.getField` itself) that only works once its own caller
-||| inlines it down to a literal, never as a standalone compiled
-||| function. Whole-program compilation never actually throws this in
-||| practice (such a definition's own un-inlined form isn't reachable
-||| from `main` to begin with -- upstream's own reachable-set fetch
-||| already excludes it). Incremental compilation's own `toIR`-scoped
-||| `defs` has no such luxury -- every definition a module makes is
-||| compiled for real regardless of whether anything in the *whole*
-||| program still calls it un-inlined -- so `normalizeProgram` (its own
-||| `incremental = True` case only) catches exactly this marker and drops
-||| the offending definition instead of aborting the whole module's
-||| compile, the same "unimplementable, fails at link time instead"
-||| treatment `Emit.idr`'s own `hasUsableForeignImpl` gives a `%foreign`
-||| declaration with no usable convention -- see
-||| rc2/doc/incremental-compile.md's "no C struct support under
-||| --inc rc2". The catch looks for this whole bracketed marker anywhere
-||| in the message (`isInfixOf`, since the message may be wrapped by the
-||| time it arrives), not free-text `InternalError` sniffing, so it
-||| can't accidentally trap some unrelated internal error.
+||| Greppable marker tagging `normalize`'s `InternalError` for a
+||| `prim__getField`/`prim__setField` whose struct/field name isn't a literal.
+||| `normalizeProgram` (incremental case only) catches it and drops the
+||| definition instead of aborting the module; see
+||| rc2/doc/incremental-compile.md's "no C struct support under --inc rc2".
 export
 notInlinedStructFieldMarker : String
 notInlinedStructFieldMarker = "[rc2:not-inlined-struct-field]"
@@ -650,29 +633,9 @@ mutual
            then pure $ RLet fc var (inlineableRep rep valueRC var bodyRC) valueRC bodyRC
            else pure $ RLet fc var rep valueRC (dropDeadLet fc natives rep (RCLoc var) valueRC bodyRC)
       where
-        ||| Promote a plain `RNative ty` to `RInlineNative ty` once ownership is
-        ||| fully known (called from `annotate`'s own `RLet` case, after both
-        ||| `valueRC`'s `postDrop` and `bodyRC` are already computed): safe and
-        ||| worthwhile exactly when `valueRC` is a bare native op and `var` is
-        ||| referenced exactly once in `bodyRC` (otherwise inlining would
-        ||| duplicate the op's computation). Anything else (a literal-valued
-        ||| let, a multi-use one, or an already-`RBoxed` one) passes `rep`
-        ||| through unchanged -- this only ever *narrows* an existing
-        ||| `RNative`, never invents a new native classification `Types.repOf`
-        ||| didn't already decide. This is a single Phase-2 decision, not an
-        ||| emission-time tree-walk per RLet, mirroring `ROp.postDrop` and
-        ||| reuse-in-place's own elevations.
-        |||
-        ||| `ROp`'s own non-empty `postDrop` (any Boxed operand it reads and
-        ||| owes a drop -- see its own doc comment) is no obstacle here: it
-        ||| just rides along on `var`'s single deferred use like the rest of
-        ||| the op's own expression text. `Compiler.RC2.Emit.Util`'s InlineMap
-        ||| stashes it alongside that text (`rcVarToBoxedC`/`rcVarToNativeC`'s
-        ||| own doc comments), and the deferred use is exactly where it gets
-        ||| discharged -- the canonical read-before-drop rule
-        ||| (`Compiler.RC2.Emit`'s `emitRC` doc comment) holds regardless of
-        ||| whether the op's own C statement was emitted eagerly (an ordinary
-        ||| `RNative` `RLet`) or deferred to its single use (`RInlineNative`).
+        ||| Narrow `RNative ty` to `RInlineNative ty` when `valueRC` is a bare
+        ||| `ROp` and `var` is used exactly once in `bodyRC`; otherwise `rep`
+        ||| is unchanged. See rc2/doc/native-type-inference.md, "`InlineMap`".
         inlineableRep : Rep -> RCExp -> Int -> RCExp -> Rep
         inlineableRep (RNative ty) (ROp {}) var bodyRC =
             if countUsesR (RCLoc var) bodyRC == 1 then RInlineNative ty else RNative ty

@@ -39,6 +39,14 @@ inferred. What's left, every iteration, is exactly the destructure
 itself (reading `sc->args[k]` into a fresh local) plus that field's own
 `RDup` -- real but smaller cost than originally framed.
 
+`emitAltChain` collapses as follows. With no default, the last alt skips
+its condition (coverage guarantees it matches). Under `SinkReturn`, the
+other alts also drop their `else`-chaining (`chainsWithElse`) and the
+trailing piece drops its braces and extra indentation, since this case is
+always the last thing in its C block. A 2-alt tail case with no default
+(`Bool`-shaped) becomes `if (...) { ...; return ...; } ...; return ...;`,
+and a single-alt one has no `if` at all.
+
 **Two ways to actually hoist that remaining cost were considered:**
 
 1. **General single-alt-case flattening**: rewrite any single-alt (or

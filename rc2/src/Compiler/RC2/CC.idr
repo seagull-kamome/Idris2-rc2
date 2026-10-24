@@ -84,43 +84,14 @@ compileCObjectFile sourceFile objectFile verbose
          cDir <- findDataFile "c"
          depLibDirs <- depPkgLibDirs
 
-         -- `-Wno-error=deprecated-declarations`: the deprecated attribute
-         -- on `fastPack`/`fastConcat` (idris2rc2_strings.h -- both leak
-         -- their own malloc'd buffer, see rc2/doc/fastpack-fix.md) is a safety net,
-         -- not something normal builds are expected to hit:
-         -- `Compiler.RC2.Emit`'s own `createCFunctions` (see
-         -- `fastPackFixedReplacement`) always redirects every
-         -- `Prelude.Types.fastPack`/`fastConcat` call site to the
-         -- leak-free `idris2rc2_fastPackFixed`/`idris2rc2_fastConcatFixed` instead, so this
-         -- declaration itself is never actually reached by generated
-         -- code. Kept `-Wno-error` anyway so a future regression in
-         -- that redirect degrades to a visible warning, not a hard
-         -- `-Werror` build failure for every program in existence.
-         -- `-ffunction-sections -fdata-sections`: pairs with
-         -- `compileCFile`'s own `--gc-sections`, letting the linker
-         -- discard individual unused functions/globals at *section*
-         -- granularity rather than only at whole-object-file
-         -- granularity. Always safe (pure dead-code stripping, no
-         -- behavior change) but specifically load-bearing for
-         -- incremental mode: rc2 compiles one whole module to one `.o`,
-         -- so a module needed for any single reason (e.g. `Prelude.IO`
-         -- for `putStrLn`) otherwise drags in every *other* function it
-         -- happens to also define -- including one that itself
-         -- dangles a reference to something `Emit.idr`'s own
-         -- `dropUnimplementableForeign`/`hasUsableForeignImpl`
-         -- deliberately dropped (e.g. `Prelude.IO.threadWait`, calling
-         -- the dropped `prim__threadWait`) even when the actual program
-         -- being built never calls it -- see
-         -- rc2/doc/incremental-compile.md's "Bugs found while
-         -- implementing" and `CC.archiveObjectFiles`'s own doc comment
-         -- for the rest of this same fix (archiving instead of linking
-         -- bare `.o`s solves it at whole-module granularity; this
-         -- solves what's left at per-function granularity).
-         -- `-O2`: the default optimisation level for generated code
-         -- (the runtime library itself is already built with `-O2`, see
-         -- `support/rc2/Makefile`). Placed before `cFlags` on purpose:
-         -- gcc/clang honour the last `-O` given, so `CFLAGS=-O0` (or
-         -- `IDRIS2_CFLAGS=-O0`) still turns it back off.
+         -- `-Wno-error=deprecated-declarations`: fastPack/fastConcat are deprecated
+         -- as a safety net (`rc2/doc/fastpack-fix.md`); a regression in the redirect
+         -- should warn, not fail every build.
+         -- `-ffunction-sections -fdata-sections`: pairs with `--gc-sections` to strip
+         -- unused functions per function; load-bearing for incremental mode
+         -- (`rc2/doc/incremental-compile.md` "Bugs found while implementing").
+         -- `-O2` goes before `cFlags` on purpose: the last `-O` wins, so
+         -- `CFLAGS=-O0` still overrides.
          let runccobj = (escapeCmd $
              [cc, "-O2", "-Werror", "-Wno-error=deprecated-declarations",
                   "-ffunction-sections", "-fdata-sections", "-c", sourceFile,

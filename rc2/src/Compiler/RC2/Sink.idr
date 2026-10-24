@@ -98,28 +98,11 @@ stripIfUnused var branch =
        then Nothing
        else Just (removeVarDrop var branch)
 
-||| Every Boxed operand `value` itself *consumes* by reading it -- an
-||| `ROp`'s or `RStructGet`'s own `postDrop` (both populated the same
-||| way, by `Compiler.RC2.RC`'s own `dropIfLastUse` -- see
-||| `rc2/doc/c-struct-support.md`'s own "ownership" section for why a
-||| struct pointer's read needs exactly `ROp`'s drop treatment despite
-||| having no operands of its own to `dup`), an `RAppName`'s Boxed args
-||| (filtered via `reps`, since a call unconditionally consumes *all*
-||| its args), or (tracked via `dupped`) any `RCon` field *not* `dup`'d
-||| first. These
-||| need an explicit `drop` in every arm `value` doesn't sink into,
-||| replacing the release `value`'s own `postDrop`/field-move that
-||| would otherwise unconditionally provide it -- see
-||| doc/branch-sinking.md's "The rewrite itself".
-|||
-||| Restricted to `RCLoc` operands even where `localRepIn` alone would
-||| call a constant `RBoxed` too (`RCEmptyCon`/`RCConstCon`/
-||| `RCConstClosure` always, `RCConst` whenever `litRep` can't place it
-||| natively) -- none of `RCLocal`'s constant-shaped constructors is
-||| ever a real refcounted value with a matching `drop` to balance;
-||| `Compiler.RC2.Emit.Util`'s own `varName` has no rendering for one at
-||| all (an "unreachable" placeholder), which is what a constant field
-||| of a sunk `RCon` would reach here.
+||| Every Boxed `RCLoc` operand `value` itself consumes by reading it (an
+||| `ROp`'s or `RStructGet`'s `postDrop`, an `RAppName`'s Boxed args, an
+||| `RCon` field not `dup`'d first). Each needs an explicit `drop` in every
+||| arm `value` doesn't sink into. See doc/branch-sinking.md, "The rewrite
+||| itself" (also why constant-shaped operands are excluded).
 consumedOperands : SortedMap Int Rep -> RCExp -> List RCLocal
 consumedOperands reps = go []
   where

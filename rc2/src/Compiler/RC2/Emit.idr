@@ -117,28 +117,11 @@ retUnsupported site = throw $ InternalError "[rc2] \{site}: a struct-return (Ret
 ||| (no statement position after a `return` for the drop to land in)
 ||| -- `SinkVar` always has one, so it just drops right after.
 emitAppNameRepInto : EmitDeps (Sink -> TailPositionStatus -> FC -> Name -> List Rep -> Rep -> List RCLocal -> List RCLocal -> Core ())
-||| Render a leftover `RAppFFIInline` (a direct, self-contained call
-||| to a `%foreign` declaration's own raw C function, see its own
-||| doc comment in RCExp.idr) into `sink` -- always produces a
-||| *Boxed* value string, mirroring `emitAppNameRepInto`'s own
-||| contract exactly (`emitNativeValue`'s own separate
-||| `RAppFFIInline` case is the native-context counterpart, used
-||| instead whenever `Compiler.RC2.DualABI`'s own `RLet` promotion
-||| already decided this call's own result stays unboxed).
-|||
-||| Every genuinely-`RBoxed`-typed argument position
-||| (`ffiRawCall`'s own drop set) needs an unconditional drop here,
-||| *in addition to* `postDrop` -- the two are disjoint by
-||| construction (`postDrop` only ever names a position whose own
-||| argument representation is native; this only ever names a
-||| position whose own argument representation is `RBoxed`) but
-||| need exactly the same "after the value has been embedded in a
-||| statement" discharge timing, so they're combined into one list
-||| and handled by the same postDrop-capture-then-drop machinery
-||| `emitAppNameRepInto` above already has. Get this backwards (miss
-||| this drop entirely, or double it up with `postDrop`) and every
-||| FFI call with a genuinely Boxed argument leaks or double-frees
-||| -- see `ffiRawCall`'s own doc comment for the full rationale.
+||| Render a leftover `RAppFFIInline` (see RCExp.idr) into `sink` as a *Boxed*
+||| value, same contract as `emitAppNameRepInto`; `emitNativeValue` has the
+||| native counterpart. Boxed-typed args are dropped here in addition to
+||| `postDrop` (disjoint sets, same discharge timing): missing or doubling
+||| one leaks or double-frees. See `rc2/doc/dual-abi.md` "Stage 5".
 emitAppFFIInlineInto : EmitDeps (Sink -> TailPositionStatus -> FC -> List String -> List CFType -> CFType -> List RCLocal -> List RCLocal -> Core ())
 ||| Canonical statement of the `postDrop` read-before-drop rule every
 ||| other `postDrop`-consuming site in this file points back to here:
@@ -277,30 +260,12 @@ mutual
         pure Nothing
       _ => pure (Just e)
 
-    ||| If `value` is a partial application (RUnderApp), or an InTailPosition
-    ||| tail call (RAppName -- see emitRC's own RAppName case, which only
-    ||| ever produces a bare closure name in that tail position, never
-    ||| otherwise) -- either possibly wrapped in leading RDup/RDrop/RFree for
-    ||| their own operands' refcounting, or in one or more RLet bindings
-    ||| that have nothing to do with the closure itself (both of which
-    ||| `annotate`/Phase 1's own ANF normalisation can wrap around any
-    ||| expression uniformly, without changing what the *tail* expression
-    ||| actually is) -- lower those wrappers first, then build the closure
-    ||| directly into `sink` (via `buildClosureIntoSink`/`makeClosureInto`)
-    ||| instead of the throwaway `closure_N` a generic `emitRC value`
-    ||| would produce (only to have the caller immediately copy it into
-    ||| the real destination right after -- two statements for one).
-    |||
-    ||| Returns `Nothing` if the closure was built (nothing left for the
-    ||| caller to do), or `Just leftover` if `value` wasn't shaped like
-    ||| this at all -- `leftover` is *not* always `value` itself: peeling
-    ||| an RDup/RDrop/RFree/RLet wrapper on the way down already emits
-    ||| that wrapper's own side effect (a dup/drop/free call, or a let
-    ||| declaration), so if the search dead-ends partway through, the
-    ||| caller must resume from what's left (the innermost un-peeled
-    ||| expression), not restart from `value` -- re-running `emitRC` on
-    ||| the original `value` would emit every wrapper's side effect a
-    ||| second time.
+    ||| Build a closure straight into `sink` when `value` is an `RUnderApp` or a
+    ||| tail `RAppName`, peeling leading RDup/RDrop/RFree/RLet wrappers (lowered
+    ||| on the way) -- skips the throwaway `closure_N`.
+    ||| Returns `Nothing` if built, else `Just leftover`: the innermost un-peeled
+    ||| expression, NOT `value`. The peeled wrappers' side effects are already
+    ||| emitted, so the caller must resume from `leftover`.
     tryBuildClosureInto : EmitDeps (Sink -> TailPositionStatus -> RCExp -> Core (Maybe RCExp))
     tryBuildClosureInto sink tailPosition e0 = peelWrappers e0 >>= \e => case (e, tailPosition) of
       (RUnderApp fc n missing args, _) => do
@@ -385,36 +350,13 @@ mutual
         finalizeSink fc sink valStr
         removeVars pending
 
-    ||| Evaluate `value` (in `tailPosition`) and dispose of its result per
-    ||| `sink` -- either declaring/assigning a named C variable, or (only
-    ||| ever while `tailPosition` is `InTailPosition`, since nothing after
-    ||| a `return` would run) emitting a plain C `return` statement. Tries
-    ||| `tryEmitLoopContinue` first (a self-tail-call has nothing to hand
-    ||| any `Sink` at all -- control leaves via `goto` -- see its own doc
-    ||| comment), then `tryBuildClosureInto` (skips a throwaway `closure_N`
-    ||| when `value` is a closure build that can go straight into `sink`
-    ||| -- see its own doc comment). A leftover `RCmpCase`/`RConCase`/
-    ||| `RConstCase` is handled specially too (`emitCmpCaseInto`/
-    ||| `emitConCaseInto`/`emitConstCaseInto`), so every branch writes
-    ||| straight into the *caller's own* `sink` instead of a throwaway
-    ||| `switchReturnVar` that then has to be copied into it -- the same
-    ||| "build directly into the real destination" idea as
-    ||| `tryBuildClosureInto`, applied to branching constructs (and,
-    ||| in tail position, letting a whole chain of nested cases collapse
-    ||| straight down to a `return` in each leaf branch, with no
-    ||| intermediate variable anywhere along the way). Anything else (a
-    ||| genuine single-expression leaf: `RV`, `RCon`, `ROp`, `RExtPrim`,
-    ||| `RPrimVal`, `RErased`, `RCrash`, `RApp`, a non-tail `RAppName`)
-    ||| falls back to the general `emitRC`-then-`finalizeSink` route --
-    ||| unless `sink` is itself a native `SinkReturn` (`RNative`/
-    ||| `RInlineNative`, Compiler.RC2.DualABI's own Stage 3b), in which
-    ||| case `emitNativeReturn` handles it instead: `emitRC`'s own
-    ||| contract is always-Boxed, exactly wrong for a function whose own
-    ||| C return type is a native scalar -- see `emitNativeReturn`'s own
-    ||| doc comment.
-    ||| Every "evaluate this RCExp and store/return its result" site in
-    ||| this module goes through here, so the choice between those routes
-    ||| is only ever written once.
+    ||| Evaluate `value` and dispose of the result per `sink` (assign to a C
+    ||| variable, or `return` in tail position); the one entry for every
+    ||| "evaluate and store/return" site. Order: `tryEmitLoopContinue`,
+    ||| `tryBuildClosureInto`, branching constructs written straight into `sink`,
+    ||| a native `SinkReturn` via `emitNativeReturn` (`emitRC` is always-Boxed,
+    ||| wrong there), else `emitRC` + `finalizeSink`. See `rc2/doc/dual-abi.md`
+    ||| "Stage 3b".
     emitInto : EmitDeps (FC -> Sink -> TailPositionStatus -> RCExp -> Core ())
     emitInto fc sink tailPosition value = do
         -- Same "resume from the leftover, not the original value" care
@@ -440,28 +382,11 @@ mutual
                      -- emitRC could render).
                      RMemoize fc' n rep body =>
                          emitMemoizeInto sink tailPosition fc' n rep body
-                     -- Everything above threads `sink` through to a
-                     -- further `emitInto` of its own (each branch arm,
-                     -- each loop body), so it must be dispatched before
-                     -- the `sink`'s own Rep is consulted. Everything
-                     -- below IS the value, so the Rep decides which
-                     -- renderer produces it.
-                     --
-                     -- A native sink -- Compiler.RC2.DualABI's own Stage
-                     -- 3b `SinkReturn`, or the native variable slot a
-                     -- branching native value assigns into (see
-                     -- `emitNativeSinkVar`) -- skips emitRC entirely:
-                     -- emitRC's own contract is "always render a Boxed
-                     -- expression string", which is exactly wrong here,
-                     -- and can't discharge a pending Boxed-operand drop
-                     -- safely in front of a `return` in the first place
-                     -- (see emitNativeReturn's own doc comment).
-                     -- `emitNativeValue` has its own native cases for
-                     -- RAppNameRep/RAppFFIInline, so those two are
-                     -- reached through here rather than short-circuited
-                     -- above -- routing them to their always-Boxed
-                     -- renderers would box a worker's own native result
-                     -- straight into a native slot.
+                     -- Arms above thread `sink` into a further `emitInto`; below, the sink's Rep
+                     -- picks the renderer. A native sink skips emitRC (always-Boxed, wrong
+                     -- here). RAppNameRep/RAppFFIInline must reach `emitNativeValue`, not their
+                     -- Boxed renderers, or a worker's native result gets boxed into a native
+                     -- slot. See `rc2/doc/dual-abi.md` "Stage 3b".
                      _ => case sink of
                               SinkReturn (RRet _ _) => emitRetInto sink tailPosition remaining
                               SinkVar _ _ (RRet _ _) => emitRetInto sink tailPosition remaining
@@ -705,36 +630,12 @@ mutual
                     defaultAction
                     alts
 
-    ||| Lowers `RMemoize` (RCExp.idr's own doc comment,
-    ||| `doc/caf-memoization.md`): a top-level 0-argument definition's
-    ||| own body, evaluated at most once and shared across every
-    ||| reference to `n`. A real if/else over a file-scope static memo,
-    ||| not a single expression `emitRC` could render -- same reasoning
-    ||| as `emitCmpCaseInto`/`emitConCaseInto` above.
-    |||
-    ||| `body` is always emitted into a fresh, forced `SinkVar` -- never
-    ||| straight into this node's own `sink`/`tailPosition` -- since its
-    ||| result has to be read back here (to store into the static memo)
-    ||| before this whole node's own value goes anywhere at all; a
-    ||| `SinkReturn` sink would make that impossible (nothing can run
-    ||| after a `return`).
-    |||
-    ||| Only the `RBoxed` case is implemented. `rep` is always a direct
-    ||| copy of the enclosing `MkRCFun`'s own `retRep`
-    ||| (`Compiler.RC2.RC2`'s `insertMemoize`), and `retRep` is hardcoded
-    ||| `RBoxed` by `Compiler.RC2.RC`'s own `normalizeDef` (Phase 1) for
-    ||| every ordinary definition: the only place a *native* `retRep` is ever introduced is
-    ||| `Compiler.RC2.DualABI`'s worker synthesis, a *separate* later
-    ||| definition alongside the original wrapper, strictly after
-    ||| `insertMemoize` already ran (`ConstFold` -> `insertMemoize` ->
-    ||| Phase 2 -> ... -> `DualABI`). So `RNative`/`RInlineNative` can't
-    ||| actually reach here. Thrown rather than half-implemented: `Sink`
-    ||| itself has no native-value-into-a-forced-intermediate-variable
-    ||| shape at all today (`SinkVar`'s own `finalizeSink` case always
-    ||| declares `IDRIS2RC2_Value *`, never a native C type -- see its
-    ||| own definition, `Emit/Util.idr`) -- a real native `RMemoize`
-    ||| would need that built first, not attempted here since nothing
-    ||| exercises it.
+    ||| Lowers `RMemoize` (`rc2/doc/caf-memoization.md`) as an if/else over a
+    ||| file-scope static memo. `body` goes into a fresh forced `SinkVar`, never
+    ||| `sink`: its result is read back to store it, impossible after a `return`.
+    ||| Only `RBoxed` is implemented (`rep` is `retRep`, Boxed until DualABI's
+    ||| worker synthesis, which runs after `insertMemoize`); a native one would
+    ||| need a native `SinkVar` shape, so it is thrown, not half-implemented.
     emitMemoizeInto : EmitDeps (Sink -> TailPositionStatus -> FC -> Name -> Rep -> RCExp -> Core ())
     emitMemoizeInto sink tailPosition fc n RBoxed body = do
         let memoVar = "idris2rc2_memo_\{cName n}"
@@ -760,65 +661,16 @@ mutual
         throw $ InternalError "[rc2] RMemoize: unexpected native retRep on \{show n} -- see emitMemoizeInto's own doc comment"
     emitMemoizeInto sink tailPosition fc n (RRet _ _) body = retUnsupported "RMemoize"
 
-    ||| Declare (and initialise) one `RLoop` loop param -- unless
-    ||| `initVal` already directly *is* `paramId`'s own value, under its
-    ||| own C name, with the matching `RBoxed` representation (the
-    ||| common case for a loop whose params simply reuse the enclosing
-    ||| function's own top-level args unchanged, see
-    ||| `Compiler.RC2.Loop`'s own `applyLoop`) -- in which case there is
-    ||| nothing to declare at all: `var_\{paramId}` already exists,
-    ||| already holds exactly this value, as a C function parameter.
-    ||| Redeclaring it under the same name would be a C redeclaration
-    ||| error, not just wasted work. Either way, `paramId`'s own `Rep` is
-    ||| recorded in `RepMap` so later reads (native or boxed) render
-    ||| correctly.
-    |||
-    ||| A genuinely fresh loop param (a native shadow -- see
-    ||| `Compiler.RC2.Loop`'s own `applyLoop`, the only other case this
-    ||| ever arises) reads `initVal` -- always one of the enclosing
-    ||| function's own top-level args -- directly via
-    ||| `rcVarToNativeC`/`rcVarToBoxedC` rather than going through
-    ||| `declareLet`/`declareNative`: those expect an ANF-shaped
-    ||| computation recipe (`ROp`/`RPrimVal`/...) to evaluate, not a
-    ||| bare existing-local read, which `emitNativeValue` has no case
-    ||| for.
-    |||
-    ||| `inPrologueDrop`: whether `initVal` is a member of the enclosing
-    ||| `RLoop`'s own `prologueDrop` (see its own doc comment in
-    ||| RCExp.idr) -- `Compiler.RC2.Loop`'s own `applyLoop` already
-    ||| decided, once, whether this exact shadowed param's own original
-    ||| is genuinely Boxed here: true unless `Compiler.RC2.DualABI` later
-    ||| promoted this very parameter at the enclosing worker's own
-    ||| signature (see its own module note), in which case
-    ||| `Compiler.RC2.Loop`'s own `stripOwnership` -- called by DualABI's
-    ||| `synthesizeWorker` over the whole worker body -- already filtered
-    ||| this `initVal` back out of `prologueDrop` for us. Membership here
-    ||| drives two things:
-    |||
-    ||| * The native unboxing is guarded by a runtime NULL check on
-    |||   `initVal`'s own variable, but only when `inPrologueDrop`: an
-    |||   *ordinary* function's own native-eligible argument is never
-    |||   actually NULL (Int/Int64/Bits64/Double always genuinely
-    |||   allocate or hit the small-value cache, never a bare `NULL`),
-    |||   but a top-level parameter of one of Compiler.RC2.MutualLoop's
-    |||   own merged functions can be -- its unused trailing "slots" are
-    |||   padded with `RCNull`/C `NULL` by callers that don't have that
-    |||   many arguments of their own (see `buildGroup`'s own `padded`),
-    |||   and this parameter can still end up native-shadowed if *some
-    |||   other* member of the same merged group reads its own
-    |||   same-position argument natively -- Compiler.RC2.Loop has no
-    |||   visibility into MutualLoop's own padding at all, so it can't
-    |||   exclude this case from eligibility. A worker-promoted parameter
-    |||   is never actually NULL either (an `int64_t` argument, not a
-    |||   padded pointer slot), so the guard is scoped to `inPrologueDrop`
-    |||   only -- see `rc2/doc/loop-conversion.md`'s "Bugs found and
-    |||   fixed" #4 (Site 2) and `rc2/doc/dual-abi.md`'s #2.
-    ||| * This is also the loop param's last use anywhere in the whole
-    |||   function -- Compiler.RC2.Loop's own rewrite has already
-    |||   redirected every other reference to the fresh shadow -- so
-    |||   `initVal` is dropped right here, once, whenever `inPrologueDrop`
-    |||   (its caller, `emitLoopInto`, discharges the full `prologueDrop`
-    |||   list as one `removeVars` after every param's own declaration).
+    ||| Declare one `RLoop` loop param, unless `initVal` is already `paramId`'s
+    ||| own `RBoxed` value under its own C name (redeclaring is a C error).
+    ||| Records `paramId`'s `Rep` in `RepMap`. A fresh native shadow reads
+    ||| `initVal` via `rcVarToNativeC`/`rcVarToBoxedC`, not `declareLet`/
+    ||| `declareNative` (those need an ANF recipe, not a bare local read).
+    ||| `inPrologueDrop`: `initVal` is in the loop's `prologueDrop`. Then the
+    ||| native unboxing is NULL-guarded (a MutualLoop-padded slot can be NULL; a
+    ||| DualABI-promoted param never is) and `initVal` is dropped here, its last
+    ||| use. See `rc2/doc/loop-conversion.md` "Bugs found and fixed" #4 and
+    ||| `rc2/doc/dual-abi.md` #2.
     declareLoopParam : EmitDeps ((inPrologueDrop : Bool) -> FC -> (paramId : Int) -> Rep -> (initVal : RCLocal) -> Core ())
     declareLoopParam _ fc paramId RBoxed initVal =
         if initVal == RCLoc paramId
@@ -849,27 +701,10 @@ mutual
         declareLoopParam inPrologueDrop fc paramId (RNative ty) initVal
     declareLoopParam _ _ _ (RRet _ _) _ = retUnsupported "RLoop param"
 
-    ||| Lower an `RLoop` (see its own doc comment in RCExp.idr): declare
-    ||| each loop param (`declareLoopParam`, a no-op for the common
-    ||| "reuses the enclosing function's own args unchanged" case), a
-    ||| freshly-labelled `loop_N:;`, then `body` itself -- writing
-    ||| straight into `sink`, same as every other branching construct
-    ||| this module lowers (an `RLoopContinue` reachable from `body` in
-    ||| tail position is intercepted by `emitInto`'s own
-    ||| `tryEmitLoopContinue` call before ever reaching here again, so
-    ||| `body`'s own tail-position value(s), if any survive, are
-    ||| genuinely this whole loop's exit value), after each declared
-    ||| param's own `prologueDrop` membership (see `declareLoopParam`'s
-    ||| own doc comment) is discharged as one `removeVars` --
-    ||| `Compiler.RC2.RC`'s `annotate`-decided ownership facts
-    ||| (`postDrop` etc.) are always discharged individually, at their
-    ||| own node; this one's just as much a precomputed IR fact
-    ||| (`Compiler.RC2.Loop`'s own `applyLoop`), simply batched here since
-    ||| every member's own drop point is this same spot regardless.
-    |||
-    ||| Pushes onto, and pops back off, `LoopParams`'s own stack around
-    ||| `body` -- see rc2/doc/loop-conversion.md's "Multiple loops per
-    ||| function" for why push/pop (not a single overwrite) is needed.
+    ||| Lower an `RLoop` (RCExp.idr): declare params (`declareLoopParam`), emit
+    ||| `loop_N:;`, then `body` into `sink`, then discharge `prologueDrop` as one
+    ||| `removeVars`. Pushes/pops `LoopParams` around `body`: see
+    ||| `rc2/doc/loop-conversion.md` "Multiple loops per function".
     emitLoopInto : EmitDeps (Sink -> TailPositionStatus -> FC -> List (Int, Rep) -> List RCLocal -> (prologueDrop : List RCLocal) -> RCExp -> Core ())
     emitLoopInto sink0 tailPosition fc loopParams initial prologueDrop body = do
         -- Declared up front, like a case's own result slot: a loop
@@ -1588,51 +1423,18 @@ flushStagedDecls outn h = do
     put ConstConDef (names, [])
     putLines outn h pending
 
-||| The distinct link-library names (already "lib"-prefix-stripped,
-||| see `linkLibName`) every `MkRCForeign` def in the program named via
-||| its own standard-FFI `%foreign` lib field -- for `Compiler.RC2.CC`
-||| to turn into `-l<name>` flags at link time, so an external library
-||| a program's own FFI bindings depend on doesn't need `IDRIS2_LDLIBS`
-||| set by hand.
-||| `noMain`: `--directive nomain` / `%cg rc2 nomain`, read by
-||| `Compiler.RC2.RC2.compileExpr` -- when `True`, `footer` (the C
-||| `main()` emitter) is skipped entirely, so the generated `.c` can be
-||| linked as a library alongside a caller-supplied `main` (e.g. a
-||| companion `.c` driving an `%export`ed symbol directly -- see
-||| `rc2/doc/export-support.md`'s own "Linking as a library" section
-||| and worked example) without a duplicate-symbol link error.
-|||
-||| `dropUnimplementableForeign`: see `hasUsableForeignImpl`'s own doc
-||| comment -- `False` (whole-program `compileExprWhole`) keeps
-||| today's hard compile-time error for a `%foreign` declaration with
-||| no rc2-usable convention; `True` (incremental `incCompile`) drops
-||| it silently instead, deferring to a link-time error only if
-||| something actually calls it.
-|||
-||| `directEntryPoint`: `Nothing` keeps today's whole-program footer,
-||| calling the `ClosedTerm`-synthesized `__mainExpression_0()`
-||| (`Compiler.Common.getCompileDataWith`'s own `unsafePerformIO`/
-||| `%MkWorld`/closure-`apply` chain, folded down to a single call by
-||| the time whole-program `Inline`/`ConstFold` are done with it).
-||| `Just call` (`Compiler.RC2.RC2.incCompile`'s own `Main`-module case
-||| only) splices `call` -- a complete C call expression, already
-||| built by the caller, e.g. `"Main_main(NULL)"` or
-||| arity-0 `"Main_main()"` -- verbatim instead. This function itself
-||| deliberately knows nothing about `Main.main`'s own real arity or
-||| how to build a `%World` token; `incCompile` does, since only it can
-||| see `Main.main`'s own actual compiled `MkRCFun` shape in `defs`
-||| (observed to vary -- a bare `putStrLn` compiles `Main.main` at
-||| arity 1 with a real `%World` token, a multi-statement `do` block
-||| calling pure functions at arity 0, folded to a CAF -- hardcoding
-||| either one broke the other). `__mainExpression_0` itself is never
-||| actually a member of any module's own `toIR`
-||| (`Compiler.Common.getIncCompileData`'s own `toIR`-only fetch never
-||| produces it, unlike whole-program's `getCompileDataWith`, which
-||| synthesizes it fresh from the real `ClosedTerm` every time -- see
-||| rc2/doc/incremental-compile.md's "Bugs found while implementing")
-||| -- undefined reference otherwise. Never `Just` at the same time as
-||| `noMain = True` (mutually exclusive: no footer at all vs. a
-||| specific direct-call one).
+||| The distinct link-library names (`linkLibName`-stripped) named by
+||| `MkRCForeign` defs' `%foreign` lib fields, for `Compiler.RC2.CC`'s `-l`
+||| flags.
+||| `noMain`: skip the C `main()` footer, to link as a library
+||| (`rc2/doc/export-support.md` "Linking as a library").
+||| `dropUnimplementableForeign`: see `hasUsableForeignImpl`; `True`
+||| (incremental) drops such a declaration silently instead of erroring.
+||| `directEntryPoint`: `Nothing` calls `__mainExpression_0()`; `Just call`
+||| splices a complete C call expression verbatim (`incCompile`'s Main
+||| module, which alone knows `Main.main`'s real arity -- hardcoding either
+||| arity broke the other). Never `Just` together with `noMain`. See
+||| `rc2/doc/incremental-compile.md` "Bugs found while implementing".
 export
 generateCSourceFile : {auto c : Ref Ctxt Defs}
                    -> List (Name, RCDef)
