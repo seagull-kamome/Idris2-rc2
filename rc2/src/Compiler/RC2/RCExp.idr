@@ -982,6 +982,25 @@ tailChildren (RConCase _ _ alts mDef) = Just (map (\(MkRConAlt _ _ _ _ b) => b) 
 tailChildren (RConstCase _ _ alts mDef) = Just (map (\(MkRConstAlt _ b) => b) alts ++ toList mDef)
 tailChildren _ = Nothing
 
+||| `tailChildren` in an `Applicative`: `e` rebuilt with `f` run on each tail
+||| below it, left to right (alternatives first, then the default); `Nothing`
+||| when `e` passes nothing on. `Core`'s own `Applicative` is a named
+||| implementation, so a caller in `Core` passes `@{Applicative.CORE}`.
+export
+traverseTailChildren : Applicative f => (RCExp -> f RCExp) -> RCExp -> Maybe (f RCExp)
+traverseTailChildren f (RLet fc v r value body) = Just (RLet fc v r value <$> f body)
+traverseTailChildren f (RDup fc v n k) = Just (RDup fc v n <$> f k)
+traverseTailChildren f (RDrop fc vs k) = Just (RDrop fc vs <$> f k)
+traverseTailChildren f (RFree fc v k) = Just (RFree fc v <$> f k)
+traverseTailChildren f (RReleaseReuse fc v k) = Just (RReleaseReuse fc v <$> f k)
+traverseTailChildren f (RReuseOffer fc sc ds us k) = Just (RReuseOffer fc sc ds us <$> f k)
+traverseTailChildren f (RCmpCase fc op args pd t e) = Just (RCmpCase fc op args pd <$> f t <*> f e)
+traverseTailChildren f (RConCase fc sc alts mDef) =
+    Just (RConCase fc sc <$> traverse (\(MkRConAlt n ci t as b) => MkRConAlt n ci t as <$> f b) alts <*> traverse f mDef)
+traverseTailChildren f (RConstCase fc sc alts mDef) =
+    Just (RConstCase fc sc <$> traverse (\(MkRConstAlt c b) => MkRConstAlt c <$> f b) alts <*> traverse f mDef)
+traverseTailChildren _ _ = Nothing
+
 ||| `v` is only ever released or reused below, never read or `dup`'d:
 ||| the post-RC form of "`v` doesn't escape", which also makes it unique.
 export
