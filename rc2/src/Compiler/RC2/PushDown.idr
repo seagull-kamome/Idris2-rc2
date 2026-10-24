@@ -20,9 +20,7 @@ import Compiler.RC2.RCExp
 import Core.FC
 
 import Data.List
-import Data.Nat
 import Data.Vect
-import Data.Maybe
 
 %default covering
 

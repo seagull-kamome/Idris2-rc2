@@ -11,10 +11,8 @@
 module Compiler.RC2.LazyCaf
 
 import Core.CompileExpr
-import Core.FC
 import Core.TT
 
-import Data.List
 import Data.SortedMap
 import Data.Vect
 

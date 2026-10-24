@@ -48,7 +48,6 @@ module Compiler.RC2.DeadVars
 
 import Compiler.RC2.RCExp
 
-import Core.FC
 
 import Data.SortedSet
 

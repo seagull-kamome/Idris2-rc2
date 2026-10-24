@@ -56,28 +56,19 @@ import Compiler.RC2.RCExp
 import Compiler.RC2.Types
 
 import Compiler.CompileExpr
-import Compiler.Common
 import Compiler.Generated
 
-import Core.Directory
-import Core.Context
 
 import Idris.Syntax
 
 import Libraries.Data.DList
 import Data.DPair
-import Data.List
-import Data.List.Quantifiers
 import Data.List1
 import Data.SortedMap
 import Data.SortedSet
-import Data.String
 import Data.Vect
 
-import Protocol.Hex
-import Libraries.Utils.Path
 
-import System
 import System.File
 
 import Compiler.RC2.Emit.ExternRefs

@@ -21,16 +21,11 @@ import Compiler.RC2.ForeignSpec
 import Compiler.RC2.Util
 
 import Compiler.CompileExpr
-import Compiler.Common
 
 import Core.Context
 
-import Libraries.Data.DList
-import Data.List
 import Data.SortedMap
-import Data.SortedSet
 import Data.String
-import Data.Vect
 
 %default covering
 

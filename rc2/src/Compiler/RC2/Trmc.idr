@@ -14,14 +14,8 @@ import Compiler.RC2.MutualLoop
 import Compiler.RC2.RCExp
 import Compiler.RC2.Util
 
-import Core.CompileExpr
-import Core.Core
-import Core.FC
-import Core.Context
 import Core.Context.Log
 
-import Data.List
-import Data.Maybe
 import Data.SortedMap
 import Data.SortedSet
 
@@ -210,13 +204,13 @@ applyTrmc defs = do
     _ <- newRef FreshId 0
     -- Bound here, not in `where`: a `where` binding is re-evaluated at
     -- every use (doc/constant-constructor-specialization.md).
-    newtypes <- pure $ the (SortedSet Name) $ fromList (mapMaybe (\(n, d) => case d of
-                                                                       MkRCCon _ _ (Just _) => Just n
-                                                                       _ => Nothing) defs)
-    existing <- pure $ the (SortedSet Name) $ fromList (map fst defs)
-    arity <- pure $ the (SortedMap Name Nat) $ fromList (mapMaybe (\(n, d) => case d of
-                                                                     MkRCFun args@(_ :: _) RBoxed False _ => Just (n, length args)
-                                                                     _ => Nothing) defs)
+    let newtypes : SortedSet Name := fromList (mapMaybe (\(n, d) => case d of
+                                                                MkRCCon _ _ (Just _) => Just n
+                                                                _ => Nothing) defs)
+    let existing : SortedSet Name := fromList (map fst defs)
+    let arity : SortedMap Name Nat := fromList (mapMaybe (\(n, d) => case d of
+                                                              MkRCFun args@(_ :: _) RBoxed False _ => Just (n, length args)
+                                                              _ => Nothing) defs)
     allSites <- logTime 3 "rc2: TRMC (sites)" $ pure $ the (SortedMap Name Sites) $ fromList (mapMaybe (\(n, d) => case d of
                                                                            MkRCFun _ _ _ body => if isJust (lookup n arity)
                                                                                                     then Just (n, findSites arity newtypes body)
@@ -231,14 +225,14 @@ applyTrmc defs = do
                                                            if null out then Nothing else Just (n, fromList out)
                                                        _ => Nothing) defs)
     multi <- logTime 3 "rc2: TRMC (SCC)" $ pure $ filter (\g => length g >= 2) (tarjanSCCs graph)
-    inMulti <- pure $ the (SortedSet Name) $ fromList (foldr (++) [] multi)
+    let inMulti : SortedSet Name := fromList (foldr (++) [] multi)
     groups <- logTime 3 "rc2: TRMC (groups)" $ pure $ mapMaybe (group allSites) (multi ++ map (\n => [n]) (filter (\n => not (contains n inMulti)) (keys allSites)))
     twins <- the (Core (List (SortedMap Name Name, List Nat, SortedMap Name Sites))) $
                  traverse (\(members, ks, sites) => do
                               acc <- fromList <$> traverse (\m => (m,) <$> fresh existing m) members
                               pure (acc, ks, sites)) groups
-    byMember <- pure $ the (SortedMap Name (SortedMap Name Name, List Nat, Sites)) $
-                    fromList (foldr (++) [] (map (\(acc, ks, sites) => map (\(m, ss) => (m, (acc, ks, ss))) (SortedMap.toList sites)) twins))
+    let byMember : SortedMap Name (SortedMap Name Name, List Nat, Sites) :=
+          fromList (concatMap (\(acc, ks, sites) => map (\(m, ss) => (m, (acc, ks, ss))) (SortedMap.toList sites)) twins)
     logTime 3 "rc2: TRMC (rewrite)" $ foldr (++) [] <$> traverse (one byMember) defs
   where
     fresh : {auto r : Ref FreshId Int} -> SortedSet Name -> Name -> Core Name

@@ -16,10 +16,7 @@ import Compiler.RC2.MutualLoop
 
 import Core.CompileExpr
 import Core.Context
-import Core.Core
-import Core.TT
 
-import Data.List
 import Data.SortedMap
 import Data.SortedSet
 import Data.Vect

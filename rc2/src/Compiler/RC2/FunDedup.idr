@@ -12,14 +12,11 @@ module Compiler.RC2.FunDedup
 import Compiler.RC2.DeadCode
 import Compiler.RC2.Pretty
 import Compiler.RC2.RCExp
-import Compiler.RC2.Types
 
 import Core.CompileExpr
-import Core.Name
 import Core.TT
 
 import Data.DPair
-import Data.List
 import Data.List1
 import Data.SortedMap
 import Data.SortedSet

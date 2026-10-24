@@ -11,12 +11,8 @@ import Compiler.RC2.Emit.Util
 import Compiler.RC2.RCExp
 import Compiler.RC2.Util
 
-import Core.Core
-import Core.FC
-import Core.Context
 import Core.Context.Log
 
-import Data.List
 import Data.List1
 import Data.SortedMap
 import Data.SortedSet

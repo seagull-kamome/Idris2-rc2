@@ -13,7 +13,6 @@ module Compiler.RC2.Reuse
 import Compiler.RC2.RCExp
 import Compiler.RC2.Util
 
-import Core.CompileExpr
 import Core.FC
 import Core.Name.Scoped
 

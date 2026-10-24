@@ -11,7 +11,6 @@ import Compiler.RC2.Types
 import Compiler.RC2.Util
 
 import Core.CompileExpr
-import Core.Name
 import Core.TT
 
 import Data.List
