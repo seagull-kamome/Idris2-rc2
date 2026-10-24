@@ -1213,14 +1213,13 @@ emitRC sink (ROp fc _ op args postDrop) _ = do
     -- stays Boxed (comparisons, or a non-numeric op) -- operands may
     -- still individually be native locals (e.g. a comparison over an
     -- earlier native arithmetic chain), hence the Rep-aware boxing
-    -- (boxOpArg, which also names and tracks any fresh box it has to
+    -- (boxOpArgParts, which also names any fresh box it has to
     -- fabricate for a Native operand, so it can be freed below).
     argsWithFresh <- traverseVect (boxOpArgParts fc) args
     let argStrs = map (\(e, _, _) => e) argsWithFresh
     -- `postDrop`: see emitRC's own doc comment. Separately, any
-    -- ephemeral box `boxOpArg` had to fabricate for a Native operand
-    -- (folded into its own returned list alongside any InlineMap'd
-    -- pending drop, see its own doc comment) is dropped too --
+    -- ephemeral box `boxOpArgParts` had to fabricate for a Native operand,
+    -- and any InlineMap'd pending drop it returns, is dropped too --
     -- `annotate` runs before `Compiler.RC2.Loop`'s native-shadow
     -- promotion ever decides a local is Native, so it can't have
     -- known about these.
@@ -1235,7 +1234,7 @@ emitRC sink (ROp fc _ op args postDrop) _ = do
     let pendings = concatMap (\(_, _, pending) => pending) (toList argsWithFresh)
     let drops = if isReuseConsumingOp op
                    then pendings
-                   else map varName postDrop ++ concatMap (\(_, fresh, pending) => toList fresh ++ pending) (toList argsWithFresh)
+                   else map varName postDrop ++ mapMaybe (\(_, fresh, _) => fresh) (toList argsWithFresh) ++ pendings
     finalizeSinkWithDrop fc sink (cOp op argStrs) drops
 
 emitRC sink (RExtPrim fc _ p args postDrop) _ = do
