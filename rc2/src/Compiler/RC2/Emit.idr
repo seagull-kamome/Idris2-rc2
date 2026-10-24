@@ -1471,7 +1471,7 @@ createCFunctions n (MkRCCon tag arity nt) = do
 -- shared FFI marshalling primitives the inline-FFI lowering above uses.
 createCFunctions n (MkRCForeign ccs fargs ret) = emitForeignDef n ccs fargs ret
 
-createCFunctions n (MkRCError exp) = throw $ InternalError "[rc2] Error with expression"
+createCFunctions n (MkRCError exp) = throw $ InternalError ("[rc2] Error with expression in " ++ show n)
 
 ||| Every file-scope declaration `def` contributes, derivable from its own
 ||| outer shape alone -- no RCExp recursion needed.
@@ -1501,7 +1501,7 @@ declarationsOf _ (MkRCError _) = pure []
 collectDeclarations : {auto c : Ref Ctxt Defs} -> {auto f : Ref FunctionDefinitions (List String)}
                    -> {auto hf : Ref HeaderFiles (SortedSet String)} -> {auto fl : Ref ForeignLibs (SortedSet String)}
                    -> Name -> RCDef -> Core ()
-collectDeclarations n (MkRCError exp) = throw $ InternalError "[rc2] Error with expression"
+collectDeclarations n (MkRCError exp) = throw $ InternalError ("[rc2] Error with expression in " ++ show n)
 collectDeclarations n def@(MkRCForeign ccs fargs ret) = do
     decls <- declarationsOf n def
     update FunctionDefinitions $ \otherDefs => decls ++ otherDefs
