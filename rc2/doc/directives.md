@@ -325,6 +325,12 @@ document:
 idris2-rc2 --cg rc2 --directive timing Program.idr -o program
 ```
 
+The same directive also prints, per specialization round, the time of each
+half (`SpecRound N: closure half` / `const-con half`) and of its steps:
+collecting the keys, building and folding the clones (`buildAll`,
+`buildConstAll`) and the whole-program redirect. What the steps leave out of
+a half is the accepting, the table updates and the counting.
+
 ## Files
 
 - `rc2/src/Compiler/RC2/RC2.idr` -- `toRCDefs`'s own stage-disable

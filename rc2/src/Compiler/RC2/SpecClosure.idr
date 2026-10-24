@@ -410,7 +410,8 @@ applySpecClosure prevTable done defs = do
                              ++ show (length keys) ++ " distinct keys, " ++ show (length defs) ++ " defs"
     caf <- maybeLogTimeOver timingEnabled 0 (pure ("rc2: SpecClosure: rebuildCafTable (" ++ show (length defs) ++ " defs, once)"))
              (pure (rebuildCafTable defs))
-    built <- buildAll defOf caf done [] (map (\(k, opps) => (k, capturedOf opps)) keys)
+    built <- maybeLogTimeOver timingEnabled 0 (pure "rc2: SpecClosure: buildAll (build + fold the clones)")
+               (buildAll defOf caf done [] (map (\(k, opps) => (k, capturedOf opps)) keys))
     let accepted = acceptClosed done built
     when timingEnabled $
       coreLift $ putStrLn $ "TIMING rc2: SpecClosure: " ++ show (length built) ++ " clones built, "
@@ -869,7 +870,8 @@ applySpecConstCon : {auto c : Ref Ctxt Defs} -> {auto fr : Ref FreshId Int}
                   -> Core (List (Name, RCDef), ConstRedirectTable, SortedSet ConstKey, Nat)
 applySpecConstCon prevTable done defs = do
     timingEnabled <- elem "timing" <$> getDirectives (Other "rc2")
-    let keys = filter (\(k, _) => not (contains k done)) (SortedMap.toList byKey)
+    keys <- maybeLogTimeOver timingEnabled 0 (pure "rc2: SpecConstCon: collect keys")
+              (pure (filter (\(k, _) => not (contains k done)) (SortedMap.toList byKey)))
     when timingEnabled $
       coreLift $ putStrLn $ "TIMING rc2: SpecConstCon: " ++ show (length keys)
                              ++ " distinct keys, " ++ show (length defs) ++ " defs"
@@ -887,8 +889,8 @@ applySpecConstCon prevTable done defs = do
     -- The same goes for `initial` below.
     let defOf : SortedMap Name RCDef := SortedMap.fromList defs
     let initial : SortedSet ConstKey := fromList (map fst keys)
-    st <- buildConstAll defOf caf initial
-            (MkConstState done [] 0 (replicate 9 0) 0) (map fst keys)
+    st <- maybeLogTimeOver timingEnabled 0 (pure "rc2: SpecConstCon: buildConstAll (build + fold the clones)")
+            (buildConstAll defOf caf initial (MkConstState done [] 0 (replicate 9 0) 0) (map fst keys))
     let accepted = acceptConst done st.built
     let table = foldl (\t, b => let (callee, argPos, value) = b.key
                                 in insertWith (++) callee [(argPos, value, b.name)] t)
@@ -911,10 +913,12 @@ applySpecConstCon prevTable done defs = do
                              ++ show (length (filter (not . (.own)) accepted)) ++ " pure forwarders accepted"
       coreLift $ putStrLn $ "TIMING rc2: SpecConstCon: gate-fail buckets [fwdOnly+scrut, fwdOnly-noscrut, fwdMixed, stored, otherEscape, noScrutNoUse, else, noParam, notPlainFun] = "
                              ++ show st.buckets
-    pure (map (\(n, d) => (n, case d of
-                                    MkRCFun a r w body => MkRCFun a r w (redirectConstCallSites table body)
-                                    d' => d'))
-               (map (\b => (b.name, b.def)) accepted ++ defs), table, done', length accepted)
+    out <- maybeLogTimeOver timingEnabled 0 (pure ("rc2: SpecConstCon: redirectAll (" ++ show (length defs + length accepted) ++ " defs, once)"))
+      (pure (map (\(n, d) => (n, case d of
+                                      MkRCFun a r w body => MkRCFun a r w (redirectConstCallSites table body)
+                                      d' => d'))
+                 (map (\b => (b.name, b.def)) accepted ++ defs)))
+    pure (out, table, done', length accepted)
   where
     addOpp : SortedMap ConstKey () -> ConstOpportunity -> SortedMap ConstKey ()
     addOpp acc opp = insert (opp.callee, opp.argPos, opp.value) () acc
@@ -961,10 +965,10 @@ specLoop : {auto c : Ref Ctxt Defs} -> {auto v : Ref VarId Int} -> {auto fr : Re
         -> SpecState -> Core (List (Name, RCDef))
 specLoop _ _ _ _ Z st = pure st.prog
 specLoop closureOn constOn timing round (S fuel) st = do
-    r1 <- if closureOn then applySpecClosure st.closureTable st.closureDone st.prog
+    r1 <- if closureOn then maybeLogTimeOver timing 0 (pure ("rc2: SpecRound " ++ show round ++ ": closure half")) (applySpecClosure st.closureTable st.closureDone st.prog)
                                      else pure (st.prog, st.closureTable, st.closureDone, 0)
     let (p1, ct, cd, k1) = the (List (Name, RCDef), RedirectTable, SortedSet SpecKey, Nat) r1
-    r2 <- if constOn then applySpecConstCon st.constTable st.constDone p1
+    r2 <- if constOn then maybeLogTimeOver timing 0 (pure ("rc2: SpecRound " ++ show round ++ ": const-con half")) (applySpecConstCon st.constTable st.constDone p1)
                                    else pure (p1, st.constTable, st.constDone, 0)
     let (p2, kt, kd, k2) = the (List (Name, RCDef), ConstRedirectTable, SortedSet ConstKey, Nat) r2
     when timing $
