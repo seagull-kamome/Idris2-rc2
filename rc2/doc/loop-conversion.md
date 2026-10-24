@@ -415,7 +415,7 @@ Originally private to `Compiler.RC2.MutualLoop` (which needs it for its
 own per-member id renaming, see below); moved here specifically so both
 `MutualLoop` and this module's own native-shadow rewrite share one
 definition instead of two hand-synchronized copies. `MutualLoop.idr`
-already imports `Compiler.RC2.Loop` (for `mapTailAppNames`), so this
+already imports `Compiler.RC2.Loop`, so this
 didn't introduce any new module dependency -- it just relocated
 existing code along an edge that already existed.
 
@@ -1467,10 +1467,12 @@ benchmark:
 
 ## Files
 
-- `rc2/src/Compiler/RC2/Loop.idr` -- `mapTailAppNames` (shared),
-  `collectBoundIds`/`Renaming`/`renameRCExp` (shared),
+- `rc2/src/Compiler/RC2/Rewrite.idr` -- the whole-tree rewrites shared by
+  several passes: `mapTailAppNames`, `collectBoundIds`/`Renaming`/
+  `renameRCExp`, `stripOwnership`.
+- `rc2/src/Compiler/RC2/Loop.idr` --
   `nativeArgType`/`nativeArgTypes`/`opNativeUsesThrough`,
-  `stripOwnership`, `assignShadowIds`, `applyLoop`,
+  `assignShadowIds`, `applyLoop`,
   `collectContinueArgs`/`invariantLoopParamIds`/
   `elideInvariantContinueArgs` (loop-invariant parameter elision),
   `invariantOpArgsThrough`/`markInvariantNative`/`usesInvariant`/

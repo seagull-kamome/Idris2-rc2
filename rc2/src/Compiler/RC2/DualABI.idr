@@ -24,6 +24,7 @@ module Compiler.RC2.DualABI
 import Compiler.RC2.RCExp
 import Compiler.RC2.Types
 import Compiler.RC2.Loop
+import Compiler.RC2.Rewrite
 import Compiler.RC2.NullParams
 import Compiler.RC2.MutualLoop
 import Compiler.RC2.Emit.Util
@@ -1191,7 +1192,7 @@ applyCallSiteRewrite typedCase ffiWorkers defs =
 ||| invariant between the two shapes (`RAppFFIInline`'s own doc comment
 ||| in RCExp.idr). Every other node just recurses through -- no
 ||| Rep-inference/ownership/tail-position logic of its own, unlike
-||| Stage 4 -- much like `Loop.idr`'s own `renameRCExp`.
+||| Stage 4 -- much like `Rewrite.idr`'s own `renameRCExp`.
 inlineFFIWorkersExp : SortedMap Name (List String, List CFType, CFType) -> RCExp -> RCExp
 inlineFFIWorkersExp ffiInline (RAppNameRep fc workerName argReps retRep postDrop args) =
     case lookup workerName ffiInline of

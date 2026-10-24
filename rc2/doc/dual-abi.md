@@ -130,7 +130,7 @@ can never be represented that way. Only ever produced by
 `Compiler.RC2.DualABI`, which runs strictly after `Compiler.RC2.Loop`
 (see "Pipeline position" below); no earlier pass constructs or expects
 to see one, and every earlier pass's own exhaustive `RCExp` matches
-(`RC.idr`'s `annotate`, `Compiler.RC2.Loop`'s `renameRCExp`) got a
+(`RC.idr`'s `annotate`, `Compiler.RC2.Rewrite`'s `renameRCExp`) got a
 defensive pass-through case for it, same reasoning as their existing
 `RLoop`/`RLoopContinue` cases.
 
@@ -264,7 +264,7 @@ every eligible, non-`MutualLoop`-merged function:
    type, in the worker's own signature.
 3. `workerBody`: the original body, verbatim, with the promoted
    parameters' now-stale ownership bookkeeping removed via
-   `Compiler.RC2.Loop`'s own `stripOwnership` (now `export`ed) --
+   `Compiler.RC2.Rewrite`'s own `stripOwnership` (now `export`ed) --
    called directly on the *original* parameter ids (not a renamed
    shadow set, since step 2 needed no renaming). `stripOwnership`'s own
    safety argument ("every value-reading occurrence of an id being
@@ -1004,7 +1004,7 @@ walk) runs as its own whole-program pass, strictly after Stage 4's
 already involved enough without also needing FFI-specific marshalling
 concerns. It's a purely structural, whole-tree rewrite with no
 Rep-inference, ownership, or tail-position logic of its own (much like
-`Loop.idr`'s own `renameRCExp` or `ConstFold.idr`'s own tree-walkers):
+`Rewrite.idr`'s own `renameRCExp` or `ConstFold.idr`'s own tree-walkers):
 every `RAppNameRep` naming a worker the second map has an entry for
 becomes `RAppFFIInline`, with `postDrop`/`args` carried over completely
 unchanged -- always safe, since `argReps = map repOf fargs` is

@@ -12,6 +12,7 @@ module Compiler.RC2.LateInline
 import Compiler.RC2.DeadCode
 import Compiler.RC2.DualABI
 import Compiler.RC2.Loop
+import Compiler.RC2.Rewrite
 import Compiler.RC2.MutualLoop
 import Compiler.RC2.RCExp
 import Compiler.RC2.Types
@@ -191,7 +192,7 @@ collectBoundIds (RLoop _ loopParams _ _ body) = map fst loopParams ++ collectBou
 collectBoundIds e = concatMap collectBoundIds (children e)
 
 ||| `True` iff `target` occurs in `e` other than as a native-operand read
-||| at `ty` or ownership bookkeeping that `Loop.stripOwnership` strips
+||| at `ty` or ownership bookkeeping that `Rewrite.stripOwnership` strips
 ||| (`RDup`/`RDrop`/`RFree`, a node's `postDrop`). `loopSlots`: the
 ||| nearest enclosing `RLoop`'s params; an `RLoopContinue` entry into a
 ||| slot already `RNative ty` is safe too, since `Emit` renders it by the

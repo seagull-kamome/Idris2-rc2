@@ -243,7 +243,7 @@ unless all of these hold (`pushOk`):
 
 **Fresh ids.** Every copy gets fresh ids for everything it binds
 (`LateInline`'s `collectBoundIds`/`freshenBoundIds`, exported for this,
-and `Loop`'s `renameRCExp`), because later passes assume ids are unique
+and `Rewrite`'s `renameRCExp`), because later passes assume ids are unique
 per definition. That needs the `VarId` counter, so this runs in `Core`,
 not inside the pure `foldConst`. Consuming ids shifts later variable
 numbers in generated C. One refc-suite test that greps generated C
