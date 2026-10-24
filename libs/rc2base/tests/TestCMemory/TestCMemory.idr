@@ -9,6 +9,7 @@ module Main
 -- and read the results back with Data.String.FFI.ptrToString.
 
 import Data.String.FFI
+import System
 import System.FFI.C.Memory
 import System.FFI.C.Null
 import System.Posix.Errno
@@ -17,9 +18,7 @@ import System.Posix.Errno
 -- loudly instead of handing NULL to a C function.
 mustAlloc : Either Errno NonNullAnyPtr -> IO AnyPtr
 mustAlloc (Right p) = pure p.ptr
-mustAlloc (Left e) = do
-  putStrLn $ "unexpected allocation failure: " ++ show e
-  pure NullAnyPtr
+mustAlloc (Left e) = die $ "unexpected allocation failure: " ++ show e
 
 cstring : String -> IO AnyPtr
 cstring s = strdupString s >>= mustAlloc

@@ -5,7 +5,7 @@ module Main
 
 -- Regression test for System.FFI.C.Limits: checks every binding against
 -- the value the LP64 Linux target must have, and checks that the `char`
--- limits agree with `schar`'s on this (signed-char) target.
+-- limits match either `schar` or `uchar` (its signedness varies by target).
 
 import System.FFI.C.Limits
 
@@ -17,8 +17,7 @@ main = do
   printLn (scharMin == -128)
   printLn (scharMax == 127)
   printLn (ucharMax == 0xff)
-  printLn (charMin == -128)
-  printLn (charMax == 127)
+  printLn ((charMin == -128 && charMax == 127) || (charMin == 0 && charMax == 255))
   printLn (mbLenMax >= 1)
 
   printLn (shrtMin == -32768)

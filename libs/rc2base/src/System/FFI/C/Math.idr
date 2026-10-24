@@ -8,8 +8,8 @@ module System.FFI.C.Math
 -- one-expression `CExpr:` template linking `libm`, so no C shim is
 -- involved (rc2/doc/ffi-cexpr.md).
 --
--- Everything lives in `namespace Math` (used as e.g. `Math.sin`), not
--- exported unqualified: several names (`sqrt`, `log`, `exp`, `sin`,
+-- Everything lives in `namespace Math` and is meant to be used qualified
+-- (`Math.sin`): several names (`sqrt`, `log`, `exp`, `sin`,
 -- `cos`, `tan`, `floor`, ...) are already exported by Prelude, and the
 -- rest would still read ambiguously beside them -- the same convention
 -- as `Data.Integer.GMP`'s own `GMP.*`.
@@ -232,6 +232,7 @@ namespace Math
   export
   scalbn : Double -> Int32 -> Double
 
+  -- FP_ILOGB0 and FP_ILOGBNAN (for 0 and NaN) are implementation-defined.
   %foreign "CExpr:(ilogb($1)),libm,math.h"
   export
   ilogb : Double -> Int32

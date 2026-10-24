@@ -41,8 +41,8 @@ malloc size = liftIO $ (primIO (prim__malloc size) >>= fromAnyPtr)
 prim__calloc : Int -> Int -> PrimIO AnyPtr
 
 %inline public export
-calloc : HasIO io => (memb : Int) -> (count : Int) -> io (Either Errno NonNullAnyPtr)
-calloc memb count = liftIO $ (primIO (prim__calloc memb count) >>= fromAnyPtr)
+calloc : HasIO io => (count : Int) -> (size : Int) -> io (Either Errno NonNullAnyPtr)
+calloc count size = liftIO $ (primIO (prim__calloc count size) >>= fromAnyPtr)
 
 
 
@@ -58,7 +58,7 @@ free ptr = liftIO $ primIO $ prim__free ptr
 -- The `mem*` group is declared by both <string.h> and the historical
 -- <memory.h> (which some systems no longer ship); these bindings include
 -- <string.h>, which every target has. All `char *`/`void *` parameters
--- are `AnyPtr` (the casts above convert a `Ptr a` or `NonNullAnyPtr`);
+-- are `AnyPtr` (`cast` converts a `Ptr a`; take `.ptr` of a `NonNullAnyPtr`);
 -- `strdupString` is the one place an Idris `String` is accepted, since
 -- the FFI marshals it to a temporary NUL-terminated `char *`. Sizes are
 -- byte counts (`size_t`, 64-bit on the hosts rc2 targets).
@@ -70,9 +70,7 @@ prim__memcpy : AnyPtr -> AnyPtr -> Bits64 -> PrimIO AnyPtr
 ||| use `memmove` when they may.
 %inline public export
 memcpy : (dest : AnyPtr) -> (src : AnyPtr) -> (size : Bits64) -> IO ()
-memcpy dest src size = do
-  _ <- primIO (prim__memcpy dest src size)
-  pure ()
+memcpy dest src size = ignore $ primIO (prim__memcpy dest src size)
 
 
 %inline %foreign "C:memmove,libc,string.h"
@@ -81,9 +79,7 @@ prim__memmove : AnyPtr -> AnyPtr -> Bits64 -> PrimIO AnyPtr
 ||| Copy `size` bytes from `src` to `dest`. The regions may overlap.
 %inline public export
 memmove : (dest : AnyPtr) -> (src : AnyPtr) -> (size : Bits64) -> IO ()
-memmove dest src size = do
-  _ <- primIO (prim__memmove dest src size)
-  pure ()
+memmove dest src size = ignore $ primIO (prim__memmove dest src size)
 
 
 %inline %foreign "C:memset,libc,string.h"
@@ -92,9 +88,7 @@ prim__memset : AnyPtr -> Int32 -> Bits64 -> PrimIO AnyPtr
 ||| Fill `size` bytes at `dest` with the low 8 bits of `value`.
 %inline public export
 memset : (dest : AnyPtr) -> (value : Int32) -> (size : Bits64) -> IO ()
-memset dest value size = do
-  _ <- primIO (prim__memset dest value size)
-  pure ()
+memset dest value size = ignore $ primIO (prim__memset dest value size)
 
 
 %inline %foreign "C:memcmp,libc,string.h"
@@ -152,9 +146,7 @@ prim__strcpy : AnyPtr -> AnyPtr -> PrimIO AnyPtr
 ||| which must have room for it. The regions must not overlap.
 %inline public export
 strcpy : (dest : AnyPtr) -> (src : AnyPtr) -> IO ()
-strcpy dest src = do
-  _ <- primIO (prim__strcpy dest src)
-  pure ()
+strcpy dest src = ignore $ primIO (prim__strcpy dest src)
 
 
 %inline %foreign "C:strncpy,libc,string.h"
@@ -165,9 +157,7 @@ prim__strncpy : AnyPtr -> AnyPtr -> Bits64 -> PrimIO AnyPtr
 ||| is not NUL-terminated.
 %inline public export
 strncpy : (dest : AnyPtr) -> (src : AnyPtr) -> (size : Bits64) -> IO ()
-strncpy dest src size = do
-  _ <- primIO (prim__strncpy dest src size)
-  pure ()
+strncpy dest src size = ignore $ primIO (prim__strncpy dest src size)
 
 
 %inline %foreign "C:strcat,libc,string.h"
@@ -177,9 +167,7 @@ prim__strcat : AnyPtr -> AnyPtr -> PrimIO AnyPtr
 ||| to the NUL-terminated `dest`, which must have room for both.
 %inline public export
 strcat : (dest : AnyPtr) -> (src : AnyPtr) -> IO ()
-strcat dest src = do
-  _ <- primIO (prim__strcat dest src)
-  pure ()
+strcat dest src = ignore $ primIO (prim__strcat dest src)
 
 
 %inline %foreign "C:strncat,libc,string.h"
@@ -190,9 +178,7 @@ prim__strncat : AnyPtr -> AnyPtr -> Bits64 -> PrimIO AnyPtr
 ||| and the terminator.
 %inline public export
 strncat : (dest : AnyPtr) -> (src : AnyPtr) -> (size : Bits64) -> IO ()
-strncat dest src size = do
-  _ <- primIO (prim__strncat dest src size)
-  pure ()
+strncat dest src size = ignore $ primIO (prim__strncat dest src size)
 
 
 %inline %foreign "C:strchr,libc,string.h"

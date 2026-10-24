@@ -22,7 +22,7 @@ integers =
     , 340282366920938463463374607431768211457 ]
 
 strings : List String
-strings = ["", "a", "ab", "abc", "abd", "abcd", "b", "B", "ABC", " ", "\x1", "\x7f", "zzz", "abc "]
+strings = ["", "a", "ab", "abc", "abd", "abcd", "b", "B", "ABC", " ", "\x1", "\x7f", "\x80", "\x9f", "\xa0", "zzz", "abc "]
 
 b : Bool -> String
 b True = "T"
