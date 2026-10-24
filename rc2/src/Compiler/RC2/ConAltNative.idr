@@ -173,7 +173,7 @@ reannotateFieldOwnership fid owned (RLet fc var rep value body) =
     -- checked against `body` *after* `markNativeOccurrences` already
     -- redirected native occurrences away, so it only ever means
     -- "genuinely still read Boxed".
-    let usedInBody = contains (RCLoc fid) (freeLocalsR body)
+    let usedInBody = mentionsLocal (RCLoc fid) body
         ownedForValue = owned && not usedInBody
         (ownedAfterValue, value') = reannotateFieldOwnership fid ownedForValue value
         -- If `body` doesn't need `fid`, thread `value`'s own result

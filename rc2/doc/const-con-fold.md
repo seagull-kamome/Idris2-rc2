@@ -135,7 +135,7 @@ exception:
   arithmetic (a `ROp` whose fold fails just re-emits the same `args`
   unchanged, no information lost). But `RLet`'s own "drop this
   binding once `body` doesn't reference the variable anymore" check
-  (`contains (RCLoc var) (freeLocalsR body')`) depends on those `args`
+  (`mentionsLocal (RCLoc var) body'`) depends on those `args`
   actually getting rewritten -- a `RCLoc` left unresolved inside e.g.
   a `RAppName`'s argument list keeps the variable looking "still
   used" forever, permanently blocking the `RLet` (and the allocation
