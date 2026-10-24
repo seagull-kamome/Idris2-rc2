@@ -137,7 +137,8 @@ raisedName : Name -> Name
 raisedName n = MN ("rc2_raised_" ++ cName n) 0
 
 ||| `body`'s tails handed `w`: a lambda binds its parameter to it, a tail
-||| call calls the raised version, a crash stays.
+||| call to a function of the plan `r` calls the raised version (any other
+||| callee has none), a crash stays.
 raiseTails : SortedSet Name -> FC -> Name -> NamedCExp -> NamedCExp
 raiseTails r fc w (NmLam lfc x b) = NmLet lfc x (NmLocal fc w) b
 raiseTails r fc w (NmLet lfc x v b) = NmLet lfc x v (raiseTails r fc w b)

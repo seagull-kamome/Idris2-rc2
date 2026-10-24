@@ -151,10 +151,10 @@ consumedOperands reps = go []
     spend dupped (a :: as) =
       if a `elem` dupped then spend (delete a dupped) as else a :: spend dupped as
     go : List RCLocal -> RCExp -> List RCLocal
-    -- Same `dupped` exclusion as the RCon case below: a postDrop target
-    -- `value` itself already `dup`'d earlier in this same chain is
-    -- self-contained, not something the branch we don't sink into owes
-    -- a compensating drop for.
+    -- A reference `value` itself `dup`'d earlier in this same chain is
+    -- self-contained, not something the branch we don't sink into owes a
+    -- compensating drop for; `spend` cancels one `dup` per occurrence, so
+    -- an operand read twice after one `dup` still owes one drop.
     go dupped (ROp _ _ _ _ postDrop) = spend dupped postDrop
     go dupped (RStructGet _ _ _ postDrop) = spend dupped postDrop
     -- The call spends one reference per Boxed operand; each one a leading

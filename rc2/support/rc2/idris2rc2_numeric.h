@@ -36,7 +36,7 @@ static inline int8_t idris2rc2_ediv_i8(int8_t n, int8_t d) {
 }
 static inline int8_t idris2rc2_emod_i8(int8_t n, int8_t d) {
   int8_t ad = (d < 0) ? -d : d;
-  __typeof__(ad) r_ = n % ad;
+  int8_t r_ = n % ad;
   return r_ < 0 ? r_ + ad : r_;
 }
 static inline int16_t idris2rc2_ediv_i16(int16_t n, int16_t d) {
@@ -45,7 +45,7 @@ static inline int16_t idris2rc2_ediv_i16(int16_t n, int16_t d) {
 }
 static inline int16_t idris2rc2_emod_i16(int16_t n, int16_t d) {
   int16_t ad = (d < 0) ? -d : d;
-  __typeof__(ad) r_ = n % ad;
+  int16_t r_ = n % ad;
   return r_ < 0 ? r_ + ad : r_;
 }
 static inline int32_t idris2rc2_ediv_i32(int32_t n, int32_t d) {
@@ -54,7 +54,7 @@ static inline int32_t idris2rc2_ediv_i32(int32_t n, int32_t d) {
 }
 static inline int32_t idris2rc2_emod_i32(int32_t n, int32_t d) {
   int32_t ad = (d < 0) ? -d : d;
-  __typeof__(ad) r_ = n % ad;
+  int32_t r_ = n % ad;
   return r_ < 0 ? r_ + ad : r_;
 }
 static inline int64_t idris2rc2_ediv_i64(int64_t n, int64_t d) {
@@ -63,7 +63,7 @@ static inline int64_t idris2rc2_ediv_i64(int64_t n, int64_t d) {
 }
 static inline int64_t idris2rc2_emod_i64(int64_t n, int64_t d) {
   int64_t ad = (d < 0) ? -d : d;
-  __typeof__(ad) r_ = n % ad;
+  int64_t r_ = n % ad;
   return r_ < 0 ? r_ + ad : r_;
 }
 
@@ -264,19 +264,16 @@ static inline IDRIS2RC2_Value *idris2rc2_mod_Bits64(IDRIS2RC2_Value *a, IDRIS2RC
     CTY rem = num % denom;                                                   \
     return MK(num / denom + ((rem < 0) ? ((denom < 0) ? 1 : -1) : 0));       \
   }
-#define IDRIS2RC2_EUCLID_MOD(TY, CTY, GET, MK)                                     \
+#define IDRIS2RC2_EUCLID_MOD(TY, BITS, GET, MK)                                   \
   static inline IDRIS2RC2_Value *idris2rc2_mod_##TY(IDRIS2RC2_Value *a, IDRIS2RC2_Value *b) {         \
-    CTY num = GET(a), denom = GET(b);                                       \
-    denom = (denom < 0) ? -denom : denom;                                    \
-    CTY r_ = num % denom;                                                    \
-    return MK(r_ < 0 ? r_ + denom : r_);                                     \
+    return MK(idris2rc2_emod_i##BITS(GET(a), GET(b)));                      \
   }
 IDRIS2RC2_EUCLID_DIV(Int8, int8_t, idris2rc2_to_i8, idris2rc2_mkInt8)
 IDRIS2RC2_EUCLID_DIV(Int16, int16_t, idris2rc2_to_i16, idris2rc2_mkInt16)
 IDRIS2RC2_EUCLID_DIV(Int32, int32_t, idris2rc2_to_i32, idris2rc2_mkInt32)
-IDRIS2RC2_EUCLID_MOD(Int8, int8_t, idris2rc2_to_i8, idris2rc2_mkInt8)
-IDRIS2RC2_EUCLID_MOD(Int16, int16_t, idris2rc2_to_i16, idris2rc2_mkInt16)
-IDRIS2RC2_EUCLID_MOD(Int32, int32_t, idris2rc2_to_i32, idris2rc2_mkInt32)
+IDRIS2RC2_EUCLID_MOD(Int8, 8, idris2rc2_to_i8, idris2rc2_mkInt8)
+IDRIS2RC2_EUCLID_MOD(Int16, 16, idris2rc2_to_i16, idris2rc2_mkInt16)
+IDRIS2RC2_EUCLID_MOD(Int32, 32, idris2rc2_to_i32, idris2rc2_mkInt32)
 
 // Int64: reuse-consuming Euclidean div/mod -- same pattern as the
 // arithmetic/bitwise ops above -- see rc2/doc/rop-reuse.md.
@@ -292,9 +289,7 @@ static inline IDRIS2RC2_Value *idris2rc2_div_Int64(IDRIS2RC2_Value *a, IDRIS2RC2
 }
 static inline IDRIS2RC2_Value *idris2rc2_mod_Int64(IDRIS2RC2_Value *a, IDRIS2RC2_Value *b) {
   int64_t num = idris2rc2_to_i64(a), denom = idris2rc2_to_i64(b);
-  denom = (denom < 0) ? -denom : denom;
-  int64_t r_ = num % denom;
-  int64_t result = r_ < 0 ? r_ + denom : r_;
+  int64_t result = idris2rc2_emod_i64(num, denom);
   IDRIS2RC2_Value *dst;
   if (idris2rc2_isUnique(a))      { ((IDRIS2RC2_Int64 *)a)->v = result; dst = a; idris2rc2_drop(b); }
   else if (idris2rc2_isUnique(b)) { ((IDRIS2RC2_Int64 *)b)->v = result; dst = b; idris2rc2_drop(a); }
