@@ -423,7 +423,7 @@ that hasn't been designed yet. May be revisited later.
 
 `IO`/`IORes` are both genuine `data` types (`libs/prelude/PrimIO.idr`),
 so a `T1 -> T2 -> IO R`-typed export's own normalized type is an
-ordinary `NTCon` wrapping `R`, peeled via `Compiler.RC2.DualABI.peelIORes`
+ordinary `NTCon` wrapping `R`, peeled via `Compiler.RC2.ForeignSpec.peelIORes`
 the same way `%foreign` already peels a `PrimIO`/`CFIORes` return.
 `CFUnit` (an `IO ()`-returning export) is accepted as a special case
 with no native marshalling on the return side at all -- the wrapper's

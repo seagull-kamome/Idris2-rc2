@@ -252,12 +252,8 @@ mentions l e = length (filter (== l) (directReads e ++ releases e)) + sum (map (
 nativeLocals : List (Int, Rep) -> RCExp -> (SortedSet Int, SortedSet Int)
 nativeLocals args body =
     let (ns, inl) = go body
-    in (union ns (fromList (mapMaybe (\(i, r) => if isBoxed r then Nothing else Just i) args)), inl)
+    in (union ns (fromList (mapMaybe (\(i, r) => if isNativeRep r then Just i else Nothing) args)), inl)
   where
-    isBoxed : Rep -> Bool
-    isBoxed RBoxed = True
-    isBoxed _ = False
-
     both : List (SortedSet Int, SortedSet Int) -> (SortedSet Int, SortedSet Int)
     both = foldl (\(a, b), (c, d) => (union a c, union b d)) (empty, empty)
 
@@ -270,7 +266,7 @@ nativeLocals args body =
                 _ => (insert x ns, inl)
     go e@(RLoop _ ps _ _ _) =
         let (ns, inl) = both (map go (children e))
-        in (union ns (fromList (mapMaybe (\(i, r) => if isBoxed r then Nothing else Just i) ps)), inl)
+        in (union ns (fromList (mapMaybe (\(i, r) => if isNativeRep r then Just i else Nothing) ps)), inl)
     go e = both (map go (children e))
 
 ||| Each bare wrapper `f params = partial g m params` (m > 0), as `(g, m)`.

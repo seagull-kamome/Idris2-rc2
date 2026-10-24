@@ -53,14 +53,6 @@ reorderable (RUnderApp _ _ _ _) = True
 reorderable (RDelay _ _ _ _) = True
 reorderable _ = False
 
-||| Constructors whose cells are real heap objects with an `args` array.
-heapCon : ConInfo -> Bool
-heapCon DATACON = True
-heapCon CONS = True
-heapCon JUST = True
-heapCon RECORD = True
-heapCon _ = False
-
 ||| Every hole candidate in `f`'s tails, whatever it calls: the
 ||| last-evaluated strict call to a function of `arity` bound to a field
 ||| of a tail heap constructor, used only there, with nothing

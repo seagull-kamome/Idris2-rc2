@@ -8,6 +8,7 @@ module Compiler.RC2.RC
 -- 2. `annotate`: Injects reference-counting primitives based on ownership.
 
 import Compiler.RC2.DualABI
+import Compiler.RC2.ForeignSpec
 import Compiler.RC2.RCExp
 import Compiler.RC2.Types
 import Compiler.RC2.Util
@@ -225,7 +226,7 @@ mutual
                               else bindCompound fr e k
                   _     => bindCompound fr e k
     bindOne fr e@(NmCon fc n ci tag []) k =
-        if ci == NIL || ci == NOTHING || ci == ZERO || ci == UNIT
+        if isNullCon ci
            then k RCNull
            else case tag of
                      Just t  => k (RCEmptyCon n ci t)
@@ -528,22 +529,13 @@ alwaysUnboxedBoxedLocalsR _ = empty
 ||| needed), any later occurrence (or one that was never owned to begin
 ||| with) needs a dup -- except a `natives`-listed local, which never needs
 ||| a dup (or any refcount op at all) no matter how it's used. An
-||| `RCConst`/`RCEmptyCon` are skipped the same way as a native -- neither
-||| was ever a real heap value to begin with (see RCExp.idr's module note
-||| on RCLocal); `RCNull` is skipped for the same reason (it's always
-||| either an erased value or one of the four NULL-mapped nullary
-||| constructors, see `bindOne` -- never a real refcounted heap value).
+||| A local that is not `isHeapLocal` is skipped the same way (a constant,
+||| `NULL` or an immortal static -- never a real refcounted heap value;
+||| see RCExp.idr's module note on RCLocal).
 splitBorrows : (natives : SortedSet RCLocal) -> Owned -> List RCLocal -> List RCLocal
 splitBorrows _ _ [] = []
-splitBorrows natives owned (RCNull :: vars) = splitBorrows natives owned vars
-splitBorrows natives owned (RCErased :: vars) = splitBorrows natives owned vars
-splitBorrows natives owned (RCWorld :: vars) = splitBorrows natives owned vars
-splitBorrows natives owned (RCConst _ :: vars) = splitBorrows natives owned vars
-splitBorrows natives owned (RCEmptyCon {} :: vars) = splitBorrows natives owned vars
-splitBorrows natives owned (RCConstCon {} :: vars) = splitBorrows natives owned vars
-splitBorrows natives owned (RCConstClosure {} :: vars) = splitBorrows natives owned vars
 splitBorrows natives owned (v :: vars) =
-    if contains v natives
+    if not (isHeapLocal v) || contains v natives
         then splitBorrows natives owned vars
         else if contains v owned
                 then splitBorrows natives (delete v owned) vars
@@ -568,15 +560,8 @@ splitBorrowsV natives owned = splitBorrows natives owned . toList
 ||| occurrence, not both.
 dropIfLastUse : (natives : SortedSet RCLocal) -> Owned -> List RCLocal -> List RCLocal
 dropIfLastUse _ _ [] = []
-dropIfLastUse natives owned (RCNull :: vars) = dropIfLastUse natives owned vars
-dropIfLastUse natives owned (RCErased :: vars) = dropIfLastUse natives owned vars
-dropIfLastUse natives owned (RCWorld :: vars) = dropIfLastUse natives owned vars
-dropIfLastUse natives owned (RCConst _ :: vars) = dropIfLastUse natives owned vars
-dropIfLastUse natives owned (RCEmptyCon {} :: vars) = dropIfLastUse natives owned vars
-dropIfLastUse natives owned (RCConstCon {} :: vars) = dropIfLastUse natives owned vars
-dropIfLastUse natives owned (RCConstClosure {} :: vars) = dropIfLastUse natives owned vars
 dropIfLastUse natives owned (v :: vars) =
-    if contains v natives
+    if not (isHeapLocal v) || contains v natives
         then dropIfLastUse natives owned vars
         else if contains v owned
                 then v :: dropIfLastUse natives (delete v owned) vars
@@ -595,17 +580,7 @@ dropIfLastUse natives owned (v :: vars) =
 ||| Compiler.RC2.Emit used to independently re-derive an ownership
 ||| decision instead of just lowering one; now it doesn't have to.
 boxedOperands : (natives : SortedSet RCLocal) -> List RCLocal -> List RCLocal
-boxedOperands natives = filter isBoxedOperand
-  where
-    isBoxedOperand : RCLocal -> Bool
-    isBoxedOperand RCNull = False
-    isBoxedOperand RCErased = False
-    isBoxedOperand RCWorld = False
-    isBoxedOperand (RCConst _) = False
-    isBoxedOperand (RCEmptyCon {}) = False
-    isBoxedOperand (RCConstCon {}) = False
-    isBoxedOperand (RCConstClosure {}) = False
-    isBoxedOperand v = not (contains v natives)
+boxedOperands natives = filter (\v => isHeapLocal v && not (contains v natives))
 
 mutual
     branchBody : SortedSet RCLocal -> SortedSet RCLocal -> RCExp -> Core RCExp
@@ -739,7 +714,7 @@ mutual
             ||| Peels through the same synthetic-let wrapper chain `Types.repOf` does.
             freeableShape : RCExp -> Bool
             freeableShape (RLet _ _ _ _ body) = freeableShape body
-            freeableShape (RCon _ _ ci _ _ _) = ci /= NIL && ci /= NOTHING && ci /= ZERO && ci /= UNIT
+            freeableShape (RCon _ _ ci _ _ _) = not (isNullCon ci)
             -- A partial application is a fresh heap closure, except that `Emit` makes one
             -- over constants only a static (`rc2/doc/static-closures.md`); a variable
             -- among the captured values keeps it a fresh allocation.
@@ -881,7 +856,7 @@ mutual
     annotateConAlt natives owned sc (MkRConAlt name ci tag args body) = do
         -- Matching NIL/NOTHING/ZERO/UNIT consumes `sc` itself (it was only
         -- ever a NULL check, no heap object to keep owning).
-        let erased = ci == NIL || ci == NOTHING || ci == ZERO || ci == UNIT
+        let erased = isNullCon ci
         -- `natives`-listed fields (e.g. an Int8 field extracted from a
         -- constructor and later read in an arithmetic op) don't belong
         -- in `owned` either, same reasoning as RLet's owned' above.
@@ -927,7 +902,7 @@ annotateDef _ d@(MkRCForeign _ _ _) = pure d
 annotateDef typedCase (MkRCError body) = MkRCError <$> annotate (definitionNatives typedCase body) empty body
 
 ||| A `%foreign` declaration's own return type, peeled through
-||| `CFIORes` (`Compiler.RC2.DualABI.peelIORes`), must not itself be a
+||| `CFIORes` (`Compiler.RC2.ForeignSpec.peelIORes`), must not itself be a
 ||| `CFFun`: there is no working C shape for a `%foreign` call to hand
 ||| back a closure (upstream RefC's `makeFunction(...)` names a function
 ||| that exists nowhere). Unchecked, it surfaces only as an undefined

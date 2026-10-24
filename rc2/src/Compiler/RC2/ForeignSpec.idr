@@ -19,6 +19,13 @@ import Data.String
 
 %default total
 
+||| `ret`'s own peeled type -- `CFIORes t`'s payload `t`, or `ret`
+||| itself for a non-IO (pure) `%foreign` declaration.
+export
+peelIORes : CFType -> CFType
+peelIORes (CFIORes t) = t
+peelIORes t = t
+
 ||| One piece of a `CExpr:` template: literal C text, a 1-based
 ||| reference to a declaration argument (`$N`), or the `Integer`
 ||| out-parameter of the result (`$r`).
@@ -239,7 +246,7 @@ validateForeign n ccs fargs ret =
                            Just k => bad "placeholder $\{show k} is out of range (the declaration has \{show nargs} argument(s))"
                            Nothing => pure ()
                       let hasResult = any isResult parts
-                      if isInteger (peel ret)
+                      if isInteger (peelIORes ret)
                          then unless hasResult $
                                   bad "an Integer result needs the out-parameter placeholder '$r' (e.g. \"CExpr:mpz_add($r, $1, $2)\"); a function returning a value, such as mpz_get_si, must be declared with an Int-typed result and wrapped in Idris"
                          else when hasResult $
@@ -265,10 +272,6 @@ validateForeign n ccs fargs ret =
     isInteger : CFType -> Bool
     isInteger CFInteger = True
     isInteger _ = False
-
-    peel : CFType -> CFType
-    peel (CFIORes t) = t
-    peel t = t
 
 ||| Substitute the already-marshalled argument expressions `args`
 ||| (1-based `$N`) into a template, each wrapped in parentheses.

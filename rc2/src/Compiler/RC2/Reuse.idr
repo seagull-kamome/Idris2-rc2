@@ -138,7 +138,7 @@ resolveReuse nested imm (RConCase fc sc alts mDef) =
             -- A field-less alternative has no cell worth reusing, and its
             -- scrutinee may not be a cell at all: a folded constant
             -- holds such a constructor as a tagged pointer (RCEmptyCon).
-            erased = ci == NIL || ci == NOTHING || ci == ZERO || ci == UNIT || null args
+            erased = isNullCon ci || null args
             (dropped, inner) = peelDrop body1
         in if not erased && elem sc dropped && contains name (usedConstructorsR inner)
               then let -- A dead offer (nothing claimed it anywhere)

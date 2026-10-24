@@ -576,9 +576,6 @@ retLayouts defs planned =
         if contains n planned then Just (n, foldl addField empty (tailFields (fromList args) body)) else Nothing
     ownOf _ = Nothing
 
-    callees : List RetTail -> List Name
-    callees = mapMaybe (\t => case t of { TailCall g => Just g; _ => Nothing })
-
     merged : SortedMap Int (List (Maybe PrimType)) -> SortedMap Int (List (Maybe PrimType)) -> SortedMap Int (List (Maybe PrimType))
     merged a b = foldl addField a (SortedMap.toList b)
 
@@ -798,13 +795,9 @@ callArgNativeReads workers var e =
 ffiReturns : List (Name, RCDef) -> SortedMap Name (NativeTy, Nat)
 ffiReturns defs = fromList (mapMaybe entry defs)
   where
-    peel : CFType -> CFType
-    peel (CFIORes t) = t
-    peel t = t
-
     entry : (Name, RCDef) -> Maybe (Name, (NativeTy, Nat))
     entry (n, MkRCForeign ccs fargs ret) =
-        if foreignUsable ccs then map (\ty => (n, (ty, length fargs))) (cfTypeNativeTy (peel ret)) else Nothing
+        if foreignUsable ccs then map (\ty => (n, (ty, length fargs))) (cfTypeNativeTy (peelIORes ret)) else Nothing
     entry _ = Nothing
 
 ||| Whole-program pass: synthesises a worker + thin wrapper for every
@@ -864,13 +857,6 @@ applyDualABI boolReturn nullTable defs = do
 -- below splices each worker's own marshalling logic directly into the
 -- call site instead of ever emitting a standalone worker C function --
 -- see `doc/dual-abi.md`'s "Stage 3c"/"Stage 5".
-
-||| `ret`'s own peeled type -- `CFIORes t`'s payload `t`, or `ret`
-||| itself for a non-IO (pure) `%foreign` declaration.
-export
-peelIORes : CFType -> CFType
-peelIORes (CFIORes t) = t
-peelIORes t = t
 
 
 ||| Every `MkRCForeign` def's own worker-table entry, if `fargs`/`ret`
@@ -1508,9 +1494,6 @@ prunePlan defs plan =
     bodyOf (_, MkRCFun _ _ _ body) = Just body
     bodyOf (_, MkRCError body) = Just body
     bodyOf _ = Nothing
-
-    callees : List RetTail -> List Name
-    callees = mapMaybe (\t => case t of { TailCall g => Just g; _ => Nothing })
 
     go : SortedSet Name -> SortedMap Name (List Name) -> SortedMap Name (List Name) -> SortedSet Name -> SortedSet Name
     go cased tailCallees tailCallers kept =

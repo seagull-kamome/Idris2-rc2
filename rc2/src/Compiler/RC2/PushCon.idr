@@ -343,10 +343,6 @@ foldAlt fc v pending reuseFrom p = go pending p
     go pend (RReleaseReuse rfc x k) = RReleaseReuse rfc x <$> go pend k
     go _ _ = Nothing
 
-isNativeRep : Rep -> Bool
-isNativeRep RBoxed = False
-isNativeRep _ = True
-
 ||| One tail, post-RC. A constructor tail whose fields are all Boxed
 ||| locals is folded against its alt (`foldAlt`); anything else gets the
 ||| part of the consumer it lands on, on a fresh local, as `pushInto`.
