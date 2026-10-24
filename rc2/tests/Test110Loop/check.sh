@@ -70,3 +70,28 @@ if [ -z "$bad" ]; then
 else
     fail "MutualLoop: merged function(s) malformed:$bad"
 fi
+
+# Loop-invariant hoisting (doc/loop-conversion.md, "Loop-invariant
+# expression hoisting"): a division by a literal is hoisted out of the
+# loop, a division by a variable stays inside it behind its zero check
+# (hoisted, it would trap with SIGFPE for y == 0, which the output diff
+# also catches).
+divPlace() {
+    awk -v f="$1" '
+        /^def / { on = (index($0, f) > 0); inloop = 0; next }
+        on && /^  loop \[/ { inloop = 1 }
+        on && /op \/Int / { print (inloop ? "inside" : "outside"); exit }' "$d"
+}
+# sumDivLiteral is inlined into `run`: its hoisted division is the
+# `op /Int [_, #7]` sitting right before the `loop [`.
+if grep -A1 'op /Int \[v[0-9]*, #7\]' "$d" | grep -q '^ *loop \['; then
+    lit=outside
+else
+    lit=inside
+fi
+var="$(divPlace sumDivGuarded)"
+if [ "$lit" = "outside" ] && [ "$var" = "inside" ]; then
+    pass "LoopInvariant -- literal divisor hoisted, variable divisor kept inside the loop"
+else
+    fail "LoopInvariant: sumDivLiteral division $lit (want outside), sumDivGuarded division $var (want inside)"
+fi

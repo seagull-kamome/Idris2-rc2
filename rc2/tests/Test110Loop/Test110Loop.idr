@@ -13,6 +13,7 @@ import Test110Loop.LoopInvariantParam
 import Test110Loop.LoopCallArgNativeShadow
 import Test110Loop.LoopConstClosureParam
 
+partial
 main : IO ()
 main = do
     SelfTailLoop.run

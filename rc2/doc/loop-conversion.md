@@ -581,26 +581,19 @@ are the only two `RCExp` shapes that can *never* carry an observable
 side effect (a genuine effect always routes through `RExtPrim`, with
 its own `%World`-token threading) -- so, in principle, either shape
 should be hoistable out of the loop entirely whenever every one of its
-own operands is itself loop-invariant.
+own operands is itself loop-invariant. (An integer division can still
+trap, which the sections below take care of.)
 
-**Scope: the loop body's own unconditional prefix only.** Only the
-straight-line `RLet` chain reached from the loop's own top *before*
-hitting the first branch (`RConCase`/`RConstCase`/`RCmpCase`) is
-scanned -- a candidate sitting inside just one arm of a branch is left
-alone entirely (that's the still-open "single-branch case hoisting"/
-`RCmpCase` gap `TODO.md` tracks, deliberately not attempted here).
-This isn't an arbitrary restriction, it's what makes the whole pass
-provably safe without needing to reason about *which* branch a given
-iteration takes at all: everything in this prefix already runs on
-*every* pass through `loop:;`, including the very first one (the label
-sits at the very top of the loop's own repeating region, before any
-exit check ever runs) -- so an expression there is already guaranteed
-to execute at least once the moment the function is called at all.
-Hoisting it to run once, ahead of the loop, instead of once per
-iteration, can only *reduce* how many times it runs; it can never turn
-a "never reached" execution into a "now reached" one. Something inside
-just one branch arm doesn't have that guarantee -- it might never run
-at all if the loop exits on its very first check.
+**Scope: every arm of the loop body.** The scan walks the
+straight-line `RLet` chain from the loop's own top and recurses into
+every arm of each branch (`RConCase`/`RConstCase`/`RCmpCase`) it meets.
+An expression inside one arm may not run on a given iteration, or at
+all, so hoisting it changes how often it runs, and may make it run
+where it never did. That is harmless only for an operation that cannot
+trap and has no ownership effects, which is what the exclusions below
+enforce (see "Detection" below): a native result (so no stale `drop`
+in another arm), no `postDrop`, no `Div`/`Mod` with a divisor that
+might be zero, and no `Crash`.
 
 **Detection (`isInvariantExpr`)**: given `variant` -- the *final*,
 post-elision `loopParams`' own set of ids -- an `RLet`'s own `value`
@@ -619,9 +612,18 @@ observable, outside the "strict evaluation, position doesn't matter"
 reasoning above), and `RCon`'s own `reuseFrom` must be `Nothing` (a
 reuse candidate is tied to a specific `RReuseOffer`'s own per-iteration
 runtime uniqueness check, not something this pass has any business
-relocating).
+relocating). Two more: an `ROp` with a non-empty `postDrop` stays put
+(the drop would run ahead of the arms that still read the operand), and
+a `Div`/`Mod` is hoisted only with a literal divisor other than 0 and
+-1 (`hoistableOp`), because the guard that protects a variable divisor
+(`if y == 0 ...`) stays behind in the loop and the hoisted division
+would trap before it, with `SIGFPE`. `Crash` is kept out for the same
+reason; Double division never traps and stays eligible. Prelude's `div` is unaffected: its
+zero check sits inside the `RLet` value, which the scan does not enter.
+`prim__div_Int` and `prim__mod_Int` are the cases that reach this
+(`sumDivGuarded`/`sumModGuarded` in `LoopInvariantParam.idr`).
 
-**A third exclusion, found the hard way, essential for
+**The native-result exclusion, found the hard way, essential for
 soundness**: hoisting is *only* safe when the binding's own declared
 `Rep` is `RNative`/`RInlineNative` -- never `RBoxed`. The reasoning
 above (operands are safe to keep reading past their own original
