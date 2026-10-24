@@ -62,6 +62,7 @@ TESTS=(
     "TestBufferRC2||Data.Buffer's Int8/Int16/Int64 primitives (upstream RefC tags)"
     "TestDoubleRC2||Data.Double.RC2's %foreign_impl patches"
     "TestXoroshiro64StarStar||System.Random.Xoroshiro64StarStar"
+    "TestXoroshiroPure||The pure Gen of both xoroshiro modules agrees with the IOGen"
     "TestStringFFI||Data.String.FFI's ptrToString"
     "TestPtrRC2||System.FFI.C.Ptr's raw fetch/store"
     "TestSizeofRC2||System.FFI.C.Sizeof's Sizeof instances"

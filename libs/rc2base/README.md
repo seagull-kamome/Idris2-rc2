@@ -357,6 +357,30 @@ bits) -- simpler than the reference algorithm's own general
 `POLY_WORDS`-word `jump[]` array, sized for generators with larger
 state than either of these.
 
+Both modules also have a pure generator, `Gen`, a value stepped by the
+same C algorithm (`pure_*` functions in `support/c`, state passed by
+value and one result word returned per call, so no `Buffer` and no
+`PrimIO`):
+
+```idris2
+mkGen         : Bits64 -> Gen                      -- same seed, same sequence as newIOGen
+genNext       : Gen -> (Bits32, Gen)               -- Bits64 for Xoroshiro128PlusPlus
+genNextDouble : Gen -> (Double, Gen)
+genJump, genLongJump : Gen -> Gen
+genJumpCE     : Gen -> (c : Bits64) -> (e : Bits32) -> Gen
+genJumpN      : Gen -> (n : Bits64) -> Gen         -- two Bits64 words for Xoroshiro128PlusPlus
+```
+
+`Xoroshiro64StarStar.Gen` holds its two state words as `Bits32`.
+`Xoroshiro128PlusPlus.Gen` splits each 64-bit word into two `Bits32`
+halves (four fields): a `Bits64` above 2^62 does not fit rc2's
+immediate representation (`rc2/doc/immediate-ints.md`) and would be
+heap-allocated on every step. Measured on `Xoroshiro128PlusPlus`, a
+loop that threads a `Gen` and XORs 10 million `genNext` outputs makes
+38 allocations in all, from start-up, and takes 0.11 s; the same loop
+over an `IOGen` needed 1.5 allocations per step and took 0.5 s. A jump
+runs the polynomial once per state word.
+
 Each module also offers a separate, single global generator
 (`setSystemSeed`/`nextIO`/`jumpIO`/`longJumpIO`/`jumpCEIO`/`jumpNIO`)
 held entirely in C-side static state (each `support/c/*.c`'s own

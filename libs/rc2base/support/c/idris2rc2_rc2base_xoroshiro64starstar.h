@@ -27,3 +27,12 @@ void idris2rc2_System_Random_jump_ce(void *sv, uint64_t c, uint32_t e);
 void idris2rc2_System_Random_jump_n_sys(uint64_t n);
 void idris2rc2_System_Random_jump_n(void *sv, uint64_t n);
 
+/* Pure counterparts: state by value, one result word per call (see the
+   .c file). `which` is 0 for the new s[0], 1 for the new s[1]. */
+uint32_t idris2rc2_System_Random_pure_out(uint32_t s0, uint32_t s1);
+uint32_t idris2rc2_System_Random_pure_s0(uint32_t s0, uint32_t s1);
+uint32_t idris2rc2_System_Random_pure_s1(uint32_t s0, uint32_t s1);
+uint32_t idris2rc2_System_Random_pure_jump(uint32_t s0, uint32_t s1, int which);
+uint32_t idris2rc2_System_Random_pure_long_jump(uint32_t s0, uint32_t s1, int which);
+uint32_t idris2rc2_System_Random_pure_jump_ce(uint32_t s0, uint32_t s1, uint64_t c, uint32_t e, int which);
+uint32_t idris2rc2_System_Random_pure_jump_n(uint32_t s0, uint32_t s1, uint64_t n, int which);
