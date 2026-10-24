@@ -35,18 +35,18 @@ static inline int8_t idris2rc2_ediv_i8(int8_t n, int8_t d) {
   return n / d + ((r < 0) ? ((d < 0) ? 1 : -1) : 0);
 }
 static inline int8_t idris2rc2_emod_i8(int8_t n, int8_t d) {
-  int8_t ad = (d < 0) ? -d : d;
-  int8_t r_ = n % ad;
-  return r_ < 0 ? r_ + ad : r_;
+  int64_t ad = (d < 0) ? -(int64_t)d : (int64_t)d;
+  int64_t r = (int64_t)n % ad;
+  return (int8_t)(r < 0 ? r + ad : r);
 }
 static inline int16_t idris2rc2_ediv_i16(int16_t n, int16_t d) {
   int16_t r = n % d;
   return n / d + ((r < 0) ? ((d < 0) ? 1 : -1) : 0);
 }
 static inline int16_t idris2rc2_emod_i16(int16_t n, int16_t d) {
-  int16_t ad = (d < 0) ? -d : d;
-  int16_t r_ = n % ad;
-  return r_ < 0 ? r_ + ad : r_;
+  int64_t ad = (d < 0) ? -(int64_t)d : (int64_t)d;
+  int64_t r = (int64_t)n % ad;
+  return (int16_t)(r < 0 ? r + ad : r);
 }
 static inline int32_t idris2rc2_ediv_i32(int32_t n, int32_t d) {
   // INT_MIN / -1 overflows (a trap in C); Idris wraps.
@@ -55,10 +55,9 @@ static inline int32_t idris2rc2_ediv_i32(int32_t n, int32_t d) {
   return n / d + ((r < 0) ? ((d < 0) ? 1 : -1) : 0);
 }
 static inline int32_t idris2rc2_emod_i32(int32_t n, int32_t d) {
-  if (d == -1) return 0;
-  int32_t ad = (d < 0) ? -d : d;
-  int32_t r_ = n % ad;
-  return r_ < 0 ? r_ + ad : r_;
+  int64_t ad = (d < 0) ? -(int64_t)d : (int64_t)d;
+  int64_t r = (int64_t)n % ad;
+  return (int32_t)(r < 0 ? r + ad : r);
 }
 static inline int64_t idris2rc2_ediv_i64(int64_t n, int64_t d) {
   // INT_MIN / -1 overflows (a trap in C); Idris wraps.
@@ -67,10 +66,12 @@ static inline int64_t idris2rc2_ediv_i64(int64_t n, int64_t d) {
   return n / d + ((r < 0) ? ((d < 0) ? 1 : -1) : 0);
 }
 static inline int64_t idris2rc2_emod_i64(int64_t n, int64_t d) {
-  if (d == -1) return 0;
-  int64_t ad = (d < 0) ? -d : d;
-  int64_t r_ = n % ad;
-  return r_ < 0 ? r_ + ad : r_;
+  if (d == -1) return 0;  // INT64_MIN % -1 traps in C
+  int64_t r = n % d;
+  if (r >= 0) return r;
+  // |d| can be 2^63, which only unsigned arithmetic holds.
+  uint64_t ad = (d < 0) ? 0 - (uint64_t)d : (uint64_t)d;
+  return (int64_t)((uint64_t)r + ad);
 }
 
 // X-macro table of the fixed-width integer PrimTypes: name token, C type,
