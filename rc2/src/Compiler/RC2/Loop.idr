@@ -1223,48 +1223,37 @@ usesInvariant p e = existsInvariantUse e
     existsInvariantUse (RAppName _ _ _ args) = any (== RCLoc p) args
     existsInvariantUse (RUnderApp _ _ _ args) = any (== RCLoc p) args
     existsInvariantUse (RDelay _ _ _ caps) = any (== RCLoc p) caps
-    existsInvariantUse (RApp _ _ c args) = if c == RCLoc p then True else any (== RCLoc p) args
+    existsInvariantUse (RApp _ _ c args) = c == RCLoc p || any (== RCLoc p) args
     existsInvariantUse (RLet _ _ _ value body) =
-        if existsInvariantUse value then True else existsInvariantUse body
+        existsInvariantUse value || existsInvariantUse body
     existsInvariantUse (RCon _ _ _ _ args _) = any (== RCLoc p) args
     existsInvariantUse (ROp _ _ _ args _) = any (== RCLoc p) (toList args)
     existsInvariantUse (RExtPrim _ _ _ args _) = any (== RCLoc p) args
     existsInvariantUse (RStructGet _ structVar _ _) = structVar == RCLoc p
     existsInvariantUse (RForce _ _ v _) = v == RCLoc p
     existsInvariantUse (RStructSet _ structVar _ value _) =
-        if structVar == RCLoc p then True else value == RCLoc p
+        structVar == RCLoc p || value == RCLoc p
     existsInvariantUse (RFill _ cell _ value _) = cell == RCLoc p || value == RCLoc p
     existsInvariantUse (RCmpCase _ _ args _ t f) =
-        if any (== RCLoc p) (toList args) then True
-        else if existsInvariantUse t then True
-        else existsInvariantUse f
+        any (== RCLoc p) (toList args) || existsInvariantUse t || existsInvariantUse f
     existsInvariantUse (RConCase _ sc alts mDef) =
-        if sc == RCLoc p then True
-        else if any (\(MkRConAlt _ _ _ _ body) => existsInvariantUse body) alts then True
-        else maybe False existsInvariantUse mDef
+        sc == RCLoc p || any (\(MkRConAlt _ _ _ _ body) => existsInvariantUse body) alts || maybe False existsInvariantUse mDef
     existsInvariantUse (RConstCase _ sc alts mDef) =
-        if sc == RCLoc p then True
-        else if any (\(MkRConstAlt _ body) => existsInvariantUse body) alts then True
-        else maybe False existsInvariantUse mDef
+        sc == RCLoc p || any (\(MkRConstAlt _ body) => existsInvariantUse body) alts || maybe False existsInvariantUse mDef
     existsInvariantUse (RDup _ v _ body) =
-        if v == RCLoc p then True else existsInvariantUse body
+        v == RCLoc p || existsInvariantUse body
     existsInvariantUse (RDrop _ vars body) =
-        if any (== RCLoc p) vars then True else existsInvariantUse body
+        any (== RCLoc p) vars || existsInvariantUse body
     existsInvariantUse (RFree _ v body) =
-        if v == RCLoc p then True else existsInvariantUse body
+        v == RCLoc p || existsInvariantUse body
     existsInvariantUse (RReleaseReuse _ v body) =
-        if v == RCLoc p then True else existsInvariantUse body
+        v == RCLoc p || existsInvariantUse body
     existsInvariantUse (RReuseOffer _ sc dupOnShared dropOnUnique body) =
-        if sc == RCLoc p then True
-        else if any (== RCLoc p) dupOnShared then True
-        else if any (== RCLoc p) dropOnUnique then True
-        else existsInvariantUse body
+        sc == RCLoc p || any (== RCLoc p) dupOnShared || any (== RCLoc p) dropOnUnique || existsInvariantUse body
     existsInvariantUse (RLoop _ _ initial prologueDrop body) =
-        if any (== RCLoc p) initial then True
-        else if any (== RCLoc p) prologueDrop then True
-        else existsInvariantUse body
+        any (== RCLoc p) initial || any (== RCLoc p) prologueDrop || existsInvariantUse body
     existsInvariantUse (RLoopContinue _ args postDrop) =
-        if any (== RCLoc p) args then True else any (== RCLoc p) postDrop
+        any (== RCLoc p) args || any (== RCLoc p) postDrop
     existsInvariantUse _ = False
 
 ||| How many `RDup`s an operand list needs for `p`'s own occurrences in

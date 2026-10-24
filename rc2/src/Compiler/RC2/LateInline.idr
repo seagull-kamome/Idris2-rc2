@@ -182,31 +182,19 @@ callsBack defOf caller callee =
 -- Splicing one call site
 ------------------------------------------------------------------------
 
-mutual
-  ||| Every locally-bound id in `e` -- `RLet`'s own `var`, `RConAlt`'s
-  ||| own destructured `args`, `RLoop`'s own `loopParams`. Everything
-  ||| the callee's own body binds *besides* its top-level params, which
-  ||| `spliceCall` renames separately.
-  export
-  collectBoundIds : RCExp -> List Int
-  collectBoundIds (RLet _ var _ value body) = var :: (collectBoundIds value ++ collectBoundIds body)
-  collectBoundIds (RCmpCase _ _ _ _ t f) = collectBoundIds t ++ collectBoundIds f
-  collectBoundIds (RConCase _ _ alts mDef) = concatMap collectBoundIdsAlt alts ++ maybe [] collectBoundIds mDef
-  collectBoundIds (RConstCase _ _ alts mDef) = concatMap collectBoundIdsConstAlt alts ++ maybe [] collectBoundIds mDef
-  collectBoundIds (RLoop _ loopParams _ _ body) = map fst loopParams ++ collectBoundIds body
-  collectBoundIds (RDup _ _ _ body) = collectBoundIds body
-  collectBoundIds (RDrop _ _ body) = collectBoundIds body
-  collectBoundIds (RFree _ _ body) = collectBoundIds body
-  collectBoundIds (RReleaseReuse _ _ body) = collectBoundIds body
-  collectBoundIds (RReuseOffer _ _ _ _ body) = collectBoundIds body
-  collectBoundIds (RMemoize _ _ _ body) = collectBoundIds body
-  collectBoundIds _ = []
-
-  collectBoundIdsAlt : RConAlt -> List Int
-  collectBoundIdsAlt (MkRConAlt _ _ _ as body) = as ++ collectBoundIds body
-
-  collectBoundIdsConstAlt : RConstAlt -> List Int
-  collectBoundIdsConstAlt (MkRConstAlt _ body) = collectBoundIds body
+||| Every locally-bound id in `e` -- `RLet`'s own `var`, `RConAlt`'s
+||| own destructured `args`, `RLoop`'s own `loopParams`. Everything
+||| the callee's own body binds *besides* its top-level params, which
+||| `spliceCall` renames separately.
+export
+collectBoundIds : RCExp -> List Int
+collectBoundIds (RLet _ var _ value body) = var :: (collectBoundIds value ++ collectBoundIds body)
+collectBoundIds (RConCase _ _ alts mDef) =
+    concatMap (\(MkRConAlt _ _ _ as body) => as ++ collectBoundIds body) alts ++ maybe [] collectBoundIds mDef
+collectBoundIds (RConstCase _ _ alts mDef) =
+    concatMap (\(MkRConstAlt _ body) => collectBoundIds body) alts ++ maybe [] collectBoundIds mDef
+collectBoundIds (RLoop _ loopParams _ _ body) = map fst loopParams ++ collectBoundIds body
+collectBoundIds e = concatMap collectBoundIds (children e)
 
 ||| `True` iff `target` occurs in `e` other than as a native-operand read
 ||| at `ty` or ownership bookkeeping that `Loop.stripOwnership` strips
@@ -241,9 +229,6 @@ hasNonNativeUse ty loopSlots target (RConstCase _ sc alts mDef) =
     (sc == RCLoc target && constAltsNativeType alts /= Just ty)
       || any (\(MkRConstAlt _ body) => hasNonNativeUse ty loopSlots target body) alts
       || maybe False (hasNonNativeUse ty loopSlots target) mDef
-hasNonNativeUse ty loopSlots target (RDup _ v _ body) = hasNonNativeUse ty loopSlots target body
-hasNonNativeUse ty loopSlots target (RDrop _ vars body) = hasNonNativeUse ty loopSlots target body
-hasNonNativeUse ty loopSlots target (RFree _ v body) = hasNonNativeUse ty loopSlots target body
 hasNonNativeUse ty loopSlots target (RReleaseReuse _ v body) = v == RCLoc target || hasNonNativeUse ty loopSlots target body
 -- RReuseOffer's sc/dupOnShared/dropOnUnique are genuine uses, as is RReleaseReuse's v
 -- above: stripOwnership deliberately never touches an already-decided reuse.
@@ -273,8 +258,8 @@ hasNonNativeUse ty loopSlots target (RLoopContinue _ args _) =
     matchesTy : Rep -> Bool
     matchesTy (RNative (TPrim ty')) = ty' == ty
     matchesTy _ = False
-hasNonNativeUse ty loopSlots target (RMemoize _ _ _ body) = hasNonNativeUse ty loopSlots target body
-hasNonNativeUse _ _ _ _ = False -- RPrimVal/RErased/RCrash: no locals. RAppNameRep/RAppFFIInline can't exist yet.
+-- RPrimVal/RErased/RCrash: no locals, so no children either.
+hasNonNativeUse ty loopSlots target e = any (hasNonNativeUse ty loopSlots target) (children e)
 
 ||| `Just ty` iff `paramId`'s occurrences in `calleeBody` are all
 ||| `ty`-typed native-operand reads (`hasNonNativeUse`); `ty` comes from
@@ -290,19 +275,7 @@ nativeEligible paramId calleeBody =
 ||| that local. See `buildSplice`.
 isLoopCarried : Int -> RCExp -> Bool
 isLoopCarried target (RLoop _ loopParams _ _ body) = elem target (map fst loopParams) || isLoopCarried target body
-isLoopCarried target (RLet _ _ _ value body) = isLoopCarried target value || isLoopCarried target body
-isLoopCarried target (RCmpCase _ _ _ _ t f) = isLoopCarried target t || isLoopCarried target f
-isLoopCarried target (RConCase _ _ alts mDef) =
-    any (\(MkRConAlt _ _ _ _ body) => isLoopCarried target body) alts || maybe False (isLoopCarried target) mDef
-isLoopCarried target (RConstCase _ _ alts mDef) =
-    any (\(MkRConstAlt _ body) => isLoopCarried target body) alts || maybe False (isLoopCarried target) mDef
-isLoopCarried target (RDup _ _ _ body) = isLoopCarried target body
-isLoopCarried target (RDrop _ _ body) = isLoopCarried target body
-isLoopCarried target (RFree _ _ body) = isLoopCarried target body
-isLoopCarried target (RReleaseReuse _ _ body) = isLoopCarried target body
-isLoopCarried target (RReuseOffer _ _ _ _ body) = isLoopCarried target body
-isLoopCarried target (RMemoize _ _ _ body) = isLoopCarried target body
-isLoopCarried _ _ = False
+isLoopCarried target e = any (isLoopCarried target) (children e)
 
 ||| Fresh `buildSplice` ids bound to a constant closure, keyed by id:
 ||| `RCConstClosure`'s own name and `missing`, which is that callee's
@@ -332,30 +305,12 @@ resolveConstClosureApps ccs e@(RApp fc lazy (RCLoc v) args) =
                         -- See `Compiler.RC2.ConstFold`'s own `RApp` case.
                         then RUnderApp fc n (minus missing (length args)) (forget args)
                         else e
-resolveConstClosureApps ccs (RLet fc var rep value body) =
-    RLet fc var rep (resolveConstClosureApps ccs value) (resolveConstClosureApps ccs body)
-resolveConstClosureApps ccs (RCmpCase fc op args postDrop t f) =
-    RCmpCase fc op args postDrop (resolveConstClosureApps ccs t) (resolveConstClosureApps ccs f)
-resolveConstClosureApps ccs (RConCase fc sc alts mDef) =
-    RConCase fc sc (map (\(MkRConAlt n ci tag as body) => MkRConAlt n ci tag as (resolveConstClosureApps ccs body)) alts)
-      (map (resolveConstClosureApps ccs) mDef)
-resolveConstClosureApps ccs (RConstCase fc sc alts mDef) =
-    RConstCase fc sc (map (\(MkRConstAlt c body) => MkRConstAlt c (resolveConstClosureApps ccs body)) alts)
-      (map (resolveConstClosureApps ccs) mDef)
 -- A loop parameter starts out as its constant closure but every
 -- `RLoopContinue` rebinds it, so inside the body it is no longer known.
 resolveConstClosureApps ccs (RLoop fc loopParams initial prologueDrop body) =
     RLoop fc loopParams initial prologueDrop
           (resolveConstClosureApps (foldl (\m, (i, _) => delete i m) ccs loopParams) body)
-resolveConstClosureApps ccs (RDup fc v extra body) = RDup fc v extra (resolveConstClosureApps ccs body)
-resolveConstClosureApps ccs (RDrop fc vs body) = RDrop fc vs (resolveConstClosureApps ccs body)
-resolveConstClosureApps ccs (RFree fc v body) = RFree fc v (resolveConstClosureApps ccs body)
-resolveConstClosureApps ccs (RReleaseReuse fc v body) = RReleaseReuse fc v (resolveConstClosureApps ccs body)
-resolveConstClosureApps ccs (RReuseOffer fc sc dupOnShared dropOnUnique body) =
-    RReuseOffer fc sc dupOnShared dropOnUnique (resolveConstClosureApps ccs body)
-resolveConstClosureApps ccs (RMemoize fc n rep body) = RMemoize fc n rep (resolveConstClosureApps ccs body)
--- Every other shape holds no further `RCExp` to rewrite.
-resolveConstClosureApps _ e = e
+resolveConstClosureApps ccs e = mapChildren (resolveConstClosureApps ccs) e
 
 ||| Builds the renaming of the callee's parameter ids onto the call
 ||| arguments, a wrapper binding each argument that needs its own `RLet`
@@ -501,9 +456,6 @@ spliceCall _ _ d _ = pure $ RCrash EmptyFC "[rc2] internal: LateInline target wa
 inlineInto : {auto v : Ref VarId Int} -> SortedMap Name RCDef -> SortedSet Name -> (self : Name) -> RCExp -> Core RCExp
 inlineInto defOf eligible self = go empty []
   where
-   mutual
-    -- `where` blocks are not implicitly `mutual` in this Idris2 version.
-    --
     -- `loopSlots`: the nearest enclosing `RLoop`'s params (`[]` outside a
     -- loop), kept apart from `reps` because it must reflect the loop already
     -- walked through ("Criterion B, revisited", Layer 3).
@@ -530,32 +482,26 @@ inlineInto defOf eligible self = go empty []
                      Nothing => RLet fc var RBoxed value <$> go reps loopSlots body
            else RLet fc var RBoxed value <$> go reps loopSlots body
     go reps loopSlots (RLet fc var rep value body) = RLet fc var rep <$> go reps loopSlots value <*> go (insert var rep reps) loopSlots body
-    go reps loopSlots (RCmpCase fc op args postDrop t f) = RCmpCase fc op args postDrop <$> go reps loopSlots t <*> go reps loopSlots f
-    go reps loopSlots (RConCase fc sc alts mDef) = RConCase fc sc <$> traverse goAlt alts <*> goMaybe reps loopSlots mDef
-      where
-        goAlt : RConAlt -> Core RConAlt
-        goAlt (MkRConAlt n ci tag as body) = MkRConAlt n ci tag as <$> go reps loopSlots body
-    go reps loopSlots (RConstCase fc sc alts mDef) = RConstCase fc sc <$> traverse goConstAlt alts <*> goMaybe reps loopSlots mDef
-      where
-        goConstAlt : RConstAlt -> Core RConstAlt
-        goConstAlt (MkRConstAlt c body) = MkRConstAlt c <$> go reps loopSlots body
     go reps loopSlots (RLoop fc loopParams initial prologueDrop body) =
         RLoop fc loopParams initial prologueDrop <$> go (foldl (\m, (i, r) => insert i r m) reps loopParams) loopParams body
+    go reps loopSlots (RCmpCase fc op args postDrop t f) = RCmpCase fc op args postDrop <$> go reps loopSlots t <*> go reps loopSlots f
+    go reps loopSlots (RConCase fc sc alts mDef) =
+        RConCase fc sc <$> traverse (\(MkRConAlt n ci tag as body) => MkRConAlt n ci tag as <$> go reps loopSlots body) alts
+                       <*> case mDef of
+                              Nothing => pure Nothing
+                              Just e => Just <$> go reps loopSlots e
+    go reps loopSlots (RConstCase fc sc alts mDef) =
+        RConstCase fc sc <$> traverse (\(MkRConstAlt c body) => MkRConstAlt c <$> go reps loopSlots body) alts
+                         <*> case mDef of
+                                Nothing => pure Nothing
+                                Just e => Just <$> go reps loopSlots e
     go reps loopSlots (RDup fc v extra body) = RDup fc v extra <$> go reps loopSlots body
     go reps loopSlots (RDrop fc vs body) = RDrop fc vs <$> go reps loopSlots body
     go reps loopSlots (RFree fc v body) = RFree fc v <$> go reps loopSlots body
     go reps loopSlots (RReleaseReuse fc v body) = RReleaseReuse fc v <$> go reps loopSlots body
     go reps loopSlots (RReuseOffer fc sc dupOnShared dropOnUnique body) = RReuseOffer fc sc dupOnShared dropOnUnique <$> go reps loopSlots body
     go reps loopSlots (RMemoize fc n rep body) = RMemoize fc n rep <$> go reps loopSlots body
-    -- RV, RUnderApp, RApp, RCon, ROp, RExtPrim, RPrimVal, RErased,
-    -- RCrash, RLoopContinue, RStructGet, RStructSet: no RCExp child to
-    -- recurse into. RAppNameRep/RAppFFIInline can't exist yet --
-    -- Compiler.RC2.DualABI runs strictly after this pass.
     go _ _ e = pure e
-
-    goMaybe : SortedMap Int Rep -> List (Int, Rep) -> Maybe RCExp -> Core (Maybe RCExp)
-    goMaybe _ _ Nothing = pure Nothing
-    goMaybe reps loopSlots (Just e) = Just <$> go reps loopSlots e
 
 ------------------------------------------------------------------------
 -- Whole-program entry point

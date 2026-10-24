@@ -83,24 +83,13 @@ genuinelyUsedR _ = empty
 ||| rewrite itself".
 removeVarDrop : Int -> RCExp -> RCExp
 removeVarDrop var (RLet fc v rep value body) = RLet fc v rep value (removeVarDrop var body)
-removeVarDrop var (RDup fc v extra body) = RDup fc v extra (removeVarDrop var body)
 removeVarDrop var (RDrop fc vars body) =
     let vars' = filter (/= RCLoc var) vars
         body' = removeVarDrop var body
     in if null vars' then body' else RDrop fc vars' body'
-removeVarDrop var (RFree fc v body) = RFree fc v (removeVarDrop var body)
-removeVarDrop var (RReleaseReuse fc v body) = RReleaseReuse fc v (removeVarDrop var body)
-removeVarDrop var (RReuseOffer fc sc dupOnShared dropOnUnique body) = RReuseOffer fc sc dupOnShared dropOnUnique (removeVarDrop var body)
-removeVarDrop var (RCmpCase fc op args pd t f) = RCmpCase fc op args pd (removeVarDrop var t) (removeVarDrop var f)
-removeVarDrop var (RConCase fc sc alts mDef) =
-    RConCase fc sc (map (\(MkRConAlt n ci tag as body) => MkRConAlt n ci tag as (removeVarDrop var body)) alts)
-      (map (removeVarDrop var) mDef)
-removeVarDrop var (RConstCase fc sc alts mDef) =
-    RConstCase fc sc (map (\(MkRConstAlt c body) => MkRConstAlt c (removeVarDrop var body)) alts)
-      (map (removeVarDrop var) mDef)
-removeVarDrop var (RLoop fc loopParams initial prologueDrop body) =
-    RLoop fc loopParams initial prologueDrop (removeVarDrop var body)
-removeVarDrop _ e = e
+-- Like `genuinelyUsedR`, never looks inside an `RMemoize`.
+removeVarDrop _ e@(RMemoize {}) = e
+removeVarDrop var e = mapChildren (removeVarDrop var) e
 
 ||| `Nothing` if `var` is genuinely read anywhere in `branch` (a
 ||| candidate for the *one* arm `value` sinks into); `Just` the
@@ -186,21 +175,9 @@ consumedOperands reps = go []
 ||| Same traversal shape as `genuinelyUsedR` itself, so the two agree
 ||| on every place a `RDrop` can turn up.
 alreadyDropped : RCExp -> SortedSet RCLocal
-alreadyDropped (RLet _ _ _ value body) = union (alreadyDropped value) (alreadyDropped body)
 alreadyDropped (RDrop _ vars body) = union (fromList vars) (alreadyDropped body)
-alreadyDropped (RDup _ _ _ body) = alreadyDropped body
-alreadyDropped (RFree _ _ body) = alreadyDropped body
-alreadyDropped (RReleaseReuse _ _ body) = alreadyDropped body
-alreadyDropped (RReuseOffer _ _ _ _ body) = alreadyDropped body
-alreadyDropped (RCmpCase _ _ _ _ t f) = union (alreadyDropped t) (alreadyDropped f)
-alreadyDropped (RConCase _ _ alts mDef) =
-    let altsD = map (\(MkRConAlt _ _ _ _ body) => alreadyDropped body) alts
-    in concat (maybe altsD (\d => alreadyDropped d :: altsD) mDef)
-alreadyDropped (RConstCase _ _ alts mDef) =
-    let altsD = map (\(MkRConstAlt _ body) => alreadyDropped body) alts
-    in concat (maybe altsD (\d => alreadyDropped d :: altsD) mDef)
-alreadyDropped (RLoop _ _ _ _ body) = alreadyDropped body
-alreadyDropped _ = empty
+alreadyDropped (RMemoize {}) = empty
+alreadyDropped e = foldMap alreadyDropped (children e)
 
 ||| Prefixes `branch` (already `var`-stripped by `stripIfUnused`) with
 ||| a `drop` for every one of `consumed` -- see `consumedOperands`'s
@@ -436,22 +413,9 @@ applySinkExp reps (RLet fc var rep value body) =
                     Just sunk => applySinkExp reps sunk
                     Nothing => RLet fc var rep value' body'
           else RLet fc var rep value' body'
-applySinkExp reps (RCmpCase fc op args pd t f) = RCmpCase fc op args pd (applySinkExp reps t) (applySinkExp reps f)
-applySinkExp reps (RConCase fc sc alts mDef) =
-    RConCase fc sc (map (\(MkRConAlt n ci tag as body) => MkRConAlt n ci tag as (applySinkExp reps body)) alts)
-      (map (applySinkExp reps) mDef)
-applySinkExp reps (RConstCase fc sc alts mDef) =
-    RConstCase fc sc (map (\(MkRConstAlt c body) => MkRConstAlt c (applySinkExp reps body)) alts)
-      (map (applySinkExp reps) mDef)
-applySinkExp reps (RDup fc v extra body) = RDup fc v extra (applySinkExp reps body)
-applySinkExp reps (RDrop fc vs body) = RDrop fc vs (applySinkExp reps body)
-applySinkExp reps (RFree fc v body) = RFree fc v (applySinkExp reps body)
-applySinkExp reps (RReleaseReuse fc v body) = RReleaseReuse fc v (applySinkExp reps body)
-applySinkExp reps (RReuseOffer fc sc dupOnShared dropOnUnique body) = RReuseOffer fc sc dupOnShared dropOnUnique (applySinkExp reps body)
 applySinkExp reps (RLoop fc loopParams initial prologueDrop body) =
     RLoop fc loopParams initial prologueDrop (applySinkExp (foldl (\m, (i, r) => insert i r m) reps loopParams) body)
-applySinkExp reps (RMemoize fc n rep body) = RMemoize fc n rep (applySinkExp reps body)
-applySinkExp _ e = e
+applySinkExp reps e = mapChildren (applySinkExp reps) e
 
 ||| Apply branch-local sinking to one top-level definition. Every
 ||| top-level argument is genuinely `RBoxed`, exactly `localRepIn`'s
