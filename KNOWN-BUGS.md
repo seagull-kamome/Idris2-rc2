@@ -210,6 +210,12 @@ If one of these stops reproducing, or a fix lands, remove the entry.
   bug and was fixed; `Test135EuclidModNegative` is in
   `NO_REFC_DIFF_TESTS` for this reason.
 
+- **Upstream RefC does not validate UTF-8 when it decodes a string.**
+  `unpack` of the bytes `C0 AF` gives `/` (an overlong form), and
+  surrogates and code points past U+10FFFF come through as such; Chez
+  gives U+FFFD for each. rc2 matches Chez. `Test143Utf8Invalid` is in
+  `NO_REFC_DIFF_TESTS` for this reason.
+
 ## `Nat` division and remainder are slow
 
 `div` and `mod` on a `Nat` (`Integral Nat` in `Data.Nat` of the base library) subtract
