@@ -135,7 +135,7 @@ A function parameter is native too (`ptrCalleeTable`, `ptrParams` in
 `Compiler.RC2.Loop`): a parameter whose every use is a call argument at a
 `TPtr` position of a `%foreign` declaration, or of another function's pointer
 parameter (found by a fixed number of rounds), becomes `Native Ptr` in the
-function's worker; the boxed wrapper converts. `Loop.stripOwnership` now also
+function's worker; the boxed wrapper converts. `Rewrite.stripOwnership` now also
 clears a promoted local from a worker call's `postDrop`, which struct return
 (`doc/struct-return.md`) fills in before the promotion happens: the opaque
 `IDRIS2RC2_Raw *` made the C compiler reject the stale `idris2rc2_drop`.

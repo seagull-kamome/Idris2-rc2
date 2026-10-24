@@ -16,7 +16,7 @@ module Compiler.RC2.PushCon
 
 import Compiler.RC2.ConstFold
 import Compiler.RC2.LateInline
-import Compiler.RC2.Loop
+import Compiler.RC2.Rewrite
 import Compiler.RC2.RCExp
 import Compiler.RC2.Util
 

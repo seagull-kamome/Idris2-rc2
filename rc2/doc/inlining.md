@@ -755,7 +755,7 @@ a closure value.
 Splicing replaces a call's own top-level-argument-to-parameter binding
 with an `RLet` per argument, and renames every occurrence of the
 callee's own parameter id to that fresh `RLet`'s own id throughout the
-spliced body (`Compiler.RC2.Loop`'s own `Renaming`/`renameRCExp`,
+spliced body (`Compiler.RC2.Rewrite`'s own `Renaming`/`renameRCExp`,
 reused as-is). Two things about this are less obvious than they look,
 both found as real bugs during implementation:
 
@@ -1020,7 +1020,7 @@ Regression test: `Test110Loop/LoopConstClosureParam.idr`.
 ### Files
 
 - `rc2/src/Compiler/RC2/LateInline.idr` -- this pass, in full.
-- `rc2/src/Compiler/RC2/Loop.idr` -- `Renaming`/`renameRCExp`, reused
+- `rc2/src/Compiler/RC2/Rewrite.idr` -- `Renaming`/`renameRCExp`, reused
   as-is for the id substitution.
 - `rc2/src/Compiler/RC2/MutualLoop.idr` -- `Graph`/`tarjanSCCs`, reused
   as-is for cycle exclusion and callee-before-caller ordering.

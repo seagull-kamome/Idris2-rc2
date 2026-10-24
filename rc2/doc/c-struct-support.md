@@ -373,7 +373,7 @@ field but a narrower meaning: it lists the operands (`structVar`, and for
 are dropped after the read or write. It is `[]` after Phase 1. Neither
 node ever inserts a `dup`. Every pass that walks `RCExp` has cases for
 them (`freeLocalsR`/`countUsesR`/`mentionedLocalsAcc` in `RCExp.idr`,
-`Loop.idr`'s `stripOwnership`, `Sink.idr`'s `genuinelyUsedR`,
+`Rewrite.idr`'s `stripOwnership`, `Sink.idr`'s `genuinelyUsedR`,
 `ConAltNative.idr`, `ConstFold.idr`, `DualABI.idr`, `LateInline.idr` and
 so on); `structVar` and `value` always count as uses of those locals.
 `DualABI` never treats the result of either node as a native value
@@ -616,7 +616,7 @@ not copying files. What that comes down to, concretely:
 - ~~Not yet enumerated: every site that needs an `RStructGet`/
   `RStructSet` case added~~ **Done -- see "Implementation status"
   below.** Every pass touching `RCExp` was audited; two real gaps were
-  found and fixed (`Loop.idr`'s `stripOwnership`, `Sink.idr`'s
+  found and fixed (`Rewrite.idr`'s `stripOwnership`, `Sink.idr`'s
   `genuinelyUsedR`), the rest confirmed already-correct via their own
   wildcard fallthrough.
 
@@ -668,7 +668,7 @@ reuse case above had already been caught by review and fixed) checked
 every other pass touching `RCExp` for whether its own wildcard
 fallthrough correctly covers the two new nodes. Two real gaps found
 and fixed:
-- `Loop.idr`'s `stripOwnership` filters `ids` out of `ROp`/`RCmpCase`/
+- `Rewrite.idr`'s `stripOwnership` filters `ids` out of `ROp`/`RCmpCase`/
   `RLoopContinue`/`RLoop`'s own `postDrop`/`prologueDrop` fields (used
   by `Compiler.RC2.ConAltNative`/`Compiler.RC2.DualABI` when promoting
   a local to a native shadow) but fell through its own wildcard for

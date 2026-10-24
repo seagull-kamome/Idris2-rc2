@@ -186,7 +186,7 @@ put more code in CAF bodies, and found four more of the same:
 variable in `refc-suite/doubles`), and `ConAltNative`'s walk.
 
 Two files needed a one-line pass-through from the start:
-`Compiler.RC2.Loop`'s own `renameRCExp` (its self-tail-call renaming
+`Compiler.RC2.Rewrite`'s own `renameRCExp` (its self-tail-call renaming
 walk *is* exhaustive over `RCExp`, even though `RMemoize` can never
 actually reach it in practice -- a 0-arg CAF has no loop-carried
 parameters for `applyLoop` to ever run on) and

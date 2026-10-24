@@ -62,7 +62,7 @@ directly, not re-derived):
    mirroring `Loop.idr`'s own `nativeArgTypes`/`opNativeUsesThrough`
    walk exactly, but rewriting instead of collecting) -- any surviving
    Boxed-context occurrence is left on `fieldId` itself, untouched.
-   `stripOwnership` (`Compiler.RC2.Loop`, reused directly) first clears
+   `stripOwnership` (`Compiler.RC2.Rewrite`, reused directly) first clears
    whatever stale `RDup`/`RDrop`/`postDrop` bookkeeping `annotate` had
    attached to `fieldId` (computed back when every occurrence, native
    and Boxed alike, was still assumed to disappear into the shadow),
@@ -366,7 +366,7 @@ lost: 0 bytes in 0 blocks` (`800 bytes in 100 blocks still reachable`
    "Bugs found and fixed" and "Reusing the original Boxed field" above
    for four separate confirmed instances of exactly this). Any change
    to `ConAltNative.idr`, or to `Compiler.RC2.Reuse`'s own
-   `resolveAlt`/`Compiler.RC2.Loop`'s own `stripOwnership`/`nativeArgTypes`
+   `resolveAlt`/`Compiler.RC2.Rewrite`'s `stripOwnership` / `Compiler.RC2.Loop`'s `nativeArgTypes`
    (all reused or mirrored here), should be re-checked with `valgrind
    --leak-check=full` against `tests/Test117ConAltNative/ConAltNative.idr` specifically
    (its own `step` runs 200k iterations, deliberately large enough that
