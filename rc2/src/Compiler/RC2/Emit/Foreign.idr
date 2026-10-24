@@ -530,7 +530,14 @@ emitExportWrapper n exportedCName fargs ret = do
     let worldArg = case ret of CFIORes _ => ["(IDRIS2RC2_Value *)NULL"]; _ => []
     let boxedArgs = map (\(i, _) => "a_" ++ show i) params ++ worldArg
     fulln <- getFullName n
-    let callExpr = "\{cName fulln}(\{showSep ", " boxedArgs})"
+    -- A callee past `MaxExtractFunArgs` takes its arguments as one
+    -- `var_arglist[]` array (`Compiler.RC2.Emit.fnSignature`), which is only
+    -- read, so the wrapper's own stack array serves.
+    let wide = length boxedArgs > MaxExtractFunArgs
+    when wide $
+        emit EmptyFC "IDRIS2RC2_Value *args[] = {\{showSep ", " boxedArgs}};"
+    let callExpr : String = if wide then "\{cName fulln}(args)"
+                            else "\{cName fulln}(\{showSep ", " boxedArgs})"
     let ranExpr = "idris2rc2_trampoline(\{callExpr})"
     case ret' of
          CFUnit => emit EmptyFC "(void)\{ranExpr};"

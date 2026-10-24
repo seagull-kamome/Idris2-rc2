@@ -446,6 +446,15 @@ it as a boxed `NULL` constant when calling in -- the same placeholder
 `Compiler.RC2.Emit.Util`'s own `packCFType`/`extractValue` already use
 for `CFWorld` everywhere else.
 
+The World slot counts toward the callee's argument count, so an
+`IO` export with 20 declared arguments has a compiled arity of 21.
+A function past `MaxExtractFunArgs` takes its arguments as one
+`IDRIS2RC2_Value *var_arglist[N]` array (`Compiler.RC2.Emit.fnSignature`),
+and `emitExportWrapper` calls it that way: it builds the array on its
+own stack, since the callee only reads it
+(`tests/Test138ExportWideIO`). The limit of 20 declared arguments in
+`validateExport` is unchanged.
+
 ## Memory: an explicit drop after every non-`Unit` return
 
 Every ordinary Rep-driven code path in rc2's own compiled output has
