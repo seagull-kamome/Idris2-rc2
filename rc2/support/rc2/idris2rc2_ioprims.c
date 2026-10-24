@@ -1,5 +1,7 @@
 #include "idris2rc2_ioprims.h"
 
+#include <limits.h>
+
 #include <pthread.h>
 #include <stdio.h>
 
@@ -81,7 +83,11 @@ IDRIS2RC2_Value *idris2rc2_ioref_cas(IDRIS2RC2_Value *erased,
 IDRIS2RC2_Value *idris2rc2_Data_IOArray_Prims_prim__newArray(
     IDRIS2RC2_Value *erased, IDRIS2RC2_Value *length, IDRIS2RC2_Value *v,
     IDRIS2RC2_Value *world) {
-  int len = (int)idris2rc2_extractInt(length);
+  // The array keeps its capacity in an `int`: a length that does not fit would
+  // wrap to a short array that the caller's own bounds check does not know about.
+  int64_t asked = (int64_t)idris2rc2_extractInt(length);
+  IDRIS2RC2_VERIFY(asked >= 0 && asked <= INT_MAX, "newArray: length %lld is out of range", (long long)asked);
+  int len = (int)asked;
   IDRIS2RC2_Array *a = idris2rc2_mkArray(len);
   for (int i = 0; i < len; i++) a->items[i] = idris2rc2_dup(v);
   return (IDRIS2RC2_Value *)a;
