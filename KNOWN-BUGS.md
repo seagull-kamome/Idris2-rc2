@@ -210,6 +210,11 @@ If one of these stops reproducing, or a fix lands, remove the entry.
   bug and was fixed; `Test135EuclidModNegative` is in
   `NO_REFC_DIFF_TESTS` for this reason.
 
+- **Upstream RefC dies with SIGFPE on `cast` of a NaN or infinite
+  `Double` to `Integer`** (GMP's `mpz_set_d`). rc2 returns 0.
+  `Test142DoubleNonFiniteToInteger` is in `NO_REFC_DIFF_TESTS` for
+  this reason.
+
 ## `Nat` division and remainder are slow
 
 `div` and `mod` on a `Nat` (`Integral Nat` in `Data.Nat` of the base library) subtract

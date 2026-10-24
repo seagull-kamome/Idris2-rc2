@@ -560,9 +560,11 @@ static inline IDRIS2RC2_Value *idris2rc2_cast_Double_to_Bits8(IDRIS2RC2_Value *x
 static inline IDRIS2RC2_Value *idris2rc2_cast_Double_to_Bits16(IDRIS2RC2_Value *x) { return idris2rc2_mkBits16((uint16_t)idris2rc2_to_double(x)); }
 static inline IDRIS2RC2_Value *idris2rc2_cast_Double_to_Bits32(IDRIS2RC2_Value *x) { return idris2rc2_mkBits32((uint32_t)idris2rc2_to_double(x)); }
 static inline IDRIS2RC2_Value *idris2rc2_cast_Double_to_Bits64(IDRIS2RC2_Value *x) { return idris2rc2_mkBits64((uint64_t)idris2rc2_to_double(x)); }
-// mpz_set_d also truncates toward zero; NaN and the infinities take it.
+// mpz_set_d truncates toward zero but raises SIGFPE on NaN and the
+// infinities, which have no integer value: they give 0.
 static inline IDRIS2RC2_Value *idris2rc2_cast_Double_to_Integer(IDRIS2RC2_Value *x) {
   double d = idris2rc2_to_double(x);
+  if (!isfinite(d)) return IDRIS2RC2_IMM_INT64(0);
   if (d > -0x1p62 && d < 0x1p62)
     return IDRIS2RC2_IMM_INT64((int64_t)d);
   IDRIS2RC2_Integer *r = idris2rc2_mkInteger();
