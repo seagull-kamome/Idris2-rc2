@@ -14,6 +14,8 @@ rc2の汎用サポートライブラリです。上流の`base`/`contrib`に無�
 
 - `Data.Integer.GMP`のすべての`mpz_*`バインディング（`$r`が`Integer`の出力引数）
 - `System.FFI.C.Ptr`のfetch/storeの組（`((ty *)p)[i]`）
+- `System.FFI.C.Math`の`<math.h>`の`double`関数
+- `System.FFI.C.Limits`の`<limits.h>`定数
 - `System.Posix.*`の各モジュール。`Directory.readdir`は、不透明な`DirEnt`をPrimIOのCExprアクセサで読み、`DirEntry`へコピーします。`struct dirent`はtypedef名ではないので、`Struct`では名指せません。
 - `Network.RC2`の`send`/`recv`
 - `EPOLL*`定数、`System.Linux.Epoll`（`struct epoll_event`をアクセサで読む）、`System.Linux.Eventfd`
@@ -64,6 +66,9 @@ rc2の汎用サポートライブラリです。上流の`base`/`contrib`に無�
 | `Control.Task`、`Control.Task.Scheduler`/`Epoll`/`Source` | 差し替え可能なイベントソースの上に作った、協調型の`Task`モナド（`epoll`とタイマー、そして`System.Linux.Uring`の上の`Control.Task.Uring`による`io_uring`）。spawn/both/raceとキャンセルを備え、複数スレッドで状態を共有するための`Ref`/`MVar`/`Chan`もあります。`doc/task.md`を参照 |
 | `System.Concurrency.RC2` | 本物のpthreadを使った`Mutex`/`Condition`/`Semaphore`/`Barrier`/`Channel`と、joinできる`forkJoin`。設計の全体は、トップレベル`README.md`の「Concurrency」の節を参照 |
 | `System.FFI.C.Array` | `malloc`で確保され、GCが解放し、`Fin`で境界検査される固定長配列 |
+| `System.FFI.C.Limits` | Cの`<limits.h>`の整数の限界値をcamelCaseで提供(`intMax`、`longMin`など) |
+| `System.FFI.C.Math` | Cの`<math.h>`の`double`関数を`namespace Math`にまとめたもの(`Math.sin`など)。分類関数は`Bool` |
+| `System.FFI.C.Memory` | Cヒープの確保(`malloc`/`calloc`/`free`)と、`<string.h>`/`<memory.h>`のよく使う関数(`memcpy`、`strlen`など)の`AnyPtr`版 |
 | `System.FFI.C.Ptr` | `Ptr`/`GCPtr`の領域に対する、検査なしの要素番号指定のfetch/store |
 | `System.FFI.C.Sizeof` | スカラー型のCの`sizeof`。バッファの刻み幅やオフセットを手で計算するときに使います |
 | `System.GC.RC2` | rc2自身の`idris2rc2_dup`/`dup_n`/`drop`への直接アクセス。不透明なFFIポインタ経由で持ち出した値に使います |
