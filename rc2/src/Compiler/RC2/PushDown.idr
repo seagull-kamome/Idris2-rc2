@@ -1,19 +1,18 @@
+||| Dup/drop push-down: a run of `dup`/`drop` nodes that sits right in
+||| front of a `case` is moved into the head of every arm, where a `dup`
+||| meets the `drop` of the same local that the arm opens with and the
+||| pair is cancelled. This is what is left of the lint's pattern A (a
+||| `dup` above a `case` that some arm cancels) for the adjacent runs;
+||| see `rc2/doc/pushdown.md` for the soundness argument, the cases it
+||| deliberately leaves alone, and the measurements. Runs right after
+||| dead-code elimination and before `DupMerge`, so it sees the final
+||| shape of every producer (`Reuse`'s field dups, `LateInline`'s spliced
+||| bodies, `Loop`'s and `DualABI`'s dups) and leaves the leftovers to
+||| `DupMerge`'s own peepholes. Disable with `--directive nopushdown`.
+|||
+||| Copyright 2026, Hattori,Hiroki. All rights reserved.
+||| This module was licensed by BSD3. see LICENSE file for detail.
 module Compiler.RC2.PushDown
-
--- Copyright 2026, Hattori,Hiroki. All rights reserved.
--- This module was licensed by BSD3.
-
--- Dup/drop push-down: a run of `dup`/`drop` nodes that sits right in
--- front of a `case` is moved into the head of every arm, where a `dup`
--- meets the `drop` of the same local that the arm opens with and the
--- pair is cancelled. This is what is left of the lint's pattern A (a
--- `dup` above a `case` that some arm cancels) for the adjacent runs;
--- see `rc2/doc/pushdown.md` for the soundness argument, the cases it
--- deliberately leaves alone, and the measurements. Runs right after
--- dead-code elimination and before `DupMerge`, so it sees the final
--- shape of every producer (`Reuse`'s field dups, `LateInline`'s spliced
--- bodies, `Loop`'s and `DualABI`'s dups) and leaves the leftovers to
--- `DupMerge`'s own peepholes. Disable with `--directive nopushdown`.
 
 import Compiler.RC2.RCExp
 

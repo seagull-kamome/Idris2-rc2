@@ -1,20 +1,19 @@
+||| C-rendering primitives used by Compiler.RC2.Emit's own RCExp -> C
+||| engine (split out of that module for size): name mangling and
+||| literal/primop-to-C-text rendering, the module-state Ref tags
+||| (ArgCounter/OutfileText/RepMap/etc.) and their small accessor
+||| helpers, Boxed/native value-to-C-expression rendering
+||| (rcVarToBoxedC/rcVarToNativeC), closure-building (makeClosure and
+||| friends), case-alternative condition/chain rendering
+||| (conAltCondExpr/emitAltChain), and the %foreign CFType<->C type
+||| mapping (cTypeOfCFType/extractValue/packCFType/collectStructDefs).
+||| Nothing in this module ever calls back into Compiler.RC2.Emit --
+||| the dependency is one-directional, which is exactly what made this
+||| split possible without a mutual-module cycle.
+|||
+||| Copyright 2026, Hattori,Hiroki. All rights reserved.
+||| This module was licensed by BSD3. see LICENSE file for detail.
 module Compiler.RC2.Emit.Util
-
--- Copyright 2026, Hattori,Hiroki. All rights reserved.
--- This module was licensed by BSD3.
-
--- C-rendering primitives used by Compiler.RC2.Emit's own RCExp -> C
--- engine (split out of that module for size): name mangling and
--- literal/primop-to-C-text rendering, the module-state Ref tags
--- (ArgCounter/OutfileText/RepMap/etc.) and their small accessor
--- helpers, Boxed/native value-to-C-expression rendering
--- (rcVarToBoxedC/rcVarToNativeC), closure-building (makeClosure and
--- friends), case-alternative condition/chain rendering
--- (conAltCondExpr/emitAltChain), and the %foreign CFType<->C type
--- mapping (cTypeOfCFType/extractValue/packCFType/collectStructDefs).
--- Nothing in this module ever calls back into Compiler.RC2.Emit --
--- the dependency is one-directional, which is exactly what made this
--- split possible without a mutual-module cycle.
 
 import Compiler.RC2.ConstFold
 import Compiler.RC2.RCExp
@@ -123,8 +122,7 @@ checkConLayout n arity tag =
 ||| Must NOT go through an intermediate `(char)` cast -- `char` is a
 ||| *signed* 8-bit type on most platforms, so for any codepoint above 127
 ||| (e.g. '\x9f' = 159) that cast reinterprets it as negative before it
-||| gets used/widened again at the call site, corrupting the value (this
-||| was a real bug: 159 became 4294967199 after `(uint32_t)(char)159`).
+||| gets used/widened again at the call site, corrupting the value.
 export
 escapeChar : Char -> String
 escapeChar c = if isAlphaNum c || isNL c
@@ -233,7 +231,7 @@ cOp Crash         [_, msg]  = "idris2rc2_crash(" ++ msg ++ ");"
 cOp fn args = show fn ++ "(" ++ (showSep ", " $ toList args) ++ ")"
 
 ||| `True` for the Boxed `PrimFn`s whose own runtime primitive
-||| (`rc2/support/rc2/idris2rc2_numeric.h`) now consumes every operand it's handed
+||| (`rc2/support/rc2/idris2rc2_numeric.h`) consumes every operand it's handed
 ||| -- reusing a uniquely-referenced one's own heap storage in place
 ||| instead of allocating fresh, and dropping whichever operand it didn't
 ||| reuse itself -- rather than only reading its operands and leaving
@@ -261,10 +259,10 @@ cOp fn args = show fn ++ "(" ++ (showSep ", " $ toList args) ++ ")"
 ||| some separate reasoning, but because `cPrimType` maps BOTH
 ||| to the identical C name (`"Int64"`) -- `Add IntType` and `Add
 ||| Int64Type` both lower to a call to the exact same
-||| `idris2rc2_add_Int64`. Missing either one here would leave `Emit.idr`
-||| still emitting its own old explicit post-call drop for that op's
-||| operands on top of the now-consuming primitive's own internal drop:
-||| a double-drop/use-after-free, not merely a missed optimisation.
+||| `idris2rc2_add_Int64`. Missing either one here would make `Emit.idr`
+||| emit an explicit post-call drop for that op's operands on top of the
+||| consuming primitive's own internal drop: a double-drop/use-after-free,
+||| not merely a missed optimisation.
 export
 isReuseConsumingOp : PrimFn arity -> Bool
 isReuseConsumingOp (Add IntegerType)  = True
@@ -817,10 +815,7 @@ repOfLocal l = (\reps => localRepIn reps l) <$> get RepMap
 ||| forced through `boxedConstExpr` despite `litRep` covering it (i.e.
 ||| from a `RCConstCon` field via `constConFieldExpr`'s `RCConst` case,
 ||| never from `inlineExprFor`'s own `RCConst` arm, which renders a
-||| native-eligible literal inline instead) -- confirmed via
-||| `rc2/tests/refc-suite/integers`'s own `Cast`/`Neg` dictionaries
-||| once folding an interface dictionary into `RCConstCon` (this
-||| session's own `RCConstClosure` addition) started exposing it.
+||| native-eligible literal inline instead).
 constDefKey : Constant -> Constant
 constDefKey (I x) = I64 (cast x)
 constDefKey c      = c
@@ -1068,12 +1063,9 @@ rcVarToBoxedC l = do
                 -- own doc comment) -- the `Nothing` fallback above is
                 -- defensive totality, not a real fallback path.
                 RInlineNative ty => (tyMk ty exprOrVar, pending)
-                -- Was unconditionally `varName l` before a non-native-
-                -- eligible RCConst (String/small Integer) could ever be
-                -- RBoxed -- every existing RBoxed local is a genuine
-                -- `RCLoc` whose `inlineExprFor` is always `Nothing`
-                -- anyway, so this is a no-op change for them, but a real
-                -- fix for the new RCConst case.
+                -- A non-native-eligible RCConst (String/small Integer) can
+                -- be RBoxed; every other RBoxed local is a genuine `RCLoc`
+                -- whose `inlineExprFor` is always `Nothing`.
                 _ => (exprOrVar, pending)
 
 ||| `boxOpArg`, with the fresh box (`Nothing` for an `RBoxed` operand) kept
@@ -1109,7 +1101,7 @@ boxOpArgParts fc l = do
 ||| contexts that immediately hand the fresh box's ownership off to
 ||| someone else), an `ROp` argument has nowhere to hand it to: the C
 ||| primitive only reads it, so the fresh box must be named here and
-||| dropped once the op is done reading it, or it leaks (found via
+||| dropped once the op is done reading it, or it leaks (see
 ||| `Test110Loop/LoopContinuePostDrop.idr`: `Types.repOf` never promotes a
 ||| `case`/`if`-valued `RLet` to Native even when a branch's own value is
 ||| a plain native arithmetic chain, so that branch's `ROp` ends up
@@ -1158,7 +1150,7 @@ rcVarToNativeC : {auto a : Ref ArgCounter Nat}
 -- path that receives it. `nativeUnbox`'s ordinary `RBoxed` case would
 -- otherwise unbox a literal C `NULL`, straight into a null-pointer
 -- dereference in the runtime accessor -- a real crash this exact
--- pattern used to hit before this clause existed.
+-- pattern would hit without this clause.
 rcVarToNativeC ty RCNull = pure (nullOfTy ty, [])
 rcVarToNativeC ty RCErased = pure (nullOfTy ty, [])
 rcVarToNativeC ty RCWorld = pure (nullOfTy ty, [])
@@ -1168,7 +1160,7 @@ rcVarToNativeC ty l = do
     let (exprOrVar, pending) = fromMaybe (varName l, []) inlined
     pure $ case rep of
                 -- Unreachable in practice: a non-native-eligible RCConst
-                -- (the only new source of an RBoxed `inlined`) is never a
+                -- (the only source of an RBoxed `inlined`) is never a
                 -- native op's own operand (String/Integer are never
                 -- native-eligible types to begin with) -- guarded anyway
                 -- for the same reason `nativeCType`/`nativeMk`/
@@ -1180,8 +1172,7 @@ rcVarToNativeC ty l = do
 ||| deterministic function of `sc`'s own id, computed identically
 ||| wherever it's needed (the offering RConAlt's own uniqueness check,
 ||| the RCon(s) that may claim it, any RReleaseReuse that releases it)
-||| with no lookup table required at all, unlike the old ReuseMap this
-||| replaced: Compiler.RC2.Reuse already resolved *which* RCon (if any)
+||| with no lookup table required at all: Compiler.RC2.Reuse already resolved *which* RCon (if any)
 ||| claims a given offer, encoding that pairing directly as data
 ||| (RCon.reuseFrom = Just sc) rather than something Emit has to
 ||| rediscover via a name-keyed map at emission time.
@@ -1236,11 +1227,10 @@ data TailPositionStatus = InTailPosition | NotInTailPosition
 ||| pre-declared result slot, see `resolveSink`) -- or straight out via a
 ||| C `return` statement (`SinkReturn`, only ever handed down while
 ||| `tailPosition` is `InTailPosition`, since nothing after a `return`
-||| would ever run). Generalises what used to be a bare `(declare, target)`
-||| pair (`assignInto`'s old signature) so that `RConCase`/`RConstCase`/
-||| `RCmpCase`'s own branches can write straight into the caller's real
+||| would ever run). Lets `RConCase`/`RConstCase`/
+||| `RCmpCase`'s own branches write straight into the caller's real
 ||| destination -- a variable *or* a `return` -- instead of a throwaway
-||| `switchReturnVar` that then had to be copied into it: the same "build
+||| `switchReturnVar` that then has to be copied into it: the same "build
 ||| directly into the real destination" idea as `tryBuildClosureInto`'s
 ||| own doc comment, generalised to branching constructs, and to `return`
 ||| as a destination in its own right.
@@ -1689,12 +1679,11 @@ data CLang = CLangC | CLangRefC
 
 ||| The C type a `%foreign` argument/return, or a struct field, of this
 ||| `CFType` is rendered as. Lifted out of `createCFunctions`'s own
-||| `where` (originally scoped to its `MkRCForeign` case alone) so
+||| `where` so
 ||| `RStructGet`/`RStructSet`'s own lowering (Part D,
 ||| doc/c-struct-support.md) can share it for a field's own `CFType`,
 ||| not just a whole `%foreign` def's. Placed ahead of the `mutual`
-||| block below (rather than alongside `createCFunctions`, its own
-||| original home) so `emitRC`'s own `RStructGet`/`RStructSet` cases,
+||| block below (rather than alongside `createCFunctions`) so `emitRC`'s own `RStructGet`/`RStructSet` cases,
 ||| earlier in that same block, can see it.
 export
 cTypeOfCFType : CFType -> String
@@ -1727,12 +1716,10 @@ cTypeOfCFType n = assert_total $ idris_crash ("INTERNAL ERROR: Unknown FFI type 
 ||| read). Lifted out of `createCFunctions`'s own `where` for the same
 ||| reason as `cTypeOfCFType` above.
 |||
-||| `CFStruct`'s own case reuses `CFPtr`'s already-working line
-||| verbatim, rather than the `idris_crash` this used to be (see
+||| `CFStruct`'s own case reuses `CFPtr`'s line verbatim (see
 ||| doc/c-struct-support.md's "Part A"): a struct is always accessed by
-||| pointer in this design, and `cTypeOfCFType` already renders both
-||| identically (`"void *"`), so there was never a reason for this to
-||| diverge from `CFPtr`'s own handling.
+||| pointer in this design, and `cTypeOfCFType` renders both
+||| identically (`"void *"`).
 export
 extractValue : (cLang : CLang) -> (cfType:CFType) -> (varName:String) -> String
 extractValue _ CFUnit           varName = "NULL"
@@ -1770,9 +1757,8 @@ extractValue _ n _ = assert_total $ idris_crash ("INTERNAL ERROR: Unknown FFI ty
 ||| `createCFunctions`'s own `where` for the same reason as
 ||| `cTypeOfCFType` above.
 |||
-||| `CFStruct`'s own case reuses `CFPtr`'s already-working line
-||| verbatim -- see `extractValue`'s own doc comment above, same
-||| reasoning (this used to call an undefined `makeStruct` helper).
+||| `CFStruct`'s own case reuses `CFPtr`'s line verbatim -- see
+||| `extractValue`'s own doc comment above, same reasoning.
 export
 packCFType : (cfType:CFType) -> (varName:String) -> String
 packCFType CFUnit          varName = "((IDRIS2RC2_Value *)NULL)"
@@ -1804,10 +1790,8 @@ packCFType (CFStruct x xs) varName = "idris2rc2_mkPtr(" ++ varName ++ ")"
 packCFType (CFUser x xs)   varName = varName
 -- No `CFFun` case: a `%foreign` declaration's own return type is
 -- rejected well before Emit ever runs if its peeled type is `CFFun`
--- (`Compiler.RC2.RC`'s own `checkForeignReturn`) -- there never was a
--- working C shape for this (the `makeFunction(...)` this case used to
--- emit called a function that has never existed anywhere, copied
--- verbatim from upstream RefC's own identically-broken line). Falls
+-- (`Compiler.RC2.RC`'s own `checkForeignReturn`) -- there is no
+-- working C shape for this. Falls
 -- through to the catch-all below, same as any other genuinely
 -- unreachable `CFType`.
 packCFType n _ = assert_total $ idris_crash ("INTERNAL ERROR: Unknown FFI type in rc2 backend: " ++ show n)

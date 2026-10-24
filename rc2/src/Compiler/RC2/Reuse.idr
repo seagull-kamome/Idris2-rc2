@@ -1,14 +1,13 @@
+||| Constructor-reuse-in-place: recycles a dying value's storage for a
+||| new constructor of the same shape, decided and encoded directly on
+||| the IR so `Emit.idr` never needs its own runtime uniqueness-check
+||| logic. See `doc/reuse-analysis.md` for the full protocol (per-alt
+||| eligibility, the `tryConsume`/`tryClaim` search, why resolution
+||| proceeds bottom-up) and its own "Bugs found and fixed".
+|||
+||| Copyright 2026, Hattori,Hiroki. All rights reserved.
+||| This module was licensed by BSD3. see LICENSE file for detail.
 module Compiler.RC2.Reuse
-
--- Copyright 2026, Hattori,Hiroki. All rights reserved.
--- This module was licensed by BSD3.
-
--- Constructor-reuse-in-place: recycles a dying value's storage for a
--- new constructor of the same shape, decided and encoded directly on
--- the IR so `Emit.idr` never needs its own runtime uniqueness-check
--- logic. See `doc/reuse-analysis.md` for the full protocol (per-alt
--- eligibility, the `tryConsume`/`tryClaim` search, why resolution
--- proceeds bottom-up) and its own "Bugs found and fixed".
 
 import Compiler.RC2.RCExp
 import Compiler.RC2.Util
@@ -144,7 +143,7 @@ resolveReuse nested imm (RConCase fc sc alts mDef) =
                        -- keeps its branch -- the unique path genuinely
                        -- avoids dup/drop-ing the surviving fields, and
                        -- collapsing it to the shared path unconditionally
-                       -- was measured to *add* refcount traffic. What it
+                       -- would *add* refcount traffic. What it
                        -- doesn't need is `tryConsume`'s own
                        -- `RReleaseReuse` on every leaf path: release it
                        -- immediately instead, so the shell goes back to

@@ -68,7 +68,7 @@ data ForeignCall = CallSym Name | CallExpr (List TemplatePart)
 ||| list. Shared by `emitGenericForeignWrapper` (which additionally
 ||| consults the same parse for the library/header options
 ||| `extLibOpts` carries, and the always-Boxed wrapper's own emission)
-||| and the new `emitAppFFIInlineInto`/`emitNativeValue`'s own
+||| and `emitAppFFIInlineInto`/`emitNativeValue`'s own
 ||| `RAppFFIInline` case below, which need only the resolved call
 ||| target itself -- no header/library registration of their own,
 ||| since the wrapper for the same declaration already did that once,
@@ -102,11 +102,9 @@ resolveForeignTarget ccs =
 ||| Also returns every genuinely-`RBoxed`-typed argument position
 ||| (`CFWorld`'s own trailing slot on a `CFIORes`-returning declaration
 ||| included), already rendered to its own drop-ready C expression text
-||| (`marshalArg`'s own doc comment) -- mirrors the old
-||| `emitFFIWorker`'s own unconditional `removeVars boxedVars`, now paid
-||| at the call site directly since no worker function exists any more
-||| to pay it internally (see `emitAppFFIInlineInto`'s own doc comment
-||| for the ownership hazard this closes). `discardLastArgument` only
+||| (`marshalArg`'s own doc comment) -- paid at the call site directly,
+||| since no worker function exists to pay it internally (see
+||| `emitAppFFIInlineInto`'s own doc comment for the ownership hazard). `discardLastArgument` only
 ||| ever trims the text actually passed to `fctName(...)` -- the
 ||| trailing `CFWorld` slot still contributes to this drop set
 ||| regardless, since it's still an ordinarily-owned Idris-level
@@ -368,11 +366,7 @@ emitForeignDef n ccs fargs ret =
               -- runtime exactly like "RefC" does -- both need
               -- CFBuffer's header-aware unwrap (Emit/Util.idr's
               -- `extractValue CLangRefC CFBuffer`), not the generic
-              -- flat-data-pointer one "C" gets. Before this, every
-              -- "RC2:"-tagged call fell into the `else` branch below
-              -- and got the wrong (CLangC) unwrap for any CFBuffer
-              -- argument -- never caught earlier because
-              -- System.Concurrency.RC2's own patches never took one.
+              -- flat-data-pointer one "C" gets.
               (cLang, target) <- resolveForeignTarget ccs
               typeVarNameArgList <- createFFIArgList fargs
 

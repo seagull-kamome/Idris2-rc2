@@ -1,11 +1,10 @@
+||| Transforms upstream's named case trees to `RCExp` in two phases:
+||| 1. `normalize`: lambda lifting and ANF-style conversion, with native type inference.
+||| 2. `annotate`: Injects reference-counting primitives based on ownership.
+|||
+||| Copyright 2026, Hattori,Hiroki. All rights reserved.
+||| This module was licensed by BSD3. see LICENSE file for detail.
 module Compiler.RC2.RC
-
--- Copyright 2026, Hattori,Hiroki. All rights reserved.
--- This module was licensed by BSD3.
-
--- Transforms upstream's named case trees to `RCExp` in two phases:
--- 1. `normalize`: lambda lifting and ANF-style conversion, with native type inference.
--- 2. `annotate`: Injects reference-counting primitives based on ownership.
 
 import Compiler.RC2.RCExp
 import Compiler.RC2.Types
@@ -401,10 +400,9 @@ mutual
 ------------------------------------------------------------------------
 -- Phase 2: reference-counting annotation (RCExp -> RCExp)
 --
--- Ownership bookkeeping (what's "owned" vs. still needed later, so must be
--- borrowed) is unchanged from the original design; the only difference is
--- that a borrow now materialises as an explicit `RDup` node wrapping the
--- consuming expression, instead of a flag on the occurrence.
+-- Ownership bookkeeping: what's "owned" vs. still needed later, so must be
+-- borrowed. A borrow materialises as an explicit `RDup` node wrapping the
+-- consuming expression.
 
 Owned : Type
 Owned = SortedSet RCLocal
@@ -571,8 +569,7 @@ dropIfLastUse natives owned (v :: vars) =
 ||| (owned) or dup'd-for-borrow -- the dup (if any) exists precisely to
 ||| give this read its own reference to consume. Becomes `ROp`'s
 ||| `postDrop` field (see its doc comment) -- this is the one place
-||| Compiler.RC2.Emit used to independently re-derive an ownership
-||| decision instead of just lowering one; now it doesn't have to.
+||| Compiler.RC2.Emit lowers this decision rather than re-deriving it.
 boxedOperands : (natives : SortedSet RCLocal) -> List RCLocal -> List RCLocal
 boxedOperands natives = filter (\v => isHeapLocal v && not (contains v natives))
 
@@ -601,15 +598,13 @@ mutual
     annotate natives owned e@(RV _ (RCConstClosure {})) = pure e
     -- `RCConst`/`RCEmptyCon`/`RCNull` need the exact same three
     -- intercepts, for the exact same reason -- `Compiler.RC2.ConstFold`
-    -- gained the ability to fold a whole `RConCase` (a destructured
+    -- can fold a whole `RConCase` (a destructured
     -- field bound via `insertConArgs`, or a whole-program CAF's own
     -- value via `RAppName`'s own fold arm) straight down to a BARE `RV`
     -- of one of these forms, with no enclosing `RLet` left for `annotate`
-    -- to have already special-cased -- previously only `RCConstCon`/
-    -- `RCConstClosure` could ever reach this point unaccompanied
+    -- to have already special-cased
     -- (`splitBorrows`/`dropIfLastUse` above already exclude all five
-    -- forms uniformly; this fallthrough hadn't needed to, before that
-    -- fold existed). Without this, the generic `RV fc v` case below
+    -- forms uniformly). Without this, the generic `RV fc v` case below
     -- wraps it in a real `RDup` (since neither set ever tracks a
     -- constant-form value), and `Compiler.RC2.Emit.Util`'s own `varName`
     -- has no real rendering for any of the five reaching it that way
@@ -664,11 +659,9 @@ mutual
         ||| let, a multi-use one, or an already-`RBoxed` one) passes `rep`
         ||| through unchanged -- this only ever *narrows* an existing
         ||| `RNative`, never invents a new native classification `Types.repOf`
-        ||| didn't already decide. Moves what used to be `Emit.idr`'s own
-        ||| `tryInlineNativeOp` (a `countUsesR` tree-walk redone at *emission*
-        ||| time on every RLet) into a single Phase-2 decision instead,
-        ||| mirroring `ROp.postDrop` and reuse-in-place's own earlier
-        ||| elevations.
+        ||| didn't already decide. This is a single Phase-2 decision, not an
+        ||| emission-time tree-walk per RLet, mirroring `ROp.postDrop` and
+        ||| reuse-in-place's own elevations.
         |||
         ||| `ROp`'s own non-empty `postDrop` (any Boxed operand it reads and
         ||| owes a drop -- see its own doc comment) is no obstacle here: it
@@ -740,11 +733,9 @@ mutual
     -- ordinary ROp's operands -- the callee is responsible for
     -- `idris2rc2_dup`-ing anything it wants to keep past the call (see
     -- `support/rc2/ioprims.c`), the same way any other FFI callee
-    -- would. Previously a bare pass-through (`owned` never consulted
-    -- at all), which leaked e.g. an IORef's own cell (`prim__newIORef`)
-    -- and any argument computed fresh for the call (e.g.
-    -- `modifyIORef`'s own `f val` fed into `writeIORef`) -- see
-    -- doc/c-struct-support.md's own addendum for the full writeup.
+    -- would. A bare pass-through (`owned` never consulted) would leak
+    -- e.g. an IORef's own cell and fresh arguments -- see
+    -- doc/c-struct-support.md's own addendum.
     annotate natives owned (RExtPrim fc lazy p args _) =
         pure $ wrapDups fc (splitBorrows natives owned args)
                           (RExtPrim fc lazy p args (boxedOperands natives args))

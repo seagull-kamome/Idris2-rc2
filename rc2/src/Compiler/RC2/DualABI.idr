@@ -1,26 +1,25 @@
+||| Dual calling convention: promotes eligible function parameters/
+||| return values to native (unboxed) representations across an
+||| *ordinary* call boundary, not just a self-tail-call loop's own
+||| `goto` (`Compiler.RC2.Loop`). Both eligibility analyses are purely
+||| local to one function's own body -- see `rc2/doc/dual-abi.md`'s "Why
+||| no whole-program fixed point is needed" -- except the Bool return
+||| (`boolReturnPlan`), a fixpoint over tail calls ("Bool return").
+|||
+||| Tail-position calls to an ordinary worker are a deliberate,
+||| permanent scope boundary (unbounded C-stack-growth risk if
+||| rewritten -- see the doc's "Scope: non-tail-position calls only,
+||| permanently" under "Stage 4"); a tail call to an FFI worker is the
+||| one exception (see the doc's "Stage 4b"), handled in
+||| `applyCallSiteRewriteBody`'s own tail-position clause below.
+|||
+||| See `rc2/doc/dual-abi.md` for the full design and the
+||| `Compiler.RC2.MutualLoop`-merged-function exclusion Stage 3 needs
+||| (that doc's "A finding that changed Stage 3's own plan").
+|||
+||| Copyright 2026, Hattori,Hiroki. All rights reserved.
+||| This module was licensed by BSD3. see LICENSE file for detail.
 module Compiler.RC2.DualABI
-
--- Copyright 2026, Hattori,Hiroki. All rights reserved.
--- This module was licensed by BSD3.
-
--- Dual calling convention: promotes eligible function parameters/
--- return values to native (unboxed) representations across an
--- *ordinary* call boundary, not just a self-tail-call loop's own
--- `goto` (`Compiler.RC2.Loop`). Both eligibility analyses are purely
--- local to one function's own body -- see `rc2/doc/dual-abi.md`'s "Why
--- no whole-program fixed point is needed" -- except the Bool return
--- (`boolReturnPlan`), a fixpoint over tail calls ("Bool return").
---
--- Tail-position calls to an ordinary worker are a deliberate,
--- permanent scope boundary (unbounded C-stack-growth risk if
--- rewritten -- see the doc's "Scope: non-tail-position calls only,
--- permanently" under "Stage 4"); a tail call to an FFI worker is the
--- one exception (see the doc's "Stage 4b"), handled in
--- `applyCallSiteRewriteBody`'s own tail-position clause below.
---
--- See `rc2/doc/dual-abi.md` for the full design and the
--- `Compiler.RC2.MutualLoop`-merged-function exclusion Stage 3 needs
--- (that doc's "A finding that changed Stage 3's own plan").
 
 import Compiler.RC2.RCExp
 import Compiler.RC2.Types
@@ -46,7 +45,7 @@ import Data.Vect
 ||| this shape (`doc/loop-conversion.md`'s "Loop-invariant parameter
 ||| elision") -- collecting every id bound along the way, plus every
 ||| nested loop's own `loopParams` too (`Compiler.RC2.LateInline` can
-||| now splice a loop-converted callee into a caller's own loop body --
+||| splice a loop-converted callee into a caller's own loop body --
 ||| rc2/doc/inlining.md's "Known limitation" section). A *sibling*
 ||| loop elsewhere in the body (not nested inside this one) can't be
 ||| reached this way regardless -- `RLoop` has no "and then" field of
@@ -598,9 +597,6 @@ dumpDualABI defs =
 ------------------------------------------------------------------------
 -- Stage 3a: worker synthesis (parameters only) + wrapper rewrite.
 
--- `FreshId`/`freshId` now live in `Compiler.RC2.Util` (byte-identical
--- copy also removed from `Compiler.RC2.MutualLoop`).
-
 ||| A fresh name for `original`'s own worker: `pfx` (`"idris2rc2_worker_"`
 ||| for an ordinary `MkRCFun` worker, `"idris2rc2_ffiworker_"` for an FFI
 ||| one) plus `original`'s own mangled C name (`cName`, `export`ed for
@@ -611,10 +607,6 @@ freshName pfx existing original = do
     i <- freshId
     let cand = MN (pfx ++ cName original) i
     if contains cand existing then freshName pfx existing original else pure cand
-
--- `isMutualLoopMerged` itself now lives in `Compiler.RC2.Util` (see its
--- own doc comment there) -- reused as-is here via the existing `Util`
--- import above.
 
 ||| A parameter made `NULL`-typed (`Compiler.RC2.NullParams`) that an `RLoop`
 ||| carries under the same id: the loop parameter takes the same native
@@ -848,33 +840,11 @@ applyDualABI boolReturn nullTable defs = do
 ||| decided by the type alone, no function body to analyse (see
 ||| `doc/dual-abi.md`'s "Stage 3c": "Eligibility needs no analysis") --
 ||| *and* `ccs` actually carries a convention rc2 can use (`foreignUsable
-||| ccs`). The second condition doesn't come up in whole-
-||| program compilation today (nothing calling such a declaration would
-||| still be present in `defs` at all by this point -- `defs` here is
-||| already upstream's own reachable-from-`main` set), but incremental
-||| compilation's own `toIR`-scoped `defs` (`Compiler.RC2.RC2.incCompile`)
-||| carries every declaration a module makes regardless of whether
-||| anything actually calls it, real convention or not -- see
-||| rc2/doc/incremental-compile.md's "Bugs found while implementing" for
-||| the concrete case (`Prelude.IO.prim__threadWait`, Chez/Scheme-only)
-||| this excludes. Skipping it here (rather than only in `Emit.idr`,
-||| where the same declaration's own dropped-if-unusable handling
-||| lives) matters because eligibility here runs *before* any call-site
-||| rewriting (Stage 4/5) -- without this check, a native-eligible-
-||| shaped call to a no-convention declaration would already have been
-||| rewritten into an `RAppFFIInline` node by the time `Emit.idr` ever
-||| sees it, which `Emit.idr`'s own per-declaration drop can no longer
-||| undo (that call site's own `resolveForeignTarget` would still try,
-||| and fail, to resolve a convention that was never there). Excluding
-||| it here instead means the call falls back to an ordinary `RAppName`/
-||| `RAppNameRep`, whose own callee resolution in `Emit.idr` already
-||| does the right thing in either mode: whole-program's own
-||| `collectDeclarations` still throws its usual immediately-
-||| attributable compile-time error if such a call is ever genuinely
-||| reachable (unaffected by this change, since that path was never
-||| about FFI-inlining specifically); incremental's own dropped-
-||| declaration/`externalFunctionRefsD` combination turns it into a
-||| link-time "undefined reference" instead, per that same doc.
+||| ccs`). Incremental compilation's `toIR`-scoped `defs` carries
+||| declarations nothing calls, with or without a usable convention; a
+||| call to a no-convention one must not become an `RAppFFIInline` here,
+||| so it falls back to an ordinary `RAppName` (see
+||| rc2/doc/incremental-compile.md, "Bugs found while implementing").
 |||
 ||| Returns two maps from one traversal: keyed by the *original* name
 ||| (`applyCallSiteRewrite`'s own input, unchanged from Stage 4) and
@@ -969,7 +939,7 @@ ultimateTail e = e
 ||| `ultimateTail` does) is a bare `ROp` reading `var` as an operand --
 ||| the one shape `Compiler.RC2.Loop`'s own `nativeArgTypes` correctly
 ||| doesn't cover for *its own* callers (a bare tail is always Boxed
-||| when that pass runs), but no longer true by Stage 4's own point in
+||| when that pass runs), but not true by Stage 4's own point in
 ||| the pipeline. See `doc/dual-abi.md`'s "Bugs found and fixed" #5 for
 ||| the `fib`-worker `v3 + v5` case this exists to catch.
 bareTailNativeReads : Int -> RCExp -> SortedSet PrimType

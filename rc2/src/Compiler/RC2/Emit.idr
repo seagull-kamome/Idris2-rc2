@@ -1,56 +1,51 @@
+||| RCExp -> C. Mostly mechanical: every ownership decision (dup/drop/free,
+||| and what to drop and when), every native-vs-boxed representation
+||| decision, and the constructor-reuse-in-place decision were already made
+||| by Compiler.RC2.RC/Compiler.RC2.Reuse and are baked into the tree as
+||| data (explicit RDup/RDrop/RFree nodes, RLet's Rep field, RCon's
+||| reuseFrom, RReuseOffer, RReleaseReuse). This module never
+||| (re)analyses any of those; it just maintains a small incrementally-built
+||| `RepMap` so that a *use* of a local (which only carries its RCLocal id)
+||| can look back up the Rep its binding RLet already decided. Every local
+||| variable use (RV, and every RCLocal appearing as a call/constructor/op
+||| argument) is lowered as-is, with no per-use dup decision: any refcount
+||| adjustment a use needs has already been made explicit as a wrapping
+||| RDup/RDrop/RFree node earlier in the tree, which this module just
+||| lowers to the matching runtime call.
+|||
+||| In particular, an `RDrop`'s own var list never needs re-filtering
+||| here: Compiler.RC2.RC's `Owned` set (the sole source of every
+||| `RDrop` it produces, via `dropUnusedOwnedVars`'s set-difference) only
+||| ever gains members at three sites (a function's own args, an RLet's
+||| own bound var, an RConAlt's own destructured args), and all three
+||| exclude `natives`-listed locals and only ever insert genuine `RCLoc`s
+||| -- never `RCConst`/`RCEmptyCon`/`RCNull`.
+|||
+||| A few things this module still *does* decide, deliberately, not an
+||| oversight:
+|||   * `tryBuildClosureInto`/`makeClosureInto`: which C statements a
+|||     closure build/partial-application ends up as. Purely a codegen-
+|||     shape optimisation (fewer statements, no throwaway `closure_N`
+|||     immediately copied into its real destination) with zero effect on
+|||     runtime semantics -- unlike the ownership/representation decisions
+|||     above, there's no *semantic* fact for Compiler.RC2.RC's IR to carry
+|||     about this, only a syntactic one about how many C statements to
+|||     spend saying it.
+|||   * `RPrimVal`'s small-int cache / constant-staging (`dyngen`/
+|||     `orStagen`): a literal's own *value* decides whether it uses the
+|||     small-int cache or gets staged into a deduplicated top-level
+|||     constant. Left here on purpose, not elevated alongside the
+|||     decisions above: this is a runtime-representation detail (which
+|||     cache/table a given literal's storage lives in), not an
+|||     ownership/native-vs-boxed *fact* about the IR itself, and dedup
+|||     inherently spans the *whole compilation unit* rather than one
+|||     definition, so it doesn't fit the "decide once per node during
+|||     Lifted -> RCExp conversion" shape the elevations above use even
+|||     if moved.
+|||
+||| Copyright 2026, Hattori,Hiroki. All rights reserved.
+||| This module was licensed by BSD3. see LICENSE file for detail.
 module Compiler.RC2.Emit
-
--- Copyright 2026, Hattori,Hiroki. All rights reserved.
--- This module was licensed by BSD3.
-
--- RCExp -> C. Mostly mechanical: every ownership decision (dup/drop/free,
--- and what to drop and when), every native-vs-boxed representation
--- decision, and the constructor-reuse-in-place decision were already made
--- by Compiler.RC2.RC/Compiler.RC2.Reuse and are baked into the tree as
--- data (explicit RDup/RDrop/RFree nodes, RLet's Rep field, RCon's
--- reuseFrom, RReuseOffer, RReleaseReuse). This module never
--- (re)analyses any of those; it just maintains a small incrementally-built
--- `RepMap` so that a *use* of a local (which only carries its RCLocal id)
--- can look back up the Rep its binding RLet already decided. Every local
--- variable use (RV, and every RCLocal appearing as a call/constructor/op
--- argument) is lowered as-is, with no per-use dup decision: any refcount
--- adjustment a use needs has already been made explicit as a wrapping
--- RDup/RDrop/RFree node earlier in the tree, which this module just
--- lowers to the matching runtime call.
---
--- In particular, an `RDrop`'s own var list never needs re-filtering
--- here: Compiler.RC2.RC's `Owned` set (the sole source of every
--- `RDrop` it produces, via `dropUnusedOwnedVars`'s set-difference) only
--- ever gains members at three sites (a function's own args, an RLet's
--- own bound var, an RConAlt's own destructured args), and all three
--- exclude `natives`-listed locals and only ever insert genuine `RCLoc`s
--- -- never `RCConst`/`RCEmptyCon`/`RCNull`. A `keepBoxedLocals`
--- Native/RCConst/RCEmptyCon/RCNull re-filter used to sit in front of
--- every `RDrop` lowering below as a defensive measure; removed once
--- this was confirmed airtight (see TODO.md's former "Architecture"
--- note on this exact question).
---
--- A few things this module still *does* decide, deliberately, not an
--- oversight:
---   * `tryBuildClosureInto`/`makeClosureInto`: which C statements a
---     closure build/partial-application ends up as. Purely a codegen-
---     shape optimisation (fewer statements, no throwaway `closure_N`
---     immediately copied into its real destination) with zero effect on
---     runtime semantics -- unlike the ownership/representation decisions
---     above, there's no *semantic* fact for Compiler.RC2.RC's IR to carry
---     about this, only a syntactic one about how many C statements to
---     spend saying it.
---   * `RPrimVal`'s small-int cache / constant-staging (`dyngen`/
---     `orStagen`): a literal's own *value* decides whether it uses the
---     small-int cache or gets staged into a deduplicated top-level
---     constant. Left here on purpose, not elevated alongside the
---     decisions above: this is a runtime-representation detail (which
---     cache/table a given literal's storage lives in), not an
---     ownership/native-vs-boxed *fact* about the IR itself, and dedup
---     inherently spans the *whole compilation unit* rather than one
---     definition, so it doesn't fit the "decide once per node during
---     Lifted -> RCExp conversion" shape the elevations above use even
---     if moved.
 
 import Compiler.RC2.RCExp
 import Compiler.RC2.Types
@@ -117,8 +112,7 @@ retUnsupported site = throw $ InternalError "[rc2] \{site}: a struct-return (Ret
 ||| like an ordinary, never-closure-deferred `RAppName` call;
 ||| `RNative`/`RInlineNative` boxes the callee's raw native result via
 ||| `nativeMk`. See `rc2/doc/dual-abi.md`'s Stage 3a "Bugs found" #3
-||| for why `postDrop` exists at all (a real reference leak, found via
-||| `valgrind`), and its Stage 4 section for why a `SinkReturn` target
+||| for why `postDrop` exists at all, and its Stage 4 section for why a `SinkReturn` target
 ||| needs the same scratch-variable capture `emitNativeReturn` uses
 ||| (no statement position after a `return` for the drop to land in)
 ||| -- `SinkVar` always has one, so it just drops right after.
@@ -165,8 +159,7 @@ emitAppFFIInlineInto : EmitDeps (Sink -> TailPositionStatus -> FC -> List String
 ||| emitted (`finalizeSinkWithDrop` below), it also has to be the one
 ||| that discharges the pending drop -- returning a bare string to a
 ||| caller that might build it into a larger expression before ever
-||| emitting anything (as several cases below used to, e.g. RApp/RCon)
-||| would leave nowhere correct to put it.
+||| emitting anything would leave nowhere correct to put it.
 emitRC : EmitDeps (Sink -> RCExp -> TailPositionStatus -> Core ())
 
 mutual
@@ -358,8 +351,7 @@ mutual
     ||| doc comment. A `return` has no statement position *after* it for
     ||| a pending Boxed-operand drop to land in, unlike `declareNative`'s
     ||| `RLet` -- see `rc2/doc/dual-abi.md`'s "no statement position
-    ||| after return" section for the full problem and the bug this
-    ||| design avoids repeating. Nothing pending: plain `return valStr;`.
+    ||| after return" section for the full problem. Nothing pending: plain `return valStr;`.
     ||| Something pending: capture the read into a scratch `tmp_N` (same
     ||| naming `makeClosure`'s own
     ||| `getNewVarThatWillNotBeFreedAtEndOfBlock` already uses) first,
@@ -521,7 +513,7 @@ mutual
     ||| A case branch (or default): emit the drops RC.idr's `annotate`
     ||| already decided on (the peeled leading RDrop), then the body
     ||| itself (an `RReuseOffer`, if Compiler.RC2.Reuse left one on this
-    ||| alt, is just part of that body now -- `emitInto`'s own peeling
+    ||| alt, is just part of that body -- `emitInto`'s own peeling
     ||| chain lowers it mechanically like any other wrapper, nothing
     ||| special-cased here). Mirrors RC2/RefC's `concaseBody`.
     |||
@@ -731,8 +723,7 @@ mutual
     ||| copy of the enclosing `MkRCFun`'s own `retRep`
     ||| (`Compiler.RC2.RC2`'s `insertMemoize`), and `retRep` is hardcoded
     ||| `RBoxed` by `Compiler.RC2.RC`'s own `normalizeDef` (Phase 1) for
-    ||| every ordinary definition -- confirmed directly, not assumed:
-    ||| the only place a *native* `retRep` is ever introduced is
+    ||| every ordinary definition: the only place a *native* `retRep` is ever introduced is
     ||| `Compiler.RC2.DualABI`'s worker synthesis, a *separate* later
     ||| definition alongside the original wrapper, strictly after
     ||| `insertMemoize` already ran (`ConstFold` -> `insertMemoize` ->
@@ -802,8 +793,7 @@ mutual
     ||| `Compiler.RC2.Loop`'s own `stripOwnership` -- called by DualABI's
     ||| `synthesizeWorker` over the whole worker body -- already filtered
     ||| this `initVal` back out of `prologueDrop` for us. Membership here
-    ||| now drives two things this function used to independently
-    ||| re-derive via a `repOfLocal` lookup on every call:
+    ||| drives two things:
     |||
     ||| * The native unboxing is guarded by a runtime NULL check on
     |||   `initVal`'s own variable, but only when `inPrologueDrop`: an
@@ -822,8 +812,7 @@ mutual
     |||   is never actually NULL either (an `int64_t` argument, not a
     |||   padded pointer slot), so the guard is scoped to `inPrologueDrop`
     |||   only -- see `rc2/doc/loop-conversion.md`'s "Bugs found and
-    |||   fixed" #4 (Site 2) and `rc2/doc/dual-abi.md`'s #2 for the crash
-    |||   and build failure this guard fixes.
+    |||   fixed" #4 (Site 2) and `rc2/doc/dual-abi.md`'s #2.
     ||| * This is also the loop param's last use anywhere in the whole
     |||   function -- Compiler.RC2.Loop's own rewrite has already
     |||   redirected every other reference to the fresh shadow -- so
@@ -914,14 +903,14 @@ mutual
     -- drop, and only *after* doing so: dropped here, the operand would be
     -- freed before the statement that reads it.
     emitNativeValue : EmitDeps (NativeTy -> RCExp -> Core (String, List String))
-    -- A bare local read -- unreachable before Stage 3b (declareNative/
+    -- A bare local read. (declareNative/
     -- inlineNative's own RLet callers only ever see an ROp/RPrimVal
     -- tail here, since Phase 1's own ANF normalisation binds every
     -- non-trivial operand to its own let). Compiler.RC2.DualABI's own
     -- native-return tail-value walk (`tailValueReps`) can genuinely
     -- find a bare `RV` at a real tail position instead -- e.g. a
     -- parameter, or an already-native intermediate, returned unchanged
-    -- -- so this case is reachable now. No pending drop: `v`'s own Rep
+    -- -- so this case is reachable. No pending drop: `v`'s own Rep
     -- is already known native by construction here (see
     -- `tailValueReps`'s own seeding), so there's nothing Boxed being
     -- read at all, unlike the ROp case below.
@@ -1138,19 +1127,14 @@ emitRC sink (RApp fc _ closure (x ::: xs@(_ :: _))) InTailPosition = do
    argsWithPending <- traverse rcVarToBoxedC (x :: xs)
    -- Only the *last* hop may safely stay undispatched via
    -- idris2rc2_tailcallApplyClosure -- every earlier one must go
-   -- through idris2rc2_applyClosure instead, exactly as the pre-merge
-   -- single-arg-at-a-time chain always did. tailcallApplyClosure
+   -- through idris2rc2_applyClosure instead. tailcallApplyClosure
    -- deliberately never dispatches even once its own closure reaches
    -- `filled == arity` (see its own doc comment); an intermediate hop
    -- can genuinely saturate the closure it's applied to before the
-   -- chain's last argument (confirmed by a real crash: Prelude.IO's
-   -- own io_bind-fused worker passes an already-partially-applied
-   -- closure through one of these positions, one argument short of
-   -- complete, so the *first* of two chained applies to it already
-   -- completes it -- chaining tailcallApplyClosure blindly for that
-   -- second hop wrote one slot past the now-full closure's own
-   -- allocation). applyClosure's own fast path correctly dispatches
-   -- and hands the chain whatever fresh value comes back instead.
+   -- chain's last argument, so chaining tailcallApplyClosure blindly
+   -- would write one slot past the full closure's own allocation.
+   -- applyClosure's own fast path correctly dispatches and hands the
+   -- chain whatever fresh value comes back instead.
    let valStr = applyChain closureStr (map fst argsWithPending)
    finalizeSinkWithDrop fc sink valStr (p1 ++ concatMap snd argsWithPending)
   where
@@ -1216,7 +1200,7 @@ emitRC sink (ROp fc _ op args postDrop) _ = do
     -- known about these.
     --
     -- `isReuseConsumingOp op` skips `postDrop` and the fresh boxes: its own
-    -- runtime primitive (rc2/support/rc2/idris2rc2_numeric.h) now consumes
+    -- runtime primitive (rc2/support/rc2/idris2rc2_numeric.h) consumes
     -- and disposes of every operand handed to it itself, reusing a
     -- uniquely-referenced one's own heap allocation in place where
     -- possible -- see rc2/doc/rop-reuse.md. What an inlined operand
@@ -1404,7 +1388,7 @@ createCFunctions : {auto c : Ref Ctxt Defs}
 createCFunctions n (MkRCFun args retRep isWorker body) = do
     -- `args`/`retRep` are dual-ABI groundwork (see RCExp.idr's own doc
     -- comment on MkRCFun, and Compiler.RC2.DualABI's own module note).
-    -- Both can now genuinely hold `RNative`/`RInlineNative` entries (a
+    -- Both can hold `RNative`/`RInlineNative` entries (a
     -- dual-ABI worker's own eligible parameters/return,
     -- Compiler.RC2.DualABI's own Stage 3a+3b), so both this function's
     -- own C declaration (its return type here, each parameter's own
@@ -1491,13 +1475,10 @@ declarationsOf _ (MkRCError _) = pure []
 ||| moved here verbatim from the old `emitGenericForeignWrapper`). Conses
 ||| each declaration onto the front of `FunctionDefinitions`, so run over
 ||| `defs` in its own original order (`generateCSourceFile`'s own
-||| `traverse_`) this reproduces the exact reverse-`defs` order the old
-||| direct-from-`createCFunctions` population left it in -- `header`
-||| prints the list as-is, so the prototype section stays byte-identical
-||| to before this pass was split out. Also the sole place `MkRCForeign`'s
-||| own `validateForeign` failure and `MkRCError` are detected -- both now surface
-||| before `outn` is ever opened, same "no half-written .c on failure"
-||| property the old single-pass design had.
+||| `traverse_`) this yields the reverse-`defs` order -- `header`
+||| prints the list as-is. Also the sole place `MkRCForeign`'s
+||| own `validateForeign` failure and `MkRCError` are detected -- both surface
+||| before `outn` is ever opened, so a failure leaves no half-written .c.
 collectDeclarations : {auto c : Ref Ctxt Defs} -> {auto f : Ref FunctionDefinitions (List String)}
                    -> {auto hf : Ref HeaderFiles (SortedSet String)} -> {auto fl : Ref ForeignLibs (SortedSet String)}
                    -> Name -> RCDef -> Core ()
@@ -1521,7 +1502,7 @@ collectDeclarations n def = do
 ||| requirement (`#include`s, struct typedefs, function prototypes --
 ||| see `collectDeclarations`'s own doc comment for why constants don't
 ||| belong here) -- returned as plain text lines instead of appended
-||| into `OutfileText` directly, since `generateCSourceFile` now writes
+||| into `OutfileText` directly, since `generateCSourceFile` writes
 ||| this straight to `outn` before any def's own body-emission pass
 ||| runs, rather than threading it through the same accumulator every
 ||| def's own generated text passes through.
@@ -1574,13 +1555,9 @@ header directiveList = do
 
 ||| Writes `ls` to `h`, throwing `FileErr outn err` on any failure --
 ||| unlike `System.File`'s own `HasIO`-polymorphic `fPutStrLn`, whose
-||| `Either FileError ()` result the old single-shot write loop this
-||| replaces discarded as a plain value inside an unconditional
-||| `pure (Right ())`, via `coreLift_`'s own `ignore`: every failure,
-||| including `openFile`'s own, used to vanish silently, leaving either
-||| no `.c` at all or a stale one for the next compile stage to trip
-||| over with a confusing gcc error instead. `Core.Core.FileErr` is an
-||| existing `Error` constructor -- no new exception type needed.
+||| `Either FileError ()` result would be discarded silently (leaving no
+||| `.c` or a stale one for the next compile stage). `Core.Core.FileErr`
+||| is an existing `Error` constructor -- no new exception type needed.
 putLines : (outn : String) -> File -> List String -> Core ()
 putLines outn h = traverse_ $ \l =>
     coreLift (fPutStrLn h l) >>= \case

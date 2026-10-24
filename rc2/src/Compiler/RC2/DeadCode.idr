@@ -1,20 +1,18 @@
+||| Whole-program mark-and-sweep dead-code elimination, run after `DualABI`
+||| and the reuse re-check and before `PushDown`, `DupMerge`, `LeafTail`,
+||| `DeadVars` and `FunDedup` (`toRCDefs`). See `rc2/doc/dead-code-elim.md`'s
+||| "Motivation" for why upstream's own reachability analysis (fixed
+||| before any rc2 pass runs) can leave a definition genuinely dead only
+||| after `Inline`/`DualABI` rewrite it (confirmed via
+||| `rc2/tests/Test114Inline/DeadCodeInline.idr`), and its "Scope" section for
+||| why only `MkRCFun` is ever pruned here -- `MkRCForeign` structurally
+||| can't actually lose every caller via `Inline`/`DualABI` alone (tracking
+||| it anyway removes nothing); `MkRCCon`/`MkRCError` simply aren't a currently-observed
+||| source of dead code.
+|||
+||| Copyright 2026, Hattori,Hiroki. All rights reserved.
+||| This module was licensed by BSD3. see LICENSE file for detail.
 module Compiler.RC2.DeadCode
-
--- Copyright 2026, Hattori,Hiroki. All rights reserved.
--- This module was licensed by BSD3.
-
--- Whole-program mark-and-sweep dead-code elimination, run after `DualABI`
--- and the reuse re-check and before `PushDown`, `DupMerge`, `LeafTail`,
--- `DeadVars` and `FunDedup` (`toRCDefs`). See `rc2/doc/dead-code-elim.md`'s
--- "Motivation" for why upstream's own reachability analysis (fixed
--- before any rc2 pass runs) can leave a definition genuinely dead only
--- after `Inline`/`DualABI` rewrite it (confirmed via
--- `rc2/tests/Test114Inline/DeadCodeInline.idr`), and its "Scope" section for
--- why only `MkRCFun` is ever pruned here -- `MkRCForeign` structurally
--- can't actually lose every caller via `Inline`/`DualABI` alone (a
--- first attempt at tracking it anyway never removed anything in
--- practice); `MkRCCon`/`MkRCError` simply aren't a currently-observed
--- source of dead code.
 
 import Compiler.RC2.RCExp
 

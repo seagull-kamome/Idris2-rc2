@@ -199,11 +199,11 @@ IDRIS2RC2_Array *idris2rc2_mkArray(int length) {
 }
 
 // idris2rc2_dup/idris2rc2_dup_n/idris2rc2_drop's own hot paths are
-// `static inline` in memory.h now, not defined here -- see that header's
+// `static inline` in memory.h, not defined here -- see that header's
 // own comment for why. Only idris2rc2_teardown (below, the cold path
 // those inline functions call into once a value's last reference is
 // actually dropped) and idris2rc2_free (which always skips straight to
-// teardown) still live in this translation unit.
+// teardown) live in this translation unit.
 
 // Whether `v` can hold further heap values: the one child of such a kind
 // that dies with its parent is torn down by looping rather than by

@@ -1,33 +1,32 @@
+||| Pipeline orchestration, in broad strokes (`toRCDefs` and
+||| `compileExprWhole` have the exact order and the stages each
+||| `--directive noXXX` turns off):
+||| 1. On the case trees, before lifting: `Delay` CAFs (`LazyCaf`),
+|||    inlining (`InlineCExp`), dead arguments (`DeadArgs`), world arity
+|||    raising (`ArityRaiseCExp`)
+||| 2. Lambda lifting + normalization into RCExp (`Compiler.RC2.RC`)
+||| 3. Constant folding (`ConstFold`), case into tails (`PushCon`),
+|||    closure/constant-constructor specialization (`SpecClosure`),
+|||    early inline (`LateInline`)
+||| 4. Nested comparison merge (`CmpMerge`), single-force lazy values
+|||    (`LazyFold`), world arity raising again
+|||    (`ArityRaise`), TRMC (`Trmc`), difference lists (`ClosureCtx`),
+|||    CAF memoization (`insertMemoize`)
+||| 5. RC annotation, constructor reuse, native shadow caching (`RC`,
+|||    `Reuse`, `ConAltNative`)
+||| 6. Loop/tail call conversion (`MutualLoop`, `Loop`)
+||| 7. Late inline (`LateInline`), applied-closure folding (`ArityRaise`),
+|||    post-RC case into tails (`PushCon`)
+||| 8. Branch-local sinking (`Sink`), dual ABI, null parameters and struct
+|||    return (`DualABI`, `NullParams`), reuse re-check (`Reuse`)
+||| 9. Dead-code elimination (`DeadCode`), dup/drop push-down (`PushDown`),
+|||    dup merging (`DupMerge`), leaf tail calls (`LeafTail`), dead variable
+|||    erasure (`DeadVars`), function dedup (`FunDedup`, whole program only)
+||| 10. C generation (`Emit`) and C compiler invocation (`CC`)
+|||
+||| Copyright 2026, Hattori,Hiroki. All rights reserved.
+||| This module was licensed by BSD3. see LICENSE file for detail.
 module Compiler.RC2.RC2
-
--- Copyright 2026, Hattori,Hiroki. All rights reserved.
--- This module was licensed by BSD3.
-
--- Pipeline orchestration, in broad strokes (`toRCDefs` and
--- `compileExprWhole` have the exact order and the stages each
--- `--directive noXXX` turns off):
--- 1. On the case trees, before lifting: `Delay` CAFs (`LazyCaf`),
---    inlining (`InlineCExp`), dead arguments (`DeadArgs`), world arity
---    raising (`ArityRaiseCExp`)
--- 2. Lambda lifting + normalization into RCExp (`Compiler.RC2.RC`)
--- 3. Constant folding (`ConstFold`), case into tails (`PushCon`),
---    closure/constant-constructor specialization (`SpecClosure`),
---    early inline (`LateInline`)
--- 4. Nested comparison merge (`CmpMerge`), single-force lazy values
---    (`LazyFold`), world arity raising again
---    (`ArityRaise`), TRMC (`Trmc`), difference lists (`ClosureCtx`),
---    CAF memoization (`insertMemoize`)
--- 5. RC annotation, constructor reuse, native shadow caching (`RC`,
---    `Reuse`, `ConAltNative`)
--- 6. Loop/tail call conversion (`MutualLoop`, `Loop`)
--- 7. Late inline (`LateInline`), applied-closure folding (`ArityRaise`),
---    post-RC case into tails (`PushCon`)
--- 8. Branch-local sinking (`Sink`), dual ABI, null parameters and struct
---    return (`DualABI`, `NullParams`), reuse re-check (`Reuse`)
--- 9. Dead-code elimination (`DeadCode`), dup/drop push-down (`PushDown`),
---    dup merging (`DupMerge`), leaf tail calls (`LeafTail`), dead variable
---    erasure (`DeadVars`), function dedup (`FunDedup`, whole program only)
--- 10. C generation (`Emit`) and C compiler invocation (`CC`)
 
 import Compiler.RC2.ArityRaise
 import Compiler.RC2.ArityRaiseCExp
@@ -368,8 +367,8 @@ toRCDefs directives incremental roots thunks preFolded = do
     -- own `annotate` case for it).
     -- Once more: the passes since expose sites the first run could not
     -- see (an inlined `bind`, say), and a function raised then is a
-    -- bare wrapper now, whose sites call its raised version directly.
-    -- A local lazy value forced once becomes a call, now that inlining has
+    -- bare wrapper, whose sites call its raised version directly.
+    -- A local lazy value forced once becomes a call, once inlining has
     -- brought delays and forces together (doc/lazy-memoization.md).
     cmpMerged <- if "nocmpmerge" `elem` directives
                     then pure earlyInlined
@@ -432,8 +431,8 @@ toRCDefs directives incremental roots thunks preFolded = do
                       else logTime 2 "rc2: Fold applied closures" $ pure (applyFoldApplied inlined)
     -- doc/constructor-escape-analysis.md's "What is left after Early
     -- inline, and the RC-aware fold": PushCon's push again, for what
-    -- LateInline has just created, with each known tail folded by hand
-    -- now that ownership is explicit. Before Sink and DualABI, so both
+    -- LateInline has created, with each known tail folded by hand
+    -- as ownership is explicit. Before Sink and DualABI, so both
     -- still see the result.
     -- Off by default (`--directive latepushcon` turns it on): on
     -- idris2-lsp it folds 243 tails yet leaves the static constructor

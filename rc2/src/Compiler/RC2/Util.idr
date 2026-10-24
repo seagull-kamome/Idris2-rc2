@@ -1,15 +1,12 @@
+||| Small, dependency-light helpers shared by two or more other
+||| Compiler.RC2 modules with nothing else in common. Kept leaf-level on
+||| purpose: this module must never depend on anything beyond Compiler.RC2.RCExp/Types, so
+||| every existing pass module stays free to import it without risking
+||| an import cycle.
+|||
+||| Copyright 2026, Hattori,Hiroki. All rights reserved.
+||| This module was licensed by BSD3. see LICENSE file for detail.
 module Compiler.RC2.Util
-
--- Copyright 2026, Hattori,Hiroki. All rights reserved.
--- This module was licensed by BSD3.
-
--- Small, dependency-light helpers shared by two or more other
--- Compiler.RC2 modules with nothing else in common -- each used to be
--- duplicated (byte-identical or near so) at its call sites until a
--- second/third copy turned up. Kept leaf-level on purpose: this module
--- must never depend on anything beyond Compiler.RC2.RCExp/Types, so
--- every existing pass module stays free to import it without risking
--- an import cycle.
 
 import Compiler.RC2.RCExp
 import Compiler.RC2.Types
@@ -89,8 +86,7 @@ isMutualLoopWorker _ = False
 ||| A per-pass monotonic counter, `Ref`-keyed by the empty phantom
 ||| `FreshId`. `Compiler.RC2.DualABI` and `Compiler.RC2.MutualLoop` each
 ||| bracket their own run with `newRef FreshId 0` and pull disambiguating
-||| ids from here; both carried a byte-identical private copy of this
-||| until now. Their own `freshName` builders stay per-module -- the
+||| ids from here. Their own `freshName` builders stay per-module -- the
 ||| naming schemes differ.
 export
 data FreshId : Type where

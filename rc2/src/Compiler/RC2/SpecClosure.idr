@@ -123,16 +123,15 @@ unforceParam p e = mapSubExprs (unforceParam p) e
 
 ||| See the doc's "Internal structure" -> "Chain detection" paragraph,
 ||| and `doc/rapp-nary-closure-apply.md`'s own "A free simplification
-||| this exposed" section for why this only *partly* collapsed once
-||| `RApp` itself gained a `List RCLocal` args field: a source-level
-||| `v x y` now reaches here as one `RApp v [x, y]` node already
-||| (`Compiler.RC2.RC`'s `collectAppChain` merges it at Phase 1), so
-||| the exact-match case below is now the common one -- but a genuinely
+||| this exposed" section: a source-level `v x y` reaches here as one
+||| `RApp v [x, y]` node already (`Compiler.RC2.RC`'s `collectAppChain`
+||| merges it at Phase 1), so the exact-match case below is the
+||| common one -- but a genuinely
 ||| let-bound intermediate partial application (`let partial = v x in
 ||| ... partial y ...`, two syntactically separate applications in the
 ||| source) still reaches here as two distinct `RApp` nodes threaded by
 ||| an `RLet`, each contributing however many args *its own* hop
-||| carries (no longer always exactly one), so the chained case still
+||| carries (not always exactly one), so the chained case still
 ||| has real work to do.
 chainArgs : RCLocal -> Nat -> RCExp -> Maybe (List RCLocal)
 chainArgs v missing (RLet _ t _ (RApp _ _ c args) cont) =
@@ -253,7 +252,7 @@ buildClone callee argPos paramVar targetName missing capturedCount args retRep b
                                           else [(i, r)]) args
     let body' = rewriteSelfCall callee argPos paramVar cloneName capturedParams
                     (rewriteApply paramVar targetName missing capturedParams body)
-    -- Each forwarding site now passes a known closure instead of the
+    -- Each forwarding site passes a known closure instead of the
     -- parameter, so that the redirect can send it to that callee's own
     -- clone: the constant itself, or a closure over the captured
     -- parameters, bound once at entry and dropped again by
@@ -363,35 +362,22 @@ record Built where
 ||| over the whole program -- `rebuildCafTable defs` up front, and a
 ||| `RedirectTable` accumulated across every key and applied in a
 ||| single final `redirectCallSitesTable` pass -- rather than once per
-||| distinct specialization key. An earlier version rebuilt the CAF
-||| table from, and redirected call sites across, the entire
-||| accumulated definitions list on *every accepted key*: an
-||| `O(distinct keys x program size)` cost that made this pass
-||| impractically slow on a program the size of `idris2-lsp` (many
-||| thousands of definitions, plausibly many distinct closure-argument
-||| keys). This version is `O(program size)` overall (plus a small
-||| `O(distinct keys)` for table bookkeeping). Reusing `defs`'s own CAF
+||| distinct specialization key, which would cost
+||| `O(distinct keys x program size)`. The pass is `O(program size)`
+||| overall (plus a small `O(distinct keys)` for table
+||| bookkeeping). Reusing `defs`'s own CAF
 ||| facts (rather than each clone's) is correctness-equivalent: a
 ||| fresh clone's body only ever calls `target` (already known),
 ||| itself (already resolved via `rewriteSelfCall`), or whatever `g`'s
 ||| original body already called -- never another just-built clone
 ||| from an earlier key in the same pass.
 |||
-||| Diagnostic instrumentation below (`logTimeOver` at threshold 0, so
-||| it would print unconditionally if reached at all) is now just the
-||| four whole-pass-level lines -- collect+group, the opportunity/key/
-||| def counts, the single `rebuildCafTable`, and the single final
-||| redirect pass -- since those are each `O(program size)` at most
-||| once per round. The earlier per-key `tryOneKey`/`buildClone+fold`
-||| lines (one pair per distinct specialization key, unbounded on a
-||| program the size of `idris2-lsp`) were removed once the
-||| `O(distinct keys x program size)` slowdown they were added to
-||| diagnose was confirmed fixed. Originally left unconditional
-||| (bypassing `--timing`/log-level entirely) since that diagnosis was
-||| still ongoing; now gated behind `maybeLogTimeOver`'s own
-||| `--directive timing` check above, same as every other pass' own
-||| `logTime` calls, since that investigation concluded and these lines
-||| were just unconditional noise on every single build otherwise.
+||| Diagnostic instrumentation below is just the four whole-pass-level
+||| lines -- collect+group, the opportunity/key/def counts, the single
+||| `rebuildCafTable`, and the single final redirect pass -- each
+||| `O(program size)` at most once per round, gated behind
+||| `maybeLogTimeOver`'s own `--directive timing` check above, same as
+||| every other pass' own `logTime` calls.
 applySpecClosure : {auto c : Ref Ctxt Defs} -> {auto v : Ref VarId Int} -> {auto fr : Ref FreshId Int}
                  -> RedirectTable -> SortedSet SpecKey -> List (Name, RCDef)
                  -> Core (List (Name, RCDef), RedirectTable, SortedSet SpecKey, Nat)
@@ -417,10 +403,9 @@ applySpecClosure prevTable done defs = do
                       prevTable accepted
     let done' = foldl (\s, b => insert b.key s) done accepted
     -- `newClones ++ defs`, not `defs ++ newClones`: matches the
-    -- ordering the old per-key-accumulated `accDefs` produced (each
-    -- accepted clone prepended, original defs at the tail), so
-    -- emission's own ArgCounter-derived temp-variable numbering is
-    -- unaffected by this refactor.
+    -- ordering of accepted clones prepended to the original defs at
+    -- the tail, so emission's own ArgCounter-derived temp-variable
+    -- numbering is stable.
     out <- maybeLogTimeOver timingEnabled 0 (pure ("rc2: SpecClosure: redirectAll (" ++ show (length defs + length accepted) ++ " defs, once)"))
       (pure $ map (\b => (b.name, dropDeadEntryClosure (redirectDef table b.def))) accepted
               ++ map (\(n, d) => (n, redirectDef table d)) defs)
@@ -448,9 +433,7 @@ applySpecClosure prevTable done defs = do
     -- are collected, rather than flattening them into one list first
     -- (`concatMap`, the obvious spelling): `concat` left-nests `++`, so
     -- every definition's list gets copied past the whole prefix built
-    -- so far. Measured on `idris2-lsp` (32.4k definitions, 12.2k
-    -- opportunities): ~0.9s of this pass's own time went there. Same
-    -- trap, and same fix, as `Compiler.RC2.LateInline`'s own `analyse`.
+    -- so far. Same trap, and same fix, as `Compiler.RC2.LateInline`'s own `analyse`.
     byKey : SortedMap SpecKey (List Opportunity)
     byKey = foldl (\acc, (_, d) => case d of
                         MkRCFun _ _ _ body => foldl addOpp acc (collectOpportunities empty body)
@@ -536,8 +519,7 @@ applySpecClosure prevTable done defs = do
 -- Steps 1-3 deliberately mirror the closure case above, so its own
 -- profitability discipline carries over unchanged. See
 -- `rc2/doc/constant-constructor-specialization.md` for the design, the
--- measured opportunity, and why this pass was once rejected outright
--- over a cost that turned out not to be its own.
+-- measured opportunity, and the `where`-clause cost trap.
 ------------------------------------------------------------------------
 
 ||| One call site passing constant constructor `value` at argument
@@ -876,10 +858,9 @@ applySpecConstCon prevTable done defs = do
     -- enclosing pattern variables it mentions, so a nullary-looking
     -- `defOf = SortedMap.fromList defs` there is really `defOf defs`,
     -- rebuilt from scratch at *every* use. The per-key lookup runs
-    -- once per key, so writing it that way cost ~1600 rebuilds of a
-    -- 38k-entry map: 103s of a 131s whole-`idris2-lsp` build, against
-    -- 0.01s once hoisted. That single difference is what made this
-    -- pass look unaffordable and get reverted the first time round.
+    -- once per key, so writing it that way rebuilds a large map once per
+    -- key (doc/constant-constructor-specialization.md, "The
+    -- `where`-clause trap").
     -- The same goes for `initial` below.
     let defOf : SortedMap Name RCDef := SortedMap.fromList defs
     let initial : SortedSet ConstKey := fromList (map fst keys)

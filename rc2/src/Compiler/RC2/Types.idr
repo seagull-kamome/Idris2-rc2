@@ -1,17 +1,16 @@
+||| Provides helpers for native type inference, deciding `Rep` for
+||| intermediate let-bound locals during normalization.
+||| Native unboxed representation is used for arithmetic chains, while
+||| boxed representation remains for function boundaries.
+||| Out of scope: a two-way match on Idris2's own Bool encoding, which
+||| Compiler.RC2.RC's `normalize` fuses into a dedicated `RCmpCase` node
+||| instead (see RCExp.idr's own `CmpOp` and doc comment on
+||| RCmpCase) -- a distinct, narrower optimisation from the let-bound-
+||| local Rep this module otherwise decides.
+|||
+||| Copyright 2026, Hattori,Hiroki. All rights reserved.
+||| This module was licensed by BSD3. see LICENSE file for detail.
 module Compiler.RC2.Types
-
--- Copyright 2026, Hattori,Hiroki. All rights reserved.
--- This module was licensed by BSD3.
-
--- Provides helpers for native type inference, deciding `Rep` for
--- intermediate let-bound locals during normalization.
--- Native unboxed representation is used for arithmetic chains, while
--- boxed representation remains for function boundaries.
--- Out of scope: a two-way match on Idris2's own Bool encoding, which
--- Compiler.RC2.RC's `normalize` fuses into a dedicated `RCmpCase` node
--- instead (see RCExp.idr's own `CmpOp` and doc comment on
--- RCmpCase) -- a distinct, narrower optimisation from the let-bound-
--- local Rep this module otherwise decides.
 
 import Compiler.RC2.RCExp
 import Core.CompileExpr
