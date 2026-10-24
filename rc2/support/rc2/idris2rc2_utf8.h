@@ -39,8 +39,8 @@ uint32_t idris2rc2_utf8DecodeAt(char const *s, size_t byteLen, size_t offset, si
 // doesn't point past the terminating NUL.
 uint32_t idris2rc2_utf8DecodeAtNul(char const *s, size_t offset, size_t *consumed);
 
-// Number of codepoints in s[0..byteLen) (each malformed byte counts as one
-// U+FFFD "character", consistent with idris2rc2_utf8DecodeAt).
+// Number of codepoints in s[0..byteLen) (each malformed sequence, as far as
+// idris2rc2_utf8DecodeAt consumes it, counts as one U+FFFD "character").
 size_t idris2rc2_utf8Length(char const *s, size_t byteLen);
 
 // Byte offset of the charIdx-th codepoint in s[0..byteLen). Returns byteLen
