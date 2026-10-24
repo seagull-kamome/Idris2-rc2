@@ -193,6 +193,12 @@ else allocate fresh" shape as `IDRIS2RC2_INTEGER_BINOP` above, but
 mutates `((IDRIS2RC2_##TY *)a)->v = result` directly instead of calling
 a GMP function into a `dst->v` mpz_t.
 
+`IDRIS2RC2_DEFOP_REUSE` is a thin wrapper over
+`IDRIS2RC2_DEFOP_REUSE_RESULT(OPNAME, TY, CTY, GET, MK, RESULT)`, which holds
+that three-way shape once and takes the result expression (over `a` and `b`)
+as an argument. The shifts, `Int64`/`Bits64` `div`/`mod` and the `Double`
+operations below use it directly.
+
 `Double` is never small-int-cached at all -- `idris2rc2_mkDouble`
 always allocates fresh -- so it doesn't need the tagged/reusable split
 in the first place, and got its own `IDRIS2RC2_DOUBLE_BINOP(OPNAME,
