@@ -1,0 +1,20 @@
+Int8 add: False True -128
+Int8 sub: True True
+Int8 mul: True True
+Int8 neg: True
+Int16 add: True True
+Int16 mul: True True
+Bits8 add: True True
+Bits8 sub: True True
+Bits8 mul: True True
+Bits8 shift: True True
+Bits8 bits: True True
+Bits16 add: True True
+Bits16 mul: True True
+Bits16 sub: True
+Int16 sub: True True True
+Int16 neg: True True
+Int8 minBound: True True True
+Int8 shift: True True
+Int16 shift: True True
+Bits16 mul wide: True True
