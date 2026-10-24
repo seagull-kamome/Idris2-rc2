@@ -965,6 +965,23 @@ children (RLoop _ _ _ _ k) = [k]
 children (RMemoize _ _ _ k) = [k]
 children _ = []
 
+||| The tail positions directly below a node that only passes its value on:
+||| a `let` body, an ownership wrapper's continuation, every arm of a branch.
+||| `Nothing` for any other node, which is itself a tail (or is not one).
+||| The one place that says which nodes a tail walk goes through.
+export
+tailChildren : RCExp -> Maybe (List RCExp)
+tailChildren (RLet _ _ _ _ body) = Just [body]
+tailChildren (RDup _ _ _ k) = Just [k]
+tailChildren (RDrop _ _ k) = Just [k]
+tailChildren (RFree _ _ k) = Just [k]
+tailChildren (RReleaseReuse _ _ k) = Just [k]
+tailChildren (RReuseOffer _ _ _ _ k) = Just [k]
+tailChildren (RCmpCase _ _ _ _ t f) = Just [t, f]
+tailChildren (RConCase _ _ alts mDef) = Just (map (\(MkRConAlt _ _ _ _ b) => b) alts ++ toList mDef)
+tailChildren (RConstCase _ _ alts mDef) = Just (map (\(MkRConstAlt _ b) => b) alts ++ toList mDef)
+tailChildren _ = Nothing
+
 ||| `v` is only ever released or reused below, never read or `dup`'d:
 ||| the post-RC form of "`v` doesn't escape", which also makes it unique.
 export

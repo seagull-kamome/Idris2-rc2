@@ -94,19 +94,8 @@ tailsOf : RCExp -> List RCExp
 tailsOf = go
   where
     go : RCExp -> List RCExp
-    go (RLet _ _ _ _ body) = go body
-    go (RCmpCase _ _ _ _ t f) = go t ++ go f
-    go (RConCase _ _ alts mDef) =
-        concatMap (\(MkRConAlt _ _ _ _ b) => go b) alts ++ maybe [] go mDef
-    go (RConstCase _ _ alts mDef) =
-        concatMap (\(MkRConstAlt _ b) => go b) alts ++ maybe [] go mDef
-    go (RDup _ _ _ k) = go k
-    go (RDrop _ _ k) = go k
-    go (RFree _ _ k) = go k
-    go (RReleaseReuse _ _ k) = go k
-    go (RReuseOffer _ _ _ _ k) = go k
     go (RLoopContinue {}) = []
-    go t = [t]
+    go t = maybe [t] (concatMap go) (tailChildren t)
 
 -------------------------------------------------------------------------------
 -- The consumer

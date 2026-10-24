@@ -27,17 +27,6 @@ import Data.SortedSet
 ||| `apply`, a worker call, a loop, a force).
 tailCalls : RCExp -> Maybe (List Name)
 tailCalls (RAppName _ _ n _) = Just [n]
-tailCalls (RLet _ _ _ _ b) = tailCalls b
-tailCalls (RDup _ _ _ b) = tailCalls b
-tailCalls (RDrop _ _ b) = tailCalls b
-tailCalls (RFree _ _ b) = tailCalls b
-tailCalls (RReleaseReuse _ _ b) = tailCalls b
-tailCalls (RReuseOffer _ _ _ _ b) = tailCalls b
-tailCalls (RCmpCase _ _ _ _ t f) = (++) <$> tailCalls t <*> tailCalls f
-tailCalls (RConCase _ _ alts def) =
-    concat <$> Prelude.traverse tailCalls (map (\(MkRConAlt _ _ _ _ b) => b) alts ++ toList def)
-tailCalls (RConstCase _ _ alts def) =
-    concat <$> Prelude.traverse tailCalls (map (\(MkRConstAlt _ b) => b) alts ++ toList def)
 tailCalls (RV {}) = Just []
 tailCalls (RCon {}) = Just []
 tailCalls (RUnderApp {}) = Just []
@@ -46,7 +35,7 @@ tailCalls (RPrimVal {}) = Just []
 tailCalls (RErased {}) = Just []
 tailCalls (RCrash {}) = Just []
 tailCalls (RExtPrim {}) = Just []
-tailCalls _ = Nothing
+tailCalls e = tailChildren e >>= \cs => concat <$> Prelude.traverse tailCalls cs
 
 ||| The functions whose tails are values or calls of functions in the set:
 ||| the least fixpoint, so a cycle of tail calls is never in it.
