@@ -169,7 +169,7 @@ rewriteBody f f' j c k exts sites mode = go
                 rest' <- go rest
                 case mode of
                      Entry => pure (RLet fc v RBoxed (cellFor e caps) rest')
-                     Acc _ last => RLet fc v RBoxed (cellFor e caps) <$> fill fc last (RCLoc v) rest'
+                     Acc _ _ => pure (RLet fc v RBoxed (cellFor e caps) rest')
             Nothing => RLet fc v rep value <$> go rest
         Nothing => case value of
             RApp afc Nothing (RCLoc c') (a ::: []) =>
@@ -187,7 +187,8 @@ rewriteBody f f' j c k exts sites mode = go
                    else let args' = replaceAt j (RCLoc c) args
                         in case mode of
                                 Entry => pure (RAppName fc Nothing f' (args' ++ [RCLoc v, RCLoc v]))
-                                Acc res _ => pure (RAppName fc Nothing f' (args' ++ [RCLoc res, RCLoc v]))
+                                Acc res last =>
+                                    fill fc last (RCLoc v) (RAppName fc Nothing f' (args' ++ [RCLoc res, RCLoc v]))
             _ => pure e
     go e@(RApp fc Nothing (RCLoc c') (a ::: [])) = if c' == c then applied fc a else pure e
     go (RCmpCase fc op args pd t e) = RCmpCase fc op args pd <$> go t <*> go e
