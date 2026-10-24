@@ -10,6 +10,7 @@
 module Compiler.RC2.ArityRaiseCExp
 
 import Compiler.RC2.Emit.Util
+import Compiler.RC2.Util
 
 import Core.CompileExpr
 import Core.Core
@@ -85,8 +86,7 @@ raisePlan : List (Name, NamedDef) -> SortedSet Name
 raisePlan defs =
     let arity : SortedMap Name Nat := fromList (mapMaybe arityOf defs)
         tbl : SortedMap Name (List Tail) := fromList (mapMaybe (tailsOf arity) defs)
-        closed = shrink tbl (fromList (keys tbl))
-    in reach tbl closed (fromList (filter (\n => any isLam (fromMaybe [] (lookup n tbl))) (Prelude.toList closed)))
+    in raiseFixpoint calleeOf isLam tbl
   where
     arityOf : (Name, NamedDef) -> Maybe (Name, Nat)
     arityOf (n, MkNmFun args _) = Just (n, length args)
@@ -108,24 +108,9 @@ raisePlan defs =
     isLam TLam = True
     isLam _ = False
 
-    callsIn : SortedSet Name -> Tail -> Bool
-    callsIn s (TCall g _) = contains g s
-    callsIn _ _ = False
-
-    inSet : SortedSet Name -> Tail -> Bool
-    inSet s (TCall g _) = contains g s
-    inSet _ _ = True
-
-    shrink : SortedMap Name (List Tail) -> SortedSet Name -> SortedSet Name
-    shrink tbl s =
-        let s' = fromList (filter (\n => all (inSet s) (fromMaybe [] (lookup n tbl))) (Prelude.toList s))
-        in if length (Prelude.toList s') == length (Prelude.toList s) then s' else shrink tbl s'
-
-    reach : SortedMap Name (List Tail) -> SortedSet Name -> SortedSet Name -> SortedSet Name
-    reach tbl closed ps =
-        let ps' = fromList (filter (\n => contains n ps || any (callsIn ps) (fromMaybe [] (lookup n tbl)))
-                                   (Prelude.toList closed))
-        in if length (Prelude.toList ps') == length (Prelude.toList ps) then ps' else reach tbl closed ps'
+    calleeOf : Tail -> Maybe Name
+    calleeOf (TCall g _) = Just g
+    calleeOf _ = Nothing
 
 -------------------------------------------------------------------------------
 -- Rewrite

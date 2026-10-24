@@ -71,8 +71,7 @@ raisePlan : List (Name, RCDef) -> SortedSet Name
 raisePlan defs =
     let arities : SortedMap Name Nat := fromList (mapMaybe arityOf defs)
         tbl : SortedMap Name (List ClosureTail) := fromList (mapMaybe (tailsOf arities) defs)
-        closed = shrink tbl (fromList (keys tbl))
-    in reach tbl closed (fromList (filter (\n => any isPartial (fromMaybe [] (lookup n tbl))) (Prelude.toList closed)))
+    in raiseFixpoint calleeOf isPartial tbl
   where
     arityOf : (Name, RCDef) -> Maybe (Name, Nat)
     arityOf (n, MkRCFun args _ _ _) = Just (n, length args)
@@ -100,24 +99,9 @@ raisePlan defs =
     isPartial (TPartial _ _) = True
     isPartial _ = False
 
-    callsIn : SortedSet Name -> ClosureTail -> Bool
-    callsIn s (TCall h) = contains h s
-    callsIn _ _ = False
-
-    okIn : SortedSet Name -> ClosureTail -> Bool
-    okIn s (TCall h) = contains h s
-    okIn _ _ = True
-
-    shrink : SortedMap Name (List ClosureTail) -> SortedSet Name -> SortedSet Name
-    shrink tbl s =
-        let s' = fromList (filter (\n => all (okIn s) (fromMaybe [] (lookup n tbl))) (Prelude.toList s))
-        in if length (Prelude.toList s') == length (Prelude.toList s) then s' else shrink tbl s'
-
-    reach : SortedMap Name (List ClosureTail) -> SortedSet Name -> SortedSet Name -> SortedSet Name
-    reach tbl closed ps =
-        let ps' = fromList (filter (\n => contains n ps || any (callsIn ps) (fromMaybe [] (lookup n tbl)))
-                                   (Prelude.toList closed))
-        in if length (Prelude.toList ps') == length (Prelude.toList ps) then ps' else reach tbl closed ps'
+    calleeOf : ClosureTail -> Maybe Name
+    calleeOf (TCall h) = Just h
+    calleeOf _ = Nothing
 
 ||| `f`'s body is exactly `partial g missing= 1 [its parameters]`: its
 ||| callers can call `g` directly, no raised version needed.
