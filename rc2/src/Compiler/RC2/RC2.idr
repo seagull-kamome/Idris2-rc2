@@ -323,14 +323,14 @@ stageDirectiveNames = disableableStageNames ++ optInStageNames
 ||| names are not literals, is dropped earlier, by `normalizeProgram`.)
 toRCDefs : {auto c : Ref Ctxt Defs} -> {auto v : Ref VarId Int} -> List String -> (incremental : Bool) -> (roots : List Name)
         -> (thunks : SortedSet Name) -> List (Name, RCDef) -> Core (List (Name, RCDef))
-toRCDefs disabled incremental roots thunks preFolded = do
-    folded <- if "noconstfold" `elem` disabled
+toRCDefs directives incremental roots thunks preFolded = do
+    folded <- if "noconstfold" `elem` directives
                  then pure preFolded
-                 else logTime 2 "rc2: ConstFold (whole-program fixpoint)" $ foldConstProgram (not ("noknowncon" `elem` disabled)) preFolded
+                 else logTime 2 "rc2: ConstFold (whole-program fixpoint)" $ foldConstProgram (not ("noknowncon" `elem` directives)) preFolded
     -- doc/constructor-escape-analysis.md's "Rewrite B": after ConstFold,
     -- whose known-constructor fold it relies on to finish each push, and
     -- before the specialization passes, so their clones start pushed.
-    pushed <- if ("nopushcon" `elem` disabled) || ("noconstfold" `elem` disabled)
+    pushed <- if ("nopushcon" `elem` directives) || ("noconstfold" `elem` directives)
                  then pure folded
                  else logTime 2 "rc2: Push case into tails" $ applyPushCon folded
     -- doc/speculative-closure-specialization.md: strictly after
@@ -345,22 +345,22 @@ toRCDefs disabled incremental roots thunks preFolded = do
     -- own clones (a clone is an ordinary MkRCFun by now) and its own
     -- clones are likewise ordinary by the time insertMemoize/Phase 2
     -- see them.
-    dictSpecialized <- if ("nospecclosure" `elem` disabled) && ("nospecconstcon" `elem` disabled)
+    dictSpecialized <- if ("nospecclosure" `elem` directives) && ("nospecconstcon" `elem` directives)
                           then pure pushed
                           else logTime 2 "rc2: Speculative specialization (closure + constant-constructor rounds)" $
-                                 applySpecRounds (not ("nospecclosure" `elem` disabled)) (not ("nospecconstcon" `elem` disabled)) pushed
+                                 applySpecRounds (not ("nospecclosure" `elem` directives)) (not ("nospecconstcon" `elem` directives)) pushed
     -- doc/constructor-escape-analysis.md's "The shapes `LateInline`
     -- creates": LateInline's single-caller splicing, run once already
     -- here, before RC annotation, so ConstFold's folds and PushCon see
     -- what it exposes. No callee in a call cycle (it may still need Loop
     -- conversion) and no CAF (not memoized yet) qualifies this early. The splices are refolded and re-pushed here;
     -- the later LateInline stage handles whatever is left.
-    earlyInlined <- if ("noearlyinline" `elem` disabled) || ("nolateinline" `elem` disabled) || ("noconstfold" `elem` disabled)
+    earlyInlined <- if ("noearlyinline" `elem` directives) || ("nolateinline" `elem` directives) || ("noconstfold" `elem` directives)
                        then pure dictSpecialized
                        else logTime 2 "rc2: Early inline" $ do
                               spliced <- applyLateInline "Early inline" True roots dictSpecialized
                               refolded <- logTime 3 "rc2: Early inline (refold)" $ pure $ map (\(n, d) => (n, foldConstDef True empty d)) spliced
-                              if "nopushcon" `elem` disabled then pure refolded else logTime 3 "rc2: Early inline (PushCon)" $ applyPushCon refolded
+                              if "nopushcon" `elem` directives then pure refolded else logTime 3 "rc2: Early inline (PushCon)" $ applyPushCon refolded
     -- doc/caf-memoization.md: right after ConstFold (and the
     -- specialization pass above, whose own clones are never 0-arg CAFs
     -- regardless) and strictly before Phase 2 (toRCDefPostFold's own
@@ -371,29 +371,29 @@ toRCDefs disabled incremental roots thunks preFolded = do
     -- bare wrapper now, whose sites call its raised version directly.
     -- A local lazy value forced once becomes a call, now that inlining has
     -- brought delays and forces together (doc/lazy-memoization.md).
-    cmpMerged <- if "nocmpmerge" `elem` disabled
+    cmpMerged <- if "nocmpmerge" `elem` directives
                     then pure earlyInlined
                     else logTime 2 "rc2: Merge nested comparisons" $ pure $ map (\(n, d) => (n, mergeCmpDef d)) earlyInlined
     lazyFolded <- logTime 2 "rc2: Lazy fold" $ pure $ map (\(n, d) => (n, foldSingleForceDef d)) cmpMerged
-    reraised <- if "noarityraise" `elem` disabled
+    reraised <- if "noarityraise" `elem` directives
                    then pure lazyFolded
                    else logTime 2 "rc2: Arity raise (after early inline)" $ applyArityRaise lazyFolded
-    trmced <- if "notrmc" `elem` disabled
+    trmced <- if "notrmc" `elem` directives
                  then pure reraised
                  else logTime 2 "rc2: TRMC" $ applyTrmc reraised
-    ctxed <- if "noctx" `elem` disabled
+    ctxed <- if "noctx" `elem` directives
                 then pure trmced
                 else logTime 2 "rc2: Closure contexts" $ applyClosureCtx trmced
     memoized <- logTime 2 "rc2: CAF memoization" $ pure (insertMemoize thunks ctxed)
     reused <- logTime 2 "rc2: RC annotate + Reuse + ConAltNative" $
                 traverse (\(n, d) => do
-                  d1 <- toRCDefPostFold (not ("noboolcase" `elem` disabled)) d
-                  let fieldCase = not ("noboolcase" `elem` disabled) && not ("noboolfield" `elem` disabled)
-                  let d2 = applyReuse (not ("noreusenested" `elem` disabled)) fieldCase d1
-                  d3 <- if "noconaltnative" `elem` disabled then pure d2 else applyConAltNative fieldCase d2
+                  d1 <- toRCDefPostFold (not ("noboolcase" `elem` directives)) d
+                  let fieldCase = not ("noboolcase" `elem` directives) && not ("noboolfield" `elem` directives)
+                  let d2 = applyReuse (not ("noreusenested" `elem` directives)) fieldCase d1
+                  d3 <- if "noconaltnative" `elem` directives then pure d2 else applyConAltNative fieldCase d2
                   pure (n, d3)) memoized
-    (merged, noPromotes) <- if "nomutualloop" `elem` disabled then pure (reused, SortedMap.empty) else logTime 2 "rc2: Mutual loop" $ applyMutualLoop reused
-    looped <- if "noloop" `elem` disabled
+    (merged, noPromotes) <- if "nomutualloop" `elem` directives then pure (reused, SortedMap.empty) else logTime 2 "rc2: Mutual loop" $ applyMutualLoop reused
+    looped <- if "noloop" `elem` directives
                  then pure merged
                  else logTime 2 "rc2: Loop conversion" $ do
                         calleeTable <- logTime 3 "rc2: Loop conversion (build callee table)" $ pure (buildCalleeTable merged)
@@ -422,12 +422,12 @@ toRCDefs disabled incremental roots thunks preFolded = do
     -- otherwise have to refuse to inline. Strictly before DualABI, so
     -- this pass only ever sees a callee's own original (always RBoxed)
     -- top-level params, never a dual-ABI worker/wrapper split.
-    inlined <- if "nolateinline" `elem` disabled
+    inlined <- if "nolateinline" `elem` directives
                   then pure looped
                   else logTime 2 "rc2: Late inline" $ applyLateInline "Late inline" False roots looped
     -- doc/world-arity-raising.md's "Post-RC fold": a closure LateInline
     -- left built and applied at once becomes a call.
-    applyFolded <- if "noapplyfold" `elem` disabled
+    applyFolded <- if "noapplyfold" `elem` directives
                       then pure inlined
                       else logTime 2 "rc2: Fold applied closures" $ pure (applyFoldApplied inlined)
     -- doc/constructor-escape-analysis.md's "What is left after Early
@@ -438,62 +438,62 @@ toRCDefs disabled incremental roots thunks preFolded = do
     -- Off by default (`--directive latepushcon` turns it on): on
     -- idris2-lsp it folds 243 tails yet leaves the static constructor
     -- count unchanged (constructor-escape-analysis.md).
-    latePushed <- if not ("latepushcon" `elem` disabled) || ("nopushcon" `elem` disabled)
+    latePushed <- if not ("latepushcon" `elem` directives) || ("nopushcon" `elem` directives)
                      then pure applyFolded
                      else logTime 2 "rc2: Push case into tails (post-RC)" $ applyPushConRC applyFolded
-    sunk <- if "nosink" `elem` disabled
+    sunk <- if "nosink" `elem` directives
                then pure latePushed
                else logTime 2 "rc2: Sink" $ pure (map (\(n, d) => (n, applySink d)) latePushed)
-    dualABId <- if "nodualabi" `elem` disabled
+    dualABId <- if "nodualabi" `elem` directives
        then pure sunk
        else logTime 2 "rc2: DualABI" $ do
-           let nullParams := if "nonullparams" `elem` disabled then SortedMap.empty else nullParamTable roots sunk
-           withNative <- logTime 3 "rc2: DualABI (workers)" $ applyDualABI (not ("noboolret" `elem` disabled)) nullParams sunk
+           let nullParams := if "nonullparams" `elem` directives then SortedMap.empty else nullParamTable roots sunk
+           withNative <- logTime 3 "rc2: DualABI (workers)" $ applyDualABI (not ("noboolret" `elem` directives)) nullParams sunk
            -- doc/struct-return.md
-           withWorkers <- if "nostructreturn" `elem` disabled
+           withWorkers <- if "nostructreturn" `elem` directives
                              then pure withNative
-                             else logTime 3 "rc2: DualABI (struct return)" $ applyStructReturn (not ("nomutualstruct" `elem` disabled)) withNative
+                             else logTime 3 "rc2: DualABI (struct return)" $ applyStructReturn (not ("nomutualstruct" `elem` directives)) withNative
            (ffiWorkers, ffiInlineMap) <- logTime 3 "rc2: DualABI (FFI worker table)" $ ffiWorkerTable sunk
-           rewritten0 <- logTime 3 "rc2: DualABI (call-site rewrite)" $ pure $ applyCallSiteRewrite (not ("noboolcase" `elem` disabled)) ffiWorkers withWorkers
+           rewritten0 <- logTime 3 "rc2: DualABI (call-site rewrite)" $ pure $ applyCallSiteRewrite (not ("noboolcase" `elem` directives)) ffiWorkers withWorkers
            -- doc/dual-abi.md, "Bool return"
-           rewritten <- if "noboolret" `elem` disabled
+           rewritten <- if "noboolret" `elem` directives
                            then pure rewritten0
                            else logTime 3 "rc2: DualABI (Bool return tail calls)" $ pure $ applyBoolReturnTails rewritten0
            logTime 3 "rc2: DualABI (FFI inline)" $ pure $ inlineFFIWorkers ffiInlineMap rewritten
     -- doc/reuse-analysis.md, "Re-checking dead offers after DualABI": before
     -- Dead code, PushDown, DupMerge and DeadVars, which then still see the result.
-    rechecked <- if "noreuserecheck" `elem` disabled
+    rechecked <- if "noreuserecheck" `elem` directives
                     then pure dualABId
                     else logTime 2 "rc2: Reuse re-check" $
-                           pure (map (\(n, d) => (n, recheckReuseDef (not ("noreusenested" `elem` disabled)) d)) dualABId)
-    pruned <- if "nodeadcode" `elem` disabled
+                           pure (map (\(n, d) => (n, recheckReuseDef (not ("noreusenested" `elem` directives)) d)) dualABId)
+    pruned <- if "nodeadcode" `elem` directives
                  then pure rechecked
                  else logTime 2 "rc2: Dead code elimination" $ pure (pruneDeadDefs roots rechecked)
     -- rc2/doc/pushdown.md: a dup/drop run in front of a case moves into the arms.
-    pushedDown <- if "nopushdown" `elem` disabled
+    pushedDown <- if "nopushdown" `elem` directives
                      then pure pruned
                      else logTime 2 "rc2: Dup/drop push-down" $ pure (map (\(n, d) => (n, applyPushDown d)) pruned)
-    dupMerged <- if "nodupmerge" `elem` disabled
+    dupMerged <- if "nodupmerge" `elem` directives
                     then pure pushedDown
                     else logTime 2 "rc2: Dup merge" $ pure (map (\(n, d) => (n, applyDupMerge d)) pushedDown)
     -- rc2/doc/leaf-tail-calls.md: before Dead variable erasure, which reserves id 0.
-    leafTailed <- if "noleaftail" `elem` disabled
+    leafTailed <- if "noleaftail" `elem` directives
                      then pure dupMerged
                      else logTime 2 "rc2: Leaf tail calls" $ applyLeafTail dupMerged
-    erased <- if "nodeadvars" `elem` disabled
+    erased <- if "nodeadvars" `elem` directives
                  then pure leafTailed
                  else logTime 2 "rc2: Dead variable erasure" $ pure (map (\(n, d) => (n, applyDeadVars d)) leafTailed)
     -- Erasing a dead `RLet` can leave a `dup` and a `drop` of the same
     -- local adjacent that weren't when Dup merge ran, so its own
     -- cancellation peephole gets one more sweep here -- no re-merge,
     -- and gated by the same directive.
-    cancelled <- if "nodupmerge" `elem` disabled
+    cancelled <- if "nodupmerge" `elem` directives
                     then pure erased
                     else logTime 2 "rc2: Dup/drop cancel (post dead-vars)" $
                            pure (map (\(n, d) => (n, applyCancelDupDrop d)) erased)
     -- rc2/doc/fun-dedup.md: functions with equal bodies become one. Not in
     -- incremental mode, where a module only sees its own definitions.
-    if ("nofundedup" `elem` disabled) || incremental
+    if ("nofundedup" `elem` directives) || incremental
        then pure cancelled
        else logTime 2 "rc2: Function dedup" $ pure (dedupFuns roots cancelled)
 

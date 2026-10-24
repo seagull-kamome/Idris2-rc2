@@ -721,7 +721,7 @@ themselves, so all three of their consumers get it at once:
 `Compiler.RC2.Loop`'s own param-shadow promotion (which
 `applyLoop`'s own doc comment already said should cover "a countdown's
 own `0` check"), this Stage's `nativePromotionFor`, and
-`Compiler.RC2.LateInline`'s own `nativeEligible`. `LateInline`'s
+`Compiler.RC2.LateInline`'s own `loopParamNativeType`. `LateInline`'s
 companion `hasNonNativeUse` had to stop treating a scrutinee
 occurrence as disqualifying in the same step, against the same shared
 `constAltsNativeType` -- the two must agree, or a value one of them

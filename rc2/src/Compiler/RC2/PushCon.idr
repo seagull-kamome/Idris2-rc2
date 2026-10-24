@@ -86,11 +86,18 @@ tailsOf = go
 data Consumer = ConC FC (List RConAlt) (Maybe RCExp)
               | ConstC FC (List RConstAlt) (Maybe RCExp)
 
-||| Which part of the consumer one tail lands on: `Just i` is alt `i`
-||| (the default being index `length alts`), `Nothing` the whole
-||| consumer, for a tail whose value isn't known here.
-Landing : Type
-Landing = Maybe (Maybe Nat)
+||| Which part of the consumer one tail lands on.
+data Landing
+    = ||| The tail's value isn't known here, so any part may run.
+      Whole
+    | ||| Alt `i` (the default being index `length alts`).
+      Part Nat
+    | ||| Known, but matching no part: the tail can't return, as good as
+      ||| `RCrash`.
+      Unreachable
+
+landingAt : Maybe Nat -> Landing
+landingAt = maybe Unreachable Part
 
 ||| `Nothing`: the tail never produces a value (`RCrash`), so nothing
 ||| lands on it.
@@ -98,8 +105,8 @@ landingOf : Consumer -> RCExp -> Maybe Landing
 landingOf _ (RCrash _ _) = Nothing
 landingOf (ConC _ alts mDef) t =
     Just $ case knownTag t of
-                Just (n, tag) => Just (altIndex n tag)
-                Nothing => Nothing
+                Just (n, tag) => landingAt (altIndex n tag)
+                Nothing => Whole
   where
     knownTag : RCExp -> Maybe (Name, Maybe Int)
     knownTag (RCon _ n _ tag _ _) = Just (n, tag)
@@ -115,9 +122,9 @@ landingOf (ConC _ alts mDef) t =
         maybe (map (const (length alts)) mDef) Just (finToNat <$> findIndex (matches n tag) alts)
 landingOf (ConstC _ alts mDef) t =
     Just $ case knownConst t of
-                Just c => Just (maybe (map (const (length alts)) mDef) Just
-                                      (findIndex (\(MkRConstAlt c' _) => c == c') alts >>= \i => Just (finToNat i)))
-                Nothing => Nothing
+                Just c => landingAt (maybe (map (const (length alts)) mDef) Just
+                                           (finToNat <$> findIndex (\(MkRConstAlt c' _) => c == c') alts))
+                Nothing => Whole
   where
     knownConst : RCExp -> Maybe Constant
     knownConst (RPrimVal _ c) = Just c
@@ -130,9 +137,8 @@ partSizes (ConC _ alts mDef) = map (\(MkRConAlt _ _ _ _ b) => sizeOf b) alts ++ 
 partSizes (ConstC _ alts mDef) = map (\(MkRConstAlt _ b) => sizeOf b) alts ++ maybe [] (\d => [sizeOf d]) mDef
 
 ||| Whether pushing is worth it and within budget, given where each
-||| tail lands. Worth it only if some tail is known (and a `Just
-||| Nothing` -- known, but matching no part -- is a tail that can't
-||| return, as good as `RCrash`).
+||| tail lands. Worth it only if some tail is known (`Part` or
+||| `Unreachable`).
 pushOk : Consumer -> List Landing -> Bool
 pushOk consumer landings =
     let sizes = partSizes consumer
@@ -140,17 +146,21 @@ pushOk consumer landings =
         partCount = \i => length (filter (landsOn i) landings)
         added = sum (map landedSize landings)
         bigTwice = any (\(i, s) => s > bigAltThreshold && partCount i > 1) (zip [0 .. length sizes] sizes)
-    in any isJust landings && not bigTwice && added <= whole + pushSizeBudget
+    in any (not . isWhole) landings && not bigTwice && added <= whole + pushSizeBudget
   where
     landsOn : Nat -> Landing -> Bool
-    landsOn _ Nothing = True
-    landsOn i (Just (Just j)) = i == j
-    landsOn _ (Just Nothing) = False
+    landsOn _ Whole = True
+    landsOn i (Part j) = i == j
+    landsOn _ Unreachable = False
 
     landedSize : Landing -> Nat
-    landedSize Nothing = sum (partSizes consumer)
-    landedSize (Just (Just j)) = fromMaybe 0 (getAt j (partSizes consumer))
-    landedSize (Just Nothing) = 0
+    landedSize Whole = sum (partSizes consumer)
+    landedSize (Part j) = fromMaybe 0 (getAt j (partSizes consumer))
+    landedSize Unreachable = 0
+
+    isWhole : Landing -> Bool
+    isWhole Whole = True
+    isWhole _ = False
 
 -------------------------------------------------------------------------------
 -- The rewrite
@@ -177,18 +187,22 @@ pushInto v rep consumer t =
     fcOf (ConstC fc _ _) = fc
 
     consumerFor : Int -> Landing -> RCExp
-    consumerFor v Nothing = case consumer of
+    consumerFor v Whole = case consumer of
         ConC fc alts mDef => RConCase fc (RCLoc v) alts mDef
         ConstC fc alts mDef => RConstCase fc (RCLoc v) alts mDef
-    consumerFor v (Just part) = case consumer of
+    consumerFor v landing = case consumer of
         ConC fc alts mDef =>
-            case part >>= \i => getAt i alts of
+            case partIndex landing >>= \i => getAt i alts of
                  Just alt => RConCase fc (RCLoc v) [alt] Nothing
                  Nothing => maybe (RCrash fc "[rc2] PushCon: known tail matched no alt") id mDef
         ConstC fc alts mDef =>
-            case part >>= \i => getAt i alts of
+            case partIndex landing >>= \i => getAt i alts of
                  Just (MkRConstAlt _ b) => b
                  Nothing => maybe (RCrash fc "[rc2] PushCon: known tail matched no alt") id mDef
+      where
+        partIndex : Landing -> Maybe Nat
+        partIndex (Part i) = Just i
+        partIndex _ = Nothing
 
 ||| `v` is read nowhere in the consumer's own parts.
 consumerAvoids : Int -> Consumer -> Bool
@@ -313,7 +327,7 @@ foldAlt fc v pending reuseFrom p = go pending p
 pushIntoRC : {auto vid : Ref VarId Int} -> SortedMap Int Rep -> Int -> Rep -> Consumer -> RCExp -> Core RCExp
 pushIntoRC reps v rep consumer t =
     case (consumer, landingOf consumer t, t) of
-         (ConC fc alts _, Just (Just (Just i)), RCon tfc _ _ _ args reuseFrom) =>
+         (ConC fc alts _, Just (Part i), RCon tfc _ _ _ args reuseFrom) =>
              case (getAt i alts, traverse boxedLoc args) of
                   (Just alt, Just argIds) => do
                       -- Freshen the alt's own binders (its fields included)
@@ -360,7 +374,7 @@ pushExpRC reps (RLet fc v rep value body) = do
          _ => unchanged
   where
     isKnown : Landing -> Bool
-    isKnown (Just (Just _)) = True
+    isKnown (Part _) = True
     isKnown _ = False
 pushExpRC reps (RLoop fc ps initial pd k) = do
     (k', c) <- pushExpRC (foldl (\m, (i, r) => insert i r m) reps ps) k

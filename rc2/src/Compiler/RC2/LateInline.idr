@@ -258,8 +258,8 @@ hasNonNativeUse ty loopSlots target e = any (hasNonNativeUse ty loopSlots target
 ||| `Just ty` iff `paramId`'s occurrences in `calleeBody` are all
 ||| `ty`-typed native-operand reads (`hasNonNativeUse`); `ty` comes from
 ||| `nativeArgType` first.
-nativeEligible : (paramId : Int) -> (calleeBody : RCExp) -> Maybe PrimType
-nativeEligible paramId calleeBody =
+loopParamNativeType : (paramId : Int) -> (calleeBody : RCExp) -> Maybe PrimType
+loopParamNativeType paramId calleeBody =
     case nativeArgType paramId calleeBody of
          Nothing => Nothing
          Just ty => if hasNonNativeUse ty [] paramId calleeBody then Nothing else Just ty
@@ -315,7 +315,7 @@ resolveConstClosureApps ccs e = mapChildren (resolveConstClosureApps ccs) e
 ||| (`isLoopCarried`) is aliased onto the caller's local. Any other gets a
 ||| fresh id: aliasing a loop-carried one would let the splice reassign the
 ||| caller's variable, and a native one needs the `RLet`'s `Rep` as the
-||| boxing decision (`RNative ty` only if `nativeEligible` agrees at the
+||| boxing decision (`RNative ty` only if `loopParamNativeType` agrees at the
 ||| same type). See `rc2/doc/inlining.md`, "Criterion B, revisited", for
 ||| the aliasing bug and a ~50x boxing regression.
 buildSplice : {auto v : Ref VarId Int} -> FC -> SortedMap Int Rep -> RCExp -> List (Int, RCLocal) -> Core (Renaming, RCExp -> RCExp, SortedSet Int, ConstClosureArgs)
@@ -325,7 +325,7 @@ buildSplice fc reps calleeBody ((paramId, actual@(RCLoc actualId)) :: rest) = do
     case argRep reps actual of
          RNative (TPrim ty) => do
              f <- freshVarId
-             let (rep, promoted') = case nativeEligible paramId calleeBody of
+             let (rep, promoted') = case loopParamNativeType paramId calleeBody of
                                           Just ty' => if ty' == ty then (RNative (TPrim ty), SortedSet.insert f promoted) else (RBoxed, promoted)
                                           Nothing => (RBoxed, promoted)
              pure (insert paramId f ren, wrap . RLet fc f rep (RV fc actual), promoted', ccs)
@@ -353,7 +353,7 @@ buildSplice fc reps calleeBody ((paramId, actual) :: rest) = do
     f <- freshVarId
     let (rep, promoted') = case constLitRep actual of
                                 Nothing => (RBoxed, promoted)
-                                Just ty => case nativeEligible paramId calleeBody of
+                                Just ty => case loopParamNativeType paramId calleeBody of
                                                 Just ty' => if ty' == ty
                                                                then (RNative (TPrim ty), SortedSet.insert f promoted)
                                                                else (RBoxed, promoted)

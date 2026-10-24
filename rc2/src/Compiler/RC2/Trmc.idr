@@ -89,15 +89,15 @@ findSites arity newtypes body = go empty 0 (-1) body
     go _ _ _ _ = empty
 
 ||| The functions `e` tail-calls with their full arity.
-tailCalls : SortedMap Name Nat -> RCExp -> List Name
-tailCalls arity (RLet _ _ _ _ rest) = tailCalls arity rest
-tailCalls arity (RAppName _ Nothing g as') = if lookup g arity == Just (length as') then [g] else []
-tailCalls arity (RCmpCase _ _ _ _ t e) = tailCalls arity t ++ tailCalls arity e
-tailCalls arity (RConCase _ _ alts mDef) =
-    foldr (\(MkRConAlt _ _ _ _ b), acc => tailCalls arity b ++ acc) (maybe [] (tailCalls arity) mDef) alts
-tailCalls arity (RConstCase _ _ alts mDef) =
-    foldr (\(MkRConstAlt _ b), acc => tailCalls arity b ++ acc) (maybe [] (tailCalls arity) mDef) alts
-tailCalls _ _ = []
+trmcTailCallees : SortedMap Name Nat -> RCExp -> List Name
+trmcTailCallees arity (RLet _ _ _ _ rest) = trmcTailCallees arity rest
+trmcTailCallees arity (RAppName _ Nothing g as') = if lookup g arity == Just (length as') then [g] else []
+trmcTailCallees arity (RCmpCase _ _ _ _ t e) = trmcTailCallees arity t ++ trmcTailCallees arity e
+trmcTailCallees arity (RConCase _ _ alts mDef) =
+    foldr (\(MkRConAlt _ _ _ _ b), acc => trmcTailCallees arity b ++ acc) (maybe [] (trmcTailCallees arity) mDef) alts
+trmcTailCallees arity (RConstCase _ _ alts mDef) =
+    foldr (\(MkRConstAlt _ b), acc => trmcTailCallees arity b ++ acc) (maybe [] (trmcTailCallees arity) mDef) alts
+trmcTailCallees _ _ = []
 
 -------------------------------------------------------------------------------
 -- Rewriting
@@ -221,7 +221,7 @@ applyTrmc defs = do
     graph <- logTime 3 "rc2: TRMC (graph)" $ pure $ the Graph $ fromList (mapMaybe (\(n, d) => case d of
                                                        MkRCFun _ _ _ body => do
                                                            ss <- lookup n allSites
-                                                           let out = filter (/= n) (map fst (values ss) ++ tailCalls arity body)
+                                                           let out = filter (/= n) (map fst (values ss) ++ trmcTailCallees arity body)
                                                            if null out then Nothing else Just (n, fromList out)
                                                        _ => Nothing) defs)
     multi <- logTime 3 "rc2: TRMC (SCC)" $ pure $ filter (\g => length g >= 2) (tarjanSCCs graph)

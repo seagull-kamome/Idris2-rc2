@@ -25,17 +25,17 @@ import Data.SortedSet
 ||| The callees of the tail positions of `e` if all of them are values or
 ||| calls; `Nothing` if one is anything that can leave work behind (an
 ||| `apply`, a worker call, a loop, a force).
-tailCalls : RCExp -> Maybe (List Name)
-tailCalls (RAppName _ _ n _) = Just [n]
-tailCalls (RV {}) = Just []
-tailCalls (RCon {}) = Just []
-tailCalls (RUnderApp {}) = Just []
-tailCalls (ROp {}) = Just []
-tailCalls (RPrimVal {}) = Just []
-tailCalls (RErased {}) = Just []
-tailCalls (RCrash {}) = Just []
-tailCalls (RExtPrim {}) = Just []
-tailCalls e = tailChildren e >>= \cs => concat <$> Prelude.traverse tailCalls cs
+leafTailCallees : RCExp -> Maybe (List Name)
+leafTailCallees (RAppName _ _ n _) = Just [n]
+leafTailCallees (RV {}) = Just []
+leafTailCallees (RCon {}) = Just []
+leafTailCallees (RUnderApp {}) = Just []
+leafTailCallees (ROp {}) = Just []
+leafTailCallees (RPrimVal {}) = Just []
+leafTailCallees (RErased {}) = Just []
+leafTailCallees (RCrash {}) = Just []
+leafTailCallees (RExtPrim {}) = Just []
+leafTailCallees e = tailChildren e >>= \cs => concat <$> Prelude.traverse leafTailCallees cs
 
 ||| The functions whose tails are values or calls of functions in the set:
 ||| the least fixpoint, so a cycle of tail calls is never in it.
@@ -46,7 +46,7 @@ leafSet defs = grow empty candidates
     candidates = mapMaybe cand defs
       where
         cand : (Name, RCDef) -> Maybe (Name, List Name)
-        cand (n, MkRCFun (_ :: _) RBoxed False body) = (\cs => (n, cs)) <$> tailCalls body
+        cand (n, MkRCFun (_ :: _) RBoxed False body) = (\cs => (n, cs)) <$> leafTailCallees body
         cand _ = Nothing
 
     grow : SortedSet Name -> List (Name, List Name) -> SortedSet Name
