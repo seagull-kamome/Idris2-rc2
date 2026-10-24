@@ -16,10 +16,10 @@ int64_t idris2rc2_worker_Main_eligibleAdd_N
 --- FFI worker-indirection count (want: none, inline splicing only) ---
 0
 --- FFI call-site shape (wrapper body + inlined non-tail call site + tailAbs's own inlined tail call) ---
-        int64_t var_3 = abs(var_4);
-    return abs(var_5);
-    int64_t retVal = abs((idris2rc2_to_i64(var_6)));
-    int64_t var_7 = abs(INT64_C(0));
+        int64_t var_3 = labs(var_4);
+    return labs(var_5);
+    int64_t retVal = labs((idris2rc2_to_i64(var_6)));
+    int64_t var_7 = labs(INT64_C(0));
 --- Compiler.RC2.Loop goto conversion for sumLoop's own worker body ---
 int64_t idris2rc2_worker_Main_sumLoop_N
 (
@@ -50,5 +50,5 @@ int64_t idris2rc2_worker_Main_tailAbs_N
     int64_t var_5
 )
 {
-    return abs(var_5);
+    return labs(var_5);
 }
