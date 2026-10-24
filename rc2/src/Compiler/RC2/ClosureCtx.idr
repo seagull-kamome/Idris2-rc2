@@ -73,7 +73,7 @@ cellFor e caps =
 -- Finding a context parameter
 
 mentions : Int -> RCExp -> Bool
-mentions c e = contains (RCLoc c) (freeLocalsR e)
+mentions c = mentionsLocal (RCLoc c)
 
 ||| Whether `c` (parameter `j` of `f`) is used only as a context:
 ||| extended at self tail calls, passed unchanged at self tail calls,

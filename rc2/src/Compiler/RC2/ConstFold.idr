@@ -304,7 +304,7 @@ foldConst caf env (RLet fc var rep value body) =
                 case litRep c of
                      Just _ =>
                          let body' = foldConst caf (insertConst var (Element (RCConst c) ItIsConst2) env) body
-                         in if contains (RCLoc var) (freeLocalsR body')
+                         in if mentionsLocal (RCLoc var) body'
                                then RLet fc var rep value' body'
                                else body'
                      -- A large `Integer` literal keeps its `let` (see
@@ -313,13 +313,13 @@ foldConst caf env (RLet fc var rep value body) =
                      Nothing => case c of
                          BI _ =>
                              let body' = foldConst caf ({ bigLits $= insert var c } env) body
-                             in if contains (RCLoc var) (freeLocalsR body')
+                             in if mentionsLocal (RCLoc var) body'
                                    then RLet fc var rep value' body'
                                    else body'
                          _ => if c == WorldVal then foldNull var (Element RCWorld ItIsWorld2) else RLet fc var rep value' (foldConst caf env body)
             RV _ cval@(RCConstCon {}) =>
                 let body' = foldConst caf (insertConst var (Element cval ItIsConstCon2) env) body
-                in if contains (RCLoc var) (freeLocalsR body')
+                in if mentionsLocal (RCLoc var) body'
                       then RLet fc var rep value' body'
                       else body'
             -- Mirrors the `RCConstCon` arm above for a `let`-rebinding
@@ -331,7 +331,7 @@ foldConst caf env (RLet fc var rep value body) =
             -- an already-folded closure didn't propagate".
             RV _ cval@(RCConstClosure {}) =>
                 let body' = foldConst caf (insertConst var (Element cval ItIsConstClosure2) env) body
-                in if contains (RCLoc var) (freeLocalsR body')
+                in if mentionsLocal (RCLoc var) body'
                       then RLet fc var rep value' body'
                       else body'
             RErased _ => foldNull var (Element RCErased ItIsErased2)
@@ -372,7 +372,7 @@ foldConst caf env (RLet fc var rep value body) =
     foldNull : Int -> Subset RCLocal IsAnyConstLocal -> RCExp
     foldNull var c =
         let body' = foldConst caf (insertConst var c env) body
-        in if contains (RCLoc var) (freeLocalsR body')
+        in if mentionsLocal (RCLoc var) body'
               then RLet fc var rep (foldConst caf env value) body'
               else body'
 
@@ -413,7 +413,7 @@ foldConst caf env (RCon fc n ci tag args Nothing) =
                        Just argsConst => RV fc (RCConstCon n ci tag resolvedArgs {argsConst})
                        Nothing        => RCon fc n ci tag resolvedArgs Nothing
 -- Every other node holding `RCLocal` operands gets them resolved
--- against `env` too, purely so `freeLocalsR` (the `RLet` case above)
+-- against `env` too, purely so `mentionsLocal` (the `RLet` case above)
 -- sees the substitution -- unresolved, a use would keep looking "live"
 -- forever, permanently blocking that `RLet` from folding away. See
 -- rc2/doc/const-con-fold.md's Bug #1.

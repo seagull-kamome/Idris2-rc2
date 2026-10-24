@@ -706,6 +706,44 @@ ownedUsedIn : (targets : SortedSet RCLocal) -> RCExp -> SortedSet RCLocal
 ownedUsedIn targets e =
     fst (ownedUsedGo targets (length (Prelude.toList targets)) (empty, 0) e)
 
+||| `contains l (freeLocalsR e)` without building the set: the same clauses,
+||| binder subtraction included, but it stops at the first hit.
+export
+mentionsLocal : RCLocal -> RCExp -> Bool
+mentionsLocal l (RV _ v) = v == l
+mentionsLocal l (RAppName _ _ _ args) = elem l args
+mentionsLocal l (RUnderApp _ _ _ args) = elem l args
+mentionsLocal l (RApp _ _ c args) = c == l || elem l args
+mentionsLocal l (RLet _ var _ value body) =
+    mentionsLocal l value || (l /= RCLoc var && mentionsLocal l body)
+mentionsLocal l (RCon _ _ _ _ args _) = elem l args
+mentionsLocal l (RRetPack _ _ _ fields) = elem l fields
+mentionsLocal l (ROp _ _ _ args _) = elem l (toList args)
+mentionsLocal l (RExtPrim _ _ _ args _) = elem l args
+mentionsLocal l (RStructGet _ structVar _ _) = structVar == l
+mentionsLocal l (RStructSet _ structVar _ value _) = structVar == l || value == l
+mentionsLocal l (RFill _ cell _ value _) = cell == l || value == l
+mentionsLocal l (RCmpCase _ _ args _ t f) =
+    elem l (toList args) || mentionsLocal l t || mentionsLocal l f
+mentionsLocal l (RConCase _ sc alts mDef) =
+    sc == l
+    || any (\(MkRConAlt _ _ _ args body) => not (elem l (map RCLoc args)) && mentionsLocal l body) alts
+    || maybe False (mentionsLocal l) mDef
+mentionsLocal l (RConstCase _ sc alts mDef) =
+    sc == l
+    || any (\(MkRConstAlt _ body) => mentionsLocal l body) alts
+    || maybe False (mentionsLocal l) mDef
+mentionsLocal l (RDup _ v _ body) = v == l || mentionsLocal l body
+mentionsLocal l (RDrop _ vars body) = elem l vars || mentionsLocal l body
+mentionsLocal l (RFree _ v body) = v == l || mentionsLocal l body
+mentionsLocal l (RReleaseReuse _ v body) = v == l || mentionsLocal l body
+mentionsLocal l (RReuseOffer _ sc dupOnShared dropOnUnique body) =
+    sc == l || elem l dupOnShared || elem l dropOnUnique || mentionsLocal l body
+mentionsLocal l (RMemoize _ _ _ body) = mentionsLocal l body
+mentionsLocal l (RDelay _ _ _ caps) = elem l caps
+mentionsLocal l (RForce _ _ v _) = v == l
+mentionsLocal _ _ = False
+
 ||| How many times `l` is referenced anywhere in `e` -- unlike
 ||| `freeLocalsR`'s set (which collapses repeats), RC.idr's
 ||| `inlineableRep` needs the exact count to tell "referenced exactly

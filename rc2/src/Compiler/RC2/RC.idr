@@ -782,7 +782,7 @@ mutual
         -- below sees it as needing a dup instead, exactly `splitBorrows`'s
         -- ordinary borrow behaviour), same as any other owned local not
         -- touched by this restriction.
-        let usedLater = union (freeLocalsR t) (freeLocalsR f)
+        let usedLater = union (ownedUsedIn owned t) (ownedUsedIn owned f)
         let argsSet = fromList (toList args)
         let deadArgs = intersection argsSet (owned `difference` usedLater)
         let liveArgs = argsSet `difference` deadArgs
