@@ -68,14 +68,14 @@ cafValueOf _ = Nothing
 `Compiler.RC2.RC2.toRCDefs`は、フェーズ1の正規化とフェーズ2の注釈付けのあいだに、この処理全体を組み込む。
 
 ```idris2
-preFolded <- ... traverse (\(n, ld) => do d <- toRCDefPreFold n ld; pure (n, d)) lds
+(preFolded, infos) <- normalizeProgram incremental main defs   -- in lowerProgram
 folded <- if "noconstfold" `elem` disabled
              then pure preFolded
              else logTime 2 "rc2: ConstFold (whole-program fixpoint)" $ pure (foldConstProgram preFolded)
 reused <- ... traverse (\(n, d) => do d1 <- toRCDefPostFold d; ...) folded
 ```
 
-(`RC2.idr:152-165`)。`toRCDefPreFold`/`toRCDefPostFold`は`RC.idr`に以前からあるフェーズ1/フェーズ2の分割であり、今回の変更では手を入れていない。不動点ループはこの2つのあいだに完全に収まる。従来の1回きりの`foldConstDef`呼び出しと同じく、フェーズ1で正規化済み・注釈付け前のIRだけを見る。
+`normalizeProgram`と`toRCDefPostFold`は`RC.idr`のフェーズ1/フェーズ2の分割である(前者を`lowerProgram`が、残りを`toRCDefs`が呼ぶ)。不動点ループはこの2つのあいだに完全に収まる。従来の1回きりの`foldConstDef`呼び出しと同じく、フェーズ1で正規化済み・注釈付け前のIRだけを見る。
 
 ### `RConCase`の判別対象の解決
 
@@ -177,7 +177,7 @@ annotate natives owned e@(RV _ RCNull) = pure e
 
 ## `noconstfold`ディレクティブ
 
-`--directive noconstfold` / `%cg rc2 noconstfold`は、`foldConstProgram`の不動点パス全体を無効にする。CAF境界をまたぐ畳み込みと`RConCase`の判別対象の解決は、同じ`foldConst`の走査の中にあるため、これより細かい切り替えはない。命名は、`noinline`/`noconaltnative`/`nomutualloop`/`noloop`/ `nosink`/`nodualabi`/`nodeadcode`とまったく同じ`no<ステージ名>`の形式に従う(`RC2.idr:68-107`のモジュールドキュメントコメントに、これらがまとめて載っている)。定数の`ExtPrim`の畳み込み(`prim__codegen`、`foldConst`の`constExtPrimValue`。以前は`toRCDefPreFold`の中にある独立した`Compiler.RC2.ConstExtPrim`パスだった)も、いまは同じ走査の中にある。そのため`noconstfold`で無効になる。
+`--directive noconstfold` / `%cg rc2 noconstfold`は、`foldConstProgram`の不動点パス全体を無効にする。CAF境界をまたぐ畳み込みと`RConCase`の判別対象の解決は、同じ`foldConst`の走査の中にあるため、これより細かい切り替えはない。命名は、`noinline`/`noconaltnative`/`nomutualloop`/`noloop`/ `nosink`/`nodualabi`/`nodeadcode`とまったく同じ`no<ステージ名>`の形式に従う(`RC2.idr:68-107`のモジュールドキュメントコメントに、これらがまとめて載っている)。定数の`ExtPrim`の畳み込み(`prim__codegen`、`foldConst`の`constExtPrimValue`。以前はフェーズ1の中にある独立した`Compiler.RC2.ConstExtPrim`パスだった)も、いまは同じ走査の中にある。そのため`noconstfold`で無効になる。
 
 ```idris2
 folded <- if "noconstfold" `elem` disabled

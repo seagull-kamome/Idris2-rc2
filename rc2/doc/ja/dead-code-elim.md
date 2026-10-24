@@ -22,11 +22,13 @@ Compiler.RC2.InlineCExp
   -> Compiler.RC2.Loop
   -> Compiler.RC2.Sink
   -> Compiler.RC2.DualABI          (worker/wrapper synthesis, call-site rewrite)
-  -> Compiler.RC2.DeadCode         (this module -- final stage)
+  -> Compiler.RC2.Reuse            (re-check of dead offers)
+  -> Compiler.RC2.DeadCode         (this module)
+  -> Compiler.RC2.PushDown -> DupMerge -> LeafTail -> DeadVars -> FunDedup
   -> Compiler.RC2.Emit             (purely mechanical RCExp -> C)
 ```
 
-このパスは`toRCDefs`の最後のステップとして、`Emit.generateCSourceFile`がこれから受け取る`List (Name, RCDef)`そのものに対して実行される。そのため、`--directive dumprcexpr`の説明(「generateCSourceFileがこれから受け取るものそのまま」)は、このパスがパイプラインに入っても、そのまま成り立つ。「このパスがあるにもかかわらず成り立つ」のではなく、「このパスを含めて成り立つ」のである。`--directive nodeadcode`を指定するとこのパスを飛ばせる。ほかの任意のステージと同じ、A/B比較のための切り分けの規約である(`RC2.idr`の`toRCDefs`のドキュメントコメントを参照)。
+このパスは`toRCDefs`の中で、`DualABI`とReuseの再チェックのあと、`PushDown`・`DupMerge`・`LeafTail`・`DeadVars`・`FunDedup`の前に実行される。`--directive nodeadcode`を指定するとこのパスを飛ばせる。ほかの任意のステージと同じ、A/B比較のための切り分けの規約である(`RC2.idr`の`toRCDefs`のドキュメントコメントを参照)。`--directive dumprcexpr`は、それらの最後のステージのあとのリストをダンプするので、ダンプは今も`Emit.generateCSourceFile`がこれから受け取るものそのままである。
 
 ## 設計
 
