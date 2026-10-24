@@ -12,3 +12,9 @@ Bits8 bits: True True
 Bits16 add: True True
 Bits16 mul: True True
 Bits16 sub: True
+Int16 sub: True True True
+Int16 neg: True True
+Int8 minBound: True True True
+Int8 shift: True True
+Int16 shift: True True
+Bits16 mul wide: True True

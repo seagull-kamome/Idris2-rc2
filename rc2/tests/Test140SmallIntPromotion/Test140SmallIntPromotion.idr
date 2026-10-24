@@ -36,3 +36,12 @@ main = do
   putStrLn ("Bits16 add: " ++ show (b16 + 1 == 0) ++ " " ++ show (b16 + 1 < 5))
   putStrLn ("Bits16 mul: " ++ show (b16 * b16 == 1) ++ " " ++ show (b16 * 2 == 65534))
   putStrLn ("Bits16 sub: " ++ show (0 - b16 == 1))
+  -- Int16 sub and neg, minBound, the arithmetic shift of the narrow signed types
+  let lo8 : Int8 = fromInteger (-128 + n)
+  let lo16 : Int16 = fromInteger (-32768 + n)
+  putStrLn ("Int16 sub: " ++ show (negate i16 - 2 > 0) ++ " " ++ show (negate i16 - 2 == 32767) ++ " " ++ show (lo16 - 1 == 32767))
+  putStrLn ("Int16 neg: " ++ show (negate lo16 == lo16) ++ " " ++ show (negate (i16 + 1) == lo16))
+  putStrLn ("Int8 minBound: " ++ show (negate lo8 == lo8) ++ " " ++ show (lo8 - 1 == i8) ++ " " ++ show (lo8 * lo8 == 0))
+  putStrLn ("Int8 shift: " ++ show (lo8 `shiftR` 7 == -1) ++ " " ++ show ((i8 + 1) `shiftR` 1 == -64))
+  putStrLn ("Int16 shift: " ++ show (lo16 `shiftR` 15 == -1) ++ " " ++ show ((i16 + 1) `shiftR` 1 == -16384))
+  putStrLn ("Bits16 mul wide: " ++ show ((b16 - 1) * (b16 - 1) == 4) ++ " " ++ show ((b16 - 255) * (b16 - 255) == 0))
