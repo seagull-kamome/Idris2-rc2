@@ -18,57 +18,35 @@ import Libraries.Utils.Path
 
 %default total
 
+||| The first of `lookups` that finds its variable set, else `dflt`.
+firstEnv : List (IO (Maybe String)) -> (dflt : String) -> IO String
+firstEnv [] dflt = pure dflt
+firstEnv (look :: rest) dflt
+    = do Nothing <- look
+           | Just v => pure v
+         firstEnv rest dflt
+
 findCC : IO String
-findCC
-    = do Nothing <- idrisGetEnv "IDRIS2_CC"
-           | Just cc => pure cc
-         Nothing <- idrisGetEnv "CC"
-           | Just cc => pure cc
-         pure "cc"
+findCC = firstEnv [idrisGetEnv "IDRIS2_CC", idrisGetEnv "CC"] "cc"
 
 findCFlags : IO String
-findCFlags
-    = do Nothing <- idrisGetEnv "IDRIS2_CFLAGS"
-           | Just v => pure v
-         Nothing <- idrisGetEnv "CFLAGS"
-           | Just v => pure v
-         pure ""
+findCFlags = firstEnv [idrisGetEnv "IDRIS2_CFLAGS", idrisGetEnv "CFLAGS"] ""
 
 findCPPFlags : IO String
-findCPPFlags
-    = do Nothing <- idrisGetEnv "IDRIS2_CPPFLAGS"
-           | Just v => pure v
-         Nothing <- idrisGetEnv "CPPFLAGS"
-           | Just v => pure v
-         pure ""
+findCPPFlags = firstEnv [idrisGetEnv "IDRIS2_CPPFLAGS", idrisGetEnv "CPPFLAGS"] ""
 
 -- Not `idrisGetEnv` -- that's restricted to `Idris.Env.envNames`'s own
 -- fixed, documented whitelist (for accurate `--help` env var listings),
 -- and `IDRIS2_AR`/`AR` aren't in it (out of scope to add to idris2-src
 -- itself for this). Plain `getEnv` has no such restriction.
 findAR : IO String
-findAR
-    = do Nothing <- getEnv "IDRIS2_AR"
-           | Just ar => pure ar
-         Nothing <- getEnv "AR"
-           | Just ar => pure ar
-         pure "ar"
+findAR = firstEnv [getEnv "IDRIS2_AR", getEnv "AR"] "ar"
 
 findLDFlags : IO String
-findLDFlags
-    = do Nothing <- idrisGetEnv "IDRIS2_LDFLAGS"
-           | Just v => pure v
-         Nothing <- idrisGetEnv "LDFLAGS"
-           | Just v => pure v
-         pure ""
+findLDFlags = firstEnv [idrisGetEnv "IDRIS2_LDFLAGS", idrisGetEnv "LDFLAGS"] ""
 
 findLDLibs : IO String
-findLDLibs
-    = do Nothing <- idrisGetEnv "IDRIS2_LDLIBS"
-           | Just v => pure v
-         Nothing <- idrisGetEnv "LDLIBS"
-           | Just v => pure v
-         pure ""
+findLDLibs = firstEnv [idrisGetEnv "IDRIS2_LDLIBS", idrisGetEnv "LDLIBS"] ""
 
 clibdirs : List String -> List String
 clibdirs ds = map (\d => "-L" ++ d) ds

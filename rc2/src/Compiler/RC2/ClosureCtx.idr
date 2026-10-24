@@ -228,11 +228,11 @@ applyClosureCtx defs = do
     _ <- newRef FreshId 0
     -- Bound here, not in `where`: a `where` binding is re-evaluated at
     -- every use (doc/constant-constructor-specialization.md).
-    newtypes <- pure $ the (SortedSet Name) $ fromList (mapMaybe (\(n, d) => case d of
-                                                                       MkRCCon _ _ (Just _) => Just n
-                                                                       _ => Nothing) defs)
-    exts <- pure $ the (SortedMap Name Extender) $ fromList (mapMaybe (\(n, d) => map (n,) (extenderOf newtypes d)) defs)
-    existing <- pure $ the (SortedSet Name) $ fromList (map fst defs)
+    let newtypes : SortedSet Name := fromList (mapMaybe (\(n, d) => case d of
+                                                                MkRCCon _ _ (Just _) => Just n
+                                                                _ => Nothing) defs)
+    let exts : SortedMap Name Extender := fromList (mapMaybe (\(n, d) => map (n,) (extenderOf newtypes d)) defs)
+    let existing : SortedSet Name := fromList (map fst defs)
     if null exts then pure defs else foldr (++) [] <$> traverse (one exts existing) defs
   where
     fresh : {auto r : Ref FreshId Int} -> SortedSet Name -> Name -> Core Name
