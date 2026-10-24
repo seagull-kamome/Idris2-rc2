@@ -145,12 +145,23 @@ export
 cStringQuoted : String -> String
 cStringQuoted cs = strCons '"' (showCString (unpack cs) "\"")
   where
+    -- C11 6.4.3 forbids universal character names for characters
+    -- below U+00A0 other than $, @ and `, so DEL and the C1 controls
+    -- need ordinary \x escapes. U+0080..U+009F must keep their UTF-8
+    -- encoding (C2 80..C2 9F), not the raw codepoint byte, or the
+    -- runtime would see invalid UTF-8.
+    hexEscape : Char -> String -> String
+    hexEscape c = (("\\x" ++ leftPad '0' 2 (asHex (cast c))) ++ "\"\"" ++)
+
     showCChar : Char -> String -> String
     showCChar '\\' = ("\\\\" ++)
     showCChar c
        = if c < chr 32
-            then (("\\x" ++ leftPad '0' 2 (asHex (cast c))) ++ "\"\"" ++)
+            then hexEscape c
             else if c < chr 127 then strCons c
+            else if c < chr 160
+                    then if c < chr 128 then hexEscape c
+                                        else (("\\xc2" ++) . hexEscape c)
             else if c < chr 65536 then (("\\u" ++ leftPad '0' 4 (asHex (cast c))) ++ "\"\"" ++)
             else (("\\U" ++ leftPad '0' 8 (asHex (cast c))) ++ "\"\"" ++)
 

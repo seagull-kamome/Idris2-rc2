@@ -122,8 +122,8 @@ tcflow TCOON: ok
 tcsendbreak: ok
 tcflush 99 gives EINVAL: True
 cfsetospeed B19200: ok
-cfsetispeed B4800: ok
 cfgetospeed == B19200: True
+cfsetispeed B4800: ok
 cfgetispeed == B4800: True
 cfsetspeed B115200: ok
 cfsetspeed sets the output rate: True

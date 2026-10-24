@@ -242,8 +242,10 @@ testSpeeds slave = do
   Right ios <- tcgetattr slave
     | Left e => putStrLn ("tcgetattr: " ++ show e)
   ok "cfsetospeed B19200" =<< cfsetospeed ios B19200
-  ok "cfsetispeed B4800" =<< cfsetispeed ios B4800
+  -- Check the output rate before touching the input rate: some libcs
+  -- (glibc included) make cfsetispeed update the output-speed bits too.
   cfgetospeed ios >>= \r => yes "cfgetospeed == B19200" (r == B19200)
+  ok "cfsetispeed B4800" =<< cfsetispeed ios B4800
   cfgetispeed ios >>= \r => yes "cfgetispeed == B4800" (r == B4800)
   ok "cfsetspeed B115200" =<< cfsetspeed ios B115200
   cfgetospeed ios >>= \r => yes "cfsetspeed sets the output rate" (r == B115200)

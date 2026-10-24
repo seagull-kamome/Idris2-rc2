@@ -22,7 +22,8 @@ A binding whose body would be a single libc/GMP call, a constant, a macro
 or a small pure expression is a `"CExpr:"` `%foreign` template
 (`rc2/doc/ffi-cexpr.md`) and has no C shim: all `Data.Integer.GMP`
 `mpz_*` bindings (`$r` is the `Integer` out-parameter), the
-`System.FFI.C.Ptr` fetch/store pairs (`((ty *)p)[i]`), the `System.Posix.*`
+`System.FFI.C.Ptr` fetch/store pairs (`((ty *)p)[i]`), `System.FFI.C.Math`'s
+`<math.h>` functions, `System.FFI.C.Limits`'s `<limits.h>` constants, the `System.Posix.*`
 modules, (`Directory.readdir` copies the opaque `DirEnt`, read through PrimIO CExpr accessors, into a `DirEntry`; `struct dirent` is not a typedef name so `Struct` cannot name it), `Network.RC2`'s `send`/`recv`, the `EPOLL*` constants,
 `System.Linux.Epoll` (`struct epoll_event` read through accessors), `System.Linux.Eventfd`, the
 `REG_*` constants and `re_nsub` in `Text.Regex.POSIX`, `Data.TextBuffer`'s
@@ -70,6 +71,9 @@ not compile when the declaration is used.
 | `Control.Task`, `Control.Task.Scheduler`/`Epoll`/`Source`/`Uring` | cooperative `Task` monad over pluggable event sources (`epoll` and timers, and `io_uring` through `Control.Task.Uring` on `System.Linux.Uring`): spawn/both/race with cancellation, and `Ref`/`MVar`/`Chan` for tasks that share state on several threads -- see `doc/task.md` |
 | `System.Concurrency.RC2` | real pthread-backed `Mutex`/`Condition`/`Semaphore`/`Barrier`/`Channel`/joinable `forkJoin` -- see the top-level `README.md`'s own "Concurrency" section for the full design |
 | `System.FFI.C.Array` | a `malloc`'d, GC-freed, `Fin`-bounds-checked fixed-length array |
+| `System.FFI.C.Limits` | C `<limits.h>` integer limits as camelCase values (`intMax`, `longMin`, ...) |
+| `System.FFI.C.Math` | C `<math.h>`'s `double` functions in `namespace Math` (`Math.sin`, ...), with `Bool` classification predicates |
+| `System.FFI.C.Memory` | C heap allocation (`malloc`/`calloc`/`free`) and the common `<string.h>`/`<memory.h>` routines (`memcpy`, `strlen`, ...) on `AnyPtr` |
 | `System.FFI.C.Ptr` | raw, unchecked element-indexed fetch/store into a `Ptr`/`GCPtr` region |
 | `System.FFI.C.Sizeof` | the C `sizeof` of a scalar type, for hand-rolled buffer strides/offsets |
 | `System.GC.RC2` | raw access to rc2's own `idris2rc2_dup`/`dup_n`/`drop`, for a value smuggled out through an opaque FFI pointer |
