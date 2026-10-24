@@ -255,21 +255,20 @@ cOp fn args = show fn ++ "(" ++ (showSep ", " $ toList args) ++ ")"
 ||| `IntegerType` (GMP `mpz_t`-backed) covers every arithmetic/bitwise op
 ||| except `Div` -- `idris2rc2_div_Integer` is a real multi-statement
 ||| Euclidean-division algorithm in `numeric.c`, not yet given this
-||| treatment. `Int64Type`/`Bits64Type` (genuinely heap-allocated once
-||| past the small-int cache) and `DoubleType` (never cached, always a
+||| treatment. `Int64Type`/`Bits64Type` (heap-allocated once past the
+||| immediate range, doc/immediate-ints.md) and `DoubleType` (never immediate, always a
 ||| real heap struct when Boxed) cover every op their own `PrimType` has
 ||| in the first place -- `Int8Type`/`Int16Type`/`Int32Type`/
 ||| `Bits8Type`/`Bits16Type`/`Bits32Type` are deliberately excluded
 ||| entirely: `Types.alwaysUnboxed` already means these are *always* a
 ||| tagged pointer at the C level, never a real heap allocation, so
-||| `idris2rc2_isUnique` (a raw `->header.refCount` read) would be
-||| undefined behaviour on one, and the existing `alwaysUnboxed` dup/drop
+||| there is no cell to reuse, and the existing `alwaysUnboxed` dup/drop
 ||| elision (`Compiler.RC2.RC`'s `alwaysUnboxedBoxedLocalsR`) already
 ||| means there's no post-call drop left to skip for them anyway.
 |||
 ||| `IntType` (Idris2's plain, machine-width `Int`) is included alongside
 ||| every `Int64Type` case, not because it's itself reuse-eligible by
-||| some separate reasoning, but because `EmitUtil.cPrimType` maps BOTH
+||| some separate reasoning, but because `cPrimType` maps BOTH
 ||| to the identical C name (`"Int64"`) -- `Add IntType` and `Add
 ||| Int64Type` both lower to a call to the exact same
 ||| `idris2rc2_add_Int64`. Missing either one here would leave `Emit.idr`
@@ -786,14 +785,10 @@ dupVars : {auto oft : Ref OutfileText Output}
 dupVars = applyFunctionToVars "idris2rc2_dup"
 
 ||| Emits a single `idris2rc2_dup(v);` for `extra=0` -- the exact same
-||| output `dupVars [v]` already produces, so this stays byte-for-byte
-||| identical to today's output whenever `extra` is `0`, which is every
-||| `RDup` node anywhere in the current pipeline (the batching pass that
-||| will actually produce `extra > 0` nodes is a separate, later task).
-||| For `extra > 0` (not yet reachable from anywhere in the current
-||| pipeline, but wired up and correct), emits `idris2rc2_dup_n(v, N);`
-||| where `N = extra + 1`, a runtime primitive doing one atomic
-||| increment of `N` instead of `N` separate `idris2rc2_dup` calls. See
+||| output `dupVars [v]` produces. For `extra > 0` (made by
+||| `Compiler.RC2.DupMerge`), emits `idris2rc2_dup_n(v, N);` where
+||| `N = extra + 1`, a runtime primitive doing one increment of `N`
+||| instead of `N` separate `idris2rc2_dup` calls. See
 ||| `Compiler.RC2.RCExp`'s `RDup` and its own `extra` field.
 export
 dupVarExtra : {auto oft : Ref OutfileText Output}

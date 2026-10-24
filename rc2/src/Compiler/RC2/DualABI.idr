@@ -79,7 +79,7 @@ findLoopThroughLets _ _ = Nothing
 ||| own "DualABI interaction"). The `Nothing` branch uses
 ||| `nativeArgTypeBatch` (one shared walk of `body` for every one of
 ||| `argIds`, not one walk per id) -- see
-||| `Compiler.RC2.Loop.callArgOrOpNativeType`'s own "Batched, multi-id
+||| `Compiler.RC2.Loop.callArgOrOpNativeTy`'s own "Batched, multi-id
 ||| native-type analysis" section.
 export
 paramEligibility : List Int -> RCExp -> List (Int, Maybe PrimType)
@@ -118,19 +118,6 @@ tailLeaves leaf reps (RLoop _ loopParams _ _ body) =
 tailLeaves _ _ (RLoopContinue _ _ _) = []
 tailLeaves leaf reps e = [leaf reps e]
 
-||| Every `Rep` a genuine (non-`RLoopContinue`) tail-position value of
-||| `e` would have, given `reps` (natives known so far, seeded from
-||| `paramEligibility`, extended through `RLet`/`RLoop` bindings) --
-||| `Nothing` for a leaf never native regardless of context (a call,
-||| closure, constructor, extprim, erasure, crash), which is what makes
-||| the whole return ineligible the moment any exit can't be native.
-||| See `doc/dual-abi.md`'s "returnEligibility / tailValueReps".
-||| `RLoopContinue` contributes nothing (never a real exit). Exported
-||| for `Compiler.RC2.LateInline`'s own reuse (the same "what native
-||| type, if any, does every tail-position exit of this body agree on"
-||| question, asked there about a spliced-in callee's own tail value
-||| instead of a whole function's own return) -- one definition of
-||| this analysis, not two kept in sync by hand.
 ||| `tailValueReps` over `NativeTy`, and, given `ffiRets` (each usable
 ||| `%foreign` declaration with a native return: that type and its argument
 ||| count), also counting a still-bare tail call to one as native: Stage 4
@@ -166,6 +153,19 @@ tailValueRepsWith ffiRets = tailLeaves leafRep
     -- RStructSet, any other RV: never a native value regardless of context.
     leafRep _ _ = Nothing
 
+||| Every `Rep` a genuine (non-`RLoopContinue`) tail-position value of
+||| `e` would have, given `reps` (natives known so far, seeded from
+||| `paramEligibility`, extended through `RLet`/`RLoop` bindings) --
+||| `Nothing` for a leaf never native regardless of context (a call,
+||| closure, constructor, extprim, erasure, crash), which is what makes
+||| the whole return ineligible the moment any exit can't be native.
+||| See `doc/dual-abi.md`'s "returnEligibility / tailValueReps".
+||| `RLoopContinue` contributes nothing (never a real exit). Exported
+||| for `Compiler.RC2.LateInline`'s own reuse (the same "what native
+||| type, if any, does every tail-position exit of this body agree on"
+||| question, asked there about a spliced-in callee's own tail value
+||| instead of a whole function's own return) -- one definition of
+||| this analysis, not two kept in sync by hand.
 export
 tailValueReps : SortedMap Int Rep -> RCExp -> List (Maybe PrimType)
 tailValueReps reps e = map (\case
@@ -1021,7 +1021,8 @@ bareTailNativeReads var e =
 ||| and how it closes the round trip. Walks only the tail-preserving
 ||| spine `fillLoopContinuePostDrop` uses (never an `RLet`'s own
 ||| `value`) -- an `RLoopContinue` can only ever sit there. No `RLoop`
-||| case needed: one `RLoop` per function, so `e` never nests a second.
+||| case: a nested `RLoop`'s continues belong to that inner loop, not to the
+||| one `loopParams` describes, so it contributes nothing.
 loopContinueNativeReads : List (Int, Rep) -> Int -> RCExp -> SortedSet NativeTy
 loopContinueNativeReads loopParams var (RLet _ _ _ _ body) = loopContinueNativeReads loopParams var body
 loopContinueNativeReads loopParams var (RCmpCase _ _ _ _ t f) =
@@ -1048,7 +1049,7 @@ loopContinueNativeReads loopParams var (RLoopContinue _ args _) =
                          (zip loopParams args)
 -- Every other shape (RV, RAppName, RAppNameRep, RUnderApp, RApp, RCon,
 -- a bare ROp/RExtPrim, RPrimVal, RErased, RCrash, RStructGet,
--- RStructSet -- and RLoop, never actually reachable here, see this
+-- RStructSet -- and RLoop, whose continues are its own, see this
 -- function's own doc comment): no RLoopContinue reachable through any
 -- of these beyond what the cases above already cover.
 loopContinueNativeReads _ _ _ = empty

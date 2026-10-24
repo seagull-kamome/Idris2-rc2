@@ -294,7 +294,7 @@ again:
   }
   case IDRIS2RC2_TAG_GCPOINTER: {
     // idris2rc2_applyClosure always fully consumes both of its own
-    // arguments (see its own doc comment in runtime.c) -- and every
+    // arguments (see its own doc comment in idris2rc2_rt.c) -- and every
     // compiler-generated closure body disposes of an owned parameter
     // exactly once by the time it returns, whether by genuine use or
     // an inserted drop for an unused binding (RC.idr's

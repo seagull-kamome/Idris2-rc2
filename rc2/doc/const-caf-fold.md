@@ -119,15 +119,15 @@ incorrect fold.
 normalization and Phase 2 annotation:
 
 ```idris2
-preFolded <- ... traverse (\(n, ld) => do d <- toRCDefPreFold n ld; pure (n, d)) lds
+(preFolded, infos) <- normalizeProgram incremental main defs   -- in lowerProgram
 folded <- if "noconstfold" `elem` disabled
              then pure preFolded
              else logTime 2 "rc2: ConstFold (whole-program fixpoint)" $ pure (foldConstProgram preFolded)
 reused <- ... traverse (\(n, d) => do d1 <- toRCDefPostFold d; ...) folded
 ```
 
-(`RC2.idr:152-165`) -- `toRCDefPreFold`/`toRCDefPostFold` are `RC.idr`'s
-existing Phase 1/Phase 2 split (unmodified by this change); the
+`normalizeProgram` and `toRCDefPostFold` are `RC.idr`'s Phase 1/Phase 2
+split (`lowerProgram` calls the first, `toRCDefs` the rest); the
 fixpoint loop sits entirely between them, seeing only Phase 1's
 already-normalized-but-not-yet-annotated IR, same as the old one-shot
 `foldConstDef` call did.
@@ -296,7 +296,7 @@ same `no<stagename>` pattern as `noinline`/`noconaltnative`/
 (`RC2.idr:68-107`'s own module doc comment lists all of them together).
 The constant `ExtPrim` fold (`prim__codegen`, `foldConst`'s
 `constExtPrimValue` -- formerly a separate `Compiler.RC2.ConstExtPrim`
-pass in `toRCDefPreFold`) now lives in this same traversal, so it is
+pass in Phase 1) now lives in this same traversal, so it is
 gated by `noconstfold` too:
 
 ```idris2

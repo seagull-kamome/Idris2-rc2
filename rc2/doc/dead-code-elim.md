@@ -44,7 +44,9 @@ Compiler.RC2.InlineCExp
   -> Compiler.RC2.Loop
   -> Compiler.RC2.Sink
   -> Compiler.RC2.DualABI          (worker/wrapper synthesis, call-site rewrite)
-  -> Compiler.RC2.DeadCode         (this module -- final stage)
+  -> Compiler.RC2.Reuse            (re-check of dead offers)
+  -> Compiler.RC2.DeadCode         (this module)
+  -> Compiler.RC2.PushDown -> DupMerge -> LeafTail -> DeadVars -> FunDedup
   -> Compiler.RC2.Emit             (purely mechanical RCExp -> C)
 ```
 

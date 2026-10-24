@@ -297,7 +297,7 @@ shadowAltFields imm nextId argIds body =
         -- `nativeArgTypeBatch` walks `core` once for every one of
         -- `argIds` together, rather than once per field via
         -- `nativeArgType` -- see
-        -- `Compiler.RC2.Loop.callArgOrOpNativeType`'s own "Batched,
+        -- `Compiler.RC2.Loop.callArgOrOpNativeTy`'s own "Batched,
         -- multi-id native-type analysis" section.
         foundTypes = nativeArgTypeBatch argIds core
         eligible : List (Int, PrimType)

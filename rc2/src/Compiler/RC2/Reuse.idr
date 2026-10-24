@@ -169,7 +169,7 @@ resolveReuse nested imm (RConCase fc sc alts mDef) =
                        -- the not-unique path (sc's own recursive
                        -- drop), but need an explicit drop on the
                        -- unique path, where sc itself is never dropped
-                       -- (EmitUtil.emitReuseOffer).
+                       -- (Emit/Util.idr's emitReuseOffer).
                        dropOnUnique = conArgsRC \\ dupOnShared
                    in MkRConAlt name ci tag args
                         (rewrapDrop outerDrop (RReuseOffer emptyFC sc dupOnShared dropOnUnique inner'))

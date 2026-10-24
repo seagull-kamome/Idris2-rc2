@@ -28,7 +28,7 @@ import Data.Vect
 
 %default covering
 
-||| Exact, greppable prefix `normalize`'s own `prim__getField`/
+||| Exact, greppable marker `normalize`'s own `prim__getField`/
 ||| `prim__setField` cases (below) tag their `InternalError` with when
 ||| the struct/field name isn't a literal -- i.e. a definition (like
 ||| `System.FFI.getField` itself) that only works once its own caller
@@ -39,16 +39,17 @@ import Data.Vect
 ||| already excludes it). Incremental compilation's own `toIR`-scoped
 ||| `defs` has no such luxury -- every definition a module makes is
 ||| compiled for real regardless of whether anything in the *whole*
-||| program still calls it un-inlined -- so `Compiler.RC2.RC2.toRCDefs`
-||| (its own `incremental = True` case only) catches exactly this
-||| marker and drops the offending definition instead of aborting the
-||| whole module's compile, the same "unimplementable, fails at link
-||| time instead" treatment `Emit.idr`'s own `hasUsableForeignImpl`
-||| gives a `%foreign` declaration with no usable convention -- see
+||| program still calls it un-inlined -- so `normalizeProgram` (its own
+||| `incremental = True` case only) catches exactly this marker and drops
+||| the offending definition instead of aborting the whole module's
+||| compile, the same "unimplementable, fails at link time instead"
+||| treatment `Emit.idr`'s own `hasUsableForeignImpl` gives a `%foreign`
+||| declaration with no usable convention -- see
 ||| rc2/doc/incremental-compile.md's "no C struct support under
-||| --inc rc2". A plain prefix match (not free-text `InternalError`
-||| sniffing) so the catch site can't accidentally trap some unrelated
-||| internal error.
+||| --inc rc2". The catch looks for this whole bracketed marker anywhere
+||| in the message (`isInfixOf`, since the message may be wrapped by the
+||| time it arrives), not free-text `InternalError` sniffing, so it
+||| can't accidentally trap some unrelated internal error.
 export
 notInlinedStructFieldMarker : String
 notInlinedStructFieldMarker = "[rc2:not-inlined-struct-field]"
@@ -458,6 +459,22 @@ nativeLocalsR (RCmpCase _ _ _ _ t f) = union (nativeLocalsR t) (nativeLocalsR f)
 nativeLocalsR (RMemoize _ _ _ body) = nativeLocalsR body
 nativeLocalsR _ = empty
 
+||| `args`, filtered down to the genuine `RCLoc`s among them, if `mty`
+||| says they're at an always-unboxed operand position -- the shared
+||| core of `alwaysUnboxedBoxedLocalsR`'s ROp and RCmpCase cases, which
+||| only differ in *how* they derive `mty`: an `ROp`'s own operand type
+||| needs `opArgTyFor`'s Cast-source refinement (its operand type can
+||| differ from its result type); a comparison's is already exactly its
+||| shared operand type (`cmpOpTy`), no refinement needed.
+alwaysUnboxedArgs : Maybe PrimType -> Vect n RCLocal -> SortedSet RCLocal
+alwaysUnboxedArgs Nothing _ = empty
+alwaysUnboxedArgs (Just ty) args =
+    if alwaysUnboxed ty then fromList (filter isRealLoc (toList args)) else empty
+  where
+    isRealLoc : RCLocal -> Bool
+    isRealLoc (RCLoc _) = True
+    isRealLoc _ = False
+
 ||| Every genuine RCLoc used as an operand of a native op at a position
 ||| whose PrimType is `Types.alwaysUnboxed` (Int8/16/32, Bits8/16/32,
 ||| Char): such an operand is *always* a tagged pointer at runtime, by
@@ -476,22 +493,6 @@ nativeLocalsR _ = empty
 ||| be unconditional no-ops (support/rc2/idris2rc2_datatypes.h), so generating the
 ||| calls at all is pure waste. Operates on Phase 1's output, same as
 ||| nativeLocalsR and for the same reason.
-||| `args`, filtered down to the genuine `RCLoc`s among them, if `mty`
-||| says they're at an always-unboxed operand position -- the shared
-||| core of `alwaysUnboxedBoxedLocalsR`'s ROp and RCmpCase cases, which
-||| only differ in *how* they derive `mty`: an `ROp`'s own operand type
-||| needs `opArgTyFor`'s Cast-source refinement (its operand type can
-||| differ from its result type); a comparison's is already exactly its
-||| shared operand type (`cmpOpTy`), no refinement needed.
-alwaysUnboxedArgs : Maybe PrimType -> Vect n RCLocal -> SortedSet RCLocal
-alwaysUnboxedArgs Nothing _ = empty
-alwaysUnboxedArgs (Just ty) args =
-    if alwaysUnboxed ty then fromList (filter isRealLoc (toList args)) else empty
-  where
-    isRealLoc : RCLocal -> Bool
-    isRealLoc (RCLoc _) = True
-    isRealLoc _ = False
-
 alwaysUnboxedBoxedLocalsR : RCExp -> SortedSet RCLocal
 alwaysUnboxedBoxedLocalsR (RLet _ var rep value body) =
     let vs = union (alwaysUnboxedBoxedLocalsR value) (alwaysUnboxedBoxedLocalsR body) in

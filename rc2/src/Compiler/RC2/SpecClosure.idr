@@ -342,6 +342,25 @@ redirectCallSitesTable table = goBound empty
 -- Whole-program entry point
 ------------------------------------------------------------------------
 
+||| `logTimeOver` when `--directive timing` is given, otherwise just `act`.
+maybeLogTimeOver : Bool -> Integer -> Core String -> Core a -> Core a
+maybeLogTimeOver True nsecs str act = logTimeOver nsecs str act
+maybeLogTimeOver False _ _ act = act
+
+||| A specialisation key: callee, argument position, target, missing.
+SpecKey : Type
+SpecKey = (Name, Nat, Name, Nat)
+
+||| One clone built for `key`, and the keys of the clones its forwarding
+||| sites need (doc's "Transitive specialisation" -> "Acceptance").
+record Built where
+  constructor MkBuilt
+  key : SpecKey
+  name : Name
+  def : RCDef
+  needs : List SpecKey
+  chains : Nat
+
 ||| One round of speculative closure-argument specialization, driven to a
 ||| fixpoint by `applySpecRounds`. `prevTable`/`done` carry the clones
 ||| kept in earlier rounds: their keys are not rebuilt, and the table is
@@ -377,27 +396,9 @@ redirectCallSitesTable table = goBound empty
 ||| diagnose was confirmed fixed. Originally left unconditional
 ||| (bypassing `--timing`/log-level entirely) since that diagnosis was
 ||| still ongoing; now gated behind `maybeLogTimeOver`'s own
-||| `--directive timing` check below, same as every other pass' own
+||| `--directive timing` check above, same as every other pass' own
 ||| `logTime` calls, since that investigation concluded and these lines
 ||| were just unconditional noise on every single build otherwise.
-maybeLogTimeOver : Bool -> Integer -> Core String -> Core a -> Core a
-maybeLogTimeOver True nsecs str act = logTimeOver nsecs str act
-maybeLogTimeOver False _ _ act = act
-
-||| A specialisation key: callee, argument position, target, missing.
-SpecKey : Type
-SpecKey = (Name, Nat, Name, Nat)
-
-||| One clone built for `key`, and the keys of the clones its forwarding
-||| sites need (doc's "Transitive specialisation" -> "Acceptance").
-record Built where
-  constructor MkBuilt
-  key : SpecKey
-  name : Name
-  def : RCDef
-  needs : List SpecKey
-  chains : Nat
-
 applySpecClosure : {auto c : Ref Ctxt Defs} -> {auto v : Ref VarId Int} -> {auto fr : Ref FreshId Int}
                  -> RedirectTable -> SortedSet SpecKey -> List (Name, RCDef)
                  -> Core (List (Name, RCDef), RedirectTable, SortedSet SpecKey, Nat)

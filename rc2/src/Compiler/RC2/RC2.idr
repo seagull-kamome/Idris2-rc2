@@ -22,10 +22,11 @@ module Compiler.RC2.RC2
 -- 6. Loop/tail call conversion (`MutualLoop`, `Loop`)
 -- 7. Late inline (`LateInline`), applied-closure folding (`ArityRaise`),
 --    post-RC case into tails (`PushCon`)
--- 8. Branch-local sinking (`Sink`), dual ABI and struct return
---    (`DualABI`)
--- 9. Dead-code elimination (`DeadCode`), dup merging (`DupMerge`),
---    dead variable erasure (`DeadVars`)
+-- 8. Branch-local sinking (`Sink`), dual ABI, null parameters and struct
+--    return (`DualABI`, `NullParams`), reuse re-check (`Reuse`)
+-- 9. Dead-code elimination (`DeadCode`), dup/drop push-down (`PushDown`),
+--    dup merging (`DupMerge`), leaf tail calls (`LeafTail`), dead variable
+--    erasure (`DeadVars`), function dedup (`FunDedup`, whole program only)
 -- 10. C generation (`Emit`) and C compiler invocation (`CC`)
 
 import Compiler.RC2.ArityRaise
@@ -89,16 +90,16 @@ import Libraries.Utils.Path
 
 %default covering
 
-||| Compiler.RC2.Reuse's pass runs after Compiler.RC2.RC's normalize+
-||| annotate are both fully done (it relies on `annotate`'s own RDrop
-||| lists -- see its own module note), on each definition's body
-||| independently -- reuse offers never cross a function boundary.
 ||| The locals `Types.typedConstScrutinees` finds, when the field rule
 ||| (`--directive noboolfield`) is on: `Reuse` and `ConAltNative` then leave a
 ||| constructor field in that set out of their own dup/drop/offer lists.
 immOf : Bool -> RCExp -> SortedSet RCLocal
 immOf on body = if on then typedConstScrutinees body else empty
 
+||| Compiler.RC2.Reuse's pass runs after Compiler.RC2.RC's normalize+
+||| annotate are both fully done (it relies on `annotate`'s own RDrop
+||| lists -- see its own module note), on each definition's body
+||| independently -- reuse offers never cross a function boundary.
 applyReuse : (nested : Bool) -> (fieldCase : Bool) -> RCDef -> RCDef
 applyReuse nested fc (MkRCFun args retRep isWorker body) = MkRCFun args retRep isWorker (resolveReuse nested (immOf fc body) body)
 applyReuse nested fc (MkRCError body) = MkRCError (resolveReuse nested (immOf fc body) body)
@@ -179,7 +180,8 @@ rcSizeConAlt (MkRConAlt _ _ _ _ body) = rcSizeOf body
 rcSizeConstAlt (MkRConstAlt _ body) = rcSizeOf body
 
 ||| Runs `Compiler.RC2.ConstFold.foldConstDef` over every definition in
-||| `defs0` (Phase 1 output, pre-`ConstFold`, from `toRCDefPreFold`),
+||| `defs0` (Phase 1 output, pre-`ConstFold`, from
+||| `Compiler.RC2.RC.normalizeProgram`),
 ||| rebuilding `CafTable` after each pass via `cafValueOf` and looping
 ||| again as long as the table's own key count is still growing (a CAF
 ||| newly proven foldable this round might be exactly what unblocks
@@ -231,13 +233,15 @@ foldConstProgram knownCons defs0 = go 1 maxConstFoldIterations empty 0 defs0
     go round (S fuel) table count defs = do
         (folded, table', count') <-
             logTime 3 "rc2: ConstFold (round \{show round}/\{show maxConstFoldIterations}, \{show count} CAFs in)" $
-              do -- Only round 1 folds known constructors: later rounds
-                 -- differ only by CAF substitution, which seldom leaves a
-                 -- constructor newly non-escaping -- not worth a use walk
-                 -- per round (rc2/doc/constructor-escape-analysis.md).
-                 let folded = map (\(n, d) => (n, foldConstDef (knownCons && round == 1) table d)) defs
-                 let (table', count') = rebuildTable folded
-                 pure (folded, table', count')
+              -- Only round 1 folds known constructors: later rounds
+              -- differ only by CAF substitution, which seldom leaves a
+              -- constructor newly non-escaping -- not worth a use walk
+              -- per round (rc2/doc/constructor-escape-analysis.md).
+              -- `pure $ let ...`, not `let` statements in a `do`: those run
+              -- before `logTime` starts its clock (code-style-Idris2.md).
+              pure $ let folded = map (\(n, d) => (n, foldConstDef (knownCons && round == 1) table d)) defs
+                         (table', count') = rebuildTable folded
+                     in (folded, table', count')
         if count' == count
            then pure folded
            else go (S round) fuel table' count' folded
@@ -313,30 +317,15 @@ stageDirectiveNames = disableableStageNames ++ optInStageNames
 |||
 ||| `roots`: names `Compiler.RC2.DeadCode.pruneDeadDefs` must never drop
 ||| regardless of reachability -- `main`'s own well-known entry name
-||| (`MN "__mainExpression" 0`, `Compiler.Common`) plus any `%export`ed
-||| names, both supplied by `compileExpr`'s own call site (the latter is
-||| currently always `[]` in practice -- rc2 doesn't otherwise implement
-||| `%export`, but including it costs nothing and avoids a latent trap
-||| if that ever changes).
+||| (`MN "__mainExpression" 0`, `Compiler.Common`) plus the `%export`ed
+||| names (rc2/doc/export-support.md), both supplied by `compileExpr`'s
+||| own call site. An incremental compile (`incCompile`) passes `[]`.
 |||
-||| `incremental`: `Compiler.RC2.RC.toRCDefPreFold` throws (tagged
-||| `notInlinedStructFieldMarker`) for a definition like
-||| `System.FFI.getField` itself -- one that only works once its own
-||| caller inlines it down to a literal struct/field name, never as a
-||| standalone compiled function (rc2/doc/incremental-compile.md's "no
-||| C struct support under --inc rc2"). Whole-program compilation
-||| (`incremental = False`) never actually throws this in practice
-||| (such a definition's own un-inlined form was already excluded by
-||| upstream's own reachable-from-`main` fetch before `toRCDefs` ever
-||| sees it) -- `False` here preserves that exactly, an uncaught
-||| `InternalError` if it's ever somehow reached. Incremental mode's
-||| own `toIR`-scoped `defs` has no such luxury (every definition a
-||| module makes is compiled for real, reachable or not) -- `True`
-||| catches exactly that one marker and drops the offending definition
-||| from the result instead of aborting the whole module's compile,
-||| same "unimplementable, fails at link time instead" treatment
-||| `Emit.idr`'s own `hasUsableForeignImpl` gives an unusable `%foreign`
-||| declaration.
+||| `incremental`: the module is compiled on its own (rc2/doc/incremental-
+||| compile.md), seeing only its own definitions, so the whole-program
+||| `FunDedup` is skipped. (The one definition kind that cannot be
+||| compiled on its own, a `getField`/`setField` whose struct and field
+||| names are not literals, is dropped earlier, by `normalizeProgram`.)
 toRCDefs : {auto c : Ref Ctxt Defs} -> {auto v : Ref VarId Int} -> List String -> (incremental : Bool) -> (roots : List Name)
         -> (thunks : SortedSet Name) -> List (Name, RCDef) -> Core (List (Name, RCDef))
 toRCDefs disabled incremental roots thunks preFolded = do
@@ -567,7 +556,7 @@ collectLazyCAFs = SortedSet.fromList . mapMaybe isLazyCAF
 ||| Ptr/AnyPtr, GCPtr/GCAnyPtr (argument-position only; validateExport
 ||| itself rejects a GCPtr return, see its own doc comment), Integer,
 ||| String, and any Struct (by pointer, same marshalling as Ptr --
-||| EmitUtil's own cTypeOfCFType/extractValue/packCFType CFStruct cases
+||| Emit/Util.idr's own cTypeOfCFType/extractValue/packCFType CFStruct cases
 ||| already alias CFPtr's verbatim) -- plus the PrimIO IO/IORes wrapper
 ||| (peeled to CFIORes so Compiler.RC2.Util's own peelIORes applies
 ||| uniformly afterward). Still nothing for Buffer/ForeignObj/CFUser/
@@ -615,7 +604,7 @@ exportNfToCFType defs (NTCon _ n _ args) = do
              -- Field list (the Struct type's own second argument)
              -- deliberately unread -- CFStruct's fields are only ever
              -- consulted for generating a C typedef ahead of a
-             -- getField/setField site (EmitUtil's collectStructDefs,
+             -- getField/setField site (Emit/Util.idr's collectStructDefs,
              -- populated solely from %foreign defs), never for
              -- %export's own marshalling (cTypeOfCFType/extractValue/
              -- packCFType's CFStruct cases already ignore them,
@@ -653,7 +642,7 @@ isCFWorld _ = False
 ||| other codegen stages share for native/boxed Rep selection, and not
 ||| widened here to avoid changing any of their behaviour): Ptr, GCPtr,
 ||| Integer, String, and any Struct all have a real, already-working
-||| %export marshalling path (`EmitUtil`'s `packCFType`/`extractValue`)
+||| %export marshalling path (`Emit/Util.idr`'s `packCFType`/`extractValue`)
 ||| that has nothing to do with Rep selection.
 isExportableCFType : CFType -> Bool
 isExportableCFType CFPtr          = True
