@@ -37,14 +37,14 @@
 
 static void buf_htonl(void *buf, int len) {
   int *buf_i = (int *)buf;
-  for (int i = 0; i < (len / (int)sizeof(int)) + 1; i++) {
+  for (int i = 0; i < len / (int)sizeof(int); i++) {
     buf_i[i] = htonl(buf_i[i]);
   }
 }
 
 static void buf_ntohl(void *buf, int len) {
   int *buf_i = (int *)buf;
-  for (int i = 0; i < (len / (int)sizeof(int)) + 1; i++) {
+  for (int i = 0; i < len / (int)sizeof(int); i++) {
     buf_i[i] = ntohl(buf_i[i]);
   }
 }
