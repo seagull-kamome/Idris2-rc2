@@ -210,6 +210,32 @@ to update instead of two).
   literal operand is the single most common member of this category
   and is handled as a degenerate case of the same table.
 
+### `InlineMap`: splicing a sole-use native local into its use site
+
+`Emit/Util.idr`'s `InlineMap` holds, per local id, the already-rendered C
+expression of a native local that is never declared as a C variable;
+`rcVarToNativeC`/`rcVarToBoxedC` (its only readers) substitute the text.
+Two cases fill it:
+
+1. A bare literal. Phase 1 binds every non-trivial operand, literals
+   included, to a fresh `let` purely for ANF shape; there is no sharing or
+   evaluation-order reason to declare a variable.
+2. A native op that Phase 2 (`annotate`) marked `RInlineNative`, used
+   exactly once (inlining a multi-use value would duplicate its
+   computation). Phase 2 decides this because use counts are unknown during
+   Phase 1. A Boxed operand the op still reads (`ROp.postDrop`) travels
+   with the expression as a pending drop list; the reader hands it back to
+   its own caller, which discharges it once the deferred read happens.
+
+   `inlineableRep` (in `annotate`'s `RLet` case, after `valueRC`'s `postDrop`
+   and `bodyRC` are known) only ever *narrows* an existing `RNative ty` to
+   `RInlineNative ty`: when `valueRC` is a bare `ROp` and the variable occurs
+   exactly once in `bodyRC`. A literal-valued, multi-use or `RBoxed` let passes
+   through unchanged; it never invents a native classification `Types.repOf`
+   did not already decide. A non-empty `postDrop` is no obstacle: the canonical
+   read-before-drop rule (`Compiler.RC2.Emit`'s `emitRC`) holds whether the
+   op's C statement was emitted eagerly or deferred to its single use.
+
 ## Bool-producing comparison results are `alwaysUnboxed`-equivalent
 
 A comparison that is *not* fused into an `RCmpCase` (operands of type

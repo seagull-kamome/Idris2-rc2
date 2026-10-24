@@ -28,21 +28,11 @@ import Data.Vect
 
 %default covering
 
-||| Cast folding mirrors upstream's own `foldableOp`
-||| (idris2-src/src/Compiler/Opts/ConstantFold.idr:20-25), not `getOp`'s
-||| own unguarded Cast dispatch, except that `IntType` is allowed:
-||| upstream excludes it because its width is backend-dependent, but in
-||| rc2 `Int` is C's `int64_t`, emitted exactly like `Int64` (and `getOp`
-||| evaluates both alike), so it folds the way `Int64` does; `Double`
-||| is excluded via `intKind` already returning `Nothing` for it
-||| (`safeConst` also excludes `Db` outright, belt-and-suspenders).
-||| `to = StringType` is its own case, not folded into the generic
-||| `intKind from && intKind to` rule, because only the from-integer
-||| direction is safe -- `Cast CharType StringType` in particular must
-||| stay excluded. See `rc2/doc/cast-fold-scope.md`'s "Char -> String",
-||| "Double -> String", and "String as Cast's source" sections for the
-||| full investigation of every excluded direction, including why each
-||| exclusion can't just be inferred from `intKind`'s current shape.
+||| Cast folding mirrors upstream's `foldableOp`
+||| (idris2-src/src/Compiler/Opts/ConstantFold.idr:20-25) except that
+||| `IntType` folds like `Int64`. `to = StringType` is a separate case
+||| (only the from-integer direction is safe; `Char -> String` stays
+||| excluded). See `rc2/doc/cast-fold-scope.md` for every excluded direction.
 foldableOp : {0 arity : Nat} -> PrimFn arity -> Bool
 foldableOp BelieveMe = False
 foldableOp (Cast from StringType) = isJust (intKind from)
@@ -431,32 +421,10 @@ foldConst caf env (RAppName fc lazy n args) =
 -- unchanged. See rc2/doc/const-closure-fold.md's "Design" section.
 foldConst _ env (RUnderApp fc n missing []) = RV fc (RCConstClosure n missing)
 foldConst _ env (RUnderApp fc n missing args) = RUnderApp fc n missing (map (resolveLocal env) args)
--- Applying a *constant* closure that this application saturates is a
--- plain direct call: `RCConstClosure` is a true leaf with no captured
--- values at all (see its own doc comment in RCExp.idr), so its
--- `missing` is `n`'s whole remaining arity and supplying exactly that
--- many arguments leaves nothing deferred. Emitting it as `RApp`
--- instead costs an `idris2rc2_applyClosure` -- an arity check, an
--- argument copy and a dispatch through `support/rc2/runtime.c`'s own
--- function-pointer table -- plus the `constclosure_N` static the
--- closure is read out of, for a callee that was statically known all
--- along. It also leaves the call opaque to every later pass:
--- `Compiler.RC2.SpecClosure`, `Compiler.RC2.LateInline` and
--- `Compiler.RC2.DualABI` all key off a *named* call, and a direct one
--- here is what lets them see through it at all.
---
--- An *under*-application still needs a real closure, but not a
--- dispatch to build one: `RUnderApp` captures `args'` directly, where
--- `RApp` would have gone through `idris2rc2_applyClosure` only for it
--- to allocate the very same closure (the constant it starts from
--- captures nothing, so there is nothing to copy across either).
--- `missing` counts what is still needed *after* the captured args, so
--- it just goes down by however many this application supplies.
--- Over-application can't occur -- `RC.idr`'s own `collectAppChain`
--- never merges past a saturation point. `RApp`'s own `lazy` field is
--- ignored at emission (see `emitRC`'s own `RApp` cases), so dropping
--- it here changes nothing. Closes `doc/const-closure-fold.md`'s
--- "Scope / limitations".
+-- Saturating a constant closure is a plain direct call (named, so the later
+-- passes see through it); an under-application builds an `RUnderApp`.
+-- Over-application can't occur (`collectAppChain`). See
+-- rc2/doc/const-closure-fold.md's "Saturated application of a folded closure".
 foldConst _ env (RApp fc lazy c args) =
     let c' = resolveLocal env c
         args' = map (resolveLocal env) args

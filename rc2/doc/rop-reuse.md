@@ -493,3 +493,15 @@ concurrency-related code (see `doc/concurrency.md`).
   `rc2/src/Compiler/RC2/Reuse.idr` (constructor-reuse-only, unrelated) --
   called out explicitly here because "what didn't need to change" is
   the whole point of this document.
+
+## Which ops count as consuming (`isReuseConsumingOp`)
+
+`Integer` covers every arithmetic/bitwise op except `Div`
+(`idris2rc2_div_Integer` is a multi-statement Euclidean division, not
+converted). `Int64`/`Bits64`/`Double` cover every op their `PrimType` has.
+The 8/16/32-bit types are excluded: `Types.alwaysUnboxed` makes them tagged
+pointers with no cell to reuse and no post-call drop left to skip.
+`IntType` must be listed wherever `Int64Type` is, because `cPrimType` maps
+both to the C name `Int64`, so `Add IntType` and `Add Int64Type` call the
+same `idris2rc2_add_Int64`; missing one makes `Emit.idr` drop operands the
+primitive already consumed (double-drop), not just lose an optimisation.

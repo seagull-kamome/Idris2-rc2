@@ -86,30 +86,14 @@ resolveForeignTarget ccs =
          Right Nothing => throw $ UserError "[rc2] a %foreign declaration has no implementation rc2 can call: it needs a \"CExpr:\", \"RC2:\", \"RefC:\" or \"C:\" alternative"
          Left err => throw $ UserError "[rc2] invalid %foreign declaration: \{err}"
 
-||| Marshal every one of `fargs`'s own positions, call `fctName`, and
-||| produce the raw (un-packed, un-widened) C return-value expression
-||| text -- `""` for a `CFIORes CFUnit` declaration, whose call is
-||| emitted here as its own statement instead (C forbids a
-||| `void`-returning call as a subexpression; `packCFType CFUnit`
-||| ignores its own argument regardless, so an empty placeholder is
-||| always safe to feed it). Shared by `emitAppFFIInlineInto` (wants
-||| this value Boxed, via `packCFType`) and `emitNativeValue`'s own
-||| `RAppFFIInline` case (wants it left native, via a plain
-||| `CFChar`-aware widen) -- both then finish it off differently, so
-||| this only carries the part identical either way, avoiding
-||| triplicating the marshalling logic.
-|||
-||| Also returns every genuinely-`RBoxed`-typed argument position
-||| (`CFWorld`'s own trailing slot on a `CFIORes`-returning declaration
-||| included), already rendered to its own drop-ready C expression text
-||| (`marshalArg`'s own doc comment) -- paid at the call site directly,
-||| since no worker function exists to pay it internally (see
-||| `emitAppFFIInlineInto`'s own doc comment for the ownership hazard). `discardLastArgument` only
-||| ever trims the text actually passed to `fctName(...)` -- the
-||| trailing `CFWorld` slot still contributes to this drop set
-||| regardless, since it's still an ordinarily-owned Idris-level
-||| reference even though the raw C function itself takes one fewer
-||| parameter.
+||| Marshal every `fargs` position, call `fctName`, and return the raw C
+||| return-value text (`""` for `CFIORes CFUnit`, whose call is emitted as its
+||| own statement: C forbids a void call as a subexpression). Shared by
+||| `emitAppFFIInlineInto` (Boxed) and `emitNativeValue` (native).
+||| Also returns the `RBoxed` argument positions as drop-ready C text, paid at
+||| the call site since no worker pays them. `discardLastArgument` trims only
+||| the call text; the trailing `CFWorld` slot still joins the drop set. See
+||| `rc2/doc/dual-abi.md` "Stage 5".
 export
 ffiRawCall : {auto a : Ref ArgCounter Nat}
           -> {auto oft : Ref OutfileText Output}
@@ -213,36 +197,16 @@ linkLibName lib =
           then Just (substr 3 (length base `minus` 3) base)
           else Nothing
 
-||| `Prelude.Types.fastPack`/`fastConcat` leak their own raw `malloc`'d
-||| `char *` return through the generic `CFString`-return FFI wrapper
-||| codegen (`emitGenericForeignWrapper`, `createCFunctions`'s own
-||| `MkRCForeign` case) -- it copies into a fresh `IDRIS2RC2_String` via
-||| `packCFType` and never frees the original -- correct for a real
-||| external library's `char *` return, wrong for these two, which
-||| `malloc` a buffer this project itself owns). `rc2/support/rc2/
-||| idris2rc2_strings.c` already has leak-free replacements
-||| (`idris2rc2_fastPackFixed`/`idris2rc2_fastConcatFixed`, returning an already-fully-built
-||| `IDRIS2RC2_Value*` directly, the same way any `CFUser` return is
-||| already passed straight through with no copy). See
-||| `rc2/doc/fastpack-fix.md` for the full writeup, including why
-||| this is intercepted here (at C-emission time, universally, for
-||| every call site project-wide -- including ones already baked into
-||| precompiled `network`/`base` code) rather than via upstream's own
-||| `%transform` mechanism (which only ever rewrites a call site within
-||| the rewriting definition's own elaboration/import scope, and so can
-||| never reach a call site inside another package's own separately-
-||| compiled `.ttc`).
-|||
-||| Checked by FULL namespace + base name (not just base name, unlike
-||| `Compiler.RC2.ConstFold`'s own `constExtPrimValue`) precisely
-||| so this never misfires on some unrelated future function that merely
-||| happens to share the base name "fastPack"/"fastConcat" in a
-||| different namespace. Every caller also checks this def's own
-||| signature shape (`CFString`-returning, single `CFUser` argument) as
-||| a second layer of defensive scoping. Shared by `createCFunctions`
-||| (dispatch to `emitFastPackFixedWrapper`) and `collectDeclarations`
-||| (must skip this def's own parseForeign/HeaderFiles/ForeignLibs
-||| registration exactly when `createCFunctions` will too).
+||| Maps `Prelude.Types.fastPack`/`fastConcat` to the leak-free
+||| `idris2rc2_fastPackFixed`/`idris2rc2_fastConcatFixed` (the generic
+||| `CFString` wrapper would leak their malloc'd result). Intercepted at C
+||| emission, not via `%transform`, which cannot reach call sites inside other
+||| packages' `.ttc`. See `rc2/doc/fastpack-fix.md`.
+||| Matches FULL namespace + base name (unlike `ConstFold`'s
+||| `constExtPrimValue`) so a same-named function elsewhere never misfires;
+||| callers also check the signature shape. Shared by `createCFunctions` and
+||| `collectDeclarations`, which must skip registration exactly when
+||| `createCFunctions` does.
 export
 fastPackFixedReplacement : Name -> Maybe String
 fastPackFixedReplacement (NS ns (UN (Basic f))) =
@@ -440,37 +404,13 @@ emitForeignDef n ccs fargs ret =
           Right Nothing => throw $ UserError "[rc2] %foreign declaration \{show n} has no implementation rc2 can call: it needs a \"CExpr:\", \"RC2:\", \"RefC:\" or \"C:\" alternative"
           Left err => throw $ UserError "[rc2] invalid %foreign declaration \{show n}: \{err}"
 
-||| The C wrapper synthesised for one validated `%export` declaration
-||| (`Compiler.RC2.RC2.validateExport`'s own result): under the
-||| user-given `exportedCName`, with native C parameter/return types,
-||| boxing each argument, calling the original always-Boxed entry point
-||| (`cName !(getFullName n)`, never itself touched/converted -- see
-||| `rc2/doc/export-support.md`), then unboxing the trampolined result.
-||| Never `static` -- nothing in generated C calls it; it exists purely
-||| for an external caller, hand-written C included (see
-||| `Test59Export/Test59Export.c`). A boxed `IDRIS2RC2_Value*` return is
-||| explicitly `idris2rc2_drop`ped right after `extractValue` reads its
-||| payload out (safe and a no-op for every already-unboxed scalar, see
-||| `idris2rc2_drop`'s own `idris2rc2_is_unboxed` check) -- unlike
-||| `main`'s own footer, which can get away with never dropping its
-||| final result because the process exits immediately after, this
-||| wrapper can be called arbitrarily many times from external C, so a
-||| real heap-allocating return (`CFInt`/`CFInt64`/`CFUnsigned64`/
-||| `CFDouble`) would otherwise leak on every call.
-|||
-||| Three argument/return positions can't use that generic pack-then-
-||| call / call-then-extract-then-drop shape as-is, and are special-
-||| cased below: a `CFInteger` argument (a raw incoming `mpz_t`, not
-||| already an `IDRIS2RC2_Integer*` out-parameter the way `packCFType`'s
-||| own CFInteger case assumes -- see its doc comment), a
-||| `CFInteger` return (GMP's `mpz_t` has no by-value C return shape at
-||| all, so the whole wrapper signature gains a leading `mpz_t out`
-||| parameter and turns `void`, mirroring `emitGenericForeignWrapper`'s
-||| own identical convention for a `%foreign` Integer return), and a
-||| `CFString` return (`extractValue`'s own CFString case aliases the
-||| Boxed value's own malloc'd buffer -- returning that pointer and
-||| *then* dropping the Boxed value it came from would hand the C
-||| caller a dangling pointer, so an independent copy is made first).
+||| The C wrapper for one validated `%export` declaration: user-given
+||| `exportedCName`, native C types, boxes arguments, calls the always-Boxed
+||| entry point, unboxes the result. Never `static` (only external C calls
+||| it). A boxed return is dropped after `extractValue`, unlike `main`'s
+||| footer, because this can be called many times. `CFInteger` arguments and
+||| returns and `CFString` returns are special-cased; see
+||| `rc2/doc/export-support.md`.
 export
 emitExportWrapper : {auto c : Ref Ctxt Defs}
                   -> {auto oft : Ref OutfileText Output}
@@ -563,42 +503,16 @@ emitExportWrapper n exportedCName fargs ret = do
     argPack CFInteger i = "(IDRIS2RC2_Value *)idris2rc2_mkIntegerFromMpz(p_\{show i})"
     argPack ty i = "(IDRIS2RC2_Value *)" ++ packCFType ty ("p_" ++ show i)
 
-||| A `%foreign` declaration rc2 can actually implement: either
-||| diverted to rc2's own native `fastPack`/`fastConcat` replacement
-||| (`fastPackFixedReplacement`, regardless of what its own `ccs` says
-||| -- rc2 supplies a native body either way) or carrying a calling
-||| convention `parseForeign` actually recognizes (`"CExpr:..."`/`"C:..."`/
-||| `"RefC:..."`/`"RC2:..."`). A declaration with neither -- e.g.
-||| `Prelude.IO.prim__threadWait`'s `%foreign "scheme:blodwen-thread-wait"`
-||| only, no C-family convention at all since only Chez ever needed one
-||| -- is a hard whole-program compile error today
-||| (`collectDeclarations`'s own `MkRCForeign` case), unreachable in
-||| practice since `DeadCode.pruneDeadDefs` already removes an unused
-||| declaration like this before `collectDeclarations` ever sees it --
-||| deliberately kept as a hard, immediately-attributable error for
-||| whole-program mode (naming the exact Idris function) rather than
-||| softened into a link-time failure too: if it's ever genuinely
-||| reachable there, something in the program truly calls a function
-||| rc2 has no way to implement, and that's worth surfacing immediately
-||| and unambiguously, not as a mystery "undefined reference" to a
-||| mangled C name. Incremental mode, in contrast, deliberately never
-||| runs `DeadCode` at all (see rc2/doc/incremental-compile.md's "What
-||| actually needs to change") -- every module's *entire* `toIR`, used
-||| or not, real convention or not, reaches `collectDeclarations`
-||| regardless of whether anything anywhere ever actually calls it, so
-||| the same hard error would trip on every unused-in-this-module
-||| declaration like this one across the whole standard library. Only
-||| there (`dropUnimplementableForeign = True`, `Compiler.RC2.RC2`'s
-||| own `incCompile`) is a declaration like this dropped from `defs`
-||| silently instead, before this module owns anything to declare --
-||| see rc2/doc/incremental-compile.md's "Bugs found while implementing"
-||| #3 for the full reasoning and the deliberate whole-program/
-||| incremental split. Any real caller (if one exists) still gets a
-||| plain `extern` prototype via `Compiler.RC2.Emit.ExternRefs.externalFunctionRefsD`, since a
-||| dropped name is indistinguishable from an ordinary externally-
-||| defined one at that point -- the failure becomes a link-time
-||| "undefined reference" there instead of either a compile-time stop
-||| or a runtime crash.
+||| True for a `%foreign` rc2 can implement: diverted to the native
+||| fastPack/fastConcat replacement, or carrying a convention `parseForeign`
+||| recognizes (`CExpr:`/`C:`/`RefC:`/`RC2:`). Otherwise whole-program mode
+||| keeps a hard compile error (a reachable one means the program calls
+||| something rc2 cannot implement; a link-time "undefined reference" would
+||| hide that). Incremental mode (`dropUnimplementableForeign = True`) drops
+||| it silently: it never runs `DeadCode`, so every module's whole `toIR`
+||| reaches here. A caller still gets an `extern` prototype
+||| (`ExternRefs.externalFunctionRefsD`), so the failure moves to link time.
+||| See `rc2/doc/incremental-compile.md` "Bugs found while implementing" #3.
 export
 hasUsableForeignImpl : (Name, RCDef) -> Bool
 hasUsableForeignImpl (n, MkRCForeign ccs fargs ret) =

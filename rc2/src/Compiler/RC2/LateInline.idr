@@ -483,24 +483,12 @@ inlineInto defOf eligible self = go empty []
 -- Whole-program entry point
 ------------------------------------------------------------------------
 
-||| One round: drop what is unreachable from `roots`
-||| (`pruneDeadDefsCached`), then splice every single-caller callee
-||| (`analyse`'s `eligible`, computed on the pruned program) into its one
-||| call site, callees before callers (`processOrder`; see the doc's
-||| "Eligibility -- and why it doubles as the profitability gate"). The
-||| `Bool` is `False` when `toProcess` (below) is empty; pruning
-||| alone does not count, because `analyse` already ran on the pruned
-||| program, so the next round would see the same program.
-|||
-||| Pruning first lets a callee whose other call site sat in dead code
-||| count as single-caller (`rc2/doc/inlining.md`, "Iterated to a
-||| fixpoint"). It does not replace the `pruneDeadDefs` after `DualABI`,
-||| which removes what that pass leaves unused.
-|||
-||| `prev`/`dirty`: see `analyse`. Only `toProcess`, the names with a
-||| callee that will actually be spliced, are walked: `carried.info`
-||| answers that with a lookup per callee, far cheaper than rebuilding
-||| every body.
+||| One round: prune what is unreachable from `roots`, then splice every
+||| single-caller callee into its call site, callees before callers (see
+||| rc2/doc/inlining.md, "Eligibility -- and why it doubles as the
+||| profitability gate" and "Iterated to a fixpoint"). The `Bool` is `False`
+||| when nothing was spliced; pruning alone doesn't count, since the next
+||| round would see the same program. `prev`/`dirty`: see `analyse`.
 |||
 ||| The `logTime`s wrap `pure $ <computation>`, not a `let`: a `let` runs
 ||| before the timer starts and reports nothing.

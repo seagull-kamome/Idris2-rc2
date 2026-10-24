@@ -139,17 +139,9 @@ resolveReuse nested imm (RConCase fc sc alts mDef) =
             erased = isNullCon ci || null args
             (dropped, inner) = peelDrop body1
         in if not erased && elem sc dropped && contains name (usedConstructorsR inner)
-              then let -- A dead offer (nothing claimed it anywhere)
-                       -- keeps its branch -- the unique path genuinely
-                       -- avoids dup/drop-ing the surviving fields, and
-                       -- collapsing it to the shared path unconditionally
-                       -- would *add* refcount traffic. What it
-                       -- doesn't need is `tryConsume`'s own
-                       -- `RReleaseReuse` on every leaf path: release it
-                       -- immediately instead, so the shell goes back to
-                       -- the allocator at once rather than at whichever
-                       -- leaf runs, and `reuseVarName sc`'s own C local
-                       -- stops spanning the whole body.
+              then let
+                       -- Dead offer: released up front, branch kept
+                       -- (rc2/doc/reuse-analysis.md, "a dead offer releases up front").
                        inner' = case tryConsume nested name sc inner of
                                      (True, consumed) => consumed
                                      (False, _) => RReleaseReuse emptyFC sc inner
@@ -157,24 +149,13 @@ resolveReuse nested imm (RConCase fc sc alts mDef) =
                        -- An always-unboxed field (`typedConstScrutinees`) needs no
                        -- dup/drop on either path: left out of the three lists below.
                        conArgsRC = filter (\l => not (contains l imm)) (map RCLoc args)
-                       -- Surviving destructured fields need their own
-                       -- dup on the "turned out shared" path; fields
-                       -- already in `dropped'` ride `sc`'s own
-                       -- recursive drop for free instead.
+                       -- See rc2/doc/reuse-analysis.md, "dropOnUnique".
                        dupOnShared = conArgsRC \\ dropped'
                        outerDrop = dropped' \\ map RCLoc args
-                       -- Never-referenced destructured fields: free on
-                       -- the not-unique path (sc's own recursive
-                       -- drop), but need an explicit drop on the
-                       -- unique path, where sc itself is never dropped
-                       -- (Emit/Util.idr's emitReuseOffer).
                        dropOnUnique = conArgsRC \\ dupOnShared
                    in MkRConAlt name ci tag args
                         (rewrapDrop outerDrop (RReuseOffer emptyFC sc dupOnShared dropOnUnique inner'))
               else let conArgsRC = filter (\l => not (contains l imm)) (map RCLoc args)
-                       -- Same "destructured via aliasing" rule as
-                       -- `dupOnShared` above, just with no reuse offer
-                       -- to carry it.
                        dupOnSurvive = conArgsRC \\ dropped
                        outerDrop = dropped \\ map RCLoc args
                    in MkRConAlt name ci tag args

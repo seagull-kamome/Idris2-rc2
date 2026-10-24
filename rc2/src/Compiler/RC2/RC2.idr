@@ -100,27 +100,9 @@ applyReuse nested fc (MkRCError body) = MkRCError (resolveReuse nested (immOf fc
 applyReuse _ _ d@(MkRCCon _ _ _) = d
 applyReuse _ _ d@(MkRCForeign _ _ _) = d
 
-||| Iteration cap for `foldConstProgram`'s own whole-program fixpoint
-||| loop: monotonicity (a CAF only ever transitions from "not yet known
-||| foldable" to "foldable", never back) means the loop would naturally
-||| halt on its own once `CafTable` stops growing, bounded by the total
-||| number of 0-arg top-level definitions in the program -- but a fixed
-||| cap on top guards against a pathological input still taking
-||| unboundedly many iterations to reach that point. Hitting the cap
-||| only leaves some CAFs un-inlined across a call boundary (a missed
-||| optimisation), never an incorrect fold -- see Test76's own module
-||| note for the mutual-recursion case this exists for.
-|||
-||| Was 4, GHC's own `-fmax-simplifier-iterations` default. Raised to 8
-||| because the `round n/m` log this loop now emits showed a real build
-||| (`idris2-lsp`) running straight into the old cap with the CAF table
-||| still growing at the last round -- the cap, not convergence, was
-||| what stopped it. At 8 the same build converges on round 5 (table
-||| 0 -> 925 -> 1006 -> 1012 -> 1014, then steady), for two more folded
-||| CAFs: the `Integral`/`Ord` dictionaries behind `Core.TTC.fromBuf`/
-||| `toBuf` and `Prelude.Types.rangeFrom`/`rangeFromTo`, each now a
-||| file-scope constant at its call site instead of a call. Round 5
-||| costs about a tenth of a second on that build.
+||| Iteration cap for `foldConstProgram`'s fixpoint loop. Hitting it only
+||| leaves some CAFs un-inlined (a missed optimisation), never an incorrect
+||| fold. Why 8 and not 4: rc2/doc/const-caf-fold.md, "CAF boundary crossing".
 maxConstFoldIterations : Nat
 maxConstFoldIterations = 8
 
@@ -174,30 +156,13 @@ rcSizeConAlt (MkRConAlt _ _ _ _ body) = rcSizeOf body
 rcSizeConstAlt (MkRConstAlt _ body) = rcSizeOf body
 
 ||| Runs `Compiler.RC2.ConstFold.foldConstDef` over every definition in
-||| `defs0` (Phase 1 output, pre-`ConstFold`, from
-||| `Compiler.RC2.RC.normalizeProgram`),
-||| rebuilding `CafTable` after each pass via `cafValueOf` and looping
-||| again as long as the table's own key count is still growing (a CAF
-||| newly proven foldable this round might be exactly what unblocks
-||| another CAF -- or an ordinary `RAppName` call site -- next round),
-||| up to `maxConstFoldIterations`.
-||| Each round is individually `logTime`d at the finer `--timing 3`
-||| level (same coarser/finer split the "Loop conversion"/"Loop
-||| conversion (apply)" pair already uses), labelled `round n/m` against
-||| `maxConstFoldIterations` so the log says at a glance whether the
-||| loop converged on its own or ran into the cap -- `n` reaching `m`
-||| means the cap bound it, anything less means `count' == count` fired.
-||| The carried-in CAF count rides along on the same label, since that
-||| is the one quantity the loop's own termination test looks at: it is
-||| the previous round's own result, so it is already known when the
-||| label is built.
-|||
-||| Per-round *times* are only indicative: `foldConstDef` is forced no
-||| further than `rebuildTable`'s own `cafValueOf` demands, so some of
-||| each round's real cost lands wherever the result is finally forced
-||| (the same laziness caveat `Compiler.RC2.LateInline.applyLateInline`
-||| records for its own rounds). The round *count* is exact regardless,
-||| which is what the cap question actually needs.
+||| `defs0` (Phase 1 output from `Compiler.RC2.RC.normalizeProgram`),
+||| rebuilding `CafTable` after each pass and looping while its key count
+||| still grows, up to `maxConstFoldIterations`; see
+||| rc2/doc/const-caf-fold.md. Each round is `logTime`d at level 3 as
+||| `round n/m` (`n` reaching `m` means the cap bound it). Per-round times
+||| are only indicative (laziness; cf. `Compiler.RC2.LateInline.applyLateInline`),
+||| the round count is exact.
 |||
 ||| `knownCons`: `False` under `--directive noknowncon`, turning off
 ||| `ConstFold`'s known-constructor fold here (the clones
@@ -980,44 +945,12 @@ incCompile c s sourceFile = do
          (_, namedInl) <- inlineNamed disabledStages Nothing Nothing (namedDefs cdata)
          (_, namedIn) <- raiseNamed disabledStages Nothing namedInl
          (defs, _) <- lowerProgram disabledStages True [] Nothing namedIn
-         -- `Main.main`'s own *compiled* arity isn't a fixed 0-or-1 --
-         -- observed both across two small test programs (a bare
-         -- `putStrLn`: arity 1, a real `%World` token; a multi-
-         -- statement `do` block calling `sort`/`SortedMap` operations:
-         -- arity 0, folded to a CAF) -- so `directEntryPoint`'s own
-         -- call expression is built from whatever `defs` (after the
-         -- very `toRCDefs` call above, so post-ConstFold/-Inline) says
-         -- `Main.main`'s real `MkRCFun` arity actually is, never
-         -- hardcoded. `__mainExpression_0` is never a member of any
-         -- module's own `toIR` at all (`Emit.idr`'s `directEntryPoint`
-         -- doc comment has the full story on why the Main module's own
-         -- footer must call `Main.main` directly instead), so
-         -- `Nothing` here would be a straight undefined-reference bug,
-         -- not a graceful fallback -- hence the `assert_total`-style
-         -- `InternalError` (not a quiet `Nothing`) if `Main.main`
-         -- somehow isn't a `MkRCFun` in `defs` at all.
-         --
-         -- Arity 0 is *not* "already a ready-to-run action, just call
-         -- it" -- confirmed wrong the hard way (a `Hello2.idr` with
-         -- pure `let`-bindings ahead of its own first real IO action
-         -- built a valid executable that silently did nothing at all:
-         -- `--directive dumprcexpr` showed `Main.main`'s own body
-         -- building its own `let`-bound values, then ending in
-         -- `partial Main.{main:31} missing=1 [v0]` -- i.e. calling
-         -- `Main_main()` with no args only *builds a closure* still
-         -- missing the `%World` argument, exactly the same
-         -- under-application `RUnderApp` compiles to anywhere else; it
-         -- never runs anything on its own). So arity 0 needs the exact
-         -- same closure-`apply` step whole-program mode's own
-         -- `PrimIO.unsafeCreateWorld` body (`apply v0 v1`) already
-         -- does for this identical reason -- `idris2rc2_applyClosure`,
-         -- the general-purpose runtime function every other
-         -- under-applied closure in the entire program is *always*
-         -- fed through, not something specific to this footer. Arity
-         -- >=1 needs no such thing: `Main.main` itself already *is*
-         -- the real C function taking the `%World` token as one of
-         -- its own genuine parameters, so a direct call already does
-         -- the equivalent of that same `apply` for free.
+         -- `Main.main`'s compiled arity is 0 or 1 (a CAF still waiting for the
+         -- world, vs. a function taking it), so the entry call is built from
+         -- the real `MkRCFun` arity, never hardcoded. Arity 0 must go through
+         -- `idris2rc2_applyClosure`: a bare call only builds the closure and
+         -- runs nothing. See rc2/doc/incremental-compile.md, "Bugs found while
+         -- implementing" item 4.
          let mainMainName = NS mainNS (UN (Basic "main"))
          directEntryPoint <- the (Core (Maybe String)) $
              if noMain

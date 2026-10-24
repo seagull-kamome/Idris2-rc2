@@ -44,31 +44,14 @@ untaggedConstructorRefsD : RCDef -> SortedSet Name
 untaggedConstructorRefsD =
     foldRCNamesD $ { onCon := \n, tag => maybe (singleton n) (const empty) tag } noRCNames
 
-||| Every function `Name` a def's own generated C references but might
-||| not itself define -- a direct call (`RAppName`), a partial-
-||| application closure build (`RUnderApp`), or a `ConstFold`-folded
-||| zero-capture closure (`RCConstClosure`). Same story as
-||| `untaggedConstructorRefsD` above: a no-op set in whole-program mode
-||| (`collectDeclarations` already forward-declares every one of these
-||| from that very same `defs` list), only populated once `defs` is a
-||| single module's own subset: e.g. `Prelude.Num` calls `Prelude.EqOrd`'s
-||| own comparison functions directly by name, with nothing declaring
-||| them in `Prelude.Num`'s own translation unit.
-|||
-||| An `RAppName` reference carries the exact arity its saturated call
-||| site uses (the callee's true arity), so the wrapper is declared
-||| `IDRIS2RC2_Value *(...N boxed pointers...)`. A name referenced only
-||| as a function-pointer *value* (`RUnderApp`/`RCConstClosure`) gets
-||| arity 0 -- harmless, since such a reference is always consumed
-||| through an explicit erased-signature cast anyway
-||| (`Emit.Util`'s `(IDRIS2RC2_Value *(*)())` closure-struct field).
-||| A bare K&R `()` declaration for every case was tried first and
-||| broke on this toolchain's C-standard default (bare `()` == `(void)`,
-||| a real C23 change): a 2-argument call to a name declared that way is
-||| a hard "too many arguments" error. `generateCSourceFile`'s own call
-||| site resolves the two arities for one name with `max`, so the real
-||| arity always wins over the placeholder 0 regardless of sighting
-||| order.
+||| Every function `Name` a def's C references but might not define:
+||| `RAppName` calls, `RUnderApp` closure builds, `RCConstClosure`s. A no-op
+||| set in whole-program mode; matters once `defs` is one module's subset.
+||| An `RAppName` carries the callee's true arity; a closure-value reference
+||| gets 0 (consumed through an erased-signature cast). Why not bare K&R `()`
+||| for all: C23 makes it `(void)`, so a 2-argument call is a hard error.
+||| `generateCSourceFile` merges arities per name with `max`. See
+||| `rc2/doc/incremental-compile.md`.
 export
 externalFunctionRefsD : RCDef -> List (Name, Nat)
 externalFunctionRefsD =

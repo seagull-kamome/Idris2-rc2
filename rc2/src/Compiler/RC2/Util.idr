@@ -95,30 +95,11 @@ export
 freshId : {auto r : Ref FreshId Int} -> Core Int
 freshId = do i <- get FreshId; put FreshId (i + 1); pure i
 
-||| A single monotonic counter for every `RCLoc`/argument variable id
-||| in the whole program, `Ref`-keyed by the empty phantom `VarId`.
-||| `Compiler.RC2.RC2.toRCDefs` allocates one with `newRef VarId 1`
-||| (not `0` -- see below) right at the top (before
-||| `Compiler.RC2.RC.normalizeDef` ever runs) and every later stage
-||| that introduces a *new* variable id --
-||| `Compiler.RC2.Loop`/`Compiler.RC2.ConAltNative`'s own shadow ids,
-||| `Compiler.RC2.MutualLoop`'s merged-function tag/slot ids,
-||| `Compiler.RC2.SpecClosure`'s clone captured-parameter ids -- pulls
-||| from the same counter instead of scanning its own definition's
-||| body for the current highest-used id and counting up locally. Since
-||| every id, everywhere in the program, comes from this one source,
-||| freshly-pulled ids can never collide with any id already in use,
-||| anywhere -- no scan needed. Scoped to one `toRCDefs` call (one
-||| whole-program compile, or one incremental module compile -- see
-||| `Compiler.RC2.Emit`'s own note on `FreshId` for why that scope is
-||| already right: a variable id never needs to be unique *across*
-||| separate incremental module compiles, only within the one C
-||| translation unit each produces). Starting at `1` reserves `0`
-||| program-wide as never a genuine `freshVarId` result -- exactly what
-||| lets `Compiler.RC2.DeadVars`, the pipeline's very last `RCExp`
-||| rewrite before `Compiler.RC2.Emit`, use `0` as its own "no real
-||| variable bound here" marker with no risk of colliding with an
-||| actual variable somewhere.
+||| A single monotonic counter for every `RCLoc`/argument variable id in the
+||| whole program (one `toRCDefs` call), so fresh ids never collide and no
+||| body scan is needed. Starts at `1` (`newRef VarId 1`): `0` is reserved as
+||| `Compiler.RC2.DeadVars`' "no real variable" marker; see
+||| rc2/doc/dead-vars.md.
 export
 data VarId : Type where
 
