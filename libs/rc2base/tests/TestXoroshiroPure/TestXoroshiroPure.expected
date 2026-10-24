@@ -1,0 +1,29 @@
+--- Testing the pure Gen ---
+[16756476715040848931, 6098722386207918385, 17541662578032534341, 3771828211556203317, 6324094075403496319]
+[683697760, 1931271236, 1649809369, 4280289826, 1140514084]
+True
+True
+True
+"jump128: True"
+"jump128 after steps: True"
+"longJump128: True"
+"longJump128 seed 0: True"
+"jumpCE128: True"
+"jumpCE128 e=0: True"
+"jumpN128: True"
+"jumpN128 n1=0: True"
+"jump64: True"
+"jump64 after steps: True"
+"longJump64: True"
+"longJump64 seed 0: True"
+"jumpCE64: True"
+"jumpCE64 e=0: True"
+"jumpN64: True"
+"jumpN64 top bit: True"
+True
+True
+True
+True
+True
+True
+--- Tests finished ---
