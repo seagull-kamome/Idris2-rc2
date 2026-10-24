@@ -1001,13 +1001,6 @@ isInvariantExpr variant (RFree _ _ cont) = isInvariantExpr variant cont
 isInvariantExpr variant (RReleaseReuse _ _ cont) = isInvariantExpr variant cont
 isInvariantExpr _ _ = False
 
-||| Whether `rep` is a native representation (`RNative`/`RInlineNative`)
-||| -- see `hoistInvariantPrefix`'s own doc comment for why only these
-||| are safe to hoist.
-isNativeRep : Rep -> Bool
-isNativeRep RBoxed = False
-isNativeRep _ = True
-
 ||| Pulls every loop-invariant `RLet` binding out of `e` -- the
 ||| straight-line chain of `RLet`s (optionally interleaved with
 ||| non-branching ownership wrappers), recursing into *every* arm of an

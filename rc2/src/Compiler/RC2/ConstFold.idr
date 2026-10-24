@@ -14,6 +14,7 @@ module Compiler.RC2.ConstFold
 
 import Compiler.RC2.RCExp
 import Compiler.RC2.Types
+import Compiler.RC2.Util
 
 import Core.CompileExpr
 import Core.FC
@@ -538,7 +539,7 @@ foldConst caf env (RConCase fc sc alts mDef) =
          -- takes whichever of their alternatives the case has. Left as a
          -- case, it would still name a local whose let this pass drops.
          RCNull =>
-             case Data.List.find (\(MkRConAlt _ ci _ _ _) => ci == NIL || ci == NOTHING || ci == ZERO || ci == UNIT) alts of
+             case Data.List.find (\(MkRConAlt _ ci _ _ _) => isNullCon ci) alts of
                   Just (MkRConAlt _ _ _ _ body) => foldConst caf env body
                   Nothing =>
                       maybe (RCrash fc "[rc2] ConstFold: RConCase NULL scrutinee matched no alt and had no default")

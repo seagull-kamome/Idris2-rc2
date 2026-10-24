@@ -249,7 +249,7 @@ reannotateFieldOwnership fid owned (RConCase fc sc alts mDef) =
     -- owns `fid` and must drop it itself. See `doc/con-alt-native.md`'s
     -- "Bugs found and fixed" #4.
     let alts' = map (\(MkRConAlt n ci tag as body) =>
-                        let erased = ci == NIL || ci == NOTHING || ci == ZERO || ci == UNIT
+                        let erased = isNullCon ci
                             ownedHere = if erased && sc == RCLoc fid then False else owned
                         in MkRConAlt n ci tag as (finalizeBranch fid ownedHere body)) alts
         mDef' = map (finalizeBranch fid owned) mDef

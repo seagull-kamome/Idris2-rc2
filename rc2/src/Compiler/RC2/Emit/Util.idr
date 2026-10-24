@@ -1586,7 +1586,7 @@ retAltCondExpr _ (MkRConAlt name _ Nothing _ _) =
 export
 conAltCondExpr : String -> RConAlt -> Core String
 conAltCondExpr sc' (MkRConAlt name coninfo tag args body) = do
-    let erased = coninfo == NIL || coninfo == NOTHING || coninfo == ZERO || coninfo == UNIT
+    let erased = isNullCon coninfo
     pure $ if erased then "NULL == \{sc'} /* \{show name} \{show coninfo} */"
            else if coninfo == CONS || coninfo == JUST || coninfo == SUCC
            then "NULL != \{sc'} /* \{show name} \{show coninfo} */"

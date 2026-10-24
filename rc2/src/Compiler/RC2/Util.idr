@@ -158,3 +158,37 @@ directiveText directiveList =
     (if null directiveList
         then "(none)"
         else showSep " " (map ("--directive " ++) (nub directiveList)))
+
+||| Whether `ci` is one of the four nullary constructors that live as C `NULL`.
+export
+isNullCon : ConInfo -> Bool
+isNullCon ci = ci == NIL || ci == NOTHING || ci == ZERO || ci == UNIT
+
+||| Whether a local can hold a refcounted heap value: only a variable can.
+||| Every other form is a constant, `NULL`, or an immortal static.
+export
+isHeapLocal : RCLocal -> Bool
+isHeapLocal (RCLoc _) = True
+isHeapLocal _ = False
+
+||| Whether `rep` is a native representation (`RNative`/`RInlineNative`).
+export
+isNativeRep : Rep -> Bool
+isNativeRep RBoxed = False
+isNativeRep _ = True
+
+||| Constructors whose cells are real heap objects with an `args` array.
+export
+heapCon : ConInfo -> Bool
+heapCon DATACON = True
+heapCon CONS = True
+heapCon JUST = True
+heapCon RECORD = True
+heapCon _ = False
+
+||| `ret`'s own peeled type -- `CFIORes t`'s payload `t`, or `ret`
+||| itself for a non-IO (pure) `%foreign` declaration.
+export
+peelIORes : CFType -> CFType
+peelIORes (CFIORes t) = t
+peelIORes t = t

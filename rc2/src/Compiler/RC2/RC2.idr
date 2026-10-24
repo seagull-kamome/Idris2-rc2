@@ -569,7 +569,7 @@ collectLazyCAFs = SortedSet.fromList . mapMaybe isLazyCAF
 ||| String, and any Struct (by pointer, same marshalling as Ptr --
 ||| EmitUtil's own cTypeOfCFType/extractValue/packCFType CFStruct cases
 ||| already alias CFPtr's verbatim) -- plus the PrimIO IO/IORes wrapper
-||| (peeled to CFIORes so Compiler.RC2.DualABI's own peelIORes applies
+||| (peeled to CFIORes so Compiler.RC2.Util's own peelIORes applies
 ||| uniformly afterward). Still nothing for Buffer/ForeignObj/CFUser/
 ||| CFFun -- deliberately out of %export's own scope (Buffer is a
 ||| known, separately-tracked gap; ForeignObj/CFUser/CFFun have no

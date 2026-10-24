@@ -41,13 +41,6 @@ record Extender where
   fields : List RCLocal
   hole : Nat
 
-heapCon : ConInfo -> Bool
-heapCon DATACON = True
-heapCon CONS = True
-heapCon JUST = True
-heapCon RECORD = True
-heapCon _ = False
-
 extenderOf : SortedSet Name -> RCDef -> Maybe Extender
 extenderOf newtypes (MkRCFun params _ False
                       (RLet _ cell _ (RCon fc n ci tag fields Nothing)

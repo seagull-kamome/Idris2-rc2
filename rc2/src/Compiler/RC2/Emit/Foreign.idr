@@ -4,7 +4,7 @@
 ||| `fastPack`/`fastConcat` diversion, the missing-implementation stub),
 ||| turns a validated `%export` declaration into its externally-callable
 ||| C entry point, and the small shared marshalling primitives
-||| (`ffiRawCall`, `resolveForeignTarget`, `peelIORes`, the `CFChar`
+||| (`ffiRawCall`, `resolveForeignTarget`, the `CFChar`
 ||| native-cast helpers) that `Compiler.RC2.Emit`'s own inline-FFI call
 ||| lowering (`emitAppFFIInlineInto`, `emitNativeValue`'s `RAppFFIInline`
 ||| case) also reaches for. Split out of `Emit.idr` to keep that module
@@ -63,18 +63,6 @@ nativeCharArgExpr vn = "(char)" ++ vn
 export
 nativeCharRetExpr : String -> String
 nativeCharRetExpr retVar = "(uint32_t)(unsigned char)" ++ retVar
-
-||| `ret`'s own peeled type -- `CFIORes t`'s payload `t`, or `ret`
-||| itself for a non-IO (pure) `%foreign` declaration. Mirrors
-||| `Compiler.RC2.DualABI`'s own `peelIORes` -- kept as its own tiny
-||| re-derivation here rather than shared across modules, same
-||| reasoning as `RAppFFIInline`'s own doc comment in RCExp.idr gives
-||| for not storing this on the IR node itself: cheap enough to
-||| re-derive per use, including per module.
-export
-peelIORes : CFType -> CFType
-peelIORes (CFIORes t) = t
-peelIORes t = t
 
 ||| What a `%foreign` call site calls: a C function by name, or a
 ||| `CExpr:` template (`Compiler.RC2.ForeignSpec`).

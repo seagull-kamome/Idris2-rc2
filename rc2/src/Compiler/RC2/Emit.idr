@@ -1171,7 +1171,7 @@ emitRC sink (RApp fc _ closure (x ::: xs@(_ :: _))) InTailPosition = do
 emitRC sink (RLet fc var rep value body) _ = unreachableInEmitRC "RLet"
 
 emitRC sink (RCon fc n coninfo tag args reuseFrom) _ = do
-    if coninfo == NIL || coninfo == NOTHING || coninfo == ZERO || coninfo == UNIT
+    if isNullCon coninfo
         then finalizeSink fc sink "(NULL /* \{show n} */)"
         else do
             checkConLayout n (length args) tag

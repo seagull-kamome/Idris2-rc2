@@ -9,6 +9,7 @@ module Compiler.RC2.ForeignSpec
 -- This module was licensed by BSD3.
 
 import Compiler.CompileExpr
+import Compiler.RC2.Util
 
 import Core.Context
 import Core.Core
@@ -239,7 +240,7 @@ validateForeign n ccs fargs ret =
                            Just k => bad "placeholder $\{show k} is out of range (the declaration has \{show nargs} argument(s))"
                            Nothing => pure ()
                       let hasResult = any isResult parts
-                      if isInteger (peel ret)
+                      if isInteger (peelIORes ret)
                          then unless hasResult $
                                   bad "an Integer result needs the out-parameter placeholder '$r' (e.g. \"CExpr:mpz_add($r, $1, $2)\"); a function returning a value, such as mpz_get_si, must be declared with an Int-typed result and wrapped in Idris"
                          else when hasResult $
@@ -265,10 +266,6 @@ validateForeign n ccs fargs ret =
     isInteger : CFType -> Bool
     isInteger CFInteger = True
     isInteger _ = False
-
-    peel : CFType -> CFType
-    peel (CFIORes t) = t
-    peel t = t
 
 ||| Substitute the already-marshalled argument expressions `args`
 ||| (1-based `$N`) into a template, each wrapped in parentheses.
