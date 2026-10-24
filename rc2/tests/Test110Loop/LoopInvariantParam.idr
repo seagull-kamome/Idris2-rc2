@@ -111,7 +111,31 @@ sumWithArmLocalBonusNat limit (S k) acc =
   let bonus = limit * 2
   in sumWithArmLocalBonusNat limit k (acc + bonus)
 
+-- An unguarded division in a loop arm must not be hoisted ahead of the
+-- `y == 0` exit that protects it (`prim__div_Int` traps on 0).
+partial
+sumDivGuarded : Int -> Int -> Int -> Int -> Int
+sumDivGuarded x y acc n =
+  if n >= 3 then acc
+  else if y == 0 then acc
+  else let q = prim__div_Int x y in sumDivGuarded x y (acc + q * q) (n + 1)
+
+partial
+sumModGuarded : Int -> Int -> Int -> Int -> Int
+sumModGuarded x y acc n =
+  if n >= 3 then acc
+  else if y == 0 then acc
+  else let r = prim__mod_Int x y in sumModGuarded x y (acc + r * r) (n + 1)
+
+%noinline
+partial
+sumDivLiteral : Int -> Int -> Int -> Int
+sumDivLiteral x acc n =
+  if n >= 3 then acc
+  else let q = prim__div_Int x 7 in sumDivLiteral x (acc + q * q) (n + 1)
+
 export
+partial
 run : IO ()
 run = do
   printLn (sumWithTag "ctx" 1000 0 0)
@@ -123,3 +147,8 @@ run = do
        MkCtx s e => putStrLn (s ++ show e)
   printLn (sumWithArmLocalBonus 500 0 0)
   printLn (sumWithArmLocalBonusNat 1000 5 0)
+  printLn (sumDivGuarded 100 5 0 0)
+  printLn (sumDivGuarded 100 0 0 0)
+  printLn (sumModGuarded 100 7 0 0)
+  printLn (sumModGuarded 100 0 0 0)
+  printLn (sumDivLiteral 100 0 0)

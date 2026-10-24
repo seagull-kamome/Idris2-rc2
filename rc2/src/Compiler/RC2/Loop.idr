@@ -939,6 +939,33 @@ noneVariant : SortedSet Int -> RCLocal -> Bool
 noneVariant variant (RCLoc i) = not (contains i variant)
 noneVariant _ _ = True
 
+||| Whether running the operation unconditionally, ahead of the loop,
+||| is safe. An integer `Div`/`Mod` qualifies only with a literal
+||| divisor that can neither trap (zero) nor overflow (`-1`, as in
+||| `INT_MIN / -1`): hoisting runs it ahead of the guard that makes a
+||| variable divisor safe. `Crash` never qualifies. Double division and
+||| every other operation always do.
+hoistableOp : PrimFn n -> List RCLocal -> Bool
+hoistableOp (Div _) [_, RCConst c] = literalOk c
+  where
+    literalOk : Constant -> Bool
+    literalOk (I x) = x /= 0 && x /= -1
+    literalOk (I8 x) = x /= 0 && x /= -1
+    literalOk (I16 x) = x /= 0 && x /= -1
+    literalOk (I32 x) = x /= 0 && x /= -1
+    literalOk (I64 x) = x /= 0 && x /= -1
+    literalOk (BI x) = x /= 0 && x /= -1
+    literalOk (B8 x) = x /= 0
+    literalOk (B16 x) = x /= 0
+    literalOk (B32 x) = x /= 0
+    literalOk (B64 x) = x /= 0
+    literalOk _ = False
+hoistableOp (Mod ty) [x, d] = hoistableOp (Div ty) [x, d]
+hoistableOp (Div DoubleType) _ = True
+hoistableOp (Div _) _ = False
+hoistableOp Crash _ = False
+hoistableOp _ _ = True
+
 ||| Whether `e` -- an `RLet`'s own `value`, after peeling the same
 ||| leading `RDup`/`RDrop`/`RFree`/`RReleaseReuse` wrapper shapes
 ||| `opNativeUsesThrough` already peels -- is an `ROp`/`RCon` reading
@@ -946,8 +973,13 @@ noneVariant _ _ = True
 ||| of `variant`, see `noneVariant`). Both are the *only* two `RCExp`
 ||| shapes this pass ever hoists (see `hoistInvariantPrefix`'s own doc
 ||| comment for why nothing else qualifies), and even then only under
-||| three further, deliberately conservative exclusions:
+||| five further, deliberately conservative exclusions:
 |||
+||| - an `ROp` with a non-empty `postDrop` stays put -- the drop would
+|||   run ahead of the arms that still read the operand;
+||| - a `Div`/`Mod` needs a literal divisor other than 0 and -1 (see
+|||   `hoistableOp`), or the hoisted operation can trap before the
+|||   guard that protects it;
 ||| - `ROp`'s own `lazy` field must be `Nothing` -- a `Just` marks an
 |||   operation Idris2 itself decided to keep deferred (`Lazy`/`Inf`);
 |||   hoisting would force it unconditionally, ahead of schedule,
@@ -963,11 +995,11 @@ noneVariant _ _ = True
 |||   `value`), but by `hoistInvariantPrefix`'s own caller-side guard;
 |||   documented here since it's just as essential to this function's
 |||   own soundness claim. See rc2/doc/loop-conversion.md's "Loop-
-|||   invariant expression hoisting" section, "A third exclusion, found
-|||   the hard way" for why a `RBoxed` result is unsound to hoist (a
+|||   invariant expression hoisting" section, "The native-result
+|||   exclusion, found the hard way" for why a `RBoxed` result is unsound to hoist (a
 |||   valgrind-confirmed double-free).
 isInvariantExpr : SortedSet Int -> RCExp -> Bool
-isInvariantExpr variant (ROp _ Nothing _ args _) = all (noneVariant variant) (toList args)
+isInvariantExpr variant (ROp _ Nothing fn args []) = hoistableOp fn (toList args) && all (noneVariant variant) (toList args)
 isInvariantExpr variant (RCon _ _ _ _ args Nothing) = all (noneVariant variant) args
 isInvariantExpr variant (RDup _ _ _ cont) = isInvariantExpr variant cont
 isInvariantExpr variant (RDrop _ _ cont) = isInvariantExpr variant cont
@@ -999,7 +1031,8 @@ isNativeRep _ = True
 ||| restriction below (`isNativeRep rep`): a native computation is pure
 ||| arithmetic/construction with no allocation or refcount bookkeeping
 ||| attached, so running it on iterations that never needed it costs
-||| cycles, never correctness. Entering branch arms doesn't relax the
+||| cycles, never correctness (a trapping `Div`/`Mod` is kept out by
+||| `hoistableOp`). Entering branch arms doesn't relax the
 ||| `Boxed` restriction at all -- if anything it's the reason that
 ||| restriction matters more now, not less (see below).
 |||
