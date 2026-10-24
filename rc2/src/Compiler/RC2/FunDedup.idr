@@ -168,23 +168,6 @@ isCandidate : RCDef -> Bool
 isCandidate (MkRCFun (_ :: _) _ _ body) = not (hasFatConst body)
 isCandidate _ = False
 
-||| A function with its parameters and its references, kept across rounds so
-||| that a round never walks a body it has no reason to touch.
-record Cand where
-  constructor MkCand
-  name : Name
-  def : RCDef
-  refs : SortedSet Name
-  size : Nat
-  ||| `isCandidate`, decided once: renaming names changes neither it nor the constants.
-  candidate : Bool
-
-mkCand : Name -> RCDef -> Cand
-mkCand n d@(MkRCFun _ _ _ body) = MkCand n d (refNames d) (nodeSize body) (isCandidate d)
--- Not a function (a constructor, a foreign declaration, an error body): never a candidate, but
--- an error body may call a merged function, so its references still count.
-mkCand n d = MkCand n d (refNames d) 0 False
-
 ||| The name a function's own references to itself are renamed to before
 ||| keying, so that two self-recursive twins agree.
 selfName : Name
@@ -192,6 +175,9 @@ selfName = UN (Basic "@self")
 
 ShallowKey : Type
 ShallowKey = (Nat, Nat, Int, String, List Name)
+
+noKey : ShallowKey
+noKey = (0, 0, 0, "", [])
 
 ||| A hash of the constants and constructors in `e`, in walk order (equal
 ||| bodies walk alike), so that functions differing only in a constant
@@ -216,14 +202,37 @@ leafHash e = go 7 [e]
 ||| The first-level key: what is cheap to compute and does not depend on
 ||| the numbering of locals. Equal keys are only a candidate for equal
 ||| functions.
-shallowKey : Cand -> ShallowKey
-shallowKey c =
-    case c.def of
+shallowKey : Name -> RCDef -> SortedSet Name -> Nat -> ShallowKey
+shallowKey name def refSet size =
+    case def of
          MkRCFun args r w body =>
-             let refs = map (\m => if m == c.name then selfName else m) (Prelude.toList c.refs)
+             let refs = map (\m => if m == name then selfName else m) (Prelude.toList refSet)
                  sig = joinBy "," (map (\(_, rp) => prettyRep rp) args) ++ " -> " ++ prettyRep r ++ (if w then " worker" else "")
-             in (length args, c.size, leafHash body, sig, Prelude.toList (SortedSet.fromList refs))
-         _ => (0, c.size, 0, "", [])
+             in (length args, size, leafHash body, sig, Prelude.toList (SortedSet.fromList refs))
+         _ => (0, size, 0, "", [])
+
+||| A function with its parameters and its references, kept across rounds so
+||| that a round never walks a body it has no reason to touch.
+record Cand where
+  constructor MkCand
+  name : Name
+  def : RCDef
+  refs : SortedSet Name
+  size : Nat
+  ||| `isCandidate`, decided once: renaming names changes neither it nor the constants.
+  candidate : Bool
+  ||| `shallowKey`, computed once with the rest: renaming names rebuilds the `Cand`, nothing else changes it.
+  key : ShallowKey
+
+mkCand : Name -> RCDef -> Cand
+mkCand n d@(MkRCFun _ _ _ body) =
+    let refs = refNames d
+        size = nodeSize body
+        cand = isCandidate d
+    in MkCand n d refs size cand (if cand then shallowKey n d refs size else noKey)
+-- Not a function (a constructor, a foreign declaration, an error body): never a candidate, but
+-- an error body may call a merged function, so its references still count.
+mkCand n d = MkCand n d (refNames d) 0 False noKey
 
 ------------------------------------------------------------------------
 -- Equality up to the numbering of locals
@@ -384,7 +393,7 @@ sameFun a b =
 ||| earlier one in its bucket (roots take their places first).
 redirections : SortedSet Name -> List Cand -> SortedMap Name Name
 redirections roots cands =
-    let buckets = foldl (\m, c => insertWith (++) (shallowKey c) [c] m)
+    let buckets = foldl (\m, c => insertWith (++) c.key [c] m)
                         (the (SortedMap ShallowKey (List Cand)) empty) cands
     in foldl (\acc, (_, group) => merge acc (reverse group)) empty (SortedMap.toList buckets)
   where
