@@ -53,6 +53,7 @@ main = do
   printLn (approx (Math.erfc 0.0) 1.0)
   printLn (approx (Math.tgamma 5.0) 24.0)
   printLn (approx (Math.lgamma 1.0) 0.0)
+  printLn (approx (Math.lgamma 5.0) 3.1780538303479458)
 
   -- trigonometric
   printLn (Math.sin 0.0 == 0.0)

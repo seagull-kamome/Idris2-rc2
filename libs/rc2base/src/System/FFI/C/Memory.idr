@@ -31,17 +31,17 @@ Cast (NonNullPtr a) NonNullAnyPtr where
 --
 
 %inline %foreign "CExpr:malloc($1),libc,stdlib.h"
-prim__malloc : Int -> PrimIO AnyPtr
+prim__malloc : Bits64 -> PrimIO AnyPtr
 
-%inline public export malloc : HasIO io => (size : Int) -> io (Either Errno NonNullAnyPtr)
+%inline public export malloc : HasIO io => (size : Bits64) -> io (Either Errno NonNullAnyPtr)
 malloc size = liftIO $ (primIO (prim__malloc size) >>= fromAnyPtr)
 
 
 %inline %foreign "CExpr:calloc($1, $2),libc,stdlib.h"
-prim__calloc : Int -> Int -> PrimIO AnyPtr
+prim__calloc : Bits64 -> Bits64 -> PrimIO AnyPtr
 
 %inline public export
-calloc : HasIO io => (count : Int) -> (size : Int) -> io (Either Errno NonNullAnyPtr)
+calloc : HasIO io => (count : Bits64) -> (size : Bits64) -> io (Either Errno NonNullAnyPtr)
 calloc count size = liftIO $ (primIO (prim__calloc count size) >>= fromAnyPtr)
 
 

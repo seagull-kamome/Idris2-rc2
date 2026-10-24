@@ -127,7 +127,9 @@ namespace Math
   export
   tgamma : Double -> Double
 
-  %foreign "CExpr:(lgamma($1)),libm,math.h"
+  -- Calls the reentrant lgamma_r (glibc and BSD): plain lgamma writes the
+  -- global signgam, a data race between threads. The sign is discarded.
+  %foreign "CExpr:({ int s_; lgamma_r($1, &s_); }),libm,math.h"
   export
   lgamma : Double -> Double
 
