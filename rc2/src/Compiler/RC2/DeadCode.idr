@@ -35,13 +35,17 @@ import Data.Vect
 ||| *constructor*, a different namespace from `defs`'s function-name
 ||| keys), `RExtPrim`'s `Name` (a fixed primitive whitelist), and
 ||| `RAppFFIInline` (no `Name` at all) are deliberately left out.
+|||
+||| Collected as a `List Name` (a plain append per node) and turned into a
+||| set once at the end: a `SortedSet` monoid unions at every node, which
+||| was the dominant cost of every `pruneDeadDefsCached` round.
 usedFunctionNamesD : RCDef -> SortedSet Name
-usedFunctionNamesD =
-    foldRCNamesD $ { onAppName      := \n, _ => singleton n
-                   , onAppNameRep   := singleton
-                   , onUnderApp     := singleton
-                   , onConstClosure := singleton
-                   } noRCNames
+usedFunctionNamesD d =
+    SortedSet.fromList $ foldRCNamesD {m = List Name} ({ onAppName      := \n, _ => [n]
+                                                       , onAppNameRep   := \n => [n]
+                                                       , onUnderApp     := \n => [n]
+                                                       , onConstClosure := \n => [n]
+                                                       } noRCNames) d
 
 ||| Standard worklist mark phase (`doc/dead-code-elim.md`'s "The sweep:
 ||| `pruneDeadDefs`"): `seen` starts as `roots` and grows by following
