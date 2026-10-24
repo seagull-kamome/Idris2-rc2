@@ -122,12 +122,13 @@ dCollapse x y z = if x < y then 1 else if x == y then 2 else 2
 dViaLE x y z = if compare x y /= GT then 1 else 2
 dViaGE x y z = if compare x y /= LT then 1 else 2
 
--- Branches that return -0.0 and 0.0 are not equal, whatever `==` says.
+-- Branches that return -0.0 and 0.0 are not equal, whatever `==` says. Told apart
+-- by `show`, not by `1.0 / x < 0.0`: Clang 14 folds that comparison to False.
 dSignedZero : Double -> Double -> Double
 dSignedZero x y = if x < y then 0.0 else if x == y then -0.0 else 1.0
 
 doubleRow : Double -> Double -> Double -> String
-doubleRow x y z = concatMap show [dLeA x y z, dLeB x y z, dGeA x y z, dGeB x y z, dLeSw x y z, dGeSw x y z, dNegThen x y z, dNegOps x y z, dCollapse x y z, dViaLE x y z, dViaGE x y z] ++ show (the Int (if 1.0 / dSignedZero x y < 0.0 then 1 else 0))
+doubleRow x y z = concatMap show [dLeA x y z, dLeB x y z, dGeA x y z, dGeB x y z, dLeSw x y z, dGeSw x y z, dNegThen x y z, dNegOps x y z, dCollapse x y z, dViaLE x y z, dViaGE x y z] ++ show (the Int (if show (dSignedZero x y) == "-0.0" then 1 else 0))
 
 -- Nat compares through Integer here; the shapes still have to agree with RefC.
 nLe, nGe, nNeg : Nat -> Nat -> Int

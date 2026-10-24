@@ -44,7 +44,7 @@ echo "--- FFI worker-indirection count (want: none, inline splicing only) ---"
 grep -c 'idris2rc2_ffiworker_' "$c"
 
 echo "--- FFI call-site shape (wrapper body + inlined non-tail call site + tailAbs's own inlined tail call) ---"
-grep -E '\babs\(' "$c" | strip_loc
+grep -E '\blabs\(' "$c" | strip_loc
 
 echo "--- Compiler.RC2.Loop goto conversion for sumLoop's own worker body ---"
 awk '/^int64_t idris2rc2_worker_Main_sumLoop_[0-9]+$/{n++; if (n==2) p=1} p{print} p&&/^}/{exit}' "$c" | strip_loc

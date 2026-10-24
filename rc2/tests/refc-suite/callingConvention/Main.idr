@@ -10,7 +10,7 @@ module Main
 -- Stage 4/Stage 4b), and Compiler.RC2.Loop's goto conversion
 -- (rc2/doc/loop-conversion.md).
 
-%foreign "C:abs,libc,stdlib.h"
+%foreign "C:labs,libc,stdlib.h"
 prim__abs : Int -> Int
 
 -- Dual-ABI-eligible: every position (both args, the return) is a

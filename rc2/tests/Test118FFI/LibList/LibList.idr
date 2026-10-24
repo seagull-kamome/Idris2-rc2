@@ -8,7 +8,7 @@ module Main
 -- command. Built and run by ../check.sh with `--directive dumpcc`; the stub
 -- libraries libdl and librt exist in every glibc.
 
-%foreign "CExpr:abs($1),libc;libdl; librt;,stdlib.h"
+%foreign "CExpr:labs($1),libc;libdl; librt;,stdlib.h"
 prim__abs : Int -> Int
 
 %foreign "CExpr:labs($1),libdl;libm,stdlib.h"
