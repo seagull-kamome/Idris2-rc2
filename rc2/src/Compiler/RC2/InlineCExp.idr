@@ -113,11 +113,7 @@ copy env (NmLet fc x val sc) = do
     pure $ NmLet fc x' !(copy env val) !(copy (insert x (NmLocal fc x') env) sc)
 copy env (NmApp fc g args) = NmApp fc <$> copy env g <*> traverse (copy env) args
 copy env (NmCon fc n ci t args) = NmCon fc n ci t <$> traverse (copy env) args
-copy env (NmOp fc op args) = NmOp fc op <$> traverseVect args
-  where
-    traverseVect : Vect k NamedCExp -> Core (Vect k NamedCExp)
-    traverseVect [] = pure []
-    traverseVect (a :: as) = pure $ !(copy env a) :: !(traverseVect as)
+copy env (NmOp fc op args) = NmOp fc op <$> traverseVect (copy env) args
 copy env (NmExtPrim fc p args) = NmExtPrim fc p <$> traverse (copy env) args
 copy env (NmForce fc lr t) = NmForce fc lr <$> copy env t
 copy env (NmDelay fc lr t) = NmDelay fc lr <$> copy env t
@@ -170,11 +166,7 @@ mutual
   inline elig (NmLam fc x sc) = NmLam fc x <$> inline elig sc
   inline elig (NmLet fc x val sc) = NmLet fc x <$> inline elig val <*> inline elig sc
   inline elig (NmCon fc n ci t args) = NmCon fc n ci t <$> traverse (inline elig) args
-  inline elig (NmOp fc op args) = NmOp fc op <$> traverseVect args
-    where
-      traverseVect : Vect k NamedCExp -> Core (Vect k NamedCExp)
-      traverseVect [] = pure []
-      traverseVect (a :: as) = pure $ !(inline elig a) :: !(traverseVect as)
+  inline elig (NmOp fc op args) = NmOp fc op <$> traverseVect (inline elig) args
   inline elig (NmExtPrim fc p args) = NmExtPrim fc p <$> traverse (inline elig) args
   inline elig (NmForce fc lr t) = NmForce fc lr <$> inline elig t
   inline elig (NmDelay fc lr t) = NmDelay fc lr <$> inline elig t

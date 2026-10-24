@@ -26,19 +26,6 @@ import Data.Vect
 
 %default total
 
-||| Plain recursive Vect traversal in Core, not the standard `traverse`:
-||| multiple `traverse`/`Applicative Core` candidates already in scope
-||| at most call sites make `traverse f (args : Vect n a)` fail to
-||| resolve at all ("Can't find an implementation for Applicative
-||| Core") rather than picking `Traversable (Vect n)`.
-export
-rc2traverseVect : (a -> Core b) -> Vect n a -> Core (Vect n b)
-rc2traverseVect f [] = pure []
-rc2traverseVect f (x :: xs) = do
-    x' <- f x
-    xs' <- rc2traverseVect f xs
-    pure (x' :: xs')
-
 ||| RC.idr wraps a branch/scope body in a leading `RDrop` node whenever
 ||| there are dead owned variables at its entry. Peel it off so its
 ||| drop list can be inspected/refined by a later pass instead of

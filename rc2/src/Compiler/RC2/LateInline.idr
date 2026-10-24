@@ -477,17 +477,13 @@ promotableNativeLetRep loopSlots var value body =
 ||| param `Rep`.
 spliceCall : {auto v : Ref VarId Int} -> FC -> SortedMap Int Rep -> RCDef -> List RCLocal -> Core RCExp
 spliceCall fc reps (MkRCFun calleeArgs _ _ calleeBody) actualArgs = do
-    (paramRen, wrap, promoted, ccs) <- buildSplice fc reps calleeBody (zipArgs (map fst calleeArgs) actualArgs)
+    (paramRen, wrap, promoted, ccs) <- buildSplice fc reps calleeBody (zip (map fst calleeArgs) actualArgs)
     let paramIds = SortedSet.fromList (map fst calleeArgs)
     internalRen <- freshenBoundIds (filter (\i => not (contains i paramIds)) (collectBoundIds calleeBody))
     let ren = foldl (\acc, (k, val) => insert k val acc) paramRen (SortedMap.toList internalRen)
     -- `promoted` ids are purely `RNative` (a value type is not refcounted, so
     -- nothing to reannotate), unlike `ConAltNative`'s shadows.
     pure $ wrap (resolveConstClosureApps ccs (stripOwnership promoted (renameRCExp ren calleeBody)))
-  where
-    zipArgs : List Int -> List RCLocal -> List (Int, RCLocal)
-    zipArgs (i :: is) (a :: as) = (i, a) :: zipArgs is as
-    zipArgs _ _ = []
 -- Defensive only -- `eligible` (built from `isFun` in `analyse`) never
 -- names anything but a `MkRCFun`.
 spliceCall _ _ d _ = pure $ RCrash EmptyFC "[rc2] internal: LateInline target wasn't a MkRCFun"

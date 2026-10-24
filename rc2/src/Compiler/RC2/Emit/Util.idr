@@ -705,18 +705,6 @@ maxLineLengthForComment : Nat
 maxLineLengthForComment = 60
 
 export
-lJust : (line:String) -> (fillPos:Nat) -> (filler:Char) -> String
-lJust line fillPos filler =
-    let n = length line in
-    case isLTE n fillPos of
-        (Yes prf) =>
-            let missing = minus fillPos n
-                fillBlock = pack (replicate missing filler)
-            in
-            line ++ fillBlock
-        (No _) => line
-
-export
 increaseIndentation : {auto il : Ref IndentLevel Nat} -> Core ()
 increaseIndentation = update IndentLevel S
 
@@ -743,8 +731,8 @@ emit fc line = do
     indent <- indentation
     let indentedLine = indent ++ line
     update OutfileText $ case isLTE (length indentedLine) maxLineLengthForComment of
-        (Yes _) => flip snoc (lJust indentedLine maxLineLengthForComment ' ' ++ " " ++ comment)
-        (No _)  => flip appendR [indentedLine, (lJust ""   maxLineLengthForComment ' ' ++ " " ++ comment)]
+        (Yes _) => flip snoc (padRight maxLineLengthForComment ' ' indentedLine ++ " " ++ comment)
+        (No _)  => flip appendR [indentedLine, (padRight maxLineLengthForComment ' ' "" ++ " " ++ comment)]
 
 export
 applyFunctionToVars : {auto oft : Ref OutfileText Output}
@@ -801,26 +789,7 @@ removeReuseConstructors = applyFunctionToVars "idris2rc2_releaseReuse"
 
 export
 repOfLocal : {auto r : Ref RepMap (SortedMap Int Rep)} -> RCLocal -> Core Rep
-repOfLocal RCNull = pure RBoxed
-repOfLocal RCErased = pure RBoxed
-repOfLocal RCWorld = pure RBoxed
--- RC.idr's bindOne only ever produces RCConst for a litRep-covered
--- (native-eligible) Constant -- see RCExp.idr's module note -- so this
--- is always RNative in practice; the RBoxed fallback is unreachable
--- defensive totality, not a real code path.
-repOfLocal (RCConst c) = pure $ maybe RBoxed (RNative . TPrim) (litRep c)
--- Always Boxed, same as RCNull -- its value is already a valid Value*
--- (a tagged pointer, per varName above), never a native scalar.
-repOfLocal (RCEmptyCon {}) = pure RBoxed
--- Always Boxed -- a staged static IDRIS2RC2_Constructor is a real
--- Value*, same as any other heap constructor, never a native scalar.
-repOfLocal (RCConstCon {}) = pure RBoxed
--- Always Boxed, same reasoning as RCConstCon -- a staged static
--- closure literal is a real Value*, never a native scalar.
-repOfLocal (RCConstClosure {}) = pure RBoxed
-repOfLocal (RCLoc i) = do
-    reps <- get RepMap
-    pure $ fromMaybe RBoxed (SortedMap.lookup i reps)
+repOfLocal l = (\reps => localRepIn reps l) <$> get RepMap
 
 ||| Dedup key for `ConstDef`'s own map: `I`/`I64` stage to the exact
 ||| same computed `ConstDef`/C rendering below (`genConstant`'s own

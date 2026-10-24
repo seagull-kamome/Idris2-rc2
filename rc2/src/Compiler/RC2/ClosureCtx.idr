@@ -79,9 +79,6 @@ cellFor e caps =
 -------------------------------------------------------------------------------
 -- Finding a context parameter
 
-||| One use of the parameter `c` along a body's tail spine.
-data Use = Extend Int | Apply | Pass
-
 mentions : Int -> RCExp -> Bool
 mentions c e = contains (RCLoc c) (freeLocalsR e)
 

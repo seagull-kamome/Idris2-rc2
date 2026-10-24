@@ -182,7 +182,7 @@ dropCallArgs dead = go
       go (NmLet fc x v b) = NmLet fc x <$> go v <*> go b
       go (NmApp fc g args) = NmApp fc <$> go g <*> traverse go args
       go (NmCon fc n ci t args) = NmCon fc n ci t <$> traverse go args
-      go (NmOp fc op args) = NmOp fc op <$> traverseVect args
+      go (NmOp fc op args) = NmOp fc op <$> traverseVect go args
       go (NmExtPrim fc p args) = NmExtPrim fc p <$> traverse go args
       go (NmForce fc lr t) = NmForce fc lr <$> go t
       go (NmDelay fc lr t) = NmDelay fc lr <$> go t
@@ -195,10 +195,6 @@ dropCallArgs dead = go
                     !(traverse (\(MkNConstAlt c b) => MkNConstAlt c <$> go b) alts)
                     !(traverseOpt go def)
       go e = pure e
-
-      traverseVect : Vect k NamedCExp -> Core (Vect k NamedCExp)
-      traverseVect [] = pure []
-      traverseVect (a :: as) = pure $ !(go a) :: !(traverseVect as)
 
 ||| Removes every dead parameter, and its argument at every call, in
 ||| `main` and every definition. Whole-program only: another module's
