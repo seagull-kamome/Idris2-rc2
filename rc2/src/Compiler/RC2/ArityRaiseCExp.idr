@@ -147,8 +147,10 @@ raiseTails r fc w (NmConCase cfc sc alts def) =
 raiseTails r fc w (NmConstCase cfc sc alts def) =
     NmConstCase cfc sc (map (\(MkNConstAlt c b) => MkNConstAlt c (raiseTails r fc w b)) alts)
                 (map (raiseTails r fc w) def)
-raiseTails r fc w (NmApp afc (NmRef rfc g) args) =
-    NmApp afc (NmRef rfc (raisedName g)) (args ++ [NmLocal fc w])
+raiseTails r fc w e@(NmApp afc (NmRef rfc g) args) =
+    if contains g r
+       then NmApp afc (NmRef rfc (raisedName g)) (args ++ [NmLocal fc w])
+       else e
 raiseTails _ _ _ e = e
 
 mutual

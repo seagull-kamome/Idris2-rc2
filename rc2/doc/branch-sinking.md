@@ -279,6 +279,13 @@ real double drop (heap corruption under `malloc`, reproduced by
 excluded `dup`'d operands; `RAppName` did not. Fix: `consumedOperands`
 now cancels one `dup`'d reference per call operand occurrence.
 
+The `ROp`, `RStructGet` and `RCon` cases first used a set filter instead,
+which cancelled *every* occurrence of a `dup`'d local: `dup x; op *Integer
+[x, x] postDrop= [x, x]` with `x` dead afterwards (one `dup`, two
+operands) left the arms the value does not sink into without the drop of
+the reference `x` arrived with, a leak. All four cases now share `spend`
+(`tests/Test137SinkDupTwice`).
+
 ## Pipeline position
 
 Runs after `Compiler.RC2.Loop` (self-tail-call conversion), before

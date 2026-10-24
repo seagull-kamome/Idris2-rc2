@@ -155,14 +155,14 @@ consumedOperands reps = go []
     -- `value` itself already `dup`'d earlier in this same chain is
     -- self-contained, not something the branch we don't sink into owes
     -- a compensating drop for.
-    go dupped (ROp _ _ _ _ postDrop) = filter (\a => not (a `elem` dupped)) postDrop
-    go dupped (RStructGet _ _ _ postDrop) = filter (\a => not (a `elem` dupped)) postDrop
+    go dupped (ROp _ _ _ _ postDrop) = spend dupped postDrop
+    go dupped (RStructGet _ _ _ postDrop) = spend dupped postDrop
     -- The call spends one reference per Boxed operand; each one a leading
     -- `dup` already added (one per unit of its count) is self-contained,
     -- exactly like the RCon/ROp cases (doc/branch-sinking.md, "Sinking a
     -- call whose operands were dup'd first").
     go dupped (RAppName _ _ _ args) = spend dupped (filter isDroppableBoxed args)
-    go dupped (RCon _ _ _ _ args _) = filter (\a => isDroppableBoxed a && not (a `elem` dupped)) args
+    go dupped (RCon _ _ _ _ args _) = spend dupped (filter isDroppableBoxed args)
     go dupped (RDup _ v extra cont) = go (replicate (S extra) v ++ dupped) cont
     go dupped (RDrop _ _ cont) = go dupped cont
     go dupped (RFree _ _ cont) = go dupped cont

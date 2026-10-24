@@ -203,6 +203,13 @@ If one of these stops reproducing, or a fix lands, remove the entry.
   `public` (`TermUI.Node`, `TermUI.Input`), so users get it without
   asking.
 
+- **Upstream RefC's signed `Int` `mod` is wrong for a negative dividend
+  that is a multiple of the divisor.** `(-6) `mod` 3` gives `3` instead
+  of `0` (the remainder `n % d` is `0`, but RefC adds `|d|` whenever
+  `n < 0`). Chez, the reference semantics, gives `0`. rc2 had the same
+  bug and was fixed; `Test135EuclidModNegative` is in
+  `NO_REFC_DIFF_TESTS` for this reason.
+
 ## `Nat` division and remainder are slow
 
 `div` and `mod` on a `Nat` (`Integral Nat` in `Data.Nat` of the base library) subtract
