@@ -505,7 +505,7 @@ nativeOpExpr (Div ty)    [x, y] =
 nativeOpExpr (Mod ty)    [x, y] =
     if isSigned ty then "idris2rc2_emod_i" ++ intBits ty ++ "(" ++ x ++ ", " ++ y ++ ")"
                    else "(" ++ x ++ " % " ++ y ++ ")"
-nativeOpExpr (Neg ty)    [x]    = wrappingOp ty "-" "0" x
+nativeOpExpr (Neg ty)    [x]    = if fixedWidthInt ty then wrappingOp ty "-" "0" x else "(-(" ++ x ++ "))"
 -- Not C's `<<`/`>>`: a count of the width or more is undefined there
 -- (idris2rc2_numeric.h's shift helpers).
 nativeOpExpr (ShiftL ty) [x, y] = "idris2rc2_shl_" ++ cPrimType ty ++ "(" ++ x ++ ", " ++ y ++ ")"

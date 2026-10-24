@@ -36,9 +36,10 @@ int64_t idris2rc2_worker_Main_sumLoop_N
     if (tmp_1 == INT64_C(0)) {
         return var_11;
     }
-    int64_t var_12 = (var_10 - INT64_C(1));
+    int64_t var_12 = ((int64_t)((uint64_t)(var_10) - (uint64_t)(INT64_C(1))));
     int64_t tmp_2 = var_12;
-    int64_t tmp_3 = (var_11 + var_10);
+    int64_t tmp_3 = ((int64_t)((uint64_t)(var_11) + (uint64_t)(var_10)));
+
     var_10 = tmp_2;
     var_11 = tmp_3;
     goto loop_1;
