@@ -39,8 +39,7 @@ import System.Clock
 
 ||| A single instance's 64 bits of xoroshiro64** state, held as an 8-byte
 ||| `Buffer` (`s[0..1]` in the reference implementation) -- mutated in
-||| place by `next`, unlike `Xoroshiro128PlusPlus.Gen`'s pure value
-||| semantics.
+||| place by `next`. `Gen` below is the pure counterpart.
 export
 data IOGen = MkIOGen Buffer
 
@@ -240,3 +239,72 @@ jumpCEIO c e = primIO $ prim__jumpCESys c e
 export
 jumpNIO : HasIO io => (n : Bits64) -> io ()
 jumpNIO n = primIO $ prim__jumpNSys n
+
+-- ----------------------------------------------------------------------------
+-- A pure generator: the two state words as a value, stepped by the same
+-- C algorithm as `IOGen` (support/c/xoroshiro64starstar.c, the
+-- `pure_*` functions). Each returns one word, so the `%foreign`
+-- declarations carry no PrimIO and no Buffer.
+
+||| The 64 bits of xoroshiro64** state, `(s[0], s[1])`. A value: every
+||| step returns the next one.
+export
+data Gen = MkGen Bits32 Bits32
+
+%foreign "C:idris2rc2_System_Random_pure_out,libidris2rc2base,idris2rc2_rc2base_xoroshiro64starstar.h"
+prim__pureOut : Bits32 -> Bits32 -> Bits32
+
+%foreign "C:idris2rc2_System_Random_pure_s0,libidris2rc2base,idris2rc2_rc2base_xoroshiro64starstar.h"
+prim__pureS0 : Bits32 -> Bits32 -> Bits32
+
+%foreign "C:idris2rc2_System_Random_pure_s1,libidris2rc2base,idris2rc2_rc2base_xoroshiro64starstar.h"
+prim__pureS1 : Bits32 -> Bits32 -> Bits32
+
+%foreign "C:idris2rc2_System_Random_pure_jump,libidris2rc2base,idris2rc2_rc2base_xoroshiro64starstar.h"
+prim__pureJump : Bits32 -> Bits32 -> Int -> Bits32
+
+%foreign "C:idris2rc2_System_Random_pure_long_jump,libidris2rc2base,idris2rc2_rc2base_xoroshiro64starstar.h"
+prim__pureLongJump : Bits32 -> Bits32 -> Int -> Bits32
+
+%foreign "C:idris2rc2_System_Random_pure_jump_ce,libidris2rc2base,idris2rc2_rc2base_xoroshiro64starstar.h"
+prim__pureJumpCE : Bits32 -> Bits32 -> Bits64 -> Bits32 -> Int -> Bits32
+
+%foreign "C:idris2rc2_System_Random_pure_jump_n,libidris2rc2base,idris2rc2_rc2base_xoroshiro64starstar.h"
+prim__pureJumpN : Bits32 -> Bits32 -> Bits64 -> Int -> Bits32
+
+||| The generator `newIOGen` would create from the same seed (the same
+||| splitmix64 step), so both produce the same sequence.
+export
+mkGen : Bits64 -> Gen
+mkGen s = let (s0, s1) = mixSeed s in MkGen s0 s1
+
+||| The next 32-bit output and the generator after that step.
+export
+genNext : Gen -> (Bits32, Gen)
+genNext (MkGen s0 s1) = (prim__pureOut s0 s1, MkGen (prim__pureS0 s0 s1) (prim__pureS1 s0 s1))
+
+||| A step's output as a uniform `Double` in `[0,1)` (`output / 2^32`),
+||| as `nextDouble` does.
+export
+genNextDouble : Gen -> (Double, Gen)
+genNextDouble g = let (v, g') = genNext g in (cast v / 4294967296.0, g')
+
+||| `jump` on a value: 2^32 steps ahead.
+export
+genJump : Gen -> Gen
+genJump (MkGen s0 s1) = MkGen (prim__pureJump s0 s1 0) (prim__pureJump s0 s1 1)
+
+||| `longJump` on a value: 2^48 steps ahead.
+export
+genLongJump : Gen -> Gen
+genLongJump (MkGen s0 s1) = MkGen (prim__pureLongJump s0 s1 0) (prim__pureLongJump s0 s1 1)
+
+||| `jumpCE` on a value: `c * 2^e` steps ahead.
+export
+genJumpCE : Gen -> (c : Bits64) -> (e : Bits32) -> Gen
+genJumpCE (MkGen s0 s1) c e = MkGen (prim__pureJumpCE s0 s1 c e 0) (prim__pureJumpCE s0 s1 c e 1)
+
+||| `jumpN` on a value: `n` steps ahead.
+export
+genJumpN : Gen -> (n : Bits64) -> Gen
+genJumpN (MkGen s0 s1) n = MkGen (prim__pureJumpN s0 s1 n 0) (prim__pureJumpN s0 s1 n 1)

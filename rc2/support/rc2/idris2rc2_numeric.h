@@ -35,36 +35,43 @@ static inline int8_t idris2rc2_ediv_i8(int8_t n, int8_t d) {
   return n / d + ((r < 0) ? ((d < 0) ? 1 : -1) : 0);
 }
 static inline int8_t idris2rc2_emod_i8(int8_t n, int8_t d) {
-  int8_t ad = (d < 0) ? -d : d;
-  int8_t r_ = n % ad;
-  return r_ < 0 ? r_ + ad : r_;
+  int64_t ad = (d < 0) ? -(int64_t)d : (int64_t)d;
+  int64_t r = (int64_t)n % ad;
+  return (int8_t)(r < 0 ? r + ad : r);
 }
 static inline int16_t idris2rc2_ediv_i16(int16_t n, int16_t d) {
   int16_t r = n % d;
   return n / d + ((r < 0) ? ((d < 0) ? 1 : -1) : 0);
 }
 static inline int16_t idris2rc2_emod_i16(int16_t n, int16_t d) {
-  int16_t ad = (d < 0) ? -d : d;
-  int16_t r_ = n % ad;
-  return r_ < 0 ? r_ + ad : r_;
+  int64_t ad = (d < 0) ? -(int64_t)d : (int64_t)d;
+  int64_t r = (int64_t)n % ad;
+  return (int16_t)(r < 0 ? r + ad : r);
 }
 static inline int32_t idris2rc2_ediv_i32(int32_t n, int32_t d) {
+  // INT_MIN / -1 overflows (a trap in C); Idris wraps.
+  if (d == -1) return (int32_t)(0 - (uint32_t)n);
   int32_t r = n % d;
   return n / d + ((r < 0) ? ((d < 0) ? 1 : -1) : 0);
 }
 static inline int32_t idris2rc2_emod_i32(int32_t n, int32_t d) {
-  int32_t ad = (d < 0) ? -d : d;
-  int32_t r_ = n % ad;
-  return r_ < 0 ? r_ + ad : r_;
+  int64_t ad = (d < 0) ? -(int64_t)d : (int64_t)d;
+  int64_t r = (int64_t)n % ad;
+  return (int32_t)(r < 0 ? r + ad : r);
 }
 static inline int64_t idris2rc2_ediv_i64(int64_t n, int64_t d) {
+  // INT_MIN / -1 overflows (a trap in C); Idris wraps.
+  if (d == -1) return (int64_t)(0 - (uint64_t)n);
   int64_t r = n % d;
   return n / d + ((r < 0) ? ((d < 0) ? 1 : -1) : 0);
 }
 static inline int64_t idris2rc2_emod_i64(int64_t n, int64_t d) {
-  int64_t ad = (d < 0) ? -d : d;
-  int64_t r_ = n % ad;
-  return r_ < 0 ? r_ + ad : r_;
+  if (d == -1) return 0;  // INT64_MIN % -1 traps in C
+  int64_t r = n % d;
+  if (r >= 0) return r;
+  // |d| can be 2^63, which only unsigned arithmetic holds.
+  uint64_t ad = (d < 0) ? 0 - (uint64_t)d : (uint64_t)d;
+  return (int64_t)((uint64_t)r + ad);
 }
 
 // X-macro table of the fixed-width integer PrimTypes: name token, C type,
@@ -140,17 +147,23 @@ IDRIS2RC2_SHIFTS_UNSIGNED(Bits16, uint16_t, 16)
 IDRIS2RC2_SHIFTS_UNSIGNED(Bits32, uint32_t, 32)
 IDRIS2RC2_SHIFTS_UNSIGNED(Bits64, uint64_t, 64)
 
-// ---- fixed-width integer arithmetic/bitwise ops (wrapping, matching C's
-//      own overflow behaviour for the underlying width) ----
+// ---- fixed-width integer arithmetic/bitwise ops (wrapping at the type's
+//      width). + - * run in uint64_t, where overflow wraps, and truncate back:
+//      signed overflow is undefined in C, and an operand narrower than `int`
+//      is promoted first. ----
 
 #define IDRIS2RC2_DEFOP(OPNAME, TY, CTY, GET, MK, OP)                              \
   static inline IDRIS2RC2_Value *idris2rc2_##OPNAME##_##TY(IDRIS2RC2_Value *a, IDRIS2RC2_Value *b) {  \
     return MK((CTY)(GET(a) OP GET(b)));                                     \
   }
+#define IDRIS2RC2_DEFOP_WRAP(OPNAME, TY, CTY, GET, MK, OP)                         \
+  static inline IDRIS2RC2_Value *idris2rc2_##OPNAME##_##TY(IDRIS2RC2_Value *a, IDRIS2RC2_Value *b) {  \
+    return MK((CTY)((uint64_t)GET(a) OP (uint64_t)GET(b)));                 \
+  }
 
-#define IDRIS2RC2_ADD_DEF(TY, CTY, GET, MK) IDRIS2RC2_DEFOP(add, TY, CTY, GET, MK, +)
-#define IDRIS2RC2_SUB_DEF(TY, CTY, GET, MK) IDRIS2RC2_DEFOP(sub, TY, CTY, GET, MK, -)
-#define IDRIS2RC2_MUL_DEF(TY, CTY, GET, MK) IDRIS2RC2_DEFOP(mul, TY, CTY, GET, MK, *)
+#define IDRIS2RC2_ADD_DEF(TY, CTY, GET, MK) IDRIS2RC2_DEFOP_WRAP(add, TY, CTY, GET, MK, +)
+#define IDRIS2RC2_SUB_DEF(TY, CTY, GET, MK) IDRIS2RC2_DEFOP_WRAP(sub, TY, CTY, GET, MK, -)
+#define IDRIS2RC2_MUL_DEF(TY, CTY, GET, MK) IDRIS2RC2_DEFOP_WRAP(mul, TY, CTY, GET, MK, *)
 #define IDRIS2RC2_DEFSHIFT(OPNAME, FN, TY, CTY, GET, MK)                            \
   static inline IDRIS2RC2_Value *idris2rc2_##OPNAME##_##TY(IDRIS2RC2_Value *a, IDRIS2RC2_Value *b) {  \
     return MK(idris2rc2_##FN##_##TY(GET(a), (uint64_t)GET(b)));             \
@@ -176,18 +189,22 @@ IDRIS2RC2_INTTYPES_TAGGED(IDRIS2RC2_XOR_DEF)
 // rc2/doc/rop-reuse.md), so a uniquely-referenced one's own struct
 // becomes the result in place instead of a fresh idris2rc2_mk*; the
 // other operand is dropped here instead of by the caller.
-#define IDRIS2RC2_DEFOP_REUSE(OPNAME, TY, CTY, GET, MK, OP)                        \
+#define IDRIS2RC2_DEFOP_REUSE_RESULT(OPNAME, TY, CTY, GET, MK, RESULT)             \
   static inline IDRIS2RC2_Value *idris2rc2_##OPNAME##_##TY(IDRIS2RC2_Value *a, IDRIS2RC2_Value *b) { \
-    CTY result = (CTY)(GET(a) OP GET(b));                                   \
+    CTY result = (RESULT);                                                  \
     IDRIS2RC2_Value *dst;                                                    \
     if (idris2rc2_isUnique(a))      { ((IDRIS2RC2_##TY *)a)->v = result; dst = a; idris2rc2_drop(b); } \
     else if (idris2rc2_isUnique(b)) { ((IDRIS2RC2_##TY *)b)->v = result; dst = b; idris2rc2_drop(a); } \
     else                             { dst = MK(result); idris2rc2_drop(a); idris2rc2_drop(b); }        \
     return dst;                                                              \
   }
-#define IDRIS2RC2_ADD_REUSE_DEF(TY, CTY, GET, MK) IDRIS2RC2_DEFOP_REUSE(add, TY, CTY, GET, MK, +)
-#define IDRIS2RC2_SUB_REUSE_DEF(TY, CTY, GET, MK) IDRIS2RC2_DEFOP_REUSE(sub, TY, CTY, GET, MK, -)
-#define IDRIS2RC2_MUL_REUSE_DEF(TY, CTY, GET, MK) IDRIS2RC2_DEFOP_REUSE(mul, TY, CTY, GET, MK, *)
+#define IDRIS2RC2_DEFOP_REUSE(OPNAME, TY, CTY, GET, MK, OP) \
+  IDRIS2RC2_DEFOP_REUSE_RESULT(OPNAME, TY, CTY, GET, MK, (CTY)(GET(a) OP GET(b)))
+#define IDRIS2RC2_DEFOP_REUSE_WRAP(OPNAME, TY, CTY, GET, MK, OP) \
+  IDRIS2RC2_DEFOP_REUSE_RESULT(OPNAME, TY, CTY, GET, MK, (CTY)((uint64_t)GET(a) OP (uint64_t)GET(b)))
+#define IDRIS2RC2_ADD_REUSE_DEF(TY, CTY, GET, MK) IDRIS2RC2_DEFOP_REUSE_WRAP(add, TY, CTY, GET, MK, +)
+#define IDRIS2RC2_SUB_REUSE_DEF(TY, CTY, GET, MK) IDRIS2RC2_DEFOP_REUSE_WRAP(sub, TY, CTY, GET, MK, -)
+#define IDRIS2RC2_MUL_REUSE_DEF(TY, CTY, GET, MK) IDRIS2RC2_DEFOP_REUSE_WRAP(mul, TY, CTY, GET, MK, *)
 #define IDRIS2RC2_DEFSHIFT_REUSE(OPNAME, FN, TY, CTY, GET, MK)                      \
   static inline IDRIS2RC2_Value *idris2rc2_##OPNAME##_##TY(IDRIS2RC2_Value *a, IDRIS2RC2_Value *b) { \
     CTY result = idris2rc2_##FN##_##TY(GET(a), (uint64_t)GET(b));           \
@@ -258,19 +275,17 @@ static inline IDRIS2RC2_Value *idris2rc2_mod_Bits64(IDRIS2RC2_Value *a, IDRIS2RC
   return dst;
 }
 
-#define IDRIS2RC2_EUCLID_DIV(TY, CTY, GET, MK)                                     \
+#define IDRIS2RC2_EUCLID_DIV(TY, BITS, GET, MK)                                   \
   static inline IDRIS2RC2_Value *idris2rc2_div_##TY(IDRIS2RC2_Value *a, IDRIS2RC2_Value *b) {         \
-    CTY num = GET(a), denom = GET(b);                                       \
-    CTY rem = num % denom;                                                   \
-    return MK(num / denom + ((rem < 0) ? ((denom < 0) ? 1 : -1) : 0));       \
+    return MK(idris2rc2_ediv_i##BITS(GET(a), GET(b)));                      \
   }
 #define IDRIS2RC2_EUCLID_MOD(TY, BITS, GET, MK)                                   \
   static inline IDRIS2RC2_Value *idris2rc2_mod_##TY(IDRIS2RC2_Value *a, IDRIS2RC2_Value *b) {         \
     return MK(idris2rc2_emod_i##BITS(GET(a), GET(b)));                      \
   }
-IDRIS2RC2_EUCLID_DIV(Int8, int8_t, idris2rc2_to_i8, idris2rc2_mkInt8)
-IDRIS2RC2_EUCLID_DIV(Int16, int16_t, idris2rc2_to_i16, idris2rc2_mkInt16)
-IDRIS2RC2_EUCLID_DIV(Int32, int32_t, idris2rc2_to_i32, idris2rc2_mkInt32)
+IDRIS2RC2_EUCLID_DIV(Int8, 8, idris2rc2_to_i8, idris2rc2_mkInt8)
+IDRIS2RC2_EUCLID_DIV(Int16, 16, idris2rc2_to_i16, idris2rc2_mkInt16)
+IDRIS2RC2_EUCLID_DIV(Int32, 32, idris2rc2_to_i32, idris2rc2_mkInt32)
 IDRIS2RC2_EUCLID_MOD(Int8, 8, idris2rc2_to_i8, idris2rc2_mkInt8)
 IDRIS2RC2_EUCLID_MOD(Int16, 16, idris2rc2_to_i16, idris2rc2_mkInt16)
 IDRIS2RC2_EUCLID_MOD(Int32, 32, idris2rc2_to_i32, idris2rc2_mkInt32)
@@ -278,9 +293,7 @@ IDRIS2RC2_EUCLID_MOD(Int32, 32, idris2rc2_to_i32, idris2rc2_mkInt32)
 // Int64: reuse-consuming Euclidean div/mod -- same pattern as the
 // arithmetic/bitwise ops above -- see rc2/doc/rop-reuse.md.
 static inline IDRIS2RC2_Value *idris2rc2_div_Int64(IDRIS2RC2_Value *a, IDRIS2RC2_Value *b) {
-  int64_t num = idris2rc2_to_i64(a), denom = idris2rc2_to_i64(b);
-  int64_t rem = num % denom;
-  int64_t result = num / denom + ((rem < 0) ? ((denom < 0) ? 1 : -1) : 0);
+  int64_t result = idris2rc2_ediv_i64(idris2rc2_to_i64(a), idris2rc2_to_i64(b));
   IDRIS2RC2_Value *dst;
   if (idris2rc2_isUnique(a))      { ((IDRIS2RC2_Int64 *)a)->v = result; dst = a; idris2rc2_drop(b); }
   else if (idris2rc2_isUnique(b)) { ((IDRIS2RC2_Int64 *)b)->v = result; dst = b; idris2rc2_drop(a); }
@@ -288,8 +301,7 @@ static inline IDRIS2RC2_Value *idris2rc2_div_Int64(IDRIS2RC2_Value *a, IDRIS2RC2
   return dst;
 }
 static inline IDRIS2RC2_Value *idris2rc2_mod_Int64(IDRIS2RC2_Value *a, IDRIS2RC2_Value *b) {
-  int64_t num = idris2rc2_to_i64(a), denom = idris2rc2_to_i64(b);
-  int64_t result = idris2rc2_emod_i64(num, denom);
+  int64_t result = idris2rc2_emod_i64(idris2rc2_to_i64(a), idris2rc2_to_i64(b));
   IDRIS2RC2_Value *dst;
   if (idris2rc2_isUnique(a))      { ((IDRIS2RC2_Int64 *)a)->v = result; dst = a; idris2rc2_drop(b); }
   else if (idris2rc2_isUnique(b)) { ((IDRIS2RC2_Int64 *)b)->v = result; dst = b; idris2rc2_drop(a); }
@@ -297,13 +309,13 @@ static inline IDRIS2RC2_Value *idris2rc2_mod_Int64(IDRIS2RC2_Value *a, IDRIS2RC2
   return dst;
 }
 
-static inline IDRIS2RC2_Value *idris2rc2_negate_Int8(IDRIS2RC2_Value *x) { return idris2rc2_mkInt8(-idris2rc2_to_i8(x)); }
-static inline IDRIS2RC2_Value *idris2rc2_negate_Int16(IDRIS2RC2_Value *x) { return idris2rc2_mkInt16(-idris2rc2_to_i16(x)); }
-static inline IDRIS2RC2_Value *idris2rc2_negate_Int32(IDRIS2RC2_Value *x) { return idris2rc2_mkInt32(-idris2rc2_to_i32(x)); }
+static inline IDRIS2RC2_Value *idris2rc2_negate_Int8(IDRIS2RC2_Value *x) { return idris2rc2_mkInt8((int8_t)(0 - (uint64_t)idris2rc2_to_i8(x))); }
+static inline IDRIS2RC2_Value *idris2rc2_negate_Int16(IDRIS2RC2_Value *x) { return idris2rc2_mkInt16((int16_t)(0 - (uint64_t)idris2rc2_to_i16(x))); }
+static inline IDRIS2RC2_Value *idris2rc2_negate_Int32(IDRIS2RC2_Value *x) { return idris2rc2_mkInt32((int32_t)(0 - (uint64_t)idris2rc2_to_i32(x))); }
 // Int64/Double negate: reuse-consuming, unary version of the same
 // pattern -- see rc2/doc/rop-reuse.md.
 static inline IDRIS2RC2_Value *idris2rc2_negate_Int64(IDRIS2RC2_Value *x) {
-  int64_t result = -idris2rc2_to_i64(x);
+  int64_t result = (int64_t)(0 - (uint64_t)idris2rc2_to_i64(x));
   if (idris2rc2_isUnique(x)) { ((IDRIS2RC2_Int64 *)x)->v = result; return x; }
   idris2rc2_drop(x);
   return idris2rc2_mkInt64(result);
@@ -560,9 +572,11 @@ static inline IDRIS2RC2_Value *idris2rc2_cast_Double_to_Bits8(IDRIS2RC2_Value *x
 static inline IDRIS2RC2_Value *idris2rc2_cast_Double_to_Bits16(IDRIS2RC2_Value *x) { return idris2rc2_mkBits16((uint16_t)idris2rc2_to_double(x)); }
 static inline IDRIS2RC2_Value *idris2rc2_cast_Double_to_Bits32(IDRIS2RC2_Value *x) { return idris2rc2_mkBits32((uint32_t)idris2rc2_to_double(x)); }
 static inline IDRIS2RC2_Value *idris2rc2_cast_Double_to_Bits64(IDRIS2RC2_Value *x) { return idris2rc2_mkBits64((uint64_t)idris2rc2_to_double(x)); }
-// mpz_set_d also truncates toward zero; NaN and the infinities take it.
+// mpz_set_d truncates toward zero but raises SIGFPE on NaN and the
+// infinities, which have no integer value: they give 0.
 static inline IDRIS2RC2_Value *idris2rc2_cast_Double_to_Integer(IDRIS2RC2_Value *x) {
   double d = idris2rc2_to_double(x);
+  if (!isfinite(d)) return IDRIS2RC2_IMM_INT64(0);
   if (d > -0x1p62 && d < 0x1p62)
     return IDRIS2RC2_IMM_INT64((int64_t)d);
   IDRIS2RC2_Integer *r = idris2rc2_mkInteger();

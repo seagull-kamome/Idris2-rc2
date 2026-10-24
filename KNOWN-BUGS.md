@@ -210,6 +210,18 @@ If one of these stops reproducing, or a fix lands, remove the entry.
   bug and was fixed; `Test135EuclidModNegative` is in
   `NO_REFC_DIFF_TESTS` for this reason.
 
+- **Upstream RefC traps on `minBound `div` (-1)`.** For `Int` and the
+  32- and 64-bit signed types the C division overflows and the process
+  dies with SIGFPE; Chez wraps (the quotient is `minBound`, the
+  remainder 0), and so does rc2. `Test141IntMinDivMinusOne` is in
+  `NO_REFC_DIFF_TESTS` for this reason.
+
+- **Upstream RefC dies with SIGFPE on `cast` of a NaN or infinite
+  `Double` to `Integer`** (GMP's `mpz_set_d`). rc2 returns 0.
+  `Test142DoubleNonFiniteToInteger` is in `NO_REFC_DIFF_TESTS` for
+  this reason.
+
+
 - **Upstream RefC does not validate UTF-8 when it decodes a string.**
   `unpack` of the bytes `C0 AF` gives `/` (an overlong form), and
   surrogates and code points past U+10FFFF come through as such; Chez
