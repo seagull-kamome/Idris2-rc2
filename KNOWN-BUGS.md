@@ -210,6 +210,12 @@ If one of these stops reproducing, or a fix lands, remove the entry.
   bug and was fixed; `Test135EuclidModNegative` is in
   `NO_REFC_DIFF_TESTS` for this reason.
 
+- **Upstream RefC traps on `minBound `div` (-1)`.** For `Int` and the
+  32- and 64-bit signed types the C division overflows and the process
+  dies with SIGFPE; Chez wraps (the quotient is `minBound`, the
+  remainder 0), and so does rc2. `Test141IntMinDivMinusOne` is in
+  `NO_REFC_DIFF_TESTS` for this reason.
+
 ## `Nat` division and remainder are slow
 
 `div` and `mod` on a `Nat` (`Integral Nat` in `Data.Nat` of the base library) subtract
