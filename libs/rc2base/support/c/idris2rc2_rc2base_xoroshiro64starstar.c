@@ -201,3 +201,48 @@ void idris2rc2_System_Random_jump_n(void *sv, uint64_t n) {
 	f2x_jumppoly_n(jump, POLY_WORDS, poly);
 	jump_apply(s, poly);
 }
+
+
+/* Pure counterparts for System.Random.Xoroshiro64StarStar's `Gen`: the
+   state is passed by value as (s0, s1) and each function returns one
+   word of the result, so Idris can declare them without PrimIO and
+   without a Buffer. `which` selects the new s[0] (0) or s[1] (1) of a
+   jump; a jump computes both words, so asking for each costs two runs. */
+
+uint32_t idris2rc2_System_Random_pure_out(uint32_t s0, uint32_t s1) {
+	(void)s1;
+	return rotl(s0 * 0x9E3779BB, 5) * 5;
+}
+
+uint32_t idris2rc2_System_Random_pure_s0(uint32_t s0, uint32_t s1) {
+	s1 ^= s0;
+	return rotl(s0, 26) ^ s1 ^ (s1 << 9);
+}
+
+uint32_t idris2rc2_System_Random_pure_s1(uint32_t s0, uint32_t s1) {
+	return rotl(s1 ^ s0, 13);
+}
+
+uint32_t idris2rc2_System_Random_pure_jump(uint32_t s0, uint32_t s1, int which) {
+	uint32_t s[2] = { s0, s1 };
+	idris2rc2_System_Random_jump(s);
+	return s[which];
+}
+
+uint32_t idris2rc2_System_Random_pure_long_jump(uint32_t s0, uint32_t s1, int which) {
+	uint32_t s[2] = { s0, s1 };
+	idris2rc2_System_Random_long_jump(s);
+	return s[which];
+}
+
+uint32_t idris2rc2_System_Random_pure_jump_ce(uint32_t s0, uint32_t s1, uint64_t c, uint32_t e, int which) {
+	uint32_t s[2] = { s0, s1 };
+	idris2rc2_System_Random_jump_ce(s, c, e);
+	return s[which];
+}
+
+uint32_t idris2rc2_System_Random_pure_jump_n(uint32_t s0, uint32_t s1, uint64_t n, int which) {
+	uint32_t s[2] = { s0, s1 };
+	idris2rc2_System_Random_jump_n(s, n);
+	return s[which];
+}
