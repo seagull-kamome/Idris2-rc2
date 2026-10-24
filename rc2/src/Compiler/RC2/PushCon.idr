@@ -66,29 +66,11 @@ sizeOf _ = 1
 ||| Rebuilds `e` with every tail replaced. A tail is where `e`'s value
 ||| is produced: past `RLet`'s value, into every arm of a branch.
 mapTails : (RCExp -> Core RCExp) -> RCExp -> Core RCExp
-mapTails f (RLet fc v r value body) = RLet fc v r value <$> mapTails f body
-mapTails f (RCmpCase fc op args pd t e) = do
-    t' <- mapTails f t
-    e' <- mapTails f e
-    pure (RCmpCase fc op args pd t' e')
-mapTails f (RConCase fc sc alts mDef) = do
-    alts' <- traverse (\(MkRConAlt n ci t as b) => MkRConAlt n ci t as <$> mapTails f b) alts
-    mDef' <- traverseOpt (mapTails f) mDef
-    pure (RConCase fc sc alts' mDef')
-mapTails f (RConstCase fc sc alts mDef) = do
-    alts' <- traverse (\(MkRConstAlt c b) => MkRConstAlt c <$> mapTails f b) alts
-    mDef' <- traverseOpt (mapTails f) mDef
-    pure (RConstCase fc sc alts' mDef')
 -- Post-RC only (`applyPushConRC`): ownership wrappers pass the tail
 -- through, a loop is opaque (its exits sit next to `RLoopContinue`s
 -- and loop-converted native shadows), and a `continue` is never a tail.
-mapTails f (RDup fc v n k) = RDup fc v n <$> mapTails f k
-mapTails f (RDrop fc vs k) = RDrop fc vs <$> mapTails f k
-mapTails f (RFree fc v k) = RFree fc v <$> mapTails f k
-mapTails f (RReleaseReuse fc v k) = RReleaseReuse fc v <$> mapTails f k
-mapTails f (RReuseOffer fc sc ds us k) = RReuseOffer fc sc ds us <$> mapTails f k
 mapTails f e@(RLoopContinue {}) = pure e
-mapTails f e = f e
+mapTails f e = fromMaybe (f e) (traverseTailChildren @{Applicative.CORE} (mapTails f) e)
 
 tailsOf : RCExp -> List RCExp
 tailsOf = go

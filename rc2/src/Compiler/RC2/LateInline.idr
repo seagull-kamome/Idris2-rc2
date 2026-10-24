@@ -478,24 +478,7 @@ inlineInto defOf eligible self = go empty []
     go reps loopSlots (RLet fc var rep value body) = RLet fc var rep <$> go reps loopSlots value <*> go (insert var rep reps) loopSlots body
     go reps loopSlots (RLoop fc loopParams initial prologueDrop body) =
         RLoop fc loopParams initial prologueDrop <$> go (foldl (\m, (i, r) => insert i r m) reps loopParams) loopParams body
-    go reps loopSlots (RCmpCase fc op args postDrop t f) = RCmpCase fc op args postDrop <$> go reps loopSlots t <*> go reps loopSlots f
-    go reps loopSlots (RConCase fc sc alts mDef) =
-        RConCase fc sc <$> traverse (\(MkRConAlt n ci tag as body) => MkRConAlt n ci tag as <$> go reps loopSlots body) alts
-                       <*> case mDef of
-                              Nothing => pure Nothing
-                              Just e => Just <$> go reps loopSlots e
-    go reps loopSlots (RConstCase fc sc alts mDef) =
-        RConstCase fc sc <$> traverse (\(MkRConstAlt c body) => MkRConstAlt c <$> go reps loopSlots body) alts
-                         <*> case mDef of
-                                Nothing => pure Nothing
-                                Just e => Just <$> go reps loopSlots e
-    go reps loopSlots (RDup fc v extra body) = RDup fc v extra <$> go reps loopSlots body
-    go reps loopSlots (RDrop fc vs body) = RDrop fc vs <$> go reps loopSlots body
-    go reps loopSlots (RFree fc v body) = RFree fc v <$> go reps loopSlots body
-    go reps loopSlots (RReleaseReuse fc v body) = RReleaseReuse fc v <$> go reps loopSlots body
-    go reps loopSlots (RReuseOffer fc sc dupOnShared dropOnUnique body) = RReuseOffer fc sc dupOnShared dropOnUnique <$> go reps loopSlots body
-    go reps loopSlots (RMemoize fc n rep body) = RMemoize fc n rep <$> go reps loopSlots body
-    go _ _ e = pure e
+    go reps loopSlots e = traverseChildren @{Applicative.CORE} (go reps loopSlots) e
 
 ------------------------------------------------------------------------
 -- Whole-program entry point

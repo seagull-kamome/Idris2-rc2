@@ -65,24 +65,7 @@ rewriteTails leaves = go
            then do x <- freshVarId
                    pure (RLet fc x RBoxed e (RV fc (RCLoc x)))
            else pure e
-    go (RLet fc x r val b) = RLet fc x r val <$> go b
-    go (RDup fc l k b) = RDup fc l k <$> go b
-    go (RDrop fc ls b) = RDrop fc ls <$> go b
-    go (RFree fc l b) = RFree fc l <$> go b
-    go (RReleaseReuse fc l b) = RReleaseReuse fc l <$> go b
-    go (RReuseOffer fc sc d u b) = RReuseOffer fc sc d u <$> go b
-    go (RCmpCase fc op xs pd t f) = RCmpCase fc op xs pd <$> go t <*> go f
-    go (RConCase fc sc alts def) =
-        RConCase fc sc <$> traverse goAlt alts <*> traverseOpt go def
-      where
-        goAlt : RConAlt -> Core RConAlt
-        goAlt (MkRConAlt n ci tag as b) = MkRConAlt n ci tag as <$> go b
-    go (RConstCase fc sc alts def) =
-        RConstCase fc sc <$> traverse goAlt alts <*> traverseOpt go def
-      where
-        goAlt : RConstAlt -> Core RConstAlt
-        goAlt (MkRConstAlt c b) = MkRConstAlt c <$> go b
-    go e = pure e
+    go e = fromMaybe (pure e) (traverseTailChildren @{Applicative.CORE} go e)
 
 ||| Make the tail calls of leaves direct in every definition.
 export
