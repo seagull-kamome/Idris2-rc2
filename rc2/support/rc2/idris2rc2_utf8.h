@@ -14,11 +14,14 @@
 
 // Decodes the codepoint starting at byte offset `offset` (must be a valid
 // character boundary, e.g. as returned by idris2rc2_utf8ByteOffsetOfChar).
-// *consumed is set to the number of bytes read: 1..4 for a well-formed
-// sequence, or 1 for an invalid lead byte / a sequence truncated by
-// byteLen, decoding to U+FFFD per Unicode's own replacement-character
-// convention -- consumed staying 1 in that case keeps a scanning caller
-// always making forward progress.
+// *consumed is set to the number of bytes read, always at least 1 so a
+// scanning caller makes forward progress: 1..4 for a well-formed sequence;
+// for an invalid lead byte (a stray continuation byte, 0xF5..0xFF) 1; for a
+// sequence cut short (by byteLen or by a byte that is not a continuation) the
+// lead byte and the continuation bytes that follow it; for a complete sequence
+// that is not a shortest-form Unicode scalar value (overlong, surrogate, past
+// U+10FFFF) its whole length. Each of these decodes to one U+FFFD, as Chez
+// Scheme's utf8->string does.
 uint32_t idris2rc2_utf8DecodeAt(char const *s, size_t byteLen, size_t offset, size_t *consumed);
 
 // Sibling of idris2rc2_utf8DecodeAt for callers that hold only a
@@ -30,9 +33,9 @@ uint32_t idris2rc2_utf8DecodeAt(char const *s, size_t byteLen, size_t offset, si
 // idris2rc2_utf8DecodeAt would turn an O(n) walk into O(n^2); this variant
 // avoids that by trusting the string's own NUL terminator directly: a
 // '\0' encountered as a would-be lead byte or as an expected continuation
-// byte is treated as end-of-data (decoding to U+FFFD, *consumed left at 1,
-// same convention as idris2rc2_utf8DecodeAt's own truncation case) rather
-// than needing a precomputed bound. Caller must still ensure offset itself
+// byte is treated as end-of-data (decoding to U+FFFD, *consumed counted as
+// in idris2rc2_utf8DecodeAt's own truncation case) rather than needing a
+// precomputed bound. Caller must still ensure offset itself
 // doesn't point past the terminating NUL.
 uint32_t idris2rc2_utf8DecodeAtNul(char const *s, size_t offset, size_t *consumed);
 
