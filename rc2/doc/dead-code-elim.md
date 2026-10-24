@@ -50,13 +50,12 @@ Compiler.RC2.InlineCExp
   -> Compiler.RC2.Emit             (purely mechanical RCExp -> C)
 ```
 
-Run as `toRCDefs`'s own last step, on the exact `List (Name, RCDef)`
-`Emit.generateCSourceFile` is about to consume -- so `--directive
-dumprcexpr`'s own claim ("precisely what generateCSourceFile is about
-to consume") stays true with this pass in the pipeline, not just
-despite it. `--directive nodeadcode` skips it, same A/B-isolation
-convention as every other optional stage (`RC2.idr`'s own `toRCDefs`
-doc comment).
+Run in `toRCDefs` after `DualABI` and the reuse re-check, and before
+`PushDown`, `DupMerge`, `LeafTail`, `DeadVars` and `FunDedup`. `--directive
+nodeadcode` skips it, same A/B-isolation convention as every other optional
+stage (`RC2.idr`'s own `toRCDefs` doc comment). `--directive dumprcexpr`
+dumps the list after the last of those stages, so the dump is still what
+`Emit.generateCSourceFile` is about to consume.
 
 ## Design
 
