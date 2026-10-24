@@ -1,0 +1,31 @@
+#0: Int 5076964154930102272 Int8 0 Int16 0 Int32 0 Int64 5076964154930102272 Bits8 0 Bits16 0 Bits32 0 Bits64 5076964154930102272
+#1: Int -5076964154930102272 Int8 0 Int16 0 Int32 0 Int64 -5076964154930102272 Bits8 0 Bits16 0 Bits32 0 Bits64 13369779918779449344
+#2: Int 3000000000 Int8 0 Int16 24064 Int32 -1294967296 Int64 3000000000 Bits8 0 Bits16 24064 Bits32 3000000000 Bits64 3000000000
+#3: Int 300 Int8 44 Int16 300 Int32 300 Int64 300 Bits8 44 Bits16 300 Bits32 300 Bits64 300
+#4: Int -129 Int8 127 Int16 -129 Int32 -129 Int64 -129 Bits8 127 Bits16 65407 Bits32 4294967167 Bits64 18446744073709551487
+#5: Int -1 Int8 -1 Int16 -1 Int32 -1 Int64 -1 Bits8 255 Bits16 65535 Bits32 4294967295 Bits64 18446744073709551615
+#6: Int -8446744073709551616 Int8 0 Int16 0 Int32 -1981284352 Int64 -8446744073709551616 Bits8 0 Bits16 0 Bits32 2313682944 Bits64 10000000000000000000
+#7: Int -9146744073709551616 Int8 0 Int16 0 Int32 -81657856 Int64 -9146744073709551616 Bits8 0 Bits16 0 Bits32 4213309440 Bits64 9300000000000000000
+#8: Int 9146744073709551616 Int8 0 Int16 0 Int32 81657856 Int64 9146744073709551616 Bits8 0 Bits16 0 Bits32 81657856 Bits64 9146744073709551616
+#9: Int 70000 Int8 112 Int16 4464 Int32 70000 Int64 70000 Bits8 112 Bits16 4464 Bits32 70000 Bits64 70000
+#10: Int 2147483648 Int8 0 Int16 0 Int32 -2147483648 Int64 2147483648 Bits8 0 Bits16 0 Bits32 2147483648 Bits64 2147483648
+#11: Int -2147483649 Int8 -1 Int16 -1 Int32 2147483647 Int64 -2147483649 Bits8 255 Bits16 65535 Bits32 2147483647 Bits64 18446744071562067967
+#12: Int 0 Int8 0 Int16 0 Int32 0 Int64 0 Bits8 0 Bits16 0 Bits32 0 Bits64 0
+#13: Int 0 Int8 0 Int16 0 Int32 0 Int64 0 Bits8 0 Bits16 0 Bits32 0 Bits64 0
+#0 native: True False False False False False False False
+#1 native: True False False True False False False True
+#2 native: True True True False False True False False
+#3 native: False True False False False False False False
+#4 native: False False True True False True True True
+#5 native: False False True True True True True True
+#6 native: True False True True False False False True
+#7 native: True False True True False False True True
+#8 native: True False False False False False False True
+#9 native: False True False False False True False False
+#10 native: True False True False False False False False
+#11 native: False False False True True True False True
+#12 native: True False False False False False False False
+#13 native: True False False False False False False False
+#100: Int 0 Int8 0 Int16 0 Int32 0 Int64 0 Bits8 0 Bits16 0 Bits32 0 Bits64 0
+#101: Int 0 Int8 0 Int16 0 Int32 0 Int64 0 Bits8 0 Bits16 0 Bits32 0 Bits64 0
+#102: Int 0 Int8 0 Int16 0 Int32 0 Int64 0 Bits8 0 Bits16 0 Bits32 0 Bits64 0

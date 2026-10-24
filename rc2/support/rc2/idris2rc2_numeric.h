@@ -564,14 +564,31 @@ IDRIS2RC2_INTTYPES(IDRIS2RC2_CAST_TO_CHAR)
 IDRIS2RC2_INTTYPES(IDRIS2RC2_CAST_TO_STRING_DECL)
 
 // ---- Double ----
-static inline IDRIS2RC2_Value *idris2rc2_cast_Double_to_Int8(IDRIS2RC2_Value *x) { return idris2rc2_mkInt8((int8_t)idris2rc2_to_double(x)); }
-static inline IDRIS2RC2_Value *idris2rc2_cast_Double_to_Int16(IDRIS2RC2_Value *x) { return idris2rc2_mkInt16((int16_t)idris2rc2_to_double(x)); }
-static inline IDRIS2RC2_Value *idris2rc2_cast_Double_to_Int32(IDRIS2RC2_Value *x) { return idris2rc2_mkInt32((int32_t)idris2rc2_to_double(x)); }
-static inline IDRIS2RC2_Value *idris2rc2_cast_Double_to_Int64(IDRIS2RC2_Value *x) { return idris2rc2_mkInt64((int64_t)idris2rc2_to_double(x)); }
-static inline IDRIS2RC2_Value *idris2rc2_cast_Double_to_Bits8(IDRIS2RC2_Value *x) { return idris2rc2_mkBits8((uint8_t)idris2rc2_to_double(x)); }
-static inline IDRIS2RC2_Value *idris2rc2_cast_Double_to_Bits16(IDRIS2RC2_Value *x) { return idris2rc2_mkBits16((uint16_t)idris2rc2_to_double(x)); }
-static inline IDRIS2RC2_Value *idris2rc2_cast_Double_to_Bits32(IDRIS2RC2_Value *x) { return idris2rc2_mkBits32((uint32_t)idris2rc2_to_double(x)); }
-static inline IDRIS2RC2_Value *idris2rc2_cast_Double_to_Bits64(IDRIS2RC2_Value *x) { return idris2rc2_mkBits64((uint64_t)idris2rc2_to_double(x)); }
+// A Double cast to a fixed-width integer truncates toward zero and wraps to the
+// type's width, as Chez does (C leaves a value out of the type's range
+// undefined): the low 64 bits of the truncated value, which a narrower type
+// then cuts down. NaN and the infinities have no integer value and give 0.
+static inline uint64_t idris2rc2_double_to_wrapped(double d) {
+  if (!isfinite(d)) return 0;
+  d = trunc(d);
+  if (d > -0x1p63 && d < 0x1p63) return (uint64_t)(int64_t)d;
+  // At least 2^63 in size, d is a multiple of 2^11, so these steps are exact.
+  double m = fmod(d, 0x1p64);
+  if (m < 0) m += 0x1p64;
+  return (uint64_t)m;
+}
+#define IDRIS2RC2_CAST_DOUBLE_TO_INT(TY, CTY, MK) \
+  static inline IDRIS2RC2_Value *idris2rc2_cast_Double_to_##TY(IDRIS2RC2_Value *x) { \
+    return MK((CTY)idris2rc2_double_to_wrapped(idris2rc2_to_double(x))); \
+  }
+IDRIS2RC2_CAST_DOUBLE_TO_INT(Int8, int8_t, idris2rc2_mkInt8)
+IDRIS2RC2_CAST_DOUBLE_TO_INT(Int16, int16_t, idris2rc2_mkInt16)
+IDRIS2RC2_CAST_DOUBLE_TO_INT(Int32, int32_t, idris2rc2_mkInt32)
+IDRIS2RC2_CAST_DOUBLE_TO_INT(Int64, int64_t, idris2rc2_mkInt64)
+IDRIS2RC2_CAST_DOUBLE_TO_INT(Bits8, uint8_t, idris2rc2_mkBits8)
+IDRIS2RC2_CAST_DOUBLE_TO_INT(Bits16, uint16_t, idris2rc2_mkBits16)
+IDRIS2RC2_CAST_DOUBLE_TO_INT(Bits32, uint32_t, idris2rc2_mkBits32)
+IDRIS2RC2_CAST_DOUBLE_TO_INT(Bits64, uint64_t, idris2rc2_mkBits64)
 // mpz_set_d truncates toward zero but raises SIGFPE on NaN and the
 // infinities, which have no integer value: they give 0.
 static inline IDRIS2RC2_Value *idris2rc2_cast_Double_to_Integer(IDRIS2RC2_Value *x) {
@@ -583,7 +600,7 @@ static inline IDRIS2RC2_Value *idris2rc2_cast_Double_to_Integer(IDRIS2RC2_Value 
   mpz_set_d(r->v, d);
   return idris2rc2_integerNormalize(r);
 }
-static inline IDRIS2RC2_Value *idris2rc2_cast_Double_to_Char(IDRIS2RC2_Value *x) { return idris2rc2_mkChar(idris2rc2_charFromCodepoint((int64_t)idris2rc2_to_double(x))); }
+static inline IDRIS2RC2_Value *idris2rc2_cast_Double_to_Char(IDRIS2RC2_Value *x) { return idris2rc2_mkChar(idris2rc2_charFromCodepoint((int64_t)idris2rc2_double_to_wrapped(idris2rc2_to_double(x)))); }
 // idris2rc2_cast_Double_to_string stays in numeric.c (multi-statement).
 IDRIS2RC2_Value *idris2rc2_cast_Double_to_string(IDRIS2RC2_Value *);
 

@@ -521,7 +521,13 @@ nativeOpExpr (BXOr ty)   [x, y] = "(" ++ x ++ " ^ " ++ y ++ ")"
 -- path (reachable whenever every operand of the cast chain is itself
 -- native-eligible, e.g. two Int32/Bits32 literals) would silently
 -- disagree with it for the exact same source expression.
+nativeOpExpr (Cast DoubleType CharType) [x] = "idris2rc2_charFromCodepoint((int64_t)idris2rc2_double_to_wrapped(" ++ x ++ "))"
 nativeOpExpr (Cast i CharType) [x] = "idris2rc2_charFromCodepoint((int64_t)(" ++ x ++ "))"
+-- A Double out of the target type's range is undefined in C: see
+-- `idris2rc2_double_to_wrapped` in idris2rc2_numeric.h.
+nativeOpExpr (Cast DoubleType o) [x] =
+    if fixedWidthInt o then "((" ++ nativeCType o ++ ")idris2rc2_double_to_wrapped(" ++ x ++ "))"
+                       else "((" ++ nativeCType o ++ ")(" ++ x ++ "))"
 nativeOpExpr (Cast i o)  [x]    = "((" ++ nativeCType o ++ ")(" ++ x ++ "))"
 nativeOpExpr DoubleExp     [x] = "exp(" ++ x ++ ")"
 nativeOpExpr DoubleLog     [x] = "log(" ++ x ++ ")"
