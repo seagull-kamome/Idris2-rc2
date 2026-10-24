@@ -18,6 +18,7 @@ import Core.CompileExpr
 import Core.Context
 
 import Data.SortedMap
+import Data.SortedSet
 import Data.String
 
 %default total
@@ -188,3 +189,29 @@ export
 peelIORes : CFType -> CFType
 peelIORes (CFIORes t) = t
 peelIORes t = t
+
+||| The functions to raise, given each candidate's tails (`tbl`): the
+||| greatest set in which every tail call (`callee`) lands inside the set,
+||| keeping only those that reach a tail `reaching` accepts, directly or
+||| through a tail call to one that does. Shared by `ArityRaise` and
+||| `ArityRaiseCExp`, which differ only in their tail type.
+export covering
+raiseFixpoint : (callee : t -> Maybe Name) -> (reaching : t -> Bool) -> SortedMap Name (List t) -> SortedSet Name
+raiseFixpoint callee reaching tbl =
+    let closed = shrink (SortedSet.fromList (keys tbl))
+    in reach closed (SortedSet.fromList (filter (\n => any reaching (tailsOf n)) (Prelude.toList closed)))
+  where
+    tailsOf : Name -> List t
+    tailsOf n = fromMaybe [] (SortedMap.lookup n tbl)
+
+    shrink : SortedSet Name -> SortedSet Name
+    shrink s =
+        let s' = SortedSet.fromList (filter (\n => all (maybe True (\g => contains g s) . callee) (tailsOf n))
+                                            (Prelude.toList s))
+        in if length (Prelude.toList s') == length (Prelude.toList s) then s' else shrink s'
+
+    reach : SortedSet Name -> SortedSet Name -> SortedSet Name
+    reach closed ps =
+        let ps' = SortedSet.fromList (filter (\n => contains n ps || any (maybe False (\g => contains g ps) . callee) (tailsOf n))
+                                             (Prelude.toList closed))
+        in if length (Prelude.toList ps') == length (Prelude.toList ps) then ps' else reach closed ps'

@@ -35,6 +35,11 @@ lazyPrefix : Maybe LazyReason -> String
 lazyPrefix Nothing = ""
 lazyPrefix (Just r) = "~" ++ show r ++ " "
 
+||| The ` postDrop= ...` tail of a node line; nothing when the list is empty.
+postDropNote : List RCLocal -> String
+postDropNote [] = ""
+postDropNote pd = " postDrop= " ++ show pd
+
 mutual
   prettyExp : Nat -> RCExp -> String
   prettyExp d (RV _ v) = indent d ++ show v ++ "\n"
@@ -64,22 +69,22 @@ mutual
       indent d ++ "retpack " ++ dumpName n ++ " tag= " ++ show tag ++ " " ++ show fields ++ "\n"
   prettyExp d (ROp _ lazy op args postDrop) =
       indent d ++ lazyPrefix lazy ++ "op " ++ show op ++ " " ++ show (toList args)
-        ++ (if postDrop == [] then "" else " postDrop= " ++ show postDrop) ++ "\n"
+        ++ postDropNote postDrop ++ "\n"
   prettyExp d (RExtPrim _ lazy p args postDrop) =
       indent d ++ lazyPrefix lazy ++ "extprim " ++ show p ++ " " ++ show args
-        ++ (if postDrop == [] then "" else " postDrop= " ++ show postDrop) ++ "\n"
+        ++ postDropNote postDrop ++ "\n"
   prettyExp d (RStructGet _ structVar (MkStructField sn _ fn _ _) postDrop) =
       indent d ++ "structGet " ++ show structVar ++ " . " ++ fn ++ " ( " ++ sn ++ " )"
-        ++ (if postDrop == [] then "" else " postDrop= " ++ show postDrop) ++ "\n"
+        ++ postDropNote postDrop ++ "\n"
   prettyExp d (RStructSet _ structVar (MkStructField sn _ fn _ _) value postDrop) =
       indent d ++ "structSet " ++ show structVar ++ " . " ++ fn ++ " ( " ++ sn ++ " ) = " ++ show value
-        ++ (if postDrop == [] then "" else " postDrop= " ++ show postDrop) ++ "\n"
+        ++ postDropNote postDrop ++ "\n"
   prettyExp d (RFill _ cell k value postDrop) =
       indent d ++ "fill " ++ show cell ++ " . " ++ show k ++ " = " ++ show value
-        ++ (if postDrop == [] then "" else " postDrop= " ++ show postDrop) ++ "\n"
+        ++ postDropNote postDrop ++ "\n"
   prettyExp d (RCmpCase _ op args postDrop whenTrue whenFalse) =
       indent d ++ "cmp " ++ show op.fst ++ " " ++ show (toList args)
-        ++ (if postDrop == [] then "" else " postDrop= " ++ show postDrop) ++ "\n"
+        ++ postDropNote postDrop ++ "\n"
       ++ indent d ++ "then\n" ++ prettyExp (d + 1) whenTrue
       ++ indent d ++ "else\n" ++ prettyExp (d + 1) whenFalse
   prettyExp d (RConCase _ sc alts mDef) =
@@ -108,14 +113,14 @@ mutual
       ++ prettyExp d body
   prettyExp d (RLoopContinue _ args postDrop) =
       indent d ++ "continue loop " ++ show args
-        ++ (if postDrop == [] then "" else " postDrop= " ++ show postDrop) ++ "\n"
+        ++ postDropNote postDrop ++ "\n"
   prettyExp d (RMemoize _ n rep body) =
       indent d ++ "memoize " ++ dumpName n ++ " : " ++ prettyRep rep ++ "\n" ++ prettyExp (d + 1) body
   prettyExp d (RDelay _ lr n caps) =
       indent d ++ "delay " ++ show lr ++ " " ++ dumpName n ++ " " ++ show caps ++ "\n"
   prettyExp d (RForce _ lr v postDrop) =
       indent d ++ "force " ++ show lr ++ " " ++ show v
-        ++ (if postDrop == [] then "" else " postDrop= " ++ show postDrop) ++ "\n"
+        ++ postDropNote postDrop ++ "\n"
 
   prettyConAlt : Nat -> RConAlt -> String
   prettyConAlt d (MkRConAlt n ci tag args body) =
