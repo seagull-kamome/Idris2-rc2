@@ -1204,26 +1204,28 @@ emitRC sink (ROp fc _ op args postDrop) _ = do
     -- stays Boxed (comparisons, or a non-numeric op) -- operands may
     -- still individually be native locals (e.g. a comparison over an
     -- earlier native arithmetic chain), hence the Rep-aware boxing
-    -- (boxOpArg, which also names and tracks any fresh box it has to
+    -- (boxOpArgParts, which also names any fresh box it has to
     -- fabricate for a Native operand, so it can be freed below).
-    argsWithFresh <- traverseVect (boxOpArg fc) args
-    let argStrs = map fst argsWithFresh
+    argsWithFresh <- traverseVect (boxOpArgParts fc) args
+    let argStrs = map (\(e, _, _) => e) argsWithFresh
     -- `postDrop`: see emitRC's own doc comment. Separately, any
-    -- ephemeral box `boxOpArg` had to fabricate for a Native operand
-    -- (folded into its own returned list alongside any InlineMap'd
-    -- pending drop, see its own doc comment) is dropped too --
+    -- ephemeral box `boxOpArgParts` had to fabricate for a Native operand,
+    -- and any InlineMap'd pending drop it returns, is dropped too --
     -- `annotate` runs before `Compiler.RC2.Loop`'s native-shadow
     -- promotion ever decides a local is Native, so it can't have
     -- known about these.
     --
-    -- `isReuseConsumingOp op` skips both: its own runtime primitive
-    -- (rc2/support/rc2/idris2rc2_numeric.h) now consumes and disposes of every
-    -- operand handed to it itself, reusing a uniquely-referenced
-    -- one's own heap allocation in place where possible -- see
-    -- rc2/doc/rop-reuse.md.
+    -- `isReuseConsumingOp op` skips `postDrop` and the fresh boxes: its own
+    -- runtime primitive (rc2/support/rc2/idris2rc2_numeric.h) now consumes
+    -- and disposes of every operand handed to it itself, reusing a
+    -- uniquely-referenced one's own heap allocation in place where
+    -- possible -- see rc2/doc/rop-reuse.md. What an inlined operand
+    -- expression read (`pending`) is not an operand of the primitive, so
+    -- that drop is still owed.
+    let pendings = concatMap (\(_, _, pending) => pending) (toList argsWithFresh)
     let drops = if isReuseConsumingOp op
-                   then []
-                   else map varName postDrop ++ concatMap snd (toList argsWithFresh)
+                   then pendings
+                   else map varName postDrop ++ mapMaybe (\(_, fresh, _) => fresh) (toList argsWithFresh) ++ pendings
     finalizeSinkWithDrop fc sink (cOp op argStrs) drops
 
 emitRC sink (RExtPrim fc _ p args postDrop) _ = do
