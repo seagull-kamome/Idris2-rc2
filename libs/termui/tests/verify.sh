@@ -39,6 +39,7 @@ TESTS=(
     "TestProgram|rc2base contrib|Elm-style program, focus, commands and subscriptions"
     "TestControls|rc2base contrib|check box, buttons and menu bar"
     "TestCanvas|rc2base contrib|canvas: drawing, clipping and wide characters"
+    "TestStyledText|rc2base contrib|styled text: wrapping, prefixes, styles and a pretty-printer Doc"
     "TestPanes|rc2base contrib|function-key guide, tab strip and splitter"
 )
 

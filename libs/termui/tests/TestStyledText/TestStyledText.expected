@@ -1,0 +1,123 @@
+-- words wrap at spaces
+|the quick
+|brown fox
+|jumps
+-- a hard line break and an empty line
+|one
+|
+|two
+-- a word longer than the line is cut
+|abcde
+|fghij
+|kl x
+-- spaces at the end of a line and at the start of the next go
+|ab
+|cd
+-- leading spaces of a paragraph stay
+|  ab cd
+-- a long word after the leading spaces drops them, no empty line
+|abcde
+|fgh
+-- leading spaces and a word that fits the next line
+|abcd
+-- a word that fits the next line but not the narrow first one goes there
+|[12:00]
+|hello
+|wonderful
+-- a hard break under a prefix, wrapped further
+|> aa bb
+|  cc
+|  dd ee
+|  ff
+-- a combining mark stays with its letter at the cut
+|abé
+|cd
+-- a wide character on a line one cell wide
+|
+|a
+-- wide characters count two cells
+|日本語
+|のテキ
+|スト
+-- wide characters between words
+|ab
+|日本語
+|cd
+-- styles follow the text over a wrap
+|aa bb cc
+    ^^^^^
+|dd ee
+ rrrrr   
+-- a style across a hard break
+|x
+ u       
+|y
+ u       
+-- a bullet and a hanging indent
+|- alpha beta
+|  gamma
+|  delta
+-- a quote bar on every line
+|| to be or
+ rr        
+|| not to
+ rr        
+|| be
+ rr        
+-- characters wrap anywhere
+|ab cd
+| efgh
+|ij
+-- truncate cuts the line
+|abcde
+-- empty text
+-- a paragraph per line of a string
+|first
+|second
+-- layoutLines
+[[("ab cd", True), (" ef", False)], [("gh ij", False)]]
+[["a"], ["b"]]
+-- Doc
+-- a document at width 24
+|Name: value
+ ^^^^^                   
+|a long sentence that is
+|  wrapped by the pretty
+|  printer at the width
+-- the same document at width 14
+|Name: value
+ ^^^^^         
+|a long
+|  sentence
+|  that is
+|  wrapped by
+|  the pretty
+|  printer at
+|  the width
+-- an empty document
+-- a trailing line break adds no line
+|x
+-- a blank line in the middle stays
+|x
+|
+|y
+-- wide characters in a document
+|日本語日
+|本語
+-- a group fits on a line at 20
+|one two
+ rrr uuu             
+-- a group breaks at 6
+|one
+ rrr   
+|two
+ uuu   
+-- nested annotations: the inner style wins over the outer
+|out in out
+ ^^^^**^^^^          
+-- a line indented by the document keeps its indent when it is wrapped further
+|
+|    aaaa
+|    bbbb
+|    cccc
+|    dddd
