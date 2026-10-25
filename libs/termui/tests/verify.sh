@@ -78,6 +78,11 @@ rm -f "$PKG_DIR/examples/build/exec/editor"
 ( cd "$PKG_DIR/examples" && ulimit -v 12000000 && timeout 600 \
     "$IDRIS2RC2" --cg rc2 -p termui -p rc2base -p contrib -o editor Editor.idr )
 [[ -x "$PKG_DIR/examples/build/exec/editor" ]] || fail "examples/Editor.idr did not build"
+echo "=== rc2 backend: build examples/LlmChat.idr (build only; it needs a terminal and a model server) ==="
+rm -f "$PKG_DIR/examples/build/exec/llmchat"
+( cd "$PKG_DIR/examples" && ulimit -v 12000000 && timeout 600 \
+    "$IDRIS2RC2" --cg rc2 -p termui -p rc2base -p contrib -p network -o llmchat LlmChat.idr )
+[[ -x "$PKG_DIR/examples/build/exec/llmchat" ]] || fail "examples/LlmChat.idr did not build"
 echo "=== rc2 backend: build examples/Chat.idr (build only) ==="
 rm -f "$PKG_DIR/examples/build/exec/chat"
 ( cd "$PKG_DIR/examples" && ulimit -v 12000000 && timeout 600 \

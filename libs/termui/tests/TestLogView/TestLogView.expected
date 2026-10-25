@@ -124,3 +124,11 @@ True
 |abc defgh
 |
 [["a"], ["b"]]
+-- pieces with line breaks (0, (True, 5))
+|you  question here
+|ai   Hello,
+|     second line
+|
+|     third
+[["you  ", "question here"], ["ai   ", "Hello,"], ["     ", "second line"], ["     "], ["     ", "third"]]
+True

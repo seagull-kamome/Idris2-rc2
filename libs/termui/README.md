@@ -25,7 +25,8 @@ widgets (text field, multi-line editor, list, scroll view, spinner, progress bar
 table), styled text (with a pretty-printer `Doc` as a source) and a canvas for
 painting single cells. Demos: [`examples/Demo.idr`](examples/Demo.idr),
 [`examples/Editor.idr`](examples/Editor.idr),
-[`examples/Chat.idr`](examples/Chat.idr) (a chat log).
+[`examples/Chat.idr`](examples/Chat.idr) (a chat log),
+[`examples/LlmChat.idr`](examples/LlmChat.idr) (a chat with a language model that streams its reply).
 See [`doc/design.md`](doc/design.md).
 
 ## Build & test

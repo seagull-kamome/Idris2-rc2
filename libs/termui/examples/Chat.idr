@@ -1,8 +1,7 @@
 ||| A chat log: type a line and press Enter to send it; a bot talks now and then,
 ||| a word at a time (`extendLast`). The log is styled text (names in colour,
 ||| lines wrapped with a hanging indent) in a `LogView`, which follows the end
-||| until you scroll up with the arrows, Page Up/Down or the wheel (Tab moves
-||| the focus to it). The window size comes from `OnResize`. Ctrl-C or Esc quits.
+||| until you scroll up with Page Up/Down or the wheel. The window size comes from `OnResize`. Ctrl-C or Esc quits.
 |||
 ||| Build: idris2-rc2 --cg rc2 -p termui -p rc2base -p contrib -o chat Chat.idr
 |||
@@ -12,6 +11,7 @@ module Main
 
 import Data.List
 import Data.String
+import System
 import System.Posix.Errno
 import TermUI.Input
 import TermUI.Node
@@ -80,7 +80,7 @@ appUpdate Quit' m = (m, Quit)
 appView : AppModel -> Node AppMsg
 appView m =
   column []
-    [ box [grow 1] [L.viewer Scroll m.log]
+    [ box [grow 1] [L.view m.log]
     , box [border Single] [T.field Edit (Just Send) m.input]
     ]
 
@@ -88,11 +88,12 @@ appSubs : AppModel -> List (Sub AppMsg)
 appSubs m =
   [ MouseFocus
   , OnResize Resized
+  , OnMouse (\e => Scroll <$> keyMsg (Mouse e))
   , Every "bot" 6000 Bot
   , OnInput (\i => case i of
                      Press KEscape _ => Just Quit'
                      Press (KChar 'c') mods => if mods.ctrl then Just Quit' else Nothing
-                     _ => Nothing)
+                     _ => Scroll <$> keyMsg i)
   ]
   ++ (if null m.typing then [] else [Every "typing" 150 Word])
 
@@ -101,5 +102,5 @@ main = do
   let log0 = L.append [message cyan "bot" "Hello! Say something."] (L.empty 20 60)
   r <- runProgram (MkProgram (MkModel log0 (T.empty 30) botLines [], NoCmd) appUpdate appView appSubs)
   case r of
-    Left e => putStrLn ("termui chat needs a terminal: " ++ show e)
+    Left e => putStrLn ("termui chat needs a terminal: " ++ show e) *> exitWith (ExitFailure 1)
     Right _ => putStrLn "bye"
