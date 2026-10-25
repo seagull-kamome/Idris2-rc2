@@ -306,3 +306,6 @@
 same
 (0, 0)
 True
+-- packed cells: styles and marks read back
+('e', (MkStyle (Indexed 255) (RGB 255 128 1) 9 0, 8))
+('\12354', (RGB 0 0 255, (True, RGB 255 128 1)))

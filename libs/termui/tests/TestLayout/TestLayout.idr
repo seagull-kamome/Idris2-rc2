@@ -179,3 +179,12 @@ main = do
   putStrLn (show (fneg'.frameWidth, fneg'.frameHeight))
   c <- getCell fneg (-1) 1
   putStrLn (show (c.glyph == ' '))
+  putStrLn "-- packed cells: styles and marks read back"
+  fp <- draw (box [style (bgColor (RGB 255 128 1) plain)]
+                [ styled (withAttr Underline (withAttr Bold (fgColor (Indexed 255) plain))) "e\x301\&\x302\&\x303\&\x304\&\x305\&\x306\&\x307\&\x308\&\x309\&"
+                , styled (fgColor (RGB 0 0 255) plain) "あ" ]) 4 2
+  e <- getCell fp 0 0
+  putStrLn (show (e.glyph, e.style, length e.combining))
+  w <- getCell fp 0 1
+  k <- getCell fp 1 1
+  putStrLn (show (w.glyph, w.style.fg, k.glyph == continuation, k.style.bg))
