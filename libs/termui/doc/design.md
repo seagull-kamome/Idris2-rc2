@@ -58,7 +58,7 @@ of `Int32`), not `Nat`: a terminal is nowhere near 2^31 cells wide, and `Int32`
 is a native `int32_t` in the code rc2 generates, where a `Nat` is a boxed
 `Integer`. `Len` can be negative: `monus` is the subtraction that stops at 0, which the
 layout uses where a size must not go below zero, and the property builders
-(`width`, `padding`, `gap`, `top` ...), `newFrame`, `getCell` and `setCell` treat
+(`width`, `padding`, `gap`, `top` ...), `newFrame` and `getCell` treat
 a negative size as 0 and a negative position as outside. Counts and indexes
 of items (a tab, a line of text) stay `Nat`, except in the list widgets
 (`Select`, `Scroll`, `Table`), which keep their window and selection as `Len`.
@@ -145,6 +145,34 @@ sequences and variation selectors are not composed, because a terminal may
 compose or widen what is around them and the cell grid could not follow. A
 wide character that does not fit at the right edge of its box is replaced by a
 space.
+
+## Frame layout
+
+A `Frame` is one `Buffer` of 16-byte cells in row-major order, so painting
+and diffing read and write words and allocate nothing per cell (a `Cell`
+record with its `Style` and `Color`s would be several heap objects per cell,
+and every blank cell would share one object whose reference count the
+painter touches on each write). A cell is four `Bits32` words:
+
+| Offset | Word |
+|---|---|
+| 0 | glyph: the code point xor `' '` |
+| 4 | foreground colour |
+| 8 | background colour |
+| 12 | attributes (bits 0-7); bit 8 is set when the cell has combining marks |
+
+- A colour has its kind in the top byte: `Default` (and `Inherit`, which a cell
+  never keeps) is 0, `Indexed n` is `0x01000000 + n`, `RGB r g b` is
+  `0x02000000` followed by the three bytes.
+- Glyph xor `' '` and `Default = 0` make an all-zero cell a blank default
+  cell, so a zeroed buffer (`newBuffer` zero-fills) is a blank frame and
+  `newFrame` writes nothing.
+- Combining marks do not fit a fixed cell. They live in a side map from the
+  byte offset of the cell to its marks (at most 8), and the marked bit tells
+  that the map has to be looked at. Equal frames without marks are compared
+  as two 64-bit words per cell.
+- `getCell` builds a `Cell` from the words for callers that want one (tests,
+  `diffFrames` for the cells it writes); the painter and the differ do not.
 
 ## Diff output
 

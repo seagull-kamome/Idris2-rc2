@@ -61,8 +61,8 @@ record St where
 glyphWidth : Char -> Len
 glyphWidth c = max 1 (charWidth c)
 
-emitCell : Len -> Len -> Len -> Cell -> St -> St
-emitCell fw x y c st =
+emitCell : Len -> Len -> Len -> St -> Cell -> St
+emitCell fw x y st c =
   let moved = if st.cursor == Just (x, y) then [] else [cursorMove (cast (y + 1)) (cast (x + 1))]
       styled = if st.current == Just c.style then [] else [sgr c.style]
       next = x + glyphWidth c.glyph
@@ -82,18 +82,14 @@ diffFrames prev0 next = do
   st <- goRows prev (span 0 next.frameHeight) start
   pure (if null st.out then "" else concat (reverse ("\ESC[0m" :: st.out)))
   where
-    before : Maybe Frame -> Len -> Len -> IO Cell
-    before Nothing _ _ = pure blank
-    before (Just p) x y = getCell p x y
-
     goCols : Maybe Frame -> Len -> Len -> St -> IO St
     goCols prev y x st =
       if x >= next.frameWidth then pure st else do
-        c <- getCell next x y
-        if c.glyph == continuation then goCols prev y (x + 1) st else do
-          o <- before prev x y
-          let st' = if o == c then st else emitCell (next.frameWidth) x y c st
-          goCols prev y (x + glyphWidth c.glyph) st'
+        g <- glyphAt next x y
+        if g == continuation then goCols prev y (x + 1) st else do
+          same <- maybe (blankAt next x y) (\p => sameAt p next x y) prev
+          st' <- if same then pure st else emitCell next.frameWidth x y st <$> getCell next x y
+          goCols prev y (x + glyphWidth g) st'
 
     goRows : Maybe Frame -> List Len -> St -> IO St
     goRows _ [] st = pure st
