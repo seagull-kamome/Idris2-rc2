@@ -45,6 +45,7 @@ dumped as text (`frameLines`), which is how the tests look at results.
 | `TermUI.Widget.TextArea` | multi-line text editor |
 | `TermUI.Widget.LineEdit` | what the text field and the editor share (characters kept, horizontal scrolling, cell to character) |
 | `TermUI.Widget.Scroll` | read-only scrolling view of lines, with a scroll bar |
+| `TermUI.Widget.LogView` | styled text that grows at the end, in a scrolling window that follows it |
 | `TermUI.Widget.Scrolling` | what the scrolling widgets share: the messages, the arithmetic, the keys |
 | `TermUI.Widget.Table` | table that scrolls under a fixed header |
 | `TermUI.Widget.ScrollBar` | the scroll bar |
@@ -516,11 +517,22 @@ while the field has the focus.
 - `Scroll`: a read-only list of lines in a window, scrolled by the arrows,
   PageUp/PageDown, Home/End and the wheel (three lines a notch); the bar on its
   right shows the position. `ScrollBar.scrollBar` is the bar alone.
+- `LogView`: styled text (`StyledText`) that grows at the end, in a window with the
+  same keys and bar as `Scroll`; for a chat or the messages of a game
+  (`examples/Chat.idr`). `append` wraps the new paragraphs once and keeps the
+  lines (appending and viewing are linear in the number of lines; the log has no
+  limit). While the window is at the
+  end it follows new text; scrolling up stops that and scrolling back to the end
+  (End, or down to it) starts it again. The width is part of the model like the
+  height (`empty rows width`, `resize rows width`; the text is wrapped to the
+  width less the bar, a character a line when that is 0 or 1, and again when the
+  width changes; a window that is not following the end stays at the same line
+  number then), so a program gives it the window size from `OnResize`.
 - `Table`: a header that stays and a body that scrolls like `Scroll` (same messages
   and keys), with the bar on the right of the body. `Display.table` is the static
   version and `Display.tableRow` one row of either.
 
-The height of the window of `Select`, `Scroll`, `Table` and `TextArea` is part of
+The height of the window of `Select`, `Scroll`, `LogView`, `Table` and `TextArea` is part of
 their model (`fromList rows ...`, `resize rows`), so `update` and `view` cannot be
 given different ones.
 - `Select`: Up/Down, PageUp/PageDown, Home/End, a click on a line (a click below

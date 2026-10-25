@@ -1,0 +1,82 @@
+-- empty (0, (True, 0))
+|
+|
+|
+-- one message (0, (True, 1))
+|ann hello there
+|
+|
+-- it wraps and follows the end (1, (True, 4))
+|bob hi, how are│
+|  you today    █
+|ann fine       █
+-- scrolled up: not following (0, (False, 4))
+|ann hello there█
+|bob hi, how are█
+|  you today    │
+-- appended while scrolled up: the window stays (0, (False, 5))
+|ann hello there█
+|bob hi, how are│
+|  you today    │
+-- to the end: following again (2, (True, 5))
+|  you today    │
+|ann fine       │
+|bob good       █
+-- to the start (0, (False, 5))
+|ann hello there█
+|bob hi, how are│
+|  you today    │
+-- a page down (2, (True, 5))
+|  you today    │
+|ann fine       │
+|bob good       █
+-- narrower: wrapped again, still at the end (4, (True, 8))
+|  you    │
+|  today  │
+|ann fine █
+|bob good █
+-- narrower, at the start (0, (False, 8))
+|ann hello█
+|  there  █
+|bob hi,  │
+|  how are│
+-- taller: the end stays in view (0, (True, 4))
+|ann hello there
+|bob hi, how are
+|  you today
+|ann fine
+|
+|
+-- scrolled to the start, then the window grows to hold all: following again (0, (True, 5))
+|ann hello there
+|bob hi, how are
+|  you today
+|ann fine
+|bob good
+-- and a new message follows (1, (True, 6))
+|bob hi, how are│
+|  you today    █
+|ann fine       █
+|bob good       █
+|ann yes        █
+-- shorter window, not following: the position stays (1, (False, 5))
+|bob hi, how are█
+|  you today    │
+-- a log shorter than the window ignores scrolling (0, (True, 1))
+|x y
+|
+|
+|
+|
+-- a zero-row window (4, (True, 4))
+-- a width of one wraps a character a line (0, (True, 2))
+|
+|
+|
+-- a wide character, an empty paragraph and a hard break (0, (True, 3))
+|日本
+|b
+|
+|
+|
+|

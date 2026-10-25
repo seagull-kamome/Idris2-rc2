@@ -1,0 +1,66 @@
+||| The log view: appended text is wrapped and kept as lines, the window
+||| follows the end until it is scrolled up, and a resize wraps again. The
+||| window is rendered to text; the state is printed as (top, follow, lines).
+|||
+||| Copyright 2026, Hattori,Hiroki. All rights reserved.
+||| This module was licensed by BSD3. see LICENSE file for detail.
+module Main
+
+import Data.List
+import TermUI.Frame
+import TermUI.Node
+import TermUI.Style
+import TermUI.Widget.LogView
+import TermUI.Widget.StyledText
+
+%default covering
+
+say : Style -> String -> String -> Para
+say st who what = MkPara [spanOf st (who ++ " ")] [spanOf plain "  "] WrapWords [spanOf plain what]
+
+state : Model -> String
+state m = show (m.top, m.follow, count m.lines)
+
+draw : String -> Model -> IO ()
+draw title m = do
+  putStrLn ("-- " ++ title ++ " " ++ state m)
+  f <- render (the (Node ()) (view m)) m.width m.rows
+  ls <- frameLines f
+  traverse_ (\l => putStrLn ("|" ++ l)) ls
+
+bold : Style
+bold = withAttr Bold plain
+
+main : IO ()
+main = do
+  let m0 = empty 3 16
+  draw "empty" m0
+  let m1 = append [say bold "ann" "hello there"] m0
+  draw "one message" m1
+  let m2 = append [say bold "bob" "hi, how are you today", say bold "ann" "fine"] m1
+  draw "it wraps and follows the end" m2
+  let m3 = update (LineUp 2) m2
+  draw "scrolled up: not following" m3
+  let m4 = append [say bold "bob" "good"] m3
+  draw "appended while scrolled up: the window stays" m4
+  let m5 = update ToEnd m4
+  draw "to the end: following again" m5
+  let m6 = update ToStart m5
+  draw "to the start" m6
+  let m7 = update PageDown m6
+  draw "a page down" m7
+  let m8 = resize 4 10 m5
+  draw "narrower: wrapped again, still at the end" m8
+  let m9 = resize 4 10 m6
+  draw "narrower, at the start" m9
+  let m10 = resize 6 16 m2
+  draw "taller: the end stays in view" m10
+  let m11 = resize 5 16 m6
+  draw "scrolled to the start, then the window grows to hold all: following again" m11
+  draw "and a new message follows" (append [say bold "ann" "yes"] m11)
+  let m12 = resize 2 16 (update (LineDown 1) m6)
+  draw "shorter window, not following: the position stays" m12
+  draw "a log shorter than the window ignores scrolling" (update PageDown (update ToEnd (append [say bold "x" "y"] (empty 5 16))))
+  draw "a zero-row window" (resize 0 16 m2)
+  draw "a width of one wraps a character a line" (append [paragraph [spanOf plain "ab"]] (empty 3 1))
+  draw "a wide character, an empty paragraph and a hard break" (append [paragraph [spanOf plain "日本\nb"], paragraph []] (empty 6 9))

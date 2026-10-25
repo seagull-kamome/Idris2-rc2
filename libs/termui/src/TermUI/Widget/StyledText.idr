@@ -197,14 +197,16 @@ layoutLines w = concatMap (layoutPara (nonneg w))
 -------------------------------------------------------------------------------
 -- View
 
-lineNode : List Span -> Node msg
-lineNode [] = box [height (Cells 1)] []
-lineNode ss = row [] (map (\s => Text s.spanStyle Truncate s.spanText) ss)
+||| One line of spans as a row; an empty line is one blank row.
+export
+lineView : List Span -> Node msg
+lineView [] = box [height (Cells 1)] []
+lineView ss = row [] (map (\s => Text s.spanStyle Truncate s.spanText) ss)
 
 ||| One node per line, wrapped to `w` cells; a scrolling widget can take them.
 export
 styledLines : Len -> StyledText -> List (Node msg)
-styledLines w = map lineNode . layoutLines w
+styledLines w = map lineView . layoutLines w
 
 ||| The text wrapped to `w` cells as a column of lines.
 export
