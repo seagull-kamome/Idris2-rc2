@@ -5,7 +5,9 @@
 ||| (`Network.HTTP.Client.WebAPI.AI.OpenAIStream`), one piece per message, so
 ||| the terminal stays alive while the model thinks: scroll the log (Page
 ||| Up/Down, the wheel), resize the window, and stop
-||| a reply with Esc. Ctrl-C quits.
+||| a reply with Esc. Ctrl-C quits. Enter sends; Alt+Enter (or Esc, Enter) starts a
+||| new line, and so does pasting text with line breaks; the input grows with its
+||| lines, up to eight.
 |||
 ||| Usage: llmchat [--url URL] [--model NAME] [--system TEXT]
 |||   --url     where the API is, `http://IPv4-or-localhost[:port]/v1`; the program
@@ -22,6 +24,7 @@ module Main
 
 import Control.Task
 import Data.List
+import Data.List1
 import Data.Maybe
 import Data.String
 import Network.HTTP.Client.WebAPI.AI.OpenAI
@@ -31,13 +34,15 @@ import System
 import System.File
 import System.Posix.Errno
 import TermUI.Input
+import TermUI.Len
 import TermUI.Node
 import TermUI.Program
 import TermUI.Style
 import TermUI.Widget.LogView as L
 import TermUI.Widget.Scrolling as Sc
 import TermUI.Widget.StyledText
-import TermUI.Widget.TextInput as T
+import TermUI.Widget.TextArea as A
+import TermUI.Width
 
 %default covering
 
@@ -71,7 +76,7 @@ parseArgs _ (flag :: _) = Left ("cannot use " ++ flag)
 data Phase = Idle | Connecting | Receiving ChatStream
 
 data AppMsg
-  = Edit T.Msg | Send | Resized Len Len | Scroll Sc.Msg
+  = Edit A.Msg | Send | Resized Len Len | Scroll Sc.Msg
   | Opened (Either ApiError ChatStream)
   | Piece (Either ApiError (Maybe Delta))
   | Stop | Quit' | Done
@@ -81,7 +86,8 @@ record AppModel where
   settings : Settings
   endpoint : Endpoint
   log : L.Model
-  input : T.Model
+  input : A.Model
+  size : (Len, Len)               -- the columns and rows of the terminal
   history : List Message          -- what the model is sent, the last first
   phase : Phase
   reply : String                  -- what the model has said so far in this turn
@@ -101,9 +107,35 @@ message c who what =
 note : String -> Para
 note t = MkPara [] [] WrapWords [spanOf (fgColor red plain) t]
 
--- Room for the log: all but the status line and the input with its border.
-logRows : Len -> Len
-logRows r = r `monus` 4
+-- The input is as high as its text, up to eight rows.
+maxInputRows : Len
+maxInputRows = 8
+
+-- The width of the editor inside the border, and of a row of text in it (a cell
+-- is kept for the scroll bar and one for the cursor).
+inputCells : Len -> Len
+inputCells cols = max 4 (cols `monus` 2)
+
+textRoom : Len -> Len
+textRoom cols = max 1 (inputCells cols `monus` 2)
+
+wantedRows : Len -> A.Model -> Len
+wantedRows cols a =
+  let room = textRoom cols
+      rowsOf = \l => max 1 ((stringWidth (pack l) + room `monus` 1) `div` room)
+  in min maxInputRows (max 1 (sum (map rowsOf (forget (split (== '\n') (unpack (A.value a)))))))
+
+-- The input has the rows its text needs and the log what is left: all but the
+-- status line and the input with its border.
+layoutFor : AppModel -> AppModel
+layoutFor m =
+  let (cols, rows) = m.size
+      want = wantedRows cols m.input
+  in { input $= A.resize (inputCells cols) want
+     , log $= L.resize (rows `monus` (3 + want)) cols } m
+
+newInput : Len -> A.Model
+newInput cols = A.setWrap True (A.empty (inputCells cols) 1)
 
 request : AppModel -> ChatRequest
 request m =
@@ -126,17 +158,17 @@ nextPiece : ChatStream -> Cmd AppMsg
 nextPiece cs = RunTaskAs "chat" (Piece <$> nextDelta cs)
 
 update : AppMsg -> AppModel -> (AppModel, Cmd AppMsg)
-update (Edit e) m = ({ input $= T.update e } m, NoCmd)
+update (Edit e) m = (layoutFor ({ input $= A.update e } m), NoCmd)
 update Send m =
-  let entered = T.value m.input in
+  let entered = A.value m.input in
   case m.phase of
     Idle =>
       if trim entered == "" then (m, NoCmd)
       else
-        let m' = { input := T.empty 60
+        let m' = layoutFor ({ input := newInput (fst m.size)
                  , history := MkMessage User entered :: m.history
                  , phase := Connecting
-                 , log $= L.update ToEnd . L.append [message green "you" entered, message cyan "ai" ""] } m
+                 , log $= L.update ToEnd . L.append [message green "you" entered, message cyan "ai" ""] } m)
         in (m', RunTaskAs "chat" (Opened <$> chatStream m'.endpoint (request m')))
     _ => (m, NoCmd)
 update (Opened (Left e)) m =
@@ -163,7 +195,7 @@ update Stop m =
   case m.phase of
     Idle => (m, NoCmd)
     p => (finish ({ log $= L.append [note "(stopped)"] } m), Batch [CancelTask "chat", closing p])
-update (Resized c r) m = ({ log $= L.resize (logRows r) c } m, NoCmd)
+update (Resized c r) m = (layoutFor ({ size := (c, r) } m), NoCmd)
 update (Scroll s) m = ({ log $= L.update s } m, NoCmd)
 update Done m = (m, NoCmd)
 update Quit' m = (m, Quit)
@@ -171,16 +203,24 @@ update Quit' m = (m, Quit)
 status : AppModel -> String
 status m =
   case m.phase of
-    Idle => "Enter sends, Esc stops a reply, Ctrl-C quits.   " ++ m.settings.model ++ " @ " ++ m.settings.url
+    Idle => "Enter sends (Alt+Enter: new line), Esc stops a reply, Ctrl-C quits.   " ++ m.settings.model ++ " @ " ++ m.settings.url
     Connecting => "waiting for the model ..."
     Receiving _ => "the model is writing (Esc stops it) ..."
+
+-- Enter sends, Alt+Enter is a line break, Page Up/Down scroll the log, the rest
+-- is the editor's.
+inputKeys : Input -> Maybe AppMsg
+inputKeys (Press KEnter mods) = Just (if mods.alt || mods.shift then Edit A.Newline else Send)
+inputKeys (Press KPageUp _) = Just (Scroll Sc.PageUp)
+inputKeys (Press KPageDown _) = Just (Scroll Sc.PageDown)
+inputKeys i = Edit <$> A.keyMsg i
 
 view : AppModel -> Node AppMsg
 view m =
   column []
     [ box [grow 1] [L.view m.log]
     , truncated dim (status m)
-    , box [border Single] [T.field Edit (Just Send) m.input]
+    , box [border Single] [focusable (\f => A.view f m.input) inputKeys]
     ]
 
 subs : AppModel -> List (Sub AppMsg)
@@ -219,7 +259,7 @@ main = do
           Right _ => do
             let auth = pure (Right (maybe [] (\k => [("Authorization", "Bearer " ++ k)]) (nonEmpty key)))
                 greeting = L.append [message cyan "ai" ("Hello! Say something to " ++ s.model ++ ".")] (L.empty 20 70)
-            r <- runProgram (MkProgram (MkModel s (MkEndpoint s.url auth) greeting (T.empty 60) [] Idle "", NoCmd)
+            r <- runProgram (MkProgram (layoutFor (MkModel s (MkEndpoint s.url auth) greeting (newInput 80) (80, 24) [] Idle ""), NoCmd)
                                        update view subs)
             case r of
               Left e => die False ("llmchat needs a terminal: " ++ show e)

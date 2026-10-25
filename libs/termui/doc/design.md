@@ -274,9 +274,12 @@ llama-server, Ollama ...) with `rc2base`'s `OpenAIStream`. The question is sent 
 `Opened stream`, `update` starts the next task for the next piece, and each piece
 is added to the end of the last paragraph of a `LogView` (`extendLast`). The terminal
 stays alive between pieces, a reply is stopped with `CancelTask "chat"`, and the
-history is sent with every question. The log is not a focusable: the input field
-is the only one, so typing needs no Tab, and Page Up/Down and the wheel reach the
-log through `OnInput` and `OnMouse` subscriptions. The URL and the model are given
+history is sent with every question. The input is a `TextArea`: Enter sends and
+Alt+Enter (a paste with line breaks too) starts a new line; it is as high as its
+rows (counted at the room of a wrapped row, up to eight) and the log takes what is
+left, so both are sized again after every edit and resize (`layoutFor`). The log is
+not a focusable: the input is the only one, so typing needs no Tab, and Page Up/Down
+(taken from the editor in its key handler) and the wheel reach the log. The URL and the model are given
 on the command line (`--url`, `--model`, `--system`; `$LLM_URL`, `$LLM_MODEL`,
 `$LLM_API_KEY`), and the URL is `http` with an IPv4 address or `localhost`.
 

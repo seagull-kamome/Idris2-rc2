@@ -87,3 +87,11 @@ main = do
   draw "extending an empty last paragraph" (extendLast [spanOf plain "now"] (append [say bold "a" "x", paragraph []] (empty 4 16)))
   draw "extending a truncated paragraph cuts at the width" (extendLast [spanOf plain " defghijklmnopq"] (append [MkPara [] [] Truncate [spanOf plain "abc"]] (empty 2 10)))
   putStrLn (show (map (map (\s => s.spanText)) (toList (append [paragraph [spanOf plain "ab"]] (empty 3 1)).lines)))
+
+  -- text with line breaks that arrives in pieces, as a model sends it
+  let base = append [MkPara [spanOf bold "you  "] [spanOf plain "     "] WrapWords [spanOf plain "question here"], MkPara [spanOf bold "ai   "] [spanOf plain "     "] WrapWords []] (empty 5 30)
+      nl = foldl (\acc, w => extendLast [spanOf plain w] acc) base ["Hello", ",", "\n", "second", " line\n", "\n", "third"]
+  draw "pieces with line breaks" nl
+  putStrLn (show (map (map (\s => s.spanText)) (toList nl.lines)))
+  let whole2 = append [MkPara [spanOf bold "you  "] [spanOf plain "     "] WrapWords [spanOf plain "question here"], MkPara [spanOf bold "ai   "] [spanOf plain "     "] WrapWords [spanOf plain "Hello,\nsecond line\n\nthird"]] (empty 5 30)
+  putStrLn (show (toList nl.lines == toList whole2.lines))
