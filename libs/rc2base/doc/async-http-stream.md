@@ -63,3 +63,43 @@ The pure parts are exported for tests and for other framings: `feedChunked`
 
 Test: `tests/TestAsyncHTTPStream` (a server task sends the answer in pieces while
 the client reads the events: they arrive while the server is still sending).
+
+## The chat completions API, streaming
+
+`Network.HTTP.Client.WebAPI.AI.OpenAIStream` is the use that `Stream` was made for:
+the `"stream": true` form of OpenAI's chat completions API, which LM Studio,
+llama.cpp's llama-server, Ollama and the cloud services serve.
+
+```idris2
+opened <- chatStream endpoint (chatRequest "model" [MkMessage User "hello"])   -- Task (Either ApiError ChatStream)
+...
+d <- nextDelta chat      -- Task (Either ApiError (Maybe Delta)); Nothing: the reply is complete
+...                      -- d.content, d.reasoning, d.finish
+closeChat chat
+```
+
+- `Endpoint` and `ChatRequest` are those of `OpenAI.chat`. The `baseUrl` is
+  `http://host[:port][/prefix]` (`parseBase`): the host an IPv4 address or `localhost`
+  (127.0.0.1) in any case, the port 1 to 65535 (80 if there is none). `https` and host
+  names are an error, as the client has no TLS and no lookup; so are a query, a
+  fragment and credentials in the URL (they would be dropped; the key goes in
+  `authHeaders`).
+- A `Delta` has the next piece of the answer (`content`), of the thought of a model
+  that thinks first (`reasoning`, from `reasoning_content` or `reasoning`) and the
+  reason the reply ended (`finish`). Events that carry none of them (the role, the
+  usage) are passed over; `[DONE]` or the end of the body ends the reply.
+- Only the first choice is read (the one with `index` 0 or none): `ChatRequest` has no
+  `n`, and the others of a server that sends more would be other replies.
+- A status outside 200..299 is `HttpStatus` with the `error.message` of the body. An
+  `error` that is not null in the data of an event (`{"error": {"message": ..}}`,
+  `{"error": "text"}`, or the JSON of it) is `DecodeError` with its message: the
+  reply failed in the middle, which `ApiError` has no better name for.
+- `nextDelta` returns `Right Nothing` at `[DONE]` and also when the body ends without
+  it; a server that closes the connection in the middle of a reply and sent no length
+  looks the same (`Stream` can only tell it for a chunked body or one with a length).
+  Call `closeChat` after the last `nextDelta`, an error included.
+- `Language.JSON` reads the lower case digits of a `\uXXXX` escape wrong and does not
+  join a pair of surrogates; the data of an event is rewritten before it is parsed (a
+  server that escapes non-ASCII text, like Python's `json.dumps`, writes both).
+
+Test: `tests/TestOpenAIStream` (a server task that answers the way LM Studio does).

@@ -18,7 +18,7 @@ modules    = Control.Concurrent.MVar,
              --
              Network.HTTP.Client, Network.HTTP.Client.Curl, Network.HTTP.Client.Curl.Raw, Network.HTTP.Client.Curl.TextBuffer,
              Network.HTTP.Client.Curl.Types,
-             Network.HTTP.Client.WebAPI.AI.OpenAI, Network.HTTP.Client.WebAPI.AI.Providers,
+             Network.HTTP.Client.WebAPI.AI.OpenAI, Network.HTTP.Client.WebAPI.AI.OpenAIStream, Network.HTTP.Client.WebAPI.AI.Providers,
              Network.HTTP.Client.WebAPI.Auth.OAuth2, Network.HTTP.Client.WebAPI.Auth.PKCE,
              Network.HTTP.Client.WebAPI.JSON,
              --

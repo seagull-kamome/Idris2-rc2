@@ -1,0 +1,71 @@
+-- endpoint
+(192.168.3.82, (1234, ("192.168.3.82:1234", "/v1")))
+(127.0.0.1, (8080, ("localhost:8080", "")))
+(127.0.0.1, (80, ("127.0.0.1", "/v1")))
+(10.0.0.5, (80, ("10.0.0.5:80", "/api/v1")))
+error: https is not supported by the stream client: use an http endpoint
+error: the host must be an IPv4 address or localhost: example.com
+error: not an IPv4 address: 300.1.1.1
+error: not an http URL: ftp://1.2.3.4/
+error: not an http URL: /v1
+(127.0.0.1, (1234, ("localhost:1234", "/V1")))
+error: bad port: abc
+error: bad port: 
+error: bad port: 8080x
+error: bad port: 0
+error: bad port: 70000
+(127.0.0.1, (65535, ("localhost:65535", "")))
+error: the host must be an IPv4 address or localhost: +1.2.3.4
+error: the host must be an IPv4 address or localhost: 1.2.3.4.5
+error: the host must be an IPv4 address or localhost: 1.2.3
+error: a query or a fragment in the endpoint URL is not supported
+error: a query or a fragment in the endpoint URL is not supported
+error: credentials in the endpoint URL are not supported
+error: no host in the endpoint URL: http:///v1
+error: no host in the endpoint URL: http://:80/
+-- pieces
+done
+("", ("", Nothing))
+("Hello", ("", Nothing))
+("\26085\26412\35486", ("", Nothing))
+("", ("hmm", Nothing))
+("", ("think", Nothing))
+("", ("", Just "stop"))
+("w\246rld \26085\26412 \\u00f6", ("", Nothing))
+("\128512!", ("", Nothing))
+("a\65533 b \65533 c \65533A ", ("", Nothing))
+error: not JSON: {"choices":[{"delta":{"content":"\u12"}}]}
+("", ("", Nothing))
+("", ("", Nothing))
+error: model not found
+error: model crashed
+error: {"code":500}
+("ok", ("", Nothing))
+("mine", ("", Nothing))
+("", ("", Nothing))
+error: not JSON: not json
+-- a reply, piece by piece
+("Hel", ("", Nothing))
+("lo, ", ("", Nothing))
+("", ("(thinking)", Nothing))
+("w\246rld \26085", ("", Nothing))
+("", ("", Just "stop"))
+end
+"request: POST /v1/chat/completions HTTP/1.1\r\nHost: 127.0.0.1:18765\r\nAccept: text/event-stream\r\nCache-Control: no-cache\r\nConnection: close\r\nContent-Length: 142\r\nContent-Type: application/json\r\nAuthorization: Bearer secret\r\n\r\n{\"model\":\"test-model\",\"messages\":[{\"role\":\"system\",\"content\":\"be brief\"},{\"role\":\"user\",\"content\":\"hi \26085\26412\"}],\"max_tokens\":64,\"stream\":true}"
+-- the reply ends with the connection, without [DONE]
+("a", ("", Nothing))
+("b", ("", Nothing))
+end
+"request: POST /v1/chat/completions HTTP/1.1\r\nHost: 127.0.0.1:18765\r\nAccept: text/event-stream\r\nCache-Control: no-cache\r\nConnection: close\r\nContent-Length: 142\r\nContent-Type: application/json\r\n\r\n{\"model\":\"test-model\",\"messages\":[{\"role\":\"system\",\"content\":\"be brief\"},{\"role\":\"user\",\"content\":\"hi \26085\26412\"}],\"max_tokens\":64,\"stream\":true}"
+-- an error answer
+failed: HttpStatus 400 model not found
+"request: POST /v1/chat/completions HTTP/1.1\r\nHost: 127.0.0.1:18765\r\nAccept: text/event-stream\r\nCache-Control: no-cache\r\nConnection: close\r\nContent-Length: 142\r\nContent-Type: application/json\r\n\r\n{\"model\":\"test-model\",\"messages\":[{\"role\":\"system\",\"content\":\"be brief\"},{\"role\":\"user\",\"content\":\"hi \26085\26412\"}],\"max_tokens\":64,\"stream\":true}"
+-- an error in the middle of the reply
+("x", ("", Nothing))
+error: DecodeError out of memory
+"request: POST /v1/chat/completions HTTP/1.1\r\nHost: 127.0.0.1:18765\r\nAccept: text/event-stream\r\nCache-Control: no-cache\r\nConnection: close\r\nContent-Length: 142\r\nContent-Type: application/json\r\n\r\n{\"model\":\"test-model\",\"messages\":[{\"role\":\"system\",\"content\":\"be brief\"},{\"role\":\"user\",\"content\":\"hi \26085\26412\"}],\"max_tokens\":64,\"stream\":true}"
+-- the key cannot be had
+Just "AuthError no key"
+-- an endpoint that cannot be used
+Just "TransportError https is not supported by the stream client: use an http endpoint"
+Just "TransportError the host must be an IPv4 address or localhost: example.com"

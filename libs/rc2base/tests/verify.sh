@@ -98,6 +98,7 @@ TESTS=(
     "TestHTTPMessage|contrib|Network.HTTP.Message: bodyLength, connectionClose, responseHead, findHeadEndFrom, parseHead (strict header lines), growBuffer; FromSegment Int"
     "TestAsyncHTTPServer|network contrib|Network.Async.HTTP.Server: answers, keep-alive, pipelining, split heads, HEAD/204, Connection, 400/413/431, limits, big bodies"
     "TestAsyncHTTPStream|network contrib|Network.Async.HTTP.Stream: chunk decoder, line and event parsers, events read while the server sends, framings, error status"
+    "TestOpenAIStream|network contrib|Network.HTTP.Client.WebAPI.AI.OpenAIStream: endpoint URL, pieces of a reply, a server that answers like LM Studio, errors"
     "TestAsyncHTTPStaticCGI|network contrib|Network.Async.HTTP.{Static,CGI} behind the router: files, index, ETag/304, 404 for .., CGI variables and body, Status/Location, 502, 504"
     "TestAsyncHTTPProxy|network contrib|Network.Async.HTTP.Proxy: path below the prefix, method/body/headers forwarded, hop-by-hop dropped, redirect, HEAD, 502 (unreachable, too large), 504"
     "TestAsyncHTTPRewrite|network contrib|Network.Async.HTTP.Rewrite: internal rewrites with groups and queries, whole-path match, first rule only, redirects, no //host and no .. out of the groups, rules that cannot be made"
