@@ -40,6 +40,7 @@ TESTS=(
     "TestControls|rc2base contrib|check box, buttons and menu bar"
     "TestCanvas|rc2base contrib|canvas: drawing, clipping and wide characters"
     "TestStyledText|rc2base contrib|styled text: wrapping, prefixes, styles and a pretty-printer Doc"
+    "TestLogView|rc2base contrib|log view: following the end, scrolling and resizing"
     "TestPanes|rc2base contrib|function-key guide, tab strip and splitter"
 )
 
@@ -77,6 +78,11 @@ rm -f "$PKG_DIR/examples/build/exec/editor"
 ( cd "$PKG_DIR/examples" && ulimit -v 12000000 && timeout 600 \
     "$IDRIS2RC2" --cg rc2 -p termui -p rc2base -p contrib -o editor Editor.idr )
 [[ -x "$PKG_DIR/examples/build/exec/editor" ]] || fail "examples/Editor.idr did not build"
+echo "=== rc2 backend: build examples/Chat.idr (build only) ==="
+rm -f "$PKG_DIR/examples/build/exec/chat"
+( cd "$PKG_DIR/examples" && ulimit -v 12000000 && timeout 600 \
+    "$IDRIS2RC2" --cg rc2 -p termui -p rc2base -p contrib -o chat Chat.idr )
+[[ -x "$PKG_DIR/examples/build/exec/chat" ]] || fail "examples/Chat.idr did not build"
 
 for entry in "${TESTS[@]}"; do
     IFS='|' read -r t extra desc <<< "$entry"
