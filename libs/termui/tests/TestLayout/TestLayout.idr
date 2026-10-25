@@ -8,6 +8,7 @@ module Main
 import Data.List
 import Data.String
 import TermUI.Frame
+import TermUI.Input
 import TermUI.Node
 import TermUI.Output
 import TermUI.Style
@@ -188,3 +189,16 @@ main = do
   w <- getCell fp 0 1
   k <- getCell fp 1 1
   putStrLn (show (w.glyph, w.style.fg, k.glyph == continuation, k.style.bg))
+  dump "a node built for its width" (withWidth (\w => text (show w))) 7 1
+  dump "inside a border and padding" (box [border Single, padding 1] [withWidth (\w => text (show w))]) 9 5
+  dump "in a row with a fixed sibling" (row [] [text "ab", box [grow 1] [withWidth (\w => text (show w))]]) 9 1
+  dump "its height follows the wrapped text" (column [] [withWidth (\w => text (replicate (cast w * 2) 'x')), text "end"]) 6 5
+  dump "in an absolute box" (box [] [box [absolute, left 2, width (Cells 4)] [withWidth (\w => text (show w))]]) 8 1
+  dump "the size properties of a body that is a box are ignored"
+    (column [] [withWidth (\w => box [width (Cells 3), maxWidth 2, absolute] [text (show w)]), text "end"]) 6 3
+  dump "the same around the node: the box around it decides"
+    (column [] [box [width (Cells 3)] [withWidth (\w => text (show w))], text "end"]) 6 2
+  dump "nested" (box [border Single] [withWidth (\w => withWidth (\v => text (show (w, v))))]) 12 3
+  dump "a zero width" (withWidth (\w => text (show w))) 0 1
+  dump "a row wider than 4096 is not wanted wider" (row [] [withWidth (\w => text (replicate (cast w) 'x')), text "|"]) 8 2
+  dump "a focusable in it is drawn unfocused" (withWidth (\_ => focusable (\f => text (if f then "focused" else "plain")) (\_ => Nothing))) 8 1

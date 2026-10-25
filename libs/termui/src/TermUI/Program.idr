@@ -298,6 +298,7 @@ currentView env = do
           go : Nat -> Node msg -> (Node msg, List (Input -> Maybe msg), List (Maybe String), Nat)
           go i n@(Text _ _ _) = (n, [], [], i)
           go i n@(CanvasView _) = (n, [], [], i)
+          go i n@(WithWidth _) = (n, [], [], i)
           go i (Focusable key body h) =
             let (inner, hs, ks, next) = go (i + 1) (body (i == focus)) in
             (tag i inner, h :: hs, key :: ks, next)

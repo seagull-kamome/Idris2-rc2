@@ -121,3 +121,28 @@
 |    bbbb
 |    cccc
 |    dddd
+-- a view that wraps to the width it is placed in
+|the quick
+|brown fox
+|jumps over
+|the lazy dog
+|
+|
+|the quick brown fox
+|jumps over the lazy
+|dog
+|
+|
+|
+|┌──────────────┐
+|│the quick     │
+|│brown fox     │
+|│jumps over the│
+|│lazy dog      │
+|└──────────────┘
+|> the quick
+|  brown fox
+|  jumps over the
+|  lazy dog
+|
+|

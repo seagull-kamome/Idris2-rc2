@@ -211,6 +211,26 @@ of cells at a time, with no per-cell work.
   a timer (`Every`) and the next view shows the result. A canvas takes no
   input; wrap it in `focusable` to read keys.
 
+## Width-aware nodes
+
+`withWidth (\w => node)` builds its node from the width of the border box it is
+placed in, for what depends on it: wrapped styled text, a rule across the
+width, a bar of a given fraction.
+
+- Where the parent does not fix the width, the node wants the width its
+  content has when `w` is 4096 (as a text wants its longest line; it does not
+  grow wider than that). In a row, next to other children, all of them shrink
+  in proportion to their size to fit; a sibling that must keep its size is
+  given `shrink 0`.
+- Its height follows the width it is placed in, like that of a wrapped text.
+- The body is built several times in a layout (to measure, to decide the width,
+  to place) and again for each ancestor that measures it: keep it cheap.
+- The parent sizes and places the `withWidth` node, so the width, height,
+  min/max sizes, margins, `grow`/`shrink` and `absolute` of a body that is a box
+  are ignored; give them to a box around the `withWidth`.
+- It cannot hold focusables: they are found before the layout, when the node
+  is not built yet; the ones in it are laid out as unfocused and get no keys.
+
 ## Styled text
 
 `TermUI.Widget.StyledText` shows text whose parts have different styles: chat
@@ -222,9 +242,10 @@ it is wrapped (`WrapWords`, `WrapChars` or `Truncate`, as for `Text`).
 one row of `Text` nodes per line; `styledLines` gives the lines as a list,
 for a scrolling widget; `layoutLines` gives them as spans, for tests.
 
-- The layout needs the width and the view does not know it: the program
-  passes the width it has (the window size, minus what is around the text) and
-  builds the view again on a resize.
+- The layout needs the width and the view does not know it. `styledView t`
+  is a `withWidth` node (see "Width-aware nodes" below) and wraps to the width
+  it is placed in, so a resize needs no new view; `styledText w t` wraps to a
+  width the program passes.
 - Words are cut at spaces (U+0020 only: text in a language that does not use
   them is one word and is cut at the width, as is a word longer than a line).
   Spaces that would end a line or start a continuation line are dropped, the

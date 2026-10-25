@@ -210,3 +210,10 @@ styledLines w = map lineNode . layoutLines w
 export
 styledText : Len -> StyledText -> Node msg
 styledText w t = column [] (styledLines w t)
+
+||| The text wrapped to the width the view is placed in, so a resize needs no
+||| new view. It is built inside `withWidth`, so see there for what that
+||| node cannot do.
+export
+styledView : StyledText -> Node msg
+styledView t = withWidth (\w => styledText w t)
