@@ -65,7 +65,7 @@ localRepIn _ (RCConstClosure {}) = RBoxed
 ||| for the full story (the per-member *wrapper* functions need no such
 ||| exclusion -- their own trivial forwarding body already has nothing
 ||| eligible). Moved here from `Compiler.RC2.DualABI` so
-||| `Compiler.RC2.Loop`'s own `buildCalleeTable` can reuse it too,
+||| `Compiler.RC2.CalleeTable`'s own `buildCalleeTable` can reuse it too,
 ||| without Loop.idr needing to import DualABI.idr (which itself
 ||| imports Loop.idr -- that would be a cycle).
 export

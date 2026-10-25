@@ -504,7 +504,7 @@ groups *before* any rewriting happens: genuinely loop-*carried* ones
 treatment -- see `TODO.md`'s own note on why a loop-carried shadow's
 own Boxed-context reuse isn't attempted), and *invariant* ones, which
 instead only have their native-context occurrences redirected
-(`markInvariantNative`, mirroring `Loop.idr`'s own `nativeArgTypes`/
+(`markInvariantNative`, mirroring `NativeUse.idr`'s own `nativeArgTypes`/
 `opNativeUsesThrough` walk exactly but rewriting instead of
 collecting) -- any surviving Boxed-context occurrence is left on the
 original parameter id, dealt with next.
@@ -1088,7 +1088,7 @@ above needed to stop assuming a single loop.
      (the standard O(1)-per-assignment approach) -- confirmed on the
      same real program: 16.740s -> 0.574s, with the SCCs found
      unchanged (87/87 regression suite still green).
-   - **`Compiler.RC2.Loop`'s `buildCalleeTable`/`calleeNativeParams`.**
+   - **`Compiler.RC2.CalleeTable`'s `buildCalleeTable`/`calleeNativeParams`.**
      `calleeNativeParams` called `nativeArgType` once per top-level
      parameter, each call re-walking that *one* definition's own body
      in full via `nativeArgTypes` -- O(parameter count x body size)
@@ -1470,8 +1470,12 @@ benchmark:
 - `rc2/src/Compiler/RC2/Rewrite.idr` -- the whole-tree rewrites shared by
   several passes: `mapTailAppNames`, `collectBoundIds`/`Renaming`/
   `renameRCExp`, `stripOwnership`.
+- `rc2/src/Compiler/RC2/NativeUse.idr` --
+  `nativeArgType`/`nativeArgTypes`/`opNativeUsesThrough` (the native-use
+  analysis).
+- `rc2/src/Compiler/RC2/CalleeTable.idr` -- `CalleeTable`,
+  `buildCalleeTable`, `callArgOrOpNativeTy`.
 - `rc2/src/Compiler/RC2/Loop.idr` --
-  `nativeArgType`/`nativeArgTypes`/`opNativeUsesThrough`,
   `assignShadowIds`, `applyLoop`,
   `collectContinueArgs`/`invariantLoopParamIds`/
   `elideInvariantContinueArgs` (loop-invariant parameter elision),

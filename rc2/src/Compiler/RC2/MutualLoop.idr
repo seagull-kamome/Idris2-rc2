@@ -23,7 +23,7 @@
 module Compiler.RC2.MutualLoop
 
 import Compiler.RC2.RCExp
-import Compiler.RC2.Loop
+import Compiler.RC2.CalleeTable
 import Compiler.RC2.Rewrite
 import Compiler.RC2.Util
 

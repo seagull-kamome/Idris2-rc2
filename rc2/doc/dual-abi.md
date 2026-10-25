@@ -76,7 +76,7 @@ with no cross-function iteration:
 - **A parameter's own eligibility** only depends on how *that
   function's own body* reads it: is it consistently used as a
   native-context `ROp`/`RCmpCase` operand? This is exactly
-  `Compiler.RC2.Loop`'s own `nativeArgType` question, just asked about
+  `Compiler.RC2.NativeUse`'s own `nativeArgType` question, just asked about
   *every* top-level parameter instead of only loop-carried ones.
   Nothing about any other function is relevant.
 - **A tail-position return value's own eligibility** comes from the
@@ -617,7 +617,7 @@ correctly either way.
 
 ### The promotion: `nativePromotionFor`
 
-Reuses `Compiler.RC2.Loop`'s own `nativeArgTypes` (now `export`ed
+Reuses `Compiler.RC2.NativeUse`'s own `nativeArgTypes` (now `export`ed
 alongside `nativeArgType`) directly -- the same question it already
 asks about a whole function's own top-level parameter, just asked
 about an `RLet`-bound worker-call result instead: does the rest of
@@ -704,7 +704,7 @@ as a whole: 90 passed, 0 known, 0 failed.
 ### Extending the promotion to `case` scrutinees
 
 The read source that turned out to matter most in real code.
-`Compiler.RC2.Loop`'s own `nativeArgTypes` used to look only at the
+`Compiler.RC2.NativeUse`'s own `nativeArgTypes` used to look only at the
 *alt bodies* of an `RConstCase`, never at the scrutinee position
 itself, so a worker call whose native result was read *only* as a
 `case` scrutinee matched none of the sources above and stayed
@@ -742,7 +742,7 @@ supplying an already-`RNative` slot is a native read, not the
 "metadata" `nativeArgTypes` used to skip -- the `RLoopContinue`
 analogue one iteration earlier. `LateInline`'s `hasNonNativeUse`
 likewise stopped treating an `initial` occurrence as disqualifying,
-against the shared `Loop.nativeSlotTy`.
+against the shared `NativeUse.nativeSlotTy`.
 
 Measured over a whole idris2-lsp build (24,343 definitions), by
 `--directive dumprcexpr`'s own `callRep` lines:
@@ -1289,7 +1289,7 @@ the closest analogue to bug #2 above) passed without any fix needed.
    bug #4 above, `fib`'s own worker still boxed both recursive calls'
    results (`idris2rc2_mkInt64(idris2rc2_worker_Main_fib_0(...))`) only to
    immediately unbox them again for the `+` -- the promotion itself
-   never fired. `Compiler.RC2.Loop`'s own `nativeArgTypes` (reused
+   never fired. `Compiler.RC2.NativeUse`'s own `nativeArgTypes` (reused
    directly for the promotion decision, see "Stage 4" above)
    deliberately doesn't count a *bare*, not-further-`RLet`-bound
    `ROp`/`RCmpCase` reading a candidate variable -- correctly, for
@@ -1723,7 +1723,7 @@ from Stage 2.
   fields verbatim, deliberately un-precomputed unlike `RAppNameRep`'s
   own `argReps`/`retRep`, plus a `postDrop` field always inherited
   unchanged from the `RAppNameRep` it replaces).
-- `rc2/src/Compiler/RC2/Loop.idr` -- `nativeArgType`/`nativeArgTypes`/
+- `rc2/src/Compiler/RC2/NativeUse.idr` -- `nativeArgType`/`nativeArgTypes`/
   `stripOwnership` now `export`ed for `Compiler.RC2.DualABI`'s own
   reuse; defensive `RAppNameRep` pass-through case in `renameRCExp`
   (now also renaming `postDrop`).

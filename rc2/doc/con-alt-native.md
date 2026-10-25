@@ -59,7 +59,7 @@ directly, not re-derived):
    exactly this shape -- no new Emit.idr work needed.
 3. `core'` is `core` with only `fieldId`'s own *native-context*
    occurrences redirected to `shadowId` (`markNativeOccurrences`,
-   mirroring `Loop.idr`'s own `nativeArgTypes`/`opNativeUsesThrough`
+   mirroring `NativeUse.idr`'s own `nativeArgTypes`/`opNativeUsesThrough`
    walk exactly, but rewriting instead of collecting) -- any surviving
    Boxed-context occurrence is left on `fieldId` itself, untouched.
    `stripOwnership` (`Compiler.RC2.Rewrite`, reused directly) first clears
@@ -231,7 +231,7 @@ rather than batched:
 1. `stripOwnership (singleton fieldId)` clears `fieldId`'s own stale
    ownership bookkeeping first, exactly as before, just keyed on the
    original field id rather than a whole batch of shadow ids.
-2. `markNativeOccurrences` mirrors `Loop.idr`'s own `nativeArgTypes`/
+2. `markNativeOccurrences` mirrors `NativeUse.idr`'s own `nativeArgTypes`/
    `opNativeUsesThrough` walk exactly, but rewrites the native-context
    occurrences it finds instead of collecting their types -- every
    Boxed-context occurrence is left on `fieldId` untouched.
@@ -320,7 +320,7 @@ lost: 0 bytes in 0 blocks` (`800 bytes in 100 blocks still reachable`
   `applyConAltNative`; `markNativeOccurrences`/`renameOpArgsThrough`,
   `reannotateFieldOwnership`/`finalizeBranch`, `countDupsNeeded`/
   `wrapNDups` (the "Reusing the original Boxed field" design above).
-- `rc2/src/Compiler/RC2/Loop.idr` -- `nativeArgTypes`/`nativeArgType`/
+- `rc2/src/Compiler/RC2/NativeUse.idr` -- `nativeArgTypes`/`nativeArgType`/
   `opNativeUsesThrough` (already `export`ed, reused unchanged --
   `markNativeOccurrences`/`renameOpArgsThrough` mirror their own walk
   exactly rather than calling them, since they rewrite instead of
@@ -366,7 +366,7 @@ lost: 0 bytes in 0 blocks` (`800 bytes in 100 blocks still reachable`
    "Bugs found and fixed" and "Reusing the original Boxed field" above
    for four separate confirmed instances of exactly this). Any change
    to `ConAltNative.idr`, or to `Compiler.RC2.Reuse`'s own
-   `resolveAlt`/`Compiler.RC2.Rewrite`'s `stripOwnership` / `Compiler.RC2.Loop`'s `nativeArgTypes`
+   `resolveAlt`/`Compiler.RC2.Rewrite`'s `stripOwnership` / `Compiler.RC2.NativeUse`'s `nativeArgTypes`
    (all reused or mirrored here), should be re-checked with `valgrind
    --leak-check=full` against `tests/Test117ConAltNative/ConAltNative.idr` specifically
    (its own `step` runs 200k iterations, deliberately large enough that

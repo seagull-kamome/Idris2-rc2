@@ -11,7 +11,7 @@ module Compiler.RC2.LateInline
 
 import Compiler.RC2.DeadCode
 import Compiler.RC2.DualABI
-import Compiler.RC2.Loop
+import Compiler.RC2.NativeUse
 import Compiler.RC2.Rewrite
 import Compiler.RC2.MutualLoop
 import Compiler.RC2.RCExp
@@ -218,7 +218,7 @@ hasNonNativeUse ty loopSlots target (RConCase _ sc alts mDef) =
     sc == RCLoc target || any (\(MkRConAlt _ _ _ _ body) => hasNonNativeUse ty loopSlots target body) alts
       || maybe False (hasNonNativeUse ty loopSlots target) mDef
 -- A native read when the alts match against `ty` (`constAltsNativeType`
--- is shared with `Loop.nativeArgTypes`, so they agree). `RConCase`'s
+-- is shared with `NativeUse.nativeArgTypes`, so they agree). `RConCase`'s
 -- scrutinee above is a constructor and stays a disqualifying use.
 hasNonNativeUse ty loopSlots target (RConstCase _ sc alts mDef) =
     (sc == RCLoc target && constAltsNativeType alts /= Just ty)
@@ -237,7 +237,7 @@ hasNonNativeUse ty loopSlots target (RReuseOffer _ sc dupOnShared dropOnUnique b
 hasNonNativeUse ty loopSlots target (RLoop _ loopParams initial _ body) =
     initialNonNative || hasNonNativeUse ty loopParams target body
   where
-    -- `nativeSlotTy` is shared with `Loop.nativeArgTypes`, which decides `ty`;
+    -- `nativeSlotTy` is shared with `NativeUse.nativeArgTypes`, which decides `ty`;
     -- the two must agree on what a native slot is.
     initialNonNative : Bool
     initialNonNative =
