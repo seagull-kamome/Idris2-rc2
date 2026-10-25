@@ -9,6 +9,7 @@
 ||| This module was licensed by BSD3. see LICENSE file for detail.
 module TermUI.Node
 
+import TermUI.Canvas
 import TermUI.Input
 import public TermUI.Len
 import TermUI.Style
@@ -81,6 +82,8 @@ public export
 data Node : Type -> Type where
   Text : Style -> Wrap -> String -> Node msg
   Box : Props -> List (Node msg) -> Node msg
+  ||| The cells of a `Canvas`, at its size.
+  CanvasView : Canvas -> Node msg
   ||| A node the runtime can give the keyboard focus to. The body is built
   ||| knowing whether it has the focus, and the handler sees the keys that
   ||| arrive while it has. Focusables are visited in tree order by Tab and
@@ -112,6 +115,12 @@ row ps = box (direction Row :: ps)
 public export
 column : List Prop -> List (Node msg) -> Node msg
 column = box
+
+||| The cells of a canvas; give the box around it a size to cut it or to
+||| leave room around it.
+public export
+canvas : Canvas -> Node msg
+canvas = CanvasView
 
 ||| Styled text; `\n` starts a new line.
 public export
@@ -227,6 +236,7 @@ keyed _ n = n
 export covering
 mapNode : (a -> b) -> Node a -> Node b
 mapNode _ (Text s w str) = Text s w str
+mapNode _ (CanvasView c) = CanvasView c
 mapNode f (Box p kids) = Box p (map (mapNode f) kids)
 mapNode f (Focusable k body h) = Focusable k (\b => mapNode f (body b)) (\i => map f (h i))
 

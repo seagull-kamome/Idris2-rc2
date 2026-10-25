@@ -38,6 +38,7 @@ TESTS=(
     "TestSuspend|rc2base contrib|Suspend and the continue, with the program as a child on a pty"
     "TestProgram|rc2base contrib|Elm-style program, focus, commands and subscriptions"
     "TestControls|rc2base contrib|check box, buttons and menu bar"
+    "TestCanvas|rc2base contrib|canvas: drawing, clipping and wide characters"
     "TestPanes|rc2base contrib|function-key guide, tab strip and splitter"
 )
 
