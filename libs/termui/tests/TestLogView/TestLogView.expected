@@ -80,3 +80,47 @@
 |
 |
 |
+-- text that arrives in pieces: extendLast (1, (True, 5))
+|  three four   │
+|  five six     █
+|  seven eight  █
+|  nine ten     █
+True
+-- extending the last paragraph leaves the ones before (3, (True, 7))
+|  seven eight  │
+|  nine ten     │
+|ann next eleven█
+|  twelve       █
+-- extending an empty log starts a paragraph (0, (True, 1))
+|hi
+|
+-- extending while scrolled up: the window stays (2, (False, 8))
+|  five six     │
+|  seven eight  █
+|  nine ten more█
+|  words that   │
+-- a different width wraps all of it again (9, (True, 13))
+|  ten   │
+|ann next│
+|  eleven│
+|  twelve█
+-- extending after several paragraphs were appended at once (1, (True, 5))
+|b two three    │
+|  four five six█
+|  seven eight  █
+|  nine         █
+-- extending after a rewrap (2, (True, 6))
+|  four five│
+|  six seven│
+|  eight    █
+|  nine     █
+True
+-- extending an empty last paragraph (0, (True, 2))
+|a x
+|now
+|
+|
+-- extending a truncated paragraph cuts at the width (0, (True, 1))
+|abc defgh
+|
+[["a"], ["b"]]

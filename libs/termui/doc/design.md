@@ -520,8 +520,11 @@ while the field has the focus.
 - `LogView`: styled text (`StyledText`) that grows at the end, in a window with the
   same keys and bar as `Scroll`; for a chat or the messages of a game
   (`examples/Chat.idr`). `append` wraps the new paragraphs once and keeps the
-  lines (appending and viewing are linear in the number of lines; the log has no
-  limit). While the window is at the
+  lines in a sequence; `extendLast` adds spans to the end of the last paragraph
+  (text that arrives in pieces: an answer typed a word at a time) and wraps only
+  that paragraph again. Appending, extending and viewing cost the new text, the
+  last paragraph and the window, times the log of the length of the log; only a
+  change of the width wraps everything again. The log has no limit. While the window is at the
   end it follows new text; scrolling up stops that and scrolling back to the end
   (End, or down to it) starts it again. The width is part of the model like the
   height (`empty rows width`, `resize rows width`; the text is wrapped to the

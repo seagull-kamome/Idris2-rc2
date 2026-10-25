@@ -175,6 +175,8 @@ wrapLine Truncate first _ cs = [fst (takeFit (max 1 first) cs)]
 logicalLines : List CS -> List (List CS)
 logicalLines cs = forget (split (\c => fst c == '\n') cs)
 
+||| The lines of one paragraph wrapped to `w` cells.
+export
 layoutPara : Len -> Para -> List (List Span)
 layoutPara w p =
   let pf = widthOf (cells p.firstPrefix)
