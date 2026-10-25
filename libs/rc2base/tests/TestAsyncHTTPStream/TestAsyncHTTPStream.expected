@@ -1,0 +1,64 @@
+-- chunked
+hello world
+hello world
+0123456789
+a
+error: bad chunk size
+日
+error: bad end of a chunk
+error: bad chunk size
+abc
+error: chunk size line too long
+-- lines
+(["one", "two"], ("thr", False))
+(["three", ""], "four")
+([], (["\26085\26412"], ""))
+(["a", "b"], (["c"], ("d", False)))
+-- events
+[(Nothing, "a"), (Nothing, "b\nc"), (Just "ping", "d")]
+[(Nothing, "e"), (Nothing, "")]
+Just "last"
+Nothing
+-- chunked, events arrive while the server is sending
+Just ["one", "two", "[DONE]", "end"]
+["send 1", "status 200", "recv one", "send 2", "recv two", "recv [DONE]"]
+-- an answer cut into pieces of three bytes
+Just ["a b c", "d\ne", "end"]
+["status 200", "recv a b c", "recv d\ne"]
+-- characters cut in the middle
+Just ["\26085\26412\35486\12398\12486\12461\12473\12488", "end"]
+["status 200", "recv \26085\26412\35486\12398\12486\12461\12473\12488"]
+-- a body of a given length
+Just ["x", "y", "end"]
+["status 200", "recv x", "recv y"]
+-- a body that ends with the connection, the last event without its blank line
+Just ["p", "q", "end"]
+["status 200", "recv p", "recv q"]
+-- an error status
+Just ["failed: HTTP 500: {\"error\":\"no\"}"]
+[]
+-- not an answer
+Just ["failed: bad answer: bad status line"]
+[]
+-- the head ends with a bare line feed, a byte order mark, CR line ends
+Just ["a", "b", "end"]
+["status 200", "recv a", "recv b"]
+-- a chunked body cut short is an error, not an end
+Just ["a", "error: cannot receive: the connection closed before the end of the body"]
+["status 200", "recv a"]
+-- a body shorter than its length is an error
+Just ["a", "error: cannot receive: the connection closed before the end of the body"]
+["status 200", "recv a"]
+-- a chunk size that is not a number
+Just ["failed: bad answer: bad chunk size"]
+[]
+-- a body with no line end is cut off at the limit
+Just ["error: bad answer: a line of the body is too long"]
+["status 200"]
+-- a line end in the request is refused before anything is sent
+Just ["cannot send: a line end in the request head", "cannot send: a line end in the request head", "cannot send: a line end in the request head"]
+-- the socket is closed when the task is given up
+Just Nothing
+["closed by the client"]
+-- no server
+Just "cannot connect: Errno:111"
