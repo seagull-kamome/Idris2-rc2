@@ -58,6 +58,7 @@ import Compiler.RC2.LazyCaf
 import Compiler.RC2.LazyFold
 import Compiler.RC2.MutualLoop
 import Compiler.RC2.NullParams
+import Compiler.RC2.CalleeTable
 import Compiler.RC2.Loop
 import Compiler.RC2.Sink
 import Compiler.RC2.Types

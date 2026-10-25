@@ -23,7 +23,8 @@ module Compiler.RC2.DualABI
 
 import Compiler.RC2.RCExp
 import Compiler.RC2.Types
-import Compiler.RC2.Loop
+import Compiler.RC2.CalleeTable
+import Compiler.RC2.NativeUse
 import Compiler.RC2.Rewrite
 import Compiler.RC2.NullParams
 import Compiler.RC2.MutualLoop
@@ -63,7 +64,7 @@ findLoopThroughLets acc (RLoop _ loopParams _ _ body) =
 findLoopThroughLets _ _ = Nothing
 
 ||| Every top-level parameter's own native eligibility: `Just ty` where
-||| `Compiler.RC2.Loop`'s `nativeArgType` (or, for an `RLoop`-wrapped
+||| `Compiler.RC2.NativeUse`'s `nativeArgType` (or, for an `RLoop`-wrapped
 ||| body, `loopParams`/its wrapping `RLet`s via `findLoopThroughLets`)
 ||| finds it eligible, `Nothing` otherwise -- an id lookup rather than a
 ||| positional `zip`, since loop-invariant-parameter elision can leave
@@ -72,7 +73,7 @@ findLoopThroughLets _ _ = Nothing
 ||| own "DualABI interaction"). The `Nothing` branch uses
 ||| `nativeArgTypeBatch` (one shared walk of `body` for every one of
 ||| `argIds`, not one walk per id) -- see
-||| `Compiler.RC2.Loop.callArgOrOpNativeTy`'s own "Batched, multi-id
+||| `Compiler.RC2.CalleeTable.callArgOrOpNativeTy`'s own "Batched, multi-id
 ||| native-type analysis" section.
 export
 paramEligibility : List Int -> RCExp -> List (Int, Maybe PrimType)
@@ -167,7 +168,7 @@ tailValueReps reps e = map (\case
 
 ||| `Just ty` iff `xs` is non-empty and every element is `Just ty` for
 ||| the *same* `ty` -- the same "consistent single type, else give up"
-||| shape `Compiler.RC2.Loop`'s own `nativeArgType` uses.
+||| shape `Compiler.RC2.NativeUse`'s own `nativeArgType` uses.
 allJustSame : Eq ty => List (Maybe ty) -> Maybe ty
 allJustSame [] = Nothing
 allJustSame (Just ty :: rest) = if all (== Just ty) rest then Just ty else Nothing
@@ -938,7 +939,7 @@ ultimateTail e = e
 
 ||| `var`'s own native `PrimType` if `e`'s own ultimate tail (peeling as
 ||| `ultimateTail` does) is a bare `ROp` reading `var` as an operand --
-||| the one shape `Compiler.RC2.Loop`'s own `nativeArgTypes` correctly
+||| the one shape `Compiler.RC2.NativeUse`'s own `nativeArgTypes` correctly
 ||| doesn't cover for *its own* callers (a bare tail is always Boxed
 ||| when that pass runs), but not true by Stage 4's own point in
 ||| the pipeline. See `doc/dual-abi.md`'s "Bugs found and fixed" #5 for

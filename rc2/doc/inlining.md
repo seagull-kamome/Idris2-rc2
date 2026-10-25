@@ -403,7 +403,7 @@ use. A non-literal constant has no native representation and stays
 This needed two matching corrections in the shared native-read analysis
 before it could fire at all -- an `RLoop`'s own `initial=` slot and a
 constant-`case` scrutinee both had to start counting as native reads in
-`Compiler.RC2.Loop`'s `nativeArgTypes`, and stop counting as
+`Compiler.RC2.NativeUse`'s `nativeArgTypes`, and stop counting as
 disqualifying uses in `hasNonNativeUse` (against the same shared
 `nativeSlotTy`/`constAltsNativeType`, so the two can't disagree). See
 `doc/dual-abi.md`'s "Extending the promotion to `case` scrutinees" for
@@ -826,7 +826,7 @@ own parameter-native-promotion decision) was written under a "one
 pass existed -- both `findLoopThroughLets` (only ever found the first
 `RLoop` reachable through a pure prefix of `RLet`s, stopping instead
 of also looking for a further one nested inside its own body) and
-`Loop.idr`'s own `nativeArgTypesFor`/`nativeArgTypes` (the fallback
+`NativeUse.idr`'s own `nativeArgTypesFor`/`nativeArgTypes` (the fallback
 `paramEligibility` uses when no such prefix-reachable loop exists at
 all, e.g. because a `case` sits between the body's own root and the
 loop -- the common shape once this pass can splice a loop-converted

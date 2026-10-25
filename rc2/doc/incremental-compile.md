@@ -183,7 +183,7 @@ own -- no code changes needed in these passes:
   first place (mutual blocks are a single-module syntactic construct)
   -- there is no cross-module case for this pass to ever see. Nothing
   to change.
-- **`Loop.buildCalleeTable`/`applyLoop`**: the table is built purely
+- **`CalleeTable.buildCalleeTable`/`applyLoop`**: the table is built purely
   from the passed def list (`buildCalleeTable`'s own doc comment: "each
   entry comes purely from that one definition's own body ... never by
   consulting any other entry"). A callee outside the module has no

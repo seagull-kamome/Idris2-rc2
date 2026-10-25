@@ -18,7 +18,7 @@ module Compiler.RC2.ConAltNative
 
 import Compiler.RC2.RCExp
 import Compiler.RC2.Types
-import Compiler.RC2.Loop
+import Compiler.RC2.NativeUse
 import Compiler.RC2.Rewrite
 import Compiler.RC2.Util
 
@@ -56,7 +56,7 @@ peelWrappers e = (id, e)
 -- instead of reboxing fresh. See `doc/con-alt-native.md`'s "Reusing
 -- the original Boxed field for surviving Boxed-context reads".
 
-||| Mirrors `Loop.idr`'s own `opNativeUsesThrough` walk, but rewrites
+||| Mirrors `NativeUse.idr`'s own `opNativeUsesThrough` walk, but rewrites
 ||| instead of collecting: once inside the `ROp` a native-`Rep` `RLet`'s
 ||| own `value` peels down to, redirect `fid`'s own occurrences in its
 ||| `args` to `sid`.
@@ -70,7 +70,7 @@ renameOpArgsThrough fid sid (RReleaseReuse fc v cont) = RReleaseReuse fc v (rena
 renameOpArgsThrough fid sid (RLet fc var rep value body) = RLet fc var rep value (renameOpArgsThrough fid sid body)
 renameOpArgsThrough _ _ e = e
 
-||| Mirrors `Loop.idr`'s own `nativeArgTypes` walk exactly, but rewrites
+||| Mirrors `NativeUse.idr`'s own `nativeArgTypes` walk exactly, but rewrites
 ||| the native-context occurrences it finds instead of collecting their
 ||| types. Every Boxed-context occurrence of `fid` is left untouched
 ||| here -- `reannotateFieldOwnership` handles those next.
@@ -291,7 +291,7 @@ shadowAltFields imm nextId argIds body =
         -- `nativeArgTypeBatch` walks `core` once for every one of
         -- `argIds` together, rather than once per field via
         -- `nativeArgType` -- see
-        -- `Compiler.RC2.Loop.callArgOrOpNativeTy`'s own "Batched,
+        -- `Compiler.RC2.CalleeTable.callArgOrOpNativeTy`'s own "Batched,
         -- multi-id native-type analysis" section.
         foundTypes = nativeArgTypeBatch argIds core
         eligible : List (Int, PrimType)
