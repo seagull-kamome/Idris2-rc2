@@ -50,6 +50,8 @@ dumped as text (`frameLines`), which is how the tests look at results.
 | `TermUI.Widget.ScrollBar` | the scroll bar |
 | `TermUI.Widget.Select` | scrolling list with a selection |
 | `TermUI.Widget.Display` | spinner, progress bar, table |
+| `TermUI.Widget.StyledText` | text in styled spans, wrapped to a width, shown as a column of lines |
+| `TermUI.Widget.StyledText.Doc` | a pretty-printer `Doc` as styled text |
 
 ## Layout semantics
 
@@ -208,6 +210,39 @@ of cells at a time, with no per-cell work.
 - Drawing is not tied to the view function: a program draws on a command or
   a timer (`Every`) and the next view shows the result. A canvas takes no
   input; wrap it in `focusable` to read keys.
+
+## Styled text
+
+`TermUI.Widget.StyledText` shows text whose parts have different styles: chat
+logs, game messages, later a Markdown viewer. The model is a list of
+paragraphs; a paragraph has the spans of its text, a prefix for its first line
+and one for the others (a bullet and the blanks under it, a quote bar), and how
+it is wrapped (`WrapWords`, `WrapChars` or `Truncate`, as for `Text`).
+`styledText w t` wraps the paragraphs to `w` cells and returns a column with
+one row of `Text` nodes per line; `styledLines` gives the lines as a list,
+for a scrolling widget; `layoutLines` gives them as spans, for tests.
+
+- The layout needs the width and the view does not know it: the program
+  passes the width it has (the window size, minus what is around the text) and
+  builds the view again on a resize.
+- Words are cut at spaces (U+0020 only: text in a language that does not use
+  them is one word and is cut at the width, as is a word longer than a line).
+  Spaces that would end a line or start a continuation line are dropped, the
+  spaces a paragraph starts with stay if they fit. A word that does not fit the
+  first line, which is narrower than the others because of its prefix, but
+  fits the others goes to the second line. A `\n` in a span starts a new line
+  in the same paragraph, with the prefix for the other lines.
+- Widths are in cells (`TermUI.Width`), so a wide character takes two.
+- A text that is not valid for the width (a prefix as wide as the line) is
+  not given any special care: it wraps a character at a time.
+- Other formats are read by turning them into `StyledText`. The first one is
+  `TermUI.Widget.StyledText.Doc.fromDoc : (ann -> Style) -> Len -> Doc ann ->
+  StyledText`, for contrib's pretty-printer: the document is laid out for the
+  width by `layoutPretty`, so `group`, `nest` and `hang` break as on a page
+  of that width; annotations become styles, an inner one winning over the
+  outer; a line at an indent keeps the indent if it is wrapped further. An
+  empty document is no paragraph, and the empty line after a final line break
+  is not shown.
 
 ## Diff output
 
