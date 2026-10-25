@@ -7,6 +7,7 @@
 module Main
 
 import Data.List
+import Data.Seq.Unsized
 import TermUI.Frame
 import TermUI.Node
 import TermUI.Style
@@ -19,7 +20,7 @@ say : Style -> String -> String -> Para
 say st who what = MkPara [spanOf st (who ++ " ")] [spanOf plain "  "] WrapWords [spanOf plain what]
 
 state : Model -> String
-state m = show (m.top, m.follow, count m.lines)
+state m = show (m.top, m.follow, lineCount m)
 
 draw : String -> Model -> IO ()
 draw title m = do
@@ -64,3 +65,25 @@ main = do
   draw "a zero-row window" (resize 0 16 m2)
   draw "a width of one wraps a character a line" (append [paragraph [spanOf plain "ab"]] (empty 3 1))
   draw "a wide character, an empty paragraph and a hard break" (append [paragraph [spanOf plain "日本\nb"], paragraph []] (empty 6 9))
+
+  let whole = append [say bold "bot" "one two three four five six seven eight nine ten"] (empty 4 16)
+      pieces = foldl (\acc, w => extendLast [spanOf plain w] acc)
+                     (append [MkPara [spanOf bold "bot "] [spanOf plain "  "] WrapWords []] (empty 4 16))
+                     ["one ", "two ", "three ", "four ", "five ", "six ", "seven ", "eight ", "nine ", "ten"]
+  draw "text that arrives in pieces: extendLast" pieces
+  putStrLn (show (toList pieces.lines == toList whole.lines))
+  let more = extendLast [spanOf plain " eleven twelve"] (append [say bold "ann" "next"] pieces)
+  draw "extending the last paragraph leaves the ones before" more
+  draw "extending an empty log starts a paragraph" (extendLast [spanOf plain "hi"] (empty 2 16))
+  let scrolled = update (LineUp 1) (extendLast [spanOf plain " more words that wrap around"] pieces)
+  draw "extending while scrolled up: the window stays" (extendLast [spanOf plain " and more"] scrolled)
+  draw "a different width wraps all of it again" (resize 4 9 more)
+
+  let multi = append [say bold "a" "one", say bold "b" "two three four five six"] (empty 4 16)
+  draw "extending after several paragraphs were appended at once" (extendLast [spanOf plain " seven eight nine"] multi)
+  let rew = resize 4 12 multi
+  draw "extending after a rewrap" (extendLast [spanOf plain " seven eight nine"] rew)
+  putStrLn (show (toList (extendLast [spanOf plain " seven eight nine"] rew).lines == toList (append [say bold "a" "one", say bold "b" "two three four five six seven eight nine"] (empty 4 12)).lines))
+  draw "extending an empty last paragraph" (extendLast [spanOf plain "now"] (append [say bold "a" "x", paragraph []] (empty 4 16)))
+  draw "extending a truncated paragraph cuts at the width" (extendLast [spanOf plain " defghijklmnopq"] (append [MkPara [] [] Truncate [spanOf plain "abc"]] (empty 2 10)))
+  putStrLn (show (map (map (\s => s.spanText)) (toList (append [paragraph [spanOf plain "ab"]] (empty 3 1)).lines)))
