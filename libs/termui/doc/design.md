@@ -266,6 +266,20 @@ for a scrolling widget; `layoutLines` gives them as spans, for tests.
   empty document is no paragraph, and the empty line after a final line break
   is not shown.
 
+## A chat with a language model
+
+`examples/LlmChat.idr` talks to a server of the OpenAI chat completions API (LM Studio,
+llama-server, Ollama ...) with `rc2base`'s `OpenAIStream`. The question is sent by
+`RunTaskAs "chat"` and the reply is read one piece per message: the task ends with
+`Opened stream`, `update` starts the next task for the next piece, and each piece
+is added to the end of the last paragraph of a `LogView` (`extendLast`). The terminal
+stays alive between pieces, a reply is stopped with `CancelTask "chat"`, and the
+history is sent with every question. The log is not a focusable: the input field
+is the only one, so typing needs no Tab, and Page Up/Down and the wheel reach the
+log through `OnInput` and `OnMouse` subscriptions. The URL and the model are given
+on the command line (`--url`, `--model`, `--system`; `$LLM_URL`, `$LLM_MODEL`,
+`$LLM_API_KEY`), and the URL is `http` with an IPv4 address or `localhost`.
+
 ## Diff output
 
 The painter writes into a fresh `Frame` for every view; `diffFrames` compares
@@ -519,7 +533,7 @@ while the field has the focus.
   right shows the position. `ScrollBar.scrollBar` is the bar alone.
 - `LogView`: styled text (`StyledText`) that grows at the end, in a window with the
   same keys and bar as `Scroll`; for a chat or the messages of a game
-  (`examples/Chat.idr`). `append` wraps the new paragraphs once and keeps the
+  (`examples/Chat.idr`, and `examples/LlmChat.idr` with a language model). `append` wraps the new paragraphs once and keeps the
   lines in a sequence; `extendLast` adds spans to the end of the last paragraph
   (text that arrives in pieces: an answer typed a word at a time) and wraps only
   that paragraph again. Appending, extending and viewing cost the new text, the
