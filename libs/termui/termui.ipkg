@@ -6,6 +6,8 @@ sourcedir  = "src"
 depends    = contrib, rc2base
 modules    = TermUI.Len,
              TermUI.Style,
+             TermUI.Cell,
+             TermUI.Canvas,
              TermUI.Node,
              TermUI.Layout,
              TermUI.Frame,

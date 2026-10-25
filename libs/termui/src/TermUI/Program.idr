@@ -297,6 +297,7 @@ currentView env = do
         mutual
           go : Nat -> Node msg -> (Node msg, List (Input -> Maybe msg), List (Maybe String), Nat)
           go i n@(Text _ _ _) = (n, [], [], i)
+          go i n@(CanvasView _) = (n, [], [], i)
           go i (Focusable key body h) =
             let (inner, hs, ks, next) = go (i + 1) (body (i == focus)) in
             (tag i inner, h :: hs, key :: ks, next)
@@ -342,6 +343,7 @@ draw env = do
     -- the terminal cursor goes.
     scan : Rect -> Laid -> (List (Nat, Rect), Maybe (Len, Len))
     scan _ (LText _ _ _) = ([], Nothing)
+    scan _ (LCanvas _ _) = ([], Nothing)
     scan clip (LBox r p kids) =
       let own = maybe [] (\i => [(i, within r clip)]) p.pTag
           cursor = if p.pCursor then Just (r.x, r.y) else Nothing

@@ -9,6 +9,7 @@ module TermUI.Layout
 import Data.List
 import Data.List1
 import Data.Maybe
+import TermUI.Canvas
 import TermUI.Len
 import Data.String
 import TermUI.Node
@@ -31,6 +32,7 @@ public export
 data Laid
   = LText Rect Style (List String)
   | LBox Rect Props (List Laid)
+  | LCanvas Rect Canvas
 
 -------------------------------------------------------------------------------
 -- Helpers
@@ -241,6 +243,7 @@ record Kid msg where
 -- A child of a parent whose content is `pw` cells wide.
 kidOf : (pw : Len) -> Node msg -> Kid msg
 kidOf _ k@(Text _ _ _) = MkKid k noEdges Auto Auto 0 1 id id
+kidOf _ k@(CanvasView _) = MkKid k noEdges Auto Auto 0 1 id id
 kidOf pw k@(Box p _) =
   MkKid k (MkEdges (pct p.pMargin.top p.pMarginPct.top) (pct p.pMargin.right p.pMarginPct.right)
                    (pct p.pMargin.bottom p.pMarginPct.bottom) (pct p.pMargin.left p.pMarginPct.left))
@@ -261,6 +264,7 @@ isAbsolute _ = False
 -- layout uses to decide widths, so that `natural` calls each child once.
 maxContent : Node msg -> Len
 maxContent (Focusable _ body _) = maxContent (body False)
+maxContent (CanvasView c) = c.canvasWidth
 maxContent (Text _ _ s) = foldl max 0 (map stringWidth (textLines s))
 maxContent (Box p kids) =
   let bx = 2 * borderWidth p.pBorder + hEdges p.pPadding
@@ -364,6 +368,7 @@ mutual
   -- the flow take no room.
   natural : Node msg -> Len -> (Len, Len)
   natural (Focusable _ body _) maxW = natural (body False) maxW
+  natural (CanvasView c) maxW = (min maxW c.canvasWidth, c.canvasHeight)
   natural (Text _ wrap s) maxW =
     let ls = wrapText wrap maxW s in
     (foldl max 0 (map stringWidth ls), count ls)
@@ -448,11 +453,12 @@ mutual
               (Nothing, Just b) => i.h `monus` (h + b + k.margin.bottom)
               _ => k.margin.top
     in place node (MkRect (i.x + x) (i.y + y) w h)
-  placeAbsolute i node@(Text _ _ _) = place node i
+  placeAbsolute i node = place node i
   
   ||| Place a node in the border box `r`.
   export
   place : Node msg -> Rect -> Laid
+  place (CanvasView c) r = LCanvas r c
   place (Text s wrap str) r = LText r s (wrapText wrap r.w str)
   place (Focusable _ body _) r = place (body False) r
   place (Box p kids) r =

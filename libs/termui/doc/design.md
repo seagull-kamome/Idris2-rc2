@@ -31,7 +31,9 @@ dumped as text (`frameLines`), which is how the tests look at results.
 | --- | --- |
 | `TermUI.Style` | `Color` (default, 256-colour index, RGB), `Attr`, `Style` |
 | `TermUI.Width` | cell width of a character (0, 1 or 2) |
-| `TermUI.Node` | the EDSL: `box`, `row`, `column`, `text`, `spacer`, props |
+| `TermUI.Cell` | the packed cell of a frame and a canvas, and how a character is stored in a grid of them |
+| `TermUI.Canvas` | a grid of cells a program draws into (`putCell`, `putString`, `fillRect`) and shows with `canvas` |
+| `TermUI.Node` | the EDSL: `box`, `row`, `column`, `text`, `canvas`, `spacer`, props |
 | `TermUI.Layout` | flexbox-like placement, text wrapping |
 | `TermUI.Frame` | cell grid, painter, `render` |
 | `TermUI.Output` | frame diff to ANSI, SGR generation |
@@ -173,6 +175,39 @@ painter touches on each write). A cell is four `Bits32` words:
   as two 64-bit words per cell.
 - `getCell` builds a `Cell` from the words for callers that want one (tests,
   `diffFrames` for the cells it writes); the painter and the differ do not.
+
+## Canvas
+
+A `Canvas` is a grid of cells with the layout of a frame, for programs that
+paint single cells: a console game, a plot. It is created and drawn into in
+`IO` and keeps what was drawn between views, so a program changes only the
+cells that change:
+
+```idris
+c <- newCanvas 40 20
+putString c 2 1 (fgColor green plain) "SCORE 120"
+fillRect c 0 19 40 1 '=' plain
+...
+view = box [border Single] [canvas c]
+```
+
+`canvas c` is a node of the size of the canvas (a box around it with a `width`
+or `height` cuts it or leaves room). Painting it into the frame copies a row
+of cells at a time, with no per-cell work.
+
+- A canvas has no combining marks. Its style is absolute: `Inherit` is the
+  terminal's own colour, and the bold or the colour of the box around it does
+  not reach the cells.
+- A wide character takes two cells; drawing over one of its halves blanks the
+  other. One cut by the edge of the canvas, by the box around it or by what
+  is drawn over it is a blank, as in a frame.
+- What is under the canvas in the frame (text, a border) is replaced, cells
+  and combining marks both, over the area of the canvas.
+- A canvas is mutable and shared: `mapNode` and the views that build the same
+  `canvas c` twice show the same cells.
+- Drawing is not tied to the view function: a program draws on a command or
+  a timer (`Every`) and the next view shows the result. A canvas takes no
+  input; wrap it in `focusable` to read keys.
 
 ## Diff output
 

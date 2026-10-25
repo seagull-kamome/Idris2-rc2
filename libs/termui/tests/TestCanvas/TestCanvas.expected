@@ -1,0 +1,59 @@
+-- drawing
+|hello
+| ...
+|     #
+|
+-- reading back
+('q', MkStyle (RGB 9 8 7) (Indexed 200) 1 0)
+(' ', True)
+' '
+-- wide characters
+|日本a
+|
+-- half of a wide character overwritten
+| X本a
+|
+-- a wide character at the right edge is a blank, inside it is kept
+| X本a
+|    あ
+True
+-- a wide character fills as many times as fit, a blank where one cell is left
+|ああ
+| あ
+-- a wide character half off the left edge blanks the first cell
+|ああ
+| あ
+-- cut by the box
+|hell
+| ...
+|
+|
+-- a wide character cut by the box is a blank
+|ab
+-- in a bordered box
+|┌──────┐
+|│ab日  │
+|└──────┘
+-- beside text
+|<ab日>
+-- over a wide character: its first half
+| ab う
+-- over a wide character: its second half
+|あ ab
+-- over a combining mark
+|Qxyz
+0
+-- over combining marks in two rows
+|QR
+|ST
+0
+1
+-- styles reach the terminal
+<ESC>[0m<ESC>[2J<ESC>[1;1H<ESC>[0;31mr<ESC>[0;4;48;2;1;2;3mg<ESC>[0m
+<ESC>[1;2H<ESC>[0;4;48;2;1;2;3mG<ESC>[0m
+-- clear
+(' ', Indexed 4)
+-- empty and negative canvases
+(0, 2)
+-- an empty canvas takes no room
+|ab

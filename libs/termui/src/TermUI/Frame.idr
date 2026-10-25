@@ -15,6 +15,8 @@ import Data.IORef
 import Data.List
 import Data.Maybe
 import Data.SortedMap
+import TermUI.Canvas
+import public TermUI.Cell
 import TermUI.Layout
 import TermUI.Len
 import TermUI.Node
@@ -41,10 +43,6 @@ public export
 blank : Cell
 blank = MkCell ' ' (settle plain) []
 
-public export
-continuation : Char
-continuation = '\0'
-
 -- The layout of a cell is in doc/design.md ("Frame layout").
 public export
 record Frame where
@@ -53,52 +51,19 @@ record Frame where
   buf : Buffer
   marks : IORef (SortedMap Int (List Char))
 
-cellSize : Int
-cellSize = 16
-
-markedBit : Bits32
-markedBit = 0x100
-
-packGlyph : Char -> Bits32
-packGlyph g = cast (ord g) `xor` 0x20
-
-unpackGlyph : Bits32 -> Char
-unpackGlyph w = chr (cast (w `xor` 0x20))
-
-packColor : Color -> Bits32
-packColor (Indexed n) = 0x01000000 .|. cast n
-packColor (RGB r g b) = 0x02000000 .|. shiftL (cast r) 16 .|. shiftL (cast g) 8 .|. cast b
-packColor _ = 0
-
-unpackColor : Bits32 -> Color
-unpackColor w =
-  case shiftR w 24 of
-    1 => Indexed (cast (w .&. 0xff))
-    2 => RGB (cast (shiftR w 16 .&. 0xff)) (cast (shiftR w 8 .&. 0xff)) (cast (w .&. 0xff))
-    _ => Default
-
 export
 newFrame : Len -> Len -> IO Frame
 newFrame w h = do
   let w' = nonneg w
       h' = nonneg h
-  -- `newBuffer` takes a C int
-  let bytes = cellSize * cast w' * cast h'
-  mb <- the (IO (Maybe Buffer)) (if bytes > 0x7fffffff then pure Nothing else newBuffer bytes)
-  let Just b = mb
-    | Nothing => assert_total (idris_crash "termui: cannot allocate a frame")
+  b <- newGrid w' h'
   MkFrame w' h' b <$> newIORef empty
 
-||| The numbers lo, lo+1, .., hi-1.
-export
-span : Len -> Len -> List Len
-span lo hi = if hi <= lo then [] else [lo .. hi `monus` 1]
-
 within : Frame -> Len -> Len -> Bool
-within f x y = x >= 0 && y >= 0 && x < f.frameWidth && y < f.frameHeight
+within f = inGrid f.frameWidth f.frameHeight
 
 offset : Frame -> Len -> Len -> Int
-offset f x y = cellSize * (cast y * cast f.frameWidth + cast x)
+offset f = cellOffset f.frameWidth
 
 export
 getCell : Frame -> Len -> Len -> IO Cell
@@ -111,13 +76,13 @@ getCell f x y =
        bg <- getBits32 f.buf (at + 8)
        a <- getBits32 f.buf (at + 12)
        ms <- if (a .&. markedBit) /= 0 then fromMaybe [] . lookup at <$> readIORef f.marks else pure []
-       pure (MkCell (unpackGlyph g) (MkStyle (unpackColor fg) (unpackColor bg) (cast (a .&. 0xff)) 0) ms)
+       pure (MkCell (unpackGlyph g) (unpackStyle fg bg a) ms)
      else pure blank
 
 ||| The glyph of a cell, without building the cell.
 export
 glyphAt : Frame -> Len -> Len -> IO Char
-glyphAt f x y = if within f x y then unpackGlyph <$> getBits32 f.buf (offset f x y) else pure ' '
+glyphAt f = glyphIn f.buf f.frameWidth f.frameHeight
 
 ||| Whether two frames of the same size have equal cells at (x, y).
 export
@@ -154,26 +119,8 @@ dropMarks f at = do
     setBits32 f.buf (at + 12) (a .&. 0xff)
     modifyIORef f.marks (delete at)
 
--- The glyph of a cell becomes ' ', its style stays.
-blankGlyph : Frame -> Len -> Len -> IO ()
-blankGlyph f x y = do
-  let at = offset f x y
-  dropMarks f at
-  setBits32 f.buf at 0
-
--- Overwriting half of a wide character blanks the other half.
 setCell : Frame -> Len -> Len -> Char -> (fg, bg, attrs : Bits32) -> IO ()
-setCell f x y g fg bg attrs =
-  when (within f x y) $ do
-    old <- glyphAt f x y
-    when (old == continuation && x > 0) $ blankGlyph f (x - 1) y
-    when (charWidth old == 2 && x + 1 < f.frameWidth) $ blankGlyph f (x + 1) y
-    let at = offset f x y
-    dropMarks f at
-    setBits32 f.buf at (packGlyph g)
-    setBits32 f.buf (at + 4) fg
-    setBits32 f.buf (at + 8) bg
-    setBits32 f.buf (at + 12) attrs
+setCell f = storeCell f.buf (dropMarks f) f.frameWidth f.frameHeight
 
 -- At most 8 marks stay with a cell.
 addMark : Frame -> Len -> Len -> Char -> IO ()
@@ -206,6 +153,51 @@ inside c x y = x >= c.x0 && x < c.x1 && y >= c.y0 && y < c.y1
 put : Frame -> Clip -> Len -> Len -> Char -> Style -> IO ()
 put f c x y g s = when (inside c x y) $ setCell f x y g (packColor s.fg) (packColor s.bg) (cast s.attrs)
 
+-- The cells of `c` that are at its place `r` inside the clip.
+blitCanvas : Frame -> Clip -> Rect -> Canvas -> IO ()
+blitCanvas f clip r c = do
+  let x0 = max r.x clip.x0
+      x1 = min (r.x + min c.canvasWidth r.w) clip.x1
+      y0 = max r.y clip.y0
+      y1 = min (r.y + min c.canvasHeight r.h) clip.y1
+  when (x1 > x0 && y1 > y0) $ do
+    forgetMarks x0 x1 y0 y1
+    traverse_ (row x0 x1) (span y0 y1)
+  where
+    -- Stored marks in the cells about to be overwritten go.
+    forgetMarks : Len -> Len -> Len -> Len -> IO ()
+    forgetMarks x0 x1 y0 y1 = do
+      ms <- readIORef f.marks
+      when (isJust (leftMost ms)) $
+        writeIORef f.marks (fromList (filter (\(k, _) => not (covered k)) (SortedMap.toList ms)))
+      where
+        covered : Int -> Bool
+        covered k =
+          let cell = k `div` cellSize
+              (cy, cx) = (cell `div` cast f.frameWidth, cell `mod` cast f.frameWidth)
+          in cx >= cast x0 && cx < cast x1 && cy >= cast y0 && cy < cast y1
+
+    blankGlyphAt : Len -> Len -> IO ()
+    blankGlyphAt x y = do
+      let at = offset f x y
+      dropMarks f at
+      setBits32 f.buf at 0
+
+    -- A wide character cut by the window or by what is under it is a blank.
+    row : Len -> Len -> Len -> IO ()
+    row x0 x1 y = do
+      let dst = offset f x0 y
+          len = cellSize * cast (x1 - x0)
+      before <- glyphAt f (x0 - 1) y
+      when (charWidth before == 2) $ blankGlyphAt (x0 - 1) y
+      after <- glyphAt f x1 y
+      when (after == continuation) $ blankGlyphAt x1 y
+      copyData c.canvasBuf (cellOffset c.canvasWidth (x0 - r.x) (y - r.y)) len f.buf dst
+      first <- glyphAt f x0 y
+      when (first == continuation) $ blankGlyphAt x0 y
+      lastG <- glyphAt f (x1 - 1) y
+      when (charWidth lastG == 2) $ blankGlyphAt (x1 - 1) y
+
 -- Children are clipped to the content box of their parent.
 paintLaid : Frame -> Clip -> Style -> Laid -> IO ()
 paintLaid f c inherited (LText r s ls) = do
@@ -233,6 +225,7 @@ paintLaid f c inherited (LText r s ls) = do
              else put f c x y ' ' s
           paintLine c (x + 2) y s rest
         _ => put f c x y ch s >> paintLine c (x + 1) y s rest
+paintLaid f c _ (LCanvas r cv) = blitCanvas f (intersect c (clipRect r)) r cv
 paintLaid f c inherited (LBox r p kids) = do
   let st = p.pStyle `over` inherited
       cl = intersect c (clipRect r)
