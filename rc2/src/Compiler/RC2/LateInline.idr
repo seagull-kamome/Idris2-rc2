@@ -4,10 +4,10 @@
 ||| criterion can widen. Design, the cycle-exclusion argument and why
 ||| every callee id is renamed: `rc2/doc/inlining.md`, "Criterion B,
 ||| revisited". Disable with `--directive nolateinline`.
+|||
+||| Copyright 2026, Hattori,Hiroki. All rights reserved.
+||| This module was licensed by BSD3. see LICENSE file for detail.
 module Compiler.RC2.LateInline
-
--- Copyright 2026, Hattori,Hiroki. All rights reserved.
--- This module was licensed by BSD3.
 
 import Compiler.RC2.DeadCode
 import Compiler.RC2.DualABI

@@ -571,7 +571,7 @@ SpecConstCon alone makes constant.
   terminates.
 - **Code size:** a clone per `(function, target)` along the chain.
   idris2-lsp's clone count and build time are the numbers to watch
-  (`--timing 3`, and the pass's own `--directive timing` counts).
+  (`--timing 3`, and the pass's own `--directive timing` step times).
 
 ### Results (2026-09-27)
 
@@ -730,7 +730,8 @@ chains 7. A joint clone over the final bodies succeeded for 3 tuples
 of 362,304 nodes, so joint clones would add under 0.003%. Multiple
 specialized parameters are therefore not worth implementing.
 
-**What "stored" is.** `storedUses` counts a constructor field and a
+**What "stored" is.** The measurement (its counter has since been
+removed, see the git log of `SpecClosure.idr`) counted a constructor field and a
 captured argument of a partial application. For the closure half it is
 almost entirely the second: 1,121 of 1,123 are an `RUnderApp` capture
 (a closure held by another closure), 2 are a constructor field. 998 of

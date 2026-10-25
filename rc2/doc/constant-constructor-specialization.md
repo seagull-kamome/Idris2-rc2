@@ -276,9 +276,9 @@ Of the 578 clones the pass keeps, 73 survive to the final IR. That is
 not 505 wasted: a clone with exactly one caller is precisely what
 `LateInline` splices away, which is better than the call it replaced.
 
-The `--directive timing` output prints this breakdown (`N distinct
-keys`, then `N keys past the scrutinee-only gate, M clones kept`), so
-it can be re-derived on any program without rebuilding the compiler.
+These counts came from counters the pass used to carry; they were
+removed once the investigation concluded (see the git log of
+`SpecClosure.idr`), so re-deriving them needs a temporary patch.
 
 ## Captured in a partial application
 

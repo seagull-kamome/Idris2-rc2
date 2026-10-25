@@ -310,9 +310,9 @@ Most passes already print their own wall-clock time unconditionally
 via `logTime`/`logTimeOver` at a nonzero threshold, gated by the
 ordinary upstream `log`/log-level mechanism, not by any directive here
 -- see e.g. `Compiler.RC2.RC2.toRCDefs`'s own `logTime 2 "rc2: ..."`
-calls around every stage. `Compiler.RC2.SpecClosure`'s own four
-whole-pass-level lines (collect+group, the opportunity/key/def counts,
-`rebuildCafTable`, `redirectAll`) are the one exception: they were
+calls around every stage. `Compiler.RC2.SpecClosure`'s own
+whole-pass-level step lines (collect+group, `rebuildCafTable`,
+`buildAll`, `redirectAll`) are the one exception: they were
 originally left permanently unconditional (bypassing `log`/log-level
 *and* any directive) while diagnosing the `O(distinct keys x program
 size)` slowdown `doc/speculative-closure-specialization.md` describes

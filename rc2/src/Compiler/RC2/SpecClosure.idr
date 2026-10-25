@@ -4,8 +4,7 @@
 ||| (its own "Internal structure" section maps directly onto this
 ||| module's own functions) -- this file only comments *how*, not *why*.
 ||| Disable with `--directive nospecclosure`. Its own whole-pass-level
-||| timing/count diagnostics (`applySpecClosure`'s own
-||| `maybeLogTimeOver`) only print with `--directive timing`.
+||| step timings (`maybeLogTimeOver`) only print with `--directive timing`.
 |||
 ||| A second, sibling pass lives in this module's own lower half:
 ||| `applySpecConstCon`, which specializes on a *constant-constructor*
@@ -14,10 +13,10 @@
 ||| is a separate stage, disabled separately with
 ||| `--directive nospecconstcon`; see
 ||| `rc2/doc/constant-constructor-specialization.md`.
+|||
+||| Copyright 2026, Hattori,Hiroki. All rights reserved.
+||| This module was licensed by BSD3. see LICENSE file for detail.
 module Compiler.RC2.SpecClosure
-
--- Copyright 2026, Hattori,Hiroki. All rights reserved.
--- This module was licensed by BSD3.
 
 import Compiler.RC2.ConstFold
 import Compiler.RC2.Emit.Util
@@ -370,19 +369,11 @@ applySpecClosure prevTable done defs = do
     timingEnabled <- elem "timing" <$> getDirectives (Other "rc2")
     keys <- maybeLogTimeOver timingEnabled 0 (pure "rc2: SpecClosure: collect+group opportunities")
              (pure (filter (\(k, _) => not (contains k done)) (SortedMap.toList byKey)))
-    when timingEnabled $
-      coreLift $ putStrLn $ "TIMING rc2: SpecClosure: " ++ show (sum (map (length . snd) keys)) ++ " opportunities, "
-                             ++ show (length keys) ++ " distinct keys, " ++ show (length defs) ++ " defs"
     caf <- maybeLogTimeOver timingEnabled 0 (pure ("rc2: SpecClosure: rebuildCafTable (" ++ show (length defs) ++ " defs, once)"))
              (pure (rebuildCafTable defs))
     built <- maybeLogTimeOver timingEnabled 0 (pure "rc2: SpecClosure: buildAll (build + fold the clones)")
                (buildAll defOf caf done [] (map (\(k, opps) => (k, capturedOf opps)) keys))
     let accepted = acceptClosed done built
-    when timingEnabled $
-      coreLift $ putStrLn $ "TIMING rc2: SpecClosure: " ++ show (length built) ++ " clones built, "
-                             ++ show (length accepted) ++ " accepted"
-                             ++ " (" ++ show (length (filter (not . null . (.needs)) accepted)) ++ " forwarding, "
-                             ++ show (length (filter (\b => null b.needs && b.chains > 1) accepted)) ++ " applying more than once)"
     let table = foldl (\t, b => let (callee, argPos, target, _) = b.key
                                 in insertWith (++) callee [(argPos, target, b.name)] t)
                       prevTable accepted
@@ -555,35 +546,6 @@ constParamUses p callee argPos e =
           then Just fwds
           else Nothing
 
-||| Occurrences of `p` stored into a constructor or closure capture.
-||| Measurement only (`--directive timing`).
-storedUses : RCLocal -> RCExp -> Nat
-storedUses p e@(RCon _ _ _ _ args _) = count (== p) args + foldSubExprs (+) 0 (storedUses p) e
-storedUses p e@(RUnderApp _ _ _ args) = count (== p) args + foldSubExprs (+) 0 (storedUses p) e
-storedUses p e = foldSubExprs (+) 0 (storedUses p) e
-
-||| Why `paramIsScrutineeOnly` failed, as a bucket index, for the
-||| `--directive timing` breakdown only: 0 forward-only with scrutinee,
-||| 1 forward-only without scrutinee, 2 forward mixed with stored or
-||| other, 3 stored (no forward), 4 other escaping (no forward, no
-||| store), 5 no scrutinee and no other use, 6 anything else.
-gateFailBucket : RCLocal -> (callee : Name) -> (argPos : Nat) -> RCExp -> Nat
-gateFailBucket p callee argPos e =
-    let uses = countUsesR p e
-        scrut = scrutineeUses p e
-        pass = selfPassthroughOccurrences p callee argPos e
-        fwd = length (constForwardSites p callee argPos e)
-        stored = storedUses p e
-        rest = minus uses (scrut + pass + fwd)
-    in if fwd > 0 then (if rest == 0 then (if scrut > 0 then 0 else 1) else 2)
-       else if stored > 0 then 3
-       else if rest > 0 then 4
-       else if scrut == 0 then 5
-       else 6
-
-bump : Nat -> List Nat -> List Nat
-bump i = zipWith (\j, n => if j == i then S n else n) [0 .. 8]
-
 ||| Total `RApp` (boxed closure dispatch) nodes in `e` -- the
 ||| profitability measure for this half of the pass.
 countApps : RCExp -> Nat
@@ -628,13 +590,6 @@ constNeeds value callee argPos body =
                  (zip [0 .. length args] args)
     go e = foldSubExprs (++) [] go e
 
-||| What attempting one key produced: `Left bucket` when the gate
-||| refused it (`gateFailBucket`, `7` for a missing parameter, `8` for a
-||| callee that is not a plain function), `Right Nothing` when it
-||| passed but the clone is worth nothing, else the built clone.
-ConstTry : Type
-ConstTry = Either Nat (Maybe ConstBuilt)
-
 ||| Clone `callee` with its `argPos` parameter dropped from the
 ||| signature and its id seeded to `value` for the fold. The body is
 ||| handed over unchanged -- `foldConstDefWith` does the substitution,
@@ -645,15 +600,15 @@ ConstTry = Either Nat (Maybe ConstBuilt)
 ||| to other keys (`needs`). The latter is the transitive case: its
 ||| worth is only the clones it reaches.
 tryConstKey : {auto fr : Ref FreshId Int}
-           -> SortedMap Name RCDef -> CafTable -> ConstKey -> Core ConstTry
+           -> SortedMap Name RCDef -> CafTable -> ConstKey -> Core (Maybe ConstBuilt)
 tryConstKey defOf caf key@(callee, argPos, value) =
     case lookup callee defOf of
          Just (MkRCFun args retRep False body) =>
              case getAt argPos args of
-                  Nothing => pure (Left 7)
+                  Nothing => pure Nothing
                   Just (paramVar, _) =>
                       case constParamUses (RCLoc paramVar) callee argPos body of
-                           Nothing => pure (Left (gateFailBucket (RCLoc paramVar) callee argPos body))
+                           Nothing => pure Nothing
                            Just _ => do
                                cloneId <- freshId
                                -- Same naming scheme as `buildClone` above, with
@@ -666,49 +621,39 @@ tryConstKey defOf caf key@(callee, argPos, value) =
                                let needs = case folded of
                                                 MkRCFun _ _ _ fb => constNeeds value callee argPos fb
                                                 _ => []
-                               pure $ Right $ if own || not (null needs)
+                               pure $ if own || not (null needs)
                                                  then Just (MkConstBuilt key cloneName folded own needs)
                                                  else Nothing
          -- A worker (`isWorker`) can't exist yet at this point in
          -- the pipeline, and anything that isn't a plain function
          -- has no parameter to specialize.
-         _ => pure (Left 8)
+         _ => pure Nothing
 
-||| Everything the work list threads: keys already attempted, clones
-||| built, and the counters for `--directive timing`.
+||| Everything the work list threads: keys already attempted and clones
+||| built.
 record ConstState where
   constructor MkConstState
   seen : SortedSet ConstKey
   built : List ConstBuilt
-  gatePassed : Nat
-  buckets : List Nat
-  transitive : Nat
 
 ||| The work list: every built clone's `needs` are queued, each key is
 ||| attempted at most once (memoised in `seen`, failures included), so
-||| the chain is built transitively and the loop terminates. `initial`
-||| is the set of keys that had a call site of their own, to count the
-||| ones only reached by forwarding. Passed in, never a `where` binding
-||| -- see the doc's "The `where`-clause trap".
+||| the chain is built transitively and the loop terminates. `defOf` is
+||| passed in, never a `where` binding -- see the doc's "The
+||| `where`-clause trap".
 buildConstAll : {auto fr : Ref FreshId Int}
-             -> SortedMap Name RCDef -> CafTable -> SortedSet ConstKey
+             -> SortedMap Name RCDef -> CafTable
              -> ConstState -> List ConstKey -> Core ConstState
-buildConstAll _ _ _ st [] = pure st
-buildConstAll defOf caf initial st (k :: rest) =
+buildConstAll _ _ st [] = pure st
+buildConstAll defOf caf st (k :: rest) =
     if contains k st.seen
-       then buildConstAll defOf caf initial st rest
+       then buildConstAll defOf caf st rest
        else do
            r <- tryConstKey defOf caf k
            let seen' = insert k st.seen
-           let trans' = if contains k initial then st.transitive else S st.transitive
            case r of
-                Left b => buildConstAll defOf caf initial
-                            ({ seen := seen', buckets $= bump b, transitive := trans' } st) rest
-                Right Nothing => buildConstAll defOf caf initial
-                                   ({ seen := seen', gatePassed $= S, transitive := trans' } st) rest
-                Right (Just b) => buildConstAll defOf caf initial
-                                    ({ seen := seen', gatePassed $= S, transitive := trans'
-                                     , built $= (b ::) } st) (b.needs ++ rest)
+                Nothing => buildConstAll defOf caf ({ seen := seen' } st) rest
+                Just b => buildConstAll defOf caf ({ seen := seen', built $= (b ::) } st) (b.needs ++ rest)
 
 ||| The greatest subset of `bs` that is worth keeping and closed: a
 ||| clone stays if it is profitable on its own (`own` -- its forwarded
@@ -794,9 +739,6 @@ applySpecConstCon prevTable done defs = do
     timingEnabled <- elem "timing" <$> getDirectives (Other "rc2")
     keys <- maybeLogTimeOver timingEnabled 0 (pure "rc2: SpecConstCon: collect keys")
               (pure (filter (\(k, _) => not (contains k done)) (SortedMap.toList byKey)))
-    when timingEnabled $
-      coreLift $ putStrLn $ "TIMING rc2: SpecConstCon: " ++ show (length keys)
-                             ++ " distinct keys, " ++ show (length defs) ++ " defs"
     let caf = rebuildCafTable defs
     -- Bound in the body, ONCE, and threaded into `buildConstAll` as a
     -- parameter -- deliberately NOT a `where` clause. A `where`
@@ -807,33 +749,14 @@ applySpecConstCon prevTable done defs = do
     -- once per key, so writing it that way rebuilds a large map once per
     -- key (doc/constant-constructor-specialization.md, "The
     -- `where`-clause trap").
-    -- The same goes for `initial` below.
     let defOf : SortedMap Name RCDef := SortedMap.fromList defs
-    let initial : SortedSet ConstKey := fromList (map fst keys)
     st <- maybeLogTimeOver timingEnabled 0 (pure "rc2: SpecConstCon: buildConstAll (build + fold the clones)")
-            (buildConstAll defOf caf initial (MkConstState done [] 0 (replicate 9 0) 0) (map fst keys))
+            (buildConstAll defOf caf (MkConstState done []) (map fst keys))
     let accepted = acceptConst done st.built
     let table = foldl (\t, b => let (callee, argPos, value) = b.key
                                 in insertWith (++) callee [(argPos, value, b.name)] t)
                       prevTable accepted
     let done' = foldl (\s, b => insert b.key s) done accepted
-    -- The two gates separately, because they fail for different
-    -- reasons and only the breakdown says where the remaining yield
-    -- is: the use gate (`constParamUses`) rejects a dictionary that is
-    -- stored or escapes, while the profitability gate rejects a clone
-    -- that folded the `case` away but left the dispatch somewhere the
-    -- fold couldn't reach.
-    when timingEnabled $ do
-      coreLift $ putStrLn $ "TIMING rc2: SpecConstCon: " ++ show st.gatePassed
-                             ++ " keys past the use gate, "
-                             ++ show (length accepted) ++ " clones kept"
-      coreLift $ putStrLn $ "TIMING rc2: SpecConstCon: " ++ show st.transitive
-                             ++ " keys reached only by forwarding, "
-                             ++ show (length st.built) ++ " clones built, "
-                             ++ show (length accepted) ++ " accepted, "
-                             ++ show (length (filter (not . (.own)) accepted)) ++ " pure forwarders accepted"
-      coreLift $ putStrLn $ "TIMING rc2: SpecConstCon: gate-fail buckets [fwdOnly+scrut, fwdOnly-noscrut, fwdMixed, stored, otherEscape, noScrutNoUse, else, noParam, notPlainFun] = "
-                             ++ show st.buckets
     out <- maybeLogTimeOver timingEnabled 0 (pure ("rc2: SpecConstCon: redirectAll (" ++ show (length defs + length accepted) ++ " defs, once)"))
       (pure (map (\(n, d) => (n, case d of
                                       MkRCFun a r w body => MkRCFun a r w (redirectConstCallSites table body)
