@@ -11,9 +11,10 @@
 ||| forward-declares every referenced symbol from that same `defs` list.
 ||| Lives here rather than in `Emit.idr` only to keep that module on
 ||| codegen -- pure analysis, no `Ref`s, nothing emitted.
+|||
+||| Copyright 2026, Hattori,Hiroki. All rights reserved.
+||| This module was licensed by BSD3. see LICENSE file for detail.
 module Compiler.RC2.Emit.ExternRefs
--- Copyright 2026, Hattori,Hiroki. All rights reserved.
--- This module was licensed by BSD3.
 
 import Compiler.RC2.RCExp
 

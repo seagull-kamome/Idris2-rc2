@@ -10,9 +10,10 @@
 ||| case) also reaches for. Split out of `Emit.idr` to keep that module
 ||| on RCExp-to-C lowering; the dependency runs one way only,
 ||| `Emit -> Emit.Foreign -> Emit.Util`.
+|||
+||| Copyright 2026, Hattori,Hiroki. All rights reserved.
+||| This module was licensed by BSD3. see LICENSE file for detail.
 module Compiler.RC2.Emit.Foreign
--- Copyright 2026, Hattori,Hiroki. All rights reserved.
--- This module was licensed by BSD3.
 
 import Compiler.RC2.RCExp
 import Compiler.RC2.Types

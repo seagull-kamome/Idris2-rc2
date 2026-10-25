@@ -4,9 +4,10 @@
 ||| `{}` and C string/character literals is respected), and the new
 ||| `CExpr:` tag carries a C expression template instead of a function
 ||| name. See `rc2/doc/ffi-cexpr.md`.
+|||
+||| Copyright 2026, Hattori,Hiroki. All rights reserved.
+||| This module was licensed by BSD3. see LICENSE file for detail.
 module Compiler.RC2.ForeignSpec
--- Copyright 2026, Hattori,Hiroki. All rights reserved.
--- This module was licensed by BSD3.
 
 import Compiler.CompileExpr
 import Compiler.RC2.Util
