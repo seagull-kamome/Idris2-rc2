@@ -84,6 +84,14 @@ data Node : Type -> Type where
   Box : Props -> List (Node msg) -> Node msg
   ||| The cells of a `Canvas`, at its size.
   CanvasView : Canvas -> Node msg
+  ||| A node built knowing the width it is given: the width of the border box
+  ||| it is placed in. For what depends on the width, as wrapped text does.
+  ||| The body is built several times per layout, so it should be cheap. If it
+  ||| is a box, its own size properties, margins and `absolute` are ignored:
+  ||| put them on a box around the `WithWidth`. It cannot hold focusables:
+  ||| they are found before the layout, when this node is not built yet, and
+  ||| the ones in it get no focus and no keys.
+  WithWidth : (Len -> Node msg) -> Node msg
   ||| A node the runtime can give the keyboard focus to. The body is built
   ||| knowing whether it has the focus, and the handler sees the keys that
   ||| arrive while it has. Focusables are visited in tree order by Tab and
@@ -121,6 +129,11 @@ column = box
 public export
 canvas : Canvas -> Node msg
 canvas = CanvasView
+
+||| A node built from the width it is placed in; see `WithWidth`.
+public export
+withWidth : (Len -> Node msg) -> Node msg
+withWidth = WithWidth
 
 ||| Styled text; `\n` starts a new line.
 public export
@@ -237,6 +250,7 @@ export covering
 mapNode : (a -> b) -> Node a -> Node b
 mapNode _ (Text s w str) = Text s w str
 mapNode _ (CanvasView c) = CanvasView c
+mapNode f (WithWidth body) = WithWidth (\w => mapNode f (body w))
 mapNode f (Box p kids) = Box p (map (mapNode f) kids)
 mapNode f (Focusable k body h) = Focusable k (\b => mapNode f (body b)) (\i => map f (h i))
 

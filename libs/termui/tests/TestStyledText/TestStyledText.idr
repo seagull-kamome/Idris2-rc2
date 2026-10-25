@@ -97,3 +97,16 @@ main = do
     (fromDoc id 20 (annotate bold (pretty "out " <+> annotate redS (pretty "in") <+> pretty " out")))
   showText "a line indented by the document keeps its indent when it is wrapped further" 12
     (fromDoc id 12 (nest 4 (line' <+> pretty "aaaa bbbb cccc dddd")))
+
+  putStrLn "-- a view that wraps to the width it is placed in"
+  let t = plainText "the quick brown fox jumps over the lazy dog"
+  for_ [12, 20] $ \w => do
+    f <- render (the (Node ()) (styledView t)) w 6
+    ls <- frameLines f
+    traverse_ (\l => putStrLn ("|" ++ l)) ls
+  fb <- render (the (Node ()) (box [border Single] [styledView t])) 16 6
+  lb <- frameLines fb
+  traverse_ (\l => putStrLn ("|" ++ l)) lb
+  fr <- render (the (Node ()) (row [] [box [shrink 0] [text "> "], styledView t])) 16 6
+  lr <- frameLines fr
+  traverse_ (\l => putStrLn ("|" ++ l)) lr

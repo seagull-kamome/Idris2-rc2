@@ -309,3 +309,39 @@ True
 -- packed cells: styles and marks read back
 ('e', (MkStyle (Indexed 255) (RGB 255 128 1) 9 0, 8))
 ('\12354', (RGB 0 0 255, (True, RGB 255 128 1)))
+-- a node built for its width
+|7
+-- inside a border and padding
+|┌───────┐
+|│       │
+|│ 5     │
+|│       │
+|└───────┘
+-- in a row with a fixed sibling
+|ab7
+-- its height follows the wrapped text
+|xxxxxx
+|xxxxxx
+|end
+|
+|
+-- in an absolute box
+|  4
+-- the size properties of a body that is a box are ignored
+|6
+|end
+|
+-- the same around the node: the box around it decides
+|3
+|end
+-- nested
+|┌──────────┐
+|│(10, 10)  │
+|└──────────┘
+-- a zero width
+|
+-- a row wider than 4096 is not wanted wider
+|xxxxxxx|
+|
+-- a focusable in it is drawn unfocused
+|plain

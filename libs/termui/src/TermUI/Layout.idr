@@ -240,10 +240,27 @@ record Kid msg where
   kgrow, kshrink : Len
   clampW, clampH : Len -> Len
 
+-- The width a `WithWidth` node is built for when asked how wide it wants to
+-- be: wide enough for any line.
+unboundedWidth : Len
+unboundedWidth = 4096
+
+-- What a `WithWidth` body is laid out as. The parent sizes and places the
+-- `WithWidth` node, not the body, so the size properties of a body that is a
+-- box (and its place out of the flow) would hold for the measuring and not
+-- for the placing; they are dropped for both.
+bodyOf : Node msg -> Node msg
+bodyOf (Box p kids) =
+  Box ({ pWidth := Auto, pHeight := Auto, pGrow := 0, pShrink := 1, pMargin := noEdges, pMarginPct := noEdges
+       , pMinWidth := Nothing, pMaxWidth := Nothing, pMinHeight := Nothing, pMaxHeight := Nothing
+       , pAbsolute := False } p) kids
+bodyOf n = n
+
 -- A child of a parent whose content is `pw` cells wide.
 kidOf : (pw : Len) -> Node msg -> Kid msg
 kidOf _ k@(Text _ _ _) = MkKid k noEdges Auto Auto 0 1 id id
 kidOf _ k@(CanvasView _) = MkKid k noEdges Auto Auto 0 1 id id
+kidOf _ k@(WithWidth _) = MkKid k noEdges Auto Auto 0 1 id id
 kidOf pw k@(Box p _) =
   MkKid k (MkEdges (pct p.pMargin.top p.pMarginPct.top) (pct p.pMargin.right p.pMarginPct.right)
                    (pct p.pMargin.bottom p.pMarginPct.bottom) (pct p.pMargin.left p.pMarginPct.left))
@@ -261,10 +278,12 @@ isAbsolute _ = False
 
 -- The width a node wants when nothing limits it, text not wrapped: the
 -- width of the border box. Linear in the size of the subtree, and what the
--- layout uses to decide widths, so that `natural` calls each child once.
+-- layout uses to decide widths, so that `natural` calls each child once
+-- (not counting the building of a `WithWidth` body).
 maxContent : Node msg -> Len
 maxContent (Focusable _ body _) = maxContent (body False)
 maxContent (CanvasView c) = c.canvasWidth
+maxContent (WithWidth body) = maxContent (bodyOf (body unboundedWidth))
 maxContent (Text _ _ s) = foldl max 0 (map stringWidth (textLines s))
 maxContent (Box p kids) =
   let bx = 2 * borderWidth p.pBorder + hEdges p.pPadding
@@ -368,6 +387,7 @@ mutual
   -- the flow take no room.
   natural : Node msg -> Len -> (Len, Len)
   natural (Focusable _ body _) maxW = natural (body False) maxW
+  natural (WithWidth body) maxW = natural (bodyOf (body maxW)) maxW
   natural (CanvasView c) maxW = (min maxW c.canvasWidth, c.canvasHeight)
   natural (Text _ wrap s) maxW =
     let ls = wrapText wrap maxW s in
@@ -459,6 +479,7 @@ mutual
   export
   place : Node msg -> Rect -> Laid
   place (CanvasView c) r = LCanvas r c
+  place (WithWidth body) r = place (bodyOf (body r.w)) r
   place (Text s wrap str) r = LText r s (wrapText wrap r.w str)
   place (Focusable _ body _) r = place (body False) r
   place (Box p kids) r =
