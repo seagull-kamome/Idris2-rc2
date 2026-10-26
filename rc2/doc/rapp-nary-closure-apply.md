@@ -48,7 +48,7 @@ empty case to reject.)
 is strictly *less* code than adding a sibling node: every existing
 `RApp fc lazy c a` clause across the pipeline (`RCExp.idr`'s own
 `freeLocalsR`/`countUsesR`/`foldRCNamesL`, `ConstFold`, `Sink`,
-`ConAltNative`, `Pretty`, `LateInline`, `SpecClosure`, `RC2.rcSizeOf`,
+`ConAltNative`, `Pretty`, `LateInline`, `SpecClosure`,
 `Emit`, `Loop`, `RC.idr`'s own Phase 1/2) widens in place to `RApp fc
 lazy c args`/`c :: args` -- a new node would need a brand-new clause in
 most of those same files instead, on top of the widening this needs
@@ -412,7 +412,7 @@ in what got collected.
 - `rc2/src/Compiler/RC2/RC.idr` -- Phase 1 `normalize`'s `LApp` clause
   (`collectAppChain`, new), Phase 2 `annotate`'s `RApp` clause.
 - `rc2/src/Compiler/RC2/ConstFold.idr`, `Sink.idr`, `ConAltNative.idr`,
-  `Pretty.idr`, `LateInline.idr`, `Loop.idr`, `RC2.idr` (`rcSizeOf`) --
+  `Pretty.idr`, `LateInline.idr`, `Loop.idr` --
   mechanical operand-list widening, no logic change.
 - `rc2/src/Compiler/RC2/SpecClosure.idr` -- `chainArgs` simplification
   (see above).
