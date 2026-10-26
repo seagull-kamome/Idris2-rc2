@@ -5,8 +5,8 @@
 ||| (`Network.HTTP.Client.WebAPI.AI.OpenAIStream`), one piece per message, so
 ||| the terminal stays alive while the model thinks: scroll the log (Page
 ||| Up/Down, the wheel), resize the window, and stop
-||| a reply with Esc. Ctrl-C quits. Enter sends; Alt+Enter (or Esc, Enter) starts a
-||| new line, and so does pasting text with line breaks; the input grows with its
+||| a reply with Esc. Ctrl-Z suspends, Ctrl-C quits. Enter sends; Alt+Enter
+||| (or Esc, Enter) starts a new line, and so does pasting text with line breaks; the input grows with its
 ||| lines, up to eight.
 |||
 ||| Usage: llmchat [--url URL] [--model NAME] [--system TEXT]
@@ -42,7 +42,6 @@ import TermUI.Widget.LogView as L
 import TermUI.Widget.Scrolling as Sc
 import TermUI.Widget.StyledText
 import TermUI.Widget.TextArea as A
-import TermUI.Width
 
 %default covering
 
@@ -79,7 +78,7 @@ data AppMsg
   = Edit A.Msg | Send | Resized Len Len | Scroll Sc.Msg
   | Opened (Either ApiError ChatStream)
   | Piece (Either ApiError (Maybe Delta))
-  | Stop | Quit' | Done
+  | Stop | Pause | Quit' | Done
 
 record AppModel where
   constructor MkModel
@@ -111,19 +110,12 @@ note t = MkPara [] [] WrapWords [spanOf (fgColor red plain) t]
 maxInputRows : Len
 maxInputRows = 8
 
--- The width of the editor inside the border, and of a row of text in it (a cell
--- is kept for the scroll bar and one for the cursor).
+-- The width of the editor inside the border.
 inputCells : Len -> Len
 inputCells cols = max 4 (cols `monus` 2)
 
-textRoom : Len -> Len
-textRoom cols = max 1 (inputCells cols `monus` 2)
-
 wantedRows : Len -> A.Model -> Len
-wantedRows cols a =
-  let room = textRoom cols
-      rowsOf = \l => max 1 ((stringWidth (pack l) + room `monus` 1) `div` room)
-  in min maxInputRows (max 1 (sum (map rowsOf (forget (split (== '\n') (unpack (A.value a)))))))
+wantedRows cols a = min maxInputRows (max 1 (cast (A.wrappedRows (cast (inputCells cols)) a)))
 
 -- The input has the rows its text needs and the log what is left: all but the
 -- status line and the input with its border.
@@ -198,12 +190,13 @@ update Stop m =
 update (Resized c r) m = (layoutFor ({ size := (c, r) } m), NoCmd)
 update (Scroll s) m = ({ log $= L.update s } m, NoCmd)
 update Done m = (m, NoCmd)
+update Pause m = (m, Suspend)
 update Quit' m = (m, Quit)
 
 status : AppModel -> String
 status m =
   case m.phase of
-    Idle => "Enter sends (Alt+Enter: new line), Esc stops a reply, Ctrl-C quits.   " ++ m.settings.model ++ " @ " ++ m.settings.url
+    Idle => "Enter sends (Alt+Enter: new line), Esc stops a reply, Ctrl-Z suspends, Ctrl-C quits.   " ++ m.settings.model ++ " @ " ++ m.settings.url
     Connecting => "waiting for the model ..."
     Receiving _ => "the model is writing (Esc stops it) ..."
 
@@ -231,6 +224,7 @@ subs _ =
   , OnInput (\i => case i of
                      Press KEscape _ => Just Stop
                      Press (KChar 'c') mods => if mods.ctrl then Just Quit' else Nothing
+                     Press (KChar 'z') mods => if mods.ctrl then Just Pause else Nothing
                      _ => Scroll <$> keyMsg i)
   ]
 

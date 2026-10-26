@@ -88,6 +88,12 @@ of items (a tab, a line of text) stay `Nat`, except in the list widgets
   trailing newline does not start a further line. Text is clipped to its
   box, and children are clipped to the content box of their parent (inside
   border and padding).
+- Where a line is broken inside a run of characters (no space to break at),
+  the Japanese line breaking rules hold (`TermUI.Kinsoku`): a closing bracket,
+  a stop, a small kana or the long vowel mark does not begin a line, an
+  opening bracket does not end one. The character before the break goes down
+  to the next line with it, up to three of them; if that does not help, the
+  break stays. This is in `Text`, styled text and the editor alike.
 - The natural size of a node is computed for a given available width, so
   wrapped text takes the height it needs once its width is known. The widths
   of the children are decided first from what each wants when nothing limits
@@ -303,7 +309,7 @@ is added to the end of the last paragraph of a `LogView` (`extendLast`). The ter
 stays alive between pieces, a reply is stopped with `CancelTask "chat"`, and the
 history is sent with every question. The input is a `TextArea`: Enter sends and
 Alt+Enter (a paste with line breaks too) starts a new line; it is as high as its
-rows (counted at the room of a wrapped row, up to eight) and the log takes what is
+rows (`TextArea.wrappedRows`, the rows the editor itself wraps to, up to eight) and the log takes what is
 left, so both are sized again after every edit and resize (`layoutFor`). The log is
 not a focusable: the input is the only one, so typing needs no Tab, and Page Up/Down
 (taken from the editor in its key handler) and the wheel reach the log. The URL and the model are given
@@ -572,7 +578,7 @@ while the field has the focus.
     selection is a step of its own (what is typed after it is another); an edit
     that changes nothing (Backspace at the start, an empty paste) leaves the
     history alone; a new edit forgets what could be redone; 100 steps are kept.
-    Ctrl-Z is left to the application (the editor example suspends on it).
+    Ctrl-Z is left to the application (the editor and llmchat examples suspend on it).
   - Columns for vertical moves are counted in cells, a click and a drag put the
     cursor under the cell.
 - `Scroll`: a read-only list of lines in a window, scrolled by the arrows,
