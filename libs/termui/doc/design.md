@@ -55,6 +55,10 @@ dumped as text (`frameLines`), which is how the tests look at results.
 | `TermUI.Widget.Label` | the label of a button, a check box, a tab, a menu or a key hint: a line of spans |
 | `TermUI.Widget.StyledText` | text in styled spans, wrapped to a width, shown as a column of lines |
 | `TermUI.Widget.StyledText.Doc` | a pretty-printer `Doc` as styled text |
+| `TermUI.Kinsoku` | Japanese line breaking rules for the wrappers |
+| `TermUI.Markdown` | a small Markdown reader (text to blocks and inlines), meant for text that arrives in pieces |
+| `TermUI.Markdown.Theme` | how Markdown looks: styles, marks, and which blocks fold and start folded |
+| `TermUI.Markdown.Render` | Markdown blocks as styled text by a theme, and the `markdown` view |
 
 ## Layout semantics
 
@@ -298,6 +302,47 @@ for a scrolling widget; `layoutLines` gives them as spans, for tests.
   outer; a line at an indent keeps the indent if it is wrapped further. An
   empty document is no paragraph, and the empty line after a final line break
   is not shown.
+
+## Markdown
+
+`TermUI.Markdown` reads a text into blocks (`Heading`, `Paragraph`,
+`CodeBlock`, `Quote`, `Bullets`, `Numbered`, `Rule`; a list item is a list of
+blocks) and inlines (text, emphasis, strong, strike, code, link, hard break).
+It is not a general Markdown library: it reads what a chat or a help text uses
+and has no tables (a row that starts with `|` keeps its line end), no HTML, no
+setext headings, no indented code and no reference links. Bare `http(s)://`
+addresses and `<...>` ones become links; a soft line break is a space.
+
+It is written for text that grows. Whatever is cut short is read as far as it
+goes: an unclosed fence holds the rest, an unclosed emphasis is plain text, a
+half-typed list marker is part of the line before. The last line of a text
+may be one that more text turns into something else (`#` and `---` are a heading
+and a rule until `#include` and `---Note` follow), which changes the block before
+it too, so when more text comes the blocks before the last two are the same (the
+test cuts texts at every length and checks it); only those two are read again.
+Streaming itself (an `extendLast` for blocks) is not in yet.
+
+`MdTheme` says how it looks, as a plain record (`defaultTheme` and `{ field := ..}`):
+a style for the paragraph, each level of heading, emphasis, strong, strike, code,
+links (and the address after a link's text), the code block (its background too),
+the quote and the marks; the marks themselves (heading `#`s, bullets by the depth
+of the list, numbers, the quote bar, the rule, blank rows between blocks) and, for
+each kind of block (`Kind`; a heading by its level), `fold : Kind -> Fold`: `NoFold`,
+`Open` (can be folded, starts open) or `Closed` (starts folded). The marks are
+ASCII by default, whose width is the same in every terminal; `-`, `+` and `*` by depth for
+bullets, `|` for the bar. Styles of nested inlines are put over each other with
+`over`, so emphasis in a heading keeps the colour of the heading.
+
+`renderMarkdown theme w src` is the styled text for width `w` and `markdown theme
+src` a view wrapped to the width it is placed in. Quotes and list items are made
+with the prefixes of the paragraphs, so a wrapped row keeps the bar or the
+indent; a code line is padded with blanks to the width so that its background is
+a block, and is wrapped by character; a rule is as wide as the room it is in.
+Folding (`fold`) is for the viewer widget, which comes next. Limits: a line that
+follows a fenced block inside a list item without an indent is taken for the
+item's text; an unclosed `[`, `*`, `_` or `~~` makes the reader look to the end of
+the paragraph for its partner, so a very long paragraph of such openers takes
+quadratic time.
 
 ## A chat with a language model
 

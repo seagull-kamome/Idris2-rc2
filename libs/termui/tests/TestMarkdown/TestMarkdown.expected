@@ -1,0 +1,143 @@
+-- parse
+h1 "Title"
+p "Some " em("emphasis") ", " strong("strong") ", " strike("gone") " and " code("code") " in a line that wraps over rows."
+h2 "Lists"
+item -
+  p "one"
+item -
+  p "two"
+  item -
+    p "nested a"
+  item -
+    p "nested b"
+item -
+  p "three"
+numbered from 1
+item #
+  p "first"
+item #
+  p "second"
+item #
+  p "tenth"
+quote
+  p "quoted text"
+  item -
+    p "with a list"
+code [idris]
+  | main : IO ()
+  | main = putStrLn "hi"
+rule
+p "end"
+-- sample
+|# Title
+ ^^^^^^^                                 
+|
+|Some emphasis, strong, gone and code in
+      ////////  ^^^^^^  ~~~~     yyyy    
+|a line that wraps over rows.
+|
+|## Lists
+ ^^^^^^^^                                
+|
+|- one
+|- two
+|  + nested a
+|  + nested b
+|- three
+|
+|1. first
+|2. second
+|3. tenth
+|
+|| quoted text
+||
+|| - with a list
+|
+| idris
+ ########################################
+| main : IO ()
+ ########################################
+| main = putStrLn "hi"
+ ########################################
+|
+|----------------------------------------
+|
+|end
+-- parse
+p "Mixed: a_b_c and 2 * 3 * 4, " strong("bold " em("and em")) ", *not*, " link("a link" -> http://x.org/p) ", " link("https://y.org" -> https://y.org) ", see " link("https://z.org/a" -> https://z.org/a) ". second line" BR "hard break still" BR "backslash"
+-- parse
+p link("outer [inner]" -> u) " [no target] [open](" link("http://x" -> http://x)
+-- parse
+code []
+  | no closing fence
+  | - not a list
+-- parse
+item -
+  p "a"
+  p "para in a"
+item -
+  p "b lazy"
+item -
+  p "other marker"
+numbered from 3
+item #
+  p "paren"
+item #
+  p "list"
+-- parse
+p "text"
+item -
+  p "list cuts the paragraph"
+numbered from 2
+item #
+  p "not a list start"
+-- parse
+p "|a|b|" BR "|-|-|" BR "|1|2|"
+-- parse
+p "see [d](" link("http://x.org" -> http://x.org) " for details (maybe) ok " link("w" -> https://en.wikipedia.org/wiki/Foo_(bar)) " " link("t" -> http://x) " " link("u" -> http://y) " z"
+-- parse
+p "a b" BR "c"
+-- tabs and a quote theme
+|a b c d
+     yyy                       
+|
+|| q x l (u)
+   rryrurrrr                   
+|
+|
+ ##############################
+|
+|b
+-- parse
+p "#nospace ####### seven"
+h2 "closing"
+h1 
+-- japanese
+|# 見出し
+ ^^^^^^^^    
+|
+|今日は天気、
+|よい。「行こ
+|う」と言っ
+|た。
+|
+|- 箇条書きの
+|  項目、とて
+|  も長い文章
+|  になってい
+|  ます。
+-- another theme
+|Head
+ ^^^^                          
+|
+|* item
+|  1. deep
+|
+|> quote
+|
+|   int x;
+ ##############################
+-- cuts: 265, unstable: 0
+-- cuts: 50, unstable: 0
+-- cuts: 113, unstable: 0
+-- cuts: 48, unstable: 0

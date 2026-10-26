@@ -42,6 +42,7 @@ TESTS=(
     "TestStyledText|rc2base contrib|styled text: wrapping, prefixes, styles and a pretty-printer Doc"
     "TestLogView|rc2base contrib|log view: following the end, scrolling and resizing"
     "TestLabels|rc2base contrib|labels with styles of their own on the button, check box, tabs, menu bar and key guide"
+    "TestMarkdown|rc2base contrib|Markdown: blocks and inlines read, drawn by a theme, text cut short"
     "TestWrapRules|rc2base contrib|Japanese line breaking rules, and the rows the editor needs for wrapped lines"
     "TestDiffReplay|rc2base contrib|frame diffs replayed in a small terminal, with scrolled rows"
     "TestPanes|rc2base contrib|function-key guide, tab strip and splitter"
