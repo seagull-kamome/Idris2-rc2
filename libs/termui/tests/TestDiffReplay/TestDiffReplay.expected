@@ -1,0 +1,17 @@
+-- ten rows scroll up by three
+<ESC>[0m<ESC>[1;10r<ESC>[3S<ESC>[r<ESC>[8;1Hfor<ESC>[8;5Hquick<ESC>[8;11Hjigs<ESC>[8;16Hvex<ESC>[8;24H|<ESC>[9;1Hglib<ESC>[9;6Hjocks<ESC>[9;12Hquiz<ESC>[9;24H|<ESC>[10;1Hnymph<ESC>[10;7Hand<ESC>[10;11Hcrwth<ESC>[10;24H#<ESC>[0m
+cells that differ: 0
+-- the same, down by two
+<ESC>[0m<ESC>[1;10r<ESC>[2T<ESC>[r<ESC>[1;1Hthe<ESC>[1;5Hquick<ESC>[1;11Hbrown<ESC>[1;17Hfox<ESC>[1;24H#<ESC>[2;1H日本語のテキスト<ESC>[2;24H|<ESC>[3;24H|<ESC>[4;24H#<ESC>[6;24H|<ESC>[7;24H#<ESC>[9;24H|<ESC>[10;24H#<ESC>[0m
+cells that differ: 0
+-- a full screen scrolls by one row: the bytes written, and the bytes of the whole screen
+scrolled output: 159 bytes, whole screen: 4274 bytes, shorter: True
+cells that differ: 0
+-- a header and a footer stay, the rows between them scroll by two
+<ESC>[0m<ESC>[2;9r<ESC>[2S<ESC>[r<ESC>[2;24H|<ESC>[4;24H#<ESC>[5;24H|<ESC>[7;24H#<ESC>[8;1Hdaft<ESC>[8;6Hzebras<ESC>[8;13Hjump<ESC>[8;24H|<ESC>[9;1Hwaltz,<ESC>[9;8Hbad<ESC>[9;12Hnymph<ESC>[9;24H|<ESC>[0m
+cells that differ: 0
+-- a few rows at the top of a tall screen, the rest blank
+<ESC>[0m<ESC>[1;5r<ESC>[1S<ESC>[r<ESC>[1;90H#<ESC>[3;90H|<ESC>[4;90H
+cells that differ: 0, scrolled: True
+-- random frames
+steps 400, wrong 0, written with a scroll 188
