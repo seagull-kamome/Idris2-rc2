@@ -28,6 +28,8 @@ kindOf (Bullets _) = KBullets
 kindOf (Numbered _ _) = KNumbered
 kindOf Rule = KRule
 
+||| `n` blanks.
+export
 blanks : Len -> String
 blanks n = pack (replicate (cast n) ' ')
 
@@ -75,8 +77,9 @@ codeLine w s =
       n = stringWidth t
   in if n < w then t ++ blanks (w `monus` n) else t
 
--- Every paragraph of a block behind a prefix: `first` for the first row of the
+||| Every paragraph of a block behind a prefix: `first` for the first row of the
 -- first paragraph, `rest` for the others.
+export
 behind : (first, rest : List Span) -> StyledText -> StyledText
 behind _ _ [] = []
 behind first rest (p :: ps) =

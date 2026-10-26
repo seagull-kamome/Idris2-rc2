@@ -59,6 +59,7 @@ dumped as text (`frameLines`), which is how the tests look at results.
 | `TermUI.Markdown` | a small Markdown reader (text to blocks and inlines), meant for text that arrives in pieces |
 | `TermUI.Markdown.Theme` | how Markdown looks: styles, marks, and which blocks fold and start folded |
 | `TermUI.Markdown.Render` | Markdown blocks as styled text by a theme, and the `markdown` view |
+| `TermUI.Widget.MarkdownView` | Markdown in a scrolling window, whose blocks fold; segments that grow at the end |
 
 ## Layout semantics
 
@@ -320,7 +321,8 @@ may be one that more text turns into something else (`#` and `---` are a heading
 and a rule until `#include` and `---Note` follow), which changes the block before
 it too, so when more text comes the blocks before the last two are the same (the
 test cuts texts at every length and checks it); only those two are read again.
-Streaming itself (an `extendLast` for blocks) is not in yet.
+The viewer below uses the whole text of the last segment each time (it is read again
+in full, not only its last two blocks).
 
 `MdTheme` says how it looks, as a plain record (`defaultTheme` and `{ field := ..}`):
 a style for the paragraph, each level of heading, emphasis, strong, strike, code,
@@ -338,11 +340,31 @@ src` a view wrapped to the width it is placed in. Quotes and list items are made
 with the prefixes of the paragraphs, so a wrapped row keeps the bar or the
 indent; a code line is padded with blanks to the width so that its background is
 a block, and is wrapped by character; a rule is as wide as the room it is in.
-Folding (`fold`) is for the viewer widget, which comes next. Limits: a line that
+Limits: a line that
 follows a fenced block inside a list item without an indent is taken for the
 item's text; an unclosed `[`, `*`, `_` or `~~` makes the reader look to the end of
 the paragraph for its partner, so a very long paragraph of such openers takes
 quadratic time.
+
+`TermUI.Widget.MarkdownView` shows Markdown in a window with a scroll bar. The text
+is kept as segments (a message of a chat, a page), each read on its own, so
+`extendSegment` reads and lays out only the last one while a reply arrives
+(`addSegment` starts the next). Blocks fold, as the theme's `fold` says. The units
+that fold are the blocks at the top of a segment: a heading folds its section, the
+blocks up to the next heading of its level or a higher one or the end of the segment
+(so the headings in a reply do not end the section of the message's own heading,
+unless they are of its level), and the others fold into a line (`[+] ``` sh  (2 lines)`,
+`[+] - first ...`). A gutter on the left, as wide as the marks, holds `[-]` or `[+]`
+on the first row of each unit; with a theme where nothing folds there is no gutter.
+The state of a unit is kept by segment and block number, so it stays when the text
+is laid out again; a block seen for the first time takes its start (`Open` or `Closed`)
+from the theme. The cursor (`NextUnit`, `PrevUnit`) picks a unit, drawn as its mark in
+reverse; `Toggle` folds or opens it, `FoldAll` and `UnfoldAll` all of them, and a
+`Click` at a row and a column in the gutter the unit there. The window keeps the unit
+at the row where it was when it folds. As a widget, `viewer` takes the keys (arrows,
+Page Up/Down, Home/End, wheel, `n` and `p`, Enter or Space, `-` and `+`); `mouseMsg top
+left` makes the messages of the mouse for a window whose corner is at that cell. Every
+change that is not an addition lays out all the segments again.
 
 ## A chat with a language model
 
@@ -350,7 +372,12 @@ quadratic time.
 llama-server, Ollama ...) with `rc2base`'s `OpenAIStream`. The question is sent by
 `RunTaskAs "chat"` and the reply is read one piece per message: the task ends with
 `Opened stream`, `update` starts the next task for the next piece, and each piece
-is added to the end of the last paragraph of a `LogView` (`extendLast`). The terminal
+is added to the last segment of a `MarkdownView` (`extendSegment`): every message is a
+segment, a heading `# ai` or `## you` and its text read as Markdown, so only that
+segment is read and laid out again, and a code block, a quote, a list or a whole
+message folds (a click on the mark in the left column, or F2 on the block that
+Alt+Up / Alt+Down picked; F3 and F4 fold and open all). The reasoning a model sends
+before its answer is not shown. The terminal
 stays alive between pieces, a reply is stopped with `CancelTask "chat"`, and the
 history is sent with every question. The input is a `TextArea`: Enter sends and
 Alt+Enter (a paste with line breaks too) starts a new line; it is as high as its
