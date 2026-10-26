@@ -14,7 +14,7 @@ import TermUI.Input
 import TermUI.Len
 import TermUI.Node
 import TermUI.Style
-import TermUI.Width
+import public TermUI.Widget.Label
 
 %default total
 
@@ -26,12 +26,12 @@ import TermUI.Width
 public export
 record Model where
   constructor MkModel
-  titles : List String
+  titles : List Label
   active : Fin (length titles)
 
 ||| A strip with the first tab active.
 export
-fromTitles : (ts : List String) -> {auto 0 ne : NonEmpty ts} -> Model
+fromTitles : (ts : List Label) -> {auto 0 ne : NonEmpty ts} -> Model
 fromTitles (t :: ts) = MkModel (t :: ts) FZ
 
 ||| The active tab, counted from 0.
@@ -45,10 +45,10 @@ select : Nat -> Model -> Model
 select i m = maybe m (MkModel m.titles) (natToFin (min i (length m.titles `minus` 1)) (length m.titles))
 
 -- A title is drawn with a space on each side, tabs are one cell apart.
-tabWidth : String -> Len
-tabWidth t = stringWidth t + 2
+tabWidth : Label -> Len
+tabWidth t = labelWidth t + 2
 
-tabLeft : Nat -> List String -> Len
+tabLeft : Nat -> List Label -> Len
 tabLeft i ts = sum (map (\t => tabWidth t + 1) (take i ts))
 
 -- 0, 1 .. n-1
@@ -102,10 +102,10 @@ export
 tabStrip : (wrap : Msg -> msg) -> Model -> Node msg
 tabStrip wrap m = focusable body (\i => map wrap (keyMsg i))
   where
-    tab : (focused : Bool) -> Nat -> String -> Node msg
+    tab : (focused : Bool) -> Nat -> Label -> Node msg
     tab focused i t =
-      Text (if i == activeIndex m then (if focused then withAttr Inverse plain else withAttr Underline (withAttr Bold plain)) else plain)
-        Truncate (" " ++ t ++ " ")
+      labelNode (if i == activeIndex m then (if focused then withAttr Inverse plain else withAttr Underline (withAttr Bold plain)) else plain)
+        " " " " t
 
     body : Bool -> Node msg
     body focused =

@@ -22,8 +22,8 @@ Status: the pure part (style, width, layout, painting, frame diff), the
 terminal runtime (raw mode, key and mouse input, resize, timers, signals) and the
 Elm-style program model with runtime-managed focus are implemented, with
 widgets (text field, multi-line editor, list, scroll view, spinner, progress bar,
-table), styled text (with a pretty-printer `Doc` as a source) and a canvas for
-painting single cells. Demos: [`examples/Demo.idr`](examples/Demo.idr),
+table), styled text (with a pretty-printer `Doc` as a source), labels with styles of
+their own and a canvas for painting single cells. Demos: [`examples/Demo.idr`](examples/Demo.idr),
 [`examples/Editor.idr`](examples/Editor.idr),
 [`examples/Chat.idr`](examples/Chat.idr) (a chat log),
 [`examples/LlmChat.idr`](examples/LlmChat.idr) (a chat with a language model that streams its reply).

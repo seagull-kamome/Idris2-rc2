@@ -10,6 +10,7 @@ import TermUI.Input
 import TermUI.Node
 import TermUI.Style
 import TermUI.Widget.Activate
+import public TermUI.Widget.Label
 
 %default total
 
@@ -19,10 +20,10 @@ import TermUI.Widget.Activate
 public export
 data Look = Framed | Flat | Link
 
-||| A button as wide as its label.
+||| A button as wide as its label (a string literal, or a `Label` of styled parts).
 export
-button : Look -> (label : String) -> (press : msg) -> Node msg
-button look label press =
+button : Look -> (text : Label) -> (press : msg) -> Node msg
+button look text press =
   row [] [ focusable body (\i => if activates i then Just press else Nothing) ]
   where
     body : Bool -> Node msg
@@ -30,10 +31,8 @@ button look label press =
       case look of
         Framed =>
           box [border (if focused then Heavy else Rounded)]
-            [ Text (if focused then withAttr Inverse plain else plain) Truncate (" " ++ label ++ " ") ]
+            [ labelNode (if focused then withAttr Inverse plain else plain) " " " " text ]
         Flat =>
-          Text (if focused then withAttr Inverse plain else bgColor (Indexed 8) plain) Truncate
-            (" " ++ label ++ " ")
+          labelNode (if focused then withAttr Inverse plain else bgColor (Indexed 8) plain) " " " " text
         Link =>
-          Text (withAttr Underline (if focused then withAttr Inverse plain else fgColor (bright blue) plain))
-            Truncate label
+          labelNode (withAttr Underline (if focused then withAttr Inverse plain else fgColor (bright blue) plain)) "" "" text

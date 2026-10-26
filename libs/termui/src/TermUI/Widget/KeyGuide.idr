@@ -14,6 +14,7 @@ import TermUI.Node
 import TermUI.Style
 import TermUI.Len
 import TermUI.Width
+import public TermUI.Widget.Label
 
 %default total
 
@@ -22,7 +23,7 @@ public export
 record Hint msg where
   constructor MkHint
   fkey : Nat
-  label : String
+  label : Label
   action : msg
 
 -- Two hints are one cell apart.
@@ -30,7 +31,7 @@ keyText : Hint msg -> String
 keyText h = "F" ++ show h.fkey
 
 hintWidth : Hint msg -> Len
-hintWidth h = stringWidth (keyText h) + 1 + stringWidth h.label
+hintWidth h = stringWidth (keyText h) + 1 + labelWidth h.label
 
 ||| The message of the hint at a column of the row, counted from its left edge.
 export
@@ -48,7 +49,7 @@ keyGuide : List (Hint msg) -> Node msg
 keyGuide hints = focusable (\_ => row [gap 1] (map hint hints)) clicked
   where
     hint : Hint msg -> Node msg
-    hint h = row [] [ Text (withAttr Inverse plain) Truncate (keyText h), Text plain Truncate (" " ++ h.label) ]
+    hint h = row [] [ Text (withAttr Inverse plain) Truncate (keyText h), labelNode plain " " "" h.label ]
 
     clicked : Input -> Maybe msg
     clicked (Mouse e) =
