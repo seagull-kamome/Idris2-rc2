@@ -605,6 +605,9 @@ tryConstKey defOf caf key@(callee, argPos, value) =
     case lookup callee defOf of
          Just (MkRCFun args retRep False body) =>
              case getAt argPos args of
+                  -- Unreachable while every call passes exactly its
+                  -- callee's parameter count: keys come from call-site
+                  -- positions, so a miss means ill-formed IR.
                   Nothing => pure Nothing
                   Just (paramVar, _) =>
                       case constParamUses (RCLoc paramVar) callee argPos body of

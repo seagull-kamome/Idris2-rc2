@@ -1160,6 +1160,9 @@ above needed to stop assuming a single loop.
    `logTimeOver` diagnostic itself was kept (not reverted) as ongoing,
    low-cost infrastructure for spotting this class of problem again.
 
+   (The P/B figures quoted below came from a diagnostic that has since
+   been removed: the slow-definition message now prints only the name.)
+
    **Follow-up: the "large B" story above was incomplete.** Extending
    the same `logTimeOver` diagnostic to also print each flagged
    definition's own parameter count (P) and a rough body-node count (B)

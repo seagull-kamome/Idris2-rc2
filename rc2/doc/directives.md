@@ -329,7 +329,9 @@ The same directive also prints, per specialization round, the time of each
 half (`SpecRound N: closure half` / `const-con half`) and of its steps:
 collecting the keys, building and folding the clones (`buildAll`,
 `buildConstAll`) and the whole-program redirect. What the steps leave out of
-a half is the accepting, the table updates and the counting.
+a half is the accepting, the table updates and the counting. Each round
+also prints one `SpecRound N` summary line: the clones kept by each half,
+the definition count (and how many are new) and the total node count.
 
 ## Files
 
