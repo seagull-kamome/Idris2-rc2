@@ -16,7 +16,7 @@ import TermUI.Input
 import TermUI.Len
 import TermUI.Node
 import TermUI.Style
-import TermUI.Width
+import public TermUI.Widget.Label
 
 %default total
 
@@ -25,12 +25,12 @@ import TermUI.Width
 
 ||| An item sends its message to the application when chosen.
 public export
-data Entry msg = Item String msg | Separator
+data Entry msg = Item Label msg | Separator
 
 public export
 record Menu msg where
   constructor MkMenu
-  title : String
+  title : Label
   entries : List (Entry msg)
 
 ||| `active` is the title under the cursor, `cursor` the entry of its menu.
@@ -64,14 +64,14 @@ entriesOf m = maybe [] entries (getAt m.active m.menus)
 
 -- A title is drawn with a space on each side.
 titleLeft : Nat -> List (Menu msg) -> Len
-titleLeft i ms = sum (map (\mn => stringWidth mn.title + 2) (take i ms))
+titleLeft i ms = sum (map (\mn => labelWidth mn.title + 2) (take i ms))
 
 -- The width of the entries of a menu, without its frame.
 bodyWidth : List (Entry msg) -> Len
 bodyWidth es = foldl max 0 (map w es) + 2
   where
     w : Entry msg -> Len
-    w (Item s _) = stringWidth s
+    w (Item s _) = labelWidth s
     w Separator = 0
 
 -------------------------------------------------------------------------------
@@ -185,10 +185,10 @@ menuBar wrap m = focusable body (\i => map wrap (keyMsg m i))
 
     title : (focused : Bool) -> Nat -> Menu msg -> Node msg
     title focused i mn =
-      Text (if focused && i == m.active then highlight else plain) Truncate (" " ++ mn.title ++ " ")
+      labelNode (if focused && i == m.active then highlight else plain) " " " " mn.title
 
     line : Nat -> Entry msg -> Node msg
-    line j (Item s _) = box [style (if j == m.cursor then highlight else plain)] [Text plain Truncate (" " ++ s ++ " ")]
+    line j (Item s _) = box [style (if j == m.cursor then highlight else plain)] [labelNode plain " " " " s]
     line _ Separator = Text plain Truncate (concat (replicate (cast (bodyWidth es)) "─"))
 
     dropdown : Node msg

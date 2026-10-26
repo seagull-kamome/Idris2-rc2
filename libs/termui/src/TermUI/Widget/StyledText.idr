@@ -18,22 +18,12 @@ import TermUI.Len
 import TermUI.Node
 import TermUI.Style
 import TermUI.Width
+import public TermUI.Widget.Span
 
 %default covering
 
 -------------------------------------------------------------------------------
 -- The text
-
-||| A piece of text in one style. A `\n` in it starts a new line.
-public export
-record Span where
-  constructor MkSpan
-  spanStyle : Style
-  spanText : String
-
-export
-Eq Span where
-  MkSpan s t == MkSpan s' t' = t == t' && s == s'
 
 ||| One paragraph: the text, how it is wrapped, and what starts its first line
 ||| and each of the others (a bullet and the blanks under it, say).
@@ -48,11 +38,6 @@ record Para where
 public export
 StyledText : Type
 StyledText = List Para
-
-||| A span of the style.
-public export
-spanOf : Style -> String -> Span
-spanOf = MkSpan
 
 ||| A paragraph of spans, wrapped at words, with no prefix.
 public export

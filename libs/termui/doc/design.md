@@ -51,6 +51,8 @@ dumped as text (`frameLines`), which is how the tests look at results.
 | `TermUI.Widget.ScrollBar` | the scroll bar |
 | `TermUI.Widget.Select` | scrolling list with a selection |
 | `TermUI.Widget.Display` | spinner, progress bar, table |
+| `TermUI.Widget.Span` | a piece of text in one style, which styled text and labels are made of |
+| `TermUI.Widget.Label` | the label of a button, a check box, a tab, a menu or a key hint: a line of spans |
 | `TermUI.Widget.StyledText` | text in styled spans, wrapped to a width, shown as a column of lines |
 | `TermUI.Widget.StyledText.Doc` | a pretty-printer `Doc` as styled text |
 
@@ -231,6 +233,31 @@ width, a bar of a given fraction.
   are ignored; give them to a box around the `withWidth`.
 - It cannot hold focusables: they are found before the layout, when the node
   is not built yet; the ones in it are laid out as unfocused and get no keys.
+
+## Labels
+
+The label of a button, a check box, a tab (`TabStrip`), a menu title and menu item
+(`MenuBar`) and a key hint (`KeyGuide`) is a `Label` (`TermUI.Widget.Label`): a line
+of spans (`TermUI.Widget.Span`), each with its style. A string literal is a label
+(`button Framed "Save" Save`, `T.fromTitles ["List", "Controls"]`, `Item "Open" Open`),
+because `Label` is a `FromString`; for parts in other styles, `styledLabel [spanOf
+bold "S", spanOf plain "ave"]`, and `plainLabel s` (`plainLabels` for a list, for
+`T.fromTitles`) for a `String` that is a variable or an expression. The widgets re-export `Label`, so a program that uses one sees it.
+
+- The style a widget gives its label (inverse while it has the focus, the
+  underline of a link, the grey of a flat button, the highlight of a menu entry)
+  is the base of the style of each part: what a part sets itself wins, the rest
+  (a colour it leaves `Inherit`, an attribute it does not set) comes from the
+  widget. So a red part of a focused button stays red and is inverse.
+- A label is one line: a line feed in a part is dropped when the label is made.
+  A label with no style of its own is drawn as one `Text`, as a string was, so it is
+  cut at the edge of a narrow box in the same way; one with styled parts is a row
+  of them. Its width
+  (`labelWidth`) is what the tabs, the menu titles and the hints are placed by, so
+  clicks land on the right one, with wide characters too.
+- `Select` items and `Table` cells are still strings; `StyledText` is for text
+  of more than a line, and a node for the rest (`labelNode base before after label`
+  is the row of text of a label).
 
 ## Styled text
 

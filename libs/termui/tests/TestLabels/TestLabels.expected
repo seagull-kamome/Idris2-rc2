@@ -1,0 +1,85 @@
+-- a string literal is a label
+| Plain
+ ggggggg     
+-- framed, with parts
+|╭──────────╮
+|│ Save now │
+   ^    rrr    
+|╰──────────╯
+-- flat: the parts over the grey
+| Save now
+ g^ggggrrrg    
+-- a link: the parts over the underline
+|Save now
+ ^uuuurrr      
+-- a check box
+|[x] Use red
+         rrr   
+-- a label under a base: inverse, as while the widget has the focus
+| Save now
+ iiiiiiiiii    
+-- wide characters in a label
+| 保存 (S)
+ g^^^^ggggg    
+-- plain labels in boxes narrower than they are: one piece, cut at the edge
+-- width 3
+|╭─╮
+|│ │
+|╰─╯
+-- width 5
+|╭───╮
+|│ Sa│
+|╰───╯
+-- width 6
+|╭────╮
+|│ Sav│
+|╰────╯
+-- flat, width 3
+| Sa
+ ggg     
+-- flat, width 5
+| Save
+ ggggg   
+-- check box, width 4
+|[ ]
+-- check box, width 7
+|[ ] Sav
+-- a line feed in a label is dropped
+| abcd
+ gggggg  
+(4, 6)
+-- tabs
+| Alpha │ Beta │ 日本
+ ^^^^^^^                 
+-- a click on the tabs: the columns of Alpha, Beta, 日本
+0 -> 0
+5 -> 0
+6 -> 0
+7 -> 0
+10 -> 1
+11 -> 1
+12 -> 1
+15 -> 2
+-- a menu bar
+| File  View
+  ^                      
+|
+-- a click on the bar: titles File and View
+0 -> (True, 0)
+1 -> (True, 0)
+6 -> (True, 1)
+7 -> (True, 1)
+8 -> (True, 1)
+13 -> (False, 0)
+-- a function-key guide
+|F1 Help F10 Quit
+ ii ^^   iii             
+-- a click on the guide
+0 -> True
+3 -> True
+6 -> True
+7 -> False
+8 -> True
+9 -> True
+10 -> True
+13 -> True
