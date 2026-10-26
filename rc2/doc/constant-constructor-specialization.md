@@ -230,6 +230,11 @@ shape is the common one in ordinary Idris code.
 
 ## Measured after the transitive extension
 
+Historical: the key and clone counts in this table came from counters the
+pass no longer carries (see the note after "Why the pre-extension yield
+was only ~1.8%"); only the final-IR and wall-clock rows can be
+re-measured from the current output.
+
 Whole `idris2-lsp` build (32,600 definitions entering the pass), against
 the same build with `--directive nospecconstcon` (final-`RCExp` dump,
 `--directive dumprcexpr`):

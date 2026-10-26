@@ -111,6 +111,56 @@ blankAt f x y = do
   r <- getBits64 f.buf (at + 8)
   pure (l == 0 && r == 0)
 
+||| A hash of the cells of row `y`, all but the last column (a scroll bar changes
+||| with the text that scrolls past it). Combining marks are not in it.
+export
+rowHash : Frame -> Len -> IO Bits64
+rowHash f y = go 0 0
+  where
+    last : Len
+    last = f.frameWidth `monus` 1
+
+    go : Len -> Bits64 -> IO Bits64
+    go x h =
+      if x >= last then pure h else do
+        let at = offset f x y
+        l <- getBits64 f.buf at
+        r <- getBits64 f.buf (at + 8)
+        go (x + 1) ((h * 1099511628211) `xor` l `xor` (r * 31))
+
+||| The hash of a row with nothing in it (`rowHash` starts from 0 and a blank cell adds 0).
+export
+emptyRowHash : Bits64
+emptyRowHash = 0
+
+||| The frame as a terminal shows it after the rows `top` to `bottom` have been
+||| scrolled up by `k` rows (down if `k` is negative): the rows that come in are
+||| blank, the others are as they were.
+export
+shiftRows : Frame -> (top, bottom, k : Len) -> IO Frame
+shiftRows f top bottom k = do
+  let w = f.frameWidth
+      rowBytes = cellSize * cast w
+  nf <- newFrame w f.frameHeight
+  -- the rows outside the region as they are, the rows of the region that stay moved;
+  -- the others are as `newFrame` made them, blank
+  copyRows f nf 0 top
+  copyRows f nf (bottom + 1) f.frameHeight
+  traverse_ (\y => copyData f.buf (offset f 0 y) rowBytes nf.buf (offset nf 0 (y - k)))
+            (if k > 0 then span (top + k) (bottom + 1) else span top (bottom + k + 1))
+  ms <- readIORef f.marks
+  let inRegion = \y => y >= top && y <= bottom
+      rowOf = \key => cast {to = Len} ((key `div` cellSize) `div` cast w)
+      (inside, outside) = partition (\(key, _) => inRegion (rowOf key)) (SortedMap.toList ms)
+      moved = mapMaybe (\(key, m) => if inRegion (rowOf key - k) then Just (key - cast k * rowBytes, m) else Nothing) inside
+  writeIORef nf.marks (fromList (outside ++ moved))
+  pure nf
+  where
+    copyRows : Frame -> Frame -> Len -> Len -> IO ()
+    copyRows src dst from to =
+      when (to > from) $
+        copyData src.buf (offset src 0 from) (cellSize * cast src.frameWidth * cast (to - from)) dst.buf (offset dst 0 from)
+
 -- The cell at `at` has no combining marks afterwards.
 dropMarks : Frame -> Int -> IO ()
 dropMarks f at = do

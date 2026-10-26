@@ -320,6 +320,23 @@ it cell by cell with the previous one.
   emitted only when the style differs from the last written cell.
 - SGR is always "reset and set" (`ESC[0;...m`), which is robust at a small
   cost in bytes.
+- Rows that have scrolled are scrolled by the terminal. When the output is 192
+  characters or more, the rows of the new frame are compared with those of the old
+  one (a hash of each row but its last column, so that a scroll bar does not hide
+  a scroll, and not of the combining marks; rows with nothing in them are not
+  counted, though they may lie inside the run); if the same number of rows (3 or more in a row) have moved up or
+  down, the output is tried with a scroll region (`CSI top;bottom r`), `CSI n S`
+  or `CSI n T` and a reset of the region, and then only the cells that still
+  differ from what the terminal now shows are written. The two shifts that most
+  rows agree on are tried, only the longest run of rows of each is scrolled, and
+  the shortest (in characters) of these and the plain difference is used, so a scroll is never worse than the plain output (a text that is
+  scrolled by a row at 147 x 33 takes 159 characters instead of 4274). The rows that
+  come in are blank (the terminal fills them with the default background after
+  `ESC[0m`), and the difference is taken against the old frame with the rows
+  moved and the new ones blank (`Frame.shiftRows`), so the result is the same
+  frame as without the scroll. The region is the whole width of the screen: cells
+  at the sides of a scrolled row (a scroll bar, a border) that differ are written
+  again.
 - With no previous frame, or after a size change, the screen is erased first
   and cells equal to a blank default cell are skipped.
 - After writing the last column the cursor position is considered unknown
