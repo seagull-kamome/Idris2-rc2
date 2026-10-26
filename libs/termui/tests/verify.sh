@@ -41,6 +41,7 @@ TESTS=(
     "TestCanvas|rc2base contrib|canvas: drawing, clipping and wide characters"
     "TestStyledText|rc2base contrib|styled text: wrapping, prefixes, styles and a pretty-printer Doc"
     "TestLogView|rc2base contrib|log view: following the end, scrolling and resizing"
+    "TestDiffReplay|rc2base contrib|frame diffs replayed in a small terminal, with scrolled rows"
     "TestPanes|rc2base contrib|function-key guide, tab strip and splitter"
 )
 
