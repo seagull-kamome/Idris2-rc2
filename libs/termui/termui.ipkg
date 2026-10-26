@@ -37,4 +37,5 @@ modules    = TermUI.Len,
              TermUI.Widget.Table,
              TermUI.Widget.TextArea,
              TermUI.Widget.TextInput,
+             TermUI.Kinsoku,
              TermUI.Width

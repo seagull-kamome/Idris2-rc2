@@ -14,6 +14,7 @@ module TermUI.Widget.StyledText
 import Data.List
 import Data.List1
 import Data.String
+import TermUI.Kinsoku
 import TermUI.Len
 import TermUI.Node
 import TermUI.Style
@@ -75,9 +76,14 @@ spansOf ((c, st) :: rest) =
 trimEnd : List CS -> List CS
 trimEnd = reverse . dropWhile isSp . reverse
 
--- The longest start of `cs` that fits in `lim`, at least one character.
+-- The longest start of `cs` that fits in `lim`, at least one character, and
+-- shorter where the rest would begin or the start end with a character the
+-- line breaking rules forbid there.
 takeFit : Len -> List CS -> (List CS, List CS)
-takeFit lim = go 0 []
+takeFit lim cs =
+  let (piece, more) = go 0 [] cs
+  in if null more then (piece, more)
+     else splitAt (holdBack (length piece) (map fst (take (S (length piece)) cs))) cs
   where
     go : Len -> List CS -> List CS -> (List CS, List CS)
     go _ acc [] = (reverse acc, [])

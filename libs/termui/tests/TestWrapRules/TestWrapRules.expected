@@ -1,0 +1,38 @@
+-- a stop does not begin a line: the character before goes down
+|今日は天
+|気、よい
+-- an opening bracket does not end a line
+|彼は言った
+|「行く」
+-- the long vowel mark does not begin a line
+|あの
+|コー
+|ヒーは
+-- at most three characters go down
+|ありが
+|と。。。
+|。。。
+-- latin words are left alone
+|hello,
+|world. foo
+|bar
+-- plain text, words
+|今日は天
+|気、よい
+-- plain text, characters
+|彼は言った
+|「行く」
+-- editor, 12 cells: needs 3 rows
+|aaaaaa
+|bbbbbb
+|cccccc
+-- editor, 12 cells: needs 3 rows
+|あいうえお
+|かきくけこ
+|さ
+-- editor, 12 cells: needs 3 rows
+|今日は天
+|気、よい
+|ok
+-- editor, 12 cells: needs 1 rows
+|short

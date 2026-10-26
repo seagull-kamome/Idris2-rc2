@@ -10,6 +10,7 @@ import Data.List
 import Data.Maybe
 import Data.String
 import TermUI.Input
+import TermUI.Kinsoku
 import TermUI.Len
 import TermUI.Node
 import TermUI.Style
@@ -96,8 +97,8 @@ wrapRows room cs = if null cs then [0] else go cs 0
             else if take 1 (drop n rest) == [' '] && not (null (drop (n + 1) rest))
             then (n + 1, False)
             else case lastSpace fitted of
-                   Just k => if k > 0 then (k + 1, False) else (n, False)
-                   Nothing => (n, False)
+                   Just k => if k > 0 then (k + 1, False) else (holdBack n rest, False)
+                   Nothing => (holdBack n rest, False)
 
     -- Walks the characters once; `skip` of them still belong to the row begun
     -- before, and a character with none left begins a row.
@@ -108,6 +109,15 @@ wrapRows room cs = if null cs then [0] else go cs 0
       case row rest of
         (n, True) => [n]
         (n, False) => n :: go xs (n `minus` 1)
+
+||| The number of rows the text takes when the editor is `cells` wide and the
+||| lines are wrapped: what a window needs to show all of it.
+export
+wrappedRows : (cells : Nat) -> Model -> Nat
+wrappedRows cells m =
+  let rm = max 1 (cells `minus` 2)
+      cur = reverse m.before ++ m.after
+  in sum (map (length . wrapRows rm) (reverse m.above ++ [cur] ++ m.below))
 
 -- The row (and its start) of the character `idx` of a line broken into rows
 -- of these lengths.

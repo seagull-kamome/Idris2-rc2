@@ -10,6 +10,7 @@ import Data.List
 import Data.List1
 import Data.Maybe
 import TermUI.Canvas
+import TermUI.Kinsoku
 import TermUI.Len
 import Data.String
 import TermUI.Node
@@ -106,7 +107,7 @@ wrapText wrap maxW s =
       case takeCells w rest of
         (a, []) => Last a
         ([], c :: _) => Cut [c] 1
-        (a, _) => Cut a (length a)
+        (a, _) => let n = holdBack (length a) rest in Cut (take n a) n
 
     wordCut : Len -> List Char -> RowCut
     wordCut w rest =
@@ -124,7 +125,7 @@ wrapText wrap maxW s =
       where
         hard : List Char -> List Char -> RowCut
         hard [] (c :: _) = Cut [c] 1
-        hard a _ = Cut a (length a)
+        hard a b = let n = holdBack (length a) (a ++ take 1 b) in Cut (take n a) n
 
     fit : String -> List String
     fit line =
