@@ -36,7 +36,7 @@ main = do
   -- type-check: `malloc 0` is not an error, but may return NULL.)
   zeroed <- calloc 4 8 >>= mustAlloc
   printLn (!(memcmp zeroed buf 8) == 0 && !(strlen zeroed) == 0)
-  huge <- malloc 0xffffffffffffffff
+  huge <- malloc 0x7fffffffffffffff
   printLn (either (== ENOMEM) (const False) huge)
   free zeroed
 
