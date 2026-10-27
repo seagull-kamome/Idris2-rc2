@@ -6,6 +6,7 @@ module Main
 import System.Concurrency
 import System.Concurrency.RC2
 import Data.IORef
+import System.Clock
 import Data.List
 
 workerCount : Int
@@ -70,6 +71,14 @@ testBarrier = do
     barrierParties : Int
     barrierParties = 4
 
+nap : Int -> IO ()
+nap ms = do
+  mtx <- makeMutex
+  cv <- makeCondition
+  mutexAcquire mtx
+  conditionWaitTimeout cv mtx (ms * 1000)
+  mutexRelease mtx
+
 testChannel : IO ()
 testChannel = do
   chan <- makeChannel
@@ -84,6 +93,20 @@ testChannel = do
 
   timedOut <- channelGetWithTimeout empty 20
   putStrLn $ "channelGetWithTimeout on empty channel: " ++ show timedOut
+
+  -- The whole time is waited for (not cut short by a wake-up), on the
+  -- monotonic clock.
+  t0 <- clockTime Monotonic
+  _ <- channelGetWithTimeout empty 60
+  t1 <- clockTime Monotonic
+  putStrLn $ "a timed get waits out its time: " ++ show (toNano (timeDifference t1 t0) >= 55000000)
+
+  -- A value that arrives while it waits is returned.
+  chan2 <- makeChannel {a = Int}
+  putter <- forkJoin {a = ()} $ nap 30 *> channelPut chan2 7
+  got <- channelGetWithTimeout chan2 5000
+  join putter
+  putStrLn $ "channelGetWithTimeout gets a value that arrives while it waits: " ++ show got
 
 testJoinableFork : IO ()
 testJoinableFork = do

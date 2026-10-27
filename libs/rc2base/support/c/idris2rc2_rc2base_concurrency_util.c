@@ -4,6 +4,7 @@
 #include "idris2rc2_rt.h"
 #include "idris2rc2_util.h"
 
+#include <errno.h>
 #include <time.h>
 #include <unistd.h>
 
@@ -22,10 +23,35 @@ void idris2rc2_mutex_release(IDRIS2RC2_Value *mutex) {
   pthread_mutex_unlock(&((IDRIS2RC2_Mutex *)mutex)->mutex);
 }
 
+// A condition variable whose timed waits run on CLOCK_MONOTONIC: a deadline made
+// from CLOCK_REALTIME stretches or shrinks when the system clock is set.
+static void init_monotonic_cond(pthread_cond_t *cond) {
+  pthread_condattr_t attr;
+  pthread_condattr_init(&attr);
+  pthread_condattr_setclock(&attr, CLOCK_MONOTONIC);
+  pthread_cond_init(cond, &attr);
+  pthread_condattr_destroy(&attr);
+}
+
+// The time `microseconds` from now on CLOCK_MONOTONIC (a negative count is now).
+static struct timespec monotonic_deadline(int64_t microseconds) {
+  struct timespec ts;
+  clock_gettime(CLOCK_MONOTONIC, &ts);
+  if (microseconds > 0) {
+    ts.tv_sec += microseconds / 1000000;
+    ts.tv_nsec += (microseconds % 1000000) * 1000;
+    if (ts.tv_nsec >= 1000000000) {
+      ts.tv_nsec -= 1000000000;
+      ts.tv_sec += 1;
+    }
+  }
+  return ts;
+}
+
 void *idris2rc2_condition_make(void) {
   IDRIS2RC2_Value *v = idris2rc2_alloc(sizeof(IDRIS2RC2_Condition));
   v->header.tag = IDRIS2RC2_TAG_CONDITION;
-  pthread_cond_init(&((IDRIS2RC2_Condition *)v)->cond, NULL);
+  init_monotonic_cond(&((IDRIS2RC2_Condition *)v)->cond);
   return v;
 }
 
@@ -34,14 +60,7 @@ void idris2rc2_condition_wait(IDRIS2RC2_Value *cond, IDRIS2RC2_Value *mutex) {
 }
 
 void idris2rc2_condition_wait_timeout(IDRIS2RC2_Value *cond, IDRIS2RC2_Value *mutex, int64_t microseconds) {
-  struct timespec ts;
-  clock_gettime(CLOCK_REALTIME, &ts);
-  ts.tv_sec += microseconds / 1000000;
-  ts.tv_nsec += (microseconds % 1000000) * 1000;
-  if (ts.tv_nsec >= 1000000000) {
-    ts.tv_nsec -= 1000000000;
-    ts.tv_sec += 1;
-  }
+  struct timespec ts = monotonic_deadline(microseconds);
   pthread_cond_timedwait(&((IDRIS2RC2_Condition *)cond)->cond, &((IDRIS2RC2_Mutex *)mutex)->mutex, &ts);
 }
 
@@ -135,6 +154,9 @@ void *idris2rc2_fork_join(IDRIS2RC2_Value *, IDRIS2RC2_Closure *fct) {
 // witness precedes the real `handle` argument.
 IDRIS2RC2_Value *idris2rc2_join(IDRIS2RC2_Value *, IDRIS2RC2_Value *handle) {
   IDRIS2RC2_JoinHandle *h = (IDRIS2RC2_JoinHandle *)handle;
+  // The result goes to the first caller; a second pthread_join on the same
+  // thread is undefined behaviour, so stop with a message instead.
+  IDRIS2RC2_VERIFY(!h->joined, "join: the thread was already joined");
   void *result;
   pthread_join(h->tid, &result);
   h->joined = true;
@@ -146,7 +168,7 @@ void *idris2rc2_channel_make(IDRIS2RC2_Value *) {
   v->header.tag = IDRIS2RC2_TAG_CHANNEL;
   IDRIS2RC2_Channel *c = (IDRIS2RC2_Channel *)v;
   pthread_mutex_init(&c->mutex, NULL);
-  pthread_cond_init(&c->cond, NULL);
+  init_monotonic_cond(&c->cond);
   c->head = NULL;
   c->tail = NULL;
   return v;
@@ -215,17 +237,13 @@ IDRIS2RC2_Value *idris2rc2_channel_get_non_blocking(IDRIS2RC2_Value *, IDRIS2RC2
 
 IDRIS2RC2_Value *idris2rc2_channel_get_with_timeout(IDRIS2RC2_Value *, IDRIS2RC2_Value *chan, int64_t milliseconds) {
   IDRIS2RC2_Channel *c = (IDRIS2RC2_Channel *)chan;
+  struct timespec ts = monotonic_deadline(milliseconds * 1000);
   pthread_mutex_lock(&c->mutex);
-  if (!c->head) {
-    struct timespec ts;
-    clock_gettime(CLOCK_REALTIME, &ts);
-    ts.tv_sec += milliseconds / 1000;
-    ts.tv_nsec += (milliseconds % 1000) * 1000000;
-    if (ts.tv_nsec >= 1000000000) {
-      ts.tv_nsec -= 1000000000;
-      ts.tv_sec += 1;
-    }
-    pthread_cond_timedwait(&c->cond, &c->mutex, &ts);
+  // A wake-up with nothing in the channel is not the end of the time: wait on,
+  // for the deadline, until a value comes or the time is out.
+  while (!c->head) {
+    if (pthread_cond_timedwait(&c->cond, &c->mutex, &ts) == ETIMEDOUT)
+      break;
   }
   idris2rc2_ChannelNode *node = c->head;
   if (node) {
