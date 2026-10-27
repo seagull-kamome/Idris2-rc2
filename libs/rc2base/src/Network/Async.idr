@@ -45,10 +45,34 @@ prim__pendingError : Int32 -> PrimIO Int32
 %foreign "CExpr:(close($1)),libc,unistd.h"
 prim__close : Int32 -> PrimIO Int32
 
--- The address of the peer of a connected socket as text, written to a buffer
--- (support/c/idris2rc2_rc2base_net_util.c); 0 on success.
-%foreign "C:idris2rc2_net_peer_name,libidris2rc2base,idris2rc2_rc2base_net_util.h"
-prim__peerName : Int32 -> AnyPtr -> Int32 -> PrimIO Int32
+-- For the address of the peer of an accepted socket: each binding is one libc
+-- call or one field, and `peerOf` below does the rest.
+%foreign "CExpr:(sizeof(struct sockaddr_storage)),libc,sys/socket.h"
+prim__sizeofSockaddrStorage : Int
+
+%foreign "CExpr:(getpeername($1, (struct sockaddr *)($2), (socklen_t *)($3))),libc,sys/socket.h"
+prim__getpeername : Int32 -> AnyPtr -> AnyPtr -> PrimIO Int32
+
+%foreign "CExpr:(*(socklen_t *)($1) = ($2)),libc,sys/socket.h"
+prim__setSocklen : AnyPtr -> Int -> PrimIO Int
+
+%foreign "CExpr:(((struct sockaddr *)($1))->sa_family),libc,sys/socket.h"
+prim__saFamily : AnyPtr -> PrimIO Int32
+
+%foreign "CExpr:(AF_INET),libc,sys/socket.h"
+prim__AF_INET : Int32
+
+%foreign "CExpr:(AF_INET6),libc,sys/socket.h"
+prim__AF_INET6 : Int32
+
+%foreign "CExpr:((void *)&((struct sockaddr_in *)($1))->sin_addr),libc,netinet/in.h"
+prim__sinAddr : AnyPtr -> PrimIO AnyPtr
+
+%foreign "CExpr:((void *)&((struct sockaddr_in6 *)($1))->sin6_addr),libc,netinet/in.h"
+prim__sin6Addr : AnyPtr -> PrimIO AnyPtr
+
+%foreign "CExpr:(inet_ntop($1, $2, (char *)($3), $4)),libc,arpa/inet.h"
+prim__inetNtop : Int32 -> AnyPtr -> AnyPtr -> Int -> PrimIO AnyPtr
 
 ||| A non-blocking socket, listening or connected.
 export
@@ -69,14 +93,30 @@ export
 (.peer) : Sock -> Maybe String
 (.peer) = peerAddr
 
--- The peer address of the connected socket `n`.
+-- The peer address of the connected socket `n` as text (IPv4 or IPv6), if it has one.
 peerOf : Int32 -> IO (Maybe String)
 peerOf n = do
-  buf <- malloc 64
-  r <- primIO (prim__peerName n buf 64)
-  res <- if r == 0 then ptrToString buf else pure Nothing
-  free buf
+  let size = prim__sizeofSockaddrStorage
+  ss <- malloc size
+  len <- malloc 4   -- a socklen_t
+  _ <- primIO (prim__setSocklen len size)
+  r <- primIO (prim__getpeername n ss len)
+  res <- if r /= 0 then pure Nothing else do
+           family <- primIO (prim__saFamily ss)
+           if family == prim__AF_INET then primIO (prim__sinAddr ss) >>= text family
+           else if family == prim__AF_INET6 then primIO (prim__sin6Addr ss) >>= text family
+           else pure Nothing
+  free len
+  free ss
   pure res
+  where
+    text : Int32 -> AnyPtr -> IO (Maybe String)
+    text family addr = do
+      buf <- malloc 64
+      p <- primIO (prim__inetNtop family addr buf 64)
+      s <- if prim__nullAnyPtr p /= 0 then pure Nothing else ptrToString buf
+      free buf
+      pure s
 
 ||| Close the socket. Closing again does nothing, so it is safe to call from a
 ||| cleanup as well as from the code that used the socket. It is not safe to call
