@@ -76,25 +76,36 @@ int64_t idris2rc2_get_thread_id(void) {
   return (int64_t)gettid();
 }
 
-static _Thread_local IDRIS2RC2_Value *idris2rc2_threadLocalData = NULL;
+// The per-thread value lives under a pthread key, so that its destructor drops
+// what is left when a thread exits (a `_Thread_local` would leak one value per
+// thread). The main thread never runs it; the process ends anyway.
+static pthread_key_t idris2rc2_threadDataKey;
+static pthread_once_t idris2rc2_threadDataOnce = PTHREAD_ONCE_INIT;
 
-// prim__setThreadData's `{a : Type}` is NOT erased by rc2's codegen --
-// the generated call passes it as a real leading argument (confirmed by
-// building and reading the generated C), so `typeWitness` here is
-// received-and-ignored, not actually absent.
+static void idris2rc2_dropThreadData(void *v) {
+  idris2rc2_drop((IDRIS2RC2_Value *)v);
+}
+
+static void idris2rc2_makeThreadDataKey(void) {
+  int err = pthread_key_create(&idris2rc2_threadDataKey, idris2rc2_dropThreadData);
+  IDRIS2RC2_VERIFY(err == 0, "pthread_key_create failed: %d", err);
+}
+
 void idris2rc2_set_thread_data(IDRIS2RC2_Value *, IDRIS2RC2_Value *val) {
-  IDRIS2RC2_Value *old = idris2rc2_threadLocalData;
+  pthread_once(&idris2rc2_threadDataOnce, idris2rc2_makeThreadDataKey);
+  IDRIS2RC2_Value *old = pthread_getspecific(idris2rc2_threadDataKey);
   // The generated FFI wrapper drops its own reference to val right after
   // this call returns (as idris2rc2_channel_put below), so the slot needs
   // its own.
-  idris2rc2_threadLocalData = idris2rc2_dup(val);
+  pthread_setspecific(idris2rc2_threadDataKey, idris2rc2_dup(val));
   idris2rc2_drop(old);
 }
 
 // prim__getThreadData's `(a : Type)` argument is likewise a real
 // (received-and-ignored) parameter, not erased.
 IDRIS2RC2_Value *idris2rc2_get_thread_data(IDRIS2RC2_Value *) {
-  return idris2rc2_dup(idris2rc2_threadLocalData);
+  pthread_once(&idris2rc2_threadDataOnce, idris2rc2_makeThreadDataKey);
+  return idris2rc2_dup(pthread_getspecific(idris2rc2_threadDataKey));
 }
 
 void *idris2rc2_semaphore_make(int64_t init) {
