@@ -27,6 +27,17 @@ module Data.Integer.GMP
 -- `System.FFI.C.Ptr`'s own per-type namespaces already use for exactly
 -- this reason.
 --
+-- ## Proofs
+--
+-- GMP raises SIGFPE (killing the process) on a zero divisor or modulus and
+-- on the square root of a negative number, so `tdivQ`/`tdivR`/`fdivQ`/
+-- `fdivR`/`cdivQ`/`cdivR`/`mod`/`divexact`, `powm`/`powmUi` and `sqrt` are
+-- thin `%inline` wrappers over private `%foreign` declarations
+-- (`prim__...`) that take an erased `So` proof of the condition; so does
+-- `sizeinbase`, for its base (2-62, which GMP does not check). A literal
+-- gets its proof by evaluation, and a run-time value from `Data.So.choose`.
+-- Upstream's `Integer` `div`/`mod` check `y == 0` at run time instead.
+--
 -- ## Scope
 --
 -- Two groups, plus three in-place mutators (`setbit`/`clrbit`/`combit`,
@@ -65,6 +76,8 @@ module Data.Integer.GMP
 --
 -- See `TODO.md`'s own entry for this module for the full list with
 -- reasons, kept in sync if this scope ever grows.
+
+import public Data.So
 
 namespace GMP
   %foreign "CExpr:(mpz_add($r, $1, $2)),libgmp,gmp.h"
@@ -115,49 +128,89 @@ namespace GMP
   export
   lcm : Integer -> Integer -> Integer
 
+  %foreign "CExpr:(mpz_tdiv_q($r, $1, $2)),libgmp,gmp.h"
+  prim__tdivQ : Integer -> Integer -> Integer
+
   ||| Truncating division (toward zero) -- quotient only. See `tdivR`
   ||| for the matching remainder.
-  %foreign "CExpr:(mpz_tdiv_q($r, $1, $2)),libgmp,gmp.h"
-  export
-  tdivQ : Integer -> Integer -> Integer
+  |||
+  ||| `b` is proved not to be 0 (GMP raises SIGFPE on a zero divisor, killing the process).
+  %inline public export
+  tdivQ : (a, b : Integer) -> {auto 0 nonZero : So (b /= 0)} -> Integer
+  tdivQ a b = prim__tdivQ a b
+
+  %foreign "CExpr:(mpz_tdiv_r($r, $1, $2)),libgmp,gmp.h"
+  prim__tdivR : Integer -> Integer -> Integer
 
   ||| Truncating division (toward zero) -- remainder only.
-  %foreign "CExpr:(mpz_tdiv_r($r, $1, $2)),libgmp,gmp.h"
-  export
-  tdivR : Integer -> Integer -> Integer
+  |||
+  ||| `b` is proved not to be 0 (GMP raises SIGFPE on a zero divisor, killing the process).
+  %inline public export
+  tdivR : (a, b : Integer) -> {auto 0 nonZero : So (b /= 0)} -> Integer
+  tdivR a b = prim__tdivR a b
+
+  %foreign "CExpr:(mpz_fdiv_q($r, $1, $2)),libgmp,gmp.h"
+  prim__fdivQ : Integer -> Integer -> Integer
 
   ||| Flooring division -- quotient only.
-  %foreign "CExpr:(mpz_fdiv_q($r, $1, $2)),libgmp,gmp.h"
-  export
-  fdivQ : Integer -> Integer -> Integer
+  |||
+  ||| `b` is proved not to be 0 (GMP raises SIGFPE on a zero divisor, killing the process).
+  %inline public export
+  fdivQ : (a, b : Integer) -> {auto 0 nonZero : So (b /= 0)} -> Integer
+  fdivQ a b = prim__fdivQ a b
+
+  %foreign "CExpr:(mpz_fdiv_r($r, $1, $2)),libgmp,gmp.h"
+  prim__fdivR : Integer -> Integer -> Integer
 
   ||| Flooring division -- remainder only (same sign as the divisor).
-  %foreign "CExpr:(mpz_fdiv_r($r, $1, $2)),libgmp,gmp.h"
-  export
-  fdivR : Integer -> Integer -> Integer
+  |||
+  ||| `b` is proved not to be 0 (GMP raises SIGFPE on a zero divisor, killing the process).
+  %inline public export
+  fdivR : (a, b : Integer) -> {auto 0 nonZero : So (b /= 0)} -> Integer
+  fdivR a b = prim__fdivR a b
+
+  %foreign "CExpr:(mpz_cdiv_q($r, $1, $2)),libgmp,gmp.h"
+  prim__cdivQ : Integer -> Integer -> Integer
 
   ||| Ceiling division -- quotient only.
-  %foreign "CExpr:(mpz_cdiv_q($r, $1, $2)),libgmp,gmp.h"
-  export
-  cdivQ : Integer -> Integer -> Integer
+  |||
+  ||| `b` is proved not to be 0 (GMP raises SIGFPE on a zero divisor, killing the process).
+  %inline public export
+  cdivQ : (a, b : Integer) -> {auto 0 nonZero : So (b /= 0)} -> Integer
+  cdivQ a b = prim__cdivQ a b
+
+  %foreign "CExpr:(mpz_cdiv_r($r, $1, $2)),libgmp,gmp.h"
+  prim__cdivR : Integer -> Integer -> Integer
 
   ||| Ceiling division -- remainder only.
-  %foreign "CExpr:(mpz_cdiv_r($r, $1, $2)),libgmp,gmp.h"
-  export
-  cdivR : Integer -> Integer -> Integer
+  |||
+  ||| `b` is proved not to be 0 (GMP raises SIGFPE on a zero divisor, killing the process).
+  %inline public export
+  cdivR : (a, b : Integer) -> {auto 0 nonZero : So (b /= 0)} -> Integer
+  cdivR a b = prim__cdivR a b
+
+  %foreign "CExpr:(mpz_mod($r, $1, $2)),libgmp,gmp.h"
+  prim__mod : Integer -> Integer -> Integer
 
   ||| Euclidean modulo -- always non-negative, regardless of either
   ||| operand's own sign (unlike `tdivR`/`fdivR`/`cdivR`).
-  %foreign "CExpr:(mpz_mod($r, $1, $2)),libgmp,gmp.h"
-  export
-  mod : Integer -> Integer -> Integer
+  |||
+  ||| `b` is proved not to be 0 (GMP raises SIGFPE on a zero divisor, killing the process).
+  %inline public export
+  mod : (a, b : Integer) -> {auto 0 nonZero : So (b /= 0)} -> Integer
+  mod a b = prim__mod a b
+
+  %foreign "CExpr:(mpz_divexact($r, $1, $2)),libgmp,gmp.h"
+  prim__divexact : Integer -> Integer -> Integer
 
   ||| Division known in advance to be exact (the divisor evenly divides
   ||| the dividend) -- faster than `tdivQ`, undefined if it doesn't
   ||| actually divide evenly.
-  %foreign "CExpr:(mpz_divexact($r, $1, $2)),libgmp,gmp.h"
-  export
-  divexact : Integer -> Integer -> Integer
+  |||
+  ||| `b` is proved not to be 0 (GMP raises SIGFPE on a zero divisor, killing the process).
+  %inline public export
+  divexact : (a, b : Integer) -> {auto 0 nonZero : So (b /= 0)} -> Integer
+  divexact a b = prim__divexact a b
 
   %foreign "CExpr:(mpz_pow_ui($r, $1, $2)),libgmp,gmp.h"
   export
@@ -170,22 +223,37 @@ namespace GMP
   export
   uiPowUi : Bits64 -> Bits64 -> Integer
 
+  %foreign "CExpr:(mpz_powm($r, $1, $2, $3)),libgmp,gmp.h"
+  prim__powm : Integer -> Integer -> Integer -> Integer
+
   ||| Modular exponentiation (`base ^ exp mod m`) -- GMP computes this
   ||| directly, far faster than `powUi` followed by `mod` for anything
   ||| but the smallest inputs. The workhorse of RSA-style cryptography.
-  %foreign "CExpr:(mpz_powm($r, $1, $2, $3)),libgmp,gmp.h"
-  export
-  powm : Integer -> Integer -> Integer -> Integer
+  |||
+  ||| `modulus` is proved not to be 0, and `exp` not to be negative (a negative exponent needs an inverse, and GMP raises SIGFPE when there is none).
+  %inline public export
+  powm : (base, exp, modulus : Integer) -> {auto 0 nonNegExp : So (exp >= 0)} -> {auto 0 nonZero : So (modulus /= 0)} -> Integer
+  powm base exp modulus = prim__powm base exp modulus
+
+  %foreign "CExpr:(mpz_powm_ui($r, $1, $2, $3)),libgmp,gmp.h"
+  prim__powmUi : Integer -> Bits64 -> Integer -> Integer
 
   ||| As `powm`, but the exponent is a native word.
-  %foreign "CExpr:(mpz_powm_ui($r, $1, $2, $3)),libgmp,gmp.h"
-  export
-  powmUi : Integer -> Bits64 -> Integer -> Integer
+  |||
+  ||| `modulus` is proved not to be 0 (GMP raises SIGFPE on it).
+  %inline public export
+  powmUi : (base : Integer) -> (exp : Bits64) -> (modulus : Integer) -> {auto 0 nonZero : So (modulus /= 0)} -> Integer
+  powmUi base exp modulus = prim__powmUi base exp modulus
+
+  %foreign "CExpr:(mpz_sqrt($r, $1)),libgmp,gmp.h"
+  prim__sqrt : Integer -> Integer
 
   ||| Integer (floor) square root.
-  %foreign "CExpr:(mpz_sqrt($r, $1)),libgmp,gmp.h"
-  export
-  sqrt : Integer -> Integer
+  |||
+  ||| `x` is proved not to be negative (GMP raises SIGFPE on it).
+  %inline public export
+  sqrt : (x : Integer) -> {auto 0 nonNeg : So (x >= 0)} -> Integer
+  sqrt x = prim__sqrt x
 
   ||| Left shift (multiply by `2^n`).
   %foreign "CExpr:(mpz_mul_2exp($r, $1, $2)),libgmp,gmp.h"
@@ -317,12 +385,17 @@ namespace GMP
   export
   tstbit : Integer -> Bits64 -> Int
 
+  %foreign "CExpr:(mpz_sizeinbase($1, $2)),libgmp,gmp.h"
+  prim__sizeinbase : Integer -> Int -> Bits64
+
   ||| Number of digits the argument would need in the given base
   ||| (2-62) -- an upper bound, occasionally one more than the tightest
   ||| possible (GMP's own documented caveat), never fewer.
-  %foreign "CExpr:(mpz_sizeinbase($1, $2)),libgmp,gmp.h"
-  export
-  sizeinbase : Integer -> Int -> Bits64
+  |||
+  ||| `base` is proved to be 2-62; GMP does not check it.
+  %inline public export
+  sizeinbase : (x : Integer) -> (base : Int) -> {auto 0 validBase : So (base >= 2 && base <= 62)} -> Bits64
+  sizeinbase x base = prim__sizeinbase x base
 
   ||| Nonzero iff the value fits in a native signed `Int` (`long`) with
   ||| no truncation.

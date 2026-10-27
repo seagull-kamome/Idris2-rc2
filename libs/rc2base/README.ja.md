@@ -319,7 +319,9 @@ static inline double idris2rc2_inf(void)          { return INFINITY; }
 
 本物のGMPの`mpz_*`関数への、直接の`%foreign`バインディングです。可能になったのは、`Compiler.RC2.Emit`自身が、`Integer`を`%foreign`の引数と戻り値に使う対応を持っているからです（`rc2/tests/Test118FFI/FFIInteger.idr`。以前の`Test55FFIIntegerReturn.idr`もここに吸収しました）。
 
-このランタイムで普通のIdrisの`Integer`をすべて裏づけている`mpz_t`そのものが、本物のGMPのシンボルへ直接渡されます（引数の場合）。戻り値の場合は、新規に確保した`mpz_t`が、暗黙の先頭の出力引数として渡されます。GMP自身の「`rop`が常に最初」という規約、`mpz_add(rop, op1, op2)`などにそのまま一致します。このモジュールのどこにも、専用のラッパは要りません。
+このランタイムで普通のIdrisの`Integer`をすべて裏づけている`mpz_t`そのものが、本物のGMPのシンボルへ直接渡されます（引数の場合）。戻り値の場合は、新規に確保した`mpz_t`が、暗黙の先頭の出力引数として渡されます。GMP自身の「`rop`が常に最初」という規約、`mpz_add(rop, op1, op2)`などにそのまま一致します。専用のラッパは要りません。ただし、次の関数は例外です。
+
+GMPは、除数が0、法が0、負数の平方根に対して`SIGFPE`を送り、プロセスを落とします。そこで、これらに行き着く関数は、値をそのまま渡さず、証明を要求します。`tdivQ`/`tdivR`/`fdivQ`/`fdivR`/`cdivQ`/`cdivR`/`mod`/`divexact`は、除数について`{auto 0 nonZero : So (b /= 0)}`を取ります。`powm`/`powmUi`は法について同様の証明を取り、`powm`はさらに指数が負でないこと（負だと逆元が要ります）の証明を取ります。`sqrt`は引数が負でないこと、`sizeinbase`は基数が2〜62であること（GMPは検査しません）の証明を取ります。リテラルなら証明は評価で見つかり（`GMP.tdivQ 10 0`はコンパイルできません）、実行時にしか分からない値は`Data.So.choose`で作ります。`System.FFI.C.Memory.malloc`がサイズ0でないことを証明させるのと同じやり方です。（アップストリームの`Integer`の`div`/`mod`は、実行時に`y == 0`を検査して`Unhandled input`で止まりますが、GMPの呼び出しにはその検査がありません。）これらは、非公開の`%foreign`宣言を包む薄い`%inline`のラッパで、消去される証明の実行時の費用はありません。
 
 バインディングは、2つのグループと3つのその場変更関数からなります。`mpz_`を落として、snake_caseを機械的にcamelCaseにしただけで、見た目のための改名はしていません。
 
