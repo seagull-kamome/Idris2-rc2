@@ -11,8 +11,10 @@ import Control.Task
 import Data.Bits
 import Data.Buffer
 import Data.IORef
+import Data.String.FFI
 import Network.Socket
 import Network.Socket.Data
+import System.FFI
 import System.Linux.Epoll
 import System.Posix.Errno
 import System.Posix.Fcntl
@@ -43,17 +45,84 @@ prim__pendingError : Int32 -> PrimIO Int32
 %foreign "CExpr:(close($1)),libc,unistd.h"
 prim__close : Int32 -> PrimIO Int32
 
+-- For the address of the peer of an accepted socket: each binding is one libc
+-- call or one field, and `peerOf` below does the rest.
+%foreign "CExpr:(sizeof(struct sockaddr_storage)),libc,sys/socket.h"
+prim__sizeofSockaddrStorage : Int
+
+%foreign "CExpr:(getpeername($1, (struct sockaddr *)($2), (socklen_t *)($3))),libc,sys/socket.h"
+prim__getpeername : Int32 -> AnyPtr -> AnyPtr -> PrimIO Int32
+
+%foreign "CExpr:(*(socklen_t *)($1) = ($2)),libc,sys/socket.h"
+prim__setSocklen : AnyPtr -> Int -> PrimIO Int
+
+%foreign "CExpr:(((struct sockaddr *)($1))->sa_family),libc,sys/socket.h"
+prim__saFamily : AnyPtr -> PrimIO Int32
+
+%foreign "CExpr:(AF_INET),libc,sys/socket.h"
+prim__AF_INET : Int32
+
+%foreign "CExpr:(AF_INET6),libc,sys/socket.h"
+prim__AF_INET6 : Int32
+
+%foreign "CExpr:((void *)&((struct sockaddr_in *)($1))->sin_addr),libc,netinet/in.h"
+prim__sinAddr : AnyPtr -> PrimIO AnyPtr
+
+%foreign "CExpr:((void *)&((struct sockaddr_in6 *)($1))->sin6_addr),libc,netinet/in.h"
+prim__sin6Addr : AnyPtr -> PrimIO AnyPtr
+
+%foreign "CExpr:((void *)inet_ntop($1, $2, (char *)($3), $4)),libc,arpa/inet.h"
+prim__inetNtop : Int32 -> AnyPtr -> AnyPtr -> Int -> PrimIO AnyPtr
+
 ||| A non-blocking socket, listening or connected.
 export
 record Sock where
   constructor MkSock
   fd : FileDesc
   open_ : IORef Bool
+  peerAddr : Maybe String
 
 ||| The descriptor, for `Control.Task.awaitReadable` and the like.
 export
 (.descriptor) : Sock -> FileDesc
 (.descriptor) = fd
+
+||| The address of the other end, as text (`192.0.2.1`), for a socket made by
+||| `accept`; `Nothing` for one made by `listen` or `connect`.
+export
+(.peer) : Sock -> Maybe String
+(.peer) = peerAddr
+
+-- The peer address of the connected socket `n` as text (IPv4 or IPv6), if it has one.
+peerOf : Int32 -> IO (Maybe String)
+peerOf n = do
+  let size = prim__sizeofSockaddrStorage
+  ss <- malloc size
+  len <- malloc 4   -- a socklen_t
+  _ <- primIO (prim__setSocklen len size)
+  r <- primIO (prim__getpeername n ss len)
+  res <- if r /= 0 then pure Nothing else do
+           family <- primIO (prim__saFamily ss)
+           found <- addressOf family ss
+           maybe (pure Nothing) (text family) found
+  free len
+  free ss
+  pure res
+  where
+    -- The address field of the sockaddr, for the families that are handled.
+    addressOf : Int32 -> AnyPtr -> IO (Maybe AnyPtr)
+    addressOf family ss =
+      if family == prim__AF_INET then Just <$> primIO (prim__sinAddr ss)
+      else if family == prim__AF_INET6 then Just <$> primIO (prim__sin6Addr ss)
+      else pure Nothing
+
+    text : Int32 -> AnyPtr -> IO (Maybe String)
+    text family addr = do
+      buf <- malloc 64
+      p <- primIO (prim__inetNtop family addr buf 64)
+      s <- if prim__nullAnyPtr p /= 0 then pure Nothing else ptrToString buf
+      free buf
+      pure s
 
 ||| Close the socket. Closing again does nothing, so it is safe to call from a
 ||| cleanup as well as from the code that used the socket. It is not safe to call
@@ -87,14 +156,22 @@ setNonBlocking fd = do
     | Left e => pure (Left e)
   setStatusFlags fd (flags .|. O_NONBLOCK)
 
-adopt : Int32 -> IO (Either Errno Sock)
-adopt n = case mkFileDesc n of
+adoptFrom : Maybe String -> Int32 -> IO (Either Errno Sock)
+adoptFrom peer n = case mkFileDesc n of
   Nothing => pure (Left EBADF)
   Just fd => do
     r <- setNonBlocking fd
     case r of
       Left e => ignore (primIO (prim__close n)) *> pure (Left e)
-      Right () => Right . MkSock fd <$> newIORef True
+      Right () => do
+        -- close-on-exec, so that a program started later does not inherit the
+        -- connection (there is a short gap between the system call that made the
+        -- descriptor and here; a `fork` of another thread in it still inherits it)
+        ignore (setFdFlags fd FD_CLOEXEC)
+        (\open_ => Right (MkSock fd open_ peer)) <$> newIORef True
+
+adopt : Int32 -> IO (Either Errno Sock)
+adopt = adoptFrom Nothing
 
 ||| A socket listening on `bindAddr` (loopback by default) and `port`.
 export
@@ -193,7 +270,9 @@ accept l = handoff start (either (\_ => pure ()) close)
     try env watching done = do
       r <- attempt (prim__accept l.fd.rawfd)
       case r of
-        Right n => adopt (cast n) >>= done
+        Right n => do
+          peer <- peerOf (cast n)
+          adoptFrom peer (cast n) >>= done
         Left e => if e == EAGAIN
                     then env.watchFd l.fd EPOLLIN (\_ => try env watching done) >>= writeIORef watching
                     else if e == EINTR then try env watching done else done (Left e)

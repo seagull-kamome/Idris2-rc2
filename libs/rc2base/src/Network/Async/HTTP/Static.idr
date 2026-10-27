@@ -135,20 +135,34 @@ serveStatic {options} root rest req =
             Right n => if n > 0 then go fd buf (off + n) else pure Nothing
             Left _ => pure Nothing
 
+    -- One entry of `If-None-Match`: `*`, or the tag of the file, weak (`W/"..."`) or not
+    -- (a weak comparison, as RFC 9110 8.8.3.2 has it for this header).
+    validator : (etag : String) -> String -> Bool
+    validator etag v =
+      let t = trim v
+      in t == "*" || (if isPrefixOf "W/" t then pack (drop 2 (unpack t)) else t) == etag
+
     -- The answer for the file at `path`.
     serveFile : (path : String) -> Stat -> Task Response
     serveFile path st =
       if st.stSize > cast options.maxFileBytes
         then liftIO (serverError "file too large\n")
         else do
-          let etag = "\"" ++ show st.stSize ++ "-" ++ show st.stMtime.tvSec ++ "\""
+          -- (the time to the nanosecond: a file written twice within a second, to
+          -- the same size, has two ETags)
+          let etag = "\"" ++ show st.stSize ++ "-" ++ show st.stMtime.tvSec ++ "-" ++ show st.stMtime.tvNsec ++ "\""
           let tags = [("ETag", etag)] ++ maybe [] (\c => [("Cache-Control", c)]) options.cacheControl
-          if any (\(k, v) => k == "if-none-match" && any ((== etag) . trim) (forget (split (== ',') v))) req.headers
+          if any (\(k, v) => k == "if-none-match" && any (validator etag) (forget (split (== ',') v))) req.headers
             then liftIO (noBody {headers = tags} 304)
-            else do
-              Just content <- readChunked path (cast st.stSize)
-                | Nothing => liftIO (serverError "cannot read file\n")
-              pure (bytes {headers = tags} 200 (mimeType path) content)
+            else if req.method == "HEAD"
+              then do
+                -- the length is the file's; the file is not read for it
+                none <- liftIO (newBuf 0)
+                pure ({ headers $= (("Content-Length", show st.stSize) ::) } (bytes {headers = tags} 200 (mimeType path) none))
+              else do
+                Just content <- readChunked path (cast st.stSize)
+                  | Nothing => liftIO (serverError "cannot read file\n")
+                pure (bytes {headers = tags} 200 (mimeType path) content)
 
     directory : (path : String) -> Task Response
     directory path =

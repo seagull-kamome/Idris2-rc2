@@ -84,7 +84,10 @@ main = ignore (runTaskWith 4 (serve 8080 handler))
   response, and the response then has a single `Connection: close` header: any
   other `Connection` header of the handler is replaced. The response to `HEAD`
   has the head of the response to `GET` and no body, as have 1xx, 204 and 304, which
-  have no `Content-Length` either. The route table of `Network.Async.HTTP.Router` sends
+  have no `Content-Length` either. A handler may answer `HEAD` with a `Content-Length`
+  header of its own and an empty body (`Network.Async.HTTP.Static` does, so that the
+  file is not read): the server (`responseHeadFor`) then adds none, and the header says
+  the length of the body the `GET` would have. The route table of `Network.Async.HTTP.Router` sends
   a `HEAD` that no `head` route takes to the `get` route of the same path.
 - HTTP/1.0 requests are served too, and the response is still `HTTP/1.1`. The
   connection ends after the response unless the request has `Connection: keep-alive`,
@@ -106,6 +109,12 @@ main = ignore (runTaskWith 4 (serve 8080 handler))
   how long a response may take to go out; after it the connection is closed. The time
   the handler takes is not counted: give a handler that may wait for long its own
   `timeoutAt`.
+- `maxConnections` (default 1024; 0 is none) is how many connections are served at
+  once. One more is answered with `503` (`Connection: close`) and closed. Each
+  connection may hold up to `maxRequestBytes`, so without a limit enough slow
+  clients make the server hold that much each, or use up its descriptors.
+- The client's address is in `Request.remote` (`192.0.2.1`, `::1`), taken from
+  `getpeername` when the connection was accepted. The sockets are close-on-exec.
 - Requests that arrive together are served one after the other, and what is left
   after each is copied to the front of a new buffer; for thousands of tiny pipelined
   requests in one read that is quadratic (not measured).

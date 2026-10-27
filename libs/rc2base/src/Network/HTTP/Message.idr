@@ -114,6 +114,9 @@ record Request where
   path    : String
   headers : List (String, String)
   body    : Buffer
+  ||| The address of the client, as text (`192.0.2.1`, `::1`), where the server
+  ||| knows it: `Network.Async.HTTP.Server` does, the callback server does not.
+  remote  : Maybe String
 
 ||| A `Handler`'s answer, passed to its `respond` continuation.
 ||| `Content-Length` is computed from `body` (`byteLength`) and added
@@ -299,16 +302,30 @@ hasBody status = status >= 200 && status /= 204 && status /= 304
 -- The status line + header lines + Content-Length + terminating CRLF,
 -- as one ASCII string. Header keys/values are assumed ASCII (RFC 7230);
 -- a non-ASCII or NUL byte in one corrupts the framing.
+--
+-- For a response to `HEAD` (`headOnly`), one that carries a `Content-Length`
+-- header of its own keeps it, with no second one computed from the body: a
+-- `HEAD` answer says how long the body of the `GET` would be, and the handler
+-- can say so without building the body. For any other request the header is
+-- computed from the body, as always.
 export
-responseHead : Response -> String
-responseHead resp =
+responseHeadFor : (headOnly : Bool) -> Response -> String
+responseHeadFor headOnly resp =
     "HTTP/1.1 " ++ show resp.status ++ " " ++ reasonPhrase resp.status ++ "\r\n"
     ++ concatMap headerLine resp.headers
-    ++ (if hasBody resp.status then "Content-Length: " ++ show (byteLength resp.body) ++ "\r\n" else "")
+    ++ (if hasBody resp.status && not ownLength then "Content-Length: " ++ show (byteLength resp.body) ++ "\r\n" else "")
     ++ "\r\n"
   where
     headerLine : (String, String) -> String
     headerLine (k, v) = k ++ ": " ++ v ++ "\r\n"
+
+    ownLength : Bool
+    ownLength = headOnly && any (\(k, _) => toLower k == "content-length") resp.headers
+
+||| `responseHeadFor False`: the answer to any request but `HEAD`.
+export
+responseHead : Response -> String
+responseHead = responseHeadFor False
 
 -------------------------------------------------------------------------------
 -- Byte-scanning request parser (operates on the read accumulator's
