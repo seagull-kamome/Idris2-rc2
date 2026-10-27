@@ -103,13 +103,19 @@ peerOf n = do
   r <- primIO (prim__getpeername n ss len)
   res <- if r /= 0 then pure Nothing else do
            family <- primIO (prim__saFamily ss)
-           if family == prim__AF_INET then primIO (prim__sinAddr ss) >>= text family
-           else if family == prim__AF_INET6 then primIO (prim__sin6Addr ss) >>= text family
-           else pure Nothing
+           found <- addressOf family ss
+           maybe (pure Nothing) (text family) found
   free len
   free ss
   pure res
   where
+    -- The address field of the sockaddr, for the families that are handled.
+    addressOf : Int32 -> AnyPtr -> IO (Maybe AnyPtr)
+    addressOf family ss =
+      if family == prim__AF_INET then Just <$> primIO (prim__sinAddr ss)
+      else if family == prim__AF_INET6 then Just <$> primIO (prim__sin6Addr ss)
+      else pure Nothing
+
     text : Int32 -> AnyPtr -> IO (Maybe String)
     text family addr = do
       buf <- malloc 64
