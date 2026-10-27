@@ -45,7 +45,7 @@ dumped as text (`frameLines`), which is how the tests look at results.
 | `TermUI.Widget.TextArea` | multi-line text editor |
 | `TermUI.Widget.LineEdit` | what the text field and the editor share (characters kept, horizontal scrolling, cell to character) |
 | `TermUI.Widget.Scroll` | read-only scrolling view of lines, with a scroll bar |
-| `TermUI.Widget.LogView` | styled text that grows at the end, in a scrolling window that follows it |
+| `TermUI.Widget.LogView` | styled text that grows at the end, in a scrolling window that follows it (a thin layer over `MarkdownView`) |
 | `TermUI.Widget.Scrolling` | what the scrolling widgets share: the messages, the arithmetic, the keys |
 | `TermUI.Widget.Table` | table that scrolls under a fixed header |
 | `TermUI.Widget.ScrollBar` | the scroll bar |
@@ -55,6 +55,11 @@ dumped as text (`frameLines`), which is how the tests look at results.
 | `TermUI.Widget.Label` | the label of a button, a check box, a tab, a menu or a key hint: a line of spans |
 | `TermUI.Widget.StyledText` | text in styled spans, wrapped to a width, shown as a column of lines |
 | `TermUI.Widget.StyledText.Doc` | a pretty-printer `Doc` as styled text |
+| `TermUI.Kinsoku` | Japanese line breaking rules for the wrappers |
+| `TermUI.Markdown` | a small Markdown reader (text to blocks and inlines), meant for text that arrives in pieces |
+| `TermUI.Markdown.Theme` | how Markdown looks: styles, marks, and which blocks fold and start folded |
+| `TermUI.Markdown.Render` | Markdown blocks as styled text by a theme, and the `markdown` view |
+| `TermUI.Widget.MarkdownView` | Markdown in a scrolling window, whose blocks fold; segments that grow at the end |
 
 ## Layout semantics
 
@@ -299,13 +304,87 @@ for a scrolling widget; `layoutLines` gives them as spans, for tests.
   empty document is no paragraph, and the empty line after a final line break
   is not shown.
 
+## Markdown
+
+`TermUI.Markdown` reads a text into blocks (`Heading`, `Paragraph`,
+`CodeBlock`, `Quote`, `Bullets`, `Numbered`, `Rule`; a list item is a list of
+blocks) and inlines (text, emphasis, strong, strike, code, link, hard break).
+It is not a general Markdown library: it reads what a chat or a help text uses
+and has no tables (a row that starts with `|` keeps its line end), no HTML, no
+setext headings, no indented code and no reference links. Bare `http(s)://`
+addresses and `<...>` ones become links; a soft line break is a space.
+
+It is written for text that grows. Whatever is cut short is read as far as it
+goes: an unclosed fence holds the rest, an unclosed emphasis is plain text, a
+half-typed list marker is part of the line before. The last line of a text
+may be one that more text turns into something else (`#` and `---` are a heading
+and a rule until `#include` and `---Note` follow), which changes the block before
+it too, so when more text comes the blocks before the last two are the same (the
+test cuts texts at every length and checks it); only those two are read again.
+The viewer below uses the whole text of the last segment each time (it is read again
+in full, not only its last two blocks).
+
+`MdTheme` says how it looks, as a plain record (`defaultTheme` and `{ field := ..}`):
+a style for the paragraph, each level of heading, emphasis, strong, strike, code,
+links (and the address after a link's text), the code block (its background too),
+the quote and the marks; the marks themselves (heading `#`s, bullets by the depth
+of the list, numbers, the quote bar, the rule, blank rows between blocks) and, for
+each kind of block (`Kind`; a heading by its level), `fold : Kind -> Fold`: `NoFold`,
+`Open` (can be folded, starts open) or `Closed` (starts folded). The marks are
+ASCII by default, whose width is the same in every terminal; `-`, `+` and `*` by depth for
+bullets, `|` for the bar. Styles of nested inlines are put over each other with
+`over`, so emphasis in a heading keeps the colour of the heading.
+
+`renderMarkdown theme w src` is the styled text for width `w` and `markdown theme
+src` a view wrapped to the width it is placed in. Quotes and list items are made
+with the prefixes of the paragraphs, so a wrapped row keeps the bar or the
+indent; a code line is padded with blanks to the width so that its background is
+a block, and is wrapped by character; a rule is as wide as the room it is in.
+Limits: a line that
+follows a fenced block inside a list item without an indent is taken for the
+item's text; an unclosed `[`, `*`, `_` or `~~` makes the reader look to the end of
+the paragraph for its partner, so a very long paragraph of such openers takes
+quadratic time.
+
+`TermUI.Widget.MarkdownView` shows Markdown in a window with a scroll bar. The text
+is kept as segments (a message of a chat, a page), each read on its own, so
+`extendSegment` reads and lays out only the last one while a reply arrives
+(`addSegment` starts the next). Blocks fold, as the theme's `fold` says. The units
+that fold are the blocks at the top of a segment: a heading folds its section, the
+blocks up to the next heading of its level or a higher one or the end of the segment
+(so the headings in a reply do not end the section of the message's own heading,
+unless they are of its level), and the others fold into their first paragraph (`[+] ``` sh  (2 lines)` for code,
+`[+] - first ...`). A gutter on the left, as wide as the marks, holds `[-]` or `[+]`
+on the first row of each unit; with a theme where nothing folds there is no gutter.
+The state of a unit is kept by segment and block number, so it stays when the text
+is laid out again; a block seen for the first time takes its start (`Open` or `Closed`)
+from the theme. The cursor (`NextUnit`, `PrevUnit`) picks a unit, drawn as its mark in
+reverse; `Toggle` folds or opens it, `FoldAll` and `UnfoldAll` all of them, and a
+`Click` at a row and a column in the gutter the unit there. The window keeps the unit
+at the row where it was when it folds. As a widget, `viewer` takes the keys (arrows,
+Page Up/Down, Home/End, wheel, `n` and `p`, Enter or Space, `-` and `+`); `mouseMsg top
+left` makes the messages of the mouse for a window whose corner is at that cell. A segment
+is Markdown text (`addSegment`, `extendSegment`) or paragraphs the program gives:
+`addStyled` takes `StyledText` as it is (its styles, hanging prefixes and wrapping, which
+Markdown cannot say; a `Styled` block), `extendStyled` adds spans to its last paragraph
+and wraps only that again, and `addDoc` takes a function from the width to `StyledText`
+(`fromDoc` of a pretty-printer `Doc`), made again when the width changes (a `StyledDoc`
+block). A theme says in `fold` whether these (`KStyled`) can fold; by default they cannot.
+A fold or a move of the cursor lays out again only the segments it touches (the lines
+after them move), and a change of the width or `FoldAll` all of them.
+
 ## A chat with a language model
 
 `examples/LlmChat.idr` talks to a server of the OpenAI chat completions API (LM Studio,
 llama-server, Ollama ...) with `rc2base`'s `OpenAIStream`. The question is sent by
 `RunTaskAs "chat"` and the reply is read one piece per message: the task ends with
 `Opened stream`, `update` starts the next task for the next piece, and each piece
-is added to the end of the last paragraph of a `LogView` (`extendLast`). The terminal
+is added to the last segment of a `MarkdownView` (`extendSegment`): every message is a
+segment, a heading `# ai` or `## you` and its text read as Markdown, so only that
+segment is read and laid out again, and a code block, a quote, a list or a whole
+message folds (a click on the mark in the left column, or F2 on the block that
+Alt+Up / Alt+Down picked; F3 and F4 fold and open all). The reasoning a model sends
+before its answer is not shown. The terminal
 stays alive between pieces, a reply is stopped with `CancelTask "chat"`, and the
 history is sent with every question. The input is a `TextArea`: Enter sends and
 Alt+Enter (a paste with line breaks too) starts a new line; it is as high as its
@@ -584,7 +663,9 @@ while the field has the focus.
 - `Scroll`: a read-only list of lines in a window, scrolled by the arrows,
   PageUp/PageDown, Home/End and the wheel (three lines a notch); the bar on its
   right shows the position. `ScrollBar.scrollBar` is the bar alone.
-- `LogView`: styled text (`StyledText`) that grows at the end, in a window with the
+- `LogView`: styled text (`StyledText`) that grows at the end, a `MarkdownView` in which
+  nothing folds and no blank rows come between paragraphs (a thin layer over it, with
+  the same results as before), in a window with the
   same keys and bar as `Scroll`; for a chat or the messages of a game
   (`examples/Chat.idr`, and `examples/LlmChat.idr` with a language model). `append` wraps the new paragraphs once and keeps the
   lines in a sequence; `extendLast` adds spans to the end of the last paragraph

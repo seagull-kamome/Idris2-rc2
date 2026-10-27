@@ -20,12 +20,12 @@ say : Style -> String -> String -> Para
 say st who what = MkPara [spanOf st (who ++ " ")] [spanOf plain "  "] WrapWords [spanOf plain what]
 
 state : Model -> String
-state m = show (m.top, m.follow, lineCount m)
+state m = show (top m, follow m, lineCount m)
 
 draw : String -> Model -> IO ()
 draw title m = do
   putStrLn ("-- " ++ title ++ " " ++ state m)
-  f <- render (the (Node ()) (view m)) m.width m.rows
+  f <- render (the (Node ()) (view m)) (width m) (rows m)
   ls <- frameLines f
   traverse_ (\l => putStrLn ("|" ++ l)) ls
 
@@ -71,7 +71,7 @@ main = do
                      (append [MkPara [spanOf bold "bot "] [spanOf plain "  "] WrapWords []] (empty 4 16))
                      ["one ", "two ", "three ", "four ", "five ", "six ", "seven ", "eight ", "nine ", "ten"]
   draw "text that arrives in pieces: extendLast" pieces
-  putStrLn (show (toList pieces.lines == toList whole.lines))
+  putStrLn (show (toList (lines pieces) == toList (lines whole)))
   let more = extendLast [spanOf plain " eleven twelve"] (append [say bold "ann" "next"] pieces)
   draw "extending the last paragraph leaves the ones before" more
   draw "extending an empty log starts a paragraph" (extendLast [spanOf plain "hi"] (empty 2 16))
@@ -83,15 +83,15 @@ main = do
   draw "extending after several paragraphs were appended at once" (extendLast [spanOf plain " seven eight nine"] multi)
   let rew = resize 4 12 multi
   draw "extending after a rewrap" (extendLast [spanOf plain " seven eight nine"] rew)
-  putStrLn (show (toList (extendLast [spanOf plain " seven eight nine"] rew).lines == toList (append [say bold "a" "one", say bold "b" "two three four five six seven eight nine"] (empty 4 12)).lines))
+  putStrLn (show (toList (lines (extendLast [spanOf plain " seven eight nine"] rew)) == toList (lines (append [say bold "a" "one", say bold "b" "two three four five six seven eight nine"] (empty 4 12)))))
   draw "extending an empty last paragraph" (extendLast [spanOf plain "now"] (append [say bold "a" "x", paragraph []] (empty 4 16)))
   draw "extending a truncated paragraph cuts at the width" (extendLast [spanOf plain " defghijklmnopq"] (append [MkPara [] [] Truncate [spanOf plain "abc"]] (empty 2 10)))
-  putStrLn (show (map (map (\s => s.spanText)) (toList (append [paragraph [spanOf plain "ab"]] (empty 3 1)).lines)))
+  putStrLn (show (map (map (\s => s.spanText)) (toList (lines (append [paragraph [spanOf plain "ab"]] (empty 3 1))))))
 
   -- text with line breaks that arrives in pieces, as a model sends it
   let base = append [MkPara [spanOf bold "you  "] [spanOf plain "     "] WrapWords [spanOf plain "question here"], MkPara [spanOf bold "ai   "] [spanOf plain "     "] WrapWords []] (empty 5 30)
       nl = foldl (\acc, w => extendLast [spanOf plain w] acc) base ["Hello", ",", "\n", "second", " line\n", "\n", "third"]
   draw "pieces with line breaks" nl
-  putStrLn (show (map (map (\s => s.spanText)) (toList nl.lines)))
+  putStrLn (show (map (map (\s => s.spanText)) (toList (lines nl))))
   let whole2 = append [MkPara [spanOf bold "you  "] [spanOf plain "     "] WrapWords [spanOf plain "question here"], MkPara [spanOf bold "ai   "] [spanOf plain "     "] WrapWords [spanOf plain "Hello,\nsecond line\n\nthird"]] (empty 5 30)
-  putStrLn (show (toList nl.lines == toList whole2.lines))
+  putStrLn (show (toList (lines nl) == toList (lines whole2)))

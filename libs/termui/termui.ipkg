@@ -38,4 +38,8 @@ modules    = TermUI.Len,
              TermUI.Widget.TextArea,
              TermUI.Widget.TextInput,
              TermUI.Kinsoku,
+             TermUI.Markdown,
+             TermUI.Markdown.Theme,
+             TermUI.Markdown.Render,
+             TermUI.Widget.MarkdownView,
              TermUI.Width

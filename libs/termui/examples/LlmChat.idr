@@ -9,6 +9,12 @@
 ||| (or Esc, Enter) starts a new line, and so does pasting text with line breaks; the input grows with its
 ||| lines, up to eight.
 |||
+||| The messages are shown as Markdown (`TermUI.Widget.MarkdownView`), the
+||| reply as it arrives. Headings, code blocks, quotes and lists fold: a
+||| click on the mark `[-]` in the left column, or F2 on the block that
+||| Alt+Up / Alt+Down picked (its mark is in reverse), folds or opens it; F3
+||| folds all and F4 opens all. A message folds into its heading.
+|||
 ||| Usage: llmchat [--url URL] [--model NAME] [--system TEXT]
 |||   --url     where the API is, `http://IPv4-or-localhost[:port]/v1`; the program
 |||             adds `/chat/completions` (default http://127.0.0.1:1234/v1, or $LLM_URL)
@@ -38,9 +44,9 @@ import TermUI.Len
 import TermUI.Node
 import TermUI.Program
 import TermUI.Style
-import TermUI.Widget.LogView as L
+import TermUI.Markdown.Theme
+import TermUI.Widget.MarkdownView as V
 import TermUI.Widget.Scrolling as Sc
-import TermUI.Widget.StyledText
 import TermUI.Widget.TextArea as A
 
 %default covering
@@ -75,7 +81,7 @@ parseArgs _ (flag :: _) = Left ("cannot use " ++ flag)
 data Phase = Idle | Connecting | Receiving ChatStream
 
 data AppMsg
-  = Edit A.Msg | Send | Resized Len Len | Scroll Sc.Msg
+  = Edit A.Msg | Send | Resized Len Len | View V.ViewMsg
   | Opened (Either ApiError ChatStream)
   | Piece (Either ApiError (Maybe Delta))
   | Stop | Pause | Quit' | Done
@@ -84,27 +90,49 @@ record AppModel where
   constructor MkModel
   settings : Settings
   endpoint : Endpoint
-  log : L.Model
+  log : V.Model
   input : A.Model
   size : (Len, Len)               -- the columns and rows of the terminal
   history : List Message          -- what the model is sent, the last first
   phase : Phase
   reply : String                  -- what the model has said so far in this turn
 
-bold : Color -> Style
-bold c = withAttr Bold (fgColor c plain)
-
 dim : Style
 dim = withAttr Dim plain
 
--- A message: the name in colour, the text wrapped under it.
-message : Color -> String -> String -> Para
-message c who what =
-  MkPara [spanOf (bold c) (who ++ "  ")] [spanOf plain (pack (replicate (length who + 2) ' '))]
-         WrapWords (if what == "" then [] else [spanOf plain what])
+-- The replies are Markdown. Each message is a segment that starts with a
+-- heading (the section of it folds): `ai` is a level 1 heading and `you` a
+-- level 2 one, so that the headings inside a reply do not end the section of
+-- the `ai` unless they are of level 1.
+theme : MdTheme
+theme = { headingMark := const ""
+        , heading := (\n => case n of
+                              1 => withAttr Bold (fgColor cyan plain)
+                              2 => withAttr Bold (fgColor green plain)
+                              _ => defaultTheme.heading n) } defaultTheme
 
-note : String -> Para
-note t = MkPara [] [] WrapWords [spanOf (fgColor red plain) t]
+-- Characters that mean something in Markdown, made plain.
+escape : String -> String
+escape = pack . concatMap (\c => if elem c (unpack "\\*_`[]~<>") then ['\\', c] else [c]) . unpack
+
+-- A line that begins with `#` is not a heading, so it cannot end the section of
+-- the message.
+plainHash : List Char -> List Char
+plainHash cs =
+  case span (== ' ') cs of
+    (sp, '#' :: rest) => sp ++ ('\\' :: '#' :: rest)
+    _ => cs
+
+-- The lines the user typed are lines of the message.
+youText : String -> String
+youText t = "## you\n\n" ++ joinBy "  \n" (map (pack . plainHash . unpack) (forget (split (== '\n') t)))
+
+aiHead : String
+aiHead = "# ai\n\n"
+
+-- A note on one line.
+noteText : String -> String
+noteText t = "**" ++ escape (pack (map (\c => if c == '\n' then ' ' else c) (unpack t))) ++ "**"
 
 -- The input is as high as its text, up to eight rows.
 maxInputRows : Len
@@ -124,7 +152,7 @@ layoutFor m =
   let (cols, rows) = m.size
       want = wantedRows cols m.input
   in { input $= A.resize (inputCells cols) want
-     , log $= L.resize (rows `monus` (3 + want)) cols } m
+     , log $= V.resize (rows `monus` (3 + want)) cols } m
 
 newInput : Len -> A.Model
 newInput cols = A.setWrap True (A.empty (inputCells cols) 1)
@@ -160,12 +188,12 @@ update Send m =
         let m' = layoutFor ({ input := newInput (fst m.size)
                  , history := MkMessage User entered :: m.history
                  , phase := Connecting
-                 , log $= L.update ToEnd . L.append [message green "you" entered, message cyan "ai" ""] } m)
+                 , log $= V.update (V.Scroll Sc.ToEnd) . V.addSegment aiHead . V.addSegment (youText entered) } m)
         in (m', RunTaskAs "chat" (Opened <$> chatStream m'.endpoint (request m')))
     _ => (m, NoCmd)
 update (Opened (Left e)) m =
   case m.phase of
-    Connecting => (finish ({ log $= L.append [note ("error: " ++ show e)] } m), NoCmd)
+    Connecting => (finish ({ log $= V.addSegment (noteText ("error: " ++ show e)) } m), NoCmd)
     _ => (m, NoCmd)
 update (Opened (Right cs)) m =
   case m.phase of
@@ -176,19 +204,17 @@ update (Piece p) m =
     Receiving cs =>
       case p of
         Right (Just d) =>
-          let spans = (if d.reasoning == "" then [] else [spanOf dim d.reasoning])
-                      ++ (if d.content == "" then [] else [spanOf plain d.content])
-                      ++ (if d.finish == Just "length" then [spanOf (fgColor red plain) " [cut off: the length limit]"] else [])
-          in ({ reply := m.reply ++ d.content, log $= L.extendLast spans } m, nextPiece cs)
+          let more = d.content ++ (if d.finish == Just "length" then "\n\n**[cut off: the length limit]**" else "")
+          in ({ reply := m.reply ++ d.content, log $= V.extendSegment more } m, nextPiece cs)
         Right Nothing => (finish m, closing m.phase)
-        Left e => (finish ({ log $= L.append [note ("error: " ++ show e)] } m), closing m.phase)
+        Left e => (finish ({ log $= V.addSegment (noteText ("error: " ++ show e)) } m), closing m.phase)
     _ => (m, NoCmd)
 update Stop m =
   case m.phase of
     Idle => (m, NoCmd)
-    p => (finish ({ log $= L.append [note "(stopped)"] } m), Batch [CancelTask "chat", closing p])
+    p => (finish ({ log $= V.addSegment (noteText "(stopped)") } m), Batch [CancelTask "chat", closing p])
 update (Resized c r) m = (layoutFor ({ size := (c, r) } m), NoCmd)
-update (Scroll s) m = ({ log $= L.update s } m, NoCmd)
+update (View v) m = ({ log $= V.update v } m, NoCmd)
 update Done m = (m, NoCmd)
 update Pause m = (m, Suspend)
 update Quit' m = (m, Quit)
@@ -196,7 +222,7 @@ update Quit' m = (m, Quit)
 status : AppModel -> String
 status m =
   case m.phase of
-    Idle => "Enter sends (Alt+Enter: new line), Esc stops a reply, Ctrl-Z suspends, Ctrl-C quits.   " ++ m.settings.model ++ " @ " ++ m.settings.url
+    Idle => "Enter sends, Alt+Enter: new line, Esc: stop, F2: fold/open, Alt+Up/Down: pick, F3/F4: fold/open all, Ctrl-Z, Ctrl-C.   " ++ m.settings.model ++ " @ " ++ m.settings.url
     Connecting => "waiting for the model ..."
     Receiving _ => "the model is writing (Esc stops it) ..."
 
@@ -204,14 +230,14 @@ status m =
 -- is the editor's.
 inputKeys : Input -> Maybe AppMsg
 inputKeys (Press KEnter mods) = Just (if mods.alt || mods.shift then Edit A.Newline else Send)
-inputKeys (Press KPageUp _) = Just (Scroll Sc.PageUp)
-inputKeys (Press KPageDown _) = Just (Scroll Sc.PageDown)
+inputKeys (Press KPageUp _) = Just (View (V.Scroll Sc.PageUp))
+inputKeys (Press KPageDown _) = Just (View (V.Scroll Sc.PageDown))
 inputKeys i = Edit <$> A.keyMsg i
 
 view : AppModel -> Node AppMsg
 view m =
   column []
-    [ box [grow 1] [L.view m.log]
+    [ box [grow 1] [V.view m.log]
     , truncated dim (status m)
     , box [border Single] [focusable (\f => A.view f m.input) inputKeys]
     ]
@@ -220,12 +246,17 @@ subs : AppModel -> List (Sub AppMsg)
 subs _ =
   [ MouseFocus
   , OnResize Resized
-  , OnMouse (\e => Scroll <$> keyMsg (Mouse e))
+  , OnMouse (\e => View <$> V.mouseMsg 0 0 e)
   , OnInput (\i => case i of
                      Press KEscape _ => Just Stop
                      Press (KChar 'c') mods => if mods.ctrl then Just Quit' else Nothing
                      Press (KChar 'z') mods => if mods.ctrl then Just Pause else Nothing
-                     _ => Scroll <$> keyMsg i)
+                     Press KUp mods => if mods.alt then Just (View V.PrevUnit) else View . V.Scroll <$> Sc.keyMsg i
+                     Press KDown mods => if mods.alt then Just (View V.NextUnit) else View . V.Scroll <$> Sc.keyMsg i
+                     Press (KF 2) _ => Just (View V.Toggle)
+                     Press (KF 3) _ => Just (View V.FoldAll)
+                     Press (KF 4) _ => Just (View V.UnfoldAll)
+                     _ => View . V.Scroll <$> Sc.keyMsg i)
   ]
 
 -- A failure to start: the message to stderr and exit status 2 (a wrong command
@@ -252,7 +283,7 @@ main = do
           Left e => die True ("--url: " ++ e ++ "\n" ++ usage)
           Right _ => do
             let auth = pure (Right (maybe [] (\k => [("Authorization", "Bearer " ++ k)]) (nonEmpty key)))
-                greeting = L.append [message cyan "ai" ("Hello! Say something to " ++ s.model ++ ".")] (L.empty 20 70)
+                greeting = V.addSegment (aiHead ++ "Hello! Say something to " ++ escape s.model ++ ".") (V.empty theme 20 70)
             r <- runProgram (MkProgram (layoutFor (MkModel s (MkEndpoint s.url auth) greeting (newInput 80) (80, 24) [] Idle ""), NoCmd)
                                        update view subs)
             case r of

@@ -1,0 +1,420 @@
+-- start: everything open (0, (False, 18))
+|[-] # Title                  █
+|                             █
+|    intro text               █
+|                             █
+|[-]  c                       █
+|     int a;                  █
+|     int b;                  █
+|                             █
+|[-] - x                      █
+|    - y                      █
+|                             │
+|[-] ## Sub                   │
+|                             │
+|    under sub                │
+-- the cursor on the first unit (0, (False, 18))
+|[-] # Title                  █
+ RRRR                          
+|                             █
+|    intro text               █
+|                             █
+|[-]  c                       █
+|     int a;                  █
+|     int b;                  █
+|                             █
+|[-] - x                      █
+|    - y                      █
+|                             │
+|[-] ## Sub                   │
+|                             │
+|    under sub                │
+-- the code block folded (0, (False, 16))
+|[-] # Title                  █
+|                             █
+|    intro text               █
+|                             █
+|[+] ``` c  (2 lines)         █
+ RRRR                          
+|                             █
+|[-] - x                      █
+|    - y                      █
+|                             █
+|[-] ## Sub                   █
+|                             █
+|    under sub                █
+|                             │
+|[-] # Next                   │
+-- the list is the next unit; the paragraph between is skipped (0, (False, 16))
+|[-] # Title                  █
+|                             █
+|    intro text               █
+|                             █
+|[+] ``` c  (2 lines)         █
+|                             █
+|[-] - x                      █
+ RRRR                          
+|    - y                      █
+|                             █
+|[-] ## Sub                   █
+|                             █
+|    under sub                █
+|                             │
+|[-] # Next                   │
+-- the heading folded: its section, the lower heading too, goes (0, (False, 5))
+|[+] # Title ...
+ RRRR                          
+|
+|[-] # Next
+|
+|    last
+|
+|
+|
+|
+|
+|
+|
+|
+|
+-- the code block toggled twice is as it was (0, (False, 18))
+|[-] # Title                  █
+|                             █
+|    intro text               █
+|                             █
+|[-]  c                       █
+ RRRR                          
+|     int a;                  █
+|     int b;                  █
+|                             █
+|[-] - x                      █
+|    - y                      █
+|                             │
+|[-] ## Sub                   │
+|                             │
+|    under sub                │
+-- the cursor does not go past the last unit (2, (False, 18))
+|    intro text               │
+|                             │
+|[-]  c                       █
+|     int a;                  █
+|     int b;                  █
+|                             █
+|[-] - x                      █
+|    - y                      █
+|                             █
+|[-] ## Sub                   █
+|                             █
+|    under sub                █
+|                             │
+|[-] # Next                   │
+ RRRR                          
+-- all folded (0, (True, 3))
+|[+] # Title ...
+|
+|[+] # Next ...
+|
+|
+|
+|
+|
+|
+|
+|
+|
+|
+|
+-- the cursor was on the code block, now out of sight: next goes to the first unit (0, (True, 3))
+|[+] # Title ...
+ RRRR                          
+|
+|[+] # Next ...
+|
+|
+|
+|
+|
+|
+|
+|
+|
+|
+|
+-- a toggle with the cursor out of sight does nothing (0, (True, 3))
+|[+] # Title ...
+|
+|[+] # Next ...
+|
+|
+|
+|
+|
+|
+|
+|
+|
+|
+|
+-- all open again (0, (False, 18))
+|[-] # Title                  █
+|                             █
+|    intro text               █
+|                             █
+|[-]  c                       █
+|     int a;                  █
+|     int b;                  █
+|                             █
+|[-] - x                      █
+|    - y                      █
+|                             │
+|[-] ## Sub                   │
+|                             │
+|    under sub                │
+-- a click in the gutter on the code block (row 4) (0, (False, 16))
+|[-] # Title                  █
+|                             █
+|    intro text               █
+|                             █
+|[+] ``` c  (2 lines)         █
+ RRRR                          
+|                             █
+|[-] - x                      █
+|    - y                      █
+|                             █
+|[-] ## Sub                   █
+|                             █
+|    under sub                █
+|                             │
+|[-] # Next                   │
+-- a click below the window does nothing (0, (False, 18))
+|[-] # Title                  █
+|                             █
+|    intro text               █
+|                             █
+|[-]  c                       █
+|     int a;                  █
+|     int b;                  █
+|                             █
+|[-] - x                      █
+|    - y                      █
+|                             │
+|[-] ## Sub                   │
+|                             │
+|    under sub                │
+-- a click outside the gutter does nothing (0, (False, 18))
+|[-] # Title                  █
+|                             █
+|    intro text               █
+|                             █
+|[-]  c                       █
+|     int a;                  █
+|     int b;                  █
+|                             █
+|[-] - x                      █
+|    - y                      █
+|                             │
+|[-] ## Sub                   │
+|                             │
+|    under sub                │
+-- arriving: the fence is not closed yet (0, (True, 6))
+|[-] # ai
+|
+|    Here is code:
+|
+|[-]  py
+|     print(1)
+|
+|
+-- nothing added (0, (True, 6))
+|[-] # ai
+|
+|    Here is code:
+|
+|[-]  py
+|     print(1)
+|
+|
+-- the fence closed, following the end (0, (True, 8))
+|[-] # ai
+|
+|    Here is code:
+|
+|[-]  py
+|     print(1)
+|
+|    and more
+-- another segment (4, (True, 12))
+|[-]  py                      │
+|     print(1)                │
+|                             │
+|    and more                 █
+|                             █
+|[-] ## you                   █
+|                             █
+|    thanks                   █
+-- the first message folded into its heading (0, (False, 5))
+|[+] # ai ...
+ RRRR                          
+|
+|[-] ## you
+|
+|    thanks
+|
+|
+|
+-- added to the last segment while the first is folded (0, (True, 5))
+|[+] # ai ...
+ RRRR                          
+|
+|[-] ## you
+|
+|    thanks a lot
+|
+|
+|
+-- code starts folded, the list and the quote have no mark (0, (True, 8))
+|[-] intro
+|
+|[+] ``` sh  (2 lines)
+|
+|    - a
+|    - b
+|
+|    | quoted
+|
+|
+|
+|
+-- the code block opened with a click (0, (True, 10))
+|[-] intro
+|
+|[-]  sh
+ RRRR                          
+|     ls
+|     rm
+|
+|    - a
+|    - b
+|
+|    | quoted
+|
+|
+-- nothing folds: no gutter (0, (True, 3))
+|# H
+|
+|text
+|
+|
+-- narrow (5, (True, 19))
+|[-]  c       │
+|     int a;  │
+|     int b;  │
+|             │
+|[-] - x      █
+|    - y      █
+|             █
+|[-] ## Sub   █
+|             █
+|    under sub█
+|             █
+|[-] # Next   █
+|             █
+|    last     █
+-- scrolled down, the unit picked (20, (False, 29))
+|    para 11            │
+|                       │
+|    para 12            │
+|                       │
+|[-]  a                 █
+ RRRR                    
+|     b                 │
+-- folded: the window stays at the mark (20, (False, 27))
+|    para 11            │
+|                       │
+|    para 12            │
+|                       │
+|[+] ```   (3 lines)    │
+ RRRR                    
+|                       █
+-- a given paragraph with a hanging indent (0, (True, 3))
+|    you  hello there,
+|         how are you
+|         today
+|
+|
+|
+|
+|
+-- spans added to its last paragraph (0, (True, 3))
+|    you  hello there,
+|         how are you
+|         today fine
+|
+|
+|
+|
+|
+-- another given segment (0, (True, 5))
+|    you  hello there,
+|         how are you
+|         today fine
+|
+|    a truncated line th
+|
+|
+|
+-- extendSegment after a given segment is a new segment (0, (True, 7))
+|    you  hello there,
+|         how are you
+|         today fine
+|
+|    a truncated line th
+|
+|    text
+|
+-- a Doc segment at 22 (0, (True, 4))
+|    alpha beta gamma
+|    delta epsilon
+|    zeta eta theta
+|    iota kappa
+|
+|
+-- the Doc laid out again at 14 (3, (True, 9))
+|    delta    │
+|    epsilon  │
+|    zeta eta █
+|    theta    █
+|    iota     █
+|    kappa    █
+-- given paragraphs that can be folded (0, (True, 3))
+|[-] first line of a given
+|    text
+|    second
+|
+|
+|
+|
+|
+-- folded into a line (0, (True, 2))
+|[+] first line of a given
+ RRRR                          
+|    text ...
+|
+|
+|
+|
+|
+|
+-- three segments, folded and moved about (0, (False, 11))
+|[+] # a ...        █
+|                   █
+|[-] # b            █
+ RRRR                
+|                   █
+|[+] ```   (2 lines)█
+|                   █
+|    more           █
+|                   █
+|[-] # c            █
+|                   │
+True
