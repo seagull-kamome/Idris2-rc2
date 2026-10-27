@@ -56,5 +56,17 @@ Nothing
 [104, 101, 108, 108, 111, 32, 99, 117, 114, 108, 10]
 Right "hello curl\n"
 Left HttpError 404
+--- refused ---
+CRLF in a value: refused
+LF in a value: refused
+space in a name: refused
+colon in a name: refused
+CRLF in a method: refused
+a tab in a value: sent
+fetchBytes, CRLF in a value: refused
+--- timeout ---
+300 ms limit on a slow answer: timed out
+1 s without data: timed out
+Right "hello curl\n"
 --- stop ---
 Right "bye"

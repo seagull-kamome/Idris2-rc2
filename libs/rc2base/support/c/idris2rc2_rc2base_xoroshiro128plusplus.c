@@ -45,7 +45,12 @@ static inline uint64_t rotl(const uint64_t x, int k) {
 }
 
 
-uint64_t idris2rc2_System_Random128_system_seed[2];
+/* Not all zero: an all-zero state yields 0 forever. Like rand() before srand(),
+   a program that never calls setSystemSeed gets a fixed, reproducible stream:
+   the state `mixSeed 1` (two splitmix64 steps from 1) gives on the Idris side,
+   as `setSystemSeed 1` would set. */
+uint64_t idris2rc2_System_Random128_system_seed[2] = {
+	0x910a2dec89025cc1ULL, 0xbeeb8da1658eec67ULL };
 void idris2rc2_System_Random128_set_system_seed(uint64_t s0, uint64_t s1) {
 	idris2rc2_System_Random128_system_seed[0] = s0;
 	idris2rc2_System_Random128_system_seed[1] = s1;
@@ -210,9 +215,18 @@ void idris2rc2_System_Random128_jump_n(void *sv, uint64_t n0, uint64_t n1) {
 
 /* Pure counterparts for System.Random.Xoroshiro128PlusPlus's `Gen`: the
    state is passed by value as (s0, s1) and each function returns one
-   word of the result, so Idris can declare them without PrimIO and
-   without a Buffer. `which` selects the new s[0] (0) or s[1] (1) of a
-   jump; a jump computes both words, so asking for each costs two runs. */
+   word of the result, so Idris can declare them without a Buffer. A jump
+   gives two words and costs 128 steps (and more for jump_ce/jump_n), so it
+   runs once: the pure_jump* functions return the new s[0] and leave the new
+   s[1] for pure_jump_hi() to give, on the same thread -- the caller runs
+   the two in one IO sequence (Gen's jumpWith), so no other jump comes
+   between. */
+
+static _Thread_local uint64_t tl_jump_hi;
+
+uint64_t idris2rc2_System_Random128_pure_jump_hi(void) {
+	return tl_jump_hi;
+}
 
 uint64_t idris2rc2_System_Random128_pure_out(uint64_t s0, uint64_t s1) {
 	return rotl(s0 + s1, 17) + s0;
@@ -227,26 +241,30 @@ uint64_t idris2rc2_System_Random128_pure_s1(uint64_t s0, uint64_t s1) {
 	return rotl(s1 ^ s0, 28);
 }
 
-uint64_t idris2rc2_System_Random128_pure_jump(uint64_t s0, uint64_t s1, int which) {
+uint64_t idris2rc2_System_Random128_pure_jump(uint64_t s0, uint64_t s1) {
 	uint64_t s[2] = { s0, s1 };
 	idris2rc2_System_Random128_jump(s);
-	return s[which];
+	tl_jump_hi = s[1];
+	return s[0];
 }
 
-uint64_t idris2rc2_System_Random128_pure_long_jump(uint64_t s0, uint64_t s1, int which) {
+uint64_t idris2rc2_System_Random128_pure_long_jump(uint64_t s0, uint64_t s1) {
 	uint64_t s[2] = { s0, s1 };
 	idris2rc2_System_Random128_long_jump(s);
-	return s[which];
+	tl_jump_hi = s[1];
+	return s[0];
 }
 
-uint64_t idris2rc2_System_Random128_pure_jump_ce(uint64_t s0, uint64_t s1, uint64_t c, uint32_t e, int which) {
+uint64_t idris2rc2_System_Random128_pure_jump_ce(uint64_t s0, uint64_t s1, uint64_t c, uint32_t e) {
 	uint64_t s[2] = { s0, s1 };
 	idris2rc2_System_Random128_jump_ce(s, c, e);
-	return s[which];
+	tl_jump_hi = s[1];
+	return s[0];
 }
 
-uint64_t idris2rc2_System_Random128_pure_jump_n(uint64_t s0, uint64_t s1, uint64_t n0, uint64_t n1, int which) {
+uint64_t idris2rc2_System_Random128_pure_jump_n(uint64_t s0, uint64_t s1, uint64_t n0, uint64_t n1) {
 	uint64_t s[2] = { s0, s1 };
 	idris2rc2_System_Random128_jump_n(s, n0, n1);
-	return s[which];
+	tl_jump_hi = s[1];
+	return s[0];
 }

@@ -65,10 +65,10 @@ rc2の汎用サポートライブラリです。上流の`base`/`contrib`に無�
 | `System.Posix.*` | POSIXバインディング。`Errno`、`File`/`FileDesc`（`FileDesc`/`DirDesc`は`Int32`と、それが負でないという消去された証明を持ちます）、`Directory`、`Dl`（`dlopen`/`dlsym`/`dlclose`）、`Path`（`mkdir`、`unlink`、`symlink`、`readlink`、`realpath`、`mkfifo`、`mkstemp`など）、`Stat`（`stat`/`lstat`/`fstat`を`Stat`レコードへ、`access`、`truncate`、`utimensat`）、`Time`（`clock_gettime`、`nanosleep`、`gmtime`/`localtime`/`mktime`/`strftime`）、`Fcntl`（`pipe`、`fcntl`のフラグ、`dupfd`）、`Poll`（`poll`）、`Select`（`select`）、`Pwd`（`getpwnam`/`getpwuid`/`getgrnam`/`getgrgid`を`Passwd`/`Group`レコードへ）、`Glob`（`fnmatch`、`glob`）、`Syslog`（`openlog`/`syslog`/`closelog`）、`Mmap`、`Process`（各種ID、プロセスグループ、`exec*`、wait状態の判定、`getrlimit`、`uname`、`sysconf`、`sigqueue`）、`Signal`（番号、シグナル集合、`sigprocmask`、`sigwait`、`sigtimedwait`、`sigsuspend`、`raise`、`alarm`）、`Uio`、CのstdioをまとめたStdio（`File = Ptr RawFile`、errnoは`Left`に入ります。`open_memstream`は`MemStream`）。POSIXの範囲を外れる宣言には、docコメントに「Linux only」「Linux and BSD」などと書いてあります |
 | `Control.Task`、`Control.Task.Scheduler`/`Epoll`/`Source` | 差し替え可能なイベントソースの上に作った、協調型の`Task`モナド（`epoll`とタイマー、そして`System.Linux.Uring`の上の`Control.Task.Uring`による`io_uring`）。spawn/both/raceとキャンセルを備え、複数スレッドで状態を共有するための`Ref`/`MVar`/`Chan`もあります。`doc/task.md`を参照 |
 | `System.Concurrency.RC2` | 本物のpthreadを使った`Mutex`/`Condition`/`Semaphore`/`Barrier`/`Channel`と、joinできる`forkJoin`。設計の全体は、トップレベル`README.md`の「Concurrency」の節を参照 |
-| `System.FFI.C.Array` | `malloc`で確保され、GCが解放し、`Fin`で境界検査される固定長配列 |
+| `System.FFI.C.Array` | `malloc`で確保してゼロで埋め、GCが解放し、`Fin`で境界検査される固定長配列。サイズが2^31 - 1バイトに収まることを証明させる（`malloc`はCの`int`を取るため） |
 | `System.FFI.C.Limits` | Cの`<limits.h>`の整数の限界値をcamelCaseで提供します（`intMax`、`longMin`など） |
 | `System.FFI.C.Math` | Cの`<math.h>`の`double`関数を`namespace Math`にまとめたもの（`Math.sin`など）。分類関数は`Bool` |
-| `System.FFI.C.Memory` | Cヒープの確保(`malloc`/`calloc`/`free`)と、`<string.h>`/`<memory.h>`のよく使う関数（`memcpy`、`strlen`など）の`AnyPtr`版 |
+| `System.FFI.C.Memory` | Cヒープの確保(サイズが0でないことを証明させる`malloc`/`calloc`と`free`)と、`<string.h>`/`<memory.h>`のよく使う関数（`memcpy`、`strlen`など）の`AnyPtr`版 |
 | `System.FFI.C.Ptr` | `Ptr`/`GCPtr`の領域に対する、検査なしの要素番号指定のfetch/store |
 | `System.FFI.C.Sizeof` | スカラー型のCの`sizeof`。バッファの刻み幅やオフセットを手で計算するときに使います |
 | `System.GC.RC2` | rc2自身の`idris2rc2_dup`/`dup_n`/`drop`への直接アクセス。不透明なFFIポインタ経由で持ち出した値に使います |
@@ -231,9 +231,9 @@ jumpN    : HasIO io => IOGen -> (n : Bits64) -> io ()   -- Xoroshiro128PlusPlus�
 
 `newIOGen`は、呼び出し側が選んだ`Bits64`のシードを、splitmix64（Vigna、パブリックドメイン）で完全な状態へ展開します。ステップ数は、`Xoroshiro64StarStar`（64ビット状態）が1回、`Xoroshiro128PlusPlus`（128ビット状態）が2回です。拡散の悪い状態や全ゼロの状態をアルゴリズムに渡さないためで、参照実装自身のヘッダコメントが勧めるシード方法そのものです。
 
-`nextDouble`は、1ステップの出力を、生成器自身のネイティブな精度（`output / 2^32`または`output / 2^64`）で`[0,1)`の一様な`Double`に写します。他の生成器の一部が提供する、`Double`の仮数53ビット分の乱雑さはありません。
+`nextDouble`は、1ステップの出力を`[0,1)`の一様な`Double`に写します。`Xoroshiro64StarStar`は`output / 2^32`（厳密）、`Xoroshiro128PlusPlus`は出力の上位53ビットに2^-53を掛けた値です。`output / 2^64`だと、2^64から2^10以内の出力が丸めで2^64に切り上がり、ちょうど1.0になってしまうためです。
 
-`newSeeded`は、単調クロックにプロセスID（`System.Clock`/`getPID`）を混ぜた値をシードにする、便宜的なコンストラクタです。暗号論的には安全でなく、「実行のたびに同じ列を渡さない」程度の妥当な既定です。再現できる、呼び出し側が選んだシードが必要なときは、`newIOGen`を直接使ってください。
+`newSeeded`は、オペレーティングシステムの乱数64ビット（`System.Random.Entropy`。POSIXの`open`/`read`/`close`のバインディングで`/dev/urandom`を読みます。同時に起動したプロセスが同じシードを共有しません）をシードにする、便宜的なコンストラクタです。それが読めないときだけ、単調クロックにプロセスID（`System.Clock`/`getPID`）を混ぜた値になります。どちらの生成器も暗号論的には安全でありません。再現できる、呼び出し側が選んだシードが必要なときは、`newIOGen`を直接使ってください。
 
 `jump`/`longJump`/`jumpCE`/`jumpN`は、参照アルゴリズム自身のジャンプ先送りの仕組みを包みます。`next`を`2^k`回（または`c * 2^e`回、あるいは呼び出し側が与える任意の距離だけ）実際に踏まずに、生成器の状態を進めます。独立した並列計算へ、重ならない部分列を配るのに役立ちます。
 
@@ -241,7 +241,7 @@ jumpN    : HasIO io => IOGen -> (n : Bits64) -> io ()   -- Xoroshiro128PlusPlus�
 
 各モジュールには、別に単一のグローバル生成器（`setSystemSeed`/`nextIO`/`jumpIO`/`longJumpIO`/`jumpCEIO`/`jumpNIO`）も用意してあります。状態はすべてC側の静的変数（各`support/c/*.c`の`system_seed[...]`）に置いてあります。
 
-このグローバル生成器はスレッド安全ではありません。共有する可変状態にロックがないので、上のインスタンスごとのAPIが呼び出し側に任せる「自分の`IOGen`は自分で守る」という約束よりも緩い扱いです。Cの`rand()`/`srand()`のように、持ち回すインスタンスなしで手早く使うための便宜として提供しているだけです。並行処理や再現性が必要な用途には、`newIOGen`と`next`を使ってください。
+このグローバル生成器はスレッド安全ではありません。共有する可変状態にロックがないので、上のインスタンスごとのAPIが呼び出し側に任せる「自分の`IOGen`は自分で守る」という約束よりも緩い扱いです。Cの`rand()`/`srand()`のように、持ち回すインスタンスなしで手早く使うための便宜として提供しているだけです。`srand()`を呼ぶ前の`rand()`と同じく、`setSystemSeed`を一度も呼ばないプログラムは固定の再現可能な乱数列（`setSystemSeed 1`が設定する状態）を得ます。全ゼロの状態にはなりません。並行処理や再現性が必要な用途には、`newIOGen`と`next`を使ってください。
 
 この単一グローバル生成器という設計は、一見もっと簡単な代案への答えでもあります。代案とは、トップレベルの`unsafePerformIO`で作った`IOGen`です。呼び出し側にハンドルを引き回さなくて済みます。
 
@@ -319,7 +319,9 @@ static inline double idris2rc2_inf(void)          { return INFINITY; }
 
 本物のGMPの`mpz_*`関数への、直接の`%foreign`バインディングです。可能になったのは、`Compiler.RC2.Emit`自身が、`Integer`を`%foreign`の引数と戻り値に使う対応を持っているからです（`rc2/tests/Test118FFI/FFIInteger.idr`。以前の`Test55FFIIntegerReturn.idr`もここに吸収しました）。
 
-このランタイムで普通のIdrisの`Integer`をすべて裏づけている`mpz_t`そのものが、本物のGMPのシンボルへ直接渡されます（引数の場合）。戻り値の場合は、新規に確保した`mpz_t`が、暗黙の先頭の出力引数として渡されます。GMP自身の「`rop`が常に最初」という規約、`mpz_add(rop, op1, op2)`などにそのまま一致します。このモジュールのどこにも、専用のラッパは要りません。
+このランタイムで普通のIdrisの`Integer`をすべて裏づけている`mpz_t`そのものが、本物のGMPのシンボルへ直接渡されます（引数の場合）。戻り値の場合は、新規に確保した`mpz_t`が、暗黙の先頭の出力引数として渡されます。GMP自身の「`rop`が常に最初」という規約、`mpz_add(rop, op1, op2)`などにそのまま一致します。専用のラッパは要りません。ただし、次の関数は例外です。
+
+GMPは、除数が0、法が0、負数の平方根に対して`SIGFPE`を送り、プロセスを落とします。そこで、これらに行き着く関数は、値をそのまま渡さず、証明を要求します。`tdivQ`/`tdivR`/`fdivQ`/`fdivR`/`cdivQ`/`cdivR`/`mod`/`divexact`は、除数について`{auto 0 nonZero : So (b /= 0)}`を取ります。`powm`/`powmUi`は法について同様の証明を取り、`powm`はさらに指数が負でないこと（負だと逆元が要ります）の証明を取ります。`sqrt`は引数が負でないこと、`sizeinbase`は基数が2〜62であること（GMPは検査しません）の証明を取ります。リテラルなら証明は評価で見つかり（`GMP.tdivQ 10 0`はコンパイルできません）、実行時にしか分からない値は`Data.So.choose`で作ります。`System.FFI.C.Memory.malloc`がサイズ0でないことを証明させるのと同じやり方です。（アップストリームの`Integer`の`div`/`mod`は、実行時に`y == 0`を検査して`Unhandled input`で止まりますが、GMPの呼び出しにはその検査がありません。）これらは、非公開の`%foreign`宣言を包む薄い`%inline`のラッパで、消去される証明の実行時の費用はありません。
 
 バインディングは、2つのグループと3つのその場変更関数からなります。`mpz_`を落として、snake_caseを機械的にcamelCaseにしただけで、見た目のための改名はしていません。
 

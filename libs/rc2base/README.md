@@ -70,10 +70,10 @@ not compile when the declaration is used.
 | `System.Posix.*` | POSIX bindings: `Errno`, `File`/`FileDesc` (`FileDesc`/`DirDesc` hold an `Int32` and an erased proof that it is not negative), `Directory`, `Dl` (`dlopen`/`dlsym`/`dlclose`), `Path` (`mkdir`, `unlink`, `symlink`, `readlink`, `realpath`, `mkfifo`, `mkstemp`, ...), `Stat` (`stat`/`lstat`/`fstat` into a `Stat` record, `access`, `truncate`, `utimensat`), `Time` (`clock_gettime`, `nanosleep`, `gmtime`/`localtime`/`mktime`/`strftime`), `Fcntl` (`pipe`, `fcntl` flags, `dupfd`), `Poll` (`poll`), `Select` (`select`), `Pwd` (`getpwnam`/`getpwuid`/`getgrnam`/`getgrgid` into `Passwd`/`Group` records), `Glob` (`fnmatch`, `glob`), `Syslog` (`openlog`/`syslog`/`closelog`), `Mmap`, `Process` (ids, process groups, `exec*`, wait-status tests, `getrlimit`, `uname`, `sysconf`, `sigqueue`), `Signal` (numbers, signal sets, `sigprocmask`, `sigwait`, `sigtimedwait`, `sigsuspend`, `raise`, `alarm`), `Uio`, and C stdio `Stdio` (`File = Ptr RawFile`, errno in `Left`; `open_memstream` as `MemStream`). Declarations outside POSIX say so ("Linux only", "Linux and BSD") in their doc comment |
 | `Control.Task`, `Control.Task.Scheduler`/`Epoll`/`Source`/`Uring` | cooperative `Task` monad over pluggable event sources (`epoll` and timers, and `io_uring` through `Control.Task.Uring` on `System.Linux.Uring`): spawn/both/race with cancellation, and `Ref`/`MVar`/`Chan` for tasks that share state on several threads -- see `doc/task.md` |
 | `System.Concurrency.RC2` | real pthread-backed `Mutex`/`Condition`/`Semaphore`/`Barrier`/`Channel`/joinable `forkJoin` -- see the top-level `README.md`'s own "Concurrency" section for the full design |
-| `System.FFI.C.Array` | a `malloc`'d, GC-freed, `Fin`-bounds-checked fixed-length array |
+| `System.FFI.C.Array` | a `malloc`'d, zeroed, GC-freed, `Fin`-bounds-checked fixed-length array; its size is proved to fit in 2^31 - 1 bytes (`malloc` takes a C `int`) |
 | `System.FFI.C.Limits` | C `<limits.h>` integer limits as camelCase values (`intMax`, `longMin`, ...) |
 | `System.FFI.C.Math` | C `<math.h>`'s `double` functions in `namespace Math` (`Math.sin`, ...), with `Bool` classification predicates |
-| `System.FFI.C.Memory` | C heap allocation (`malloc`/`calloc`/`free`) and the common `<string.h>`/`<memory.h>` routines (`memcpy`, `strlen`, ...) on `AnyPtr` |
+| `System.FFI.C.Memory` | C heap allocation (`malloc`/`calloc`, whose sizes are proved not to be 0, and `free`) and the common `<string.h>`/`<memory.h>` routines (`memcpy`, `strlen`, ...) on `AnyPtr` |
 | `System.FFI.C.Ptr` | raw, unchecked element-indexed fetch/store into a `Ptr`/`GCPtr` region |
 | `System.FFI.C.Sizeof` | the C `sizeof` of a scalar type, for hand-rolled buffer strides/offsets |
 | `System.GC.RC2` | raw access to rc2's own `idris2rc2_dup`/`dup_n`/`drop`, for a value smuggled out through an opaque FFI pointer |
@@ -337,14 +337,16 @@ via one (`Xoroshiro64StarStar`, 64-bit state) or two
 domain) steps, to avoid handing the algorithm a poorly-diffused or
 all-zero state -- exactly the seeding method the reference
 implementation's own header comment suggests. `nextDouble` maps a
-step's output onto a uniform `Double` in `[0,1)` at the generator's own
-native precision (`output / 2^32` or `output / 2^64`) -- not the full
-53-bit `Double` mantissa's worth of randomness some other generators
-provide. `newSeeded` is a convenience constructor seeded from the
-monotonic clock mixed with the current process id (`System.Clock`/
-`getPID`) -- not cryptographically secure, just a reasonable "don't
-hand me the same sequence every run" default; use `newIOGen` directly
-for a reproducible, caller-chosen seed.
+step's output onto a uniform `Double` in `[0,1)`: `output / 2^32` for
+`Xoroshiro64StarStar` (exact), and the top 53 bits of the output times
+2^-53 for `Xoroshiro128PlusPlus` (`output / 2^64` would round an output
+within 2^10 of 2^64 up to exactly 1.0). `newSeeded` is a convenience constructor seeded with
+64 random bits from the operating system (`System.Random.Entropy`, which reads
+`/dev/urandom` with the POSIX `open`/`read`/`close` bindings, so two
+processes started together do not share a seed); only if that cannot be read
+is the seed the monotonic clock mixed with the process id
+(`System.Clock`/`getPID`). The generators are not cryptographically secure;
+use `newIOGen` directly for a reproducible, caller-chosen seed.
 
 `jump`/`longJump`/`jumpCE`/`jumpN` wrap the reference algorithm's own
 jump-ahead machinery, advancing a generator's state as if by `2^k` (or
@@ -379,7 +381,9 @@ heap-allocated on every step. Measured on `Xoroshiro128PlusPlus`, a
 loop that threads a `Gen` and XORs 10 million `genNext` outputs makes
 38 allocations in all, from start-up, and takes 0.11 s; the same loop
 over an `IOGen` needed 1.5 allocations per step and took 0.5 s. A jump
-runs the polynomial once per state word.
+runs once: `Xoroshiro64StarStar` gets its two new words packed in one
+`Bits64`, `Xoroshiro128PlusPlus` reads the second one from a thread-local
+the C side leaves it in, right after the first, in the same IO action.
 
 Each module also offers a separate, single global generator
 (`setSystemSeed`/`nextIO`/`jumpIO`/`longJumpIO`/`jumpCEIO`/`jumpNIO`)
@@ -388,7 +392,9 @@ held entirely in C-side static state (each `support/c/*.c`'s own
 mutable state, unlike even the "caller must guard their own `IOGen`"
 contract the per-instance API above leaves to callers), offered purely
 as a quick, no-instance-to-carry-around convenience akin to C's own
-`rand()`/`srand()`. Prefer `newIOGen`/`next` for anything concurrent or
+`rand()`/`srand()`: like `rand()` before `srand()`, a program that never
+calls `setSystemSeed` gets a fixed, reproducible stream (the state
+`setSystemSeed 1` sets), never the all-zero state. Prefer `newIOGen`/`next` for anything concurrent or
 reproducible.
 
 The single-global-generator design is also the answer to a seemingly
@@ -540,7 +546,22 @@ Idris `Integer` in this runtime is handed to (arguments) or freshly
 allocated for (an implicit, leading out-parameter for a return value,
 exactly matching GMP's own `rop`-always-first convention -- `mpz_add
 (rop, op1, op2)`, etc.) the real GMP symbol directly, no wrapper of its
-own needed anywhere in this module.
+own needed -- except for the functions below that GMP kills the process on.
+
+GMP raises `SIGFPE` on a zero divisor, a zero modulus and the square root
+of a negative number, so the bindings that would reach one take a proof
+instead of passing it on: `tdivQ`/`tdivR`/`fdivQ`/`fdivR`/`cdivQ`/`cdivR`/
+`mod`/`divexact` an `{auto 0 nonZero : So (b /= 0)}` for the divisor,
+`powm`/`powmUi` one for the modulus (and `powm` one that the exponent is
+not negative, which would need an inverse), `sqrt` one that the argument
+is not negative, and `sizeinbase` one that the base is 2-62 (GMP does not
+check it). The proof is found by evaluation for a literal (`GMP.tdivQ 10 0`
+does not compile) and made with `Data.So.choose` for a value known only at
+run time, the same way `System.FFI.C.Memory.malloc` proves its size is not
+0. (Upstream's `div`/`mod` on `Integer` check `y == 0` at run time and stop
+with `Unhandled input`; a GMP call has no such check.) These are thin
+`%inline` wrappers over private `%foreign` declarations; the erased proof
+costs nothing at run time.
 
 Two groups plus three in-place mutators, `mpz_` dropped and snake_case turned
 into camelCase mechanically, nothing renamed for style: **arithmetic/bitwise**

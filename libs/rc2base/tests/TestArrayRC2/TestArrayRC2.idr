@@ -12,9 +12,18 @@ module Main
 -- pointer that was stored, not just an equally-non-null one.
 
 import Data.Fin
+import Data.So
 import System.FFI
 import System.FFI.C.Array
 import System.FFI.C.Ptr
+
+-- A count known only at run time: the proof is made with `choose`.
+tryNew : Nat -> IO Bool
+tryNew n = case choose (natToInteger n * cast (sizeof Bits64) <= maxCArrayBytes) of
+  Left _ => do
+    arr <- newCArray {ty = Bits64} n
+    pure (length arr == n)
+  Right _ => pure False
 
 allFins : List (Fin 4)
 allFins = [FZ, FS FZ, FS (FS FZ), FS (FS (FS FZ))]
@@ -84,3 +93,21 @@ main = do
   v <- unsafePtrFetch bufRaw 0
   printLn (v == 0xcafef00d)
   free raw
+
+  -- the memory is zeroed: reuse a block that was filled with ones
+  dirty <- System.FFI.malloc 64
+  for_ [0 .. 63] $ \i => unsafePtrStore (the (Ptr Bits8) (prim__castPtr dirty)) i 0xff
+  System.FFI.free dirty
+  zeroed <- newCArray {ty = Bits8} 64
+  zs <- traverse (fetch zeroed) (Data.Fin.List.allFins 64)
+  printLn (all (== 0) zs)
+
+  -- the size limit: 2^28 Bits64 would be 2^31 bytes, which `int` cannot hold
+  tryNew 3 >>= printLn
+  tryNew 268435456 >>= printLn
+
+  -- fromListBy
+  Just fromL <- fromListBy {ty = Bits16} (\x => cast (x * 2)) (the (List Nat) [1, 2, 3])
+    | Nothing => putStrLn "fromListBy: too long"
+  vsL <- traverse (fetch fromL) [FZ, FS FZ, FS (FS FZ)]
+  printLn (vsL == [2, 4, 6])

@@ -70,6 +70,7 @@ TESTS=(
     "TestCLimits||System.FFI.C.Limits: <limits.h> constants"
     "TestCMath||System.FFI.C.Math: <math.h> double functions"
     "TestCMemory||System.FFI.C.Memory's <string.h>/<memory.h> bindings"
+    "TestQueue||Data.Queue appending keeps both queues' order"
     "TestIntegerGMP||Data.Integer.GMP's direct GMP bindings"
     "TestHTTPServer|network contrib|Network.HTTP.Server: cross-thread respond + stop"
     "TestRegexPOSIX||Text.Regex.POSIX: libc <regex.h> bindings"
@@ -86,6 +87,7 @@ TESTS=(
     "TestPosixFile||System.Posix.File/FileDesc: open flags, read/write/lseek/dup/lock/chmod round trip"
     "TestPosixSignal||System.Posix.Signal: signal constants vs <signal.h>"
     "TestPosixProcess||System.Posix.Process: getpid, kill, fork, wait"
+    "TestPosixSpawn||System.Posix.Spawn: spawnStdio with its stdin/stdout at descriptor 0 or 1"
     "TestPosixDirectory||System.Posix.Directory: opendir, chdir, getcwd, DT_* constants"
     "TestPosixMmap||System.Posix.Mmap: PROT_/MAP_ constants, anonymous and file mappings"
     "TestPosixUio||System.Posix.Uio: writev/readv, pread/pwrite"
@@ -126,7 +128,7 @@ NEEDS_CURL=" TestCurl TestWebAPI "
 # Tests that need liburing's headers (liburing.h); skipped the same way.
 NEEDS_URING=" TestUringNop TestUringFile TestUringSocket TestTaskUring "
 # Tests built with IDRIS2_CFLAGS=-D_GNU_SOURCE (declarations glibc hides otherwise).
-NEEDS_GNU_SOURCE=" TestAsyncHTTPStaticCGI TestPosixTermios TestLinux TestTask TestTaskUring "
+NEEDS_GNU_SOURCE=" TestPosixSpawn TestAsyncHTTPStaticCGI TestPosixTermios TestLinux TestTask TestTaskUring "
 have_curl_h() { echo '#include <curl/curl.h>' | gcc -E -x c - > /dev/null 2>&1; }
 # Tests whose generated C must not mention liburing at all.
 NO_LIBURING_C=" TestTaskNoUring "

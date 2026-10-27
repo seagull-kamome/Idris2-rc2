@@ -13,6 +13,26 @@ module Main
 -- small one (`fitsSlongP`, bit-position examples, etc).
 
 import Data.Integer.GMP
+import Data.So
+
+-- The functions GMP kills the process on (a zero divisor or modulus, a
+-- negative square root) take a proof that the value is fine: a literal is
+-- accepted by evaluation (`GMP.tdivQ 10 0` does not compile), and a value
+-- known only at run time is checked with `choose`.
+safeDiv : Integer -> Integer -> Maybe Integer
+safeDiv a b = case choose (b /= 0) of
+  Left _ => Just (GMP.tdivQ a b)
+  Right _ => Nothing
+
+safeSqrt : Integer -> Maybe Integer
+safeSqrt x = case choose (x >= 0) of
+  Left _ => Just (GMP.sqrt x)
+  Right _ => Nothing
+
+safePowm : Integer -> Integer -> Integer -> Maybe Integer
+safePowm b e m = case (choose (e >= 0), choose (m /= 0)) of
+  (Left _, Left _) => Just (GMP.powm b e m)
+  _ => Nothing
 
 big1 : Integer
 big1 = 123456789012345678901234567890
@@ -110,3 +130,10 @@ main = do
     printLn (GMP.getD 2 == 2.0)
     printLn (GMP.scan0 4 0 == 0)
     printLn (GMP.scan1 4 0 == 2)
+    printLn (safeDiv 100 7)
+    printLn (safeDiv 100 0)
+    printLn (safeSqrt 144)
+    printLn (safeSqrt (-1))
+    printLn (safePowm 4 13 497)
+    printLn (safePowm 4 13 0)
+    printLn (safePowm 4 (-1) 497)

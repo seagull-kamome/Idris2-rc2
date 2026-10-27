@@ -31,9 +31,9 @@ int idris2rc2_re2_partial_match(IDRIS2RC2_Regex *re, const char *text, int64_t t
 // Finds the leftmost unanchored match, caching every submatch (index 0
 // = whole match, 1..N = capturing groups) for idris2rc2_re2_group/
 // _group_len/_group_present to read afterwards. Returns 0 (no match) or
-// 1. The cache is overwritten by the next find() on the same
-// IDRIS2RC2_Regex -- read every group needed before calling find()
-// again.
+// 1. The cache is per thread, not per IDRIS2RC2_Regex (a compiled pattern
+// may be shared between threads), and is overwritten by the next find() on
+// the same thread -- read every group needed before calling find() again.
 int idris2rc2_re2_find(IDRIS2RC2_Regex *re, const char *text, int64_t textLen);
 int idris2rc2_re2_group_count(IDRIS2RC2_Regex *re);
 // 0/1; distinguishes "group didn't participate in the match" from "an

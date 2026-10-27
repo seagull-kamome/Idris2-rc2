@@ -34,6 +34,7 @@ import Data.Bits
 import Data.Buffer
 import System
 import System.Clock
+import System.Random.Entropy
 
 %default covering
 
@@ -184,19 +185,25 @@ export
 jumpN : HasIO io => IOGen -> (n : Bits64) -> io ()
 jumpN (MkIOGen buf) n = primIO $ prim__jumpN buf n
 
-||| Convenience constructor: a fresh generator, seeded from the monotonic
-||| clock and the current process id. Not cryptographically secure, just
-||| a reasonable non-fixed default -- use `newIOGen` directly for a
+||| Convenience constructor: a fresh generator, seeded with 64 random bits
+||| from the operating system (`/dev/urandom`, which two processes started
+||| together do not share). Only when that cannot be read (no `/dev`, say) is the seed the monotonic clock mixed with the process id, which
+||| processes started at about the same time can share. The generator is
+||| not cryptographically secure -- use `newIOGen` directly for a
 ||| reproducible, caller-chosen seed. `Nothing` only on buffer allocation
 ||| failure (unlike `Xoroshiro128PlusPlus.newSeeded`, which wraps a plain
 ||| `IORef` and so can't fail this way).
 export
 newSeeded : HasIO io => io (Maybe IOGen)
 newSeeded = do
-  clk <- liftIO (clockTime Monotonic)
-  pid <- getPID
-  let mixed = cast (toNano clk) `xor` cast pid
-  newIOGen mixed
+  r <- entropy64
+  seed <- case r of
+    Just s => pure s
+    Nothing => do
+      clk <- liftIO (clockTime Monotonic)
+      pid <- getPID
+      pure (cast (toNano clk) `xor` cast pid)
+  newIOGen seed
 
 -- ----------------------------------------------------------------------------
 -- A separate, single global generator held entirely in C-side static
@@ -260,17 +267,22 @@ prim__pureS0 : Bits32 -> Bits32 -> Bits32
 %foreign "C:idris2rc2_System_Random_pure_s1,libidris2rc2base,idris2rc2_rc2base_xoroshiro64starstar.h"
 prim__pureS1 : Bits32 -> Bits32 -> Bits32
 
+-- A jump runs once and gives the new state packed in a `Bits64`: s[0] in the
+-- low half, s[1] in the high half (`fromPacked`).
 %foreign "C:idris2rc2_System_Random_pure_jump,libidris2rc2base,idris2rc2_rc2base_xoroshiro64starstar.h"
-prim__pureJump : Bits32 -> Bits32 -> Int -> Bits32
+prim__pureJump : Bits32 -> Bits32 -> Bits64
 
 %foreign "C:idris2rc2_System_Random_pure_long_jump,libidris2rc2base,idris2rc2_rc2base_xoroshiro64starstar.h"
-prim__pureLongJump : Bits32 -> Bits32 -> Int -> Bits32
+prim__pureLongJump : Bits32 -> Bits32 -> Bits64
 
 %foreign "C:idris2rc2_System_Random_pure_jump_ce,libidris2rc2base,idris2rc2_rc2base_xoroshiro64starstar.h"
-prim__pureJumpCE : Bits32 -> Bits32 -> Bits64 -> Bits32 -> Int -> Bits32
+prim__pureJumpCE : Bits32 -> Bits32 -> Bits64 -> Bits32 -> Bits64
 
 %foreign "C:idris2rc2_System_Random_pure_jump_n,libidris2rc2base,idris2rc2_rc2base_xoroshiro64starstar.h"
-prim__pureJumpN : Bits32 -> Bits32 -> Bits64 -> Int -> Bits32
+prim__pureJumpN : Bits32 -> Bits32 -> Bits64 -> Bits64
+
+fromPacked : Bits64 -> Gen
+fromPacked w = MkGen (cast w) (cast (w `shiftR` 32))
 
 ||| The generator `newIOGen` would create from the same seed (the same
 ||| splitmix64 step), so both produce the same sequence.
@@ -292,19 +304,19 @@ genNextDouble g = let (v, g') = genNext g in (cast v / 4294967296.0, g')
 ||| `jump` on a value: 2^32 steps ahead.
 export
 genJump : Gen -> Gen
-genJump (MkGen s0 s1) = MkGen (prim__pureJump s0 s1 0) (prim__pureJump s0 s1 1)
+genJump (MkGen s0 s1) = fromPacked (prim__pureJump s0 s1)
 
 ||| `longJump` on a value: 2^48 steps ahead.
 export
 genLongJump : Gen -> Gen
-genLongJump (MkGen s0 s1) = MkGen (prim__pureLongJump s0 s1 0) (prim__pureLongJump s0 s1 1)
+genLongJump (MkGen s0 s1) = fromPacked (prim__pureLongJump s0 s1)
 
 ||| `jumpCE` on a value: `c * 2^e` steps ahead.
 export
 genJumpCE : Gen -> (c : Bits64) -> (e : Bits32) -> Gen
-genJumpCE (MkGen s0 s1) c e = MkGen (prim__pureJumpCE s0 s1 c e 0) (prim__pureJumpCE s0 s1 c e 1)
+genJumpCE (MkGen s0 s1) c e = fromPacked (prim__pureJumpCE s0 s1 c e)
 
 ||| `jumpN` on a value: `n` steps ahead.
 export
 genJumpN : Gen -> (n : Bits64) -> Gen
-genJumpN (MkGen s0 s1) n = MkGen (prim__pureJumpN s0 s1 n 0) (prim__pureJumpN s0 s1 n 1)
+genJumpN (MkGen s0 s1) n = fromPacked (prim__pureJumpN s0 s1 n)

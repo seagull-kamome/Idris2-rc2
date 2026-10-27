@@ -1,5 +1,6 @@
 module System.Posix.Mmap
 
+import System.Posix.Errno
 import System.Posix.FileDesc
 
 -------------------------------------------------------------------------------
@@ -89,4 +90,13 @@ mmap addr len prot flags fd offset = do
   ptr <- primIO $ prim__mmap addr len prot flags (maybe (-1) rawfd fd) offset
   if prim__mmap_failed ptr /= 0 then pure Nothing else pure (Just ptr)
 
+%inline %foreign "CExpr:(munmap($1, $2)),libc,sys/mman.h"
+prim__munmap : AnyPtr -> Int64 -> PrimIO Int32
 
+||| Remove the mapping of `len` bytes at `addr` (an address `mmap` gave; the
+||| length is rounded up to a whole page).
+|||
+||| See also: `munmap(2)`.
+%inline public export
+munmap : AnyPtr -> Int64 -> IO (Either Errno ())
+munmap addr len = primIO (prim__munmap addr len) >>= checkUnit

@@ -71,8 +71,10 @@ before the route is chosen.
   trailing `/` in the request it is redirected (301) to the one with it, so that
   relative links in the page work.
 - `Content-Type` comes from the extension (`mimeType`), `ETag` from the size and the
-  time of modification; `If-None-Match` with it is answered with 304.
-  `cacheControl` adds a `Cache-Control`.
+  time of modification to the nanosecond (`"size-sec-nsec"`); `If-None-Match` with it
+  (also `W/"..."`, and `*`) is answered with 304. `cacheControl` adds a `Cache-Control`.
+  A `HEAD` is answered with the `Content-Length` of the file, from `stat`, and the file
+  is not read.
 - The file is read into a buffer of its size (from `stat`), `chunkBytes` at a time
   (default 256 KiB), each read a `blocking` step of its own with `pread`: a large
   file does not hold a worker thread (or, with none, the scheduler) for the whole
@@ -88,7 +90,8 @@ has to be a regular file with the execute permission (else 404). The rest of the
 path is `PATH_INFO`. RFC 3875 variables: `GATEWAY_INTERFACE`, `SERVER_PROTOCOL`,
 `SERVER_SOFTWARE`, `SERVER_NAME`, `SERVER_PORT` (both from `options`),
 `REQUEST_METHOD`, `SCRIPT_NAME`, `PATH_INFO`, `QUERY_STRING`, `CONTENT_LENGTH`,
-`CONTENT_TYPE` and `HTTP_*` for the other headers. Not passed: `Proxy` (httpoxy),
+`REMOTE_ADDR` (the client's address, from `Request.remote`, where the server knows
+it), `CONTENT_TYPE` and `HTTP_*` for the other headers. Not passed: `Proxy` (httpoxy),
 `Authorization` (unless `passAuthorization`, RFC 3875, 4.1.18), and a header whose
 name has anything but letters, digits and `-` in it (`X_A` would be the same variable
 as `X-A`, and `X-A=B` would make a variable `HTTP_X_A` with `B=` in its value). A header

@@ -13,6 +13,12 @@ module System.FFI.C.Array
 -- of ceremony not worth it here, since `newCArray` itself is the only
 -- place `len` and the real allocation size can ever disagree.
 --
+-- `newCArray` proves its size fits in `maxCArrayBytes`: `System.FFI.malloc`
+-- takes a C `int`, so a larger size would be cut and the `Fin` indices would
+-- then write past a smaller allocation. The bound also keeps `len` within
+-- `Bits32` and the index within `fetch`/`store`'s `Int32`, so `lengthCorrect`
+-- does hold. The memory is zeroed, not left as the allocator had it.
+--
 -- `fetch`/`store` are a single definition generic over `ty`, dispatched
 -- via `System.FFI.C.Ptr`'s own `PtrCFFI ty` constraint rather than a
 -- per-type namespace -- unlike `Sizeof` (whose `sizeof_ : Bits32` has
@@ -34,7 +40,9 @@ module System.FFI.C.Array
 -- the whole call.
 
 import Data.List
+import Data.So
 import System.FFI
+import System.FFI.C.Memory as CMem
 import public System.FFI.C.Ptr
 import public System.FFI.C.Sizeof
 import Data.Fin
@@ -49,12 +57,31 @@ record CArray (n : Nat) (ty : Type) where
 
 -------------------------------------------------------------------------------
 
+||| The most bytes an array may take: what the `int` size of `System.FFI.malloc`
+||| (C's `idris2_malloc(int)`) holds. A larger one would be cut to a smaller
+||| size, and the array's `Fin` indices would then write past the allocation.
+||| It also keeps the element count within `len : Bits32` and the `Int32` index
+||| of `fetch`/`store`.
+public export
+maxCArrayBytes : Integer
+maxCArrayBytes = 2147483647
+
+||| The proof that `n` elements of `ty` fit in `maxCArrayBytes`.
+public export
+0 FitsCArray : Sizeof ty => (n : Nat) -> Type
+FitsCArray {ty} n = So (natToInteger n * cast (sizeof ty) <= maxCArrayBytes)
+
+||| An array of `n` elements, all bytes 0. `n` is proved to fit in
+||| `maxCArrayBytes` bytes (found by evaluation for a literal; made with
+||| `Data.So.choose` for a count known only at run time).
 export
-newCArray : Sizeof ty => (n : Nat) -> IO (CArray n ty)
+newCArray : Sizeof ty => (n : Nat) -> {auto 0 fits : FitsCArray {ty} n} -> IO (CArray n ty)
 newCArray n = do
-    raw <- malloc (cast n * cast (sizeof ty))
+    let bytes = cast n * cast (sizeof ty)
+    raw <- System.FFI.malloc bytes
+    when (bytes > 0) $ CMem.memset raw 0 (cast bytes)
     let typedPtr = prim__castPtr {t = ty} raw
-    gcPtr <- onCollect typedPtr (\p => free (prim__forgetPtr p))
+    gcPtr <- onCollect typedPtr (\p => System.FFI.free (prim__forgetPtr p))
     pure (MkCArray gcPtr (cast n))
 
 export %inline
@@ -81,13 +108,16 @@ store xs m x = unsafeGCPtrStore xs.ptr (cast (finToNat m)) x
 -------------------------------------------------------------------------------
 --
 
+||| An array of the mapped elements of the list; `Nothing` when it is too long to
+||| fit in `maxCArrayBytes` bytes.
 export
-fromListBy : PtrCFFI ty => Sizeof ty => (a -> ty) -> (xs : List a) -> IO (CArray (length xs) ty)
-fromListBy f xs = do
-    arr <- newCArray n
-    for_ (zip (allFins n) xs) $ \(i,x) => store arr i (f x)
-    pure arr
+fromListBy : PtrCFFI ty => Sizeof ty => (a -> ty) -> (xs : List a) -> IO (Maybe (CArray (length xs) ty))
+fromListBy {ty} f xs =
+    case choose (natToInteger n * cast (sizeof ty) <= maxCArrayBytes) of
+      Left fits => do
+        arr <- newCArray n
+        for_ (zip (allFins n) xs) $ \(i,x) => store arr i (f x)
+        pure (Just arr)
+      Right _ => pure Nothing
   where
     n = length xs
-
-

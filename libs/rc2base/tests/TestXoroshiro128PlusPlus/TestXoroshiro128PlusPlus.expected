@@ -1,3 +1,6 @@
+default global generator is seed 1: True
+toUnit maxBound < 1: True
+toUnit 0 == 0: True
 16756476715040848931
 6098722386207918385
 17541662578032534341
@@ -7,6 +10,8 @@
 16756476715040848931
 6098722386207918385
 newSeeded: ok
+two newSeeded streams differ: True
+two entropy64 draws differ: True
 True
 True
 True

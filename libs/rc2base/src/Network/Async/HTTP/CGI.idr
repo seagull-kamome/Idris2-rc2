@@ -185,6 +185,7 @@ runCGI {options} mountAt dir rest req = case splitPath rest of
           , ("SCRIPT_NAME", "/" ++ joinBy "/" (splitPath mountAt ++ [name]))
           , ("PATH_INFO", if null pathInfo then "" else "/" ++ joinBy "/" pathInfo)
           , ("QUERY_STRING", query), ("CONTENT_LENGTH", show (byteLength req.body)) ]
+          ++ maybe [] (\a => [("REMOTE_ADDR", a)]) req.remote   -- RFC 3875 4.1.8, where the address is known
           ++ contentType
 
         -- the variables of the options that none of the others replaces

@@ -32,6 +32,14 @@ main = do
   memset buf 0 65
   printLn (!(strlen buf) == 0)
 
+  -- calloc zeroes; a failed allocation is Left ENOMEM. (A size of 0 does not
+  -- type-check: `malloc 0` is not an error, but may return NULL.)
+  zeroed <- calloc 4 8 >>= mustAlloc
+  printLn (!(memcmp zeroed buf 8) == 0 && !(strlen zeroed) == 0)
+  huge <- malloc 0x7fffffffffffffff
+  printLn (either (== ENOMEM) (const False) huge)
+  free zeroed
+
   hello <- cstring "hello"
   memcpy buf hello 6
   printLn (!(strlen buf) == 5)
@@ -104,6 +112,16 @@ main = do
   fromIdris <- cstring "from Idris"
   printLn (!(ptrToString fromIdris) == Just "from Idris")
   free fromIdris
+  -- a NUL inside the String is copied too (strlen sees the prefix only)
+  withNul <- cstring "ab\0cd"
+  printLn (!(strlen withNul) == 2)
+  same <- cstring "ab\0cd"
+  other <- cstring "ab\0ce"
+  printLn (!(memcmp withNul same 6) == 0)
+  printLn (!(memcmp withNul other 6) /= 0)
+  free withNul
+  free same
+  free other
 
   free hello
   free abc

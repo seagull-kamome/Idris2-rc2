@@ -15,5 +15,6 @@ MAP_POPULATE=32768
 MAP_STACK=131072
 anonymous: (42, (7, 0))
 munmap: 0
+munmap, zero length: Errno:22
 file: (109, 101)
 zero length: Nothing

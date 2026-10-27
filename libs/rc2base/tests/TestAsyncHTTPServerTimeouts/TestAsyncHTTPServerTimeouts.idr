@@ -11,12 +11,15 @@ module Main
 --   * a kept-alive connection that goes idle is closed after its answer;
 --   * a response to a client that does not read is given up (the client gets
 --     only part of it);
---   * and the server still serves an ordinary request.
+--   * and the server still serves an ordinary request;
+--   * with at most one connection served at once, a second one is answered with
+--     503 and closed, and once the first has gone the next is served.
 
 import Control.Task
 import Control.Task.Scheduler
 import Data.Buffer
 import Data.List
+import Data.Maybe
 import Data.String
 import Network.Async.HTTP.Server
 import Network.Socket
@@ -113,8 +116,26 @@ ordinary port = map (maybe "no client" (firstLine . fst)) $ withClient port $ \s
   _ <- Network.Socket.send sock "GET /hello HTTP/1.1\r\nHost: t\r\nConnection: close\r\n\r\n"
   drain sock
 
+-- A connection that is held (nothing sent), and a second one while it is: the
+-- first line of the answer to the second.
+overLimit : Port -> IO String
+overLimit port = map (fromMaybe "no client") $ withClient port $ \held => do
+    usleep 100000   -- (the server has taken the first)
+    map (maybe "no client" (firstLine . fst)) $ withClient port $ \sock => do
+      _ <- Network.Socket.send sock "GET /hello HTTP/1.1\r\nHost: t\r\nConnection: close\r\n\r\n"
+      drain sock
+
 main : IO ()
 main = do
+  r2 <- runTaskWith 3 (race (serve {limits = { maxConnections := 1 } limits} 18762 handler) (do
+          a <- blocking (overLimit 18762)
+          blocking (usleep 200000)   -- (the server has seen the first one go)
+          b <- blocking (ordinary 18762)
+          pure [ "over the limit: " ++ a, "after the first has gone: " ++ b ]))
+  case r2 of
+    Just (Right lines) => traverse_ putStrLn lines
+    Just (Left stopped) => putStrLn "server ended"
+    Nothing => putStrLn "no result"
   r <- runTaskWith 3 (race (serve {limits} 18761 handler) (do
          a <- blocking (idle 18761)
          b <- blocking (stalled 18761)

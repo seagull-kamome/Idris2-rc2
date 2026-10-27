@@ -47,10 +47,10 @@ HTTP/1.1 200 OK | Content-Type: text/plain; charset=utf-8
 route
 
 HTTP/1.1 200 OK | Content-Type: text/plain | X-Script: env
-POST|/cgi-bin/env.sh|/extra/path|a=1&b=2|11|text/x-test|yes|CGI/1.1|localhost:8080||/usr/bin:/bin||one, two
+POST|/cgi-bin/env.sh|/extra/path|a=1&b=2|11|text/x-test|yes|CGI/1.1|localhost:8080||/usr/bin:/bin||one, two|127.0.0.1
 hello world
 HTTP/1.1 200 OK | Content-Type: text/plain | X-Script: env
-GET|/cgi-bin/env.sh|||0|||CGI/1.1|localhost:8080||/usr/bin:/bin||
+GET|/cgi-bin/env.sh|||0|||CGI/1.1|localhost:8080||/usr/bin:/bin|||127.0.0.1
 
 HTTP/1.1 404 Not Found | Content-Type: text/plain
 nope
@@ -88,7 +88,7 @@ HTTP/1.1 200 OK | Content-Type: text/plain
 cgi
 
 HTTP/1.1 200 OK | Content-Type: text/plain | X-Script: env
-GET|/cgi-bin/env.sh|||0|||CGI/1.1|localhost:8080||/usr/bin:/bin||
+GET|/cgi-bin/env.sh|||0|||CGI/1.1|localhost:8080||/usr/bin:/bin|||127.0.0.1
 
 HTTP/1.1 200 OK | Content-Type: text/plain; charset=utf-8
 hello file
@@ -107,7 +107,7 @@ HTTP/1.1 404 Not Found | Content-Type: text/plain; charset=utf-8
 none
 
 HTTP/1.1 200 OK | Content-Type: text/plain | X-Script: env
-POST|/scripts/env.sh|/extra|z=1|4|||CGI/1.1|localhost:8080||/usr/bin:/bin||
+POST|/scripts/env.sh|/extra|z=1|4|||CGI/1.1|localhost:8080||/usr/bin:/bin|||127.0.0.1
 body
 HTTP/1.1 404 Not Found | Content-Type: text/plain; charset=utf-8
 not found
@@ -122,3 +122,8 @@ holding the output: HTTP/1.1 504 Gateway Timeout | Content-Type: text/plain; cha
 gateway timeout
 
 child that held the output gone: True
+HEAD length is the GET length: True
+HEAD body is empty: True
+ETag has three parts: True
+weak validator matches: True
+* matches: True

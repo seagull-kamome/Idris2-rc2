@@ -198,6 +198,8 @@ handler : Handler
 handler req respond =
     case req.path of
       "/hello.txt" => respond !(text 200 "hello curl\n")
+      "/slow"      => do napMs 1500
+                         respond !(text 200 "late")
       "/stop"      => do stop
                          respond !(text 200 "bye")
       _            => respond !(Response.notFound "nope")
@@ -237,6 +239,51 @@ testFetch base = do
     fetchText curlClient (base ++ "/hello.txt") >>= printLn
     fetchText curlClient (base ++ "/missing.txt") >>= printLn
 
+-- What the request would write to the wire is checked first: a CR or LF in
+-- a header value or method, or a header name that is not a token, is refused
+-- before libcurl is given anything. A control-free value is sent as it is.
+refused : Either FetchError a -> String
+refused (Left (SetupError _)) = "refused"
+refused (Left _) = "other error"
+refused (Right _) = "sent"
+
+testRefused : String -> IO ()
+testRefused base = do
+    section "refused"
+    r1 <- fetch curlClient (get (base ++ "/hello.txt") {headers = [("X-A", "b\r\nX-Evil: 1")]})
+    putStrLn ("CRLF in a value: " ++ refused r1)
+    r2 <- fetch curlClient (get (base ++ "/hello.txt") {headers = [("X-A", "b\nX-Evil: 1")]})
+    putStrLn ("LF in a value: " ++ refused r2)
+    r3 <- fetch curlClient (get (base ++ "/hello.txt") {headers = [("Bad Name", "x")]})
+    putStrLn ("space in a name: " ++ refused r3)
+    r4 <- fetch curlClient (get (base ++ "/hello.txt") {headers = [("X-A:", "x")]})
+    putStrLn ("colon in a name: " ++ refused r4)
+    r5 <- fetch curlClient (request (OTHER "GET / HTTP/1.1\r\nX: y") (base ++ "/hello.txt"))
+    putStrLn ("CRLF in a method: " ++ refused r5)
+    r6 <- fetch curlClient (get (base ++ "/hello.txt") {headers = [("X-A", "tab\tok")]})
+    putStrLn ("a tab in a value: " ++ refused r6)
+    fetchBytes curlClient (get (base ++ "/hello.txt") {headers = [("X-A", "b\r\nX-Evil: 1")]})
+      >>= \r => putStrLn ("fetchBytes, CRLF in a value: " ++ refused r)
+
+-- A transfer that hangs is given up: the server answers /slow after 1.5 s.
+testTimeout : String -> IO ()
+testTimeout base = do
+    section "timeout"
+    let quick = curlClientWith ({ totalTimeoutMs := 300 } defaultCurlOptions)
+    t0 <- fetch quick (get (base ++ "/slow"))
+    putStrLn $ "300 ms limit on a slow answer: " ++ case t0 of
+                 Left (TransportError _) => "timed out"
+                 Left _ => "other error"
+                 Right _ => "answered"
+    let impatient = curlClientWith ({ lowSpeedBytesPerSec := 1000, lowSpeedSeconds := 1 } defaultCurlOptions)
+    t1 <- fetch impatient (get (base ++ "/slow"))
+    putStrLn $ "1 s without data: " ++ case t1 of
+                 Left (TransportError _) => "timed out"
+                 Left _ => "other error"
+                 Right _ => "answered"
+    -- the default options let a prompt answer through
+    fetchText curlClient (base ++ "/hello.txt") >>= printLn
+
 partial
 main : IO ()
 main = do
@@ -258,6 +305,8 @@ main = do
     waitServer base 100
     testHttp base
     testFetch base
+    testRefused base
+    testTimeout base
     section "stop"
     fetchText curlClient (base ++ "/stop") >>= printLn
     join srv

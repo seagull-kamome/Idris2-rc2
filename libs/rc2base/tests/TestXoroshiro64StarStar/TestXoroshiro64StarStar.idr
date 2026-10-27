@@ -22,6 +22,14 @@ printSeq (S k) g = do
 
 main : IO ()
 main = do
+  -- The global generator, before any setSystemSeed, starts from the fixed
+  -- default state (seed 1): not the all-zero state, which would yield 0 forever.
+  Just g1 <- newIOGen 1
+    | Nothing => putStrLn "newIOGen: allocation failed"
+  d1 <- next g1
+  d1' <- nextIO
+  putStrLn $ "default global generator is seed 1: " ++ show (d1 == d1' && d1 /= 0)
+
   -- Per-instance generator.
   Just g <- newIOGen 42
     | Nothing => putStrLn "newIOGen: allocation failed"
@@ -39,13 +47,18 @@ main = do
   nextIO >>= printLn
   nextIO >>= printLn
 
-  -- newSeeded is entropy-seeded (clock + pid) and therefore
-  -- non-deterministic -- only checked for "doesn't crash", not compared
-  -- against a fixed value.
+  -- newSeeded is seeded from the kernel (getrandom) and therefore
+  -- non-deterministic -- not compared against a fixed value; two generators
+  -- made one after the other must not give the same stream (they would if
+  -- the seed were a clock reading shared by processes started together).
   Just eg <- newSeeded
     | Nothing => putStrLn "newSeeded: allocation failed"
-  _ <- next eg
+  Just eg2 <- newSeeded
+    | Nothing => putStrLn "newSeeded: allocation failed"
+  xs <- traverse (\_ => next eg) (the (List Nat) [1 .. 4])
+  ys <- traverse (\_ => next eg2) (the (List Nat) [1 .. 4])
   putStrLn "newSeeded: ok"
+  putStrLn $ "two newSeeded streams differ: " ++ show (xs /= ys)
 
   -- jump/longJump/jumpN cross-checked against jumpCE's own documented
   -- equivalences (prng.di.unimi.it's reference comment: "jump_ce(1, 32)

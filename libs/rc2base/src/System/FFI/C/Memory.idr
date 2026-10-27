@@ -1,5 +1,7 @@
 module System.FFI.C.Memory
 
+import Data.So
+import Data.String.RC2
 import Decidable.Equality
 import System.FFI.C.Null
 import System.Posix.Errno
@@ -8,6 +10,10 @@ import System.Posix.Errno
 -------------------------------------------------------------------------------
 --
 
+||| `Right` for a non-NULL pointer, else the `errno` of the call that gave NULL.
+||| Only for calls where NULL means failure and sets `errno`: `malloc 0` and
+||| `calloc 0 n` may return NULL without failing, which is why `malloc` and
+||| `calloc` below take a size that is proved not to be 0.
 public export
 fromAnyPtr : AnyPtr -> IO (Either Errno NonNullAnyPtr)
 fromAnyPtr ptr with (decEq (isNullAnyPtr ptr) False)
@@ -33,15 +39,24 @@ Cast (NonNullPtr a) NonNullAnyPtr where
 %inline %foreign "CExpr:malloc($1),libc,stdlib.h"
 prim__malloc : Bits64 -> PrimIO AnyPtr
 
-%inline public export malloc : HasIO io => (size : Bits64) -> io (Either Errno NonNullAnyPtr)
+||| Allocate `size` bytes; release them with `free`. `size` is proved not to be 0
+||| (`malloc 0` may return NULL as a success, which cannot be told from failure);
+||| for a literal the proof is found by evaluation.
+%inline public export
+malloc : HasIO io => (size : Bits64) -> {auto 0 nonZero : So (size /= 0)}
+      -> io (Either Errno NonNullAnyPtr)
 malloc size = liftIO $ (primIO (prim__malloc size) >>= fromAnyPtr)
 
 
 %inline %foreign "CExpr:calloc($1, $2),libc,stdlib.h"
 prim__calloc : Bits64 -> Bits64 -> PrimIO AnyPtr
 
+||| Allocate `count * size` zeroed bytes; release them with `free`. Neither is
+||| proved to be 0, for the reason given at `malloc`.
 %inline public export
-calloc : HasIO io => (count : Bits64) -> (size : Bits64) -> io (Either Errno NonNullAnyPtr)
+calloc : HasIO io => (count : Bits64) -> (size : Bits64)
+      -> {auto 0 countNonZero : So (count /= 0)} -> {auto 0 sizeNonZero : So (size /= 0)}
+      -> io (Either Errno NonNullAnyPtr)
 calloc count size = liftIO $ (primIO (prim__calloc count size) >>= fromAnyPtr)
 
 
@@ -59,8 +74,8 @@ free ptr = liftIO $ primIO $ prim__free ptr
 -- <memory.h> (which some systems no longer ship); these bindings include
 -- <string.h>, which every target has. All `char *`/`void *` parameters
 -- are `AnyPtr` (`cast` converts a `Ptr a`; take `.ptr` of a `NonNullAnyPtr`);
--- `strdupString` is the one place an Idris `String` is accepted, since
--- the FFI marshals it to a temporary NUL-terminated `char *`. Sizes are
+-- `strdupString` is the one place an Idris `String` is accepted: it copies
+-- the whole string, a NUL inside it included. Sizes are
 -- byte counts (`size_t`, 64-bit on the hosts rc2 targets).
 
 %inline %foreign "C:memcpy,libc,string.h"
@@ -221,14 +236,23 @@ strdup : AnyPtr -> IO (Either Errno NonNullAnyPtr)
 strdup ptr = primIO (prim__strdup ptr) >>= fromAnyPtr
 
 
-%inline %foreign "C:strdup,libc,string.h"
-prim__strdupString : String -> PrimIO AnyPtr
+%inline %foreign "C:memcpy,libc,string.h"
+prim__memcpyFromString : AnyPtr -> String -> Bits64 -> PrimIO AnyPtr
 
-||| `strdup` for an Idris `String`: the FFI passes a temporary
-||| NUL-terminated copy, and the result is a fresh allocation to `free`.
-%inline public export
+||| `strdup` for an Idris `String`: a fresh allocation to `free`. The bytes up
+||| to the terminating NUL are copied by length, so a NUL inside the `String`
+||| is kept (`strdup` itself would stop there).
+public export
 strdupString : String -> IO (Either Errno NonNullAnyPtr)
-strdupString str = primIO (prim__strdupString str) >>= fromAnyPtr
+strdupString str =
+  let size = cast {to = Bits64} (byteLength str) + 1 in
+  case choose (size /= 0) of
+    Left _ => do
+      Right p <- malloc size
+        | Left err => pure (Left err)
+      _ <- primIO (prim__memcpyFromString p.ptr str size)
+      pure (Right p)
+    Right _ => pure (Left ENOMEM)
 
 -------------------------------------------------------------------------------
 --

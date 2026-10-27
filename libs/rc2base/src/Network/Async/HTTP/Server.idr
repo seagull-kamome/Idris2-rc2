@@ -15,6 +15,7 @@ import public Network.HTTP.Message
 import Control.Task
 import Control.Task.Scheduler
 import Data.Buffer
+import Data.IORef
 import Data.String
 import Data.Either
 import Network.Async
@@ -50,12 +51,17 @@ record Limits where
   ||| How long a response may take to be sent, in milliseconds: after that the
   ||| connection is closed.
   writeTimeoutMs : Nat
+  ||| How many connections are served at once (0: no limit). One more is
+  ||| answered with 503 and closed. Each connection may hold up to
+  ||| `maxRequestBytes`, so without a limit enough slow clients make the server
+  ||| hold that much each (or use up its descriptors).
+  maxConnections : Nat
 
 ||| 64 KiB for the head, 8 MiB for the request; 60 s idle, 30 s for a request to
-||| arrive and 30 s for a response to go out.
+||| arrive and 30 s for a response to go out; 1024 connections at once.
 export
 defaultLimits : Limits
-defaultLimits = MkLimits 65536 8388608 60000 30000 30000
+defaultLimits = MkLimits 65536 8388608 60000 30000 30000 1024
 
 -- Bytes asked of one `recv`.
 chunk : Int
@@ -66,7 +72,7 @@ chunk = 65536
 encode : (headOnly : Bool) -> Response -> IO Buffer
 encode headOnly resp = do
   let bodyLen = byteLength resp.body
-  let head = responseHead resp
+  let head = responseHeadFor headOnly resp
   let headLen = stringByteLength head
   let sent = if hasBody resp.status && not headOnly then bodyLen else 0
   out <- newBuf (headLen + sent)
@@ -206,7 +212,7 @@ connection limits handler conn = do
     serveRequest buf len head = do
       let reqEnd = head.bodyStart + head.size
       body <- liftIO (slice buf head.bodyStart head.size)
-      resp <- handler (MkRequest head.method head.path head.headers body)
+      resp <- handler (MkRequest head.method head.path head.headers body conn.peer)
       -- HTTP/1.0 ends the connection unless the request asked to keep it
       let closing = connectionClose head.headers || closes resp
                     || (head.http10 && not (connectionKeepAlive head.headers))
@@ -234,15 +240,36 @@ transient e = elem e [ECONNABORTED, EPROTO, ENETDOWN, ENOPROTOOPT, EHOSTDOWN, EN
 export
 serveOn : {default defaultLimits limits : Limits} -> Sock -> Handler -> Task (Either Errno ())
 serveOn {limits} listener handler = do
-  r <- accept listener
-  case r of
-    Right conn => spawnOwning (close conn) (withSock conn (connection limits handler conn)) *> again
-    Left e => if exhausted e then sleepFor 10 *> again
-              else if transient e then again
-              else pure (Left e)
+    active <- onReactor (newIORef (the Nat 0))
+    loop active
   where
-    again : Task (Either Errno ())
-    again = serveOn {limits} listener handler
+    -- Answer a connection over the limit, and let it go.
+    turnAway : Sock -> Task ()
+    turnAway conn = do
+      resp <- liftIO (text {headers = [("Connection", "close")]} 503 "service unavailable\n")
+      out <- liftIO (encode False resp)
+      deadline <- (\t => t + 1000) <$> now
+      ignore (sendAllUntil deadline conn out 0 (byteLength out))
+
+    loop : IORef Nat -> Task (Either Errno ())
+    loop active = do
+      r <- accept listener
+      case r of
+        Right conn => do
+          n <- onReactor (readIORef active)
+          if limits.maxConnections > 0 && n >= limits.maxConnections
+            then spawnOwning (close conn) (withSock conn (turnAway conn)) *> loop active
+            else do
+              onReactor (modifyIORef active S)
+              -- (counted down once: by the task when it ends, or by the release if
+              -- it is given up before it starts)
+              let leave = modifyIORef active (`minus` 1)
+              spawnOwning (close conn *> leave)
+                          (finally (\_ => leave) (withSock conn (connection limits handler conn)))
+              loop active
+        Left e => if exhausted e then sleepFor 10 *> loop active
+                  else if transient e then loop active
+                  else pure (Left e)
 
 ||| Listen on `port` (loopback by default) and serve until given up. The result
 ||| is the `Errno` that stopped it.

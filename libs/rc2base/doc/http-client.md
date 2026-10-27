@@ -50,8 +50,8 @@ string's UTF-8 byte length rather than `CURL_ZERO_TERMINATED`.
 **One client interface.** `Network.HTTP.Client` defines
 `HTTPClient h` (`fetch`, `fetchBytes`) over a client *value* `h`, and
 `Network.HTTP.Client.Curl` provides the libcurl one (`curlClient`, a
-stateless `CurlClient`; each request initialises libcurl and its own
-easy handle). A transfer failure is `TransportError String`, which
+`CurlClient` that holds only its `CurlOptions`; each request makes its own
+easy handle, and libcurl itself is initialised once per process). A transfer failure is `TransportError String`, which
 carries the implementation's own message (for libcurl, the `CURLcode`
 and its text); a caller that needs the `CURLcode` itself uses
 `Curl.Raw`. A test can pass its own `HTTPClient` instead.
@@ -63,9 +63,24 @@ and its text); a caller that needs the `CURLcode` itself uses
 transfer failure reaches the caller as `TransportError String`. The
 token functions (`refresh`, `accessToken`, `login`, `geminiOAuth`) are
 `partial` because their internals are only `covering`, and so is `chat`.
-`HttpError` comes from `fetchText` only. `curl_global_init` is not
-thread-safe and each request calls it: do not run requests from several
-threads at once.
+`HttpError` comes from `fetchText` only.
+
+**What is refused, and the time limits.** libcurl writes a custom header and
+the request method to the wire as they are, so `Curl` checks the request
+first: a header name that is not an HTTP token, a control character (other
+than HTAB) in a header value, or a method that is not a token gives
+`SetupError` and nothing is sent (a CR/LF in a value would otherwise end the
+header and start another one). `Network.Async.HTTP.Proxy` refuses the same.
+`curlClient` uses `defaultCurlOptions`: 30 s to connect, no limit on the
+whole transfer, a transfer slower than 1 byte per second for 60 s is aborted
+(it stops a hung transfer without limiting a long download that makes
+progress), at most 10 redirects. `curlClientWith` takes other
+`CurlOptions` (`totalTimeoutMs`, `lowSpeedBytesPerSec`/`lowSpeedSeconds`, ...).
+`curl_global_init` is called once per process (`curlGlobalInitOnce`, under
+`pthread_once`, in rc2base's own support library) and never cleaned up, since
+neither is safe to run beside a transfer in another thread; requests may be
+made from several threads. The body is a `String` passed as a C string, so a
+NUL in it ends it early.
 
 **One OpenAI-compatible client.** Claude, Gemini and llama.cpp all
 serve `POST /chat/completions` with `Authorization: Bearer`. An

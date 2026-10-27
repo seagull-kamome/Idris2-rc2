@@ -6,7 +6,13 @@ Barrier released all 4 parties: True
 Channel got 3 values summing to 60: True
 channelGetNonBlocking on empty channel: Nothing
 channelGetWithTimeout on empty channel: Nothing
+a timed get waits out its time: True
+channelGetWithTimeout gets a value that arrives while it waits: Just 7
 conditionWaitTimeout returned without deadlocking
 getThreadId returned: True
 setThreadData/getThreadData round-trip: True
+junk: 2000
+setThreadData String round-trip: hello12345xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+setThreadData List round-trip: [1, 2, 3]
+thread data survives until exit: [46, 46, 46, 46, 46, 46, 46, 46]
 --- Tests finished ---

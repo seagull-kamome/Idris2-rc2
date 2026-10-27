@@ -35,11 +35,18 @@ module System.Random.Xoroshiro128PlusPlus
 -- their default little-endian mode) because "native" there already means
 -- "little-endian" -- not a coincidence this project relies on elsewhere,
 -- but not a real risk in practice either.
+--
+-- `IOGen` is abstract and only `newIOGen`/`copyIOGen` make one, each with a
+-- 16-byte `Buffer` (a malloc'd block, aligned for a `uint64_t`), so the C side
+-- never sees a buffer of another size. On a big-endian host the seeded words
+-- would be byte-swapped against what the C code reads and the sequences
+-- would differ from the pure `Gen`'s: rc2 targets little-endian hosts only.
 
 import Data.Bits
 import Data.Buffer
 import System
 import System.Clock
+import System.Random.Entropy
 
 %default covering
 
@@ -144,14 +151,20 @@ export
 next : HasIO io => IOGen -> io Bits64
 next (MkIOGen buf) = primIO $ prim__next buf
 
-||| A step's output mapped to a uniform `Double` in `[0,1)`, at the
-||| generator's own native 64-bit precision (`output / 2^64`) -- same
-||| formula as `Xoroshiro64StarStar.nextDouble`, scaled up.
+||| The top 53 bits of an output as a `Double` in `[0,1)`. A `Double` has a
+||| 53-bit significand, so the conversion is exact: `cast v / 2^64` rounds
+||| an output within 2^10 of 2^64 up to 2^64, which would give exactly 1.0.
+export
+toUnit : Bits64 -> Double
+toUnit v = cast (v `shiftR` 11) * 1.1102230246251565e-16   -- 2^-53
+
+||| A step's output mapped to a uniform `Double` in `[0,1)`, using the top
+||| 53 bits of the output (all a `Double` can hold).
 export
 nextDouble : HasIO io => IOGen -> io Double
 nextDouble g = do
   v <- next g
-  pure (cast v / 18446744073709551616.0)
+  pure (toUnit v)
 
 ||| Equivalent to 2^64 calls to `next` -- advances a generator to the
 ||| start of one of 2^64 non-overlapping subsequences, useful for
@@ -189,18 +202,24 @@ export
 jumpN : HasIO io => IOGen -> (n0 : Bits64) -> (n1 : Bits64) -> io ()
 jumpN (MkIOGen buf) n0 n1 = primIO $ prim__jumpN buf n0 n1
 
-||| Convenience constructor: a fresh generator, seeded from the monotonic
-||| clock and the current process id. Not cryptographically secure, just
-||| a reasonable non-fixed default -- use `newIOGen` directly for a
-||| reproducible, caller-chosen seed. `Nothing` only on buffer allocation
-||| failure.
+||| Convenience constructor: a fresh generator, seeded with 64 random bits
+||| from the operating system (`/dev/urandom`, which two processes started
+||| together do not share). Only when that cannot be read (no `/dev`, say) is the seed the monotonic clock mixed with the process id, which
+||| processes started at about the same time can share. The generator is
+||| not cryptographically secure, and 64 bits of seed give 2^64 of its
+||| 2^128 states -- use `newIOGen` directly for a reproducible,
+||| caller-chosen seed. `Nothing` only on buffer allocation failure.
 export
 newSeeded : HasIO io => io (Maybe IOGen)
 newSeeded = do
-  clk <- liftIO (clockTime Monotonic)
-  pid <- getPID
-  let mixed = cast (toNano clk) `xor` cast pid
-  newIOGen mixed
+  r <- entropy64
+  seed <- case r of
+    Just s => pure s
+    Nothing => do
+      clk <- liftIO (clockTime Monotonic)
+      pid <- getPID
+      pure (cast (toNano clk) `xor` cast pid)
+  newIOGen seed
 
 -- ----------------------------------------------------------------------------
 -- A separate, single global generator held entirely in C-side static
@@ -268,17 +287,23 @@ prim__pureS0 : Bits64 -> Bits64 -> Bits64
 %foreign "C:idris2rc2_System_Random128_pure_s1,libidris2rc2base,idris2rc2_rc2base_xoroshiro128plusplus.h"
 prim__pureS1 : Bits64 -> Bits64 -> Bits64
 
+-- A jump gives two words and runs once: each of these returns the new s[0] and
+-- leaves the new s[1] for `prim__pureJumpHi`, on the same thread. They are
+-- PrimIO so that `jumpWith` can sequence the two in one IO action.
 %foreign "C:idris2rc2_System_Random128_pure_jump,libidris2rc2base,idris2rc2_rc2base_xoroshiro128plusplus.h"
-prim__pureJump : Bits64 -> Bits64 -> Int -> Bits64
+prim__pureJump : Bits64 -> Bits64 -> PrimIO Bits64
 
 %foreign "C:idris2rc2_System_Random128_pure_long_jump,libidris2rc2base,idris2rc2_rc2base_xoroshiro128plusplus.h"
-prim__pureLongJump : Bits64 -> Bits64 -> Int -> Bits64
+prim__pureLongJump : Bits64 -> Bits64 -> PrimIO Bits64
 
 %foreign "C:idris2rc2_System_Random128_pure_jump_ce,libidris2rc2base,idris2rc2_rc2base_xoroshiro128plusplus.h"
-prim__pureJumpCE : Bits64 -> Bits64 -> Bits64 -> Bits32 -> Int -> Bits64
+prim__pureJumpCE : Bits64 -> Bits64 -> Bits64 -> Bits32 -> PrimIO Bits64
 
 %foreign "C:idris2rc2_System_Random128_pure_jump_n,libidris2rc2base,idris2rc2_rc2base_xoroshiro128plusplus.h"
-prim__pureJumpN : Bits64 -> Bits64 -> Bits64 -> Bits64 -> Int -> Bits64
+prim__pureJumpN : Bits64 -> Bits64 -> Bits64 -> Bits64 -> PrimIO Bits64
+
+%foreign "C:idris2rc2_System_Random128_pure_jump_hi,libidris2rc2base,idris2rc2_rc2base_xoroshiro128plusplus.h"
+prim__pureJumpHi : PrimIO Bits64
 
 fromWords : Bits64 -> Bits64 -> Gen
 fromWords s0 s1 = MkGen (cast (s0 `shiftR` 32)) (cast s0) (cast (s1 `shiftR` 32)) (cast s1)
@@ -299,16 +324,21 @@ genNext g =
   let (s0, s1) = toWords g
   in (prim__pureOut s0 s1, fromWords (prim__pureS0 s0 s1) (prim__pureS1 s0 s1))
 
-||| A step's output as a uniform `Double` in `[0,1)` (`output / 2^64`),
+||| A step's output as a uniform `Double` in `[0,1)` (its top 53 bits),
 ||| as `nextDouble` does.
 export
 genNextDouble : Gen -> (Double, Gen)
-genNextDouble g = let (v, g') = genNext g in (cast v / 18446744073709551616.0, g')
+genNextDouble g = let (v, g') = genNext g in (toUnit v, g')
 
-jumpWith : (Bits64 -> Bits64 -> Int -> Bits64) -> Gen -> Gen
-jumpWith f g =
+-- The jump itself (128 steps, and the jump polynomial for `jumpCE`/`jumpN`)
+-- runs once; the second word of the new state is read right after it, in the
+-- same IO action, from the thread-local the C side left it in.
+jumpWith : (Bits64 -> Bits64 -> PrimIO Bits64) -> Gen -> Gen
+jumpWith f g = unsafePerformIO $ do
   let (s0, s1) = toWords g
-  in fromWords (f s0 s1 0) (f s0 s1 1)
+  lo <- primIO (f s0 s1)
+  hi <- primIO prim__pureJumpHi
+  pure (fromWords lo hi)
 
 ||| `jump` on a value: 2^64 steps ahead.
 export

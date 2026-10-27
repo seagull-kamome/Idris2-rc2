@@ -7,11 +7,13 @@
 
 // ///////////////////////////////////////////////////////////////////////////
 
-idris2rc2_TextBuffer* idris2rc2_TextBuffer_mkEmpty(int len) {
+idris2rc2_TextBuffer* idris2rc2_TextBuffer_mkEmpty(int64_t len) {
+    // `len` is an `int` in the buffer header, so longer text cannot be held.
+    IDRIS2RC2_VERIFY(len >= 0 && len <= INT32_MAX, "TextBuffer: too long");
     idris2rc2_TextBuffer* buffer = malloc(
 		    sizeof(idris2rc2_TextBuffer) + sizeof(uint32_t) * len);
     IDRIS2RC2_VERIFY(buffer, "allocation failed");
-    buffer->len = len;
+    buffer->len = (int)len;
     return buffer;
 }
 
@@ -19,7 +21,7 @@ idris2rc2_TextBuffer* idris2rc2_TextBuffer_mkEmpty(int len) {
 idris2rc2_TextBuffer* idris2rc2_String_to_TextBuffer(const char* utf8_str, int64_t byteLenI) {
     size_t byteLen = byteLenI < 0 ? 0u : (size_t)byteLenI;
     size_t len = idris2rc2_utf8Length(utf8_str, byteLen);
-    idris2rc2_TextBuffer* buffer = idris2rc2_TextBuffer_mkEmpty((int)len);
+    idris2rc2_TextBuffer* buffer = idris2rc2_TextBuffer_mkEmpty((int64_t)len);
     size_t offset = 0;
     for (size_t i = 0; i < len; i++) {
         size_t consumed;
@@ -35,7 +37,7 @@ idris2rc2_TextBuffer* idris2rc2_RawUtf8_to_TextBuffer(const char* utf8_str) {
 
 
 idris2rc2_TextBuffer* idris2rc2_TextBuffer_append(const idris2rc2_TextBuffer* a, const idris2rc2_TextBuffer* b) {
-    idris2rc2_TextBuffer* r = idris2rc2_TextBuffer_mkEmpty(a->len + b->len);
+    idris2rc2_TextBuffer* r = idris2rc2_TextBuffer_mkEmpty((int64_t)a->len + (int64_t)b->len);
     memcpy(r->buf, a->buf, sizeof(uint32_t) * (size_t)a->len);
     memcpy(r->buf + a->len, b->buf, sizeof(uint32_t) * (size_t)b->len);
     return r;
