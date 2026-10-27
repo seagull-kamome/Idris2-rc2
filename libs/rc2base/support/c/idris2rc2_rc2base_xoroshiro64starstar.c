@@ -208,8 +208,9 @@ void idris2rc2_System_Random_jump_n(void *sv, uint64_t n) {
 /* Pure counterparts for System.Random.Xoroshiro64StarStar's `Gen`: the
    state is passed by value as (s0, s1) and each function returns one
    word of the result, so Idris can declare them without PrimIO and
-   without a Buffer. `which` selects the new s[0] (0) or s[1] (1) of a
-   jump; a jump computes both words, so asking for each costs two runs. */
+   without a Buffer. A jump gives both words of the new state, so it runs
+   once and returns them packed in one 64-bit value, s[0] in the low half
+   and s[1] in the high half. */
 
 uint32_t idris2rc2_System_Random_pure_out(uint32_t s0, uint32_t s1) {
 	(void)s1;
@@ -225,26 +226,30 @@ uint32_t idris2rc2_System_Random_pure_s1(uint32_t s0, uint32_t s1) {
 	return rotl(s1 ^ s0, 13);
 }
 
-uint32_t idris2rc2_System_Random_pure_jump(uint32_t s0, uint32_t s1, int which) {
+static uint64_t pack_state(const uint32_t s[2]) {
+	return ((uint64_t)s[1] << 32) | s[0];
+}
+
+uint64_t idris2rc2_System_Random_pure_jump(uint32_t s0, uint32_t s1) {
 	uint32_t s[2] = { s0, s1 };
 	idris2rc2_System_Random_jump(s);
-	return s[which];
+	return pack_state(s);
 }
 
-uint32_t idris2rc2_System_Random_pure_long_jump(uint32_t s0, uint32_t s1, int which) {
+uint64_t idris2rc2_System_Random_pure_long_jump(uint32_t s0, uint32_t s1) {
 	uint32_t s[2] = { s0, s1 };
 	idris2rc2_System_Random_long_jump(s);
-	return s[which];
+	return pack_state(s);
 }
 
-uint32_t idris2rc2_System_Random_pure_jump_ce(uint32_t s0, uint32_t s1, uint64_t c, uint32_t e, int which) {
+uint64_t idris2rc2_System_Random_pure_jump_ce(uint32_t s0, uint32_t s1, uint64_t c, uint32_t e) {
 	uint32_t s[2] = { s0, s1 };
 	idris2rc2_System_Random_jump_ce(s, c, e);
-	return s[which];
+	return pack_state(s);
 }
 
-uint32_t idris2rc2_System_Random_pure_jump_n(uint32_t s0, uint32_t s1, uint64_t n, int which) {
+uint64_t idris2rc2_System_Random_pure_jump_n(uint32_t s0, uint32_t s1, uint64_t n) {
 	uint32_t s[2] = { s0, s1 };
 	idris2rc2_System_Random_jump_n(s, n);
-	return s[which];
+	return pack_state(s);
 }
