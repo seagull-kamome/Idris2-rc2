@@ -542,7 +542,22 @@ Idris `Integer` in this runtime is handed to (arguments) or freshly
 allocated for (an implicit, leading out-parameter for a return value,
 exactly matching GMP's own `rop`-always-first convention -- `mpz_add
 (rop, op1, op2)`, etc.) the real GMP symbol directly, no wrapper of its
-own needed anywhere in this module.
+own needed -- except for the functions below that GMP kills the process on.
+
+GMP raises `SIGFPE` on a zero divisor, a zero modulus and the square root
+of a negative number, so the bindings that would reach one take a proof
+instead of passing it on: `tdivQ`/`tdivR`/`fdivQ`/`fdivR`/`cdivQ`/`cdivR`/
+`mod`/`divexact` an `{auto 0 nonZero : So (b /= 0)}` for the divisor,
+`powm`/`powmUi` one for the modulus (and `powm` one that the exponent is
+not negative, which would need an inverse), `sqrt` one that the argument
+is not negative, and `sizeinbase` one that the base is 2-62 (GMP does not
+check it). The proof is found by evaluation for a literal (`GMP.tdivQ 10 0`
+does not compile) and made with `Data.So.choose` for a value known only at
+run time, the same way `System.FFI.C.Memory.malloc` proves its size is not
+0. (Upstream's `div`/`mod` on `Integer` check `y == 0` at run time and stop
+with `Unhandled input`; a GMP call has no such check.) These are thin
+`%inline` wrappers over private `%foreign` declarations; the erased proof
+costs nothing at run time.
 
 Two groups plus three in-place mutators, `mpz_` dropped and snake_case turned
 into camelCase mechanically, nothing renamed for style: **arithmetic/bitwise**
