@@ -500,7 +500,9 @@ pollFd s = epollDescriptor s.master
 ||| until something happens) for the sources and the timers, and run what they
 ||| woke. `False` when nothing is left: no ready step, no timer, no operation
 ||| pending. When steps are still ready at the end (a task that keeps
-||| yielding) `pollFd` is made readable again.
+||| yielding) `pollFd` is made readable again. `False` also when `epollWait`
+||| fails with anything but `EINTR` (the descriptor is unusable, and trying again
+||| would only spin).
 export
 turn : Scheduler -> (timeoutMs : Int32) -> IO Bool
 turn s timeoutMs = do
@@ -516,7 +518,7 @@ turn s timeoutMs = do
        -- a virtual clock does not wait for a timer: look, and move it if nothing else happens
        let wait = if not (Queue.isEmpty q') || (isJust virt && not (null timers)) then 0 else timeoutMs
        Right evs <- epollWait s.master wait
-         | Left _ => pure True
+         | Left e => pure (e == EINTR)
        srcs <- readIORef s.sources
        traverse_ (\ev => maybe (pure ()) (.drain) (lookup ev.fd srcs)) evs
        when (isJust virt && null evs && Queue.isEmpty q') $

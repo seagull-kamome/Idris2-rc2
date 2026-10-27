@@ -144,6 +144,17 @@ testThreadIdAndData = do
   xs <- getThreadData (List Int)
   putStrLn $ "setThreadData List round-trip: " ++ show xs
 
+-- Threads that exit with a value in their slot: the slot's destructor drops it
+-- (under the address sanitizer, a leak or a double drop shows up here).
+testThreadDataAtExit : IO ()
+testThreadDataAtExit = do
+  handles <- for (the (List Int) [1 .. 8]) $ \i => forkJoin {a = String} $ do
+    setThreadData {a = String} ("thread" ++ show i ++ pack (replicate 40 'y'))
+    setThreadData {a = String} ("again" ++ show i ++ pack (replicate 40 'z'))
+    getThreadData String
+  rs <- for handles join
+  putStrLn $ "thread data survives until exit: " ++ show (map (length . unpack) rs)
+
 main : IO ()
 main = do
   putStrLn "--- Testing System.Concurrency.RC2 ---"
@@ -167,5 +178,6 @@ main = do
   testChannel
   testConditionWaitTimeout
   testThreadIdAndData
+  testThreadDataAtExit
 
   putStrLn "--- Tests finished ---"
