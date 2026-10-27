@@ -118,6 +118,11 @@ prim__curlGlobalInit : Int -> PrimIO Int
 %foreign "C:curl_global_cleanup,libcurl,curl/curl.h"
 prim__curlGlobalCleanup : PrimIO ()
 
+-- idris2rc2_curl_global_init_once is in rc2base's own support library (no
+-- curl.h needed to build it; only a program that reaches it links libcurl).
+%foreign "C:idris2rc2_curl_global_init_once,libidris2rc2base,idris2rc2_rc2base_curl_util.h"
+prim__curlGlobalInitOnce : PrimIO Int
+
 %foreign "C:curl_easy_init,libcurl,curl/curl.h"
 prim__curlEasyInit : PrimIO AnyPtr
 
@@ -295,6 +300,14 @@ curlGlobalInit = MkCURLcode <$> primIO (prim__curlGlobalInit curlGlobalAll)
 export
 curlGlobalCleanup : HasIO io => io ()
 curlGlobalCleanup = primIO prim__curlGlobalCleanup
+
+||| `curl_global_init` at most once per process, safe to call from several
+||| threads (`curl_global_init` itself is not thread-safe before libcurl 7.84).
+||| There is no matching cleanup: `curl_global_cleanup` while another thread
+||| is in a transfer is unsafe too, and the process end releases everything.
+export
+curlGlobalInitOnce : HasIO io => io CURLcode
+curlGlobalInitOnce = MkCURLcode <$> primIO prim__curlGlobalInitOnce
 
 ------------------------------------------------------------------------
 -- Easy handle lifecycle

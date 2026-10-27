@@ -101,6 +101,33 @@ public export
 curlopt_CUSTOMREQUEST : CURLoption
 curlopt_CUSTOMREQUEST = MkCURLoption 10036 -- CURLOPTTYPE_OBJECTPOINT + 36
 
+||| The most redirects `curlopt_FOLLOWLOCATION` follows (`-1`: no limit).
+public export
+curlopt_MAXREDIRS : CURLoption
+curlopt_MAXREDIRS = MkCURLoption 68 -- CURLOPTTYPE_LONG + 68
+
+||| The time the whole transfer may take, in milliseconds (`0`: no limit).
+public export
+curlopt_TIMEOUT_MS : CURLoption
+curlopt_TIMEOUT_MS = MkCURLoption 155 -- CURLOPTTYPE_LONG + 155
+
+||| The time the connection may take to be made, in milliseconds.
+public export
+curlopt_CONNECTTIMEOUT_MS : CURLoption
+curlopt_CONNECTTIMEOUT_MS = MkCURLoption 156 -- CURLOPTTYPE_LONG + 156
+
+||| The transfer is aborted if it is slower than this many bytes per second
+||| for `curlopt_LOW_SPEED_TIME` seconds. It stops a transfer that hangs
+||| without limiting the length of one that makes progress.
+public export
+curlopt_LOW_SPEED_LIMIT : CURLoption
+curlopt_LOW_SPEED_LIMIT = MkCURLoption 19 -- CURLOPTTYPE_LONG + 19
+
+||| See `curlopt_LOW_SPEED_LIMIT`.
+public export
+curlopt_LOW_SPEED_TIME : CURLoption
+curlopt_LOW_SPEED_TIME = MkCURLoption 20 -- CURLOPTTYPE_LONG + 20
+
 ||| The request body, copied immediately (unlike the older
 ||| `CURLOPT_POSTFIELDS`, which just stores the pointer -- libcurl
 ||| would then need the caller's own buffer to outlive the transfer).
