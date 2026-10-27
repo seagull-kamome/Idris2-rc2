@@ -9,7 +9,11 @@
 module Main
 
 import Data.List
+import Data.Seq.Unsized
 import Data.String
+import Text.PrettyPrint.Prettyprinter.Doc
+import Text.PrettyPrint.Prettyprinter.Util
+import TermUI.Markdown
 import TermUI.Frame
 import TermUI.Len
 import TermUI.Markdown.Theme
@@ -17,6 +21,8 @@ import TermUI.Node
 import TermUI.Style
 import TermUI.Widget.MarkdownView as V
 import TermUI.Widget.Scrolling as Sc
+import TermUI.Widget.StyledText
+import TermUI.Widget.StyledText.Doc
 
 %default covering
 
@@ -93,3 +99,28 @@ main = do
   let b1 = run [V.Scroll Sc.ToStart, V.Scroll (Sc.LineDown 20), V.NextUnit] big
   draw "scrolled down, the unit picked" b1
   draw "folded: the window stays at the mark" (V.update V.Toggle b1)
+  -- paragraphs that are given: prefixes, styles and wrapping stay as they are
+  let g0 = V.addStyled [MkPara [spanOf (withAttr Bold plain) "you  "] [spanOf plain "     "] WrapWords [spanOf plain "hello there, how are you today"]] (V.empty defaultTheme 8 24)
+  draw "a given paragraph with a hanging indent" g0
+  let g1 = V.extendStyled [spanOf plain " fine"] g0
+  draw "spans added to its last paragraph" g1
+  let g2 = V.addStyled [MkPara [] [] Truncate [spanOf plain "a truncated line that is long"]] g1
+  draw "another given segment" g2
+  draw "extendSegment after a given segment is a new segment" (V.extendSegment "text" g2)
+  -- paragraphs made for the width: a Doc is laid out again when the width changes
+  let doc = reflow "alpha beta gamma delta epsilon zeta eta theta iota kappa" {ann = ()}
+  let d0 = V.addDoc (\w => fromDoc (const plain) w doc) (V.empty defaultTheme 6 22)
+  draw "a Doc segment at 22" d0
+  draw "the Doc laid out again at 14" (V.resize 6 14 d0)
+  -- a theme in which given paragraphs fold
+  let th2 = { fold := (\k => case k of
+                               KStyled => Open
+                               _ => NoFold) } defaultTheme
+  let f0 = V.addStyled [paragraph [spanOf plain "first line of a given text"], paragraph [spanOf plain "second"]] (V.empty th2 8 30)
+  draw "given paragraphs that can be folded" f0
+  draw "folded into a line" (run [V.NextUnit, V.Toggle] f0)
+  -- laying out only the segment that changed gives the lines of laying out all
+  let three = V.addSegment "# c\n\nlast" (V.addSegment "# b\n\n```\nx\ny\n```\n\nmore" (V.addSegment "# a\n\ntext" (V.empty defaultTheme 10 20)))
+  let edited = run [V.NextUnit, V.Toggle, V.NextUnit, V.NextUnit, V.Toggle, V.PrevUnit] three
+  draw "three segments, folded and moved about" edited
+  putStrLn (show (map (map spanText) (toList edited.lines) == map (map spanText) (toList (V.resize 10 20 (V.resize 10 21 edited)).lines)))

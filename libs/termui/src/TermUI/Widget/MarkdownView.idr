@@ -44,14 +44,17 @@ data ViewMsg
   | UnfoldAll
   | Click Len Len
 
--- A text, its blocks, which of them are folded and for how many of them the
--- theme has said whether they start folded.
+-- A segment: its blocks (read from `text` if `isText`, else given), which of
+-- them are folded, for how many of them the theme has said whether they start
+-- folded, and how many lines it takes.
 record Seg where
   constructor MkSeg
+  isText : Bool
   text : String
   blocks : List Block
   folded : List Nat
   known : Nat
+  nLines : Nat
 
 public export
 record Model where
@@ -62,7 +65,6 @@ record Model where
   segs : Seq Seg
   lines : Seq (List Span)
   owners : Seq (Maybe (Nat, Nat))   -- the unit whose mark is on the line: the segment and the block
-  lastStart : Nat                   -- the first line of the last segment
   top : Len
   follow : Bool
   cursor : Maybe (Nat, Nat)
@@ -86,7 +88,7 @@ startsFolded Closed = True
 startsFolded _ = False
 
 allKinds : List Kind
-allKinds = [KHeading 1, KHeading 2, KHeading 3, KHeading 4, KHeading 5, KHeading 6, KParagraph, KCode, KQuote, KBullets, KNumbered, KRule]
+allKinds = [KHeading 1, KHeading 2, KHeading 3, KHeading 4, KHeading 5, KHeading 6, KParagraph, KCode, KQuote, KBullets, KNumbered, KRule, KStyled]
 
 -- The gutter is as wide as the marks, and absent if nothing folds.
 gutter : MdTheme -> Len
@@ -105,7 +107,22 @@ settleDefaults th seg =
   in { folded := filter (< n) seg.folded ++ closed, known := n } seg
 
 newSeg : MdTheme -> String -> Seg
-newSeg th text = settleDefaults th (MkSeg text (parse text) [] 0)
+newSeg th text = settleDefaults th (MkSeg True text (parse text) [] 0 0)
+
+setLines : Nat -> Seg -> Seg
+setLines n seg = { nLines := n } seg
+
+setBlocks : List Block -> Seg -> Seg
+setBlocks bs seg = { blocks := bs } seg
+
+setText : String -> Seg -> Seg
+setText t seg = { text := t, blocks := parse t } seg
+
+moreBody : List Span -> Para -> Para
+moreBody spans p = { body $= (++ spans) } p
+
+givenSeg : MdTheme -> List Block -> Seg
+givenSeg th bs = settleDefaults th (MkSeg False "" bs [] 0 0)
 
 -------------------------------------------------------------------------------
 -- Layout
@@ -160,7 +177,7 @@ layoutSeg th w cursor idx seg = go Nothing (idx > 0) (indexed seg.blocks)
                paras = if isFolded then collapsed th contentW b else renderBlock th 0 contentW b
                mark = markSpan unit isFolded (cursor == Just (idx, i))
                blankG = spanOf plain (blanks gw)
-               ls = concatMap (layoutPara w) (behind [mark] [blankG] paras)
+               ls = concatMap (layoutPara w) (if gw == 0 then paras else behind [mark] [blankG] paras)
                gapLines = the (List (List Span)) (if needGap then replicate th.gap [] else [])
                own = (case ls of
                         [] => []
@@ -187,23 +204,36 @@ settle m =
 -- Every segment laid out again.
 layoutAll : Model -> Model
 layoutAll m =
-  let (ls, os, start, _) = foldl step (Q.empty, Q.empty, 0, 0) (toList m.segs)
-  in { lines := ls, owners := os, lastStart := start } m
+  let (ls, os, segs', _) = foldl step (Q.empty, Q.empty, Q.empty, 0) (toList m.segs)
+  in { lines := ls, owners := os, segs := segs' } m
   where
-    step : (Seq (List Span), Seq (Maybe (Nat, Nat)), Nat, Nat) -> Seg -> (Seq (List Span), Seq (Maybe (Nat, Nat)), Nat, Nat)
-    step (ls, os, _, idx) seg =
+    step : (Seq (List Span), Seq (Maybe (Nat, Nat)), Seq Seg, Nat) -> Seg
+         -> (Seq (List Span), Seq (Maybe (Nat, Nat)), Seq Seg, Nat)
+    step (ls, os, ss, idx) seg =
       let (sl, so) = layoutSeg m.theme (textWidth m.width) m.cursor idx seg
-      in (Q.(++) ls (Q.fromList sl), Q.(++) os (Q.fromList so), Q.length ls, S idx)
+      in (Q.(++) ls (Q.fromList sl), Q.(++) os (Q.fromList so), ss `snoc` setLines (length sl) seg, S idx)
 
--- Only the last segment laid out again.
-layoutLast : Model -> Model
-layoutLast m =
-  case Q.viewr m.segs of
+-- The first line of segment `k`, which is `seg`. The last one is found from the
+-- number of lines of the log; the others by adding up those before it.
+segStart : Nat -> Seg -> Model -> Nat
+segStart k seg m =
+  if S k == Q.length m.segs
+     then Q.length m.lines `minus` seg.nLines
+     else foldl (\a, s => a + s.nLines) 0 (toList (Q.take k m.segs))
+
+-- Only segment `k` laid out again, and the lines after it moved.
+relayout : Nat -> Model -> Model
+relayout k m =
+  case Q.index k m.segs of
     Nothing => m
-    Just (before, seg) =>
-      let (sl, so) = layoutSeg m.theme (textWidth m.width) m.cursor (Q.length before) seg
-      in { lines := Q.(++) (Q.take m.lastStart m.lines) (Q.fromList sl)
-         , owners := Q.(++) (Q.take m.lastStart m.owners) (Q.fromList so) } m
+    Just seg =>
+      let (sl, so) = layoutSeg m.theme (textWidth m.width) m.cursor k seg
+          start = segStart k seg m
+          stop = start + seg.nLines
+          seg' = setLines (length sl) seg
+      in { segs := Q.(++) (Q.take k m.segs) (Q.(++) (Q.singleton seg') (Q.drop (S k) m.segs))
+         , lines := Q.(++) (Q.take start m.lines) (Q.(++) (Q.fromList sl) (Q.drop stop m.lines))
+         , owners := Q.(++) (Q.take start m.owners) (Q.(++) (Q.fromList so) (Q.drop stop m.owners)) } m
 
 -------------------------------------------------------------------------------
 -- The text
@@ -211,32 +241,68 @@ layoutLast m =
 ||| An empty viewer in a window `rows` high and `width` wide.
 export
 empty : MdTheme -> (rows, width : Len) -> Model
-empty th rows width = MkModel th (nonneg rows) (nonneg width) Q.empty Q.empty Q.empty 0 0 True Nothing
+empty th rows width = MkModel th (nonneg rows) (nonneg width) Q.empty Q.empty Q.empty 0 True Nothing
 
-||| Add a segment of text at the end.
-export
-addSegment : String -> Model -> Model
-addSegment text m =
+-- A segment added at the end.
+pushSeg : Seg -> Model -> Model
+pushSeg seg m =
   let idx = Q.length m.segs
-      seg = newSeg m.theme text
       (sl, so) = layoutSeg m.theme (textWidth m.width) m.cursor idx seg
-  in settle ({ segs $= (`snoc` seg)
-             , lastStart := Q.length m.lines
+  in settle ({ segs $= (`snoc` setLines (length sl) seg)
              , lines $= (\ls => Q.(++) ls (Q.fromList sl))
              , owners $= (\os => Q.(++) os (Q.fromList so)) } m)
 
-||| Add text to the end of the last segment, or as a segment of its own if
-||| there is none. Only that segment is read and laid out again.
+||| Add a segment of Markdown text at the end.
+export
+addSegment : String -> Model -> Model
+addSegment text m = pushSeg (newSeg m.theme text) m
+
+||| Add text to the end of the last segment if that is Markdown text, else as
+||| a segment of its own. Only that segment is read and laid out again.
 export
 extendSegment : String -> Model -> Model
 extendSegment "" m = m
 extendSegment more m =
   case Q.viewr m.segs of
-    Nothing => addSegment more m
     Just (before, seg) =>
-      let full = seg.text ++ more
-          seg' = settleDefaults m.theme (MkSeg full (parse full) seg.folded seg.known)
-      in settle (layoutLast ({ segs := before `snoc` seg' } m))
+      if seg.isText
+         then let full = seg.text ++ more
+                  seg' = settleDefaults m.theme (setText full seg)
+              in settle (relayout (Q.length before) ({ segs := before `snoc` seg' } m))
+         else addSegment more m
+    Nothing => addSegment more m
+
+||| Add a segment of paragraphs that are given, with the styles, prefixes and
+||| wrapping they carry, at the end.
+export
+addStyled : StyledText -> Model -> Model
+addStyled [] m = m
+addStyled t m = pushSeg (givenSeg m.theme [Styled t]) m
+
+||| Add a segment of paragraphs made for the width they are shown in (see
+||| `TermUI.Widget.StyledText.Doc.fromDoc`), which are made again when the
+||| window changes its width.
+export
+addDoc : (Len -> StyledText) -> Model -> Model
+addDoc f m = pushSeg (givenSeg m.theme [StyledDoc f]) m
+
+||| Add spans to the end of the last paragraph of the last segment if that is
+||| made of given paragraphs, else as a segment of its own. Only that
+||| paragraph is wrapped again.
+export
+extendStyled : List Span -> Model -> Model
+extendStyled spans m =
+  case Q.viewr m.segs of
+    Just (before, seg) =>
+      (case (seg.isText, reverse seg.blocks) of
+         (False, Styled ps :: others) =>
+           let ps' = case reverse ps of
+                       [] => [paragraph spans]
+                       (p :: more) => reverse (moreBody spans p :: more)
+               seg' = setBlocks (reverse (Styled ps' :: others)) seg
+           in settle (relayout (Q.length before) ({ segs := before `snoc` seg' } m))
+         _ => addStyled [paragraph spans] m)
+    Nothing => addStyled [paragraph spans] m
 
 -------------------------------------------------------------------------------
 -- Folding
@@ -270,8 +336,9 @@ mapFolded f seg = { folded := f seg.folded } seg
 -- Segment `s` with `f` applied to the blocks it has folded.
 withFolded : Nat -> (List Nat -> List Nat) -> Model -> Model
 withFolded s f m =
-  let segs' = Q.fromList (map (\ks => if fst ks == s then mapFolded f (snd ks) else snd ks) (indexed (toList m.segs)))
-  in layoutAll ({ segs := segs' } m)
+  case Q.index s m.segs of
+    Nothing => m
+    Just seg => relayout s ({ segs := Q.(++) (Q.take s m.segs) (Q.(++) (Q.singleton (mapFolded f seg)) (Q.drop (S s) m.segs)) } m)
 
 -- Fold or open a unit, the window keeping the unit at the row it was at.
 toggleUnit : (Nat, Nat) -> Model -> Model
@@ -293,6 +360,12 @@ setAll fold m =
       m' = layoutAll ({ segs := segs' } m)
   in { top := min m'.top (lastTop m'), follow := False } m'
 
+-- The cursor on a unit: only the segments it leaves and enters are laid out again.
+setCursor : Maybe (Nat, Nat) -> Model -> Model
+setCursor c m =
+  let touched = nub (mapMaybe (map fst) [m.cursor, c])
+  in foldl (flip relayout) ({ cursor := c } m) touched
+
 -- The cursor on another unit, the window showing it.
 moveCursor : Bool -> Model -> Model
 moveCursor forward m =
@@ -310,7 +383,7 @@ moveCursor forward m =
   in case chosen of
        Nothing => m
        Just c =>
-         let m' = layoutAll ({ cursor := Just c } m)
+         let m' = setCursor (Just c) m
          in maybe m' (\l => reveal l m') (lineOf c m')
 
 ||| Handle a message.
@@ -327,7 +400,7 @@ update UnfoldAll m = setAll False m
 update (Click row col) m =
   if col >= gutter m.theme || row >= m.rows then m
   else case Q.index (cast (m.top + row)) m.owners of
-         Just (Just u) => toggleUnit u (layoutAll ({ cursor := Just u } m))
+         Just (Just u) => toggleUnit u (setCursor (Just u) m)
          _ => m
 
 ||| The same viewer in a window of another size; it is laid out again if the

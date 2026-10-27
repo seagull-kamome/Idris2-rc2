@@ -24,6 +24,7 @@ data Kind
   | KBullets
   | KNumbered
   | KRule
+  | KStyled              -- paragraphs given by the program
 
 ||| Whether a kind of block can be folded, and how it starts. A heading folds
 ||| its section: the blocks up to the next heading of its level or a higher one.
@@ -95,6 +96,7 @@ defaultTheme = MkTheme
   (\k => case k of
                    KParagraph => NoFold
                    KRule => NoFold
+                   KStyled => NoFold
                    _ => Open)  -- fold
   "[-] "  -- openMark
   "[+] "  -- closedMark

@@ -40,6 +40,8 @@ dumpB d b = map (\l => pack (replicate (2 * d) ' ') ++ l) (go b)
     go (Bullets items) = concatMap (\it => "item -" :: concatMap (dumpB 1) it) items
     go (Numbered n items) = ("numbered from " ++ show n) :: concatMap (\it => "item #" :: concatMap (dumpB 1) it) items
     go Rule = ["rule"]
+    go (Styled _) = ["styled"]
+    go (StyledDoc _) = ["styled doc"]
 
 dump : String -> IO ()
 dump src = do

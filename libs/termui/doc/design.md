@@ -45,7 +45,7 @@ dumped as text (`frameLines`), which is how the tests look at results.
 | `TermUI.Widget.TextArea` | multi-line text editor |
 | `TermUI.Widget.LineEdit` | what the text field and the editor share (characters kept, horizontal scrolling, cell to character) |
 | `TermUI.Widget.Scroll` | read-only scrolling view of lines, with a scroll bar |
-| `TermUI.Widget.LogView` | styled text that grows at the end, in a scrolling window that follows it |
+| `TermUI.Widget.LogView` | styled text that grows at the end, in a scrolling window that follows it (a thin layer over `MarkdownView`) |
 | `TermUI.Widget.Scrolling` | what the scrolling widgets share: the messages, the arithmetic, the keys |
 | `TermUI.Widget.Table` | table that scrolls under a fixed header |
 | `TermUI.Widget.ScrollBar` | the scroll bar |
@@ -353,7 +353,7 @@ is kept as segments (a message of a chat, a page), each read on its own, so
 that fold are the blocks at the top of a segment: a heading folds its section, the
 blocks up to the next heading of its level or a higher one or the end of the segment
 (so the headings in a reply do not end the section of the message's own heading,
-unless they are of its level), and the others fold into a line (`[+] ``` sh  (2 lines)`,
+unless they are of its level), and the others fold into their first paragraph (`[+] ``` sh  (2 lines)` for code,
 `[+] - first ...`). A gutter on the left, as wide as the marks, holds `[-]` or `[+]`
 on the first row of each unit; with a theme where nothing folds there is no gutter.
 The state of a unit is kept by segment and block number, so it stays when the text
@@ -363,8 +363,15 @@ reverse; `Toggle` folds or opens it, `FoldAll` and `UnfoldAll` all of them, and 
 `Click` at a row and a column in the gutter the unit there. The window keeps the unit
 at the row where it was when it folds. As a widget, `viewer` takes the keys (arrows,
 Page Up/Down, Home/End, wheel, `n` and `p`, Enter or Space, `-` and `+`); `mouseMsg top
-left` makes the messages of the mouse for a window whose corner is at that cell. Every
-change that is not an addition lays out all the segments again.
+left` makes the messages of the mouse for a window whose corner is at that cell. A segment
+is Markdown text (`addSegment`, `extendSegment`) or paragraphs the program gives:
+`addStyled` takes `StyledText` as it is (its styles, hanging prefixes and wrapping, which
+Markdown cannot say; a `Styled` block), `extendStyled` adds spans to its last paragraph
+and wraps only that again, and `addDoc` takes a function from the width to `StyledText`
+(`fromDoc` of a pretty-printer `Doc`), made again when the width changes (a `StyledDoc`
+block). A theme says in `fold` whether these (`KStyled`) can fold; by default they cannot.
+A fold or a move of the cursor lays out again only the segments it touches (the lines
+after them move), and a change of the width or `FoldAll` all of them.
 
 ## A chat with a language model
 
@@ -656,7 +663,9 @@ while the field has the focus.
 - `Scroll`: a read-only list of lines in a window, scrolled by the arrows,
   PageUp/PageDown, Home/End and the wheel (three lines a notch); the bar on its
   right shows the position. `ScrollBar.scrollBar` is the bar alone.
-- `LogView`: styled text (`StyledText`) that grows at the end, in a window with the
+- `LogView`: styled text (`StyledText`) that grows at the end, a `MarkdownView` in which
+  nothing folds and no blank rows come between paragraphs (a thin layer over it, with
+  the same results as before), in a window with the
   same keys and bar as `Scroll`; for a chat or the messages of a game
   (`examples/Chat.idr`, and `examples/LlmChat.idr` with a language model). `append` wraps the new paragraphs once and keeps the
   lines in a sequence; `extendLast` adds spans to the end of the last paragraph

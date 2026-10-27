@@ -27,6 +27,8 @@ kindOf (Quote _) = KQuote
 kindOf (Bullets _) = KBullets
 kindOf (Numbered _ _) = KNumbered
 kindOf Rule = KRule
+kindOf (Styled _) = KStyled
+kindOf (StyledDoc _) = KStyled
 
 ||| `n` blanks.
 export
@@ -125,6 +127,8 @@ mutual
         width = foldl max 0 (map stringWidth markers)
         padded = map (\m => m ++ blanks (width `monus` stringWidth m)) markers
     in concat (zipWith (\m, it => item th depth avail (spanOf th.markerStyle m) width it) padded items)
+  renderBlock _ _ _ (Styled ps) = ps
+  renderBlock _ _ avail (StyledDoc f) = f avail
   renderBlock th _ avail Rule =
     let unit' = max 1 (stringWidth th.rule)
         n = avail `div` unit'
