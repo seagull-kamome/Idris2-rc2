@@ -18,4 +18,5 @@ find b(.)c over NUL: Just [Just "b\NULc", Just "\NUL"]
 findFirst past NUL: Just [Just "xyz"]
 pattern with NUL: True
 globalReplace past NUL: "a\NUL#b#"
+shared Regex across two threads, wrong results: 0
 --- done ---

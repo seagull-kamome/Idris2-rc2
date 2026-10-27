@@ -12,7 +12,24 @@ module Main
 -- invalid-pattern parse errors) to stderr, so verify.sh diffs stdout
 -- alone.
 
+import Data.String
+import System.Concurrency.RC2
 import Text.Regex.RE2
+
+-- One compiled Regex used by several threads: `find` looks pure, so it must
+-- not keep its result in the Regex. Each thread matches texts that differ in
+-- the key length and the number on every round, so a result that came from
+-- the other thread's match shows as a wrong group.
+sharedFind : Regex -> Char -> Nat -> IO Nat
+sharedFind re letter rounds = go rounds 0
+  where
+    go : Nat -> Nat -> IO Nat
+    go Z bad = pure bad
+    go (S k) bad =
+      let key = pack (replicate (S (integerToNat (natToInteger k `mod` 9))) letter)
+          num = show (k * 7919)
+          expected = Just [Just (key ++ "=" ++ num), Just key, Just num]
+      in go k (if find re (key ++ "=" ++ num) == expected then bad else S bad)
 
 main : IO ()
 main = do
@@ -54,4 +71,11 @@ main = do
   Just digit <- compile "[0-9]"
     | Nothing => putStrLn "FAIL: [0-9] rejected"
   putStrLn $ "globalReplace past NUL: " ++ show (globalReplace digit "#" "a\NUL1b2")
+  Just shared <- compile "([a-z]+)=([0-9]+)"
+    | Nothing => putStrLn "FAIL: ([a-z]+)=([0-9]+) rejected"
+  ta <- forkJoin (sharedFind shared 'a' 20000)
+  tb <- forkJoin (sharedFind shared 'b' 20000)
+  badA <- join ta
+  badB <- join tb
+  putStrLn $ "shared Regex across two threads, wrong results: " ++ show (badA + badB)
   putStrLn "--- done ---"

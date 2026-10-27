@@ -7,11 +7,16 @@
 
 struct IDRIS2RC2_Regex {
   RE2 re;
-  std::vector<std::string> lastMatch;
-  std::vector<bool> lastMatchPresent;
 
   explicit IDRIS2RC2_Regex(absl::string_view pattern) : re(pattern) {}
 };
+
+// The submatches of the last find() on this thread. Kept per thread, not in the
+// IDRIS2RC2_Regex: a compiled pattern is shared (RE2 matching is thread-safe,
+// and Text.Regex.RE2.find looks pure), so a result stored in it would be
+// overwritten, or its vectors reallocated, by another thread's find().
+static thread_local std::vector<std::string> tl_lastMatch;
+static thread_local std::vector<bool> tl_lastMatchPresent;
 
 static absl::string_view view(const char *s, int64_t len) {
   return absl::string_view(s, len < 0 ? 0 : (size_t)len);
@@ -52,37 +57,37 @@ int idris2rc2_re2_find(IDRIS2RC2_Regex *re, const char *text, int64_t textLen) {
   absl::string_view subject = view(text, textLen);
   bool ok = re->re.Match(subject, 0, subject.size(), RE2::UNANCHORED, submatch.data(), n);
 
-  re->lastMatch.clear();
-  re->lastMatchPresent.clear();
+  tl_lastMatch.clear();
+  tl_lastMatchPresent.clear();
   if (!ok) return 0;
 
-  re->lastMatch.reserve((size_t)n);
-  re->lastMatchPresent.reserve((size_t)n);
+  tl_lastMatch.reserve((size_t)n);
+  tl_lastMatchPresent.reserve((size_t)n);
   for (int i = 0; i < n; i++) {
     bool present = submatch[(size_t)i].data() != nullptr;
-    re->lastMatchPresent.push_back(present);
-    re->lastMatch.emplace_back(present ? std::string(submatch[(size_t)i]) : std::string());
+    tl_lastMatchPresent.push_back(present);
+    tl_lastMatch.emplace_back(present ? std::string(submatch[(size_t)i]) : std::string());
   }
   return 1;
 }
 
 int idris2rc2_re2_group_count(IDRIS2RC2_Regex *re) {
-  return (int)re->lastMatch.size();
+  return (int)tl_lastMatch.size();
 }
 
 int idris2rc2_re2_group_present(IDRIS2RC2_Regex *re, int index) {
-  if (index < 0 || (size_t)index >= re->lastMatchPresent.size()) return 0;
-  return re->lastMatchPresent[(size_t)index] ? 1 : 0;
+  if (index < 0 || (size_t)index >= tl_lastMatchPresent.size()) return 0;
+  return tl_lastMatchPresent[(size_t)index] ? 1 : 0;
 }
 
 void *idris2rc2_re2_group(IDRIS2RC2_Regex *re, int index) {
-  if (index < 0 || (size_t)index >= re->lastMatch.size()) return const_cast<char *>("");
-  return re->lastMatch[(size_t)index].data();
+  if (index < 0 || (size_t)index >= tl_lastMatch.size()) return const_cast<char *>("");
+  return tl_lastMatch[(size_t)index].data();
 }
 
 int64_t idris2rc2_re2_group_len(IDRIS2RC2_Regex *re, int index) {
-  if (index < 0 || (size_t)index >= re->lastMatch.size()) return 0;
-  return (int64_t)re->lastMatch[(size_t)index].size();
+  if (index < 0 || (size_t)index >= tl_lastMatch.size()) return 0;
+  return (int64_t)tl_lastMatch[(size_t)index].size();
 }
 
 void *idris2rc2_re2_replace(IDRIS2RC2_Regex *re, const char *text, int64_t textLen,
