@@ -41,4 +41,5 @@ modules    = TermUI.Len,
              TermUI.Markdown,
              TermUI.Markdown.Theme,
              TermUI.Markdown.Render,
+             TermUI.Widget.MarkdownView,
              TermUI.Width
