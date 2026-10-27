@@ -9,4 +9,7 @@ channelGetWithTimeout on empty channel: Nothing
 conditionWaitTimeout returned without deadlocking
 getThreadId returned: True
 setThreadData/getThreadData round-trip: True
+junk: 2000
+setThreadData String round-trip: hello12345xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+setThreadData List round-trip: [1, 2, 3]
 --- Tests finished ---

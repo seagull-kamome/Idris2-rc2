@@ -1,0 +1,2 @@
+plain: "got:hello\n"
+stdout is 0: "got:hello\n"

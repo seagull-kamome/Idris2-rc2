@@ -108,6 +108,18 @@ testThreadIdAndData = do
   setThreadData {a = Int} 99
   back <- getThreadData Int
   putStrLn $ "setThreadData/getThreadData round-trip: " ++ show (back == 99)
+  -- A heap value: the slot must hold its own reference, as the FFI wrapper
+  -- drops the caller's right after the call. Churn the allocator so a freed
+  -- cell would be reused, then replace the value (the old one is dropped).
+  n <- pure (the Int 12345)
+  setThreadData {a = String} ("hello" ++ show n ++ pack (replicate 40 'x'))
+  let junk = map (\i => show i ++ "-" ++ show (i * 7)) (the (List Int) [1 .. 2000])
+  putStrLn $ "junk: " ++ show (length junk)
+  s1 <- getThreadData String
+  putStrLn $ "setThreadData String round-trip: " ++ s1
+  setThreadData {a = List Int} [1, 2, 3]
+  xs <- getThreadData (List Int)
+  putStrLn $ "setThreadData List round-trip: " ++ show xs
 
 main : IO ()
 main = do

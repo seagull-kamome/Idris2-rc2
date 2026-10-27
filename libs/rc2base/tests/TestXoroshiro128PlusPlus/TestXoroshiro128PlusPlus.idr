@@ -22,6 +22,18 @@ printSeq (S k) g = do
 
 main : IO ()
 main = do
+  -- The global generator, before any setSystemSeed, starts from the fixed
+  -- default state (seed 1): not the all-zero state, which would yield 0 forever.
+  Just g1 <- newIOGen 1
+    | Nothing => putStrLn "newIOGen: allocation failed"
+  d1 <- next g1
+  d1' <- nextIO
+  putStrLn $ "default global generator is seed 1: " ++ show (d1 == d1' && d1 /= 0)
+
+  -- The largest output maps below 1.0 (cast v / 2^64 would round up to it).
+  putStrLn $ "toUnit maxBound < 1: " ++ show (toUnit 0xffffffffffffffff < 1.0)
+  putStrLn $ "toUnit 0 == 0: " ++ show (toUnit 0 == 0.0)
+
   -- Per-instance generator.
   Just g <- newIOGen 42
     | Nothing => putStrLn "newIOGen: allocation failed"
@@ -29,7 +41,7 @@ main = do
 
   -- g has already drawn 5 values above, so this is the 6th step in the
   -- same seed-42 sequence (cross-checked against the reference's
-  -- next[5] = 6324094075403496319, converted to [0,1) via /2^64).
+  -- next[5] = 6324094075403496319, converted to [0,1) via its top 53 bits).
   d <- nextDouble g
   printLn d
 

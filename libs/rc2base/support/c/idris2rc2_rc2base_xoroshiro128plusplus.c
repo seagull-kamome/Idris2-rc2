@@ -45,7 +45,12 @@ static inline uint64_t rotl(const uint64_t x, int k) {
 }
 
 
-uint64_t idris2rc2_System_Random128_system_seed[2];
+/* Not all zero: an all-zero state yields 0 forever. Like rand() before srand(),
+   a program that never calls setSystemSeed gets a fixed, reproducible stream:
+   the state `mixSeed 1` (two splitmix64 steps from 1) gives on the Idris side,
+   as `setSystemSeed 1` would set. */
+uint64_t idris2rc2_System_Random128_system_seed[2] = {
+	0x910a2dec89025cc1ULL, 0xbeeb8da1658eec67ULL };
 void idris2rc2_System_Random128_set_system_seed(uint64_t s0, uint64_t s1) {
 	idris2rc2_System_Random128_system_seed[0] = s0;
 	idris2rc2_System_Random128_system_seed[1] = s1;

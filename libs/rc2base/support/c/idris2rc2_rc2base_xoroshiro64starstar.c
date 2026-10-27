@@ -41,7 +41,9 @@ static inline uint32_t rotl(const uint32_t x, int k) {
 }
 
 
-uint32_t idris2rc2_System_Random_system_seed[2];
+/* Not all zero (see the 128-bit generator): the state `setSystemSeed 1` sets,
+   i.e. the first splitmix64 output from 1, low word first. */
+uint32_t idris2rc2_System_Random_system_seed[2] = { 0x89025cc1u, 0x910a2decu };
 void idris2rc2_System_Random_set_system_seed(uint64_t seed) {
 	idris2rc2_System_Random_system_seed[0] = (uint32_t)seed;
 	idris2rc2_System_Random_system_seed[1] = (uint32_t)(seed >> 32);

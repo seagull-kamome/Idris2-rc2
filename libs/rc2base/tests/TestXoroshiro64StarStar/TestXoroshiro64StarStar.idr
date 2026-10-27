@@ -22,6 +22,14 @@ printSeq (S k) g = do
 
 main : IO ()
 main = do
+  -- The global generator, before any setSystemSeed, starts from the fixed
+  -- default state (seed 1): not the all-zero state, which would yield 0 forever.
+  Just g1 <- newIOGen 1
+    | Nothing => putStrLn "newIOGen: allocation failed"
+  d1 <- next g1
+  d1' <- nextIO
+  putStrLn $ "default global generator is seed 1: " ++ show (d1 == d1' && d1 /= 0)
+
   -- Per-instance generator.
   Just g <- newIOGen 42
     | Nothing => putStrLn "newIOGen: allocation failed"
