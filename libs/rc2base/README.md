@@ -341,8 +341,9 @@ step's output onto a uniform `Double` in `[0,1)`: `output / 2^32` for
 `Xoroshiro64StarStar` (exact), and the top 53 bits of the output times
 2^-53 for `Xoroshiro128PlusPlus` (`output / 2^64` would round an output
 within 2^10 of 2^64 up to exactly 1.0). `newSeeded` is a convenience constructor seeded with
-64 random bits from the kernel (`System.Linux.Random.getrandom`, so two
-processes started together do not share a seed); only if that call fails
+64 random bits from the operating system (`System.Random.Entropy`, which reads
+`/dev/urandom` with the POSIX `open`/`read`/`close` bindings, so two
+processes started together do not share a seed); only if that cannot be read
 is the seed the monotonic clock mixed with the process id
 (`System.Clock`/`getPID`). The generators are not cryptographically secure;
 use `newIOGen` directly for a reproducible, caller-chosen seed.

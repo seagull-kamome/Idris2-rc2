@@ -34,8 +34,7 @@ import Data.Bits
 import Data.Buffer
 import System
 import System.Clock
-import System.Linux.Random
-import System.Posix.Errno
+import System.Random.Entropy
 
 %default covering
 
@@ -187,9 +186,8 @@ jumpN : HasIO io => IOGen -> (n : Bits64) -> io ()
 jumpN (MkIOGen buf) n = primIO $ prim__jumpN buf n
 
 ||| Convenience constructor: a fresh generator, seeded with 64 random bits
-||| from the kernel (`getrandom`, which two processes started together
-||| do not share). Only when that fails (a system call a sandbox forbids,
-||| say) is the seed the monotonic clock mixed with the process id, which
+||| from the operating system (`/dev/urandom`, which two processes started
+||| together do not share). Only when that cannot be read (no `/dev`, say) is the seed the monotonic clock mixed with the process id, which
 ||| processes started at about the same time can share. The generator is
 ||| not cryptographically secure -- use `newIOGen` directly for a
 ||| reproducible, caller-chosen seed. `Nothing` only on buffer allocation
@@ -198,10 +196,10 @@ jumpN (MkIOGen buf) n = primIO $ prim__jumpN buf n
 export
 newSeeded : HasIO io => io (Maybe IOGen)
 newSeeded = do
-  r <- liftIO (getrandomBits64 0)
+  r <- entropy64
   seed <- case r of
-    Right s => pure s
-    Left _ => do
+    Just s => pure s
+    Nothing => do
       clk <- liftIO (clockTime Monotonic)
       pid <- getPID
       pure (cast (toNano clk) `xor` cast pid)
