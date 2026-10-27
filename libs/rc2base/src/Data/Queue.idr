@@ -49,15 +49,19 @@ namespace Queue
     public export length : Queue a -> Nat
     length (MkQueue f b) = length f + length b
 
+    export
     Functor Queue where
       map f (MkQueue f1 b) = MkQueue (map f f1) (map f b)
 
+    export
     Semigroup (Queue a) where
-      (MkQueue f1 b1) <+> (MkQueue f2 b2) = MkQueue (f1 ++ f2) (b1 ++ b2)
+      (MkQueue f1 b1) <+> (MkQueue f2 b2) = MkQueue (f1 ++ reverse b1 ++ f2) b2
 
+    export
     Monoid (Queue a) where
       neutral = empty
 
+    export
     DecEq a => DecEq (Queue a) where
       decEq (MkQueue f1 b1) (MkQueue f2 b2) =
         case decEq f1 f2 of

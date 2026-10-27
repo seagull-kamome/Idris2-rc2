@@ -70,6 +70,7 @@ TESTS=(
     "TestCLimits||System.FFI.C.Limits: <limits.h> constants"
     "TestCMath||System.FFI.C.Math: <math.h> double functions"
     "TestCMemory||System.FFI.C.Memory's <string.h>/<memory.h> bindings"
+    "TestQueue||Data.Queue appending keeps both queues' order"
     "TestIntegerGMP||Data.Integer.GMP's direct GMP bindings"
     "TestHTTPServer|network contrib|Network.HTTP.Server: cross-thread respond + stop"
     "TestRegexPOSIX||Text.Regex.POSIX: libc <regex.h> bindings"

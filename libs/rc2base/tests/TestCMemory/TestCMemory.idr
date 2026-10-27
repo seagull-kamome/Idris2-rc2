@@ -112,6 +112,16 @@ main = do
   fromIdris <- cstring "from Idris"
   printLn (!(ptrToString fromIdris) == Just "from Idris")
   free fromIdris
+  -- a NUL inside the String is copied too (strlen sees the prefix only)
+  withNul <- cstring "ab\0cd"
+  printLn (!(strlen withNul) == 2)
+  same <- cstring "ab\0cd"
+  other <- cstring "ab\0ce"
+  printLn (!(memcmp withNul same 6) == 0)
+  printLn (!(memcmp withNul other 6) /= 0)
+  free withNul
+  free same
+  free other
 
   free hello
   free abc
