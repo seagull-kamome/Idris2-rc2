@@ -12,7 +12,7 @@ typedef struct {
 } idris2rc2_TextBuffer;
 
 
-idris2rc2_TextBuffer* idris2rc2_TextBuffer_mkEmpty(int len);
+idris2rc2_TextBuffer* idris2rc2_TextBuffer_mkEmpty(int64_t len);
 // `byteLen` is the String's byte length (Data.String.RC2.byteLength), so a
 // NUL inside it is decoded like any other character.
 idris2rc2_TextBuffer* idris2rc2_String_to_TextBuffer(const char* utf8_str, int64_t byteLen);
