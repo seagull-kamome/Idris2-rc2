@@ -8,6 +8,7 @@ default global generator is seed 1: True
 683697760
 1931271236
 newSeeded: ok
+two newSeeded streams differ: True
 True
 True
 True
