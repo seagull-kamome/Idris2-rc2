@@ -94,6 +94,7 @@ TESTS=(
     "TestPosixStdio||System.Posix.Stdio: FILE* streams, fgetc/fgets/getline/fread, writes, position, tmpfile, fmemopen"
     "TestLinux||System.Linux.Pipe: pipe2 with O_CLOEXEC/O_NONBLOCK"
     "TestTaskEnv||Control.Task: Env.slot (one value per scheduler, released at close) and Env.addSource (taken out when given up)"
+    "TestTaskIdle||Control.Task.Scheduler.turn: once every task has ended and turn says nothing is left, pollFd is not readable (no busy loop in a program that waits for it)"
     "TestTaskPointThen||Control.Task: a chain of liftIO runs on one worker in parallel mode (same results and order everywhere, a long chain, a mixed one, a loop that is given up)"
     "TestTaskHandoff||Control.Task: handoff gives back a value whose task is cancelled; finally and spawnOwning run their action once"
     "TestNetworkAsync|network contrib|Network.Async: serve a connection; a lost race closes the listener and a just-accepted connection; recv/send refuse bad ranges"

@@ -1,0 +1,3 @@
+a task that ends at once: ended True, calls to turn few, pollFd still readable: False
+a task that sleeps: ended True, calls to turn few, pollFd still readable: False
+a task that starts another: ended True, calls to turn few, pollFd still readable: False
