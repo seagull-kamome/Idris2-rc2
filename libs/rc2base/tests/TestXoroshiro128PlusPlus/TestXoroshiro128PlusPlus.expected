@@ -11,6 +11,7 @@ toUnit 0 == 0: True
 6098722386207918385
 newSeeded: ok
 two newSeeded streams differ: True
+two entropy64 draws differ: True
 True
 True
 True

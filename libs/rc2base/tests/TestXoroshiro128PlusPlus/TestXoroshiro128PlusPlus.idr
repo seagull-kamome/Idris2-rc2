@@ -11,6 +11,7 @@ module Main
 -- the reference and this port is the only way this test could pass while
 -- still being wrong.
 
+import System.Random.Entropy
 import System.Random.Xoroshiro128PlusPlus
 
 printSeq : Nat -> IOGen -> IO ()
@@ -63,6 +64,13 @@ main = do
   ys <- traverse (\_ => next eg2) (the (List Nat) [1 .. 4])
   putStrLn "newSeeded: ok"
   putStrLn $ "two newSeeded streams differ: " ++ show (xs /= ys)
+
+  -- the operating system's source itself (POSIX open/read/close of /dev/urandom)
+  Just e1 <- entropy64
+    | Nothing => putStrLn "entropy64: unavailable"
+  Just e2 <- entropy64
+    | Nothing => putStrLn "entropy64: unavailable"
+  putStrLn $ "two entropy64 draws differ: " ++ show (e1 /= e2)
 
   -- jump/longJump/jumpN cross-checked against jumpCE's own documented
   -- equivalences (prng.di.unimi.it's reference comment: "jump_ce(1, 64)

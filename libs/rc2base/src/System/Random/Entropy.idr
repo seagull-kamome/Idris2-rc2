@@ -37,8 +37,7 @@ entropy64 = liftIO $ do
     attempt _ _ Z = pure False
     attempt fd buf (S k) = do
       n <- read fd buf
+      interrupted <- if n < 0 then (== EINTR) <$> errno else pure False
       if n == 8 then pure True
-      else if n < 0 then do
-        e <- errno
-        if e == EINTR then attempt fd buf k else pure False
-      else pure False
+        else if interrupted then attempt fd buf k
+        else pure False
