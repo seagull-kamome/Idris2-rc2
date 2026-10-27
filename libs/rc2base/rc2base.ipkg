@@ -41,6 +41,7 @@ modules    = Control.Concurrent.MVar,
              System.Posix.Path, System.Posix.Stat, System.Posix.Stdio, System.Posix.Time,
              System.Posix.Uio, System.Posix.Termios,
              --
+             System.Random.Entropy,
              System.Random.Xoroshiro128PlusPlus,
              System.Random.Xoroshiro64StarStar,
              Text.Encoding.UTF8,
