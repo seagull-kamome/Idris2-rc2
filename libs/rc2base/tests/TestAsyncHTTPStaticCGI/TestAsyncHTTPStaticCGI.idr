@@ -201,6 +201,10 @@ clients port dir = do
   escape <- ask (req "GET" "/cgi-bin/..%2fpublic%2fhello.txt")
   cwd <- ask (req "GET" "/cgi-bin/pwd.sh")
   after <- ask (req "GET" "/cgi-bin/env.sh")
+  headFull <- ask (req "HEAD" "/static/hello.txt")
+  getFull <- ask (req "GET" "/static/hello.txt")
+  weak <- ask ("GET /static/hello.txt HTTP/1.1\r\nHost: t\r\nConnection: close\r\nIf-None-Match: W/" ++ etag ++ "\r\n\r\n")
+  star <- ask "GET /static/hello.txt HTTP/1.1\r\nHost: t\r\nConnection: close\r\nIf-None-Match: *\r\n\r\n"
   pure (map (summary types)
           ([ index, noSlash, subIndex, hello, spaced, headed, cached, stale, tooBig, badName, dotfile, posted, absent, dotdot, dotdot2
           , outside, route, envRun, getRun, status, redirect, nohead, big, slow, badStatus, textStatus, noexec, nowhere
@@ -210,7 +214,15 @@ clients port dir = do
           , "orphan: " ++ summary types orphan
           , "child left by the program that ended gone: " ++ show orphanChildGone
           , "holding the output: " ++ summary types keepout
-          , "child that held the output gone: " ++ show keepoutChildGone ])
+          , "child that held the output gone: " ++ show keepoutChildGone
+          -- HEAD says the length of the file without reading it, and sends no body
+          , "HEAD length is the GET length: " ++ show (headerOf "Content-Length" headFull == headerOf "Content-Length" getFull
+                                                      && headerOf "Content-Length" getFull /= "")
+          , "HEAD body is empty: " ++ show (snd (parts headFull) == "")
+          -- the ETag has the nanoseconds of the time of modification: size-sec-nsec
+          , "ETag has three parts: " ++ show (length (forget (split (== '-') (headerOf "ETag" getFull))) == 3)
+          , "weak validator matches: " ++ show (isPrefixOf "HTTP/1.1 304" weak)
+          , "* matches: " ++ show (isPrefixOf "HTTP/1.1 304" star) ])
 
 -- The directory of the test, from the path of the executable
 -- (<dir>/build/exec/<name>): verify.sh runs it from another directory.

@@ -11,8 +11,10 @@ import Control.Task
 import Data.Bits
 import Data.Buffer
 import Data.IORef
+import Data.String.FFI
 import Network.Socket
 import Network.Socket.Data
+import System.FFI
 import System.Linux.Epoll
 import System.Posix.Errno
 import System.Posix.Fcntl
@@ -43,17 +45,38 @@ prim__pendingError : Int32 -> PrimIO Int32
 %foreign "CExpr:(close($1)),libc,unistd.h"
 prim__close : Int32 -> PrimIO Int32
 
+-- The address of the peer of a connected socket as text, written to the buffer
+-- `$2` (46 bytes at least); 0 on success. IPv4 and IPv6.
+%foreign "CExpr:(({ struct sockaddr_storage ss; socklen_t l = sizeof ss; void *a = NULL; int f = 0; if (getpeername($1, (struct sockaddr *)&ss, &l) == 0) { f = ss.ss_family; if (f == AF_INET) a = &((struct sockaddr_in *)&ss)->sin_addr; else if (f == AF_INET6) a = &((struct sockaddr_in6 *)&ss)->sin6_addr; } (a != NULL && inet_ntop(f, a, (char *)($2), 46) != NULL) ? 0 : -1; })),libc,sys/socket.h;netinet/in.h;arpa/inet.h"
+prim__peerName : Int32 -> AnyPtr -> PrimIO Int32
+
 ||| A non-blocking socket, listening or connected.
 export
 record Sock where
   constructor MkSock
   fd : FileDesc
   open_ : IORef Bool
+  peerAddr : Maybe String
 
 ||| The descriptor, for `Control.Task.awaitReadable` and the like.
 export
 (.descriptor) : Sock -> FileDesc
 (.descriptor) = fd
+
+||| The address of the other end, as text (`192.0.2.1`), for a socket made by
+||| `accept`; `Nothing` for one made by `listen` or `connect`.
+export
+(.peer) : Sock -> Maybe String
+(.peer) = peerAddr
+
+-- The peer address of the connected socket `n`.
+peerOf : Int32 -> IO (Maybe String)
+peerOf n = do
+  buf <- malloc 64
+  r <- primIO (prim__peerName n buf)
+  res <- if r == 0 then ptrToString buf else pure Nothing
+  free buf
+  pure res
 
 ||| Close the socket. Closing again does nothing, so it is safe to call from a
 ||| cleanup as well as from the code that used the socket. It is not safe to call
@@ -87,14 +110,22 @@ setNonBlocking fd = do
     | Left e => pure (Left e)
   setStatusFlags fd (flags .|. O_NONBLOCK)
 
-adopt : Int32 -> IO (Either Errno Sock)
-adopt n = case mkFileDesc n of
+adoptFrom : Maybe String -> Int32 -> IO (Either Errno Sock)
+adoptFrom peer n = case mkFileDesc n of
   Nothing => pure (Left EBADF)
   Just fd => do
     r <- setNonBlocking fd
     case r of
       Left e => ignore (primIO (prim__close n)) *> pure (Left e)
-      Right () => Right . MkSock fd <$> newIORef True
+      Right () => do
+        -- close-on-exec, so that a program started later does not inherit the
+        -- connection (there is a short gap between the system call that made the
+        -- descriptor and here; a `fork` of another thread in it still inherits it)
+        ignore (setFdFlags fd FD_CLOEXEC)
+        (\open_ => Right (MkSock fd open_ peer)) <$> newIORef True
+
+adopt : Int32 -> IO (Either Errno Sock)
+adopt = adoptFrom Nothing
 
 ||| A socket listening on `bindAddr` (loopback by default) and `port`.
 export
@@ -193,7 +224,9 @@ accept l = handoff start (either (\_ => pure ()) close)
     try env watching done = do
       r <- attempt (prim__accept l.fd.rawfd)
       case r of
-        Right n => adopt (cast n) >>= done
+        Right n => do
+          peer <- peerOf (cast n)
+          adoptFrom peer (cast n) >>= done
         Left e => if e == EAGAIN
                     then env.watchFd l.fd EPOLLIN (\_ => try env watching done) >>= writeIORef watching
                     else if e == EINTR then try env watching done else done (Left e)
