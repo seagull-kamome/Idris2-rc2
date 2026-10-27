@@ -71,7 +71,7 @@ prim__sinAddr : AnyPtr -> PrimIO AnyPtr
 %foreign "CExpr:((void *)&((struct sockaddr_in6 *)($1))->sin6_addr),libc,netinet/in.h"
 prim__sin6Addr : AnyPtr -> PrimIO AnyPtr
 
-%foreign "CExpr:(inet_ntop($1, $2, (char *)($3), $4)),libc,arpa/inet.h"
+%foreign "CExpr:((void *)inet_ntop($1, $2, (char *)($3), $4)),libc,arpa/inet.h"
 prim__inetNtop : Int32 -> AnyPtr -> AnyPtr -> Int -> PrimIO AnyPtr
 
 ||| A non-blocking socket, listening or connected.
