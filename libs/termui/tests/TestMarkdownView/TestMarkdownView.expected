@@ -336,3 +336,85 @@
 |[+] ```   (3 lines)    │
  RRRR                    
 |                       █
+-- a given paragraph with a hanging indent (0, (True, 3))
+|    you  hello there,
+|         how are you
+|         today
+|
+|
+|
+|
+|
+-- spans added to its last paragraph (0, (True, 3))
+|    you  hello there,
+|         how are you
+|         today fine
+|
+|
+|
+|
+|
+-- another given segment (0, (True, 5))
+|    you  hello there,
+|         how are you
+|         today fine
+|
+|    a truncated line th
+|
+|
+|
+-- extendSegment after a given segment is a new segment (0, (True, 7))
+|    you  hello there,
+|         how are you
+|         today fine
+|
+|    a truncated line th
+|
+|    text
+|
+-- a Doc segment at 22 (0, (True, 4))
+|    alpha beta gamma
+|    delta epsilon
+|    zeta eta theta
+|    iota kappa
+|
+|
+-- the Doc laid out again at 14 (3, (True, 9))
+|    delta    │
+|    epsilon  │
+|    zeta eta █
+|    theta    █
+|    iota     █
+|    kappa    █
+-- given paragraphs that can be folded (0, (True, 3))
+|[-] first line of a given
+|    text
+|    second
+|
+|
+|
+|
+|
+-- folded into a line (0, (True, 2))
+|[+] first line of a given
+ RRRR                          
+|    text ...
+|
+|
+|
+|
+|
+|
+-- three segments, folded and moved about (0, (False, 11))
+|[+] # a ...        █
+|                   █
+|[-] # b            █
+ RRRR                
+|                   █
+|[+] ```   (2 lines)█
+|                   █
+|    more           █
+|                   █
+|[-] # c            █
+|                   │
+True

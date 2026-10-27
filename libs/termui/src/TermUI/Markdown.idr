@@ -15,6 +15,8 @@ module TermUI.Markdown
 
 import Data.List
 import Data.Maybe
+import TermUI.Len
+import TermUI.Widget.StyledText
 
 %default covering
 
@@ -39,6 +41,11 @@ data Block
   | Bullets (List (List Block))
   | Numbered Nat (List (List Block))   -- the number of the first item
   | Rule
+  -- Text that is not Markdown, made by the program: paragraphs with the styles,
+  -- prefixes and wrapping they carry, or paragraphs made for the width they are
+  -- shown in (a pretty-printer `Doc`, say). Reading never makes these.
+  | Styled StyledText
+  | StyledDoc (Len -> StyledText)
 
 -------------------------------------------------------------------------------
 -- Characters and lines
