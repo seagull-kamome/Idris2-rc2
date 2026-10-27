@@ -502,7 +502,10 @@ pollFd s = epollDescriptor s.master
 ||| pending. When steps are still ready at the end (a task that keeps
 ||| yielding) `pollFd` is made readable again. `False` also when `epollWait`
 ||| fails with anything but `EINTR` (the descriptor is unusable, and trying again
-||| would only spin).
+||| would only spin). When nothing is left the sources are still looked at once,
+||| without waiting: a wake-up whose work was done in the batch above (the last
+||| task ended) would else stay readable, and a loop that waits for `pollFd` would
+||| call `turn` again at once, for ever.
 export
 turn : Scheduler -> (timeoutMs : Int32) -> IO Bool
 turn s timeoutMs = do
@@ -510,15 +513,16 @@ turn s timeoutMs = do
   fireTimers s
   q' <- readIORef s.runQ
   pend <- readIORef s.pending
-  if Queue.isEmpty q' && pend == 0
+  let idle = Queue.isEmpty q' && pend == 0
+  virt <- readIORef s.virtual
+  timers <- readIORef s.timers
+  -- a virtual clock does not wait for a timer: look, and move it if nothing else happens
+  let wait = if idle || not (Queue.isEmpty q') || (isJust virt && not (null timers)) then 0 else timeoutMs
+  Right evs <- epollWait s.master wait
+    | Left e => pure (e == EINTR && not idle)
+  if idle && null evs
      then pure False
      else do
-       virt <- readIORef s.virtual
-       timers <- readIORef s.timers
-       -- a virtual clock does not wait for a timer: look, and move it if nothing else happens
-       let wait = if not (Queue.isEmpty q') || (isJust virt && not (null timers)) then 0 else timeoutMs
-       Right evs <- epollWait s.master wait
-         | Left e => pure (e == EINTR)
        srcs <- readIORef s.sources
        traverse_ (\ev => maybe (pure ()) (.drain) (lookup ev.fd srcs)) evs
        when (isJust virt && null evs && Queue.isEmpty q') $
@@ -527,7 +531,11 @@ turn s timeoutMs = do
        runBatch s stepBudget
        q3 <- readIORef s.runQ
        unless (Queue.isEmpty q3) (wake s)
-       pure True
+       if idle
+          then do
+            pend3 <- readIORef s.pending
+            pure (not (Queue.isEmpty q3 && pend3 == 0))
+          else pure True
 
 runWithTime : (virtual : Bool) -> (parallel : Bool) -> (untilRoot : Bool) -> (workers : Nat) -> Task a -> IO (Maybe a, Time)
 runWithTime virt par untilRoot workers t = do
