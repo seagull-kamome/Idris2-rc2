@@ -78,16 +78,30 @@ testConstants = do
 ||| opendir / readDirEntries / closedir.
 testListing : IO ()
 testListing = do
-  rd <- opendir dir
-  es <- readDirEntries rd
+  Right rd <- opendir dir
+    | Left e => putStrLn ("opendir failed: " ++ show e)
+  Right es <- readDirEntries rd
+    | Left e => putStrLn ("readdir failed: " ++ show e)
   _ <- closedir rd
   for_ (sortBy (\x, y => compare x.name y.name) es) $ \e =>
     putStrLn ("entry " ++ e.name ++ " " ++ show e.type ++ " " ++ show (e.ino > 0))
 
+||| opendir of a missing path and fdopendir of a descriptor that is not a directory.
+testFailures : IO ()
+testFailures = do
+  r <- opendir (dir ++ "/no-such-directory")
+  putStrLn ("opendir missing is ENOENT: " ++ either (show . (== ENOENT)) (const "opened") r)
+  Right fd <- openFile (dir ++ "/a") 0 0
+    | Left e => putStrLn ("open file failed: " ++ show e)
+  r2 <- fdopendir fd
+  putStrLn ("fdopendir of a file is ENOTDIR: " ++ either (show . (== ENOTDIR)) (const "opened") r2)
+  ignore (close fd)
+
 ||| dirfd / telldir / seekdir / rewinddir / closedir / fdopendir.
 testDirfd : IO ()
 testDirfd = do
-  d <- opendir dir
+  Right d <- opendir dir
+    | Left e => putStrLn ("opendir failed: " ++ show e)
   Right dd <- dirfd d
     | Left _ => putStrLn "dirfd failed"
   putStrLn ("dirfd ok: " ++ show (dd.rawdirfd >= 0))
@@ -97,7 +111,8 @@ testDirfd = do
   closedir d >>= \r => putStrLn ("closedir: " ++ show r)
   Right dfd <- openFile dir 0 0
     | Left e => putStrLn ("open dir failed: " ++ show e)
-  d2 <- fdopendir dfd
+  Right d2 <- fdopendir dfd
+    | Left e => putStrLn ("fdopendir failed: " ++ show e)
   closedir d2 >>= \r => putStrLn ("closedir fdopendir: " ++ show r)
 
 ||| chdir into the scratch directory and back with fchdir; chroot and chdir on a missing path.
@@ -128,6 +143,7 @@ main = do
   testConstants
   setup
   testListing
+  testFailures
   testDirfd
   testChdir
   teardown
