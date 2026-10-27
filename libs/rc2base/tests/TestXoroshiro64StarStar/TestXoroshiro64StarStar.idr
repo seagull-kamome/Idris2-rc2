@@ -47,13 +47,18 @@ main = do
   nextIO >>= printLn
   nextIO >>= printLn
 
-  -- newSeeded is entropy-seeded (clock + pid) and therefore
-  -- non-deterministic -- only checked for "doesn't crash", not compared
-  -- against a fixed value.
+  -- newSeeded is seeded from the kernel (getrandom) and therefore
+  -- non-deterministic -- not compared against a fixed value; two generators
+  -- made one after the other must not give the same stream (they would if
+  -- the seed were a clock reading shared by processes started together).
   Just eg <- newSeeded
     | Nothing => putStrLn "newSeeded: allocation failed"
-  _ <- next eg
+  Just eg2 <- newSeeded
+    | Nothing => putStrLn "newSeeded: allocation failed"
+  xs <- traverse (\_ => next eg) (the (List Nat) [1 .. 4])
+  ys <- traverse (\_ => next eg2) (the (List Nat) [1 .. 4])
   putStrLn "newSeeded: ok"
+  putStrLn $ "two newSeeded streams differ: " ++ show (xs /= ys)
 
   -- jump/longJump/jumpN cross-checked against jumpCE's own documented
   -- equivalences (prng.di.unimi.it's reference comment: "jump_ce(1, 32)

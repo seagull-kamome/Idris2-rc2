@@ -10,6 +10,7 @@ toUnit 0 == 0: True
 16756476715040848931
 6098722386207918385
 newSeeded: ok
+two newSeeded streams differ: True
 True
 True
 True

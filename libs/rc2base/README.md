@@ -340,11 +340,12 @@ implementation's own header comment suggests. `nextDouble` maps a
 step's output onto a uniform `Double` in `[0,1)`: `output / 2^32` for
 `Xoroshiro64StarStar` (exact), and the top 53 bits of the output times
 2^-53 for `Xoroshiro128PlusPlus` (`output / 2^64` would round an output
-within 2^10 of 2^64 up to exactly 1.0). `newSeeded` is a convenience constructor seeded from the
-monotonic clock mixed with the current process id (`System.Clock`/
-`getPID`) -- not cryptographically secure, just a reasonable "don't
-hand me the same sequence every run" default; use `newIOGen` directly
-for a reproducible, caller-chosen seed.
+within 2^10 of 2^64 up to exactly 1.0). `newSeeded` is a convenience constructor seeded with
+64 random bits from the kernel (`System.Linux.Random.getrandom`, so two
+processes started together do not share a seed); only if that call fails
+is the seed the monotonic clock mixed with the process id
+(`System.Clock`/`getPID`). The generators are not cryptographically secure;
+use `newIOGen` directly for a reproducible, caller-chosen seed.
 
 `jump`/`longJump`/`jumpCE`/`jumpN` wrap the reference algorithm's own
 jump-ahead machinery, advancing a generator's state as if by `2^k` (or
@@ -379,7 +380,9 @@ heap-allocated on every step. Measured on `Xoroshiro128PlusPlus`, a
 loop that threads a `Gen` and XORs 10 million `genNext` outputs makes
 38 allocations in all, from start-up, and takes 0.11 s; the same loop
 over an `IOGen` needed 1.5 allocations per step and took 0.5 s. A jump
-runs the polynomial once per state word.
+runs once: `Xoroshiro64StarStar` gets its two new words packed in one
+`Bits64`, `Xoroshiro128PlusPlus` reads the second one from a thread-local
+the C side leaves it in, right after the first, in the same IO action.
 
 Each module also offers a separate, single global generator
 (`setSystemSeed`/`nextIO`/`jumpIO`/`longJumpIO`/`jumpCEIO`/`jumpNIO`)
