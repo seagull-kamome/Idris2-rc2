@@ -282,7 +282,10 @@ waitEvents l timeoutMs = do
       case find (\(fd, _, _) => fd == raw) ts of
         Nothing => pure []
         Just (_, ident, fd) => do
-          _ <- timerfd_read fd
+          -- A timer closed and made again earlier in the same batch can have the
+          -- number of the one this event is for: it has not expired, and reads nothing.
+          Right _ <- timerfd_read fd
+            | Left _ => pure []
           if ident == EscapeKey
              then cancelTimer l ident >> flushPending
              else pure [ETimer ident]

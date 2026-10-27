@@ -86,6 +86,25 @@ cancelRequest ring tag = do
 Prep : Type
 Prep = URing -> SQE -> Bits64 -> IO ()
 
+-- A submission that fails for a moment (a signal, no memory, a full completion
+-- queue) leaves the entries queued, and the next submission takes them: so the
+-- request is not failed, which would let it run after its caller was told it did
+-- not. The submission is tried again from the scheduler until it goes through.
+-- Any other error means the ring is unusable, and nothing is queued for good.
+transient : Errno -> Bool
+transient e = e == EINTR || e == EAGAIN || e == EBUSY
+
+-- Submit; `failed` is told of an error that is not transient.
+submitRetrying : Env -> Ring -> (failed : Errno -> IO ()) -> IO ()
+submitRetrying env ring failed = do
+  r <- submit ring.uring
+  case r of
+       Right _ => pure ()
+       Left e =>
+         if transient e
+            then drain ring *> env.post (submitRetrying env ring failed)   -- the drain makes room in the completion queue
+            else failed e
+
 -- Start a request. The result is what `decode` makes of its completion.
 request : (decode : Completion -> Either Errno a) -> Prep -> Task (Either Errno a)
 request decode prep = Async $ \env, done => do
@@ -97,9 +116,14 @@ request decode prep = Async $ \env, done => do
   tag <- fresh ring
   prep ring.uring sqe tag
   modifyIORef ring.waiting (insert tag (done . decode))
-  Right _ <- submit ring.uring
-    | Left e => modifyIORef ring.waiting (delete tag) *> failWith e
-  pure (MkCancel (cancelRequest ring tag))
+  r <- submit ring.uring
+  case r of
+       Right _ => pure (MkCancel (cancelRequest ring tag))
+       Left e =>
+         if transient e
+            then env.post (submitRetrying env ring (\e' => modifyIORef ring.waiting (delete tag) *> done (Left e')))
+                 *> pure (MkCancel (cancelRequest ring tag))
+            else modifyIORef ring.waiting (delete tag) *> failWith e
 
 -- A request that has no result but success.
 unit : Prep -> Task (Either Errno ())
