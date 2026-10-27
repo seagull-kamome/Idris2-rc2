@@ -68,7 +68,7 @@ rc2の汎用サポートライブラリです。上流の`base`/`contrib`に無�
 | `System.FFI.C.Array` | `malloc`で確保され、GCが解放し、`Fin`で境界検査される固定長配列 |
 | `System.FFI.C.Limits` | Cの`<limits.h>`の整数の限界値をcamelCaseで提供します（`intMax`、`longMin`など） |
 | `System.FFI.C.Math` | Cの`<math.h>`の`double`関数を`namespace Math`にまとめたもの（`Math.sin`など）。分類関数は`Bool` |
-| `System.FFI.C.Memory` | Cヒープの確保(`malloc`/`calloc`/`free`)と、`<string.h>`/`<memory.h>`のよく使う関数（`memcpy`、`strlen`など）の`AnyPtr`版 |
+| `System.FFI.C.Memory` | Cヒープの確保(サイズが0でないことを証明させる`malloc`/`calloc`と`free`)と、`<string.h>`/`<memory.h>`のよく使う関数（`memcpy`、`strlen`など）の`AnyPtr`版 |
 | `System.FFI.C.Ptr` | `Ptr`/`GCPtr`の領域に対する、検査なしの要素番号指定のfetch/store |
 | `System.FFI.C.Sizeof` | スカラー型のCの`sizeof`。バッファの刻み幅やオフセットを手で計算するときに使います |
 | `System.GC.RC2` | rc2自身の`idris2rc2_dup`/`dup_n`/`drop`への直接アクセス。不透明なFFIポインタ経由で持ち出した値に使います |
@@ -231,7 +231,7 @@ jumpN    : HasIO io => IOGen -> (n : Bits64) -> io ()   -- Xoroshiro128PlusPlus�
 
 `newIOGen`は、呼び出し側が選んだ`Bits64`のシードを、splitmix64（Vigna、パブリックドメイン）で完全な状態へ展開します。ステップ数は、`Xoroshiro64StarStar`（64ビット状態）が1回、`Xoroshiro128PlusPlus`（128ビット状態）が2回です。拡散の悪い状態や全ゼロの状態をアルゴリズムに渡さないためで、参照実装自身のヘッダコメントが勧めるシード方法そのものです。
 
-`nextDouble`は、1ステップの出力を、生成器自身のネイティブな精度（`output / 2^32`または`output / 2^64`）で`[0,1)`の一様な`Double`に写します。他の生成器の一部が提供する、`Double`の仮数53ビット分の乱雑さはありません。
+`nextDouble`は、1ステップの出力を`[0,1)`の一様な`Double`に写します。`Xoroshiro64StarStar`は`output / 2^32`（厳密）、`Xoroshiro128PlusPlus`は出力の上位53ビットに2^-53を掛けた値です。`output / 2^64`だと、2^64から2^10以内の出力が丸めで2^64に切り上がり、ちょうど1.0になってしまうためです。
 
 `newSeeded`は、単調クロックにプロセスID（`System.Clock`/`getPID`）を混ぜた値をシードにする、便宜的なコンストラクタです。暗号論的には安全でなく、「実行のたびに同じ列を渡さない」程度の妥当な既定です。再現できる、呼び出し側が選んだシードが必要なときは、`newIOGen`を直接使ってください。
 
@@ -241,7 +241,7 @@ jumpN    : HasIO io => IOGen -> (n : Bits64) -> io ()   -- Xoroshiro128PlusPlus�
 
 各モジュールには、別に単一のグローバル生成器（`setSystemSeed`/`nextIO`/`jumpIO`/`longJumpIO`/`jumpCEIO`/`jumpNIO`）も用意してあります。状態はすべてC側の静的変数（各`support/c/*.c`の`system_seed[...]`）に置いてあります。
 
-このグローバル生成器はスレッド安全ではありません。共有する可変状態にロックがないので、上のインスタンスごとのAPIが呼び出し側に任せる「自分の`IOGen`は自分で守る」という約束よりも緩い扱いです。Cの`rand()`/`srand()`のように、持ち回すインスタンスなしで手早く使うための便宜として提供しているだけです。並行処理や再現性が必要な用途には、`newIOGen`と`next`を使ってください。
+このグローバル生成器はスレッド安全ではありません。共有する可変状態にロックがないので、上のインスタンスごとのAPIが呼び出し側に任せる「自分の`IOGen`は自分で守る」という約束よりも緩い扱いです。Cの`rand()`/`srand()`のように、持ち回すインスタンスなしで手早く使うための便宜として提供しているだけです。`srand()`を呼ぶ前の`rand()`と同じく、`setSystemSeed`を一度も呼ばないプログラムは固定の再現可能な乱数列（`setSystemSeed 1`が設定する状態）を得ます。全ゼロの状態にはなりません。並行処理や再現性が必要な用途には、`newIOGen`と`next`を使ってください。
 
 この単一グローバル生成器という設計は、一見もっと簡単な代案への答えでもあります。代案とは、トップレベルの`unsafePerformIO`で作った`IOGen`です。呼び出し側にハンドルを引き回さなくて済みます。
 

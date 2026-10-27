@@ -144,14 +144,20 @@ export
 next : HasIO io => IOGen -> io Bits64
 next (MkIOGen buf) = primIO $ prim__next buf
 
-||| A step's output mapped to a uniform `Double` in `[0,1)`, at the
-||| generator's own native 64-bit precision (`output / 2^64`) -- same
-||| formula as `Xoroshiro64StarStar.nextDouble`, scaled up.
+||| The top 53 bits of an output as a `Double` in `[0,1)`. A `Double` has a
+||| 53-bit significand, so the conversion is exact: `cast v / 2^64` rounds
+||| an output within 2^10 of 2^64 up to 2^64, which would give exactly 1.0.
+export
+toUnit : Bits64 -> Double
+toUnit v = cast (v `shiftR` 11) * 1.1102230246251565e-16   -- 2^-53
+
+||| A step's output mapped to a uniform `Double` in `[0,1)`, using the top
+||| 53 bits of the output (all a `Double` can hold).
 export
 nextDouble : HasIO io => IOGen -> io Double
 nextDouble g = do
   v <- next g
-  pure (cast v / 18446744073709551616.0)
+  pure (toUnit v)
 
 ||| Equivalent to 2^64 calls to `next` -- advances a generator to the
 ||| start of one of 2^64 non-overlapping subsequences, useful for
@@ -299,11 +305,11 @@ genNext g =
   let (s0, s1) = toWords g
   in (prim__pureOut s0 s1, fromWords (prim__pureS0 s0 s1) (prim__pureS1 s0 s1))
 
-||| A step's output as a uniform `Double` in `[0,1)` (`output / 2^64`),
+||| A step's output as a uniform `Double` in `[0,1)` (its top 53 bits),
 ||| as `nextDouble` does.
 export
 genNextDouble : Gen -> (Double, Gen)
-genNextDouble g = let (v, g') = genNext g in (cast v / 18446744073709551616.0, g')
+genNextDouble g = let (v, g') = genNext g in (toUnit v, g')
 
 jumpWith : (Bits64 -> Bits64 -> Int -> Bits64) -> Gen -> Gen
 jumpWith f g =

@@ -1,5 +1,6 @@
 module System.FFI.C.Memory
 
+import Data.So
 import Decidable.Equality
 import System.FFI.C.Null
 import System.Posix.Errno
@@ -8,6 +9,10 @@ import System.Posix.Errno
 -------------------------------------------------------------------------------
 --
 
+||| `Right` for a non-NULL pointer, else the `errno` of the call that gave NULL.
+||| Only for calls where NULL means failure and sets `errno`: `malloc 0` and
+||| `calloc 0 n` may return NULL without failing, which is why `malloc` and
+||| `calloc` below take a size that is proved not to be 0.
 public export
 fromAnyPtr : AnyPtr -> IO (Either Errno NonNullAnyPtr)
 fromAnyPtr ptr with (decEq (isNullAnyPtr ptr) False)
@@ -33,15 +38,24 @@ Cast (NonNullPtr a) NonNullAnyPtr where
 %inline %foreign "CExpr:malloc($1),libc,stdlib.h"
 prim__malloc : Bits64 -> PrimIO AnyPtr
 
-%inline public export malloc : HasIO io => (size : Bits64) -> io (Either Errno NonNullAnyPtr)
+||| Allocate `size` bytes; release them with `free`. `size` is proved not to be 0
+||| (`malloc 0` may return NULL as a success, which cannot be told from failure);
+||| for a literal the proof is found by evaluation.
+%inline public export
+malloc : HasIO io => (size : Bits64) -> {auto 0 nonZero : So (size /= 0)}
+      -> io (Either Errno NonNullAnyPtr)
 malloc size = liftIO $ (primIO (prim__malloc size) >>= fromAnyPtr)
 
 
 %inline %foreign "CExpr:calloc($1, $2),libc,stdlib.h"
 prim__calloc : Bits64 -> Bits64 -> PrimIO AnyPtr
 
+||| Allocate `count * size` zeroed bytes; release them with `free`. Neither is
+||| proved to be 0, for the reason given at `malloc`.
 %inline public export
-calloc : HasIO io => (count : Bits64) -> (size : Bits64) -> io (Either Errno NonNullAnyPtr)
+calloc : HasIO io => (count : Bits64) -> (size : Bits64)
+      -> {auto 0 countNonZero : So (count /= 0)} -> {auto 0 sizeNonZero : So (size /= 0)}
+      -> io (Either Errno NonNullAnyPtr)
 calloc count size = liftIO $ (primIO (prim__calloc count size) >>= fromAnyPtr)
 
 

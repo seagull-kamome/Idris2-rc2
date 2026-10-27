@@ -32,6 +32,14 @@ main = do
   memset buf 0 65
   printLn (!(strlen buf) == 0)
 
+  -- calloc zeroes; a failed allocation is Left ENOMEM. (A size of 0 does not
+  -- type-check: `malloc 0` is not an error, but may return NULL.)
+  zeroed <- calloc 4 8 >>= mustAlloc
+  printLn (!(memcmp zeroed buf 8) == 0 && !(strlen zeroed) == 0)
+  huge <- malloc 0x7fffffffffffffff
+  printLn (either (== ENOMEM) (const False) huge)
+  free zeroed
+
   hello <- cstring "hello"
   memcpy buf hello 6
   printLn (!(strlen buf) == 5)

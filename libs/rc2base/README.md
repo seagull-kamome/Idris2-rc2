@@ -73,7 +73,7 @@ not compile when the declaration is used.
 | `System.FFI.C.Array` | a `malloc`'d, GC-freed, `Fin`-bounds-checked fixed-length array |
 | `System.FFI.C.Limits` | C `<limits.h>` integer limits as camelCase values (`intMax`, `longMin`, ...) |
 | `System.FFI.C.Math` | C `<math.h>`'s `double` functions in `namespace Math` (`Math.sin`, ...), with `Bool` classification predicates |
-| `System.FFI.C.Memory` | C heap allocation (`malloc`/`calloc`/`free`) and the common `<string.h>`/`<memory.h>` routines (`memcpy`, `strlen`, ...) on `AnyPtr` |
+| `System.FFI.C.Memory` | C heap allocation (`malloc`/`calloc`, whose sizes are proved not to be 0, and `free`) and the common `<string.h>`/`<memory.h>` routines (`memcpy`, `strlen`, ...) on `AnyPtr` |
 | `System.FFI.C.Ptr` | raw, unchecked element-indexed fetch/store into a `Ptr`/`GCPtr` region |
 | `System.FFI.C.Sizeof` | the C `sizeof` of a scalar type, for hand-rolled buffer strides/offsets |
 | `System.GC.RC2` | raw access to rc2's own `idris2rc2_dup`/`dup_n`/`drop`, for a value smuggled out through an opaque FFI pointer |
@@ -337,10 +337,10 @@ via one (`Xoroshiro64StarStar`, 64-bit state) or two
 domain) steps, to avoid handing the algorithm a poorly-diffused or
 all-zero state -- exactly the seeding method the reference
 implementation's own header comment suggests. `nextDouble` maps a
-step's output onto a uniform `Double` in `[0,1)` at the generator's own
-native precision (`output / 2^32` or `output / 2^64`) -- not the full
-53-bit `Double` mantissa's worth of randomness some other generators
-provide. `newSeeded` is a convenience constructor seeded from the
+step's output onto a uniform `Double` in `[0,1)`: `output / 2^32` for
+`Xoroshiro64StarStar` (exact), and the top 53 bits of the output times
+2^-53 for `Xoroshiro128PlusPlus` (`output / 2^64` would round an output
+within 2^10 of 2^64 up to exactly 1.0). `newSeeded` is a convenience constructor seeded from the
 monotonic clock mixed with the current process id (`System.Clock`/
 `getPID`) -- not cryptographically secure, just a reasonable "don't
 hand me the same sequence every run" default; use `newIOGen` directly
@@ -388,7 +388,9 @@ held entirely in C-side static state (each `support/c/*.c`'s own
 mutable state, unlike even the "caller must guard their own `IOGen`"
 contract the per-instance API above leaves to callers), offered purely
 as a quick, no-instance-to-carry-around convenience akin to C's own
-`rand()`/`srand()`. Prefer `newIOGen`/`next` for anything concurrent or
+`rand()`/`srand()`: like `rand()` before `srand()`, a program that never
+calls `setSystemSeed` gets a fixed, reproducible stream (the state
+`setSystemSeed 1` sets), never the all-zero state. Prefer `newIOGen`/`next` for anything concurrent or
 reproducible.
 
 The single-global-generator design is also the answer to a seemingly

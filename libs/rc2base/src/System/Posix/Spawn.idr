@@ -12,6 +12,7 @@ module System.Posix.Spawn
 
 import System.FFI
 import System.Posix.Errno
+import System.Posix.Fcntl
 import System.Posix.FileDesc
 import System.Posix.Process
 
@@ -94,19 +95,10 @@ runSteps (step :: rest) = do
   r <- primIO step
   if r /= 0 then pure r else runSteps rest
 
-||| Start the program at `path` (no `PATH` lookup, and a relative `path` is taken
-||| from `cwd`, which is the directory the program starts in) with `argv` (the
-||| program name first) and exactly the environment `envp` (`NAME=value`). Its
-||| standard input is `stdin` and its standard output `stdout`; the standard error
-||| is ours, and no other descriptor is passed on. The program is a process group
-||| of its own (its process ID is the group's: `kill (-pid)` ends it and what it
-||| started), has no blocked signal (the caller may block some, for `signalfd`), and every
-||| signal has its default action (not the `SIG_IGN` the caller set, which `exec` keeps). The
-||| descriptors stay open in the caller. `Left` when the program cannot be started (`ENOENT`, `EACCES`, ...).
-export
-spawnStdio : (path, cwd : String) -> (argv, envp : List String) -> (stdin, stdout : FileDesc)
-          -> IO (Either Errno ProcessID)
-spawnStdio path cwd argv envp stdin stdout = do
+-- `spawnStdio` for descriptors that are 3 or more.
+spawnDup2 : (path, cwd : String) -> (argv, envp : List String) -> (stdin, stdout : FileDesc)
+         -> IO (Either Errno ProcessID)
+spawnDup2 path cwd argv envp stdin stdout = do
   actions <- malloc prim__sizeofFileActions
   attr <- malloc prim__sizeofAttr
   sigs <- malloc prim__sizeofSigset
@@ -136,6 +128,38 @@ spawnStdio path cwd argv envp stdin stdout = do
   freeArgv (length envp) e
   traverse_ free [actions, attr, sigs, noSigs, pid]
   pure (if r == 0 then Right (MkProcessID started) else Left (MkErrno r))
+
+||| Start the program at `path` (no `PATH` lookup, and a relative `path` is taken
+||| from `cwd`, which is the directory the program starts in) with `argv` (the
+||| program name first) and exactly the environment `envp` (`NAME=value`). Its
+||| standard input is `stdin` and its standard output `stdout`; the standard error
+||| is ours, and no other descriptor is passed on. The program is a process group
+||| of its own (its process ID is the group's: `kill (-pid)` ends it and what it
+||| started), has no blocked signal (the caller may block some, for `signalfd`), and every
+||| signal has its default action (not the `SIG_IGN` the caller set, which `exec` keeps). The
+||| descriptors stay open in the caller. `Left` when the program cannot be started (`ENOENT`, `EACCES`, ...).
+export
+spawnStdio : (path, cwd : String) -> (argv, envp : List String) -> (stdin, stdout : FileDesc)
+          -> IO (Either Errno ProcessID)
+spawnStdio path cwd argv envp stdin stdout = do
+  Right (i, closeI) <- apart stdin
+    | Left e => pure (Left e)
+  Right (o, closeO) <- apart stdout
+    | Left e => closeI *> pure (Left e)
+  r <- spawnDup2 path cwd argv envp i o
+  closeI
+  closeO
+  pure r
+  where
+    -- The child's `dup2 stdin 0` would overwrite `stdout` if that is 0, and
+    -- `dup2 stdout 1` would read a `stdin` that is 1 after it was overwritten.
+    -- A process that has closed its own standard input or output (a daemon)
+    -- gets 0 or 1 from `pipe` and the like, so such a descriptor is copied
+    -- above 2 first; the copy is closed afterwards.
+    apart : FileDesc -> IO (Either Errno (FileDesc, IO ()))
+    apart fd =
+      if fd.rawfd >= 3 then pure (Right (fd, pure ()))
+      else map (\d => (d, ignore (close d))) <$> dupfdCloexec fd 3
 
 ||| Ignore SIGPIPE in this process, so that writing to a pipe whose reader has gone
 ||| is the error `EPIPE` and not the end of the program. (Sockets are written with

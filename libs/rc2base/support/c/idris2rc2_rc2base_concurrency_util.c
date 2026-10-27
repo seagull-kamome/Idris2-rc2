@@ -65,7 +65,10 @@ static _Thread_local IDRIS2RC2_Value *idris2rc2_threadLocalData = NULL;
 // received-and-ignored, not actually absent.
 void idris2rc2_set_thread_data(IDRIS2RC2_Value *, IDRIS2RC2_Value *val) {
   IDRIS2RC2_Value *old = idris2rc2_threadLocalData;
-  idris2rc2_threadLocalData = val;
+  // The generated FFI wrapper drops its own reference to val right after
+  // this call returns (as idris2rc2_channel_put below), so the slot needs
+  // its own.
+  idris2rc2_threadLocalData = idris2rc2_dup(val);
   idris2rc2_drop(old);
 }
 
