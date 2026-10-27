@@ -45,10 +45,10 @@ prim__pendingError : Int32 -> PrimIO Int32
 %foreign "CExpr:(close($1)),libc,unistd.h"
 prim__close : Int32 -> PrimIO Int32
 
--- The address of the peer of a connected socket as text, written to the buffer
--- `$2` (46 bytes at least); 0 on success. IPv4 and IPv6.
-%foreign "CExpr:(({ struct sockaddr_storage ss; socklen_t l = sizeof ss; void *a = NULL; int f = 0; if (getpeername($1, (struct sockaddr *)&ss, &l) == 0) { f = ss.ss_family; if (f == AF_INET) a = &((struct sockaddr_in *)&ss)->sin_addr; else if (f == AF_INET6) a = &((struct sockaddr_in6 *)&ss)->sin6_addr; } (a != NULL && inet_ntop(f, a, (char *)($2), 46) != NULL) ? 0 : -1; })),libc,sys/socket.h;netinet/in.h;arpa/inet.h"
-prim__peerName : Int32 -> AnyPtr -> PrimIO Int32
+-- The address of the peer of a connected socket as text, written to a buffer
+-- (support/c/idris2rc2_rc2base_net_util.c); 0 on success.
+%foreign "C:idris2rc2_net_peer_name,libidris2rc2base,idris2rc2_rc2base_net_util.h"
+prim__peerName : Int32 -> AnyPtr -> Int32 -> PrimIO Int32
 
 ||| A non-blocking socket, listening or connected.
 export
@@ -73,7 +73,7 @@ export
 peerOf : Int32 -> IO (Maybe String)
 peerOf n = do
   buf <- malloc 64
-  r <- primIO (prim__peerName n buf)
+  r <- primIO (prim__peerName n buf 64)
   res <- if r == 0 then ptrToString buf else pure Nothing
   free buf
   pure res
