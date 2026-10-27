@@ -13,6 +13,8 @@ entry a 8 True
 entry b 8 True
 entry link 10 True
 entry sub 4 True
+opendir missing is ENOENT: True
+fdopendir of a file is ENOTDIR: True
 dirfd ok: True
 closedir: 0
 closedir fdopendir: 0

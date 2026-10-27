@@ -102,7 +102,8 @@ glob pattern flags = do
                        else Left (if rc == prim__GLOB_NOSPACE then GlobNoSpace
                                   else if rc == prim__GLOB_ABORTED then GlobAborted
                                   else GlobOther rc))
-  -- After a failed `glob`, glibc has freed everything itself.
-  when (rc == 0) $ ignore (primIO (prim__globfree g))
+  -- Also after a failure: what the structure holds then is not specified by
+  -- POSIX (glibc has freed it already, and `globfree` of that is harmless).
+  _ <- primIO (prim__globfree g)
   free g
   pure res

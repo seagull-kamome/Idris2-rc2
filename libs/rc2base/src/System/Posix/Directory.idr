@@ -19,19 +19,25 @@ DIRPtr : Type
 DIRPtr = Ptr DIR
 
 
+-- A stream pointer that is NULL when the call failed.
+orErrno : DIRPtr -> IO (Either Errno DIRPtr)
+orErrno p =
+  if prim__nullAnyPtr (prim__forgetPtr p) /= 0 then Left <$> errno else pure (Right p)
+
 %inline %foreign "CExpr:(opendir($1)),libc,sys/types.h;dirent.h"
 prim__opendir : String -> PrimIO DIRPtr
 
-||| Open a directory stream for the given path.
-public export opendir : String -> IO DIRPtr
-opendir filename = primIO $ prim__opendir filename
+||| Open a directory stream for the given path, or the `errno`.
+public export opendir : String -> IO (Either Errno DIRPtr)
+opendir filename = primIO (prim__opendir filename) >>= orErrno
 
 %inline %foreign "CExpr:(fdopendir($1)),libc,sys/types.h;dirent.h"
 prim__fdopendir : Int32 -> PrimIO DIRPtr
 
-||| Create a directory stream from an open directory file descriptor.
-public export fdopendir : FileDesc -> IO DIRPtr
-fdopendir fd = primIO $ prim__fdopendir fd.rawfd
+||| Create a directory stream from an open directory file descriptor, or the
+||| `errno` (the descriptor is then still the caller's).
+public export fdopendir : FileDesc -> IO (Either Errno DIRPtr)
+fdopendir fd = primIO (prim__fdopendir fd.rawfd) >>= orErrno
 
 
 %inline %foreign "CExpr:(closedir($1)),libc,sys/types.h;dirent.h"
@@ -93,7 +99,8 @@ DT_SOCK : Bits8
 DT_UNKNOWN : Bits8
 
 
-%foreign "CExpr:(readdir($1)),libc,sys/types.h;dirent.h"
+-- `errno` is cleared first: `readdir` leaves it alone at the end of the stream.
+%foreign "CExpr:(({ errno = 0; readdir($1); })),libc,sys/types.h;dirent.h;errno.h"
 prim__readdir : DIRPtr -> PrimIO (Ptr DirEnt)
 
 %foreign "CExpr:(((struct dirent *)($1))->d_name),libc,sys/types.h;dirent.h"
@@ -113,28 +120,32 @@ record DirEntry where
   type : Bits8
   ino : Bits64
 
-||| Read the next directory entry from a directory stream; `Nothing` at the
-||| end of the stream (or on error, see `errno`).
-export readdir : DIRPtr -> IO (Maybe DirEntry)
+||| Read the next directory entry from a directory stream: `Right Nothing` at
+||| the end of the stream, `Left` with the `errno` if reading failed.
+export readdir : DIRPtr -> IO (Either Errno (Maybe DirEntry))
 readdir dirp = do
   p <- primIO $ prim__readdir dirp
   if prim__nullAnyPtr (prim__forgetPtr p) /= 0
-    then pure Nothing
+    then do e <- errno
+            pure (if e == MkErrno 0 then Right Nothing else Left e)
     else do
       n <- primIO $ prim__d_name p
       t <- primIO $ prim__d_type p
       i <- primIO $ prim__d_ino p
-      pure $ Just (MkDirEntry n t i)
+      pure $ Right (Just (MkDirEntry n t i))
 
-||| All remaining entries of the stream, in stream order (including "." and "..").
-covering export readDirEntries : DIRPtr -> IO (List DirEntry)
+||| All remaining entries of the stream, in stream order (including "." and
+||| ".."); the `errno` if reading failed.
+covering export readDirEntries : DIRPtr -> IO (Either Errno (List DirEntry))
 readDirEntries dirp = go []
   where
-    covering go : List DirEntry -> IO (List DirEntry)
+    covering go : List DirEntry -> IO (Either Errno (List DirEntry))
     go acc = do
-      Just e <- readdir dirp
-        | Nothing => pure (reverse acc)
-      go (e :: acc)
+      r <- readdir dirp
+      case r of
+           Left e => pure (Left e)
+           Right Nothing => pure (Right (reverse acc))
+           Right (Just e) => go (e :: acc)
 
 
 -------------------------------------------------------------------------------

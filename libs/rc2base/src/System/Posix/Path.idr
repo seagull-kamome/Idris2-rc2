@@ -106,13 +106,19 @@ copyString s = do
   buf <- malloc n
   _ <- primIO (prim__strcpy buf s)
   pure buf
+%inline %foreign "CExpr:(unlink((const char *)($1))),libc,unistd.h"
+prim__unlinkPtr : AnyPtr -> PrimIO Int32
+%inline %foreign "CExpr:(rmdir((const char *)($1))),libc,unistd.h"
+prim__rmdirPtr : AnyPtr -> PrimIO Int32
 %inline %foreign "CExpr:(mkstemp((char *)($1))),libc,stdlib.h"
 prim__mkstemp : AnyPtr -> PrimIO Int32
 %inline %foreign "CExpr:(mkdtemp((char *)($1))),libc,stdlib.h"
 prim__mkdtemp : AnyPtr -> PrimIO AnyPtr
 
 ||| Create and open a unique temporary file from a template ending in
-||| `XXXXXX`; returns the descriptor and the file's name.
+||| `XXXXXX`; returns the descriptor and the file's name. A name that is not
+||| valid UTF-8 (the template had such bytes) cannot be returned as a `String`:
+||| the file is removed again and the result is `Left EILSEQ`.
 export
 mkstemp : (template : String) -> IO (Either Errno (FileDesc, String))
 mkstemp template = do
@@ -122,13 +128,19 @@ mkstemp template = do
      then do e <- errno
              free buf
              pure (Left e)
-     else do name <- ptrToStringFree buf
-             pure $ case name of
-                         Nothing => Left (MkErrno 84)
-                         Just n => maybe (Left EBADF) (\d => Right (d, n)) (mkFileDesc r)
+     else do name <- ptrToString buf
+             case name of
+                  Nothing => do _ <- primIO (prim__unlinkPtr buf)
+                                _ <- maybe (pure 0) close (mkFileDesc r)
+                                free buf
+                                pure (Left EILSEQ)
+                  Just n => do free buf
+                               pure (maybe (Left EBADF) (\d => Right (d, n)) (mkFileDesc r))
 
 ||| Create a unique temporary directory from a template ending in `XXXXXX`;
-||| returns the directory's name.
+||| returns the directory's name. A name that is not valid UTF-8 cannot be
+||| returned as a `String`: the directory is removed again and the result is
+||| `Left EILSEQ`.
 export
 mkdtemp : (template : String) -> IO (Either Errno String)
 mkdtemp template = do
@@ -138,5 +150,9 @@ mkdtemp template = do
      then do e <- errno
              free buf
              pure (Left e)
-     else do name <- ptrToStringFree buf
-             pure (maybe (Left (MkErrno 84)) Right name)
+     else do name <- ptrToString buf
+             case name of
+                  Nothing => do _ <- primIO (prim__rmdirPtr buf)
+                                free buf
+                                pure (Left EILSEQ)
+                  Just n => free buf *> pure (Right n)
