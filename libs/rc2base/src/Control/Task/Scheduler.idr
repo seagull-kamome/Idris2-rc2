@@ -443,9 +443,11 @@ closeScheduler s = do
   left <- readIORef s.runQ
   writeIORef s.runQ Queue.empty
   traverse_ (.drop) (Queue.toList left)
+  -- The workers first: a job that is running may still use a slot, so the
+  -- slots are released only after the pool has joined its threads.
+  closePool s.pool
   releases <- readIORef s.releases
   sequence_ releases
-  closePool s.pool
   ignore (epollClose s.master)
   closeFdWatcher s.watcher
   ignore (close s.inboxFd)

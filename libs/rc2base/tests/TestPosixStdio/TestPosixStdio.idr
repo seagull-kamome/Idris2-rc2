@@ -84,6 +84,9 @@ testRead = do
   fgetc f >>= printLn
   report "ungetc" =<< ungetc f 108
   fgetc f >>= printLn
+  -- no room for a line: refused, nothing read
+  fgets f 0 >>= printLn
+  fgets f (-5) >>= printLn
   fgets f 100 >>= printLn
   getline f >>= printLn
   Just buf <- newBuffer 4

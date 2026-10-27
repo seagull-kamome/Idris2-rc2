@@ -6,6 +6,8 @@ fopen missing: True
 Just 108
 ungetc: ()
 Just 108
+Left Errno:22
+Left Errno:22
 Right (Just "ine one\n")
 Right (Just "line two")
 Buffer.fread: 4 "last"

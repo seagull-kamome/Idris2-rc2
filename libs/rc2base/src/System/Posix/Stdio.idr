@@ -330,9 +330,12 @@ fputs file str = do
 
 ||| Read a line of at most `size - 1` bytes, with its newline if it fit.
 ||| `Right Nothing` at the end of the file. The text is cut at a NUL byte.
+||| `Left EINVAL` for a `size` under 1: `fgets` has no room for even the
+||| terminator then (a `size` of 0 is undefined in C), and the buffer could
+||| not be allocated.
 export
 fgets : File -> (size : Int32) -> IO (Either Errno (Maybe String))
-fgets file size = do
+fgets file size = if size < 1 then pure (Left EINVAL) else do
   buf <- malloc (cast {to = Int} size)
   p <- primIO (prim__fgets buf size file.ptr)
   r <- if prim__nullAnyPtr p /= 0

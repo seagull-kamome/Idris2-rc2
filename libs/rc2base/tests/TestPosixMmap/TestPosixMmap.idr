@@ -6,8 +6,8 @@ module Main
 -- System.Posix.Mmap: the PROT_*/MAP_* constants (compared with a plain C
 -- program through the .expected file), an anonymous mapping written and
 -- read back through System.FFI.C.Ptr, a read-only file-backed mapping,
--- and the failing mmap (zero length) mapped to Nothing. The module has no
--- munmap, so the test declares its own.
+-- and the failing mmap (zero length) mapped to Nothing; the mappings are
+-- removed with the module's munmap, whose failure (zero length) is EINVAL.
 
 import System.Directory
 import System.File
@@ -19,9 +19,6 @@ import System.Posix.Mmap
 
 %foreign "CExpr:(NULL),libc,stddef.h"
 nullPtr : AnyPtr
-
-%foreign "CExpr:(munmap($1, $2)),libc,sys/mman.h"
-prim__munmap : AnyPtr -> Int64 -> PrimIO Int32
 
 c : String -> Int32 -> IO ()
 c n v = putStrLn (n ++ "=" ++ show v)
@@ -82,7 +79,8 @@ testAnonymous = do
   b <- unsafePtrFetch bytes 4095
   z <- unsafePtrFetch bytes 100
   putStrLn ("anonymous: " ++ show (a, b, z))
-  primIO (prim__munmap p 4096) >>= \r => putStrLn ("munmap: " ++ show r)
+  munmap p 4096 >>= \r => putStrLn ("munmap: " ++ either show (const "0") r)
+  munmap p 0 >>= \r => putStrLn ("munmap, zero length: " ++ either show (const "0") r)
 
 ||| File-backed read-only mapping of the input file.
 testFileBacked : IO ()
@@ -95,7 +93,7 @@ testFileBacked = do
   f0 <- unsafePtrFetch fb 0
   f10 <- unsafePtrFetch fb 10
   putStrLn ("file: " ++ show (f0, f10))
-  _ <- primIO (prim__munmap q 11)
+  _ <- munmap q 11
   _ <- close fd
   pure ()
 
