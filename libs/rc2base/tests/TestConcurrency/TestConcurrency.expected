@@ -14,4 +14,5 @@ setThreadData/getThreadData round-trip: True
 junk: 2000
 setThreadData String round-trip: hello12345xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
 setThreadData List round-trip: [1, 2, 3]
+thread data survives until exit: [46, 46, 46, 46, 46, 46, 46, 46]
 --- Tests finished ---
