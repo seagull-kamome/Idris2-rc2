@@ -39,10 +39,12 @@ primFdToFileDesc fd = case mkFileDesc fd of
 %inline %foreign "CExpr:close($1),libc,unistd.h"
 prim__close : Int32 -> PrimIO Int32
 
-||| Close a file descriptor.
+||| Close a file descriptor. The descriptor is gone afterwards even when this
+||| fails (`EINTR` is not a reason to close again; `EIO` says buffered data may
+||| be lost).
 public export
-close : FileDesc -> IO Int32
-close fd = primIO $ prim__close fd.rawfd
+close : FileDesc -> IO (Either Errno ())
+close fd = primIO (prim__close fd.rawfd) >>= checkUnit
 
 -------------------------------------------------------------------------------
 --

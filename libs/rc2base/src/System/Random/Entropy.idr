@@ -36,8 +36,7 @@ entropy64 = liftIO $ do
     attempt : FileDesc -> Buffer -> (tries : Nat) -> IO Bool
     attempt _ _ Z = pure False
     attempt fd buf (S k) = do
-      n <- read fd buf
-      interrupted <- if n < 0 then (== EINTR) <$> errno else pure False
-      if n == 8 then pure True
-        else if interrupted then attempt fd buf k
-        else pure False
+      r <- read fd buf
+      case r of
+           Right n => pure (n == 8)
+           Left e => if e == EINTR then attempt fd buf k else pure False

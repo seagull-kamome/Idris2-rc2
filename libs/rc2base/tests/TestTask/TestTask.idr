@@ -51,11 +51,10 @@ readStr : FileDesc -> IO (Either Errno String)
 readStr fd = do
   Just buf <- newBuffer 64
     | Nothing => pure (Right "")
-  n <- read fd buf
-  if n < 0
-     then Left <$> errno
-     else do bs <- traverse (getBits8 buf) (map cast (the (List Nat) (if n == 0 then [] else [0 .. cast n `minus` 1])))
-             pure (Right (pack (map (chr . cast) bs)))
+  Right n <- read fd buf
+    | Left e => pure (Left e)
+  bs <- traverse (getBits8 buf) (map cast (the (List Nat) (if n == 0 then [] else [0 .. n `minus` 1])))
+  pure (Right (pack (map (chr . cast) bs)))
 
 -- sleep in real time
 nap : Nat -> IO ()

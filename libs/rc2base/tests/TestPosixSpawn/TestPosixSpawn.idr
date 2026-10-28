@@ -22,8 +22,9 @@ slurp : FileDesc -> IO String
 slurp fd = do
   Just buf <- newBuffer 256
     | Nothing => pure "newBuffer failed"
-  n <- read fd buf
-  if n <= 0 then pure "" else do
+  Right n <- read fd buf
+    | Left _ => pure ""
+  if n == 0 then pure "" else do
     s <- getString buf 0 (cast n)
     rest <- slurp fd
     pure (s ++ rest)

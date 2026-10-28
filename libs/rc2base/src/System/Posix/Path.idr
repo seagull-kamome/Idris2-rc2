@@ -131,7 +131,7 @@ mkstemp template = do
      else do name <- ptrToString buf
              case name of
                   Nothing => do _ <- primIO (prim__unlinkPtr buf)
-                                _ <- maybe (pure 0) close (mkFileDesc r)
+                                _ <- maybe (pure (Right ())) close (mkFileDesc r)
                                 free buf
                                 pure (Left EILSEQ)
                   Just n => do free buf

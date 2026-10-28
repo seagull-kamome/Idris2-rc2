@@ -49,6 +49,16 @@ public export
 checkNonNeg : Int32 -> IO (Either Errno Int32)
 checkNonNeg r = if r >= 0 then pure (Right r) else map Left errno
 
+||| `Right r` for a non-negative 64-bit return value (an offset), otherwise `Left errno`.
+public export
+checkNonNeg64 : Int64 -> IO (Either Errno Int64)
+checkNonNeg64 r = if r >= 0 then pure (Right r) else map Left errno
+
+||| `Right n` for a non-negative return value that counts bytes, otherwise `Left errno`.
+public export
+checkCount : Int64 -> IO (Either Errno Nat)
+checkCount r = if r >= 0 then pure (Right (cast r)) else map Left errno
+
 -------------------------------------------------------------------------------
 --
 

@@ -109,6 +109,9 @@ testReadAndDup = do
   s <- getString buf 0 12
   putStrLn ("Buffer.read: " ++ show m ++ " " ++ show s)
   _ <- lseek rfd (cast 6) SEEK_SET
+  -- a failure is the errno: posix_fallocate on a descriptor not open for writing
+  Buffer.write rfd buf >>= \r => putStrLn ("write to a read-only descriptor is EBADF: " ++ show (r == Left EBADF))
+  fallocate rfd (cast 0) (cast 4096) >>= \r => putStrLn ("fallocate read-only is EBADF: " ++ show (r == Left EBADF))
   p <- malloc 16
   k <- AnyPtr.read rfd p 5
   putStrLn ("AnyPtr.read: " ++ show k)
@@ -149,6 +152,7 @@ testWriteAndLocks = do
 ||| Path based chmod/chown/lchown and the *at variants relative to a directory descriptor.
 testPathBased : IO ()
 testPathBased = do
+  chmod (dir ++ "/missing") 420 >>= \r => putStrLn ("chmod missing is ENOENT: " ++ show (r == Left ENOENT))
   chmod path 420 >>= \r => putStrLn ("chmod: " ++ show r)
   chown path 4294967295 4294967295 >>= \r => putStrLn ("chown: " ++ show r)
   lchown path 4294967295 4294967295 >>= \r => putStrLn ("lchown: " ++ show r)

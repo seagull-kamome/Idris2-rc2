@@ -82,7 +82,7 @@ testVectorIO fd = do
   putStrLn ("sizeof iovec: " ++ show SizeOfIOVec)
   for_ [a, b, c, d, e] free
  where
-  seekStart : FileDesc -> IO Int64
+  seekStart : FileDesc -> IO (Either Errno Int64)
   seekStart fd = lseek fd (cast (the Int64 0)) SEEK_SET
 
 -----------------------------------------------------------------------------
