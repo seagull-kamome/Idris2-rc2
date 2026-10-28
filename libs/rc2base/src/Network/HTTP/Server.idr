@@ -42,6 +42,7 @@ import System.Posix.Errno
 import System.Posix.Fcntl
 import System.Posix.File
 import System.Posix.FileDesc
+import System.Posix.Socket as Posix
 
 -- The event loop itself never terminates by construction (`loop`,
 -- `acceptLoop`) -- overrides rc2base.ipkg's package-wide `--total`.
@@ -184,12 +185,9 @@ ioChunk = 65536
 -- The event loop
 -------------------------------------------------------------------------------
 
-%inline %foreign "CExpr:(({ int one = 1; setsockopt($1, SOL_SOCKET, SO_REUSEADDR, &one, sizeof(one)); })),libc,sys/socket.h"
-prim__setReuseAddr : Int32 -> PrimIO Int32
-
 -- So a restarted server can rebind its port at once instead of waiting out `TIME_WAIT`.
 setReuseAddr : FileDesc -> IO Bool
-setReuseAddr fd = (== 0) <$> primIO (prim__setReuseAddr fd.rawfd)
+setReuseAddr fd = either (const False) (const True) <$> Posix.setSockOptInt fd SOL_SOCKET SO_REUSEADDR 1
 
 -- Every socket registered with the `EPoll` must be non-blocking: a blocking
 -- `accept` / `recv` / `send` would stall the whole single-threaded loop.

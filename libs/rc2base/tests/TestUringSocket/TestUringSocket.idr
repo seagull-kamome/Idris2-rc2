@@ -19,6 +19,7 @@ import System.FFI
 import System.Linux.Uring
 import System.Posix.Errno
 import System.Posix.FileDesc
+import System.Posix.Socket as Posix
 
 port : Port
 port = 18734
