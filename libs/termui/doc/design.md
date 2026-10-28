@@ -358,6 +358,17 @@ The rules:
   there is padding on top.
 - Sizes are limited to 65535 cells.
 
+`foldClick` says where a press of the left button folds or opens a block that
+can be folded: `OnMark` (the default; the mark in the gutter on the first row),
+`OnFirstRow` (anywhere on the first row) or `OnBlock` (anywhere on its rows,
+the padding and the columns of the left margin included; not the rows of margin
+above and below). A click below the first row of a block shows its first row
+(the block shrinks to it). A press on the scroll bar never does. The
+marks may be `""`: when no mark is wider than nothing the gutter is gone and the
+cursor is shown by the first row of the block in reverse; the folded state is
+then shown by the `" ..."` of a folded block (and the line of a folded code
+block). `OnMark` with no marks has nothing to click.
+
 `renderMarkdown theme w src` is the styled text for width `w` and `markdown theme
 src` a view wrapped to the width it is placed in. Quotes and list items are made
 with the prefixes of the paragraphs, so a wrapped row keeps the bar or the

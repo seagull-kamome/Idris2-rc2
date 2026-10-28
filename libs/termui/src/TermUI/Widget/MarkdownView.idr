@@ -9,7 +9,9 @@
 ||| up to the next heading of its level or a higher one, or the end of the
 ||| segment; the others fold into a line. The cursor (`NextUnit`, `PrevUnit`)
 ||| picks the unit that `Toggle` folds or opens; it is drawn as the mark in
-||| reverse. See libs/termui/doc/design.md ("Markdown").
+||| reverse (the first row of the unit, if the theme has no marks). A click folds
+||| or opens a unit on its mark, on its first row or on any of its rows, as the
+||| theme says (`foldClick`). See libs/termui/doc/design.md ("Markdown").
 |||
 ||| Copyright 2026, Hattori,Hiroki. All rights reserved.
 ||| This module was licensed by BSD3. see LICENSE file for detail.
@@ -56,6 +58,13 @@ record Seg where
   known : Nat
   nLines : Nat
 
+-- The unit (the segment and the block) that a line belongs to, and whether it is the
+-- first line of the unit, where its mark is.
+record Owner where
+  constructor MkOwn
+  unit : (Nat, Nat)
+  head : Bool
+
 public export
 record Model where
   constructor MkModel
@@ -64,7 +73,7 @@ record Model where
   width : Len                       -- the scroll bar included
   segs : Seq Seg
   lines : Seq (List Span)
-  owners : Seq (Maybe (Nat, Nat))   -- the unit whose mark is on the line: the segment and the block
+  owners : Seq (Maybe Owner)        -- the unit a click on the line folds
   top : Len
   follow : Bool
   cursor : Maybe (Nat, Nat)
@@ -130,6 +139,11 @@ givenSeg th bs = settleDefaults th (MkSeg False "" bs [] 0 0)
 textWidth : Len -> Len
 textWidth w = w `monus` 1
 
+-- The first line with the colours reversed.
+reverseHead : List (List Span) -> List (List Span)
+reverseHead [] = []
+reverseHead (l :: rest) = map (\sp => { spanStyle := withAttr Inverse sp.spanStyle } sp) l :: rest
+
 -- A block folded: a line, behind its left margin and padding and without the
 -- rows of padding. What marks it as folded is part of the line, so that it is
 -- wrapped with the rest.
@@ -145,10 +159,11 @@ collapsed th w b = boxAround th (kindOf b) w False (\iw => line iw b)
         [] => []
         (p :: _) => [{ body $= (++ [spanOf th.foldStyle " ..."]) } p]
 
--- The lines of a segment with the units whose marks are on them. A segment
+-- The lines of a segment with the units that a click on them folds: the first
+-- line of a unit, where its mark is, and for `OnBlock` the others. A segment
 -- after the first starts with the gap.
 layoutSeg : MdTheme -> (w : Len) -> (cursor : Maybe (Nat, Nat)) -> (idx : Nat) -> Seg
-          -> (List (List Span), List (Maybe (Nat, Nat)))
+          -> (List (List Span), List (Maybe Owner))
 layoutSeg th w cursor idx seg = go Nothing (if idx > 0 then Just 0 else Nothing) (indexed seg.blocks)
   where
     gw : Len
@@ -166,7 +181,7 @@ layoutSeg th w cursor idx seg = go Nothing (if idx > 0 then Just 0 else Nothing)
 
     -- `before` is the bottom margin of the block shown before, if there is one
     go : (hiding : Maybe Nat) -> (before : Maybe Nat) -> List (Nat, Block)
-       -> (List (List Span), List (Maybe (Nat, Nat)))
+       -> (List (List Span), List (Maybe Owner))
     go _ _ [] = ([], [])
     go hiding before ((i, b) :: rest) =
       let level = case b of
@@ -183,14 +198,17 @@ layoutSeg th w cursor idx seg = go Nothing (if idx > 0 then Just 0 else Nothing)
                paras = if isFolded then collapsed th contentW b else renderBlock th 0 contentW b
                mark = markSpan unit isFolded (cursor == Just (idx, i))
                blankG = spanOf plain (blanks gw)
-               ls = concatMap (layoutPara w) (if gw == 0 then paras else behind [mark] [blankG] paras)
+               laid = concatMap (layoutPara w) (if gw == 0 then paras else behind [mark] [blankG] paras)
+               -- with no gutter the cursor is shown by the first row being reversed
+               ls = if gw == 0 && unit && cursor == Just (idx, i) then reverseHead laid else laid
                gapRows = the Nat (case before of
                                     Nothing => marginTop th b
                                     Just pb => max th.gap (max pb (marginTop th b)))
                gapLines = the (List (List Span)) (replicate gapRows [])
+               others = if unit && th.foldClick == OnBlock then Just (MkOwn (idx, i) False) else Nothing
                own = (case ls of
                         [] => []
-                        (_ :: more) => (if unit then Just (idx, i) else Nothing) :: map (const Nothing) more)
+                        (_ :: more) => (if unit then Just (MkOwn (idx, i) True) else Nothing) :: map (const others) more)
                (restLs, restOs) = go (if isFolded then level else Nothing) (Just (marginBottom th b)) rest
            in (gapLines ++ ls ++ restLs, map (const Nothing) gapLines ++ own ++ restOs)
 
@@ -216,8 +234,8 @@ layoutAll m =
   let (ls, os, segs', _) = foldl step (Q.empty, Q.empty, Q.empty, 0) (toList m.segs)
   in { lines := ls, owners := os, segs := segs' } m
   where
-    step : (Seq (List Span), Seq (Maybe (Nat, Nat)), Seq Seg, Nat) -> Seg
-         -> (Seq (List Span), Seq (Maybe (Nat, Nat)), Seq Seg, Nat)
+    step : (Seq (List Span), Seq (Maybe Owner), Seq Seg, Nat) -> Seg
+         -> (Seq (List Span), Seq (Maybe Owner), Seq Seg, Nat)
     step (ls, os, ss, idx) seg =
       let (sl, so) = layoutSeg m.theme (textWidth m.width) m.cursor idx seg
       in (Q.(++) ls (Q.fromList sl), Q.(++) os (Q.fromList so), ss `snoc` setLines (length sl) seg, S idx)
@@ -318,7 +336,7 @@ extendStyled spans m =
 
 -- The units on view, in order.
 units : Model -> List (Nat, Nat)
-units m = mapMaybe id (toList m.owners)
+units m = mapMaybe (\o => o >>= \w => if w.head then Just w.unit else Nothing) (toList m.owners)
 
 indexOf : Eq a => a -> List a -> Maybe Nat
 indexOf x = go 0
@@ -328,7 +346,7 @@ indexOf x = go 0
     go i (y :: ys) = if x == y then Just i else go (S i) ys
 
 lineOf : (Nat, Nat) -> Model -> Maybe Nat
-lineOf u m = indexOf (Just u) (toList m.owners)
+lineOf u m = indexOf (Just u) (map (\o => o >>= \w => if w.head then Just w.unit else Nothing) (toList m.owners))
 
 -- The window shows the line.
 reveal : Nat -> Model -> Model
@@ -395,6 +413,13 @@ moveCursor forward m =
          let m' = setCursor (Just c) m
          in maybe m' (\l => reveal l m') (lineOf c m')
 
+-- Whether a click folds the unit: the first line of it or not, in the gutter or
+-- not, left of the scroll bar or not.
+hits : FoldClick -> (first, inGutter, inText : Bool) -> Bool
+hits OnMark first inGutter _ = first && inGutter
+hits OnFirstRow first _ inText = first && inText
+hits OnBlock _ _ inText = inText
+
 ||| Handle a message.
 export
 update : ViewMsg -> Model -> Model
@@ -407,9 +432,15 @@ update Toggle m = maybe m (\c => if elem c (units m) then toggleUnit c m else m)
 update FoldAll m = setAll True m
 update UnfoldAll m = setAll False m
 update (Click row col) m =
-  if col >= gutter m.theme || row >= m.rows then m
+  if row >= m.rows then m
   else case Q.index (cast (m.top + row)) m.owners of
-         Just (Just u) => toggleUnit u (setCursor (Just u) m)
+         Just (Just w) =>
+           if hits m.theme.foldClick w.head (col < gutter m.theme) (col < textWidth m.width)
+              then (let m' = toggleUnit w.unit (setCursor (Just w.unit) m)
+                    -- a click on a row below the first one: the unit shrinks to its first
+                    -- row, which may be above the window
+                    in if w.head then m' else maybe m' (\l => reveal l m') (lineOf w.unit m'))
+              else m
          _ => m
 
 ||| The same viewer in a window of another size; it is laid out again if the
@@ -456,7 +487,8 @@ keyMsg i = Scroll <$> Sc.keyMsg i
 
 ||| The mouse for a viewer whose window has its top left at the cell (`top`,
 ||| `left`) of the screen: the wheel scrolls and a press of the left button
-||| in the gutter folds or opens a block.
+||| folds or opens a block where the theme's `foldClick` says (by default in
+||| the gutter).
 export
 mouseMsg : (top, left : Len) -> MouseEvent -> Maybe ViewMsg
 mouseMsg top left e =

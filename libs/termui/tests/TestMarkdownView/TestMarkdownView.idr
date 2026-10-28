@@ -85,6 +85,30 @@ main = do
   draw "a click in the gutter on the code block (row 4)" m4
   draw "a click below the window does nothing" (run [V.Scroll Sc.ToStart, V.Click 14 1, V.Click 20 1] m0)
   draw "a click outside the gutter does nothing" (run [V.Scroll Sc.ToStart, V.Click 4 10] m0)
+  -- where a click folds
+  let c1 = V.addSegment doc (V.empty ({ foldClick := OnFirstRow } defaultTheme) 14 30)
+  let c2 = V.addSegment doc (V.empty ({ foldClick := OnBlock } defaultTheme) 14 30)
+  let at = \row, col, m => run [V.Scroll Sc.ToStart, V.Click row col] m
+  draw "OnFirstRow: a click on the text of the first row of the code block folds it" (at 4 10 c1)
+  draw "OnFirstRow: a click on its second row does nothing" (at 5 10 c1)
+  draw "OnBlock: a click on the second row of the code block folds it" (at 5 10 c2)
+  draw "OnBlock: a click on the heading text folds its section" (at 0 8 c2)
+  draw "OnBlock: a click on the blank row between blocks does nothing" (at 3 8 c2)
+  draw "OnBlock: a click on the scroll bar does nothing" (at 5 29 c2)
+  draw "OnBlock: a click on a paragraph, which cannot fold, does nothing" (at 2 8 c2)
+  -- a tall block whose first row is above the window: folding it by a click below shows its first row
+  let tall = V.addSegment "intro\n\n```\na\nb\nc\nd\ne\nf\ng\nh\n```\n\nend 1\n\nend 2\n\nend 3\n\nend 4\n\nend 5\n\nend 6" (V.empty ({ foldClick := OnBlock } defaultTheme) 5 20)
+  let t1 = run [V.Scroll Sc.ToStart, V.Scroll (Sc.LineDown 6)] tall
+  draw "OnBlock: the code block is under the window's top" t1
+  draw "OnBlock: a click on its last visible row folds it, and its first row is shown" (run [V.Click 3 5] t1)
+  -- no marks: no gutter, the cursor is the first row in reverse
+  let nm = { openMark := "", closedMark := "" } defaultTheme
+  let n1 = V.addSegment doc (V.empty ({ foldClick := OnBlock } nm) 14 30)
+  draw "no marks: no gutter" (run [V.Scroll Sc.ToStart] n1)
+  draw "no marks: the cursor on the code block is its first row in reverse" (run [V.Scroll Sc.ToStart, V.NextUnit, V.NextUnit] n1)
+  draw "no marks: a click on the code block folds it" (at 5 3 n1)
+  draw "no marks: the keys fold it too" (run [V.Scroll Sc.ToStart, V.NextUnit, V.NextUnit, V.Toggle] n1)
+  draw "no marks and OnMark: nothing to click" (at 4 0 (V.addSegment doc (V.empty nm 14 30)))
   -- a second segment, then text added to it while it arrives
   let s0 = V.addSegment "# ai\n\n" (V.empty defaultTheme 8 30)
   let s1 = V.extendSegment "Here is code:\n\n```py\nprint(1)" s0

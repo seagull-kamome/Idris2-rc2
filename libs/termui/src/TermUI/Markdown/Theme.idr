@@ -32,6 +32,24 @@ data Kind
 public export
 data Fold = NoFold | Open | Closed
 
+||| Where a click folds or opens a block that can be folded.
+public export
+data FoldClick
+  = ||| On its mark, in the gutter, on the first row of the block.
+    OnMark
+  | ||| Anywhere on the first row of the block.
+    OnFirstRow
+  | ||| Anywhere on the block: its rows, the padding and the columns of the left
+    ||| margin too, but not the rows of margin above and below.
+    OnBlock
+
+public export
+Eq FoldClick where
+  OnMark == OnMark = True
+  OnFirstRow == OnFirstRow = True
+  OnBlock == OnBlock = True
+  _ == _ = False
+
 ||| The space around a block (`margin`) and inside it (`padding`), in cells, as
 ||| in CSS: from the outside in, the margin, the padding, then the block (a
 ||| quote's bar, a list's markers and the text are part of the block). The
@@ -84,6 +102,7 @@ record MdTheme where
   openMark, closedMark : String        -- before the first line of a block that can be folded
   foldStyle : Style
   box : Kind -> BoxStyle               -- margin and padding by kind of block
+  foldClick : FoldClick                -- where a click folds a block; the marks may be "" with the text
 
 ||| Headings, code and quotes and lists can be folded, and start open.
 public export
@@ -130,3 +149,4 @@ defaultTheme = MkTheme
   (\k => case k of
                    KCode => { fill := bgColor (Indexed 236) plain } noBox
                    _ => noBox)  -- box
+  OnMark  -- foldClick
