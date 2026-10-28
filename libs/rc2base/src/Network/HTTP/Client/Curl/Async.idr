@@ -331,23 +331,29 @@ streamAsync (MkCurlClient o) req = do
                               Right () => Left (TransportError "no head in the answer")) (liftIO (outcomeOf x))
             else waitStep x >> headLoop x
 
+||| `nextChunk`, with an action run on the bytes in the same step that takes them:
+||| a task given up cannot fall between the two, so nothing that was taken is lost.
+export
+nextChunkWith : (Buffer -> IO a) -> FetchStream -> Task (Either FetchError (Maybe a))
+nextChunkWith f (MkFetchStream x) = do
+  True <- liftIO (readIORef x.isOpen)
+      | False => pure (Right Nothing)
+  Right over <- liftIO (advance x)
+      | Left e => liftIO (closeXfer x) >> pure (Left e)
+  Nothing <- liftIO (takeBody x >>= traverse f)
+      | Just r => pure (Right (Just r))
+  if over
+    then liftIO (do r <- outcomeOf x
+                    closeXfer x
+                    pure (map (const Nothing) r))
+    else waitStep x >> nextChunkWith f (MkFetchStream x)
+
 ||| The next bytes of the body, as they arrive: `Nothing` at the end of the body. A
 ||| transfer that fails on the way is `Left`, not an end. The transfer is closed when
 ||| it gives the end or an error.
 export
 nextChunk : FetchStream -> Task (Either FetchError (Maybe Buffer))
-nextChunk (MkFetchStream x) = do
-  True <- liftIO (readIORef x.isOpen)
-      | False => pure (Right Nothing)
-  Right over <- liftIO (advance x)
-      | Left e => liftIO (closeXfer x) >> pure (Left e)
-  Nothing <- liftIO (takeBody x)
-      | Just b => pure (Right (Just b))
-  if over
-    then liftIO (do r <- outcomeOf x
-                    closeXfer x
-                    pure (map (const Nothing) r))
-    else waitStep x >> nextChunk (MkFetchStream x)
+nextChunk = nextChunkWith pure
 
 ||| End the transfer; does nothing if it has ended.
 export

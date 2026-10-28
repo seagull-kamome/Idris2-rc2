@@ -740,10 +740,9 @@ upstreamに取り込まれたら`idris2-src`を更新して自作idris2を作り
 
 ## HTTPクライアントの一本化
 
-`Network.HTTP.Client.Curl.Async`(`libs/rc2base/doc/async-http-client.md`)ができたので、
-自前のソケットでHTTPを話している2か所を載せ替える。
+`Network.HTTP.Client.Curl.Async`(`libs/rc2base/doc/async-http-client.md`)ができ、
+`Network.Async.HTTP.Stream`はその上に載った。自前のソケットでHTTPを話している残りの1か所を載せ替える。
 
-- `Network.Async.HTTP.Stream`: `streamPost`をこの上に載せる。https、名前解決、IPv6が使えるようになる。
-  chunkのデコーダは不要になる(行分割とイベントのパーサは残る)。
 - `Network.Async.HTTP.Proxy`の私用クライアント: 転送の厳格な検査(`Transfer-Encoding`の拒否、
-  先頭行と`Content-Length`の検査、リダイレクトを追わない)を保ったまま載せ替えられるかを先に確かめる。
+  先頭行と`Content-Length`の検査、リダイレクトを追わない、応答の大きさの上限)を保ったまま
+  載せ替えられるかを先に確かめる。リダイレクトを追わない設定は`CurlOptions`に無い。

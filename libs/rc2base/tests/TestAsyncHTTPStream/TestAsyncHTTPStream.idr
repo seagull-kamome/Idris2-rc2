@@ -3,12 +3,13 @@ module Main
 -- Copyright 2026, Hattori,Hiroki. All rights reserved.
 -- This module was licensed by BSD3.
 
--- Network.Async.HTTP.Stream: the pure parts (chunk decoder, line splitter, event
--- parser) on their own, then a server task that sends an answer in pieces while the
--- client task reads the events: events arrive while the server is still sending, a
--- chunked body, a body of a given length and one that ends with the connection,
--- bytes cut in the middle of a character, an error status, and a server that
--- is not there.
+-- Network.Async.HTTP.Stream: the pure parts (line splitter, event parser) on their
+-- own, then a server task that sends an answer in pieces while the client task
+-- reads the events: events arrive while the server is still sending, a chunked
+-- body, a body of a given length and one that ends with the connection, bytes
+-- cut in the middle of a character, an error status, and a server that is not
+-- there. The framing of the body is libcurl's, so the errors for a body that
+-- is cut short or a head that is not one carry libcurl's message.
 
 import Control.Task
 import Control.Task.Scheduler
@@ -36,26 +37,6 @@ bytes = encode . unpack
 
 showText : List Bits8 -> String
 showText = pack . decode
-
-chunkedAll : List String -> String
-chunkedAll parts =
-  case foldlM (\(st, acc), p => map (\(st', out) => (st', acc ++ out)) (feedChunked st (bytes p))) (chunkStart, []) parts of
-    Left e => "error: " ++ e
-    Right (_, out) => showText out
-
-chunkedTests : IO ()
-chunkedTests = do
-  putStrLn "-- chunked"
-  putStrLn (chunkedAll ["5\r\nhello\r\n6\r\n world\r\n0\r\n\r\n"])
-  putStrLn (chunkedAll ["5\r\nhel", "lo\r\n", "6\r", "\n wor", "ld\r\n0\r", "\n\r\n"])
-  putStrLn (chunkedAll ["A;ext=1\r\n0123456789\r\n0\r\nTrailer: x\r\n\r\n"])
-  putStrLn (chunkedAll ["1\r\na\r\n0\r\n\r\nignored after the end"])
-  putStrLn (chunkedAll ["zz\r\nabc"])
-  putStrLn (chunkedAll ["3\r\n日\r\n0\r\n\r\n"])
-  putStrLn (chunkedAll ["3\r\nabcXX\r\n"])
-  putStrLn (chunkedAll ["3 junk\r\nabc\r\n"])
-  putStrLn (chunkedAll ["3  \r\nabc\r\n0\r\n\r\n"])
-  putStrLn (chunkedAll [pack (replicate 200 '1'), "\r\n"])
 
 linesTests : IO ()
 linesTests = do
@@ -192,7 +173,6 @@ timeoutAt' ms t = do
 
 main : IO ()
 main = do
-  chunkedTests
   linesTests
   sseTests
 
