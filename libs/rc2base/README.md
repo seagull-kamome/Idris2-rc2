@@ -40,7 +40,7 @@ cache and error buffer, the `xoroshiro` system seeds), allocation and cleanup (`
 Declarations needing `_GNU_SOURCE` (`O_DIRECT`, `O_LARGEFILE`, `O_NOATIME`,
 `O_PATH`, `O_TMPFILE`, `AT_EMPTY_PATH`, `SEEK_DATA`, `SEEK_HOLE`, `dup3`,
 `preadv2`/`pwritev2`, `memfd_create` with `MFD_*` and the `F_SEAL_*` seals,
-`splice` with `SPLICE_F_*`, `copy_file_range`, `statx`, the CPU-set macros of `System.Linux.Process`) need `_GNU_SOURCE`, which generated code does not define
+`splice` with `SPLICE_F_*`, `copy_file_range`, `statx`, `ppoll`, the CPU-set macros of `System.Linux.Process`) need `_GNU_SOURCE`, which generated code does not define
 itself: build the program with `IDRIS2_CFLAGS=-D_GNU_SOURCE` (or
 `CFLAGS=-D_GNU_SOURCE`) in the environment of the Idris compiler. Each of these
 declarations says so in its doc comment; without the flag the generated C does
@@ -78,7 +78,7 @@ not compile when the declaration is used.
 | `System.FFI.C.Sizeof` | the C `sizeof` of a scalar type, for hand-rolled buffer strides/offsets |
 | `System.GC.RC2` | raw access to rc2's own `idris2rc2_dup`/`dup_n`/`drop`, for a value smuggled out through an opaque FFI pointer |
 | `System.GC.RC2.touch` | `touch x`: keep `x` alive until that action (GHC `touchForeignPtr`); safe for any value, unlike `unsafeGCDup`/`unsafeGCDrop` |
-| `System.Linux.*` | Linux-only bindings; `Epoll` (a thin `epoll` FFI wrapper backing `Network.HTTP.Server`'s event loop), `Pipe` (`pipe2`), `Eventfd`, `Memfd` (`memfd_create` and file seals), `Copy` (`sendfile`, `splice`, `copy_file_range`), `Prctl`, `Statx` (`statx` with the birth time and mount ID), `Random` (`getrandom`), `Process` (`gettid`, `pidfd_open`, CPU affinity), `Timerfd`, `Signalfd`, `Inotify`, `Uring` (`io_uring` via liburing, `doc/uring.md`; needs liburing's headers and library in a program that imports it), `Clock` (`CLOCK_BOOTTIME`, ...) and `Dl` (`dladdr`, more `dlopen` flags) |
+| `System.Linux.*` | Linux-only bindings; `Epoll` (a thin `epoll` FFI wrapper backing `Network.HTTP.Server`'s event loop), `Pipe` (`pipe2`), `Ppoll` (`poll` with a nanosecond timeout and a signal mask), `Eventfd`, `Memfd` (`memfd_create` and file seals), `Copy` (`sendfile`, `splice`, `copy_file_range`), `Prctl`, `Statx` (`statx` with the birth time and mount ID), `Random` (`getrandom`), `Process` (`gettid`, `pidfd_open`, CPU affinity), `Timerfd`, `Signalfd`, `Inotify`, `Uring` (`io_uring` via liburing, `doc/uring.md`; needs liburing's headers and library in a program that imports it), `Clock` (`CLOCK_BOOTTIME`, ...) and `Dl` (`dladdr`, more `dlopen` flags) |
 | `System.Random.Xoroshiro128PlusPlus`/`Xoroshiro64StarStar` | two from-scratch PRNG ports -- see below |
 | `Text.Encoding.UTF8` | UTF-8 bytes <-> codepoints, pure `List` transforms -- see below |
 | `Text.NumberFormat` | fixed-width, zero-padded, lowercase hex (`ToHex`) for every fixed-width integer type -- see below |

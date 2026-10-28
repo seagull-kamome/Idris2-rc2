@@ -142,6 +142,20 @@ testPipe = do
   _ <- close rd
   poll [(rd, POLLIN)] 0 >>= \r => putStrLn ("closed descriptor: " ++ show (map (map (== POLLNVAL)) r))
 
+testPollHelpers : IO ()
+testPollHelpers = do
+  putStrLn "-- pollOne, pollReady"
+  Right (rd, wr) <- pipe
+    | Left _ => putStrLn "pipe failed"
+  pollOne rd POLLIN 0 >>= \r => putStrLn ("pollOne, nothing yet: " ++ show r)
+  pollReady [(rd, POLLIN), (wr, POLLOUT)] 0 >>= \r =>
+    putStrLn ("pollReady, only the write end: " ++ show (map (map (\(fd, e) => (fd.rawfd == wr.rawfd, e == POLLOUT))) r))
+  _ <- write wr "ping"
+  pollOne rd (POLLIN .|. POLLOUT) 0 >>= \r => putStrLn ("pollOne, happened: " ++ show (map (happened POLLIN) r, map (happened POLLOUT) r))
+  _ <- close wr
+  _ <- close rd
+  pure ()
+
 testExec : IO ()
 testExec = do
   putStrLn "-- exec"
@@ -208,6 +222,7 @@ main = do
   testTime
   testInfo
   testPipe
+  testPollHelpers
   testSelect
   testPwd
   testExec

@@ -17,6 +17,9 @@ import System
 import System.File
 import System.File.Buffer
 import System.FFI
+import System.Posix.FileDesc as FD
+import System.Posix.Errno
+import System.Posix.Poll
 
 import Network.Socket
 import Network.HTTP.Client
@@ -213,22 +216,6 @@ accessToken http c path = do
 -- Interactive login
 ------------------------------------------------------------------------
 
--- `struct pollfd[2]`. A `Struct` from `malloc`, not a `Buffer`: see
--- doc/http-client.md.
-PollFds : Type
-PollFds = Struct "idris2webapi_pollfd2"
-    [ ("fd0", Int32), ("events0", Bits16), ("revents0", Bits16)
-    , ("fd1", Int32), ("events1", Bits16), ("revents1", Bits16) ]
-
-%foreign "C:malloc,libc,stdlib.h"
-prim__newPollFds : Int -> PrimIO PollFds
-
-%foreign "C:free,libc,stdlib.h"
-prim__freePollFds : PollFds -> PrimIO ()
-
-%foreign "C:poll,libc,poll.h"
-prim__poll : PollFds -> Int -> Int -> PrimIO Int
-
 randomBytes : Int -> IO (Either String (List Bits8))
 randomBytes n = do
     Just buf <- newBuffer n
@@ -258,17 +245,14 @@ listenLoopback port = go port (the Nat 5)
             | _ => close s >> go (p + 1) k
         pure (Just (s, p))
 
--- True when `fd` is readable, False when stdin is.
-waitEither : PollFds -> Int -> IO (Either String Bool)
-waitEither fds fd = do
-    setField fds "fd0" (the Int32 (cast fd))
-    setField fds "events0" (the Bits16 1)
-    setField fds "revents0" (the Bits16 0)
-    setField fds "fd1" (the Int32 0)
-    setField fds "events1" (the Bits16 1)
-    setField fds "revents1" (the Bits16 0)
-    n <- primIO (prim__poll fds 2 (-1))
-    pure $ if n < 0 then Left "poll failed" else Right (the Bits16 (getField fds "revents0") /= 0)
+-- True when the socket is readable, False when stdin is.
+waitEither : Int -> IO (Either String Bool)
+waitEither fd = do
+    Just sock <- pure (mkFileDesc (cast fd))
+        | Nothing => pure (Left "bad socket")
+    Right [r0, _] <- poll [(sock, POLLIN), (MkFileDesc 0, POLLIN)] (-1)
+        | _ => pure (Left "poll failed")
+    pure (Right (r0 /= 0))
 
 isRedirect : List (String, String) -> Bool
 isRedirect ps = isJust (lookup "code" ps) || isJust (lookup "error" ps)
@@ -315,25 +299,22 @@ covering
 waitRedirect : Maybe (Socket, Int) -> IO (Either String (List (String, String)))
 waitRedirect Nothing       = readPasted
 waitRedirect (Just (s, _)) = do
-    fds <- primIO (prim__newPollFds 16)
-    r <- loop fds
-    primIO (prim__freePollFds fds)
-    pure r
+    loop
   where
     covering
-    loop : PollFds -> IO (Either String (List (String, String)))
-    loop fds = do
-        Right sockReady <- waitEither fds (descriptor s)
+    loop : IO (Either String (List (String, String)))
+    loop = do
+        Right sockReady <- waitEither (descriptor s)
             | Left e => pure (Left e)
         if sockReady
-            then maybe (loop fds) (pure . Right) !(serveOnce s)
+            then maybe loop (pure . Right) !(serveOnce s)
             else do
                 line <- getLine
                 if isRedirect (queryParams line)
                     then pure (Right (queryParams line))
                     else if !(fEOF stdin)
                         then readFromBrowserOnly
-                        else badPaste >> loop fds
+                        else badPaste >> loop
       where
         covering
         readFromBrowserOnly : IO (Either String (List (String, String)))

@@ -42,6 +42,10 @@ nonblock set: True
 dupfd at least 10: True
 hangup with data pending: Right [True]
 closed descriptor: Right [True]
+-- pollOne, pollReady
+pollOne, nothing yet: Right 0
+pollReady, only the write end: Right [(True, True)]
+pollOne, happened: (Right True, Right False)
 -- select
 empty pipe (readable, writable): Right (0, 1)
 after write: readable Right 1

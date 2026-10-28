@@ -25,6 +25,7 @@ import System.Linux.Dl
 import System.Linux.Inotify
 import System.Linux.Memfd
 import System.Linux.Pipe
+import System.Linux.Ppoll
 import System.Linux.Prctl
 import System.Linux.Process
 import System.Linux.Random
@@ -368,6 +369,21 @@ testEpoll = do
   epollClose ep >>= \r => putStrLn ("close: " ++ errOf r)
   epollClose ep2 >>= \r => putStrLn ("close the second: " ++ errOf r)
 
+testPpoll : IO ()
+testPpoll = do
+  putStrLn "-- ppoll"
+  Right (rd, wr) <- pipe2 0
+    | Left _ => putStrLn "pipe2 failed"
+  mask <- emptySigSet
+  ppoll [(rd, POLLIN)] (Just (MkTimeSpec 0 10000000)) Nothing >>= \r => putStrLn ("times out: " ++ show r)
+  ppoll [(rd, POLLIN)] (Just (MkTimeSpec 0 0)) (Just mask) >>= \r => putStrLn ("with a mask, times out: " ++ show r)
+  _ <- write wr "ping"
+  ppoll [(rd, POLLIN), (wr, POLLOUT)] Nothing (Just mask) >>= \r =>
+    putStrLn ("forever, then data: " ++ show (map (map (happened POLLIN)) r))
+  _ <- close wr
+  _ <- close rd
+  pure ()
+
 main : IO ()
 main = do
   Right (rd, wr) <- pipe2 (O_CLOEXEC .|. O_NONBLOCK)
@@ -392,6 +408,7 @@ main = do
   testDl
   testEventfd
   testEpoll
+  testPpoll
   testMemfd
   testPrctl
   testStatx

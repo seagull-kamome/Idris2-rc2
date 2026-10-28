@@ -34,7 +34,7 @@ rc2の汎用サポートライブラリです。上流の`base`/`contrib`に無�
 次の宣言は`_GNU_SOURCE`が必要です。生成コードは`_GNU_SOURCE`を自分では定義しません。
 
 - `O_DIRECT`、`O_LARGEFILE`、`O_NOATIME`、`O_PATH`、`O_TMPFILE`、`AT_EMPTY_PATH`、`SEEK_DATA`、`SEEK_HOLE`
-- `dup3`、`preadv2`/`pwritev2`、`copy_file_range`、`statx`
+- `dup3`、`preadv2`/`pwritev2`、`copy_file_range`、`statx`、`ppoll`
 - `memfd_create`と`MFD_*`・`F_SEAL_*`の各シール
 - `splice`と`SPLICE_F_*`
 - `System.Linux.Process`のCPUセットマクロ
@@ -73,7 +73,7 @@ rc2の汎用サポートライブラリです。上流の`base`/`contrib`に無�
 | `System.FFI.C.Sizeof` | スカラー型のCの`sizeof`。バッファの刻み幅やオフセットを手で計算するときに使います |
 | `System.GC.RC2` | rc2自身の`idris2rc2_dup`/`dup_n`/`drop`への直接アクセス。不透明なFFIポインタ経由で持ち出した値に使います |
 | `System.GC.RC2.touch` | `touch x`は、そのアクションまで`x`を生かしておきます（GHCの`touchForeignPtr`）。`unsafeGCDup`/`unsafeGCDrop`と違い、どの値に対しても安全です |
-| `System.Linux.*` | Linux専用のバインディング。`Epoll`（`Network.HTTP.Server`のイベントループを支える薄い`epoll`のFFIラッパ）、`Pipe`（`pipe2`）、`Eventfd`、`Memfd`（`memfd_create`とファイルシール）、`Copy`（`sendfile`、`splice`、`copy_file_range`）、`Prctl`、`Statx`（生成時刻とマウントID付きの`statx`）、`Random`（`getrandom`）、`Process`（`gettid`、`pidfd_open`、CPUアフィニティ）、`Timerfd`、`Signalfd`、`Inotify`、`Uring`（liburing経由の`io_uring`、`doc/uring.md`。importするプログラムにはliburingのヘッダとライブラリが必要です）、`Clock`（`CLOCK_BOOTTIME`など）、`Dl`（`dladdr`、追加の`dlopen`フラグ） |
+| `System.Linux.*` | Linux専用のバインディング。`Epoll`（`Network.HTTP.Server`のイベントループを支える薄い`epoll`のFFIラッパ）、`Pipe`（`pipe2`）、`Ppoll`（ナノ秒の待ち時間とシグナルマスクを取れる`poll`）、`Eventfd`、`Memfd`（`memfd_create`とファイルシール）、`Copy`（`sendfile`、`splice`、`copy_file_range`）、`Prctl`、`Statx`（生成時刻とマウントID付きの`statx`）、`Random`（`getrandom`）、`Process`（`gettid`、`pidfd_open`、CPUアフィニティ）、`Timerfd`、`Signalfd`、`Inotify`、`Uring`（liburing経由の`io_uring`、`doc/uring.md`。importするプログラムにはliburingのヘッダとライブラリが必要です）、`Clock`（`CLOCK_BOOTTIME`など）、`Dl`（`dladdr`、追加の`dlopen`フラグ） |
 | `System.Random.Xoroshiro128PlusPlus`/`Xoroshiro64StarStar` | ゼロから移植した2つの乱数生成器。後述 |
 | `Text.Encoding.UTF8` | UTF-8のバイト列とコードポイントの相互変換。純粋な`List`変換です。後述 |
 | `Text.NumberFormat` | すべての固定幅整数型に対する、固定幅・ゼロ詰め・小文字の16進表記（`ToHex`）。後述 |
