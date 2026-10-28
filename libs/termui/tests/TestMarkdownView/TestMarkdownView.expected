@@ -170,6 +170,77 @@
 |[-] ## Sub                   │
 |                             │
 |    under sub                │
+-- box: margins and padding, the gap is the largest of the facing margins (0, (True, 22))
+|[-] # Title
+|
+|    intro text
+|
+|
+|[-]
+|       c
+|       int a;
+|       int b;
+|
+|
+|[-] - x
+|    - y
+|
+|[-] ## Sub
+|
+|    under sub
+|
+|
+|[-] # Next
+|
+|    last
+|
+|
+-- box: the code block folded is one line, behind its left padding, without its padding rows (0, (True, 18))
+|[-] # Title
+|
+|    intro text
+|
+|
+|[+]   ``` c  (2 lines)
+ RRRR                          
+|
+|[-] - x
+|    - y
+|
+|[-] ## Sub
+|
+|    under sub
+|
+|
+|[-] # Next
+|
+|    last
+|
+|
+|
+|
+|
+|
+-- box: a folded paragraph with padding on the right and on the left (0, (True, 5))
+|[+]  a paragraph
+|     long enough
+|     to wrap in
+|     this window
+|     ...
+|
+-- box: the next segment starts after the gap only (12, (True, 24))
+|    - y                      │
+|                             │
+|[-] ## Sub                   │
+|                             │
+|    under sub                │
+|                             │
+|                             █
+|[-] # Next                   █
+|                             █
+|    last                     █
+|                             █
+|    second segment           █
 -- a click in the gutter on the code block (row 4) (0, (False, 16))
 |[-] # Title                  █
 |                             █
@@ -216,6 +287,205 @@
 |[-] ## Sub                   │
 |                             │
 |    under sub                │
+-- OnFirstRow: a click on the text of the first row of the code block folds it (0, (False, 16))
+|[-] # Title                  █
+|                             █
+|    intro text               █
+|                             █
+|[+] ``` c  (2 lines)         █
+ RRRR                          
+|                             █
+|[-] - x                      █
+|    - y                      █
+|                             █
+|[-] ## Sub                   █
+|                             █
+|    under sub                █
+|                             │
+|[-] # Next                   │
+-- OnFirstRow: a click on its second row does nothing (0, (False, 18))
+|[-] # Title                  █
+|                             █
+|    intro text               █
+|                             █
+|[-]  c                       █
+|     int a;                  █
+|     int b;                  █
+|                             █
+|[-] - x                      █
+|    - y                      █
+|                             │
+|[-] ## Sub                   │
+|                             │
+|    under sub                │
+-- OnBlock: a click on the second row of the code block folds it (0, (False, 16))
+|[-] # Title                  █
+|                             █
+|    intro text               █
+|                             █
+|[+] ``` c  (2 lines)         █
+ RRRR                          
+|                             █
+|[-] - x                      █
+|    - y                      █
+|                             █
+|[-] ## Sub                   █
+|                             █
+|    under sub                █
+|                             │
+|[-] # Next                   │
+-- OnBlock: a click on the heading text folds its section (0, (False, 5))
+|[+] # Title ...
+ RRRR                          
+|
+|[-] # Next
+|
+|    last
+|
+|
+|
+|
+|
+|
+|
+|
+|
+-- OnBlock: a click on the blank row between blocks does nothing (0, (False, 18))
+|[-] # Title                  █
+|                             █
+|    intro text               █
+|                             █
+|[-]  c                       █
+|     int a;                  █
+|     int b;                  █
+|                             █
+|[-] - x                      █
+|    - y                      █
+|                             │
+|[-] ## Sub                   │
+|                             │
+|    under sub                │
+-- OnBlock: a click on the scroll bar does nothing (0, (False, 18))
+|[-] # Title                  █
+|                             █
+|    intro text               █
+|                             █
+|[-]  c                       █
+|     int a;                  █
+|     int b;                  █
+|                             █
+|[-] - x                      █
+|    - y                      █
+|                             │
+|[-] ## Sub                   │
+|                             │
+|    under sub                │
+-- OnBlock: a click on a paragraph, which cannot fold, does nothing (0, (False, 18))
+|[-] # Title                  █
+|                             █
+|    intro text               █
+|                             █
+|[-]  c                       █
+|     int a;                  █
+|     int b;                  █
+|                             █
+|[-] - x                      █
+|    - y                      █
+|                             │
+|[-] ## Sub                   │
+|                             │
+|    under sub                │
+-- OnBlock: the code block is under the window's top (6, (False, 22))
+|     e             │
+|     f             █
+|     g             │
+|     h             │
+|                   │
+-- OnBlock: a click on its last visible row folds it, and its first row is shown (2, (False, 15))
+|[+] ```   (8 lines)│
+ RRRR                
+|                   █
+|    end 1          │
+|                   │
+|    end 2          │
+-- no marks: no gutter (0, (False, 18))
+|# Title                      █
+|                             █
+|intro text                   █
+|                             █
+| c                           █
+| int a;                      █
+| int b;                      █
+|                             █
+|- x                          █
+|- y                          █
+|                             │
+|## Sub                       │
+|                             │
+|under sub                    │
+-- no marks: the cursor on the code block is its first row in reverse (0, (False, 18))
+|# Title                      █
+|                             █
+|intro text                   █
+|                             █
+| c                           █
+ RRRRRRRRRRRRRRRRRRRRRRRRRRRRR 
+| int a;                      █
+| int b;                      █
+|                             █
+|- x                          █
+|- y                          █
+|                             │
+|## Sub                       │
+|                             │
+|under sub                    │
+-- no marks: a click on the code block folds it (0, (False, 16))
+|# Title                      █
+|                             █
+|intro text                   █
+|                             █
+|``` c  (2 lines)             █
+ RRRRRRRRRRRRRRRR              
+|                             █
+|- x                          █
+|- y                          █
+|                             █
+|## Sub                       █
+|                             █
+|under sub                    █
+|                             │
+|# Next                       │
+-- no marks: the keys fold it too (0, (False, 16))
+|# Title                      █
+|                             █
+|intro text                   █
+|                             █
+|``` c  (2 lines)             █
+ RRRRRRRRRRRRRRRR              
+|                             █
+|- x                          █
+|- y                          █
+|                             █
+|## Sub                       █
+|                             █
+|under sub                    █
+|                             │
+|# Next                       │
+-- no marks and OnMark: nothing to click (0, (False, 18))
+|# Title                      █
+|                             █
+|intro text                   █
+|                             █
+| c                           █
+| int a;                      █
+| int b;                      █
+|                             █
+|- x                          █
+|- y                          █
+|                             │
+|## Sub                       │
+|                             │
+|under sub                    │
 -- arriving: the fence is not closed yet (0, (True, 6))
 |[-] # ai
 |

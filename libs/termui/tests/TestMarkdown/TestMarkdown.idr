@@ -90,6 +90,14 @@ stable src = do
 sample : String
 sample = "# Title\n\nSome *emphasis*, **strong**, ~~gone~~ and `code` in a line that wraps over rows.\n\n## Lists\n\n- one\n- two\n  - nested a\n  - nested b\n- three\n\n1. first\n2. second\n10. tenth\n\n> quoted text\n> - with a list\n\n```idris\nmain : IO ()\nmain = putStrLn \"hi\"\n```\n\n---\nend"
 
+boxed : MdTheme
+boxed = { box := (\k => case k of
+                          KHeading _ => { margin := MkEdges 1 0 0 0, padding := MkEdges 0 0 1 0 } noBox
+                          KParagraph => { margin := MkEdges 1 3 2 4 } noBox
+                          KQuote => { padding := MkEdges 0 0 0 2 } noBox
+                          KCode => { margin := MkEdges 1 0 1 2, padding := MkEdges 1 1 1 1, fill := bgColor (Indexed 236) plain } noBox
+                          _ => noBox) } defaultTheme
+
 main : IO ()
 main = do
   dump sample
@@ -106,6 +114,12 @@ main = do
   dump "#nospace\n####### seven\n## closing ##\n#"
   show' "japanese" defaultTheme 12 "# 見出し\n\n今日は天気、よい。「行こう」と言った。\n\n- 箇条書きの項目、とても長い文章になっています。"
   show' "another theme" (record' defaultTheme) 30 "# Head\n\n- item\n  1. deep\n\n> quote\n\n```c\nint x;\n```"
+  show' "margin and padding by kind" boxed 30 "# Head\n\ntext one\n\ntext two that wraps over the narrow margins\n\n> quote\n\n```c\nint x;\n```\n\nend"
+  show' "a quote, then code" boxed 30 "> quote\n\n```c\nint x;\n```"
+  show' "margins collapse: the larger counts" ({ gap := 0 } boxed) 30 "text one\n\ntext two"
+  show' "nested: a quote and a list item keep their own boxes" boxed 30 "> text in a quote\n>\n> more\n\n- item\n\n  second paragraph of the item"
+  show' "a box wider than the width does not break" ({ box := const (MkBox (MkEdges 0 20 0 20) (MkEdges 0 20 0 20) plain) } defaultTheme) 10 "text\n\n```\ncode\n```"
+  show' "negative sizes count as zero" ({ box := const (MkBox (MkEdges (-1) (-2) (-3) (-4)) noEdges plain) } defaultTheme) 20 "a\n\nb"
   stable sample
   stable "text\n#include <x>\n---Note\n***Note:*** done\n- a\n#x"
   stable "see [d](http://x.org for details (maybe) ok [w](https://en.wikipedia.org/wiki/Foo_(bar)) [t](http://x \"title\") z"
