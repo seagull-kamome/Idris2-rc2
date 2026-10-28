@@ -20,7 +20,7 @@ fdatasync: Right ()
 SEEK_CUR: Right 12
 SEEK_SET: Right 3
 SEEK_END: Right 10
-close: 0
+close: Right ()
 Buffer.read: 12 "hello world\n"
 fallocate read-only is EBADF: True
 AnyPtr.read: 5
@@ -38,15 +38,15 @@ lockfUnlock: Right ()
 fchmod: Right ()
 fchown: Right ()
 fallocate: Right ()
-close: 0
+close: Right ()
 chmod missing is ENOENT: True
 chmod: Right ()
 chown: Right ()
 lchown: Right ()
 fchmodat: Right ()
 fchownat: Right ()
-openat+close: 0
-close dir: 0
+openat+close: Right ()
+close dir: Right ()
 errno: True
 -- stat
 size=5 nlink=1

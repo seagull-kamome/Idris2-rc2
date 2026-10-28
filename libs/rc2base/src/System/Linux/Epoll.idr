@@ -157,7 +157,6 @@ epollWait ep timeoutMs = do
 export
 epollClose : EPoll -> IO (Either Errno ())
 epollClose ep = do
-  r <- close ep.efd
-  res <- checkUnit r
+  res <- close ep.efd
   free ep.buffer
   pure res
