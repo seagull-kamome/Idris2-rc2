@@ -5,6 +5,10 @@ module Main
 
 import Data.Bits
 import Data.Buffer
+import Data.List
+import Data.String
+import System
+import System.Directory
 import System.File
 import System.Linux.Uring
 import System.Posix.Errno
@@ -40,7 +44,7 @@ openFd ring what prep = do
 roundTrip : URing -> Buffer -> Buffer -> IO (Either String String)
 roundTrip ring buf readBuf = do
   let size = cast {to = Bits32} (length message)
-  Right fd <- openFd ring "open for write" (\sqe => prepOpenat sqe Nothing path (O_CREAT .|. O_WRONLY .|. O_TRUNC) 0o644)
+  Right fd <- openFd ring "open for write" (\sqe => prepOpenat ring sqe Nothing path (O_CREAT .|. O_WRONLY .|. O_TRUNC) 0o644 1)
     | Left e => pure (Left e)
   Right written <- runOne ring "write" (\sqe => prepWrite ring sqe fd buf size 0 0)
     | Left e => pure (Left e)
@@ -51,7 +55,7 @@ roundTrip ring buf readBuf = do
          | Left e => pure (Left e)
        Right _ <- runOne ring "close (write)" (\sqe => prepClose sqe fd)
          | Left e => pure (Left e)
-       Right readFd <- openFd ring "open for read" (\sqe => prepOpenat sqe Nothing path O_RDONLY 0)
+       Right readFd <- openFd ring "open for read" (\sqe => prepOpenat ring sqe Nothing path O_RDONLY 0 1)
          | Left e => pure (Left e)
        Right readC <- runOne ring "read" (\sqe => prepRead ring sqe readFd readBuf size 0 0)
          | Left e => pure (Left e)
@@ -60,6 +64,41 @@ roundTrip ring buf readBuf = do
        if result readC /= Right (length message)
           then pure (Left ("read " ++ show readC.res))
           else Right <$> getString readBuf 0 (cast (length message))
+
+-- Heap churn between `prep` and `submit`: a path that the caller no longer
+-- holds is freed on return, and the kernel reads it at `submit`.
+churn : Int -> Int
+churn n = go 1 0
+  where
+    go : Int -> Int -> Int
+    go i acc = if i > n then acc
+               else go (i + 1) (acc + cast (length (pack (replicate 24 (chr (65 + i `mod` 26))) ++ show i)))
+
+runtimeName : Int -> String
+runtimeName n = "iouring_runtime_path_" ++ show (1000 + n) ++ ".tmp"
+
+||| `openat` with a path built at run time, the heap churned before `submit`:
+||| the file must be created under that name.
+runtimePath : URing -> IO String
+runtimePath ring = do
+  args <- getArgs
+  let n = the Int (cast (length args))
+  Just sqe <- getSqe ring
+    | Nothing => pure "FAIL: getSqe"
+  -- built twice: the string given to `prepOpenat` is held by nobody else
+  prepOpenat ring sqe Nothing (runtimeName n) (O_CREAT .|. O_WRONLY .|. O_TRUNC) 0o644 7
+  -- evaluated here, before `submit`
+  when (churn 200000 < 0) $ putStrLn "unreachable"
+  Right 1 <- submit ring
+    | other => pure "FAIL: submit"
+  Right completion <- waitCompletion ring
+    | Left e => pure "FAIL: waitCompletion"
+  let name = runtimeName n
+  found <- exists name
+  _ <- removeFile name
+  pure $ case fdResult completion of
+    Left e => "FAIL: openat " ++ show e
+    Right fd => if found then "PASS: openat with a path built at run time" else "FAIL: no file named " ++ name
 
 main : IO ()
 main = do
@@ -72,6 +111,7 @@ main = do
     | Nothing => putStrLn "FAIL: newBuffer (read) failed"
 
   outcome <- roundTrip ring buf readBuf
+  runtimePath ring >>= putStrLn
   exit ring
   _ <- removeFile path
   case outcome of
