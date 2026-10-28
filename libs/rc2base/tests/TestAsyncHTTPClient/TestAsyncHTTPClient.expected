@@ -1,0 +1,49 @@
+-- heads
+[(200, ([("Content-Type", "text/plain"), ("X-A", "1"), ("X-A", "2")], True))]
+[(302, True), (200, True)]
+Just 200
+Nothing
+Nothing
+Just 200
+[(204, [("server", "x")])]
+Just 304
+0
+-- a string body, a header, the request line
+(200, ("hello", Just "one"))
+["request GET /a?b=c HTTP/1.1"]
+-- bytes
+(200, (4, 129))
+["request GET / HTTP/1.1"]
+-- a 404 is an answer, not an error
+(404, ("no", Nothing))
+["request GET /missing HTTP/1.1"]
+-- fetchTextAsync turns a 404 into HttpError
+Left HttpError 404
+["request GET /missing HTTP/1.1"]
+-- a chunked body in pieces of two bytes
+(200, ("abcdefg", Nothing))
+["request GET / HTTP/1.1"]
+-- a POST with a body and a header
+(200, ("ok", Nothing))
+["request POST /p HTTP/1.1"]
+-- a redirect to another server is followed, and only the last headers are kept
+Just "(200, (\"end\", Just \"last\"))"
+["request GET /start HTTP/1.1", "request GET /end HTTP/1.1"]
+-- the body in pieces, while the server is still sending
+Just ["data: one\n\n", "data: two\n\n", "end"]
+["request GET /events HTTP/1.1", "send 1", "status 200 Just \"text/event-stream\"", "recv data: one\n\n", "send 2", "recv data: two\n\n"]
+-- a stream: the body stops short, the first bytes come before the error
+(200, (Right (Just "bytes"), (Left TransportError CURLcode 18 (Transferred a partial file), "end")))
+["request GET /cut HTTP/1.1"]
+-- a stream: a 404 gives its head, and the stream may be closed unread
+(404, Right Nothing)
+["request GET /none HTTP/1.1"]
+-- two transfers at once, the slow one first
+["request GET / HTTP/1.1", "request GET / HTTP/1.1", "done (200, (\"fast\", Nothing))", "done (200, (\"slow\", Nothing))"]
+-- given up: the server sees the connection close
+Just "gave up"
+["closed by the client"]
+-- no server
+Just "transport error"
+-- a request that is refused before anything is sent
+Just ["SetupError header \"A\\r\\nB\" has a name that is not a token or a control character in its value", "SetupError header \"A\" has a name that is not a token or a control character in its value"]

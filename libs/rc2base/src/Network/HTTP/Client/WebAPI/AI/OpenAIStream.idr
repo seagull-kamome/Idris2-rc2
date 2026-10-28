@@ -7,8 +7,7 @@ module Network.HTTP.Client.WebAPI.AI.OpenAIStream
 -- LM Studio, llama.cpp's llama-server, Ollama and the cloud services also serve:
 -- the answer arrives as server-sent events, each with the next piece of the
 -- reply. `chatStream` sends the request, `nextDelta` waits for the next piece. It
--- runs on `Network.Async.HTTP.Stream`: plain `http` to an IPv4 address (or
--- `localhost`) only, which is what a local model server is; see
+-- runs on `Network.Async.HTTP.Stream` (libcurl, as a task); see
 -- `doc/async-http-stream.md`. `OpenAI.chat` is the form that gives the whole
 -- answer at once.
 
@@ -42,59 +41,46 @@ record ChatStream where
   constructor MkChatStream
   stream : Stream
 
-||| Where the endpoint is: the address, the port, what `Host` says, and the path
-||| the API is under (`http://192.168.3.82:1234/v1` is `/v1`). The scheme is
-||| `http`; the host an IPv4 address or `localhost` (in any case); the port 1 to
-||| 65535, 80 if there is none. A query, a fragment and credentials in the URL
-||| are refused rather than dropped.
+||| The base URL of the API with no slash at its end (`http://192.168.3.82:1234/v1/`
+||| is `http://192.168.3.82:1234/v1`). The scheme is `http` or `https` (in any case);
+||| a query, a fragment and credentials in the URL are refused rather than dropped.
 export
-parseBase : String -> Either String (SocketAddress, Port, String, String)
-parseBase base =
-  case (stripPrefixNoCase "http://" base, stripPrefixNoCase "https://" base) of
-    (Just rest, _) => withAuthority rest
-    (_, Just _) => Left "https is not supported by the stream client: use an http endpoint"
-    _ => Left ("not an http URL: " ++ base)
+endpointUrl : String -> Either String String
+endpointUrl base =
+  case (afterScheme "http://", afterScheme "https://") of
+    (Just rest, _) => withAuthority (take 7 (unpack base)) rest
+    (_, Just rest) => withAuthority (take 8 (unpack base)) rest
+    _ => Left ("not an http or https URL: " ++ base)
   where
-    stripPrefixNoCase : String -> String -> Maybe String
-    stripPrefixNoCase pre str =
-      if toLower (pack (take (length pre) (unpack str))) == pre then Just (pack (drop (length pre) (unpack str))) else Nothing
-
-    digits : String -> Bool
-    digits t = t /= "" && all isDigit (unpack t)
-
-    octet : String -> Maybe Int
-    octet t = if digits t && length t <= 3 then parsePositive t else Nothing
-
-    address : String -> Either String SocketAddress
-    address "localhost" = Right (IPv4Addr 127 0 0 1)
-    address h = case traverse octet (forget (split (== '.') h)) of
-                  Just [a, b, c, d] =>
-                    if all (<= 255) [a, b, c, d] then Right (IPv4Addr a b c d)
-                    else Left ("not an IPv4 address: " ++ h)
-                  _ => Left ("the host must be an IPv4 address or localhost: " ++ h)
+    afterScheme : String -> Maybe String
+    afterScheme pre =
+      if toLower (pack (take (length pre) (unpack base))) == pre
+         then Just (pack (drop (length pre) (unpack base))) else Nothing
 
     stripSlash : String -> String
     stripSlash = pack . reverse . dropWhile (== '/') . reverse . unpack
 
-    portNumber : String -> (given : Bool) -> Either String Int
-    portNumber _ False = Right 80
-    portNumber t True =
-      case (if digits t && length t <= 5 then parsePositive {a = Int} t else Nothing) of
-        Just n => if n >= 1 && n <= 65535 then Right n else Left ("bad port: " ++ t)
-        Nothing => Left ("bad port: " ++ t)
+    -- The text after the colon of `host:port`, if it is not a port number (1 to 65535);
+    -- a host in brackets (IPv6) is libcurl's to read.
+    badPort : String -> Maybe String
+    badPort authority =
+      if isPrefixOf "[" authority then Nothing else
+        case break (== ':') authority of
+          (_, "") => Nothing
+          (_, rest) =>
+            let t = pack (drop 1 (unpack rest))
+            in if t /= "" && length t <= 5 && all isDigit (unpack t) && maybe False (\n => n >= 1 && n <= 65535) (parsePositive {a = Int} t)
+                  then Nothing else Just t
 
-    withAuthority : String -> Either String (SocketAddress, Port, String, String)
-    withAuthority rest =
+    withAuthority : List Char -> String -> Either String String
+    withAuthority scheme rest =
       let (authority, after) = break (\c => c == '/' || c == '?' || c == '#') rest
       in if any (\c => c == '?' || c == '#') (unpack after) then Left "a query or a fragment in the endpoint URL is not supported"
          else if any (== '@') (unpack authority) then Left "credentials in the endpoint URL are not supported"
-         else do
-           let (hostPart, portPart) = break (== ':') authority
-           let host = toLower hostPart
-           when (host == "") (Left ("no host in the endpoint URL: " ++ base))
-           port <- portNumber (pack (drop 1 (unpack portPart))) (portPart /= "")
-           addr <- address host
-           pure (addr, port, host ++ (if portPart == "" then "" else ":" ++ show port), stripSlash after)
+         else if fst (break (== ':') authority) == "" then Left ("no host in the endpoint URL: " ++ base)
+         else case badPort authority of
+                Just p => Left ("bad port: " ++ p)
+                Nothing => Right (pack scheme ++ authority ++ stripSlash after)
 
 -- `Language.JSON` reads the hexadecimal digits of a `\uXXXX` escape in lower case
 -- (`\u00f6`) as the wrong numbers, and a pair of surrogates (`\ud83d\ude00`, a
@@ -188,15 +174,15 @@ fromStreamError e = TransportError (show e)
 export
 chatStream : Endpoint -> ChatRequest -> Task (Either ApiError ChatStream)
 chatStream ep req =
-  case parseBase ep.baseUrl of
+  case endpointUrl ep.baseUrl of
     Left e => pure (Left (TransportError e))
-    Right (addr, port, host, base) => do
+    Right base => do
       auth <- liftIO ep.authHeaders
       case auth of
         Left e => pure (Left (AuthError e))
         Right hs => do
-          r <- streamPost addr port host (base ++ "/chat/completions")
-                          (("Content-Type", "application/json") :: hs) (streamBody req)
+          r <- streamPostUrl (base ++ "/chat/completions")
+                             (("Content-Type", "application/json") :: hs) (streamBody req)
           pure (bimap fromStreamError (MkChatStream . snd) r)
 
 ||| Wait for the next piece; `Nothing` when the reply is complete (`[DONE]`, or

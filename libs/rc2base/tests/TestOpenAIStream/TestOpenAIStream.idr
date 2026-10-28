@@ -33,9 +33,9 @@ port = 18765
 
 showBase : String -> String
 showBase url =
-  case parseBase url of
+  case endpointUrl url of
     Left e => "error: " ++ e
-    Right (addr, p, host, path) => show (addr, p, host, path)
+    Right base => base
 
 showDelta : String -> String
 showDelta payload =
@@ -49,7 +49,7 @@ pureTests = do
   putStrLn "-- endpoint"
   traverse_ (putStrLn . showBase)
     [ "http://192.168.3.82:1234/v1", "http://localhost:8080", "http://127.0.0.1/v1/", "http://10.0.0.5:80/api/v1//"
-    , "https://192.168.3.82/v1", "http://example.com/v1", "http://300.1.1.1/", "ftp://1.2.3.4/", "/v1"
+    , "https://192.168.3.82/v1", "http://example.com/v1", "https://api.example.com/v1/", "http://[::1]:8080/v1", "ftp://1.2.3.4/", "/v1"
     , "HTTP://LocalHost:1234/V1", "http://localhost:abc/v1", "http://localhost:/v1", "http://h:8080x/", "http://localhost:0/"
     , "http://localhost:70000/", "http://localhost:65535", "http://+1.2.3.4/", "http://1.2.3.4.5/", "http://1.2.3/"
     , "http://1.2.3.4/v1?api-version=1", "http://1.2.3.4/v1#x", "http://user:pw@1.2.3.4/v1", "http:///v1", "http://:80/" ]
@@ -205,4 +205,4 @@ main = do
   traverse_ (\url => do
                r <- runTaskWith 2 (chatStream (MkEndpoint url (pure (Right []))) request)
                putStrLn (show (map (either show (const "stream")) r)))
-    ["https://192.168.3.82:1234/v1", "http://example.com/v1"]
+    ["ftp://127.0.0.1/v1", "http://127.0.0.1:99999/v1", "http://127.0.0.1/v1?x=1"]

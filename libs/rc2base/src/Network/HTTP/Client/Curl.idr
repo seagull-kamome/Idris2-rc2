@@ -62,6 +62,7 @@ noControl v = all (\c => (ord c >= 32 && ord c /= 127) || c == '\t') (unpack v)
 ||| Why the request cannot be sent, if it cannot: a header name that is not a
 ||| token, a control character in a header value, or a request method that
 ||| is not a token.
+export
 requestError : FetchRequest -> Maybe String
 requestError req =
     if not (isToken (methodName req.method)) then Just "request method is not a token"
@@ -89,6 +90,7 @@ applyMethod h m mbody = do
     traverse_ (curlEasySetoptString h curlopt_COPYPOSTFIELDS) mbody
 
 ||| Returns the header slist, which setopt does not take ownership of.
+export
 applyRequest : HasIO io => CurlOptions -> AnyPtr -> FetchRequest -> io AnyPtr
 applyRequest o h req = do
     ignore $ curlEasySetoptString h curlopt_URL req.url

@@ -65,6 +65,14 @@ public export
 curlopt_WRITEDATA : CURLoption
 curlopt_WRITEDATA = MkCURLoption 10001 -- CURLOPTTYPE_CBPOINT + 1
 
+||| The `FILE *` libcurl's default header callback writes the response head
+||| to, one line at a time and with the line ends, for every response of a
+||| redirected transfer (`CURLOPTTYPE_CBPOINT + 29`; like `curlopt_WRITEDATA`
+||| it needs no callback of ours when the stream is a memory stream).
+public export
+curlopt_HEADERDATA : CURLoption
+curlopt_HEADERDATA = MkCURLoption 10029
+
 ||| `1` selects a plain `GET` -- only useful to force it back after a
 ||| handle was previously configured for `POST`/`CUSTOMREQUEST`/etc.
 ||| (`curl_easy_setopt(3)`'s own note); a fresh handle already

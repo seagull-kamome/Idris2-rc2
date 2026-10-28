@@ -1,14 +1,3 @@
--- chunked
-hello world
-hello world
-0123456789
-a
-error: bad chunk size
-日
-error: bad end of a chunk
-error: bad chunk size
-abc
-error: chunk size line too long
 -- lines
 (["one", "two"], ("thr", False))
 (["three", ""], "four")
@@ -38,20 +27,20 @@ Just ["p", "q", "end"]
 Just ["failed: HTTP 500: {\"error\":\"no\"}"]
 []
 -- not an answer
-Just ["failed: bad answer: bad status line"]
+Just ["failed: cannot receive: CURLcode 1 (Unsupported protocol)"]
 []
 -- the head ends with a bare line feed, a byte order mark, CR line ends
 Just ["a", "b", "end"]
 ["status 200", "recv a", "recv b"]
 -- a chunked body cut short is an error, not an end
-Just ["a", "error: cannot receive: the connection closed before the end of the body"]
+Just ["a", "error: cannot receive: CURLcode 18 (Transferred a partial file)"]
 ["status 200", "recv a"]
 -- a body shorter than its length is an error
-Just ["a", "error: cannot receive: the connection closed before the end of the body"]
+Just ["a", "error: cannot receive: CURLcode 18 (Transferred a partial file)"]
 ["status 200", "recv a"]
 -- a chunk size that is not a number
-Just ["failed: bad answer: bad chunk size"]
-[]
+Just ["a", "error: cannot receive: CURLcode 56 (Failure when receiving data from the peer)"]
+["status 200", "recv a"]
 -- a body with no line end is cut off at the limit
 Just ["error: bad answer: a line of the body is too long"]
 ["status 200"]
@@ -61,4 +50,4 @@ Just ["cannot send: a line end in the request head", "cannot send: a line end in
 Just Nothing
 ["closed by the client"]
 -- no server
-Just "cannot connect: Errno:111"
+Just "cannot connect: CURLcode 7 (Could not connect to server)"
