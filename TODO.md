@@ -740,10 +740,17 @@ upstreamに取り込まれたら`idris2-src`を更新して自作idris2を作り
 
 ## HTTPクライアントの一本化
 
-`Network.Async.HTTP.Client.Curl`(`libs/rc2base/doc/async-http-client.md`)ができたので、
-自前のソケットでHTTPを話している2か所を載せ替える。
+## HTTPクライアントの一本化の残り
 
-- `Network.Async.HTTP.Stream`: `streamPost`をこの上に載せる。https、名前解決、IPv6が使えるようになる。
-  chunkのデコーダは不要になる(行分割とイベントのパーサは残る)。
+`Network.Async.HTTP.Client.Curl`(`libs/rc2base/doc/async-http-client.md`)ができ、
+`Network.Async.HTTP.Stream`はその上に載った。`Network.Async.HTTP.Proxy`の私用クライアントは
+自前のソケットのまま残す(載せ替えない)。
+
+- 理由: Proxyは転送の検査が厳格で、libcurlに載せると保てない。chunkedの応答は502にする、
+  リダイレクトを追わずに中継する(`CurlOptions`にその設定が無い)、応答の大きさに上限がある、
+  先頭行と`Content-Length`を検査する、`Connection`が名指しするヘッダまで落とす。libcurlは
+  chunkedを自分で解き、`Accept: */*`などを付ける。仕様を変えるなら`TestAsyncHTTPProxy`の期待値から見直す。
+
 - `Network.Async.HTTP.Proxy`の私用クライアント: 転送の厳格な検査(`Transfer-Encoding`の拒否、
-  先頭行と`Content-Length`の検査、リダイレクトを追わない)を保ったまま載せ替えられるかを先に確かめる。
+  先頭行と`Content-Length`の検査、リダイレクトを追わない、応答の大きさの上限)を保ったまま
+  載せ替えられるかを先に確かめる。リダイレクトを追わない設定は`CurlOptions`に無い。
