@@ -148,7 +148,8 @@ testExec = do
   e <- execv "/no/such/program" ["x"]
   putStrLn ("execv missing: errno " ++ show (errnum e))
   ignore $ fflush stdout
-  c <- fork
+  Right c <- fork
+    | Left e => putStrLn ("fork failed: " ++ show e)
   if cast {to=Int32} c == 0
     then do _ <- execvp "sh" ["sh", "-c", "exit 3"]
             exitNow 127
@@ -157,7 +158,8 @@ testExec = do
     | Left _ => putStrLn "waitpid failed"
   putStrLn ("exec sh -c 'exit 3': exited " ++ show (exitedWith st) ++ ", signal " ++ show (map (\(MkSignal x) => x) (killedBy st)))
   ignore $ fflush stdout
-  c2 <- fork
+  Right c2 <- fork
+    | Left e => putStrLn ("fork failed: " ++ show e)
   if cast {to=Int32} c2 == 0
     then do _ <- execve "/bin/sh" ["sh", "-c", "test \"$FOO\" = bar"] ["FOO=bar"]
             exitNow 127
@@ -213,7 +215,8 @@ main = do
   kill me (cast {to=Signal} (the Int32 0)) >>= \r => putStrLn ("kill self 0: " ++ errOf r)
   -- child 1: exits with status 7
   ignore $ fflush stdout
-  c1 <- fork
+  Right c1 <- fork
+    | Left e => putStrLn ("fork failed: " ++ show e)
   if (cast {to=Int32} c1) == 0
     then exit 7
     else pure ()
@@ -223,7 +226,8 @@ main = do
   putStrLn ("child 1 exit status: " ++ show (exitCode st1))
   -- child 2: killed by SIGKILL while sleeping
   ignore $ fflush stdout
-  c2 <- fork
+  Right c2 <- fork
+    | Left e => putStrLn ("fork failed: " ++ show e)
   if (cast {to=Int32} c2) == 0
     then sleep 30 >> exit 0
     else pure ()
@@ -238,7 +242,8 @@ main = do
   kill (cast {to=ProcessID} (the Int32 2147483647)) (cast {to=Signal} (the Int32 0)) >>= \r => putStrLn ("kill missing process: " ++ either (\e => "errno " ++ show (errnum e)) (const "ok") r)
   -- a child that has not exited: WNOHANG gives process ID 0
   ignore $ fflush stdout
-  c3 <- fork
+  Right c3 <- fork
+    | Left e => putStrLn ("fork failed: " ++ show e)
   if cast {to=Int32} c3 == 0
     then sleep 30 >> exitNow 0
     else pure ()

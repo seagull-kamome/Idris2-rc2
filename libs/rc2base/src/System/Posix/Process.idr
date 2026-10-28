@@ -82,11 +82,12 @@ exit code = primIO $ prim__exit code
 
 %foreign "CExpr:(fork()),libc,sys/types.h;unistd.h"
 prim__fork : PrimIO Int32
-||| Create a child process and return its process ID.
-%inline public export fork : IO ProcessID
+||| Create a child process. In the parent the result is the child's process ID;
+||| in the child it is process ID 0 (`Left` with the `errno` if no child was made).
+%inline public export fork : IO (Either Errno ProcessID)
 fork = do
   pid <- primIO prim__fork
-  pure $ MkProcessID pid
+  if pid < 0 then Left <$> errno else pure (Right (MkProcessID pid))
 
 
 -------------------------------------------------------------------------------

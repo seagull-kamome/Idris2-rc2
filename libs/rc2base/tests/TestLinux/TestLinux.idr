@@ -315,7 +315,8 @@ testProcess = do
   pid <- getpid
   putStrLn ("tid is pid in the main thread: " ++ show (cast {to=Int32} tid == cast {to=Int32} pid))
   ignore $ fflush stdout
-  c <- fork
+  Right c <- fork
+    | Left e => putStrLn ("fork failed: " ++ show e)
   if cast {to=Int32} c == 0
     then sleep 30 >> exitNow 0
     else pure ()
