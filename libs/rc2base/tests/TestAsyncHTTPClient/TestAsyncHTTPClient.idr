@@ -3,7 +3,7 @@ module Main
 -- Copyright 2026, Hattori,Hiroki. All rights reserved.
 -- This module was licensed by BSD3.
 
--- Network.HTTP.Client.Curl.Async: the heads in the text libcurl writes, then
+-- Network.Async.HTTP.Client.Curl: the heads in the text libcurl writes, then
 -- transfers against servers that are tasks of the same scheduler: the answer as a
 -- whole (string and bytes, a 404, a chunked body, a POST), the body in pieces
 -- while the server is still sending, two transfers at once with the slow one
@@ -19,8 +19,8 @@ import Data.Maybe
 import Data.String
 import Network.Async
 import Network.HTTP.Client
-import Network.HTTP.Client.Async
-import Network.HTTP.Client.Curl.Async
+import Network.Async.HTTP.Client
+import Network.Async.HTTP.Client.Curl
 import Network.HTTP.Message
 import Network.Socket.Data
 import System.Posix.Errno

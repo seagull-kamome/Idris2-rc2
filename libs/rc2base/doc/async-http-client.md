@@ -1,7 +1,7 @@
-# `Network.HTTP.Client.Async`: the HTTP client as a task
+# `Network.Async.HTTP.Client`: the HTTP client as a task
 
 `Network.HTTP.Client` (libcurl) blocks the thread for a whole transfer.
-`Network.HTTP.Client.Async` gives the same requests and answers as a `Task`
+`Network.Async.HTTP.Client` gives the same requests and answers as a `Task`
 of the scheduler (`Control.Task`), so a program that is waiting for a server
 can wait for other things too (a terminal, a timer, other transfers). The
 synchronous client is unchanged; its users need not move.
@@ -19,8 +19,8 @@ closeStream stream
 
 | Module | Role |
 |---|---|
-| `Network.HTTP.Client.Async` | `AsyncHTTPClient` (`fetchAsync`, `fetchBytesAsync`), `fetchTextAsync`, `FetchHead` (status and headers of an answer whose body is coming) |
-| `Network.HTTP.Client.Curl.Async` | the implementation on libcurl for `CurlClient`; `streamAsync`, `nextChunk`, `closeStream` and the pure `parseHeads`/`finalHead` |
+| `Network.Async.HTTP.Client` | `AsyncHTTPClient` (`fetchAsync`, `fetchBytesAsync`), `fetchTextAsync`, `FetchHead` (status and headers of an answer whose body is coming) |
+| `Network.Async.HTTP.Client.Curl` | the implementation on libcurl for `CurlClient`; `streamAsync`, `nextChunk`, `closeStream` and the pure `parseHeads`/`finalHead` |
 
 A program using them needs the same packages as `Network.HTTP.Client.Curl`
 and libcurl 8.8.0 or later (`curl_multi_waitfds`).

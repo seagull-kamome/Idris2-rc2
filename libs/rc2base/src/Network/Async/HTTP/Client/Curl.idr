@@ -1,4 +1,4 @@
-||| The libcurl implementation of `Network.HTTP.Client.Async`: a transfer is a
+||| The libcurl implementation of `Network.Async.HTTP.Client`: a transfer is a
 ||| task of the scheduler. It drives libcurl's multi interface itself --
 ||| `curl_multi_perform` when something happened, then a wait for the sockets
 ||| libcurl names (`curl_multi_waitfds`) with the scheduler's `epoll`, or for the
@@ -6,7 +6,7 @@
 ||| and no thread waits. The body is written to a memory stream, which is how
 ||| `streamAsync` hands it out in pieces while the transfer goes on. Needs
 ||| libcurl 8.8.0. See `doc/async-http-client.md`.
-module Network.HTTP.Client.Curl.Async
+module Network.Async.HTTP.Client.Curl
 
 -- Copyright 2026, Hattori,Hiroki. All rights reserved.
 -- This module was licensed by BSD3.
@@ -27,7 +27,7 @@ import System.Posix.FileDesc
 import System.Posix.Stdio
 
 import public Network.HTTP.Client
-import public Network.HTTP.Client.Async
+import public Network.Async.HTTP.Client
 import public Network.HTTP.Client.Curl
 import Network.HTTP.Client.Curl.Raw
 import Network.HTTP.Client.Curl.Types

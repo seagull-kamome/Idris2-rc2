@@ -2,7 +2,7 @@
 
 An HTTP client for answers that come in pieces over a long time: server-sent
 events (`text/event-stream`), as a language model sends its reply a word at a
-time. It is the SSE reader on `Network.HTTP.Client.Curl.Async`
+time. It is the SSE reader on `Network.Async.HTTP.Client.Curl`
 (`doc/async-http-client.md`): libcurl, as a task of the scheduler, so a slow
 server holds up nothing else and a program that is waiting for the next event can
 wait for other things too (a terminal, a timer). `https`, host names, IPv6,

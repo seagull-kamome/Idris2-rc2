@@ -1,6 +1,6 @@
 ||| An HTTP client that gives the body of an answer as it arrives, for
 ||| server-sent events (`text/event-stream`): a language model that answers a
-||| word at a time, a feed. It runs on `Network.HTTP.Client.Curl.Async` (libcurl,
+||| word at a time, a feed. It runs on `Network.Async.HTTP.Client.Curl` (libcurl,
 ||| as a task of the scheduler), so a slow server holds up nothing else, `https`
 ||| and host names work, and the framing of the body (chunked or of a given
 ||| length) is libcurl's. `streamPostUrl` sends a request and reads the head of
@@ -20,8 +20,8 @@ import Data.List
 import Data.Maybe
 import Data.String
 import Network.HTTP.Client
-import Network.HTTP.Client.Async
-import Network.HTTP.Client.Curl.Async
+import Network.Async.HTTP.Client
+import Network.Async.HTTP.Client.Curl
 import Network.HTTP.Client.Curl
 import Network.Socket.Data
 import Text.Encoding.UTF8
