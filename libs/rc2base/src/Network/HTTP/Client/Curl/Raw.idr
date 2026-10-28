@@ -229,6 +229,19 @@ prim__curlMultiWait : AnyPtr -> AnyPtr -> Bits32 -> Int -> CellI32 -> PrimIO Int
 %foreign "C:curl_multi_info_read,libcurl,curl/multi.h"
 prim__curlMultiInfoRead : AnyPtr -> CellI32 -> PrimIO AnyPtr
 
+-- `struct curl_waitfd` is `{ curl_socket_t fd; short events; short revents; }`, 8
+-- bytes; its `events` bits are those of `poll` (`CURL_WAIT_POLLIN` is `POLLIN`).
+%inline %foreign "CExpr:(sizeof(struct curl_waitfd)),libcurl,curl/curl.h"
+prim__sizeofWaitfd : Int
+%inline %foreign "CExpr:(curl_multi_waitfds((CURLM *)($1), (struct curl_waitfd *)($2), $3, (unsigned int *)($4))),libcurl,curl/curl.h"
+prim__curlMultiWaitfds : AnyPtr -> AnyPtr -> Bits32 -> CellI32 -> PrimIO Int
+%inline %foreign "CExpr:(((struct curl_waitfd *)($1))[$2].fd),libcurl,curl/curl.h"
+prim__waitfdFd : AnyPtr -> Int -> PrimIO Int32
+%inline %foreign "CExpr:(((struct curl_waitfd *)($1))[$2].events),libcurl,curl/curl.h"
+prim__waitfdEvents : AnyPtr -> Int -> PrimIO Bits16
+%inline %foreign "CExpr:(curl_multi_timeout((CURLM *)($1), (long *)($2))),libcurl,curl/curl.h"
+prim__curlMultiTimeout : AnyPtr -> CellI64 -> PrimIO Int
+
 %foreign "C:curl_share_init,libcurl,curl/curl.h"
 prim__curlShareInit : PrimIO AnyPtr
 
@@ -584,6 +597,36 @@ curlMultiInfoRead m = withCell (prim__newCellI32 8) prim__freeCellI32 $ \c => do
     pure $ Just ( MkCURLMSG (cast (the Int32 (getField msg "msg")))
                 , getField msg "easy_handle"
                 , MkCURLcode (cast (the Int32 (getField msg "result"))) )
+
+||| The sockets `m` is waiting on and what for (`POLLIN` and `POLLOUT` bits), at most
+||| 16: what a task waits for with `epoll` instead of blocking in `curlMultiWait`.
+||| Needs libcurl 8.8.0.
+export
+curlMultiWaitfds : HasIO io => AnyPtr -> io (Either CURLMcode (List (Int32, Bits16)))
+curlMultiWaitfds m = do
+    arr <- liftIO (malloc (prim__sizeofWaitfd * 16))
+    r <- withCell (prim__newCellI32 8) prim__freeCellI32 $ \c => do
+        rc <- primIO (prim__curlMultiWaitfds m arr 16 c)
+        if rc /= 0 then pure (Left (MkCURLMcode rc)) else do
+            let n = min 16 (cast {to=Int} (the Int32 (getField c "v")))
+            Right <$> collect arr 0 (cast {to=Nat} (max 0 n))
+    liftIO (free arr)
+    pure r
+  where
+    collect : AnyPtr -> Int -> Nat -> io (List (Int32, Bits16))
+    collect arr i Z = pure []
+    collect arr i (S k) = do
+        fd <- primIO (prim__waitfdFd arr i)
+        ev <- primIO (prim__waitfdEvents arr i)
+        ((fd, ev) ::) <$> collect arr (i + 1) k
+
+||| How many milliseconds `m` may wait before `curlMultiPerform` has to be called
+||| again; -1 when it has no timer.
+export
+curlMultiTimeout : HasIO io => AnyPtr -> io (Either CURLMcode Int)
+curlMultiTimeout m = withCell (prim__newCellI64 8) prim__freeCellI64 $ \c => do
+    rc <- primIO (prim__curlMultiTimeout m c)
+    pure $ if rc == 0 then Right (cast (the Int64 (getField c "v"))) else Left (MkCURLMcode rc)
 
 ------------------------------------------------------------------------
 -- Share interface

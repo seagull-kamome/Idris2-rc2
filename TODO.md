@@ -737,3 +737,13 @@ upstreamに取り込まれたら`idris2-src`を更新して自作idris2を作り
   (`waitid(WNOWAIT)`が`System.Posix`にあれば塞げる)。pidfdの経路は`kill`を先にしている。
 - `cgi`は`SIGKILL`を受けても止まらない子(D状態)を専用のスレッドで回収する。回収を待つ接続が
   あるわけではないが、そのスレッドは子が戻るまで残る。
+
+## HTTPクライアントの一本化
+
+`Network.HTTP.Client.Curl.Async`(`libs/rc2base/doc/async-http-client.md`)ができたので、
+自前のソケットでHTTPを話している2か所を載せ替える。
+
+- `Network.Async.HTTP.Stream`: `streamPost`をこの上に載せる。https、名前解決、IPv6が使えるようになる。
+  chunkのデコーダは不要になる(行分割とイベントのパーサは残る)。
+- `Network.Async.HTTP.Proxy`の私用クライアント: 転送の厳格な検査(`Transfer-Encoding`の拒否、
+  先頭行と`Content-Length`の検査、リダイレクトを追わない)を保ったまま載せ替えられるかを先に確かめる。

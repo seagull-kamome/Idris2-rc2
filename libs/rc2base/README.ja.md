@@ -57,6 +57,7 @@ rc2の汎用サポートライブラリです。上流の`base`/`contrib`に無�
 | `Network.URL` | URLの解析・構築とパーセントエンコード。後述 |
 | `Network.HTTP.Route`/`Router` | `Network.HTTP.Server`の上に作った、型安全なルートテーブル。後述 |
 | `Network.HTTP.Client` | `fetch()`の形をしたクライアントインターフェース`HTTPClient`。`doc/http-client.md`を参照 |
+| `Network.HTTP.Client.Async` | `Task`として使うクライアント`AsyncHTTPClient`。`Curl.Async`がlibcurl版（`fetchAsync`、`streamAsync`）。`doc/async-http-client.md`を参照 |
 | `Network.HTTP.Client.Curl.*` | libcurlのクライアント（`Curl`: `curlClient`）、バインディング（`Raw`、`Types`）、`TextBuffer`への取り込み。`doc/http-client.md`を参照 |
 | `Network.HTTP.Client.WebAPI.*` | OpenAI互換のチャットクライアント、OAuth 2.0（PKCE）ログイン。`doc/http-client.md`を参照 |
 | `Network.HTTP.Server` | 最小限のシングルスレッド・`epoll`駆動のHTTP/1.1サーバ。後述 |
