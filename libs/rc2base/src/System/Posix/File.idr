@@ -179,11 +179,12 @@ namespace String
   -- read : FileDesc -> Bits32 -> IO (Maybe String)
   -- read fd count = do
 
-  ||| Write a UTF-8 string to a file descriptor.
+  ||| Write a UTF-8 string to a file descriptor; the number of bytes written,
+  ||| which can be fewer than all of them.
   %inline public export
-  write : FileDesc -> String -> IO Int64
+  write : FileDesc -> String -> IO (Either Errno Nat)
   write fd str =
-    primIO $ prim__write fd.rawfd str $ cast{to=Bits64} $ byteLength str
+    primIO (prim__write fd.rawfd str (cast{to=Bits64} (byteLength str))) >>= checkCount
 
 
 
@@ -193,15 +194,16 @@ namespace AnyPtr
   %inline %foreign "CExpr:(write($1, $2, $3)),libc,unistd.h"
   prim__write : Int32 -> AnyPtr -> Bits64 -> PrimIO Int64
 
-  ||| Read up to `count` bytes from a file descriptor into memory.
+  ||| Read up to `count` bytes from a file descriptor into memory; the number of
+  ||| bytes read, `0` at the end of the file.
   %inline public export
-  read : FileDesc -> AnyPtr -> Bits64 -> IO Int64
-  read fd buf count = primIO (prim__read fd.rawfd buf count)
+  read : FileDesc -> AnyPtr -> Bits64 -> IO (Either Errno Nat)
+  read fd buf count = primIO (prim__read fd.rawfd buf count) >>= checkCount
 
   ||| Write up to `count` bytes from memory to a file descriptor.
   %inline public export
-  write : FileDesc -> AnyPtr -> Bits64 -> IO Int64
-  write fd buf count = primIO (prim__write fd.rawfd buf count)
+  write : FileDesc -> AnyPtr -> Bits64 -> IO (Either Errno Nat)
+  write fd buf count = primIO (prim__write fd.rawfd buf count) >>= checkCount
 
 
 
@@ -213,15 +215,15 @@ namespace Buffer
 
   ||| Read the entire buffer from a file descriptor.
   %inline public export
-  read : FileDesc -> Buffer -> IO Int64
+  read : FileDesc -> Buffer -> IO (Either Errno Nat)
   read fd buf =
-    primIO $ prim__read fd.rawfd buf $ cast{to=Bits64} !(rawSize buf)
+    primIO (prim__read fd.rawfd buf (cast{to=Bits64} !(rawSize buf))) >>= checkCount
 
   ||| Write the entire buffer to a file descriptor.
   %inline public export
-  write : FileDesc -> Buffer -> IO Int64
+  write : FileDesc -> Buffer -> IO (Either Errno Nat)
   write fd buf =
-    primIO $ prim__write fd.rawfd buf $ cast{to=Bits64} !(rawSize buf)
+    primIO (prim__write fd.rawfd buf (cast{to=Bits64} !(rawSize buf))) >>= checkCount
 
 
 -------------------------------------------------------------------------------

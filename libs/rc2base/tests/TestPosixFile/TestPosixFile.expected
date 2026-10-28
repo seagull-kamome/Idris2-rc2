@@ -14,19 +14,20 @@ O_RDONLY=0
 O_WRONLY=1
 O_RDWR=2
 AT_SYMLINK_NOFOLLOW=256
-write: 12
+write: Right 12
 fsync: Right ()
 fdatasync: Right ()
 SEEK_CUR: Right 12
 SEEK_SET: Right 3
 SEEK_END: Right 10
 close: Right ()
-Buffer.read: 12 "hello world\n"
+Buffer.read: Right 12 "hello world\n"
+write to a read-only descriptor is EBADF: True
 fallocate read-only is EBADF: True
-AnyPtr.read: 5
+AnyPtr.read: Right 5
 dup: ok
 dup2: 99
-Buffer.write: 3
+Buffer.write: Right 3
 flockShared: Right ()
 flockExclude: Right ()
 funlock: Right ()

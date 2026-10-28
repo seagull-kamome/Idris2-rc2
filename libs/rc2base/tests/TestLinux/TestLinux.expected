@@ -72,7 +72,7 @@ contents: "hello world"
 seals at first: Right 0
 addSeals: ok
 write and grow sealed: Right True
-write after the seal: -1, errno 1
+write after the seal: errno 1
 addSeals without MFD_ALLOW_SEALING: errno 1
 sendfile: Right 5
 sendfile copied: "world"

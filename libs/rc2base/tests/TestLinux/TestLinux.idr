@@ -197,7 +197,8 @@ slurp fd = do
   _ <- lseek fd (cast 0) SEEK_SET
   Just buf <- newBuffer 64
     | Nothing => pure "newBuffer failed"
-  n <- Buffer.read fd buf
+  Right n <- Buffer.read fd buf
+    | Left _ => pure "read failed"
   getString buf 0 (cast n)
 
 testEventfd : IO ()
@@ -230,8 +231,7 @@ testMemfd = do
   addSeals m (F_SEAL_WRITE .|. F_SEAL_GROW) >>= \r => putStrLn ("addSeals: " ++ errOf r)
   getSeals m >>= \r => putStrLn ("write and grow sealed: " ++ show (map (\x => (x .&. F_SEAL_WRITE) /= 0 && (x .&. F_SEAL_GROW) /= 0 && (x .&. F_SEAL_SHRINK) == 0) r))
   n <- String.write m "x"
-  e <- errno
-  putStrLn ("write after the seal: " ++ show n ++ ", errno " ++ show (errnum e))
+  putStrLn ("write after the seal: " ++ either (\e => "errno " ++ show (errnum e)) show n)
   Right plain <- memfd_create "plain" 0
     | Left e => putStrLn ("memfd_create failed: " ++ show e)
   addSeals plain F_SEAL_GROW >>= \r => putStrLn ("addSeals without MFD_ALLOW_SEALING: " ++ errOf r)
@@ -245,7 +245,8 @@ testMemfd = do
   splice m (Just 0) wr Nothing 5 0 >>= \r => putStrLn ("splice: " ++ show r)
   Just buf <- newBuffer 16
     | Nothing => putStrLn "newBuffer failed"
-  k <- Buffer.read rd buf
+  Right k <- Buffer.read rd buf
+    | Left e => putStrLn ("read failed: " ++ show e)
   getString buf 0 (cast k) >>= \s => putStrLn ("pipe has: " ++ show s)
   splice m Nothing dst Nothing 1 0 >>= \r => putStrLn ("splice between files: " ++ either (\x => "errno " ++ show (errnum x)) show r)
   _ <- close rd

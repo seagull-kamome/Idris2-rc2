@@ -110,6 +110,7 @@ testReadAndDup = do
   putStrLn ("Buffer.read: " ++ show m ++ " " ++ show s)
   _ <- lseek rfd (cast 6) SEEK_SET
   -- a failure is the errno: posix_fallocate on a descriptor not open for writing
+  Buffer.write rfd buf >>= \r => putStrLn ("write to a read-only descriptor is EBADF: " ++ show (r == Left EBADF))
   fallocate rfd (cast 0) (cast 4096) >>= \r => putStrLn ("fallocate read-only is EBADF: " ++ show (r == Left EBADF))
   p <- malloc 16
   k <- AnyPtr.read rfd p 5

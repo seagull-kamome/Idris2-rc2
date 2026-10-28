@@ -44,11 +44,10 @@ writeBytes fd bytes = do
   Just buf <- newBuffer (cast n)
     | Nothing => pure (Left (MkErrno 12))
   traverse_ (\(i, b) => setBits8 buf (cast i) b) (zip (the (List Nat) [0 .. n `minus` 1]) bytes)
-  written <- write fd buf
-  if written < 0
-     then do e <- errno
-             if e == EINTR then writeBytes fd bytes else pure (Left e)
-     else writeBytes fd (drop (cast written) bytes)
+  r <- write fd buf
+  case r of
+       Left e => if e == EINTR then writeBytes fd bytes else pure (Left e)
+       Right written => writeBytes fd (drop written bytes)
 
 ||| Write a string as UTF-8.
 export
@@ -62,10 +61,10 @@ readBytes : FileDesc -> IO (Either Errno (List Bits8))
 readBytes fd = do
   Just buf <- newBuffer 4096
     | Nothing => pure (Left (MkErrno 12))
-  n <- read fd buf
-  if n < 0
-     then Left <$> errno
-     else Right <$> traverse (getBits8 buf) (map cast (the (List Nat) (if n == 0 then [] else [0 .. cast n `minus` 1])))
+  r <- read fd buf
+  case r of
+       Left e => pure (Left e)
+       Right n => Right <$> traverse (getBits8 buf) (map cast (the (List Nat) (if n == 0 then [] else [0 .. n `minus` 1])))
 
 ||| Put the terminal in raw mode and switch to the alternate screen.
 ||| `Left ENOTTY` when the input is not a terminal.
