@@ -67,6 +67,10 @@ del twice: errno 2
 after del: Right 0
 close: ok
 close the second: ok
+-- ppoll
+times out: Right [0]
+with a mask, times out: Right [0]
+forever, then data: Right [True, False]
 -- memfd, sendfile, splice, copy_file_range
 contents: "hello world"
 seals at first: Right 0

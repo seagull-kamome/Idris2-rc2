@@ -1,6 +1,9 @@
 ||| `poll`: wait for events on several descriptors.
 module System.Posix.Poll
 
+import Data.Bits
+import Data.List
+import Data.Maybe
 import System.FFI
 import System.Posix.Errno
 import System.Posix.FileDesc
@@ -42,17 +45,18 @@ prim__get_revents : AnyPtr -> Int -> PrimIO Bits16
 %inline %foreign "CExpr:(poll((struct pollfd *)($1), $2, $3)),libc,poll.h"
 prim__poll : AnyPtr -> Bits64 -> Int32 -> PrimIO Int32
 
-||| Wait until one of the descriptors is ready for the events asked for, or
-||| for `timeoutMs` milliseconds (-1: forever, 0: do not wait). Returns the
-||| events that happened on each descriptor, in the order given (0: none);
-||| `Left EINTR` when a signal interrupted the wait.
+||| Run the call on a `struct pollfd` array built from the list (the call gets
+||| the array and its length) and read the `revents` back, in the order given;
+||| `Left errno` when the call returns a negative number. For `poll`-like calls,
+||| as `System.Linux.Ppoll.ppoll`.
 export
-poll : List (FileDesc, PollEvents) -> (timeoutMs : Int32) -> IO (Either Errno (List PollEvents))
-poll fds timeout = do
+withPollfds : List (FileDesc, PollEvents) -> (AnyPtr -> Bits64 -> IO Int32)
+           -> IO (Either Errno (List PollEvents))
+withPollfds fds call = do
   let n = length fds
   p <- malloc (prim__sizeofPollfd * cast (max 1 n))
   fill p 0 fds
-  rc <- primIO (prim__poll p (cast n) timeout)
+  rc <- call p (cast n)
   res <- if rc < 0
             then Left <$> errno
             else Right <$> collect p 0 n
@@ -70,3 +74,27 @@ poll fds timeout = do
     collect p i (S k) = do
       r <- primIO (prim__get_revents p i)
       (r ::) <$> collect p (i + 1) k
+
+||| Wait until one of the descriptors is ready for the events asked for, or
+||| for `timeoutMs` milliseconds (-1: forever, 0: do not wait). Returns the
+||| events that happened on each descriptor, in the order given (0: none);
+||| `Left EINTR` when a signal interrupted the wait.
+export
+poll : List (FileDesc, PollEvents) -> (timeoutMs : Int32) -> IO (Either Errno (List PollEvents))
+poll fds timeout = withPollfds fds $ \p, n => primIO (prim__poll p n timeout)
+
+||| Whether any of the `wanted` bits is among the events that happened.
+export
+happened : (wanted : PollEvents) -> (events : PollEvents) -> Bool
+happened wanted events = (events .&. wanted) /= 0
+
+||| `poll` on one descriptor: the events that happened (0: none).
+export
+pollOne : FileDesc -> PollEvents -> (timeoutMs : Int32) -> IO (Either Errno PollEvents)
+pollOne fd ev timeout = map (map (fromMaybe 0 . head')) (poll [(fd, ev)] timeout)
+
+||| `poll`, with only the descriptors that something happened on, and what
+||| happened.
+export
+pollReady : List (FileDesc, PollEvents) -> (timeoutMs : Int32) -> IO (Either Errno (List (FileDesc, PollEvents)))
+pollReady fds timeout = map (map (\rs => filter ((/= 0) . snd) (zip (map fst fds) rs))) (poll fds timeout)
