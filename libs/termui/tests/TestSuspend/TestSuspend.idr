@@ -101,7 +101,8 @@ main = do
   Right slave <- openFile name (2 .|. O_NOCTTY) 0
     | Left e => putStrLn ("open slave: " ++ show e)
   _ <- setWinSize master 20 3
-  pid <- fork
+  Right pid <- fork
+    | Left e => putStrLn ("fork: " ++ show e)
   case pid of
     MkProcessID 0 => do
       -- a group of its own, as a job has: Suspend stops the group
