@@ -16,7 +16,7 @@
 ||| folds all and F4 opens all. A message folds into its heading.
 |||
 ||| Usage: llmchat [--url URL] [--model NAME] [--system TEXT]
-|||   --url     where the API is, `http://IPv4-or-localhost[:port]/v1`; the program
+|||   --url     where the API is, `http(s)://host[:port]/v1`; the program
 |||             adds `/chat/completions` (default http://127.0.0.1:1234/v1, or $LLM_URL)
 |||   --model   the model name the server knows (default $LLM_MODEL)
 |||   --system  a system prompt
@@ -62,7 +62,7 @@ record Settings where
 
 usage : String
 usage = "usage: llmchat [--url URL] [--model NAME] [--system TEXT]\n"
-     ++ "  --url     http://IPv4-or-localhost[:port]/v1   (default http://127.0.0.1:1234/v1, or $LLM_URL)\n"
+     ++ "  --url     http(s)://host[:port]/v1   (default http://127.0.0.1:1234/v1, or $LLM_URL)\n"
      ++ "  --model   the model name the server knows       (default $LLM_MODEL)\n"
      ++ "  --system  a system prompt\n"
      ++ "  the key, if the server wants one, is in $LLM_API_KEY"
@@ -279,7 +279,7 @@ main = do
       Left e => die True (e ++ "\n" ++ usage)
       Right s =>
         if s.model == "" then die True ("no model: give --model NAME (or $LLM_MODEL)\n" ++ usage)
-        else case parseBase s.url of
+        else case endpointUrl s.url of
           Left e => die True ("--url: " ++ e ++ "\n" ++ usage)
           Right _ => do
             let auth = pure (Right (maybe [] (\k => [("Authorization", "Bearer " ++ k)]) (nonEmpty key)))
