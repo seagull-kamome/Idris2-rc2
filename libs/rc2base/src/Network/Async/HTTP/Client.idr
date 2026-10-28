@@ -1,8 +1,8 @@
 ||| The asynchronous counterpart of `Network.HTTP.Client`: the same requests and
 ||| answers, as a `Task` of the scheduler, so that a slow server holds up nothing
-||| else. `Network.HTTP.Client.Curl.Async` is the implementation on libcurl. See
+||| else. `Network.Async.HTTP.Client.Curl` is the implementation on libcurl. See
 ||| `doc/async-http-client.md`.
-module Network.HTTP.Client.Async
+module Network.Async.HTTP.Client
 
 -- Copyright 2026, Hattori,Hiroki. All rights reserved.
 -- This module was licensed by BSD3.

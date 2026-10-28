@@ -101,7 +101,7 @@ TESTS=(
     "TestHTTPMessage|contrib|Network.HTTP.Message: bodyLength, connectionClose, responseHead, findHeadEndFrom, parseHead (strict header lines), growBuffer; FromSegment Int"
     "TestAsyncHTTPServer|network contrib|Network.Async.HTTP.Server: answers, keep-alive, pipelining, split heads, HEAD/204, Connection, 400/413/431, limits, big bodies"
     "TestAsyncHTTPStream|network contrib|Network.Async.HTTP.Stream: chunk decoder, line and event parsers, events read while the server sends, framings, error status"
-    "TestAsyncHTTPClient|network contrib|Network.HTTP.Client.Curl.Async: the answer as a whole and in pieces, two transfers at once, a transfer given up, refused requests"
+    "TestAsyncHTTPClient|network contrib|Network.Async.HTTP.Client.Curl: the answer as a whole and in pieces, two transfers at once, a transfer given up, refused requests"
     "TestOpenAIStream|network contrib|Network.HTTP.Client.WebAPI.AI.OpenAIStream: endpoint URL, pieces of a reply, a server that answers like LM Studio, errors"
     "TestAsyncHTTPStaticCGI|network contrib|Network.Async.HTTP.{Static,CGI} behind the router: files, index, ETag/304, 404 for .., CGI variables and body, Status/Location, 502, 504"
     "TestAsyncHTTPProxy|network contrib|Network.Async.HTTP.Proxy: path below the prefix, method/body/headers forwarded, hop-by-hop dropped, redirect, HEAD, 502 (unreachable, too large), 504"

@@ -740,7 +740,7 @@ upstreamに取り込まれたら`idris2-src`を更新して自作idris2を作り
 
 ## HTTPクライアントの一本化
 
-`Network.HTTP.Client.Curl.Async`(`libs/rc2base/doc/async-http-client.md`)ができたので、
+`Network.Async.HTTP.Client.Curl`(`libs/rc2base/doc/async-http-client.md`)ができたので、
 自前のソケットでHTTPを話している2か所を載せ替える。
 
 - `Network.Async.HTTP.Stream`: `streamPost`をこの上に載せる。https、名前解決、IPv6が使えるようになる。
