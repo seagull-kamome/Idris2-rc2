@@ -63,8 +63,8 @@ needs liburing's headers and library only where a program uses
 
 ## Design choices
 
-- **`URing.pending`/`pendingAddrs` keep every in-flight buffer/sockaddr
-  alive until its own completion is consumed.** Confirmed as *real* bugs
+- **`URing.pending`/`pendingAddrs`/`pendingPaths` keep every in-flight
+  buffer/sockaddr/path alive until its own completion is consumed.** Confirmed as *real* bugs
   while writing this package, not hypotheticals -- the same root cause
   bit twice, in two different guises:
   1. `prepWrite`'s first version took no `URing` argument and didn't
@@ -115,7 +115,7 @@ needs liburing's headers and library only where a program uses
   release the matching entry the moment its own `Completion` comes
   back; `exit` is now only a backstop for whatever never got a
   completion consumed at all. The one caveat this trade brought in:
-  two of these five calls in flight *concurrently* on the same ring
+  two of these six calls in flight *concurrently* on the same ring
   must use distinct `userData`, or the second's insert silently
   overwrites the first's map entry -- unlike a tag collision anywhere
   else in this package (merely inconvenient for telling completions
@@ -152,7 +152,11 @@ needs liburing's headers and library only where a program uses
   descriptor `prepAccept` and `prepOpenat` produce), which turn a negative
   `-errno` into `Left`. `getSqe` stays `Maybe`: a full queue is not an
   `errno`. `prepOpenat` takes `Maybe DirDesc` (`Nothing` is `AT_FDCWD`) and
-  the `O_*` flags of `System.Posix.File`.
+  the `O_*` flags of `System.Posix.File`, and, like `prepRead`, the `URing` and
+  a `userData`: the path is read by the kernel at `submit`, so it is kept in
+  `URing.pendingPaths` until the completion is read (a path built at run time
+  is otherwise freed on return and `openat` opens whatever the memory holds
+  by then).
 - **`MultishotAccept` is a documented discipline, not a compiler-enforced
   linear resource** -- a real attempt was made at the latter (marking
   `readMultishotAccept`'s own argument multiplicity 1, so reusing an

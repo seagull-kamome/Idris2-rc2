@@ -110,37 +110,38 @@ prim__prepRecv : Ptr RawSQE -> Int32 -> Buffer -> Bits64 -> Int32 -> PrimIO ()
 ||| (and every `SQE` obtained from it) must only ever be used from the
 ||| thread that created it, per liburing's own documented contract.
 |||
-||| `pending`/`pendingAddrs` are this record's own answer to a real
+||| `pending`/`pendingAddrs`/`pendingPaths` are this record's own answer to a real
 ||| correctness trap, confirmed *twice* by actual bugs while writing
 ||| this package (see `doc/iouring.md`'s own "Design choices" section):
 ||| every `prep*` function that hands the kernel a pointer to read or
 ||| write *later* -- `prepRead`/`prepWrite`/`prepSend`/`prepRecv`'s own
-||| `Buffer`, `prepConnect`'s own `sockaddr` -- only actually gets read
+||| `Buffer`, `prepConnect`'s own `sockaddr`, `prepOpenat`'s own `path` -- only actually gets read
 ||| once `submit` runs the underlying `io_uring_enter` syscall,
 ||| arbitrarily long after the `prep*` call itself returns. A `Buffer`
 ||| argument looks fully consumed to rc2's own ownership analysis the
 ||| moment the (`void`-returning, entirely opaque to rc2) `prep*` FFI
-||| call returns, and gets dropped immediately; `prepConnect`'s own
+||| call returns, and gets dropped immediately (a `path` is the same: the
+||| string is freed on return unless something keeps it); `prepConnect`'s own
 ||| `sockaddr` lives in the `getaddrinfo` result this package owns outright,
 ||| with no refcounting at all to protect it if freed too early.
 |||
-||| Keyed by the exact `userData` each of those five functions' own
+||| Keyed by the exact `userData` each of those six functions' own
 ||| mandatory parameter set the `SQE` to (not `setUserData` -- these
-||| five take it directly instead, precisely so this key is already
+||| six take it directly instead, precisely so this key is already
 ||| known at the moment they insert into this map). `waitCompletion`/
 ||| `pollCompletion` release the matching entry the instant its own
-||| `Completion` is read back, so a `Buffer`/`sockaddr` is held only for
+||| `Completion` is read back, so a `Buffer`/`sockaddr`/`path` is held only for
 ||| as long as the kernel might still touch it, not for this `URing`'s
 ||| whole lifetime -- `exit` still frees whatever's left (an `SQE`
 ||| submitted but never waited on, one `prepCancel64`-cancelled
 ||| mid-flight, ...) as a final backstop, same as before.
 |||
-||| Two of these five calls in flight *concurrently* on the same ring
+||| Two of these six calls in flight *concurrently* on the same ring
 ||| must use distinct `userData`: unlike every other `prep*`, where a
 ||| repeated tag is merely inconvenient for telling completions apart
 ||| afterward, a collision here makes the second call's own insert
 ||| overwrite the first's entry in this very map, dropping this
-||| package's own protective reference on the first `Buffer`/`sockaddr`
+||| package's own protective reference on the first `Buffer`/`sockaddr`/`path`
 ||| while the kernel may still be about to read or write it -- exactly
 ||| the use-after-free hazard this map exists to prevent.
 export
@@ -150,6 +151,7 @@ record URing where
   cqeSlot : AnyPtr
   pending : IORef (SortedMap Bits64 Buffer)
   pendingAddrs : IORef (SortedMap Bits64 AddrInfo)
+  pendingPaths : IORef (SortedMap Bits64 String)
 
 ||| Sets up a new ring with room for at least `queueDepth` in-flight
 ||| submissions (liburing itself rounds this up to the next power of
@@ -174,7 +176,8 @@ init queueDepth = do
           else do
             pendingRef <- newIORef empty
             pendingAddrsRef <- newIORef empty
-            pure (Right (MkURing (prim__castPtr ring) slot pendingRef pendingAddrsRef))
+            pendingPathsRef <- newIORef empty
+            pure (Right (MkURing (prim__castPtr ring) slot pendingRef pendingAddrsRef pendingPathsRef))
 
 ||| The descriptor of the ring: readable (`poll`, `epoll`) while completions are
 ||| waiting to be reaped with `pollCompletion`.
@@ -201,6 +204,7 @@ exit r = do
   free r.cqeSlot
   writeIORef r.pending empty
   writeIORef r.pendingAddrs empty
+  writeIORef r.pendingPaths empty
 
 -------------------------------------------------------------------------------
 -- Submission
@@ -232,10 +236,10 @@ getSqe r = do
 ||| pending requests, a request-specific continuation key, ...). Optional:
 ||| an untagged `SQE`'s completion just carries `userData = 0`.
 |||
-||| Not for `prepRead`/`prepWrite`/`prepSend`/`prepRecv`/`prepConnect`'s
-||| own `SQE` -- those five take their own `userData` directly as a
+||| Not for `prepRead`/`prepWrite`/`prepSend`/`prepRecv`/`prepConnect`/`prepOpenat`'s
+||| own `SQE` -- those six take their own `userData` directly as a
 ||| parameter instead, the same way `prepMultishotAccept`'s already
-||| does: it doubles as the key `URing.pending`/`pendingAddrs` release
+||| does: it doubles as the key `URing.pending`/`pendingAddrs`/`pendingPaths` release
 ||| on once the matching `Completion` comes back, so it has to be known
 ||| (and set) at `prep*` time, not layered on afterward.
 export
@@ -283,11 +287,16 @@ prepWrite ring sqe fd buf nbytes fileOffset userData = do
 
 ||| `openat`-equivalent, `Nothing` for a plain CWD-relative `path`
 ||| (`AT_FDCWD`). `flags` and `mode` are the `O_*` and permission bits of
-||| `System.Posix.File`. Read the new descriptor with `fdResult`.
+||| `System.Posix.File`. Read the new descriptor with `fdResult`. Takes `ring`
+||| and mandates `userData` for the same lifetime reason `prepRead` does: the
+||| kernel reads `path` once `submit` runs, so the string is kept in
+||| `ring.pendingPaths` until the completion is read back.
 export
-prepOpenat : SQE -> (dirfd : Maybe DirDesc) -> (path : String) -> (flags : Bits32) -> (mode : Bits32) -> IO ()
-prepOpenat sqe dirfd path flags mode =
+prepOpenat : URing -> SQE -> (dirfd : Maybe DirDesc) -> (path : String) -> (flags : Bits32) -> (mode : Bits32) -> (userData : Bits64) -> IO ()
+prepOpenat ring sqe dirfd path flags mode userData = do
   primIO (prim__prepOpenat sqe.ptr (maybe prim__AT_FDCWD (.rawdirfd) dirfd) path flags mode)
+  primIO (prim__sqeSetData64 sqe.ptr userData)
+  modifyIORef ring.pendingPaths (insert userData path)
 
 ||| Closes `fd`. The completion's `res` is `0` on success, a negative
 ||| `-errno` otherwise.
@@ -513,6 +522,7 @@ releasePending : URing -> Bits64 -> IO ()
 releasePending r tag = do
   modifyIORef r.pending (delete tag)
   modifyIORef r.pendingAddrs (delete tag)
+  modifyIORef r.pendingPaths (delete tag)
 
 ||| `IORING_CQE_F_MORE`: whether the request that generated `c` will
 ||| still generate further completions after this one -- meaningful
