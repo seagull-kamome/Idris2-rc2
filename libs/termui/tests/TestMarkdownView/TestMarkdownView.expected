@@ -170,6 +170,77 @@
 |[-] ## Sub                   │
 |                             │
 |    under sub                │
+-- box: margins and padding, the gap is the largest of the facing margins (0, (True, 22))
+|[-] # Title
+|
+|    intro text
+|
+|
+|[-]
+|       c
+|       int a;
+|       int b;
+|
+|
+|[-] - x
+|    - y
+|
+|[-] ## Sub
+|
+|    under sub
+|
+|
+|[-] # Next
+|
+|    last
+|
+|
+-- box: the code block folded is one line, behind its left padding, without its padding rows (0, (True, 18))
+|[-] # Title
+|
+|    intro text
+|
+|
+|[+]   ``` c  (2 lines)
+ RRRR                          
+|
+|[-] - x
+|    - y
+|
+|[-] ## Sub
+|
+|    under sub
+|
+|
+|[-] # Next
+|
+|    last
+|
+|
+|
+|
+|
+|
+-- box: a folded paragraph with padding on the right and on the left (0, (True, 5))
+|[+]  a paragraph
+|     long enough
+|     to wrap in
+|     this window
+|     ...
+|
+-- box: the next segment starts after the gap only (12, (True, 24))
+|    - y                      │
+|                             │
+|[-] ## Sub                   │
+|                             │
+|    under sub                │
+|                             │
+|                             █
+|[-] # Next                   █
+|                             █
+|    last                     █
+|                             █
+|    second segment           █
 -- a click in the gutter on the code block (row 4) (0, (False, 16))
 |[-] # Title                  █
 |                             █

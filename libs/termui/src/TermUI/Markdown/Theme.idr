@@ -10,6 +10,7 @@ module TermUI.Markdown.Theme
 
 import Data.List
 import TermUI.Len
+import TermUI.Node
 import TermUI.Style
 
 %default total
@@ -30,6 +31,30 @@ data Kind
 ||| its section: the blocks up to the next heading of its level or a higher one.
 public export
 data Fold = NoFold | Open | Closed
+
+||| The space around a block (`margin`) and inside it (`padding`), in cells, as
+||| in CSS: from the outside in, the margin, the padding, then the block (a
+||| quote's bar, a list's markers and the text are part of the block). The
+||| padding is painted with `fill`; the margin is blank. The text inside keeps
+||| its own styles: `fill` is not put under it. The fold mark and a click that
+||| folds belong to the first row of the box, which is a row of padding if
+||| there is padding on top.
+|||
+||| Rows between two neighbouring blocks are the largest of `gap`, the bottom
+||| margin of the first and the top margin of the second (the margins collapse).
+||| The right margin and padding only narrow the block: nothing is painted
+||| there. The bottom margin of the last block of a text is not drawn.
+public export
+record BoxStyle where
+  constructor MkBox
+  margin : Edges
+  padding : Edges
+  fill : Style
+
+||| No margin and no padding.
+public export
+noBox : BoxStyle
+noBox = MkBox noEdges noEdges plain
 
 public export
 record MdTheme where
@@ -58,6 +83,7 @@ record MdTheme where
   fold : Kind -> Fold
   openMark, closedMark : String        -- before the first line of a block that can be folded
   foldStyle : Style
+  box : Kind -> BoxStyle               -- margin and padding by kind of block
 
 ||| Headings, code and quotes and lists can be folded, and start open.
 public export
@@ -101,3 +127,6 @@ defaultTheme = MkTheme
   "[-] "  -- openMark
   "[+] "  -- closedMark
   (withAttr Dim plain)  -- foldStyle
+  (\k => case k of
+                   KCode => { fill := bgColor (Indexed 236) plain } noBox
+                   _ => noBox)  -- box

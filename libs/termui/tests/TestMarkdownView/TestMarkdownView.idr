@@ -63,6 +63,24 @@ main = do
   draw "the cursor was on the code block, now out of sight: next goes to the first unit" (run [V.NextUnit, V.NextUnit, V.FoldAll, V.Scroll Sc.ToStart, V.NextUnit] m0)
   draw "a toggle with the cursor out of sight does nothing" (run [V.NextUnit, V.NextUnit, V.FoldAll, V.Scroll Sc.ToStart, V.Toggle] m0)
   draw "all open again" (run [V.FoldAll, V.UnfoldAll, V.Scroll Sc.ToStart] m0)
+  -- margins and padding by kind
+  let bx = { box := (\k => case k of
+                            KCode => { margin := MkEdges 1 0 0 0, padding := MkEdges 1 0 1 2 } noBox
+                            KParagraph => { margin := MkEdges 0 0 2 0 } noBox
+                            _ => noBox) } defaultTheme
+  let x0 = V.addSegment doc (V.empty bx 24 30)
+  draw "box: margins and padding, the gap is the largest of the facing margins" (V.update (V.Scroll Sc.ToStart) x0)
+  draw "box: the code block folded is one line, behind its left padding, without its padding rows" (run [V.Scroll Sc.ToStart, V.NextUnit, V.NextUnit, V.Toggle] x0)
+  -- a folded block keeps its left margin and padding, and its " ..." is not cut off on the right
+  let rp = { box := (\k => case k of
+                            KParagraph => { padding := MkEdges 0 2 0 1, fill := bgColor (Indexed 236) plain } noBox
+                            _ => noBox)
+           , fold := (\k => case k of
+                             KParagraph => Closed
+                             _ => NoFold) } defaultTheme
+  draw "box: a folded paragraph with padding on the right and on the left" (V.addSegment "a paragraph long enough to wrap in this window" (V.empty rp 6 20))
+  let x1 = V.addSegment "second segment" (V.addSegment doc (V.empty bx 12 30))
+  draw "box: the next segment starts after the gap only" (run [V.Scroll Sc.ToEnd] x1)
   let m4 = run [V.Scroll Sc.ToStart, V.Click 4 1] m0
   draw "a click in the gutter on the code block (row 4)" m4
   draw "a click below the window does nothing" (run [V.Scroll Sc.ToStart, V.Click 14 1, V.Click 20 1] m0)

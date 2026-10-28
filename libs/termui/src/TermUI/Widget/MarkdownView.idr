@@ -130,21 +130,26 @@ givenSeg th bs = settleDefaults th (MkSeg False "" bs [] 0 0)
 textWidth : Len -> Len
 textWidth w = w `monus` 1
 
--- A block folded: a line.
+-- A block folded: a line, behind its left margin and padding and without the
+-- rows of padding. What marks it as folded is part of the line, so that it is
+-- wrapped with the rest.
 collapsed : MdTheme -> Len -> Block -> StyledText
-collapsed th _ (CodeBlock lang ls) =
-  [MkPara [] [] Truncate
-     [spanOf (th.foldStyle `over` th.codeBlock) ("``` " ++ lang ++ "  (" ++ show (length ls) ++ " lines)")]]
-collapsed th w b =
-  case renderBlock th 0 w b of
-    [] => []
-    (p :: _) => [{ body $= (++ [spanOf th.foldStyle " ..."]) } p]
+collapsed th w b = boxAround th (kindOf b) w False (\iw => line iw b)
+  where
+    line : Len -> Block -> StyledText
+    line _ (CodeBlock lang ls) =
+      [MkPara [] [] Truncate
+         [spanOf (th.foldStyle `over` th.codeBlock) ("``` " ++ lang ++ "  (" ++ show (length ls) ++ " lines)")]]
+    line iw blk =
+      case renderBare th 0 iw blk of
+        [] => []
+        (p :: _) => [{ body $= (++ [spanOf th.foldStyle " ..."]) } p]
 
 -- The lines of a segment with the units whose marks are on them. A segment
 -- after the first starts with the gap.
 layoutSeg : MdTheme -> (w : Len) -> (cursor : Maybe (Nat, Nat)) -> (idx : Nat) -> Seg
           -> (List (List Span), List (Maybe (Nat, Nat)))
-layoutSeg th w cursor idx seg = go Nothing (idx > 0) (indexed seg.blocks)
+layoutSeg th w cursor idx seg = go Nothing (if idx > 0 then Just 0 else Nothing) (indexed seg.blocks)
   where
     gw : Len
     gw = gutter th
@@ -159,10 +164,11 @@ layoutSeg th w cursor idx seg = go Nothing (idx > 0) (indexed seg.blocks)
                padded = mark ++ blanks (gw `monus` stringWidth mark)
            in spanOf (if selected then withAttr Inverse th.foldStyle else th.foldStyle) padded
 
-    go : (hiding : Maybe Nat) -> (needGap : Bool) -> List (Nat, Block)
+    -- `before` is the bottom margin of the block shown before, if there is one
+    go : (hiding : Maybe Nat) -> (before : Maybe Nat) -> List (Nat, Block)
        -> (List (List Span), List (Maybe (Nat, Nat)))
     go _ _ [] = ([], [])
-    go hiding needGap ((i, b) :: rest) =
+    go hiding before ((i, b) :: rest) =
       let level = case b of
                     Heading n _ => Just n
                     _ => Nothing
@@ -170,7 +176,7 @@ layoutSeg th w cursor idx seg = go Nothing (idx > 0) (indexed seg.blocks)
                      (Just h, Just n) => n > h
                      (Just _, Nothing) => True
                      (Nothing, _) => False
-      in if hidden then go hiding needGap rest
+      in if hidden then go hiding before rest
          else
            let unit = isUnit th b
                isFolded = unit && elem i seg.folded
@@ -178,11 +184,14 @@ layoutSeg th w cursor idx seg = go Nothing (idx > 0) (indexed seg.blocks)
                mark = markSpan unit isFolded (cursor == Just (idx, i))
                blankG = spanOf plain (blanks gw)
                ls = concatMap (layoutPara w) (if gw == 0 then paras else behind [mark] [blankG] paras)
-               gapLines = the (List (List Span)) (if needGap then replicate th.gap [] else [])
+               gapRows = the Nat (case before of
+                                    Nothing => marginTop th b
+                                    Just pb => max th.gap (max pb (marginTop th b)))
+               gapLines = the (List (List Span)) (replicate gapRows [])
                own = (case ls of
                         [] => []
                         (_ :: more) => (if unit then Just (idx, i) else Nothing) :: map (const Nothing) more)
-               (restLs, restOs) = go (if isFolded then level else Nothing) True rest
+               (restLs, restOs) = go (if isFolded then level else Nothing) (Just (marginBottom th b)) rest
            in (gapLines ++ ls ++ restLs, map (const Nothing) gapLines ++ own ++ restOs)
 
 ||| The number of lines laid out.

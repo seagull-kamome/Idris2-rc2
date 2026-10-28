@@ -335,6 +335,29 @@ ASCII by default, whose width is the same in every terminal; `-`, `+` and `*` by
 bullets, `|` for the bar. Styles of nested inlines are put over each other with
 `over`, so emphasis in a heading keeps the colour of the heading.
 
+`box : Kind -> BoxStyle` gives a margin and a padding, in cells and on each side
+(`Edges`, the one of `TermUI.Node`), to each kind of block, as in CSS. From the
+outside in: the margin (blank), the padding (painted with `fill`), then the block;
+a quote's bar and a list's markers are part of the block, so inside the padding.
+The default has none, except that the padding of code is painted like the code.
+The rules:
+- Blank rows between two neighbouring blocks are the largest of `gap`, the bottom
+  margin of the first and the top margin of the second (the margins collapse). The
+  top margin of the first block of a text counts; the bottom margin of the last
+  one is not drawn. It applies to blocks inside quotes and list items too, not to
+  the list items themselves.
+- With a margin or padding on the right, the block is wrapped to the room that is
+  left (the paragraphs are wrapped when the block is made, as one row each), and
+  with padding on the right its rows are painted up to it with `fill`.
+- A margin and padding that do not leave a cell for the block are not used on
+  the left and right. Negative sizes are 0.
+- A folded block is one row, behind its left margin and padding, without the
+  rows of padding (so its fold mark moves to the row of the text when it folds).
+- `fill` paints the padding only; the text keeps its own styles. The fold mark
+  and the click that folds are on the first row of the box, a row of padding if
+  there is padding on top.
+- Sizes are limited to 65535 cells.
+
 `renderMarkdown theme w src` is the styled text for width `w` and `markdown theme
 src` a view wrapped to the width it is placed in. Quotes and list items are made
 with the prefixes of the paragraphs, so a wrapped row keeps the bar or the

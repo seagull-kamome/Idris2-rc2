@@ -137,6 +137,71 @@ h1
 |
 |   int x;
  ##############################
+-- margin and padding by kind
+|
+|# Head
+ ^^^^^^                        
+|
+|
+|    text one
+|
+|
+|    text two that wraps
+|    over the narrow margins
+|
+|
+|  |
+|  |     quote
+|
+|
+   ############################
+|    c
+   ############################
+|    int x;
+   ############################
+|
+   ############################
+|
+|    end
+-- a quote, then code
+|  |
+|  |     quote
+|
+|
+   ############################
+|    c
+   ############################
+|    int x;
+   ############################
+|
+   ############################
+-- margins collapse: the larger counts
+|
+|    text one
+|
+|
+|    text two
+-- nested: a quote and a list item keep their own boxes
+|  |
+|  |     text in a quote
+|  |
+|  |
+|  |     more
+|
+|-     item
+|
+|
+|      second paragraph of
+|      the item
+-- a box wider than the width does not break
+|text
+|
+| code
+ ##########
+-- negative sizes count as zero
+|a
+|
+|b
 -- cuts: 265, unstable: 0
 -- cuts: 50, unstable: 0
 -- cuts: 113, unstable: 0
