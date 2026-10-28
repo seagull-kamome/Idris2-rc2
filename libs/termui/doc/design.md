@@ -393,7 +393,7 @@ left, so both are sized again after every edit and resize (`layoutFor`). The log
 not a focusable: the input is the only one, so typing needs no Tab, and Page Up/Down
 (taken from the editor in its key handler) and the wheel reach the log. The URL and the model are given
 on the command line (`--url`, `--model`, `--system`; `$LLM_URL`, `$LLM_MODEL`,
-`$LLM_API_KEY`), and the URL is `http` with an IPv4 address or `localhost`.
+`$LLM_API_KEY`), and the URL is `http` or `https` (`endpointUrl` of rc2base).
 
 ## Diff output
 
