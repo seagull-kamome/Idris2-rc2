@@ -1,1 +1,2 @@
+PASS: openat with a path built at run time
 PASS: file round-trip

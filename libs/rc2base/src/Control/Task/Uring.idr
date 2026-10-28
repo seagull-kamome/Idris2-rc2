@@ -185,7 +185,7 @@ uringConnect fd host port = do
 ||| descriptor. `flags` and `mode` are those of `System.Posix.File.openat`.
 export
 uringOpenat : Maybe DirDesc -> String -> (flags : Bits32) -> (mode : Bits32) -> Task (Either Errno FileDesc)
-uringOpenat dir path flags mode = request fdResult (untagged (\sqe => prepOpenat sqe dir path flags mode))
+uringOpenat dir path flags mode = request fdResult (\ring, sqe, tag => prepOpenat ring sqe dir path flags mode tag)
 
 ||| Close a descriptor.
 export
