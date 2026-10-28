@@ -52,6 +52,7 @@ not compile when the declaration is used.
 | --- | --- |
 | `Control.Concurrent.MVar` | Haskell's `MVar` (thread-safe `takeMVar`/`putMVar`/`modifyMVar`/...), over `System.Concurrency`'s `Mutex`/`Condition` |
 | `Data.Text`/`Data.TextBuffer` | UTF-8-derived codepoint buffer -- see "API" below |
+| `Data.Seq.RC2` | `Data.Seq.Unsized` of contrib with the two fixes it lacks (`index`, `take`, `drop`, `splitAt` and `(++)` are wrong for some sizes there; see `KNOWN-BUGS.md`); same names |
 | `Data.String.FFI` | patches upstream `Data.String` `%foreign` gaps -- see `TODO.md` |
 | `Data.String.RC2` | byte-offset `String` slicing, for when a span isn't codepoint-aligned -- see below |
 | `Data.Double.RC2` | patches upstream `Data.Double`'s `unitRoundoff`/`epsilon`/`nan`/`inf` -- see below |
