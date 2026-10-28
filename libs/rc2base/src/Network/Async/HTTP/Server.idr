@@ -80,7 +80,7 @@ encode headOnly resp = do
   when (sent > 0) $ copyData resp.body 0 sent out headLen
   pure out
 
--- The request line and the headers of a request, and how long its body is.
+-- The request line and the headers of a request, and how its body is delimited.
 record Head where
   constructor MkHead
   method : String
@@ -88,7 +88,7 @@ record Head where
   headers : List (String, String)
   http10 : Bool
   bodyStart : Int
-  size : Int
+  bodyFraming : Framing
 
 -- What a read gave.
 data Read = Got Buffer Int | Gone | TimedOut
@@ -96,7 +96,8 @@ data Read = Got Buffer Int | Gone | TimedOut
 -- Serve one connection until the client leaves or asks to close. What cannot be
 -- served is answered and the connection closed: 400 for a head or framing that
 -- cannot be read, 408 for a request that took too long to arrive, 413 for a
--- request over the limit, 431 for a head over it.
+-- request over the limit, 417 for an expectation other than 100-continue, 431
+-- for a head over it, 501 for a transfer coding other than chunked.
 connection : Limits -> Handler -> Sock -> Task ()
 connection limits handler conn = do
   buf <- liftIO (newBuf initCap)
@@ -124,17 +125,21 @@ connection limits handler conn = do
 
     readHead : Buffer -> (len, scanned : Int) -> (deadline : Maybe Time) -> Task ()
     gotHead : Buffer -> (len, headEnd : Int) -> (deadline : Maybe Time) -> Task ()
+    expecting : Buffer -> (len : Int) -> Head -> (deadline : Maybe Time) -> Task ()
     readBody : Buffer -> (len : Int) -> Head -> (deadline : Maybe Time) -> Task ()
-    serveRequest : Buffer -> (len : Int) -> Head -> Task ()
+    readChunks : Buffer -> (len : Int) -> Head -> ChunkMark -> (deadline : Maybe Time) -> Task ()
+    serveRequest : Buffer -> (len, reqEnd : Int) -> Head -> Buffer -> Task ()
 
-    -- Send the response; whether it went out in time.
-    reply : (headOnly : Bool) -> Response -> Task Bool
-    reply headOnly resp = do
-      out <- liftIO (encode headOnly resp)
+    -- Send the bytes; whether they went out in time.
+    sendOut : Buffer -> Task Bool
+    sendOut out = do
       sent <- case limits.writeTimeoutMs of
                 Z => Just <$> sendAll conn out 0 (byteLength out)
                 ms => (\t => sendAllUntil t conn out 0 (byteLength out)) =<< map (+ ms) now
       pure (maybe False isRight sent)
+
+    reply : (headOnly : Bool) -> Response -> Task Bool
+    reply headOnly resp = liftIO (encode headOnly resp) >>= sendOut
 
     -- Answer what cannot be served and let the connection end, lingering
     -- (`doc/async-http-server.md`).
@@ -195,23 +200,61 @@ connection limits handler conn = do
       where
         -- The framing headers can be trusted and the request is not too large.
         framed : (method, path : String) -> List (String, String) -> (http10 : Bool) -> Task ()
-        framed method path hdrs http10 = case bodyLength hdrs of
-          Nothing => refuse 400 "bad request\n"
-          Just size =>
+        framed method path hdrs http10 = case framing hdrs of
+          Left Malformed => refuse 400 "bad request\n"
+          Left UnsupportedCoding => refuse 501 "transfer coding not implemented\n"
+          Right Chunked =>
+            if http10 then refuse 400 "bad request\n"
+            else expecting buf len (MkHead method path hdrs http10 (headEnd + 4) Chunked) deadline
+          Right fr@(Sized size) =>
             if size > limits.maxRequestBytes - (headEnd + 4) then refuse 413 "payload too large\n"
-            else readBody buf len (MkHead method path hdrs http10 (headEnd + 4) size) deadline
+            else expecting buf len (MkHead method path hdrs http10 (headEnd + 4) fr) deadline
 
-    readBody buf len head deadline =
-      if len >= head.bodyStart + head.size then serveRequest buf len head else do
-        r <- more deadline buf len (min chunk (head.bodyStart + head.size - len))
-        case r of
-          Gone => pure ()
-          TimedOut => timedOut len
-          Got buf' len' => readBody buf' len' head deadline
+    -- A client that expects `100 Continue` waits for it before it sends the body
+    -- (RFC 9110, 10.1.1); HTTP/1.0 has no such response.
+    expecting buf len head deadline = case expectation head.headers of
+      ExpectUnmet => refuse 417 "expectation failed\n"
+      ExpectContinue =>
+        if head.http10 || not (awaiting head) then readBody buf len head deadline
+        else do
+          sent <- liftIO (fromString continueHead) >>= sendOut
+          when sent (readBody buf len head deadline)
+      NoExpectation => readBody buf len head deadline
+      where
+        awaiting : Head -> Bool
+        awaiting (MkHead _ _ _ _ start (Sized size)) = len < start + size
+        awaiting (MkHead _ _ _ _ start Chunked) = len <= start
 
-    serveRequest buf len head = do
-      let reqEnd = head.bodyStart + head.size
-      body <- liftIO (slice buf head.bodyStart head.size)
+    readBody buf len head deadline = case head.bodyFraming of
+      Chunked => readChunks buf len head (MkChunkMark head.bodyStart 0) deadline
+      Sized size =>
+        if len >= head.bodyStart + size
+          then liftIO (slice buf head.bodyStart size) >>= serveRequest buf len (head.bodyStart + size) head
+          else do
+            r <- more deadline buf len (min chunk (head.bodyStart + size - len))
+            case r of
+              Gone => pure ()
+              TimedOut => timedOut len
+              Got buf' len' => readBody buf' len' head deadline
+
+    readChunks buf len head mark deadline = do
+      found <- liftIO (scanChunks Nothing buf len (limits.maxRequestBytes - head.bodyStart) mark)
+      case found of
+        ChunksBad => refuse 400 "bad request\n"
+        ChunksTooLarge => refuse 413 "payload too large\n"
+        ChunksEnd reqEnd size => do
+          body <- liftIO (joinChunks buf head.bodyStart reqEnd size)
+          serveRequest buf len reqEnd ({ headers := decodedHeaders size head.headers } head) body
+        ChunksMore mark' =>
+          if len >= limits.maxRequestBytes then refuse 413 "payload too large\n"
+          else do
+            r <- more deadline buf len (min chunk (limits.maxRequestBytes - len))
+            case r of
+              Gone => pure ()
+              TimedOut => timedOut len
+              Got buf' len' => readChunks buf' len' head mark' deadline
+
+    serveRequest buf len reqEnd head body = do
       resp <- handler (MkRequest head.method head.path head.headers body conn.peer)
       -- HTTP/1.0 ends the connection unless the request asked to keep it
       let closing = connectionClose head.headers || closes resp

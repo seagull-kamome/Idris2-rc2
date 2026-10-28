@@ -46,4 +46,6 @@ main = do
 
   putStrLn "segments: \{show (pathSegments "/a%2Fb/c/")}"
 
+  putStrLn "ports: \{show (map (\u => (parse u).port) ["http://h:65535/", "http://h:65536/", "http://h:99999/", "http://h:0/", "http://[::1]:70000/", "http://h:80/", "http://h:18446744073709551696/", "http://h:+80/", "http://h:/", "http://h:080/"])}"
+
   putStrLn "--- done ---"

@@ -126,6 +126,13 @@ badFraming : String -> String
 badFraming header =
   "POST /echo HTTP/1.1\r\nHost: t\r\n" ++ header ++ "\r\n\r\nGET /hello HTTP/1.1\r\n\r\n"
 
+-- A request with a chunked body (`Connection: close`, so the answer ends the session).
+chunkedHead : String -> String
+chunkedHead path = "POST " ++ path ++ " HTTP/1.1\r\nHost: t\r\nConnection: close\r\nTransfer-Encoding: chunked\r\n\r\n"
+
+chunkedReq : String -> String -> String
+chunkedReq path chunks = chunkedHead path ++ chunks
+
 -- `n` bytes that make a request line and headers without ending them.
 unfinishedHead : (n : Nat) -> String
 unfinishedHead n = pack (take n (unpack "GET / HTTP/1.1\r\nX: " ++ replicate (n + 100) 'a'))
@@ -208,9 +215,39 @@ smallLimits port = do
                , "HEAD /agent HTTP/1.1\r\nHost: t\r\nUser-Agent: probe/1\r\nConnection: close\r\n\r\n"
                , postReq "/agent" "x"
                , "POST /count/abc HTTP/1.1\r\nHost: t\r\nConnection: close\r\nContent-Length: 0\r\n\r\n" ]
+  -- chunked bodies: sizes in hex with an extension, a trailer field, the headers
+  -- the handler is given, and a request that follows
+  chunked <- traverse (\r => ask [r])
+               [ chunkedReq "/echo" "3\r\nabc\r\n3;ext=1\r\ndef\r\nA\r\n0123456789\r\n0\r\nTrailer: v\r\n\r\n"
+               , chunkedReq "/echo" "0\r\n\r\n"
+               , chunkedReq "/count/2" "2\r\nhi\r\n0\r\n\r\n"
+               , "POST /echo HTTP/1.1\r\nHost: t\r\nTransfer-Encoding: Gzip , CHUNKED\r\n\r\n0\r\n\r\n" ]
+  chunkedThenGet <- ask ["POST /echo HTTP/1.1\r\nHost: t\r\nTransfer-Encoding: chunked\r\n\r\n1\r\nx\r\n0\r\n\r\n" ++ getReq "/hello" True]
+  chunkedSplit <- pieces port [chunkedHead "/echo", "3\r\nab", "c\r\n0", "\r\n", "\r\n"]
+  refusedChunks <- traverse (\r => ask [r])
+               [ chunkedReq "/echo" "zz\r\n"
+               , chunkedReq "/echo" "\r\n"
+               , chunkedReq "/echo" "3\r\nabcXY"
+               , chunkedReq "/echo" "3;\x01\r\nabc\r\n0\r\n\r\n"
+               , chunkedReq "/echo" "0\r\nno colon\r\n\r\n"
+               , chunkedReq "/echo" "2000\r\n"
+               , chunkedReq "/echo" "fffffffffffffffffffff\r\n"
+               , "POST /echo HTTP/1.1\r\nHost: t\r\nTransfer-Encoding: gzip, chunked\r\n\r\n0\r\n\r\n"
+               , "POST /echo HTTP/1.1\r\nHost: t\r\nTransfer-Encoding: chunked, gzip\r\n\r\n0\r\n\r\n"
+               , "POST /echo HTTP/1.1\r\nHost: t\r\nTransfer-Encoding: chunked\r\nContent-Length: 3\r\n\r\n0\r\n\r\n"
+               , "POST /echo HTTP/1.0\r\nTransfer-Encoding: chunked\r\n\r\n0\r\n\r\n" ]
+  -- chunks over the limit that arrive a piece at a time
+  chunkedBig <- pieces port [chunkedHead "/echo", "800\r\n" ++ pack (replicate 2048 'x') ++ "\r\n", "800\r\n" ++ pack (replicate 2048 'x') ++ "\r\n"]
+  -- Expect: 100-continue is answered before the body is sent, an unknown expectation is refused
+  continued <- ask ["POST /echo HTTP/1.1\r\nHost: t\r\nConnection: close\r\nExpect: 100-continue\r\nContent-Length: 2\r\n\r\n", "hi"]
+  continuedChunked <- ask ["POST /echo HTTP/1.1\r\nHost: t\r\nConnection: close\r\nExpect: 100-continue\r\nTransfer-Encoding: chunked\r\n\r\n", "2\r\nhi\r\n0\r\n\r\n"]
+  continuedBody <- ask ["POST /echo HTTP/1.1\r\nHost: t\r\nConnection: close\r\nExpect: 100-continue\r\nContent-Length: 2\r\n\r\nhi"]
+  continuedBig <- ask ["POST /echo HTTP/1.1\r\nHost: t\r\nExpect: 100-continue\r\nContent-Length: 5000\r\n\r\n"]
+  continuedOld <- ask ["POST /echo HTTP/1.0\r\nExpect: 100-continue\r\nContent-Length: 2\r\n\r\nhi"]
+  unmet <- ask ["POST /echo HTTP/1.1\r\nHost: t\r\nExpect: 200-ok\r\nContent-Length: 2\r\n\r\nhi"]
   (slowA, slowB) <- both (ask [getReq "/slow" True]) (ask [getReq "/slow" True])
   pure (map show ([one, body, alive, user, headed, noContent, piped, [split], exact, tokens, handlerCloses, handlerStays]
-                  ++ refusedLimits ++ [[refusedWithBody]] ++ refusedHeads ++ refusedFraming ++ [heads, optioned] ++ versions ++ withReq ++ [slowA, slowB]))
+                  ++ refusedLimits ++ [[refusedWithBody]] ++ refusedHeads ++ refusedFraming ++ [heads, optioned] ++ versions ++ withReq ++ chunked ++ [chunkedThenGet, [chunkedSplit]] ++ refusedChunks ++ [[chunkedBig], continued, continuedChunked, continuedBody, continuedBig, continuedOld, unmet] ++ [slowA, slowB]))
 
 -- The second server: the head limit (65536) is above the request limit (2048).
 headAboveRequest : Port -> Task (List String)

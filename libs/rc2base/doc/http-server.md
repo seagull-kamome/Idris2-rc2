@@ -164,10 +164,13 @@ A deliberately small HTTP/1.1 subset:
   (each on its own `getString` of its byte range), never one big head
   string. Header key match is case-insensitive; the value is SP/HTAB-
   trimmed. The body is handed over as raw `Buffer` bytes.
-- Framing is checked (`Network.HTTP.Message.bodyLength`): a `Content-Length`
+- Framing is checked (`Network.HTTP.Message.framing`): a `Content-Length`
   that is not plain digits, has more than 18 of them, or appears twice with
-  different values, and any `Transfer-Encoding`, make the request unreliable to
-  frame, so it is refused rather than guessed. So is a header line that is not
+  different values, a `Transfer-Encoding` together with a `Content-Length`, and one
+  that does not end with `chunked`, make the request unreliable to frame, so it is
+  refused rather than guessed. A `Transfer-Encoding: chunked` body is decoded
+  (`scanChunks`; the handler gets the headers of `decodedHeaders`), `Network.HTTP.Server`
+  closes the connection on any other coding. So is a header line that is not
   `name: value` (`parseHead`): no colon, no name, white space before the name (an
   obsolete line fold) or between the name and the colon -- a proxy that ignores that
   space reads the request differently. `Network.HTTP.Server` closes the
@@ -188,8 +191,9 @@ A deliberately small HTTP/1.1 subset:
 Explicitly **not** supported, all considered genuinely out of scope
 rather than deferred:
 
-- `chunked` transfer encoding (request or response) -- only
-  `Content-Length` bodies.
+- `chunked` transfer encoding of a response -- only `Content-Length` bodies. (A
+  request body may be chunked.) `Expect: 100-continue` is answered by
+  `Network.Async.HTTP.Server` only.
 - HTTP/1.0 (its default is connection-per-request, the opposite of
   HTTP/1.1's default this parser assumes). `Network.Async.HTTP.Server` serves it.
 - Response ordering guarantees under pipelining -- if two pipelined

@@ -683,7 +683,7 @@ main = serve 8080 handler   -- binds 127.0.0.1:8080, runs until `stop`
 ```
 
 Linux-only (`epoll`); supports request-line + headers +
-`Content-Length` body and keep-alive, not `chunked`/HTTP/1.0/TLS/
+`Content-Length` body and keep-alive, a chunked request body (decoded) but not a chunked response/HTTP/1.0/TLS/
 pipelining response ordering. The read accumulator is capped
 (`serve`'s `maxRequestBytes`, default 8 MiB); an over-large request is
 dropped without a response. See `doc/http-server.md` for the full

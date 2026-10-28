@@ -1,20 +1,62 @@
---- bodyLength ---
-none: Just 0
-zero: Just 0
-plain: Just 259
-18 digits: Just 999999999999999999
-19 digits: Nothing
-wraps to 3: Nothing
-wraps negative: Nothing
-max int: Nothing
-not a number: Nothing
-negative: Nothing
-plus sign: Nothing
-empty: Nothing
-two equal: Just 5
-two different: Nothing
-chunked: Nothing
-chunked and length: Nothing
+--- framing ---
+none: Right Sized 0
+zero: Right Sized 0
+plain: Right Sized 259
+18 digits: Right Sized 999999999999999999
+19 digits: Left Malformed
+wraps to 3: Left Malformed
+wraps negative: Left Malformed
+max int: Left Malformed
+not a number: Left Malformed
+negative: Left Malformed
+plus sign: Left Malformed
+empty: Left Malformed
+two equal: Right Sized 5
+two different: Left Malformed
+chunked: Right Chunked
+chunked, any case, spaces: Right Chunked
+chunked, vertical tab: Left Malformed
+chunked and length: Left Malformed
+gzip then chunked: Left UnsupportedCoding
+two headers: Left UnsupportedCoding
+chunked then gzip: Left Malformed
+gzip: Left Malformed
+chunked twice: Left Malformed
+empty: Left Malformed
+empty items: Right Chunked
+--- expectation ---
+none: NoExpectation
+100-continue: ExpectContinue
+any case, spaces: ExpectContinue
+twice: ExpectContinue
+other: ExpectUnmet
+mixed: ExpectUnmet
+--- chunked bodies ---
+one chunk: end 13 size 3 "abc"
+extension, hex size: end 24 size 10 "0123456789"
+trailer: end 23 size 1 "a"
+followed by more: end 11 size 1 "a"
+empty: end 5 size 0 ""
+leading zeros: end 22 size 3 "abc"
+no bytes: more from 0 after 0
+half a size line: more from 0 after 0
+half the data: more from 0 after 0
+no last chunk: more from 8 after 3
+no end of trailers: more from 0 after 0
+not hex: bad
+no size: bad
+space in size: bad
+bare LF: bad
+no CRLF after data: bad
+control character in extension: bad
+trailer without colon: bad
+over the limit, data not there: too large
+over the limit, in two: too large
+size that does not fit: too large
+--- chunked bodies, a piece at a time ---
+ends with 30 bytes: 30, 7
+--- decodedHeaders ---
+[("host", "t"), ("content-length", "7")]
 --- FromSegment Int ---
 7: Just 7
 -7: Just (-7)
